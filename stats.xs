@@ -389,9 +389,9 @@ double var(...)
 	  unsigned int count = 0;
 	CODE:
 	  for (unsigned int i = 0; i < items; i++) {
-		   SV* arg = ST(i);
+		   SV*restrict arg = ST(i);
 		   if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
-		       AV* av = (AV*)SvRV(arg);
+		       AV*restrict av = (AV*)SvRV(arg);
 		       unsigned int len = av_len(av) + 1;
 		       for (unsigned int j = 0; j < len; j++) {
 		           SV** tv = av_fetch(av, j, 0);
@@ -404,7 +404,7 @@ double var(...)
 	  if (count < 2) croak("stdev needs >= 2 elements");
 	  double avg = total / count;
 	  for (unsigned int i = 0; i < items; i++) {
-		   SV* arg = ST(i);
+		   SV*restrict arg = ST(i);
 		   if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
 		       AV* av = (AV*)SvRV(arg);
 		       unsigned int len = av_len(av) + 1;
