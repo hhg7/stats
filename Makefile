@@ -163,16 +163,10 @@ BOOTDEP =
 
 # Handy lists of source code files:
 XS_FILES = bu.stats.xs \
-	chatgpt.xs \
-	claude.stats.xs \
 	stats.xs
 C_FILES  = bu.stats.c \
-	chatgpt.c \
-	claude.stats.c \
 	stats.c
 O_FILES  = bu.stats.o \
-	chatgpt.o \
-	claude.stats.o \
 	stats.o
 H_FILES  = ppport.h
 MAN1PODS = 
@@ -559,14 +553,6 @@ clean :: clean_subdirs
 	  bu.stats.bso bu.stats.c \
 	  bu.stats.def bu.stats.exp \
 	  bu.stats.o bu.stats_def.old \
-	  chatgpt.base chatgpt.bs \
-	  chatgpt.bso chatgpt.c \
-	  chatgpt.def chatgpt.exp \
-	  chatgpt.o chatgpt_def.old \
-	  claude.stats.base claude.stats.bs \
-	  claude.stats.bso claude.stats.c \
-	  claude.stats.def claude.stats.exp \
-	  claude.stats.o claude.stats_def.old \
 	  core core.*perl.*.? \
 	  core.[0-9] core.[0-9][0-9] \
 	  core.[0-9][0-9][0-9] core.[0-9][0-9][0-9][0-9] \
@@ -990,7 +976,7 @@ PERL_HDRS = \
 
 $(OBJECT) : $(PERL_HDRS)
 
-bu.stats.c chatgpt.c claude.stats.c stats.c : $(XSUBPPDEPS)
+bu.stats.c stats.c : $(XSUBPPDEPS)
 
 
 # --- MakeMaker makefile section:

@@ -115,14 +115,14 @@ static double evaluate_term(HV *restrict data_hoa, HV **restrict row_hashes, uns
     char term_cpy[256];
     strncpy(term_cpy, term, 255); term_cpy[255] = '\0';
 
-    char *colon = strchr(term_cpy, ':');
+    char *restrict colon = strchr(term_cpy, ':');
     if (colon) {
         *colon = '\0';
         return evaluate_term(data_hoa, row_hashes, i, term_cpy) * evaluate_term(data_hoa, row_hashes, i, colon + 1);
     }
 
     if (strncmp(term_cpy, "I(", 2) == 0) {
-        char *end = strrchr(term_cpy, ')');
+        char *restrict end = strrchr(term_cpy, ')');
         if (end) *end = '\0';
         char *inner = term_cpy + 2;
         char *caret = strchr(inner, '^');
@@ -1615,10 +1615,8 @@ XS_EUPXS(XS_stats_lm)
     {
         if (items % 2 != 0) 
             croak("Usage: lm(formula => 'mpg ~ wt * hp', data => \\%mtcars)");
-
         const char *restrict formula  = NULL;
         SV *restrict data_sv = NULL;
-
         for (I32 i = 0; i < items; i += 2) {
             const char *restrict key = SvPV_nolen(ST(i));
             SV *restrict val = ST(i + 1);
@@ -1628,7 +1626,6 @@ XS_EUPXS(XS_stats_lm)
         }        
         if (!formula) croak("lm: formula is required");
         if (!data_sv || !SvROK(data_sv)) croak("lm: data is required and must be a reference");
-
         /* --- 1. Clean and Strip the Formula --- */
         char f_cpy[512];
         char *restrict src = (char*)formula;
@@ -1639,7 +1636,7 @@ XS_EUPXS(XS_stats_lm)
         }
         *dst = '\0';
 
-        char *tilde = strchr(f_cpy, '~');
+        char *restrict tilde = strchr(f_cpy, '~');
         if (!tilde) croak("lm: invalid formula, missing '~'");
         *tilde = '\0';
 
@@ -1654,9 +1651,8 @@ XS_EUPXS(XS_stats_lm)
         if (strstr(rhs, "-1")) has_intercept = false;
 
         if (has_intercept) {
-            strcpy(terms[num_terms++], "(Intercept)");
+            strcpy(terms[num_terms++], "Intercept");
         }
-
         /* Tokenize by the '+' operator */
         char *restrict chunk = strtok(rhs, "+");
         while (chunk != NULL) {
@@ -1664,8 +1660,7 @@ XS_EUPXS(XS_stats_lm)
                 chunk = strtok(NULL, "+");
                 continue;
             }
-
-            char *star = strchr(chunk, '*');
+            char *restrict star = strchr(chunk, '*');
             if (star) {
                 *star = '\0';
                 char *restrict left = chunk;
@@ -1699,10 +1694,7 @@ XS_EUPXS(XS_stats_lm)
                 strcpy(uniq_terms[num_uniq++], terms[i]);
             }
         }
-
-        unsigned int p = num_uniq;
-        unsigned int n = 0;
-
+        unsigned int p = num_uniq, n = 0;
         /* --- 3. Structure Row Iterators for Hash of Hashes --- */
         char **restrict row_names = NULL;
         HV **restrict row_hashes = NULL;
@@ -1769,7 +1761,7 @@ XS_EUPXS(XS_stats_lm)
         for (unsigned int i = 0; i < n; i++) {
             Y[i] = evaluate_term(data_hoa, row_hashes, i, lhs);
             for (unsigned int j = 0; j < p; j++) {
-                if (strcmp(uniq_terms[j], "(Intercept)") == 0) {
+                if (strcmp(uniq_terms[j], "Intercept") == 0) {
                     X[i * p + j] = 1.0;
                 } else {
                     X[i * p + j] = evaluate_term(data_hoa, row_hashes, i, uniq_terms[j]);
@@ -1855,7 +1847,7 @@ XS_EUPXS(XS_stats_lm)
 
         RETVAL = newRV_noinc((SV*)res_hv);
     }
-#line 1859 "stats.c"
+#line 1851 "stats.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }

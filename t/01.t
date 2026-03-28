@@ -43,14 +43,12 @@ if (abs($stdev - $correct) < 10**-14) {
 }
 # -------------------------------
 # Custom helper for floating-point comparisons
-sub is_approx ($got, $expected, $test_name) {
+sub is_approx ($got, $expected, $test_name, $epsilon = 10**-7) {
 	my $current_sub = ( split( /::/, ( caller(0) )[3] ) )[-1];
 	foreach my ($i, $arg) (indexed ($got, $expected, $test_name)) {
 		next if defined $arg;
 		die "\$arg[$i] (see subroutine signature for name) isn't defined in $current_sub";
 	}
-	my $epsilon = 1e-7; # Margin of error
-
 	if (abs($got - $expected) < $epsilon) {
 	  pass($test_name);
 	  return 1;
@@ -61,7 +59,6 @@ sub is_approx ($got, $expected, $test_name) {
 	}
 }
 # --- Tests ---
-
 # 1. Valid Mathematical Outcomes
 is_approx( pearson_r([1, 2, 3], [2, 4, 6]), 1, 
 	'Perfect positive correlation (r = 1)' );
@@ -375,24 +372,78 @@ if (encode_json($mat1) eq $matrix_correct) {
 my $mtcars = json_file_to_ref('mtcars.hoh.json');
 my $lm = lm(formula =>  'mpg ~ wt * hp^2', data => $mtcars);
 p $lm;
-#my %correct_lm = (
-#	coefficients => {
-#		Intercept => 49.8084234287587,
-#		hp        => -0.120102090978019,
-#		wt        => -8.21662429724302,
-#		'wt:hp'   => 0.0278481483187383
-#	},
-#	rank => 4
-#);
-#foreach my $key ('Intercept', 'hp', 'wt', 'wt:hp') {
-#	unless (defined $lm->{coefficients}{$key}) {
-#		p $lm;
-#		die "\"$key\" isn't defined" ;
-#	}
-#	is_approx( $lm->{coefficients}{$key}, $correct_lm{coefficients}{$key}, "Checking lm's $key" );
-#}
-#foreach my $key ('rank') {
-#	die "\"$key\" isn't defined" unless defined $lm->{$key};
-#	is_approx( $lm->{$key}, $correct_lm{$key}, "Checking \"$key\"");
-#}
+my %correct_lm = (
+	coefficients => {
+		Intercept => 49.8084234287587,
+		hp        => -0.120102090978019,
+		wt        => -8.21662429724302,
+		'wt:hp'   => 0.0278481483187383
+	},
+	'df.residual' => 28,
+	'fitted.values' => {
+		'Mazda RX4' => 23.09547, 		'Mazda RX4 Wag' => 21.78138,
+		'Datsun 710'    => 25.58488, 		'Hornet 4 Drive' => 20.02924,
+		'Hornet Sportabout' => 17.28996, 		Valiant             => 18.88542,
+		'Duster 360'        => 15.40745, 		'Merc 240D'         => 21.65887,
+		'Merc 450SE'        => 15.14994, 		'Merc 450SL'          => 16.23929,
+		'Merc 450SLC'         =>16.07909, 		'Cadillac Fleetwood'  => 12.02179,
+		'Lincoln Continental' =>11.89490, 		'Chrysler Imperial'   => 12.50221,
+		'Fiat 128'            => 27.84866, 		'Honda Civic'   => 32.63195,
+		'Toyota Corolla'   => 30.24587, 		'Toyota Corona'   => 24.56317,
+		'Dodge Challenger'   => 17.57441, 		'AMC Javelin'   => 17.91776,
+		'Camaro Z28'   => 15.03111, 		'Pontiac Firebird'   => 15.93596,
+		'Fiat X1-9'   => 29.53900, 		'Porsche 914-2'   => 26.71871,
+		'Lotus Europa'   => 28.56630, 		'Ford Pantera L'   =>15.36033,
+		'Ferrari Dino'   => 19.52990, 		'Maserati Bora'   => 13.54587,
+		'Volvo 142E'      => 22.31363
+	},
+	rank => 4,
+		residuals  => {
+		'AMC Javelin'        =>   -2.7177637422554,		'Cadillac Fleetwood' =>   -1.62178684578001,
+		'Camaro Z28'         =>   -1.73111177599938, 	'Chrysler Imperial'  =>   2.19779322930961,
+		'Datsun 710'         =>   -2.78487707944995,		'Dodge Challenger'   =>   -2.07441456805362,
+		'Duster 360'         =>   -1.10744532497053,		'Ferrari Dino'       =>   0.17010189824968,
+		'Fiat 128'           =>   4.55133689384449,		'Fiat X1-9'           =>  -2.23900443083033,
+		'Ford Pantera L'        => 0.439669246713233,	'Honda Civic'         =>  -2.23195395366212,
+		'Hornet 4 Drive'     =>   1.37075604153847,		'Hornet Sportabout'  =>   1.41004478703069,
+		'Lincoln Continental' =>  -1.4949003236173,		'Lotus Europa'       =>   1.83369534357951,
+		'Maserati Bora'      =>   1.45413280824033,		'Mazda RX4'           =>  -2.09547410785999,
+		'Mazda RX4 Wag'       =>  -0.781375472403504,	'Merc 230'            =>  1.95008336608675,
+		'Merc 240D'           =>  2.74113094560431,		'Merc 280'            =>  0.646212827429729,
+		'Merc 280C'           =>  -0.75378717257027,		'Merc 450SE'          =>  1.25006037875687,
+		'Merc 450SL'          =>  1.06071479480091,		'Merc 450SLC'         =>  -0.879087325205568,
+		'Pontiac Firebird'    =>  3.26404011532368,		'Porsche 914-2'       =>  -0.718705557249944,
+		'Toyota Corolla'      =>  3.65413017953585,		'Toyota Corona'       =>  -3.06317321493851,
+		Valiant               =>  -0.785416091802773,	'Volvo 142E'          =>  -0.913625869362747
+  }
+);
+foreach my $key ('Intercept', 'hp', 'wt', 'wt:hp') {
+	unless (defined $lm->{coefficients}{$key}) {
+		p $lm;
+		die "\"$key\" isn't defined" ;
+	}
+	is_approx( $lm->{coefficients}{$key}, $correct_lm{coefficients}{$key}, "Checking lm's $key" );
+}
+foreach my $key ('df.residual', 'rank') {
+	unless (defined $lm->{$key}) {
+		p $lm;
+		die "\"$key\" isn't defined" ;
+	}
+	is_approx( $lm->{$key}, $correct_lm{$key}, "Checking \"$key\"");
+}
+foreach my $key ('fitted.values', 'residuals') {
+	foreach my $car (keys %{ $correct_lm{$key} }) {
+		unless (defined $lm->{$key}{$car}) {
+			p $lm;
+			die "\"$car\" isn't defined in \"fitted.values\"" ;
+		}
+		is_approx(
+			$lm->{$key}{$car},
+			$correct_lm{$key}{$car},
+			"Checking $key \"$car\"",
+			10**-5
+		);
+	}
+}
+
 done_testing();
