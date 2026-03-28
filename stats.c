@@ -1854,6 +1854,66 @@ XS_EUPXS(XS_stats_lm)
     XSRETURN(1);
 }
 
+
+XS_EUPXS(XS_stats_rnorm); /* prototype to pass -Wmissing-prototypes */
+XS_EUPXS(XS_stats_rnorm)
+{
+    dVAR; dXSARGS;
+    PERL_UNUSED_VAR(cv); /* -W */
+    PERL_UNUSED_VAR(items); /* -W */
+    {
+	SV *	RETVAL;
+#line 1526 "stats.xs"
+	{
+	  if (items % 2 != 0)
+		   croak("Usage: rnorm(n => 10, mean => 0, sd => 1) - must be even key/value pairs");
+
+	  /* --- Parse named arguments from the flat stack --- */
+	  unsigned int n = 0;
+	  double mean = 0.0, sd = 1.0;
+
+	  for (I32 i = 0; i < items; i += 2) {
+		   const char* restrict key = SvPV_nolen(ST(i));
+		   SV* restrict val = ST(i + 1);
+
+		   if      (strEQ(key, "n"))      n    = (unsigned int)SvUV(val);
+		   else if (strEQ(key, "mean"))   mean = SvNV(val);
+		   else if (strEQ(key, "sd"))     sd   = SvNV(val);
+		   else croak("rnorm: unknown argument '%s'", key);
+	  }
+
+	  if (sd < 0.0) croak("rnorm: standard deviation must be non-negative");
+
+	  AV *restrict result_av = newAV();
+	  if (n > 0) {
+		   av_extend(result_av, n - 1);
+
+		   /* Generate random normals using the Box-Muller transform */
+		   for (unsigned int i = 0; i < n; ) {
+		       double u, v, s;
+		       do {
+		           /* Drand01() hooks into Perl's internal PRNG, respecting Perl's srand() */
+		           u = 2.0 * Drand01() - 1.0;
+		           v = 2.0 * Drand01() - 1.0;
+		           s = u * u + v * v;
+		       } while (s >= 1.0 || s == 0.0);
+		       double mul = sqrt(-2.0 * log(s) / s);
+		       /* Box-Muller generates two independent values per iteration */
+		       av_store(result_av, i++, newSVnv(mean + sd * u * mul));
+		       if (i < n) {
+		           av_store(result_av, i++, newSVnv(mean + sd * v * mul));
+		       }
+		   }
+	  }
+	  RETVAL = newRV_noinc((SV*)result_av);
+	}
+#line 1911 "stats.c"
+	RETVAL = sv_2mortal(RETVAL);
+	ST(0) = RETVAL;
+    }
+    XSRETURN(1);
+}
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -1893,6 +1953,7 @@ XS_EXTERNAL(boot_stats)
         (void)newXSproto_portable("stats::scale", XS_stats_scale, file, "@");
         newXS_deffile("stats::matrix", XS_stats_matrix);
         newXS_deffile("stats::lm", XS_stats_lm);
+        newXS_deffile("stats::rnorm", XS_stats_rnorm);
 #if PERL_VERSION_LE(5, 21, 5)
 #  if PERL_VERSION_GE(5, 9, 0)
     if (PL_unitcheckav)

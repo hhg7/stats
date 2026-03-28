@@ -171,7 +171,7 @@ foreach my $j (0,1) {
 	is_approx( $t_test->{'conf_int'}[$j], $correct_t[0]{'conf_int'}[$j], "Conf. interval index $j");
 }
 #------------------
-# start new test
+# t.test
 #------------------
 $t_test = t_test(
 	'x'       => $test_data[1][0],
@@ -187,9 +187,7 @@ foreach my $key (grep {ref $correct_t[1]{$_} eq ''} keys %{ $correct_t[1] }) {
 foreach my $j (0,1) {
 	is_approx( $t_test->{'conf_int'}[$j], $correct_t[1]{'conf_int'}[$j], "Conf. interval index $j");
 }
-#------------------
 # start new test
-#------------------
 $t_test = t_test(
 	'x'    => $test_data[3][0],
 	'y'    => $test_data[3][1],
@@ -445,5 +443,6 @@ foreach my $key ('fitted.values', 'residuals') {
 		);
 	}
 }
-
+my $normals = rnorm( n => 5, mean => 10, sd => 2);
+p $normals;
 done_testing();

@@ -14,7 +14,7 @@ use warnings FATAL => 'all';
 use autodie ':default';
 use List::Util qw(min sum);
 use Exporter 'import';
-our @EXPORT_OK = qw(cor lm matrix mean median p_adjust pearson_r scale sd t_test var);
+our @EXPORT_OK = qw(cor lm matrix mean median p_adjust pearson_r rnorm scale sd t_test var);
 our @EXPORT = @EXPORT_OK;
 
 require XSLoader;
