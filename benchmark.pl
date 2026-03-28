@@ -1,0 +1,35 @@
+#!/usr/bin/env perl
+
+use 5.042.1;
+no source::encoding;
+use warnings FATAL => 'all';
+use autodie ':all';
+use stats; # mean
+use Time::HiRes;
+use List::Util 'sum';
+use Util 'rand_between';
+
+sub perl_mean {
+	my @n = map { ref($_) eq 'ARRAY' ? @$_ : $_ } @_;
+	my $current_sub = ( split( /::/, ( caller(0) )[3] ) )[-1];
+	die "$current_sub needs >= 1 element in the array" if scalar @n < 1;
+	return sum(@n) / scalar @n;
+}
+my @x = map {rand_between(-5, 5)} 0..99999;
+my $max = 999;
+my $t0 = Time::HiRes::time();
+for (my $n = 0; $n < $max; $n++) {
+	perl_mean( \@x );
+}
+my $t1 = Time::HiRes::time();
+my $run0 = $t1-$t0;
+printf("perl mean did %lf seconds\n", $run0);
+#-----------
+$t0 = Time::HiRes::time();
+for (my $n = 0; $n < $max; $n++) {	
+	mean( \@x );
+}
+$t1 = Time::HiRes::time();
+my $run1 = $t1-$t0;
+printf("mean did %lf seconds\n", $run1);
+printf("2nd/1st = %lf; 1st/2nd = %lf\n", $run1/$run0, $run0/$run1);

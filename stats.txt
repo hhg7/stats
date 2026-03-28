@@ -1,0 +1,457 @@
+#define PERL_NO_GET_CONTEXT
+#include "EXTERN.h"
+#include "perl.h"
+#include "XSUB.h"
+#include "ppport.h"
+#include <math.h>
+#include <string.h>
+
+/* --- C HELPER SECTION --- */
+#include <ctype.h>
+#include <stdlib.h>
+
+/* Struct for sorting p-values while remembering their original index */
+typedef struct {
+    double p;
+    int orig_idx;
+} PVal;
+
+/* Comparator for qsort */
+static int cmp_pval(const void *a, const void *b) {
+    double diff = ((PVal*)a)->p - ((PVal*)b)->p;
+    if (diff < 0) return -1;
+    if (diff > 0) return 1;
+    /* Stabilize sort by falling back to original index */
+    return ((PVal*)a)->orig_idx - ((PVal*)b)->orig_idx; 
+}
+
+/* Math macros */
+#define MAX_ITER 200
+#define EPS 3.0e-7
+#define FPMIN 1.0e-30
+
+static double _incbeta_cf(double a, double b, double x) {
+    int m;
+    double aa, c, d, del, h, qab, qam, qap;
+    qab = a + b; qap = a + 1.0; qam = a - 1.0;
+    c = 1.0; d = 1.0 - qab * x / qap;
+    if (fabs(d) < FPMIN) d = FPMIN;
+    d = 1.0 / d; h = d;
+    for (m = 1; m <= MAX_ITER; m++) {
+        int m2 = 2 * m;
+        aa = m * (b - m) * x / ((qam + m2) * (a + m2));
+        d = 1.0 + aa * d;
+        if (fabs(d) < FPMIN) d = FPMIN;
+        c = 1.0 + aa / c;
+        if (fabs(c) < FPMIN) c = FPMIN;
+        d = 1.0 / d; h *= d * c;
+        aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2));
+        d = 1.0 + aa * d;
+        if (fabs(d) < FPMIN) d = FPMIN;
+        c = 1.0 + aa / c;
+        if (fabs(c) < FPMIN) c = FPMIN;
+        d = 1.0 / d; del = d * c; h *= del;
+        if (fabs(del - 1.0) < EPS) break;
+    }
+    return h;
+}
+
+static double incbeta(double a, double b, double x) {
+    if (x <= 0.0) return 0.0;
+    if (x >= 1.0) return 1.0;
+    double bt = exp(lgamma(a + b) - lgamma(a) - lgamma(b) + a * log(x) + b * log(1.0 - x));
+    if (x < (a + 1.0) / (a + b + 2.0)) return bt * _incbeta_cf(a, b, x) / a;
+    return 1.0 - bt * _incbeta_cf(b, a, 1.0 - x) / b;
+}
+
+static double get_t_pvalue(double t, double df, const char* alt) {
+    double x = df / (df + t * t);
+    double prob_2tail = incbeta(df / 2.0, 0.5, x);
+    if (strcmp(alt, "less") == 0) return (t < 0) ? 0.5 * prob_2tail : 1.0 - 0.5 * prob_2tail;
+    if (strcmp(alt, "greater") == 0) return (t > 0) ? 0.5 * prob_2tail : 1.0 - 0.5 * prob_2tail;
+    return prob_2tail;
+}
+
+/* Bisection algorithm to find the inverse t-distribution (Critical t-value) */
+static double qt_tail(double df, double p_tail) {
+    double low = 0.0, high = 1.0;
+    /* Find upper bound */
+    while (get_t_pvalue(high, df, "greater") > p_tail) {
+        low = high;
+        high *= 2.0;
+        if (high > 1000000.0) break; /* Fallback limit */
+    }
+    /* Bisect to find the root */
+    for (unsigned int i = 0; i < 100; i++) {
+        double mid = (low + high) / 2.0;
+        double p_mid = get_t_pvalue(mid, df, "greater");
+        if (p_mid > p_tail) {
+            low = mid;
+        } else {
+            high = mid;
+        }
+        if (high - low < 1e-8) break;
+    }
+    return (low + high) / 2.0;
+}
+
+/* --- XS SECTION --- */
+
+MODULE = stats		PACKAGE = stats		
+
+double
+mean(...)
+    PROTOTYPE: @
+    INIT:
+        double total = 0;
+        int count = 0;
+    CODE:
+        for (int i = 0; i < items; i++) {
+            SV* arg = ST(i);
+            if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
+                AV* av = (AV*)SvRV(arg);
+                int len = av_len(av) + 1;
+                for (int j = 0; j < len; j++) {
+                    SV** tv = av_fetch(av, j, 0);
+                    if (tv && SvOK(*tv)) { total += SvNV(*tv); count++; }
+                }
+            } else if (SvOK(arg)) {
+                total += SvNV(arg); count++;
+            }
+        }
+        if (count == 0) croak("mean needs >= 1 element");
+        RETVAL = total / count;
+    OUTPUT:
+        RETVAL
+
+double
+stdev(...)
+    PROTOTYPE: @
+    INIT:
+        double total = 0;
+        int count = 0;
+        double sum_sq = 0;
+    CODE:
+        for (int i = 0; i < items; i++) {
+            SV* arg = ST(i);
+            if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
+                AV* av = (AV*)SvRV(arg);
+                int len = av_len(av) + 1;
+                for (int j = 0; j < len; j++) {
+                    SV** tv = av_fetch(av, j, 0);
+                    if (tv && SvOK(*tv)) { total += SvNV(*tv); count++; }
+                }
+            } else if (SvOK(arg)) {
+                total += SvNV(arg); count++;
+            }
+        }
+        if (count < 2) croak("stdev needs >= 2 elements");
+        double avg = total / count;
+        for (int i = 0; i < items; i++) {
+            SV* arg = ST(i);
+            if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
+                AV* av = (AV*)SvRV(arg);
+                int len = av_len(av) + 1;
+                for (int j = 0; j < len; j++) {
+                    SV** tv = av_fetch(av, j, 0);
+                    if (tv && SvOK(*tv)) sum_sq += pow(SvNV(*tv) - avg, 2);
+                }
+            } else if (SvOK(arg)) {
+                sum_sq += pow(SvNV(arg) - avg, 2);
+            }
+        }
+        RETVAL = sqrt(sum_sq / (count - 1));
+    OUTPUT:
+        RETVAL
+
+double
+pearson_r(SV* x_sv, SV* y_sv)
+    INIT:
+        if (!SvROK(x_sv) || SvTYPE(SvRV(x_sv)) != SVt_PVAV ||
+            !SvROK(y_sv) || SvTYPE(SvRV(y_sv)) != SVt_PVAV) {
+            croak("Both arguments must be array references");
+        }
+        AV* x_av = (AV*)SvRV(x_sv);
+        AV* y_av = (AV*)SvRV(y_sv);
+        int n = av_len(x_av) + 1;
+        if (n != (av_len(y_av) + 1)) croak("Arrays must have the same number of elements");
+        if (n < 2) croak("Need at least 2 elements");
+        double sum_x = 0, sum_y = 0, sum_xy = 0, sum_x2 = 0, sum_y2 = 0;
+    CODE:
+        for (int i = 0; i < n; i++) {
+            SV** xv = av_fetch(x_av, i, 0);
+            SV** yv = av_fetch(y_av, i, 0);
+            double x = (xv && SvOK(*xv)) ? SvNV(*xv) : 0.0;
+            double y = (yv && SvOK(*yv)) ? SvNV(*yv) : 0.0;
+            sum_x += x; sum_y += y; sum_xy += x * y;
+            sum_x2 += x * x; sum_y2 += y * y;
+        }
+        double num = (n * sum_xy) - (sum_x * sum_y);
+        double den = sqrt((n * sum_x2 - (sum_x * sum_x)) * (n * sum_y2 - (sum_y * sum_y)));
+        if (den == 0) XSRETURN_UNDEF;
+        RETVAL = num / den;
+    OUTPUT:
+        RETVAL
+
+
+SV*
+t_test(SV* args_sv)
+    INIT:
+        if (!SvROK(args_sv) || SvTYPE(SvRV(args_sv)) != SVt_PVHV) {
+            croak("Usage: t_test({ x => [...], y => [...], ... }) - Arguments must be a HASH reference");
+        }
+        HV* args_hv = (HV*)SvRV(args_sv);
+        SV** temp;
+
+        if (!(temp = hv_fetch(args_hv, "x", 1, 0)) || !SvROK(*temp) || SvTYPE(SvRV(*temp)) != SVt_PVAV) {
+            croak("t_test: 'x' is a required argument and must be an ARRAY reference");
+        }
+        AV* x_av = (AV*)SvRV(*temp);
+        int nx = av_len(x_av) + 1;
+        if (nx < 2) croak("t_test: 'x' needs at least 2 elements");
+
+        AV* y_av = NULL;
+        if ((temp = hv_fetch(args_hv, "y", 1, 0)) && SvROK(*temp) && SvTYPE(SvRV(*temp)) == SVt_PVAV) {
+            y_av = (AV*)SvRV(*temp);
+        }
+
+        double mu = 0.0;
+        if ((temp = hv_fetch(args_hv, "mu", 2, 0))) mu = SvNV(*temp);
+
+        bool paired = FALSE;
+        if ((temp = hv_fetch(args_hv, "paired", 6, 0))) paired = SvTRUE(*temp);
+
+        bool var_equal = FALSE;
+        if ((temp = hv_fetch(args_hv, "var_equal", 9, 0))) var_equal = SvTRUE(*temp);
+
+        double conf_level = 0.95;
+        if ((temp = hv_fetch(args_hv, "conf_level", 10, 0))) conf_level = SvNV(*temp);
+        if (conf_level <= 0.0 || conf_level >= 1.0) croak("t_test: 'conf_level' must be between 0 and 1");
+
+        const char* alternative = "two.sided";
+        if ((temp = hv_fetch(args_hv, "alternative", 11, 0))) alternative = SvPV_nolen(*temp);
+
+        double sum_x = 0, sum_x2 = 0, mean_x, var_x;
+        double t_stat, df, p_val, std_err, cint_est;
+        HV* results = newHV();
+
+    CODE:
+        for (int i = 0; i < nx; i++) {
+            SV** tv = av_fetch(x_av, i, 0);
+            double val = (tv && SvOK(*tv)) ? SvNV(*tv) : 0;
+            sum_x += val; sum_x2 += val * val;
+        }
+        mean_x = sum_x / nx;
+        var_x = (sum_x2 - (sum_x * sum_x) / nx) / (nx - 1);
+
+        if (paired || y_av) {
+            if (!y_av) croak("t_test: 'y' must be provided for paired or two-sample tests");
+            int ny = av_len(y_av) + 1;
+            if (paired && ny != nx) croak("t_test: Paired arrays must be same length");
+
+            double sum_y = 0, sum_y2 = 0, mean_y, var_y;
+            for (int i = 0; i < ny; i++) {
+                SV** tv = av_fetch(y_av, i, 0);
+                double val = (tv && SvOK(*tv)) ? SvNV(*tv) : 0;
+                sum_y += val; sum_y2 += val * val;
+            }
+            mean_y = sum_y / ny;
+            var_y = (sum_y2 - (sum_y * sum_y) / ny) / (ny - 1);
+
+            if (paired) {
+                double sum_d = 0, sum_d2 = 0;
+                for (int i = 0; i < nx; i++) {
+                    double dx = SvNV(*av_fetch(x_av, i, 0));
+                    double dy = SvNV(*av_fetch(y_av, i, 0));
+                    sum_d += (dx - dy); sum_d2 += (dx - dy) * (dx - dy);
+                }
+                double mean_d = sum_d / nx;
+                double var_d = (sum_d2 - (sum_d * sum_d) / nx) / (nx - 1);
+                
+                cint_est = mean_d;
+                std_err = sqrt(var_d / nx);
+                t_stat = (cint_est - mu) / std_err;
+                df = nx - 1;
+                hv_store(results, "estimate", 8, newSVnv(mean_d), 0);
+            } else if (var_equal) {
+                double pooled_var = ((nx - 1) * var_x + (ny - 1) * var_y) / (nx + ny - 2);
+                cint_est = mean_x - mean_y;
+                std_err = sqrt(pooled_var * (1.0 / nx + 1.0 / ny));
+                t_stat = (cint_est - mu) / std_err;
+                df = nx + ny - 2;
+                hv_store(results, "estimate_x", 10, newSVnv(mean_x), 0);
+                hv_store(results, "estimate_y", 10, newSVnv(mean_y), 0);
+            } else {
+                cint_est = mean_x - mean_y;
+                double stderr_x2 = var_x / nx;
+                double stderr_y2 = var_y / ny;
+                std_err = sqrt(stderr_x2 + stderr_y2);
+                t_stat = (cint_est - mu) / std_err;
+                df = pow(stderr_x2 + stderr_y2, 2) / (pow(stderr_x2, 2) / (nx - 1) + pow(stderr_y2, 2) / (ny - 1));
+                hv_store(results, "estimate_x", 10, newSVnv(mean_x), 0);
+                hv_store(results, "estimate_y", 10, newSVnv(mean_y), 0);
+            }
+        } else {
+            cint_est = mean_x;
+            std_err = sqrt(var_x / nx);
+            t_stat = (cint_est - mu) / std_err;
+            df = nx - 1;
+            hv_store(results, "estimate", 8, newSVnv(mean_x), 0);
+        }
+
+        /* Calculate P-Value */
+        p_val = get_t_pvalue(t_stat, df, alternative);
+        
+        /* Calculate Confidence Intervals */
+        double alpha = 1.0 - conf_level;
+        double t_crit = 0.0;
+        double ci_lower, ci_upper;
+
+        if (strcmp(alternative, "less") == 0) {
+            t_crit = qt_tail(df, alpha);
+            ci_lower = -INFINITY;
+            ci_upper = cint_est + t_crit * std_err;
+        } else if (strcmp(alternative, "greater") == 0) {
+            t_crit = qt_tail(df, alpha);
+            ci_lower = cint_est - t_crit * std_err;
+            ci_upper = INFINITY;
+        } else {
+            t_crit = qt_tail(df, alpha / 2.0);
+            ci_lower = cint_est - t_crit * std_err;
+            ci_upper = cint_est + t_crit * std_err;
+        }
+
+        AV* conf_int = newAV();
+        av_push(conf_int, newSVnv(ci_lower));
+        av_push(conf_int, newSVnv(ci_upper));
+
+        hv_store(results, "statistic", 9, newSVnv(t_stat), 0);
+        hv_store(results, "df", 2, newSVnv(df), 0);
+        hv_store(results, "p_value", 7, newSVnv(p_val), 0);
+        hv_store(results, "conf_int", 8, newRV_noinc((SV*)conf_int), 0);
+        
+        RETVAL = newRV_noinc((SV*)results);
+    OUTPUT:
+        RETVAL
+
+void
+p_adjust(SV* p_sv, const char* method = "holm")
+    INIT:
+        if (!SvROK(p_sv) || SvTYPE(SvRV(p_sv)) != SVt_PVAV) {
+            croak("p_adjust: first argument must be an ARRAY reference of p-values");
+        }
+        
+        AV* p_av = (AV*)SvRV(p_sv);
+        int n = av_len(p_av) + 1;
+        
+        /* Handle empty input */
+        if (n == 0) {
+            XSRETURN_EMPTY;
+        }
+
+        /* Normalize method string */
+        char meth[64];
+        strncpy(meth, method, 63); meth[63] = '\0';
+        for(int i = 0; meth[i]; i++) meth[i] = tolower(meth[i]);
+
+        /* Resolve aliases */
+        if (strstr(meth, "benjamini") && strstr(meth, "hochberg")) strcpy(meth, "bh");
+        if (strstr(meth, "benjamini") && strstr(meth, "yekutieli")) strcpy(meth, "by");
+        if (strcmp(meth, "fdr") == 0) strcpy(meth, "bh");
+
+        /* Allocate C memory */
+        PVal* arr;
+        double* adj;
+        Newx(arr, n, PVal);
+        Newx(adj, n, double);
+
+        for (int i = 0; i < n; i++) {
+            SV** tv = av_fetch(p_av, i, 0);
+            arr[i].p = (tv && SvOK(*tv)) ? SvNV(*tv) : 1.0;
+            arr[i].orig_idx = i;
+        }
+
+        /* Sort ascending (Stable sort using original index) */
+        qsort(arr, n, sizeof(PVal), cmp_pval);
+
+    PPCODE:
+        if (strcmp(meth, "bonferroni") == 0) {
+            for (int i = 0; i < n; i++) {
+                double v = arr[i].p * n;
+                adj[arr[i].orig_idx] = (v < 1.0) ? v : 1.0;
+            }
+        } 
+        else if (strcmp(meth, "holm") == 0) {
+            double cummax = 0.0;
+            for (int i = 0; i < n; i++) {
+                double v = arr[i].p * (n - i);
+                if (v > cummax) cummax = v;
+                adj[arr[i].orig_idx] = (cummax < 1.0) ? cummax : 1.0;
+            }
+        } 
+        else if (strcmp(meth, "hochberg") == 0) {
+            double cummin = 1.0;
+            for (int i = n - 1; i >= 0; i--) {
+                double v = arr[i].p * (n - i);
+                if (v < cummin) cummin = v;
+                adj[arr[i].orig_idx] = (cummin < 1.0) ? cummin : 1.0;
+            }
+        } 
+        else if (strcmp(meth, "bh") == 0) {
+            double cummin = 1.0;
+            for (int i = n - 1; i >= 0; i--) {
+                double v = arr[i].p * n / (i + 1.0);
+                if (v < cummin) cummin = v;
+                adj[arr[i].orig_idx] = (cummin < 1.0) ? cummin : 1.0;
+            }
+        } else if (strcmp(meth, "by") == 0) {
+            double q = 0.0;
+            for (int i = 1; i <= n; i++) q += 1.0 / i;
+            double cummin = 1.0;
+            for (int i = n - 1; i >= 0; i--) {
+                double v = arr[i].p * n / (i + 1.0) * q;
+                if (v < cummin) cummin = v;
+                adj[arr[i].orig_idx] = (cummin < 1.0) ? cummin : 1.0;
+            }
+        } else if (strcmp(meth, "hommel") == 0) {
+            double *pa;
+            Newx(pa, n, double);
+            for (int i = 0; i < n; i++) pa[i] = arr[n-1].p;
+
+            for (int j = n - 1; j >= 2; j--) {
+                int n_mj = n - j; 
+                double q1 = (j * arr[n_mj + 1].p) / 2.0;
+                for (int k = 1; k < j - 1; k++) {
+                    double val = (j * arr[n_mj + 1 + k].p) / (k + 2.0);
+                    if (val < q1) q1 = val;
+                }
+                for (int i = 0; i <= n_mj; i++) {
+                    double v = j * arr[i].p;
+                    pa[i] = (v < q1) ? v : q1;
+                }
+                double last_ij = pa[n_mj];
+                for (int i = n_mj + 1; i < n; i++) {
+                    if (last_ij > pa[i]) pa[i] = last_ij;
+                }
+            }
+            for (int i = 0; i < n; i++) {
+                adj[arr[i].orig_idx] = (pa[i] < 1.0) ? pa[i] : 1.0;
+            }
+            Safefree(pa);
+        } 
+        else if (strcmp(meth, "none") == 0) {
+            for (int i = 0; i < n; i++) adj[arr[i].orig_idx] = arr[i].p;
+        } 
+        else {
+            Safefree(arr); Safefree(adj);
+            croak("Unknown p-value adjustment method: %s", method);
+        }
+
+        /* Push values onto the Perl stack as a flat list */
+        EXTEND(SP, n);
+        for (int i = 0; i < n; i++) {
+            PUSHs(sv_2mortal(newSVnv(adj[i])));
+        }
+
+        Safefree(arr);
+        Safefree(adj);
