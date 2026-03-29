@@ -325,7 +325,7 @@ foreach my $method (sort keys %correct_cor) {
 }
 # It flattens the input and returns a standard array
 #----------------------
-#		SCALE
+#  SCALE
 #----------------------
 my @scaled_results = scale(1..5);
 my @correct_scaled = (-1.2649111, -0.6324555, 0.0000000, 0.6324555, 1.2649111);
@@ -443,6 +443,8 @@ foreach my $key ('fitted.values', 'residuals') {
 		);
 	}
 }
-my $normals = rnorm( n => 5, mean => 10, sd => 2);
-p $normals;
+$lm = lm(formula =>  'mpg ~ wt + hp', data => $mtcars);
+p $lm;
+#my $normals = rnorm( n => 5, mean => 10, sd => 2);
+#p $normals;
 done_testing();

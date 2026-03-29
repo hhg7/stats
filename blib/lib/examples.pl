@@ -8,6 +8,8 @@ use stats;
 use JSON 'encode_json';
 use Util;
 
+my $m = matrix(data => [1..9], nrow => 3, ncol => 3);
+p $m;
 my $mtcars = json_file_to_ref('mtcars.json');
 my (@mtcars, %mtcars);
 foreach my $row (@{ $mtcars }) { # transform AoH to HoA
@@ -16,7 +18,9 @@ foreach my $row (@{ $mtcars }) { # transform AoH to HoA
 		push @{ $mtcars{$row_name}{$key} }, $row->{$key};
 	}
 }
-ref_to_json_file(\%mtcars, 'mtcars.hoh.json');
+unless (-f 'mtcars.hoh.json') {
+	ref_to_json_file(\%mtcars, 'mtcars.hoh.json');
+}
 #my $lm = lm(formula => 'mpg ~ wt * hp^2', data => \%mtcars);
 #say encode_json( \%mtcars );
 # matrix

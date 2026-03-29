@@ -81,11 +81,11 @@ static int invert_matrix_gj(double *A, unsigned int n) {
 /* Internal extractor resolving single data values from HoA, AoH, or HoH */
 static double get_data_value(HV *restrict data_hoa, HV **restrict row_hashes, unsigned int i, const char *restrict var) {
     if (row_hashes) {
-        SV** val = hv_fetch(row_hashes[i], var, strlen(var), 0);
+        SV**restrict val = hv_fetch(row_hashes[i], var, strlen(var), 0);
         if (val && SvROK(*val) && SvTYPE(SvRV(*val)) == SVt_PVAV) {
             /* Support JSON-decoded HoH where values are arrays: {"mpg":[21.0]} */
-            AV* av = (AV*)SvRV(*val);
-            SV** inner = av_fetch(av, 0, 0);
+            AV*restrict av = (AV*)SvRV(*val);
+            SV**restrict inner = av_fetch(av, 0, 0);
             return (inner && SvOK(*inner)) ? SvNV(*inner) : 0.0;
         }
         return (val && SvOK(*val)) ? SvNV(*val) : 0.0;
@@ -93,8 +93,8 @@ static double get_data_value(HV *restrict data_hoa, HV **restrict row_hashes, un
         /* Support Hash of Arrays */
         SV** col = hv_fetch(data_hoa, var, strlen(var), 0);
         if (col && SvROK(*col) && SvTYPE(SvRV(*col)) == SVt_PVAV) {
-            AV* av = (AV*)SvRV(*col);
-            SV** val = av_fetch(av, i, 0);
+            AV*restrict av = (AV*)SvRV(*col);
+            SV**restrict val = av_fetch(av, i, 0);
             return (val && SvOK(*val)) ? SvNV(*val) : 0.0;
         }
     }
@@ -865,7 +865,7 @@ SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 		       croak("cor: x must be a matrix (array ref of array refs) "
 		             "when y is a matrix");
 
-		   SV** xr0 = av_fetch(x_av, 0, 0);
+		   SV**restrict xr0 = av_fetch(x_av, 0, 0);
 		   if (!xr0 || !SvROK(*xr0) || SvTYPE(SvRV(*xr0)) != SVt_PVAV)
 		       croak("cor: each row of x must be an ARRAY reference");
 		   int ncols_x = av_len((AV*)SvRV(*xr0)) + 1;
@@ -873,7 +873,7 @@ SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 		   int nrows   = nx;   /* observations */
 
 		   /* -- extract x columns -------------------------------------- */
-		   double **col_x;
+		   double **restrict col_x;
 		   Newx(col_x, ncols_x, double*);
 		   for (int j = 0; j < ncols_x; j++) {
 		       Newx(col_x[j], nrows, double);
@@ -1406,7 +1406,7 @@ SV* lm(...)
             }
         } else if (SvTYPE(ref) == SVt_PVAV) {
             /* Fallback: AoH mode */
-            AV* av = (AV*)ref;
+            AV*restrict av = (AV*)ref;
             n = av_len(av) + 1;
             Newx(row_names, n, char*);
             Newx(row_hashes, n, HV*);
