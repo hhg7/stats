@@ -4,7 +4,7 @@ use 5.042.1;
 no source::encoding;
 use warnings FATAL => 'all';
 use autodie ':all';
-use stats;
+use Stats::LikeR;
 use JSON 'encode_json';
 use Util;
 

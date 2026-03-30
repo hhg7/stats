@@ -1,8 +1,8 @@
 use ExtUtils::MakeMaker;
 
 WriteMakefile(
-	NAME              => 'stats',
-	VERSION_FROM      => 'lib/stats.pm', 
+	NAME              => 'Stats::LikeR',
+	VERSION_FROM      => 'lib/Stats/LikeR.pm', 
 	PREREQ_PM         => {}, 
 	LIBS              => ['-lm'], 
 	DEFINE            => '', 

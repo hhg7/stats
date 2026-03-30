@@ -1,11 +1,11 @@
 #!/usr/bin/env perl
 
-use 5.042.1;
+use 5.042.2;
 no source::encoding;
 use warnings FATAL => 'all';
 use Test::More;
 use Test::Exception; # die_ok
-use stats;
+use Stats::LikeR;
 use Util;
 use JSON qw(decode_json encode_json);
 # written with Gemini's help
@@ -445,6 +445,9 @@ foreach my $key ('fitted.values', 'residuals') {
 }
 $lm = lm(formula =>  'mpg ~ wt + hp', data => $mtcars);
 p $lm;
-#my $normals = rnorm( n => 5, mean => 10, sd => 2);
-#p $normals;
+my ($rmean, $sd, $n) = (10, 2, 9999);
+my $normals = rnorm( n => $n, mean => $rmean, sd => $sd);
+is_approx(scalar @{ $normals }, $n, 'rnorm sample size');
+is_approx(mean($normals), $rmean, 'rnorm mean', 0.1);
+is_approx(sd($normals), $sd, 'rnorm sd', 0.1);
 done_testing();
