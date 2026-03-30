@@ -6,10 +6,20 @@ use warnings FATAL => 'all';
 use Test::More;
 use Test::Exception; # die_ok
 use Stats::LikeR;
-use Util;
 use JSON qw(decode_json encode_json);
-# written with Gemini's help
-#my ($simple_task, $log_write, $stopping, $dry_run, $overwrite) = (0,0,0,0,0);
+
+# Gemini helped to write some of the tests
+
+sub json_file_to_ref ($json_filename) {
+	die "$json_filename doesn't exist or isn't a file" unless -f $json_filename;
+	die "$json_filename has 0 size" if (-s $json_filename == 0);
+#	say "Reading $json_filename" if defined $_[0];
+	open my $fh, '<:raw', $json_filename; # Read it unmangled
+	local $/;                     # Read whole file
+	my $json = <$fh>;             # This is UTF-8
+#	$json =~ s/NaN/"NaN"/g;
+	return decode_json($json); # This produces decoded text
+}
 #----------------------
 #		mean
 #----------------------
@@ -32,6 +42,11 @@ if (mean([1,1], [2,2]) == 1.5) {
 } else {
 	fail('Arrays as references cannot be given');
 }
+
+# Exceptional cases for mean
+eval { mean() };
+like( $@, qr/mean needs >= 1 element/, 'mean: dies when given empty input' );
+
 # standard deviation
 my $stdev = sd(2,4,4,4,5,5,7,9);
 my $correct = 2.1380899352994;
@@ -41,6 +56,14 @@ if (abs($stdev - $correct) < 10**-14) {
 	my $diff = $correct - $stdev;
 	fail("stdev does not work, got $stdev with an error of $diff");
 }
+
+# Exceptional cases for sd / var
+eval { sd(1) };
+like( $@, qr/stdev needs >= 2 elements/, 'sd: dies when given < 2 elements' );
+
+eval { var(1) };
+like( $@, qr/stdev needs >= 2 elements/, 'var: dies when given < 2 elements' );
+
 # -------------------------------
 # Custom helper for floating-point comparisons
 sub is_approx ($got, $expected, $test_name, $epsilon = 10**-7) {
@@ -202,6 +225,26 @@ foreach my $key (grep {ref $correct_t[2]{$_} eq ''} keys %{ $correct_t[2] }) {
 foreach my $j (0,1) {
 	is_approx( $t_test->{'conf_int'}[$j], $correct_t[2]{'conf_int'}[$j], "Conf. interval index $j");
 }
+
+# t_test exceptions & alternative hypotheses tests
+eval { t_test(y => [1..5]) };
+like( $@, qr/must be an ARRAY reference/, 't_test: dies when x is missing' );
+
+eval { t_test(x => [1..5], paired => 1) };
+like( $@, qr/'y' must be provided for paired or two-sample tests/, 't_test: dies paired without y' );
+
+eval { t_test(x => [1..5], y => [1..4], paired => 1) };
+like( $@, qr/Paired arrays must be same length/, 't_test: dies on mismatched paired arrays' );
+
+eval { t_test(x => [1..5], conf_level => 1.5) };
+like( $@, qr/'conf_level' must be between 0 and 1/, 't_test: dies on invalid conf_level' );
+
+my $t_alt_greater = t_test(x => [5, 6, 7, 8, 9], mu => 2, alternative => 'greater');
+ok( $t_alt_greater->{p_value} < 0.05, 't_test alternative greater works (small p_value)' );
+
+my $t_alt_less = t_test(x => [5, 6, 7, 8, 9], mu => 20, alternative => 'less');
+ok( $t_alt_less->{p_value} < 0.05, 't_test alternative less works (small p_value)' );
+
 #----------------------
 #		p ajdust
 #----------------------
@@ -292,6 +335,17 @@ foreach my $method ('Hochberg','Benjamini-Hochberg','Benjamini-Yekutieli', 'Bonf
 		fail("$method doesn't work for FDR correction with error = $error");
 	}
 }
+
+# p_adjust exceptions
+eval { p_adjust("not array") };
+like( $@, qr/first argument must be an ARRAY reference/, 'p_adjust: dies on non-array' );
+
+eval { p_adjust(\@pvalues, "invalid_method") };
+like( $@, qr/Unknown p-value adjustment method/, 'p_adjust: dies on invalid method' );
+
+my @empty_p = p_adjust([]);
+is_deeply( \@empty_p, [], 'p_adjust handles empty arrayref gracefully' );
+
 #----------------------
 #		var
 #----------------------
@@ -308,6 +362,10 @@ foreach my ($i, $ans) (indexed @ans) {
 	my $median = median( $test_data[$i][0] );
 	is_approx( $median, $ans, "Median test $i");
 }
+
+eval { median() };
+like( $@, qr/median needs >= 1 element/, 'median: dies when given empty input' );
+
 #----------------------
 #		cor
 #----------------------
@@ -323,6 +381,19 @@ foreach my $method (sort keys %correct_cor) {
 		"cor: method = \"$method\""
 	);
 }
+
+# cor exceptions and matrix support tests
+eval { cor([1,2,3], [1,2], 'pearson') };
+like( $@, qr/x and y must have the same length/, 'cor: dies on mismatched flat vector lengths' );
+
+eval { cor([1,2,3], undef, 'unknown_method') };
+like( $@, qr/unknown method/, 'cor: dies on unknown method' );
+
+my $mat_x = [[1, 2], [3, 4], [5, 6]];
+my $mat_y = [[6, 5], [4, 3], [2, 1]];
+my $cor_matrix = cor($mat_x, $mat_y);
+is( ref($cor_matrix), 'ARRAY', 'cor with matrices returns an array reference' );
+
 # It flattens the input and returns a standard array
 #----------------------
 #  SCALE
@@ -338,11 +409,19 @@ foreach my ($i, $correct) (indexed @correct_scaled) {
 	is_approx($scaled_results[$i], $correct, "index $i for scale");
 }
 @scaled_results = scale(1..5, {center => true, scale => false});
-p @scaled_results;
+#p @scaled_results;
 @correct_scaled = (-2..2);
 foreach my ($i, $correct) (indexed @correct_scaled) {
 	is_approx($scaled_results[$i], $correct, "index $i for scale");
 }
+
+# scale matrix tests and exceptions
+eval { scale(1) };
+like( $@, qr/scale needs >= 2 elements to calculate SD/, 'scale: dies with 1 element for default SD scale' );
+
+my $scaled_mat = scale([[1, 2], [3, 4], [5, 6]]);
+is( ref($scaled_mat), 'ARRAY', 'scale on matrix returns an array reference' );
+
 #-----------------------
 #			MATRIX
 #-----------------------
@@ -356,6 +435,17 @@ if (encode_json($mat1) eq $matrix_correct) {
 } else {
 	fail('simple "matrix" fails');
 }
+
+# matrix exceptions
+eval { matrix(data => "string", nrow => 2) };
+like( $@, qr/must be an array reference/, 'matrix: dies on non-arrayref data' );
+
+eval { matrix(data => [1,2], nrow => 0, ncol => 0) };
+like( $@, qr/Dimensions must be greater than 0/, 'matrix: dies on 0 dimensions' );
+
+eval { matrix(data => []) };
+like( $@, qr/Data array cannot be empty/, 'matrix: dies on empty data array' );
+
 #$matrix_correct = '[[-0.707106781186547,-0.707106781186547,-0.707106781186547],[0.707106781186547,0.707106781186547,0.707106781186547]]';
 
 #@scaled_results = scale(
@@ -369,7 +459,7 @@ if (encode_json($mat1) eq $matrix_correct) {
 #----------------------------
 my $mtcars = json_file_to_ref('mtcars.hoh.json');
 my $lm = lm(formula =>  'mpg ~ wt * hp^2', data => $mtcars);
-p $lm;
+#p $lm;
 my %correct_lm = (
 	coefficients => {
 		Intercept => 49.8084234287587,
@@ -417,14 +507,14 @@ my %correct_lm = (
 );
 foreach my $key ('Intercept', 'hp', 'wt', 'wt:hp') {
 	unless (defined $lm->{coefficients}{$key}) {
-		p $lm;
+		#p $lm;
 		die "\"$key\" isn't defined" ;
 	}
 	is_approx( $lm->{coefficients}{$key}, $correct_lm{coefficients}{$key}, "Checking lm's $key" );
 }
 foreach my $key ('df.residual', 'rank') {
 	unless (defined $lm->{$key}) {
-		p $lm;
+		#p $lm;
 		die "\"$key\" isn't defined" ;
 	}
 	is_approx( $lm->{$key}, $correct_lm{$key}, "Checking \"$key\"");
@@ -432,7 +522,7 @@ foreach my $key ('df.residual', 'rank') {
 foreach my $key ('fitted.values', 'residuals') {
 	foreach my $car (keys %{ $correct_lm{$key} }) {
 		unless (defined $lm->{$key}{$car}) {
-			p $lm;
+			#p $lm;
 			die "\"$car\" isn't defined in \"fitted.values\"" ;
 		}
 		is_approx(
@@ -444,10 +534,64 @@ foreach my $key ('fitted.values', 'residuals') {
 	}
 }
 $lm = lm(formula =>  'mpg ~ wt + hp', data => $mtcars);
-p $lm;
+%correct_lm = (
+	coefficients => {
+		Intercept => 37.22727,
+		hp        => -0.03177,
+		wt        => -3.87783,
+	},
+	rank => 3,
+	'df.residual' => 29,
+);
+foreach my $key ('Intercept', 'hp', 'wt') {
+	unless (defined $lm->{coefficients}{$key}) {
+		#p $lm;
+		die "\"$key\" isn't defined" ;
+	}
+	is_approx(
+		$lm->{coefficients}{$key},
+		$correct_lm{coefficients}{$key},
+		"Checking lm's $key",
+		0.1
+	);
+}
+foreach my $key ('df.residual', 'rank') {
+	unless (defined $lm->{$key}) {
+		die "\"$key\" isn't defined" ;
+	}
+	is_approx( $lm->{$key}, $correct_lm{$key}, "Checking \"$key\"");
+}
+
+# lm exceptions and additional tests
+eval { lm(data => $mtcars) };
+like( $@, qr/formula is required/, 'lm: dies without a formula' );
+
+dies_ok {
+	lm(formula => 'mpg wt'); # missing ~
+} 'lm: dies on bad formula lacking ~';
+dies_ok {
+	lm(formula => 'mpg ~ wt', data => 'not_a_hash');
+} 'lm: dies when given a non-hash';
+
+dies_ok {
+	my $lm_no_int = lm(formula => 'mpg ~ wt -1', data => $mtcars);
+#ok( !defined($lm_no_int->{coefficients}{Intercept}), 'lm: formula -1 correctly suppresses Intercept' );
+} 'lm: formula -1 correctly suppresses Intercept';
+
+#---------------------------
+#   rnorm
+#----------------------------
 my ($rmean, $sd, $n) = (10, 2, 9999);
 my $normals = rnorm( n => $n, mean => $rmean, sd => $sd);
 is_approx(scalar @{ $normals }, $n, 'rnorm sample size');
 is_approx(mean($normals), $rmean, 'rnorm mean', 0.1);
 is_approx(sd($normals), $sd, 'rnorm sd', 0.1);
+
+# rnorm exceptions
+eval { rnorm(n => 10, sd => -1) };
+like( $@, qr/standard deviation must be non-negative/, 'rnorm: dies on negative sd' );
+
+eval { rnorm(n => 10, mean => 0, 'missing_value_key') };
+like( $@, qr/must be even key\/value pairs/, 'rnorm: dies on odd argument count' );
+
 done_testing();

@@ -14,23 +14,23 @@
 
 /* Gauss-Jordan Elimination with partial pivoting for matrix inversion.
  * Overwrites matrix A with its inverse. Returns 1 on singular failure. */
-static int invert_matrix_gj(double *A, unsigned int n) {
-	unsigned int *restrict indxc, *restrict indxr, *restrict ipiv;
-	Newx(indxc, n, unsigned int);
-	Newx(indxr, n, unsigned int);
-	Newx(ipiv,  n, unsigned int);
+static int invert_matrix_gj(double *A, UV n) {
+	UV *restrict indxc, *restrict indxr, *restrict ipiv;
+	Newx(indxc, n, UV);
+	Newx(indxr, n, UV);
+	Newx(ipiv,  n, UV);
 
-	for (unsigned int i = 0; i < n; i++) ipiv[i] = 0;
+	for (UV i = 0; i < n; i++) ipiv[i] = 0;
 
-	unsigned int i, icol = 0, irow = 0, j, k, l, ll;
+	UV icol = 0, irow = 0, ll;
 	double big, dum, pivinv, temp;
 	int fail = 0;
 
-	for (i = 0; i < n; i++) {
+	for (UV i = 0; i < n; i++) {
 	  big = 0.0;
-	  for (j = 0; j < n; j++) {
+	  for (UV j = 0; j < n; j++) {
 		   if (ipiv[j] != 1) {
-		       for (k = 0; k < n; k++) {
+		       for (UV k = 0; k < n; k++) {
 		           if (ipiv[k] == 0) {
 		               if (fabs(A[j * n + k]) >= big) {
 		                   big = fabs(A[j * n + k]);
@@ -43,7 +43,7 @@ static int invert_matrix_gj(double *A, unsigned int n) {
 	  }
 	  ++(ipiv[icol]);
 	  if (irow != icol) {
-		   for (l = 0; l < n; l++) {
+		   for (UV l = 0; l < n; l++) {
 		       temp = A[irow * n + l];
 		       A[irow * n + l] = A[icol * n + l];
 		       A[icol * n + l] = temp;
@@ -54,19 +54,19 @@ static int invert_matrix_gj(double *A, unsigned int n) {
 	  if (A[icol * n + icol] == 0.0) { fail = 1; break; }
 	  pivinv = 1.0 / A[icol * n + icol];
 	  A[icol * n + icol] = 1.0;
-	  for (l = 0; l < n; l++) A[icol * n + l] *= pivinv;
+	  for (UV l = 0; l < n; l++) A[icol * n + l] *= pivinv;
 	  for (ll = 0; ll < n; ll++) {
 		   if (ll != icol) {
 		       dum = A[ll * n + icol];
 		       A[ll * n + icol] = 0.0;
-		       for (l = 0; l < n; l++) A[ll * n + l] -= A[icol * n + l] * dum;
+		       for (UV l = 0; l < n; l++) A[ll * n + l] -= A[icol * n + l] * dum;
 		   }
 	  }
 	}
 	if (!fail) {
-	  for (l = n; l > 0; l--) {
+	  for (UV l = n; l > 0; l--) {
 		   if (indxr[l - 1] != indxc[l - 1]) {
-		       for (k = 0; k < n; k++) {
+		       for (UV k = 0; k < n; k++) {
 		           temp = A[k * n + indxr[l - 1]];
 		           A[k * n + indxr[l - 1]] = A[k * n + indxc[l - 1]];
 		           A[k * n + indxc[l - 1]] = temp;
@@ -91,7 +91,7 @@ static double get_data_value(HV *restrict data_hoa, HV **restrict row_hashes, un
 	  return (val && SvOK(*val)) ? SvNV(*val) : 0.0;
 	} else if (data_hoa) {
 	  /* Support Hash of Arrays */
-	  SV** col = hv_fetch(data_hoa, var, strlen(var), 0);
+	  SV**restrict col = hv_fetch(data_hoa, var, strlen(var), 0);
 	  if (col && SvROK(*col) && SvTYPE(SvRV(*col)) == SVt_PVAV) {
 		   AV*restrict av = (AV*)SvRV(*col);
 		   SV**restrict val = av_fetch(av, i, 0);
@@ -125,14 +125,13 @@ static double evaluate_term(HV *restrict data_hoa, HV **restrict row_hashes, uns
 	  double v = get_data_value(data_hoa, row_hashes, i, inner);
 	  return power == 1 ? v : pow(v, power);
 	}
-
 	return get_data_value(data_hoa, row_hashes, i, term_cpy);
 }
 
 /* Struct for sorting p-values while remembering their original index */
 typedef struct {
 	double p;
-	unsigned int orig_idx;
+	size_t orig_idx;
 } PVal;
 
 /* Comparator for qsort */
@@ -143,16 +142,14 @@ static int cmp_pval(const void *a, const void *b) {
     /* Stabilize sort by falling back to original index */
     return ((PVal*)a)->orig_idx - ((PVal*)b)->orig_idx; 
 }
-
 /* -----------------------------------------------------------------------
  * Helpers for cor(): ranking (Spearman), Pearson r, Kendall tau-b
  * ----------------------------------------------------------------------- */
-
 /* Item used to sort values while remembering their original index,
  * needed for average-rank tie-breaking in Spearman correlation.        */
 typedef struct {
-    double       val;
-    unsigned int idx;
+    double val;
+    size_t idx;
 } RankItem;
 
 static int cmp_rank_item(const void *a, const void *b) {
@@ -165,29 +162,29 @@ static int cmp_rank_item(const void *a, const void *b) {
 /* Compute 1-based average ranks with tie-breaking into out[].
  * in[] is not modified.                                                 */
 static void rank_data(const double *in, double *out, unsigned int n) {
-    RankItem *ri;
-    Newx(ri, n, RankItem);
-    for (unsigned int i = 0; i < n; i++) { ri[i].val = in[i]; ri[i].idx = i; }
-    qsort(ri, n, sizeof(RankItem), cmp_rank_item);
+	RankItem *restrict ri;
+	Newx(ri, n, RankItem);
+	for (size_t i = 0; i < n; i++) { ri[i].val = in[i]; ri[i].idx = i; }
+	qsort(ri, n, sizeof(RankItem), cmp_rank_item);
 
-    unsigned int i = 0;
-    while (i < n) {
-        unsigned int j = i;
-        /* Find the full extent of this tie group */
-        while (j + 1 < n && ri[j + 1].val == ri[j].val) j++;
-        /* All members get the average of ranks i+1 … j+1 (1-based) */
-        double avg = (double)(i + j) / 2.0 + 1.0;
-        for (unsigned int k = i; k <= j; k++) out[ri[k].idx] = avg;
-        i = j + 1;
-    }
-    Safefree(ri);
+	size_t i = 0;
+	while (i < n) {
+	  size_t j = i;
+	  /* Find the full extent of this tie group */
+	  while (j + 1 < n && ri[j + 1].val == ri[j].val) j++;
+	  /* All members get the average of ranks i+1 … j+1 (1-based) */
+	  double avg = (double)(i + j) / 2.0 + 1.0;
+	  for (size_t k = i; k <= j; k++) out[ri[k].idx] = avg;
+	  i = j + 1;
+	}
+	Safefree(ri);
 }
 
 /* Pearson product-moment r between two n-element arrays.
  * Returns NAN when either variable has zero variance (matches R).       */
 static double pearson_corr(const double *restrict x, const double *restrict y, unsigned int n) {
     double sx = 0, sy = 0, sxy = 0, sx2 = 0, sy2 = 0;
-    for (unsigned int i = 0; i < n; i++) {
+    for (size_t i = 0; i < n; i++) {
         sx  += x[i];     sy  += y[i];
         sxy += x[i]*y[i]; sx2 += x[i]*x[i]; sy2 += y[i]*y[i];
     }
@@ -206,9 +203,9 @@ static double pearson_corr(const double *restrict x, const double *restrict y, u
  * from numerator and denominator, matching R's cor(method="kendall").
  * Returns NAN when the denominator is zero.                             */
 static double kendall_tau_b(const double *x, const double *y, unsigned int n) {
-    long long C = 0, D = 0, tie_x = 0, tie_y = 0;
-    for (unsigned int i = 0; i < n - 1; i++) {
-        for (unsigned int j = i + 1; j < n; j++) {
+    size_t C = 0, D = 0, tie_x = 0, tie_y = 0;
+    for (size_t i = 0; i < n - 1; i++) {
+        for (size_t j = i + 1; j < n; j++) {
             int sx = (x[i] > x[j]) - (x[i] < x[j]);   /* sign of x[i]-x[j] */
             int sy = (y[i] > y[j]) - (y[i] < y[j]);
             if      (sx == 0 && sy == 0) { /* joint tie — not counted */ }
@@ -226,20 +223,20 @@ static double kendall_tau_b(const double *x, const double *y, unsigned int n) {
 /* Single dispatch: compute correlation according to method string.
  * Allocates and frees temporary rank arrays internally for Spearman.   */
 static double compute_cor(const double *x, const double *y,
-                           unsigned int n, const char *method) {
-    if (strcmp(method, "spearman") == 0) {
-        double *restrict rx, *restrict ry;
-        Newx(rx, n, double); Newx(ry, n, double);
-        rank_data(x, rx, n);
-        rank_data(y, ry, n);
-        double r = pearson_corr(rx, ry, n);
-        Safefree(rx); Safefree(ry);
-        return r;
-    }
-    if (strcmp(method, "kendall") == 0)
-        return kendall_tau_b(x, y, n);
-    /* default: pearson */
-    return pearson_corr(x, y, n);
+                           size_t n, const char *method) {
+	if (strcmp(method, "spearman") == 0) {
+	  double *restrict rx, *restrict ry;
+	  Newx(rx, n, double); Newx(ry, n, double);
+	  rank_data(x, rx, n);
+	  rank_data(y, ry, n);
+	  double r = pearson_corr(rx, ry, n);
+	  Safefree(rx); Safefree(ry);
+	  return r;
+	}
+	if (strcmp(method, "kendall") == 0)
+	  return kendall_tau_b(x, y, n);
+	/* default: pearson */
+	return pearson_corr(x, y, n);
 }
 
 /* Math macros */
@@ -313,12 +310,12 @@ static double qt_tail(double df, double p_tail) {
 }
 
 int compare_doubles(const void *a, const void *b) {
-    double da = *(const double*)a;
-    double db = *(const double*)b;
+    double da = *(const double*restrict)a;
+    double db = *(const double*restrict)b;
     return (da > db) - (da < db);
 }
 /* --- XS SECTION --- */
-MODULE = Stats::LikeR		PACKAGE = Stats::LikeR		
+MODULE = Stats::LikeR	PACKAGE = Stats::LikeR		
 
 double mean(...)
 	PROTOTYPE: @
@@ -348,15 +345,15 @@ double sd(...)
 	PROTOTYPE: @
 	INIT:
 		double total = 0, sum_sq = 0;
-		unsigned int count = 0;
+		size_t count = 0;
 	CODE:
-	  for (unsigned int i = 0; i < items; i++) {
+	  for (size_t i = 0; i < items; i++) {
 		   SV* arg = ST(i);
 		   if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
 		       AV* av = (AV*)SvRV(arg);
-		       unsigned int len = av_len(av) + 1;
-		       for (unsigned int j = 0; j < len; j++) {
-		           SV** tv = av_fetch(av, j, 0);
+		       size_t len = av_len(av) + 1;
+		       for (size_t j = 0; j < len; j++) {
+		           SV**restrict tv = av_fetch(av, j, 0);
 		           if (tv && SvOK(*tv)) { total += SvNV(*tv); count++; }
 		       }
 		   } else if (SvOK(arg)) {
@@ -365,13 +362,13 @@ double sd(...)
 	  }
 	  if (count < 2) croak("stdev needs >= 2 elements");
 	  double avg = total / count;
-	  for (unsigned int i = 0; i < items; i++) {
+	  for (size_t i = 0; i < items; i++) {
 		   SV*restrict arg = ST(i);
 		   if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
-		       AV* av = (AV*)SvRV(arg);
-		       unsigned int len = av_len(av) + 1;
-		       for (unsigned int j = 0; j < len; j++) {
-		           SV** tv = av_fetch(av, j, 0);
+		       AV*restrict av = (AV*)SvRV(arg);
+		       size_t len = av_len(av) + 1;
+		       for (size_t j = 0; j < len; j++) {
+		           SV**restrict tv = av_fetch(av, j, 0);
 		           if (tv && SvOK(*tv)) sum_sq += pow(SvNV(*tv) - avg, 2);
 		       }
 		   } else if (SvOK(arg)) {
@@ -386,15 +383,15 @@ double var(...)
 	PROTOTYPE: @
 	INIT:
 	  double total = 0.0, sum_sq = 0.0;
-	  unsigned int count = 0;
+	  size_t count = 0;
 	CODE:
-	  for (unsigned int i = 0; i < items; i++) {
+	  for (size_t i = 0; i < items; i++) {
 		   SV*restrict arg = ST(i);
 		   if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
 		       AV*restrict av = (AV*)SvRV(arg);
-		       unsigned int len = av_len(av) + 1;
-		       for (unsigned int j = 0; j < len; j++) {
-		           SV** tv = av_fetch(av, j, 0);
+		       size_t len = av_len(av) + 1;
+		       for (size_t j = 0; j < len; j++) {
+		           SV**restrict tv = av_fetch(av, j, 0);
 		           if (tv && SvOK(*tv)) { total += SvNV(*tv); count++; }
 		       }
 		   } else if (SvOK(arg)) {
@@ -403,13 +400,13 @@ double var(...)
 	  }
 	  if (count < 2) croak("stdev needs >= 2 elements");
 	  double avg = total / count;
-	  for (unsigned int i = 0; i < items; i++) {
+	  for (size_t i = 0; i < items; i++) {
 		   SV*restrict arg = ST(i);
 		   if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
-		       AV* av = (AV*)SvRV(arg);
-		       unsigned int len = av_len(av) + 1;
-		       for (unsigned int j = 0; j < len; j++) {
-		           SV** tv = av_fetch(av, j, 0);
+		       AV*restrict av = (AV*)SvRV(arg);
+		       size_t len = av_len(av) + 1;
+		       for (ssize_t j = 0; j < len; j++) {
+		           SV**restrict tv = av_fetch(av, j, 0);
 		           if (tv && SvOK(*tv)) sum_sq += pow(SvNV(*tv) - avg, 2);
 		       }
 		   } else if (SvOK(arg)) {
@@ -426,14 +423,14 @@ double pearson_r(SV* x_sv, SV* y_sv)
 		   !SvROK(y_sv) || SvTYPE(SvRV(y_sv)) != SVt_PVAV) {
 		   croak("Both arguments must be array references");
 	  }
-	  AV* x_av = (AV*)SvRV(x_sv);
-	  AV* y_av = (AV*)SvRV(y_sv);
-	  unsigned int n = av_len(x_av) + 1;
+	  AV*restrict x_av = (AV*)SvRV(x_sv);
+	  AV*restrict y_av = (AV*)SvRV(y_sv);
+	  size_t n = av_len(x_av) + 1;
 	  if (n != (av_len(y_av) + 1)) croak("Arrays must have the same number of elements");
 	  if (n < 2) croak("Need at least 2 elements");
 	  double sum_x = 0, sum_y = 0, sum_xy = 0, sum_x2 = 0, sum_y2 = 0;
 	CODE:
-	  for (unsigned int i = 0; i < n; i++) {
+	  for (size_t i = 0; i < n; i++) {
 		   SV**restrict xv = av_fetch(x_av, i, 0);
 		   SV**restrict yv = av_fetch(y_av, i, 0);
 		   double x = (xv && SvOK(*xv)) ? SvNV(*xv) : 0.0;
@@ -463,8 +460,8 @@ SV* t_test(...)
 	  const char*restrict alternative = "two.sided";
 
 	  for (I32 i = 0; i < items; i += 2) {
-		   const char* key = SvPV_nolen(ST(i));
-		   SV* val = ST(i + 1);
+		   const char*restrict key = SvPV_nolen(ST(i));
+		   SV*restrict val = ST(i + 1);
 
 		   if      (strEQ(key, "x"))           x_sv        = val;
 		   else if (strEQ(key, "y"))           y_sv        = val;
@@ -480,11 +477,11 @@ SV* t_test(...)
 	  if (!x_sv || !SvROK(x_sv) || SvTYPE(SvRV(x_sv)) != SVt_PVAV)
 		   croak("t_test: 'x' is a required argument and must be an ARRAY reference");
 
-	  AV* x_av = (AV*)SvRV(x_sv);
-	  unsigned int nx = av_len(x_av) + 1;
+	  AV*restrict x_av = (AV*)SvRV(x_sv);
+	  size_t nx = av_len(x_av) + 1;
 	  if (nx < 2) croak("t_test: 'x' needs at least 2 elements");
 
-	  AV* y_av = NULL;
+	  AV*restrict y_av = NULL;
 	  if (y_sv && SvROK(y_sv) && SvTYPE(SvRV(y_sv)) == SVt_PVAV)
 		   y_av = (AV*)SvRV(y_sv);
 
@@ -496,8 +493,8 @@ SV* t_test(...)
 	  double t_stat, df, p_val, std_err, cint_est;
 	  HV*restrict results = newHV();
 
-	  for (unsigned int i = 0; i < nx; i++) {
-		   SV** tv = av_fetch(x_av, i, 0);
+	  for (size_t i = 0; i < nx; i++) {
+		   SV**restrict tv = av_fetch(x_av, i, 0);
 		   double val = (tv && SvOK(*tv)) ? SvNV(*tv) : 0;
 		   sum_x += val; sum_x2 += val * val;
 	  }
@@ -506,12 +503,12 @@ SV* t_test(...)
 
 	  if (paired || y_av) {
 		   if (!y_av) croak("t_test: 'y' must be provided for paired or two-sample tests");
-		   unsigned int ny = av_len(y_av) + 1;
+		   size_t ny = av_len(y_av) + 1;
 		   if (paired && ny != nx) croak("t_test: Paired arrays must be same length");
 
 		   double sum_y = 0, sum_y2 = 0, mean_y, var_y;
-		   for (unsigned int i = 0; i < ny; i++) {
-		       SV** tv = av_fetch(y_av, i, 0);
+		   for (size_t i = 0; i < ny; i++) {
+		       SV**restrict tv = av_fetch(y_av, i, 0);
 		       double val = (tv && SvOK(*tv)) ? SvNV(*tv) : 0;
 		       sum_y += val; sum_y2 += val * val;
 		   }
@@ -520,7 +517,7 @@ SV* t_test(...)
 
 		   if (paired) {
 		       double sum_d = 0, sum_d2 = 0;
-		       for (unsigned int i = 0; i < nx; i++) {
+		       for (size_t i = 0; i < nx; i++) {
 		           double dx = SvNV(*av_fetch(x_av, i, 0));
 		           double dy = SvNV(*av_fetch(y_av, i, 0));
 		           sum_d += (dx - dy); sum_d2 += (dx - dy) * (dx - dy);
@@ -578,7 +575,7 @@ SV* t_test(...)
 		   ci_upper = cint_est + t_crit * std_err;
 	  }
 
-	  AV* conf_int = newAV();
+	  AV*restrict conf_int = newAV();
 	  av_push(conf_int, newSVnv(ci_lower));
 	  av_push(conf_int, newSVnv(ci_upper));
 
@@ -597,33 +594,28 @@ void p_adjust(SV* p_sv, const char* method = "holm")
 	  if (!SvROK(p_sv) || SvTYPE(SvRV(p_sv)) != SVt_PVAV) {
 		   croak("p_adjust: first argument must be an ARRAY reference of p-values");
 	  }
-	  
 	  AV *restrict p_av = (AV*)SvRV(p_sv);
-	  unsigned int n = av_len(p_av) + 1;
-	  
+	  size_t n = av_len(p_av) + 1;
 	  /* Handle empty input */
 	  if (n == 0) {
 		   XSRETURN_EMPTY;
 	  }
-
 	  /* Normalize method string */
 	  char meth[64];
 	  strncpy(meth, method, 63); meth[63] = '\0';
-	  for(int i = 0; meth[i]; i++) meth[i] = tolower(meth[i]);
-
+	  for(unsigned short int i = 0; meth[i]; i++) meth[i] = tolower(meth[i]);
 	  /* Resolve aliases */
 	  if (strstr(meth, "benjamini") && strstr(meth, "hochberg")) strcpy(meth, "bh");
 	  if (strstr(meth, "benjamini") && strstr(meth, "yekutieli")) strcpy(meth, "by");
 	  if (strcmp(meth, "fdr") == 0) strcpy(meth, "bh");
-
 	  /* Allocate C memory */
 	  PVal *restrict arr;
 	  double *restrict adj;
 	  Newx(arr, n, PVal);
 	  Newx(adj, n, double);
 
-	  for (unsigned int i = 0; i < n; i++) {
-		   SV** tv = av_fetch(p_av, i, 0);
+	  for (size_t i = 0; i < n; i++) {
+		   SV**restrict tv = av_fetch(p_av, i, 0);
 		   arr[i].p = (tv && SvOK(*tv)) ? SvNV(*tv) : 1.0;
 		   arr[i].orig_idx = i;
 	  }
@@ -633,36 +625,36 @@ void p_adjust(SV* p_sv, const char* method = "holm")
 
 	PPCODE:
 	  if (strcmp(meth, "bonferroni") == 0) {
-		   for (unsigned int i = 0; i < n; i++) {
+		   for (size_t i = 0; i < n; i++) {
 		       double v = arr[i].p * n;
 		       adj[arr[i].orig_idx] = (v < 1.0) ? v : 1.0;
 		   }
 	  } else if (strcmp(meth, "holm") == 0) {
 		   double cummax = 0.0;
-		   for (int i = 0; i < n; i++) {
+		   for (UV i = 0; i < n; i++) {
 		       double v = arr[i].p * (n - i);
 		       if (v > cummax) cummax = v;
 		       adj[arr[i].orig_idx] = (cummax < 1.0) ? cummax : 1.0;
 		   }
 	  } else if (strcmp(meth, "hochberg") == 0) {
 		   double cummin = 1.0;
-		   for (int i = n - 1; i >= 0; i--) {
+		   for (ssize_t i = n - 1; i >= 0; i--) {
 		       double v = arr[i].p * (n - i);
 		       if (v < cummin) cummin = v;
 		       adj[arr[i].orig_idx] = (cummin < 1.0) ? cummin : 1.0;
 		   }
 	  } else if (strcmp(meth, "bh") == 0) {
 		   double cummin = 1.0;
-		   for (int i = n - 1; i >= 0; i--) {
+		   for (ssize_t i = n - 1; i >= 0; i--) {
 		       double v = arr[i].p * n / (i + 1.0);
 		       if (v < cummin) cummin = v;
 		       adj[arr[i].orig_idx] = (cummin < 1.0) ? cummin : 1.0;
 		   }
 	  } else if (strcmp(meth, "by") == 0) {
 		   double q = 0.0;
-		   for (int i = 1; i <= n; i++) q += 1.0 / i;
+		   for (size_t i = 1; i <= n; i++) q += 1.0 / i;
 		   double cummin = 1.0;
-		   for (int i = n - 1; i >= 0; i--) {
+		   for (ssize_t i = n - 1; i >= 0; i--) {
 		       double v = arr[i].p * n / (i + 1.0) * q;
 		       if (v < cummin) cummin = v;
 		       adj[arr[i].orig_idx] = (cummin < 1.0) ? cummin : 1.0;
@@ -673,43 +665,39 @@ void p_adjust(SV* p_sv, const char* method = "holm")
 		   
 		   /* Initial: min(n * p[i] / (i + 1)) */
 		   double min_val = n * arr[0].p;
-		   for (unsigned int i = 1; i < n; i++) {
+		   for (size_t i = 1; i < n; i++) {
 		       double temp = (n * arr[i].p) / (i + 1.0);
 		       if (temp < min_val) {
 		           min_val = temp;
 		       }
 		   }
 		   /* pa <- q <- rep(min, n) */
-		   for (unsigned int i = 0; i < n; i++) {
+		   for (size_t i = 0; i < n; i++) {
 		       pa[i] = min_val;
 		       q_arr[i] = min_val;
 		   }
-		   for (unsigned int j = n - 1; j >= 2; j--) {
-		       int n_mj = n - j;       /* Max index for 'ij'. Length is n_mj + 1 */
-		       int i2_len = j - 1;     /* Length of 'i2' */
-		       
+		   for (size_t j = n - 1; j >= 2; j--) {
+		       ssize_t n_mj = n - j;       /* Max index for 'ij'. Length is n_mj + 1 */
+		       ssize_t i2_len = j - 1;     /* Length of 'i2' */
 		       /* Calculate q1 = min(j * p[i2] / (2:j)) */
 		       double q1 = (j * arr[n_mj + 1].p) / 2.0;
-		       for (unsigned int k = 1; k < i2_len; k++) {
+		       for (size_t k = 1; k < i2_len; k++) {
 		           double temp_q1 = (j * arr[n_mj + 1 + k].p) / (2.0 + k);
 		           if (temp_q1 < q1) {
 		               q1 = temp_q1;
 		           }
 		       }
-
 		       /* q[ij] <- pmin(j * p[ij], q1) */
-		       for (unsigned int i = 0; i <= n_mj; i++) {
+		       for (size_t i = 0; i <= n_mj; i++) {
 		           double v = j * arr[i].p;
 		           q_arr[i] = (v < q1) ? v : q1;
 		       }
-
 		       /* q[i2] <- q[n - j] */
-		       for (unsigned int i = 0; i < i2_len; i++) {
+		       for (size_t i = 0; i < i2_len; i++) {
 		           q_arr[n_mj + 1 + i] = q_arr[n_mj];
 		       }
-
 		       /* pa <- pmax(pa, q) */
-		       for (unsigned int i = 0; i < n; i++) {
+		       for (size_t i = 0; i < n; i++) {
 		           if (pa[i] < q_arr[i]) {
 		              pa[i] = q_arr[i];
 		           }
@@ -717,7 +705,7 @@ void p_adjust(SV* p_sv, const char* method = "holm")
 		   }
 		   
 		   /* pmin(1, pmax(pa, p))[ro] — map sorted results back to original indices */
-		   for (unsigned int i = 0; i < n; i++) {
+		   for (size_t i = 0; i < n; i++) {
 		       double v = (pa[i] > arr[i].p) ? pa[i] : arr[i].p;
 		       if (v > 1.0) v = 1.0;
 		       adj[arr[i].orig_idx] = v;
@@ -725,7 +713,7 @@ void p_adjust(SV* p_sv, const char* method = "holm")
 		   free(pa); pa = NULL;
 		   free(q_arr); q_arr = NULL;
 	  } else if (strcmp(meth, "none") == 0) {
-		   for (unsigned int i = 0; i < n; i++) {
+		   for (size_t i = 0; i < n; i++) {
 		   	adj[arr[i].orig_idx] = arr[i].p;
 		   }
 	  } else {
@@ -734,29 +722,27 @@ void p_adjust(SV* p_sv, const char* method = "holm")
 	  }
 	  /* Push values onto the Perl stack as a flat list */
 	  EXTEND(SP, n);
-	  for (int i = 0; i < n; i++) {
+	  for (size_t i = 0; i < n; i++) {
 		   PUSHs(sv_2mortal(newSVnv(adj[i])));
 	  }
-
 	  Safefree(arr); arr = NULL;
 	  Safefree(adj); adj = NULL;
 
 double median(...)
 	PROTOTYPE: @
 	INIT:
-	  unsigned int total_count = 0;
-	  unsigned int k = 0;
+	  size_t total_count = 0, k = 0;
 	  double *restrict nums;
 	  double median_val = 0.0;
 	CODE:
 	  /* Pass 1: Count total valid elements to allocate memory */
-	  for (unsigned int i = 0; i < items; i++) {
-		   SV* arg = ST(i);
+	  for (size_t i = 0; i < items; i++) {
+		   SV*restrict arg = ST(i);
 		   if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
 		       AV* av = (AV*)SvRV(arg);
 		       unsigned int len = av_len(av) + 1;
-		       for (unsigned int j = 0; j < len; j++) {
-		           SV** tv = av_fetch(av, j, 0);
+		       for (size_t j = 0; j < len; j++) {
+		           SV**restrict tv = av_fetch(av, j, 0);
 		           if (tv && SvOK(*tv)) { total_count++; }
 		       }
 		   } else if (SvOK(arg)) {
@@ -767,13 +753,13 @@ double median(...)
 	  /* Allocate C array now that we know the exact size */
 	  Newx(nums, total_count, double);
 	  /* Pass 2: Populate the C array */
-	  for (unsigned int i = 0; i < items; i++) {
-		   SV* arg = ST(i);
+	  for (size_t i = 0; i < items; i++) {
+		   SV*restrict arg = ST(i);
 		   if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
-		       AV* av = (AV*)SvRV(arg);
-		       unsigned int len = av_len(av) + 1;
-		       for (unsigned int j = 0; j < len; j++) {
-		           SV** tv = av_fetch(av, j, 0);
+		       AV*restrict av = (AV*)SvRV(arg);
+		       size_t len = av_len(av) + 1;
+		       for (size_t j = 0; j < len; j++) {
+		           SV**restrict tv = av_fetch(av, j, 0);
 		           if (tv && SvOK(*tv)) { 
 		               nums[k++] = SvNV(*tv); 
 		           }
@@ -782,16 +768,13 @@ double median(...)
 		       nums[k++] = SvNV(arg);
 		   }
 	  }
-
 	  /* Sort and calculate median */
 	  qsort(nums, total_count, sizeof(double), compare_doubles);
-
 	  if (total_count % 2 == 0) {
 		   median_val = (nums[total_count / 2 - 1] + nums[total_count / 2]) / 2.0;
 	  } else {
 		   median_val = nums[total_count / 2];
 	  }
-
 	  Safefree(nums); nums = NULL;
 	  RETVAL = median_val;
 	OUTPUT:
@@ -810,7 +793,7 @@ SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 	  if (!SvROK(x_sv) || SvTYPE(SvRV(x_sv)) != SVt_PVAV)
 		   croak("cor: x must be an ARRAY reference");
 	  AV*restrict x_av = (AV*)SvRV(x_sv);
-	  unsigned int nx   = av_len(x_av) + 1;
+	  size_t nx   = av_len(x_av) + 1;
 	  if (nx == 0) croak("cor: x is empty");
 	  /* --- detect whether x is a flat vector or a matrix (AoA) ------- */
 	  int x_is_matrix = 0;
@@ -822,9 +805,9 @@ SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 	  /* --- detect y -------------------------------------------------- */
 	  int has_y = (SvOK(y_sv) && SvROK(y_sv) &&
 		            SvTYPE(SvRV(y_sv)) == SVt_PVAV);
-	  AV* y_av     = has_y ? (AV*)SvRV(y_sv) : NULL;
-	  int ny       = has_y ? av_len(y_av) + 1 : 0;
-	  int y_is_matrix = 0;
+	  AV*restrict y_av     = has_y ? (AV*)SvRV(y_sv) : NULL;
+	  size_t ny       = has_y ? av_len(y_av) + 1 : 0;
+	  short int y_is_matrix = 0;
 	  if (has_y && ny > 0) {
 		   SV** fp = av_fetch(y_av, 0, 0);
 		   if (fp && SvROK(*fp) && SvTYPE(SvRV(*fp)) == SVt_PVAV)
@@ -837,7 +820,7 @@ SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 		       RETVAL = newSVnv(1.0);
 		   } else {
 		       if (nx != ny)
-		           croak("cor: x and y must have the same length (%d vs %d)",
+		           croak("cor: x and y must have the same length (%lu vs %lu)",
 		                 nx, ny);
 		       if (nx < 2)
 		           croak("cor: need at least 2 observations");
@@ -846,12 +829,12 @@ SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 		       Newx(xd, nx, double);
 		       Newx(yd, ny, double);
 
-		       for (int i = 0; i < nx; i++) {
-		           SV** tv = av_fetch(x_av, i, 0);
+		       for (size_t i = 0; i < nx; i++) {
+		           SV**restrict tv = av_fetch(x_av, i, 0);
 		           xd[i] = (tv && SvOK(*tv)) ? SvNV(*tv) : 0.0;
 		       }
-		       for (int i = 0; i < ny; i++) {
-		           SV** tv = av_fetch(y_av, i, 0);
+		       for (size_t i = 0; i < ny; i++) {
+		           SV**restrict tv = av_fetch(y_av, i, 0);
 		           yd[i] = (tv && SvOK(*tv)) ? SvNV(*tv) : 0.0;
 		       }
 
@@ -868,36 +851,35 @@ SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 		   SV**restrict xr0 = av_fetch(x_av, 0, 0);
 		   if (!xr0 || !SvROK(*xr0) || SvTYPE(SvRV(*xr0)) != SVt_PVAV)
 		       croak("cor: each row of x must be an ARRAY reference");
-		   int ncols_x = av_len((AV*)SvRV(*xr0)) + 1;
+		   size_t ncols_x = av_len((AV*)SvRV(*xr0)) + 1;
 		   if (ncols_x == 0) croak("cor: x matrix has zero columns");
-		   int nrows   = nx;   /* observations */
+		   size_t nrows   = nx;   /* observations */
 
 		   /* -- extract x columns -------------------------------------- */
 		   double **restrict col_x;
 		   Newx(col_x, ncols_x, double*);
-		   for (int j = 0; j < ncols_x; j++) {
+		   for (size_t j = 0; j < ncols_x; j++) {
 		       Newx(col_x[j], nrows, double);
-		       for (int i = 0; i < nrows; i++) {
-		           SV** rv = av_fetch(x_av, i, 0);
+		       for (size_t i = 0; i < nrows; i++) {
+		           SV**restrict rv = av_fetch(x_av, i, 0);
 		           if (!rv || !SvROK(*rv))
-		               croak("cor: x row %d is not an array ref", i);
-		           AV*  row = (AV*)SvRV(*rv);
-		           SV** cv  = av_fetch(row, j, 0);
+		               croak("cor: x row %lu is not an array ref", i);
+		           AV*restrict  row = (AV*)SvRV(*rv);
+		           SV**restrict cv  = av_fetch(row, j, 0);
 		           col_x[j][i] = (cv && SvOK(*cv)) ? SvNV(*cv) : 0.0;
 		       }
 		   }
 
 		   /* -- resolve y: separate matrix or re-use x (symmetric) ---- */
-		   unsigned int    ncols_y;
-		   double **col_y   = NULL;
+		   size_t    ncols_y;
+		   double **restrict col_y   = NULL;
 		   int    symmetric = 0;   /* 1 = cor(X) — result is symmetric */
-
 		   if (has_y && y_is_matrix) {
 		       /* cross-correlation: X (nrows × p) vs Y (nrows × q)      */
 		       if (ny != nrows)
 		           croak("cor: x and y must have the same number of rows "
-		                 "(%d vs %d)", nrows, ny);
-		       SV** yr0 = av_fetch(y_av, 0, 0);
+		                 "(%lu vs %lu)", nrows, ny);
+		       SV**restrict yr0 = av_fetch(y_av, 0, 0);
 		       if (!yr0 || !SvROK(*yr0) || SvTYPE(SvRV(*yr0)) != SVt_PVAV)
 		           croak("cor: each row of y must be an ARRAY reference");
 		       ncols_y = av_len((AV*)SvRV(*yr0)) + 1;
@@ -907,11 +889,11 @@ SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 		       for (unsigned int j = 0; j < ncols_y; j++) {
 		           Newx(col_y[j], nrows, double);
 		           for (unsigned int i = 0; i < nrows; i++) {
-		               SV** rv = av_fetch(y_av, i, 0);
+		               SV**  rv = av_fetch(y_av, i, 0);
 		               if (!rv || !SvROK(*rv))
 		                   croak("cor: y row %d is not an array ref", i);
-		               AV*  row = (AV*)SvRV(*rv);
-		               SV** cv  = av_fetch(row, j, 0);
+		               AV*restrict  row = (AV*)SvRV(*rv);
+		               SV**restrict cv  = av_fetch(row, j, 0);
 		               col_y[j][i] = (cv && SvOK(*cv)) ? SvNV(*cv) : 0.0;
 		           }
 		       }
@@ -922,60 +904,58 @@ SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 		       symmetric = 1;
 		   }
 		   if (nrows < 2)
-		       croak("cor: need at least 2 observations (got %d)", nrows);
-
+		       croak("cor: need at least 2 observations (got %lu)", nrows);
 		   /* -- build cache for symmetric case: compute upper triangle,
 		      store results, mirror to lower triangle                    */
-		   AV* result_av = newAV();
+		   AV*restrict result_av = newAV();
 		   av_extend(result_av, ncols_x - 1);
 		   /* Allocate per-row AVs up front so we can fill them in order */
-		   AV **rows_out;
+		   AV **restrict rows_out;
 		   Newx(rows_out, ncols_x, AV*);
-		   for (unsigned int i = 0; i < ncols_x; i++) {
+		   for (size_t i = 0; i < ncols_x; i++) {
 		       rows_out[i] = newAV();
 		       av_extend(rows_out[i], ncols_y - 1);
 		   }
 		   if (symmetric) {
 		       /* Upper triangle + diagonal, then mirror.
 		          r_cache[i][j] (j >= i) holds the computed value.      */
-		       double **r_cache;
+		       double **restrict r_cache;
 		       Newx(r_cache, ncols_x, double*);
-		       for (unsigned int i = 0; i < ncols_x; i++)
+		       for (size_t i = 0; i < ncols_x; i++)
 		           Newx(r_cache[i], ncols_x, double);
 
-		       for (unsigned int i = 0; i < ncols_x; i++) {
+		       for (size_t i = 0; i < ncols_x; i++) {
 		           r_cache[i][i] = 1.0;                /* diagonal */
-		           for (unsigned int j = i + 1; j < ncols_x; j++) {
+		           for (size_t j = i + 1; j < ncols_x; j++) {
 		               double r = compute_cor(col_x[i], col_x[j], nrows, method);
 		               r_cache[i][j] = r;
 		               r_cache[j][i] = r;              /* symmetry */
 		           }
 		       }
 		       /* fill output AoA from cache */
-		       for (unsigned int i = 0; i < ncols_x; i++)
-		           for (unsigned int j = 0; j < ncols_x; j++)
+		       for (size_t i = 0; i < ncols_x; i++)
+		           for (size_t j = 0; j < ncols_x; j++)
 		               av_store(rows_out[i], j, newSVnv(r_cache[i][j]));
 
-		       for (unsigned int i = 0; i < ncols_x; i++) Safefree(r_cache[i]);
+		       for (size_t i = 0; i < ncols_x; i++) Safefree(r_cache[i]);
 		       Safefree(r_cache);
 		   } else {
 		       /* cross-correlation: every (i,j) pair is independent     */
-		       for (unsigned int i = 0; i < ncols_x; i++)
-		           for (unsigned int j = 0; j < ncols_y; j++)
+		       for (size_t i = 0; i < ncols_x; i++)
+		           for (size_t j = 0; j < ncols_y; j++)
 		               av_store(rows_out[i], j,
 		                        newSVnv(compute_cor(col_x[i], col_y[j],
 		                                            nrows, method)));
 		   }
 		   /* push row AVs into result */
-		   for (unsigned int i = 0; i < ncols_x; i++)
+		   for (size_t i = 0; i < ncols_x; i++)
 		       av_store(result_av, i, newRV_noinc((SV*)rows_out[i]));
 		   Safefree(rows_out);
-
 		   /* -- free column arrays ------------------------------------- */
-		   for (unsigned int j = 0; j < ncols_x; j++) Safefree(col_x[j]);
+		   for (size_t j = 0; j < ncols_x; j++) Safefree(col_x[j]);
 		   Safefree(col_x);
 		   if (!symmetric) {
-		       for (unsigned int j = 0; j < ncols_y; j++) Safefree(col_y[j]);
+		       for (size_t j = 0; j < ncols_y; j++) Safefree(col_y[j]);
 		       Safefree(col_y);
 		   }
 		   RETVAL = newRV_noinc((SV*)result_av);
@@ -989,12 +969,10 @@ void scale(...)
 	{
 	  bool do_center_mean = true, do_scale_sd = true;
 	  double center_val = 0.0, scale_val = 1.0;
-	  
 	  int data_items = items;
-
 	  /* 1. Parse Options Hash (if it exists as the last argument) */
 	  if (items > 0) {
-		   SV* last_arg = ST(items - 1);
+		   SV*restrict last_arg = ST(items - 1);
 		   if (SvROK(last_arg) && SvTYPE(SvRV(last_arg)) == SVt_PVHV) {
 		       data_items = items - 1; /* Exclude hash from data processing */
 		       HV* opt_hv = (HV*)SvRV(last_arg);
@@ -1002,11 +980,11 @@ void scale(...)
 		       /* --- Parse 'center' --- */
 		       SV**restrict center_sv = hv_fetch(opt_hv, "center", 6, 0);
 		       if (center_sv) {
-		           SV* val_sv = *center_sv;
+		           SV*restrict val_sv = *center_sv;
 		           if (!SvOK(val_sv)) {
 		               do_center_mean = false; center_val = 0.0;
 		           } else {
-		               char *str = SvPV_nolen(val_sv);
+		               char *restrict str = SvPV_nolen(val_sv);
 		               /* Trap booleans and empty strings before numeric checks */
 		               if (strcasecmp(str, "mean") == 0 || strcasecmp(str, "true") == 0 || strcmp(str, "1") == 0) {
 		                   do_center_mean = true;
@@ -1050,7 +1028,7 @@ void scale(...)
 	  if (data_items == 1) {
 		   SV*restrict first_arg = ST(0);
 		   if (SvROK(first_arg) && SvTYPE(SvRV(first_arg)) == SVt_PVAV) {
-		       AV* av = (AV*)SvRV(first_arg);
+		       AV*restrict av = (AV*)SvRV(first_arg);
 		       if (av_len(av) >= 0) {
 		           SV**restrict first_elem = av_fetch(av, 0, 0);
 		           if (first_elem && SvROK(*first_elem) && SvTYPE(SvRV(*first_elem)) == SVt_PVAV) {
@@ -1063,36 +1041,36 @@ void scale(...)
 		   /* ========================================================= */
 		   /* MATRIX MODE: Scale columns independently (Just like R)    */
 		   /* ========================================================= */
-		   AV* mat_av = (AV*)SvRV(ST(0));
-		   unsigned int nrow = av_len(mat_av) + 1, ncol = 0;
+		   AV*restrict mat_av = (AV*)SvRV(ST(0));
+		   size_t nrow = av_len(mat_av) + 1, ncol = 0;
 		   
-		   SV** first_row = av_fetch(mat_av, 0, 0);
+		   SV**restrict first_row = av_fetch(mat_av, 0, 0);
 		   ncol = av_len((AV*)SvRV(*first_row)) + 1;
 
 		   if (nrow == 0 || ncol == 0) croak("scale requires non-empty matrix");
 
 		   /* Create a new matrix for the scaled output */
-		   AV* result_av = newAV();
+		   AV*restrict result_av = newAV();
 		   av_extend(result_av, nrow - 1);
-		   AV** row_ptrs = (AV**)safemalloc(nrow * sizeof(AV*));
-		   for (unsigned int r = 0; r < nrow; r++) {
+		   AV**restrict row_ptrs = (AV**)safemalloc(nrow * sizeof(AV*));
+		   for (size_t r = 0; r < nrow; r++) {
 		       row_ptrs[r] = newAV();
 		       av_extend(row_ptrs[r], ncol - 1);
 		       av_push(result_av, newRV_noinc((SV*)row_ptrs[r]));
 		   }
 
 		   /* Calculate and apply scale per column */
-		   for (unsigned int c = 0; c < ncol; c++) {
+		   for (size_t c = 0; c < ncol; c++) {
 		       double col_sum = 0.0;
 		       double *restrict col_data;
 		       Newx(col_data, nrow, double);
 
 		       /* Extract the column data */
-		       for (unsigned int r = 0; r < nrow; r++) {
-		           SV** row_sv = av_fetch(mat_av, r, 0);
+		       for (size_t r = 0; r < nrow; r++) {
+		           SV**restrict row_sv = av_fetch(mat_av, r, 0);
 		           if (row_sv && SvROK(*row_sv)) {
-		               AV* row_av = (AV*)SvRV(*row_sv);
-		               SV** cell_sv = av_fetch(row_av, c, 0);
+		               AV*restrict row_av = (AV*)SvRV(*row_sv);
+		               SV**restrict cell_sv = av_fetch(row_av, c, 0);
 		               col_data[r] = (cell_sv && SvOK(*cell_sv)) ? SvNV(*cell_sv) : 0.0;
 		           } else {
 		               col_data[r] = 0.0;
@@ -1110,14 +1088,14 @@ void scale(...)
 		               croak("scale needs >= 2 rows to calculate standard deviation for a matrix column");
 		           }
 		           double sum_sq = 0.0;
-		           for (unsigned int r = 0; r < nrow; r++) {
+		           for (size_t r = 0; r < nrow; r++) {
 		               double diff = col_data[r] - col_center;
 		               sum_sq += diff * diff;
 		           }
 		           col_scale = sqrt(sum_sq / (nrow - 1));
 		       }
 		       /* Store scaled values back into the new matrix rows */
-		       for (unsigned int r = 0; r < nrow; r++) {
+		       for (size_t r = 0; r < nrow; r++) {
 		           double centered = col_data[r] - col_center;
 		           double final_val = (col_scale == 0.0) ? (0.0 / 0.0) : (centered / col_scale);
 		           av_store(row_ptrs[r], c, newSVnv(final_val));
@@ -1128,20 +1106,18 @@ void scale(...)
 		   /* Push the resulting matrix as a single Reference onto the Perl stack */
 		   EXTEND(SP, 1);
 		   PUSHs(sv_2mortal(newRV_noinc((SV*)result_av)));
-
 	  } else {
 		   /* ========================================================= */
 		   /* FLAT LIST MODE: Original functionality                    */
 		   /* ========================================================= */
-		   unsigned int total_count = 0, k = 0;
+		   size_t total_count = 0, k = 0;
 		   double *restrict nums;
 		   double sum = 0.0;
-
-		   for (unsigned int i = 0; i < data_items; i++) {
+		   for (size_t i = 0; i < data_items; i++) {
 		       SV* arg = ST(i);
 		       if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
-		           AV* av = (AV*)SvRV(arg);
-		           unsigned int len = av_len(av) + 1;
+		           AV*restrict av = (AV*)SvRV(arg);
+		           size_t len = av_len(av) + 1;
 		           for (unsigned int j = 0; j < len; j++) {
 		               SV** tv = av_fetch(av, j, 0);
 		               if (tv && SvOK(*tv)) { total_count++; }
@@ -1154,13 +1130,13 @@ void scale(...)
 		   if (total_count == 0) croak("scale requires at least 1 numeric element");
 		   Newx(nums, total_count, double);
 
-		   for (unsigned int i = 0; i < data_items; i++) {
-		       SV* arg = ST(i);
+		   for (size_t i = 0; i < data_items; i++) {
+		       SV*restrict arg = ST(i);
 		       if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
-		           AV* av = (AV*)SvRV(arg);
-		           unsigned int len = av_len(av) + 1;
-		           for (unsigned int j = 0; j < len; j++) {
-		               SV** tv = av_fetch(av, j, 0);
+		           AV*restrict av = (AV*)SvRV(arg);
+		           size_t len = av_len(av) + 1;
+		           for (size_t j = 0; j < len; j++) {
+		               SV**restrict tv = av_fetch(av, j, 0);
 		               if (tv && SvOK(*tv)) { 
 		                   double val = SvNV(*tv);
 		                   nums[k++] = val; sum += val;
@@ -1180,7 +1156,7 @@ void scale(...)
 		           croak("scale needs >= 2 elements to calculate SD");
 		       }
 		       double sum_sq = 0.0;
-		       for (unsigned int i = 0; i < total_count; i++) {
+		       for (size_t i = 0; i < total_count; i++) {
 		           double diff = nums[i] - center_val;
 		           sum_sq += diff * diff;
 		       }
@@ -1188,7 +1164,7 @@ void scale(...)
 		   }
 
 		   EXTEND(SP, total_count);
-		   for (unsigned int i = 0; i < total_count; i++) {
+		   for (size_t i = 0; i < total_count; i++) {
 		       double centered = nums[i] - center_val;
 		       double final_val = (scale_val == 0.0) ? (0.0 / 0.0) : (centered / scale_val);
 		       PUSHs(sv_2mortal(newSVnv(final_val)));
@@ -1232,7 +1208,7 @@ CODE:
         croak("The 'data' option must be an array reference (e.g. data => [1..6])");
     }
 
-    AV* data_av = (AV*)SvRV(data_sv);
+    AV*restrict data_av = (AV*)SvRV(data_sv);
     UV  data_len = (UV)(av_top_index(data_av) + 1);
 
     if (data_len == 0) {
@@ -1252,10 +1228,10 @@ CODE:
         croak("Dimensions must be greater than 0");
     }
     /* Create the matrix (Array of Arrays) */
-    AV* result_av = newAV();
+    AV*restrict result_av = newAV();
     av_extend(result_av, nrow - 1);
     UV r, c, i;/* Use unsigned types for counters to prevent negative indexing */
-    AV** row_ptrs = (AV**)safemalloc(nrow * sizeof(AV*)); /* Pre-allocate row pointers */
+    AV**restrict row_ptrs = (AV**restrict)safemalloc(nrow * sizeof(AV*)); /* Pre-allocate row pointers */
     for (r = 0; r < nrow; r++) {
         row_ptrs[r] = newAV();
         av_extend(row_ptrs[r], ncol - 1);

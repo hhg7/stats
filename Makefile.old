@@ -1,4 +1,4 @@
-# This Makefile is for the stats extension to perl.
+# This Makefile is for the Stats::LikeR extension to perl.
 #
 # It was generated automatically by MakeMaker version
 # 7.76 (Revision: 77600) from the contents of
@@ -16,17 +16,17 @@
 #     DEFINE => q[]
 #     INC => q[-I.]
 #     LIBS => [q[-lm]]
-#     NAME => q[stats]
+#     NAME => q[Stats::LikeR]
 #     PREREQ_PM => {  }
 #     TEST_REQUIRES => {  }
-#     VERSION_FROM => q[lib/stats.pm]
+#     VERSION_FROM => q[lib/Stats/LikeR.pm]
 
 # --- MakeMaker post_initialize section:
 
 
 # --- MakeMaker const_config section:
 
-# These definitions are from config.sh (via /home/con/perl5/perlbrew/perls/perl-5.42.1/lib/5.42.1/x86_64-linux/Config.pm).
+# These definitions are from config.sh (via /home/con/perl5/perlbrew/perls/perl-5.42.2/lib/5.42.2/x86_64-linux/Config.pm).
 # They may have been overridden via Makefile.PL or on the command line.
 AR = ar
 CC = cc
@@ -44,10 +44,10 @@ LIBC = /lib/x86_64-linux-gnu/libc.so.6
 LIB_EXT = .a
 OBJ_EXT = .o
 OSNAME = linux
-OSVERS = 6.8.0-101-generic
+OSVERS = 6.8.0-106-generic
 RANLIB = :
-SITELIBEXP = /home/con/perl5/perlbrew/perls/perl-5.42.1/lib/site_perl/5.42.1
-SITEARCHEXP = /home/con/perl5/perlbrew/perls/perl-5.42.1/lib/site_perl/5.42.1/x86_64-linux
+SITELIBEXP = /home/con/perl5/perlbrew/perls/perl-5.42.2/lib/site_perl/5.42.2
+SITEARCHEXP = /home/con/perl5/perlbrew/perls/perl-5.42.2/lib/site_perl/5.42.2/x86_64-linux
 SO = so
 VENDORARCHEXP = 
 VENDORLIBEXP = 
@@ -57,8 +57,8 @@ VENDORLIBEXP =
 AR_STATIC_ARGS = cr
 DIRFILESEP = /
 DFSEP = $(DIRFILESEP)
-NAME = stats
-NAME_SYM = stats
+NAME = Stats::LikeR
+NAME_SYM = Stats_LikeR
 VERSION = 0.01
 VERSION_MACRO = VERSION
 VERSION_SYM = 0_01
@@ -79,55 +79,55 @@ MAN3SECTION = 3
 INSTALLDIRS = site
 DESTDIR = 
 PREFIX = $(SITEPREFIX)
-PERLPREFIX = /home/con/perl5/perlbrew/perls/perl-5.42.1
-SITEPREFIX = /home/con/perl5/perlbrew/perls/perl-5.42.1
+PERLPREFIX = /home/con/perl5/perlbrew/perls/perl-5.42.2
+SITEPREFIX = /home/con/perl5/perlbrew/perls/perl-5.42.2
 VENDORPREFIX = 
-INSTALLPRIVLIB = /home/con/perl5/perlbrew/perls/perl-5.42.1/lib/5.42.1
+INSTALLPRIVLIB = /home/con/perl5/perlbrew/perls/perl-5.42.2/lib/5.42.2
 DESTINSTALLPRIVLIB = $(DESTDIR)$(INSTALLPRIVLIB)
-INSTALLSITELIB = /home/con/perl5/perlbrew/perls/perl-5.42.1/lib/site_perl/5.42.1
+INSTALLSITELIB = /home/con/perl5/perlbrew/perls/perl-5.42.2/lib/site_perl/5.42.2
 DESTINSTALLSITELIB = $(DESTDIR)$(INSTALLSITELIB)
 INSTALLVENDORLIB = 
 DESTINSTALLVENDORLIB = $(DESTDIR)$(INSTALLVENDORLIB)
-INSTALLARCHLIB = /home/con/perl5/perlbrew/perls/perl-5.42.1/lib/5.42.1/x86_64-linux
+INSTALLARCHLIB = /home/con/perl5/perlbrew/perls/perl-5.42.2/lib/5.42.2/x86_64-linux
 DESTINSTALLARCHLIB = $(DESTDIR)$(INSTALLARCHLIB)
-INSTALLSITEARCH = /home/con/perl5/perlbrew/perls/perl-5.42.1/lib/site_perl/5.42.1/x86_64-linux
+INSTALLSITEARCH = /home/con/perl5/perlbrew/perls/perl-5.42.2/lib/site_perl/5.42.2/x86_64-linux
 DESTINSTALLSITEARCH = $(DESTDIR)$(INSTALLSITEARCH)
 INSTALLVENDORARCH = 
 DESTINSTALLVENDORARCH = $(DESTDIR)$(INSTALLVENDORARCH)
-INSTALLBIN = /home/con/perl5/perlbrew/perls/perl-5.42.1/bin
+INSTALLBIN = /home/con/perl5/perlbrew/perls/perl-5.42.2/bin
 DESTINSTALLBIN = $(DESTDIR)$(INSTALLBIN)
-INSTALLSITEBIN = /home/con/perl5/perlbrew/perls/perl-5.42.1/bin
+INSTALLSITEBIN = /home/con/perl5/perlbrew/perls/perl-5.42.2/bin
 DESTINSTALLSITEBIN = $(DESTDIR)$(INSTALLSITEBIN)
 INSTALLVENDORBIN = 
 DESTINSTALLVENDORBIN = $(DESTDIR)$(INSTALLVENDORBIN)
-INSTALLSCRIPT = /home/con/perl5/perlbrew/perls/perl-5.42.1/bin
+INSTALLSCRIPT = /home/con/perl5/perlbrew/perls/perl-5.42.2/bin
 DESTINSTALLSCRIPT = $(DESTDIR)$(INSTALLSCRIPT)
-INSTALLSITESCRIPT = /home/con/perl5/perlbrew/perls/perl-5.42.1/bin
+INSTALLSITESCRIPT = /home/con/perl5/perlbrew/perls/perl-5.42.2/bin
 DESTINSTALLSITESCRIPT = $(DESTDIR)$(INSTALLSITESCRIPT)
 INSTALLVENDORSCRIPT = 
 DESTINSTALLVENDORSCRIPT = $(DESTDIR)$(INSTALLVENDORSCRIPT)
-INSTALLMAN1DIR = /home/con/perl5/perlbrew/perls/perl-5.42.1/man/man1
+INSTALLMAN1DIR = /home/con/perl5/perlbrew/perls/perl-5.42.2/man/man1
 DESTINSTALLMAN1DIR = $(DESTDIR)$(INSTALLMAN1DIR)
-INSTALLSITEMAN1DIR = /home/con/perl5/perlbrew/perls/perl-5.42.1/man/man1
+INSTALLSITEMAN1DIR = /home/con/perl5/perlbrew/perls/perl-5.42.2/man/man1
 DESTINSTALLSITEMAN1DIR = $(DESTDIR)$(INSTALLSITEMAN1DIR)
 INSTALLVENDORMAN1DIR = 
 DESTINSTALLVENDORMAN1DIR = $(DESTDIR)$(INSTALLVENDORMAN1DIR)
-INSTALLMAN3DIR = /home/con/perl5/perlbrew/perls/perl-5.42.1/man/man3
+INSTALLMAN3DIR = /home/con/perl5/perlbrew/perls/perl-5.42.2/man/man3
 DESTINSTALLMAN3DIR = $(DESTDIR)$(INSTALLMAN3DIR)
-INSTALLSITEMAN3DIR = /home/con/perl5/perlbrew/perls/perl-5.42.1/man/man3
+INSTALLSITEMAN3DIR = /home/con/perl5/perlbrew/perls/perl-5.42.2/man/man3
 DESTINSTALLSITEMAN3DIR = $(DESTDIR)$(INSTALLSITEMAN3DIR)
 INSTALLVENDORMAN3DIR = 
 DESTINSTALLVENDORMAN3DIR = $(DESTDIR)$(INSTALLVENDORMAN3DIR)
-PERL_LIB = /home/con/perl5/perlbrew/perls/perl-5.42.1/lib/5.42.1
-PERL_ARCHLIB = /home/con/perl5/perlbrew/perls/perl-5.42.1/lib/5.42.1/x86_64-linux
+PERL_LIB = /home/con/perl5/perlbrew/perls/perl-5.42.2/lib/5.42.2
+PERL_ARCHLIB = /home/con/perl5/perlbrew/perls/perl-5.42.2/lib/5.42.2/x86_64-linux
 LIBPERL_A = libperl.a
 FIRST_MAKEFILE = Makefile
 MAKEFILE_OLD = Makefile.old
 MAKE_APERL_FILE = Makefile.aperl
 PERLMAINCC = $(CC)
-PERL_INC = /home/con/perl5/perlbrew/perls/perl-5.42.1/lib/5.42.1/x86_64-linux/CORE
-PERL = "/home/con/perl5/perlbrew/perls/perl-5.42.1/bin/perl"
-FULLPERL = "/home/con/perl5/perlbrew/perls/perl-5.42.1/bin/perl"
+PERL_INC = /home/con/perl5/perlbrew/perls/perl-5.42.2/lib/5.42.2/x86_64-linux/CORE
+PERL = "/home/con/perl5/perlbrew/perls/perl-5.42.2/bin/perl"
+FULLPERL = "/home/con/perl5/perlbrew/perls/perl-5.42.2/bin/perl"
 ABSPERL = $(PERL)
 PERLRUN = $(PERL)
 FULLPERLRUN = $(FULLPERL)
@@ -140,7 +140,7 @@ PERM_DIR = 755
 PERM_RW = 644
 PERM_RWX = 755
 
-MAKEMAKER   = /home/con/perl5/perlbrew/perls/perl-5.42.1/lib/5.42.1/ExtUtils/MakeMaker.pm
+MAKEMAKER   = /home/con/perl5/perlbrew/perls/perl-5.42.2/lib/5.42.2/ExtUtils/MakeMaker.pm
 MM_VERSION  = 7.76
 MM_REVISION = 77600
 
@@ -149,11 +149,11 @@ MM_REVISION = 77600
 # PARENT_NAME = NAME without BASEEXT and no trailing :: (eg Foo::Bar)
 # DLBASE  = Basename part of dynamic library. May be just equal BASEEXT.
 MAKE = make
-FULLEXT = stats
-BASEEXT = stats
-PARENT_NAME = 
+FULLEXT = Stats/LikeR
+BASEEXT = LikeR
+PARENT_NAME = Stats
 DLBASE = $(BASEEXT)
-VERSION_FROM = lib/stats.pm
+VERSION_FROM = lib/Stats/LikeR.pm
 INC = -I.
 DEFINE = 
 OBJECT = $(BASEEXT)$(OBJ_EXT)
@@ -162,16 +162,22 @@ LINKTYPE = dynamic
 BOOTDEP = 
 
 # Handy lists of source code files:
-XS_FILES = stats.xs
-C_FILES  = stats.c
-O_FILES  = stats.o
+XS_FILES = Fisher_Test.xs \
+	LikeR.xs \
+	bu.stats.xs
+C_FILES  = Fisher_Test.c \
+	LikeR.c \
+	bu.stats.c
+O_FILES  = Fisher_Test.o \
+	LikeR.o \
+	bu.stats.o
 H_FILES  = ppport.h
 MAN1PODS = 
 MAN3PODS = 
 
 # Where to build things
-INST_LIBDIR      = $(INST_LIB)
-INST_ARCHLIBDIR  = $(INST_ARCHLIB)
+INST_LIBDIR      = $(INST_LIB)/Stats
+INST_ARCHLIBDIR  = $(INST_ARCHLIB)/Stats
 
 INST_AUTODIR     = $(INST_LIB)/auto/$(FULLEXT)
 INST_ARCHAUTODIR = $(INST_ARCHLIB)/auto/$(FULLEXT)
@@ -187,10 +193,10 @@ PERL_ARCHIVE_AFTER =
 
 
 TO_INST_PM = benchmark.pl \
-	lib/stats.pm \
-	try.pl
-PERL_ARCHLIBDEP = /home/con/perl5/perlbrew/perls/perl-5.42.1/lib/5.42.1/x86_64-linux
-PERL_INCDEP = /home/con/perl5/perlbrew/perls/perl-5.42.1/lib/5.42.1/x86_64-linux/CORE
+	examples.pl \
+	lib/Stats/LikeR.pm
+PERL_ARCHLIBDEP = /home/con/perl5/perlbrew/perls/perl-5.42.2/lib/5.42.2/x86_64-linux
+PERL_INCDEP = /home/con/perl5/perlbrew/perls/perl-5.42.2/lib/5.42.2/x86_64-linux/CORE
 
 
 # Dependencies info
@@ -213,12 +219,12 @@ AUTOSPLITFILE = $(ABSPERLRUN)  -e 'use AutoSplit;  autosplit($$$$ARGV[0], $$$$AR
 
 # --- MakeMaker tool_xsubpp section:
 
-XSUBPPDIR = /home/con/perl5/perlbrew/perls/perl-5.42.1/lib/5.42.1/ExtUtils
+XSUBPPDIR = /home/con/perl5/perlbrew/perls/perl-5.42.2/lib/5.42.2/ExtUtils
 XSUBPP = "$(XSUBPPDIR)$(DFSEP)xsubpp"
 XSUBPPRUN = $(PERLRUN) $(XSUBPP)
 XSPROTOARG = 
-XSUBPPDEPS = /home/con/perl5/perlbrew/perls/perl-5.42.1/lib/5.42.1/ExtUtils/typemap /home/con/perl5/perlbrew/perls/perl-5.42.1/lib/5.42.1/ExtUtils$(DFSEP)xsubpp
-XSUBPPARGS = -typemap '/home/con/perl5/perlbrew/perls/perl-5.42.1/lib/5.42.1/ExtUtils/typemap'
+XSUBPPDEPS = /home/con/perl5/perlbrew/perls/perl-5.42.2/lib/5.42.2/ExtUtils/typemap /home/con/perl5/perlbrew/perls/perl-5.42.2/lib/5.42.2/ExtUtils$(DFSEP)xsubpp
+XSUBPPARGS = -typemap '/home/con/perl5/perlbrew/perls/perl-5.42.2/lib/5.42.2/ExtUtils/typemap'
 XSUBPP_EXTRA_ARGS =
 
 
@@ -274,8 +280,8 @@ CI = ci -u
 RCS_LABEL = rcs -Nv$(VERSION_SYM): -q
 DIST_CP = best
 DIST_DEFAULT = tardist
-DISTNAME = stats
-DISTVNAME = stats-0.01
+DISTNAME = Stats-LikeR
+DISTVNAME = Stats-LikeR-0.01
 
 
 # --- MakeMaker macro section:
@@ -294,7 +300,7 @@ MPOLLUTE =
 
 # --- MakeMaker const_loadlibs section:
 
-# stats might depend on some other libraries:
+# Stats::LikeR might depend on some other libraries:
 # See ExtUtils::Liblist for details
 #
 EXTRALIBS = 
@@ -544,8 +550,20 @@ clean :: clean_subdirs
 	  $(BOOTSTRAP) $(INST_ARCHAUTODIR)/extralibs.all \
 	  $(INST_ARCHAUTODIR)/extralibs.ld $(MAKE_APERL_FILE) \
 	  *$(LIB_EXT) *$(OBJ_EXT) \
-	  *perl.core MYMETA.json \
+	  *perl.core Fisher_Test.base \
+	  Fisher_Test.bs Fisher_Test.bso \
+	  Fisher_Test.c Fisher_Test.def \
+	  Fisher_Test.exp Fisher_Test.o \
+	  Fisher_Test_def.old LikeR.base \
+	  LikeR.bs LikeR.bso \
+	  LikeR.c LikeR.def \
+	  LikeR.exp LikeR.o \
+	  LikeR_def.old MYMETA.json \
 	  MYMETA.yml blibdirs.ts \
+	  bu.stats.base bu.stats.bs \
+	  bu.stats.bso bu.stats.c \
+	  bu.stats.def bu.stats.exp \
+	  bu.stats.o bu.stats_def.old \
 	  core core.*perl.*.? \
 	  core.[0-9] core.[0-9][0-9] \
 	  core.[0-9][0-9][0-9] core.[0-9][0-9][0-9][0-9] \
@@ -554,10 +572,6 @@ clean :: clean_subdirs
 	  perl$(EXE_EXT) perl.exe \
 	  perlmain.c pm_to_blib \
 	  pm_to_blib.ts so_locations \
-	  stats.base stats.bs \
-	  stats.bso stats.c \
-	  stats.def stats.exp \
-	  stats.o stats_def.old \
 	  tmon.out 
 	- $(RM_RF) \
 	  blib 
@@ -598,7 +612,7 @@ metafile : create_distdir
 	$(NOECHO) $(ECHO) 'meta-spec:' >> META_new.yml
 	$(NOECHO) $(ECHO) '  url: http://module-build.sourceforge.net/META-spec-v1.4.html' >> META_new.yml
 	$(NOECHO) $(ECHO) '  version: '\''1.4'\''' >> META_new.yml
-	$(NOECHO) $(ECHO) 'name: stats' >> META_new.yml
+	$(NOECHO) $(ECHO) 'name: Stats-LikeR' >> META_new.yml
 	$(NOECHO) $(ECHO) 'no_index:' >> META_new.yml
 	$(NOECHO) $(ECHO) '  directory:' >> META_new.yml
 	$(NOECHO) $(ECHO) '    - t' >> META_new.yml
@@ -622,7 +636,7 @@ metafile : create_distdir
 	$(NOECHO) $(ECHO) '      "url" : "http://search.cpan.org/perldoc?CPAN::Meta::Spec",' >> META_new.json
 	$(NOECHO) $(ECHO) '      "version" : 2' >> META_new.json
 	$(NOECHO) $(ECHO) '   },' >> META_new.json
-	$(NOECHO) $(ECHO) '   "name" : "stats",' >> META_new.json
+	$(NOECHO) $(ECHO) '   "name" : "Stats-LikeR",' >> META_new.json
 	$(NOECHO) $(ECHO) '   "no_index" : {' >> META_new.json
 	$(NOECHO) $(ECHO) '      "directory" : [' >> META_new.json
 	$(NOECHO) $(ECHO) '         "t",' >> META_new.json
@@ -969,7 +983,7 @@ PERL_HDRS = \
 
 $(OBJECT) : $(PERL_HDRS)
 
-stats.c : $(XSUBPPDEPS)
+Fisher_Test.c LikeR.c bu.stats.c : $(XSUBPPDEPS)
 
 
 # --- MakeMaker makefile section:
@@ -995,8 +1009,8 @@ $(FIRST_MAKEFILE) : Makefile.PL $(CONFIGDEP)
 
 # --- MakeMaker makeaperl section ---
 MAP_TARGET    = perl
-FULLPERL      = "/home/con/perl5/perlbrew/perls/perl-5.42.1/bin/perl"
-MAP_PERLINC   = "-Iblib/arch" "-Iblib/lib" "-I/home/con/perl5/perlbrew/perls/perl-5.42.1/lib/5.42.1/x86_64-linux" "-I/home/con/perl5/perlbrew/perls/perl-5.42.1/lib/5.42.1"
+FULLPERL      = "/home/con/perl5/perlbrew/perls/perl-5.42.2/bin/perl"
+MAP_PERLINC   = "-Iblib/arch" "-Iblib/lib" "-I/home/con/perl5/perlbrew/perls/perl-5.42.2/lib/5.42.2/x86_64-linux" "-I/home/con/perl5/perlbrew/perls/perl-5.42.2/lib/5.42.2"
 
 $(MAP_TARGET) :: $(MAKE_APERL_FILE)
 	$(MAKE) $(USEMAKEFILE) $(MAKE_APERL_FILE) $@
@@ -1047,14 +1061,14 @@ testdb_static :: static pure_all $(MAP_TARGET)
 # --- MakeMaker ppd section:
 # Creates a PPD (Perl Package Description) for a binary distribution.
 ppd :
-	$(NOECHO) $(ECHO) '<SOFTPKG NAME="stats" VERSION="0.01">' > stats.ppd
-	$(NOECHO) $(ECHO) '    <ABSTRACT></ABSTRACT>' >> stats.ppd
-	$(NOECHO) $(ECHO) '    <AUTHOR></AUTHOR>' >> stats.ppd
-	$(NOECHO) $(ECHO) '    <IMPLEMENTATION>' >> stats.ppd
-	$(NOECHO) $(ECHO) '        <ARCHITECTURE NAME="x86_64-linux-5.42" />' >> stats.ppd
-	$(NOECHO) $(ECHO) '        <CODEBASE HREF="" />' >> stats.ppd
-	$(NOECHO) $(ECHO) '    </IMPLEMENTATION>' >> stats.ppd
-	$(NOECHO) $(ECHO) '</SOFTPKG>' >> stats.ppd
+	$(NOECHO) $(ECHO) '<SOFTPKG NAME="Stats-LikeR" VERSION="0.01">' > Stats-LikeR.ppd
+	$(NOECHO) $(ECHO) '    <ABSTRACT></ABSTRACT>' >> Stats-LikeR.ppd
+	$(NOECHO) $(ECHO) '    <AUTHOR></AUTHOR>' >> Stats-LikeR.ppd
+	$(NOECHO) $(ECHO) '    <IMPLEMENTATION>' >> Stats-LikeR.ppd
+	$(NOECHO) $(ECHO) '        <ARCHITECTURE NAME="x86_64-linux-5.42" />' >> Stats-LikeR.ppd
+	$(NOECHO) $(ECHO) '        <CODEBASE HREF="" />' >> Stats-LikeR.ppd
+	$(NOECHO) $(ECHO) '    </IMPLEMENTATION>' >> Stats-LikeR.ppd
+	$(NOECHO) $(ECHO) '</SOFTPKG>' >> Stats-LikeR.ppd
 
 
 # --- MakeMaker pm_to_blib section:
@@ -1065,9 +1079,9 @@ pm_to_blib : $(FIRST_MAKEFILE) $(TO_INST_PM)
 	  -e '@parts=splice @ARGV,0,$$i+1;' \
 	  -e 'pop @parts; $$filter=join q{ }, map qq{"$$_"}, @parts;' \
 	  -e 'pm_to_blib({@ARGV}, '\''$(INST_LIB)/auto'\'', $$filter, '\''$(PERM_DIR)'\'')' -- $(PM_FILTER) -- \
-	  'benchmark.pl' '$(INST_LIB)/benchmark.pl' \
-	  'lib/stats.pm' 'blib/lib/stats.pm' \
-	  'try.pl' '$(INST_LIB)/try.pl' 
+	  'benchmark.pl' '$(INST_LIB)/Stats/benchmark.pl' \
+	  'examples.pl' '$(INST_LIB)/Stats/examples.pl' \
+	  'lib/Stats/LikeR.pm' 'blib/lib/Stats/LikeR.pm' 
 	$(NOECHO) $(TOUCH) pm_to_blib
 
 
