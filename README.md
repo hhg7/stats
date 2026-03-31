@@ -42,7 +42,22 @@ where `$mtcars` is a hash of hashes
 
 ## mean
 
+    mean(1,2,3);
+    
+or
+
+    my @arr = 1..8;
+    mean(@arr, 4, 5)
+
+or
+
+    mean([1,1], [2,2]) # 1.5
+
 ## median
+
+works like mean:
+
+    median( $test_data[$i][0] )
 
 ## p_adjust
 
@@ -52,8 +67,32 @@ where `$mtcars` is a hash of hashes
 
 ## scale
 
+    my @scaled_results = scale(1..5);
+
 ## sd
 
+    my $stdev = sd(2,4,4,4,5,5,7,9); # works just like List::Util
+
+Correct answer is 2.1380899352994;
+    
 ## t_test
+
+returns a hash reference
+
+    $t_test = t_test(
+    	'x'    => $test_data[3][0],
+    	'y'    => $test_data[3][1],
+	    paired => true
+    );
+
+which looks like:
+
+    conf_int     => [
+        -0.06672889, 0.25672889
+    ],
+    df        => 5,
+    estimate  => 0.095,
+    p_value   => 0.19143688433660,
+    statistic => 1.50996688705414
 
 ## var

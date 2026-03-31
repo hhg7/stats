@@ -47,7 +47,9 @@ if (mean([1,1], [2,2]) == 1.5) {
 eval { mean() };
 like( $@, qr/mean needs >= 1 element/, 'mean: dies when given empty input' );
 
+# -------------------------------
 # standard deviation
+# -------------------------------
 my $stdev = sd(2,4,4,4,5,5,7,9);
 my $correct = 2.1380899352994;
 if (abs($stdev - $correct) < 10**-14) {
@@ -460,7 +462,7 @@ like( $@, qr/Data array cannot be empty/, 'matrix: dies on empty data array' );
 my $mtcars = json_file_to_ref('mtcars.hoh.json');
 my $lm = lm(formula =>  'mpg ~ wt * hp^2', data => $mtcars);
 #p $lm;
-my %correct_lm = (
+my %correct = (
 	coefficients => {
 		Intercept => 49.8084234287587,
 		hp        => -0.120102090978019,
@@ -510,31 +512,31 @@ foreach my $key ('Intercept', 'hp', 'wt', 'wt:hp') {
 		#p $lm;
 		die "\"$key\" isn't defined" ;
 	}
-	is_approx( $lm->{coefficients}{$key}, $correct_lm{coefficients}{$key}, "Checking lm's $key" );
+	is_approx( $lm->{coefficients}{$key}, $correct{coefficients}{$key}, "Checking lm's $key" );
 }
 foreach my $key ('df.residual', 'rank') {
 	unless (defined $lm->{$key}) {
 		#p $lm;
 		die "\"$key\" isn't defined" ;
 	}
-	is_approx( $lm->{$key}, $correct_lm{$key}, "Checking \"$key\"");
+	is_approx( $lm->{$key}, $correct{$key}, "Checking \"$key\"");
 }
 foreach my $key ('fitted.values', 'residuals') {
-	foreach my $car (keys %{ $correct_lm{$key} }) {
+	foreach my $car (keys %{ $correct{$key} }) {
 		unless (defined $lm->{$key}{$car}) {
 			#p $lm;
 			die "\"$car\" isn't defined in \"fitted.values\"" ;
 		}
 		is_approx(
 			$lm->{$key}{$car},
-			$correct_lm{$key}{$car},
+			$correct{$key}{$car},
 			"Checking $key \"$car\"",
 			10**-5
 		);
 	}
 }
 $lm = lm(formula =>  'mpg ~ wt + hp', data => $mtcars);
-%correct_lm = (
+%correct = (
 	coefficients => {
 		Intercept => 37.22727,
 		hp        => -0.03177,
@@ -550,7 +552,7 @@ foreach my $key ('Intercept', 'hp', 'wt') {
 	}
 	is_approx(
 		$lm->{coefficients}{$key},
-		$correct_lm{coefficients}{$key},
+		$correct{coefficients}{$key},
 		"Checking lm's $key",
 		0.1
 	);
@@ -559,7 +561,7 @@ foreach my $key ('df.residual', 'rank') {
 	unless (defined $lm->{$key}) {
 		die "\"$key\" isn't defined" ;
 	}
-	is_approx( $lm->{$key}, $correct_lm{$key}, "Checking \"$key\"");
+	is_approx( $lm->{$key}, $correct{$key}, "Checking \"$key\"");
 }
 
 # lm exceptions and additional tests
@@ -592,11 +594,36 @@ like( $@, qr/standard deviation must be non-negative/, 'rnorm: dies on negative 
 
 eval { rnorm(n => 10, mean => 0, 'missing_value_key') };
 like( $@, qr/must be even key\/value pairs/, 'rnorm: dies on odd argument count' );
-
+#----------------------
+#    quantile
+#----------------------
+my $quantile = quantile('x' => [1..99], probs => [0.05, 0.1, 0.25]);
+# R equivalent: quantile(1:99, probs=c(0.01,0.1,0.25))
+@ans = (5.9, 10.80, 25.50);
+my @quantile_keys = ('5%', '10%', '25%');
+foreach my $idx (0..$#ans) {
+	is_approx($quantile->{$quantile_keys[$idx]}, $ans[$idx], "quantile: $quantile_keys[$idx]", 10**-14);
+}
+p $quantile;
+#----------------------
+#    Fisher's Test
+#----------------------
 my $array_data = [
 	[10, 2],
 	[3, 15]
 ];
-my $res1 = fisher_test($array_data);
-p $res1;
+my $ft = fisher_test($array_data);
+p $ft; # R equivalent: fisher.test( matrix(c(10,2,3,15), nrow = 2)))
+%correct = (
+	p_value => 0.0005367241
+);
+is_approx( $ft->{p_value}, $correct{p_value}, 'Fisher\'s test p-value' );
+my $conf_int_range = abs $ft->{conf_int}[0] - $ft->{conf_int}[1];
+my $correct_conf_int_range = 301.462337971516 - 2.75338278824932;
+if (0.99*$correct_conf_int_range < $conf_int_range < 1.01* $correct_conf_int_range) {
+	pass('Fisher\'s test is within 1% of correct: ');
+} else {
+	fail('Fisher\'s test is *NOT* within 1% of correct: ');
+}
+is_approx( $ft->{estimate}{'odds ratio'}, 21.30533, 'Fisher\'s test odds ratio', 10**-3);
 done_testing();

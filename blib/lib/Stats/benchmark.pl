@@ -4,7 +4,7 @@ use 5.042.1;
 no source::encoding;
 use warnings FATAL => 'all';
 use autodie ':all';
-use stats; # mean
+use Stats::LikeR; # mean
 use Time::HiRes;
 use List::Util 'sum';
 use Util 'rand_between';
@@ -31,5 +31,5 @@ for (my $n = 0; $n < $max; $n++) {
 }
 $t1 = Time::HiRes::time();
 my $run1 = $t1-$t0;
-printf("mean did %lf seconds\n", $run1);
+printf("XS mean did %lf seconds\n", $run1);
 printf("2nd/1st = %lf; 1st/2nd = %lf\n", $run1/$run0, $run0/$run1);

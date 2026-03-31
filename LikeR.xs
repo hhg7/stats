@@ -180,7 +180,7 @@ static double exact_p_value(size_t a, size_t b, size_t c, size_t d) {
 
 /* Gauss-Jordan Elimination with partial pivoting for matrix inversion.
  * Overwrites matrix A with its inverse. Returns 1 on singular failure. */
-static int invert_matrix_gj(double *A, UV n) {
+static int invert_matrix_gj(double *restrict A, UV n) {
 	UV *restrict indxc, *restrict indxr, *restrict ipiv;
 	Newx(indxc, n, UV);
 	Newx(indxr, n, UV);
@@ -301,7 +301,7 @@ typedef struct {
 } PVal;
 
 /* Comparator for qsort */
-static int cmp_pval(const void *a, const void *b) {
+static int cmp_pval(const void *restrict a, const void *restrict b) {
     double diff = ((PVal*)a)->p - ((PVal*)b)->p;
     if (diff < 0) return -1;
     if (diff > 0) return 1;
@@ -318,7 +318,7 @@ typedef struct {
     size_t idx;
 } RankItem;
 
-static int cmp_rank_item(const void *a, const void *b) {
+static int cmp_rank_item(const void *restrict a, const void *restrict b) {
     double diff = ((RankItem*)a)->val - ((RankItem*)b)->val;
     if (diff < 0) return -1;
     if (diff > 0) return  1;
@@ -327,7 +327,7 @@ static int cmp_rank_item(const void *a, const void *b) {
 
 /* Compute 1-based average ranks with tie-breaking into out[].
  * in[] is not modified.                                                 */
-static void rank_data(const double *in, double *out, size_t n) {
+static void rank_data(const double *restrict in, double *restrict out, size_t n) {
 	RankItem *restrict ri;
 	Newx(ri, n, RankItem);
 	for (size_t i = 0; i < n; i++) { ri[i].val = in[i]; ri[i].idx = i; }
@@ -368,7 +368,7 @@ static double pearson_corr(const double *restrict x, const double *restrict y, u
  * x, T_y = pairs tied only on y.  Joint ties (both zero) are excluded
  * from numerator and denominator, matching R's cor(method="kendall").
  * Returns NAN when the denominator is zero.                             */
-static double kendall_tau_b(const double *x, const double *y, unsigned int n) {
+static double kendall_tau_b(const double *restrict x, const double *restrict y, unsigned int n) {
     size_t C = 0, D = 0, tie_x = 0, tie_y = 0;
     for (size_t i = 0; i < n - 1; i++) {
         for (size_t j = i + 1; j < n; j++) {
@@ -388,8 +388,8 @@ static double kendall_tau_b(const double *x, const double *y, unsigned int n) {
 
 /* Single dispatch: compute correlation according to method string.
  * Allocates and frees temporary rank arrays internally for Spearman.   */
-static double compute_cor(const double *x, const double *y,
-                           size_t n, const char *method) {
+static double compute_cor(const double *restrict x, const double *restrict y,
+                           size_t n, const char *restrict method) {
 	if (strcmp(method, "spearman") == 0) {
 	  double *restrict rx, *restrict ry;
 	  Newx(rx, n, double); Newx(ry, n, double);
@@ -475,13 +475,120 @@ static double qt_tail(double df, double p_tail) {
     return (low + high) / 2.0;
 }
 
-int compare_doubles(const void *a, const void *b) {
+int compare_doubles(const void *restrict a, const void *restrict b) {
     double da = *(const double*restrict)a;
     double db = *(const double*restrict)b;
     return (da > db) - (da < db);
 }
 /* --- XS SECTION --- */
 MODULE = Stats::LikeR	PACKAGE = Stats::LikeR		
+
+SV* quantile(...)
+	CODE:
+	{
+	  if (items % 2 != 0 && items != 1) 
+		   croak("Usage: quantile(x => \\@data, probs => \\@probs)");
+	  SV *restrict x_sv = NULL;
+	  SV *restrict probs_sv = NULL;
+	  /* --- Parse named arguments --- */
+	  if (items == 1) {
+		   x_sv = ST(0);
+	  } else {
+		   for (I32 i = 0; i < items; i += 2) {
+		       const char *restrict key = SvPV_nolen(ST(i));
+		       SV *restrict val = ST(i + 1);
+		       
+		       if      (strEQ(key, "x"))     x_sv = val;
+		       else if (strEQ(key, "probs")) probs_sv = val;
+		       else croak("quantile: unknown argument '%s'", key);
+		   }
+	  }
+	  if (!x_sv || !SvROK(x_sv) || SvTYPE(SvRV(x_sv)) != SVt_PVAV)
+		   croak("quantile: 'x' must be an array reference");
+	  AV *restrict x_av = (AV*)SvRV(x_sv);
+	  size_t n_raw = av_len(x_av) + 1;
+	  if (n_raw == 0) croak("quantile: 'x' is empty");
+
+	  /* --- Extract valid numeric data & drop NAs --- */
+	  double *restrict x;
+	  Newx(x, n_raw, double);
+	  size_t n = 0;
+	  for (size_t i = 0; i < n_raw; i++) {
+		   SV **restrict tv = av_fetch(x_av, i, 0);
+		   if (tv && SvOK(*tv)) {
+		       x[n++] = SvNV(*tv);
+		   }
+	  }
+	  if (n == 0) {
+		   Safefree(x);
+		   croak("quantile: 'x' contains no valid numbers");
+	  }
+
+	  /* --- Sort Data for Quantile Math --- */
+	  qsort(x, n, sizeof(double), compare_doubles);
+
+	  /* --- Parse Probabilities (Default matches R's c(0, .25, .5, .75, 1)) --- */
+	  double default_probs[] = {0.0, 0.25, 0.50, 0.75, 1.0};
+	  unsigned int n_probs = 5;
+	  double *restrict probs;
+
+	  if (probs_sv && SvROK(probs_sv) && SvTYPE(SvRV(probs_sv)) == SVt_PVAV) {
+		   AV *restrict p_av = (AV*)SvRV(probs_sv);
+		   n_probs = av_len(p_av) + 1;
+		   Newx(probs, n_probs, double);
+		   for (unsigned int i = 0; i < n_probs; i++) {
+		       SV **tv = av_fetch(p_av, i, 0);
+		       probs[i] = (tv && SvOK(*tv)) ? SvNV(*tv) : 0.0;
+		       if (probs[i] < 0.0 || probs[i] > 1.0) {
+		           Safefree(x); Safefree(probs);
+		           croak("quantile: probabilities must be between 0 and 1");
+		       }
+		   }
+	  } else {
+		   Newx(probs, n_probs, double);
+		   for (unsigned int i = 0; i < n_probs; i++) probs[i] = default_probs[i];
+	  }
+
+	  /* --- Calculate Quantiles (R Type 7 Algorithm) --- */
+	  HV *restrict res_hv = newHV();
+
+	  for (size_t i = 0; i < n_probs; i++) {
+		   double p = probs[i], q = 0.0;
+
+		   if (n == 1) {
+		       q = x[0];
+		   } else if (p == 1.0) {
+		       q = x[n - 1]; /* Prevent out-of-bounds mapping */
+		   } else if (p == 0.0) {
+		       q = x[0];
+		   } else {
+		       /* Continuous sample quantile interpolation (Type 7) */
+		       double h = (n - 1) * p;
+		       unsigned int j = (unsigned int)h; /* floor via cast */
+		       double gamma = h - j;
+		       q = (1.0 - gamma) * x[j] + gamma * x[j + 1];
+		   }
+
+		   /* Format hash key to exactly match R's naming convention ("25%", "33.3%") */
+		   char key[32];
+		   double pct = p * 100.0;
+		   
+		   if (pct == (unsigned int)pct) {
+		       snprintf(key, sizeof(key), "%.0f%%", pct);
+		   } else {
+		       snprintf(key, sizeof(key), "%.1f%%", pct);
+		   }
+
+		   hv_store(res_hv, key, strlen(key), newSVnv(q), 0);
+	  }
+
+	  Safefree(x);
+	  Safefree(probs);
+
+	  RETVAL = newRV_noinc((SV*)res_hv);
+	}
+	OUTPUT:
+	  RETVAL
 
 double mean(...)
 	PROTOTYPE: @
@@ -516,7 +623,7 @@ double sd(...)
 	  for (size_t i = 0; i < items; i++) {
 		   SV* arg = ST(i);
 		   if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
-		       AV* av = (AV*)SvRV(arg);
+		       AV*restrict av = (AV*)SvRV(arg);
 		       size_t len = av_len(av) + 1;
 		       for (size_t j = 0; j < len; j++) {
 		           SV**restrict tv = av_fetch(av, j, 0);
@@ -638,25 +745,20 @@ SV* t_test(...)
 		   else if (strEQ(key, "alternative")) alternative = SvPV_nolen(val);
 		   else croak("t_test: unknown argument '%s'", key);
 	  }
-
 	  /* --- Validate required / types --- */
 	  if (!x_sv || !SvROK(x_sv) || SvTYPE(SvRV(x_sv)) != SVt_PVAV)
 		   croak("t_test: 'x' is a required argument and must be an ARRAY reference");
-
 	  AV*restrict x_av = (AV*)SvRV(x_sv);
 	  size_t nx = av_len(x_av) + 1;
 	  if (nx < 2) croak("t_test: 'x' needs at least 2 elements");
-
 	  AV*restrict y_av = NULL;
 	  if (y_sv && SvROK(y_sv) && SvTYPE(SvRV(y_sv)) == SVt_PVAV)
 		   y_av = (AV*)SvRV(y_sv);
 
 	  if (conf_level <= 0.0 || conf_level >= 1.0)
 		   croak("t_test: 'conf_level' must be between 0 and 1");
-
 	  /* --- Computation (identical to the original) --- */
-	  double sum_x = 0, sum_x2 = 0, mean_x, var_x;
-	  double t_stat, df, p_val, std_err, cint_est;
+	  double sum_x = 0, sum_x2 = 0, mean_x, var_x, t_stat, df, p_val, std_err, cint_est;
 	  HV*restrict results = newHV();
 
 	  for (size_t i = 0; i < nx; i++) {
@@ -1740,7 +1842,7 @@ fisher_test(data_ref, conf_level = 0.95)
             HV*restrict outer = (HV*)deref;
             HE*restrict outer_entry;
             I32 outer_len;
-            size_t val_count = 0;
+            unsigned short int val_count = 0;
             int vals[4] = {0, 0, 0, 0};
             
             hv_iterinit(outer);
@@ -1763,7 +1865,6 @@ fisher_test(data_ref, conf_level = 0.95)
         /* Perform Calculations */
         p_val = exact_p_value(a, b, c, d);
         calculate_exact_stats(a, b, c, d, conf_level, &mle_or, &ci_low, &ci_high);
-
         /* Construct the Return HashRef purely in C */
         ret_hash = newHV();
         hv_stores(ret_hash, "p_value", newSVnv(p_val));
