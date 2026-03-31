@@ -13,7 +13,9 @@ This is meant to call subroutines directly through eXternal Subroutines (XS) for
 
 that is, `pearson` is the default and will be used if `$method` is not specified.
 
-##fisher_test
+Just like R, `pearson`, `spearman`, and `kendall` are available
+
+## fisher_test
 
     my $array_data = [
     	[10, 2],
@@ -23,7 +25,7 @@ that is, `pearson` is the default and will be used if `$method` is not specified
 
 I have the p-value calculated very precisely, but there are some inexactness (approximately 1% for the confidence intervals) which I couldn't rectify.  The answers are very close to R besides the p-value, where they are identical.
 
-##lm
+## lm
 
 This is the linear models function.
 
@@ -31,24 +33,27 @@ This is the linear models function.
 
 where `$mtcars` is a hash of hashes
 
-##matrix
+## matrix
 
+    my $mat1 = matrix(
+    	data => [1..6],
+    	nrow => 2
+    );
 
+## mean
 
-##mean
+## median
 
-##median
+## p_adjust
 
-##p_adjust
+## pearson_r
 
-##pearson_r
+## rnorm
 
-##rnorm
+## scale
 
-##scale
+## sd
 
-##sd
+## t_test
 
-##t_test
-
-##var
+## var

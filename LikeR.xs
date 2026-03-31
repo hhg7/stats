@@ -15,7 +15,6 @@ static double log_choose(size_t n, size_t k) {
     return lgamma((double)n + 1.0) - lgamma((double)k + 1.0) - lgamma((double)(n - k) + 1.0);
 }
 
-
 static double bisection_root(double (*func)(size_t, size_t, size_t, double),
                              size_t r1, size_t r2, size_t c1, double target,
                              double log_low0, double log_high0) {
@@ -86,7 +85,6 @@ static void calc_tails(size_t a, size_t b, size_t c, size_t d, double omega,
     size_t r1 = a + b, r2 = c + d, c1 = a + c;
     size_t min_x = (r2 > c1) ? 0 : c1 - r2;
     size_t max_x = (r1 < c1) ? r1 : c1;
-
     *lower_tail = 0.0;
     *upper_tail = 0.0;
     if (omega <= 0.0) {
@@ -94,12 +92,9 @@ static void calc_tails(size_t a, size_t b, size_t c, size_t d, double omega,
         *upper_tail = 1.0;
         return;
     }
-
-    double p = 1.0;
-    double total = 1.0;
+    double p = 1.0, total = 1.0;
     if (min_x <= a) *lower_tail += p;
     if (min_x >= a) *upper_tail += p;
-
     for (size_t x = min_x; x < max_x; ++x) {
         double ratio = ((double)(r1 - x) * (c1 - x) * omega) /
                        ((x + 1.0) * (r2 - c1 + x + 1.0));
@@ -133,10 +128,7 @@ static void calculate_exact_stats(size_t a, size_t b, size_t c, size_t d, double
     if (a == min_x) {
         *ci_low = 0.0;
     } else {
-        double log_low = -100.0, log_high = 100.0;
-        double best = 1.0;
-        double best_err = 1e9;
-        double lt, ut;
+        double log_low = -100.0, log_high = 100.0, best = 1.0, best_err = 1e9, lt, ut;
         for (int i = 0; i < 10000; ++i) {
             double log_mid = 0.5 * (log_low + log_high);
             double mid = exp(log_mid);
@@ -148,7 +140,6 @@ static void calculate_exact_stats(size_t a, size_t b, size_t c, size_t d, double
         }
         *ci_low = best;
     }
-
     /* Upper CI: P(X ≤ a | ω) = α/2 */
     if (a == max_x) {
         *ci_high = INFINITY;
@@ -1044,7 +1035,6 @@ SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 		           col_x[j][i] = (cv && SvOK(*cv)) ? SvNV(*cv) : 0.0;
 		       }
 		   }
-
 		   /* -- resolve y: separate matrix or re-use x (symmetric) ---- */
 		   size_t    ncols_y;
 		   double **restrict col_y   = NULL;
