@@ -8,6 +8,181 @@
 #include <string.h>
 #include <ctype.h>
 #include <stdlib.h>
+#include <float.h>
+#include <string.h>
+/* Helper: log combination */
+static double log_choose(size_t n, size_t k) {
+    return lgamma((double)n + 1.0) - lgamma((double)k + 1.0) - lgamma((double)(n - k) + 1.0);
+}
+
+
+static double bisection_root(double (*func)(size_t, size_t, size_t, double),
+                             size_t r1, size_t r2, size_t c1, double target,
+                             double log_low0, double log_high0) {
+    double log_low  = log_low0;
+    double log_high = log_high0;
+    double best_omega = exp((log_low + log_high) * 0.5);
+    double best_error = 1e9;
+
+    for (unsigned int i = 0; i < 20000; ++i) {
+        double log_mid = 0.5 * (log_low + log_high);
+        double omega   = exp(log_mid);
+        double val     = func(r1, r2, c1, omega);
+        double error   = fabs(val - target);
+
+        if (error < best_error) {
+            best_error = error;
+            best_omega = omega;
+        }
+
+        if (val > target) {
+            log_high = log_mid;
+        } else {
+            log_low  = log_mid;
+        }
+        if (log_high - log_low < 1e-30) break;
+    }
+    return best_omega;
+}
+/* Stable recursive-ratio PMF (matches R's internal method) */
+static double dnoncentral_hypergeom(size_t x, size_t r1, size_t r2, size_t c1, double omega) {
+    size_t min_x = (r2 > c1) ? 0 : c1 - r2;
+    size_t max_x = (r1 < c1) ? r1 : c1;
+    if (x < min_x || x > max_x || omega <= 0.0) return 0.0;
+
+    double p = 1.0;      /* relative mass at min_x */
+    double sum = 1.0;
+    for (size_t i = min_x; i < x; ++i) {
+        double ratio = ((double)(r1 - i) * (c1 - i) * omega) /
+                       ((i + 1.0) * (r2 - c1 + i + 1.0));
+        p *= ratio;
+        sum += p;
+    }
+    return p / sum;
+}
+
+/* Expected value using the same stable recursive method */
+static double expected_a(size_t r1, size_t r2, size_t c1, double omega) {
+    size_t min_x = (r2 > c1) ? 0 : c1 - r2;
+    size_t max_x = (r1 < c1) ? r1 : c1;
+    if (omega <= 0.0) return (double)min_x;
+
+    double p = 1.0;
+    double sum_p = 1.0;
+    double sum_xp = (double)min_x;
+    for (size_t i = min_x; i < max_x; ++i) {
+        double ratio = ((double)(r1 - i) * (c1 - i) * omega) /
+                       ((i + 1.0) * (r2 - c1 + i + 1.0));
+        p *= ratio;
+        sum_p += p;
+        sum_xp += (double)(i + 1) * p;
+    }
+    return sum_xp / sum_p;
+}
+
+/* Tail probabilities using recursive ratio (fast + stable, same as R) */
+static void calc_tails(size_t a, size_t b, size_t c, size_t d, double omega, 
+                       double *restrict lower_tail, double *restrict upper_tail) {
+    size_t r1 = a + b, r2 = c + d, c1 = a + c;
+    size_t min_x = (r2 > c1) ? 0 : c1 - r2;
+    size_t max_x = (r1 < c1) ? r1 : c1;
+
+    *lower_tail = 0.0;
+    *upper_tail = 0.0;
+    if (omega <= 0.0) {
+        *lower_tail = 1.0;
+        *upper_tail = 1.0;
+        return;
+    }
+
+    double p = 1.0;
+    double total = 1.0;
+    if (min_x <= a) *lower_tail += p;
+    if (min_x >= a) *upper_tail += p;
+
+    for (size_t x = min_x; x < max_x; ++x) {
+        double ratio = ((double)(r1 - x) * (c1 - x) * omega) /
+                       ((x + 1.0) * (r2 - c1 + x + 1.0));
+        p *= ratio;
+        total += p;
+
+        size_t curr = x + 1;
+        if (curr <= a) *lower_tail += p;
+        if (curr >= a) *upper_tail += p;
+    }
+    double inv = 1.0 / total;
+    *lower_tail *= inv;
+    *upper_tail *= inv;
+}
+
+/* Bisection with best-point tracking (matches R printed precision) */
+static void calculate_exact_stats(size_t a, size_t b, size_t c, size_t d, double conf_level,
+                                  double *restrict mle_or, double *restrict ci_low, double *restrict ci_high) {
+    double alpha = 1.0 - conf_level;
+    double target_alpha = alpha / 2.0;
+
+    size_t r1 = a + b, r2 = c + d, c1 = a + c;
+    size_t min_x = (r2 > c1) ? 0 : c1 - r2;
+    size_t max_x = (r1 < c1) ? r1 : c1;
+    /* MLE */
+    if (a == min_x && a == max_x) *mle_or = 1.0;
+    else if (a == min_x) *mle_or = 0.0;
+    else if (a == max_x) *mle_or = INFINITY;
+    else *mle_or = bisection_root(expected_a, r1, r2, c1, (double)a, -100.0, 100.0);
+    /* Lower CI: P(X ≥ a | ω) = α/2 */
+    if (a == min_x) {
+        *ci_low = 0.0;
+    } else {
+        double log_low = -100.0, log_high = 100.0;
+        double best = 1.0;
+        double best_err = 1e9;
+        double lt, ut;
+        for (int i = 0; i < 10000; ++i) {
+            double log_mid = 0.5 * (log_low + log_high);
+            double mid = exp(log_mid);
+            calc_tails(a, b, c, d, mid, &lt, &ut);
+            double err = fabs(ut - target_alpha);
+            if (err < best_err) { best_err = err; best = mid; }
+            if (ut > target_alpha) log_high = log_mid; else log_low = log_mid;
+            if (log_high - log_low < 1e-32) break;
+        }
+        *ci_low = best;
+    }
+
+    /* Upper CI: P(X ≤ a | ω) = α/2 */
+    if (a == max_x) {
+        *ci_high = INFINITY;
+    } else {
+        double log_low = -100.0, log_high = 100.0, best = 1.0, best_err = 1e9, lt, ut;
+        for (int i = 0; i < 10000; ++i) {
+            double log_mid = 0.5 * (log_low + log_high);
+            double mid = exp(log_mid);
+            calc_tails(a, b, c, d, mid, &lt, &ut);
+            double err = fabs(lt - target_alpha);
+            if (err < best_err) { best_err = err; best = mid; }
+            if (lt > target_alpha) log_low = log_mid; else log_high = log_mid;
+            if (log_high - log_low < 1e-32) break;
+        }
+        *ci_high = best;
+    }
+}
+/* Two-sided exact p-value */
+static double exact_p_value(size_t a, size_t b, size_t c, size_t d) {
+    size_t r1 = a + b, r2 = c + d, c1 = a + c;
+    size_t min_x = (r2 > c1) ? 0 : c1 - r2;
+    size_t max_x = (r1 < c1) ? r1 : c1;
+    
+    double p_obs = exp(log_choose(r1, a) + log_choose(r2, c) - log_choose(r1 + r2, c1));
+    double p_val = 0.0;
+    
+    for (size_t i = min_x; i <= max_x; i++) {
+        double p_cur = exp(log_choose(r1, i) + log_choose(r2, c1 - i) - log_choose(r1 + r2, c1));
+        if (p_cur <= p_obs * (1.0 + 1e-7)) {
+            p_val += p_cur;
+        }
+    }
+    return (p_val > 1.0) ? 1.0 : p_val;
+}
 /* -----------------------------------------------------------------------
  * Helpers for lm() Linear Regression: OLS Matrix Math & Formula Parsing
  * ----------------------------------------------------------------------- */
@@ -24,7 +199,7 @@ static int invert_matrix_gj(double *A, UV n) {
 
 	UV icol = 0, irow = 0, ll;
 	double big, dum, pivinv, temp;
-	int fail = 0;
+	bool fail = 0;
 
 	for (UV i = 0; i < n; i++) {
 	  big = 0.0;
@@ -115,8 +290,8 @@ static double evaluate_term(HV *restrict data_hoa, HV **restrict row_hashes, uns
 	if (strncmp(term_cpy, "I(", 2) == 0) {
 	  char *restrict end = strrchr(term_cpy, ')');
 	  if (end) *end = '\0';
-	  char *inner = term_cpy + 2;
-	  char *caret = strchr(inner, '^');
+	  char *restrict inner = term_cpy + 2;
+	  char *restrict caret = strchr(inner, '^');
 	  int power = 1;
 	  if (caret) {
 		   *caret = '\0';
@@ -161,7 +336,7 @@ static int cmp_rank_item(const void *a, const void *b) {
 
 /* Compute 1-based average ranks with tie-breaking into out[].
  * in[] is not modified.                                                 */
-static void rank_data(const double *in, double *out, unsigned int n) {
+static void rank_data(const double *in, double *out, size_t n) {
 	RankItem *restrict ri;
 	Newx(ri, n, RankItem);
 	for (size_t i = 0; i < n; i++) { ri[i].val = in[i]; ri[i].idx = i; }
@@ -1185,9 +1360,8 @@ CODE:
     bool byrow = FALSE, nrow_set = FALSE, ncol_set = FALSE;
     /* Parse named arguments */
     for (I32 i = 0; i < items; i += 2) {
-        char* key = SvPV_nolen(ST(i));
-        SV* val   = ST(i + 1);
-
+        char*restrict key = SvPV_nolen(ST(i));
+        SV*restrict val   = ST(i + 1);
         if (strEQ(key, "data")) {
             data_sv = val;
         } else if (strEQ(key, "nrow")) {
@@ -1202,15 +1376,12 @@ CODE:
             croak("Unknown option: %s", key);
         }
     }
-
     /* Validate data input */
     if (!data_sv || !SvROK(data_sv) || SvTYPE(SvRV(data_sv)) != SVt_PVAV) {
         croak("The 'data' option must be an array reference (e.g. data => [1..6])");
     }
-
     AV*restrict data_av = (AV*)SvRV(data_sv);
     UV  data_len = (UV)(av_top_index(data_av) + 1);
-
     if (data_len == 0) {
         croak("Data array cannot be empty");
     }
@@ -1314,16 +1485,16 @@ SV* lm(...)
                 char *restrict right = star + 1;
                 
                 /* R formula rule: strip ^N unless wrapped in I() */
-                char *c_left = strchr(left, '^'); 
+                char *restrict c_left = strchr(left, '^'); 
                 if (c_left && strncmp(left, "I(", 2) != 0) *c_left = '\0';
-                char *c_right = strchr(right, '^'); 
+                char *restrict c_right = strchr(right, '^'); 
                 if (c_right && strncmp(right, "I(", 2) != 0) *c_right = '\0';
                 
                 strcpy(terms[num_terms++], left);
                 strcpy(terms[num_terms++], right);
                 sprintf(terms[num_terms++], "%s:%s", left, right);
             } else {
-                char *c_chunk = strchr(chunk, '^'); 
+                char *restrict c_chunk = strchr(chunk, '^'); 
                 if (c_chunk && strncmp(chunk, "I(", 2) != 0) *c_chunk = '\0';
                 strcpy(terms[num_terms++], chunk);
             }
@@ -1347,7 +1518,7 @@ SV* lm(...)
         HV **restrict row_hashes = NULL;
         HV *restrict data_hoa = NULL;
 
-        SV* ref = SvRV(data_sv);
+        SV*restrict ref = SvRV(data_sv);
         if (SvTYPE(ref) == SVt_PVHV) {
             HV*restrict hv = (HV*)ref;
             if (hv_iterinit(hv) == 0) croak("lm: Data hash is empty");
@@ -1368,10 +1539,10 @@ SV* lm(...)
                     n = hv_iterinit(hv);
                     Newx(row_names, n, char*);
                     Newx(row_hashes, n, HV*);
-                    unsigned int i = 0;
+                    size_t i = 0;
                     while ((entry = hv_iternext(hv))) {
                         I32 len;
-                        char *key = hv_iterkey(entry, &len);
+                        char *restrict key = hv_iterkey(entry, &len);
                         row_names[i] = savepv(key);
                         row_hashes[i] = (HV*)SvRV(hv_iterval(hv, entry));
                         i++;
@@ -1386,14 +1557,14 @@ SV* lm(...)
             n = av_len(av) + 1;
             Newx(row_names, n, char*);
             Newx(row_hashes, n, HV*);
-            for (unsigned int i = 0; i < n; i++) {
-                SV** val = av_fetch(av, i, 0);
+            for (size_t i = 0; i < n; i++) {
+                SV**restrict val = av_fetch(av, i, 0);
                 if (val && SvROK(*val) && SvTYPE(SvRV(*val)) == SVt_PVHV) {
                     row_hashes[i] = (HV*)SvRV(*val);
-                    char buf[32]; snprintf(buf, sizeof(buf), "%u", i + 1);
+                    char buf[32]; snprintf(buf, sizeof(buf), "%lu", i + 1);
                     row_names[i] = savepv(buf);
                 } else {
-                    for (unsigned int x = 0; x < i; x++) Safefree(row_names[x]);
+                    for (size_t x = 0; x < i; x++) Safefree(row_names[x]);
                     Safefree(row_names); Safefree(row_hashes);
                     croak("lm: Array values must be HashRefs (AoH)");
                 }
@@ -1405,9 +1576,9 @@ SV* lm(...)
         double *restrict X; Newx(X, n * p, double);
         double *restrict Y; Newx(Y, n, double);
 
-        for (unsigned int i = 0; i < n; i++) {
+        for (size_t i = 0; i < n; i++) {
             Y[i] = evaluate_term(data_hoa, row_hashes, i, lhs);
-            for (unsigned int j = 0; j < p; j++) {
+            for (size_t j = 0; j < p; j++) {
                 if (strcmp(uniq_terms[j], "Intercept") == 0) {
                     X[i * p + j] = 1.0;
                 } else {
@@ -1415,23 +1586,21 @@ SV* lm(...)
                 }
             }
         }
-
         /* --- 4. Ordinary Least Squares (OLS) Math --- */
         double *restrict XtX; Newxz(XtX, p * p, double);
-        for (unsigned int i = 0; i < p; i++) {
-            for (unsigned int j = 0; j < p; j++) {
+        for (size_t i = 0; i < p; i++) {
+            for (size_t j = 0; j < p; j++) {
                 double sum = 0.0;
-                for (unsigned int k = 0; k < n; k++) {
+                for (size_t k = 0; k < n; k++) {
                     sum += X[k * p + i] * X[k * p + j];
                 }
                 XtX[i * p + j] = sum;
             }
         }
-
         double *restrict XtY; Newxz(XtY, p, double);
-        for (unsigned int i = 0; i < p; i++) {
+        for (size_t i = 0; i < p; i++) {
             double sum = 0.0;
-            for (unsigned int k = 0; k < n; k++) {
+            for (size_t k = 0; k < n; k++) {
                 sum += X[k * p + i] * Y[k];
             }
             XtY[i] = sum;
@@ -1440,7 +1609,7 @@ SV* lm(...)
         if (invert_matrix_gj(XtX, p) != 0) {
             Safefree(X); Safefree(Y); Safefree(XtX); Safefree(XtY);
             if (row_hashes) Safefree(row_hashes);
-            for (unsigned int i = 0; i < n; i++) Safefree(row_names[i]);
+            for (size_t i = 0; i < n; i++) Safefree(row_names[i]);
             Safefree(row_names);
             croak("lm: computation failed (singular/rank-deficient matrix)");
         }
@@ -1504,7 +1673,7 @@ SV* rnorm(...)
 		   croak("Usage: rnorm(n => 10, mean => 0, sd => 1) - must be even key/value pairs");
 
 	  /* --- Parse named arguments from the flat stack --- */
-	  unsigned int n = 0;
+	  ssize_t n = 0;
 	  double mean = 0.0, sd = 1.0;
 	  for (I32 i = 0; i < items; i += 2) {
 		   const char* restrict key = SvPV_nolen(ST(i));
@@ -1515,15 +1684,12 @@ SV* rnorm(...)
 		   else if (strEQ(key, "sd"))     sd   = SvNV(val);
 		   else croak("rnorm: unknown argument '%s'", key);
 	  }
-
 	  if (sd < 0.0) croak("rnorm: standard deviation must be non-negative");
-
 	  AV *restrict result_av = newAV();
 	  if (n > 0) {
 		   av_extend(result_av, n - 1);
-
 		   /* Generate random normals using the Box-Muller transform */
-		   for (unsigned int i = 0; i < n; ) {
+		   for (size_t i = 0; i < n; ) {
 		       double u, v, s;
 		       do {
 		           /* Drand01() hooks into Perl's internal PRNG, respecting Perl's srand() */
@@ -1543,3 +1709,85 @@ SV* rnorm(...)
 	}
 	OUTPUT:
 	  RETVAL
+
+PROTOTYPES: DISABLE
+
+SV*
+fisher_test(data_ref, conf_level = 0.95)
+    SV* data_ref
+    double conf_level
+    PREINIT:
+        size_t a = 0, b = 0, c = 0, d = 0;
+        double p_val, mle_or, ci_low, ci_high;
+        HV*restrict ret_hash;
+        AV*restrict ci_array;
+        HV*restrict est_hash;
+    CODE:
+        if (!SvROK(data_ref)) croak("fisher_test requires a reference to an Array or Hash");
+        SV*restrict deref = SvRV(data_ref);
+        /* Fast Path: 2D Array / AoA */
+        if (SvTYPE(deref) == SVt_PVAV) {
+            AV*restrict outer = (AV*)deref;
+            if (av_len(outer) != 1) croak("Outer array must have exactly 2 rows");
+            
+            SV**restrict row1_ptr = av_fetch(outer, 0, 0);
+            SV**restrict row2_ptr = av_fetch(outer, 1, 0);
+            
+            if (row1_ptr && row2_ptr && SvROK(*row1_ptr) && SvROK(*row2_ptr)) {
+                AV*restrict row1 = (AV*)SvRV(*row1_ptr);
+                AV*restrict row2 = (AV*)SvRV(*row2_ptr);
+                
+                a = SvIV(*av_fetch(row1, 0, 0));
+                b = SvIV(*av_fetch(row1, 1, 0));
+                c = SvIV(*av_fetch(row2, 0, 0));
+                d = SvIV(*av_fetch(row2, 1, 0));
+            } else {
+                croak("Invalid 2D Array structure");
+            }
+        } 
+        /* Complex Path: 2D Hash (Because Perl hash order is random, we extract the first 4 integers found in the nested hashes) */
+        else if (SvTYPE(deref) == SVt_PVHV) {
+            HV*restrict outer = (HV*)deref;
+            HE*restrict outer_entry;
+            I32 outer_len;
+            size_t val_count = 0;
+            int vals[4] = {0, 0, 0, 0};
+            
+            hv_iterinit(outer);
+            while ((outer_entry = hv_iternext(outer))) {
+                SV* inner_sv = hv_iterval(outer, outer_entry);
+                if (SvROK(inner_sv) && SvTYPE(SvRV(inner_sv)) == SVt_PVHV) {
+                    HV* inner = (HV*)SvRV(inner_sv);
+                    HE* inner_entry;
+                    hv_iterinit(inner);
+                    while ((inner_entry = hv_iternext(inner)) && val_count < 4) {
+                        vals[val_count++] = SvIV(hv_iterval(inner, inner_entry));
+                    }
+                }
+            }
+            if (val_count != 4) croak("2D Hash must contain exactly 4 values");
+            a = vals[0]; b = vals[1]; c = vals[2]; d = vals[3];
+        } else {
+            croak("Input must be a 2D Array or 2D Hash");
+        }
+        /* Perform Calculations */
+        p_val = exact_p_value(a, b, c, d);
+        calculate_exact_stats(a, b, c, d, conf_level, &mle_or, &ci_low, &ci_high);
+
+        /* Construct the Return HashRef purely in C */
+        ret_hash = newHV();
+        hv_stores(ret_hash, "p_value", newSVnv(p_val));
+        hv_stores(ret_hash, "method", newSVpv("Fisher's Exact Test for Count Data", 0));
+        
+        ci_array = newAV();
+        av_push(ci_array, newSVnv(ci_low));
+        av_push(ci_array, newSVnv(ci_high));
+        hv_stores(ret_hash, "conf_int", newRV_noinc((SV*)ci_array));
+        
+        est_hash = newHV();
+        hv_stores(est_hash, "odds ratio", newSVnv(mle_or));
+        hv_stores(ret_hash, "estimate", newRV_noinc((SV*)est_hash));
+        /* Return the HashRef */
+        RETVAL = newRV_noinc((SV*)ret_hash);
+    OUTPUT:
+        RETVAL

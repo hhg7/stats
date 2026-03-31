@@ -330,7 +330,6 @@ fisher_test_2x2(int a, int b, int c, int d,
     int m  = a + b;    /* row 1 total  */
     int n  = c + d;    /* row 2 total  */
     int k  = a + c;    /* col 1 total  */
-
     int lo = (k - n > 0) ? k - n : 0;
     int hi = (k < m)     ? k     : m;
     int len = hi - lo + 1;
@@ -343,29 +342,22 @@ fisher_test_2x2(int a, int b, int c, int d,
         support[i] = lo + i;
         logdc[i]   = dhyper_log(lo + i, m, n, k);
     }
-
     /* Index of observed cell value in support */
     int obs_idx = a - lo;
-
     /* P-value */
     double pval = fisher_pvalue(logdc, len, obs_idx, alternative);
-
     /* Odds ratio (MLE) */
     double or_est = mle_ncp(support, logdc, len, a);
-
     /* Confidence interval */
     double ci_lo = 0.0, ci_hi = INFINITY;
     if (do_conf_int) {
         ci_ncp(support, logdc, len, a, conf_level, alternative,
                &ci_lo, &ci_hi);
     }
-
     free(support);
     free(logdc);
-
     /* Build return hash */
     HV *result = newHV();
-
     hv_store(result, "p_value",      7, newSVnv(pval),    0);
     hv_store(result, "odds_ratio",   10, newSVnv(or_est), 0);
     hv_store(result, "alternative",  11, newSVpv(alternative, 0), 0);

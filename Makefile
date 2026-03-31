@@ -6,7 +6,7 @@
 #
 #       ANY CHANGES MADE HERE WILL BE LOST!
 #
-#   MakeMaker ARGV: (q[OPTIMIZE=-O3 -Wall])
+#   MakeMaker ARGV: (q[OPTIMIZE=-O4])
 #
 
 #   MakeMaker Parameters:
@@ -293,7 +293,7 @@ DISTVNAME = Stats-LikeR-0.01
 # --- MakeMaker cflags section:
 
 CCFLAGS = -fwrapv -fno-strict-aliasing -pipe -fstack-protector-strong -I/usr/local/include -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64
-OPTIMIZE = -O3 -Wall
+OPTIMIZE = -O4
 PERLTYPE = 
 MPOLLUTE = 
 
@@ -741,7 +741,7 @@ distdir : create_distdir distmeta
 
 # --- MakeMaker dist_test section:
 disttest : distdir
-	cd $(DISTVNAME) && $(ABSPERLRUN) Makefile.PL "OPTIMIZE=-O3 -Wall"
+	cd $(DISTVNAME) && $(ABSPERLRUN) Makefile.PL "OPTIMIZE=-O4"
 	cd $(DISTVNAME) && $(MAKE) $(PASTHRU)
 	cd $(DISTVNAME) && $(MAKE) test $(PASTHRU)
 
@@ -998,7 +998,7 @@ $(FIRST_MAKEFILE) : Makefile.PL $(CONFIGDEP)
 	-$(NOECHO) $(RM_F) $(MAKEFILE_OLD)
 	-$(NOECHO) $(MV)   $(FIRST_MAKEFILE) $(MAKEFILE_OLD)
 	- $(MAKE) $(USEMAKEFILE) $(MAKEFILE_OLD) clean $(DEV_NULL)
-	$(PERLRUN) Makefile.PL "OPTIMIZE=-O3 -Wall"
+	$(PERLRUN) Makefile.PL "OPTIMIZE=-O4"
 	$(NOECHO) $(ECHO) "==> Your Makefile has been rebuilt. <=="
 	$(NOECHO) $(ECHO) "==> Please rerun the $(MAKE) command.  <=="
 	$(FALSE)
@@ -1021,7 +1021,7 @@ $(MAKE_APERL_FILE) : static $(FIRST_MAKEFILE) pm_to_blib
 		Makefile.PL DIR="" \
 		MAKEFILE=$(MAKE_APERL_FILE) LINKTYPE=static \
 		MAKEAPERL=1 NORECURS=1 CCCDLFLAGS= \
-		OPTIMIZE='-O3 -Wall'
+		OPTIMIZE=-O4
 
 
 # --- MakeMaker test section:

@@ -577,7 +577,6 @@ dies_ok {
 	my $lm_no_int = lm(formula => 'mpg ~ wt -1', data => $mtcars);
 #ok( !defined($lm_no_int->{coefficients}{Intercept}), 'lm: formula -1 correctly suppresses Intercept' );
 } 'lm: formula -1 correctly suppresses Intercept';
-
 #---------------------------
 #   rnorm
 #----------------------------
@@ -594,4 +593,10 @@ like( $@, qr/standard deviation must be non-negative/, 'rnorm: dies on negative 
 eval { rnorm(n => 10, mean => 0, 'missing_value_key') };
 like( $@, qr/must be even key\/value pairs/, 'rnorm: dies on odd argument count' );
 
+my $array_data = [
+	[10, 2],
+	[3, 15]
+];
+my $res1 = fisher_test($array_data);
+p $res1;
 done_testing();
