@@ -3,9 +3,7 @@ use 5.042.2;
 no source::encoding;
 use DDP {output => 'STDOUT', array_max => 10, show_memsize => 1};
 use Devel::Confess 'color';
-use blib;
 package Stats::LikeR;
-use blib;
 our $VERSION = 0.01;
 require XSLoader;
 XSLoader::load('Stats::LikeR', $VERSION);
@@ -17,7 +15,7 @@ use warnings FATAL => 'all';
 use autodie ':default';
 use List::Util qw(min sum);
 use Exporter 'import';
-our @EXPORT_OK = qw(cor fisher_test lm matrix mean median p_adjust pearson_r quantile rnorm scale sd t_test var);
+our @EXPORT_OK = qw(cor fisher_test hist lm matrix mean median p_adjust pearson_r quantile rbinom rnorm runif scale sd t_test var);
 our @EXPORT = @EXPORT_OK;
 
 #sub mean {

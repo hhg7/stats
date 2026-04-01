@@ -6,6 +6,7 @@ use warnings FATAL => 'all';
 use Test::More;
 use Test::Exception; # die_ok
 use Stats::LikeR;
+use List::Util qw(max min);
 use JSON qw(decode_json encode_json);
 
 # Gemini helped to write some of the tests
@@ -626,4 +627,70 @@ if (0.99*$correct_conf_int_range < $conf_int_range < 1.01* $correct_conf_int_ran
 	fail('Fisher\'s test is *NOT* within 1% of correct: ');
 }
 is_approx( $ft->{estimate}{'odds ratio'}, 21.30533, 'Fisher\'s test odds ratio', 10**-3);
+#----------------------
+#    hist
+#----------------------
+subtest 'hist functionality' => sub {
+	# 1. Basic properties with a simple dataset
+	# Data: 1, 2, 2, 3, 3, 3, 4, 4, 5 (9 elements)
+	my $h_data = [1, 2, 2, 3, 3, 3, 4, 4, 5];
+	my $breaks = 4;
+	my $res = hist($h_data, breaks => $breaks);
+	is(ref $res, 'HASH', 'hist: returns a hash reference');
+	is(scalar @{$res->{counts}}, $breaks, 'hist: correct number of bins (counts)');
+	is(scalar @{$res->{breaks}}, $breaks+1, 'hist: correct number of breaks (n+1)');
+	is(scalar @{$res->{mids}},   $breaks, 'hist: correct number of midpoints');
+
+	# 2. Verify counts sum to total elements
+	my $total_counts = 0;
+	$total_counts += $_ for @{$res->{counts}};
+	is($total_counts, scalar @$h_data, 'hist: sum of counts matches input size');
+
+	# 3. Verify midpoints are mathematically correct
+	my $mid_ok = 1;
+	for my $i (0 .. $#{$res->{mids}}) {
+	  my $expected_mid = ($res->{breaks}->[$i] + $res->{breaks}->[$i+1]) / 2;
+	  $mid_ok = 0 if abs($res->{mids}->[$i] - $expected_mid) > 1e-12;
+	}
+	ok($mid_ok, 'hist: midpoints are correctly calculated between breaks');
+
+	# 4. Density check: Total area (sum of density * bin_width) must be 1
+	my $area = 0;
+	for my $i (0 .. $#{$res->{counts}}) {
+	  my $width = $res->{breaks}->[$i+1] - $res->{breaks}->[$i];
+	  $area += $res->{density}->[$i] * $width;
+	}
+	ok(abs($area - 1.0) < 1e-12, 'hist: total area under density curve is 1.0');
+
+	# 5. Test with a single value (Edge case)
+	my $single = hist([10], breaks => 1);
+	is($single->{counts}->[0], 1, 'hist: handles single-element array');
+	is($single->{breaks}->[0], 10, 'hist: single-element break starts at value');
+
+	# Optional: Visual inspection if needed
+	p $res;
+};
+
+#----------------------
+#    hist exceptions
+#----------------------
+subtest 'hist exceptions' => sub {
+	# Should die if not an array ref
+	dies_ok { hist("not an array") } 'hist: dies on string input';
+	dies_ok { hist({ a => 1 }) }     'hist: dies on hash ref input';
+
+	# Should die on empty array
+	dies_ok { hist([]) }             'hist: dies on empty array ref';
+
+	# Should die on non-numeric data (depending on your SVNV strictness)
+	dies_ok { hist([qw(a b c)]) }    'hist: dies on non-numeric array content';
+};
+my $unif = runif( n => $n, min => 0, max => 1);
+if (scalar @{ $unif } == $n) {
+	pass('random uniform distribution has the correct # of elements');
+} else {
+	fail('random uniform distribution does NOT have the correct # of elements');
+}
+is_approx( min(@{ $unif }), 0, 'Approximately correct minimum', 10**-3);
+is_approx( max(@{ $unif }), 1, 'Approximately correct maximum', 10**-3);
 done_testing();

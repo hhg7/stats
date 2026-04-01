@@ -10,6 +10,24 @@
 #include <stdlib.h>
 #include <float.h>
 #include <string.h>
+
+/* -----------------------------------------------------------------------
+ * Helpers for Random Number Generation
+ * ----------------------------------------------------------------------- */
+
+/* Generates a single binomial random variate. 
+ * Uses the standard Bernoulli trial loop. Drand01() taps into Perl's PRNG.
+ */
+static unsigned int generate_binomial(unsigned int size, double prob) {
+    if (prob <= 0.0) return 0;
+    if (prob >= 1.0) return size;
+    
+    unsigned int successes = 0;
+    for (unsigned int i = 0; i < size; i++) {
+        if (Drand01() <= prob) successes++;
+    }
+    return successes;
+}
 /* Helper: log combination */
 static double log_choose(size_t n, size_t k) {
     return lgamma((double)n + 1.0) - lgamma((double)k + 1.0) - lgamma((double)(n - k) + 1.0);
@@ -462,7 +480,7 @@ static double qt_tail(double df, double p_tail) {
         if (high > 1000000.0) break; /* Fallback limit */
     }
     /* Bisect to find the root */
-    for (unsigned int i = 0; i < 100; i++) {
+    for (unsigned short int i = 0; i < 100; i++) {
         double mid = (low + high) / 2.0;
         double p_mid = get_t_pvalue(mid, df, "greater");
         if (p_mid > p_tail) {
@@ -480,8 +498,221 @@ int compare_doubles(const void *restrict a, const void *restrict b) {
     double db = *(const double*restrict)b;
     return (da > db) - (da < db);
 }
+/* Helper to calculate the number of bins using Sturges' formula: log2(n) + 1 */
+static size_t calculate_sturges_bins(size_t n) {
+    if (n == 0) return 1;
+    return (size_t)(log((double)n) / log(2.0) + 1.0);
+}
+
+/* Logic for distributing data into bins */
+static void compute_hist_logic(double *x, size_t n, double *breaks, size_t n_bins, 
+                               size_t *counts, double *mids, double *density) {
+    size_t i, j;
+    double total_n = (double)n;
+
+    for (i = 0; i < n_bins; i++) {
+        counts[i] = 0;
+        mids[i] = (breaks[i] + breaks[i+1]) / 2.0;
+        double bin_width = breaks[i+1] - breaks[i];
+        
+        for (j = 0; j < n; j++) {
+            /* Logic: include.lowest = TRUE, right = TRUE (R defaults) */
+            /* Intervals are (a, b], but the first interval is [a, b] */
+            if (i == 0) {
+                if (x[j] >= breaks[i] && x[j] <= breaks[i+1]) counts[i]++;
+            } else {
+                if (x[j] > breaks[i] && x[j] <= breaks[i+1]) counts[i]++;
+            }
+        }
+        
+        if (bin_width > 0) {
+            density[i] = (double)counts[i] / (total_n * bin_width);
+        } else {
+            density[i] = 0.0;
+        }
+    }
+}
 /* --- XS SECTION --- */
 MODULE = Stats::LikeR	PACKAGE = Stats::LikeR		
+
+SV* runif(...)
+    CODE:
+    {
+        if (items % 2 != 0)
+            croak("Usage: runif(n => 10, min => 0, max => 1)");
+
+        /* --- Parse named arguments --- */
+        unsigned int n = 0;
+        double min = 0.0, max = 1.0;
+
+        for (I32 i = 0; i < items; i += 2) {
+            const char* restrict key = SvPV_nolen(ST(i));
+            SV* restrict val = ST(i + 1);
+
+            if      (strEQ(key, "n"))    n   = (unsigned int)SvUV(val);
+            else if (strEQ(key, "min"))  min = SvNV(val);
+            else if (strEQ(key, "max"))  max = SvNV(val);
+            else croak("runif: unknown argument '%s'", key);
+        }
+
+        if (min > max) croak("runif: min must be less than or equal to max");
+
+        AV *restrict result_av = newAV();
+        if (n > 0) {
+            av_extend(result_av, n - 1);
+            double range = max - min;
+            
+            for (unsigned int i = 0; i < n; i++) {
+                /* Transform standard [0,1) uniform to [min, max) */
+                av_store(result_av, i, newSVnv(min + range * Drand01()));
+            }
+        }
+
+        RETVAL = newRV_noinc((SV*)result_av);
+    }
+    OUTPUT:
+        RETVAL
+
+SV* rbinom(...)
+    CODE:
+    {
+        if (items % 2 != 0)
+            croak("Usage: rbinom(n => 10, size => 100, prob => 0.5)");
+
+        /* --- Parse named arguments --- */
+        unsigned int n = 0, size = 0;
+        double prob = 0.5;
+        
+        bool size_set = false, prob_set = false;
+
+        for (I32 i = 0; i < items; i += 2) {
+            const char* restrict key = SvPV_nolen(ST(i));
+            SV* restrict val = ST(i + 1);
+
+            if      (strEQ(key, "n"))      n    = (unsigned int)SvUV(val);
+            else if (strEQ(key, "size")) { size = (unsigned int)SvUV(val); size_set = true; }
+            else if (strEQ(key, "prob")) { prob = SvNV(val); prob_set = true; }
+            else croak("rbinom: unknown argument '%s'", key);
+        }
+
+        /* R requires size and prob to be explicitly passed in rbinom */
+        if (!size_set || !prob_set) croak("rbinom: 'size' and 'prob' are required arguments");
+        if (prob < 0.0 || prob > 1.0) croak("rbinom: prob must be between 0 and 1");
+
+        AV *restrict result_av = newAV();
+        if (n > 0) {
+            av_extend(result_av, n - 1);
+            for (unsigned int i = 0; i < n; i++) {
+                av_store(result_av, i, newSVuv(generate_binomial(size, prob)));
+            }
+        }
+
+        RETVAL = newRV_noinc((SV*)result_av);
+    }
+    OUTPUT:
+        RETVAL
+
+SV*
+hist(SV* x_sv, ...)
+    CODE:
+    {
+        /* 1. Validate Input */
+        if (!SvROK(x_sv) || SvTYPE(SvRV(x_sv)) != SVt_PVAV)
+            croak("hist: first argument must be an array reference");
+        
+        AV*restrict x_av = (AV*)SvRV(x_sv);
+        size_t n_raw = av_len(x_av) + 1;
+        if (n_raw == 0) croak("hist: input array is empty");
+
+        /* 2. Extract Data & Find Range */
+        double *restrict x;
+        Newx(x, n_raw, double);
+        size_t n = 0;
+        double min_val = DBL_MAX, max_val = -DBL_MAX;
+
+        for (size_t i = 0; i < n_raw; i++) {
+            SV**restrict tv = av_fetch(x_av, i, 0);
+            if (tv && SvOK(*tv)) {
+                double val = SvNV(*tv);
+                x[n++] = val;
+                if (val < min_val) min_val = val;
+                if (val > max_val) max_val = val;
+            }
+        }
+        if (n == 0) {
+            Safefree(x);
+            croak("hist: input contains no valid numeric data");
+        }
+        /* 3. Determine Bin Count (Sturges default or user-provided) */
+/* 3. Determine Bin Count (Sturges default or user-provided) */
+        size_t n_bins = 0;
+        
+        if (items == 2) {
+            /* Support pure positional argument: hist($data, 22) */
+            n_bins = (size_t)SvIV(ST(1));
+        } else if (items > 2) {
+            /* Support named parameters even if mixed with positional arguments */
+            for (I32 i = 1; i < items - 1; i++) {
+                /* Make sure the SV holds a string before doing string comparison */
+                if (SvPOK(ST(i)) && strEQ(SvPV_nolen(ST(i)), "breaks")) {
+                    n_bins = (size_t)SvIV(ST(i+1));
+                    break;
+                }
+            }
+            /* Fallback: if 'breaks' wasn't found but a positional number was given first */
+            if (n_bins == 0 && looks_like_number(ST(1))) {
+                n_bins = (size_t)SvIV(ST(1));
+            }
+        }
+
+        if (n_bins == 0) n_bins = calculate_sturges_bins(n);
+
+        /* 4. Allocate Result Arrays */
+        double *restrict breaks, *restrict mids, *restrict density;
+        size_t *restrict counts;
+        Newx(breaks,  n_bins + 1, double);
+        Newx(mids,    n_bins,     double);
+        Newx(density, n_bins,     double);
+        Newx(counts,  n_bins,     size_t);
+
+        /* Generate simple linear breaks */
+        double step = (max_val - min_val) / (double)n_bins;
+        for (size_t i = 0; i <= n_bins; i++) {
+            breaks[i] = min_val + (double)i * step;
+        }
+
+        /* 5. Compute Statistics */
+        compute_hist_logic(x, n, breaks, n_bins, counts, mids, density);
+
+        /* 6. Build Return HashRef */
+        HV*restrict res_hv = newHV();
+        AV*restrict av_breaks  = newAV();
+        AV*restrict av_counts  = newAV();
+        AV*restrict av_mids    = newAV();
+        AV*restrict av_density = newAV();
+
+        for (size_t i = 0; i <= n_bins; i++) {
+            av_push(av_breaks, newSVnv(breaks[i]));
+            if (i < n_bins) {
+                av_push(av_counts,  newSViv(counts[i]));
+                av_push(av_mids,    newSVnv(mids[i]));
+                av_push(av_density, newSVnv(density[i]));
+            }
+        }
+
+        hv_stores(res_hv, "breaks",  newRV_noinc((SV*)av_breaks));
+        hv_stores(res_hv, "counts",  newRV_noinc((SV*)av_counts));
+        hv_stores(res_hv, "mids",    newRV_noinc((SV*)av_mids));
+        hv_stores(res_hv, "density", newRV_noinc((SV*)av_density));
+
+        /* Clean up */
+        Safefree(x); Safefree(breaks); Safefree(mids);
+        Safefree(density); Safefree(counts);
+
+        RETVAL = newRV_noinc((SV*)res_hv);
+    }
+    OUTPUT:
+        RETVAL
 
 SV* quantile(...)
 	CODE:

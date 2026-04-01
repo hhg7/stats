@@ -15,6 +15,17 @@ sub perl_mean {
 	die "$current_sub needs >= 1 element in the array" if scalar @n < 1;
 	return sum(@n) / scalar @n;
 }
+sub perl_sd {
+	my @n = map { ref($_) eq 'ARRAY' ? @$_ : $_ } @_;
+	my $current_sub = ( split( /::/, ( caller(0) )[3] ) )[-1];
+	die "$current_sub needs >= 2 elements in the array" if scalar @n < 2;
+	my $mean = sum(@n) / scalar @n;
+	my $standard_deviation = 0;
+	foreach my $element (@n) {
+		$standard_deviation += ($element-$mean)**2;
+	}
+	return sqrt($standard_deviation/((scalar @n)-1));
+}
 my @x = map {rand_between(-5, 5)} 0..99999;
 my $max = 999;
 my $t0 = Time::HiRes::time();
@@ -32,4 +43,23 @@ for (my $n = 0; $n < $max; $n++) {
 $t1 = Time::HiRes::time();
 my $run1 = $t1-$t0;
 printf("XS mean did %lf seconds\n", $run1);
+printf("2nd/1st = %lf; 1st/2nd = %lf\n", $run1/$run0, $run0/$run1);
+#-------------------
+# test stdev
+#-------------------
+$t0 = Time::HiRes::time();
+for (my $n = 0; $n < $max; $n++) {
+	perl_sd( \@x );
+}
+$t1 = Time::HiRes::time();
+$run0 = $t1-$t0;
+printf("perl mean did %lf seconds\n", $run0);
+#-----------
+$t0 = Time::HiRes::time();
+for (my $n = 0; $n < $max; $n++) {	
+	sd( \@x );
+}
+$t1 = Time::HiRes::time();
+$run1 = $t1-$t0;
+printf("XS sd did %lf seconds\n", $run1);
 printf("2nd/1st = %lf; 1st/2nd = %lf\n", $run1/$run0, $run0/$run1);

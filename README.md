@@ -61,9 +61,20 @@ works like mean:
 
 ## p_adjust
 
+Returns array
+
+    my @q = p_adjust(\@pvalues, $method);
+
 ## pearson_r
 
 ## rnorm
+
+    my ($rmean, $sd, $n) = (10, 2, 9999);
+    my $normals = rnorm( n => $n, mean => $rmean, sd => $sd);
+
+## runif
+
+    my $unif = runif( n => $n, min => 0, max => 1);
 
 ## scale
 
@@ -71,7 +82,7 @@ works like mean:
 
 ## sd
 
-    my $stdev = sd(2,4,4,4,5,5,7,9); # works just like List::Util
+    my $stdev = sd(2,4,4,4,5,5,7,9);
 
 Correct answer is 2.1380899352994;
     
@@ -96,3 +107,7 @@ which looks like:
     statistic => 1.50996688705414
 
 ## var
+
+as simple as possible:
+
+    var(2, 4, 5, 8, 9)
