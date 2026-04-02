@@ -15,7 +15,7 @@ use warnings FATAL => 'all';
 use autodie ':default';
 use List::Util qw(min sum);
 use Exporter 'import';
-our @EXPORT_OK = qw(cor fisher_test hist lm matrix mean median p_adjust pearson_r quantile rbinom rnorm runif scale sd t_test var);
+our @EXPORT_OK = qw(cor fisher_test hist lm matrix mean median p_adjust pearson_r quantile rbinom rnorm runif scale sd seq t_test var);
 our @EXPORT = @EXPORT_OK;
 
 #sub mean {

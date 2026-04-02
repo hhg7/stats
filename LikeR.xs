@@ -10,7 +10,14 @@
 #include <stdlib.h>
 #include <float.h>
 #include <string.h>
-
+/* Ensure Perl's PRNG is seeded, matching the lazy-evaluation of Perl's rand() */
+#define AUTO_SEED_PRNG() \
+    do { \
+        if (!PL_srand_called) { \
+            (void)seedDrand01((Rand_seed_t)Perl_seed(aTHX)); \
+            PL_srand_called = TRUE; \
+        } \
+    } while (0)
 /* -----------------------------------------------------------------------
  * Helpers for Random Number Generation
  * ----------------------------------------------------------------------- */
@@ -462,7 +469,7 @@ static double incbeta(double a, double b, double x) {
 	return 1.0 - bt * _incbeta_cf(b, a, 1.0 - x) / b;
 }
 
-static double get_t_pvalue(double t, double df, const char* alt) {
+static double get_t_pvalue(double t, double df, const char*restrict alt) {
 	double x = df / (df + t * t);
 	double prob_2tail = incbeta(df / 2.0, 0.5, x);
 	if (strcmp(alt, "less") == 0) return (t < 0) ? 0.5 * prob_2tail : 1.0 - 0.5 * prob_2tail;
@@ -472,65 +479,62 @@ static double get_t_pvalue(double t, double df, const char* alt) {
 
 /* Bisection algorithm to find the inverse t-distribution (Critical t-value) */
 static double qt_tail(double df, double p_tail) {
-    double low = 0.0, high = 1.0;
-    /* Find upper bound */
-    while (get_t_pvalue(high, df, "greater") > p_tail) {
-        low = high;
-        high *= 2.0;
-        if (high > 1000000.0) break; /* Fallback limit */
-    }
-    /* Bisect to find the root */
-    for (unsigned short int i = 0; i < 100; i++) {
-        double mid = (low + high) / 2.0;
-        double p_mid = get_t_pvalue(mid, df, "greater");
-        if (p_mid > p_tail) {
-            low = mid;
-        } else {
-            high = mid;
-        }
-        if (high - low < 1e-8) break;
-    }
-    return (low + high) / 2.0;
+	double low = 0.0, high = 1.0;
+	/* Find upper bound */
+	while (get_t_pvalue(high, df, "greater") > p_tail) {
+	  low = high;
+	  high *= 2.0;
+	  if (high > 1000000.0) break; /* Fallback limit */
+	}
+	/* Bisect to find the root */
+	for (unsigned short int i = 0; i < 100; i++) {
+	  double mid = (low + high) / 2.0;
+	  double p_mid = get_t_pvalue(mid, df, "greater");
+	  if (p_mid > p_tail) {
+		   low = mid;
+	  } else {
+		   high = mid;
+	  }
+	  if (high - low < 1e-8) break;
+	}
+	return (low + high) / 2.0;
 }
 
 int compare_doubles(const void *restrict a, const void *restrict b) {
-    double da = *(const double*restrict)a;
-    double db = *(const double*restrict)b;
-    return (da > db) - (da < db);
+	double da = *(const double*restrict)a;
+	double db = *(const double*restrict)b;
+	return (da > db) - (da < db);
 }
 /* Helper to calculate the number of bins using Sturges' formula: log2(n) + 1 */
 static size_t calculate_sturges_bins(size_t n) {
-    if (n == 0) return 1;
-    return (size_t)(log((double)n) / log(2.0) + 1.0);
+	if (n == 0) return 1;
+	return (size_t)(log((double)n) / log(2.0) + 1.0);
 }
 
 /* Logic for distributing data into bins */
-static void compute_hist_logic(double *x, size_t n, double *breaks, size_t n_bins, 
-                               size_t *counts, double *mids, double *density) {
-    size_t i, j;
-    double total_n = (double)n;
-
-    for (i = 0; i < n_bins; i++) {
-        counts[i] = 0;
-        mids[i] = (breaks[i] + breaks[i+1]) / 2.0;
-        double bin_width = breaks[i+1] - breaks[i];
-        
-        for (j = 0; j < n; j++) {
-            /* Logic: include.lowest = TRUE, right = TRUE (R defaults) */
-            /* Intervals are (a, b], but the first interval is [a, b] */
-            if (i == 0) {
-                if (x[j] >= breaks[i] && x[j] <= breaks[i+1]) counts[i]++;
-            } else {
-                if (x[j] > breaks[i] && x[j] <= breaks[i+1]) counts[i]++;
-            }
-        }
-        
-        if (bin_width > 0) {
-            density[i] = (double)counts[i] / (total_n * bin_width);
-        } else {
-            density[i] = 0.0;
-        }
-    }
+static void compute_hist_logic(double *restrict x, size_t n, double *restrict breaks, size_t n_bins, 
+                               size_t *restrict counts, double *restrict mids, double *restrict density) {
+	double total_n = (double)n;
+	for (size_t i = 0; i < n_bins; i++) {
+	  counts[i] = 0;
+	  mids[i] = (breaks[i] + breaks[i+1]) / 2.0;
+	  double bin_width = breaks[i+1] - breaks[i];
+	  
+	  for (size_t j = 0; j < n; j++) {
+		   /* Logic: include.lowest = TRUE, right = TRUE (R defaults) */
+		   /* Intervals are (a, b], but the first interval is [a, b] */
+		   if (i == 0) {
+		       if (x[j] >= breaks[i] && x[j] <= breaks[i+1]) counts[i]++;
+		   } else {
+		       if (x[j] > breaks[i] && x[j] <= breaks[i+1]) counts[i]++;
+		   }
+	  }
+	  if (bin_width > 0) {
+		   density[i] = (double)counts[i] / (total_n * bin_width);
+	  } else {
+		   density[i] = 0.0;
+	  }
+	}
 }
 /* --- XS SECTION --- */
 MODULE = Stats::LikeR	PACKAGE = Stats::LikeR		
@@ -538,6 +542,9 @@ MODULE = Stats::LikeR	PACKAGE = Stats::LikeR
 SV* runif(...)
     CODE:
     {
+        /* Auto-seed the PRNG if the Perl script hasn't done so yet */
+        AUTO_SEED_PRNG();
+
         if (items % 2 != 0)
             croak("Usage: runif(n => 10, min => 0, max => 1)");
 
@@ -548,7 +555,6 @@ SV* runif(...)
         for (I32 i = 0; i < items; i += 2) {
             const char* restrict key = SvPV_nolen(ST(i));
             SV* restrict val = ST(i + 1);
-
             if      (strEQ(key, "n"))    n   = (unsigned int)SvUV(val);
             else if (strEQ(key, "min"))  min = SvNV(val);
             else if (strEQ(key, "max"))  max = SvNV(val);
@@ -556,7 +562,7 @@ SV* runif(...)
         }
 
         if (min > max) croak("runif: min must be less than or equal to max");
-
+        
         AV *restrict result_av = newAV();
         if (n > 0) {
             av_extend(result_av, n - 1);
@@ -576,6 +582,8 @@ SV* runif(...)
 SV* rbinom(...)
     CODE:
     {
+        /* Auto-seed the PRNG if the Perl script hasn't done so yet */
+        AUTO_SEED_PRNG();
         if (items % 2 != 0)
             croak("Usage: rbinom(n => 10, size => 100, prob => 0.5)");
 
@@ -1467,7 +1475,7 @@ void scale(...)
 	{
 	  bool do_center_mean = true, do_scale_sd = true;
 	  double center_val = 0.0, scale_val = 1.0;
-	  int data_items = items;
+	  unsigned int data_items = items;
 	  /* 1. Parse Options Hash (if it exists as the last argument) */
 	  if (items > 0) {
 		   SV*restrict last_arg = ST(items - 1);
@@ -1674,82 +1682,82 @@ void scale(...)
 
 SV* matrix(...) 
 CODE:
-    /* Basic check: must have an even number of arguments for key => value */
-    if (items % 2 != 0) {
-        croak("Usage: matrix(data => [...], nrow => $n, ncol => $m, byrow => $bool)");
-    }
-    SV*restrict data_sv = NULL;
-    UV  nrow = 0, ncol = 0;
-    bool byrow = FALSE, nrow_set = FALSE, ncol_set = FALSE;
-    /* Parse named arguments */
-    for (I32 i = 0; i < items; i += 2) {
-        char*restrict key = SvPV_nolen(ST(i));
-        SV*restrict val   = ST(i + 1);
-        if (strEQ(key, "data")) {
-            data_sv = val;
-        } else if (strEQ(key, "nrow")) {
-            nrow = (UV)SvUV(val);
-            nrow_set = TRUE;
-        } else if (strEQ(key, "ncol")) {
-            ncol = (UV)SvUV(val);
-            ncol_set = TRUE;
-        } else if (strEQ(key, "byrow")) {
-            byrow = SvTRUE(val);
-        } else {
-            croak("Unknown option: %s", key);
-        }
-    }
-    /* Validate data input */
-    if (!data_sv || !SvROK(data_sv) || SvTYPE(SvRV(data_sv)) != SVt_PVAV) {
-        croak("The 'data' option must be an array reference (e.g. data => [1..6])");
-    }
-    AV*restrict data_av = (AV*)SvRV(data_sv);
-    UV  data_len = (UV)(av_top_index(data_av) + 1);
-    if (data_len == 0) {
-        croak("Data array cannot be empty");
-    }
-    /* R-style dimension inference */
-    if (!nrow_set && !ncol_set) {
-        nrow = data_len;
-        ncol = 1;
-    } else if (nrow_set && !ncol_set) {
-        ncol = (data_len + nrow - 1) / nrow;
-    } else if (!nrow_set && ncol_set) {
-        nrow = (data_len + ncol - 1) / ncol;
-    }
-    /* Final safety check for dimensions */
-    if (nrow == 0 || ncol == 0) {
-        croak("Dimensions must be greater than 0");
-    }
-    /* Create the matrix (Array of Arrays) */
-    AV*restrict result_av = newAV();
-    av_extend(result_av, nrow - 1);
-    UV r, c, i;/* Use unsigned types for counters to prevent negative indexing */
-    AV**restrict row_ptrs = (AV**restrict)safemalloc(nrow * sizeof(AV*)); /* Pre-allocate row pointers */
-    for (r = 0; r < nrow; r++) {
-        row_ptrs[r] = newAV();
-        av_extend(row_ptrs[r], ncol - 1);
-        av_push(result_av, newRV_noinc((SV*)row_ptrs[r]));
-    }
-    /* Fill the matrix */
-    UV total_cells = nrow * ncol;
-    for (i = 0; i < total_cells; i++) {
-        /* Vector recycling logic */
-        SV**restrict fetched = av_fetch(data_av, i % data_len, 0);
-        SV*restrict val = fetched ? newSVsv(*fetched) : newSV(0);
-        if (byrow) {
-            r = i / ncol;
-            c = i % ncol;
-        } else {
-            r = i % nrow;
-            c = i / nrow;
-        }
-        av_store(row_ptrs[r], c, val);
-    }
-    safefree(row_ptrs);
-    RETVAL = newRV_noinc((SV*)result_av);
-OUTPUT:
-    RETVAL
+	/* Basic check: must have an even number of arguments for key => value */
+	if (items % 2 != 0) {
+	  croak("Usage: matrix(data => [...], nrow => $n, ncol => $m, byrow => $bool)");
+	}
+	SV*restrict data_sv = NULL;
+	UV  nrow = 0, ncol = 0;
+	bool byrow = FALSE, nrow_set = FALSE, ncol_set = FALSE;
+	/* Parse named arguments */
+	for (I32 i = 0; i < items; i += 2) {
+	  char*restrict key = SvPV_nolen(ST(i));
+	  SV*restrict val   = ST(i + 1);
+	  if (strEQ(key, "data")) {
+		   data_sv = val;
+	  } else if (strEQ(key, "nrow")) {
+		   nrow = (UV)SvUV(val);
+		   nrow_set = TRUE;
+	  } else if (strEQ(key, "ncol")) {
+		   ncol = (UV)SvUV(val);
+		   ncol_set = TRUE;
+	  } else if (strEQ(key, "byrow")) {
+		   byrow = SvTRUE(val);
+	  } else {
+		   croak("Unknown option: %s", key);
+	  }
+	}
+	/* Validate data input */
+	if (!data_sv || !SvROK(data_sv) || SvTYPE(SvRV(data_sv)) != SVt_PVAV) {
+	  croak("The 'data' option must be an array reference (e.g. data => [1..6])");
+	}
+	AV*restrict data_av = (AV*)SvRV(data_sv);
+	UV  data_len = (UV)(av_top_index(data_av) + 1);
+	if (data_len == 0) {
+	  croak("Data array cannot be empty");
+	}
+	/* R-style dimension inference */
+	if (!nrow_set && !ncol_set) {
+	  nrow = data_len;
+	  ncol = 1;
+	} else if (nrow_set && !ncol_set) {
+	  ncol = (data_len + nrow - 1) / nrow;
+	} else if (!nrow_set && ncol_set) {
+	  nrow = (data_len + ncol - 1) / ncol;
+	}
+	/* Final safety check for dimensions */
+	if (nrow == 0 || ncol == 0) {
+	  croak("Dimensions must be greater than 0");
+	}
+	/* Create the matrix (Array of Arrays) */
+	AV*restrict result_av = newAV();
+	av_extend(result_av, nrow - 1);
+	UV r, c, i;/* Use unsigned types for counters to prevent negative indexing */
+	AV**restrict row_ptrs = (AV**restrict)safemalloc(nrow * sizeof(AV*)); /* Pre-allocate row pointers */
+	for (r = 0; r < nrow; r++) {
+	  row_ptrs[r] = newAV();
+	  av_extend(row_ptrs[r], ncol - 1);
+	  av_push(result_av, newRV_noinc((SV*)row_ptrs[r]));
+	}
+	/* Fill the matrix */
+	UV total_cells = nrow * ncol;
+	for (i = 0; i < total_cells; i++) {
+	  /* Vector recycling logic */
+	  SV**restrict fetched = av_fetch(data_av, i % data_len, 0);
+	  SV*restrict val = fetched ? newSVsv(*fetched) : newSV(0);
+	  if (byrow) {
+		   r = i / ncol;
+		   c = i % ncol;
+	  } else {
+		   r = i % nrow;
+		   c = i / nrow;
+	  }
+	  av_store(row_ptrs[r], c, val);
+	}
+	safefree(row_ptrs);
+	RETVAL = newRV_noinc((SV*)result_av);
+	OUTPUT:
+	RETVAL
 
 SV* lm(...)
     CODE:
@@ -1969,19 +1977,17 @@ SV* lm(...)
             Safefree(row_names[i]);
         }
         Safefree(row_names);
-
         hv_store(res_hv, "coefficients",  12, newRV_noinc((SV*)coef_hv), 0);
         hv_store(res_hv, "fitted.values", 13, newRV_noinc((SV*)fitted_hv), 0);
         hv_store(res_hv, "residuals",      9, newRV_noinc((SV*)resid_hv), 0);
         hv_store(res_hv, "df.residual",   11, newSVuv(n - p), 0);
         hv_store(res_hv, "rank",          4,  newSVuv(p), 0);
-
         /* Clean up */
-        Safefree(X); 
-        Safefree(Y); 
-        Safefree(XtX); 
-        Safefree(XtY); 
-        Safefree(beta);
+        Safefree(X); X = NULL;
+        Safefree(Y); Y = NULL;
+        Safefree(XtX); XtX = NULL;
+        Safefree(XtY); XtY = NULL;
+        Safefree(beta); beta = NULL;
         if (row_hashes) Safefree(row_hashes);
 
         RETVAL = newRV_noinc((SV*)res_hv);
@@ -1989,14 +1995,54 @@ SV* lm(...)
     OUTPUT:
         RETVAL
 
+void
+seq(from, to, by = 1.0)
+    NV from
+    NV to
+    NV by
+PPCODE:
+	{
+	  //Handle the zero 'by' case
+	  if (by == 0.0) {
+		   if (from == to) {
+		       EXTEND(SP, 1);
+		       mPUSHn(from);
+		       XSRETURN(1);
+		   } else {
+		       croak("invalid 'by' argument: cannot be zero when from != to");
+		   }
+	  }
+	  /* Check for wrong direction / infinite loop */
+	  if ((from < to && by < 0.0) || (from > to && by > 0.0)) {
+		   croak("wrong sign in 'by' argument");
+	  }
+	  /* * Calculate number of elements. 
+		* R uses a small epsilon (like 1e-10) to avoid dropping the last 
+		* element due to floating point inaccuracies.
+		*/
+	  double n_elements_d = (to - from) / by;
+	  if (n_elements_d < 0.0) n_elements_d = 0.0;
+	  IV n_elements = (IV)(n_elements_d + 1e-10) + 1;
+	  /* Pre-extend the stack to avoid reallocating inside the loop */
+	  EXTEND(SP, n_elements);
+	  NV current = from;
+	  for (IV i = 0; i < n_elements; i++) {
+		   mPUSHn(current);
+		   current += by;
+	  }
+	  XSRETURN(n_elements);
+	}
+
 SV* rnorm(...)
 	CODE:
 	{
+	  /* Auto-seed the PRNG if the Perl script hasn't done so yet */
+	  AUTO_SEED_PRNG();
+
 	  if (items % 2 != 0)
 		   croak("Usage: rnorm(n => 10, mean => 0, sd => 1) - must be even key/value pairs");
-
 	  /* --- Parse named arguments from the flat stack --- */
-	  ssize_t n = 0;
+	  size_t n = 0;
 	  double mean = 0.0, sd = 1.0;
 	  for (I32 i = 0; i < items; i += 2) {
 		   const char* restrict key = SvPV_nolen(ST(i));
@@ -2007,7 +2053,9 @@ SV* rnorm(...)
 		   else if (strEQ(key, "sd"))     sd   = SvNV(val);
 		   else croak("rnorm: unknown argument '%s'", key);
 	  }
+	  
 	  if (sd < 0.0) croak("rnorm: standard deviation must be non-negative");
+	  
 	  AV *restrict result_av = newAV();
 	  if (n > 0) {
 		   av_extend(result_av, n - 1);
@@ -2020,6 +2068,7 @@ SV* rnorm(...)
 		           v = 2.0 * Drand01() - 1.0;
 		           s = u * u + v * v;
 		       } while (s >= 1.0 || s == 0.0);
+		       
 		       double mul = sqrt(-2.0 * log(s) / s);
 		       /* Box-Muller generates two independent values per iteration */
 		       av_store(result_av, i++, newSVnv(mean + sd * u * mul));
@@ -2028,6 +2077,7 @@ SV* rnorm(...)
 		       }
 		   }
 	  }
+	  
 	  RETVAL = newRV_noinc((SV*)result_av);
 	}
 	OUTPUT:
@@ -2037,79 +2087,79 @@ PROTOTYPES: DISABLE
 
 SV*
 fisher_test(data_ref, conf_level = 0.95)
-    SV* data_ref
-    double conf_level
-    PREINIT:
-        size_t a = 0, b = 0, c = 0, d = 0;
-        double p_val, mle_or, ci_low, ci_high;
-        HV*restrict ret_hash;
-        AV*restrict ci_array;
-        HV*restrict est_hash;
-    CODE:
-        if (!SvROK(data_ref)) croak("fisher_test requires a reference to an Array or Hash");
-        SV*restrict deref = SvRV(data_ref);
-        /* Fast Path: 2D Array / AoA */
-        if (SvTYPE(deref) == SVt_PVAV) {
-            AV*restrict outer = (AV*)deref;
-            if (av_len(outer) != 1) croak("Outer array must have exactly 2 rows");
-            
-            SV**restrict row1_ptr = av_fetch(outer, 0, 0);
-            SV**restrict row2_ptr = av_fetch(outer, 1, 0);
-            
-            if (row1_ptr && row2_ptr && SvROK(*row1_ptr) && SvROK(*row2_ptr)) {
-                AV*restrict row1 = (AV*)SvRV(*row1_ptr);
-                AV*restrict row2 = (AV*)SvRV(*row2_ptr);
-                
-                a = SvIV(*av_fetch(row1, 0, 0));
-                b = SvIV(*av_fetch(row1, 1, 0));
-                c = SvIV(*av_fetch(row2, 0, 0));
-                d = SvIV(*av_fetch(row2, 1, 0));
-            } else {
-                croak("Invalid 2D Array structure");
-            }
-        } 
-        /* Complex Path: 2D Hash (Because Perl hash order is random, we extract the first 4 integers found in the nested hashes) */
-        else if (SvTYPE(deref) == SVt_PVHV) {
-            HV*restrict outer = (HV*)deref;
-            HE*restrict outer_entry;
-            I32 outer_len;
-            unsigned short int val_count = 0;
-            int vals[4] = {0, 0, 0, 0};
-            
-            hv_iterinit(outer);
-            while ((outer_entry = hv_iternext(outer))) {
-                SV* inner_sv = hv_iterval(outer, outer_entry);
-                if (SvROK(inner_sv) && SvTYPE(SvRV(inner_sv)) == SVt_PVHV) {
-                    HV* inner = (HV*)SvRV(inner_sv);
-                    HE* inner_entry;
-                    hv_iterinit(inner);
-                    while ((inner_entry = hv_iternext(inner)) && val_count < 4) {
-                        vals[val_count++] = SvIV(hv_iterval(inner, inner_entry));
-                    }
-                }
-            }
-            if (val_count != 4) croak("2D Hash must contain exactly 4 values");
-            a = vals[0]; b = vals[1]; c = vals[2]; d = vals[3];
-        } else {
-            croak("Input must be a 2D Array or 2D Hash");
-        }
-        /* Perform Calculations */
-        p_val = exact_p_value(a, b, c, d);
-        calculate_exact_stats(a, b, c, d, conf_level, &mle_or, &ci_low, &ci_high);
-        /* Construct the Return HashRef purely in C */
-        ret_hash = newHV();
-        hv_stores(ret_hash, "p_value", newSVnv(p_val));
-        hv_stores(ret_hash, "method", newSVpv("Fisher's Exact Test for Count Data", 0));
-        
-        ci_array = newAV();
-        av_push(ci_array, newSVnv(ci_low));
-        av_push(ci_array, newSVnv(ci_high));
-        hv_stores(ret_hash, "conf_int", newRV_noinc((SV*)ci_array));
-        
-        est_hash = newHV();
-        hv_stores(est_hash, "odds ratio", newSVnv(mle_or));
-        hv_stores(ret_hash, "estimate", newRV_noinc((SV*)est_hash));
-        /* Return the HashRef */
-        RETVAL = newRV_noinc((SV*)ret_hash);
-    OUTPUT:
-        RETVAL
+	SV* data_ref
+	double conf_level
+	PREINIT:
+	  size_t a = 0, b = 0, c = 0, d = 0;
+	  double p_val, mle_or, ci_low, ci_high;
+	  HV*restrict ret_hash;
+	  AV*restrict ci_array;
+	  HV*restrict est_hash;
+	CODE:
+	  if (!SvROK(data_ref)) croak("fisher_test requires a reference to an Array or Hash");
+	  SV*restrict deref = SvRV(data_ref);
+	  /* Fast Path: 2D Array / AoA */
+	  if (SvTYPE(deref) == SVt_PVAV) {
+		   AV*restrict outer = (AV*)deref;
+		   if (av_len(outer) != 1) croak("Outer array must have exactly 2 rows");
+		   
+		   SV**restrict row1_ptr = av_fetch(outer, 0, 0);
+		   SV**restrict row2_ptr = av_fetch(outer, 1, 0);
+		   
+		   if (row1_ptr && row2_ptr && SvROK(*row1_ptr) && SvROK(*row2_ptr)) {
+		       AV*restrict row1 = (AV*)SvRV(*row1_ptr);
+		       AV*restrict row2 = (AV*)SvRV(*row2_ptr);
+		       
+		       a = SvIV(*av_fetch(row1, 0, 0));
+		       b = SvIV(*av_fetch(row1, 1, 0));
+		       c = SvIV(*av_fetch(row2, 0, 0));
+		       d = SvIV(*av_fetch(row2, 1, 0));
+		   } else {
+		       croak("Invalid 2D Array structure");
+		   }
+	  } 
+//Complex Path: 2D Hash (Because Perl hash order is random, we extract the first 4 integers found in the nested hashes)
+	  else if (SvTYPE(deref) == SVt_PVHV) {
+		   HV*restrict outer = (HV*)deref;
+		   HE*restrict outer_entry;
+		   I32 outer_len;
+		   unsigned short int val_count = 0;
+		   int vals[4] = {0, 0, 0, 0};
+		   
+		   hv_iterinit(outer);
+		   while ((outer_entry = hv_iternext(outer))) {
+		       SV*restrict inner_sv = hv_iterval(outer, outer_entry);
+		       if (SvROK(inner_sv) && SvTYPE(SvRV(inner_sv)) == SVt_PVHV) {
+		           HV*restrict inner = (HV*)SvRV(inner_sv);
+		           HE*restrict inner_entry;
+		           hv_iterinit(inner);
+		           while ((inner_entry = hv_iternext(inner)) && val_count < 4) {
+		               vals[val_count++] = SvIV(hv_iterval(inner, inner_entry));
+		           }
+		       }
+		   }
+		   if (val_count != 4) croak("2D Hash must contain exactly 4 values");
+		   a = vals[0]; b = vals[1]; c = vals[2]; d = vals[3];
+	  } else {
+		   croak("Input must be a 2D Array or 2D Hash");
+	  }
+	  /* Perform Calculations */
+	  p_val = exact_p_value(a, b, c, d);
+	  calculate_exact_stats(a, b, c, d, conf_level, &mle_or, &ci_low, &ci_high);
+	  /* Construct the Return HashRef purely in C */
+	  ret_hash = newHV();
+	  hv_stores(ret_hash, "p_value", newSVnv(p_val));
+	  hv_stores(ret_hash, "method", newSVpv("Fisher's Exact Test for Count Data", 0));
+	  
+	  ci_array = newAV();
+	  av_push(ci_array, newSVnv(ci_low));
+	  av_push(ci_array, newSVnv(ci_high));
+	  hv_stores(ret_hash, "conf_int", newRV_noinc((SV*)ci_array));
+	  
+	  est_hash = newHV();
+	  hv_stores(est_hash, "odds ratio", newSVnv(mle_or));
+	  hv_stores(ret_hash, "estimate", newRV_noinc((SV*)est_hash));
+	  /* Return the HashRef */
+	  RETVAL = newRV_noinc((SV*)ret_hash);
+	OUTPUT:
+	  RETVAL

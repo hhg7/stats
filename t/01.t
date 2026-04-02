@@ -233,19 +233,19 @@ foreach my $j (0,1) {
 eval { t_test(y => [1..5]) };
 like( $@, qr/must be an ARRAY reference/, 't_test: dies when x is missing' );
 
-eval { t_test(x => [1..5], paired => 1) };
+eval { t_test('x' => [1..5], paired => 1) };
 like( $@, qr/'y' must be provided for paired or two-sample tests/, 't_test: dies paired without y' );
 
-eval { t_test(x => [1..5], y => [1..4], paired => 1) };
+eval { t_test('x' => [1..5], 'y' => [1..4], paired => 1) };
 like( $@, qr/Paired arrays must be same length/, 't_test: dies on mismatched paired arrays' );
 
-eval { t_test(x => [1..5], conf_level => 1.5) };
+eval { t_test('x' => [1..5], conf_level => 1.5) };
 like( $@, qr/'conf_level' must be between 0 and 1/, 't_test: dies on invalid conf_level' );
 
-my $t_alt_greater = t_test(x => [5, 6, 7, 8, 9], mu => 2, alternative => 'greater');
+my $t_alt_greater = t_test('x' => [5, 6, 7, 8, 9], mu => 2, alternative => 'greater');
 ok( $t_alt_greater->{p_value} < 0.05, 't_test alternative greater works (small p_value)' );
 
-my $t_alt_less = t_test(x => [5, 6, 7, 8, 9], mu => 20, alternative => 'less');
+my $t_alt_less = t_test('x' => [5, 6, 7, 8, 9], mu => 20, alternative => 'less');
 ok( $t_alt_less->{p_value} < 0.05, 't_test alternative less works (small p_value)' );
 
 #----------------------
@@ -588,7 +588,6 @@ my $normals = rnorm( n => $n, mean => $rmean, sd => $sd);
 is_approx(scalar @{ $normals }, $n, 'rnorm sample size');
 is_approx(mean($normals), $rmean, 'rnorm mean', 0.1);
 is_approx(sd($normals), $sd, 'rnorm sd', 0.1);
-
 # rnorm exceptions
 eval { rnorm(n => 10, sd => -1) };
 like( $@, qr/standard deviation must be non-negative/, 'rnorm: dies on negative sd' );
@@ -678,13 +677,14 @@ subtest 'hist exceptions' => sub {
 	# Should die if not an array ref
 	dies_ok { hist("not an array") } 'hist: dies on string input';
 	dies_ok { hist({ a => 1 }) }     'hist: dies on hash ref input';
-
 	# Should die on empty array
 	dies_ok { hist([]) }             'hist: dies on empty array ref';
-
 	# Should die on non-numeric data (depending on your SVNV strictness)
 	dies_ok { hist([qw(a b c)]) }    'hist: dies on non-numeric array content';
 };
+#----------------------
+#   runif
+#----------------------
 my $unif = runif( n => $n, min => 0, max => 1);
 if (scalar @{ $unif } == $n) {
 	pass('random uniform distribution has the correct # of elements');
@@ -693,4 +693,57 @@ if (scalar @{ $unif } == $n) {
 }
 is_approx( min(@{ $unif }), 0, 'Approximately correct minimum', 10**-3);
 is_approx( max(@{ $unif }), 1, 'Approximately correct maximum', 10**-3);
+foreach my $dup (1) {
+	my $unif2 = runif( n => $n, min => 0, max => 1);
+	p $unif2;
+	my @identical_idx = grep { $unif->[$_] == $unif2->[$_] } 0..$n-1;
+	if (scalar @identical_idx == 0) {
+		pass('runif does not repeat');
+	} else { # > 1 identical value
+		fail('runif repeats ' . scalar @identical_idx . "/$n values");
+	}
+}
+#----------------------
+#      rbinom
+#----------------------
+my $binom = rbinom( n => $n, prob => 0.5, size => 9);
+if (scalar @{ $binom } == $n) {
+	pass('binom has the correct # of elements');
+} else {
+	fail("binom should have $n elements, but has " . scalar @{ $binom } . ' elements');
+}
+
+#----------------------
+#       seq
+#----------------------
+# Example 1: Standard integer sequence
+say 'seq(1, 5):';
+my @seq = seq(1, 5);
+say join(', ', @seq), "\n";
+
+foreach my ($idx, $item) (indexed @seq) {
+	is_approx( $item, $idx + 1, "seq item $idx");
+}
+
+# Example 2: Fractional steps
+say 'seq(1, 2, 0.25):';
+@seq = seq(1, 2, 0.25);
+say join(", ", @seq), "\n";
+for (my $idx = 2; $idx >= 1; $idx -= 0.25) { # count down to pop
+	is_approx(pop @seq, $idx, "seq item $idx with fractional step");
+}
+
+# Example 3: Negative steps
+say 'seq(10, 5, -1):';
+@seq = seq(10, 5, -1);
+say join(", ", @seq), "\n";
+for (my $idx = 5; $idx <= 10; $idx++) { # count down to pop
+	is_approx(pop @seq, $idx, "seq item $idx with negative step");
+}
+# Example 4: R-style floating point boundary catch
+# (In naive C, 2.0 - 0.2 could cause the last element to drop off)
+say 'seq(0, 1, 0.1):';
+@seq = seq(0, 1, 0.1);
+say join(", ", @seq);
+
 done_testing();

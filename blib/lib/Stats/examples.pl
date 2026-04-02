@@ -6,6 +6,7 @@ use warnings FATAL => 'all';
 use autodie ':all';
 use Stats::LikeR;
 use JSON 'encode_json';
+use Matplotlib::Simple;
 use Util;
 
 my $m = matrix(data => [1..9], nrow => 3, ncol => 3);
@@ -21,6 +22,8 @@ foreach my $row (@{ $mtcars }) { # transform AoH to HoA
 unless (-f 'mtcars.hoh.json') {
 	ref_to_json_file(\%mtcars, 'mtcars.hoh.json');
 }
+my $binom = rbinom( n => 99, prob => 0.5, size => 1);
+p $binom, array_max => scalar @{ $binom };
 #my $lm = lm(formula => 'mpg ~ wt * hp^2', data => \%mtcars);
 #say encode_json( \%mtcars );
 # matrix
