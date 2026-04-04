@@ -119,7 +119,15 @@ Works as closely as I can to R's seq, which is very similar to Perl's `for` loop
         is_approx(pop @seq, $idx, "seq item $idx with negative step");
     }
 }
-    
+
+## Shapiro Test
+
+tests to see if an array reference is normally distributed, returns a p-value and a statistic
+
+    my $shapiro = shapiro_test(
+    	[1..5]
+    );
+
 ## t_test
 
 returns a hash reference

@@ -771,5 +771,10 @@ my $shapiro = shapiro_test(
 );
 is_approx( $shapiro->{p_value}, 0.9671739, 'Shapiro p-value');
 is_approx( $shapiro->{W}, 0.9867622, 'Shapiro W');
-p $shapiro;
+#--------
+$shapiro = shapiro_test(
+	[1..19]
+);
+is_approx( $shapiro->{p_value}, 0.5896506, 'Shapiro p-value: 19 values');
+is_approx( $shapiro->{W}, 0.9608707, 'Shapiro W: 19 values');
 done_testing();

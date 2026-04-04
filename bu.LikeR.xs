@@ -524,7 +524,7 @@ typedef struct {
 } Observation;
 
 /* Pure C comparator for qsort */
-int compare_obs(const void *a, const void *b) {
+int compare_obs(const void *restrict a, const void *restrict b) {
 	double va = ((Observation*)a)->value;
 	double vb = ((Observation*)b)->value;
 	if (va < vb) return -1;
@@ -574,12 +574,10 @@ void
 shapiro_test(data)
     SV *data
 PREINIT:
-    AV *av;
-    HV *ret_hash;
-    int n, i;
-    double *restrict x;
-    double w = 0.0, p_val = 0.0;
-    double mean = 0.0, ssq = 0.0;
+    AV *restrict av;
+    HV *restrict ret_hash;
+    size_t n;
+    double *restrict x, w = 0.0, p_val = 0.0, mean = 0.0, ssq = 0.0;
 PPCODE:
     if (!SvROK(data) || SvTYPE(SvRV(data)) != SVt_PVAV) {
         croak("Expected an array reference");
@@ -595,8 +593,8 @@ PPCODE:
     Newx(x, n, double);
 
     /* Extract variables and calculate mean */
-    for (i = 0; i < n; i++) {
-        SV **elem = av_fetch(av, i, 0);
+    for (unsigned i = 0; i < n; i++) {
+        SV **restrict elem = av_fetch(av, i, 0);
         if (elem && SvOK(*elem)) {
             x[i] = SvNV(*elem);
             mean += x[i];
@@ -607,7 +605,7 @@ PPCODE:
     mean /= n;
 
     /* Calculate Sum of Squares */
-    for (i = 0; i < n; i++) {
+    for (unsigned i = 0; i < n; i++) {
         ssq += (x[i] - mean) * (x[i] - mean);
     }
 
@@ -628,12 +626,12 @@ PPCODE:
         /* Exact P-value for n=3 */
         p_val = 1.90985931710274 * (asin(sqrt(w)) - 1.04719755119660); 
     } else {
-        double *m, *a;
+        double *restrict m, *restrict a;
         double sum_m2 = 0.0, b_val = 0.0;
         Newx(m, n, double);
         Newx(a, n, double);
 
-        for (i = 0; i < n; i++) {
+        for (unsigned int i = 0; i < n; i++) {
             m[i] = inverse_normal_cdf((i + 1.0 - 0.375) / (n + 0.25));
             sum_m2 += m[i] * m[i];
         }
@@ -645,7 +643,7 @@ PPCODE:
 
         if (n == 4 || n == 5) {
             double eps = (sum_m2 - 2.0 * m[n-1]*m[n-1]) / (1.0 - 2.0 * a_n*a_n);
-            for (i = 1; i < n-1; i++) {
+            for (unsigned int i = 1; i < n-1; i++) {
                 a[i] = m[i] / sqrt(eps);
             }
         } else {
@@ -653,64 +651,61 @@ PPCODE:
             a[n-2] = a_n1;
             a[1]   = -a_n1;
             double eps = (sum_m2 - 2.0 * m[n-1]*m[n-1] - 2.0 * m[n-2]*m[n-2]) / (1.0 - 2.0 * a_n*a_n - 2.0 * a_n1*a_n1);
-            for (i = 2; i < n-2; i++) {
+            for (unsigned int i = 2; i < n-2; i++) {
                 a[i] = m[i] / sqrt(eps);
             }
         }
-        for (i = 0; i < n; i++) {
+        for (unsigned int i = 0; i < n; i++) {
             b_val += a[i] * x[i];
         }
         w = (b_val * b_val) / ssq;
 // --- AS R94 P-Value Calculation: High Precision Refinement ---
+        /* NOTE: p_val is declared in PREINIT above; do NOT shadow it with a
+         * local 'double p_val' here or the result will never reach the caller. */
         double y = log(1.0 - w);
-        double z, p_val;
+        double z;
 
-        if (n == 3) {
-            /* Precise calculation for n=3 using R's exact multiplier */
-            p_val = 1.909859317102744 * (asin(sqrt(w)) - 1.047197551196598);
-        } else if (n <= 11) {
-            /* Royston's branch for 4 <= n <= 11 */
+        if (n <= 11) {
+            // Royston's branch for 4 <= n <= 11 (AS R94, small-sample path).
+            // gamma is the upper bound on y = log(1-W); if y reaches gamma
+            // the p-value is essentially zero
             double nn = (double)n;
             double gamma = 0.459 * nn - 2.273;
-            
-            if (y > gamma) {
-                p_val = 1e-19; 
+
+            if (y >= gamma) {
+                p_val = 1e-19;
             } else {
-                /* Horner's method for mu and sigma to prevent precision loss */
-                double mu = 0.544 + nn * (-0.39978 + nn * (0.025054 - nn * 0.0006714));
-                double sig_val = 1.3822 + nn * (-0.7785 + nn * (0.062767 - nn * 0.0020322));
-                double sigma = exp(sig_val);
-                
+                /* Horner-form polynomials in n for mu and log(sigma). */
+                double mu     = 0.544  + nn * (-0.39978  + nn * ( 0.025054  - nn * 0.0006714));
+                double sig_val= 1.3822 + nn * (-0.77857  + nn * ( 0.062767  - nn * 0.0020322));
+                double sigma  = exp(sig_val);
+
                 z = (-log(gamma - y) - mu) / sigma;
-                
-                /* Using a high-precision Normal CDF approximation */
-                p_val = 0.5 * erfc(-z * M_SQRT1_2); 
+
+                /* Upper-tail probability P(Z > z): small W → large z → small p-value. */
+                p_val = 0.5 * erfc(z * M_SQRT1_2);
             }
         } else {
-            /* Royston's branch for n >= 12 */
-            double ln_n = log((double)n);
-            
-            /* Horner's method for mu and sigma polynomials */
-            double mu = -1.5861 + ln_n * (-0.31082 + ln_n * (-0.083751 + ln_n * 0.0038915));
-            double sig_val = -0.4803 + ln_n * (-0.082676 + ln_n * 0.0030302);
-            double sigma = exp(sig_val);
-            
+            /* Royston's branch for n >= 12 (AS R94, large-sample path). */
+            double ln_n   = log((double)n);
+
+            /* Horner-form polynomials in log(n) for mu and log(sigma). */
+            double mu     = -1.5861 + ln_n * (-0.31082 + ln_n * (-0.083751 + ln_n * 0.0038915));
+            double sig_val= -0.4803 + ln_n * (-0.082676 + ln_n * 0.0030302);
+            double sigma  = exp(sig_val);
+
             z = (y - mu) / sigma;
             p_val = 0.5 * erfc(z * M_SQRT1_2);
         }
-
-        /* Clamp the p-value */
+        // Clamp the p-value
         if (p_val > 1.0) p_val = 1.0;
         if (p_val < 0.0) p_val = 0.0;
         
-        Safefree(m);
-        Safefree(a);
+        Safefree(m); m = NULL;
+        Safefree(a); a = NULL;
     }
-    
-    Safefree(x);
-
+    Safefree(x); x = NULL;
     ret_hash = newHV();
-    
     hv_stores(ret_hash, "statistic", newSVnv(w));
     hv_stores(ret_hash, "W",         newSVnv(w));
     hv_stores(ret_hash, "p_value",   newSVnv(p_val));
@@ -1732,7 +1727,7 @@ void scale(...)
 		   SV*restrict last_arg = ST(items - 1);
 		   if (SvROK(last_arg) && SvTYPE(SvRV(last_arg)) == SVt_PVHV) {
 		       data_items = items - 1; /* Exclude hash from data processing */
-		       HV* opt_hv = (HV*)SvRV(last_arg);
+		       HV*restrict opt_hv = (HV*)SvRV(last_arg);
 
 		       // --- Parse 'center'
 		       SV**restrict center_sv = hv_fetch(opt_hv, "center", 6, 0);
@@ -1780,7 +1775,7 @@ void scale(...)
 		       }
 		   }
 	  }
-	  /* 2. Detect if the input is a Matrix (Array of Arrays) */
+	  // 2. Detect if the input is a Matrix (Array of Arrays)
 	  bool is_matrix = false;
 	  if (data_items == 1) {
 		   SV*restrict first_arg = ST(0);
@@ -1795,9 +1790,9 @@ void scale(...)
 		   }
 	  }
 	  if (is_matrix) {
-		   // =========================================================
+		   //=========================================================
 		   // MATRIX MODE: Scale columns independently (Just like R)
-		   // =========================================================
+		   //=========================================================
 		   AV*restrict mat_av = (AV*)SvRV(ST(0));
 		   size_t nrow = av_len(mat_av) + 1, ncol = 0;
 		   
@@ -1815,13 +1810,11 @@ void scale(...)
 		       av_extend(row_ptrs[r], ncol - 1);
 		       av_push(result_av, newRV_noinc((SV*)row_ptrs[r]));
 		   }
-
 		   // Calculate and apply scale per column
 		   for (size_t c = 0; c < ncol; c++) {
 		       double col_sum = 0.0;
 		       double *restrict col_data;
 		       Newx(col_data, nrow, double);
-
 		       /* Extract the column data */
 		       for (size_t r = 0; r < nrow; r++) {
 		           SV**restrict row_sv = av_fetch(mat_av, r, 0);
