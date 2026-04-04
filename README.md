@@ -5,6 +5,8 @@ I've used Artificial Intelligence tools such as Claude, Gemini, and Grok to writ
 There are other similar tools on CPAN, but I want speed and a form like List::Util, which I've gotten here with the help of AI, which often required many attempts to do correctly.
 This is meant to call subroutines directly through eXternal Subroutines (XS) for speed.
 
+There **are** other modules on CPAN that can do **PARTS** of this, but this works the way that I **want** it to.
+
 # Functions/Subroutines
 
 ## cor
@@ -55,7 +57,7 @@ or
 
 ## median
 
-works like mean:
+works like mean, taking array references and arrays:
 
     median( $test_data[$i][0] )
 
@@ -85,6 +87,38 @@ Returns array
     my $stdev = sd(2,4,4,4,5,5,7,9);
 
 Correct answer is 2.1380899352994;
+
+## seq
+
+Works as closely as I can to R's seq, which is very similar to Perl's `for` loops.  Returns an array, not an array reference.
+
+### Example 1: Standard integer sequence
+
+    say 'seq(1, 5):';
+    my @seq = seq(1, 5);
+    say join(', ', @seq), "\n";
+
+    say 'seq(1, 2, 0.25):';
+    @seq = seq(1, 2, 0.25);
+
+### Example 2: Fractional steps
+
+    say 'seq(1, 2, 0.25):';
+    @seq = seq(1, 2, 0.25);
+    say join(", ", @seq), "\n";
+    for (my $idx = 2; $idx >= 1; $idx -= 0.25) { # count down to pop
+    	is_approx(pop @seq, $idx, "seq item $idx with fractional step");
+    }
+
+### Example 3: Negative steps
+
+    say 'seq(10, 5, -1):';
+    @seq = seq(10, 5, -1);
+    say join(", ", @seq), "\n";
+    for (my $idx = 5; $idx <= 10; $idx++) { # count down to pop
+        is_approx(pop @seq, $idx, "seq item $idx with negative step");
+    }
+}
     
 ## t_test
 

@@ -6,10 +6,26 @@ use warnings FATAL => 'all';
 use Test::More;
 use Test::Exception; # die_ok
 use Stats::LikeR;
-use List::Util qw(max min);
 use JSON qw(decode_json encode_json);
 
 # Gemini helped to write some of the tests
+
+# Custom helper for floating-point comparisons
+sub is_approx ($got, $expected, $test_name, $epsilon = 10**-7) {
+	my $current_sub = ( split( /::/, ( caller(0) )[3] ) )[-1];
+	foreach my ($i, $arg) (indexed ($got, $expected, $test_name)) {
+		next if defined $arg;
+		die "\$arg[$i] (see subroutine signature for name) isn't defined in $current_sub";
+	}
+	if (abs($got - $expected) < $epsilon) {
+		pass($test_name);
+		return 1;
+	} else {
+		fail($test_name);
+		diag("         got: $got\n    expected: $expected");
+		return 0;
+	}
+}
 
 sub json_file_to_ref ($json_filename) {
 	die "$json_filename doesn't exist or isn't a file" unless -f $json_filename;
@@ -21,6 +37,23 @@ sub json_file_to_ref ($json_filename) {
 #	$json =~ s/NaN/"NaN"/g;
 	return decode_json($json); # This produces decoded text
 }
+#----------------------
+#		min
+#----------------------
+is_approx( min(1,2,2.33,3), 1, 'min of scalars');
+my @test_data = (-5..5);
+is_approx(min(@test_data), $test_data[0], 'min of array');
+my $test_data = \@test_data;
+is_approx(min($test_data), $test_data[0], 'min of array reference');
+my %h = (A => -3, B => 4, C => 9);
+is_approx( min(values %h), -3, 'min takes values from hash');
+#----------------------
+#		max
+#----------------------
+is_approx( max(1,2,3), 3, 'max of scalars');
+is_approx(max(@test_data), $test_data[-1], 'max of array');
+is_approx(max($test_data), $test_data[-1], 'max of array reference');
+is_approx( max(values %h), 9, 'max takes values from hash');
 #----------------------
 #		mean
 #----------------------
@@ -68,22 +101,6 @@ eval { var(1) };
 like( $@, qr/stdev needs >= 2 elements/, 'var: dies when given < 2 elements' );
 
 # -------------------------------
-# Custom helper for floating-point comparisons
-sub is_approx ($got, $expected, $test_name, $epsilon = 10**-7) {
-	my $current_sub = ( split( /::/, ( caller(0) )[3] ) )[-1];
-	foreach my ($i, $arg) (indexed ($got, $expected, $test_name)) {
-		next if defined $arg;
-		die "\$arg[$i] (see subroutine signature for name) isn't defined in $current_sub";
-	}
-	if (abs($got - $expected) < $epsilon) {
-	  pass($test_name);
-	  return 1;
-	} else {
-	  fail($test_name);
-	  diag("         got: $got\n    expected: $expected");
-	  return 0;
-	}
-}
 # --- Tests ---
 # 1. Valid Mathematical Outcomes
 is_approx( pearson_r([1, 2, 3], [2, 4, 6]), 1, 
@@ -119,7 +136,7 @@ eval { pearson_r([], []) };
 like( $@, qr/Need at least 2 elements/, 
 	'Dies correctly when given empty arrays' );
 
-my @test_data = (
+@test_data = (
 [
 	[27.5,21.0,19.0,23.6,17.0,17.9,16.9,20.1,21.9,22.6,23.1,19.6,19.0,21.7,21.4],
 	[27.1,22.0,20.8,23.4,23.4,23.5,25.8,22.0,24.8,20.2,21.9,22.1,22.9,20.5,24.4],
@@ -746,4 +763,13 @@ say 'seq(0, 1, 0.1):';
 @seq = seq(0, 1, 0.1);
 say join(", ", @seq);
 
+#my $wt_result = wilcox_test( 'x' => [1..4], 'y' => [5..8], {});
+#p $wt_result;
+
+my $shapiro = shapiro_test(
+	[1..5]
+);
+is_approx( $shapiro->{p_value}, 0.9671739, 'Shapiro p-value');
+is_approx( $shapiro->{W}, 0.9867622, 'Shapiro W');
+p $shapiro;
 done_testing();
