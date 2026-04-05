@@ -5,11 +5,24 @@ no source::encoding;
 use warnings FATAL => 'all';
 use autodie ':all';
 use Stats::LikeR;
-use JSON 'encode_json';
-use Matplotlib::Simple;
+#use JSON 'encode_json';
+#use Matplotlib::Simple;
 use Util;
 
-my $m = matrix(data => [1..9], nrow => 3, ncol => 3);
+my $x = [1, 2, 3, 4, 5];
+my $y = [2, 1, 4, 3, 5];
+
+foreach my $meth ('spearman', 'kendall', 'pearson') {
+	my $result = cor_test(
+		'x'         => $x,
+		'y'         => $y,
+		alternative => 'two.sided',
+		method      => $meth
+	);
+
+	p $result;
+}
+=my $m = matrix(data => [1..9], nrow => 3, ncol => 3);
 p $m;
 my $mtcars = json_file_to_ref('mtcars.json');
 my (@mtcars, %mtcars);

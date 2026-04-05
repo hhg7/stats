@@ -1384,7 +1384,7 @@ void p_adjust(SV* p_sv, const char* method = "holm")
 		   }
 	  } else if (strcmp(meth, "holm") == 0) {
 		   double cummax = 0.0;
-		   for (UV i = 0; i < n; i++) {
+		   for (size_t i = 0; i < n; i++) {
 		       double v = arr[i].p * (n - i);
 		       if (v > cummax) cummax = v;
 		       adj[arr[i].orig_idx] = (cummax < 1.0) ? cummax : 1.0;
@@ -1415,8 +1415,7 @@ void p_adjust(SV* p_sv, const char* method = "holm")
 	  } else if (strcmp(meth, "hommel") == 0) {
 		   double *restrict pa = (double *)malloc(n * sizeof(double));
 		   double *restrict q_arr = (double *)malloc(n * sizeof(double));
-		   
-		   /* Initial: min(n * p[i] / (i + 1)) */
+		   // Initial: min(n * p[i] / (i + 1))
 		   double min_val = n * arr[0].p;
 		   for (size_t i = 1; i < n; i++) {
 		       double temp = (n * arr[i].p) / (i + 1.0);
@@ -1424,15 +1423,15 @@ void p_adjust(SV* p_sv, const char* method = "holm")
 		           min_val = temp;
 		       }
 		   }
-		   /* pa <- q <- rep(min, n) */
+		   // pa <- q <- rep(min, n)
 		   for (size_t i = 0; i < n; i++) {
 		       pa[i] = min_val;
 		       q_arr[i] = min_val;
 		   }
 		   for (size_t j = n - 1; j >= 2; j--) {
-		       ssize_t n_mj = n - j;       /* Max index for 'ij'. Length is n_mj + 1 */
-		       ssize_t i2_len = j - 1;     /* Length of 'i2' */
-		       /* Calculate q1 = min(j * p[i2] / (2:j)) */
+		       ssize_t n_mj = n - j;       // Max index for 'ij'. Length is n_mj + 1
+		       ssize_t i2_len = j - 1;     // Length of 'i2
+		       // Calculate q1 = min(j * p[i2] / (2:j))
 		       double q1 = (j * arr[n_mj + 1].p) / 2.0;
 		       for (size_t k = 1; k < i2_len; k++) {
 		           double temp_q1 = (j * arr[n_mj + 1 + k].p) / (2.0 + k);
@@ -1445,19 +1444,18 @@ void p_adjust(SV* p_sv, const char* method = "holm")
 		           double v = j * arr[i].p;
 		           q_arr[i] = (v < q1) ? v : q1;
 		       }
-		       /* q[i2] <- q[n - j] */
+		       // q[i2] <- q[n - j]
 		       for (size_t i = 0; i < i2_len; i++) {
 		           q_arr[n_mj + 1 + i] = q_arr[n_mj];
 		       }
-		       /* pa <- pmax(pa, q) */
+		       // pa <- pmax(pa, q)
 		       for (size_t i = 0; i < n; i++) {
 		           if (pa[i] < q_arr[i]) {
 		              pa[i] = q_arr[i];
 		           }
 		       }
 		   }
-		   
-		   /* pmin(1, pmax(pa, p))[ro] — map sorted results back to original indices */
+		   // pmin(1, pmax(pa, p))[ro] — map sorted results back to original indices
 		   for (size_t i = 0; i < n; i++) {
 		       double v = (pa[i] > arr[i].p) ? pa[i] : arr[i].p;
 		       if (v > 1.0) v = 1.0;
