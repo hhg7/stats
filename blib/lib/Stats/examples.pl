@@ -12,14 +12,40 @@ use Util;
 my $x = [1, 2, 3, 4, 5];
 my $y = [2, 1, 4, 3, 5];
 
-foreach my $meth ('spearman', 'kendall', 'pearson') {
+my @correct = (
+{ # cor.test(cx, cy, alternative='two.sided', method = 'spearman', continuity=1)
+	estimate  => 0.8,
+	'p.value' => 0.1333333,
+	statistic => 4,
+},
+{ #cor.test(cx, cy, alternative='two.sided', method = 'kendall', continuity=1)
+	estimate  => 0.6, # tau
+	'p.value' => 0.2333333,
+	statistic => 
+#	statistic, 
+},
+{	 alternative => 'two.sided',
+    'conf.int' => [
+       -0.279637693499009, 0.986196123450776
+    ],
+    estimate  =>  0.8,
+    method    => 'pearson',
+    p.value   => 0.104088,
+    parameter => 3,
+    statistic => 2.309401
+
+);
+foreach my ($idx, $meth) (indexed('spearman', 'kendall', 'pearson')) {
 	my $result = cor_test(
 		'x'         => $x,
 		'y'         => $y,
 		alternative => 'two.sided',
-		method      => $meth
+		method      => $meth,
+		continuity  => 1
 	);
-
+	foreach my $key (sort keys %{ $result }) {
+	
+	}
 	p $result;
 }
 =my $m = matrix(data => [1..9], nrow => 3, ncol => 3);

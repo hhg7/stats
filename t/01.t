@@ -3,9 +3,11 @@
 use 5.042.2;
 no source::encoding;
 use warnings FATAL => 'all';
+use warnings::unused;
 use Test::More;
 use Test::Exception; # die_ok
 use Stats::LikeR;
+use Scalar::Util 'looks_like_number';
 use JSON qw(decode_json encode_json);
 
 # Gemini helped to write some of the tests
@@ -595,7 +597,7 @@ dies_ok {
 
 dies_ok {
 	my $lm_no_int = lm(formula => 'mpg ~ wt -1', data => $mtcars);
-#ok( !defined($lm_no_int->{coefficients}{Intercept}), 'lm: formula -1 correctly suppresses Intercept' );
+	ok( !defined($lm_no_int->{coefficients}{Intercept}), 'lm: formula -1 correctly suppresses Intercept' );
 } 'lm: formula -1 correctly suppresses Intercept';
 #---------------------------
 #   rnorm
@@ -710,7 +712,7 @@ if (scalar @{ $unif } == $n) {
 }
 is_approx( min(@{ $unif }), 0, 'Approximately correct minimum', 10**-3);
 is_approx( max(@{ $unif }), 1, 'Approximately correct maximum', 10**-3);
-foreach my $dup (1) {
+{
 	my $unif2 = runif( n => $n, min => 0, max => 1);
 	p $unif2;
 	my @identical_idx = grep { $unif->[$_] == $unif2->[$_] } 0..$n-1;
@@ -777,4 +779,71 @@ $shapiro = shapiro_test(
 );
 is_approx( $shapiro->{p_value}, 0.5896506, 'Shapiro p-value: 19 values');
 is_approx( $shapiro->{W}, 0.9608707, 'Shapiro W: 19 values');
+#------- cor test
+
+my $x = [1, 2, 3, 4, 5];
+my $y = [2, 1, 4, 3, 5];
+
+my @correct = (
+{ # cor.test(cx, cy, alternative='two.sided', method = 'spearman', continuity=1)
+	alternative => 'two.sided',
+	estimate    => 0.8,
+	'p.value'   => 0.1333333,
+	statistic   => 4,
+	method      => 'spearman'
+},
+{ # cor.test(cx, cy, alternative='two.sided', method = 'kendall', continuity=1)
+	alternative => 'two.sided',
+	estimate    => 0.6, # tau
+	method      => 'kendall',
+	'p.value'   => 0.2333333,
+	statistic   => 8
+},
+{# cor.test(cx, cy, alternative='two.sided', method = 'pearson', continuity=1)
+	alternative => 'two.sided',
+	'conf.int' => [
+	 -0.279637693499009, 0.986196123450776
+	],
+	estimate  =>  0.8,
+	method    => 'pearson',
+	'p.value' => 0.104088,
+	parameter => 3,
+	statistic => 2.309401
+},
+{ # cor.test(cx, cy, alternative='less', method = 'pearson', continuity=1
+	alternative => 'less',
+	'conf.int' => [
+	 -1, 0.9785289
+	],
+	estimate  =>  0.8,
+	method    => 'pearson',
+	'p.value' => 0.947956,
+	parameter => 3,
+	statistic => 2.309401	
+},
+{# cor.test(cx, cy, alternative='less', method = 'kendall', continuity=1)
+	alternative => 'less',
+	estimate    => 0.6, # tau
+	method      => 'kendall',
+	'p.value'   => 0.9583333,
+	statistic   => 8
+}
+);
+foreach my $meth (@correct) {
+	my $result = cor_test(
+		'x'         => $x,
+		'y'         => $y,
+		alternative => $meth->{alternative},
+		method      => $meth->{method},
+		continuity  => 1
+	);
+	my @undef_keys = grep {!defined $meth->{$_}} sort keys %{ $result };
+	if (scalar @undef_keys > 0) {
+		p @undef_keys;
+		die "The above keys aren't defined";
+	}
+	foreach my $key (sort grep {looks_like_number($result->{$_})} keys %{ $result }) {
+		is_approx( $result->{$key}, $meth->{$key}, "cor_test: $meth->{method}/$meth->{alternative} & $key");
+	}
+}
 done_testing();
