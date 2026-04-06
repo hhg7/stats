@@ -579,21 +579,6 @@ static void compute_hist_logic(double *restrict x, size_t n, double *restrict br
 	  }
 	}
 }
-// Pure C struct for tracking observations
-typedef struct {
-    double value;
-    int group;
-    double rank;
-} Observation;
-
-/* Pure C comparator for qsort */
-int compare_obs(const void *restrict a, const void *restrict b) {
-	double va = ((Observation*)a)->value;
-	double vb = ((Observation*)b)->value;
-	if (va < vb) return -1;
-	if (va > vb) return 1;
-	return 0;
-}
 
 // Standard Normal CDF approximation
 double approx_pnorm(double x) {
@@ -641,7 +626,7 @@ static double inverse_normal_cdf(double p) {
  * Mirrors R's default: exact = (n < 10) with no ties.
  * Valid up to n = 9 (362 880 iterations — negligible cost).
  * ----------------------------------------------------------------------- */
-static double spearman_exact_pvalue(double s_obs, int n, const char *alt) {
+static double spearman_exact_pvalue(double s_obs, int n, const char *restrict alt) {
     int *perm = (int*)safemalloc(n * sizeof(int));
     int *c    = (int*)safemalloc(n * sizeof(int));
     int  i;
@@ -779,30 +764,24 @@ CODE:
     if (!x_ref || !y_ref) croak("cor_test: 'x' and 'y' are required array references");
 
     AV *restrict x_av, *restrict y_av;
-    unsigned int n, i, j;
     double *restrict x, *restrict y;
     double estimate = 0, p_value = 0, statistic = 0, df = 0, ci_lower = 0, ci_upper = 0;
     bool is_pearson  = (strcmp(method, "pearson") == 0);
     bool is_kendall  = (strcmp(method, "kendall") == 0);
     bool is_spearman = (strcmp(method, "spearman") == 0);
     HV *restrict rhv;
-
     if (!SvROK(x_ref) || SvTYPE(SvRV(x_ref)) != SVt_PVAV ||
         !SvROK(y_ref) || SvTYPE(SvRV(y_ref)) != SVt_PVAV) {
         croak("x and y must be array references");
     }
-
     x_av = (AV*)SvRV(x_ref);
     y_av = (AV*)SvRV(y_ref);
-    n = av_len(x_av) + 1;
-
+    size_t n = av_len(x_av) + 1;
     if (n != av_len(y_av) + 1) croak("incompatible dimensions");
     if (n < 3) croak("not enough finite observations");
-
     x = safemalloc(n * sizeof(double));
     y = safemalloc(n * sizeof(double));
-
-    for (i = 0; i < n; i++) {
+    for (size_t i = 0; i < n; i++) {
         SV **restrict x_val = av_fetch(x_av, i, 0);
         SV **restrict y_val = av_fetch(y_av, i, 0);
         x[i] = x_val && SvOK(*x_val) ? SvNV(*x_val) : 0;
@@ -811,7 +790,7 @@ CODE:
 
     if (is_pearson) {
         double sum_x = 0, sum_y = 0, sum_x2 = 0, sum_y2 = 0, sum_xy = 0;
-        for (i = 0; i < n; i++) {
+        for (size_t i = 0; i < n; i++) {
             sum_x  += x[i];
             sum_y  += y[i];
             sum_x2 += x[i]*x[i];
@@ -840,8 +819,8 @@ CODE:
 
 		} else if (is_kendall) {
         int c = 0, d = 0, tie_x = 0, tie_y = 0;
-        for (i = 0; i < n - 1; i++) {
-            for (j = i + 1; j < n; j++) {
+        for (size_t i = 0; i < n - 1; i++) {
+            for (size_t j = i + 1; j < n; j++) {
                 double sign_x = (x[i] - x[j] > 0) - (x[i] - x[j] < 0);
                 double sign_y = (y[i] - y[j] > 0) - (y[i] - y[j] < 0);
                 if (sign_x == 0 && sign_y == 0) { /* Joint tie, ignore */ }
@@ -863,13 +842,11 @@ CODE:
         } else {
             do_exact = SvTRUE(exact_sv) ? 1 : 0;
         }
-        
-        /* If forced exact but ties exist, R overrides and falls back to approximation anyway */
+        // If forced exact but ties exist, R overrides and falls back to approximation anyway
         if (do_exact && has_ties) do_exact = 0;
-
         if (do_exact) {
             double S_stat = c - d;
-            statistic = S_stat;
+            statistic = c;
             p_value = kendall_exact_pvalue(n, S_stat, alternative);
         } else {
             /* Normal approximation for large N or ties */
@@ -894,7 +871,7 @@ CODE:
 
         /* Spearman rho = Pearson r of the ranks */
         double sum_x = 0, sum_y = 0, sum_x2 = 0, sum_y2 = 0, sum_xy = 0;
-        for (i = 0; i < n; i++) {
+        for (size_t i = 0; i < n; i++) {
             sum_x  += rank_x[i];  sum_y  += rank_y[i];
             sum_x2 += rank_x[i]*rank_x[i]; sum_y2 += rank_y[i]*rank_y[i];
             sum_xy += rank_x[i]*rank_y[i];
@@ -908,14 +885,14 @@ CODE:
 
         /* S = sum of squared rank differences (R's reported statistic) */
         double S_stat = 0.0;
-        for (i = 0; i < n; i++) {
+        for (size_t i = 0; i < n; i++) {
             double diff = rank_x[i] - rank_y[i];
             S_stat += diff * diff;
         }
 
         /* Ties produce fractional (averaged) ranks — detect them */
         int has_ties = 0;
-        for (i = 0; i < n; i++) {
+        for (size_t i = 0; i < n; i++) {
             if (rank_x[i] != floor(rank_x[i]) || rank_y[i] != floor(rank_y[i])) {
                 has_ties = 1;
                 break;
@@ -939,17 +916,14 @@ CODE:
             statistic = r * sqrt((n - 2.0) / (1.0 - r * r));
             p_value = get_t_pvalue(statistic, (double)(n - 2), alternative);
         }
-
         Safefree(rank_x);
         Safefree(rank_y);
     } else {
         Safefree(x); Safefree(y);
         croak("Unknown method");
     }
-
     Safefree(x);
     Safefree(y);
-
     rhv = newHV();
     hv_stores(rhv, "estimate", newSVnv(estimate));
     hv_stores(rhv, "p.value", newSVnv(p_value));

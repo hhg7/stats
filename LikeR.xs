@@ -579,21 +579,6 @@ static void compute_hist_logic(double *restrict x, size_t n, double *restrict br
 	  }
 	}
 }
-// Pure C struct for tracking observations
-typedef struct {
-    double value;
-    int group;
-    double rank;
-} Observation;
-
-/* Pure C comparator for qsort */
-int compare_obs(const void *restrict a, const void *restrict b) {
-	double va = ((Observation*)a)->value;
-	double vb = ((Observation*)b)->value;
-	if (va < vb) return -1;
-	if (va > vb) return 1;
-	return 0;
-}
 
 // Standard Normal CDF approximation
 double approx_pnorm(double x) {
