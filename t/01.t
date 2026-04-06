@@ -78,7 +78,12 @@ if (mean([1,1], [2,2]) == 1.5) {
 } else {
 	fail('Arrays as references cannot be given');
 }
-
+subtest 'Numerical Stability: Catastrophic Cancellation' => sub {
+	my @large_data = (1000000000.1, 1000000000.2, 1000000000.3);
+	# The variance of (0.1, 0.2, 0.3) is exactly 0.01.
+	is_approx( var(@large_data), 0.01, 'var: handles large magnitude data cleanly' );
+	is_approx( sd(@large_data), 0.1, 'sd: handles large magnitude data cleanly' );
+};
 # Exceptional cases for mean
 eval { mean() };
 like( $@, qr/mean needs >= 1 element/, 'mean: dies when given empty input' );
@@ -99,44 +104,7 @@ if (abs($stdev - $correct) < 10**-14) {
 eval { sd(1) };
 like( $@, qr/stdev needs >= 2 elements/, 'sd: dies when given < 2 elements' );
 
-eval { var(1) };
-like( $@, qr/stdev needs >= 2 elements/, 'var: dies when given < 2 elements' );
-
-# -------------------------------
-# --- Tests ---
-# 1. Valid Mathematical Outcomes
-is_approx( pearson_r([1, 2, 3], [2, 4, 6]), 1, 
-	'Perfect positive correlation (r = 1)' );
-
-is_approx( pearson_r([1, 2, 3], [6, 4, 2]), -1, 
-	'Perfect negative correlation (r = -1)' );
-
-is_approx( pearson_r([-1, 0, 1, 0], [0, 1, 0, -1]), 0, 
-	'Zero correlation (r = 0)' );
-
-is_approx( pearson_r([10, 20, 30, 40, 50], [12, 24, 33, 38, 55]), 0.9857122,
-	'Standard positive correlation calculation' );
-
-## 2. Mathematical Edge Cases
-is( pearson_r([1, 1, 1], [2, 4, 6]), undef, 
-	'Zero variance in one array returns undef (division by zero)' );
-
-# 3. Validation / Exception Handling
-eval { pearson_r("string", [1, 2]) };
-like( $@, qr/Both arguments must be array references/, 
-	"Dies correctly when given a non-array reference" );
-
-eval { pearson_r([1, 2, 3], [1, 2]) };
-like( $@, qr/Arrays must have the same number of elements/, 
-	'Dies correctly on mismatched array lengths' );
-
-eval { pearson_r([1], [2]) };
-like( $@, qr/Need at least 2 elements/, 
-	'Dies correctly when given less than 2 elements' );
-
-eval { pearson_r([], []) };
-like( $@, qr/Need at least 2 elements/, 
-	'Dies correctly when given empty arrays' );
+dies_ok { var(1) } 'var: dies when given < 2 elements' ;
 
 @test_data = (
 [
@@ -509,22 +477,22 @@ my %correct = (
 	},
 	rank => 4,
 		residuals  => {
-		'AMC Javelin'        =>   -2.7177637422554,		'Cadillac Fleetwood' =>   -1.62178684578001,
-		'Camaro Z28'         =>   -1.73111177599938, 	'Chrysler Imperial'  =>   2.19779322930961,
-		'Datsun 710'         =>   -2.78487707944995,		'Dodge Challenger'   =>   -2.07441456805362,
-		'Duster 360'         =>   -1.10744532497053,		'Ferrari Dino'       =>   0.17010189824968,
-		'Fiat 128'           =>   4.55133689384449,		'Fiat X1-9'           =>  -2.23900443083033,
-		'Ford Pantera L'        => 0.439669246713233,	'Honda Civic'         =>  -2.23195395366212,
-		'Hornet 4 Drive'     =>   1.37075604153847,		'Hornet Sportabout'  =>   1.41004478703069,
-		'Lincoln Continental' =>  -1.4949003236173,		'Lotus Europa'       =>   1.83369534357951,
-		'Maserati Bora'      =>   1.45413280824033,		'Mazda RX4'           =>  -2.09547410785999,
-		'Mazda RX4 Wag'       =>  -0.781375472403504,	'Merc 230'            =>  1.95008336608675,
-		'Merc 240D'           =>  2.74113094560431,		'Merc 280'            =>  0.646212827429729,
-		'Merc 280C'           =>  -0.75378717257027,		'Merc 450SE'          =>  1.25006037875687,
-		'Merc 450SL'          =>  1.06071479480091,		'Merc 450SLC'         =>  -0.879087325205568,
-		'Pontiac Firebird'    =>  3.26404011532368,		'Porsche 914-2'       =>  -0.718705557249944,
-		'Toyota Corolla'      =>  3.65413017953585,		'Toyota Corona'       =>  -3.06317321493851,
-		Valiant               =>  -0.785416091802773,	'Volvo 142E'          =>  -0.913625869362747
+		'AMC Javelin'        =>   -2.7177637422554,	'Cadillac Fleetwood' =>   -1.62178684578001,
+		'Camaro Z28'         =>   -1.73111177599938, 'Chrysler Imperial'  =>   2.19779322930961,
+		'Datsun 710'         =>   -2.78487707944995,	'Dodge Challenger'   =>   -2.07441456805362,
+		'Duster 360'         =>   -1.10744532497053,	'Ferrari Dino'       =>   0.17010189824968,
+		'Fiat 128'           =>   4.55133689384449,	'Fiat X1-9'           =>  -2.23900443083033,
+		'Ford Pantera L'     => 0.439669246713233,	'Honda Civic'         =>  -2.23195395366212,
+		'Hornet 4 Drive'     =>   1.37075604153847,	'Hornet Sportabout'  =>   1.41004478703069,
+		'Lincoln Continental' =>  -1.4949003236173,	'Lotus Europa'       =>   1.83369534357951,
+		'Maserati Bora'      =>   1.45413280824033,	'Mazda RX4'           =>  -2.09547410785999,
+		'Mazda RX4 Wag'       =>  -0.781375472403504,'Merc 230'            =>  1.95008336608675,
+		'Merc 240D'           =>  2.74113094560431,	'Merc 280'            =>  0.646212827429729,
+		'Merc 280C'           =>  -0.75378717257027,	'Merc 450SE'          =>  1.25006037875687,
+		'Merc 450SL'          =>  1.06071479480091,	'Merc 450SLC'         =>  -0.879087325205568,
+		'Pontiac Firebird'    =>  3.26404011532368,	'Porsche 914-2'       =>  -0.718705557249944,
+		'Toyota Corolla'      =>  3.65413017953585,	'Toyota Corona'       =>  -3.06317321493851,
+		Valiant               =>  -0.785416091802773,'Volvo 142E'          =>  -0.913625869362747
   }
 );
 foreach my $key ('Intercept', 'hp', 'wt', 'wt:hp') {

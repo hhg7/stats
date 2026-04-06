@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 
-use 5.042.1;
+use 5.042.2;
 no source::encoding;
 use warnings FATAL => 'all';
 use autodie ':all';
@@ -63,3 +63,8 @@ $t1 = Time::HiRes::time();
 $run1 = $t1-$t0;
 printf("XS sd did %lf seconds\n", $run1);
 printf("2nd/1st = %lf; 1st/2nd = %lf\n", $run1/$run0, $run0/$run1);
+#-----
+my @large_data = (1000000000.1, 1000000000.2, 1000000000.3);
+# The variance of (0.1, 0.2, 0.3) is exactly 0.01.
+say var(@large_data) . ' ?= 0.01';#, 'var: handles large magnitude data cleanly' );
+say sd(@large_data) . ' ?= 0.1';
