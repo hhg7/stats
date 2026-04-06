@@ -416,7 +416,7 @@ static void rank_data(const double *restrict in, double *restrict out, size_t n)
 
 /* Pearson product-moment r between two n-element arrays.
  * Returns NAN when either variable has zero variance (matches R).       */
-static double pearson_corr(const double *restrict x, const double *restrict y, unsigned int n) {
+static double pearson_corr(const double *restrict x, const double *restrict y, size_t n) {
     double sx = 0, sy = 0, sxy = 0, sx2 = 0, sy2 = 0;
     for (size_t i = 0; i < n; i++) {
         sx  += x[i];     sy  += y[i];
@@ -1282,7 +1282,7 @@ hist(SV* x_sv, ...)
             n_bins = (size_t)SvIV(ST(1));
         } else if (items > 2) {
             /* Support named parameters even if mixed with positional arguments */
-            for (I32 i = 1; i < items - 1; i++) {
+            for (unsigned short i = 1; i < items - 1; i++) {
                 /* Make sure the SV holds a string before doing string comparison */
                 if (SvPOK(ST(i)) && strEQ(SvPV_nolen(ST(i)), "breaks")) {
                     n_bins = (size_t)SvIV(ST(i+1));
@@ -1476,121 +1476,86 @@ double mean(...)
 double sd(...)
 	PROTOTYPE: @
 	INIT:
-		double total = 0, sum_sq = 0;
-		size_t count = 0;
+	  double mean = 0.0, M2 = 0.0;
+	  size_t count = 0;
 	CODE:
-	  for (I32 i = 0; i < items; i++) {
-		   SV* arg = ST(i);
+	  // Single Pass Standard Deviation via Welford's Algorithm
+	  for (unsigned short i = 0; i < items; i++) {
+		   SV* restrict arg = ST(i);
 		   if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
 		       AV*restrict av = (AV*)SvRV(arg);
 		       size_t len = av_len(av) + 1;
 		       for (size_t j = 0; j < len; j++) {
 		           SV**restrict tv = av_fetch(av, j, 0);
-		           if (tv && SvOK(*tv)) { total += SvNV(*tv); count++; }
+		           if (tv && SvOK(*tv)) {
+		               count++;
+		               double val = SvNV(*tv);
+		               double delta = val - mean;
+		               mean += delta / count;
+		               M2 += delta * (val - mean);
+		           }
 		       }
 		   } else if (SvOK(arg)) {
-		       total += SvNV(arg); count++;
+		       count++;
+		       double val = SvNV(arg);
+		       double delta = val - mean;
+		       mean += delta / count;
+		       M2 += delta * (val - mean);
 		   }
 	  }
 	  if (count < 2) croak("stdev needs >= 2 elements");
-	  double avg = total / count;
-	  for (size_t i = 0; i < items; i++) {
-		   SV*restrict arg = ST(i);
-		   if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
-		       AV*restrict av = (AV*)SvRV(arg);
-		       size_t len = av_len(av) + 1;
-		       for (size_t j = 0; j < len; j++) {
-		           SV**restrict tv = av_fetch(av, j, 0);
-		           if (tv && SvOK(*tv)) sum_sq += pow(SvNV(*tv) - avg, 2);
-		       }
-		   } else if (SvOK(arg)) {
-		       sum_sq += pow(SvNV(arg) - avg, 2);
-		   }
-	  }
-	  RETVAL = sqrt(sum_sq / (count - 1));
+	  RETVAL = sqrt(M2 / (count - 1));
 	OUTPUT:
 	  RETVAL
 
 double var(...)
 	PROTOTYPE: @
 	INIT:
-	  double total = 0.0, sum_sq = 0.0;
+	  double mean = 0.0, M2 = 0.0;
 	  size_t count = 0;
 	CODE:
-	  for (I32 i = 0; i < items; i++) {
+	  // Single Pass Variance via Welford's Algorithm
+	  for (unsigned short i = 0; i < items; i++) {
 		   SV*restrict arg = ST(i);
 		   if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
 		       AV*restrict av = (AV*)SvRV(arg);
 		       size_t len = av_len(av) + 1;
 		       for (size_t j = 0; j < len; j++) {
 		           SV**restrict tv = av_fetch(av, j, 0);
-		           if (tv && SvOK(*tv)) { total += SvNV(*tv); count++; }
+		           if (tv && SvOK(*tv)) { 
+		               count++;
+		               double val = SvNV(*tv);
+		               double delta = val - mean;
+		               mean += delta / count;
+		               M2 += delta * (val - mean);
+		           }
 		       }
 		   } else if (SvOK(arg)) {
-		       total += SvNV(arg); count++;
+		       count++;
+		       double val = SvNV(arg);
+		       double delta = val - mean;
+		       mean += delta / count;
+		       M2 += delta * (val - mean);
 		   }
 	  }
-	  if (count < 2) croak("stdev needs >= 2 elements");
-	  double avg = total / count;
-	  for (I32 i = 0; i < items; i++) {
-		   SV*restrict arg = ST(i);
-		   if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
-		       AV*restrict av = (AV*)SvRV(arg);
-		       size_t len = av_len(av) + 1;
-		       for (size_t j = 0; j < len; j++) {
-		           SV**restrict tv = av_fetch(av, j, 0);
-		           if (tv && SvOK(*tv)) sum_sq += pow(SvNV(*tv) - avg, 2);
-		       }
-		   } else if (SvOK(arg)) {
-		       sum_sq += pow(SvNV(arg) - avg, 2);
-		   }
-	  }
-	  RETVAL = sum_sq / (count - 1);
+	  if (count < 2) croak("var needs >= 2 elements");
+	  RETVAL = M2 / (count - 1);
 	OUTPUT:
 	  RETVAL
-
-double pearson_r(SV* x_sv, SV* y_sv)
-	INIT:
-		if (!SvROK(x_sv) || SvTYPE(SvRV(x_sv)) != SVt_PVAV ||
-			!SvROK(y_sv) || SvTYPE(SvRV(y_sv)) != SVt_PVAV) {
-			croak("Both arguments must be array references");
-		}
-		AV*restrict x_av = (AV*)SvRV(x_sv);
-		AV*restrict y_av = (AV*)SvRV(y_sv);
-		size_t n = av_len(x_av) + 1;
-		if (n != (av_len(y_av) + 1)) croak("Arrays must have the same number of elements");
-		if (n < 2) croak("Need at least 2 elements");
-		double sum_x = 0, sum_y = 0, sum_xy = 0, sum_x2 = 0, sum_y2 = 0;
-	CODE:
-		for (size_t i = 0; i < n; i++) {
-			SV**restrict xv = av_fetch(x_av, i, 0);
-			SV**restrict yv = av_fetch(y_av, i, 0);
-			double x = (xv && SvOK(*xv)) ? SvNV(*xv) : 0.0;
-			double y = (yv && SvOK(*yv)) ? SvNV(*yv) : 0.0;
-			sum_x += x; sum_y += y; sum_xy += x * y;
-			sum_x2 += x * x; sum_y2 += y * y;
-		}
-		double num = (n * sum_xy) - (sum_x * sum_y);
-		double den = sqrt((n * sum_x2 - (sum_x * sum_x)) * (n * sum_y2 - (sum_y * sum_y)));
-		if (den == 0) XSRETURN_UNDEF;
-		RETVAL = num / den;
-	OUTPUT:
-	  RETVAL
-
 
 SV* t_test(...)
 	CODE:
 	{
 	  if (items % 2 != 0)
 		   croak("Usage: t_test(x => [...], y => [...], ...) - must be even key/value pairs");
-
+		   
 	  /* --- Parse named arguments from the flat stack --- */
 	  SV*restrict x_sv = NULL;
 	  SV*restrict y_sv = NULL;
 	  double mu = 0.0, conf_level = 0.95;
 	  bool paired = FALSE, var_equal = FALSE;
 	  const char*restrict alternative = "two.sided";
-
+	  
 	  for (I32 i = 0; i < items; i += 2) {
 		   const char*restrict key = SvPV_nolen(ST(i));
 		   SV*restrict val = ST(i + 1);
@@ -1604,66 +1569,78 @@ SV* t_test(...)
 		   else if (strEQ(key, "alternative")) alternative = SvPV_nolen(val);
 		   else croak("t_test: unknown argument '%s'", key);
 	  }
+	  
 	  // --- Validate required / types ---
 	  if (!x_sv || !SvROK(x_sv) || SvTYPE(SvRV(x_sv)) != SVt_PVAV)
 		   croak("t_test: 'x' is a required argument and must be an ARRAY reference");
+		   
 	  AV*restrict x_av = (AV*)SvRV(x_sv);
 	  size_t nx = av_len(x_av) + 1;
 	  if (nx < 2) croak("t_test: 'x' needs at least 2 elements");
+	  
 	  AV*restrict y_av = NULL;
 	  if (y_sv && SvROK(y_sv) && SvTYPE(SvRV(y_sv)) == SVt_PVAV)
 		   y_av = (AV*)SvRV(y_sv);
-
+		   
 	  if (conf_level <= 0.0 || conf_level >= 1.0)
 		   croak("t_test: 'conf_level' must be between 0 and 1");
-	  /* --- Computation (identical to the original) --- */
-	  double sum_x = 0, sum_x2 = 0, mean_x, var_x, t_stat, df, p_val, std_err, cint_est;
+		   
+	  // --- Computation via Welford's Algorithm --- */
+	  double mean_x = 0.0, M2_x = 0.0, var_x, t_stat, df, p_val, std_err, cint_est;
 	  HV*restrict results = newHV();
 
 	  for (size_t i = 0; i < nx; i++) {
 		   SV**restrict tv = av_fetch(x_av, i, 0);
 		   double val = (tv && SvOK(*tv)) ? SvNV(*tv) : 0;
-		   sum_x += val; sum_x2 += val * val;
+		   double delta = val - mean_x;
+		   mean_x += delta / (i + 1);
+		   M2_x += delta * (val - mean_x);
 	  }
-	  mean_x = sum_x / nx;
-	  var_x  = (sum_x2 - (sum_x * sum_x) / nx) / (nx - 1);
-
+	  var_x = M2_x / (nx - 1);
+	  
 	  if (paired || y_av) {
 		   if (!y_av) croak("t_test: 'y' must be provided for paired or two-sample tests");
 		   size_t ny = av_len(y_av) + 1;
 		   if (paired && ny != nx) croak("t_test: Paired arrays must be same length");
-
-		   double sum_y = 0, sum_y2 = 0, mean_y, var_y;
+		   
+		   double mean_y = 0.0, M2_y = 0.0, var_y;
 		   for (size_t i = 0; i < ny; i++) {
 		       SV**restrict tv = av_fetch(y_av, i, 0);
 		       double val = (tv && SvOK(*tv)) ? SvNV(*tv) : 0;
-		       sum_y += val; sum_y2 += val * val;
+		       double delta = val - mean_y;
+		       mean_y += delta / (i + 1);
+		       M2_y += delta * (val - mean_y);
 		   }
-		   mean_y = sum_y / ny;
-		   var_y  = (sum_y2 - (sum_y * sum_y) / ny) / (ny - 1);
-
+		   var_y = M2_y / (ny - 1);
+		   
 		   if (paired) {
-		       double sum_d = 0, sum_d2 = 0;
+		       double mean_d = 0.0, M2_d = 0.0;
 		       for (size_t i = 0; i < nx; i++) {
 		           double dx = SvNV(*av_fetch(x_av, i, 0));
 		           double dy = SvNV(*av_fetch(y_av, i, 0));
-		           sum_d += (dx - dy); sum_d2 += (dx - dy) * (dx - dy);
+		           double val = dx - dy;
+		           double delta = val - mean_d;
+		           mean_d += delta / (i + 1);
+		           M2_d += delta * (val - mean_d);
 		       }
-		       double mean_d = sum_d / nx;
-		       double var_d  = (sum_d2 - (sum_d * sum_d) / nx) / (nx - 1);
+		       double var_d = M2_d / (nx - 1);
+		       
 		       cint_est = mean_d;
 		       std_err  = sqrt(var_d / nx);
 		       t_stat   = (cint_est - mu) / std_err;
 		       df       = nx - 1;
 		       hv_store(results, "estimate", 8, newSVnv(mean_d), 0);
+		       
 		   } else if (var_equal) {
 		       double pooled_var = ((nx - 1) * var_x + (ny - 1) * var_y) / (nx + ny - 2);
 		       cint_est = mean_x - mean_y;
 		       std_err  = sqrt(pooled_var * (1.0 / nx + 1.0 / ny));
 		       t_stat   = (cint_est - mu) / std_err;
 		       df       = nx + ny - 2;
+		       
 		       hv_store(results, "estimate_x", 10, newSVnv(mean_x), 0);
 		       hv_store(results, "estimate_y", 10, newSVnv(mean_y), 0);
+		       
 		   } else {
 		       cint_est         = mean_x - mean_y;
 		       double stderr_x2 = var_x / nx;
@@ -1672,6 +1649,7 @@ SV* t_test(...)
 		       t_stat           = (cint_est - mu) / std_err;
 		       df = pow(stderr_x2 + stderr_y2, 2) /
 		            (pow(stderr_x2, 2) / (nx - 1) + pow(stderr_y2, 2) / (ny - 1));
+		            
 		       hv_store(results, "estimate_x", 10, newSVnv(mean_x), 0);
 		       hv_store(results, "estimate_y", 10, newSVnv(mean_y), 0);
 		   }
@@ -1685,9 +1663,8 @@ SV* t_test(...)
 
 	  p_val = get_t_pvalue(t_stat, df, alternative);
 
-	  double alpha = 1.0 - conf_level;
-	  double t_crit, ci_lower, ci_upper;
-
+	  double alpha = 1.0 - conf_level, t_crit, ci_lower, ci_upper;
+	  
 	  if (strcmp(alternative, "less") == 0) {
 		   t_crit   = qt_tail(df, alpha);
 		   ci_lower = -INFINITY;
@@ -1705,7 +1682,7 @@ SV* t_test(...)
 	  AV*restrict conf_int = newAV();
 	  av_push(conf_int, newSVnv(ci_lower));
 	  av_push(conf_int, newSVnv(ci_upper));
-
+	  
 	  hv_store(results, "statistic", 9, newSVnv(t_stat), 0);
 	  hv_store(results, "df",        2, newSVnv(df),     0);
 	  hv_store(results, "p_value",   7, newSVnv(p_val),  0);
@@ -1861,7 +1838,7 @@ double median(...)
 	  double median_val = 0.0;
 	CODE:
 	  /* Pass 1: Count total valid elements to allocate memory */
-	  for (I32 i = 0; i < items; i++) {
+	  for (size_t i = 0; i < items; i++) {
 		   SV*restrict arg = ST(i);
 		   if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
 		       AV*restrict av = (AV*)SvRV(arg);
@@ -1878,7 +1855,7 @@ double median(...)
 	  // Allocate C array now that we know the exact size
 	  Newx(nums, total_count, double);
 	  // Pass 2: Populate the C array
-	  for (I32 i = 0; i < items; i++) {
+	  for (size_t i = 0; i < items; i++) {
 		   SV*restrict arg = ST(i);
 		   if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
 		       AV*restrict av = (AV*)SvRV(arg);
@@ -2637,13 +2614,13 @@ PPCODE:
 		*/
 	  double n_elements_d = (to - from) / by;
 	  if (n_elements_d < 0.0) n_elements_d = 0.0;
-	  IV n_elements = (IV)(n_elements_d + 1e-10) + 1;
+	  size_t n_elements = (IV)(n_elements_d + 1e-10) + 1;
 	  /* Pre-extend the stack to avoid reallocating inside the loop */
 	  EXTEND(SP, n_elements);
 	  NV current = from;
-	  for (IV i = 0; i < n_elements; i++) {
-		   mPUSHn(current);
-		   current += by;
+	  for (size_t i = 0; i < n_elements; i++) {
+		  mPUSHn(from + i * by);
+		  current += by;
 	  }
 	  XSRETURN(n_elements);
 	}

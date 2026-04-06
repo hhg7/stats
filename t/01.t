@@ -656,7 +656,38 @@ subtest 'hist functionality' => sub {
 	# Optional: Visual inspection if needed
 	p $res;
 };
+#-------------------------------------------------------------------
+#  Performance & Edge Cases for hist()
+#-------------------------------------------------------------------
+subtest 'hist: O(N) Performance and Edge Cases' => sub {
+	# 1. Test standard binning boundaries
+	# Data spans 0 to 10 exactly.
+	my $data = [0, 2.5, 4.9, 5.0, 7.5, 10];
+	my $res = hist($data, breaks => 2);
+	
+	# With 2 bins spanning 0 to 10, step is 5.
+	# Bin 0: [0, 5] -> should capture 0, 2.5, 4.9, 5.0 (4 items)
+	# Bin 1: (5, 10] -> should capture 7.5, 10 (2 items)
+	is_deeply($res->{counts}, [4, 2], 'hist: correctly assigns boundary values in O(N) logic');
+	is_deeply($res->{breaks}, [0, 5, 10], 'hist: correct breaks generation');
 
+	# 2. Test zero-variance edge case (all identical values)
+	my $flat_data = [7, 7, 7, 7, 7];
+	my $flat_res = hist($flat_data, breaks => 1);
+	
+	is($flat_res->{counts}->[0], 5, 'hist: properly handles flatline data (step = 0)');
+	is($flat_res->{density}->[0], 1, 'hist: density is 1.0 for a single zero-width bin');
+	
+	# 3. Scale test: Generate a slightly larger array to ensure no memory segfaults
+	# and quick processing.
+	my @large_uniform = seq(1, 1000, 0.5); 
+	my $large_res = hist(\@large_uniform, breaks => 10);
+	
+	my $total_counted = 0;
+	$total_counted += $_ for @{ $large_res->{counts} };
+	
+	is($total_counted, scalar @large_uniform, 'hist: sum of counts perfectly matches input size on larger datasets');
+};
 #----------------------
 #    hist exceptions
 #----------------------
@@ -733,9 +764,18 @@ say 'seq(0, 1, 0.1):';
 @seq = seq(0, 1, 0.1);
 say join(", ", @seq);
 
+subtest 'seq: Floating-point precision drift' => sub {
+	my @seq_drift = seq(0, 100, 0.1);
+	# If current += by is used, the 500th element (50.0) might evaluate to 49.999999999999
+	is_approx( $seq_drift[500], 50.0, 'seq: 500th fractional step maintains exact expected scale without drifting', 10**-12 );
+};
+
 #my $wt_result = wilcox_test( 'x' => [1..4], 'y' => [5..8], {});
 #p $wt_result;
 
+#----------------------
+#       Shapiro Test
+#----------------------
 my $shapiro = shapiro_test(
 	[1..5]
 );
@@ -801,8 +841,8 @@ foreach my $meth (@correct) {
 	my $result = cor_test(
 		'x'         => $x,
 		'y'         => $y,
-		alternative => $meth->{alternative},
-		method      => $meth->{method},
+		alternative => $meth->{alternative}, # so that it matches the test
+		method      => $meth->{method},      # so that it matches the test
 		continuity  => 1
 	);
 	my @undef_keys = grep {!defined $meth->{$_}} sort keys %{ $result };
