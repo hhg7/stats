@@ -3,7 +3,6 @@
 use 5.042.2;
 no source::encoding;
 use warnings FATAL => 'all';
-use warnings::unused;
 use Test::More;
 use Test::Exception; # die_ok
 use Stats::LikeR;
@@ -19,12 +18,13 @@ sub is_approx ($got, $expected, $test_name, $epsilon = 10**-7) {
 		next if defined $arg;
 		die "\$arg[$i] (see subroutine signature for name) isn't defined in $current_sub";
 	}
-	if (abs($got - $expected) < $epsilon) {
+	my $diff = abs($got - $expected);
+	if ($diff < $epsilon) {
 		pass($test_name);
 		return 1;
 	} else {
 		fail($test_name);
-		diag("         got: $got\n    expected: $expected");
+		diag("         got: $got\n    expected: $expected; diff = $diff");
 		return 0;
 	}
 }
@@ -491,26 +491,6 @@ my %correct = (
 		'Pontiac Firebird'    =>  3.26404011532368,	'Porsche 914-2'       =>  -0.718705557249944,
 		'Toyota Corolla'      =>  3.65413017953585,	'Toyota Corona'       =>  -3.06317321493851,
 		Valiant               =>  -0.785416091802773,'Volvo 142E'          =>  -0.913625869362747
-	},
-	summary => {
-		hp => {
-  			Estimate      => -0.03177295,
-      	'Pr(>|t|)'    => 0.00145122851187347,
-       	'Std. Error'  => 0.0090297096758557,
-         't value'     => -3.518712
-      },
-      wt => {
-      	Estimate      => -3.87783074,
-      	'Pr(>|t|)'    => 1.119647e-06,
-       	'Std. Error'  => 0.63273349,
-         't value'     => -6.128695
-      },
-      Intercept => {
-      	Estimate      => 37.22727012,
-      	'Pr(>|t|)'    => 2.565459e-20,
-       	'Std. Error'  => 1.59878754,
-         't value'     => 23.284689
-      }
 	}
 );
 foreach my $key ('Intercept', 'hp', 'wt', 'wt:hp') {
@@ -550,6 +530,26 @@ $lm = lm(formula =>  'mpg ~ wt + hp', data => $mtcars);
 	},
 	rank => 3,
 	'df.residual' => 29,
+	summary => {
+		hp => {
+  			Estimate      => -0.03177295,
+      	'Pr(>|t|)'    => 0.00145122851187347,
+       	'Std. Error'  => 0.0090297096758557,
+         't value'     => -3.518712
+      },
+      wt => {
+      	Estimate      => -3.87783074,
+      	'Pr(>|t|)'    => 1.119647e-06,
+       	'Std. Error'  => 0.63273349,
+         't value'     => -6.128695
+      },
+      Intercept => {
+      	Estimate      => 37.22727012,
+      	'Pr(>|t|)'    => 2.565459e-20,
+       	'Std. Error'  => 1.59878754,
+         't value'     => 23.284689
+      }
+	}
 );
 foreach my $key ('Intercept', 'hp', 'wt') {
 	unless (defined $lm->{coefficients}{$key}) {
@@ -562,6 +562,16 @@ foreach my $key ('Intercept', 'hp', 'wt') {
 		"Checking lm's $key",
 		0.1
 	);
+	unless (defined $lm->{summary}{$key}) {
+		die "$key is missing summary";
+	}
+	foreach my $val ('Estimate', 'Pr(>|t|)', 'Std. Error', 't value') {
+		my $e = 10**-7;
+		if ($correct{summary}{$key}{$val} =~ m/\.(\d+)$/) {
+			$e = 10**(2-length $1);
+		}
+		is_approx( $lm->{summary}{$key}{$val}, $correct{summary}{$key}{$val}, "lm: Summary $key & $val", $e);
+	}
 }
 foreach my $key ('df.residual', 'rank') {
 	unless (defined $lm->{$key}) {
@@ -908,4 +918,33 @@ foreach my $meth (@correct) {
 		is_approx( $result->{$key}, $meth->{$key}, "cor_test: $meth->{method}/$meth->{alternative} & $key");
 	}
 }
+#--------------------
+#  aov
+#--------------------
+#> yield <- c(5.5, 5.4, 5.8, 4.5, 4.8, 4.2) 
+#> ctrl <- c(1, 1, 1, 0, 0, 0)
+#> aov(yield ~ ctrl)
+#Call:
+#   aov(formula = yield ~ ctrl)
+
+#Terms:
+#                     ctrl Residuals
+#Sum of Squares  1.7066667 0.2666667
+#Deg. of Freedom         1         4
+
+#Residual standard error: 0.2581989
+#Estimated effects may be unbalanced
+#> summary(aov(yield ~ ctrl))
+#            Df Sum Sq Mean Sq F value  Pr(>F)   
+#ctrl         1 1.7067  1.7067    25.6 0.00718 **
+#Residuals    4 0.2667  0.0667                   
+#---
+#Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+my $yield = [5.5, 5.4, 5.8, 4.5, 4.8, 4.2];
+my $ctrl  = [1,     1,   1,   0,   0,   0];
+%h = (
+	yield => $yield, ctrl => $ctrl
+);
+my $aov_res = aov( \%h, 'yield ~ ctrl');
+p $aov_res;
 done_testing();

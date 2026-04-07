@@ -533,7 +533,7 @@ static void compute_hist_logic(double *restrict x, size_t n, double *restrict br
 	double total_n = (double)n;
 	double min_val = breaks[0];
 	double step = (n_bins > 0) ? (breaks[1] - breaks[0]) : 0.0;
-	/* Initialize counts and compute midpoints */
+	// Initialize counts and compute midpoints
 	for (size_t i = 0; i < n_bins; i++) {
 	  counts[i] = 0;
 	  mids[i] = (breaks[i] + breaks[i+1]) / 2.0;
@@ -542,17 +542,14 @@ static void compute_hist_logic(double *restrict x, size_t n, double *restrict br
 	if (step > 0.0) {
 	  for (size_t j = 0; j < n; j++) {
 		   double val = x[j];
-		   /* Ignore out-of-bounds or invalid values */
+		   // Ignore out-of-bounds or invalid values
 		   if (isnan(val) || isinf(val) || val < min_val) continue;
-
-		   /* Calculate initial bin index mathematically */
+		   // Calculate initial bin index mathematically
 		   size_t idx = (size_t)((val - min_val) / step);
-
-		   /* Clamp to valid array bounds first to prevent overflow */
+		   // Clamp to valid array bounds first to prevent overflow */
 		   if (idx >= n_bins) {
 		       idx = n_bins - 1;
 		   }
-
 		   /* Adjust for exact boundaries (R's right-inclusive default: (a, b]) */
 		   /* If value is exactly on or slightly below the lower boundary of the assigned bin, 
 		      it belongs in the previous bin. (First bin [a, b] is inclusive on both ends) */
@@ -781,6 +778,37 @@ static double pt_2tail(double t, ssize_t df) {
 	  /* This side handles the non-tail cases accurately */
 	  return 1.0 - bt * betacf(b, a, 1.0 - x) / b;
 	}
+}
+// F-distribution Cumulative Distribution Function P(F <= f)
+static double pf(double f, double df1, double df2) {
+    if (f <= 0.0) return 0.0;
+    double x = (df1 * f) / (df1 * f + df2);
+    return incbeta(df1 / 2.0, df2 / 2.0, x);
+}
+/* Helper to fetch numeric values for a term from the data HashRef */
+static double evaluate_term_aov(HV* data, const char* term, size_t row) {
+    SV** svp = hv_fetch(data, term, strlen(term), 0);
+    if (svp && SvROK(*svp) && SvTYPE(SvRV(*svp)) == SVt_PVAV) {
+        AV* av = (AV*)SvRV(*svp);
+        SV** val = av_fetch(av, row, 0);
+        return (val && SvOK(*val)) ? SvNV(*val) : 0.0;
+    }
+    return 0.0;
+}
+
+/* Sweep operator for sequential Sum of Squares */
+static void sweep_matrix_aov(double**restrict m, int p, int k) {
+    double pivot = m[k][k];
+    ssize_t i, j;
+    if (fabs(pivot) < 1e-12) return;
+    for (unsigned int j = 0; j < p; j++) if (j != k) m[k][j] /= pivot;
+    for (unsigned int i = 0; i < p; i++) {
+        if (i == k) continue;
+        double factor = m[i][k];
+        for (j = 0; j < p; j++) if (j != k) m[i][j] -= factor * m[k][j];
+        m[i][k] = -factor / pivot;
+    }
+    m[k][k] = 1.0 / pivot;
 }
 // --- XS SECTION ---
 MODULE = Stats::LikeR  PACKAGE = Stats::LikeR
@@ -1207,20 +1235,20 @@ double max(...)
 SV* runif(...)
 	CODE:
 	{
-	  /* Auto-seed the PRNG if the Perl script hasn't done so yet */
+	  // Auto-seed the PRNG if the Perl script hasn't done so yet
 	  AUTO_SEED_PRNG();
 
 	  if (items % 2 != 0)
 		   croak("Usage: runif(n => 10, min => 0, max => 1)");
 
-	  /* --- Parse named arguments --- */
-	  unsigned int n = 0;
+	  // --- Parse named arguments ---
+	  size_t n = 0;
 	  double min = 0.0, max = 1.0;
 
 	  for (unsigned short int i = 0; i < items; i += 2) {
 		   const char* restrict key = SvPV_nolen(ST(i));
 		   SV* restrict val = ST(i + 1);
-		   if      (strEQ(key, "n"))    n   = (unsigned int)SvUV(val);
+		   if      (strEQ(key, "n"))    n   = (size_t)SvUV(val);
 		   else if (strEQ(key, "min"))  min = SvNV(val);
 		   else if (strEQ(key, "max"))  max = SvNV(val);
 		   else croak("runif: unknown argument '%s'", key);
@@ -1233,12 +1261,11 @@ SV* runif(...)
 		   av_extend(result_av, n - 1);
 		   double range = max - min;
 		   
-		   for (unsigned int i = 0; i < n; i++) {
-		       /* Transform standard [0,1) uniform to [min, max) */
+		   for (size_t i = 0; i < n; i++) {
+		       // Transform standard [0,1) uniform to [min, max)
 		       av_store(result_av, i, newSVnv(min + range * Drand01()));
 		   }
 	  }
-
 	  RETVAL = newRV_noinc((SV*)result_av);
 	}
 	OUTPUT:
@@ -1286,105 +1313,100 @@ SV* rbinom(...)
 
 SV*
 hist(SV* x_sv, ...)
-    CODE:
-    {
-        /* 1. Validate Input */
-        if (!SvROK(x_sv) || SvTYPE(SvRV(x_sv)) != SVt_PVAV)
-            croak("hist: first argument must be an array reference");
-        
-        AV*restrict x_av = (AV*)SvRV(x_sv);
-        size_t n_raw = av_len(x_av) + 1;
-        if (n_raw == 0) croak("hist: input array is empty");
+	CODE:
+	{
+	  /* 1. Validate Input */
+	  if (!SvROK(x_sv) || SvTYPE(SvRV(x_sv)) != SVt_PVAV)
+		   croak("hist: first argument must be an array reference");
+	  
+	  AV*restrict x_av = (AV*)SvRV(x_sv);
+	  size_t n_raw = av_len(x_av) + 1;
+	  if (n_raw == 0) croak("hist: input array is empty");
 
-        /* 2. Extract Data & Find Range */
-        double *restrict x;
-        Newx(x, n_raw, double);
-        size_t n = 0;
-        double min_val = DBL_MAX, max_val = -DBL_MAX;
+	  /* 2. Extract Data & Find Range */
+	  double *restrict x;
+	  Newx(x, n_raw, double);
+	  size_t n = 0;
+	  double min_val = DBL_MAX, max_val = -DBL_MAX;
 
-        for (size_t i = 0; i < n_raw; i++) {
-            SV**restrict tv = av_fetch(x_av, i, 0);
-            if (tv && SvOK(*tv)) {
-                double val = SvNV(*tv);
-                x[n++] = val;
-                if (val < min_val) min_val = val;
-                if (val > max_val) max_val = val;
-            }
-        }
-        if (n == 0) {
-            Safefree(x);
-            croak("hist: input contains no valid numeric data");
-        }
-        /* 3. Determine Bin Count (Sturges default or user-provided) */
-/* 3. Determine Bin Count (Sturges default or user-provided) */
-        size_t n_bins = 0;
-        
-        if (items == 2) {
-            /* Support pure positional argument: hist($data, 22) */
-            n_bins = (size_t)SvIV(ST(1));
-        } else if (items > 2) {
-            /* Support named parameters even if mixed with positional arguments */
-            for (unsigned short i = 1; i < items - 1; i++) {
-                /* Make sure the SV holds a string before doing string comparison */
-                if (SvPOK(ST(i)) && strEQ(SvPV_nolen(ST(i)), "breaks")) {
-                    n_bins = (size_t)SvIV(ST(i+1));
-                    break;
-                }
-            }
-            /* Fallback: if 'breaks' wasn't found but a positional number was given first */
-            if (n_bins == 0 && looks_like_number(ST(1))) {
-                n_bins = (size_t)SvIV(ST(1));
-            }
-        }
+	  for (size_t i = 0; i < n_raw; i++) {
+		   SV**restrict tv = av_fetch(x_av, i, 0);
+		   if (tv && SvOK(*tv)) {
+		       double val = SvNV(*tv);
+		       x[n++] = val;
+		       if (val < min_val) min_val = val;
+		       if (val > max_val) max_val = val;
+		   }
+	  }
+	  if (n == 0) {
+		   Safefree(x);
+		   croak("hist: input contains no valid numeric data");
+	  }
+	  /* 3. Determine Bin Count (Sturges default or user-provided) */
+	  size_t n_bins = 0;
+	  
+	  if (items == 2) {
+		   /* Support pure positional argument: hist($data, 22) */
+		   n_bins = (size_t)SvIV(ST(1));
+	  } else if (items > 2) {
+		   /* Support named parameters even if mixed with positional arguments */
+		   for (unsigned short i = 1; i < items - 1; i++) {
+		       /* Make sure the SV holds a string before doing string comparison */
+		       if (SvPOK(ST(i)) && strEQ(SvPV_nolen(ST(i)), "breaks")) {
+		           n_bins = (size_t)SvIV(ST(i+1));
+		           break;
+		       }
+		   }
+		   /* Fallback: if 'breaks' wasn't found but a positional number was given first */
+		   if (n_bins == 0 && looks_like_number(ST(1))) {
+		       n_bins = (size_t)SvIV(ST(1));
+		   }
+	  }
+	  if (n_bins == 0) n_bins = calculate_sturges_bins(n);
+	  // 4. Allocate Result Arrays
+	  double *restrict breaks, *restrict mids, *restrict density;
+	  size_t *restrict counts;
+	  Newx(breaks,  n_bins + 1, double);
+	  Newx(mids,    n_bins,     double);
+	  Newx(density, n_bins,     double);
+	  Newx(counts,  n_bins,     size_t);
 
-        if (n_bins == 0) n_bins = calculate_sturges_bins(n);
+	  // Generate simple linear breaks
+	  double step = (max_val - min_val) / (double)n_bins;
+	  for (size_t i = 0; i <= n_bins; i++) {
+		   breaks[i] = min_val + (double)i * step;
+	  }
 
-        /* 4. Allocate Result Arrays */
-        double *restrict breaks, *restrict mids, *restrict density;
-        size_t *restrict counts;
-        Newx(breaks,  n_bins + 1, double);
-        Newx(mids,    n_bins,     double);
-        Newx(density, n_bins,     double);
-        Newx(counts,  n_bins,     size_t);
+	  // 5. Compute Statistics
+	  compute_hist_logic(x, n, breaks, n_bins, counts, mids, density);
 
-        /* Generate simple linear breaks */
-        double step = (max_val - min_val) / (double)n_bins;
-        for (size_t i = 0; i <= n_bins; i++) {
-            breaks[i] = min_val + (double)i * step;
-        }
+	  // 6. Build Return HashRef
+	  HV*restrict res_hv = newHV();
+	  AV*restrict av_breaks  = newAV();
+	  AV*restrict av_counts  = newAV();
+	  AV*restrict av_mids    = newAV();
+	  AV*restrict av_density = newAV();
+	  for (size_t i = 0; i <= n_bins; i++) {
+		   av_push(av_breaks, newSVnv(breaks[i]));
+		   if (i < n_bins) {
+		       av_push(av_counts,  newSViv(counts[i]));
+		       av_push(av_mids,    newSVnv(mids[i]));
+		       av_push(av_density, newSVnv(density[i]));
+		   }
+	  }
+	  hv_stores(res_hv, "breaks",  newRV_noinc((SV*)av_breaks));
+	  hv_stores(res_hv, "counts",  newRV_noinc((SV*)av_counts));
+	  hv_stores(res_hv, "mids",    newRV_noinc((SV*)av_mids));
+	  hv_stores(res_hv, "density", newRV_noinc((SV*)av_density));
 
-        /* 5. Compute Statistics */
-        compute_hist_logic(x, n, breaks, n_bins, counts, mids, density);
+	  // Clean
+	  Safefree(x); Safefree(breaks); Safefree(mids);
+	  Safefree(density); Safefree(counts);
 
-        /* 6. Build Return HashRef */
-        HV*restrict res_hv = newHV();
-        AV*restrict av_breaks  = newAV();
-        AV*restrict av_counts  = newAV();
-        AV*restrict av_mids    = newAV();
-        AV*restrict av_density = newAV();
-
-        for (size_t i = 0; i <= n_bins; i++) {
-            av_push(av_breaks, newSVnv(breaks[i]));
-            if (i < n_bins) {
-                av_push(av_counts,  newSViv(counts[i]));
-                av_push(av_mids,    newSVnv(mids[i]));
-                av_push(av_density, newSVnv(density[i]));
-            }
-        }
-
-        hv_stores(res_hv, "breaks",  newRV_noinc((SV*)av_breaks));
-        hv_stores(res_hv, "counts",  newRV_noinc((SV*)av_counts));
-        hv_stores(res_hv, "mids",    newRV_noinc((SV*)av_mids));
-        hv_stores(res_hv, "density", newRV_noinc((SV*)av_density));
-
-        /* Clean up */
-        Safefree(x); Safefree(breaks); Safefree(mids);
-        Safefree(density); Safefree(counts);
-
-        RETVAL = newRV_noinc((SV*)res_hv);
-    }
-    OUTPUT:
-        RETVAL
+	  RETVAL = newRV_noinc((SV*)res_hv);
+	}
+	OUTPUT:
+	  RETVAL
 
 SV* quantile(...)
 	CODE:
@@ -1806,8 +1828,9 @@ void p_adjust(SV* p_sv, const char* method = "holm")
 		       adj[arr[i].orig_idx] = (cummin < 1.0) ? cummin : 1.0;
 		   }
 	  } else if (strcmp(meth, "hommel") == 0) {
-		   double *restrict pa = (double *)malloc(n * sizeof(double));
-		   double *restrict q_arr = (double *)malloc(n * sizeof(double));
+		   double *restrict pa, *restrict q_arr;
+		   Newx(pa, n, double);
+		   Newx(q_arr, n, double);
 		   // Initial: min(n * p[i] / (i + 1))
 		   double min_val = n * arr[0].p;
 		   for (size_t i = 1; i < n; i++) {
@@ -1854,8 +1877,7 @@ void p_adjust(SV* p_sv, const char* method = "holm")
 		       if (v > 1.0) v = 1.0;
 		       adj[arr[i].orig_idx] = v;
 		   }
-		   free(pa); pa = NULL;
-		   free(q_arr); q_arr = NULL;
+		   Safefree(pa);  Safefree(q_arr);
 	  } else if (strcmp(meth, "none") == 0) {
 		   for (size_t i = 0; i < n; i++) {
 		   	adj[arr[i].orig_idx] = arr[i].p;
@@ -1998,7 +2020,12 @@ SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 		   size_t ncols_x = av_len((AV*)SvRV(*xr0)) + 1;
 		   if (ncols_x == 0) croak("cor: x matrix has zero columns");
 		   size_t nrows   = nx;   /* observations */
-
+		   // PRE-VALIDATION PASS: Ensure all rows are arrays to prevent memory leaks on croak
+		   for (size_t i = 0; i < nrows; i++) {
+		       SV**restrict rv = av_fetch(x_av, i, 0);
+		       if (!rv || !SvROK(*rv) || SvTYPE(SvRV(*rv)) != SVt_PVAV)
+		           croak("cor: x row %lu is not an array ref", i);
+		   }
 		   // -- extract x columns
 		   double **restrict col_x;
 		   Newx(col_x, ncols_x, double*);
@@ -2784,6 +2811,171 @@ SV* rnorm(...)
 	OUTPUT:
 	  RETVAL
 
+SV*
+aov(data_ref, formula_sv)
+    SV* data_ref
+    SV* formula_sv
+    CODE:
+    {
+        HV* data;
+        char *restrict f_str, *restrict lhs, *restrict rhs, *restrict token, *saveptr;
+        char **terms;
+        int num_terms = 0, j, row;
+        size_t n;
+        double **restrict xtx, rss_prev, rss_curr;
+        HV* ret_hash;
+
+        if (!SvROK(data_ref) || SvTYPE(SvRV(data_ref)) != SVt_PVHV)
+            croak("aov: data must be a HashRef");
+
+        data = (HV*)SvRV(data_ref);
+        f_str = savepv(SvPV_nolen(formula_sv));
+
+        // --- Formula parsing: lhs ~ rhs ---------------------------------
+        lhs = strtok_r(f_str, "~", &saveptr);
+        rhs = strtok_r(NULL, "~", &saveptr);
+        if (!lhs || !rhs) { Safefree(f_str); croak("aov: invalid formula (missing '~')"); }
+
+        // Trim whitespace from lhs
+        while (isspace((unsigned char)*lhs)) lhs++;
+        token = lhs + strlen(lhs) - 1;
+        while (token > lhs && isspace((unsigned char)*token)) *token-- = '\0';
+
+        // Trim whitespace from rhs
+        while (isspace((unsigned char)*rhs)) rhs++;
+        { char *restrict rhs_end = rhs + strlen(rhs) - 1;
+          while (rhs_end > rhs && isspace((unsigned char)*rhs_end)) *rhs_end-- = '\0'; }
+
+        /* --- Row count from first column -------------------------------- */
+        HE*restrict entry;
+        hv_iterinit(data);
+        if (!(entry = hv_iternext(data))) { Safefree(f_str); croak("aov: empty data"); }
+        SV* first_col = hv_iterval(data, entry);
+        if (!SvROK(first_col) || SvTYPE(SvRV(first_col)) != SVt_PVAV) {
+            Safefree(f_str);
+            croak("aov: data values must be array references (column-oriented HoA)");
+        }
+        n = av_len((AV*)SvRV(first_col)) + 1;
+
+        // --- Tokenize RHS terms by '+' ----------------------------------
+        terms = (char**)safemalloc(32 * sizeof(char*));
+        token = strtok_r(rhs, "+", &saveptr);
+        while (token && num_terms < 32) {
+            while (isspace((unsigned char)*token)) token++;
+            char* end = token + strlen(token) - 1;
+            while (end > token && isspace((unsigned char)*end)) *end-- = '\0';
+            // Skip intercept override tokens
+            if (strcmp(token, "1") != 0 && strcmp(token, "-1") != 0)
+                terms[num_terms++] = savepv(token);
+            token = strtok_r(NULL, "+", &saveptr);
+        }
+        // p = number of X columns (Intercept + predictors)
+        int p = num_terms + 1;
+        int mat_size = p + 1; // augmented matrix dimension
+
+        /* --- Build fully symmetric augmented matrix [X'X X'y; y'X y'y] -
+         *
+         * Layout (mat_size × mat_size):
+         *   xtx[0..p-1][0..p-1]  =  X'X
+         *   xtx[0..p-1][p]       =  X'y  (last column)
+         *   xtx[p][0..p-1]       =  y'X  (last row  — THE FIX)
+         *   xtx[p][p]            =  y'y
+         *
+         * Without the y'X row the sweep operator cannot update xtx[p][p]
+         * when pivoting the intercept, so SST_corrected is never computed
+         * and every sequential SS is wrong.
+         * ---------------------------------------------------------------- */
+        xtx = (double**)safemalloc(mat_size * sizeof(double*));
+        for (unsigned i = 0; i < mat_size; i++) {
+            xtx[i] = (double*)safemalloc(mat_size * sizeof(double));
+            for (j = 0; j < mat_size; j++) xtx[i][j] = 0.0;
+        }
+
+        size_t valid_n = 0;
+        for (row = 0; row < (int)n; row++) {
+            double y = evaluate_term_aov(data, lhs, row);
+            if (isnan(y)) continue; /* skip rows with missing response */
+
+            double *row_vec = (double*)safemalloc(p * sizeof(double));
+            row_vec[0] = 1.0; /* Intercept */
+            for (unsigned i = 0; i < num_terms; i++)
+                row_vec[i+1] = evaluate_term_aov(data, terms[i], row);
+
+            /* Outer product for X'X, and cross-products with y */
+            for (unsigned int i = 0; i < p; i++) {
+                for (j = 0; j < p; j++) xtx[i][j] += row_vec[i] * row_vec[j];
+                xtx[i][p] += row_vec[i] * y; /* X'y: last column              */
+                xtx[p][i] += y * row_vec[i]; /* y'X: last row — CRITICAL FIX  */
+            }
+            xtx[p][p] += y * y;
+            Safefree(row_vec);
+            valid_n++;
+        }
+
+        ret_hash = newHV();
+
+        // --- Sequential (Type I) SS via Goodnight sweep -----------------
+        // Sweep intercept → xtx[p][p] becomes SST corrected for the mean
+        sweep_matrix_aov(xtx, mat_size, 0);
+        rss_prev = xtx[p][p]; /* SST_corrected */
+
+        for (unsigned i = 0; i < num_terms; i++) {
+            sweep_matrix_aov(xtx, mat_size, i + 1);
+            rss_curr = xtx[p][p];
+            double ss_term = rss_prev - rss_curr; /* sequential SS for term i */
+            rss_prev = rss_curr;
+
+            HV*restrict term_stats = newHV();
+            hv_stores(term_stats, "Df",     newSViv(1));
+            hv_stores(term_stats, "Sum Sq", newSVnv(ss_term));
+            hv_store(ret_hash, terms[i], strlen(terms[i]),
+                     newRV_noinc((SV*)term_stats), 0);
+        }
+
+        // --- Residuals --------------------------------------------------
+        // Use valid_n (rows with non-NA response) to match R's df.residual
+        int res_df = (int)valid_n - p;
+        double ms_res = (res_df > 0) ? rss_prev / res_df : 0.0;
+
+        HV*restrict res_stats = newHV();
+        hv_stores(res_stats, "Df",      newSViv(res_df));
+        hv_stores(res_stats, "Sum Sq",  newSVnv(rss_prev));
+        hv_stores(res_stats, "Mean Sq", newSVnv(ms_res));
+        hv_stores(ret_hash, "Residuals", newRV_noinc((SV*)res_stats));
+
+        // --- F-statistics and p-values ----------------------------------
+        for (unsigned i = 0; i < num_terms; i++) {
+            SV**restrict term_sv = hv_fetch(ret_hash, terms[i], strlen(terms[i]), 0);
+            HV*restrict t_hv = (HV*)SvRV(*term_sv);
+
+            double ss  = SvNV(*hv_fetch(t_hv, "Sum Sq", 6, 0));
+            double ms  = ss / 1.0; /* df = 1 per continuous predictor term */
+            hv_stores(t_hv, "Mean Sq", newSVnv(ms));
+
+            if (ms_res > 0.0) {
+                double f_val = ms / ms_res;
+                hv_stores(t_hv, "F value", newSVnv(f_val));
+                // Upper-tail p-value: P(F > f_val) = 1 - pf(f_val, df1, df2)
+                hv_stores(t_hv, "Pr(>F)",
+                          newSVnv(1.0 - pf(f_val, 1.0, (double)res_df)));
+            } else {
+                hv_stores(t_hv, "F value", newSVnv(NAN));
+                hv_stores(t_hv, "Pr(>F)",  newSVnv(NAN));
+            }
+        }
+
+        // --- Cleanup ----------------------------------------------------
+        for (unsigned i = 0; i < num_terms; i++) Safefree(terms[i]);
+        Safefree(terms);
+        for (unsigned i = 0; i < mat_size; i++) Safefree(xtx[i]);
+        Safefree(xtx);
+        Safefree(f_str);
+
+        RETVAL = newRV_noinc((SV*)ret_hash);
+    }
+    OUTPUT:
+        RETVAL
+
 PROTOTYPES: DISABLE
 
 SV*
@@ -2863,3 +3055,5 @@ fisher_test(data_ref, conf_level = 0.95)
 	  RETVAL = newRV_noinc((SV*)ret_hash);
 	OUTPUT:
 	  RETVAL
+
+

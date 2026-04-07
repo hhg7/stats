@@ -165,15 +165,18 @@ BOOTDEP =
 XS_FILES = Fisher_Test.xs \
 	LikeR.xs \
 	bu.LikeR.xs \
-	bu.stats.xs
+	bu.stats.xs \
+	old.LikeR.xs
 C_FILES  = Fisher_Test.c \
 	LikeR.c \
 	bu.LikeR.c \
-	bu.stats.c
+	bu.stats.c \
+	old.LikeR.c
 O_FILES  = Fisher_Test.o \
 	LikeR.o \
 	bu.LikeR.o \
-	bu.stats.o
+	bu.stats.o \
+	old.LikeR.o
 H_FILES  = ppport.h
 MAN1PODS = 
 MAN3PODS = 
@@ -575,7 +578,11 @@ clean :: clean_subdirs
 	  core.[0-9] core.[0-9][0-9] \
 	  core.[0-9][0-9][0-9] core.[0-9][0-9][0-9][0-9] \
 	  core.[0-9][0-9][0-9][0-9][0-9] lib$(BASEEXT).def \
-	  mon.out perl \
+	  mon.out old.LikeR.base \
+	  old.LikeR.bs old.LikeR.bso \
+	  old.LikeR.c old.LikeR.def \
+	  old.LikeR.exp old.LikeR.o \
+	  old.LikeR_def.old perl \
 	  perl$(EXE_EXT) perl.exe \
 	  perlmain.c pm_to_blib \
 	  pm_to_blib.ts so_locations \
@@ -990,7 +997,7 @@ PERL_HDRS = \
 
 $(OBJECT) : $(PERL_HDRS)
 
-Fisher_Test.c LikeR.c bu.LikeR.c bu.stats.c : $(XSUBPPDEPS)
+Fisher_Test.c LikeR.c bu.LikeR.c bu.stats.c old.LikeR.c : $(XSUBPPDEPS)
 
 
 # --- MakeMaker makefile section:
