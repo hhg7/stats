@@ -764,7 +764,7 @@ static double betacf(double a, double b, double x) {
 }
 
 // Numerically stable p-value for Student's T (2-tailed)
-static double pt_2tail(double t, int df) {
+static double pt_2tail(double t, ssize_t df) {
 	if (df <= 0 || isnan(t)) return NAN;
 	double x = df / (df + t * t);
 	double a = 0.5 * df;

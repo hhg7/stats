@@ -491,7 +491,27 @@ my %correct = (
 		'Pontiac Firebird'    =>  3.26404011532368,	'Porsche 914-2'       =>  -0.718705557249944,
 		'Toyota Corolla'      =>  3.65413017953585,	'Toyota Corona'       =>  -3.06317321493851,
 		Valiant               =>  -0.785416091802773,'Volvo 142E'          =>  -0.913625869362747
-  }
+	},
+	summary => {
+		hp => {
+  			Estimate      => -0.03177295,
+      	'Pr(>|t|)'    => 0.00145122851187347,
+       	'Std. Error'  => 0.0090297096758557,
+         't value'     => -3.518712
+      },
+      wt => {
+      	Estimate      => -3.87783074,
+      	'Pr(>|t|)'    => 1.119647e-06,
+       	'Std. Error'  => 0.63273349,
+         't value'     => -6.128695
+      },
+      Intercept => {
+      	Estimate      => 37.22727012,
+      	'Pr(>|t|)'    => 2.565459e-20,
+       	'Std. Error'  => 1.59878754,
+         't value'     => 23.284689
+      }
+	}
 );
 foreach my $key ('Intercept', 'hp', 'wt', 'wt:hp') {
 	unless (defined $lm->{coefficients}{$key}) {
