@@ -741,7 +741,7 @@ static double kendall_exact_pvalue(unsigned int n, double s_obs, const char *res
 }
 // Continued fraction for Incomplete Beta Function (internal helper)
 static double betacf(double a, double b, double x) {
-    double aa, c, d, del, h, qab, qam, qap;
+    double c, d, h, qab, qam, qap;
     qab = a + b;
     qap = a + 1.0;
     qam = a - 1.0;
@@ -752,7 +752,7 @@ static double betacf(double a, double b, double x) {
     h = d;
     for (unsigned short int m = 1; m <= 100; m++) {
         unsigned short int m2 = 2 * m;
-        aa = m * (b - m) * x / ((qam + m2) * (a + m2));
+        double aa = m * (b - m) * x / ((qam + m2) * (a + m2));
         d = 1.0 + aa * d;
         if (fabs(d) < 1e-30) d = 1e-30;
         c = 1.0 + aa / c;
@@ -765,31 +765,31 @@ static double betacf(double a, double b, double x) {
         c = 1.0 + aa / c;
         if (fabs(c) < 1e-30) c = 1e-30;
         d = 1.0 / d;
-        del = d * c;
+        double del = d * c;
         h *= del;
         if (fabs(del - 1.0) < 3e-7) break;
     }
     return h;
 }
 
-/* Numerically stable p-value for Student's T (2-tailed) */
+// Numerically stable p-value for Student's T (2-tailed)
 static double pt_2tail(double t, int df) {
-    if (df <= 0 || isnan(t)) return NAN;
-    double x = df / (df + t * t);
-    double a = 0.5 * df;
-    double b = 0.5;
-    
-    /* Regularized Incomplete Beta Function I_x(a, b) */
-    /* When t is large, x is small, and this calculates the tail directly */
-    double bt = exp(lgamma(a + b) - lgamma(a) - lgamma(b) + 
-                    a * log(x) + b * log(1.0 - x));
-    
-    if (x < (a + 1.0) / (a + b + 2.0)) {
-        return bt * betacf(a, b, x) / a;
-    } else {
-        /* This side handles the non-tail cases accurately */
-        return 1.0 - bt * betacf(b, a, 1.0 - x) / b;
-    }
+	if (df <= 0 || isnan(t)) return NAN;
+	double x = df / (df + t * t);
+	double a = 0.5 * df;
+	double b = 0.5;
+
+	/* Regularized Incomplete Beta Function I_x(a, b) */
+	/* When t is large, x is small, and this calculates the tail directly */
+	double bt = exp(lgamma(a + b) - lgamma(a) - lgamma(b) + 
+		           a * log(x) + b * log(1.0 - x));
+
+	if (x < (a + 1.0) / (a + b + 2.0)) {
+	  return bt * betacf(a, b, x) / a;
+	} else {
+	  /* This side handles the non-tail cases accurately */
+	  return 1.0 - bt * betacf(b, a, 1.0 - x) / b;
+	}
 }
 // --- XS SECTION ---
 #line 796 "LikeR.c"
