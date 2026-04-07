@@ -452,25 +452,23 @@ my $lm = lm(formula =>  'mpg ~ wt * hp^2', data => $mtcars);
 #p $lm;
 my %correct = (
 	coefficients => {
-		Intercept => 49.8084234287587,
-		hp        => -0.120102090978019,
-		wt        => -8.21662429724302,
-		'wt:hp'   => 0.0278481483187383
+		Intercept => 49.8084234287587,	hp        => -0.120102090978019,
+		wt        => -8.21662429724302,	'wt:hp'   => 0.0278481483187383
 	},
 	'df.residual' => 28,
 	'fitted.values' => {
-		'Mazda RX4' => 23.09547, 		'Mazda RX4 Wag' => 21.78138,
-		'Datsun 710'    => 25.58488, 		'Hornet 4 Drive' => 20.02924,
-		'Hornet Sportabout' => 17.28996, 		Valiant             => 18.88542,
-		'Duster 360'        => 15.40745, 		'Merc 240D'         => 21.65887,
-		'Merc 450SE'        => 15.14994, 		'Merc 450SL'          => 16.23929,
-		'Merc 450SLC'         =>16.07909, 		'Cadillac Fleetwood'  => 12.02179,
-		'Lincoln Continental' =>11.89490, 		'Chrysler Imperial'   => 12.50221,
-		'Fiat 128'            => 27.84866, 		'Honda Civic'   => 32.63195,
+		'Mazda RX4' => 23.09547, 				'Mazda RX4 Wag' => 21.78138,
+		'Datsun 710'    => 25.58488, 			'Hornet 4 Drive' => 20.02924,
+		'Hornet Sportabout' => 17.28996, 	Valiant             => 18.88542,
+		'Duster 360'        => 15.40745, 	'Merc 240D'         => 21.65887,
+		'Merc 450SE'        => 15.14994, 	'Merc 450SL'          => 16.23929,
+		'Merc 450SLC'         =>16.07909, 	'Cadillac Fleetwood'  => 12.02179,
+		'Lincoln Continental' =>11.89490, 	'Chrysler Imperial'   => 12.50221,
+		'Fiat 128'            => 27.84866, 	'Honda Civic'   => 32.63195,
 		'Toyota Corolla'   => 30.24587, 		'Toyota Corona'   => 24.56317,
-		'Dodge Challenger'   => 17.57441, 		'AMC Javelin'   => 17.91776,
-		'Camaro Z28'   => 15.03111, 		'Pontiac Firebird'   => 15.93596,
-		'Fiat X1-9'   => 29.53900, 		'Porsche 914-2'   => 26.71871,
+		'Dodge Challenger'   => 17.57441, 	'AMC Javelin'   => 17.91776,
+		'Camaro Z28'   => 15.03111, 			'Pontiac Firebird'   => 15.93596,
+		'Fiat X1-9'   => 29.53900, 			'Porsche 914-2'   => 26.71871,
 		'Lotus Europa'   => 28.56630, 		'Ford Pantera L'   =>15.36033,
 		'Ferrari Dino'   => 19.52990, 		'Maserati Bora'   => 13.54587,
 		'Volvo 142E'      => 22.31363
@@ -567,6 +565,42 @@ dies_ok {
 	my $lm_no_int = lm(formula => 'mpg ~ wt -1', data => $mtcars);
 	ok( !defined($lm_no_int->{coefficients}{Intercept}), 'lm: formula -1 correctly suppresses Intercept' );
 } 'lm: formula -1 correctly suppresses Intercept';
+
+#-------------------------------------------------------------------
+#  lm: Matching R's Statistical Behaviors
+#-------------------------------------------------------------------
+
+subtest 'lm: R-Parity edge cases (NAs, Strings, Collinearity)' => sub {
+	my $messy_data = {
+		'R1' => { 'y' => 10, 'x1' => 2,  'x2' => 4 },
+		'R2' => { 'y' => 12, 'x1' => 3,  'x2' => 6 },
+		'R3' => { 'y' => 15, 'x1' => undef, x2 => 8 }, # Missing predictor
+		'R4' => { 'y' => 20, 'x1' => 5,  x2 => 10 },
+		'R5' => { 'y' => undef, x1 => 6, x2 => 12 },   # Missing response
+		'R6' => { 'y' => 22, x1 => 7,  x2 => "blue" }, # String/Factor
+		'R7' => { 'y' => 25, x1 => 8,  x2 => 16 },
+	};
+	my $lm_res;
+	lives_ok {
+		$lm_res = lm(formula => 'y ~ x1 + x2', data => $messy_data);
+	} 'lm: Handles missing data, strings, and collinearity without croaking';
+	# 1. Check Listwise Deletion (NAs and Strings should drop the row)
+	# Only R1, R2, R4, R7 are strictly valid numeric rows. (N = 4)
+	is( $lm_res->{'df.residual'}, 2, 'lm: correctly drops rows with undef or strings (Listwise Deletion)' );
+	ok( !exists $lm_res->{'fitted.values'}{'R3'}, 'lm: omitted row R3 has no fitted value' );
+	
+	# 2. Check Collinearity (x2 is exactly x1 * 2)
+	# R sets aliased coefficients to NA/undef.
+	ok( exists $lm_res->{coefficients}{x2}, 'lm: collinear coefficient key exists' );
+	
+	# In Perl, a C 'NaN' translates to a string "NaN" or undef depending on the platform.
+	my $x2_coef = $lm_res->{coefficients}{x2};
+	ok( !defined($x2_coef) || $x2_coef eq 'NaN' || $x2_coef != $x2_coef, 
+	    'lm: aliased/collinear variable x2 is correctly flagged as NaN/undef (matches R)' );
+	
+	# 3. Check Rank
+	is( $lm_res->{rank}, 2, 'lm: rank is reduced to 2 (Intercept + x1)' );
+};
 #---------------------------
 #   rnorm
 #----------------------------

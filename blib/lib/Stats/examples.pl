@@ -9,7 +9,12 @@ use Stats::LikeR;
 #use Matplotlib::Simple;
 use Util;
 
-my $x = [1, 2, 3, 4, 5];
+my $mtcars = json_file_to_ref('mtcars.hoh.json');
+my $lm = lm(formula =>  'mpg ~ wt + hp', data => $mtcars);
+p $lm;
+printf('%.3g' . "\n", $lm->{summary}{hp}{'Pr(>|t|)'});
+
+=my $x = [1, 2, 3, 4, 5];
 my $y = [2, 1, 4, 3, 5];
 
 my @correct = (

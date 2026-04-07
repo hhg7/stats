@@ -67,8 +67,6 @@ Returns array
 
     my @q = p_adjust(\@pvalues, $method);
 
-## pearson_r
-
 ## rnorm
 
     my ($rmean, $sd, $n) = (10, 2, 9999);
