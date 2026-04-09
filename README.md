@@ -9,6 +9,32 @@ There **are** other modules on CPAN that can do **PARTS** of this, but this work
 
 # Functions/Subroutines
 
+## aov
+
+    aov(
+    {
+        yield => [5.5, 5.4, 5.8, 4.5, 4.8, 4.2],
+        ctrl  => [1,     1,   1,   0,   0,   0]
+    },
+    'yield ~ ctrl');
+
+which returns
+
+    {
+        ctrl        {
+            Df          1,
+            "F value"   25.6000000000001,
+            "Mean Sq"   1.70666666666667,
+            Pr(>F)      0.00718232855871859,
+            "Sum Sq"    1.70666666666667
+        },
+        Residuals   {
+            Df          4,
+            "Mean Sq"   0.0666666666666665,
+            "Sum Sq"    0.266666666666666
+       }
+    }
+
 ## cor
 
     cor($array1, $array2, $method = 'pearson'),
@@ -16,6 +42,16 @@ There **are** other modules on CPAN that can do **PARTS** of this, but this work
 that is, `pearson` is the default and will be used if `$method` is not specified.
 
 Just like R, `pearson`, `spearman`, and `kendall` are available
+
+## cor_test
+
+    my $result = cor_test(
+    		'x'         => $x,
+    		'y'         => $y,
+    		alternative => 'two.sided'
+    		method      => 'pearson',
+    		continuity  => 1
+    	);
 
 ## fisher_test
 
@@ -66,6 +102,10 @@ works like mean, taking array references and arrays:
 Returns array
 
     my @q = p_adjust(\@pvalues, $method);
+
+## rbinom
+
+    my $binom = rbinom( n => $n, prob => 0.5, size => 9);
 
 ## rnorm
 
@@ -128,7 +168,11 @@ tests to see if an array reference is normally distributed, returns a p-value an
 
 ## t_test
 
-returns a hash reference
+There are 1-sample and 2-sample t-tests:
+
+    my $t_test = t_test( 'x' => $test_data[$i][$j], mu => mean( $test_data[$i][$j] ));
+
+or 2-sample:
 
     $t_test = t_test(
     	'x'    => $test_data[3][0],
@@ -136,7 +180,8 @@ returns a hash reference
 	    paired => true
     );
 
-which looks like:
+
+returns a hash reference, which looks like:
 
     conf_int     => [
         -0.06672889, 0.25672889

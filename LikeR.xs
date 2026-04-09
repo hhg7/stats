@@ -282,21 +282,20 @@ static int sweep_matrix_ols(double *restrict A, size_t n, bool *restrict aliased
 
 // Internal extractor resolving single data values. Returns NAN on missing or non-numeric.
 static double get_data_value(HV *restrict data_hoa, HV **restrict row_hashes, unsigned int i, const char *restrict var) {
-    SV **val = NULL;
+    SV **restrict val = NULL;
     if (row_hashes) {
         val = hv_fetch(row_hashes[i], var, strlen(var), 0);
         if (val && SvROK(*val) && SvTYPE(SvRV(*val)) == SVt_PVAV) {
-            AV* av = (AV*)SvRV(*val);
+            AV*restrict av = (AV*)SvRV(*val);
             val = av_fetch(av, 0, 0);
         }
     } else if (data_hoa) {
-        SV** col = hv_fetch(data_hoa, var, strlen(var), 0);
+        SV**restrict col = hv_fetch(data_hoa, var, strlen(var), 0);
         if (col && SvROK(*col) && SvTYPE(SvRV(*col)) == SVt_PVAV) {
-            AV* av = (AV*)SvRV(*col);
+            AV*restrict av = (AV*)SvRV(*col);
             val = av_fetch(av, i, 0);
         }
     }
-    
     if (val && SvOK(*val)) {
         if (looks_like_number(*val)) return SvNV(*val);
         return NAN; /* Catch strings like "blue" */
@@ -556,12 +555,10 @@ static void compute_hist_logic(double *restrict x, size_t n, double *restrict br
 		   while (idx > 0 && val <= breaks[idx]) {
 		       idx--;
 		   }
-		   
-		   /* Conversely, if floating-point truncation placed it too low, push it up */
+		   // Conversely, if floating-point truncation placed it too low, push it up
 		   while (idx < n_bins - 1 && val > breaks[idx + 1]) {
 		       idx++;
 		   }
-
 		   counts[idx]++;
 	  }
 	} else if (n_bins > 0) {
@@ -591,29 +588,27 @@ double approx_pnorm(double x) {
 #define DP_INDEX(i, j, k, n2, max_u) ((i) * ((n2) + 1) * ((max_u) + 1) + (j) * ((max_u) + 1) + (k))
 /* Pure C: Beasley-Springer-Moro approximation for inverse normal CDF */
 static double inverse_normal_cdf(double p) {
-    double a[4] = {2.50662823884, -18.61500062529, 41.39119773534, -25.44106049637};
-    double b[4] = {-8.47351093090, 23.08336743743, -21.06224101826, 3.13082909833};
-    double c[9] = {0.3374754822726147, 0.9761690190917186, 0.1607979714918209,
-                   0.0276438810333863, 0.0038405729373609, 0.0003951896511919,
-                   0.0000321767881768, 0.0000002888167364, 0.0000003960315187};
-    double x, r, y;
-
-    y = p - 0.5;
-    if (fabs(y) < 0.42) {
-        r = y * y;
-        x = y * (((a[3]*r + a[2])*r + a[1])*r + a[0]) /
-                ((((b[3]*r + b[2])*r + b[1])*r + b[0])*r + 1.0);
-    } else {
-        r = p;
-        if (y > 0) r = 1.0 - p;
-        r = log(-log(r));
-        x = c[0] + r * (c[1] + r * (c[2] + r * (c[3] + r * (c[4] +
-            r * (c[5] + r * (c[6] + r * (c[7] + r * c[8])))))));
-        if (y < 0) x = -x;
-    }
-    return x;
+	double a[4] = {2.50662823884, -18.61500062529, 41.39119773534, -25.44106049637};
+	double b[4] = {-8.47351093090, 23.08336743743, -21.06224101826, 3.13082909833};
+	double c[9] = {0.3374754822726147, 0.9761690190917186, 0.1607979714918209,
+		          0.0276438810333863, 0.0038405729373609, 0.0003951896511919,
+		          0.0000321767881768, 0.0000002888167364, 0.0000003960315187};
+	double x, r, y;
+	y = p - 0.5;
+	if (fabs(y) < 0.42) {
+	  r = y * y;
+	  x = y * (((a[3]*r + a[2])*r + a[1])*r + a[0]) /
+		       ((((b[3]*r + b[2])*r + b[1])*r + b[0])*r + 1.0);
+	} else {
+	  r = p;
+	  if (y > 0) r = 1.0 - p;
+	  r = log(-log(r));
+	  x = c[0] + r * (c[1] + r * (c[2] + r * (c[3] + r * (c[4] +
+		   r * (c[5] + r * (c[6] + r * (c[7] + r * c[8])))))));
+	  if (y < 0) x = -x;
+	}
+	return x;
 }
-
 /* -----------------------------------------------------------------------
  * Exact Spearman p-value via exhaustive permutation enumeration.
  *
@@ -665,9 +660,7 @@ static double spearman_exact_pvalue(double s_obs, int n, const char *restrict al
     }
 #undef TALLY_PERM
 
-    Safefree(perm);
-    Safefree(c);
-
+    Safefree(perm); Safefree(c);
     /* p_le = P(S ≤ s_obs) ≡ P(rho ≥ rho_obs)  — upper rho tail
      * p_ge = P(S ≥ s_obs) ≡ P(rho ≤ rho_obs)  — lower rho tail  */
     double p_le = (double)count_le / (double)total;
@@ -796,226 +789,683 @@ static double evaluate_term_aov(HV* data, const char* term, size_t row) {
     return 0.0;
 }
 
-/* Sweep operator for sequential Sum of Squares */
+// Sweep operator for sequential Sum of Squares
 static void sweep_matrix_aov(double**restrict m, int p, int k) {
     double pivot = m[k][k];
-    ssize_t i, j;
-    if (fabs(pivot) < 1e-12) return;
-    for (unsigned int j = 0; j < p; j++) if (j != k) m[k][j] /= pivot;
-    for (unsigned int i = 0; i < p; i++) {
-        if (i == k) continue;
-        double factor = m[i][k];
-        for (j = 0; j < p; j++) if (j != k) m[i][j] -= factor * m[k][j];
-        m[i][k] = -factor / pivot;
-    }
+// ... [lines 248-252]
     m[k][k] = 1.0 / pivot;
+}
+
+/* Householder QR Decomposition for Sequential Sums of Squares */
+static void apply_householder_aov(double** restrict X, double* restrict y, size_t n, int p) {
+ for (int k = 0; k < p && k < n; k++) {
+     double max_val = 0;
+     for (size_t i = k; i < n; i++) {
+         if (fabs(X[i][k]) > max_val) max_val = fabs(X[i][k]);
+     }
+     if (max_val == 0) continue; /* Collinear or zero column */
+
+     double norm = 0;
+     for (size_t i = k; i < n; i++) {
+         X[i][k] /= max_val;
+         norm += X[i][k] * X[i][k];
+     }
+     norm = sqrt(norm);
+     double s = (X[k][k] > 0) ? -norm : norm;
+     double u1 = X[k][k] - s;
+     X[k][k] = s * max_val;
+     
+     for (int j = k + 1; j < p; j++) {
+         double dot = u1 * X[k][j];
+         for (size_t i = k + 1; i < n; i++) dot += X[i][j] * X[i][k];
+         double tau = dot / (s * u1);
+         X[k][j] += tau * u1;
+         for (size_t i = k + 1; i < n; i++) X[i][j] += tau * X[i][k];
+     }
+     
+     /* Transform the response vector y */
+     double dot_y = u1 * y[k];
+     for (size_t i = k + 1; i < n; i++) dot_y += y[i] * X[i][k];
+     double tau_y = dot_y / (s * u1);
+     y[k] += tau_y * u1;
+     for (size_t i = k + 1; i < n; i++) y[i] += tau_y * X[i][k];
+ }
 }
 // --- XS SECTION ---
 MODULE = Stats::LikeR  PACKAGE = Stats::LikeR
 
 PROTOTYPES: ENABLE
 
+SV* glm(...)
+    CODE:
+    {
+        if (items % 2 != 0) 
+            croak("Usage: glm(formula => 'am ~ wt + hp', data => \\%mtcars, family => 'binomial')");
+
+        const char *restrict formula  = NULL;
+        SV *restrict data_sv = NULL;
+        const char *restrict family = "gaussian"; // Default family
+
+        for (unsigned short i = 0; i < items; i += 2) {
+            const char *restrict key = SvPV_nolen(ST(i));
+            SV *restrict val = ST(i + 1);
+            if      (strEQ(key, "formula")) formula = SvPV_nolen(val);
+            else if (strEQ(key, "data"))    data_sv = val;
+            else if (strEQ(key, "family"))  family = SvPV_nolen(val);
+            else croak("glm: unknown argument '%s'", key);
+        }        
+        if (!formula) croak("glm: formula is required");
+        if (!data_sv || !SvROK(data_sv)) croak("glm: data is required and must be a reference");
+        
+        bool is_binomial = (strcmp(family, "binomial") == 0);
+        bool is_gaussian = (strcmp(family, "gaussian") == 0);
+        if (!is_binomial && !is_gaussian) croak("glm: unsupported family '%s'", family);
+
+        // --- 1. Clean and Strip the Formula ---
+        char f_cpy[512];
+        char *restrict src = (char*)formula;
+        char *restrict dst = f_cpy;
+        while (*src && (dst - f_cpy < 511)) {
+            if (!isspace(*src)) { *dst++ = *src; }
+            src++;
+        }
+        *dst = '\0';
+
+        char *restrict tilde = strchr(f_cpy, '~');
+        if (!tilde) croak("glm: invalid formula, missing '~'");
+        *tilde = '\0';
+        
+        char *restrict lhs = f_cpy;   // Response Variable
+        char *restrict rhs = tilde + 1; // Predictor Expression
+
+        // --- 2. Tokenize Terms and Resolve Interaction Macros ---
+        char terms[128][128];
+        unsigned int num_terms = 0;
+        
+        bool has_intercept = true;
+        if (strstr(rhs, "-1")) has_intercept = false;
+        if (has_intercept) {
+            strcpy(terms[num_terms++], "Intercept");
+        }
+        
+        char *restrict chunk = strtok(rhs, "+");
+        while (chunk != NULL) {
+            if (strcmp(chunk, "1") == 0 || strcmp(chunk, "-1") == 0) {
+                chunk = strtok(NULL, "+");
+                continue;
+            }
+            char *restrict star = strchr(chunk, '*');
+            if (star) {
+                *star = '\0';
+                char *restrict left = chunk;
+                char *restrict right = star + 1;
+                
+                char *restrict c_left = strchr(left, '^');
+                if (c_left && strncmp(left, "I(", 2) != 0) *c_left = '\0';
+                char *restrict c_right = strchr(right, '^'); 
+                if (c_right && strncmp(right, "I(", 2) != 0) *c_right = '\0';
+                
+                strcpy(terms[num_terms++], left);
+                strcpy(terms[num_terms++], right);
+                sprintf(terms[num_terms++], "%s:%s", left, right);
+            } else {
+                char *restrict c_chunk = strchr(chunk, '^'); 
+                if (c_chunk && strncmp(chunk, "I(", 2) != 0) *c_chunk = '\0';
+                strcpy(terms[num_terms++], chunk);
+            }
+            chunk = strtok(NULL, "+");
+        }
+
+        char uniq_terms[128][128];
+        unsigned int num_uniq = 0;
+        for (unsigned int i = 0; i < num_terms; i++) {
+            bool found = false;
+            for (unsigned int j = 0; j < num_uniq; j++) {
+                if (strcmp(terms[i], uniq_terms[j]) == 0) { found = true; break; }
+            }
+            if (!found) strcpy(uniq_terms[num_uniq++], terms[i]);
+        }
+        unsigned int p = num_uniq, n = 0;
+
+        // --- 3. Structure Row Iterators for Hash of Hashes ---
+        char **restrict row_names = NULL;
+        HV **restrict row_hashes = NULL;
+        HV *restrict data_hoa = NULL;
+
+        SV*restrict ref = SvRV(data_sv);
+        if (SvTYPE(ref) == SVt_PVHV) {
+            HV*restrict hv = (HV*)ref;
+            if (hv_iterinit(hv) == 0) croak("glm: Data hash is empty");
+            HE*restrict entry = hv_iternext(hv);
+            if (entry) {
+                SV*restrict val = hv_iterval(hv, entry);
+                if (SvROK(val) && SvTYPE(SvRV(val)) == SVt_PVAV) {
+                    data_hoa = hv;
+                    n = av_len((AV*)SvRV(val)) + 1;
+                    Newx(row_names, n, char*);
+                    for(unsigned int i = 0; i < n; i++) {
+                        char buf[32];
+                        snprintf(buf, sizeof(buf), "%u", i+1);
+                        row_names[i] = savepv(buf);
+                    }
+                } else if (SvROK(val) && SvTYPE(SvRV(val)) == SVt_PVHV) {
+                    n = hv_iterinit(hv);
+                    Newx(row_names, n, char*);
+                    Newx(row_hashes, n, HV*);
+                    size_t i = 0;
+                    while ((entry = hv_iternext(hv))) {
+                        unsigned int len;
+                        char *restrict key = hv_iterkey(entry, &len);
+                        row_names[i] = savepv(key);
+                        row_hashes[i] = (HV*)SvRV(hv_iterval(hv, entry));
+                        i++;
+                    }
+                } else croak("glm: Hash values must be ArrayRefs (HoA) or HashRefs (HoH)");
+            }
+        } else if (SvTYPE(ref) == SVt_PVAV) {
+            AV*restrict av = (AV*)ref;
+            n = av_len(av) + 1;
+            Newx(row_names, n, char*);
+            Newx(row_hashes, n, HV*);
+            for (size_t i = 0; i < n; i++) {
+                SV**restrict val = av_fetch(av, i, 0);
+                if (val && SvROK(*val) && SvTYPE(SvRV(*val)) == SVt_PVHV) {
+                    row_hashes[i] = (HV*)SvRV(*val);
+                    char buf[32]; snprintf(buf, sizeof(buf), "%lu", i + 1);
+                    row_names[i] = savepv(buf);
+                } else {
+                    for (size_t x = 0; x < i; x++) Safefree(row_names[x]);
+                    Safefree(row_names); Safefree(row_hashes);
+                    croak("glm: Array values must be HashRefs (AoH)");
+                }
+            }
+        } else croak("glm: Data must be an Array or Hash reference");
+
+        double *restrict X; Newx(X, n * p, double);
+        double *restrict Y; Newx(Y, n, double);
+        char **restrict valid_row_names; Newx(valid_row_names, n, char*);
+
+        // -- Implement Listwise Deletion (na.omit) -- 
+        size_t valid_n = 0;
+        for (size_t i = 0; i < n; i++) {
+            double y_val = evaluate_term(data_hoa, row_hashes, i, lhs);
+            if (isnan(y_val)) {
+                Safefree(row_names[i]); 
+                continue;
+            }
+            
+            bool row_ok = true;
+            double row_x[128];
+            for (size_t j = 0; j < p; j++) {
+                if (strcmp(uniq_terms[j], "Intercept") == 0) {
+                    row_x[j] = 1.0;
+                } else {
+                    row_x[j] = evaluate_term(data_hoa, row_hashes, i, uniq_terms[j]);
+                    if (isnan(row_x[j])) { row_ok = false; break; }
+                }
+            }
+            
+            if (!row_ok) {
+                Safefree(row_names[i]);
+                continue;
+            }
+            
+            Y[valid_n] = y_val;
+            for (size_t j = 0; j < p; j++) X[valid_n * p + j] = row_x[j];
+            valid_row_names[valid_n] = row_names[i];
+            valid_n++;
+        }
+        Safefree(row_names); 
+
+        if (valid_n <= p) {
+            Safefree(X); Safefree(Y); Safefree(valid_row_names);
+            if (row_hashes) Safefree(row_hashes);
+            croak("glm: 0 degrees of freedom (too many NAs or parameters > observations)");
+        }
+
+        // --- 4. IRLS (Iteratively Reweighted Least Squares) ---
+        double *restrict mu       = (double*)safemalloc(valid_n * sizeof(double));
+        double *restrict eta      = (double*)safemalloc(valid_n * sizeof(double));
+        double *restrict W        = (double*)safemalloc(valid_n * sizeof(double));
+        double *restrict WZ       = (double*)safemalloc(valid_n * sizeof(double));
+        double *restrict beta     = (double*)safemalloc(p * sizeof(double));
+        double *restrict beta_old = (double*)safemalloc(p * sizeof(double));
+        bool *restrict aliased    = (bool*)safemalloc(p * sizeof(bool));
+        double *restrict XtWX     = (double*)safemalloc(p * p * sizeof(double));
+        double *restrict XtWZ     = (double*)safemalloc(p * sizeof(double));
+        
+        // Initialization
+        double deviance_old = 0.0, deviance_new = 0.0;
+        for (unsigned int i = 0; i < p; i++) {
+            beta[i] = 0.0;
+            beta_old[i] = 0.0;
+        }
+
+        for (unsigned int i = 0; i < valid_n; i++) {
+            if (is_binomial) {
+                mu[i] = (Y[i] + 0.5) / 2.0;
+                eta[i] = log(mu[i] / (1.0 - mu[i]));
+                
+                double dev = 0.0;
+                if (Y[i] == 0.0)      dev = -2.0 * log(1.0 - mu[i]);
+                else if (Y[i] == 1.0) dev = -2.0 * log(mu[i]);
+                else dev = 2.0 * (Y[i] * log(Y[i] / mu[i]) + (1.0 - Y[i]) * log((1.0 - Y[i]) / (1.0 - mu[i])));
+                deviance_old += dev;
+            } else {
+                mu[i] = Y[i];
+                eta[i] = Y[i];
+                deviance_old += (Y[i] - mu[i]) * (Y[i] - mu[i]);
+            }
+        }
+
+        int iter = 0, max_iter = 25, final_rank = p;
+        bool converged = false;
+
+        for (iter = 1; iter <= max_iter; iter++) {
+            
+            // 4a. Update Weights and Working Response Mathematically
+            for (unsigned int i = 0; i < valid_n; i++) {
+                if (is_binomial) {
+                    double w = mu[i] * (1.0 - mu[i]);
+                    if (w < 1e-10) w = 1e-10; 
+                    W[i] = w;
+                    WZ[i] = w * eta[i] + (Y[i] - mu[i]);
+                } else {
+                    W[i] = 1.0;
+                    WZ[i] = Y[i];
+                }
+            }
+
+            // 4b. Form XtWX and XtWZ
+            for (unsigned int i = 0; i < p; i++) {
+                XtWZ[i] = 0.0;
+                for (unsigned int j = 0; j < p; j++) XtWX[i * p + j] = 0.0;
+            }
+
+            for (unsigned int k = 0; k < valid_n; k++) {
+                double w = W[k];
+                double wz = WZ[k];
+                for (unsigned int i = 0; i < p; i++) {
+                    XtWZ[i] += X[k * p + i] * wz;
+                    double xw = X[k * p + i] * w;
+                    for (unsigned int j = 0; j < p; j++) {
+                        XtWX[i * p + j] += xw * X[k * p + j];
+                    }
+                }
+            }
+
+            // 4c. Solve Weighted Least Squares (inverts XtWX in place)
+            final_rank = sweep_matrix_ols(XtWX, p, aliased);
+
+            for (unsigned int i = 0; i < p; i++) {
+                if (aliased[i]) {
+                    beta[i] = NAN;
+                } else {
+                    double sum = 0.0;
+                    for (unsigned int j = 0; j < p; j++) {
+                        if (!aliased[j]) sum += XtWX[i * p + j] * XtWZ[j];
+                    }
+                    beta[i] = sum;
+                }
+            }
+
+            // Step-halving loop: Protects against taking diverging steps 
+            for (int half = 0; half < 10; half++) {
+                deviance_new = 0.0;
+
+                // 4d. Update Linear Predictor and Fitted Values
+                for (unsigned int i = 0; i < valid_n; i++) {
+                    double linear_pred = 0.0;
+                    for (unsigned int j = 0; j < p; j++) {
+                        if (!aliased[j]) linear_pred += X[i * p + j] * beta[j];
+                    }
+                    eta[i] = linear_pred;
+                    
+                    if (is_binomial) {
+                        mu[i] = 1.0 / (1.0 + exp(-eta[i]));
+                        // R safely clamps mu to prevent log(0) - .Machine$double.eps 
+                        if (mu[i] < 2.220446049250313e-16) mu[i] = 2.220446049250313e-16;
+                        if (mu[i] > 1.0 - 2.220446049250313e-16) mu[i] = 1.0 - 2.220446049250313e-16;
+                        
+                        double dev = 0.0;
+                        if (Y[i] == 0.0)      dev = -2.0 * log(1.0 - mu[i]);
+                        else if (Y[i] == 1.0) dev = -2.0 * log(mu[i]);
+                        else dev = 2.0 * (Y[i] * log(Y[i] / mu[i]) + (1.0 - Y[i]) * log((1.0 - Y[i]) / (1.0 - mu[i])));
+                        deviance_new += dev;
+                    } else {
+                        mu[i] = eta[i];
+                        double res = Y[i] - mu[i];
+                        deviance_new += res * res; // Gaussian deviance = RSS
+                    }
+                }
+                
+                // If deviance improved, accept the step and move to convergence check
+                if (!is_binomial || deviance_new <= deviance_old + 1e-7) {
+                    break;
+                }
+                
+                // Otherwise, halve the step and test again
+                for (unsigned int j = 0; j < p; j++) {
+                    beta[j] = (beta[j] + beta_old[j]) / 2.0;
+                }
+            }
+
+            // 4e. Check Convergence
+            if (fabs(deviance_new - deviance_old) / (0.1 + fabs(deviance_new)) < 1e-8) {
+                converged = true;
+                break;
+            }
+            deviance_old = deviance_new;
+            for (unsigned int j = 0; j < p; j++) beta_old[j] = beta[j];
+        }
+
+        // Recalculate Final Covariance Matrix for completely accurate Standard Errors
+        for (unsigned int i = 0; i < p; i++) {
+            for (unsigned int j = 0; j < p; j++) XtWX[i * p + j] = 0.0;
+        }
+        for (unsigned int k = 0; k < valid_n; k++) {
+            double w = is_binomial ? (mu[k] * (1.0 - mu[k])) : 1.0;
+            if (w < 1e-10) w = 1e-10;
+            for (unsigned int i = 0; i < p; i++) {
+                double xw = X[k * p + i] * w;
+                for (unsigned int j = 0; j < p; j++) {
+                    XtWX[i * p + j] += xw * X[k * p + j];
+                }
+            }
+        }
+        final_rank = sweep_matrix_ols(XtWX, p, aliased);
+
+
+        // --- 5. Assemble Return Structure ---
+        HV *restrict res_hv = newHV();
+        HV *restrict coef_hv = newHV();
+        HV *restrict fitted_hv = newHV();
+        HV *restrict resid_hv = newHV();
+        
+        int df_res = valid_n - final_rank;
+        double dispersion = is_binomial ? 1.0 : ((df_res > 0) ? (deviance_new / df_res) : NAN);
+
+        for (unsigned int i = 0; i < valid_n; i++) {
+            double res = Y[i] - mu[i];
+            // Store working residuals for consistency with LM format
+            hv_store(fitted_hv, valid_row_names[i], strlen(valid_row_names[i]), newSVnv(mu[i]), 0);
+            hv_store(resid_hv,  valid_row_names[i], strlen(valid_row_names[i]), newSVnv(res), 0);
+            Safefree(valid_row_names[i]);
+        }
+        Safefree(valid_row_names);
+
+        HV *restrict summary_hv = newHV();
+        AV *restrict terms_av = newAV();
+
+        for (unsigned int j = 0; j < p; j++) {
+            hv_store(coef_hv, uniq_terms[j], strlen(uniq_terms[j]), newSVnv(beta[j]), 0);
+            av_push(terms_av, newSVpv(uniq_terms[j], 0));
+            
+            HV *restrict row_hv = newHV();
+            if (aliased[j]) {
+                hv_store(row_hv, "Estimate",   8, newSVpv("NaN", 0), 0);
+                hv_store(row_hv, "Std. Error", 10, newSVpv("NaN", 0), 0);
+                hv_store(row_hv, "z value",    7, newSVpv("NaN", 0), 0);
+                hv_store(row_hv, "Pr(>|z|)",   8, newSVpv("NaN", 0), 0);
+            } else {
+                double se = sqrt(dispersion * XtWX[j * p + j]);
+                double z_val = beta[j] / se;
+                
+                // For gaussian we use t-dist, for binomial we use normal distribution for p-values
+                double p_val = is_binomial ? 2.0 * (1.0 - approx_pnorm(fabs(z_val))) : pt_2tail(z_val, df_res);
+                
+                hv_store(row_hv, "Estimate",   8, newSVnv(beta[j]), 0);
+                hv_store(row_hv, "Std. Error", 10, newSVnv(se), 0);
+                hv_store(row_hv, is_binomial ? "z value" : "t value", 7, newSVnv(z_val), 0);
+                hv_store(row_hv, is_binomial ? "Pr(>|z|)" : "Pr(>|t|)", 8, newSVnv(p_val), 0);
+            }
+            hv_store(summary_hv, uniq_terms[j], strlen(uniq_terms[j]), newRV_noinc((SV*)row_hv), 0);
+        }
+
+        // Calculate Null Deviance (Simplistic intercept-only check)
+        double null_dev = 0.0;
+        double sum_y = 0.0;
+        for (unsigned int i = 0; i < valid_n; i++) sum_y += Y[i];
+        double mu_null = sum_y / valid_n;
+        
+        for (unsigned int i = 0; i < valid_n; i++) {
+             if (is_binomial) {
+                 if (Y[i] == 0.0)      null_dev += -2.0 * log(1.0 - mu_null);
+                 else if (Y[i] == 1.0) null_dev += -2.0 * log(mu_null);
+                 else null_dev += 2.0 * (Y[i] * log(Y[i] / mu_null) + (1.0 - Y[i]) * log((1.0 - Y[i]) / (1.0 - mu_null)));
+             } else {
+                 double diff = Y[i] - mu_null;
+                 null_dev += diff * diff;
+             }
+        }
+
+        hv_store(res_hv, "coefficients",  12, newRV_noinc((SV*)coef_hv), 0);
+        hv_store(res_hv, "fitted.values", 13, newRV_noinc((SV*)fitted_hv), 0);
+        hv_store(res_hv, "residuals",      9, newRV_noinc((SV*)resid_hv), 0);
+        hv_store(res_hv, "family",         6, newSVpv(family, 0), 0);
+        hv_store(res_hv, "df.residual",   11, newSVuv(df_res), 0);
+        hv_store(res_hv, "df.null",        7, newSVuv(valid_n - 1), 0);
+        hv_store(res_hv, "deviance",       8, newSVnv(deviance_new), 0);
+        hv_store(res_hv, "null.deviance", 13, newSVnv(null_dev), 0);
+        hv_store(res_hv, "iter",           4, newSVuv(iter > max_iter ? max_iter : iter), 0);
+        hv_store(res_hv, "converged",      9, newSVuv(converged ? 1 : 0), 0);
+        hv_store(res_hv, "rank",           4, newSVuv(final_rank), 0);
+        hv_store(res_hv, "summary",        7, newRV_noinc((SV*)summary_hv), 0);
+        hv_store(res_hv, "terms",          5, newRV_noinc((SV*)terms_av), 0);
+
+        // --- Clean up ---
+        Safefree(mu); Safefree(eta); Safefree(WZ); Safefree(W);
+        Safefree(beta); Safefree(beta_old); Safefree(aliased);
+        Safefree(XtWX); Safefree(XtWZ);
+        Safefree(X); Safefree(Y); 
+        if (row_hashes) Safefree(row_hashes);
+
+        RETVAL = newRV_noinc((SV*)res_hv);
+    }
+OUTPUT:
+    RETVAL
+
 SV* cor_test(...)
 CODE:
 {
-    if (items % 2 != 0)
-        croak("Usage: cor_test(x => \\@data1, y => \\@data2, method => 'pearson', ...)");
-    SV *restrict x_ref = NULL, *restrict y_ref = NULL;
-    const char *restrict alternative = "two.sided";
-    const char *restrict method = "pearson";
-    SV *restrict exact_sv = NULL;
-    double conf_level = 0.95;
-    int continuity = 0;
-    /* Parse named arguments from the flat stack */
-    for (unsigned short int i = 0; i < items; i += 2) {
-        const char *restrict key = SvPV_nolen(ST(i));
-        SV *restrict val = ST(i + 1);
+	if (items % 2 != 0)
+	  croak("Usage: cor_test(x => \\@data1, y => \\@data2, method => 'pearson', ...)");
+	SV *restrict x_ref = NULL, *restrict y_ref = NULL;
+	const char *restrict alternative = "two.sided";
+	const char *restrict method = "pearson";
+	SV *restrict exact_sv = NULL;
+	double conf_level = 0.95;
+	int continuity = 0;
+	/* Parse named arguments from the flat stack */
+	for (unsigned short int i = 0; i < items; i += 2) {
+	  const char *restrict key = SvPV_nolen(ST(i));
+	  SV *restrict val = ST(i + 1);
 
-        if      (strEQ(key, "x"))           x_ref = val;
-        else if (strEQ(key, "y"))           y_ref = val;
-        else if (strEQ(key, "alternative")) alternative = SvPV_nolen(val);
-        else if (strEQ(key, "method"))      method = SvPV_nolen(val);
-        else if (strEQ(key, "exact"))       exact_sv = val;
-        else if (strEQ(key, "conf.level") || strEQ(key, "conf_level")) conf_level = SvNV(val);
-        else if (strEQ(key, "continuity"))  continuity = SvTRUE(val);
-        else croak("cor_test: unknown argument '%s'", key);
-    }
+	  if      (strEQ(key, "x"))           x_ref = val;
+	  else if (strEQ(key, "y"))           y_ref = val;
+	  else if (strEQ(key, "alternative")) alternative = SvPV_nolen(val);
+	  else if (strEQ(key, "method"))      method = SvPV_nolen(val);
+	  else if (strEQ(key, "exact"))       exact_sv = val;
+	  else if (strEQ(key, "conf.level") || strEQ(key, "conf_level")) conf_level = SvNV(val);
+	  else if (strEQ(key, "continuity"))  continuity = SvTRUE(val);
+	  else croak("cor_test: unknown argument '%s'", key);
+	}
 
-    if (!x_ref || !y_ref) croak("cor_test: 'x' and 'y' are required array references");
-    AV *restrict x_av, *restrict y_av;
-    double *restrict x, *restrict y;
-    double estimate = 0, p_value = 0, statistic = 0, df = 0, ci_lower = 0, ci_upper = 0;
-    bool is_pearson  = (strcmp(method, "pearson") == 0);
-    bool is_kendall  = (strcmp(method, "kendall") == 0);
-    bool is_spearman = (strcmp(method, "spearman") == 0);
-    HV *restrict rhv;
-    if (!SvROK(x_ref) || SvTYPE(SvRV(x_ref)) != SVt_PVAV ||
-        !SvROK(y_ref) || SvTYPE(SvRV(y_ref)) != SVt_PVAV) {
-        croak("x and y must be array references");
-    }
-    x_av = (AV*)SvRV(x_ref);
-    y_av = (AV*)SvRV(y_ref);
-    size_t n = av_len(x_av) + 1;
-    if (n != av_len(y_av) + 1) croak("incompatible dimensions");
-    if (n < 3) croak("not enough finite observations");
-    x = safemalloc(n * sizeof(double));
-    y = safemalloc(n * sizeof(double));
-    for (size_t i = 0; i < n; i++) {
-        SV **restrict x_val = av_fetch(x_av, i, 0);
-        SV **restrict y_val = av_fetch(y_av, i, 0);
-        x[i] = x_val && SvOK(*x_val) ? SvNV(*x_val) : 0;
-        y[i] = y_val && SvOK(*y_val) ? SvNV(*y_val) : 0;
-    }
+	if (!x_ref || !y_ref) croak("cor_test: 'x' and 'y' are required array references");
+	AV *restrict x_av, *restrict y_av;
+	double *restrict x, *restrict y;
+	double estimate = 0, p_value = 0, statistic = 0, df = 0, ci_lower = 0, ci_upper = 0;
+	bool is_pearson  = (strcmp(method, "pearson") == 0);
+	bool is_kendall  = (strcmp(method, "kendall") == 0);
+	bool is_spearman = (strcmp(method, "spearman") == 0);
+	HV *restrict rhv;
+	if (!SvROK(x_ref) || SvTYPE(SvRV(x_ref)) != SVt_PVAV ||
+	  !SvROK(y_ref) || SvTYPE(SvRV(y_ref)) != SVt_PVAV) {
+	  croak("x and y must be array references");
+	}
+	x_av = (AV*)SvRV(x_ref);
+	y_av = (AV*)SvRV(y_ref);
+	size_t n = av_len(x_av) + 1;
+	if (n != av_len(y_av) + 1) croak("incompatible dimensions");
+	if (n < 3) croak("not enough finite observations");
+	x = safemalloc(n * sizeof(double));
+	y = safemalloc(n * sizeof(double));
+	for (size_t i = 0; i < n; i++) {
+	  SV **restrict x_val = av_fetch(x_av, i, 0);
+	  SV **restrict y_val = av_fetch(y_av, i, 0);
+	  x[i] = x_val && SvOK(*x_val) ? SvNV(*x_val) : 0;
+	  y[i] = y_val && SvOK(*y_val) ? SvNV(*y_val) : 0;
+	}
 
-    if (is_pearson) {
-        /* Welford's Method for Pearson Correlation */
-        double mean_x = 0.0, mean_y = 0.0, M2_x = 0.0, M2_y = 0.0, cov = 0.0;
-        for (size_t i = 0; i < n; i++) {
-            double dx = x[i] - mean_x;
-            mean_x += dx / (i + 1);
-            double dy = y[i] - mean_y;
-            mean_y += dy / (i + 1);
-            M2_x += dx * (x[i] - mean_x);
-            M2_y += dy * (y[i] - mean_y);
-            cov  += dx * (y[i] - mean_y);
-        }
-        estimate = (M2_x > 0.0 && M2_y > 0.0) ? cov / sqrt(M2_x * M2_y) : 0.0;
-        df = n - 2;
-        statistic = estimate * sqrt(df / (1.0 - estimate * estimate));
-        
-        /* Confidence interval using Fisher's Z transform */
-        double z = 0.5 * log((1.0 + estimate) / (1.0 - estimate));
-        double se = 1.0 / sqrt(n - 3);
-        double alpha = 1.0 - conf_level;
-        double q = qnorm(1.0 - alpha/2.0);
-        ci_lower = tanh(z - q * se);
-        ci_upper = tanh(z + q * se);
-        
-        /* HIGH-PRECISION P-VALUE USING INCOMPLETE BETA */
-        p_value = get_t_pvalue(statistic, df, alternative);
-    } else if (is_kendall) {
-        int c = 0, d = 0, tie_x = 0, tie_y = 0;
-        for (size_t i = 0; i < n - 1; i++) {
-            for (size_t j = i + 1; j < n; j++) {
-                double sign_x = (x[i] - x[j] > 0) - (x[i] - x[j] < 0);
-                double sign_y = (y[i] - y[j] > 0) - (y[i] - y[j] < 0);
-                if (sign_x == 0 && sign_y == 0) { /* Joint tie, ignore */ }
-                else if (sign_x == 0) tie_x++;
-                else if (sign_y == 0) tie_y++;
-                else if (sign_x * sign_y > 0) c++;
-                else d++;
-            }
-        }
-        double denom = sqrt((double)(c + d + tie_x) * (double)(c + d + tie_y));
-        estimate = (denom == 0.0) ? (0.0/0.0) : (double)(c - d) / denom;
-        int has_ties = (tie_x > 0 || tie_y > 0);
-        int do_exact;
-        
-        /* Mirror R: exact defaults to TRUE if N < 50 and NO ties */
-        if (!exact_sv || !SvOK(exact_sv)) {
-            do_exact = (n < 50) && !has_ties;
-        } else {
-            do_exact = SvTRUE(exact_sv) ? 1 : 0;
-        }
-        // If forced exact but ties exist, R overrides and falls back to approximation anyway
-        if (do_exact && has_ties) do_exact = 0;
-        
-        if (do_exact) {
-            double S_stat = c - d;
-            statistic = c;
-            p_value = kendall_exact_pvalue(n, S_stat, alternative);
-        } else {
-            /* Normal approximation for large N or ties */
-            double var_S = n * (n - 1) * (2.0 * n + 5.0) / 18.0;
-            double S = c - d;
-            if (continuity) S -= (S > 0 ? 1 : -1);
-            statistic = S / sqrt(var_S);
+	if (is_pearson) {
+	  /* Welford's Method for Pearson Correlation */
+	  double mean_x = 0.0, mean_y = 0.0, M2_x = 0.0, M2_y = 0.0, cov = 0.0;
+	  for (size_t i = 0; i < n; i++) {
+		   double dx = x[i] - mean_x;
+		   mean_x += dx / (i + 1);
+		   double dy = y[i] - mean_y;
+		   mean_y += dy / (i + 1);
+		   M2_x += dx * (x[i] - mean_x);
+		   M2_y += dy * (y[i] - mean_y);
+		   cov  += dx * (y[i] - mean_y);
+	  }
+	  estimate = (M2_x > 0.0 && M2_y > 0.0) ? cov / sqrt(M2_x * M2_y) : 0.0;
+	  df = n - 2;
+	  statistic = estimate * sqrt(df / (1.0 - estimate * estimate));
+	  
+	  /* Confidence interval using Fisher's Z transform */
+	  double z = 0.5 * log((1.0 + estimate) / (1.0 - estimate));
+	  double se = 1.0 / sqrt(n - 3);
+	  double alpha = 1.0 - conf_level;
+	  double q = qnorm(1.0 - alpha/2.0);
+	  ci_lower = tanh(z - q * se);
+	  ci_upper = tanh(z + q * se);
+	  
+	  /* HIGH-PRECISION P-VALUE USING INCOMPLETE BETA */
+	  p_value = get_t_pvalue(statistic, df, alternative);
+	} else if (is_kendall) {
+	  int c = 0, d = 0, tie_x = 0, tie_y = 0;
+	  for (size_t i = 0; i < n - 1; i++) {
+		   for (size_t j = i + 1; j < n; j++) {
+		       double sign_x = (x[i] - x[j] > 0) - (x[i] - x[j] < 0);
+		       double sign_y = (y[i] - y[j] > 0) - (y[i] - y[j] < 0);
+		       if (sign_x == 0 && sign_y == 0) { /* Joint tie, ignore */ }
+		       else if (sign_x == 0) tie_x++;
+		       else if (sign_y == 0) tie_y++;
+		       else if (sign_x * sign_y > 0) c++;
+		       else d++;
+		   }
+	  }
+	  double denom = sqrt((double)(c + d + tie_x) * (double)(c + d + tie_y));
+	  estimate = (denom == 0.0) ? (0.0/0.0) : (double)(c - d) / denom;
+	  bool has_ties = (tie_x > 0 || tie_y > 0);
+	  bool do_exact;
+	  
+	  /* Mirror R: exact defaults to TRUE if N < 50 and NO ties */
+	  if (!exact_sv || !SvOK(exact_sv)) {
+		   do_exact = (n < 50) && !has_ties;
+	  } else {
+		   do_exact = SvTRUE(exact_sv) ? 1 : 0;
+	  }
+	  // If forced exact but ties exist, R overrides and falls back to approximation anyway
+	  if (do_exact && has_ties) do_exact = 0;
+	  
+	  if (do_exact) {
+		   double S_stat = c - d;
+		   statistic = c;
+		   p_value = kendall_exact_pvalue(n, S_stat, alternative);
+	  } else {
+		   /* Normal approximation for large N or ties */
+		   double var_S = n * (n - 1) * (2.0 * n + 5.0) / 18.0;
+		   double S = c - d;
+		   if (continuity) S -= (S > 0 ? 1 : -1);
+		   statistic = S / sqrt(var_S);
 
-            if (strcmp(alternative, "two.sided") == 0) {
-                p_value = 2.0 * (1.0 - approx_pnorm(fabs(statistic)));
-            } else if (strcmp(alternative, "less") == 0) {
-                p_value = approx_pnorm(statistic);
-            } else {
-                p_value = 1.0 - approx_pnorm(statistic);
-            }
-        }
-    } else if (is_spearman) {
-        double *restrict rank_x = safemalloc(n * sizeof(double));
-        double *restrict rank_y = safemalloc(n * sizeof(double));
-        compute_ranks(x, rank_x, n);
-        compute_ranks(y, rank_y, n);
-        
-        /* Spearman rho = Pearson r of the ranks (Welford's Method) */
-        double mean_x = 0.0, mean_y = 0.0, M2_x = 0.0, M2_y = 0.0, cov = 0.0;
-        for (size_t i = 0; i < n; i++) {
-            double dx = rank_x[i] - mean_x;
-            mean_x += dx / (i + 1);
-            double dy = rank_y[i] - mean_y;
-            mean_y += dy / (i + 1);
-            M2_x += dx * (rank_x[i] - mean_x);
-            M2_y += dy * (rank_y[i] - mean_y);
-            cov  += dx * (rank_y[i] - mean_y);
-        }
-        estimate = (M2_x > 0.0 && M2_y > 0.0) ? cov / sqrt(M2_x * M2_y) : 0.0;
+		   if (strcmp(alternative, "two.sided") == 0) {
+		       p_value = 2.0 * (1.0 - approx_pnorm(fabs(statistic)));
+		   } else if (strcmp(alternative, "less") == 0) {
+		       p_value = approx_pnorm(statistic);
+		   } else {
+		       p_value = 1.0 - approx_pnorm(statistic);
+		   }
+	  }
+	} else if (is_spearman) {
+	  double *restrict rank_x = safemalloc(n * sizeof(double));
+	  double *restrict rank_y = safemalloc(n * sizeof(double));
+	  compute_ranks(x, rank_x, n);
+	  compute_ranks(y, rank_y, n);
+	  
+	  /* Spearman rho = Pearson r of the ranks (Welford's Method) */
+	  double mean_x = 0.0, mean_y = 0.0, M2_x = 0.0, M2_y = 0.0, cov = 0.0;
+	  for (size_t i = 0; i < n; i++) {
+		   double dx = rank_x[i] - mean_x;
+		   mean_x += dx / (i + 1);
+		   double dy = rank_y[i] - mean_y;
+		   mean_y += dy / (i + 1);
+		   M2_x += dx * (rank_x[i] - mean_x);
+		   M2_y += dy * (rank_y[i] - mean_y);
+		   cov  += dx * (rank_y[i] - mean_y);
+	  }
+	  estimate = (M2_x > 0.0 && M2_y > 0.0) ? cov / sqrt(M2_x * M2_y) : 0.0;
 
-        /* S = sum of squared rank differences (R's reported statistic) */
-        double S_stat = 0.0;
-        for (size_t i = 0; i < n; i++) {
-            double diff = rank_x[i] - rank_y[i];
-            S_stat += diff * diff;
-        }
+	  /* S = sum of squared rank differences (R's reported statistic) */
+	  double S_stat = 0.0;
+	  for (size_t i = 0; i < n; i++) {
+		   double diff = rank_x[i] - rank_y[i];
+		   S_stat += diff * diff;
+	  }
 
-        /* Ties produce fractional (averaged) ranks — detect them */
-        int has_ties = 0;
-        for (size_t i = 0; i < n; i++) {
-            if (rank_x[i] != floor(rank_x[i]) || rank_y[i] != floor(rank_y[i])) {
-                has_ties = 1;
-                break;
-            }
-        }
+	  /* Ties produce fractional (averaged) ranks — detect them */
+	  int has_ties = 0;
+	  for (size_t i = 0; i < n; i++) {
+		   if (rank_x[i] != floor(rank_x[i]) || rank_y[i] != floor(rank_y[i])) {
+		       has_ties = 1;
+		       break;
+		   }
+	  }
 
-        int do_exact;
-        if (!exact_sv || !SvOK(exact_sv)) {
-            do_exact = (n < 10) && !has_ties;
-        } else {
-            do_exact = SvTRUE(exact_sv) ? 1 : 0;
-        }
+	  int do_exact;
+	  if (!exact_sv || !SvOK(exact_sv)) {
+		   do_exact = (n < 10) && !has_ties;
+	  } else {
+		   do_exact = SvTRUE(exact_sv) ? 1 : 0;
+	  }
 
-        if (do_exact) {
-            statistic = S_stat;
-            p_value   = spearman_exact_pvalue(S_stat, n, alternative);
-        } else {
-            double r = estimate;
-            if (continuity)
-                r *= (1.0 - 1.0 / (2.0 * (n - 1)));
-            statistic = r * sqrt((n - 2.0) / (1.0 - r * r));
-            p_value = get_t_pvalue(statistic, (double)(n - 2), alternative);
-        }
-        Safefree(rank_x);
-        Safefree(rank_y);
-    } else {
-        Safefree(x); Safefree(y);
-        croak("Unknown method");
-    }
-    Safefree(x);
-    Safefree(y);
-    
-    rhv = newHV();
-    hv_stores(rhv, "estimate", newSVnv(estimate));
-    hv_stores(rhv, "p.value", newSVnv(p_value));
-    hv_stores(rhv, "statistic", newSVnv(statistic));
-    hv_stores(rhv, "method", newSVpv(method, 0));
-    hv_stores(rhv, "alternative", newSVpv(alternative, 0));
-    
-    if (is_pearson) {
-        hv_stores(rhv, "parameter", newSVnv(df));
-        AV *ci_av = newAV();
-        av_push(ci_av, newSVnv(ci_lower));
-        av_push(ci_av, newSVnv(ci_upper));
-        hv_stores(rhv, "conf.int", newRV_noinc((SV*)ci_av));
-    }
+	  if (do_exact) {
+		   statistic = S_stat;
+		   p_value   = spearman_exact_pvalue(S_stat, n, alternative);
+	  } else {
+		   double r = estimate;
+		   if (continuity)
+		       r *= (1.0 - 1.0 / (2.0 * (n - 1)));
+		   statistic = r * sqrt((n - 2.0) / (1.0 - r * r));
+		   p_value = get_t_pvalue(statistic, (double)(n - 2), alternative);
+	  }
+	  Safefree(rank_x);
+	  Safefree(rank_y);
+	} else {
+	  Safefree(x); Safefree(y);
+	  croak("Unknown method");
+	}
+	Safefree(x);
+	Safefree(y);
 
-    RETVAL = newRV_noinc((SV*)rhv);
+	rhv = newHV();
+	hv_stores(rhv, "estimate", newSVnv(estimate));
+	hv_stores(rhv, "p.value", newSVnv(p_value));
+	hv_stores(rhv, "statistic", newSVnv(statistic));
+	hv_stores(rhv, "method", newSVpv(method, 0));
+	hv_stores(rhv, "alternative", newSVpv(alternative, 0));
+
+	if (is_pearson) {
+	  hv_stores(rhv, "parameter", newSVnv(df));
+	  AV *ci_av = newAV();
+	  av_push(ci_av, newSVnv(ci_lower));
+	  av_push(ci_av, newSVnv(ci_upper));
+	  hv_stores(rhv, "conf.int", newRV_noinc((SV*)ci_av));
+	}
+
+	RETVAL = newRV_noinc((SV*)rhv);
 }
 OUTPUT:
     RETVAL
@@ -1661,6 +2111,7 @@ SV* t_test(...)
 		   M2_x += delta * (val - mean_x);
 	  }
 	  var_x = M2_x / (nx - 1);
+	  if (var_x == 0.0 && !y_av) croak("t_test: data are essentially constant");
 	  
 	  if (paired || y_av) {
 		   if (!y_av) croak("t_test: 'y' must be provided for paired or two-sample tests");
@@ -1688,6 +2139,9 @@ SV* t_test(...)
 		           M2_d += delta * (val - mean_d);
 		       }
 		       double var_d = M2_d / (nx - 1);
+		       if (var_d == 0.0) croak("t_test: data are essentially constant");
+		       
+		       cint_est = mean_d;
 		       
 		       cint_est = mean_d;
 		       std_err  = sqrt(var_d / nx);
@@ -1695,7 +2149,8 @@ SV* t_test(...)
 		       df       = nx - 1;
 		       hv_store(results, "estimate", 8, newSVnv(mean_d), 0);
 		       
-		   } else if (var_equal) {
+			} else if (var_equal) {
+		       if (var_x == 0.0 && var_y == 0.0) croak("t_test: data are essentially constant");
 		       double pooled_var = ((nx - 1) * var_x + (ny - 1) * var_y) / (nx + ny - 2);
 		       cint_est = mean_x - mean_y;
 		       std_err  = sqrt(pooled_var * (1.0 / nx + 1.0 / ny));
@@ -1706,6 +2161,7 @@ SV* t_test(...)
 		       hv_store(results, "estimate_y", 10, newSVnv(mean_y), 0);
 		       
 		   } else {
+		       if (var_x == 0.0 && var_y == 0.0) croak("t_test: data are essentially constant");
 		       cint_est         = mean_x - mean_y;
 		       double stderr_x2 = var_x / nx;
 		       double stderr_y2 = var_y / ny;
@@ -1955,20 +2411,20 @@ SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 		   croak("cor: unknown method '%s' (use 'pearson', 'spearman', or 'kendall')",
 		         method);
 
-	  /* --- validate x ------------------------------------------------ */
+	  // --- validate x ------------------------------------------------
 	  if (!SvROK(x_sv) || SvTYPE(SvRV(x_sv)) != SVt_PVAV)
 		   croak("cor: x must be an ARRAY reference");
 	  AV*restrict x_av = (AV*)SvRV(x_sv);
 	  size_t nx   = av_len(x_av) + 1;
 	  if (nx == 0) croak("cor: x is empty");
-	  /* --- detect whether x is a flat vector or a matrix (AoA) ------- */
+	  // --- detect whether x is a flat vector or a matrix (AoA) -------
 	  bool x_is_matrix = 0;
 	  {
 		   SV**restrict fp = av_fetch(x_av, 0, 0);
 		   if (fp && SvROK(*fp) && SvTYPE(SvRV(*fp)) == SVt_PVAV)
 		       x_is_matrix = 1;
 	  }
-	  /* --- detect y -------------------------------------------------- */
+	  // --- detect y ----------------------------
 	  bool has_y = (SvOK(y_sv) && SvROK(y_sv) &&
 		            SvTYPE(SvRV(y_sv)) == SVt_PVAV);
 	  AV*restrict y_av = has_y ? (AV*)SvRV(y_sv) : NULL;
@@ -1997,11 +2453,11 @@ SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 
 		       for (size_t i = 0; i < nx; i++) {
 		           SV**restrict tv = av_fetch(x_av, i, 0);
-		           xd[i] = (tv && SvOK(*tv)) ? SvNV(*tv) : 0.0;
+		           xd[i] = (tv && SvOK(*tv) && looks_like_number(*tv)) ? SvNV(*tv) : NAN;
 		       }
 		       for (size_t i = 0; i < ny; i++) {
 		           SV**restrict tv = av_fetch(y_av, i, 0);
-		           yd[i] = (tv && SvOK(*tv)) ? SvNV(*tv) : 0.0;
+		           yd[i] = (tv && SvOK(*tv) && looks_like_number(*tv)) ? SvNV(*tv) : NAN;
 		       }
 
 		       double r = compute_cor(xd, yd, nx, method);
@@ -2037,7 +2493,7 @@ SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 		               croak("cor: x row %lu is not an array ref", i);
 		           AV*restrict  row = (AV*)SvRV(*rv);
 		           SV**restrict cv  = av_fetch(row, j, 0);
-		           col_x[j][i] = (cv && SvOK(*cv)) ? SvNV(*cv) : 0.0;
+		           col_x[j][i] = (cv && SvOK(*cv) && looks_like_number(*cv)) ? SvNV(*cv) : NAN;
 		       }
 		   }
 		   // -- resolve y: separate matrix or re-use x (symmetric)
@@ -2064,7 +2520,7 @@ SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 		                   croak("cor: y row %lu is not an array ref", i);
 		               AV*restrict  row = (AV*)SvRV(*rv);
 		               SV**restrict cv  = av_fetch(row, j, 0);
-		               col_y[j][i] = (cv && SvOK(*cv)) ? SvNV(*cv) : 0.0;
+		               col_y[j][i] = (cv && SvOK(*cv) && looks_like_number(*cv)) ? SvNV(*cv) : NAN;
 		           }
 		       }
 		   } else {
@@ -2817,13 +3273,15 @@ aov(data_ref, formula_sv)
     SV* formula_sv
     CODE:
     {
-        HV* data;
+        HV*restrict data;
         char *restrict f_str, *restrict lhs, *restrict rhs, *restrict token, *saveptr;
-        char **terms;
-        int num_terms = 0, j, row;
+        char **restrict terms;
+        unsigned int num_terms = 0, j, row;
         size_t n;
-        double **restrict xtx, rss_prev, rss_curr;
-        HV* ret_hash;
+        double **restrict X_mat;
+        double *restrict y_vec;
+        double rss_prev;
+        HV*restrict ret_hash;
 
         if (!SvROK(data_ref) || SvTYPE(SvRV(data_ref)) != SVt_PVHV)
             croak("aov: data must be a HashRef");
@@ -2862,7 +3320,7 @@ aov(data_ref, formula_sv)
         token = strtok_r(rhs, "+", &saveptr);
         while (token && num_terms < 32) {
             while (isspace((unsigned char)*token)) token++;
-            char* end = token + strlen(token) - 1;
+            char*restrict end = token + strlen(token) - 1;
             while (end > token && isspace((unsigned char)*end)) *end-- = '\0';
             // Skip intercept override tokens
             if (strcmp(token, "1") != 0 && strcmp(token, "-1") != 0)
@@ -2885,53 +3343,48 @@ aov(data_ref, formula_sv)
          * when pivoting the intercept, so SST_corrected is never computed
          * and every sequential SS is wrong.
          * ---------------------------------------------------------------- */
-        xtx = (double**)safemalloc(mat_size * sizeof(double*));
-        for (unsigned i = 0; i < mat_size; i++) {
-            xtx[i] = (double*)safemalloc(mat_size * sizeof(double));
-            for (j = 0; j < mat_size; j++) xtx[i][j] = 0.0;
+        X_mat = (double**)safemalloc(n * sizeof(double*));
+        for (size_t i = 0; i < n; i++) {
+            X_mat[i] = (double*)safemalloc(p * sizeof(double));
         }
+        y_vec = (double*)safemalloc(n * sizeof(double));
 
         size_t valid_n = 0;
-        for (row = 0; row < (int)n; row++) {
+			for (row = 0; row < (int)n; row++) {
             double y = evaluate_term_aov(data, lhs, row);
             if (isnan(y)) continue; /* skip rows with missing response */
 
-            double *row_vec = (double*)safemalloc(p * sizeof(double));
-            row_vec[0] = 1.0; /* Intercept */
-            for (unsigned i = 0; i < num_terms; i++)
-                row_vec[i+1] = evaluate_term_aov(data, terms[i], row);
-
-            /* Outer product for X'X, and cross-products with y */
-            for (unsigned int i = 0; i < p; i++) {
-                for (j = 0; j < p; j++) xtx[i][j] += row_vec[i] * row_vec[j];
-                xtx[i][p] += row_vec[i] * y; /* X'y: last column              */
-                xtx[p][i] += y * row_vec[i]; /* y'X: last row — CRITICAL FIX  */
+            X_mat[valid_n][0] = 1.0; /* Intercept */
+            for (unsigned i = 0; i < num_terms; i++) {
+                X_mat[valid_n][i+1] = evaluate_term_aov(data, terms[i], row);
             }
-            xtx[p][p] += y * y;
-            Safefree(row_vec);
+            y_vec[valid_n] = y;
             valid_n++;
         }
-
         ret_hash = newHV();
-
-        // --- Sequential (Type I) SS via Goodnight sweep -----------------
-        // Sweep intercept → xtx[p][p] becomes SST corrected for the mean
-        sweep_matrix_aov(xtx, mat_size, 0);
-        rss_prev = xtx[p][p]; /* SST_corrected */
-
+// --- Sequential (Type I) SS via Householder QR -----------------
+        apply_householder_aov(X_mat, y_vec, valid_n, p);
+        /* Calculate SST Corrected (Residual after removing just intercept).
+           Because Q is orthogonal, SST is simply the sum of squares of the 
+           transformed y vector, skipping the intercept index (0) */
+        rss_prev = 0.0;
+        for (size_t i = 1; i < valid_n; i++) {
+            rss_prev += y_vec[i] * y_vec[i];
+        }
         for (unsigned i = 0; i < num_terms; i++) {
-            sweep_matrix_aov(xtx, mat_size, i + 1);
-            rss_curr = xtx[p][p];
-            double ss_term = rss_prev - rss_curr; /* sequential SS for term i */
-            rss_prev = rss_curr;
-
+            /* The SS explained by term i is exactly the square of the 
+               transformed y element at index i+1 */
+            double ss_term = y_vec[i + 1] * y_vec[i + 1];
+            
+            rss_prev -= ss_term; /* Update residual sum of squares */
+            if (rss_prev < 0.0) rss_prev = 0.0; /* Float safeguard */
+            
             HV*restrict term_stats = newHV();
             hv_stores(term_stats, "Df",     newSViv(1));
             hv_stores(term_stats, "Sum Sq", newSVnv(ss_term));
             hv_store(ret_hash, terms[i], strlen(terms[i]),
                      newRV_noinc((SV*)term_stats), 0);
         }
-
         // --- Residuals --------------------------------------------------
         // Use valid_n (rows with non-NA response) to match R's df.residual
         int res_df = (int)valid_n - p;
@@ -2942,7 +3395,6 @@ aov(data_ref, formula_sv)
         hv_stores(res_stats, "Sum Sq",  newSVnv(rss_prev));
         hv_stores(res_stats, "Mean Sq", newSVnv(ms_res));
         hv_stores(ret_hash, "Residuals", newRV_noinc((SV*)res_stats));
-
         // --- F-statistics and p-values ----------------------------------
         for (unsigned i = 0; i < num_terms; i++) {
             SV**restrict term_sv = hv_fetch(ret_hash, terms[i], strlen(terms[i]), 0);
@@ -2967,8 +3419,9 @@ aov(data_ref, formula_sv)
         // --- Cleanup ----------------------------------------------------
         for (unsigned i = 0; i < num_terms; i++) Safefree(terms[i]);
         Safefree(terms);
-        for (unsigned i = 0; i < mat_size; i++) Safefree(xtx[i]);
-        Safefree(xtx);
+        for (size_t i = 0; i < n; i++) Safefree(X_mat[i]);
+        Safefree(X_mat);
+        Safefree(y_vec);
         Safefree(f_str);
 
         RETVAL = newRV_noinc((SV*)ret_hash);

@@ -1,21 +1,18 @@
 #!/usr/bin/env perl
 use 5.042.2;
 no source::encoding;
-use DDP {output => 'STDOUT', array_max => 10, show_memsize => 1};
-use Devel::Confess 'color';
 package Stats::LikeR;
 our $VERSION = 0.01;
 require XSLoader;
 XSLoader::load('Stats::LikeR', $VERSION);
-use DDP {output => 'STDOUT', array_max => 10, show_memsize => 1};
-use Devel::Confess 'color';
+#use DDP {output => 'STDOUT', array_max => 10, show_memsize => 1};
+#use Devel::Confess 'color';
 use 5.042.2;
 no source::encoding;
 use warnings FATAL => 'all';
 use autodie ':default';
-use List::Util qw(min sum);
 use Exporter 'import';
-our @EXPORT_OK = qw(aov cor cor_test fisher_test hist lm matrix mean median min max p_adjust quantile rbinom rnorm runif scale sd seq shapiro_test t_test var);
+our @EXPORT_OK = qw(aov cor cor_test fisher_test glm hist lm matrix mean median min max p_adjust quantile rbinom rnorm runif scale sd seq shapiro_test t_test var);
 our @EXPORT = @EXPORT_OK;
 
 #sub mean {

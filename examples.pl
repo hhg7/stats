@@ -7,9 +7,25 @@ use autodie ':all';
 use Stats::LikeR;
 #use JSON 'encode_json';
 #use Matplotlib::Simple;
-use Util;
+use DDP {output => 'STDOUT', array_max => 10, show_memsize => 1};
+use Devel::Confess 'color';
 
-my $mtcars = json_file_to_ref('mtcars.hoh.json');
+my $t = t_test(
+	'x' => [3,3,3,3]
+);
+p $t;
+=my $mtcars = json_file_to_ref('mtcars.json');
+my %mtcars_hoa;
+foreach my $row (@{ $mtcars }) {
+	my $car = delete $row->{_row};
+	push @{ $mtcars_hoa{car} }, $car;
+	foreach my $key (keys %{ $row }) {
+		push @{ $mtcars_hoa{$key} }, $row->{$key};
+	}
+}
+p %mtcars_hoa;
+ref_to_json_file(\%mtcars_hoa, 'mtcars.hoa.json' );
+=my $mtcars = json_file_to_ref('mtcars.hoh.json');
 my $lm = lm(formula =>  'mpg ~ wt + hp', data => $mtcars);
 p $lm;
 printf('%.3g' . "\n", $lm->{summary}{hp}{'Pr(>|t|)'});

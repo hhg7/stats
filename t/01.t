@@ -5,6 +5,8 @@ no source::encoding;
 use warnings FATAL => 'all';
 use Test::More;
 use Test::Exception; # die_ok
+use DDP {output => 'STDOUT', array_max => 10, show_memsize => 1};
+use Devel::Confess 'color';
 use Stats::LikeR;
 use Scalar::Util 'looks_like_number';
 use JSON qw(decode_json encode_json);
@@ -106,6 +108,9 @@ like( $@, qr/stdev needs >= 2 elements/, 'sd: dies when given < 2 elements' );
 
 dies_ok { var(1) } 'var: dies when given < 2 elements' ;
 
+#------------------
+# t.test
+#------------------
 @test_data = (
 [
 	[27.5,21.0,19.0,23.6,17.0,17.9,16.9,20.1,21.9,22.6,23.1,19.6,19.0,21.7,21.4],
@@ -139,6 +144,14 @@ dies_ok { var(1) } 'var: dies when given < 2 elements' ;
 	[9/23.0,21/45.0,0/38.0],
 	[0/44.0,42/94.0,0/22.0]
 ]);
+foreach my $i (0..$#test_data) { # single sample t-tests
+	foreach my $j (0,1) {
+		my $t_test = t_test( 'x' => $test_data[$i][$j], mu => mean( $test_data[$i][$j] ));
+		is_approx( $t_test->{p_value}, 1,            "t_test: Testing set $i/$j p-value");
+		is_approx( $t_test->{df}, scalar @{ $test_data[$i][$j] } - 1, "t_test: df $i/$j");
+		is_approx( $t_test->{statistic}, 0, "t_test: t $i/$j");
+	}
+}
 my @correct_t = (
 	{ # default
 		conf_int     => [
@@ -183,9 +196,6 @@ foreach my $key (grep {ref $correct_t[0]{$_} eq ''} keys %{ $correct_t[0] }) {
 foreach my $j (0,1) {
 	is_approx( $t_test->{'conf_int'}[$j], $correct_t[0]{'conf_int'}[$j], "Conf. interval index $j");
 }
-#------------------
-# t.test
-#------------------
 $t_test = t_test(
 	'x'       => $test_data[1][0],
 	'y'       => $test_data[1][1],
@@ -234,6 +244,10 @@ ok( $t_alt_greater->{p_value} < 0.05, 't_test alternative greater works (small p
 
 my $t_alt_less = t_test('x' => [5, 6, 7, 8, 9], mu => 20, alternative => 'less');
 ok( $t_alt_less->{p_value} < 0.05, 't_test alternative less works (small p_value)' );
+
+dies_ok {
+	t_test( 'x' => [3,3,3,3] )
+} '"t_test" dies when data is constant';
 
 #----------------------
 #		p ajdust
@@ -794,7 +808,72 @@ if (scalar @{ $binom } == $n) {
 } else {
 	fail("binom should have $n elements, but has " . scalar @{ $binom } . ' elements');
 }
+subtest 'rbinom: Exceptions and Validations' => sub {
+	eval { rbinom(n => 10, size => 10) };
+	like( $@, qr/'size' and 'prob' are required arguments/, 'rbinom: dies when prob is missing' );
 
+	dies_ok {
+		rbinom(n => 10, prob => 0.5)
+	} 'qr/"size" and "prob" are required arguments: rbinom: dies when size is missing';
+
+	dies_ok {
+		rbinom(n => 10, size => 10, prob => 1.5)
+	} 'qr/prob must be between 0 and 1: rbinom: dies when prob > 1';
+
+	dies_ok {
+		rbinom(n => 10, size => 10, prob => -0.1) 
+	} 'qr/prob must be between 0 and 1: rbinom: dies when prob < 0';
+	dies_ok {
+		rbinom(n => 10, size => 10, prob => 0.5, 'extra_arg');
+	} 'rbinom: dies on odd argument count';
+};
+
+subtest 'rbinom: Edge Cases (Deterministic)' => sub {
+	my $n_edge = 100;
+	# Prob = 0 should strictly return 0
+	my $binom_p = rbinom(n => $n_edge, size => 10, prob => 0);
+	is_approx( max($binom_p), 0, 'rbinom: prob=0 always returns 0' );
+	is_approx( min($binom_p), 0, 'rbinom: prob=0 always returns 0' );
+	
+	# Prob = 1 should strictly return 'size'
+	$binom_p = rbinom(n => $n_edge, size => 15, prob => 1);
+	is_approx( min($binom_p), 15, 'rbinom: prob=1 always returns size' );
+	is_approx( max($binom_p), 15, 'rbinom: prob=1 always returns size' );
+
+	# Size = 0 should strictly return 0
+	$binom_p = rbinom(n => $n_edge, size => 0, prob => 0.5);
+	is_approx( max($binom_p), 0, 'rbinom: size=0 always returns 0' );
+};
+
+subtest 'rbinom: Statistical Properties' => sub {
+	my $n_stat = 10000;
+	my $size   = 20;
+	my $prob   = 0.3;
+	my $binom_stats = rbinom(n => $n_stat, size => $size, prob => $prob);
+	
+	is_approx( scalar @{ $binom_stats }, $n_stat, 'rbinom: returns correct number of elements' );
+	
+	my $expected_mean = $size * $prob;
+	my $expected_var  = $size * $prob * (1 - $prob);
+	
+	# Allow a small epsilon (margin of error) for stochasticity
+	is_approx( mean($binom_stats), $expected_mean, 'rbinom: empirical mean matches theoretical mean', 0.1 );
+	is_approx( var($binom_stats), $expected_var, 'rbinom: empirical variance matches theoretical variance', 0.5 );
+};
+
+subtest 'rbinom: Randomness' => sub {
+	my $n_rand = 100;
+	my $binom_1 = rbinom(n => $n_rand, size => 10, prob => 0.5);
+	my $binom_2 = rbinom(n => $n_rand, size => 10, prob => 0.5);
+	
+	my @identical_idx = grep { $binom_1->[$_] == $binom_2->[$_] } 0..($n_rand-1);
+	
+	if (scalar @identical_idx < $n_rand) {
+		pass('rbinom: consecutive calls generate different non-repeating sequences');
+	} else {
+		fail('rbinom: consecutive calls generated identical arrays (PRNG state not updating)');
+	}
+};
 #----------------------
 #       seq
 #----------------------
@@ -940,11 +1019,92 @@ foreach my $meth (@correct) {
 #Residuals    4 0.2667  0.0667                   
 #---
 #Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
-my $yield = [5.5, 5.4, 5.8, 4.5, 4.8, 4.2];
-my $ctrl  = [1,     1,   1,   0,   0,   0];
-%h = (
-	yield => $yield, ctrl => $ctrl
+my $aov_res = 
+aov(
+	{
+		yield => [5.5, 5.4, 5.8, 4.5, 4.8, 4.2],
+		ctrl  => [1,     1,   1,   0,   0,   0]
+	},
+'yield ~ ctrl');
+%correct = (
+	ctrl => {
+		Df        => 1,
+		'F value' => 25.6000000000001,
+		'Mean Sq' => 1.70666666666667,
+		'Pr(>F)'  => 0.007182329,
+		'Sum Sq'  => 1.70666666666667
+	 },
+	 Residuals => {
+		Df        => 4,
+		'Mean Sq' => 0.0666666666666729,
+		'Sum Sq'  => 0.266666666666692
+	 }
 );
-my $aov_res = aov( \%h, 'yield ~ ctrl');
-p $aov_res;
+foreach my $k1 ('ctrl', 'Residuals') {
+	foreach my $k2 (sort keys %{ $correct{$k1} }) {
+		my $e = 10**-7;
+		if ($correct{$k1}{$k2} =~ m/\.(\d+)$/) {
+			$e = 10**(2-length $1);
+		}
+		is_approx( $aov_res->{$k1}{$k2}, $correct{$k1}{$k2}, "AOV: $k1/$k2");
+	}
+}
+#-------------------------------------------------------------------
+#  glm: Generalized Linear Models
+#-------------------------------------------------------------------
+subtest 'glm: Gaussian matches lm' => sub {
+    # Check that gaussian glm is mathematically identical to OLS lm
+    my $lm_res = lm(formula => 'mpg ~ wt + hp', data => $mtcars);
+    my $glm_res = glm(formula => 'mpg ~ wt + hp', data => $mtcars, family => 'gaussian');
+    
+    is_approx($glm_res->{coefficients}{Intercept}, $lm_res->{coefficients}{Intercept}, 'glm gaussian matches lm intercept');
+    is_approx($glm_res->{coefficients}{wt}, $lm_res->{coefficients}{wt}, 'glm gaussian matches lm wt');
+    is_approx($glm_res->{deviance}, $lm_res->{rss}, 'glm gaussian deviance matches lm RSS');
+    is($glm_res->{family}, 'gaussian', 'glm stored family correctly');
+};
+
+#-------------------------------------------------------------------
+#  glm: Generalized Linear Models
+#-------------------------------------------------------------------
+subtest 'glm: Gaussian matches lm' => sub {
+	# Check that gaussian glm is mathematically identical to OLS lm
+	my $lm_res = lm(formula => 'mpg ~ wt + hp', data => $mtcars);
+	my $glm_res = glm(formula => 'mpg ~ wt + hp', data => $mtcars, family => 'gaussian');
+
+	is_approx($glm_res->{coefficients}{Intercept}, $lm_res->{coefficients}{Intercept}, 'glm gaussian matches lm intercept');
+	is_approx($glm_res->{coefficients}{wt}, $lm_res->{coefficients}{wt}, 'glm gaussian matches lm wt');
+	is_approx($glm_res->{deviance}, $lm_res->{rss}, 'glm gaussian deviance matches lm RSS');
+	is($glm_res->{family}, 'gaussian', 'glm stored family correctly');
+};
+
+subtest 'glm: Binomial (Logistic Regression)' => sub {
+	# Test dataset matching exact output from R's glm(am ~ wt + hp, data=mtcars, family=binomial)
+	my $glm_bin = glm(formula => 'am ~ wt + hp', data => $mtcars, family => 'binomial');
+	# 1. Convergence & Integrity
+	ok($glm_bin->{converged}, 'glm binomial converged');
+	ok($glm_bin->{iter} < 25, 'glm binomial converged under iteration limit');
+	# 2. Coefficients (matching R precisely)
+	my %correct_bin_coefs = (
+	  Intercept => 18.86630,
+	  wt        => -8.08348,
+	  hp        =>  0.03626
+	);
+	foreach my $coef (keys %correct_bin_coefs) {
+	  is_approx(
+		   $glm_bin->{coefficients}{$coef},
+		   $correct_bin_coefs{$coef},
+		   "glm binomial matches R coef for $coef",
+		   0.001
+	  );
+	}
+	# 3. Summary standard errors & z-values
+	is_approx($glm_bin->{summary}{Intercept}{'Std. Error'}, 7.44356, 'glm binomial Std. Error for Intercept', 0.001);
+	is_approx($glm_bin->{summary}{wt}{'z value'}, -2.634, 'glm binomial z value for wt', 0.001);
+
+	# 4. Deviance metrics
+	is_approx($glm_bin->{deviance}, 10.059, 'glm binomial residual deviance', 0.001);
+	is_approx($glm_bin->{'null.deviance'}, 43.229, 'glm binomial null deviance', 0.001);
+	is($glm_bin->{'df.residual'}, 29, 'glm binomial residual degrees of freedom');
+	is($glm_bin->{'df.null'}, 31, 'glm binomial null degrees of freedom');
+};
 done_testing();
