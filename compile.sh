@@ -1,1 +1,1 @@
-perl Makefile.PL OPTIMIZE="-O4" && make && make test && make install
+perl Makefile.PL OPTIMIZE="-O4 -Wunused" && make && make test && make install

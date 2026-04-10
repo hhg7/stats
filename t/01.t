@@ -239,11 +239,11 @@ like( $@, qr/Paired arrays must be same length/, 't_test: dies on mismatched pai
 eval { t_test('x' => [1..5], conf_level => 1.5) };
 like( $@, qr/'conf_level' must be between 0 and 1/, 't_test: dies on invalid conf_level' );
 
-my $t_alt_greater = t_test('x' => [5, 6, 7, 8, 9], mu => 2, alternative => 'greater');
-ok( $t_alt_greater->{p_value} < 0.05, 't_test alternative greater works (small p_value)' );
+$t_test = t_test('x' => [5, 6, 7, 8, 9], mu => 2, alternative => 'greater');
+ok( $t_test->{p_value} < 0.05, 't_test alternative greater works (small p_value)' );
 
-my $t_alt_less = t_test('x' => [5, 6, 7, 8, 9], mu => 20, alternative => 'less');
-ok( $t_alt_less->{p_value} < 0.05, 't_test alternative less works (small p_value)' );
+$t_test = t_test('x' => [5, 6, 7, 8, 9], mu => 20, alternative => 'less');
+ok( $t_test->{p_value} < 0.05, 't_test alternative less works (small p_value)' );
 
 dies_ok {
 	t_test( 'x' => [3,3,3,3] )
@@ -263,7 +263,7 @@ my @pvalues = (4.533744e-01, 7.296024e-01, 9.936026e-02, 9.079658e-02, 1.801962e
 1.801145e-05, 2.504456e-07, 3.310253e-02, 9.427839e-03, 8.791153e-04,
 2.177831e-04, 9.693054e-04, 6.610250e-05, 2.900813e-02, 5.735490e-03);
 
-my %correct_q = (
+my %correct = (
 	'Benjamini-Hochberg' => [6.126681e-01, 8.521710e-01, 1.987205e-01, 1.891595e-01, 3.217789e-01,
 9.301450e-01, 4.870370e-01, 9.301450e-01, 6.049731e-01, 6.826753e-01,
 6.482629e-01, 7.253722e-01, 5.280973e-01, 8.769926e-01, 4.705703e-01,
@@ -331,7 +331,7 @@ foreach my $method ('Hochberg','Benjamini-Hochberg','Benjamini-Yekutieli', 'Bonf
 	my @q = p_adjust(\@pvalues, $method);
 	my $error = 0.0;
 	foreach my $q (0..$#q) {
-		$error += abs($q[$q] - $correct_q{$method}[$q]);
+		$error += abs($q[$q] - $correct{$method}[$q]);
 	}
 	if ($error < 10**-6) {
 		ok(1, "$method works with cumulative error of $error");
@@ -375,13 +375,13 @@ like( $@, qr/median needs >= 1 element/, 'median: dies when given empty input' )
 #----------------------
 $test_data[0] = [1, 2, 3, 4, 5,  5, 6,  7,   8];
 $test_data[1] = [2, 4, 6, 8, 10, 9, 12, 14, 16];
-my %correct_cor = (
+%correct = (
 	pearson  => 0.9973649,	spearman => 0.9958246,	kendall  => 0.9860133
 );
-foreach my $method (sort keys %correct_cor) {
+foreach my $method (sort keys %correct) {
 	is_approx(
 		cor($test_data[0], $test_data[1], $method),
-		$correct_cor{$method},
+		$correct{$method},
 		"cor: method = \"$method\""
 	);
 }
@@ -464,7 +464,7 @@ like( $@, qr/Data array cannot be empty/, 'matrix: dies on empty data array' );
 my $mtcars = json_file_to_ref('mtcars.hoh.json');
 my $lm = lm(formula =>  'mpg ~ wt * hp^2', data => $mtcars);
 #p $lm;
-my %correct = (
+%correct = (
 	coefficients => {
 		Intercept => 49.8084234287587,	hp        => -0.120102090978019,
 		wt        => -8.21662429724302,	'wt:hp'   => 0.0278481483187383
@@ -1107,4 +1107,118 @@ subtest 'glm: Binomial (Logistic Regression)' => sub {
 	is($glm_bin->{'df.residual'}, 29, 'glm binomial residual degrees of freedom');
 	is($glm_bin->{'df.null'}, 31, 'glm binomial null degrees of freedom');
 };
+my %tooth_growth = (
+	dose => [qw(0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 1.0 1.0 1.0 1.0 1.0 1.0 1.0 1.0 1.0
+1.0 2.0 2.0 2.0 2.0 2.0 2.0 2.0 2.0 2.0 2.0 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5
+0.5 0.5 1.0 1.0 1.0 1.0 1.0 1.0 1.0 1.0 1.0 1.0 2.0 2.0 2.0 2.0 2.0 2.0 2.0
+2.0 2.0 2.0)],
+	len  => [qw(4.2 11.5  7.3  5.8  6.4 10.0 11.2 11.2  5.2  7.0 16.5 16.5 15.2 17.3 22.5
+17.3 13.6 14.5 18.8 15.5 23.6 18.5 33.9 25.5 26.4 32.5 26.7 21.5 23.3 29.5
+15.2 21.5 17.6  9.7 14.5 10.0  8.2  9.4 16.5  9.7 19.7 23.3 23.6 26.4 20.0
+25.2 25.8 21.2 14.5 27.3 25.5 26.4 22.4 24.5 24.8 30.9 26.4 27.3 29.4 23.0)],
+	supp => [qw(VC VC VC VC VC VC VC VC VC VC VC VC VC VC VC VC VC VC VC VC VC VC VC VC VC
+VC VC VC VC VC OJ OJ OJ OJ OJ OJ OJ OJ OJ OJ OJ OJ OJ OJ OJ OJ OJ OJ OJ OJ
+OJ OJ OJ OJ OJ OJ OJ OJ OJ OJ)]
+);
+%correct = (
+	aic => 357.3958,
+	coefficients => {
+		dose      => 9.763571,
+		Intercept => 7.4225
+	},
+	deviance        => 1227.905,
+	'df.null'       => 59,
+	'df.residual'   => 58,
+	iter            => 2,
+	'null.deviance' => 3452.209,
+	rank            => 2,
+	summary => {
+		dose  => {
+			Estimate     => 9.7636,
+			'Pr(>|t|)'   => 1.23*10**-14,
+			'Std. Error' => 0.952532934814911,
+			't value'    => 10.250114270819
+		},
+		Intercept => {
+			Estimate     => 7.4225,
+			'Pr(>|t|)'   => 2.06e-07,
+			'Std. Error' => 1.2601,
+			't value'    => 5.89
+		}
+	}
+);
+foreach my ($idx, $val) (indexed qw(
+-8.1042857 -0.8042857 -5.0042857 -6.5042857 -5.9042857 -2.3042857 -1.1042857 
+-1.1042857 -7.1042857 -5.3042857 -0.6860714 -0.6860714 -1.9860714  0.1139286 
+ 5.3139286  0.1139286 -3.5860714 -2.6860714  1.6139286 -1.6860714 -3.3496429 
+-8.4496429  6.9503571 -1.4496429 -0.5496429  5.5503571 -0.2496429 -5.4496429 
+-3.6496429  2.5503571  2.8957143  9.1957143  5.2957143 -2.6042857  2.1957143 
+-2.3042857 -4.1042857 -2.9042857  4.1957143 -2.6042857  2.5139286  6.1139286 
+ 6.4139286  9.2139286  2.8139286  8.0139286  8.6139286  4.0139286 -2.6860714 
+10.1139286 -1.4496429 -0.5496429 -4.5496429 -2.4496429 -2.1496429  3.9503571 
+-0.5496429  0.3503571  2.4503571 -3.9496429
+)) {
+	$correct{'deviance.resid'}{$idx+1} = $val;
+}
+my $glm_teeth = glm(
+	data    => \%tooth_growth,
+	formula => 'len ~ dose',
+	family  => 'gaussian'
+);
+
+foreach my $term (sort keys %{ $correct{coefficients} }) {
+	my $e = 10**-7;
+	if ($correct{coefficients}{$term} =~ m/\.(\d+)$/) {
+		$e = 10**(1-length $1);
+	}
+	is_approx( $glm_teeth->{coefficients}{$term}, $correct{coefficients}{$term}, "generalized Linear Models (glm) coefficients->$term within $e", $e);
+}
+foreach my $term (sort keys %{ $correct{summary} }) {
+	foreach my $stat ('Estimate', 'Pr(>|t|)', 'Std. Error', 't value') {
+		my $e = 10**-7;
+		if ($correct{summary}{$term}{$stat} =~ m/\.(\d+)$/) {
+			$e = 10**(1-length $1);
+		} else {
+			my $sp = sprintf '%.3g', $correct{summary}{$term}{$stat};
+			if ($sp =~ m/e\-(\d+)$/) {
+				$e = 10**(2-$1);
+			} else {
+				die "$sp failed regex.";
+			}
+		}
+		is_approx( $glm_teeth->{summary}{$term}{$stat}, $correct{summary}{$term}{$stat}, "generalized Linear Models (glm) coefficients->$term/$stat within $e", $e);
+	}
+}
+foreach my $key (sort grep {ref $correct{$_} eq '' } keys %correct) {
+	my $e;
+	if ($correct{$key} =~ m/\.(\d+)$/) {
+		$e = 10**(-length $1);
+	} elsif ($correct{$key} =~ m/^\-?\d+$/) {
+		$e = 10**-199;
+	} else {
+		my $sp = sprintf '%.3g', $correct{$key};
+		if ($sp =~ m/e\-(\d+)$/) {
+			$e = 10**(2-$1);
+		} else {
+			die "$sp failed regex.";
+		}
+	}
+	is_approx( $glm_teeth->{$key}, $correct{$key}, "$key within $e", $e);
+}
+foreach my $key (sort keys %{ $correct{'deviance.resid'} } ) {
+	my $e;
+	if ($correct{'deviance.resid'}{$key} =~ m/\.(\d+)$/) {
+		$e = 10**(-length $1);
+	} elsif ($correct{'deviance.resid'}{$key} =~ m/^\-?\d+$/) {
+		$e = 10**-199;
+	} else {
+		my $sp = sprintf '%.3g', $correct{'deviance.resid'}{$key};
+		if ($sp =~ m/e\-(\d+)$/) {
+			$e = 10**(2-$1);
+		} else {
+			die "$sp failed regex.";
+		}
+	}
+	is_approx( $glm_teeth->{'deviance.resid'}{$key}, $correct{'deviance.resid'}{$key}, "deviance.resid $key within $e");
+}
 done_testing();

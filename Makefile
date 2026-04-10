@@ -6,7 +6,7 @@
 #
 #       ANY CHANGES MADE HERE WILL BE LOST!
 #
-#   MakeMaker ARGV: (q[OPTIMIZE=-O4])
+#   MakeMaker ARGV: (q[OPTIMIZE=-O4 -Wunused])
 #
 
 #   MakeMaker Parameters:
@@ -165,17 +165,14 @@ BOOTDEP =
 XS_FILES = Fisher_Test.xs \
 	LikeR.xs \
 	bu.LikeR.xs \
-	bu.stats.xs \
 	old.LikeR.xs
 C_FILES  = Fisher_Test.c \
 	LikeR.c \
 	bu.LikeR.c \
-	bu.stats.c \
 	old.LikeR.c
 O_FILES  = Fisher_Test.o \
 	LikeR.o \
 	bu.LikeR.o \
-	bu.stats.o \
 	old.LikeR.o
 H_FILES  = ppport.h
 MAN1PODS = 
@@ -299,7 +296,7 @@ DISTVNAME = Stats-LikeR-0.01
 # --- MakeMaker cflags section:
 
 CCFLAGS = -fwrapv -fno-strict-aliasing -pipe -fstack-protector-strong -I/usr/local/include -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64
-OPTIMIZE = -O4
+OPTIMIZE = -O4 -Wunused
 PERLTYPE = 
 MPOLLUTE = 
 
@@ -570,10 +567,6 @@ clean :: clean_subdirs
 	  bu.LikeR.bso bu.LikeR.c \
 	  bu.LikeR.def bu.LikeR.exp \
 	  bu.LikeR.o bu.LikeR_def.old \
-	  bu.stats.base bu.stats.bs \
-	  bu.stats.bso bu.stats.c \
-	  bu.stats.def bu.stats.exp \
-	  bu.stats.o bu.stats_def.old \
 	  core core.*perl.*.? \
 	  core.[0-9] core.[0-9][0-9] \
 	  core.[0-9][0-9][0-9] core.[0-9][0-9][0-9][0-9] \
@@ -755,7 +748,7 @@ distdir : create_distdir distmeta
 
 # --- MakeMaker dist_test section:
 disttest : distdir
-	cd $(DISTVNAME) && $(ABSPERLRUN) Makefile.PL "OPTIMIZE=-O4"
+	cd $(DISTVNAME) && $(ABSPERLRUN) Makefile.PL "OPTIMIZE=-O4 -Wunused"
 	cd $(DISTVNAME) && $(MAKE) $(PASTHRU)
 	cd $(DISTVNAME) && $(MAKE) test $(PASTHRU)
 
@@ -997,7 +990,7 @@ PERL_HDRS = \
 
 $(OBJECT) : $(PERL_HDRS)
 
-Fisher_Test.c LikeR.c bu.LikeR.c bu.stats.c old.LikeR.c : $(XSUBPPDEPS)
+Fisher_Test.c LikeR.c bu.LikeR.c old.LikeR.c : $(XSUBPPDEPS)
 
 
 # --- MakeMaker makefile section:
@@ -1012,7 +1005,7 @@ $(FIRST_MAKEFILE) : Makefile.PL $(CONFIGDEP)
 	-$(NOECHO) $(RM_F) $(MAKEFILE_OLD)
 	-$(NOECHO) $(MV)   $(FIRST_MAKEFILE) $(MAKEFILE_OLD)
 	- $(MAKE) $(USEMAKEFILE) $(MAKEFILE_OLD) clean $(DEV_NULL)
-	$(PERLRUN) Makefile.PL "OPTIMIZE=-O4"
+	$(PERLRUN) Makefile.PL "OPTIMIZE=-O4 -Wunused"
 	$(NOECHO) $(ECHO) "==> Your Makefile has been rebuilt. <=="
 	$(NOECHO) $(ECHO) "==> Please rerun the $(MAKE) command.  <=="
 	$(FALSE)
@@ -1035,7 +1028,7 @@ $(MAKE_APERL_FILE) : static $(FIRST_MAKEFILE) pm_to_blib
 		Makefile.PL DIR="" \
 		MAKEFILE=$(MAKE_APERL_FILE) LINKTYPE=static \
 		MAKEAPERL=1 NORECURS=1 CCCDLFLAGS= \
-		OPTIMIZE=-O4
+		OPTIMIZE='-O4 -Wunused'
 
 
 # --- MakeMaker test section:
