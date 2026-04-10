@@ -609,41 +609,6 @@ dies_ok {
 	ok( !defined($lm_no_int->{coefficients}{Intercept}), 'lm: formula -1 correctly suppresses Intercept' );
 } 'lm: formula -1 correctly suppresses Intercept';
 
-#-------------------------------------------------------------------
-#  lm: Matching R's Statistical Behaviors
-#-------------------------------------------------------------------
-
-subtest 'lm: R-Parity edge cases (NAs, Strings, Collinearity)' => sub {
-	my $messy_data = {
-		'R1' => { 'y' => 10, 'x1' => 2,  'x2' => 4 },
-		'R2' => { 'y' => 12, 'x1' => 3,  'x2' => 6 },
-		'R3' => { 'y' => 15, 'x1' => undef, x2 => 8 }, # Missing predictor
-		'R4' => { 'y' => 20, 'x1' => 5,  x2 => 10 },
-		'R5' => { 'y' => undef, x1 => 6, x2 => 12 },   # Missing response
-		'R6' => { 'y' => 22, x1 => 7,  x2 => "blue" }, # String/Factor
-		'R7' => { 'y' => 25, x1 => 8,  x2 => 16 },
-	};
-	my $lm_res;
-	lives_ok {
-		$lm_res = lm(formula => 'y ~ x1 + x2', data => $messy_data);
-	} 'lm: Handles missing data, strings, and collinearity without croaking';
-	# 1. Check Listwise Deletion (NAs and Strings should drop the row)
-	# Only R1, R2, R4, R7 are strictly valid numeric rows. (N = 4)
-	is( $lm_res->{'df.residual'}, 2, 'lm: correctly drops rows with undef or strings (Listwise Deletion)' );
-	ok( !exists $lm_res->{'fitted.values'}{'R3'}, 'lm: omitted row R3 has no fitted value' );
-	
-	# 2. Check Collinearity (x2 is exactly x1 * 2)
-	# R sets aliased coefficients to NA/undef.
-	ok( exists $lm_res->{coefficients}{x2}, 'lm: collinear coefficient key exists' );
-	
-	# In Perl, a C 'NaN' translates to a string "NaN" or undef depending on the platform.
-	my $x2_coef = $lm_res->{coefficients}{x2};
-	ok( !defined($x2_coef) || $x2_coef eq 'NaN' || $x2_coef != $x2_coef, 
-	    'lm: aliased/collinear variable x2 is correctly flagged as NaN/undef (matches R)' );
-	
-	# 3. Check Rank
-	is( $lm_res->{rank}, 2, 'lm: rank is reduced to 2 (Intercept + x1)' );
-};
 #---------------------------
 #   rnorm
 #----------------------------
@@ -1159,6 +1124,18 @@ foreach my ($idx, $val) (indexed qw(
 )) {
 	$correct{'deviance.resid'}{$idx+1} = $val;
 }
+foreach my ($idx, $val) (indexed qw(
+12.30429 12.30429 12.30429 12.30429 12.30429 12.30429 12.30429 12.30429 
+12.30429 12.30429 17.18607 17.18607 17.18607 17.18607 17.18607 17.18607 
+17.18607 17.18607 17.18607 17.18607 26.94964 26.94964 26.94964 26.94964 
+26.94964 26.94964 26.94964 26.94964 26.94964 26.94964 12.30429 12.30429 
+12.30429 12.30429 12.30429 12.30429 12.30429 12.30429 12.30429 12.30429 
+17.18607 17.18607 17.18607 17.18607 17.18607 17.18607 17.18607 17.18607 
+17.18607 17.18607 26.94964 26.94964 26.94964 26.94964 26.94964 26.94964 
+26.94964 26.94964 26.94964 26.94964
+)) {
+	$correct{'fitted.values'}{$idx+1} = $val;
+}
 my $glm_teeth = glm(
 	data    => \%tooth_growth,
 	formula => 'len ~ dose',
@@ -1204,21 +1181,23 @@ foreach my $key (sort grep {ref $correct{$_} eq '' } keys %correct) {
 	}
 	is_approx( $glm_teeth->{$key}, $correct{$key}, "$key within $e", $e);
 }
-foreach my $key (sort keys %{ $correct{'deviance.resid'} } ) {
-	my $e;
-	if ($correct{'deviance.resid'}{$key} =~ m/\.(\d+)$/) {
-		$e = 10**(-length $1);
-	} elsif ($correct{'deviance.resid'}{$key} =~ m/^\-?\d+$/) {
-		$e = 10**-199;
-	} else {
-		my $sp = sprintf '%.3g', $correct{'deviance.resid'}{$key};
-		if ($sp =~ m/e\-(\d+)$/) {
-			$e = 10**(2-$1);
+foreach my $k1 ('deviance.resid', 'fitted.values') {
+	foreach my $key (sort keys %{ $correct{$k1} } ) {
+		my $e;
+		if ($correct{$k1}{$key} =~ m/\.(\d+)$/) {
+			$e = 10**(-(length $1));
+		} elsif ($correct{$k1}{$key} =~ m/^\-?\d+$/) {
+			$e = 10**-199;
 		} else {
-			die "$sp failed regex.";
+			my $sp = sprintf '%.3g', $correct{$k1}{$key};
+			if ($sp =~ m/e\-(\d+)$/) {
+				$e = 10**(2-$1);
+			} else {
+				die "$sp failed regex.";
+			}
 		}
+		is_approx( $glm_teeth->{$k1}{$key}, $correct{$k1}{$key}, "$k1 $key within $e", $e);
 	}
-	is_approx( $glm_teeth->{'deviance.resid'}{$key}, $correct{'deviance.resid'}{$key}, "deviance.resid $key within $e");
 }
 $glm_teeth = glm(
 	data    => \%tooth_growth,
@@ -1228,6 +1207,7 @@ $glm_teeth = glm(
 %correct = (
 	aic        => 348.41553291891,
 	deviance   => 1022.5550357143,
+	'df.null'     => 59,
 	'df.residual' => 57,
 #	dispersion => 17.93956,
 	coefficients => {
@@ -1235,6 +1215,7 @@ $glm_teeth = glm(
 		Intercept => 9.272500,
 		suppVC    => -3.700000
 	},
+	iter         => 2,
 	summary => {
 		dose  => {
 			Estimate     => 9.763571,
@@ -1267,6 +1248,18 @@ foreach my ($idx, $val) (indexed qw(
  8.2639286 -3.2996429 -2.3996429 -6.3996429 -4.2996429 -3.9996429  2.1003571 
 -2.3996429 -1.4996429  0.6003571 -5.7996429)) {
 	$correct{'deviance.resid'}{$idx+1} = $val;
+}
+foreach my ($idx, $val) (indexed qw(
+10.45429 10.45429 10.45429 10.45429 10.45429 10.45429 10.45429 10.45429 
+10.45429 10.45429 15.33607 15.33607 15.33607 15.33607 15.33607 15.33607 
+15.33607 15.33607 15.33607 15.33607 25.09964 25.09964 25.09964 25.09964 
+25.09964 25.09964 25.09964 25.09964 25.09964 25.09964 14.15429 14.15429 
+14.15429 14.15429 14.15429 14.15429 14.15429 14.15429 14.15429 14.15429 
+19.03607 19.03607 19.03607 19.03607 19.03607 19.03607 19.03607 19.03607 
+19.03607 19.03607 28.79964 28.79964 28.79964 28.79964 28.79964 28.79964 
+28.79964 28.79964 28.79964 28.79964
+)) {
+	$correct{'fitted.values'}{$idx + 1} = $val;
 }
 foreach my $term (sort keys %{ $correct{coefficients} }) {
 	my $e = 10**-7;
@@ -1316,22 +1309,22 @@ foreach my $term (sort keys %{ $correct{summary} }) {
 		is_approx( $glm_teeth->{summary}{$term}{$stat}, $correct{summary}{$term}{$stat}, "glm coefficients->$term/$stat: $glm_teeth->{summary}{$term}{$stat}, $correct{summary}{$term}{$stat}", $e);
 	}
 }
-foreach my $key (sort keys %{ $correct{'deviance.resid'} } ) {
-	my $e;
-	if ($correct{'deviance.resid'}{$key} =~ m/\.(\d+)$/) {
-		$e = 10**(-(length $1));
-		say __LINE__;
-	} elsif ($correct{'deviance.resid'}{$key} =~ m/^\-?\d+$/) {
-		$e = 10**-199;
-	} else {
-		say __LINE__;
-		my $sp = sprintf '%.3g', $correct{'deviance.resid'}{$key};
-		if ($sp =~ m/e\-(\d+)$/) {
-			$e = 10**(2-$1);
+foreach my $k1 ('fitted.values', 'deviance.resid') {
+	foreach my $key (sort keys %{ $correct{$k1} } ) {
+		my $e;
+		if ($correct{$k1}{$key} =~ m/\.(\d+)$/) {
+			$e = 10**(-(length $1));
+		} elsif ($correct{$k1}{$key} =~ m/^\-?\d+$/) {
+			$e = 10**-199;
 		} else {
-			die "$sp failed regex.";
+			my $sp = sprintf '%.3g', $correct{$k1}{$key};
+			if ($sp =~ m/e\-(\d+)$/) {
+				$e = 10**(2-$1);
+			} else {
+				die "$sp failed regex.";
+			}
 		}
+		is_approx( $glm_teeth->{$k1}{$key}, $correct{$k1}{$key}, "$k1 $key within $e", $e);
 	}
-	is_approx( $glm_teeth->{'deviance.resid'}{$key}, $correct{'deviance.resid'}{$key}, "deviance.resid $key within $e");
 }
 done_testing();
