@@ -12,7 +12,6 @@ use Scalar::Util 'looks_like_number';
 use JSON qw(decode_json encode_json);
 
 # Gemini helped to write some of the tests
-
 # Custom helper for floating-point comparisons
 sub is_approx ($got, $expected, $test_name, $epsilon = 10**-7) {
 	my $current_sub = ( split( /::/, ( caller(0) )[3] ) )[-1];
@@ -1212,6 +1211,120 @@ foreach my $key (sort keys %{ $correct{'deviance.resid'} } ) {
 	} elsif ($correct{'deviance.resid'}{$key} =~ m/^\-?\d+$/) {
 		$e = 10**-199;
 	} else {
+		my $sp = sprintf '%.3g', $correct{'deviance.resid'}{$key};
+		if ($sp =~ m/e\-(\d+)$/) {
+			$e = 10**(2-$1);
+		} else {
+			die "$sp failed regex.";
+		}
+	}
+	is_approx( $glm_teeth->{'deviance.resid'}{$key}, $correct{'deviance.resid'}{$key}, "deviance.resid $key within $e");
+}
+$glm_teeth = glm(
+	data    => \%tooth_growth,
+	formula => 'len ~ dose + supp',
+	family  => 'gaussian'
+);
+%correct = (
+	aic        => 348.41553291891,
+	deviance   => 1022.5550357143,
+	'df.residual' => 57,
+#	dispersion => 17.93956,
+	coefficients => {
+		dose      => 9.763571,
+		Intercept => 9.272500,
+		suppVC    => -3.700000
+	},
+	summary => {
+		dose  => {
+			Estimate     => 9.763571,
+			'Pr(>|t|)'   => 6.313519e-16,
+			'Std. Error' => 0.8768343,
+			't value'    => 11.135025
+		},
+		Intercept => {
+			Estimate     => 9.272500,
+			'Pr(>|t|)'   => 1.312335e-09,
+			'Std. Error' => 1.2823649,
+			't value'    => 7.230781
+		},
+		suppVC    => {
+			Estimate     => -3.700000,
+			'Pr(>|t|)'   => 1.300662e-03,
+			'Std. Error' => 1.0936045,
+			't value'    => -3.383307
+		}
+	}
+);
+foreach my ($idx, $val) (indexed qw(
+-6.2542857  1.0457143 -3.1542857 -4.6542857 -4.0542857 -0.4542857  0.7457143 
+ 0.7457143 -5.2542857 -3.4542857  1.1639286  1.1639286 -0.1360714  1.9639286 
+ 7.1639286  1.9639286 -1.7360714 -0.8360714  3.4639286  0.1639286 -1.4996429 
+-6.5996429  8.8003571  0.4003571  1.3003571  7.4003571  1.6003571 -3.5996429 
+-1.7996429  4.4003571  1.0457143  7.3457143  3.4457143 -4.4542857  0.3457143 
+-4.1542857 -5.9542857 -4.7542857  2.3457143 -4.4542857  0.6639286  4.2639286 
+ 4.5639286  7.3639286  0.9639286  6.1639286  6.7639286  2.1639286 -4.5360714 
+ 8.2639286 -3.2996429 -2.3996429 -6.3996429 -4.2996429 -3.9996429  2.1003571 
+-2.3996429 -1.4996429  0.6003571 -5.7996429)) {
+	$correct{'deviance.resid'}{$idx+1} = $val;
+}
+foreach my $term (sort keys %{ $correct{coefficients} }) {
+	my $e = 10**-7;
+	if ($correct{coefficients}{$term} =~ m/\.(\d+)$/) {
+		$e = 10**(-length $1);
+	} elsif ($correct{coefficients}{$term} =~ m/^\-?\d+$/) {
+		$e = 10**-199;
+	} else {
+		my $sp = sprintf '%.3g', $correct{coefficients}{$term};
+		if ($sp =~ m/e\-(\d+)$/) {
+			$e = 10**(2-$1);
+		} else {
+			die "$sp failed regex.";
+		}
+	}
+	is_approx( $glm_teeth->{coefficients}{$term}, $correct{coefficients}{$term}, "generalized Linear Models (glm) coefficients->$term = $glm_teeth->{coefficients}{$term} within $e of $correct{coefficients}{$term}", $e);
+}
+foreach my $key (sort grep {ref $correct{$_} eq '' } keys %correct) {
+	my $e;
+	if ($correct{$key} =~ m/\.(\d+)$/) {
+		$e = 10**(-length $1);
+	} elsif ($correct{$key} =~ m/^\-?\d+$/) {
+		$e = 10**-199;
+	} else {
+		my $sp = sprintf '%.3g', $correct{$key};
+		if ($sp =~ m/e\-(\d+)$/) {
+			$e = 10**(2-$1);
+		} else {
+			die "$sp failed regex.";
+		}
+	}
+	is_approx( $glm_teeth->{$key}, $correct{$key}, "$key within $e of $correct{$key}", $e);
+}
+foreach my $term (sort keys %{ $correct{summary} }) {
+	foreach my $stat ('Estimate', 'Pr(>|t|)', 'Std. Error', 't value') {
+		my $e = 10**-7;
+		if ($correct{summary}{$term}{$stat} =~ m/\.(\d+)$/) {
+			$e = 10**(1-length $1);
+		} else {
+			my $sp = sprintf '%.3g', $correct{summary}{$term}{$stat};
+			if ($sp =~ m/e\-(\d+)$/) {
+				$e = 10**(2-$1);
+			} else {
+				die "$sp failed regex.";
+			}
+		}
+		is_approx( $glm_teeth->{summary}{$term}{$stat}, $correct{summary}{$term}{$stat}, "glm coefficients->$term/$stat: $glm_teeth->{summary}{$term}{$stat}, $correct{summary}{$term}{$stat}", $e);
+	}
+}
+foreach my $key (sort keys %{ $correct{'deviance.resid'} } ) {
+	my $e;
+	if ($correct{'deviance.resid'}{$key} =~ m/\.(\d+)$/) {
+		$e = 10**(-(length $1));
+		say __LINE__;
+	} elsif ($correct{'deviance.resid'}{$key} =~ m/^\-?\d+$/) {
+		$e = 10**-199;
+	} else {
+		say __LINE__;
 		my $sp = sprintf '%.3g', $correct{'deviance.resid'}{$key};
 		if ($sp =~ m/e\-(\d+)$/) {
 			$e = 10**(2-$1);

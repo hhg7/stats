@@ -337,7 +337,54 @@ static double evaluate_term(HV *restrict data_hoa, HV **restrict row_hashes, uns
     return get_data_value(data_hoa, row_hashes, i, term_cpy);
 }
 
-/* Struct for sorting p-values while remembering their original index */
+// Helper to infer column type from its first valid element
+static bool is_column_categorical(HV *restrict data_hoa, HV **restrict row_hashes, size_t n, const char *restrict var) {
+    for (size_t i = 0; i < n; i++) {
+        SV **val = NULL;
+        if (row_hashes) {
+            val = hv_fetch(row_hashes[i], var, strlen(var), 0);
+            if (val && SvROK(*val) && SvTYPE(SvRV(*val)) == SVt_PVAV) {
+                AV*restrict av = (AV*)SvRV(*val);
+                val = av_fetch(av, 0, 0);
+            }
+        } else if (data_hoa) {
+            SV **col = hv_fetch(data_hoa, var, strlen(var), 0);
+            if (col && SvROK(*col) && SvTYPE(SvRV(*col)) == SVt_PVAV) {
+                AV*restrict av = (AV*)SvRV(*col);
+                val = av_fetch(av, i, 0);
+            }
+        }
+        if (val && SvOK(*val)) {
+            if (looks_like_number(*val)) return false; /* First valid is number -> Numeric Column */
+            return true; /* First valid is string -> Categorical Column */
+        }
+    }
+    return false;
+}
+
+/* Internal extractor resolving single data string values using dynamic allocation. */
+static char* get_data_string_alloc(HV *restrict data_hoa, HV **restrict row_hashes, unsigned int i, const char *restrict var) {
+    SV **val = NULL;
+    if (row_hashes) {
+        val = hv_fetch(row_hashes[i], var, strlen(var), 0);
+        if (val && SvROK(*val) && SvTYPE(SvRV(*val)) == SVt_PVAV) {
+            AV*restrict av = (AV*)SvRV(*val);
+            val = av_fetch(av, 0, 0);
+        }
+    } else if (data_hoa) {
+        SV **col = hv_fetch(data_hoa, var, strlen(var), 0);
+        if (col && SvROK(*col) && SvTYPE(SvRV(*col)) == SVt_PVAV) {
+            AV*restrict av = (AV*)SvRV(*col);
+            val = av_fetch(av, i, 0);
+        }
+    }
+    if (val && SvOK(*val)) {
+        return savepv(SvPV_nolen(*val)); /* Allocates and returns string */
+    }
+    return NULL;
+}
+
+// Struct for sorting p-values while remembering their original index
 typedef struct {
 	double p;
 	size_t orig_idx;
@@ -819,7 +866,7 @@ static void apply_householder_aov(double** restrict X, double* restrict y, size_
  }
 }
 // --- XS SECTION ---
-#line 823 "LikeR.c"
+#line 870 "LikeR.c"
 #ifndef PERL_UNUSED_VAR
 #  define PERL_UNUSED_VAR(var) if (0) var = var
 #endif
@@ -970,7 +1017,7 @@ S_croak_xs_usage(const CV *const cv, const char *const params)
 #  define TARGn(nv, do_taint) sv_setnv_mg(TARG, nv)
 #endif
 
-#line 974 "LikeR.c"
+#line 1021 "LikeR.c"
 
 XS_EUPXS(XS_Stats__LikeR_glm); /* prototype to pass -Wmissing-prototypes */
 XS_EUPXS(XS_Stats__LikeR_glm)
@@ -980,413 +1027,476 @@ XS_EUPXS(XS_Stats__LikeR_glm)
     PERL_UNUSED_VAR(items); /* -W */
     {
 	SV *	RETVAL;
-#line 819 "LikeR.xs"
-	{
-	  if (items % 2 != 0) 
-		   croak("Usage: glm(formula => 'am ~ wt + hp', data => \\%mtcars, family => 'binomial')");
+#line 866 "LikeR.xs"
+    {
+        const char *restrict formula  = NULL;
+        SV *restrict data_sv = NULL;
+        const char *restrict family = "gaussian";
+        char f_cpy[512];
+        char *restrict src, *restrict dst, *restrict tilde, *restrict lhs, *restrict rhs, *restrict chunk;
 
-	  const char *restrict formula  = NULL;
-	  SV *restrict data_sv = NULL;
-	  const char *restrict family = "gaussian"; // Default family
+        /* Dynamic Term Arrays */
+        char **terms = NULL;
+        char **uniq_terms = NULL;
+        char **exp_terms = NULL;
+        bool *is_dummy = NULL;
+        char **dummy_base = NULL;
+        char **dummy_level = NULL;
+        unsigned int term_cap = 64, exp_cap = 64;
 
-	  for (unsigned short i = 0; i < items; i += 2) {
-		   const char *restrict key = SvPV_nolen(ST(i));
-		   SV *restrict val = ST(i + 1);
-		   if      (strEQ(key, "formula")) formula = SvPV_nolen(val);
-		   else if (strEQ(key, "data"))    data_sv = val;
-		   else if (strEQ(key, "family"))  family = SvPV_nolen(val);
-		   else croak("glm: unknown argument '%s'", key);
-	  }        
-	  if (!formula) croak("glm: formula is required");
-	  if (!data_sv || !SvROK(data_sv)) croak("glm: data is required and must be a reference");
-	  bool is_binomial = (strcmp(family, "binomial") == 0);
-	  bool is_gaussian = (strcmp(family, "gaussian") == 0);
-	  if (!is_binomial && !is_gaussian) croak("glm: unsupported family '%s'", family);
-	  // --- 1. Clean and Strip the Formula ---
-	  char f_cpy[512];
-	  char *restrict src = (char*)formula;
-	  char *restrict dst = f_cpy;
-	  while (*src && (dst - f_cpy < 511)) {
-		   if (!isspace(*src)) { *dst++ = *src; }
-		   src++;
-	  }
-	  *dst = '\0';
-	  char *restrict tilde = strchr(f_cpy, '~');
-	  if (!tilde) croak("glm: invalid formula, missing '~'");
-	  *tilde = '\0';
-	  char *restrict lhs = f_cpy;   // Response Variable
-	  char *restrict rhs = tilde + 1; // Predictor Expression
-	  // --- 2. Tokenize Terms and Resolve Interaction Macros ---
-	  char terms[128][128];
-	  size_t num_terms = 0;
-	  bool has_intercept = true;
-	  if (strstr(rhs, "-1")) has_intercept = false;
-	  if (has_intercept) {
-		   strcpy(terms[num_terms++], "Intercept");
-	  }
-	  char *restrict chunk = strtok(rhs, "+");
-	  while (chunk != NULL) {
-		   if (strcmp(chunk, "1") == 0 || strcmp(chunk, "-1") == 0) {
-		       chunk = strtok(NULL, "+");
-		       continue;
-		   }
-		   char *restrict star = strchr(chunk, '*');
-		   if (star) {
-		       *star = '\0';
-		       char *restrict left = chunk;
-		       char *restrict right = star + 1;
+        unsigned int num_terms = 0, num_uniq = 0, p = 0, p_exp = 0;
+        size_t n = 0, valid_n = 0;
+        bool has_intercept = true, is_binomial = false, is_gaussian = false, converged = false;
+        int iter = 0, max_iter = 25, final_rank = 0, df_res = 0;
+        double deviance_old = 0.0, deviance_new = 0.0, null_dev = 0.0, aic = 0.0;
+        double sum_y = 0.0, mu_null = 0.0, dispersion = 0.0;
 
-		       char *restrict c_left = strchr(left, '^');
-		       if (c_left && strncmp(left, "I(", 2) != 0) *c_left = '\0';
-		       char *restrict c_right = strchr(right, '^'); 
-		       if (c_right && strncmp(right, "I(", 2) != 0) *c_right = '\0';
+        char **restrict row_names = NULL;
+        char **restrict valid_row_names = NULL;
+        HV **restrict row_hashes = NULL;
+        HV *restrict data_hoa = NULL;
+        SV *restrict ref = NULL;
 
-		       strcpy(terms[num_terms++], left);
-		       strcpy(terms[num_terms++], right);
-		       sprintf(terms[num_terms++], "%s:%s", left, right);
-		   } else {
-		       char *restrict c_chunk = strchr(chunk, '^'); 
-		       if (c_chunk && strncmp(chunk, "I(", 2) != 0) *c_chunk = '\0';
-		       strcpy(terms[num_terms++], chunk);
-		   }
-		   chunk = strtok(NULL, "+");
-	  }
+        double *restrict X = NULL, *restrict Y = NULL, *restrict mu = NULL, *restrict eta = NULL;
+        double *restrict W = NULL, *restrict WZ = NULL, *restrict beta = NULL, *restrict beta_old = NULL;
+        bool *restrict aliased = NULL;
+        double *restrict XtWX = NULL, *restrict XtWZ = NULL;
 
-	  char uniq_terms[128][128];
-	  unsigned int num_uniq = 0;
-	  for (size_t i = 0; i < num_terms; i++) {
-		   bool found = false;
-		   for (size_t j = 0; j < num_uniq; j++) {
-		       if (strcmp(terms[i], uniq_terms[j]) == 0) { found = true; break; }
-		   }
-		   if (!found) strcpy(uniq_terms[num_uniq++], terms[i]);
-	  }
-	  unsigned int p = num_uniq, n = 0;
+        HV *restrict res_hv, *restrict coef_hv, *restrict fitted_hv, *restrict resid_hv, *restrict summary_hv;
+        AV *restrict terms_av;
+        HE *restrict entry;
+        unsigned short i_arg;
+        unsigned int i, j, k, l, l1, l2;
 
-	  // --- 3. Structure Row Iterators for Hash of Hashes ---
-	  char **restrict row_names = NULL;
-	  HV **restrict row_hashes = NULL;
-	  HV *restrict data_hoa = NULL;
+        if (items % 2 != 0) croak("Usage: glm(formula => 'am ~ wt + hp', data => \\%mtcars)");
 
-	  SV*restrict ref = SvRV(data_sv);
-	  if (SvTYPE(ref) == SVt_PVHV) {
-		   HV*restrict hv = (HV*)ref;
-		   if (hv_iterinit(hv) == 0) croak("glm: Data hash is empty");
-		   HE*restrict entry = hv_iternext(hv);
-		   if (entry) {
-		       SV*restrict val = hv_iterval(hv, entry);
-		       if (SvROK(val) && SvTYPE(SvRV(val)) == SVt_PVAV) {
-		           data_hoa = hv;
-		           n = av_len((AV*)SvRV(val)) + 1;
-		           Newx(row_names, n, char*);
-		           for(unsigned int i = 0; i < n; i++) {
-		               char buf[32];
-		               snprintf(buf, sizeof(buf), "%u", i+1);
-		               row_names[i] = savepv(buf);
-		           }
-		       } else if (SvROK(val) && SvTYPE(SvRV(val)) == SVt_PVHV) {
-		           n = hv_iterinit(hv);
-		           Newx(row_names, n, char*);
-		           Newx(row_hashes, n, HV*);
-		           size_t i = 0;
-		           while ((entry = hv_iternext(hv))) {
-		               unsigned int len;
-		               char *restrict key = hv_iterkey(entry, &len);
-		               row_names[i] = savepv(key);
-		               row_hashes[i] = (HV*)SvRV(hv_iterval(hv, entry));
-		               i++;
-		           }
-		       } else croak("glm: Hash values must be ArrayRefs (HoA) or HashRefs (HoH)");
-		   }
-	  } else if (SvTYPE(ref) == SVt_PVAV) {
-		   AV*restrict av = (AV*)ref;
-		   n = av_len(av) + 1;
-		   Newx(row_names, n, char*);
-		   Newx(row_hashes, n, HV*);
-		   for (size_t i = 0; i < n; i++) {
-		       SV**restrict val = av_fetch(av, i, 0);
-		       if (val && SvROK(*val) && SvTYPE(SvRV(*val)) == SVt_PVHV) {
-		           row_hashes[i] = (HV*)SvRV(*val);
-		           char buf[32]; snprintf(buf, sizeof(buf), "%lu", i + 1);
-		           row_names[i] = savepv(buf);
-		       } else {
-		           for (size_t x = 0; x < i; x++) Safefree(row_names[x]);
-		           Safefree(row_names); Safefree(row_hashes);
-		           croak("glm: Array values must be HashRefs (AoH)");
-		       }
-		   }
-	  } else croak("glm: Data must be an Array or Hash reference");
-	  double *restrict X; Newx(X, n * p, double);
-	  double *restrict Y; Newx(Y, n, double);
-	  char **restrict valid_row_names; Newx(valid_row_names, n, char*);
-	  // -- Implement Listwise Deletion (na.omit) -- 
-	  size_t valid_n = 0;
-	  for (size_t i = 0; i < n; i++) {
-		   double y_val = evaluate_term(data_hoa, row_hashes, i, lhs);
-		   if (isnan(y_val)) {
-		       Safefree(row_names[i]); 
-		       continue;
-		   }
-		   bool row_ok = true;
-		   double row_x[128];
-		   for (size_t j = 0; j < p; j++) {
-		       if (strcmp(uniq_terms[j], "Intercept") == 0) {
-		           row_x[j] = 1.0;
-		       } else {
-		           row_x[j] = evaluate_term(data_hoa, row_hashes, i, uniq_terms[j]);
-		           if (isnan(row_x[j])) { row_ok = false; break; }
-		       }
-		   }
-		   if (!row_ok) {
-		       Safefree(row_names[i]);
-		       continue;
-		   }
-		   Y[valid_n] = y_val;
-		   for (size_t j = 0; j < p; j++) X[valid_n * p + j] = row_x[j];
-		   valid_row_names[valid_n] = row_names[i];
-		   valid_n++;
-	  }
-	  Safefree(row_names); 
-	  if (valid_n <= p) {
-		   Safefree(X); Safefree(Y); Safefree(valid_row_names);
-		   if (row_hashes) Safefree(row_hashes);
-		   croak("glm: 0 degrees of freedom (too many NAs or parameters > observations)");
-	  }
-	  // --- 4. IRLS (Iteratively Reweighted Least Squares) ---
-	  double *restrict mu       = (double*)safemalloc(valid_n * sizeof(double));
-	  double *restrict eta      = (double*)safemalloc(valid_n * sizeof(double));
-	  double *restrict W        = (double*)safemalloc(valid_n * sizeof(double));
-	  double *restrict WZ       = (double*)safemalloc(valid_n * sizeof(double));
-	  double *restrict beta     = (double*)safemalloc(p * sizeof(double));
-	  double *restrict beta_old = (double*)safemalloc(p * sizeof(double));
-	  bool *restrict aliased    = (bool*)safemalloc(p * sizeof(bool));
-	  double *restrict XtWX     = (double*)safemalloc(p * p * sizeof(double));
-	  double *restrict XtWZ     = (double*)safemalloc(p * sizeof(double));
-	  // Initialization
-	  double deviance_old = 0.0, deviance_new = 0.0;
-	  for (size_t i = 0; i < p; i++) {
-		   beta[i] = 0.0;
-		   beta_old[i] = 0.0;
-	  }
+        for (i_arg = 0; i_arg < items; i_arg += 2) {
+            const char *restrict key = SvPV_nolen(ST(i_arg));
+            SV *restrict val = ST(i_arg + 1);
+            if      (strEQ(key, "formula")) formula = SvPV_nolen(val);
+            else if (strEQ(key, "data"))    data_sv = val;
+            else if (strEQ(key, "family"))  family = SvPV_nolen(val);
+            else croak("glm: unknown argument '%s'", key);
+        }        
+        if (!formula) croak("glm: formula is required");
+        if (!data_sv || !SvROK(data_sv)) croak("glm: data is required and must be a reference");
 
-	  for (size_t i = 0; i < valid_n; i++) {
-		   if (is_binomial) {
-		       if (Y[i] < 0.0 || Y[i] > 1.0) {
-		           croak("glm: binomial family requires response values between 0 and 1 (found %f)", Y[i]);
-		       }
-		       mu[i] = (Y[i] + 0.5) / 2.0;
-		       eta[i] = log(mu[i] / (1.0 - mu[i]));
+        is_binomial = (strcmp(family, "binomial") == 0);
+        is_gaussian = (strcmp(family, "gaussian") == 0);
+        if (!is_binomial && !is_gaussian) croak("glm: unsupported family '%s'", family);
 
-		       double dev = 0.0;
-		       if (Y[i] == 0.0)      dev = -2.0 * log(1.0 - mu[i]);
-		       else if (Y[i] == 1.0) dev = -2.0 * log(mu[i]);
-		       else dev = 2.0 * (Y[i] * log(Y[i] / mu[i]) + (1.0 - Y[i]) * log((1.0 - Y[i]) / (1.0 - mu[i])));
-		       deviance_old += dev;
-		   } else {
-		       mu[i] = 0.0;//Y[i];
-		       eta[i] = 0.0;//Y[i];
-//		       deviance_old += (Y[i] - mu[i]) * (Y[i] - mu[i]);
-		   }
-	  }
-	  int iter = 0, max_iter = 25, final_rank = p;
-	  bool converged = false;
-	  for (iter = 1; iter <= max_iter; iter++) {
-		   // 4a. Update Weights and Working Response Mathematically
-		   for (unsigned int i = 0; i < valid_n; i++) {
-		       if (is_binomial) {
-		           double w = mu[i] * (1.0 - mu[i]);
-		           if (w < 1e-10) w = 1e-10; 
-		           W[i] = w;
-		           WZ[i] = w * eta[i] + (Y[i] - mu[i]);
-		       } else {
-		           W[i] = 1.0;
-		           WZ[i] = Y[i];
-		       }
-		   }
-		   // 4b. Form XtWX and XtWZ
-		   for (unsigned int i = 0; i < p; i++) {
-		       XtWZ[i] = 0.0;
-		       for (unsigned int j = 0; j < p; j++) XtWX[i * p + j] = 0.0;
-		   }
-		   for (unsigned int k = 0; k < valid_n; k++) {
-		       double w = W[k];
-		       double wz = WZ[k];
-		       for (unsigned int i = 0; i < p; i++) {
-		           XtWZ[i] += X[k * p + i] * wz;
-		           double xw = X[k * p + i] * w;
-		           for (unsigned int j = 0; j < p; j++) {
-		               XtWX[i * p + j] += xw * X[k * p + j];
-		           }
-		       }
-		   }
-		   // 4c. Solve Weighted Least Squares (inverts XtWX in place)
-		   final_rank = sweep_matrix_ols(XtWX, p, aliased);
-		   for (unsigned int i = 0; i < p; i++) {
-		       if (aliased[i]) {
-		           beta[i] = NAN;
-		       } else {
-		           double sum = 0.0;
-		           for (unsigned int j = 0; j < p; j++) {
-		               if (!aliased[j]) sum += XtWX[i * p + j] * XtWZ[j];
-		           }
-		           beta[i] = sum;
-		       }
-		   }
-		   // Step-halving loop: Protects against taking diverging steps 
-		   for (int half = 0; half < 10; half++) {
-		       deviance_new = 0.0;
-		       // 4d. Update Linear Predictor and Fitted Values
-		       for (unsigned int i = 0; i < valid_n; i++) {
-		           double linear_pred = 0.0;
-		           for (unsigned int j = 0; j < p; j++) {
-		               if (!aliased[j]) linear_pred += X[i * p + j] * beta[j];
-		           }
-		           eta[i] = linear_pred;
+        /* Allocations */
+        Newx(terms, term_cap, char*);
+        Newx(uniq_terms, term_cap, char*);
+        Newx(exp_terms, exp_cap, char*);
+        Newx(is_dummy, exp_cap, bool);
+        Newx(dummy_base, exp_cap, char*);
+        Newx(dummy_level, exp_cap, char*);
 
-		           if (is_binomial) {
-		               mu[i] = 1.0 / (1.0 + exp(-eta[i]));
-		               // R safely clamps mu to prevent log(0) - .Machine$double.eps 
-		               if (mu[i] < 2.220446049250313e-16) mu[i] = 2.220446049250313e-16;
-		               if (mu[i] > 1.0 - 2.220446049250313e-16) mu[i] = 1.0 - 2.220446049250313e-16;
+        src = (char*)formula; dst = f_cpy;
+        while (*src && (dst - f_cpy < 511)) { if (!isspace(*src)) { *dst++ = *src; } src++; }
+        *dst = '\0';
 
-		               double dev = 0.0;
-		               if (Y[i] == 0.0)      dev = -2.0 * log(1.0 - mu[i]);
-		               else if (Y[i] == 1.0) dev = -2.0 * log(mu[i]);
-		               else dev = 2.0 * (Y[i] * log(Y[i] / mu[i]) + (1.0 - Y[i]) * log((1.0 - Y[i]) / (1.0 - mu[i])));
-		               deviance_new += dev;
-		           } else {
-		               mu[i] = eta[i];
-		               double res = Y[i] - mu[i];
-		               deviance_new += res * res; // Gaussian deviance = RSS
-		           }
-		       }
-		       // If deviance improved, accept the step and move to convergence check
-		       if (!is_binomial || deviance_new <= deviance_old + 1e-7) {
-		           break;
-		       }
-		       // Otherwise, halve the step and test again
-		       for (unsigned int j = 0; j < p; j++) {
-		           beta[j] = (beta[j] + beta_old[j]) / 2.0;
-		       }
-		   }
-		   // 4e. Check Convergence
-		   if (fabs(deviance_new - deviance_old) / (0.1 + fabs(deviance_new)) < 1e-8) {
-		       converged = true;
-		       break;
-		   }
-		   deviance_old = deviance_new;
-		   for (unsigned int j = 0; j < p; j++) beta_old[j] = beta[j];
-	  }
-	  // Recalculate Final Covariance Matrix for completely accurate Standard Errors
-	  for (unsigned int i = 0; i < p; i++) {
-		   for (unsigned int j = 0; j < p; j++) XtWX[i * p + j] = 0.0;
-	  }
-	  for (unsigned int k = 0; k < valid_n; k++) {
-		   double w = is_binomial ? (mu[k] * (1.0 - mu[k])) : 1.0;
-		   if (w < 1e-10) w = 1e-10;
-		   for (unsigned int i = 0; i < p; i++) {
-		       double xw = X[k * p + i] * w;
-		       for (unsigned int j = 0; j < p; j++) {
-		           XtWX[i * p + j] += xw * X[k * p + j];
-		       }
-		   }
-	  }
-	  final_rank = sweep_matrix_ols(XtWX, p, aliased);
-	  // --- 5. Assemble Return Structure ---
-	  HV *restrict res_hv = newHV();
-	  HV *restrict coef_hv = newHV();
-	  HV *restrict fitted_hv = newHV();
-	  HV *restrict resid_hv = newHV();
-	  int df_res = valid_n - final_rank;
-	  double dispersion = is_binomial ? 1.0 : ((df_res > 0) ? (deviance_new / df_res) : NAN);
-	  for (unsigned int i = 0; i < valid_n; i++) {
-		   double res = Y[i] - mu[i];
-		   // Store working residuals for consistency with LM format
-		   hv_store(fitted_hv, valid_row_names[i], strlen(valid_row_names[i]), newSVnv(mu[i]), 0);
-		   hv_store(resid_hv,  valid_row_names[i], strlen(valid_row_names[i]), newSVnv(res), 0);
-		   Safefree(valid_row_names[i]);
-	  }
-	  Safefree(valid_row_names);
-	  HV *restrict summary_hv = newHV();
-	  AV *restrict terms_av = newAV();
+        tilde = strchr(f_cpy, '~');
+        if (!tilde) croak("glm: invalid formula, missing '~'");
+        *tilde = '\0';
+        lhs = f_cpy; rhs = tilde + 1;
 
-	  for (unsigned int j = 0; j < p; j++) {
-		   hv_store(coef_hv, uniq_terms[j], strlen(uniq_terms[j]), newSVnv(beta[j]), 0);
-		   av_push(terms_av, newSVpv(uniq_terms[j], 0));
+        if (strstr(rhs, "-1")) has_intercept = false;
+        if (has_intercept) { terms[num_terms++] = savepv("Intercept"); }
 
-		   HV *restrict row_hv = newHV();
-		   if (aliased[j]) {
-		       hv_store(row_hv, "Estimate",   8, newSVpv("NaN", 0), 0);
-		       hv_store(row_hv, "Std. Error", 10, newSVpv("NaN", 0), 0);
-		       hv_store(row_hv, "z value",    7, newSVpv("NaN", 0), 0);
-		       hv_store(row_hv, "Pr(>|z|)",   8, newSVpv("NaN", 0), 0);
-		   } else {
-		       double se = sqrt(dispersion * XtWX[j * p + j]);
-		       double z_val = beta[j] / se;
+        chunk = strtok(rhs, "+");
+        while (chunk != NULL) {
+            if (num_terms >= term_cap - 3) {
+                term_cap *= 2;
+                Renew(terms, term_cap, char*);
+                Renew(uniq_terms, term_cap, char*);
+            }
+            if (strcmp(chunk, "1") == 0 || strcmp(chunk, "-1") == 0) {
+                chunk = strtok(NULL, "+");
+                continue;
+            }
+            char *restrict star = strchr(chunk, '*');
+            if (star) {
+                *star = '\0';
+                char *restrict left = chunk;
+                char *restrict right = star + 1;
+                char *restrict c_l = strchr(left, '^'); if (c_l && strncmp(left, "I(", 2) != 0) *c_l = '\0';
+                char *restrict c_r = strchr(right, '^'); if (c_r && strncmp(right, "I(", 2) != 0) *c_r = '\0';
 
-		       // For gaussian we use t-dist, for binomial we use normal distribution for p-values
-		       double p_val = is_binomial ? 2.0 * (1.0 - approx_pnorm(fabs(z_val))) : pt_2tail(z_val, df_res);
+                terms[num_terms++] = savepv(left);
+                terms[num_terms++] = savepv(right);
 
-		       hv_store(row_hv, "Estimate",   8, newSVnv(beta[j]), 0);
-		       hv_store(row_hv, "Std. Error", 10, newSVnv(se), 0);
-		       hv_store(row_hv, is_binomial ? "z value" : "t value", 7, newSVnv(z_val), 0);
-		       hv_store(row_hv, is_binomial ? "Pr(>|z|)" : "Pr(>|t|)", 8, newSVnv(p_val), 0);
-		   }
-		   hv_store(summary_hv, uniq_terms[j], strlen(uniq_terms[j]), newRV_noinc((SV*)row_hv), 0);
-	  }
+                size_t inter_len = strlen(left) + strlen(right) + 2;
+                terms[num_terms] = (char*)safemalloc(inter_len);
+                snprintf(terms[num_terms++], inter_len, "%s:%s", left, right);
+            } else {
+                char *restrict c_chunk = strchr(chunk, '^'); 
+                if (c_chunk && strncmp(chunk, "I(", 2) != 0) *c_chunk = '\0';
+                terms[num_terms++] = savepv(chunk);
+            }
+            chunk = strtok(NULL, "+");
+        }
 
-	  // Calculate Null Deviance (Simplistic intercept-only check)
-	  double null_dev = 0.0;
-	  double sum_y = 0.0;
-	  for (unsigned int i = 0; i < valid_n; i++) sum_y += Y[i];
-	  double mu_null = sum_y / valid_n;
+        for (i = 0; i < num_terms; i++) {
+            bool found = false;
+            for (j = 0; j < num_uniq; j++) {
+                if (strcmp(terms[i], uniq_terms[j]) == 0) { found = true; break; }
+            }
+            if (!found) uniq_terms[num_uniq++] = savepv(terms[i]);
+        }
+        p = num_uniq;
 
-	  for (unsigned int i = 0; i < valid_n; i++) {
-		    if (is_binomial) {
-		        if (Y[i] == 0.0)      null_dev += -2.0 * log(1.0 - mu_null);
-		        else if (Y[i] == 1.0) null_dev += -2.0 * log(mu_null);
-		        else null_dev += 2.0 * (Y[i] * log(Y[i] / mu_null) + (1.0 - Y[i]) * log((1.0 - Y[i]) / (1.0 - mu_null)));
-		    } else {
-		        double diff = Y[i] - mu_null;
-		        null_dev += diff * diff;
-		    }
-	  }
-	  // Calculate Akaike Information Criterion (AIC)
-	  double aic = 0.0;
-	  if (is_gaussian) {
-	      double n_f = (double)valid_n;
-	      // Gaussian estimates an extra dispersion parameter, so we add 1 to the rank penalty
-	      aic = n_f * (log(2.0 * M_PI) + 1.0 + log(deviance_new / n_f)) + 2.0 * (final_rank + 1.0);
-	  } else if (is_binomial) {
-	      // Binomial dispersion is fixed at 1, so parameters = final_rank
-	      aic = deviance_new + 2.0 * final_rank;
-	  }
+        /* Row Iterators */
+        ref = SvRV(data_sv);
+        if (SvTYPE(ref) == SVt_PVHV) {
+            HV*restrict hv = (HV*)ref;
+            if (hv_iterinit(hv) == 0) croak("glm: Data hash is empty");
+            entry = hv_iternext(hv);
+            if (entry) {
+                SV*restrict val = hv_iterval(hv, entry);
+                if (SvROK(val) && SvTYPE(SvRV(val)) == SVt_PVAV) {
+                    data_hoa = hv;
+                    n = av_len((AV*)SvRV(val)) + 1;
+                    Newx(row_names, n, char*);
+                    for(i = 0; i < n; i++) {
+                        char buf[32]; snprintf(buf, sizeof(buf), "%u", i+1);
+                        row_names[i] = savepv(buf);
+                    }
+                } else if (SvROK(val) && SvTYPE(SvRV(val)) == SVt_PVHV) {
+                    n = hv_iterinit(hv);
+                    Newx(row_names, n, char*); Newx(row_hashes, n, HV*);
+                    i = 0;
+                    while ((entry = hv_iternext(hv))) {
+                        unsigned int len;
+                        row_names[i] = savepv(hv_iterkey(entry, &len));
+                        row_hashes[i] = (HV*)SvRV(hv_iterval(hv, entry));
+                        i++;
+                    }
+                } else croak("glm: Hash values must be ArrayRefs (HoA) or HashRefs (HoH)");
+            }
+        } else if (SvTYPE(ref) == SVt_PVAV) {
+            AV*restrict av = (AV*)ref;
+            n = av_len(av) + 1;
+            Newx(row_names, n, char*); Newx(row_hashes, n, HV*);
+            for (i = 0; i < n; i++) {
+                SV**restrict val = av_fetch(av, i, 0);
+                if (val && SvROK(*val) && SvTYPE(SvRV(*val)) == SVt_PVHV) {
+                    row_hashes[i] = (HV*)SvRV(*val);
+                    char buf[32]; snprintf(buf, sizeof(buf), "%u", i + 1);
+                    row_names[i] = savepv(buf);
+                } else {
+                    for (k = 0; k < i; k++) Safefree(row_names[k]);
+                    Safefree(row_names); Safefree(row_hashes);
+                    croak("glm: Array values must be HashRefs (AoH)");
+                }
+            }
+        } else croak("glm: Data must be an Array or Hash reference");
 
-	  hv_store(res_hv, "aic",            3, newSVnv(aic), 0);
-	  hv_store(res_hv, "coefficients",  12, newRV_noinc((SV*)coef_hv), 0);
-	  hv_store(res_hv, "converged",      9, newSVuv(converged ? 1 : 0), 0);
-	  hv_store(res_hv, "deviance",       8, newSVnv(deviance_new), 0);
-	  hv_store(res_hv, "deviance.resid", 14, newRV_noinc((SV*)resid_hv), 0);
-	  hv_store(res_hv, "df.null",        7, newSVuv(valid_n - 1), 0);
-	  hv_store(res_hv, "df.residual",   11, newSVuv(df_res), 0);
-	  hv_store(res_hv, "family",         6, newSVpv(family, 0), 0);
-	  hv_store(res_hv, "fitted.values", 13, newRV_noinc((SV*)fitted_hv), 0);
-	  hv_store(res_hv, "iter",           4, newSVuv(iter > max_iter ? max_iter : iter), 0);
-	  hv_store(res_hv, "null.deviance", 13, newSVnv(null_dev), 0);
-	  hv_store(res_hv, "rank",           4, newSVuv(final_rank), 0);
-	  hv_store(res_hv, "summary",        7, newRV_noinc((SV*)summary_hv), 0);
-	  hv_store(res_hv, "terms",          5, newRV_noinc((SV*)terms_av), 0);
+        /* Categorical Expansion */
+        for (j = 0; j < p; j++) {
+            if (p_exp + 32 >= exp_cap) {
+                exp_cap *= 2;
+                Renew(exp_terms, exp_cap, char*);
+                Renew(is_dummy, exp_cap, bool);
+                Renew(dummy_base, exp_cap, char*);
+                Renew(dummy_level, exp_cap, char*);
+            }
 
-	  // --- Clean up ---
-	  Safefree(mu); Safefree(eta); Safefree(WZ); Safefree(W);
-	  Safefree(beta); Safefree(beta_old); Safefree(aliased);
-	  Safefree(XtWX); Safefree(XtWZ);
-	  Safefree(X); Safefree(Y); 
-	  if (row_hashes) Safefree(row_hashes);
+            if (strcmp(uniq_terms[j], "Intercept") == 0) {
+                exp_terms[p_exp] = savepv("Intercept");
+                is_dummy[p_exp] = false;
+                p_exp++;
+                continue;
+            }
 
-	  RETVAL = newRV_noinc((SV*)res_hv);
-	}
-#line 1390 "LikeR.c"
+            if (is_column_categorical(data_hoa, row_hashes, n, uniq_terms[j])) {
+                char **levels = NULL;
+                unsigned int num_levels = 0;
+                unsigned int levels_cap = 8;
+                Newx(levels, levels_cap, char*);
+
+                for (i = 0; i < n; i++) {
+                    char* str_val = get_data_string_alloc(data_hoa, row_hashes, i, uniq_terms[j]);
+                    if (str_val) {
+                        bool found = false;
+                        for (l = 0; l < num_levels; l++) {
+                            if (strcmp(levels[l], str_val) == 0) { found = true; break; }
+                        }
+                        if (!found) {
+                            if (num_levels >= levels_cap) {
+                                levels_cap *= 2;
+                                Renew(levels, levels_cap, char*);
+                            }
+                            levels[num_levels++] = savepv(str_val);
+                        }
+                        Safefree(str_val);
+                    }
+                }
+
+                if (num_levels > 0) {
+                    for (l1 = 0; l1 < num_levels - 1; l1++) {
+                        for (l2 = l1 + 1; l2 < num_levels; l2++) {
+                            if (strcmp(levels[l1], levels[l2]) > 0) {
+                                char *tmp = levels[l1];
+                                levels[l1] = levels[l2];
+                                levels[l2] = tmp;
+                            }
+                        }
+                    }
+                    for (l = 1; l < num_levels; l++) {
+                        if (p_exp >= exp_cap) {
+                            exp_cap *= 2;
+                            Renew(exp_terms, exp_cap, char*); Renew(is_dummy, exp_cap, bool);
+                            Renew(dummy_base, exp_cap, char*); Renew(dummy_level, exp_cap, char*);
+                        }
+                        size_t t_len = strlen(uniq_terms[j]) + strlen(levels[l]) + 1;
+                        exp_terms[p_exp] = (char*)safemalloc(t_len);
+                        snprintf(exp_terms[p_exp], t_len, "%s%s", uniq_terms[j], levels[l]);
+
+                        is_dummy[p_exp] = true;
+                        dummy_base[p_exp] = savepv(uniq_terms[j]);
+                        dummy_level[p_exp] = savepv(levels[l]);
+                        p_exp++;
+                    }
+                    for (l = 0; l < num_levels; l++) Safefree(levels[l]);
+                    Safefree(levels);
+                } else {
+                    Safefree(levels);
+                    exp_terms[p_exp] = savepv(uniq_terms[j]);
+                    is_dummy[p_exp] = false;
+                    p_exp++;
+                }
+            } else {
+                exp_terms[p_exp] = savepv(uniq_terms[j]);
+                is_dummy[p_exp] = false;
+                p_exp++;
+            }
+        }
+        p = p_exp;
+
+        Newx(X, n * p, double); Newx(Y, n, double); Newx(valid_row_names, n, char*);
+
+        /* Listwise Deletion */
+        for (i = 0; i < n; i++) {
+            double y_val = evaluate_term(data_hoa, row_hashes, i, lhs);
+            if (isnan(y_val)) { Safefree(row_names[i]); continue; }
+
+            bool row_ok = true;
+            double *row_x = (double*)safemalloc(p * sizeof(double));
+            for (j = 0; j < p; j++) {
+                if (strcmp(exp_terms[j], "Intercept") == 0) {
+                    row_x[j] = 1.0;
+                } else if (is_dummy[j]) {
+                    char* str_val = get_data_string_alloc(data_hoa, row_hashes, i, dummy_base[j]);
+                    if (str_val) {
+                        row_x[j] = (strcmp(str_val, dummy_level[j]) == 0) ? 1.0 : 0.0;
+                        Safefree(str_val);
+                    } else { row_ok = false; break; }
+                } else {
+                    row_x[j] = evaluate_term(data_hoa, row_hashes, i, exp_terms[j]);
+                    if (isnan(row_x[j])) { row_ok = false; break; }
+                }
+            }
+            if (!row_ok) { Safefree(row_names[i]); Safefree(row_x); continue; }
+
+            Y[valid_n] = y_val;
+            for (j = 0; j < p; j++) X[valid_n * p + j] = row_x[j];
+            valid_row_names[valid_n] = row_names[i];
+            valid_n++;
+            Safefree(row_x);
+        }
+        Safefree(row_names); 
+
+        if (valid_n <= p) {
+            Safefree(X); Safefree(Y); Safefree(valid_row_names);
+            if (row_hashes) Safefree(row_hashes);
+            croak("glm: 0 degrees of freedom (too many NAs or parameters > observations)");
+        }
+
+        /* IRLS Math Loop */
+        mu = (double*)safemalloc(valid_n * sizeof(double)); eta = (double*)safemalloc(valid_n * sizeof(double));
+        W = (double*)safemalloc(valid_n * sizeof(double)); WZ = (double*)safemalloc(valid_n * sizeof(double));
+        beta = (double*)safemalloc(p * sizeof(double)); beta_old = (double*)safemalloc(p * sizeof(double));
+        aliased = (bool*)safemalloc(p * sizeof(bool));
+        XtWX = (double*)safemalloc(p * p * sizeof(double)); XtWZ = (double*)safemalloc(p * sizeof(double));
+
+        for (i = 0; i < p; i++) { beta[i] = 0.0; beta_old[i] = 0.0; }
+
+        for (i = 0; i < valid_n; i++) {
+            if (is_binomial) {
+                if (Y[i] < 0.0 || Y[i] > 1.0) croak("glm: binomial family requires response between 0 and 1");
+                mu[i] = (Y[i] + 0.5) / 2.0; eta[i] = log(mu[i] / (1.0 - mu[i]));
+
+                double dev = 0.0;
+                if (Y[i] == 0.0)      dev = -2.0 * log(1.0 - mu[i]);
+                else if (Y[i] == 1.0) dev = -2.0 * log(mu[i]);
+                else dev = 2.0 * (Y[i] * log(Y[i] / mu[i]) + (1.0 - Y[i]) * log((1.0 - Y[i]) / (1.0 - mu[i])));
+                deviance_old += dev;
+            } else { mu[i] = 0.0; eta[i] = 0.0; }
+        }
+
+        for (iter = 1; iter <= max_iter; iter++) {
+            for (i = 0; i < valid_n; i++) {
+                if (is_binomial) {
+                    double w = mu[i] * (1.0 - mu[i]);
+                    if (w < 1e-10) w = 1e-10; 
+                    W[i] = w; WZ[i] = w * eta[i] + (Y[i] - mu[i]);
+                } else { W[i] = 1.0; WZ[i] = Y[i]; }
+            }
+            for (i = 0; i < p; i++) { XtWZ[i] = 0.0; for (j = 0; j < p; j++) XtWX[i * p + j] = 0.0; }
+            for (k = 0; k < valid_n; k++) {
+                double w = W[k], wz = WZ[k];
+                for (i = 0; i < p; i++) {
+                    XtWZ[i] += X[k * p + i] * wz;
+                    double xw = X[k * p + i] * w;
+                    for (j = 0; j < p; j++) XtWX[i * p + j] += xw * X[k * p + j];
+                }
+            }
+
+            final_rank = sweep_matrix_ols(XtWX, p, aliased);
+
+            for (i = 0; i < p; i++) {
+                if (aliased[i]) { beta[i] = NAN; } else {
+                    double sum = 0.0;
+                    for (j = 0; j < p; j++) if (!aliased[j]) sum += XtWX[i * p + j] * XtWZ[j];
+                    beta[i] = sum;
+                }
+            }
+
+            for (int half = 0; half < 10; half++) {
+                deviance_new = 0.0;
+                for (i = 0; i < valid_n; i++) {
+                    double linear_pred = 0.0;
+                    for (j = 0; j < p; j++) if (!aliased[j]) linear_pred += X[i * p + j] * beta[j];
+                    eta[i] = linear_pred;
+                    if (is_binomial) {
+                        mu[i] = 1.0 / (1.0 + exp(-eta[i]));
+                        if (mu[i] < 2.220446049250313e-16) mu[i] = 2.220446049250313e-16;
+                        if (mu[i] > 1.0 - 2.220446049250313e-16) mu[i] = 1.0 - 2.220446049250313e-16;
+
+                        double dev = 0.0;
+                        if (Y[i] == 0.0)      dev = -2.0 * log(1.0 - mu[i]);
+                        else if (Y[i] == 1.0) dev = -2.0 * log(mu[i]);
+                        else dev = 2.0 * (Y[i] * log(Y[i] / mu[i]) + (1.0 - Y[i]) * log((1.0 - Y[i]) / (1.0 - mu[i])));
+                        deviance_new += dev;
+                    } else {
+                        mu[i] = eta[i];
+                        double res = Y[i] - mu[i];
+                        deviance_new += res * res;
+                    }
+                }
+                if (!is_binomial || deviance_new <= deviance_old + 1e-7) break;
+                for (j = 0; j < p; j++) beta[j] = (beta[j] + beta_old[j]) / 2.0;
+            }
+
+            if (fabs(deviance_new - deviance_old) / (0.1 + fabs(deviance_new)) < 1e-8) { converged = true; break; }
+            deviance_old = deviance_new;
+            for (j = 0; j < p; j++) beta_old[j] = beta[j];
+        }
+
+        for (i = 0; i < p; i++) { for (j = 0; j < p; j++) XtWX[i * p + j] = 0.0; }
+        for (k = 0; k < valid_n; k++) {
+            double w = is_binomial ? (mu[k] * (1.0 - mu[k])) : 1.0;
+            if (w < 1e-10) w = 1e-10;
+            for (i = 0; i < p; i++) {
+                double xw = X[k * p + i] * w;
+                for (j = 0; j < p; j++) XtWX[i * p + j] += xw * X[k * p + j];
+            }
+        }
+        final_rank = sweep_matrix_ols(XtWX, p, aliased);
+
+        /* Return Struct */
+        res_hv = newHV(); coef_hv = newHV(); fitted_hv = newHV(); resid_hv = newHV();
+        df_res = valid_n - final_rank;
+        dispersion = is_binomial ? 1.0 : ((df_res > 0) ? (deviance_new / df_res) : NAN);
+
+        for (i = 0; i < valid_n; i++) {
+            double res = Y[i] - mu[i];
+            hv_store(fitted_hv, valid_row_names[i], strlen(valid_row_names[i]), newSVnv(mu[i]), 0);
+            hv_store(resid_hv,  valid_row_names[i], strlen(valid_row_names[i]), newSVnv(res), 0);
+            Safefree(valid_row_names[i]);
+        }
+        Safefree(valid_row_names);
+
+        summary_hv = newHV(); terms_av = newAV();
+
+        for (j = 0; j < p; j++) {
+            hv_store(coef_hv, exp_terms[j], strlen(exp_terms[j]), newSVnv(beta[j]), 0);
+            av_push(terms_av, newSVpv(exp_terms[j], 0));
+
+            HV *restrict row_hv = newHV();
+            if (aliased[j]) {
+                hv_store(row_hv, "Estimate",   8, newSVpv("NaN", 0), 0);
+                hv_store(row_hv, "Std. Error", 10, newSVpv("NaN", 0), 0);
+                hv_store(row_hv, "z value",    7, newSVpv("NaN", 0), 0);
+                hv_store(row_hv, "Pr(>|z|)",   8, newSVpv("NaN", 0), 0);
+            } else {
+                double se = sqrt(dispersion * XtWX[j * p + j]);
+                double z_val = beta[j] / se;
+                double p_val = is_binomial ? 2.0 * (1.0 - approx_pnorm(fabs(z_val))) : pt_2tail(z_val, df_res);
+
+                hv_store(row_hv, "Estimate",   8, newSVnv(beta[j]), 0);
+                hv_store(row_hv, "Std. Error", 10, newSVnv(se), 0);
+                hv_store(row_hv, is_binomial ? "z value" : "t value", 7, newSVnv(z_val), 0);
+                hv_store(row_hv, is_binomial ? "Pr(>|z|)" : "Pr(>|t|)", 8, newSVnv(p_val), 0);
+            }
+            hv_store(summary_hv, exp_terms[j], strlen(exp_terms[j]), newRV_noinc((SV*)row_hv), 0);
+        }
+
+        for (i = 0; i < valid_n; i++) sum_y += Y[i];
+        mu_null = sum_y / valid_n;
+        for (i = 0; i < valid_n; i++) {
+              if (is_binomial) {
+                  if (Y[i] == 0.0)      null_dev += -2.0 * log(1.0 - mu_null);
+                  else if (Y[i] == 1.0) null_dev += -2.0 * log(mu_null);
+                  else null_dev += 2.0 * (Y[i] * log(Y[i] / mu_null) + (1.0 - Y[i]) * log((1.0 - Y[i]) / (1.0 - mu_null)));
+              } else {
+                  double diff = Y[i] - mu_null;
+                  null_dev += diff * diff;
+              }
+        }
+
+        if (is_gaussian) {
+            double n_f = (double)valid_n;
+            aic = n_f * (log(2.0 * M_PI) + 1.0 + log(deviance_new / n_f)) + 2.0 * (final_rank + 1.0);
+        } else if (is_binomial) { aic = deviance_new + 2.0 * final_rank; }
+
+        hv_store(res_hv, "aic",            3, newSVnv(aic), 0);
+        hv_store(res_hv, "coefficients",  12, newRV_noinc((SV*)coef_hv), 0);
+        hv_store(res_hv, "converged",      9, newSVuv(converged ? 1 : 0), 0);
+        hv_store(res_hv, "deviance",       8, newSVnv(deviance_new), 0);
+        hv_store(res_hv, "deviance.resid", 14, newRV_noinc((SV*)resid_hv), 0);
+        hv_store(res_hv, "df.null",        7, newSVuv(valid_n - 1), 0);
+        hv_store(res_hv, "df.residual",   11, newSVuv(df_res), 0);
+        hv_store(res_hv, "family",         6, newSVpv(family, 0), 0);
+        hv_store(res_hv, "fitted.values", 13, newRV_noinc((SV*)fitted_hv), 0);
+        hv_store(res_hv, "iter",           4, newSVuv(iter > max_iter ? max_iter : iter), 0);
+        hv_store(res_hv, "null.deviance", 13, newSVnv(null_dev), 0);
+        hv_store(res_hv, "rank",           4, newSVuv(final_rank), 0);
+        hv_store(res_hv, "summary",        7, newRV_noinc((SV*)summary_hv), 0);
+        hv_store(res_hv, "terms",          5, newRV_noinc((SV*)terms_av), 0);
+
+        /* Deep Cleanup */
+        for (i = 0; i < num_terms; i++) Safefree(terms[i]);
+        Safefree(terms);
+        for (i = 0; i < num_uniq; i++) Safefree(uniq_terms[i]);
+        Safefree(uniq_terms);
+        for (j = 0; j < p_exp; j++) {
+            Safefree(exp_terms[j]);
+            if (is_dummy[j]) { Safefree(dummy_base[j]); Safefree(dummy_level[j]); }
+        }
+        Safefree(exp_terms); Safefree(is_dummy);
+        Safefree(dummy_base); Safefree(dummy_level);
+
+        Safefree(mu); Safefree(eta); Safefree(WZ); Safefree(W);
+        Safefree(beta); Safefree(beta_old); Safefree(aliased);
+        Safefree(XtWX); Safefree(XtWZ); Safefree(X); Safefree(Y); 
+        if (row_hashes) Safefree(row_hashes);
+
+        RETVAL = newRV_noinc((SV*)res_hv);
+    }
+#line 1500 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -1402,7 +1512,7 @@ XS_EUPXS(XS_Stats__LikeR_cor_test)
     PERL_UNUSED_VAR(items); /* -W */
     {
 	SV *	RETVAL;
-#line 1229 "LikeR.xs"
+#line 1339 "LikeR.xs"
 {
 	if (items % 2 != 0)
 	  croak("Usage: cor_test(x => \\@data1, y => \\@data2, method => 'pearson', ...)");
@@ -1603,7 +1713,7 @@ XS_EUPXS(XS_Stats__LikeR_cor_test)
 
 	RETVAL = newRV_noinc((SV*)rhv);
 }
-#line 1607 "LikeR.c"
+#line 1717 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -1622,13 +1732,13 @@ XS_EUPXS(XS_Stats__LikeR_shapiro_test)
     {
 	SV *	data = ST(0)
 ;
-#line 1436 "LikeR.xs"
+#line 1546 "LikeR.xs"
     AV *restrict av;
     HV *restrict ret_hash;
     size_t n;
     double *restrict x, w = 0.0, p_val = 0.0, mean = 0.0, ssq = 0.0;
-#line 1631 "LikeR.c"
-#line 1441 "LikeR.xs"
+#line 1741 "LikeR.c"
+#line 1551 "LikeR.xs"
     if (!SvROK(data) || SvTYPE(SvRV(data)) != SVt_PVAV) {
         croak("Expected an array reference");
     }
@@ -1757,7 +1867,7 @@ XS_EUPXS(XS_Stats__LikeR_shapiro_test)
     hv_stores(ret_hash, "p.value",   newSVnv(p_val));
     EXTEND(SP, 1);
     PUSHs(sv_2mortal(newRV_noinc((SV *)ret_hash)));
-#line 1761 "LikeR.c"
+#line 1871 "LikeR.c"
 	PUTBACK;
 	return;
     }
@@ -1773,12 +1883,12 @@ XS_EUPXS(XS_Stats__LikeR_min)
     {
 	double	RETVAL;
 	dXSTARG;
-#line 1573 "LikeR.xs"
+#line 1683 "LikeR.xs"
 	  double min_val = 0.0;
 	  size_t count = 0;
 	  bool first = TRUE;
-#line 1781 "LikeR.c"
-#line 1577 "LikeR.xs"
+#line 1891 "LikeR.c"
+#line 1687 "LikeR.xs"
 	  for (unsigned short int i = 0; i < items; i++) {
 		   SV* restrict arg = ST(i);
 		   if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
@@ -1806,7 +1916,7 @@ XS_EUPXS(XS_Stats__LikeR_min)
 	  }
 	  if (count == 0) croak("min needs >= 1 numeric element");
 	  RETVAL = min_val;
-#line 1810 "LikeR.c"
+#line 1920 "LikeR.c"
 	TARGn((double)RETVAL, 1);
 	ST(0) = TARG;
     }
@@ -1823,12 +1933,12 @@ XS_EUPXS(XS_Stats__LikeR_max)
     {
 	double	RETVAL;
 	dXSTARG;
-#line 1610 "LikeR.xs"
+#line 1720 "LikeR.xs"
 	  double max_val = 0.0;
 	  size_t count = 0;
 	  bool first = TRUE;
-#line 1831 "LikeR.c"
-#line 1614 "LikeR.xs"
+#line 1941 "LikeR.c"
+#line 1724 "LikeR.xs"
 	  for (unsigned short int i = 0; i < items; i++) {
 		   SV* restrict arg = ST(i);
 		   if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
@@ -1856,7 +1966,7 @@ XS_EUPXS(XS_Stats__LikeR_max)
 	  }
 	  if (count == 0) croak("max needs >= 1 numeric element");
 	  RETVAL = max_val;
-#line 1860 "LikeR.c"
+#line 1970 "LikeR.c"
 	TARGn((double)RETVAL, 1);
 	ST(0) = TARG;
     }
@@ -1872,7 +1982,7 @@ XS_EUPXS(XS_Stats__LikeR_runif)
     PERL_UNUSED_VAR(items); /* -W */
     {
 	SV *	RETVAL;
-#line 1646 "LikeR.xs"
+#line 1756 "LikeR.xs"
 	{
 	  // Auto-seed the PRNG if the Perl script hasn't done so yet
 	  AUTO_SEED_PRNG();
@@ -1907,7 +2017,7 @@ XS_EUPXS(XS_Stats__LikeR_runif)
 	  }
 	  RETVAL = newRV_noinc((SV*)result_av);
 	}
-#line 1911 "LikeR.c"
+#line 2021 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -1923,7 +2033,7 @@ XS_EUPXS(XS_Stats__LikeR_rbinom)
     PERL_UNUSED_VAR(items); /* -W */
     {
 	SV *	RETVAL;
-#line 1685 "LikeR.xs"
+#line 1795 "LikeR.xs"
 	{
 	  // Auto-seed the PRNG if the Perl script hasn't done so yet
 	  AUTO_SEED_PRNG();
@@ -1959,7 +2069,7 @@ XS_EUPXS(XS_Stats__LikeR_rbinom)
 
 	  RETVAL = newRV_noinc((SV*)result_av);
 	}
-#line 1963 "LikeR.c"
+#line 2073 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -1977,7 +2087,7 @@ XS_EUPXS(XS_Stats__LikeR_hist)
 	SV *	RETVAL;
 	SV*	x_sv = ST(0)
 ;
-#line 1726 "LikeR.xs"
+#line 1836 "LikeR.xs"
 	{
 	  /* 1. Validate Input */
 	  if (!SvROK(x_sv) || SvTYPE(SvRV(x_sv)) != SVt_PVAV)
@@ -2069,7 +2179,7 @@ XS_EUPXS(XS_Stats__LikeR_hist)
 
 	  RETVAL = newRV_noinc((SV*)res_hv);
 	}
-#line 2073 "LikeR.c"
+#line 2183 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -2085,7 +2195,7 @@ XS_EUPXS(XS_Stats__LikeR_quantile)
     PERL_UNUSED_VAR(items); /* -W */
     {
 	SV *	RETVAL;
-#line 1822 "LikeR.xs"
+#line 1932 "LikeR.xs"
 	{
 	  if (items % 2 != 0 && items != 1) 
 		   croak("Usage: quantile(x => \\@data, probs => \\@probs)");
@@ -2186,7 +2296,7 @@ XS_EUPXS(XS_Stats__LikeR_quantile)
 
 	  RETVAL = newRV_noinc((SV*)res_hv);
 	}
-#line 2190 "LikeR.c"
+#line 2300 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -2203,11 +2313,11 @@ XS_EUPXS(XS_Stats__LikeR_mean)
     {
 	double	RETVAL;
 	dXSTARG;
-#line 1928 "LikeR.xs"
+#line 2038 "LikeR.xs"
 	  double total = 0;
 	  size_t count = 0;
-#line 2210 "LikeR.c"
-#line 1931 "LikeR.xs"
+#line 2320 "LikeR.c"
+#line 2041 "LikeR.xs"
 	  for (size_t i = 0; i < items; i++) {
 		   SV*restrict arg = ST(i);
 		   if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
@@ -2223,7 +2333,7 @@ XS_EUPXS(XS_Stats__LikeR_mean)
 	  }
 	  if (count == 0) croak("mean needs >= 1 element");
 	  RETVAL = total / count;
-#line 2227 "LikeR.c"
+#line 2337 "LikeR.c"
 	TARGn((double)RETVAL, 1);
 	ST(0) = TARG;
     }
@@ -2240,11 +2350,11 @@ XS_EUPXS(XS_Stats__LikeR_sd)
     {
 	double	RETVAL;
 	dXSTARG;
-#line 1952 "LikeR.xs"
+#line 2062 "LikeR.xs"
 	  double mean = 0.0, M2 = 0.0;
 	  size_t count = 0;
-#line 2247 "LikeR.c"
-#line 1955 "LikeR.xs"
+#line 2357 "LikeR.c"
+#line 2065 "LikeR.xs"
 	  // Single Pass Standard Deviation via Welford's Algorithm
 	  for (size_t i = 0; i < items; i++) {
 		   SV* restrict arg = ST(i);
@@ -2271,7 +2381,7 @@ XS_EUPXS(XS_Stats__LikeR_sd)
 	  }
 	  if (count < 2) croak("stdev needs >= 2 elements");
 	  RETVAL = sqrt(M2 / (count - 1));
-#line 2275 "LikeR.c"
+#line 2385 "LikeR.c"
 	TARGn((double)RETVAL, 1);
 	ST(0) = TARG;
     }
@@ -2288,11 +2398,11 @@ XS_EUPXS(XS_Stats__LikeR_var)
     {
 	double	RETVAL;
 	dXSTARG;
-#line 1987 "LikeR.xs"
+#line 2097 "LikeR.xs"
 	  double mean = 0.0, M2 = 0.0;
 	  size_t count = 0;
-#line 2295 "LikeR.c"
-#line 1990 "LikeR.xs"
+#line 2405 "LikeR.c"
+#line 2100 "LikeR.xs"
 	  // Single Pass Variance via Welford's Algorithm
 	  for (size_t i = 0; i < items; i++) {
 		   SV*restrict arg = ST(i);
@@ -2319,7 +2429,7 @@ XS_EUPXS(XS_Stats__LikeR_var)
 	  }
 	  if (count < 2) croak("var needs >= 2 elements");
 	  RETVAL = M2 / (count - 1);
-#line 2323 "LikeR.c"
+#line 2433 "LikeR.c"
 	TARGn((double)RETVAL, 1);
 	ST(0) = TARG;
     }
@@ -2335,7 +2445,7 @@ XS_EUPXS(XS_Stats__LikeR_t_test)
     PERL_UNUSED_VAR(items); /* -W */
     {
 	SV *	RETVAL;
-#line 2021 "LikeR.xs"
+#line 2131 "LikeR.xs"
 	{
 	  if (items % 2 != 0)
 		   croak("Usage: t_test(x => [...], y => [...], ...) - must be even key/value pairs");
@@ -2487,7 +2597,7 @@ XS_EUPXS(XS_Stats__LikeR_t_test)
 
 	  RETVAL = newRV_noinc((SV*)results);
 	}
-#line 2491 "LikeR.c"
+#line 2601 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -2514,7 +2624,7 @@ XS_EUPXS(XS_Stats__LikeR_p_adjust)
 	    method = (const char *)SvPV_nolen(ST(1))
 ;
 	}
-#line 2177 "LikeR.xs"
+#line 2287 "LikeR.xs"
 	  if (!SvROK(p_sv) || SvTYPE(SvRV(p_sv)) != SVt_PVAV) {
 		   croak("p_adjust: first argument must be an ARRAY reference of p-values");
 	  }
@@ -2547,8 +2657,8 @@ XS_EUPXS(XS_Stats__LikeR_p_adjust)
 	  /* Sort ascending (Stable sort using original index) */
 	  qsort(arr, n, sizeof(PVal), cmp_pval);
 
-#line 2551 "LikeR.c"
-#line 2210 "LikeR.xs"
+#line 2661 "LikeR.c"
+#line 2320 "LikeR.xs"
 	  if (strcmp(meth, "bonferroni") == 0) {
 		   for (size_t i = 0; i < n; i++) {
 		       double v = arr[i].p * n;
@@ -2650,7 +2760,7 @@ XS_EUPXS(XS_Stats__LikeR_p_adjust)
 	  }
 	  Safefree(arr); arr = NULL;
 	  Safefree(adj); adj = NULL;
-#line 2654 "LikeR.c"
+#line 2764 "LikeR.c"
 	PUTBACK;
 	return;
     }
@@ -2666,12 +2776,12 @@ XS_EUPXS(XS_Stats__LikeR_median)
     {
 	double	RETVAL;
 	dXSTARG;
-#line 2315 "LikeR.xs"
+#line 2425 "LikeR.xs"
 	  size_t total_count = 0, k = 0;
 	  double *restrict nums;
 	  double median_val = 0.0;
-#line 2674 "LikeR.c"
-#line 2319 "LikeR.xs"
+#line 2784 "LikeR.c"
+#line 2429 "LikeR.xs"
 	  /* Pass 1: Count total valid elements to allocate memory */
 	  for (size_t i = 0; i < items; i++) {
 		   SV*restrict arg = ST(i);
@@ -2714,7 +2824,7 @@ XS_EUPXS(XS_Stats__LikeR_median)
 	  }
 	  Safefree(nums); nums = NULL;
 	  RETVAL = median_val;
-#line 2718 "LikeR.c"
+#line 2828 "LikeR.c"
 	TARGn((double)RETVAL, 1);
 	ST(0) = TARG;
     }
@@ -2748,7 +2858,7 @@ XS_EUPXS(XS_Stats__LikeR_cor)
 	    method = (const char *)SvPV_nolen(ST(2))
 ;
 	}
-#line 2366 "LikeR.xs"
+#line 2476 "LikeR.xs"
 	  /* --- validate method ------------------------------------------- */
 	  if (strcmp(method, "pearson")  != 0 &&
 		   strcmp(method, "spearman") != 0 &&
@@ -2780,8 +2890,8 @@ XS_EUPXS(XS_Stats__LikeR_cor)
 		   if (fp && SvROK(*fp) && SvTYPE(SvRV(*fp)) == SVt_PVAV)
 		       y_is_matrix = 1;
 	  }
-#line 2784 "LikeR.c"
-#line 2398 "LikeR.xs"
+#line 2894 "LikeR.c"
+#line 2508 "LikeR.xs"
 	  if (!x_is_matrix && !y_is_matrix) {
 		   if (!has_y) {
 		       /* cor(vector) == 1 by definition */
@@ -2932,7 +3042,7 @@ XS_EUPXS(XS_Stats__LikeR_cor)
 		   }
 		   RETVAL = newRV_noinc((SV*)result_av);
 	  }
-#line 2936 "LikeR.c"
+#line 3046 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -2949,7 +3059,7 @@ XS_EUPXS(XS_Stats__LikeR_scale)
     PERL_UNUSED_VAR(ax); /* -Wall */
     SP -= items;
     {
-#line 2554 "LikeR.xs"
+#line 2664 "LikeR.xs"
 	{
 	  bool do_center_mean = true, do_scale_sd = true;
 	  double center_val = 0.0, scale_val = 1.0;
@@ -3150,7 +3260,7 @@ XS_EUPXS(XS_Stats__LikeR_scale)
 		   Safefree(nums); nums = NULL;
 	  }
 	}
-#line 3154 "LikeR.c"
+#line 3264 "LikeR.c"
 	PUTBACK;
 	return;
     }
@@ -3165,7 +3275,7 @@ XS_EUPXS(XS_Stats__LikeR_matrix)
     PERL_UNUSED_VAR(items); /* -W */
     {
 	SV *	RETVAL;
-#line 2757 "LikeR.xs"
+#line 2867 "LikeR.xs"
 	// Basic check: must have an even number of arguments for key => value
 	if (items % 2 != 0) {
 	  croak("Usage: matrix(data => [...], nrow => $n, ncol => $m, byrow => $bool)");
@@ -3240,7 +3350,7 @@ XS_EUPXS(XS_Stats__LikeR_matrix)
 	}
 	safefree(row_ptrs);
 	RETVAL = newRV_noinc((SV*)result_av);
-#line 3244 "LikeR.c"
+#line 3354 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -3256,310 +3366,374 @@ XS_EUPXS(XS_Stats__LikeR_lm)
     PERL_UNUSED_VAR(items); /* -W */
     {
 	SV *	RETVAL;
-#line 2836 "LikeR.xs"
-    {
-        if (items % 2 != 0) 
-            croak("Usage: lm(formula => 'mpg ~ wt * hp', data => \\%mtcars)");
-        const char *restrict formula  = NULL;
-        SV *restrict data_sv = NULL;
-        for (unsigned short i = 0; i < items; i += 2) {
-            const char *restrict key = SvPV_nolen(ST(i));
-            SV *restrict val = ST(i + 1);
-            if      (strEQ(key, "formula")) formula = SvPV_nolen(val);
-            else if (strEQ(key, "data"))    data_sv = val;
-            else croak("lm: unknown argument '%s'", key);
-        }        
-        if (!formula) croak("lm: formula is required");
-        if (!data_sv || !SvROK(data_sv)) croak("lm: data is required and must be a reference");
-        // --- 1. Clean and Strip the Formula ---
-        char f_cpy[512];
-        char *restrict src = (char*)formula;
-        char *restrict dst = f_cpy;
-        while (*src && (dst - f_cpy < 511)) {
-            if (!isspace(*src)) { *dst++ = *src; }
-            src++;
-        }
-        *dst = '\0';
+#line 2946 "LikeR.xs"
+	{
+	  const char *restrict formula  = NULL;
+	  SV *restrict data_sv = NULL;
+	  char f_cpy[512];
+	  char *restrict src, *restrict dst, *restrict tilde, *restrict lhs, *restrict rhs, *restrict chunk;
 
-        char *restrict tilde = strchr(f_cpy, '~');
-        if (!tilde) croak("lm: invalid formula, missing '~'");
-        *tilde = '\0';
+	  /* Dynamic Term Arrays */
+	  char **terms = NULL;
+	  char **uniq_terms = NULL;
+	  char **exp_terms = NULL;
+	  bool *is_dummy = NULL;
+	  char **dummy_base = NULL;
+	  char **dummy_level = NULL;
+	  unsigned int term_cap = 64, exp_cap = 64;
 
-        char *restrict lhs = f_cpy;         /* Response Variable */
-        char *restrict rhs = tilde + 1;     /* Predictor Expression */
+	  unsigned int num_terms = 0, num_uniq = 0, p = 0, p_exp = 0;
+	  size_t n = 0, valid_n = 0;
+	  bool has_intercept = true;
+	  char **restrict row_names = NULL;
+	  char **restrict valid_row_names = NULL;
+	  HV **restrict row_hashes = NULL;
+	  HV *restrict data_hoa = NULL;
+	  SV *restrict ref = NULL;
+	  double *restrict X = NULL, *restrict Y = NULL, *restrict XtX = NULL, *restrict XtY = NULL;
+	  bool *restrict aliased = NULL;
+	  double *restrict beta = NULL;
+	  int final_rank = 0;
 
-        /* --- 2. Tokenize Terms and Resolve Interaction Macros --- */
-        char terms[128][128];
-        unsigned int num_terms = 0;
+	  HV *restrict res_hv, *restrict coef_hv, *restrict fitted_hv, *restrict resid_hv, *restrict summary_hv;
+	  AV *restrict terms_av;
+	  double rss = 0.0, rse_sq = 0.0;
+	  int df_res = 0;
+	  HE *restrict entry;
+	  unsigned short i_arg;
+	  size_t i, j, k, l, l1, l2;
+	  if (items % 2 != 0) croak("Usage: lm(formula => 'mpg ~ wt * hp', data => \\%mtcars)");
+	  for (i_arg = 0; i_arg < items; i_arg += 2) {
+		   const char *restrict key = SvPV_nolen(ST(i_arg));
+		   SV *restrict val = ST(i_arg + 1);
+		   if      (strEQ(key, "formula")) formula = SvPV_nolen(val);
+		   else if (strEQ(key, "data"))    data_sv = val;
+		   else croak("lm: unknown argument '%s'", key);
+	  }        
+	  if (!formula) croak("lm: formula is required");
+	  if (!data_sv || !SvROK(data_sv)) croak("lm: data is required and must be a reference");
+	  // Allocations
+	  Newx(terms, term_cap, char*);
+	  Newx(uniq_terms, term_cap, char*);
+	  Newx(exp_terms, exp_cap, char*);
+	  Newx(is_dummy, exp_cap, bool);
+	  Newx(dummy_base, exp_cap, char*);
+	  Newx(dummy_level, exp_cap, char*);
 
-        bool has_intercept = true;
-        if (strstr(rhs, "-1")) has_intercept = false;
+	  src = (char*)formula; dst = f_cpy;
+	  while (*src && (dst - f_cpy < 511)) { if (!isspace(*src)) { *dst++ = *src; } src++; }
+	  *dst = '\0';
 
-        if (has_intercept) {
-            strcpy(terms[num_terms++], "Intercept");
-        }
-        // Tokenize by the '+' operator
-        char *restrict chunk = strtok(rhs, "+");
-        while (chunk != NULL) {
-            if (strcmp(chunk, "1") == 0 || strcmp(chunk, "-1") == 0) {
-                chunk = strtok(NULL, "+");
-                continue;
-            }
-            char *restrict star = strchr(chunk, '*');
-            if (star) {
-                *star = '\0';
-                char *restrict left = chunk;
-                char *restrict right = star + 1;
+	  tilde = strchr(f_cpy, '~');
+	  if (!tilde) croak("lm: invalid formula, missing '~'");
+	  *tilde = '\0';
+	  lhs = f_cpy; rhs = tilde + 1;
 
-                // R formula rule: strip ^N unless wrapped in I()
-                char *restrict c_left = strchr(left, '^'); 
-                if (c_left && strncmp(left, "I(", 2) != 0) *c_left = '\0';
-                char *restrict c_right = strchr(right, '^'); 
-                if (c_right && strncmp(right, "I(", 2) != 0) *c_right = '\0';
+	  if (strstr(rhs, "-1")) has_intercept = false;
+	  if (has_intercept) { terms[num_terms++] = savepv("Intercept"); }
 
-                strcpy(terms[num_terms++], left);
-                strcpy(terms[num_terms++], right);
-                sprintf(terms[num_terms++], "%s:%s", left, right);
-            } else {
-                char *restrict c_chunk = strchr(chunk, '^'); 
-                if (c_chunk && strncmp(chunk, "I(", 2) != 0) *c_chunk = '\0';
-                strcpy(terms[num_terms++], chunk);
-            }
-            chunk = strtok(NULL, "+");
-        }
+	  chunk = strtok(rhs, "+");
+	  while (chunk != NULL) {
+		   if (num_terms >= term_cap - 3) {
+		       term_cap *= 2;
+		       Renew(terms, term_cap, char*); Renew(uniq_terms, term_cap, char*);
+		   }
+		   if (strcmp(chunk, "1") == 0 || strcmp(chunk, "-1") == 0) { chunk = strtok(NULL, "+"); continue; }
+		   char *restrict star = strchr(chunk, '*');
+		   if (star) {
+		       *star = '\0';
+		       char *restrict left = chunk;
+		       char *restrict right = star + 1;
+		       char *restrict c_l = strchr(left, '^'); if (c_l && strncmp(left, "I(", 2) != 0) *c_l = '\0';
+		       char *restrict c_r = strchr(right, '^'); if (c_r && strncmp(right, "I(", 2) != 0) *c_r = '\0';
 
-        char uniq_terms[128][128];
-        unsigned int num_uniq = 0;
-        for (unsigned int i = 0; i < num_terms; i++) {
-            bool found = false;
-            for (unsigned int j = 0; j < num_uniq; j++) {
-                if (strcmp(terms[i], uniq_terms[j]) == 0) { found = true; break; }
-            }
-            if (!found) {
-                strcpy(uniq_terms[num_uniq++], terms[i]);
-            }
-        }
-        unsigned int p = num_uniq, n = 0;
-        /* --- 3. Structure Row Iterators for Hash of Hashes --- */
-        char **restrict row_names = NULL;
-        HV **restrict row_hashes = NULL;
-        HV *restrict data_hoa = NULL;
+		       terms[num_terms++] = savepv(left);
+		       terms[num_terms++] = savepv(right);
 
-        SV*restrict ref = SvRV(data_sv);
-        if (SvTYPE(ref) == SVt_PVHV) {
-            HV*restrict hv = (HV*)ref;
-            if (hv_iterinit(hv) == 0) croak("lm: Data hash is empty");
-            HE*restrict entry = hv_iternext(hv);
-            if (entry) {
-                SV*restrict val = hv_iterval(hv, entry);
-                if (SvROK(val) && SvTYPE(SvRV(val)) == SVt_PVAV) {
-                    /* Fallback: HoA mode */
-                    data_hoa = hv;
-                    n = av_len((AV*)SvRV(val)) + 1;
-                    Newx(row_names, n, char*);
-                    for(unsigned int i = 0; i < n; i++) {
-                        char buf[32]; snprintf(buf, sizeof(buf), "%u", i+1);
-                        row_names[i] = savepv(buf);
-                    }
-                } else if (SvROK(val) && SvTYPE(SvRV(val)) == SVt_PVHV) {
-                    /* Primary: HoH mode (%mtcars keys are "Mazda RX4") */
-                    n = hv_iterinit(hv);
-                    Newx(row_names, n, char*);
-                    Newx(row_hashes, n, HV*);
-                    size_t i = 0;
-                    while ((entry = hv_iternext(hv))) {
-                        unsigned int len;
-                        char *restrict key = hv_iterkey(entry, &len);
-                        row_names[i] = savepv(key);
-                        row_hashes[i] = (HV*)SvRV(hv_iterval(hv, entry));
-                        i++;
-                    }
-                } else {
-                    croak("lm: Hash values must be ArrayRefs (HoA) or HashRefs (HoH)");
-                }
-            }
-        } else if (SvTYPE(ref) == SVt_PVAV) {
-            // Fallback: AoH mode
-            AV*restrict av = (AV*)ref;
-            n = av_len(av) + 1;
-            Newx(row_names, n, char*);
-            Newx(row_hashes, n, HV*);
-            for (size_t i = 0; i < n; i++) {
-                SV**restrict val = av_fetch(av, i, 0);
-                if (val && SvROK(*val) && SvTYPE(SvRV(*val)) == SVt_PVHV) {
-                    row_hashes[i] = (HV*)SvRV(*val);
-                    char buf[32]; snprintf(buf, sizeof(buf), "%lu", i + 1);
-                    row_names[i] = savepv(buf);
-                } else {
-                    for (size_t x = 0; x < i; x++) Safefree(row_names[x]);
-                    Safefree(row_names); Safefree(row_hashes);
-                    croak("lm: Array values must be HashRefs (AoH)");
-                }
-            }
-        } else {
-            croak("lm: Data must be an Array or Hash reference");
-        }
-double *restrict X; Newx(X, n * p, double);
-        double *restrict Y; Newx(Y, n, double);
-        char **restrict valid_row_names; Newx(valid_row_names, n, char*);
+		       size_t inter_len = strlen(left) + strlen(right) + 2;
+		       terms[num_terms] = (char*)safemalloc(inter_len);
+		       snprintf(terms[num_terms++], inter_len, "%s:%s", left, right);
+		   } else {
+		       char *restrict c_chunk = strchr(chunk, '^'); 
+		       if (c_chunk && strncmp(chunk, "I(", 2) != 0) *c_chunk = '\0';
+		       terms[num_terms++] = savepv(chunk);
+		   }
+		   chunk = strtok(NULL, "+");
+	  }
 
-        /* -- Implement Listwise Deletion (na.omit) -- */
-        size_t valid_n = 0;
-        for (size_t i = 0; i < n; i++) {
-            double y_val = evaluate_term(data_hoa, row_hashes, i, lhs);
-            if (isnan(y_val)) {
-                Safefree(row_names[i]); 
-                continue; 
-            }
+	  for (i = 0; i < num_terms; i++) {
+		   bool found = false;
+		   for (j = 0; j < num_uniq; j++) {
+		       if (strcmp(terms[i], uniq_terms[j]) == 0) { found = true; break; }
+		   }
+		   if (!found) uniq_terms[num_uniq++] = savepv(terms[i]);
+	  }
+	  p = num_uniq;
 
-            bool row_ok = true;
-            double row_x[128];
-            for (size_t j = 0; j < p; j++) {
-                if (strcmp(uniq_terms[j], "Intercept") == 0) {
-                    row_x[j] = 1.0;
-                } else {
-                    row_x[j] = evaluate_term(data_hoa, row_hashes, i, uniq_terms[j]);
-                    if (isnan(row_x[j])) { row_ok = false; break; }
-                }
-            }
+	  // Row Iterators
+	  ref = SvRV(data_sv);
+	  if (SvTYPE(ref) == SVt_PVHV) {
+		   HV*restrict hv = (HV*)ref;
+		   if (hv_iterinit(hv) == 0) croak("lm: Data hash is empty");
+		   entry = hv_iternext(hv);
+		   if (entry) {
+		       SV*restrict val = hv_iterval(hv, entry);
+		       if (SvROK(val) && SvTYPE(SvRV(val)) == SVt_PVAV) {
+		           data_hoa = hv;
+		           n = av_len((AV*)SvRV(val)) + 1;
+		           Newx(row_names, n, char*);
+		           for(i = 0; i < n; i++) {
+		               char buf[32]; snprintf(buf, sizeof(buf), "%lu", (size_t)(i+1));
+		               row_names[i] = savepv(buf);
+		           }
+		       } else if (SvROK(val) && SvTYPE(SvRV(val)) == SVt_PVHV) {
+		           n = hv_iterinit(hv);
+		           Newx(row_names, n, char*); Newx(row_hashes, n, HV*);
+		           i = 0;
+		           while ((entry = hv_iternext(hv))) {
+		               unsigned int len;
+		               row_names[i] = savepv(hv_iterkey(entry, &len));
+		               row_hashes[i] = (HV*)SvRV(hv_iterval(hv, entry));
+		               i++;
+		           }
+		       } else croak("lm: Hash values must be ArrayRefs (HoA) or HashRefs (HoH)");
+		   }
+	  } else if (SvTYPE(ref) == SVt_PVAV) {
+		   AV*restrict av = (AV*)ref;
+		   n = av_len(av) + 1;
+		   Newx(row_names, n, char*); Newx(row_hashes, n, HV*);
+		   for (i = 0; i < n; i++) {
+		       SV**restrict val = av_fetch(av, i, 0);
+		       if (val && SvROK(*val) && SvTYPE(SvRV(*val)) == SVt_PVHV) {
+		           row_hashes[i] = (HV*)SvRV(*val);
+		           char buf[32]; snprintf(buf, sizeof(buf), "%lu", (long unsigned)(i + 1));
+		           row_names[i] = savepv(buf);
+		       } else {
+		           for (k = 0; k < i; k++) Safefree(row_names[k]);
+		           Safefree(row_names); Safefree(row_hashes);
+		           croak("lm: Array values must be HashRefs (AoH)");
+		       }
+		   }
+	  } else croak("lm: Data must be an Array or Hash reference");
 
-            if (!row_ok) {
-                Safefree(row_names[i]);
-                continue;
-            }
+	  // Categorical Expansion
+	  for (j = 0; j < p; j++) {
+		   if (p_exp + 32 >= exp_cap) {
+		       exp_cap *= 2;
+		       Renew(exp_terms, exp_cap, char*); Renew(is_dummy, exp_cap, bool);
+		       Renew(dummy_base, exp_cap, char*); Renew(dummy_level, exp_cap, char*);
+		   }
 
-            /* Populate valid row */
-            Y[valid_n] = y_val;
-            for (size_t j = 0; j < p; j++) X[valid_n * p + j] = row_x[j];
-            valid_row_names[valid_n] = row_names[i];
-            valid_n++;
-        }
-        Safefree(row_names); /* We now use valid_row_names */
+		   if (strcmp(uniq_terms[j], "Intercept") == 0) {
+		       exp_terms[p_exp] = savepv("Intercept");
+		       is_dummy[p_exp] = false;
+		       p_exp++;
+		       continue;
+		   }
 
-        if (valid_n <= p) {
-            Safefree(X); Safefree(Y); Safefree(valid_row_names);
-            if (row_hashes) Safefree(row_hashes);
-            croak("lm: 0 degrees of freedom (too many NAs or parameters > observations)");
-        }
+		   if (is_column_categorical(data_hoa, row_hashes, n, uniq_terms[j])) {
+		       char **levels = NULL;
+		       unsigned int num_levels = 0;
+		       unsigned int levels_cap = 8;
+		       Newx(levels, levels_cap, char*);
 
-        /* --- 4. Ordinary Least Squares (OLS) Math --- */
-        double *restrict XtX;
-        Newxz(XtX, p * p, double);
-        for (size_t i = 0; i < p; i++) {
-            for (size_t j = 0; j < p; j++) {
-                double sum = 0.0;
-                for (size_t k = 0; k < valid_n; k++) {
-                    sum += X[k * p + i] * X[k * p + j];
-                }
-                XtX[i * p + j] = sum;
-            }
-        }
+		       for (i = 0; i < n; i++) {
+		           char* str_val = get_data_string_alloc(data_hoa, row_hashes, i, uniq_terms[j]);
+		           if (str_val) {
+		               bool found = false;
+		               for (l = 0; l < num_levels; l++) {
+		                   if (strcmp(levels[l], str_val) == 0) { found = true; break; }
+		               }
+		               if (!found) {
+		                   if (num_levels >= levels_cap) {
+		                       levels_cap *= 2;
+		                       Renew(levels, levels_cap, char*);
+		                   }
+		                   levels[num_levels++] = savepv(str_val);
+		               }
+		               Safefree(str_val);
+		           }
+		       }
 
-        double *restrict XtY;
-        Newxz(XtY, p, double);
-        for (size_t i = 0; i < p; i++) {
-            double sum = 0.0;
-            for (size_t k = 0; k < valid_n; k++) {
-                sum += X[k * p + i] * Y[k];
-            }
-            XtY[i] = sum;
-        }
+		       if (num_levels > 0) {
+		           for (l1 = 0; l1 < num_levels - 1; l1++) {
+		               for (l2 = l1 + 1; l2 < num_levels; l2++) {
+		                   if (strcmp(levels[l1], levels[l2]) > 0) {
+		                       char *tmp = levels[l1];
+		                       levels[l1] = levels[l2];
+		                       levels[l2] = tmp;
+		                   }
+		               }
+		           }
+		           for (l = 1; l < num_levels; l++) {
+		               if (p_exp >= exp_cap) {
+		                   exp_cap *= 2;
+		                   Renew(exp_terms, exp_cap, char*); Renew(is_dummy, exp_cap, bool);
+		                   Renew(dummy_base, exp_cap, char*); Renew(dummy_level, exp_cap, char*);
+		               }
+		               size_t t_len = strlen(uniq_terms[j]) + strlen(levels[l]) + 1;
+		               exp_terms[p_exp] = (char*)safemalloc(t_len);
+		               snprintf(exp_terms[p_exp], t_len, "%s%s", uniq_terms[j], levels[l]);
 
-        bool *restrict aliased;
-        Newx(aliased, p, bool);
-        /* Replaces the fragile invert_matrix_gj with Sweep */
-        int final_rank = sweep_matrix_ols(XtX, p, aliased);
+		               is_dummy[p_exp] = true;
+		               dummy_base[p_exp] = savepv(uniq_terms[j]);
+		               dummy_level[p_exp] = savepv(levels[l]);
+		               p_exp++;
+		           }
+		           for (l = 0; l < num_levels; l++) Safefree(levels[l]);
+		           Safefree(levels);
+		       } else {
+		           Safefree(levels);
+		           exp_terms[p_exp] = savepv(uniq_terms[j]);
+		           is_dummy[p_exp] = false;
+		           p_exp++;
+		       }
+		   } else {
+		       exp_terms[p_exp] = savepv(uniq_terms[j]);
+		       is_dummy[p_exp] = false;
+		       p_exp++;
+		   }
+	  }
+	  p = p_exp;
 
-        double *restrict beta; Newxz(beta, p, double);
-        for (unsigned int i = 0; i < p; i++) {
-            if (aliased[i]) {
-                beta[i] = NAN; /* Match R's aliased variables */
-            } else {
-                double sum = 0.0;
-                for (unsigned int j = 0; j < p; j++) {
-                    if (!aliased[j]) sum += XtX[i * p + j] * XtY[j];
-                }
-                beta[i] = sum;
-            }
-        }
+	  Newx(X, n * p, double); Newx(Y, n, double); Newx(valid_row_names, n, char*);
 
-        // 5. Assemble Return Structure
-        HV *restrict res_hv = newHV();
-        HV *restrict coef_hv = newHV();
-        HV *restrict fitted_hv = newHV();
-        HV *restrict resid_hv = newHV();
+	  // Listwise Deletion
+	  for (i = 0; i < n; i++) {
+		   double y_val = evaluate_term(data_hoa, row_hashes, i, lhs);
+		   if (isnan(y_val)) { Safefree(row_names[i]); continue; }
 
-        double rss = 0.0;
+		   bool row_ok = true;
+		   double *row_x = (double*)safemalloc(p * sizeof(double));
+		   for (j = 0; j < p; j++) {
+		       if (strcmp(exp_terms[j], "Intercept") == 0) {
+		           row_x[j] = 1.0;
+		       } else if (is_dummy[j]) {
+		           char* str_val = get_data_string_alloc(data_hoa, row_hashes, i, dummy_base[j]);
+		           if (str_val) {
+		               row_x[j] = (strcmp(str_val, dummy_level[j]) == 0) ? 1.0 : 0.0;
+		               Safefree(str_val);
+		           } else { row_ok = false; break; }
+		       } else {
+		           row_x[j] = evaluate_term(data_hoa, row_hashes, i, exp_terms[j]);
+		           if (isnan(row_x[j])) { row_ok = false; break; }
+		       }
+		   }
+		   if (!row_ok) { Safefree(row_names[i]); Safefree(row_x); continue; }
 
-        /* Calculate Fitted Values, Residuals, and RSS */
-        for (unsigned int i = 0; i < valid_n; i++) {
-            double y_hat = 0.0;
-            for (unsigned int j = 0; j < p; j++) {
-                if (!aliased[j]) {
-                    y_hat += X[i * p + j] * beta[j];
-                }
-            }
-            double res = Y[i] - y_hat;
-            rss += res * res;
+		   Y[valid_n] = y_val;
+		   for (j = 0; j < p; j++) X[valid_n * p + j] = row_x[j];
+		   valid_row_names[valid_n] = row_names[i];
+		   valid_n++;
+		   Safefree(row_x);
+	  }
+	  Safefree(row_names);
 
-            hv_store(fitted_hv, valid_row_names[i], strlen(valid_row_names[i]), newSVnv(y_hat), 0);
-            hv_store(resid_hv,  valid_row_names[i], strlen(valid_row_names[i]), newSVnv(res), 0);
-            Safefree(valid_row_names[i]);
-        }
-        Safefree(valid_row_names);
+	  if (valid_n <= p) {
+		   Safefree(X); Safefree(Y); Safefree(valid_row_names);
+		   if (row_hashes) Safefree(row_hashes);
+		   croak("lm: 0 degrees of freedom (too many NAs or parameters > observations)");
+	  }
 
-        // Calculate Summary Statistics (Std Error, t-value, p-value)
-        HV *restrict summary_hv = newHV();
-        AV *restrict terms_av = newAV();
-        int df_res = valid_n - final_rank;
-        double rse_sq = (df_res > 0) ? (rss / df_res) : NAN;
+	  /* OLS Math */
+	  Newxz(XtX, p * p, double);
+	  for (i = 0; i < p; i++) {
+		   for (j = 0; j < p; j++) {
+		       double sum = 0.0;
+		       for (k = 0; k < valid_n; k++) sum += X[k * p + i] * X[k * p + j];
+		       XtX[i * p + j] = sum;
+		   }
+	  }
 
-        for (unsigned int j = 0; j < p; j++) {
-            // 1. Add to flat coefficients hash
-            hv_store(coef_hv, uniq_terms[j], strlen(uniq_terms[j]), newSVnv(beta[j]), 0);
+	  Newxz(XtY, p, double);
+	  for (i = 0; i < p; i++) {
+		   double sum = 0.0;
+		   for (k = 0; k < valid_n; k++) sum += X[k * p + i] * Y[k];
+		   XtY[i] = sum;
+	  }
 
-            // 2. Record term order for Perl formatting
-            av_push(terms_av, newSVpv(uniq_terms[j], 0));
+	  Newx(aliased, p, bool);
+	  final_rank = sweep_matrix_ols(XtX, p, aliased);
 
-            // 3. Build summary row HashRef/
-            HV *restrict row_hv = newHV();
-            if (aliased[j]) {
-                hv_store(row_hv, "Estimate",   8, newSVpv("NaN", 0), 0);
-                hv_store(row_hv, "Std. Error", 10, newSVpv("NaN", 0), 0);
-                hv_store(row_hv, "t value",    7, newSVpv("NaN", 0), 0);
-                hv_store(row_hv, "Pr(>|t|)",   8, newSVpv("NaN", 0), 0);
-            } else {
-                /* Sweep replaced XtX with its inverse. XtX[j * p + j] is the diagonal element */
-                double se = sqrt(rse_sq * XtX[j * p + j]);
-                double t_val = beta[j] / se;
-                double p_val = pt_2tail(t_val, df_res);
+	  Newxz(beta, p, double);
+	  for (i = 0; i < p; i++) {
+		   if (aliased[i]) { beta[i] = NAN; } else {
+		       double sum = 0.0;
+		       for (j = 0; j < p; j++) if (!aliased[j]) sum += XtX[i * p + j] * XtY[j];
+		       beta[i] = sum;
+		   }
+	  }
 
-                hv_store(row_hv, "Estimate",   8, newSVnv(beta[j]), 0);
-                hv_store(row_hv, "Std. Error", 10, newSVnv(se), 0);
-                hv_store(row_hv, "t value",    7, newSVnv(t_val), 0);
-                hv_store(row_hv, "Pr(>|t|)",   8, newSVnv(p_val), 0);
-            }
-            hv_store(summary_hv, uniq_terms[j], strlen(uniq_terms[j]), newRV_noinc((SV*)row_hv), 0);
-        }
+	  /* Return Struct */
+	  res_hv = newHV(); coef_hv = newHV(); fitted_hv = newHV(); resid_hv = newHV();
 
-        /* Store everything in the main return hash */
-        hv_store(res_hv, "coefficients",  12, newRV_noinc((SV*)coef_hv), 0);
-        hv_store(res_hv, "fitted.values", 13, newRV_noinc((SV*)fitted_hv), 0);
-        hv_store(res_hv, "residuals",      9, newRV_noinc((SV*)resid_hv), 0);
-        hv_store(res_hv, "df.residual",   11, newSVuv(df_res), 0);
-        hv_store(res_hv, "rank",          4,  newSVuv(final_rank), 0);
-        hv_store(res_hv, "rss",           3,  newSVnv(rss), 0);
-        hv_store(res_hv, "summary",       7,  newRV_noinc((SV*)summary_hv), 0);
-        hv_store(res_hv, "terms",         5,  newRV_noinc((SV*)terms_av), 0);
-/* Clean up */
-        Safefree(X); Safefree(Y); 
-        Safefree(XtX); Safefree(XtY);
-        Safefree(beta); Safefree(aliased);
-        if (row_hashes) Safefree(row_hashes);
+	  for (i = 0; i < valid_n; i++) {
+		   double y_hat = 0.0;
+		   for (j = 0; j < p; j++) if (!aliased[j]) y_hat += X[i * p + j] * beta[j];
+		   double res = Y[i] - y_hat;
+		   rss += res * res;
 
-        RETVAL = newRV_noinc((SV*)res_hv);
-    }
-#line 3563 "LikeR.c"
+		   hv_store(fitted_hv, valid_row_names[i], strlen(valid_row_names[i]), newSVnv(y_hat), 0);
+		   hv_store(resid_hv,  valid_row_names[i], strlen(valid_row_names[i]), newSVnv(res), 0);
+		   Safefree(valid_row_names[i]);
+	  }
+	  Safefree(valid_row_names);
+
+	  summary_hv = newHV(); terms_av = newAV();
+	  df_res = valid_n - final_rank;
+	  rse_sq = (df_res > 0) ? (rss / df_res) : NAN;
+
+	  for (j = 0; j < p; j++) {
+		   hv_store(coef_hv, exp_terms[j], strlen(exp_terms[j]), newSVnv(beta[j]), 0);
+		   av_push(terms_av, newSVpv(exp_terms[j], 0));
+
+		   HV *restrict row_hv = newHV();
+		   if (aliased[j]) {
+		       hv_store(row_hv, "Estimate",   8, newSVpv("NaN", 0), 0);
+		       hv_store(row_hv, "Std. Error", 10, newSVpv("NaN", 0), 0);
+		       hv_store(row_hv, "t value",    7, newSVpv("NaN", 0), 0);
+		       hv_store(row_hv, "Pr(>|t|)",   8, newSVpv("NaN", 0), 0);
+		   } else {
+		       double se = sqrt(rse_sq * XtX[j * p + j]);
+		       double t_val = beta[j] / se;
+		       double p_val = pt_2tail(t_val, df_res);
+
+		       hv_store(row_hv, "Estimate",   8, newSVnv(beta[j]), 0);
+		       hv_store(row_hv, "Std. Error", 10, newSVnv(se), 0);
+		       hv_store(row_hv, "t value",    7, newSVnv(t_val), 0);
+		       hv_store(row_hv, "Pr(>|t|)",   8, newSVnv(p_val), 0);
+		   }
+		   hv_store(summary_hv, exp_terms[j], strlen(exp_terms[j]), newRV_noinc((SV*)row_hv), 0);
+	  }
+
+	  hv_store(res_hv, "coefficients",  12, newRV_noinc((SV*)coef_hv), 0);
+	  hv_store(res_hv, "fitted.values", 13, newRV_noinc((SV*)fitted_hv), 0);
+	  hv_store(res_hv, "residuals",      9, newRV_noinc((SV*)resid_hv), 0);
+	  hv_store(res_hv, "df.residual",   11, newSVuv(df_res), 0);
+	  hv_store(res_hv, "rank",          4,  newSVuv(final_rank), 0);
+	  hv_store(res_hv, "rss",           3,  newSVnv(rss), 0);
+	  hv_store(res_hv, "summary",       7,  newRV_noinc((SV*)summary_hv), 0);
+	  hv_store(res_hv, "terms",         5,  newRV_noinc((SV*)terms_av), 0);
+
+	  // Deep Cleanup
+	  for (i = 0; i < num_terms; i++) Safefree(terms[i]);
+	  Safefree(terms);
+	  for (i = 0; i < num_uniq; i++) Safefree(uniq_terms[i]);
+	  Safefree(uniq_terms);
+	  for (j = 0; j < p_exp; j++) {
+		   Safefree(exp_terms[j]);
+		   if (is_dummy[j]) { Safefree(dummy_base[j]); Safefree(dummy_level[j]); }
+	  }
+	  Safefree(exp_terms); Safefree(is_dummy);
+	  Safefree(dummy_base); Safefree(dummy_level);
+
+	  Safefree(X); Safefree(Y); Safefree(XtX); Safefree(XtY);
+	  Safefree(beta); Safefree(aliased);
+	  if (row_hashes) Safefree(row_hashes);
+
+	  RETVAL = newRV_noinc((SV*)res_hv);
+	}
+#line 3737 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -3588,7 +3762,7 @@ XS_EUPXS(XS_Stats__LikeR_seq)
 	    by = (double)SvNV(ST(2))
 ;
 	}
-#line 3147 "LikeR.xs"
+#line 3321 "LikeR.xs"
 	{
 	  //Handle the zero 'by' case
 	  if (by == 0.0) {
@@ -3620,7 +3794,7 @@ XS_EUPXS(XS_Stats__LikeR_seq)
 	  }
 	  XSRETURN(n_elements);
 	}
-#line 3624 "LikeR.c"
+#line 3798 "LikeR.c"
 	PUTBACK;
 	return;
     }
@@ -3635,7 +3809,7 @@ XS_EUPXS(XS_Stats__LikeR_rnorm)
     PERL_UNUSED_VAR(items); /* -W */
     {
 	SV *	RETVAL;
-#line 3181 "LikeR.xs"
+#line 3355 "LikeR.xs"
 	{
 	  // Auto-seed the PRNG if the Perl script hasn't done so yet
 	  AUTO_SEED_PRNG();
@@ -3681,7 +3855,7 @@ XS_EUPXS(XS_Stats__LikeR_rnorm)
 
 	  RETVAL = newRV_noinc((SV*)result_av);
 	}
-#line 3685 "LikeR.c"
+#line 3859 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -3701,7 +3875,7 @@ XS_EUPXS(XS_Stats__LikeR_aov)
 	SV*	formula_sv = ST(1)
 ;
 	SV *	RETVAL;
-#line 3234 "LikeR.xs"
+#line 3408 "LikeR.xs"
     {
         HV*restrict data;
         char *restrict f_str, *restrict lhs, *restrict rhs, *restrict token, *saveptr;
@@ -3854,7 +4028,7 @@ XS_EUPXS(XS_Stats__LikeR_aov)
 
         RETVAL = newRV_noinc((SV*)ret_hash);
     }
-#line 3858 "LikeR.c"
+#line 4032 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -3872,13 +4046,13 @@ XS_EUPXS(XS_Stats__LikeR_fisher_test)
 	SV*	data_ref = ST(0)
 ;
 	double	conf_level;
-#line 3396 "LikeR.xs"
+#line 3570 "LikeR.xs"
 	  size_t a = 0, b = 0, c = 0, d = 0;
 	  double p_val, mle_or, ci_low, ci_high;
 	  HV*restrict ret_hash;
 	  AV*restrict ci_array;
 	  HV*restrict est_hash;
-#line 3882 "LikeR.c"
+#line 4056 "LikeR.c"
 	SV *	RETVAL;
 
 	if (items < 2)
@@ -3887,7 +4061,7 @@ XS_EUPXS(XS_Stats__LikeR_fisher_test)
 	    conf_level = (double)SvNV(ST(1))
 ;
 	}
-#line 3402 "LikeR.xs"
+#line 3576 "LikeR.xs"
 	  if (!SvROK(data_ref)) croak("fisher_test requires a reference to an Array or Hash");
 	  SV*restrict deref = SvRV(data_ref);
 	  /* Fast Path: 2D Array / AoA */
@@ -3952,7 +4126,7 @@ XS_EUPXS(XS_Stats__LikeR_fisher_test)
 	  hv_stores(ret_hash, "estimate", newRV_noinc((SV*)est_hash));
 	  // Return the HashRef
 	  RETVAL = newRV_noinc((SV*)ret_hash);
-#line 3956 "LikeR.c"
+#line 4130 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }

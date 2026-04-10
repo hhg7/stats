@@ -218,7 +218,8 @@ static void calculate_exact_stats(size_t a, size_t b, size_t c, size_t d, double
         *ci_high = best;
     }
 }
-/* Two-sided exact p-value */
+
+// Two-sided exact p-value
 static double exact_p_value(size_t a, size_t b, size_t c, size_t d) {
 	size_t r1 = a + b, r2 = c + d, c1 = a + c;
 	size_t min_x = (r2 > c1) ? 0 : c1 - r2;
