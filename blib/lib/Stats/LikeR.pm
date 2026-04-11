@@ -14,17 +14,17 @@ use warnings FATAL => 'all';
 use autodie ':default';
 use Exporter 'import';
 XSLoader::load('Stats::LikeR', $VERSION);
-our @EXPORT_OK = qw(aov cor cor_test fisher_test glm hist lm matrix mean median min max p_adjust quantile rbinom rnorm runif scale sd seq shapiro_test t_test var write_table);
+our @EXPORT_OK = qw(aov cor cor_test fisher_test glm hist lm matrix mean median min max p_adjust quantile rbinom read_table rnorm runif scale sd seq shapiro_test t_test var write_table);
 our @EXPORT = @EXPORT_OK;
 package Stats::LikeR;
 
 require XSLoader;
 
-sub read_table { # mimics R's read.table; returns array of hash
+sub read_table { 
 	my ($args) = @_;
 	my $args_ref = ref $args;
-	my $current_sub = (split(/::/,(caller(0))[3]))[-1]; # https://stackoverflow.com/questions/2559792/how-can-i-get-the-name-of-the-current-subroutine-in-perl
-	my @req_args = ('filename');#, 'row name');
+	my $current_sub = (split(/::/,(caller(0))[3]))[-1]; 
+	my @req_args = ('filename');
 	if ($args_ref ne 'HASH') {
 		say STDERR 'Required args:';
 		p @req_args;
@@ -36,28 +36,26 @@ sub read_table { # mimics R's read.table; returns array of hash
 		die 'the above args are necessary, but were not defined.';
 	}
 	my @defined_args = (@req_args,
-		'comment.char', #character to skip lines after the header
-		'sep', # by default ","
+		'comment.char', 
+		'sep', 
 		'substitutions',
 		'output.type'
 	);
-	my @bad_args = grep { # which args aren't defined?
-								my $key = $_;
-								not grep {$_ eq $key} @defined_args
-							  } keys %{ $args };
+	my %allowed_args = map { $_ => 1 } @defined_args;
+	my @bad_args = grep { !$allowed_args{$_} } keys %{ $args };
 	if (scalar @bad_args > 0) {
 		p @bad_args;
 		say 'the above arguments are not recognized.';
 		p @defined_args;
 		die 'The above args are accepted.'
 	}
-	$args->{sep} = $args->{sep} // ',';
 	$args->{'output.type'} = $args->{'output.type'} // 'aoh';
+	$args->{sep} = $args->{sep} // ',';
 	my (@data, @header, %data);
 	open my $txt, '<', $args->{filename};
 	while (<$txt>) {
 		if (
-				($. > 1) # past header
+				($. > 1) 
 				&& 
 				(defined $args->{'comment.char'})
 				&&
@@ -66,38 +64,47 @@ sub read_table { # mimics R's read.table; returns array of hash
 			next	
 		}
 		chomp;
-# CSV will often have commas inside the fields, which incorrectly splits some cells
-		foreach my $sub (@{ $args->{substitutions} }) {
+
+		# FIXED: Default to empty array ref if substitutions not provided
+		foreach my $sub (@{ $args->{substitutions} // [] }) {
 			$_ =~ s/$sub->[0]/$sub->[1]/g;
 		}
-		my @line = grep {$_ ne ''} split /$args->{sep}/;
-		if ($. == 1) { # header
-#			if ((defined $args->{'row name'}) && (!grep { $_ eq $args->{'row name'}} @line)) {
-#				p @line;
-#				die "the above line is missing $args->{'row name'}"
-#			}
+		
+		# FIXED: Use -1 limit to keep trailing empty fields, removed destructive grep
+		my @line = split /$args->{sep}/, $_, -1;
+		
+		if ($. == 1) { 
 			foreach my $cell (@line) {
 				$cell =~ s/^#//;
-				if ($cell =~ m/^"(.+)"$/) { # remove quotes
+				if ($cell =~ m/^"(.+)"$/) { 
 					$cell = $1;
 				}
+				# FIXED: Un-escape doubled quotes
+				$cell =~ s/""/"/g; 
 			}
-			@header = grep {$_ ne ''} @line;
+			# It's usually safe to drop completely empty headers at the end
+			@header = grep {$_ ne ''} @line; 
 			next;
 		}
+		
 		if (scalar @line != scalar @header) {
-			p @line;
-			p @header;
-			warn "the number of elements on $args->{filename} line $. != the header.";
+			# Truncate or pad line to match header gracefully, or warn
+			warn "the number of elements on $args->{filename} line $. (" . scalar(@line) . ") != the header (" . scalar(@header) . ").";
 			next;
 		}
-		next if grep {not defined} @line;
+		
 		my %line;
-		@line{@header} = @line; # hash slice based on header
-		if (grep {!defined} values %line) {
-			p %line;
-			die "got undefined values at line $. in $args->{filename}";
+		for my $i (0 .. $#header) {
+			my $cell = $line[$i];
+			# FIXED: Handle quotes and un-escape data payload properly
+			if (defined $cell && $cell =~ m/^"(.*)"$/) {
+				$cell = $1;
+				$cell =~ s/""/"/g;
+			}
+			# Treat empty strings as 'NA' or undef to maintain column alignment
+			$line{$header[$i]} = ($cell eq '') ? 'NA' : $cell; 
 		}
+
 		if ($args->{'output.type'} eq 'aoh') {
 			push @data, \%line;
 		} elsif ($args->{'output.type'} eq 'hoa') {
@@ -105,10 +112,9 @@ sub read_table { # mimics R's read.table; returns array of hash
 				push @{ $data{$col} }, $line{$col};
 			}
 		}
-#		my $key = $line{$args->{'row name'}};
-#		delete $line{$args->{'row name'}};
-#		$data{$key} = \%line;
 	}
+	close $txt;
+	
 	if ($args->{'output.type'} eq 'aoh') {
 		return \@data;
 	} elsif ($args->{'output.type'} eq 'hoa') {
@@ -117,95 +123,142 @@ sub read_table { # mimics R's read.table; returns array of hash
 }
 
 sub write_table {
-	# 1. Allow passing the data hash ref as the first positional argument
-	my $data_ref = (ref($_[0]) eq 'HASH') ? shift : undef;
-
+	my $data_ref = (ref($_[0]) eq 'HASH' || ref($_[0]) eq 'ARRAY') ? shift : undef;
 	my $current_sub = (split(/::/,(caller(0))[3]))[-1];
 
 	my %args = (
-	  sep         => ',',
-	  'row.names' => 1,      # Default to true, similar to R
-	  @_,
+		sep         => ',',
+		'row.names' => 1,      
+		@_,
 	);
 
-	# Map the positional data ref to the 'data' key if provided
 	$args{data} //= $data_ref;
 
-	# 2. Argument validation
 	my %allowed = map { $_ => 1 } qw(data file row.names sep);
 	my @err = grep { !$allowed{$_} } keys %args;
 	if (@err > 0) {
-	  die "$current_sub: Unknown arguments passed: " . join(", ", @err) . "\n";
+		die "$current_sub: Unknown arguments passed: " . join(", ", @err) . "\n";
 	}
 
 	die "$current_sub: 'file' argument is required\n" unless defined $args{file};
-	die "$current_sub: 'data' must be a HASH reference\n" 
-	  unless defined $args{data} && ref $args{data} eq 'HASH';
+	die "$current_sub: 'data' must be a HASH or ARRAY reference\n" 
+		unless defined $args{data} && (ref($args{data}) eq 'HASH' || ref($args{data}) eq 'ARRAY');
 
 	my $data         = $args{data};
 	my $sep          = $args{sep};
 	my $file         = $args{file};
 	my $inc_rownames = $args{'row.names'};
 
-	my @rows = keys %$data;
-	return if @rows == 0; # Nothing to write
+	my $quote_field = sub {
+		my ($val, $sep) = @_;
+		return '' unless defined $val;
+		# FIXED: Prevent nested references from being stringified silently
+		die "$current_sub: Cannot write nested reference types to table\n" if ref($val);
+		
+		my $str = "$val";  
+		if (index($str, $sep) != -1 || index($str, '"') != -1 || $str =~ /[\r\n]/) {
+			$str =~ s/"/""/g;
+			$str = qq{"$str"};
+		}
+		return $str;
+	};
 
-	# 3. Determine if it's a Hash of Hashes or Hash of Arrays
-	my $first_type = ref $data->{$rows[0]};
-	die "$current_sub: Data values must be either all HASHes or all ARRAYs\n"
-	  unless $first_type eq 'HASH' || $first_type eq 'ARRAY';
+	my $data_type = ref $data;
+	my ($is_hoh, $is_hoa, $is_aoh) = (0, 0, 0);
+	my @rows;
 
-	# Validate that all elements match the first element's type
-	my @type_err = grep { ref $data->{$_} ne $first_type } @rows;
-	if (@type_err > 0) {
-	  die "$current_sub: Mixed data types detected. Ensure all values are $first_type references.\n";
-	}
-	# 4. Open file for writing
-	open my $fh, '>', $file or die "$current_sub: Could not open '$file' for writing: $!\n";
-	if ($first_type eq 'HASH') {
-	  # --- HASH OF HASHES ---
-	  # Get all unique inner keys to act as column headers
-	  my %col_map;
-	  for my $r (@rows) {
-		   $col_map{$_} = 1 for keys %{ $data->{$r} };
-	  }
-	  my @headers = sort keys %col_map;
+	if ($data_type eq 'HASH') {
+		@rows = keys %$data;
+		return if @rows == 0; 
 
-	  # Print header
-	  my @header_row = @headers;
-	  unshift @header_row, "" if $inc_rownames; # Leave top-left cell blank for row.names
-	  print $fh join($sep, @header_row) . "\n";
-	  # Print data
-	  for my $r (sort @rows) {
-		   # Use "NA" for missing inner keys, mimicking R
-		   my @row_data = map { defined $data->{$r}{$_} ? $data->{$r}{$_} : "NA" } @headers;
-		   unshift @row_data, $r if $inc_rownames;
-		   print $fh join($sep, @row_data) . "\n";
-	  }
+		my $first_type = ref $data->{$rows[0]};
+		die "$current_sub: Data values must be either all HASHes or all ARRAYs\n"
+			unless $first_type eq 'HASH' || $first_type eq 'ARRAY';
+
+		my @type_err = grep { ref $data->{$_} ne $first_type } @rows;
+		if (@type_err > 0) {
+			die "$current_sub: Mixed data types detected. Ensure all values are $first_type references.\n";
+		}
+
+		$is_hoh = ($first_type eq 'HASH');
+		$is_hoa = ($first_type eq 'ARRAY');
 	} else {
-	  # --- HASH OF ARRAYS ---
-	  # Find the maximum array length to know how many columns we have
-	  my $max_cols = 0;
-	  for my $r (@rows) {
-		   my $len = scalar @{ $data->{$r} };
-		   $max_cols = $len if $len > $max_cols;
-	  }
+		return if @$data == 0;
 
-	  # Generate headers (e.g., V1, V2, V3... mimicking R's default behavior)
-	  my @headers = map { "V$_" } 1 .. $max_cols;
-	  my @header_row = @headers;
-	  unshift @header_row, "" if $inc_rownames;
-	  print $fh join($sep, @header_row) . "\n";
+		my $first_elem = $data->[0];
+		die "$current_sub: For ARRAY data, all elements must be HASH references (Array of Hashes)\n"
+			unless defined $first_elem && ref($first_elem) eq 'HASH';
 
-	  # Print data
-	  for my $r (sort @rows) {
-		   my @row_data = @{ $data->{$r} };
-		   # Pad with "NA" if some arrays are shorter than others
-		   push @row_data, "NA" while @row_data < $max_cols;
-		   unshift @row_data, $r if $inc_rownames;
-		   print $fh join($sep, @row_data) . "\n";
-	  }
+		my @type_err = grep { !defined($_) || ref($_) ne 'HASH' } @$data;
+		if (@type_err > 0) {
+			die "$current_sub: Mixed data types detected in Array of Hashes. All elements must be HASH references.\n";
+		}
+
+		$is_aoh = 1;
 	}
+
+	open my $fh, '>', $file or die "$current_sub: Could not open '$file' for writing: $!\n";
+
+	if ($is_hoh) {
+		my %col_map;
+		for my $r (@rows) {
+			$col_map{$_} = 1 for keys %{ $data->{$r} };
+		}
+		my @headers = sort keys %col_map;
+
+		my @header_row = @headers;
+		unshift @header_row, "" if $inc_rownames;
+		@header_row = map { $quote_field->($_, $sep) } @header_row;
+		print $fh join($sep, @header_row) . "\n";
+
+		for my $r (sort @rows) {
+			my @row_data = map { defined $data->{$r}{$_} ? $data->{$r}{$_} : "NA" } @headers;
+			unshift @row_data, $r if $inc_rownames;
+			my @quoted = map { $quote_field->($_, $sep) } @row_data;
+			print $fh join($sep, @quoted) . "\n";
+		}
+	} elsif ($is_hoa) {
+		my $max_cols = 0;
+		for my $r (@rows) {
+			my $len = scalar @{ $data->{$r} };
+			$max_cols = $len if $len > $max_cols;
+		}
+
+		my @headers = map { "V$_" } 1 .. $max_cols;
+		my @header_row = @headers;
+		unshift @header_row, "" if $inc_rownames;
+		@header_row = map { $quote_field->($_, $sep) } @header_row;
+		print $fh join($sep, @header_row) . "\n";
+
+		for my $r (sort @rows) {
+			my @row_data = map { defined $_ ? $_ : "NA" } @{ $data->{$r} };
+			push @row_data, "NA" while @row_data < $max_cols;
+			unshift @row_data, $r if $inc_rownames;
+			my @quoted = map { $quote_field->($_, $sep) } @row_data;
+			print $fh join($sep, @quoted) . "\n";
+		}
+	} elsif ($is_aoh) {
+		my %col_map;
+		for my $row_hash (@$data) {
+			$col_map{$_} = 1 for keys %$row_hash;
+		}
+		my @headers = sort keys %col_map;
+
+		my @header_row = @headers;
+		unshift @header_row, "" if $inc_rownames;
+		@header_row = map { $quote_field->($_, $sep) } @header_row;
+		print $fh join($sep, @header_row) . "\n";
+
+		for my $i (0 .. $#$data) {
+			my $row_hash = $data->[$i];
+			my @row_data = map { defined $row_hash->{$_} ? $row_hash->{$_} : "NA" } @headers;
+			unshift @row_data, $i + 1 if $inc_rownames;
+			my @quoted = map { $quote_field->($_, $sep) } @row_data;
+			print $fh join($sep, @quoted) . "\n";
+		}
+	}
+	# FIXED: Explicitly close the filehandle to ensure immediate flushing
+	close $fh; 
 }
 1;
 #sub mean {

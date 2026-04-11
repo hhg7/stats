@@ -1351,5 +1351,118 @@ if (sha512_base64($str) eq 'FInYAXZcS7lK1n7osAhVkp5SiQNpt3h4kql9yZ2YCoPQslHKjwfG
 } else {
 	fail("sha512 does not match for write_table; see $tmp_file");
 }
+# === TEST 1: HASH OF HASHES (positional) ===
+# Demonstrates: HoH, sorted rows/columns, "NA" for missing values,
+#               quoting when separator ("\t") or " appears inside data
+$tmp_file = '/tmp/test_hoh.tsv';
+my %data_hoh = (
+	'r1' => { 'c1' => 42,        'c2' => 'hello,world' },
+	'r2' => { 'c1' => 99,        'c3' => 'quote"here' },
+	'r3' => { 'c2' => "tab\tin", 'c4' => undef },
+);
 
+write_table(\%data_hoh, sep => "\t", 'row.names' => true, file => $tmp_file);
+$str = file2string($tmp_file);
+if (sha512_base64($str) eq 'ZYK6zmrT47CLrEc4PSFtCtvdkLtv47MCIMHIg70bARlWO5J9MuzybnV5h7dBSyQn8dOKojaX6pinxOvbTVaI+g') {
+	pass('write_table successfully wrote a tab-delimited file (Hash of Hashes)');
+	unlink $tmp_file;
+} else {
+	fail("sha512 does not match for write_table HoH; see $tmp_file");
+}
+# === TEST 2: HASH OF ARRAYS (positional) ===
+# Demonstrates: HoA, auto-generated V1/V2... headers, padding shorter arrays with "NA",
+#               quoting when separator ("\t") or " appears inside data
+$tmp_file = '/tmp/test_hoa.tsv';
+my %data_hoa = (
+	'r1' => [42, 'hello,world', undef, undef],
+	'r2' => [99, undef, 'quote"here', undef],
+	'r3' => [undef, "tab\tin", undef, undef],
+);
+
+write_table(\%data_hoa, sep => "\t", 'row.names' => true, file => $tmp_file);
+$str = file2string($tmp_file);
+if (sha512_base64($str) eq 'wsKnu+u+TTMEYpTS0NKGes8JrWQ9JfnUgP8yCmo+q3BmnLbrzYUE74n+nd23kaGffHABIt1aluUPRgqtVl5jVA') {
+    pass('write_table successfully wrote a tab-delimited file (Hash of Arrays)');
+    unlink $tmp_file;
+} else {
+    fail("sha512 does not match for write_table HoA; see $tmp_file");
+}
+
+# === TEST 3: ARRAY OF HASHES (positional) ===
+# Demonstrates: AoH, preserves original array order (no sorting of rows),
+#               row names become 1, 2, 3..., quoting when separator ("\t") or " appears inside data
+$tmp_file = '/tmp/test_aoh.tsv';
+my @data_aoh = (
+	{ 'c1' => 42,          'c2' => 'hello,world' },
+	{ 'c1' => 99,          'c3' => 'quote"here' },
+	{ 'c2' => "tab\tin" },
+);
+
+write_table(\@data_aoh, sep => "\t", 'row.names' => true, file => $tmp_file);
+$str = file2string($tmp_file);
+if (sha512_base64($str) eq 'Nx/3jb/smu2Jdk2SNCXhxK7yaAO0GO5TAbwztb16fYqDT8nSMzdbdK61I30pfB3KVPtZ5w5rT4Ex2d4+pJFm5g') {
+	pass('write_table successfully wrote a tab-delimited file (Array of Hashes)');
+	unlink $tmp_file;
+} else {
+	fail("sha512 does not match for write_table AoH; see $tmp_file");
+}
+#-------------------------------------------------------------------
+#  read_table & write_table specific bug checks
+#-------------------------------------------------------------------
+subtest 'read_table: Substitutions array dereference bug' => sub {
+	my $tmp_csv = '/tmp/test_sub_bug.csv';
+	open my $fh, '>', $tmp_csv or die $!;
+	print $fh "col1,col2\nval1,val2\n";
+	close $fh;
+
+	# Previously, omitting 'substitutions' caused an undef dereference crash.
+	lives_ok {
+		my $data = read_table({ filename => $tmp_csv });
+		is($data->[0]{col1}, 'val1', 'Data read successfully without substitutions arg');
+	} 'read_table lives when substitutions array is not provided';
+	unlink $tmp_csv;
+};
+
+subtest 'read_table: Preserving missing values and trailing separators' => sub {
+	my $tmp_csv = '/tmp/test_missing_data.csv';
+	open my $fh, '>', $tmp_csv or die $!;
+	# Row 1 has an empty middle column. Row 2 has a trailing empty column.
+	say $fh "A,B,C\n1,,3\n4,5,";
+	close $fh;
+	my $data;
+	lives_ok {
+		# Suppress the warning just for the test scope if desired, but 
+		# the patched code shouldn't throw a warning here anymore.
+		$data = read_table({ filename => $tmp_csv, 'output.type' => 'aoh' });
+	} 'read_table parses lines with missing values correctly';
+
+	is($data->[0]{B}, 'NA', 'Middle missing value correctly assigned NA (not skipped by grep)');
+	is($data->[1]{C}, 'NA', 'Trailing missing value correctly assigned NA (not dropped by split limit)');
+	unlink $tmp_csv;
+};
+
+subtest 'read_table / write_table: Escaped quote handling' => sub {
+	my $tmp_csv = '/tmp/test_quotes.csv';
+	my @data_out = (
+		{ 'c1' => 42, 'c2' => 'Normal String' },
+		{ 'c1' => 99, 'c2' => 'String with "quotes" inside' }
+	);
+	# Write the table. write_table should turn "quotes" into ""quotes""
+	write_table(\@data_out, sep => ",", 'row.names' => false, file => $tmp_csv);
+	# Read the table back. read_table should turn ""quotes"" back into "quotes"
+	my $data_in = read_table({ filename => $tmp_csv, 'output.type' => 'aoh' });
+	is($data_in->[1]{c2}, 'String with "quotes" inside', 'read_table correctly unescapes internal quotes');
+	unlink $tmp_csv;
+};
+
+subtest 'write_table: Nested reference stringification protection' => sub {
+	my $tmp_csv = '/tmp/test_nested.csv';
+	my %bad_data = (
+		'r1' => { 'c1' => 42, 'c2' => [1, 2, 3] } # Arrayref inside the hash
+	);
+	dies_ok {
+		write_table(\%bad_data, sep => ",", 'row.names' => true, file => $tmp_csv);
+	} 'write_table dies to prevent silent stringification of nested references';
+	unlink $tmp_csv if -e $tmp_csv;
+};
 done_testing();

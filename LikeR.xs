@@ -49,95 +49,93 @@ static double qnorm(double p) {
 // Rank helper for Spearman
 typedef struct { double val; int index; double rank; } RankItem_cor_test;
 static int compare_rank(const void *restrict a, const void *restrict b) {
-    double diff = ((RankItem_cor_test*)a)->val - ((RankItem_cor_test*)b)->val;
-    return (diff > 0) - (diff < 0);
+	double diff = ((RankItem_cor_test*)a)->val - ((RankItem_cor_test*)b)->val;
+	return (diff > 0) - (diff < 0);
 }
 
 static int compare_index(const void *restrict a, const void *restrict b) {
-    return ((RankItem_cor_test*)a)->index - ((RankItem_cor_test*)b)->index;
+	return ((RankItem_cor_test*)a)->index - ((RankItem_cor_test*)b)->index;
 }
 
-static void compute_ranks(double *restrict data, double *restrict ranks, unsigned int n) {
-    RankItem_cor_test *restrict items = safemalloc(n * sizeof(RankItem_cor_test));
-    for (unsigned int i = 0; i < n; i++) {
-        items[i].val = data[i];
-        items[i].index = i;
-    }
-    qsort(items, n, sizeof(RankItem_cor_test), compare_rank);
-    // Handle ties by averaging ranks
-    for (unsigned int i = 0; i < n; ) {
-        unsigned int j = i + 1;
-        while (j < n && items[j].val == items[i].val) j++;
-        double avg_rank = (i + 1 + j) / 2.0;
-        for (int k = i; k < j; k++) items[k].rank = avg_rank;
-        i = j;
-    }
-    
-    qsort(items, n, sizeof(RankItem_cor_test), compare_index);
-    for (unsigned int i = 0; i < n; i++) ranks[i] = items[i].rank;
-    Safefree(items);
+static void compute_ranks(double *restrict data, double *restrict ranks, size_t n) {
+	RankItem_cor_test *restrict items = safemalloc(n * sizeof(RankItem_cor_test));
+	for (size_t i = 0; i < n; i++) {
+	  items[i].val = data[i];
+	  items[i].index = i;
+	}
+	qsort(items, n, sizeof(RankItem_cor_test), compare_rank);
+	// Handle ties by averaging ranks
+	for (size_t i = 0; i < n; ) {
+	  size_t j = i + 1;
+	  while (j < n && items[j].val == items[i].val) j++;
+	  double avg_rank = (i + 1 + j) / 2.0;
+	  for (size_t k = i; k < j; k++) items[k].rank = avg_rank;
+	  i = j;
+	}
+	qsort(items, n, sizeof(RankItem_cor_test), compare_index);
+	for (size_t i = 0; i < n; i++) ranks[i] = items[i].rank;
+	Safefree(items);
 }
 // Generates a single binomial random variate. 
 //Uses the standard Bernoulli trial loop. Drand01() taps into Perl's PRNG.
 static size_t generate_binomial(size_t size, double prob) {
-    if (prob <= 0.0) return 0;
-    if (prob >= 1.0) return size;
-    
-    unsigned int successes = 0;
-    for (size_t i = 0; i < size; i++) {
-        if (Drand01() <= prob) successes++;
-    }
-    return successes;
+	if (prob <= 0.0) return 0;
+	if (prob >= 1.0) return size;
+
+	unsigned int successes = 0;
+	for (size_t i = 0; i < size; i++) {
+	  if (Drand01() <= prob) successes++;
+	}
+	return successes;
 }
 // Helper: log combination
 static double log_choose(size_t n, size_t k) {
-    return lgamma((double)n + 1.0) - lgamma((double)k + 1.0) - lgamma((double)(n - k) + 1.0);
+	return lgamma((double)n + 1.0) - lgamma((double)k + 1.0) - lgamma((double)(n - k) + 1.0);
 }
 
 static double bisection_root(double (*func)(size_t, size_t, size_t, double),
                              size_t r1, size_t r2, size_t c1, double target,
                              double log_low0, double log_high0) {
-    double log_low  = log_low0;
-    double log_high = log_high0;
-    double best_omega = exp((log_low + log_high) * 0.5);
-    double best_error = 1e9;
+	double log_low  = log_low0;
+	double log_high = log_high0;
+	double best_omega = exp((log_low + log_high) * 0.5);
+	double best_error = 1e9;
 
-    for (unsigned short int i = 0; i < 20000; ++i) {
-        double log_mid = 0.5 * (log_low + log_high);
-        double omega   = exp(log_mid);
-        double val     = func(r1, r2, c1, omega);
-        double error   = fabs(val - target);
+	for (unsigned short int i = 0; i < 20000; ++i) {
+		double log_mid = 0.5 * (log_low + log_high);
+		double omega   = exp(log_mid);
+		double val     = func(r1, r2, c1, omega);
+		double error   = fabs(val - target);
 
-        if (error < best_error) {
-            best_error = error;
-            best_omega = omega;
-        }
+		if (error < best_error) {
+			best_error = error;
+			best_omega = omega;
+		}
 
-        if (val > target) {
-            log_high = log_mid;
-        } else {
-            log_low  = log_mid;
-        }
-        if (log_high - log_low < 1e-30) break;
-    }
-    return best_omega;
+		if (val > target) {
+			log_high = log_mid;
+		} else {
+			log_low  = log_mid;
+		}
+		if (log_high - log_low < 1e-30) break;
+	}
+	return best_omega;
 }
 // Expected value using the same stable recursive method
 static double expected_a(size_t r1, size_t r2, size_t c1, double omega) {
-    size_t min_x = (r2 > c1) ? 0 : c1 - r2;
-    size_t max_x = (r1 < c1) ? r1 : c1;
-    if (omega <= 0.0) return (double)min_x;
-
-    double p = 1.0, sum_p = 1.0;
-    double sum_xp = (double)min_x;
-    for (size_t i = min_x; i < max_x; ++i) {
-        double ratio = ((double)(r1 - i) * (c1 - i) * omega) /
-                       ((i + 1.0) * (r2 - c1 + i + 1.0));
-        p *= ratio;
-        sum_p += p;
-        sum_xp += (double)(i + 1) * p;
-    }
-    return sum_xp / sum_p;
+	size_t min_x = (r2 > c1) ? 0 : c1 - r2;
+	size_t max_x = (r1 < c1) ? r1 : c1;
+	if (omega <= 0.0) return (double)min_x;
+	double p = 1.0, sum_p = 1.0;
+	double sum_xp = (double)min_x;
+	for (size_t i = min_x; i < max_x; ++i) {
+		double ratio = ((double)(r1 - i) * (c1 - i) * omega) /
+				        ((i + 1.0) * (r2 - c1 + i + 1.0));
+		p *= ratio;
+		sum_p += p;
+		sum_xp += (double)(i + 1) * p;
+	}
+	return sum_xp / sum_p;
 }
 
 // Tail probabilities using recursive ratio (fast + stable, same as R)/
@@ -180,17 +178,17 @@ static void calculate_exact_stats(size_t a, size_t b, size_t c, size_t d, double
     size_t r1 = a + b, r2 = c + d, c1 = a + c;
     size_t min_x = (r2 > c1) ? 0 : c1 - r2;
     size_t max_x = (r1 < c1) ? r1 : c1;
-    /* MLE */
+    // MLE
     if (a == min_x && a == max_x) *mle_or = 1.0;
     else if (a == min_x) *mle_or = 0.0;
     else if (a == max_x) *mle_or = INFINITY;
     else *mle_or = bisection_root(expected_a, r1, r2, c1, (double)a, -100.0, 100.0);
-    /* Lower CI: P(X ≥ a | ω) = α/2 */
+    // Lower CI: P(X ≥ a | ω) = α/2
     if (a == min_x) {
         *ci_low = 0.0;
     } else {
         double log_low = -100.0, log_high = 100.0, best = 1.0, best_err = 1e9, lt, ut;
-        for (unsigned int i = 0; i < 10000; ++i) {
+        for (unsigned short int i = 0; i < 10000; ++i) {
             double log_mid = 0.5 * (log_low + log_high);
             double mid = exp(log_mid);
             calc_tails(a, b, c, d, mid, &lt, &ut);
@@ -201,7 +199,7 @@ static void calculate_exact_stats(size_t a, size_t b, size_t c, size_t d, double
         }
         *ci_low = best;
     }
-    /* Upper CI: P(X ≤ a | ω) = α/2 */
+    // Upper CI: P(X ≤ a | ω) = α/2
     if (a == max_x) {
         *ci_high = INFINITY;
     } else {
@@ -244,34 +242,34 @@ static double exact_p_value(size_t a, size_t b, size_t c, size_t d) {
  * This gracefully handles collinearity by bypassing aliased columns.
  * Matches R's LINPACK/LAPACK coefficient dropping behavior. */
 static int sweep_matrix_ols(double *restrict A, size_t n, bool *restrict aliased) {
-    int rank = 0;
-    for (size_t k = 0; k < n; k++) aliased[k] = false;
+	int rank = 0;
+	for (size_t k = 0; k < n; k++) aliased[k] = false;
 
-    for (size_t k = 0; k < n; k++) {
-        /* Check pivot for collinearity / zero variance */
-        if (fabs(A[k * n + k]) < 1e-10) {
-            aliased[k] = true;
-            /* Isolate this column so it doesn't affect the rest of the matrix */
-            for (size_t i = 0; i < n; i++) { A[k * n + i] = 0.0; A[i * n + k] = 0.0; }
-            continue;
-        }
-        rank++;
-        double pivot = 1.0 / A[k * n + k];
-        A[k * n + k] = 1.0;
-        
-        for (size_t j = 0; j < n; j++) A[k * n + j] *= pivot;
-        
-        for (size_t i = 0; i < n; i++) {
-            if (i != k && A[i * n + k] != 0.0) {
-                double factor = A[i * n + k];
-                A[i * n + k] = 0.0;
-                for (size_t j = 0; j < n; j++) {
-                    A[i * n + j] -= factor * A[k * n + j];
-                }
-            }
-        }
-    }
-    return rank;
+	for (size_t k = 0; k < n; k++) {
+		// Check pivot for collinearity / zero variance
+		if (fabs(A[k * n + k]) < 1e-10) {
+			aliased[k] = true;
+			/* Isolate this column so it doesn't affect the rest of the matrix */
+			for (size_t i = 0; i < n; i++) { A[k * n + i] = 0.0; A[i * n + k] = 0.0; }
+			continue;
+		}
+		rank++;
+		double pivot = 1.0 / A[k * n + k];
+		A[k * n + k] = 1.0;
+
+		for (size_t j = 0; j < n; j++) A[k * n + j] *= pivot;
+
+		for (size_t i = 0; i < n; i++) {
+			if (i != k && A[i * n + k] != 0.0) {
+				 double factor = A[i * n + k];
+				 A[i * n + k] = 0.0;
+				 for (size_t j = 0; j < n; j++) {
+					  A[i * n + j] -= factor * A[k * n + j];
+				 }
+			}
+		}
+	}
+	return rank;
 }
 
 // Internal extractor resolving single data values. Returns NAN on missing or non-numeric.
@@ -338,49 +336,49 @@ static double evaluate_term(HV *restrict data_hoa, HV **restrict row_hashes, uns
 
 // Helper to infer column type from its first valid element
 static bool is_column_categorical(HV *restrict data_hoa, HV **restrict row_hashes, size_t n, const char *restrict var) {
-    for (size_t i = 0; i < n; i++) {
-        SV **val = NULL;
-        if (row_hashes) {
-            val = hv_fetch(row_hashes[i], var, strlen(var), 0);
-            if (val && SvROK(*val) && SvTYPE(SvRV(*val)) == SVt_PVAV) {
-                AV*restrict av = (AV*)SvRV(*val);
-                val = av_fetch(av, 0, 0);
-            }
-        } else if (data_hoa) {
-            SV **col = hv_fetch(data_hoa, var, strlen(var), 0);
-            if (col && SvROK(*col) && SvTYPE(SvRV(*col)) == SVt_PVAV) {
-                AV*restrict av = (AV*)SvRV(*col);
-                val = av_fetch(av, i, 0);
-            }
-        }
-        if (val && SvOK(*val)) {
-            if (looks_like_number(*val)) return false; /* First valid is number -> Numeric Column */
-            return true; /* First valid is string -> Categorical Column */
-        }
-    }
-    return false;
+	for (size_t i = 0; i < n; i++) {
+	  SV **restrict val = NULL;
+	  if (row_hashes) {
+		   val = hv_fetch(row_hashes[i], var, strlen(var), 0);
+		   if (val && SvROK(*val) && SvTYPE(SvRV(*val)) == SVt_PVAV) {
+		       AV*restrict av = (AV*)SvRV(*val);
+		       val = av_fetch(av, 0, 0);
+		   }
+	  } else if (data_hoa) {
+		   SV **col = hv_fetch(data_hoa, var, strlen(var), 0);
+		   if (col && SvROK(*col) && SvTYPE(SvRV(*col)) == SVt_PVAV) {
+		       AV*restrict av = (AV*)SvRV(*col);
+		       val = av_fetch(av, i, 0);
+		   }
+	  }
+	  if (val && SvOK(*val)) {
+		   if (looks_like_number(*val)) return false; /* First valid is number -> Numeric Column */
+		   return true; /* First valid is string -> Categorical Column */
+	  }
+	}
+	return false;
 }
 
 /* Internal extractor resolving single data string values using dynamic allocation. */
-static char* get_data_string_alloc(HV *restrict data_hoa, HV **restrict row_hashes, unsigned int i, const char *restrict var) {
-    SV **val = NULL;
-    if (row_hashes) {
-        val = hv_fetch(row_hashes[i], var, strlen(var), 0);
-        if (val && SvROK(*val) && SvTYPE(SvRV(*val)) == SVt_PVAV) {
-            AV*restrict av = (AV*)SvRV(*val);
-            val = av_fetch(av, 0, 0);
-        }
-    } else if (data_hoa) {
-        SV **col = hv_fetch(data_hoa, var, strlen(var), 0);
-        if (col && SvROK(*col) && SvTYPE(SvRV(*col)) == SVt_PVAV) {
-            AV*restrict av = (AV*)SvRV(*col);
-            val = av_fetch(av, i, 0);
-        }
-    }
-    if (val && SvOK(*val)) {
-        return savepv(SvPV_nolen(*val)); /* Allocates and returns string */
-    }
-    return NULL;
+static char* get_data_string_alloc(HV *restrict data_hoa, HV **restrict row_hashes, size_t i, const char *restrict var) {
+	SV **restrict val = NULL;
+	if (row_hashes) {
+		val = hv_fetch(row_hashes[i], var, strlen(var), 0);
+		if (val && SvROK(*val) && SvTYPE(SvRV(*val)) == SVt_PVAV) {
+			AV*restrict av = (AV*)SvRV(*val);
+			val = av_fetch(av, 0, 0);
+		}
+	} else if (data_hoa) {
+		SV **restrict col = hv_fetch(data_hoa, var, strlen(var), 0);
+		if (col && SvROK(*col) && SvTYPE(SvRV(*col)) == SVt_PVAV) {
+			AV*restrict av = (AV*)SvRV(*col);
+			val = av_fetch(av, i, 0);
+		}
+	}
+	if (val && SvOK(*val)) {
+	  return savepv(SvPV_nolen(*val)); /* Allocates and returns string */
+	}
+	return NULL;
 }
 
 // Struct for sorting p-values while remembering their original index
@@ -403,8 +401,8 @@ static int cmp_pval(const void *restrict a, const void *restrict b) {
 /* Item used to sort values while remembering their original index,
  * needed for average-rank tie-breaking in Spearman correlation.        */
 typedef struct {
-    double val;
-    size_t idx;
+	double val;
+	size_t idx;
 } RankItem;
 
 static int cmp_rank_item(const void *restrict a, const void *restrict b) {
@@ -438,15 +436,15 @@ static void rank_data(const double *restrict in, double *restrict out, size_t n)
 /* Pearson product-moment r between two n-element arrays.
  * Returns NAN when either variable has zero variance (matches R).       */
 static double pearson_corr(const double *restrict x, const double *restrict y, size_t n) {
-    double sx = 0, sy = 0, sxy = 0, sx2 = 0, sy2 = 0;
-    for (size_t i = 0; i < n; i++) {
-        sx  += x[i];     sy  += y[i];
-        sxy += x[i]*y[i]; sx2 += x[i]*x[i]; sy2 += y[i]*y[i];
-    }
-    double num = (double)n * sxy - sx * sy;
-    double den = sqrt(((double)n * sx2 - sx*sx) * ((double)n * sy2 - sy*sy));
-    if (den == 0.0) return NAN;
-    return num / den;
+	double sx = 0, sy = 0, sxy = 0, sx2 = 0, sy2 = 0;
+	for (size_t i = 0; i < n; i++) {
+	  sx  += x[i];     sy  += y[i];
+	  sxy += x[i]*y[i]; sx2 += x[i]*x[i]; sy2 += y[i]*y[i];
+	}
+	double num = (double)n * sxy - sx * sy;
+	double den = sqrt(((double)n * sx2 - sx*sx) * ((double)n * sy2 - sy*sy));
+	if (den == 0.0) return NAN;
+	return num / den;
 }
 
 /* Kendall's tau-b between two n-element arrays.
@@ -544,13 +542,13 @@ static double get_t_pvalue(double t, double df, const char*restrict alt) {
 /* Bisection algorithm to find the inverse t-distribution (Critical t-value) */
 static double qt_tail(double df, double p_tail) {
 	double low = 0.0, high = 1.0;
-	/* Find upper bound */
+	// Find upper bound
 	while (get_t_pvalue(high, df, "greater") > p_tail) {
 	  low = high;
 	  high *= 2.0;
 	  if (high > 1000000.0) break; /* Fallback limit */
 	}
-	/* Bisect to find the root */
+	// Bisect to find the root
 	for (unsigned short int i = 0; i < 100; i++) {
 	  double mid = (low + high) / 2.0;
 	  double p_mid = get_t_pvalue(mid, df, "greater");
@@ -2532,7 +2530,7 @@ SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 		       }
 		   }
 		   // -- resolve y: separate matrix or re-use x (symmetric)
-		   size_t    ncols_y;
+		   size_t ncols_y;
 		   double **restrict col_y   = NULL;
 		   bool symmetric = 0;   // 1 = cor(X) — result is symmetric
 		   if (has_y && y_is_matrix) {
@@ -2586,11 +2584,11 @@ SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 		           Newx(r_cache[i], ncols_x, double);
 
 		       for (size_t i = 0; i < ncols_x; i++) {
-		           r_cache[i][i] = 1.0;                // diagonal
+		           r_cache[i][i] = 1.0; // diagonal
 		           for (size_t j = i + 1; j < ncols_x; j++) {
 		               double r = compute_cor(col_x[i], col_x[j], nrows, method);
 		               r_cache[i][j] = r;
-		               r_cache[j][i] = r;              // symmetry
+		               r_cache[j][i] = r; // symmetry
 		           }
 		       }
 		       // fill output AoA from cache
@@ -2601,18 +2599,18 @@ SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 		       for (size_t i = 0; i < ncols_x; i++) Safefree(r_cache[i]);
 		       Safefree(r_cache); r_cache = NULL;
 		   } else {
-		       /* cross-correlation: every (i,j) pair is independent     */
+		       // cross-correlation: every (i,j) pair is independent
 		       for (size_t i = 0; i < ncols_x; i++)
 		           for (size_t j = 0; j < ncols_y; j++)
 		               av_store(rows_out[i], j,
 		                        newSVnv(compute_cor(col_x[i], col_y[j],
 		                                            nrows, method)));
 		   }
-		   /* push row AVs into result */
+		   // push row AVs into result */
 		   for (size_t i = 0; i < ncols_x; i++)
 		       av_store(result_av, i, newRV_noinc((SV*)rows_out[i]));
 		   Safefree(rows_out); rows_out = NULL;
-		   /* -- free column arrays ------------------------------------- */
+		   // -- free column arrays -------------------------------------
 		   for (size_t j = 0; j < ncols_x; j++) Safefree(col_x[j]);
 		   Safefree(col_x); col_x = NULL;
 		   if (!symmetric) {
