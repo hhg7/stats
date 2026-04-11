@@ -896,7 +896,7 @@ SV* glm(...)
 	  AV *restrict terms_av;
 	  HE *restrict entry;
 	  unsigned short i_arg;
-	  size_t i, j, k, l;
+	  size_t i, j;
 
 	  if (items % 2 != 0) croak("Usage: glm(formula => 'am ~ wt + hp', data => \\%mtcars)");
 	  
@@ -1014,7 +1014,7 @@ SV* glm(...)
 		           char buf[32]; snprintf(buf, sizeof(buf), "%lu", i + 1);
 		           row_names[i] = savepv(buf);
 		       } else {
-		           for (k = 0; k < i; k++) Safefree(row_names[k]);
+		           for (size_t k = 0; k < i; k++) Safefree(row_names[k]);
 		           Safefree(row_names); Safefree(row_hashes);
 		           croak("glm: Array values must be HashRefs (AoH)");
 		       }
@@ -1037,13 +1037,13 @@ SV* glm(...)
 		   }
 		   if (is_column_categorical(data_hoa, row_hashes, n, uniq_terms[j])) {
 		       char **restrict levels = NULL;
-		       unsigned int num_levels = 0, levels_cap = 8;
+		       size_t num_levels = 0, levels_cap = 8;
 		       Newx(levels, levels_cap, char*);
 		       for (i = 0; i < n; i++) {
 		           char* str_val = get_data_string_alloc(data_hoa, row_hashes, i, uniq_terms[j]);
 		           if (str_val) {
 		               bool found = false;
-		               for (l = 0; l < num_levels; l++) {
+		               for (size_t l = 0; l < num_levels; l++) {
 		                   if (strcmp(levels[l], str_val) == 0) { found = true; break; }
 		               }
 		               if (!found) {
@@ -1066,7 +1066,7 @@ SV* glm(...)
 		                   }
 		               }
 		           }
-		           for (l = 1; l < num_levels; l++) {
+		           for (size_t l = 1; l < num_levels; l++) {
 		               if (p_exp >= exp_cap) {
 		                   exp_cap *= 2;
 		                   Renew(exp_terms, exp_cap, char*); Renew(is_dummy, exp_cap, bool);
@@ -1081,7 +1081,7 @@ SV* glm(...)
 		               dummy_level[p_exp] = savepv(levels[l]);
 		               p_exp++;
 		           }
-		           for (l = 0; l < num_levels; l++) Safefree(levels[l]);
+		           for (size_t l = 0; l < num_levels; l++) Safefree(levels[l]);
 		           Safefree(levels);
 		       } else {
 		           Safefree(levels);
@@ -1162,7 +1162,7 @@ SV* glm(...)
 		       } else { W[i] = 1.0; WZ[i] = Y[i]; }
 		   }
 		   for (i = 0; i < p; i++) { XtWZ[i] = 0.0; for (j = 0; j < p; j++) XtWX[i * p + j] = 0.0; }
-		   for (k = 0; k < valid_n; k++) {
+		   for (size_t k = 0; k < valid_n; k++) {
 		       double w = W[k], wz = WZ[k];
 		       for (i = 0; i < p; i++) {
 		           XtWZ[i] += X[k * p + i] * wz;
@@ -1208,7 +1208,7 @@ SV* glm(...)
 		   for (j = 0; j < p; j++) beta_old[j] = beta[j];
 	  }
 	  for (i = 0; i < p; i++) { for (j = 0; j < p; j++) XtWX[i * p + j] = 0.0; }
-	  for (k = 0; k < valid_n; k++) {
+	  for (size_t k = 0; k < valid_n; k++) {
 		   double w = is_binomial ? (mu[k] * (1.0 - mu[k])) : 1.0;
 		   if (w < 1e-10) w = 1e-10;
 		   for (i = 0; i < p; i++) {
