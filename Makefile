@@ -197,7 +197,8 @@ PERL_ARCHIVE_AFTER =
 
 TO_INST_PM = benchmark.pl \
 	examples.pl \
-	lib/Stats/LikeR.pm
+	lib/Stats/LikeR.pm \
+	lib/Stats/bu.LikeR.pm
 PERL_ARCHLIBDEP = /home/con/perl5/perlbrew/perls/perl-5.42.2/lib/5.42.2/x86_64-linux
 PERL_INCDEP = /home/con/perl5/perlbrew/perls/perl-5.42.2/lib/5.42.2/x86_64-linux/CORE
 
@@ -1089,7 +1090,8 @@ pm_to_blib : $(FIRST_MAKEFILE) $(TO_INST_PM)
 	  -e 'pm_to_blib({@ARGV}, '\''$(INST_LIB)/auto'\'', $$filter, '\''$(PERM_DIR)'\'')' -- $(PM_FILTER) -- \
 	  'benchmark.pl' '$(INST_LIB)/Stats/benchmark.pl' \
 	  'examples.pl' '$(INST_LIB)/Stats/examples.pl' \
-	  'lib/Stats/LikeR.pm' 'blib/lib/Stats/LikeR.pm' 
+	  'lib/Stats/LikeR.pm' 'blib/lib/Stats/LikeR.pm' \
+	  'lib/Stats/bu.LikeR.pm' 'blib/lib/Stats/bu.LikeR.pm' 
 	$(NOECHO) $(TOUCH) pm_to_blib
 
 

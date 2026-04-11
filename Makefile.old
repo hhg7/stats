@@ -6,7 +6,7 @@
 #
 #       ANY CHANGES MADE HERE WILL BE LOST!
 #
-#   MakeMaker ARGV: ()
+#   MakeMaker ARGV: (q[OPTIMIZE=-O4 -Wunused])
 #
 
 #   MakeMaker Parameters:
@@ -164,13 +164,16 @@ BOOTDEP =
 # Handy lists of source code files:
 XS_FILES = Fisher_Test.xs \
 	LikeR.xs \
-	bu.stats.xs
+	bu.LikeR.xs \
+	old.LikeR.xs
 C_FILES  = Fisher_Test.c \
 	LikeR.c \
-	bu.stats.c
+	bu.LikeR.c \
+	old.LikeR.c
 O_FILES  = Fisher_Test.o \
 	LikeR.o \
-	bu.stats.o
+	bu.LikeR.o \
+	old.LikeR.o
 H_FILES  = ppport.h
 MAN1PODS = 
 MAN3PODS = 
@@ -194,7 +197,8 @@ PERL_ARCHIVE_AFTER =
 
 TO_INST_PM = benchmark.pl \
 	examples.pl \
-	lib/Stats/LikeR.pm
+	lib/Stats/LikeR.pm \
+	lib/Stats/bu.LikeR.pm
 PERL_ARCHLIBDEP = /home/con/perl5/perlbrew/perls/perl-5.42.2/lib/5.42.2/x86_64-linux
 PERL_INCDEP = /home/con/perl5/perlbrew/perls/perl-5.42.2/lib/5.42.2/x86_64-linux/CORE
 
@@ -293,7 +297,7 @@ DISTVNAME = Stats-LikeR-0.01
 # --- MakeMaker cflags section:
 
 CCFLAGS = -fwrapv -fno-strict-aliasing -pipe -fstack-protector-strong -I/usr/local/include -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64
-OPTIMIZE = -O2
+OPTIMIZE = -O4 -Wunused
 PERLTYPE = 
 MPOLLUTE = 
 
@@ -560,15 +564,19 @@ clean :: clean_subdirs
 	  LikeR.exp LikeR.o \
 	  LikeR_def.old MYMETA.json \
 	  MYMETA.yml blibdirs.ts \
-	  bu.stats.base bu.stats.bs \
-	  bu.stats.bso bu.stats.c \
-	  bu.stats.def bu.stats.exp \
-	  bu.stats.o bu.stats_def.old \
+	  bu.LikeR.base bu.LikeR.bs \
+	  bu.LikeR.bso bu.LikeR.c \
+	  bu.LikeR.def bu.LikeR.exp \
+	  bu.LikeR.o bu.LikeR_def.old \
 	  core core.*perl.*.? \
 	  core.[0-9] core.[0-9][0-9] \
 	  core.[0-9][0-9][0-9] core.[0-9][0-9][0-9][0-9] \
 	  core.[0-9][0-9][0-9][0-9][0-9] lib$(BASEEXT).def \
-	  mon.out perl \
+	  mon.out old.LikeR.base \
+	  old.LikeR.bs old.LikeR.bso \
+	  old.LikeR.c old.LikeR.def \
+	  old.LikeR.exp old.LikeR.o \
+	  old.LikeR_def.old perl \
 	  perl$(EXE_EXT) perl.exe \
 	  perlmain.c pm_to_blib \
 	  pm_to_blib.ts so_locations \
@@ -741,7 +749,7 @@ distdir : create_distdir distmeta
 
 # --- MakeMaker dist_test section:
 disttest : distdir
-	cd $(DISTVNAME) && $(ABSPERLRUN) Makefile.PL 
+	cd $(DISTVNAME) && $(ABSPERLRUN) Makefile.PL "OPTIMIZE=-O4 -Wunused"
 	cd $(DISTVNAME) && $(MAKE) $(PASTHRU)
 	cd $(DISTVNAME) && $(MAKE) test $(PASTHRU)
 
@@ -983,7 +991,7 @@ PERL_HDRS = \
 
 $(OBJECT) : $(PERL_HDRS)
 
-Fisher_Test.c LikeR.c bu.stats.c : $(XSUBPPDEPS)
+Fisher_Test.c LikeR.c bu.LikeR.c old.LikeR.c : $(XSUBPPDEPS)
 
 
 # --- MakeMaker makefile section:
@@ -998,7 +1006,7 @@ $(FIRST_MAKEFILE) : Makefile.PL $(CONFIGDEP)
 	-$(NOECHO) $(RM_F) $(MAKEFILE_OLD)
 	-$(NOECHO) $(MV)   $(FIRST_MAKEFILE) $(MAKEFILE_OLD)
 	- $(MAKE) $(USEMAKEFILE) $(MAKEFILE_OLD) clean $(DEV_NULL)
-	$(PERLRUN) Makefile.PL 
+	$(PERLRUN) Makefile.PL "OPTIMIZE=-O4 -Wunused"
 	$(NOECHO) $(ECHO) "==> Your Makefile has been rebuilt. <=="
 	$(NOECHO) $(ECHO) "==> Please rerun the $(MAKE) command.  <=="
 	$(FALSE)
@@ -1020,7 +1028,8 @@ $(MAKE_APERL_FILE) : static $(FIRST_MAKEFILE) pm_to_blib
 	$(NOECHO) $(PERLRUNINST) \
 		Makefile.PL DIR="" \
 		MAKEFILE=$(MAKE_APERL_FILE) LINKTYPE=static \
-		MAKEAPERL=1 NORECURS=1 CCCDLFLAGS=
+		MAKEAPERL=1 NORECURS=1 CCCDLFLAGS= \
+		OPTIMIZE='-O4 -Wunused'
 
 
 # --- MakeMaker test section:
@@ -1081,7 +1090,8 @@ pm_to_blib : $(FIRST_MAKEFILE) $(TO_INST_PM)
 	  -e 'pm_to_blib({@ARGV}, '\''$(INST_LIB)/auto'\'', $$filter, '\''$(PERM_DIR)'\'')' -- $(PM_FILTER) -- \
 	  'benchmark.pl' '$(INST_LIB)/Stats/benchmark.pl' \
 	  'examples.pl' '$(INST_LIB)/Stats/examples.pl' \
-	  'lib/Stats/LikeR.pm' 'blib/lib/Stats/LikeR.pm' 
+	  'lib/Stats/LikeR.pm' 'blib/lib/Stats/LikeR.pm' \
+	  'lib/Stats/bu.LikeR.pm' 'blib/lib/Stats/bu.LikeR.pm' 
 	$(NOECHO) $(TOUCH) pm_to_blib
 
 

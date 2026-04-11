@@ -10,6 +10,7 @@ use Devel::Confess 'color';
 use Stats::LikeR;
 use Scalar::Util 'looks_like_number';
 use JSON qw(decode_json encode_json);
+use Digest::SHA 'sha512_base64';
 
 # Gemini helped to write some of the tests
 # Custom helper for floating-point comparisons
@@ -1327,4 +1328,28 @@ foreach my $k1 ('fitted.values', 'deviance.resid') {
 		is_approx( $glm_teeth->{$k1}{$key}, $correct{$k1}{$key}, "$k1 $key within $e", $e);
 	}
 }
+#-------------------
+#     write_table
+#-------------------
+my %data = (
+	'Row_A' => { 'Col1' => 10, 'Col2' => 20 },
+	'Row_B' => { 'Col1' => 30, 'Col3' => 40 },
+);
+
+# The corrected call:
+sub file2string {
+	my $file = shift;
+	open my $fh, '<', $file;
+	return do { local $/; <$fh> };
+}
+my $tmp_file = '/tmp/test.tsv';
+write_table(\%data, sep => "\t", 'row.names' => true, file => $tmp_file);
+my $str = file2string($tmp_file);
+if (sha512_base64($str) eq 'FInYAXZcS7lK1n7osAhVkp5SiQNpt3h4kql9yZ2YCoPQslHKjwfGAXgdiphDSc6wMhlpU5toNmSifEUz1OgHNQ') {
+	pass('write_table successfully wrote a tab-delimited file');
+	unlink $tmp_file;
+} else {
+	fail("sha512 does not match for write_table; see $tmp_file");
+}
+
 done_testing();
