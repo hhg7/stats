@@ -298,15 +298,18 @@ static double get_data_value(HV *restrict data_hoa, HV **restrict row_hashes, un
 }
 
 // Recursive formula resolver must propagate NANs
+// Recursive formula resolver with dynamic allocation
 static double evaluate_term(HV *restrict data_hoa, HV **restrict row_hashes, unsigned int i, const char *restrict term) {
-    char term_cpy[256];
-    strncpy(term_cpy, term, 255); term_cpy[255] = '\0';
+    // Dynamically allocate instead of char term_cpy[256];
+    char *restrict term_cpy = savepv(term); 
 
     char *restrict colon = strchr(term_cpy, ':');
     if (colon) {
         *colon = '\0';
         double left = evaluate_term(data_hoa, row_hashes, i, term_cpy);
         double right = evaluate_term(data_hoa, row_hashes, i, colon + 1);
+        Safefree(term_cpy); // Free before returning
+        
         if (isnan(left) || isnan(right)) return NAN;
         return left * right;
     }
@@ -322,10 +325,15 @@ static double evaluate_term(HV *restrict data_hoa, HV **restrict row_hashes, uns
             power = atoi(caret + 1);
         }
         double v = get_data_value(data_hoa, row_hashes, i, inner);
+        Safefree(term_cpy); // Free before returning
+        
         if (isnan(v)) return NAN;
         return power == 1 ? v : pow(v, power);
     }
-    return get_data_value(data_hoa, row_hashes, i, term_cpy);
+    
+    double result = get_data_value(data_hoa, row_hashes, i, term_cpy);
+    Safefree(term_cpy); // Free before returning
+    return result;
 }
 
 // Helper to infer column type from its first valid element
