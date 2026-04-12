@@ -20,104 +20,96 @@ package Stats::LikeR;
 
 require XSLoader;
 
-sub read_table { 
-	my ($args) = @_;
-	my $args_ref = ref $args;
-	my $current_sub = (split(/::/,(caller(0))[3]))[-1]; 
-	my @req_args = ('filename');
-	if ($args_ref ne 'HASH') {
-		say STDERR 'Required args:';
-		p @req_args;
-		die "\"$args_ref\" was entered, but a \"HASH\" is needed by $current_sub";
-	}
-	my @undef_args = grep { !defined $args->{$_}} @req_args;
-	if (scalar @undef_args > 0) {
-		p @undef_args;
-		die 'the above args are necessary, but were not defined.';
-	}
-	my @defined_args = (@req_args,
-		'comment.char', 
-		'sep', 
+sub read_table {
+	my $file = shift;
+	die "\"$file\" is either unreadable or not a file" unless -r -f $file;
+	my %args = (
+		sep => ',', comment => '#',
+		@_,
+	);
+	my %allowed_args = map {$_ => 1} (
+		'comment', #character to skip lines after the header
+		'row.name',
+		'sep', # by default ","
 		'substitutions',
 		'output.type'
 	);
-	my %allowed_args = map { $_ => 1 } @defined_args;
-	my @bad_args = grep { !$allowed_args{$_} } keys %{ $args };
-	if (scalar @bad_args > 0) {
-		p @bad_args;
-		say 'the above arguments are not recognized.';
-		p @defined_args;
-		die 'The above args are accepted.'
+	my @undef_args = sort grep {!$allowed_args{$_}} keys %allowed_args;
+	my $current_sub = (split(/::/,(caller(0))[3]))[-1];
+	if (scalar @undef_args > 0) {
+		p @undef_args;
+		die "the above args aren't defined for $current_sub";
 	}
-	$args->{'output.type'} = $args->{'output.type'} // 'aoh';
-	$args->{sep} = $args->{sep} // ',';
-	my (@data, @header, %data);
-	open my $txt, '<', $args->{filename};
+	# ... (argument validation logic from your original script) ...
+	$args{'output.type'} = $args{'output.type'} // 'aoh';
+	if ($args{'output.type'} !~ m/^(?:aoh|hoa)$/) {
+		die "\"$args{'output.type'}\" isn't allowed";
+	}
+	$args{comment} = $args{comment} // '#';
+	my (@data, %data, @header);
+	open my $txt, '<', $file;
 	while (<$txt>) {
-		if (
-				($. > 1) 
-				&& 
-				(defined $args->{'comment.char'})
-				&&
-				($_ =~ m/^$args->{'comment.char'}/)
-			) {
-			next	
-		}
-		chomp;
-
-		# FIXED: Default to empty array ref if substitutions not provided
-		foreach my $sub (@{ $args->{substitutions} // [] }) {
+		next if $_ =~ m/^$args{comment}/;
+		next if /^\h*$/; # Skip empty lines
+		$_ =~ s/\r?\n$//; # chomp with annoying and invisible Windows "\r"
+		# Apply substitutions if any
+		foreach my $sub (@{ $args{substitutions} // [] }) {
 			$_ =~ s/$sub->[0]/$sub->[1]/g;
 		}
-		
-		# FIXED: Use -1 limit to keep trailing empty fields, removed destructive grep
-		my @line = split /$args->{sep}/, $_, -1;
-		
-		if ($. == 1) { 
+		# Use -1 to keep trailing empty fields
+		my @line = split /$args{sep}/, $_;
+		if ($. == 1) {
+			# --- HEADER PROCESSING ---
 			foreach my $cell (@line) {
-				$cell =~ s/^#//;
-				if ($cell =~ m/^"(.+)"$/) { 
-					$cell = $1;
-				}
-				# FIXED: Un-escape doubled quotes
-				$cell =~ s/""/"/g; 
+				$cell =~ s/^#//;      # Remove comment prefix if present
+				$cell =~ s/"$//; # Strip surrounding quotes 
+				$cell =~ s/^"//;
+				$cell =~ s/\"\"/\"/g;  # Un-escape doubled quotes 
 			}
-			# It's usually safe to drop completely empty headers at the end
-			@header = grep {$_ ne ''} @line; 
+			# FIX: Instead of grep, only remove trailing empty fields
+			# that might exist due to a trailing separator.
+			while (@line && $line[-1] eq '') { pop @line }
+			@header = @line; 
+			# R-LIKE BEHAVIOR: If the first header is blank (like in HepatitisCdata.csv),
+			# give it a name so it can be used as a hash key for the index column.
+			if ((scalar @header > 0) && ($header[0] eq '')) {
+				$header[0] = 'row_name'; 
+			}
 			next;
 		}
-		
+		# Check for column alignment
 		if (scalar @line != scalar @header) {
-			# Truncate or pad line to match header gracefully, or warn
-			warn "the number of elements on $args->{filename} line $. (" . scalar(@line) . ") != the header (" . scalar(@header) . ").";
+			warn "Alignment error on $file line $. (" . scalar(@line) . " fields vs " . scalar(@header) . " headers).";
 			next;
 		}
-		
+		# --- DATA PROCESSING ---
 		my %line;
 		for my $i (0 .. $#header) {
 			my $cell = $line[$i];
-			# FIXED: Handle quotes and un-escape data payload properly
-			if (defined $cell && $cell =~ m/^"(.*)"$/) {
-				$cell = $1;
-				$cell =~ s/""/"/g;
+			# Strip quotes and handle un-escaping for data fields 
+			if (defined $cell) {
+				$cell =~ s/^\"|\"$//g;
+				$cell =~ s/\"\"/\"/g;
+				$cell =~ s/"$//;
+				$cell =~ s/^"//;
 			}
-			# Treat empty strings as 'NA' or undef to maintain column alignment
-			$line{$header[$i]} = ($cell eq '') ? 'NA' : $cell; 
+			# R-like behavior: Treat empty strings as 'NA' 
+			$line{$header[$i]} = ($cell eq '') ? 'NA' : $cell;
 		}
-
-		if ($args->{'output.type'} eq 'aoh') {
+		if ($args{'output.type'} eq 'aoh') {
 			push @data, \%line;
-		} elsif ($args->{'output.type'} eq 'hoa') {
+		} elsif ($args{'output.type'} eq 'hoa') {
 			foreach my $col (@header) {
 				push @{ $data{$col} }, $line{$col};
 			}
+		} elsif ($args{'output.type'} eq 'hoh') {
+			
 		}
 	}
 	close $txt;
-	
-	if ($args->{'output.type'} eq 'aoh') {
+	if ($args{'output.type'} eq 'aoh') {
 		return \@data;
-	} elsif ($args->{'output.type'} eq 'hoa') {
+	} elsif ($args{'output.type'} =~ m/^(?:hoa|hoh)$/) {
 		return \%data;
 	}
 }

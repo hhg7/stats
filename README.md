@@ -131,6 +131,9 @@ Returns array
 
     my $binom = rbinom( n => $n, prob => 0.5, size => 9);
 
+## read_table
+
+	
 ## rnorm
 
     my ($rmean, $sd, $n) = (10, 2, 9999);
@@ -182,7 +185,7 @@ Works as closely as I can to R's seq, which is very similar to Perl's `for` loop
     }
 }
 
-## Shapiro Test
+## shapiro_test
 
 tests to see if an array reference is normally distributed, returns a p-value and a statistic
 
@@ -220,3 +223,7 @@ returns a hash reference, which looks like:
 as simple as possible:
 
     var(2, 4, 5, 8, 9)
+
+## write_table
+
+    write_table(\@data_aoh, sep => "\t", 'row.names' => true, file => $tmp_file);

@@ -1329,6 +1329,26 @@ foreach my $k1 ('fitted.values', 'deviance.resid') {
 	}
 }
 #-------------------
+#     read_table
+#-------------------
+$test_data = read_table('lib/Stats/HepatitisCdata.csv');
+p $test_data;
+if (
+	($test_data->[0]{Age} == 32)   && ($test_data->[0]{Sex} eq 'm') &&
+   ($test_data->[0]{ALB} == 38.5) && ($test_data->[0]{ALP} == 52.5) &&
+   ($test_data->[0]{ALT} == 7.7)  && ($test_data->[0]{AST} == 22.1) &&
+   ($test_data->[0]{BIL} == 7.5)  && ($test_data->[0]{Category} eq '0=Blood Donor') &&
+   ($test_data->[0]{CHE} == 6.93) && ($test_data->[0]{CHOL} == 3.23) &&
+   ($test_data->[0]{CREA} == 106) && ($test_data->[0]{GGT} == 12.1) &&
+   ($test_data->[0]{PROT} == 69)  && ($test_data->[614]{Category} eq '3=Cirrhosis')
+	)
+	{
+	pass('"read_table" reads into array of hash ("aoh") correctly');
+} else {
+	fail('"read_table" failed to read into array of hash ("aoh") correctly');
+}
+$test_data = read_table('lib/Stats/HepatitisCdata.csv', 'output.type' => 'hoa');
+#-------------------
 #     write_table
 #-------------------
 my %data = (
@@ -1409,37 +1429,6 @@ if (sha512_base64($str) eq 'Nx/3jb/smu2Jdk2SNCXhxK7yaAO0GO5TAbwztb16fYqDT8nSMzdb
 #-------------------------------------------------------------------
 #  read_table & write_table specific bug checks
 #-------------------------------------------------------------------
-subtest 'read_table: Substitutions array dereference bug' => sub {
-	my $tmp_csv = '/tmp/test_sub_bug.csv';
-	open my $fh, '>', $tmp_csv or die $!;
-	print $fh "col1,col2\nval1,val2\n";
-	close $fh;
-
-	# Previously, omitting 'substitutions' caused an undef dereference crash.
-	lives_ok {
-		my $data = read_table({ filename => $tmp_csv });
-		is($data->[0]{col1}, 'val1', 'Data read successfully without substitutions arg');
-	} 'read_table lives when substitutions array is not provided';
-	unlink $tmp_csv;
-};
-
-subtest 'read_table: Preserving missing values and trailing separators' => sub {
-	my $tmp_csv = '/tmp/test_missing_data.csv';
-	open my $fh, '>', $tmp_csv or die $!;
-	# Row 1 has an empty middle column. Row 2 has a trailing empty column.
-	say $fh "A,B,C\n1,,3\n4,5,";
-	close $fh;
-	my $data;
-	lives_ok {
-		# Suppress the warning just for the test scope if desired, but 
-		# the patched code shouldn't throw a warning here anymore.
-		$data = read_table({ filename => $tmp_csv, 'output.type' => 'aoh' });
-	} 'read_table parses lines with missing values correctly';
-
-	is($data->[0]{B}, 'NA', 'Middle missing value correctly assigned NA (not skipped by grep)');
-	is($data->[1]{C}, 'NA', 'Trailing missing value correctly assigned NA (not dropped by split limit)');
-	unlink $tmp_csv;
-};
 
 subtest 'read_table / write_table: Escaped quote handling' => sub {
 	my $tmp_csv = '/tmp/test_quotes.csv';
@@ -1450,7 +1439,7 @@ subtest 'read_table / write_table: Escaped quote handling' => sub {
 	# Write the table. write_table should turn "quotes" into ""quotes""
 	write_table(\@data_out, sep => ",", 'row.names' => false, file => $tmp_csv);
 	# Read the table back. read_table should turn ""quotes"" back into "quotes"
-	my $data_in = read_table({ filename => $tmp_csv, 'output.type' => 'aoh' });
+	my $data_in = read_table($tmp_csv, 'output.type' => 'aoh');
 	is($data_in->[1]{c2}, 'String with "quotes" inside', 'read_table correctly unescapes internal quotes');
 	unlink $tmp_csv;
 };

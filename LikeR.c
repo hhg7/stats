@@ -1067,7 +1067,7 @@ XS_EUPXS(XS_Stats__LikeR_glm)
 	  AV *restrict terms_av;
 	  HE *restrict entry;
 	  unsigned short i_arg;
-	  size_t i, j;
+	  size_t i;
 
 	  if (items % 2 != 0) croak("Usage: glm(formula => 'am ~ wt + hp', data => \\%mtcars)");
 
@@ -1139,7 +1139,7 @@ XS_EUPXS(XS_Stats__LikeR_glm)
 
 	  for (i = 0; i < num_terms; i++) {
 		   bool found = false;
-		   for (j = 0; j < num_uniq; j++) {
+		   for (size_t j = 0; j < num_uniq; j++) {
 		       if (strcmp(terms[i], uniq_terms[j]) == 0) { found = true; break; }
 		   }
 		   if (!found) uniq_terms[num_uniq++] = savepv(terms[i]);
@@ -1192,7 +1192,7 @@ XS_EUPXS(XS_Stats__LikeR_glm)
 		   }
 	  } else croak("glm: Data must be an Array or Hash reference");
 	  // Categorical Expansion
-	  for (j = 0; j < p; j++) {
+	  for (size_t j = 0; j < p; j++) {
 		   if (p_exp + 32 >= exp_cap) {
 		       exp_cap *= 2;
 		       Renew(exp_terms, exp_cap, char*);
@@ -1277,7 +1277,7 @@ XS_EUPXS(XS_Stats__LikeR_glm)
 
 		   bool row_ok = true;
 		   double *restrict row_x = (double*)safemalloc(p * sizeof(double));
-		   for (j = 0; j < p; j++) {
+		   for (size_t j = 0; j < p; j++) {
 		       if (strcmp(exp_terms[j], "Intercept") == 0) {
 		           row_x[j] = 1.0;
 		       } else if (is_dummy[j]) {
@@ -1294,7 +1294,7 @@ XS_EUPXS(XS_Stats__LikeR_glm)
 		   if (!row_ok) { Safefree(row_names[i]); Safefree(row_x); continue; }
 
 		   Y[valid_n] = y_val;
-		   for (j = 0; j < p; j++) X[valid_n * p + j] = row_x[j];
+		   for (size_t j = 0; j < p; j++) X[valid_n * p + j] = row_x[j];
 		   valid_row_names[valid_n] = row_names[i];
 		   valid_n++;
 		   Safefree(row_x);
@@ -1332,20 +1332,20 @@ XS_EUPXS(XS_Stats__LikeR_glm)
 		           W[i] = w; WZ[i] = w * eta[i] + (Y[i] - mu[i]);
 		       } else { W[i] = 1.0; WZ[i] = Y[i]; }
 		   }
-		   for (i = 0; i < p; i++) { XtWZ[i] = 0.0; for (j = 0; j < p; j++) XtWX[i * p + j] = 0.0; }
+		   for (i = 0; i < p; i++) { XtWZ[i] = 0.0; for (size_t j = 0; j < p; j++) XtWX[i * p + j] = 0.0; }
 		   for (size_t k = 0; k < valid_n; k++) {
 		       double w = W[k], wz = WZ[k];
 		       for (i = 0; i < p; i++) {
 		           XtWZ[i] += X[k * p + i] * wz;
 		           double xw = X[k * p + i] * w;
-		           for (j = 0; j < p; j++) XtWX[i * p + j] += xw * X[k * p + j];
+		           for (size_t j = 0; j < p; j++) XtWX[i * p + j] += xw * X[k * p + j];
 		       }
 		   }
 		   final_rank = sweep_matrix_ols(XtWX, p, aliased);
 		   for (i = 0; i < p; i++) {
 		       if (aliased[i]) { beta[i] = NAN; } else {
 		           double sum = 0.0;
-		           for (j = 0; j < p; j++) if (!aliased[j]) sum += XtWX[i * p + j] * XtWZ[j];
+		           for (size_t j = 0; j < p; j++) if (!aliased[j]) sum += XtWX[i * p + j] * XtWZ[j];
 		           beta[i] = sum;
 		       }
 		   }
@@ -1353,7 +1353,7 @@ XS_EUPXS(XS_Stats__LikeR_glm)
 		       deviance_new = 0.0;
 		       for (i = 0; i < valid_n; i++) {
 		           double linear_pred = 0.0;
-		           for (j = 0; j < p; j++) if (!aliased[j]) linear_pred += X[i * p + j] * beta[j];
+		           for (size_t j = 0; j < p; j++) if (!aliased[j]) linear_pred += X[i * p + j] * beta[j];
 		           eta[i] = linear_pred;
 		           if (is_binomial) {
 		               mu[i] = 1.0 / (1.0 + exp(-eta[i]));
@@ -1372,19 +1372,19 @@ XS_EUPXS(XS_Stats__LikeR_glm)
 		           }
 		       }
 		       if (!is_binomial || deviance_new <= deviance_old + 1e-7) break;
-		       for (j = 0; j < p; j++) beta[j] = (beta[j] + beta_old[j]) / 2.0;
+		       for (size_t j = 0; j < p; j++) beta[j] = (beta[j] + beta_old[j]) / 2.0;
 		   }
 		   if (fabs(deviance_new - deviance_old) / (0.1 + fabs(deviance_new)) < 1e-8) { converged = true; break; }
 		   deviance_old = deviance_new;
-		   for (j = 0; j < p; j++) beta_old[j] = beta[j];
+		   for (size_t j = 0; j < p; j++) beta_old[j] = beta[j];
 	  }
-	  for (i = 0; i < p; i++) { for (j = 0; j < p; j++) XtWX[i * p + j] = 0.0; }
+	  for (i = 0; i < p; i++) { for (size_t j = 0; j < p; j++) XtWX[i * p + j] = 0.0; }
 	  for (size_t k = 0; k < valid_n; k++) {
 		   double w = is_binomial ? (mu[k] * (1.0 - mu[k])) : 1.0;
 		   if (w < 1e-10) w = 1e-10;
 		   for (i = 0; i < p; i++) {
 		       double xw = X[k * p + i] * w;
-		       for (j = 0; j < p; j++) XtWX[i * p + j] += xw * X[k * p + j];
+		       for (size_t j = 0; j < p; j++) XtWX[i * p + j] += xw * X[k * p + j];
 		   }
 	  }
 	  final_rank = sweep_matrix_ols(XtWX, p, aliased);
@@ -1400,7 +1400,7 @@ XS_EUPXS(XS_Stats__LikeR_glm)
 	  }
 	  Safefree(valid_row_names);
 	  summary_hv = newHV(); terms_av = newAV();
-	  for (j = 0; j < p; j++) {
+	  for (size_t j = 0; j < p; j++) {
 		   hv_store(coef_hv, exp_terms[j], strlen(exp_terms[j]), newSVnv(beta[j]), 0);
 		   av_push(terms_av, newSVpv(exp_terms[j], 0));
 
@@ -1458,7 +1458,7 @@ XS_EUPXS(XS_Stats__LikeR_glm)
 	  Safefree(terms);
 	  for (i = 0; i < num_uniq; i++) Safefree(uniq_terms[i]);
 	  Safefree(uniq_terms);
-	  for (j = 0; j < p_exp; j++) {
+	  for (size_t j = 0; j < p_exp; j++) {
 		   Safefree(exp_terms[j]);
 		   if (is_dummy[j]) { Safefree(dummy_base[j]); Safefree(dummy_level[j]); }
 	  }
