@@ -4,8 +4,6 @@ no source::encoding;
 package Stats::LikeR;
 our $VERSION = 0.01;
 require XSLoader;
-#use DDP {output => 'STDOUT', array_max => 10, show_memsize => 1};
-#use Devel::Confess 'color';
 use 5.042.2;
 no source::encoding;
 use DDP {output => 'STDOUT', array_max => 10, show_memsize => 1};
@@ -32,7 +30,7 @@ sub read_table {
 		'row.name',
 		'sep', # by default ","
 		'substitutions',
-		'output.type'
+		'output.type' # aoh, hoa, or hoh
 	);
 	my @undef_args = sort grep {!$allowed_args{$_}} keys %allowed_args;
 	my $current_sub = (split(/::/,(caller(0))[3]))[-1];
@@ -42,7 +40,7 @@ sub read_table {
 	}
 	# ... (argument validation logic from your original script) ...
 	$args{'output.type'} = $args{'output.type'} // 'aoh';
-	if ($args{'output.type'} !~ m/^(?:aoh|hoa)$/) {
+	if ($args{'output.type'} !~ m/^(?:aoh|hoa|hoh)$/) {
 		die "\"$args{'output.type'}\" isn't allowed";
 	}
 	$args{comment} = $args{comment} // '#';
@@ -75,6 +73,12 @@ sub read_table {
 			if ((scalar @header > 0) && ($header[0] eq '')) {
 				$header[0] = 'row_name'; 
 			}
+			if (($args{'output.type'} eq 'hoh') && (not defined $args{'row.name'})) {
+				$args{'row.name'} = $header[0];
+			}
+			if ((defined $args{'row.name'}) && (!grep {$_ eq $args{'row.name'}} @header)) {
+				die "\"$args{'row.name'}\" isn't in the header of $file";
+			}
 			next;
 		}
 		# Check for column alignment
@@ -103,7 +107,10 @@ sub read_table {
 				push @{ $data{$col} }, $line{$col};
 			}
 		} elsif ($args{'output.type'} eq 'hoh') {
-			
+			my $row_name = $line{$args{'row.name'}};
+			foreach my $col (@header) {
+				$data{$col}{$row_name} = $line{$col};
+			}
 		}
 	}
 	close $txt;
@@ -117,34 +124,32 @@ sub read_table {
 sub write_table {
 	my $data_ref = (ref($_[0]) eq 'HASH' || ref($_[0]) eq 'ARRAY') ? shift : undef;
 	my $current_sub = (split(/::/,(caller(0))[3]))[-1];
-
 	my %args = (
 		sep         => ',',
 		'row.names' => 1,      
 		@_,
 	);
-
 	$args{data} //= $data_ref;
-
-	my %allowed = map { $_ => 1 } qw(data file row.names sep);
+	my %allowed = map { $_ => 1 } qw(data file row.names sep col.names);
 	my @err = grep { !$allowed{$_} } keys %args;
 	if (@err > 0) {
 		die "$current_sub: Unknown arguments passed: " . join(", ", @err) . "\n";
 	}
-
 	die "$current_sub: 'file' argument is required\n" unless defined $args{file};
 	die "$current_sub: 'data' must be a HASH or ARRAY reference\n" 
 		unless defined $args{data} && (ref($args{data}) eq 'HASH' || ref($args{data}) eq 'ARRAY');
 
+	my $col_names = $args{'col.names'};
+	if (defined $col_names && ref($col_names) ne 'ARRAY') {
+		die "$current_sub: 'col.names' must be an ARRAY reference\n";
+	}
 	my $data         = $args{data};
 	my $sep          = $args{sep};
 	my $file         = $args{file};
 	my $inc_rownames = $args{'row.names'};
-
 	my $quote_field = sub {
 		my ($val, $sep) = @_;
 		return '' unless defined $val;
-		# FIXED: Prevent nested references from being stringified silently
 		die "$current_sub: Cannot write nested reference types to table\n" if ref($val);
 		
 		my $str = "$val";  
@@ -154,15 +159,12 @@ sub write_table {
 		}
 		return $str;
 	};
-
 	my $data_type = ref $data;
 	my ($is_hoh, $is_hoa, $is_aoh) = (0, 0, 0);
 	my @rows;
-
 	if ($data_type eq 'HASH') {
 		@rows = keys %$data;
 		return if @rows == 0; 
-
 		my $first_type = ref $data->{$rows[0]};
 		die "$current_sub: Data values must be either all HASHes or all ARRAYs\n"
 			unless $first_type eq 'HASH' || $first_type eq 'ARRAY';
@@ -171,7 +173,6 @@ sub write_table {
 		if (@type_err > 0) {
 			die "$current_sub: Mixed data types detected. Ensure all values are $first_type references.\n";
 		}
-
 		$is_hoh = ($first_type eq 'HASH');
 		$is_hoa = ($first_type eq 'ARRAY');
 	} else {
@@ -185,21 +186,23 @@ sub write_table {
 		if (@type_err > 0) {
 			die "$current_sub: Mixed data types detected in Array of Hashes. All elements must be HASH references.\n";
 		}
-
 		$is_aoh = 1;
 	}
-
 	open my $fh, '>', $file or die "$current_sub: Could not open '$file' for writing: $!\n";
-
 	if ($is_hoh) {
-		my %col_map;
-		for my $r (@rows) {
-			$col_map{$_} = 1 for keys %{ $data->{$r} };
+		my @headers;
+		if ($col_names) {
+			@headers = @$col_names;
+		} else {
+			my %col_map;
+			for my $r (@rows) {
+				$col_map{$_} = 1 for keys %{ $data->{$r} };
+			}
+			@headers = sort keys %col_map;
 		}
-		my @headers = sort keys %col_map;
 
 		my @header_row = @headers;
-		unshift @header_row, "" if $inc_rownames;
+		unshift @header_row, '' if $inc_rownames;
 		@header_row = map { $quote_field->($_, $sep) } @header_row;
 		print $fh join($sep, @header_row) . "\n";
 
@@ -215,32 +218,40 @@ sub write_table {
 			my $len = scalar @{ $data->{$r} };
 			$max_cols = $len if $len > $max_cols;
 		}
-
-		my @headers = map { "V$_" } 1 .. $max_cols;
+		my @headers;
+		if ($col_names) {
+			@headers = @$col_names;
+			$max_cols = scalar @headers;
+		} else {
+			@headers = map { "V$_" } 1 .. $max_cols;
+		}
 		my @header_row = @headers;
 		unshift @header_row, "" if $inc_rownames;
 		@header_row = map { $quote_field->($_, $sep) } @header_row;
-		print $fh join($sep, @header_row) . "\n";
-
+		say $fh join($sep, @header_row);
 		for my $r (sort @rows) {
-			my @row_data = map { defined $_ ? $_ : "NA" } @{ $data->{$r} };
-			push @row_data, "NA" while @row_data < $max_cols;
+			my @row_data = map { defined $_ ? $_ : "NA" } @{ $data->{$r} }[0 .. $max_cols - 1];
+			# Ensure we pad with NA if the row data is shorter than max_cols
+			push @row_data, 'NA' while @row_data < $max_cols;
 			unshift @row_data, $r if $inc_rownames;
 			my @quoted = map { $quote_field->($_, $sep) } @row_data;
 			print $fh join($sep, @quoted) . "\n";
 		}
 	} elsif ($is_aoh) {
-		my %col_map;
-		for my $row_hash (@$data) {
-			$col_map{$_} = 1 for keys %$row_hash;
+		my @headers;
+		if ($col_names) {
+			@headers = @$col_names;
+		} else {
+			my %col_map;
+			for my $row_hash (@$data) {
+				$col_map{$_} = 1 for keys %$row_hash;
+			}
+			@headers = sort keys %col_map;
 		}
-		my @headers = sort keys %col_map;
-
 		my @header_row = @headers;
 		unshift @header_row, "" if $inc_rownames;
 		@header_row = map { $quote_field->($_, $sep) } @header_row;
-		print $fh join($sep, @header_row) . "\n";
-
+		say $fh join($sep, @header_row);
 		for my $i (0 .. $#$data) {
 			my $row_hash = $data->[$i];
 			my @row_data = map { defined $row_hash->{$_} ? $row_hash->{$_} : "NA" } @headers;
@@ -249,8 +260,7 @@ sub write_table {
 			print $fh join($sep, @quoted) . "\n";
 		}
 	}
-	# FIXED: Explicitly close the filehandle to ensure immediate flushing
-	close $fh; 
+	close $fh;
 }
 1;
 #sub mean {

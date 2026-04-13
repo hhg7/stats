@@ -11,6 +11,7 @@ use Stats::LikeR;
 use Scalar::Util 'looks_like_number';
 use JSON qw(decode_json encode_json);
 use Digest::SHA 'sha512_base64';
+use File::Temp;
 
 # Gemini helped to write some of the tests
 # Custom helper for floating-point comparisons
@@ -1332,7 +1333,6 @@ foreach my $k1 ('fitted.values', 'deviance.resid') {
 #     read_table
 #-------------------
 $test_data = read_table('lib/Stats/HepatitisCdata.csv');
-p $test_data;
 if (
 	($test_data->[0]{Age} == 32)   && ($test_data->[0]{Sex} eq 'm') &&
    ($test_data->[0]{ALB} == 38.5) && ($test_data->[0]{ALP} == 52.5) &&
@@ -1348,6 +1348,34 @@ if (
 	fail('"read_table" failed to read into array of hash ("aoh") correctly');
 }
 $test_data = read_table('lib/Stats/HepatitisCdata.csv', 'output.type' => 'hoa');
+if (
+	($test_data->{Sex}[0] eq $test_data->{Sex}[2] eq $test_data->{Sex}[3] eq 'm')
+	&&
+	($test_data->{PROT}[0] == 69) && ($test_data->{PROT}[1] == 76.5)
+	&&
+	($test_data->{Age}[0] == 32 == $test_data->{Age}[9] == $test_data->{Age}[8])
+	) {
+	pass('"read_table" reads into hash of array correctly');
+} else {
+	fail('"read_table" fails to read into hash of array correctly');
+}
+$test_data = read_table('lib/Stats/HepatitisCdata.csv', 'output.type' => 'hoh');
+p $test_data->{Sex};
+if (
+	($test_data->{Sex}{1} eq $test_data->{Sex}{2} eq $test_data->{Sex}{3} eq 'm')
+	&&
+	($test_data->{PROT}{1} == 69) && ($test_data->{PROT}{2} == 76.5)
+	&&
+	($test_data->{Age}{1} == 32 == $test_data->{Age}{8} == $test_data->{Age}{7})
+	) {
+	pass('"read_table" reads into hash of hash (hoh) correctly');
+} else {
+	fail('"read_table" fails to read into hash of hash correctly');
+}
+
+dies_ok {
+	read_table('lib/Stats/HepatitisCdata.csv', 'output.type' => 'not_real_type')
+} 'dies when given non-accepted type of output';
 #-------------------
 #     write_table
 #-------------------
@@ -1374,7 +1402,9 @@ if (sha512_base64($str) eq 'FInYAXZcS7lK1n7osAhVkp5SiQNpt3h4kql9yZ2YCoPQslHKjwfG
 # === TEST 1: HASH OF HASHES (positional) ===
 # Demonstrates: HoH, sorted rows/columns, "NA" for missing values,
 #               quoting when separator ("\t") or " appears inside data
-$tmp_file = '/tmp/test_hoh.tsv';
+my $fh = File::Temp->new(DIR => '/tmp', SUFFIX => '.tsv', UNLINK => 1);
+close $fh;
+$tmp_file = $fh->filename;
 my %data_hoh = (
 	'r1' => { 'c1' => 42,        'c2' => 'hello,world' },
 	'r2' => { 'c1' => 99,        'c3' => 'quote"here' },
@@ -1453,5 +1483,40 @@ subtest 'write_table: Nested reference stringification protection' => sub {
 		write_table(\%bad_data, sep => ",", 'row.names' => true, file => $tmp_csv);
 	} 'write_table dies to prevent silent stringification of nested references';
 	unlink $tmp_csv if -e $tmp_csv;
+};
+subtest 'write_table: col.names feature validation' => sub {
+	my $fh = File::Temp->new(DIR => '/tmp', SUFFIX => '.tsv', UNLINK => 1);
+	close $fh;
+	my $tmp_file = $fh->filename;
+	# Test 1: AoH filtering and reordering
+	my @data_col_names = (
+		{ 'a' => 1, 'b' => 2, 'c' => 3 },
+		{ 'a' => 4, 'b' => 5, 'c' => 6 },
+	);
+
+	# Extract only 'c' and 'a', in that exact order
+	write_table(\@data_col_names, sep => "\t", 'row.names' => false, 'col.names' => ['c', 'a'], file => $tmp_file);
+	my $str = file2string($fh->filename);
+	my $expected_str = "c\ta\n3\t1\n6\t4\n";
+	
+	is($str, $expected_str, 'write_table: col.names correctly filters and reorders Array of Hashes');
+	unlink $tmp_file if -f $tmp_file;
+
+	# Test 2: HoH enforcing order and padding missing columns
+	my %data_hoh_col = (
+		'Row1' => { 'X' => 10, 'Y' => 20 },
+		'Row2' => { 'Y' => 30, 'Z' => 40 },
+	);
+
+	# Requesting a column 'Z' missing in Row1, and 'X' missing in Row2
+	write_table(\%data_hoh_col, sep => ",", 'row.names' => true, 'col.names' => ['Y', 'Z', 'X'], file => $tmp_file);
+	$str = file2string($tmp_file);
+
+	$expected_str = ",Y,Z,X\nRow1,20,NA,10\nRow2,30,40,NA\n";
+	is($str, $expected_str, 'write_table: col.names correctly forces order and pads NAs for Hash of Hashes');
+	# Test 3: Exceptions
+	dies_ok {
+		write_table(\%data_hoh_col, file => $tmp_file, 'col.names' => "Not an array ref");
+	} 'write_table: dies when col.names is not an array reference';
 };
 done_testing();
