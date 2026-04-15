@@ -197,7 +197,6 @@ PERL_ARCHIVE_AFTER =
 
 TO_INST_PM = benchmark.pl \
 	examples.pl \
-	lib/Stats/20260411.LikeR.pm \
 	lib/Stats/HepatitisCdata.csv \
 	lib/Stats/LikeR.pm \
 	lib/Stats/bu.LikeR.pm \
@@ -1093,7 +1092,6 @@ pm_to_blib : $(FIRST_MAKEFILE) $(TO_INST_PM)
 	  -e 'pm_to_blib({@ARGV}, '\''$(INST_LIB)/auto'\'', $$filter, '\''$(PERM_DIR)'\'')' -- $(PM_FILTER) -- \
 	  'benchmark.pl' '$(INST_LIB)/Stats/benchmark.pl' \
 	  'examples.pl' '$(INST_LIB)/Stats/examples.pl' \
-	  'lib/Stats/20260411.LikeR.pm' 'blib/lib/Stats/20260411.LikeR.pm' \
 	  'lib/Stats/HepatitisCdata.csv' 'blib/lib/Stats/HepatitisCdata.csv' \
 	  'lib/Stats/LikeR.pm' 'blib/lib/Stats/LikeR.pm' \
 	  'lib/Stats/bu.LikeR.pm' 'blib/lib/Stats/bu.LikeR.pm' \

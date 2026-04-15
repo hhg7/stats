@@ -1333,6 +1333,11 @@ foreach my $k1 ('fitted.values', 'deviance.resid') {
 #     read_table
 #-------------------
 $test_data = read_table('lib/Stats/HepatitisCdata.csv');
+if (ref $test_data eq 'ARRAY') {
+	pass('"aoh" is an array');
+} else {
+	fail('"aoh" is not an array');
+}
 if (
 	($test_data->[0]{Age} == 32)   && ($test_data->[0]{Sex} eq 'm') &&
    ($test_data->[0]{ALB} == 38.5) && ($test_data->[0]{ALP} == 52.5) &&
@@ -1360,7 +1365,13 @@ if (
 	fail('"read_table" fails to read into hash of array correctly');
 }
 $test_data = read_table('lib/Stats/HepatitisCdata.csv', 'output.type' => 'hoh');
-p $test_data->{Sex};
+foreach my $col ('Category', 'Age', 'Sex', 'ALB', 'ALP', 'ALT', 'AST', 'BIL','CHE', 'CHOL', 'CREA', 'GGT', 'PROT') {
+	if (defined $test_data->{$col}) {
+		pass("\"$col\" is defined from \"read_table\"");
+	} else {
+		fail("\"$col\" isn't defined from \"read_table\"");
+	}
+}
 if (
 	($test_data->{Sex}{1} eq $test_data->{Sex}{2} eq $test_data->{Sex}{3} eq 'm')
 	&&
@@ -1371,6 +1382,7 @@ if (
 	pass('"read_table" reads into hash of hash (hoh) correctly');
 } else {
 	fail('"read_table" fails to read into hash of hash correctly');
+	die;
 }
 
 dies_ok {
@@ -1391,7 +1403,7 @@ sub file2string {
 	return do { local $/; <$fh> };
 }
 my $tmp_file = '/tmp/test.tsv';
-write_table(\%data, sep => "\t", 'row.names' => true, file => $tmp_file);
+write_table(\%data, $tmp_file, sep => "\t", 'row.names' => true);
 my $str = file2string($tmp_file);
 if (sha512_base64($str) eq 'FInYAXZcS7lK1n7osAhVkp5SiQNpt3h4kql9yZ2YCoPQslHKjwfGAXgdiphDSc6wMhlpU5toNmSifEUz1OgHNQ') {
 	pass('write_table successfully wrote a tab-delimited file');
@@ -1411,7 +1423,7 @@ my %data_hoh = (
 	'r3' => { 'c2' => "tab\tin", 'c4' => undef },
 );
 
-write_table(\%data_hoh, sep => "\t", 'row.names' => true, file => $tmp_file);
+write_table(\%data_hoh, $tmp_file, sep => "\t", 'row.names' => true);
 $str = file2string($tmp_file);
 if (sha512_base64($str) eq 'ZYK6zmrT47CLrEc4PSFtCtvdkLtv47MCIMHIg70bARlWO5J9MuzybnV5h7dBSyQn8dOKojaX6pinxOvbTVaI+g') {
 	pass('write_table successfully wrote a tab-delimited file (Hash of Hashes)');
@@ -1429,7 +1441,7 @@ my %data_hoa = (
 	'r3' => [undef, "tab\tin", undef, undef],
 );
 
-write_table(\%data_hoa, sep => "\t", 'row.names' => true, file => $tmp_file);
+write_table(\%data_hoa, $tmp_file, sep => "\t", 'row.names' => true);
 $str = file2string($tmp_file);
 if (sha512_base64($str) eq 'wsKnu+u+TTMEYpTS0NKGes8JrWQ9JfnUgP8yCmo+q3BmnLbrzYUE74n+nd23kaGffHABIt1aluUPRgqtVl5jVA') {
     pass('write_table successfully wrote a tab-delimited file (Hash of Arrays)');
@@ -1448,7 +1460,7 @@ my @data_aoh = (
 	{ 'c2' => "tab\tin" },
 );
 
-write_table(\@data_aoh, sep => "\t", 'row.names' => true, file => $tmp_file);
+write_table(\@data_aoh, $tmp_file, sep => "\t", 'row.names' => true);
 $str = file2string($tmp_file);
 if (sha512_base64($str) eq 'Nx/3jb/smu2Jdk2SNCXhxK7yaAO0GO5TAbwztb16fYqDT8nSMzdbdK61I30pfB3KVPtZ5w5rT4Ex2d4+pJFm5g') {
 	pass('write_table successfully wrote a tab-delimited file (Array of Hashes)');
@@ -1467,7 +1479,7 @@ subtest 'read_table / write_table: Escaped quote handling' => sub {
 		{ 'c1' => 99, 'c2' => 'String with "quotes" inside' }
 	);
 	# Write the table. write_table should turn "quotes" into ""quotes""
-	write_table(\@data_out, sep => ",", 'row.names' => false, file => $tmp_csv);
+	write_table(\@data_out, $tmp_csv, sep => ",", 'row.names' => false);
 	# Read the table back. read_table should turn ""quotes"" back into "quotes"
 	my $data_in = read_table($tmp_csv, 'output.type' => 'aoh');
 	is($data_in->[1]{c2}, 'String with "quotes" inside', 'read_table correctly unescapes internal quotes');
@@ -1475,14 +1487,14 @@ subtest 'read_table / write_table: Escaped quote handling' => sub {
 };
 
 subtest 'write_table: Nested reference stringification protection' => sub {
-	my $tmp_csv = '/tmp/test_nested.csv';
+	my $fh = File::Temp->new( DIR => '/tmp', SUFFIX => '.csv', UNLINK => 1);
+	close $fh;
 	my %bad_data = (
 		'r1' => { 'c1' => 42, 'c2' => [1, 2, 3] } # Arrayref inside the hash
 	);
 	dies_ok {
-		write_table(\%bad_data, sep => ",", 'row.names' => true, file => $tmp_csv);
+		write_table(\%bad_data, $fh->filename), sep => ',', 'row.names' => true;
 	} 'write_table dies to prevent silent stringification of nested references';
-	unlink $tmp_csv if -e $tmp_csv;
 };
 subtest 'write_table: col.names feature validation' => sub {
 	my $fh = File::Temp->new(DIR => '/tmp', SUFFIX => '.tsv', UNLINK => 1);
@@ -1495,7 +1507,7 @@ subtest 'write_table: col.names feature validation' => sub {
 	);
 
 	# Extract only 'c' and 'a', in that exact order
-	write_table(\@data_col_names, sep => "\t", 'row.names' => false, 'col.names' => ['c', 'a'], file => $tmp_file);
+	write_table(\@data_col_names, $tmp_file, sep => "\t", 'row.names' => false, 'col.names' => ['c', 'a']);
 	my $str = file2string($fh->filename);
 	my $expected_str = "c\ta\n3\t1\n6\t4\n";
 	
@@ -1509,14 +1521,79 @@ subtest 'write_table: col.names feature validation' => sub {
 	);
 
 	# Requesting a column 'Z' missing in Row1, and 'X' missing in Row2
-	write_table(\%data_hoh_col, sep => ",", 'row.names' => true, 'col.names' => ['Y', 'Z', 'X'], file => $tmp_file);
+	write_table(\%data_hoh_col, $tmp_file, sep => ',', 'row.names' => true, 'col.names' => ['Y', 'Z', 'X']);
 	$str = file2string($tmp_file);
 
 	$expected_str = ",Y,Z,X\nRow1,20,NA,10\nRow2,30,40,NA\n";
 	is($str, $expected_str, 'write_table: col.names correctly forces order and pads NAs for Hash of Hashes');
 	# Test 3: Exceptions
 	dies_ok {
-		write_table(\%data_hoh_col, file => $tmp_file, 'col.names' => "Not an array ref");
+		write_table(\%data_hoh_col, $tmp_file, 'col.names' => 'Not an array ref');
 	} 'write_table: dies when col.names is not an array reference';
+};
+#-------------------------------------------------------------------
+#  aov: Categorical Variables & Interactions (Bug Fix Validations)
+#-------------------------------------------------------------------
+
+subtest 'aov: One-Way ANOVA with Categorical Factor (>2 Levels)' => sub {
+	# If the bug is present, 'group' is evaluated as a string (yielding 0.0), 
+	# resulting in Df=1, Sum Sq=0.0, and F value=NaN.
+	# A correct implementation must expand 'group' into 2 dummy variables (Df=2).
+	my $data_1way = {
+	  yield_val => [5.5, 5.4, 5.8, 4.5, 4.8, 4.2, 6.1, 6.5, 6.2],
+	  group     => ['A',   'A',   'A',   'B',   'B',   'B',   'C',   'C',   'C']
+	};
+
+	my $res_1way = aov($data_1way, 'yield_val ~ group');
+
+	# Validate the 'group' term (k=3 levels -> Df=2)
+	is($res_1way->{group}{Df}, 2, 'aov 1-way: Df is correct for a 3-level factor');
+	is_approx($res_1way->{group}{'Sum Sq'},  4.74888888888889,  'aov 1-way: Sum Sq');
+	is_approx($res_1way->{group}{'Mean Sq'}, 2.37444444444444,  'aov 1-way: Mean Sq');
+	is_approx($res_1way->{group}{'F value'}, 40.3207547169811,  'aov 1-way: F value');
+	is_approx($res_1way->{group}{'Pr(>F)'},  0.0003319084,      'aov 1-way: Pr(>F)', 1e-6);
+
+	# Validate Residuals
+	is($res_1way->{Residuals}{Df}, 6, 'aov 1-way: Residuals Df');
+	is_approx($res_1way->{Residuals}{'Sum Sq'},  0.353333333333333, 'aov 1-way: Residuals Sum Sq');
+	is_approx($res_1way->{Residuals}{'Mean Sq'}, 0.058888888888889, 'aov 1-way: Residuals Mean Sq');
+};
+
+subtest 'aov: Two-Way ANOVA with Categorical Interactions' => sub {
+	# If the bug is present, the parser fails to understand the '*' operator 
+	# and fails to map "supp:dose" correctly.
+	my $data_2way = {
+	  len  => [4.2, 11.5, 7.3, 5.8, 6.4, 16.5, 16.5, 15.2, 17.3, 22.5, 
+		        15.2, 21.5, 17.6, 9.7, 14.5, 19.7, 23.3, 23.6, 26.4, 20.0],
+	  supp => ['VC', 'VC', 'VC', 'VC', 'VC', 'VC', 'VC', 'VC', 'VC', 'VC', 
+		        'OJ', 'OJ', 'OJ', 'OJ', 'OJ', 'OJ', 'OJ', 'OJ', 'OJ', 'OJ'],
+	  dose => ['D0.5', 'D0.5', 'D0.5', 'D0.5', 'D0.5', 'D1', 'D1', 'D1', 'D1', 'D1', 
+		        'D0.5', 'D0.5', 'D0.5', 'D0.5', 'D0.5', 'D1', 'D1', 'D1', 'D1', 'D1']
+	};
+
+	# The formula `supp * dose` implicitly tests `supp + dose + supp:dose`
+	my $res_2way = aov($data_2way, 'len ~ supp * dose');
+
+	# 1. Validate the 'supp' term
+	is($res_2way->{supp}{Df}, 1, 'aov 2-way: supp Df');
+	is_approx($res_2way->{supp}{'Sum Sq'}, 233.2445, 'aov 2-way: supp Sum Sq', 1e-4);
+	is_approx($res_2way->{supp}{'F value'}, 22.175219, 'aov 2-way: supp F value', 1e-4);
+
+	# 2. Validate the 'dose' term
+	is($res_2way->{dose}{Df}, 1, 'aov 2-way: dose Df');
+	is_approx($res_2way->{dose}{'Sum Sq'}, 381.0645, 'aov 2-way: dose Sum Sq', 1e-4);
+	is_approx($res_2way->{dose}{'F value'}, 36.228888, 'aov 2-way: dose F value', 1e-4);
+
+	# 3. Validate the 'supp:dose' interaction term
+	ok(defined $res_2way->{'supp:dose'}, 'aov 2-way: Interaction term supp:dose exists');
+	is($res_2way->{'supp:dose'}{Df}, 1, 'aov 2-way: supp:dose Df');
+	is_approx($res_2way->{'supp:dose'}{'Sum Sq'}, 16.7445, 'aov 2-way: supp:dose Sum Sq', 1e-4);
+	is_approx($res_2way->{'supp:dose'}{'F value'}, 1.591947, 'aov 2-way: supp:dose F value', 1e-4);
+	is_approx($res_2way->{'supp:dose'}{'Pr(>F)'}, 0.225133, 'aov 2-way: supp:dose Pr(>F)', 1e-5);
+
+	# 4. Validate the Residuals
+	is($res_2way->{Residuals}{Df}, 16, 'aov 2-way: Residuals Df');
+	is_approx($res_2way->{Residuals}{'Sum Sq'}, 168.2920, 'aov 2-way: Residuals Sum Sq', 1e-4);
+	is_approx($res_2way->{Residuals}{'Mean Sq'}, 10.51825, 'aov 2-way: Residuals Mean Sq', 1e-4);
 };
 done_testing();

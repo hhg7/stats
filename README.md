@@ -87,6 +87,8 @@ takes a hash of an array as input
     	family  => 'gaussian'
     );
 
+I'm not completely confident that this is working perfectly, I've only gotten this subroutine to work for simple cases
+
 ## lm
 
 This is the linear models function.
@@ -226,4 +228,8 @@ as simple as possible:
 
 ## write_table
 
-    write_table(\@data_aoh, sep => "\t", 'row.names' => true, file => $tmp_file);
+mimics R's "write.table", with data as first argument to subroutine, and output file as second
+
+    write_table(\@data_aoh, $tmp_file, sep => "\t", 'row.names' => true);
+
+

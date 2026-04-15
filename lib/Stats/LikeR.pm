@@ -14,7 +14,6 @@ use Exporter 'import';
 XSLoader::load('Stats::LikeR', $VERSION);
 our @EXPORT_OK = qw(aov cor cor_test fisher_test glm hist lm matrix mean median min max p_adjust quantile rbinom read_table rnorm runif scale sd seq shapiro_test t_test var write_table);
 our @EXPORT = @EXPORT_OK;
-package Stats::LikeR;
 
 require XSLoader;
 
@@ -123,19 +122,19 @@ sub read_table {
 
 sub write_table {
 	my $data_ref = (ref($_[0]) eq 'HASH' || ref($_[0]) eq 'ARRAY') ? shift : undef;
-	my $current_sub = (split(/::/,(caller(0))[3]))[-1];
+	my $file = shift;
 	my %args = (
 		sep         => ',',
 		'row.names' => 1,      
 		@_,
 	);
+	my $current_sub = (split(/::/,(caller(0))[3]))[-1];
 	$args{data} //= $data_ref;
 	my %allowed = map { $_ => 1 } qw(data file row.names sep col.names);
 	my @err = grep { !$allowed{$_} } keys %args;
 	if (@err > 0) {
 		die "$current_sub: Unknown arguments passed: " . join(", ", @err) . "\n";
 	}
-	die "$current_sub: 'file' argument is required\n" unless defined $args{file};
 	die "$current_sub: 'data' must be a HASH or ARRAY reference\n" 
 		unless defined $args{data} && (ref($args{data}) eq 'HASH' || ref($args{data}) eq 'ARRAY');
 
@@ -145,7 +144,6 @@ sub write_table {
 	}
 	my $data         = $args{data};
 	my $sep          = $args{sep};
-	my $file         = $args{file};
 	my $inc_rownames = $args{'row.names'};
 	my $quote_field = sub {
 		my ($val, $sep) = @_;
