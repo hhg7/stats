@@ -948,8 +948,7 @@ my @correct = (
 );
 foreach my $meth (@correct) {
 	my $result = cor_test(
-		'x'         => $x,
-		'y'         => $y,
+		$x, $y, # first 2 args are positional
 		alternative => $meth->{alternative}, # so that it matches the test
 		method      => $meth->{method},      # so that it matches the test
 		continuity  => 1

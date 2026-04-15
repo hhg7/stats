@@ -1022,7 +1022,7 @@ CODE:
             char **restrict levels = NULL; size_t num_levels = 0, levels_cap = 8;
             Newx(levels, levels_cap, char*);
             for (i = 0; i < n; i++) {
-                char* str_val = get_data_string_alloc(data_hoa, row_hashes, i, uniq_terms[j]);
+                char*restrict str_val = get_data_string_alloc(data_hoa, row_hashes, i, uniq_terms[j]);
                 if (str_val) {
                     bool found = false;
                     for (size_t l = 0; l < num_levels; l++) {
@@ -1251,7 +1251,7 @@ CODE:
     df_res = valid_n - final_rank;
     dispersion = is_binomial ? 1.0 : ((df_res > 0) ? (deviance_new / df_res) : NAN);
     
-    for (i = 0; i < valid_n; i++) {
+    for (size_t i = 0; i < valid_n; i++) {
         double res = Y[i] - mu[i];
         if (is_binomial) {
             // Deviance residuals for binomial
@@ -1331,22 +1331,23 @@ OUTPUT:
 SV* cor_test(...)
 CODE:
 {
-	if (items % 2 != 0)
-	  croak("Usage: cor_test(x => \\@data1, y => \\@data2, method => 'pearson', ...)");
-	SV *restrict x_ref = NULL, *restrict y_ref = NULL;
+	if (items < 2 || items % 2 != 0)
+	  croak("Usage: cor_test(\\@x, \\@y, method => 'pearson', ...)");
+
+	SV *restrict x_ref = ST(0), *restrict y_ref = ST(1);
+
 	const char *restrict alternative = "two.sided";
 	const char *restrict method = "pearson";
 	SV *restrict exact_sv = NULL;
 	double conf_level = 0.95;
 	int continuity = 0;
-	/* Parse named arguments from the flat stack */
-	for (unsigned short int i = 0; i < items; i += 2) {
+
+	/* Parse named arguments from the flat stack starting at index 2 */
+	for (unsigned short int i = 2; i < items; i += 2) {
 	  const char *restrict key = SvPV_nolen(ST(i));
 	  SV *restrict val = ST(i + 1);
 
-	  if      (strEQ(key, "x"))           x_ref = val;
-	  else if (strEQ(key, "y"))           y_ref = val;
-	  else if (strEQ(key, "alternative")) alternative = SvPV_nolen(val);
+	  if      (strEQ(key, "alternative")) alternative = SvPV_nolen(val);
 	  else if (strEQ(key, "method"))      method = SvPV_nolen(val);
 	  else if (strEQ(key, "exact"))       exact_sv = val;
 	  else if (strEQ(key, "conf.level") || strEQ(key, "conf_level")) conf_level = SvNV(val);
@@ -1354,17 +1355,18 @@ CODE:
 	  else croak("cor_test: unknown argument '%s'", key);
 	}
 
-	if (!x_ref || !y_ref) croak("cor_test: 'x' and 'y' are required array references");
 	AV *restrict x_av, *restrict y_av;
 	double *restrict x, *restrict y;
 	double estimate = 0, p_value = 0, statistic = 0, df = 0, ci_lower = 0, ci_upper = 0;
+
 	bool is_pearson  = (strcmp(method, "pearson") == 0);
 	bool is_kendall  = (strcmp(method, "kendall") == 0);
 	bool is_spearman = (strcmp(method, "spearman") == 0);
 	HV *restrict rhv;
-	if (!SvROK(x_ref) || SvTYPE(SvRV(x_ref)) != SVt_PVAV ||
-	  !SvROK(y_ref) || SvTYPE(SvRV(y_ref)) != SVt_PVAV) {
-	  croak("x and y must be array references");
+
+	if (!SvOK(x_ref) || !SvROK(x_ref) || SvTYPE(SvRV(x_ref)) != SVt_PVAV ||
+	    !SvOK(y_ref) || !SvROK(y_ref) || SvTYPE(SvRV(y_ref)) != SVt_PVAV) {
+	  croak("cor_test: x and y must be array references");
 	}
 	x_av = (AV*)SvRV(x_ref);
 	y_av = (AV*)SvRV(y_ref);
@@ -1379,9 +1381,8 @@ CODE:
 	  x[i] = x_val && SvOK(*x_val) ? SvNV(*x_val) : 0;
 	  y[i] = y_val && SvOK(*y_val) ? SvNV(*y_val) : 0;
 	}
-
 	if (is_pearson) {
-	  /* Welford's Method for Pearson Correlation */
+	  // Welford's Method for Pearson Correlation
 	  double mean_x = 0.0, mean_y = 0.0, M2_x = 0.0, M2_y = 0.0, cov = 0.0;
 	  for (size_t i = 0; i < n; i++) {
 		   double dx = x[i] - mean_x;
@@ -1395,23 +1396,24 @@ CODE:
 	  estimate = (M2_x > 0.0 && M2_y > 0.0) ? cov / sqrt(M2_x * M2_y) : 0.0;
 	  df = n - 2;
 	  statistic = estimate * sqrt(df / (1.0 - estimate * estimate));
-	  
-	  /* Confidence interval using Fisher's Z transform */
+
+	  // Confidence interval using Fisher's Z transform
 	  double z = 0.5 * log((1.0 + estimate) / (1.0 - estimate));
 	  double se = 1.0 / sqrt(n - 3);
 	  double alpha = 1.0 - conf_level;
 	  double q = qnorm(1.0 - alpha/2.0);
 	  ci_lower = tanh(z - q * se);
 	  ci_upper = tanh(z + q * se);
-	  
-	  /* HIGH-PRECISION P-VALUE USING INCOMPLETE BETA */
+	  // HIGH-PRECISION P-VALUE USING INCOMPLETE BETA
 	  p_value = get_t_pvalue(statistic, df, alternative);
+
 	} else if (is_kendall) {
 	  int c = 0, d = 0, tie_x = 0, tie_y = 0;
 	  for (size_t i = 0; i < n - 1; i++) {
 		   for (size_t j = i + 1; j < n; j++) {
 		       double sign_x = (x[i] - x[j] > 0) - (x[i] - x[j] < 0);
 		       double sign_y = (y[i] - y[j] > 0) - (y[i] - y[j] < 0);
+
 		       if (sign_x == 0 && sign_y == 0) { /* Joint tie, ignore */ }
 		       else if (sign_x == 0) tie_x++;
 		       else if (sign_y == 0) tie_y++;
@@ -1421,9 +1423,9 @@ CODE:
 	  }
 	  double denom = sqrt((double)(c + d + tie_x) * (double)(c + d + tie_y));
 	  estimate = (denom == 0.0) ? (0.0/0.0) : (double)(c - d) / denom;
+
 	  bool has_ties = (tie_x > 0 || tie_y > 0);
 	  bool do_exact;
-	  
 	  /* Mirror R: exact defaults to TRUE if N < 50 and NO ties */
 	  if (!exact_sv || !SvOK(exact_sv)) {
 		   do_exact = (n < 50) && !has_ties;
@@ -1432,7 +1434,7 @@ CODE:
 	  }
 	  // If forced exact but ties exist, R overrides and falls back to approximation anyway
 	  if (do_exact && has_ties) do_exact = 0;
-	  
+
 	  if (do_exact) {
 		   double S_stat = c - d;
 		   statistic = c;
@@ -1457,8 +1459,7 @@ CODE:
 	  double *restrict rank_y = safemalloc(n * sizeof(double));
 	  compute_ranks(x, rank_x, n);
 	  compute_ranks(y, rank_y, n);
-	  
-	  /* Spearman rho = Pearson r of the ranks (Welford's Method) */
+	  // Spearman rho = Pearson r of the ranks (Welford's Method)
 	  double mean_x = 0.0, mean_y = 0.0, M2_x = 0.0, M2_y = 0.0, cov = 0.0;
 	  for (size_t i = 0; i < n; i++) {
 		   double dx = rank_x[i] - mean_x;
@@ -1470,24 +1471,21 @@ CODE:
 		   cov  += dx * (rank_y[i] - mean_y);
 	  }
 	  estimate = (M2_x > 0.0 && M2_y > 0.0) ? cov / sqrt(M2_x * M2_y) : 0.0;
-
-	  /* S = sum of squared rank differences (R's reported statistic) */
+	  // S = sum of squared rank differences (R's reported statistic)
 	  double S_stat = 0.0;
 	  for (size_t i = 0; i < n; i++) {
 		   double diff = rank_x[i] - rank_y[i];
 		   S_stat += diff * diff;
 	  }
 
-	  /* Ties produce fractional (averaged) ranks — detect them */
-	  int has_ties = 0;
+	  // Ties produce fractional (averaged) ranks — detect them
+	  bool has_ties = 0, do_exact;
 	  for (size_t i = 0; i < n; i++) {
 		   if (rank_x[i] != floor(rank_x[i]) || rank_y[i] != floor(rank_y[i])) {
 		       has_ties = 1;
 		       break;
 		   }
 	  }
-
-	  int do_exact;
 	  if (!exact_sv || !SvOK(exact_sv)) {
 		   do_exact = (n < 10) && !has_ties;
 	  } else {
@@ -1532,6 +1530,7 @@ CODE:
 }
 OUTPUT:
     RETVAL
+
 
 void
 shapiro_test(data)
