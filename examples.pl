@@ -5,12 +5,32 @@ no source::encoding;
 use warnings FATAL => 'all';
 use autodie ':all';
 use Stats::LikeR;
-#use JSON 'encode_json';
-#use Matplotlib::Simple;
 use DDP {output => 'STDOUT', array_max => 10, show_memsize => 1};
 use Devel::Confess 'color';
+use Time::HiRes;
+use File::Temp;
 
-my %hoa = (
+my $fh = File::Temp->new(DIR => '/tmp', SUFFIX => '.csv', UNLINK => 1);
+close $fh;
+my $d = read_table('lib/Stats/HepatitisCdata.csv', 'output.type' => 'hoa');
+my (@gemini, @compiled);
+foreach my $x (0..9) {
+	my $t0 = Time::HiRes::time();
+	my $x = write_table($d, $fh->filename);
+	my $t1 = Time::HiRes::time();
+	push @compiled, $t1-$t0;
+}
+say 'Compiled mean: ' . mean(\@compiled);
+foreach my $x (0..9) {
+	my $t0 = Time::HiRes::time();
+	my $x = gemini_write_table($d, $fh->filename);
+	my $t1 = Time::HiRes::time();
+	push @gemini, $t1-$t0;
+}
+say 'Gemini mean: ' . mean(\@gemini);
+my $t = t_test('x' => \@compiled, 'y' => \@gemini);
+p $t;
+=my %hoa = (
 	'r1' => [42, 'hello,world', undef, undef],
 	'r2' => [99, undef, 'quote"here', undef],
 	'r3' => [undef, "tab\tin", undef, undef],

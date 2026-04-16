@@ -287,9 +287,9 @@ static double get_data_value(HV *restrict data_hoa, HV **restrict row_hashes, un
     }
     if (val && SvOK(*val)) {
         if (looks_like_number(*val)) return SvNV(*val);
-        return NAN; /* Catch strings like "blue" */
+        return NAN; // Catch strings like "blue"
     }
-    return NAN; /* Catch undef/missing keys */
+    return NAN; // Catch undef/missing keys
 }
 
 // Recursive formula resolver must propagate NANs
@@ -297,7 +297,6 @@ static double get_data_value(HV *restrict data_hoa, HV **restrict row_hashes, un
 static double evaluate_term(HV *restrict data_hoa, HV **restrict row_hashes, unsigned int i, const char *restrict term) {
     // Dynamically allocate instead of char term_cpy[256];
     char *restrict term_cpy = savepv(term); 
-
     char *restrict colon = strchr(term_cpy, ':');
     if (colon) {
         *colon = '\0';
@@ -308,7 +307,6 @@ static double evaluate_term(HV *restrict data_hoa, HV **restrict row_hashes, uns
         if (isnan(left) || isnan(right)) return NAN;
         return left * right;
     }
-    
     if (strncmp(term_cpy, "I(", 2) == 0) {
         char *restrict end = strrchr(term_cpy, ')');
         if (end) *end = '\0';
@@ -325,7 +323,6 @@ static double evaluate_term(HV *restrict data_hoa, HV **restrict row_hashes, uns
         if (isnan(v)) return NAN;
         return power == 1 ? v : pow(v, power);
     }
-    
     double result = get_data_value(data_hoa, row_hashes, i, term_cpy);
     Safefree(term_cpy); // Free before returning
     return result;
@@ -334,24 +331,24 @@ static double evaluate_term(HV *restrict data_hoa, HV **restrict row_hashes, uns
 // Helper to infer column type from its first valid element
 static bool is_column_categorical(HV *restrict data_hoa, HV **restrict row_hashes, size_t n, const char *restrict var) {
 	for (size_t i = 0; i < n; i++) {
-	  SV **restrict val = NULL;
-	  if (row_hashes) {
-		   val = hv_fetch(row_hashes[i], var, strlen(var), 0);
-		   if (val && SvROK(*val) && SvTYPE(SvRV(*val)) == SVt_PVAV) {
-		       AV*restrict av = (AV*)SvRV(*val);
-		       val = av_fetch(av, 0, 0);
-		   }
-	  } else if (data_hoa) {
-		   SV **restrict col = hv_fetch(data_hoa, var, strlen(var), 0);
-		   if (col && SvROK(*col) && SvTYPE(SvRV(*col)) == SVt_PVAV) {
-		       AV*restrict av = (AV*)SvRV(*col);
-		       val = av_fetch(av, i, 0);
-		   }
-	  }
-	  if (val && SvOK(*val)) {
-		   if (looks_like_number(*val)) return false; /* First valid is number -> Numeric Column */
-		   return true; /* First valid is string -> Categorical Column */
-	  }
+		SV **restrict val = NULL;
+		if (row_hashes) {
+			val = hv_fetch(row_hashes[i], var, strlen(var), 0);
+			if (val && SvROK(*val) && SvTYPE(SvRV(*val)) == SVt_PVAV) {
+				 AV*restrict av = (AV*)SvRV(*val);
+				 val = av_fetch(av, 0, 0);
+			}
+		} else if (data_hoa) {
+			SV **restrict col = hv_fetch(data_hoa, var, strlen(var), 0);
+			if (col && SvROK(*col) && SvTYPE(SvRV(*col)) == SVt_PVAV) {
+				 AV*restrict av = (AV*)SvRV(*col);
+				 val = av_fetch(av, i, 0);
+			}
+		}
+		if (val && SvOK(*val)) {
+			if (looks_like_number(*val)) return false; // First valid is number -> Numeric Column
+			return true; // First valid is string -> Categorical Column
+		}
 	}
 	return false;
 }
@@ -386,11 +383,11 @@ typedef struct {
 
 // Comparator for qsort
 static int cmp_pval(const void *restrict a, const void *restrict b) {
-    double diff = ((PVal*)a)->p - ((PVal*)b)->p;
-    if (diff < 0) return -1;
-    if (diff > 0) return 1;
-    /* Stabilize sort by falling back to original index */
-    return ((PVal*)a)->orig_idx - ((PVal*)b)->orig_idx; 
+	double diff = ((PVal*)a)->p - ((PVal*)b)->p;
+	if (diff < 0) return -1;
+	if (diff > 0) return 1;
+	/* Stabilize sort by falling back to original index */
+	return ((PVal*)a)->orig_idx - ((PVal*)b)->orig_idx; 
 }
 /* -----------------------------------------------------------------------
  * Helpers for cor(): ranking (Spearman), Pearson r, Kendall tau-b
@@ -403,10 +400,10 @@ typedef struct {
 } RankItem;
 
 static int cmp_rank_item(const void *restrict a, const void *restrict b) {
-    double diff = ((RankItem*)a)->val - ((RankItem*)b)->val;
-    if (diff < 0) return -1;
-    if (diff > 0) return  1;
-    return 0;
+	double diff = ((RankItem*)a)->val - ((RankItem*)b)->val;
+	if (diff < 0) return -1;
+	if (diff > 0) return  1;
+	return 0;
 }
 
 /* Compute 1-based average ranks with tie-breaking into out[].
@@ -419,13 +416,13 @@ static void rank_data(const double *restrict in, double *restrict out, size_t n)
 
 	size_t i = 0;
 	while (i < n) {
-	  size_t j = i;
-	  /* Find the full extent of this tie group */
-	  while (j + 1 < n && ri[j + 1].val == ri[j].val) j++;
-	  /* All members get the average of ranks i+1 … j+1 (1-based) */
-	  double avg = (double)(i + j) / 2.0 + 1.0;
-	  for (size_t k = i; k <= j; k++) out[ri[k].idx] = avg;
-	  i = j + 1;
+		size_t j = i;
+		/* Find the full extent of this tie group */
+		while (j + 1 < n && ri[j + 1].val == ri[j].val) j++;
+		/* All members get the average of ranks i+1 … j+1 (1-based) */
+		double avg = (double)(i + j) / 2.0 + 1.0;
+		for (size_t k = i; k <= j; k++) out[ri[k].idx] = avg;
+		i = j + 1;
 	}
 	Safefree(ri);
 }
@@ -536,7 +533,7 @@ static double get_t_pvalue(double t, double df, const char*restrict alt) {
 	return prob_2tail;
 }
 
-/* Bisection algorithm to find the inverse t-distribution (Critical t-value) */
+// Bisection algorithm to find the inverse t-distribution (Critical t-value)
 static double qt_tail(double df, double p_tail) {
 	double low = 0.0, high = 1.0;
 	// Find upper bound
@@ -665,44 +662,44 @@ static double inverse_normal_cdf(double p) {
  * Valid up to n = 9 (362 880 iterations — negligible cost).
  * ----------------------------------------------------------------------- */
 static double spearman_exact_pvalue(double s_obs, int n, const char *restrict alt) {
-    int *restrict perm = (int*)safemalloc(n * sizeof(int));
-    int *restrict c    = (int*)safemalloc(n * sizeof(int));
-    int  i;
-    for (i = 0; i < n; i++) { perm[i] = i + 1; c[i] = 0; }
+	int *restrict perm = (int*)safemalloc(n * sizeof(int));
+	int *restrict c    = (int*)safemalloc(n * sizeof(int));
+	int  i;
+	for (i = 0; i < n; i++) { perm[i] = i + 1; c[i] = 0; }
 
-    long count_le = 0, count_ge = 0, total = 0;
+	long count_le = 0, count_ge = 0, total = 0;
 
-#define TALLY_PERM() do {                                    \
-        double s_ = 0.0;                                     \
-        for (int ii = 0; ii < n; ii++) {                    \
-            double d_ = (double)(ii + 1) - (double)perm[ii];\
-            s_ += d_ * d_;                                   \
-        }                                                    \
-        if (s_ <= s_obs + 1e-9) count_le++;                 \
-        if (s_ >= s_obs - 1e-9) count_ge++;                 \
-        total++;                                             \
-    } while (0)
+	#define TALLY_PERM() do {                                    \
+	  double s_ = 0.0;                                     \
+	  for (int ii = 0; ii < n; ii++) {                    \
+		   double d_ = (double)(ii + 1) - (double)perm[ii];\
+		   s_ += d_ * d_;                                   \
+	  }                                                    \
+	  if (s_ <= s_obs + 1e-9) count_le++;                 \
+	  if (s_ >= s_obs - 1e-9) count_ge++;                 \
+	  total++;                                             \
+	} while (0)
 
-    TALLY_PERM();   /* initial permutation [1, 2, ..., n] */
+	TALLY_PERM();   /* initial permutation [1, 2, ..., n] */
 
-    unsigned int k = 1;
-    while (k < n) {
-        if (c[k] < k) {
-            int tmp;
-            if (k % 2 == 0) {
-                tmp = perm[0]; perm[0] = perm[k]; perm[k] = tmp;
-            } else {
-                tmp = perm[c[k]]; perm[c[k]] = perm[k]; perm[k] = tmp;
-            }
-            TALLY_PERM();
-            c[k]++;
-            k = 1;
-        } else {
-            c[k] = 0;
-            k++;
-        }
-    }
-#undef TALLY_PERM
+	unsigned int k = 1;
+	while (k < n) {
+	  if (c[k] < k) {
+		   int tmp;
+		   if (k % 2 == 0) {
+		       tmp = perm[0]; perm[0] = perm[k]; perm[k] = tmp;
+		   } else {
+		       tmp = perm[c[k]]; perm[c[k]] = perm[k]; perm[k] = tmp;
+		   }
+		   TALLY_PERM();
+		   c[k]++;
+		   k = 1;
+	  } else {
+		   c[k] = 0;
+		   k++;
+	  }
+	}
+	#undef TALLY_PERM
 
 	Safefree(perm); Safefree(c);
 	/* p_le = P(S ≤ s_obs) ≡ P(rho ≥ rho_obs)  — upper rho tail
@@ -815,39 +812,39 @@ static double pf(double f, double df1, double df2) {
 }
 
 /* Householder QR Decomposition for Sequential Sums of Squares */
-static void apply_householder_aov(double** restrict X, double* restrict y, size_t n, int p) {
- for (unsigned int k = 0; k < p && k < n; k++) {
-     double max_val = 0;
-     for (size_t i = k; i < n; i++) {
-         if (fabs(X[i][k]) > max_val) max_val = fabs(X[i][k]);
-     }
-     if (max_val == 0) continue; /* Collinear or zero column */
+static void apply_householder_aov(double** restrict X, double* restrict y, size_t n, size_t p) {
+	for (unsigned int k = 0; k < p && k < n; k++) {
+		double max_val = 0;
+		for (size_t i = k; i < n; i++) {
+			if (fabs(X[i][k]) > max_val) max_val = fabs(X[i][k]);
+		}
+		if (max_val == 0) continue; /* Collinear or zero column */
 
-     double norm = 0;
-     for (size_t i = k; i < n; i++) {
-         X[i][k] /= max_val;
-         norm += X[i][k] * X[i][k];
-     }
-     norm = sqrt(norm);
-     double s = (X[k][k] > 0) ? -norm : norm;
-     double u1 = X[k][k] - s;
-     X[k][k] = s * max_val;
-     
-     for (int j = k + 1; j < p; j++) {
-         double dot = u1 * X[k][j];
-         for (size_t i = k + 1; i < n; i++) dot += X[i][j] * X[i][k];
-         double tau = dot / (s * u1);
-         X[k][j] += tau * u1;
-         for (size_t i = k + 1; i < n; i++) X[i][j] += tau * X[i][k];
-     }
-     
-     /* Transform the response vector y */
-     double dot_y = u1 * y[k];
-     for (size_t i = k + 1; i < n; i++) dot_y += y[i] * X[i][k];
-     double tau_y = dot_y / (s * u1);
-     y[k] += tau_y * u1;
-     for (size_t i = k + 1; i < n; i++) y[i] += tau_y * X[i][k];
- }
+		double norm = 0;
+		for (size_t i = k; i < n; i++) {
+			X[i][k] /= max_val;
+			norm += X[i][k] * X[i][k];
+		}
+		norm = sqrt(norm);
+		double s = (X[k][k] > 0) ? -norm : norm;
+		double u1 = X[k][k] - s;
+		X[k][k] = s * max_val;
+
+		for (size_t j = k + 1; j < p; j++) {
+			double dot = u1 * X[k][j];
+			for (size_t i = k + 1; i < n; i++) dot += X[i][j] * X[i][k];
+			double tau = dot / (s * u1);
+			X[k][j] += tau * u1;
+			for (size_t i = k + 1; i < n; i++) X[i][j] += tau * X[i][k];
+		}
+
+		/* Transform the response vector y */
+		double dot_y = u1 * y[k];
+		for (size_t i = k + 1; i < n; i++) dot_y += y[i] * X[i][k];
+		double tau_y = dot_y / (s * u1);
+		y[k] += tau_y * u1;
+		for (size_t i = k + 1; i < n; i++) y[i] += tau_y * X[i][k];
+	}
 }
 // --- XS SECTION ---
 MODULE = Stats::LikeR  PACKAGE = Stats::LikeR

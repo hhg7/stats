@@ -22,7 +22,7 @@ sub is_approx ($got, $expected, $test_name, $epsilon = 10**-7) {
 		die "\$arg[$i] (see subroutine signature for name) isn't defined in $current_sub";
 	}
 	my $diff = abs($got - $expected);
-	if ($diff < $epsilon) {
+	if ($diff <= $epsilon) {
 		pass("$test_name: within $epsilon");
 		return 1;
 	} else {
@@ -910,8 +910,9 @@ $shapiro = shapiro_test(
 );
 is_approx( $shapiro->{p_value}, 0.5896506, 'Shapiro p-value: 19 values');
 is_approx( $shapiro->{W}, 0.9608707, 'Shapiro W: 19 values');
+#--------------------
 #------- cor test
-
+#--------------------
 my $x = [1, 2, 3, 4, 5];
 my $y = [2, 1, 4, 3, 5];
 
@@ -991,6 +992,14 @@ foreach my ($idx, $meth) (indexed @correct) {
 		}
 		is_approx( $result->{$key}, $meth->{$key}, "cor_test: $meth->{method}/$meth->{alternative} & $key");
 	}
+}
+#--------------------
+#  cov
+#--------------------
+is_approx(2, cov($x, $y), 'default covariance/cov', 0);
+@correct = (2,2,12);
+foreach my ($idx, $method) (indexed ('pearson', 'spearman', 'kendall')) {
+	is_approx(cov($x, $y, $method), $correct[$idx], "cov with $method", 0 );
 }
 #--------------------
 #  aov

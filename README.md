@@ -53,6 +53,18 @@ Just like R, `pearson`, `spearman`, and `kendall` are available
     		continuity  => 1
     	);
 
+## cov
+
+    cov($array1, $array2, 'pearson')
+
+or
+
+    cov($array1, $array2, 'spearman')
+
+or
+
+    cov($array1, $array2, 'kendall')
+
 ## fisher_test
 
     my $array_data = [
