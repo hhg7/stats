@@ -10,7 +10,39 @@ use Stats::LikeR;
 use DDP {output => 'STDOUT', array_max => 10, show_memsize => 1};
 use Devel::Confess 'color';
 
-my @s = seq(10,1,1);
+my %hoa = (
+	'r1' => [42, 'hello,world', undef, undef],
+	'r2' => [99, undef, 'quote"here', undef],
+	'r3' => [undef, "tab\tin", undef, undef],
+);
+
+write_table(
+	\%hoa,
+	'/tmp/hoa.tsv',
+	sep => "\t"
+);
+
+my $table = read_table( '/tmp/hoa.tsv', sep => "\t", 'output.type' => 'hoa');
+p $table;
+foreach my $key (sort keys %hoa) {	
+	my $max_i_hoa = scalar @{ $hoa{$key} } - 1;
+	my $max_i_table = scalar @{ $table->{$key} } - 1;
+	if ($max_i_hoa == $max_i_table) {
+		say "$key has the same number of elements";
+	}
+	foreach my $i (0..$max_i_hoa) {
+		if (
+				(defined $hoa{$key}[$i])
+				&&
+				(defined $table->{$key}[$i])
+				&&
+				($hoa{$key}[$i] eq $table->{$key}[$i])
+			) {
+			say 'pass';
+		}
+	}
+}
+=my @s = seq(10,1,1);
 p @s;
 die;
 my %tooth_growth = (

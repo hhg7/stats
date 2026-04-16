@@ -14,7 +14,6 @@ use Exporter 'import';
 XSLoader::load('Stats::LikeR', $VERSION);
 our @EXPORT_OK = qw(aov cor cor_test fisher_test glm hist lm matrix mean median min max p_adjust quantile rbinom read_table rnorm runif scale sd seq shapiro_test t_test var write_table);
 our @EXPORT = @EXPORT_OK;
-package Stats::LikeR;
 
 require XSLoader;
 
@@ -32,44 +31,88 @@ sub read_table {
 		'substitutions',
 		'output.type' # aoh, hoa, or hoh
 	);
-	my @undef_args = sort grep {!$allowed_args{$_}} keys %allowed_args;
+	
+	# FIX: Validate against %args, not %allowed_args
+	my @undef_args = sort grep {!$allowed_args{$_}} keys %args;
 	my $current_sub = (split(/::/,(caller(0))[3]))[-1];
 	if (scalar @undef_args > 0) {
 		p @undef_args;
 		die "the above args aren't defined for $current_sub";
 	}
-	# ... (argument validation logic from your original script) ...
+
 	$args{'output.type'} = $args{'output.type'} // 'aoh';
 	if ($args{'output.type'} !~ m/^(?:aoh|hoa|hoh)$/) {
 		die "\"$args{'output.type'}\" isn't allowed";
 	}
 	$args{comment} = $args{comment} // '#';
+	
 	my (@data, %data, @header);
 	open my $txt, '<', $file;
-	while (<$txt>) {
-		next if $_ =~ m/^$args{comment}/;
-		next if /^\h*$/; # Skip empty lines
-		$_ =~ s/\r?\n$//; # chomp with annoying and invisible Windows "\r"
-		# Apply substitutions if any
-		foreach my $sub (@{ $args{substitutions} // [] }) {
-			$_ =~ s/$sub->[0]/$sub->[1]/g;
+	
+	# State machine variables for CSV/TSV parsing
+	my $in_quotes = 0;
+	my @line;
+	my $field = '';
+	my $sep_len = length($args{sep});
+	
+	while (my $line_str = <$txt>) {
+		# Skip comments and empty lines ONLY if we are not inside a multiline quoted field
+		if (!$in_quotes) {
+			next if $line_str =~ m/^\Q$args{comment}\E/;
+			next if $line_str =~ m/^\h*[\r\n]+$/; 
 		}
-		# Use -1 to keep trailing empty fields
-		my @line = split /$args{sep}/, $_;
-		if ($. == 1) {
-			# --- HEADER PROCESSING ---
-			foreach my $cell (@line) {
-				$cell =~ s/^#//;      # Remove comment prefix if present
-				$cell =~ s/"$//; # Strip surrounding quotes 
-				$cell =~ s/^"//;
-				$cell =~ s/\"\"/\"/g;  # Un-escape doubled quotes 
+
+		$line_str =~ s/\r?\n$//; # chomp with annoying invisible Windows "\r"
+		
+		# Apply substitutions if any (only on raw unquoted lines to prevent breaking the parser)
+		if (!$in_quotes) {
+			foreach my $sub (@{ $args{substitutions} // [] }) {
+				$line_str =~ s/$sub->[0]/$sub->[1]/g;
 			}
-			# FIX: Instead of grep, only remove trailing empty fields
-			# that might exist due to a trailing separator.
+		}
+
+		# --- PARSING MACHINE ---
+		# Safely extracts fields, handling quotes, doubled-quotes, and inner separators.
+		my $len = length($line_str);
+		for (my $i = 0; $i < $len; $i++) {
+			my $char = substr($line_str, $i, 1);
+			
+			if ($char eq '"') {
+				if ($in_quotes && $i + 1 < $len && substr($line_str, $i + 1, 1) eq '"') {
+					$field .= '"';
+					$i++; # Skip the escaped second quote
+				} elsif ($in_quotes) {
+					$in_quotes = 0; # Close quotes
+				} else {
+					$in_quotes = 1; # Open quotes
+				}
+			} elsif (!$in_quotes && substr($line_str, $i, $sep_len) eq $args{sep}) {
+				push @line, $field;
+				$field = '';
+				$i += $sep_len - 1; # Advance past multi-char separators
+			} else {
+				$field .= $char;
+			}
+		}
+		
+		if ($in_quotes) {
+			# Line ended but quotes are still open! Append newline and fetch next line
+			$field .= "\n";
+			next; 
+		}
+		
+		# Push the final field of the record
+		push @line, $field;
+		$field = '';
+		
+		if (!@header) {
+			# --- HEADER PROCESSING ---
+			$line[0] =~ s/^\Q$args{comment}\E// if @line && defined $line[0];
+			
 			while (@line && $line[-1] eq '') { pop @line }
 			@header = @line; 
-			# R-LIKE BEHAVIOR: If the first header is blank (like in HepatitisCdata.csv),
-			# give it a name so it can be used as a hash key for the index column.
+			
+			# R-LIKE BEHAVIOR
 			if ((scalar @header > 0) && ($header[0] eq '')) {
 				$header[0] = 'row_name'; 
 			}
@@ -79,41 +122,48 @@ sub read_table {
 			if ((defined $args{'row.name'}) && (!grep {$_ eq $args{'row.name'}} @header)) {
 				die "\"$args{'row.name'}\" isn't in the header of $file";
 			}
+			
+			@line = (); # Reset for the first data line
 			next;
 		}
+		
 		# Check for column alignment
 		if (scalar @line != scalar @header) {
-			warn "Alignment error on $file line $. (" . scalar(@line) . " fields vs " . scalar(@header) . " headers).";
-			next;
+			p @line;
+			p @header;
+			die "Alignment error on $file (" . scalar(@line) . " fields vs " . scalar(@header) . " headers).";
 		}
+		
 		# --- DATA PROCESSING ---
-		my %line;
+		my %line_hash;
 		for my $i (0 .. $#header) {
 			my $cell = $line[$i];
-			# Strip quotes and handle un-escaping for data fields 
-			if (defined $cell) {
-				$cell =~ s/^\"|\"$//g;
-				$cell =~ s/\"\"/\"/g;
-				$cell =~ s/"$//;
-				$cell =~ s/^"//;
-			}
-			# R-like behavior: Treat empty strings as 'NA' 
-			$line{$header[$i]} = ($cell eq '') ? 'NA' : $cell;
+			# R-like behavior: Treat completely empty fields as 'NA' 
+			$line_hash{$header[$i]} = (defined($cell) && $cell eq '') ? 'NA' : $cell;
 		}
+		
 		if ($args{'output.type'} eq 'aoh') {
-			push @data, \%line;
+			push @data, \%line_hash;
 		} elsif ($args{'output.type'} eq 'hoa') {
 			foreach my $col (@header) {
-				push @{ $data{$col} }, $line{$col};
+				push @{ $data{$col} }, $line_hash{$col};
 			}
 		} elsif ($args{'output.type'} eq 'hoh') {
-			my $row_name = $line{$args{'row.name'}};
+			my $row_name = $line_hash{$args{'row.name'}};
 			foreach my $col (@header) {
-				$data{$col}{$row_name} = $line{$col};
+				$data{$col}{$row_name} = $line_hash{$col};
 			}
 		}
+		
+		@line = (); # Reset array for next record
 	}
 	close $txt;
+	
+	# Sanity check: Ensure the file didn't abruptly end with an unclosed quote
+	if ($in_quotes) {
+		die "Error parsing $file: Reached EOF while inside quotes.";
+	}
+
 	if ($args{'output.type'} eq 'aoh') {
 		return \@data;
 	} elsif ($args{'output.type'} =~ m/^(?:hoa|hoh)$/) {
@@ -123,19 +173,19 @@ sub read_table {
 
 sub write_table {
 	my $data_ref = (ref($_[0]) eq 'HASH' || ref($_[0]) eq 'ARRAY') ? shift : undef;
-	my $current_sub = (split(/::/,(caller(0))[3]))[-1];
+	my $file = shift;
 	my %args = (
 		sep         => ',',
 		'row.names' => 1,      
 		@_,
 	);
+	my $current_sub = (split(/::/,(caller(0))[3]))[-1];
 	$args{data} //= $data_ref;
 	my %allowed = map { $_ => 1 } qw(data file row.names sep col.names);
 	my @err = grep { !$allowed{$_} } keys %args;
 	if (@err > 0) {
 		die "$current_sub: Unknown arguments passed: " . join(", ", @err) . "\n";
 	}
-	die "$current_sub: 'file' argument is required\n" unless defined $args{file};
 	die "$current_sub: 'data' must be a HASH or ARRAY reference\n" 
 		unless defined $args{data} && (ref($args{data}) eq 'HASH' || ref($args{data}) eq 'ARRAY');
 
@@ -145,7 +195,6 @@ sub write_table {
 	}
 	my $data         = $args{data};
 	my $sep          = $args{sep};
-	my $file         = $args{file};
 	my $inc_rownames = $args{'row.names'};
 	my $quote_field = sub {
 		my ($val, $sep) = @_;
@@ -213,27 +262,43 @@ sub write_table {
 			print $fh join($sep, @quoted) . "\n";
 		}
 	} elsif ($is_hoa) {
-		my $max_cols = 0;
-		for my $r (@rows) {
-			my $len = scalar @{ $data->{$r} };
-			$max_cols = $len if $len > $max_cols;
+		# 1. Find the maximum number of rows
+		my $max_rows = 0;
+		foreach my $col (keys %$data) {
+			my $len = scalar @{ $data->{$col} };
+			$max_rows = $len if $len > $max_rows;
 		}
+		$max_rows--; # Convert length to max index
+
+		# 2. Determine headers
 		my @headers;
-		if ($col_names) {
+		if (defined $col_names) {
 			@headers = @$col_names;
-			$max_cols = scalar @headers;
 		} else {
-			@headers = map { "V$_" } 1 .. $max_cols;
+			@headers = sort keys %$data;
 		}
+		
+		die "Could not get headers in $current_sub" if @headers == 0;
+
+		# 3. Print Header Row
 		my @header_row = @headers;
-		unshift @header_row, "" if $inc_rownames;
+		unshift @header_row, '' if $inc_rownames; # Restored row name placeholder
 		@header_row = map { $quote_field->($_, $sep) } @header_row;
-		say $fh join($sep, @header_row);
-		for my $r (sort @rows) {
-			my @row_data = map { defined $_ ? $_ : "NA" } @{ $data->{$r} }[0 .. $max_cols - 1];
-			# Ensure we pad with NA if the row data is shorter than max_cols
-			push @row_data, 'NA' while @row_data < $max_cols;
-			unshift @row_data, $r if $inc_rownames;
+		print $fh join($sep, @header_row) . "\n";
+
+		# 4. Process and Print Data Rows
+		for my $i (0 .. $max_rows) {
+			my @row_data;
+			
+			# Collect raw data for the row
+			foreach my $col (@headers) {
+				push @row_data, defined($data->{$col}[$i]) ? $data->{$col}[$i] : 'NA';
+			}
+			
+			# Prepend row number if required
+			unshift @row_data, $i + 1 if $inc_rownames;
+			
+			# Apply your quoting logic!
 			my @quoted = map { $quote_field->($_, $sep) } @row_data;
 			print $fh join($sep, @quoted) . "\n";
 		}
@@ -260,7 +325,6 @@ sub write_table {
 			print $fh join($sep, @quoted) . "\n";
 		}
 	}
-	close $fh;
 }
 1;
 #sub mean {

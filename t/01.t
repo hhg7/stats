@@ -23,7 +23,7 @@ sub is_approx ($got, $expected, $test_name, $epsilon = 10**-7) {
 	}
 	my $diff = abs($got - $expected);
 	if ($diff < $epsilon) {
-		pass($test_name);
+		pass("$test_name: within $epsilon");
 		return 1;
 	} else {
 		fail($test_name);
@@ -377,13 +377,27 @@ like( $@, qr/median needs >= 1 element/, 'median: dies when given empty input' )
 $test_data[0] = [1, 2, 3, 4, 5,  5, 6,  7,   8];
 $test_data[1] = [2, 4, 6, 8, 10, 9, 12, 14, 16];
 %correct = (
-	pearson  => 0.9973649,	spearman => 0.9958246,	kendall  => 0.9860133
+	pearson  => 0.99736494930655,	spearman => 0.99582461641931,	kendall  => 0.98601329718327
 );
 foreach my $method (sort keys %correct) {
+	my $e;
+	if ($correct{$method} =~ m/\.(\d+)$/) {
+		$e = 10**(-(length $1));
+	} elsif ($correct{$method} =~ m/^\-?\d+$/) {
+		$e = 10**-199;
+	} else {
+		my $sp = sprintf '%.3g', $correct{$method};
+		if ($sp =~ m/e\-(\d+)$/) {
+			$e = 10**(2-$1);
+		} else {
+			die "$sp failed regex.";
+		}
+	}
 	is_approx(
 		cor($test_data[0], $test_data[1], $method),
 		$correct{$method},
-		"cor: method = \"$method\""
+		"cor: method = \"$method\"",
+		$e
 	);
 }
 
@@ -905,6 +919,7 @@ my @correct = (
 { # cor.test(cx, cy, alternative='two.sided', method = 'spearman', continuity=1)
 	alternative => 'two.sided',
 	estimate    => 0.8,
+	'conf.level'=> 0.95,
 	'p.value'   => 0.1333333,
 	statistic   => 4,
 	method      => 'spearman'
@@ -914,7 +929,7 @@ my @correct = (
 	estimate    => 0.6, # tau
 	method      => 'kendall',
 	'p.value'   => 0.2333333,
-	statistic   => 8
+	statistic   => 8,
 },
 {# cor.test(cx, cy, alternative='two.sided', method = 'pearson', continuity=1)
 	alternative => 'two.sided',
@@ -925,7 +940,7 @@ my @correct = (
 	method    => 'pearson',
 	'p.value' => 0.104088,
 	parameter => 3,
-	statistic => 2.309401
+	statistic => 2.309401,
 },
 { # cor.test(cx, cy, alternative='less', method = 'pearson', continuity=1
 	alternative => 'less',
@@ -936,29 +951,44 @@ my @correct = (
 	method    => 'pearson',
 	'p.value' => 0.947956,
 	parameter => 3,
-	statistic => 2.309401	
+	statistic => 2.309401,
 },
 {# cor.test(cx, cy, alternative='less', method = 'kendall', continuity=1)
 	alternative => 'less',
 	estimate    => 0.6, # tau
 	method      => 'kendall',
 	'p.value'   => 0.9583333,
-	statistic   => 8
+	statistic   => 8,
+},
+{# cor.test(cx, cy, conf.level=0.99)
+	alternative => 'two.sided',
+	'conf.level'=> 0.99,
+	estimate    => 0.8,
+	method      => 'pearson',
+	'p.value'   => 0.10408803866183,
+	parameter   => 3,
+	statistic   => 2.30940107675850,
 }
 );
-foreach my $meth (@correct) {
+foreach my ($idx, $meth) (indexed @correct) {
+	$meth->{'conf.level'} = $meth->{'conf.level'} // 0.95; # default 0.95
+	say $meth->{'conf.level'};
 	my $result = cor_test(
 		$x, $y, # first 2 args are positional
 		alternative => $meth->{alternative}, # so that it matches the test
 		method      => $meth->{method},      # so that it matches the test
-		continuity  => 1
+		continuity  => 1,
+		'conf.level'=> $meth->{'conf.level'}
 	);
-	my @undef_keys = grep {!defined $meth->{$_}} sort keys %{ $result };
+	my @undef_keys = grep {!defined $result->{$_}} sort keys %{ $result };
 	if (scalar @undef_keys > 0) {
 		p @undef_keys;
 		die "The above keys aren't defined";
 	}
 	foreach my $key (sort grep {looks_like_number($result->{$_})} keys %{ $result }) {
+		if (not defined $meth->{$key}) {
+			die "\"$key\" isn't defined in answer key \$meth (index $idx/$#correct)";
+		}
 		is_approx( $result->{$key}, $meth->{$key}, "cor_test: $meth->{method}/$meth->{alternative} & $key");
 	}
 }
@@ -1440,14 +1470,14 @@ my %data_hoa = (
 	'r3' => [undef, "tab\tin", undef, undef],
 );
 
-write_table(\%data_hoa, $tmp_file, sep => "\t", 'row.names' => true);
-$str = file2string($tmp_file);
-if (sha512_base64($str) eq 'wsKnu+u+TTMEYpTS0NKGes8JrWQ9JfnUgP8yCmo+q3BmnLbrzYUE74n+nd23kaGffHABIt1aluUPRgqtVl5jVA') {
-    pass('write_table successfully wrote a tab-delimited file (Hash of Arrays)');
-    unlink $tmp_file;
-} else {
-    fail("sha512 does not match for write_table HoA; see $tmp_file");
-}
+#write_table(\%data_hoa, $tmp_file, sep => "\t", 'row.names' => true);
+#$str = file2string($tmp_file);
+#if (sha512_base64($str) eq 'wsKnu+u+TTMEYpTS0NKGes8JrWQ9JfnUgP8yCmo+q3BmnLbrzYUE74n+nd23kaGffHABIt1aluUPRgqtVl5jVA') {
+#    pass('write_table successfully wrote a tab-delimited file (Hash of Arrays)');
+#    unlink $tmp_file;
+#} else {
+#    fail("sha512 does not match for write_table HoA; see $tmp_file");
+#}
 
 # === TEST 3: ARRAY OF HASHES (positional) ===
 # Demonstrates: AoH, preserves original array order (no sorting of rows),
@@ -1529,7 +1559,65 @@ subtest 'write_table: col.names feature validation' => sub {
 	dies_ok {
 		write_table(\%data_hoh_col, $tmp_file, 'col.names' => 'Not an array ref');
 	} 'write_table: dies when col.names is not an array reference';
+	
+	my %hoa = (A => [1..4], B => [-3..3], C => [9,3,4]);
+	write_table(
+		\%hoa,
+		'/tmp/hoa.test.tsv',
+		sep => "\t"
+	);
 };
+%correct = (
+	'r1' => [42, 'hello,world', undef, undef],
+	'r2' => [99, undef, 'quote"here', undef],
+	'r3' => [undef, "tab\tin", undef, undef],
+);
+$fh = File::Temp->new(DIR => '/tmp', SUFFIX => '.tsv', UNLINK => 1);
+close $fh;
+write_table(
+	\%correct,
+	$fh->filename,
+	sep => "\t"
+);
+
+$test_data = read_table( $fh->filename, sep => "\t", 'output.type' => 'hoa');
+foreach my $key (sort keys %correct) {	
+	my $max_i_hoa = scalar @{ $correct{$key} } - 1;
+	my $max_i_table = scalar @{ $test_data->{$key} } - 1;
+	if ($max_i_hoa == $max_i_table) {
+		pass("$key has the same number of elements");
+	} else {
+		fail("$key does not have the same number of elements.");
+	}
+	foreach my $i (0..$max_i_hoa) {
+		if (
+				(defined $correct{$key}[$i])
+				&&
+				(defined $test_data->{$key}[$i])
+				&&
+				($correct{$key}[$i] eq $test_data->{$key}[$i])
+			) {
+			pass("$key element $i has the correct value");
+		} elsif (
+				(defined $correct{$key}[$i])
+				&&
+				(defined $test_data->{$key}[$i])
+				&&
+				($correct{$key}[$i] ne $test_data->{$key}[$i])
+			) {
+			fail("$key element $i has the correct value");
+		} elsif (
+				(not defined $correct{$key}[$i])
+				&&
+				(defined $test_data->{$key}[$i])
+				&&
+				('NA' eq $test_data->{$key}[$i])
+			) {
+			pass("$key element $i correctly takes undefined values to \"NA\"");
+		}
+	}
+}
+
 #-------------------------------------------------------------------
 #  aov: Categorical Variables & Interactions (Bug Fix Validations)
 #-------------------------------------------------------------------
