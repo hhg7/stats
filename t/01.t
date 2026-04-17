@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 
-use 5.042.2;
+use 5.040;
 no source::encoding;
 use warnings FATAL => 'all';
 use Test::More;
@@ -1370,7 +1370,7 @@ foreach my $k1 ('fitted.values', 'deviance.resid') {
 #-------------------
 #     read_table
 #-------------------
-$test_data = read_table('lib/Stats/HepatitisCdata.csv');
+$test_data = read_table('t/HepatitisCdata.csv');
 if (ref $test_data eq 'ARRAY') {
 	pass('"aoh" is an array');
 } else {
@@ -1390,7 +1390,7 @@ if (
 } else {
 	fail('"read_table" failed to read into array of hash ("aoh") correctly');
 }
-$test_data = read_table('lib/Stats/HepatitisCdata.csv', 'output.type' => 'hoa');
+$test_data = read_table('t/HepatitisCdata.csv', 'output.type' => 'hoa');
 if (
 	($test_data->{Sex}[0] eq $test_data->{Sex}[2] eq $test_data->{Sex}[3] eq 'm')
 	&&
@@ -1402,7 +1402,7 @@ if (
 } else {
 	fail('"read_table" fails to read into hash of array correctly');
 }
-$test_data = read_table('lib/Stats/HepatitisCdata.csv', 'output.type' => 'hoh');
+$test_data = read_table('t/HepatitisCdata.csv', 'output.type' => 'hoh');
 foreach my $col ('Category', 'Age', 'Sex', 'ALB', 'ALP', 'ALT', 'AST', 'BIL','CHE', 'CHOL', 'CREA', 'GGT', 'PROT') {
 	if (defined $test_data->{$col}) {
 		pass("\"$col\" is defined from \"read_table\"");
@@ -1424,8 +1424,39 @@ if (
 }
 
 dies_ok {
-	read_table('lib/Stats/HepatitisCdata.csv', 'output.type' => 'not_real_type')
+	read_table('t/HepatitisCdata.csv', 'output.type' => 'not_real_type')
 } 'dies when given non-accepted type of output';
+foreach my $f ('t/E2021.csv','t/E2022.csv','t/E2023.csv','t/E2024.csv') {
+	$test_data = read_table( $f, sep => ',' );
+	p $test_data;
+}
+$test_data = read_table('t/bodyfat.csv', 'output.type' => 'hoa');
+my @col = qw(Density	BodyFat Age Weight Height Neck Chest Abdomen	Hip Thigh Knee Ankle	Biceps Forearm	Wrist);
+my @err = grep {!defined $test_data->{$_}} @col;
+if (scalar @err == 0) {
+	pass('bodyfat has no missing columns');
+} else {
+	p @err;
+	fail('bodyfat has missing columns (see above)');
+}
+@err = grep {ref $test_data->{$_} ne 'ARRAY'} @col;
+if (scalar @err == 0) {
+	pass('all columns/keys are arrays');
+} else {
+	p @err;
+	fail('at least some columns/keys are not arrays after bodyfat.csv');
+}
+@err = grep {scalar @{ $test_data->{$_} } != 252} @col;
+if (scalar @err == 0) {
+	pass('all columns/keys are arrays');
+} else {
+	p @err;
+	fail('at least some columns/keys are not arrays after bodyfat.csv');
+}
+@correct = qw(1.0271	31.9 74	207.5	70	40.8 112.4 108.5	107.1	59.3	42.2	24.6	33.7 30 20.9);
+foreach my ($idx, $col) (indexed @col) {
+	is_approx($test_data->{$col}[251], $correct[$idx], "Last row: column/key $col", 0);
+}
 #-------------------
 #     write_table
 #-------------------

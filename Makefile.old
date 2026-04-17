@@ -163,11 +163,14 @@ BOOTDEP =
 
 # Handy lists of source code files:
 XS_FILES = Fisher_Test.xs \
-	LikeR.xs
+	LikeR.xs \
+	bu.LikeR.xs
 C_FILES  = Fisher_Test.c \
-	LikeR.c
+	LikeR.c \
+	bu.LikeR.c
 O_FILES  = Fisher_Test.o \
-	LikeR.o
+	LikeR.o \
+	bu.LikeR.o
 H_FILES  = ppport.h
 MAN1PODS = 
 MAN3PODS = 
@@ -191,7 +194,6 @@ PERL_ARCHIVE_AFTER =
 
 TO_INST_PM = benchmark.pl \
 	examples.pl \
-	lib/Stats/HepatitisCdata.csv \
 	lib/Stats/LikeR.pm \
 	lib/Stats/bu.LikeR.pm \
 	lib/Stats/test.pl
@@ -560,6 +562,10 @@ clean :: clean_subdirs
 	  LikeR.exp LikeR.o \
 	  LikeR_def.old MYMETA.json \
 	  MYMETA.yml blibdirs.ts \
+	  bu.LikeR.base bu.LikeR.bs \
+	  bu.LikeR.bso bu.LikeR.c \
+	  bu.LikeR.def bu.LikeR.exp \
+	  bu.LikeR.o bu.LikeR_def.old \
 	  core core.*perl.*.? \
 	  core.[0-9] core.[0-9][0-9] \
 	  core.[0-9][0-9][0-9] core.[0-9][0-9][0-9][0-9] \
@@ -979,7 +985,7 @@ PERL_HDRS = \
 
 $(OBJECT) : $(PERL_HDRS)
 
-Fisher_Test.c LikeR.c : $(XSUBPPDEPS)
+Fisher_Test.c LikeR.c bu.LikeR.c : $(XSUBPPDEPS)
 
 
 # --- MakeMaker makefile section:
@@ -1078,7 +1084,6 @@ pm_to_blib : $(FIRST_MAKEFILE) $(TO_INST_PM)
 	  -e 'pm_to_blib({@ARGV}, '\''$(INST_LIB)/auto'\'', $$filter, '\''$(PERM_DIR)'\'')' -- $(PM_FILTER) -- \
 	  'benchmark.pl' '$(INST_LIB)/Stats/benchmark.pl' \
 	  'examples.pl' '$(INST_LIB)/Stats/examples.pl' \
-	  'lib/Stats/HepatitisCdata.csv' 'blib/lib/Stats/HepatitisCdata.csv' \
 	  'lib/Stats/LikeR.pm' 'blib/lib/Stats/LikeR.pm' \
 	  'lib/Stats/bu.LikeR.pm' 'blib/lib/Stats/bu.LikeR.pm' \
 	  'lib/Stats/test.pl' 'blib/lib/Stats/test.pl' 

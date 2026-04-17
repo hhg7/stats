@@ -146,16 +146,198 @@ sub old_read_table {
 		return \%data;
 	}
 }
+
+sub old_write_table {
+	my $data_ref = (ref($_[0]) eq 'HASH' || ref($_[0]) eq 'ARRAY') ? shift : undef;
+	my $file = shift;
+	my %args = (
+		sep         => ',',
+		'row.names' => 1,      
+		@_,
+	);
+	my $current_sub = (split(/::/,(caller(0))[3]))[-1];
+	$args{data} //= $data_ref;
+	my %allowed = map { $_ => 1 } qw(data file row.names sep col.names);
+	my @err = grep { !$allowed{$_} } keys %args;
+	if (@err > 0) {
+		die "$current_sub: Unknown arguments passed: " . join(", ", @err) . "\n";
+	}
+	die "$current_sub: 'data' must be a HASH or ARRAY reference\n" 
+		unless defined $args{data} && (ref($args{data}) eq 'HASH' || ref($args{data}) eq 'ARRAY');
+
+	my $col_names = $args{'col.names'};
+	if (defined $col_names && ref($col_names) ne 'ARRAY') {
+		die "$current_sub: 'col.names' must be an ARRAY reference\n";
+	}
+	my $data         = $args{data};
+	my $sep          = $args{sep};
+	my $inc_rownames = $args{'row.names'};
+	my $quote_field = sub {
+		my ($val, $sep) = @_;
+		return '' unless defined $val;
+		die "$current_sub: Cannot write nested reference types to table\n" if ref($val);
+		
+		my $str = "$val";  
+		if (index($str, $sep) != -1 || index($str, '"') != -1 || $str =~ /[\r\n]/) {
+			$str =~ s/"/""/g;
+			$str = qq{"$str"};
+		}
+		return $str;
+	};
+	my $data_type = ref $data;
+	my ($is_hoh, $is_hoa, $is_aoh) = (0, 0, 0);
+	my @rows;
+	if ($data_type eq 'HASH') {
+		@rows = keys %$data;
+		return if @rows == 0; 
+		my $first_type = ref $data->{$rows[0]};
+		die "$current_sub: Data values must be either all HASHes or all ARRAYs\n"
+			unless $first_type eq 'HASH' || $first_type eq 'ARRAY';
+
+		my @type_err = grep { ref $data->{$_} ne $first_type } @rows;
+		if (@type_err > 0) {
+			die "$current_sub: Mixed data types detected. Ensure all values are $first_type references.\n";
+		}
+		$is_hoh = ($first_type eq 'HASH');
+		$is_hoa = ($first_type eq 'ARRAY');
+	} else {
+		return if @$data == 0;
+
+		my $first_elem = $data->[0];
+		die "$current_sub: For ARRAY data, all elements must be HASH references (Array of Hashes)\n"
+			unless defined $first_elem && ref($first_elem) eq 'HASH';
+
+		my @type_err = grep { !defined($_) || ref($_) ne 'HASH' } @$data;
+		if (@type_err > 0) {
+			die "$current_sub: Mixed data types detected in Array of Hashes. All elements must be HASH references.\n";
+		}
+		$is_aoh = 1;
+	}
+	open my $fh, '>', $file or die "$current_sub: Could not open '$file' for writing: $!\n";
+	if ($is_hoh) {
+		my @headers;
+		if (defined $col_names) {  # Bug 6 fix: was "if ($col_names)" — use defined
+			@headers = @$col_names;
+		} else {
+			my %col_map;
+			for my $r (@rows) {
+				$col_map{$_} = 1 for keys %{ $data->{$r} };
+			}
+			@headers = sort keys %col_map;
+		}
+
+		my @header_row = @headers;
+		unshift @header_row, '' if $inc_rownames;
+		@header_row = map { $quote_field->($_, $sep) } @header_row;
+		print $fh join($sep, @header_row) . "\n";
+
+		for my $r (sort @rows) {
+			my @row_data = map { defined $data->{$r}{$_} ? $data->{$r}{$_} : "NA" } @headers;
+			unshift @row_data, $r if $inc_rownames;
+			my @quoted = map { $quote_field->($_, $sep) } @row_data;
+			print $fh join($sep, @quoted) . "\n";
+		}
+	} elsif ($is_hoa) {
+		# 1. Find the maximum number of rows
+		my $max_rows = 0;
+		foreach my $col (keys %$data) {
+			my $len = scalar @{ $data->{$col} };
+			$max_rows = $len if $len > $max_rows;
+		}
+		$max_rows--; # Convert length to max index
+
+		# 2. Determine headers
+		my @headers;
+		if (defined $col_names) {
+			@headers = @$col_names;
+		} else {
+			@headers = sort keys %$data;
+		}
+		
+		die "Could not get headers in $current_sub" if @headers == 0;
+
+		# Bug 5 fix: if row.names is a column name (non-numeric string), pull it out to be first
+		my $rownames_col;
+		if ($inc_rownames && $inc_rownames =~ /\D/) {
+			$rownames_col = $inc_rownames;
+			@headers = grep { $_ ne $rownames_col } @headers;
+		}
+
+		# 3. Print Header Row
+		my @header_row = @headers;
+		unshift @header_row, '' if $inc_rownames;
+		@header_row = map { $quote_field->($_, $sep) } @header_row;
+		print $fh join($sep, @header_row) . "\n";
+
+		# 4. Process and Print Data Rows
+		for my $i (0 .. $max_rows) {
+			my @row_data;
+			
+			foreach my $col (@headers) {
+				push @row_data, defined($data->{$col}[$i]) ? $data->{$col}[$i] : 'NA';
+			}
+			
+			if ($inc_rownames) {
+				# Bug 5 fix: use named column value if row.names is a column name
+				my $rn_val = defined $rownames_col
+					? (defined $data->{$rownames_col}[$i] ? $data->{$rownames_col}[$i] : 'NA')
+					: $i + 1;
+				unshift @row_data, $rn_val;
+			}
+			
+			my @quoted = map { $quote_field->($_, $sep) } @row_data;
+			print $fh join($sep, @quoted) . "\n";
+		}
+	} elsif ($is_aoh) {
+		my @headers;
+		if (defined $col_names) {  # Bug 6 fix: was "if ($col_names)" — use defined
+			@headers = @$col_names;
+		} else {
+			my %col_map;
+			for my $row_hash (@$data) {
+				$col_map{$_} = 1 for keys %$row_hash;
+			}
+			@headers = sort keys %col_map;
+		}
+
+		# Bug 5 fix: if row.names is a column name (non-numeric string), pull it out to be first
+		my $rownames_col;
+		if ($inc_rownames && $inc_rownames =~ /\D/) {
+			$rownames_col = $inc_rownames;
+			@headers = grep { $_ ne $rownames_col } @headers;
+		}
+
+		my @header_row = @headers;
+		unshift @header_row, "" if $inc_rownames;
+		@header_row = map { $quote_field->($_, $sep) } @header_row;
+		print $fh join($sep, @header_row) . "\n";  # Bug 7 fix: was "say $fh" — use print consistently
+		for my $i (0 .. $#$data) {
+			my $row_hash = $data->[$i];
+			my @row_data = map { defined $row_hash->{$_} ? $row_hash->{$_} : "NA" } @headers;
+			if ($inc_rownames) {
+				# Bug 5 fix: use named column value if row.names is a column name
+				my $rn_val = defined $rownames_col
+					? (defined $row_hash->{$rownames_col} ? $row_hash->{$rownames_col} : 'NA')
+					: $i + 1;
+				unshift @row_data, $rn_val;
+			}
+			my @quoted = map { $quote_field->($_, $sep) } @row_data;
+			print $fh join($sep, @quoted) . "\n";
+		}
+	}
+	close $fh;  # Bug 8 fix: file handle was never closed
+}
+
 my (@old, @new);
 foreach my $x (0..9) {
 	my $t0 = Time::HiRes::time();
-	my $x = old_read_table('lib/Stats/HepatitisCdata.csv', 'output.type' => 'hoa');
+	my $x = old_read_table('t/HepatitisCdata.csv', 'output.type' => 'hoa');
 	my $t1 = Time::HiRes::time();
 	push @old, $t1-$t0;
 }
 foreach my $x (0..9) {
 	my $t0 = Time::HiRes::time();
-	my $x = read_table('lib/Stats/HepatitisCdata.csv', 'output.type' => 'hoa');
+	my $x = read_table('t/HepatitisCdata.csv', 'output.type' => 'hoa');
 	my $t1 = Time::HiRes::time();
 	push @new, $t1-$t0;
 }
@@ -163,26 +345,30 @@ p @old;
 p @new;
 my $t = t_test('x' => \@old, 'y' => \@new);
 p $t;
-=my $fh = File::Temp->new(DIR => '/tmp', SUFFIX => '.csv', UNLINK => 1);
+# write_table
+my $fh = File::Temp->new(DIR => '/tmp', SUFFIX => '.csv', UNLINK => 1);
 close $fh;
-my $d = read_table('lib/Stats/HepatitisCdata.csv', 'output.type' => 'hoa');
-my (@gemini, @compiled);
+my $d = read_table('t/HepatitisCdata.csv', 'output.type' => 'hoa');
+undef @old;
+undef @new;
+foreach my $x (0..9) {
+	my $t0 = Time::HiRes::time();
+	my $x = old_write_table($d, $fh->filename);
+	my $t1 = Time::HiRes::time();
+	push @old, $t1-$t0;
+}
+say 'old mean: ' . mean(\@old);
 foreach my $x (0..9) {
 	my $t0 = Time::HiRes::time();
 	my $x = write_table($d, $fh->filename);
 	my $t1 = Time::HiRes::time();
-	push @compiled, $t1-$t0;
+	push @new, $t1-$t0;
 }
-say 'Compiled mean: ' . mean(\@compiled);
-foreach my $x (0..9) {
-	my $t0 = Time::HiRes::time();
-	my $x = gemini_write_table($d, $fh->filename);
-	my $t1 = Time::HiRes::time();
-	push @gemini, $t1-$t0;
-}
-say 'Gemini mean: ' . mean(\@gemini);
-my $t = t_test('x' => \@compiled, 'y' => \@gemini);
+say 'New mean: ' . mean(\@new);
+say 'Mean old / Mean new: ' . mean(\@old) / mean(\@new);
+$t = t_test('x' => \@old, 'y' => \@new);
 p $t;
+=x
 =my %hoa = (
 	'r1' => [42, 'hello,world', undef, undef],
 	'r2' => [99, undef, 'quote"here', undef],
