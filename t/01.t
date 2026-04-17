@@ -1510,15 +1510,76 @@ my %data_hoa = (
 	'r3' => [undef, "tab\tin", undef, undef],
 );
 
-#write_table(\%data_hoa, $tmp_file, sep => "\t", 'row.names' => true);
-#$str = file2string($tmp_file);
-#if (sha512_base64($str) eq 'wsKnu+u+TTMEYpTS0NKGes8JrWQ9JfnUgP8yCmo+q3BmnLbrzYUE74n+nd23kaGffHABIt1aluUPRgqtVl5jVA') {
-#    pass('write_table successfully wrote a tab-delimited file (Hash of Arrays)');
-#    unlink $tmp_file;
-#} else {
-#    fail("sha512 does not match for write_table HoA; see $tmp_file");
-#}
-
+write_table(\%data_hoa, $tmp_file, sep => "\t", 'row.names' => true);
+$str = file2string($tmp_file);
+if (sha512_base64($str) eq '1wv8uFDVQkQ9UZ+50n+r/Z8oj4VFP4eusApZDAY1DB3dXhT+gFFyCR2Z1ZVQDTOJrUaMRpfWt6vLSlaSsNps7g') {
+    pass('write_table successfully wrote a tab-delimited file (Hash of Arrays)');
+    unlink $tmp_file;
+} else {
+    fail("sha512 does not match for write_table HoA; see $tmp_file");
+}
+#---------
+# read_table with filter: aoh
+#---------
+$test_data = read_table(
+	't/HepatitisCdata.csv',
+	filter => {
+		Sex => sub {$_ eq 'f'}
+	},
+	'output.type' => 'aoh'
+);
+if (scalar @{ $test_data } == 238) {
+	pass('filter on hepatitis/female has the correct number of rows: 238');
+} else {
+	fail('filter on hepatitis/female has ' . scalar @{ $test_data } . ' rows, when it should have 238');
+}
+@correct = (39.9,	35.2,	22,	29.8,	6.3,	8.16,	4.37,	60,	4.5, 72.5);
+@col = qw(ALB	ALP	ALT	AST	BIL	CHE	CHOL	CREA	GGT	PROT);
+foreach my ($idx, $col) (indexed @col) {
+	is_approx( $test_data->[0]{$col}, $correct[$idx], "read_table: Column $col after filter", 0);
+}
+#---------
+# read_table with filter: hoa
+#---------
+$test_data = read_table(
+	't/HepatitisCdata.csv',
+	filter => {
+		Sex => sub {$_ eq 'f'}
+	},
+	'output.type' => 'hoa'
+);
+foreach my $col (sort keys %{ $test_data }) {
+	my $n = scalar @{ $test_data->{$col} };
+	if ($n == 238) {
+		pass("filter on hepatitis/female $col has the correct number of rows: 238");
+	} else {
+		fail("filter on hepatitis/female $col has $n rows, when it should have 238");
+	}
+}
+foreach my ($idx, $col) (indexed @col) {
+	is_approx( $test_data->{$col}[0], $correct[$idx], "read_table: Column $col after filter", 0);
+}
+#---------
+# read_table with filter: hoh
+#---------
+$test_data = read_table(
+	't/HepatitisCdata.csv',
+	filter => {
+		Sex => sub {$_ eq 'f'}
+	},
+	'output.type' => 'hoh'
+);
+foreach my $col (sort keys %{ $test_data }) {
+	my $n = scalar keys %{ $test_data->{$col} };
+	if ($n == 238) {
+		pass("filter on hepatitis/female $col has the correct number of rows: 238");
+	} else {
+		fail("filter on hepatitis/female $col has $n rows, when it should have 238");
+	}
+}
+foreach my ($idx, $col) (indexed @col) {
+	is_approx( $test_data->{$col}{319}, $correct[$idx], "read_table: Column $col after filter", 0);
+}
 # === TEST 3: ARRAY OF HASHES (positional) ===
 # Demonstrates: AoH, preserves original array order (no sorting of rows),
 #               row names become 1, 2, 3..., quoting when separator ("\t") or " appears inside data
@@ -1542,17 +1603,17 @@ if (sha512_base64($str) eq 'Nx/3jb/smu2Jdk2SNCXhxK7yaAO0GO5TAbwztb16fYqDT8nSMzdb
 #-------------------------------------------------------------------
 
 subtest 'read_table / write_table: Escaped quote handling' => sub {
-	my $tmp_csv = '/tmp/test_quotes.csv';
+	my $tmp_csv = File::Temp->new(DIR => '/tmp', SUFFIX => '.csv', UNLINK => 1);
+	close $tmp_csv;
 	my @data_out = (
 		{ 'c1' => 42, 'c2' => 'Normal String' },
 		{ 'c1' => 99, 'c2' => 'String with "quotes" inside' }
 	);
 	# Write the table. write_table should turn "quotes" into ""quotes""
-	write_table(\@data_out, $tmp_csv, sep => ",", 'row.names' => false);
+	write_table(\@data_out, $tmp_csv->filename, sep => ',', 'row.names' => 0);
 	# Read the table back. read_table should turn ""quotes"" back into "quotes"
-	my $data_in = read_table($tmp_csv, 'output.type' => 'aoh');
+	my $data_in = read_table($tmp_csv->filename, 'output.type' => 'aoh');
 	is($data_in->[1]{c2}, 'String with "quotes" inside', 'read_table correctly unescapes internal quotes');
-	unlink $tmp_csv;
 };
 
 subtest 'write_table: Nested reference stringification protection' => sub {
@@ -1612,15 +1673,15 @@ subtest 'write_table: col.names feature validation' => sub {
 	'r2' => [99, undef, 'quote"here', undef],
 	'r3' => [undef, "tab\tin", undef, undef],
 );
-$fh = File::Temp->new(DIR => '/tmp', SUFFIX => '.tsv', UNLINK => 1);
+$fh = File::Temp->new(DIR => '/tmp', SUFFIX => '.tsv', UNLINK => 0);
 close $fh;
 write_table(
 	\%correct,
 	$fh->filename,
 	sep => "\t"
 );
-
 $test_data = read_table( $fh->filename, sep => "\t", 'output.type' => 'hoa');
+
 foreach my $key (sort keys %correct) {	
 	my $max_i_hoa = scalar @{ $correct{$key} } - 1;
 	my $max_i_table = scalar @{ $test_data->{$key} } - 1;
@@ -1658,6 +1719,20 @@ foreach my $key (sort keys %correct) {
 	}
 }
 
+write_table(
+	\%correct,
+	$fh->filename,
+	sep => "\t",
+	'row.names' => false
+);
+$str = file2string($fh->filename);
+if (sha512_base64($str) eq 'mSFIF/IuIR3GfRWvnv+4OkMi12JwoIV4zxt57vv2QQxuEGOde8w8hD7xSBNsMjczFLqZRqmlvOq0tcWAkhF0ag') {
+	pass('write_table was successful');
+} else {
+	fail('failed to write_table');
+	say sha512_base64($str);
+	die;
+}
 #-------------------------------------------------------------------
 #  aov: Categorical Variables & Interactions (Bug Fix Validations)
 #-------------------------------------------------------------------

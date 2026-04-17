@@ -29,7 +29,8 @@ sub read_table {
 		'row.names',
 		'sep',
 		'substitutions',
-		'output.type' 
+		'output.type',
+		'filter'         # <== ADDED
 	);
 	my @undef_args = sort grep {!$allowed_args{$_}} keys %args;
 	my $current_sub = (split(/::/,(caller(0))[3]))[-1];
@@ -41,18 +42,26 @@ sub read_table {
 	if ($args{'output.type'} !~ m/^(?:aoh|hoa|hoh)$/) {
 		die "\"$args{'output.type'}\" isn't allowed";
 	}
-	my (@data, %data, @header);
+
+	# Normalize the filter argument
+	my $filter = $args{filter};
+	if (defined $filter && ref($filter) eq 'CODE') {
+		$filter = { 0 => $filter }; # 0 means the whole row
+	} elsif (defined $filter && ref($filter) ne 'HASH') {
+		die "'filter' must be a CODE or HASH reference";
+	}
+
+	my (@data, %data, @header, %mapped_filters);
 	# Execute the fast C-state machine. Returns an AoA.
 	my $aoa = _parse_csv_file($file, $args{sep} // '', $args{comment} // '');
+	
 	foreach my $line_ref (@$aoa) {
 		my @line = @$line_ref;
 		if (!@header) {
 			# --- HEADER PROCESSING ---
 			$line[0] =~ s/^\Q$args{comment}\E// if @line && defined $line[0];
-			
 			while (@line && $line[-1] eq '') { pop @line }
 			@header = @line; 
-			
 			# R-LIKE BEHAVIOR
 			if ((scalar @header > 0) && ($header[0] eq '')) {
 				$header[0] = 'row_name'; 
@@ -63,6 +72,19 @@ sub read_table {
 			if ((defined $args{'row.names'}) && (!grep {$_ eq $args{'row.names'}} @header)) {
 				die "\"$args{'row.names'}\" isn't in the header of $file";
 			}
+
+			# Map filters to 1-based indices (or 0 for whole row)
+			if ($filter) {
+				for my $k (keys %$filter) {
+					if ($k =~ /^\d+$/) {
+						$mapped_filters{$k} = $filter->{$k};
+					} else {
+						my ($idx) = grep { $header[$_] eq $k } 0..$#header;
+						die "Filter column '$k' not found in header" unless defined $idx;
+						$mapped_filters{$idx + 1} = $filter->{$k};
+					}
+				}
+			}
 			next;
 		}
 		
@@ -70,13 +92,37 @@ sub read_table {
 		if (scalar @line != scalar @header) {
 			die "Alignment error on $file (" . scalar(@line) . " fields vs " . scalar(@header) . " headers).";
 		}
+		
 		# --- DATA PROCESSING ---
 		my %line_hash;
 		for my $i (0 .. $#header) {
 			my $cell = $line[$i];
-			# R-like behavior: Treat completely empty fields as 'NA' 
 			$line_hash{$header[$i]} = (defined($cell) && $cell eq '') ? 'NA' : $cell;
 		}
+
+		# --- APPLY FILTERS ---
+		my $skip = 0;
+		if (%mapped_filters) {
+			foreach my $fld (sort { $a <=> $b } keys %mapped_filters) {
+				local %_ = %line_hash; # Make %_ available to the callback
+				local $_ = $fld == 0 ? $line_ref : $line[$fld - 1]; # Localize $_
+
+				my $keep = $mapped_filters{$fld}->($line_ref, \%line_hash);
+				if (!$keep) {
+					$skip = 1;
+					last;
+				}
+
+				# If the callback modified $_, write the mutation back to the data
+				if ($fld > 0) {
+					$line[$fld - 1] = $_;
+					$line_hash{$header[$fld - 1]} = (defined($_) && $_ eq '') ? 'NA' : $_;
+				}
+			}
+		}
+		next if $skip; # Reject the row if it failed the filter
+
+		# Populate requested data structure
 		if ($args{'output.type'} eq 'aoh') {
 			push @data, \%line_hash;
 		} elsif ($args{'output.type'} eq 'hoa') {
