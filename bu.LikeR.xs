@@ -1045,14 +1045,14 @@ PPCODE:
 		           hv_store_ent(col_map, hv_iterkeysv(inner_entry), newSViv(1), 0);
 		       }
 		   }
-		   I32 num_cols = hv_iterinit(col_map);
-		   const char **col_array = safemalloc(num_cols * sizeof(char*));
-		   for(I32 i=0; i<num_cols; i++) {
-		       HE *ce = hv_iternext(col_map);
+		   unsigned num_cols = hv_iterinit(col_map);
+		   const char **restrict col_array = safemalloc(num_cols * sizeof(char*));
+		   for(unsigned i=0; i<num_cols; i++) {
+		       HE *restrict ce = hv_iternext(col_map);
 		       col_array[i] = SvPV_nolen(hv_iterkeysv(ce));
 		   }
 		   qsort(col_array, num_cols, sizeof(char*), cmp_string_wt);
-		   for(I32 i=0; i<num_cols; i++) av_push(headers_av, newSVpv(col_array[i], 0));
+		   for(unsigned i=0; i<num_cols; i++) av_push(headers_av, newSVpv(col_array[i], 0));
 		   safefree(col_array);
 		   SvREFCNT_dec(col_map);
 	  }
@@ -1204,108 +1204,106 @@ PPCODE:
 		   if (inc_rownames && !rownames_col) safefree((char*)row_data[0]);
 	  }
 	  safefree(row_data);
-	}
-	// ----- Array of Hashes -----
-	else if (is_aoh) {
-	  AV *restrict data_av = (AV*)data_ref;
-	  SSize_t num_rows = av_len(data_av) + 1;
+	} else if (is_aoh) {// ----- Array of Hashes -----
+		AV *restrict data_av = (AV*)data_ref;
+		size_t num_rows = av_len(data_av) + 1;
 
-	  if (col_names_sv && SvOK(col_names_sv)) {
-		   AV *restrict c_av = (AV*)SvRV(col_names_sv);
-		   for(SSize_t i=0; i<=av_len(c_av); i++) {
-		       SV **restrict c = av_fetch(c_av, i, 0);
-		       if(c && SvOK(*c)) av_push(headers_av, newSVsv(*c));
-		   }
-	  } else {
-		   HV *restrict col_map = newHV();
-		   for(SSize_t i=0; i<num_rows; i++) {
-		       SV **restrict row_ptr = av_fetch(data_av, i, 0);
-		       if (row_ptr && SvROK(*row_ptr)) {
-		           HV *restrict row_hv = (HV*)SvRV(*row_ptr);
-		           hv_iterinit(row_hv);
-		           HE *restrict entry;
-		           while((entry = hv_iternext(row_hv))) {
-		               hv_store_ent(col_map, hv_iterkeysv(entry), newSViv(1), 0);
-		           }
-		       }
-		   }
-		   I32 num_cols = hv_iterinit(col_map);
-		   const char **restrict col_array = safemalloc(num_cols * sizeof(char*));
-		   for(unsigned int i=0; i<num_cols; i++) {
-		       HE *ce = hv_iternext(col_map);
-		       col_array[i] = SvPV_nolen(hv_iterkeysv(ce));
-		   }
-		   qsort(col_array, num_cols, sizeof(char*), cmp_string_wt);
-		   for(unsigned int i=0; i<num_cols; i++) av_push(headers_av, newSVpv(col_array[i], 0));
-		   safefree(col_array);
-		   SvREFCNT_dec(col_map);
-	  }
+		if (col_names_sv && SvOK(col_names_sv)) {
+			AV *restrict c_av = (AV*)SvRV(col_names_sv);
+			for(SSize_t i=0; i<=av_len(c_av); i++) {
+				 SV **restrict c = av_fetch(c_av, i, 0);
+				 if(c && SvOK(*c)) av_push(headers_av, newSVsv(*c));
+			}
+		} else {
+			HV *restrict col_map = newHV();
+			for(size_t i=0; i<num_rows; i++) {
+				 SV **restrict row_ptr = av_fetch(data_av, i, 0);
+				 if (row_ptr && SvROK(*row_ptr)) {
+				     HV *restrict row_hv = (HV*)SvRV(*row_ptr);
+				     hv_iterinit(row_hv);
+				     HE *restrict entry;
+				     while((entry = hv_iternext(row_hv))) {
+				         hv_store_ent(col_map, hv_iterkeysv(entry), newSViv(1), 0);
+				     }
+				 }
+			}
+			unsigned num_cols = hv_iterinit(col_map);
+			const char **restrict col_array = safemalloc(num_cols * sizeof(char*));
+			for(unsigned int i=0; i<num_cols; i++) {
+				 HE *restrict ce = hv_iternext(col_map);
+				 col_array[i] = SvPV_nolen(hv_iterkeysv(ce));
+			}
+			qsort(col_array, num_cols, sizeof(char*), cmp_string_wt);
+			for(unsigned int i=0; i<num_cols; i++) av_push(headers_av, newSVpv(col_array[i], 0));
+			safefree(col_array);
+			SvREFCNT_dec(col_map);
+		}
 
-	  if (inc_rownames && contains_nondigit(row_names_sv)) {
-		   rownames_col = SvPV_nolen(row_names_sv);
-		   AV *restrict filtered_headers = newAV();
-		   for(SSize_t i=0; i<=av_len(headers_av); i++) {
-		       SV *h_sv = *av_fetch(headers_av, i, 0);
-		       if (strcmp(SvPV_nolen(h_sv), rownames_col) != 0) {
-		           av_push(filtered_headers, newSVsv(h_sv));
-		       }
-		   }
-		   SvREFCNT_dec(headers_av);
-		   headers_av = filtered_headers;
-	  }
+		if (inc_rownames && contains_nondigit(row_names_sv)) {
+			rownames_col = SvPV_nolen(row_names_sv);
+			AV *restrict filtered_headers = newAV();
+			for(SSize_t i=0; i<=av_len(headers_av); i++) {
+				 SV *restrict h_sv = *av_fetch(headers_av, i, 0);
+				 if (strcmp(SvPV_nolen(h_sv), rownames_col) != 0) {
+				     av_push(filtered_headers, newSVsv(h_sv));
+				 }
+			}
+			SvREFCNT_dec(headers_av);
+			headers_av = filtered_headers;
+		}
 
-	  SSize_t num_headers = av_len(headers_av) + 1;
-	  const char **restrict header_row = safemalloc((num_headers + 1) * sizeof(char*));
-	  size_t h_idx = 0;
-	  if (inc_rownames) header_row[h_idx++] = "";
-	  for(SSize_t i=0; i<num_headers; i++) {
-		   header_row[h_idx++] = SvPV_nolen(*av_fetch(headers_av, i, 0));
-	  }
-	  print_string_row(fh, header_row, h_idx, sep);
-	  safefree(header_row);
+		SSize_t num_headers = av_len(headers_av) + 1;
+		const char **restrict header_row = safemalloc((num_headers + 1) * sizeof(char*));
+		size_t h_idx = 0;
+		if (inc_rownames) header_row[h_idx++] = "";
+		for(SSize_t i=0; i<num_headers; i++) {
+			header_row[h_idx++] = SvPV_nolen(*av_fetch(headers_av, i, 0));
+		}
+		print_string_row(fh, header_row, h_idx, sep);
+		safefree(header_row);
 
-	  const char **restrict row_data = safemalloc((num_headers + 1) * sizeof(char*));
-	  for(SSize_t i=0; i<num_rows; i++) {
-		   size_t d_idx = 0;
-		   SV **restrict row_ptr = av_fetch(data_av, i, 0);
-		   HV *restrict row_hv = (row_ptr && SvROK(*row_ptr)) ? (HV*)SvRV(*row_ptr) : NULL;
+		const char **restrict row_data = safemalloc((num_headers + 1) * sizeof(char*));
+		for(SSize_t i=0; i<num_rows; i++) {
+			size_t d_idx = 0;
+			SV **restrict row_ptr = av_fetch(data_av, i, 0);
+			HV *restrict row_hv = (row_ptr && SvROK(*row_ptr)) ? (HV*)SvRV(*row_ptr) : NULL;
 
-		   if (inc_rownames) {
-		       if (rownames_col) {
-		           SV **restrict rn_val_ptr = row_hv ? hv_fetch(row_hv, rownames_col, strlen(rownames_col), 0) : NULL;
-		           if (rn_val_ptr && SvOK(*rn_val_ptr)) {
-		               if (SvROK(*rn_val_ptr)) {
-		                   PerlIO_close(fh);
-		                   croak("write_table: Cannot write nested reference types to table\n");
-		               }
-		               row_data[d_idx++] = SvPV_nolen(*rn_val_ptr);
-		           } else {
-		               row_data[d_idx++] = "NA";
-		           }
-		       } else {
-		           char buf[32];
-		           snprintf(buf, sizeof(buf), "%ld", (long)(i + 1));
-		           row_data[d_idx++] = savepv(buf);
-		       }
-		   }
+			if (inc_rownames) {
+				 if (rownames_col) {
+				     SV **restrict rn_val_ptr = row_hv ? hv_fetch(row_hv, rownames_col, strlen(rownames_col), 0) : NULL;
+				     if (rn_val_ptr && SvOK(*rn_val_ptr)) {
+				         if (SvROK(*rn_val_ptr)) {
+				             PerlIO_close(fh);
+				             croak("write_table: Cannot write nested reference types to table\n");
+				         }
+				         row_data[d_idx++] = SvPV_nolen(*rn_val_ptr);
+				     } else {
+				         row_data[d_idx++] = "NA";
+				     }
+				 } else {
+				     char buf[32];
+				     snprintf(buf, sizeof(buf), "%ld", (long)(i + 1));
+				     row_data[d_idx++] = savepv(buf);
+				 }
+			}
 
-		   for(SSize_t j=0; j<num_headers; j++) {
-		       const char *restrict col_name = SvPV_nolen(*av_fetch(headers_av, j, 0));
-		       SV **restrict cell_ptr = row_hv ? hv_fetch(row_hv, col_name, strlen(col_name), 0) : NULL;
-		       if (cell_ptr && SvOK(*cell_ptr)) {
-		           if (SvROK(*cell_ptr)) {
-		               PerlIO_close(fh);
-		               croak("write_table: Cannot write nested reference types to table\n");
-		           }
-		           row_data[d_idx++] = SvPV_nolen(*cell_ptr);
-		       } else {
-		           row_data[d_idx++] = "NA";
-		       }
-		   }
-		   print_string_row(fh, row_data, d_idx, sep);
-		   if (inc_rownames && !rownames_col) safefree((char*)row_data[0]);
-	  }
-	  safefree(row_data);
+			for(SSize_t j=0; j<num_headers; j++) {
+				 const char *restrict col_name = SvPV_nolen(*av_fetch(headers_av, j, 0));
+				 SV **restrict cell_ptr = row_hv ? hv_fetch(row_hv, col_name, strlen(col_name), 0) : NULL;
+				 if (cell_ptr && SvOK(*cell_ptr)) {
+				     if (SvROK(*cell_ptr)) {
+				         PerlIO_close(fh);
+				         croak("write_table: Cannot write nested reference types to table\n");
+				     }
+				     row_data[d_idx++] = SvPV_nolen(*cell_ptr);
+				 } else {
+				     row_data[d_idx++] = "NA";
+				 }
+			}
+			print_string_row(fh, row_data, d_idx, sep);
+			if (inc_rownames && !rownames_col) safefree((char*)row_data[0]);
+		}
+		safefree(row_data);
 	}
 	if (headers_av) SvREFCNT_dec(headers_av);
 	if (rows_av) SvREFCNT_dec(rows_av);
