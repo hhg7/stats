@@ -851,6 +851,212 @@ MODULE = Stats::LikeR  PACKAGE = Stats::LikeR
 
 PROTOTYPES: ENABLE
 
+SV*
+_parse_csv_file(char* file, const char* sep_str, const char* comment_str)
+INIT:
+	PerlIO *fp;
+	AV *restrict data = newAV();
+	AV *restrict current_row = newAV();
+	SV *restrict field = newSVpvs("");
+	bool in_quotes = 0;
+	size_t sep_len;
+	size_t comment_len;
+	SV *restrict line_sv;
+CODE:
+	sep_len = sep_str ? strlen(sep_str) : 0;
+	comment_len = comment_str ? strlen(comment_str) : 0;
+
+	fp = PerlIO_open(file, "r");
+	if (!fp) {
+		croak("Could not open file '%s'", file);
+	}
+	line_sv = newSV_type(SVt_PV);
+	// Read line by line using PerlIO
+	while (sv_gets(line_sv, fp, 0) != NULL) {
+		char *restrict line = SvPV_nolen(line_sv);
+		size_t len = SvCUR(line_sv);
+		// chomp \r\n (Handles Windows invisible \r natively)
+		if (len > 0 && line[len-1] == '\n') {
+			len--;
+			if (len > 0 && line[len-1] == '\r') {
+				len--;
+			}
+		}
+		if (!in_quotes) {
+			// Skip completely empty lines (\h*[\r\n]+$ equivalent)
+			bool is_empty = 1;
+			for (size_t i = 0; i < len; i++) {
+				if (line[i] != ' ' && line[i] != '\t') { is_empty = 0; break; }
+			}
+			if (is_empty) continue;
+
+			// Skip comments
+			if (comment_len > 0 && len >= comment_len && strncmp(line, comment_str, comment_len) == 0) {
+				continue;
+			}
+		}
+
+		// --- CORE PARSING MACHINE ---
+		for (size_t i = 0; i < len; i++) {
+			char ch = line[i];
+			if (ch == '"') {
+				if (in_quotes && (i + 1 < len) && line[i+1] == '"') {
+					sv_catpvn(field, "\"", 1);
+					i++; // Skip the escaped second quote
+				} else if (in_quotes) {
+					in_quotes = 0; // Close quotes
+				} else {
+					in_quotes = 1; // Open quotes
+				}
+			} else if (!in_quotes && sep_len > 0 && (len - i) >= sep_len && strncmp(line + i, sep_str, sep_len) == 0) {
+				av_push(current_row, newSVsv(field));
+				sv_setpvs(field, ""); // Reset for next field
+				i += sep_len - 1;     // Advance past multi-char separators
+			} else {
+				sv_catpvn(field, &ch, 1);
+			}
+		}
+		if (in_quotes) {
+			// Line ended but quotes are still open! Append newline and fetch next
+			sv_catpvn(field, "\n", 1);
+		} else {
+			// Push the final field of the record
+			av_push(current_row, newSVsv(field));
+			sv_setpvs(field, "");
+			
+			// Push the row to data
+			av_push(data, newRV_noinc((SV*)current_row));
+			current_row = newAV();
+		}
+	}
+	PerlIO_close(fp);
+	SvREFCNT_dec(line_sv);
+	// Sanity check: Ensure the file didn't abruptly end
+	if (in_quotes) {
+		SvREFCNT_dec(field);
+		SvREFCNT_dec(current_row);
+		SvREFCNT_dec(data);
+		croak("Error parsing %s: Reached EOF while inside quotes.", file);
+	}
+	SvREFCNT_dec(field);
+	SvREFCNT_dec(current_row);
+	RETVAL = newRV_noinc((SV*)data);
+OUTPUT:
+	RETVAL
+
+SV* cov(SV* x_sv, SV* y_sv, const char* method = "pearson")
+	CODE:
+	{
+	  // 1. Validate inputs are Array References
+	  if (!SvROK(x_sv) || SvTYPE(SvRV(x_sv)) != SVt_PVAV) {
+		   croak("cov: first argument 'x' must be an ARRAY reference");
+	  }
+	  if (!SvROK(y_sv) || SvTYPE(SvRV(y_sv)) != SVt_PVAV) {
+		   croak("cov: second argument 'y' must be an ARRAY reference");
+	  }
+
+	  // 2. Validate method argument
+	  if (strcmp(method, "pearson") != 0 && 
+		   strcmp(method, "spearman") != 0 && 
+		   strcmp(method, "kendall") != 0) {
+		   croak("cov: unknown method '%s' (use 'pearson', 'spearman', or 'kendall')", method);
+	  }
+
+	  AV *restrict x_av = (AV*)SvRV(x_sv);
+	  AV *restrict y_av = (AV*)SvRV(y_sv);
+	  size_t nx = av_len(x_av) + 1;
+	  size_t ny = av_len(y_av) + 1;
+
+	  if (nx != ny) {
+		   croak("cov: incompatible dimensions (x has %lu, y has %lu)", 
+		         (unsigned long)nx, (unsigned long)ny);
+	  }
+
+	  // 3. Extract Valid Pairwise Data
+	  // Allocate temporary C arrays for numeric processing
+	  double *restrict x_val = (double*)safemalloc(nx * sizeof(double));
+	  double *restrict y_val = (double*)safemalloc(nx * sizeof(double));
+	  size_t n = 0;
+
+	  for (size_t i = 0; i < nx; i++) {
+		   SV **restrict x_tv = av_fetch(x_av, i, 0);
+		   SV **restrict y_tv = av_fetch(y_av, i, 0);
+
+		   // Extract numeric values, defaulting to NAN for missing/invalid data
+		   double xv = (x_tv && SvOK(*x_tv) && looks_like_number(*x_tv)) ? SvNV(*x_tv) : NAN;
+		   double yv = (y_tv && SvOK(*y_tv) && looks_like_number(*y_tv)) ? SvNV(*y_tv) : NAN;
+
+		   // Pairwise complete observations (skips NAs seamlessly like R)
+		   if (!isnan(xv) && !isnan(yv)) {
+		       x_val[n] = xv;
+		       y_val[n] = yv;
+		       n++;
+		   }
+	  }
+
+	  // 4. Handle edge cases where data is too sparse
+	  if (n < 2) {
+		   Safefree(x_val);
+		   Safefree(y_val);
+		   RETVAL = newSVnv(NAN);
+	  } else {
+		   double ans = 0.0;
+		   
+		   // 5. Algorithm routing
+		   if (strcmp(method, "kendall") == 0) {
+		       // R's default cov(..., method="kendall") iterates the full n x n space
+		       for (size_t i = 0; i < n; i++) {
+		           for (size_t j = 0; j < n; j++) {
+		               int sx = (x_val[i] > x_val[j]) - (x_val[i] < x_val[j]);
+		               int sy = (y_val[i] > y_val[j]) - (y_val[i] < y_val[j]);
+		               ans += (double)(sx * sy);
+		           }
+		       }
+		   } else {
+		       double mean_x = 0.0, mean_y = 0.0, cov_sum = 0.0;
+		       
+		       if (strcmp(method, "spearman") == 0) {
+		           // Spearman: Rank the data first, then run standard covariance
+		           double *restrict rx = (double*)safemalloc(n * sizeof(double));
+		           double *restrict ry = (double*)safemalloc(n * sizeof(double));
+		           
+		           // Uses your existing rank_data() helper from LikeR.xs
+		           rank_data(x_val, rx, n);
+		           rank_data(y_val, ry, n);
+		           
+		           for (size_t i = 0; i < n; i++) {
+		               double dx = rx[i] - mean_x;
+		               mean_x += dx / (i + 1);
+		               double dy = ry[i] - mean_y;
+		               mean_y += dy / (i + 1);
+		               cov_sum += dx * (ry[i] - mean_y);
+		           }
+		           
+		           Safefree(rx);
+		           Safefree(ry);
+		       } else { 
+		           // Pearson: Welford's Single-Pass Covariance Algorithm
+		           for (size_t i = 0; i < n; i++) {
+		               double dx = x_val[i] - mean_x;
+		               mean_x += dx / (i + 1);
+		               double dy = y_val[i] - mean_y;
+		               mean_y += dy / (i + 1);
+		               cov_sum += dx * (y_val[i] - mean_y);
+		           }
+		       }
+		       
+		       // Unbiased Sample Covariance (N - 1) for Pearson & Spearman
+		       ans = cov_sum / (n - 1);
+		   }
+		   
+		   Safefree(x_val);
+		   Safefree(y_val);
+		   RETVAL = newSVnv(ans);
+	  }
+	}
+	OUTPUT:
+	  RETVAL
+
 SV* glm(...)
 CODE:
 {

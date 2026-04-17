@@ -1057,14 +1057,14 @@ foreach my $k1 ('ctrl', 'Residuals') {
 #  glm: Generalized Linear Models
 #-------------------------------------------------------------------
 subtest 'glm: Gaussian matches lm' => sub {
-    # Check that gaussian glm is mathematically identical to OLS lm
-    my $lm_res = lm(formula => 'mpg ~ wt + hp', data => $mtcars);
-    my $glm_res = glm(formula => 'mpg ~ wt + hp', data => $mtcars, family => 'gaussian');
-    
-    is_approx($glm_res->{coefficients}{Intercept}, $lm_res->{coefficients}{Intercept}, 'glm gaussian matches lm intercept');
-    is_approx($glm_res->{coefficients}{wt}, $lm_res->{coefficients}{wt}, 'glm gaussian matches lm wt');
-    is_approx($glm_res->{deviance}, $lm_res->{rss}, 'glm gaussian deviance matches lm RSS');
-    is($glm_res->{family}, 'gaussian', 'glm stored family correctly');
+	# Check that gaussian glm is mathematically identical to OLS lm
+	my $lm_res = lm(formula => 'mpg ~ wt + hp', data => $mtcars);
+	my $glm_res = glm(formula => 'mpg ~ wt + hp', data => $mtcars, family => 'gaussian');
+
+	is_approx($glm_res->{coefficients}{Intercept}, $lm_res->{coefficients}{Intercept}, 'glm gaussian matches lm intercept');
+	is_approx($glm_res->{coefficients}{wt}, $lm_res->{coefficients}{wt}, 'glm gaussian matches lm wt');
+	is_approx($glm_res->{deviance}, $lm_res->{rss}, 'glm gaussian deviance matches lm RSS');
+	is($glm_res->{family}, 'gaussian', 'glm stored family correctly');
 };
 
 #-------------------------------------------------------------------

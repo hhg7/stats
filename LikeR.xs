@@ -851,6 +851,98 @@ MODULE = Stats::LikeR  PACKAGE = Stats::LikeR
 
 PROTOTYPES: ENABLE
 
+SV*
+_parse_csv_file(char* file, const char* sep_str, const char* comment_str)
+INIT:
+	PerlIO *fp;
+	AV *restrict data = newAV();
+	AV *restrict current_row = newAV();
+	SV *restrict field = newSVpvs("");
+	bool in_quotes = 0;
+	size_t sep_len;
+	size_t comment_len;
+	SV *restrict line_sv;
+CODE:
+	sep_len = sep_str ? strlen(sep_str) : 0;
+	comment_len = comment_str ? strlen(comment_str) : 0;
+
+	fp = PerlIO_open(file, "r");
+	if (!fp) {
+		croak("Could not open file '%s'", file);
+	}
+	line_sv = newSV_type(SVt_PV);
+	// Read line by line using PerlIO
+	while (sv_gets(line_sv, fp, 0) != NULL) {
+		char *restrict line = SvPV_nolen(line_sv);
+		size_t len = SvCUR(line_sv);
+		// chomp \r\n (Handles Windows invisible \r natively)
+		if (len > 0 && line[len-1] == '\n') {
+			len--;
+			if (len > 0 && line[len-1] == '\r') {
+				len--;
+			}
+		}
+		if (!in_quotes) {
+			// Skip completely empty lines (\h*[\r\n]+$ equivalent)
+			bool is_empty = 1;
+			for (size_t i = 0; i < len; i++) {
+				if (line[i] != ' ' && line[i] != '\t') { is_empty = 0; break; }
+			}
+			if (is_empty) continue;
+
+			// Skip comments
+			if (comment_len > 0 && len >= comment_len && strncmp(line, comment_str, comment_len) == 0) {
+				continue;
+			}
+		}
+		// --- CORE PARSING MACHINE ---
+		for (size_t i = 0; i < len; i++) {
+			char ch = line[i];
+			if (ch == '"') {
+				if (in_quotes && (i + 1 < len) && line[i+1] == '"') {
+					sv_catpvn(field, "\"", 1);
+					i++; // Skip the escaped second quote
+				} else if (in_quotes) {
+					in_quotes = 0; // Close quotes
+				} else {
+					in_quotes = 1; // Open quotes
+				}
+			} else if (!in_quotes && sep_len > 0 && (len - i) >= sep_len && strncmp(line + i, sep_str, sep_len) == 0) {
+				av_push(current_row, newSVsv(field));
+				sv_setpvs(field, ""); // Reset for next field
+				i += sep_len - 1;     // Advance past multi-char separators
+			} else {
+				sv_catpvn(field, &ch, 1);
+			}
+		}
+		if (in_quotes) {
+			// Line ended but quotes are still open! Append newline and fetch next
+			sv_catpvn(field, "\n", 1);
+		} else {
+			// Push the final field of the record
+			av_push(current_row, newSVsv(field));
+			sv_setpvs(field, "");
+			
+			// Push the row to data
+			av_push(data, newRV_noinc((SV*)current_row));
+			current_row = newAV();
+		}
+	}
+	PerlIO_close(fp);
+	SvREFCNT_dec(line_sv);
+	// Sanity check: Ensure the file didn't abruptly end
+	if (in_quotes) {
+		SvREFCNT_dec(field);
+		SvREFCNT_dec(current_row);
+		SvREFCNT_dec(data);
+		croak("Error parsing %s: Reached EOF while inside quotes.", file);
+	}
+	SvREFCNT_dec(field);
+	SvREFCNT_dec(current_row);
+	RETVAL = newRV_noinc((SV*)data);
+OUTPUT:
+	RETVAL
+
 SV* cov(SV* x_sv, SV* y_sv, const char* method = "pearson")
 	CODE:
 	{
@@ -871,7 +963,6 @@ SV* cov(SV* x_sv, SV* y_sv, const char* method = "pearson")
 
 	  AV *restrict x_av = (AV*)SvRV(x_sv);
 	  AV *restrict y_av = (AV*)SvRV(y_sv);
-	  
 	  size_t nx = av_len(x_av) + 1;
 	  size_t ny = av_len(y_av) + 1;
 
