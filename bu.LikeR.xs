@@ -867,40 +867,40 @@ static int contains_nondigit(SV *sv) {
 
 // Writes a properly quoted string dynamically
 static void print_str_quoted(PerlIO *fh, const char *str, const char *sep) {
-    if (!str) str = "";
-    int needs_quotes = 0;
-    if (strstr(str, sep) != NULL || strchr(str, '"') != NULL || strchr(str, '\r') != NULL || strchr(str, '\n') != NULL) {
-        needs_quotes = 1;
-    }
+	if (!str) str = "";
+	int needs_quotes = 0;
+	if (strstr(str, sep) != NULL || strchr(str, '"') != NULL || strchr(str, '\r') != NULL || strchr(str, '\n') != NULL) {
+	  needs_quotes = 1;
+	}
 
-    if (needs_quotes) {
-        PerlIO_putc(fh, '"');
-        for (const char *p = str; *p; p++) {
-            if (*p == '"') {
-                PerlIO_putc(fh, '"');
-                PerlIO_putc(fh, '"');
-            } else {
-                PerlIO_putc(fh, *p);
-            }
-        }
-        PerlIO_putc(fh, '"');
-    } else {
-        PerlIO_puts(fh, str);
-    }
+	if (needs_quotes) {
+	  PerlIO_putc(fh, '"');
+	  for (const char *p = str; *p; p++) {
+		   if (*p == '"') {
+		       PerlIO_putc(fh, '"');
+		       PerlIO_putc(fh, '"');
+		   } else {
+		       PerlIO_putc(fh, *p);
+		   }
+	  }
+	  PerlIO_putc(fh, '"');
+	} else {
+	  PerlIO_puts(fh, str);
+	}
 }
 
 // Writes an array of strings joined by sep
 static void print_string_row(PerlIO *fh, const char **row, size_t len, const char *sep) {
-    size_t sep_len = strlen(sep);
-    for (size_t i = 0; i < len; i++) {
-        if (i > 0) PerlIO_write(fh, sep, sep_len);
-        if (row[i]) {
-            print_str_quoted(fh, row[i], sep);
-        } else {
-            print_str_quoted(fh, "", sep);
-        }
-    }
-    PerlIO_putc(fh, '\n');
+	size_t sep_len = strlen(sep);
+	for (size_t i = 0; i < len; i++) {
+	  if (i > 0) PerlIO_write(fh, sep, sep_len);
+	  if (row[i]) {
+		   print_str_quoted(fh, row[i], sep);
+	  } else {
+		   print_str_quoted(fh, "", sep);
+	  }
+	}
+	PerlIO_putc(fh, '\n');
 }
 
 // --- XS SECTION ---
@@ -4420,7 +4420,7 @@ fisher_test(data_ref, conf_level = 0.95)
 	CODE:
 	  if (!SvROK(data_ref)) croak("fisher_test requires a reference to an Array or Hash");
 	  SV*restrict deref = SvRV(data_ref);
-	  /* Fast Path: 2D Array / AoA */
+	  // Fast Path: 2D Array / AoA
 	  if (SvTYPE(deref) == SVt_PVAV) {
 		   AV*restrict outer = (AV*)deref;
 		   if (av_len(outer) != 1) croak("Outer array must have exactly 2 rows");

@@ -30,7 +30,7 @@ sub read_table {
 		'sep',
 		'substitutions',
 		'output.type',
-		'filter'         # <== ADDED
+		'filter'
 	);
 	my @undef_args = sort grep {!$allowed_args{$_}} keys %args;
 	my $current_sub = (split(/::/,(caller(0))[3]))[-1];

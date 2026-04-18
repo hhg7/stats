@@ -162,14 +162,11 @@ LINKTYPE = dynamic
 BOOTDEP = 
 
 # Handy lists of source code files:
-XS_FILES = Fisher_Test.xs \
-	LikeR.xs \
+XS_FILES = LikeR.xs \
 	bu.LikeR.xs
-C_FILES  = Fisher_Test.c \
-	LikeR.c \
+C_FILES  = LikeR.c \
 	bu.LikeR.c
-O_FILES  = Fisher_Test.o \
-	LikeR.o \
+O_FILES  = LikeR.o \
 	bu.LikeR.o
 H_FILES  = ppport.h
 MAN1PODS = 
@@ -552,11 +549,7 @@ clean :: clean_subdirs
 	  $(BOOTSTRAP) $(INST_ARCHAUTODIR)/extralibs.all \
 	  $(INST_ARCHAUTODIR)/extralibs.ld $(MAKE_APERL_FILE) \
 	  *$(LIB_EXT) *$(OBJ_EXT) \
-	  *perl.core Fisher_Test.base \
-	  Fisher_Test.bs Fisher_Test.bso \
-	  Fisher_Test.c Fisher_Test.def \
-	  Fisher_Test.exp Fisher_Test.o \
-	  Fisher_Test_def.old LikeR.base \
+	  *perl.core LikeR.base \
 	  LikeR.bs LikeR.bso \
 	  LikeR.c LikeR.def \
 	  LikeR.exp LikeR.o \
@@ -985,7 +978,7 @@ PERL_HDRS = \
 
 $(OBJECT) : $(PERL_HDRS)
 
-Fisher_Test.c LikeR.c bu.LikeR.c : $(XSUBPPDEPS)
+LikeR.c bu.LikeR.c : $(XSUBPPDEPS)
 
 
 # --- MakeMaker makefile section:
