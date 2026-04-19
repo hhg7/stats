@@ -1,0 +1,12 @@
+#!/usr/bin/env perl
+
+use 5.042.2;
+no source::encoding;
+use warnings FATAL => 'all';
+use autodie ':default';
+use Util;
+use Stats::LikeR;
+
+my @tab = ([762, 327, 468], [484, 239, 477]);
+my $chisq = chisq_test(\@tab);
+p $chisq;

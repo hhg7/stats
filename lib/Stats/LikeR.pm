@@ -12,10 +12,31 @@ use warnings FATAL => 'all';
 use autodie ':default';
 use Exporter 'import';
 XSLoader::load('Stats::LikeR', $VERSION);
-our @EXPORT_OK = qw(aov cor cor_test cov fisher_test glm hist lm matrix mean median min max p_adjust quantile rbinom read_table rnorm runif scale sd seq shapiro_test t_test var write_table);
+our @EXPORT_OK = qw(aov chisq_test cor cor_test cov fisher_test glm hist lm matrix mean median min max p_adjust quantile rbinom read_table rnorm runif scale sd seq shapiro_test t_test var write_table);
 our @EXPORT = @EXPORT_OK;
 
 require XSLoader;
+
+# Wrapper to mimic R's structure
+sub chisq_test {
+	my ($data) = @_;
+
+	die "Input must be an array reference" unless ref($data) eq 'ARRAY';
+
+	# The XS function handles the heavy lifting
+	my $result = _chisq_c($data);
+
+	# Format the output to look like R's htest object
+	return {
+	  'statistic' => { 'X-squared' => $result->{statistic} },
+	  'parameter' => { 'df' => $result->{df} },
+	  'p.value'   => $result->{p_value},
+	  'method'    => $result->{method},
+	  'data.name' => 'Perl ArrayRef',
+	  'observed'  => $data,
+	  'expected'  => $result->{expected}
+	};
+}
 
 sub read_table {
 	my $file = shift;

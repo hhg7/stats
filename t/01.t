@@ -1798,4 +1798,13 @@ subtest 'aov: Two-Way ANOVA with Categorical Interactions' => sub {
 	is_approx($res_2way->{Residuals}{'Sum Sq'}, 168.2920, 'aov 2-way: Residuals Sum Sq', 1e-4);
 	is_approx($res_2way->{Residuals}{'Mean Sq'}, 10.51825, 'aov 2-way: Residuals Mean Sq', 1e-4);
 };
+#-----------------------
+# chi-squared test
+#-----------------------
+# https://www.rdocumentation.org/packages/stats/versions/3.6.2/topics/chisq.test
+@test_data = ([762, 327, 468], [484, 239, 477]);
+$test_data = chisq_test(\@test_data);
+is_approx($test_data->{parameter}{df}, 2, 'degrees of freedom for Chi-squared', 0);
+is_approx($test_data->{'p.value'}, 2.9535891832118e-07, 'Chi-squared p-value', 1e-17);
+is_approx($test_data->{statistic}{'X-squared'}, 30.070149095755, 'Chi-squared statistic');
 done_testing();
