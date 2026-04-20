@@ -911,7 +911,7 @@ $shapiro = shapiro_test(
 is_approx( $shapiro->{p_value}, 0.5896506, 'Shapiro p-value: 19 values');
 is_approx( $shapiro->{W}, 0.9608707, 'Shapiro W: 19 values');
 #--------------------
-#------- cor test
+#     cor test
 #--------------------
 my $x = [1, 2, 3, 4, 5];
 my $y = [2, 1, 4, 3, 5];
@@ -1804,6 +1804,7 @@ subtest 'aov: Two-Way ANOVA with Categorical Interactions' => sub {
 # https://www.rdocumentation.org/packages/stats/versions/3.6.2/topics/chisq.test
 @test_data = ([762, 327, 468], [484, 239, 477]);
 $test_data = chisq_test(\@test_data);
+p $test_data;
 is_approx($test_data->{parameter}{df}, 2, 'degrees of freedom for Chi-squared', 0);
 is_approx($test_data->{'p.value'}, 2.9535891832118e-07, 'Chi-squared p-value', 1e-17);
 is_approx($test_data->{statistic}{'X-squared'}, 30.070149095755, 'Chi-squared statistic');

@@ -1183,7 +1183,7 @@ PPCODE:
 	if (is_hoh) {
 	  if (col_names_sv && SvOK(col_names_sv)) {
 		   AV *restrict c_av = (AV*)SvRV(col_names_sv);
-		   for(SSize_t i=0; i<=av_len(c_av); i++) {
+		   for(size_t i=0; i<=av_len(c_av); i++) {
 		       SV **restrict c = av_fetch(c_av, i, 0);
 		       if(c && SvOK(*c)) av_push(headers_av, newSVsv(*c));
 		   }
@@ -1192,9 +1192,9 @@ PPCODE:
 		   hv_iterinit((HV*)data_ref);
 		   HE *restrict entry;
 		   while((entry = hv_iternext((HV*)data_ref))) {
-		       HV *inner = (HV*)SvRV(hv_iterval((HV*)data_ref, entry));
+		       HV *restrict inner = (HV*)SvRV(hv_iterval((HV*)data_ref, entry));
 		       hv_iterinit(inner);
-		       HE *inner_entry;
+		       HE *restrict inner_entry;
 		       while((inner_entry = hv_iternext(inner))) {
 		           hv_store_ent(col_map, hv_iterkeysv(inner_entry), newSViv(1), 0);
 		       }
@@ -1211,7 +1211,7 @@ PPCODE:
 		   SvREFCNT_dec(col_map);
 	  }
 
-	  SSize_t num_headers = av_len(headers_av) + 1;
+	  size_t num_headers = av_len(headers_av) + 1;
 	  const char **restrict header_row = safemalloc((num_headers + 1) * sizeof(char*));
 	  size_t h_idx = 0;
 	  if (inc_rownames) header_row[h_idx++] = "";
@@ -1221,26 +1221,27 @@ PPCODE:
 	  print_string_row(fh, header_row, h_idx, sep);
 	  safefree(header_row);
 
-	  SSize_t num_rows = av_len(rows_av) + 1;
-	  const char **row_array = safemalloc(num_rows * sizeof(char*));
-	  for(SSize_t i=0; i<num_rows; i++) row_array[i] = SvPV_nolen(*av_fetch(rows_av, i, 0));
+	  size_t num_rows = av_len(rows_av) + 1;
+	  const char **restrict row_array = safemalloc(num_rows * sizeof(char*));
+	  for(size_t i=0; i<num_rows; i++) row_array[i] = SvPV_nolen(*av_fetch(rows_av, i, 0));
 	  qsort(row_array, num_rows, sizeof(char*), cmp_string_wt);
 
 	  HV *restrict data_hv = (HV*)data_ref;
 	  const char **restrict row_data = safemalloc((num_headers + 1) * sizeof(char*));
-	  for(SSize_t i=0; i<num_rows; i++) {
+	  for(size_t i=0; i<num_rows; i++) {
 		   size_t d_idx = 0;
 		   if (inc_rownames) row_data[d_idx++] = row_array[i];
 
 		   SV **restrict inner_hv_ptr = hv_fetch(data_hv, row_array[i], strlen(row_array[i]), 0);
 		   HV *restrict inner_hv = inner_hv_ptr ? (HV*)SvRV(*inner_hv_ptr) : NULL;
 
-		   for(SSize_t j=0; j<num_headers; j++) {
+		   for(size_t j=0; j<num_headers; j++) {
 		       const char *restrict col_name = SvPV_nolen(*av_fetch(headers_av, j, 0));
 		       SV **restrict cell_ptr = inner_hv ? hv_fetch(inner_hv, col_name, strlen(col_name), 0) : NULL;
 		       if (cell_ptr && SvOK(*cell_ptr)) {
 		           if (SvROK(*cell_ptr)) {
 		               PerlIO_close(fh);
+		               safefree(row_array);
 		               croak("write_table: Cannot write nested reference types to table\n");
 		           }
 		           row_data[d_idx++] = SvPV_nolen(*cell_ptr);
@@ -1259,15 +1260,15 @@ PPCODE:
 	  hv_iterinit(data_hv);
 	  HE *restrict entry;
 	  while((entry = hv_iternext(data_hv))) {
-		   AV *arr = (AV*)SvRV(hv_iterval(data_hv, entry));
+		   AV *restrict arr = (AV*)SvRV(hv_iterval(data_hv, entry));
 		   SSize_t len = av_len(arr) + 1;
 		   if (len > max_rows) max_rows = len;
 	  }
 
 	  if (col_names_sv && SvOK(col_names_sv)) {
-		   AV *c_av = (AV*)SvRV(col_names_sv);
-		   for(SSize_t i=0; i<=av_len(c_av); i++) {
-		       SV **c = av_fetch(c_av, i, 0);
+		   AV *restrict c_av = (AV*)SvRV(col_names_sv);
+		   for(size_t i=0; i<=av_len(c_av); i++) {
+		       SV **restrict c = av_fetch(c_av, i, 0);
 		       if(c && SvOK(*c)) av_push(headers_av, newSVsv(*c));
 		   }
 	  } else {
@@ -1307,8 +1308,8 @@ PPCODE:
 	  print_string_row(fh, header_row, h_idx, sep);
 	  safefree(header_row);
 
-	  const char **row_data = safemalloc((num_headers + 1) * sizeof(char*));
-	  for(SSize_t i=0; i<max_rows; i++) {
+	  const char **restrict row_data = safemalloc((num_headers + 1) * sizeof(char*));
+	  for(size_t i=0; i<max_rows; i++) {
 		   size_t d_idx = 0;
 		   if (inc_rownames) {
 		       if (rownames_col) {
@@ -1335,12 +1336,12 @@ PPCODE:
 		       }
 		   }
 
-		   for(SSize_t j=0; j<num_headers; j++) {
+		   for(size_t j=0; j<num_headers; j++) {
 		       const char *restrict col_name = SvPV_nolen(*av_fetch(headers_av, j, 0));
-		       SV **arr_ptr = hv_fetch(data_hv, col_name, strlen(col_name), 0);
+		       SV **restrict arr_ptr = hv_fetch(data_hv, col_name, strlen(col_name), 0);
 		       if (arr_ptr && SvROK(*arr_ptr)) {
-		           AV *arr = (AV*)SvRV(*arr_ptr);
-		           SV **cell_ptr = av_fetch(arr, i, 0);
+		           AV *restrict arr = (AV*)SvRV(*arr_ptr);
+		           SV **restrict cell_ptr = av_fetch(arr, i, 0);
 		           if (cell_ptr && SvOK(*cell_ptr)) {
 		               if (SvROK(*cell_ptr)) {
 		                   PerlIO_close(fh);
@@ -1364,7 +1365,7 @@ PPCODE:
 
 		if (col_names_sv && SvOK(col_names_sv)) {
 			AV *restrict c_av = (AV*)SvRV(col_names_sv);
-			for(SSize_t i=0; i<=av_len(c_av); i++) {
+			for(size_t i=0; i<=av_len(c_av); i++) {
 				 SV **restrict c = av_fetch(c_av, i, 0);
 				 if(c && SvOK(*c)) av_push(headers_av, newSVsv(*c));
 			}

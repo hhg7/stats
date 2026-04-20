@@ -35,6 +35,49 @@ which returns
        }
     }
 
+#chisq_test
+
+    my @test_data = ([762, 327, 468], [484, 239, 477]);
+    my $test_data = chisq_test(\@test_data);
+
+which outputs:
+
+    {
+    data.name   "Perl ArrayRef",
+    expected    [
+        [0] [
+                [0] 703.671381936888,
+                [1] 319.645266594124,
+                [2] 533.683351468988
+            ],
+        [1] [
+                [0] 542.328618063112,
+                [1] 246.354733405876,
+                [2] 411.316648531012
+            ]
+    ],
+    method      "Pearson's Chi-squared test",
+    observed    [
+        [0] [
+                [0] 762,
+                [1] 327,
+                [2] 468
+            ],
+        [1] [
+                [0] 484,
+                [1] 239,
+                [2] 477
+            ]
+    ],
+    p.value     2.95358918321176e-07,
+    parameter   {
+        df   2
+    },
+    statistic   {
+        X-squared   30.0701490957547
+    }
+    }
+
 ## cor
 
     cor($array1, $array2, $method = 'pearson'),
@@ -137,25 +180,42 @@ works like mean, taking array references and arrays:
 
 ## p_adjust
 
-Returns array
+Returns array of false-discovery-rate-corrected p-values, where methods available are "holm", "hochberg", "hommel", "bonferroni", "BH", "BY", "fdr"
 
     my @q = p_adjust(\@pvalues, $method);
 
 ## rbinom
 
+Create a binomial distribution of numbers
+
     my $binom = rbinom( n => $n, prob => 0.5, size => 9);
 
 ## read_table
 
-	
+I've tried to make this as simple as possible, trying to follow from R:
+
+    my $test_data = read_table('t/HepatitisCdata.csv');
+
+output types can be AOH, HOA, HOH
+
+    read_table($filename, 'output.type' => 'aoh');
+
+    read_table($filename, 'output.type' => 'hoa');
+
 ## rnorm
+
+Make a normal distribution of numbers, with pre-set mean `mean`, standard deviation `sd`, and number `n`.
 
     my ($rmean, $sd, $n) = (10, 2, 9999);
     my $normals = rnorm( n => $n, mean => $rmean, sd => $sd);
 
 ## runif
 
+Make a distribution of approximately uniform distribution
+
     my $unif = runif( n => $n, min => 0, max => 1);
+
+where `n` is the number of items, the values are between `min` and `max`
 
 ## scale
 
@@ -206,6 +266,14 @@ tests to see if an array reference is normally distributed, returns a p-value an
     my $shapiro = shapiro_test(
     	[1..5]
     );
+
+and returns the hash reference:
+    {
+    p.value     0.589650577093106,
+    p_value     0.589650577093106,
+    statistic   0.960870680168535,
+    W           0.960870680168535
+    }
 
 ## t_test
 
