@@ -328,6 +328,9 @@ sub old_write_table {
 	close $fh;  # Bug 8 fix: file handle was never closed
 }
 
+say '-------------';
+say 'read_table:';
+say '-------------';
 my (@old, @new);
 foreach my $x (0..9) {
 	my $t0 = Time::HiRes::time();
@@ -348,6 +351,9 @@ p $t;
 # write_table
 my $fh = File::Temp->new(DIR => '/tmp', SUFFIX => '.csv', UNLINK => 1);
 close $fh;
+say '-------------';
+say 'write_table:';
+say '-------------';
 my $d = read_table('t/HepatitisCdata.csv', 'output.type' => 'hoa');
 undef @old;
 undef @new;

@@ -10,3 +10,4 @@ use XS::Check;
 
 my $check = XS::Check->new ();
 $check->check_file ('LikeR.xs');
+

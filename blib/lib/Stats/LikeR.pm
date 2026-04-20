@@ -73,11 +73,13 @@ sub read_table {
 	}
 
 	my (@data, %data, @header, %mapped_filters);
-	# Execute the fast C-state machine. Returns an AoA.
-	my $aoa = _parse_csv_file($file, $args{sep} // '', $args{comment} // '');
-	
-	foreach my $line_ref (@$aoa) {
+
+	# Execute the fast C-state machine. Pass an anonymous coderef to process streams.
+	# This bypasses creating an intermediate AoA memory spike.
+	_parse_csv_file($file, $args{sep} // '', $args{comment} // '', sub {
+		my ($line_ref) = @_;
 		my @line = @$line_ref;
+		
 		if (!@header) {
 			# --- HEADER PROCESSING ---
 			$line[0] =~ s/^\Q$args{comment}\E// if @line && defined $line[0];
@@ -106,7 +108,7 @@ sub read_table {
 					}
 				}
 			}
-			next;
+			return; # Equivalent to 'next' out of the closure
 		}
 		
 		# Check for column alignment
@@ -141,7 +143,7 @@ sub read_table {
 				}
 			}
 		}
-		next if $skip; # Reject the row if it failed the filter
+		return if $skip; # Reject the row if it failed the filter, skipping memory allocation
 
 		# Populate requested data structure
 		if ($args{'output.type'} eq 'aoh') {
@@ -157,7 +159,7 @@ sub read_table {
 				$data{$col}{$row_name} = $line_hash{$col};
 			}
 		}
-	}
+	});
 	if ($args{'output.type'} eq 'aoh') {
 		return \@data;
 	} elsif ($args{'output.type'} =~ m/^(?:hoa|hoh)$/) {

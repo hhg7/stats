@@ -1479,16 +1479,22 @@ PPCODE:
 }
 
 SV*
-_parse_csv_file(char* file, const char* sep_str, const char* comment_str)
+_parse_csv_file(char* file, const char* sep_str, const char* comment_str, SV* callback = &PL_sv_undef)
 INIT:
 	PerlIO *fp;
-	AV *restrict data = newAV();
+	AV *restrict data = NULL;
 	AV *restrict current_row = newAV();
 	SV *restrict field = newSVpvs("");
 	bool in_quotes = 0, post_quote = 0;
 	size_t sep_len, comment_len;
 	SV *restrict line_sv;
+	bool use_cb = 0;
 CODE:
+	if (SvOK(callback) && SvROK(callback) && SvTYPE(SvRV(callback)) == SVt_PVCV) {
+		use_cb = 1;
+	} else {
+		data = newAV();
+	}
 	sep_len = sep_str ? strlen(sep_str) : 0;
 	comment_len = comment_str ? strlen(comment_str) : 0;
 
@@ -1524,9 +1530,6 @@ CODE:
 		// --- CORE PARSING MACHINE ---
 		for (size_t i = 0; i < len; i++) {
 			const char ch = line[i];
-			/* Fix 1: Skip bare CR characters — R's read.csv strips \r too.
-			 * This handles Windows CRLF endings embedded inside quoted fields
-			 * (e.g. E2022: 1,"e2022\r",3  where \r leaks before the closing "). */
 			if (ch == '\r') continue;
 			if (ch == '"') {
 				if (in_quotes && (i + 1 < len) && line[i+1] == '"') {
@@ -1534,20 +1537,15 @@ CODE:
 					i++; // Skip the escaped second quote
 				} else if (in_quotes) {
 					in_quotes = 0;  // Close quotes
-					post_quote = 1; /* Fix 2: remember we just closed a quoted field.
-					                 * Prevents a stray " (as in E2023: 1,""e2023",3)
-					                 * from reopening the quoted state and then hitting
-					                 * EOF inside an "open" quote, which used to croak. */
+					post_quote = 1;
 				} else if (!post_quote) {
 					in_quotes = 1; // Open quotes (only when not in post-quote state)
 				}
-				/* In post_quote mode a bare " is silently ignored — the field has
-				 * already been assembled and this " is malformed decoration. */
 			} else if (!in_quotes && sep_len > 0 && (len - i) >= sep_len && strncmp(line + i, sep_str, sep_len) == 0) {
 				av_push(current_row, newSVsv(field));
 				sv_setpvs(field, ""); // Reset for next field
 				i += sep_len - 1;     // Advance past multi-char separators
-				post_quote = 0;       // Reset post-quote state at field boundary
+				post_quote = 0;
 			} else {
 				sv_catpvn(field, &ch, 1);
 			}
@@ -1560,27 +1558,53 @@ CODE:
 			// Push the final field of the record
 			av_push(current_row, newSVsv(field));
 			sv_setpvs(field, "");
-			
-			// Push the row to data
-			av_push(data, newRV_noinc((SV*)current_row));
+			// If a callback is provided, invoke it in a streaming fashion
+			if (use_cb) {
+				dSP;
+				ENTER;
+				SAVETMPS;
+				PUSHMARK(SP);
+				XPUSHs(sv_2mortal(newRV_inc((SV*)current_row)));
+				PUTBACK;
+				call_sv(callback, G_DISCARD);
+				FREETMPS;
+				LEAVE;
+				SvREFCNT_dec(current_row); // Frees the row from C memory if Perl didn't keep it
+			} else {
+				av_push(data, newRV_noinc((SV*)current_row));
+			}
 			current_row = newAV();
 		}
 	}
 	PerlIO_close(fp);
 	SvREFCNT_dec(line_sv);
-	/* Fix 3: Graceful EOF inside a quoted field (E2024: 1,"e2024: — no closing quote,
-	 * no trailing newline).  Rather than croaking, treat whatever has been accumulated
-	 * in `field` as the last field of the last row and push it.  The caller's Perl code
-	 * will then either reject the short row via the alignment check or treat the partial
-	 * row as a valid (header) row — both outcomes are correct and neither crashes. */
+
 	if (in_quotes) {
 		av_push(current_row, newSVsv(field));
-		av_push(data, newRV_noinc((SV*)current_row));
+		if (use_cb) {
+			dSP;
+			ENTER;
+			SAVETMPS;
+			PUSHMARK(SP);
+			XPUSHs(sv_2mortal(newRV_inc((SV*)current_row)));
+			PUTBACK;
+			call_sv(callback, G_DISCARD);
+			FREETMPS;
+			LEAVE;
+			SvREFCNT_dec(current_row);
+		} else {
+			av_push(data, newRV_noinc((SV*)current_row));
+		}
 		current_row = newAV();
 	}
 	SvREFCNT_dec(field);
 	SvREFCNT_dec(current_row);
-	RETVAL = newRV_noinc((SV*)data);
+	
+	if (use_cb) {
+		RETVAL = &PL_sv_undef; // Memory was fully handled by callback stream
+	} else {
+		RETVAL = newRV_noinc((SV*)data);
+	}
 OUTPUT:
 	RETVAL
 

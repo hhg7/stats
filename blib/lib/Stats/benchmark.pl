@@ -70,5 +70,5 @@ my @large_data = (1000000000.1, 1000000000.2, 1000000000.3);
 say var(@large_data) . ' ?= 0.01';#, 'var: handles large magnitude data cleanly' );
 say sd(@large_data) . ' ?= 0.1';
 #----------
-my $aoh = csv( in => './lib/Stats/HepatitisCdata.csv', headers => 'auto');
+my $aoh = csv( in => 't/HepatitisCdata.csv', headers => 'auto');
 p $aoh;
