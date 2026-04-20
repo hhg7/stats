@@ -1807,4 +1807,6 @@ $test_data = chisq_test(\@test_data);
 is_approx($test_data->{parameter}{df}, 2, 'degrees of freedom for Chi-squared', 0);
 is_approx($test_data->{'p.value'}, 2.9535891832118e-07, 'Chi-squared p-value', 1e-17);
 is_approx($test_data->{statistic}{'X-squared'}, 30.070149095755, 'Chi-squared statistic');
+#$test_data = ks_test('x' => $x, 'y' => $y);
+#p $test_data;
 done_testing();

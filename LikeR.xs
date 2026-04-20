@@ -661,11 +661,10 @@ static double inverse_normal_cdf(double p) {
  * Mirrors R's default: exact = (n < 10) with no ties.
  * Valid up to n = 9 (362 880 iterations — negligible cost).
  * ----------------------------------------------------------------------- */
-static double spearman_exact_pvalue(double s_obs, int n, const char *restrict alt) {
+static double spearman_exact_pvalue(double s_obs, size_t n, const char *restrict alt) {
 	int *restrict perm = (int*)safemalloc(n * sizeof(int));
 	int *restrict c    = (int*)safemalloc(n * sizeof(int));
-	int  i;
-	for (i = 0; i < n; i++) { perm[i] = i + 1; c[i] = 0; }
+	for (size_t i = 0; i < n; i++) { perm[i] = i + 1; c[i] = 0; }
 
 	long count_le = 0, count_ge = 0, total = 0;
 
@@ -957,108 +956,106 @@ _chisq_c(data_ref)
     SV* data_ref;
 CODE:
 {
-    AV*restrict obs_av = (AV*)SvRV(data_ref);
-    int r = av_top_index(obs_av) + 1;
-    int is_2d = 0;
-    int c = 0;
-    
-    SV**restrict first_elem = av_fetch(obs_av, 0, 0);
-    if (first_elem && SvROK(*first_elem) && SvTYPE(SvRV(*first_elem)) == SVt_PVAV) {
-        is_2d = 1;
-        AV*restrict first_row = (AV*)SvRV(*first_elem);
-        c = av_top_index(first_row) + 1;
-    } else {
-        c = r;
-        r = 1; 
-    }
+	AV*restrict obs_av = (AV*)SvRV(data_ref);
+	int r = av_top_index(obs_av) + 1, c = 0;
+	bool is_2d = 0;
 
-    double stat = 0.0;
-    int df = 0;
-    double grand_total = 0.0;
-    int yates = (is_2d && r == 2 && c == 2) ? 1 : 0;
-    
-    AV* expected_av = newAV();
-    
-    if (is_2d) {
-        double row_sum[r];
-        double col_sum[c];
-        for(unsigned int i=0; i<r; i++) row_sum[i] = 0.0;
-        for(unsigned int j=0; j<c; j++) col_sum[j] = 0.0;
-        
-        for (unsigned int i = 0; i < r; i++) {
-            SV**restrict row_sv = av_fetch(obs_av, i, 0);
-            AV*restrict row = (AV*)SvRV(*row_sv);
-            for (int j = 0; j < c; j++) {
-                SV**restrict val_sv = av_fetch(row, j, 0);
-                double val = SvNV(*val_sv);
-                row_sum[i] += val;
-                col_sum[j] += val;
-                grand_total += val;
-            }
-        }
-        
-        for (unsigned int i = 0; i < r; i++) {
-            AV*restrict exp_row = newAV();
-            SV**restrict row_sv = av_fetch(obs_av, i, 0);
-            AV*restrict row = (AV*)SvRV(*row_sv);
-            
-            for (int j = 0; j < c; j++) {
-                double E = (row_sum[i] * col_sum[j]) / grand_total;
-                SV** val_sv = av_fetch(row, j, 0);
-                double O = SvNV(*val_sv);
-                
-                av_push(exp_row, newSVnv(E));
-                
-                if (yates) {
-                    // Exact R logic: min(0.5, abs(O - E))
-                    double abs_diff = fabs(O - E);
-                    double y_corr = (abs_diff > 0.5) ? 0.5 : abs_diff;
-                    double diff = abs_diff - y_corr;
-                    stat += (diff * diff) / E;
-                } else {
-                    stat += ((O - E) * (O - E)) / E;
-                }
-            }
-            av_push(expected_av, newRV_noinc((SV*)exp_row));
-        }
-        df = (r - 1) * (c - 1);
-        
-    } else {
-        for (unsigned int j = 0; j < c; j++) {
-            SV**restrict val_sv = av_fetch(obs_av, j, 0);
-            grand_total += SvNV(*val_sv);
-        }
-        
-        double E = grand_total / (double)c;
-        for (unsigned int j = 0; j < c; j++) {
-            SV**restrict val_sv = av_fetch(obs_av, j, 0);
-            double O = SvNV(*val_sv);
-            
-            av_push(expected_av, newSVnv(E));
-            stat += ((O - E) * (O - E)) / E;
-        }
-        df = c - 1;
-    }
+	SV**restrict first_elem = av_fetch(obs_av, 0, 0);
+	if (first_elem && SvROK(*first_elem) && SvTYPE(SvRV(*first_elem)) == SVt_PVAV) {
+	  is_2d = 1;
+	  AV*restrict first_row = (AV*)SvRV(*first_elem);
+	  c = av_top_index(first_row) + 1;
+	} else {
+	  c = r;
+	  r = 1; 
+	}
 
-    double p_val = get_p_value(stat, df);
+	double stat = 0.0, grand_total = 0.0;
+	int df = 0;
+	int yates = (is_2d && r == 2 && c == 2) ? 1 : 0;
 
-    HV*restrict results = newHV();
-    hv_store(results, "statistic", 9, newSVnv(stat), 0);
-    hv_store(results, "df", 2, newSViv(df), 0);
-    hv_store(results, "p_value", 7, newSVnv(p_val), 0);
-    hv_store(results, "expected", 8, newRV_noinc((SV*)expected_av), 0);
-    
-    if (is_2d) {
-        if (yates) {
-            hv_store(results, "method", 6, newSVpv("Pearson's Chi-squared test with Yates' continuity correction", 0), 0);
-        } else {
-            hv_store(results, "method", 6, newSVpv("Pearson's Chi-squared test", 0), 0);
-        }
-    } else {
-        hv_store(results, "method", 6, newSVpv("Chi-squared test for given probabilities", 0), 0);
-    }
+	AV*restrict expected_av = newAV();
 
-    RETVAL = newRV_noinc((SV*)results);
+	if (is_2d) {
+	  double row_sum[r];
+	  double col_sum[c];
+	  for(unsigned int i=0; i<r; i++) row_sum[i] = 0.0;
+	  for(unsigned int j=0; j<c; j++) col_sum[j] = 0.0;
+	  
+	  for (unsigned int i = 0; i < r; i++) {
+		   SV**restrict row_sv = av_fetch(obs_av, i, 0);
+		   AV*restrict row = (AV*)SvRV(*row_sv);
+		   for (unsigned int j = 0; j < c; j++) {
+		       SV**restrict val_sv = av_fetch(row, j, 0);
+		       double val = SvNV(*val_sv);
+		       row_sum[i] += val;
+		       col_sum[j] += val;
+		       grand_total += val;
+		   }
+	  }
+	  
+	  for (unsigned int i = 0; i < r; i++) {
+		   AV*restrict exp_row = newAV();
+		   SV**restrict row_sv = av_fetch(obs_av, i, 0);
+		   AV*restrict row = (AV*)SvRV(*row_sv);
+		   
+		   for (unsigned int j = 0; j < c; j++) {
+		       double E = (row_sum[i] * col_sum[j]) / grand_total;
+		       SV**restrict val_sv = av_fetch(row, j, 0);
+		       double O = SvNV(*val_sv);
+		       
+		       av_push(exp_row, newSVnv(E));
+		       
+		       if (yates) {
+		           // Exact R logic: min(0.5, abs(O - E))
+		           double abs_diff = fabs(O - E);
+		           double y_corr = (abs_diff > 0.5) ? 0.5 : abs_diff;
+		           double diff = abs_diff - y_corr;
+		           stat += (diff * diff) / E;
+		       } else {
+		           stat += ((O - E) * (O - E)) / E;
+		       }
+		   }
+		   av_push(expected_av, newRV_noinc((SV*)exp_row));
+	  }
+	  df = (r - 1) * (c - 1);
+	  
+	} else {
+	  for (unsigned int j = 0; j < c; j++) {
+		   SV**restrict val_sv = av_fetch(obs_av, j, 0);
+		   grand_total += SvNV(*val_sv);
+	  }
+	  
+	  double E = grand_total / (double)c;
+	  for (unsigned int j = 0; j < c; j++) {
+		   SV**restrict val_sv = av_fetch(obs_av, j, 0);
+		   double O = SvNV(*val_sv);
+		   
+		   av_push(expected_av, newSVnv(E));
+		   stat += ((O - E) * (O - E)) / E;
+	  }
+	  df = c - 1;
+	}
+
+	double p_val = get_p_value(stat, df);
+
+	HV*restrict results = newHV();
+	hv_store(results, "statistic", 9, newSVnv(stat), 0);
+	hv_store(results, "df", 2, newSViv(df), 0);
+	hv_store(results, "p_value", 7, newSVnv(p_val), 0);
+	hv_store(results, "expected", 8, newRV_noinc((SV*)expected_av), 0);
+
+	if (is_2d) {
+	  if (yates) {
+		   hv_store(results, "method", 6, newSVpv("Pearson's Chi-squared test with Yates' continuity correction", 0), 0);
+	  } else {
+		   hv_store(results, "method", 6, newSVpv("Pearson's Chi-squared test", 0), 0);
+	  }
+	} else {
+	  hv_store(results, "method", 6, newSVpv("Chi-squared test for given probabilities", 0), 0);
+	}
+
+	RETVAL = newRV_noinc((SV*)results);
 }
 OUTPUT:
     RETVAL
