@@ -195,7 +195,9 @@ TO_INST_PM = benchmark.pl \
 	examples.pl \
 	lib/Stats/LikeR.pm \
 	lib/Stats/bu.LikeR.pm \
-	lib/Stats/test.pl
+	lib/Stats/test.pl \
+	runif.pl \
+	xs.check.pl
 PERL_ARCHLIBDEP = /home/con/perl5/perlbrew/perls/perl-5.42.2/lib/5.42.2/x86_64-linux
 PERL_INCDEP = /home/con/perl5/perlbrew/perls/perl-5.42.2/lib/5.42.2/x86_64-linux/CORE
 
@@ -1083,7 +1085,9 @@ pm_to_blib : $(FIRST_MAKEFILE) $(TO_INST_PM)
 	  'examples.pl' '$(INST_LIB)/Stats/examples.pl' \
 	  'lib/Stats/LikeR.pm' 'blib/lib/Stats/LikeR.pm' \
 	  'lib/Stats/bu.LikeR.pm' 'blib/lib/Stats/bu.LikeR.pm' \
-	  'lib/Stats/test.pl' 'blib/lib/Stats/test.pl' 
+	  'lib/Stats/test.pl' 'blib/lib/Stats/test.pl' \
+	  'runif.pl' '$(INST_LIB)/Stats/runif.pl' \
+	  'xs.check.pl' '$(INST_LIB)/Stats/xs.check.pl' 
 	$(NOECHO) $(TOUCH) pm_to_blib
 
 
