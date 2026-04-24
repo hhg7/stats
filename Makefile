@@ -193,6 +193,7 @@ TO_INST_PM = benchmark.pl \
 	chisq.test.pl \
 	cor.test.pl \
 	examples.pl \
+	hist.pl \
 	lib/Stats/LikeR.pm \
 	lib/Stats/bu.LikeR.pm \
 	lib/Stats/test.pl \
@@ -1084,6 +1085,7 @@ pm_to_blib : $(FIRST_MAKEFILE) $(TO_INST_PM)
 	  'chisq.test.pl' '$(INST_LIB)/Stats/chisq.test.pl' \
 	  'cor.test.pl' '$(INST_LIB)/Stats/cor.test.pl' \
 	  'examples.pl' '$(INST_LIB)/Stats/examples.pl' \
+	  'hist.pl' '$(INST_LIB)/Stats/hist.pl' \
 	  'lib/Stats/LikeR.pm' 'blib/lib/Stats/LikeR.pm' \
 	  'lib/Stats/bu.LikeR.pm' 'blib/lib/Stats/bu.LikeR.pm' \
 	  'lib/Stats/test.pl' 'blib/lib/Stats/test.pl' \
