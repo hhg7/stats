@@ -26,53 +26,33 @@
 #endif
 // --- Math Helpers for P-values and Confidence Intervals --- 
 
-// Inverse Normal CDF (Approximate) for Confidence Intervals
-static double qnorm(double p) {
-    double a[] = { 2.50662823884, -18.61500062529, 41.39119773534, -25.44106049637 };
-    double b[] = { -8.47351093090, 23.08336743743, -21.06224101826, 3.13082909833 };
-    double c[] = { 0.33747562770, 0.97616901909, 0.16079797149, 0.02764368149, 0.00384057293, 0.00039518965, 0.00003217679, 0.00000028881, 0.00000000396 };
-    double r, x;
-    double y = p - 0.5;
-    if (fabs(y) < 0.42) {
-        r = y * y;
-        x = y * (((a[3]*r + a[2])*r + a[1])*r + a[0]) / ((((b[3]*r + b[2])*r + b[1])*r + b[0])*r + 1.0);
-    } else {
-        r = p;
-        if (y > 0) r = 1.0 - p;
-        r = log(-log(r));
-        x = c[0] + r * (c[1] + r * (c[2] + r * (c[3] + r * (c[4] + r * (c[5] + r * (c[6] + r * (c[7] + r * c[8])))))));
-        if (y < 0) x = -x;
-    }
-    return x;
-}
-
-// Rank helper for Spearman
-typedef struct { double val; int index; double rank; } RankItem_cor_test;
+// Ranking helper with tie adjustment (matches R's tie handling)
+typedef struct { double val; size_t idx; double rank; } RankInfo;
 static int compare_rank(const void *restrict a, const void *restrict b) {
-	double diff = ((RankItem_cor_test*)a)->val - ((RankItem_cor_test*)b)->val;
+	double diff = ((RankInfo*)a)->val - ((RankInfo*)b)->val;
 	return (diff > 0) - (diff < 0);
 }
 
 static int compare_index(const void *restrict a, const void *restrict b) {
-	return ((RankItem_cor_test*)a)->index - ((RankItem_cor_test*)b)->index;
+	return ((RankInfo*)a)->idx - ((RankInfo*)b)->idx;
 }
 
 static void compute_ranks(double *restrict data, double *restrict ranks, size_t n) {
-	RankItem_cor_test *restrict items = safemalloc(n * sizeof(RankItem_cor_test));
+	RankInfo *restrict items = safemalloc(n * sizeof(RankInfo));
 	for (size_t i = 0; i < n; i++) {
-	  items[i].val = data[i];
-	  items[i].index = i;
+		items[i].val = data[i];
+		items[i].idx = i;
 	}
-	qsort(items, n, sizeof(RankItem_cor_test), compare_rank);
+	qsort(items, n, sizeof(RankInfo), compare_rank);
 	// Handle ties by averaging ranks
 	for (size_t i = 0; i < n; ) {
-	  size_t j = i + 1;
-	  while (j < n && items[j].val == items[i].val) j++;
-	  double avg_rank = (i + 1 + j) / 2.0;
-	  for (size_t k = i; k < j; k++) items[k].rank = avg_rank;
-	  i = j;
+		size_t j = i + 1;
+		while (j < n && items[j].val == items[i].val) j++;
+		double avg_rank = (i + 1 + j) / 2.0;
+		for (size_t k = i; k < j; k++) items[k].rank = avg_rank;
+		i = j;
 	}
-	qsort(items, n, sizeof(RankItem_cor_test), compare_index);
+	qsort(items, n, sizeof(RankInfo), compare_index);
 	for (size_t i = 0; i < n; i++) ranks[i] = items[i].rank;
 	Safefree(items);
 }
@@ -82,9 +62,9 @@ static size_t generate_binomial(size_t size, double prob) {
 	if (prob <= 0.0) return 0;
 	if (prob >= 1.0) return size;
 
-	unsigned int successes = 0;
+	size_t successes = 0;
 	for (size_t i = 0; i < size; i++) {
-	  if (Drand01() <= prob) successes++;
+		if (Drand01() <= prob) successes++;
 	}
 	return successes;
 }
@@ -627,7 +607,6 @@ double approx_pnorm(double x) {
 
 /* Macro for exact Wilcoxon 3D array indexing */
 #define DP_INDEX(i, j, k, n2, max_u) ((i) * ((n2) + 1) * ((max_u) + 1) + (j) * ((max_u) + 1) + (k))
-/* Pure C: Beasley-Springer-Moro approximation for inverse normal CDF */
 static double inverse_normal_cdf(double p) {
 	double a[4] = {2.50662823884, -18.61500062529, 41.39119773534, -25.44106049637};
 	double b[4] = {-8.47351093090, 23.08336743743, -21.06224101826, 3.13082909833};
@@ -752,57 +731,6 @@ static double kendall_exact_pvalue(size_t n, double s_obs, const char *restrict 
 	double p = 2.0 * (p_ge < p_le ? p_ge : p_le);
 	return p > 1.0 ? 1.0 : p;
 }
-// Continued fraction for Incomplete Beta Function (internal helper)
-static double betacf(double a, double b, double x) {
-	double c, d, h, qab, qam, qap;
-	qab = a + b;
-	qap = a + 1.0;
-	qam = a - 1.0;
-	c = 1.0;
-	d = 1.0 - qab * x / qap;
-	if (fabs(d) < 1e-30) d = 1e-30;
-	d = 1.0 / d;
-	h = d;
-	for (unsigned short int m = 1; m <= 100; m++) {
-	  unsigned short int m2 = 2 * m;
-	  double aa = m * (b - m) * x / ((qam + m2) * (a + m2));
-	  d = 1.0 + aa * d;
-	  if (fabs(d) < 1e-30) d = 1e-30;
-	  c = 1.0 + aa / c;
-	  if (fabs(c) < 1e-30) c = 1e-30;
-	  d = 1.0 / d;
-	  h *= d * c;
-	  aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2));
-	  d = 1.0 + aa * d;
-	  if (fabs(d) < 1e-30) d = 1e-30;
-	  c = 1.0 + aa / c;
-	  if (fabs(c) < 1e-30) c = 1e-30;
-	  d = 1.0 / d;
-	  double del = d * c;
-	  h *= del;
-	  if (fabs(del - 1.0) < 3e-7) break;
-	}
-	return h;
-}
-
-// Numerically stable p-value for Student's T (2-tailed)
-static double pt_2tail(double t, ssize_t df) {
-	if (df <= 0 || isnan(t)) return NAN;
-	double x = df / (df + t * t);
-	double a = 0.5 * df, b = 0.5;
-
-	// Regularized Incomplete Beta Function I_x(a, b)
-	// When t is large, x is small, and this calculates the tail directly
-	double bt = exp(lgamma(a + b) - lgamma(a) - lgamma(b) + 
-		           a * log(x) + b * log(1.0 - x));
-
-	if (x < (a + 1.0) / (a + b + 2.0)) {
-	  return bt * betacf(a, b, x) / a;
-	} else {
-	  /* This side handles the non-tail cases accurately */
-	  return 1.0 - bt * betacf(b, a, 1.0 - x) / b;
-	}
-}
 // F-distribution Cumulative Distribution Function P(F <= f)
 static double pf(double f, double df1, double df2) {
 	if (f <= 0.0) return 0.0;
@@ -812,7 +740,7 @@ static double pf(double f, double df1, double df2) {
 
 /* Householder QR Decomposition for Sequential Sums of Squares */
 static void apply_householder_aov(double** restrict X, double* restrict y, size_t n, size_t p) {
-	for (unsigned int k = 0; k < p && k < n; k++) {
+	for (size_t k = 0; k < p && k < n; k++) {
 		double max_val = 0;
 		for (size_t i = k; i < n; i++) {
 			if (fabs(X[i][k]) > max_val) max_val = fabs(X[i][k]);
@@ -837,7 +765,7 @@ static void apply_householder_aov(double** restrict X, double* restrict y, size_
 			for (size_t i = k + 1; i < n; i++) X[i][j] += tau * X[i][k];
 		}
 
-		/* Transform the response vector y */
+		// Transform the response vector y
 		double dot_y = u1 * y[k];
 		for (size_t i = k + 1; i < n; i++) dot_y += y[i] * X[i][k];
 		double tau_y = dot_y / (s * u1);
@@ -904,52 +832,257 @@ static void print_string_row(PerlIO *fh, const char **row, size_t len, const cha
 // Calculates the Regularized Upper Incomplete Gamma Function Q(a, x)
 // This perfectly replicates R's pchisq(..., lower.tail=FALSE)
 double igamc(double a, double x) {
-    if (x < 0.0 || a <= 0.0) return 1.0;
-    if (x == 0.0) return 1.0;
+	if (x < 0.0 || a <= 0.0) return 1.0;
+	if (x == 0.0) return 1.0;
 
-    // Series expansion for x < a + 1
-    if (x < a + 1.0) {
-        double sum = 1.0 / a;
-        double term = 1.0 / a;
-        double n = 1.0;
-        while (fabs(term) > 1e-15) {
-            term *= x / (a + n);
-            sum += term;
-            n += 1.0;
-        }
-        return 1.0 - (sum * exp(-x + a * log(x) - lgamma(a)));
-    }
+	// Series expansion for x < a + 1
+	if (x < a + 1.0) {
+		double sum = 1.0 / a;
+		double term = 1.0 / a;
+		double n = 1.0;
+		while (fabs(term) > 1e-15) {
+			term *= x / (a + n);
+			sum += term;
+			n += 1.0;
+		}
+		return 1.0 - (sum * exp(-x + a * log(x) - lgamma(a)));
+	}
 
-    // Continued fraction for x >= a + 1
-    double b = x + 1.0 - a;
-    double c = 1.0 / 1e-30;
-    double d = 1.0 / b;
-    double h = d;
-    double i = 1.0;
-    while (i < 10000) { // Safety bound
-        double an = -i * (i - a);
-        b += 2.0;
-        d = an * d + b;
-        if (fabs(d) < 1e-30) d = 1e-30;
-        c = b + an / c;
-        if (fabs(c) < 1e-30) c = 1e-30;
-        d = 1.0 / d;
-        double del = d * c;
-        h *= del;
-        if (fabs(del - 1.0) < 1e-15) break;
-        i += 1.0;
-    }
-    return h * exp(-x + a * log(x) - lgamma(a));
+	// Continued fraction for x >= a + 1
+	double b = x + 1.0 - a;
+	double c = 1.0 / 1e-30;
+	double d = 1.0 / b;
+	double h = d, i = 1.0;
+	while (i < 10000) { // Safety bound
+		double an = -i * (i - a);
+		b += 2.0;
+		d = an * d + b;
+		if (fabs(d) < 1e-30) d = 1e-30;
+		c = b + an / c;
+		if (fabs(c) < 1e-30) c = 1e-30;
+		d = 1.0 / d;
+		double del = d * c;
+		h *= del;
+		if (fabs(del - 1.0) < 1e-15) break;
+		i += 1.0;
+	}
+	return h * exp(-x + a * log(x) - lgamma(a));
 }
 
 // Chi-Squared p-value is simply the Incomplete Gamma of (df/2, stat/2)
 double get_p_value(double stat, int df) {
-    if (df <= 0) return 1.0;
-    if (stat <= 0.0) return 1.0;
-    return igamc((double)df / 2.0, stat / 2.0);
+	if (df <= 0) return 1.0;
+	if (stat <= 0.0) return 1.0;
+	return igamc((double)df / 2.0, stat / 2.0);
 }
+
+/* --- C HELPER SECTION --- */
+#define PERL_NO_GET_CONTEXT
+
+#ifndef M_SQRT1_2
+#define M_SQRT1_2 0.70710678118654752440
+#endif
+
+/* Robust Binomial Coefficient using long double */
+static long double choose_comb(int n, int k) {
+	if (k < 0 || k > n) return 0.0L;
+	if (k > n / 2) k = n - k;
+	long double res = 1.0L;
+	for (int i = 1; i <= k; i++) {
+	  res = res * (long double)(n - i + 1) / (long double)i;
+	}
+	return res;
+}
+
+/* Exact CDF for Mann-Whitney U: P(U <= q) 
+   Mathematically identical to R's cwilcox generating function */
+static double exact_pwilcox(double q, int m, int n) {
+    int k = (int)floor(q + 1e-7); // R uses 1e-7 fuzz
+    int max_u = m * n;
+    if (k < 0) return 0.0;
+    if (k >= max_u) return 1.0;
+
+    long double *restrict w = (long double *)safecalloc(max_u + 1, sizeof(long double));
+    w[0] = 1.0L;
+
+    for (int j = 1; j <= n; j++) {
+        for (int i = j; i <= max_u; i++) w[i] += w[i - j];
+        for (int i = max_u; i >= j + m; i--) w[i] -= w[i - j - m];
+    }
+
+    long double cum_p = 0.0L;
+    for (int i = 0; i <= k; i++) cum_p += w[i];
+    
+    long double total = choose_comb(m + n, n);
+    double result = (double)(cum_p / total);
+    
+    Safefree(w);
+    return result;
+}
+
+/* Exact CDF for Wilcoxon Signed Rank: P(V <= q) 
+   Mathematically identical to R's csignrank subset-sum DP */
+static double exact_psignrank(double q, int n) {
+	int k = (int)floor(q + 1e-7);
+	int max_v = n * (n + 1) / 2;
+	if (k < 0) return 0.0;
+	if (k >= max_v) return 1.0;
+
+	long double *restrict w = (long double *)safecalloc(max_v + 1, sizeof(long double));
+	w[0] = 1.0L;
+
+	for (int i = 1; i <= n; i++) {
+	  for (int j = max_v; j >= i; j--) w[j] += w[j - i];
+	}
+
+	long double cum_p = 0.0L;
+	for (int i = 0; i <= k; i++) cum_p += w[i];
+
+	long double total = powl(2.0L, (long double)n);
+	double result = (double)(cum_p / total);
+
+	Safefree(w);
+	return result;
+}
+
+static int cmp_rank_info(const void *a, const void *b) {
+	double da = ((const RankInfo*)a)->val;
+	double db = ((const RankInfo*)b)->val;
+	return (da > db) - (da < db);
+}
+
+static double rank_and_count_ties(RankInfo *ri, size_t n, int *has_ties) {
+	if (n == 0) return 0.0;
+	qsort(ri, n, sizeof(RankInfo), cmp_rank_info);
+	size_t i = 0;
+	double tie_adj = 0.0;
+	*has_ties = 0;
+	while (i < n) {
+		size_t j = i + 1;
+		while (j < n && ri[j].val == ri[i].val) j++;
+		double r = (double)(i + 1 + j) / 2.0; 
+		for (size_t k = i; k < j; k++) ri[k].rank = r;
+		size_t t = j - i;
+		if (t > 1) { *has_ties = 1; tie_adj += ((double)t * t * t - t); }
+		i = j;
+	}
+	return tie_adj;
+}
+
 // --- XS SECTION ---
 MODULE = Stats::LikeR  PACKAGE = Stats::LikeR
+
+SV*
+wilcox_test(AV* x_av, AV* y_av = NULL, bool paired = 0, double mu = 0.0, int exact = -1)
+CODE:
+{
+	size_t nx = av_top_index(x_av) + 1;
+	size_t ny = y_av ? (av_top_index(y_av) + 1) : 0;
+	if (nx == 0) croak("Not enough 'x' observations");
+
+	double p_value = 0.0, statistic = 0.0;
+	const char *restrict method_desc = "";
+	bool use_exact = 0;
+
+	// --- TWO SAMPLE (Mann-Whitney) ---
+	if (ny > 0 && !paired) {
+	  size_t total_n = nx + ny;
+	  RankInfo *ri = (RankInfo *)safemalloc(total_n * sizeof(RankInfo));
+	  for (size_t i = 0; i < nx; i++) {
+		   SV**restrict el = av_fetch(x_av, i, 0);
+		   ri[i].val = el ? SvNV(*el) : 0.0; ri[i].idx = 1;
+	  }
+	  for (size_t i = 0; i < ny; i++) {
+		   SV**restrict el = av_fetch(y_av, i, 0);
+		   ri[nx + i].val = (el ? SvNV(*el) : 0.0) - mu; ri[nx + i].idx = 2;
+	  }
+
+	  int has_ties = 0;
+	  double tie_adj = rank_and_count_ties(ri, total_n, &has_ties);
+	  double w_rank_sum = 0.0;
+	  for (size_t i = 0; i < total_n; i++) if (ri[i].idx == 1) w_rank_sum += ri[i].rank;
+	  statistic = w_rank_sum - (double)nx * (nx + 1) / 2.0;
+
+	  // R Logic: Default exact to TRUE if N < 50 and no ties
+	  if (exact == 1) use_exact = 1;
+	  else if (exact == 0) use_exact = 0;
+	  else use_exact = (total_n < 50 && !has_ties);
+
+	  if (use_exact && has_ties) {
+		   warn("cannot compute exact p-value with ties; falling back to approximation");
+		   use_exact = 0;
+	  }
+
+	  if (use_exact) {
+		   method_desc = "Wilcoxon rank sum exact test";
+		   double p = exact_pwilcox(statistic, nx, ny);
+		   // Translate R's two-sided tail logic: take the smaller tail
+		   if (p > 0.5) p = 1.0 - exact_pwilcox(statistic - 1.0, nx, ny);
+		   p_value = 2.0 * p;
+	  } else {
+		   method_desc = "Wilcoxon rank sum test with continuity correction";
+		   double exp = (double)nx * ny / 2.0;
+		   double var = ((double)nx * ny / 12.0) * ((total_n + 1.0) - tie_adj / (total_n * (total_n - 1.0)));
+		   double z = statistic - exp;
+		   // R's exact continuity correction: z <- z - sign(z) * 0.5
+		   if (z > 0) z -= 0.5; else if (z < 0) z += 0.5;
+		   // CRITICAL FIX: -fabs ensures we always get the lower tail probability
+		   p_value = 2.0 * approx_pnorm(-fabs(z / sqrt(var)));
+	  }
+	  Safefree(ri);
+	} else { // --- ONE SAMPLE / PAIRED ---
+	  if (paired && nx != ny) croak("'x' and 'y' must have same length");
+	  double *restrict diffs = (double *)safemalloc(nx * sizeof(double));
+	  size_t n_nz = 0;
+	  for (size_t i = 0; i < nx; i++) {
+		   double dx = SvNV(*av_fetch(x_av, i, 0));
+		   double d = paired ? (dx - SvNV(*av_fetch(y_av, i, 0)) - mu) : (dx - mu);
+		   if (fabs(d) > 1e-15) diffs[n_nz++] = d;
+	  }
+
+	  RankInfo *restrict ri = (RankInfo *)safemalloc(n_nz * sizeof(RankInfo));
+	  for (size_t i = 0; i < n_nz; i++) { ri[i].val = fabs(diffs[i]); ri[i].idx = (diffs[i] > 0); }
+
+	  int has_ties = 0;
+	  double tie_adj = rank_and_count_ties(ri, n_nz, &has_ties);
+	  statistic = 0.0;
+	  for (size_t i = 0; i < n_nz; i++) if (ri[i].idx) statistic += ri[i].rank;
+
+	  if (exact == 1) use_exact = 1;
+	  else if (exact == 0) use_exact = 0;
+	  else use_exact = (n_nz < 50 && !has_ties);
+
+	  if (use_exact && has_ties) {
+		   warn("cannot compute exact p-value with ties; falling back to approximation");
+		   use_exact = 0;
+	  }
+
+	  if (use_exact) {
+		   method_desc = "Wilcoxon exact signed rank test";
+		   double p = exact_psignrank(statistic, n_nz);
+		   if (p > 0.5) p = 1.0 - exact_psignrank(statistic - 1.0, n_nz);
+		   p_value = 2.0 * p;
+	  } else {
+		   method_desc = "Wilcoxon signed rank test with continuity correction";
+		   double exp = (double)n_nz * (n_nz + 1.0) / 4.0;
+		   double var = (n_nz * (n_nz + 1.0) * (2.0 * n_nz + 1.0) / 24.0) - (tie_adj / 48.0);
+		   double z = statistic - exp;
+		   if (z > 0) z -= 0.5; else if (z < 0) z += 0.5;
+		   p_value = 2.0 * approx_pnorm(-fabs(z / sqrt(var)));
+	  }
+	  Safefree(ri); Safefree(diffs);
+	}
+
+	if (p_value > 1.0) p_value = 1.0;
+
+	HV *restrict res = newHV();
+	hv_stores(res, "statistic", newSVnv(statistic));
+	hv_stores(res, "p_value", newSVnv(p_value));
+	hv_stores(res, "method", newSVpv(method_desc, 0));
+	RETVAL = newRV_noinc((SV*)res);
+}
+OUTPUT:
+    RETVAL
 
 SV*
 _chisq_c(data_ref)
@@ -977,8 +1110,7 @@ CODE:
 	AV*restrict expected_av = newAV();
 
 	if (is_2d) {
-	  double row_sum[r];
-	  double col_sum[c];
+	  double row_sum[r], col_sum[c];
 	  for(unsigned int i=0; i<r; i++) row_sum[i] = 0.0;
 	  for(unsigned int j=0; j<c; j++) col_sum[j] = 0.0;
 	  
@@ -993,19 +1125,15 @@ CODE:
 		       grand_total += val;
 		   }
 	  }
-	  
 	  for (unsigned int i = 0; i < r; i++) {
 		   AV*restrict exp_row = newAV();
 		   SV**restrict row_sv = av_fetch(obs_av, i, 0);
 		   AV*restrict row = (AV*)SvRV(*row_sv);
-		   
 		   for (unsigned int j = 0; j < c; j++) {
 		       double E = (row_sum[i] * col_sum[j]) / grand_total;
 		       SV**restrict val_sv = av_fetch(row, j, 0);
 		       double O = SvNV(*val_sv);
-		       
 		       av_push(exp_row, newSVnv(E));
-		       
 		       if (yates) {
 		           // Exact R logic: min(0.5, abs(O - E))
 		           double abs_diff = fabs(O - E);
@@ -1019,18 +1147,15 @@ CODE:
 		   av_push(expected_av, newRV_noinc((SV*)exp_row));
 	  }
 	  df = (r - 1) * (c - 1);
-	  
 	} else {
 	  for (unsigned int j = 0; j < c; j++) {
 		   SV**restrict val_sv = av_fetch(obs_av, j, 0);
 		   grand_total += SvNV(*val_sv);
 	  }
-	  
 	  double E = grand_total / (double)c;
 	  for (unsigned int j = 0; j < c; j++) {
 		   SV**restrict val_sv = av_fetch(obs_av, j, 0);
 		   double O = SvNV(*val_sv);
-		   
 		   av_push(expected_av, newSVnv(E));
 		   stat += ((O - E) * (O - E)) / E;
 	  }
@@ -1058,12 +1183,11 @@ CODE:
 	RETVAL = newRV_noinc((SV*)results);
 }
 OUTPUT:
-    RETVAL
+	RETVAL
 
 PROTOTYPES: ENABLE
 
-void
-write_table(...)
+void write_table(...)
 PPCODE:
 {
 	SV *restrict data_sv = NULL;
@@ -1090,13 +1214,13 @@ PPCODE:
 	// Read the remaining Hash-style arguments
 	for (; arg_idx < items; arg_idx += 2) {
 	  if (arg_idx + 1 >= items) croak("write_table: Odd number of arguments passed");
-	  const char *key = SvPV_nolen(ST(arg_idx));
+	  const char *restrict key = SvPV_nolen(ST(arg_idx));
 	  SV *restrict val = ST(arg_idx + 1);
 	  if (strEQ(key, "data")) data_sv = val;
-	  else if (strEQ(key, "file")) file_sv = val;
-	  else if (strEQ(key, "sep")) sep = SvPV_nolen(val);
-	  else if (strEQ(key, "row.names")) row_names_sv = val;
 	  else if (strEQ(key, "col.names")) col_names_sv = val;
+	  else if (strEQ(key, "file")) file_sv = val;
+	  else if (strEQ(key, "row.names")) row_names_sv = val;
+	  else if (strEQ(key, "sep")) sep = SvPV_nolen(val);
 	  else croak("write_table: Unknown arguments passed: %s", key);
 	}
 
@@ -1109,7 +1233,7 @@ PPCODE:
 	}
 
 	if (!file_sv || !SvOK(file_sv)) croak("write_table: file name missing\n");
-	const char *file = SvPV_nolen(file_sv);
+	const char *restrict file = SvPV_nolen(file_sv);
 
 	if (col_names_sv && SvOK(col_names_sv)) {
 	  if (!SvROK(col_names_sv) || SvTYPE(SvRV(col_names_sv)) != SVt_PVAV) {
@@ -1163,7 +1287,7 @@ PPCODE:
 		   croak("write_table: For ARRAY data, all elements must be HASH references (Array of Hashes)\n");
 	  }
 
-	  for (SSize_t i = 0; i <= av_len(av); i++) {
+	  for (size_t i = 0; i <= av_len(av); i++) {
 		   SV **restrict ptr = av_fetch(av, i, 0);
 		   if (!ptr || !*ptr || !SvROK(*ptr) || SvTYPE(SvRV(*ptr)) != SVt_PVHV) {
 		       croak("write_table: Mixed data types detected in Array of Hashes. All elements must be HASH references.\n");
@@ -1210,7 +1334,6 @@ PPCODE:
 		   safefree(col_array);
 		   SvREFCNT_dec(col_map);
 	  }
-
 	  size_t num_headers = av_len(headers_av) + 1;
 	  const char **restrict header_row = safemalloc((num_headers + 1) * sizeof(char*));
 	  size_t h_idx = 0;
@@ -1221,23 +1344,19 @@ PPCODE:
 	  }
 	  print_string_row(fh, header_row, h_idx, sep);
 	  safefree(header_row);
-
 	  size_t num_rows = av_len(rows_av) + 1;
 	  const char **restrict row_array = safemalloc(num_rows * sizeof(char*));
 	  for(size_t i=0; i<num_rows; i++) {
 	  	row_array[i] = SvPV_nolen(*av_fetch(rows_av, i, 0));
 	  }
 	  qsort(row_array, num_rows, sizeof(char*), cmp_string_wt);
-
 	  HV *restrict data_hv = (HV*)data_ref;
 	  const char **restrict row_data = safemalloc((num_headers + 1) * sizeof(char*));
 	  for(size_t i=0; i<num_rows; i++) {
 		   size_t d_idx = 0;
 		   if (inc_rownames) row_data[d_idx++] = row_array[i];
-
 		   SV **restrict inner_hv_ptr = hv_fetch(data_hv, row_array[i], strlen(row_array[i]), 0);
 		   HV *restrict inner_hv = inner_hv_ptr ? (HV*)SvRV(*inner_hv_ptr) : NULL;
-
 		   for(size_t j=0; j<num_headers; j++) {
 		       SV**restrict h_ptr = av_fetch(headers_av, j, 0);
 				 const char *restrict col_name = (h_ptr && SvOK(*h_ptr)) ? SvPV_nolen(*h_ptr) : "";
@@ -1256,9 +1375,7 @@ PPCODE:
 		   print_string_row(fh, row_data, d_idx, sep);
 	  }
 	  safefree(row_array); safefree(row_data);
-	}
-	// ----- Hash of Arrays -----
-	else if (is_hoa) {
+	} else if (is_hoa) { // ----- Hash of Arrays -----
 	  HV *restrict data_hv = (HV*)data_ref;
 	  size_t max_rows = 0;
 	  hv_iterinit(data_hv);
@@ -2131,7 +2248,7 @@ CODE:
 		} else {
 			double se = sqrt(dispersion * XtWX[j * p + j]);
 			double val_stat = beta[j] / se;
-			double p_val = is_binomial ? 2.0 * (1.0 - approx_pnorm(fabs(val_stat))) : pt_2tail(val_stat, df_res);
+			double p_val = is_binomial ? 2.0 * (1.0 - approx_pnorm(fabs(val_stat))) : get_t_pvalue(val_stat, df_res, "two.sided");
 			
 			hv_store(row_hv, "Estimate",   8, newSVnv(beta[j]), 0);
 			hv_store(row_hv, "Std. Error", 10, newSVnv(se), 0);
@@ -2251,7 +2368,7 @@ CODE:
 	  double z = 0.5 * log((1.0 + estimate) / (1.0 - estimate));
 	  double se = 1.0 / sqrt(n - 3);
 	  double alpha = 1.0 - conf_level;
-	  double q = qnorm(1.0 - alpha/2.0);
+	  double q = inverse_normal_cdf(1.0 - alpha/2.0);
 	  ci_lower = tanh(z - q * se);
 	  ci_upper = tanh(z + q * se);
 	  // HIGH-PRECISION P-VALUE USING INCOMPLETE BETA
@@ -4094,7 +4211,7 @@ SV* lm(...)
 		   } else {
 		       double se = sqrt(rse_sq * XtX[j * p + j]);
 		       double t_val = beta[j] / se;
-		       double p_val = pt_2tail(t_val, df_res);
+		       double p_val = get_t_pvalue(t_val, df_res, "two.sided");//pt_2tail();
 		       
 		       hv_store(row_hv, "Estimate",   8, newSVnv(beta[j]), 0);
 		       hv_store(row_hv, "Std. Error", 10, newSVnv(se), 0);

@@ -1548,6 +1548,21 @@ $test_data = read_table(
 	},
 	'output.type' => 'hoa'
 );
+if (defined $test_data->{Sex}) {
+	pass('read_table: "Sex" column is output after filter');
+} else {
+	fail('read_table: "Sex" column is NOT output after filter');
+}
+my $nf = 0;
+foreach my $sex (@{ $test_data->{Sex} }) {
+	$nf++ if $sex eq 'f';
+}
+if ($nf == 238) {
+	pass('read_table: filter shows that all are female, which was intended');
+} else {
+	$nf = 238 - $nf;
+	fail("read_table: filter shows that $nf individuals are NOT female, which was NOT intended");
+}
 foreach my $col (sort keys %{ $test_data }) {
 	my $n = scalar @{ $test_data->{$col} };
 	if ($n == 238) {
@@ -1742,8 +1757,8 @@ subtest 'aov: One-Way ANOVA with Categorical Factor (>2 Levels)' => sub {
 	# resulting in Df=1, Sum Sq=0.0, and F value=NaN.
 	# A correct implementation must expand 'group' into 2 dummy variables (Df=2).
 	my $data_1way = {
-	  yield_val => [5.5, 5.4, 5.8, 4.5, 4.8, 4.2, 6.1, 6.5, 6.2],
-	  group     => ['A',   'A',   'A',   'B',   'B',   'B',   'C',   'C',   'C']
+		yield_val => [5.5, 5.4, 5.8, 4.5, 4.8, 4.2, 6.1, 6.5, 6.2],
+		group     => ['A',   'A',   'A',   'B',   'B',   'B',   'C',   'C',   'C']
 	};
 
 	my $res_1way = aov($data_1way, 'yield_val ~ group');
@@ -1808,6 +1823,23 @@ p $test_data;
 is_approx($test_data->{parameter}{df}, 2, 'degrees of freedom for Chi-squared', 0);
 is_approx($test_data->{'p.value'}, 2.9535891832118e-07, 'Chi-squared p-value', 1e-17);
 is_approx($test_data->{statistic}{'X-squared'}, 30.070149095755, 'Chi-squared statistic');
+#------------------------
+# Wilcoxon text
+#------------------------
+$test_data = wilcox_test(
+	[1.83,  0.50,  1.62,  2.48, 1.68, 1.88, 1.55, 3.06, 1.30],
+	[0.878, 0.647, 0.598, 2.05, 1.06, 1.29, 1.06, 3.14, 1.29]
+);
+is_approx($test_data->{statistic}, 58, 'Wilcox test statistic', 0);
+is_approx($test_data->{'p_value'}, 0.132919458185319, 'Wilcox test p-value', 1e-15);
+#-----
+$test_data = wilcox_test(
+	[1.83,  0.50,  1.62,  2.48, 1.68, 1.88, 1.55, 3.06, 1.30],
+	[0.878, 0.647, 0.598, 2.05, 1.06, 1.29, 1.06, 3.14, 1.29],
+	paired => true
+);
+#is_approx($test_data->{statistic}, 40, 'Wilcox test (paired) statistic', 0);
+#is_approx($test_data->{'p_value'}, 0.0390625, 'Wilcox test (paired) statistic', 1e-7);
 #$test_data = ks_test('x' => $x, 'y' => $y);
 #p $test_data;
 done_testing();

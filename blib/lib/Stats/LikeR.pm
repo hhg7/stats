@@ -12,7 +12,7 @@ use warnings FATAL => 'all';
 use autodie ':default';
 use Exporter 'import';
 XSLoader::load('Stats::LikeR', $VERSION);
-our @EXPORT_OK = qw(aov chisq_test cor cor_test cov fisher_test glm hist lm matrix mean median min max p_adjust quantile rbinom read_table rnorm runif scale sd seq shapiro_test t_test var write_table);
+our @EXPORT_OK = qw(aov chisq_test cor cor_test cov fisher_test glm hist lm matrix mean median min max p_adjust quantile rbinom read_table rnorm runif scale sd seq shapiro_test t_test var wilcox_test write_table);
 our @EXPORT = @EXPORT_OK;
 
 require XSLoader;
@@ -46,12 +46,7 @@ sub read_table {
 		@_,
 	);
 	my %allowed_args = map {$_ => 1} (
-		'comment',
-		'row.names',
-		'sep',
-		'substitutions',
-		'output.type',
-		'filter'
+		'comment',	'output.type',	'filter', 'row.names', 'sep',	'substitutions'
 	);
 	my @undef_args = sort grep {!$allowed_args{$_}} keys %args;
 	my $current_sub = (split(/::/,(caller(0))[3]))[-1];
@@ -63,7 +58,6 @@ sub read_table {
 	if ($args{'output.type'} !~ m/^(?:aoh|hoa|hoh)$/) {
 		die "\"$args{'output.type'}\" isn't allowed";
 	}
-
 	# Normalize the filter argument
 	my $filter = $args{filter};
 	if (defined $filter && ref($filter) eq 'CODE') {
@@ -71,15 +65,12 @@ sub read_table {
 	} elsif (defined $filter && ref($filter) ne 'HASH') {
 		die "'filter' must be a CODE or HASH reference";
 	}
-
 	my (@data, %data, @header, %mapped_filters);
-
 	# Execute the fast C-state machine. Pass an anonymous coderef to process streams.
 	# This bypasses creating an intermediate AoA memory spike.
 	_parse_csv_file($file, $args{sep} // '', $args{comment} // '', sub {
 		my ($line_ref) = @_;
 		my @line = @$line_ref;
-		
 		if (!@header) {
 			# --- HEADER PROCESSING ---
 			$line[0] =~ s/^\Q$args{comment}\E// if @line && defined $line[0];
@@ -95,7 +86,6 @@ sub read_table {
 			if ((defined $args{'row.names'}) && (!grep {$_ eq $args{'row.names'}} @header)) {
 				die "\"$args{'row.names'}\" isn't in the header of $file";
 			}
-
 			# Map filters to 1-based indices (or 0 for whole row)
 			if ($filter) {
 				for my $k (keys %$filter) {
@@ -110,12 +100,10 @@ sub read_table {
 			}
 			return; # Equivalent to 'next' out of the closure
 		}
-		
 		# Check for column alignment
 		if (scalar @line != scalar @header) {
 			die "Alignment error on $file (" . scalar(@line) . " fields vs " . scalar(@header) . " headers).";
 		}
-		
 		# --- DATA PROCESSING ---
 		my %line_hash;
 		for my $i (0 .. $#header) {

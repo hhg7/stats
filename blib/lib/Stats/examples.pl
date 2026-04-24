@@ -346,6 +346,8 @@ foreach my $x (0..9) {
 }
 p @old;
 p @new;
+say 'New mean: ' . mean(\@new);
+say 'Mean old / Mean new: ' . mean(\@old) / mean(\@new);
 my $t = t_test('x' => \@old, 'y' => \@new);
 p $t;
 # write_table
