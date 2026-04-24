@@ -67,7 +67,7 @@ static void compute_ranks(double *restrict data, double *restrict ranks, size_t 
 }
 // Generates a single binomial random variate. 
 //Uses the standard Bernoulli trial loop. Drand01() taps into Perl's PRNG.
-static size_t generate_binomial(size_t size, double prob) {
+static size_t generate_binomial(const size_t size, const double prob) {
 	if (prob <= 0.0) return 0;
 	if (prob >= 1.0) return size;
 
@@ -82,146 +82,146 @@ static double log_choose(size_t n, size_t k) {
 	return lgamma((double)n + 1.0) - lgamma((double)k + 1.0) - lgamma((double)(n - k) + 1.0);
 }
 
-static double bisection_root(double (*func)(size_t, size_t, size_t, double),
-                             size_t r1, size_t r2, size_t c1, double target,
-                             double log_low0, double log_high0) {
-	double log_low  = log_low0;
-	double log_high = log_high0;
-	double best_omega = exp((log_low + log_high) * 0.5);
-	double best_error = 1e9;
+// Log-space tails for non-central hypergeometric
+static void calc_tails_logspace(size_t a, size_t min_x, size_t max_x, double omega, const double *logdc, double *restrict lower_tail, double *restrict upper_tail) {
+	double max_d = -1e300, log_omega = log(omega);
 
-	for (unsigned short int i = 0; i < 20000; ++i) {
-		double log_mid = 0.5 * (log_low + log_high);
-		double omega   = exp(log_mid);
-		double val     = func(r1, r2, c1, omega);
-		double error   = fabs(val - target);
-
-		if (error < best_error) {
-			best_error = error;
-			best_omega = omega;
-		}
-
-		if (val > target) {
-			log_high = log_mid;
-		} else {
-			log_low  = log_mid;
-		}
-		if (log_high - log_low < 1e-30) break;
+	for(size_t k = 0; k <= max_x - min_x; ++k) {
+	  double d_val = logdc[k] + log_omega * (min_x + k);
+	  if (d_val > max_d) max_d = d_val;
 	}
-	return best_omega;
-}
-// Expected value using the same stable recursive method
-static double expected_a(size_t r1, size_t r2, size_t c1, double omega) {
-	size_t min_x = (r2 > c1) ? 0 : c1 - r2;
-	size_t max_x = (r1 < c1) ? r1 : c1;
-	if (omega <= 0.0) return (double)min_x;
-	double p = 1.0, sum_p = 1.0;
-	double sum_xp = (double)min_x;
-	for (size_t i = min_x; i < max_x; ++i) {
-		double ratio = ((double)(r1 - i) * (c1 - i) * omega) /
-				        ((i + 1.0) * (r2 - c1 + i + 1.0));
-		p *= ratio;
-		sum_p += p;
-		sum_xp += (double)(i + 1) * p;
+
+	double sum_d = 0.0;
+	for(size_t k = 0; k <= max_x - min_x; ++k) {
+	  sum_d += exp(logdc[k] + log_omega * (min_x + k) - max_d);
 	}
-	return sum_xp / sum_p;
+
+	*lower_tail = 0.0;
+	*upper_tail = 0.0;
+
+	for(size_t k = 0; k <= max_x - min_x; ++k) {
+	  double p_prob = exp(logdc[k] + log_omega * (min_x + k) - max_d) / sum_d;
+	  if (min_x + k <= a) *lower_tail += p_prob;
+	  if (min_x + k >= a) *upper_tail += p_prob;
+	}
 }
 
-// Tail probabilities using recursive ratio (fast + stable, same as R)/
-static void calc_tails(size_t a, size_t b, size_t c, size_t d, double omega, 
-                       double *restrict lower_tail, double *restrict upper_tail) {
-    size_t r1 = a + b, r2 = c + d, c1 = a + c;
-    size_t min_x = (r2 > c1) ? 0 : c1 - r2;
-    size_t max_x = (r1 < c1) ? r1 : c1;
-    *lower_tail = 0.0;
-    *upper_tail = 0.0;
-    if (omega <= 0.0) {
-        *lower_tail = 1.0;
-        *upper_tail = 1.0;
-        return;
-    }
-    double p = 1.0, total = 1.0;
-    if (min_x <= a) *lower_tail += p;
-    if (min_x >= a) *upper_tail += p;
-    for (size_t x = min_x; x < max_x; ++x) {
-        double ratio = ((double)(r1 - x) * (c1 - x) * omega) /
-                       ((x + 1.0) * (r2 - c1 + x + 1.0));
-        p *= ratio;
-        total += p;
-
-        size_t curr = x + 1;
-        if (curr <= a) *lower_tail += p;
-        if (curr >= a) *upper_tail += p;
-    }
-    double inv = 1.0 / total;
-    *lower_tail *= inv;
-    *upper_tail *= inv;
-}
-
-/* Bisection with best-point tracking (matches R printed precision) */
-static void calculate_exact_stats(size_t a, size_t b, size_t c, size_t d, double conf_level,
-                                  double *restrict mle_or, double *restrict ci_low, double *restrict ci_high) {
+// Exact stats using log-space
+static void calculate_exact_stats(size_t a, size_t b, size_t c, size_t d, double conf_level, const char*restrict alt, double *restrict mle_or, double *restrict ci_low, double *restrict ci_high) {
     double alpha = 1.0 - conf_level;
-    double target_alpha = alpha / 2.0;
-
     size_t r1 = a + b, r2 = c + d, c1 = a + c;
     size_t min_x = (r2 > c1) ? 0 : c1 - r2;
     size_t max_x = (r1 < c1) ? r1 : c1;
+    
+    bool is_less = (strcmp(alt, "less") == 0);
+    bool is_greater = (strcmp(alt, "greater") == 0);
+
+    double *restrict logdc = (double*)safemalloc((max_x - min_x + 1) * sizeof(double));
+    double denom = log_choose(r1 + r2, c1);
+    for(size_t x = min_x; x <= max_x; ++x) {
+        logdc[x - min_x] = log_choose(r1, x) + log_choose(r2, c1 - x) - denom;
+    }
+
     // MLE
     if (a == min_x && a == max_x) *mle_or = 1.0;
     else if (a == min_x) *mle_or = 0.0;
     else if (a == max_x) *mle_or = INFINITY;
-    else *mle_or = bisection_root(expected_a, r1, r2, c1, (double)a, -100.0, 100.0);
-    // Lower CI: P(X ≥ a | ω) = α/2
-    if (a == min_x) {
-        *ci_low = 0.0;
-    } else {
-        double log_low = -100.0, log_high = 100.0, best = 1.0, best_err = 1e9, lt, ut;
-        for (unsigned short int i = 0; i < 10000; ++i) {
+    else {
+        double log_low = -100.0, log_high = 100.0;
+        for (unsigned short int i = 0; i < 3000; i++) {
             double log_mid = 0.5 * (log_low + log_high);
-            double mid = exp(log_mid);
-            calc_tails(a, b, c, d, mid, &lt, &ut);
-            double err = fabs(ut - target_alpha);
-            if (err < best_err) { best_err = err; best = mid; }
-            if (ut > target_alpha) log_high = log_mid; else log_low = log_mid;
-            if (log_high - log_low < 1e-32) break;
+            double max_d = -1e300;
+            for(size_t k = 0; k <= max_x - min_x; ++k) {
+                double d_val = logdc[k] + log_mid * (min_x + k);
+                if (d_val > max_d) max_d = d_val;
+            }
+            double sum_d = 0.0, exp_val = 0.0;
+            for(size_t k = 0; k <= max_x - min_x; ++k) {
+                double p_prob = exp(logdc[k] + log_mid * (min_x + k) - max_d);
+                sum_d += p_prob;
+                exp_val += (min_x + k) * p_prob;
+            }
+            exp_val /= sum_d;
+            
+            if (exp_val > a) log_high = log_mid;
+            else log_low = log_mid;
+            if (log_high - log_low < 1e-15) break;
         }
-        *ci_low = best;
+        *mle_or = exp(0.5 * (log_low + log_high));
     }
-    // Upper CI: P(X ≤ a | ω) = α/2
-    if (a == max_x) {
-        *ci_high = INFINITY;
-    } else {
-        double log_low = -100.0, log_high = 100.0, best = 1.0, best_err = 1e9, lt, ut;
-        for (unsigned short int i = 0; i < 10000; ++i) {
-            double log_mid = 0.5 * (log_low + log_high);
-            double mid = exp(log_mid);
-            calc_tails(a, b, c, d, mid, &lt, &ut);
-            double err = fabs(lt - target_alpha);
-            if (err < best_err) { best_err = err; best = mid; }
-            if (lt > target_alpha) log_low = log_mid; else log_high = log_mid;
-            if (log_high - log_low < 1e-32) break;
+
+    *ci_low = 0.0;
+    *ci_high = INFINITY;
+
+    // Lower CI
+    if (!is_less) { 
+        double target_alpha = is_greater ? alpha : alpha / 2.0;
+        if (a != min_x) {
+            double log_low = -100.0, log_high = 100.0, best = 1.0, best_err = 1e9, lt, ut;
+            for (unsigned short int i = 0; i < 1000; i++) {
+                double log_mid = 0.5 * (log_low + log_high);
+                double mid = exp(log_mid);
+                calc_tails_logspace(a, min_x, max_x, mid, logdc, &lt, &ut);
+                double err = fabs(ut - target_alpha);
+                if (err < best_err) { best_err = err; best = mid; }
+                if (ut > target_alpha) log_high = log_mid;
+                else log_low = log_mid;
+                if (log_high - log_low < 1e-15) break;
+            }
+            *ci_low = best;
         }
-        *ci_high = best;
     }
+
+    // Upper CI
+    if (!is_greater) { 
+        double target_alpha = is_less ? alpha : alpha / 2.0;
+        if (a != max_x) {
+            double log_low = -100.0, log_high = 100.0, best = 1.0, best_err = 1e9, lt, ut;
+            for (unsigned short int i = 0; i < 1000; i++) {
+                double log_mid = 0.5 * (log_low + log_high);
+                double mid = exp(log_mid);
+                calc_tails_logspace(a, min_x, max_x, mid, logdc, &lt, &ut);
+                double err = fabs(lt - target_alpha);
+                if (err < best_err) { best_err = err; best = mid; }
+                if (lt > target_alpha) log_low = log_mid;
+                else log_high = log_mid;
+                if (log_high - log_low < 1e-15) break;
+            }
+            *ci_high = best;
+        }
+    }
+    safefree(logdc);
 }
 
-// Two-sided exact p-value
-static double exact_p_value(size_t a, size_t b, size_t c, size_t d) {
-	size_t r1 = a + b, r2 = c + d, c1 = a + c;
-	size_t min_x = (r2 > c1) ? 0 : c1 - r2;
-	size_t max_x = (r1 < c1) ? r1 : c1;
+// Exact p-value using log-space
+static double exact_p_value(size_t a, size_t b, size_t c, size_t d, const char* alt) {
+    size_t r1 = a + b, r2 = c + d, c1 = a + c;
+    size_t min_x = (r2 > c1) ? 0 : c1 - r2;
+    size_t max_x = (r1 < c1) ? r1 : c1;
 
-	double p_obs = exp(log_choose(r1, a) + log_choose(r2, c) - log_choose(r1 + r2, c1));
-	double p_val = 0.0;
+    double *logdc = (double*)safemalloc((max_x - min_x + 1) * sizeof(double));
+    double denom = log_choose(r1 + r2, c1);
+    for(size_t x = min_x; x <= max_x; ++x) {
+        logdc[x - min_x] = log_choose(r1, x) + log_choose(r2, c1 - x) - denom;
+    }
 
-	for (size_t i = min_x; i <= max_x; i++) {
-		double p_cur = exp(log_choose(r1, i) + log_choose(r2, c1 - i) - log_choose(r1 + r2, c1));
-		if (p_cur <= p_obs * (1.0 + 1e-7)) {
-			p_val += p_cur;
-		}
-	}
-	return (p_val > 1.0) ? 1.0 : p_val;
+    double p_val = 0.0;
+    
+    if (strcmp(alt, "less") == 0) {
+        for(size_t x = min_x; x <= a; ++x) p_val += exp(logdc[x - min_x]);
+    } else if (strcmp(alt, "greater") == 0) {
+        for(size_t x = a; x <= max_x; ++x) p_val += exp(logdc[x - min_x]);
+    } else {
+        double p_obs = exp(logdc[a - min_x]);
+        double relErr = 1.0 + 1e-7;
+        for(size_t x = min_x; x <= max_x; ++x) {
+            double p_cur = exp(logdc[x - min_x]);
+            if (p_cur <= p_obs * relErr) p_val += p_cur;
+        }
+    }
+    
+    safefree(logdc);
+    return (p_val > 1.0) ? 1.0 : p_val;
 }
 /* -----------------------------------------------------------------------
  * Helpers for lm() Linear Regression: OLS Matrix Math & Formula Parsing
@@ -958,7 +958,7 @@ static int cmp_rank_info(const void *a, const void *b) {
 	return (da > db) - (da < db);
 }
 
-static double rank_and_count_ties(RankInfo *ri, size_t n, int *has_ties) {
+static double rank_and_count_ties(RankInfo *restrict ri, size_t n, int *restrict has_ties) {
 	if (n == 0) return 0.0;
 	qsort(ri, n, sizeof(RankInfo), cmp_rank_info);
 	size_t i = 0;
@@ -3566,7 +3566,6 @@ XS_EUPXS(XS_Stats__LikeR_t_test)
 	  // --- Validate required / types ---
 	  if (!x_sv || !SvROK(x_sv) || SvTYPE(SvRV(x_sv)) != SVt_PVAV)
 		   croak("t_test: 'x' is a required argument and must be an ARRAY reference");
-
 	  AV*restrict x_av = (AV*)SvRV(x_sv);
 	  size_t nx = av_len(x_av) + 1;
 	  if (nx < 2) croak("t_test: 'x' needs at least 2 elements");
@@ -3689,7 +3688,7 @@ XS_EUPXS(XS_Stats__LikeR_t_test)
 
 	  RETVAL = newRV_noinc((SV*)results);
 	}
-#line 3693 "LikeR.c"
+#line 3692 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -3716,7 +3715,7 @@ XS_EUPXS(XS_Stats__LikeR_p_adjust)
 	    method = (const char *)SvPV_nolen(ST(1))
 ;
 	}
-#line 3235 "LikeR.xs"
+#line 3234 "LikeR.xs"
 	  if (!SvROK(p_sv) || SvTYPE(SvRV(p_sv)) != SVt_PVAV) {
 		   croak("p_adjust: first argument must be an ARRAY reference of p-values");
 	  }
@@ -3749,8 +3748,8 @@ XS_EUPXS(XS_Stats__LikeR_p_adjust)
 	  // Sort ascending (Stable sort using original index)
 	  qsort(arr, n, sizeof(PVal), cmp_pval);
 
-#line 3753 "LikeR.c"
-#line 3268 "LikeR.xs"
+#line 3752 "LikeR.c"
+#line 3267 "LikeR.xs"
 	  if (strcmp(meth, "bonferroni") == 0) {
 		   for (size_t i = 0; i < n; i++) {
 		       double v = arr[i].p * n;
@@ -3852,7 +3851,7 @@ XS_EUPXS(XS_Stats__LikeR_p_adjust)
 	  }
 	  Safefree(arr); arr = NULL;
 	  Safefree(adj); adj = NULL;
-#line 3856 "LikeR.c"
+#line 3855 "LikeR.c"
 	PUTBACK;
 	return;
     }
@@ -3868,12 +3867,12 @@ XS_EUPXS(XS_Stats__LikeR_median)
     {
 	double	RETVAL;
 	dXSTARG;
-#line 3373 "LikeR.xs"
+#line 3372 "LikeR.xs"
 		size_t total_count = 0, k = 0;
 		double *restrict nums;
 		double median_val = 0.0;
-#line 3876 "LikeR.c"
-#line 3377 "LikeR.xs"
+#line 3875 "LikeR.c"
+#line 3376 "LikeR.xs"
 	  // Pass 1: Count total valid elements to allocate memory
 	  for (size_t i = 0; i < items; i++) {
 		   SV*restrict arg = ST(i);
@@ -3916,7 +3915,7 @@ XS_EUPXS(XS_Stats__LikeR_median)
 	  }
 	  Safefree(nums); nums = NULL;
 	  RETVAL = median_val;
-#line 3920 "LikeR.c"
+#line 3919 "LikeR.c"
 	TARGn((double)RETVAL, 1);
 	ST(0) = TARG;
     }
@@ -3950,7 +3949,7 @@ XS_EUPXS(XS_Stats__LikeR_cor)
 	    method = (const char *)SvPV_nolen(ST(2))
 ;
 	}
-#line 3424 "LikeR.xs"
+#line 3423 "LikeR.xs"
 	  // --- validate method -------------------------------------------
 	  if (strcmp(method, "pearson")  != 0 &&
 		   strcmp(method, "spearman") != 0 &&
@@ -3982,8 +3981,8 @@ XS_EUPXS(XS_Stats__LikeR_cor)
 		   if (fp && SvROK(*fp) && SvTYPE(SvRV(*fp)) == SVt_PVAV)
 		       y_is_matrix = 1;
 	  }
-#line 3986 "LikeR.c"
-#line 3456 "LikeR.xs"
+#line 3985 "LikeR.c"
+#line 3455 "LikeR.xs"
 	  if (!x_is_matrix && !y_is_matrix) {
 		   if (!has_y) {
 		       /* cor(vector) == 1 by definition */
@@ -4134,7 +4133,7 @@ XS_EUPXS(XS_Stats__LikeR_cor)
 		   }
 		   RETVAL = newRV_noinc((SV*)result_av);
 	  }
-#line 4138 "LikeR.c"
+#line 4137 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -4151,7 +4150,7 @@ XS_EUPXS(XS_Stats__LikeR_scale)
     PERL_UNUSED_VAR(ax); /* -Wall */
     SP -= items;
     {
-#line 3612 "LikeR.xs"
+#line 3611 "LikeR.xs"
 	{
 	  bool do_center_mean = true, do_scale_sd = true;
 	  double center_val = 0.0, scale_val = 1.0;
@@ -4352,7 +4351,7 @@ XS_EUPXS(XS_Stats__LikeR_scale)
 		   Safefree(nums); nums = NULL;
 	  }
 	}
-#line 4356 "LikeR.c"
+#line 4355 "LikeR.c"
 	PUTBACK;
 	return;
     }
@@ -4367,7 +4366,7 @@ XS_EUPXS(XS_Stats__LikeR_matrix)
     PERL_UNUSED_VAR(items); /* -W */
     {
 	SV *	RETVAL;
-#line 3815 "LikeR.xs"
+#line 3814 "LikeR.xs"
 	// Basic check: must have an even number of arguments for key => value
 	if (items % 2 != 0) {
 	  croak("Usage: matrix(data => [...], nrow => $n, ncol => $m, byrow => $bool)");
@@ -4442,7 +4441,7 @@ XS_EUPXS(XS_Stats__LikeR_matrix)
 	}
 	safefree(row_ptrs);
 	RETVAL = newRV_noinc((SV*)result_av);
-#line 4446 "LikeR.c"
+#line 4445 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -4458,7 +4457,7 @@ XS_EUPXS(XS_Stats__LikeR_lm)
     PERL_UNUSED_VAR(items); /* -W */
     {
 	SV *	RETVAL;
-#line 3894 "LikeR.xs"
+#line 3893 "LikeR.xs"
 	{
 	  const char *restrict formula  = NULL;
 	  SV *restrict data_sv = NULL;
@@ -4810,7 +4809,7 @@ XS_EUPXS(XS_Stats__LikeR_lm)
 
 	  RETVAL = newRV_noinc((SV*)res_hv);
 	}
-#line 4814 "LikeR.c"
+#line 4813 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -4839,7 +4838,7 @@ XS_EUPXS(XS_Stats__LikeR_seq)
 	    by = (double)SvNV(ST(2))
 ;
 	}
-#line 4254 "LikeR.xs"
+#line 4253 "LikeR.xs"
 	{
 	  //Handle the zero 'by' case
 	  if (by == 0.0) {
@@ -4869,7 +4868,7 @@ XS_EUPXS(XS_Stats__LikeR_seq)
 	  }
 	  XSRETURN(n_elements);
 	}
-#line 4873 "LikeR.c"
+#line 4872 "LikeR.c"
 	PUTBACK;
 	return;
     }
@@ -4884,7 +4883,7 @@ XS_EUPXS(XS_Stats__LikeR_rnorm)
     PERL_UNUSED_VAR(items); /* -W */
     {
 	SV *	RETVAL;
-#line 4286 "LikeR.xs"
+#line 4285 "LikeR.xs"
 	{
 		// Auto-seed the PRNG if the Perl script hasn't done so yet
 		AUTO_SEED_PRNG();
@@ -4929,7 +4928,7 @@ XS_EUPXS(XS_Stats__LikeR_rnorm)
 		}
 		RETVAL = newRV_noinc((SV*)result_av);
 	}
-#line 4933 "LikeR.c"
+#line 4932 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -4949,7 +4948,7 @@ XS_EUPXS(XS_Stats__LikeR_aov)
 	SV*	formula_sv = ST(1)
 ;
 	SV *	RETVAL;
-#line 4338 "LikeR.xs"
+#line 4337 "LikeR.xs"
 	{
 		const char *restrict formula = SvPV_nolen(formula_sv);
 		char f_cpy[512];
@@ -5312,7 +5311,7 @@ XS_EUPXS(XS_Stats__LikeR_aov)
 
 		RETVAL = newRV_noinc((SV*)ret_hash);
 	}
-#line 5316 "LikeR.c"
+#line 5315 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -5324,95 +5323,133 @@ XS_EUPXS(XS_Stats__LikeR_fisher_test); /* prototype to pass -Wmissing-prototypes
 XS_EUPXS(XS_Stats__LikeR_fisher_test)
 {
     dVAR; dXSARGS;
-    if (items < 1 || items > 2)
-       croak_xs_usage(cv,  "data_ref, conf_level = 0.95");
+    PERL_UNUSED_VAR(cv); /* -W */
+    PERL_UNUSED_VAR(items); /* -W */
     {
-	SV*	data_ref = ST(0)
-;
-	double	conf_level;
-#line 4710 "LikeR.xs"
-	  size_t a = 0, b = 0, c = 0, d = 0;
-	  double p_val, mle_or, ci_low, ci_high;
-	  HV*restrict ret_hash;
-	  AV*restrict ci_array;
-	  HV*restrict est_hash;
-#line 5340 "LikeR.c"
 	SV *	RETVAL;
+#line 4707 "LikeR.xs"
+{
+	if (items < 1) croak("fisher_test requires at least a data reference");
 
-	if (items < 2)
-	    conf_level = 0.95;
-	else {
-	    conf_level = (double)SvNV(ST(1))
-;
+	SV*restrict data_ref = ST(0);
+	double conf_level = 0.95;
+	const char*restrict alternative = "two.sided";
+
+	/* Parse named arguments */
+	for (unsigned short int i = 1; i < items; i += 2) {
+	  if (i + 1 >= items) croak("fisher_test: odd number of arguments");
+	  const char*restrict key = SvPV_nolen(ST(i));
+	  SV*restrict val = ST(i + 1);
+	  if (strEQ(key, "conf_level") || strEQ(key, "conf.level")) {
+		   conf_level = SvNV(val);
+	  } else if (strEQ(key, "alternative")) {
+		   alternative = SvPV_nolen(val);
+	  }
 	}
-#line 4716 "LikeR.xs"
-		if (!SvROK(data_ref)) croak("fisher_test requires a reference to an Array or Hash");
-		SV*restrict deref = SvRV(data_ref);
-		// Fast Path: 2D Array / AoA
-		if (SvTYPE(deref) == SVt_PVAV) {
-			AV*restrict outer = (AV*)deref;
-			if (av_len(outer) != 1) croak("Outer array must have exactly 2 rows");
 
-			SV**restrict row1_ptr = av_fetch(outer, 0, 0);
-			SV**restrict row2_ptr = av_fetch(outer, 1, 0);
+	if (!SvROK(data_ref)) croak("fisher_test requires a reference to an Array or Hash");
+	SV*restrict deref = SvRV(data_ref);
+	size_t a = 0, b = 0, c = 0, d = 0;
+	// Extract Data
+	if (SvTYPE(deref) == SVt_PVAV) {
+	  AV*restrict outer = (AV*)deref;
+	  if (av_len(outer) != 1) croak("Outer array must have exactly 2 rows");
 
-			if (row1_ptr && row2_ptr && SvROK(*row1_ptr) && SvROK(*row2_ptr)) {
-				AV*restrict row1 = (AV*)SvRV(*row1_ptr);
-				AV*restrict row2 = (AV*)SvRV(*row2_ptr);
-				SV**restrict a_ptr = av_fetch(row1, 0, 0);
-				SV**restrict b_ptr = av_fetch(row1, 1, 0);
-				SV**restrict c_ptr = av_fetch(row2, 0, 0);
-				SV**restrict d_ptr = av_fetch(row2, 1, 0);
-				a = (a_ptr && SvOK(*a_ptr)) ? SvIV(*a_ptr) : 0;
-				b = (b_ptr && SvOK(*b_ptr)) ? SvIV(*b_ptr) : 0;
-				c = (c_ptr && SvOK(*c_ptr)) ? SvIV(*c_ptr) : 0;
-				d = (d_ptr && SvOK(*d_ptr)) ? SvIV(*d_ptr) : 0;
-			} else {
-				croak("Invalid 2D Array structure");
-			}
-		}  else if (SvTYPE(deref) == SVt_PVHV) {
-		//Complex Path: 2D Hash (Because Perl hash order is random, we extract the first 4 integers found in the nested hashes)
-			HV*restrict outer = (HV*)deref;
-			HE*restrict outer_entry;
-			unsigned short int val_count = 0;
-			int vals[4] = {0, 0, 0, 0};
+	  SV**restrict row1_ptr = av_fetch(outer, 0, 0);
+	  SV**restrict row2_ptr = av_fetch(outer, 1, 0);
 
-			hv_iterinit(outer);
-			while ((outer_entry = hv_iternext(outer))) {
-				 SV*restrict inner_sv = hv_iterval(outer, outer_entry);
-				 if (SvROK(inner_sv) && SvTYPE(SvRV(inner_sv)) == SVt_PVHV) {
-				     HV*restrict inner = (HV*)SvRV(inner_sv);
-				     HE*restrict inner_entry;
-				     hv_iterinit(inner);
-				     while ((inner_entry = hv_iternext(inner)) && val_count < 4) {
-				         vals[val_count++] = SvIV(hv_iterval(inner, inner_entry));
-				     }
-				 }
-			}
-			if (val_count != 4) croak("2D Hash must contain exactly 4 values");
-			a = vals[0]; b = vals[1]; c = vals[2]; d = vals[3];
-		} else {
-			croak("Input must be a 2D Array or 2D Hash");
-		}
-		// Perform Calculations
-		p_val = exact_p_value(a, b, c, d);
-		calculate_exact_stats(a, b, c, d, conf_level, &mle_or, &ci_low, &ci_high);
-		// Construct the Return HashRef purely in C
-		ret_hash = newHV();
-		hv_stores(ret_hash, "p_value", newSVnv(p_val));
-		hv_stores(ret_hash, "method", newSVpv("Fisher's Exact Test for Count Data", 0));
+	  if (row1_ptr && row2_ptr && SvROK(*row1_ptr) && SvROK(*row2_ptr)) {
+		   AV*restrict row1 = (AV*)SvRV(*row1_ptr);
+		   AV*restrict row2 = (AV*)SvRV(*row2_ptr);
 
-		ci_array = newAV();
-		av_push(ci_array, newSVnv(ci_low));
-		av_push(ci_array, newSVnv(ci_high));
-		hv_stores(ret_hash, "conf_int", newRV_noinc((SV*)ci_array));
+		   SV**restrict a_ptr = av_fetch(row1, 0, 0);
+		   SV**restrict b_ptr = av_fetch(row1, 1, 0);
+		   SV**restrict c_ptr = av_fetch(row2, 0, 0);
+		   SV**restrict d_ptr = av_fetch(row2, 1, 0);
 
-		est_hash = newHV();
-		hv_stores(est_hash, "odds ratio", newSVnv(mle_or));
-		hv_stores(ret_hash, "estimate", newRV_noinc((SV*)est_hash));
-		// Return the HashRef
-		RETVAL = newRV_noinc((SV*)ret_hash);
-#line 5416 "LikeR.c"
+		   a = (a_ptr && SvOK(*a_ptr)) ? SvIV(*a_ptr) : 0;
+		   b = (b_ptr && SvOK(*b_ptr)) ? SvIV(*b_ptr) : 0;
+		   c = (c_ptr && SvOK(*c_ptr)) ? SvIV(*c_ptr) : 0;
+		   d = (d_ptr && SvOK(*d_ptr)) ? SvIV(*d_ptr) : 0;
+	  } else {
+		   croak("Invalid 2D Array structure");
+	  }
+	} else if (SvTYPE(deref) == SVt_PVHV) {
+	  /* Fixed 2D Hash Logic: Sort keys lexically to enforce structured rows/columns */
+	  HV*restrict outer = (HV*)deref;
+	  if (hv_iterinit(outer) != 2) croak("Outer hash must have exactly 2 keys");
+
+	  HE*restrict he1 = hv_iternext(outer);
+	  HE*restrict he2 = hv_iternext(outer);
+	  if (!he1 || !he2) croak("Invalid outer hash");
+
+	  const char*restrict k1 = SvPV_nolen(hv_iterkeysv(he1));
+	  const char*restrict k2 = SvPV_nolen(hv_iterkeysv(he2));
+
+	  HE*restrict row1_he = (strcmp(k1, k2) < 0) ? he1 : he2;
+	  HE*restrict row2_he = (strcmp(k1, k2) < 0) ? he2 : he1;
+
+	  SV*restrict row1_sv = hv_iterval(outer, row1_he);
+	  SV*restrict row2_sv = hv_iterval(outer, row2_he);
+
+	  if (!SvROK(row1_sv) || SvTYPE(SvRV(row1_sv)) != SVt_PVHV ||
+		   !SvROK(row2_sv) || SvTYPE(SvRV(row2_sv)) != SVt_PVHV) {
+		   croak("Inner elements must be hashes");
+	  }
+
+	  HV*restrict in1 = (HV*)SvRV(row1_sv);
+	  HV*restrict in2 = (HV*)SvRV(row2_sv);
+
+	  if (hv_iterinit(in1) != 2 || hv_iterinit(in2) != 2) croak("Inner hashes must have exactly 2 keys");
+
+	  HE*restrict in1_he1 = hv_iternext(in1);
+	  HE*restrict in1_he2 = hv_iternext(in1);
+	  const char*restrict in1_k1 = SvPV_nolen(hv_iterkeysv(in1_he1));
+	  const char*restrict in1_k2 = SvPV_nolen(hv_iterkeysv(in1_he2));
+
+	  HE*restrict in1_c1 = (strcmp(in1_k1, in1_k2) < 0) ? in1_he1 : in1_he2;
+	  HE*restrict in1_c2 = (strcmp(in1_k1, in1_k2) < 0) ? in1_he2 : in1_he1;
+
+	  HE*restrict in2_he1 = hv_iternext(in2);
+	  HE*restrict in2_he2 = hv_iternext(in2);
+	  const char*restrict in2_k1 = SvPV_nolen(hv_iterkeysv(in2_he1));
+	  const char*restrict in2_k2 = SvPV_nolen(hv_iterkeysv(in2_he2));
+
+	  HE*restrict in2_c1 = (strcmp(in2_k1, in2_k2) < 0) ? in2_he1 : in2_he2;
+	  HE*restrict in2_c2 = (strcmp(in2_k1, in2_k2) < 0) ? in2_he2 : in2_he1;
+
+	  a = (hv_iterval(in1, in1_c1) && SvOK(hv_iterval(in1, in1_c1))) ? SvIV(hv_iterval(in1, in1_c1)) : 0;
+	  b = (hv_iterval(in1, in1_c2) && SvOK(hv_iterval(in1, in1_c2))) ? SvIV(hv_iterval(in1, in1_c2)) : 0;
+	  c = (hv_iterval(in2, in2_c1) && SvOK(hv_iterval(in2, in2_c1))) ? SvIV(hv_iterval(in2, in2_c1)) : 0;
+	  d = (hv_iterval(in2, in2_c2) && SvOK(hv_iterval(in2, in2_c2))) ? SvIV(hv_iterval(in2, in2_c2)) : 0;
+	} else {
+	  croak("Input must be a 2D Array or 2D Hash");
+	}
+
+	// Perform Calculations via Helpers
+	double p_val = exact_p_value(a, b, c, d, alternative);
+	double mle_or, ci_low, ci_high;
+	calculate_exact_stats(a, b, c, d, conf_level, alternative, &mle_or, &ci_low, &ci_high);
+
+	// Construct the Return HashRef purely in C
+	HV*restrict ret_hash = newHV();
+	hv_stores(ret_hash, "p_value", newSVnv(p_val));
+	hv_stores(ret_hash, "method", newSVpv("Fisher's Exact Test for Count Data", 0));
+	hv_stores(ret_hash, "alternative", newSVpv(alternative, 0));
+
+	AV*restrict ci_array = newAV();
+	av_push(ci_array, newSVnv(ci_low));
+	av_push(ci_array, newSVnv(ci_high));
+	hv_stores(ret_hash, "conf_int", newRV_noinc((SV*)ci_array));
+
+	HV*restrict est_hash = newHV();
+	hv_stores(est_hash, "odds ratio", newSVnv(mle_or));
+	hv_stores(ret_hash, "estimate", newRV_noinc((SV*)est_hash));
+
+	// Return the HashRef
+	RETVAL = newRV_noinc((SV*)ret_hash);
+}
+#line 5453 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }

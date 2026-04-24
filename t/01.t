@@ -653,16 +653,9 @@ p $quantile;
 #----------------------
 #    Fisher's Test
 #----------------------
-my $array_data = [
-	[10, 2],
-	[3, 15]
-];
-my $ft = fisher_test($array_data);
-p $ft; # R equivalent: fisher.test( matrix(c(10,2,3,15), nrow = 2)))
-%correct = (
-	p_value => 0.0005367241
-);
-is_approx( $ft->{p_value}, $correct{p_value}, 'Fisher\'s test p-value' );
+my $ft = fisher_test([[10, 2],[3, 15]]);
+# R equivalent: fisher.test( matrix(c(10,2,3,15), nrow = 2)))
+is_approx( 0.00053672411914344, $ft->{p_value}, 'Fisher\'s test p-value', 10**-15);
 my $conf_int_range = abs $ft->{conf_int}[0] - $ft->{conf_int}[1];
 my $correct_conf_int_range = 301.462337971516 - 2.75338278824932;
 if (0.99*$correct_conf_int_range < $conf_int_range < 1.01* $correct_conf_int_range) {
@@ -671,6 +664,40 @@ if (0.99*$correct_conf_int_range < $conf_int_range < 1.01* $correct_conf_int_ran
 	fail('Fisher\'s test is *NOT* within 1% of correct: ');
 }
 is_approx( $ft->{estimate}{'odds ratio'}, 21.30533, 'Fisher\'s test odds ratio', 10**-3);
+#---------
+$ft = fisher_test( {
+	Guess => {
+		Milk => 3, Tea => 1
+	},
+	Truth => {
+		Milk => 1, Tea => 3
+	}
+});
+is_approx($ft->{'p_value'}, 0.48571428571429, 'Fisher Test: hash input p-value', 1e-14);
+$conf_int_range = abs $ft->{conf_int}[0] - $ft->{conf_int}[1];
+$correct_conf_int_range = 621.9337505 - 0.2117329;
+if (0.99*$correct_conf_int_range < $conf_int_range < 1.01* $correct_conf_int_range) {
+	pass('Fisher\'s test is within 1% of correct: ');
+} else {
+	fail('Fisher\'s test is *NOT* within 1% of correct: ');
+}
+is_approx( $ft->{estimate}{'odds ratio'}, 6.408309, 'Fisher\'s hash input test odds ratio', 10**-3);
+#-------
+$ft = fisher_test( {
+	Guess => {
+		Milk => 3, Tea => 1
+	},
+	Truth => {
+		Milk => 1, Tea => 3
+	}
+}, alternative => 'greater');
+is_approx($ft->{'p_value'}, 0.24285714285714, 'Fisher Test: hash input p-value with alternative = "greater"', 1e-14);
+is_approx($ft->{conf_int}[0], 0.3135693, 'Fisher test hash input with greater alternative', 10**-4 );
+if ($ft->{conf_int}[1] == 'inf') {
+	pass('Fisher test: Upper confidence interval is infinite');
+} else {
+	fail('Fisher test: Upper confidence interval is NOT infinite');
+}
 #----------------------
 #    hist
 #----------------------
