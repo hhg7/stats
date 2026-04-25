@@ -1134,176 +1134,236 @@ XS_EUPXS(XS_Stats__LikeR_wilcox_test); /* prototype to pass -Wmissing-prototypes
 XS_EUPXS(XS_Stats__LikeR_wilcox_test)
 {
     dVAR; dXSARGS;
-    if (items < 1 || items > 5)
-       croak_xs_usage(cv,  "x_av, y_av= NULL, paired= 0, mu= 0.0, exact= -1");
+    PERL_UNUSED_VAR(cv); /* -W */
+    PERL_UNUSED_VAR(items); /* -W */
     {
 	SV *	RETVAL;
-	AV*	x_av;
-	AV*	y_av;
-	bool	paired;
-	double	mu;
-	int	exact;
-
-	STMT_START {
-		SV* const xsub_tmp_sv = ST(0);
-		SvGETMAGIC(xsub_tmp_sv);
-		if (SvROK(xsub_tmp_sv) && SvTYPE(SvRV(xsub_tmp_sv)) == SVt_PVAV){
-		    x_av = (AV*)SvRV(xsub_tmp_sv);
-		}
-		else{
-		    Perl_croak_nocontext("%s: %s is not an ARRAY reference",
-				"Stats::LikeR::wilcox_test",
-				"x_av");
-		}
-	} STMT_END
-;
-
-	if (items < 2)
-	    y_av = NULL;
-	else {
-	    STMT_START {
-		    SV* const xsub_tmp_sv = ST(1);
-		    SvGETMAGIC(xsub_tmp_sv);
-		    if (SvROK(xsub_tmp_sv) && SvTYPE(SvRV(xsub_tmp_sv)) == SVt_PVAV){
-			y_av = (AV*)SvRV(xsub_tmp_sv);
-		    }
-		    else{
-			Perl_croak_nocontext("%s: %s is not an ARRAY reference",
-				    "Stats::LikeR::wilcox_test",
-				    "y_av");
-		    }
-	    } STMT_END
-;
-	}
-
-	if (items < 3)
-	    paired = 0;
-	else {
-	    paired = (bool)SvTRUE(ST(2))
-;
-	}
-
-	if (items < 4)
-	    mu = 0.0;
-	else {
-	    mu = (double)SvNV(ST(3))
-;
-	}
-
-	if (items < 5)
-	    exact = -1;
-	else {
-	    exact = (int)SvIV(ST(4))
-;
-	}
 #line 976 "LikeR.xs"
 {
-	size_t nx = av_top_index(x_av) + 1;
-	size_t ny = y_av ? (av_top_index(y_av) + 1) : 0;
+	SV *restrict x_sv = NULL, *restrict y_sv = NULL;
+	bool paired = false, correct = true;
+	double mu = 0.0;
+	short int exact = -1;
+	const char *restrict alternative = "two.sided";
+
+	int arg_idx = 0;
+
+	// 1. Shift first positional argument as 'x' if it's an array reference
+	if (arg_idx < items && SvROK(ST(arg_idx)) && SvTYPE(SvRV(ST(arg_idx))) == SVt_PVAV) {
+		x_sv = ST(arg_idx);
+		arg_idx++;
+	}
+
+	// 2. Shift second positional argument as 'y' if it's an array reference
+	if (arg_idx < items && SvROK(ST(arg_idx)) && SvTYPE(SvRV(ST(arg_idx))) == SVt_PVAV) {
+		y_sv = ST(arg_idx);
+		arg_idx++;
+	}
+
+	// Ensure the remaining arguments form complete key-value pairs
+	if ((items - arg_idx) % 2 != 0) {
+		croak("Usage: wilcox_test(\\@x, [\\@y], key => value, ...)");
+	}
+
+	// --- Parse named arguments from the remaining flat stack ---
+	for (; arg_idx < items; arg_idx += 2) {
+		const char *restrict key = SvPV_nolen(ST(arg_idx));
+		SV *restrict val = ST(arg_idx + 1);
+
+		if      (strEQ(key, "x"))           x_sv = val;
+		else if (strEQ(key, "y"))           y_sv = val;
+		else if (strEQ(key, "paired"))      paired = SvTRUE(val);
+		else if (strEQ(key, "correct"))     correct = SvTRUE(val);
+		else if (strEQ(key, "mu"))          mu = SvNV(val);
+		else if (strEQ(key, "exact"))       {
+			if (!SvOK(val)) exact = -1;
+			else exact = SvTRUE(val) ? 1 : 0;
+		}
+		else if (strEQ(key, "alternative")) alternative = SvPV_nolen(val);
+		else croak("wilcox_test: unknown argument '%s'", key);
+	}
+
+	// --- Validate required / types ---
+	if (!x_sv || !SvROK(x_sv) || SvTYPE(SvRV(x_sv)) != SVt_PVAV)
+		croak("wilcox_test: 'x' is a required argument and must be an ARRAY reference");
+
+	AV *restrict x_av = (AV*)SvRV(x_sv);
+	size_t nx = av_len(x_av) + 1;
 	if (nx == 0) croak("Not enough 'x' observations");
+
+	AV *restrict y_av = NULL;
+	size_t ny = 0;
+	if (y_sv && SvROK(y_sv) && SvTYPE(SvRV(y_sv)) == SVt_PVAV) {
+		y_av = (AV*)SvRV(y_sv);
+		ny = av_len(y_av) + 1;
+	}
 
 	double p_value = 0.0, statistic = 0.0;
 	const char *restrict method_desc = "";
-	bool use_exact = 0;
+	bool use_exact = false;
 
 	// --- TWO SAMPLE (Mann-Whitney) ---
 	if (ny > 0 && !paired) {
-	  size_t total_n = nx + ny;
-	  RankInfo *ri = (RankInfo *)safemalloc(total_n * sizeof(RankInfo));
-	  for (size_t i = 0; i < nx; i++) {
-		   SV**restrict el = av_fetch(x_av, i, 0);
-		   ri[i].val = el ? SvNV(*el) : 0.0; ri[i].idx = 1;
-	  }
-	  for (size_t i = 0; i < ny; i++) {
-		   SV**restrict el = av_fetch(y_av, i, 0);
-		   ri[nx + i].val = (el ? SvNV(*el) : 0.0) - mu; ri[nx + i].idx = 2;
-	  }
+		RankInfo *restrict ri = (RankInfo *)safemalloc((nx + ny) * sizeof(RankInfo));
+		size_t valid_nx = 0, valid_ny = 0;
+		for (size_t i = 0; i < nx; i++) {
+			SV**restrict el = av_fetch(x_av, i, 0);
+			if (el && SvOK(*el) && looks_like_number(*el)) {
+				ri[valid_nx].val = SvNV(*el) - mu; // R subtracts mu from x
+				ri[valid_nx].idx = 1;
+				valid_nx++;
+			}
+		}
+		for (size_t i = 0; i < ny; i++) {
+			SV**restrict el = av_fetch(y_av, i, 0);
+			if (el && SvOK(*el) && looks_like_number(*el)) {
+				ri[valid_nx + valid_ny].val = SvNV(*el);
+				ri[valid_nx + valid_ny].idx = 2;
+				valid_ny++;
+			}
+		}
+		if (valid_nx == 0) { Safefree(ri); croak("not enough (non-missing) 'x' observations"); }
+		if (valid_ny == 0) { Safefree(ri); croak("not enough 'y' observations"); }
+		size_t total_n = valid_nx + valid_ny;
+		int has_ties = 0;
+		double tie_adj = rank_and_count_ties(ri, total_n, &has_ties);
+		double w_rank_sum = 0.0;
+		for (size_t i = 0; i < total_n; i++) if (ri[i].idx == 1) w_rank_sum += ri[i].rank;
+		statistic = w_rank_sum - (double)valid_nx * (valid_nx + 1.0) / 2.0;
 
-	  int has_ties = 0;
-	  double tie_adj = rank_and_count_ties(ri, total_n, &has_ties);
-	  double w_rank_sum = 0.0;
-	  for (size_t i = 0; i < total_n; i++) if (ri[i].idx == 1) w_rank_sum += ri[i].rank;
-	  statistic = w_rank_sum - (double)nx * (nx + 1) / 2.0;
+		if (exact == 1) use_exact = true;
+		else if (exact == 0) use_exact = false;
+		else use_exact = (valid_nx < 50 && valid_ny < 50 && !has_ties);
 
-	  // R Logic: Default exact to TRUE if N < 50 and no ties
-	  if (exact == 1) use_exact = 1;
-	  else if (exact == 0) use_exact = 0;
-	  else use_exact = (total_n < 50 && !has_ties);
+		if (use_exact && has_ties) {
+			warn("cannot compute exact p-value with ties; falling back to approximation");
+			use_exact = false;
+		}
+		if (use_exact) {
+			method_desc = "Wilcoxon rank sum exact test";
+			double p_less = exact_pwilcox(statistic, valid_nx, valid_ny);
+			double p_greater = 1.0 - exact_pwilcox(statistic - 1.0, valid_nx, valid_ny);
 
-	  if (use_exact && has_ties) {
-		   warn("cannot compute exact p-value with ties; falling back to approximation");
-		   use_exact = 0;
-	  }
+			if (strcmp(alternative, "less") == 0) p_value = p_less;
+			else if (strcmp(alternative, "greater") == 0) p_value = p_greater;
+			else {
+				double p = (p_less < p_greater) ? p_less : p_greater;
+				p_value = 2.0 * p;
+			}
+		} else {
+			method_desc = correct ? "Wilcoxon rank sum test with continuity correction" : "Wilcoxon rank sum test";
+			double exp = (double)valid_nx * valid_ny / 2.0;
+			double var = ((double)valid_nx * valid_ny / 12.0) * ((total_n + 1.0) - tie_adj / (total_n * (total_n - 1.0)));
+			double z = statistic - exp;
 
-	  if (use_exact) {
-		   method_desc = "Wilcoxon rank sum exact test";
-		   double p = exact_pwilcox(statistic, nx, ny);
-		   // Translate R's two-sided tail logic: take the smaller tail
-		   if (p > 0.5) p = 1.0 - exact_pwilcox(statistic - 1.0, nx, ny);
-		   p_value = 2.0 * p;
-	  } else {
-		   method_desc = "Wilcoxon rank sum test with continuity correction";
-		   double exp = (double)nx * ny / 2.0;
-		   double var = ((double)nx * ny / 12.0) * ((total_n + 1.0) - tie_adj / (total_n * (total_n - 1.0)));
-		   double z = statistic - exp;
-		   // R's exact continuity correction: z <- z - sign(z) * 0.5
-		   if (z > 0) z -= 0.5; else if (z < 0) z += 0.5;
-		   // CRITICAL FIX: -fabs ensures we always get the lower tail probability
-		   p_value = 2.0 * approx_pnorm(-fabs(z / sqrt(var)));
-	  }
-	  Safefree(ri);
+			double CORRECTION = 0.0;
+			if (correct) {
+				if (strcmp(alternative, "two.sided") == 0) CORRECTION = (z > 0 ? 0.5 : -0.5);
+				else if (strcmp(alternative, "greater") == 0) CORRECTION = 0.5;
+				else if (strcmp(alternative, "less") == 0) CORRECTION = -0.5;
+			}
+			z = (z - CORRECTION) / sqrt(var);
+
+			if (strcmp(alternative, "less") == 0) p_value = approx_pnorm(z);
+			else if (strcmp(alternative, "greater") == 0) p_value = 1.0 - approx_pnorm(z);
+			else p_value = 2.0 * approx_pnorm(-fabs(z));
+		}
+		Safefree(ri);
+
 	} else { // --- ONE SAMPLE / PAIRED ---
-	  if (paired && nx != ny) croak("'x' and 'y' must have same length");
-	  double *restrict diffs = (double *)safemalloc(nx * sizeof(double));
-	  size_t n_nz = 0;
-	  for (size_t i = 0; i < nx; i++) {
-		   double dx = SvNV(*av_fetch(x_av, i, 0));
-		   double d = paired ? (dx - SvNV(*av_fetch(y_av, i, 0)) - mu) : (dx - mu);
-		   if (fabs(d) > 1e-15) diffs[n_nz++] = d;
-	  }
+		if (paired && (!y_av || nx != ny)) croak("'x' and 'y' must have the same length for paired test");
 
-	  RankInfo *restrict ri = (RankInfo *)safemalloc(n_nz * sizeof(RankInfo));
-	  for (size_t i = 0; i < n_nz; i++) { ri[i].val = fabs(diffs[i]); ri[i].idx = (diffs[i] > 0); }
+		double *restrict diffs = (double *)safemalloc(nx * sizeof(double));
+		size_t n_nz = 0;
+		bool has_zeroes = false;
+		for (size_t i = 0; i < nx; i++) {
+			SV**restrict x_el = av_fetch(x_av, i, 0);
+			if (!x_el || !SvOK(*x_el) || !looks_like_number(*x_el)) continue;
+			double dx = SvNV(*x_el);
 
-	  int has_ties = 0;
-	  double tie_adj = rank_and_count_ties(ri, n_nz, &has_ties);
-	  statistic = 0.0;
-	  for (size_t i = 0; i < n_nz; i++) if (ri[i].idx) statistic += ri[i].rank;
+			if (paired) {
+				SV**restrict y_el = av_fetch(y_av, i, 0);
+				if (!y_el || !SvOK(*y_el) || !looks_like_number(*y_el)) continue;
+				double dy = SvNV(*y_el);
+				double d = dx - dy - mu;
+				if (d == 0.0) has_zeroes = true; // Drop exact zeroes
+				else diffs[n_nz++] = d;
+			} else {
+				double d = dx - mu;
+				if (d == 0.0) has_zeroes = true;
+				else diffs[n_nz++] = d;
+			}
+		}
+		if (n_nz == 0) {
+			Safefree(diffs);
+			croak("not enough (non-missing) observations");
+		}
+		RankInfo *ri = (RankInfo *)safemalloc(n_nz * sizeof(RankInfo));
+		for (size_t i = 0; i < n_nz; i++) { 
+			ri[i].val = fabs(diffs[i]); 
+			ri[i].idx = (diffs[i] > 0);
+		}
+		int has_ties = 0;
+		double tie_adj = rank_and_count_ties(ri, n_nz, &has_ties);
+		statistic = 0.0;
+		for (size_t i = 0; i < n_nz; i++) {
+			if (ri[i].idx) statistic += ri[i].rank;
+		}
 
-	  if (exact == 1) use_exact = 1;
-	  else if (exact == 0) use_exact = 0;
-	  else use_exact = (n_nz < 50 && !has_ties);
+		if (exact == 1) use_exact = true;
+		else if (exact == 0) use_exact = false;
+		else use_exact = (n_nz < 50 && !has_ties);
 
-	  if (use_exact && has_ties) {
-		   warn("cannot compute exact p-value with ties; falling back to approximation");
-		   use_exact = 0;
-	  }
+		if (use_exact && has_ties) {
+			warn("cannot compute exact p-value with ties; falling back to approximation");
+			use_exact = false;
+		}
+		if (use_exact && has_zeroes) {
+			warn("cannot compute exact p-value with zeroes; falling back to approximation");
+			use_exact = false;
+		}
 
-	  if (use_exact) {
-		   method_desc = "Wilcoxon exact signed rank test";
-		   double p = exact_psignrank(statistic, n_nz);
-		   if (p > 0.5) p = 1.0 - exact_psignrank(statistic - 1.0, n_nz);
-		   p_value = 2.0 * p;
-	  } else {
-		   method_desc = "Wilcoxon signed rank test with continuity correction";
-		   double exp = (double)n_nz * (n_nz + 1.0) / 4.0;
-		   double var = (n_nz * (n_nz + 1.0) * (2.0 * n_nz + 1.0) / 24.0) - (tie_adj / 48.0);
-		   double z = statistic - exp;
-		   if (z > 0) z -= 0.5; else if (z < 0) z += 0.5;
-		   p_value = 2.0 * approx_pnorm(-fabs(z / sqrt(var)));
-	  }
-	  Safefree(ri); Safefree(diffs);
+		if (use_exact) {
+			method_desc = paired ? "Wilcoxon exact signed rank test" : "Wilcoxon exact signed rank test";
+			double p_less = exact_psignrank(statistic, n_nz);
+			double p_greater = 1.0 - exact_psignrank(statistic - 1.0, n_nz);
+
+			if (strcmp(alternative, "less") == 0) p_value = p_less;
+			else if (strcmp(alternative, "greater") == 0) p_value = p_greater;
+			else {
+				double p = (p_less < p_greater) ? p_less : p_greater;
+				p_value = 2.0 * p;
+			}
+		} else {
+			method_desc = correct ? "Wilcoxon signed rank test with continuity correction" : "Wilcoxon signed rank test";
+			double exp = (double)n_nz * (n_nz + 1.0) / 4.0;
+			double var = (n_nz * (n_nz + 1.0) * (2.0 * n_nz + 1.0) / 24.0) - (tie_adj / 48.0);
+			double z = statistic - exp;
+
+			double CORRECTION = 0.0;
+			if (correct) {
+				if (strcmp(alternative, "two.sided") == 0) CORRECTION = (z > 0 ? 0.5 : -0.5);
+				else if (strcmp(alternative, "greater") == 0) CORRECTION = 0.5;
+				else if (strcmp(alternative, "less") == 0) CORRECTION = -0.5;
+			}
+			z = (z - CORRECTION) / sqrt(var);
+
+			if (strcmp(alternative, "less") == 0) p_value = approx_pnorm(z);
+			else if (strcmp(alternative, "greater") == 0) p_value = 1.0 - approx_pnorm(z);
+			else p_value = 2.0 * approx_pnorm(-fabs(z));
+		}
+		Safefree(ri); Safefree(diffs);
 	}
 
 	if (p_value > 1.0) p_value = 1.0;
-
 	HV *restrict res = newHV();
 	hv_stores(res, "statistic", newSVnv(statistic));
 	hv_stores(res, "p_value", newSVnv(p_value));
 	hv_stores(res, "method", newSVpv(method_desc, 0));
+	hv_stores(res, "alternative", newSVpv(alternative, 0));
 	RETVAL = newRV_noinc((SV*)res);
 }
-#line 1307 "LikeR.c"
+#line 1367 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -1321,7 +1381,7 @@ XS_EUPXS(XS_Stats__LikeR__chisq_c)
 	SV*	data_ref = ST(0)
 ;
 	SV *	RETVAL;
-#line 1089 "LikeR.xs"
+#line 1207 "LikeR.xs"
 {
 	AV*restrict obs_av = (AV*)SvRV(data_ref);
 	int r = av_top_index(obs_av) + 1, c = 0;
@@ -1416,7 +1476,7 @@ XS_EUPXS(XS_Stats__LikeR__chisq_c)
 
 	RETVAL = newRV_noinc((SV*)results);
 }
-#line 1420 "LikeR.c"
+#line 1480 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -1433,7 +1493,7 @@ XS_EUPXS(XS_Stats__LikeR_write_table)
     PERL_UNUSED_VAR(ax); /* -Wall */
     SP -= items;
     {
-#line 1190 "LikeR.xs"
+#line 1308 "LikeR.xs"
 {
 	SV *restrict data_sv = NULL;
 	SV *restrict file_sv = NULL;
@@ -1839,7 +1899,7 @@ XS_EUPXS(XS_Stats__LikeR_write_table)
 	PerlIO_close(fh);
 	XSRETURN_EMPTY;
 }
-#line 1843 "LikeR.c"
+#line 1903 "LikeR.c"
 	PUTBACK;
 	return;
     }
@@ -1868,7 +1928,7 @@ XS_EUPXS(XS_Stats__LikeR__parse_csv_file)
 	    callback = ST(3)
 ;
 	}
-#line 1599 "LikeR.xs"
+#line 1717 "LikeR.xs"
 	PerlIO *fp;
 	AV *restrict data = NULL;
 	AV *restrict current_row = newAV();
@@ -1877,8 +1937,8 @@ XS_EUPXS(XS_Stats__LikeR__parse_csv_file)
 	size_t sep_len, comment_len;
 	SV *restrict line_sv;
 	bool use_cb = 0;
-#line 1881 "LikeR.c"
-#line 1608 "LikeR.xs"
+#line 1941 "LikeR.c"
+#line 1726 "LikeR.xs"
 	if (SvOK(callback) && SvROK(callback) && SvTYPE(SvRV(callback)) == SVt_PVCV) {
 		use_cb = 1;
 	} else {
@@ -1994,7 +2054,7 @@ XS_EUPXS(XS_Stats__LikeR__parse_csv_file)
 	} else {
 		RETVAL = newRV_noinc((SV*)data);
 	}
-#line 1998 "LikeR.c"
+#line 2058 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -2022,7 +2082,7 @@ XS_EUPXS(XS_Stats__LikeR_cov)
 	    method = (const char *)SvPV_nolen(ST(2))
 ;
 	}
-#line 1728 "LikeR.xs"
+#line 1846 "LikeR.xs"
 	{
 	  // 1. Validate inputs are Array References
 	  if (!SvROK(x_sv) || SvTYPE(SvRV(x_sv)) != SVt_PVAV) {
@@ -2131,7 +2191,7 @@ XS_EUPXS(XS_Stats__LikeR_cov)
 		   RETVAL = newSVnv(ans);
 	  }
 	}
-#line 2135 "LikeR.c"
+#line 2195 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -2147,7 +2207,7 @@ XS_EUPXS(XS_Stats__LikeR_glm)
     PERL_UNUSED_VAR(items); /* -W */
     {
 	SV *	RETVAL;
-#line 1841 "LikeR.xs"
+#line 1959 "LikeR.xs"
 {
 	const char *restrict formula  = NULL;
 	SV *restrict data_sv = NULL;
@@ -2600,7 +2660,7 @@ XS_EUPXS(XS_Stats__LikeR_glm)
 
 	RETVAL = newRV_noinc((SV*)res_hv);
 }
-#line 2604 "LikeR.c"
+#line 2664 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -2616,7 +2676,7 @@ XS_EUPXS(XS_Stats__LikeR_cor_test)
     PERL_UNUSED_VAR(items); /* -W */
     {
 	SV *	RETVAL;
-#line 2298 "LikeR.xs"
+#line 2416 "LikeR.xs"
 {
 	if (items < 2 || items % 2 != 0)
 		croak("Usage: cor_test(\\@x, \\@y, method => 'pearson', ...)");
@@ -2833,7 +2893,7 @@ XS_EUPXS(XS_Stats__LikeR_cor_test)
 
 	RETVAL = newRV_noinc((SV*)rhv);
 }
-#line 2837 "LikeR.c"
+#line 2897 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -2852,13 +2912,13 @@ XS_EUPXS(XS_Stats__LikeR_shapiro_test)
     {
 	SV *	data = ST(0)
 ;
-#line 2521 "LikeR.xs"
+#line 2639 "LikeR.xs"
 	AV *restrict av;
 	HV *restrict ret_hash;
 	size_t n_raw, n = 0;
 	double *restrict x, w = 0.0, p_val = 0.0, mean = 0.0, ssq = 0.0;
-#line 2861 "LikeR.c"
-#line 2526 "LikeR.xs"
+#line 2921 "LikeR.c"
+#line 2644 "LikeR.xs"
 	if (!SvROK(data) || SvTYPE(SvRV(data)) != SVt_PVAV) {
 	  croak("Expected an array reference");
 	}
@@ -2984,7 +3044,7 @@ XS_EUPXS(XS_Stats__LikeR_shapiro_test)
 	hv_stores(ret_hash, "p.value",   newSVnv(p_val));
 	EXTEND(SP, 1);
 	PUSHs(sv_2mortal(newRV_noinc((SV *)ret_hash)));
-#line 2988 "LikeR.c"
+#line 3048 "LikeR.c"
 	PUTBACK;
 	return;
     }
@@ -3000,12 +3060,12 @@ XS_EUPXS(XS_Stats__LikeR_min)
     {
 	double	RETVAL;
 	dXSTARG;
-#line 2655 "LikeR.xs"
+#line 2773 "LikeR.xs"
 		double min_val = 0.0;
 		size_t count = 0;
 		bool first = TRUE;
-#line 3008 "LikeR.c"
-#line 2659 "LikeR.xs"
+#line 3068 "LikeR.c"
+#line 2777 "LikeR.xs"
 		for (unsigned short int i = 0; i < items; i++) {
 			SV* restrict arg = ST(i);
 			if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
@@ -3033,7 +3093,7 @@ XS_EUPXS(XS_Stats__LikeR_min)
 		}
 		if (count == 0) croak("min needs >= 1 numeric element");
 		RETVAL = min_val;
-#line 3037 "LikeR.c"
+#line 3097 "LikeR.c"
 	TARGn((double)RETVAL, 1);
 	ST(0) = TARG;
     }
@@ -3050,12 +3110,12 @@ XS_EUPXS(XS_Stats__LikeR_max)
     {
 	double	RETVAL;
 	dXSTARG;
-#line 2692 "LikeR.xs"
+#line 2810 "LikeR.xs"
 	  double max_val = 0.0;
 	  size_t count = 0;
 	  bool first = TRUE;
-#line 3058 "LikeR.c"
-#line 2696 "LikeR.xs"
+#line 3118 "LikeR.c"
+#line 2814 "LikeR.xs"
 	  for (size_t i = 0; i < items; i++) {
 		   SV* restrict arg = ST(i);
 		   if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
@@ -3083,7 +3143,7 @@ XS_EUPXS(XS_Stats__LikeR_max)
 	  }
 	  if (count == 0) croak("max needs >= 1 numeric element");
 	  RETVAL = max_val;
-#line 3087 "LikeR.c"
+#line 3147 "LikeR.c"
 	TARGn((double)RETVAL, 1);
 	ST(0) = TARG;
     }
@@ -3099,36 +3159,40 @@ XS_EUPXS(XS_Stats__LikeR_runif)
     PERL_UNUSED_VAR(items); /* -W */
     {
 	SV *	RETVAL;
-#line 2728 "LikeR.xs"
+#line 2846 "LikeR.xs"
 	{
-	  // Auto-seed the PRNG if the Perl script hasn't done so yet
-	  AUTO_SEED_PRNG();
-	  if (items % 2 != 0)
-		   croak("Usage: runif(n => 10, min => 0, max => 1)");
-	  // --- Parse named arguments ---
-	  size_t n = 0;
-	  double min = 0.0, max = 1.0;
-	  for (unsigned short int i = 0; i < items; i += 2) {
-		   const char* restrict key = SvPV_nolen(ST(i));
-		   SV* restrict val = ST(i + 1);
-		   if      (strEQ(key, "n"))    n   = (size_t)SvUV(val);
-		   else if (strEQ(key, "min"))  min = SvNV(val);
-		   else if (strEQ(key, "max"))  max = SvNV(val);
-		   else croak("runif: unknown argument '%s'", key);
-	  }
-	  if (min > max) croak("runif: min must be less than or equal to max");
-	  AV *restrict result_av = newAV();
-	  if (n > 0) {
-		   av_extend(result_av, n - 1);
-		   double range = max - min;
-		   for (size_t i = 0; i < n; i++) {
-		       // Transform standard [0,1) uniform to [min, max)
-		       av_store(result_av, i, newSVnv(min + range * Drand01()));
-		   }
-	  }
-	  RETVAL = newRV_noinc((SV*)result_av);
+		// Auto-seed the PRNG if the Perl script hasn't done so yet
+		AUTO_SEED_PRNG();
+		if (items % 2 != 0)
+			croak("Usage: runif(n => 10, min => 0, max => 1)");
+		// --- Parse named arguments ---
+		size_t n = 0;
+		double min = 0.0, max = 1.0;
+		for (unsigned short int i = 0; i < items; i += 2) {
+			const char* restrict key = SvPV_nolen(ST(i));
+			SV* restrict val = ST(i + 1);
+			if      (strEQ(key, "n"))    n   = (size_t)SvUV(val);
+			else if (strEQ(key, "min"))  min = SvNV(val);
+			else if (strEQ(key, "max"))  max = SvNV(val);
+			else croak("runif: unknown argument '%s'", key);
+		}
+		if (min > max) {
+			const double tmp = min;
+			min = max;
+			max = tmp;
+		}
+		if (min > max) croak("runif: min must be less than or equal to max");
+		AV *restrict result_av = newAV();
+		if (n > 0) {
+			av_extend(result_av, n - 1);
+			double range = max - min;
+			for (size_t i = 0; i < n; i++) {// Transform standard [0,1) uniform to [min, max)
+				av_store(result_av, i, newSVnv(min + range * Drand01()));
+			}
+		}
+		RETVAL = newRV_noinc((SV*)result_av);
 	}
-#line 3132 "LikeR.c"
+#line 3196 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -3144,7 +3208,7 @@ XS_EUPXS(XS_Stats__LikeR_rbinom)
     PERL_UNUSED_VAR(items); /* -W */
     {
 	SV *	RETVAL;
-#line 2761 "LikeR.xs"
+#line 2883 "LikeR.xs"
 	{
 	  // Auto-seed the PRNG if the Perl script hasn't done so yet
 	  AUTO_SEED_PRNG();
@@ -3180,7 +3244,7 @@ XS_EUPXS(XS_Stats__LikeR_rbinom)
 
 	  RETVAL = newRV_noinc((SV*)result_av);
 	}
-#line 3184 "LikeR.c"
+#line 3248 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -3198,99 +3262,99 @@ XS_EUPXS(XS_Stats__LikeR_hist)
 	SV *	RETVAL;
 	SV*	x_sv = ST(0)
 ;
-#line 2802 "LikeR.xs"
+#line 2924 "LikeR.xs"
 	{
-	  /* 1. Validate Input */
-	  if (!SvROK(x_sv) || SvTYPE(SvRV(x_sv)) != SVt_PVAV)
-		   croak("hist: first argument must be an array reference");
+		// 1. Validate Input
+		if (!SvROK(x_sv) || SvTYPE(SvRV(x_sv)) != SVt_PVAV)
+			croak("hist: first argument must be an array reference");
 
-	  AV*restrict x_av = (AV*)SvRV(x_sv);
-	  size_t n_raw = av_len(x_av) + 1;
-	  if (n_raw == 0) croak("hist: input array is empty");
+		AV*restrict x_av = (AV*)SvRV(x_sv);
+		size_t n_raw = av_len(x_av) + 1;
+		if (n_raw == 0) croak("hist: input array is empty");
 
-	  /* 2. Extract Data & Find Range */
-	  double *restrict x;
-	  Newx(x, n_raw, double);
-	  size_t n = 0;
-	  double min_val = DBL_MAX, max_val = -DBL_MAX;
+		// 2. Extract Data & Find Range
+		double *restrict x;
+		Newx(x, n_raw, double);
+		size_t n = 0;
+		double min_val = DBL_MAX, max_val = -DBL_MAX;
 
-	  for (size_t i = 0; i < n_raw; i++) {
-		   SV**restrict tv = av_fetch(x_av, i, 0);
-		   if (tv && SvOK(*tv)) {
-		       double val = SvNV(*tv);
-		       x[n++] = val;
-		       if (val < min_val) min_val = val;
-		       if (val > max_val) max_val = val;
-		   }
-	  }
-	  if (n == 0) {
-		   Safefree(x);
-		   croak("hist: input contains no valid numeric data");
-	  }
-	  /* 3. Determine Bin Count (Sturges default or user-provided) */
-	  size_t n_bins = 0;
+		for (size_t i = 0; i < n_raw; i++) {
+			SV**restrict tv = av_fetch(x_av, i, 0);
+			if (tv && SvOK(*tv)) {
+				 double val = SvNV(*tv);
+				 x[n++] = val;
+				 if (val < min_val) min_val = val;
+				 if (val > max_val) max_val = val;
+			}
+		}
+		if (n == 0) {
+			Safefree(x);
+			croak("hist: input contains no valid numeric data");
+		}
+		// 3. Determine Bin Count (Sturges default or user-provided)
+		size_t n_bins = 0;
 
-	  if (items == 2) {
-		   /* Support pure positional argument: hist($data, 22) */
-		   n_bins = (size_t)SvIV(ST(1));
-	  } else if (items > 2) {
-		   /* Support named parameters even if mixed with positional arguments */
-		   for (unsigned short i = 1; i < items - 1; i++) {
-		       /* Make sure the SV holds a string before doing string comparison */
-		       if (SvPOK(ST(i)) && strEQ(SvPV_nolen(ST(i)), "breaks")) {
-		           n_bins = (size_t)SvIV(ST(i+1));
-		           break;
-		       }
-		   }
-		   /* Fallback: if 'breaks' wasn't found but a positional number was given first */
-		   if (n_bins == 0 && looks_like_number(ST(1))) {
-		       n_bins = (size_t)SvIV(ST(1));
-		   }
-	  }
-	  if (n_bins == 0) n_bins = calculate_sturges_bins(n);
-	  // 4. Allocate Result Arrays
-	  double *restrict breaks, *restrict mids, *restrict density;
-	  size_t *restrict counts;
-	  Newx(breaks,  n_bins + 1, double);
-	  Newx(mids,    n_bins,     double);
-	  Newx(density, n_bins,     double);
-	  Newx(counts,  n_bins,     size_t);
+		if (items == 2) {
+			// Support pure positional argument: hist($data, 22)
+			n_bins = (size_t)SvIV(ST(1));
+		} else if (items > 2) {
+			/* Support named parameters even if mixed with positional arguments */
+			for (unsigned short i = 1; i < items - 1; i++) {
+				 /* Make sure the SV holds a string before doing string comparison */
+				 if (SvPOK(ST(i)) && strEQ(SvPV_nolen(ST(i)), "breaks")) {
+				     n_bins = (size_t)SvIV(ST(i+1));
+				     break;
+				 }
+			}
+			/* Fallback: if 'breaks' wasn't found but a positional number was given first */
+			if (n_bins == 0 && looks_like_number(ST(1))) {
+				 n_bins = (size_t)SvIV(ST(1));
+			}
+		}
+		if (n_bins == 0) n_bins = calculate_sturges_bins(n);
+		// 4. Allocate Result Arrays
+		double *restrict breaks, *restrict mids, *restrict density;
+		size_t *restrict counts;
+		Newx(breaks,  n_bins + 1, double);
+		Newx(mids,    n_bins,     double);
+		Newx(density, n_bins,     double);
+		Newx(counts,  n_bins,     size_t);
 
-	  // Generate simple linear breaks
-	  double step = (max_val - min_val) / (double)n_bins;
-	  for (size_t i = 0; i <= n_bins; i++) {
-		   breaks[i] = min_val + (double)i * step;
-	  }
+		// Generate simple linear breaks
+		double step = (max_val - min_val) / (double)n_bins;
+		for (size_t i = 0; i <= n_bins; i++) {
+			breaks[i] = min_val + (double)i * step;
+		}
 
-	  // 5. Compute Statistics
-	  compute_hist_logic(x, n, breaks, n_bins, counts, mids, density);
+		// 5. Compute Statistics
+		compute_hist_logic(x, n, breaks, n_bins, counts, mids, density);
 
-	  // 6. Build Return HashRef
-	  HV*restrict res_hv = newHV();
-	  AV*restrict av_breaks  = newAV();
-	  AV*restrict av_counts  = newAV();
-	  AV*restrict av_mids    = newAV();
-	  AV*restrict av_density = newAV();
-	  for (size_t i = 0; i <= n_bins; i++) {
-		   av_push(av_breaks, newSVnv(breaks[i]));
-		   if (i < n_bins) {
-		       av_push(av_counts,  newSViv(counts[i]));
-		       av_push(av_mids,    newSVnv(mids[i]));
-		       av_push(av_density, newSVnv(density[i]));
-		   }
-	  }
-	  hv_stores(res_hv, "breaks",  newRV_noinc((SV*)av_breaks));
-	  hv_stores(res_hv, "counts",  newRV_noinc((SV*)av_counts));
-	  hv_stores(res_hv, "mids",    newRV_noinc((SV*)av_mids));
-	  hv_stores(res_hv, "density", newRV_noinc((SV*)av_density));
+		// 6. Build Return HashRef
+		HV*restrict res_hv = newHV();
+		AV*restrict av_breaks  = newAV();
+		AV*restrict av_counts  = newAV();
+		AV*restrict av_mids    = newAV();
+		AV*restrict av_density = newAV();
+		for (size_t i = 0; i <= n_bins; i++) {
+			av_push(av_breaks, newSVnv(breaks[i]));
+			if (i < n_bins) {
+				 av_push(av_counts,  newSViv(counts[i]));
+				 av_push(av_mids,    newSVnv(mids[i]));
+				 av_push(av_density, newSVnv(density[i]));
+			}
+		}
+		hv_stores(res_hv, "breaks",  newRV_noinc((SV*)av_breaks));
+		hv_stores(res_hv, "counts",  newRV_noinc((SV*)av_counts));
+		hv_stores(res_hv, "mids",    newRV_noinc((SV*)av_mids));
+		hv_stores(res_hv, "density", newRV_noinc((SV*)av_density));
 
-	  // Clean
-	  Safefree(x); Safefree(breaks); Safefree(mids);
-	  Safefree(density); Safefree(counts);
+		// Clean
+		Safefree(x); Safefree(breaks); Safefree(mids);
+		Safefree(density); Safefree(counts);
 
-	  RETVAL = newRV_noinc((SV*)res_hv);
+		RETVAL = newRV_noinc((SV*)res_hv);
 	}
-#line 3294 "LikeR.c"
+#line 3358 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -3306,7 +3370,7 @@ XS_EUPXS(XS_Stats__LikeR_quantile)
     PERL_UNUSED_VAR(items); /* -W */
     {
 	SV *	RETVAL;
-#line 2898 "LikeR.xs"
+#line 3020 "LikeR.xs"
 	{
 	  if (items % 2 != 0 && items != 1) 
 		   croak("Usage: quantile(x => \\@data, probs => \\@probs)");
@@ -3407,7 +3471,7 @@ XS_EUPXS(XS_Stats__LikeR_quantile)
 
 	  RETVAL = newRV_noinc((SV*)res_hv);
 	}
-#line 3411 "LikeR.c"
+#line 3475 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -3424,11 +3488,11 @@ XS_EUPXS(XS_Stats__LikeR_mean)
     {
 	double	RETVAL;
 	dXSTARG;
-#line 3004 "LikeR.xs"
+#line 3126 "LikeR.xs"
 	  double total = 0;
 	  size_t count = 0;
-#line 3431 "LikeR.c"
-#line 3007 "LikeR.xs"
+#line 3495 "LikeR.c"
+#line 3129 "LikeR.xs"
 	  for (size_t i = 0; i < items; i++) {
 		   SV*restrict arg = ST(i);
 		   if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
@@ -3444,7 +3508,7 @@ XS_EUPXS(XS_Stats__LikeR_mean)
 	  }
 	  if (count == 0) croak("mean needs >= 1 element");
 	  RETVAL = total / count;
-#line 3448 "LikeR.c"
+#line 3512 "LikeR.c"
 	TARGn((double)RETVAL, 1);
 	ST(0) = TARG;
     }
@@ -3461,11 +3525,11 @@ XS_EUPXS(XS_Stats__LikeR_sd)
     {
 	double	RETVAL;
 	dXSTARG;
-#line 3028 "LikeR.xs"
+#line 3150 "LikeR.xs"
 	  double mean = 0.0, M2 = 0.0;
 	  size_t count = 0;
-#line 3468 "LikeR.c"
-#line 3031 "LikeR.xs"
+#line 3532 "LikeR.c"
+#line 3153 "LikeR.xs"
 	  // Single Pass Standard Deviation via Welford's Algorithm
 	  for (size_t i = 0; i < items; i++) {
 		   SV* restrict arg = ST(i);
@@ -3492,7 +3556,7 @@ XS_EUPXS(XS_Stats__LikeR_sd)
 	  }
 	  if (count < 2) croak("stdev needs >= 2 elements");
 	  RETVAL = sqrt(M2 / (count - 1));
-#line 3496 "LikeR.c"
+#line 3560 "LikeR.c"
 	TARGn((double)RETVAL, 1);
 	ST(0) = TARG;
     }
@@ -3509,11 +3573,11 @@ XS_EUPXS(XS_Stats__LikeR_var)
     {
 	double	RETVAL;
 	dXSTARG;
-#line 3063 "LikeR.xs"
+#line 3185 "LikeR.xs"
 	  double mean = 0.0, M2 = 0.0;
 	  size_t count = 0;
-#line 3516 "LikeR.c"
-#line 3066 "LikeR.xs"
+#line 3580 "LikeR.c"
+#line 3188 "LikeR.xs"
 	  // Single Pass Variance via Welford's Algorithm
 	  for (size_t i = 0; i < items; i++) {
 		   SV*restrict arg = ST(i);
@@ -3540,7 +3604,7 @@ XS_EUPXS(XS_Stats__LikeR_var)
 	  }
 	  if (count < 2) croak("var needs >= 2 elements");
 	  RETVAL = M2 / (count - 1);
-#line 3544 "LikeR.c"
+#line 3608 "LikeR.c"
 	TARGn((double)RETVAL, 1);
 	ST(0) = TARG;
     }
@@ -3556,158 +3620,158 @@ XS_EUPXS(XS_Stats__LikeR_t_test)
     PERL_UNUSED_VAR(items); /* -W */
     {
 	SV *	RETVAL;
-#line 3097 "LikeR.xs"
+#line 3219 "LikeR.xs"
 	{
-	  if (items % 2 != 0)
-		   croak("Usage: t_test(x => [...], y => [...], ...) - must be even key/value pairs");
+		SV*restrict x_sv = NULL;
+		SV*restrict y_sv = NULL;
+		double mu = 0.0, conf_level = 0.95;
+		bool paired = FALSE, var_equal = FALSE;
+		const char*restrict alternative = "two.sided";
 
-	  // --- Parse named arguments from the flat stack
-	  SV*restrict x_sv = NULL;
-	  SV*restrict y_sv = NULL;
-	  double mu = 0.0, conf_level = 0.95;
-	  bool paired = FALSE, var_equal = FALSE;
-	  const char*restrict alternative = "two.sided";
+		int arg_idx = 0;
 
-	  for (unsigned short i = 0; i < items; i += 2) {
-		   const char*restrict key = SvPV_nolen(ST(i));
-		   SV*restrict val = ST(i + 1);
+		// 1. Shift first positional argument as 'x' if it's an array reference
+		if (arg_idx < items && SvROK(ST(arg_idx)) && SvTYPE(SvRV(ST(arg_idx))) == SVt_PVAV) {
+		  x_sv = ST(arg_idx);
+		  arg_idx++;
+		}
 
-		   if      (strEQ(key, "x"))           x_sv        = val;
-		   else if (strEQ(key, "y"))           y_sv        = val;
-		   else if (strEQ(key, "mu"))          mu          = SvNV(val);
-		   else if (strEQ(key, "paired"))      paired      = SvTRUE(val);
-		   else if (strEQ(key, "var_equal"))   var_equal   = SvTRUE(val);
-		   else if (strEQ(key, "conf_level"))  conf_level  = SvNV(val);
-		   else if (strEQ(key, "alternative")) alternative = SvPV_nolen(val);
-		   else croak("t_test: unknown argument '%s'", key);
-	  }
+		// 2. Shift second positional argument as 'y' if it's an array reference
+		if (arg_idx < items && SvROK(ST(arg_idx)) && SvTYPE(SvRV(ST(arg_idx))) == SVt_PVAV) {
+		  y_sv = ST(arg_idx);
+		  arg_idx++;
+		}
 
-	  // --- Validate required / types ---
-	  if (!x_sv || !SvROK(x_sv) || SvTYPE(SvRV(x_sv)) != SVt_PVAV)
-		   croak("t_test: 'x' is a required argument and must be an ARRAY reference");
-	  AV*restrict x_av = (AV*)SvRV(x_sv);
-	  size_t nx = av_len(x_av) + 1;
-	  if (nx < 2) croak("t_test: 'x' needs at least 2 elements");
+		// Ensure the remaining arguments form complete key-value pairs
+		if ((items - arg_idx) % 2 != 0) {
+		  croak("Usage: t_test(\\@x, [\\@y], key => value, ...)");
+		}
 
-	  AV*restrict y_av = NULL;
-	  if (y_sv && SvROK(y_sv) && SvTYPE(SvRV(y_sv)) == SVt_PVAV)
-		   y_av = (AV*)SvRV(y_sv);
+		// --- Parse named arguments from the remaining flat stack ---
+		for (; arg_idx < items; arg_idx += 2) {
+			const char*restrict key = SvPV_nolen(ST(arg_idx));
+			SV*restrict val = ST(arg_idx + 1);
 
-	  if (conf_level <= 0.0 || conf_level >= 1.0)
-		   croak("t_test: 'conf_level' must be between 0 and 1");
+			if      (strEQ(key, "x"))           x_sv        = val;
+			else if (strEQ(key, "y"))           y_sv        = val;
+			else if (strEQ(key, "mu"))          mu          = SvNV(val);
+			else if (strEQ(key, "paired"))      paired      = SvTRUE(val);
+			else if (strEQ(key, "var_equal"))   var_equal   = SvTRUE(val);
+			else if (strEQ(key, "conf_level"))  conf_level  = SvNV(val);
+			else if (strEQ(key, "alternative")) alternative = SvPV_nolen(val);
+			else croak("t_test: unknown argument '%s'", key);
+		}
 
-	  // --- Computation via Welford's Algorithm --- */
-	  double mean_x = 0.0, M2_x = 0.0, var_x, t_stat, df, p_val, std_err, cint_est;
-	  HV*restrict results = newHV();
+		// --- Validate required / types ---
+		if (!x_sv || !SvROK(x_sv) || SvTYPE(SvRV(x_sv)) != SVt_PVAV)
+			croak("t_test: 'x' is a required argument and must be an ARRAY reference");
+		AV*restrict x_av = (AV*)SvRV(x_sv);
+		size_t nx = av_len(x_av) + 1;
+		if (nx < 2) croak("t_test: 'x' needs at least 2 elements");
+		AV*restrict y_av = NULL;
+		if (y_sv && SvROK(y_sv) && SvTYPE(SvRV(y_sv)) == SVt_PVAV)
+			y_av = (AV*)SvRV(y_sv);
 
-	  for (size_t i = 0; i < nx; i++) {
-		   SV**restrict tv = av_fetch(x_av, i, 0);
-		   double val = (tv && SvOK(*tv)) ? SvNV(*tv) : 0;
-		   double delta = val - mean_x;
-		   mean_x += delta / (i + 1);
-		   M2_x += delta * (val - mean_x);
-	  }
-	  var_x = M2_x / (nx - 1);
-	  if (var_x == 0.0 && !y_av) croak("t_test: data are essentially constant");
+		if (conf_level <= 0.0 || conf_level >= 1.0)
+			croak("t_test: 'conf_level' must be between 0 and 1");
+		// --- Computation via Welford's Algorithm --- */
+		double mean_x = 0.0, M2_x = 0.0, var_x, t_stat, df, p_val, std_err, cint_est;
+		HV*restrict results = newHV();
+		for (size_t i = 0; i < nx; i++) {
+			SV**restrict tv = av_fetch(x_av, i, 0);
+			double val = (tv && SvOK(*tv)) ? SvNV(*tv) : 0;
+			double delta = val - mean_x;
+			mean_x += delta / (i + 1);
+			M2_x += delta * (val - mean_x);
+		}
+		var_x = M2_x / (nx - 1);
+		if (var_x == 0.0 && !y_av) croak("t_test: data are essentially constant");
 
-	  if (paired || y_av) {
-		   if (!y_av) croak("t_test: 'y' must be provided for paired or two-sample tests");
-		   size_t ny = av_len(y_av) + 1;
-		   if (paired && ny != nx) croak("t_test: Paired arrays must be same length");
-
-		   double mean_y = 0.0, M2_y = 0.0, var_y;
-		   for (size_t i = 0; i < ny; i++) {
-		       SV**restrict tv = av_fetch(y_av, i, 0);
-		       double val = (tv && SvOK(*tv)) ? SvNV(*tv) : 0;
-		       double delta = val - mean_y;
-		       mean_y += delta / (i + 1);
-		       M2_y += delta * (val - mean_y);
-		   }
-		   var_y = M2_y / (ny - 1);
-
-		   if (paired) {
-		       double mean_d = 0.0, M2_d = 0.0;
-		       for (size_t i = 0; i < nx; i++) {
+		if (paired || y_av) {
+			if (!y_av) croak("t_test: 'y' must be provided for paired or two-sample tests");
+			size_t ny = av_len(y_av) + 1;
+			if (paired && ny != nx) croak("t_test: Paired arrays must be same length");
+			double mean_y = 0.0, M2_y = 0.0, var_y;
+			for (size_t i = 0; i < ny; i++) {
+				 SV**restrict tv = av_fetch(y_av, i, 0);
+				 double val = (tv && SvOK(*tv)) ? SvNV(*tv) : 0;
+				 double delta = val - mean_y;
+				 mean_y += delta / (i + 1);
+				 M2_y += delta * (val - mean_y);
+			}
+			var_y = M2_y / (ny - 1);
+			if (paired) {
+				 double mean_d = 0.0, M2_d = 0.0;
+				 for (size_t i = 0; i < nx; i++) {
 					  SV**restrict dx_ptr = av_fetch(x_av, i, 0);
-		           SV**restrict dy_ptr = av_fetch(y_av, i, 0);
-		           double dx = (dx_ptr && SvOK(*dx_ptr)) ? SvNV(*dx_ptr) : 0.0;
-		           double dy = (dy_ptr && SvOK(*dy_ptr)) ? SvNV(*dy_ptr) : 0.0;
-		           double val = dx - dy;
-		           double delta = val - mean_d;
-		           mean_d += delta / (i + 1);
-		           M2_d += delta * (val - mean_d);
-		       }
-		       double var_d = M2_d / (nx - 1);
-		       if (var_d == 0.0) croak("t_test: data are essentially constant");
-
-		       cint_est = mean_d;
-		       std_err  = sqrt(var_d / nx);
-		       t_stat   = (cint_est - mu) / std_err;
-		       df       = nx - 1;
-		       hv_store(results, "estimate", 8, newSVnv(mean_d), 0);
-
+					  SV**restrict dy_ptr = av_fetch(y_av, i, 0);
+				     double dx = (dx_ptr && SvOK(*dx_ptr)) ? SvNV(*dx_ptr) : 0.0;
+				     double dy = (dy_ptr && SvOK(*dy_ptr)) ? SvNV(*dy_ptr) : 0.0;
+				     double val = dx - dy;
+				     double delta = val - mean_d;
+				     mean_d += delta / (i + 1);
+				     M2_d += delta * (val - mean_d);
+				 }
+				 double var_d = M2_d / (nx - 1);
+				 if (var_d == 0.0) croak("t_test: data are essentially constant");
+				 cint_est = mean_d;
+				 std_err  = sqrt(var_d / nx);
+				 t_stat   = (cint_est - mu) / std_err;
+				 df       = nx - 1;
+				 hv_store(results, "estimate", 8, newSVnv(mean_d), 0);
 			} else if (var_equal) {
-		       if (var_x == 0.0 && var_y == 0.0) croak("t_test: data are essentially constant");
-		       double pooled_var = ((nx - 1) * var_x + (ny - 1) * var_y) / (nx + ny - 2);
-		       cint_est = mean_x - mean_y;
-		       std_err  = sqrt(pooled_var * (1.0 / nx + 1.0 / ny));
-		       t_stat   = (cint_est - mu) / std_err;
-		       df       = nx + ny - 2;
-
-		       hv_store(results, "estimate_x", 10, newSVnv(mean_x), 0);
-		       hv_store(results, "estimate_y", 10, newSVnv(mean_y), 0);
-
-		   } else {
-		       if (var_x == 0.0 && var_y == 0.0) croak("t_test: data are essentially constant");
-		       cint_est         = mean_x - mean_y;
-		       double stderr_x2 = var_x / nx;
-		       double stderr_y2 = var_y / ny;
-		       std_err          = sqrt(stderr_x2 + stderr_y2);
-		       t_stat           = (cint_est - mu) / std_err;
-		       df = pow(stderr_x2 + stderr_y2, 2) /
-		            (pow(stderr_x2, 2) / (nx - 1) + pow(stderr_y2, 2) / (ny - 1));
-
-		       hv_store(results, "estimate_x", 10, newSVnv(mean_x), 0);
-		       hv_store(results, "estimate_y", 10, newSVnv(mean_y), 0);
-		   }
-	  } else {
-		   cint_est = mean_x;
-		   std_err  = sqrt(var_x / nx);
-		   t_stat   = (cint_est - mu) / std_err;
-		   df       = nx - 1;
-		   hv_store(results, "estimate", 8, newSVnv(mean_x), 0);
-	  }
-
-	  p_val = get_t_pvalue(t_stat, df, alternative);
-
-	  double alpha = 1.0 - conf_level, t_crit, ci_lower, ci_upper;
-
-	  if (strcmp(alternative, "less") == 0) {
-		   t_crit   = qt_tail(df, alpha);
-		   ci_lower = -INFINITY;
-		   ci_upper = cint_est + t_crit * std_err;
-	  } else if (strcmp(alternative, "greater") == 0) {
-		   t_crit   = qt_tail(df, alpha);
-		   ci_lower = cint_est - t_crit * std_err;
-		   ci_upper = INFINITY;
-	  } else {
-		   t_crit   = qt_tail(df, alpha / 2.0);
-		   ci_lower = cint_est - t_crit * std_err;
-		   ci_upper = cint_est + t_crit * std_err;
-	  }
-
-	  AV*restrict conf_int = newAV();
-	  av_push(conf_int, newSVnv(ci_lower));
-	  av_push(conf_int, newSVnv(ci_upper));
-
-	  hv_store(results, "statistic", 9, newSVnv(t_stat), 0);
-	  hv_store(results, "df",        2, newSVnv(df),     0);
-	  hv_store(results, "p_value",   7, newSVnv(p_val),  0);
-	  hv_store(results, "conf_int",  8, newRV_noinc((SV*)conf_int), 0);
-
-	  RETVAL = newRV_noinc((SV*)results);
+				 if (var_x == 0.0 && var_y == 0.0) croak("t_test: data are essentially constant");
+				 double pooled_var = ((nx - 1) * var_x + (ny - 1) * var_y) / (nx + ny - 2);
+				 cint_est = mean_x - mean_y;
+				 std_err  = sqrt(pooled_var * (1.0 / nx + 1.0 / ny));
+				 t_stat   = (cint_est - mu) / std_err;
+				 df       = nx + ny - 2;
+				 hv_store(results, "estimate_x", 10, newSVnv(mean_x), 0);
+				 hv_store(results, "estimate_y", 10, newSVnv(mean_y), 0);
+			} else {
+				 if (var_x == 0.0 && var_y == 0.0) croak("t_test: data are essentially constant");
+				 cint_est         = mean_x - mean_y;
+				 double stderr_x2 = var_x / nx;
+				 double stderr_y2 = var_y / ny;
+				 std_err          = sqrt(stderr_x2 + stderr_y2);
+				 t_stat           = (cint_est - mu) / std_err;
+				 df = pow(stderr_x2 + stderr_y2, 2) /
+				      (pow(stderr_x2, 2) / (nx - 1) + pow(stderr_y2, 2) / (ny - 1));
+				 hv_store(results, "estimate_x", 10, newSVnv(mean_x), 0);
+				 hv_store(results, "estimate_y", 10, newSVnv(mean_y), 0);
+			}
+		} else {
+			cint_est = mean_x;
+			std_err  = sqrt(var_x / nx);
+			t_stat   = (cint_est - mu) / std_err;
+			df       = nx - 1;
+			hv_store(results, "estimate", 8, newSVnv(mean_x), 0);
+		}
+		p_val = get_t_pvalue(t_stat, df, alternative);
+		double alpha = 1.0 - conf_level, t_crit, ci_lower, ci_upper;
+		if (strcmp(alternative, "less") == 0) {
+			t_crit   = qt_tail(df, alpha);
+			ci_lower = -INFINITY;
+			ci_upper = cint_est + t_crit * std_err;
+		} else if (strcmp(alternative, "greater") == 0) {
+			t_crit   = qt_tail(df, alpha);
+			ci_lower = cint_est - t_crit * std_err;
+			ci_upper = INFINITY;
+		} else {
+			t_crit   = qt_tail(df, alpha / 2.0);
+			ci_lower = cint_est - t_crit * std_err;
+			ci_upper = cint_est + t_crit * std_err;
+		}
+		AV*restrict conf_int = newAV();
+		av_push(conf_int, newSVnv(ci_lower));
+		av_push(conf_int, newSVnv(ci_upper));
+		hv_store(results, "statistic", 9, newSVnv(t_stat), 0);
+		hv_store(results, "df",        2, newSVnv(df),     0);
+		hv_store(results, "p_value",   7, newSVnv(p_val),  0);
+		hv_store(results, "conf_int",  8, newRV_noinc((SV*)conf_int), 0);
+		RETVAL = newRV_noinc((SV*)results);
 	}
-#line 3711 "LikeR.c"
+#line 3775 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -3734,7 +3798,7 @@ XS_EUPXS(XS_Stats__LikeR_p_adjust)
 	    method = (const char *)SvPV_nolen(ST(1))
 ;
 	}
-#line 3252 "LikeR.xs"
+#line 3374 "LikeR.xs"
 		if (!SvROK(p_sv) || SvTYPE(SvRV(p_sv)) != SVt_PVAV) {
 			croak("p_adjust: first argument must be an ARRAY reference of p-values");
 		}
@@ -3765,12 +3829,12 @@ XS_EUPXS(XS_Stats__LikeR_p_adjust)
 		}
 		// Sort ascending (Stable sort using original index)
 		qsort(arr, n, sizeof(PVal), cmp_pval);
-#line 3769 "LikeR.c"
-#line 3283 "LikeR.xs"
+#line 3833 "LikeR.c"
+#line 3405 "LikeR.xs"
 		if (strcmp(meth, "bonferroni") == 0) {
 			for (size_t i = 0; i < n; i++) {
-				 double v = arr[i].p * n;
-				 adj[arr[i].orig_idx] = (v < 1.0) ? v : 1.0;
+				double v = arr[i].p * n;
+				adj[arr[i].orig_idx] = (v < 1.0) ? v : 1.0;
 			}
 		} else if (strcmp(meth, "holm") == 0) {
 			double cummax = 0.0;
@@ -3789,18 +3853,18 @@ XS_EUPXS(XS_Stats__LikeR_p_adjust)
 		} else if (strcmp(meth, "bh") == 0) {
 			double cummin = 1.0;
 			for (ssize_t i = n - 1; i >= 0; i--) {
-				 double v = arr[i].p * n / (i + 1.0);
-				 if (v < cummin) cummin = v;
-				 adj[arr[i].orig_idx] = (cummin < 1.0) ? cummin : 1.0;
+				double v = arr[i].p * n / (i + 1.0);
+				if (v < cummin) cummin = v;
+				adj[arr[i].orig_idx] = (cummin < 1.0) ? cummin : 1.0;
 			}
 		} else if (strcmp(meth, "by") == 0) {
 			double q = 0.0;
 			for (size_t i = 1; i <= n; i++) q += 1.0 / i;
 			double cummin = 1.0;
 			for (ssize_t i = n - 1; i >= 0; i--) {
-				 double v = arr[i].p * n / (i + 1.0) * q;
-				 if (v < cummin) cummin = v;
-				 adj[arr[i].orig_idx] = (cummin < 1.0) ? cummin : 1.0;
+				double v = arr[i].p * n / (i + 1.0) * q;
+				if (v < cummin) cummin = v;
+				adj[arr[i].orig_idx] = (cummin < 1.0) ? cummin : 1.0;
 			}
 		} else if (strcmp(meth, "hommel") == 0) {
 			double *restrict pa, *restrict q_arr;
@@ -3868,7 +3932,7 @@ XS_EUPXS(XS_Stats__LikeR_p_adjust)
 		}
 		Safefree(arr); arr = NULL;
 		Safefree(adj); adj = NULL;
-#line 3872 "LikeR.c"
+#line 3936 "LikeR.c"
 	PUTBACK;
 	return;
     }
@@ -3884,12 +3948,12 @@ XS_EUPXS(XS_Stats__LikeR_median)
     {
 	double	RETVAL;
 	dXSTARG;
-#line 3388 "LikeR.xs"
+#line 3510 "LikeR.xs"
 		size_t total_count = 0, k = 0;
 		double *restrict nums;
 		double median_val = 0.0;
-#line 3892 "LikeR.c"
-#line 3392 "LikeR.xs"
+#line 3956 "LikeR.c"
+#line 3514 "LikeR.xs"
 	  // Pass 1: Count total valid elements to allocate memory
 	  for (size_t i = 0; i < items; i++) {
 		   SV*restrict arg = ST(i);
@@ -3932,7 +3996,7 @@ XS_EUPXS(XS_Stats__LikeR_median)
 	  }
 	  Safefree(nums); nums = NULL;
 	  RETVAL = median_val;
-#line 3936 "LikeR.c"
+#line 4000 "LikeR.c"
 	TARGn((double)RETVAL, 1);
 	ST(0) = TARG;
     }
@@ -3966,7 +4030,7 @@ XS_EUPXS(XS_Stats__LikeR_cor)
 	    method = (const char *)SvPV_nolen(ST(2))
 ;
 	}
-#line 3439 "LikeR.xs"
+#line 3561 "LikeR.xs"
 	  // --- validate method -------------------------------------------
 	  if (strcmp(method, "pearson")  != 0 &&
 		   strcmp(method, "spearman") != 0 &&
@@ -3998,8 +4062,8 @@ XS_EUPXS(XS_Stats__LikeR_cor)
 		   if (fp && SvROK(*fp) && SvTYPE(SvRV(*fp)) == SVt_PVAV)
 		       y_is_matrix = 1;
 	  }
-#line 4002 "LikeR.c"
-#line 3471 "LikeR.xs"
+#line 4066 "LikeR.c"
+#line 3593 "LikeR.xs"
 	  if (!x_is_matrix && !y_is_matrix) {
 		   if (!has_y) {
 		       /* cor(vector) == 1 by definition */
@@ -4150,7 +4214,7 @@ XS_EUPXS(XS_Stats__LikeR_cor)
 		   }
 		   RETVAL = newRV_noinc((SV*)result_av);
 	  }
-#line 4154 "LikeR.c"
+#line 4218 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -4167,7 +4231,7 @@ XS_EUPXS(XS_Stats__LikeR_scale)
     PERL_UNUSED_VAR(ax); /* -Wall */
     SP -= items;
     {
-#line 3627 "LikeR.xs"
+#line 3749 "LikeR.xs"
 	{
 	  bool do_center_mean = true, do_scale_sd = true;
 	  double center_val = 0.0, scale_val = 1.0;
@@ -4368,7 +4432,7 @@ XS_EUPXS(XS_Stats__LikeR_scale)
 		   Safefree(nums); nums = NULL;
 	  }
 	}
-#line 4372 "LikeR.c"
+#line 4436 "LikeR.c"
 	PUTBACK;
 	return;
     }
@@ -4383,7 +4447,7 @@ XS_EUPXS(XS_Stats__LikeR_matrix)
     PERL_UNUSED_VAR(items); /* -W */
     {
 	SV *	RETVAL;
-#line 3830 "LikeR.xs"
+#line 3952 "LikeR.xs"
 	// Basic check: must have an even number of arguments for key => value
 	if (items % 2 != 0) {
 	  croak("Usage: matrix(data => [...], nrow => $n, ncol => $m, byrow => $bool)");
@@ -4458,7 +4522,7 @@ XS_EUPXS(XS_Stats__LikeR_matrix)
 	}
 	safefree(row_ptrs);
 	RETVAL = newRV_noinc((SV*)result_av);
-#line 4462 "LikeR.c"
+#line 4526 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -4474,7 +4538,7 @@ XS_EUPXS(XS_Stats__LikeR_lm)
     PERL_UNUSED_VAR(items); /* -W */
     {
 	SV *	RETVAL;
-#line 3909 "LikeR.xs"
+#line 4031 "LikeR.xs"
 	{
 	  const char *restrict formula  = NULL;
 	  SV *restrict data_sv = NULL;
@@ -4826,7 +4890,7 @@ XS_EUPXS(XS_Stats__LikeR_lm)
 
 	  RETVAL = newRV_noinc((SV*)res_hv);
 	}
-#line 4830 "LikeR.c"
+#line 4894 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -4855,37 +4919,37 @@ XS_EUPXS(XS_Stats__LikeR_seq)
 	    by = (double)SvNV(ST(2))
 ;
 	}
-#line 4269 "LikeR.xs"
+#line 4391 "LikeR.xs"
 	{
-	  //Handle the zero 'by' case
-	  if (by == 0.0) {
-		   if (from == to) {
-		       EXTEND(SP, 1);
-		       mPUSHn(from);
-		       XSRETURN(1);
-		   } else {
-		       croak("invalid 'by' argument: cannot be zero when from != to");
-		   }
-	  }
-	  // Check for wrong direction / infinite loop
-	  if ((from < to && by < 0.0) || (from > to && by > 0.0)) {
-		   croak("wrong sign in 'by' argument");
-	  }
-	  /* * Calculate number of elements. 
+		//Handle the zero 'by' case
+		if (by == 0.0) {
+			if (from == to) {
+				 EXTEND(SP, 1);
+				 mPUSHn(from);
+				 XSRETURN(1);
+			} else {
+				 croak("invalid 'by' argument: cannot be zero when from != to");
+			}
+		}
+		// Check for wrong direction / infinite loop
+		if ((from < to && by < 0.0) || (from > to && by > 0.0)) {
+			croak("wrong sign in 'by' argument");
+		}
+		/* * Calculate number of elements. 
 		* R uses a small epsilon (like 1e-10) to avoid dropping the last 
 		* element due to floating point inaccuracies.
 		*/
-	  double n_elements_d = (to - from) / by;
-	  if (n_elements_d < 0.0) n_elements_d = 0.0;
-	  size_t n_elements = (n_elements_d + 1e-10) + 1;
-	  // Pre-extend the stack to avoid reallocating inside the loop
-	  EXTEND(SP, n_elements);
-	  for (size_t i = 0; i < n_elements; i++) {
+		double n_elements_d = (to - from) / by;
+		if (n_elements_d < 0.0) n_elements_d = 0.0;
+		size_t n_elements = (n_elements_d + 1e-10) + 1;
+		// Pre-extend the stack to avoid reallocating inside the loop
+		EXTEND(SP, n_elements);
+		for (size_t i = 0; i < n_elements; i++) {
 		  mPUSHn(from + i * by);
-	  }
-	  XSRETURN(n_elements);
+		}
+		XSRETURN(n_elements);
 	}
-#line 4889 "LikeR.c"
+#line 4953 "LikeR.c"
 	PUTBACK;
 	return;
     }
@@ -4900,7 +4964,7 @@ XS_EUPXS(XS_Stats__LikeR_rnorm)
     PERL_UNUSED_VAR(items); /* -W */
     {
 	SV *	RETVAL;
-#line 4301 "LikeR.xs"
+#line 4423 "LikeR.xs"
 	{
 		// Auto-seed the PRNG if the Perl script hasn't done so yet
 		AUTO_SEED_PRNG();
@@ -4945,7 +5009,7 @@ XS_EUPXS(XS_Stats__LikeR_rnorm)
 		}
 		RETVAL = newRV_noinc((SV*)result_av);
 	}
-#line 4949 "LikeR.c"
+#line 5013 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -4965,7 +5029,7 @@ XS_EUPXS(XS_Stats__LikeR_aov)
 	SV*	formula_sv = ST(1)
 ;
 	SV *	RETVAL;
-#line 4353 "LikeR.xs"
+#line 4475 "LikeR.xs"
 	{
 		const char *restrict formula = SvPV_nolen(formula_sv);
 		char f_cpy[512];
@@ -5328,7 +5392,7 @@ XS_EUPXS(XS_Stats__LikeR_aov)
 
 		RETVAL = newRV_noinc((SV*)ret_hash);
 	}
-#line 5332 "LikeR.c"
+#line 5396 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -5344,7 +5408,7 @@ XS_EUPXS(XS_Stats__LikeR_fisher_test)
     PERL_UNUSED_VAR(items); /* -W */
     {
 	SV *	RETVAL;
-#line 4723 "LikeR.xs"
+#line 4845 "LikeR.xs"
 {
 	if (items < 1) croak("fisher_test requires at least a data reference");
 
@@ -5352,7 +5416,7 @@ XS_EUPXS(XS_Stats__LikeR_fisher_test)
 	double conf_level = 0.95;
 	const char*restrict alternative = "two.sided";
 
-	/* Parse named arguments */
+	// Parse named arguments
 	for (unsigned short int i = 1; i < items; i += 2) {
 	  if (i + 1 >= items) croak("fisher_test: odd number of arguments");
 	  const char*restrict key = SvPV_nolen(ST(i));
@@ -5389,52 +5453,40 @@ XS_EUPXS(XS_Stats__LikeR_fisher_test)
 		   c = (c_ptr && SvOK(*c_ptr)) ? SvIV(*c_ptr) : 0;
 		   d = (d_ptr && SvOK(*d_ptr)) ? SvIV(*d_ptr) : 0;
 	  } else {
-		   croak("Invalid 2D Array structure");
+		  croak("Invalid 2D Array structure");
 	  }
 	} else if (SvTYPE(deref) == SVt_PVHV) {
 	  /* Fixed 2D Hash Logic: Sort keys lexically to enforce structured rows/columns */
 	  HV*restrict outer = (HV*)deref;
 	  if (hv_iterinit(outer) != 2) croak("Outer hash must have exactly 2 keys");
-
 	  HE*restrict he1 = hv_iternext(outer);
 	  HE*restrict he2 = hv_iternext(outer);
 	  if (!he1 || !he2) croak("Invalid outer hash");
-
 	  const char*restrict k1 = SvPV_nolen(hv_iterkeysv(he1));
 	  const char*restrict k2 = SvPV_nolen(hv_iterkeysv(he2));
-
 	  HE*restrict row1_he = (strcmp(k1, k2) < 0) ? he1 : he2;
 	  HE*restrict row2_he = (strcmp(k1, k2) < 0) ? he2 : he1;
-
 	  SV*restrict row1_sv = hv_iterval(outer, row1_he);
 	  SV*restrict row2_sv = hv_iterval(outer, row2_he);
-
 	  if (!SvROK(row1_sv) || SvTYPE(SvRV(row1_sv)) != SVt_PVHV ||
 		   !SvROK(row2_sv) || SvTYPE(SvRV(row2_sv)) != SVt_PVHV) {
 		   croak("Inner elements must be hashes");
 	  }
-
 	  HV*restrict in1 = (HV*)SvRV(row1_sv);
 	  HV*restrict in2 = (HV*)SvRV(row2_sv);
-
 	  if (hv_iterinit(in1) != 2 || hv_iterinit(in2) != 2) croak("Inner hashes must have exactly 2 keys");
-
 	  HE*restrict in1_he1 = hv_iternext(in1);
 	  HE*restrict in1_he2 = hv_iternext(in1);
 	  const char*restrict in1_k1 = SvPV_nolen(hv_iterkeysv(in1_he1));
 	  const char*restrict in1_k2 = SvPV_nolen(hv_iterkeysv(in1_he2));
-
 	  HE*restrict in1_c1 = (strcmp(in1_k1, in1_k2) < 0) ? in1_he1 : in1_he2;
 	  HE*restrict in1_c2 = (strcmp(in1_k1, in1_k2) < 0) ? in1_he2 : in1_he1;
-
 	  HE*restrict in2_he1 = hv_iternext(in2);
 	  HE*restrict in2_he2 = hv_iternext(in2);
 	  const char*restrict in2_k1 = SvPV_nolen(hv_iterkeysv(in2_he1));
 	  const char*restrict in2_k2 = SvPV_nolen(hv_iterkeysv(in2_he2));
-
 	  HE*restrict in2_c1 = (strcmp(in2_k1, in2_k2) < 0) ? in2_he1 : in2_he2;
 	  HE*restrict in2_c2 = (strcmp(in2_k1, in2_k2) < 0) ? in2_he2 : in2_he1;
-
 	  a = (hv_iterval(in1, in1_c1) && SvOK(hv_iterval(in1, in1_c1))) ? SvIV(hv_iterval(in1, in1_c1)) : 0;
 	  b = (hv_iterval(in1, in1_c2) && SvOK(hv_iterval(in1, in1_c2))) ? SvIV(hv_iterval(in1, in1_c2)) : 0;
 	  c = (hv_iterval(in2, in2_c1) && SvOK(hv_iterval(in2, in2_c1))) ? SvIV(hv_iterval(in2, in2_c1)) : 0;
@@ -5466,7 +5518,7 @@ XS_EUPXS(XS_Stats__LikeR_fisher_test)
 	// Return the HashRef
 	RETVAL = newRV_noinc((SV*)ret_hash);
 }
-#line 5470 "LikeR.c"
+#line 5522 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }

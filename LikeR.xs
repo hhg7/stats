@@ -971,116 +971,234 @@ static double rank_and_count_ties(RankInfo *restrict ri, size_t n, int *restrict
 MODULE = Stats::LikeR  PACKAGE = Stats::LikeR
 
 SV*
-wilcox_test(AV* x_av, AV* y_av = NULL, bool paired = 0, double mu = 0.0, int exact = -1)
+wilcox_test(...)
 CODE:
 {
-	size_t nx = av_top_index(x_av) + 1;
-	size_t ny = y_av ? (av_top_index(y_av) + 1) : 0;
+	SV *restrict x_sv = NULL, *restrict y_sv = NULL;
+	bool paired = false, correct = true;
+	double mu = 0.0;
+	short int exact = -1;
+	const char *restrict alternative = "two.sided";
+
+	int arg_idx = 0;
+
+	// 1. Shift first positional argument as 'x' if it's an array reference
+	if (arg_idx < items && SvROK(ST(arg_idx)) && SvTYPE(SvRV(ST(arg_idx))) == SVt_PVAV) {
+		x_sv = ST(arg_idx);
+		arg_idx++;
+	}
+
+	// 2. Shift second positional argument as 'y' if it's an array reference
+	if (arg_idx < items && SvROK(ST(arg_idx)) && SvTYPE(SvRV(ST(arg_idx))) == SVt_PVAV) {
+		y_sv = ST(arg_idx);
+		arg_idx++;
+	}
+
+	// Ensure the remaining arguments form complete key-value pairs
+	if ((items - arg_idx) % 2 != 0) {
+		croak("Usage: wilcox_test(\\@x, [\\@y], key => value, ...)");
+	}
+
+	// --- Parse named arguments from the remaining flat stack ---
+	for (; arg_idx < items; arg_idx += 2) {
+		const char *restrict key = SvPV_nolen(ST(arg_idx));
+		SV *restrict val = ST(arg_idx + 1);
+
+		if      (strEQ(key, "x"))           x_sv = val;
+		else if (strEQ(key, "y"))           y_sv = val;
+		else if (strEQ(key, "paired"))      paired = SvTRUE(val);
+		else if (strEQ(key, "correct"))     correct = SvTRUE(val);
+		else if (strEQ(key, "mu"))          mu = SvNV(val);
+		else if (strEQ(key, "exact"))       {
+			if (!SvOK(val)) exact = -1;
+			else exact = SvTRUE(val) ? 1 : 0;
+		}
+		else if (strEQ(key, "alternative")) alternative = SvPV_nolen(val);
+		else croak("wilcox_test: unknown argument '%s'", key);
+	}
+
+	// --- Validate required / types ---
+	if (!x_sv || !SvROK(x_sv) || SvTYPE(SvRV(x_sv)) != SVt_PVAV)
+		croak("wilcox_test: 'x' is a required argument and must be an ARRAY reference");
+		
+	AV *restrict x_av = (AV*)SvRV(x_sv);
+	size_t nx = av_len(x_av) + 1;
 	if (nx == 0) croak("Not enough 'x' observations");
 
+	AV *restrict y_av = NULL;
+	size_t ny = 0;
+	if (y_sv && SvROK(y_sv) && SvTYPE(SvRV(y_sv)) == SVt_PVAV) {
+		y_av = (AV*)SvRV(y_sv);
+		ny = av_len(y_av) + 1;
+	}
+	
 	double p_value = 0.0, statistic = 0.0;
 	const char *restrict method_desc = "";
-	bool use_exact = 0;
+	bool use_exact = false;
 
 	// --- TWO SAMPLE (Mann-Whitney) ---
 	if (ny > 0 && !paired) {
-	  size_t total_n = nx + ny;
-	  RankInfo *ri = (RankInfo *)safemalloc(total_n * sizeof(RankInfo));
-	  for (size_t i = 0; i < nx; i++) {
-		   SV**restrict el = av_fetch(x_av, i, 0);
-		   ri[i].val = el ? SvNV(*el) : 0.0; ri[i].idx = 1;
-	  }
-	  for (size_t i = 0; i < ny; i++) {
-		   SV**restrict el = av_fetch(y_av, i, 0);
-		   ri[nx + i].val = (el ? SvNV(*el) : 0.0) - mu; ri[nx + i].idx = 2;
-	  }
+		RankInfo *restrict ri = (RankInfo *)safemalloc((nx + ny) * sizeof(RankInfo));
+		size_t valid_nx = 0, valid_ny = 0;
+		for (size_t i = 0; i < nx; i++) {
+			SV**restrict el = av_fetch(x_av, i, 0);
+			if (el && SvOK(*el) && looks_like_number(*el)) {
+				ri[valid_nx].val = SvNV(*el) - mu; // R subtracts mu from x
+				ri[valid_nx].idx = 1;
+				valid_nx++;
+			}
+		}
+		for (size_t i = 0; i < ny; i++) {
+			SV**restrict el = av_fetch(y_av, i, 0);
+			if (el && SvOK(*el) && looks_like_number(*el)) {
+				ri[valid_nx + valid_ny].val = SvNV(*el);
+				ri[valid_nx + valid_ny].idx = 2;
+				valid_ny++;
+			}
+		}
+		if (valid_nx == 0) { Safefree(ri); croak("not enough (non-missing) 'x' observations"); }
+		if (valid_ny == 0) { Safefree(ri); croak("not enough 'y' observations"); }
+		size_t total_n = valid_nx + valid_ny;
+		int has_ties = 0;
+		double tie_adj = rank_and_count_ties(ri, total_n, &has_ties);
+		double w_rank_sum = 0.0;
+		for (size_t i = 0; i < total_n; i++) if (ri[i].idx == 1) w_rank_sum += ri[i].rank;
+		statistic = w_rank_sum - (double)valid_nx * (valid_nx + 1.0) / 2.0;
+		
+		if (exact == 1) use_exact = true;
+		else if (exact == 0) use_exact = false;
+		else use_exact = (valid_nx < 50 && valid_ny < 50 && !has_ties);
+		
+		if (use_exact && has_ties) {
+			warn("cannot compute exact p-value with ties; falling back to approximation");
+			use_exact = false;
+		}
+		if (use_exact) {
+			method_desc = "Wilcoxon rank sum exact test";
+			double p_less = exact_pwilcox(statistic, valid_nx, valid_ny);
+			double p_greater = 1.0 - exact_pwilcox(statistic - 1.0, valid_nx, valid_ny);
 
-	  int has_ties = 0;
-	  double tie_adj = rank_and_count_ties(ri, total_n, &has_ties);
-	  double w_rank_sum = 0.0;
-	  for (size_t i = 0; i < total_n; i++) if (ri[i].idx == 1) w_rank_sum += ri[i].rank;
-	  statistic = w_rank_sum - (double)nx * (nx + 1) / 2.0;
+			if (strcmp(alternative, "less") == 0) p_value = p_less;
+			else if (strcmp(alternative, "greater") == 0) p_value = p_greater;
+			else {
+				double p = (p_less < p_greater) ? p_less : p_greater;
+				p_value = 2.0 * p;
+			}
+		} else {
+			method_desc = correct ? "Wilcoxon rank sum test with continuity correction" : "Wilcoxon rank sum test";
+			double exp = (double)valid_nx * valid_ny / 2.0;
+			double var = ((double)valid_nx * valid_ny / 12.0) * ((total_n + 1.0) - tie_adj / (total_n * (total_n - 1.0)));
+			double z = statistic - exp;
+			
+			double CORRECTION = 0.0;
+			if (correct) {
+				if (strcmp(alternative, "two.sided") == 0) CORRECTION = (z > 0 ? 0.5 : -0.5);
+				else if (strcmp(alternative, "greater") == 0) CORRECTION = 0.5;
+				else if (strcmp(alternative, "less") == 0) CORRECTION = -0.5;
+			}
+			z = (z - CORRECTION) / sqrt(var);
 
-	  // R Logic: Default exact to TRUE if N < 50 and no ties
-	  if (exact == 1) use_exact = 1;
-	  else if (exact == 0) use_exact = 0;
-	  else use_exact = (total_n < 50 && !has_ties);
-
-	  if (use_exact && has_ties) {
-		   warn("cannot compute exact p-value with ties; falling back to approximation");
-		   use_exact = 0;
-	  }
-
-	  if (use_exact) {
-		   method_desc = "Wilcoxon rank sum exact test";
-		   double p = exact_pwilcox(statistic, nx, ny);
-		   // Translate R's two-sided tail logic: take the smaller tail
-		   if (p > 0.5) p = 1.0 - exact_pwilcox(statistic - 1.0, nx, ny);
-		   p_value = 2.0 * p;
-	  } else {
-		   method_desc = "Wilcoxon rank sum test with continuity correction";
-		   double exp = (double)nx * ny / 2.0;
-		   double var = ((double)nx * ny / 12.0) * ((total_n + 1.0) - tie_adj / (total_n * (total_n - 1.0)));
-		   double z = statistic - exp;
-		   // R's exact continuity correction: z <- z - sign(z) * 0.5
-		   if (z > 0) z -= 0.5; else if (z < 0) z += 0.5;
-		   // CRITICAL FIX: -fabs ensures we always get the lower tail probability
-		   p_value = 2.0 * approx_pnorm(-fabs(z / sqrt(var)));
-	  }
-	  Safefree(ri);
+			if (strcmp(alternative, "less") == 0) p_value = approx_pnorm(z);
+			else if (strcmp(alternative, "greater") == 0) p_value = 1.0 - approx_pnorm(z);
+			else p_value = 2.0 * approx_pnorm(-fabs(z));
+		}
+		Safefree(ri);
+		
 	} else { // --- ONE SAMPLE / PAIRED ---
-	  if (paired && nx != ny) croak("'x' and 'y' must have same length");
-	  double *restrict diffs = (double *)safemalloc(nx * sizeof(double));
-	  size_t n_nz = 0;
-	  for (size_t i = 0; i < nx; i++) {
-		   double dx = SvNV(*av_fetch(x_av, i, 0));
-		   double d = paired ? (dx - SvNV(*av_fetch(y_av, i, 0)) - mu) : (dx - mu);
-		   if (fabs(d) > 1e-15) diffs[n_nz++] = d;
-	  }
+		if (paired && (!y_av || nx != ny)) croak("'x' and 'y' must have the same length for paired test");
+		
+		double *restrict diffs = (double *)safemalloc(nx * sizeof(double));
+		size_t n_nz = 0;
+		bool has_zeroes = false;
+		for (size_t i = 0; i < nx; i++) {
+			SV**restrict x_el = av_fetch(x_av, i, 0);
+			if (!x_el || !SvOK(*x_el) || !looks_like_number(*x_el)) continue;
+			double dx = SvNV(*x_el);
 
-	  RankInfo *restrict ri = (RankInfo *)safemalloc(n_nz * sizeof(RankInfo));
-	  for (size_t i = 0; i < n_nz; i++) { ri[i].val = fabs(diffs[i]); ri[i].idx = (diffs[i] > 0); }
+			if (paired) {
+				SV**restrict y_el = av_fetch(y_av, i, 0);
+				if (!y_el || !SvOK(*y_el) || !looks_like_number(*y_el)) continue;
+				double dy = SvNV(*y_el);
+				double d = dx - dy - mu;
+				if (d == 0.0) has_zeroes = true; // Drop exact zeroes
+				else diffs[n_nz++] = d;
+			} else {
+				double d = dx - mu;
+				if (d == 0.0) has_zeroes = true;
+				else diffs[n_nz++] = d;
+			}
+		}
+		if (n_nz == 0) {
+			Safefree(diffs);
+			croak("not enough (non-missing) observations");
+		}
+		RankInfo *ri = (RankInfo *)safemalloc(n_nz * sizeof(RankInfo));
+		for (size_t i = 0; i < n_nz; i++) { 
+			ri[i].val = fabs(diffs[i]); 
+			ri[i].idx = (diffs[i] > 0);
+		}
+		int has_ties = 0;
+		double tie_adj = rank_and_count_ties(ri, n_nz, &has_ties);
+		statistic = 0.0;
+		for (size_t i = 0; i < n_nz; i++) {
+			if (ri[i].idx) statistic += ri[i].rank;
+		}
 
-	  int has_ties = 0;
-	  double tie_adj = rank_and_count_ties(ri, n_nz, &has_ties);
-	  statistic = 0.0;
-	  for (size_t i = 0; i < n_nz; i++) if (ri[i].idx) statistic += ri[i].rank;
+		if (exact == 1) use_exact = true;
+		else if (exact == 0) use_exact = false;
+		else use_exact = (n_nz < 50 && !has_ties);
 
-	  if (exact == 1) use_exact = 1;
-	  else if (exact == 0) use_exact = 0;
-	  else use_exact = (n_nz < 50 && !has_ties);
+		if (use_exact && has_ties) {
+			warn("cannot compute exact p-value with ties; falling back to approximation");
+			use_exact = false;
+		}
+		if (use_exact && has_zeroes) {
+			warn("cannot compute exact p-value with zeroes; falling back to approximation");
+			use_exact = false;
+		}
+		
+		if (use_exact) {
+			method_desc = paired ? "Wilcoxon exact signed rank test" : "Wilcoxon exact signed rank test";
+			double p_less = exact_psignrank(statistic, n_nz);
+			double p_greater = 1.0 - exact_psignrank(statistic - 1.0, n_nz);
 
-	  if (use_exact && has_ties) {
-		   warn("cannot compute exact p-value with ties; falling back to approximation");
-		   use_exact = 0;
-	  }
+			if (strcmp(alternative, "less") == 0) p_value = p_less;
+			else if (strcmp(alternative, "greater") == 0) p_value = p_greater;
+			else {
+				double p = (p_less < p_greater) ? p_less : p_greater;
+				p_value = 2.0 * p;
+			}
+		} else {
+			method_desc = correct ? "Wilcoxon signed rank test with continuity correction" : "Wilcoxon signed rank test";
+			double exp = (double)n_nz * (n_nz + 1.0) / 4.0;
+			double var = (n_nz * (n_nz + 1.0) * (2.0 * n_nz + 1.0) / 24.0) - (tie_adj / 48.0);
+			double z = statistic - exp;
+			
+			double CORRECTION = 0.0;
+			if (correct) {
+				if (strcmp(alternative, "two.sided") == 0) CORRECTION = (z > 0 ? 0.5 : -0.5);
+				else if (strcmp(alternative, "greater") == 0) CORRECTION = 0.5;
+				else if (strcmp(alternative, "less") == 0) CORRECTION = -0.5;
+			}
+			z = (z - CORRECTION) / sqrt(var);
 
-	  if (use_exact) {
-		   method_desc = "Wilcoxon exact signed rank test";
-		   double p = exact_psignrank(statistic, n_nz);
-		   if (p > 0.5) p = 1.0 - exact_psignrank(statistic - 1.0, n_nz);
-		   p_value = 2.0 * p;
-	  } else {
-		   method_desc = "Wilcoxon signed rank test with continuity correction";
-		   double exp = (double)n_nz * (n_nz + 1.0) / 4.0;
-		   double var = (n_nz * (n_nz + 1.0) * (2.0 * n_nz + 1.0) / 24.0) - (tie_adj / 48.0);
-		   double z = statistic - exp;
-		   if (z > 0) z -= 0.5; else if (z < 0) z += 0.5;
-		   p_value = 2.0 * approx_pnorm(-fabs(z / sqrt(var)));
-	  }
-	  Safefree(ri); Safefree(diffs);
+			if (strcmp(alternative, "less") == 0) p_value = approx_pnorm(z);
+			else if (strcmp(alternative, "greater") == 0) p_value = 1.0 - approx_pnorm(z);
+			else p_value = 2.0 * approx_pnorm(-fabs(z));
+		}
+		Safefree(ri); Safefree(diffs);
 	}
-
+	
 	if (p_value > 1.0) p_value = 1.0;
-
 	HV *restrict res = newHV();
 	hv_stores(res, "statistic", newSVnv(statistic));
 	hv_stores(res, "p_value", newSVnv(p_value));
 	hv_stores(res, "method", newSVpv(method_desc, 0));
+	hv_stores(res, "alternative", newSVpv(alternative, 0));
 	RETVAL = newRV_noinc((SV*)res);
 }
 OUTPUT:
-    RETVAL
+	RETVAL
 
 SV*
 _chisq_c(data_ref)
@@ -2684,7 +2802,7 @@ double min(...)
 		if (count == 0) croak("min needs >= 1 numeric element");
 		RETVAL = min_val;
 	OUTPUT:
-	  RETVAL
+		RETVAL
 
 double max(...)
 	PROTOTYPE: @
@@ -2726,32 +2844,36 @@ double max(...)
 SV* runif(...)
 	CODE:
 	{
-	  // Auto-seed the PRNG if the Perl script hasn't done so yet
-	  AUTO_SEED_PRNG();
-	  if (items % 2 != 0)
-		   croak("Usage: runif(n => 10, min => 0, max => 1)");
-	  // --- Parse named arguments ---
-	  size_t n = 0;
-	  double min = 0.0, max = 1.0;
-	  for (unsigned short int i = 0; i < items; i += 2) {
-		   const char* restrict key = SvPV_nolen(ST(i));
-		   SV* restrict val = ST(i + 1);
-		   if      (strEQ(key, "n"))    n   = (size_t)SvUV(val);
-		   else if (strEQ(key, "min"))  min = SvNV(val);
-		   else if (strEQ(key, "max"))  max = SvNV(val);
-		   else croak("runif: unknown argument '%s'", key);
-	  }
-	  if (min > max) croak("runif: min must be less than or equal to max");
-	  AV *restrict result_av = newAV();
-	  if (n > 0) {
-		   av_extend(result_av, n - 1);
-		   double range = max - min;
-		   for (size_t i = 0; i < n; i++) {
-		       // Transform standard [0,1) uniform to [min, max)
-		       av_store(result_av, i, newSVnv(min + range * Drand01()));
-		   }
-	  }
-	  RETVAL = newRV_noinc((SV*)result_av);
+		// Auto-seed the PRNG if the Perl script hasn't done so yet
+		AUTO_SEED_PRNG();
+		if (items % 2 != 0)
+			croak("Usage: runif(n => 10, min => 0, max => 1)");
+		// --- Parse named arguments ---
+		size_t n = 0;
+		double min = 0.0, max = 1.0;
+		for (unsigned short int i = 0; i < items; i += 2) {
+			const char* restrict key = SvPV_nolen(ST(i));
+			SV* restrict val = ST(i + 1);
+			if      (strEQ(key, "n"))    n   = (size_t)SvUV(val);
+			else if (strEQ(key, "min"))  min = SvNV(val);
+			else if (strEQ(key, "max"))  max = SvNV(val);
+			else croak("runif: unknown argument '%s'", key);
+		}
+		if (min > max) {
+			const double tmp = min;
+			min = max;
+			max = tmp;
+		}
+		if (min > max) croak("runif: min must be less than or equal to max");
+		AV *restrict result_av = newAV();
+		if (n > 0) {
+			av_extend(result_av, n - 1);
+			double range = max - min;
+			for (size_t i = 0; i < n; i++) {// Transform standard [0,1) uniform to [min, max)
+				av_store(result_av, i, newSVnv(min + range * Drand01()));
+			}
+		}
+		RETVAL = newRV_noinc((SV*)result_av);
 	}
 	OUTPUT:
 	  RETVAL
@@ -2800,95 +2922,95 @@ SV*
 hist(SV* x_sv, ...)
 	CODE:
 	{
-	  /* 1. Validate Input */
-	  if (!SvROK(x_sv) || SvTYPE(SvRV(x_sv)) != SVt_PVAV)
-		   croak("hist: first argument must be an array reference");
-	  
-	  AV*restrict x_av = (AV*)SvRV(x_sv);
-	  size_t n_raw = av_len(x_av) + 1;
-	  if (n_raw == 0) croak("hist: input array is empty");
+		// 1. Validate Input
+		if (!SvROK(x_sv) || SvTYPE(SvRV(x_sv)) != SVt_PVAV)
+			croak("hist: first argument must be an array reference");
 
-	  /* 2. Extract Data & Find Range */
-	  double *restrict x;
-	  Newx(x, n_raw, double);
-	  size_t n = 0;
-	  double min_val = DBL_MAX, max_val = -DBL_MAX;
+		AV*restrict x_av = (AV*)SvRV(x_sv);
+		size_t n_raw = av_len(x_av) + 1;
+		if (n_raw == 0) croak("hist: input array is empty");
 
-	  for (size_t i = 0; i < n_raw; i++) {
-		   SV**restrict tv = av_fetch(x_av, i, 0);
-		   if (tv && SvOK(*tv)) {
-		       double val = SvNV(*tv);
-		       x[n++] = val;
-		       if (val < min_val) min_val = val;
-		       if (val > max_val) max_val = val;
-		   }
-	  }
-	  if (n == 0) {
-		   Safefree(x);
-		   croak("hist: input contains no valid numeric data");
-	  }
-	  /* 3. Determine Bin Count (Sturges default or user-provided) */
-	  size_t n_bins = 0;
-	  
-	  if (items == 2) {
-		   /* Support pure positional argument: hist($data, 22) */
-		   n_bins = (size_t)SvIV(ST(1));
-	  } else if (items > 2) {
-		   /* Support named parameters even if mixed with positional arguments */
-		   for (unsigned short i = 1; i < items - 1; i++) {
-		       /* Make sure the SV holds a string before doing string comparison */
-		       if (SvPOK(ST(i)) && strEQ(SvPV_nolen(ST(i)), "breaks")) {
-		           n_bins = (size_t)SvIV(ST(i+1));
-		           break;
-		       }
-		   }
-		   /* Fallback: if 'breaks' wasn't found but a positional number was given first */
-		   if (n_bins == 0 && looks_like_number(ST(1))) {
-		       n_bins = (size_t)SvIV(ST(1));
-		   }
-	  }
-	  if (n_bins == 0) n_bins = calculate_sturges_bins(n);
-	  // 4. Allocate Result Arrays
-	  double *restrict breaks, *restrict mids, *restrict density;
-	  size_t *restrict counts;
-	  Newx(breaks,  n_bins + 1, double);
-	  Newx(mids,    n_bins,     double);
-	  Newx(density, n_bins,     double);
-	  Newx(counts,  n_bins,     size_t);
+		// 2. Extract Data & Find Range
+		double *restrict x;
+		Newx(x, n_raw, double);
+		size_t n = 0;
+		double min_val = DBL_MAX, max_val = -DBL_MAX;
 
-	  // Generate simple linear breaks
-	  double step = (max_val - min_val) / (double)n_bins;
-	  for (size_t i = 0; i <= n_bins; i++) {
-		   breaks[i] = min_val + (double)i * step;
-	  }
+		for (size_t i = 0; i < n_raw; i++) {
+			SV**restrict tv = av_fetch(x_av, i, 0);
+			if (tv && SvOK(*tv)) {
+				 double val = SvNV(*tv);
+				 x[n++] = val;
+				 if (val < min_val) min_val = val;
+				 if (val > max_val) max_val = val;
+			}
+		}
+		if (n == 0) {
+			Safefree(x);
+			croak("hist: input contains no valid numeric data");
+		}
+		// 3. Determine Bin Count (Sturges default or user-provided)
+		size_t n_bins = 0;
 
-	  // 5. Compute Statistics
-	  compute_hist_logic(x, n, breaks, n_bins, counts, mids, density);
+		if (items == 2) {
+			// Support pure positional argument: hist($data, 22)
+			n_bins = (size_t)SvIV(ST(1));
+		} else if (items > 2) {
+			/* Support named parameters even if mixed with positional arguments */
+			for (unsigned short i = 1; i < items - 1; i++) {
+				 /* Make sure the SV holds a string before doing string comparison */
+				 if (SvPOK(ST(i)) && strEQ(SvPV_nolen(ST(i)), "breaks")) {
+				     n_bins = (size_t)SvIV(ST(i+1));
+				     break;
+				 }
+			}
+			/* Fallback: if 'breaks' wasn't found but a positional number was given first */
+			if (n_bins == 0 && looks_like_number(ST(1))) {
+				 n_bins = (size_t)SvIV(ST(1));
+			}
+		}
+		if (n_bins == 0) n_bins = calculate_sturges_bins(n);
+		// 4. Allocate Result Arrays
+		double *restrict breaks, *restrict mids, *restrict density;
+		size_t *restrict counts;
+		Newx(breaks,  n_bins + 1, double);
+		Newx(mids,    n_bins,     double);
+		Newx(density, n_bins,     double);
+		Newx(counts,  n_bins,     size_t);
 
-	  // 6. Build Return HashRef
-	  HV*restrict res_hv = newHV();
-	  AV*restrict av_breaks  = newAV();
-	  AV*restrict av_counts  = newAV();
-	  AV*restrict av_mids    = newAV();
-	  AV*restrict av_density = newAV();
-	  for (size_t i = 0; i <= n_bins; i++) {
-		   av_push(av_breaks, newSVnv(breaks[i]));
-		   if (i < n_bins) {
-		       av_push(av_counts,  newSViv(counts[i]));
-		       av_push(av_mids,    newSVnv(mids[i]));
-		       av_push(av_density, newSVnv(density[i]));
-		   }
-	  }
-	  hv_stores(res_hv, "breaks",  newRV_noinc((SV*)av_breaks));
-	  hv_stores(res_hv, "counts",  newRV_noinc((SV*)av_counts));
-	  hv_stores(res_hv, "mids",    newRV_noinc((SV*)av_mids));
-	  hv_stores(res_hv, "density", newRV_noinc((SV*)av_density));
+		// Generate simple linear breaks
+		double step = (max_val - min_val) / (double)n_bins;
+		for (size_t i = 0; i <= n_bins; i++) {
+			breaks[i] = min_val + (double)i * step;
+		}
 
-	  // Clean
-	  Safefree(x); Safefree(breaks); Safefree(mids);
-	  Safefree(density); Safefree(counts);
+		// 5. Compute Statistics
+		compute_hist_logic(x, n, breaks, n_bins, counts, mids, density);
 
-	  RETVAL = newRV_noinc((SV*)res_hv);
+		// 6. Build Return HashRef
+		HV*restrict res_hv = newHV();
+		AV*restrict av_breaks  = newAV();
+		AV*restrict av_counts  = newAV();
+		AV*restrict av_mids    = newAV();
+		AV*restrict av_density = newAV();
+		for (size_t i = 0; i <= n_bins; i++) {
+			av_push(av_breaks, newSVnv(breaks[i]));
+			if (i < n_bins) {
+				 av_push(av_counts,  newSViv(counts[i]));
+				 av_push(av_mids,    newSVnv(mids[i]));
+				 av_push(av_density, newSVnv(density[i]));
+			}
+		}
+		hv_stores(res_hv, "breaks",  newRV_noinc((SV*)av_breaks));
+		hv_stores(res_hv, "counts",  newRV_noinc((SV*)av_counts));
+		hv_stores(res_hv, "mids",    newRV_noinc((SV*)av_mids));
+		hv_stores(res_hv, "density", newRV_noinc((SV*)av_density));
+
+		// Clean
+		Safefree(x); Safefree(breaks); Safefree(mids);
+		Safefree(density); Safefree(counts);
+
+		RETVAL = newRV_noinc((SV*)res_hv);
 	}
 	OUTPUT:
 	  RETVAL
@@ -3095,154 +3217,154 @@ double var(...)
 SV* t_test(...)
 	CODE:
 	{
-	  if (items % 2 != 0)
-		   croak("Usage: t_test(x => [...], y => [...], ...) - must be even key/value pairs");
-		   
-	  // --- Parse named arguments from the flat stack
-	  SV*restrict x_sv = NULL;
-	  SV*restrict y_sv = NULL;
-	  double mu = 0.0, conf_level = 0.95;
-	  bool paired = FALSE, var_equal = FALSE;
-	  const char*restrict alternative = "two.sided";
-	  
-	  for (unsigned short i = 0; i < items; i += 2) {
-		   const char*restrict key = SvPV_nolen(ST(i));
-		   SV*restrict val = ST(i + 1);
+		SV*restrict x_sv = NULL;
+		SV*restrict y_sv = NULL;
+		double mu = 0.0, conf_level = 0.95;
+		bool paired = FALSE, var_equal = FALSE;
+		const char*restrict alternative = "two.sided";
 
-		   if      (strEQ(key, "x"))           x_sv        = val;
-		   else if (strEQ(key, "y"))           y_sv        = val;
-		   else if (strEQ(key, "mu"))          mu          = SvNV(val);
-		   else if (strEQ(key, "paired"))      paired      = SvTRUE(val);
-		   else if (strEQ(key, "var_equal"))   var_equal   = SvTRUE(val);
-		   else if (strEQ(key, "conf_level"))  conf_level  = SvNV(val);
-		   else if (strEQ(key, "alternative")) alternative = SvPV_nolen(val);
-		   else croak("t_test: unknown argument '%s'", key);
-	  }
-	  
-	  // --- Validate required / types ---
-	  if (!x_sv || !SvROK(x_sv) || SvTYPE(SvRV(x_sv)) != SVt_PVAV)
-		   croak("t_test: 'x' is a required argument and must be an ARRAY reference");
-	  AV*restrict x_av = (AV*)SvRV(x_sv);
-	  size_t nx = av_len(x_av) + 1;
-	  if (nx < 2) croak("t_test: 'x' needs at least 2 elements");
-	  
-	  AV*restrict y_av = NULL;
-	  if (y_sv && SvROK(y_sv) && SvTYPE(SvRV(y_sv)) == SVt_PVAV)
-		   y_av = (AV*)SvRV(y_sv);
-		   
-	  if (conf_level <= 0.0 || conf_level >= 1.0)
-		   croak("t_test: 'conf_level' must be between 0 and 1");
-		   
-	  // --- Computation via Welford's Algorithm --- */
-	  double mean_x = 0.0, M2_x = 0.0, var_x, t_stat, df, p_val, std_err, cint_est;
-	  HV*restrict results = newHV();
+		int arg_idx = 0;
 
-	  for (size_t i = 0; i < nx; i++) {
-		   SV**restrict tv = av_fetch(x_av, i, 0);
-		   double val = (tv && SvOK(*tv)) ? SvNV(*tv) : 0;
-		   double delta = val - mean_x;
-		   mean_x += delta / (i + 1);
-		   M2_x += delta * (val - mean_x);
-	  }
-	  var_x = M2_x / (nx - 1);
-	  if (var_x == 0.0 && !y_av) croak("t_test: data are essentially constant");
-	  
-	  if (paired || y_av) {
-		   if (!y_av) croak("t_test: 'y' must be provided for paired or two-sample tests");
-		   size_t ny = av_len(y_av) + 1;
-		   if (paired && ny != nx) croak("t_test: Paired arrays must be same length");
-		   
-		   double mean_y = 0.0, M2_y = 0.0, var_y;
-		   for (size_t i = 0; i < ny; i++) {
-		       SV**restrict tv = av_fetch(y_av, i, 0);
-		       double val = (tv && SvOK(*tv)) ? SvNV(*tv) : 0;
-		       double delta = val - mean_y;
-		       mean_y += delta / (i + 1);
-		       M2_y += delta * (val - mean_y);
-		   }
-		   var_y = M2_y / (ny - 1);
-		   
-		   if (paired) {
-		       double mean_d = 0.0, M2_d = 0.0;
-		       for (size_t i = 0; i < nx; i++) {
+		// 1. Shift first positional argument as 'x' if it's an array reference
+		if (arg_idx < items && SvROK(ST(arg_idx)) && SvTYPE(SvRV(ST(arg_idx))) == SVt_PVAV) {
+		  x_sv = ST(arg_idx);
+		  arg_idx++;
+		}
+
+		// 2. Shift second positional argument as 'y' if it's an array reference
+		if (arg_idx < items && SvROK(ST(arg_idx)) && SvTYPE(SvRV(ST(arg_idx))) == SVt_PVAV) {
+		  y_sv = ST(arg_idx);
+		  arg_idx++;
+		}
+
+		// Ensure the remaining arguments form complete key-value pairs
+		if ((items - arg_idx) % 2 != 0) {
+		  croak("Usage: t_test(\\@x, [\\@y], key => value, ...)");
+		}
+
+		// --- Parse named arguments from the remaining flat stack ---
+		for (; arg_idx < items; arg_idx += 2) {
+			const char*restrict key = SvPV_nolen(ST(arg_idx));
+			SV*restrict val = ST(arg_idx + 1);
+
+			if      (strEQ(key, "x"))           x_sv        = val;
+			else if (strEQ(key, "y"))           y_sv        = val;
+			else if (strEQ(key, "mu"))          mu          = SvNV(val);
+			else if (strEQ(key, "paired"))      paired      = SvTRUE(val);
+			else if (strEQ(key, "var_equal"))   var_equal   = SvTRUE(val);
+			else if (strEQ(key, "conf_level"))  conf_level  = SvNV(val);
+			else if (strEQ(key, "alternative")) alternative = SvPV_nolen(val);
+			else croak("t_test: unknown argument '%s'", key);
+		}
+
+		// --- Validate required / types ---
+		if (!x_sv || !SvROK(x_sv) || SvTYPE(SvRV(x_sv)) != SVt_PVAV)
+			croak("t_test: 'x' is a required argument and must be an ARRAY reference");
+		AV*restrict x_av = (AV*)SvRV(x_sv);
+		size_t nx = av_len(x_av) + 1;
+		if (nx < 2) croak("t_test: 'x' needs at least 2 elements");
+		AV*restrict y_av = NULL;
+		if (y_sv && SvROK(y_sv) && SvTYPE(SvRV(y_sv)) == SVt_PVAV)
+			y_av = (AV*)SvRV(y_sv);
+			
+		if (conf_level <= 0.0 || conf_level >= 1.0)
+			croak("t_test: 'conf_level' must be between 0 and 1");
+		// --- Computation via Welford's Algorithm --- */
+		double mean_x = 0.0, M2_x = 0.0, var_x, t_stat, df, p_val, std_err, cint_est;
+		HV*restrict results = newHV();
+		for (size_t i = 0; i < nx; i++) {
+			SV**restrict tv = av_fetch(x_av, i, 0);
+			double val = (tv && SvOK(*tv)) ? SvNV(*tv) : 0;
+			double delta = val - mean_x;
+			mean_x += delta / (i + 1);
+			M2_x += delta * (val - mean_x);
+		}
+		var_x = M2_x / (nx - 1);
+		if (var_x == 0.0 && !y_av) croak("t_test: data are essentially constant");
+
+		if (paired || y_av) {
+			if (!y_av) croak("t_test: 'y' must be provided for paired or two-sample tests");
+			size_t ny = av_len(y_av) + 1;
+			if (paired && ny != nx) croak("t_test: Paired arrays must be same length");
+			double mean_y = 0.0, M2_y = 0.0, var_y;
+			for (size_t i = 0; i < ny; i++) {
+				 SV**restrict tv = av_fetch(y_av, i, 0);
+				 double val = (tv && SvOK(*tv)) ? SvNV(*tv) : 0;
+				 double delta = val - mean_y;
+				 mean_y += delta / (i + 1);
+				 M2_y += delta * (val - mean_y);
+			}
+			var_y = M2_y / (ny - 1);
+			if (paired) {
+				 double mean_d = 0.0, M2_d = 0.0;
+				 for (size_t i = 0; i < nx; i++) {
 					  SV**restrict dx_ptr = av_fetch(x_av, i, 0);
-		           SV**restrict dy_ptr = av_fetch(y_av, i, 0);
-		           double dx = (dx_ptr && SvOK(*dx_ptr)) ? SvNV(*dx_ptr) : 0.0;
-		           double dy = (dy_ptr && SvOK(*dy_ptr)) ? SvNV(*dy_ptr) : 0.0;
-		           double val = dx - dy;
-		           double delta = val - mean_d;
-		           mean_d += delta / (i + 1);
-		           M2_d += delta * (val - mean_d);
-		       }
-		       double var_d = M2_d / (nx - 1);
-		       if (var_d == 0.0) croak("t_test: data are essentially constant");
-		       
-		       cint_est = mean_d;
-		       std_err  = sqrt(var_d / nx);
-		       t_stat   = (cint_est - mu) / std_err;
-		       df       = nx - 1;
-		       hv_store(results, "estimate", 8, newSVnv(mean_d), 0);
-		       
+					  SV**restrict dy_ptr = av_fetch(y_av, i, 0);
+				     double dx = (dx_ptr && SvOK(*dx_ptr)) ? SvNV(*dx_ptr) : 0.0;
+				     double dy = (dy_ptr && SvOK(*dy_ptr)) ? SvNV(*dy_ptr) : 0.0;
+				     double val = dx - dy;
+				     double delta = val - mean_d;
+				     mean_d += delta / (i + 1);
+				     M2_d += delta * (val - mean_d);
+				 }
+				 double var_d = M2_d / (nx - 1);
+				 if (var_d == 0.0) croak("t_test: data are essentially constant");
+				 cint_est = mean_d;
+				 std_err  = sqrt(var_d / nx);
+				 t_stat   = (cint_est - mu) / std_err;
+				 df       = nx - 1;
+				 hv_store(results, "estimate", 8, newSVnv(mean_d), 0);
 			} else if (var_equal) {
-		       if (var_x == 0.0 && var_y == 0.0) croak("t_test: data are essentially constant");
-		       double pooled_var = ((nx - 1) * var_x + (ny - 1) * var_y) / (nx + ny - 2);
-		       cint_est = mean_x - mean_y;
-		       std_err  = sqrt(pooled_var * (1.0 / nx + 1.0 / ny));
-		       t_stat   = (cint_est - mu) / std_err;
-		       df       = nx + ny - 2;
-		       
-		       hv_store(results, "estimate_x", 10, newSVnv(mean_x), 0);
-		       hv_store(results, "estimate_y", 10, newSVnv(mean_y), 0);
-		       
-		   } else {
-		       if (var_x == 0.0 && var_y == 0.0) croak("t_test: data are essentially constant");
-		       cint_est         = mean_x - mean_y;
-		       double stderr_x2 = var_x / nx;
-		       double stderr_y2 = var_y / ny;
-		       std_err          = sqrt(stderr_x2 + stderr_y2);
-		       t_stat           = (cint_est - mu) / std_err;
-		       df = pow(stderr_x2 + stderr_y2, 2) /
-		            (pow(stderr_x2, 2) / (nx - 1) + pow(stderr_y2, 2) / (ny - 1));
-		            
-		       hv_store(results, "estimate_x", 10, newSVnv(mean_x), 0);
-		       hv_store(results, "estimate_y", 10, newSVnv(mean_y), 0);
-		   }
-	  } else {
-		   cint_est = mean_x;
-		   std_err  = sqrt(var_x / nx);
-		   t_stat   = (cint_est - mu) / std_err;
-		   df       = nx - 1;
-		   hv_store(results, "estimate", 8, newSVnv(mean_x), 0);
-	  }
-
-	  p_val = get_t_pvalue(t_stat, df, alternative);
-
-	  double alpha = 1.0 - conf_level, t_crit, ci_lower, ci_upper;
-	  
-	  if (strcmp(alternative, "less") == 0) {
-		   t_crit   = qt_tail(df, alpha);
-		   ci_lower = -INFINITY;
-		   ci_upper = cint_est + t_crit * std_err;
-	  } else if (strcmp(alternative, "greater") == 0) {
-		   t_crit   = qt_tail(df, alpha);
-		   ci_lower = cint_est - t_crit * std_err;
-		   ci_upper = INFINITY;
-	  } else {
-		   t_crit   = qt_tail(df, alpha / 2.0);
-		   ci_lower = cint_est - t_crit * std_err;
-		   ci_upper = cint_est + t_crit * std_err;
-	  }
-
-	  AV*restrict conf_int = newAV();
-	  av_push(conf_int, newSVnv(ci_lower));
-	  av_push(conf_int, newSVnv(ci_upper));
-	  
-	  hv_store(results, "statistic", 9, newSVnv(t_stat), 0);
-	  hv_store(results, "df",        2, newSVnv(df),     0);
-	  hv_store(results, "p_value",   7, newSVnv(p_val),  0);
-	  hv_store(results, "conf_int",  8, newRV_noinc((SV*)conf_int), 0);
-
-	  RETVAL = newRV_noinc((SV*)results);
+				 if (var_x == 0.0 && var_y == 0.0) croak("t_test: data are essentially constant");
+				 double pooled_var = ((nx - 1) * var_x + (ny - 1) * var_y) / (nx + ny - 2);
+				 cint_est = mean_x - mean_y;
+				 std_err  = sqrt(pooled_var * (1.0 / nx + 1.0 / ny));
+				 t_stat   = (cint_est - mu) / std_err;
+				 df       = nx + ny - 2;
+				 hv_store(results, "estimate_x", 10, newSVnv(mean_x), 0);
+				 hv_store(results, "estimate_y", 10, newSVnv(mean_y), 0);
+			} else {
+				 if (var_x == 0.0 && var_y == 0.0) croak("t_test: data are essentially constant");
+				 cint_est         = mean_x - mean_y;
+				 double stderr_x2 = var_x / nx;
+				 double stderr_y2 = var_y / ny;
+				 std_err          = sqrt(stderr_x2 + stderr_y2);
+				 t_stat           = (cint_est - mu) / std_err;
+				 df = pow(stderr_x2 + stderr_y2, 2) /
+				      (pow(stderr_x2, 2) / (nx - 1) + pow(stderr_y2, 2) / (ny - 1));
+				 hv_store(results, "estimate_x", 10, newSVnv(mean_x), 0);
+				 hv_store(results, "estimate_y", 10, newSVnv(mean_y), 0);
+			}
+		} else {
+			cint_est = mean_x;
+			std_err  = sqrt(var_x / nx);
+			t_stat   = (cint_est - mu) / std_err;
+			df       = nx - 1;
+			hv_store(results, "estimate", 8, newSVnv(mean_x), 0);
+		}
+		p_val = get_t_pvalue(t_stat, df, alternative);
+		double alpha = 1.0 - conf_level, t_crit, ci_lower, ci_upper;
+		if (strcmp(alternative, "less") == 0) {
+			t_crit   = qt_tail(df, alpha);
+			ci_lower = -INFINITY;
+			ci_upper = cint_est + t_crit * std_err;
+		} else if (strcmp(alternative, "greater") == 0) {
+			t_crit   = qt_tail(df, alpha);
+			ci_lower = cint_est - t_crit * std_err;
+			ci_upper = INFINITY;
+		} else {
+			t_crit   = qt_tail(df, alpha / 2.0);
+			ci_lower = cint_est - t_crit * std_err;
+			ci_upper = cint_est + t_crit * std_err;
+		}
+		AV*restrict conf_int = newAV();
+		av_push(conf_int, newSVnv(ci_lower));
+		av_push(conf_int, newSVnv(ci_upper));
+		hv_store(results, "statistic", 9, newSVnv(t_stat), 0);
+		hv_store(results, "df",        2, newSVnv(df),     0);
+		hv_store(results, "p_value",   7, newSVnv(p_val),  0);
+		hv_store(results, "conf_int",  8, newRV_noinc((SV*)conf_int), 0);
+		RETVAL = newRV_noinc((SV*)results);
 	}
 	OUTPUT:
 	  RETVAL
@@ -3282,8 +3404,8 @@ void p_adjust(SV* p_sv, const char* method = "holm")
 	PPCODE:
 		if (strcmp(meth, "bonferroni") == 0) {
 			for (size_t i = 0; i < n; i++) {
-				 double v = arr[i].p * n;
-				 adj[arr[i].orig_idx] = (v < 1.0) ? v : 1.0;
+				double v = arr[i].p * n;
+				adj[arr[i].orig_idx] = (v < 1.0) ? v : 1.0;
 			}
 		} else if (strcmp(meth, "holm") == 0) {
 			double cummax = 0.0;
@@ -3302,18 +3424,18 @@ void p_adjust(SV* p_sv, const char* method = "holm")
 		} else if (strcmp(meth, "bh") == 0) {
 			double cummin = 1.0;
 			for (ssize_t i = n - 1; i >= 0; i--) {
-				 double v = arr[i].p * n / (i + 1.0);
-				 if (v < cummin) cummin = v;
-				 adj[arr[i].orig_idx] = (cummin < 1.0) ? cummin : 1.0;
+				double v = arr[i].p * n / (i + 1.0);
+				if (v < cummin) cummin = v;
+				adj[arr[i].orig_idx] = (cummin < 1.0) ? cummin : 1.0;
 			}
 		} else if (strcmp(meth, "by") == 0) {
 			double q = 0.0;
 			for (size_t i = 1; i <= n; i++) q += 1.0 / i;
 			double cummin = 1.0;
 			for (ssize_t i = n - 1; i >= 0; i--) {
-				 double v = arr[i].p * n / (i + 1.0) * q;
-				 if (v < cummin) cummin = v;
-				 adj[arr[i].orig_idx] = (cummin < 1.0) ? cummin : 1.0;
+				double v = arr[i].p * n / (i + 1.0) * q;
+				if (v < cummin) cummin = v;
+				adj[arr[i].orig_idx] = (cummin < 1.0) ? cummin : 1.0;
 			}
 		} else if (strcmp(meth, "hommel") == 0) {
 			double *restrict pa, *restrict q_arr;
@@ -4267,33 +4389,33 @@ seq(from, to, by = 1.0)
 	double by
 PPCODE:
 	{
-	  //Handle the zero 'by' case
-	  if (by == 0.0) {
-		   if (from == to) {
-		       EXTEND(SP, 1);
-		       mPUSHn(from);
-		       XSRETURN(1);
-		   } else {
-		       croak("invalid 'by' argument: cannot be zero when from != to");
-		   }
-	  }
-	  // Check for wrong direction / infinite loop
-	  if ((from < to && by < 0.0) || (from > to && by > 0.0)) {
-		   croak("wrong sign in 'by' argument");
-	  }
-	  /* * Calculate number of elements. 
+		//Handle the zero 'by' case
+		if (by == 0.0) {
+			if (from == to) {
+				 EXTEND(SP, 1);
+				 mPUSHn(from);
+				 XSRETURN(1);
+			} else {
+				 croak("invalid 'by' argument: cannot be zero when from != to");
+			}
+		}
+		// Check for wrong direction / infinite loop
+		if ((from < to && by < 0.0) || (from > to && by > 0.0)) {
+			croak("wrong sign in 'by' argument");
+		}
+		/* * Calculate number of elements. 
 		* R uses a small epsilon (like 1e-10) to avoid dropping the last 
 		* element due to floating point inaccuracies.
 		*/
-	  double n_elements_d = (to - from) / by;
-	  if (n_elements_d < 0.0) n_elements_d = 0.0;
-	  size_t n_elements = (n_elements_d + 1e-10) + 1;
-	  // Pre-extend the stack to avoid reallocating inside the loop
-	  EXTEND(SP, n_elements);
-	  for (size_t i = 0; i < n_elements; i++) {
+		double n_elements_d = (to - from) / by;
+		if (n_elements_d < 0.0) n_elements_d = 0.0;
+		size_t n_elements = (n_elements_d + 1e-10) + 1;
+		// Pre-extend the stack to avoid reallocating inside the loop
+		EXTEND(SP, n_elements);
+		for (size_t i = 0; i < n_elements; i++) {
 		  mPUSHn(from + i * by);
-	  }
-	  XSRETURN(n_elements);
+		}
+		XSRETURN(n_elements);
 	}
 
 SV* rnorm(...)
@@ -4727,7 +4849,7 @@ CODE:
 	double conf_level = 0.95;
 	const char*restrict alternative = "two.sided";
 
-	/* Parse named arguments */
+	// Parse named arguments
 	for (unsigned short int i = 1; i < items; i += 2) {
 	  if (i + 1 >= items) croak("fisher_test: odd number of arguments");
 	  const char*restrict key = SvPV_nolen(ST(i));
@@ -4764,52 +4886,40 @@ CODE:
 		   c = (c_ptr && SvOK(*c_ptr)) ? SvIV(*c_ptr) : 0;
 		   d = (d_ptr && SvOK(*d_ptr)) ? SvIV(*d_ptr) : 0;
 	  } else {
-		   croak("Invalid 2D Array structure");
+		  croak("Invalid 2D Array structure");
 	  }
 	} else if (SvTYPE(deref) == SVt_PVHV) {
 	  /* Fixed 2D Hash Logic: Sort keys lexically to enforce structured rows/columns */
 	  HV*restrict outer = (HV*)deref;
 	  if (hv_iterinit(outer) != 2) croak("Outer hash must have exactly 2 keys");
-	  
 	  HE*restrict he1 = hv_iternext(outer);
 	  HE*restrict he2 = hv_iternext(outer);
 	  if (!he1 || !he2) croak("Invalid outer hash");
-	  
 	  const char*restrict k1 = SvPV_nolen(hv_iterkeysv(he1));
 	  const char*restrict k2 = SvPV_nolen(hv_iterkeysv(he2));
-	  
 	  HE*restrict row1_he = (strcmp(k1, k2) < 0) ? he1 : he2;
 	  HE*restrict row2_he = (strcmp(k1, k2) < 0) ? he2 : he1;
-	  
 	  SV*restrict row1_sv = hv_iterval(outer, row1_he);
 	  SV*restrict row2_sv = hv_iterval(outer, row2_he);
-	  
 	  if (!SvROK(row1_sv) || SvTYPE(SvRV(row1_sv)) != SVt_PVHV ||
 		   !SvROK(row2_sv) || SvTYPE(SvRV(row2_sv)) != SVt_PVHV) {
 		   croak("Inner elements must be hashes");
 	  }
-	  
 	  HV*restrict in1 = (HV*)SvRV(row1_sv);
 	  HV*restrict in2 = (HV*)SvRV(row2_sv);
-	  
 	  if (hv_iterinit(in1) != 2 || hv_iterinit(in2) != 2) croak("Inner hashes must have exactly 2 keys");
-	  
 	  HE*restrict in1_he1 = hv_iternext(in1);
 	  HE*restrict in1_he2 = hv_iternext(in1);
 	  const char*restrict in1_k1 = SvPV_nolen(hv_iterkeysv(in1_he1));
 	  const char*restrict in1_k2 = SvPV_nolen(hv_iterkeysv(in1_he2));
-	  
 	  HE*restrict in1_c1 = (strcmp(in1_k1, in1_k2) < 0) ? in1_he1 : in1_he2;
 	  HE*restrict in1_c2 = (strcmp(in1_k1, in1_k2) < 0) ? in1_he2 : in1_he1;
-	  
 	  HE*restrict in2_he1 = hv_iternext(in2);
 	  HE*restrict in2_he2 = hv_iternext(in2);
 	  const char*restrict in2_k1 = SvPV_nolen(hv_iterkeysv(in2_he1));
 	  const char*restrict in2_k2 = SvPV_nolen(hv_iterkeysv(in2_he2));
-	  
 	  HE*restrict in2_c1 = (strcmp(in2_k1, in2_k2) < 0) ? in2_he1 : in2_he2;
 	  HE*restrict in2_c2 = (strcmp(in2_k1, in2_k2) < 0) ? in2_he2 : in2_he1;
-	  
 	  a = (hv_iterval(in1, in1_c1) && SvOK(hv_iterval(in1, in1_c1))) ? SvIV(hv_iterval(in1, in1_c1)) : 0;
 	  b = (hv_iterval(in1, in1_c2) && SvOK(hv_iterval(in1, in1_c2))) ? SvIV(hv_iterval(in1, in1_c2)) : 0;
 	  c = (hv_iterval(in2, in2_c1) && SvOK(hv_iterval(in2, in2_c1))) ? SvIV(hv_iterval(in2, in2_c1)) : 0;

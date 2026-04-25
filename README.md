@@ -116,6 +116,32 @@ or
     ];
     my $res1 = fisher_test($array_data);
 
+which returns a hash reference:
+
+    {
+    alternative   "two.sided",
+    conf_int      [
+        [0] 2.75338278824932,
+        [1] 301.462337971516
+    ],
+    estimate      {
+        "odds ratio"   21.3053175567504
+    },
+    method        "Fisher's Exact Test for Count Data",
+    p_value       0.00053672411914343
+}
+
+### hash reference entry
+
+    $ft = fisher_test( {
+        Guess => {
+            Milk => 3, Tea => 1
+        },
+        Truth => {
+            Milk => 1, Tea => 3
+        }
+    });
+
 I have the p-value calculated very precisely, but there are some inexactness (approximately 1% for the confidence intervals) which I couldn't rectify.  The answers are very close to R besides the p-value, where they are identical.
 
 ## glm
@@ -196,7 +222,7 @@ I've tried to make this as simple as possible, trying to follow from R:
 
     my $test_data = read_table('t/HepatitisCdata.csv');
 
-output types can be AOH, HOA, HOH
+output types can be AOH (aoa), HOA (hoa), HOH (hoh)
 
     read_table($filename, 'output.type' => 'aoh');
 
@@ -268,6 +294,7 @@ tests to see if an array reference is normally distributed, returns a p-value an
     );
 
 and returns the hash reference:
+
     {
     p.value     0.589650577093106,
     p_value     0.589650577093106,
@@ -279,16 +306,15 @@ and returns the hash reference:
 
 There are 1-sample and 2-sample t-tests:
 
-    my $t_test = t_test( 'x' => $test_data[$i][$j], mu => mean( $test_data[$i][$j] ));
+    my $t_test = t_test( $test_data[$i][$j], mu => mean( $test_data[$i][$j] ));
 
 or 2-sample:
 
     $t_test = t_test(
-    	'x'    => $test_data[3][0],
-    	'y'    => $test_data[3][1],
+    	$test_data[3][0],
+    	$test_data[3][1],
 	    paired => true
     );
-
 
 returns a hash reference, which looks like:
 
@@ -300,11 +326,27 @@ returns a hash reference, which looks like:
     p_value   => 0.19143688433660,
     statistic => 1.50996688705414
 
+the two groups compared can be specified, though not necessarily, as `x` and `y`, just like in R:
+
+    $t_test = t_test(
+    	'x' => test_data[3][0],
+    	'y' => $test_data[3][1],
+	    paired => true
+    );
+
 ## var
 
 as simple as possible:
 
     var(2, 4, 5, 8, 9)
+
+## wilcox_test
+
+
+    $test_data = wilcox_test(
+    	'x' => [1.83,  0.50,  1.62,  2.48, 1.68, 1.88, 1.55, 3.06, 1.30],
+    	'y' => [0.878, 0.647, 0.598, 2.05, 1.06, 1.29, 1.06, 3.14, 1.29]
+    );
 
 ## write_table
 

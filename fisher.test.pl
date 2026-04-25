@@ -17,7 +17,7 @@ my $t0 = Time::HiRes::time();
 my $ft = fisher_test($array_data);
 my $t1 = Time::HiRes::time();
 printf("Simple array calculation in %g seconds.\n", $t1-$t0);
-#p $ft; # R equivalent: fisher.test( matrix(c(10,2,3,15), nrow = 2)))
+p $ft; # R equivalent: fisher.test( matrix(c(10,2,3,15), nrow = 2)))
 $t0 = Time::HiRes::time();
 $ft = fisher_test( {
 	Guess => {

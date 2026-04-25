@@ -151,6 +151,11 @@ foreach my $i (0..$#test_data) { # single sample t-tests
 		is_approx( $t_test->{p_value}, 1,            "t_test: Testing set $i/$j p-value");
 		is_approx( $t_test->{df}, scalar @{ $test_data[$i][$j] } - 1, "t_test: df $i/$j");
 		is_approx( $t_test->{statistic}, 0, "t_test: t $i/$j");
+		# without key "x"
+		$t_test = t_test( $test_data[$i][$j], mu => mean( $test_data[$i][$j] ));
+		is_approx( $t_test->{p_value}, 1,            "t_test: Testing set $i/$j p-value");
+		is_approx( $t_test->{df}, scalar @{ $test_data[$i][$j] } - 1, "t_test: df $i/$j");
+		is_approx( $t_test->{statistic}, 0, "t_test: t $i/$j");
 	}
 }
 my @correct_t = (
@@ -185,8 +190,7 @@ my @correct_t = (
 	}
 );
 my $t_test = t_test(
-	'x' => $test_data[0][0],
-	'y' => $test_data[0][1]
+	'x' => $test_data[0][0],	'y' => $test_data[0][1]
 );
 foreach my $key (grep {ref $correct_t[0]{$_} eq ''} keys %{ $correct_t[0] }) {
 	if (not defined $t_test->{$key}) {
@@ -213,8 +217,7 @@ foreach my $j (0,1) {
 }
 # start new test
 $t_test = t_test(
-	'x'    => $test_data[3][0],
-	'y'    => $test_data[3][1],
+	'x'    => $test_data[3][0], 'y'    => $test_data[3][1],
 	paired => true
 );
 foreach my $key (grep {ref $correct_t[2]{$_} eq ''} keys %{ $correct_t[2] }) {
@@ -249,6 +252,49 @@ ok( $t_test->{p_value} < 0.05, 't_test alternative less works (small p_value)' )
 dies_ok {
 	t_test( 'x' => [3,3,3,3] )
 } '"t_test" dies when data is constant';
+
+$t_test = t_test(
+	'x' => $test_data[0][0],
+	mu  => mean( $test_data[0][0] )
+);
+is_approx( $t_test->{'p_value'}, 1, 't_test: single distribution p-value', 0);
+is_approx( $t_test->{statistic}, 0, 't_test: single distribution statistic', 0);
+#-repeat without "x"
+
+$t_test = t_test( $test_data[0][0], $test_data[0][1]);
+foreach my $key (grep {ref $correct_t[0]{$_} eq ''} keys %{ $correct_t[0] }) {
+	if (not defined $t_test->{$key}) {
+		die "$key isn't defined in test";
+	}
+	is_approx( $t_test->{$key}, $correct_t[0]{$key}, "t_test var_equal = true; $key");
+}
+foreach my $j (0,1) {
+	is_approx( $t_test->{'conf_int'}[$j], $correct_t[0]{'conf_int'}[$j], "Conf. interval index $j");
+}
+$t_test = t_test(
+	$test_data[1][0], $test_data[1][1],
+	var_equal => true
+);
+foreach my $key (grep {ref $correct_t[1]{$_} eq ''} keys %{ $correct_t[1] }) {
+	if (not defined $t_test->{$key}) {
+		die "$key isn't defined in test";
+	}
+	is_approx( $t_test->{$key}, $correct_t[1]{$key}, "t_test var_equal = true; $key");
+}
+foreach my $j (0,1) {
+	is_approx( $t_test->{'conf_int'}[$j], $correct_t[1]{'conf_int'}[$j], "Conf. interval index $j");
+}
+# start new test
+$t_test = t_test(	$test_data[3][0], $test_data[3][1],	paired => true);
+foreach my $key (grep {ref $correct_t[2]{$_} eq ''} keys %{ $correct_t[2] }) {
+	if (not defined $t_test->{$key}) {
+		die "$key isn't defined in test";
+	}
+	is_approx( $t_test->{$key}, $correct_t[2]{$key}, "t_test var_equal = true; $key");
+}
+foreach my $j (0,1) {
+	is_approx( $t_test->{'conf_int'}[$j], $correct_t[2]{'conf_int'}[$j], "Conf. interval index $j");
+}
 
 #----------------------
 #		p ajdust
@@ -338,6 +384,18 @@ foreach my $method ('Hochberg','Benjamini-Hochberg','Benjamini-Yekutieli', 'Bonf
 		ok(1, "$method works with cumulative error of $error");
 	} else {
 		fail("$method doesn't work for FDR correction with error = $error");
+	}
+	my $val = 0.003;
+	@q = p_adjust([$val], $method);
+	if (scalar @q == 1) {
+		pass("p_adjust: $method gives exactly 1 value");
+	} else {
+		fail('p_adjust has ' . (scalar @q) . ' values, when it should have exactly 1 value');
+	}
+	if ($q[0] == $val) {
+		pass("p_adjust: $method with 1 value returns that value");
+	} else {
+		fail("p_adjust: $method returned $q[0], instead of $val");
 	}
 }
 
@@ -1890,19 +1948,20 @@ is_approx($test_data->{statistic}{'X-squared'}, 30.070149095755, 'Chi-squared st
 # Wilcoxon text
 #------------------------
 $test_data = wilcox_test(
-	[1.83,  0.50,  1.62,  2.48, 1.68, 1.88, 1.55, 3.06, 1.30],
-	[0.878, 0.647, 0.598, 2.05, 1.06, 1.29, 1.06, 3.14, 1.29]
+	'x' => [1.83,  0.50,  1.62,  2.48, 1.68, 1.88, 1.55, 3.06, 1.30],
+	'y' => [0.878, 0.647, 0.598, 2.05, 1.06, 1.29, 1.06, 3.14, 1.29]
 );
 is_approx($test_data->{statistic}, 58, 'Wilcox test statistic', 0);
 is_approx($test_data->{'p_value'}, 0.132919458185319, 'Wilcox test p-value', 1e-15);
 #-----
 $test_data = wilcox_test(
-	[1.83,  0.50,  1.62,  2.48, 1.68, 1.88, 1.55, 3.06, 1.30],
-	[0.878, 0.647, 0.598, 2.05, 1.06, 1.29, 1.06, 3.14, 1.29],
+	'x' => [1.83,  0.50,  1.62,  2.48, 1.68, 1.88, 1.55, 3.06, 1.30],
+	'y' => [0.878, 0.647, 0.598, 2.05, 1.06, 1.29, 1.06, 3.14, 1.29],
 	paired => true
 );
-#is_approx($test_data->{statistic}, 40, 'Wilcox test (paired) statistic', 0);
-#is_approx($test_data->{'p_value'}, 0.0390625, 'Wilcox test (paired) statistic', 1e-7);
+p $test_data;
+is_approx($test_data->{statistic}, 40, 'Wilcox test (paired) statistic', 0);
+is_approx($test_data->{'p_value'}, 0.0390625, 'Wilcox test (paired) statistic', 1e-7);
 #$test_data = ks_test('x' => $x, 'y' => $y);
 #p $test_data;
 done_testing();
