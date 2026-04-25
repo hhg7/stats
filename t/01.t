@@ -1020,6 +1020,42 @@ foreach my ($idx, $meth) (indexed @correct) {
 		is_approx( $result->{$key}, $meth->{$key}, "cor_test: $meth->{method}/$meth->{alternative} & $key");
 	}
 }
+# NA/undef handling
+my $x_na = [1, 2,     3, undef,  5, 5, 6,     undef,7];
+my $y_na = [2, undef, 6, 8,     10, 9, undef, 14,  16];
+@correct = (
+{
+	alternative => 'two.sided',
+	'conf.level'=> 0.95,
+	estimate    => 0.98262751397896,
+	method      => 'pearson',
+	'p.value'   => 0.00274152275175,
+	parameter   => 3,
+	statistic   => 9.17060521448829,
+}
+);
+foreach my ($idx, $meth) (indexed @correct) {
+	$meth->{'conf.level'} = $meth->{'conf.level'} // 0.95; # default 0.95
+	say $meth->{'conf.level'};
+	my $result = cor_test(
+		$x_na, $y_na, # first 2 args are positional
+		alternative => $meth->{alternative}, # so that it matches the test
+		method      => $meth->{method},      # so that it matches the test
+		continuity  => 1,
+		'conf.level'=> $meth->{'conf.level'}
+	);
+	my @undef_keys = grep {!defined $result->{$_}} sort keys %{ $result };
+	if (scalar @undef_keys > 0) {
+		p @undef_keys;
+		die "The above keys aren't defined";
+	}
+	foreach my $key (sort grep {looks_like_number($result->{$_})} keys %{ $result }) {
+		if (not defined $meth->{$key}) {
+			die "\"$key\" isn't defined in answer key \$meth (index $idx/$#correct)";
+		}
+		is_approx( $result->{$key}, $meth->{$key}, "cor_test: $meth->{method}/$meth->{alternative} & $key");
+	}
+}
 #--------------------
 #  cov
 #--------------------

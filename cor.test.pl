@@ -8,5 +8,7 @@ use DDP {output => 'STDOUT', array_max => 10, show_memsize => 1};
 use Devel::Confess 'color';
 use Stats::LikeR;
 
-my $r = cor_test([1..8], [reverse -8..-1]);
+my $x_na = [1, 2,     3, undef,  5, 5, 6,     undef,7];
+my $y_na = [2, undef, 6, 8,     10, 9, undef, 14,  16];
+my $r = cor_test($x_na, $y_na);
 p $r;
