@@ -1,18 +1,15 @@
 #!/usr/bin/env perl
-use 5.042.2;
-no source::encoding;
+require 5.010;
 package Stats::LikeR;
 our $VERSION = 0.01;
 require XSLoader;
-use 5.042.2;
-no source::encoding;
 use DDP {output => 'STDOUT', array_max => 10, show_memsize => 1};
 use Devel::Confess 'color';
 use warnings FATAL => 'all';
 use autodie ':default';
 use Exporter 'import';
 XSLoader::load('Stats::LikeR', $VERSION);
-our @EXPORT_OK = qw(aov chisq_test cor cor_test cov fisher_test glm hist lm matrix mean median min max p_adjust quantile rbinom read_table rnorm runif scale sd seq shapiro_test t_test var wilcox_test write_table);
+our @EXPORT_OK = qw(aov chisq_test cor cor_test cov fisher_test glm hist lm matrix mean median min max p_adjust power_t_test quantile rbinom read_table rnorm runif scale sd seq shapiro_test t_test var wilcox_test write_table);
 our @EXPORT = @EXPORT_OK;
 
 require XSLoader;

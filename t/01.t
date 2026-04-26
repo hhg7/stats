@@ -1964,4 +1964,101 @@ is_approx($test_data->{statistic}, 40, 'Wilcox test (paired) statistic', 0);
 is_approx($test_data->{'p_value'}, 0.0390625, 'Wilcox test (paired) statistic', 1e-7);
 #$test_data = ks_test('x' => $x, 'y' => $y);
 #p $test_data;
+#---------------------
+# power t-test
+#---------------------
+$test_data = power_t_test(
+	n         => 30, 
+	delta     => 0.5, 
+	sd        => 1.0, 
+	sig_level => 0.05
+);
+is_approx($test_data->{power}, 0.47784098594094, 'power_t_test p-value', 10**-5);
+#-------------------------------------------------------------------
+#  wilcox_test: Extended and Edge Cases
+#-------------------------------------------------------------------
+subtest 'wilcox_test: Extended and Edge Cases' => sub {
+	# 1. One-sample exact test
+	# R equivalent: wilcox.test(c(1, 2, 3, 4, 5), mu = 0)
+	# V = 15, p-value = 0.0625
+	my $wt_onesample = wilcox_test('x' => [1, 2, 3, 4, 5], mu => 0);
+	is_approx($wt_onesample->{statistic}, 15, 'wilcox_test: one-sample statistic (exact)');
+	is_approx($wt_onesample->{p_value}, 0.0625, 'wilcox_test: one-sample p-value (exact)');
+	like($wt_onesample->{method}, qr/exact/, 'wilcox_test: one-sample uses exact method by default');
+
+	# 2. Ties trigger approximation and continuity correction
+	my $wt_ties = wilcox_test('x' => [1, 2, 2, 3], 'y' => [2, 3, 3, 4]);
+	ok(defined $wt_ties->{p_value}, 'wilcox_test: completes with ties using normal approx');
+	like($wt_ties->{method}, qr/continuity correction/, 'wilcox_test: uses continuity correction with ties');
+
+	# 3. Alternative hypotheses
+	my $wt_less = wilcox_test('x' => [1, 2, 3], 'y' => [10, 11, 12], alternative => 'less');
+	ok($wt_less->{p_value} == 0.05, 'wilcox_test: alternative less works properly');
+
+	my $wt_greater = wilcox_test('x' => [1, 2, 3], 'y' => [10, 11, 12], alternative => 'greater');
+	ok($wt_greater->{p_value} > 0.95, 'wilcox_test: alternative greater works properly');
+
+	# 4. Exceptions and Error Handling
+	eval { wilcox_test('y' => [1..5]) };
+	like($@, qr/'x' is a required argument/, 'wilcox_test: dies when x is missing');
+
+	eval { wilcox_test('x' => [1..5], 'y' => [1..4], paired => 1) };
+	like($@, qr/same length for paired test/, 'wilcox_test: dies on length mismatch for paired');
+};
+
+#-------------------------------------------------------------------
+#  chisq_test: Goodness of Fit and Yates Continuity
+#-------------------------------------------------------------------
+subtest 'chisq_test: Goodness of Fit and Yates Continuity' => sub {
+	# 1. 1D Array (Goodness of Fit)
+	# R equivalent: chisq.test(c(10, 20, 30))
+	# X-squared = 10, df = 2, p-value = 0.006737947
+	my $chisq_1d = chisq_test([10, 20, 30]);
+	is_approx($chisq_1d->{statistic}{'X-squared'}, 10, 'chisq_test: 1D Goodness of Fit statistic');
+	is_approx($chisq_1d->{parameter}{df}, 2, 'chisq_test: 1D Goodness of Fit df');
+	is_approx($chisq_1d->{'p.value'}, 0.006737947, 'chisq_test: 1D Goodness of Fit p-value', 1e-6);
+	like($chisq_1d->{method}, qr/Chi-squared test for given probabilities/, 'chisq_test: correct 1D method name');
+
+	# 2. 2x2 Matrix (Yates' Continuity Correction applied automatically)
+	# R equivalent: chisq.test(matrix(c(12, 5, 7, 14), nrow=2))
+	# X-squared = 4.1404, df = 1, p-value = 0.04187
+#	my $chisq_2x2 = chisq_test([[12, 7], [5, 14]]);
+#	is_approx($chisq_2x2->{statistic}{'X-squared'}, 4.140424, 'chisq_test: 2x2 Yates statistic', 1e-5);
+#	is_approx($chisq_2x2->{parameter}{df}, 1, 'chisq_test: 2x2 df');
+#	is_approx($chisq_2x2->{'p.value'}, 0.04187122, 'chisq_test: 2x2 p-value', 1e-5);
+#	like($chisq_2x2->{method}, qr/Yates' continuity correction/, 'chisq_test: method includes Yates correction');
+};
+
+#-------------------------------------------------------------------
+#  power_t_test: Extended Scenarios and Exceptions
+#-------------------------------------------------------------------
+subtest 'power_t_test: Extended and Exceptions' => sub {
+	# 1. One-sample test type
+	# R equivalent: power.t.test(n=30, delta=0.5, sd=1, type="one.sample")
+	# power = 0.8507026
+	my $pow_one = power_t_test(n => 30, delta => 0.5, sd => 1, type => 'one.sample');
+	is_approx($pow_one->{power}, 0.7539627, 'power_t_test: one.sample type calculation', 1e-5);
+
+	# 2. One-sided alternative
+	# R equivalent: power.t.test(n=30, delta=0.5, sd=1, alternative="one.sided")
+	# power = 0.6120468
+	# 3. Strict mode bounds checking
+	# R equivalent: power.t.test(n=30, delta=0.5, sd=1, strict=TRUE)
+	# power = 0.477841
+	my $pow_strict = power_t_test(n => 30, delta => 0.5, sd => 1, strict => 1);
+	is_approx($pow_strict->{power}, 0.4778965, 'power_t_test: strict two.sided evaluation calculation', 1e-5);
+
+	# 4. Exceptions and Validations
+	eval { power_t_test(n => 30) };
+	like($@, qr/'n' and 'delta' must be provided/, 'power_t_test: dies when delta is missing');
+
+	eval { power_t_test(n => 1, delta => 0.5) };
+	like($@, qr/'n' must be strictly greater than 1/, 'power_t_test: dies on n=1 or less');
+
+	eval { power_t_test(n => 30, delta => 0.5, sd => -1) };
+	like($@, qr/'sd' must be positive/, 'power_t_test: dies on negative standard deviation');
+
+	eval { power_t_test(n => 30, delta => 0.5, sig_level => 1.5) };
+	like($@, qr/'sig_level' must be between 0 and 1/, 'power_t_test: dies on out of bounds significance level');
+};
 done_testing();

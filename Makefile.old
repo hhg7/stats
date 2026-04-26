@@ -198,6 +198,7 @@ TO_INST_PM = benchmark.pl \
 	lib/Stats/LikeR.pm \
 	lib/Stats/bu.LikeR.pm \
 	lib/Stats/test.pl \
+	power.t.test.pl \
 	runif.pl \
 	t.test.pl \
 	wilcox.text.pl \
@@ -1092,6 +1093,7 @@ pm_to_blib : $(FIRST_MAKEFILE) $(TO_INST_PM)
 	  'lib/Stats/LikeR.pm' 'blib/lib/Stats/LikeR.pm' \
 	  'lib/Stats/bu.LikeR.pm' 'blib/lib/Stats/bu.LikeR.pm' \
 	  'lib/Stats/test.pl' 'blib/lib/Stats/test.pl' \
+	  'power.t.test.pl' '$(INST_LIB)/Stats/power.t.test.pl' \
 	  'runif.pl' '$(INST_LIB)/Stats/runif.pl' \
 	  't.test.pl' '$(INST_LIB)/Stats/t.test.pl' \
 	  'wilcox.text.pl' '$(INST_LIB)/Stats/wilcox.text.pl' \

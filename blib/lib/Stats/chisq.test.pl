@@ -10,3 +10,6 @@ use Stats::LikeR;
 my @tab = ([762, 327, 468], [484, 239, 477]);
 my $chisq = chisq_test(\@tab);
 p $chisq;
+
+$chisq = chisq_test([10, 20, 30]);
+p $chisq;
