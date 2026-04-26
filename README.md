@@ -1,7 +1,7 @@
 # Synopsis
 
 Get basic R statistical functions working in Perl as if they were part of List::Util, like `min`, `max`, `sum`, etc.
-I've used Artificial Intelligence tools such as Claude, Gemini, and Grok to write this.
+I've used Artificial Intelligence tools such as Claude, Gemini, and Grok to write this as well as using my own gray matter.
 There are other similar tools on CPAN, but I want speed and a form like List::Util, which I've gotten here with the help of AI, which often required many attempts to do correctly.
 This is meant to call subroutines directly through eXternal Subroutines (XS) for speed.
 
@@ -227,6 +227,16 @@ output types can be AOH (aoa), HOA (hoa), HOH (hoh)
     read_table($filename, 'output.type' => 'aoh');
 
     read_table($filename, 'output.type' => 'hoa');
+
+and, like Text::CSV_XS, filters can be applied in order to save RAM on big files:
+
+    $test_data = read_table(
+        't/HepatitisCdata.csv',
+        filter => {
+            Sex => sub {$_ eq 'f'} # where "Sex" is the column name, and "$_" is the value for that column
+        },
+        'output.type' => 'aoh'
+    );
 
 ## rnorm
 
