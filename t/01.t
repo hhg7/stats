@@ -1990,10 +1990,9 @@ subtest 'aov: Collinearity and Rank Deficiency' => sub {
 subtest 'aov: Interaction Missing Main Effects Exception' => sub {
 	my $data_interact = {
 		'y' => [1, 2, 3, 4],
-		A => ['a', 'b', 'a', 'b'],
-		B => ['x', 'x', 'y', 'y']
+		A   => ['a', 'b', 'a', 'b'],
+		B   => ['x', 'x', 'y', 'y']
 	};
-	
 	# Without explicit A and B added, Cartesian cross-product dummy building fails.
 	eval { aov($data_interact, 'y ~ A:B') };
 	like($@, qr/requires its main effects to be explicitly included/, 'aov: cleanly croaks when main effects are missing for interaction evaluation');
@@ -2138,5 +2137,71 @@ subtest 'power_t_test: Extended and Exceptions' => sub {
 
 	eval { power_t_test(n => 30, delta => 0.5, sig_level => 1.5) };
 	like($@, qr/'sig_level' must be between 0 and 1/, 'power_t_test: dies on out of bounds significance level');
+};
+#-------------------------------------------------------------------
+#  lm & aov: Dot (.) Operator Expansion
+#-------------------------------------------------------------------
+subtest 'lm & aov: Dot (.) operator formula expansion' => sub {
+	my $dot_data = {
+		'y'  => [10, 15, 20, 25, 30],
+		x1 => [1,  2,  3,  4,  5],
+		x2 => [2,  1,  4,  3,  5]
+	};
+
+	# Test lm: Coefficients should match regardless of order
+	my $lm_explicit = lm(formula => 'y ~ x1 + x2', data => $dot_data);
+	my $lm_dot      = lm(formula => 'y ~ .',       data => $dot_data);
+
+	is_approx($lm_dot->{coefficients}{x1}, $lm_explicit->{coefficients}{x1}, 'lm: dot operator correctly expands to x1');
+	is_approx($lm_dot->{coefficients}{x2}, $lm_explicit->{coefficients}{x2}, 'lm: dot operator correctly expands to x2');
+	is_approx($lm_dot->{'r.squared'}, $lm_explicit->{'r.squared'}, 'lm: dot operator produces identical r.squared');
+
+	# Test aov: Compare Total SS and Residuals to avoid Type I SS ordering issues
+	my $aov_explicit = aov($dot_data, 'y ~ x1 + x2');
+	my $aov_dot      = aov($dot_data, 'y ~ .');
+
+	# Sum of all non-residual SS should be equal
+	my $sum_ss_explicit = $aov_explicit->{x1}{'Sum Sq'} + $aov_explicit->{x2}{'Sum Sq'};
+	my $sum_ss_dot      = $aov_dot->{x1}{'Sum Sq'}      + $aov_dot->{x2}{'Sum Sq'};
+
+	is_approx($sum_ss_dot, $sum_ss_explicit, 'aov: total explained Sum Sq matches regardless of variable order');
+	is_approx($aov_dot->{Residuals}{'Sum Sq'}, $aov_explicit->{Residuals}{'Sum Sq'}, 'aov: dot operator produces identical Residual Sum Sq');
+};
+
+#-------------------------------------------------------------------
+#  lm & aov: Memory-safe Exception Pathways
+#-------------------------------------------------------------------
+subtest 'lm & aov: Memory-safe croak and validation' => sub {
+	# 1. 0 Degrees of Freedom (Parameters >= Observations)
+	# In the previous architecture, these would allocate large C arrays and then leak them when croaking.
+	# Now, they extract data first, realize there's not enough df, and croak cleanly.
+	my $short_data = { 
+		'y'  => [1, 2],
+		x1 => [3, 4],
+		x2 => [5, 6]
+	};
+	dies_ok { 
+		lm(formula => 'y ~ x1 + x2', data => $short_data) 
+	} 'lm: dies safely on 0 degrees of freedom (too few rows)';
+	
+	dies_ok { 
+		aov($short_data, 'y ~ x1 + x2') 
+	} 'aov: dies safely on 0 degrees of freedom (too few rows)';
+	# 2. Listwise Deletion resulting in 0 DF
+	my $na_data = { 
+		'y' => [undef, undef, undef, 1], 
+		'x' => [1, 2, 3, 4] 
+	};
+	dies_ok { 
+		lm(formula => 'y ~ x', data => $na_data) 
+	} 'lm: dies safely when listwise deletion (NAs) drops rows below parameter count';
+
+	# 3. Bad Formula parsing
+	dies_ok { 
+		lm(formula => 'y = x1 + x2', data => $short_data) 
+	} 'lm: dies safely on invalid formula (missing tilde)';
+	dies_ok { 
+		aov($short_data, 'y = x1 + x2') 
+	} 'aov: dies safely on invalid formula (missing tilde)';
 };
 done_testing();
