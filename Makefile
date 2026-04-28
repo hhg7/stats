@@ -189,7 +189,8 @@ PERL_ARCHIVE       =
 PERL_ARCHIVE_AFTER = 
 
 
-TO_INST_PM = benchmark.pl \
+TO_INST_PM = aov.pl \
+	benchmark.pl \
 	chisq.test.pl \
 	cor.test.pl \
 	examples.pl \
@@ -198,6 +199,7 @@ TO_INST_PM = benchmark.pl \
 	lib/Stats/LikeR.pm \
 	lib/Stats/bu.LikeR.pm \
 	lib/Stats/test.pl \
+	lm.pl \
 	power.t.test.pl \
 	runif.pl \
 	t.test.pl \
@@ -1084,6 +1086,7 @@ pm_to_blib : $(FIRST_MAKEFILE) $(TO_INST_PM)
 	  -e '@parts=splice @ARGV,0,$$i+1;' \
 	  -e 'pop @parts; $$filter=join q{ }, map qq{"$$_"}, @parts;' \
 	  -e 'pm_to_blib({@ARGV}, '\''$(INST_LIB)/auto'\'', $$filter, '\''$(PERM_DIR)'\'')' -- $(PM_FILTER) -- \
+	  'aov.pl' '$(INST_LIB)/Stats/aov.pl' \
 	  'benchmark.pl' '$(INST_LIB)/Stats/benchmark.pl' \
 	  'chisq.test.pl' '$(INST_LIB)/Stats/chisq.test.pl' \
 	  'cor.test.pl' '$(INST_LIB)/Stats/cor.test.pl' \
@@ -1093,6 +1096,7 @@ pm_to_blib : $(FIRST_MAKEFILE) $(TO_INST_PM)
 	  'lib/Stats/LikeR.pm' 'blib/lib/Stats/LikeR.pm' \
 	  'lib/Stats/bu.LikeR.pm' 'blib/lib/Stats/bu.LikeR.pm' \
 	  'lib/Stats/test.pl' 'blib/lib/Stats/test.pl' \
+	  'lm.pl' '$(INST_LIB)/Stats/lm.pl' \
 	  'power.t.test.pl' '$(INST_LIB)/Stats/power.t.test.pl' \
 	  'runif.pl' '$(INST_LIB)/Stats/runif.pl' \
 	  't.test.pl' '$(INST_LIB)/Stats/t.test.pl' \

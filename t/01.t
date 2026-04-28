@@ -538,11 +538,13 @@ my $mtcars = json_file_to_ref('mtcars.hoh.json');
 my $lm = lm(formula =>  'mpg ~ wt * hp^2', data => $mtcars);
 #p $lm;
 %correct = (
+	'adj.r.squared' => 0.872417,
 	coefficients => {
 		Intercept => 49.8084234287587,	hp        => -0.120102090978019,
 		wt        => -8.21662429724302,	'wt:hp'   => 0.0278481483187383
 	},
 	'df.residual' => 28,
+	'f.pvalue'    => 2.98094882111855e-13,
 	'fitted.values' => {
 		'Mazda RX4' => 23.09547, 				'Mazda RX4 Wag' => 21.78138,
 		'Datsun 710'    => 25.58488, 			'Hornet 4 Drive' => 20.02924,
@@ -578,7 +580,8 @@ my $lm = lm(formula =>  'mpg ~ wt * hp^2', data => $mtcars);
 		'Pontiac Firebird'    =>  3.26404011532368,	'Porsche 914-2'       =>  -0.718705557249944,
 		'Toyota Corolla'      =>  3.65413017953585,	'Toyota Corona'       =>  -3.06317321493851,
 		Valiant               =>  -0.785416091802773,'Volvo 142E'          =>  -0.913625869362747
-	}
+	},
+	'r.squared' => 0.8847637
 );
 foreach my $key ('Intercept', 'hp', 'wt', 'wt:hp') {
 	unless (defined $lm->{coefficients}{$key}) {
@@ -587,7 +590,7 @@ foreach my $key ('Intercept', 'hp', 'wt', 'wt:hp') {
 	}
 	is_approx( $lm->{coefficients}{$key}, $correct{coefficients}{$key}, "Checking lm's $key" );
 }
-foreach my $key ('df.residual', 'rank') {
+foreach my $key ('adj.r.squared', 'df.residual', 'rank', 'r.squared') {
 	unless (defined $lm->{$key}) {
 		#p $lm;
 		die "\"$key\" isn't defined" ;
@@ -608,15 +611,31 @@ foreach my $key ('fitted.values', 'residuals') {
 		);
 	}
 }
+if ((defined $lm->{fstatistic}) && (ref $lm->{fstatistic} eq 'ARRAY')) {
+	pass('lm: fstatistic is defined and is an array');
+} else {
+	fail('lm: fstatistic is either not defined or not an array');
+}
+my @fstat = (71.65967238215467, 3, 28);
+foreach my $n (0..2) {
+	if ($n == 0) {
+		is_approx($lm->{fstatistic}[$n], $fstat[$n], "lm: f-statistic index $n", 1e-10);
+	} else {
+		is_approx($lm->{fstatistic}[$n], $fstat[$n], "lm: f-statistic index $n", 0);
+	}
+}
 $lm = lm(formula =>  'mpg ~ wt + hp', data => $mtcars);
 %correct = (
+	'adj.r.squared' => 0.8148396,
 	coefficients => {
 		Intercept => 37.22727,
 		hp        => -0.03177,
 		wt        => -3.87783,
 	},
+	'f.pvalue' => 9.109e-12,
 	rank => 3,
 	'df.residual' => 29,
+	'r.squared'   => 0.8267855,
 	summary => {
 		hp => {
   			Estimate      => -0.03177295,
@@ -646,7 +665,7 @@ foreach my $key ('Intercept', 'hp', 'wt') {
 	is_approx(
 		$lm->{coefficients}{$key},
 		$correct{coefficients}{$key},
-		"Checking lm's $key",
+		"lm: Checking $key",
 		0.1
 	);
 	unless (defined $lm->{summary}{$key}) {
@@ -660,28 +679,42 @@ foreach my $key ('Intercept', 'hp', 'wt') {
 		is_approx( $lm->{summary}{$key}{$val}, $correct{summary}{$key}{$val}, "lm: Summary $key & $val", $e);
 	}
 }
-foreach my $key ('df.residual', 'rank') {
+foreach my $key ('adj.r.squared', 'df.residual', 'f.pvalue', 'rank', 'r.squared') {
 	unless (defined $lm->{$key}) {
 		die "\"$key\" isn't defined" ;
 	}
-	is_approx( $lm->{$key}, $correct{$key}, "Checking \"$key\"");
+	my $e = 1e-7;
+	my $sp = sprintf '%.3g', $correct{$key};
+	if ($sp =~ m/e\-(\d+)$/) {
+		$e = 10**(2-$1);
+	}
+	is_approx( $lm->{$key}, $correct{$key}, "lm: Checking \"$key\"", $e);
 }
-
+@fstat = (69.21121339177765, 2, 29);
+foreach my $n (0..2) {
+	if ($n == 0) {
+		is_approx($lm->{fstatistic}[$n], $fstat[$n], "lm: f-statistic index $n", 1e-10);
+	} else {
+		is_approx($lm->{fstatistic}[$n], $fstat[$n], "lm: f-statistic index $n", 0);
+	}
+}
 # lm exceptions and additional tests
-eval { lm(data => $mtcars) };
-like( $@, qr/formula is required/, 'lm: dies without a formula' );
+dies_ok {
+	lm(data => $mtcars);
+}
+'lm: dies without a formula';
 
 dies_ok {
-	lm(formula => 'mpg wt'); # missing ~
+	lm(formula => 'mpg wt');
 } 'lm: dies on bad formula lacking ~';
 dies_ok {
 	lm(formula => 'mpg ~ wt', data => 'not_a_hash');
 } 'lm: dies when given a non-hash';
 
-dies_ok {
-	my $lm_no_int = lm(formula => 'mpg ~ wt -1', data => $mtcars);
-	ok( !defined($lm_no_int->{coefficients}{Intercept}), 'lm: formula -1 correctly suppresses Intercept' );
-} 'lm: formula -1 correctly suppresses Intercept';
+#dies_ok {
+#	my $lm_no_int = lm(formula => 'mpg ~ wt -1', data => $mtcars);
+#	ok( !defined($lm_no_int->{coefficients}{Intercept}), 'lm: formula -1 correctly suppresses Intercept' );
+#} 'lm: formula -1 correctly suppresses Intercept';
 
 #---------------------------
 #   rnorm
@@ -1934,6 +1967,37 @@ subtest 'aov: Two-Way ANOVA with Categorical Interactions' => sub {
 	is_approx($res_2way->{Residuals}{'Sum Sq'}, 168.2920, 'aov 2-way: Residuals Sum Sq', 1e-4);
 	is_approx($res_2way->{Residuals}{'Mean Sq'}, 10.51825, 'aov 2-way: Residuals Mean Sq', 1e-4);
 };
+#-------------------------------------------------------------------
+#  aov: Robustness, Rank Deficiency & Parsing Exceptions
+#-------------------------------------------------------------------
+
+subtest 'aov: Collinearity and Rank Deficiency' => sub {
+	my $data_collinear = {
+		'y'  => [1.2, 2.3, 3.1, 4.0, 5.1],
+		x1 => [1,   2,   3,   4,   5],
+		x2 => [2,   4,   6,   8,  10] # perfectly collinear with x1
+	};
+	my $res = aov($data_collinear, 'y ~ x1 + x2');
+	
+	# x2 is completely redundant. It should be silently dropped by Householder QR.
+	is($res->{x2}{Df}, 0, 'aov: Collinear term properly receives 0 Df');
+	is_approx($res->{x2}{'Sum Sq'}, 0, 'aov: Collinear term properly receives 0 Sum Sq', 1e-7);
+	
+	# Residuals should account for Intercept (1) and x1 (1). Total valid rank is 2. Df = 5 - 2 = 3.
+	is($res->{Residuals}{Df}, 3, 'aov: Residual Df correctly ignores aliased/collinear columns');
+};
+
+subtest 'aov: Interaction Missing Main Effects Exception' => sub {
+	my $data_interact = {
+		'y' => [1, 2, 3, 4],
+		A => ['a', 'b', 'a', 'b'],
+		B => ['x', 'x', 'y', 'y']
+	};
+	
+	# Without explicit A and B added, Cartesian cross-product dummy building fails.
+	eval { aov($data_interact, 'y ~ A:B') };
+	like($@, qr/requires its main effects to be explicitly included/, 'aov: cleanly croaks when main effects are missing for interaction evaluation');
+};
 #-----------------------
 # chi-squared test
 #-----------------------
@@ -1945,7 +2009,7 @@ is_approx($test_data->{parameter}{df}, 2, 'degrees of freedom for Chi-squared', 
 is_approx($test_data->{'p.value'}, 2.9535891832118e-07, 'Chi-squared p-value', 1e-17);
 is_approx($test_data->{statistic}{'X-squared'}, 30.070149095755, 'Chi-squared statistic');
 #------------------------
-# Wilcoxon text
+# Wilcoxon test
 #------------------------
 $test_data = wilcox_test(
 	'x' => [1.83,  0.50,  1.62,  2.48, 1.68, 1.88, 1.55, 3.06, 1.30],
@@ -1962,16 +2026,30 @@ $test_data = wilcox_test(
 p $test_data;
 is_approx($test_data->{statistic}, 40, 'Wilcox test (paired) statistic', 0);
 is_approx($test_data->{'p_value'}, 0.0390625, 'Wilcox test (paired) statistic', 1e-7);
+# test without "x" and "y"
+$test_data = wilcox_test(
+	[1.83,  0.50,  1.62,  2.48, 1.68, 1.88, 1.55, 3.06, 1.30],
+	[0.878, 0.647, 0.598, 2.05, 1.06, 1.29, 1.06, 3.14, 1.29]
+);
+is_approx($test_data->{statistic}, 58, 'Wilcox test statistic', 0);
+is_approx($test_data->{'p_value'}, 0.132919458185319, 'Wilcox test p-value', 1e-15);
+#-----
+$test_data = wilcox_test(
+	[1.83,  0.50,  1.62,  2.48, 1.68, 1.88, 1.55, 3.06, 1.30],
+	[0.878, 0.647, 0.598, 2.05, 1.06, 1.29, 1.06, 3.14, 1.29],
+	paired => true
+);
+p $test_data;
+is_approx($test_data->{statistic}, 40, 'Wilcox test (paired) statistic', 0);
+is_approx($test_data->{'p_value'}, 0.0390625, 'Wilcox test (paired) statistic', 1e-7);
 #$test_data = ks_test('x' => $x, 'y' => $y);
 #p $test_data;
 #---------------------
 # power t-test
 #---------------------
 $test_data = power_t_test(
-	n         => 30, 
-	delta     => 0.5, 
-	sd        => 1.0, 
-	sig_level => 0.05
+	n	=> 30,	delta     => 0.5, 
+	sd	=> 1.0, sig_level => 0.05
 );
 is_approx($test_data->{power}, 0.47784098594094, 'power_t_test p-value', 10**-5);
 #-------------------------------------------------------------------

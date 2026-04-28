@@ -131,6 +131,7 @@ which returns a hash reference:
     p_value       0.00053672411914343
 }
 
+
 ### hash reference entry
 
     $ft = fisher_test( {
@@ -168,7 +169,7 @@ takes a hash of an array as input
     	family  => 'gaussian'
     );
 
-I'm not completely confident that this is working perfectly, I've only gotten this subroutine to work for simple cases
+I'm not completely confident that this is working perfectly, though I've gotten this subroutine to work for simple cases
 
 ## lm
 
@@ -209,6 +210,13 @@ works like mean, taking array references and arrays:
 Returns array of false-discovery-rate-corrected p-values, where methods available are "holm", "hochberg", "hommel", "bonferroni", "BH", "BY", "fdr"
 
     my @q = p_adjust(\@pvalues, $method);
+
+## power_t_test
+
+    $test_data = power_t_test(
+    	n	=> 30,	delta     => 0.5, 
+    	sd	=> 1.0, sig_level => 0.05
+    );
 
 ## rbinom
 
@@ -352,10 +360,9 @@ as simple as possible:
 
 ## wilcox_test
 
-
     $test_data = wilcox_test(
-    	'x' => [1.83,  0.50,  1.62,  2.48, 1.68, 1.88, 1.55, 3.06, 1.30],
-    	'y' => [0.878, 0.647, 0.598, 2.05, 1.06, 1.29, 1.06, 3.14, 1.29]
+    	[1.83,  0.50,  1.62,  2.48, 1.68, 1.88, 1.55, 3.06, 1.30],
+    	[0.878, 0.647, 0.598, 2.05, 1.06, 1.29, 1.06, 3.14, 1.29]
     );
 
 ## write_table

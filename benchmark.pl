@@ -8,7 +8,7 @@ use Stats::LikeR; # mean
 use Time::HiRes;
 use List::Util 'sum';
 use Util 'rand_between';
-use Text::CSV_XS 'csv';
+#use Text::CSV_XS 'csv';
 
 sub perl_mean {
 	my @n = map { ref($_) eq 'ARRAY' ? @$_ : $_ } @_;
@@ -70,5 +70,5 @@ my @large_data = (1000000000.1, 1000000000.2, 1000000000.3);
 say var(@large_data) . ' ?= 0.01';#, 'var: handles large magnitude data cleanly' );
 say sd(@large_data) . ' ?= 0.1';
 #----------
-my $aoh = csv( in => 't/HepatitisCdata.csv', headers => 'auto');
-p $aoh;
+#my $aoh = csv( in => 't/HepatitisCdata.csv', headers => 'auto');
+#p $aoh;
