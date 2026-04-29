@@ -35,7 +35,13 @@ which returns
        }
     }
 
-#chisq_test
+You can also perform Two-Way ANOVA with categorical interactions using the `*` operator. The parser will implicitly evaluate the main effects alongside the interaction:
+
+    my $res_2way = aov($data_2way, 'len ~ supp * dose');
+
+It is robust against rank deficiency; collinear terms will gracefully receive 0 degrees of freedom and 0 sum of squares, matching R's behavior.
+
+## chisq_test
 
     my @test_data = ([762, 327, 468], [484, 239, 477]);
     my $test_data = chisq_test(\@test_data);
@@ -78,6 +84,12 @@ which outputs:
     }
     }
 
+It also supports 1D arrays for Goodness of Fit tests:
+
+    my $chisq_1d = chisq_test([10, 20, 30]);
+
+For 2x2 matrices, Yates' Continuity Correction is applied automatically, exactly like in R.
+
 ## cor
 
     cor($array1, $array2, $method = 'pearson'),
@@ -85,6 +97,8 @@ which outputs:
 that is, `pearson` is the default and will be used if `$method` is not specified.
 
 Just like R, `pearson`, `spearman`, and `kendall` are available
+
+If you provide an array of arrays (a matrix), `cor` will compute the correlation matrix automatically. 
 
 ## cor_test
 
@@ -95,6 +109,8 @@ Just like R, `pearson`, `spearman`, and `kendall` are available
     		method      => 'pearson',
     		continuity  => 1
     	);
+
+`cor_test` safely handles `undef` (or `NA`) values seamlessly by computing over pairwise complete observations. 
 
 ## cov
 
@@ -109,6 +125,8 @@ or
     cov($array1, $array2, 'kendall')
 
 ## fisher_test
+
+### array reference entry
 
     my $array_data = [
     	[10, 2],
@@ -169,7 +187,19 @@ takes a hash of an array as input
     	family  => 'gaussian'
     );
 
-I'm not completely confident that this is working perfectly, though I've gotten this subroutine to work for simple cases
+I'm not completely confident that this is working perfectly, though I've gotten this subroutine to work for simple cases.
+
+In addition to the `gaussian` default, it fully supports logistic regression using the `binomial` family parameter via Iteratively Reweighted Least Squares (IRLS):
+
+    my $glm_bin = glm(formula => 'am ~ wt + hp', data => \%mtcars, family => 'binomial');
+
+## hist
+
+Computes the histogram of the given data values, operating in single $O(N)$ pass performance. It returns the bin counts, computed breaks, midpoints, and density. 
+
+    my $res = hist([1, 2, 2, 3, 3, 3, 4, 4, 5], breaks => 4);
+
+If `breaks` is not explicitly provided, it defaults to calculating the number of bins using Sturges' formula.
 
 ## lm
 
@@ -179,12 +209,24 @@ This is the linear models function.
 
 where `$mtcars` is a hash of hashes
 
+`lm` also supports generating interaction terms directly within the formula using the `*` operator:
+
+    my $lm = lm(formula => 'mpg ~ wt * hp^2', data => \%mtcars);
+
+If your data contains missing numbers (`NA` or `undef`), `lm` handles listwise deletion dynamically to ensure mathematical integrity before fitting.
+
+the dot operator also works:
+
+    $lm = lm(formula => 'y ~ .', data => $dot_data);
+
 ## matrix
 
     my $mat1 = matrix(
     	data => [1..6],
     	nrow => 2
     );
+
+You can also pass `byrow => 1` if you want the matrix populated row-wise instead of column-wise.
 
 ## mean
 
@@ -218,11 +260,23 @@ Returns array of false-discovery-rate-corrected p-values, where methods availabl
     	sd	=> 1.0, sig_level => 0.05
     );
 
+It also allows configuring the test type (`type => 'one.sample'`, `'two.sample'`, `'paired'`) and alternative hypothesis (`alternative => 'one.sided'`). You can also pass `strict => 1` to strictly evaluate both tails of the distribution.
+
+## quantile
+
+Calculates sample quantiles using R's continuous Type 7 interpolation. 
+
+    my $quantile = quantile('x' => [1..99], probs => [0.05, 0.1, 0.25]);
+
+If the `probs` parameter is omitted, it behaves identically to R by defaulting to the 0, 25, 50, 75, and 100 percentiles (`c(0, .25, .5, .75, 1)`). The returned hash keys match R's standardized naming convention (e.g., `"25%"`, `"33.3%"`).
+
 ## rbinom
 
 Create a binomial distribution of numbers
 
     my $binom = rbinom( n => $n, prob => 0.5, size => 9);
+
+It hooks directly into Perl's internal PRNG system, respecting `srand()` seeds. 
 
 ## read_table
 
@@ -265,6 +319,14 @@ where `n` is the number of items, the values are between `min` and `max`
 
     my @scaled_results = scale(1..5);
 
+You can also pass an options hash to disable centering or scaling:
+
+    my @scaled_results = scale(1..5, { center => false, scale => true });
+
+It fully supports matrix operations. By passing an array of arrays, `scale` processes the data column by column independently:
+
+    my $scaled_mat = scale([[1, 2], [3, 4], [5, 6]]);
+
 ## sd
 
     my $stdev = sd(2,4,4,4,5,5,7,9);
@@ -301,7 +363,6 @@ Works as closely as I can to R's seq, which is very similar to Perl's `for` loop
     for (my $idx = 5; $idx <= 10; $idx++) { # count down to pop
         is_approx(pop @seq, $idx, "seq item $idx with negative step");
     }
-}
 
 ## shapiro_test
 
@@ -365,10 +426,16 @@ as simple as possible:
     	[0.878, 0.647, 0.598, 2.05, 1.06, 1.29, 1.06, 3.14, 1.29]
     );
 
+It fully supports paired tests (`paired => true`) and can calculate exact p-values (the default for $N < 50$ without ties). If ties are encountered, it automatically switches to an approximation with continuity correction.
+
 ## write_table
 
 mimics R's "write.table", with data as first argument to subroutine, and output file as second
 
     write_table(\@data_aoh, $tmp_file, sep => "\t", 'row.names' => true);
+
+You can also precisely filter and reorder which columns are written by passing an array reference to `col.names`:
+
+    write_table(\@data, $tmp_file, sep => "\t", 'col.names' => ['c', 'a']);
 
 

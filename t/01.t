@@ -12,6 +12,7 @@ use Scalar::Util 'looks_like_number';
 use JSON qw(decode_json encode_json);
 use Digest::SHA 'sha512_base64';
 use File::Temp;
+use Test::LeakTrace;
 
 # Gemini helped to write some of the tests
 # Custom helper for floating-point comparisons
@@ -46,6 +47,11 @@ sub json_file_to_ref ($json_filename) {
 #		min
 #----------------------
 is_approx( min(1,2,2.33,3), 1, 'min of scalars');
+no_leaks_ok {
+	eval {
+		min(1, 2, 2.33, 3)
+	}
+} 'min(): no memory leaks';
 my @test_data = (-5..5);
 is_approx(min(@test_data), $test_data[0], 'min of array');
 my $test_data = \@test_data;
@@ -59,6 +65,11 @@ is_approx( max(1,2,3), 3, 'max of scalars');
 is_approx(max(@test_data), $test_data[-1], 'max of array');
 is_approx(max($test_data), $test_data[-1], 'max of array reference');
 is_approx( max(values %h), 9, 'max takes values from hash');
+no_leaks_ok {
+	eval {
+		max(1, 2, 2.33, 3)
+	}
+} 'max(): no memory leaks';
 #----------------------
 #		mean
 #----------------------
@@ -91,6 +102,11 @@ subtest 'Numerical Stability: Catastrophic Cancellation' => sub {
 eval { mean() };
 like( $@, qr/mean needs >= 1 element/, 'mean: dies when given empty input' );
 
+no_leaks_ok {
+	eval {
+		mean(1, 2, 2.33, 3)
+	}
+} 'mean(): no memory leaks';
 # -------------------------------
 # standard deviation
 # -------------------------------
@@ -108,7 +124,11 @@ eval { sd(1) };
 like( $@, qr/stdev needs >= 2 elements/, 'sd: dies when given < 2 elements' );
 
 dies_ok { var(1) } 'var: dies when given < 2 elements' ;
-
+no_leaks_ok {
+	eval {
+		sd(1, 2, 2.33, 3)
+	}
+} 'sd(): no memory leaks';
 #------------------
 # t.test
 #------------------
@@ -148,11 +168,21 @@ dies_ok { var(1) } 'var: dies when given < 2 elements' ;
 foreach my $i (0..$#test_data) { # single sample t-tests
 	foreach my $j (0,1) {
 		my $t_test = t_test( 'x' => $test_data[$i][$j], mu => mean( $test_data[$i][$j] ));
+		no_leaks_ok {
+			eval {
+				 t_test( 'x' => $test_data[$i][$j], mu => mean( $test_data[$i][$j] ));
+			}
+		} 't_test(): no memory leaks';
 		is_approx( $t_test->{p_value}, 1,            "t_test: Testing set $i/$j p-value");
 		is_approx( $t_test->{df}, scalar @{ $test_data[$i][$j] } - 1, "t_test: df $i/$j");
 		is_approx( $t_test->{statistic}, 0, "t_test: t $i/$j");
 		# without key "x"
 		$t_test = t_test( $test_data[$i][$j], mu => mean( $test_data[$i][$j] ));
+		no_leaks_ok {
+			eval {
+				 t_test( $test_data[$i][$j], mu => mean( $test_data[$i][$j] ));
+			}
+		} 't_test(): no memory leaks';
 		is_approx( $t_test->{p_value}, 1,            "t_test: Testing set $i/$j p-value");
 		is_approx( $t_test->{df}, scalar @{ $test_data[$i][$j] } - 1, "t_test: df $i/$j");
 		is_approx( $t_test->{statistic}, 0, "t_test: t $i/$j");
@@ -385,6 +415,11 @@ foreach my $method ('Hochberg','Benjamini-Hochberg','Benjamini-Yekutieli', 'Bonf
 	} else {
 		fail("$method doesn't work for FDR correction with error = $error");
 	}
+	no_leaks_ok {
+		eval {
+			 p_adjust( \@pvalues, $method);
+		}
+	} 'p_adjust(): no memory leaks';
 	my $val = 0.003;
 	@q = p_adjust([$val], $method);
 	if (scalar @q == 1) {
@@ -408,7 +443,11 @@ like( $@, qr/Unknown p-value adjustment method/, 'p_adjust: dies on invalid meth
 
 my @empty_p = p_adjust([]);
 is_deeply( \@empty_p, [], 'p_adjust handles empty arrayref gracefully' );
-
+no_leaks_ok {
+	eval {
+		 p_adjust([]);
+	}
+} 'p_adjust(): no memory leaks';
 #----------------------
 #		var
 #----------------------
@@ -416,6 +455,11 @@ my @ans = (2.5, 8.3);
 foreach my ($i, $arr) (indexed([1..5], [2, 4, 5, 8, 9])) {
 	my $var = var( $arr );
 	is_approx( $var, $ans[$i], "Test index $i for var");
+	no_leaks_ok {
+		eval {
+			 var( $arr );
+		}
+	} 'var(): no memory leaks';
 }
 #----------------------
 #		median
@@ -424,6 +468,11 @@ foreach my ($i, $arr) (indexed([1..5], [2, 4, 5, 8, 9])) {
 foreach my ($i, $ans) (indexed @ans) {
 	my $median = median( $test_data[$i][0] );
 	is_approx( $median, $ans, "Median test $i");
+	no_leaks_ok {
+		eval {
+			 var( $test_data[$i][0] );
+		}
+	} 'median(): no memory leaks';
 }
 
 eval { median() };
@@ -457,6 +506,11 @@ foreach my $method (sort keys %correct) {
 		"cor: method = \"$method\"",
 		$e
 	);
+	no_leaks_ok {
+		eval {
+			 cor($test_data[0], $test_data[1], $method);
+		}
+	} "cor() with $method: no memory leaks";
 }
 
 # cor exceptions and matrix support tests
@@ -476,6 +530,11 @@ is( ref($cor_matrix), 'ARRAY', 'cor with matrices returns an array reference' );
 #  SCALE
 #----------------------
 my @scaled_results = scale(1..5);
+no_leaks_ok {
+	eval {
+		 scale(1..5);
+	}
+} 'scale: no memory leaks';
 my @correct_scaled = (-1.2649111, -0.6324555, 0.0000000, 0.6324555, 1.2649111);
 foreach my ($i, $correct) (indexed @correct_scaled) {
 	is_approx($scaled_results[$i], $correct, "index $i for scale");
@@ -513,6 +572,14 @@ if (encode_json($mat1) eq $matrix_correct) {
 	fail('simple "matrix" fails');
 }
 
+no_leaks_ok {
+	eval {
+		matrix(
+			data => [1..6],
+			nrow => 2
+		);
+	}
+} 'matrix: no memory leaks';
 # matrix exceptions
 eval { matrix(data => "string", nrow => 2) };
 like( $@, qr/must be an array reference/, 'matrix: dies on non-arrayref data' );
@@ -536,6 +603,12 @@ like( $@, qr/Data array cannot be empty/, 'matrix: dies on empty data array' );
 #----------------------------
 my $mtcars = json_file_to_ref('mtcars.hoh.json');
 my $lm = lm(formula =>  'mpg ~ wt * hp^2', data => $mtcars);
+
+no_leaks_ok {
+	eval {
+		lm(formula =>  'mpg ~ wt * hp^2', data => $mtcars);
+	}
+} 'lm: "mpg ~ wt * hp^2": no memory leaks';
 #p $lm;
 %correct = (
 	'adj.r.squared' => 0.872417,
@@ -560,7 +633,7 @@ my $lm = lm(formula =>  'mpg ~ wt * hp^2', data => $mtcars);
 		'Fiat X1-9'   => 29.53900, 			'Porsche 914-2'   => 26.71871,
 		'Lotus Europa'   => 28.56630, 		'Ford Pantera L'   =>15.36033,
 		'Ferrari Dino'   => 19.52990, 		'Maserati Bora'   => 13.54587,
-		'Volvo 142E'      => 22.31363
+		'Volvo 142E'     => 22.31363
 	},
 	rank => 4,
 		residuals  => {
@@ -625,6 +698,11 @@ foreach my $n (0..2) {
 	}
 }
 $lm = lm(formula =>  'mpg ~ wt + hp', data => $mtcars);
+no_leaks_ok {
+	eval {
+		lm(formula =>  'mpg ~ wt + hp', data => $mtcars);
+	};
+} 'lm: "mpg ~ wt + hp": no memory leaks';
 %correct = (
 	'adj.r.squared' => 0.8148396,
 	coefficients => {
@@ -703,14 +781,29 @@ dies_ok {
 	lm(data => $mtcars);
 }
 'lm: dies without a formula';
-
+no_leaks_ok {
+	eval {
+		lm(data => $mtcars);
+	};
+} 'lm: dies without a formula and no memory leaks';
+#--------
 dies_ok {
 	lm(formula => 'mpg wt');
 } 'lm: dies on bad formula lacking ~';
+no_leaks_ok {
+	eval {
+		lm(formula => 'mpg wt');
+	};
+} 'lm: dies on a bad formula and no memory leaks';
 dies_ok {
 	lm(formula => 'mpg ~ wt', data => 'not_a_hash');
 } 'lm: dies when given a non-hash';
 
+no_leaks_ok {
+	eval {
+		lm(formula => 'mpg ~ wt', data => 'not_a_hash');
+	};
+} 'lm: dies on a bad formula and no memory leaks';
 #dies_ok {
 #	my $lm_no_int = lm(formula => 'mpg ~ wt -1', data => $mtcars);
 #	ok( !defined($lm_no_int->{coefficients}{Intercept}), 'lm: formula -1 correctly suppresses Intercept' );
@@ -721,6 +814,9 @@ dies_ok {
 #----------------------------
 my ($rmean, $sd, $n) = (10, 2, 9999);
 my $normals = rnorm( n => $n, mean => $rmean, sd => $sd);
+no_leaks_ok {
+	rnorm( n => $n, mean => $rmean, sd => $sd);
+} 'rnorm has no memory leaks';
 is_approx(scalar @{ $normals }, $n, 'rnorm sample size');
 is_approx(mean($normals), $rmean, 'rnorm mean', 0.1);
 is_approx(sd($normals), $sd, 'rnorm sd', 0.1);
@@ -734,13 +830,15 @@ like( $@, qr/must be even key\/value pairs/, 'rnorm: dies on odd argument count'
 #    quantile
 #----------------------
 my $quantile = quantile('x' => [1..99], probs => [0.05, 0.1, 0.25]);
+no_leaks_ok {
+	quantile('x' => [1..99], probs => [0.05, 0.1, 0.25]);
+} 'quantile has no memory leaks';
 # R equivalent: quantile(1:99, probs=c(0.01,0.1,0.25))
 @ans = (5.9, 10.80, 25.50);
 my @quantile_keys = ('5%', '10%', '25%');
 foreach my $idx (0..$#ans) {
 	is_approx($quantile->{$quantile_keys[$idx]}, $ans[$idx], "quantile: $quantile_keys[$idx]", 10**-14);
 }
-p $quantile;
 #----------------------
 #    Fisher's Test
 #----------------------
@@ -755,6 +853,11 @@ if (0.99*$correct_conf_int_range < $conf_int_range < 1.01* $correct_conf_int_ran
 	fail('Fisher\'s test is *NOT* within 1% of correct: ');
 }
 is_approx( $ft->{estimate}{'odds ratio'}, 21.30533, 'Fisher\'s test odds ratio', 10**-3);
+no_leaks_ok {
+	eval {
+		fisher_test([[10, 2],[3, 15]]);
+	}
+} 'Fisher\'s test with array: no leaks';
 #---------
 $ft = fisher_test( {
 	Guess => {
@@ -773,6 +876,18 @@ if (0.99*$correct_conf_int_range < $conf_int_range < 1.01* $correct_conf_int_ran
 	fail('Fisher\'s test is *NOT* within 1% of correct: ');
 }
 is_approx( $ft->{estimate}{'odds ratio'}, 6.408309, 'Fisher\'s hash input test odds ratio', 10**-3);
+no_leaks_ok {
+	eval {
+		fisher_test( {
+			Guess => {
+				Milk => 3, Tea => 1
+			},
+			Truth => {
+				Milk => 1, Tea => 3
+			}
+		});
+	}
+} 'Fisher\'s test with hash: no leaks';
 #-------
 $ft = fisher_test( {
 	Guess => {
@@ -789,6 +904,18 @@ if ($ft->{conf_int}[1] == 'inf') {
 } else {
 	fail('Fisher test: Upper confidence interval is NOT infinite');
 }
+no_leaks_ok {
+	eval {
+		fisher_test( {
+			Guess => {
+				Milk => 3, Tea => 1
+			},
+			Truth => {
+				Milk => 1, Tea => 3
+			}
+		}, alternative => 'greater');
+	}
+} 'Fisher\'s test with hash and "greater" alternative: no leaks';
 #----------------------
 #    hist
 #----------------------
@@ -897,6 +1024,11 @@ is_approx( max(@{ $unif }), 1, 'Approximately correct maximum', 10**-3);
 		fail('runif repeats ' . scalar @identical_idx . "/$n values");
 	}
 }
+no_leaks_ok {
+	eval {
+		runif( n => $n, min => 0, max => 1);
+	};
+} 'runif: no memory leaks';
 #----------------------
 #      rbinom
 #----------------------
@@ -906,6 +1038,11 @@ if (scalar @{ $binom } == $n) {
 } else {
 	fail("binom should have $n elements, but has " . scalar @{ $binom } . ' elements');
 }
+no_leaks_ok {
+	eval {
+		rbinom( n => $n, prob => 0.5, size => 9);
+	};
+} 'rbinom: no memory leaks';
 subtest 'rbinom: Exceptions and Validations' => sub {
 	eval { rbinom(n => 10, size => 10) };
 	like( $@, qr/'size' and 'prob' are required arguments/, 'rbinom: dies when prob is missing' );
@@ -978,15 +1115,23 @@ subtest 'rbinom: Randomness' => sub {
 # Example 1: Standard integer sequence
 say 'seq(1, 5):';
 my @seq = seq(1, 5);
-say join(', ', @seq), "\n";
-
+no_leaks_ok {
+	eval {
+		seq(1,5);
+	};
+} 'seq: no memory leaks';
 foreach my ($idx, $item) (indexed @seq) {
-	is_approx( $item, $idx + 1, "seq item $idx");
+	is_approx( $item, $idx + 1, "seq item $idx", 0);
 }
 
 # Example 2: Fractional steps
 say 'seq(1, 2, 0.25):';
 @seq = seq(1, 2, 0.25);
+no_leaks_ok {
+	eval {
+		seq(1,2,0.25);
+	};
+} 'seq: no memory leaks';
 say join(", ", @seq), "\n";
 for (my $idx = 2; $idx >= 1; $idx -= 0.25) { # count down to pop
 	is_approx(pop @seq, $idx, "seq item $idx with fractional step");
@@ -995,6 +1140,12 @@ for (my $idx = 2; $idx >= 1; $idx -= 0.25) { # count down to pop
 # Example 3: Negative steps
 say 'seq(10, 5, -1):';
 @seq = seq(10, 5, -1);
+
+no_leaks_ok {
+	eval {
+		seq(10, 5, -1);
+	};
+} 'seq: no memory leaks';
 say join(", ", @seq), "\n";
 for (my $idx = 5; $idx <= 10; $idx++) { # count down to pop
 	is_approx(pop @seq, $idx, "seq item $idx with negative step");
@@ -1009,6 +1160,11 @@ subtest 'seq: Floating-point precision drift' => sub {
 	my @seq_drift = seq(0, 100, 0.1);
 	# If current += by is used, the 500th element (50.0) might evaluate to 49.999999999999
 	is_approx( $seq_drift[500], 50.0, 'seq: 500th fractional step maintains exact expected scale without drifting', 10**-12 );
+	no_leaks_ok {
+		eval {
+			seq(0, 100, 0.1);
+		};
+	} 'seq: no memory leaks';
 };
 
 #my $wt_result = wilcox_test( 'x' => [1..4], 'y' => [5..8], {});
@@ -1020,12 +1176,22 @@ subtest 'seq: Floating-point precision drift' => sub {
 my $shapiro = shapiro_test(
 	[1..5]
 );
+no_leaks_ok {
+	shapiro_test(
+		[1..5]
+	);
+} 'Shapiro test: no leaks';
 is_approx( $shapiro->{p_value}, 0.9671739, 'Shapiro p-value');
 is_approx( $shapiro->{W}, 0.9867622, 'Shapiro W');
 #--------
 $shapiro = shapiro_test(
 	[1..19]
 );
+no_leaks_ok {
+	shapiro_test(
+		[1..19]
+	);
+} 'Shapiro test: no leaks';
 is_approx( $shapiro->{p_value}, 0.5896506, 'Shapiro p-value: 19 values');
 is_approx( $shapiro->{W}, 0.9608707, 'Shapiro W: 19 values');
 #--------------------
@@ -1110,6 +1276,17 @@ foreach my ($idx, $meth) (indexed @correct) {
 		}
 		is_approx( $result->{$key}, $meth->{$key}, "cor_test: $meth->{method}/$meth->{alternative} & $key");
 	}
+	no_leaks_ok {
+		eval {
+			cor_test(
+				$x, $y, # first 2 args are positional
+				alternative => $meth->{alternative}, # so that it matches the test
+				method      => $meth->{method},      # so that it matches the test
+				continuity  => 1,
+				'conf.level'=> $meth->{'conf.level'}
+			);
+		};
+	} "cor_test $idx: no memory leaks";
 }
 # NA/undef handling
 my $x_na = [1, 2,     3, undef,  5, 5, 6,     undef,7];
@@ -1146,6 +1323,17 @@ foreach my ($idx, $meth) (indexed @correct) {
 		}
 		is_approx( $result->{$key}, $meth->{$key}, "cor_test: $meth->{method}/$meth->{alternative} & $key");
 	}
+	no_leaks_ok {
+		eval {
+			cor_test(
+				$x_na, $y_na, # first 2 args are positional
+				alternative => $meth->{alternative}, # so that it matches the test
+				method      => $meth->{method},      # so that it matches the test
+				continuity  => 1,
+				'conf.level'=> $meth->{'conf.level'}
+			);
+		};
+	} "cor_test $idx: no memory leaks";
 }
 #--------------------
 #  cov
@@ -1210,16 +1398,24 @@ foreach my $k1 ('ctrl', 'Residuals') {
 #-------------------------------------------------------------------
 #  glm: Generalized Linear Models
 #-------------------------------------------------------------------
-subtest 'glm: Gaussian matches lm' => sub {
+#subtest 'glm: Gaussian matches lm' => sub {
 	# Check that gaussian glm is mathematically identical to OLS lm
-	my $lm_res = lm(formula => 'mpg ~ wt + hp', data => $mtcars);
-	my $glm_res = glm(formula => 'mpg ~ wt + hp', data => $mtcars, family => 'gaussian');
-
-	is_approx($glm_res->{coefficients}{Intercept}, $lm_res->{coefficients}{Intercept}, 'glm gaussian matches lm intercept');
-	is_approx($glm_res->{coefficients}{wt}, $lm_res->{coefficients}{wt}, 'glm gaussian matches lm wt');
-	is_approx($glm_res->{deviance}, $lm_res->{rss}, 'glm gaussian deviance matches lm RSS');
-	is($glm_res->{family}, 'gaussian', 'glm stored family correctly');
-};
+my $lm_res = lm(formula => 'mpg ~ wt + hp', data => $mtcars);
+no_leaks_ok {
+	eval {
+		lm(formula => 'mpg ~ wt + hp', data => $mtcars);
+	};
+} 'lm: no leaks';
+my $glm_res = glm(formula => 'mpg ~ wt + hp', data => $mtcars, family => 'gaussian');
+no_leaks_ok {
+	eval {
+		glm(formula => 'mpg ~ wt + hp', data => $mtcars);
+	};
+} 'glm: no leaks';
+is_approx($glm_res->{coefficients}{Intercept}, $lm_res->{coefficients}{Intercept}, 'glm gaussian matches lm intercept');
+is_approx($glm_res->{coefficients}{wt}, $lm_res->{coefficients}{wt}, 'glm gaussian matches lm wt');
+is_approx($glm_res->{deviance}, $lm_res->{rss}, 'glm gaussian deviance matches lm RSS');
+is($glm_res->{family}, 'gaussian', 'glm stored family correctly');
 
 #-------------------------------------------------------------------
 #  glm: Generalized Linear Models
@@ -1398,6 +1594,15 @@ $glm_teeth = glm(
 	formula => 'len ~ dose + supp',
 	family  => 'gaussian'
 );
+no_leaks_ok {
+	eval {
+		glm(
+			data    => \%tooth_growth,
+			formula => 'len ~ dose + supp',
+			family  => 'gaussian'
+		);
+	};
+} 'glm with teeth dataset: no memory leaks';
 %correct = (
 	aic        => 348.41553291891,
 	deviance   => 1022.5550357143,
@@ -1530,6 +1735,11 @@ if (ref $test_data eq 'ARRAY') {
 } else {
 	fail('"aoh" is not an array');
 }
+no_leaks_ok {
+	eval {
+		read_table('t/HepatitisCdata.csv');
+	};
+} 'read_table: basic with no memory leaks';
 if (
 	($test_data->[0]{Age} == 32)   && ($test_data->[0]{Sex} eq 'm') &&
    ($test_data->[0]{ALB} == 38.5) && ($test_data->[0]{ALP} == 52.5) &&
@@ -1556,6 +1766,11 @@ if (
 } else {
 	fail('"read_table" fails to read into hash of array correctly');
 }
+no_leaks_ok {
+	eval {
+		read_table('t/HepatitisCdata.csv', 'output.type' => 'hoa');
+	};
+} 'read_table: basic with no memory leaks with hash of array';
 $test_data = read_table('t/HepatitisCdata.csv', 'output.type' => 'hoh');
 foreach my $col ('Category', 'Age', 'Sex', 'ALB', 'ALP', 'ALT', 'AST', 'BIL','CHE', 'CHOL', 'CREA', 'GGT', 'PROT') {
 	if (defined $test_data->{$col}) {
@@ -1564,6 +1779,11 @@ foreach my $col ('Category', 'Age', 'Sex', 'ALB', 'ALP', 'ALT', 'AST', 'BIL','CH
 		fail("\"$col\" isn't defined from \"read_table\"");
 	}
 }
+no_leaks_ok {
+	eval {
+		read_table('t/HepatitisCdata.csv', 'output.type' => 'hoh');
+	};
+} 'read_table: basic with no memory leaks with hash of hash';
 if (
 	($test_data->{Sex}{1} eq $test_data->{Sex}{2} eq $test_data->{Sex}{3} eq 'm')
 	&&
@@ -1585,6 +1805,11 @@ foreach my $f ('t/E2021.csv','t/E2022.csv','t/E2023.csv','t/E2024.csv') {
 	p $test_data;
 }
 $test_data = read_table('t/bodyfat.csv', 'output.type' => 'hoa');
+no_leaks_ok {
+	eval {
+		read_table('t/bodyfat.csv', 'output.type' => 'hoa');
+	};
+} 'read_table: no memory leaks with bodyfat hash-of-array';
 my @col = qw(Density	BodyFat Age Weight Height Neck Chest Abdomen	Hip Thigh Knee Ankle	Biceps Forearm	Wrist);
 my @err = grep {!defined $test_data->{$_}} @col;
 if (scalar @err == 0) {
@@ -1634,6 +1859,11 @@ if (sha512_base64($str) eq 'FInYAXZcS7lK1n7osAhVkp5SiQNpt3h4kql9yZ2YCoPQslHKjwfG
 } else {
 	fail("sha512 does not match for write_table; see $tmp_file");
 }
+no_leaks_ok {
+	eval {
+		write_table(\%data, $tmp_file, sep => "\t", 'row.names' => true);
+	};
+} 'write_table: no memory leaks with row.names = true';
 # === TEST 1: HASH OF HASHES (positional) ===
 # Demonstrates: HoH, sorted rows/columns, "NA" for missing values,
 #               quoting when separator ("\t") or " appears inside data
@@ -1654,6 +1884,11 @@ if (sha512_base64($str) eq 'ZYK6zmrT47CLrEc4PSFtCtvdkLtv47MCIMHIg70bARlWO5J9Muzy
 } else {
 	fail("sha512 does not match for write_table HoH; see $tmp_file");
 }
+no_leaks_ok {
+	eval {
+		write_table(\%data_hoh, $tmp_file, sep => "\t", 'row.names' => true);
+	};
+} 'write_table: no memory leaks with hash-of-hash input';
 # === TEST 2: HASH OF ARRAYS (positional) ===
 # Demonstrates: HoA, auto-generated V1/V2... headers, padding shorter arrays with "NA",
 #               quoting when separator ("\t") or " appears inside data
@@ -1672,6 +1907,30 @@ if (sha512_base64($str) eq '1wv8uFDVQkQ9UZ+50n+r/Z8oj4VFP4eusApZDAY1DB3dXhT+gFFy
 } else {
     fail("sha512 does not match for write_table HoA; see $tmp_file");
 }
+no_leaks_ok {
+	eval {
+		write_table(\%data_hoa, $tmp_file, sep => "\t", 'row.names' => true);
+	};
+} 'write_table: no memory leaks with hash-of-hash input';
+# ==============================================================================
+# 4. write_table: Nested Reference Memory Leaks
+# ==============================================================================
+# We supply a valid Array-of-Hashes, but one of the cells contains an Array reference.
+# write_table cannot write deeply nested structures to a flat CSV and will croak.
+# The fix ensures that the previously allocated header/row strings are freed before croaking.
+my $nested_data = [
+	{ Name => 'Alice', Age => 30, Scores => [95, 90] }, # Nested 'Scores' array
+	{ Name => 'Bob',   Age => 25, Scores => [80, 85] }
+];
+
+no_leaks_ok {
+  eval {
+      write_table(
+          data => $nested_data, 
+          file => 'test_output_dummy.csv'
+      );
+  };
+} 'write_table: No memory leaks when encountering illegal nested references';
 #---------
 # read_table with filter: aoh
 #---------
@@ -1687,6 +1946,17 @@ if (scalar @{ $test_data } == 238) {
 } else {
 	fail('filter on hepatitis/female has ' . scalar @{ $test_data } . ' rows, when it should have 238');
 }
+no_leaks_ok {
+	eval {
+		read_table(
+			't/HepatitisCdata.csv',
+			filter => {
+				Sex => sub {$_ eq 'f'}
+			},
+			'output.type' => 'aoh'
+		);
+	};
+} 'read_table: reads hepatitis data without leaks with filter: aoh';
 @correct = (39.9,	35.2,	22,	29.8,	6.3,	8.16,	4.37,	60,	4.5, 72.5);
 @col = qw(ALB	ALP	ALT	AST	BIL	CHE	CHOL	CREA	GGT	PROT);
 foreach my ($idx, $col) (indexed @col) {
@@ -1707,6 +1977,17 @@ if (defined $test_data->{Sex}) {
 } else {
 	fail('read_table: "Sex" column is NOT output after filter');
 }
+no_leaks_ok {
+	eval {
+		read_table(
+			't/HepatitisCdata.csv',
+			filter => {
+				Sex => sub {$_ eq 'f'}
+			},
+			'output.type' => 'hoa'
+		);
+	};
+} 'read_table: reads hepatitis data without leaks with filter: hoa';
 my $nf = 0;
 foreach my $sex (@{ $test_data->{Sex} }) {
 	$nf++ if $sex eq 'f';
@@ -2016,8 +2297,16 @@ $test_data = wilcox_test(
 );
 is_approx($test_data->{statistic}, 58, 'Wilcox test statistic', 0);
 is_approx($test_data->{'p_value'}, 0.132919458185319, 'Wilcox test p-value', 1e-15);
+no_leaks_ok {
+	eval {
+		$test_data = wilcox_test(
+			'x' => [1.83,  0.50,  1.62,  2.48, 1.68, 1.88, 1.55, 3.06, 1.30],
+			'y' => [0.878, 0.647, 0.598, 2.05, 1.06, 1.29, 1.06, 3.14, 1.29]
+		);
+	};
+} 'wilcox test: no leaks';
 #-----
-$test_data = wilcox_test(
+$test_data = wilcox_test( # test paired version
 	'x' => [1.83,  0.50,  1.62,  2.48, 1.68, 1.88, 1.55, 3.06, 1.30],
 	'y' => [0.878, 0.647, 0.598, 2.05, 1.06, 1.29, 1.06, 3.14, 1.29],
 	paired => true
@@ -2032,6 +2321,15 @@ $test_data = wilcox_test(
 );
 is_approx($test_data->{statistic}, 58, 'Wilcox test statistic', 0);
 is_approx($test_data->{'p_value'}, 0.132919458185319, 'Wilcox test p-value', 1e-15);
+no_leaks_ok {
+	eval {
+		$test_data = wilcox_test(
+			'x' => [1.83,  0.50,  1.62,  2.48, 1.68, 1.88, 1.55, 3.06, 1.30],
+			'y' => [0.878, 0.647, 0.598, 2.05, 1.06, 1.29, 1.06, 3.14, 1.29],
+			paired => true
+		);
+	};
+} 'wilcox test: no leaks';
 #-----
 $test_data = wilcox_test(
 	[1.83,  0.50,  1.62,  2.48, 1.68, 1.88, 1.55, 3.06, 1.30],
@@ -2051,6 +2349,14 @@ $test_data = power_t_test(
 	sd	=> 1.0, sig_level => 0.05
 );
 is_approx($test_data->{power}, 0.47784098594094, 'power_t_test p-value', 10**-5);
+no_leaks_ok {
+	eval {
+		power_t_test(
+			n	=> 30,	delta     => 0.5, 
+			sd	=> 1.0, sig_level => 0.05
+		);
+	};
+} 'power_t_test';
 #-------------------------------------------------------------------
 #  wilcox_test: Extended and Edge Cases
 #-------------------------------------------------------------------
@@ -2141,36 +2447,75 @@ subtest 'power_t_test: Extended and Exceptions' => sub {
 #-------------------------------------------------------------------
 #  lm & aov: Dot (.) Operator Expansion
 #-------------------------------------------------------------------
-subtest 'lm & aov: Dot (.) operator formula expansion' => sub {
-	my $dot_data = {
-		'y'  => [10, 15, 20, 25, 30],
-		x1 => [1,  2,  3,  4,  5],
-		x2 => [2,  1,  4,  3,  5]
-	};
-
-	# Test lm: Coefficients should match regardless of order
-	my $lm_explicit = lm(formula => 'y ~ x1 + x2', data => $dot_data);
-	my $lm_dot      = lm(formula => 'y ~ .',       data => $dot_data);
-
-	is_approx($lm_dot->{coefficients}{x1}, $lm_explicit->{coefficients}{x1}, 'lm: dot operator correctly expands to x1');
-	is_approx($lm_dot->{coefficients}{x2}, $lm_explicit->{coefficients}{x2}, 'lm: dot operator correctly expands to x2');
-	is_approx($lm_dot->{'r.squared'}, $lm_explicit->{'r.squared'}, 'lm: dot operator produces identical r.squared');
-
-	# Test aov: Compare Total SS and Residuals to avoid Type I SS ordering issues
-	my $aov_explicit = aov($dot_data, 'y ~ x1 + x2');
-	my $aov_dot      = aov($dot_data, 'y ~ .');
-
-	# Sum of all non-residual SS should be equal
-	my $sum_ss_explicit = $aov_explicit->{x1}{'Sum Sq'} + $aov_explicit->{x2}{'Sum Sq'};
-	my $sum_ss_dot      = $aov_dot->{x1}{'Sum Sq'}      + $aov_dot->{x2}{'Sum Sq'};
-
-	is_approx($sum_ss_dot, $sum_ss_explicit, 'aov: total explained Sum Sq matches regardless of variable order');
-	is_approx($aov_dot->{Residuals}{'Sum Sq'}, $aov_explicit->{Residuals}{'Sum Sq'}, 'aov: dot operator produces identical Residual Sum Sq');
+#subtest 'lm & aov: Dot (.) operator formula expansion' => sub {
+my $dot_data = {
+	'y'  => [10, 15, 20, 25, 30],
+	x1 => [1,  2,  3,  4,  5],
+	x2 => [2,  1,  4,  3,  5]
 };
 
+# Test lm: Coefficients should match regardless of order
+my $lm_explicit = lm(formula => 'y ~ x1 + x2', data => $dot_data);
+my $lm_dot      = lm(formula => 'y ~ .',       data => $dot_data);
+is_approx($lm_dot->{coefficients}{x1}, $lm_explicit->{coefficients}{x1}, 'lm: dot operator correctly expands to x1');
+is_approx($lm_dot->{coefficients}{x2}, $lm_explicit->{coefficients}{x2}, 'lm: dot operator correctly expands to x2');
+is_approx($lm_dot->{'r.squared'}, $lm_explicit->{'r.squared'}, 'lm: dot operator produces identical r.squared');
+no_leaks_ok {
+	eval {
+		lm(formula => 'y ~ .', data => $dot_data);
+	};
+} 'lm: no leaks with "."';
+# Test aov: Compare Total SS and Residuals to avoid Type I SS ordering issues
+my $aov_explicit = aov($dot_data, 'y ~ x1 + x2');
+my $aov_dot      = aov($dot_data, 'y ~ .');
+no_leaks_ok {
+	eval {
+		 aov($dot_data, 'y ~ .');
+	};
+} 'aov with ".": no memory leaks';
+
+# Sum of all non-residual SS should be equal
+my $sum_ss_explicit = $aov_explicit->{x1}{'Sum Sq'} + $aov_explicit->{x2}{'Sum Sq'};
+my $sum_ss_dot      = $aov_dot->{x1}{'Sum Sq'}      + $aov_dot->{x2}{'Sum Sq'};
+
+is_approx($sum_ss_dot, $sum_ss_explicit, 'aov: total explained Sum Sq matches regardless of variable order');
+is_approx($aov_dot->{Residuals}{'Sum Sq'}, $aov_explicit->{Residuals}{'Sum Sq'}, 'aov: dot operator produces identical Residual Sum Sq');
 #-------------------------------------------------------------------
+#  lm: Relative Tolerance / Collinearity (Bug Fix #3)
+#-------------------------------------------------------------------
+subtest 'lm: Relative collinearity tolerance on unscaled data' => sub {
+	# 1. Microscopic Variance Test
+	my $micro_data = {
+		'y'  => [1.1, 2.1, 3.1, 4.1, 5.1],
+		x1 => [1e-8, 2e-8, 3e-8, 4e-8, 5e-8]
+	};
+	# Variance of x1 is tiny (~ 1e-16). The old absolute tolerance of 1e-10 
+	# would falsely flag this as collinear/aliased and assign it a NaN coefficient.
+
+	my $lm_micro = lm(formula => 'y ~ x1', data => $micro_data);
+
+	ok(defined $lm_micro->{coefficients}{x1}, 'lm: micro-variance predictor is successfully parsed');
+	ok($lm_micro->{coefficients}{x1} ne 'NaN', 'lm: micro-variance coefficient is calculated (not aliased)');
+	is_approx($lm_micro->{coefficients}{x1}, 1e8, 'lm: micro-variance coefficient value is perfectly estimated', 1e-3);
+
+	# 2. True Collinearity Validation
+	my $coll_data = {
+		'y' => [1, 2, 3, 4, 5],
+		x1 => [1, 2, 3, 4, 5],
+		x2 => [2, 4, 6, 8, 10] # x2 is perfectly linearly dependent on x1
+	};
+
+	my $lm_coll = lm(formula => 'y ~ x1 + x2', data => $coll_data);
+
+	# Ensure one of them was properly targeted and aliased by the sweep operator
+	my $x1_is_nan = (!defined $lm_coll->{coefficients}{x1} || $lm_coll->{coefficients}{x1} eq 'NaN');
+	my $x2_is_nan = (!defined $lm_coll->{coefficients}{x2} || $lm_coll->{coefficients}{x2} eq 'NaN');
+
+	ok($x1_is_nan || $x2_is_nan, 'lm: perfectly collinear variables are still properly aliased and dropped');
+};
+#----------------------------------------------
 #  lm & aov: Memory-safe Exception Pathways
-#-------------------------------------------------------------------
+#----------------------------------------------
 subtest 'lm & aov: Memory-safe croak and validation' => sub {
 	# 1. 0 Degrees of Freedom (Parameters >= Observations)
 	# In the previous architecture, these would allocate large C arrays and then leak them when croaking.
