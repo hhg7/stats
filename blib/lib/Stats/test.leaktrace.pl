@@ -18,8 +18,8 @@ use Stats::LikeR;
 # write_table cannot write deeply nested structures to a flat CSV and will croak.
 # The fix ensures that the previously allocated header/row strings are freed before croaking.
 my $nested_data = [
-  { Name => "Alice", Age => 30, Scores => [95, 90] }, # Nested 'Scores' array
-  { Name => "Bob",   Age => 25, Scores => [80, 85] }
+	{ Name => "Alice", Age => 30, Scores => [95, 90] }, # Nested 'Scores' array
+	{ Name => "Bob",   Age => 25, Scores => [80, 85] }
 ];
 
 no_leaks_ok {

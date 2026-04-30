@@ -1510,8 +1510,7 @@ foreach my ($idx, $val) (indexed qw(
 -2.3042857 -4.1042857 -2.9042857  4.1957143 -2.6042857  2.5139286  6.1139286 
  6.4139286  9.2139286  2.8139286  8.0139286  8.6139286  4.0139286 -2.6860714 
 10.1139286 -1.4496429 -0.5496429 -4.5496429 -2.4496429 -2.1496429  3.9503571 
--0.5496429  0.3503571  2.4503571 -3.9496429
-)) {
+-0.5496429  0.3503571  2.4503571 -3.9496429)) {
 	$correct{'deviance.resid'}{$idx+1} = $val;
 }
 foreach my ($idx, $val) (indexed qw(
@@ -2549,4 +2548,42 @@ subtest 'lm & aov: Memory-safe croak and validation' => sub {
 		aov($short_data, 'y = x1 + x2') 
 	} 'aov: dies safely on invalid formula (missing tilde)';
 };
+#------------------------
+# Kolmogorov-Smirnov
+#------------------------
+my $ksx = [qw(2.29258933  0.18126998 -0.35344691 -1.11263431 -1.27008776 -0.25430767
+-0.42543048  0.93866464 -0.20838470  1.23049681  2.00720734 -1.90505316
+-0.01565043  0.75832509 -0.16071642 -0.12233682  1.96816567  1.12870747
+2.65888437  0.28593201  0.77703726 -0.04010983  0.76615094  0.54587695
+-0.05254988  0.38800321 -1.17422679  1.23959021  0.69485302 -0.11265354
+-0.24885903 -0.08385566  1.31638004  0.26217220  0.54655099 -0.93221413
+0.25564497  0.93769895  0.03296175  0.40248836 -0.29519459  0.50047151
+-0.83870281  1.12315212 -0.54269950  1.11397783 -0.54257221  0.28592571
+1.50792125  0.08526939)];
+my $ksy = [qw(0.12691328 0.90138032 0.24332833 0.43789166 0.84998830 0.81363851
+0.86952816 0.59003408 0.16147129 0.20170704 0.49802479 0.55526988
+0.66574521 0.38529607 0.84985111 0.59408528 0.39516660 0.70785236
+0.53252618 0.62963267 0.53251903 0.18885578 0.61922322 0.07602336
+0.28763359 0.10201167 0.16455688 0.68249714 0.20168356 0.01536685)];
+# Rkst.g <- ks.test(x, y, alternative='greater')
+my $ks = ks_test($ksx, $ksy);
+is_approx($ks->{p_value}, 0.001825518, 'Kolmogorov-Smirnov test: p-value', 1e-9); # two-sided
+is_approx($ks->{statistic}, 0.42, 'Kolmogorov-Smirnov test: statistic', 0);
+no_leaks_ok {
+	eval {
+		ks_test($ksx, $ksy);
+	}
+} 'Kolmogorov-Smirnov test ok without memory leaks';
+$ks = ks_test($ksx, $ksy, alternative => 'less');
+no_leaks_ok {
+	eval {
+		ks_test($ksx, $ksy);
+	}
+} 'Kolmogorov-Smirnov test ok without memory leaks; with less alternative';
+is_approx($ks->{p_value}, 0.06784844, 'Kolmogorov-Smirnov test: p-value (alternative = less)', 1e-8);
+is_approx($ks->{statistic}, 0.26, 'Kolmogorov-Smirnov test: statistic (alternative = less)', 0);
+# alternative = 'greater'
+$ks = ks_test($ksx, $ksy, alternative => 'greater');
+is_approx($ks->{statistic}, 0.42, 'Kolmogorov-Smirnov test alternative = "greater", statistic', 0);
+is_approx($ks->{'p_value'}, 0.0009127589, 'Kolmogorov-Smirnov test alternative = "greater", statistic', 1e-8);
 done_testing();

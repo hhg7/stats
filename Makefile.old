@@ -196,6 +196,7 @@ TO_INST_PM = aov.pl \
 	examples.pl \
 	fisher.test.pl \
 	hist.pl \
+	ks.test.pl \
 	lib/Stats/LikeR.pm \
 	lib/Stats/bu.LikeR.pm \
 	lib/Stats/test.pl \
@@ -1094,6 +1095,7 @@ pm_to_blib : $(FIRST_MAKEFILE) $(TO_INST_PM)
 	  'examples.pl' '$(INST_LIB)/Stats/examples.pl' \
 	  'fisher.test.pl' '$(INST_LIB)/Stats/fisher.test.pl' \
 	  'hist.pl' '$(INST_LIB)/Stats/hist.pl' \
+	  'ks.test.pl' '$(INST_LIB)/Stats/ks.test.pl' \
 	  'lib/Stats/LikeR.pm' 'blib/lib/Stats/LikeR.pm' \
 	  'lib/Stats/bu.LikeR.pm' 'blib/lib/Stats/bu.LikeR.pm' \
 	  'lib/Stats/test.pl' 'blib/lib/Stats/test.pl' \
