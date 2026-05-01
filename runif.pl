@@ -17,10 +17,14 @@ p $d;
 $d = rnorm(mean => 5, n => 3, sd => 2);
 say 'rnorm:';
 p $d;
+say 'rnorm with 9 elements:';
+$d = rnorm(9);
+p $d;
+$d = rnorm(9, 1);
+p $d;
 #--------------
 $d = rbinom(n => 3, size => 4, prob => 0.5);
 say 'rbinom:';
 p $d;
-$d = rbinom(33);
 #--------------
 

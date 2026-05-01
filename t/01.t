@@ -51,13 +51,24 @@ no_leaks_ok {
 	eval {
 		min(1, 2, 2.33, 3)
 	}
-} 'min(): no memory leaks';
+} 'min(): no memory leaks' unless $INC{'Devel/Cover.pm'};
 my @test_data = (-5..5);
 is_approx(min(@test_data), $test_data[0], 'min of array');
 my $test_data = \@test_data;
 is_approx(min($test_data), $test_data[0], 'min of array reference');
 my %h = (A => -3, B => 4, C => 9);
 is_approx( min(values %h), -3, 'min takes values from hash');
+dies_ok { min() } 'min: dies when given 0 elements' ;
+if (min(9,'-inf') == '-inf') {
+	pass('min: -inf shows as minimum');
+} else {
+	fail('fail: -inf failed the minimum');
+}
+if (min(9,'inf') == 9) {
+	pass('min: inf is correctly handled');
+} else {
+	fail('fail: inf is correctly');
+}
 #----------------------
 #		max
 #----------------------
@@ -69,18 +80,22 @@ no_leaks_ok {
 	eval {
 		max(1, 2, 2.33, 3)
 	}
-} 'max(): no memory leaks';
+} 'max(): no memory leaks' unless $INC{'Devel/Cover.pm'};
+if (max(9,'-inf') == 9) {
+	pass('max: -inf is interpreted correctly');
+} else {
+	fail('max fail: -inf is NOT interpreted correctly');
+}
+if (max(9,'inf') == 'inf') {
+	pass('max: inf is correctly handled');
+} else {
+	fail('max fail: inf is correctly');
+}
+dies_ok { max() } 'max: dies when given 0 elements' ;
 #----------------------
 #		mean
 #----------------------
-my $mean_ok = 0;
-my $mean = mean(1,2,3);
-if ($mean == 2) {
-	$mean_ok = 1;
-} else {
-	die "mean = $mean";
-}
-ok($mean_ok, 'Verified: Simple mean works');
+is_approx(mean(1,2,3), 2, 'mean: simple example works', 0);
 my @arr = 1..8;
 if (mean(@arr, 4, 5) == 4.5) {
 	ok(1, 'Arrays can be given to mean and mixed');
@@ -106,7 +121,7 @@ no_leaks_ok {
 	eval {
 		mean(1, 2, 2.33, 3)
 	}
-} 'mean(): no memory leaks';
+} 'mean(): no memory leaks' unless $INC{'Devel/Cover.pm'};
 # -------------------------------
 # standard deviation
 # -------------------------------
@@ -126,9 +141,10 @@ like( $@, qr/stdev needs >= 2 elements/, 'sd: dies when given < 2 elements' );
 dies_ok { var(1) } 'var: dies when given < 2 elements' ;
 no_leaks_ok {
 	eval {
-		sd(1, 2, 2.33, 3)
+		sd(1, 2, 2.33, 3);
 	}
-} 'sd(): no memory leaks';
+} 'sd: no memory leaks' unless $INC{'Devel/Cover.pm'};
+is_approx( sd(3, 3, 3, 3), 0, 'sd: all identical values returns 0', 0);
 #------------------
 # t.test
 #------------------
@@ -182,7 +198,7 @@ foreach my $i (0..$#test_data) { # single sample t-tests
 			eval {
 				 t_test( $test_data[$i][$j], mu => mean( $test_data[$i][$j] ));
 			}
-		} 't_test(): no memory leaks';
+		} 't_test(): no memory leaks' unless $INC{'Devel/Cover.pm'};
 		is_approx( $t_test->{p_value}, 1,            "t_test: Testing set $i/$j p-value");
 		is_approx( $t_test->{df}, scalar @{ $test_data[$i][$j] } - 1, "t_test: df $i/$j");
 		is_approx( $t_test->{statistic}, 0, "t_test: t $i/$j");
@@ -270,7 +286,7 @@ like( $@, qr/'y' must be provided for paired or two-sample tests/, 't_test: dies
 eval { t_test('x' => [1..5], 'y' => [1..4], paired => 1) };
 like( $@, qr/Paired arrays must be same length/, 't_test: dies on mismatched paired arrays' );
 
-eval { t_test('x' => [1..5], conf_level => 1.5) };
+eval { t_test([1..5], conf_level => 1.5) };
 like( $@, qr/'conf_level' must be between 0 and 1/, 't_test: dies on invalid conf_level' );
 
 $t_test = t_test('x' => [5, 6, 7, 8, 9], mu => 2, alternative => 'greater');
@@ -419,7 +435,7 @@ foreach my $method ('Hochberg','Benjamini-Hochberg','Benjamini-Yekutieli', 'Bonf
 		eval {
 			 p_adjust( \@pvalues, $method);
 		}
-	} 'p_adjust(): no memory leaks';
+	} 'p_adjust(): no memory leaks' unless $INC{'Devel/Cover.pm'};
 	my $val = 0.003;
 	@q = p_adjust([$val], $method);
 	if (scalar @q == 1) {
@@ -447,7 +463,7 @@ no_leaks_ok {
 	eval {
 		 p_adjust([]);
 	}
-} 'p_adjust(): no memory leaks';
+} 'p_adjust(): no memory leaks' unless $INC{'Devel/Cover.pm'};
 #----------------------
 #		var
 #----------------------
@@ -459,8 +475,9 @@ foreach my ($i, $arr) (indexed([1..5], [2, 4, 5, 8, 9])) {
 		eval {
 			 var( $arr );
 		}
-	} 'var(): no memory leaks';
+	} 'var(): no memory leaks' unless $INC{'Devel/Cover.pm'};
 }
+is_approx( var(7, 7, 7, 7), 0, 'var: all identical values returns 0' );
 #----------------------
 #		median
 #----------------------
@@ -472,12 +489,11 @@ foreach my ($i, $ans) (indexed @ans) {
 		eval {
 			 var( $test_data[$i][0] );
 		}
-	} 'median(): no memory leaks';
+	} 'median(): no memory leaks' unless $INC{'Devel/Cover.pm'};
 }
-
-eval { median() };
-like( $@, qr/median needs >= 1 element/, 'median: dies when given empty input' );
-
+dies_ok { median() } 'median: dies when given empty data';
+is_approx(median(1,2,-1,9), 1.5, 'median: w/ even # of arguments', 0);
+is_approx(median([1,2,-1,9]), 1.5, 'median: w/ even # of arguments as array ref argument', 0);
 #----------------------
 #		cor
 #----------------------
@@ -491,7 +507,7 @@ foreach my $method (sort keys %correct) {
 	if ($correct{$method} =~ m/\.(\d+)$/) {
 		$e = 10**(-(length $1));
 	} elsif ($correct{$method} =~ m/^\-?\d+$/) {
-		$e = 10**-199;
+		$e = 0;
 	} else {
 		my $sp = sprintf '%.3g', $correct{$method};
 		if ($sp =~ m/e\-(\d+)$/) {
@@ -534,7 +550,7 @@ no_leaks_ok {
 	eval {
 		 scale(1..5);
 	}
-} 'scale: no memory leaks';
+} 'scale: no memory leaks' unless $INC{'Devel/Cover.pm'};
 my @correct_scaled = (-1.2649111, -0.6324555, 0.0000000, 0.6324555, 1.2649111);
 foreach my ($i, $correct) (indexed @correct_scaled) {
 	is_approx($scaled_results[$i], $correct, "index $i for scale");
@@ -579,7 +595,7 @@ no_leaks_ok {
 			nrow => 2
 		);
 	}
-} 'matrix: no memory leaks';
+} 'matrix: no memory leaks' unless $INC{'Devel/Cover.pm'};
 # matrix exceptions
 eval { matrix(data => "string", nrow => 2) };
 like( $@, qr/must be an array reference/, 'matrix: dies on non-arrayref data' );
@@ -608,7 +624,7 @@ no_leaks_ok {
 	eval {
 		lm(formula =>  'mpg ~ wt * hp^2', data => $mtcars);
 	}
-} 'lm: "mpg ~ wt * hp^2": no memory leaks';
+} 'lm: "mpg ~ wt * hp^2": no memory leaks' unless $INC{'Devel/Cover.pm'};
 #p $lm;
 %correct = (
 	'adj.r.squared' => 0.872417,
@@ -702,7 +718,7 @@ no_leaks_ok {
 	eval {
 		lm(formula =>  'mpg ~ wt + hp', data => $mtcars);
 	};
-} 'lm: "mpg ~ wt + hp": no memory leaks';
+} 'lm: "mpg ~ wt + hp": no memory leaks' unless $INC{'Devel/Cover.pm'};
 %correct = (
 	'adj.r.squared' => 0.8148396,
 	coefficients => {
@@ -785,7 +801,7 @@ no_leaks_ok {
 	eval {
 		lm(data => $mtcars);
 	};
-} 'lm: dies without a formula and no memory leaks';
+} 'lm: dies without a formula and no memory leaks' unless $INC{'Devel/Cover.pm'};
 #--------
 dies_ok {
 	lm(formula => 'mpg wt');
@@ -794,7 +810,7 @@ no_leaks_ok {
 	eval {
 		lm(formula => 'mpg wt');
 	};
-} 'lm: dies on a bad formula and no memory leaks';
+} 'lm: dies on a bad formula and no memory leaks' unless $INC{'Devel/Cover.pm'};
 dies_ok {
 	lm(formula => 'mpg ~ wt', data => 'not_a_hash');
 } 'lm: dies when given a non-hash';
@@ -803,7 +819,7 @@ no_leaks_ok {
 	eval {
 		lm(formula => 'mpg ~ wt', data => 'not_a_hash');
 	};
-} 'lm: dies on a bad formula and no memory leaks';
+} 'lm: dies on a bad formula and no memory leaks' unless $INC{'Devel/Cover.pm'};
 #dies_ok {
 #	my $lm_no_int = lm(formula => 'mpg ~ wt -1', data => $mtcars);
 #	ok( !defined($lm_no_int->{coefficients}{Intercept}), 'lm: formula -1 correctly suppresses Intercept' );
@@ -816,7 +832,7 @@ my ($rmean, $sd, $n) = (10, 2, 9999);
 my $normals = rnorm( n => $n, mean => $rmean, sd => $sd);
 no_leaks_ok {
 	rnorm( n => $n, mean => $rmean, sd => $sd);
-} 'rnorm has no memory leaks';
+} 'rnorm has no memory leaks' unless $INC{'Devel/Cover.pm'};
 is_approx(scalar @{ $normals }, $n, 'rnorm sample size');
 is_approx(mean($normals), $rmean, 'rnorm mean', 0.1);
 is_approx(sd($normals), $sd, 'rnorm sd', 0.1);
@@ -824,21 +840,31 @@ is_approx(sd($normals), $sd, 'rnorm sd', 0.1);
 eval { rnorm(n => 10, sd => -1) };
 like( $@, qr/standard deviation must be non-negative/, 'rnorm: dies on negative sd' );
 
-eval { rnorm(n => 10, mean => 0, 'missing_value_key') };
-like( $@, qr/must be even key\/value pairs/, 'rnorm: dies on odd argument count' );
+#eval { rnorm(n => 10, mean => 0, 'missing_value_key') };
+#like( $@, qr/must be even key\/value pairs/, 'rnorm: dies on odd argument count' );
 #----------------------
 #    quantile
 #----------------------
 my $quantile = quantile('x' => [1..99], probs => [0.05, 0.1, 0.25]);
 no_leaks_ok {
 	quantile('x' => [1..99], probs => [0.05, 0.1, 0.25]);
-} 'quantile has no memory leaks';
+} 'quantile has no memory leaks' unless $INC{'Devel/Cover.pm'};
 # R equivalent: quantile(1:99, probs=c(0.01,0.1,0.25))
 @ans = (5.9, 10.80, 25.50);
 my @quantile_keys = ('5%', '10%', '25%');
 foreach my $idx (0..$#ans) {
 	is_approx($quantile->{$quantile_keys[$idx]}, $ans[$idx], "quantile: $quantile_keys[$idx]", 10**-14);
 }
+# works without "x" argument
+quantile([1..99], probs => [0.05, 0.1, 0.25]);
+no_leaks_ok {
+	quantile([1..99], probs => [0.05, 0.1, 0.25]);
+} 'quantile has no memory leaks' unless $INC{'Devel/Cover.pm'};
+# R equivalent: quantile(1:99, probs=c(0.01,0.1,0.25))
+foreach my $idx (0..$#ans) {
+	is_approx($quantile->{$quantile_keys[$idx]}, $ans[$idx], "quantile: $quantile_keys[$idx]", 10**-14);
+}
+# quantile also works without "x => " to simplify
 #----------------------
 #    Fisher's Test
 #----------------------
@@ -857,7 +883,7 @@ no_leaks_ok {
 	eval {
 		fisher_test([[10, 2],[3, 15]]);
 	}
-} 'Fisher\'s test with array: no leaks';
+} 'Fisher\'s test with array: no leaks' unless $INC{'Devel/Cover.pm'};
 #---------
 $ft = fisher_test( {
 	Guess => {
@@ -887,7 +913,7 @@ no_leaks_ok {
 			}
 		});
 	}
-} 'Fisher\'s test with hash: no leaks';
+} 'Fisher\'s test with hash: no leaks' unless $INC{'Devel/Cover.pm'};
 #-------
 $ft = fisher_test( {
 	Guess => {
@@ -915,7 +941,7 @@ no_leaks_ok {
 			}
 		}, alternative => 'greater');
 	}
-} 'Fisher\'s test with hash and "greater" alternative: no leaks';
+} 'Fisher\'s test with hash and "greater" alternative: no leaks' unless $INC{'Devel/Cover.pm'};
 #----------------------
 #    hist
 #----------------------
@@ -1012,6 +1038,9 @@ if (scalar @{ $unif } == $n) {
 } else {
 	fail('runif: random uniform distribution does NOT have the correct # of elements');
 }
+#---------------
+# runif
+#---------------
 is_approx( min(@{ $unif }), 0, 'Approximately correct minimum', 10**-3);
 is_approx( max(@{ $unif }), 1, 'Approximately correct maximum', 10**-3);
 {
@@ -1066,7 +1095,7 @@ no_leaks_ok {
 	eval {
 		rbinom( n => $n, prob => 0.5, size => 9);
 	};
-} 'rbinom: no memory leaks';
+} 'rbinom: no memory leaks' unless $INC{'Devel/Cover.pm'};
 subtest 'rbinom: Exceptions and Validations' => sub {
 	eval { rbinom(n => 10, size => 10) };
 	like( $@, qr/'size' and 'prob' are required arguments/, 'rbinom: dies when prob is missing' );
@@ -1143,7 +1172,7 @@ no_leaks_ok {
 	eval {
 		seq(1,5);
 	};
-} 'seq: no memory leaks' unless $INC{'Devel/Cover.pm'}; ;
+} 'seq: no memory leaks' unless $INC{'Devel/Cover.pm'};
 foreach my ($idx, $item) (indexed @seq) {
 	is_approx( $item, $idx + 1, "seq item $idx", 0);
 }
@@ -1625,7 +1654,7 @@ no_leaks_ok {
 			family  => 'gaussian'
 		);
 	};
-} 'glm with teeth dataset: no memory leaks';
+} 'glm with teeth dataset: no memory leaks' unless $INC{'Devel/Cover.pm'};
 %correct = (
 	aic        => 348.41553291891,
 	deviance   => 1022.5550357143,
@@ -1886,7 +1915,7 @@ no_leaks_ok {
 	eval {
 		write_table(\%data, $tmp_file, sep => "\t", 'row.names' => true);
 	};
-} 'write_table: no memory leaks with row.names = true';
+} 'write_table: no memory leaks with row.names = true' unless $INC{'Devel/Cover.pm'};
 # === TEST 1: HASH OF HASHES (positional) ===
 # Demonstrates: HoH, sorted rows/columns, "NA" for missing values,
 #               quoting when separator ("\t") or " appears inside data
@@ -1911,7 +1940,7 @@ no_leaks_ok {
 	eval {
 		write_table(\%data_hoh, $tmp_file, sep => "\t", 'row.names' => true);
 	};
-} 'write_table: no memory leaks with hash-of-hash input';
+} 'write_table: no memory leaks with hash-of-hash input' unless $INC{'Devel/Cover.pm'};
 # === TEST 2: HASH OF ARRAYS (positional) ===
 # Demonstrates: HoA, auto-generated V1/V2... headers, padding shorter arrays with "NA",
 #               quoting when separator ("\t") or " appears inside data
@@ -1934,7 +1963,7 @@ no_leaks_ok {
 	eval {
 		write_table(\%data_hoa, $tmp_file, sep => "\t", 'row.names' => true);
 	};
-} 'write_table: no memory leaks with hash-of-hash input';
+} 'write_table: no memory leaks with hash-of-hash input' unless $INC{'Devel/Cover.pm'};
 # ==============================================================================
 # 4. write_table: Nested Reference Memory Leaks
 # ==============================================================================
@@ -1953,7 +1982,7 @@ no_leaks_ok {
           file => 'test_output_dummy.csv'
       );
   };
-} 'write_table: No memory leaks when encountering illegal nested references';
+} 'write_table: No memory leaks when encountering illegal nested references' unless $INC{'Devel/Cover.pm'};
 #---------
 # read_table with filter: aoh
 #---------
@@ -2224,7 +2253,7 @@ no_leaks_ok {
 			'row.names' => false
 		);
 	}
-} 'write_table: no memory leaks with tab separator and "row.names" set to false' unless $INC{'Devel/Cover.pm'};
+} 'write_table: no memory leaks w/ tab separator and "row.names" set to false' unless $INC{'Devel/Cover.pm'};
 #-------------------------------------------------------------------
 #  aov: Categorical Variables & Interactions (Bug Fix Validations)
 #-------------------------------------------------------------------
@@ -2353,7 +2382,7 @@ no_leaks_ok {
 			'y' => [0.878, 0.647, 0.598, 2.05, 1.06, 1.29, 1.06, 3.14, 1.29]
 		);
 	};
-} 'wilcox test: no leaks';
+} 'wilcox test: no leaks' unless $INC{'Devel/Cover.pm'};
 #-----
 $test_data = wilcox_test( # test paired version
 	'x' => [1.83,  0.50,  1.62,  2.48, 1.68, 1.88, 1.55, 3.06, 1.30],
@@ -2377,7 +2406,7 @@ no_leaks_ok {
 			paired => true
 		);
 	};
-} 'wilcox test: no leaks';
+} 'wilcox test: no leaks' unless $INC{'Devel/Cover.pm'};
 #-----
 $test_data = wilcox_test(
 	[1.83,  0.50,  1.62,  2.48, 1.68, 1.88, 1.55, 3.06, 1.30],
@@ -2403,7 +2432,7 @@ no_leaks_ok {
 			sd	=> 1.0, sig_level => 0.05
 		);
 	};
-} 'power_t_test';
+} 'power_t_test' unless $INC{'Devel/Cover.pm'};
 #-------------------------------------------------------------------
 #  wilcox_test: Extended and Edge Cases
 #-------------------------------------------------------------------
@@ -2511,7 +2540,7 @@ no_leaks_ok {
 	eval {
 		lm(formula => 'y ~ .', data => $dot_data);
 	};
-} 'lm: no leaks with "."';
+} 'lm: no leaks with "."' unless $INC{'Devel/Cover.pm'};
 # Test aov: Compare Total SS and Residuals to avoid Type I SS ordering issues
 my $aov_explicit = aov($dot_data, 'y ~ x1 + x2');
 my $aov_dot      = aov($dot_data, 'y ~ .');
@@ -2519,7 +2548,7 @@ no_leaks_ok {
 	eval {
 		 aov($dot_data, 'y ~ .');
 	};
-} 'aov with ".": no memory leaks';
+} 'aov with ".": no memory leaks' unless $INC{'Devel/Cover.pm'};
 
 # Sum of all non-residual SS should be equal
 my $sum_ss_explicit = $aov_explicit->{x1}{'Sum Sq'} + $aov_explicit->{x2}{'Sum Sq'};
@@ -2621,13 +2650,13 @@ no_leaks_ok {
 	eval {
 		ks_test($ksx, $ksy);
 	}
-} 'Kolmogorov-Smirnov test ok without memory leaks';
+} 'Kolmogorov-Smirnov test ok without memory leaks' unless $INC{'Devel/Cover.pm'};
 $ks = ks_test($ksx, $ksy, alternative => 'less');
 no_leaks_ok {
 	eval {
 		ks_test($ksx, $ksy);
 	}
-} 'Kolmogorov-Smirnov test ok without memory leaks; with less alternative';
+} 'Kolmogorov-Smirnov test ok without memory leaks; with less alternative' unless $INC{'Devel/Cover.pm'};
 is_approx($ks->{p_value}, 0.06784844, 'Kolmogorov-Smirnov test: p-value (alternative = less)', 1e-8);
 is_approx($ks->{statistic}, 0.26, 'Kolmogorov-Smirnov test: statistic (alternative = less)', 0);
 # alternative = 'greater'

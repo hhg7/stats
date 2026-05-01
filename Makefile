@@ -201,9 +201,12 @@ TO_INST_PM = aov.pl \
 	lib/Stats/bu.LikeR.pm \
 	lib/Stats/test.pl \
 	lm.pl \
+	min.pl \
 	power.t.test.pl \
+	quantile.pl \
 	read.table.pl \
 	runif.pl \
+	sd.pl \
 	t.test.pl \
 	test.leaktrace.pl \
 	wilcox.text.pl \
@@ -1102,9 +1105,12 @@ pm_to_blib : $(FIRST_MAKEFILE) $(TO_INST_PM)
 	  'lib/Stats/bu.LikeR.pm' 'blib/lib/Stats/bu.LikeR.pm' \
 	  'lib/Stats/test.pl' 'blib/lib/Stats/test.pl' \
 	  'lm.pl' '$(INST_LIB)/Stats/lm.pl' \
+	  'min.pl' '$(INST_LIB)/Stats/min.pl' \
 	  'power.t.test.pl' '$(INST_LIB)/Stats/power.t.test.pl' \
+	  'quantile.pl' '$(INST_LIB)/Stats/quantile.pl' \
 	  'read.table.pl' '$(INST_LIB)/Stats/read.table.pl' \
 	  'runif.pl' '$(INST_LIB)/Stats/runif.pl' \
+	  'sd.pl' '$(INST_LIB)/Stats/sd.pl' \
 	  't.test.pl' '$(INST_LIB)/Stats/t.test.pl' \
 	  'test.leaktrace.pl' '$(INST_LIB)/Stats/test.leaktrace.pl' \
 	  'wilcox.text.pl' '$(INST_LIB)/Stats/wilcox.text.pl' \

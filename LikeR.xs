@@ -3529,107 +3529,113 @@ hist(SV* x_sv, ...)
 SV* quantile(...)
 	CODE:
 	{
-	  if (items % 2 != 0 && items != 1) 
-		   croak("Usage: quantile(x => \\@data, probs => \\@probs)");
-	  SV *restrict x_sv = NULL;
-	  SV *restrict probs_sv = NULL;
-	  /* --- Parse named arguments --- */
-	  if (items == 1) {
-		   x_sv = ST(0);
-	  } else {
-		   for (size_t i = 0; i < items; i += 2) {
-		       const char *restrict key = SvPV_nolen(ST(i));
-		       SV *restrict val = ST(i + 1);
-		       
-		       if      (strEQ(key, "x"))     x_sv = val;
-		       else if (strEQ(key, "probs")) probs_sv = val;
-		       else croak("quantile: unknown argument '%s'", key);
-		   }
-	  }
-	  if (!x_sv || !SvROK(x_sv) || SvTYPE(SvRV(x_sv)) != SVt_PVAV)
-		   croak("quantile: 'x' must be an array reference");
-	  AV *restrict x_av = (AV*)SvRV(x_sv);
-	  size_t n_raw = av_len(x_av) + 1;
-	  if (n_raw == 0) croak("quantile: 'x' is empty");
+		SV *restrict x_sv = NULL;
+		SV *restrict probs_sv = NULL;
+		int arg_idx = 0;
 
-	  /* --- Extract valid numeric data & drop NAs --- */
-	  double *restrict x;
-	  Newx(x, n_raw, double);
-	  size_t n = 0;
-	  for (size_t i = 0; i < n_raw; i++) {
-		   SV **restrict tv = av_fetch(x_av, i, 0);
-		   if (tv && SvOK(*tv)) {
-		       x[n++] = SvNV(*tv);
-		   }
-	  }
-	  if (n == 0) {
-		   Safefree(x);
-		   croak("quantile: 'x' contains no valid numbers");
-	  }
-	  // --- Sort Data for Quantile Math ---
-	  qsort(x, n, sizeof(double), compare_doubles);
-	  // --- Parse Probabilities (Default matches R's c(0, .25, .5, .75, 1)) ---
-	  double default_probs[] = {0.0, 0.25, 0.50, 0.75, 1.0};
-	  unsigned int n_probs = 5;
-	  double *restrict probs;
+		/* --- 1. Consume first positional arg as 'x' if it's an array ref --- */
+		if (arg_idx < items && SvROK(ST(arg_idx)) && SvTYPE(SvRV(ST(arg_idx))) == SVt_PVAV) {
+			 x_sv = ST(arg_idx);
+			 arg_idx++;
+		}
 
-	  if (probs_sv && SvROK(probs_sv) && SvTYPE(SvRV(probs_sv)) == SVt_PVAV) {
-		   AV *restrict p_av = (AV*)SvRV(probs_sv);
-		   n_probs = av_len(p_av) + 1;
-		   Newx(probs, n_probs, double);
-		   for (unsigned int i = 0; i < n_probs; i++) {
-		       SV **tv = av_fetch(p_av, i, 0);
-		       probs[i] = (tv && SvOK(*tv)) ? SvNV(*tv) : 0.0;
-		       if (probs[i] < 0.0 || probs[i] > 1.0) {
-		           Safefree(x); Safefree(probs);
-		           croak("quantile: probabilities must be between 0 and 1");
-		       }
-		   }
-	  } else {
-		   Newx(probs, n_probs, double);
-		   for (unsigned int i = 0; i < n_probs; i++) probs[i] = default_probs[i];
-	  }
+		/* --- 2. Remaining args must be key-value pairs --- */
+		if ((items - arg_idx) % 2 != 0)
+			 croak("Usage: quantile(\\@data, probs => \\@probs)  OR  quantile(x => \\@data, probs => \\@probs)");
 
-	  /* --- Calculate Quantiles (R Type 7 Algorithm) --- */
-	  HV *restrict res_hv = newHV();
+		for (; arg_idx < items; arg_idx += 2) {
+			 const char *restrict key = SvPV_nolen(ST(arg_idx));
+			 SV *restrict val = ST(arg_idx + 1);
 
-	  for (size_t i = 0; i < n_probs; i++) {
-		   double p = probs[i], q = 0.0;
+			 if      (strEQ(key, "x"))     x_sv     = val;
+			 else if (strEQ(key, "probs")) probs_sv = val;
+			 else croak("quantile: unknown argument '%s'", key);
+		}
+		if (!x_sv || !SvROK(x_sv) || SvTYPE(SvRV(x_sv)) != SVt_PVAV)
+			croak("quantile: 'x' must be an array reference");
+		AV *restrict x_av = (AV*)SvRV(x_sv);
+		size_t n_raw = av_len(x_av) + 1;
+		if (n_raw == 0) croak("quantile: 'x' is empty");
 
-		   if (n == 1) {
-		       q = x[0];
-		   } else if (p == 1.0) {
-		       q = x[n - 1]; /* Prevent out-of-bounds mapping */
-		   } else if (p == 0.0) {
-		       q = x[0];
-		   } else {
-		       /* Continuous sample quantile interpolation (Type 7) */
-		       double h = (n - 1) * p;
-		       unsigned int j = (unsigned int)h; /* floor via cast */
-		       double gamma = h - j;
-		       q = (1.0 - gamma) * x[j] + gamma * x[j + 1];
-		   }
+		/* --- Extract valid numeric data & drop NAs --- */
+		double *restrict x;
+		Newx(x, n_raw, double);
+		size_t n = 0;
+		for (size_t i = 0; i < n_raw; i++) {
+			SV **restrict tv = av_fetch(x_av, i, 0);
+			if (tv && SvOK(*tv)) {
+				 x[n++] = SvNV(*tv);
+			}
+		}
+		if (n == 0) {
+			Safefree(x);
+			croak("quantile: 'x' contains no valid numbers");
+		}
+		// --- Sort Data for Quantile Math ---
+		qsort(x, n, sizeof(double), compare_doubles);
+		// --- Parse Probabilities (Default matches R's c(0, .25, .5, .75, 1)) ---
+		double default_probs[] = {0.0, 0.25, 0.50, 0.75, 1.0};
+		unsigned int n_probs = 5;
+		double *restrict probs;
 
-		   /* Format hash key to exactly match R's naming convention ("25%", "33.3%") */
-		   char key[32];
-		   double pct = p * 100.0;
-		   
-		   if (pct == (unsigned int)pct) {
-		       snprintf(key, sizeof(key), "%.0f%%", pct);
-		   } else {
-		       snprintf(key, sizeof(key), "%.1f%%", pct);
-		   }
+		if (probs_sv && SvROK(probs_sv) && SvTYPE(SvRV(probs_sv)) == SVt_PVAV) {
+			AV *restrict p_av = (AV*)SvRV(probs_sv);
+			n_probs = av_len(p_av) + 1;
+			Newx(probs, n_probs, double);
+			for (unsigned int i = 0; i < n_probs; i++) {
+				 SV **tv = av_fetch(p_av, i, 0);
+				 probs[i] = (tv && SvOK(*tv)) ? SvNV(*tv) : 0.0;
+				 if (probs[i] < 0.0 || probs[i] > 1.0) {
+				     Safefree(x); Safefree(probs);
+				     croak("quantile: probabilities must be between 0 and 1");
+				 }
+			}
+		} else {
+			Newx(probs, n_probs, double);
+			for (unsigned int i = 0; i < n_probs; i++) probs[i] = default_probs[i];
+		}
 
-		   hv_store(res_hv, key, strlen(key), newSVnv(q), 0);
-	  }
+		/* --- Calculate Quantiles (R Type 7 Algorithm) --- */
+		HV *restrict res_hv = newHV();
 
-	  Safefree(x);
-	  Safefree(probs);
+		for (size_t i = 0; i < n_probs; i++) {
+			double p = probs[i], q = 0.0;
 
-	  RETVAL = newRV_noinc((SV*)res_hv);
+			if (n == 1) {
+				 q = x[0];
+			} else if (p == 1.0) {
+				 q = x[n - 1]; /* Prevent out-of-bounds mapping */
+			} else if (p == 0.0) {
+				 q = x[0];
+			} else {
+				 /* Continuous sample quantile interpolation (Type 7) */
+				 double h = (n - 1) * p;
+				 unsigned int j = (unsigned int)h; /* floor via cast */
+				 double gamma = h - j;
+				 q = (1.0 - gamma) * x[j] + gamma * x[j + 1];
+			}
+
+			/* Format hash key to exactly match R's naming convention ("25%", "33.3%") */
+			char key[32];
+			double pct = p * 100.0;
+			
+			if (pct == (unsigned int)pct) {
+				 snprintf(key, sizeof(key), "%.0f%%", pct);
+			} else {
+				 snprintf(key, sizeof(key), "%.1f%%", pct);
+			}
+
+			hv_store(res_hv, key, strlen(key), newSVnv(q), 0);
+		}
+
+		Safefree(x);
+		Safefree(probs);
+
+		RETVAL = newRV_noinc((SV*)res_hv);
 	}
 	OUTPUT:
 	  RETVAL
+
 
 double mean(...)
 	PROTOTYPE: @
@@ -5038,56 +5044,65 @@ PPCODE:
 	}
 
 SV* rnorm(...)
-	CODE:
-	{
-		// Auto-seed the PRNG if the Perl script hasn't done so yet
-		AUTO_SEED_PRNG();
+    CODE:
+    {
+        // Auto-seed the PRNG if the Perl script hasn't done so yet
+        AUTO_SEED_PRNG();
 
-		if (items % 2 != 0)
-			croak("Usage: rnorm(n => 10, mean => 0, sd => 1) - must be even key/value pairs");
-		// --- Parse named arguments from the flat stack ---
-		size_t n = 0;
-		double mean = 0.0, sd = 1.0;
-		for (unsigned short int i = 0; i < items; i += 2) {
-			const char* restrict key = SvPV_nolen(ST(i));
-			SV* restrict val = ST(i + 1);
+        size_t n = 0;
+        double mean = 0.0, sd = 1.0;
+        int arg_start = 0;
 
-			if      (strEQ(key, "n"))      n    = (unsigned int)SvUV(val);
-			else if (strEQ(key, "mean"))   mean = SvNV(val);
-			else if (strEQ(key, "sd"))     sd   = SvNV(val);
-			else croak("rnorm: unknown argument '%s'", key);
-		}
+        // Check if the first argument is a simple integer (rnorm(33))
+        if (items > 0 && SvIOK(ST(0)) && (items == 1 || items % 2 != 0)) {
+            n = (unsigned int)SvUV(ST(0));
+            arg_start = 1; // Start parsing named arguments from the second element
+        }
 
-		if (sd < 0.0) croak("rnorm: standard deviation must be non-negative");
+        // --- Parse remaining named arguments from the flat stack ---
+        if ((items - arg_start) % 2 != 0) {
+            croak("Usage: rnorm(n), rnorm(n => 10, mean => 0, sd => 1), or rnorm(33, mean => 0)");
+        }
 
-		AV *restrict result_av = newAV();
-		if (n > 0) {
-			av_extend(result_av, n - 1);
-			// Generate random normals using the Box-Muller transform
-			for (size_t i = 0; i < n; ) {
-				 double u, v, s;
-				 do {
-				     // Drand01() hooks into Perl's internal PRNG, respecting Perl's srand()
-				     u = 2.0 * Drand01() - 1.0;
-				     v = 2.0 * Drand01() - 1.0;
-				     s = u * u + v * v;
-				 } while (s >= 1.0 || s == 0.0);
-				 
-				 double mul = sqrt(-2.0 * log(s) / s);
-				 // Box-Muller generates two independent values per iteration
-				 av_store(result_av, i++, newSVnv(mean + sd * u * mul));
-				 if (i < n) {
-				     av_store(result_av, i++, newSVnv(mean + sd * v * mul));
-				 }
-			}
-		}
-		RETVAL = newRV_noinc((SV*)result_av);
-	}
-	OUTPUT:
-	  RETVAL
+        for (int i = arg_start; i < items; i += 2) {
+            const char* restrict key = SvPV_nolen(ST(i));
+            SV* restrict val = ST(i + 1);
 
-SV*
-aov(data_sv, formula_sv)
+            if      (strEQ(key, "n"))    n    = (unsigned int)SvUV(val);
+            else if (strEQ(key, "mean")) mean = SvNV(val);
+            else if (strEQ(key, "sd"))   sd   = SvNV(val);
+            else croak("rnorm: unknown argument '%s'", key);
+        }
+
+        if (sd < 0.0) croak("rnorm: standard deviation must be non-negative");
+
+        AV *restrict result_av = newAV();
+        if (n > 0) {
+            av_extend(result_av, n - 1);
+            // Generate random normals using the Box-Muller transform
+            for (size_t i = 0; i < n; ) {
+                 double u, v, s;
+                 do {
+                     // Drand01() hooks into Perl's internal PRNG, respecting Perl's srand()
+                     u = 2.0 * Drand01() - 1.0;
+                     v = 2.0 * Drand01() - 1.0;
+                     s = u * u + v * v;
+                 } while (s >= 1.0 || s == 0.0);
+                 
+                 double mul = sqrt(-2.0 * log(s) / s);
+                 // Box-Muller generates two independent values per iteration
+                 av_store(result_av, i++, newSVnv(mean + sd * u * mul));
+                 if (i < n) {
+                     av_store(result_av, i++, newSVnv(mean + sd * v * mul));
+                 }
+            }
+        }
+        RETVAL = newRV_noinc((SV*)result_av);
+    }
+    OUTPUT:
+      RETVAL
+
+SV* aov(data_sv, formula_sv)
 	SV* data_sv
 	SV* formula_sv
 	CODE:

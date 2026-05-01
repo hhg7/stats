@@ -5038,56 +5038,65 @@ PPCODE:
 	}
 
 SV* rnorm(...)
-	CODE:
-	{
-		// Auto-seed the PRNG if the Perl script hasn't done so yet
-		AUTO_SEED_PRNG();
+    CODE:
+    {
+        // Auto-seed the PRNG if the Perl script hasn't done so yet
+        AUTO_SEED_PRNG();
 
-		if (items % 2 != 0)
-			croak("Usage: rnorm(n => 10, mean => 0, sd => 1) - must be even key/value pairs");
-		// --- Parse named arguments from the flat stack ---
-		size_t n = 0;
-		double mean = 0.0, sd = 1.0;
-		for (unsigned short int i = 0; i < items; i += 2) {
-			const char* restrict key = SvPV_nolen(ST(i));
-			SV* restrict val = ST(i + 1);
+        size_t n = 0;
+        double mean = 0.0, sd = 1.0;
+        int arg_start = 0;
 
-			if      (strEQ(key, "n"))      n    = (unsigned int)SvUV(val);
-			else if (strEQ(key, "mean"))   mean = SvNV(val);
-			else if (strEQ(key, "sd"))     sd   = SvNV(val);
-			else croak("rnorm: unknown argument '%s'", key);
-		}
+        // Check if the first argument is a simple integer (rnorm(33))
+        if (items > 0 && SvIOK(ST(0)) && (items == 1 || items % 2 != 0)) {
+            n = (unsigned int)SvUV(ST(0));
+            arg_start = 1; // Start parsing named arguments from the second element
+        }
 
-		if (sd < 0.0) croak("rnorm: standard deviation must be non-negative");
+        // --- Parse remaining named arguments from the flat stack ---
+        if ((items - arg_start) % 2 != 0) {
+            croak("Usage: rnorm(n), rnorm(n => 10, mean => 0, sd => 1), or rnorm(33, mean => 0)");
+        }
 
-		AV *restrict result_av = newAV();
-		if (n > 0) {
-			av_extend(result_av, n - 1);
-			// Generate random normals using the Box-Muller transform
-			for (size_t i = 0; i < n; ) {
-				 double u, v, s;
-				 do {
-				     // Drand01() hooks into Perl's internal PRNG, respecting Perl's srand()
-				     u = 2.0 * Drand01() - 1.0;
-				     v = 2.0 * Drand01() - 1.0;
-				     s = u * u + v * v;
-				 } while (s >= 1.0 || s == 0.0);
-				 
-				 double mul = sqrt(-2.0 * log(s) / s);
-				 // Box-Muller generates two independent values per iteration
-				 av_store(result_av, i++, newSVnv(mean + sd * u * mul));
-				 if (i < n) {
-				     av_store(result_av, i++, newSVnv(mean + sd * v * mul));
-				 }
-			}
-		}
-		RETVAL = newRV_noinc((SV*)result_av);
-	}
-	OUTPUT:
-	  RETVAL
+        for (int i = arg_start; i < items; i += 2) {
+            const char* restrict key = SvPV_nolen(ST(i));
+            SV* restrict val = ST(i + 1);
 
-SV*
-aov(data_sv, formula_sv)
+            if      (strEQ(key, "n"))    n    = (unsigned int)SvUV(val);
+            else if (strEQ(key, "mean")) mean = SvNV(val);
+            else if (strEQ(key, "sd"))   sd   = SvNV(val);
+            else croak("rnorm: unknown argument '%s'", key);
+        }
+
+        if (sd < 0.0) croak("rnorm: standard deviation must be non-negative");
+
+        AV *restrict result_av = newAV();
+        if (n > 0) {
+            av_extend(result_av, n - 1);
+            // Generate random normals using the Box-Muller transform
+            for (size_t i = 0; i < n; ) {
+                 double u, v, s;
+                 do {
+                     // Drand01() hooks into Perl's internal PRNG, respecting Perl's srand()
+                     u = 2.0 * Drand01() - 1.0;
+                     v = 2.0 * Drand01() - 1.0;
+                     s = u * u + v * v;
+                 } while (s >= 1.0 || s == 0.0);
+                 
+                 double mul = sqrt(-2.0 * log(s) / s);
+                 // Box-Muller generates two independent values per iteration
+                 av_store(result_av, i++, newSVnv(mean + sd * u * mul));
+                 if (i < n) {
+                     av_store(result_av, i++, newSVnv(mean + sd * v * mul));
+                 }
+            }
+        }
+        RETVAL = newRV_noinc((SV*)result_av);
+    }
+    OUTPUT:
+      RETVAL
+
+SV* aov(data_sv, formula_sv)
 	SV* data_sv
 	SV* formula_sv
 	CODE:
