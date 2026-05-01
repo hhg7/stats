@@ -3333,20 +3333,20 @@ CODE:
 		if (i + 1 < items && SvPOK(ST(i))) {
 			char *restrict key = SvPV_nolen(ST(i));
 			if (strEQ(key, "n")) {
-				 n = (size_t)SvUV(ST(i+1));
-				 n_set = 1;
-				 i += 2;
-				 continue;
+				n = (size_t)SvUV(ST(i+1));
+				n_set = 1;
+				i += 2;
+				continue;
 			} else if (strEQ(key, "min")) {
-				 min = SvNV(ST(i+1));
-				 min_set = 1;
-				 i += 2;
-				 continue;
+				min = SvNV(ST(i+1));
+				min_set = 1;
+				i += 2;
+				continue;
 			} else if (strEQ(key, "max")) {
-				 max = SvNV(ST(i+1));
-				 max_set = 1;
-				 i += 2;
-				 continue;
+				max = SvNV(ST(i+1));
+				max_set = 1;
+				i += 2;
+				continue;
 			}
 		}
 
