@@ -18,7 +18,7 @@ require XSLoader;
 sub chisq_test {
 	my ($data) = @_;
 
-	die "Input must be an array reference" unless ref($data) eq 'ARRAY';
+	die 'Input must be an array reference' unless ref($data) eq 'ARRAY';
 
 	# The XS function handles the heavy lifting
 	my $result = _chisq_c($data);
@@ -104,10 +104,12 @@ sub read_table {
 		# --- DATA PROCESSING ---
 		my %line_hash;
 		for my $i (0 .. $#header) {
-			my $cell = $line[$i];
-			$line_hash{$header[$i]} = (defined($cell) && $cell eq '') ? 'NA' : $cell;
+			if (!defined($line[$i]) || $line[$i] eq '') {
+         	$line_hash{$header[$i]} = 'NA';
+         } else {
+         	$line_hash{$header[$i]} = $line[$i];
+         }
 		}
-
 		# --- APPLY FILTERS ---
 		my $skip = 0;
 		if (%mapped_filters) {
@@ -145,9 +147,14 @@ sub read_table {
 			}
 		}
 	});
+	@header = ();
+	%mapped_filters = ();
 	if ($args{'output.type'} eq 'aoh') {
-		return \@data;
+		undef %data;
+		my $final_ref = \@data;
+		return $final_ref;
 	} elsif ($args{'output.type'} =~ m/^(?:hoa|hoh)$/) {
+		@data = ();
 		return \%data;
 	}
 }

@@ -8,11 +8,13 @@ use Devel::Confess;
 use DDP {output => 'STDOUT', array_max => 10, show_memsize => 1};
 use Stats::LikeR;
 
-my @tab = ([762, 327, 468], [484, 239, 477]);
-my $chisq = chisq_test(\@tab);
-p $chisq;
-
-$chisq = chisq_test([10, 20, 30]);
-p $chisq;
-$chisq = chisq_test( 'string' );
-p $chisq;
+my %hoa = (
+	a => [1..3],
+	b => [4..9],
+	c => [0..5]
+);
+write_table(
+	\%hoa, '/tmp/write.cols.tsv',
+	'col.names' => [qw(a b)],
+	'row.names' => false
+);

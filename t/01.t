@@ -1738,7 +1738,7 @@ no_leaks_ok {
 	eval {
 		read_table('t/HepatitisCdata.csv');
 	};
-} 'read_table: basic with no memory leaks';
+} 'read_table: basic with no memory leaks' unless $INC{'Devel/Cover.pm'};
 if (
 	($test_data->[0]{Age} == 32)   && ($test_data->[0]{Sex} eq 'm') &&
    ($test_data->[0]{ALB} == 38.5) && ($test_data->[0]{ALP} == 52.5) &&
@@ -1769,7 +1769,7 @@ no_leaks_ok {
 	eval {
 		read_table('t/HepatitisCdata.csv', 'output.type' => 'hoa');
 	};
-} 'read_table: basic with no memory leaks with hash of array';
+} 'read_table: basic with no memory leaks with hash of array' unless $INC{'Devel/Cover.pm'};
 $test_data = read_table('t/HepatitisCdata.csv', 'output.type' => 'hoh');
 foreach my $col ('Category', 'Age', 'Sex', 'ALB', 'ALP', 'ALT', 'AST', 'BIL','CHE', 'CHOL', 'CREA', 'GGT', 'PROT') {
 	if (defined $test_data->{$col}) {
@@ -1782,7 +1782,7 @@ no_leaks_ok {
 	eval {
 		read_table('t/HepatitisCdata.csv', 'output.type' => 'hoh');
 	};
-} 'read_table: basic with no memory leaks with hash of hash';
+} 'read_table: basic with no memory leaks with hash of hash' unless $INC{'Devel/Cover.pm'};
 if (
 	($test_data->{Sex}{1} eq $test_data->{Sex}{2} eq $test_data->{Sex}{3} eq 'm')
 	&&
@@ -1808,7 +1808,7 @@ no_leaks_ok {
 	eval {
 		read_table('t/bodyfat.csv', 'output.type' => 'hoa');
 	};
-} 'read_table: no memory leaks with bodyfat hash-of-array';
+} 'read_table: no memory leaks with bodyfat hash-of-array' unless $INC{'Devel/Cover.pm'};
 my @col = qw(Density	BodyFat Age Weight Height Neck Chest Abdomen	Hip Thigh Knee Ankle	Biceps Forearm	Wrist);
 my @err = grep {!defined $test_data->{$_}} @col;
 if (scalar @err == 0) {
@@ -1955,7 +1955,7 @@ no_leaks_ok {
 			'output.type' => 'aoh'
 		);
 	};
-} 'read_table: reads hepatitis data without leaks with filter: aoh';
+} 'read_table: reads hepatitis data without leaks with filter: aoh' unless $INC{'Devel/Cover.pm'};
 @correct = (39.9,	35.2,	22,	29.8,	6.3,	8.16,	4.37,	60,	4.5, 72.5);
 @col = qw(ALB	ALP	ALT	AST	BIL	CHE	CHOL	CREA	GGT	PROT);
 foreach my ($idx, $col) (indexed @col) {
@@ -1986,7 +1986,7 @@ no_leaks_ok {
 			'output.type' => 'hoa'
 		);
 	};
-} 'read_table: reads hepatitis data without leaks with filter: hoa';
+} 'read_table: reads hepatitis data without leaks with filter: hoa' unless $INC{'Devel/Cover.pm'};
 my $nf = 0;
 foreach my $sex (@{ $test_data->{Sex} }) {
 	$nf++ if $sex eq 'f';
@@ -2018,6 +2018,15 @@ $test_data = read_table(
 	},
 	'output.type' => 'hoh'
 );
+no_leaks_ok {
+	read_table(
+		't/HepatitisCdata.csv',
+		filter => {
+			Sex => sub {$_ eq 'f'}
+		},
+		'output.type' => 'hoh'
+	);
+} 'read_table: no memory leaks with filter and female sex' unless $INC{'Devel/Cover.pm'};
 foreach my $col (sort keys %{ $test_data }) {
 	my $n = scalar keys %{ $test_data->{$col} };
 	if ($n == 238) {
@@ -2182,6 +2191,16 @@ if (sha512_base64($str) eq 'mSFIF/IuIR3GfRWvnv+4OkMi12JwoIV4zxt57vv2QQxuEGOde8w8
 	say sha512_base64($str);
 	die;
 }
+no_leaks_ok {
+	eval {
+		write_table(
+			\%correct,
+			$fh->filename,
+			sep => "\t",
+			'row.names' => false
+		);
+	}
+} 'write_table: no memory leaks with tab separator and "row.names" set to false' unless $INC{'Devel/Cover.pm'};
 #-------------------------------------------------------------------
 #  aov: Categorical Variables & Interactions (Bug Fix Validations)
 #-------------------------------------------------------------------
@@ -2194,7 +2213,6 @@ subtest 'aov: One-Way ANOVA with Categorical Factor (>2 Levels)' => sub {
 		yield_val => [5.5, 5.4, 5.8, 4.5, 4.8, 4.2, 6.1, 6.5, 6.2],
 		group     => ['A',   'A',   'A',   'B',   'B',   'B',   'C',   'C',   'C']
 	};
-
 	my $res_1way = aov($data_1way, 'yield_val ~ group');
 
 	# Validate the 'group' term (k=3 levels -> Df=2)
@@ -2283,10 +2301,15 @@ subtest 'aov: Interaction Missing Main Effects Exception' => sub {
 # https://www.rdocumentation.org/packages/stats/versions/3.6.2/topics/chisq.test
 @test_data = ([762, 327, 468], [484, 239, 477]);
 $test_data = chisq_test(\@test_data);
-p $test_data;
+#p $test_data;
 is_approx($test_data->{parameter}{df}, 2, 'degrees of freedom for Chi-squared', 0);
 is_approx($test_data->{'p.value'}, 2.9535891832118e-07, 'Chi-squared p-value', 1e-17);
 is_approx($test_data->{statistic}{'X-squared'}, 30.070149095755, 'Chi-squared statistic');
+no_leaks_ok {
+	eval {
+		chisq_test(\@test_data)
+	};
+} 'chisq_test: no memory leaks' unless $INC{'Devel/Cover.pm'};
 #------------------------
 # Wilcoxon test
 #------------------------
@@ -2310,7 +2333,6 @@ $test_data = wilcox_test( # test paired version
 	'y' => [0.878, 0.647, 0.598, 2.05, 1.06, 1.29, 1.06, 3.14, 1.29],
 	paired => true
 );
-p $test_data;
 is_approx($test_data->{statistic}, 40, 'Wilcox test (paired) statistic', 0);
 is_approx($test_data->{'p_value'}, 0.0390625, 'Wilcox test (paired) statistic', 1e-7);
 # test without "x" and "y"
@@ -2335,7 +2357,6 @@ $test_data = wilcox_test(
 	[0.878, 0.647, 0.598, 2.05, 1.06, 1.29, 1.06, 3.14, 1.29],
 	paired => true
 );
-p $test_data;
 is_approx($test_data->{statistic}, 40, 'Wilcox test (paired) statistic', 0);
 is_approx($test_data->{'p_value'}, 0.0390625, 'Wilcox test (paired) statistic', 1e-7);
 #$test_data = ks_test('x' => $x, 'y' => $y);
