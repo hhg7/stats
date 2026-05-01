@@ -3314,41 +3314,80 @@ double max(...)
 	  RETVAL
 
 SV* runif(...)
-	CODE:
-	{
-		// Auto-seed the PRNG if the Perl script hasn't done so yet
-		AUTO_SEED_PRNG();
-		if (items % 2 != 0)
-			croak("Usage: runif(n => 10, min => 0, max => 1)");
-		// --- Parse named arguments ---
-		size_t n = 0;
-		double min = 0.0, max = 1.0;
-		for (unsigned short int i = 0; i < items; i += 2) {
-			const char* restrict key = SvPV_nolen(ST(i));
-			SV* restrict val = ST(i + 1);
-			if      (strEQ(key, "n"))    n   = (size_t)SvUV(val);
-			else if (strEQ(key, "min"))  min = SvNV(val);
-			else if (strEQ(key, "max"))  max = SvNV(val);
-			else croak("runif: unknown argument '%s'", key);
-		}
-		if (min > max) {
-			const double tmp = min;
-			min = max;
-			max = tmp;
-		}
-		if (min > max) croak("runif: min must be less than or equal to max");
-		AV *restrict result_av = newAV();
-		if (n > 0) {
-			av_extend(result_av, n - 1);
-			double range = max - min;
-			for (size_t i = 0; i < n; i++) {// Transform standard [0,1) uniform to [min, max)
-				av_store(result_av, i, newSVnv(min + range * Drand01()));
+CODE:
+{
+	size_t n = 0;
+	double min = 0.0, max = 1.0;
+
+	// Flags to track what has been assigned
+	bool n_set = 0, min_set = 0, max_set = 0;
+
+	unsigned int i = 0;
+
+	if (items == 0) {
+	  croak("Usage: runif(n, [min=0], [max=1]) or runif(n => $n, ...)");
+	}
+
+	while (i < items) {
+		// 1. Check if the current argument is a string key for a named parameter
+		if (i + 1 < items && SvPOK(ST(i))) {
+			char *restrict key = SvPV_nolen(ST(i));
+			if (strEQ(key, "n")) {
+				n = (size_t)SvUV(ST(i+1));
+				n_set = 1;
+				i += 2;
+				continue;
+			} else if (strEQ(key, "min")) {
+				min = SvNV(ST(i+1));
+				min_set = 1;
+				i += 2;
+				continue;
+			} else if (strEQ(key, "max")) {
+				max = SvNV(ST(i+1));
+				max_set = 1;
+				i += 2;
+				continue;
 			}
 		}
-		RETVAL = newRV_noinc((SV*)result_av);
+
+		// 2. Fallback to positional parsing if it's not a recognized key
+		if (!n_set) {
+			n = (size_t)SvUV(ST(i));
+			n_set = 1;
+		} else if (!min_set) {
+			min = SvNV(ST(i));
+			min_set = 1;
+		} else if (!max_set) {
+			max = SvNV(ST(i));
+			max_set = 1;
+		} else {
+			croak("Too many arguments or unrecognized parameter passed to runif()");
+		}
+		i++;
 	}
-	OUTPUT:
-	  RETVAL
+	if (!n_set) {
+		croak("runif() requires at least the 'n' parameter");
+	}
+	// Ensure PRNG is seeded
+	AUTO_SEED_PRNG();
+	AV *restrict results = newAV();
+	if (n > 0) {
+		av_extend(results, n - 1);
+	}
+	const double range = max - min;
+	for (size_t j = 0; j < n; j++) {
+		double r;
+		if (max < min) {
+			r = NAN; // R behavior for inverted ranges
+		} else {
+			r = min + range * Drand01();
+		}
+		av_push(results, newSVnv(r));
+	}
+	RETVAL = newRV_noinc((SV*)results);
+}
+OUTPUT:
+    RETVAL
 
 SV* rbinom(...)
 	CODE:

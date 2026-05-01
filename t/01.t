@@ -1008,9 +1008,9 @@ subtest 'hist exceptions' => sub {
 #----------------------
 my $unif = runif( n => $n, min => 0, max => 1);
 if (scalar @{ $unif } == $n) {
-	pass('random uniform distribution has the correct # of elements');
+	pass('runif: random uniform distribution has the correct # of elements');
 } else {
-	fail('random uniform distribution does NOT have the correct # of elements');
+	fail('runif: random uniform distribution does NOT have the correct # of elements');
 }
 is_approx( min(@{ $unif }), 0, 'Approximately correct minimum', 10**-3);
 is_approx( max(@{ $unif }), 1, 'Approximately correct maximum', 10**-3);
@@ -1028,7 +1028,31 @@ no_leaks_ok {
 	eval {
 		runif( n => $n, min => 0, max => 1);
 	};
-} 'runif: no memory leaks';
+} 'runif: no memory leaks with named args' unless $INC{'Devel/Cover.pm'};
+#single arg
+$unif = runif(9);
+if (scalar @{ $unif } == 9) {
+	pass('runif: random uniform distribution has the correct # of elements');
+} else {
+	fail('runif: random uniform distribution does NOT have the correct # of elements');
+}
+no_leaks_ok {
+	eval {
+		runif( 9 );
+	};
+} 'runif: no memory leaks with single arg' unless $INC{'Devel/Cover.pm'};
+# positional args
+$unif = runif(9, 0, 99);
+if (scalar @{ $unif } == 9) {
+	pass('runif: random uniform distribution has the correct # of elements');
+} else {
+	fail('runif: random uniform distribution does NOT have the correct # of elements');
+}
+no_leaks_ok {
+	eval {
+		runif( 9, 0, 99 );
+	};
+} 'runif: no memory leaks with positional args' unless $INC{'Devel/Cover.pm'};
 #----------------------
 #      rbinom
 #----------------------
@@ -1119,7 +1143,7 @@ no_leaks_ok {
 	eval {
 		seq(1,5);
 	};
-} 'seq: no memory leaks';
+} 'seq: no memory leaks' unless $INC{'Devel/Cover.pm'}; ;
 foreach my ($idx, $item) (indexed @seq) {
 	is_approx( $item, $idx + 1, "seq item $idx", 0);
 }
@@ -1131,7 +1155,7 @@ no_leaks_ok {
 	eval {
 		seq(1,2,0.25);
 	};
-} 'seq: no memory leaks';
+} 'seq: no memory leaks' unless $INC{'Devel/Cover.pm'};
 say join(", ", @seq), "\n";
 for (my $idx = 2; $idx >= 1; $idx -= 0.25) { # count down to pop
 	is_approx(pop @seq, $idx, "seq item $idx with fractional step");
@@ -1145,7 +1169,7 @@ no_leaks_ok {
 	eval {
 		seq(10, 5, -1);
 	};
-} 'seq: no memory leaks';
+} 'seq: no memory leaks' unless $INC{'Devel/Cover.pm'};
 say join(", ", @seq), "\n";
 for (my $idx = 5; $idx <= 10; $idx++) { # count down to pop
 	is_approx(pop @seq, $idx, "seq item $idx with negative step");
@@ -1164,7 +1188,7 @@ subtest 'seq: Floating-point precision drift' => sub {
 		eval {
 			seq(0, 100, 0.1);
 		};
-	} 'seq: no memory leaks';
+	} 'seq: no memory leaks' unless $INC{'Devel/Cover.pm'};
 };
 
 #my $wt_result = wilcox_test( 'x' => [1..4], 'y' => [5..8], {});
@@ -1180,7 +1204,7 @@ no_leaks_ok {
 	shapiro_test(
 		[1..5]
 	);
-} 'Shapiro test: no leaks';
+} 'Shapiro test: no leaks' unless $INC{'Devel/Cover.pm'};
 is_approx( $shapiro->{p_value}, 0.9671739, 'Shapiro p-value');
 is_approx( $shapiro->{W}, 0.9867622, 'Shapiro W');
 #--------
@@ -1191,7 +1215,7 @@ no_leaks_ok {
 	shapiro_test(
 		[1..19]
 	);
-} 'Shapiro test: no leaks';
+} 'Shapiro test: no leaks' unless $INC{'Devel/Cover.pm'};
 is_approx( $shapiro->{p_value}, 0.5896506, 'Shapiro p-value: 19 values');
 is_approx( $shapiro->{W}, 0.9608707, 'Shapiro W: 19 values');
 #--------------------
@@ -1286,7 +1310,7 @@ foreach my ($idx, $meth) (indexed @correct) {
 				'conf.level'=> $meth->{'conf.level'}
 			);
 		};
-	} "cor_test $idx: no memory leaks";
+	} "cor_test $idx: no memory leaks" unless $INC{'Devel/Cover.pm'};
 }
 # NA/undef handling
 my $x_na = [1, 2,     3, undef,  5, 5, 6,     undef,7];
@@ -1333,7 +1357,7 @@ foreach my ($idx, $meth) (indexed @correct) {
 				'conf.level'=> $meth->{'conf.level'}
 			);
 		};
-	} "cor_test $idx: no memory leaks";
+	} "cor_test $idx: no memory leaks" unless $INC{'Devel/Cover.pm'};
 }
 #--------------------
 #  cov
@@ -2310,6 +2334,9 @@ no_leaks_ok {
 		chisq_test(\@test_data)
 	};
 } 'chisq_test: no memory leaks' unless $INC{'Devel/Cover.pm'};
+dies_ok {
+	chisq_test('not an array');
+} 'chisq_test: dies without array reference ';
 #------------------------
 # Wilcoxon test
 #------------------------

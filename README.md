@@ -309,11 +309,25 @@ Make a normal distribution of numbers, with pre-set mean `mean`, standard deviat
 
 ## runif
 
+### named arguments
+
 Make a distribution of approximately uniform distribution
 
     my $unif = runif( n => $n, min => 0, max => 1);
 
 where `n` is the number of items, the values are between `min` and `max`
+
+### positional args
+
+this is to match R's behavior:
+
+    runif( 9 )
+
+will make 9 numbers in [0,1]
+
+    runif(9, 0, 99)
+
+will match `n`, `min`, and `max` respectively
 
 ## scale
 
