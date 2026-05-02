@@ -8,4 +8,5 @@ use DDP {output => 'STDOUT', array_max => 10, show_memsize => 1};
 use Devel::Confess 'color';
 use Stats::LikeR;
 
-t_test([1,2,3,4], 'y' => [3,5,-3,5]);
+my $t = t_test([1,2,3,4], 'y' => [3,5,-3,5]);
+p $t;

@@ -188,7 +188,7 @@ foreach my $i (0..$#test_data) { # single sample t-tests
 			eval {
 				 t_test( 'x' => $test_data[$i][$j], mu => mean( $test_data[$i][$j] ));
 			}
-		} 't_test(): no memory leaks';
+		} 't_test(): no memory leaks' unless $INC{'Devel/Cover.pm'};
 		is_approx( $t_test->{p_value}, 1,            "t_test: Testing set $i/$j p-value");
 		is_approx( $t_test->{df}, scalar @{ $test_data[$i][$j] } - 1, "t_test: df $i/$j");
 		is_approx( $t_test->{statistic}, 0, "t_test: t $i/$j");
@@ -275,7 +275,18 @@ foreach my $key (grep {ref $correct_t[2]{$_} eq ''} keys %{ $correct_t[2] }) {
 foreach my $j (0,1) {
 	is_approx( $t_test->{'conf_int'}[$j], $correct_t[2]{'conf_int'}[$j], "Conf. interval index $j");
 }
-
+p $test_data[0];
+$t_test = t_test(
+	$test_data[0][0], #[qw(27.5 21.0 19.0 23.6 17.0 17.9 16.9 20.1 21.9 22.6 23.1 19.6 19.0 21.7 21.4)],
+	$test_data[0][1], #[qw(27.1 22.0 20.8 23.4 23.4 23.5 25.8 22.0 24.8 20.2 21.9 22.1 22.9 20.5 24.4)],
+	var_equal => false,
+	'conf_level' => 0.99
+);
+foreach my ($idx, $val) (indexed (-4.6264605, 0.2931271)) {
+	is_approx($t_test->{conf_int}[$idx], $val, "t_test: var_equal = false, conf.int = 0.99 conf_int $idx", 1e-6);
+}
+is_approx( $t_test->{p_value}, 0.02137800146287, 't_test: var_equal = false, conf.int = 0.99', 1e-14);
+is_approx( $t_test->{df}, 24.98853, 't_test: var_equal = false, conf.int = 0.99', 1e-5);
 # t_test exceptions & alternative hypotheses tests
 eval { t_test(y => [1..5]) };
 like( $@, qr/must be an ARRAY reference/, 't_test: dies when x is missing' );
@@ -526,7 +537,7 @@ foreach my $method (sort keys %correct) {
 		eval {
 			 cor($test_data[0], $test_data[1], $method);
 		}
-	} "cor() with $method: no memory leaks";
+	} "cor() with $method: no memory leaks" unless $INC{'Devel/Cover.pm'};
 }
 
 # cor exceptions and matrix support tests
@@ -733,7 +744,7 @@ no_leaks_ok {
 	summary => {
 		hp => {
   			Estimate      => -0.03177295,
-      	'Pr(>|t|)'    => 0.00145122851187347,
+      	'Pr(>|t|)'    => 0.0014512285315694,
        	'Std. Error'  => 0.0090297096758557,
          't value'     => -3.518712
       },

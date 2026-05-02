@@ -531,8 +531,8 @@ static double compute_cor(const double *restrict x, const double *restrict y,
 }
 
 // Math macros
-#define MAX_ITER 200
-#define EPS 3.0e-7
+#define MAX_ITER 500
+#define EPS 3.0e-15
 #define FPMIN 1.0e-30
 
 static double _incbeta_cf(double a, double b, double x) {
@@ -1349,7 +1349,7 @@ CODE:
 
 	  // Check for ties in combined set
 	  size_t total_n = valid_nx + valid_ny;
-	  double *comb = (double *)safemalloc(total_n * sizeof(double));
+	  double *restrict comb = (double *)safemalloc(total_n * sizeof(double));
 	  for(size_t i=0; i<valid_nx; i++) comb[i] = x_data[i];
 	  for(size_t i=0; i<valid_ny; i++) comb[valid_nx+i] = y_data[i];
 	  qsort(comb, total_n, sizeof(double), compare_doubles);
@@ -1383,7 +1383,7 @@ CODE:
 	} 
 	// --- ONE SAMPLE (e.g. against pnorm) ---
 	else if (y_sv && SvPOK(y_sv)) {
-	  const char *dist = SvPV_nolen(y_sv);
+	  const char *restrict dist = SvPV_nolen(y_sv);
 	  if (strEQ(dist, "pnorm")) {
 		   qsort(x_data, valid_nx, sizeof(double), compare_doubles);
 		   double max_d = 0.0, max_d_plus = 0.0, max_d_minus = 0.0;
@@ -1433,18 +1433,14 @@ CODE:
 	  Safefree(x_data);
 	  croak("ks_test: Invalid arguments for 'y'.");
 	}
-
 	Safefree(x_data);
-
 	if (p_value > 1.0) p_value = 1.0;
 	if (p_value < 0.0) p_value = 0.0;
-
 	HV *restrict res = newHV();
 	hv_stores(res, "statistic", newSVnv(statistic));
 	hv_stores(res, "p_value", newSVnv(p_value));
 	hv_stores(res, "method", newSVpv(method_desc, 0));
 	hv_stores(res, "alternative", newSVpv(alternative, 0));
-
 	RETVAL = newRV_noinc((SV*)res);
 }
 OUTPUT:
