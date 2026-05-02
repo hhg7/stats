@@ -1,7 +1,7 @@
         -:    0:Source:/home/con/perl5/perlbrew/perls/perl-5.42.2/lib/5.42.2/x86_64-linux/CORE/sv_inline.h
         -:    0:Graph:./LikeR.gcno
         -:    0:Data:./LikeR.gcda
-        -:    0:Runs:3
+        -:    0:Runs:1
         -:    1:/*    sv_inline.h
         -:    2: *
         -:    3: *    Copyright (C) 2022 by Larry Wall and others
@@ -73,8 +73,8 @@
         -:   69:
         -:   70:/* new_SV(): return a new, empty SV head */
         -:   71:PERL_STATIC_INLINE SV*
-function Perl_new_sv called 42684 returned 100% blocks executed 100%
-    42684:   72:Perl_new_sv(pTHX_ const char *file, int line, const char *func)
+function Perl_new_sv called 4742 returned 100% blocks executed 80%
+     4742:   72:Perl_new_sv(pTHX_ const char *file, int line, const char *func)
         -:   73:{
         -:   74:    SV* sv;
         -:   75:#if !defined(DEBUG_LEAKING_SCALARS) || \
@@ -84,19 +84,19 @@ function Perl_new_sv called 42684 returned 100% blocks executed 100%
         -:   79:    PERL_UNUSED_ARG(func);
         -:   80:#endif
         -:   81:
-    42684:   82:    if (PL_sv_root)
-    42684:   82-block  0
-branch  0 taken 42681 (fallthrough)
-branch  1 taken 3
-    42681:   83:        uproot_SV(sv);
-    42681:   83-block  0
+     4742:   82:    if (PL_sv_root)
+     4742:   82-block  0
+branch  0 taken 4742 (fallthrough)
+branch  1 taken 0
+     4742:   83:        uproot_SV(sv);
+     4742:   83-block  0
         -:   84:    else
-        3:   85:        sv = Perl_more_sv(aTHX);
-        3:   85-block  0
-call    0 returned 3
-    42684:   86:    SvANY(sv) = 0;
-    42684:   87:    SvREFCNT(sv) = 1;
-    42684:   88:    SvFLAGS(sv) = 0;
+    #####:   85:        sv = Perl_more_sv(aTHX);
+    %%%%%:   85-block  0
+call    0 never executed
+     4742:   86:    SvANY(sv) = 0;
+     4742:   87:    SvREFCNT(sv) = 1;
+     4742:   88:    SvFLAGS(sv) = 0;
         -:   89:#ifdef DEBUG_LEAKING_SCALARS
         -:   90:    sv->sv_debug_optype = PL_op ? PL_op->op_type : 0;
         -:   91:    sv->sv_debug_line = (U16) (PL_parser && PL_parser->copline != NOLINE
@@ -115,8 +115,8 @@ call    0 returned 3
         -:  104:    DEBUG_m(PerlIO_printf(Perl_debug_log, "0x%" UVxf ": (%05ld) new_SV (from %s:%d [%s])\n",
         -:  105:            PTR2UV(sv), (long)sv->sv_debug_serial, file, line, func));
         -:  106:#endif
-    42684:  107:    return sv;
-    42684:  107-block  0
+     4742:  107:    return sv;
+     4742:  107-block  0
         -:  108:}
         -:  109:#  define new_SV(p) (p)=Perl_new_sv(aTHX_ __FILE__, __LINE__, FUNCTION__)
         -:  110:
@@ -351,19 +351,19 @@ call    0 returned 3
         -:  339:    } STMT_END
         -:  340:
         -:  341:PERL_STATIC_INLINE void *
-function S_new_body called 40767 returned 100% blocks executed 80%
-    40767:  342:S_new_body(pTHX_ const svtype sv_type)
+function S_new_body called 4377 returned 100% blocks executed 100%
+     4377:  342:S_new_body(pTHX_ const svtype sv_type)
         -:  343:{
         -:  344:    void *xpv;
-   40767*:  345:    new_body_from_arena(xpv, sv_type, bodies_by_type[sv_type]);
-    40767:  345-block  0
-branch  0 taken 40767 (fallthrough)
-branch  1 taken 0
-    40767:  345-block  1
-    %%%%%:  345-block  2
-call    2 never executed
-    40767:  346:    return xpv;
-    40767:  346-block  0
+     4377:  345:    new_body_from_arena(xpv, sv_type, bodies_by_type[sv_type]);
+     4377:  345-block  0
+branch  0 taken 4376 (fallthrough)
+branch  1 taken 1
+     4376:  345-block  1
+        1:  345-block  2
+call    2 returned 1
+     4377:  346:    return xpv;
+     4377:  346-block  0
         -:  347:}
         -:  348:
         -:  349:#endif
@@ -389,38 +389,38 @@ call    2 never executed
         -:  369:*/
         -:  370:
         -:  371:PERL_STATIC_INLINE SV *
-function Perl_newSV_type called 42684 returned 100% blocks executed 59%
-    42684:  372:Perl_newSV_type(pTHX_ const svtype type)
+function Perl_newSV_type called 4742 returned 100% blocks executed 59%
+     4742:  372:Perl_newSV_type(pTHX_ const svtype type)
         -:  373:{
         -:  374:    SV *sv;
         -:  375:    void*      new_body;
         -:  376:    const struct body_details *type_details;
         -:  377:
-    42684:  378:    new_SV(sv);
-    42684:  378-block  0
-call    0 returned 42684
+     4742:  378:    new_SV(sv);
+     4742:  378-block  0
+call    0 returned 4742
         -:  379:
-    42684:  380:    type_details = bodies_by_type + type;
+     4742:  380:    type_details = bodies_by_type + type;
         -:  381:
-    42684:  382:    SvFLAGS(sv) &= ~SVTYPEMASK;
-    42684:  383:    SvFLAGS(sv) |= type;
+     4742:  382:    SvFLAGS(sv) &= ~SVTYPEMASK;
+     4742:  383:    SvFLAGS(sv) |= type;
         -:  384:
-    42684:  385:    switch (type) {
+     4742:  385:    switch (type) {
 branch  0 taken 0
-branch  1 taken 1917
+branch  1 taken 365
 branch  2 taken 0
-branch  3 taken 40680
-branch  4 taken 87
+branch  3 taken 4364
+branch  4 taken 13
 branch  5 taken 0
 branch  6 taken 0
     #####:  386:    case SVt_NULL:
     #####:  387:        break;
     %%%%%:  387-block  0
-     1917:  388:    case SVt_IV:
-     1917:  389:        SET_SVANY_FOR_BODYLESS_IV(sv);
-     1917:  390:        SvIV_set(sv, 0);
-     1917:  391:        break;
-     1917:  391-block  0
+      365:  388:    case SVt_IV:
+      365:  389:        SET_SVANY_FOR_BODYLESS_IV(sv);
+      365:  390:        SvIV_set(sv, 0);
+      365:  391:        break;
+      365:  391-block  0
     #####:  392:    case SVt_NV:
         -:  393:#if NVSIZE <= IVSIZE
     #####:  394:        SET_SVANY_FOR_BODYLESS_NV(sv);
@@ -430,7 +430,7 @@ branch  6 taken 0
     #####:  398:        SvNV_set(sv, 0);
     #####:  399:        break;
     %%%%%:  399-block  0
-    40680:  400:    case SVt_PVHV:
+     4364:  400:    case SVt_PVHV:
         -:  401:    case SVt_PVAV:
         -:  402:    case SVt_PVOBJ:
         -:  403:        assert(type_details->body_size);
@@ -439,9 +439,9 @@ branch  6 taken 0
         -:  406:        assert(type_details->arena);
         -:  407:        assert(type_details->arena_size);
         -:  408:        /* This points to the start of the allocated area.  */
-    40680:  409:        new_body = S_new_body(aTHX_ type);
-    40680:  409-block  0
-call    0 returned 40680
+     4364:  409:        new_body = S_new_body(aTHX_ type);
+     4364:  409-block  0
+call    0 returned 4364
         -:  410:        /* xpvav and xpvhv have no offset, so no need to adjust new_body */
         -:  411:        assert(!(type_details->offset));
         -:  412:#else
@@ -449,43 +449,43 @@ call    0 returned 40680
         -:  414:           we fake things so that arena is false for all 16 types..  */
         -:  415:        new_body = new_NOARENAZ(type_details);
         -:  416:#endif
-    40680:  417:        SvANY(sv) = new_body;
+     4364:  417:        SvANY(sv) = new_body;
         -:  418:
-    40680:  419:        SvSTASH_set(sv, NULL);
-    40680:  420:        SvMAGIC_set(sv, NULL);
+     4364:  419:        SvSTASH_set(sv, NULL);
+     4364:  420:        SvMAGIC_set(sv, NULL);
         -:  421:
-    40680:  422:        switch(type) {
-branch  0 taken 39396
-branch  1 taken 1284
+     4364:  422:        switch(type) {
+branch  0 taken 4114
+branch  1 taken 250
 branch  2 taken 0
 branch  3 taken 0
-    39396:  423:        case SVt_PVAV:
-    39396:  424:            AvFILLp(sv) = -1;
-    39396:  425:            AvMAX(sv) = -1;
-    39396:  426:            AvALLOC(sv) = NULL;
+     4114:  423:        case SVt_PVAV:
+     4114:  424:            AvFILLp(sv) = -1;
+     4114:  425:            AvMAX(sv) = -1;
+     4114:  426:            AvALLOC(sv) = NULL;
         -:  427:
-    39396:  428:            AvREAL_only(sv);
-    39396:  429:            break;
-    39396:  429-block  0
-     1284:  430:        case SVt_PVHV:
-     1284:  431:            HvTOTALKEYS(sv) = 0;
+     4114:  428:            AvREAL_only(sv);
+     4114:  429:            break;
+     4114:  429-block  0
+      250:  430:        case SVt_PVHV:
+      250:  431:            HvTOTALKEYS(sv) = 0;
         -:  432:            /* start with PERL_HASH_DEFAULT_HvMAX+1 buckets: */
-     1284:  433:            HvMAX(sv) = PERL_HASH_DEFAULT_HvMAX;
+      250:  433:            HvMAX(sv) = PERL_HASH_DEFAULT_HvMAX;
         -:  434:
         -:  435:            assert(!SvOK(sv));
-    1284*:  436:            SvOK_off(sv);
-     1284:  436-block  0
+     250*:  436:            SvOK_off(sv);
+      250:  436-block  0
 branch  0 taken 0 (fallthrough)
-branch  1 taken 1284
+branch  1 taken 250
     %%%%%:  436-block  1
 call    2 never executed
         -:  437:#ifndef NODEFAULT_SHAREKEYS
-     1284:  438:            HvSHAREKEYS_on(sv);         /* key-sharing on by default */
+      250:  438:            HvSHAREKEYS_on(sv);         /* key-sharing on by default */
         -:  439:#endif
         -:  440:            /* start with PERL_HASH_DEFAULT_HvMAX+1 buckets: */
-     1284:  441:            HvMAX(sv) = PERL_HASH_DEFAULT_HvMAX;
-     1284:  442:            break;
-     1284:  442-block  0
+      250:  441:            HvMAX(sv) = PERL_HASH_DEFAULT_HvMAX;
+      250:  442:            break;
+      250:  442-block  0
     #####:  443:        case SVt_PVOBJ:
     #####:  444:            ObjectMAXFIELD(sv) = -1;
     #####:  445:            ObjectFIELDS(sv) = NULL;
@@ -497,11 +497,11 @@ call    2 never executed
 call    0 never executed
         -:  449:        }
         -:  450:
-    40680:  451:        sv->sv_u.svu_array = NULL; /* or svu_hash  */
-    40680:  452:        break;
-    40680:  452-block  0
+     4364:  451:        sv->sv_u.svu_array = NULL; /* or svu_hash  */
+     4364:  452:        break;
+     4364:  452-block  0
         -:  453:
-       87:  454:    case SVt_PVIV:
+       13:  454:    case SVt_PVIV:
         -:  455:    case SVt_PVIO:
         -:  456:    case SVt_PVGV:
         -:  457:    case SVt_PVCV:
@@ -522,10 +522,10 @@ call    0 never executed
         -:  472:         * Obviously this all only holds as long as it's a true reflection of
         -:  473:         * the bodies_by_type lookup table. */
         -:  474:#ifndef PURIFY
-      87*:  475:         ASSUME(type_details->arena);
-       87:  475-block  0
+      13*:  475:         ASSUME(type_details->arena);
+       13:  475-block  0
 branch  0 taken 0 (fallthrough)
-branch  1 taken 87
+branch  1 taken 13
     %%%%%:  475-block  1
 call    2 never executed
         -:  476:#endif
@@ -536,16 +536,16 @@ call    2 never executed
         -:  481:        /* We always allocated the full length item with PURIFY. To do this
         -:  482:           we fake things so that arena is false for all 16 types..  */
         -:  483:#ifndef PURIFY
-       87:  484:        if(type_details->arena) {
-       87:  484-block  0
-branch  0 taken 87 (fallthrough)
+       13:  484:        if(type_details->arena) {
+       13:  484-block  0
+branch  0 taken 13 (fallthrough)
 branch  1 taken 0
         -:  485:            /* This points to the start of the allocated area.  */
-       87:  486:            new_body = S_new_body(aTHX_ type);
-       87:  486-block  0
-call    0 returned 87
-       87:  487:            Zero(new_body, type_details->body_size, char);
-       87:  488:            new_body = ((char *)new_body) - type_details->offset;
+       13:  486:            new_body = S_new_body(aTHX_ type);
+       13:  486-block  0
+call    0 returned 13
+       13:  487:            Zero(new_body, type_details->body_size, char);
+       13:  488:            new_body = ((char *)new_body) - type_details->offset;
         -:  489:        } else
         -:  490:#endif
         -:  491:        {
@@ -553,12 +553,12 @@ call    0 returned 87
     %%%%%:  492-block  0
 call    0 never executed
         -:  493:        }
-       87:  494:        SvANY(sv) = new_body;
+       13:  494:        SvANY(sv) = new_body;
         -:  495:
-       87:  496:        if (UNLIKELY(type == SVt_PVIO)) {
-       87:  496-block  0
+       13:  496:        if (UNLIKELY(type == SVt_PVIO)) {
+       13:  496-block  0
 branch  0 taken 0 (fallthrough)
-branch  1 taken 87
+branch  1 taken 13
     #####:  497:            IO * const io = MUTABLE_IO(sv);
     #####:  498:            GV *iogv = gv_fetchpvs("IO::File::", GV_ADD, SVt_PVHV);
     %%%%%:  498-block  0
@@ -576,9 +576,9 @@ call    0 never executed
     #####:  507:            IoPAGE_LEN(sv) = 60;
         -:  508:        }
         -:  509:
-       87:  510:        sv->sv_u.svu_rv = NULL;
-       87:  511:        break;
-       87:  511-block  0
+       13:  510:        sv->sv_u.svu_rv = NULL;
+       13:  511:        break;
+       13:  511-block  0
     #####:  512:    default:
     #####:  513:        Perl_croak(aTHX_ "panic: sv_upgrade to unknown type %lu",
     %%%%%:  513-block  0
@@ -586,8 +586,8 @@ call    0 never executed
         -:  514:                   (unsigned long)type);
         -:  515:    }
         -:  516:
-    42684:  517:    return sv;
-    42684:  517-block  0
+     4742:  517:    return sv;
+     4742:  517-block  0
         -:  518:}
         -:  519:
         -:  520:/*
@@ -682,38 +682,38 @@ branch  1 never executed
         -:  596:*/
         -:  597:
         -:  598:PERL_STATIC_INLINE void
-function Perl_SvGETMAGIC called 150 returned 100% blocks executed 67%
-      150:  599:Perl_SvGETMAGIC(pTHX_ SV *sv)
+function Perl_SvGETMAGIC called 29 returned 100% blocks executed 67%
+       29:  599:Perl_SvGETMAGIC(pTHX_ SV *sv)
         -:  600:{
         -:  601:    PERL_ARGS_ASSERT_SVGETMAGIC;
         -:  602:
-      150:  603:    if (UNLIKELY(SvGMAGICAL(sv))) {
-      150:  603-block  0
+       29:  603:    if (UNLIKELY(SvGMAGICAL(sv))) {
+       29:  603-block  0
 branch  0 taken 0 (fallthrough)
-branch  1 taken 150
+branch  1 taken 29
     #####:  604:        mg_get(sv);
     %%%%%:  604-block  0
 call    0 never executed
         -:  605:    }
-      150:  606:}
+       29:  606:}
         -:  607:
         -:  608:PERL_STATIC_INLINE bool
-function Perl_SvTRUE called 150 returned 100% blocks executed 80%
-      150:  609:Perl_SvTRUE(pTHX_ SV *sv)
+function Perl_SvTRUE called 29 returned 100% blocks executed 80%
+       29:  609:Perl_SvTRUE(pTHX_ SV *sv)
         -:  610:{
         -:  611:    PERL_ARGS_ASSERT_SVTRUE;
         -:  612:
-      150:  613:    if (UNLIKELY(sv == NULL))
-      150:  613-block  0
+       29:  613:    if (UNLIKELY(sv == NULL))
+       29:  613-block  0
 branch  0 taken 0 (fallthrough)
-branch  1 taken 150
+branch  1 taken 29
     #####:  614:        return FALSE;
     %%%%%:  614-block  0
-      150:  615:    SvGETMAGIC(sv);
-      150:  615-block  0
-call    0 returned 150
-      150:  616:    return SvTRUE_nomg_NN(sv);
-call    0 returned 150
+       29:  615:    SvGETMAGIC(sv);
+       29:  615-block  0
+call    0 returned 29
+       29:  616:    return SvTRUE_nomg_NN(sv);
+call    0 returned 29
         -:  617:}
         -:  618:
         -:  619:PERL_STATIC_INLINE bool
@@ -736,38 +736,38 @@ call    0 returned 150
         -:  636:}
         -:  637:
         -:  638:PERL_STATIC_INLINE bool
-function Perl_SvTRUE_common called 150 returned 100% blocks executed 24%
-      150:  639:Perl_SvTRUE_common(pTHX_ SV * sv, const bool sv_2bool_is_fallback)
+function Perl_SvTRUE_common called 29 returned 100% blocks executed 24%
+       29:  639:Perl_SvTRUE_common(pTHX_ SV * sv, const bool sv_2bool_is_fallback)
         -:  640:{
         -:  641:    PERL_ARGS_ASSERT_SVTRUE_COMMON;
         -:  642:
-      150:  643:    if (UNLIKELY(SvIMMORTAL_INTERP(sv)))
-      150:  643-block  0
-branch  0 taken 63 (fallthrough)
-branch  1 taken 87
-       63:  644:        return SvIMMORTAL_TRUE(sv);
-       63:  644-block  0
+       29:  643:    if (UNLIKELY(SvIMMORTAL_INTERP(sv)))
+       29:  643-block  0
+branch  0 taken 14 (fallthrough)
+branch  1 taken 15
+       14:  644:        return SvIMMORTAL_TRUE(sv);
+       14:  644-block  0
         -:  645:
-       87:  646:    if (! SvOK(sv))
-       87:  646-block  0
+       15:  646:    if (! SvOK(sv))
+       15:  646-block  0
 branch  0 taken 0 (fallthrough)
-branch  1 taken 87
+branch  1 taken 15
     #####:  647:        return FALSE;
     %%%%%:  647-block  0
         -:  648:
-       87:  649:    if (SvPOK(sv))
-       87:  649-block  0
+       15:  649:    if (SvPOK(sv))
+       15:  649-block  0
 branch  0 taken 0 (fallthrough)
-branch  1 taken 87
+branch  1 taken 15
     #####:  650:        return SvPVXtrue(sv);
     %%%%%:  650-block  0
         -:  651:
-       87:  652:    if (SvIOK(sv))
-       87:  652-block  0
-branch  0 taken 87 (fallthrough)
+       15:  652:    if (SvIOK(sv))
+       15:  652-block  0
+branch  0 taken 15 (fallthrough)
 branch  1 taken 0
-       87:  653:        return SvIVX(sv) != 0; /* casts to bool */
-       87:  653-block  0
+       15:  653:        return SvIVX(sv) != 0; /* casts to bool */
+       15:  653-block  0
         -:  654:
     #####:  655:    if (SvROK(sv) && !(SvOBJECT(SvRV(sv)) && HvAMAGIC(SvSTASH(SvRV(sv)))))
     %%%%%:  655-block  0
@@ -836,26 +836,26 @@ branch  1 never executed
         -:  686:}
         -:  687:
         -:  688:PERL_STATIC_INLINE void
-function Perl_SvREFCNT_dec called 38928 returned 100% blocks executed 80%
-    38928:  689:Perl_SvREFCNT_dec(pTHX_ SV *sv)
+function Perl_SvREFCNT_dec called 4022 returned 100% blocks executed 80%
+     4022:  689:Perl_SvREFCNT_dec(pTHX_ SV *sv)
         -:  690:{
-    38928:  691:    if (LIKELY(sv != NULL)) {
-    38928:  691-block  0
-branch  0 taken 38928 (fallthrough)
+     4022:  691:    if (LIKELY(sv != NULL)) {
+     4022:  691-block  0
+branch  0 taken 4022 (fallthrough)
 branch  1 taken 0
-    38928:  692:        U32 rc = SvREFCNT(sv);
-    38928:  693:        if (LIKELY(rc > 1))
-    38928:  693-block  0
+     4022:  692:        U32 rc = SvREFCNT(sv);
+     4022:  693:        if (LIKELY(rc > 1))
+     4022:  693-block  0
 branch  0 taken 0 (fallthrough)
-branch  1 taken 38928
+branch  1 taken 4022
     #####:  694:            SvREFCNT(sv) = rc - 1;
     %%%%%:  694-block  0
         -:  695:        else
-    38928:  696:            Perl_sv_free2(aTHX_ sv, rc);
-    38928:  696-block  0
-call    0 returned 38928
+     4022:  696:            Perl_sv_free2(aTHX_ sv, rc);
+     4022:  696-block  0
+call    0 returned 4022
         -:  697:    }
-    38928:  698:}
+     4022:  698:}
         -:  699:
         -:  700:PERL_STATIC_INLINE SV *
         -:  701:Perl_SvREFCNT_dec_ret_NULL(pTHX_ SV *sv)
@@ -975,51 +975,51 @@ call    0 returned 38928
         -:  815:*/
         -:  816:
         -:  817:PERL_STATIC_INLINE IV
-function Perl_SvIV called 123 returned 100% blocks executed 75%
-      123:  818:Perl_SvIV(pTHX_ SV *sv) {
+function Perl_SvIV called 21 returned 100% blocks executed 75%
+       21:  818:Perl_SvIV(pTHX_ SV *sv) {
         -:  819:    PERL_ARGS_ASSERT_SVIV;
         -:  820:
-      123:  821:    if (SvIOK_nog(sv))
-      123:  821-block  0
-branch  0 taken 123 (fallthrough)
+       21:  821:    if (SvIOK_nog(sv))
+       21:  821-block  0
+branch  0 taken 21 (fallthrough)
 branch  1 taken 0
-      123:  822:        return SvIVX(sv);
-      123:  822-block  0
+       21:  822:        return SvIVX(sv);
+       21:  822-block  0
     #####:  823:    return sv_2iv(sv);
     %%%%%:  823-block  0
 call    0 never executed
         -:  824:}
         -:  825:
         -:  826:PERL_STATIC_INLINE UV
-function Perl_SvUV called 117 returned 100% blocks executed 75%
-      117:  827:Perl_SvUV(pTHX_ SV *sv) {
+function Perl_SvUV called 31 returned 100% blocks executed 75%
+       31:  827:Perl_SvUV(pTHX_ SV *sv) {
         -:  828:    PERL_ARGS_ASSERT_SVUV;
         -:  829:
-      117:  830:    if (SvUOK_nog(sv))
-      117:  830-block  0
+       31:  830:    if (SvUOK_nog(sv))
+       31:  830-block  0
 branch  0 taken 0 (fallthrough)
-branch  1 taken 117
+branch  1 taken 31
     #####:  831:        return SvUVX(sv);
     %%%%%:  831-block  0
-      117:  832:    return sv_2uv(sv);
-      117:  832-block  0
-call    0 returned 117
+       31:  832:    return sv_2uv(sv);
+       31:  832-block  0
+call    0 returned 31
         -:  833:}
         -:  834:
         -:  835:PERL_STATIC_INLINE NV
-function Perl_SvNV called 208761 returned 100% blocks executed 100%
-   208761:  836:Perl_SvNV(pTHX_ SV *sv) {
+function Perl_SvNV called 66193 returned 100% blocks executed 100%
+    66193:  836:Perl_SvNV(pTHX_ SV *sv) {
         -:  837:    PERL_ARGS_ASSERT_SVNV;
         -:  838:
-   208761:  839:    if (SvNOK_nog(sv))
-   208761:  839-block  0
-branch  0 taken 174951 (fallthrough)
-branch  1 taken 33810
-   174951:  840:        return SvNVX(sv);
-   174951:  840-block  0
-    33810:  841:    return sv_2nv(sv);
-    33810:  841-block  0
-call    0 returned 33807
+    66193:  839:    if (SvNOK_nog(sv))
+    66193:  839-block  0
+branch  0 taken 55071 (fallthrough)
+branch  1 taken 11122
+    55071:  840:        return SvNVX(sv);
+    55071:  840-block  0
+    11122:  841:    return sv_2nv(sv);
+    11122:  841-block  0
+call    0 returned 11121
         -:  842:}
         -:  843:
         -:  844:PERL_STATIC_INLINE IV
@@ -1088,8 +1088,8 @@ call    0 returned 33807
         -:  907:}
         -:  908:
         -:  909:PERL_STATIC_INLINE char *
-function Perl_SvPV_helper called 43545 returned 100% blocks executed 57%
-    43545:  910:Perl_SvPV_helper(pTHX_
+function Perl_SvPV_helper called 4861 returned 100% blocks executed 57%
+     4861:  910:Perl_SvPV_helper(pTHX_
         -:  911:                 SV * const sv,
         -:  912:                 STRLEN * const lp,
         -:  913:                 const U32 flags,
@@ -1101,83 +1101,83 @@ function Perl_SvPV_helper called 43545 returned 100% blocks executed 57%
         -:  919:{
         -:  920:    /* 'type' should be known at compile time, so this is reduced to a single
         -:  921:     * conditional at runtime */
-    43545:  922:    if (   (type == SvPVbyte_type_      && SvPOK_byte_nog(sv))
-    43545:  922-block  0
-branch  0 taken 18 (fallthrough)
-branch  1 taken 43527
-       18:  922-block  1
-branch  2 taken 6 (fallthrough)
-branch  3 taken 12
-   43533*:  923:        || (type == SvPVforce_type_     && SvPOK_pure_nogthink(sv))
-    43533:  923-block  0
+     4861:  922:    if (   (type == SvPVbyte_type_      && SvPOK_byte_nog(sv))
+     4861:  922-block  0
+branch  0 taken 4 (fallthrough)
+branch  1 taken 4857
+        4:  922-block  1
+branch  2 taken 2 (fallthrough)
+branch  3 taken 2
+    4859*:  923:        || (type == SvPVforce_type_     && SvPOK_pure_nogthink(sv))
+     4859:  923-block  0
 branch  0 taken 0 (fallthrough)
-branch  1 taken 43533
+branch  1 taken 4859
     %%%%%:  923-block  1
 branch  2 never executed (fallthrough)
 branch  3 never executed
-   43533*:  924:        || (type == SvPVutf8_type_      && SvPOK_utf8_nog(sv))
-    43533:  924-block  0
+    4859*:  924:        || (type == SvPVutf8_type_      && SvPOK_utf8_nog(sv))
+     4859:  924-block  0
 branch  0 taken 0 (fallthrough)
-branch  1 taken 43533
+branch  1 taken 4859
     %%%%%:  924-block  1
 branch  2 never executed (fallthrough)
 branch  3 never executed
-    43533:  925:        || (type == SvPVnormal_type_    && SvPOK_nog(sv))
-    43533:  925-block  0
-branch  0 taken 43527 (fallthrough)
-branch  1 taken 6
-    43527:  925-block  1
-branch  2 taken 171 (fallthrough)
-branch  3 taken 43356
-     177*:  926:        || (type == SvPVutf8_pure_type_ && SvPOK_utf8_pure_nogthink(sv))
-      177:  926-block  0
+     4859:  925:        || (type == SvPVnormal_type_    && SvPOK_nog(sv))
+     4859:  925-block  0
+branch  0 taken 4857 (fallthrough)
+branch  1 taken 2
+     4857:  925-block  1
+branch  2 taken 39 (fallthrough)
+branch  3 taken 4818
+      41*:  926:        || (type == SvPVutf8_pure_type_ && SvPOK_utf8_pure_nogthink(sv))
+       41:  926-block  0
 branch  0 taken 0 (fallthrough)
-branch  1 taken 177
+branch  1 taken 41
     %%%%%:  926-block  1
 branch  2 never executed (fallthrough)
 branch  3 never executed
-     177*:  927:        || (type == SvPVbyte_pure_type_ && SvPOK_byte_pure_nogthink(sv))
-      177:  927-block  0
+      41*:  927:        || (type == SvPVbyte_pure_type_ && SvPOK_byte_pure_nogthink(sv))
+       41:  927-block  0
 branch  0 taken 0 (fallthrough)
-branch  1 taken 177
+branch  1 taken 41
     %%%%%:  927-block  1
 branch  2 never executed (fallthrough)
 branch  3 never executed
         -:  928:   ) {
-    43368:  929:        if (lp) {
-    43368:  929-block  0
-branch  0 taken 12 (fallthrough)
-branch  1 taken 43356
-       12:  930:            *lp = SvCUR(sv);
-       12:  930-block  0
+     4820:  929:        if (lp) {
+     4820:  929-block  0
+branch  0 taken 2 (fallthrough)
+branch  1 taken 4818
+        2:  930:            *lp = SvCUR(sv);
+        2:  930-block  0
         -:  931:        }
         -:  932:
         -:  933:        /* Similarly 'return_flags is known at compile time, so this becomes
         -:  934:         * branchless */
-    43368:  935:        if (return_flags & SV_MUTABLE_RETURN) {
-    43368:  935-block  0
+     4820:  935:        if (return_flags & SV_MUTABLE_RETURN) {
+     4820:  935-block  0
 branch  0 taken 0 (fallthrough)
-branch  1 taken 43368
+branch  1 taken 4820
     #####:  936:            return SvPVX_mutable(sv);
     %%%%%:  936-block  0
         -:  937:        }
-    43368:  938:        else if(return_flags & SV_CONST_RETURN) {
-    43368:  938-block  0
+     4820:  938:        else if(return_flags & SV_CONST_RETURN) {
+     4820:  938-block  0
 branch  0 taken 0 (fallthrough)
-branch  1 taken 43368
+branch  1 taken 4820
     #####:  939:            return (char *) SvPVX_const(sv);
     %%%%%:  939-block  0
         -:  940:        }
         -:  941:        else {
-    43368:  942:            return SvPVX(sv);
-    43368:  942-block  0
+     4820:  942:            return SvPVX(sv);
+     4820:  942-block  0
         -:  943:        }
         -:  944:    }
         -:  945:
-      177:  946:    if (or_null) {  /* This is also known at compile time */
-      177:  946-block  0
+       41:  946:    if (or_null) {  /* This is also known at compile time */
+       41:  946-block  0
 branch  0 taken 0 (fallthrough)
-branch  1 taken 177
+branch  1 taken 41
     #####:  947:        if (flags & SV_GMAGIC) {    /* As is this */
     %%%%%:  947-block  0
 branch  0 never executed (fallthrough)
@@ -1205,9 +1205,9 @@ branch  1 never executed
         -:  958:    }
         -:  959:
         -:  960:    /* Can't trivially handle this, call the function */
-      177:  961:    return non_trivial(aTHX_ sv, lp, (flags|return_flags));
-      177:  961-block  0
-call    0 returned 177
+       41:  961:    return non_trivial(aTHX_ sv, lp, (flags|return_flags));
+       41:  961-block  0
+call    0 returned 41
         -:  962:}
         -:  963:
         -:  964:/*
@@ -1220,22 +1220,22 @@ call    0 returned 177
         -:  971:*/
         -:  972:
         -:  973:PERL_STATIC_INLINE SV *
-function Perl_newRV_noinc called 1917 returned 100% blocks executed 100%
-     1917:  974:Perl_newRV_noinc(pTHX_ SV *const tmpRef)
+function Perl_newRV_noinc called 365 returned 100% blocks executed 100%
+      365:  974:Perl_newRV_noinc(pTHX_ SV *const tmpRef)
         -:  975:{
-     1917:  976:    SV *sv = newSV_type(SVt_IV);
-     1917:  976-block  0
-call    0 returned 1917
+      365:  976:    SV *sv = newSV_type(SVt_IV);
+      365:  976-block  0
+call    0 returned 365
         -:  977:
         -:  978:    PERL_ARGS_ASSERT_NEWRV_NOINC;
         -:  979:
-     1917:  980:    SvTEMP_off(tmpRef);
+      365:  980:    SvTEMP_off(tmpRef);
         -:  981:
         -:  982:    /* inlined, simplified sv_setrv_noinc(sv, tmpRef); */
-     1917:  983:    SvRV_set(sv, tmpRef);
-     1917:  984:    SvROK_on(sv);
+      365:  983:    SvRV_set(sv, tmpRef);
+      365:  984:    SvROK_on(sv);
         -:  985:
-     1917:  986:    return sv;
+      365:  986:    return sv;
         -:  987:}
         -:  988:
         -:  989:PERL_STATIC_INLINE char *

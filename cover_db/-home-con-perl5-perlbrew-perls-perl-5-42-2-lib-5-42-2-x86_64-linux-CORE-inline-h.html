@@ -347,14 +347,14 @@ recursive call.
 <tr><td class="h">371</td><td></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;return *PL_markstack_ptr;</td></tr>
 <tr><td class="h">372</td><td></td><td></td><td></td><td></td><td></td><td class="s">}</td></tr>
 <tr><td class="h">373</td><td colspan="6"></td></tr><tr><td class="h">374</td><td></td><td></td><td></td><td></td><td></td><td class="s">PERL_STATIC_INLINE Stack_off_t</td></tr>
-<tr><td class="h">375</td><td><div class="c3">1593</div></td><td></td><td></td><td></td><td></td><td class="s">Perl_POPMARK(pTHX)</td></tr>
+<tr><td class="h">375</td><td><div class="c3">287</div></td><td></td><td></td><td></td><td></td><td class="s">Perl_POPMARK(pTHX)</td></tr>
 <tr><td class="h">376</td><td></td><td></td><td></td><td></td><td></td><td class="s">{</td></tr>
 <tr><td class="h">377</td><td></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;DEBUG_s(DEBUG_v(PerlIO_printf(Perl_debug_log,</td></tr>
 <tr><td class="h">378</td><td></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&quot;MARK pop&nbsp;&nbsp;%p %&quot; IVdf &quot;\n&quot;,</td></tr>
 <tr><td class="h">379</td><td></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;(PL_markstack_ptr-1),</td></tr>
 <tr><td class="h">380</td><td></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;(IV)*(PL_markstack_ptr-1))));</td></tr>
 <tr><td class="h">381</td><td></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;assert((PL_markstack_ptr &gt; PL_markstack) || !&quot;MARK underflow&quot;);</td></tr>
-<tr><td class="h">382</td><td><div class="c3">1593</div></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;return *PL_markstack_ptr--;</td></tr>
+<tr><td class="h">382</td><td><div class="c3">287</div></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;return *PL_markstack_ptr--;</td></tr>
 <tr><td class="h">383</td><td></td><td></td><td></td><td></td><td></td><td class="s">}</td></tr>
 <tr><td class="h">384</td><td colspan="6"></td></tr><tr><td class="h">385</td><td></td><td></td><td></td><td></td><td></td><td class="s">/*</td></tr>
 <tr><td class="h">386 - 392</td><td colspan="5"></td><td class="s"><pre>=for apidoc_section $rpp
@@ -3754,16 +3754,16 @@ trailing NUL added if not already present.
 =cut</pre></td></tr>
 <tr><td class="h">4464</td><td></td><td></td><td></td><td></td><td></td><td class="s">*/</td></tr>
 <tr><td class="h">4465</td><td colspan="6"></td></tr><tr><td class="h">4466</td><td></td><td></td><td></td><td></td><td></td><td class="s">PERL_STATIC_INLINE char *</td></tr>
-<tr><td class="h">4467</td><td><div class="c3">12345</div></td><td></td><td></td><td></td><td></td><td class="s">Perl_savepv(pTHX_ const char *pv)</td></tr>
+<tr><td class="h">4467</td><td><div class="c3">2617</div></td><td></td><td></td><td></td><td></td><td class="s">Perl_savepv(pTHX_ const char *pv)</td></tr>
 <tr><td class="h">4468</td><td></td><td></td><td></td><td></td><td></td><td class="s">{</td></tr>
 <tr><td class="h">4469</td><td></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;PERL_UNUSED_CONTEXT;</td></tr>
-<tr><td class="h">4470</td><td><div class="c3">12345</div></td><td><div class="c0" title="-/F"><a href="-home-con-perl5-perlbrew-perls-perl-5-42-2-lib-5-42-2-x86_64-linux-CORE-inline-h--branch.html#L4470">50</a></div></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;if (!pv)</td></tr>
+<tr><td class="h">4470</td><td><div class="c3">2617</div></td><td><div class="c0" title="-/F"><a href="-home-con-perl5-perlbrew-perls-perl-5-42-2-lib-5-42-2-x86_64-linux-CORE-inline-h--branch.html#L4470">50</a></div></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;if (!pv)</td></tr>
 <tr><td class="h">4471</td><td><div class="c0">0</div></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;return NULL;</td></tr>
 <tr><td class="h">4472</td><td></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;else {</td></tr>
 <tr><td class="h">4473</td><td></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;char *newaddr;</td></tr>
-<tr><td class="h">4474</td><td><div class="c3">12345</div></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;const STRLEN pvlen = strlen(pv)+1;</td></tr>
-<tr><td class="h">4475</td><td><div class="c3">12345</div></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Newx(newaddr, pvlen, char);</td></tr>
-<tr><td class="h">4476</td><td><div class="c3">12345</div></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;return (char*)memcpy(newaddr, pv, pvlen);</td></tr>
+<tr><td class="h">4474</td><td><div class="c3">2617</div></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;const STRLEN pvlen = strlen(pv)+1;</td></tr>
+<tr><td class="h">4475</td><td><div class="c3">2617</div></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Newx(newaddr, pvlen, char);</td></tr>
+<tr><td class="h">4476</td><td><div class="c3">2617</div></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;return (char*)memcpy(newaddr, pv, pvlen);</td></tr>
 <tr><td class="h">4477</td><td></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;}</td></tr>
 <tr><td class="h">4478</td><td></td><td></td><td></td><td></td><td></td><td class="s">}</td></tr>
 <tr><td class="h">4479</td><td colspan="6"></td></tr><tr><td class="h">4480</td><td></td><td></td><td></td><td></td><td></td><td class="s">/* same thing but with a known length */</td></tr>

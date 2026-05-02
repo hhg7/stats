@@ -875,6 +875,18 @@ no_leaks_ok {
 foreach my $idx (0..$#ans) {
 	is_approx($quantile->{$quantile_keys[$idx]}, $ans[$idx], "quantile: $quantile_keys[$idx]", 10**-14);
 }
+$quantile = quantile([1..5], probs => [0,1]);
+if (($quantile->{'0%'} == 1) && ($quantile->{'100%'} == 5)) {
+	pass('quantile: boundaries return min and max');
+} else {
+	fail('quantile: boundaries do NOT return min and max');
+}
+$quantile = quantile([3], probs => [0.33]);
+if ($quantile->{'33%'} == 3) {
+	pass('single element to quantile returns that element');
+} else {
+	fail('single element to quantile fails to return that element');
+}
 # quantile also works without "x => " to simplify
 #----------------------
 #    Fisher's Test
@@ -953,6 +965,34 @@ no_leaks_ok {
 		}, alternative => 'greater');
 	}
 } 'Fisher\'s test with hash and "greater" alternative: no leaks' unless $INC{'Devel/Cover.pm'};
+$ft = fisher_test( { # taste.ft.less in my Rdata file
+	Guess => {
+		Milk => 3, Tea => 1
+	},
+	Truth => {
+		Milk => 1, Tea => 3
+	}
+}, alternative => 'less');
+is_approx($ft->{p_value}, 0.98571428571429, 'fisher_test: alternative="less" p.value', 1e-10);
+is_approx($ft->{estimate}{'odds ratio'}, 6.40830886700579, 'fisher_test: alternative="less" odds ratio', 1e-4);
+$conf_int_range = abs $ft->{conf_int}[0] - $ft->{conf_int}[1];
+$correct_conf_int_range = 306.2469 - 0.0000;
+if (0.99*$correct_conf_int_range < $conf_int_range < 1.01* $correct_conf_int_range) {
+	pass('Fisher\'s test with alternative less confidence interval is within 1% of correct');
+} else {
+	fail('Fisher\'s test with alternative less confidence interval is *NOT* within 1% of correct');
+}
+
+dies_ok {
+	fisher_test();
+} 'fisher_test: requires a data reference';
+$ft = fisher_test([[5, 0], [1, 4]]); # in the R data file, "ft.zero"
+is_approx($ft->{p_value}, 0.04761904761905, 'fisher_test: zero inside: p-value', 1e-13);
+if ($ft->{estimate}{'odds ratio'} == 'inf') {
+	pass('fisher_test: odds ratio with 0 in input is infinite');
+} else {
+	fail('fisher_test: odds ratio with 0 input is NOT infinite');
+}
 #----------------------
 #    hist
 #----------------------
@@ -2492,13 +2532,12 @@ subtest 'chisq_test: Goodness of Fit and Yates Continuity' => sub {
 	# 2. 2x2 Matrix (Yates' Continuity Correction applied automatically)
 	# R equivalent: chisq.test(matrix(c(12, 5, 7, 14), nrow=2))
 	# X-squared = 4.1404, df = 1, p-value = 0.04187
-#	my $chisq_2x2 = chisq_test([[12, 7], [5, 14]]);
-#	is_approx($chisq_2x2->{statistic}{'X-squared'}, 4.140424, 'chisq_test: 2x2 Yates statistic', 1e-5);
-#	is_approx($chisq_2x2->{parameter}{df}, 1, 'chisq_test: 2x2 df');
-#	is_approx($chisq_2x2->{'p.value'}, 0.04187122, 'chisq_test: 2x2 p-value', 1e-5);
-#	like($chisq_2x2->{method}, qr/Yates' continuity correction/, 'chisq_test: method includes Yates correction');
+	my $chisq_2x2 = chisq_test([[12, 7], [5, 14]]);
+	is_approx($chisq_2x2->{statistic}{'X-squared'}, 3.831933, 'chisq_test: 2x2 Yates statistic', 1e-5);
+	is_approx($chisq_2x2->{parameter}{df}, 1, 'chisq_test: 2x2 df', 0);
+	is_approx($chisq_2x2->{'p.value'}, 0.05028492, 'chisq_test: 2x2 p-value', 1e-7);
+	like($chisq_2x2->{method}, qr/Yates' continuity correction/, 'chisq_test: method includes Yates correction');
 };
-
 #-------------------------------------------------------------------
 #  power_t_test: Extended Scenarios and Exceptions
 #-------------------------------------------------------------------

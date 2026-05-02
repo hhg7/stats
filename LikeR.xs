@@ -34,7 +34,7 @@ static double exact_pnt(double t, double df, double ncp) {
 	double step = 1.0 / n_steps;
 	double integral = 0.0;
 	double half_df = df / 2.0;
-	
+
 	double log_coef = log(2.0) + half_df * log(half_df) - lgamma(half_df);
 	double root_half = 0.70710678118654752440; // 1 / sqrt(2)
 
@@ -1353,7 +1353,7 @@ CODE:
 	  for(size_t i=0; i<valid_nx; i++) comb[i] = x_data[i];
 	  for(size_t i=0; i<valid_ny; i++) comb[valid_nx+i] = y_data[i];
 	  qsort(comb, total_n, sizeof(double), compare_doubles);
-	  
+
 	  bool has_ties = false;
 	  for(size_t i = 1; i < total_n; i++) {
 		   if(comb[i] == comb[i-1]) { has_ties = true; break; }
@@ -1670,12 +1670,12 @@ CODE:
 	bool is_2d = 0;
 	SV**restrict first_elem = av_fetch(obs_av, 0, 0);
 	if (first_elem && SvROK(*first_elem) && SvTYPE(SvRV(*first_elem)) == SVt_PVAV) {
-	  is_2d = 1;
-	  AV*restrict first_row = (AV*)SvRV(*first_elem);
-	  c = av_top_index(first_row) + 1;
+		is_2d = 1;
+		AV*restrict first_row = (AV*)SvRV(*first_elem);
+		c = av_top_index(first_row) + 1;
 	} else {
-	  c = r;
-	  r = 1;
+		c = r;
+		r = 1;
 	}
 
 	double stat = 0.0, grand_total = 0.0;
@@ -4206,17 +4206,14 @@ SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 		               col_y[j][i] = (cv && SvOK(*cv) && looks_like_number(*cv)) ? SvNV(*cv) : NAN;
 		           }
 		       }
-		   } else {
-		       // cor(X) — symmetric p×p result; share column arrays
+		   } else { // cor(X) — symmetric p×p result; share column arrays
 		       ncols_y  = ncols_x;
 		       col_y    = col_x;
 		       symmetric = 1;
 		   }
-
 		   if (nrows < 2)
 		       croak("cor: need at least 2 observations (got %lu)", nrows);
-
-		   /* -- build cache for symmetric case: compute upper triangle, store results, mirror to lower triangle */
+		   // -- build cache for symmetric case: compute upper triangle, store results, mirror to lower triangle
 		   AV*restrict result_av = newAV();
 		   av_extend(result_av, ncols_x - 1);
 		   // Allocate per-row AVs up front so we can fill them in order
@@ -4226,7 +4223,6 @@ SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 		       rows_out[i] = newAV();
 		       av_extend(rows_out[i], ncols_y - 1);
 		   }
-
 		   if (symmetric) {
 		       /* Upper triangle + diagonal, then mirror. r_cache[i][j] (j >= i) holds the computed value. */
 		       double **restrict r_cache;
@@ -4242,7 +4238,6 @@ SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 		               r_cache[j][i] = r; // symmetry
 		           }
 		       }
-
 		       // fill output AoA from cache
 		       for (size_t i = 0; i < ncols_x; i++)
 		           for (size_t j = 0; j < ncols_x; j++)
@@ -4256,22 +4251,17 @@ SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 		           for (size_t j = 0; j < ncols_y; j++)
 		               av_store(rows_out[i], j, newSVnv(compute_cor(col_x[i], col_y[j], nrows, method)));
 		   }
-
 		   // push row AVs into result
 		   for (size_t i = 0; i < ncols_x; i++)
 		       av_store(result_av, i, newRV_noinc((SV*)rows_out[i]));
-
 		   Safefree(rows_out); rows_out = NULL;
-
 		   // -- free column arrays -------------------------------------
 		   for (size_t j = 0; j < ncols_x; j++) Safefree(col_x[j]);
 		   Safefree(col_x); col_x = NULL;
-
 		   if (!symmetric) {
 		       for (size_t j = 0; j < ncols_y; j++) Safefree(col_y[j]);
 		       Safefree(col_y);
 		   }
-
 		   RETVAL = newRV_noinc((SV*)result_av);
 	  }
 	OUTPUT:

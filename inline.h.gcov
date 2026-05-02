@@ -1,7 +1,7 @@
         -:    0:Source:/home/con/perl5/perlbrew/perls/perl-5.42.2/lib/5.42.2/x86_64-linux/CORE/inline.h
         -:    0:Graph:./LikeR.gcno
         -:    0:Data:./LikeR.gcda
-        -:    0:Runs:3
+        -:    0:Runs:1
         -:    1:/*>    inline.h
         -:    2: *
         -:    3: *    Copyright (C) 2012 by Larry Wall and others
@@ -376,16 +376,16 @@
         -:  372:}
         -:  373:
         -:  374:PERL_STATIC_INLINE Stack_off_t
-function Perl_POPMARK called 1593 returned 100% blocks executed 100%
-     1593:  375:Perl_POPMARK(pTHX)
+function Perl_POPMARK called 287 returned 100% blocks executed 100%
+      287:  375:Perl_POPMARK(pTHX)
         -:  376:{
         -:  377:    DEBUG_s(DEBUG_v(PerlIO_printf(Perl_debug_log,
         -:  378:                                 "MARK pop  %p %" IVdf "\n",
         -:  379:                                  (PL_markstack_ptr-1),
         -:  380:                                  (IV)*(PL_markstack_ptr-1))));
         -:  381:    assert((PL_markstack_ptr > PL_markstack) || !"MARK underflow");
-     1593:  382:    return *PL_markstack_ptr--;
-     1593:  382-block  0
+      287:  382:    return *PL_markstack_ptr--;
+      287:  382-block  0
         -:  383:}
         -:  384:
         -:  385:/*
@@ -4470,23 +4470,23 @@ function Perl_POPMARK called 1593 returned 100% blocks executed 100%
         -: 4464:*/
         -: 4465:
         -: 4466:PERL_STATIC_INLINE char *
-function Perl_savepv called 12345 returned 100% blocks executed 80%
-    12345: 4467:Perl_savepv(pTHX_ const char *pv)
+function Perl_savepv called 2617 returned 100% blocks executed 80%
+     2617: 4467:Perl_savepv(pTHX_ const char *pv)
         -: 4468:{
         -: 4469:    PERL_UNUSED_CONTEXT;
-    12345: 4470:    if (!pv)
-    12345: 4470-block  0
+     2617: 4470:    if (!pv)
+     2617: 4470-block  0
 branch  0 taken 0 (fallthrough)
-branch  1 taken 12345
+branch  1 taken 2617
     #####: 4471:        return NULL;
     %%%%%: 4471-block  0
         -: 4472:    else {
         -: 4473:        char *newaddr;
-    12345: 4474:        const STRLEN pvlen = strlen(pv)+1;
-    12345: 4475:        Newx(newaddr, pvlen, char);
-    12345: 4475-block  0
-call    0 returned 12345
-    12345: 4476:        return (char*)memcpy(newaddr, pv, pvlen);
+     2617: 4474:        const STRLEN pvlen = strlen(pv)+1;
+     2617: 4475:        Newx(newaddr, pvlen, char);
+     2617: 4475-block  0
+call    0 returned 2617
+     2617: 4476:        return (char*)memcpy(newaddr, pv, pvlen);
         -: 4477:    }
         -: 4478:}
         -: 4479:

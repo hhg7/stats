@@ -14,5 +14,7 @@ p $chisq;
 
 $chisq = chisq_test([10, 20, 30]);
 p $chisq;
-$chisq = chisq_test( 'string' );
+#$chisq = chisq_test( 'string' );
+#p $chisq;
+$chisq = chisq_test([[12, 7], [5, 14]]);
 p $chisq;

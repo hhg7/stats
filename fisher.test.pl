@@ -40,4 +40,14 @@ $ft = fisher_test( {
 }, alternative => 'greater');
 $t1 = Time::HiRes::time();
 printf("Hash calculation in %g seconds.\n", $t1-$t0);
+$ft = fisher_test( {
+	Guess => {
+		Milk => 3, Tea => 1
+	},
+	Truth => {
+		Milk => 1, Tea => 3
+	}
+}, alternative => 'less');
+p $ft;
+$ft = fisher_test([[5, 0], [1, 4]]);
 p $ft;
