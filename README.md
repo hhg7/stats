@@ -3,7 +3,7 @@
 Get basic R statistical functions working in Perl as if they were part of List::Util, like `min`, `max`, `sum`, etc.
 I've used Artificial Intelligence tools such as Claude, Gemini, and Grok to write this as well as using my own gray matter.
 There are other similar tools on CPAN, but I want speed and a form like List::Util, which I've gotten here with the help of AI, which often required many attempts to do correctly.
-This is meant to call subroutines directly through eXternal Subroutines (XS) for speed.
+This is meant to call subroutines directly through eXternal Subroutines (XS) for performance and portability.
 
 There **are** other modules on CPAN that can do **PARTS** of this, but this works the way that I **want** it to.
 
@@ -149,7 +149,6 @@ which returns a hash reference:
     p_value       0.00053672411914343
 }
 
-
 ### hash reference entry
 
     $ft = fisher_test( {
@@ -200,6 +199,20 @@ Computes the histogram of the given data values, operating in single $O(N)$ pass
     my $res = hist([1, 2, 2, 3, 3, 3, 4, 4, 5], breaks => 4);
 
 If `breaks` is not explicitly provided, it defaults to calculating the number of bins using Sturges' formula.
+
+## ks_test
+
+The Kolmogorov-Smirnov test, which tests whether or not two arrays/lists of data are part of the same distribution is implemented simply:
+
+    $ks = ks_test(\@x, \@y, alternative => 'greater');
+
+returning a hash reference.
+
+Also, a single array can be tested against a normal distribution:
+
+    $ks = ks_test($ksx, 'pnorm');
+
+The p-value precision is about 1e-8, which I want to improve, but am not sure how.
 
 ## lm
 

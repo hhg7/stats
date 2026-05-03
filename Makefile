@@ -201,6 +201,7 @@ TO_INST_PM = aov.pl \
 	lib/Stats/bu.LikeR.pm \
 	lib/Stats/test.pl \
 	lm.pl \
+	md2pod.pl \
 	min.pl \
 	power.t.test.pl \
 	quantile.pl \
@@ -1105,6 +1106,7 @@ pm_to_blib : $(FIRST_MAKEFILE) $(TO_INST_PM)
 	  'lib/Stats/bu.LikeR.pm' 'blib/lib/Stats/bu.LikeR.pm' \
 	  'lib/Stats/test.pl' 'blib/lib/Stats/test.pl' \
 	  'lm.pl' '$(INST_LIB)/Stats/lm.pl' \
+	  'md2pod.pl' '$(INST_LIB)/Stats/md2pod.pl' \
 	  'min.pl' '$(INST_LIB)/Stats/min.pl' \
 	  'power.t.test.pl' '$(INST_LIB)/Stats/power.t.test.pl' \
 	  'quantile.pl' '$(INST_LIB)/Stats/quantile.pl' \

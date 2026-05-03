@@ -1785,7 +1785,7 @@ foreach my $key (sort grep {ref $correct{$_} eq '' } keys %correct) {
 	if ($correct{$key} =~ m/\.(\d+)$/) {
 		$e = 10**(-length $1);
 	} elsif ($correct{$key} =~ m/^\-?\d+$/) {
-		$e = 10**-199;
+		$e = 0;
 	} else {
 		my $sp = sprintf '%.3g', $correct{$key};
 		if ($sp =~ m/e\-(\d+)$/) {
@@ -2688,7 +2688,7 @@ my $ksy = [qw(0.12691328 0.90138032 0.24332833 0.43789166 0.84998830 0.81363851
 0.66574521 0.38529607 0.84985111 0.59408528 0.39516660 0.70785236
 0.53252618 0.62963267 0.53251903 0.18885578 0.61922322 0.07602336
 0.28763359 0.10201167 0.16455688 0.68249714 0.20168356 0.01536685)];
-# Rkst.g <- ks.test(x, y, alternative='greater')
+# R: kst.g <- ks.test(x, y, alternative='greater')
 my $ks = ks_test($ksx, $ksy);
 is_approx($ks->{p_value}, 0.001825518, 'Kolmogorov-Smirnov test: p-value', 1e-9); # two-sided
 is_approx($ks->{statistic}, 0.42, 'Kolmogorov-Smirnov test: statistic', 0);
@@ -2709,4 +2709,13 @@ is_approx($ks->{statistic}, 0.26, 'Kolmogorov-Smirnov test: statistic (alternati
 $ks = ks_test($ksx, $ksy, alternative => 'greater');
 is_approx($ks->{statistic}, 0.42, 'Kolmogorov-Smirnov test alternative = "greater", statistic', 0);
 is_approx($ks->{'p_value'}, 0.0009127589, 'Kolmogorov-Smirnov test alternative = "greater", statistic', 1e-8);
+#------------
+$ks = ks_test($ksx, 'pnorm');
+is_approx($ks->{p_value}, 0.05937757067668, 'Kolmogorov-Smirnov test: 1d array vs pnorm p-value', 1e-8);
+is_approx($ks->{statistic}, 0.1839226, 'Kolmogorov-Smirnov test: 1d array vs pnorm statistic', 1e-6);
+no_leaks_ok {
+	eval {
+		$ks = ks_test($ksx, 'pnorm');
+	};
+} 'Kolmogorov-Smirnov test with 1 array and a named distribution: no memory leaks' unless $INC{'Devel/Cover.pm'};
 done_testing();

@@ -23,3 +23,5 @@ my $ks = ks_test(\@x, \@y);
 p $ks;
 $ks = ks_test(\@x, \@y, alternative => 'greater');
 p $ks;
+$ks = ks_test(\@x, 'pnorm');
+p $ks;
