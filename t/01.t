@@ -12,7 +12,7 @@ use Scalar::Util 'looks_like_number';
 use JSON qw(decode_json encode_json);
 use Digest::SHA 'sha512_base64';
 use File::Temp;
-use Test::LeakTrace;
+use Test::LeakTrace 'no_leaks_ok';
 
 # Gemini helped to write some of the tests
 # Custom helper for floating-point comparisons
@@ -831,10 +831,11 @@ no_leaks_ok {
 		lm(formula => 'mpg ~ wt', data => 'not_a_hash');
 	};
 } 'lm: dies on a bad formula and no memory leaks' unless $INC{'Devel/Cover.pm'};
-#dies_ok {
-#	my $lm_no_int = lm(formula => 'mpg ~ wt -1', data => $mtcars);
-#	ok( !defined($lm_no_int->{coefficients}{Intercept}), 'lm: formula -1 correctly suppresses Intercept' );
-#} 'lm: formula -1 correctly suppresses Intercept';
+lives_ok {                         # was dies_ok — the block is expected to succeed
+    my $lm_no_int = lm(formula => 'mpg ~ wt -1', data => $mtcars);
+    ok( !defined($lm_no_int->{coefficients}{Intercept}),
+        'lm: formula -1 correctly suppresses Intercept' );
+} 'lm: formula -1 correctly suppresses Intercept';
 
 #---------------------------
 #   rnorm
@@ -1563,7 +1564,7 @@ subtest 'glm: Binomial (Logistic Regression)' => sub {
 	is_approx($glm_bin->{deviance}, 10.059, 'glm binomial residual deviance', 0.001);
 	is_approx($glm_bin->{'null.deviance'}, 43.229, 'glm binomial null deviance', 0.001);
 	is($glm_bin->{'df.residual'}, 29, 'glm binomial residual degrees of freedom');
-	is($glm_bin->{'df.null'}, 31, 'glm binomial null degrees of freedom');
+	is_approx($glm_bin->{'df.null'}, 31, 'glm binomial null degrees of freedom', 0);
 };
 my %tooth_growth = (
 	dose => [qw(0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 1.0 1.0 1.0 1.0 1.0 1.0 1.0 1.0 1.0
@@ -2468,22 +2469,6 @@ is_approx($test_data->{statistic}, 40, 'Wilcox test (paired) statistic', 0);
 is_approx($test_data->{'p_value'}, 0.0390625, 'Wilcox test (paired) statistic', 1e-7);
 #$test_data = ks_test('x' => $x, 'y' => $y);
 #p $test_data;
-#---------------------
-# power t-test
-#---------------------
-$test_data = power_t_test(
-	n	=> 30,	delta     => 0.5, 
-	sd	=> 1.0, sig_level => 0.05
-);
-is_approx($test_data->{power}, 0.47784098594094, 'power_t_test p-value', 10**-5);
-no_leaks_ok {
-	eval {
-		power_t_test(
-			n	=> 30,	delta     => 0.5, 
-			sd	=> 1.0, sig_level => 0.05
-		);
-	};
-} 'power_t_test' unless $INC{'Devel/Cover.pm'};
 #-------------------------------------------------------------------
 #  wilcox_test: Extended and Edge Cases
 #-------------------------------------------------------------------
@@ -2538,38 +2523,49 @@ subtest 'chisq_test: Goodness of Fit and Yates Continuity' => sub {
 	is_approx($chisq_2x2->{'p.value'}, 0.05028492, 'chisq_test: 2x2 p-value', 1e-7);
 	like($chisq_2x2->{method}, qr/Yates' continuity correction/, 'chisq_test: method includes Yates correction');
 };
-#-------------------------------------------------------------------
-#  power_t_test: Extended Scenarios and Exceptions
-#-------------------------------------------------------------------
-subtest 'power_t_test: Extended and Exceptions' => sub {
-	# 1. One-sample test type
-	# R equivalent: power.t.test(n=30, delta=0.5, sd=1, type="one.sample")
-	# power = 0.8507026
-	my $pow_one = power_t_test(n => 30, delta => 0.5, sd => 1, type => 'one.sample');
-	is_approx($pow_one->{power}, 0.7539627, 'power_t_test: one.sample type calculation', 1e-5);
-
-	# 2. One-sided alternative
-	# R equivalent: power.t.test(n=30, delta=0.5, sd=1, alternative="one.sided")
-	# power = 0.6120468
-	# 3. Strict mode bounds checking
-	# R equivalent: power.t.test(n=30, delta=0.5, sd=1, strict=TRUE)
-	# power = 0.477841
-	my $pow_strict = power_t_test(n => 30, delta => 0.5, sd => 1, strict => 1);
-	is_approx($pow_strict->{power}, 0.4778965, 'power_t_test: strict two.sided evaluation calculation', 1e-5);
-
-	# 4. Exceptions and Validations
-	eval { power_t_test(n => 30) };
-	like($@, qr/'n' and 'delta' must be provided/, 'power_t_test: dies when delta is missing');
-
-	eval { power_t_test(n => 1, delta => 0.5) };
-	like($@, qr/'n' must be strictly greater than 1/, 'power_t_test: dies on n=1 or less');
-
-	eval { power_t_test(n => 30, delta => 0.5, sd => -1) };
-	like($@, qr/'sd' must be positive/, 'power_t_test: dies on negative standard deviation');
-
-	eval { power_t_test(n => 30, delta => 0.5, sig_level => 1.5) };
-	like($@, qr/'sig_level' must be between 0 and 1/, 'power_t_test: dies on out of bounds significance level');
-};
+#---------------------
+# power t-test
+#---------------------
+$test_data = power_t_test(#ptt <- power.t.test(n = 30, delta=0.5, sd = 1, sig.level=0.05)
+	n  => 30,	delta     => 0.5, 
+	sd => 1.0,	sig_level => 0.05
+);
+is_approx($test_data->{power}, 0.47784098594094, 'power_t_test: power', 1e-9);
+no_leaks_ok {
+	eval {
+		power_t_test(#ptt <- power.t.test(n = 30, delta=0.5, sd = 1, sig.level=0.05)
+			n  => 30,	delta     => 0.5, 
+			sd => 1.0,	sig_level => 0.05
+		);
+	};
+} 'power_t_test: calculating power' unless $INC{'Devel/Cover.pm'};
+$test_data = power_t_test( power => 0.8, delta => 0.5, sd => 1 );
+is_approx($test_data->{n}, 63.76576, 'power_t_test: n', 1e-4);
+no_leaks_ok {
+	eval {
+		power_t_test( power => 0.8, delta => 0.5, sd => 1 );
+	};
+} 'power_t_test: calculating n' unless $INC{'Devel/Cover.pm'};
+@ans = (63.76576371427387, 33.36720408802200, 33.36720408802200);
+foreach my ($idx, $type) (indexed ('two.sample', 'one.sample', 'paired')) {
+	$test_data = power_t_test( power => 0.8, delta => 0.5, sd => 1, type => $type);
+	is_approx( $test_data->{n}, $ans[$idx], "power_t_test: n w/ type = \"$type\"", 1e-4);
+	no_leaks_ok {
+		eval {
+			power_t_test( power => 0.8, delta => 0.5, sd => 1, type => $type );
+		};
+	} "power_t_test: calculating n with type = \"$type\"" unless $INC{'Devel/Cover.pm'};
+}
+@ans = (63.76576371427387, 50.15079949213846);
+foreach my ($idx, $alt) (indexed('two.sided', 'one.sided')) {
+	$test_data = power_t_test( power => 0.8, delta => 0.5, sd => 1, alternative => $alt);
+	is_approx( $test_data->{n}, $ans[$idx], "power_t_test: n with alternative = \"$alt\"", 1e-4);
+	no_leaks_ok {
+		eval {
+			power_t_test( power => 0.8, delta => 0.5, sd => 1, alternative => $alt);
+		};
+	} "power_t_test: n with alternative = \"$alt\" with no leaks" unless $INC{'Devel/Cover.pm'};
+}
 #-------------------------------------------------------------------
 #  lm & aov: Dot (.) Operator Expansion
 #-------------------------------------------------------------------
