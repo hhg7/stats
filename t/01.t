@@ -828,7 +828,7 @@ dies_ok {
 
 no_leaks_ok {
 	eval {
-		lm(formula => 'mpg ~ wt', data => 'not_a_hash');
+		lm(formula => 'mpg ~ wt', data => 'not_a_hash') unless $INC{'Devel/Cover.pm'};
 	};
 } 'lm: dies on a bad formula and no memory leaks' unless $INC{'Devel/Cover.pm'};
 lives_ok {                         # was dies_ok — the block is expected to succeed
@@ -836,7 +836,350 @@ lives_ok {                         # was dies_ok — the block is expected to su
     ok( !defined($lm_no_int->{coefficients}{Intercept}),
         'lm: formula -1 correctly suppresses Intercept' );
 } 'lm: formula -1 correctly suppresses Intercept';
+#-------------------------------------------------------------------
+#  lm: Categorical (String) Predictors
+#
+#  All expected values are derived analytically from first principles
+#  (OLS algebra) and cross-validated against the aov subtests above
+#  where noted.  Three scenarios are covered:
+#
+#    1. Binary predictor (2 groups, n=3 each)
+#    2. Three-level predictor (3 groups, n=3 each) — same data as the
+#         "aov: One-Way ANOVA with Categorical Factor" subtest
+#    3. Non-alphabetical input order — reference level must still be
+#         the alphabetically first label
+#-------------------------------------------------------------------
 
+subtest 'lm: Binary categorical predictor (two groups)' => sub {
+	# R: lm(c(1,2,3,7,8,9) ~ c('ctrl','ctrl','ctrl','trt','trt','trt'))
+	# 'ctrl' < 'trt' alphabetically, so 'ctrl' is the reference (baseline) level.
+	# One dummy variable is created: 'grptrt'.
+	my $data = {
+	  'y' => [1, 2, 3, 7, 8, 9],
+	  grp => ['ctrl', 'ctrl', 'ctrl', 'trt', 'trt', 'trt'],
+	};
+	my $lm_bin = lm(formula => 'y ~ grp', data => $data);
+
+	# 1. Dummy variable naming ------------------------------------------------
+	#    Only the non-reference level becomes a coefficient key.
+	ok(  defined $lm_bin->{coefficients}{Intercept},
+	  'lm cat 2-level: Intercept is defined' );
+	ok(  defined $lm_bin->{coefficients}{grptrt},
+	  'lm cat 2-level: dummy "grptrt" is created for the non-reference level' );
+	ok( !defined $lm_bin->{coefficients}{grpctrl},
+	  'lm cat 2-level: reference "grpctrl" is absent from coefficients' );
+
+	# 2. Coefficient values (exact by algebra) --------------------------------
+	#    Design matrix X = [[1,0],[1,0],[1,0],[1,1],[1,1],[1,1]]
+	#    OLS estimate = (X'X)^{-1} X'y:
+	#      Intercept = mean('ctrl') = (1+2+3)/3 = 2
+	#      grptrt    = mean('trt') - mean('ctrl') = (7+8+9)/3 - 2 = 6
+	is_approx( $lm_bin->{coefficients}{Intercept}, 2,
+	  'lm cat 2-level: Intercept = mean(ctrl) = 2', 0 );
+	is_approx( $lm_bin->{coefficients}{grptrt}, 6,
+	  'lm cat 2-level: grptrt = mean(trt) - mean(ctrl) = 6', 0 );
+
+	# 3. Model fit (exact fractions) ------------------------------------------
+	#    grand_mean = 5
+	#    SS_between = 3*(2-5)^2 + 3*(8-5)^2 = 27 + 27 = 54
+	#    SS_res     = (1-2)^2+0+(3-2)^2 + (7-8)^2+0+(9-8)^2 = 4
+	#    SS_total   = 16+9+4+4+9+16 = 58
+	#    r.squared     = 54/58 = 27/29
+	#    adj.r.squared = 1 - (SS_res/df_res)/(SS_total/df_total)
+	#                  = 1 - (4/4)/(58/5) = 1 - 5/58 = 53/58
+	is_approx( $lm_bin->{'r.squared'}, 27/29,
+	  'lm cat 2-level: r.squared = 27/29', 1e-7 );
+	is_approx( $lm_bin->{'adj.r.squared'}, 53/58,
+	  'lm cat 2-level: adj.r.squared = 53/58', 1e-7 );
+	is_approx( $lm_bin->{'df.residual'}, 4,
+	  'lm cat 2-level: df.residual = n - rank = 6 - 2 = 4', 0 );
+	is_approx( $lm_bin->{'rank'}, 2,
+	  'lm cat 2-level: rank = 2 (Intercept + 1 dummy)', 0 );
+
+	# 4. F-statistic ----------------------------------------------------------
+	#    F = (SS_reg/df_reg) / (SS_res/df_res) = (54/1) / (4/4) = 54 on (1, 4) df
+	#    f.pvalue = I(df2/(df2+df1*F); df2/2, df1/2)
+	#             = I(4/58; 2, 0.5)
+	#             = 1 - (3/2)*sqrt(27/29) + (1/2)*(27/29)^(3/2)
+	#             = 0.0018262607...   [verified analytically in Perl]
+	if ( (defined $lm_bin->{fstatistic}) && (ref $lm_bin->{fstatistic} eq 'ARRAY') ) {
+	  pass('lm cat 2-level: fstatistic is defined and is an array');
+	} else {
+	  fail('lm cat 2-level: fstatistic is defined and is an array');
+	}
+	is_approx( $lm_bin->{fstatistic}[0], 54,
+	  'lm cat 2-level: F statistic = 54', 0 );
+	is_approx( $lm_bin->{fstatistic}[1],  1,
+	  'lm cat 2-level: F numerator df = 1', 0 );
+	is_approx( $lm_bin->{fstatistic}[2],  4,
+	  'lm cat 2-level: F denominator df = 4', 0 );
+	is_approx( $lm_bin->{'f.pvalue'}, 0.0018262607,
+	  'lm cat 2-level: f.pvalue = I(4/58;2,0.5)', 1e-7 );
+
+	# 5. Summary table --------------------------------------------------------
+	#    MS_res = SS_res / df_res = 4/4 = 1
+	#    (X'X)^{-1} = [[1/3,-1/3],[-1/3,2/3]]  (det(X'X)=9)
+	#
+	#    SE(Intercept) = sqrt(MS_res * 1/3) = 1/sqrt(3)
+	#    SE(grptrt)    = sqrt(MS_res * 2/3) = sqrt(2/3)
+	#    t(Intercept)  = 2 / (1/sqrt(3)) = 2*sqrt(3)
+	#    t(grptrt)     = 6 / sqrt(2/3)   = 6*sqrt(3/2)
+	#
+	#    p(Intercept): 2*pt(-2*sqrt(3), df=4) = I(4/16; 2, 0.5)
+	#                = 1 - (3/2)*sqrt(3/4) + (1/2)*(3/4)^(3/2) = 0.0257214207...
+	#    p(grptrt):   equals f.pvalue (single predictor, F = t^2)
+	#                = 0.0018262607...
+	is_approx( $lm_bin->{summary}{Intercept}{Estimate}, 2,
+	  'lm cat 2-level: summary Estimate(Intercept) = 2', 0 );
+	is_approx( $lm_bin->{summary}{grptrt}{Estimate}, 6,
+	  'lm cat 2-level: summary Estimate(grptrt) = 6', 0 );
+	is_approx( $lm_bin->{summary}{Intercept}{'Std. Error'}, 1/sqrt(3),
+	  'lm cat 2-level: SE(Intercept) = 1/sqrt(3)', 1e-7 );
+	is_approx( $lm_bin->{summary}{grptrt}{'Std. Error'}, sqrt(2/3),
+	  'lm cat 2-level: SE(grptrt) = sqrt(2/3)', 1e-7 );
+	is_approx( $lm_bin->{summary}{Intercept}{'t value'}, 2*sqrt(3),
+	  'lm cat 2-level: t(Intercept) = 2*sqrt(3)', 1e-7 );
+	is_approx( $lm_bin->{summary}{grptrt}{'t value'}, 6*sqrt(3/2),
+	  'lm cat 2-level: t(grptrt) = 6*sqrt(3/2)', 1e-7 );
+	is_approx( $lm_bin->{summary}{Intercept}{'Pr(>|t|)'}, 0.0257214207,
+	  'lm cat 2-level: p(Intercept) = I(1/4;2,0.5)', 1e-7 );
+	is_approx( $lm_bin->{summary}{grptrt}{'Pr(>|t|)'}, 0.0018262607,
+	  'lm cat 2-level: p(grptrt) = f.pvalue (single predictor)', 1e-7 );
+
+	no_leaks_ok {
+	  eval { lm(formula => 'y ~ grp', data => $data) };
+	} 'lm cat 2-level: no memory leaks' unless $INC{'Devel/Cover.pm'};
+};
+
+subtest 'lm: Three-level categorical predictor (cross-validated against aov)' => sub {
+	# Uses the same data as the 'aov: One-Way ANOVA with Categorical Factor' subtest.
+	# R: lm(yield_val ~ group) — reference level is 'A' (alphabetically first).
+	# Two dummy variables are created: 'groupB' and 'groupC'.
+	my $data = {
+	  yield_val => [5.5, 5.4, 5.8, 4.5, 4.8, 4.2, 6.1, 6.5, 6.2],
+	  group     => ['A', 'A', 'A', 'B', 'B', 'B', 'C', 'C', 'C'],
+	};
+	my $lm_3 = lm(formula => 'yield_val ~ group', data => $data);
+
+	# 1. Dummy variable naming ------------------------------------------------
+	ok(  defined $lm_3->{coefficients}{Intercept},
+	  'lm cat 3-level: Intercept is defined' );
+	ok(  defined $lm_3->{coefficients}{groupB},
+	  'lm cat 3-level: dummy "groupB" is created' );
+	ok(  defined $lm_3->{coefficients}{groupC},
+	  'lm cat 3-level: dummy "groupC" is created' );
+	ok( !defined $lm_3->{coefficients}{groupA},
+	  'lm cat 3-level: reference "groupA" is absent from coefficients' );
+
+	# 2. Coefficient values (exact by algebra) --------------------------------
+	#    Intercept = mean(A) = (5.5+5.4+5.8)/3 = 16.7/3 = 5.5666̄
+	#    groupB    = mean(B) - mean(A) = 4.5 - 16.7/3  = -1.0666̄
+	#    groupC    = mean(C) - mean(A) = 18.8/3 - 16.7/3 = 2.1/3 = 0.7
+	is_approx( $lm_3->{coefficients}{Intercept}, 16.7/3,
+	  'lm cat 3-level: Intercept = mean(A) = 16.7/3', 1e-10 );
+	is_approx( $lm_3->{coefficients}{groupB}, 4.5 - 16.7/3,
+	  'lm cat 3-level: groupB = mean(B) - mean(A)', 1e-10 );
+	is_approx( $lm_3->{coefficients}{groupC}, 2.1/3,
+	  'lm cat 3-level: groupC = mean(C) - mean(A) = 2.1/3 = 0.7', 1e-10 );
+
+	# 3. Model fit (exact fractions) ------------------------------------------
+	#    mean(A)=16.7/3, mean(B)=4.5, mean(C)=18.8/3; grand_mean=49/9
+	#    SS_group  = 3*(11/90)^2 + 3*(17/18)^2 + 3*(37/45)^2
+	#              = (363+21675+16428)/8100 = 38466/8100 = 2137/450
+	#    SS_res    = 0.0867 + 0.18 + 0.0867 = 53/150
+	#    SS_total  = 2137/450 + 53/150 = 2296/450 = 1148/225
+	#    r.squared     = 2137/2296
+	#    adj.r.squared = 1 - (53/900)/(1148/1800) = 1 - 53/574 = 521/574
+	is_approx( $lm_3->{'r.squared'}, 2137/2296,
+	  'lm cat 3-level: r.squared = 2137/2296', 1e-7 );
+	is_approx( $lm_3->{'adj.r.squared'}, 521/574,
+	  'lm cat 3-level: adj.r.squared = 521/574', 1e-7 );
+	is_approx( $lm_3->{'df.residual'}, 6,
+	  'lm cat 3-level: df.residual = n - rank = 9 - 3 = 6', 0 );
+	is_approx( $lm_3->{'rank'}, 3,
+	  'lm cat 3-level: rank = 3 (Intercept + 2 dummies)', 0 );
+
+	# 4. F-statistic (cross-validated against aov One-Way result) --------------
+	#    MS_group = SS_group/2 = 2137/900; MS_res = SS_res/6 = 53/900
+	#    F = MS_group/MS_res = 2137/53 / 2 = 40.3207547169811...
+	#    f.pvalue = (df2/(df2+df1*F))^(df2/2) = (6/86.641...)^3 = 0.0003319084
+	#              [same value as aov Pr(>F) for 'group', verified in R]
+	if ( (defined $lm_3->{fstatistic}) && (ref $lm_3->{fstatistic} eq 'ARRAY') ) {
+	  pass('lm cat 3-level: fstatistic is defined and is an array');
+	} else {
+	  fail('lm cat 3-level: fstatistic is defined and is an array');
+	}
+	is_approx( $lm_3->{fstatistic}[0], 40.3207547169811,
+	  'lm cat 3-level: F value matches aov One-Way result', 1e-7 );
+	is_approx( $lm_3->{fstatistic}[1], 2,
+	  'lm cat 3-level: F numerator df = k - 1 = 2', 0 );
+	is_approx( $lm_3->{fstatistic}[2], 6,
+	  'lm cat 3-level: F denominator df = n - k = 6', 0 );
+	is_approx( $lm_3->{'f.pvalue'}, 0.0003319084,
+	  'lm cat 3-level: f.pvalue matches aov Pr(>F)', 5e-6 );
+
+	# 5. Summary table --------------------------------------------------------
+	#    MS_res = 53/900.
+	#    (X'X)^{-1} for balanced 3-group design (det=27):
+	#      diag = [1/3, 2/3, 2/3]   (off-diag elements not needed for SE)
+	#
+	#    SE(Intercept) = sqrt(MS_res * 1/3) = sqrt(53/2700)  ≈ 0.140106
+	#    SE(groupB)    = sqrt(MS_res * 2/3) = sqrt(53/1350)  ≈ 0.198139
+	#    SE(groupC)    = sqrt(MS_res * 2/3) = sqrt(53/1350)  ≈ 0.198139
+	#
+	#    t(Intercept)  = (16.7/3) / sqrt(53/2700) ≈  39.732
+	#    t(groupB)     = (4.5-16.7/3) / sqrt(53/1350) ≈  -5.383
+	#    t(groupC)     = (2.1/3)      / sqrt(53/1350) ≈   3.533
+	#
+	#    p-value bounds (df=6): t_{6,0.005}=3.707, t_{6,0.002}≈5.208
+	#      p(groupB): |t|=5.38 > 5.208 → p < 0.005
+	#      p(groupC): |t|=3.53, between t_{6,0.02} and t_{6,0.01} → p < 0.02
+	is_approx( $lm_3->{summary}{Intercept}{Estimate}, 16.7/3,
+	  'lm cat 3-level: summary Estimate(Intercept)', 1e-10 );
+	is_approx( $lm_3->{summary}{groupB}{Estimate}, 4.5 - 16.7/3,
+	  'lm cat 3-level: summary Estimate(groupB)', 1e-10 );
+	is_approx( $lm_3->{summary}{groupC}{Estimate}, 2.1/3,
+	  'lm cat 3-level: summary Estimate(groupC)', 1e-10 );
+	is_approx( $lm_3->{summary}{Intercept}{'Std. Error'}, sqrt(53/2700),
+	  'lm cat 3-level: SE(Intercept) = sqrt(53/2700)', 1e-7 );
+	is_approx( $lm_3->{summary}{groupB}{'Std. Error'}, sqrt(53/1350),
+	  'lm cat 3-level: SE(groupB) = sqrt(53/1350)', 1e-7 );
+	is_approx( $lm_3->{summary}{groupC}{'Std. Error'}, sqrt(53/1350),
+	  'lm cat 3-level: SE(groupC) = sqrt(53/1350)', 1e-7 );
+	is_approx( $lm_3->{summary}{Intercept}{'t value'},
+	  (16.7/3) / sqrt(53/2700),
+	  'lm cat 3-level: t(Intercept)', 1e-5 );
+	is_approx( $lm_3->{summary}{groupB}{'t value'},
+	  (4.5 - 16.7/3) / sqrt(53/1350),
+	  'lm cat 3-level: t(groupB)', 1e-5 );
+	is_approx( $lm_3->{summary}{groupC}{'t value'},
+	  (2.1/3) / sqrt(53/1350),
+	  'lm cat 3-level: t(groupC)', 1e-5 );
+	ok( $lm_3->{summary}{groupB}{'Pr(>|t|)'} < 0.005,
+	  'lm cat 3-level: p(groupB) < 0.005  (|t|=5.38 > t_{6,0.002}=5.208)' );
+	ok( $lm_3->{summary}{groupC}{'Pr(>|t|)'} < 0.02,
+	  'lm cat 3-level: p(groupC) < 0.02   (|t|=3.53, between t_{6,0.01} and t_{6,0.02})' );
+
+	no_leaks_ok {
+	  eval { lm(formula => 'yield_val ~ group', data => $data) };
+	} 'lm cat 3-level: no memory leaks' unless $INC{'Devel/Cover.pm'};
+};
+
+subtest 'lm: Reference level is alphabetically first regardless of input order' => sub {
+	# Observations arrive in C/A/B order, but the reference level must be 'A'
+	# (sorted alphabetically), so dummies are 'grpB' and 'grpC', not 'grpA'.
+	# R: lm(c(8,9,10,1,2,3,5,6,7) ~ c('C','C','C','A','A','A','B','B','B'))
+	my $data = {
+	  'y' => [8, 9, 10, 1, 2, 3, 5, 6, 7],
+	  grp => ['C', 'C', 'C', 'A', 'A', 'A', 'B', 'B', 'B'],
+	};
+	my $lm_ref = lm(formula => 'y ~ grp', data => $data);
+
+	# 1. Dummy variable naming ------------------------------------------------
+	#    'A' < 'B' < 'C' alphabetically → 'A' is the reference.
+	ok(  defined $lm_ref->{coefficients}{Intercept},
+	  'lm cat ref-level: Intercept is defined' );
+	ok(  defined $lm_ref->{coefficients}{grpB},
+	  'lm cat ref-level: dummy "grpB" is created' );
+	ok(  defined $lm_ref->{coefficients}{grpC},
+	  'lm cat ref-level: dummy "grpC" is created' );
+	ok( !defined $lm_ref->{coefficients}{grpA},
+	  'lm cat ref-level: "grpA" is absent — it is the reference level' );
+
+	# 2. Coefficient values (exact by algebra) --------------------------------
+	#    Intercept = mean(A) = (1+2+3)/3 = 2
+	#    grpB      = mean(B) - mean(A) = (5+6+7)/3 - 2 = 6 - 2 = 4
+	#    grpC      = mean(C) - mean(A) = (8+9+10)/3 - 2 = 9 - 2 = 7
+	is_approx( $lm_ref->{coefficients}{Intercept}, 2,
+	  'lm cat ref-level: Intercept = mean(A) = 2', 0 );
+	is_approx( $lm_ref->{coefficients}{grpB}, 4,
+	  'lm cat ref-level: grpB = mean(B) - mean(A) = 4', 0 );
+	is_approx( $lm_ref->{coefficients}{grpC}, 7,
+	  'lm cat ref-level: grpC = mean(C) - mean(A) = 7', 0 );
+
+	# 3. Model fit (exact fractions) ------------------------------------------
+	#    grand_mean = 51/9 = 17/3
+	#    SS_between: 3*(2-17/3)^2 + 3*(6-17/3)^2 + 3*(9-17/3)^2
+	#              = 3*(11/3)^2 + 3*(1/3)^2 + 3*(10/3)^2
+	#              = (363 + 3 + 300)/9 = 666/9 = 74
+	#    SS_res: within-group SS for three consecutive-integer triples
+	#              = 2 + 2 + 2 = 6
+	#    SS_total  = 74 + 6 = 80
+	#    r.squared     = 74/80 = 37/40 = 0.925
+	#    adj.r.squared = 1 - (6/6)/(80/8) = 1 - 1/10 = 9/10 = 0.9
+	is_approx( $lm_ref->{'r.squared'}, 37/40,
+	  'lm cat ref-level: r.squared = 37/40 = 0.925', 1e-7 );
+	is_approx( $lm_ref->{'adj.r.squared'}, 9/10,
+	  'lm cat ref-level: adj.r.squared = 9/10 = 0.9', 1e-7 );
+	is_approx( $lm_ref->{'df.residual'}, 6,
+	  'lm cat ref-level: df.residual = n - rank = 9 - 3 = 6', 0 );
+	is_approx( $lm_ref->{'rank'}, 3,
+	  'lm cat ref-level: rank = 3 (Intercept + 2 dummies)', 0 );
+
+	# 4. F-statistic ----------------------------------------------------------
+	#    F = (SS_between/df_between) / (SS_res/df_res)
+	#      = (74/2) / (6/6) = 37  on (2, 6) df
+	#
+	#    f.pvalue = I(df2/(df2+df1*F); df2/2, df1/2)
+	#             = I(6/80; 3, 1)
+	#             = (6/80)^3           [since I(x;3,1) = x^3]
+	#             = (3/40)^3 = 27/64000 = 0.000421875  (exact)
+	if ( (defined $lm_ref->{fstatistic}) && (ref $lm_ref->{fstatistic} eq 'ARRAY') ) {
+	  pass('lm cat ref-level: fstatistic is defined and is an array');
+	} else {
+	  fail('lm cat ref-level: fstatistic is defined and is an array');
+	}
+	is_approx( $lm_ref->{fstatistic}[0], 37,
+	  'lm cat ref-level: F = (74/2)/(6/6) = 37', 0 );
+	is_approx( $lm_ref->{fstatistic}[1], 2,
+	  'lm cat ref-level: F numerator df = k - 1 = 2', 0 );
+	is_approx( $lm_ref->{fstatistic}[2], 6,
+	  'lm cat ref-level: F denominator df = n - k = 6', 0 );
+	is_approx( $lm_ref->{'f.pvalue'}, 27/64000,
+	  'lm cat ref-level: f.pvalue = (3/40)^3 = 27/64000 (exact)', 1e-9 );
+
+	# 5. Summary table --------------------------------------------------------
+	#    MS_res = SS_res / df_res = 6/6 = 1
+	#    (X'X)^{-1} for balanced 3-group design (same structure as subtest 2):
+	#      diag = [1/3, 2/3, 2/3]
+	#
+	#    SE(Intercept) = sqrt(MS_res * 1/3) = 1/sqrt(3)    ≈ 0.577350
+	#    SE(grpB)      = sqrt(MS_res * 2/3) = sqrt(2/3)    ≈ 0.816497
+	#    SE(grpC)      = sqrt(MS_res * 2/3) = sqrt(2/3)    ≈ 0.816497
+	#    t(Intercept)  = 2 / (1/sqrt(3))   = 2*sqrt(3)     ≈ 3.464102
+	#    t(grpB)       = 4 / sqrt(2/3)     = 4*sqrt(3/2)   ≈ 4.898979
+	#    t(grpC)       = 7 / sqrt(2/3)     = 7*sqrt(3/2)   ≈ 8.573214
+	#
+	#    p-value bounds (df=6): t_{6,0.001}=5.959
+	#      p(grpB): |t|=4.90, between t_{6,0.01} and t_{6,0.001} → p < 0.01
+	#      p(grpC): |t|=8.57 > t_{6,0.001}=5.959              → p < 0.001
+	is_approx( $lm_ref->{summary}{Intercept}{Estimate}, 2,
+	  'lm cat ref-level: summary Estimate(Intercept) = 2', 0 );
+	is_approx( $lm_ref->{summary}{grpB}{Estimate}, 4,
+	  'lm cat ref-level: summary Estimate(grpB) = 4', 0 );
+	is_approx( $lm_ref->{summary}{grpC}{Estimate}, 7,
+	  'lm cat ref-level: summary Estimate(grpC) = 7', 0 );
+	is_approx( $lm_ref->{summary}{Intercept}{'Std. Error'}, 1/sqrt(3),
+	  'lm cat ref-level: SE(Intercept) = 1/sqrt(3)', 1e-7 );
+	is_approx( $lm_ref->{summary}{grpB}{'Std. Error'}, sqrt(2/3),
+	  'lm cat ref-level: SE(grpB) = sqrt(2/3)', 1e-7 );
+	is_approx( $lm_ref->{summary}{grpC}{'Std. Error'}, sqrt(2/3),
+	  'lm cat ref-level: SE(grpC) = sqrt(2/3)', 1e-7 );
+	is_approx( $lm_ref->{summary}{Intercept}{'t value'}, 2*sqrt(3),
+	  'lm cat ref-level: t(Intercept) = 2*sqrt(3)', 1e-7 );
+	is_approx( $lm_ref->{summary}{grpB}{'t value'}, 4*sqrt(3/2),
+	  'lm cat ref-level: t(grpB) = 4*sqrt(3/2)', 1e-7 );
+	is_approx( $lm_ref->{summary}{grpC}{'t value'}, 7*sqrt(3/2),
+	  'lm cat ref-level: t(grpC) = 7*sqrt(3/2)', 1e-7 );
+	ok( $lm_ref->{summary}{grpB}{'Pr(>|t|)'} < 0.01,
+	  'lm cat ref-level: p(grpB) < 0.01   (|t|=4.90, df=6)' );
+	ok( $lm_ref->{summary}{grpC}{'Pr(>|t|)'} < 0.001,
+	  'lm cat ref-level: p(grpC) < 0.001  (|t|=8.57 > t_{6,0.001}=5.959)' );
+
+	no_leaks_ok {
+	  eval { lm(formula => 'y ~ grp', data => $data) };
+	} 'lm cat ref-level: no memory leaks';
+};
 #---------------------------
 #   rnorm
 #----------------------------
