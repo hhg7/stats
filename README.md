@@ -200,6 +200,26 @@ Computes the histogram of the given data values, operating in single $O(N)$ pass
 
 If `breaks` is not explicitly provided, it defaults to calculating the number of bins using Sturges' formula.
 
+## kruskal_test
+
+Performs a Kruskal-Wallis rank sum test, see 
+https://www.rdocumentation.org/packages/stats/versions/3.6.2/topics/kruskal.test
+
+    my @xk = (2.9, 3.0, 2.5, 2.6, 3.2); # normal subjects
+    my @yk = (3.8, 2.7, 4.0, 2.4);      # with obstructive airway disease
+    my @zk = (2.8, 3.4, 3.7, 2.2, 2.0); # with asbestosis
+    my @x = (@xk, @yk, @zk);
+    my @g = (
+    	(map {'Normal subjects'} 0..4),
+    	(map {'Subjects with obstructive airway disease'} 0..3),
+    	map {'Subjects with asbestosis'} 0..4
+    );
+    my $t0 = Time::HiRes::time();
+    my $kt = kruskal_test(\@x, \@g);
+    my $t1 = Time::HiRes::time();
+    printf("Kruskal calculation in %g seconds.\n", $t1-$t0);
+    p $kt;
+
 ## ks_test
 
 The Kolmogorov-Smirnov test, which tests whether or not two arrays/lists of data are part of the same distribution is implemented simply:

@@ -3061,4 +3061,39 @@ no_leaks_ok {
 		$ks = ks_test($ksx, 'pnorm');
 	};
 } 'Kolmogorov-Smirnov test with 1 array and a named distribution: no memory leaks' unless $INC{'Devel/Cover.pm'};
+#---------------
+#  Kruskal test (kruskal.R)
+#---------------
+my @xk = (2.9, 3.0, 2.5, 2.6, 3.2); # normal subjects
+my @yk = (3.8, 2.7, 4.0, 2.4);      # with obstructive airway disease
+my @zk = (2.8, 3.4, 3.7, 2.2, 2.0); # with asbestosis
+my @x = (@xk, @yk, @zk);
+my @g = (
+	(map {'Normal subjects'} 0..4),
+	(map {'Subjects with obstructive airway disease'} 0..3),
+	map {'Subjects with asbestosis'} 0..4
+);
+my $kt = kruskal_test(\@x, \@g);
+is_approx($kt->{'p_value'}, 0.67996477357889, 'kruskal: p-value', 1e-13);
+is_approx($kt->{statistic}, 0.77142857142857, 'kruskal: statistic', 1e-13);
+is_approx($kt->{parameter}, 2, 'kruskal: parameter', 0);
+no_leaks_ok {
+	eval {
+		$kt = kruskal_test(\@x, \@g);
+	}
+} 'kruskal test: no memory leaks' unless $INC{'Devel/Cover.pm'};
+my %x = (
+	'normal.subjects' => [2.9, 3.0, 2.5, 2.6, 3.2],
+	'obs. airway disease' => [3.8, 2.7, 4.0, 2.4],
+	'asbestosis' => [2.8, 3.4, 3.7, 2.2, 2.0]
+);
+$kt = kruskal_test(\%x);
+is_approx($kt->{'p_value'}, 0.67996477357889, 'kruskal HOA: p-value', 1e-13);
+is_approx($kt->{statistic}, 0.77142857142857, 'kruskal HOA: statistic', 1e-13);
+is_approx($kt->{parameter}, 2, 'kruskal HOA: parameter', 0);
+no_leaks_ok {
+	eval {
+		$kt = kruskal_test(\@x, \@g);
+	}
+} 'kruskal test: no memory leaks with HOA input' unless $INC{'Devel/Cover.pm'};
 done_testing();

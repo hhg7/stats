@@ -22,13 +22,4 @@ my $t0 = Time::HiRes::time();
 my $kt = kruskal_test(\@x, \@g);
 my $t1 = Time::HiRes::time();
 printf("Kruskal calculation in %g seconds.\n", $t1-$t0);
-my %x = (
-'normal.subjects' => [2.9, 3.0, 2.5, 2.6, 3.2],
-'obs. airway disease' => [3.8, 2.7, 4.0, 2.4],
-'asbestosis' => [2.8, 3.4, 3.7, 2.2, 2.0]
-);
-$t0 = Time::HiRes::time();
-$kt = kruskal_test(\%x);
-$t1 = Time::HiRes::time();
-printf("Kruskal calculation via HoA in %g seconds.\n", $t1-$t0);
 p $kt;
