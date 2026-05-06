@@ -12,6 +12,7 @@
 #   MakeMaker Parameters:
 
 #     BUILD_REQUIRES => {  }
+#     CCFLAGS => q[-std=c99]
 #     CONFIGURE_REQUIRES => {  }
 #     DEFINE => q[]
 #     INC => q[-I.]
@@ -170,7 +171,7 @@ O_FILES  = LikeR.o \
 	bu.LikeR.o
 H_FILES  = ppport.h
 MAN1PODS = 
-MAN3PODS = 
+MAN3PODS = lib/Stats/LikeR.pm
 
 # Where to build things
 INST_LIBDIR      = $(INST_LIB)/Stats
@@ -311,7 +312,7 @@ DISTVNAME = Stats-LikeR-0.01
 
 # --- MakeMaker cflags section:
 
-CCFLAGS = -fwrapv -fno-strict-aliasing -pipe -fstack-protector-strong -I/usr/local/include -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64
+CCFLAGS = -std=c99
 OPTIMIZE = -O4 -Wunused
 PERLTYPE = 
 MPOLLUTE = 
@@ -536,8 +537,10 @@ POD2MAN_EXE = $(PERLRUN) "-MExtUtils::Command::MM" -e pod2man "--"
 POD2MAN = $(POD2MAN_EXE)
 
 
-manifypods : pure_all config 
-	$(NOECHO) $(NOOP)
+manifypods : pure_all config  \
+	lib/Stats/LikeR.pm
+	$(NOECHO) $(POD2MAN) --section=$(MAN3SECTION) --perm_rw=$(PERM_RW) -u \
+	  lib/Stats/LikeR.pm $(INST_MAN3DIR)/Stats::LikeR.$(MAN3EXT) 
 
 
 

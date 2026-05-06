@@ -5813,7 +5813,6 @@ CODE:
 	          && SvTYPE(SvRV(ST(arg_idx))) == SVt_PVAV) {
 		g_sv = ST(arg_idx++);
 	}
-
 	// 2. Parse named arguments (fallback)
 	for (; arg_idx < items; arg_idx += 2) {
 		const char *restrict key = SvPV_nolen(ST(arg_idx));
@@ -5823,18 +5822,15 @@ CODE:
 		else if (strEQ(key, "h")) h_sv = val;
 		else croak("kruskal_test: unknown argument '%s'", key);
 	}
-
 	// 3. Mutual-exclusion guard
 	if (h_sv && (x_sv || g_sv))
 		croak("kruskal_test: cannot mix 'h' (hash-of-arrays) with 'x'/'g' inputs");
-
 	/* ------------------------------------------------------------------ */
 	/* Shared state filled by whichever input branch runs                  */
 	/* ------------------------------------------------------------------ */
 	RankInfo *restrict ri = NULL;
 	size_t valid_n = 0;
 	size_t k       = 0;
-
 	/* ------------------------------------------------------------------ */
 	/* 4a. Hash-of-arrays input path                                       */
 	/*     my %x = ( group1 => [...], group2 => [...], ... )              */
@@ -5842,15 +5838,13 @@ CODE:
 	if (h_sv) {
 		if (!SvROK(h_sv) || SvTYPE(SvRV(h_sv)) != SVt_PVHV)
 			croak("kruskal_test: 'h' must be a HASH reference");
-
 		HV *restrict h_hv = (HV*)SvRV(h_sv);
-
-		/* First pass – validate values and tally total elements */
+		// First pass – validate values and tally total elements
 		size_t total = 0;
 		hv_iterinit(h_hv);
-		HE *he;
+		HE *restrict he;
 		while ((he = hv_iternext(h_hv))) {
-			SV *val = HeVAL(he);
+			SV *restrict val = HeVAL(he);
 			if (!SvROK(val) || SvTYPE(SvRV(val)) != SVt_PVAV)
 				croak("kruskal_test: every value in 'h' must be an ARRAY reference");
 			total += (size_t)(av_len((AV*)SvRV(val)) + 1);
@@ -5877,8 +5871,8 @@ CODE:
 		}
 		k = group_id;   /* number of unique groups = number of hash keys */
 
-	/* ------------------------------------------------------------------ */
-	/* 4b. Original x / g array-pair input path (unchanged)               */
+	/* ------------------------------------------------------------------
+	/* 4b. Original x / g array-pair input path (unchanged)
 	/* ------------------------------------------------------------------ */
 	} else {
 		if (!x_sv || !SvROK(x_sv) || SvTYPE(SvRV(x_sv)) != SVt_PVAV)
@@ -5895,7 +5889,7 @@ CODE:
 
 		ri = (RankInfo *)safemalloc(nx * sizeof(RankInfo));
 
-		/* Map string group names → contiguous integer IDs */
+		// Map string group names → contiguous integer IDs
 		HV    *restrict group_map    = newHV();
 		size_t          next_group_id = 0;
 

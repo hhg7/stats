@@ -202,8 +202,12 @@ If `breaks` is not explicitly provided, it defaults to calculating the number of
 
 ## kruskal_test
 
+Essentially the test determines if all groups have the same median (same distribution) (an excellent review is at https://library.virginia.edu/data/articles/getting-started-with-the-kruskal-wallis-test)
+
 Performs a Kruskal-Wallis rank sum test, see 
 https://www.rdocumentation.org/packages/stats/versions/3.6.2/topics/kruskal.test
+
+### R-like array entry
 
     my @xk = (2.9, 3.0, 2.5, 2.6, 3.2); # normal subjects
     my @yk = (3.8, 2.7, 4.0, 2.4);      # with obstructive airway disease
@@ -218,6 +222,19 @@ https://www.rdocumentation.org/packages/stats/versions/3.6.2/topics/kruskal.test
     my $kt = kruskal_test(\@x, \@g);
     my $t1 = Time::HiRes::time();
     printf("Kruskal calculation in %g seconds.\n", $t1-$t0);
+    p $kt;
+
+### hash of array entry
+
+    my %x = (
+    'normal.subjects' => [2.9, 3.0, 2.5, 2.6, 3.2],
+    'obs. airway disease' => [3.8, 2.7, 4.0, 2.4],
+    'asbestosis' => [2.8, 3.4, 3.7, 2.2, 2.0]
+    );
+    $t0 = Time::HiRes::time();
+    $kt = kruskal_test(\%x);
+    $t1 = Time::HiRes::time();
+    printf("Kruskal calculation via HoA in %g seconds.\n", $t1-$t0);
     p $kt;
 
 ## ks_test

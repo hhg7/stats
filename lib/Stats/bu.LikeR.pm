@@ -1,18 +1,15 @@
 #!/usr/bin/env perl
-use 5.042.2;
-no source::encoding;
+require 5.010;
 package Stats::LikeR;
 our $VERSION = 0.01;
 require XSLoader;
-use 5.042.2;
-no source::encoding;
 use DDP {output => 'STDOUT', array_max => 10, show_memsize => 1};
 use Devel::Confess 'color';
 use warnings FATAL => 'all';
 use autodie ':default';
 use Exporter 'import';
 XSLoader::load('Stats::LikeR', $VERSION);
-our @EXPORT_OK = qw(aov chisq_test cor cor_test cov fisher_test glm hist lm matrix mean median min max p_adjust quantile rbinom read_table rnorm runif scale sd seq shapiro_test t_test var write_table);
+our @EXPORT_OK = qw(aov chisq_test cor cor_test cov fisher_test glm hist kruskal_test ks_test lm matrix mean median min max p_adjust power_t_test quantile rbinom read_table rnorm runif scale sd seq shapiro_test t_test var wilcox_test write_table);
 our @EXPORT = @EXPORT_OK;
 
 require XSLoader;
@@ -21,7 +18,7 @@ require XSLoader;
 sub chisq_test {
 	my ($data) = @_;
 
-	die "Input must be an array reference" unless ref($data) eq 'ARRAY';
+	die 'Input must be an array reference' unless ref($data) eq 'ARRAY';
 
 	# The XS function handles the heavy lifting
 	my $result = _chisq_c($data);
@@ -46,12 +43,7 @@ sub read_table {
 		@_,
 	);
 	my %allowed_args = map {$_ => 1} (
-		'comment',
-		'row.names',
-		'sep',
-		'substitutions',
-		'output.type',
-		'filter'
+		'comment',	'output.type',	'filter', 'row.names', 'sep',	'substitutions'
 	);
 	my @undef_args = sort grep {!$allowed_args{$_}} keys %args;
 	my $current_sub = (split(/::/,(caller(0))[3]))[-1];
@@ -63,7 +55,6 @@ sub read_table {
 	if ($args{'output.type'} !~ m/^(?:aoh|hoa|hoh)$/) {
 		die "\"$args{'output.type'}\" isn't allowed";
 	}
-
 	# Normalize the filter argument
 	my $filter = $args{filter};
 	if (defined $filter && ref($filter) eq 'CODE') {
@@ -71,12 +62,11 @@ sub read_table {
 	} elsif (defined $filter && ref($filter) ne 'HASH') {
 		die "'filter' must be a CODE or HASH reference";
 	}
-
 	my (@data, %data, @header, %mapped_filters);
-	# Execute the fast C-state machine. Returns an AoA.
-	my $aoa = _parse_csv_file($file, $args{sep} // '', $args{comment} // '');
-	
-	foreach my $line_ref (@$aoa) {
+	# Execute the fast C-state machine. Pass an anonymous coderef to process streams.
+	# This bypasses creating an intermediate AoA memory spike.
+	_parse_csv_file($file, $args{sep} // '', $args{comment} // '', sub {
+		my ($line_ref) = @_;
 		my @line = @$line_ref;
 		if (!@header) {
 			# --- HEADER PROCESSING ---
@@ -93,7 +83,6 @@ sub read_table {
 			if ((defined $args{'row.names'}) && (!grep {$_ eq $args{'row.names'}} @header)) {
 				die "\"$args{'row.names'}\" isn't in the header of $file";
 			}
-
 			# Map filters to 1-based indices (or 0 for whole row)
 			if ($filter) {
 				for my $k (keys %$filter) {
@@ -106,21 +95,21 @@ sub read_table {
 					}
 				}
 			}
-			next;
+			return; # Equivalent to 'next' out of the closure
 		}
-		
 		# Check for column alignment
 		if (scalar @line != scalar @header) {
 			die "Alignment error on $file (" . scalar(@line) . " fields vs " . scalar(@header) . " headers).";
 		}
-		
 		# --- DATA PROCESSING ---
 		my %line_hash;
 		for my $i (0 .. $#header) {
-			my $cell = $line[$i];
-			$line_hash{$header[$i]} = (defined($cell) && $cell eq '') ? 'NA' : $cell;
+			if (!defined($line[$i]) || $line[$i] eq '') {
+         	$line_hash{$header[$i]} = 'NA';
+         } else {
+         	$line_hash{$header[$i]} = $line[$i];
+         }
 		}
-
 		# --- APPLY FILTERS ---
 		my $skip = 0;
 		if (%mapped_filters) {
@@ -141,7 +130,7 @@ sub read_table {
 				}
 			}
 		}
-		next if $skip; # Reject the row if it failed the filter
+		return if $skip; # Reject the row if it failed the filter, skipping memory allocation
 
 		# Populate requested data structure
 		if ($args{'output.type'} eq 'aoh') {
@@ -157,10 +146,15 @@ sub read_table {
 				$data{$col}{$row_name} = $line_hash{$col};
 			}
 		}
-	}
+	});
+	@header = ();
+	%mapped_filters = ();
 	if ($args{'output.type'} eq 'aoh') {
-		return \@data;
+		undef %data;
+		my $final_ref = \@data;
+		return $final_ref;
 	} elsif ($args{'output.type'} =~ m/^(?:hoa|hoh)$/) {
+		@data = ();
 		return \%data;
 	}
 }

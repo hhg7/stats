@@ -6420,7 +6420,6 @@ XS_EUPXS(XS_Stats__LikeR_kruskal_test)
 	          && SvTYPE(SvRV(ST(arg_idx))) == SVt_PVAV) {
 		g_sv = ST(arg_idx++);
 	}
-
 	// 2. Parse named arguments (fallback)
 	for (; arg_idx < items; arg_idx += 2) {
 		const char *restrict key = SvPV_nolen(ST(arg_idx));
@@ -6430,18 +6429,15 @@ XS_EUPXS(XS_Stats__LikeR_kruskal_test)
 		else if (strEQ(key, "h")) h_sv = val;
 		else croak("kruskal_test: unknown argument '%s'", key);
 	}
-
 	// 3. Mutual-exclusion guard
 	if (h_sv && (x_sv || g_sv))
 		croak("kruskal_test: cannot mix 'h' (hash-of-arrays) with 'x'/'g' inputs");
-
 	/* ------------------------------------------------------------------ */
 	/* Shared state filled by whichever input branch runs                  */
 	/* ------------------------------------------------------------------ */
 	RankInfo *restrict ri = NULL;
 	size_t valid_n = 0;
 	size_t k       = 0;
-
 	/* ------------------------------------------------------------------ */
 	/* 4a. Hash-of-arrays input path                                       */
 	/*     my %x = ( group1 => [...], group2 => [...], ... )              */
@@ -6449,15 +6445,13 @@ XS_EUPXS(XS_Stats__LikeR_kruskal_test)
 	if (h_sv) {
 		if (!SvROK(h_sv) || SvTYPE(SvRV(h_sv)) != SVt_PVHV)
 			croak("kruskal_test: 'h' must be a HASH reference");
-
 		HV *restrict h_hv = (HV*)SvRV(h_sv);
-
-		/* First pass – validate values and tally total elements */
+		// First pass – validate values and tally total elements
 		size_t total = 0;
 		hv_iterinit(h_hv);
-		HE *he;
+		HE *restrict he;
 		while ((he = hv_iternext(h_hv))) {
-			SV *val = HeVAL(he);
+			SV *restrict val = HeVAL(he);
 			if (!SvROK(val) || SvTYPE(SvRV(val)) != SVt_PVAV)
 				croak("kruskal_test: every value in 'h' must be an ARRAY reference");
 			total += (size_t)(av_len((AV*)SvRV(val)) + 1);
@@ -6484,8 +6478,8 @@ XS_EUPXS(XS_Stats__LikeR_kruskal_test)
 		}
 		k = group_id;   /* number of unique groups = number of hash keys */
 
-	/* ------------------------------------------------------------------ */
-	/* 4b. Original x / g array-pair input path (unchanged)               */
+	/* ------------------------------------------------------------------
+	/* 4b. Original x / g array-pair input path (unchanged)
 	/* ------------------------------------------------------------------ */
 	} else {
 		if (!x_sv || !SvROK(x_sv) || SvTYPE(SvRV(x_sv)) != SVt_PVAV)
@@ -6502,7 +6496,7 @@ XS_EUPXS(XS_Stats__LikeR_kruskal_test)
 
 		ri = (RankInfo *)safemalloc(nx * sizeof(RankInfo));
 
-		/* Map string group names → contiguous integer IDs */
+		// Map string group names → contiguous integer IDs
 		HV    *restrict group_map    = newHV();
 		size_t          next_group_id = 0;
 
@@ -6576,7 +6570,7 @@ XS_EUPXS(XS_Stats__LikeR_kruskal_test)
 	hv_stores(res, "method",    newSVpv("Kruskal-Wallis rank sum test", 0));
 	RETVAL = newRV_noinc((SV*)res);
 }
-#line 6580 "LikeR.c"
+#line 6574 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }

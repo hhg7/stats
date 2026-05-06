@@ -5792,3 +5792,176 @@ CODE:
 OUTPUT:
     RETVAL
 
+SV* kruskal_test(...)
+CODE:
+{
+	SV *restrict x_sv = NULL, *restrict g_sv = NULL, *restrict h_sv = NULL;
+	unsigned int arg_idx = 0;
+
+	// 1. Shift positional arguments
+	//    Accept either: (arrayref, arrayref) or (hashref)
+	if (arg_idx < items && SvROK(ST(arg_idx))) {
+		svtype t = SvTYPE(SvRV(ST(arg_idx)));
+		if (t == SVt_PVAV) {
+			x_sv = ST(arg_idx++);
+		} else if (t == SVt_PVHV) {
+			h_sv = ST(arg_idx++);          /* hash-of-arrays shortcut */
+		}
+	}
+	if (!h_sv && arg_idx < items
+	          && SvROK(ST(arg_idx))
+	          && SvTYPE(SvRV(ST(arg_idx))) == SVt_PVAV) {
+		g_sv = ST(arg_idx++);
+	}
+	// 2. Parse named arguments (fallback)
+	for (; arg_idx < items; arg_idx += 2) {
+		const char *restrict key = SvPV_nolen(ST(arg_idx));
+		SV         *restrict val = ST(arg_idx + 1);
+		if      (strEQ(key, "x")) x_sv = val;
+		else if (strEQ(key, "g")) g_sv = val;
+		else if (strEQ(key, "h")) h_sv = val;
+		else croak("kruskal_test: unknown argument '%s'", key);
+	}
+	// 3. Mutual-exclusion guard
+	if (h_sv && (x_sv || g_sv))
+		croak("kruskal_test: cannot mix 'h' (hash-of-arrays) with 'x'/'g' inputs");
+	/* ------------------------------------------------------------------ */
+	/* Shared state filled by whichever input branch runs                  */
+	/* ------------------------------------------------------------------ */
+	RankInfo *restrict ri = NULL;
+	size_t valid_n = 0;
+	size_t k       = 0;
+	/* ------------------------------------------------------------------ */
+	/* 4a. Hash-of-arrays input path                                       */
+	/*     my %x = ( group1 => [...], group2 => [...], ... )              */
+	/* ------------------------------------------------------------------ */
+	if (h_sv) {
+		if (!SvROK(h_sv) || SvTYPE(SvRV(h_sv)) != SVt_PVHV)
+			croak("kruskal_test: 'h' must be a HASH reference");
+		HV *restrict h_hv = (HV*)SvRV(h_sv);
+		// First pass – validate values and tally total elements
+		size_t total = 0;
+		hv_iterinit(h_hv);
+		HE *he;
+		while ((he = hv_iternext(h_hv))) {
+			SV *val = HeVAL(he);
+			if (!SvROK(val) || SvTYPE(SvRV(val)) != SVt_PVAV)
+				croak("kruskal_test: every value in 'h' must be an ARRAY reference");
+			total += (size_t)(av_len((AV*)SvRV(val)) + 1);
+		}
+		if (total < 2) croak("not enough observations");
+
+		ri = (RankInfo *)safemalloc(total * sizeof(RankInfo));
+
+		/* Second pass – fill ri[], assigning one group_id per hash key */
+		size_t group_id = 0;
+		hv_iterinit(h_hv);
+		while ((he = hv_iternext(h_hv))) {
+			AV    *restrict av  = (AV*)SvRV(HeVAL(he));
+			size_t          n_g = (size_t)(av_len(av) + 1);
+			for (size_t i = 0; i < n_g; i++) {
+				SV **restrict el = av_fetch(av, i, 0);
+				if (el && SvOK(*el) && looks_like_number(*el)) {
+					ri[valid_n].val = SvNV(*el);
+					ri[valid_n].idx = group_id;   /* group identity */
+					valid_n++;
+				}
+			}
+			group_id++;
+		}
+		k = group_id;   /* number of unique groups = number of hash keys */
+
+	/* ------------------------------------------------------------------ */
+	/* 4b. Original x / g array-pair input path (unchanged)               */
+	/* ------------------------------------------------------------------ */
+	} else {
+		if (!x_sv || !SvROK(x_sv) || SvTYPE(SvRV(x_sv)) != SVt_PVAV)
+			croak("kruskal_test: 'x' is a required argument and must be an ARRAY reference");
+		if (!g_sv || !SvROK(g_sv) || SvTYPE(SvRV(g_sv)) != SVt_PVAV)
+			croak("kruskal_test: 'g' is a required argument and must be an ARRAY reference");
+
+		AV *restrict x_av = (AV*)SvRV(x_sv);
+		AV *restrict g_av = (AV*)SvRV(g_sv);
+		size_t nx = (size_t)(av_len(x_av) + 1);
+		size_t ng = (size_t)(av_len(g_av) + 1);
+		if (nx != ng) croak("kruskal_test: 'x' and 'g' must have the same length");
+		if (nx < 2)   croak("not enough observations");
+
+		ri = (RankInfo *)safemalloc(nx * sizeof(RankInfo));
+
+		// Map string group names → contiguous integer IDs
+		HV    *restrict group_map    = newHV();
+		size_t          next_group_id = 0;
+
+		for (size_t i = 0; i < nx; i++) {
+			SV **restrict x_el = av_fetch(x_av, i, 0);
+			SV **restrict g_el = av_fetch(g_av, i, 0);
+			if (x_el && SvOK(*x_el) && looks_like_number(*x_el)
+			         && g_el && SvOK(*g_el)) {
+				const char *restrict g_str = SvPV_nolen(*g_el);
+				STRLEN                glen  = strlen(g_str);
+				SV   **restrict id_sv = hv_fetch(group_map, g_str, glen, 0);
+				size_t group_id;
+				if (id_sv) {
+					group_id = SvUV(*id_sv);
+				} else {
+					group_id = next_group_id++;
+					hv_store(group_map, g_str, glen, newSVuv(group_id), 0);
+				}
+				ri[valid_n].val = SvNV(*x_el);
+				ri[valid_n].idx = group_id;
+				valid_n++;
+			}
+		}
+		k = next_group_id;
+		SvREFCNT_dec(group_map);
+	}
+
+	/* ------------------------------------------------------------------ */
+	/* 5. Shared post-extraction validation                                */
+	/* ------------------------------------------------------------------ */
+	if (valid_n < 2) { Safefree(ri); croak("not enough observations");            }
+	if (k       < 2) { Safefree(ri); croak("all observations are in the same group"); }
+
+	// 6. Ranking and Tie Accumulation (Reusing LikeR Helper)
+	bool   has_ties = 0;
+	double tie_adj  = rank_and_count_ties(ri, valid_n, &has_ties);
+
+	// 7. Aggregate Sum of Ranks by Group (tapply(r, g, sum))
+	double *restrict group_rank_sums = (double *)safecalloc(k, sizeof(double));
+	size_t *restrict group_counts    = (size_t *)safecalloc(k, sizeof(size_t));
+	for (size_t i = 0; i < valid_n; i++) {
+		size_t g_id = ri[i].idx;
+		group_rank_sums[g_id] += ri[i].rank;
+		group_counts[g_id]++;
+	}
+
+	// 8. Calculate STATISTIC
+	double stat_base = 0.0;
+	for (size_t i = 0; i < k; i++) {
+		if (group_counts[i] > 0)
+			stat_base += (group_rank_sums[i] * group_rank_sums[i])
+			             / (double)group_counts[i];
+	}
+	Safefree(group_rank_sums); Safefree(group_counts); Safefree(ri);
+
+	double n_d  = (double)valid_n;
+	double stat = (12.0 * stat_base / (n_d * (n_d + 1.0))) - 3.0 * (n_d + 1.0);
+	if (tie_adj > 0.0) {
+		double tie_denom = 1.0 - (tie_adj / (n_d * n_d * n_d - n_d));
+		stat /= tie_denom;
+	}
+	int    df    = (int)k - 1;
+	double p_val = get_p_value(stat, df);
+
+	// 9. Return structured data exactly like R's htest
+	HV *restrict res = newHV();
+	hv_stores(res, "statistic", newSVnv(stat));
+	hv_stores(res, "parameter", newSViv(df));
+	hv_stores(res, "p_value",   newSVnv(p_val));
+	hv_stores(res, "p.value",   newSVnv(p_val));
+	hv_stores(res, "method",    newSVpv("Kruskal-Wallis rank sum test", 0));
+	RETVAL = newRV_noinc((SV*)res);
+}
+OUTPUT:
+	RETVAL
