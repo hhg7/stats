@@ -547,7 +547,7 @@ If C<breaks> is not explicitly provided, it defaults to calculating the number o
 
 =head2 kruskal_test
 
-Essentially the test determines if all groups have the same median (same distribution).
+Essentially the test determines if all groups have the same median (same distribution) (an excellent review is at https://library.virginia.edu/data/articles/getting-started-with-the-kruskal-wallis-test)
 
 Performs a Kruskal-Wallis rank sum test, see 
 https://www.rdocumentation.org/packages/stats/versions/3.6.2/topics/kruskal.test
