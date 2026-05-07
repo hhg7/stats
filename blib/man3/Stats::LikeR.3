@@ -58,7 +58,7 @@
 .\" ========================================================================
 .\"
 .IX Title "Stats::LikeR 3"
-.TH Stats::LikeR 3 2026-05-06 "perl v5.42.2" "User Contributed Perl Documentation"
+.TH Stats::LikeR 3 2026-05-07 "perl v5.42.2" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -295,7 +295,7 @@ Computes the histogram of the given data values, operating in single $O(N)$ pass
 If \f(CW\*(C`breaks\*(C'\fR is not explicitly provided, it defaults to calculating the number of bins using Sturges\*(Aq formula.
 .SS kruskal_test
 .IX Subsection "kruskal_test"
-Essentially the test determines if all groups have the same median (same distribution).
+Essentially the test determines if all groups have the same median (same distribution) (an excellent review is at https://library.virginia.edu/data/articles/getting\-started\-with\-the\-kruskal\-wallis\-test)
 .PP
 Performs a Kruskal\-Wallis rank sum test, see 
 https://www.rdocumentation.org/packages/stats/versions/3.6.2/topics/kruskal.test
