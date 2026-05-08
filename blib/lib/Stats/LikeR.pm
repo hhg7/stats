@@ -1,7 +1,8 @@
 #!/usr/bin/env perl
+# ABSTRACT: Get basic statistical functions, like in R, but with Perl using XS for performance
 require 5.010;
 package Stats::LikeR;
-our $VERSION = 0.01;
+our $VERSION = 0.02;
 require XSLoader;
 use DDP {output => 'STDOUT', array_max => 10, show_memsize => 1};
 use Devel::Confess 'color';
@@ -9,7 +10,7 @@ use warnings FATAL => 'all';
 use autodie ':default';
 use Exporter 'import';
 XSLoader::load('Stats::LikeR', $VERSION);
-our @EXPORT_OK = qw(aov chisq_test cor cor_test cov fisher_test glm hist kruskal_test ks_test lm matrix mean median min max p_adjust power_t_test quantile rbinom read_table rnorm runif scale sd seq shapiro_test sum t_test var wilcox_test write_table);
+our @EXPORT_OK = qw(aov chisq_test cor cor_test cov fisher_test glm hist kruskal_test ks_test lm matrix mean median min max p_adjust power_t_test quantile rbinom read_table rnorm runif scale sd seq shapiro_test sum t_test var var_test wilcox_test write_table);
 our @EXPORT = @EXPORT_OK;
 
 require XSLoader;
@@ -571,6 +572,8 @@ https://www.rdocumentation.org/packages/stats/versions/3.6.2/topics/kruskal.test
 
 =head3 hash of array entry
 
+I feel that this is better, and more easily read, than what you get in R:
+
  my %x = (
  'normal.subjects' => [2.9, 3.0, 2.5, 2.6, 3.2],
  'obs. airway disease' => [3.8, 2.7, 4.0, 2.4],
@@ -789,6 +792,19 @@ and returns the hash reference:
  statistic   0.960870680168535,
  W           0.960870680168535
  }
+
+=head2 sum
+
+returns sum, but using both arrays and array references.
+
+ my $test_data = [1..8];
+ sum($test_data)
+
+which I prefer, compared to List::Util's required casting into an array:
+
+ sum(@{ $test_data });
+
+which is shorter and much easier to read
 
 =head2 t_test
 

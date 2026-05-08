@@ -58,7 +58,7 @@
 .\" ========================================================================
 .\"
 .IX Title "Stats::LikeR 3"
-.TH Stats::LikeR 3 2026-05-07 "perl v5.42.2" "User Contributed Perl Documentation"
+.TH Stats::LikeR 3 2026-05-08 "perl v5.42.2" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -322,6 +322,8 @@ https://www.rdocumentation.org/packages/stats/versions/3.6.2/topics/kruskal.test
 .PP
 \fIhash of array entry\fR
 .IX Subsection "hash of array entry"
+.PP
+I feel that this is better, and more easily read, than what you get in R:
 .PP
 .Vb 10
 \& my %x = (
@@ -592,6 +594,22 @@ and returns the hash reference:
 \& W           0.960870680168535
 \& }
 .Ve
+.SS sum
+.IX Subsection "sum"
+returns sum, but using both arrays and array references.
+.PP
+.Vb 2
+\& my $test_data = [1..8];
+\& sum($test_data)
+.Ve
+.PP
+which I prefer, compared to List::Util\*(Aqs required casting into an array:
+.PP
+.Vb 1
+\& sum(@{ $test_data });
+.Ve
+.PP
+which is shorter and much easier to read
 .SS t_test
 .IX Subsection "t_test"
 There are 1\-sample and 2\-sample t\-tests:

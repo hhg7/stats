@@ -6,7 +6,7 @@
 #
 #       ANY CHANGES MADE HERE WILL BE LOST!
 #
-#   MakeMaker ARGV: (q[OPTIMIZE=-O4 -Wunused])
+#   MakeMaker ARGV: (q[dev.Makefile])
 #
 
 #   MakeMaker Parameters:
@@ -60,11 +60,11 @@ DIRFILESEP = /
 DFSEP = $(DIRFILESEP)
 NAME = Stats::LikeR
 NAME_SYM = Stats_LikeR
-VERSION = 0.01
+VERSION = 0.02
 VERSION_MACRO = VERSION
-VERSION_SYM = 0_01
+VERSION_SYM = 0_02
 DEFINE_VERSION = -D$(VERSION_MACRO)=\"$(VERSION)\"
-XS_VERSION = 0.01
+XS_VERSION = 0.02
 XS_VERSION_MACRO = XS_VERSION
 XS_DEFINE_VERSION = -D$(XS_VERSION_MACRO)=\"$(XS_VERSION)\"
 INST_ARCHLIB = blib/arch
@@ -212,6 +212,7 @@ TO_INST_PM = aov.pl \
 	sd.pl \
 	t.test.pl \
 	test.leaktrace.pl \
+	var.test.pl \
 	wilcox.text.pl \
 	write.table.pl \
 	xs.check.pl
@@ -301,7 +302,7 @@ RCS_LABEL = rcs -Nv$(VERSION_SYM): -q
 DIST_CP = best
 DIST_DEFAULT = tardist
 DISTNAME = Stats-LikeR
-DISTVNAME = Stats-LikeR-0.01
+DISTVNAME = Stats-LikeR-0.02
 
 
 # --- MakeMaker macro section:
@@ -313,7 +314,7 @@ DISTVNAME = Stats-LikeR-0.01
 # --- MakeMaker cflags section:
 
 CCFLAGS = -std=c99
-OPTIMIZE = -O4 -Wunused
+OPTIMIZE = -O2
 PERLTYPE = 
 MPOLLUTE = 
 
@@ -547,6 +548,12 @@ manifypods : pure_all config  \
 
 # --- MakeMaker processPL section:
 
+pure_all :: dev.Makefile
+	$(NOECHO) $(NOOP)
+
+dev.Makefile :: dev.Makefile.PL pm_to_blib 
+	$(PERLRUNINST) dev.Makefile.PL dev.Makefile 
+
 
 # --- MakeMaker installbin section:
 
@@ -636,7 +643,7 @@ metafile : create_distdir
 	$(NOECHO) $(ECHO) '    - t' >> META_new.yml
 	$(NOECHO) $(ECHO) '    - inc' >> META_new.yml
 	$(NOECHO) $(ECHO) 'requires: {}' >> META_new.yml
-	$(NOECHO) $(ECHO) 'version: 0.01' >> META_new.yml
+	$(NOECHO) $(ECHO) 'version: 0.02' >> META_new.yml
 	$(NOECHO) $(ECHO) 'x_serialization_backend: '\''CPAN::Meta::YAML version 0.020'\''' >> META_new.yml
 	-$(NOECHO) $(MV) META_new.yml $(DISTVNAME)/META.yml
 	$(NOECHO) $(ECHO) Generating META.json
@@ -677,7 +684,7 @@ metafile : create_distdir
 	$(NOECHO) $(ECHO) '      }' >> META_new.json
 	$(NOECHO) $(ECHO) '   },' >> META_new.json
 	$(NOECHO) $(ECHO) '   "release_status" : "stable",' >> META_new.json
-	$(NOECHO) $(ECHO) '   "version" : 0.01,' >> META_new.json
+	$(NOECHO) $(ECHO) '   "version" : 0.02,' >> META_new.json
 	$(NOECHO) $(ECHO) '   "x_serialization_backend" : "JSON::PP version 4.16"' >> META_new.json
 	$(NOECHO) $(ECHO) '}' >> META_new.json
 	-$(NOECHO) $(MV) META_new.json $(DISTVNAME)/META.json
@@ -759,7 +766,7 @@ distdir : create_distdir distmeta
 
 # --- MakeMaker dist_test section:
 disttest : distdir
-	cd $(DISTVNAME) && $(ABSPERLRUN) Makefile.PL "OPTIMIZE=-O4 -Wunused"
+	cd $(DISTVNAME) && $(ABSPERLRUN) Makefile.PL "dev.Makefile"
 	cd $(DISTVNAME) && $(MAKE) $(PASTHRU)
 	cd $(DISTVNAME) && $(MAKE) test $(PASTHRU)
 
@@ -1016,7 +1023,7 @@ $(FIRST_MAKEFILE) : Makefile.PL $(CONFIGDEP)
 	-$(NOECHO) $(RM_F) $(MAKEFILE_OLD)
 	-$(NOECHO) $(MV)   $(FIRST_MAKEFILE) $(MAKEFILE_OLD)
 	- $(MAKE) $(USEMAKEFILE) $(MAKEFILE_OLD) clean $(DEV_NULL)
-	$(PERLRUN) Makefile.PL "OPTIMIZE=-O4 -Wunused"
+	$(PERLRUN) Makefile.PL "dev.Makefile"
 	$(NOECHO) $(ECHO) "==> Your Makefile has been rebuilt. <=="
 	$(NOECHO) $(ECHO) "==> Please rerun the $(MAKE) command.  <=="
 	$(FALSE)
@@ -1039,7 +1046,7 @@ $(MAKE_APERL_FILE) : static $(FIRST_MAKEFILE) pm_to_blib
 		Makefile.PL DIR="" \
 		MAKEFILE=$(MAKE_APERL_FILE) LINKTYPE=static \
 		MAKEAPERL=1 NORECURS=1 CCCDLFLAGS= \
-		OPTIMIZE='-O4 -Wunused'
+		dev.Makefile
 
 
 # --- MakeMaker test section:
@@ -1080,7 +1087,7 @@ testdb_static :: static pure_all $(MAP_TARGET)
 # --- MakeMaker ppd section:
 # Creates a PPD (Perl Package Description) for a binary distribution.
 ppd :
-	$(NOECHO) $(ECHO) '<SOFTPKG NAME="Stats-LikeR" VERSION="0.01">' > Stats-LikeR.ppd
+	$(NOECHO) $(ECHO) '<SOFTPKG NAME="Stats-LikeR" VERSION="0.02">' > Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '    <ABSTRACT></ABSTRACT>' >> Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '    <AUTHOR></AUTHOR>' >> Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '    <IMPLEMENTATION>' >> Stats-LikeR.ppd
@@ -1120,6 +1127,7 @@ pm_to_blib : $(FIRST_MAKEFILE) $(TO_INST_PM)
 	  'sd.pl' '$(INST_LIB)/Stats/sd.pl' \
 	  't.test.pl' '$(INST_LIB)/Stats/t.test.pl' \
 	  'test.leaktrace.pl' '$(INST_LIB)/Stats/test.leaktrace.pl' \
+	  'var.test.pl' '$(INST_LIB)/Stats/var.test.pl' \
 	  'wilcox.text.pl' '$(INST_LIB)/Stats/wilcox.text.pl' \
 	  'write.table.pl' '$(INST_LIB)/Stats/write.table.pl' \
 	  'xs.check.pl' '$(INST_LIB)/Stats/xs.check.pl' 

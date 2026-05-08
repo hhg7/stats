@@ -1,8 +1,9 @@
 #!/usr/bin/env perl
 
-use 5.040;
+use 5.010;
 no source::encoding;
 use warnings FATAL => 'all';
+use feature 'say';
 use Test::More;
 use Test::Exception; # die_ok
 use DDP {output => 'STDOUT', array_max => 10, show_memsize => 1};
@@ -16,11 +17,17 @@ use Test::LeakTrace 'no_leaks_ok';
 
 # Gemini helped to write some of the tests
 # Custom helper for floating-point comparisons
-sub is_approx ($got, $expected, $test_name, $epsilon = 10**-7) {
+sub is_approx {
+	my ($got, $expected, $test_name, $epsilon) = @_;
+	if (not defined $epsilon) {
+		$epsilon = 1e-7;
+	}
 	my $current_sub = ( split( /::/, ( caller(0) )[3] ) )[-1];
-	foreach my ($i, $arg) (indexed ($got, $expected, $test_name)) {
+	my $i = 0;
+	foreach my $arg ($got, $expected, $test_name) {
 		next if defined $arg;
 		die "\$arg[$i] (see subroutine signature for name) isn't defined in $current_sub";
+		$i++;
 	}
 	my $diff = abs($got - $expected);
 	if ($diff <= $epsilon) {
@@ -33,7 +40,8 @@ sub is_approx ($got, $expected, $test_name, $epsilon = 10**-7) {
 	}
 }
 
-sub json_file_to_ref ($json_filename) {
+sub json_file_to_ref {
+	my $json_filename = shift;
 	die "$json_filename doesn't exist or isn't a file" unless -f $json_filename;
 	die "$json_filename has 0 size" if (-s $json_filename == 0);
 #	say "Reading $json_filename" if defined $_[0];
@@ -250,7 +258,7 @@ foreach my $j (0,1) {
 $t_test = t_test(
 	'x'       => $test_data[1][0],
 	'y'       => $test_data[1][1],
-	var_equal => true
+	var_equal => 1
 );
 foreach my $key (grep {ref $correct_t[1]{$_} eq ''} keys %{ $correct_t[1] }) {
 	if (not defined $t_test->{$key}) {
@@ -264,7 +272,7 @@ foreach my $j (0,1) {
 # start new test
 $t_test = t_test(
 	'x'    => $test_data[3][0], 'y'    => $test_data[3][1],
-	paired => true
+	paired => 1
 );
 foreach my $key (grep {ref $correct_t[2]{$_} eq ''} keys %{ $correct_t[2] }) {
 	if (not defined $t_test->{$key}) {
@@ -279,11 +287,13 @@ p $test_data[0];
 $t_test = t_test(
 	$test_data[0][0], #[qw(27.5 21.0 19.0 23.6 17.0 17.9 16.9 20.1 21.9 22.6 23.1 19.6 19.0 21.7 21.4)],
 	$test_data[0][1], #[qw(27.1 22.0 20.8 23.4 23.4 23.5 25.8 22.0 24.8 20.2 21.9 22.1 22.9 20.5 24.4)],
-	var_equal => false,
+	var_equal => 0,
 	'conf_level' => 0.99
 );
-foreach my ($idx, $val) (indexed (-4.6264605, 0.2931271)) {
+my $idx = 0;
+foreach my $val (-4.6264605, 0.2931271) {
 	is_approx($t_test->{conf_int}[$idx], $val, "t_test: var_equal = false, conf.int = 0.99 conf_int $idx", 1e-6);
+	$idx++;
 }
 is_approx( $t_test->{p_value}, 0.02137800146287, 't_test: var_equal = false, conf.int = 0.99', 1e-14);
 is_approx( $t_test->{df}, 24.98853, 't_test: var_equal = false, conf.int = 0.99', 1e-5);
@@ -330,7 +340,7 @@ foreach my $j (0,1) {
 }
 $t_test = t_test(
 	$test_data[1][0], $test_data[1][1],
-	var_equal => true
+	var_equal => 1
 );
 foreach my $key (grep {ref $correct_t[1]{$_} eq ''} keys %{ $correct_t[1] }) {
 	if (not defined $t_test->{$key}) {
@@ -342,7 +352,7 @@ foreach my $j (0,1) {
 	is_approx( $t_test->{'conf_int'}[$j], $correct_t[1]{'conf_int'}[$j], "Conf. interval index $j");
 }
 # start new test
-$t_test = t_test(	$test_data[3][0], $test_data[3][1],	paired => true);
+$t_test = t_test(	$test_data[3][0], $test_data[3][1],	paired => 1);
 foreach my $key (grep {ref $correct_t[2]{$_} eq ''} keys %{ $correct_t[2] }) {
 	if (not defined $t_test->{$key}) {
 		die "$key isn't defined in test";
@@ -479,28 +489,32 @@ no_leaks_ok {
 #		var
 #----------------------
 my @ans = (2.5, 8.3);
-foreach my ($i, $arr) (indexed([1..5], [2, 4, 5, 8, 9])) {
+$idx = 0;
+foreach my $arr ([1..5], [2, 4, 5, 8, 9]) {
 	my $var = var( $arr );
-	is_approx( $var, $ans[$i], "Test index $i for var");
+	is_approx( $var, $ans[$idx], "Test index $idx for var");
 	no_leaks_ok {
 		eval {
 			 var( $arr );
 		}
 	} 'var(): no memory leaks' unless $INC{'Devel/Cover.pm'};
+	$idx++;
 }
 is_approx( var(7, 7, 7, 7), 0, 'var: all identical values returns 0' );
 #----------------------
 #		median
 #----------------------
 @ans = (21, 21.55, 19.2);
-foreach my ($i, $ans) (indexed @ans) {
-	my $median = median( $test_data[$i][0] );
-	is_approx( $median, $ans, "Median test $i");
+$idx = 0;
+foreach my $ans (@ans) {
+	my $median = median( $test_data[$idx][0] );
+	is_approx( $median, $ans, "Median test $idx");
 	no_leaks_ok {
 		eval {
-			 var( $test_data[$i][0] );
+			 var( $test_data[$idx][0] );
 		}
 	} 'median(): no memory leaks' unless $INC{'Devel/Cover.pm'};
+	$idx++;
 }
 dies_ok { median() } 'median: dies when given empty data';
 is_approx(median(1,2,-1,9), 1.5, 'median: w/ even # of arguments', 0);
@@ -563,19 +577,25 @@ no_leaks_ok {
 	}
 } 'scale: no memory leaks' unless $INC{'Devel/Cover.pm'};
 my @correct_scaled = (-1.2649111, -0.6324555, 0.0000000, 0.6324555, 1.2649111);
-foreach my ($i, $correct) (indexed @correct_scaled) {
-	is_approx($scaled_results[$i], $correct, "index $i for scale");
+$idx = 0;
+foreach my $correct (@correct_scaled) {
+	is_approx($scaled_results[$idx], $correct, "index $idx for scale");
+	$idx++;
 }
-@scaled_results = scale(1..5, { center => false });
+@scaled_results = scale(1..5, { center => 0 });
 @correct_scaled = (0.269679944985297, 0.539359889970594, 0.80903983495589, 1.07871977994119, 1.34839972492648);
-foreach my ($i, $correct) (indexed @correct_scaled) {
-	is_approx($scaled_results[$i], $correct, "index $i for scale");
+$idx = 0;
+foreach my $correct (@correct_scaled) {
+	is_approx($scaled_results[$idx], $correct, "index $idx for scale");
+	$idx++;
 }
-@scaled_results = scale(1..5, {center => true, scale => false});
+@scaled_results = scale(1..5, {center => 1, scale => 0});
 #p @scaled_results;
 @correct_scaled = (-2..2);
-foreach my ($i, $correct) (indexed @correct_scaled) {
-	is_approx($scaled_results[$i], $correct, "index $i for scale");
+$idx = 0;
+foreach my $correct (@correct_scaled) {
+	is_approx($scaled_results[$idx], $correct, "index $idx for scale");
+	$idx++;
 }
 
 # scale matrix tests and exceptions
@@ -1240,7 +1260,7 @@ my $ft = fisher_test([[10, 2],[3, 15]]);
 is_approx( 0.00053672411914344, $ft->{p_value}, 'Fisher\'s test p-value', 10**-15);
 my $conf_int_range = abs $ft->{conf_int}[0] - $ft->{conf_int}[1];
 my $correct_conf_int_range = 301.462337971516 - 2.75338278824932;
-if (0.99*$correct_conf_int_range < $conf_int_range < 1.01* $correct_conf_int_range) {
+if ((0.99*$correct_conf_int_range < $conf_int_range) && ($conf_int_range < 1.01* $correct_conf_int_range)) {
 	pass('Fisher\'s test is within 1% of correct: ');
 } else {
 	fail('Fisher\'s test is *NOT* within 1% of correct: ');
@@ -1263,7 +1283,7 @@ $ft = fisher_test( {
 is_approx($ft->{'p_value'}, 0.48571428571429, 'Fisher Test: hash input p-value', 1e-14);
 $conf_int_range = abs $ft->{conf_int}[0] - $ft->{conf_int}[1];
 $correct_conf_int_range = 621.9337505 - 0.2117329;
-if (0.99*$correct_conf_int_range < $conf_int_range < 1.01* $correct_conf_int_range) {
+if ((0.99*$correct_conf_int_range < $conf_int_range) && ($conf_int_range < 1.01* $correct_conf_int_range)) {
 	pass('Fisher\'s test is within 1% of correct: ');
 } else {
 	fail('Fisher\'s test is *NOT* within 1% of correct: ');
@@ -1568,8 +1588,10 @@ no_leaks_ok {
 		seq(1,5);
 	};
 } 'seq: no memory leaks' unless $INC{'Devel/Cover.pm'};
-foreach my ($idx, $item) (indexed @seq) {
+$idx = 0;
+foreach my $item (@seq) {
 	is_approx( $item, $idx + 1, "seq item $idx", 0);
+	$idx++;
 }
 
 # Example 2: Fractional steps
@@ -1703,7 +1725,8 @@ my @correct = (
 	statistic   => 2.30940107675850,
 }
 );
-foreach my ($idx, $meth) (indexed @correct) {
+$idx = 0;
+foreach my $meth (@correct) {
 	$meth->{'conf.level'} = $meth->{'conf.level'} // 0.95; # default 0.95
 	say $meth->{'conf.level'};
 	my $result = cor_test(
@@ -1735,6 +1758,7 @@ foreach my ($idx, $meth) (indexed @correct) {
 			);
 		};
 	} "cor_test $idx: no memory leaks" unless $INC{'Devel/Cover.pm'};
+	$idx++;
 }
 # NA/undef handling
 my $x_na = [1, 2,     3, undef,  5, 5, 6,     undef,7];
@@ -1750,7 +1774,8 @@ my $y_na = [2, undef, 6, 8,     10, 9, undef, 14,  16];
 	statistic   => 9.17060521448829,
 }
 );
-foreach my ($idx, $meth) (indexed @correct) {
+$idx = 0;
+foreach my $meth (@correct) {
 	$meth->{'conf.level'} = $meth->{'conf.level'} // 0.95; # default 0.95
 	say $meth->{'conf.level'};
 	my $result = cor_test(
@@ -1782,14 +1807,17 @@ foreach my ($idx, $meth) (indexed @correct) {
 			);
 		};
 	} "cor_test $idx: no memory leaks" unless $INC{'Devel/Cover.pm'};
+	$idx++;
 }
 #--------------------
 #  cov
 #--------------------
 is_approx(2, cov($x, $y), 'default covariance/cov', 0);
 @correct = (2,2,12);
-foreach my ($idx, $method) (indexed ('pearson', 'spearman', 'kendall')) {
+$idx = 0;
+foreach my $method ('pearson', 'spearman', 'kendall') {
 	is_approx(cov($x, $y, $method), $correct[$idx], "cov with $method", 0 );
+	$idx++;
 }
 #--------------------
 #  aov
@@ -1949,7 +1977,8 @@ OJ OJ OJ OJ OJ OJ OJ OJ OJ OJ)]
 		}
 	}
 );
-foreach my ($idx, $val) (indexed qw(
+$idx = 0;
+foreach my $val ( qw(
 -8.1042857 -0.8042857 -5.0042857 -6.5042857 -5.9042857 -2.3042857 -1.1042857 
 -1.1042857 -7.1042857 -5.3042857 -0.6860714 -0.6860714 -1.9860714  0.1139286 
  5.3139286  0.1139286 -3.5860714 -2.6860714  1.6139286 -1.6860714 -3.3496429 
@@ -1960,8 +1989,10 @@ foreach my ($idx, $val) (indexed qw(
 10.1139286 -1.4496429 -0.5496429 -4.5496429 -2.4496429 -2.1496429  3.9503571 
 -0.5496429  0.3503571  2.4503571 -3.9496429)) {
 	$correct{'deviance.resid'}{$idx+1} = $val;
+	$idx++;
 }
-foreach my ($idx, $val) (indexed qw(
+$idx = 0;
+foreach my $val ( qw(
 12.30429 12.30429 12.30429 12.30429 12.30429 12.30429 12.30429 12.30429 
 12.30429 12.30429 17.18607 17.18607 17.18607 17.18607 17.18607 17.18607 
 17.18607 17.18607 17.18607 17.18607 26.94964 26.94964 26.94964 26.94964 
@@ -1972,6 +2003,7 @@ foreach my ($idx, $val) (indexed qw(
 26.94964 26.94964 26.94964 26.94964
 )) {
 	$correct{'fitted.values'}{$idx+1} = $val;
+	$idx++;
 }
 my $glm_teeth = glm(
 	data    => \%tooth_growth,
@@ -2083,7 +2115,8 @@ no_leaks_ok {
 		}
 	}
 );
-foreach my ($idx, $val) (indexed qw(
+$idx = 0;
+foreach my $val ( qw(
 -6.2542857  1.0457143 -3.1542857 -4.6542857 -4.0542857 -0.4542857  0.7457143 
  0.7457143 -5.2542857 -3.4542857  1.1639286  1.1639286 -0.1360714  1.9639286 
  7.1639286  1.9639286 -1.7360714 -0.8360714  3.4639286  0.1639286 -1.4996429 
@@ -2094,8 +2127,10 @@ foreach my ($idx, $val) (indexed qw(
  8.2639286 -3.2996429 -2.3996429 -6.3996429 -4.2996429 -3.9996429  2.1003571 
 -2.3996429 -1.4996429  0.6003571 -5.7996429)) {
 	$correct{'deviance.resid'}{$idx+1} = $val;
+	$idx++;
 }
-foreach my ($idx, $val) (indexed qw(
+$idx = 0;
+foreach my $val ( qw(
 10.45429 10.45429 10.45429 10.45429 10.45429 10.45429 10.45429 10.45429 
 10.45429 10.45429 15.33607 15.33607 15.33607 15.33607 15.33607 15.33607 
 15.33607 15.33607 15.33607 15.33607 25.09964 25.09964 25.09964 25.09964 
@@ -2106,6 +2141,7 @@ foreach my ($idx, $val) (indexed qw(
 28.79964 28.79964 28.79964 28.79964
 )) {
 	$correct{'fitted.values'}{$idx + 1} = $val;
+	$idx++;
 }
 foreach my $term (sort keys %{ $correct{coefficients} }) {
 	my $e = 10**-7;
@@ -2280,8 +2316,10 @@ if (scalar @err == 0) {
 	fail('at least some columns/keys are not arrays after bodyfat.csv');
 }
 @correct = qw(1.0271	31.9 74	207.5	70	40.8 112.4 108.5	107.1	59.3	42.2	24.6	33.7 30 20.9);
-foreach my ($idx, $col) (indexed @col) {
+$idx = 0;
+foreach my $col (@col) {
 	is_approx($test_data->{$col}[251], $correct[$idx], "Last row: column/key $col", 0);
+	$idx++;
 }
 #-------------------
 #     write_table
@@ -2298,7 +2336,7 @@ sub file2string {
 	return do { local $/; <$fh> };
 }
 my $tmp_file = '/tmp/test.tsv';
-write_table(\%data, $tmp_file, sep => "\t", 'row.names' => true);
+write_table(\%data, $tmp_file, sep => "\t", 'row.names' => 1);
 my $str = file2string($tmp_file);
 if (sha512_base64($str) eq 'FInYAXZcS7lK1n7osAhVkp5SiQNpt3h4kql9yZ2YCoPQslHKjwfGAXgdiphDSc6wMhlpU5toNmSifEUz1OgHNQ') {
 	pass('write_table successfully wrote a tab-delimited file');
@@ -2308,7 +2346,7 @@ if (sha512_base64($str) eq 'FInYAXZcS7lK1n7osAhVkp5SiQNpt3h4kql9yZ2YCoPQslHKjwfG
 }
 no_leaks_ok {
 	eval {
-		write_table(\%data, $tmp_file, sep => "\t", 'row.names' => true);
+		write_table(\%data, $tmp_file, sep => "\t", 'row.names' => 1);
 	};
 } 'write_table: no memory leaks with row.names = true' unless $INC{'Devel/Cover.pm'};
 # === TEST 1: HASH OF HASHES (positional) ===
@@ -2323,7 +2361,7 @@ my %data_hoh = (
 	'r3' => { 'c2' => "tab\tin", 'c4' => undef },
 );
 
-write_table(\%data_hoh, $tmp_file, sep => "\t", 'row.names' => true);
+write_table(\%data_hoh, $tmp_file, sep => "\t", 'row.names' => 1);
 $str = file2string($tmp_file);
 if (sha512_base64($str) eq 'ZYK6zmrT47CLrEc4PSFtCtvdkLtv47MCIMHIg70bARlWO5J9MuzybnV5h7dBSyQn8dOKojaX6pinxOvbTVaI+g') {
 	pass('write_table successfully wrote a tab-delimited file (Hash of Hashes)');
@@ -2333,7 +2371,7 @@ if (sha512_base64($str) eq 'ZYK6zmrT47CLrEc4PSFtCtvdkLtv47MCIMHIg70bARlWO5J9Muzy
 }
 no_leaks_ok {
 	eval {
-		write_table(\%data_hoh, $tmp_file, sep => "\t", 'row.names' => true);
+		write_table(\%data_hoh, $tmp_file, sep => "\t", 'row.names' => 1);
 	};
 } 'write_table: no memory leaks with hash-of-hash input' unless $INC{'Devel/Cover.pm'};
 # === TEST 2: HASH OF ARRAYS (positional) ===
@@ -2346,7 +2384,7 @@ my %data_hoa = (
 	'r3' => [undef, "tab\tin", undef, undef],
 );
 
-write_table(\%data_hoa, $tmp_file, sep => "\t", 'row.names' => true);
+write_table(\%data_hoa, $tmp_file, sep => "\t", 'row.names' => 1);
 $str = file2string($tmp_file);
 if (sha512_base64($str) eq '1wv8uFDVQkQ9UZ+50n+r/Z8oj4VFP4eusApZDAY1DB3dXhT+gFFyCR2Z1ZVQDTOJrUaMRpfWt6vLSlaSsNps7g') {
     pass('write_table successfully wrote a tab-delimited file (Hash of Arrays)');
@@ -2356,7 +2394,7 @@ if (sha512_base64($str) eq '1wv8uFDVQkQ9UZ+50n+r/Z8oj4VFP4eusApZDAY1DB3dXhT+gFFy
 }
 no_leaks_ok {
 	eval {
-		write_table(\%data_hoa, $tmp_file, sep => "\t", 'row.names' => true);
+		write_table(\%data_hoa, $tmp_file, sep => "\t", 'row.names' => 1);
 	};
 } 'write_table: no memory leaks with hash-of-hash input' unless $INC{'Devel/Cover.pm'};
 # ==============================================================================
@@ -2406,8 +2444,10 @@ no_leaks_ok {
 } 'read_table: reads hepatitis data without leaks with filter: aoh' unless $INC{'Devel/Cover.pm'};
 @correct = (39.9,	35.2,	22,	29.8,	6.3,	8.16,	4.37,	60,	4.5, 72.5);
 @col = qw(ALB	ALP	ALT	AST	BIL	CHE	CHOL	CREA	GGT	PROT);
-foreach my ($idx, $col) (indexed @col) {
+$idx = 0;
+foreach my ($col) (@col) {
 	is_approx( $test_data->[0]{$col}, $correct[$idx], "read_table: Column $col after filter", 0);
+	$idx++;
 }
 #---------
 # read_table with filter: hoa
@@ -2453,8 +2493,10 @@ foreach my $col (sort keys %{ $test_data }) {
 		fail("filter on hepatitis/female $col has $n rows, when it should have 238");
 	}
 }
-foreach my ($idx, $col) (indexed @col) {
+$idx = 0;
+foreach my $col (@col) {
 	is_approx( $test_data->{$col}[0], $correct[$idx], "read_table: Column $col after filter", 0);
+	$idx++;
 }
 #---------
 # read_table with filter: hoh
@@ -2483,8 +2525,10 @@ foreach my $col (sort keys %{ $test_data }) {
 		fail("filter on hepatitis/female $col has $n rows, when it should have 238");
 	}
 }
-foreach my ($idx, $col) (indexed @col) {
+$idx = 0;
+foreach my $col (@col) {
 	is_approx( $test_data->{$col}{319}, $correct[$idx], "read_table: Column $col after filter", 0);
+	$idx++;
 }
 # === TEST 3: ARRAY OF HASHES (positional) ===
 # Demonstrates: AoH, preserves original array order (no sorting of rows),
@@ -2496,7 +2540,7 @@ my @data_aoh = (
 	{ 'c2' => "tab\tin" },
 );
 
-write_table(\@data_aoh, $tmp_file, sep => "\t", 'row.names' => true);
+write_table(\@data_aoh, $tmp_file, sep => "\t", 'row.names' => 1);
 $str = file2string($tmp_file);
 if (sha512_base64($str) eq 'Nx/3jb/smu2Jdk2SNCXhxK7yaAO0GO5TAbwztb16fYqDT8nSMzdbdK61I30pfB3KVPtZ5w5rT4Ex2d4+pJFm5g') {
 	pass('write_table successfully wrote a tab-delimited file (Array of Hashes)');
@@ -2529,7 +2573,7 @@ subtest 'write_table: Nested reference stringification protection' => sub {
 		'r1' => { 'c1' => 42, 'c2' => [1, 2, 3] } # Arrayref inside the hash
 	);
 	dies_ok {
-		write_table(\%bad_data, $fh->filename), sep => ',', 'row.names' => true;
+		write_table(\%bad_data, $fh->filename);
 	} 'write_table dies to prevent silent stringification of nested references';
 };
 subtest 'write_table: col.names feature validation' => sub {
@@ -2543,7 +2587,7 @@ subtest 'write_table: col.names feature validation' => sub {
 	);
 
 	# Extract only 'c' and 'a', in that exact order
-	write_table(\@data_col_names, $tmp_file, sep => "\t", 'row.names' => false, 'col.names' => ['c', 'a']);
+	write_table(\@data_col_names, $tmp_file, sep => "\t", 'row.names' => 0, 'col.names' => ['c', 'a']);
 	my $str = file2string($fh->filename);
 	my $expected_str = "c\ta\n3\t1\n6\t4\n";
 	
@@ -2557,7 +2601,7 @@ subtest 'write_table: col.names feature validation' => sub {
 	);
 
 	# Requesting a column 'Z' missing in Row1, and 'X' missing in Row2
-	write_table(\%data_hoh_col, $tmp_file, sep => ',', 'row.names' => true, 'col.names' => ['Y', 'Z', 'X']);
+	write_table(\%data_hoh_col, $tmp_file, sep => ',', 'row.names' => 1, 'col.names' => ['Y', 'Z', 'X']);
 	$str = file2string($tmp_file);
 
 	$expected_str = ",Y,Z,X\nRow1,20,NA,10\nRow2,30,40,NA\n";
@@ -2657,7 +2701,7 @@ write_table(
 	\%correct,
 	$fh->filename,
 	sep => "\t",
-	'row.names' => false
+	'row.names' => 0
 );
 $str = file2string($fh->filename);
 if (sha512_base64($str) eq 'mSFIF/IuIR3GfRWvnv+4OkMi12JwoIV4zxt57vv2QQxuEGOde8w8hD7xSBNsMjczFLqZRqmlvOq0tcWAkhF0ag') {
@@ -2673,7 +2717,7 @@ no_leaks_ok {
 			\%correct,
 			$fh->filename,
 			sep => "\t",
-			'row.names' => false
+			'row.names' => 0
 		);
 	}
 } 'write_table: no memory leaks w/ tab separator and "row.names" set to false' unless $INC{'Devel/Cover.pm'};
@@ -2810,7 +2854,7 @@ no_leaks_ok {
 $test_data = wilcox_test( # test paired version
 	'x' => [1.83,  0.50,  1.62,  2.48, 1.68, 1.88, 1.55, 3.06, 1.30],
 	'y' => [0.878, 0.647, 0.598, 2.05, 1.06, 1.29, 1.06, 3.14, 1.29],
-	paired => true
+	paired => 1
 );
 is_approx($test_data->{statistic}, 40, 'Wilcox test (paired) statistic', 0);
 is_approx($test_data->{'p_value'}, 0.0390625, 'Wilcox test (paired) statistic', 1e-7);
@@ -2826,7 +2870,7 @@ no_leaks_ok {
 		$test_data = wilcox_test(
 			'x' => [1.83,  0.50,  1.62,  2.48, 1.68, 1.88, 1.55, 3.06, 1.30],
 			'y' => [0.878, 0.647, 0.598, 2.05, 1.06, 1.29, 1.06, 3.14, 1.29],
-			paired => true
+			paired => 1
 		);
 	};
 } 'wilcox test: no leaks' unless $INC{'Devel/Cover.pm'};
@@ -2834,7 +2878,7 @@ no_leaks_ok {
 $test_data = wilcox_test(
 	[1.83,  0.50,  1.62,  2.48, 1.68, 1.88, 1.55, 3.06, 1.30],
 	[0.878, 0.647, 0.598, 2.05, 1.06, 1.29, 1.06, 3.14, 1.29],
-	paired => true
+	paired => 1
 );
 is_approx($test_data->{statistic}, 40, 'Wilcox test (paired) statistic', 0);
 is_approx($test_data->{'p_value'}, 0.0390625, 'Wilcox test (paired) statistic', 1e-7);
@@ -2918,7 +2962,8 @@ no_leaks_ok {
 	};
 } 'power_t_test: calculating n' unless $INC{'Devel/Cover.pm'};
 @ans = (63.76576371427387, 33.36720408802200, 33.36720408802200);
-foreach my ($idx, $type) (indexed ('two.sample', 'one.sample', 'paired')) {
+$idx = 0;
+foreach my $type ('two.sample', 'one.sample', 'paired') {
 	$test_data = power_t_test( power => 0.8, delta => 0.5, sd => 1, type => $type);
 	is_approx( $test_data->{n}, $ans[$idx], "power_t_test: n w/ type = \"$type\"", 1e-4);
 	no_leaks_ok {
@@ -2926,9 +2971,11 @@ foreach my ($idx, $type) (indexed ('two.sample', 'one.sample', 'paired')) {
 			power_t_test( power => 0.8, delta => 0.5, sd => 1, type => $type );
 		};
 	} "power_t_test: calculating n with type = \"$type\"" unless $INC{'Devel/Cover.pm'};
+	$idx++;
 }
 @ans = (63.76576371427387, 50.15079949213846);
-foreach my ($idx, $alt) (indexed('two.sided', 'one.sided')) {
+$idx = 0;
+foreach my $alt ('two.sided', 'one.sided') {
 	$test_data = power_t_test( power => 0.8, delta => 0.5, sd => 1, alternative => $alt);
 	is_approx( $test_data->{n}, $ans[$idx], "power_t_test: n with alternative = \"$alt\"", 1e-4);
 	no_leaks_ok {
@@ -2936,6 +2983,7 @@ foreach my ($idx, $alt) (indexed('two.sided', 'one.sided')) {
 			power_t_test( power => 0.8, delta => 0.5, sd => 1, alternative => $alt);
 		};
 	} "power_t_test: n with alternative = \"$alt\" with no leaks" unless $INC{'Devel/Cover.pm'};
+	$idx++;
 }
 #-------------------------------------------------------------------
 #  lm & aov: Dot (.) Operator Expansion
@@ -3143,4 +3191,22 @@ foreach my $n (3,8) {
 }
 $test_data = [1..8];
 is_approx(sum($test_data), 36, 'sum to 8 using array reference', 0);
+#----------------------
+# var_test (var.test.R)
+#----------------------
+# simplest case
+$test_data = var_test(\@xk, \@yk);
+is_approx( $test_data->{conf_int}[0], 0.008735893, 'var_test: lower bound of confidence interval', 1e-8);
+is_approx( $test_data->{conf_int}[1], 1.316461157, 'var_test: lower bound of confidence interval', 1e-8);
+@ans = (0.131920529801325, 0.0795981508839616, 0.131920529801325);
+$idx = 0;
+foreach my $key ('estimate', 'p_value', 'statistic') {
+	is_approx( $test_data->{$key}, $ans[$idx], "var_test: $key", 1e-14);
+	$idx++;
+}
+no_leaks_ok {
+	$test_data = var_test(\@xk, \@yk);
+} 'var_test: no leaks' unless $INC{'Devel/Cover.pm'};
+
+# with ratio
 done_testing();

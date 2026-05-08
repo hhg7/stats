@@ -1261,6 +1261,34 @@ static double p_body(double n, double delta, double sd, double sig_level, int ts
 	  return 1.0 - exact_pnt(qu, nu, ncp);
 	}
 }
+
+// Bisection algorithm to find the inverse F-distribution (Quantile function)
+// Equivalent to R's qf(p, df1, df2)
+static double qf_bisection(double p, double df1, double df2) {
+	if (p <= 0.0) return 0.0;
+	if (p >= 1.0) return INFINITY;
+	double low = 0.0, high = 1.0;
+	// Find upper bound
+	while (pf(high, df1, df2) < p) {
+	  low = high;
+	  high *= 2.0;
+	  if (high > 1e100) break; /* Fallback limit */
+	}
+
+	// Bisect to find the root
+	for (unsigned short int i = 0; i < 150; i++) {
+		double mid = low + (high - low) / 2.0;
+		double p_mid = pf(mid, df1, df2);
+
+		if (p_mid < p) {
+			low = mid;
+		} else {
+			high = mid;
+		}
+		if (high - low < 1e-12) break;
+	}
+	return (low + high) / 2.0;
+}
 // --- XS SECTION ---
 MODULE = Stats::LikeR  PACKAGE = Stats::LikeR
 
@@ -1877,7 +1905,7 @@ PPCODE:
 	if (!fh) croak("write_table: Could not open '%s' for writing", file);
 
 	AV *restrict headers_av = newAV();
-	int inc_rownames = (row_names_sv && SvTRUE(row_names_sv)) ? 1 : 0;
+	bool inc_rownames = (row_names_sv && SvTRUE(row_names_sv)) ? 1 : 0;
 	const char *restrict rownames_col = NULL;
 
 	// ----- Hash of Hashes -----
@@ -2302,7 +2330,6 @@ CODE:
 	}
 	SvREFCNT_dec(field);
 	SvREFCNT_dec(current_row);
-	
 	if (use_cb) {
 		RETVAL = &PL_sv_undef; // Memory was fully handled by callback stream
 	} else {
@@ -2363,12 +2390,10 @@ SV* cov(SV* x_sv, SV* y_sv, const char* method = "pearson")
 
 		// 4. Handle edge cases where data is too sparse
 		if (n < 2) {
-			Safefree(x_val);
-			Safefree(y_val);
+			Safefree(x_val);	Safefree(y_val);
 			RETVAL = newSVnv(NAN);
 		} else {
-			double ans = 0.0;
-			
+			double ans = 0.0;			
 			// 5. Algorithm routing
 			if (strcmp(method, "kendall") == 0) {
 				 // R's default cov(..., method="kendall") iterates the full n x n space
@@ -2381,7 +2406,6 @@ SV* cov(SV* x_sv, SV* y_sv, const char* method = "pearson")
 				 }
 			} else {
 				 double mean_x = 0.0, mean_y = 0.0, cov_sum = 0.0;
-				 
 				 if (strcmp(method, "spearman") == 0) {
 				     // Spearman: Rank the data first, then run standard covariance
 				     double *restrict rx = (double*)safemalloc(n * sizeof(double));
@@ -2433,7 +2457,7 @@ CODE:
 	char f_cpy[512];
 	char *restrict src, *restrict dst, *restrict tilde, *restrict lhs, *restrict rhs, *restrict chunk;
 
-	/* Dynamic Term Arrays */
+	// Dynamic Term Arrays
 	char **restrict terms = NULL, **restrict uniq_terms = NULL, **restrict exp_terms = NULL;
 	bool *restrict is_dummy = NULL;
 	char **restrict dummy_base = NULL, **restrict dummy_level = NULL;
@@ -5989,3 +6013,148 @@ CODE:
 }
 OUTPUT:
 	RETVAL
+
+SV* var_test(...)
+CODE:
+{
+	SV* restrict x_sv = NULL;
+	SV* restrict y_sv = NULL;
+	double ratio = 1.0, conf_level = 0.95;
+	const char* restrict alternative = "two.sided";
+	unsigned int arg_idx = 0;
+
+	// 1. Shift positional argument 'x' if it's an array reference
+	if (arg_idx < items && SvROK(ST(arg_idx)) && SvTYPE(SvRV(ST(arg_idx))) == SVt_PVAV) {
+	  x_sv = ST(arg_idx);
+	  arg_idx++;
+	}
+
+	// 2. Shift positional argument 'y' if it's an array reference
+	if (arg_idx < items && SvROK(ST(arg_idx)) && SvTYPE(SvRV(ST(arg_idx))) == SVt_PVAV) {
+	  y_sv = ST(arg_idx);
+	  arg_idx++;
+	}
+
+	// Ensure the remaining arguments form complete key-value pairs
+	if ((items - arg_idx) % 2 != 0) {
+	  croak("Usage: var_test(\\@x, \\@y, key => value, ...)");
+	}
+
+	// --- Parse named arguments from the remaining flat stack ---
+	for (; arg_idx < items; arg_idx += 2) {
+	  const char* restrict key = SvPV_nolen(ST(arg_idx));
+	  SV* restrict val = ST(arg_idx + 1);
+
+	  if      (strEQ(key, "x"))           x_sv        = val;
+	  else if (strEQ(key, "y"))           y_sv        = val;
+	  else if (strEQ(key, "ratio"))       ratio       = SvNV(val);
+	  else if (strEQ(key, "conf_level") || strEQ(key, "conf.level")) conf_level = SvNV(val);
+	  else if (strEQ(key, "alternative")) alternative = SvPV_nolen(val);
+	  else croak("var_test: unknown argument '%s'", key);
+	}
+
+	// --- Validate required inputs / types ---
+	if (!x_sv || !SvROK(x_sv) || SvTYPE(SvRV(x_sv)) != SVt_PVAV)
+	  croak("var_test: 'x' is a required argument and must be an ARRAY reference");
+	if (!y_sv || !SvROK(y_sv) || SvTYPE(SvRV(y_sv)) != SVt_PVAV)
+	  croak("var_test: 'y' is a required argument and must be an ARRAY reference");
+
+	if (ratio <= 0.0 || !isfinite(ratio)) 
+	  croak("var_test: 'ratio' must be a single positive number");
+	if (conf_level <= 0.0 || conf_level >= 1.0 || !isfinite(conf_level))
+	  croak("var_test: 'conf.level' must be a single number between 0 and 1");
+
+	AV* restrict x_av = (AV*)SvRV(x_sv);
+	AV* restrict y_av = (AV*)SvRV(y_sv);
+	size_t nx_raw = av_len(x_av) + 1;
+	size_t ny_raw = av_len(y_av) + 1;
+
+	// --- Computation via Welford's Algorithm (ignoring NaNs) ---
+	double mean_x = 0.0, M2_x = 0.0;
+	size_t nx = 0;
+	for (size_t i = 0; i < nx_raw; i++) {
+		SV** restrict tv = av_fetch(x_av, i, 0);
+		if (tv && SvOK(*tv) && looks_like_number(*tv)) {
+			double val = SvNV(*tv);
+			if (!isnan(val) && isfinite(val)) {
+				 nx++;
+				 double delta = val - mean_x;
+				 mean_x += delta / nx;
+				 M2_x += delta * (val - mean_x);
+			}
+		}
+	}
+
+	double mean_y = 0.0, M2_y = 0.0;
+	size_t ny = 0;
+	for (size_t i = 0; i < ny_raw; i++) {
+	  SV** restrict tv = av_fetch(y_av, i, 0);
+	  if (tv && SvOK(*tv) && looks_like_number(*tv)) {
+		   double val = SvNV(*tv);
+		   if (!isnan(val) && isfinite(val)) {
+		       ny++;
+		       double delta = val - mean_y;
+		       mean_y += delta / ny;
+		       M2_y += delta * (val - mean_y);
+		   }
+	  }
+	}
+
+	if (nx < 2) croak("not enough 'x' observations");
+	if (ny < 2) croak("not enough 'y' observations");
+
+	double df_x = (double)(nx - 1);
+	double df_y = (double)(ny - 1);
+	double var_x = M2_x / df_x;
+	double var_y = M2_y / df_y;
+
+	if (var_y == 0.0) croak("var_test: variance of 'y' is zero (cannot divide by zero)");
+
+	// --- Statistics Math ---
+	double estimate = var_x / var_y;
+	double statistic = estimate / ratio;
+
+	double p_val = pf(statistic, df_x, df_y);
+	double ci_lower = 0.0, ci_upper = INFINITY;
+
+	if (strcmp(alternative, "less") == 0) {
+	  ci_upper = estimate / qf_bisection(1.0 - conf_level, df_x, df_y);
+	} else if (strcmp(alternative, "greater") == 0) {
+	  p_val = 1.0 - p_val;
+	  ci_lower = estimate / qf_bisection(conf_level, df_x, df_y);
+	} else {
+	  // two.sided
+	  double p1 = p_val;
+	  double p2 = 1.0 - p_val;
+	  p_val = 2.0 * (p1 < p2 ? p1 : p2);
+	  
+	  double beta = (1.0 - conf_level) / 2.0;
+	  ci_lower = estimate / qf_bisection(1.0 - beta, df_x, df_y);
+	  ci_upper = estimate / qf_bisection(beta, df_x, df_y);
+	}
+
+	// --- Pack Results ---
+	HV* restrict results = newHV();
+	hv_store(results, "statistic", 9, newSVnv(statistic), 0);
+
+	AV* restrict param_av = newAV();
+	av_push(param_av, newSVnv(df_x));
+	av_push(param_av, newSVnv(df_y));
+	hv_store(results, "parameter", 9, newRV_noinc((SV*)param_av), 0);
+
+	hv_store(results, "p_value", 7, newSVnv(p_val), 0);
+
+	AV* restrict conf_int = newAV();
+	av_push(conf_int, newSVnv(ci_lower));
+	av_push(conf_int, newSVnv(ci_upper));
+	hv_store(results, "conf_int", 8, newRV_noinc((SV*)conf_int), 0);
+
+	hv_store(results, "estimate", 8, newSVnv(estimate), 0);
+	hv_store(results, "null_value", 10, newSVnv(ratio), 0);
+	hv_store(results, "alternative", 11, newSVpv(alternative, 0), 0);
+	hv_store(results, "method", 6, newSVpv("F test to compare two variances", 0), 0);
+
+	RETVAL = newRV_noinc((SV*)results);
+}
+OUTPUT:
+    RETVAL
