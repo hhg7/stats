@@ -1,7 +1,6 @@
 #!/usr/bin/env perl
 
 use 5.010;
-no source::encoding;
 use warnings FATAL => 'all';
 use feature 'say';
 use Test::More;
@@ -464,11 +463,7 @@ foreach my $method ('Hochberg','Benjamini-Hochberg','Benjamini-Yekutieli', 'Bonf
 	} else {
 		fail('p_adjust has ' . (scalar @q) . ' values, when it should have exactly 1 value');
 	}
-	if ($q[0] == $val) {
-		pass("p_adjust: $method with 1 value returns that value");
-	} else {
-		fail("p_adjust: $method returned $q[0], instead of $val");
-	}
+	is_approx($q[0], $val, "p_adjust: $method with 1 value returns that value", 1e-9);
 }
 
 # p_adjust exceptions
@@ -3209,4 +3204,34 @@ no_leaks_ok {
 } 'var_test: no leaks' unless $INC{'Devel/Cover.pm'};
 
 # with ratio
+$test_data = var_test(\@xk, \@yk, ratio => 2);
+@ans = (0.13192052980132, 0.02383452765940, 0.06596026490066);
+$idx = 0;
+foreach my $key ('estimate', 'p_value', 'statistic') {
+	is_approx( $test_data->{$key}, $ans[$idx], "var_test with set ratio: $key", 1e-14);
+	$idx++;
+}
+no_leaks_ok {
+	$test_data = var_test(\@xk, \@yk, ratio => 2);
+} 'var_test: no leaks with set ratio' unless $INC{'Devel/Cover.pm'};
+# conf.level = 0.99
+$test_data = var_test(\@xk, \@yk, conf_level => 0.99);
+@ans = (0.13192052980132, 0.07959815088396, 0.13192052980132);
+$idx = 0;
+foreach my $key ('estimate', 'p_value', 'statistic') {
+	is_approx( $test_data->{$key}, $ans[$idx], "var_test with set ratio: $key", 1e-14);
+	$idx++;
+}
+no_leaks_ok {
+	$test_data = var_test(\@xk, \@yk, conf_level => 0.99);
+} 'var_test: no leaks with conf.level = 0.99' unless $INC{'Devel/Cover.pm'};
+dies_ok {
+	var_test(\@xk, [1,1,1,1]);
+} 'var_test: dies when variance of y is 0';
+dies_ok {
+	var_test([1], \@yk);
+} 'var_test: dies with insufficient # of observations in x';
+dies_ok {
+	var_test(\@xk, [1]);
+} 'var_test: dies with insufficient # of observations in y';
 done_testing();

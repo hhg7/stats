@@ -212,6 +212,7 @@ TO_INST_PM = aov.pl \
 	sd.pl \
 	t.test.pl \
 	test.leaktrace.pl \
+	var.test.pl \
 	wilcox.text.pl \
 	write.table.pl \
 	xs.check.pl
@@ -1126,6 +1127,7 @@ pm_to_blib : $(FIRST_MAKEFILE) $(TO_INST_PM)
 	  'sd.pl' '$(INST_LIB)/Stats/sd.pl' \
 	  't.test.pl' '$(INST_LIB)/Stats/t.test.pl' \
 	  'test.leaktrace.pl' '$(INST_LIB)/Stats/test.leaktrace.pl' \
+	  'var.test.pl' '$(INST_LIB)/Stats/var.test.pl' \
 	  'wilcox.text.pl' '$(INST_LIB)/Stats/wilcox.text.pl' \
 	  'write.table.pl' '$(INST_LIB)/Stats/write.table.pl' \
 	  'xs.check.pl' '$(INST_LIB)/Stats/xs.check.pl' 

@@ -34,9 +34,17 @@ for (i in seq_along(result)) {
   cat("\n")
 }
 #-------
-result <- var.test(x, y, ratio = 1)
+result <- var.test(x, y, ratio = 2)
 for (i in seq_along(result)) {
   cat("Component:", names(result)[i], "\n")
   print(result[[i]])
   cat("\n")
 }
+sprintf('%.14f', result$estimate)
+sprintf('%.14f', result$p.value)
+sprintf('%.14f', result$statistic)
+#--------
+result <- var.test(x, y, conf.level = 0.99)
+sprintf('%.14f', result$estimate)
+sprintf('%.14f', result$p.value)
+sprintf('%.14f', result$statistic)

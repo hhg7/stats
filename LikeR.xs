@@ -1865,10 +1865,8 @@ PPCODE:
 		if (first_type != SVt_PVHV && first_type != SVt_PVAV) {
 			croak("write_table: Data values must be either all HASHes or all ARRAYs\n");
 		}
-
 		is_hoh = (first_type == SVt_PVHV);
 		is_hoa = (first_type == SVt_PVAV);
-
 		hv_iterinit(hv);
 		while ((entry = hv_iternext(hv))) {
 			SV *restrict val = hv_iterval(hv, entry);
@@ -1876,7 +1874,6 @@ PPCODE:
 				 croak("write_table: Mixed data types detected. Ensure all values are %s references.\n", is_hoh ? "HASH" : "ARRAY");
 			}
 		}
-
 		if (is_hoh) {
 			rows_av = newAV();
 			hv_iterinit(hv);
@@ -1921,18 +1918,18 @@ PPCODE:
 			hv_iterinit((HV*)data_ref);
 			HE *restrict entry;
 			while((entry = hv_iternext((HV*)data_ref))) {
-				 HV *restrict inner = (HV*)SvRV(hv_iterval((HV*)data_ref, entry));
-				 hv_iterinit(inner);
-				 HE *restrict inner_entry;
-				 while((inner_entry = hv_iternext(inner))) {
-				     hv_store_ent(col_map, hv_iterkeysv(inner_entry), newSViv(1), 0);
-				 }
+				HV *restrict inner = (HV*)SvRV(hv_iterval((HV*)data_ref, entry));
+				hv_iterinit(inner);
+				HE *restrict inner_entry;
+				while((inner_entry = hv_iternext(inner))) {
+					hv_store_ent(col_map, hv_iterkeysv(inner_entry), newSViv(1), 0);
+				}
 			}
 			unsigned num_cols = hv_iterinit(col_map);
 			const char **restrict col_array = safemalloc(num_cols * sizeof(char*));
 			for(unsigned i=0; i<num_cols; i++) {
-				 HE *restrict ce = hv_iternext(col_map);
-				 col_array[i] = SvPV_nolen(hv_iterkeysv(ce));
+				HE *restrict ce = hv_iternext(col_map);
+				col_array[i] = SvPV_nolen(hv_iterkeysv(ce));
 			}
 			qsort(col_array, num_cols, sizeof(char*), cmp_string_wt);
 			for(unsigned i=0; i<num_cols; i++) av_push(headers_av, newSVpv(col_array[i], 0));
@@ -6077,10 +6074,10 @@ CODE:
 		if (tv && SvOK(*tv) && looks_like_number(*tv)) {
 			double val = SvNV(*tv);
 			if (!isnan(val) && isfinite(val)) {
-				 nx++;
-				 double delta = val - mean_x;
-				 mean_x += delta / nx;
-				 M2_x += delta * (val - mean_x);
+				nx++;
+				double delta = val - mean_x;
+				mean_x += delta / nx;
+				M2_x += delta * (val - mean_x);
 			}
 		}
 	}

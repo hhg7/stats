@@ -9,13 +9,14 @@ use Devel::Confess 'color';
 use Stats::LikeR;
 use Time::HiRes;
 
-my $data_interact = {
-	'y' => [1, 2, 3, 4],
-	'A' => ['a', 'b', 'a', 'b'],
-	'B' => ['x', 'x', 'y', 'y']
-};
 my $t0 = Time::HiRes::time();
-my $ft = aov($data_interact, 'y ~ A:B');
+my $aov = aov(
+	{
+		yield => [5.5, 5.4, 5.8, 4.5, 4.8, 4.2],
+		ctrl  => [1,     1,   1,   0,   0,   0]
+	},
+'yield ~ ctrl');
 my $t1 = Time::HiRes::time();
 printf("aov calculation in %g seconds.\n", $t1-$t0);
+p $aov;
 
