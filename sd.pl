@@ -10,3 +10,4 @@ use Stats::LikeR;
 
 say sd(7,7,7);
 say 'I did not die';
+say sd(2);

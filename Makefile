@@ -193,6 +193,7 @@ PERL_ARCHIVE_AFTER =
 TO_INST_PM = aov.pl \
 	benchmark.pl \
 	chisq.test.pl \
+	cor.pl \
 	cor.test.pl \
 	examples.pl \
 	fisher.test.pl \
@@ -212,6 +213,7 @@ TO_INST_PM = aov.pl \
 	sd.pl \
 	t.test.pl \
 	test.leaktrace.pl \
+	var.pl \
 	var.test.pl \
 	wilcox.text.pl \
 	write.table.pl \
@@ -1108,6 +1110,7 @@ pm_to_blib : $(FIRST_MAKEFILE) $(TO_INST_PM)
 	  'aov.pl' '$(INST_LIB)/Stats/aov.pl' \
 	  'benchmark.pl' '$(INST_LIB)/Stats/benchmark.pl' \
 	  'chisq.test.pl' '$(INST_LIB)/Stats/chisq.test.pl' \
+	  'cor.pl' '$(INST_LIB)/Stats/cor.pl' \
 	  'cor.test.pl' '$(INST_LIB)/Stats/cor.test.pl' \
 	  'examples.pl' '$(INST_LIB)/Stats/examples.pl' \
 	  'fisher.test.pl' '$(INST_LIB)/Stats/fisher.test.pl' \
@@ -1127,6 +1130,7 @@ pm_to_blib : $(FIRST_MAKEFILE) $(TO_INST_PM)
 	  'sd.pl' '$(INST_LIB)/Stats/sd.pl' \
 	  't.test.pl' '$(INST_LIB)/Stats/t.test.pl' \
 	  'test.leaktrace.pl' '$(INST_LIB)/Stats/test.leaktrace.pl' \
+	  'var.pl' '$(INST_LIB)/Stats/var.pl' \
 	  'var.test.pl' '$(INST_LIB)/Stats/var.test.pl' \
 	  'wilcox.text.pl' '$(INST_LIB)/Stats/wilcox.text.pl' \
 	  'write.table.pl' '$(INST_LIB)/Stats/write.table.pl' \

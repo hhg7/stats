@@ -8,5 +8,5 @@ use DDP {output => 'STDOUT', array_max => 10, show_memsize => 1};
 use Devel::Confess 'color';
 use Stats::LikeR;
 
-min(3);
-var();
+say min(3);
+say min(3, undef);

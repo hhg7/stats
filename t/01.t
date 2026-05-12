@@ -76,6 +76,12 @@ if (min(9,'inf') == 9) {
 } else {
 	fail('fail: inf is correctly');
 }
+dies_ok {
+	min(1, undef);
+} 'min: dies with undefined values as a scalar';
+dies_ok {
+	min(1, [2,undef]);
+} 'min: dies with undefined values inside array references';
 #----------------------
 #		max
 #----------------------
@@ -99,6 +105,12 @@ if (max(9,'inf') == 'inf') {
 	fail('max fail: inf is correctly');
 }
 dies_ok { max() } 'max: dies when given 0 elements' ;
+dies_ok {
+	max(1, undef);
+} 'max: dies with undefined values';
+dies_ok {
+	max(1, [2,undef]);
+} 'max: dies with undefined values inside array references';
 #----------------------
 #		mean
 #----------------------
@@ -129,12 +141,18 @@ no_leaks_ok {
 		mean(1, 2, 2.33, 3)
 	}
 } 'mean(): no memory leaks' unless $INC{'Devel/Cover.pm'};
+dies_ok {
+	mean(1, undef);
+} 'mean: dies with undefined values';
+dies_ok {
+	mean(1, [2,undef]);
+} 'mean: dies with undefined values inside array references';
 # -------------------------------
 # standard deviation
 # -------------------------------
 my $stdev = sd(2,4,4,4,5,5,7,9);
 my $correct = 2.1380899352994;
-if (abs($stdev - $correct) < 10**-14) {
+if (abs($stdev - $correct) < 1e-14) {
 	ok(1, 'stdev works');
 } else {
 	my $diff = $correct - $stdev;
@@ -142,8 +160,9 @@ if (abs($stdev - $correct) < 10**-14) {
 }
 
 # Exceptional cases for sd / var
-eval { sd(1) };
-like( $@, qr/stdev needs >= 2 elements/, 'sd: dies when given < 2 elements' );
+dies_ok {
+	sd(1)
+} 'sd: dies when given < 2 elements';
 
 dies_ok { var(1) } 'var: dies when given < 2 elements' ;
 no_leaks_ok {
@@ -152,6 +171,12 @@ no_leaks_ok {
 	}
 } 'sd: no memory leaks' unless $INC{'Devel/Cover.pm'};
 is_approx( sd(3, 3, 3, 3), 0, 'sd: all identical values returns 0', 0);
+dies_ok {
+	sd(1, undef);
+} 'sd: dies with undefined values';
+dies_ok {
+	sd(1, [2,undef]);
+} 'sd: dies with undefined values inside array references';
 #------------------
 # t.test
 #------------------
@@ -496,6 +521,13 @@ foreach my $arr ([1..5], [2, 4, 5, 8, 9]) {
 	$idx++;
 }
 is_approx( var(7, 7, 7, 7), 0, 'var: all identical values returns 0' );
+
+dies_ok {
+	var(1, undef);
+} 'var: dies with undefined values';
+dies_ok {
+	var(1, [2,undef]);
+} 'var: dies with undefined values inside array references';
 #----------------------
 #		median
 #----------------------
@@ -514,6 +546,12 @@ foreach my $ans (@ans) {
 dies_ok { median() } 'median: dies when given empty data';
 is_approx(median(1,2,-1,9), 1.5, 'median: w/ even # of arguments', 0);
 is_approx(median([1,2,-1,9]), 1.5, 'median: w/ even # of arguments as array ref argument', 0);
+dies_ok {
+	median(1, undef);
+} 'median: dies with undefined values';
+dies_ok {
+	median(1, [2,undef]);
+} 'median: dies with undefined values inside array references';
 #----------------------
 #		cor
 #----------------------
@@ -545,8 +583,16 @@ foreach my $method (sort keys %correct) {
 	no_leaks_ok {
 		eval {
 			 cor($test_data[0], $test_data[1], $method);
-		}
+		};
 	} "cor() with $method: no memory leaks" unless $INC{'Devel/Cover.pm'};
+	dies_ok {
+		cor([1,1],[1,1], $method);
+	} "cor with $method: dies when given standard deviation = 0";
+	no_leaks_ok {
+		eval {
+			cor([1,1],[1,1], $method);
+		};
+	} "cor with $method: dies w/o memory leaks when given standard deviation = 0";
 }
 
 # cor exceptions and matrix support tests
@@ -1866,6 +1912,11 @@ foreach my $k1 ('ctrl', 'Residuals') {
 		is_approx( $aov_res->{$k1}{$k2}, $correct{$k1}{$k2}, "AOV: $k1/$k2");
 	}
 }
+if (defined $aov_res->{group_stats}) {
+	pass('aov: group_stats are defined');
+} else {
+	fail('aov: group_stats are NOT defined');
+}
 #-------------------------------------------------------------------
 #  glm: Generalized Linear Models
 #-------------------------------------------------------------------
@@ -3148,6 +3199,12 @@ my $kt = kruskal_test(\@x, \@g);
 is_approx($kt->{'p_value'}, 0.67996477357889, 'kruskal: p-value', 1e-13);
 is_approx($kt->{statistic}, 0.77142857142857, 'kruskal: statistic', 1e-13);
 is_approx($kt->{parameter}, 2, 'kruskal: parameter', 0);
+
+if (defined $kt->{group_stats}) {
+	pass('kruskal: group_stats are defined');
+} else {
+	fail('kruskal: group_stats are NOT defined');
+}
 no_leaks_ok {
 	eval {
 		$kt = kruskal_test(\@x, \@g);
@@ -3186,6 +3243,15 @@ foreach my $n (3,8) {
 }
 $test_data = [1..8];
 is_approx(sum($test_data), 36, 'sum to 8 using array reference', 0);
+no_leaks_ok {
+	sum([1..9]);
+} 'sum: no leaks' unless $INC{'Devel/Cover.pm'};
+dies_ok {
+	sum(1, undef);
+} 'sum: dies with undefined values';
+dies_ok {
+	sum(1, [2,undef]);
+} 'sum: dies with undefined values inside array references';
 #----------------------
 # var_test (var.test.R)
 #----------------------

@@ -1,6 +1,6 @@
         -:    0:Source:/home/con/perl5/perlbrew/perls/perl-5.42.2/lib/5.42.2/x86_64-linux/CORE/sv_inline.h
-        -:    0:Graph:./LikeR.gcno
-        -:    0:Data:./LikeR.gcda
+        -:    0:Graph:./Stats-LikeR-0.01/LikeR.gcno
+        -:    0:Data:./Stats-LikeR-0.01/LikeR.gcda
         -:    0:Runs:3
         -:    1:/*    sv_inline.h
         -:    2: *

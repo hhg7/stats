@@ -8,4 +8,7 @@ WriteMakefile(
 	LIBS              => ['-lm'], 
 	DEFINE            => '', 
 	INC               => '-I.', 
+    # Primary optimization control
+	OPTIMIZE          => '-O4 -Wunused',
+    # For linking step as well
 );

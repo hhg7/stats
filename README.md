@@ -147,7 +147,7 @@ which returns a hash reference:
     },
     method        "Fisher's Exact Test for Count Data",
     p_value       0.00053672411914343
-}
+    }
 
 ### hash reference entry
 
@@ -280,6 +280,17 @@ the dot operator also works:
 
 You can also pass `byrow => 1` if you want the matrix populated row-wise instead of column-wise.
 
+## max
+
+    max(1,2,3);
+    
+or
+
+    my @arr = 1..8;
+    max(@arr, 4, 5)
+
+as of version 0.02, max will die if any undefined values are provided
+
 ## mean
 
     mean(1,2,3);
@@ -293,11 +304,26 @@ or
 
     mean([1,1], [2,2]) # 1.5
 
+as of version 0.02, mean will die if any undefined values are provided
+
 ## median
 
 works like mean, taking array references and arrays:
 
     median( $test_data[$i][0] )
+
+as of version 0.02, median will die if any undefined values are provided
+
+## min
+
+    min(1,2,3);
+    
+or
+
+    my @arr = 1..8;
+    min(@arr, 4, 5)
+
+as of version 0.02, min will die if any undefined values are provided
 
 ## p_adjust
 
@@ -399,6 +425,8 @@ It fully supports matrix operations. By passing an array of arrays, `scale` proc
 
 Correct answer is 2.1380899352994;
 
+As of version 0.02, sd will croak/die if any undefined values are provided.
+
 ## seq
 
 Works as closely as I can to R's seq, which is very similar to Perl's `for` loops.  Returns an array, not an array reference.
@@ -460,6 +488,8 @@ which I prefer, compared to List::Util's required casting into an array:
 
 which is shorter and much easier to read
 
+as of version 0.02, `sum` will cause the script to die if any undefined values are provided
+
 ## t_test
 
 There are 1-sample and 2-sample t-tests:
@@ -497,6 +527,13 @@ the two groups compared can be specified, though not necessarily, as `x` and `y`
 as simple as possible:
 
     var(2, 4, 5, 8, 9)
+
+as of version 0.02, `var` will die if any undefined values are provided
+
+like `min`, `max`, etc., `var` can accept array references, to make code simpler:
+
+    my $ref = \@arr;
+    var($ref) = var(@arr)
 
 ## wilcox_test
 
