@@ -9,5 +9,4 @@ use Devel::Confess 'color';
 use Stats::LikeR;
 
 say sd(7,7,7);
-say 'I did not die';
-say sd(2);
+say sd([7,7,7]);

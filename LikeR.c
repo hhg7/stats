@@ -2112,34 +2112,34 @@ XS_EUPXS(XS_Stats__LikeR_write_table)
 
 	// ----- Hash of Hashes -----
 	if (is_hoh) {
-	  if (col_names_sv && SvOK(col_names_sv)) {
-		   AV *restrict c_av = (AV*)SvRV(col_names_sv);
-		   for(size_t i=0; i<=av_len(c_av); i++) {
-		       SV **restrict c = av_fetch(c_av, i, 0);
-		       if(c && SvOK(*c)) av_push(headers_av, newSVsv(*c));
-		   }
-	  } else {
-		   HV *restrict col_map = newHV();
-		   hv_iterinit((HV*)data_ref);
-		   HE *restrict entry;
-		   while((entry = hv_iternext((HV*)data_ref))) {
-		       HV *restrict inner = (HV*)SvRV(hv_iterval((HV*)data_ref, entry));
-		       hv_iterinit(inner);
-		       HE *restrict inner_entry;
-		       while((inner_entry = hv_iternext(inner))) {
-		           hv_store_ent(col_map, hv_iterkeysv(inner_entry), newSViv(1), 0);
-		       }
-		   }
-		   unsigned num_cols = hv_iterinit(col_map);
-		   const char **restrict col_array = safemalloc(num_cols * sizeof(char*));
-		   for(unsigned i=0; i<num_cols; i++) {
-		       HE *restrict ce = hv_iternext(col_map);
-		       col_array[i] = SvPV_nolen(hv_iterkeysv(ce));
-		   }
-		   qsort(col_array, num_cols, sizeof(char*), cmp_string_wt);
-		   for(unsigned i=0; i<num_cols; i++) av_push(headers_av, newSVpv(col_array[i], 0));
-		   safefree(col_array);
-		   SvREFCNT_dec(col_map);
+		if (col_names_sv && SvOK(col_names_sv)) {
+			AV *restrict c_av = (AV*)SvRV(col_names_sv);
+			for(size_t i=0; i<=av_len(c_av); i++) {
+				SV **restrict c = av_fetch(c_av, i, 0);
+				if(c && SvOK(*c)) av_push(headers_av, newSVsv(*c));
+			}
+		} else {
+			HV *restrict col_map = newHV();
+			hv_iterinit((HV*)data_ref);
+			HE *restrict entry;
+			while((entry = hv_iternext((HV*)data_ref))) {
+				 HV *restrict inner = (HV*)SvRV(hv_iterval((HV*)data_ref, entry));
+				 hv_iterinit(inner);
+				 HE *restrict inner_entry;
+				 while((inner_entry = hv_iternext(inner))) {
+				     hv_store_ent(col_map, hv_iterkeysv(inner_entry), newSViv(1), 0);
+				 }
+			}
+			unsigned num_cols = hv_iterinit(col_map);
+			const char **restrict col_array = safemalloc(num_cols * sizeof(char*));
+			for(unsigned i=0; i<num_cols; i++) {
+				 HE *restrict ce = hv_iternext(col_map);
+				 col_array[i] = SvPV_nolen(hv_iterkeysv(ce));
+			}
+			qsort(col_array, num_cols, sizeof(char*), cmp_string_wt);
+			for(unsigned i=0; i<num_cols; i++) av_push(headers_av, newSVpv(col_array[i], 0));
+			safefree(col_array);
+			SvREFCNT_dec(col_map);
 	}
 	size_t num_headers = av_len(headers_av) + 1;
 	const char **restrict header_row = safemalloc((num_headers + 1) * sizeof(char*));

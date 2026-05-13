@@ -58,7 +58,7 @@
 .\" ========================================================================
 .\"
 .IX Title "Stats::LikeR 3"
-.TH Stats::LikeR 3 2026-05-12 "perl v5.42.2" "User Contributed Perl Documentation"
+.TH Stats::LikeR 3 2026-05-13 "perl v5.42.2" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -565,7 +565,13 @@ It fully supports matrix operations. By passing an array of arrays, \f(CW\*(C`sc
 \& my $stdev = sd(2,4,4,4,5,5,7,9);
 .Ve
 .PP
-Correct answer is 2.1380899352994;
+Correct answer is 2.1380899352994
+.PP
+\&\f(CW\*(C`sd\*(C'\fR can accept both array references as well as arrays:
+.PP
+.Vb 1
+\& my $stdev = sd([2,4,4,4,5,5,7,9]);
+.Ve
 .PP
 As of version 0.02, sd will croak/die if any undefined values are provided.
 .SS seq
@@ -700,6 +706,35 @@ like \f(CW\*(C`min\*(C'\fR, \f(CW\*(C`max\*(C'\fR, etc., \f(CW\*(C`var\*(C'\fR c
 \& my $ref = \e@arr;
 \& var($ref) = var(@arr)
 .Ve
+.SS var_test
+.IX Subsection "var_test"
+As described by R: Performs an F test to compare the variances of two samples from normal populations
+.PP
+.Vb 2
+\& use Stats::LikeR;
+\& use Time::HiRes;
+\& 
+\& my @x = (2.9, 3.0, 2.5, 2.6, 3.2);
+\& my @y = (3.8, 2.7, 4.0, 2.4);
+\& my @z = (2.8, 3.4, 3.7, 2.2, 2.0);
+\& 
+\& my $t0 = Time::HiRes::time();
+\& my $vt = var_test(\e@x, \e@y);
+\& my $t1 = Time::HiRes::time();
+\& printf("var_tests in %g seconds.\en", $t1\-$t0);
+.Ve
+.PP
+also, conf_level can be set:
+.PP
+.Vb 1
+\& $vt = var_test(\e@xk, \e@yk, conf_level => 0.99);
+.Ve
+.PP
+as well as a ratio (from R: the hypothesized ratio of the population variances of \f(CW\*(C`x\*(C'\fR and \f(CW\*(C`y\*(C'\fR:
+.PP
+.Vb 1
+\& $test_data = var_test(\e@xk, \e@yk, ratio => 2);
+.Ve
 .SS wilcox_test
 .IX Subsection "wilcox_test"
 .Vb 4
@@ -709,7 +744,7 @@ like \f(CW\*(C`min\*(C'\fR, \f(CW\*(C`max\*(C'\fR, etc., \f(CW\*(C`var\*(C'\fR c
 \& );
 .Ve
 .PP
-It fully supports paired tests (\f(CW\*(C`paired => true\*(C'\fR) and can calculate exact p\-values (the default for \f(CW$N\fR < 50$ without ties). If ties are encountered, it automatically switches to an approximation with continuity correction.
+It fully supports paired tests (\f(CW\*(C`paired => true\*(C'\fR) and can calculate exact p\-values (the default for \f(CW\*(C`N < 50\*(C'\fR without ties). If ties are encountered, it automatically switches to an approximation with continuity correction.
 .SS write_table
 .IX Subsection "write_table"
 mimics R\*(Aqs "write.table", with data as first argument to subroutine, and output file as second
@@ -723,3 +758,20 @@ You can also precisely filter and reorder which columns are written by passing a
 .Vb 1
 \& write_table(\e@data, $tmp_file, sep => "\et", \*(Aqcol.names\*(Aq => [\*(Aqc\*(Aq, \*(Aqa\*(Aq]);
 .Ve
+.PP
+undefined variables are printed as \f(CW\*(C`NA\*(C'\fR by default, but can be set as you wish using \f(CW\*(C`undef.val\*(C'\fR
+.PP
+.Vb 1
+\& write_table(\e%data_hoa, \*(Aq/tmp/undef.val.tsv\*(Aq, sep => "\et", \*(Aqundef.val\*(Aq => \*(Aqnan\*(Aq)
+.Ve
+.SH changes
+.IX Header "changes"
+.SS 0.02
+.IX Subsection "0.02"
+back\-compatible to Perl 5.10, instead of original 5.40, ensuring more people can use it
+added var_test
+mean, min, sum, median, var, and max die with undefined values, and print the offending indices
+"group_stats" added to aov, for TukeyHSD in the future
+"cor" dies when given data with standard deviation of 0
+var_test added
+\&\f(CW\*(C`write_table\*(C'\fR now has \f(CW\*(C`undef.val\*(C'\fR option, which shows how undefined values are printed to tables, which is \f(CW\*(C`NA\*(C'\fR by default.

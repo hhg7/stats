@@ -768,7 +768,11 @@ It fully supports matrix operations. By passing an array of arrays, C<scale> pro
 
  my $stdev = sd(2,4,4,4,5,5,7,9);
 
-Correct answer is 2.1380899352994;
+Correct answer is 2.1380899352994
+
+C<sd> can accept both array references as well as arrays:
+
+ my $stdev = sd([2,4,4,4,5,5,7,9]);
 
 As of version 0.02, sd will croak/die if any undefined values are provided.
 
@@ -880,6 +884,30 @@ like C<min>, C<max>, etc., C<var> can accept array references, to make code simp
  my $ref = \@arr;
  var($ref) = var(@arr)
 
+=head2 var_test
+
+As described by R: Performs an F test to compare the variances of two samples from normal populations
+
+ use Stats::LikeR;
+ use Time::HiRes;
+ 
+ my @x = (2.9, 3.0, 2.5, 2.6, 3.2);
+ my @y = (3.8, 2.7, 4.0, 2.4);
+ my @z = (2.8, 3.4, 3.7, 2.2, 2.0);
+ 
+ my $t0 = Time::HiRes::time();
+ my $vt = var_test(\@x, \@y);
+ my $t1 = Time::HiRes::time();
+ printf("var_tests in %g seconds.\n", $t1-$t0);
+
+also, conf_level can be set:
+
+ $vt = var_test(\@xk, \@yk, conf_level => 0.99);
+
+as well as a ratio (from R: the hypothesized ratio of the population variances of C<x> and C<y>:
+
+ $test_data = var_test(\@xk, \@yk, ratio => 2);
+
 =head2 wilcox_test
 
  $test_data = wilcox_test(
@@ -887,7 +915,7 @@ like C<min>, C<max>, etc., C<var> can accept array references, to make code simp
      [0.878, 0.647, 0.598, 2.05, 1.06, 1.29, 1.06, 3.14, 1.29]
  );
 
-It fully supports paired tests (C<< paired =E<gt> true >>) and can calculate exact p-values (the default for $N < 50$ without ties). If ties are encountered, it automatically switches to an approximation with continuity correction.
+It fully supports paired tests (C<< paired =E<gt> true >>) and can calculate exact p-values (the default for C<< N E<lt> 50 >> without ties). If ties are encountered, it automatically switches to an approximation with continuity correction.
 
 =head2 write_table
 
@@ -898,3 +926,19 @@ mimics R's "write.table", with data as first argument to subroutine, and output 
 You can also precisely filter and reorder which columns are written by passing an array reference to C<col.names>:
 
  write_table(\@data, $tmp_file, sep => "\t", 'col.names' => ['c', 'a']);
+
+undefined variables are printed as C<NA> by default, but can be set as you wish using C<undef.val>
+
+ write_table(\%data_hoa, '/tmp/undef.val.tsv', sep => "\t", 'undef.val' => 'nan')
+
+=head1 changes
+
+=head2 0.02
+
+back-compatible to Perl 5.10, instead of original 5.40, ensuring more people can use it
+added var_test
+mean, min, sum, median, var, and max die with undefined values, and print the offending indices
+"group_stats" added to aov, for TukeyHSD in the future
+"cor" dies when given data with standard deviation of 0
+var_test added
+C<write_table> now has C<undef.val> option, which shows how undefined values are printed to tables, which is C<NA> by default.
