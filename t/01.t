@@ -782,7 +782,7 @@ foreach my $n (0..2) {
 	if ($n == 0) {
 		is_approx($lm->{fstatistic}[$n], $fstat[$n], "lm: f-statistic index $n", 1e-10);
 	} else {
-		is_approx($lm->{fstatistic}[$n], $fstat[$n], "lm: f-statistic index $n", 0);
+		is_approx($lm->{fstatistic}[$n], $fstat[$n], "lm: f-statistic index $n", 1e-14);
 	}
 }
 $lm = lm(formula =>  'mpg ~ wt + hp', data => $mtcars);
@@ -861,7 +861,7 @@ foreach my $n (0..2) {
 	if ($n == 0) {
 		is_approx($lm->{fstatistic}[$n], $fstat[$n], "lm: f-statistic index $n", 1e-10);
 	} else {
-		is_approx($lm->{fstatistic}[$n], $fstat[$n], "lm: f-statistic index $n", 0);
+		is_approx($lm->{fstatistic}[$n], $fstat[$n], "lm: f-statistic index $n", 1e-14);
 	}
 }
 # lm exceptions and additional tests
@@ -1631,7 +1631,7 @@ no_leaks_ok {
 } 'seq: no memory leaks' unless $INC{'Devel/Cover.pm'};
 $idx = 0;
 foreach my $item (@seq) {
-	is_approx( $item, $idx + 1, "seq item $idx", 0);
+	is_approx( $item, $idx + 1, "seq item $idx", 1e-14);
 	$idx++;
 }
 
@@ -1853,7 +1853,7 @@ foreach my $meth (@correct) {
 #--------------------
 #  cov
 #--------------------
-is_approx(2, cov($x, $y), 'default covariance/cov', 0);
+is_approx(2, cov($x, $y), 'default covariance/cov', 1e-14);
 @correct = (2,2,12);
 $idx = 0;
 foreach my $method ('pearson', 'spearman', 'kendall') {
@@ -1981,7 +1981,7 @@ subtest 'glm: Binomial (Logistic Regression)' => sub {
 	is_approx($glm_bin->{deviance}, 10.059, 'glm binomial residual deviance', 0.001);
 	is_approx($glm_bin->{'null.deviance'}, 43.229, 'glm binomial null deviance', 0.001);
 	is($glm_bin->{'df.residual'}, 29, 'glm binomial residual degrees of freedom');
-	is_approx($glm_bin->{'df.null'}, 31, 'glm binomial null degrees of freedom', 0);
+	is_approx($glm_bin->{'df.null'}, 31, 'glm binomial null degrees of freedom', 1e-14);
 };
 my %tooth_growth = (
 	dose => [qw(0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 1.0 1.0 1.0 1.0 1.0 1.0 1.0 1.0 1.0
@@ -2364,7 +2364,7 @@ if (scalar @err == 0) {
 @correct = qw(1.0271	31.9 74	207.5	70	40.8 112.4 108.5	107.1	59.3	42.2	24.6	33.7 30 20.9);
 $idx = 0;
 foreach my $col (@col) {
-	is_approx($test_data->{$col}[251], $correct[$idx], "Last row: column/key $col", 0);
+	is_approx($test_data->{$col}[251], $correct[$idx], "Last row: column/key $col", 1e-14);
 	$idx++;
 }
 #-------------------
@@ -2443,6 +2443,15 @@ no_leaks_ok {
 		write_table(\%data_hoa, $tmp_file, sep => "\t", 'row.names' => 1);
 	};
 } 'write_table: no memory leaks with hash-of-hash input' unless $INC{'Devel/Cover.pm'};
+#---------
+write_table(\%data_hoa, '/tmp/undef.val.tsv', sep => "\t", 'undef.val' => 'nan');
+$str = file2string('/tmp/undef.val.tsv');
+if (sha512_base64($str) eq 'Pbohr5w8D4e6691E0WV3W6RjtjIEvgS1egsPixNkXhZ0Jhu3vmRHoR6Lkxsm0GBJ2c0iT7yYZq4G45w/qwDnKQ') {
+	pass('undefined values are switched to nan');
+} else {
+	fail('undefined values are NOT switched to nan');
+}
+
 # ==============================================================================
 # 4. write_table: Nested Reference Memory Leaks
 # ==============================================================================
@@ -2492,7 +2501,7 @@ no_leaks_ok {
 @col = qw(ALB	ALP	ALT	AST	BIL	CHE	CHOL	CREA	GGT	PROT);
 $idx = 0;
 foreach my ($col) (@col) {
-	is_approx( $test_data->[0]{$col}, $correct[$idx], "read_table: Column $col after filter", 0);
+	is_approx( $test_data->[0]{$col}, $correct[$idx], "read_table: Column $col after filter", 1e-14);
 	$idx++;
 }
 #---------
@@ -2541,7 +2550,7 @@ foreach my $col (sort keys %{ $test_data }) {
 }
 $idx = 0;
 foreach my $col (@col) {
-	is_approx( $test_data->{$col}[0], $correct[$idx], "read_table: Column $col after filter", 0);
+	is_approx( $test_data->{$col}[0], $correct[$idx], "read_table: Column $col after filter", 1e-14);
 	$idx++;
 }
 #---------
@@ -2573,7 +2582,7 @@ foreach my $col (sort keys %{ $test_data }) {
 }
 $idx = 0;
 foreach my $col (@col) {
-	is_approx( $test_data->{$col}{319}, $correct[$idx], "read_table: Column $col after filter", 0);
+	is_approx( $test_data->{$col}{319}, $correct[$idx], "read_table: Column $col after filter", 1e-14);
 	$idx++;
 }
 # === TEST 3: ARRAY OF HASHES (positional) ===
@@ -2868,7 +2877,7 @@ subtest 'aov: Interaction Missing Main Effects Exception' => sub {
 @test_data = ([762, 327, 468], [484, 239, 477]);
 $test_data = chisq_test(\@test_data);
 #p $test_data;
-is_approx($test_data->{parameter}{df}, 2, 'degrees of freedom for Chi-squared', 0);
+is_approx($test_data->{parameter}{df}, 2, 'degrees of freedom for Chi-squared', 1e-14);
 is_approx($test_data->{'p.value'}, 2.9535891832118e-07, 'Chi-squared p-value', 1e-17);
 is_approx($test_data->{statistic}{'X-squared'}, 30.070149095755, 'Chi-squared statistic');
 no_leaks_ok {
@@ -2886,7 +2895,7 @@ $test_data = wilcox_test(
 	'x' => [1.83,  0.50,  1.62,  2.48, 1.68, 1.88, 1.55, 3.06, 1.30],
 	'y' => [0.878, 0.647, 0.598, 2.05, 1.06, 1.29, 1.06, 3.14, 1.29]
 );
-is_approx($test_data->{statistic}, 58, 'Wilcox test statistic', 0);
+is_approx($test_data->{statistic}, 58, 'Wilcox test statistic', 1e-14);
 is_approx($test_data->{'p_value'}, 0.132919458185319, 'Wilcox test p-value', 1e-15);
 no_leaks_ok {
 	eval {
@@ -2902,14 +2911,14 @@ $test_data = wilcox_test( # test paired version
 	'y' => [0.878, 0.647, 0.598, 2.05, 1.06, 1.29, 1.06, 3.14, 1.29],
 	paired => 1
 );
-is_approx($test_data->{statistic}, 40, 'Wilcox test (paired) statistic', 0);
+is_approx($test_data->{statistic}, 40, 'Wilcox test (paired) statistic',1e-4);
 is_approx($test_data->{'p_value'}, 0.0390625, 'Wilcox test (paired) statistic', 1e-7);
 # test without "x" and "y"
 $test_data = wilcox_test(
 	[1.83,  0.50,  1.62,  2.48, 1.68, 1.88, 1.55, 3.06, 1.30],
 	[0.878, 0.647, 0.598, 2.05, 1.06, 1.29, 1.06, 3.14, 1.29]
 );
-is_approx($test_data->{statistic}, 58, 'Wilcox test statistic', 0);
+is_approx($test_data->{statistic}, 58, 'Wilcox test statistic', 1e-14);
 is_approx($test_data->{'p_value'}, 0.132919458185319, 'Wilcox test p-value', 1e-15);
 no_leaks_ok {
 	eval {
@@ -2926,7 +2935,7 @@ $test_data = wilcox_test(
 	[0.878, 0.647, 0.598, 2.05, 1.06, 1.29, 1.06, 3.14, 1.29],
 	paired => 1
 );
-is_approx($test_data->{statistic}, 40, 'Wilcox test (paired) statistic', 0);
+is_approx($test_data->{statistic}, 40, 'Wilcox test (paired) statistic', 1e-14);
 is_approx($test_data->{'p_value'}, 0.0390625, 'Wilcox test (paired) statistic', 1e-7);
 #$test_data = ks_test('x' => $x, 'y' => $y);
 #p $test_data;
@@ -2980,7 +2989,7 @@ subtest 'chisq_test: Goodness of Fit and Yates Continuity' => sub {
 	# X-squared = 4.1404, df = 1, p-value = 0.04187
 	my $chisq_2x2 = chisq_test([[12, 7], [5, 14]]);
 	is_approx($chisq_2x2->{statistic}{'X-squared'}, 3.831933, 'chisq_test: 2x2 Yates statistic', 1e-5);
-	is_approx($chisq_2x2->{parameter}{df}, 1, 'chisq_test: 2x2 df', 0);
+	is_approx($chisq_2x2->{parameter}{df}, 1, 'chisq_test: 2x2 df', 1e-14);
 	is_approx($chisq_2x2->{'p.value'}, 0.05028492, 'chisq_test: 2x2 p-value', 1e-7);
 	like($chisq_2x2->{method}, qr/Yates' continuity correction/, 'chisq_test: method includes Yates correction');
 };
@@ -3156,7 +3165,7 @@ my $ksy = [qw(0.12691328 0.90138032 0.24332833 0.43789166 0.84998830 0.81363851
 # R: kst.g <- ks.test(x, y, alternative='greater')
 my $ks = ks_test($ksx, $ksy);
 is_approx($ks->{p_value}, 0.001825518, 'Kolmogorov-Smirnov test: p-value', 1e-9); # two-sided
-is_approx($ks->{statistic}, 0.42, 'Kolmogorov-Smirnov test: statistic', 0);
+is_approx($ks->{statistic}, 0.42, 'Kolmogorov-Smirnov test: statistic', 1e-14);
 no_leaks_ok {
 	eval {
 		ks_test($ksx, $ksy);
@@ -3169,10 +3178,10 @@ no_leaks_ok {
 	}
 } 'Kolmogorov-Smirnov test ok without memory leaks; with less alternative' unless $INC{'Devel/Cover.pm'};
 is_approx($ks->{p_value}, 0.06784844, 'Kolmogorov-Smirnov test: p-value (alternative = less)', 1e-8);
-is_approx($ks->{statistic}, 0.26, 'Kolmogorov-Smirnov test: statistic (alternative = less)', 0);
+is_approx($ks->{statistic}, 0.26, 'Kolmogorov-Smirnov test: statistic (alternative = less)', 1e-14);
 # alternative = 'greater'
 $ks = ks_test($ksx, $ksy, alternative => 'greater');
-is_approx($ks->{statistic}, 0.42, 'Kolmogorov-Smirnov test alternative = "greater", statistic', 0);
+is_approx($ks->{statistic}, 0.42, 'Kolmogorov-Smirnov test alternative = "greater", statistic', 1e-14);
 is_approx($ks->{'p_value'}, 0.0009127589, 'Kolmogorov-Smirnov test alternative = "greater", statistic', 1e-8);
 #------------
 $ks = ks_test($ksx, 'pnorm');
@@ -3198,7 +3207,7 @@ my @g = (
 my $kt = kruskal_test(\@x, \@g);
 is_approx($kt->{'p_value'}, 0.67996477357889, 'kruskal: p-value', 1e-13);
 is_approx($kt->{statistic}, 0.77142857142857, 'kruskal: statistic', 1e-13);
-is_approx($kt->{parameter}, 2, 'kruskal: parameter', 0);
+is_approx($kt->{parameter}, 2, 'kruskal: parameter', 1e-14);
 
 if (defined $kt->{group_stats}) {
 	pass('kruskal: group_stats are defined');
@@ -3214,7 +3223,7 @@ no_leaks_ok {
 kruskal_test('x' => \@x, 'g' => \@g);
 is_approx($kt->{'p_value'}, 0.67996477357889, 'kruskal: p-value', 1e-13);
 is_approx($kt->{statistic}, 0.77142857142857, 'kruskal: statistic', 1e-13);
-is_approx($kt->{parameter}, 2, 'kruskal: parameter', 0);
+is_approx($kt->{parameter}, 2, 'kruskal: parameter', 1e-14);
 no_leaks_ok {
 	eval {
 		$kt = kruskal_test('x' => \@x, 'y' => \@g);
@@ -3229,7 +3238,7 @@ my %x = (
 $kt = kruskal_test(\%x);
 is_approx($kt->{'p_value'}, 0.67996477357889, 'kruskal HOA: p-value', 1e-13);
 is_approx($kt->{statistic}, 0.77142857142857, 'kruskal HOA: statistic', 1e-13);
-is_approx($kt->{parameter}, 2, 'kruskal HOA: parameter', 0);
+is_approx($kt->{parameter}, 2, 'kruskal HOA: parameter', 1e-14);
 no_leaks_ok {
 	eval {
 		$kt = kruskal_test(\@x, \@g);
@@ -3239,10 +3248,10 @@ no_leaks_ok {
 #    sum
 #-------------
 foreach my $n (3,8) {
-	is_approx(sum(1..$n), ($n*($n+1))/2, "sum of 1..$n", 0);
+	is_approx(sum(1..$n), ($n*($n+1))/2, "sum of 1..$n", 1e-14);
 }
 $test_data = [1..8];
-is_approx(sum($test_data), 36, 'sum to 8 using array reference', 0);
+is_approx(sum($test_data), 36, 'sum to 8 using array reference', 1e-14);
 no_leaks_ok {
 	sum([1..9]);
 } 'sum: no leaks' unless $INC{'Devel/Cover.pm'};

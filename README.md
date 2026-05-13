@@ -554,4 +554,6 @@ You can also precisely filter and reorder which columns are written by passing a
 
     write_table(\@data, $tmp_file, sep => "\t", 'col.names' => ['c', 'a']);
 
+undefined variables are printed as `NA` by default, but can be set as you wish using `undef.val`
 
+    write_table(\%data_hoa, '/tmp/undef.val.tsv', sep => "\t", 'undef.val' => 'nan')

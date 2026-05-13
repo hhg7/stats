@@ -4,4 +4,4 @@ back-compatible to Perl 5.10, instead of original 5.40, ensuring more people can
 added var_test
 mean, min, sum, median, var, and max die with undefined values, and print the offending indices
 "group_stats" added to aov, for TukeyHSD in the future
-
+"cor" dies when given data with standard deviation of 0
