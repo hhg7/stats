@@ -126,12 +126,11 @@ if (mean([1,1], [2,2]) == 1.5) {
 } else {
 	fail('Arrays as references cannot be given');
 }
-subtest 'Numerical Stability: Catastrophic Cancellation' => sub {
-	my @large_data = (1000000000.1, 1000000000.2, 1000000000.3);
-	# The variance of (0.1, 0.2, 0.3) is exactly 0.01.
-	is_approx( var(@large_data), 0.01, 'var: handles large magnitude data cleanly' );
-	is_approx( sd(@large_data), 0.1, 'sd: handles large magnitude data cleanly' );
-};
+
+my @large_data = (1000000000.1, 1000000000.2, 1000000000.3);
+# The variance of (0.1, 0.2, 0.3) is exactly 0.01.
+is_approx( var(@large_data), 0.01, 'var: handles large magnitude data cleanly' );
+is_approx( sd(@large_data), 0.1, 'sd: handles large magnitude data cleanly' );
 # Exceptional cases for mean
 eval { mean() };
 like( $@, qr/mean needs >= 1 element/, 'mean: dies when given empty input' );
@@ -1018,235 +1017,234 @@ subtest 'lm: Binary categorical predictor (two groups)' => sub {
 	} 'lm cat 2-level: no memory leaks' unless $INC{'Devel/Cover.pm'};
 };
 
-subtest 'lm: Three-level categorical predictor (cross-validated against aov)' => sub {
-	# Uses the same data as the 'aov: One-Way ANOVA with Categorical Factor' subtest.
-	# R: lm(yield_val ~ group) — reference level is 'A' (alphabetically first).
-	# Two dummy variables are created: 'groupB' and 'groupC'.
-	my $data = {
-	  yield_val => [5.5, 5.4, 5.8, 4.5, 4.8, 4.2, 6.1, 6.5, 6.2],
-	  group     => ['A', 'A', 'A', 'B', 'B', 'B', 'C', 'C', 'C'],
-	};
-	my $lm_3 = lm(formula => 'yield_val ~ group', data => $data);
-
-	# 1. Dummy variable naming ------------------------------------------------
-	ok(  defined $lm_3->{coefficients}{Intercept},
-	  'lm cat 3-level: Intercept is defined' );
-	ok(  defined $lm_3->{coefficients}{groupB},
-	  'lm cat 3-level: dummy "groupB" is created' );
-	ok(  defined $lm_3->{coefficients}{groupC},
-	  'lm cat 3-level: dummy "groupC" is created' );
-	ok( !defined $lm_3->{coefficients}{groupA},
-	  'lm cat 3-level: reference "groupA" is absent from coefficients' );
-
-	# 2. Coefficient values (exact by algebra) --------------------------------
-	#    Intercept = mean(A) = (5.5+5.4+5.8)/3 = 16.7/3 = 5.5666̄
-	#    groupB    = mean(B) - mean(A) = 4.5 - 16.7/3  = -1.0666̄
-	#    groupC    = mean(C) - mean(A) = 18.8/3 - 16.7/3 = 2.1/3 = 0.7
-	is_approx( $lm_3->{coefficients}{Intercept}, 16.7/3,
-	  'lm cat 3-level: Intercept = mean(A) = 16.7/3', 1e-10 );
-	is_approx( $lm_3->{coefficients}{groupB}, 4.5 - 16.7/3,
-	  'lm cat 3-level: groupB = mean(B) - mean(A)', 1e-10 );
-	is_approx( $lm_3->{coefficients}{groupC}, 2.1/3,
-	  'lm cat 3-level: groupC = mean(C) - mean(A) = 2.1/3 = 0.7', 1e-10 );
-
-	# 3. Model fit (exact fractions) ------------------------------------------
-	#    mean(A)=16.7/3, mean(B)=4.5, mean(C)=18.8/3; grand_mean=49/9
-	#    SS_group  = 3*(11/90)^2 + 3*(17/18)^2 + 3*(37/45)^2
-	#              = (363+21675+16428)/8100 = 38466/8100 = 2137/450
-	#    SS_res    = 0.0867 + 0.18 + 0.0867 = 53/150
-	#    SS_total  = 2137/450 + 53/150 = 2296/450 = 1148/225
-	#    r.squared     = 2137/2296
-	#    adj.r.squared = 1 - (53/900)/(1148/1800) = 1 - 53/574 = 521/574
-	is_approx( $lm_3->{'r.squared'}, 2137/2296,
-	  'lm cat 3-level: r.squared = 2137/2296', 1e-7 );
-	is_approx( $lm_3->{'adj.r.squared'}, 521/574,
-	  'lm cat 3-level: adj.r.squared = 521/574', 1e-7 );
-	is_approx( $lm_3->{'df.residual'}, 6,
-	  'lm cat 3-level: df.residual = n - rank = 9 - 3 = 6', 0 );
-	is_approx( $lm_3->{'rank'}, 3,
-	  'lm cat 3-level: rank = 3 (Intercept + 2 dummies)', 0 );
-
-	# 4. F-statistic (cross-validated against aov One-Way result) --------------
-	#    MS_group = SS_group/2 = 2137/900; MS_res = SS_res/6 = 53/900
-	#    F = MS_group/MS_res = 2137/53 / 2 = 40.3207547169811...
-	#    f.pvalue = (df2/(df2+df1*F))^(df2/2) = (6/86.641...)^3 = 0.0003319084
-	#              [same value as aov Pr(>F) for 'group', verified in R]
-	if ( (defined $lm_3->{fstatistic}) && (ref $lm_3->{fstatistic} eq 'ARRAY') ) {
-	  pass('lm cat 3-level: fstatistic is defined and is an array');
-	} else {
-	  fail('lm cat 3-level: fstatistic is defined and is an array');
-	}
-	is_approx( $lm_3->{fstatistic}[0], 40.3207547169811,
-	  'lm cat 3-level: F value matches aov One-Way result', 1e-7 );
-	is_approx( $lm_3->{fstatistic}[1], 2,
-	  'lm cat 3-level: F numerator df = k - 1 = 2', 0 );
-	is_approx( $lm_3->{fstatistic}[2], 6,
-	  'lm cat 3-level: F denominator df = n - k = 6', 0 );
-	is_approx( $lm_3->{'f.pvalue'}, 0.0003319084,
-	  'lm cat 3-level: f.pvalue matches aov Pr(>F)', 5e-6 );
-
-	# 5. Summary table --------------------------------------------------------
-	#    MS_res = 53/900.
-	#    (X'X)^{-1} for balanced 3-group design (det=27):
-	#      diag = [1/3, 2/3, 2/3]   (off-diag elements not needed for SE)
-	#
-	#    SE(Intercept) = sqrt(MS_res * 1/3) = sqrt(53/2700)  ≈ 0.140106
-	#    SE(groupB)    = sqrt(MS_res * 2/3) = sqrt(53/1350)  ≈ 0.198139
-	#    SE(groupC)    = sqrt(MS_res * 2/3) = sqrt(53/1350)  ≈ 0.198139
-	#
-	#    t(Intercept)  = (16.7/3) / sqrt(53/2700) ≈  39.732
-	#    t(groupB)     = (4.5-16.7/3) / sqrt(53/1350) ≈  -5.383
-	#    t(groupC)     = (2.1/3)      / sqrt(53/1350) ≈   3.533
-	#
-	#    p-value bounds (df=6): t_{6,0.005}=3.707, t_{6,0.002}≈5.208
-	#      p(groupB): |t|=5.38 > 5.208 → p < 0.005
-	#      p(groupC): |t|=3.53, between t_{6,0.02} and t_{6,0.01} → p < 0.02
-	is_approx( $lm_3->{summary}{Intercept}{Estimate}, 16.7/3,
-	  'lm cat 3-level: summary Estimate(Intercept)', 1e-10 );
-	is_approx( $lm_3->{summary}{groupB}{Estimate}, 4.5 - 16.7/3,
-	  'lm cat 3-level: summary Estimate(groupB)', 1e-10 );
-	is_approx( $lm_3->{summary}{groupC}{Estimate}, 2.1/3,
-	  'lm cat 3-level: summary Estimate(groupC)', 1e-10 );
-	is_approx( $lm_3->{summary}{Intercept}{'Std. Error'}, sqrt(53/2700),
-	  'lm cat 3-level: SE(Intercept) = sqrt(53/2700)', 1e-7 );
-	is_approx( $lm_3->{summary}{groupB}{'Std. Error'}, sqrt(53/1350),
-	  'lm cat 3-level: SE(groupB) = sqrt(53/1350)', 1e-7 );
-	is_approx( $lm_3->{summary}{groupC}{'Std. Error'}, sqrt(53/1350),
-	  'lm cat 3-level: SE(groupC) = sqrt(53/1350)', 1e-7 );
-	is_approx( $lm_3->{summary}{Intercept}{'t value'},
-	  (16.7/3) / sqrt(53/2700),
-	  'lm cat 3-level: t(Intercept)', 1e-5 );
-	is_approx( $lm_3->{summary}{groupB}{'t value'},
-	  (4.5 - 16.7/3) / sqrt(53/1350),
-	  'lm cat 3-level: t(groupB)', 1e-5 );
-	is_approx( $lm_3->{summary}{groupC}{'t value'},
-	  (2.1/3) / sqrt(53/1350),
-	  'lm cat 3-level: t(groupC)', 1e-5 );
-	ok( $lm_3->{summary}{groupB}{'Pr(>|t|)'} < 0.005,
-	  'lm cat 3-level: p(groupB) < 0.005  (|t|=5.38 > t_{6,0.002}=5.208)' );
-	ok( $lm_3->{summary}{groupC}{'Pr(>|t|)'} < 0.02,
-	  'lm cat 3-level: p(groupC) < 0.02   (|t|=3.53, between t_{6,0.01} and t_{6,0.02})' );
-
-	no_leaks_ok {
-	  eval { lm(formula => 'yield_val ~ group', data => $data) };
-	} 'lm cat 3-level: no memory leaks' unless $INC{'Devel/Cover.pm'};
+#subtest 'lm: Three-level categorical predictor (cross-validated against aov)' => sub {
+# Uses the same data as the 'aov: One-Way ANOVA with Categorical Factor' subtest.
+# R: lm(yield_val ~ group) — reference level is 'A' (alphabetically first).
+# Two dummy variables are created: 'groupB' and 'groupC'.
+my $data = {
+  yield_val => [5.5, 5.4, 5.8, 4.5, 4.8, 4.2, 6.1, 6.5, 6.2],
+  group     => ['A', 'A', 'A', 'B', 'B', 'B', 'C', 'C', 'C'],
 };
+my $lm_3 = lm(formula => 'yield_val ~ group', data => $data);
 
-subtest 'lm: Reference level is alphabetically first regardless of input order' => sub {
-	# Observations arrive in C/A/B order, but the reference level must be 'A'
-	# (sorted alphabetically), so dummies are 'grpB' and 'grpC', not 'grpA'.
-	# R: lm(c(8,9,10,1,2,3,5,6,7) ~ c('C','C','C','A','A','A','B','B','B'))
-	my $data = {
-	  'y' => [8, 9, 10, 1, 2, 3, 5, 6, 7],
-	  grp => ['C', 'C', 'C', 'A', 'A', 'A', 'B', 'B', 'B'],
-	};
-	my $lm_ref = lm(formula => 'y ~ grp', data => $data);
+# 1. Dummy variable naming ------------------------------------------------
+ok(  defined $lm_3->{coefficients}{Intercept},
+  'lm cat 3-level: Intercept is defined' );
+ok(  defined $lm_3->{coefficients}{groupB},
+  'lm cat 3-level: dummy "groupB" is created' );
+ok(  defined $lm_3->{coefficients}{groupC},
+  'lm cat 3-level: dummy "groupC" is created' );
+ok( !defined $lm_3->{coefficients}{groupA},
+  'lm cat 3-level: reference "groupA" is absent from coefficients' );
 
-	# 1. Dummy variable naming ------------------------------------------------
-	#    'A' < 'B' < 'C' alphabetically → 'A' is the reference.
-	ok(  defined $lm_ref->{coefficients}{Intercept},
-	  'lm cat ref-level: Intercept is defined' );
-	ok(  defined $lm_ref->{coefficients}{grpB},
-	  'lm cat ref-level: dummy "grpB" is created' );
-	ok(  defined $lm_ref->{coefficients}{grpC},
-	  'lm cat ref-level: dummy "grpC" is created' );
-	ok( !defined $lm_ref->{coefficients}{grpA},
-	  'lm cat ref-level: "grpA" is absent — it is the reference level' );
+# 2. Coefficient values (exact by algebra) --------------------------------
+#    Intercept = mean(A) = (5.5+5.4+5.8)/3 = 16.7/3 = 5.5666̄
+#    groupB    = mean(B) - mean(A) = 4.5 - 16.7/3  = -1.0666̄
+#    groupC    = mean(C) - mean(A) = 18.8/3 - 16.7/3 = 2.1/3 = 0.7
+is_approx( $lm_3->{coefficients}{Intercept}, 16.7/3,
+  'lm cat 3-level: Intercept = mean(A) = 16.7/3', 1e-10 );
+is_approx( $lm_3->{coefficients}{groupB}, 4.5 - 16.7/3,
+  'lm cat 3-level: groupB = mean(B) - mean(A)', 1e-10 );
+is_approx( $lm_3->{coefficients}{groupC}, 2.1/3,
+  'lm cat 3-level: groupC = mean(C) - mean(A) = 2.1/3 = 0.7', 1e-10 );
 
-	# 2. Coefficient values (exact by algebra) --------------------------------
-	#    Intercept = mean(A) = (1+2+3)/3 = 2
-	#    grpB      = mean(B) - mean(A) = (5+6+7)/3 - 2 = 6 - 2 = 4
-	#    grpC      = mean(C) - mean(A) = (8+9+10)/3 - 2 = 9 - 2 = 7
-	is_approx( $lm_ref->{coefficients}{Intercept}, 2,
-	  'lm cat ref-level: Intercept = mean(A) = 2', 0 );
-	is_approx( $lm_ref->{coefficients}{grpB}, 4,
-	  'lm cat ref-level: grpB = mean(B) - mean(A) = 4', 0 );
-	is_approx( $lm_ref->{coefficients}{grpC}, 7,
-	  'lm cat ref-level: grpC = mean(C) - mean(A) = 7', 0 );
+# 3. Model fit (exact fractions) ------------------------------------------
+#    mean(A)=16.7/3, mean(B)=4.5, mean(C)=18.8/3; grand_mean=49/9
+#    SS_group  = 3*(11/90)^2 + 3*(17/18)^2 + 3*(37/45)^2
+#              = (363+21675+16428)/8100 = 38466/8100 = 2137/450
+#    SS_res    = 0.0867 + 0.18 + 0.0867 = 53/150
+#    SS_total  = 2137/450 + 53/150 = 2296/450 = 1148/225
+#    r.squared     = 2137/2296
+#    adj.r.squared = 1 - (53/900)/(1148/1800) = 1 - 53/574 = 521/574
+is_approx( $lm_3->{'r.squared'}, 2137/2296,
+  'lm cat 3-level: r.squared = 2137/2296', 1e-7 );
+is_approx( $lm_3->{'adj.r.squared'}, 521/574,
+  'lm cat 3-level: adj.r.squared = 521/574', 1e-7 );
+is_approx( $lm_3->{'df.residual'}, 6,
+  'lm cat 3-level: df.residual = n - rank = 9 - 3 = 6', 0 );
+is_approx( $lm_3->{'rank'}, 3,
+  'lm cat 3-level: rank = 3 (Intercept + 2 dummies)', 0 );
 
-	# 3. Model fit (exact fractions) ------------------------------------------
-	#    grand_mean = 51/9 = 17/3
-	#    SS_between: 3*(2-17/3)^2 + 3*(6-17/3)^2 + 3*(9-17/3)^2
-	#              = 3*(11/3)^2 + 3*(1/3)^2 + 3*(10/3)^2
-	#              = (363 + 3 + 300)/9 = 666/9 = 74
-	#    SS_res: within-group SS for three consecutive-integer triples
-	#              = 2 + 2 + 2 = 6
-	#    SS_total  = 74 + 6 = 80
-	#    r.squared     = 74/80 = 37/40 = 0.925
-	#    adj.r.squared = 1 - (6/6)/(80/8) = 1 - 1/10 = 9/10 = 0.9
-	is_approx( $lm_ref->{'r.squared'}, 37/40,
-	  'lm cat ref-level: r.squared = 37/40 = 0.925', 1e-7 );
-	is_approx( $lm_ref->{'adj.r.squared'}, 9/10,
-	  'lm cat ref-level: adj.r.squared = 9/10 = 0.9', 1e-7 );
-	is_approx( $lm_ref->{'df.residual'}, 6,
-	  'lm cat ref-level: df.residual = n - rank = 9 - 3 = 6', 0 );
-	is_approx( $lm_ref->{'rank'}, 3,
-	  'lm cat ref-level: rank = 3 (Intercept + 2 dummies)', 0 );
+# 4. F-statistic (cross-validated against aov One-Way result) --------------
+#    MS_group = SS_group/2 = 2137/900; MS_res = SS_res/6 = 53/900
+#    F = MS_group/MS_res = 2137/53 / 2 = 40.3207547169811...
+#    f.pvalue = (df2/(df2+df1*F))^(df2/2) = (6/86.641...)^3 = 0.0003319084
+#              [same value as aov Pr(>F) for 'group', verified in R]
+if ( (defined $lm_3->{fstatistic}) && (ref $lm_3->{fstatistic} eq 'ARRAY') ) {
+  pass('lm cat 3-level: fstatistic is defined and is an array');
+} else {
+  fail('lm cat 3-level: fstatistic is defined and is an array');
+}
+is_approx( $lm_3->{fstatistic}[0], 40.3207547169811,
+  'lm cat 3-level: F value matches aov One-Way result', 1e-7 );
+is_approx( $lm_3->{fstatistic}[1], 2,
+  'lm cat 3-level: F numerator df = k - 1 = 2', 0 );
+is_approx( $lm_3->{fstatistic}[2], 6,
+  'lm cat 3-level: F denominator df = n - k = 6', 0 );
+is_approx( $lm_3->{'f.pvalue'}, 0.0003319084,
+  'lm cat 3-level: f.pvalue matches aov Pr(>F)', 5e-6 );
 
-	# 4. F-statistic ----------------------------------------------------------
-	#    F = (SS_between/df_between) / (SS_res/df_res)
-	#      = (74/2) / (6/6) = 37  on (2, 6) df
-	#
-	#    f.pvalue = I(df2/(df2+df1*F); df2/2, df1/2)
-	#             = I(6/80; 3, 1)
-	#             = (6/80)^3           [since I(x;3,1) = x^3]
-	#             = (3/40)^3 = 27/64000 = 0.000421875  (exact)
-	if ( (defined $lm_ref->{fstatistic}) && (ref $lm_ref->{fstatistic} eq 'ARRAY') ) {
-	  pass('lm cat ref-level: fstatistic is defined and is an array');
-	} else {
-	  fail('lm cat ref-level: fstatistic is defined and is an array');
-	}
-	is_approx( $lm_ref->{fstatistic}[0], 37,
-	  'lm cat ref-level: F = (74/2)/(6/6) = 37', 0 );
-	is_approx( $lm_ref->{fstatistic}[1], 2,
-	  'lm cat ref-level: F numerator df = k - 1 = 2', 0 );
-	is_approx( $lm_ref->{fstatistic}[2], 6,
-	  'lm cat ref-level: F denominator df = n - k = 6', 0 );
-	is_approx( $lm_ref->{'f.pvalue'}, 27/64000,
-	  'lm cat ref-level: f.pvalue = (3/40)^3 = 27/64000 (exact)', 1e-9 );
+# 5. Summary table --------------------------------------------------------
+#    MS_res = 53/900.
+#    (X'X)^{-1} for balanced 3-group design (det=27):
+#      diag = [1/3, 2/3, 2/3]   (off-diag elements not needed for SE)
+#
+#    SE(Intercept) = sqrt(MS_res * 1/3) = sqrt(53/2700)  ≈ 0.140106
+#    SE(groupB)    = sqrt(MS_res * 2/3) = sqrt(53/1350)  ≈ 0.198139
+#    SE(groupC)    = sqrt(MS_res * 2/3) = sqrt(53/1350)  ≈ 0.198139
+#
+#    t(Intercept)  = (16.7/3) / sqrt(53/2700) ≈  39.732
+#    t(groupB)     = (4.5-16.7/3) / sqrt(53/1350) ≈  -5.383
+#    t(groupC)     = (2.1/3)      / sqrt(53/1350) ≈   3.533
+#
+#    p-value bounds (df=6): t_{6,0.005}=3.707, t_{6,0.002}≈5.208
+#      p(groupB): |t|=5.38 > 5.208 → p < 0.005
+#      p(groupC): |t|=3.53, between t_{6,0.02} and t_{6,0.01} → p < 0.02
+is_approx( $lm_3->{summary}{Intercept}{Estimate}, 16.7/3,
+  'lm cat 3-level: summary Estimate(Intercept)', 1e-10 );
+is_approx( $lm_3->{summary}{groupB}{Estimate}, 4.5 - 16.7/3,
+  'lm cat 3-level: summary Estimate(groupB)', 1e-10 );
+is_approx( $lm_3->{summary}{groupC}{Estimate}, 2.1/3,
+  'lm cat 3-level: summary Estimate(groupC)', 1e-10 );
+is_approx( $lm_3->{summary}{Intercept}{'Std. Error'}, sqrt(53/2700),
+  'lm cat 3-level: SE(Intercept) = sqrt(53/2700)', 1e-7 );
+is_approx( $lm_3->{summary}{groupB}{'Std. Error'}, sqrt(53/1350),
+  'lm cat 3-level: SE(groupB) = sqrt(53/1350)', 1e-7 );
+is_approx( $lm_3->{summary}{groupC}{'Std. Error'}, sqrt(53/1350),
+  'lm cat 3-level: SE(groupC) = sqrt(53/1350)', 1e-7 );
+is_approx( $lm_3->{summary}{Intercept}{'t value'},
+  (16.7/3) / sqrt(53/2700),
+  'lm cat 3-level: t(Intercept)', 1e-5 );
+is_approx( $lm_3->{summary}{groupB}{'t value'},
+  (4.5 - 16.7/3) / sqrt(53/1350),
+  'lm cat 3-level: t(groupB)', 1e-5 );
+is_approx( $lm_3->{summary}{groupC}{'t value'},
+  (2.1/3) / sqrt(53/1350),
+  'lm cat 3-level: t(groupC)', 1e-5 );
+ok( $lm_3->{summary}{groupB}{'Pr(>|t|)'} < 0.005,
+  'lm cat 3-level: p(groupB) < 0.005  (|t|=5.38 > t_{6,0.002}=5.208)' );
+ok( $lm_3->{summary}{groupC}{'Pr(>|t|)'} < 0.02,
+  'lm cat 3-level: p(groupC) < 0.02   (|t|=3.53, between t_{6,0.01} and t_{6,0.02})' );
 
-	# 5. Summary table --------------------------------------------------------
-	#    MS_res = SS_res / df_res = 6/6 = 1
-	#    (X'X)^{-1} for balanced 3-group design (same structure as subtest 2):
-	#      diag = [1/3, 2/3, 2/3]
-	#
-	#    SE(Intercept) = sqrt(MS_res * 1/3) = 1/sqrt(3)    ≈ 0.577350
-	#    SE(grpB)      = sqrt(MS_res * 2/3) = sqrt(2/3)    ≈ 0.816497
-	#    SE(grpC)      = sqrt(MS_res * 2/3) = sqrt(2/3)    ≈ 0.816497
-	#    t(Intercept)  = 2 / (1/sqrt(3))   = 2*sqrt(3)     ≈ 3.464102
-	#    t(grpB)       = 4 / sqrt(2/3)     = 4*sqrt(3/2)   ≈ 4.898979
-	#    t(grpC)       = 7 / sqrt(2/3)     = 7*sqrt(3/2)   ≈ 8.573214
-	#
-	#    p-value bounds (df=6): t_{6,0.001}=5.959
-	#      p(grpB): |t|=4.90, between t_{6,0.01} and t_{6,0.001} → p < 0.01
-	#      p(grpC): |t|=8.57 > t_{6,0.001}=5.959              → p < 0.001
-	is_approx( $lm_ref->{summary}{Intercept}{Estimate}, 2,
-	  'lm cat ref-level: summary Estimate(Intercept) = 2', 0 );
-	is_approx( $lm_ref->{summary}{grpB}{Estimate}, 4,
-	  'lm cat ref-level: summary Estimate(grpB) = 4', 0 );
-	is_approx( $lm_ref->{summary}{grpC}{Estimate}, 7,
-	  'lm cat ref-level: summary Estimate(grpC) = 7', 0 );
-	is_approx( $lm_ref->{summary}{Intercept}{'Std. Error'}, 1/sqrt(3),
-	  'lm cat ref-level: SE(Intercept) = 1/sqrt(3)', 1e-7 );
-	is_approx( $lm_ref->{summary}{grpB}{'Std. Error'}, sqrt(2/3),
-	  'lm cat ref-level: SE(grpB) = sqrt(2/3)', 1e-7 );
-	is_approx( $lm_ref->{summary}{grpC}{'Std. Error'}, sqrt(2/3),
-	  'lm cat ref-level: SE(grpC) = sqrt(2/3)', 1e-7 );
-	is_approx( $lm_ref->{summary}{Intercept}{'t value'}, 2*sqrt(3),
-	  'lm cat ref-level: t(Intercept) = 2*sqrt(3)', 1e-7 );
-	is_approx( $lm_ref->{summary}{grpB}{'t value'}, 4*sqrt(3/2),
-	  'lm cat ref-level: t(grpB) = 4*sqrt(3/2)', 1e-7 );
-	is_approx( $lm_ref->{summary}{grpC}{'t value'}, 7*sqrt(3/2),
-	  'lm cat ref-level: t(grpC) = 7*sqrt(3/2)', 1e-7 );
-	ok( $lm_ref->{summary}{grpB}{'Pr(>|t|)'} < 0.01,
-	  'lm cat ref-level: p(grpB) < 0.01   (|t|=4.90, df=6)' );
-	ok( $lm_ref->{summary}{grpC}{'Pr(>|t|)'} < 0.001,
-	  'lm cat ref-level: p(grpC) < 0.001  (|t|=8.57 > t_{6,0.001}=5.959)' );
+no_leaks_ok {
+  eval { lm(formula => 'yield_val ~ group', data => $data) };
+} 'lm cat 3-level: no memory leaks' unless $INC{'Devel/Cover.pm'};
 
-	no_leaks_ok {
-	  eval { lm(formula => 'y ~ grp', data => $data) };
-	} 'lm cat ref-level: no memory leaks';
+
+#subtest 'lm: Reference level is alphabetically first regardless of input order' => sub {
+# Observations arrive in C/A/B order, but the reference level must be 'A'
+# (sorted alphabetically), so dummies are 'grpB' and 'grpC', not 'grpA'.
+# R: lm(c(8,9,10,1,2,3,5,6,7) ~ c('C','C','C','A','A','A','B','B','B'))
+$data = {
+  'y' => [8, 9, 10, 1, 2, 3, 5, 6, 7],
+  grp => ['C', 'C', 'C', 'A', 'A', 'A', 'B', 'B', 'B'],
 };
+my $lm_ref = lm(formula => 'y ~ grp', data => $data);
+
+# 1. Dummy variable naming ------------------------------------------------
+#    'A' < 'B' < 'C' alphabetically → 'A' is the reference.
+ok(  defined $lm_ref->{coefficients}{Intercept},
+  'lm cat ref-level: Intercept is defined' );
+ok(  defined $lm_ref->{coefficients}{grpB},
+  'lm cat ref-level: dummy "grpB" is created' );
+ok(  defined $lm_ref->{coefficients}{grpC},
+  'lm cat ref-level: dummy "grpC" is created' );
+ok( !defined $lm_ref->{coefficients}{grpA},
+  'lm cat ref-level: "grpA" is absent — it is the reference level' );
+
+# 2. Coefficient values (exact by algebra) --------------------------------
+#    Intercept = mean(A) = (1+2+3)/3 = 2
+#    grpB      = mean(B) - mean(A) = (5+6+7)/3 - 2 = 6 - 2 = 4
+#    grpC      = mean(C) - mean(A) = (8+9+10)/3 - 2 = 9 - 2 = 7
+is_approx( $lm_ref->{coefficients}{Intercept}, 2,
+  'lm cat ref-level: Intercept = mean(A) = 2', 0 );
+is_approx( $lm_ref->{coefficients}{grpB}, 4,
+  'lm cat ref-level: grpB = mean(B) - mean(A) = 4', 0 );
+is_approx( $lm_ref->{coefficients}{grpC}, 7,
+  'lm cat ref-level: grpC = mean(C) - mean(A) = 7', 0 );
+
+# 3. Model fit (exact fractions) ------------------------------------------
+#    grand_mean = 51/9 = 17/3
+#    SS_between: 3*(2-17/3)^2 + 3*(6-17/3)^2 + 3*(9-17/3)^2
+#              = 3*(11/3)^2 + 3*(1/3)^2 + 3*(10/3)^2
+#              = (363 + 3 + 300)/9 = 666/9 = 74
+#    SS_res: within-group SS for three consecutive-integer triples
+#              = 2 + 2 + 2 = 6
+#    SS_total  = 74 + 6 = 80
+#    r.squared     = 74/80 = 37/40 = 0.925
+#    adj.r.squared = 1 - (6/6)/(80/8) = 1 - 1/10 = 9/10 = 0.9
+is_approx( $lm_ref->{'r.squared'}, 37/40,
+  'lm cat ref-level: r.squared = 37/40 = 0.925', 1e-7 );
+is_approx( $lm_ref->{'adj.r.squared'}, 9/10,
+  'lm cat ref-level: adj.r.squared = 9/10 = 0.9', 1e-7 );
+is_approx( $lm_ref->{'df.residual'}, 6,
+  'lm cat ref-level: df.residual = n - rank = 9 - 3 = 6', 0 );
+is_approx( $lm_ref->{'rank'}, 3,
+  'lm cat ref-level: rank = 3 (Intercept + 2 dummies)', 0 );
+
+# 4. F-statistic ----------------------------------------------------------
+#    F = (SS_between/df_between) / (SS_res/df_res)
+#      = (74/2) / (6/6) = 37  on (2, 6) df
+#
+#    f.pvalue = I(df2/(df2+df1*F); df2/2, df1/2)
+#             = I(6/80; 3, 1)
+#             = (6/80)^3           [since I(x;3,1) = x^3]
+#             = (3/40)^3 = 27/64000 = 0.000421875  (exact)
+if ( (defined $lm_ref->{fstatistic}) && (ref $lm_ref->{fstatistic} eq 'ARRAY') ) {
+  pass('lm cat ref-level: fstatistic is defined and is an array');
+} else {
+  fail('lm cat ref-level: fstatistic is defined and is an array');
+}
+is_approx( $lm_ref->{fstatistic}[0], 37,
+  'lm cat ref-level: F = (74/2)/(6/6) = 37', 0 );
+is_approx( $lm_ref->{fstatistic}[1], 2,
+  'lm cat ref-level: F numerator df = k - 1 = 2', 0 );
+is_approx( $lm_ref->{fstatistic}[2], 6,
+  'lm cat ref-level: F denominator df = n - k = 6', 0 );
+is_approx( $lm_ref->{'f.pvalue'}, 27/64000,
+  'lm cat ref-level: f.pvalue = (3/40)^3 = 27/64000 (exact)', 1e-9 );
+
+# 5. Summary table --------------------------------------------------------
+#    MS_res = SS_res / df_res = 6/6 = 1
+#    (X'X)^{-1} for balanced 3-group design (same structure as subtest 2):
+#      diag = [1/3, 2/3, 2/3]
+#
+#    SE(Intercept) = sqrt(MS_res * 1/3) = 1/sqrt(3)    ≈ 0.577350
+#    SE(grpB)      = sqrt(MS_res * 2/3) = sqrt(2/3)    ≈ 0.816497
+#    SE(grpC)      = sqrt(MS_res * 2/3) = sqrt(2/3)    ≈ 0.816497
+#    t(Intercept)  = 2 / (1/sqrt(3))   = 2*sqrt(3)     ≈ 3.464102
+#    t(grpB)       = 4 / sqrt(2/3)     = 4*sqrt(3/2)   ≈ 4.898979
+#    t(grpC)       = 7 / sqrt(2/3)     = 7*sqrt(3/2)   ≈ 8.573214
+#
+#    p-value bounds (df=6): t_{6,0.001}=5.959
+#      p(grpB): |t|=4.90, between t_{6,0.01} and t_{6,0.001} → p < 0.01
+#      p(grpC): |t|=8.57 > t_{6,0.001}=5.959              → p < 0.001
+is_approx( $lm_ref->{summary}{Intercept}{Estimate}, 2,
+  'lm cat ref-level: summary Estimate(Intercept) = 2', 0 );
+is_approx( $lm_ref->{summary}{grpB}{Estimate}, 4,
+  'lm cat ref-level: summary Estimate(grpB) = 4', 0 );
+is_approx( $lm_ref->{summary}{grpC}{Estimate}, 7,
+  'lm cat ref-level: summary Estimate(grpC) = 7', 0 );
+is_approx( $lm_ref->{summary}{Intercept}{'Std. Error'}, 1/sqrt(3),
+  'lm cat ref-level: SE(Intercept) = 1/sqrt(3)', 1e-7 );
+is_approx( $lm_ref->{summary}{grpB}{'Std. Error'}, sqrt(2/3),
+  'lm cat ref-level: SE(grpB) = sqrt(2/3)', 1e-7 );
+is_approx( $lm_ref->{summary}{grpC}{'Std. Error'}, sqrt(2/3),
+  'lm cat ref-level: SE(grpC) = sqrt(2/3)', 1e-7 );
+is_approx( $lm_ref->{summary}{Intercept}{'t value'}, 2*sqrt(3),
+  'lm cat ref-level: t(Intercept) = 2*sqrt(3)', 1e-7 );
+is_approx( $lm_ref->{summary}{grpB}{'t value'}, 4*sqrt(3/2),
+  'lm cat ref-level: t(grpB) = 4*sqrt(3/2)', 1e-7 );
+is_approx( $lm_ref->{summary}{grpC}{'t value'}, 7*sqrt(3/2),
+  'lm cat ref-level: t(grpC) = 7*sqrt(3/2)', 1e-7 );
+ok( $lm_ref->{summary}{grpB}{'Pr(>|t|)'} < 0.01,
+  'lm cat ref-level: p(grpB) < 0.01   (|t|=4.90, df=6)' );
+ok( $lm_ref->{summary}{grpC}{'Pr(>|t|)'} < 0.001,
+  'lm cat ref-level: p(grpC) < 0.001  (|t|=8.57 > t_{6,0.001}=5.959)' );
+
+no_leaks_ok {
+  eval { lm(formula => 'y ~ grp', data => $data) };
+} 'lm cat ref-level: no memory leaks';
 #---------------------------
 #   rnorm
 #----------------------------
@@ -1407,90 +1405,85 @@ if ($ft->{estimate}{'odds ratio'} == 'inf') {
 #----------------------
 #    hist
 #----------------------
-subtest 'hist functionality' => sub {
-	# 1. Basic properties with a simple dataset
-	# Data: 1, 2, 2, 3, 3, 3, 4, 4, 5 (9 elements)
-	my $h_data = [1, 2, 2, 3, 3, 3, 4, 4, 5];
-	my $breaks = 4;
-	my $res = hist($h_data, breaks => $breaks);
-	is(ref $res, 'HASH', 'hist: returns a hash reference');
-	is(scalar @{$res->{counts}}, $breaks, 'hist: correct number of bins (counts)');
-	is(scalar @{$res->{breaks}}, $breaks+1, 'hist: correct number of breaks (n+1)');
-	is(scalar @{$res->{mids}},   $breaks, 'hist: correct number of midpoints');
+# 1. Basic properties with a simple dataset
+# Data: 1, 2, 2, 3, 3, 3, 4, 4, 5 (9 elements)
+my $h_data = [1, 2, 2, 3, 3, 3, 4, 4, 5];
+my $breaks = 4;
+my $res = hist($h_data, breaks => $breaks);
+is(ref $res, 'HASH', 'hist: returns a hash reference');
+is(scalar @{$res->{counts}}, $breaks, 'hist: correct number of bins (counts)');
+is(scalar @{$res->{breaks}}, $breaks+1, 'hist: correct number of breaks (n+1)');
+is(scalar @{$res->{mids}},   $breaks, 'hist: correct number of midpoints');
 
-	# 2. Verify counts sum to total elements
-	my $total_counts = 0;
-	$total_counts += $_ for @{$res->{counts}};
-	is($total_counts, scalar @$h_data, 'hist: sum of counts matches input size');
+# 2. Verify counts sum to total elements
+my $total_counts = 0;
+$total_counts += $_ for @{$res->{counts}};
+is($total_counts, scalar @$h_data, 'hist: sum of counts matches input size');
 
-	# 3. Verify midpoints are mathematically correct
-	my $mid_ok = 1;
-	for my $i (0 .. $#{$res->{mids}}) {
-	  my $expected_mid = ($res->{breaks}->[$i] + $res->{breaks}->[$i+1]) / 2;
-	  $mid_ok = 0 if abs($res->{mids}->[$i] - $expected_mid) > 1e-12;
-	}
-	ok($mid_ok, 'hist: midpoints are correctly calculated between breaks');
+# 3. Verify midpoints are mathematically correct
+my $mid_ok = 1;
+for my $i (0 .. $#{$res->{mids}}) {
+  my $expected_mid = ($res->{breaks}->[$i] + $res->{breaks}->[$i+1]) / 2;
+  $mid_ok = 0 if abs($res->{mids}->[$i] - $expected_mid) > 1e-12;
+}
+ok($mid_ok, 'hist: midpoints are correctly calculated between breaks');
 
-	# 4. Density check: Total area (sum of density * bin_width) must be 1
-	my $area = 0;
-	for my $i (0 .. $#{$res->{counts}}) {
-	  my $width = $res->{breaks}->[$i+1] - $res->{breaks}->[$i];
-	  $area += $res->{density}->[$i] * $width;
-	}
-	ok(abs($area - 1.0) < 1e-12, 'hist: total area under density curve is 1.0');
+# 4. Density check: Total area (sum of density * bin_width) must be 1
+my $area = 0;
+for my $i (0 .. $#{$res->{counts}}) {
+  my $width = $res->{breaks}->[$i+1] - $res->{breaks}->[$i];
+  $area += $res->{density}->[$i] * $width;
+}
+ok(abs($area - 1.0) < 1e-12, 'hist: total area under density curve is 1.0');
 
-	# 5. Test with a single value (Edge case)
-	my $single = hist([10], breaks => 1);
-	is($single->{counts}->[0], 1, 'hist: handles single-element array');
-	is($single->{breaks}->[0], 10, 'hist: single-element break starts at value');
+# 5. Test with a single value (Edge case)
+my $single = hist([10], breaks => 1);
+is($single->{counts}->[0], 1, 'hist: handles single-element array');
+is($single->{breaks}->[0], 10, 'hist: single-element break starts at value');
 
-	# Optional: Visual inspection if needed
-	p $res;
-};
+# Optional: Visual inspection if needed
+p $res;
 #-------------------------------------------------------------------
 #  Performance & Edge Cases for hist()
 #-------------------------------------------------------------------
-subtest 'hist: O(N) Performance and Edge Cases' => sub {
-	# 1. Test standard binning boundaries
-	# Data spans 0 to 10 exactly.
-	my $data = [0, 2.5, 4.9, 5.0, 7.5, 10];
-	my $res = hist($data, breaks => 2);
-	
-	# With 2 bins spanning 0 to 10, step is 5.
-	# Bin 0: [0, 5] -> should capture 0, 2.5, 4.9, 5.0 (4 items)
-	# Bin 1: (5, 10] -> should capture 7.5, 10 (2 items)
-	is_deeply($res->{counts}, [4, 2], 'hist: correctly assigns boundary values in O(N) logic');
-	is_deeply($res->{breaks}, [0, 5, 10], 'hist: correct breaks generation');
+#subtest 'hist: O(N) Performance and Edge Cases' => sub {
+# 1. Test standard binning boundaries
+# Data spans 0 to 10 exactly.
+$data = [0, 2.5, 4.9, 5.0, 7.5, 10];
+$res = hist($data, breaks => 2);
 
-	# 2. Test zero-variance edge case (all identical values)
-	my $flat_data = [7, 7, 7, 7, 7];
-	my $flat_res = hist($flat_data, breaks => 1);
-	
-	is($flat_res->{counts}->[0], 5, 'hist: properly handles flatline data (step = 0)');
-	is($flat_res->{density}->[0], 1, 'hist: density is 1.0 for a single zero-width bin');
-	
-	# 3. Scale test: Generate a slightly larger array to ensure no memory segfaults
-	# and quick processing.
-	my @large_uniform = seq(1, 1000, 0.5); 
-	my $large_res = hist(\@large_uniform, breaks => 10);
-	
-	my $total_counted = 0;
-	$total_counted += $_ for @{ $large_res->{counts} };
-	
-	is($total_counted, scalar @large_uniform, 'hist: sum of counts perfectly matches input size on larger datasets');
-};
+# With 2 bins spanning 0 to 10, step is 5.
+# Bin 0: [0, 5] -> should capture 0, 2.5, 4.9, 5.0 (4 items)
+# Bin 1: (5, 10] -> should capture 7.5, 10 (2 items)
+is_deeply($res->{counts}, [4, 2], 'hist: correctly assigns boundary values in O(N) logic');
+is_deeply($res->{breaks}, [0, 5, 10], 'hist: correct breaks generation');
+
+# 2. Test zero-variance edge case (all identical values)
+my $flat_data = [7, 7, 7, 7, 7];
+my $flat_res = hist($flat_data, breaks => 1);
+
+is($flat_res->{counts}->[0], 5, 'hist: properly handles flatline data (step = 0)');
+is($flat_res->{density}->[0], 1, 'hist: density is 1.0 for a single zero-width bin');
+
+# 3. Scale test: Generate a slightly larger array to ensure no memory segfaults
+# and quick processing.
+my @large_uniform = seq(1, 1000, 0.5); 
+my $large_res = hist(\@large_uniform, breaks => 10);
+
+my $total_counted = 0;
+$total_counted += $_ for @{ $large_res->{counts} };
+
+is($total_counted, scalar @large_uniform, 'hist: sum of counts perfectly matches input size on larger datasets');
 #----------------------
 #    hist exceptions
 #----------------------
-subtest 'hist exceptions' => sub {
 	# Should die if not an array ref
-	dies_ok { hist("not an array") } 'hist: dies on string input';
-	dies_ok { hist({ a => 1 }) }     'hist: dies on hash ref input';
-	# Should die on empty array
-	dies_ok { hist([]) }             'hist: dies on empty array ref';
-	# Should die on non-numeric data (depending on your SVNV strictness)
-	dies_ok { hist([qw(a b c)]) }    'hist: dies on non-numeric array content';
-};
+dies_ok { hist("not an array") } 'hist: dies on string input';
+dies_ok { hist({ a => 1 }) }     'hist: dies on hash ref input';
+# Should die on empty array
+dies_ok { hist([]) }             'hist: dies on empty array ref';
+# Should die on non-numeric data (depending on your SVNV strictness)
+dies_ok { hist([qw(a b c)]) }    'hist: dies on non-numeric array content';
 #----------------------
 #   runif
 #----------------------
@@ -1558,72 +1551,66 @@ no_leaks_ok {
 		rbinom( n => $n, prob => 0.5, size => 9);
 	};
 } 'rbinom: no memory leaks' unless $INC{'Devel/Cover.pm'};
-subtest 'rbinom: Exceptions and Validations' => sub {
-	eval { rbinom(n => 10, size => 10) };
-	like( $@, qr/'size' and 'prob' are required arguments/, 'rbinom: dies when prob is missing' );
+eval { rbinom(n => 10, size => 10) };
+like( $@, qr/'size' and 'prob' are required arguments/, 'rbinom: dies when prob is missing' );
 
-	dies_ok {
-		rbinom(n => 10, prob => 0.5)
-	} 'qr/"size" and "prob" are required arguments: rbinom: dies when size is missing';
+dies_ok {
+	rbinom(n => 10, prob => 0.5)
+} 'qr/"size" and "prob" are required arguments: rbinom: dies when size is missing';
 
-	dies_ok {
-		rbinom(n => 10, size => 10, prob => 1.5)
-	} 'qr/prob must be between 0 and 1: rbinom: dies when prob > 1';
+dies_ok {
+	rbinom(n => 10, size => 10, prob => 1.5)
+} 'qr/prob must be between 0 and 1: rbinom: dies when prob > 1';
 
-	dies_ok {
-		rbinom(n => 10, size => 10, prob => -0.1) 
-	} 'qr/prob must be between 0 and 1: rbinom: dies when prob < 0';
-	dies_ok {
-		rbinom(n => 10, size => 10, prob => 0.5, 'extra_arg');
-	} 'rbinom: dies on odd argument count';
-};
+dies_ok {
+	rbinom(n => 10, size => 10, prob => -0.1) 
+} 'qr/prob must be between 0 and 1: rbinom: dies when prob < 0';
+dies_ok {
+	rbinom(n => 10, size => 10, prob => 0.5, 'extra_arg');
+} 'rbinom: dies on odd argument count';
 
-subtest 'rbinom: Edge Cases (Deterministic)' => sub {
-	my $n_edge = 100;
-	# Prob = 0 should strictly return 0
-	my $binom_p = rbinom(n => $n_edge, size => 10, prob => 0);
-	is_approx( max($binom_p), 0, 'rbinom: prob=0 always returns 0' );
-	is_approx( min($binom_p), 0, 'rbinom: prob=0 always returns 0' );
-	
-	# Prob = 1 should strictly return 'size'
-	$binom_p = rbinom(n => $n_edge, size => 15, prob => 1);
-	is_approx( min($binom_p), 15, 'rbinom: prob=1 always returns size' );
-	is_approx( max($binom_p), 15, 'rbinom: prob=1 always returns size' );
+#subtest 'rbinom: Edge Cases (Deterministic)' => sub {
+my $n_edge = 100;
+# Prob = 0 should strictly return 0
+my $binom_p = rbinom(n => $n_edge, size => 10, prob => 0);
+is_approx( max($binom_p), 0, 'rbinom: prob=0 always returns 0' );
+is_approx( min($binom_p), 0, 'rbinom: prob=0 always returns 0' );
 
-	# Size = 0 should strictly return 0
-	$binom_p = rbinom(n => $n_edge, size => 0, prob => 0.5);
-	is_approx( max($binom_p), 0, 'rbinom: size=0 always returns 0' );
-};
+# Prob = 1 should strictly return 'size'
+$binom_p = rbinom(n => $n_edge, size => 15, prob => 1);
+is_approx( min($binom_p), 15, 'rbinom: prob=1 always returns size' );
+is_approx( max($binom_p), 15, 'rbinom: prob=1 always returns size' );
 
-subtest 'rbinom: Statistical Properties' => sub {
-	my $n_stat = 10000;
-	my $size   = 20;
-	my $prob   = 0.3;
-	my $binom_stats = rbinom(n => $n_stat, size => $size, prob => $prob);
-	
-	is_approx( scalar @{ $binom_stats }, $n_stat, 'rbinom: returns correct number of elements' );
-	
-	my $expected_mean = $size * $prob;
-	my $expected_var  = $size * $prob * (1 - $prob);
-	
-	# Allow a small epsilon (margin of error) for stochasticity
-	is_approx( mean($binom_stats), $expected_mean, 'rbinom: empirical mean matches theoretical mean', 0.1 );
-	is_approx( var($binom_stats), $expected_var, 'rbinom: empirical variance matches theoretical variance', 0.5 );
-};
+# Size = 0 should strictly return 0
+$binom_p = rbinom(n => $n_edge, size => 0, prob => 0.5);
+is_approx( max($binom_p), 0, 'rbinom: size=0 always returns 0' );
 
-subtest 'rbinom: Randomness' => sub {
-	my $n_rand = 100;
-	my $binom_1 = rbinom(n => $n_rand, size => 10, prob => 0.5);
-	my $binom_2 = rbinom(n => $n_rand, size => 10, prob => 0.5);
-	
-	my @identical_idx = grep { $binom_1->[$_] == $binom_2->[$_] } 0..($n_rand-1);
-	
-	if (scalar @identical_idx < $n_rand) {
-		pass('rbinom: consecutive calls generate different non-repeating sequences');
-	} else {
-		fail('rbinom: consecutive calls generated identical arrays (PRNG state not updating)');
-	}
-};
+my $n_stat = 10000;
+my $size   = 20;
+my $prob   = 0.3;
+my $binom_stats = rbinom(n => $n_stat, size => $size, prob => $prob);
+
+is_approx( scalar @{ $binom_stats }, $n_stat, 'rbinom: returns correct number of elements' );
+
+my $expected_mean = $size * $prob;
+my $expected_var  = $size * $prob * (1 - $prob);
+
+# Allow a small epsilon (margin of error) for stochasticity
+is_approx( mean($binom_stats), $expected_mean, 'rbinom: empirical mean matches theoretical mean', 0.1 );
+is_approx( var($binom_stats), $expected_var, 'rbinom: empirical variance matches theoretical variance', 0.5 );
+
+#subtest 'rbinom: Randomness' => sub {
+my $n_rand = 100;
+my $binom_1 = rbinom(n => $n_rand, size => 10, prob => 0.5);
+my $binom_2 = rbinom(n => $n_rand, size => 10, prob => 0.5);
+
+my @identical_idx = grep { $binom_1->[$_] == $binom_2->[$_] } 0..($n_rand-1);
+
+if (scalar @identical_idx < $n_rand) {
+	pass('rbinom: consecutive calls generate different non-repeating sequences');
+} else {
+	fail('rbinom: consecutive calls generated identical arrays (PRNG state not updating)');
+}
 #----------------------
 #       seq
 #----------------------
@@ -1673,16 +1660,15 @@ say 'seq(0, 1, 0.1):';
 @seq = seq(0, 1, 0.1);
 say join(", ", @seq);
 
-subtest 'seq: Floating-point precision drift' => sub {
-	my @seq_drift = seq(0, 100, 0.1);
-	# If current += by is used, the 500th element (50.0) might evaluate to 49.999999999999
-	is_approx( $seq_drift[500], 50.0, 'seq: 500th fractional step maintains exact expected scale without drifting', 10**-12 );
-	no_leaks_ok {
-		eval {
-			seq(0, 100, 0.1);
-		};
-	} 'seq: no memory leaks' unless $INC{'Devel/Cover.pm'};
-};
+#'seq: Floating-point precision drift'
+my @seq_drift = seq(0, 100, 0.1);
+# If current += by is used, the 500th element (50.0) might evaluate to 49.999999999999
+is_approx( $seq_drift[500], 50.0, 'seq: 500th fractional step maintains exact expected scale without drifting', 10**-12 );
+no_leaks_ok {
+	eval {
+		seq(0, 100, 0.1);
+	};
+} 'seq: no memory leaks' unless $INC{'Devel/Cover.pm'};
 
 #my $wt_result = wilcox_test( 'x' => [1..4], 'y' => [5..8], {});
 #p $wt_result;
@@ -1926,8 +1912,8 @@ if (defined $aov_res->{group_stats}) {
 #-------------------------------------------------------------------
 #  glm: Generalized Linear Models
 #-------------------------------------------------------------------
-#subtest 'glm: Gaussian matches lm' => sub {
-	# Check that gaussian glm is mathematically identical to OLS lm
+#'glm: Gaussian matches lm' => sub {
+# Check that gaussian glm is mathematically identical to OLS lm
 my $lm_res = lm(formula => 'mpg ~ wt + hp', data => $mtcars);
 no_leaks_ok {
 	eval {
@@ -2030,8 +2016,7 @@ OJ OJ OJ OJ OJ OJ OJ OJ OJ OJ)]
 	}
 );
 $idx = 0;
-foreach my $val ( qw(
--8.1042857 -0.8042857 -5.0042857 -6.5042857 -5.9042857 -2.3042857 -1.1042857 
+my @v = qw(-8.1042857 -0.8042857 -5.0042857 -6.5042857 -5.9042857 -2.3042857 -1.1042857 
 -1.1042857 -7.1042857 -5.3042857 -0.6860714 -0.6860714 -1.9860714  0.1139286 
  5.3139286  0.1139286 -3.5860714 -2.6860714  1.6139286 -1.6860714 -3.3496429 
 -8.4496429  6.9503571 -1.4496429 -0.5496429  5.5503571 -0.2496429 -5.4496429 
@@ -2039,21 +2024,21 @@ foreach my $val ( qw(
 -2.3042857 -4.1042857 -2.9042857  4.1957143 -2.6042857  2.5139286  6.1139286 
  6.4139286  9.2139286  2.8139286  8.0139286  8.6139286  4.0139286 -2.6860714 
 10.1139286 -1.4496429 -0.5496429 -4.5496429 -2.4496429 -2.1496429  3.9503571 
--0.5496429  0.3503571  2.4503571 -3.9496429)) {
+-0.5496429  0.3503571  2.4503571 -3.9496429);
+foreach my $val (@v) {
 	$correct{'deviance.resid'}{$idx+1} = $val;
 	$idx++;
 }
 $idx = 0;
-foreach my $val ( qw(
-12.30429 12.30429 12.30429 12.30429 12.30429 12.30429 12.30429 12.30429 
+@v = qw(12.30429 12.30429 12.30429 12.30429 12.30429 12.30429 12.30429 12.30429 
 12.30429 12.30429 17.18607 17.18607 17.18607 17.18607 17.18607 17.18607 
 17.18607 17.18607 17.18607 17.18607 26.94964 26.94964 26.94964 26.94964 
 26.94964 26.94964 26.94964 26.94964 26.94964 26.94964 12.30429 12.30429 
 12.30429 12.30429 12.30429 12.30429 12.30429 12.30429 12.30429 12.30429 
 17.18607 17.18607 17.18607 17.18607 17.18607 17.18607 17.18607 17.18607 
 17.18607 17.18607 26.94964 26.94964 26.94964 26.94964 26.94964 26.94964 
-26.94964 26.94964 26.94964 26.94964
-)) {
+26.94964 26.94964 26.94964 26.94964);
+foreach my $val (@v) {
 	$correct{'fitted.values'}{$idx+1} = $val;
 	$idx++;
 }
@@ -2506,7 +2491,7 @@ no_leaks_ok {
 @correct = (39.9,	35.2,	22,	29.8,	6.3,	8.16,	4.37,	60,	4.5, 72.5);
 @col = qw(ALB	ALP	ALT	AST	BIL	CHE	CHOL	CREA	GGT	PROT);
 $idx = 0;
-foreach my ($col) (@col) {
+foreach my $col (@col) {
 	is_approx( $test_data->[0]{$col}, $correct[$idx], "read_table: Column $col after filter", 1e-14);
 	$idx++;
 }
@@ -2964,7 +2949,7 @@ subtest 'wilcox_test: Extended and Edge Cases' => sub {
 
 	# 3. Alternative hypotheses
 	my $wt_less = wilcox_test('x' => [1, 2, 3], 'y' => [10, 11, 12], alternative => 'less');
-	ok($wt_less->{p_value} == 0.05, 'wilcox_test: alternative less works properly');
+	is_approx($wt_less->{p_value}, 0.05, 'wilcox_test: alternative less works properly', 1e-14);
 
 	my $wt_greater = wilcox_test('x' => [1, 2, 3], 'y' => [10, 11, 12], alternative => 'greater');
 	ok($wt_greater->{p_value} > 0.95, 'wilcox_test: alternative greater works properly');

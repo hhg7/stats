@@ -2,7 +2,7 @@
 # ABSTRACT: Get basic statistical functions, like in R, but with Perl using XS for performance
 use 5.010;
 package Stats::LikeR;
-our $VERSION = 0.02;
+our $VERSION = 0.03;
 require XSLoader;
 use DDP {output => 'STDOUT', array_max => 10, show_memsize => 1};
 use Devel::Confess 'color';
@@ -10,7 +10,7 @@ use warnings FATAL => 'all';
 use autodie ':default';
 use Exporter 'import';
 XSLoader::load('Stats::LikeR', $VERSION);
-our @EXPORT_OK = qw(aov chisq_test cor cor_test cov fisher_test glm hist kruskal_test ks_test lm matrix mean median min max p_adjust power_t_test quantile rbinom read_table rnorm runif scale sd seq shapiro_test sum t_test var var_test wilcox_test write_table);
+our @EXPORT_OK = qw(aov chisq_test cor cor_test cov fisher_test glm hist kruskal_test ks_test lm matrix mean median min max p_adjust power_t_test quantile rbinom read_table rnorm runif sample scale sd seq shapiro_test sum t_test var var_test wilcox_test write_table);
 our @EXPORT = @EXPORT_OK;
 
 require XSLoader;

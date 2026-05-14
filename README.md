@@ -407,6 +407,10 @@ will make 9 numbers in [0,1]
 
 will match `n`, `min`, and `max` respectively
 
+## sample
+
+
+
 ## scale
 
     my @scaled_results = scale(1..5);
