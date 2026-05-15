@@ -3456,7 +3456,7 @@ SV* rbinom(...)
 	  RETVAL = newRV_noinc((SV*)result_av);
 	}
 	OUTPUT:
-	  RETVAL
+		RETVAL
 
 SV*
 hist(SV* x_sv, ...)

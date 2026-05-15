@@ -5,7 +5,6 @@ use warnings FATAL => 'all';
 use feature 'say';
 use Test::More;
 use Test::Exception; # die_ok
-use DDP {output => 'STDOUT', array_max => 10, show_memsize => 1};
 use Devel::Confess 'color';
 use Stats::LikeR;
 use Scalar::Util 'looks_like_number';
@@ -312,7 +311,6 @@ foreach my $key (grep {ref $correct_t[2]{$_} eq ''} keys %{ $correct_t[2] }) {
 foreach my $j (0,1) {
 	is_approx( $t_test->{'conf_int'}[$j], $correct_t[2]{'conf_int'}[$j], "Conf. interval index $j");
 }
-p $test_data[0];
 $t_test = t_test(
 	$test_data[0][0], #[qw(27.5 21.0 19.0 23.6 17.0 17.9 16.9 20.1 21.9 22.6 23.1 19.6 19.0 21.7 21.4)],
 	$test_data[0][1], #[qw(27.1 22.0 20.8 23.4 23.4 23.5 25.8 22.0 24.8 20.2 21.9 22.1 22.9 20.5 24.4)],
@@ -916,108 +914,107 @@ lives_ok {                         # was dies_ok — the block is expected to su
 #         the alphabetically first label
 #-------------------------------------------------------------------
 
-subtest 'lm: Binary categorical predictor (two groups)' => sub {
-	# R: lm(c(1,2,3,7,8,9) ~ c('ctrl','ctrl','ctrl','trt','trt','trt'))
-	# 'ctrl' < 'trt' alphabetically, so 'ctrl' is the reference (baseline) level.
-	# One dummy variable is created: 'grptrt'.
-	my $data = {
-	  'y' => [1, 2, 3, 7, 8, 9],
-	  grp => ['ctrl', 'ctrl', 'ctrl', 'trt', 'trt', 'trt'],
-	};
-	my $lm_bin = lm(formula => 'y ~ grp', data => $data);
-
-	# 1. Dummy variable naming ------------------------------------------------
-	#    Only the non-reference level becomes a coefficient key.
-	ok(  defined $lm_bin->{coefficients}{Intercept},
-	  'lm cat 2-level: Intercept is defined' );
-	ok(  defined $lm_bin->{coefficients}{grptrt},
-	  'lm cat 2-level: dummy "grptrt" is created for the non-reference level' );
-	ok( !defined $lm_bin->{coefficients}{grpctrl},
-	  'lm cat 2-level: reference "grpctrl" is absent from coefficients' );
-
-	# 2. Coefficient values (exact by algebra) --------------------------------
-	#    Design matrix X = [[1,0],[1,0],[1,0],[1,1],[1,1],[1,1]]
-	#    OLS estimate = (X'X)^{-1} X'y:
-	#      Intercept = mean('ctrl') = (1+2+3)/3 = 2
-	#      grptrt    = mean('trt') - mean('ctrl') = (7+8+9)/3 - 2 = 6
-	is_approx( $lm_bin->{coefficients}{Intercept}, 2,
-	  'lm cat 2-level: Intercept = mean(ctrl) = 2', 0 );
-	is_approx( $lm_bin->{coefficients}{grptrt}, 6,
-	  'lm cat 2-level: grptrt = mean(trt) - mean(ctrl) = 6', 0 );
-
-	# 3. Model fit (exact fractions) ------------------------------------------
-	#    grand_mean = 5
-	#    SS_between = 3*(2-5)^2 + 3*(8-5)^2 = 27 + 27 = 54
-	#    SS_res     = (1-2)^2+0+(3-2)^2 + (7-8)^2+0+(9-8)^2 = 4
-	#    SS_total   = 16+9+4+4+9+16 = 58
-	#    r.squared     = 54/58 = 27/29
-	#    adj.r.squared = 1 - (SS_res/df_res)/(SS_total/df_total)
-	#                  = 1 - (4/4)/(58/5) = 1 - 5/58 = 53/58
-	is_approx( $lm_bin->{'r.squared'}, 27/29,
-	  'lm cat 2-level: r.squared = 27/29', 1e-7 );
-	is_approx( $lm_bin->{'adj.r.squared'}, 53/58,
-	  'lm cat 2-level: adj.r.squared = 53/58', 1e-7 );
-	is_approx( $lm_bin->{'df.residual'}, 4,
-	  'lm cat 2-level: df.residual = n - rank = 6 - 2 = 4', 0 );
-	is_approx( $lm_bin->{'rank'}, 2,
-	  'lm cat 2-level: rank = 2 (Intercept + 1 dummy)', 0 );
-
-	# 4. F-statistic ----------------------------------------------------------
-	#    F = (SS_reg/df_reg) / (SS_res/df_res) = (54/1) / (4/4) = 54 on (1, 4) df
-	#    f.pvalue = I(df2/(df2+df1*F); df2/2, df1/2)
-	#             = I(4/58; 2, 0.5)
-	#             = 1 - (3/2)*sqrt(27/29) + (1/2)*(27/29)^(3/2)
-	#             = 0.0018262607...   [verified analytically in Perl]
-	if ( (defined $lm_bin->{fstatistic}) && (ref $lm_bin->{fstatistic} eq 'ARRAY') ) {
-	  pass('lm cat 2-level: fstatistic is defined and is an array');
-	} else {
-	  fail('lm cat 2-level: fstatistic is defined and is an array');
-	}
-	is_approx( $lm_bin->{fstatistic}[0], 54,
-	  'lm cat 2-level: F statistic = 54', 0 );
-	is_approx( $lm_bin->{fstatistic}[1],  1,
-	  'lm cat 2-level: F numerator df = 1', 0 );
-	is_approx( $lm_bin->{fstatistic}[2],  4,
-	  'lm cat 2-level: F denominator df = 4', 0 );
-	is_approx( $lm_bin->{'f.pvalue'}, 0.0018262607,
-	  'lm cat 2-level: f.pvalue = I(4/58;2,0.5)', 1e-7 );
-
-	# 5. Summary table --------------------------------------------------------
-	#    MS_res = SS_res / df_res = 4/4 = 1
-	#    (X'X)^{-1} = [[1/3,-1/3],[-1/3,2/3]]  (det(X'X)=9)
-	#
-	#    SE(Intercept) = sqrt(MS_res * 1/3) = 1/sqrt(3)
-	#    SE(grptrt)    = sqrt(MS_res * 2/3) = sqrt(2/3)
-	#    t(Intercept)  = 2 / (1/sqrt(3)) = 2*sqrt(3)
-	#    t(grptrt)     = 6 / sqrt(2/3)   = 6*sqrt(3/2)
-	#
-	#    p(Intercept): 2*pt(-2*sqrt(3), df=4) = I(4/16; 2, 0.5)
-	#                = 1 - (3/2)*sqrt(3/4) + (1/2)*(3/4)^(3/2) = 0.0257214207...
-	#    p(grptrt):   equals f.pvalue (single predictor, F = t^2)
-	#                = 0.0018262607...
-	is_approx( $lm_bin->{summary}{Intercept}{Estimate}, 2,
-	  'lm cat 2-level: summary Estimate(Intercept) = 2', 0 );
-	is_approx( $lm_bin->{summary}{grptrt}{Estimate}, 6,
-	  'lm cat 2-level: summary Estimate(grptrt) = 6', 0 );
-	is_approx( $lm_bin->{summary}{Intercept}{'Std. Error'}, 1/sqrt(3),
-	  'lm cat 2-level: SE(Intercept) = 1/sqrt(3)', 1e-7 );
-	is_approx( $lm_bin->{summary}{grptrt}{'Std. Error'}, sqrt(2/3),
-	  'lm cat 2-level: SE(grptrt) = sqrt(2/3)', 1e-7 );
-	is_approx( $lm_bin->{summary}{Intercept}{'t value'}, 2*sqrt(3),
-	  'lm cat 2-level: t(Intercept) = 2*sqrt(3)', 1e-7 );
-	is_approx( $lm_bin->{summary}{grptrt}{'t value'}, 6*sqrt(3/2),
-	  'lm cat 2-level: t(grptrt) = 6*sqrt(3/2)', 1e-7 );
-	is_approx( $lm_bin->{summary}{Intercept}{'Pr(>|t|)'}, 0.0257214207,
-	  'lm cat 2-level: p(Intercept) = I(1/4;2,0.5)', 1e-7 );
-	is_approx( $lm_bin->{summary}{grptrt}{'Pr(>|t|)'}, 0.0018262607,
-	  'lm cat 2-level: p(grptrt) = f.pvalue (single predictor)', 1e-7 );
-
-	no_leaks_ok {
-	  eval { lm(formula => 'y ~ grp', data => $data) };
-	} 'lm cat 2-level: no memory leaks' unless $INC{'Devel/Cover.pm'};
+# 'lm: Binary categorical predictor (two groups)'
+# R: lm(c(1,2,3,7,8,9) ~ c('ctrl','ctrl','ctrl','trt','trt','trt'))
+# 'ctrl' < 'trt' alphabetically, so 'ctrl' is the reference (baseline) level.
+# One dummy variable is created: 'grptrt'.
+$data = {
+  'y' => [1, 2, 3, 7, 8, 9],
+  grp => ['ctrl', 'ctrl', 'ctrl', 'trt', 'trt', 'trt'],
 };
+my $lm_bin = lm(formula => 'y ~ grp', data => $data);
 
-#subtest 'lm: Three-level categorical predictor (cross-validated against aov)' => sub {
+# 1. Dummy variable naming ------------------------------------------------
+#    Only the non-reference level becomes a coefficient key.
+ok(  defined $lm_bin->{coefficients}{Intercept},
+  'lm cat 2-level: Intercept is defined' );
+ok(  defined $lm_bin->{coefficients}{grptrt},
+  'lm cat 2-level: dummy "grptrt" is created for the non-reference level' );
+ok( !defined $lm_bin->{coefficients}{grpctrl},
+  'lm cat 2-level: reference "grpctrl" is absent from coefficients' );
+
+# 2. Coefficient values (exact by algebra) --------------------------------
+#    Design matrix X = [[1,0],[1,0],[1,0],[1,1],[1,1],[1,1]]
+#    OLS estimate = (X'X)^{-1} X'y:
+#      Intercept = mean('ctrl') = (1+2+3)/3 = 2
+#      grptrt    = mean('trt') - mean('ctrl') = (7+8+9)/3 - 2 = 6
+is_approx( $lm_bin->{coefficients}{Intercept}, 2,
+  'lm cat 2-level: Intercept = mean(ctrl) = 2', 0 );
+is_approx( $lm_bin->{coefficients}{grptrt}, 6,
+  'lm cat 2-level: grptrt = mean(trt) - mean(ctrl) = 6', 0 );
+
+# 3. Model fit (exact fractions) ------------------------------------------
+#    grand_mean = 5
+#    SS_between = 3*(2-5)^2 + 3*(8-5)^2 = 27 + 27 = 54
+#    SS_res     = (1-2)^2+0+(3-2)^2 + (7-8)^2+0+(9-8)^2 = 4
+#    SS_total   = 16+9+4+4+9+16 = 58
+#    r.squared     = 54/58 = 27/29
+#    adj.r.squared = 1 - (SS_res/df_res)/(SS_total/df_total)
+#                  = 1 - (4/4)/(58/5) = 1 - 5/58 = 53/58
+is_approx( $lm_bin->{'r.squared'}, 27/29,
+  'lm cat 2-level: r.squared = 27/29', 1e-7 );
+is_approx( $lm_bin->{'adj.r.squared'}, 53/58,
+  'lm cat 2-level: adj.r.squared = 53/58', 1e-7 );
+is_approx( $lm_bin->{'df.residual'}, 4,
+  'lm cat 2-level: df.residual = n - rank = 6 - 2 = 4', 0 );
+is_approx( $lm_bin->{'rank'}, 2,
+  'lm cat 2-level: rank = 2 (Intercept + 1 dummy)', 0 );
+
+# 4. F-statistic ----------------------------------------------------------
+#    F = (SS_reg/df_reg) / (SS_res/df_res) = (54/1) / (4/4) = 54 on (1, 4) df
+#    f.pvalue = I(df2/(df2+df1*F); df2/2, df1/2)
+#             = I(4/58; 2, 0.5)
+#             = 1 - (3/2)*sqrt(27/29) + (1/2)*(27/29)^(3/2)
+#             = 0.0018262607...   [verified analytically in Perl]
+if ( (defined $lm_bin->{fstatistic}) && (ref $lm_bin->{fstatistic} eq 'ARRAY') ) {
+  pass('lm cat 2-level: fstatistic is defined and is an array');
+} else {
+  fail('lm cat 2-level: fstatistic is defined and is an array');
+}
+is_approx( $lm_bin->{fstatistic}[0], 54,
+  'lm cat 2-level: F statistic = 54', 0 );
+is_approx( $lm_bin->{fstatistic}[1],  1,
+  'lm cat 2-level: F numerator df = 1', 0 );
+is_approx( $lm_bin->{fstatistic}[2],  4,
+  'lm cat 2-level: F denominator df = 4', 0 );
+is_approx( $lm_bin->{'f.pvalue'}, 0.0018262607,
+  'lm cat 2-level: f.pvalue = I(4/58;2,0.5)', 1e-7 );
+
+# 5. Summary table --------------------------------------------------------
+#    MS_res = SS_res / df_res = 4/4 = 1
+#    (X'X)^{-1} = [[1/3,-1/3],[-1/3,2/3]]  (det(X'X)=9)
+#
+#    SE(Intercept) = sqrt(MS_res * 1/3) = 1/sqrt(3)
+#    SE(grptrt)    = sqrt(MS_res * 2/3) = sqrt(2/3)
+#    t(Intercept)  = 2 / (1/sqrt(3)) = 2*sqrt(3)
+#    t(grptrt)     = 6 / sqrt(2/3)   = 6*sqrt(3/2)
+#
+#    p(Intercept): 2*pt(-2*sqrt(3), df=4) = I(4/16; 2, 0.5)
+#                = 1 - (3/2)*sqrt(3/4) + (1/2)*(3/4)^(3/2) = 0.0257214207...
+#    p(grptrt):   equals f.pvalue (single predictor, F = t^2)
+#                = 0.0018262607...
+is_approx( $lm_bin->{summary}{Intercept}{Estimate}, 2,
+  'lm cat 2-level: summary Estimate(Intercept) = 2', 0 );
+is_approx( $lm_bin->{summary}{grptrt}{Estimate}, 6,
+  'lm cat 2-level: summary Estimate(grptrt) = 6', 0 );
+is_approx( $lm_bin->{summary}{Intercept}{'Std. Error'}, 1/sqrt(3),
+  'lm cat 2-level: SE(Intercept) = 1/sqrt(3)', 1e-7 );
+is_approx( $lm_bin->{summary}{grptrt}{'Std. Error'}, sqrt(2/3),
+  'lm cat 2-level: SE(grptrt) = sqrt(2/3)', 1e-7 );
+is_approx( $lm_bin->{summary}{Intercept}{'t value'}, 2*sqrt(3),
+  'lm cat 2-level: t(Intercept) = 2*sqrt(3)', 1e-7 );
+is_approx( $lm_bin->{summary}{grptrt}{'t value'}, 6*sqrt(3/2),
+  'lm cat 2-level: t(grptrt) = 6*sqrt(3/2)', 1e-7 );
+is_approx( $lm_bin->{summary}{Intercept}{'Pr(>|t|)'}, 0.0257214207,
+  'lm cat 2-level: p(Intercept) = I(1/4;2,0.5)', 1e-7 );
+is_approx( $lm_bin->{summary}{grptrt}{'Pr(>|t|)'}, 0.0018262607,
+  'lm cat 2-level: p(grptrt) = f.pvalue (single predictor)', 1e-7 );
+
+no_leaks_ok {
+  eval { lm(formula => 'y ~ grp', data => $data) };
+} 'lm cat 2-level: no memory leaks' unless $INC{'Devel/Cover.pm'};
+
+#'lm: Three-level categorical predictor (cross-validated against aov)'
 # Uses the same data as the 'aov: One-Way ANOVA with Categorical Factor' subtest.
 # R: lm(yield_val ~ group) — reference level is 'A' (alphabetically first).
 # Two dummy variables are created: 'groupB' and 'groupC'.
@@ -1131,7 +1128,7 @@ no_leaks_ok {
 } 'lm cat 3-level: no memory leaks' unless $INC{'Devel/Cover.pm'};
 
 
-#subtest 'lm: Reference level is alphabetically first regardless of input order' => sub {
+# 'lm: Reference level is alphabetically first regardless of input order' => sub {
 # Observations arrive in C/A/B order, but the reference level must be 'A'
 # (sorted alphabetically), so dummies are 'grpB' and 'grpC', not 'grpA'.
 # R: lm(c(8,9,10,1,2,3,5,6,7) ~ c('C','C','C','A','A','A','B','B','B'))
@@ -1386,7 +1383,7 @@ is_approx($ft->{p_value}, 0.98571428571429, 'fisher_test: alternative="less" p.v
 is_approx($ft->{estimate}{'odds ratio'}, 6.40830886700579, 'fisher_test: alternative="less" odds ratio', 1e-4);
 $conf_int_range = abs $ft->{conf_int}[0] - $ft->{conf_int}[1];
 $correct_conf_int_range = 306.2469 - 0.0000;
-if (0.99*$correct_conf_int_range < $conf_int_range < 1.01* $correct_conf_int_range) {
+if ((0.99*$correct_conf_int_range < $conf_int_range) && ($conf_int_range < 1.01* $correct_conf_int_range)) {
 	pass('Fisher\'s test with alternative less confidence interval is within 1% of correct');
 } else {
 	fail('Fisher\'s test with alternative less confidence interval is *NOT* within 1% of correct');
@@ -1441,8 +1438,6 @@ my $single = hist([10], breaks => 1);
 is($single->{counts}->[0], 1, 'hist: handles single-element array');
 is($single->{breaks}->[0], 10, 'hist: single-element break starts at value');
 
-# Optional: Visual inspection if needed
-p $res;
 #-------------------------------------------------------------------
 #  Performance & Edge Cases for hist()
 #-------------------------------------------------------------------
@@ -1500,7 +1495,6 @@ is_approx( min(@{ $unif }), 0, 'Approximately correct minimum', 10**-3);
 is_approx( max(@{ $unif }), 1, 'Approximately correct maximum', 10**-3);
 {
 	my $unif2 = runif( n => $n, min => 0, max => 1);
-	p $unif2;
 	my @identical_idx = grep { $unif->[$_] == $unif2->[$_] } 0..$n-1;
 	if (scalar @identical_idx == 0) {
 		pass('runif does not repeat');
@@ -1569,7 +1563,7 @@ dies_ok {
 	rbinom(n => 10, size => 10, prob => 0.5, 'extra_arg');
 } 'rbinom: dies on odd argument count';
 
-#subtest 'rbinom: Edge Cases (Deterministic)' => sub {
+# 'rbinom: Edge Cases (Deterministic)'
 my $n_edge = 100;
 # Prob = 0 should strictly return 0
 my $binom_p = rbinom(n => $n_edge, size => 10, prob => 0);
@@ -1599,7 +1593,7 @@ my $expected_var  = $size * $prob * (1 - $prob);
 is_approx( mean($binom_stats), $expected_mean, 'rbinom: empirical mean matches theoretical mean', 0.1 );
 is_approx( var($binom_stats), $expected_var, 'rbinom: empirical variance matches theoretical variance', 0.5 );
 
-#subtest 'rbinom: Randomness' => sub {
+# 'rbinom: Randomness' 
 my $n_rand = 100;
 my $binom_1 = rbinom(n => $n_rand, size => 10, prob => 0.5);
 my $binom_2 = rbinom(n => $n_rand, size => 10, prob => 0.5);
@@ -1771,7 +1765,7 @@ foreach my $meth (@correct) {
 	);
 	my @undef_keys = grep {!defined $result->{$_}} sort keys %{ $result };
 	if (scalar @undef_keys > 0) {
-		p @undef_keys;
+		say STDERR join (', ', @undef_keys);
 		die "The above keys aren't defined";
 	}
 	foreach my $key (sort grep {looks_like_number($result->{$_})} keys %{ $result }) {
@@ -1820,7 +1814,7 @@ foreach my $meth (@correct) {
 	);
 	my @undef_keys = grep {!defined $result->{$_}} sort keys %{ $result };
 	if (scalar @undef_keys > 0) {
-		p @undef_keys;
+		say STDERR join (', ', @undef_keys);
 		die "The above keys aren't defined";
 	}
 	foreach my $key (sort grep {looks_like_number($result->{$_})} keys %{ $result }) {
@@ -1934,47 +1928,45 @@ is($glm_res->{family}, 'gaussian', 'glm stored family correctly');
 #-------------------------------------------------------------------
 #  glm: Generalized Linear Models
 #-------------------------------------------------------------------
-subtest 'glm: Gaussian matches lm' => sub {
+#'glm: Gaussian matches lm' => sub {
 	# Check that gaussian glm is mathematically identical to OLS lm
-	my $lm_res = lm(formula => 'mpg ~ wt + hp', data => $mtcars);
-	my $glm_res = glm(formula => 'mpg ~ wt + hp', data => $mtcars, family => 'gaussian');
+$lm_res = lm(formula => 'mpg ~ wt + hp', data => $mtcars);
+$glm_res = glm(formula => 'mpg ~ wt + hp', data => $mtcars, family => 'gaussian');
 
-	is_approx($glm_res->{coefficients}{Intercept}, $lm_res->{coefficients}{Intercept}, 'glm gaussian matches lm intercept');
-	is_approx($glm_res->{coefficients}{wt}, $lm_res->{coefficients}{wt}, 'glm gaussian matches lm wt');
-	is_approx($glm_res->{deviance}, $lm_res->{rss}, 'glm gaussian deviance matches lm RSS');
-	is($glm_res->{family}, 'gaussian', 'glm stored family correctly');
-};
+is_approx($glm_res->{coefficients}{Intercept}, $lm_res->{coefficients}{Intercept}, 'glm gaussian matches lm intercept');
+is_approx($glm_res->{coefficients}{wt}, $lm_res->{coefficients}{wt}, 'glm gaussian matches lm wt');
+is_approx($glm_res->{deviance}, $lm_res->{rss}, 'glm gaussian deviance matches lm RSS');
+is($glm_res->{family}, 'gaussian', 'glm stored family correctly');
 
-subtest 'glm: Binomial (Logistic Regression)' => sub {
-	# Test dataset matching exact output from R's glm(am ~ wt + hp, data=mtcars, family=binomial)
-	my $glm_bin = glm(formula => 'am ~ wt + hp', data => $mtcars, family => 'binomial');
-	# 1. Convergence & Integrity
-	ok($glm_bin->{converged}, 'glm binomial converged');
-	ok($glm_bin->{iter} < 25, 'glm binomial converged under iteration limit');
-	# 2. Coefficients (matching R precisely)
-	my %correct_bin_coefs = (
-	  Intercept => 18.86630,
-	  wt        => -8.08348,
-	  hp        =>  0.03626
-	);
-	foreach my $coef (keys %correct_bin_coefs) {
-	  is_approx(
-		   $glm_bin->{coefficients}{$coef},
-		   $correct_bin_coefs{$coef},
-		   "glm binomial matches R coef for $coef",
-		   0.001
-	  );
-	}
-	# 3. Summary standard errors & z-values
-	is_approx($glm_bin->{summary}{Intercept}{'Std. Error'}, 7.44356, 'glm binomial Std. Error for Intercept', 0.001);
-	is_approx($glm_bin->{summary}{wt}{'z value'}, -2.634, 'glm binomial z value for wt', 0.001);
+#'glm: Binomial (Logistic Regression)' => sub {
+# Test dataset matching exact output from R's glm(am ~ wt + hp, data=mtcars, family=binomial)
+my $glm_bin = glm(formula => 'am ~ wt + hp', data => $mtcars, family => 'binomial');
+# 1. Convergence & Integrity
+ok($glm_bin->{converged}, 'glm binomial converged');
+ok($glm_bin->{iter} < 25, 'glm binomial converged under iteration limit');
+# 2. Coefficients (matching R precisely)
+my %correct_bin_coefs = (
+  Intercept => 18.86630,
+  wt        => -8.08348,
+  hp        =>  0.03626
+);
+foreach my $coef (keys %correct_bin_coefs) {
+  is_approx(
+	   $glm_bin->{coefficients}{$coef},
+	   $correct_bin_coefs{$coef},
+	   "glm binomial matches R coef for $coef",
+	   0.001
+  );
+}
+# 3. Summary standard errors & z-values
+is_approx($glm_bin->{summary}{Intercept}{'Std. Error'}, 7.44356, 'glm binomial Std. Error for Intercept', 0.001);
+is_approx($glm_bin->{summary}{wt}{'z value'}, -2.634, 'glm binomial z value for wt', 0.001);
 
-	# 4. Deviance metrics
-	is_approx($glm_bin->{deviance}, 10.059, 'glm binomial residual deviance', 0.001);
-	is_approx($glm_bin->{'null.deviance'}, 43.229, 'glm binomial null deviance', 0.001);
-	is($glm_bin->{'df.residual'}, 29, 'glm binomial residual degrees of freedom');
-	is_approx($glm_bin->{'df.null'}, 31, 'glm binomial null degrees of freedom', 1e-14);
-};
+# 4. Deviance metrics
+is_approx($glm_bin->{deviance}, 10.059, 'glm binomial residual deviance', 0.001);
+is_approx($glm_bin->{'null.deviance'}, 43.229, 'glm binomial null deviance', 0.001);
+is($glm_bin->{'df.residual'}, 29, 'glm binomial residual degrees of freedom');
+is_approx($glm_bin->{'df.null'}, 31, 'glm binomial null degrees of freedom', 1e-14);
 my %tooth_growth = (
 	dose => [qw(0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 1.0 1.0 1.0 1.0 1.0 1.0 1.0 1.0 1.0
 1.0 2.0 2.0 2.0 2.0 2.0 2.0 2.0 2.0 2.0 2.0 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5
@@ -2276,11 +2268,11 @@ if (
 }
 $test_data = read_table('t/HepatitisCdata.csv', 'output.type' => 'hoa');
 if (
-	($test_data->{Sex}[0] eq $test_data->{Sex}[2] eq $test_data->{Sex}[3] eq 'm')
+	(($test_data->{Sex}[0] eq $test_data->{Sex}[2]) && ($test_data->{Sex}[0] eq 'm') && ($test_data->{Sex}[3] eq 'm'))
 	&&
 	($test_data->{PROT}[0] == 69) && ($test_data->{PROT}[1] == 76.5)
 	&&
-	($test_data->{Age}[0] == 32 == $test_data->{Age}[9] == $test_data->{Age}[8])
+	($test_data->{Age}[0] == 32) && (32 == $test_data->{Age}[9]) && (32 == $test_data->{Age}[8])
 	) {
 	pass('"read_table" reads into hash of array correctly');
 } else {
@@ -2305,11 +2297,11 @@ no_leaks_ok {
 	};
 } 'read_table: basic with no memory leaks with hash of hash' unless $INC{'Devel/Cover.pm'};
 if (
-	($test_data->{Sex}{1} eq $test_data->{Sex}{2} eq $test_data->{Sex}{3} eq 'm')
+	($test_data->{Sex}{1} eq 'm') && ('m' eq $test_data->{Sex}{2}) && ('m' eq $test_data->{Sex}{3})
 	&&
 	($test_data->{PROT}{1} == 69) && ($test_data->{PROT}{2} == 76.5)
 	&&
-	($test_data->{Age}{1} == 32 == $test_data->{Age}{8} == $test_data->{Age}{7})
+	($test_data->{Age}{1} == 32) && (32 == $test_data->{Age}{8}) && (32 == $test_data->{Age}{7})
 	) {
 	pass('"read_table" reads into hash of hash (hoh) correctly');
 } else {
@@ -2322,7 +2314,6 @@ dies_ok {
 } 'dies when given non-accepted type of output';
 foreach my $f ('t/E2021.csv','t/E2022.csv','t/E2023.csv','t/E2024.csv') {
 	$test_data = read_table( $f, sep => ',' );
-	p $test_data;
 }
 $test_data = read_table('t/bodyfat.csv', 'output.type' => 'hoa');
 no_leaks_ok {
@@ -2335,21 +2326,21 @@ my @err = grep {!defined $test_data->{$_}} @col;
 if (scalar @err == 0) {
 	pass('bodyfat has no missing columns');
 } else {
-	p @err;
+	say STDERR join (', ', @err);
 	fail('bodyfat has missing columns (see above)');
 }
 @err = grep {ref $test_data->{$_} ne 'ARRAY'} @col;
 if (scalar @err == 0) {
 	pass('all columns/keys are arrays');
 } else {
-	p @err;
+	say STDERR join (', ', @err);
 	fail('at least some columns/keys are not arrays after bodyfat.csv');
 }
 @err = grep {scalar @{ $test_data->{$_} } != 252} @col;
 if (scalar @err == 0) {
 	pass('all columns/keys are arrays');
 } else {
-	p @err;
+	say STDERR join (', ', @err);
 	fail('at least some columns/keys are not arrays after bodyfat.csv');
 }
 @correct = qw(1.0271	31.9 74	207.5	70	40.8 112.4 108.5	107.1	59.3	42.2	24.6	33.7 30 20.9);
@@ -2598,102 +2589,99 @@ if (sha512_base64($str) eq 'Nx/3jb/smu2Jdk2SNCXhxK7yaAO0GO5TAbwztb16fYqDT8nSMzdb
 #  read_table & write_table specific bug checks
 #-------------------------------------------------------------------
 
-subtest 'read_table / write_table: Escaped quote handling' => sub {
-	my $tmp_csv = File::Temp->new(DIR => '/tmp', SUFFIX => '.csv', UNLINK => 1);
-	close $tmp_csv;
-	my @data_out = (
-		{ 'c1' => 42, 'c2' => 'Normal String' },
-		{ 'c1' => 99, 'c2' => 'String with "quotes" inside' }
-	);
-	# Write the table. write_table should turn "quotes" into ""quotes""
-	write_table(\@data_out, $tmp_csv->filename, sep => ',', 'row.names' => 0);
-	# Read the table back. read_table should turn ""quotes"" back into "quotes"
-	my $data_in = read_table($tmp_csv->filename, 'output.type' => 'aoh');
-	is($data_in->[1]{c2}, 'String with "quotes" inside', 'read_table correctly unescapes internal quotes');
-};
+#'read_table / write_table: Escaped quote handling' => sub {
+my $tmp_csv = File::Temp->new(DIR => '/tmp', SUFFIX => '.csv', UNLINK => 1);
+close $tmp_csv;
+my @data_out = (
+	{ 'c1' => 42, 'c2' => 'Normal String' },
+	{ 'c1' => 99, 'c2' => 'String with "quotes" inside' }
+);
+# Write the table. write_table should turn "quotes" into ""quotes""
+write_table(\@data_out, $tmp_csv->filename, sep => ',', 'row.names' => 0);
+# Read the table back. read_table should turn ""quotes"" back into "quotes"
+my $data_in = read_table($tmp_csv->filename, 'output.type' => 'aoh');
+is($data_in->[1]{c2}, 'String with "quotes" inside', 'read_table correctly unescapes internal quotes');
 
-subtest 'write_table: Nested reference stringification protection' => sub {
-	my $fh = File::Temp->new( DIR => '/tmp', SUFFIX => '.csv', UNLINK => 1);
-	close $fh;
-	my %bad_data = (
-		'r1' => { 'c1' => 42, 'c2' => [1, 2, 3] } # Arrayref inside the hash
-	);
-	dies_ok {
-		write_table(\%bad_data, $fh->filename);
-	} 'write_table dies to prevent silent stringification of nested references';
-};
-subtest 'write_table: col.names feature validation' => sub {
-	my $fh = File::Temp->new(DIR => '/tmp', SUFFIX => '.tsv', UNLINK => 1);
-	close $fh;
-	my $tmp_file = $fh->filename;
-	# Test 1: AoH filtering and reordering
-	my @data_col_names = (
-		{ 'a' => 1, 'b' => 2, 'c' => 3 },
-		{ 'a' => 4, 'b' => 5, 'c' => 6 },
-	);
+#'write_table: Nested reference stringification protection' => sub {
+$fh = File::Temp->new( DIR => '/tmp', SUFFIX => '.csv', UNLINK => 1);
+close $fh;
+my %bad_data = (
+	'r1' => { 'c1' => 42, 'c2' => [1, 2, 3] } # Arrayref inside the hash
+);
+dies_ok {
+	write_table(\%bad_data, $fh->filename);
+} 'write_table dies to prevent silent stringification of nested references';
+#'write_table: col.names feature validation' => sub {
+$fh = File::Temp->new(DIR => '/tmp', SUFFIX => '.tsv', UNLINK => 1);
+close $fh;
+$tmp_file = $fh->filename;
+# Test 1: AoH filtering and reordering
+my @data_col_names = (
+	{ 'a' => 1, 'b' => 2, 'c' => 3 },
+	{ 'a' => 4, 'b' => 5, 'c' => 6 },
+);
 
-	# Extract only 'c' and 'a', in that exact order
-	write_table(\@data_col_names, $tmp_file, sep => "\t", 'row.names' => 0, 'col.names' => ['c', 'a']);
-	my $str = file2string($fh->filename);
-	my $expected_str = "c\ta\n3\t1\n6\t4\n";
-	
-	is($str, $expected_str, 'write_table: col.names correctly filters and reorders Array of Hashes');
-	unlink $tmp_file if -f $tmp_file;
+# Extract only 'c' and 'a', in that exact order
+write_table(\@data_col_names, $tmp_file, sep => "\t", 'row.names' => 0, 'col.names' => ['c', 'a']);
+$str = file2string($fh->filename);
+my $expected_str = "c\ta\n3\t1\n6\t4\n";
 
-	# Test 2: HoH enforcing order and padding missing columns
-	my %data_hoh_col = (
-		'Row1' => { 'X' => 10, 'Y' => 20 },
-		'Row2' => { 'Y' => 30, 'Z' => 40 },
-	);
+is($str, $expected_str, 'write_table: col.names correctly filters and reorders Array of Hashes');
+unlink $tmp_file if -f $tmp_file;
 
-	# Requesting a column 'Z' missing in Row1, and 'X' missing in Row2
-	write_table(\%data_hoh_col, $tmp_file, sep => ',', 'row.names' => 1, 'col.names' => ['Y', 'Z', 'X']);
-	$str = file2string($tmp_file);
+# Test 2: HoH enforcing order and padding missing columns
+my %data_hoh_col = (
+	'Row1' => { 'X' => 10, 'Y' => 20 },
+	'Row2' => { 'Y' => 30, 'Z' => 40 },
+);
 
-	$expected_str = ",Y,Z,X\nRow1,20,NA,10\nRow2,30,40,NA\n";
-	is($str, $expected_str, 'write_table: col.names correctly forces order and pads NAs for Hash of Hashes');
-	# Test 3: Exceptions
-	dies_ok {
-		write_table(\%data_hoh_col, $tmp_file, 'col.names' => 'Not an array ref');
-	} 'write_table: dies when col.names is not an array reference';
-	
-	my %hoa = (A => [1..4], B => [-3..3], C => [9,3,4]);
-	no_leaks_ok {
-		eval {
-			write_table(
-				\%hoa,
-				'/tmp/hoa.test.tsv',
-				sep => "\t"
-			);
-		};
-	} 'write_table: no leaks with hash-of-array input'  unless $INC{'Devel/Cover.pm'};
-	my $f = '/tmp/hoa.test2.tsv';
-	write_table(
+# Requesting a column 'Z' missing in Row1, and 'X' missing in Row2
+write_table(\%data_hoh_col, $tmp_file, sep => ',', 'row.names' => 1, 'col.names' => ['Y', 'Z', 'X']);
+$str = file2string($tmp_file);
+
+$expected_str = ",Y,Z,X\nRow1,20,NA,10\nRow2,30,40,NA\n";
+is($str, $expected_str, 'write_table: col.names correctly forces order and pads NAs for Hash of Hashes');
+# Test 3: Exceptions
+dies_ok {
+	write_table(\%data_hoh_col, $tmp_file, 'col.names' => 'Not an array ref');
+} 'write_table: dies when col.names is not an array reference';
+
+my %hoa = (A => [1..4], B => [-3..3], C => [9,3,4]);
+no_leaks_ok {
+	eval {
+		write_table(
+			\%hoa,
+			'/tmp/hoa.test.tsv',
+			sep => "\t"
+		);
+	};
+} 'write_table: no leaks with hash-of-array input'  unless $INC{'Devel/Cover.pm'};
+my $f = '/tmp/hoa.test2.tsv';
+write_table(
+	\%hoa, $f,	sep => "\t", 'col.names' => ['B', 'C', 'A']
+);
+$str = file2string($f);
+if (sha512_base64($str) eq 'gSDXQI2aBVJgsuzGvuHY4bbDSkCSNI6JPFWRjc2+2Khp7YdTyjew+lIKuakxKAHO758CcjTLhdMw15J7vf3P/g') {
+	pass('write_table: hoa with "col.names"');
+} else {
+	fail('write_table: hoa with "col.names"');
+}
+no_leaks_ok {
+	eval {
 		\%hoa, $f,	sep => "\t", 'col.names' => ['B', 'C', 'A']
-	);
-	$str = file2string($f);
-	if (sha512_base64($str) eq 'gSDXQI2aBVJgsuzGvuHY4bbDSkCSNI6JPFWRjc2+2Khp7YdTyjew+lIKuakxKAHO758CcjTLhdMw15J7vf3P/g') {
-		pass('write_table: hoa with "col.names"');
-	} else {
-		fail('write_table: hoa with "col.names"');
-	}
-	no_leaks_ok {
-		eval {
-			\%hoa, $f,	sep => "\t", 'col.names' => ['B', 'C', 'A']
-		};
-	} 'write_table: no leaks with hash-of-array input and "col.names"'  unless $INC{'Devel/Cover.pm'};
+	};
+} 'write_table: no leaks with hash-of-array input and "col.names"'  unless $INC{'Devel/Cover.pm'};
 #----- repeat above with nondigit
-	%hoa = (A => ['x',1..4], B => ['y',-3..3], C => ['z',9,3,4]);
-	write_table(
-		\%hoa, $f,	sep => "\t", 'col.names' => ['B', 'C', 'A']
-	);
-	$str = file2string($f);
-	if (sha512_base64($str) eq 'z7qR91AqEvKUb6QSftcaH0gctut3oOF/p1O62cFyR0LPeJs7syAudEohZ2mOHtZiqwQO3U+rCH/YCl7yveqf8w') {
-		pass('write_table: hoa input with col.names and nondigit input');
-	} else {
-		fail('write_table: hoa input with col.names and nondigit input');
-	}
-};
+%hoa = (A => ['x',1..4], B => ['y',-3..3], C => ['z',9,3,4]);
+write_table(
+	\%hoa, $f,	sep => "\t", 'col.names' => ['B', 'C', 'A']
+);
+$str = file2string($f);
+if (sha512_base64($str) eq 'z7qR91AqEvKUb6QSftcaH0gctut3oOF/p1O62cFyR0LPeJs7syAudEohZ2mOHtZiqwQO3U+rCH/YCl7yveqf8w') {
+	pass('write_table: hoa input with col.names and nondigit input');
+} else {
+	fail('write_table: hoa input with col.names and nondigit input');
+}
 %correct = (
 	'r1' => [42, 'hello,world', undef, undef],
 	'r2' => [99, undef, 'quote"here', undef],
@@ -2771,96 +2759,91 @@ no_leaks_ok {
 #  aov: Categorical Variables & Interactions (Bug Fix Validations)
 #-------------------------------------------------------------------
 
-subtest 'aov: One-Way ANOVA with Categorical Factor (>2 Levels)' => sub {
-	# If the bug is present, 'group' is evaluated as a string (yielding 0.0), 
-	# resulting in Df=1, Sum Sq=0.0, and F value=NaN.
-	# A correct implementation must expand 'group' into 2 dummy variables (Df=2).
-	my $data_1way = {
-		yield_val => [5.5, 5.4, 5.8, 4.5, 4.8, 4.2, 6.1, 6.5, 6.2],
-		group     => ['A',   'A',   'A',   'B',   'B',   'B',   'C',   'C',   'C']
-	};
-	my $res_1way = aov($data_1way, 'yield_val ~ group');
+# 'aov: One-Way ANOVA with Categorical Factor (>2 Levels)' => sub {
+# If the bug is present, 'group' is evaluated as a string (yielding 0.0), 
+# resulting in Df=1, Sum Sq=0.0, and F value=NaN.
+# A correct implementation must expand 'group' into 2 dummy variables (Df=2).
+my $data_1way = {
+	yield_val => [5.5, 5.4, 5.8, 4.5, 4.8, 4.2, 6.1, 6.5, 6.2],
+	group     => ['A',   'A',   'A',   'B',   'B',   'B',   'C',   'C',   'C']
+};
+my $res_1way = aov($data_1way, 'yield_val ~ group');
 
-	# Validate the 'group' term (k=3 levels -> Df=2)
-	is($res_1way->{group}{Df}, 2, 'aov 1-way: Df is correct for a 3-level factor');
-	is_approx($res_1way->{group}{'Sum Sq'},  4.74888888888889,  'aov 1-way: Sum Sq');
-	is_approx($res_1way->{group}{'Mean Sq'}, 2.37444444444444,  'aov 1-way: Mean Sq');
-	is_approx($res_1way->{group}{'F value'}, 40.3207547169811,  'aov 1-way: F value');
-	is_approx($res_1way->{group}{'Pr(>F)'},  0.0003319084,      'aov 1-way: Pr(>F)', 1e-6);
+# Validate the 'group' term (k=3 levels -> Df=2)
+is($res_1way->{group}{Df}, 2, 'aov 1-way: Df is correct for a 3-level factor');
+is_approx($res_1way->{group}{'Sum Sq'},  4.74888888888889,  'aov 1-way: Sum Sq');
+is_approx($res_1way->{group}{'Mean Sq'}, 2.37444444444444,  'aov 1-way: Mean Sq');
+is_approx($res_1way->{group}{'F value'}, 40.3207547169811,  'aov 1-way: F value');
+is_approx($res_1way->{group}{'Pr(>F)'},  0.0003319084,      'aov 1-way: Pr(>F)', 1e-6);
 
-	# Validate Residuals
-	is($res_1way->{Residuals}{Df}, 6, 'aov 1-way: Residuals Df');
-	is_approx($res_1way->{Residuals}{'Sum Sq'},  0.353333333333333, 'aov 1-way: Residuals Sum Sq');
-	is_approx($res_1way->{Residuals}{'Mean Sq'}, 0.058888888888889, 'aov 1-way: Residuals Mean Sq');
+# Validate Residuals
+is($res_1way->{Residuals}{Df}, 6, 'aov 1-way: Residuals Df');
+is_approx($res_1way->{Residuals}{'Sum Sq'},  0.353333333333333, 'aov 1-way: Residuals Sum Sq');
+is_approx($res_1way->{Residuals}{'Mean Sq'}, 0.058888888888889, 'aov 1-way: Residuals Mean Sq');
+
+# 'aov: Two-Way ANOVA with Categorical Interactions'
+# If the bug is present, the parser fails to understand the '*' operator 
+# and fails to map "supp:dose" correctly.
+my $data_2way = {
+  len  => [4.2, 11.5, 7.3, 5.8, 6.4, 16.5, 16.5, 15.2, 17.3, 22.5, 
+	        15.2, 21.5, 17.6, 9.7, 14.5, 19.7, 23.3, 23.6, 26.4, 20.0],
+  supp => ['VC', 'VC', 'VC', 'VC', 'VC', 'VC', 'VC', 'VC', 'VC', 'VC', 
+	        'OJ', 'OJ', 'OJ', 'OJ', 'OJ', 'OJ', 'OJ', 'OJ', 'OJ', 'OJ'],
+  dose => ['D0.5', 'D0.5', 'D0.5', 'D0.5', 'D0.5', 'D1', 'D1', 'D1', 'D1', 'D1', 
+	        'D0.5', 'D0.5', 'D0.5', 'D0.5', 'D0.5', 'D1', 'D1', 'D1', 'D1', 'D1']
 };
 
-subtest 'aov: Two-Way ANOVA with Categorical Interactions' => sub {
-	# If the bug is present, the parser fails to understand the '*' operator 
-	# and fails to map "supp:dose" correctly.
-	my $data_2way = {
-	  len  => [4.2, 11.5, 7.3, 5.8, 6.4, 16.5, 16.5, 15.2, 17.3, 22.5, 
-		        15.2, 21.5, 17.6, 9.7, 14.5, 19.7, 23.3, 23.6, 26.4, 20.0],
-	  supp => ['VC', 'VC', 'VC', 'VC', 'VC', 'VC', 'VC', 'VC', 'VC', 'VC', 
-		        'OJ', 'OJ', 'OJ', 'OJ', 'OJ', 'OJ', 'OJ', 'OJ', 'OJ', 'OJ'],
-	  dose => ['D0.5', 'D0.5', 'D0.5', 'D0.5', 'D0.5', 'D1', 'D1', 'D1', 'D1', 'D1', 
-		        'D0.5', 'D0.5', 'D0.5', 'D0.5', 'D0.5', 'D1', 'D1', 'D1', 'D1', 'D1']
-	};
+# The formula `supp * dose` implicitly tests `supp + dose + supp:dose`
+my $res_2way = aov($data_2way, 'len ~ supp * dose');
 
-	# The formula `supp * dose` implicitly tests `supp + dose + supp:dose`
-	my $res_2way = aov($data_2way, 'len ~ supp * dose');
+# 1. Validate the 'supp' term
+is($res_2way->{supp}{Df}, 1, 'aov 2-way: supp Df');
+is_approx($res_2way->{supp}{'Sum Sq'}, 233.2445, 'aov 2-way: supp Sum Sq', 1e-4);
+is_approx($res_2way->{supp}{'F value'}, 22.175219, 'aov 2-way: supp F value', 1e-4);
 
-	# 1. Validate the 'supp' term
-	is($res_2way->{supp}{Df}, 1, 'aov 2-way: supp Df');
-	is_approx($res_2way->{supp}{'Sum Sq'}, 233.2445, 'aov 2-way: supp Sum Sq', 1e-4);
-	is_approx($res_2way->{supp}{'F value'}, 22.175219, 'aov 2-way: supp F value', 1e-4);
+# 2. Validate the 'dose' term
+is($res_2way->{dose}{Df}, 1, 'aov 2-way: dose Df');
+is_approx($res_2way->{dose}{'Sum Sq'}, 381.0645, 'aov 2-way: dose Sum Sq', 1e-4);
+is_approx($res_2way->{dose}{'F value'}, 36.228888, 'aov 2-way: dose F value', 1e-4);
 
-	# 2. Validate the 'dose' term
-	is($res_2way->{dose}{Df}, 1, 'aov 2-way: dose Df');
-	is_approx($res_2way->{dose}{'Sum Sq'}, 381.0645, 'aov 2-way: dose Sum Sq', 1e-4);
-	is_approx($res_2way->{dose}{'F value'}, 36.228888, 'aov 2-way: dose F value', 1e-4);
+# 3. Validate the 'supp:dose' interaction term
+ok(defined $res_2way->{'supp:dose'}, 'aov 2-way: Interaction term supp:dose exists');
+is($res_2way->{'supp:dose'}{Df}, 1, 'aov 2-way: supp:dose Df');
+is_approx($res_2way->{'supp:dose'}{'Sum Sq'}, 16.7445, 'aov 2-way: supp:dose Sum Sq', 1e-4);
+is_approx($res_2way->{'supp:dose'}{'F value'}, 1.591947, 'aov 2-way: supp:dose F value', 1e-4);
+is_approx($res_2way->{'supp:dose'}{'Pr(>F)'}, 0.225133, 'aov 2-way: supp:dose Pr(>F)', 1e-5);
 
-	# 3. Validate the 'supp:dose' interaction term
-	ok(defined $res_2way->{'supp:dose'}, 'aov 2-way: Interaction term supp:dose exists');
-	is($res_2way->{'supp:dose'}{Df}, 1, 'aov 2-way: supp:dose Df');
-	is_approx($res_2way->{'supp:dose'}{'Sum Sq'}, 16.7445, 'aov 2-way: supp:dose Sum Sq', 1e-4);
-	is_approx($res_2way->{'supp:dose'}{'F value'}, 1.591947, 'aov 2-way: supp:dose F value', 1e-4);
-	is_approx($res_2way->{'supp:dose'}{'Pr(>F)'}, 0.225133, 'aov 2-way: supp:dose Pr(>F)', 1e-5);
-
-	# 4. Validate the Residuals
-	is($res_2way->{Residuals}{Df}, 16, 'aov 2-way: Residuals Df');
-	is_approx($res_2way->{Residuals}{'Sum Sq'}, 168.2920, 'aov 2-way: Residuals Sum Sq', 1e-4);
-	is_approx($res_2way->{Residuals}{'Mean Sq'}, 10.51825, 'aov 2-way: Residuals Mean Sq', 1e-4);
-};
+# 4. Validate the Residuals
+is($res_2way->{Residuals}{Df}, 16, 'aov 2-way: Residuals Df');
+is_approx($res_2way->{Residuals}{'Sum Sq'}, 168.2920, 'aov 2-way: Residuals Sum Sq', 1e-4);
+is_approx($res_2way->{Residuals}{'Mean Sq'}, 10.51825, 'aov 2-way: Residuals Mean Sq', 1e-4);
 #-------------------------------------------------------------------
 #  aov: Robustness, Rank Deficiency & Parsing Exceptions
 #-------------------------------------------------------------------
-
-subtest 'aov: Collinearity and Rank Deficiency' => sub {
-	my $data_collinear = {
-		'y'  => [1.2, 2.3, 3.1, 4.0, 5.1],
-		x1 => [1,   2,   3,   4,   5],
-		x2 => [2,   4,   6,   8,  10] # perfectly collinear with x1
-	};
-	my $res = aov($data_collinear, 'y ~ x1 + x2');
-	
-	# x2 is completely redundant. It should be silently dropped by Householder QR.
-	is($res->{x2}{Df}, 0, 'aov: Collinear term properly receives 0 Df');
-	is_approx($res->{x2}{'Sum Sq'}, 0, 'aov: Collinear term properly receives 0 Sum Sq', 1e-7);
-	
-	# Residuals should account for Intercept (1) and x1 (1). Total valid rank is 2. Df = 5 - 2 = 3.
-	is($res->{Residuals}{Df}, 3, 'aov: Residual Df correctly ignores aliased/collinear columns');
+# 'aov: Collinearity and Rank Deficiency' => sub {
+my $data_collinear = {
+	'y'  => [1.2, 2.3, 3.1, 4.0, 5.1],
+	x1 => [1,   2,   3,   4,   5],
+	x2 => [2,   4,   6,   8,  10] # perfectly collinear with x1
 };
+$res = aov($data_collinear, 'y ~ x1 + x2');
 
-subtest 'aov: Interaction Missing Main Effects Exception' => sub {
-	my $data_interact = {
-		'y' => [1, 2, 3, 4],
-		A   => ['a', 'b', 'a', 'b'],
-		B   => ['x', 'x', 'y', 'y']
-	};
-	# Without explicit A and B added, Cartesian cross-product dummy building fails.
-	eval { aov($data_interact, 'y ~ A:B') };
-	like($@, qr/requires its main effects to be explicitly included/, 'aov: cleanly croaks when main effects are missing for interaction evaluation');
+# x2 is completely redundant. It should be silently dropped by Householder QR.
+is($res->{x2}{Df}, 0, 'aov: Collinear term properly receives 0 Df');
+is_approx($res->{x2}{'Sum Sq'}, 0, 'aov: Collinear term properly receives 0 Sum Sq', 1e-7);
+
+# Residuals should account for Intercept (1) and x1 (1). Total valid rank is 2. Df = 5 - 2 = 3.
+is($res->{Residuals}{Df}, 3, 'aov: Residual Df correctly ignores aliased/collinear columns');
+
+# 'aov: Interaction Missing Main Effects Exception' => sub {
+my $data_interact = {
+	'y' => [1, 2, 3, 4],
+	A   => ['a', 'b', 'a', 'b'],
+	B   => ['x', 'x', 'y', 'y']
 };
+# Without explicit A and B added, Cartesian cross-product dummy building fails.
+eval { aov($data_interact, 'y ~ A:B') };
+like($@, qr/requires its main effects to be explicitly included/, 'aov: cleanly croaks when main effects are missing for interaction evaluation');
 #-----------------------
 # chi-squared test
 #-----------------------
@@ -2933,57 +2916,55 @@ is_approx($test_data->{'p_value'}, 0.0390625, 'Wilcox test (paired) statistic', 
 #-------------------------------------------------------------------
 #  wilcox_test: Extended and Edge Cases
 #-------------------------------------------------------------------
-subtest 'wilcox_test: Extended and Edge Cases' => sub {
-	# 1. One-sample exact test
-	# R equivalent: wilcox.test(c(1, 2, 3, 4, 5), mu = 0)
-	# V = 15, p-value = 0.0625
-	my $wt_onesample = wilcox_test('x' => [1, 2, 3, 4, 5], mu => 0);
-	is_approx($wt_onesample->{statistic}, 15, 'wilcox_test: one-sample statistic (exact)');
-	is_approx($wt_onesample->{p_value}, 0.0625, 'wilcox_test: one-sample p-value (exact)');
-	like($wt_onesample->{method}, qr/exact/, 'wilcox_test: one-sample uses exact method by default');
+# 'wilcox_test: Extended and Edge Cases'
+# 1. One-sample exact test
+# R equivalent: wilcox.test(c(1, 2, 3, 4, 5), mu = 0)
+# V = 15, p-value = 0.0625
+my $wt_onesample = wilcox_test('x' => [1, 2, 3, 4, 5], mu => 0);
+is_approx($wt_onesample->{statistic}, 15, 'wilcox_test: one-sample statistic (exact)');
+is_approx($wt_onesample->{p_value}, 0.0625, 'wilcox_test: one-sample p-value (exact)');
+like($wt_onesample->{method}, qr/exact/, 'wilcox_test: one-sample uses exact method by default');
 
-	# 2. Ties trigger approximation and continuity correction
-	my $wt_ties = wilcox_test('x' => [1, 2, 2, 3], 'y' => [2, 3, 3, 4]);
-	ok(defined $wt_ties->{p_value}, 'wilcox_test: completes with ties using normal approx');
-	like($wt_ties->{method}, qr/continuity correction/, 'wilcox_test: uses continuity correction with ties');
+# 2. Ties trigger approximation and continuity correction
+my $wt_ties = wilcox_test('x' => [1, 2, 2, 3], 'y' => [2, 3, 3, 4]);
+ok(defined $wt_ties->{p_value}, 'wilcox_test: completes with ties using normal approx');
+like($wt_ties->{method}, qr/continuity correction/, 'wilcox_test: uses continuity correction with ties');
 
-	# 3. Alternative hypotheses
-	my $wt_less = wilcox_test('x' => [1, 2, 3], 'y' => [10, 11, 12], alternative => 'less');
-	is_approx($wt_less->{p_value}, 0.05, 'wilcox_test: alternative less works properly', 1e-14);
+# 3. Alternative hypotheses
+my $wt_less = wilcox_test('x' => [1, 2, 3], 'y' => [10, 11, 12], alternative => 'less');
+is_approx($wt_less->{p_value}, 0.05, 'wilcox_test: alternative less works properly', 1e-14);
 
-	my $wt_greater = wilcox_test('x' => [1, 2, 3], 'y' => [10, 11, 12], alternative => 'greater');
-	ok($wt_greater->{p_value} > 0.95, 'wilcox_test: alternative greater works properly');
+my $wt_greater = wilcox_test('x' => [1, 2, 3], 'y' => [10, 11, 12], alternative => 'greater');
+ok($wt_greater->{p_value} > 0.95, 'wilcox_test: alternative greater works properly');
 
-	# 4. Exceptions and Error Handling
-	eval { wilcox_test('y' => [1..5]) };
-	like($@, qr/'x' is a required argument/, 'wilcox_test: dies when x is missing');
+# 4. Exceptions and Error Handling
+eval { wilcox_test('y' => [1..5]) };
+like($@, qr/'x' is a required argument/, 'wilcox_test: dies when x is missing');
 
-	eval { wilcox_test('x' => [1..5], 'y' => [1..4], paired => 1) };
-	like($@, qr/same length for paired test/, 'wilcox_test: dies on length mismatch for paired');
-};
+eval { wilcox_test('x' => [1..5], 'y' => [1..4], paired => 1) };
+like($@, qr/same length for paired test/, 'wilcox_test: dies on length mismatch for paired');
 
 #-------------------------------------------------------------------
 #  chisq_test: Goodness of Fit and Yates Continuity
 #-------------------------------------------------------------------
-subtest 'chisq_test: Goodness of Fit and Yates Continuity' => sub {
-	# 1. 1D Array (Goodness of Fit)
-	# R equivalent: chisq.test(c(10, 20, 30))
-	# X-squared = 10, df = 2, p-value = 0.006737947
-	my $chisq_1d = chisq_test([10, 20, 30]);
-	is_approx($chisq_1d->{statistic}{'X-squared'}, 10, 'chisq_test: 1D Goodness of Fit statistic');
-	is_approx($chisq_1d->{parameter}{df}, 2, 'chisq_test: 1D Goodness of Fit df');
-	is_approx($chisq_1d->{'p.value'}, 0.006737947, 'chisq_test: 1D Goodness of Fit p-value', 1e-6);
-	like($chisq_1d->{method}, qr/Chi-squared test for given probabilities/, 'chisq_test: correct 1D method name');
+# 'chisq_test: Goodness of Fit and Yates Continuity'
+# 1. 1D Array (Goodness of Fit)
+# R equivalent: chisq.test(c(10, 20, 30))
+# X-squared = 10, df = 2, p-value = 0.006737947
+my $chisq_1d = chisq_test([10, 20, 30]);
+is_approx($chisq_1d->{statistic}{'X-squared'}, 10, 'chisq_test: 1D Goodness of Fit statistic');
+is_approx($chisq_1d->{parameter}{df}, 2, 'chisq_test: 1D Goodness of Fit df');
+is_approx($chisq_1d->{'p.value'}, 0.006737947, 'chisq_test: 1D Goodness of Fit p-value', 1e-6);
+like($chisq_1d->{method}, qr/Chi-squared test for given probabilities/, 'chisq_test: correct 1D method name');
 
-	# 2. 2x2 Matrix (Yates' Continuity Correction applied automatically)
-	# R equivalent: chisq.test(matrix(c(12, 5, 7, 14), nrow=2))
-	# X-squared = 4.1404, df = 1, p-value = 0.04187
-	my $chisq_2x2 = chisq_test([[12, 7], [5, 14]]);
-	is_approx($chisq_2x2->{statistic}{'X-squared'}, 3.831933, 'chisq_test: 2x2 Yates statistic', 1e-5);
-	is_approx($chisq_2x2->{parameter}{df}, 1, 'chisq_test: 2x2 df', 1e-14);
-	is_approx($chisq_2x2->{'p.value'}, 0.05028492, 'chisq_test: 2x2 p-value', 1e-7);
-	like($chisq_2x2->{method}, qr/Yates' continuity correction/, 'chisq_test: method includes Yates correction');
-};
+# 2. 2x2 Matrix (Yates' Continuity Correction applied automatically)
+# R equivalent: chisq.test(matrix(c(12, 5, 7, 14), nrow=2))
+# X-squared = 4.1404, df = 1, p-value = 0.04187
+my $chisq_2x2 = chisq_test([[12, 7], [5, 14]]);
+is_approx($chisq_2x2->{statistic}{'X-squared'}, 3.831933, 'chisq_test: 2x2 Yates statistic', 1e-5);
+is_approx($chisq_2x2->{parameter}{df}, 1, 'chisq_test: 2x2 df', 1e-14);
+is_approx($chisq_2x2->{'p.value'}, 0.05028492, 'chisq_test: 2x2 p-value', 1e-7);
+like($chisq_2x2->{method}, qr/Yates' continuity correction/, 'chisq_test: method includes Yates correction');
 #---------------------
 # power t-test
 #---------------------
@@ -3070,72 +3051,70 @@ is_approx($aov_dot->{Residuals}{'Sum Sq'}, $aov_explicit->{Residuals}{'Sum Sq'},
 #-------------------------------------------------------------------
 #  lm: Relative Tolerance / Collinearity (Bug Fix #3)
 #-------------------------------------------------------------------
-subtest 'lm: Relative collinearity tolerance on unscaled data' => sub {
-	# 1. Microscopic Variance Test
-	my $micro_data = {
-		'y'  => [1.1, 2.1, 3.1, 4.1, 5.1],
-		x1 => [1e-8, 2e-8, 3e-8, 4e-8, 5e-8]
-	};
-	# Variance of x1 is tiny (~ 1e-16). The old absolute tolerance of 1e-10 
-	# would falsely flag this as collinear/aliased and assign it a NaN coefficient.
-
-	my $lm_micro = lm(formula => 'y ~ x1', data => $micro_data);
-
-	ok(defined $lm_micro->{coefficients}{x1}, 'lm: micro-variance predictor is successfully parsed');
-	ok($lm_micro->{coefficients}{x1} ne 'NaN', 'lm: micro-variance coefficient is calculated (not aliased)');
-	is_approx($lm_micro->{coefficients}{x1}, 1e8, 'lm: micro-variance coefficient value is perfectly estimated', 1e-3);
-
-	# 2. True Collinearity Validation
-	my $coll_data = {
-		'y' => [1, 2, 3, 4, 5],
-		x1 => [1, 2, 3, 4, 5],
-		x2 => [2, 4, 6, 8, 10] # x2 is perfectly linearly dependent on x1
-	};
-
-	my $lm_coll = lm(formula => 'y ~ x1 + x2', data => $coll_data);
-
-	# Ensure one of them was properly targeted and aliased by the sweep operator
-	my $x1_is_nan = (!defined $lm_coll->{coefficients}{x1} || $lm_coll->{coefficients}{x1} eq 'NaN');
-	my $x2_is_nan = (!defined $lm_coll->{coefficients}{x2} || $lm_coll->{coefficients}{x2} eq 'NaN');
-
-	ok($x1_is_nan || $x2_is_nan, 'lm: perfectly collinear variables are still properly aliased and dropped');
+# 'lm: Relative collinearity tolerance on unscaled data'
+# 1. Microscopic Variance Test
+my $micro_data = {
+	'y'  => [1.1, 2.1, 3.1, 4.1, 5.1],
+	x1 => [1e-8, 2e-8, 3e-8, 4e-8, 5e-8]
 };
+# Variance of x1 is tiny (~ 1e-16). The old absolute tolerance of 1e-10 
+# would falsely flag this as collinear/aliased and assign it a NaN coefficient.
+
+my $lm_micro = lm(formula => 'y ~ x1', data => $micro_data);
+
+ok(defined $lm_micro->{coefficients}{x1}, 'lm: micro-variance predictor is successfully parsed');
+ok($lm_micro->{coefficients}{x1} ne 'NaN', 'lm: micro-variance coefficient is calculated (not aliased)');
+is_approx($lm_micro->{coefficients}{x1}, 1e8, 'lm: micro-variance coefficient value is perfectly estimated', 1e-3);
+
+# 2. True Collinearity Validation
+my $coll_data = {
+	'y' => [1, 2, 3, 4, 5],
+	x1 => [1, 2, 3, 4, 5],
+	x2 => [2, 4, 6, 8, 10] # x2 is perfectly linearly dependent on x1
+};
+
+my $lm_coll = lm(formula => 'y ~ x1 + x2', data => $coll_data);
+
+# Ensure one of them was properly targeted and aliased by the sweep operator
+my $x1_is_nan = (!defined $lm_coll->{coefficients}{x1} || $lm_coll->{coefficients}{x1} =~ m/nan/i);
+my $x2_is_nan = (!defined $lm_coll->{coefficients}{x2} || $lm_coll->{coefficients}{x2} =~ m/nan/i);
+
+ok($x1_is_nan || $x2_is_nan, 'lm: perfectly collinear variables are still properly aliased and dropped');
 #----------------------------------------------
 #  lm & aov: Memory-safe Exception Pathways
 #----------------------------------------------
-subtest 'lm & aov: Memory-safe croak and validation' => sub {
-	# 1. 0 Degrees of Freedom (Parameters >= Observations)
-	# In the previous architecture, these would allocate large C arrays and then leak them when croaking.
-	# Now, they extract data first, realize there's not enough df, and croak cleanly.
-	my $short_data = { 
-		'y'  => [1, 2],
-		x1 => [3, 4],
-		x2 => [5, 6]
-	};
-	dies_ok { 
-		lm(formula => 'y ~ x1 + x2', data => $short_data) 
-	} 'lm: dies safely on 0 degrees of freedom (too few rows)';
-	
-	dies_ok { 
-		aov($short_data, 'y ~ x1 + x2') 
-	} 'aov: dies safely on 0 degrees of freedom (too few rows)';
-	# 2. Listwise Deletion resulting in 0 DF
-	my $na_data = { 
-		'y' => [undef, undef, undef, 1], 
-		'x' => [1, 2, 3, 4] 
-	};
-	dies_ok { 
-		lm(formula => 'y ~ x', data => $na_data) 
-	} 'lm: dies safely when listwise deletion (NAs) drops rows below parameter count';
-
-	# 3. Bad Formula parsing
-	dies_ok { 
-		lm(formula => 'y = x1 + x2', data => $short_data) 
-	} 'lm: dies safely on invalid formula (missing tilde)';
-	dies_ok { 
-		aov($short_data, 'y = x1 + x2') 
-	} 'aov: dies safely on invalid formula (missing tilde)';
+# 'lm & aov: Memory-safe croak and validation'
+# 1. 0 Degrees of Freedom (Parameters >= Observations)
+# In the previous architecture, these would allocate large C arrays and then leak them when croaking.
+# Now, they extract data first, realize there's not enough df, and croak cleanly.
+my $short_data = { 
+	'y'  => [1, 2],
+	x1 => [3, 4],
+	x2 => [5, 6]
 };
+dies_ok { 
+	lm(formula => 'y ~ x1 + x2', data => $short_data) 
+} 'lm: dies safely on 0 degrees of freedom (too few rows)';
+
+dies_ok { 
+	aov($short_data, 'y ~ x1 + x2') 
+} 'aov: dies safely on 0 degrees of freedom (too few rows)';
+# 2. Listwise Deletion resulting in 0 DF
+my $na_data = { 
+	'y' => [undef, undef, undef, 1], 
+	'x' => [1, 2, 3, 4] 
+};
+dies_ok { 
+	lm(formula => 'y ~ x', data => $na_data) 
+} 'lm: dies safely when listwise deletion (NAs) drops rows below parameter count';
+
+# 3. Bad Formula parsing
+dies_ok { 
+	lm(formula => 'y = x1 + x2', data => $short_data) 
+} 'lm: dies safely on invalid formula (missing tilde)';
+dies_ok { 
+	aov($short_data, 'y = x1 + x2') 
+} 'aov: dies safely on invalid formula (missing tilde)';
 #------------------------
 # Kolmogorov-Smirnov
 #------------------------
