@@ -6342,82 +6342,118 @@ CODE:
 OUTPUT:
     RETVAL
 
-PROTOTYPES: DISABLE
-
-void
-sample(ref, n)
+SV *sample(ref, n = 1)
     SV *ref
-    IV  n
-  PREINIT:
-    IV   len, i, idx;
-    HV  *hv;
-    AV  *av;
-  PPCODE:
-    /* ------------------------------------------------------------------ */
-    /* Validate first argument                                              */
-    /* ------------------------------------------------------------------ */
-    if (!SvROK(ref))
-        croak("sample: first argument must be a hash or array reference");
+    IV n
+PREINIT:
+    SV *ret = &PL_sv_undef;
+CODE:
+    if (!PL_srand_called) {
+        (void)seedDrand01((Rand_seed_t)Perl_seed(aTHX));
+        PL_srand_called = TRUE;
+    }
+    if (n < 0) n = 0;
 
-    if (n < 1)
-        croak("sample: n must be >= 1");
+    if (SvROK(ref)) {
+        SV *rv = SvRV(ref);
 
-    /* ------------------------------------------------------------------ */
-    /* HASH reference                                                       */
-    /* ------------------------------------------------------------------ */
-    if (SvTYPE(SvRV(ref)) == SVt_PVHV) {
-        AV  *keys;
-        HE  *entry;
+        /* --- HASH REFERENCE --- */
+        if (SvTYPE(rv) == SVt_PVHV) {
+            HV *hv    = (HV *)rv;
+            I32 count = hv_iterinit(hv);
+            I32 limit = (n < (IV)count) ? (I32)n : count;
+            HV *ret_hv = newHV();
 
-        hv   = (HV *)SvRV(ref);
+            if (count > 0 && limit > 0) {
+                HE **entries;
+                HE  *entry;
+                I32  i;
 
-        /* Collect all keys into a temporary mortal AV so we can index them */
-        keys = (AV *)sv_2mortal((SV *)newAV());
-        hv_iterinit(hv);
-        while ((entry = hv_iternext(hv)) != NULL)
-            av_push(keys, newSVsv(hv_iterkeysv(entry)));
+                Newx(entries, count, HE *);
 
-        len = (IV)av_len(keys) + 1;
-        if (len == 0)
-            XSRETURN_EMPTY;
+                /* Collect all HE pointers in one pass */
+                i = 0;
+                while ((entry = hv_iternext(hv)))
+                    entries[i++] = entry;
 
-        EXTEND(SP, n);
-        for (i = 0; i < n; i++) {
-            SV        **kp, **vp;
-            STRLEN      klen;
-            const char *kstr;
+                /* Partial Fisher-Yates (only 'limit' passes) */
+                for (i = 0; i < limit; i++) {
+                    I32 j    = i + (I32)(Drand01() * (count - i));
+                    HE *tmp  = entries[i];
+                    entries[i] = entries[j];
+                    entries[j] = tmp;
+                }
 
-            /* Pick a uniformly random index */
-            idx  = (IV)(Drand01() * (double)len);
-            if (idx >= len) idx = len - 1;   /* clamp floating-point edge */
+                /* Pre-size result hash to avoid rehashing during population */
+                hv_ksplit(ret_hv, limit);
 
-            kp   = av_fetch(keys, idx, 0);
-            kstr = SvPV(*kp, klen);
-            vp   = hv_fetch(hv, kstr, (I32)klen, 0);
-            PUSHs(vp ? sv_mortalcopy(*vp) : &PL_sv_undef);
+                for (i = 0; i < limit; i++) {
+                    HEK *hek = HeKEY_hek(entries[i]);
+                    /*
+                     * hv_store() with a precomputed hash skips the hash
+                     * computation entirely.  Negative klen signals UTF-8.
+                     */
+                    (void)hv_store(
+                        ret_hv,
+                        HEK_KEY(hek),
+                        HEK_UTF8(hek) ? -(I32)HEK_LEN(hek) : (I32)HEK_LEN(hek),
+                        SvREFCNT_inc(HeVAL(entries[i])),  /* HeVAL: direct macro, no call */
+                        HeHASH(entries[i])                /* reuse precomputed hash */
+                    );
+                }
+                Safefree(entries);
+            }
+            ret = newRV_noinc((SV *)ret_hv);
+        }
+
+        /* --- ARRAY REFERENCE --- */
+        else if (SvTYPE(rv) == SVt_PVAV) {
+            AV    *av    = (AV *)rv;
+            SSize_t count = av_top_index(av) + 1;  /* signed; 0 for empty AV */
+            SSize_t limit = (n < count) ? (SSize_t)n : count;
+            AV    *ret_av = newAV();
+
+            /* Pre-allocate the result array to avoid incremental reallocs */
+            if (n > 0)
+                av_extend(ret_av, (SSize_t)n - 1);
+
+            if (count > 0) {
+                SV    **src = AvARRAY(av);   /* direct pointer into AV's C array */
+                SSize_t *idx;
+                SSize_t  i;
+
+                /* Shuffle indices rather than SV** to keep the original AV intact */
+                Newx(idx, count, SSize_t);
+                for (i = 0; i < count; i++)
+                    idx[i] = i;
+
+                /* Partial Fisher-Yates on the index array */
+                for (i = 0; i < limit; i++) {
+                    SSize_t j   = i + (SSize_t)(Drand01() * (count - i));
+                    SSize_t tmp = idx[i];
+                    idx[i]  = idx[j];
+                    idx[j]  = tmp;
+                }
+
+                for (i = 0; i < (SSize_t)n; i++) {
+                    if (i < limit) {
+                        SV *sv = src[idx[i]];   /* AvARRAY direct access — no av_fetch call */
+                        av_push(ret_av, (sv && sv != &PL_sv_undef)
+                                            ? SvREFCNT_inc(sv)
+                                            : newSV(0));
+                    } else {
+                        av_push(ret_av, newSV(0));
+                    }
+                }
+                Safefree(idx);
+            } else {
+                SSize_t i;
+                for (i = 0; i < (SSize_t)n; i++)
+                    av_push(ret_av, newSV(0));
+            }
+            ret = newRV_noinc((SV *)ret_av);
         }
     }
-    /* ------------------------------------------------------------------ */
-    /* ARRAY reference                                                      */
-    /* ------------------------------------------------------------------ */
-    else if (SvTYPE(SvRV(ref)) == SVt_PVAV) {
-        av  = (AV *)SvRV(ref);
-        len = (IV)av_len(av) + 1;
-        if (len == 0)
-            XSRETURN_EMPTY;
-
-        EXTEND(SP, n);
-        for (i = 0; i < n; i++) {
-            SV **ep;
-            idx = (IV)(Drand01() * (double)len);
-            if (idx >= len) idx = len - 1;
-
-            ep  = av_fetch(av, idx, 0);
-            PUSHs(ep ? sv_mortalcopy(*ep) : &PL_sv_undef);
-        }
-    }
-    else {
-        croak("sample: first argument must be a hash or array reference, "
-              "got ref to type %d", (int)SvTYPE(SvRV(ref)));
-    }
-
+    RETVAL = ret;
+OUTPUT:
+    RETVAL

@@ -2,7 +2,7 @@
 # ABSTRACT: Get basic statistical functions, like in R, but with Perl using XS for performance
 use 5.010;
 package Stats::LikeR;
-our $VERSION = 0.03;
+our $VERSION = 0.04;
 require XSLoader;
 use DDP {output => 'STDOUT', array_max => 10, show_memsize => 1};
 use Devel::Confess 'color';
@@ -752,6 +752,8 @@ will make 9 numbers in [0,1]
 
 will match C<n>, C<min>, and C<max> respectively
 
+=head2 sample
+
 =head2 scale
 
  my @scaled_results = scale(1..5);
@@ -936,9 +938,15 @@ undefined variables are printed as C<NA> by default, but can be set as you wish 
 =head2 0.02
 
 back-compatible to Perl 5.10, instead of original 5.40, ensuring more people can use it
+
 added var_test
+
 mean, min, sum, median, var, and max die with undefined values, and print the offending indices
+
 "group_stats" added to aov, for TukeyHSD in the future
+
 "cor" dies when given data with standard deviation of 0
+
 var_test added
+
 C<write_table> now has C<undef.val> option, which shows how undefined values are printed to tables, which is C<NA> by default.

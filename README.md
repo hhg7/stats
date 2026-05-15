@@ -592,12 +592,23 @@ undefined variables are printed as `NA` by default, but can be set as you wish u
 
 # changes
 
+## 0.03
+
+Compatibility back to Perl 5.10
+
 ## 0.02
 
 back-compatible to Perl 5.10, instead of original 5.40, ensuring more people can use it
+
 added var_test
+
 mean, min, sum, median, var, and max die with undefined values, and print the offending indices
+
 "group_stats" added to aov, for TukeyHSD in the future
+
 "cor" dies when given data with standard deviation of 0
+
 var_test added
+
 `write_table` now has `undef.val` option, which shows how undefined values are printed to tables, which is `NA` by default.
+
