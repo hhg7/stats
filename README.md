@@ -604,7 +604,9 @@ Leak testing for `sample`
 
 removal of Data::Printer dependency for easier CPAN testing
 
-switched one `unsigned int` variable to `I32` so that clang doesn't complain
+switched several `unsigned int` variable to `I32` so that clang doesn't complain
+
+added restrict keyword for `sample`
 
 ## 0.04
 

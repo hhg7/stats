@@ -29,35 +29,34 @@ static bool     sample__seeded = FALSE;
 PERL_STATIC_INLINE uint64_t
 sample__mix64(void)
 {
-    uint64_t z = (sample__state += UINT64_C(0x9e3779b97f4a7c15));
-    z = (z ^ (z >> 30)) * UINT64_C(0xbf58476d1ce4e5b9);
-    z = (z ^ (z >> 27)) * UINT64_C(0x94d049bb133111eb);
-    return z ^ (z >> 31);
+	uint64_t z = (sample__state += UINT64_C(0x9e3779b97f4a7c15));
+	z = (z ^ (z >> 30)) * UINT64_C(0xbf58476d1ce4e5b9);
+	z = (z ^ (z >> 27)) * UINT64_C(0x94d049bb133111eb);
+	return z ^ (z >> 31);
 }
 
 static void
 sample__seed(void)
 {
-    uint64_t s = 0;
-    size_t   got = 0;
-    FILE    *ur  = fopen("/dev/urandom", "rb");
-    if (ur) { got = fread(&s, sizeof s, 1, ur); fclose(ur); }
-    if (got != 1 || s == 0)
-        s = (uint64_t)time(NULL) ^ ((uint64_t)getpid() << 32);
-    sample__state  = s;
-    (void)sample__mix64();   /* discard first output to warm the state */
-    sample__seeded = TRUE;
+	uint64_t s = 0;
+	size_t   got = 0;
+	FILE    *restrict ur  = fopen("/dev/urandom", "rb");
+	if (ur) { got = fread(&s, sizeof s, 1, ur); fclose(ur); }
+	if (got != 1 || s == 0)
+	  s = (uint64_t)time(NULL) ^ ((uint64_t)getpid() << 32);
+	sample__state  = s;
+	(void)sample__mix64();   /* discard first output to warm the state */
+	sample__seeded = TRUE;
 }
 
 /* Uniform integer in [0, upper) — rejection loop, no modulo bias */
-PERL_STATIC_INLINE SSize_t
-sample__rand(SSize_t upper)
-{
-    const uint64_t u = (uint64_t)upper;
-    const uint64_t t = (uint64_t)(-(uint64_t)u) % u;
-    uint64_t r;
-    do { r = sample__mix64(); } while (r < t);
-    return (SSize_t)(r % u);
+PERL_STATIC_INLINE size_t
+sample__rand(size_t upper) {
+	const uint64_t u = (uint64_t)upper;
+	const uint64_t t = (uint64_t)(-(uint64_t)u) % u;
+	uint64_t r;
+	do { r = sample__mix64(); } while (r < t);
+	return (size_t)(r % u);
 }
 /* ── end sample() private PRNG ─────────────────────────────────────────── */
 
@@ -80,11 +79,9 @@ sample__rand(SSize_t upper)
 // This perfectly replicates R's pt(..., ncp) exactness without requiring complex Beta functions.
 static double exact_pnt(double t, double df, double ncp) {
 	if (df <= 0.0) return 0.0;
-	
 	unsigned short int n_steps = 30000;
 	double step = 1.0 / n_steps;
-	double integral = 0.0;
-	double half_df = df / 2.0;
+	double integral = 0.0, half_df = df / 2.0;
 
 	double log_coef = log(2.0) + half_df * log(half_df) - lgamma(half_df);
 	double root_half = 0.70710678118654752440; // 1 / sqrt(2)
@@ -2461,11 +2458,9 @@ SV* cov(SV* x_sv, SV* y_sv, const char* method = "pearson")
 				     // Spearman: Rank the data first, then run standard covariance
 				     double *restrict rx = (double*)safemalloc(n * sizeof(double));
 				     double *restrict ry = (double*)safemalloc(n * sizeof(double));
-				     
 				     // Uses your existing rank_data() helper from LikeR.xs
 				     rank_data(x_val, rx, n);
 				     rank_data(y_val, ry, n);
-				     
 				     for (size_t i = 0; i < n; i++) {
 				         double dx = rx[i] - mean_x;
 				         mean_x += dx / (i + 1);
@@ -2473,9 +2468,7 @@ SV* cov(SV* x_sv, SV* y_sv, const char* method = "pearson")
 				         mean_y += dy / (i + 1);
 				         cov_sum += dx * (ry[i] - mean_y);
 				     }
-				     
-				     Safefree(rx);
-				     Safefree(ry);
+				     Safefree(rx); Safefree(ry);
 				 } else { 
 				     // Pearson: Welford's Single-Pass Covariance Algorithm
 				     for (size_t i = 0; i < n; i++) {
@@ -2490,9 +2483,7 @@ SV* cov(SV* x_sv, SV* y_sv, const char* method = "pearson")
 				 // Unbiased Sample Covariance (N - 1) for Pearson & Spearman
 				 ans = cov_sum / (n - 1);
 			}
-			
-			Safefree(x_val);
-			Safefree(y_val);
+			Safefree(x_val); Safefree(y_val);
 			RETVAL = newSVnv(ans);
 		}
 	}
@@ -4807,7 +4798,7 @@ CODE:
 		       Newx(row_names, n, char*); Newx(row_hashes, n, HV*);
 		       i = 0;
 		       while ((entry = hv_iternext(hv))) {
-		           unsigned int len;
+		           I32 len;
 		           row_names[i] = savepv(hv_iterkey(entry, &len));
 		           row_hashes[i] = (HV*)SvRV(hv_iterval(hv, entry));
 		           i++;
@@ -5368,7 +5359,7 @@ SV* aov(data_sv, formula_sv)
 		            Newx(row_names, n, char*); Newx(row_hashes, n, HV*);
 		            i = 0;
 		            while ((entry = hv_iternext(hv))) {
-		                unsigned int len;
+		                I32 len;
 		                row_names[i] = savepv(hv_iterkey(entry, &len));
 		                row_hashes[i] = (HV*)SvRV(hv_iterval(hv, entry));
 		                i++;
@@ -6405,103 +6396,99 @@ CODE:
 	}
 	if (n < 0) n = 0;
 	if (SvROK(ref)) {
-	  SV *restrict rv = SvRV(ref);
-	  /* --- HASH REFERENCE --- */
-	  if (SvTYPE(rv) == SVt_PVHV) {
-		   HV *restrict hv    = (HV *)rv;
-		   I32 count = hv_iterinit(hv);
-		   I32 limit = (n < (IV)count) ? (I32)n : count;
-		   HV *restrict ret_hv = newHV();
+		SV *restrict rv = SvRV(ref);
+		/* --- HASH REFERENCE --- */
+		if (SvTYPE(rv) == SVt_PVHV) {
+			HV *restrict hv    = (HV *)rv;
+			I32 count = hv_iterinit(hv);
+			I32 limit = (n < (IV)count) ? (I32)n : count;
+			HV *restrict ret_hv = newHV();
 
-		   if (count > 0 && limit > 0) {
-		       HE **restrict entries;
-		       HE  *restrict entry;
-		       unsigned i;
+			if (count > 0 && limit > 0) {
+				 HE **restrict entries;
+				 HE  *restrict entry;
+				 unsigned i;
 
-		       Newx(entries, count, HE *);
+				 Newx(entries, count, HE *);
 
-		       /* Collect all HE pointers in one pass */
-		       i = 0;
-		       while ((entry = hv_iternext(hv)))
-		           entries[i++] = entry;
+				 /* Collect all HE pointers in one pass */
+				 i = 0;
+				 while ((entry = hv_iternext(hv)))
+				     entries[i++] = entry;
 
-		       /* Partial Fisher-Yates (only 'limit' passes) */
-		       for (i = 0; i < limit; i++) {
-		           I32 j    = i + (I32)(Drand01() * (count - i));
-		           HE *restrict tmp  = entries[i];
-		           entries[i] = entries[j];
-		           entries[j] = tmp;
-		       }
+				 /* Partial Fisher-Yates (only 'limit' passes) */
+				 for (i = 0; i < limit; i++) {
+				     I32 j    = i + (I32)(Drand01() * (count - i));
+				     HE *restrict tmp  = entries[i];
+				     entries[i] = entries[j];
+				     entries[j] = tmp;
+				 }
 
-		       /* Pre-size result hash to avoid rehashing during population */
-		       hv_ksplit(ret_hv, limit);
+				 /* Pre-size result hash to avoid rehashing during population */
+				 hv_ksplit(ret_hv, limit);
 
-		       for (i = 0; i < limit; i++) {
-		           HEK *restrict hek = HeKEY_hek(entries[i]);
-		           /*
-		            * hv_store() with a precomputed hash skips the hash
-		            * computation entirely.  Negative klen signals UTF-8.
-		            */
-		           (void)hv_store(
-		               ret_hv,
-		               HEK_KEY(hek),
-		               HEK_UTF8(hek) ? -(I32)HEK_LEN(hek) : (I32)HEK_LEN(hek),
-		               SvREFCNT_inc(HeVAL(entries[i])),  /* HeVAL: direct macro, no call */
-		               HeHASH(entries[i])                /* reuse precomputed hash */
-		           );
-		       }
-		       Safefree(entries);
-		   }
-		   ret = newRV_noinc((SV *)ret_hv);
-	  }
+				 for (i = 0; i < limit; i++) {
+				     HEK *restrict hek = HeKEY_hek(entries[i]);
+				     /*
+				      * hv_store() with a precomputed hash skips the hash
+				      * computation entirely.  Negative klen signals UTF-8.
+				      */
+				     (void)hv_store(
+				         ret_hv,
+				         HEK_KEY(hek),
+				         HEK_UTF8(hek) ? -(I32)HEK_LEN(hek) : (I32)HEK_LEN(hek),
+				         SvREFCNT_inc(HeVAL(entries[i])),  /* HeVAL: direct macro, no call */
+				         HeHASH(entries[i])                /* reuse precomputed hash */
+				     );
+				 }
+				 Safefree(entries);
+			}
+			ret = newRV_noinc((SV *)ret_hv);
+		} else if (SvTYPE(rv) == SVt_PVAV) {/* --- ARRAY REFERENCE --- */
+			AV    *restrict av    = (AV *)rv;
+			size_t count = av_top_index(av) + 1;  /* signed; 0 for empty AV */
+			size_t limit = (n < count) ? (size_t)n : count;
+			AV    *restrict ret_av = newAV();
 
-	  /* --- ARRAY REFERENCE --- */
-	  else if (SvTYPE(rv) == SVt_PVAV) {
-		   AV    *restrict av    = (AV *)rv;
-		   SSize_t count = av_top_index(av) + 1;  /* signed; 0 for empty AV */
-		   SSize_t limit = (n < count) ? (SSize_t)n : count;
-		   AV    *restrict ret_av = newAV();
+			/* Pre-allocate the result array to avoid incremental reallocs */
+			if (n > 0)
+				 av_extend(ret_av, (size_t)n - 1);
 
-		   /* Pre-allocate the result array to avoid incremental reallocs */
-		   if (n > 0)
-		       av_extend(ret_av, (SSize_t)n - 1);
+			if (count > 0) {
+				 SV    **restrict src = AvARRAY(av);   /* direct pointer into AV's C array */
+				 size_t *restrict idx;
+				 size_t  i;
 
-		   if (count > 0) {
-		       SV    **restrict src = AvARRAY(av);   /* direct pointer into AV's C array */
-		       size_t *restrict idx;
-		       size_t  i;
+				 /* Shuffle indices rather than SV** to keep the original AV intact */
+				 Newx(idx, count, size_t);
+				 for (i = 0; i < count; i++)
+				     idx[i] = i;
 
-		       /* Shuffle indices rather than SV** to keep the original AV intact */
-		       Newx(idx, count, size_t);
-		       for (i = 0; i < count; i++)
-		           idx[i] = i;
+				 /* Partial Fisher-Yates on the index array */
+				 for (i = 0; i < limit; i++) {
+				     size_t j   = i + (size_t)(Drand01() * (count - i));
+				     size_t tmp = idx[i];
+				     idx[i]  = idx[j];
+				     idx[j]  = tmp;
+				 }
 
-		       /* Partial Fisher-Yates on the index array */
-		       for (i = 0; i < limit; i++) {
-		           size_t j   = i + (SSize_t)(Drand01() * (count - i));
-		           size_t tmp = idx[i];
-		           idx[i]  = idx[j];
-		           idx[j]  = tmp;
-		       }
-
-		       for (i = 0; i < (SSize_t)n; i++) {
-		           if (i < limit) {
-		               SV *sv = src[idx[i]];   /* AvARRAY direct access — no av_fetch call */
-		               av_push(ret_av, (sv && sv != &PL_sv_undef)
-		                                   ? SvREFCNT_inc(sv)
-		                                   : newSV(0));
-		           } else {
-		               av_push(ret_av, newSV(0));
-		           }
-		       }
-		       Safefree(idx);
-		   } else {
-		       SSize_t i;
-		       for (i = 0; i < (SSize_t)n; i++)
-		           av_push(ret_av, newSV(0));
-		   }
-		   ret = newRV_noinc((SV *)ret_av);
-	  }
+				 for (i = 0; i < (size_t)n; i++) {
+				     if (i < limit) {
+				         SV *sv = src[idx[i]];   /* AvARRAY direct access — no av_fetch call */
+				         av_push(ret_av, (sv && sv != &PL_sv_undef)
+				                             ? SvREFCNT_inc(sv)
+				                             : newSV(0));
+				     } else {
+				         av_push(ret_av, newSV(0));
+				     }
+				 }
+				 Safefree(idx);
+			} else {
+				for (size_t i = 0; i < (size_t)n; i++)
+				    av_push(ret_av, newSV(0));
+			}
+			ret = newRV_noinc((SV *)ret_av);
+		}
 	}
 	RETVAL = ret;
 OUTPUT:

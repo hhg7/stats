@@ -4,7 +4,6 @@ use 5.010;
 package Stats::LikeR;
 our $VERSION = 0.05;
 require XSLoader;
-use DDP {output => 'STDOUT', array_max => 10, show_memsize => 1};
 use Devel::Confess 'color';
 use warnings FATAL => 'all';
 use autodie ':default';
@@ -49,7 +48,7 @@ sub read_table {
 	my @undef_args = sort grep {!$allowed_args{$_}} keys %args;
 	my $current_sub = (split(/::/,(caller(0))[3]))[-1];
 	if (scalar @undef_args > 0) {
-		p @undef_args;
+		say join (', ', @undef_args);
 		die "the above args aren't defined for $current_sub";
 	}
 	$args{'output.type'} = $args{'output.type'} // 'aoh';
