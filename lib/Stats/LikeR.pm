@@ -2,7 +2,7 @@
 # ABSTRACT: Get basic statistical functions, like in R, but with Perl using XS for performance
 use 5.010;
 package Stats::LikeR;
-our $VERSION = 0.04;
+our $VERSION = 0.05;
 require XSLoader;
 use DDP {output => 'STDOUT', array_max => 10, show_memsize => 1};
 use Devel::Confess 'color';
@@ -159,6 +159,25 @@ sub read_table {
 		return \%data;
 	}
 }
+
+#sub sample {
+#	my $ref = shift;
+#	my $n = 1;
+#	$n = shift if defined $_[0];
+#	my $ref_type = ref $ref;
+#	if ($ref_type eq 'HASH') {
+#		my %return;
+#		my @keys = shuffle( keys %{ $ref } );
+#		foreach my $k (@keys) {
+#			$return{$k} = $ref->{$k};
+#			last if (scalar keys %return) == $n;
+#		}
+#		return \%return;
+#	} elsif ($ref_type eq 'ARRAY') {
+#		my @shuffled = shuffle( @{ $ref } );
+#		return \@shuffled[0..$n-1];
+#	}
+#}
 
 #sub write_table {
 #	my $data_ref = (ref($_[0]) eq 'HASH' || ref($_[0]) eq 'ARRAY') ? shift : undef;
@@ -754,6 +773,14 @@ will match C<n>, C<min>, and C<max> respectively
 
 =head2 sample
 
+take a sample of hash or array slices.
+
+ my $h = sample(\%h, 4); # take 4 hash keys and their values into $h
+
+or, alternatively, with arrays:
+
+ my $arr = sample(\@arr, 3); # take 3 indices of an array
+
 =head2 scale
 
  my @scaled_results = scale(1..5);
@@ -934,6 +961,26 @@ undefined variables are printed as C<NA> by default, but can be set as you wish 
  write_table(\%data_hoa, '/tmp/undef.val.tsv', sep => "\t", 'undef.val' => 'nan')
 
 =head1 changes
+
+=head2 0.05
+
+Leak testing for C<sample>
+
+removal of Data::Printer dependency for easier CPAN testing
+
+switched one C<unsigned int> variable to C<I32> so that clang doesn't complain
+
+=head2 0.04
+
+addition of C<sample> function
+
+GNU source, to maximize compatibility and ease installation
+
+removal of JSON dependency to ease installation
+
+=head2 0.03
+
+Compatibility back to Perl 5.10
 
 =head2 0.02
 

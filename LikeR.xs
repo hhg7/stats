@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 /* --- C HELPER SECTION --- */
 #define PERL_NO_GET_CONTEXT
 #include "EXTERN.h"
@@ -9,6 +10,56 @@
 #include <stdlib.h>
 #include <float.h>
 #include <string.h>
+#include <stdint.h>   /* uint64_t — harmless if perl.h already pulled it in */
+
+/* ── sample(): private splitmix64 PRNG ─────────────────────────────────────
+ *
+ * sample() gets its own PRNG state, completely separate from Drand01.
+ * That means generate_binomial(), ruif(), rbinom(), and every other caller
+ * of Drand01() are unaffected — their streams are never advanced or reseeded
+ * by anything sample() does.
+ *
+ * Seeding is lazy (first call) and reads from /dev/urandom; falls back to
+ * time()^PID on systems without it.  No aTHX needed: all calls are plain C.
+ * PERL_NO_GET_CONTEXT is therefore not a concern here.
+ */
+static uint64_t sample__state  = 0;
+static bool     sample__seeded = FALSE;
+
+PERL_STATIC_INLINE uint64_t
+sample__mix64(void)
+{
+    uint64_t z = (sample__state += UINT64_C(0x9e3779b97f4a7c15));
+    z = (z ^ (z >> 30)) * UINT64_C(0xbf58476d1ce4e5b9);
+    z = (z ^ (z >> 27)) * UINT64_C(0x94d049bb133111eb);
+    return z ^ (z >> 31);
+}
+
+static void
+sample__seed(void)
+{
+    uint64_t s = 0;
+    size_t   got = 0;
+    FILE    *ur  = fopen("/dev/urandom", "rb");
+    if (ur) { got = fread(&s, sizeof s, 1, ur); fclose(ur); }
+    if (got != 1 || s == 0)
+        s = (uint64_t)time(NULL) ^ ((uint64_t)getpid() << 32);
+    sample__state  = s;
+    (void)sample__mix64();   /* discard first output to warm the state */
+    sample__seeded = TRUE;
+}
+
+/* Uniform integer in [0, upper) — rejection loop, no modulo bias */
+PERL_STATIC_INLINE SSize_t
+sample__rand(SSize_t upper)
+{
+    const uint64_t u = (uint64_t)upper;
+    const uint64_t t = (uint64_t)(-(uint64_t)u) % u;
+    uint64_t r;
+    do { r = sample__mix64(); } while (r < t);
+    return (SSize_t)(r % u);
+}
+/* ── end sample() private PRNG ─────────────────────────────────────────── */
 
 /* Ensure Perl's PRNG is seeded, matching the lazy-evaluation of Perl's rand() */
 #define AUTO_SEED_PRNG() \
@@ -2577,7 +2628,7 @@ CODE:
 				 Newx(row_names, n, char*); Newx(row_hashes, n, HV*);
 				 i = 0;
 				 while ((entry = hv_iternext(hv))) {
-				     unsigned int len;
+				     I32 len;
 				     row_names[i] = savepv(hv_iterkey(entry, &len));
 				     row_hashes[i] = (HV*)SvRV(hv_iterval(hv, entry));
 				     i++;
@@ -6346,114 +6397,112 @@ SV *sample(ref, n = 1)
     SV *ref
     IV n
 PREINIT:
-    SV *ret = &PL_sv_undef;
+    SV *restrict ret = &PL_sv_undef;
 CODE:
-    if (!PL_srand_called) {
-        (void)seedDrand01((Rand_seed_t)Perl_seed(aTHX));
-        PL_srand_called = TRUE;
-    }
-    if (n < 0) n = 0;
+	if (!PL_srand_called) {
+	  (void)seedDrand01((Rand_seed_t)Perl_seed(aTHX));
+	  PL_srand_called = TRUE;
+	}
+	if (n < 0) n = 0;
+	if (SvROK(ref)) {
+	  SV *restrict rv = SvRV(ref);
+	  /* --- HASH REFERENCE --- */
+	  if (SvTYPE(rv) == SVt_PVHV) {
+		   HV *restrict hv    = (HV *)rv;
+		   I32 count = hv_iterinit(hv);
+		   I32 limit = (n < (IV)count) ? (I32)n : count;
+		   HV *restrict ret_hv = newHV();
 
-    if (SvROK(ref)) {
-        SV *rv = SvRV(ref);
+		   if (count > 0 && limit > 0) {
+		       HE **restrict entries;
+		       HE  *restrict entry;
+		       unsigned i;
 
-        /* --- HASH REFERENCE --- */
-        if (SvTYPE(rv) == SVt_PVHV) {
-            HV *hv    = (HV *)rv;
-            I32 count = hv_iterinit(hv);
-            I32 limit = (n < (IV)count) ? (I32)n : count;
-            HV *ret_hv = newHV();
+		       Newx(entries, count, HE *);
 
-            if (count > 0 && limit > 0) {
-                HE **entries;
-                HE  *entry;
-                I32  i;
+		       /* Collect all HE pointers in one pass */
+		       i = 0;
+		       while ((entry = hv_iternext(hv)))
+		           entries[i++] = entry;
 
-                Newx(entries, count, HE *);
+		       /* Partial Fisher-Yates (only 'limit' passes) */
+		       for (i = 0; i < limit; i++) {
+		           I32 j    = i + (I32)(Drand01() * (count - i));
+		           HE *restrict tmp  = entries[i];
+		           entries[i] = entries[j];
+		           entries[j] = tmp;
+		       }
 
-                /* Collect all HE pointers in one pass */
-                i = 0;
-                while ((entry = hv_iternext(hv)))
-                    entries[i++] = entry;
+		       /* Pre-size result hash to avoid rehashing during population */
+		       hv_ksplit(ret_hv, limit);
 
-                /* Partial Fisher-Yates (only 'limit' passes) */
-                for (i = 0; i < limit; i++) {
-                    I32 j    = i + (I32)(Drand01() * (count - i));
-                    HE *tmp  = entries[i];
-                    entries[i] = entries[j];
-                    entries[j] = tmp;
-                }
+		       for (i = 0; i < limit; i++) {
+		           HEK *restrict hek = HeKEY_hek(entries[i]);
+		           /*
+		            * hv_store() with a precomputed hash skips the hash
+		            * computation entirely.  Negative klen signals UTF-8.
+		            */
+		           (void)hv_store(
+		               ret_hv,
+		               HEK_KEY(hek),
+		               HEK_UTF8(hek) ? -(I32)HEK_LEN(hek) : (I32)HEK_LEN(hek),
+		               SvREFCNT_inc(HeVAL(entries[i])),  /* HeVAL: direct macro, no call */
+		               HeHASH(entries[i])                /* reuse precomputed hash */
+		           );
+		       }
+		       Safefree(entries);
+		   }
+		   ret = newRV_noinc((SV *)ret_hv);
+	  }
 
-                /* Pre-size result hash to avoid rehashing during population */
-                hv_ksplit(ret_hv, limit);
+	  /* --- ARRAY REFERENCE --- */
+	  else if (SvTYPE(rv) == SVt_PVAV) {
+		   AV    *restrict av    = (AV *)rv;
+		   SSize_t count = av_top_index(av) + 1;  /* signed; 0 for empty AV */
+		   SSize_t limit = (n < count) ? (SSize_t)n : count;
+		   AV    *restrict ret_av = newAV();
 
-                for (i = 0; i < limit; i++) {
-                    HEK *hek = HeKEY_hek(entries[i]);
-                    /*
-                     * hv_store() with a precomputed hash skips the hash
-                     * computation entirely.  Negative klen signals UTF-8.
-                     */
-                    (void)hv_store(
-                        ret_hv,
-                        HEK_KEY(hek),
-                        HEK_UTF8(hek) ? -(I32)HEK_LEN(hek) : (I32)HEK_LEN(hek),
-                        SvREFCNT_inc(HeVAL(entries[i])),  /* HeVAL: direct macro, no call */
-                        HeHASH(entries[i])                /* reuse precomputed hash */
-                    );
-                }
-                Safefree(entries);
-            }
-            ret = newRV_noinc((SV *)ret_hv);
-        }
+		   /* Pre-allocate the result array to avoid incremental reallocs */
+		   if (n > 0)
+		       av_extend(ret_av, (SSize_t)n - 1);
 
-        /* --- ARRAY REFERENCE --- */
-        else if (SvTYPE(rv) == SVt_PVAV) {
-            AV    *av    = (AV *)rv;
-            SSize_t count = av_top_index(av) + 1;  /* signed; 0 for empty AV */
-            SSize_t limit = (n < count) ? (SSize_t)n : count;
-            AV    *ret_av = newAV();
+		   if (count > 0) {
+		       SV    **restrict src = AvARRAY(av);   /* direct pointer into AV's C array */
+		       size_t *restrict idx;
+		       size_t  i;
 
-            /* Pre-allocate the result array to avoid incremental reallocs */
-            if (n > 0)
-                av_extend(ret_av, (SSize_t)n - 1);
+		       /* Shuffle indices rather than SV** to keep the original AV intact */
+		       Newx(idx, count, size_t);
+		       for (i = 0; i < count; i++)
+		           idx[i] = i;
 
-            if (count > 0) {
-                SV    **src = AvARRAY(av);   /* direct pointer into AV's C array */
-                SSize_t *idx;
-                SSize_t  i;
+		       /* Partial Fisher-Yates on the index array */
+		       for (i = 0; i < limit; i++) {
+		           size_t j   = i + (SSize_t)(Drand01() * (count - i));
+		           size_t tmp = idx[i];
+		           idx[i]  = idx[j];
+		           idx[j]  = tmp;
+		       }
 
-                /* Shuffle indices rather than SV** to keep the original AV intact */
-                Newx(idx, count, SSize_t);
-                for (i = 0; i < count; i++)
-                    idx[i] = i;
-
-                /* Partial Fisher-Yates on the index array */
-                for (i = 0; i < limit; i++) {
-                    SSize_t j   = i + (SSize_t)(Drand01() * (count - i));
-                    SSize_t tmp = idx[i];
-                    idx[i]  = idx[j];
-                    idx[j]  = tmp;
-                }
-
-                for (i = 0; i < (SSize_t)n; i++) {
-                    if (i < limit) {
-                        SV *sv = src[idx[i]];   /* AvARRAY direct access — no av_fetch call */
-                        av_push(ret_av, (sv && sv != &PL_sv_undef)
-                                            ? SvREFCNT_inc(sv)
-                                            : newSV(0));
-                    } else {
-                        av_push(ret_av, newSV(0));
-                    }
-                }
-                Safefree(idx);
-            } else {
-                SSize_t i;
-                for (i = 0; i < (SSize_t)n; i++)
-                    av_push(ret_av, newSV(0));
-            }
-            ret = newRV_noinc((SV *)ret_av);
-        }
-    }
-    RETVAL = ret;
+		       for (i = 0; i < (SSize_t)n; i++) {
+		           if (i < limit) {
+		               SV *sv = src[idx[i]];   /* AvARRAY direct access — no av_fetch call */
+		               av_push(ret_av, (sv && sv != &PL_sv_undef)
+		                                   ? SvREFCNT_inc(sv)
+		                                   : newSV(0));
+		           } else {
+		               av_push(ret_av, newSV(0));
+		           }
+		       }
+		       Safefree(idx);
+		   } else {
+		       SSize_t i;
+		       for (i = 0; i < (SSize_t)n; i++)
+		           av_push(ret_av, newSV(0));
+		   }
+		   ret = newRV_noinc((SV *)ret_av);
+	  }
+	}
+	RETVAL = ret;
 OUTPUT:
     RETVAL

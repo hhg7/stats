@@ -58,7 +58,7 @@
 .\" ========================================================================
 .\"
 .IX Title "Stats::LikeR 3"
-.TH Stats::LikeR 3 2026-05-15 "perl v5.42.2" "User Contributed Perl Documentation"
+.TH Stats::LikeR 3 2026-05-18 "perl v5.42.2" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -544,6 +544,17 @@ will make 9 numbers in [0,1]
 will match \f(CW\*(C`n\*(C'\fR, \f(CW\*(C`min\*(C'\fR, and \f(CW\*(C`max\*(C'\fR respectively
 .SS sample
 .IX Subsection "sample"
+take a sample of hash or array slices.
+.PP
+.Vb 1
+\& my $h = sample(\e%h, 4); # take 4 hash keys and their values into $h
+.Ve
+.PP
+or, alternatively, with arrays:
+.PP
+.Vb 1
+\& my $arr = sample(\e@arr, 3); # take 3 indices of an array
+.Ve
 .SS scale
 .IX Subsection "scale"
 .Vb 1
@@ -768,6 +779,23 @@ undefined variables are printed as \f(CW\*(C`NA\*(C'\fR by default, but can be s
 .Ve
 .SH changes
 .IX Header "changes"
+.SS 0.05
+.IX Subsection "0.05"
+Leak testing for \f(CW\*(C`sample\*(C'\fR
+.PP
+removal of Data::Printer dependency for easier CPAN testing
+.PP
+switched one \f(CW\*(C`unsigned int\*(C'\fR variable to \f(CW\*(C`I32\*(C'\fR so that clang doesn\*(Aqt complain
+.SS 0.04
+.IX Subsection "0.04"
+addition of \f(CW\*(C`sample\*(C'\fR function
+.PP
+GNU source, to maximize compatibility and ease installation
+.PP
+removal of JSON dependency to ease installation
+.SS 0.03
+.IX Subsection "0.03"
+Compatibility back to Perl 5.10
 .SS 0.02
 .IX Subsection "0.02"
 back\-compatible to Perl 5.10, instead of original 5.40, ensuring more people can use it

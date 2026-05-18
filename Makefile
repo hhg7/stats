@@ -60,11 +60,11 @@ DIRFILESEP = /
 DFSEP = $(DIRFILESEP)
 NAME = Stats::LikeR
 NAME_SYM = Stats_LikeR
-VERSION = 0.04
+VERSION = 0.05
 VERSION_MACRO = VERSION
-VERSION_SYM = 0_04
+VERSION_SYM = 0_05
 DEFINE_VERSION = -D$(VERSION_MACRO)=\"$(VERSION)\"
-XS_VERSION = 0.04
+XS_VERSION = 0.05
 XS_VERSION_MACRO = XS_VERSION
 XS_DEFINE_VERSION = -D$(XS_VERSION_MACRO)=\"$(XS_VERSION)\"
 INST_ARCHLIB = blib/arch
@@ -164,11 +164,14 @@ BOOTDEP =
 
 # Handy lists of source code files:
 XS_FILES = LikeR.xs \
-	bu.LikeR.xs
+	bu.LikeR.xs \
+	con.LikeR.xs
 C_FILES  = LikeR.c \
-	bu.LikeR.c
+	bu.LikeR.c \
+	con.LikeR.c
 O_FILES  = LikeR.o \
-	bu.LikeR.o
+	bu.LikeR.o \
+	con.LikeR.o
 H_FILES  = ppport.h
 MAN1PODS = 
 MAN3PODS = lib/Stats/LikeR.pm
@@ -306,7 +309,7 @@ RCS_LABEL = rcs -Nv$(VERSION_SYM): -q
 DIST_CP = best
 DIST_DEFAULT = tardist
 DISTNAME = Stats-LikeR
-DISTVNAME = Stats-LikeR-0.04
+DISTVNAME = Stats-LikeR-0.05
 
 
 # --- MakeMaker macro section:
@@ -599,6 +602,10 @@ clean :: clean_subdirs
 	  bu.LikeR.bso bu.LikeR.c \
 	  bu.LikeR.def bu.LikeR.exp \
 	  bu.LikeR.o bu.LikeR_def.old \
+	  con.LikeR.base con.LikeR.bs \
+	  con.LikeR.bso con.LikeR.c \
+	  con.LikeR.def con.LikeR.exp \
+	  con.LikeR.o con.LikeR_def.old \
 	  core core.*perl.*.? \
 	  core.[0-9] core.[0-9][0-9] \
 	  core.[0-9][0-9][0-9] core.[0-9][0-9][0-9][0-9] \
@@ -653,7 +660,7 @@ metafile : create_distdir
 	$(NOECHO) $(ECHO) '    - t' >> META_new.yml
 	$(NOECHO) $(ECHO) '    - inc' >> META_new.yml
 	$(NOECHO) $(ECHO) 'requires: {}' >> META_new.yml
-	$(NOECHO) $(ECHO) 'version: 0.04' >> META_new.yml
+	$(NOECHO) $(ECHO) 'version: 0.05' >> META_new.yml
 	$(NOECHO) $(ECHO) 'x_serialization_backend: '\''CPAN::Meta::YAML version 0.020'\''' >> META_new.yml
 	-$(NOECHO) $(MV) META_new.yml $(DISTVNAME)/META.yml
 	$(NOECHO) $(ECHO) Generating META.json
@@ -694,7 +701,7 @@ metafile : create_distdir
 	$(NOECHO) $(ECHO) '      }' >> META_new.json
 	$(NOECHO) $(ECHO) '   },' >> META_new.json
 	$(NOECHO) $(ECHO) '   "release_status" : "stable",' >> META_new.json
-	$(NOECHO) $(ECHO) '   "version" : 0.04,' >> META_new.json
+	$(NOECHO) $(ECHO) '   "version" : 0.05,' >> META_new.json
 	$(NOECHO) $(ECHO) '   "x_serialization_backend" : "JSON::PP version 4.16"' >> META_new.json
 	$(NOECHO) $(ECHO) '}' >> META_new.json
 	-$(NOECHO) $(MV) META_new.json $(DISTVNAME)/META.json
@@ -1018,7 +1025,7 @@ PERL_HDRS = \
 
 $(OBJECT) : $(PERL_HDRS)
 
-LikeR.c bu.LikeR.c : $(XSUBPPDEPS)
+LikeR.c bu.LikeR.c con.LikeR.c : $(XSUBPPDEPS)
 
 
 # --- MakeMaker makefile section:
@@ -1097,7 +1104,7 @@ testdb_static :: static pure_all $(MAP_TARGET)
 # --- MakeMaker ppd section:
 # Creates a PPD (Perl Package Description) for a binary distribution.
 ppd :
-	$(NOECHO) $(ECHO) '<SOFTPKG NAME="Stats-LikeR" VERSION="0.04">' > Stats-LikeR.ppd
+	$(NOECHO) $(ECHO) '<SOFTPKG NAME="Stats-LikeR" VERSION="0.05">' > Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '    <ABSTRACT></ABSTRACT>' >> Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '    <AUTHOR></AUTHOR>' >> Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '    <IMPLEMENTATION>' >> Stats-LikeR.ppd

@@ -409,7 +409,13 @@ will match `n`, `min`, and `max` respectively
 
 ## sample
 
+take a sample of hash or array slices.
 
+    my $h = sample(\%h, 4); # take 4 hash keys and their values into $h
+
+or, alternatively, with arrays:
+
+    my $arr = sample(\@arr, 3); # take 3 indices of an array
 
 ## scale
 
@@ -591,6 +597,22 @@ undefined variables are printed as `NA` by default, but can be set as you wish u
     write_table(\%data_hoa, '/tmp/undef.val.tsv', sep => "\t", 'undef.val' => 'nan')
 
 # changes
+
+## 0.05
+
+Leak testing for `sample`
+
+removal of Data::Printer dependency for easier CPAN testing
+
+switched one `unsigned int` variable to `I32` so that clang doesn't complain
+
+## 0.04
+
+addition of `sample` function
+
+GNU source, to maximize compatibility and ease installation
+
+removal of JSON dependency to ease installation
 
 ## 0.03
 

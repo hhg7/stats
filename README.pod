@@ -411,6 +411,14 @@ will match C<n>, C<min>, and C<max> respectively
 
 =head2 sample
 
+take a sample of hash or array slices.
+
+ my $h = sample(\%h, 4); # take 4 hash keys and their values into $h
+
+or, alternatively, with arrays:
+
+ my $arr = sample(\@arr, 3); # take 3 indices of an array
+
 =head2 scale
 
  my @scaled_results = scale(1..5);
@@ -591,6 +599,26 @@ undefined variables are printed as C<NA> by default, but can be set as you wish 
  write_table(\%data_hoa, '/tmp/undef.val.tsv', sep => "\t", 'undef.val' => 'nan')
 
 =head1 changes
+
+=head2 0.05
+
+Leak testing for C<sample>
+
+removal of Data::Printer dependency for easier CPAN testing
+
+switched one C<unsigned int> variable to C<I32> so that clang doesn't complain
+
+=head2 0.04
+
+addition of C<sample> function
+
+GNU source, to maximize compatibility and ease installation
+
+removal of JSON dependency to ease installation
+
+=head2 0.03
+
+Compatibility back to Perl 5.10
 
 =head2 0.02
 

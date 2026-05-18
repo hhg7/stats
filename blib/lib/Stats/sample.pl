@@ -30,17 +30,19 @@ sub perl_sample ($ref, $n = 1) {
 my %h = (a => 1, b => 2, c => 3, d => 4);
 
 my (@xs, @perl);
-foreach my $n (1..4) {
-	my $t0 = Time::HiRes::time();
-	my $n = sample(\%h, 1);
-	p $n;
-	my $t1 = Time::HiRes::time();
-	push @xs, $t1-$t0;
-#-----
-	$t0 = Time::HiRes::time();
-	$n = perl_sample(\%h, 1);
-	$t1 = Time::HiRes::time();
-	push @perl, $t1-$t0;
+foreach my $s (1..3) {
+	foreach my $n (1..4) {
+		my $t0 = Time::HiRes::time();
+		my $sa = sample(\%h, $s);
+		p $sa;
+		my $t1 = Time::HiRes::time();
+		push @xs, $t1-$t0;
+	#-----
+		$t0 = Time::HiRes::time();
+		$sa = perl_sample(\%h, $s);
+		$t1 = Time::HiRes::time();
+		push @perl, $t1-$t0;
+	}
 }
 say 'hashes:';
 my $tt = t_test( \@xs, \@perl, var_equal => false);

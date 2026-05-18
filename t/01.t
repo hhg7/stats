@@ -5,10 +5,8 @@ use warnings FATAL => 'all';
 use feature 'say';
 use Test::More;
 use Test::Exception; # die_ok
-use Devel::Confess 'color';
 use Stats::LikeR;
 use Scalar::Util 'looks_like_number';
-use JSON qw(decode_json encode_json);
 use Digest::SHA 'sha512_base64';
 use File::Temp;
 use Test::LeakTrace 'no_leaks_ok';
@@ -36,18 +34,6 @@ sub is_approx {
 		diag("         got: $got\n    expected: $expected; diff = $diff");
 		return 0;
 	}
-}
-
-sub json_file_to_ref {
-	my $json_filename = shift;
-	die "$json_filename doesn't exist or isn't a file" unless -f $json_filename;
-	die "$json_filename has 0 size" if (-s $json_filename == 0);
-#	say "Reading $json_filename" if defined $_[0];
-	open my $fh, '<:raw', $json_filename; # Read it unmangled
-	local $/;                     # Read whole file
-	my $json = <$fh>;             # This is UTF-8
-#	$json =~ s/NaN/"NaN"/g;
-	return decode_json($json); # This produces decoded text
 }
 #----------------------
 #		min
@@ -657,7 +643,7 @@ my $mat1 = matrix(
 	data => [1..6],
 	nrow => 2
 );
-if (encode_json($mat1) eq $matrix_correct) {
+if ('[[1,3,5],[2,4,6]]' eq $matrix_correct) {
 	pass('simple "matrix" works');
 } else {
 	fail('simple "matrix" fails');
@@ -692,7 +678,264 @@ like( $@, qr/Data array cannot be empty/, 'matrix: dies on empty data array' );
 #---------------------------
 #       lm
 #----------------------------
-my $mtcars = json_file_to_ref('mtcars.hoh.json');
+my $mtcars = {
+    'Duster 360' => {
+        'qsec' => [15.84],       'gear' => [3],
+        'wt' => [3.57],        'disp' => [360],
+        'drat' => [3.21],       'cyl' => [8],
+        'mpg' => [14.3],        'hp' => [245],
+        'carb' => [4],        'vs' => [0],
+        'am' => [0],
+    },
+    'Merc 280' => {
+        'carb' => [4],        'mpg' => [19.2],
+        'hp' => [123],        'vs' => [1],
+        'am' => [0],        'drat' => [3.92],
+        'cyl' => [6],        'disp' => [167.6],
+        'wt' => [3.44],        'gear' => [4],
+        'qsec' => [18.3],
+    },
+    'Merc 450SL' => {
+        'qsec' => [17.6],        'gear' => [3],
+        'drat' => [3.07],        'cyl' => [8],
+        'mpg' => [17.3],        'wt' => [3.73],
+        'hp' => [180],        'disp' => [275.8],
+        'carb' => [3],        'vs' => [0],
+        'am' => [0],
+    },
+    'Merc 280C' => {
+        'cyl' => [6],        'gear' => [4],
+        'drat' => [3.92],        'qsec' => [18.9],
+        'am' => [0],        'vs' => [1],
+        'carb' => [4],        'disp' => [167.6],
+        'hp' => [123],        'mpg' => [17.8],
+        'wt' => [3.44],
+    },
+    'Merc 450SE' => {
+        'gear' => [3],        'qsec' => [17.4],
+        'disp' => [275.8],        'wt' => [4.07],
+        'cyl' => [8],        'drat' => [3.07],
+        'am' => [0],        'vs' => [0],
+        'carb' => [3],        'hp' => [180],
+        'mpg' => [16.4],
+    },
+    'Mazda RX4' => {
+        'drat' => [3.9],        'cyl' => [6],
+        'mpg' => [21],        'hp' => [110],
+        'carb' => [4],        'am' => [1],
+        'vs' => [0],        'qsec' => [16.46],
+        'gear' => [4],        'wt' => [2.62],
+        'disp' => [160],
+    },
+    'Cadillac Fleetwood' => {
+        'wt' => [5.25],        'disp' => [472],
+        'qsec' => [17.98],        'gear' => [3],
+        'hp' => [205],        'mpg' => [10.4],
+        'carb' => [4],        'vs' => [0],
+        'am' => [0],        'drat' => [2.93],
+        'cyl' => [8],
+    },
+    'Camaro Z28' => {
+        'gear' => [3],        'drat' => [3.73],
+        'qsec' => [15.41],        'cyl' => [8],
+        'carb' => [4],        'disp' => [350],
+        'hp' => [245],        'mpg' => [13.3],
+        'wt' => [3.84],        'vs' => [0],
+        'am' => [0],
+    },
+    'Lincoln Continental' => {
+        'drat' => [3],        'cyl' => [8],
+        'mpg' => [10.4],        'hp' => [215],
+        'carb' => [4],        'vs' => [0],
+        'am' => [0],        'qsec' => [17.82],
+        'gear' => [3],        'wt' => [5.424],
+        'disp' => [460],
+    },
+    'Hornet 4 Drive' => {
+        'gear' => [3],        'drat' => [3.08],
+        'qsec' => [19.44],        'cyl' => [6],
+        'disp' => [258],        'carb' => [1],
+        'mpg' => [21.4],        'wt' => [3.215],
+        'hp' => [110],        'vs' => [1],
+        'am' => [0],
+    },
+    'Ford Pantera L' => {
+        'qsec' => [14.5],        'drat' => [4.22],
+        'gear' => [5],        'cyl' => [8],
+        'hp' => [264],        'mpg' => [15.8],
+        'wt' => [3.17],        'carb' => [4],
+        'disp' => [351],        'am' => [1],
+        'vs' => [0],
+    },
+    'Lotus Europa' => {
+        'mpg' => [30.4],        'hp' => [113],
+        'carb' => [2],        'am' => [1],
+        'vs' => [1],        'drat' => [3.77],
+        'cyl' => [4],        'wt' => [1.513],
+        'disp' => [95.1],        'qsec' => [16.9],
+        'gear' => [5],
+    },
+    'Merc 230' => {
+        'cyl' => [4],        'drat' => [3.92],
+        'gear' => [4],        'qsec' => [22.9],
+        'am' => [0],        'vs' => [1],
+        'carb' => [2],        'disp' => [140.8],
+        'hp' => [95],        'mpg' => [22.8],
+        'wt' => [3.15],
+    },
+    'Pontiac Firebird' => {
+        'am' => [0],        'vs' => [0],
+        'disp' => [400],    'carb' => [2],
+        'mpg' => [19.2],    'wt' => [3.845],
+        'hp' => [175],      'cyl' => [8],
+        'drat' => [3.08],   'gear' => [3],
+        'qsec' => [17.05],
+    },
+    'Dodge Challenger' => {
+        'mpg' => [15.5],    'wt' => [3.52],
+        'hp' => [150],      'disp' => [318],
+        'carb' => [2],      'vs' => [0],
+        'am' => [0],        'qsec' => [16.87],
+        'gear' => [3],      'drat' => [2.76],
+        'cyl' => [8],
+    },
+    'Datsun 710' => {
+        'wt' => [2.32],      'disp' => [108],
+        'qsec' => [18.61],   'gear' => [4],
+        'hp' => [93],        'mpg' => [22.8],
+        'carb' => [1],        'am' => [1],
+        'vs' => [1],        'drat' => [3.85],
+        'cyl' => [4],
+    },
+    'Valiant' => {
+        'cyl' => [6],        'qsec' => [20.22],
+        'drat' => [2.76],        'gear' => [3],
+        'am' => [0],        'vs' => [1],
+        'hp' => [105],        'mpg' => [18.1],
+        'wt' => [3.46],        'carb' => [1],
+        'disp' => [225],
+    },
+    'Merc 240D' => {
+        'disp' => [146.7],        'wt' => [3.19],
+        'gear' => [4],        'qsec' => [20],
+        'carb' => [2],        'hp' => [62],
+        'mpg' => [24.4],        'vs' => [1],
+        'am' => [0],        'drat' => [3.69],
+        'cyl' => [4],
+    },
+    'Mazda RX4 Wag' => {
+        'vs' => [0],        'am' => [1],
+        'hp' => [110],        'mpg' => [21],
+        'carb' => [4],        'cyl' => [6],
+        'drat' => [3.9],        'wt' => [2.875],
+        'disp' => [160],        'qsec' => [17.02],
+        'gear' => [4],
+    },
+    'Maserati Bora' => {
+        'disp' => [301],        'wt' => [3.57],
+        'gear' => [5],        'qsec' => [14.6],
+        'carb' => [8],        'hp' => [335],
+        'mpg' => [15],        'vs' => [0],
+        'am' => [1],        'drat' => [3.54],
+        'cyl' => [8],
+    },
+    'Chrysler Imperial' => {
+        'disp' => [440],        'wt' => [5.345],
+        'gear' => [3],        'qsec' => [17.42],
+        'carb' => [4],        'mpg' => [14.7],
+        'hp' => [230],        'am' => [0],
+        'vs' => [0],        'drat' => [3.23],
+        'cyl' => [8],
+    },
+    'Toyota Corona' => {
+        'qsec' => [20.01],   'drat' => [3.7],
+        'gear' => [3],       'cyl' => [4],
+        'wt' => [2.465],     'mpg' => [21.5],
+        'hp' => [97],        'disp' => [120.1],
+        'carb' => [1],       'am' => [0],
+        'vs' => [1],
+    },
+    'Toyota Corolla' => {
+        'vs' => [1],        'am' => [1],
+        'wt' => [1.835],        'mpg' => [33.9],
+        'hp' => [65],        'disp' => [71.1],
+        'carb' => [1],        'cyl' => [4],
+        'qsec' => [19.9],        'drat' => [4.22],
+        'gear' => [4],
+    },
+    'Fiat X1-9' => {
+        'carb' => [1],        'hp' => [66],
+        'mpg' => [27.3],        'vs' => [1],
+        'am' => [1],        'drat' => [4.08],
+        'cyl' => [4],        'disp' => [79],
+        'wt' => [1.935],        'gear' => [4],
+        'qsec' => [18.9],
+    },
+    'Merc 450SLC' => {
+        'am' => [0],        'vs' => [0],
+        'carb' => [3],        'disp' => [275.8],
+        'hp' => [180],        'mpg' => [15.2],
+        'wt' => [3.78],        'cyl' => [8],
+        'gear' => [3],        'drat' => [3.07],
+        'qsec' => [18],
+    },
+    'Honda Civic' => {
+        'vs' => [1],        'am' => [1],
+        'hp' => [52],        'mpg' => [30.4],
+        'wt' => [1.615],        'carb' => [2],
+        'disp' => [75.7],        'cyl' => [4],
+        'qsec' => [18.52],        'gear' => [4],
+        'drat' => [4.93],
+    },
+    'AMC Javelin' => {
+        'cyl' => [8],        'drat' => [3.15],
+        'vs' => [0],        'am' => [0],
+        'hp' => [150],        'mpg' => [15.2],
+        'carb' => [2],        'qsec' => [17.3],
+        'gear' => [3],        'wt' => [3.435],
+        'disp' => [304],
+    },
+    'Volvo 142E' => {
+        'drat' => [4.11],        'cyl' => [4],
+        'carb' => [2],        'hp' => [109],
+        'mpg' => [21.4],        'vs' => [1],
+        'am' => [1],        'gear' => [4],
+        'qsec' => [18.6],        'disp' => [121],
+        'wt' => [2.78],
+    },
+    'Porsche 914-2' => {
+        'qsec' => [16.7],        'gear' => [5],
+        'drat' => [4.43],        'cyl' => [4],
+        'mpg' => [26],        'wt' => [2.14],
+        'hp' => [91],        'disp' => [120.3],
+        'carb' => [2],        'am' => [1],
+        'vs' => [0],
+    },
+    'Ferrari Dino' => {
+        'wt' => [2.77],        'disp' => [145],
+        'qsec' => [15.5],        'gear' => [5],
+        'mpg' => [19.7],        'hp' => [175],
+        'carb' => [6],        'vs' => [0],
+        'am' => [1],        'drat' => [3.62],
+        'cyl' => [6],
+    },
+    'Hornet Sportabout' => {
+        'hp' => [175],        'wt' => [3.44],
+        'mpg' => [18.7],        'carb' => [2],
+        'disp' => [360],        'vs' => [0],
+        'am' => [0],        'qsec' => [17.02],
+        'gear' => [3],        'drat' => [3.15],
+        'cyl' => [8],
+    },
+    'Fiat 128' => {
+        'am' => [1],        'vs' => [1],
+        'mpg' => [32.4],    'wt' => [2.2],
+        'hp' => [66],        'disp' => [78.7],
+        'carb' => [1],      'cyl' => [4],
+        'qsec' => [19.47],        'gear' => [4],
+        'drat' => [4.08],
+    },
+};
 my $lm = lm(formula =>  'mpg ~ wt * hp^2', data => $mtcars);
 
 no_leaks_ok {
@@ -939,9 +1182,9 @@ ok( !defined $lm_bin->{coefficients}{grpctrl},
 #      Intercept = mean('ctrl') = (1+2+3)/3 = 2
 #      grptrt    = mean('trt') - mean('ctrl') = (7+8+9)/3 - 2 = 6
 is_approx( $lm_bin->{coefficients}{Intercept}, 2,
-  'lm cat 2-level: Intercept = mean(ctrl) = 2', 0 );
+  'lm cat 2-level: Intercept = mean(ctrl) = 2', 1e-14 );
 is_approx( $lm_bin->{coefficients}{grptrt}, 6,
-  'lm cat 2-level: grptrt = mean(trt) - mean(ctrl) = 6', 0 );
+  'lm cat 2-level: grptrt = mean(trt) - mean(ctrl) = 6', 1e-14 );
 
 # 3. Model fit (exact fractions) ------------------------------------------
 #    grand_mean = 5
@@ -956,9 +1199,9 @@ is_approx( $lm_bin->{'r.squared'}, 27/29,
 is_approx( $lm_bin->{'adj.r.squared'}, 53/58,
   'lm cat 2-level: adj.r.squared = 53/58', 1e-7 );
 is_approx( $lm_bin->{'df.residual'}, 4,
-  'lm cat 2-level: df.residual = n - rank = 6 - 2 = 4', 0 );
+  'lm cat 2-level: df.residual = n - rank = 6 - 2 = 4', 1e-14 );
 is_approx( $lm_bin->{'rank'}, 2,
-  'lm cat 2-level: rank = 2 (Intercept + 1 dummy)', 0 );
+  'lm cat 2-level: rank = 2 (Intercept + 1 dummy)', 1e-14 );
 
 # 4. F-statistic ----------------------------------------------------------
 #    F = (SS_reg/df_reg) / (SS_res/df_res) = (54/1) / (4/4) = 54 on (1, 4) df
@@ -972,11 +1215,11 @@ if ( (defined $lm_bin->{fstatistic}) && (ref $lm_bin->{fstatistic} eq 'ARRAY') )
   fail('lm cat 2-level: fstatistic is defined and is an array');
 }
 is_approx( $lm_bin->{fstatistic}[0], 54,
-  'lm cat 2-level: F statistic = 54', 0 );
+  'lm cat 2-level: F statistic = 54', 1e-14 );
 is_approx( $lm_bin->{fstatistic}[1],  1,
-  'lm cat 2-level: F numerator df = 1', 0 );
+  'lm cat 2-level: F numerator df = 1', 1e-14 );
 is_approx( $lm_bin->{fstatistic}[2],  4,
-  'lm cat 2-level: F denominator df = 4', 0 );
+  'lm cat 2-level: F denominator df = 4', 1e-14 );
 is_approx( $lm_bin->{'f.pvalue'}, 0.0018262607,
   'lm cat 2-level: f.pvalue = I(4/58;2,0.5)', 1e-7 );
 
@@ -994,9 +1237,9 @@ is_approx( $lm_bin->{'f.pvalue'}, 0.0018262607,
 #    p(grptrt):   equals f.pvalue (single predictor, F = t^2)
 #                = 0.0018262607...
 is_approx( $lm_bin->{summary}{Intercept}{Estimate}, 2,
-  'lm cat 2-level: summary Estimate(Intercept) = 2', 0 );
+  'lm cat 2-level: summary Estimate(Intercept) = 2', 1e-14 );
 is_approx( $lm_bin->{summary}{grptrt}{Estimate}, 6,
-  'lm cat 2-level: summary Estimate(grptrt) = 6', 0 );
+  'lm cat 2-level: summary Estimate(grptrt) = 6', 1e-14 );
 is_approx( $lm_bin->{summary}{Intercept}{'Std. Error'}, 1/sqrt(3),
   'lm cat 2-level: SE(Intercept) = 1/sqrt(3)', 1e-7 );
 is_approx( $lm_bin->{summary}{grptrt}{'Std. Error'}, sqrt(2/3),
@@ -1058,9 +1301,9 @@ is_approx( $lm_3->{'r.squared'}, 2137/2296,
 is_approx( $lm_3->{'adj.r.squared'}, 521/574,
   'lm cat 3-level: adj.r.squared = 521/574', 1e-7 );
 is_approx( $lm_3->{'df.residual'}, 6,
-  'lm cat 3-level: df.residual = n - rank = 9 - 3 = 6', 0 );
+  'lm cat 3-level: df.residual = n - rank = 9 - 3 = 6', 1e-14 );
 is_approx( $lm_3->{'rank'}, 3,
-  'lm cat 3-level: rank = 3 (Intercept + 2 dummies)', 0 );
+  'lm cat 3-level: rank = 3 (Intercept + 2 dummies)', 1e-14 );
 
 # 4. F-statistic (cross-validated against aov One-Way result) --------------
 #    MS_group = SS_group/2 = 2137/900; MS_res = SS_res/6 = 53/900
@@ -1075,9 +1318,9 @@ if ( (defined $lm_3->{fstatistic}) && (ref $lm_3->{fstatistic} eq 'ARRAY') ) {
 is_approx( $lm_3->{fstatistic}[0], 40.3207547169811,
   'lm cat 3-level: F value matches aov One-Way result', 1e-7 );
 is_approx( $lm_3->{fstatistic}[1], 2,
-  'lm cat 3-level: F numerator df = k - 1 = 2', 0 );
+  'lm cat 3-level: F numerator df = k - 1 = 2', 1e-14 );
 is_approx( $lm_3->{fstatistic}[2], 6,
-  'lm cat 3-level: F denominator df = n - k = 6', 0 );
+  'lm cat 3-level: F denominator df = n - k = 6',1e-14 );
 is_approx( $lm_3->{'f.pvalue'}, 0.0003319084,
   'lm cat 3-level: f.pvalue matches aov Pr(>F)', 5e-6 );
 
@@ -1154,11 +1397,11 @@ ok( !defined $lm_ref->{coefficients}{grpA},
 #    grpB      = mean(B) - mean(A) = (5+6+7)/3 - 2 = 6 - 2 = 4
 #    grpC      = mean(C) - mean(A) = (8+9+10)/3 - 2 = 9 - 2 = 7
 is_approx( $lm_ref->{coefficients}{Intercept}, 2,
-  'lm cat ref-level: Intercept = mean(A) = 2', 0 );
+  'lm cat ref-level: Intercept = mean(A) = 2', 1e-14 );
 is_approx( $lm_ref->{coefficients}{grpB}, 4,
-  'lm cat ref-level: grpB = mean(B) - mean(A) = 4', 0 );
+  'lm cat ref-level: grpB = mean(B) - mean(A) = 4', 1e-14 );
 is_approx( $lm_ref->{coefficients}{grpC}, 7,
-  'lm cat ref-level: grpC = mean(C) - mean(A) = 7', 0 );
+  'lm cat ref-level: grpC = mean(C) - mean(A) = 7', 1e-14 );
 
 # 3. Model fit (exact fractions) ------------------------------------------
 #    grand_mean = 51/9 = 17/3
@@ -1175,9 +1418,9 @@ is_approx( $lm_ref->{'r.squared'}, 37/40,
 is_approx( $lm_ref->{'adj.r.squared'}, 9/10,
   'lm cat ref-level: adj.r.squared = 9/10 = 0.9', 1e-7 );
 is_approx( $lm_ref->{'df.residual'}, 6,
-  'lm cat ref-level: df.residual = n - rank = 9 - 3 = 6', 0 );
+  'lm cat ref-level: df.residual = n - rank = 9 - 3 = 6', 1e-14 );
 is_approx( $lm_ref->{'rank'}, 3,
-  'lm cat ref-level: rank = 3 (Intercept + 2 dummies)', 0 );
+  'lm cat ref-level: rank = 3 (Intercept + 2 dummies)', 1e-14 );
 
 # 4. F-statistic ----------------------------------------------------------
 #    F = (SS_between/df_between) / (SS_res/df_res)
@@ -1193,11 +1436,11 @@ if ( (defined $lm_ref->{fstatistic}) && (ref $lm_ref->{fstatistic} eq 'ARRAY') )
   fail('lm cat ref-level: fstatistic is defined and is an array');
 }
 is_approx( $lm_ref->{fstatistic}[0], 37,
-  'lm cat ref-level: F = (74/2)/(6/6) = 37', 0 );
+  'lm cat ref-level: F = (74/2)/(6/6) = 37', 1e-14 );
 is_approx( $lm_ref->{fstatistic}[1], 2,
-  'lm cat ref-level: F numerator df = k - 1 = 2', 0 );
+  'lm cat ref-level: F numerator df = k - 1 = 2', 1e-14 );
 is_approx( $lm_ref->{fstatistic}[2], 6,
-  'lm cat ref-level: F denominator df = n - k = 6', 0 );
+  'lm cat ref-level: F denominator df = n - k = 6', 1e-14 );
 is_approx( $lm_ref->{'f.pvalue'}, 27/64000,
   'lm cat ref-level: f.pvalue = (3/40)^3 = 27/64000 (exact)', 1e-9 );
 
@@ -1217,11 +1460,11 @@ is_approx( $lm_ref->{'f.pvalue'}, 27/64000,
 #      p(grpB): |t|=4.90, between t_{6,0.01} and t_{6,0.001} → p < 0.01
 #      p(grpC): |t|=8.57 > t_{6,0.001}=5.959              → p < 0.001
 is_approx( $lm_ref->{summary}{Intercept}{Estimate}, 2,
-  'lm cat ref-level: summary Estimate(Intercept) = 2', 0 );
+  'lm cat ref-level: summary Estimate(Intercept) = 2', 1e-14 );
 is_approx( $lm_ref->{summary}{grpB}{Estimate}, 4,
-  'lm cat ref-level: summary Estimate(grpB) = 4', 0 );
+  'lm cat ref-level: summary Estimate(grpB) = 4', 1e-14 );
 is_approx( $lm_ref->{summary}{grpC}{Estimate}, 7,
-  'lm cat ref-level: summary Estimate(grpC) = 7', 0 );
+  'lm cat ref-level: summary Estimate(grpC) = 7', 1e-14 );
 is_approx( $lm_ref->{summary}{Intercept}{'Std. Error'}, 1/sqrt(3),
   'lm cat ref-level: SE(Intercept) = 1/sqrt(3)', 1e-7 );
 is_approx( $lm_ref->{summary}{grpB}{'Std. Error'}, sqrt(2/3),
@@ -1843,7 +2086,7 @@ is_approx(2, cov($x, $y), 'default covariance/cov', 1e-14);
 @correct = (2,2,12);
 $idx = 0;
 foreach my $method ('pearson', 'spearman', 'kendall') {
-	is_approx(cov($x, $y, $method), $correct[$idx], "cov with $method", 0 );
+	is_approx(cov($x, $y, $method), $correct[$idx], "cov with $method", 1e-14 );
 	$idx++;
 }
 #--------------------
@@ -3279,4 +3522,55 @@ dies_ok {
 dies_ok {
 	var_test(\@xk, [1]);
 } 'var_test: dies with insufficient # of observations in y';
+#------------------
+#    sample
+#------------------
+%h = (a => 1, b => 2, c => 3, d => 4);
+
+@arr = qw(apple banana cherry date elderberry);
+foreach my $s (1..3) {
+	# hash
+	my $sa = sample(\%h, $s);
+	if (scalar keys %{ $sa } == $s) {
+		pass("sample: $s number of slices makes $s hash keys");
+	} else {
+		fail("sample: $s number of slices does NOT make $s hash keys");
+	}
+	foreach my $key (keys %{ $sa }) {
+		if (defined $h{$key}) {
+			pass("sample: $key is defined in both original hash and sample hash reference with $s keys");
+		} else {
+			fail("sample: $key is NOT defined in both original hash and sample hash reference with $s keys");
+		}
+		if ($h{$key} == $sa->{$key}) {
+			pass("sample: $key is equal in both original and sample with $s samples");
+		} else {
+			fail("sample: $key is NOT equal in both original and sample with $s samples");
+		}
+	}
+	no_leaks_ok {
+		eval {
+			$sa = sample(\%h, $s);
+		}
+	} "sample: hash with $s samples doesn't have leaks" unless $INC{'Devel/Cover.pm'};
+	# array
+	$sa = sample(\@arr, $s);
+	if (scalar @{ $sa } == $s) {
+		pass("sample: array sample with $s samples: $s samples in array reference");
+	} else {
+		fail("sample: array sample with $s samples: $s samples are NOT in array reference");
+	}
+	foreach my $i (@{ $sa }) {
+		if (grep {$_ eq $i} @arr) {
+			pass("sample: $i is in both array and sample array reference");
+		} else {
+			fail("sample: $i isn't in both array and sample array reference");
+		}
+	}
+	no_leaks_ok {
+		eval {
+			$sa = sample(\@arr, $s);
+		}
+	} "sample: array with $s samples doesn't have leaks" unless $INC{'Devel/Cover.pm'};
+}
 done_testing();
