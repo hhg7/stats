@@ -1,6 +1,8 @@
 #!/usr/bin/env perl
 # ABSTRACT: Get basic statistical functions, like in R, but with Perl using XS for performance
-use 5.010;
+require 5.010;
+use strict;
+use feature 'say';
 package Stats::LikeR;
 our $VERSION = 0.06;
 require XSLoader;
@@ -156,6 +158,22 @@ sub read_table {
 	} elsif ($args{'output.type'} =~ m/^(?:hoa|hoh)$/) {
 		@data = ();
 		return \%data;
+	}
+}
+
+sub summary {
+	my $data = shift;
+	my $ref_type = ref $data;
+	my $current_sub = (split(/::/,(caller(0))[3]))[-1];
+	if (($ref_type ne 'ARRAY') && ($ref_type ne 'HASH')) {
+		die "data for $current_sub must either be a hash or an array, not \"$ref_type\"";
+	}
+	my %args = (
+		nrows => 10,
+		@_,
+	);
+	if ($ref_type eq 'ARRAY') {
+		
 	}
 }
 
