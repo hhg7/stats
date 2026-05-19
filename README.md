@@ -598,6 +598,14 @@ undefined variables are printed as `NA` by default, but can be set as you wish u
 
 # changes
 
+## 0.06
+
+Changed compiler options for Solaris
+
+signed integers changed to unsigned in `glm`
+
+Added restrict keywords to `power_t_test`, and made `int` to `unsigned int`
+
 ## 0.05
 
 Leak testing for `sample`

@@ -2,7 +2,7 @@
 # ABSTRACT: Get basic statistical functions, like in R, but with Perl using XS for performance
 use 5.010;
 package Stats::LikeR;
-our $VERSION = 0.05;
+our $VERSION = 0.06;
 require XSLoader;
 use Devel::Confess 'color';
 use warnings FATAL => 'all';
@@ -961,13 +961,23 @@ undefined variables are printed as C<NA> by default, but can be set as you wish 
 
 =head1 changes
 
+=head2 0.06
+
+Changed compiler options for Solaris
+
+signed integers changed to unsigned in C<glm>
+
+Added restrict keywords to C<power_t_test>, and made C<int> to C<unsigned int>
+
 =head2 0.05
 
 Leak testing for C<sample>
 
 removal of Data::Printer dependency for easier CPAN testing
 
-switched one C<unsigned int> variable to C<I32> so that clang doesn't complain
+switched several C<unsigned int> variable to C<I32> so that clang doesn't complain
+
+added restrict keyword for C<sample>
 
 =head2 0.04
 

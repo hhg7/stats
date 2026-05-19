@@ -14,17 +14,17 @@ my %WriteMakefileArgs = (
   },
   "DISTNAME" => "Stats-LikeR",
   "LICENSE" => "perl",
-  CCFLAGS => '-std=c99',
   "MIN_PERL_VERSION" => "5.010",
   "NAME" => "Stats::LikeR",
   "PREREQ_PM" => {
+    "Devel::Confess" => 0,
     "Digest::SHA" => 0,
     "Test::Exception" => 0,
     "Test::LeakTrace" => 0,
     "Test::More" => 0,
     "autodie" => 0
   },
-  "VERSION" => "0.04",
+  "VERSION" => "0.05",
   "test" => {
     "TESTS" => "t/*.t"
   }
@@ -33,7 +33,6 @@ my %WriteMakefileArgs = (
 
 my %FallbackPrereqs = (
   "Devel::Confess" => 0,
-  "Devel::Size" => 0,
   "Digest::SHA" => 0,
   "Test::Exception" => 0,
   "Test::LeakTrace" => 0,
