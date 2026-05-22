@@ -165,13 +165,16 @@ BOOTDEP =
 # Handy lists of source code files:
 XS_FILES = LikeR.xs \
 	bu.LikeR.xs \
-	con.LikeR.xs
+	con.LikeR.xs \
+	oneway_test.xs
 C_FILES  = LikeR.c \
 	bu.LikeR.c \
-	con.LikeR.c
+	con.LikeR.c \
+	oneway_test.c
 O_FILES  = LikeR.o \
 	bu.LikeR.o \
-	con.LikeR.o
+	con.LikeR.o \
+	oneway_test.o
 H_FILES  = ppport.h
 MAN1PODS = 
 MAN3PODS = lib/Stats/LikeR.pm
@@ -209,6 +212,7 @@ TO_INST_PM = aov.pl \
 	lm.pl \
 	md2pod.pl \
 	min.pl \
+	oneway_test_demo.pl \
 	power.t.test.pl \
 	quantile.pl \
 	read.table.pl \
@@ -610,7 +614,11 @@ clean :: clean_subdirs
 	  core.[0-9] core.[0-9][0-9] \
 	  core.[0-9][0-9][0-9] core.[0-9][0-9][0-9][0-9] \
 	  core.[0-9][0-9][0-9][0-9][0-9] lib$(BASEEXT).def \
-	  mon.out perl \
+	  mon.out oneway_test.base \
+	  oneway_test.bs oneway_test.bso \
+	  oneway_test.c oneway_test.def \
+	  oneway_test.exp oneway_test.o \
+	  oneway_test_def.old perl \
 	  perl$(EXE_EXT) perl.exe \
 	  perlmain.c pm_to_blib \
 	  pm_to_blib.ts so_locations \
@@ -1025,7 +1033,7 @@ PERL_HDRS = \
 
 $(OBJECT) : $(PERL_HDRS)
 
-LikeR.c bu.LikeR.c con.LikeR.c : $(XSUBPPDEPS)
+LikeR.c bu.LikeR.c con.LikeR.c oneway_test.c : $(XSUBPPDEPS)
 
 
 # --- MakeMaker makefile section:
@@ -1138,6 +1146,7 @@ pm_to_blib : $(FIRST_MAKEFILE) $(TO_INST_PM)
 	  'lm.pl' '$(INST_LIB)/Stats/lm.pl' \
 	  'md2pod.pl' '$(INST_LIB)/Stats/md2pod.pl' \
 	  'min.pl' '$(INST_LIB)/Stats/min.pl' \
+	  'oneway_test_demo.pl' '$(INST_LIB)/Stats/oneway_test_demo.pl' \
 	  'power.t.test.pl' '$(INST_LIB)/Stats/power.t.test.pl' \
 	  'quantile.pl' '$(INST_LIB)/Stats/quantile.pl' \
 	  'read.table.pl' '$(INST_LIB)/Stats/read.table.pl' \

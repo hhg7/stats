@@ -2146,6 +2146,60 @@ if (defined $aov_res->{group_stats}) {
 } else {
 	fail('aov: group_stats are NOT defined');
 }
+# omitting formula results in stacking
+$aov_res = aov(
+	{
+		yield => [5.5, 5.4, 5.8, 4.5, 4.8, 4.2],
+		ctrl  => [1,     1,   1,   0,   0,   0]
+	}
+);
+foreach my $key ('Group', 'group_stats', 'Residuals') {
+	if (defined $aov_res->{$key}) {
+		pass("aov: \"$key\" hash reference is defined");
+	} else {
+		fail("aov: \"$key\" hash reference is NOT defined");
+	}
+}
+# go through Group
+@correct = ('Df', 'F value', 'Mean Sq', 'Pr(>F)', 'Sum Sq');
+@ans = (1, 177.504798464491216, 61.653333333333329, 0.000000108622655, 61.653333333333329);
+foreach my $i (0..$#ans) {
+	die "$correct[$i] is missing" unless defined $aov_res->{Group}{$correct[$i]};
+	is_approx( $aov_res->{Group}{$correct[$i]}, $ans[$i], "aov: Group $correct[$i]", 1e-9);
+}
+foreach my $key ('mean', 'size') {
+	if (defined $aov_res->{group_stats}{$key}) {
+		pass("aov: group_stats \"$key\" hash reference is defined");
+	} else {
+		fail("aov: group_stats \"$key\" hash reference is NOT defined");
+	}
+}
+@correct = ('ctrl', 'yield');
+@ans = (0.5, 5.03333333333333);
+foreach my $i (0..$#ans) {
+	is_approx( $aov_res->{group_stats}{mean}{$correct[$i]}, $ans[$i], "aov: group_stats mean $correct[$i]", 1e-13);
+}
+@ans = (6, 6);
+foreach my $i (0..$#ans) {
+	is_approx( $aov_res->{group_stats}{size}{$correct[$i]}, $ans[$i], "aov: group_stats size $correct[$i]", 1e-13);
+}
+# go through Residuals
+@correct = ('Df', 'Mean Sq', 'Sum Sq');
+@ans = (10, 0.347333333333334, 3.473333333333336);
+foreach my $i (0..$#ans) {
+	die "$correct[$i] is missing" unless defined $aov_res->{Residuals}{$correct[$i]};
+	is_approx( $aov_res->{Residuals}{$correct[$i]}, $ans[$i], "aov: Residual $correct[$i]", 1e-13);
+}
+no_leaks_ok {
+	eval {
+		aov(
+			{
+				yield => [5.5, 5.4, 5.8, 4.5, 4.8, 4.2],
+				ctrl  => [1,     1,   1,   0,   0,   0]
+			}
+		);
+	};
+} 'aov: no memory leaks with formula omission and stacking' unless $INC{'Devel/Cover.pm'};
 #-------------------------------------------------------------------
 #  glm: Generalized Linear Models
 #-------------------------------------------------------------------

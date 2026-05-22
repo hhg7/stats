@@ -11,6 +11,8 @@ There **are** other modules on CPAN that can do **PARTS** of this, but this work
 
 ## aov
 
+Warning: assumes normal distribution
+
     aov(
     {
         yield => [5.5, 5.4, 5.8, 4.5, 4.8, 4.2],

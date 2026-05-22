@@ -9,10 +9,9 @@ require XSLoader;
 use Devel::Confess 'color';
 use warnings FATAL => 'all';
 use autodie ':default';
-use Scalar::Util 'looks_like_number';
 use Exporter 'import';
 XSLoader::load('Stats::LikeR', $VERSION);
-our @EXPORT_OK = qw(aov chisq_test cor cor_test cov fisher_test glm hist kruskal_test ks_test lm matrix mean median min max p_adjust power_t_test quantile rbinom read_table rnorm runif sample scale sd seq shapiro_test sum t_test var var_test wilcox_test write_table);
+our @EXPORT_OK = qw(aov chisq_test cor cor_test cov fisher_test glm hist kruskal_test ks_test lm matrix mean median min max oneway_test p_adjust power_t_test quantile rbinom read_table rnorm runif sample scale sd seq shapiro_test sum t_test var var_test wilcox_test write_table);
 our @EXPORT = @EXPORT_OK;
 
 require XSLoader;
@@ -358,6 +357,8 @@ There B<are> other modules on CPAN that can do B<PARTS> of this, but this works 
 
 =head2 aov
 
+Warning: assumes normal distribution
+
  aov(
  {
      yield => [5.5, 5.4, 5.8, 4.5, 4.8, 4.2],
@@ -387,6 +388,36 @@ You can also perform Two-Way ANOVA with categorical interactions using the C<*> 
  my $res_2way = aov($data_2way, 'len ~ supp * dose');
 
 It is robust against rank deficiency; collinear terms will gracefully receive 0 degrees of freedom and 0 sum of squares, matching R's behavior.
+
+=head3 omitting formula
+
+As of version 0.07, in the case of an omitted formula, stacking is done:
+
+ aov(
+ {
+     yield => [5.5, 5.4, 5.8, 4.5, 4.8, 4.2],
+     ctrl  => [1,     1,   1,   0,   0,   0]
+ },
+ );
+
+is the equivalent of:
+
+ yield <- c(5.5, 5.4, 5.8, 4.5, 4.8, 4.2)
+ ctrl <- c(1,     1,   1,   0,   0,   0)
+ 
+ # Combine them into a named list (the R equivalent of your hash)
+ my_list <- list(yield = yield, ctrl = ctrl)
+ 
+ # Convert the list into a "long" dataframe
+ # This creates two columns: "values" and "ind" (the group name)
+ my_data <- stack(my_list)
+ 
+ # Rename columns for clarity (optional but good practice)
+ colnames(my_data) <- c("Value", "Group")
+ anova_model <- aov(Value ~ Group, data = my_data)
+ summary(anova_model)
+
+in R
 
 =head2 chisq_test
 
@@ -847,9 +878,13 @@ which I prefer, compared to List::Util's required casting into an array:
 
  sum(@{ $test_data });
 
-which is shorter and much easier to read
+which is shorter and much easier to read.  Stats::LikeR, however, will work for B<both>
 
 as of version 0.02, C<sum> will cause the script to die if any undefined values are provided
+
+=head2 summary
+
+Analogous to R's C<summary>, but 
 
 =head2 t_test
 
@@ -944,6 +979,14 @@ undefined variables are printed as C<NA> by default, but can be set as you wish 
  write_table(\%data_hoa, '/tmp/undef.val.tsv', sep => "\t", 'undef.val' => 'nan')
 
 =head1 changes
+
+=head2 0.07
+
+Changes to dist.ini to prevent C<LikeR.c: loadable library and perl binaries are mismatched> errors on other operating systems
+
+Addition of C<summary> function.
+
+Formulas can now be omitted from C<aov>, resulting in a stacked calculation.
 
 =head2 0.06
 

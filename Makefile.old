@@ -6,21 +6,23 @@
 #
 #       ANY CHANGES MADE HERE WILL BE LOST!
 #
-#   MakeMaker ARGV: (q[dev.Makefile])
+#   MakeMaker ARGV: ()
 #
 
 #   MakeMaker Parameters:
 
+#     ABSTRACT => q[Get basic statistical functions, like in R, but with Perl using XS for performance]
+#     AUTHOR => [q[David E. Condon <dec986@gmail.com>]]
 #     BUILD_REQUIRES => {  }
-#     CCFLAGS => q[-std=c99]
-#     CONFIGURE_REQUIRES => {  }
-#     DEFINE => q[]
-#     INC => q[-I.]
-#     LIBS => [q[-lm]]
+#     CONFIGURE_REQUIRES => { ExtUtils::MakeMaker=>q[0] }
+#     DISTNAME => q[Stats-LikeR]
+#     LICENSE => q[perl]
+#     MIN_PERL_VERSION => q[5.010]
 #     NAME => q[Stats::LikeR]
-#     PREREQ_PM => {  }
+#     PREREQ_PM => { Devel::Confess=>q[0], Digest::SHA=>q[0], Test::Exception=>q[0], Test::LeakTrace=>q[0], Test::More=>q[0], autodie=>q[0] }
 #     TEST_REQUIRES => {  }
-#     VERSION_FROM => q[lib/Stats/LikeR.pm]
+#     VERSION => q[0.06]
+#     test => { TESTS=>q[t/*.t] }
 
 # --- MakeMaker post_initialize section:
 
@@ -60,11 +62,11 @@ DIRFILESEP = /
 DFSEP = $(DIRFILESEP)
 NAME = Stats::LikeR
 NAME_SYM = Stats_LikeR
-VERSION = 0.07
+VERSION = 0.06
 VERSION_MACRO = VERSION
-VERSION_SYM = 0_07
+VERSION_SYM = 0_06
 DEFINE_VERSION = -D$(VERSION_MACRO)=\"$(VERSION)\"
-XS_VERSION = 0.07
+XS_VERSION = 0.06
 XS_VERSION_MACRO = XS_VERSION
 XS_DEFINE_VERSION = -D$(XS_VERSION_MACRO)=\"$(XS_VERSION)\"
 INST_ARCHLIB = blib/arch
@@ -154,9 +156,7 @@ FULLEXT = Stats/LikeR
 BASEEXT = LikeR
 PARENT_NAME = Stats
 DLBASE = $(BASEEXT)
-VERSION_FROM = lib/Stats/LikeR.pm
-INC = -I.
-DEFINE = 
+VERSION_FROM = 
 OBJECT = $(BASEEXT)$(OBJ_EXT)
 LDFROM = $(OBJECT)
 LINKTYPE = dynamic
@@ -165,13 +165,16 @@ BOOTDEP =
 # Handy lists of source code files:
 XS_FILES = LikeR.xs \
 	bu.LikeR.xs \
-	con.LikeR.xs
+	con.LikeR.xs \
+	oneway_test.xs
 C_FILES  = LikeR.c \
 	bu.LikeR.c \
-	con.LikeR.c
+	con.LikeR.c \
+	oneway_test.c
 O_FILES  = LikeR.o \
 	bu.LikeR.o \
-	con.LikeR.o
+	con.LikeR.o \
+	oneway_test.o
 H_FILES  = ppport.h
 MAN1PODS = 
 MAN3PODS = lib/Stats/LikeR.pm
@@ -209,6 +212,7 @@ TO_INST_PM = aov.pl \
 	lm.pl \
 	md2pod.pl \
 	min.pl \
+	oneway_test_demo.pl \
 	power.t.test.pl \
 	quantile.pl \
 	read.table.pl \
@@ -309,7 +313,7 @@ RCS_LABEL = rcs -Nv$(VERSION_SYM): -q
 DIST_CP = best
 DIST_DEFAULT = tardist
 DISTNAME = Stats-LikeR
-DISTVNAME = Stats-LikeR-0.07
+DISTVNAME = Stats-LikeR-0.06
 
 
 # --- MakeMaker macro section:
@@ -320,7 +324,7 @@ DISTVNAME = Stats-LikeR-0.07
 
 # --- MakeMaker cflags section:
 
-CCFLAGS = -std=c99
+CCFLAGS = -fwrapv -fno-strict-aliasing -pipe -fstack-protector-strong -I/usr/local/include -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64
 OPTIMIZE = -O2
 PERLTYPE = 
 MPOLLUTE = 
@@ -331,9 +335,6 @@ MPOLLUTE =
 # Stats::LikeR might depend on some other libraries:
 # See ExtUtils::Liblist for details
 #
-EXTRALIBS = 
-LDLOADLIBS = -lm
-BSLOADLIBS = 
 
 
 # --- MakeMaker const_cccmd section:
@@ -351,8 +352,8 @@ PASTHRU = LIBPERL_A="$(LIBPERL_A)"\
 	LINKTYPE="$(LINKTYPE)"\
 	OPTIMIZE="$(OPTIMIZE)"\
 	PREFIX="$(PREFIX)"\
-	PASTHRU_DEFINE=' $(PASTHRU_DEFINE)'\
-	PASTHRU_INC='-I. $(PASTHRU_INC)'
+	PASTHRU_DEFINE='$(DEFINE) $(PASTHRU_DEFINE)'\
+	PASTHRU_INC='$(INC) $(PASTHRU_INC)'
 
 
 # --- MakeMaker special_targets section:
@@ -610,7 +611,11 @@ clean :: clean_subdirs
 	  core.[0-9] core.[0-9][0-9] \
 	  core.[0-9][0-9][0-9] core.[0-9][0-9][0-9][0-9] \
 	  core.[0-9][0-9][0-9][0-9][0-9] lib$(BASEEXT).def \
-	  mon.out perl \
+	  mon.out oneway_test.base \
+	  oneway_test.bs oneway_test.bso \
+	  oneway_test.c oneway_test.def \
+	  oneway_test.exp oneway_test.o \
+	  oneway_test_def.old perl \
 	  perl$(EXE_EXT) perl.exe \
 	  perlmain.c pm_to_blib \
 	  pm_to_blib.ts so_locations \
@@ -641,16 +646,16 @@ realclean purge :: realclean_subdirs
 metafile : create_distdir
 	$(NOECHO) $(ECHO) Generating META.yml
 	$(NOECHO) $(ECHO) '---' > META_new.yml
-	$(NOECHO) $(ECHO) 'abstract: unknown' >> META_new.yml
+	$(NOECHO) $(ECHO) 'abstract: '\''Get basic statistical functions, like in R, but with Perl using XS for performance'\''' >> META_new.yml
 	$(NOECHO) $(ECHO) 'author:' >> META_new.yml
-	$(NOECHO) $(ECHO) '  - unknown' >> META_new.yml
+	$(NOECHO) $(ECHO) '  - '\''David E. Condon <dec986@gmail.com>'\''' >> META_new.yml
 	$(NOECHO) $(ECHO) 'build_requires:' >> META_new.yml
 	$(NOECHO) $(ECHO) '  ExtUtils::MakeMaker: '\''0'\''' >> META_new.yml
 	$(NOECHO) $(ECHO) 'configure_requires:' >> META_new.yml
 	$(NOECHO) $(ECHO) '  ExtUtils::MakeMaker: '\''0'\''' >> META_new.yml
 	$(NOECHO) $(ECHO) 'dynamic_config: 1' >> META_new.yml
 	$(NOECHO) $(ECHO) 'generated_by: '\''ExtUtils::MakeMaker version 7.76, CPAN::Meta::Converter version 2.150010'\''' >> META_new.yml
-	$(NOECHO) $(ECHO) 'license: unknown' >> META_new.yml
+	$(NOECHO) $(ECHO) 'license: perl' >> META_new.yml
 	$(NOECHO) $(ECHO) 'meta-spec:' >> META_new.yml
 	$(NOECHO) $(ECHO) '  url: http://module-build.sourceforge.net/META-spec-v1.4.html' >> META_new.yml
 	$(NOECHO) $(ECHO) '  version: '\''1.4'\''' >> META_new.yml
@@ -659,20 +664,27 @@ metafile : create_distdir
 	$(NOECHO) $(ECHO) '  directory:' >> META_new.yml
 	$(NOECHO) $(ECHO) '    - t' >> META_new.yml
 	$(NOECHO) $(ECHO) '    - inc' >> META_new.yml
-	$(NOECHO) $(ECHO) 'requires: {}' >> META_new.yml
-	$(NOECHO) $(ECHO) 'version: 0.07' >> META_new.yml
+	$(NOECHO) $(ECHO) 'requires:' >> META_new.yml
+	$(NOECHO) $(ECHO) '  Devel::Confess: '\''0'\''' >> META_new.yml
+	$(NOECHO) $(ECHO) '  Digest::SHA: '\''0'\''' >> META_new.yml
+	$(NOECHO) $(ECHO) '  Test::Exception: '\''0'\''' >> META_new.yml
+	$(NOECHO) $(ECHO) '  Test::LeakTrace: '\''0'\''' >> META_new.yml
+	$(NOECHO) $(ECHO) '  Test::More: '\''0'\''' >> META_new.yml
+	$(NOECHO) $(ECHO) '  autodie: '\''0'\''' >> META_new.yml
+	$(NOECHO) $(ECHO) '  perl: '\''5.010'\''' >> META_new.yml
+	$(NOECHO) $(ECHO) 'version: '\''0.06'\''' >> META_new.yml
 	$(NOECHO) $(ECHO) 'x_serialization_backend: '\''CPAN::Meta::YAML version 0.020'\''' >> META_new.yml
 	-$(NOECHO) $(MV) META_new.yml $(DISTVNAME)/META.yml
 	$(NOECHO) $(ECHO) Generating META.json
 	$(NOECHO) $(ECHO) '{' > META_new.json
-	$(NOECHO) $(ECHO) '   "abstract" : "unknown",' >> META_new.json
+	$(NOECHO) $(ECHO) '   "abstract" : "Get basic statistical functions, like in R, but with Perl using XS for performance",' >> META_new.json
 	$(NOECHO) $(ECHO) '   "author" : [' >> META_new.json
-	$(NOECHO) $(ECHO) '      "unknown"' >> META_new.json
+	$(NOECHO) $(ECHO) '      "David E. Condon <dec986@gmail.com>"' >> META_new.json
 	$(NOECHO) $(ECHO) '   ],' >> META_new.json
 	$(NOECHO) $(ECHO) '   "dynamic_config" : 1,' >> META_new.json
 	$(NOECHO) $(ECHO) '   "generated_by" : "ExtUtils::MakeMaker version 7.76, CPAN::Meta::Converter version 2.150010",' >> META_new.json
 	$(NOECHO) $(ECHO) '   "license" : [' >> META_new.json
-	$(NOECHO) $(ECHO) '      "unknown"' >> META_new.json
+	$(NOECHO) $(ECHO) '      "perl_5"' >> META_new.json
 	$(NOECHO) $(ECHO) '   ],' >> META_new.json
 	$(NOECHO) $(ECHO) '   "meta-spec" : {' >> META_new.json
 	$(NOECHO) $(ECHO) '      "url" : "http://search.cpan.org/perldoc?CPAN::Meta::Spec",' >> META_new.json
@@ -697,11 +709,19 @@ metafile : create_distdir
 	$(NOECHO) $(ECHO) '         }' >> META_new.json
 	$(NOECHO) $(ECHO) '      },' >> META_new.json
 	$(NOECHO) $(ECHO) '      "runtime" : {' >> META_new.json
-	$(NOECHO) $(ECHO) '         "requires" : {}' >> META_new.json
+	$(NOECHO) $(ECHO) '         "requires" : {' >> META_new.json
+	$(NOECHO) $(ECHO) '            "Devel::Confess" : "0",' >> META_new.json
+	$(NOECHO) $(ECHO) '            "Digest::SHA" : "0",' >> META_new.json
+	$(NOECHO) $(ECHO) '            "Test::Exception" : "0",' >> META_new.json
+	$(NOECHO) $(ECHO) '            "Test::LeakTrace" : "0",' >> META_new.json
+	$(NOECHO) $(ECHO) '            "Test::More" : "0",' >> META_new.json
+	$(NOECHO) $(ECHO) '            "autodie" : "0",' >> META_new.json
+	$(NOECHO) $(ECHO) '            "perl" : "5.010"' >> META_new.json
+	$(NOECHO) $(ECHO) '         }' >> META_new.json
 	$(NOECHO) $(ECHO) '      }' >> META_new.json
 	$(NOECHO) $(ECHO) '   },' >> META_new.json
 	$(NOECHO) $(ECHO) '   "release_status" : "stable",' >> META_new.json
-	$(NOECHO) $(ECHO) '   "version" : 0.07,' >> META_new.json
+	$(NOECHO) $(ECHO) '   "version" : "0.06",' >> META_new.json
 	$(NOECHO) $(ECHO) '   "x_serialization_backend" : "JSON::PP version 4.16"' >> META_new.json
 	$(NOECHO) $(ECHO) '}' >> META_new.json
 	-$(NOECHO) $(MV) META_new.json $(DISTVNAME)/META.json
@@ -783,7 +803,7 @@ distdir : create_distdir distmeta
 
 # --- MakeMaker dist_test section:
 disttest : distdir
-	cd $(DISTVNAME) && $(ABSPERLRUN) Makefile.PL "dev.Makefile"
+	cd $(DISTVNAME) && $(ABSPERLRUN) Makefile.PL 
 	cd $(DISTVNAME) && $(MAKE) $(PASTHRU)
 	cd $(DISTVNAME) && $(MAKE) test $(PASTHRU)
 
@@ -1025,7 +1045,7 @@ PERL_HDRS = \
 
 $(OBJECT) : $(PERL_HDRS)
 
-LikeR.c bu.LikeR.c con.LikeR.c : $(XSUBPPDEPS)
+LikeR.c bu.LikeR.c con.LikeR.c oneway_test.c : $(XSUBPPDEPS)
 
 
 # --- MakeMaker makefile section:
@@ -1040,7 +1060,7 @@ $(FIRST_MAKEFILE) : Makefile.PL $(CONFIGDEP)
 	-$(NOECHO) $(RM_F) $(MAKEFILE_OLD)
 	-$(NOECHO) $(MV)   $(FIRST_MAKEFILE) $(MAKEFILE_OLD)
 	- $(MAKE) $(USEMAKEFILE) $(MAKEFILE_OLD) clean $(DEV_NULL)
-	$(PERLRUN) Makefile.PL "dev.Makefile"
+	$(PERLRUN) Makefile.PL 
 	$(NOECHO) $(ECHO) "==> Your Makefile has been rebuilt. <=="
 	$(NOECHO) $(ECHO) "==> Please rerun the $(MAKE) command.  <=="
 	$(FALSE)
@@ -1062,8 +1082,7 @@ $(MAKE_APERL_FILE) : static $(FIRST_MAKEFILE) pm_to_blib
 	$(NOECHO) $(PERLRUNINST) \
 		Makefile.PL DIR="" \
 		MAKEFILE=$(MAKE_APERL_FILE) LINKTYPE=static \
-		MAKEAPERL=1 NORECURS=1 CCCDLFLAGS= \
-		dev.Makefile
+		MAKEAPERL=1 NORECURS=1 CCCDLFLAGS=
 
 
 # --- MakeMaker test section:
@@ -1104,10 +1123,17 @@ testdb_static :: static pure_all $(MAP_TARGET)
 # --- MakeMaker ppd section:
 # Creates a PPD (Perl Package Description) for a binary distribution.
 ppd :
-	$(NOECHO) $(ECHO) '<SOFTPKG NAME="Stats-LikeR" VERSION="0.07">' > Stats-LikeR.ppd
-	$(NOECHO) $(ECHO) '    <ABSTRACT></ABSTRACT>' >> Stats-LikeR.ppd
-	$(NOECHO) $(ECHO) '    <AUTHOR></AUTHOR>' >> Stats-LikeR.ppd
+	$(NOECHO) $(ECHO) '<SOFTPKG NAME="Stats-LikeR" VERSION="0.06">' > Stats-LikeR.ppd
+	$(NOECHO) $(ECHO) '    <ABSTRACT>Get basic statistical functions, like in R, but with Perl using XS for performance</ABSTRACT>' >> Stats-LikeR.ppd
+	$(NOECHO) $(ECHO) '    <AUTHOR>David E. Condon &lt;dec986@gmail.com&gt;</AUTHOR>' >> Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '    <IMPLEMENTATION>' >> Stats-LikeR.ppd
+	$(NOECHO) $(ECHO) '        <PERLCORE VERSION="5,010,0,0" />' >> Stats-LikeR.ppd
+	$(NOECHO) $(ECHO) '        <REQUIRE NAME="Devel::Confess" />' >> Stats-LikeR.ppd
+	$(NOECHO) $(ECHO) '        <REQUIRE NAME="Digest::SHA" />' >> Stats-LikeR.ppd
+	$(NOECHO) $(ECHO) '        <REQUIRE NAME="Test::Exception" />' >> Stats-LikeR.ppd
+	$(NOECHO) $(ECHO) '        <REQUIRE NAME="Test::LeakTrace" />' >> Stats-LikeR.ppd
+	$(NOECHO) $(ECHO) '        <REQUIRE NAME="Test::More" />' >> Stats-LikeR.ppd
+	$(NOECHO) $(ECHO) '        <REQUIRE NAME="autodie::" />' >> Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '        <ARCHITECTURE NAME="x86_64-linux-5.42" />' >> Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '        <CODEBASE HREF="" />' >> Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '    </IMPLEMENTATION>' >> Stats-LikeR.ppd
@@ -1138,6 +1164,7 @@ pm_to_blib : $(FIRST_MAKEFILE) $(TO_INST_PM)
 	  'lm.pl' '$(INST_LIB)/Stats/lm.pl' \
 	  'md2pod.pl' '$(INST_LIB)/Stats/md2pod.pl' \
 	  'min.pl' '$(INST_LIB)/Stats/min.pl' \
+	  'oneway_test_demo.pl' '$(INST_LIB)/Stats/oneway_test_demo.pl' \
 	  'power.t.test.pl' '$(INST_LIB)/Stats/power.t.test.pl' \
 	  'quantile.pl' '$(INST_LIB)/Stats/quantile.pl' \
 	  'read.table.pl' '$(INST_LIB)/Stats/read.table.pl' \

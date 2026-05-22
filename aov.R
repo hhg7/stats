@@ -11,5 +11,20 @@ my_data <- stack(my_list)
 # Rename columns for clarity (optional but good practice)
 colnames(my_data) <- c("Value", "Group")
 anova_model <- aov(Value ~ Group, data = my_data)
-summary(anova_model)
+result <- summary(anova_model)
+# Flatten the result object so we can iterate through everything (coefficients, residuals, etc.)
+flat_result <- unlist(result)
 
+for (attr in names(flat_result)) {
+  val <- flat_result[[attr]]
+  
+  # Format to 15 decimals if it's a number, otherwise print as-is
+  if (is.numeric(val)) {
+    cat(sprintf("%s %.15f\n", attr, val))
+  } else {
+    cat(sprintf("%s %s\n", attr, val))
+  }
+}
+for (attr in names(result)) {
+  cat(sprintf("%s %.15f\n", attr, as.numeric(result[[attr]])))
+}
