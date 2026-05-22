@@ -60,11 +60,11 @@ DIRFILESEP = /
 DFSEP = $(DIRFILESEP)
 NAME = Stats::LikeR
 NAME_SYM = Stats_LikeR
-VERSION = 0.06
+VERSION = 0.07
 VERSION_MACRO = VERSION
-VERSION_SYM = 0_06
+VERSION_SYM = 0_07
 DEFINE_VERSION = -D$(VERSION_MACRO)=\"$(VERSION)\"
-XS_VERSION = 0.06
+XS_VERSION = 0.07
 XS_VERSION_MACRO = XS_VERSION
 XS_DEFINE_VERSION = -D$(XS_VERSION_MACRO)=\"$(XS_VERSION)\"
 INST_ARCHLIB = blib/arch
@@ -216,8 +216,8 @@ TO_INST_PM = aov.pl \
 	sample.pl \
 	sd.pl \
 	sha512.pl \
+	summary.pl \
 	t.test.pl \
-	test.leaktrace.pl \
 	var.pl \
 	var.test.pl \
 	wilcox.text.pl \
@@ -309,7 +309,7 @@ RCS_LABEL = rcs -Nv$(VERSION_SYM): -q
 DIST_CP = best
 DIST_DEFAULT = tardist
 DISTNAME = Stats-LikeR
-DISTVNAME = Stats-LikeR-0.06
+DISTVNAME = Stats-LikeR-0.07
 
 
 # --- MakeMaker macro section:
@@ -660,7 +660,7 @@ metafile : create_distdir
 	$(NOECHO) $(ECHO) '    - t' >> META_new.yml
 	$(NOECHO) $(ECHO) '    - inc' >> META_new.yml
 	$(NOECHO) $(ECHO) 'requires: {}' >> META_new.yml
-	$(NOECHO) $(ECHO) 'version: 0.06' >> META_new.yml
+	$(NOECHO) $(ECHO) 'version: 0.07' >> META_new.yml
 	$(NOECHO) $(ECHO) 'x_serialization_backend: '\''CPAN::Meta::YAML version 0.020'\''' >> META_new.yml
 	-$(NOECHO) $(MV) META_new.yml $(DISTVNAME)/META.yml
 	$(NOECHO) $(ECHO) Generating META.json
@@ -701,7 +701,7 @@ metafile : create_distdir
 	$(NOECHO) $(ECHO) '      }' >> META_new.json
 	$(NOECHO) $(ECHO) '   },' >> META_new.json
 	$(NOECHO) $(ECHO) '   "release_status" : "stable",' >> META_new.json
-	$(NOECHO) $(ECHO) '   "version" : 0.06,' >> META_new.json
+	$(NOECHO) $(ECHO) '   "version" : 0.07,' >> META_new.json
 	$(NOECHO) $(ECHO) '   "x_serialization_backend" : "JSON::PP version 4.16"' >> META_new.json
 	$(NOECHO) $(ECHO) '}' >> META_new.json
 	-$(NOECHO) $(MV) META_new.json $(DISTVNAME)/META.json
@@ -1104,7 +1104,7 @@ testdb_static :: static pure_all $(MAP_TARGET)
 # --- MakeMaker ppd section:
 # Creates a PPD (Perl Package Description) for a binary distribution.
 ppd :
-	$(NOECHO) $(ECHO) '<SOFTPKG NAME="Stats-LikeR" VERSION="0.06">' > Stats-LikeR.ppd
+	$(NOECHO) $(ECHO) '<SOFTPKG NAME="Stats-LikeR" VERSION="0.07">' > Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '    <ABSTRACT></ABSTRACT>' >> Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '    <AUTHOR></AUTHOR>' >> Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '    <IMPLEMENTATION>' >> Stats-LikeR.ppd
@@ -1145,8 +1145,8 @@ pm_to_blib : $(FIRST_MAKEFILE) $(TO_INST_PM)
 	  'sample.pl' '$(INST_LIB)/Stats/sample.pl' \
 	  'sd.pl' '$(INST_LIB)/Stats/sd.pl' \
 	  'sha512.pl' '$(INST_LIB)/Stats/sha512.pl' \
+	  'summary.pl' '$(INST_LIB)/Stats/summary.pl' \
 	  't.test.pl' '$(INST_LIB)/Stats/t.test.pl' \
-	  'test.leaktrace.pl' '$(INST_LIB)/Stats/test.leaktrace.pl' \
 	  'var.pl' '$(INST_LIB)/Stats/var.pl' \
 	  'var.test.pl' '$(INST_LIB)/Stats/var.test.pl' \
 	  'wilcox.text.pl' '$(INST_LIB)/Stats/wilcox.text.pl' \

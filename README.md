@@ -41,6 +41,36 @@ You can also perform Two-Way ANOVA with categorical interactions using the `*` o
 
 It is robust against rank deficiency; collinear terms will gracefully receive 0 degrees of freedom and 0 sum of squares, matching R's behavior.
 
+### omitting formula
+
+As of version 0.07, in the case of an omitted formula, stacking is done:
+
+    aov(
+    {
+        yield => [5.5, 5.4, 5.8, 4.5, 4.8, 4.2],
+        ctrl  => [1,     1,   1,   0,   0,   0]
+    },
+    );
+
+is the equivalent of:
+
+    yield <- c(5.5, 5.4, 5.8, 4.5, 4.8, 4.2)
+    ctrl <- c(1,     1,   1,   0,   0,   0)
+    
+    # Combine them into a named list (the R equivalent of your hash)
+    my_list <- list(yield = yield, ctrl = ctrl)
+    
+    # Convert the list into a "long" dataframe
+    # This creates two columns: "values" and "ind" (the group name)
+    my_data <- stack(my_list)
+
+    # Rename columns for clarity (optional but good practice)
+    colnames(my_data) <- c("Value", "Group")
+    anova_model <- aov(Value ~ Group, data = my_data)
+    summary(anova_model)
+
+in R
+
 ## chisq_test
 
     my @test_data = ([762, 327, 468], [484, 239, 477]);
@@ -500,9 +530,13 @@ which I prefer, compared to List::Util's required casting into an array:
 
     sum(@{ $test_data });
 
-which is shorter and much easier to read
+which is shorter and much easier to read.  Stats::LikeR, however, will work for **both**
 
 as of version 0.02, `sum` will cause the script to die if any undefined values are provided
+
+## summary
+
+Analogous to R's `summary`, but 
 
 ## t_test
 
@@ -597,6 +631,14 @@ undefined variables are printed as `NA` by default, but can be set as you wish u
     write_table(\%data_hoa, '/tmp/undef.val.tsv', sep => "\t", 'undef.val' => 'nan')
 
 # changes
+
+## 0.07
+
+Changes to dist.ini to prevent `LikeR.c: loadable library and perl binaries are mismatched` errors on other operating systems
+
+Addition of `summary` function.
+
+Formulas can now be omitted from `aov`, resulting in a stacked calculation.
 
 ## 0.06
 

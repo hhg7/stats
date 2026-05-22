@@ -4,11 +4,12 @@ require 5.010;
 use strict;
 use feature 'say';
 package Stats::LikeR;
-our $VERSION = 0.06;
+our $VERSION = 0.07;
 require XSLoader;
 use Devel::Confess 'color';
 use warnings FATAL => 'all';
 use autodie ':default';
+use Scalar::Util 'looks_like_number';
 use Exporter 'import';
 XSLoader::load('Stats::LikeR', $VERSION);
 our @EXPORT_OK = qw(aov chisq_test cor cor_test cov fisher_test glm hist kruskal_test ks_test lm matrix mean median min max p_adjust power_t_test quantile rbinom read_table rnorm runif sample scale sd seq shapiro_test sum t_test var var_test wilcox_test write_table);
@@ -160,41 +161,6 @@ sub read_table {
 		return \%data;
 	}
 }
-
-sub summary {
-	my $data = shift;
-	my $ref_type = ref $data;
-	my $current_sub = (split(/::/,(caller(0))[3]))[-1];
-	if (($ref_type ne 'ARRAY') && ($ref_type ne 'HASH')) {
-		die "data for $current_sub must either be a hash or an array, not \"$ref_type\"";
-	}
-	my %args = (
-		nrows => 10,
-		@_,
-	);
-	if ($ref_type eq 'ARRAY') {
-		
-	}
-}
-
-#sub sample {
-#	my $ref = shift;
-#	my $n = 1;
-#	$n = shift if defined $_[0];
-#	my $ref_type = ref $ref;
-#	if ($ref_type eq 'HASH') {
-#		my %return;
-#		my @keys = shuffle( keys %{ $ref } );
-#		foreach my $k (@keys) {
-#			$return{$k} = $ref->{$k};
-#			last if (scalar keys %return) == $n;
-#		}
-#		return \%return;
-#	} elsif ($ref_type eq 'ARRAY') {
-#		my @shuffled = shuffle( @{ $ref } );
-#		return \@shuffled[0..$n-1];
-#	}
-#}
 
 #sub write_table {
 #	my $data_ref = (ref($_[0]) eq 'HASH' || ref($_[0]) eq 'ARRAY') ? shift : undef;
