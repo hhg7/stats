@@ -1387,13 +1387,17 @@ static double qf_bisection(double p, double df1, double df2) {
 
 /* ── OneWayResult struct ─────────────────────────────────────────────── */
 typedef struct {
-	double  statistic;
-	double  num_df;
-	double  denom_df;
-	double  p_value;
-	int     k;          /* number of groups          */
-	IV      n;          /* total observations        */
-	int     var_equal;  /* 0 = Welch, 1 = classic    */
+    double  statistic;
+    double  num_df;
+    double  denom_df;
+    double  p_value;
+    double  ss_between;  /* between-group sum of squares  */
+    double  ss_within;   /* within-group  sum of squares  */
+    double  ms_between;  /* ss_between / num_df           */
+    double  ms_within;   /* ss_within  / denom_df         */
+    int     k;           /* number of groups              */
+    IV      n;           /* total observations            */
+    int     var_equal;   /* 0 = Welch, 1 = classic        */
 } OneWayResult;
 
 /* ── c_oneway_test ───────────────────────────────────────────────────────
@@ -1404,7 +1408,7 @@ typedef struct {
  *  var_equal – 0 = Welch (default), 1 = classic equal-variance F-test
  *
  *  Mirrors R's oneway.test() arithmetic exactly.
- *  Calls pf() which must be declared elsewhere in the .xs file.
+ *  Calls pf(f, df1, df2) declared elsewhere in the .xs file.
  * ----------------------------------------------------------------------- */
 static OneWayResult
 c_oneway_test(const double *restrict data,
@@ -1460,10 +1464,14 @@ c_oneway_test(const double *restrict data,
             ssbg += n_i[g] * dm * dm;
             sswg += (n_i[g] - 1.0) * v_i[g];
         }
-        double df2   = (double)(total_n - (IV)k);
+        double df2    = (double)(total_n - (IV)k);
         res.statistic = (ssbg / df1) / (sswg / df2);
         res.num_df    = df1;
         res.denom_df  = df2;
+        res.ss_between = ssbg;
+        res.ss_within  = sswg;
+        res.ms_between = ssbg / df1;
+        res.ms_within  = sswg / df2;
     } else {
         /* ── Welch one-way (heteroscedastic) ───────────────────────────── *
          *  w_i  = n_i / v_i                                               *
@@ -1472,38 +1480,46 @@ c_oneway_test(const double *restrict data,
          *  tmp  = Σ[(1 − w_i/W)² / (n_i−1)] / (k²−1)                    *
          *  F    = Σ[w_i·(m_i − m̃)²] / [(k−1)·(1 + 2·(k−2)·tmp)]        *
          *  df2  = 1 / (3·tmp)                                             *
+         *                                                                 *
+         *  SS values use the unweighted grand mean (same as classic)      *
+         *  so the output table is always populated.                        *
          * ─────────────────────────────────────────────────────────────── */
         double *restrict w_i = (double *)safemalloc(k * sizeof(double));
-
         double sum_w = 0.0;
         for (size_t g = 0; g < k; g++) { w_i[g] = n_i[g] / v_i[g]; sum_w += w_i[g]; }
-
         double wgrand = 0.0;
         for (size_t g = 0; g < k; g++) wgrand += w_i[g] * m_i[g];
         wgrand /= sum_w;
-
         double tmp = 0.0;
         for (size_t g = 0; g < k; g++) {
             double t = 1.0 - w_i[g] / sum_w;
             tmp += (t * t) / (n_i[g] - 1.0);
         }
         tmp /= ((double)k * (double)k - 1.0);   /* k² − 1 */
-
         double num = 0.0;
         for (size_t g = 0; g < k; g++) {
             double dm = m_i[g] - wgrand;
             num += w_i[g] * dm * dm;
         }
-
         res.statistic = num / (df1 * (1.0 + 2.0 * (double)(k - 2) * tmp));
         res.num_df    = df1;
         res.denom_df  = (tmp > 0.0) ? (1.0 / (3.0 * tmp)) : 1e300;
+        /* unweighted SS for the output table */
+        double ssbg = 0.0, sswg = 0.0;
+        for (size_t g = 0; g < k; g++) {
+            double dm = m_i[g] - grand_mean;
+            ssbg += n_i[g] * dm * dm;
+            sswg += (n_i[g] - 1.0) * v_i[g];
+        }
+        res.ss_between = ssbg;
+        res.ss_within  = sswg;
+        res.ms_between = (df1  > 0.0) ? ssbg / df1          : 0.0;
+        res.ms_within  = (res.denom_df > 0.0) ? sswg / res.denom_df : 0.0;
 
         Safefree(w_i);
     }
-
     /* upper-tail p-value  P(F ≥ statistic) */
-    res.p_value = pf(res.statistic, res.num_df, res.denom_df);
+    res.p_value = 1 - pf(res.statistic, res.num_df, res.denom_df);
 
     Safefree(n_i);
     Safefree(m_i);
@@ -1554,6 +1570,8 @@ parse_formula(const char *formula, char **lhs, char **rhs)
  *    out_flat[]  – observations sorted into contiguous group blocks
  *    out_sizes[] – number of observations per group  (caller allocates n
  *                  slots for both; actual group count returned via *out_k)
+ *    out_names   – if non-NULL, receives a heap-allocated char** of k
+ *                  group-name strings (caller must free each and the array)
  *
  *  Group identity is the string representation of each label element
  *  (SvPV_nolen), so integer 0 and string "0" are the same group.
@@ -1571,6 +1589,7 @@ build_groups_from_formula(pTHX_
                           double *restrict out_flat,
                           size_t *restrict out_sizes,
                           size_t *out_k,
+                          char ***out_names,
                           char *errbuf,
                           size_t errbuf_len)
 {
@@ -1664,11 +1683,15 @@ build_groups_from_formula(pTHX_
 
     *out_k = ngroups;
 
-    /* ── clean up ──────────────────────────────────────────────────── */
+    /* ── clean up or hand off group names ─────────────────────────── */
     Safefree(write_pos);
     Safefree(obs_group);
-    for (size_t g = 0; g < ngroups; g++) Safefree(group_names[g]);
-    Safefree(group_names);
+    if (out_names) {
+        *out_names = group_names;   /* caller takes ownership */
+    } else {
+        for (size_t g = 0; g < ngroups; g++) Safefree(group_names[g]);
+        Safefree(group_names);
+    }
     return 1;
 }
 #undef OWT_MAX_GROUPS
@@ -1683,12 +1706,15 @@ oneway_test(hashref, ...)
   PREINIT:
     HV          *in_hv;
     HE          *he;
-    int          var_equal   = 0;
-    const char  *formula_str = NULL;   /* NULL = Mode 1 (groups hash) */
+    int          var_equal    = 0;
+    const char  *formula_str  = NULL;    /* NULL = Mode 1 (groups hash)    */
+    const char  *factor_name  = "Group"; /* key used for the Group sub-hash */
     char        *lhs = NULL, *rhs = NULL;
-    double      *flat  = NULL;
-    size_t      *sizes = NULL;
-    size_t       k     = 0;
+    double      *flat   = NULL;
+    size_t      *sizes  = NULL;
+    char       **gnames = NULL;          /* group label strings, length k   */
+    double      *gmeans = NULL;          /* per-group means,    length k    */
+    size_t       k      = 0;
     IV           total_n = 0;
     OneWayResult res;
     HV          *ret_hv;
@@ -1713,22 +1739,19 @@ oneway_test(hashref, ...)
     if (formula_str != NULL) {
         /* ══════════════════════════════════════════════════════════════
          * MODE 2 – formula  "response ~ factor"
-         *
-         *  Parse the formula, look up both arrays in \%data,
-         *  then delegate to build_groups_from_formula().
          * ══════════════════════════════════════════════════════════════ */
         if (!parse_formula(formula_str, &lhs, &rhs))
             croak("oneway_test: cannot parse formula '%s' — "
                   "expected 'response ~ factor'", formula_str);
 
-        /* look up response array */
+        factor_name = rhs;   /* use the actual factor variable name */
+
         SV **resp_svp = hv_fetch(in_hv, lhs, (I32)strlen(lhs), 0);
         if (!resp_svp || !*resp_svp || !SvROK(*resp_svp)
             || SvTYPE(SvRV(*resp_svp)) != SVt_PVAV)
             croak("oneway_test: formula LHS '%s' not found as an array ref "
                   "in the hash", lhs);
 
-        /* look up factor/grouping array */
         SV **fact_svp = hv_fetch(in_hv, rhs, (I32)strlen(rhs), 0);
         if (!fact_svp || !*fact_svp || !SvROK(*fact_svp)
             || SvTYPE(SvRV(*fact_svp)) != SVt_PVAV)
@@ -1739,17 +1762,13 @@ oneway_test(hashref, ...)
         AV *label_av = (AV *)SvRV(*fact_svp);
         IV  n        = av_len(resp_av) + 1;
 
-        /* allocate worst-case buffers (at most n groups) */
         flat  = (double *)safemalloc((size_t)n * sizeof(double));
         sizes = (size_t *)safemalloc((size_t)n * sizeof(size_t));
 
         if (!build_groups_from_formula(aTHX_ resp_av, label_av,
-                                       flat, sizes, &k,
+                                       flat, sizes, &k, &gnames,
                                        errbuf, sizeof errbuf)) {
-            Safefree(flat);
-            Safefree(sizes);
-            Safefree(lhs);
-            Safefree(rhs);
+            Safefree(flat); Safefree(sizes); Safefree(lhs); Safefree(rhs);
             croak("oneway_test: %s", errbuf);
         }
 
@@ -1758,15 +1777,15 @@ oneway_test(hashref, ...)
     } else {
         /* ══════════════════════════════════════════════════════════════
          * MODE 1 – hash of groups  { label => \@observations, … }
-         *
-         *  Original behaviour, unchanged.
          * ══════════════════════════════════════════════════════════════ */
         k = (size_t)hv_iterinit(in_hv);
         if (k < 2)
             croak("oneway_test: need at least 2 groups, got %zu", k);
 
-        /* first pass: sizes + total */
-        sizes = (size_t *)safemalloc(k * sizeof(size_t));
+        sizes  = (size_t *)safemalloc(k * sizeof(size_t));
+        gnames = (char  **)safemalloc(k * sizeof(char *));
+
+        /* first pass: sizes, total_n, and group name strings */
         {
             size_t g = 0;
             while ((he = hv_iternext(in_hv)) != NULL) {
@@ -1778,12 +1797,18 @@ oneway_test(hashref, ...)
                 if (len < 2)
                     croak("oneway_test: group '%s' has fewer than 2 observations",
                           HePV(he, PL_na));
-                sizes[g++] = (size_t)len;
-                total_n   += (IV)len;
+                sizes[g] = (size_t)len;
+                total_n += (IV)len;
+                /* save a copy of the key string */
+                STRLEN klen;
+                const char *kstr = HePV(he, klen);
+                gnames[g] = (char *)safemalloc(klen + 1);
+                memcpy(gnames[g], kstr, klen + 1);
+                g++;
             }
         }
 
-        /* second pass: fill flat */
+        /* second pass: fill flat in the same iteration order */
         flat = (double *)safemalloc((size_t)total_n * sizeof(double));
         {
             size_t offset = 0;
@@ -1799,32 +1824,77 @@ oneway_test(hashref, ...)
         }
     }
 
+    /* ── per-group means from flat (before c_oneway_test frees nothing) ─ */
+    gmeans = (double *)safemalloc(k * sizeof(double));
+    {
+        size_t offset = 0;
+        for (size_t g = 0; g < k; g++) {
+            double sum = 0.0;
+            for (size_t i = 0; i < sizes[g]; i++) sum += flat[offset + i];
+            gmeans[g] = sum / (double)sizes[g];
+            offset   += sizes[g];
+        }
+    }
+
     /* ── run the arithmetic ──────────────────────────────────────────── */
     res = c_oneway_test(flat, sizes, k, var_equal);
 
     Safefree(flat);
-    Safefree(sizes);
-    if (lhs) Safefree(lhs);
-    if (rhs) Safefree(rhs);
+    if (lhs) Safefree(lhs);   /* rhs kept alive as factor_name until after output */
 
-    /* ── build return hash ref ───────────────────────────────────────── */
+    /* ── build return hash ref ───────────────────────────────────────── *
+     *                                                                    *
+     *  {                                                                 *
+     *    <factor>  => { Df, "Sum Sq", "Mean Sq", "F value", "Pr(>F)" }  *
+     *    Residuals => { Df, "Sum Sq", "Mean Sq" }                        *
+     *    group_stats => { mean => { g => v, … }, size => { g => n, … } } *
+     *  }                                                                 *
+     * ─────────────────────────────────────────────────────────────────── */
     ret_hv = (HV *)sv_2mortal((SV *)newHV());
 
-    hv_stores(ret_hv, "statistic", newSVnv(res.statistic));
-    hv_stores(ret_hv, "num_df",    newSVnv(res.num_df));
-    hv_stores(ret_hv, "denom_df",  newSVnv(res.denom_df));
-    hv_stores(ret_hv, "p_value",   newSVnv(res.p_value));
-    hv_stores(ret_hv, "k",         newSViv((IV)res.k));
-    hv_stores(ret_hv, "n",         newSViv(res.n));
-    hv_stores(ret_hv, "method",
-        newSVpv(var_equal
-            ? "One-way analysis of means"
-            : "One-way analysis of means (not assuming equal variances)",
-            0));
+    /* ── Group (factor) sub-hash ─────────────────────────────────────── */
+    {
+        HV *g_hv = newHV();
+        hv_stores(g_hv, "Df",      newSVnv(res.num_df));
+        hv_stores(g_hv, "Sum Sq",  newSVnv(res.ss_between));
+        hv_stores(g_hv, "Mean Sq", newSVnv(res.ms_between));
+        hv_stores(g_hv, "F value", newSVnv(res.statistic));
+        hv_stores(g_hv, "Pr(>F)",  newSVnv(res.p_value));
+        hv_store(ret_hv, factor_name, (I32)strlen(factor_name),
+                 newRV_noinc((SV *)g_hv), 0);
+    }
 
-    /* only include 'formula' key when Mode 2 was used */
-    if (formula_str)
-        hv_stores(ret_hv, "formula", newSVpv(formula_str, 0));
+    /* ── Residuals sub-hash ──────────────────────────────────────────── */
+    {
+        HV *r_hv = newHV();
+        hv_stores(r_hv, "Df",      newSVnv(res.denom_df));
+        hv_stores(r_hv, "Sum Sq",  newSVnv(res.ss_within));
+        hv_stores(r_hv, "Mean Sq", newSVnv(res.ms_within));
+        hv_stores(ret_hv, "Residuals", newRV_noinc((SV *)r_hv));
+    }
+
+    /* ── group_stats sub-hash ────────────────────────────────────────── */
+    {
+        HV *gs_hv   = newHV();
+        HV *mean_hv = newHV();
+        HV *size_hv = newHV();
+        for (size_t g = 0; g < k; g++) {
+            const char *gn  = gnames[g];
+            I32         gnl = (I32)strlen(gn);
+            hv_store(mean_hv, gn, gnl, newSVnv(gmeans[g]),       0);
+            hv_store(size_hv, gn, gnl, newSViv((IV)sizes[g]),    0);
+        }
+        hv_stores(gs_hv, "mean", newRV_noinc((SV *)mean_hv));
+        hv_stores(gs_hv, "size", newRV_noinc((SV *)size_hv));
+        hv_stores(ret_hv, "group_stats", newRV_noinc((SV *)gs_hv));
+    }
+
+    /* ── clean up ────────────────────────────────────────────────────── */
+    Safefree(gmeans);
+    Safefree(sizes);
+    for (size_t g = 0; g < k; g++) Safefree(gnames[g]);
+    Safefree(gnames);
+    if (rhs) Safefree(rhs);   /* freed here, after factor_name is no longer needed */
 
     RETVAL = newRV((SV *)ret_hv);
 

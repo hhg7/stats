@@ -1,8 +1,8 @@
 #!/usr/bin/perl
 use strict;
 use warnings;
-# use MyStats;   # your XS module
-
+use Stats::LikeR;
+use DDP;
 # ══════════════════════════════════════════════════════════════════════════
 # MODE 1 – hash of groups (original behaviour)
 #
@@ -11,13 +11,14 @@ use warnings;
 # ══════════════════════════════════════════════════════════════════════════
 
 my %groups = (
-    yield => [5.5, 5.4, 5.8],
-    ctrl  => [4.5, 4.8, 4.2],
+	yield => [5.5, 5.4, 5.8, 4.5, 4.8, 4.2],
+	ctrl  => [1,     1,   1,   0,   0,   0]
 );
 
 my $r1 = oneway_test(\%groups);                    # Welch (default)
+p $r1;
 my $r2 = oneway_test(\%groups, var_equal => 1);    # classic ANOVA
-
+p $r2;
 print "── Mode 1: hash of groups ──────────────────────────────\n";
 printf "Welch  F=%.4f  df=(%.4f, %.4f)  p=%.6f\n",
     $r1->{statistic}, $r1->{num_df}, $r1->{denom_df}, $r1->{p_value};
@@ -37,12 +38,12 @@ printf "Classic F=%.4f  df=(%.0f, %.0f)  p=%.6f\n",
 # ══════════════════════════════════════════════════════════════════════════
 
 my %data = (
-    yield => [5.5, 5.4, 5.8, 4.5, 4.8, 4.2],
-    ctrl  => [1,   1,   1,   0,   0,   0  ],
+	yield => [5.5, 5.4, 5.8, 4.5, 4.8, 4.2],
+	ctrl  => [1,   1,   1,   0,   0,   0  ],
 );
 
-my $r3 = oneway_test(\%data, formula => "yield ~ ctrl");
-my $r4 = oneway_test(\%data, formula => "yield ~ ctrl", var_equal => 1);
+my $r3 = oneway_test(\%data, formula => 'yield ~ ctrl');
+my $r4 = oneway_test(\%data, formula => 'yield ~ ctrl', var_equal => 1);
 
 print "\n── Mode 2: formula ─────────────────────────────────────\n";
 printf "Formula : %s\n",  $r3->{formula};
@@ -64,7 +65,7 @@ my %survey = (
     dept  => [qw(HR HR HR  IT IT  IT  RD RD  RD HR)],
 );
 
-my $r5 = oneway_test(\%survey, formula => "score ~ dept");
+my $r5 = oneway_test(\%survey, formula => 'score ~ dept');
 print "\n── Mode 2: string factor labels ───────────────────────\n";
 printf "k=%d groups, n=%d obs\n", $r5->{k}, $r5->{n};
 printf "Welch  F=%.4f  df=(%.4f, %.4f)  p=%.6f\n",
@@ -75,13 +76,13 @@ printf "Welch  F=%.4f  df=(%.4f, %.4f)  p=%.6f\n",
 # ══════════════════════════════════════════════════════════════════════════
 
 # Mismatched array lengths
-eval { oneway_test({ y => [1,2,3], g => [1,2] }, formula => "y ~ g") };
+eval { oneway_test({ y => [1,2,3], g => [1,2] }, formula => 'y ~ g') };
 print "\nCaught (length mismatch): $@" if $@;
 
 # Malformed formula
-eval { oneway_test(\%data, formula => "yield") };
+eval { oneway_test(\%data, formula => 'yield') };
 print "Caught (bad formula)    : $@" if $@;
 
 # Unknown variable name
-eval { oneway_test(\%data, formula => "weight ~ ctrl") };
+eval { oneway_test(\%data, formula => 'weight ~ ctrl') };
 print "Caught (missing key)    : $@" if $@;

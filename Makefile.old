@@ -165,16 +165,13 @@ BOOTDEP =
 # Handy lists of source code files:
 XS_FILES = LikeR.xs \
 	bu.LikeR.xs \
-	con.LikeR.xs \
-	oneway_test.xs
+	con.LikeR.xs
 C_FILES  = LikeR.c \
 	bu.LikeR.c \
-	con.LikeR.c \
-	oneway_test.c
+	con.LikeR.c
 O_FILES  = LikeR.o \
 	bu.LikeR.o \
-	con.LikeR.o \
-	oneway_test.o
+	con.LikeR.o
 H_FILES  = ppport.h
 MAN1PODS = 
 MAN3PODS = lib/Stats/LikeR.pm
@@ -611,11 +608,7 @@ clean :: clean_subdirs
 	  core.[0-9] core.[0-9][0-9] \
 	  core.[0-9][0-9][0-9] core.[0-9][0-9][0-9][0-9] \
 	  core.[0-9][0-9][0-9][0-9][0-9] lib$(BASEEXT).def \
-	  mon.out oneway_test.base \
-	  oneway_test.bs oneway_test.bso \
-	  oneway_test.c oneway_test.def \
-	  oneway_test.exp oneway_test.o \
-	  oneway_test_def.old perl \
+	  mon.out perl \
 	  perl$(EXE_EXT) perl.exe \
 	  perlmain.c pm_to_blib \
 	  pm_to_blib.ts so_locations \
@@ -1045,7 +1038,7 @@ PERL_HDRS = \
 
 $(OBJECT) : $(PERL_HDRS)
 
-LikeR.c bu.LikeR.c con.LikeR.c oneway_test.c : $(XSUBPPDEPS)
+LikeR.c bu.LikeR.c con.LikeR.c : $(XSUBPPDEPS)
 
 
 # --- MakeMaker makefile section:

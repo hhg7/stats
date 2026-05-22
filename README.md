@@ -239,6 +239,21 @@ Essentially the test determines if all groups have the same median (same distrib
 Performs a Kruskal-Wallis rank sum test, see 
 https://www.rdocumentation.org/packages/stats/versions/3.6.2/topics/kruskal.test
 
+### hash of array entry
+
+I feel that this is better, and more easily read, than what you get in R:
+
+    my %x = (
+    'normal.subjects' => [2.9, 3.0, 2.5, 2.6, 3.2],
+    'obs. airway disease' => [3.8, 2.7, 4.0, 2.4],
+    'asbestosis' => [2.8, 3.4, 3.7, 2.2, 2.0]
+    );
+    $t0 = Time::HiRes::time();
+    $kt = kruskal_test(\%x);
+    $t1 = Time::HiRes::time();
+    printf("Kruskal calculation via HoA in %g seconds.\n", $t1-$t0);
+    p $kt;
+
 ### R-like array entry
 
     my @xk = (2.9, 3.0, 2.5, 2.6, 3.2); # normal subjects
@@ -254,21 +269,6 @@ https://www.rdocumentation.org/packages/stats/versions/3.6.2/topics/kruskal.test
     my $kt = kruskal_test(\@x, \@g);
     my $t1 = Time::HiRes::time();
     printf("Kruskal calculation in %g seconds.\n", $t1-$t0);
-    p $kt;
-
-### hash of array entry
-
-I feel that this is better, and more easily read, than what you get in R:
-
-    my %x = (
-    'normal.subjects' => [2.9, 3.0, 2.5, 2.6, 3.2],
-    'obs. airway disease' => [3.8, 2.7, 4.0, 2.4],
-    'asbestosis' => [2.8, 3.4, 3.7, 2.2, 2.0]
-    );
-    $t0 = Time::HiRes::time();
-    $kt = kruskal_test(\%x);
-    $t1 = Time::HiRes::time();
-    printf("Kruskal calculation via HoA in %g seconds.\n", $t1-$t0);
     p $kt;
 
 ## ks_test

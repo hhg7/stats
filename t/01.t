@@ -3627,4 +3627,7 @@ foreach my $s (1..3) {
 		}
 	} "sample: array with $s samples doesn't have leaks" unless $INC{'Devel/Cover.pm'};
 }
+#-----------------
+#   oneway_test
+#-----------------
 done_testing();
