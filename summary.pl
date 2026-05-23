@@ -91,7 +91,6 @@ sub summary {
 		push @out, '-' x 78;
 		my $rows_printed = 0;
 		foreach my $key (sort {lc $a cmp lc $b} keys %{ $data }) {
-			say $key;
 			my @undef = grep {!defined $data->{$key}[$_]} 0..scalar @{ $data->{$key} }-1;
 			if (scalar @undef > 0) {
 				say STDERR join (',', @undef);
@@ -129,3 +128,5 @@ $h{short} = runif(9);
 summary(\@arr, nrows => 19);
 summary(\%h);
 summary(\%h, nrows => 3);
+my $owt = oneway_test(\%h);
+p $owt;

@@ -209,7 +209,7 @@ TO_INST_PM = aov.pl \
 	lm.pl \
 	md2pod.pl \
 	min.pl \
-	oneway_test_demo.pl \
+	oneway_test.pl \
 	power.t.test.pl \
 	quantile.pl \
 	read.table.pl \
@@ -1139,7 +1139,7 @@ pm_to_blib : $(FIRST_MAKEFILE) $(TO_INST_PM)
 	  'lm.pl' '$(INST_LIB)/Stats/lm.pl' \
 	  'md2pod.pl' '$(INST_LIB)/Stats/md2pod.pl' \
 	  'min.pl' '$(INST_LIB)/Stats/min.pl' \
-	  'oneway_test_demo.pl' '$(INST_LIB)/Stats/oneway_test_demo.pl' \
+	  'oneway_test.pl' '$(INST_LIB)/Stats/oneway_test.pl' \
 	  'power.t.test.pl' '$(INST_LIB)/Stats/power.t.test.pl' \
 	  'quantile.pl' '$(INST_LIB)/Stats/quantile.pl' \
 	  'read.table.pl' '$(INST_LIB)/Stats/read.table.pl' \

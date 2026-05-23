@@ -361,10 +361,74 @@ as of version 0.02, min will die if any undefined values are provided
 
 Like ANOVA/aov but does not assume normality
 
+### hash of array input
+
     $test_data = oneway_test({
     	yield => [5.5, 5.4, 5.8, 4.5, 4.8, 4.2],
     	ctrl  => [1,     1,   1,   0,   0,   0]
     });
+
+which will output a hash reference:
+
+    {
+    Group         {
+        Df          1,
+        "F value"   177.504798464491,
+        "Mean Sq"   61.6533333333333,
+        Pr(>F)      1.31343255160843e-07,
+        "Sum Sq"    61.6533333333333
+    },
+    group_stats   {
+        mean   {
+            ctrl    0.5,
+            yield   5.03333333333333
+        },
+        size   {
+            ctrl    6,
+            yield   6
+        }
+    },
+    Residuals     {
+        Df          9.81767348326473,
+        "Mean Sq"   0.353783749200256,
+        "Sum Sq"    3.47333333333333
+    }
+}
+
+### array of array input
+
+    oneway_test([
+       [5.5, 5.4, 5.8, 4.5, 4.8, 4.2],
+       [1,     1,   1,   0,   0,   0]
+    	]);
+
+which will output a nearly identical hash reference as for hash of arrays:
+
+    {
+    Group         {
+        Df          1,
+        "F value"   177.504798464491,
+        "Mean Sq"   61.6533333333333,
+        Pr(>F)      1.31343255160843e-07,
+        "Sum Sq"    61.6533333333333
+    },
+    group_stats   {
+        mean   {
+            "Index 0"   5.03333333333333,
+            "Index 1"   0.5
+        },
+        size   {
+            "Index 0"   6,
+            "Index 1"   6
+        }
+    },
+    Residuals     {
+        Df          9.81767348326473,
+        "Mean Sq"   0.353783749200256,
+        "Sum Sq"    3.47333333333333
+    }
+    }
+
 
 ## p_adjust
 
@@ -547,7 +611,8 @@ as of version 0.02, `sum` will cause the script to die if any undefined values a
 
 ## summary
 
-Analogous to R's `summary`, but 
+Analogous to R's `summary`, but does not deal with outputs from other functions.
+`summary` only describes data as it is entered.
 
 ## t_test
 
