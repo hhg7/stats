@@ -1699,14 +1699,13 @@ build_groups_from_formula(pTHX_
 // --- XS SECTION ---
 MODULE = Stats::LikeR  PACKAGE = Stats::LikeR
 
-
 SV *
 oneway_test(hashref, ...)
     SV *hashref
   PREINIT:
-    HV          *in_hv;
-    HE          *he;
-    int          var_equal    = 0;
+    HV          *restrict in_hv;
+    HE          *restrict he;
+    bool         var_equal    = 0;
     const char  *formula_str  = NULL;    /* NULL = Mode 1 (groups hash)    */
     const char  *factor_name  = "Group"; /* key used for the Group sub-hash */
     char        *lhs = NULL, *rhs = NULL;
@@ -1717,7 +1716,7 @@ oneway_test(hashref, ...)
     size_t       k      = 0;
     IV           total_n = 0;
     OneWayResult res;
-    HV          *ret_hv;
+    HV          *restrict ret_hv;
     char         errbuf[512];
 
   CODE:

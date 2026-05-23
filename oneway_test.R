@@ -14,4 +14,15 @@ anova_model <- oneway.test(Value ~ Group, data = my_data)
 for (k in c('statistic','parameter', 'p.value')) {
 	cat(sprintf('%s = %.15f', k, anova_model[[k]]), "\n")
 }
-
+#---
+print('--------')
+# Combine them into a standard dataframe (side-by-side columns)
+my_data <- data.frame(yield = yield, ctrl = ctrl)
+# Tell R that 'ctrl' represents categorical groups (0 and 1), not continuous numbers
+my_data$ctrl <- as.factor(my_data$ctrl)
+# Run the one-way ANOVA with your requested formula
+anova_model <- oneway.test(yield ~ ctrl, data = my_data)
+# Print the results
+for (k in c('statistic', 'parameter', 'p.value')) {
+    cat(sprintf('%s = %.15f', k, anova_model[[k]]), "\n")
+}

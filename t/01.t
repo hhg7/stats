@@ -3634,8 +3634,6 @@ $test_data = oneway_test({
 	yield => [5.5, 5.4, 5.8, 4.5, 4.8, 4.2],
 	ctrl  => [1,     1,   1,   0,   0,   0]
 });
-use DDP;
-p $test_data;
 foreach my $key ('Group', 'Residuals', 'group_stats') {
 	if (defined $test_data->{$key}) {
 		pass("oneway_test: no formula; \"$key\" exists");
@@ -3673,5 +3671,22 @@ no_leaks_ok {
 		});
 	}
 } 'oneway_test: no leaks without formula'  unless $INC{'Devel/Cover.pm'};
-#p $owt;
+$test_data = oneway_test({
+	yield => [5.5, 5.4, 5.8, 4.5, 4.8, 4.2],
+	ctrl  => [1,     1,   1,   0,   0,   0]
+}, formula => 'yield ~ ctrl');
+use DDP;
+p $test_data;
+foreach my $key ('ctrl', 'Residuals', 'group_stats') {
+	if (defined $test_data->{$key}) {
+		pass("oneway_test: no formula; \"$key\" exists");
+	} else {
+		fail("oneway_test: no formula; \"$key\" does NOT exist");
+	}
+}
+is_approx( $test_data->{ctrl}{Df}, 1, 'oneway_test: w/ formula df', 1e-13);
+is_approx( $test_data->{ctrl}{'F value'}, 25.600000000000030, 'oneway_test: w/ formula F value', 1e-13);
+is_approx( $test_data->{ctrl}{'Pr(>F)'}, 0.009707504058380, 'oneway_test: w/ formula p-value', 1e-13);
+is_approx( $test_data->{Residuals}{Df}, 3.563474387527839, 'oneway_test: w/ formula parameter', 1e-13);
+
 done_testing();

@@ -58,7 +58,7 @@
 .\" ========================================================================
 .\"
 .IX Title "Stats::LikeR 3"
-.TH Stats::LikeR 3 2026-05-22 "perl v5.42.2" "User Contributed Perl Documentation"
+.TH Stats::LikeR 3 2026-05-23 "perl v5.42.2" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -336,6 +336,24 @@ Essentially the test determines if all groups have the same median (same distrib
 Performs a Kruskal\-Wallis rank sum test, see 
 https://www.rdocumentation.org/packages/stats/versions/3.6.2/topics/kruskal.test
 .PP
+\fIhash of array entry\fR
+.IX Subsection "hash of array entry"
+.PP
+I feel that this is better, and more easily read, than what you get in R:
+.PP
+.Vb 10
+\& my %x = (
+\& \*(Aqnormal.subjects\*(Aq => [2.9, 3.0, 2.5, 2.6, 3.2],
+\& \*(Aqobs. airway disease\*(Aq => [3.8, 2.7, 4.0, 2.4],
+\& \*(Aqasbestosis\*(Aq => [2.8, 3.4, 3.7, 2.2, 2.0]
+\& );
+\& $t0 = Time::HiRes::time();
+\& $kt = kruskal_test(\e%x);
+\& $t1 = Time::HiRes::time();
+\& printf("Kruskal calculation via HoA in %g seconds.\en", $t1\-$t0);
+\& p $kt;
+.Ve
+.PP
 \fIR\-like array entry\fR
 .IX Subsection "R-like array entry"
 .PP
@@ -353,24 +371,6 @@ https://www.rdocumentation.org/packages/stats/versions/3.6.2/topics/kruskal.test
 \& my $kt = kruskal_test(\e@x, \e@g);
 \& my $t1 = Time::HiRes::time();
 \& printf("Kruskal calculation in %g seconds.\en", $t1\-$t0);
-\& p $kt;
-.Ve
-.PP
-\fIhash of array entry\fR
-.IX Subsection "hash of array entry"
-.PP
-I feel that this is better, and more easily read, than what you get in R:
-.PP
-.Vb 10
-\& my %x = (
-\& \*(Aqnormal.subjects\*(Aq => [2.9, 3.0, 2.5, 2.6, 3.2],
-\& \*(Aqobs. airway disease\*(Aq => [3.8, 2.7, 4.0, 2.4],
-\& \*(Aqasbestosis\*(Aq => [2.8, 3.4, 3.7, 2.2, 2.0]
-\& );
-\& $t0 = Time::HiRes::time();
-\& $kt = kruskal_test(\e%x);
-\& $t1 = Time::HiRes::time();
-\& printf("Kruskal calculation via HoA in %g seconds.\en", $t1\-$t0);
 \& p $kt;
 .Ve
 .SS ks_test
@@ -480,6 +480,16 @@ or
 .Ve
 .PP
 as of version 0.02, min will die if any undefined values are provided
+.SS oneway_test
+.IX Subsection "oneway_test"
+Like ANOVA/aov but does not assume normality
+.PP
+.Vb 4
+\& $test_data = oneway_test({
+\&     yield => [5.5, 5.4, 5.8, 4.5, 4.8, 4.2],
+\&     ctrl  => [1,     1,   1,   0,   0,   0]
+\& });
+.Ve
 .SS p_adjust
 .IX Subsection "p_adjust"
 Returns array of false\-discovery\-rate\-corrected p\-values, where methods available are "holm", "hochberg", "hommel", "bonferroni", "BH", "BY", "fdr"
@@ -552,10 +562,10 @@ Make a normal distribution of numbers, with pre\-set mean \f(CW\*(C`mean\*(C'\fR
 .Ve
 .SS runif
 .IX Subsection "runif"
+Make a distribution of approximately uniform distribution
+.PP
 \fInamed arguments\fR
 .IX Subsection "named arguments"
-.PP
-Make a distribution of approximately uniform distribution
 .PP
 .Vb 1
 \& my $unif = runif( n => $n, min => 0, max => 1);
