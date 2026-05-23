@@ -585,6 +585,21 @@ Essentially the test determines if all groups have the same median (same distrib
 Performs a Kruskal-Wallis rank sum test, see 
 https://www.rdocumentation.org/packages/stats/versions/3.6.2/topics/kruskal.test
 
+=head3 hash of array entry
+
+I feel that this is better, and more easily read, than what you get in R:
+
+ my %x = (
+ 'normal.subjects' => [2.9, 3.0, 2.5, 2.6, 3.2],
+ 'obs. airway disease' => [3.8, 2.7, 4.0, 2.4],
+ 'asbestosis' => [2.8, 3.4, 3.7, 2.2, 2.0]
+ );
+ $t0 = Time::HiRes::time();
+ $kt = kruskal_test(\%x);
+ $t1 = Time::HiRes::time();
+ printf("Kruskal calculation via HoA in %g seconds.\n", $t1-$t0);
+ p $kt;
+
 =head3 R-like array entry
 
  my @xk = (2.9, 3.0, 2.5, 2.6, 3.2); # normal subjects
@@ -600,21 +615,6 @@ https://www.rdocumentation.org/packages/stats/versions/3.6.2/topics/kruskal.test
  my $kt = kruskal_test(\@x, \@g);
  my $t1 = Time::HiRes::time();
  printf("Kruskal calculation in %g seconds.\n", $t1-$t0);
- p $kt;
-
-=head3 hash of array entry
-
-I feel that this is better, and more easily read, than what you get in R:
-
- my %x = (
- 'normal.subjects' => [2.9, 3.0, 2.5, 2.6, 3.2],
- 'obs. airway disease' => [3.8, 2.7, 4.0, 2.4],
- 'asbestosis' => [2.8, 3.4, 3.7, 2.2, 2.0]
- );
- $t0 = Time::HiRes::time();
- $kt = kruskal_test(\%x);
- $t1 = Time::HiRes::time();
- printf("Kruskal calculation via HoA in %g seconds.\n", $t1-$t0);
  p $kt;
 
 =head2 ks_test
@@ -703,6 +703,15 @@ or
 
 as of version 0.02, min will die if any undefined values are provided
 
+=head2 oneway_test
+
+Like ANOVA/aov but does not assume normality
+
+ $test_data = oneway_test({
+     yield => [5.5, 5.4, 5.8, 4.5, 4.8, 4.2],
+     ctrl  => [1,     1,   1,   0,   0,   0]
+ });
+
 =head2 p_adjust
 
 Returns array of false-discovery-rate-corrected p-values, where methods available are "holm", "hochberg", "hommel", "bonferroni", "BH", "BY", "fdr"
@@ -765,9 +774,9 @@ Make a normal distribution of numbers, with pre-set mean C<mean>, standard devia
 
 =head2 runif
 
-=head3 named arguments
-
 Make a distribution of approximately uniform distribution
+
+=head3 named arguments
 
  my $unif = runif( n => $n, min => 0, max => 1);
 

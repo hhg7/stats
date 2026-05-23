@@ -1,6 +1,6 @@
 # Synopsis
 
-Get basic R statistical functions working in Perl as if they were part of List::Util, like `min`, `max`, `sum`, etc.
+Get basic statistical functions working in Perl as if they were part of List::Util, like `min`, `max`, `sum`, etc.
 I've used Artificial Intelligence tools such as Claude, Gemini, and Grok to write this as well as using my own gray matter.
 There are other similar tools on CPAN, but I want speed and a form like List::Util, which I've gotten here with the help of AI, which often required many attempts to do correctly.
 This is meant to call subroutines directly through eXternal Subroutines (XS) for performance and portability.
@@ -357,6 +357,15 @@ or
 
 as of version 0.02, min will die if any undefined values are provided
 
+## oneway_test
+
+Like ANOVA/aov but does not assume normality
+
+    $test_data = oneway_test({
+    	yield => [5.5, 5.4, 5.8, 4.5, 4.8, 4.2],
+    	ctrl  => [1,     1,   1,   0,   0,   0]
+    });
+
 ## p_adjust
 
 Returns array of false-discovery-rate-corrected p-values, where methods available are "holm", "hochberg", "hommel", "bonferroni", "BH", "BY", "fdr"
@@ -419,9 +428,9 @@ Make a normal distribution of numbers, with pre-set mean `mean`, standard deviat
 
 ## runif
 
-### named arguments
-
 Make a distribution of approximately uniform distribution
+
+### named arguments
 
     my $unif = runif( n => $n, min => 0, max => 1);
 
@@ -640,7 +649,9 @@ Changes to dist.ini to prevent `LikeR.c: loadable library and perl binaries are 
 
 Addition of `summary` function.
 
-Formulas can now be omitted from `aov`, resulting in a stacked calculation.
+Formulas can now be omitted from `aov`, resulting in a stacked calculation as R would think.
+
+Addition of `oneway_test` for multi-group comparisons that does not assume normality like `aov` does.
 
 ## 0.06
 

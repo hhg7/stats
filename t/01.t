@@ -3630,4 +3630,29 @@ foreach my $s (1..3) {
 #-----------------
 #   oneway_test
 #-----------------
+$test_data = oneway_test({
+	yield => [5.5, 5.4, 5.8, 4.5, 4.8, 4.2],
+	ctrl  => [1,     1,   1,   0,   0,   0]
+});
+foreach my $key ('Group', 'Residuals') {
+	if (defined $test_data->{$key}) {
+		pass("oneway_test: no formula; \"$key\" exists");
+	} else {
+		fail("oneway_test: no formula; \"$key\" does NOT exist");
+	}
+}
+
+is_approx( $test_data->{Group}{Df}, 1, 'oneway_test: no formula df', 1e-13);
+is_approx( $test_data->{Group}{'F value'}, 177.504798464491358, 'oneway_test: no formula F value', 1e-13);
+is_approx( $test_data->{Group}{'Pr(>F)'}, 0.000000131343255, 'oneway_test: no formula p-value', 1e-13);
+is_approx( $test_data->{Residuals}{Df}, 9.817673483264731, 'oneway_test: no formula parameter', 1e-13);
+no_leaks_ok {
+	eval {
+		oneway_test({
+			yield => [5.5, 5.4, 5.8, 4.5, 4.8, 4.2],
+			ctrl  => [1,     1,   1,   0,   0,   0]
+		});
+	}
+} 'oneway_test: no leaks without formula'  unless $INC{'Devel/Cover.pm'};
+#p $owt;
 done_testing();
