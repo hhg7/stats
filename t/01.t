@@ -3634,7 +3634,9 @@ $test_data = oneway_test({
 	yield => [5.5, 5.4, 5.8, 4.5, 4.8, 4.2],
 	ctrl  => [1,     1,   1,   0,   0,   0]
 });
-foreach my $key ('Group', 'Residuals') {
+use DDP;
+p $test_data;
+foreach my $key ('Group', 'Residuals', 'group_stats') {
 	if (defined $test_data->{$key}) {
 		pass("oneway_test: no formula; \"$key\" exists");
 	} else {
@@ -3646,6 +3648,23 @@ is_approx( $test_data->{Group}{Df}, 1, 'oneway_test: no formula df', 1e-13);
 is_approx( $test_data->{Group}{'F value'}, 177.504798464491358, 'oneway_test: no formula F value', 1e-13);
 is_approx( $test_data->{Group}{'Pr(>F)'}, 0.000000131343255, 'oneway_test: no formula p-value', 1e-13);
 is_approx( $test_data->{Residuals}{Df}, 9.817673483264731, 'oneway_test: no formula parameter', 1e-13);
+
+foreach my $key ('mean', 'size') {
+	if (defined $test_data->{group_stats}{$key}) {
+		pass("oneway_test: group_stats \"$key\" hash reference is defined");
+	} else {
+		fail("oneway_test: group_stats \"$key\" hash reference is NOT defined");
+	}
+}
+@correct = ('ctrl', 'yield');
+@ans = (0.5, 5.03333333333333);
+foreach my $i (0..$#ans) {
+	is_approx( $test_data->{group_stats}{mean}{$correct[$i]}, $ans[$i], "oneway_test: group_stats mean $correct[$i]", 1e-13);
+}
+@ans = (6, 6);
+foreach my $i (0..$#ans) {
+	is_approx( $test_data->{group_stats}{size}{$correct[$i]}, $ans[$i], "oneway_test: group_stats size $correct[$i]", 1e-13);
+}
 no_leaks_ok {
 	eval {
 		oneway_test({
