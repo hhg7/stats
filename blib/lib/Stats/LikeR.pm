@@ -10,8 +10,9 @@ use Devel::Confess 'color';
 use warnings FATAL => 'all';
 use autodie ':default';
 use Exporter 'import';
+use Scalar::Util 'looks_like_number';
 XSLoader::load('Stats::LikeR', $VERSION);
-our @EXPORT_OK = qw(aov chisq_test cor cor_test cov fisher_test glm hist kruskal_test ks_test lm matrix mean median min max oneway_test p_adjust power_t_test quantile rbinom read_table rnorm runif sample scale sd seq shapiro_test sum t_test var var_test wilcox_test write_table);
+our @EXPORT_OK = qw(aov chisq_test cor cor_test cov fisher_test glm hist kruskal_test ks_test lm matrix mean median min max oneway_test p_adjust power_t_test quantile rbinom read_table rnorm runif sample scale sd seq shapiro_test sum summary t_test var var_test wilcox_test write_table);
 our @EXPORT = @EXPORT_OK;
 
 require XSLoader;
@@ -37,15 +38,145 @@ sub chisq_test {
 	};
 }
 
+
+sub summary {
+	my ($data, %args);
+	my $current_sub = (split(/::/,(caller(0))[3]))[-1];
+
+	if (@_ && ref $_[0]) {
+	  # Handles: summary(\@arr) or summary(\@arr, nrows => 5) or summary(\%h, nrow => 3)
+	  $data = shift;
+	  %args = @_; # capture any trailing key/value pairs
+	} else {
+	  # Handles: summary(@runif) or summary(@runif, nrows => 2)
+	  # Extract known trailing named arguments from the flat list
+	  while (@_ >= 2 && defined $_[-2] && !ref($_[-2]) && $_[-2] =~ /^(?:nrows|nrow)$/) {
+	  	  my $val = pop @_;
+		  my $key = pop @_;
+		  $args{$key} = $val;
+	  }
+	  # The remaining items in @_ make up the actual data array
+	  my @list = @_;
+	  $data = \@list;
+	}
+
+	# Normalize nrow -> nrows, default to 10
+	$args{nrows} //= delete($args{nrow}) // 10;
+
+	my $ref_type = ref $data;
+	if (($ref_type ne 'ARRAY') && ($ref_type ne 'HASH')) {
+		die "$current_sub' data must either be a hash or an array, not \"$ref_type\"";
+	}
+	
+	my $single_arr = 0;
+	if (($ref_type eq 'ARRAY') && (ref $data->[0] eq '')) {
+		$single_arr = 1;
+	}
+	
+	my @header = ('# values', 'Min.', '1st Qu.', 'Median', 'Mean', '3rd Qu.', 'Max.');
+	my @out;
+	
+	if ($single_arr == 1) {
+		push @out, '-' x 75;
+		my $header = sprintf('%9s ' x scalar @header, @header);
+		push @out, $header;
+		push @out, '-' x 75;
+		my @undef = grep {!defined $data->[$_]} 0..scalar @{ $data }-1;
+		if (scalar @undef > 0) {
+			say STDERR join (',', @undef);
+			die "The above indices are not defined in $current_sub";
+		}
+		my @numeric = grep {looks_like_number($_)} @{ $data };
+		my $q = quantile(\@numeric, probs => [0.25, 0.75]);
+		my $vals = sprintf('%9.4g ' x scalar @header, scalar @numeric, min(\@numeric), $q->{'25%'}, median(\@numeric), mean(\@numeric), $q->{'75%'}, max(\@numeric));
+		push @out, $vals;
+	} elsif ($ref_type eq 'ARRAY') {
+		push @out, '-' x 75;
+		my $header = sprintf('%9s ' x scalar @header, @header);
+		unshift @header, 'Index';
+		$header = 'Index ' . $header;
+		push @out, $header;
+		push @out, '-' x 75;
+		my $rows_printed = 0;
+		foreach my $index (0..$#$data) {
+			my @undef = grep {!defined $data->[$index][$_]} 0..scalar @{ $data->[$index] }-1;
+			if (scalar @undef > 0) {
+				say STDERR join (',', @undef);
+				die "The above indices are not defined for index $index in $current_sub";
+			}
+			my @numeric = grep {looks_like_number($_)} @{ $data->[$index] };
+			my $q = quantile(\@numeric, probs => [0.25, 0.75]);
+			my $vals = sprintf('%6.4g', $index) . sprintf('%9.4g ' x (scalar @header - 1), scalar @numeric, min(\@numeric), $q->{'25%'}, median(\@numeric), mean(\@numeric), $q->{'75%'}, max(\@numeric));
+			push @out, $vals;
+			$rows_printed++;
+			last if $rows_printed >= $args{nrows}; # Changed to >= just to be safe
+		}
+	} elsif ($ref_type eq 'HASH') {
+		push @out, '-' x 78;
+		my $header = sprintf('%9s ' x scalar @header, @header);
+		unshift @header, 'Key';
+		$header = '  Key    ' . $header;
+		push @out, $header;
+		push @out, '-' x 78;
+		my $rows_printed = 0;
+		foreach my $key (sort {lc $a cmp lc $b} keys %{ $data }) {
+			my @undef = grep {!defined $data->{$key}[$_]} 0..scalar @{ $data->{$key} }-1;
+			if (scalar @undef > 0) {
+				say STDERR join (',', @undef);
+				die "The above indices are not defined for key $key in $current_sub";
+			}
+			my @numeric = grep {looks_like_number($_)} @{ $data->{$key} };
+			my $q = quantile(\@numeric, probs => [0.25, 0.75]);
+			my $print_key;
+			if ($key =~ m/^(.{0,9})/) { # take the first 9 characters of the key
+				$print_key = $1;
+			} else {
+				die "\"$key\" failed regex";
+			}
+			if ((length $print_key) < 9) { # make sure that short keys line up correctly
+				$print_key .= ' ' x (9 - length $print_key);
+			}
+			my $vals = $print_key . sprintf('%9.4g ' x (scalar @header - 1), scalar @numeric, min(\@numeric), $q->{'25%'}, median(\@numeric), mean(\@numeric), $q->{'75%'}, max(\@numeric));
+			push @out, $vals;
+			$rows_printed++;
+			last if $rows_printed >= $args{nrows};
+		}
+	}
+	say join ("\n", @out);
+	return \@out;
+}
+
 sub read_table {
 	my $file = shift;
-	die "\"$file\" is either unreadable or not a file" unless -r -f $file;
+	die "\"$file\" is not a file" unless -f $file;
+	die "\"$file\" is not readable" unless -r $file;
+
+	# 1. Parse the incoming arguments into a temporary hash
+	my %input_args = @_;
+
+	# 2. Handle 'delim' as a synonym for 'sep'
+	if (defined $input_args{delim}) {
+	  $input_args{sep} = delete $input_args{delim};
+	}
+
+	# 3. Determine the default separator based on the file extension
+	my $default_sep = ','; # fallback default
+	if ($file =~ /\.tsv$/i) {
+	  $default_sep = "\t";
+	} elsif ($file =~ /\.csv$/i) {
+	  $default_sep = ",";
+	}
+
+	# 4. Merge defaults with user inputs (user inputs override defaults)
 	my %args = (
-		sep => ',', comment => '#',
-		@_,
+	  sep     => $default_sep,
+	  comment => '#',
+	  %input_args,
 	);
+
+	# 5. Define allowed arguments (including 'delim' since it can be passed in)
 	my %allowed_args = map {$_ => 1} (
-		'comment',	'output.type',	'filter', 'row.names', 'sep',	'substitutions'
+	  'comment', 'output.type', 'filter', 'row.names', 'sep', 'delim'
 	);
 	my @undef_args = sort grep {!$allowed_args{$_}} keys %args;
 	my $current_sub = (split(/::/,(caller(0))[3]))[-1];
@@ -346,7 +477,7 @@ sub read_table {
 
 =head1 Synopsis
 
-Get basic R statistical functions working in Perl as if they were part of List::Util, like C<min>, C<max>, C<sum>, etc.
+Get basic statistical functions working in Perl as if they were part of List::Util, like C<min>, C<max>, C<sum>, etc.
 I've used Artificial Intelligence tools such as Claude, Gemini, and Grok to write this as well as using my own gray matter.
 There are other similar tools on CPAN, but I want speed and a form like List::Util, which I've gotten here with the help of AI, which often required many attempts to do correctly.
 This is meant to call subroutines directly through eXternal Subroutines (XS) for performance and portability.
@@ -707,10 +838,74 @@ as of version 0.02, min will die if any undefined values are provided
 
 Like ANOVA/aov but does not assume normality
 
+=head3 hash of array input
+
  $test_data = oneway_test({
      yield => [5.5, 5.4, 5.8, 4.5, 4.8, 4.2],
      ctrl  => [1,     1,   1,   0,   0,   0]
  });
+
+which will output a hash reference:
+
+ {
+ Group         {
+     Df          1,
+     "F value"   177.504798464491,
+     "Mean Sq"   61.6533333333333,
+     Pr(>F)      1.31343255160843e-07,
+     "Sum Sq"    61.6533333333333
+ },
+ group_stats   {
+     mean   {
+         ctrl    0.5,
+         yield   5.03333333333333
+     },
+     size   {
+         ctrl    6,
+         yield   6
+     }
+ },
+ Residuals     {
+     Df          9.81767348326473,
+     "Mean Sq"   0.353783749200256,
+     "Sum Sq"    3.47333333333333
+ }
+
+}
+
+=head3 array of array input
+
+ oneway_test([
+    [5.5, 5.4, 5.8, 4.5, 4.8, 4.2],
+    [1,     1,   1,   0,   0,   0]
+     ]);
+
+which will output a nearly identical hash reference as for hash of arrays:
+
+ {
+ Group         {
+     Df          1,
+     "F value"   177.504798464491,
+     "Mean Sq"   61.6533333333333,
+     Pr(>F)      1.31343255160843e-07,
+     "Sum Sq"    61.6533333333333
+ },
+ group_stats   {
+     mean   {
+         "Index 0"   5.03333333333333,
+         "Index 1"   0.5
+     },
+     size   {
+         "Index 0"   6,
+         "Index 1"   6
+     }
+ },
+ Residuals     {
+     Df          9.81767348326473,
+     "Mean Sq"   0.353783749200256,
+     "Sum Sq"    3.47333333333333
+ }
+ }
 
 =head2 p_adjust
 
@@ -749,6 +944,17 @@ I've tried to make this as simple as possible, trying to follow from R:
 
  my $test_data = read_table('t/HepatitisCdata.csv');
 
+=head2 options
+
+| Option | Description | Example |
+| -------- | ------- | ------- |
+C<comment> | Comment character, by default C<#> | C<comment = %> or whatever|
+|C<output.type>| data type for output: array of hash, hash of array, or hash of hash | C<< 'output.type' =E<gt> 'aoh' >>|
+|C<filter>| Only take in rows with a certain filter | C<< filter =E<gt> {   Sex =E<gt> sub {$_ eq 'f'} } >>|
+|C<row.names> | include row names in retrieved data; off by default | |
+|C<sep> | field separator character; synonym with C<delim>| C<< sep =E<gt> "\t" >> |
+| C<delim>| field separator character; synonym with C<sep>| C<< delim =E<gt> "\t" >> |
+
 output types can be AOH (aoa), HOA (hoa), HOH (hoh)
 
  read_table($filename, 'output.type' => 'aoh');
@@ -765,6 +971,9 @@ and, like Text::CSV_XS, filters can be applied in order to save RAM on big files
      'output.type' => 'aoh'
  );
 
+the default delimiter is C<,>
+Suffixes C<.csv> and C<.tsv> are automatically detected from file names, but if specified, are overridden by C<delim> and/or C<sep>. C<sep> is given priority.
+
 =head2 rnorm
 
 Make a normal distribution of numbers, with pre-set mean C<mean>, standard deviation C<sd>, and number C<n>.
@@ -774,7 +983,7 @@ Make a normal distribution of numbers, with pre-set mean C<mean>, standard devia
 
 =head2 runif
 
-Make a distribution of approximately uniform distribution
+Make an approximately uniform distribution into an array
 
 =head3 named arguments
 
@@ -887,13 +1096,43 @@ which I prefer, compared to List::Util's required casting into an array:
 
  sum(@{ $test_data });
 
-which is shorter and much easier to read.  Stats::LikeR, however, will work for B<both>
+which passing a reference is shorter and much easier to read.  Stats::LikeR, however, will work for B<both>
 
 as of version 0.02, C<sum> will cause the script to die if any undefined values are provided
 
 =head2 summary
 
-Analogous to R's C<summary>, but 
+Analogous to R's C<summary>, but does not deal with outputs from other functions.
+C<summary> only describes data as it is entered.
+An option C<nrows> or its synonym C<nrow> specifies the maximum number of rows that will print.
+
+=head3 array of array input
+
+ my @arr;
+ foreach my $i (0..18) {
+     push @arr, runif(22);
+ }
+
+and then C<summary(\@arr)>, or C<summary(@arr)>
+
+ ---------------------------------------------------------------------------
+ Index  # values      Min.   1st Qu.    Median      Mean   3rd Qu.      Max. 
+ ---------------------------------------------------------------------------
+      0       22   0.04312     0.286    0.4975    0.5121    0.7296    0.9633 
+      1       22   0.05932    0.1483     0.495    0.4737    0.7699    0.9371 
+      2       22   0.02742    0.1588    0.4045    0.4325    0.6682    0.9878 
+      3       22  0.009233    0.2552    0.5398    0.5147    0.7755    0.9808 
+      4       22   0.06727    0.2432    0.5019    0.4855    0.7121    0.9043 
+      5       22  0.001032    0.1646    0.3021    0.3727    0.5704    0.9556 
+
+=head3 hash of array input
+
+ $test_data = summary(
+     {
+         A => runif(9),
+         B => runif(9)
+     },
+ );
 
 =head2 t_test
 
@@ -975,7 +1214,7 @@ It fully supports paired tests (C<< paired =E<gt> true >>) and can calculate exa
 
 =head2 write_table
 
-mimics R's "write.table", with data as first argument to subroutine, and output file as second
+mimics R's C<write.table>, with data as first argument to subroutine, and output file as second
 
  write_table(\@data_aoh, $tmp_file, sep => "\t", 'row.names' => true);
 
@@ -987,6 +1226,8 @@ undefined variables are printed as C<NA> by default, but can be set as you wish 
 
  write_table(\%data_hoa, '/tmp/undef.val.tsv', sep => "\t", 'undef.val' => 'nan')
 
+as of version 0.07, C<write_table> determines comma and tab-separated delimiters from the filename, but will override if C<sep> or C<delim> are explicitly set.
+
 =head1 changes
 
 =head2 0.07
@@ -995,7 +1236,11 @@ Changes to dist.ini to prevent C<LikeR.c: loadable library and perl binaries are
 
 Addition of C<summary> function.
 
-Formulas can now be omitted from C<aov>, resulting in a stacked calculation.
+Formulas can now be omitted from C<aov>, resulting in a stacked calculation as R would think.
+
+Addition of C<oneway_test> for multi-group comparisons that does not assume normality like C<aov> does.
+
+C<read_table> and C<write_table> now automatically set separators for C<.csv> files as C<,> and C<.tsv> files as C<"\t">, respectively, so these values no longer need to be specified separately from the file name.
 
 =head2 0.06
 
