@@ -4,7 +4,7 @@ require 5.010;
 use strict;
 use feature 'say';
 package Stats::LikeR;
-our $VERSION = 0.07;
+our $VERSION = 0.08;
 require XSLoader;
 use Devel::Confess 'color';
 use warnings FATAL => 'all';
@@ -12,7 +12,7 @@ use autodie ':default';
 use Exporter 'import';
 use Scalar::Util 'looks_like_number';
 XSLoader::load('Stats::LikeR', $VERSION);
-our @EXPORT_OK = qw(aov chisq_test cor cor_test cov fisher_test glm hist kruskal_test ks_test lm matrix mean median min max oneway_test p_adjust power_t_test quantile rbinom read_table rnorm runif sample scale sd seq shapiro_test sum summary t_test var var_test wilcox_test write_table);
+our @EXPORT_OK = qw(aov chisq_test cor cor_test cov fisher_test glm hist kruskal_test ks_test lm matrix max mean median min mode oneway_test p_adjust power_t_test quantile rbinom read_table rnorm runif sample scale sd seq shapiro_test sum summary t_test var var_test wilcox_test write_table);
 our @EXPORT = @EXPORT_OK;
 
 require XSLoader;
@@ -37,7 +37,6 @@ sub chisq_test {
 	  'expected'  => $result->{expected}
 	};
 }
-
 
 sub summary {
 	my ($data, %args);
@@ -127,12 +126,7 @@ sub summary {
 			}
 			my @numeric = grep {looks_like_number($_)} @{ $data->{$key} };
 			my $q = quantile(\@numeric, probs => [0.25, 0.75]);
-			my $print_key;
-			if ($key =~ m/^(.{0,9})/) { # take the first 9 characters of the key
-				$print_key = $1;
-			} else {
-				die "\"$key\" failed regex";
-			}
+			my $print_key = substr($key, 0, 9);
 			if ((length $print_key) < 9) { # make sure that short keys line up correctly
 				$print_key .= ' ' x (9 - length $print_key);
 			}
@@ -834,6 +828,14 @@ or
 
 as of version 0.02, min will die if any undefined values are provided
 
+=head2 mode
+
+Takes either an array or an array reference, and returns an array of the most common scalars (numbers or strings)
+
+ @arr = mode([1,3,3,3]); # returns (3)
+ 
+ @arr = mode('a','a','c','c','z'); # returns ('a', 'c')
+
 =head2 oneway_test
 
 Like ANOVA/aov but does not assume normality
@@ -1230,9 +1232,13 @@ as of version 0.07, C<write_table> determines comma and tab-separated delimiters
 
 =head1 changes
 
-=head2 0.07
+=head2 0.08
 
-Changes to dist.ini to prevent C<LikeR.c: loadable library and perl binaries are mismatched> errors on other operating systems
+Speed improvement in C<summary> of hashes of arrays
+
+Addition of C<mode> function
+
+=head2 0.07
 
 Addition of C<summary> function.
 

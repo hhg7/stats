@@ -3883,9 +3883,9 @@ if (
 	&&
 	($test_data->[2] =~ m/^\-+$/)
 	&&
-	($test_data->[3] =~ m/^\h*A\h*\d/)
+	($test_data->[3] =~ m/^\h*A\h*9/)
 	&&
-	($test_data->[4] =~ m/^\h*B\h*\d/)
+	($test_data->[4] =~ m/^\h*B\h*9/)
 	&&
 	(scalar @{ $test_data } == 5)
 	){
@@ -3903,4 +3903,50 @@ if (scalar @{ $test_data } == 4) {
 } else {
 	fail('summary: "nrows" does NOT limit rows of output');
 }
+#------
+#   mode
+#------
+@arr = mode(1,3,3,3);
+$size = scalar @arr;
+if ($size == 1) {
+	pass('mode: correctly returns a single value for this array');
+} else {
+	fail("mode: returns $size instead of a single value");
+}
+is_approx($arr[0], 3, 'mode: mode is correct number', 1e-14);
+
+#------
+@arr = mode([1,3,3,3]);
+$size = scalar @arr;
+if ($size == 1) {
+	pass('mode: correctly returns a single value for this array');
+} else {
+	fail("mode: returns $size instead of a single value");
+}
+is_approx($arr[0], 3, 'mode: mode is correct number', 1e-14);
+#--- non-numeric data
+@arr = mode('a','a','c','c','z');
+$size = scalar @arr;
+if ($size == 2) {
+	pass('mode: correctly returns a single value for this array');
+} else {
+	fail("mode: returns $size instead of a single value");
+}
+if ((grep {$_ eq 'a'} @arr) && (grep {$_ eq 'c'} @arr)) {
+	pass('mode: both letters correctly show as modes');
+} else {
+	fail('mode: both letters are not showing correctly as modes');
+}
+dies_ok {
+	mode(1, undef)
+} 'mode: dies with an undefined value';
+no_leaks_ok {
+	mode(1, 2);
+} 'mode: no leaks with scalars entered' unless $INC{'Devel/Cover.pm'};
+no_leaks_ok {
+	mode([1, 2]);
+} 'mode: no leaks with array reference entered' unless $INC{'Devel/Cover.pm'};
+dies_ok {
+	mode()
+} 'mode: dies with 0 values entered';
 done_testing();

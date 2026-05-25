@@ -357,6 +357,14 @@ or
 
 as of version 0.02, min will die if any undefined values are provided
 
+## mode
+
+Takes either an array or an array reference, and returns an array of the most common scalars (numbers or strings)
+
+    @arr = mode([1,3,3,3]); # returns (3)
+
+    @arr = mode('a','a','c','c','z'); # returns ('a', 'c')
+
 ## oneway_test
 
 Like ANOVA/aov but does not assume normality
@@ -754,9 +762,13 @@ as of version 0.07, `write_table` determines comma and tab-separated delimiters 
 
 # changes
 
-## 0.07
+## 0.08
 
-Changes to dist.ini to prevent `LikeR.c: loadable library and perl binaries are mismatched` errors on other operating systems
+Speed improvement in `summary` of hashes of arrays
+
+Addition of `mode` function
+
+## 0.07
 
 Addition of `summary` function.
 

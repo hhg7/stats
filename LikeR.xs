@@ -2326,11 +2326,9 @@ CODE:
 		c = r;
 		r = 1;
 	}
-
 	double stat = 0.0, grand_total = 0.0;
 	int df = 0;
 	int yates = (is_2d && r == 2 && c == 2) ? 1 : 0;
-
 	AV*restrict expected_av = newAV();
 	if (is_2d) {
 		double *restrict row_sum = (double*)safemalloc(r * sizeof(double));
@@ -4321,35 +4319,99 @@ double mean(...)
 	OUTPUT:
 	  RETVAL
 
+void mode(...)
+	PROTOTYPE: @
+	PREINIT:
+	HV *restrict counts;
+	HV *restrict originals;
+	size_t max_count = 0, arg_count = 0;
+	HE *restrict he;
+	PPCODE:
+	/* counts:    string(value) -> occurrence count */
+	/* originals: string(value) -> SV* first-seen original */
+	counts    = (HV *)sv_2mortal((SV *)newHV());
+	originals = (HV *)sv_2mortal((SV *)newHV());
+
+	for (size_t i = 0; i < items; i++) {
+		SV *restrict arg = ST(i);
+		if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
+			AV *restrict av = (AV *)SvRV(arg);
+			size_t len = av_len(av) + 1;
+			for (size_t j = 0; j < len; j++) {
+				SV **restrict tv = av_fetch(av, j, 0);
+				if (tv && SvOK(*tv)) {
+					STRLEN klen;
+					const char *restrict key = SvPV(*tv, klen);
+					SV **restrict slot = hv_fetch(counts, key, klen, 1);
+					if (!slot) croak("mode: internal hash error");
+					size_t cnt = SvOK(*slot) ? SvIV(*slot) + 1 : 1;
+					sv_setiv(*slot, cnt);
+					if (cnt > max_count) max_count = cnt;
+					if (cnt == 1)
+						 hv_store(originals, key, klen, newSVsv(*tv), 0);
+					arg_count++;
+				} else {
+					croak("mode: undefined value at array ref index %zu (argument %zu)", j, i);
+				}
+			}
+		} else if (SvOK(arg)) {
+			STRLEN klen;
+			const char *restrict key = SvPV(arg, klen);
+			SV **restrict slot = hv_fetch(counts, key, klen, 1);
+			if (!slot) croak("mode: internal hash error");
+			size_t cnt = SvOK(*slot) ? SvIV(*slot) + 1 : 1;
+			sv_setiv(*slot, cnt);
+			if (cnt > max_count) max_count = cnt;
+			if (cnt == 1)
+			  hv_store(originals, key, klen, newSVsv(arg), 0);
+			arg_count++;
+		} else {
+			croak("mode: undefined value at argument index %zu", i);
+		}
+	}
+
+	if (arg_count == 0)
+		croak("mode needs >= 1 element");
+
+	hv_iterinit(counts);
+	while ((he = hv_iternext(counts))) {
+		if (SvIV(hv_iterval(counts, he)) == max_count) {
+			STRLEN klen;
+			const char *restrict key = HePV(he, klen);
+			SV **restrict orig = hv_fetch(originals, key, klen, 0);
+			mXPUSHs(orig ? newSVsv(*orig) : newSVpvn(key, klen));
+		}
+	}
+
 double sum(...)
 	PROTOTYPE: @
 	INIT:
-	  double total = 0;
-	  size_t count = 0;
+		double total = 0;
+		size_t count = 0;
 	CODE:
-	  for (size_t i = 0; i < items; i++) {
-		   SV* restrict arg = ST(i);
-		   if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
-		       AV* restrict av = (AV*)SvRV(arg);
-		       size_t len = av_len(av) + 1;
-		       for (size_t j = 0; j < len; j++) {
-		           SV** restrict tv = av_fetch(av, j, 0);
-		           if (tv && SvOK(*tv)) {
-		               total += SvNV(*tv);
-		               count++;
-		           } else {
-		               croak("sum: undefined value at array ref index %zu (argument %zu)", j, i);
-		           }
-		       }
-		   } else if (SvOK(arg)) {
-		       total += SvNV(arg);
-		       count++;
-		   } else {
-		       croak("sum: undefined value at argument index %zu", i);
-		   }
-	  }
-	  if (count == 0) croak("sum needs >= 1 element");
-	  RETVAL = total;
+		for (size_t i = 0; i < items; i++) {
+			SV* restrict arg = ST(i);
+			if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
+				 AV* restrict av = (AV*)SvRV(arg);
+				 size_t len = av_len(av) + 1;
+				 for (size_t j = 0; j < len; j++) {
+				     SV** restrict tv = av_fetch(av, j, 0);
+				     if (tv && SvOK(*tv)) {
+				         total += SvNV(*tv);
+				         count++;
+				     } else {
+				         croak("sum: undefined value at array ref index %zu (argument %zu)", j, i);
+				     }
+				 }
+			} else if (SvOK(arg)) {
+				 total += SvNV(arg);
+				 count++;
+			} else {
+				 croak("sum: undefined value at argument index %zu", i);
+			}
+		}
+		if (count == 0) croak("sum needs >= 1 element");
+		RETVAL = total;
 	OUTPUT:
 	  RETVAL
 
@@ -4399,38 +4461,38 @@ double var(...)
 	  double mean = 0.0, M2 = 0.0;
 	  size_t count = 0;
 	CODE:
-	  /* Single Pass Variance via Welford's Algorithm */
-	  for (size_t i = 0; i < items; i++) {
-		   SV* restrict arg = ST(i);
-		   if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
-		       AV* restrict av = (AV*)SvRV(arg);
-		       size_t len = av_len(av) + 1;
-		       for (size_t j = 0; j < len; j++) {
-		           SV** restrict tv = av_fetch(av, j, 0);
-		           if (tv && SvOK(*tv)) {
-		               count++;
-		               double val = SvNV(*tv);
-		               double delta = val - mean;
-		               mean += delta / count;
-		               M2 += delta * (val - mean);
-		           } else {
-		               croak("var: undefined value at array ref index %zu (argument %zu)", j, i);
-		           }
-		       }
-		   } else if (SvOK(arg)) {
-		       count++;
-		       double val = SvNV(arg);
-		       double delta = val - mean;
-		       mean += delta / count;
-		       M2 += delta * (val - mean);
-		   } else {
-		       croak("var: undefined value at argument index %zu", i);
-		   }
-	  }
-	  if (count < 2) croak("var needs >= 2 elements");
-	  RETVAL = M2 / (count - 1);
+	/* Single Pass Variance via Welford's Algorithm */
+		for (size_t i = 0; i < items; i++) {
+			SV* restrict arg = ST(i);
+			if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
+				 AV* restrict av = (AV*)SvRV(arg);
+				 size_t len = av_len(av) + 1;
+				 for (size_t j = 0; j < len; j++) {
+					  SV** restrict tv = av_fetch(av, j, 0);
+					  if (tv && SvOK(*tv)) {
+						   count++;
+						   double val = SvNV(*tv);
+						   double delta = val - mean;
+						   mean += delta / count;
+						   M2 += delta * (val - mean);
+					  } else {
+						   croak("var: undefined value at array ref index %zu (argument %zu)", j, i);
+					  }
+				 }
+			} else if (SvOK(arg)) {
+				 count++;
+				 double val = SvNV(arg);
+				 double delta = val - mean;
+				 mean += delta / count;
+				 M2 += delta * (val - mean);
+			} else {
+				 croak("var: undefined value at argument index %zu", i);
+			}
+		}
+		if (count < 2) croak("var needs >= 2 elements");
+		RETVAL = M2 / (count - 1);
 	OUTPUT:
-	  RETVAL
+		RETVAL
 
 SV* t_test(...)
 	CODE:
@@ -4441,7 +4503,7 @@ SV* t_test(...)
 		bool paired = FALSE, var_equal = FALSE;
 		const char*restrict alternative = "two.sided";
 
-		int arg_idx = 0;
+		unsigned short int arg_idx = 0;
 
 		// 1. Shift first positional argument as 'x' if it's an array reference
 		if (arg_idx < items && SvROK(ST(arg_idx)) && SvTYPE(SvRV(ST(arg_idx))) == SVt_PVAV) {
@@ -4585,7 +4647,7 @@ SV* t_test(...)
 		RETVAL = newRV_noinc((SV*)results);
 	}
 	OUTPUT:
-	  RETVAL
+		RETVAL
 
 void p_adjust(SV* p_sv, const char* method = "holm")
 	INIT:
