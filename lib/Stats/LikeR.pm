@@ -17,27 +17,6 @@ our @EXPORT = @EXPORT_OK;
 
 require XSLoader;
 
-# Wrapper to mimic R's structure
-sub chisq_test {
-	my ($data) = @_;
-
-	die 'Input must be an array reference' unless ref($data) eq 'ARRAY';
-
-	# The XS function handles the heavy lifting
-	my $result = _chisq_c($data);
-
-	# Format the output to look like R's htest object
-	return {
-	  'statistic' => { 'X-squared' => $result->{statistic} },
-	  'parameter' => { 'df' => $result->{df} },
-	  'p.value'   => $result->{p_value},
-	  'method'    => $result->{method},
-	  'data.name' => 'Perl ArrayRef',
-	  'observed'  => $data,
-	  'expected'  => $result->{expected}
-	};
-}
-
 sub summary {
 	my ($data, %args);
 	my $current_sub = (split(/::/,(caller(0))[3]))[-1];
@@ -58,23 +37,18 @@ sub summary {
 	  my @list = @_;
 	  $data = \@list;
 	}
-
 	# Normalize nrow -> nrows, default to 10
 	$args{nrows} //= delete($args{nrow}) // 10;
-
 	my $ref_type = ref $data;
 	if (($ref_type ne 'ARRAY') && ($ref_type ne 'HASH')) {
 		die "$current_sub' data must either be a hash or an array, not \"$ref_type\"";
 	}
-	
 	my $single_arr = 0;
 	if (($ref_type eq 'ARRAY') && (ref $data->[0] eq '')) {
 		$single_arr = 1;
 	}
-	
 	my @header = ('# values', 'Min.', '1st Qu.', 'Median', 'Mean', '3rd Qu.', 'Max.');
 	my @out;
-	
 	if ($single_arr == 1) {
 		push @out, '-' x 75;
 		my $header = sprintf('%9s ' x scalar @header, @header);
@@ -1190,7 +1164,6 @@ As described by R: Performs an F test to compare the variances of two samples fr
  
  my @x = (2.9, 3.0, 2.5, 2.6, 3.2);
  my @y = (3.8, 2.7, 4.0, 2.4);
- my @z = (2.8, 3.4, 3.7, 2.2, 2.0);
  
  my $t0 = Time::HiRes::time();
  my $vt = var_test(\@x, \@y);
@@ -1237,6 +1210,8 @@ as of version 0.07, C<write_table> determines comma and tab-separated delimiters
 Speed improvement in C<summary> of hashes of arrays
 
 Addition of C<mode> function
+
+Chi-squared function no longer has Perl wrapper, and all code is in XS, which should result in a minor speed increase with 1 less function call.
 
 =head2 0.07
 

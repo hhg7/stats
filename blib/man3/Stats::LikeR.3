@@ -58,7 +58,7 @@
 .\" ========================================================================
 .\"
 .IX Title "Stats::LikeR 3"
-.TH Stats::LikeR 3 2026-05-25 "perl v5.42.2" "User Contributed Perl Documentation"
+.TH Stats::LikeR 3 2026-05-26 "perl v5.42.2" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -911,7 +911,6 @@ As described by R: Performs an F test to compare the variances of two samples fr
 \& 
 \& my @x = (2.9, 3.0, 2.5, 2.6, 3.2);
 \& my @y = (3.8, 2.7, 4.0, 2.4);
-\& my @z = (2.8, 3.4, 3.7, 2.2, 2.0);
 \& 
 \& my $t0 = Time::HiRes::time();
 \& my $vt = var_test(\e@x, \e@y);
@@ -968,6 +967,8 @@ as of version 0.07, \f(CW\*(C`write_table\*(C'\fR determines comma and tab\-sepa
 Speed improvement in \f(CW\*(C`summary\*(C'\fR of hashes of arrays
 .PP
 Addition of \f(CW\*(C`mode\*(C'\fR function
+.PP
+Chi\-squared function no longer has Perl wrapper, and all code is in XS, which should result in a minor speed increase with 1 less function call.
 .SS 0.07
 .IX Subsection "0.07"
 Addition of \f(CW\*(C`summary\*(C'\fR function.

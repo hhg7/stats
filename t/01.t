@@ -3903,6 +3903,24 @@ if (scalar @{ $test_data } == 4) {
 } else {
 	fail('summary: "nrows" does NOT limit rows of output');
 }
+$test_data = summary([runif(9), runif(9)]);
+if (
+	($test_data->[0] =~ m/^\-+$/)
+	&&
+	($test_data->[1] =~ m/^\h*Index\h*/)
+	&&
+	($test_data->[2] =~ m/^\-+$/)
+	&&
+	($test_data->[3] =~ m/^\h*0\h*9\h+/)
+	&&
+	($test_data->[4] =~ m/^\h*1\h*9\h+/)
+	&&
+	(scalar @{ $test_data } == 5)
+	){
+	pass('summary: takes array reference');
+} else {
+	fail('summary: failed to take array reference');
+}
 #------
 #   mode
 #------

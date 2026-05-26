@@ -1,4 +1,6 @@
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
 /* --- C HELPER SECTION --- */
 #define PERL_NO_GET_CONTEXT
 #include "EXTERN.h"
@@ -10,6 +12,7 @@
 #include <stdlib.h>
 #include <float.h>
 #include <string.h>
+#include <strings.h>
 #include <stdint.h>   /* uint64_t — harmless if perl.h already pulled it in */
 /*
 XS words:
@@ -2310,98 +2313,126 @@ CODE:
 OUTPUT:
 	RETVAL
 
-SV* _chisq_c(data_ref)
-	SV* data_ref;
+SV* chisq_test(data_ref)
+    SV* data_ref;
 CODE:
 {
-	AV*restrict obs_av = (AV*)SvRV(data_ref);
-	int r = av_top_index(obs_av) + 1, c = 0;
-	bool is_2d = 0;
-	SV**restrict first_elem = av_fetch(obs_av, 0, 0);
-	if (first_elem && SvROK(*first_elem) && SvTYPE(SvRV(*first_elem)) == SVt_PVAV) {
-		is_2d = 1;
-		AV*restrict first_row = (AV*)SvRV(*first_elem);
-		c = av_top_index(first_row) + 1;
-	} else {
-		c = r;
-		r = 1;
-	}
-	double stat = 0.0, grand_total = 0.0;
-	int df = 0;
-	int yates = (is_2d && r == 2 && c == 2) ? 1 : 0;
-	AV*restrict expected_av = newAV();
-	if (is_2d) {
-		double *restrict row_sum = (double*)safemalloc(r * sizeof(double));
-		double *restrict col_sum = (double*)safemalloc(c * sizeof(double));
-		for(unsigned int i=0; i<r; i++) row_sum[i] = 0.0;
-		for(unsigned int j=0; j<c; j++) col_sum[j] = 0.0;
-		for (unsigned int i = 0; i < r; i++) {
-			SV**restrict row_sv = av_fetch(obs_av, i, 0);
-			AV*restrict row = (AV*)SvRV(*row_sv);
-			for (unsigned int j = 0; j < c; j++) {
-				 SV**restrict val_sv = av_fetch(row, j, 0);
-				 double val = SvNV(*val_sv);
-				 row_sum[i] += val;
-				 col_sum[j] += val;
-				 grand_total += val;
-			}
-		}
-		for (unsigned int i = 0; i < r; i++) {
-			AV*restrict exp_row = newAV();
-			SV**restrict row_sv = av_fetch(obs_av, i, 0);
-			AV*restrict row = (AV*)SvRV(*row_sv);
-			for (unsigned int j = 0; j < c; j++) {
-				double E = (row_sum[i] * col_sum[j]) / grand_total;
-				SV**restrict val_sv = av_fetch(row, j, 0);
-				double O = SvNV(*val_sv);
-				av_push(exp_row, newSVnv(E));
-				if (yates) {
-				  // Exact R logic: min(0.5, abs(O - E))
-				  double abs_diff = fabs(O - E);
-				  double y_corr = (abs_diff > 0.5) ? 0.5 : abs_diff;
-				  double diff = abs_diff - y_corr;
-				  stat += (diff * diff) / E;
-				} else {
-				  stat += ((O - E) * (O - E)) / E;
-				}
-			}
-			av_push(expected_av, newRV_noinc((SV*)exp_row));
-		}
-		safefree(row_sum); safefree(col_sum);
-		df = (r - 1) * (c - 1);
-	} else {
-	  for (unsigned int j = 0; j < c; j++) {
-		   SV**restrict val_sv = av_fetch(obs_av, j, 0);
-		   grand_total += SvNV(*val_sv);
-	  }
-	  double E = grand_total / (double)c;
-	  for (unsigned int j = 0; j < c; j++) {
-		   SV**restrict val_sv = av_fetch(obs_av, j, 0);
-		   double O = SvNV(*val_sv);
-		   av_push(expected_av, newSVnv(E));
-		   stat += ((O - E) * (O - E)) / E;
-	  }
-	  df = c - 1;
-	}
-	double p_val = get_p_value(stat, df);
-	HV*restrict results = newHV();
-	hv_store(results, "statistic", 9, newSVnv(stat), 0);
-	hv_store(results, "df", 2, newSViv(df), 0);
-	hv_store(results, "p_value", 7, newSVnv(p_val), 0);
-	hv_store(results, "expected", 8, newRV_noinc((SV*)expected_av), 0);
-	if (is_2d) {
-		if (yates) {
-			hv_store(results, "method", 6, newSVpv("Pearson's Chi-squared test with Yates' continuity correction", 0), 0);
-		} else {
-			hv_store(results, "method", 6, newSVpv("Pearson's Chi-squared test", 0), 0);
-		}
-	} else {
-	  hv_store(results, "method", 6, newSVpv("Chi-squared test for given probabilities", 0), 0);
-	}
-	RETVAL = newRV_noinc((SV*)results);
+    // 1. Input Validation (mimics: die 'Input must be an array reference')
+    if (!SvROK(data_ref) || SvTYPE(SvRV(data_ref)) != SVt_PVAV) {
+        croak("Input must be an array reference");
+    }
+
+    AV*restrict obs_av = (AV*)SvRV(data_ref);
+    int r = av_top_index(obs_av) + 1, c = 0;
+    bool is_2d = 0;
+    SV**restrict first_elem = av_fetch(obs_av, 0, 0);
+    if (first_elem && SvROK(*first_elem) && SvTYPE(SvRV(*first_elem)) == SVt_PVAV) {
+        is_2d = 1;
+        AV*restrict first_row = (AV*)SvRV(*first_elem);
+        c = av_top_index(first_row) + 1;
+    } else {
+        c = r;
+        r = 1;
+    }
+    double stat = 0.0, grand_total = 0.0;
+    int df = 0;
+    bool yates = (is_2d && r == 2 && c == 2) ? 1 : 0;
+    AV*restrict expected_av = newAV();
+    if (is_2d) {
+        double *restrict row_sum = (double*)safemalloc(r * sizeof(double));
+        double *restrict col_sum = (double*)safemalloc(c * sizeof(double));
+        for(unsigned int i=0; i<r; i++) row_sum[i] = 0.0;
+        for(unsigned int j=0; j<c; j++) col_sum[j] = 0.0;
+        for (unsigned int i = 0; i < r; i++) {
+            SV**restrict row_sv = av_fetch(obs_av, i, 0);
+            AV*restrict row = (AV*)SvRV(*row_sv);
+            for (unsigned int j = 0; j < c; j++) {
+                 SV**restrict val_sv = av_fetch(row, j, 0);
+                 double val = SvNV(*val_sv);
+                 row_sum[i] += val;
+                 col_sum[j] += val;
+                 grand_total += val;
+            }
+        }
+        for (unsigned int i = 0; i < r; i++) {
+            AV*restrict exp_row = newAV();
+            SV**restrict row_sv = av_fetch(obs_av, i, 0);
+            AV*restrict row = (AV*)SvRV(*row_sv);
+            for (unsigned int j = 0; j < c; j++) {
+                double E = (row_sum[i] * col_sum[j]) / grand_total;
+                SV**restrict val_sv = av_fetch(row, j, 0);
+                double O = SvNV(*val_sv);
+                av_push(exp_row, newSVnv(E));
+                if (yates) {
+                  // Exact R logic: min(0.5, abs(O - E))
+                  double abs_diff = fabs(O - E);
+                  double y_corr = (abs_diff > 0.5) ? 0.5 : abs_diff;
+                  double diff = abs_diff - y_corr;
+                  stat += (diff * diff) / E;
+                } else {
+                  stat += ((O - E) * (O - E)) / E;
+                }
+            }
+            av_push(expected_av, newRV_noinc((SV*)exp_row));
+        }
+        safefree(row_sum); safefree(col_sum);
+        df = (r - 1) * (c - 1);
+    } else {
+      for (unsigned int j = 0; j < c; j++) {
+           SV**restrict val_sv = av_fetch(obs_av, j, 0);
+           grand_total += SvNV(*val_sv);
+      }
+      double E = grand_total / (double)c;
+      for (unsigned int j = 0; j < c; j++) {
+           SV**restrict val_sv = av_fetch(obs_av, j, 0);
+           double O = SvNV(*val_sv);
+           av_push(expected_av, newSVnv(E));
+           stat += ((O - E) * (O - E)) / E;
+      }
+      df = c - 1;
+    }
+    double p_val = get_p_value(stat, df);
+
+    // 2. Build the top-level results Hash (mimicking R's htest structure)
+    HV*restrict results = newHV();
+
+    // 'statistic' => { 'X-squared' => stat }
+    HV*restrict statistic_hv = newHV();
+    hv_store(statistic_hv, "X-squared", 9, newSVnv(stat), 0);
+    hv_store(results, "statistic", 9, newRV_noinc((SV*)statistic_hv), 0);
+
+    // 'parameter' => { 'df' => df }
+    HV*restrict parameter_hv = newHV();
+    hv_store(parameter_hv, "df", 2, newSViv(df), 0);
+    hv_store(results, "parameter", 9, newRV_noinc((SV*)parameter_hv), 0);
+
+    // 'p.value' => p_val
+    hv_store(results, "p.value", 7, newSVnv(p_val), 0);
+
+    // 'expected' => expected_av
+    hv_store(results, "expected", 8, newRV_noinc((SV*)expected_av), 0);
+
+    // 'observed' => data_ref (Increment ref count since hv_store consumes ownership)
+    hv_store(results, "observed", 8, SvREFCNT_inc(data_ref), 0);
+
+    // 'data.name' => 'Perl ArrayRef'
+    hv_store(results, "data.name", 9, newSVpv("Perl ArrayRef", 0), 0);
+
+    // 'method' => String
+    if (is_2d) {
+        if (yates) {
+            hv_store(results, "method", 6, newSVpv("Pearson's Chi-squared test with Yates' continuity correction", 0), 0);
+        } else {
+            hv_store(results, "method", 6, newSVpv("Pearson's Chi-squared test", 0), 0);
+        }
+    } else {
+        hv_store(results, "method", 6, newSVpv("Chi-squared test for given probabilities", 0), 0);
+    }
+
+    RETVAL = newRV_noinc((SV*)results);
 }
 OUTPUT:
-	RETVAL
+    RETVAL
 
 PROTOTYPES: ENABLE
 

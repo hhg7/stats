@@ -720,7 +720,6 @@ As described by R: Performs an F test to compare the variances of two samples fr
 
     my @x = (2.9, 3.0, 2.5, 2.6, 3.2);
     my @y = (3.8, 2.7, 4.0, 2.4);
-    my @z = (2.8, 3.4, 3.7, 2.2, 2.0);
 
     my $t0 = Time::HiRes::time();
     my $vt = var_test(\@x, \@y);
@@ -767,6 +766,10 @@ as of version 0.07, `write_table` determines comma and tab-separated delimiters 
 Speed improvement in `summary` of hashes of arrays
 
 Addition of `mode` function
+
+Chi-squared function no longer has Perl wrapper, and all code is in XS, which should result in a minor speed increase with 1 less function call.
+
+Compiler changes for GNU source and inclusion of `strings.h`, to ensure more CPAN testing works better.
 
 ## 0.07
 
