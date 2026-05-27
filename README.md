@@ -9,6 +9,12 @@ There **are** other modules on CPAN that can do **PARTS** of this, but this work
 
 # Functions/Subroutines
 
+## add_data
+
+Add data to a hash.
+
+
+
 ## aoh2hoh
 
 Take an array of hashes and turn it into a hash of hash
@@ -356,6 +362,38 @@ Also, a single array can be tested against a normal distribution:
     $ks = ks_test($ksx, 'pnorm');
 
 The p-value precision is about 1e-8, which I want to improve, but am not sure how.
+
+## ljoin
+
+Consider a hash: `$h{$row}{$col}`, and another hash `$i{$row}{$col}`.
+`ljoin` will add information for each `$row`, where it exists in both `%h` and `%i`
+
+For example,
+
+    {
+    "Jack Smith"   {
+        age   30
+    }
+    }
+
+and a second hash,
+    {
+        "Jack Smith"   {
+            dept   "Engineering"
+        },
+        "Jane Doe"     {
+            age   25
+        }
+    }
+
+in this case, running `ljoin(\%h, \%i)` will modify \%h to result:
+
+    {
+    "Jack Smith"   {
+        age    30,
+        dept   "Engineering"
+    }
+    }
 
 ## lm
 
@@ -837,11 +875,13 @@ as of version 0.07, `write_table` determines comma and tab-separated delimiters 
 
 Speed improvement in `summary` of hashes of arrays
 
-Addition of `dnorm`, and `mode` functions
+Addition of `add_data`, `dnorm`, `ljoin`, and `mode` functions
 
 Chi-squared function no longer has Perl wrapper, and all code is in XS, which should result in a minor speed increase with 1 less function call.
 
 Compiler changes for GNU source and inclusion of `strings.h`, to ensure more CPAN testing works better.
+
+`read_table` now returns hash-of-hash in {row}{column}
 
 ## 0.07
 

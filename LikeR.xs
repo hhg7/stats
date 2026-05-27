@@ -7402,4 +7402,160 @@ CODE:
 	}
 	}
 OUTPUT:
-RETVAL
+	RETVAL
+
+#define PERL_NO_GET_CONTEXT
+#include "EXTERN.h"
+#include "perl.h"
+#include "XSUB.h"
+#include "ppport.h"
+
+MODULE = Stats::LikeR        PACKAGE = Stats::LikeR
+
+void
+ljoin(h_ref, i_ref)
+    SV *h_ref;
+    SV *i_ref;
+PREINIT:
+    HV *restrict h_hv, *restrict i_hv;
+    HE *restrict h_entry;
+CODE:
+	/* 1. Validate inputs are hash references */
+	if (!SvROK(h_ref) || SvTYPE(SvRV(h_ref)) != SVt_PVHV) {
+	  croak("First argument to ljoin must be a hash reference");
+	}
+	if (!SvROK(i_ref) || SvTYPE(SvRV(i_ref)) != SVt_PVHV) {
+	  croak("Second argument to ljoin must be a hash reference");
+	}
+
+	h_hv = (HV *)SvRV(h_ref);
+	i_hv = (HV *)SvRV(i_ref);
+	/* 2. Iterate through the primary hash ($h) */
+	hv_iterinit(h_hv);
+	while ((h_entry = hv_iternext(h_hv))) {
+	  SV *restrict row_key_sv = hv_iterkeysv(h_entry);
+	  SV *restrict h_row_sv   = hv_iterval(h_hv, h_entry);
+	  /* 3. Check if this row key exists in the secondary hash ($i) */
+	  HE *i_fetch_he = hv_fetch_ent(i_hv, row_key_sv, 0, 0);
+	  if (i_fetch_he) {
+		   SV *restrict i_row_sv = HeVAL(i_fetch_he);
+		   /* 4. Ensure $h->{row} is a Hash and $i->{row} is a valid reference */
+		   if (SvROK(h_row_sv) && SvTYPE(SvRV(h_row_sv)) == SVt_PVHV && SvROK(i_row_sv)) {
+		       HV *restrict h_row_hv = (HV *)SvRV(h_row_sv);
+		       /* Case A: $i->{row} is a Hash Reference */
+		       if (SvTYPE(SvRV(i_row_sv)) == SVt_PVHV) {
+		           HV *restrict i_row_hv = (HV *)SvRV(i_row_sv);
+		           HE *restrict i_entry;
+		           hv_iterinit(i_row_hv);
+		           while ((i_entry = hv_iternext(i_row_hv))) {
+		               SV *col_key_sv = hv_iterkeysv(i_entry);
+		               SV *col_val    = hv_iterval(i_row_hv, i_entry);
+		               
+		               hv_store_ent(h_row_hv, col_key_sv, SvREFCNT_inc(col_val), 0);
+		           }
+		       } else if (SvTYPE(SvRV(i_row_sv)) == SVt_PVAV) {
+		       /* Case B: $i->{row} is an Array Reference */
+		           AV *i_row_av = (AV *)SvRV(i_row_sv);
+		           
+		           /* av_len returns the top index (length - 1) */
+		           SSize_t top_idx = av_len(i_row_av); 
+		           SSize_t idx;
+
+		           /* Iterate through the array in chunks of 2 (key-value pairs) */
+		           for (idx = 0; idx < top_idx; idx += 2) {
+		               SV **key_svp = av_fetch(i_row_av, idx, 0);
+		               SV **val_svp = av_fetch(i_row_av, idx + 1, 0);
+
+		               /* Ensure both the key and value exist in the array */
+		               if (key_svp && val_svp) {
+		                   hv_store_ent(h_row_hv, *key_svp, SvREFCNT_inc(*val_svp), 0);
+		               }
+		           }
+		       }
+		   }
+	  }
+	}
+
+void
+add_data(h_ref, i_ref)
+    SV *h_ref;
+    SV *i_ref;
+PREINIT:
+    HV *h_hv, *i_hv;
+    HE *i_entry;
+CODE:
+	/* 1. Validate inputs */
+	if (!SvROK(h_ref) || SvTYPE(SvRV(h_ref)) != SVt_PVHV) {
+	  croak("First argument to add_data must be a hash reference");
+	}
+	if (!SvROK(i_ref) || SvTYPE(SvRV(i_ref)) != SVt_PVHV) {
+	  croak("Second argument to add_data must be a hash reference");
+	}
+
+	h_hv = (HV *)SvRV(h_ref);
+	i_hv = (HV *)SvRV(i_ref);
+
+	/* 2. Iterate through the SECONDARY hash ($i) */
+	hv_iterinit(i_hv);
+	while ((i_entry = hv_iternext(i_hv))) {
+	  SV *row_key_sv = hv_iterkeysv(i_entry);
+	  SV *i_row_sv   = hv_iterval(i_hv, i_entry);
+
+	  /* Only proceed if the secondary row contains a valid reference */
+	  if (SvROK(i_row_sv)) {
+		   HE *h_fetch_he = hv_fetch_ent(h_hv, row_key_sv, 0, 0);
+		   SV *h_row_sv   = NULL;
+		   HV *h_row_hv   = NULL;
+
+		   /* 3. Check if the row exists in $h */
+		   if (h_fetch_he) {
+		       h_row_sv = HeVAL(h_fetch_he);
+		       /* Ensure existing row is a Hash Reference */
+		       if (SvROK(h_row_sv) && SvTYPE(SvRV(h_row_sv)) == SVt_PVHV) {
+		           h_row_hv = (HV *)SvRV(h_row_sv);
+		       }
+		   } else {
+		       /* 4. Row DOES NOT exist in $h: Create it */
+		       h_row_hv = newHV();
+		       
+		       /* Create a reference to the new hash. newRV_noinc transfers 
+		          ownership of the HV's initial reference count to the SV. */
+		       h_row_sv = newRV_noinc((SV *)h_row_hv);
+		       
+		       /* Store in $h. hv_store_ent takes ownership of the SV's ref count. */
+		       hv_store_ent(h_hv, row_key_sv, h_row_sv, 0);
+		   }
+
+		   /* 5. Merge data if we successfully resolved a target hash row */
+		   if (h_row_hv) {
+		       
+		       /* Case A: $i->{row} is a Hash Reference */
+		       if (SvTYPE(SvRV(i_row_sv)) == SVt_PVHV) {
+		           HV *i_inner_hv = (HV *)SvRV(i_row_sv);
+		           HE *i_inner_entry;
+
+		           hv_iterinit(i_inner_hv);
+		           while ((i_inner_entry = hv_iternext(i_inner_hv))) {
+		               SV *col_key_sv = hv_iterkeysv(i_inner_entry);
+		               SV *col_val    = hv_iterval(i_inner_hv, i_inner_entry);
+		               hv_store_ent(h_row_hv, col_key_sv, SvREFCNT_inc(col_val), 0);
+		           }
+		       } else if (SvTYPE(SvRV(i_row_sv)) == SVt_PVAV
+		       /* Case B: $i->{row} is an Array Reference */
+		       ) {
+		           AV *i_inner_av = (AV *)SvRV(i_row_sv);
+		           SSize_t top_idx = av_len(i_inner_av);
+		           SSize_t idx;
+
+		           for (idx = 0; idx < top_idx; idx += 2) {
+		               SV **key_svp = av_fetch(i_inner_av, idx, 0);
+		               SV **val_svp = av_fetch(i_inner_av, idx + 1, 0);
+
+		               if (key_svp && val_svp) {
+		                   hv_store_ent(h_row_hv, *key_svp, SvREFCNT_inc(*val_svp), 0);
+		               }
+		           }
+		       }
+		   }
+	  }
+	}
