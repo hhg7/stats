@@ -1382,11 +1382,9 @@ static double qf_bisection(double p, double df1, double df2) {
  * =========================================================================
  */
 
-/* -----------------------------------------------------------------------
- * C HELPERS  (place above "--- XS SECTION ---")
- * ----------------------------------------------------------------------- */
+/* C HELPERS  (place above "--- XS SECTION ---") */
 
-/* ── OneWayResult struct ─────────────────────────────────────────────── */
+/* ── OneWayResult struct */
 typedef struct {
 	double  statistic;
 	double  num_df;
@@ -1689,7 +1687,67 @@ build_groups_from_formula(pTHX_
 	return 1;
 }
 #undef OWT_MAX_GROUPS
+// --- Math Macros ---
+#ifndef M_LN_SQRT_2PI
+#define M_LN_SQRT_2PI 0.91893853320467274178
+#endif
+#ifndef M_LN2
+#define M_LN2 0.69314718055994530941
+#endif
+#ifndef M_1_SQRT_2PI
+#define M_1_SQRT_2PI 0.39894228040143267794
+#endif
 
+/* ── c_dnorm: Normal distribution PDF ──────────────────────────────────────
+ *
+ * Mathematically identical to R's dnorm4.
+ * Includes Morten Welinder's precision improvements for extreme tails.
+ * ----------------------------------------------------------------------- */
+static double c_dnorm(double x, double mu, double sigma, int give_log) {
+	// Propagate NaNs
+	if (isnan(x) || isnan(mu) || isnan(sigma)) return x + mu + sigma; 
+
+	if (sigma < 0.0) {
+	  warn("dnorm: standard deviation must be non-negative");
+	  return NAN;
+	}
+	if (isinf(sigma)) return 0.0;
+	if ((isnan(x) || isinf(x)) && mu == x) return NAN; // x-mu is NaN
+
+	// Dirac delta behavior for zero variance
+	if (sigma == 0.0) return (x == mu) ? INFINITY : 0.0;
+
+	// Standardize x
+	x = (x - mu) / sigma;
+	if (isnan(x) || isinf(x)) return 0.0;
+
+	x = fabs(x);
+
+	// Catch massive limits early to prevent math overflow
+	if (x >= 2.0 * sqrt(DBL_MAX)) return 0.0;
+
+	if (give_log) {
+	  return -(M_LN_SQRT_2PI + 0.5 * x * x + log(sigma));
+	}
+
+	/* Naive formula for standard bodies */
+	if (x < 5.0) {
+	  return M_1_SQRT_2PI * exp(-0.5 * x * x) / sigma;
+	}
+
+	// Underflow boundary check using IEEE float characteristics
+	if (x > sqrt(-2.0 * M_LN2 * (DBL_MIN_EXP + 1.0 - DBL_MANT_DIG))) {
+	  return 0.0;
+	}
+
+	/* Splitting x to dodge floating point inaccuracies in x^2 for large x.
+	* x = x1 + x2, where |x2| <= 2^-16
+	* trunc() safely substitutes R_forceint() */
+	double x1 = ldexp(trunc(ldexp(x, 16)), -16);
+	double x2 = x - x1;
+
+	return (M_1_SQRT_2PI / sigma) * (exp(-0.5 * x1 * x1) * exp((-0.5 * x2 - x1) * x2));
+}
 // --- XS SECTION ---
 MODULE = Stats::LikeR  PACKAGE = Stats::LikeR
 
@@ -3448,19 +3506,19 @@ CODE:
 	for (i = 0; i < valid_n; i++) sum_y += Y[i];
 	double mean_y = sum_y / valid_n;
 	for (i = 0; i < valid_n; i++) {
-	  if (is_binomial) {
-		   if (Y[i] < 0.0 || Y[i] > 1.0) croak("glm: binomial family requires response between 0 and 1");
-		   mu[i] = (Y[i] + 0.5) / 2.0; 
-		   eta[i] = log(mu[i] / (1.0 - mu[i]));
-		   double dev = 0.0;
-		   if (Y[i] == 0.0)      dev = -2.0 * log(1.0 - mu[i]);
-		   else if (Y[i] == 1.0) dev = -2.0 * log(mu[i]);
-		   else dev = 2.0 * (Y[i] * log(Y[i] / mu[i]) + (1.0 - Y[i]) * log((1.0 - Y[i]) / (1.0 - mu[i])));
-		   deviance_old += dev;
-	  } else { 
-		   mu[i] = mean_y; // R gaussian init
-		   eta[i] = mu[i]; 
-	  }
+		if (is_binomial) {
+			if (Y[i] < 0.0 || Y[i] > 1.0) croak("glm: binomial family requires response between 0 and 1");
+			mu[i] = (Y[i] + 0.5) / 2.0; 
+			eta[i] = log(mu[i] / (1.0 - mu[i]));
+			double dev = 0.0;
+			if (Y[i] == 0.0)      dev = -2.0 * log(1.0 - mu[i]);
+			else if (Y[i] == 1.0) dev = -2.0 * log(mu[i]);
+			else dev = 2.0 * (Y[i] * log(Y[i] / mu[i]) + (1.0 - Y[i]) * log((1.0 - Y[i]) / (1.0 - mu[i])));
+			deviance_old += dev;
+		} else { 
+			mu[i] = mean_y; // R gaussian init
+			eta[i] = mu[i]; 
+		}
 	}
 	// IRLS Loop
 	for (iter = 1; iter <= max_iter; iter++) {
@@ -7298,3 +7356,50 @@ CODE:
 	RETVAL = ret;
 OUTPUT:
     RETVAL
+
+SV* dnorm(...)
+CODE:
+{
+	if (items < 1) {
+	  croak("Usage: dnorm(x), dnorm(x, mean => 0, sd => 1, log => 0)");
+	}
+	SV*restrict x_sv = ST(0);
+	double mean = 0.0, sd = 1.0; /*defaults*/
+	bool give_log = 0;
+	// --- Parse remaining named arguments from the flat stack ---
+	if ((items - 1) % 2 != 0) {
+	  croak("dnorm: Expected an even number of key-value named arguments after 'x'");
+	}
+	for (size_t i = 1; i < items; i += 2) {
+	  const char* restrict key = SvPV_nolen(ST(i));
+	  SV* restrict val = ST(i + 1);
+	  if      (strEQ(key, "mean")) mean     = SvNV(val);
+	  else if (strEQ(key, "sd"))   sd       = SvNV(val);
+	  else if (strEQ(key, "log"))  give_log = SvTRUE(val) ? 1 : 0;
+	  else croak("dnorm: unknown argument '%s'", key);
+	}
+	// --- Branch based on scalar vs. arrayref for 'x' ---
+	if (SvROK(x_sv) && SvTYPE(SvRV(x_sv)) == SVt_PVAV) {
+	  // x is an array reference
+	  AV *restrict x_av = (AV*)SvRV(x_sv);
+	  IV n = av_len(x_av) + 1;
+	  AV *restrict result_av = newAV();
+	  if (n > 0) {
+		   av_extend(result_av, n - 1);
+		   for (IV i = 0; i < n; i++) {
+		       SV **restrict elem = av_fetch(x_av, i, 0);
+		       double x_val = (elem && *elem) ? SvNV(*elem) : NAN;
+		       double res = c_dnorm(x_val, mean, sd, give_log);
+		       av_store(result_av, i, newSVnv(res));
+		   }
+	  }
+	  RETVAL = newRV_noinc((SV*)result_av);
+	} else {
+	  // x is a single numeric scalar
+	  double x_val = SvNV(x_sv);
+	  double res = c_dnorm(x_val, mean, sd, give_log);
+	  RETVAL = newSVnv(res);
+	}
+	}
+OUTPUT:
+RETVAL

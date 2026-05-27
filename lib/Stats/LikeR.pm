@@ -12,7 +12,7 @@ use autodie ':default';
 use Exporter 'import';
 use Scalar::Util 'looks_like_number';
 XSLoader::load('Stats::LikeR', $VERSION);
-our @EXPORT_OK = qw(aoh2hoh aov chisq_test cor cor_test cov fisher_test glm hist kruskal_test ks_test lm matrix max mean median min mode oneway_test p_adjust power_t_test quantile rbinom read_table rnorm runif sample scale sd seq shapiro_test sum summary t_test var var_test wilcox_test write_table);
+our @EXPORT_OK = qw(aoh2hoh aov chisq_test cor cor_test cov dnorm fisher_test glm hist kruskal_test ks_test lm matrix max mean median min mode oneway_test p_adjust power_t_test quantile rbinom read_table rnorm runif sample scale sd seq shapiro_test sum summary t_test var var_test wilcox_test write_table);
 our @EXPORT = @EXPORT_OK;
 
 require XSLoader;

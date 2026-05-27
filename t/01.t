@@ -4049,15 +4049,49 @@ foreach my $hashkey (0, 1) {
 	}
 }
 if (
-	($test_data->{0}{a} eq 'A') &&
-	($test_data->{0}{b} eq 'B') &&
-	($test_data->{0}{r} eq '1st') &&
-	($test_data->{1}{a} eq 'C') &&
-	($test_data->{1}{b} eq 'D') &&
-	($test_data->{1}{r} eq '2nd')
+	($test_data->{0}{a} eq 'A') &&	($test_data->{0}{b} eq 'B') &&
+	($test_data->{0}{r} eq '1st') &&	($test_data->{1}{a} eq 'C') &&
+	($test_data->{1}{b} eq 'D') &&	($test_data->{1}{r} eq '2nd')
 ) {
 	pass('aoh2hoh: values are all correct without pivot key defined');
 } else {
 	fail('aoh2hoh: values are NOT all correct without pivot key defined');
 }
+#-----------
+# dnorm
+#-----------
+@ans = (0.000001486719515, 0.000133830225765, 0.004431848411938, 0.053990966513188,
+0.241970724519143, 0.398942280401433, 0.241970724519143, 0.053990966513188, 0.004431848411938,
+0.000133830225765, 0.000001486719515);
+$idx = -5;
+foreach my $i (0..$#ans) {
+	is_approx(dnorm($idx), $ans[$i], "dnorm: dnorm($idx)", 1e-13);
+	$idx++;
+}
+%h = (
+-3 => 0.004431848411938,   -2.5 => 0.017528300493569, 
+-1.5 => 0.129517595665892, -0.5 => 0.352065326764300, 
+0.5 => 0.352065326764300,  1.5 => 0.129517595665892, 2.5 => 0.017528300493569);
+foreach my $v (sort {$a <=> $b} keys %h) {
+	is_approx(dnorm($v), $h{$v}, "dnorm: dnorm($v)", 1e-13);
+}
+$data = dnorm([1,2,3]);
+@ans = (0.241970725, 0.053990967, 0.004431848);
+if (scalar @{ $data } == 3) {
+	pass('dnorm: passing a vector/array reference has the correct # of elements');
+} else {
+	my $nelem = scalar @{ $data };
+	fail("dnorm: has $nelem elements, but should have 3");
+}
+foreach my $i (0..$#ans) {
+	is_approx($data->[$i], $ans[$i], "dnorm, passed array reference index $i", 1e-7);
+}
+$data = dnorm(0, sd => 2);
+is_approx($data, 0.199471140200716, 'dnorm: with sd = 2', 1e-13);
+$data = dnorm(0, sd => 2, mean => 0);
+is_approx($data, 0.199471140200716, 'dnorm: with sd = 2 and mean passed as key', 1e-13);
+$data = dnorm(0, sd => 2, mean => 0, 'log' => 0);
+is_approx($data, 0.199471140200716, 'dnorm: with sd = 2 and mean and log passed as key', 1e-13);
+$data = dnorm(0, sd => 2, mean => 0, 'log' => 1);
+is_approx($data, -1.612085713764618, 'dnorm: with log passed', 1e-13);
 done_testing();

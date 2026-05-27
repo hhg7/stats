@@ -212,6 +212,22 @@ or
 
     cov($array1, $array2, 'kendall')
 
+## dnorm
+
+gives the density of the normal distribution, with the specified mean and standard deviation.
+
+In other words, the predicted height of the value `x`, given a mean, standard deviation, and whether or not to use a log value.
+
+returns a single scalar/number if a single value is given, otherwise returns an array reference.
+
+Usage:
+
+    dnorm(4) # assumes a mean of 0 and standard deviation of 1
+
+but default mean, standard deviation, and log can be passed as parameters:
+
+    $x = dnorm(0, mean => 0, sd => 2, 'log' => 0);
+
 ## fisher_test
 
 ### array reference entry
