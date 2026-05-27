@@ -9,6 +9,62 @@ There **are** other modules on CPAN that can do **PARTS** of this, but this work
 
 # Functions/Subroutines
 
+## aoh2hoh
+
+Take an array of hashes and turn it into a hash of hash
+
+### with pivot key/row name
+
+    my @aoh = (
+    {
+    	a => 'A',
+    	b => 'B',
+    	r => '1st'
+    },
+    {
+    	a => 'C',
+    	b => 'D',
+    	r => '2nd'
+    }
+    );
+    my $t0 = Time::HiRes::time();
+    my $hoh = aoh2hoh( \@aoh,  'r' ); # second item is pivot key or row name
+    my $t1 = Time::HiRes::time();
+
+    p $hoh;
+    printf("aoh2hoh in %g seconds\n", $t1 - $t0);
+
+
+where the resulting hash-of-hash looks like:
+
+        {
+        1st   {
+            a   "A",
+            b   "B"
+        },
+        2nd   {
+            a   "C",
+            b   "D"
+        }
+    }
+
+### no pivot key/row name
+
+with no pivot key, each array index becomes a hash key, which is less useful, but necessary for completeness.  The same `@aoh` above becomes:
+
+    {
+        0   {
+            a   "A",
+            b   "B",
+            r   "1st" (dualvar: 1)
+        },
+        1   {
+            a   "C",
+            b   "D",
+            r   "2nd" (dualvar: 2)
+        }
+    }
+
 ## aov
 
 Warning: assumes normal distribution

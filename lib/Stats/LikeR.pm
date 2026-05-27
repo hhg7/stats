@@ -12,7 +12,7 @@ use autodie ':default';
 use Exporter 'import';
 use Scalar::Util 'looks_like_number';
 XSLoader::load('Stats::LikeR', $VERSION);
-our @EXPORT_OK = qw(aov chisq_test cor cor_test cov fisher_test glm hist kruskal_test ks_test lm matrix max mean median min mode oneway_test p_adjust power_t_test quantile rbinom read_table rnorm runif sample scale sd seq shapiro_test sum summary t_test var var_test wilcox_test write_table);
+our @EXPORT_OK = qw(aoh2hoh aov chisq_test cor cor_test cov fisher_test glm hist kruskal_test ks_test lm matrix max mean median min mode oneway_test p_adjust power_t_test quantile rbinom read_table rnorm runif sample scale sd seq shapiro_test sum summary t_test var var_test wilcox_test write_table);
 our @EXPORT = @EXPORT_OK;
 
 require XSLoader;
@@ -453,6 +453,61 @@ This is meant to call subroutines directly through eXternal Subroutines (XS) for
 There B<are> other modules on CPAN that can do B<PARTS> of this, but this works the way that I B<want> it to.
 
 =head1 Functions/Subroutines
+
+=head2 aoh2hoh
+
+Take an array of hashes and turn it into a hash of hash
+
+=head3 with pivot key/row name
+
+ my @aoh = (
+ {
+     a => 'A',
+     b => 'B',
+     r => '1st'
+ },
+ {
+     a => 'C',
+     b => 'D',
+     r => '2nd'
+ }
+ );
+ my $t0 = Time::HiRes::time();
+ my $hoh = aoh2hoh( \@aoh,  'r' ); # second item is pivot key or row name
+ my $t1 = Time::HiRes::time();
+ 
+ p $hoh;
+ printf("aoh2hoh in %g seconds\n", $t1 - $t0);
+
+where the resulting hash-of-hash looks like:
+
+     {
+     1st   {
+         a   "A",
+         b   "B"
+     },
+     2nd   {
+         a   "C",
+         b   "D"
+     }
+ }
+
+=head3 no pivot key/row name
+
+with no pivot key, each array index becomes a hash key, which is less useful, but necessary for completeness.  The same C<@aoh> above becomes:
+
+ {
+     0   {
+         a   "A",
+         b   "B",
+         r   "1st" (dualvar: 1)
+     },
+     1   {
+         a   "C",
+         b   "D",
+         r   "2nd" (dualvar: 2)
+     }
+ }
 
 =head2 aov
 
@@ -1212,6 +1267,8 @@ Speed improvement in C<summary> of hashes of arrays
 Addition of C<mode> function
 
 Chi-squared function no longer has Perl wrapper, and all code is in XS, which should result in a minor speed increase with 1 less function call.
+
+Compiler changes for GNU source and inclusion of C<strings.h>, to ensure more CPAN testing works better.
 
 =head2 0.07
 

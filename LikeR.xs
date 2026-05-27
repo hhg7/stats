@@ -297,12 +297,12 @@ static double exact_p_value(size_t a, size_t b, size_t c, size_t d, const char* 
 }
 /* -----------------------------------------------------------------------
  * Helpers for lm Linear Regression: OLS Matrix Math & Formula Parsing
- * ----------------------------------------------------------------------- */
+ * -----------------------------------------------------------------------
 
-/* Sweep operator for symmetric positive-definite matrices (e.g., XtX).
- * This gracefully handles collinearity by bypassing aliased columns.
- * Utilizes a relative tolerance check to prevent dropping micro-variance features.
- */
+ Sweep operator for symmetric positive-definite matrices (e.g., XtX).
+ This gracefully handles collinearity by bypassing aliased columns.
+ Utilizes a relative tolerance check to prevent dropping micro-variance features.
+*/
 static int sweep_matrix_ols(double *restrict A, size_t n, bool *restrict aliased) {
 	int rank = 0;
 	double *restrict orig_diag = (double*)safemalloc(n * sizeof(double));
@@ -1693,6 +1693,109 @@ build_groups_from_formula(pTHX_
 // --- XS SECTION ---
 MODULE = Stats::LikeR  PACKAGE = Stats::LikeR
 
+SV *
+aoh2hoh(aoh_ref, pivot_key_sv = NULL)
+    SV *aoh_ref
+    SV *pivot_key_sv
+PREINIT:
+    AV *restrict aoh;
+    HV *restrict hoh;
+    SSize_t top_index; /* Kept as signed SSize_t to safely handle empty arrays (-1) */
+    SV **restrict elem_ptr;
+    char *restrict pivot_key = NULL;
+    STRLEN pivot_key_len = 0;
+CODE:
+	/* 1. Validate input array reference */
+	if (!SvROK(aoh_ref) || SvTYPE(SvRV(aoh_ref)) != SVt_PVAV) {
+	croak("Argument to aoh2hoh must be an array reference");
+	}
+
+	/* 2. Check if a pivot key was provided */
+	if (pivot_key_sv && SvOK(pivot_key_sv)) {
+	pivot_key = SvPV(pivot_key_sv, pivot_key_len);
+	}
+
+	aoh = (AV *)SvRV(aoh_ref);
+	hoh = newHV();
+	top_index = av_top_index(aoh);
+
+	/* 3. Iterate through the array */
+	for (SSize_t i = 0; i <= top_index; i++) {
+	  elem_ptr = av_fetch(aoh, i, 0);
+
+	  if (elem_ptr && *elem_ptr) {
+		   SV *restrict elem = *elem_ptr;
+		   char *restrict final_key = NULL;
+		   STRLEN final_key_len = 0;
+		   bool allocated_key = 0;
+		   HV *restrict new_inner_hash = NULL; /* Will hold our shallow copy if we pivot */
+
+		   if (!SvROK(elem) || SvTYPE(SvRV(elem)) != SVt_PVHV) {
+		       croak("Array element at index %ld is not a hash reference", (long)i);
+		   }
+
+		   /* 4. Attempt to pivot on the provided key (NON-DESTRUCTIVE) */
+		   if (pivot_key) {
+		        HV *restrict inner_hash = (HV *)SvRV(elem);
+		        
+		        /* Use hv_fetch so we DON'T mutate the original hash */
+		        SV **restrict inner_val_ptr = hv_fetch(inner_hash, pivot_key, pivot_key_len, 0);
+
+		        if (inner_val_ptr && *inner_val_ptr && SvOK(*inner_val_ptr)) {
+		            final_key = SvPV(*inner_val_ptr, final_key_len);
+		            /* Create a shallow copy of the hash to omit the pivot key */
+		            new_inner_hash = newHV();
+		            HE *restrict he;
+		            /* Iterate over the original hash */
+		            hv_iterinit(inner_hash);
+		            while ((he = hv_iternext(inner_hash))) {
+		                I32 klen;
+		                char *k = hv_iterkey(he, &klen);
+
+		                /* Skip the pivot key so it doesn't end up in our new hash */
+		                if (klen == (I32)pivot_key_len && memcmp(k, pivot_key, klen) == 0) {
+		                    continue;
+		                }
+
+		                /* Copy the key/value to the new hash */
+		                SV *restrict v = hv_iterval(inner_hash, he);
+		                hv_store(new_inner_hash, k, klen, SvREFCNT_inc(v), 0);
+		            }
+		        }
+		   }
+		   /* 5. Fallback: No pivot key provided, or key was missing in this row */
+		   if (!final_key) {
+		        final_key_len = snprintf(NULL, 0, "%ld", (long)i);
+		        Newx(final_key, final_key_len + 1, char);
+		        snprintf(final_key, final_key_len + 1, "%ld", (long)i);
+		        allocated_key = 1;
+		   }
+		   /* 6. Prepare the reference to store */
+		   SV *restrict val_to_store;
+		   if (new_inner_hash) {
+		        /* We made a copy, wrap it in a new reference */
+		        val_to_store = newRV_noinc((SV *)new_inner_hash);
+		   } else {
+		        /* No copy was needed, just increment the original reference */
+		        val_to_store = SvREFCNT_inc(elem);
+		   }
+
+		   /* 7. Store the key/value pair in the new outer hash */
+		   if (hv_store(hoh, final_key, final_key_len, val_to_store, 0) == NULL) {
+		        SvREFCNT_dec(val_to_store); 
+		   }
+
+		   /* 8. Free dynamically allocated memory if we fell back to integers */
+		   if (allocated_key) {
+		        Safefree(final_key);
+		   }
+	  }
+	}
+
+	RETVAL = newRV_noinc((SV *)hoh);
+OUTPUT:
+    RETVAL
+
 SV *oneway_test(data_ref, ...)
 	SV *data_ref
 	PREINIT:
@@ -2317,119 +2420,110 @@ SV* chisq_test(data_ref)
     SV* data_ref;
 CODE:
 {
-    // 1. Input Validation (mimics: die 'Input must be an array reference')
-    if (!SvROK(data_ref) || SvTYPE(SvRV(data_ref)) != SVt_PVAV) {
-        croak("Input must be an array reference");
-    }
+	// 1. Input Validation (mimics: die 'Input must be an array reference')
+	if (!SvROK(data_ref) || SvTYPE(SvRV(data_ref)) != SVt_PVAV) {
+	croak("Input must be an array reference");
+	}
+	AV*restrict obs_av = (AV*)SvRV(data_ref);
+	int r = av_top_index(obs_av) + 1, c = 0;
+	bool is_2d = 0;
+	SV**restrict first_elem = av_fetch(obs_av, 0, 0);
+	if (first_elem && SvROK(*first_elem) && SvTYPE(SvRV(*first_elem)) == SVt_PVAV) {
+		is_2d = 1;
+		AV*restrict first_row = (AV*)SvRV(*first_elem);
+		c = av_top_index(first_row) + 1;
+	} else {
+		c = r;
+		r = 1;
+	}
+	double stat = 0.0, grand_total = 0.0;
+	unsigned int df = 0;
+	bool yates = (is_2d && r == 2 && c == 2) ? 1 : 0;
+	AV*restrict expected_av = newAV();
+	if (is_2d) {
+		double *restrict row_sum = (double*)safemalloc(r * sizeof(double));
+		double *restrict col_sum = (double*)safemalloc(c * sizeof(double));
+		for(unsigned int i=0; i<r; i++) row_sum[i] = 0.0;
+		for(unsigned int j=0; j<c; j++) col_sum[j] = 0.0;
+		for (unsigned int i = 0; i < r; i++) {
+			SV**restrict row_sv = av_fetch(obs_av, i, 0);
+			AV*restrict row = (AV*)SvRV(*row_sv);
+			for (unsigned int j = 0; j < c; j++) {
+				  SV**restrict val_sv = av_fetch(row, j, 0);
+				  double val = SvNV(*val_sv);
+				  row_sum[i] += val;
+				  col_sum[j] += val;
+				  grand_total += val;
+			}
+		}
+		for (unsigned int i = 0; i < r; i++) {
+			AV*restrict exp_row = newAV();
+			SV**restrict row_sv = av_fetch(obs_av, i, 0);
+			AV*restrict row = (AV*)SvRV(*row_sv);
+			for (unsigned int j = 0; j < c; j++) {
+				double E = (row_sum[i] * col_sum[j]) / grand_total;
+				SV**restrict val_sv = av_fetch(row, j, 0);
+				double O = SvNV(*val_sv);
+				av_push(exp_row, newSVnv(E));
+				if (yates) {
+				// Exact R logic: min(0.5, abs(O - E))
+				double abs_diff = fabs(O - E);
+				double y_corr = (abs_diff > 0.5) ? 0.5 : abs_diff;
+				double diff = abs_diff - y_corr;
+				stat += (diff * diff) / E;
+				} else {
+				stat += ((O - E) * (O - E)) / E;
+				}
+			}
+			av_push(expected_av, newRV_noinc((SV*)exp_row));
+		}
+		safefree(row_sum); safefree(col_sum);
+		df = (r - 1) * (c - 1);
+	} else {
+	for (unsigned int j = 0; j < c; j++) {
+		SV**restrict val_sv = av_fetch(obs_av, j, 0);
+		grand_total += SvNV(*val_sv);
+	}
+	double E = grand_total / (double)c;
+	for (unsigned int j = 0; j < c; j++) {
+		SV**restrict val_sv = av_fetch(obs_av, j, 0);
+		double O = SvNV(*val_sv);
+		av_push(expected_av, newSVnv(E));
+		stat += ((O - E) * (O - E)) / E;
+	}
+	df = c - 1;
+	}
+	double p_val = get_p_value(stat, df);
+	// 2. Build the top-level results Hash (mimicking R's htest structure)
+	HV*restrict results = newHV();
+	// 'statistic' => { 'X-squared' => stat }
+	HV*restrict statistic_hv = newHV();
+	hv_store(statistic_hv, "X-squared", 9, newSVnv(stat), 0);
+	hv_store(results, "statistic", 9, newRV_noinc((SV*)statistic_hv), 0);
+	// 'parameter' => { 'df' => df }
+	HV*restrict parameter_hv = newHV();
+	hv_store(parameter_hv, "df", 2, newSViv(df), 0);
+	hv_store(results, "parameter", 9, newRV_noinc((SV*)parameter_hv), 0);
+	// 'p.value' => p_val
+	hv_store(results, "p.value", 7, newSVnv(p_val), 0);
+	// 'expected' => expected_av
+	hv_store(results, "expected", 8, newRV_noinc((SV*)expected_av), 0);
+	// 'observed' => data_ref (Increment ref count since hv_store consumes ownership)
+	hv_store(results, "observed", 8, SvREFCNT_inc(data_ref), 0);
+	// 'data.name' => 'Perl ArrayRef'
+	hv_store(results, "data.name", 9, newSVpv("Perl ArrayRef", 0), 0);
+	// 'method' => String
+	if (is_2d) {
+	  if (yates) {
+		   hv_store(results, "method", 6, newSVpv("Pearson's Chi-squared test with Yates' continuity correction", 0), 0);
+	  } else {
+		   hv_store(results, "method", 6, newSVpv("Pearson's Chi-squared test", 0), 0);
+	  }
+	} else {
+		hv_store(results, "method", 6, newSVpv("Chi-squared test for given probabilities", 0), 0);
+	}
 
-    AV*restrict obs_av = (AV*)SvRV(data_ref);
-    int r = av_top_index(obs_av) + 1, c = 0;
-    bool is_2d = 0;
-    SV**restrict first_elem = av_fetch(obs_av, 0, 0);
-    if (first_elem && SvROK(*first_elem) && SvTYPE(SvRV(*first_elem)) == SVt_PVAV) {
-        is_2d = 1;
-        AV*restrict first_row = (AV*)SvRV(*first_elem);
-        c = av_top_index(first_row) + 1;
-    } else {
-        c = r;
-        r = 1;
-    }
-    double stat = 0.0, grand_total = 0.0;
-    int df = 0;
-    bool yates = (is_2d && r == 2 && c == 2) ? 1 : 0;
-    AV*restrict expected_av = newAV();
-    if (is_2d) {
-        double *restrict row_sum = (double*)safemalloc(r * sizeof(double));
-        double *restrict col_sum = (double*)safemalloc(c * sizeof(double));
-        for(unsigned int i=0; i<r; i++) row_sum[i] = 0.0;
-        for(unsigned int j=0; j<c; j++) col_sum[j] = 0.0;
-        for (unsigned int i = 0; i < r; i++) {
-            SV**restrict row_sv = av_fetch(obs_av, i, 0);
-            AV*restrict row = (AV*)SvRV(*row_sv);
-            for (unsigned int j = 0; j < c; j++) {
-                 SV**restrict val_sv = av_fetch(row, j, 0);
-                 double val = SvNV(*val_sv);
-                 row_sum[i] += val;
-                 col_sum[j] += val;
-                 grand_total += val;
-            }
-        }
-        for (unsigned int i = 0; i < r; i++) {
-            AV*restrict exp_row = newAV();
-            SV**restrict row_sv = av_fetch(obs_av, i, 0);
-            AV*restrict row = (AV*)SvRV(*row_sv);
-            for (unsigned int j = 0; j < c; j++) {
-                double E = (row_sum[i] * col_sum[j]) / grand_total;
-                SV**restrict val_sv = av_fetch(row, j, 0);
-                double O = SvNV(*val_sv);
-                av_push(exp_row, newSVnv(E));
-                if (yates) {
-                  // Exact R logic: min(0.5, abs(O - E))
-                  double abs_diff = fabs(O - E);
-                  double y_corr = (abs_diff > 0.5) ? 0.5 : abs_diff;
-                  double diff = abs_diff - y_corr;
-                  stat += (diff * diff) / E;
-                } else {
-                  stat += ((O - E) * (O - E)) / E;
-                }
-            }
-            av_push(expected_av, newRV_noinc((SV*)exp_row));
-        }
-        safefree(row_sum); safefree(col_sum);
-        df = (r - 1) * (c - 1);
-    } else {
-      for (unsigned int j = 0; j < c; j++) {
-           SV**restrict val_sv = av_fetch(obs_av, j, 0);
-           grand_total += SvNV(*val_sv);
-      }
-      double E = grand_total / (double)c;
-      for (unsigned int j = 0; j < c; j++) {
-           SV**restrict val_sv = av_fetch(obs_av, j, 0);
-           double O = SvNV(*val_sv);
-           av_push(expected_av, newSVnv(E));
-           stat += ((O - E) * (O - E)) / E;
-      }
-      df = c - 1;
-    }
-    double p_val = get_p_value(stat, df);
-
-    // 2. Build the top-level results Hash (mimicking R's htest structure)
-    HV*restrict results = newHV();
-
-    // 'statistic' => { 'X-squared' => stat }
-    HV*restrict statistic_hv = newHV();
-    hv_store(statistic_hv, "X-squared", 9, newSVnv(stat), 0);
-    hv_store(results, "statistic", 9, newRV_noinc((SV*)statistic_hv), 0);
-
-    // 'parameter' => { 'df' => df }
-    HV*restrict parameter_hv = newHV();
-    hv_store(parameter_hv, "df", 2, newSViv(df), 0);
-    hv_store(results, "parameter", 9, newRV_noinc((SV*)parameter_hv), 0);
-
-    // 'p.value' => p_val
-    hv_store(results, "p.value", 7, newSVnv(p_val), 0);
-
-    // 'expected' => expected_av
-    hv_store(results, "expected", 8, newRV_noinc((SV*)expected_av), 0);
-
-    // 'observed' => data_ref (Increment ref count since hv_store consumes ownership)
-    hv_store(results, "observed", 8, SvREFCNT_inc(data_ref), 0);
-
-    // 'data.name' => 'Perl ArrayRef'
-    hv_store(results, "data.name", 9, newSVpv("Perl ArrayRef", 0), 0);
-
-    // 'method' => String
-    if (is_2d) {
-        if (yates) {
-            hv_store(results, "method", 6, newSVpv("Pearson's Chi-squared test with Yates' continuity correction", 0), 0);
-        } else {
-            hv_store(results, "method", 6, newSVpv("Pearson's Chi-squared test", 0), 0);
-        }
-    } else {
-        hv_store(results, "method", 6, newSVpv("Chi-squared test for given probabilities", 0), 0);
-    }
-
-    RETVAL = newRV_noinc((SV*)results);
+	RETVAL = newRV_noinc((SV*)results);
 }
 OUTPUT:
     RETVAL
@@ -2439,432 +2533,426 @@ PROTOTYPES: ENABLE
 void write_table(...)
 PPCODE:
 {
-    SV *restrict data_sv = NULL;
-    SV *restrict file_sv = NULL;
-    unsigned int arg_idx = 0;
+	SV *restrict data_sv = NULL;
+	SV *restrict file_sv = NULL;
+	unsigned int arg_idx = 0;
 
-    // Mimic the Perl shift logic
-    if (arg_idx < items && SvROK(ST(arg_idx))) {
-        int type = SvTYPE(SvRV(ST(arg_idx)));
-        if (type == SVt_PVHV || type == SVt_PVAV) {
-            data_sv = ST(arg_idx);
-            arg_idx++;
-        }
-    }
-    if (arg_idx < items) {
-        file_sv = ST(arg_idx);
-        arg_idx++;
-    }
+	// Mimic the Perl shift logic
+	if (arg_idx < items && SvROK(ST(arg_idx))) {
+		int type = SvTYPE(SvRV(ST(arg_idx)));
+		if (type == SVt_PVHV || type == SVt_PVAV) {
+			data_sv = ST(arg_idx);
+			arg_idx++;
+		}
+	}
+	if (arg_idx < items) {
+	  file_sv = ST(arg_idx);
+	  arg_idx++;
+	}
 
-    const char *restrict sep = ",";
-    bool explicit_sep = 0; // Track if delimiter was manually specified
-    const char *restrict undef_val = "NA";
-    SV *restrict row_names_sv = sv_2mortal(newSViv(1));
-    SV *restrict col_names_sv = NULL;
+	const char *restrict sep = ",";
+	bool explicit_sep = 0; // Track if delimiter was manually specified
+	const char *restrict undef_val = "NA";
+	SV *restrict row_names_sv = sv_2mortal(newSViv(1));
+	SV *restrict col_names_sv = NULL;
 
-    // Read the remaining Hash-style arguments
-    for (; arg_idx < items; arg_idx += 2) {
-        if (arg_idx + 1 >= items) croak("write_table: Odd number of arguments passed");
-        const char *restrict key = SvPV_nolen(ST(arg_idx));
-        SV *restrict val = ST(arg_idx + 1);
-        if (strEQ(key, "data")) data_sv = val;
-        else if (strEQ(key, "col.names")) col_names_sv = val;
-        else if (strEQ(key, "file")) file_sv = val;
-        else if (strEQ(key, "row.names")) row_names_sv = val;
-        // NEW: Check for either "sep" or "delim" and mark as explicitly provided
-        else if (strEQ(key, "sep") || strEQ(key, "delim")) {
-            sep = SvPV_nolen(val);
-            explicit_sep = 1;
-        }
-        else if (strEQ(key, "undef.val")) undef_val = SvPV_nolen(val);
-        else croak("write_table: Unknown arguments passed: %s", key);
-    }
+	// Read the remaining Hash-style arguments
+	for (; arg_idx < items; arg_idx += 2) {
+		if (arg_idx + 1 >= items) croak("write_table: Odd number of arguments passed");
+		const char *restrict key = SvPV_nolen(ST(arg_idx));
+		SV *restrict val = ST(arg_idx + 1);
+		if (strEQ(key, "data")) data_sv = val;
+		else if (strEQ(key, "col.names")) col_names_sv = val;
+		else if (strEQ(key, "file")) file_sv = val;
+		else if (strEQ(key, "row.names")) row_names_sv = val;
+		// NEW: Check for either "sep" or "delim" and mark as explicitly provided
+		else if (strEQ(key, "sep") || strEQ(key, "delim")) {
+			sep = SvPV_nolen(val);
+			explicit_sep = 1;
+		}
+		else if (strEQ(key, "undef.val")) undef_val = SvPV_nolen(val);
+		else croak("write_table: Unknown arguments passed: %s", key);
+	}
+	if (!data_sv || !SvROK(data_sv)) {
+	  croak("write_table: 'data' must be a HASH or ARRAY reference\n");
+	}
+	SV *restrict data_ref = SvRV(data_sv);
+	if (SvTYPE(data_ref) != SVt_PVHV && SvTYPE(data_ref) != SVt_PVAV) {
+	  croak("write_table: 'data' must be a HASH or ARRAY reference\n");
+	}
+	if (!file_sv || !SvOK(file_sv)) croak("write_table: file name missing\n");
+	const char *restrict file = SvPV_nolen(file_sv);
+	// NEW: Auto-detect separator from file extension if not overridden
+	if (!explicit_sep) {
+	  size_t file_len = strlen(file);
+	  if (file_len >= 4) {
+		   const char *restrict ext = file + file_len - 4;
+		   if (strEQ(ext, ".tsv") || strEQ(ext, ".TSV")) {
+		       sep = "\t";
+		   } else if (strEQ(ext, ".csv") || strEQ(ext, ".CSV")) {
+		       sep = ",";
+		   }
+	  }
+	}
 
-    if (!data_sv || !SvROK(data_sv)) {
-        croak("write_table: 'data' must be a HASH or ARRAY reference\n");
-    }
-    SV *restrict data_ref = SvRV(data_sv);
-    if (SvTYPE(data_ref) != SVt_PVHV && SvTYPE(data_ref) != SVt_PVAV) {
-        croak("write_table: 'data' must be a HASH or ARRAY reference\n");
-    }
+	if (col_names_sv && SvOK(col_names_sv)) {
+		if (!SvROK(col_names_sv) || SvTYPE(SvRV(col_names_sv)) != SVt_PVAV) {
+			croak("write_table: 'col.names' must be an ARRAY reference\n");
+		}
+	}
 
-    if (!file_sv || !SvOK(file_sv)) croak("write_table: file name missing\n");
-    const char *restrict file = SvPV_nolen(file_sv);
+	bool is_hoh = 0, is_hoa = 0, is_aoh = 0;
+	AV *restrict rows_av = NULL;
 
-    // NEW: Auto-detect separator from file extension if not overridden
-    if (!explicit_sep) {
-        size_t file_len = strlen(file);
-        if (file_len >= 4) {
-            const char *restrict ext = file + file_len - 4;
-            if (strEQ(ext, ".tsv") || strEQ(ext, ".TSV")) {
-                sep = "\t";
-            } else if (strEQ(ext, ".csv") || strEQ(ext, ".CSV")) {
-                sep = ",";
-            }
-        }
-    }
+	// Validate Input Structures & Homogeneity 
+	if (SvTYPE(data_ref) == SVt_PVHV) {
+		HV *restrict hv = (HV*)data_ref;
+		if (hv_iterinit(hv) == 0) XSRETURN_EMPTY;
 
-    if (col_names_sv && SvOK(col_names_sv)) {
-        if (!SvROK(col_names_sv) || SvTYPE(SvRV(col_names_sv)) != SVt_PVAV) {
-            croak("write_table: 'col.names' must be an ARRAY reference\n");
-        }
-    }
+		HE *restrict entry = hv_iternext(hv);
+		SV *restrict first_val = hv_iterval(hv, entry);
+		if (!first_val || !SvROK(first_val)) {
+			croak("write_table: Data values must be either all HASHes or all ARRAYs\n");
+		}
+		int first_type = SvTYPE(SvRV(first_val));
+		if (first_type != SVt_PVHV && first_type != SVt_PVAV) {
+			croak("write_table: Data values must be either all HASHes or all ARRAYs\n");
+		}
+		is_hoh = (first_type == SVt_PVHV);
+		is_hoa = (first_type == SVt_PVAV);
+		hv_iterinit(hv);
+		while ((entry = hv_iternext(hv))) {
+			SV *restrict val = hv_iterval(hv, entry);
+			if (!val || !SvROK(val) || SvTYPE(SvRV(val)) != first_type) {
+				 croak("write_table: Mixed data types detected. Ensure all values are %s references.\n", is_hoh ? "HASH" : "ARRAY");
+			}
+		}
+		if (is_hoh) {
+			rows_av = newAV();
+			hv_iterinit(hv);
+			while ((entry = hv_iternext(hv))) {
+				 av_push(rows_av, newSVsv(hv_iterkeysv(entry)));
+			}
+		}
+	} else {
+		AV *restrict av = (AV*)data_ref;
+		if (av_len(av) < 0) XSRETURN_EMPTY;
+		SV **restrict first_ptr = av_fetch(av, 0, 0);
+		if (!first_ptr || !*first_ptr || !SvROK(*first_ptr) || SvTYPE(SvRV(*first_ptr)) != SVt_PVHV) {
+			croak("write_table: For ARRAY data, all elements must be HASH references (Array of Hashes)\n");
+		}
 
-    bool is_hoh = 0, is_hoa = 0, is_aoh = 0;
-    AV *restrict rows_av = NULL;
+		for (size_t i = 0; i <= av_len(av); i++) {
+			SV **restrict ptr = av_fetch(av, i, 0);
+			if (!ptr || !*ptr || !SvROK(*ptr) || SvTYPE(SvRV(*ptr)) != SVt_PVHV) {
+				 croak("write_table: Mixed data types detected in Array of Hashes. All elements must be HASH references.\n");
+			}
+		}
+		is_aoh = 1;
+	}
+	PerlIO *restrict fh = PerlIO_open(file, "w");
+	if (!fh) croak("write_table: Could not open '%s' for writing", file);
+	AV *restrict headers_av = newAV();
+	bool inc_rownames = (row_names_sv && SvTRUE(row_names_sv)) ? 1 : 0;
+	const char *restrict rownames_col = NULL;
+	// ----- Hash of Hashes -----
+	if (is_hoh) {
+	  if (col_names_sv && SvOK(col_names_sv)) {
+		   AV *restrict c_av = (AV*)SvRV(col_names_sv);
+		   for(size_t i=0; i<=av_len(c_av); i++) {
+		       SV **restrict c = av_fetch(c_av, i, 0);
+		       if(c && SvOK(*c)) av_push(headers_av, newSVsv(*c));
+		   }
+	  } else {
+		   HV *restrict col_map = newHV();
+		   hv_iterinit((HV*)data_ref);
+		   HE *restrict entry;
+		   while((entry = hv_iternext((HV*)data_ref))) {
+		       HV *restrict inner = (HV*)SvRV(hv_iterval((HV*)data_ref, entry));
+		       hv_iterinit(inner);
+		       HE *restrict inner_entry;
+		       while((inner_entry = hv_iternext(inner))) {
+		           hv_store_ent(col_map, hv_iterkeysv(inner_entry), newSViv(1), 0);
+		       }
+		   }
+		   unsigned num_cols = hv_iterinit(col_map);
+		   const char **restrict col_array = safemalloc(num_cols * sizeof(char*));
+		   for(unsigned i=0; i<num_cols; i++) {
+		       HE *restrict ce = hv_iternext(col_map);
+		       col_array[i] = SvPV_nolen(hv_iterkeysv(ce));
+		   }
+		   qsort(col_array, num_cols, sizeof(char*), cmp_string_wt);
+		   for(unsigned i=0; i<num_cols; i++) av_push(headers_av, newSVpv(col_array[i], 0));
+		   safefree(col_array);
+		   SvREFCNT_dec(col_map);
+	}
+	size_t num_headers = av_len(headers_av) + 1;
+	const char **restrict header_row = safemalloc((num_headers + 1) * sizeof(char*));
 
-    // Validate Input Structures & Homogeneity 
-    if (SvTYPE(data_ref) == SVt_PVHV) {
-        HV *restrict hv = (HV*)data_ref;
-        if (hv_iterinit(hv) == 0) XSRETURN_EMPTY;
+	size_t h_idx = 0;
+	if (inc_rownames) header_row[h_idx++] = "";
+	for(unsigned short int i=0; i<num_headers; i++) {
+	  SV**restrict h_ptr = av_fetch(headers_av, i, 0);
+	  header_row[h_idx++] = (h_ptr && SvOK(*h_ptr)) ? SvPV_nolen(*h_ptr) : "";
+	}
+	print_string_row(fh, header_row, h_idx, sep);
+	safefree(header_row);
 
-        HE *restrict entry = hv_iternext(hv);
-        SV *restrict first_val = hv_iterval(hv, entry);
-        if (!first_val || !SvROK(first_val)) {
-            croak("write_table: Data values must be either all HASHes or all ARRAYs\n");
-        }
-        int first_type = SvTYPE(SvRV(first_val));
-        if (first_type != SVt_PVHV && first_type != SVt_PVAV) {
-            croak("write_table: Data values must be either all HASHes or all ARRAYs\n");
-        }
-        is_hoh = (first_type == SVt_PVHV);
-        is_hoa = (first_type == SVt_PVAV);
-        hv_iterinit(hv);
-        while ((entry = hv_iternext(hv))) {
-            SV *restrict val = hv_iterval(hv, entry);
-            if (!val || !SvROK(val) || SvTYPE(SvRV(val)) != first_type) {
-                croak("write_table: Mixed data types detected. Ensure all values are %s references.\n", is_hoh ? "HASH" : "ARRAY");
-            }
-        }
-        if (is_hoh) {
-            rows_av = newAV();
-            hv_iterinit(hv);
-            while ((entry = hv_iternext(hv))) {
-                av_push(rows_av, newSVsv(hv_iterkeysv(entry)));
-            }
-        }
-    } else {
-        AV *restrict av = (AV*)data_ref;
-        if (av_len(av) < 0) XSRETURN_EMPTY;
-        SV **restrict first_ptr = av_fetch(av, 0, 0);
-        if (!first_ptr || !*first_ptr || !SvROK(*first_ptr) || SvTYPE(SvRV(*first_ptr)) != SVt_PVHV) {
-            croak("write_table: For ARRAY data, all elements must be HASH references (Array of Hashes)\n");
-        }
+	size_t num_rows = av_len(rows_av) + 1;
+	const char **restrict row_array = safemalloc(num_rows * sizeof(char*));
+	for(size_t i=0; i<num_rows; i++) {
+	  row_array[i] = SvPV_nolen(*av_fetch(rows_av, i, 0));
+	}
+	qsort(row_array, num_rows, sizeof(char*), cmp_string_wt);
 
-        for (size_t i = 0; i <= av_len(av); i++) {
-            SV **restrict ptr = av_fetch(av, i, 0);
-            if (!ptr || !*ptr || !SvROK(*ptr) || SvTYPE(SvRV(*ptr)) != SVt_PVHV) {
-                croak("write_table: Mixed data types detected in Array of Hashes. All elements must be HASH references.\n");
-            }
-        }
-        is_aoh = 1;
-    }
+	HV *restrict data_hv = (HV*)data_ref;
+	const char **restrict row_data = safemalloc((num_headers + 1) * sizeof(char*));
 
-    PerlIO *restrict fh = PerlIO_open(file, "w");
-    if (!fh) croak("write_table: Could not open '%s' for writing", file);
+	for(size_t i=0; i<num_rows; i++) {
+	  size_t d_idx = 0;
+	  if (inc_rownames) row_data[d_idx++] = row_array[i];
 
-    AV *restrict headers_av = newAV();
-    bool inc_rownames = (row_names_sv && SvTRUE(row_names_sv)) ? 1 : 0;
-    const char *restrict rownames_col = NULL;
+	  SV **restrict inner_hv_ptr = hv_fetch(data_hv, row_array[i], strlen(row_array[i]), 0);
+	  HV *restrict inner_hv = inner_hv_ptr ? (HV*)SvRV(*inner_hv_ptr) : NULL;
 
-    // ----- Hash of Hashes -----
-    if (is_hoh) {
-        if (col_names_sv && SvOK(col_names_sv)) {
-            AV *restrict c_av = (AV*)SvRV(col_names_sv);
-            for(size_t i=0; i<=av_len(c_av); i++) {
-                SV **restrict c = av_fetch(c_av, i, 0);
-                if(c && SvOK(*c)) av_push(headers_av, newSVsv(*c));
-            }
-        } else {
-            HV *restrict col_map = newHV();
-            hv_iterinit((HV*)data_ref);
-            HE *restrict entry;
-            while((entry = hv_iternext((HV*)data_ref))) {
-                HV *restrict inner = (HV*)SvRV(hv_iterval((HV*)data_ref, entry));
-                hv_iterinit(inner);
-                HE *restrict inner_entry;
-                while((inner_entry = hv_iternext(inner))) {
-                    hv_store_ent(col_map, hv_iterkeysv(inner_entry), newSViv(1), 0);
-                }
-            }
-            unsigned num_cols = hv_iterinit(col_map);
-            const char **restrict col_array = safemalloc(num_cols * sizeof(char*));
-            for(unsigned i=0; i<num_cols; i++) {
-                HE *restrict ce = hv_iternext(col_map);
-                col_array[i] = SvPV_nolen(hv_iterkeysv(ce));
-            }
-            qsort(col_array, num_cols, sizeof(char*), cmp_string_wt);
-            for(unsigned i=0; i<num_cols; i++) av_push(headers_av, newSVpv(col_array[i], 0));
-            safefree(col_array);
-            SvREFCNT_dec(col_map);
-    }
-    size_t num_headers = av_len(headers_av) + 1;
-    const char **restrict header_row = safemalloc((num_headers + 1) * sizeof(char*));
+	  for(size_t j=0; j<num_headers; j++) {
+		   SV**restrict h_ptr = av_fetch(headers_av, j, 0);
+		   const char *restrict col_name = (h_ptr && SvOK(*h_ptr)) ? SvPV_nolen(*h_ptr) : "";
+		   SV **restrict cell_ptr = inner_hv ? hv_fetch(inner_hv, col_name, strlen(col_name), 0) : NULL;
+		   if (cell_ptr && SvOK(*cell_ptr)) {
+		   if (SvROK(*cell_ptr)) {
+		     PerlIO_close(fh);
+		     safefree(row_array); safefree(row_data);
+		     if (headers_av) SvREFCNT_dec(headers_av);
+		     if (rows_av) SvREFCNT_dec(rows_av);
+		     croak("write_table: Cannot write nested reference types to table\n");
+		   }
+		       row_data[d_idx++] = SvPV_nolen(*cell_ptr);
+		   } else {
+		       row_data[d_idx++] = undef_val;
+		   }
+	  }
+	  print_string_row(fh, row_data, d_idx, sep);
+	}
+	safefree(row_array); safefree(row_data);
 
-    size_t h_idx = 0;
-    if (inc_rownames) header_row[h_idx++] = "";
-    for(unsigned short int i=0; i<num_headers; i++) {
-        SV**restrict h_ptr = av_fetch(headers_av, i, 0);
-        header_row[h_idx++] = (h_ptr && SvOK(*h_ptr)) ? SvPV_nolen(*h_ptr) : "";
-    }
-    print_string_row(fh, header_row, h_idx, sep);
-    safefree(header_row);
+	} else if (is_hoa) { // ----- Hash of Arrays -----
+	  HV *restrict data_hv = (HV*)data_ref;
+	  size_t max_rows = 0;
+	  hv_iterinit(data_hv);
+	  HE *restrict entry;
+	  while((entry = hv_iternext(data_hv))) {
+		   AV *restrict arr = (AV*)SvRV(hv_iterval(data_hv, entry));
+		   size_t len = av_len(arr) + 1;
+		   if (len > max_rows) max_rows = len;
+	  }
 
-    size_t num_rows = av_len(rows_av) + 1;
-    const char **restrict row_array = safemalloc(num_rows * sizeof(char*));
-    for(size_t i=0; i<num_rows; i++) {
-        row_array[i] = SvPV_nolen(*av_fetch(rows_av, i, 0));
-    }
-    qsort(row_array, num_rows, sizeof(char*), cmp_string_wt);
+	  if (col_names_sv && SvOK(col_names_sv)) {
+		   AV *restrict c_av = (AV*)SvRV(col_names_sv);
+		   for(size_t i=0; i<=av_len(c_av); i++) {
+		       SV **restrict c = av_fetch(c_av, i, 0);
+		       if(c && SvOK(*c)) av_push(headers_av, newSVsv(*c));
+		   }
+	  } else {
+		   unsigned int num_cols = hv_iterinit(data_hv);
+		   const char **restrict col_array = safemalloc(num_cols * sizeof(char*));
+		   for(unsigned int i=0; i<num_cols; i++) {
+		       HE *restrict ce = hv_iternext(data_hv);
+		       col_array[i] = SvPV_nolen(hv_iterkeysv(ce));
+		   }
+		   qsort(col_array, num_cols, sizeof(char*), cmp_string_wt);
+		   for(unsigned i=0; i<num_cols; i++) av_push(headers_av, newSVpv(col_array[i], 0));
+		   safefree(col_array);
+	  }
+	  if (av_len(headers_av) < 0) croak("Could not get headers in write_table");
+	  if (inc_rownames && contains_nondigit(row_names_sv)) {
+		   rownames_col = SvPV_nolen(row_names_sv);
+		   AV *restrict filtered_headers = (AV*)sv_2mortal((SV*)newAV());
 
-    HV *restrict data_hv = (HV*)data_ref;
-    const char **restrict row_data = safemalloc((num_headers + 1) * sizeof(char*));
+		   for(size_t i=0; i<=av_len(headers_av); i++) {
+		       SV**restrict h_ptr = av_fetch(headers_av, i, 0);
+		       if (!h_ptr || !*h_ptr) continue;
+		       SV *restrict h_sv = *h_ptr;
+		       if (strcmp(SvPV_nolen(h_sv), rownames_col) != 0) {
+		           av_push(filtered_headers, newSVsv(h_sv));
+		       }
+		   }
+		   SvREFCNT_dec(headers_av);
+		   headers_av = filtered_headers;
+	  }
+	  size_t num_headers = av_len(headers_av) + 1;
+	  const char **restrict header_row = safemalloc((num_headers + 1) * sizeof(char*));
+	  size_t h_idx = 0;
+	  if (inc_rownames) header_row[h_idx++] = "";
+	  for(size_t i=0; i<num_headers; i++) {
+		   SV**restrict h_ptr = av_fetch(headers_av, i, 0);
+		   header_row[h_idx++] = (h_ptr && SvOK(*h_ptr)) ? SvPV_nolen(*h_ptr) : "";
+	  }
+	  print_string_row(fh, header_row, h_idx, sep);
+	  safefree(header_row);
+	  const char **restrict row_data = safemalloc((num_headers + 1) * sizeof(char*));
+	  for(size_t i=0; i<max_rows; i++) {
+		   size_t d_idx = 0;
+		   if (inc_rownames) {
+		       if (rownames_col) {
+		           SV **restrict rn_arr_ptr = hv_fetch(data_hv, rownames_col, strlen(rownames_col), 0);
+		           if (rn_arr_ptr && SvROK(*rn_arr_ptr)) {
+		               AV *restrict rn_arr = (AV*)SvRV(*rn_arr_ptr);
+		               SV **restrict rn_val_ptr = av_fetch(rn_arr, i, 0);
+		               if (rn_val_ptr && SvOK(*rn_val_ptr)) {
+		                   if (SvROK(*rn_val_ptr)) {
+		                          PerlIO_close(fh);
+		                          safefree(row_data);
+		                          if (headers_av) SvREFCNT_dec(headers_av);
+		                          croak("write_table: Cannot write nested reference types to table\n");
+		                    }
+		                    row_data[d_idx++] = SvPV_nolen(*rn_val_ptr);
+		                } else {
+		                   row_data[d_idx++] = undef_val;
+		                }
+		           } else {
+		                row_data[d_idx++] = undef_val;
+		           }
+		       } else {
+		           char buf[32];
+		           snprintf(buf, sizeof(buf), "%ld", (long)(i + 1));
+		           row_data[d_idx++] = savepv(buf);
+		       }
+		   }
+		   for(size_t j=0; j<num_headers; j++) {
+		       SV**restrict h_ptr = av_fetch(headers_av, j, 0);
+		       const char *restrict col_name = (h_ptr && SvOK(*h_ptr)) ? SvPV_nolen(*h_ptr) : "";
+		       SV **restrict arr_ptr = hv_fetch(data_hv, col_name, strlen(col_name), 0);
+		       if (arr_ptr && SvROK(*arr_ptr)) {
+		           AV *restrict arr = (AV*)SvRV(*arr_ptr);
+		           SV **restrict cell_ptr = av_fetch(arr, i, 0);
+		           if (cell_ptr && SvOK(*cell_ptr)) {
+		                if (SvROK(*cell_ptr)) {
+		                     PerlIO_close(fh);
+		                     safefree(row_data);
+		                     if (headers_av) SvREFCNT_dec(headers_av);
+		                     croak("write_table: Cannot write nested reference types to table\n");
+		                }
+		                row_data[d_idx++] = SvPV_nolen(*cell_ptr);
+		           } else {
+		                row_data[d_idx++] = undef_val;
+		           }
+		       } else {
+		           row_data[d_idx++] = undef_val;
+		       }
+		   }
+		   print_string_row(fh, row_data, d_idx, sep);
+		   if (inc_rownames && !rownames_col) safefree((char*)row_data[0]);
+	  }
+	  safefree(row_data);
+	} else if (is_aoh) {// ----- Array of Hashes -----
+	AV *restrict data_av = (AV*)data_ref;
+	size_t num_rows = av_len(data_av) + 1;
+	if (col_names_sv && SvOK(col_names_sv)) {
+		AV *restrict c_av = (AV*)SvRV(col_names_sv);
+		for(size_t i=0; i<=av_len(c_av); i++) {
+			 SV **restrict c = av_fetch(c_av, i, 0);
+			 if(c && SvOK(*c)) av_push(headers_av, newSVsv(*c));
+		}
+	} else {
+		HV *restrict col_map = newHV();
+		for(size_t i=0; i<num_rows; i++) {
+			SV **restrict row_ptr = av_fetch(data_av, i, 0);
+			if (row_ptr && SvROK(*row_ptr)) {
+				HV *restrict row_hv = (HV*)SvRV(*row_ptr);
+				hv_iterinit(row_hv);
+				HE *restrict entry;
+				while((entry = hv_iternext(row_hv))) {
+					hv_store_ent(col_map, hv_iterkeysv(entry), newSViv(1), 0);
+				}
+			}
+		}
+		unsigned num_cols = hv_iterinit(col_map);
+		const char **restrict col_array = safemalloc(num_cols * sizeof(char*));
+		for(unsigned int i=0; i<num_cols; i++) {
+			 HE *restrict ce = hv_iternext(col_map);
+			 col_array[i] = SvPV_nolen(hv_iterkeysv(ce));
+		}
+		qsort(col_array, num_cols, sizeof(char*), cmp_string_wt);
+		for(unsigned int i=0; i<num_cols; i++) av_push(headers_av, newSVpv(col_array[i], 0));
+		safefree(col_array);
+		SvREFCNT_dec(col_map);
+	}
+	if (inc_rownames && contains_nondigit(row_names_sv)) {
+		rownames_col = SvPV_nolen(row_names_sv);
+		AV *restrict filtered_headers = newAV();
+		for(size_t i=0; i<=av_len(headers_av); i++) {
+			 SV**restrict h_ptr = av_fetch(headers_av, i, 0);
+			 if (!h_ptr || !*h_ptr) continue;
+			 SV *restrict h_sv = *h_ptr;
+			 if (strcmp(SvPV_nolen(h_sv), rownames_col) != 0) {
+				  av_push(filtered_headers, newSVsv(h_sv));
+			 }
+		}
+		SvREFCNT_dec(headers_av);
+		headers_av = filtered_headers;
+	}
+	size_t num_headers = av_len(headers_av) + 1;
+	const char **restrict header_row = safemalloc((num_headers + 1) * sizeof(char*));
+	size_t h_idx = 0;
+	if (inc_rownames) header_row[h_idx++] = "";
+	for(size_t i=0; i<num_headers; i++) {
+		SV**restrict h_ptr = av_fetch(headers_av, i, 0);
+		header_row[h_idx++] = (h_ptr && SvOK(*h_ptr)) ? SvPV_nolen(*h_ptr) : "";
+	}
+	print_string_row(fh, header_row, h_idx, sep);
+	safefree(header_row);
+	const char **restrict row_data = safemalloc((num_headers + 1) * sizeof(char*));
+	for(size_t i=0; i<num_rows; i++) {
+		size_t d_idx = 0;
+		SV **restrict row_ptr = av_fetch(data_av, i, 0);
+		HV *restrict row_hv = (row_ptr && SvROK(*row_ptr)) ? (HV*)SvRV(*row_ptr) : NULL;
+		if (inc_rownames) {
+			if (rownames_col) {
+				SV **restrict rn_val_ptr = row_hv ? hv_fetch(row_hv, rownames_col, strlen(rownames_col), 0) : NULL;
+				if (rn_val_ptr && SvOK(*rn_val_ptr)) {
+					  if (SvROK(*rn_val_ptr)) {
+							 PerlIO_close(fh);
+								   safefree(row_data);
+								   if (headers_av) SvREFCNT_dec(headers_av);
+							 croak("write_table: Cannot write nested reference types to table\n");
+					  }
+					  row_data[d_idx++] = SvPV_nolen(*rn_val_ptr);
+				} else {
+					  row_data[d_idx++] = undef_val;
+				}
+			} else {
+			  char buf[32];
+			  snprintf(buf, sizeof(buf), "%ld", (long)(i + 1));
+			  row_data[d_idx++] = savepv(buf);
+			}
+		}
 
-    for(size_t i=0; i<num_rows; i++) {
-        size_t d_idx = 0;
-        if (inc_rownames) row_data[d_idx++] = row_array[i];
-
-        SV **restrict inner_hv_ptr = hv_fetch(data_hv, row_array[i], strlen(row_array[i]), 0);
-        HV *restrict inner_hv = inner_hv_ptr ? (HV*)SvRV(*inner_hv_ptr) : NULL;
-
-        for(size_t j=0; j<num_headers; j++) {
-            SV**restrict h_ptr = av_fetch(headers_av, j, 0);
-            const char *restrict col_name = (h_ptr && SvOK(*h_ptr)) ? SvPV_nolen(*h_ptr) : "";
-            SV **restrict cell_ptr = inner_hv ? hv_fetch(inner_hv, col_name, strlen(col_name), 0) : NULL;
-            if (cell_ptr && SvOK(*cell_ptr)) {
-            if (SvROK(*cell_ptr)) {
-              PerlIO_close(fh);
-              safefree(row_array); safefree(row_data);
-              if (headers_av) SvREFCNT_dec(headers_av);
-              if (rows_av) SvREFCNT_dec(rows_av);
-              croak("write_table: Cannot write nested reference types to table\n");
-            }
-                row_data[d_idx++] = SvPV_nolen(*cell_ptr);
-            } else {
-                row_data[d_idx++] = undef_val;
-            }
-        }
-        print_string_row(fh, row_data, d_idx, sep);
-    }
-    safefree(row_array); safefree(row_data);
-
-    } else if (is_hoa) { // ----- Hash of Arrays -----
-        HV *restrict data_hv = (HV*)data_ref;
-        size_t max_rows = 0;
-        hv_iterinit(data_hv);
-        HE *restrict entry;
-        while((entry = hv_iternext(data_hv))) {
-            AV *restrict arr = (AV*)SvRV(hv_iterval(data_hv, entry));
-            size_t len = av_len(arr) + 1;
-            if (len > max_rows) max_rows = len;
-        }
-
-        if (col_names_sv && SvOK(col_names_sv)) {
-            AV *restrict c_av = (AV*)SvRV(col_names_sv);
-            for(size_t i=0; i<=av_len(c_av); i++) {
-                SV **restrict c = av_fetch(c_av, i, 0);
-                if(c && SvOK(*c)) av_push(headers_av, newSVsv(*c));
-            }
-        } else {
-            unsigned int num_cols = hv_iterinit(data_hv);
-            const char **restrict col_array = safemalloc(num_cols * sizeof(char*));
-            for(unsigned int i=0; i<num_cols; i++) {
-                HE *restrict ce = hv_iternext(data_hv);
-                col_array[i] = SvPV_nolen(hv_iterkeysv(ce));
-            }
-            qsort(col_array, num_cols, sizeof(char*), cmp_string_wt);
-            for(unsigned i=0; i<num_cols; i++) av_push(headers_av, newSVpv(col_array[i], 0));
-            safefree(col_array);
-        }
-        if (av_len(headers_av) < 0) croak("Could not get headers in write_table");
-        if (inc_rownames && contains_nondigit(row_names_sv)) {
-            rownames_col = SvPV_nolen(row_names_sv);
-            AV *restrict filtered_headers = (AV*)sv_2mortal((SV*)newAV());
-
-            for(size_t i=0; i<=av_len(headers_av); i++) {
-                SV**restrict h_ptr = av_fetch(headers_av, i, 0);
-                if (!h_ptr || !*h_ptr) continue;
-                SV *restrict h_sv = *h_ptr;
-                if (strcmp(SvPV_nolen(h_sv), rownames_col) != 0) {
-                    av_push(filtered_headers, newSVsv(h_sv));
-                }
-            }
-            SvREFCNT_dec(headers_av);
-            headers_av = filtered_headers;
-        }
-        size_t num_headers = av_len(headers_av) + 1;
-        const char **restrict header_row = safemalloc((num_headers + 1) * sizeof(char*));
-        size_t h_idx = 0;
-        if (inc_rownames) header_row[h_idx++] = "";
-        for(size_t i=0; i<num_headers; i++) {
-            SV**restrict h_ptr = av_fetch(headers_av, i, 0);
-            header_row[h_idx++] = (h_ptr && SvOK(*h_ptr)) ? SvPV_nolen(*h_ptr) : "";
-        }
-        print_string_row(fh, header_row, h_idx, sep);
-        safefree(header_row);
-        const char **restrict row_data = safemalloc((num_headers + 1) * sizeof(char*));
-        for(size_t i=0; i<max_rows; i++) {
-            size_t d_idx = 0;
-            if (inc_rownames) {
-                if (rownames_col) {
-                    SV **restrict rn_arr_ptr = hv_fetch(data_hv, rownames_col, strlen(rownames_col), 0);
-                    if (rn_arr_ptr && SvROK(*rn_arr_ptr)) {
-                        AV *restrict rn_arr = (AV*)SvRV(*rn_arr_ptr);
-                        SV **restrict rn_val_ptr = av_fetch(rn_arr, i, 0);
-                        if (rn_val_ptr && SvOK(*rn_val_ptr)) {
-                            if (SvROK(*rn_val_ptr)) {
-                                   PerlIO_close(fh);
-                                   safefree(row_data);
-                                   if (headers_av) SvREFCNT_dec(headers_av);
-                                   croak("write_table: Cannot write nested reference types to table\n");
-                             }
-                             row_data[d_idx++] = SvPV_nolen(*rn_val_ptr);
-                         } else {
-                            row_data[d_idx++] = undef_val;
-                         }
-                    } else {
-                         row_data[d_idx++] = undef_val;
-                    }
-                } else {
-                    char buf[32];
-                    snprintf(buf, sizeof(buf), "%ld", (long)(i + 1));
-                    row_data[d_idx++] = savepv(buf);
-                }
-            }
-            for(size_t j=0; j<num_headers; j++) {
-                SV**restrict h_ptr = av_fetch(headers_av, j, 0);
-                const char *restrict col_name = (h_ptr && SvOK(*h_ptr)) ? SvPV_nolen(*h_ptr) : "";
-                SV **restrict arr_ptr = hv_fetch(data_hv, col_name, strlen(col_name), 0);
-                if (arr_ptr && SvROK(*arr_ptr)) {
-                    AV *restrict arr = (AV*)SvRV(*arr_ptr);
-                    SV **restrict cell_ptr = av_fetch(arr, i, 0);
-                    if (cell_ptr && SvOK(*cell_ptr)) {
-                         if (SvROK(*cell_ptr)) {
-                              PerlIO_close(fh);
-                              safefree(row_data);
-                              if (headers_av) SvREFCNT_dec(headers_av);
-                              croak("write_table: Cannot write nested reference types to table\n");
-                         }
-                         row_data[d_idx++] = SvPV_nolen(*cell_ptr);
-                    } else {
-                         row_data[d_idx++] = undef_val;
-                    }
-                } else {
-                    row_data[d_idx++] = undef_val;
-                }
-            }
-            print_string_row(fh, row_data, d_idx, sep);
-            if (inc_rownames && !rownames_col) safefree((char*)row_data[0]);
-        }
-        safefree(row_data);
-    } else if (is_aoh) {// ----- Array of Hashes -----
-      AV *restrict data_av = (AV*)data_ref;
-      size_t num_rows = av_len(data_av) + 1;
-      if (col_names_sv && SvOK(col_names_sv)) {
-           AV *restrict c_av = (AV*)SvRV(col_names_sv);
-           for(size_t i=0; i<=av_len(c_av); i++) {
-                SV **restrict c = av_fetch(c_av, i, 0);
-                if(c && SvOK(*c)) av_push(headers_av, newSVsv(*c));
-           }
-      } else {
-           HV *restrict col_map = newHV();
-           for(size_t i=0; i<num_rows; i++) {
-                SV **restrict row_ptr = av_fetch(data_av, i, 0);
-                if (row_ptr && SvROK(*row_ptr)) {
-                    HV *restrict row_hv = (HV*)SvRV(*row_ptr);
-                    hv_iterinit(row_hv);
-                    HE *restrict entry;
-                    while((entry = hv_iternext(row_hv))) {
-                        hv_store_ent(col_map, hv_iterkeysv(entry), newSViv(1), 0);
-                    }
-                }
-           }
-           unsigned num_cols = hv_iterinit(col_map);
-           const char **restrict col_array = safemalloc(num_cols * sizeof(char*));
-           for(unsigned int i=0; i<num_cols; i++) {
-                HE *restrict ce = hv_iternext(col_map);
-                col_array[i] = SvPV_nolen(hv_iterkeysv(ce));
-           }
-           qsort(col_array, num_cols, sizeof(char*), cmp_string_wt);
-           for(unsigned int i=0; i<num_cols; i++) av_push(headers_av, newSVpv(col_array[i], 0));
-           safefree(col_array);
-           SvREFCNT_dec(col_map);
-      }
-      if (inc_rownames && contains_nondigit(row_names_sv)) {
-           rownames_col = SvPV_nolen(row_names_sv);
-           AV *restrict filtered_headers = newAV();
-           for(size_t i=0; i<=av_len(headers_av); i++) {
-                SV**restrict h_ptr = av_fetch(headers_av, i, 0);
-                if (!h_ptr || !*h_ptr) continue;
-                SV *restrict h_sv = *h_ptr;
-                if (strcmp(SvPV_nolen(h_sv), rownames_col) != 0) {
-                    av_push(filtered_headers, newSVsv(h_sv));
-                }
-           }
-           SvREFCNT_dec(headers_av);
-           headers_av = filtered_headers;
-      }
-      size_t num_headers = av_len(headers_av) + 1;
-      const char **restrict header_row = safemalloc((num_headers + 1) * sizeof(char*));
-      size_t h_idx = 0;
-      if (inc_rownames) header_row[h_idx++] = "";
-      for(size_t i=0; i<num_headers; i++) {
-           SV**restrict h_ptr = av_fetch(headers_av, i, 0);
-           header_row[h_idx++] = (h_ptr && SvOK(*h_ptr)) ? SvPV_nolen(*h_ptr) : "";
-      }
-      print_string_row(fh, header_row, h_idx, sep);
-      safefree(header_row);
-      const char **restrict row_data = safemalloc((num_headers + 1) * sizeof(char*));
-      for(size_t i=0; i<num_rows; i++) {
-           size_t d_idx = 0;
-           SV **restrict row_ptr = av_fetch(data_av, i, 0);
-           HV *restrict row_hv = (row_ptr && SvROK(*row_ptr)) ? (HV*)SvRV(*row_ptr) : NULL;
-           if (inc_rownames) {
-               if (rownames_col) {
-                 SV **restrict rn_val_ptr = row_hv ? hv_fetch(row_hv, rownames_col, strlen(rownames_col), 0) : NULL;
-                 if (rn_val_ptr && SvOK(*rn_val_ptr)) {
-                       if (SvROK(*rn_val_ptr)) {
-                            PerlIO_close(fh);
-                                 safefree(row_data);
-                                 if (headers_av) SvREFCNT_dec(headers_av);
-                            croak("write_table: Cannot write nested reference types to table\n");
-                       }
-                       row_data[d_idx++] = SvPV_nolen(*rn_val_ptr);
-                 } else {
-                       row_data[d_idx++] = undef_val;
-                 }
-               } else {
-                 char buf[32];
-                 snprintf(buf, sizeof(buf), "%ld", (long)(i + 1));
-                 row_data[d_idx++] = savepv(buf);
-               }
-           }
-
-           for(size_t j=0; j<num_headers; j++) {
-                SV**restrict h_ptr = av_fetch(headers_av, j, 0);
-                const char *restrict col_name = (h_ptr && SvOK(*h_ptr)) ? SvPV_nolen(*h_ptr) : "";
-                SV **restrict cell_ptr = row_hv ? hv_fetch(row_hv, col_name, strlen(col_name), 0) : NULL;
-                if (cell_ptr && SvOK(*cell_ptr)) {
-                    if (SvROK(*cell_ptr)) {
-                        PerlIO_close(fh);
-                        safefree(row_data);
-                        if (headers_av) SvREFCNT_dec(headers_av);
-                        croak("write_table: Cannot write nested reference types to table\n");
-                    }
-                    row_data[d_idx++] = SvPV_nolen(*cell_ptr);
-                } else {
-                    row_data[d_idx++] = undef_val;
-                }
-           }
-           print_string_row(fh, row_data, d_idx, sep);
-           if (inc_rownames && !rownames_col) safefree((char*)row_data[0]);
-      }
-      safefree(row_data);
-    }
-    if (headers_av) SvREFCNT_dec(headers_av);
-    if (rows_av) SvREFCNT_dec(rows_av);
-    PerlIO_close(fh);
-    XSRETURN_EMPTY;
+		for(size_t j=0; j<num_headers; j++) {
+			 SV**restrict h_ptr = av_fetch(headers_av, j, 0);
+			 const char *restrict col_name = (h_ptr && SvOK(*h_ptr)) ? SvPV_nolen(*h_ptr) : "";
+			 SV **restrict cell_ptr = row_hv ? hv_fetch(row_hv, col_name, strlen(col_name), 0) : NULL;
+			 if (cell_ptr && SvOK(*cell_ptr)) {
+				  if (SvROK(*cell_ptr)) {
+				      PerlIO_close(fh);
+				      safefree(row_data);
+				      if (headers_av) SvREFCNT_dec(headers_av);
+				      croak("write_table: Cannot write nested reference types to table\n");
+				  }
+				  row_data[d_idx++] = SvPV_nolen(*cell_ptr);
+			 } else {
+				  row_data[d_idx++] = undef_val;
+			 }
+		}
+		print_string_row(fh, row_data, d_idx, sep);
+		if (inc_rownames && !rownames_col) safefree((char*)row_data[0]);
+	}
+	safefree(row_data);
+	}
+	if (headers_av) SvREFCNT_dec(headers_av);
+	if (rows_av) SvREFCNT_dec(rows_av);
+	PerlIO_close(fh);
+	XSRETURN_EMPTY;
 }
 
 SV*
@@ -3054,51 +3142,51 @@ SV* cov(SV* x_sv, SV* y_sv, const char* method = "pearson")
 			double ans = 0.0;			
 			// 5. Algorithm routing
 			if (strcmp(method, "kendall") == 0) {
-				 // R's default cov(..., method="kendall") iterates the full n x n space
-				 for (size_t i = 0; i < n; i++) {
-				     for (size_t j = 0; j < n; j++) {
-				         int sx = (x_val[i] > x_val[j]) - (x_val[i] < x_val[j]);
-				         int sy = (y_val[i] > y_val[j]) - (y_val[i] < y_val[j]);
-				         ans += (double)(sx * sy);
-				     }
-				 }
+				// R's default cov(..., method="kendall") iterates the full n x n space
+				for (size_t i = 0; i < n; i++) {
+				  for (size_t j = 0; j < n; j++) {
+						int sx = (x_val[i] > x_val[j]) - (x_val[i] < x_val[j]);
+						int sy = (y_val[i] > y_val[j]) - (y_val[i] < y_val[j]);
+						ans += (double)(sx * sy);
+				  }
+				}
 			} else {
-				 double mean_x = 0.0, mean_y = 0.0, cov_sum = 0.0;
-				 if (strcmp(method, "spearman") == 0) {
-				     // Spearman: Rank the data first, then run standard covariance
-				     double *restrict rx = (double*)safemalloc(n * sizeof(double));
-				     double *restrict ry = (double*)safemalloc(n * sizeof(double));
-				     // Uses your existing rank_data() helper from LikeR.xs
-				     rank_data(x_val, rx, n);
-				     rank_data(y_val, ry, n);
-				     for (size_t i = 0; i < n; i++) {
-				         double dx = rx[i] - mean_x;
-				         mean_x += dx / (i + 1);
-				         double dy = ry[i] - mean_y;
-				         mean_y += dy / (i + 1);
-				         cov_sum += dx * (ry[i] - mean_y);
-				     }
-				     Safefree(rx); Safefree(ry);
-				 } else { 
-				     // Pearson: Welford's Single-Pass Covariance Algorithm
-				     for (size_t i = 0; i < n; i++) {
-				         double dx = x_val[i] - mean_x;
-				         mean_x += dx / (i + 1);
-				         double dy = y_val[i] - mean_y;
-				         mean_y += dy / (i + 1);
-				         cov_sum += dx * (y_val[i] - mean_y);
-				     }
-				 }
-				 
-				 // Unbiased Sample Covariance (N - 1) for Pearson & Spearman
-				 ans = cov_sum / (n - 1);
+				double mean_x = 0.0, mean_y = 0.0, cov_sum = 0.0;
+				if (strcmp(method, "spearman") == 0) {
+				  // Spearman: Rank the data first, then run standard covariance
+				  double *restrict rx = (double*)safemalloc(n * sizeof(double));
+				  double *restrict ry = (double*)safemalloc(n * sizeof(double));
+				  // Uses your existing rank_data() helper from LikeR.xs
+				  rank_data(x_val, rx, n);
+				  rank_data(y_val, ry, n);
+				  for (size_t i = 0; i < n; i++) {
+						double dx = rx[i] - mean_x;
+						mean_x += dx / (i + 1);
+						double dy = ry[i] - mean_y;
+						mean_y += dy / (i + 1);
+						cov_sum += dx * (ry[i] - mean_y);
+				  }
+				  Safefree(rx); Safefree(ry);
+				} else { 
+				  // Pearson: Welford's Single-Pass Covariance Algorithm
+				  for (size_t i = 0; i < n; i++) {
+						double dx = x_val[i] - mean_x;
+						mean_x += dx / (i + 1);
+						double dy = y_val[i] - mean_y;
+						mean_y += dy / (i + 1);
+						cov_sum += dx * (y_val[i] - mean_y);
+				  }
+				}
+
+				// Unbiased Sample Covariance (N - 1) for Pearson & Spearman
+				ans = cov_sum / (n - 1);
 			}
 			Safefree(x_val); Safefree(y_val);
 			RETVAL = newSVnv(ans);
 		}
 	}
 	OUTPUT:
-	  RETVAL
+		RETVAL
 
 SV* glm(...)
 CODE:
@@ -3157,7 +3245,7 @@ CODE:
 	Newx(exp_terms, exp_cap, char*); Newx(is_dummy, exp_cap, bool);
 	Newx(dummy_base, exp_cap, char*); Newx(dummy_level, exp_cap, char*);
 
-	src = (char*)formula; dst = f_cpy;
+	src = (char*restrict)formula; dst = f_cpy;
 	while (*src && (dst - f_cpy < 511)) { if (!isspace(*src)) { *dst++ = *src; } src++; }
 	*dst = '\0';
 
@@ -6096,17 +6184,17 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 		Newx(row_names, n, char*);
 		Newx(row_hashes, n, HV*);
 		for (i = 0; i < n; i++) {
-			 SV**restrict val = av_fetch(av, i, 0);
-			 if (val && SvROK(*val) && SvTYPE(SvRV(*val)) == SVt_PVHV) {
-				  row_hashes[i] = (HV*)SvRV(*val);
-				  char buf[32];
-				  snprintf(buf, sizeof(buf), "%lu", (unsigned long)(i + 1));
-				  row_names[i] = savepv(buf);
-			 } else {
-				  for (size_t k = 0; k < i; k++) Safefree(row_names[k]);
-				  Safefree(row_names); Safefree(row_hashes);
-				  croak("aov: Array values must be HashRefs (AoH)");
-			 }
+			SV**restrict val = av_fetch(av, i, 0);
+			if (val && SvROK(*val) && SvTYPE(SvRV(*val)) == SVt_PVHV) {
+			  row_hashes[i] = (HV*)SvRV(*val);
+			  char buf[32];
+			  snprintf(buf, sizeof(buf), "%lu", (unsigned long)(i + 1));
+			  row_names[i] = savepv(buf);
+			} else {
+			  for (size_t k = 0; k < i; k++) Safefree(row_names[k]);
+			  Safefree(row_names); Safefree(row_hashes);
+			  croak("aov: Array values must be HashRefs (AoH)");
+			}
 		}
 	} else croak("aov: Data must be an Array or Hash reference");
 
@@ -6146,22 +6234,22 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 	chunk = strtok(rhs, "+");
 	while (chunk != NULL) {
 		if (strcmp(chunk, ".") == 0) {
-			 AV *restrict cols = get_all_columns(data_hoa, row_hashes, n);
-			 for (size_t c = 0; c <= av_len(cols); c++) {
-				  SV **restrict col_sv = av_fetch(cols, c, 0);
-				  if (col_sv && SvOK(*col_sv)) {
-				      const char *restrict col_name = SvPV_nolen(*col_sv);
-				      if (strcmp(col_name, lhs) != 0) {
-				          size_t slen = strlen(col_name);
-				          if (rhs_len + slen + 2 < sizeof(rhs_expanded)) {
-				              if (rhs_len > 0) { strcat(rhs_expanded, "+"); rhs_len++; }
-				              strcat(rhs_expanded, col_name);
-				              rhs_len += slen;
-				          }
-				      }
-				  }
-			 }
-			 SvREFCNT_dec(cols);
+			AV *restrict cols = get_all_columns(data_hoa, row_hashes, n);
+			for (size_t c = 0; c <= av_len(cols); c++) {
+			  SV **restrict col_sv = av_fetch(cols, c, 0);
+			  if (col_sv && SvOK(*col_sv)) {
+					const char *restrict col_name = SvPV_nolen(*col_sv);
+					if (strcmp(col_name, lhs) != 0) {
+						 size_t slen = strlen(col_name);
+						 if (rhs_len + slen + 2 < sizeof(rhs_expanded)) {
+						     if (rhs_len > 0) { strcat(rhs_expanded, "+"); rhs_len++; }
+						     strcat(rhs_expanded, col_name);
+						     rhs_len += slen;
+						 }
+					}
+			  }
+			}
+			SvREFCNT_dec(cols);
 		} else {
 			 size_t slen = strlen(chunk);
 			 if (rhs_len + slen + 2 < sizeof(rhs_expanded)) {
@@ -6191,7 +6279,7 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 			 if (star) {
 				  *star = '\0';
 				  char *restrict left = chunk;
-				  char *right = star + 1;
+				  char *restrict right = star + 1;
 				  char *restrict c_l = strchr(left, '^');
 				  if (c_l && strncmp(left, "I(", 2) != 0) *c_l = '\0';
 				  char *restrict c_r = strchr(right, '^'); if (c_r && strncmp(right, "I(", 2) != 0) *c_r = '\0';
@@ -6210,11 +6298,11 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 	}
 
 	for (i = 0; i < num_terms; i++) {
-		  bool found = FALSE;
-		  for (size_t k = 0; k < num_uniq; k++) {
-		        if (strcmp(terms[i], uniq_terms[k]) == 0) { found = TRUE; break; }
-		  }
-		  if (!found) uniq_terms[num_uniq++] = savepv(terms[i]);
+		bool found = FALSE;
+		for (size_t k = 0; k < num_uniq; k++) {
+			if (strcmp(terms[i], uniq_terms[k]) == 0) { found = TRUE; break; }
+		}
+		if (!found) uniq_terms[num_uniq++] = savepv(terms[i]);
 	}
 	p = num_uniq;
 
@@ -6257,8 +6345,8 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 				Safefree(l_indices); Safefree(r_indices);
 				croak("aov: Interaction term '%s' requires its main effects to be explicitly included in the formula", uniq_terms[j]);
 			} else {
-				for (int li = 0; li < l_count; li++) {
-					 for (int ri = 0; ri < r_count; ri++) {
+				for (unsigned int li = 0; li < l_count; li++) {
+					 for (unsigned int ri = 0; ri < r_count; ri++) {
 						  if (p_exp >= exp_cap) {
 						      exp_cap *= 2;
 						      Renew(exp_terms, exp_cap, char*); Renew(parent_term, exp_cap, char*);
@@ -6285,7 +6373,7 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 				unsigned int num_levels = 0, levels_cap = 8;
 				Newx(levels, levels_cap, char*);
 				for (i = 0; i < n; i++) {
-					 char* str_val = get_data_string_alloc(data_hoa, row_hashes, i, uniq_terms[j]);
+					 char*restrict str_val = get_data_string_alloc(data_hoa, row_hashes, i, uniq_terms[j]);
 					 if (str_val) {
 						  bool found = FALSE;
 						  for (size_t l = 0; l < num_levels; l++) {
@@ -6685,14 +6773,14 @@ CODE:
 	if (is_null_power) {
 	  power = p_body(n, delta, sd, sig_level, tsample, tside, strict);
 	} else if (is_null_n) {
-	  double low = 2.0, high = 1e7;
-	  while (p_body(high, delta, sd, sig_level, tsample, tside, strict) < power && high < 1e12) high *= 2.0;
-	  while (high - low > tol) {
-		   double mid = low + (high - low) / 2.0;
-		   if (p_body(mid, delta, sd, sig_level, tsample, tside, strict) < power) low = mid;
-		   else high = mid;
-	  }
-	  n = low + (high - low) / 2.0;
+		double low = 2.0, high = 1e7;
+		while (p_body(high, delta, sd, sig_level, tsample, tside, strict) < power && high < 1e12) high *= 2.0;
+		while (high - low > tol) {
+			double mid = low + (high - low) / 2.0;
+			if (p_body(mid, delta, sd, sig_level, tsample, tside, strict) < power) low = mid;
+			else high = mid;
+		}
+		n = low + (high - low) / 2.0;
 	} else if (is_null_sd) {
 	  double low = delta * 1e-7, high = delta * 1e7;
 	  while (high - low > tol) {
@@ -6733,7 +6821,7 @@ CODE:
 	RETVAL = newRV_noinc((SV*)ret);
 }
 OUTPUT:
-    RETVAL
+	RETVAL
 
 SV* kruskal_test(...)
 CODE:
@@ -6744,12 +6832,12 @@ CODE:
 	// 1. Shift positional arguments
 	//    Accept either: (arrayref, arrayref) or (hashref)
 	if (arg_idx < items && SvROK(ST(arg_idx))) {
-	  svtype t = SvTYPE(SvRV(ST(arg_idx)));
-	  if (t == SVt_PVAV) {
-		   x_sv = ST(arg_idx++);
-	  } else if (t == SVt_PVHV) {
-		   h_sv = ST(arg_idx++);          /* hash-of-arrays shortcut */
-	  }
+		svtype t = SvTYPE(SvRV(ST(arg_idx)));
+		if (t == SVt_PVAV) {
+			x_sv = ST(arg_idx++);
+		} else if (t == SVt_PVHV) {
+			h_sv = ST(arg_idx++);          /* hash-of-arrays shortcut */
+		}
 	}
 	if (!h_sv && arg_idx < items
 		     && SvROK(ST(arg_idx))
@@ -6826,48 +6914,48 @@ CODE:
 	/* 4b. Original x / g array-pair input path                           */
 	/* ------------------------------------------------------------------ */
 	} else {
-	  if (!x_sv || !SvROK(x_sv) || SvTYPE(SvRV(x_sv)) != SVt_PVAV)
-		   croak("kruskal_test: 'x' is a required argument and must be an ARRAY reference");
-	  if (!g_sv || !SvROK(g_sv) || SvTYPE(SvRV(g_sv)) != SVt_PVAV)
-		   croak("kruskal_test: 'g' is a required argument and must be an ARRAY reference");
+		if (!x_sv || !SvROK(x_sv) || SvTYPE(SvRV(x_sv)) != SVt_PVAV)
+			croak("kruskal_test: 'x' is a required argument and must be an ARRAY reference");
+		if (!g_sv || !SvROK(g_sv) || SvTYPE(SvRV(g_sv)) != SVt_PVAV)
+			croak("kruskal_test: 'g' is a required argument and must be an ARRAY reference");
 
-	  AV *restrict x_av = (AV*)SvRV(x_sv);
-	  AV *restrict g_av = (AV*)SvRV(g_sv);
-	  size_t nx = (size_t)(av_len(x_av) + 1);
-	  size_t ng = (size_t)(av_len(g_av) + 1);
-	  if (nx != ng) croak("kruskal_test: 'x' and 'g' must have the same length");
-	  if (nx < 2)   croak("not enough observations");
+		AV *restrict x_av = (AV*)SvRV(x_sv);
+		AV *restrict g_av = (AV*)SvRV(g_sv);
+		size_t nx = (size_t)(av_len(x_av) + 1);
+		size_t ng = (size_t)(av_len(g_av) + 1);
+		if (nx != ng) croak("kruskal_test: 'x' and 'g' must have the same length");
+		if (nx < 2)   croak("not enough observations");
 
-	  ri = (RankInfo *)safemalloc(nx * sizeof(RankInfo));
-	  group_names = (char **)safecalloc(nx, sizeof(char*)); // Upper bound
+		ri = (RankInfo *)safemalloc(nx * sizeof(RankInfo));
+		group_names = (char **)safecalloc(nx, sizeof(char*)); // Upper bound
 
-	  // Map string group names → contiguous integer IDs
-	  HV *restrict group_map    = newHV();
-	  size_t          next_group_id = 0;
+		// Map string group names → contiguous integer IDs
+		HV *restrict group_map    = newHV();
+		size_t          next_group_id = 0;
 
-	  for (size_t i = 0; i < nx; i++) {
-		   SV **restrict x_el = av_fetch(x_av, i, 0);
-		   SV **restrict g_el = av_fetch(g_av, i, 0);
-		   if (x_el && SvOK(*x_el) && looks_like_number(*x_el)
-		            && g_el && SvOK(*g_el)) {
-		       const char *restrict g_str = SvPV_nolen(*g_el);
-		       STRLEN               glen  = strlen(g_str);
-		       SV   **restrict id_sv = hv_fetch(group_map, g_str, glen, 0);
-		       size_t group_id;
-		       if (id_sv) {
-		           group_id = SvUV(*id_sv);
-		       } else {
-		           group_id = next_group_id++;
-		           hv_store(group_map, g_str, glen, newSVuv(group_id), 0);
-		           group_names[group_id] = savepvn(g_str, glen); // Save string key
-		       }
-		       ri[valid_n].val = SvNV(*x_el);
-		       ri[valid_n].idx = group_id;
-		       valid_n++;
-		   }
-	  }
-	  k = next_group_id;
-	  SvREFCNT_dec(group_map);
+		for (size_t i = 0; i < nx; i++) {
+			SV **restrict x_el = av_fetch(x_av, i, 0);
+			SV **restrict g_el = av_fetch(g_av, i, 0);
+			if (x_el && SvOK(*x_el) && looks_like_number(*x_el)
+				      && g_el && SvOK(*g_el)) {
+				const char *restrict g_str = SvPV_nolen(*g_el);
+				STRLEN               glen  = strlen(g_str);
+				SV   **restrict id_sv = hv_fetch(group_map, g_str, glen, 0);
+				size_t group_id;
+				if (id_sv) {
+				  group_id = SvUV(*id_sv);
+				} else {
+				  group_id = next_group_id++;
+				  hv_store(group_map, g_str, glen, newSVuv(group_id), 0);
+				  group_names[group_id] = savepvn(g_str, glen); // Save string key
+				}
+				ri[valid_n].val = SvNV(*x_el);
+				ri[valid_n].idx = group_id;
+				valid_n++;
+			}
+		}
+		k = next_group_id;
+		SvREFCNT_dec(group_map);
 	}
 
 	/* ------------------------------------------------------------------ */
@@ -6947,8 +7035,7 @@ CODE:
 
 	// Memory Cleanup
 	Safefree(group_names);    Safefree(group_rank_sums); 
-	Safefree(group_val_sums); Safefree(group_counts); 
-	Safefree(ri);
+	Safefree(group_val_sums); Safefree(group_counts); Safefree(ri);
 
 	RETVAL = newRV_noinc((SV*)res);
 }
@@ -7029,16 +7116,16 @@ CODE:
 	double mean_y = 0.0, M2_y = 0.0;
 	size_t ny = 0;
 	for (size_t i = 0; i < ny_raw; i++) {
-	  SV** restrict tv = av_fetch(y_av, i, 0);
-	  if (tv && SvOK(*tv) && looks_like_number(*tv)) {
-		   double val = SvNV(*tv);
-		   if (!isnan(val) && isfinite(val)) {
-		       ny++;
-		       double delta = val - mean_y;
-		       mean_y += delta / ny;
-		       M2_y += delta * (val - mean_y);
-		   }
-	  }
+		SV** restrict tv = av_fetch(y_av, i, 0);
+		if (tv && SvOK(*tv) && looks_like_number(*tv)) {
+			double val = SvNV(*tv);
+			if (!isnan(val) && isfinite(val)) {
+				ny++;
+				double delta = val - mean_y;
+				mean_y += delta / ny;
+				M2_y += delta * (val - mean_y);
+			}
+		}
 	}
 
 	if (nx < 2) croak("not enough 'x' observations");
@@ -7116,8 +7203,8 @@ CODE:
 		/* --- HASH REFERENCE --- */
 		if (SvTYPE(rv) == SVt_PVHV) {
 			HV *restrict hv    = (HV *)rv;
-			I32 count = hv_iterinit(hv);
-			I32 limit = (n < (IV)count) ? (I32)n : count;
+			unsigned count = hv_iterinit(hv);
+			unsigned limit = (n < (IV)count) ? (I32)n : count;
 			HV *restrict ret_hv = newHV();
 
 			if (count > 0 && limit > 0) {
@@ -7173,25 +7260,24 @@ CODE:
 			if (count > 0) {
 				 SV    **restrict src = AvARRAY(av);   /* direct pointer into AV's C array */
 				 size_t *restrict idx;
-				 size_t  i;
 
 				 /* Shuffle indices rather than SV** to keep the original AV intact */
 				 Newx(idx, count, size_t);
-				 for (i = 0; i < count; i++)
+				 for (size_t i = 0; i < count; i++)
 				     idx[i] = i;
 
 				 /* Partial Fisher-Yates on the index array */
-				 for (i = 0; i < limit; i++) {
+				 for (size_t i = 0; i < limit; i++) {
 				     size_t j   = i + (size_t)(Drand01() * (count - i));
 				     size_t tmp = idx[i];
 				     idx[i]  = idx[j];
 				     idx[j]  = tmp;
 				 }
 
-				 for (i = 0; i < (size_t)n; i++) {
+				 for (size_t i = 0; i < (size_t)n; i++) {
 				     if (i < limit) {
 				         SV *restrict sv = src[idx[i]];   /* AvARRAY direct access — no av_fetch call */
-				         SV *push_sv;
+				         SV *restrict push_sv;
 							if (sv && sv != &PL_sv_undef)
 								 push_sv = SvREFCNT_inc(sv);
 							else

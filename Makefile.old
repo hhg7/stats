@@ -193,7 +193,8 @@ PERL_ARCHIVE       =
 PERL_ARCHIVE_AFTER = 
 
 
-TO_INST_PM = aov.pl \
+TO_INST_PM = aoh2hoh.pl \
+	aov.pl \
 	benchmark.pl \
 	chisq.test.pl \
 	cor.pl \
@@ -204,7 +205,6 @@ TO_INST_PM = aov.pl \
 	kruskal.pl \
 	ks.test.pl \
 	lib/Stats/LikeR.pm \
-	lib/Stats/bu.LikeR.pm \
 	lib/Stats/test.pl \
 	lm.pl \
 	md2pod.pl \
@@ -1124,6 +1124,7 @@ pm_to_blib : $(FIRST_MAKEFILE) $(TO_INST_PM)
 	  -e '@parts=splice @ARGV,0,$$i+1;' \
 	  -e 'pop @parts; $$filter=join q{ }, map qq{"$$_"}, @parts;' \
 	  -e 'pm_to_blib({@ARGV}, '\''$(INST_LIB)/auto'\'', $$filter, '\''$(PERM_DIR)'\'')' -- $(PM_FILTER) -- \
+	  'aoh2hoh.pl' '$(INST_LIB)/Stats/aoh2hoh.pl' \
 	  'aov.pl' '$(INST_LIB)/Stats/aov.pl' \
 	  'benchmark.pl' '$(INST_LIB)/Stats/benchmark.pl' \
 	  'chisq.test.pl' '$(INST_LIB)/Stats/chisq.test.pl' \
@@ -1135,7 +1136,6 @@ pm_to_blib : $(FIRST_MAKEFILE) $(TO_INST_PM)
 	  'kruskal.pl' '$(INST_LIB)/Stats/kruskal.pl' \
 	  'ks.test.pl' '$(INST_LIB)/Stats/ks.test.pl' \
 	  'lib/Stats/LikeR.pm' 'blib/lib/Stats/LikeR.pm' \
-	  'lib/Stats/bu.LikeR.pm' 'blib/lib/Stats/bu.LikeR.pm' \
 	  'lib/Stats/test.pl' 'blib/lib/Stats/test.pl' \
 	  'lm.pl' '$(INST_LIB)/Stats/lm.pl' \
 	  'md2pod.pl' '$(INST_LIB)/Stats/md2pod.pl' \
