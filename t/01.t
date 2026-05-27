@@ -4183,7 +4183,7 @@ $n = {
     'Invalid'    => 'Not a reference'                      # Edge case safety
 };
 
-Stats::LikeR::add_data($data, $n);
+add_data($data, $n);
 
 # --- Test 1: Total key count ---
 $size = scalar keys %{ $data };

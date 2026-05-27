@@ -11,9 +11,16 @@ There **are** other modules on CPAN that can do **PARTS** of this, but this work
 
 ## add_data
 
-Add data to a hash.
+Add data to a hash
 
-
+    $data = { 'Jack Smith' => { age => 30 } };
+    $n = { 
+        'Jack Smith' => { dept => 'Engineering' },             # Update existing (Hash)
+        'Jane Doe'   => { age => 25, dept => 'Sales' },        # Add new (Hash)
+        'Bob Brown'  => [ 'age', 40, 'dept', 'IT' ],           # Add new (Array)
+        'Invalid'    => 'Not a reference'                      # Edge case safety
+    };
+    add_data($data, $n); # will add data to 'Jack Smith', as well as new keys for Jane and Bob.
 
 ## aoh2hoh
 

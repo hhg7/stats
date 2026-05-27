@@ -11,6 +11,19 @@ There B<are> other modules on CPAN that can do B<PARTS> of this, but this works 
 
 =head1 Functions/Subroutines
 
+=head2 add_data
+
+Add data to a hash
+
+ $data = { 'Jack Smith' => { age => 30 } };
+ $n = { 
+     'Jack Smith' => { dept => 'Engineering' },             # Update existing (Hash)
+     'Jane Doe'   => { age => 25, dept => 'Sales' },        # Add new (Hash)
+     'Bob Brown'  => [ 'age', 40, 'dept', 'IT' ],           # Add new (Array)
+     'Invalid'    => 'Not a reference'                      # Edge case safety
+ };
+ add_data($data, $n); # will add data to 'Jack Smith', as well as new keys for Jane and Bob.
+
 =head2 aoh2hoh
 
 Take an array of hashes and turn it into a hash of hash
@@ -213,6 +226,22 @@ or
 
  cov($array1, $array2, 'kendall')
 
+=head2 dnorm
+
+gives the density of the normal distribution, with the specified mean and standard deviation.
+
+In other words, the predicted height of the value C<x>, given a mean, standard deviation, and whether or not to use a log value.
+
+returns a single scalar/number if a single value is given, otherwise returns an array reference.
+
+Usage:
+
+ dnorm(4) # assumes a mean of 0 and standard deviation of 1
+
+but default mean, standard deviation, and log can be passed as parameters:
+
+ $x = dnorm(0, mean => 0, sd => 2, 'log' => 0);
+
 =head2 fisher_test
 
 =head3 array reference entry
@@ -341,6 +370,38 @@ Also, a single array can be tested against a normal distribution:
  $ks = ks_test($ksx, 'pnorm');
 
 The p-value precision is about 1e-8, which I want to improve, but am not sure how.
+
+=head2 ljoin
+
+Consider a hash: C<$h{$row}{$col}>, and another hash C<$i{$row}{$col}>.
+C<ljoin> will add information for each C<$row>, where it exists in both C<%h> and C<%i>
+
+For example,
+
+ {
+ "Jack Smith"   {
+     age   30
+ }
+ }
+
+and a second hash,
+    {
+        "Jack Smith"   {
+            dept   "Engineering"
+        },
+        "Jane Doe"     {
+            age   25
+        }
+    }
+
+in this case, running C<ljoin(\%h, \%i)> will modify \%h to result:
+
+ {
+ "Jack Smith"   {
+     age    30,
+     dept   "Engineering"
+ }
+ }
 
 =head2 lm
 
@@ -821,11 +882,13 @@ as of version 0.07, C<write_table> determines comma and tab-separated delimiters
 
 Speed improvement in C<summary> of hashes of arrays
 
-Addition of C<mode> function
+Addition of C<add_data>, C<dnorm>, C<ljoin>, and C<mode> functions
 
 Chi-squared function no longer has Perl wrapper, and all code is in XS, which should result in a minor speed increase with 1 less function call.
 
 Compiler changes for GNU source and inclusion of C<strings.h>, to ensure more CPAN testing works better.
+
+C<read_table> now returns hash-of-hash in {row}{column}
 
 =head2 0.07
 
