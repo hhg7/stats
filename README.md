@@ -837,7 +837,7 @@ as of version 0.07, `write_table` determines comma and tab-separated delimiters 
 
 Speed improvement in `summary` of hashes of arrays
 
-Addition of `mode` function
+Addition of `dnorm`, and `mode` functions
 
 Chi-squared function no longer has Perl wrapper, and all code is in XS, which should result in a minor speed increase with 1 less function call.
 
