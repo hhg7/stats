@@ -1751,8 +1751,7 @@ static double c_dnorm(double x, double mu, double sigma, int give_log) {
 // --- XS SECTION ---
 MODULE = Stats::LikeR  PACKAGE = Stats::LikeR
 
-SV *
-aoh2hoh(aoh_ref, pivot_key_sv = NULL)
+SV * aoh2hoh(aoh_ref, pivot_key_sv = NULL)
     SV *aoh_ref
     SV *pivot_key_sv
 PREINIT:
@@ -1779,75 +1778,70 @@ CODE:
 
 	/* 3. Iterate through the array */
 	for (SSize_t i = 0; i <= top_index; i++) {
-	  elem_ptr = av_fetch(aoh, i, 0);
+		elem_ptr = av_fetch(aoh, i, 0);
+		if (elem_ptr && *elem_ptr) {
+			SV *restrict elem = *elem_ptr;
+			char *restrict final_key = NULL;
+			STRLEN final_key_len = 0;
+			bool allocated_key = 0;
+			HV *restrict new_inner_hash = NULL; /* Will hold our shallow copy if we pivot */
+			if (!SvROK(elem) || SvTYPE(SvRV(elem)) != SVt_PVHV) {
+				croak("Array element at index %ld is not a hash reference", (long)i);
+			}
+			/* 4. Attempt to pivot on the provided key (NON-DESTRUCTIVE) */
+			if (pivot_key) {
+				HV *restrict inner_hash = (HV *)SvRV(elem);
+				/* Use hv_fetch so we DON'T mutate the original hash */
+				SV **restrict inner_val_ptr = hv_fetch(inner_hash, pivot_key, pivot_key_len, 0);
+				if (inner_val_ptr && *inner_val_ptr && SvOK(*inner_val_ptr)) {
+					final_key = SvPV(*inner_val_ptr, final_key_len);
+					/* Create a shallow copy of the hash to omit the pivot key */
+					new_inner_hash = newHV();
+					HE *restrict he;
+					/* Iterate over the original hash */
+					hv_iterinit(inner_hash);
+					while ((he = hv_iternext(inner_hash))) {
+						I32 klen;
+						char *restrict k = hv_iterkey(he, &klen);
 
-	  if (elem_ptr && *elem_ptr) {
-		   SV *restrict elem = *elem_ptr;
-		   char *restrict final_key = NULL;
-		   STRLEN final_key_len = 0;
-		   bool allocated_key = 0;
-		   HV *restrict new_inner_hash = NULL; /* Will hold our shallow copy if we pivot */
+						/* Skip the pivot key so it doesn't end up in our new hash */
+						if (klen == (I32)pivot_key_len && memcmp(k, pivot_key, klen) == 0) {
+						  continue;
+						}
 
-		   if (!SvROK(elem) || SvTYPE(SvRV(elem)) != SVt_PVHV) {
-		       croak("Array element at index %ld is not a hash reference", (long)i);
-		   }
+						/* Copy the key/value to the new hash */
+						SV *restrict v = hv_iterval(inner_hash, he);
+						hv_store(new_inner_hash, k, klen, SvREFCNT_inc(v), 0);
+					}
+				}
+			}
+			/* 5. Fallback: No pivot key provided, or key was missing in this row */
+			if (!final_key) {
+				final_key_len = snprintf(NULL, 0, "%ld", (long)i);
+				Newx(final_key, final_key_len + 1, char);
+				snprintf(final_key, final_key_len + 1, "%ld", (long)i);
+				allocated_key = 1;
+			}
+			/* 6. Prepare the reference to store */
+			SV *restrict val_to_store;
+			if (new_inner_hash) {
+				/* We made a copy, wrap it in a new reference */
+				val_to_store = newRV_noinc((SV *)new_inner_hash);
+			} else {
+				/* No copy was needed, just increment the original reference */
+				val_to_store = SvREFCNT_inc(elem);
+			}
 
-		   /* 4. Attempt to pivot on the provided key (NON-DESTRUCTIVE) */
-		   if (pivot_key) {
-		        HV *restrict inner_hash = (HV *)SvRV(elem);
-		        
-		        /* Use hv_fetch so we DON'T mutate the original hash */
-		        SV **restrict inner_val_ptr = hv_fetch(inner_hash, pivot_key, pivot_key_len, 0);
+			/* 7. Store the key/value pair in the new outer hash */
+			if (hv_store(hoh, final_key, final_key_len, val_to_store, 0) == NULL) {
+				SvREFCNT_dec(val_to_store); 
+			}
 
-		        if (inner_val_ptr && *inner_val_ptr && SvOK(*inner_val_ptr)) {
-		            final_key = SvPV(*inner_val_ptr, final_key_len);
-		            /* Create a shallow copy of the hash to omit the pivot key */
-		            new_inner_hash = newHV();
-		            HE *restrict he;
-		            /* Iterate over the original hash */
-		            hv_iterinit(inner_hash);
-		            while ((he = hv_iternext(inner_hash))) {
-		                I32 klen;
-		                char *k = hv_iterkey(he, &klen);
-
-		                /* Skip the pivot key so it doesn't end up in our new hash */
-		                if (klen == (I32)pivot_key_len && memcmp(k, pivot_key, klen) == 0) {
-		                    continue;
-		                }
-
-		                /* Copy the key/value to the new hash */
-		                SV *restrict v = hv_iterval(inner_hash, he);
-		                hv_store(new_inner_hash, k, klen, SvREFCNT_inc(v), 0);
-		            }
-		        }
-		   }
-		   /* 5. Fallback: No pivot key provided, or key was missing in this row */
-		   if (!final_key) {
-		        final_key_len = snprintf(NULL, 0, "%ld", (long)i);
-		        Newx(final_key, final_key_len + 1, char);
-		        snprintf(final_key, final_key_len + 1, "%ld", (long)i);
-		        allocated_key = 1;
-		   }
-		   /* 6. Prepare the reference to store */
-		   SV *restrict val_to_store;
-		   if (new_inner_hash) {
-		        /* We made a copy, wrap it in a new reference */
-		        val_to_store = newRV_noinc((SV *)new_inner_hash);
-		   } else {
-		        /* No copy was needed, just increment the original reference */
-		        val_to_store = SvREFCNT_inc(elem);
-		   }
-
-		   /* 7. Store the key/value pair in the new outer hash */
-		   if (hv_store(hoh, final_key, final_key_len, val_to_store, 0) == NULL) {
-		        SvREFCNT_dec(val_to_store); 
-		   }
-
-		   /* 8. Free dynamically allocated memory if we fell back to integers */
-		   if (allocated_key) {
-		        Safefree(final_key);
-		   }
-	  }
+			/* 8. Free dynamically allocated memory if we fell back to integers */
+			if (allocated_key) {
+				Safefree(final_key);
+			}
+		}
 	}
 
 	RETVAL = newRV_noinc((SV *)hoh);
@@ -7476,13 +7470,12 @@ CODE:
 	  }
 	}
 
-void
-add_data(h_ref, i_ref)
-    SV *h_ref;
-    SV *i_ref;
+void add_data(h_ref, i_ref)
+	SV *h_ref;
+	SV *i_ref;
 PREINIT:
-    HV *h_hv, *i_hv;
-    HE *i_entry;
+	HV *restrict h_hv, *restrict i_hv;
+	HE *restrict i_entry;
 CODE:
 	/* 1. Validate inputs */
 	if (!SvROK(h_ref) || SvTYPE(SvRV(h_ref)) != SVt_PVHV) {
@@ -7491,71 +7484,59 @@ CODE:
 	if (!SvROK(i_ref) || SvTYPE(SvRV(i_ref)) != SVt_PVHV) {
 	  croak("Second argument to add_data must be a hash reference");
 	}
-
 	h_hv = (HV *)SvRV(h_ref);
 	i_hv = (HV *)SvRV(i_ref);
-
 	/* 2. Iterate through the SECONDARY hash ($i) */
 	hv_iterinit(i_hv);
 	while ((i_entry = hv_iternext(i_hv))) {
-	  SV *row_key_sv = hv_iterkeysv(i_entry);
-	  SV *i_row_sv   = hv_iterval(i_hv, i_entry);
-
-	  /* Only proceed if the secondary row contains a valid reference */
-	  if (SvROK(i_row_sv)) {
-		   HE *h_fetch_he = hv_fetch_ent(h_hv, row_key_sv, 0, 0);
-		   SV *h_row_sv   = NULL;
-		   HV *h_row_hv   = NULL;
-
-		   /* 3. Check if the row exists in $h */
-		   if (h_fetch_he) {
-		       h_row_sv = HeVAL(h_fetch_he);
-		       /* Ensure existing row is a Hash Reference */
-		       if (SvROK(h_row_sv) && SvTYPE(SvRV(h_row_sv)) == SVt_PVHV) {
-		           h_row_hv = (HV *)SvRV(h_row_sv);
-		       }
-		   } else {
-		       /* 4. Row DOES NOT exist in $h: Create it */
-		       h_row_hv = newHV();
-		       
-		       /* Create a reference to the new hash. newRV_noinc transfers 
-		          ownership of the HV's initial reference count to the SV. */
-		       h_row_sv = newRV_noinc((SV *)h_row_hv);
-		       
-		       /* Store in $h. hv_store_ent takes ownership of the SV's ref count. */
-		       hv_store_ent(h_hv, row_key_sv, h_row_sv, 0);
-		   }
-
-		   /* 5. Merge data if we successfully resolved a target hash row */
-		   if (h_row_hv) {
-		       
-		       /* Case A: $i->{row} is a Hash Reference */
-		       if (SvTYPE(SvRV(i_row_sv)) == SVt_PVHV) {
-		           HV *i_inner_hv = (HV *)SvRV(i_row_sv);
-		           HE *i_inner_entry;
-
-		           hv_iterinit(i_inner_hv);
-		           while ((i_inner_entry = hv_iternext(i_inner_hv))) {
-		               SV *col_key_sv = hv_iterkeysv(i_inner_entry);
-		               SV *col_val    = hv_iterval(i_inner_hv, i_inner_entry);
-		               hv_store_ent(h_row_hv, col_key_sv, SvREFCNT_inc(col_val), 0);
-		           }
-		       } else if (SvTYPE(SvRV(i_row_sv)) == SVt_PVAV
-		       /* Case B: $i->{row} is an Array Reference */
-		       ) {
-		           AV *i_inner_av = (AV *)SvRV(i_row_sv);
-		           SSize_t top_idx = av_len(i_inner_av);
-		           SSize_t idx;
-
-		           for (idx = 0; idx < top_idx; idx += 2) {
-		               SV **key_svp = av_fetch(i_inner_av, idx, 0);
-		               SV **val_svp = av_fetch(i_inner_av, idx + 1, 0);
-
-		               if (key_svp && val_svp) {
-		                   hv_store_ent(h_row_hv, *key_svp, SvREFCNT_inc(*val_svp), 0);
-		               }
-		           }
-		       }
-		   }
-	  }
+		SV *restrict row_key_sv = hv_iterkeysv(i_entry);
+		SV *restrict i_row_sv   = hv_iterval(i_hv, i_entry);
+		/* Only proceed if the secondary row contains a valid reference */
+		if (SvROK(i_row_sv)) {
+			HE *restrict h_fetch_he = hv_fetch_ent(h_hv, row_key_sv, 0, 0);
+			SV *restrict h_row_sv   = NULL;
+			HV *restrict h_row_hv   = NULL;
+			/* 3. Check if the row exists in $h */
+			if (h_fetch_he) {
+				h_row_sv = HeVAL(h_fetch_he);
+				 /* Ensure existing row is a Hash Reference */
+				if (SvROK(h_row_sv) && SvTYPE(SvRV(h_row_sv)) == SVt_PVHV) {
+					h_row_hv = (HV *)SvRV(h_row_sv);
+				}
+			} else {
+				 /* 4. Row DOES NOT exist in $h: Create it */
+				 h_row_hv = newHV();
+				 /* Create a reference to the new hash. newRV_noinc transfers 
+				    ownership of the HV's initial reference count to the SV. */
+				 h_row_sv = newRV_noinc((SV *)h_row_hv);
+				 /* Store in $h. hv_store_ent takes ownership of the SV's ref count. */
+				 hv_store_ent(h_hv, row_key_sv, h_row_sv, 0);
+			}
+			/* 5. Merge data if we successfully resolved a target hash row */
+			if (h_row_hv) {
+				/* Case A: $i->{row} is a Hash Reference */
+				if (SvTYPE(SvRV(i_row_sv)) == SVt_PVHV) {
+					HV *restrict i_inner_hv = (HV *)SvRV(i_row_sv);
+					HE *restrict i_inner_entry;
+					hv_iterinit(i_inner_hv);
+					while ((i_inner_entry = hv_iternext(i_inner_hv))) {
+						SV *restrict col_key_sv = hv_iterkeysv(i_inner_entry);
+						SV *restrict col_val    = hv_iterval(i_inner_hv, i_inner_entry);
+						hv_store_ent(h_row_hv, col_key_sv, SvREFCNT_inc(col_val), 0);
+					}
+				} else if (SvTYPE(SvRV(i_row_sv)) == SVt_PVAV) {
+				/* Case B: $i->{row} is an Array Reference */
+					AV *restrict i_inner_av = (AV *)SvRV(i_row_sv);
+					SSize_t top_idx = av_len(i_inner_av);
+					SSize_t idx;
+					for (idx = 0; idx < top_idx; idx += 2) {
+						SV **restrict key_svp = av_fetch(i_inner_av, idx, 0);
+						SV **restrict val_svp = av_fetch(i_inner_av, idx + 1, 0);
+						if (key_svp && val_svp) {
+							hv_store_ent(h_row_hv, *key_svp, SvREFCNT_inc(*val_svp), 0);
+						}
+					}
+				}
+			}
+		}
 	}

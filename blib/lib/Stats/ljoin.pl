@@ -32,12 +32,25 @@ sub ljoin_pp {
 		}
 	}
 }
-my $h = { 'Jack Smith' => { age => 30 } };
-my $i = { 'Jack Smith' => { dept => 'Engineering' }, 'Jane Doe' => { age => 25 } };
-
-p $h;
-my $t0 = Time::HiRes::time();
-ljoin($h, $i);
-my $t1 = Time::HiRes::time();
-p $h;
-printf("ljoin worked in %g seconds\n", $t1-$t0);
+my (@xs, @perl);
+foreach my $n (0..9) {
+	my $h = { 'Jack Smith' => { age => 30 } };
+	my $i = { 'Jack Smith' => { dept => 'Engineering' }, 'Jane Doe' => { age => 25 } };
+	my $t0 = Time::HiRes::time();
+	ljoin($h, $i);
+	my $t1 = Time::HiRes::time();
+	push @xs, $t1-$t0;
+}
+foreach my $n (0..9) {
+	my $h = { 'Jack Smith' => { age => 30 } };
+	my $i = { 'Jack Smith' => { dept => 'Engineering' }, 'Jane Doe' => { age => 25 } };
+	my $t0 = Time::HiRes::time();
+	ljoin_pp($h, $i);
+	my $t1 = Time::HiRes::time();
+	push @perl, $t1-$t0;
+	p $h if $n == 0;
+}
+summary(@xs);
+summary(@perl);
+my $tt = t_test(\@xs, \@perl, var_equal => false);
+p $tt;

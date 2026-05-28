@@ -73,6 +73,20 @@ This is meant to call subroutines directly through eXternal Subroutines (XS) for
 There \fBare\fR other modules on CPAN that can do \fBPARTS\fR of this, but this works the way that I \fBwant\fR it to.
 .SH Functions/Subroutines
 .IX Header "Functions/Subroutines"
+.SS add_data
+.IX Subsection "add_data"
+Add data to a hash
+.PP
+.Vb 8
+\& $data = { \*(AqJack Smith\*(Aq => { age => 30 } };
+\& $n = { 
+\&     \*(AqJack Smith\*(Aq => { dept => \*(AqEngineering\*(Aq },             # Update existing (Hash)
+\&     \*(AqJane Doe\*(Aq   => { age => 25, dept => \*(AqSales\*(Aq },        # Add new (Hash)
+\&     \*(AqBob Brown\*(Aq  => [ \*(Aqage\*(Aq, 40, \*(Aqdept\*(Aq, \*(AqIT\*(Aq ],           # Add new (Array)
+\&     \*(AqInvalid\*(Aq    => \*(AqNot a reference\*(Aq                      # Edge case safety
+\& };
+\& add_data($data, $n); # will add data to \*(AqJack Smith\*(Aq, as well as new keys for Jane and Bob.
+.Ve
 .SS aoh2hoh
 .IX Subsection "aoh2hoh"
 Take an array of hashes and turn it into a hash of hash
@@ -304,6 +318,25 @@ or
 .Vb 1
 \& cov($array1, $array2, \*(Aqkendall\*(Aq)
 .Ve
+.SS dnorm
+.IX Subsection "dnorm"
+gives the density of the normal distribution, with the specified mean and standard deviation.
+.PP
+In other words, the predicted height of the value \f(CW\*(C`x\*(C'\fR, given a mean, standard deviation, and whether or not to use a log value.
+.PP
+returns a single scalar/number if a single value is given, otherwise returns an array reference.
+.PP
+Usage:
+.PP
+.Vb 1
+\& dnorm(4) # assumes a mean of 0 and standard deviation of 1
+.Ve
+.PP
+but default mean, standard deviation, and log can be passed as parameters:
+.PP
+.Vb 1
+\& $x = dnorm(0, mean => 0, sd => 2, \*(Aqlog\*(Aq => 0);
+.Ve
 .SS fisher_test
 .IX Subsection "fisher_test"
 \fIarray reference entry\fR
@@ -452,6 +485,41 @@ Also, a single array can be tested against a normal distribution:
 .Ve
 .PP
 The p\-value precision is about 1e\-8, which I want to improve, but am not sure how.
+.SS ljoin
+.IX Subsection "ljoin"
+Consider a hash: \f(CW\*(C`$h{$row}{$col}\*(C'\fR, and another hash \f(CW\*(C`$i{$row}{$col}\*(C'\fR.
+\&\f(CW\*(C`ljoin\*(C'\fR will add information for each \f(CW$row\fR, where it exists in both \f(CW%h\fR and \f(CW%i\fR
+.PP
+For example,
+.PP
+.Vb 5
+\& {
+\& "Jack Smith"   {
+\&     age   30
+\& }
+\& }
+.Ve
+.PP
+and a second hash,
+    {
+        "Jack Smith"   {
+            dept   "Engineering"
+        },
+        "Jane Doe"     {
+            age   25
+        }
+    }
+.PP
+in this case, running \f(CW\*(C`ljoin(\e%h, \e%i)\*(C'\fR will modify \e%h to result:
+.PP
+.Vb 6
+\& {
+\& "Jack Smith"   {
+\&     age    30,
+\&     dept   "Engineering"
+\& }
+\& }
+.Ve
 .SS lm
 .IX Subsection "lm"
 This is the linear models function.
@@ -1028,11 +1096,13 @@ as of version 0.07, \f(CW\*(C`write_table\*(C'\fR determines comma and tab\-sepa
 .IX Subsection "0.08"
 Speed improvement in \f(CW\*(C`summary\*(C'\fR of hashes of arrays
 .PP
-Addition of \f(CW\*(C`mode\*(C'\fR function
+Addition of \f(CW\*(C`add_data\*(C'\fR, \f(CW\*(C`dnorm\*(C'\fR, \f(CW\*(C`ljoin\*(C'\fR, and \f(CW\*(C`mode\*(C'\fR functions
 .PP
 Chi\-squared function no longer has Perl wrapper, and all code is in XS, which should result in a minor speed increase with 1 less function call.
 .PP
 Compiler changes for GNU source and inclusion of \f(CW\*(C`strings.h\*(C'\fR, to ensure more CPAN testing works better.
+.PP
+\&\f(CW\*(C`read_table\*(C'\fR now returns hash\-of\-hash in {row}{column}
 .SS 0.07
 .IX Subsection "0.07"
 Addition of \f(CW\*(C`summary\*(C'\fR function.
