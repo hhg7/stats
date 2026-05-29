@@ -12,7 +12,7 @@ use autodie ':default';
 use Exporter 'import';
 use Scalar::Util 'looks_like_number';
 XSLoader::load('Stats::LikeR', $VERSION);
-our @EXPORT_OK = qw(add_data aoh2hoh aov chisq_test cor cor_test cov dnorm fisher_test glm hist kruskal_test ks_test ljoin lm matrix max mean median min mode oneway_test p_adjust power_t_test quantile rbinom read_table rnorm runif sample scale sd seq shapiro_test sum summary t_test var var_test wilcox_test write_table);
+our @EXPORT_OK = qw(add_data aov chisq_test cor cor_test cov dnorm fisher_test glm group_by hist kruskal_test ks_test ljoin lm matrix max mean median min mode oneway_test p_adjust power_t_test quantile rbinom read_table rnorm runif sample scale sd seq shapiro_test sum summary t_test var var_test wilcox_test write_table);
 our @EXPORT = @EXPORT_OK;
 
 require XSLoader;
@@ -753,6 +753,48 @@ In addition to the C<gaussian> default, it fully supports logistic regression us
 
  my $glm_bin = glm(formula => 'am ~ wt + hp', data => \%mtcars, family => 'binomial');
 
+=head2 group_by
+
+Take a hash of arrays, hash of hashes, or array of hashes, and group a column by another column.
+
+ my $aoh_data = [
+     { 'Gender' => 'Male',   'Testosterone, total (nmol/L)' => 20.5 },
+     { 'Gender' => 'Female', 'Testosterone, total (nmol/L)' => 1.8 },
+     { 'Gender' => 'Male',   'Testosterone, total (nmol/L)' => 18.2 },
+     { 'Gender' => 'Female' } # Intentional missing target value
+ ];
+
+as well as
+
+ $hoh_data = {
+     'Patient_A' => { 'Gender' => 'Male',   'Testosterone, total (nmol/L)' => 20.5 },
+     'Patient_B' => { 'Gender' => 'Female', 'Testosterone, total (nmol/L)' => 1.8 },
+     'Patient_C' => { 'Gender' => 'Male',   'Testosterone, total (nmol/L)' => 18.2 },
+     'Patient_D' => { 'Gender' => 'Female' }, # Intentional missing target value
+     'Patient_E' => { 'Gender' => 'Female', 'Testosterone, total (nmol/L)' => undef } # Explicit undef
+     };
+
+and
+
+ my $hoa_data = {
+     'Gender'                       => ['Male', 'Female', 'Male', 'Female'],
+     'Testosterone, total (nmol/L)' => [22.1,   2.5,      19.4,   undef   ]
+ };
+
+all become the hash of arrays:
+
+ {
+     Female   [
+         [0] 1.8
+     ],
+     Male     [
+         [0] 18.2,
+         [1] 20.5
+     ]
+ }
+
+returns an empty array of hashes if neither target nor group keys are found
+
 =head2 hist
 
 Computes the histogram of the given data values, operating in single $O(N)$ pass performance. It returns the bin counts, computed breaks, midpoints, and density. 
@@ -817,7 +859,7 @@ The p-value precision is about 1e-8, which I want to improve, but am not sure ho
 =head2 ljoin
 
 Consider a hash: C<$h{$row}{$col}>, and another hash C<$i{$row}{$col}>.
-C<ljoin> will add information for each C<$row>, where it exists in both C<%h> and C<%i>
+C<ljoin> will add information for each C<$row> to C<$h>, where C<$row> exists in both C<%h> and C<%i>
 
 For example,
 
@@ -1325,7 +1367,7 @@ as of version 0.07, C<write_table> determines comma and tab-separated delimiters
 
 Speed improvement in C<summary> of hashes of arrays
 
-Addition of C<add_data>, C<dnorm>, C<ljoin>, and C<mode> functions
+Addition of C<add_data>, C<dnorm>, C<group_by>, C<ljoin>, and C<mode> functions
 
 Chi-squared function no longer has Perl wrapper, and all code is in XS, which should result in a minor speed increase with 1 less function call.
 

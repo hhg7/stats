@@ -16,6 +16,7 @@ my %WriteMakefileArgs = (
   "LICENSE" => "perl",
   "MIN_PERL_VERSION" => "5.010",
   "NAME" => "Stats::LikeR",
+  'VERSION_FROM' => 'lib/Stats/LikeR.pm',
   "PREREQ_PM" => {
     "Devel::Confess" => 0,
     "Digest::SHA" => 0,
@@ -25,7 +26,7 @@ my %WriteMakefileArgs = (
     "Test::More" => 0,
     "autodie" => 0
   },
-  "VERSION" => "0.07",
+  "VERSION" => "0.08",
   "test" => {
     "TESTS" => "t/*.t"
   }

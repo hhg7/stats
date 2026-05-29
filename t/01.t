@@ -3,21 +3,19 @@
 require 5.010;
 use warnings FATAL => 'all';
 use feature 'say';
-use Test::More;
-use Test::Exception; # die_ok
-use Stats::LikeR;
-use Scalar::Util 'looks_like_number';
 use Digest::SHA 'sha512_base64';
 use File::Temp;
+use Scalar::Util 'looks_like_number';
+use Stats::LikeR;
+use Test::Exception; # die_ok
+use Test::More;
 use Test::LeakTrace 'no_leaks_ok';
 
 # Gemini helped to write some of the tests
 # Custom helper for floating-point comparisons
 sub is_approx {
 	my ($got, $expected, $test_name, $epsilon) = @_;
-	if (not defined $epsilon) {
-		$epsilon = 1e-7;
-	}
+	$epsilon = 1e-7 if not defined $epsilon;
 	my $current_sub = ( split( /::/, ( caller(0) )[3] ) )[-1];
 	my $i = 0;
 	foreach my $arg ($got, $expected, $test_name) {
@@ -35,9 +33,9 @@ sub is_approx {
 		return 0;
 	}
 }
-#----------------------
-#		min
-#----------------------
+#--------
+# min
+#--------
 is_approx( min(1,2,2.33,3), 1, 'min of scalars');
 no_leaks_ok {
 	eval {
@@ -285,8 +283,7 @@ foreach my $j (0,1) {
 }
 # start new test
 $t_test = t_test(
-	'x'    => $test_data[3][0], 'y'    => $test_data[3][1],
-	paired => 1
+	'x'    => $test_data[3][0], 'y' => $test_data[3][1],	paired => 1
 );
 foreach my $key (grep {ref $correct_t[2]{$_} eq ''} keys %{ $correct_t[2] }) {
 	if (not defined $t_test->{$key}) {
@@ -679,262 +676,171 @@ like( $@, qr/Data array cannot be empty/, 'matrix: dies on empty data array' );
 #       lm
 #----------------------------
 my $mtcars = {
-    'Duster 360' => {
-        'qsec' => [15.84],       'gear' => [3],
-        'wt' => [3.57],        'disp' => [360],
-        'drat' => [3.21],       'cyl' => [8],
-        'mpg' => [14.3],        'hp' => [245],
-        'carb' => [4],        'vs' => [0],
-        'am' => [0],
-    },
-    'Merc 280' => {
-        'carb' => [4],        'mpg' => [19.2],
-        'hp' => [123],        'vs' => [1],
-        'am' => [0],        'drat' => [3.92],
-        'cyl' => [6],        'disp' => [167.6],
-        'wt' => [3.44],        'gear' => [4],
-        'qsec' => [18.3],
-    },
-    'Merc 450SL' => {
-        'qsec' => [17.6],        'gear' => [3],
-        'drat' => [3.07],        'cyl' => [8],
-        'mpg' => [17.3],        'wt' => [3.73],
-        'hp' => [180],        'disp' => [275.8],
-        'carb' => [3],        'vs' => [0],
-        'am' => [0],
-    },
-    'Merc 280C' => {
-        'cyl' => [6],        'gear' => [4],
-        'drat' => [3.92],        'qsec' => [18.9],
-        'am' => [0],        'vs' => [1],
-        'carb' => [4],        'disp' => [167.6],
-        'hp' => [123],        'mpg' => [17.8],
-        'wt' => [3.44],
-    },
-    'Merc 450SE' => {
-        'gear' => [3],        'qsec' => [17.4],
-        'disp' => [275.8],        'wt' => [4.07],
-        'cyl' => [8],        'drat' => [3.07],
-        'am' => [0],        'vs' => [0],
-        'carb' => [3],        'hp' => [180],
-        'mpg' => [16.4],
-    },
-    'Mazda RX4' => {
-        'drat' => [3.9],        'cyl' => [6],
-        'mpg' => [21],        'hp' => [110],
-        'carb' => [4],        'am' => [1],
-        'vs' => [0],        'qsec' => [16.46],
-        'gear' => [4],        'wt' => [2.62],
-        'disp' => [160],
-    },
-    'Cadillac Fleetwood' => {
-        'wt' => [5.25],        'disp' => [472],
-        'qsec' => [17.98],        'gear' => [3],
-        'hp' => [205],        'mpg' => [10.4],
-        'carb' => [4],        'vs' => [0],
-        'am' => [0],        'drat' => [2.93],
-        'cyl' => [8],
-    },
-    'Camaro Z28' => {
-        'gear' => [3],        'drat' => [3.73],
-        'qsec' => [15.41],        'cyl' => [8],
-        'carb' => [4],        'disp' => [350],
-        'hp' => [245],        'mpg' => [13.3],
-        'wt' => [3.84],        'vs' => [0],
-        'am' => [0],
-    },
-    'Lincoln Continental' => {
-        'drat' => [3],        'cyl' => [8],
-        'mpg' => [10.4],        'hp' => [215],
-        'carb' => [4],        'vs' => [0],
-        'am' => [0],        'qsec' => [17.82],
-        'gear' => [3],        'wt' => [5.424],
-        'disp' => [460],
-    },
-    'Hornet 4 Drive' => {
-        'gear' => [3],        'drat' => [3.08],
-        'qsec' => [19.44],        'cyl' => [6],
-        'disp' => [258],        'carb' => [1],
-        'mpg' => [21.4],        'wt' => [3.215],
-        'hp' => [110],        'vs' => [1],
-        'am' => [0],
-    },
-    'Ford Pantera L' => {
-        'qsec' => [14.5],        'drat' => [4.22],
-        'gear' => [5],        'cyl' => [8],
-        'hp' => [264],        'mpg' => [15.8],
-        'wt' => [3.17],        'carb' => [4],
-        'disp' => [351],        'am' => [1],
-        'vs' => [0],
-    },
-    'Lotus Europa' => {
-        'mpg' => [30.4],        'hp' => [113],
-        'carb' => [2],        'am' => [1],
-        'vs' => [1],        'drat' => [3.77],
-        'cyl' => [4],        'wt' => [1.513],
-        'disp' => [95.1],        'qsec' => [16.9],
-        'gear' => [5],
-    },
-    'Merc 230' => {
-        'cyl' => [4],        'drat' => [3.92],
-        'gear' => [4],        'qsec' => [22.9],
-        'am' => [0],        'vs' => [1],
-        'carb' => [2],        'disp' => [140.8],
-        'hp' => [95],        'mpg' => [22.8],
-        'wt' => [3.15],
-    },
-    'Pontiac Firebird' => {
-        'am' => [0],        'vs' => [0],
-        'disp' => [400],    'carb' => [2],
-        'mpg' => [19.2],    'wt' => [3.845],
-        'hp' => [175],      'cyl' => [8],
-        'drat' => [3.08],   'gear' => [3],
-        'qsec' => [17.05],
-    },
-    'Dodge Challenger' => {
-        'mpg' => [15.5],    'wt' => [3.52],
-        'hp' => [150],      'disp' => [318],
-        'carb' => [2],      'vs' => [0],
-        'am' => [0],        'qsec' => [16.87],
-        'gear' => [3],      'drat' => [2.76],
-        'cyl' => [8],
-    },
-    'Datsun 710' => {
-        'wt' => [2.32],      'disp' => [108],
-        'qsec' => [18.61],   'gear' => [4],
-        'hp' => [93],        'mpg' => [22.8],
-        'carb' => [1],        'am' => [1],
-        'vs' => [1],        'drat' => [3.85],
-        'cyl' => [4],
-    },
-    'Valiant' => {
-        'cyl' => [6],        'qsec' => [20.22],
-        'drat' => [2.76],        'gear' => [3],
-        'am' => [0],        'vs' => [1],
-        'hp' => [105],        'mpg' => [18.1],
-        'wt' => [3.46],        'carb' => [1],
-        'disp' => [225],
-    },
-    'Merc 240D' => {
-        'disp' => [146.7],        'wt' => [3.19],
-        'gear' => [4],        'qsec' => [20],
-        'carb' => [2],        'hp' => [62],
-        'mpg' => [24.4],        'vs' => [1],
-        'am' => [0],        'drat' => [3.69],
-        'cyl' => [4],
-    },
-    'Mazda RX4 Wag' => {
-        'vs' => [0],        'am' => [1],
-        'hp' => [110],        'mpg' => [21],
-        'carb' => [4],        'cyl' => [6],
-        'drat' => [3.9],        'wt' => [2.875],
-        'disp' => [160],        'qsec' => [17.02],
-        'gear' => [4],
-    },
-    'Maserati Bora' => {
-        'disp' => [301],        'wt' => [3.57],
-        'gear' => [5],        'qsec' => [14.6],
-        'carb' => [8],        'hp' => [335],
-        'mpg' => [15],        'vs' => [0],
-        'am' => [1],        'drat' => [3.54],
-        'cyl' => [8],
-    },
-    'Chrysler Imperial' => {
-        'disp' => [440],        'wt' => [5.345],
-        'gear' => [3],        'qsec' => [17.42],
-        'carb' => [4],        'mpg' => [14.7],
-        'hp' => [230],        'am' => [0],
-        'vs' => [0],        'drat' => [3.23],
-        'cyl' => [8],
-    },
-    'Toyota Corona' => {
-        'qsec' => [20.01],   'drat' => [3.7],
-        'gear' => [3],       'cyl' => [4],
-        'wt' => [2.465],     'mpg' => [21.5],
-        'hp' => [97],        'disp' => [120.1],
-        'carb' => [1],       'am' => [0],
-        'vs' => [1],
-    },
-    'Toyota Corolla' => {
-        'vs' => [1],        'am' => [1],
-        'wt' => [1.835],        'mpg' => [33.9],
-        'hp' => [65],        'disp' => [71.1],
-        'carb' => [1],        'cyl' => [4],
-        'qsec' => [19.9],        'drat' => [4.22],
-        'gear' => [4],
-    },
-    'Fiat X1-9' => {
-        'carb' => [1],        'hp' => [66],
-        'mpg' => [27.3],        'vs' => [1],
-        'am' => [1],        'drat' => [4.08],
-        'cyl' => [4],        'disp' => [79],
-        'wt' => [1.935],        'gear' => [4],
-        'qsec' => [18.9],
-    },
-    'Merc 450SLC' => {
-        'am' => [0],        'vs' => [0],
-        'carb' => [3],        'disp' => [275.8],
-        'hp' => [180],        'mpg' => [15.2],
-        'wt' => [3.78],        'cyl' => [8],
-        'gear' => [3],        'drat' => [3.07],
-        'qsec' => [18],
-    },
-    'Honda Civic' => {
-        'vs' => [1],        'am' => [1],
-        'hp' => [52],        'mpg' => [30.4],
-        'wt' => [1.615],        'carb' => [2],
-        'disp' => [75.7],        'cyl' => [4],
-        'qsec' => [18.52],        'gear' => [4],
-        'drat' => [4.93],
-    },
-    'AMC Javelin' => {
-        'cyl' => [8],        'drat' => [3.15],
-        'vs' => [0],        'am' => [0],
-        'hp' => [150],        'mpg' => [15.2],
-        'carb' => [2],        'qsec' => [17.3],
-        'gear' => [3],        'wt' => [3.435],
-        'disp' => [304],
-    },
-    'Volvo 142E' => {
-        'drat' => [4.11],        'cyl' => [4],
-        'carb' => [2],        'hp' => [109],
-        'mpg' => [21.4],        'vs' => [1],
-        'am' => [1],        'gear' => [4],
-        'qsec' => [18.6],        'disp' => [121],
-        'wt' => [2.78],
-    },
-    'Porsche 914-2' => {
-        'qsec' => [16.7],        'gear' => [5],
-        'drat' => [4.43],        'cyl' => [4],
-        'mpg' => [26],        'wt' => [2.14],
-        'hp' => [91],        'disp' => [120.3],
-        'carb' => [2],        'am' => [1],
-        'vs' => [0],
-    },
-    'Ferrari Dino' => {
-        'wt' => [2.77],        'disp' => [145],
-        'qsec' => [15.5],        'gear' => [5],
-        'mpg' => [19.7],        'hp' => [175],
-        'carb' => [6],        'vs' => [0],
-        'am' => [1],        'drat' => [3.62],
-        'cyl' => [6],
-    },
-    'Hornet Sportabout' => {
-        'hp' => [175],        'wt' => [3.44],
-        'mpg' => [18.7],        'carb' => [2],
-        'disp' => [360],        'vs' => [0],
-        'am' => [0],        'qsec' => [17.02],
-        'gear' => [3],        'drat' => [3.15],
-        'cyl' => [8],
-    },
-    'Fiat 128' => {
-        'am' => [1],        'vs' => [1],
-        'mpg' => [32.4],    'wt' => [2.2],
-        'hp' => [66],        'disp' => [78.7],
-        'carb' => [1],      'cyl' => [4],
-        'qsec' => [19.47],        'gear' => [4],
-        'drat' => [4.08],
-    },
+'Duster 360' => {
+	'qsec' => [15.84],'gear' => [3], 'wt' => [3.57],  'disp' => [360],
+	'drat' => [3.21], 'cyl' => [8],  'mpg' => [14.3], 'hp' => [245],
+	'carb' => [4],    'vs' => [0],
+	'am' => [0],
+},
+'Merc 280' => {
+ 'carb' => [4],  'mpg' => [19.2], 'hp' => [123], 'vs' => [1],
+ 'am' => [0],    'drat' => [3.92], 'cyl' => [6], 'disp' => [167.6],
+ 'wt' => [3.44], 'gear' => [4], 'qsec' => [18.3],
+},
+'Merc 450SL' => {
+ 'qsec' => [17.6], 'gear' => [3], 'drat' => [3.07], 'cyl' => [8],
+ 'mpg' => [17.3], 'wt' => [3.73], 'hp' => [180], 'disp' => [275.8],
+ 'carb' => [3], 'vs' => [0], 'am' => [0],
+},
+'Merc 280C' => {
+ 'cyl' => [6],     'gear' => [4],
+ 'drat' => [3.92], 'qsec' => [18.9],
+ 'am' => [0],      'vs' => [1],
+ 'carb' => [4],    'disp' => [167.6],
+ 'hp' => [123],    'mpg' => [17.8],
+ 'wt' => [3.44],
+},
+'Merc 450SE' => {
+ 'gear' => [3],     'qsec' => [17.4],  'disp' => [275.8], 'wt' => [4.07],
+ 'cyl' => [8],      'drat' => [3.07],  'am' => [0],        'vs' => [0],
+ 'carb' => [3],     'hp' => [180],
+ 'mpg' => [16.4],
+},
+'Mazda RX4' => {
+ 'drat' => [3.9], 'cyl' => [6],  'mpg' => [21],        'hp' => [110],
+ 'carb' => [4],   'am' => [1],   'vs' => [0],     'qsec' => [16.46],
+ 'gear' => [4],   'wt' => [2.62], 'disp' => [160],
+},
+'Cadillac Fleetwood' => {
+ 'wt' => [5.25],        'disp' => [472], 'qsec' => [17.98],        'gear' => [3],
+ 'hp' => [205],        'mpg' => [10.4], 'carb' => [4],        'vs' => [0],
+ 'am' => [0],        'drat' => [2.93],  'cyl' => [8],
+},
+'Camaro Z28' => {
+ 'gear' => [3],   'drat' => [3.73], 'qsec' => [15.41],        'cyl' => [8],
+ 'carb' => [4],   'disp' => [350], 'hp' => [245],        'mpg' => [13.3],
+ 'wt' => [3.84],  'vs' => [0],  'am' => [0],
+},
+'Lincoln Continental' => {
+ 'drat' => [3], 'cyl' => [8],    'mpg' => [10.4], 'hp' => [215],
+ 'carb' => [4], 'vs' => [0],     'am' => [0], 'qsec' => [17.82],
+ 'gear' => [3], 'wt' => [5.424], 'disp' => [460],
+},
+'Hornet 4 Drive' => {
+ 'gear' => [3],   'drat' => [3.08],  'qsec' => [19.44],  'cyl' => [6],
+ 'disp' => [258], 'carb' => [1],     'mpg' => [21.4],   'wt' => [3.215],
+ 'hp' => [110],   'vs' => [1],       'am' => [0],
+},
+'Ford Pantera L' => {
+ 'qsec' => [14.5], 'drat' => [4.22], 'gear' => [5],  'cyl' => [8],
+ 'hp' => [264],    'mpg' => [15.8],  'wt' => [3.17], 'carb' => [4],
+ 'disp' => [351],  'am' => [1],      'vs' => [0],
+},
+'Lotus Europa' => {
+  'mpg' => [30.4],  'hp' => [113],    'carb' => [2], 'am' => [1],
+  'vs' => [1],      'drat' => [3.77], 'cyl' => [4],  'wt' => [1.513],
+  'disp' => [95.1], 'qsec' => [16.9], 'gear' => [5],
+},
+'Merc 230' => {
+  'cyl' => [4], 'drat' => [3.92], 'gear' => [4], 'qsec' => [22.9],
+  'am' => [0],  'vs' => [1],      'carb' => [2], 'disp' => [140.8],
+  'hp' => [95], 'mpg' => [22.8],  'wt' => [3.15],
+},
+'Pontiac Firebird' => {
+  'am' => [0],      'vs' => [0],     'disp' => [400],    'carb' => [2],
+  'mpg' => [19.2],  'wt' => [3.845], 'hp' => [175],      'cyl' => [8],
+  'drat' => [3.08], 'gear' => [3],   'qsec' => [17.05],
+},
+'Dodge Challenger' => {
+  'mpg' => [15.5], 'wt' => [3.52],   'hp' => [150],      'disp' => [318],
+  'carb' => [2],   'vs' => [0],      'am' => [0],        'qsec' => [16.87],
+  'gear' => [3],   'drat' => [2.76], 'cyl' => [8],
+},
+'Datsun 710' => {
+  'wt' => [2.32], 'disp' => [108], 'qsec' => [18.61], 'gear' => [4],
+  'hp' => [93],   'mpg' => [22.8], 'carb' => [1],     'am' => [1],
+  'vs' => [1],    'drat' => [3.85],'cyl' => [4],
+},
+'Valiant' => {
+  'cyl' => [6], 'qsec' => [20.22],  'drat' => [2.76], 'gear' => [3],
+  'am' => [0],  'vs' => [1],        'hp' => [105],     'mpg' => [18.1],
+  'wt' => [3.46], 'carb' => [1],    'disp' => [225],
+},
+'Merc 240D' => {
+  'disp' => [146.7], 'wt' => [3.19], 'gear' => [4], 'qsec' => [20],
+  'carb' => [2],     'hp' => [62], 'mpg' => [24.4],        'vs' => [1],
+  'am' => [0],       'drat' => [3.69], 'cyl' => [4],
+},
+'Mazda RX4 Wag' => {
+  'vs' => [0],     'am' => [1],      'hp' => [110],   'mpg' => [21],
+  'carb' => [4],   'cyl' => [6],     'drat' => [3.9], 'wt' => [2.875],
+  'disp' => [160], 'qsec' => [17.02],'gear' => [4],
+},
+'Maserati Bora' => {
+  'disp' => [301], 'wt' => [3.57],   'gear' => [5], 'qsec' => [14.6],
+  'carb' => [8],   'hp' => [335],    'mpg' => [15], 'vs' => [0],
+  'am' => [1],     'drat' => [3.54], 'cyl' => [8],
+},
+'Chrysler Imperial' => {
+  'disp' => [440], 'wt' => [5.345], 'gear' => [3],        'qsec' => [17.42],
+  'carb' => [4],   'mpg' => [14.7],   'hp' => [230],        'am' => [0],
+  'vs' => [0],     'drat' => [3.23],    'cyl' => [8],
+},
+'Toyota Corona' => {
+  'qsec' => [20.01], 'drat' => [3.7], 'gear' => [3],       'cyl' => [4],
+  'wt' => [2.465],   'mpg' => [21.5], 'hp' => [97],        'disp' => [120.1],
+  'carb' => [1],     'am' => [0],     'vs' => [1]
+},
+'Toyota Corolla' => {
+  'vs' => [1],      'am' => [1],      'wt' => [1.835], 'mpg' => [33.9],
+  'hp' => [65],     'disp' => [71.1], 'carb' => [1],   'cyl' => [4],
+  'qsec' => [19.9], 'drat' => [4.22], 'gear' => [4],
+},
+'Fiat X1-9' => {
+  'carb' => [1],   'hp' => [66],     'mpg' => [27.3], 'vs' => [1],
+  'am' => [1],     'drat' => [4.08], 'cyl' => [4],    'disp' => [79],
+  'wt' => [1.935], 'gear' => [4],    'qsec' => [18.9],
+},
+'Merc 450SLC' => {
+  'am' => [0],   'vs' => [0],      'carb' => [3],  'disp' => [275.8],
+  'hp' => [180], 'mpg' => [15.2],  'wt' => [3.78], 'cyl' => [8],
+  'gear' => [3], 'drat' => [3.07], 'qsec' => [18]
+},
+'Honda Civic' => {
+  'vs' => [1],       'am' => [1],   'hp' => [52],    'mpg' => [30.4],
+  'wt' => [1.615],   'carb' => [2], 'disp' => [75.7],'cyl' => [4],
+  'qsec' => [18.52], 'gear' => [4], 'drat' => [4.93]
+},
+'AMC Javelin' => {
+  'cyl' => [8],  'drat' => [3.15], 'vs' => [0],   'am' => [0],
+  'hp' => [150], 'mpg' => [15.2], 'carb' => [2],  'qsec' => [17.3],
+  'gear' => [3], 'wt' => [3.435], 'disp' => [304]
+},
+'Volvo 142E' => {
+  'drat' => [4.11], 'cyl' => [4],    'carb' => [2],  'hp' => [109],
+  'mpg' => [21.4],  'vs' => [1],     'am' => [1],    'gear' => [4],
+  'qsec' => [18.6], 'disp' => [121], 'wt' => [2.78]
+},
+'Porsche 914-2' => {
+  'qsec' => [16.7], 'gear' => [5],  'drat' => [4.43], 'cyl' => [4],
+  'mpg' => [26],    'wt' => [2.14], 'hp' => [91], 'disp' => [120.3],
+  'carb' => [2],    'am' => [1],    'vs' => [0]
+},
+'Ferrari Dino' => {
+  'wt' => [2.77],  'disp' => [145],  'qsec' => [15.5], 'gear' => [5],
+  'mpg' => [19.7], 'hp' => [175],    'carb' => [6], 'vs' => [0],
+  'am' => [1],     'drat' => [3.62], 'cyl' => [6]
+},
+'Hornet Sportabout' => {
+  'hp' => [175],   'wt' => [3.44],   'mpg' => [18.7], 'carb' => [2],
+  'disp' => [360], 'vs' => [0],    'am' => [0],  'qsec' => [17.02],
+  'gear' => [3],   'drat' => [3.15], 'cyl' => [8]
+},
+'Fiat 128' => {
+  'am' => [1],       'vs' => [1],        'mpg' => [32.4], 'wt' => [2.2],
+  'hp' => [66],      'disp' => [78.7],  'carb' => [1],    'cyl' => [4],
+  'qsec' => [19.47], 'gear' => [4], 'drat' => [4.08]
+},
 };
 my $lm = lm(formula =>  'mpg ~ wt * hp^2', data => $mtcars);
 
@@ -1935,7 +1841,7 @@ no_leaks_ok {
 is_approx( $shapiro->{p_value}, 0.5896506, 'Shapiro p-value: 19 values');
 is_approx( $shapiro->{W}, 0.9608707, 'Shapiro W: 19 values');
 #--------------------
-#     cor test
+#     cor_test
 #--------------------
 my $x = [1, 2, 3, 4, 5];
 my $y = [2, 1, 4, 3, 5];
@@ -2047,7 +1953,6 @@ my $y_na = [2, undef, 6, 8,     10, 9, undef, 14,  16];
 $idx = 0;
 foreach my $meth (@correct) {
 	$meth->{'conf.level'} = $meth->{'conf.level'} // 0.95; # default 0.95
-	say $meth->{'conf.level'};
 	my $result = cor_test(
 		$x_na, $y_na, # first 2 args are positional
 		alternative => $meth->{alternative}, # so that it matches the test
@@ -2079,6 +1984,50 @@ foreach my $meth (@correct) {
 	} "cor_test $idx: no memory leaks" unless $INC{'Devel/Cover.pm'};
 	$idx++;
 }
+
+$idx = cor_test([1..5], [1..5], method => 'pearson');
+is_approx( $idx->{estimate}, 1.0, 'cor_test: estimate = 1', 1e-13);
+if ($idx->{statistic} == 'inf') {
+	pass('cor_test: perfect positive correlation: stat is +Inf');
+} else {
+	fail('cor_test: perfect positive correlation: stat is NOT +Inf');
+}
+$idx = cor_test([1..5], [reverse 1..5], method => 'pearson');
+is_approx( $idx->{estimate}, -1.0, 'cor_test: estimate = 1', 1e-13);
+if ($idx->{statistic} == '-inf') {
+	pass('cor_test: perfect positive correlation: stat is -Inf');
+} else {
+	fail('cor_test: perfect positive correlation: stat is NOT -Inf');
+}
+#if ((!isnan( $idx->{'conf.int'}[0])) && (!isnan( $idx->{'conf.int'}[1]))) {
+#	pass('cor_test w/ pearson: CI endpoints are not NaN');
+#} else {
+#	fail('cor_test w/ pearson: 1 or 2 CI endpoints is/are NaN');
+#}
+$idx = cor_test([10, 20, 30, 40, 50, 60, 70, 80, 90, 100], [10, 20, 30, 40, 50, 60, 70, 80, 90, 100], method => 'spearman');
+is_approx( $idx->{estimate}, 1.0, 'cor_test: spearman estimate', 1e-13);
+if ($idx->{statistic} == 'inf') {
+	pass('cor_test: spearman has perfect positive correlation: stat is Inf');
+} else {
+	fail('cor_test: spearman perfect positive correlation: stat is NOT Inf');
+}
+$idx = cor_test([1..10], [reverse 1..10], method => 'spearman');
+is_approx( $idx->{estimate}, -1.0, 'cor_test with spearman: estimate == -1', 1e-13);
+
+if ($idx->{statistic} == '-inf') {
+	pass('cor_test w/ spearman: perfect positive correlation: stat = -Inf');
+} else {
+	fail('cor_test w/ spearman: perfect positive correlation: stat is NOT -Inf');
+}
+$idx = cor_test([1..200], [reverse 1..200], method => 'kendall', exact => 0);
+is_approx( $idx->{estimate}, -1.0, 'cor_test: kendall = -1 for anti-monotone', 1e-13);
+
+#$idx = cor_test( [5,5,5,5,5], [3,3,3,3,3], method => 'kendall', exact => 0);
+#if (isnan($idx->{estimate})) {
+#	pass('cor_test kendall: estimate is NaN when all pairs are joint ties');
+#} else {
+#	fail('cor_test kendall: estimate is NOT NaN when all pairs are joint ties');
+#}
 #--------------------
 #  cov
 #--------------------
@@ -3876,16 +3825,11 @@ if (
 $test_data = summary(\%hoa);
 if (
 	($test_data->[0] =~ m/^\-+$/)
-	&&
-	($test_data->[1] =~ m/^\h*Key\h*/)
-	&&
-	($test_data->[2] =~ m/^\-+$/)
-	&&
-	($test_data->[3] =~ m/^\h*A\h*9/)
-	&&
-	($test_data->[4] =~ m/^\h*B\h*9/)
-	&&
-	(scalar @{ $test_data } == 5)
+	&& ($test_data->[1] =~ m/^\h*Key\h*/)
+	&& ($test_data->[2] =~ m/^\-+$/)
+	&& ($test_data->[3] =~ m/^\h*A\h*9/)
+	&& ($test_data->[4] =~ m/^\h*B\h*9/)
+	&& (scalar @{ $test_data } == 5)
 	){
 	pass('summary: takes hash reference');
 } else {
@@ -3904,16 +3848,11 @@ if (scalar @{ $test_data } == 4) {
 $test_data = summary([runif(9), runif(9)]);
 if (
 	($test_data->[0] =~ m/^\-+$/)
-	&&
-	($test_data->[1] =~ m/^\h*Index\h*/)
-	&&
-	($test_data->[2] =~ m/^\-+$/)
-	&&
-	($test_data->[3] =~ m/^\h*0\h*9\h+/)
-	&&
-	($test_data->[4] =~ m/^\h*1\h*9\h+/)
-	&&
-	(scalar @{ $test_data } == 5)
+	&&	($test_data->[1] =~ m/^\h*Index\h*/)
+	&&	($test_data->[2] =~ m/^\-+$/)
+	&&	($test_data->[3] =~ m/^\h*0\h*9\h+/)
+	&&	($test_data->[4] =~ m/^\h*1\h*9\h+/)
+	&&	(scalar @{ $test_data } == 5)
 	){
 	pass('summary: takes array reference');
 } else {
@@ -3968,93 +3907,93 @@ dies_ok {
 #---------
 # aoh2hoh
 #---------
-@arr = (
-	{
-		a => 'A',
-		b => 'B',
-		r => '1st'
-	},
-	{
-		a => 'C',
-		b => 'D',
-		r => '2nd'
-	}
-);
-$test_data = aoh2hoh( \@arr,  'r' );
-if ((scalar keys %{ $test_data }) == scalar @arr) {
-	pass('aoh2hoh: 1 index in @arr is 1 hash key in the resulting hash-of-hash');
-} else {
-	fail('aoh2hoh: 1 index in @arr is NOT 1 hash key in the resulting hash-of-hash');
-}
-foreach my $hashkey ('1st', '2nd') {
-	if (defined $test_data->{$hashkey}) {
-		pass("aoh2hoh: \"$hashkey\" is defined in hoh");
-	} else {
-		fail("aoh2hoh: \"$hashkey\" is NOT defined in hoh");
-	}
-	if ((scalar keys %{ $test_data->{$hashkey} }) == 2) {
-		pass("aoh2hoh: \"$hashkey\" has the correct # of elements");
-	} else {
-		fail("aoh2hoh: \"$hashkey\" does NOT have the correct # of elements");
-	}
-	if ((defined $test_data->{$hashkey}{a}) && (defined $test_data->{$hashkey}{b})) {
-		pass("aoh2hoh: $hashkey has both keys defined");
-	} else {
-		fail("aoh2hoh: $hashkey does NOT have both keys defined");
-	}
-}
-if ($test_data->{'1st'}{a} eq 'A') {
-	pass('aoh2hoh: 1st key "a" is correct');
-} else {
-	fail('aoh2hoh: 1st key "a" is NOT correct');
-}
-if ($test_data->{'1st'}{b} eq 'B') {
-	pass('aoh2hoh: 1st key "b" is correct');
-} else {
-	fail('aoh2hoh: 1st key "b" is NOT correct');
-}
-if ($test_data->{'2nd'}{a} eq 'C') {
-	pass('aoh2hoh: 2nd key "a" is correct');
-} else {
-	fail('aoh2hoh: 2nd key "a" is NOT correct');
-}
-if ($test_data->{'2nd'}{b} eq 'D') {
-	pass('aoh2hoh: 2nd key "b" is correct');
-} else {
-	fail('aoh2hoh: 2nd key "b" is NOT correct');
-}
-$test_data = aoh2hoh( \@arr );
-if ((scalar keys %{ $test_data }) == scalar @arr) {
-	pass('aoh2hoh: 1 index in @arr is 1 hash key in the resulting hash-of-hash');
-} else {
-	fail('aoh2hoh: 1 index in @arr is NOT 1 hash key in the resulting hash-of-hash');
-}
-foreach my $hashkey (0, 1) {
-	if (defined $test_data->{$hashkey}) {
-		pass("aoh2hoh: \"$hashkey\" is defined in hoh");
-	} else {
-		fail("aoh2hoh: \"$hashkey\" is NOT defined in hoh");
-	}
-	if ((scalar keys %{ $test_data->{$hashkey} }) == 3) {
-		pass("aoh2hoh: \"$hashkey\" has the correct # of elements");
-	} else {
-		fail("aoh2hoh: \"$hashkey\" does NOT have the correct # of elements");
-	}
-	if ( 3 == scalar grep {defined $test_data->{$hashkey}{$_}} ('a', 'b', 'r')) {
-		pass("aoh2hoh: $hashkey has all 3 keys defined");
-	} else {
-		fail("aoh2hoh: $hashkey does NOT have all 3 keys defined");
-	}
-}
-if (
-	($test_data->{0}{a} eq 'A') &&	($test_data->{0}{b} eq 'B') &&
-	($test_data->{0}{r} eq '1st') &&	($test_data->{1}{a} eq 'C') &&
-	($test_data->{1}{b} eq 'D') &&	($test_data->{1}{r} eq '2nd')
-) {
-	pass('aoh2hoh: values are all correct without pivot key defined');
-} else {
-	fail('aoh2hoh: values are NOT all correct without pivot key defined');
-}
+#@arr = (
+#	{
+#		a => 'A',
+#		b => 'B',
+#		r => '1st'
+#	},
+#	{
+#		a => 'C',
+#		b => 'D',
+#		r => '2nd'
+#	}
+#);
+#$test_data = aoh2hoh( \@arr,  'r' );
+#if ((scalar keys %{ $test_data }) == scalar @arr) {
+#	pass('aoh2hoh: 1 index in @arr is 1 hash key in the resulting hash-of-hash');
+#} else {
+#	fail('aoh2hoh: 1 index in @arr is NOT 1 hash key in the resulting hash-of-hash');
+#}
+#foreach my $hashkey ('1st', '2nd') {
+#	if (defined $test_data->{$hashkey}) {
+#		pass("aoh2hoh: \"$hashkey\" is defined in hoh");
+#	} else {
+#		fail("aoh2hoh: \"$hashkey\" is NOT defined in hoh");
+#	}
+#	if ((scalar keys %{ $test_data->{$hashkey} }) == 2) {
+#		pass("aoh2hoh: \"$hashkey\" has the correct # of elements");
+#	} else {
+#		fail("aoh2hoh: \"$hashkey\" does NOT have the correct # of elements");
+#	}
+#	if ((defined $test_data->{$hashkey}{a}) && (defined $test_data->{$hashkey}{b})) {
+#		pass("aoh2hoh: $hashkey has both keys defined");
+#	} else {
+#		fail("aoh2hoh: $hashkey does NOT have both keys defined");
+#	}
+#}
+#if ($test_data->{'1st'}{a} eq 'A') {
+#	pass('aoh2hoh: 1st key "a" is correct');
+#} else {
+#	fail('aoh2hoh: 1st key "a" is NOT correct');
+#}
+#if ($test_data->{'1st'}{b} eq 'B') {
+#	pass('aoh2hoh: 1st key "b" is correct');
+#} else {
+#	fail('aoh2hoh: 1st key "b" is NOT correct');
+#}
+#if ($test_data->{'2nd'}{a} eq 'C') {
+#	pass('aoh2hoh: 2nd key "a" is correct');
+#} else {
+#	fail('aoh2hoh: 2nd key "a" is NOT correct');
+#}
+#if ($test_data->{'2nd'}{b} eq 'D') {
+#	pass('aoh2hoh: 2nd key "b" is correct');
+#} else {
+#	fail('aoh2hoh: 2nd key "b" is NOT correct');
+#}
+#$test_data = aoh2hoh( \@arr );
+#if ((scalar keys %{ $test_data }) == scalar @arr) {
+#	pass('aoh2hoh: 1 index in @arr is 1 hash key in the resulting hash-of-hash');
+#} else {
+#	fail('aoh2hoh: 1 index in @arr is NOT 1 hash key in the resulting hash-of-hash');
+#}
+#foreach my $hashkey (0, 1) {
+#	if (defined $test_data->{$hashkey}) {
+#		pass("aoh2hoh: \"$hashkey\" is defined in hoh");
+#	} else {
+#		fail("aoh2hoh: \"$hashkey\" is NOT defined in hoh");
+#	}
+#	if ((scalar keys %{ $test_data->{$hashkey} }) == 3) {
+#		pass("aoh2hoh: \"$hashkey\" has the correct # of elements");
+#	} else {
+#		fail("aoh2hoh: \"$hashkey\" does NOT have the correct # of elements");
+#	}
+#	if ( 3 == scalar grep {defined $test_data->{$hashkey}{$_}} ('a', 'b', 'r')) {
+#		pass("aoh2hoh: $hashkey has all 3 keys defined");
+#	} else {
+#		fail("aoh2hoh: $hashkey does NOT have all 3 keys defined");
+#	}
+#}
+#if (
+#	($test_data->{0}{a} eq 'A') &&	($test_data->{0}{b} eq 'B') &&
+#	($test_data->{0}{r} eq '1st') &&	($test_data->{1}{a} eq 'C') &&
+#	($test_data->{1}{b} eq 'D') &&	($test_data->{1}{r} eq '2nd')
+#) {
+#	pass('aoh2hoh: values are all correct without pivot key defined');
+#} else {
+#	fail('aoh2hoh: values are NOT all correct without pivot key defined');
+#}
 #-----------
 # dnorm
 #-----------
@@ -4118,7 +4057,7 @@ foreach my $key ('age', 'dept') {
 	}
 }
 if (
-	($data->{'Jack Smith'}{age} == 30)
+	(abs($data->{'Jack Smith'}{age} - 30) < 1e-13)
 	&&
 	($data->{'Jack Smith'}{dept} eq 'Engineering')
 	) {
@@ -4149,13 +4088,13 @@ $n    = { 'Bob Brown' => { score => 99 } };
 
 ljoin($data, $n);
 
-if ($data->{'Bob Brown'}{score} == 99) {
+if (abs($data->{'Bob Brown'}{score} - 99) < 1e-13) {
 	pass('ljoin: existing column value is overwritten correctly');
 } else {
 	fail('ljoin: existing column value was NOT overwritten');
 }
 
-if (defined $data->{'Bob Brown'}{active} && $data->{'Bob Brown'}{active} == 1) {
+if (defined $data->{'Bob Brown'}{active} && (abs($data->{'Bob Brown'}{active} - 1) < 1e-13)) {
 	pass('ljoin: untouched existing column remains intact');
 } else {
 	fail('ljoin: untouched existing column was lost or modified');
@@ -4195,7 +4134,7 @@ if ($size == 3) {
 
 # --- Test 2: Existing row updated correctly ---
 if (defined $data->{'Jack Smith'} && 
-    $data->{'Jack Smith'}{age} == 30 && 
+    (abs($data->{'Jack Smith'}{age} - 30) < 1e-13) && 
     $data->{'Jack Smith'}{dept} eq 'Engineering') {
     pass('add_data: existing row updated correctly');
 } else {
@@ -4204,34 +4143,206 @@ if (defined $data->{'Jack Smith'} &&
 
 # --- Test 3: New row added from Hash ---
 if (defined $data->{'Jane Doe'}) {
-    pass('add_data: new row from hash is defined');
-    
-    if ($data->{'Jane Doe'}{age} == 25 && $data->{'Jane Doe'}{dept} eq 'Sales') {
-        pass('add_data: new row from hash has correct values');
-    } else {
-        fail('add_data: new row from hash has INCORRECT values');
-    }
+	pass('add_data: new row from hash is defined');
+	if ((abs($data->{'Jane Doe'}{age} - 25) < 1e-13) && $data->{'Jane Doe'}{dept} eq 'Sales') {
+		pass('add_data: new row from hash has correct values');
+	} else {
+		fail('add_data: new row from hash has INCORRECT values');
+	}
 } else {
     fail('add_data: new row from hash is NOT defined');
 }
 
 # --- Test 4: New row added from Array ---
 if (defined $data->{'Bob Brown'}) {
-    pass('add_data: new row from array is defined');
-    
-    if ($data->{'Bob Brown'}{age} == 40 && $data->{'Bob Brown'}{dept} eq 'IT') {
-        pass('add_data: new row from array has correct values');
-    } else {
-        fail('add_data: new row from array has INCORRECT values');
-    }
+	pass('add_data: new row from array is defined');
+	if ((abs($data->{'Bob Brown'}{age} - 40) < 1e-13) && $data->{'Bob Brown'}{dept} eq 'IT') {
+		pass('add_data: new row from array has correct values');
+	} else {
+		fail('add_data: new row from array has INCORRECT values');
+	}
 } else {
-    fail('add_data: new row from array is NOT defined');
+	fail('add_data: new row from array is NOT defined');
 }
 
 # --- Test 5: Safety check for invalid inner data ---
 if (!defined $data->{'Invalid'}) {
-    pass('add_data: gracefully skipped non-reference data without crashing');
+	pass('add_data: gracefully skipped non-reference data without crashing');
 } else {
-    fail('add_data: improperly added a row for non-reference data');
+	fail('add_data: improperly added a row for non-reference data');
 }
+
+#--------
+# group_by
+#--------
+dies_ok {
+	group_by( undef, 'a', 'b');
+} 'group_by: dies when given an undefined data reference';
+#dies_ok {
+#	group_by('not a data ref', 'a', 'b');
+#} 'group_by: dies when data is not a data reference';
+dies_ok {
+	group_by( { A => [1,2] }, undef, 'b');
+} 'group_by: dies when target key reference (row name in HoH) is not defined';
+dies_ok {
+	group_by( { A => [1,2] }, 'b', undef);
+} 'group_by: dies when target key reference (col. name in HoH) is not defined';
+
+#
+# TEST SET 1: Array of Hashes (AoH)
+#
+my $aoh_data = [
+ { 'Gender' => 'Male',   'Testosterone, total (nmol/L)' => 20.5 },
+ { 'Gender' => 'Female', 'Testosterone, total (nmol/L)' => 1.8 },
+ { 'Gender' => 'Male',   'Testosterone, total (nmol/L)' => 18.2 },
+ { 'Gender' => 'Female' } # Intentional missing target value
+];
+
+my $res1 = group_by($aoh_data, 'Testosterone, total (nmol/L)', 'Gender');
+
+if (scalar keys %{ $res1 } == 2) {
+	pass('group_by (AoH): correct number of group keys created');
+} else {
+	fail('group_by (AoH): incorrect number of group keys');
+}
+
+if (scalar @{ $res1->{'Male'} } == 2 &&
+(abs($res1->{'Male'}[0] - 20.5) < 1e-13) &&
+(abs($res1->{'Male'}[1] - 18.2) < 1e-13)
+){
+	pass('group_by (AoH): Male target values grouped correctly');
+} else {
+	fail('group_by (AoH): Male target values NOT grouped correctly');
+}
+
+if (scalar @{ $res1->{'Female'} } == 1 && abs($res1->{'Female'}[0] - 1.8) < 1e-13) {
+	pass('group_by (AoH): Female target values grouped correctly (including undef values)');
+} else {
+	fail('group_by (AoH): Female target values NOT grouped correctly');
+}
+no_leaks_ok {
+	eval {
+		group_by($aoh_data, 'Testosterone, total (nmol/L)', 'Gender')
+	};
+} 'group_by: no leaks with Array of hashes input' unless $INC{'Devel/Cover.pm'};
+#
+# TEST SET 2: Hash of Arrays (HoA)
+#
+my $hoa_data = {
+	'Gender'                       => ['Male', 'Female', 'Male', 'Female'],
+	'Testosterone, total (nmol/L)' => [22.1,   2.5,      19.4,   undef   ]
+};
+
+my $res2 = group_by($hoa_data, 'Testosterone, total (nmol/L)', 'Gender');
+
+no_leaks_ok {
+	eval {
+		group_by($hoa_data, 'Testosterone, total (nmol/L)', 'Gender')
+	};
+} 'group_by: no leaks with Hash of arrays input' unless $INC{'Devel/Cover.pm'};
+if (scalar keys %$res2 == 2) {
+	pass('group_by (HoA): correct number of group keys created');
+} else {
+	fail('group_by (HoA): incorrect number of group keys');
+}
+
+if (scalar @{ $res2->{'Male'} } == 2
+&& abs($res2->{'Male'}[0] - 22.1) < 1e-13
+&& abs($res2->{'Male'}[1] - 19.4) < 1e-13) {
+	pass('group_by (HoA): Male target values grouped correctly');
+} else {
+	fail('group_by (HoA): Male target values NOT grouped correctly');
+}
+
+if (!defined $res2->{'Female'}[1]) {
+	pass('group_by (HoA): gracefully handled undefined target arrays element');
+} else {
+	fail('group_by (HoA): failed to handle undefined target array element');
+}
+# ==========================================
+# TEST SET 3: Hash of Hashes (HoH)
+# ==========================================
+$test_data = {
+ 'Patient_A' => { 'Gender' => 'Male',   'Testosterone, total (nmol/L)' => 20.5 },
+ 'Patient_B' => { 'Gender' => 'Female', 'Testosterone, total (nmol/L)' => 1.8 },
+ 'Patient_C' => { 'Gender' => 'Male',   'Testosterone, total (nmol/L)' => 18.2 },
+ 'Patient_D' => { 'Gender' => 'Female' }, # Intentional missing target value
+ 'Patient_E' => { 'Gender' => 'Female', 'Testosterone, total (nmol/L)' => undef } # Explicit undef
+};
+
+my $res3 = group_by($test_data, 'Testosterone, total (nmol/L)', 'Gender');
+
+if (scalar keys %$res3 == 2) {
+	pass('group_by (HoH): correct number of group keys created');
+} else {
+	fail('group_by (HoH): incorrect number of group keys');
+}
+
+# Sort the array to protect the test against randomized hash iteration order
+my @males = sort { $a <=> $b } @{ $res3->{'Male'} };
+
+if (scalar @males == 2 && (abs($males[0] - 18.2) < 1e-13) && abs($males[1] - 20.5) < 1e-13) {
+	pass('group_by (HoH): Male target values grouped correctly');
+} else {
+	fail('group_by (HoH): Male target values NOT grouped correctly');
+}
+
+my @females = @{ $res3->{'Female'} };
+
+if (scalar @females == 1 && abs($females[0] - 1.8) < 1e-13) {
+	pass('group_by (HoH): Female target correctly handled missing and undef values');
+} else {
+	fail('group_by (HoH): Female target improperly included undefined/missing values');
+}
+no_leaks_ok {
+	eval {
+		group_by($test_data, 'Testosterone, total (nmol/L)', 'Gender')
+	};
+} 'group_by: no leaks with Hash of hash input' unless $INC{'Devel/Cover.pm'};
+#
+# TEST SET 4: Group By with Code Filters
+#
+
+# Data representing males and females, where we only want to keep Sex => 'f'
+$test_data = [
+ { 'Gender' => 'Group 1', 'Sex' => 'm', 'Testosterone' => 20.5 },
+ { 'Gender' => 'Group 1', 'Sex' => 'f', 'Testosterone' => 1.8 },
+ { 'Gender' => 'Group 2', 'Sex' => 'm', 'Testosterone' => 18.2 },
+ { 'Gender' => 'Group 2', 'Sex' => 'f', 'Testosterone' => 2.1 }
+];
+
+$test_data = group_by($test_data, 'Testosterone', 'Gender', { Sex => sub { $_ eq 'f' } });
+
+# Verification: Only 1 item should exist in each group array (the females)
+if (scalar @{ $test_data->{'Group 1'} } == 1 && abs($test_data->{'Group 1'}[0] - 1.8) < 1e-13) {
+	pass('group_by (filter AoH): successfully evaluated $_ eq "f" and filtered out Group 1 Male');
+} else {
+	fail('group_by (filter AoH): failed to filter Group 1');
+}
+
+if (scalar @{ $test_data->{'Group 2'} } == 1 && abs($test_data->{'Group 2'}[0] - 2.1) < 1e-13) {
+	pass('group_by (filter AoH): successfully evaluated $_ eq "f" and filtered out Group 2 Male');
+} else {
+	fail('group_by (filter AoH): failed to filter Group 2');
+}
+
+$test_data = {
+ 'Gender'       => [ 'Group 1', 'Group 1', 'Group 2', 'Group 2' ],
+ 'Sex'          => [ 'm',       'f',       'm',       'f'       ],
+ 'Testosterone' => [ 20.5,      1.8,       18.2,      2.1       ]
+};
+
+$test_data = group_by($test_data, 'Testosterone', 'Gender', { Sex => sub { $_ eq 'f' } });
+
+if (scalar @{ $test_data->{'Group 1'} } == 1 && abs($test_data->{'Group 1'}[0] - 1.8) < 1e-13) {
+	pass('group_by (filter HoA): successfully evaluated $_ eq "f" and filtered HoA columns');
+} else {
+	fail('group_by (filter HoA): failed to filter HoA array parallelly');
+}
+no_leaks_ok {
+	eval {
+		group_by($test_data, 'Testosterone', 'Gender', { Sex => sub { $_ eq 'f' } });
+	};
+} 'group_by: no leaks with filter' unless $INC{'Devel/Cover.pm'};
 done_testing();
+

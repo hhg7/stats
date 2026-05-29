@@ -22,31 +22,7 @@ Add data to a hash
     };
     add_data($data, $n); # will add data to 'Jack Smith', as well as new keys for Jane and Bob.
 
-## aoh2hoh
-
-Take an array of hashes and turn it into a hash of hash
-
-### with pivot key/row name
-
-    my @aoh = (
-    {
-    	a => 'A',
-    	b => 'B',
-    	r => '1st'
-    },
-    {
-    	a => 'C',
-    	b => 'D',
-    	r => '2nd'
-    }
-    );
-    my $t0 = Time::HiRes::time();
-    my $hoh = aoh2hoh( \@aoh,  'r' ); # second item is pivot key or row name
-    my $t1 = Time::HiRes::time();
-
-    p $hoh;
-    printf("aoh2hoh in %g seconds\n", $t1 - $t0);
-
+this is the equivalent of adding new rows, as well as `ljoin`, which is described below.
 
 where the resulting hash-of-hash looks like:
 
@@ -309,6 +285,48 @@ In addition to the `gaussian` default, it fully supports logistic regression usi
 
     my $glm_bin = glm(formula => 'am ~ wt + hp', data => \%mtcars, family => 'binomial');
 
+## group_by
+
+Take a hash of arrays, hash of hashes, or array of hashes, and group a column by another column.
+
+    my $aoh_data = [
+        { 'Gender' => 'Male',   'Testosterone, total (nmol/L)' => 20.5 },
+        { 'Gender' => 'Female', 'Testosterone, total (nmol/L)' => 1.8 },
+        { 'Gender' => 'Male',   'Testosterone, total (nmol/L)' => 18.2 },
+        { 'Gender' => 'Female' } # Intentional missing target value
+    ];
+
+as well as
+
+    $hoh_data = {
+        'Patient_A' => { 'Gender' => 'Male',   'Testosterone, total (nmol/L)' => 20.5 },
+        'Patient_B' => { 'Gender' => 'Female', 'Testosterone, total (nmol/L)' => 1.8 },
+        'Patient_C' => { 'Gender' => 'Male',   'Testosterone, total (nmol/L)' => 18.2 },
+        'Patient_D' => { 'Gender' => 'Female' }, # Intentional missing target value
+        'Patient_E' => { 'Gender' => 'Female', 'Testosterone, total (nmol/L)' => undef } # Explicit undef
+        };
+
+and
+
+    my $hoa_data = {
+        'Gender'                       => ['Male', 'Female', 'Male', 'Female'],
+        'Testosterone, total (nmol/L)' => [22.1,   2.5,      19.4,   undef   ]
+    };
+
+all become the hash of arrays:
+
+    {
+        Female   [
+            [0] 1.8
+        ],
+        Male     [
+            [0] 18.2,
+            [1] 20.5
+        ]
+    }
+
+returns an empty array of hashes if neither target nor group keys are found
+
 ## hist
 
 Computes the histogram of the given data values, operating in single $O(N)$ pass performance. It returns the bin counts, computed breaks, midpoints, and density. 
@@ -373,7 +391,7 @@ The p-value precision is about 1e-8, which I want to improve, but am not sure ho
 ## ljoin
 
 Consider a hash: `$h{$row}{$col}`, and another hash `$i{$row}{$col}`.
-`ljoin` will add information for each `$row`, where it exists in both `%h` and `%i`
+`ljoin` will add information for each `$row` to `$h`, where `$row` exists in both `%h` and `%i`
 
 For example,
 
@@ -432,7 +450,7 @@ You can also pass `byrow => 1` if you want the matrix populated row-wise instead
 ## max
 
     max(1,2,3);
-    
+
 or
 
     my @arr = 1..8;
@@ -882,13 +900,14 @@ as of version 0.07, `write_table` determines comma and tab-separated delimiters 
 
 Speed improvement in `summary` of hashes of arrays
 
-Addition of `add_data`, `dnorm`, `ljoin`, and `mode` functions
+Addition of `add_data`, `dnorm`, `group_by`, `ljoin`, and `mode` functions
 
 Chi-squared function no longer has Perl wrapper, and all code is in XS, which should result in a minor speed increase with 1 less function call.
 
 Compiler changes for GNU source and inclusion of `strings.h`, to ensure more CPAN testing works better.
 
 `read_table` now returns hash-of-hash in {row}{column}
+
 
 ## 0.07
 
