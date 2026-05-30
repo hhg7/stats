@@ -4,7 +4,7 @@ require 5.010;
 use strict;
 use feature 'say';
 package Stats::LikeR;
-our $VERSION = 0.08;
+our $VERSION = 0.09;
 require XSLoader;
 use Devel::Confess 'color';
 use warnings FATAL => 'all';
@@ -467,30 +467,7 @@ Add data to a hash
  };
  add_data($data, $n); # will add data to 'Jack Smith', as well as new keys for Jane and Bob.
 
-=head2 aoh2hoh
-
-Take an array of hashes and turn it into a hash of hash
-
-=head3 with pivot key/row name
-
- my @aoh = (
- {
-     a => 'A',
-     b => 'B',
-     r => '1st'
- },
- {
-     a => 'C',
-     b => 'D',
-     r => '2nd'
- }
- );
- my $t0 = Time::HiRes::time();
- my $hoh = aoh2hoh( \@aoh,  'r' ); # second item is pivot key or row name
- my $t1 = Time::HiRes::time();
- 
- p $hoh;
- printf("aoh2hoh in %g seconds\n", $t1 - $t0);
+this is the equivalent of adding new rows, as well as C<ljoin>, which is described below.
 
 where the resulting hash-of-hash looks like:
 
@@ -781,6 +758,12 @@ and
      'Testosterone, total (nmol/L)' => [22.1,   2.5,      19.4,   undef   ]
  };
 
+then run the function thus:
+
+ group_by( $hoa_data, 'Testosterone, total (nmol/L)', 'Gender');
+
+The output can be thought of like a hash, with the first string broken down by the second.
+
 all become the hash of arrays:
 
  {
@@ -793,7 +776,20 @@ all become the hash of arrays:
      ]
  }
 
-returns an empty array of hashes if neither target nor group keys are found
+returns an empty array of hashes if neither target nor group keys are found.
+
+=head3 Filtering
+
+Data can be further broken down with filter/subs like in C<read_table>:
+
+ my $testosterone = group_by($d, # group testosterone by "Gender"
+     'Testosterone, total (nmol/L)',
+     'Gender',
+     { 'Race/Hispanic origin w/ NH Asian' => sub { $_ eq $n } },
+     { 'Testosterone, total (nmol/L)' => sub { $_ ne 'NA' } } # filter
+ );
+
+where each filter filters on the columns, e.g. second hash keys.
 
 =head2 hist
 
@@ -859,7 +855,7 @@ The p-value precision is about 1e-8, which I want to improve, but am not sure ho
 =head2 ljoin
 
 Consider a hash: C<$h{$row}{$col}>, and another hash C<$i{$row}{$col}>.
-C<ljoin> will add information for each C<$row> to C<$h>, where C<$row> exists in both C<%h> and C<%i>
+C<ljoin> will add information for C<$col> in C<%i> for each C<$row> to C<%h>, where C<$row> exists in both C<%h> and C<%i>
 
 For example,
 
@@ -1365,7 +1361,7 @@ as of version 0.07, C<write_table> determines comma and tab-separated delimiters
 
 =head2 0.08
 
-Speed improvement in C<summary> of hashes of arrays
+Speed improvement in C<summary> of hashes.
 
 Addition of C<add_data>, C<dnorm>, C<group_by>, C<ljoin>, and C<mode> functions
 
