@@ -41,8 +41,32 @@ sample__mix64(void)
 	return z ^ (z >> 31);
 }
 
-static void
-sample__seed(void)
+/* * Helper function to increment the count for a given SV.
+ * Skips NULL or Undefined values as requested.
+ */
+static void increment_count(pTHX_ HV* counts_hv, SV* val) {
+	/* Skip null pointers or undef (non-OK) values */
+	if (!val || !SvOK(val)) return; 
+
+	STRLEN len;
+	/* SvPV forces stringification (so numbers become string keys) */
+	const char* str = SvPV(val, len);
+
+	/* hv_fetch with lval=1 creates the key if it doesn't exist */
+	SV** svp = hv_fetch(counts_hv, str, len, 1);
+
+	if (svp) {
+	  if (!SvOK(*svp)) {
+		   /* Initialize count to 1 as an Unsigned Value (UV) */
+		   sv_setuv(*svp, 1);
+	  } else {
+		   /* Increment existing Unsigned Value */
+		   sv_setuv(*svp, SvUV(*svp) + 1);
+	  }
+	}
+}
+
+static void sample__seed(void)
 {
 	dTHX; /* fetch the Perl context */
 	uint64_t s = 0;
@@ -7421,6 +7445,131 @@ CODE:
 		}
 	}
 
+SV*
+value_counts(...)
+PREINIT:
+    HV* counts_hv;
+    SV* arg1;
+CODE:
+/* 1. CHECK FOR DATA FIRST to prevent memory leaks if we die */
+	if (items == 0) {
+	  croak("value_counts: no data provided. At least one argument is required.");
+	}
+
+	arg1 = ST(0);
+	if (!SvOK(arg1)) {
+	  croak("First argument to value_counts is NOT defined");
+	}
+
+	/* 2. Allocate memory only after we know we are proceeding */
+	counts_hv = newHV();
+
+	/* CASE 1: Flattened Array (or single scalar) */
+	if (!SvROK(arg1)) {
+	  for (unsigned i = 0; i < items; i++) {
+		   increment_count(aTHX_ counts_hv, ST(i));
+	  }
+	} else {/* CASE 2: Array Reference */
+	  SV*restrict rv = SvRV(arg1);
+	  if (SvTYPE(rv) == SVt_PVAV) {
+		   AV*restrict av = (AV*)rv;
+		   SSize_t len = av_len(av) + 1;
+		   for (unsigned i = 0; i < len; i++) {
+		       SV**restrict valp = av_fetch(av, i, 0);
+		       if (valp) increment_count(aTHX_ counts_hv, *valp);
+		   }
+	  } else if (SvTYPE(rv) == SVt_PVHV) { /* CASES 3, 4, 5: Hash Reference */
+		   HV*restrict hv = (HV*)rv;
+	/* CASES 4 & 5: Nested Structure requiring a 2nd Argument */
+		   if (items > 1) {
+		       SV*restrict arg2 = ST(1);
+		       STRLEN klen;
+		       const char*restrict key = SvPV(arg2, klen); 
+
+		       /* DataFrame-style Column-Oriented data check */
+		       SV**restrict col_svp = hv_fetch(hv, key, klen, 0);
+		       if (col_svp && SvROK(*col_svp) && SvTYPE(SvRV(*col_svp)) == SVt_PVAV) {
+		           AV*restrict av = (AV*)SvRV(*col_svp);
+		           SSize_t len = av_len(av) + 1;
+		           for (unsigned i = 0; i < len; i++) {
+		               SV**restrict valp = av_fetch(av, i, 0);
+		               if (valp) increment_count(aTHX_ counts_hv, *valp);
+		           }
+		       } else {
+		           /* Fallback: Row-Oriented nested structure */
+		           HE*restrict he;
+		           hv_iterinit(hv);
+		           while ((he = hv_iternext(hv))) {
+		               SV*restrict inner_sv = HeVAL(he);
+		               if (SvROK(inner_sv)) {
+		                   SV*restrict inner_rv = SvRV(inner_sv);
+	/* CASE 5: Hash of Hashes */
+		                   if (SvTYPE(inner_rv) == SVt_PVHV) {
+		                       HV*restrict inner_hv = (HV*)inner_rv;
+		                       SV**restrict valp = hv_fetch(inner_hv, key, klen, 0);
+		                       if (valp) increment_count(aTHX_ counts_hv, *valp);
+		                   } else if (SvTYPE(inner_rv) == SVt_PVAV) {
+	/* CASE 4: Hash of Arrays (Row-Oriented) */
+		                       if (looks_like_number(arg2)) {
+		                            AV*restrict inner_av = (AV*)inner_rv;
+		                            SSize_t idx = SvIV(arg2); 
+		                            SV**restrict valp = av_fetch(inner_av, idx, 0);
+		                            if (valp) increment_count(aTHX_ counts_hv, *valp);
+		                       }
+		                   }
+		               }
+		           }
+		       }
+		   } else { /* CASE 3: Hash Reference (No 2nd argument) */
+		       HE*restrict he;
+		       hv_iterinit(hv);
+		       while ((he = hv_iternext(hv))) {
+		           SV*restrict val = HeVAL(he);
+		           
+		           /* --- MODIFIED SAFETY CHECK --- */
+		           if (SvROK(val)) {
+		               SV*restrict inner_rv = SvRV(val);
+		               
+		               /* If it's a Hash of Arrays, count ALL elements in the inner arrays */
+		               if (SvTYPE(inner_rv) == SVt_PVAV) {
+		                   AV*restrict inner_av = (AV*)inner_rv;
+		                   SSize_t len = av_len(inner_av) + 1;
+		                   for (unsigned i = 0; i < len; i++) {
+		                       SV**restrict valp = av_fetch(inner_av, i, 0);
+		                       if (valp) increment_count(aTHX_ counts_hv, *valp);
+		                   }
+		               } 
+		               /* If it's a Hash of Hashes, count ALL elements across all inner keys */
+		               else if (SvTYPE(inner_rv) == SVt_PVHV) {
+		                   HV*restrict inner_hv = (HV*)inner_rv;
+		                   HE*restrict inner_he;
+		                   hv_iterinit(inner_hv);
+		                   while ((inner_he = hv_iternext(inner_hv))) {
+		                       SV*restrict inner_val = HeVAL(inner_he);
+		                       increment_count(aTHX_ counts_hv, inner_val);
+		                   }
+		               } 
+		               /* Unrecognized nested reference type */
+		               else {
+		                   SvREFCNT_dec((SV*)counts_hv);
+		                   croak("value_counts: Unsupported nested reference type.");
+		               }
+		           } else {
+		               /* Simple scalar value */
+		               increment_count(aTHX_ counts_hv, val);
+		           }
+		       }
+		   }
+	  } else {
+	/* Safely decrement the reference count of our hash before dying to prevent a leak */
+		   SvREFCNT_dec((SV*)counts_hv);
+		   croak("value_counts: Unsupported reference type.");
+	  }
+	}
+	RETVAL = newRV_noinc((SV*)counts_hv);
+OUTPUT:
+    RETVAL
+
 #define EVAL_FILTER(sub_sv, val_sv, keep) do {        \
  dSP;                                                 \
  unsigned int count;                                  \
@@ -7633,4 +7782,4 @@ CODE:
 	/* Balance xsubpp's automatic sv_2mortal to prevent refcount dropping to -1 */
 	RETVAL = SvREFCNT_inc(result_ref);
 OUTPUT:
-    RETVAL
+	RETVAL

@@ -852,6 +852,61 @@ the two groups compared can be specified, though not necessarily, as `x` and `y`
 	    paired => true
     );
 
+## value_counts
+
+Count the values in a given data set, return a hash reference showing how many times each particular value is present.
+
+### Scalar
+
+    $hash = value_counts('c');
+
+returns `{ c => 1 }`
+
+### Array reference
+
+    value_counts(['a','b','b']);
+
+returns `{ a => 1, b => 2}`
+
+### Array
+
+    my $value_counts = value_counts('a','b','b');
+
+like an array reference above, returns `{ a => 1, b => 2}`
+
+### Hash
+
+    my $value_counts = value_counts( { A => 'a', B => 'a', C => 'b' } );
+
+returns `{ a => 2, b => 1}`
+
+### Hash of array
+
+    my $value_counts = value_counts({ 'a' => ['j', 't', 't'], 'b' => ['j', 't', 'v']});
+
+without a key (like above), the occurences of `j`, `t`, and `v` are counted.
+
+With a key, like `a` for above, only values within that hash key are counted:
+
+    my $vc = value_counts({ 'a' => ['j', 't', 't'], 'b' => ['j', 't', 'v']}, 'a');
+
+### Hash of hash (table)
+
+    $hash = value_counts( {
+        A => {
+            a => 'x',
+            b => 'z'
+        },
+        B => {
+            a => 'x'
+        },
+        C => {
+	        a => 'y'
+        }
+    }, 'a');
+
+the column, or second hash key, that you wish to count, is specified at the command line
+
 ## var
 
 as simple as possible:
@@ -914,6 +969,12 @@ undefined variables are printed as `NA` by default, but can be set as you wish u
 as of version 0.07, `write_table` determines comma and tab-separated delimiters from the filename, but will override if `sep` or `delim` are explicitly set.
 
 # changes
+
+## 0.10
+
+changes to compilation for CPAN, trying to get this work on Windows
+
+Addition of `value_counts`
 
 ## 0.09
 

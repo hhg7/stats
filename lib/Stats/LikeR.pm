@@ -4,7 +4,7 @@ require 5.010;
 use strict;
 use feature 'say';
 package Stats::LikeR;
-our $VERSION = 0.09;
+our $VERSION = 0.10;
 require XSLoader;
 use Devel::Confess 'color';
 use warnings FATAL => 'all';
@@ -12,7 +12,7 @@ use autodie ':default';
 use Exporter 'import';
 use Scalar::Util 'looks_like_number';
 XSLoader::load('Stats::LikeR', $VERSION);
-our @EXPORT_OK = qw(add_data aov chisq_test cor cor_test cov dnorm fisher_test glm group_by hist kruskal_test ks_test ljoin lm matrix max mean median min mode oneway_test p_adjust power_t_test quantile rbinom read_table rnorm runif sample scale sd seq shapiro_test sum summary t_test var var_test wilcox_test write_table);
+our @EXPORT_OK = qw(add_data aov chisq_test cor cor_test cov dnorm fisher_test glm group_by hist kruskal_test ks_test ljoin lm matrix max mean median min mode oneway_test p_adjust power_t_test quantile rbinom read_table rnorm runif sample scale sd seq shapiro_test sum summary t_test value_counts var var_test wilcox_test write_table);
 our @EXPORT = @EXPORT_OK;
 
 require XSLoader;
@@ -1296,6 +1296,24 @@ the two groups compared can be specified, though not necessarily, as C<x> and C<
      paired => true
  );
 
+=head2 value_counts
+
+Count the values in a given data set, return a hash reference showing how many times each particular value is present.
+
+=head3 Scalar
+
+ $hash = value_counts('c');
+
+returns C<< { c =E<gt> 1 } >>
+
+=head3 Array reference
+
+ value_counts(['a','b','b']);
+
+returns C<< { a =E<gt> 1, b =E<gt> 2} >>
+
+=head3 Array
+
 =head2 var
 
 as simple as possible:
@@ -1358,6 +1376,12 @@ undefined variables are printed as C<NA> by default, but can be set as you wish 
 as of version 0.07, C<write_table> determines comma and tab-separated delimiters from the filename, but will override if C<sep> or C<delim> are explicitly set.
 
 =head1 changes
+
+=head2 0.10
+
+changes to compilation for CPAN, trying to get this work on Windows
+
+Addition of C<value_counts>
 
 =head2 0.09
 
