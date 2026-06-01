@@ -1070,6 +1070,88 @@ It also allows configuring the test type (C<< type =E<gt> 'one.sample' >>, C<'tw
 | C<strict> | Boolean | C<FALSE> | Use strict interpretation of two-sided power calculations. |
 | C<tol> | Float | ~C<1.22e-4> | Numerical tolerance used for the internal root-finding algorithm. |
 
+=head2 prcomp
+
+Principal Component Analysis
+
+=head3 Options
+
+| Option | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| C<center> | Boolean | C<1> (True) | If true, the variables are shifted to be zero-centered before the analysis takes place. |
+| C<scale> | Boolean | C<0> (False) | If true, the variables are scaled to have unit variance before the analysis takes place. I<< Note: If a column has zero variance, the function will C<croak> to prevent division by zero. >> |
+| C<retx> | Boolean | C<1> (True) | If true, the rotated data (the original data multiplied by the rotation matrix) is returned under the key C<x>. |
+| C<tol> | Number | C<undef> | A value indicating the magnitude below which components should be omitted. Components are omitted if their standard deviation is less than or equal to C<tol> times the standard deviation of the first component. |
+| C<rank> | Integer | C<undef> | Optionally specify a strict limit on the number of principal components to return. The function will return C<min(rank, rows, columns)> components. |
+
+=head3 Results
+
+=head3 Returned Data Structure
+
+The C<prcomp> function returns a HashRef containing the following keys representing the results of the Principal Component Analysis:
+
+| Key | Type | Description |
+| :--- | :--- | :--- |
+| C<sdev> | ArrayRef[Number] | The standard deviations of the principal components. Mathematically, these are the square roots of the eigenvalues of the covariance matrix. |
+| C<rotation> | ArrayRef[ArrayRef] | A 2D array representing the matrix of variable loadings (the eigenvectors). Each inner array represents a row, and the columns correspond to the principal components. |
+| C<x> | ArrayRef[ArrayRef] | A 2D array containing the rotated data (often referred to as PCA scores). This is the original data projected onto the principal components. I<< Note: Only present if the C<retx> option is true. >> |
+| C<center> | ArrayRef[Number] or C<0> | The centering values used (typically the column means). Returns false (C<0>) if centering was disabled. |
+| C<scale> | ArrayRef[Number] or C<0> | The scaling values used (typically the column standard deviations). Returns false (C<0>) if scaling was disabled. |
+| C<varnames> | ArrayRef[String] | The sorted names of the original variables. I<Note: Only present if the input data was a Hash of Arrays (HoA) or a Hash of Hashes (HoH).> |
+
+=head3 Using array of arrays
+
+ my $aoa = [ 
+     [2, 4], 
+     [4, 2], 
+     [6, 6] 
+ ];
+ 
+ my $pca = prcomp($aoa);
+
+which returns
+
+ {
+     center     [
+         [0] 4,
+         [1] 4
+     ],
+     rotation   [
+         [0] [
+                 [0] 0.707106781186547,
+                 [1] 0.707106781186548
+             ],
+         [1] [
+                 [0] 0.707106781186548,
+                 [1] -0.707106781186547
+             ]
+     ],
+     scale      false,
+     sdev       [
+         [0] 2.44948974278318,
+         [1] 1.4142135623731
+     ],
+     x          [
+         [0] [
+                 [0] -1.41421356237309,
+                 [1] -1.4142135623731
+             ],
+         [1] [
+                 [0] -1.4142135623731,
+                 [1] 1.41421356237309
+             ],
+         [2] [
+                 [0] 2.82842712474619,
+                 [1] 2.22044604925031e-16
+             ]
+     ]
+ }
+
+=head3 Hash of Arrays
+
+ my $hoa = { B => [4, 2, 6], A => [2, 4, 6] };
+ my $pca = prcomp($hoa);
+
 =head2 quantile
 
 Calculates sample quantiles using R's continuous Type 7 interpolation. 

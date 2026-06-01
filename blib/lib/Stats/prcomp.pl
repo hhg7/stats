@@ -63,7 +63,8 @@ my $aoa = [
 ];
 
 my $pca = prcomp($aoa);
-
+use DDP;
+p $pca;
 my $n_keys = scalar keys %{ $pca };
 if ($n_keys == 5) { # sdev, rotation, x, center, scale
 	pass('prcomp (AoA): returns the correct # of hash keys (5)');

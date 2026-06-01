@@ -786,6 +786,98 @@ It also allows configuring the test type (\f(CW\*(C`type => \*(Aqone.sample\*(Aq
 | \f(CW\*(C`alternative\*(C'\fR | String | \f(CW"two.sided"\fR | One\- or two\-sided test: \f(CW"two.sided"\fR, \f(CW"one.sided"\fR, \f(CW"greater"\fR, or \f(CW"less"\fR. |
 | \f(CW\*(C`strict\*(C'\fR | Boolean | \f(CW\*(C`FALSE\*(C'\fR | Use strict interpretation of two\-sided power calculations. |
 | \f(CW\*(C`tol\*(C'\fR | Float | ~\f(CW1.22e\-4\fR | Numerical tolerance used for the internal root\-finding algorithm. |
+.SS prcomp
+.IX Subsection "prcomp"
+Principal Component Analysis
+.PP
+\fIOptions\fR
+.IX Subsection "Options"
+.PP
+| Option | Type | Default | Description |
+| :\-\-\- | :\-\-\- | :\-\-\- | :\-\-\- |
+| \f(CW\*(C`center\*(C'\fR | Boolean | \f(CW1\fR (True) | If true, the variables are shifted to be zero\-centered before the analysis takes place. |
+| \f(CW\*(C`scale\*(C'\fR | Boolean | \f(CW0\fR (False) | If true, the variables are scaled to have unit variance before the analysis takes place. \fINote: If a column has zero variance, the function will \fR\f(CI\*(C`croak\*(C'\fR\fI to prevent division by zero.\fR |
+| \f(CW\*(C`retx\*(C'\fR | Boolean | \f(CW1\fR (True) | If true, the rotated data (the original data multiplied by the rotation matrix) is returned under the key \f(CW\*(C`x\*(C'\fR. |
+| \f(CW\*(C`tol\*(C'\fR | Number | \f(CW\*(C`undef\*(C'\fR | A value indicating the magnitude below which components should be omitted. Components are omitted if their standard deviation is less than or equal to \f(CW\*(C`tol\*(C'\fR times the standard deviation of the first component. |
+| \f(CW\*(C`rank\*(C'\fR | Integer | \f(CW\*(C`undef\*(C'\fR | Optionally specify a strict limit on the number of principal components to return. The function will return \f(CW\*(C`min(rank, rows, columns)\*(C'\fR components. |
+.PP
+\fIResults\fR
+.IX Subsection "Results"
+.PP
+\fIReturned Data Structure\fR
+.IX Subsection "Returned Data Structure"
+.PP
+The \f(CW\*(C`prcomp\*(C'\fR function returns a HashRef containing the following keys representing the results of the Principal Component Analysis:
+.PP
+| Key | Type | Description |
+| :\-\-\- | :\-\-\- | :\-\-\- |
+| \f(CW\*(C`sdev\*(C'\fR | ArrayRef[Number] | The standard deviations of the principal components. Mathematically, these are the square roots of the eigenvalues of the covariance matrix. |
+| \f(CW\*(C`rotation\*(C'\fR | ArrayRef[ArrayRef] | A 2D array representing the matrix of variable loadings (the eigenvectors). Each inner array represents a row, and the columns correspond to the principal components. |
+| \f(CW\*(C`x\*(C'\fR | ArrayRef[ArrayRef] | A 2D array containing the rotated data (often referred to as PCA scores). This is the original data projected onto the principal components. \fINote: Only present if the \fR\f(CI\*(C`retx\*(C'\fR\fI option is true.\fR |
+| \f(CW\*(C`center\*(C'\fR | ArrayRef[Number] or \f(CW0\fR | The centering values used (typically the column means). Returns false (\f(CW0\fR) if centering was disabled. |
+| \f(CW\*(C`scale\*(C'\fR | ArrayRef[Number] or \f(CW0\fR | The scaling values used (typically the column standard deviations). Returns false (\f(CW0\fR) if scaling was disabled. |
+| \f(CW\*(C`varnames\*(C'\fR | ArrayRef[String] | The sorted names of the original variables. \fINote: Only present if the input data was a Hash of Arrays (HoA) or a Hash of Hashes (HoH).\fR |
+.PP
+\fIUsing array of arrays\fR
+.IX Subsection "Using array of arrays"
+.PP
+.Vb 5
+\& my $aoa = [ 
+\&     [2, 4], 
+\&     [4, 2], 
+\&     [6, 6] 
+\& ];
+\& 
+\& my $pca = prcomp($aoa);
+.Ve
+.PP
+which returns
+.PP
+.Vb 10
+\& {
+\&     center     [
+\&         [0] 4,
+\&         [1] 4
+\&     ],
+\&     rotation   [
+\&         [0] [
+\&                 [0] 0.707106781186547,
+\&                 [1] 0.707106781186548
+\&             ],
+\&         [1] [
+\&                 [0] 0.707106781186548,
+\&                 [1] \-0.707106781186547
+\&             ]
+\&     ],
+\&     scale      false,
+\&     sdev       [
+\&         [0] 2.44948974278318,
+\&         [1] 1.4142135623731
+\&     ],
+\&     x          [
+\&         [0] [
+\&                 [0] \-1.41421356237309,
+\&                 [1] \-1.4142135623731
+\&             ],
+\&         [1] [
+\&                 [0] \-1.4142135623731,
+\&                 [1] 1.41421356237309
+\&             ],
+\&         [2] [
+\&                 [0] 2.82842712474619,
+\&                 [1] 2.22044604925031e\-16
+\&             ]
+\&     ]
+\& }
+.Ve
+.PP
+\fIHash of Arrays\fR
+.IX Subsection "Hash of Arrays"
+.PP
+.Vb 2
+\& my $hoa = { B => [4, 2, 6], A => [2, 4, 6] };
+\& my $pca = prcomp($hoa);
+.Ve
 .SS quantile
 .IX Subsection "quantile"
 Calculates sample quantiles using R\*(Aqs continuous Type 7 interpolation.
