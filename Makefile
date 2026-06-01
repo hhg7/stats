@@ -211,6 +211,7 @@ TO_INST_PM = aoh2hoh.pl \
 	lib/Stats/test.pl \
 	ljoin.pl \
 	lm.pl \
+	matrix.pl \
 	md2pod.pl \
 	min.pl \
 	mode.pl \
@@ -1148,6 +1149,7 @@ pm_to_blib : $(FIRST_MAKEFILE) $(TO_INST_PM)
 	  'lib/Stats/test.pl' 'blib/lib/Stats/test.pl' \
 	  'ljoin.pl' '$(INST_LIB)/Stats/ljoin.pl' \
 	  'lm.pl' '$(INST_LIB)/Stats/lm.pl' \
+	  'matrix.pl' '$(INST_LIB)/Stats/matrix.pl' \
 	  'md2pod.pl' '$(INST_LIB)/Stats/md2pod.pl' \
 	  'min.pl' '$(INST_LIB)/Stats/min.pl' \
 	  'mode.pl' '$(INST_LIB)/Stats/mode.pl' \

@@ -468,6 +468,12 @@ the dot operator also works:
 
 You can also pass C<< byrow =E<gt> 1 >> if you want the matrix populated row-wise instead of column-wise.
 
+As of version 0.10, parameters do not need to be named, so that C<matrix> works more like R:
+
+ my $d = matrix(rnorm(32000), 1000, 32);
+
+works as C<data>, C<nrow>, and C<ncol>
+
 =head2 max
 
  max(1,2,3);
@@ -608,6 +614,18 @@ Returns array of false-discovery-rate-corrected p-values, where methods availabl
  );
 
 It also allows configuring the test type (C<< type =E<gt> 'one.sample' >>, C<'two.sample'>, C<'paired'>) and alternative hypothesis (C<< alternative =E<gt> 'one.sided' >>). You can also pass C<< strict =E<gt> 1 >> to strictly evaluate both tails of the distribution.
+
+| Parameter | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| C<n> | Float | C<undef> | Number of observations (per group for two-sample, pairs for paired). |
+| C<delta> | Float | C<undef> | True difference in means. |
+| C<sd> | Float | 1.0 | Standard deviation. |
+| C<sig_level> | Float | 0.05 | Significance level (Type I error probability). Also accepts C<sig.level>. |
+| C<power> | Float | C<undef> | Power of test (1 minus Type II error probability). |
+| C<type> | String | C<"two.sample"> | Type of t-test: C<"two.sample">, C<"one.sample">, or C<"paired">. |
+| C<alternative> | String | C<"two.sided"> | One- or two-sided test: C<"two.sided">, C<"one.sided">, C<"greater">, or C<"less">. |
+| C<strict> | Boolean | C<FALSE> | Use strict interpretation of two-sided power calculations. |
+| C<tol> | Float | ~C<1.22e-4> | Numerical tolerance used for the internal root-finding algorithm. |
 
 =head2 quantile
 
@@ -853,6 +871,30 @@ the two groups compared can be specified, though not necessarily, as C<x> and C<
      paired => true
  );
 
+=head3 Parameters
+
+| Parameter | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| C<x> | Array Reference | Required | The first vector of data. Must contain at least 2 elements. |
+| C<y> | Array Reference | C<undef> | The second vector of data. Required for two-sample or paired tests. |
+| C<mu> | Float | 0.0 | The true value of the mean (or difference in means) for the null hypothesis. |
+| C<paired> | Boolean | C<FALSE> | If true, performs a paired t-test. C<x> and C<y> must be the same length. |
+| C<var_equal> | Boolean | C<FALSE> | If true, assumes equal variances (standard two-sample). If false, performs Welch's t-test with unequal variances. |
+| C<conf_level> | Float | 0.95 | Confidence level for the returned confidence interval. Must be between 0 and 1. |
+| C<alternative> | String | C<"two.sided"> | Direction of the alternative hypothesis: C<"two.sided">, C<"less">, or C<"greater">. |
+
+=head3 Return Hash
+
+| Key | Description |
+| :--- | :--- |
+| C<statistic> | The computed t-statistic. |
+| C<df> | Degrees of freedom for the test. |
+| C<p_value> | The calculated p-value based on the test directionality. |
+| C<conf_int> | An Array Reference containing two elements: C<[lower_bound, upper_bound]>. |
+| C<estimate> | The estimated mean of C<x> (one-sample) OR the mean of the differences (paired). |
+| C<estimate_x> | The estimated mean of the C<x> vector (only returned in two-sample tests). |
+| C<estimate_y> | The estimated mean of the C<y> vector (only returned in two-sample tests). |
+
 =head2 value_counts
 
 Count the values in a given data set, return a hash reference showing how many times each particular value is present.
@@ -870,6 +912,43 @@ returns C<< { c =E<gt> 1 } >>
 returns C<< { a =E<gt> 1, b =E<gt> 2} >>
 
 =head3 Array
+
+ my $value_counts = value_counts('a','b','b');
+
+like an array reference above, returns C<< { a =E<gt> 1, b =E<gt> 2} >>
+
+=head3 Hash
+
+ my $value_counts = value_counts( { A => 'a', B => 'a', C => 'b' } );
+
+returns C<< { a =E<gt> 2, b =E<gt> 1} >>
+
+=head3 Hash of array
+
+ my $value_counts = value_counts({ 'a' => ['j', 't', 't'], 'b' => ['j', 't', 'v']});
+
+without a key (like above), the occurences of C<j>, C<t>, and C<v> are counted.
+
+With a key, like C<a> for above, only values within that hash key are counted:
+
+ my $vc = value_counts({ 'a' => ['j', 't', 't'], 'b' => ['j', 't', 'v']}, 'a');
+
+=head3 Hash of hash (table)
+
+ $hash = value_counts( {
+     A => {
+         a => 'x',
+         b => 'z'
+     },
+     B => {
+         a => 'x'
+     },
+     C => {
+         a => 'y'
+     }
+ }, 'a');
+
+the column, or second hash key, that you wish to count, is specified at the command line
 
 =head2 var
 
@@ -939,6 +1018,8 @@ as of version 0.07, C<write_table> determines comma and tab-separated delimiters
 changes to compilation for CPAN, trying to get this work on Windows
 
 Addition of C<value_counts>
+
+C<matrix> will work without key names, just like in R.  Testing for C<matrix> has improved.
 
 =head2 0.09
 

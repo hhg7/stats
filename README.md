@@ -613,6 +613,18 @@ Returns array of false-discovery-rate-corrected p-values, where methods availabl
 
 It also allows configuring the test type (`type => 'one.sample'`, `'two.sample'`, `'paired'`) and alternative hypothesis (`alternative => 'one.sided'`). You can also pass `strict => 1` to strictly evaluate both tails of the distribution.
 
+| Parameter | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `n` | Float | `undef` | Number of observations (per group for two-sample, pairs for paired). |
+| `delta` | Float | `undef` | True difference in means. |
+| `sd` | Float | 1.0 | Standard deviation. |
+| `sig_level` | Float | 0.05 | Significance level (Type I error probability). Also accepts `sig.level`. |
+| `power` | Float | `undef` | Power of test (1 minus Type II error probability). |
+| `type` | String | `"two.sample"` | Type of t-test: `"two.sample"`, `"one.sample"`, or `"paired"`. |
+| `alternative` | String | `"two.sided"` | One- or two-sided test: `"two.sided"`, `"one.sided"`, `"greater"`, or `"less"`. |
+| `strict` | Boolean | `FALSE` | Use strict interpretation of two-sided power calculations. |
+| `tol` | Float | ~`1.22e-4` | Numerical tolerance used for the internal root-finding algorithm. |
+
 ## quantile
 
 Calculates sample quantiles using R's continuous Type 7 interpolation. 
@@ -858,6 +870,30 @@ the two groups compared can be specified, though not necessarily, as `x` and `y`
 	    paired => true
     );
 
+### Parameters
+
+| Parameter | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `x` | Array Reference | Required | The first vector of data. Must contain at least 2 elements. |
+| `y` | Array Reference | `undef` | The second vector of data. Required for two-sample or paired tests. |
+| `mu` | Float | 0.0 | The true value of the mean (or difference in means) for the null hypothesis. |
+| `paired` | Boolean | `FALSE` | If true, performs a paired t-test. `x` and `y` must be the same length. |
+| `var_equal` | Boolean | `FALSE` | If true, assumes equal variances (standard two-sample). If false, performs Welch's t-test with unequal variances. |
+| `conf_level` | Float | 0.95 | Confidence level for the returned confidence interval. Must be between 0 and 1. |
+| `alternative` | String | `"two.sided"` | Direction of the alternative hypothesis: `"two.sided"`, `"less"`, or `"greater"`. |
+
+### Return Hash
+
+| Key | Description |
+| :--- | :--- |
+| `statistic` | The computed t-statistic. |
+| `df` | Degrees of freedom for the test. |
+| `p_value` | The calculated p-value based on the test directionality. |
+| `conf_int` | An Array Reference containing two elements: `[lower_bound, upper_bound]`. |
+| `estimate` | The estimated mean of `x` (one-sample) OR the mean of the differences (paired). |
+| `estimate_x` | The estimated mean of the `x` vector (only returned in two-sample tests). |
+| `estimate_y` | The estimated mean of the `y` vector (only returned in two-sample tests). |
+
 ## value_counts
 
 Count the values in a given data set, return a hash reference showing how many times each particular value is present.
@@ -982,7 +1018,7 @@ changes to compilation for CPAN, trying to get this work on Windows
 
 Addition of `value_counts`
 
-`matrix` will work without key names, just like in R
+`matrix` will work without key names, just like in R.  Testing for `matrix` has improved.
 
 ## 0.09
 

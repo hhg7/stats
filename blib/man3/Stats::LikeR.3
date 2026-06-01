@@ -58,7 +58,7 @@
 .\" ========================================================================
 .\"
 .IX Title "Stats::LikeR 3"
-.TH Stats::LikeR 3 2026-05-31 "perl v5.42.2" "User Contributed Perl Documentation"
+.TH Stats::LikeR 3 2026-06-01 "perl v5.42.2" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -601,6 +601,14 @@ the dot operator also works:
 .Ve
 .PP
 You can also pass \f(CW\*(C`byrow => 1\*(C'\fR if you want the matrix populated row\-wise instead of column\-wise.
+.PP
+As of version 0.10, parameters do not need to be named, so that \f(CW\*(C`matrix\*(C'\fR works more like R:
+.PP
+.Vb 1
+\& my $d = matrix(rnorm(32000), 1000, 32);
+.Ve
+.PP
+works as \f(CW\*(C`data\*(C'\fR, \f(CW\*(C`nrow\*(C'\fR, and \f(CW\*(C`ncol\*(C'\fR
 .SS max
 .IX Subsection "max"
 .Vb 1
@@ -766,6 +774,18 @@ Returns array of false\-discovery\-rate\-corrected p\-values, where methods avai
 .Ve
 .PP
 It also allows configuring the test type (\f(CW\*(C`type => \*(Aqone.sample\*(Aq\*(C'\fR, \f(CW\*(Aqtwo.sample\*(Aq\fR, \f(CW\*(Aqpaired\*(Aq\fR) and alternative hypothesis (\f(CW\*(C`alternative => \*(Aqone.sided\*(Aq\*(C'\fR). You can also pass \f(CW\*(C`strict => 1\*(C'\fR to strictly evaluate both tails of the distribution.
+.PP
+| Parameter | Type | Default | Description |
+| :\-\-\- | :\-\-\- | :\-\-\- | :\-\-\- |
+| \f(CW\*(C`n\*(C'\fR | Float | \f(CW\*(C`undef\*(C'\fR | Number of observations (per group for two\-sample, pairs for paired). |
+| \f(CW\*(C`delta\*(C'\fR | Float | \f(CW\*(C`undef\*(C'\fR | True difference in means. |
+| \f(CW\*(C`sd\*(C'\fR | Float | 1.0 | Standard deviation. |
+| \f(CW\*(C`sig_level\*(C'\fR | Float | 0.05 | Significance level (Type I error probability). Also accepts \f(CW\*(C`sig.level\*(C'\fR. |
+| \f(CW\*(C`power\*(C'\fR | Float | \f(CW\*(C`undef\*(C'\fR | Power of test (1 minus Type II error probability). |
+| \f(CW\*(C`type\*(C'\fR | String | \f(CW"two.sample"\fR | Type of t\-test: \f(CW"two.sample"\fR, \f(CW"one.sample"\fR, or \f(CW"paired"\fR. |
+| \f(CW\*(C`alternative\*(C'\fR | String | \f(CW"two.sided"\fR | One\- or two\-sided test: \f(CW"two.sided"\fR, \f(CW"one.sided"\fR, \f(CW"greater"\fR, or \f(CW"less"\fR. |
+| \f(CW\*(C`strict\*(C'\fR | Boolean | \f(CW\*(C`FALSE\*(C'\fR | Use strict interpretation of two\-sided power calculations. |
+| \f(CW\*(C`tol\*(C'\fR | Float | ~\f(CW1.22e\-4\fR | Numerical tolerance used for the internal root\-finding algorithm. |
 .SS quantile
 .IX Subsection "quantile"
 Calculates sample quantiles using R\*(Aqs continuous Type 7 interpolation.
@@ -1063,6 +1083,32 @@ the two groups compared can be specified, though not necessarily, as \f(CW\*(C`x
 \&     paired => true
 \& );
 .Ve
+.PP
+\fIParameters\fR
+.IX Subsection "Parameters"
+.PP
+| Parameter | Type | Default | Description |
+| :\-\-\- | :\-\-\- | :\-\-\- | :\-\-\- |
+| \f(CW\*(C`x\*(C'\fR | Array Reference | Required | The first vector of data. Must contain at least 2 elements. |
+| \f(CW\*(C`y\*(C'\fR | Array Reference | \f(CW\*(C`undef\*(C'\fR | The second vector of data. Required for two\-sample or paired tests. |
+| \f(CW\*(C`mu\*(C'\fR | Float | 0.0 | The true value of the mean (or difference in means) for the null hypothesis. |
+| \f(CW\*(C`paired\*(C'\fR | Boolean | \f(CW\*(C`FALSE\*(C'\fR | If true, performs a paired t\-test. \f(CW\*(C`x\*(C'\fR and \f(CW\*(C`y\*(C'\fR must be the same length. |
+| \f(CW\*(C`var_equal\*(C'\fR | Boolean | \f(CW\*(C`FALSE\*(C'\fR | If true, assumes equal variances (standard two\-sample). If false, performs Welch\*(Aqs t\-test with unequal variances. |
+| \f(CW\*(C`conf_level\*(C'\fR | Float | 0.95 | Confidence level for the returned confidence interval. Must be between 0 and 1. |
+| \f(CW\*(C`alternative\*(C'\fR | String | \f(CW"two.sided"\fR | Direction of the alternative hypothesis: \f(CW"two.sided"\fR, \f(CW"less"\fR, or \f(CW"greater"\fR. |
+.PP
+\fIReturn Hash\fR
+.IX Subsection "Return Hash"
+.PP
+| Key | Description |
+| :\-\-\- | :\-\-\- |
+| \f(CW\*(C`statistic\*(C'\fR | The computed t\-statistic. |
+| \f(CW\*(C`df\*(C'\fR | Degrees of freedom for the test. |
+| \f(CW\*(C`p_value\*(C'\fR | The calculated p\-value based on the test directionality. |
+| \f(CW\*(C`conf_int\*(C'\fR | An Array Reference containing two elements: \f(CW\*(C`[lower_bound, upper_bound]\*(C'\fR. |
+| \f(CW\*(C`estimate\*(C'\fR | The estimated mean of \f(CW\*(C`x\*(C'\fR (one\-sample) OR the mean of the differences (paired). |
+| \f(CW\*(C`estimate_x\*(C'\fR | The estimated mean of the \f(CW\*(C`x\*(C'\fR vector (only returned in two\-sample tests). |
+| \f(CW\*(C`estimate_y\*(C'\fR | The estimated mean of the \f(CW\*(C`y\*(C'\fR vector (only returned in two\-sample tests). |
 .SS value_counts
 .IX Subsection "value_counts"
 Count the values in a given data set, return a hash reference showing how many times each particular value is present.
@@ -1087,6 +1133,56 @@ returns \f(CW\*(C`{ a => 1, b => 2}\*(C'\fR
 .PP
 \fIArray\fR
 .IX Subsection "Array"
+.PP
+.Vb 1
+\& my $value_counts = value_counts(\*(Aqa\*(Aq,\*(Aqb\*(Aq,\*(Aqb\*(Aq);
+.Ve
+.PP
+like an array reference above, returns \f(CW\*(C`{ a => 1, b => 2}\*(C'\fR
+.PP
+\fIHash\fR
+.IX Subsection "Hash"
+.PP
+.Vb 1
+\& my $value_counts = value_counts( { A => \*(Aqa\*(Aq, B => \*(Aqa\*(Aq, C => \*(Aqb\*(Aq } );
+.Ve
+.PP
+returns \f(CW\*(C`{ a => 2, b => 1}\*(C'\fR
+.PP
+\fIHash of array\fR
+.IX Subsection "Hash of array"
+.PP
+.Vb 1
+\& my $value_counts = value_counts({ \*(Aqa\*(Aq => [\*(Aqj\*(Aq, \*(Aqt\*(Aq, \*(Aqt\*(Aq], \*(Aqb\*(Aq => [\*(Aqj\*(Aq, \*(Aqt\*(Aq, \*(Aqv\*(Aq]});
+.Ve
+.PP
+without a key (like above), the occurences of \f(CW\*(C`j\*(C'\fR, \f(CW\*(C`t\*(C'\fR, and \f(CW\*(C`v\*(C'\fR are counted.
+.PP
+With a key, like \f(CW\*(C`a\*(C'\fR for above, only values within that hash key are counted:
+.PP
+.Vb 1
+\& my $vc = value_counts({ \*(Aqa\*(Aq => [\*(Aqj\*(Aq, \*(Aqt\*(Aq, \*(Aqt\*(Aq], \*(Aqb\*(Aq => [\*(Aqj\*(Aq, \*(Aqt\*(Aq, \*(Aqv\*(Aq]}, \*(Aqa\*(Aq);
+.Ve
+.PP
+\fIHash of hash (table)\fR
+.IX Subsection "Hash of hash (table)"
+.PP
+.Vb 12
+\& $hash = value_counts( {
+\&     A => {
+\&         a => \*(Aqx\*(Aq,
+\&         b => \*(Aqz\*(Aq
+\&     },
+\&     B => {
+\&         a => \*(Aqx\*(Aq
+\&     },
+\&     C => {
+\&         a => \*(Aqy\*(Aq
+\&     }
+\& }, \*(Aqa\*(Aq);
+.Ve
+.PP
+the column, or second hash key, that you wish to count, is specified at the command line
 .SS var
 .IX Subsection "var"
 as simple as possible:
@@ -1169,6 +1265,8 @@ as of version 0.07, \f(CW\*(C`write_table\*(C'\fR determines comma and tab\-sepa
 changes to compilation for CPAN, trying to get this work on Windows
 .PP
 Addition of \f(CW\*(C`value_counts\*(C'\fR
+.PP
+\&\f(CW\*(C`matrix\*(C'\fR will work without key names, just like in R.  Testing for \f(CW\*(C`matrix\*(C'\fR has improved.
 .SS 0.09
 .IX Subsection "0.09"
 context changes in XS \f(CW\*(C`dTHX\*(C'\fR, \f(CW\*(C`pTHX_\*(C'\fR, and \f(CW\*(C`aTHX_\*(C'\fR to get better CPAN testing results

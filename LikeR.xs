@@ -5114,203 +5114,197 @@ SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 	CODE:
 	// Branch 1: both inputs are flat vectors  →  scalar result
 	if (!x_is_matrix && !y_is_matrix) {
-		  if (!has_y) {
-		      /* cor(vector) == 1 by definition */
-		      RETVAL = newSVnv(1.0);
-		  } else {
-		      if (nx != ny)
-		          croak("cor: x and y must have the same length (%lu vs %lu)",
-		                nx, ny);
-
-		      if (nx < 2)
-		          croak("cor: need at least 2 observations");
-
-		      double *restrict xd, *restrict yd;
-		      Newx(xd, nx, double);
-		      Newx(yd, ny, double);
-
-		      bool x_sd0 = 1, y_sd0 = 1;
-		      double x_first = NAN, y_first = NAN;
-
-		      for (size_t i = 0; i < nx; i++) {
-		          SV**restrict tv = av_fetch(x_av, i, 0);
-		          double val = (tv && SvOK(*tv) && looks_like_number(*tv)) ? SvNV(*tv) : NAN;
-		          xd[i] = val;
-		          if (!isnan(val)) {
-		              if (isnan(x_first)) x_first = val;
-		              else if (val != x_first) x_sd0 = 0;
-		          }
-		      }
-		      for (size_t i = 0; i < ny; i++) {
-		          SV**restrict tv = av_fetch(y_av, i, 0);
-		          double val = (tv && SvOK(*tv) && looks_like_number(*tv)) ? SvNV(*tv) : NAN;
-		          yd[i] = val;
-		          if (!isnan(val)) {
-		              if (isnan(y_first)) y_first = val;
-		              else if (val != y_first) y_sd0 = 0;
-		          }
-		      }
-
-		      if (x_sd0 || y_sd0) {
-		          Safefree(xd); Safefree(yd);
-		          if (x_sd0) croak("cor: standard deviation of x is 0");
-		          croak("cor: standard deviation of y is 0");
-		      }
-
-		      double r = compute_cor(xd, yd, nx, method);
-		      Safefree(xd); Safefree(yd);
-		      RETVAL = newSVnv(r);
-		  }
+		if (!has_y) {
+			/* cor(vector) == 1 by definition */
+			RETVAL = newSVnv(1.0);
+		} else {
+			if (nx != ny)
+				croak("cor: x and y must have the same length (%lu vs %lu)",
+				       nx, ny);
+			if (nx < 2)
+				croak("cor: need at least 2 observations");
+			double *restrict xd, *restrict yd;
+			Newx(xd, nx, double);
+			Newx(yd, ny, double);
+			bool x_sd0 = 1, y_sd0 = 1;
+			double x_first = NAN, y_first = NAN;
+			for (size_t i = 0; i < nx; i++) {
+				SV**restrict tv = av_fetch(x_av, i, 0);
+				double val = (tv && SvOK(*tv) && looks_like_number(*tv)) ? SvNV(*tv) : NAN;
+				xd[i] = val;
+				if (!isnan(val)) {
+				  if (isnan(x_first)) x_first = val;
+				  else if (val != x_first) x_sd0 = 0;
+				}
+			}
+			for (size_t i = 0; i < ny; i++) {
+				SV**restrict tv = av_fetch(y_av, i, 0);
+				double val = (tv && SvOK(*tv) && looks_like_number(*tv)) ? SvNV(*tv) : NAN;
+				yd[i] = val;
+				if (!isnan(val)) {
+				  if (isnan(y_first)) y_first = val;
+				  else if (val != y_first) y_sd0 = 0;
+				}
+			}
+			if (x_sd0 || y_sd0) {
+				Safefree(xd); Safefree(yd);
+				if (x_sd0) croak("cor: standard deviation of x is 0");
+				croak("cor: standard deviation of y is 0");
+			}
+			double r = compute_cor(xd, yd, nx, method);
+			Safefree(xd); Safefree(yd);
+			RETVAL = newSVnv(r);
+		}
 	} else {//Branch 2: x is a matrix (or y is a matrix)  →  AoA result
-		  // -- resolve x matrix dimensions
-		  if (!x_is_matrix)
-		      croak("cor: x must be a matrix (array ref of array refs) "
-		            "when y is a matrix");
+		// -- resolve x matrix dimensions
+		if (!x_is_matrix)
+			croak("cor: x must be a matrix (array ref of array refs) "
+				   "when y is a matrix");
 
-		  SV**restrict xr0 = av_fetch(x_av, 0, 0);
-		  if (!xr0 || !SvROK(*xr0) || SvTYPE(SvRV(*xr0)) != SVt_PVAV)
-		      croak("cor: each row of x must be an ARRAY reference");
+		SV**restrict xr0 = av_fetch(x_av, 0, 0);
+		if (!xr0 || !SvROK(*xr0) || SvTYPE(SvRV(*xr0)) != SVt_PVAV)
+			croak("cor: each row of x must be an ARRAY reference");
 
-		  size_t ncols_x = av_len((AV*)SvRV(*xr0)) + 1;
-		  if (ncols_x == 0) croak("cor: x matrix has zero columns");
+		size_t ncols_x = av_len((AV*)SvRV(*xr0)) + 1;
+		if (ncols_x == 0) croak("cor: x matrix has zero columns");
 
-		  size_t nrows   = nx;    /* observations */
+		size_t nrows   = nx;    /* observations */
 
-		  // PRE-VALIDATION PASS: Ensure all rows are arrays to prevent memory leaks on croak
-		  for (size_t i = 0; i < nrows; i++) {
-		      SV**restrict rv = av_fetch(x_av, i, 0);
-		      if (!rv || !SvROK(*rv) || SvTYPE(SvRV(*rv)) != SVt_PVAV)
-		          croak("cor: x row %lu is not an array ref", i);
-		  }
-		  
-		  if (has_y && y_is_matrix) {
-		      if (ny != nrows) croak("cor: x and y must have the same number of rows (%lu vs %lu)", nrows, ny);
-		      for (size_t i = 0; i < nrows; i++) {
-		          SV**restrict rv = av_fetch(y_av, i, 0);
-		          if (!rv || !SvROK(*rv) || SvTYPE(SvRV(*rv)) != SVt_PVAV)
-		              croak("cor: y row %lu is not an array ref", i);
-		      }
-		  }
+		// PRE-VALIDATION PASS: Ensure all rows are arrays to prevent memory leaks on croak
+		for (size_t i = 0; i < nrows; i++) {
+			SV**restrict rv = av_fetch(x_av, i, 0);
+			if (!rv || !SvROK(*rv) || SvTYPE(SvRV(*rv)) != SVt_PVAV)
+				 croak("cor: x row %lu is not an array ref", i);
+		}
 
-		  // -- extract x columns
-		  double **restrict col_x;
-		  Newx(col_x, ncols_x, double*);
+		if (has_y && y_is_matrix) {
+			if (ny != nrows) croak("cor: x and y must have the same number of rows (%lu vs %lu)", nrows, ny);
+			for (size_t i = 0; i < nrows; i++) {
+				 SV**restrict rv = av_fetch(y_av, i, 0);
+				 if (!rv || !SvROK(*rv) || SvTYPE(SvRV(*rv)) != SVt_PVAV)
+				     croak("cor: y row %lu is not an array ref", i);
+			}
+		}
 
-		  for (size_t j = 0; j < ncols_x; j++) {
-		      Newx(col_x[j], nrows, double);
-		      bool sd0 = 1;
-		      double first = NAN;
-		      for (size_t i = 0; i < nrows; i++) {
-		          SV**restrict rv = av_fetch(x_av, i, 0);
-		          AV*restrict  row = (AV*)SvRV(*rv);
-		          SV**restrict cv  = av_fetch(row, j, 0);
-		          double val = (cv && SvOK(*cv) && looks_like_number(*cv)) ? SvNV(*cv) : NAN;
-		          col_x[j][i] = val;
-		          if (!isnan(val)) {
-		              if (isnan(first)) first = val;
-		              else if (val != first) sd0 = 0;
-		          }
-		      }
-		      if (sd0) {
-		          for (size_t k = 0; k <= j; k++) Safefree(col_x[k]);
-		          Safefree(col_x);
-		          croak("cor: standard deviation is 0 in x column %lu", j);
-		      }
-		  }
+		// -- extract x columns
+		double **restrict col_x;
+		Newx(col_x, ncols_x, double*);
 
-		  // -- resolve y: separate matrix or re-use x (symmetric)
-		  size_t ncols_y;
-		  double **restrict col_y   = NULL;
-		  bool symmetric = 0;
+		for (size_t j = 0; j < ncols_x; j++) {
+			Newx(col_x[j], nrows, double);
+			bool sd0 = 1;
+			double first = NAN;
+			for (size_t i = 0; i < nrows; i++) {
+				 SV**restrict rv = av_fetch(x_av, i, 0);
+				 AV*restrict  row = (AV*)SvRV(*rv);
+				 SV**restrict cv  = av_fetch(row, j, 0);
+				 double val = (cv && SvOK(*cv) && looks_like_number(*cv)) ? SvNV(*cv) : NAN;
+				 col_x[j][i] = val;
+				 if (!isnan(val)) {
+				     if (isnan(first)) first = val;
+				     else if (val != first) sd0 = 0;
+				 }
+			}
+			if (sd0) {
+				 for (size_t k = 0; k <= j; k++) Safefree(col_x[k]);
+				 Safefree(col_x);
+				 croak("cor: standard deviation is 0 in x column %lu", j);
+			}
+		}
 
-		  // 1 = cor(X) — result is symmetric
-		  if (has_y && y_is_matrix) {
-		      // cross-correlation: X (nrows × p) vs Y (nrows × q)
-		      SV**restrict yr0 = av_fetch(y_av, 0, 0);
-		      ncols_y = av_len((AV*)SvRV(*yr0)) + 1;
-		      if (ncols_y == 0) croak("cor: y matrix has zero columns");
+		// -- resolve y: separate matrix or re-use x (symmetric)
+		size_t ncols_y;
+		double **restrict col_y   = NULL;
+		bool symmetric = 0;
 
-		      Newx(col_y, ncols_y, double*);
-		      for (size_t j = 0; j < ncols_y; j++) {
-		          Newx(col_y[j], nrows, double);
-		          bool sd0 = 1;
-		          double first = NAN;
-		          for (size_t i = 0; i < nrows; i++) {
-		              SV**restrict  rv = av_fetch(y_av, i, 0);
-		              AV*restrict  row = (AV*)SvRV(*rv);
-		              SV**restrict cv  = av_fetch(row, j, 0);
-		              double val = (cv && SvOK(*cv) && looks_like_number(*cv)) ? SvNV(*cv) : NAN;
-		              col_y[j][i] = val;
-		              if (!isnan(val)) {
-		                  if (isnan(first)) first = val;
-		                  else if (val != first) sd0 = 0;
-		              }
-		          }
-		          if (sd0) {
-		              for (size_t k = 0; k < ncols_x; k++) Safefree(col_x[k]);
-		              Safefree(col_x);
-		              for (size_t k = 0; k <= j; k++) Safefree(col_y[k]);
-		              Safefree(col_y);
-		              croak("cor: standard deviation is 0 in y column %lu", j);
-		          }
-		      }
-		  } else { // cor(X) — symmetric p×p result; share column arrays
-		      ncols_y  = ncols_x;
-		      col_y    = col_x;
-		      symmetric = 1;
-		  }
-		  if (nrows < 2)
-		      croak("cor: need at least 2 observations (got %lu)", nrows);
-		  // -- build cache for symmetric case: compute upper triangle, store results, mirror to lower triangle
-		  AV*restrict result_av = newAV();
-		  av_extend(result_av, ncols_x - 1);
-		  // Allocate per-row AVs up front so we can fill them in order
-		  AV **restrict rows_out;
-		  Newx(rows_out, ncols_x, AV*);
-		  for (size_t i = 0; i < ncols_x; i++) {
-		      rows_out[i] = newAV();
-		      av_extend(rows_out[i], ncols_y - 1);
-		  }
-		  if (symmetric) {
-/* Upper triangle + diagonal, then mirror. r_cache[i][j] (j >= i) holds the computed value. */
-		      double **restrict r_cache;
-		      Newx(r_cache, ncols_x, double*);
-		      for (size_t i = 0; i < ncols_x; i++)
-		          Newx(r_cache[i], ncols_x, double);
+		// 1 = cor(X) — result is symmetric
+		if (has_y && y_is_matrix) {
+			// cross-correlation: X (nrows × p) vs Y (nrows × q)
+			SV**restrict yr0 = av_fetch(y_av, 0, 0);
+			ncols_y = av_len((AV*)SvRV(*yr0)) + 1;
+			if (ncols_y == 0) croak("cor: y matrix has zero columns");
 
-		      for (size_t i = 0; i < ncols_x; i++) {
-		          r_cache[i][i] = 1.0; // diagonal
-		          for (size_t j = i + 1; j < ncols_x; j++) {
-		              double r = compute_cor(col_x[i], col_x[j], nrows, method);
-		              r_cache[i][j] = r;
-		              r_cache[j][i] = r; // symmetry
-		          }
-		      }
-		      // fill output AoA from cache
-		      for (size_t i = 0; i < ncols_x; i++)
-		          for (size_t j = 0; j < ncols_x; j++)
-		              av_store(rows_out[i], j, newSVnv(r_cache[i][j]));
+			Newx(col_y, ncols_y, double*);
+			for (size_t j = 0; j < ncols_y; j++) {
+				 Newx(col_y[j], nrows, double);
+				 bool sd0 = 1;
+				 double first = NAN;
+				 for (size_t i = 0; i < nrows; i++) {
+				     SV**restrict  rv = av_fetch(y_av, i, 0);
+				     AV*restrict  row = (AV*)SvRV(*rv);
+				     SV**restrict cv  = av_fetch(row, j, 0);
+				     double val = (cv && SvOK(*cv) && looks_like_number(*cv)) ? SvNV(*cv) : NAN;
+				     col_y[j][i] = val;
+				     if (!isnan(val)) {
+				         if (isnan(first)) first = val;
+				         else if (val != first) sd0 = 0;
+				     }
+				 }
+				 if (sd0) {
+				     for (size_t k = 0; k < ncols_x; k++) Safefree(col_x[k]);
+				     Safefree(col_x);
+				     for (size_t k = 0; k <= j; k++) Safefree(col_y[k]);
+				     Safefree(col_y);
+				     croak("cor: standard deviation is 0 in y column %lu", j);
+				 }
+			}
+		} else { // cor(X) — symmetric p×p result; share column arrays
+			ncols_y  = ncols_x;
+			col_y    = col_x;
+			symmetric = 1;
+		}
+		if (nrows < 2)
+			croak("cor: need at least 2 observations (got %lu)", nrows);
+		// -- build cache for symmetric case: compute upper triangle, store results, mirror to lower triangle
+		AV*restrict result_av = newAV();
+		av_extend(result_av, ncols_x - 1);
+		// Allocate per-row AVs up front so we can fill them in order
+		AV **restrict rows_out;
+		Newx(rows_out, ncols_x, AV*);
+		for (size_t i = 0; i < ncols_x; i++) {
+			rows_out[i] = newAV();
+			av_extend(rows_out[i], ncols_y - 1);
+		}
+		if (symmetric) {
+		/* Upper triangle + diagonal, then mirror. r_cache[i][j] (j >= i) holds the computed value. */
+			double **restrict r_cache;
+			Newx(r_cache, ncols_x, double*);
+			for (size_t i = 0; i < ncols_x; i++)
+				 Newx(r_cache[i], ncols_x, double);
 
-		      for (size_t i = 0; i < ncols_x; i++) Safefree(r_cache[i]);
-		      Safefree(r_cache); r_cache = NULL;
-		  } else {
-		      // cross-correlation: every (i,j) pair is independent
-		      for (size_t i = 0; i < ncols_x; i++)
-		          for (size_t j = 0; j < ncols_y; j++)
-		              av_store(rows_out[i], j, newSVnv(compute_cor(col_x[i], col_y[j], nrows, method)));
-		  }
-		  // push row AVs into result
-		  for (size_t i = 0; i < ncols_x; i++)
-		      av_store(result_av, i, newRV_noinc((SV*)rows_out[i]));
-		  Safefree(rows_out); rows_out = NULL;
-		  // -- free column arrays -------------------------------------
-		  for (size_t j = 0; j < ncols_x; j++) Safefree(col_x[j]);
-		  Safefree(col_x); col_x = NULL;
-		  if (!symmetric) {
-		      for (size_t j = 0; j < ncols_y; j++) Safefree(col_y[j]);
-		      Safefree(col_y);
-		  }
-		  RETVAL = newRV_noinc((SV*)result_av);
+			for (size_t i = 0; i < ncols_x; i++) {
+				 r_cache[i][i] = 1.0; // diagonal
+				 for (size_t j = i + 1; j < ncols_x; j++) {
+				     double r = compute_cor(col_x[i], col_x[j], nrows, method);
+				     r_cache[i][j] = r;
+				     r_cache[j][i] = r; // symmetry
+				 }
+			}
+			// fill output AoA from cache
+			for (size_t i = 0; i < ncols_x; i++)
+				 for (size_t j = 0; j < ncols_x; j++)
+				     av_store(rows_out[i], j, newSVnv(r_cache[i][j]));
+
+			for (size_t i = 0; i < ncols_x; i++) Safefree(r_cache[i]);
+			Safefree(r_cache); r_cache = NULL;
+		} else {
+			// cross-correlation: every (i,j) pair is independent
+			for (size_t i = 0; i < ncols_x; i++)
+				for (size_t j = 0; j < ncols_y; j++)
+					av_store(rows_out[i], j, newSVnv(compute_cor(col_x[i], col_y[j], nrows, method)));
+		}
+		// push row AVs into result
+		for (size_t i = 0; i < ncols_x; i++)
+			av_store(result_av, i, newRV_noinc((SV*)rows_out[i]));
+		Safefree(rows_out); rows_out = NULL;
+		// -- free column arrays -------------------------------------
+		for (size_t j = 0; j < ncols_x; j++) Safefree(col_x[j]);
+		Safefree(col_x); col_x = NULL;
+		if (!symmetric) {
+			for (size_t j = 0; j < ncols_y; j++) Safefree(col_y[j]);
+			Safefree(col_y);
+		}
+		RETVAL = newRV_noinc((SV*)result_av);
 	}
 	OUTPUT:
 		RETVAL
@@ -5326,52 +5320,52 @@ void scale(...)
 		if (items > 0) {
 			SV*restrict last_arg = ST(items - 1);
 			if (SvROK(last_arg) && SvTYPE(SvRV(last_arg)) == SVt_PVHV) {
-				 data_items = items - 1; // Exclude hash from data processing
-				 HV*restrict opt_hv = (HV*)SvRV(last_arg);
-				 // --- Parse 'center'
-				 SV**restrict center_sv = hv_fetch(opt_hv, "center", 6, 0);
-				 if (center_sv) {
-				     SV*restrict val_sv = *center_sv;
-				     if (!SvOK(val_sv)) {
-				         do_center_mean = FALSE; center_val = 0.0;
-				     } else {
-				         char *restrict str = SvPV_nolen(val_sv);
-				         /* Trap booleans and empty strings before numeric checks */
-				         if (strcasecmp(str, "mean") == 0 || strcasecmp(str, "true") == 0 || strcmp(str, "1") == 0) {
-				             do_center_mean = TRUE;
-				         } else if (strcasecmp(str, "none") == 0 || strcasecmp(str, "false") == 0 || strcmp(str, "0") == 0 || strcmp(str, "") == 0) {
-				             do_center_mean = FALSE; center_val = 0.0;
-				         } else if (looks_like_number(val_sv)) {
-				             do_center_mean = FALSE; center_val = SvNV(val_sv);
-				         } else if (SvTRUE(val_sv)) {
-				             do_center_mean = TRUE;
-				         } else {
-				             do_center_mean = FALSE; center_val = 0.0;
-				         }
-				     }
-				 }
-				 // --- Parse 'scale' ---
-				 SV**restrict scale_sv = hv_fetch(opt_hv, "scale", 5, 0);
-				 if (scale_sv) {
-				     SV*restrict val_sv = *scale_sv;
-				     if (!SvOK(val_sv)) {
-				         do_scale_sd = FALSE; scale_val = 1.0;
-				     } else {
-				         char *restrict str = SvPV_nolen(val_sv);
-				         if (strcasecmp(str, "sd") == 0 || strcasecmp(str, "true") == 0 || strcmp(str, "1") == 0) {
-				             do_scale_sd = TRUE;
-				         } else if (strcasecmp(str, "none") == 0 || strcasecmp(str, "false") == 0 || strcmp(str, "0") == 0 || strcmp(str, "") == 0) {
-				             do_scale_sd = FALSE; scale_val = 1.0;
-				         } else if (looks_like_number(val_sv)) {
-				             do_scale_sd = FALSE; scale_val = SvNV(val_sv);
-				             if (scale_val == 0.0) scale_val = 1.0; /* Prevent Division By Zero */
-				         } else if (SvTRUE(val_sv)) {
-				             do_scale_sd = TRUE;
-				         } else {
-				             do_scale_sd = FALSE; scale_val = 1.0;
-				         }
-				     }
-				 }
+				data_items = items - 1; // Exclude hash from data processing
+				HV*restrict opt_hv = (HV*)SvRV(last_arg);
+				// --- Parse 'center'
+				SV**restrict center_sv = hv_fetch(opt_hv, "center", 6, 0);
+				if (center_sv) {
+				  SV*restrict val_sv = *center_sv;
+				  if (!SvOK(val_sv)) {
+						do_center_mean = FALSE; center_val = 0.0;
+				  } else {
+						char *restrict str = SvPV_nolen(val_sv);
+						/* Trap booleans and empty strings before numeric checks */
+						if (strcasecmp(str, "mean") == 0 || strcasecmp(str, "true") == 0 || strcmp(str, "1") == 0) {
+							 do_center_mean = TRUE;
+						} else if (strcasecmp(str, "none") == 0 || strcasecmp(str, "false") == 0 || strcmp(str, "0") == 0 || strcmp(str, "") == 0) {
+							 do_center_mean = FALSE; center_val = 0.0;
+						} else if (looks_like_number(val_sv)) {
+							 do_center_mean = FALSE; center_val = SvNV(val_sv);
+						} else if (SvTRUE(val_sv)) {
+							 do_center_mean = TRUE;
+						} else {
+							 do_center_mean = FALSE; center_val = 0.0;
+						}
+				  }
+				}
+				// --- Parse 'scale' ---
+				SV**restrict scale_sv = hv_fetch(opt_hv, "scale", 5, 0);
+				if (scale_sv) {
+				  SV*restrict val_sv = *scale_sv;
+				  if (!SvOK(val_sv)) {
+						do_scale_sd = FALSE; scale_val = 1.0;
+				  } else {
+						char *restrict str = SvPV_nolen(val_sv);
+						if (strcasecmp(str, "sd") == 0 || strcasecmp(str, "true") == 0 || strcmp(str, "1") == 0) {
+							 do_scale_sd = TRUE;
+						} else if (strcasecmp(str, "none") == 0 || strcasecmp(str, "false") == 0 || strcmp(str, "0") == 0 || strcmp(str, "") == 0) {
+							 do_scale_sd = FALSE; scale_val = 1.0;
+						} else if (looks_like_number(val_sv)) {
+							 do_scale_sd = FALSE; scale_val = SvNV(val_sv);
+							 if (scale_val == 0.0) scale_val = 1.0; /* Prevent Division By Zero */
+						} else if (SvTRUE(val_sv)) {
+							 do_scale_sd = TRUE;
+						} else {
+							 do_scale_sd = FALSE; scale_val = 1.0;
+						}
+				  }
+				}
 			}
 		}
 		// 2. Detect if the input is a Matrix (Array of Arrays)
@@ -5389,12 +5383,9 @@ void scale(...)
 			}
 		}
 		if (is_matrix) {
-			//
 			// MATRIX MODE: Scale columns independently (Just like R)
-			//
 			AV*restrict mat_av = (AV*)SvRV(ST(0));
 			size_t nrow = av_len(mat_av) + 1, ncol = 0;
-			
 			SV**restrict first_row = av_fetch(mat_av, 0, 0);
 			ncol = av_len((AV*)SvRV(*first_row)) + 1;
 
@@ -5456,9 +5447,7 @@ void scale(...)
 			EXTEND(SP, 1);
 			PUSHs(sv_2mortal(newRV_noinc((SV*)result_av)));
 		} else {
-			// ======================================
 			// FLAT LIST MODE: Original functionality
-			// ======================================
 			size_t total_count = 0, k = 0;
 			double *restrict nums;
 			double sum = 0.0;
@@ -5651,9 +5640,7 @@ CODE:
 	if (!formula) croak("lm: formula is required");
 	if (!data_sv || !SvROK(data_sv)) croak("lm: data is required and must be a reference");
 
-	// ========================================================================
-	// PHASE 1: Data Extraction
-	// ========================================================================
+	/* PHASE 1: Data Extraction */
 	ref = SvRV(data_sv);
 	if (SvTYPE(ref) == SVt_PVHV) {
 		HV *restrict hv = (HV*)ref;
@@ -5699,9 +5686,7 @@ CODE:
 			}
 		}
 	} else croak("lm: Data must be an Array or Hash reference");
-	//
-	// PHASE 2: Formula Parsing & `.` Expansion
-	//
+	/* PHASE 2: Formula Parsing & `.` Expansion */
 	src = (char*)formula; dst = f_cpy;
 	while (*src && (dst - f_cpy < 511)) { if (!isspace(*src)) { *dst++ = *src; } src++; }
 	*dst = '\0';
@@ -5851,10 +5836,7 @@ CODE:
 	  if (!found) uniq_terms[num_uniq++] = savepv(terms[i]);
 	}
 	p = num_uniq;
-
-	// ========================================================================
-	// PHASE 3: Categorical Expansion
-	// ========================================================================
+	/* PHASE 3: Categorical Expansion*/
 	for (j = 0; j < p; j++) {
 		if (p_exp + 32 >= exp_cap) {
 			exp_cap *= 2;
