@@ -466,6 +466,12 @@ the dot operator also works:
 
 You can also pass `byrow => 1` if you want the matrix populated row-wise instead of column-wise.
 
+As of version 0.10, parameters do not need to be named, so that `matrix` works more like R:
+
+    my $d = matrix(rnorm(32000), 1000, 32);
+
+works as `data`, `nrow`, and `ncol`
+
 ## max
 
     max(1,2,3);
@@ -975,6 +981,8 @@ as of version 0.07, `write_table` determines comma and tab-separated delimiters 
 changes to compilation for CPAN, trying to get this work on Windows
 
 Addition of `value_counts`
+
+`matrix` will work without key names, just like in R
 
 ## 0.09
 
