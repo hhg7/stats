@@ -1554,15 +1554,16 @@ and then C<summary(\@arr)>, or C<summary(@arr)>
 
 =head2 t_test
 
-There are 1-sample and 2-sample t-tests, from one or two arrays:
+There are 1-sample and 2-sample t-tests:
 
- my $t_test = t_test( $array1, mu => mean( $test_data[$i][$j] ));
+ my $t_test = t_test( $test_data[$i][$j], mu => mean( $test_data[$i][$j] ));
 
 or 2-sample:
 
  $t_test = t_test(
-     $array1,    $array2,
-     paired => 1
+     $test_data[3][0],
+     $test_data[3][1],
+     paired => true
  );
 
 returns a hash reference, which looks like:
@@ -1578,8 +1579,9 @@ returns a hash reference, which looks like:
 the two groups compared can be specified, though not necessarily, as C<x> and C<y>, just like in R:
 
  $t_test = t_test(
-     'x' => $array1, 'y' => $array2,
-     paired => 1
+     'x' => test_data[3][0],
+     'y' => $test_data[3][1],
+     paired => true
  );
 
 =head3 Parameters
@@ -1813,12 +1815,6 @@ undefined variables are printed as C<NA> by default, but can be set as you wish 
 as of version 0.07, C<write_table> determines comma and tab-separated delimiters from the filename, but will override if C<sep> or C<delim> are explicitly set.
 
 =head1 changes
-
-=head2 0.11
-
-better POD formatting for tables
-
-addition of MANIFEST.skip to get better testing results on CPAN
 
 =head2 0.10
 

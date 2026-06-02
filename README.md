@@ -922,16 +922,15 @@ and then `summary(\@arr)`, or `summary(@arr)`
 
 ## t_test
 
-There are 1-sample and 2-sample t-tests:
+There are 1-sample and 2-sample t-tests, from one or two arrays:
 
-    my $t_test = t_test( $test_data[$i][$j], mu => mean( $test_data[$i][$j] ));
+    my $t_test = t_test( $array1, mu => mean( $test_data[$i][$j] ));
 
 or 2-sample:
 
     $t_test = t_test(
-    	$test_data[3][0],
-    	$test_data[3][1],
-	    paired => true
+    	$array1,	$array2,
+	    paired => 1
     );
 
 returns a hash reference, which looks like:
@@ -947,9 +946,8 @@ returns a hash reference, which looks like:
 the two groups compared can be specified, though not necessarily, as `x` and `y`, just like in R:
 
     $t_test = t_test(
-    	'x' => test_data[3][0],
-    	'y' => $test_data[3][1],
-	    paired => true
+    	'x' => $array1, 'y' => $array2,
+	    paired => 1
     );
 
 ### Parameters
@@ -1049,19 +1047,15 @@ like `min`, `max`, etc., `var` can accept array references, to make code simpler
 As described by R: Performs an F test to compare the variances of two samples from normal populations
 
     use Stats::LikeR;
-    use Time::HiRes;
 
     my @x = (2.9, 3.0, 2.5, 2.6, 3.2);
     my @y = (3.8, 2.7, 4.0, 2.4);
 
-    my $t0 = Time::HiRes::time();
     my $vt = var_test(\@x, \@y);
-    my $t1 = Time::HiRes::time();
-    printf("var_tests in %g seconds.\n", $t1-$t0);
 
 also, conf_level can be set:
 
-    $vt = var_test(\@xk, \@yk, conf_level => 0.99);
+    $vt = var_test(\@x, \@y, conf_level => 0.99);
 
 as well as a ratio (from R: the hypothesized ratio of the population variances of `x` and `y`:
 
@@ -1093,6 +1087,14 @@ undefined variables are printed as `NA` by default, but can be set as you wish u
 as of version 0.07, `write_table` determines comma and tab-separated delimiters from the filename, but will override if `sep` or `delim` are explicitly set.
 
 # changes
+
+## 0.11
+
+better POD formatting for tables
+
+addition of MANIFEST.skip to get better testing results on CPAN
+
+glm: bugfix for when there is no intercept in the formula, new test cases in t/glm.t
 
 ## 0.10
 

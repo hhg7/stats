@@ -61,8 +61,8 @@
 .\}
 .\" ========================================================================
 .\"
-.IX Title "Stats::LikeR 3"
-.TH Stats::LikeR 3 "2026-06-02" "perl v5.10.1" "User Contributed Perl Documentation"
+.IX Title "Stats::bu.LikeR 3"
+.TH Stats::bu.LikeR 3 "2026-06-02" "perl v5.10.1" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -1104,18 +1104,19 @@ and then \f(CW\*(C`summary(\e@arr)\*(C'\fR, or \f(CW\*(C`summary(@arr)\*(C'\fR
 .Ve
 .SS "t_test"
 .IX Subsection "t_test"
-There are 1\-sample and 2\-sample t\-tests, from one or two arrays:
+There are 1\-sample and 2\-sample t\-tests:
 .PP
 .Vb 1
-\& my $t_test = t_test( $array1, mu => mean( $test_data[$i][$j] ));
+\& my $t_test = t_test( $test_data[$i][$j], mu => mean( $test_data[$i][$j] ));
 .Ve
 .PP
 or 2\-sample:
 .PP
-.Vb 4
+.Vb 5
 \& $t_test = t_test(
-\&     $array1,    $array2,
-\&     paired => 1
+\&     $test_data[3][0],
+\&     $test_data[3][1],
+\&     paired => true
 \& );
 .Ve
 .PP
@@ -1133,10 +1134,11 @@ returns a hash reference, which looks like:
 .PP
 the two groups compared can be specified, though not necessarily, as \f(CW\*(C`x\*(C'\fR and \f(CW\*(C`y\*(C'\fR, just like in R:
 .PP
-.Vb 4
+.Vb 5
 \& $t_test = t_test(
-\&     \*(Aqx\*(Aq => $array1, \*(Aqy\*(Aq => $array2,
-\&     paired => 1
+\&     \*(Aqx\*(Aq => test_data[3][0],
+\&     \*(Aqy\*(Aq => $test_data[3][1],
+\&     paired => true
 \& );
 .Ve
 .PP
@@ -1296,11 +1298,6 @@ undefined variables are printed as \f(CW\*(C`NA\*(C'\fR by default, but can be s
 as of version 0.07, \f(CW\*(C`write_table\*(C'\fR determines comma and tab-separated delimiters from the filename, but will override if \f(CW\*(C`sep\*(C'\fR or \f(CW\*(C`delim\*(C'\fR are explicitly set.
 .SH "changes"
 .IX Header "changes"
-.SS "0.11"
-.IX Subsection "0.11"
-better \s-1POD\s0 formatting for tables
-.PP
-addition of \s-1MANIFEST\s0.skip to get better testing results on \s-1CPAN\s0
 .SS "0.10"
 .IX Subsection "0.10"
 changes to compilation for \s-1CPAN\s0, trying to get this work on Windows

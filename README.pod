@@ -615,17 +615,80 @@ Returns array of false-discovery-rate-corrected p-values, where methods availabl
 
 It also allows configuring the test type (C<< type =E<gt> 'one.sample' >>, C<'two.sample'>, C<'paired'>) and alternative hypothesis (C<< alternative =E<gt> 'one.sided' >>). You can also pass C<< strict =E<gt> 1 >> to strictly evaluate both tails of the distribution.
 
-| Parameter | Type | Default | Description |
-| :--- | :--- | :--- | :--- |
-| C<n> | Float | C<undef> | Number of observations (per group for two-sample, pairs for paired). |
-| C<delta> | Float | C<undef> | True difference in means. |
-| C<sd> | Float | 1.0 | Standard deviation. |
-| C<sig_level> | Float | 0.05 | Significance level (Type I error probability). Also accepts C<sig.level>. |
-| C<power> | Float | C<undef> | Power of test (1 minus Type II error probability). |
-| C<type> | String | C<"two.sample"> | Type of t-test: C<"two.sample">, C<"one.sample">, or C<"paired">. |
-| C<alternative> | String | C<"two.sided"> | One- or two-sided test: C<"two.sided">, C<"one.sided">, C<"greater">, or C<"less">. |
-| C<strict> | Boolean | C<FALSE> | Use strict interpretation of two-sided power calculations. |
-| C<tol> | Float | ~C<1.22e-4> | Numerical tolerance used for the internal root-finding algorithm. |
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>Parameter</th>
+  <th>Type</th>
+  <th>Default</th>
+  <th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>n</code></td>
+  <td>Float</td>
+  <td><code>undef</code></td>
+  <td>Number of observations (per group for two-sample, pairs for paired).</td>
+</tr>
+<tr>
+  <td><code>delta</code></td>
+  <td>Float</td>
+  <td><code>undef</code></td>
+  <td>True difference in means.</td>
+</tr>
+<tr>
+  <td><code>sd</code></td>
+  <td>Float</td>
+  <td>1.0</td>
+  <td>Standard deviation.</td>
+</tr>
+<tr>
+  <td><code>sig_level</code></td>
+  <td>Float</td>
+  <td>0.05</td>
+  <td>Significance level (Type I error probability). Also accepts <code>sig.level</code>.</td>
+</tr>
+<tr>
+  <td><code>power</code></td>
+  <td>Float</td>
+  <td><code>undef</code></td>
+  <td>Power of test (1 minus Type II error probability).</td>
+</tr>
+<tr>
+  <td><code>type</code></td>
+  <td>String</td>
+  <td><code>"two.sample"</code></td>
+  <td>Type of t-test: <code>"two.sample"</code>, <code>"one.sample"</code>, or <code>"paired"</code>.</td>
+</tr>
+<tr>
+  <td><code>alternative</code></td>
+  <td>String</td>
+  <td><code>"two.sided"</code></td>
+  <td>One- or two-sided test: <code>"two.sided"</code>, <code>"one.sided"</code>, <code>"greater"</code>, or <code>"less"</code>.</td>
+</tr>
+<tr>
+  <td><code>strict</code></td>
+  <td>Boolean</td>
+  <td><code>FALSE</code></td>
+  <td>Use strict interpretation of two-sided power calculations.</td>
+</tr>
+<tr>
+  <td><code>tol</code></td>
+  <td>Float</td>
+  <td>~<code>1.22e-4</code></td>
+  <td>Numerical tolerance used for the internal root-finding algorithm.</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
 
 =head2 prcomp
 
@@ -633,13 +696,56 @@ Principal Component Analysis
 
 =head3 Options
 
-| Option | Type | Default | Description |
-| :--- | :--- | :--- | :--- |
-| C<center> | Boolean | C<1> (True) | If true, the variables are shifted to be zero-centered before the analysis takes place. |
-| C<scale> | Boolean | C<0> (False) | If true, the variables are scaled to have unit variance before the analysis takes place. I<< Note: If a column has zero variance, the function will C<croak> to prevent division by zero. >> |
-| C<retx> | Boolean | C<1> (True) | If true, the rotated data (the original data multiplied by the rotation matrix) is returned under the key C<x>. |
-| C<tol> | Number | C<undef> | A value indicating the magnitude below which components should be omitted. Components are omitted if their standard deviation is less than or equal to C<tol> times the standard deviation of the first component. |
-| C<rank> | Integer | C<undef> | Optionally specify a strict limit on the number of principal components to return. The function will return C<min(rank, rows, columns)> components. |
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>Option</th>
+  <th>Type</th>
+  <th>Default</th>
+  <th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>center</code></td>
+  <td>Boolean</td>
+  <td><code>1</code> (True)</td>
+  <td>If true, the variables are shifted to be zero-centered before the analysis takes place.</td>
+</tr>
+<tr>
+  <td><code>scale</code></td>
+  <td>Boolean</td>
+  <td><code>0</code> (False)</td>
+  <td>If true, the variables are scaled to have unit variance before the analysis takes place. <i>Note: If a column has zero variance, the function will <code>croak</code> to prevent division by zero.</i></td>
+</tr>
+<tr>
+  <td><code>retx</code></td>
+  <td>Boolean</td>
+  <td><code>1</code> (True)</td>
+  <td>If true, the rotated data (the original data multiplied by the rotation matrix) is returned under the key <code>x</code>.</td>
+</tr>
+<tr>
+  <td><code>tol</code></td>
+  <td>Number</td>
+  <td><code>undef</code></td>
+  <td>A value indicating the magnitude below which components should be omitted. Components are omitted if their standard deviation is less than or equal to <code>tol</code> times the standard deviation of the first component.</td>
+</tr>
+<tr>
+  <td><code>rank</code></td>
+  <td>Integer</td>
+  <td><code>undef</code></td>
+  <td>Optionally specify a strict limit on the number of principal components to return. The function will return <code>min(rank, rows, columns)</code> components.</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
 
 =head3 Results
 
@@ -647,14 +753,55 @@ Principal Component Analysis
 
 The C<prcomp> function returns a HashRef containing the following keys representing the results of the Principal Component Analysis:
 
-| Key | Type | Description |
-| :--- | :--- | :--- |
-| C<sdev> | ArrayRef[Number] | The standard deviations of the principal components. Mathematically, these are the square roots of the eigenvalues of the covariance matrix. |
-| C<rotation> | ArrayRef[ArrayRef] | A 2D array representing the matrix of variable loadings (the eigenvectors). Each inner array represents a row, and the columns correspond to the principal components. |
-| C<x> | ArrayRef[ArrayRef] | A 2D array containing the rotated data (often referred to as PCA scores). This is the original data projected onto the principal components. I<< Note: Only present if the C<retx> option is true. >> |
-| C<center> | ArrayRef[Number] or C<0> | The centering values used (typically the column means). Returns false (C<0>) if centering was disabled. |
-| C<scale> | ArrayRef[Number] or C<0> | The scaling values used (typically the column standard deviations). Returns false (C<0>) if scaling was disabled. |
-| C<varnames> | ArrayRef[String] | The sorted names of the original variables. I<Note: Only present if the input data was a Hash of Arrays (HoA) or a Hash of Hashes (HoH).> |
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>Key</th>
+  <th>Type</th>
+  <th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>sdev</code></td>
+  <td>ArrayRef[Number]</td>
+  <td>The standard deviations of the principal components. Mathematically, these are the square roots of the eigenvalues of the covariance matrix.</td>
+</tr>
+<tr>
+  <td><code>rotation</code></td>
+  <td>ArrayRef[ArrayRef]</td>
+  <td>A 2D array representing the matrix of variable loadings (the eigenvectors). Each inner array represents a row, and the columns correspond to the principal components.</td>
+</tr>
+<tr>
+  <td><code>x</code></td>
+  <td>ArrayRef[ArrayRef]</td>
+  <td>A 2D array containing the rotated data (often referred to as PCA scores). This is the original data projected onto the principal components. <i>Note: Only present if the <code>retx</code> option is true.</i></td>
+</tr>
+<tr>
+  <td><code>center</code></td>
+  <td>ArrayRef[Number] or <code>0</code></td>
+  <td>The centering values used (typically the column means). Returns false (<code>0</code>) if centering was disabled.</td>
+</tr>
+<tr>
+  <td><code>scale</code></td>
+  <td>ArrayRef[Number] or <code>0</code></td>
+  <td>The scaling values used (typically the column standard deviations). Returns false (<code>0</code>) if scaling was disabled.</td>
+</tr>
+<tr>
+  <td><code>varnames</code></td>
+  <td>ArrayRef[String]</td>
+  <td>The sorted names of the original variables. <i>Note: Only present if the input data was a Hash of Arrays (HoA) or a Hash of Hashes (HoH).</i></td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
 
 =head3 Using array of arrays
 
@@ -733,14 +880,55 @@ I've tried to make this as simple as possible, trying to follow from R:
 
 =head2 options
 
-| Option | Description | Example |
-| -------- | ------- | ------- |
-C<comment> | Comment character, by default C<#> | C<comment = %> or whatever|
-|C<output.type>| data type for output: array of hash, hash of array, or hash of hash | C<< 'output.type' =E<gt> 'aoh' >>|
-|C<filter>| Only take in rows with a certain filter | C<< filter =E<gt> {   Sex =E<gt> sub {$_ eq 'f'} } >>|
-|C<row.names> | include row names in retrieved data; off by default | |
-|C<sep> | field separator character; synonym with C<delim>| C<< sep =E<gt> "\t" >> |
-| C<delim>| field separator character; synonym with C<sep>| C<< delim =E<gt> "\t" >> |
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>Option</th>
+  <th>Description</th>
+  <th>Example</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>comment</code></td>
+  <td>Comment character, by default <code>#</code></td>
+  <td><code>comment = %</code> or whatever</td>
+</tr>
+<tr>
+  <td><code>output.type</code></td>
+  <td>data type for output: array of hash, hash of array, or hash of hash</td>
+  <td><code>'output.type' => 'aoh'</code></td>
+</tr>
+<tr>
+  <td><code>filter</code></td>
+  <td>Only take in rows with a certain filter</td>
+  <td><code>filter => {	Sex => sub {$_ eq 'f'} }</code></td>
+</tr>
+<tr>
+  <td><code>row.names</code></td>
+  <td>include row names in retrieved data; off by default</td>
+  <td></td>
+</tr>
+<tr>
+  <td><code>sep</code></td>
+  <td>field separator character; synonym with <code>delim</code></td>
+  <td><code>sep => "\t"</code></td>
+</tr>
+<tr>
+  <td><code>delim</code></td>
+  <td>field separator character; synonym with <code>sep</code></td>
+  <td><code>delim => "\t"</code></td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
 
 output types can be AOH (aoa), HOA (hoa), HOH (hoh)
 
@@ -923,16 +1111,15 @@ and then C<summary(\@arr)>, or C<summary(@arr)>
 
 =head2 t_test
 
-There are 1-sample and 2-sample t-tests:
+There are 1-sample and 2-sample t-tests, from one or two arrays:
 
- my $t_test = t_test( $test_data[$i][$j], mu => mean( $test_data[$i][$j] ));
+ my $t_test = t_test( $array1, mu => mean( $test_data[$i][$j] ));
 
 or 2-sample:
 
  $t_test = t_test(
-     $test_data[3][0],
-     $test_data[3][1],
-     paired => true
+     $array1,    $array2,
+     paired => 1
  );
 
 returns a hash reference, which looks like:
@@ -948,34 +1135,123 @@ returns a hash reference, which looks like:
 the two groups compared can be specified, though not necessarily, as C<x> and C<y>, just like in R:
 
  $t_test = t_test(
-     'x' => test_data[3][0],
-     'y' => $test_data[3][1],
-     paired => true
+     'x' => $array1, 'y' => $array2,
+     paired => 1
  );
 
 =head3 Parameters
 
-| Parameter | Type | Default | Description |
-| :--- | :--- | :--- | :--- |
-| C<x> | Array Reference | Required | The first vector of data. Must contain at least 2 elements. |
-| C<y> | Array Reference | C<undef> | The second vector of data. Required for two-sample or paired tests. |
-| C<mu> | Float | 0.0 | The true value of the mean (or difference in means) for the null hypothesis. |
-| C<paired> | Boolean | C<FALSE> | If true, performs a paired t-test. C<x> and C<y> must be the same length. |
-| C<var_equal> | Boolean | C<FALSE> | If true, assumes equal variances (standard two-sample). If false, performs Welch's t-test with unequal variances. |
-| C<conf_level> | Float | 0.95 | Confidence level for the returned confidence interval. Must be between 0 and 1. |
-| C<alternative> | String | C<"two.sided"> | Direction of the alternative hypothesis: C<"two.sided">, C<"less">, or C<"greater">. |
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>Parameter</th>
+  <th>Type</th>
+  <th>Default</th>
+  <th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>x</code></td>
+  <td>Array Reference</td>
+  <td>Required</td>
+  <td>The first vector of data. Must contain at least 2 elements.</td>
+</tr>
+<tr>
+  <td><code>y</code></td>
+  <td>Array Reference</td>
+  <td><code>undef</code></td>
+  <td>The second vector of data. Required for two-sample or paired tests.</td>
+</tr>
+<tr>
+  <td><code>mu</code></td>
+  <td>Float</td>
+  <td>0.0</td>
+  <td>The true value of the mean (or difference in means) for the null hypothesis.</td>
+</tr>
+<tr>
+  <td><code>paired</code></td>
+  <td>Boolean</td>
+  <td><code>FALSE</code></td>
+  <td>If true, performs a paired t-test. <code>x</code> and <code>y</code> must be the same length.</td>
+</tr>
+<tr>
+  <td><code>var_equal</code></td>
+  <td>Boolean</td>
+  <td><code>FALSE</code></td>
+  <td>If true, assumes equal variances (standard two-sample). If false, performs Welch's t-test with unequal variances.</td>
+</tr>
+<tr>
+  <td><code>conf_level</code></td>
+  <td>Float</td>
+  <td>0.95</td>
+  <td>Confidence level for the returned confidence interval. Must be between 0 and 1.</td>
+</tr>
+<tr>
+  <td><code>alternative</code></td>
+  <td>String</td>
+  <td><code>"two.sided"</code></td>
+  <td>Direction of the alternative hypothesis: <code>"two.sided"</code>, <code>"less"</code>, or <code>"greater"</code>.</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
 
 =head3 Return Hash
 
-| Key | Description |
-| :--- | :--- |
-| C<statistic> | The computed t-statistic. |
-| C<df> | Degrees of freedom for the test. |
-| C<p_value> | The calculated p-value based on the test directionality. |
-| C<conf_int> | An Array Reference containing two elements: C<[lower_bound, upper_bound]>. |
-| C<estimate> | The estimated mean of C<x> (one-sample) OR the mean of the differences (paired). |
-| C<estimate_x> | The estimated mean of the C<x> vector (only returned in two-sample tests). |
-| C<estimate_y> | The estimated mean of the C<y> vector (only returned in two-sample tests). |
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>Key</th>
+  <th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>statistic</code></td>
+  <td>The computed t-statistic.</td>
+</tr>
+<tr>
+  <td><code>df</code></td>
+  <td>Degrees of freedom for the test.</td>
+</tr>
+<tr>
+  <td><code>p_value</code></td>
+  <td>The calculated p-value based on the test directionality.</td>
+</tr>
+<tr>
+  <td><code>conf_int</code></td>
+  <td>An Array Reference containing two elements: <code>[lower_bound, upper_bound]</code>.</td>
+</tr>
+<tr>
+  <td><code>estimate</code></td>
+  <td>The estimated mean of <code>x</code> (one-sample) OR the mean of the differences (paired).</td>
+</tr>
+<tr>
+  <td><code>estimate_x</code></td>
+  <td>The estimated mean of the <code>x</code> vector (only returned in two-sample tests).</td>
+</tr>
+<tr>
+  <td><code>estimate_y</code></td>
+  <td>The estimated mean of the <code>y</code> vector (only returned in two-sample tests).</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
 
 =head2 value_counts
 
@@ -1095,11 +1371,17 @@ as of version 0.07, C<write_table> determines comma and tab-separated delimiters
 
 =head1 changes
 
+=head2 0.11
+
+better POD formatting for tables
+
+addition of MANIFEST.skip to get better testing results on CPAN
+
 =head2 0.10
 
 changes to compilation for CPAN, trying to get this work on Windows
 
-Addition of C<value_counts>
+Addition of C<prcomp> and C<value_counts>
 
 C<matrix> will work without key names, just like in R.  Testing for C<matrix> has improved.
 
