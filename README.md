@@ -141,52 +141,138 @@ in R
 
 ## chisq_test
 
-    my @test_data = ([762, 327, 468], [484, 239, 477]);
-    my $test_data = chisq_test(\@test_data);
+The `chisq_test` function performs chi-squared contingency table tests and goodness-of-fit tests. It natively accepts both arrays and hashes (1D and 2D) and mathematically mirrors R's `chisq.test()`, returning a structured hash reference of the results.
 
-which outputs:
+For 2x2 matrices, Yates' Continuity Correction is applied automatically.
+
+### Accepted Inputs
+
+| Input Type | Data Structure | Applied Test |
+| --- | --- | --- |
+| **1D Array** | `[ $v1, $v2, ... ]` | Chi-squared test for given probabilities |
+| **2D Array** | `[ [ $v1, $v2 ], [ $v3, $v4 ] ]` | Pearson's Chi-squared test (Yates' correction if 2x2) |
+| **1D Hash** | `{ key1 => $v1, key2 => $v2 }` | Chi-squared test for given probabilities |
+| **2D Hash** | `{ row1 => { c1 => $v1, c2 => $v2 } }` | Pearson's Chi-squared test (Yates' correction if 2x2) |
+
+### Output Object Structure
+
+The function returns a single Hash Reference containing the following key-value pairs. The internal structure of `expected` and `observed` will always identically match the structure of your input.
+
+| Key | Data Type | Description |
+| --- | --- | --- |
+| **data.name** | String | Identifies the input type (e.g., `"Perl ArrayRef"` or `"Perl HashRef"`). |
+| **expected** | Array/Hash Ref | The expected frequencies, matching the geometry of the input. |
+| **method** | String | The specific statistical test applied. |
+| **observed** | Array/Hash Ref | The original data passed to the function. |
+| **p.value** | Float | The calculated p-value of the test. |
+| **parameter** | Hash Ref | Contains the degrees of freedom (`df`). |
+| **statistic** | Hash Ref | Contains the test statistic (`X-squared`). |
+
+### 1. Two-Dimensional Array
+
+Passing an Array of Arrays (AoA) triggers a standard Pearson's Chi-squared test. If the input is exactly a 2x2 matrix, Yates' continuity correction is applied automatically.
+
+    perl
+    my $test_data = [
+        [762, 327, 468], 
+        [484, 239, 477]
+    ];
+    my $res = chisq_test($test_data);
+
+**Output:**
 
     {
-    data.name   "Perl ArrayRef",
-    expected    [
-        [0] [
-                [0] 703.671381936888,
-                [1] 319.645266594124,
-                [2] 533.683351468988
-            ],
-        [1] [
-                [0] 542.328618063112,
-                [1] 246.354733405876,
-                [2] 411.316648531012
-            ]
-    ],
-    method      "Pearson's Chi-squared test",
-    observed    [
-        [0] [
-                [0] 762,
-                [1] 327,
-                [2] 468
-            ],
-        [1] [
-                [0] 484,
-                [1] 239,
-                [2] 477
-            ]
-    ],
-    p.value     2.95358918321176e-07,
-    parameter   {
-        df   2
+        'data.name' => 'Perl ArrayRef',
+        'expected'  => [
+            [ 703.671381936888, 319.645266594124, 533.683351468988 ],
+            [ 542.328618063112, 246.354733405876, 411.316648531012 ]
+        ],
+        'method'    => "Pearson's Chi-squared test",
+        'observed'  => [
+            [ 762, 327, 468 ],
+            [ 484, 239, 477 ]
+        ],
+        'p.value'   => 2.95358918321176e-07,
+        'parameter' => { 'df' => 2 },
+        'statistic' => { 'X-squared' => 30.0701490957547 }
+    }
+
+
+### 2. One-Dimensional Array (Goodness of Fit)
+
+Passing a flat Array Reference triggers a Goodness of Fit test, assuming equal expected probabilities across all items.
+
+    my $data = [10, 20, 30];
+    my $res = chisq_test($data);
+
+**Output:**
+
+    {
+        'data.name' => 'Perl ArrayRef',
+        'expected'  => [ 20, 20, 20 ],
+        'method'    => 'Chi-squared test for given probabilities',
+        'observed'  => [ 10, 20, 30 ],
+        'p.value'   => 0.00673794699908547,
+        'parameter' => { 'df' => 2 },
+        'statistic' => { 'X-squared' => 10 }
+    }
+
+
+
+### 3. Two-Dimensional Hash (Pearson's Chi-squared)
+
+Passing a Hash of Hashes (HoH) applies the exact same logic as a 2D Array, but preserves your nested string keys in the output. This is particularly useful when mapping data extracted directly from JSON, databases, or categorical mappings.
+
+    my $data = {
+        GroupA => { Success => 10, Failure => 15 },
+        GroupB => { Success => 20, Failure => 5  }
+    };
+    
+    my $res = chisq_test($data);
+
+**Output:**
+
+    {
+        'data.name' => 'Perl HashRef',
+        'expected'  => {
+        'GroupA' => { 'Failure' => 10, 'Success' => 15 },
+        'GroupB' => { 'Failure' => 10, 'Success' => 15 }
     },
-    statistic   {
-        X-squared   30.0701490957547
+    'method'    => "Pearson's Chi-squared test with Yates' continuity correction",
+        'observed'  => {
+        'GroupA' => { 'Failure' => 15, 'Success' => 10 },
+        'GroupB' => { 'Failure' => 5,  'Success' => 20 }
+        },
+        'p.value'   => 0.00937475878430379,
+        'parameter' => { 'df' => 1 },
+        'statistic' => { 'X-squared' => 6.75 }
     }
+
+
+### 4. One-Dimensional Hash (Goodness of Fit)
+
+Flat Hash References evaluate Goodness of Fit while preserving your categorical keys in the `expected` and `observed` output blocks.
+
+
+	my $data = { 
+		Apples  => 10, 
+		Oranges => 20, 
+		Bananas => 30 
+	};
+	
+	my $res = chisq_test($data);
+
+**Output:**
+
+    {
+        'data.name' => 'Perl HashRef',
+        'expected'  => { 'Apples' => 20, 'Bananas' => 20, 'Oranges' => 20 },
+        'method'    => 'Chi-squared test for given probabilities',
+        'observed'  => { 'Apples' => 10, 'Bananas' => 30, 'Oranges' => 20 },
+        'p.value'   => 0.00673794699908547,
+        'parameter' => { 'df' => 2 },
+        'statistic' => { 'X-squared' => 10 }
     }
-
-It also supports 1D arrays for Goodness of Fit tests:
-
-    my $chisq_1d = chisq_test([10, 20, 30]);
-
-For 2x2 matrices, Yates' Continuity Correction is applied automatically, exactly like in R.
 
 ## cor
 
@@ -387,7 +473,7 @@ Data can be further broken down with filter/subs like in `read_table`:
     my $testosterone = group_by($d, # group testosterone by "Gender"
         'Testosterone, total (nmol/L)',
         'Gender',
-        { 'Race/Hispanic origin w/ NH Asian' => sub { $_ eq $n } },
+        { 'Race/Hispanic origin w/ NH Asian' => sub { $_ eq $n } },# filter
         { 'Testosterone, total (nmol/L)' => sub { $_ ne 'NA' } } # filter
     );
 
@@ -417,11 +503,7 @@ I feel that this is better, and more easily read, than what you get in R:
     'obs. airway disease' => [3.8, 2.7, 4.0, 2.4],
     'asbestosis' => [2.8, 3.4, 3.7, 2.2, 2.0]
     );
-    $t0 = Time::HiRes::time();
     $kt = kruskal_test(\%x);
-    $t1 = Time::HiRes::time();
-    printf("Kruskal calculation via HoA in %g seconds.\n", $t1-$t0);
-    p $kt;
 
 ### R-like array entry
 
@@ -434,11 +516,7 @@ I feel that this is better, and more easily read, than what you get in R:
     	(map {'Subjects with obstructive airway disease'} 0..3),
     	map {'Subjects with asbestosis'} 0..4
     );
-    my $t0 = Time::HiRes::time();
     my $kt = kruskal_test(\@x, \@g);
-    my $t1 = Time::HiRes::time();
-    printf("Kruskal calculation in %g seconds.\n", $t1-$t0);
-    p $kt;
 
 ## ks_test
 
@@ -1021,6 +1099,52 @@ the two groups compared can be specified, though not necessarily, as `x` and `y`
 | `estimate_x` | The estimated mean of the `x` vector (only returned in two-sample tests). |
 | `estimate_y` | The estimated mean of the `y` vector (only returned in two-sample tests). |
 
+## transpose
+
+Transposes a two-dimensional data structure, swapping rows and columns. Accepts either an array of arrays or a hash of hashes.
+Returns a new reference of the same type; the input is never modified.
+
+### Array of array input
+
+Takes a reference to an array of array references and returns a new AoA where `output[j][i] = input[i][j]`.
+
+    my $matrix = [[1, 2, 3], [4, 5, 6]];
+    my $t = transpose($matrix);
+    # [[1, 4],
+    #  [2, 5],
+    #  [3, 6]]
+
+All rows must be the same length; a ragged input is a fatal error.
+`undef` is valid as an element value and is preserved exactly. An empty outer array or an array of empty rows both return `[]`.
+
+Dies if:
+- any inner element is not an array reference
+- rows differ in length (ragged array)
+
+### Hash of hash input
+
+Takes a reference to a hash of hash references and returns a new HoH where `output{col}{row} = input{row}{col}`.
+
+    my $table = { alice => { score => 97, grade => 'A' }, bob   => { score => 84, grade => 'B' } };
+    my $t = transpose($table);
+    # { score => { alice => 97,  bob => 84  },
+    #   grade => { alice => 'A', bob => 'B' } }
+
+Inner keys do not need to be uniform across rows. If a given column key appears in only some rows, the output hash for that column will simply contain only those rows — no padding or `undef`-filling is performed.
+
+    my $sparse = {
+    a => { x => 1, y => 2 },
+    b => { x => 3, z => 4 } };
+    
+    my $t = transpose($sparse);
+    # { x => { a => 1, b => 3 },
+    #   y => { a => 2 },
+    #   z => { b => 4 } }
+
+An empty outer hash or an outer hash whose inner hashes are all empty both return `{}`.
+
+Dies if any inner element is not a hash reference
+
 ## value_counts
 
 Count the values in a given data set, return a hash reference showing how many times each particular value is present.
@@ -1140,6 +1264,12 @@ as of version 0.07, `write_table` determines comma and tab-separated delimiters 
 `ljoin`: Addition of `restrict` keywords in many places; should improve CPU performance
 
 Better POD formatting, correction of output hash for README's `add_data`
+
+`chisq_test` can now accept hash of hashes as input
+
+new `transpose` function
+
+removed unused function from C helpers
 
 ## 0.11
 

@@ -30,7 +30,6 @@ SvROK = scalar value reference is OK
  * PERL_NO_GET_CONTEXT is therefore not a concern here.
  */
 static uint64_t sample__state  = 0;
-static bool     sample__seeded = FALSE;
 
 PERL_STATIC_INLINE uint64_t
 sample__mix64(void)
@@ -42,45 +41,25 @@ sample__mix64(void)
 }
 
 /* * Helper function to increment the count for a given SV.
- * Skips NULL or Undefined values as requested.
- */
+ * Skips NULL or Undefined values as requested. */
 static void increment_count(pTHX_ HV* counts_hv, SV* val) {
 	/* Skip null pointers or undef (non-OK) values */
 	if (!val || !SvOK(val)) return; 
-
 	STRLEN len;
 	/* SvPV forces stringification (so numbers become string keys) */
-	const char* str = SvPV(val, len);
-
+	char*restrict str = SvPV(val, len);
 	/* hv_fetch with lval=1 creates the key if it doesn't exist */
-	SV** svp = hv_fetch(counts_hv, str, len, 1);
-
+	SV**restrict svp = hv_fetch(counts_hv, str, len, 1);
 	if (svp) {
-	  if (!SvOK(*svp)) {
-		   /* Initialize count to 1 as an Unsigned Value (UV) */
-		   sv_setuv(*svp, 1);
-	  } else {
-		   /* Increment existing Unsigned Value */
-		   sv_setuv(*svp, SvUV(*svp) + 1);
-	  }
+		if (!SvOK(*svp)) {
+			sv_setuv(*svp, 1);// Initialize count to 1 as an Unsigned Value (UV)
+		} else {
+			sv_setuv(*svp, SvUV(*svp) + 1);// Increment existing Unsigned Value
+		}
 	}
 }
 
-static void sample__seed(void)
-{
-	dTHX; /* fetch the Perl context */
-	uint64_t s = 0;
-	size_t   got = 0;
-	FILE    *restrict ur  = fopen("/dev/urandom", "rb");
-	if (ur) { got = fread(&s, sizeof s, 1, ur); fclose(ur); }
-	if (got != 1 || s == 0)
-	s = (uint64_t)time(NULL) ^ ((uint64_t)getpid() << 32);
-	sample__state  = s;
-	(void)sample__mix64();   /* discard first output to warm the state */
-	sample__seeded = TRUE;
-}
-
-/* Uniform integer in [0, upper) — rejection loop, no modulo bias */
+// Uniform integer in [0, upper) — rejection loop, no modulo bias
 PERL_STATIC_INLINE size_t
 sample__rand(size_t upper) {
 	const uint64_t u = (uint64_t)upper;
@@ -89,9 +68,9 @@ sample__rand(size_t upper) {
 	do { r = sample__mix64(); } while (r < t);
 	return (size_t)(r % u);
 }
-/* ── end sample() private PRNG ─────────────────────────────────────────── */
+// end sample() private PRNG
 
-/* Ensure Perl's PRNG is seeded, matching the lazy-evaluation of Perl's rand() */
+// Ensure Perl's PRNG is seeded, matching the lazy-evaluation of Perl's rand()
 #define AUTO_SEED_PRNG() \
 	do { \
 		if (!PL_srand_called) { \
@@ -100,9 +79,7 @@ sample__rand(size_t upper) {
 		} \
 	} while (0)
 
-// ---------------------------------------
-//   Helpers for Random Number Generation
-// ---------------------------------------
+// Helpers for Random Number Generation
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
@@ -296,7 +273,7 @@ static double exact_p_value(size_t a, size_t b, size_t c, size_t d, const char* 
 	size_t min_x = (r2 > c1) ? 0 : c1 - r2;
 	size_t max_x = (r1 < c1) ? r1 : c1;
 
-	double *logdc = (double*)safemalloc((max_x - min_x + 1) * sizeof(double));
+	double *restrict logdc = (double*)safemalloc((max_x - min_x + 1) * sizeof(double));
 	double denom = log_choose(r1 + r2, c1);
 	for(size_t x = min_x; x <= max_x; ++x) {
 		logdc[x - min_x] = log_choose(r1, x) + log_choose(r2, c1 - x) - denom;
@@ -1022,12 +999,11 @@ double get_p_value(double stat, int df) {
 	return igamc((double)df / 2.0, stat / 2.0);
 }
 
-/* --- C HELPER SECTION --- */
 #ifndef M_SQRT1_2
 #define M_SQRT1_2 0.70710678118654752440
 #endif
 
-/* Robust Binomial Coefficient using long double */
+// Robust Binomial Coefficient using long double
 static long double choose_comb(int n, int k) {
 	if (k < 0 || k > n) return 0.0L;
 	if (k > n / 2) k = n - k;
@@ -1401,9 +1377,6 @@ static double qf_bisection(double p, double df1, double df2) {
  * =========================================================================
  */
 
-/* C HELPERS  (place above "--- XS SECTION ---") */
-
-/* ── OneWayResult struct */
 typedef struct {
 	double  statistic;
 	double  num_df;
@@ -1554,18 +1527,18 @@ parse_formula(const char *formula, char **lhs, char **rhs)
 	const char *restrict tilde = strchr(formula, '~');
 	if (!tilde) return 0;
 
-	/* left-hand side: trim trailing whitespace */
+	// left-hand side: trim trailing whitespace
 	const char *l_start = formula;
 	const char *l_end   = tilde - 1;
 	while (l_end >= l_start && isspace((unsigned char)*l_end)) l_end--;
-	if (l_end < l_start) return 0;             /* empty LHS */
+	if (l_end < l_start) return 0; /* empty LHS */
 
-	/* right-hand side: trim leading whitespace */
+	// right-hand side: trim leading whitespace */
 	const char *restrict r_start = tilde + 1;
 	while (*r_start && isspace((unsigned char)*r_start)) r_start++;
 	const char *restrict r_end = r_start + strlen(r_start) - 1;
 	while (r_end >= r_start && isspace((unsigned char)*r_end)) r_end--;
-	if (r_end < r_start) return 0;             /* empty RHS */
+	if (r_end < r_start) return 0; /* empty RHS */
 
 	size_t llen = (size_t)(l_end - l_start + 1);
 	size_t rlen = (size_t)(r_end - r_start + 1);
@@ -1577,7 +1550,7 @@ parse_formula(const char *formula, char **lhs, char **rhs)
 	return 1;
 }
 
-/* ── build_groups_from_formula ───────────────────────────────────────────
+/* ── build_groups_from_formula ───────────────
  *
  *  Takes parallel response[] and label[] arrays (each length n) and
  *  partitions them into groups, filling:
@@ -1596,8 +1569,7 @@ parse_formula(const char *formula, char **lhs, char **rhs)
  */
 #define OWT_MAX_GROUPS 1024   /* sane ceiling; ANOVA with >1024 groups is absurd */
 
-static int
-build_groups_from_formula(pTHX_
+static int build_groups_from_formula(pTHX_
 	AV *restrict response_av,
 	AV *restrict label_av,
 	double *restrict out_flat,
@@ -1629,9 +1601,8 @@ build_groups_from_formula(pTHX_
 		/* maps obs index → group index */
 
 	for (IV i = 0; i < n; i++) {
-	  SV **lsv = av_fetch(label_av, i, 0);
-	  const char *label = (lsv && *lsv) ? SvPV_nolen(*lsv) : "";
-
+	  SV **restrict lsv = av_fetch(label_av, i, 0);
+	  const char *restrict label = (lsv && *lsv) ? SvPV_nolen(*lsv) : "";
 	  /* linear scan for existing group (k is small, O(n·k) is fine) */
 	  IV gidx = -1;
 	  for (size_t g = 0; g < ngroups; g++) {
@@ -7731,8 +7702,7 @@ CODE:
 		}
 	}
 
-SV*
-value_counts(...)
+SV* value_counts(...)
 PREINIT:
 	HV* counts_hv;
 	SV* arg1;
@@ -8343,5 +8313,126 @@ CODE:
 
 	RETVAL = newRV_noinc((SV*)res_hv);
 }
+OUTPUT:
+    RETVAL
+
+SV *transpose(input_ref)
+	SV *input_ref
+PREINIT:
+	svtype  ref_type;
+	SV     *restrict retval_sv;
+CODE:
+	SvGETMAGIC(input_ref);
+	if (!SvROK(input_ref))
+	  croak("Stats::LikeR::transpose: Input must be a hash ref or array ref");
+	ref_type = SvTYPE(SvRV(input_ref));
+	if (ref_type == SVt_PVHV) {// ── Hash-of-Hashes
+		HV *restrict in_hv  = (HV *)SvRV(input_ref);
+		HV *restrict out_hv = newHV();
+		HE *restrict he_row, *restrict he_col, *restrict out_inner_he;
+		retval_sv = sv_2mortal(newRV_noinc((SV *)out_hv));
+		hv_iterinit(in_hv);
+		while ((he_row = hv_iternext(in_hv))) {
+			SV *restrict row_key_sv  = hv_iterkeysv(he_row);
+			SV *restrict row_val     = hv_iterval(in_hv, he_row);
+			HV *restrict in_inner_hv;
+			SvGETMAGIC(row_val);
+
+			if (!SvROK(row_val) || SvTYPE(SvRV(row_val)) != SVt_PVHV)
+				 croak("Stats::LikeR::transpose: Hash mode – inner element is not a hash ref");
+			in_inner_hv = (HV *)SvRV(row_val);
+			hv_iterinit(in_inner_hv);
+			while ((he_col = hv_iternext(in_inner_hv))) {
+				SV *restrict col_key_sv = hv_iterkeysv(he_col);
+				SV *restrict val        = hv_iterval(in_inner_hv, he_col);
+				HV *restrict out_inner_hv;
+				SV *restrict inner_ref;
+				SvGETMAGIC(val);
+				out_inner_he = hv_fetch_ent(out_hv, col_key_sv, 0, 0);
+				if (out_inner_he) {
+				  inner_ref = HeVAL(out_inner_he);
+				  if (!SvROK(inner_ref) || SvTYPE(SvRV(inner_ref)) != SVt_PVHV)
+						croak("Stats::LikeR::transpose: Internal error – output structure corrupted");
+				  out_inner_hv = (HV *)SvRV(inner_ref);
+				} else {
+				  out_inner_hv = newHV();
+				  inner_ref    = newRV_noinc((SV *)out_inner_hv);
+				  if (!hv_store_ent(out_hv, col_key_sv, inner_ref, 0)) {
+						SvREFCNT_dec(inner_ref);
+						croak("Stats::LikeR::transpose: Failed to allocate inner hash");
+				  }
+				}
+				SvREFCNT_inc(val);
+				if (!hv_store_ent(out_inner_hv, row_key_sv, val, 0)) {
+				  SvREFCNT_dec(val);
+				  croak("Stats::LikeR::transpose: Failed to store transposed value");
+				}
+			}
+		}
+	} else if (ref_type == SVt_PVAV) { // Array-of-Arrays
+		AV     *restrict in_av  = (AV *)SvRV(input_ref);
+		AV     *restrict out_av = newAV();
+		SSize_t nrows  = av_len(in_av) + 1;
+		SSize_t ncols  = 0;
+		retval_sv = sv_2mortal(newRV_noinc((SV *)out_av));
+		if (nrows > 0) {// Pass 1: validate all rows; fix ncols from row 0
+			{
+				 SV **restrict elem = av_fetch(in_av, 0, 0);
+				 if (!elem || !*elem)
+					  croak("Stats::LikeR::transpose: Array mode – row 0 is missing");
+				 SvGETMAGIC(*elem);
+				 if (!SvROK(*elem) || SvTYPE(SvRV(*elem)) != SVt_PVAV)
+					  croak("Stats::LikeR::transpose: Array mode – row 0 is not an array ref");
+				 ncols = av_len((AV *)SvRV(*elem)) + 1;
+			}
+			for (SSize_t i = 1; i < nrows; i++) {
+				 SV     **restrict elem      = av_fetch(in_av, i, 0);
+				 SSize_t  row_ncols;
+				 if (!elem || !*elem)
+					  croak("Stats::LikeR::transpose: Array mode – row %d is missing", (int)i);
+				 SvGETMAGIC(*elem);
+				 if (!SvROK(*elem) || SvTYPE(SvRV(*elem)) != SVt_PVAV)
+					  croak("Stats::LikeR::transpose: Array mode – row %d is not an array ref", (int)i);
+				 row_ncols = av_len((AV *)SvRV(*elem)) + 1;
+				 if (row_ncols != ncols)
+					  croak("Stats::LikeR::transpose: Array mode – ragged array: "
+					        "row 0 has %d cols, row %d has %d",
+					        (int)ncols, (int)i, (int)row_ncols);
+			}
+			// Pass 2: output[j][i] = input[i][j]
+			if (ncols > 0) {
+				av_extend(out_av, ncols - 1);
+				for (SSize_t j = 0; j < ncols; j++) {
+					AV *restrict out_col_av = newAV();
+					SV *restrict col_ref    = newRV_noinc((SV *)out_col_av);
+					if (!av_store(out_av, j, col_ref)) {
+						SvREFCNT_dec(col_ref);
+						croak("Stats::LikeR::transpose: Array mode – "
+								"failed to allocate output column %d", (int)j);
+					}
+					av_extend(out_col_av, nrows - 1);
+					for (SSize_t i = 0; i < nrows; i++) {
+						SV **restrict elem = av_fetch(in_av, i, 0);
+						if (elem && *elem) {
+						  SvGETMAGIC(*elem); 
+						}
+						AV *restrict in_row_av = (AV *)SvRV(*elem);
+						SV **restrict val_ptr   = av_fetch(in_row_av, j, 0);
+						SV  *restrict val       = (val_ptr && *val_ptr) ? *val_ptr : &PL_sv_undef;
+						SvGETMAGIC(val);
+						SvREFCNT_inc(val);
+						if (!av_store(out_col_av, i, val)) {
+							SvREFCNT_dec(val);
+							croak("Stats::LikeR::transpose: Array mode – "
+									 "failed to store [%d][%d]", (int)j, (int)i);
+						}
+					}
+				}
+			}
+		}
+	} else { // Unsupported
+	  croak("Stats::LikeR::transpose: Input must be a hash ref or array ref");
+	}
+	RETVAL = SvREFCNT_inc(retval_sv);
 OUTPUT:
     RETVAL

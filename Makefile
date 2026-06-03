@@ -222,6 +222,7 @@ TO_INST_PM = add_data.pl \
 	prcomp.pl \
 	quantile.pl \
 	read.table.pl \
+	rnorm.pl \
 	runif.pl \
 	sample.pl \
 	sd.pl \
@@ -1163,6 +1164,7 @@ pm_to_blib : $(FIRST_MAKEFILE) $(TO_INST_PM)
 	  'prcomp.pl' '$(INST_LIB)/Stats/prcomp.pl' \
 	  'quantile.pl' '$(INST_LIB)/Stats/quantile.pl' \
 	  'read.table.pl' '$(INST_LIB)/Stats/read.table.pl' \
+	  'rnorm.pl' '$(INST_LIB)/Stats/rnorm.pl' \
 	  'runif.pl' '$(INST_LIB)/Stats/runif.pl' \
 	  'sample.pl' '$(INST_LIB)/Stats/sample.pl' \
 	  'sd.pl' '$(INST_LIB)/Stats/sd.pl' \

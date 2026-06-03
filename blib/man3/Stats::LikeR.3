@@ -212,58 +212,138 @@ is the equivalent of:
 in R
 .SS chisq_test
 .IX Subsection "chisq_test"
-.Vb 2
-\& my @test_data = ([762, 327, 468], [484, 239, 477]);
-\& my $test_data = chisq_test(\e@test_data);
+The \f(CW\*(C`chisq_test\*(C'\fR function performs chi\-squared contingency table tests and goodness\-of\-fit tests. It natively accepts both arrays and hashes (1D and 2D) and mathematically mirrors R\*(Aqs \f(CW\*(C`chisq.test()\*(C'\fR, returning a structured hash reference of the results.
+.PP
+For 2x2 matrices, Yates\*(Aq Continuity Correction is applied automatically.
+.PP
+\fIAccepted Inputs\fR
+.IX Subsection "Accepted Inputs"
+.PP
+\fIOutput Object Structure\fR
+.IX Subsection "Output Object Structure"
+.PP
+The function returns a single Hash Reference containing the following key\-value pairs. The internal structure of \f(CW\*(C`expected\*(C'\fR and \f(CW\*(C`observed\*(C'\fR will always identically match the structure of your input.
+.PP
+\fI1. Two\-Dimensional Array\fR
+.IX Subsection "1. Two-Dimensional Array"
+.PP
+Passing an Array of Arrays (AoA) triggers a standard Pearson\*(Aqs Chi\-squared test. If the input is exactly a 2x2 matrix, Yates\*(Aq continuity correction is applied automatically.
+.PP
+.Vb 6
+\& perl
+\& my $test_data = [
+\&     [762, 327, 468], 
+\&     [484, 239, 477]
+\& ];
+\& my $res = chisq_test($test_data);
 .Ve
 .PP
-which outputs:
+\&\fBOutput:\fR
 .PP
 .Vb 10
 \& {
-\& data.name   "Perl ArrayRef",
-\& expected    [
-\&     [0] [
-\&             [0] 703.671381936888,
-\&             [1] 319.645266594124,
-\&             [2] 533.683351468988
-\&         ],
-\&     [1] [
-\&             [0] 542.328618063112,
-\&             [1] 246.354733405876,
-\&             [2] 411.316648531012
-\&         ]
-\& ],
-\& method      "Pearson\*(Aqs Chi\-squared test",
-\& observed    [
-\&     [0] [
-\&             [0] 762,
-\&             [1] 327,
-\&             [2] 468
-\&         ],
-\&     [1] [
-\&             [0] 484,
-\&             [1] 239,
-\&             [2] 477
-\&         ]
-\& ],
-\& p.value     2.95358918321176e\-07,
-\& parameter   {
-\&     df   2
+\&     \*(Aqdata.name\*(Aq => \*(AqPerl ArrayRef\*(Aq,
+\&     \*(Aqexpected\*(Aq  => [
+\&         [ 703.671381936888, 319.645266594124, 533.683351468988 ],
+\&         [ 542.328618063112, 246.354733405876, 411.316648531012 ]
+\&     ],
+\&     \*(Aqmethod\*(Aq    => "Pearson\*(Aqs Chi\-squared test",
+\&     \*(Aqobserved\*(Aq  => [
+\&         [ 762, 327, 468 ],
+\&         [ 484, 239, 477 ]
+\&     ],
+\&     \*(Aqp.value\*(Aq   => 2.95358918321176e\-07,
+\&     \*(Aqparameter\*(Aq => { \*(Aqdf\*(Aq => 2 },
+\&     \*(Aqstatistic\*(Aq => { \*(AqX\-squared\*(Aq => 30.0701490957547 }
+\& }
+.Ve
+.PP
+\fI2. One\-Dimensional Array (Goodness of Fit)\fR
+.IX Subsection "2. One-Dimensional Array (Goodness of Fit)"
+.PP
+Passing a flat Array Reference triggers a Goodness of Fit test, assuming equal expected probabilities across all items.
+.PP
+.Vb 2
+\& my $data = [10, 20, 30];
+\& my $res = chisq_test($data);
+.Ve
+.PP
+\&\fBOutput:\fR
+.PP
+.Vb 9
+\& {
+\&     \*(Aqdata.name\*(Aq => \*(AqPerl ArrayRef\*(Aq,
+\&     \*(Aqexpected\*(Aq  => [ 20, 20, 20 ],
+\&     \*(Aqmethod\*(Aq    => \*(AqChi\-squared test for given probabilities\*(Aq,
+\&     \*(Aqobserved\*(Aq  => [ 10, 20, 30 ],
+\&     \*(Aqp.value\*(Aq   => 0.00673794699908547,
+\&     \*(Aqparameter\*(Aq => { \*(Aqdf\*(Aq => 2 },
+\&     \*(Aqstatistic\*(Aq => { \*(AqX\-squared\*(Aq => 10 }
+\& }
+.Ve
+.PP
+\fI3. Two\-Dimensional Hash (Pearson\*(Aqs Chi\-squared)\fR
+.IX Subsection "3. Two-Dimensional Hash (Pearson's Chi-squared)"
+.PP
+Passing a Hash of Hashes (HoH) applies the exact same logic as a 2D Array, but preserves your nested string keys in the output. This is particularly useful when mapping data extracted directly from JSON, databases, or categorical mappings.
+.PP
+.Vb 4
+\& my $data = {
+\&     GroupA => { Success => 10, Failure => 15 },
+\&     GroupB => { Success => 20, Failure => 5  }
+\& };
+\& 
+\& my $res = chisq_test($data);
+.Ve
+.PP
+\&\fBOutput:\fR
+.PP
+.Vb 10
+\& {
+\&     \*(Aqdata.name\*(Aq => \*(AqPerl HashRef\*(Aq,
+\&     \*(Aqexpected\*(Aq  => {
+\&     \*(AqGroupA\*(Aq => { \*(AqFailure\*(Aq => 10, \*(AqSuccess\*(Aq => 15 },
+\&     \*(AqGroupB\*(Aq => { \*(AqFailure\*(Aq => 10, \*(AqSuccess\*(Aq => 15 }
 \& },
-\& statistic   {
-\&     X\-squared   30.0701490957547
-\& }
+\& \*(Aqmethod\*(Aq    => "Pearson\*(Aqs Chi\-squared test with Yates\*(Aq continuity correction",
+\&     \*(Aqobserved\*(Aq  => {
+\&     \*(AqGroupA\*(Aq => { \*(AqFailure\*(Aq => 15, \*(AqSuccess\*(Aq => 10 },
+\&     \*(AqGroupB\*(Aq => { \*(AqFailure\*(Aq => 5,  \*(AqSuccess\*(Aq => 20 }
+\&     },
+\&     \*(Aqp.value\*(Aq   => 0.00937475878430379,
+\&     \*(Aqparameter\*(Aq => { \*(Aqdf\*(Aq => 1 },
+\&     \*(Aqstatistic\*(Aq => { \*(AqX\-squared\*(Aq => 6.75 }
 \& }
 .Ve
 .PP
-It also supports 1D arrays for Goodness of Fit tests:
+\fI4. One\-Dimensional Hash (Goodness of Fit)\fR
+.IX Subsection "4. One-Dimensional Hash (Goodness of Fit)"
 .PP
-.Vb 1
-\& my $chisq_1d = chisq_test([10, 20, 30]);
+Flat Hash References evaluate Goodness of Fit while preserving your categorical keys in the \f(CW\*(C`expected\*(C'\fR and \f(CW\*(C`observed\*(C'\fR output blocks.
+.PP
+.Vb 5
+\& my $data = { 
+\&     Apples  => 10, 
+\&     Oranges => 20, 
+\&     Bananas => 30 
+\& };
+\& 
+\& my $res = chisq_test($data);
 .Ve
 .PP
-For 2x2 matrices, Yates\*(Aq Continuity Correction is applied automatically, exactly like in R.
+\&\fBOutput:\fR
+.PP
+.Vb 9
+\& {
+\&     \*(Aqdata.name\*(Aq => \*(AqPerl HashRef\*(Aq,
+\&     \*(Aqexpected\*(Aq  => { \*(AqApples\*(Aq => 20, \*(AqBananas\*(Aq => 20, \*(AqOranges\*(Aq => 20 },
+\&     \*(Aqmethod\*(Aq    => \*(AqChi\-squared test for given probabilities\*(Aq,
+\&     \*(Aqobserved\*(Aq  => { \*(AqApples\*(Aq => 10, \*(AqBananas\*(Aq => 30, \*(AqOranges\*(Aq => 20 },
+\&     \*(Aqp.value\*(Aq   => 0.00673794699908547,
+\&     \*(Aqparameter\*(Aq => { \*(Aqdf\*(Aq => 2 },
+\&     \*(Aqstatistic\*(Aq => { \*(AqX\-squared\*(Aq => 10 }
+\& }
+.Ve
 .SS cor
 .IX Subsection "cor"
 .Vb 1
@@ -1155,8 +1235,12 @@ the two groups compared can be specified, though not necessarily, as \f(CW\*(C`x
 \fIParameters\fR
 .IX Subsection "Parameters"
 .PP
+0
+.PP
 \fIReturn Hash\fR
 .IX Subsection "Return Hash"
+.PP
+1
 .SS value_counts
 .IX Subsection "value_counts"
 Count the values in a given data set, return a hash reference showing how many times each particular value is present.
@@ -1304,6 +1388,13 @@ undefined variables are printed as \f(CW\*(C`NA\*(C'\fR by default, but can be s
 as of version 0.07, \f(CW\*(C`write_table\*(C'\fR determines comma and tab\-separated delimiters from the filename, but will override if \f(CW\*(C`sep\*(C'\fR or \f(CW\*(C`delim\*(C'\fR are explicitly set.
 .SH changes
 .IX Header "changes"
+.SS 0.12
+.IX Subsection "0.12"
+\&\f(CW\*(C`ljoin\*(C'\fR: Addition of \f(CW\*(C`restrict\*(C'\fR keywords in many places; should improve CPU performance
+.PP
+Better POD formatting, correction of output hash for README\*(Aqs \f(CW\*(C`add_data\*(C'\fR
+.PP
+\&\f(CW\*(C`chisq_test\*(C'\fR can now accept hash of hashes as input
 .SS 0.11
 .IX Subsection "0.11"
 better POD formatting for tables

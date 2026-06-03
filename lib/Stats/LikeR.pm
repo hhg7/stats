@@ -12,7 +12,7 @@ use autodie ':default';
 use Exporter 'import';
 use Scalar::Util 'looks_like_number';
 XSLoader::load('Stats::LikeR', $VERSION);
-our @EXPORT_OK = qw(add_data aov chisq_test cor cor_test cov dnorm fisher_test glm group_by hist kruskal_test ks_test ljoin lm matrix max mean median min mode oneway_test p_adjust power_t_test prcomp quantile rbinom read_table rnorm runif sample scale sd seq shapiro_test sum summary t_test value_counts var var_test wilcox_test write_table);
+our @EXPORT_OK = qw(add_data aov chisq_test cor cor_test cov dnorm fisher_test glm group_by hist kruskal_test ks_test ljoin lm matrix max mean median min mode oneway_test p_adjust power_t_test prcomp quantile rbinom read_table rnorm runif sample scale sd seq shapiro_test sum summary t_test transpose value_counts var var_test wilcox_test write_table);
 our @EXPORT = @EXPORT_OK;
 
 require XSLoader;
@@ -654,52 +654,211 @@ in R
 
 =head2 chisq_test
 
- my @test_data = ([762, 327, 468], [484, 239, 477]);
- my $test_data = chisq_test(\@test_data);
+The C<chisq_test> function performs chi-squared contingency table tests and goodness-of-fit tests. It natively accepts both arrays and hashes (1D and 2D) and mathematically mirrors R's C<chisq.test()>, returning a structured hash reference of the results.
 
-which outputs:
+For 2x2 matrices, Yates' Continuity Correction is applied automatically.
+
+=head3 Accepted Inputs
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>Input Type</th>
+  <th>Data Structure</th>
+  <th>Applied Test</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><b>1D Array</b></td>
+  <td><code>[ $v1, $v2, ... ]</code></td>
+  <td>Chi-squared test for given probabilities</td>
+</tr>
+<tr>
+  <td><b>2D Array</b></td>
+  <td><code>[ [ $v1, $v2 ], [ $v3, $v4 ] ]</code></td>
+  <td>Pearson's Chi-squared test (Yates' correction if 2x2)</td>
+</tr>
+<tr>
+  <td><b>1D Hash</b></td>
+  <td><code>{ key1 => $v1, key2 => $v2 }</code></td>
+  <td>Chi-squared test for given probabilities</td>
+</tr>
+<tr>
+  <td><b>2D Hash</b></td>
+  <td><code>{ row1 => { c1 => $v1, c2 => $v2 } }</code></td>
+  <td>Pearson's Chi-squared test (Yates' correction if 2x2)</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+=head3 Output Object Structure
+
+The function returns a single Hash Reference containing the following key-value pairs. The internal structure of C<expected> and C<observed> will always identically match the structure of your input.
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>Key</th>
+  <th>Data Type</th>
+  <th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><b>data.name</b></td>
+  <td>String</td>
+  <td>Identifies the input type (e.g., <code>"Perl ArrayRef"</code> or <code>"Perl HashRef"</code>).</td>
+</tr>
+<tr>
+  <td><b>expected</b></td>
+  <td>Array/Hash Ref</td>
+  <td>The expected frequencies, matching the geometry of the input.</td>
+</tr>
+<tr>
+  <td><b>method</b></td>
+  <td>String</td>
+  <td>The specific statistical test applied.</td>
+</tr>
+<tr>
+  <td><b>observed</b></td>
+  <td>Array/Hash Ref</td>
+  <td>The original data passed to the function.</td>
+</tr>
+<tr>
+  <td><b>p.value</b></td>
+  <td>Float</td>
+  <td>The calculated p-value of the test.</td>
+</tr>
+<tr>
+  <td><b>parameter</b></td>
+  <td>Hash Ref</td>
+  <td>Contains the degrees of freedom (<code>df</code>).</td>
+</tr>
+<tr>
+  <td><b>statistic</b></td>
+  <td>Hash Ref</td>
+  <td>Contains the test statistic (<code>X-squared</code>).</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+=head3 1. Two-Dimensional Array
+
+Passing an Array of Arrays (AoA) triggers a standard Pearson's Chi-squared test. If the input is exactly a 2x2 matrix, Yates' continuity correction is applied automatically.
+
+ perl
+ my $test_data = [
+     [762, 327, 468], 
+     [484, 239, 477]
+ ];
+ my $res = chisq_test($test_data);
+
+B<Output:>
 
  {
- data.name   "Perl ArrayRef",
- expected    [
-     [0] [
-             [0] 703.671381936888,
-             [1] 319.645266594124,
-             [2] 533.683351468988
-         ],
-     [1] [
-             [0] 542.328618063112,
-             [1] 246.354733405876,
-             [2] 411.316648531012
-         ]
- ],
- method      "Pearson's Chi-squared test",
- observed    [
-     [0] [
-             [0] 762,
-             [1] 327,
-             [2] 468
-         ],
-     [1] [
-             [0] 484,
-             [1] 239,
-             [2] 477
-         ]
- ],
- p.value     2.95358918321176e-07,
- parameter   {
-     df   2
+     'data.name' => 'Perl ArrayRef',
+     'expected'  => [
+         [ 703.671381936888, 319.645266594124, 533.683351468988 ],
+         [ 542.328618063112, 246.354733405876, 411.316648531012 ]
+     ],
+     'method'    => "Pearson's Chi-squared test",
+     'observed'  => [
+         [ 762, 327, 468 ],
+         [ 484, 239, 477 ]
+     ],
+     'p.value'   => 2.95358918321176e-07,
+     'parameter' => { 'df' => 2 },
+     'statistic' => { 'X-squared' => 30.0701490957547 }
+ }
+
+=head3 2. One-Dimensional Array (Goodness of Fit)
+
+Passing a flat Array Reference triggers a Goodness of Fit test, assuming equal expected probabilities across all items.
+
+ my $data = [10, 20, 30];
+ my $res = chisq_test($data);
+
+B<Output:>
+
+ {
+     'data.name' => 'Perl ArrayRef',
+     'expected'  => [ 20, 20, 20 ],
+     'method'    => 'Chi-squared test for given probabilities',
+     'observed'  => [ 10, 20, 30 ],
+     'p.value'   => 0.00673794699908547,
+     'parameter' => { 'df' => 2 },
+     'statistic' => { 'X-squared' => 10 }
+ }
+
+=head3 3. Two-Dimensional Hash (Pearson's Chi-squared)
+
+Passing a Hash of Hashes (HoH) applies the exact same logic as a 2D Array, but preserves your nested string keys in the output. This is particularly useful when mapping data extracted directly from JSON, databases, or categorical mappings.
+
+ my $data = {
+     GroupA => { Success => 10, Failure => 15 },
+     GroupB => { Success => 20, Failure => 5  }
+ };
+ 
+ my $res = chisq_test($data);
+
+B<Output:>
+
+ {
+     'data.name' => 'Perl HashRef',
+     'expected'  => {
+     'GroupA' => { 'Failure' => 10, 'Success' => 15 },
+     'GroupB' => { 'Failure' => 10, 'Success' => 15 }
  },
- statistic   {
-     X-squared   30.0701490957547
+ 'method'    => "Pearson's Chi-squared test with Yates' continuity correction",
+     'observed'  => {
+     'GroupA' => { 'Failure' => 15, 'Success' => 10 },
+     'GroupB' => { 'Failure' => 5,  'Success' => 20 }
+     },
+     'p.value'   => 0.00937475878430379,
+     'parameter' => { 'df' => 1 },
+     'statistic' => { 'X-squared' => 6.75 }
  }
+
+=head3 4. One-Dimensional Hash (Goodness of Fit)
+
+Flat Hash References evaluate Goodness of Fit while preserving your categorical keys in the C<expected> and C<observed> output blocks.
+
+ my $data = { 
+     Apples  => 10, 
+     Oranges => 20, 
+     Bananas => 30 
+ };
+ 
+ my $res = chisq_test($data);
+
+B<Output:>
+
+ {
+     'data.name' => 'Perl HashRef',
+     'expected'  => { 'Apples' => 20, 'Bananas' => 20, 'Oranges' => 20 },
+     'method'    => 'Chi-squared test for given probabilities',
+     'observed'  => { 'Apples' => 10, 'Bananas' => 30, 'Oranges' => 20 },
+     'p.value'   => 0.00673794699908547,
+     'parameter' => { 'df' => 2 },
+     'statistic' => { 'X-squared' => 10 }
  }
-
-It also supports 1D arrays for Goodness of Fit tests:
-
- my $chisq_1d = chisq_test([10, 20, 30]);
-
-For 2x2 matrices, Yates' Continuity Correction is applied automatically, exactly like in R.
 
 =head2 cor
 
@@ -1840,57 +1999,37 @@ the two groups compared can be specified, though not necessarily, as C<x> and C<
   <th>Type</th>
   <th>Default</th>
   <th>Description</th>
+  <th>Example</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-  <td><code>x</code></td>
-  <td>Array Reference</td>
-  <td>Required</td>
-  <td>The first vector of data. Must contain at least 2 elements.</td>
-</tr>
-<tr>
-  <td><code>y</code></td>
-  <td>Array Reference</td>
+  <td><i>(Term Name)</i></td>
+  <td><code>HashRef</code></td>
   <td><code>undef</code></td>
-  <td>The second vector of data. Required for two-sample or paired tests.</td>
+  <td>A nested hash for each independent term in the formula (e.g., <code>'Group'</code>, <code>'N:P'</code>), containing its ANOVA table statistics.</td>
+  <td><code>{'Df' => 1, 'Sum Sq' => 14.2, 'Mean Sq' => 14.2, 'F value' => 25.81, 'Pr(>F)' => 0.0004}</code></td>
 </tr>
 <tr>
-  <td><code>mu</code></td>
-  <td>Float</td>
-  <td>0.0</td>
-  <td>The true value of the mean (or difference in means) for the null hypothesis.</td>
+  <td><code>Residuals</code></td>
+  <td><code>HashRef</code></td>
+  <td><code>undef</code></td>
+  <td>A nested hash containing the residual (error) statistics for the fitted model.</td>
+  <td><code>{'Df' => 10, 'Sum Sq' => 5.5, 'Mean Sq' => 0.55}</code></td>
 </tr>
 <tr>
-  <td><code>paired</code></td>
-  <td>Boolean</td>
-  <td><code>FALSE</code></td>
-  <td>If true, performs a paired t-test. <code>x</code> and <code>y</code> must be the same length.</td>
-</tr>
-<tr>
-  <td><code>var_equal</code></td>
-  <td>Boolean</td>
-  <td><code>FALSE</code></td>
-  <td>If true, assumes equal variances (standard two-sample). If false, performs Welch's t-test with unequal variances.</td>
-</tr>
-<tr>
-  <td><code>conf_level</code></td>
-  <td>Float</td>
-  <td>0.95</td>
-  <td>Confidence level for the returned confidence interval. Must be between 0 and 1.</td>
-</tr>
-<tr>
-  <td><code>alternative</code></td>
-  <td>String</td>
-  <td><code>"two.sided"</code></td>
-  <td>Direction of the alternative hypothesis: <code>"two.sided"</code>, <code>"less"</code>, or <code>"greater"</code>.</td>
+  <td><code>group_stats</code></td>
+  <td><code>HashRef</code></td>
+  <td><code>undef</code></td>
+  <td>A nested hash containing descriptive statistics (<code>mean</code> and <code>size</code> / count) for every column evaluated in the original unstacked data structure.</td>
+  <td><code>{'mean' => {'A' => 2.1, 'B' => 5.4}, 'size' => {'A' => 10, 'B' => 10}}</code></td>
 </tr>
 </tbody>
 </table>
 
 =end html
 
-
+0
 
 =head3 Return Hash
 
@@ -1901,45 +2040,41 @@ the two groups compared can be specified, though not necessarily, as C<x> and C<
 <table>
 <thead>
 <tr>
-  <th>Key</th>
+  <th>Parameter</th>
+  <th>Type</th>
+  <th>Default</th>
   <th>Description</th>
+  <th>Example</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-  <td><code>statistic</code></td>
-  <td>The computed t-statistic.</td>
+  <td><i>(Term Name)</i></td>
+  <td><code>HashRef</code></td>
+  <td><code>undef</code></td>
+  <td>A nested hash for each independent term in the formula (e.g., <code>'Group'</code>, <code>'N:P'</code>), containing its ANOVA table statistics.</td>
+  <td><code>{'Df' => 1, 'Sum Sq' => 14.2, 'Mean Sq' => 14.2, 'F value' => 25.81, 'Pr(>F)' => 0.0004}</code></td>
 </tr>
 <tr>
-  <td><code>df</code></td>
-  <td>Degrees of freedom for the test.</td>
+  <td><code>Residuals</code></td>
+  <td><code>HashRef</code></td>
+  <td><code>undef</code></td>
+  <td>A nested hash containing the residual (error) statistics for the fitted model.</td>
+  <td><code>{'Df' => 10, 'Sum Sq' => 5.5, 'Mean Sq' => 0.55}</code></td>
 </tr>
 <tr>
-  <td><code>p_value</code></td>
-  <td>The calculated p-value based on the test directionality.</td>
-</tr>
-<tr>
-  <td><code>conf_int</code></td>
-  <td>An Array Reference containing two elements: <code>[lower_bound, upper_bound]</code>.</td>
-</tr>
-<tr>
-  <td><code>estimate</code></td>
-  <td>The estimated mean of <code>x</code> (one-sample) OR the mean of the differences (paired).</td>
-</tr>
-<tr>
-  <td><code>estimate_x</code></td>
-  <td>The estimated mean of the <code>x</code> vector (only returned in two-sample tests).</td>
-</tr>
-<tr>
-  <td><code>estimate_y</code></td>
-  <td>The estimated mean of the <code>y</code> vector (only returned in two-sample tests).</td>
+  <td><code>group_stats</code></td>
+  <td><code>HashRef</code></td>
+  <td><code>undef</code></td>
+  <td>A nested hash containing descriptive statistics (<code>mean</code> and <code>size</code> / count) for every column evaluated in the original unstacked data structure.</td>
+  <td><code>{'mean' => {'A' => 2.1, 'B' => 5.4}, 'size' => {'A' => 10, 'B' => 10}}</code></td>
 </tr>
 </tbody>
 </table>
 
 =end html
 
-
+1
 
 =head2 value_counts
 
@@ -2054,6 +2189,14 @@ undefined variables are printed as C<NA> by default, but can be set as you wish 
 as of version 0.07, C<write_table> determines comma and tab-separated delimiters from the filename, but will override if C<sep> or C<delim> are explicitly set.
 
 =head1 changes
+
+=head2 0.12
+
+C<ljoin>: Addition of C<restrict> keywords in many places; should improve CPU performance
+
+Better POD formatting, correction of output hash for README's C<add_data>
+
+C<chisq_test> can now accept hash of hashes as input
 
 =head2 0.11
 

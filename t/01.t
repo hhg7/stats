@@ -4163,18 +4163,18 @@ add_data($data, $n);
 # --- Test 1: Total key count ---
 $size = scalar keys %{ $data };
 if ($size == 3) {
-    pass('add_data: correct number of keys (3) in $data');
+	pass('add_data: correct number of keys (3) in $data');
 } else {
-    fail("add_data: should have 3 keys, but has $size keys");
+	fail("add_data: should have 3 keys, but has $size keys");
 }
 
 # --- Test 2: Existing row updated correctly ---
 if (defined $data->{'Jack Smith'} && 
-    (abs($data->{'Jack Smith'}{age} - 30) < 1e-13) && 
-    $data->{'Jack Smith'}{dept} eq 'Engineering') {
-    pass('add_data: existing row updated correctly');
+	(abs($data->{'Jack Smith'}{age} - 30) < 1e-13) && 
+	$data->{'Jack Smith'}{dept} eq 'Engineering') {
+	pass('add_data: existing row updated correctly');
 } else {
-    fail('add_data: existing row was NOT updated correctly');
+	fail('add_data: existing row was NOT updated correctly');
 }
 
 # --- Test 3: New row added from Hash ---
@@ -4186,7 +4186,7 @@ if (defined $data->{'Jane Doe'}) {
 		fail('add_data: new row from hash has INCORRECT values');
 	}
 } else {
-    fail('add_data: new row from hash is NOT defined');
+	fail('add_data: new row from hash is NOT defined');
 }
 
 # --- Test 4: New row added from Array ---

@@ -43,7 +43,9 @@ dies_ok { chisq_test(123) } 'Croaks with non-reference (scalar)';
 dies_ok { chisq_test(\"string") } 'Croaks with scalar reference';
 dies_ok { chisq_test([]) } 'Croaks with empty array reference';
 dies_ok { chisq_test({}) } 'Croaks with empty hash reference';
-
+dies_ok { chisq_test([undef, undef]) } 'Croaks with undefined values in array ref';
+dies_ok { chisq_test({ A => undef }) } 'Croaks with undefined keys in hash ref';
+dies_ok { chisq_test(undef) } 'Croaks with undefined arg';
 # ======================================================================
 # 1D Array Test
 # R Code: 
@@ -98,7 +100,7 @@ $data = [[10, 10, 20], [20, 20, 20]];
 $res = chisq_test($data);
     
 is($res->{method}, "Pearson's Chi-squared test", 'Standard Pearson applied (no Yates)');
-is($res->{parameter}{df}, 2, 'Calculates correct degrees of freedom');
+is_approx($res->{parameter}{df}, 2, 'Calculates correct degrees of freedom', 1e-13);
 is_approx($res->{'p.value'}, 0.249352208777296, 'chisq_test: 3x2 matrix, p-value correct', 1e-13);
 # ======================================================================
 # 1D Hash Test
@@ -113,13 +115,13 @@ $data = { A => 10, B => 20, C => 30 };
 $res = chisq_test($data);
 
 is($res->{'data.name'}, 'Perl HashRef', 'Correct data.name');
-is_approx($res->{statistic}{'X-squared'}, 10.0, 'Calculates correct X-squared from Hash keys');
-is($res->{parameter}{df}, 2, 'Calculates correct degrees of freedom');
+is_approx($res->{statistic}{'X-squared'}, 10.0, 'Calculates correct X-squared from Hash keys', 1e-13);
+is_approx($res->{parameter}{df}, 2, 'Calculates correct degrees of freedom', 1e-13);
 
 is(ref($res->{expected}), 'HASH', 'Expected frequencies is a hash ref');
-is_approx($res->{expected}{A}, 20.0, 'Expected frequency for key A is correct');
-
-# ======================================================================
+is_approx($res->{expected}{A}, 20.0, 'Expected frequency for key A is correct', 1e-13);
+is_approx($res->{'p.value'}, 0.00673794699908547, 'chisq_test: p-value for 1D hash', 1e-13);
+#
 # 2D Hash Test
 # R Code: 
 #   chisq.test(rbind(Group1=c(Success=10, Failure=15), Group2=c(Success=20, Failure=5)))
@@ -127,7 +129,7 @@ is_approx($res->{expected}{A}, 20.0, 'Expected frequency for key A is correct');
 #   Pearson's Chi-squared test with Yates' continuity correction
 #   data:  rbind(...)
 #   X-squared = 6.75, df = 1, p-value = 0.009375
-# ======================================================================
+#
 $data = {
 	Group1 => { Success => 10, Failure => 15 },
 	Group2 => { Success => 20, Failure => 5 }
@@ -136,30 +138,30 @@ $res = chisq_test($data);
 
 is($res->{method}, "Pearson's Chi-squared test with Yates' continuity correction", 'Yates correction triggered for 2x2 HoH');
 is_approx($res->{statistic}{'X-squared'}, 6.75, 'Calculates correct X-squared from 2D Hash');
-is($res->{parameter}{df}, 1, 'Calculates correct degrees of freedom');
-
-# ======================================================================
+is_approx($res->{parameter}{df}, 1, 'Calculates correct degrees of freedom', 1e-13);
+is_approx($res->{'p.value'}, 0.00937476845943488, 'chisq_test: 2x2 p-value', 1e-13);
+#
 # Memory Leak Validations
-# ======================================================================
+#
 # It's crucial that the XS matrices, nested SVs, and Av/Hv structures are freed.
 no_leaks_ok {
 	eval { chisq_test([]) }; # Expected failure
-} 'No leaks on early exception (Empty Array)';
+} 'No leaks on early exception (Empty Array)' unless $INC{'Devel/Cover.pm'};
 
 no_leaks_ok {
 	$data = [10, 20, 30, 40];
 	chisq_test($data);
-} 'No leaks with successful 1D Array processing';
+} 'No leaks with successful 1D Array processing' unless $INC{'Devel/Cover.pm'};
 
 no_leaks_ok {
 	$data = [[10, 15], [20, 5]];
 	chisq_test($data);
-} 'No leaks with successful 2D Array processing';
+} 'No leaks with successful 2D Array processing' unless $INC{'Devel/Cover.pm'};
 
 no_leaks_ok {
 	$data = { a => 10, b => 20, c => 30 };
 	chisq_test($data);
-} 'No leaks with successful 1D Hash processing';
+} 'No leaks with successful 1D Hash processing' unless $INC{'Devel/Cover.pm'};
 
 no_leaks_ok {
 	$data = {
@@ -167,6 +169,6 @@ no_leaks_ok {
 		row2 => { col1 => 20, col2 => 5 }
 	};
 	chisq_test($data);
-} 'No leaks with successful 2D Hash processing';
+} 'No leaks with successful 2D Hash processing' unless $INC{'Devel/Cover.pm'};
 
 done_testing();
