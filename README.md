@@ -26,14 +26,18 @@ this is the equivalent of adding new rows, as well as `ljoin`, which is describe
 
 where the resulting hash-of-hash looks like:
 
-        {
-        1st   {
-            a   "A",
-            b   "B"
+    {
+        "Bob Brown"    {
+            age    40,
+            dept   "IT"
         },
-        2nd   {
-            a   "C",
-            b   "D"
+        "Jack Smith"   {
+            age    30,
+            dept   "Engineering"
+        },
+        "Jane Doe"     {
+            age    25,
+            dept   "Sales"
         }
     }
 
@@ -87,6 +91,23 @@ You can also perform Two-Way ANOVA with categorical interactions using the `*` o
     my $res_2way = aov($data_2way, 'len ~ supp * dose');
 
 It is robust against rank deficiency; collinear terms will gracefully receive 0 degrees of freedom and 0 sum of squares, matching R's behavior.
+
+### Input Parameters
+
+| Parameter | Type | Default | Description | Example |
+| --- | --- | --- | --- | --- |
+| `data_sv` | `HashRef` | `ArrayRef` | *(Required)* | The dataset to analyze. Accepts a Hash of Arrays (HoA) or Array of Hashes (AoH). If no formula is provided, it must be an HoA to allow automatic stacking (mimicking R's `stack()` on a named list). |
+| `formula_sv` | `String` | `undef` | A symbolic description of the model to be fitted. If omitted, the formula automatically defaults to `'Value ~ Group'` and the input data is stacked. | `'yield ~ N * P'` |
+
+### Output Variables
+
+The function returns a single `HashRef` containing the evaluated statistical results. Because the keys map dynamically to the terms parsed from your formula, the structure will vary based on your inputs.
+
+| Parameter | Type | Default | Description | Example |
+| --- | --- | --- | --- | --- |
+| *(Term Name)* | `HashRef` | `undef` | A nested hash for each independent term in the formula (e.g., `'Group'`, `'N:P'`), containing its ANOVA table statistics. | `{'Df' => 1, 'Sum Sq' => 14.2, 'Mean Sq' => 14.2, 'F value' => 25.81, 'Pr(>F)' => 0.0004}` |
+| `Residuals` | `HashRef` | `undef` | A nested hash containing the residual (error) statistics for the fitted model. | `{'Df' => 10, 'Sum Sq' => 5.5, 'Mean Sq' => 0.55}` |
+| `group_stats` | `HashRef` | `undef` | A nested hash containing descriptive statistics (`mean` and `size` / count) for every column evaluated in the original unstacked data structure. | `{'mean' => {'A' => 2.1, 'B' => 5.4}, 'size' => {'A' => 10, 'B' => 10}}` |
 
 ### omitting formula
 
@@ -279,11 +300,37 @@ takes a hash of an array as input
     	family  => 'gaussian'
     );
 
-I'm not completely confident that this is working perfectly, though I've gotten this subroutine to work for simple cases.
-
 In addition to the `gaussian` default, it fully supports logistic regression using the `binomial` family parameter via Iteratively Reweighted Least Squares (IRLS):
 
     my $glm_bin = glm(formula => 'am ~ wt + hp', data => \%mtcars, family => 'binomial');
+
+### Input Parameters
+
+| Parameter | Type | Default | Description | Example |
+| --- | --- | --- | --- | --- |
+| `formula` | `String` | *None (Required)* | A symbolic description of the model to be fitted. Supports operators like `+`, `:`, `*`, `^`, and `-1` (to remove the intercept). | `'am ~ wt + hp'`, `'y ~ x - 1'` |
+| `data` | `HashRef` or `ArrayRef` | *None (Required)* | The dataset containing the variables used in the formula. Accepts either a Hash of Arrays (HoA) or an Array of Hashes (AoH). | `\%mtcars`, `[{x => 1, y => 2}, ...]` |
+| `family` | `String` | `'gaussian'` | A description of the error distribution and link function to be used in the model. Currently supports `'gaussian'` (identity link) and `'binomial'` (logit link). | `'binomial'` |
+
+### Output variables
+
+| Variable | Type | Description | Example |
+| --- | --- | --- | --- |
+| `aic` | `Double` | Akaike's Information Criterion for the fitted model. | `123.45` |
+| `boundary` | `Integer (Boolean)` | `1` if the fitted values computationally reached the `0` or `1` boundary (specific to the binomial family), `0` otherwise. | `0` |
+| `coefficients` | `HashRef` | A hash mapping the expanded model term names to their estimated coefficient values. | `{'Intercept' => 1.5, 'wt' => -0.5}` |
+| `converged` | `Integer (Boolean)` | `1` if the Iteratively Reweighted Least Squares (IRLS) algorithm converged within the maximum iterations, `0` otherwise. | `1` |
+| `deviance` | `Double` | The residual deviance of the fitted model. | `15.2` |
+| `deviance.resid` | `HashRef` | A hash mapping data row names to their computed deviance residuals. | `{'Mazda RX4' => 0.12}` |
+| `df.null` | `Integer` | The residual degrees of freedom for the null model. | `31` |
+| `df.residual` | `Integer` | The residual degrees of freedom for the fitted model. | `30` |
+| `family` | `String` | The statistical family used to fit the model. | `"gaussian"` |
+| `fitted.values` | `HashRef` | A hash mapping data row names to the fitted mean values (the model's predictions on the scale of the response). | `{'Mazda RX4' => 0.85}` |
+| `iter` | `Integer` | The number of IRLS iterations performed before convergence or hitting the iteration limit. | `4` |
+| `null.deviance` | `Double` | The deviance for the null model (a baseline model containing only an intercept, or an offset of 0 if the intercept is removed). | `43.5` |
+| `rank` | `Integer` | The numeric rank of the fitted linear model (the number of estimated, non-aliased parameters). | `2` |
+| `summary` | `HashRef` | A nested hash mapping each term to its detailed summary statistics, including `Estimate`, `Std. Error`, `t value` / `z value`, and `Pr(> t )` / `Pr(> z )`. Aliased parameters return `"NaN"`. | `{'wt' => {'Estimate' => -0.5, 'Std. Error' => 0.1, ...}}` |
+| `terms` | `ArrayRef` | An ordered list of the expanded term names included in the model matrix. | `['Intercept', 'wt', 'hp']` |
 
 ## group_by
 
@@ -924,7 +971,7 @@ and then `summary(\@arr)`, or `summary(@arr)`
 
 There are 1-sample and 2-sample t-tests, from one or two arrays:
 
-    my $t_test = t_test( $array1, mu => mean( $test_data[$i][$j] ));
+    my $t_test = t_test( $array1, mu => mean( 0.2334 ));
 
 or 2-sample:
 
@@ -1088,13 +1135,23 @@ as of version 0.07, `write_table` determines comma and tab-separated delimiters 
 
 # changes
 
+## 0.12
+
+`ljoin`: Addition of `restrict` keywords in many places; should improve CPU performance
+
+Better POD formatting, correction of output hash for README's `add_data`
+
 ## 0.11
 
 better POD formatting for tables
 
 addition of MANIFEST.skip to get better testing results on CPAN
 
-glm: bugfix for when there is no intercept in the formula, new test cases in t/glm.t
+`glm`: bugfix for when there is no intercept in the formula, new test cases in t/glm.t
+
+`write_table` now accepts simple hashes as input, in addition to hash of arrays, hash of hashes, and arrays of hashes
+
+Better documentation for t-test
 
 ## 0.10
 
