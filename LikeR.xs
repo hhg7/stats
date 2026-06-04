@@ -7636,8 +7636,10 @@ void add_data(h_ref, i_ref)
 	SV *h_ref;
 	SV *i_ref;
 PREINIT:
-	HV *restrict h_hv, *restrict i_hv;
+	HV *restrict h_hv;
+	HV *restrict i_hv;
 	HE *restrict i_entry;
+	int target_mode = 0; /* 0 = Unknown, 1 = HoH, 2 = HoA */
 CODE:
 	/* 1. Validate inputs */
 	if (!SvROK(h_ref) || SvTYPE(SvRV(h_ref)) != SVt_PVHV) {
@@ -7648,35 +7650,69 @@ CODE:
 	}
 	h_hv = (HV *)SvRV(h_ref);
 	i_hv = (HV *)SvRV(i_ref);
-	// 2. Iterate through the SECONDARY hash ($i)
+
+	/* Determine target mode safely */
+	if (HvKEYS(h_hv) > 0) {
+	  HE **probe_array = HvARRAY(h_hv);
+	  STRLEN probe_max = HvMAX(h_hv);
+	  for (STRLEN p_idx = 0; p_idx <= probe_max && target_mode == 0; p_idx++) {
+		   for (HE *p_entry = probe_array[p_idx]; p_entry && target_mode == 0; p_entry = HeNEXT(p_entry)) {
+		       SV *val = HeVAL(p_entry);
+		       if (SvROK(val)) {
+		           if (SvTYPE(SvRV(val)) == SVt_PVHV) target_mode = 1;
+		           else if (SvTYPE(SvRV(val)) == SVt_PVAV) target_mode = 2;
+		       }
+		   }
+	  }
+	}
+	/* Target is empty, infer intent from source hash */
+	if (target_mode == 0 && HvKEYS(i_hv) > 0) {
+		HE **restrict probe_array = HvARRAY(i_hv);
+		STRLEN probe_max = HvMAX(i_hv);
+		for (STRLEN p_idx = 0; p_idx <= probe_max && target_mode == 0; p_idx++) {
+			for (HE *restrict p_entry = probe_array[p_idx]; p_entry && target_mode == 0; p_entry = HeNEXT(p_entry)) {
+				SV *restrict val = HeVAL(p_entry);
+				if (SvROK(val)) {
+					if (SvTYPE(SvRV(val)) == SVt_PVHV) target_mode = 1;
+					else if (SvTYPE(SvRV(val)) == SVt_PVAV) target_mode = 2;
+				}
+			}
+		}
+	}
+	if (target_mode == 0) { target_mode = 1; }
+	/* 2. Iterate through the SECONDARY hash ($i) */
 	hv_iterinit(i_hv);
 	while ((i_entry = hv_iternext(i_hv))) {
 		SV *restrict row_key_sv = hv_iterkeysv(i_entry);
 		SV *restrict i_row_sv   = hv_iterval(i_hv, i_entry);
-		// Only proceed if the secondary row contains a valid reference
 		if (SvROK(i_row_sv)) {
 			HE *restrict h_fetch_he = hv_fetch_ent(h_hv, row_key_sv, 0, 0);
 			SV *restrict h_row_sv   = NULL;
 			HV *restrict h_row_hv   = NULL;
-			// 3. Check if the row exists in $h
+			AV *restrict h_row_av   = NULL;
+			/* 3. Check if the row exists in $h */
 			if (h_fetch_he) {
 				h_row_sv = HeVAL(h_fetch_he);
-				 // Ensure existing row is a Hash Reference
-				if (SvROK(h_row_sv) && SvTYPE(SvRV(h_row_sv)) == SVt_PVHV) {
-					h_row_hv = (HV *)SvRV(h_row_sv);
+				if (SvROK(h_row_sv)) {
+					if (SvTYPE(SvRV(h_row_sv)) == SVt_PVHV) {
+						h_row_hv = (HV *)SvRV(h_row_sv);
+					} else if (SvTYPE(SvRV(h_row_sv)) == SVt_PVAV) {
+						h_row_av = (AV *)SvRV(h_row_sv);
+					}
 				}
-			} else {
-				 /* 4. Row DOES NOT exist in $h: Create it */
-				 h_row_hv = newHV();
-				 /* Create a reference to the new hash. newRV_noinc transfers 
-				    ownership of the HV's initial reference count to the SV. */
-				 h_row_sv = newRV_noinc((SV *)h_row_hv);
-				 /* Store in $h. hv_store_ent takes ownership of the SV's ref count. */
-				 hv_store_ent(h_hv, row_key_sv, h_row_sv, 0);
+			} else {// 4. Row DOES NOT exist in $h: Create it
+				if (target_mode == 2) {
+					h_row_av = newAV();
+					h_row_sv = newRV_noinc((SV *)h_row_av);
+				} else {
+					h_row_hv = newHV();
+					h_row_sv = newRV_noinc((SV *)h_row_hv);
+				}
+				hv_store_ent(h_hv, row_key_sv, h_row_sv, 0);
 			}
-			/* 5. Merge data if we successfully resolved a target hash row */
+
+			/* 5. Merge data */
 			if (h_row_hv) {
-				/* Case A: $i->{row} is a Hash Reference */
 				if (SvTYPE(SvRV(i_row_sv)) == SVt_PVHV) {
 					HV *restrict i_inner_hv = (HV *)SvRV(i_row_sv);
 					HE *restrict i_inner_entry;
@@ -7687,14 +7723,36 @@ CODE:
 						hv_store_ent(h_row_hv, col_key_sv, SvREFCNT_inc(col_val), 0);
 					}
 				} else if (SvTYPE(SvRV(i_row_sv)) == SVt_PVAV) {
-				/* Case B: $i->{row} is an Array Reference */
 					AV *restrict i_inner_av = (AV *)SvRV(i_row_sv);
 					SSize_t top_idx = av_len(i_inner_av);
 					for (SSize_t idx = 0; idx < top_idx; idx += 2) {
 						SV **restrict key_svp = av_fetch(i_inner_av, idx, 0);
 						SV **restrict val_svp = av_fetch(i_inner_av, idx + 1, 0);
-						if (key_svp && val_svp) {
-							hv_store_ent(h_row_hv, *key_svp, SvREFCNT_inc(*val_svp), 0);
+						
+						/* COMPILER FIX: Ensure neither pointer nor value is NULL */
+						if (key_svp && *key_svp && val_svp) {
+							 SV *val_to_store = *val_svp ? *val_svp : &PL_sv_undef;
+							 hv_store_ent(h_row_hv, *key_svp, SvREFCNT_inc(val_to_store), 0);
+						}
+					}
+				}
+			} else if (h_row_av) {
+				if (SvTYPE(SvRV(i_row_sv)) == SVt_PVAV) {
+					AV *restrict i_inner_av = (AV *)SvRV(i_row_sv);
+					SSize_t top_idx = av_len(i_inner_av);
+					for (SSize_t idx = 0; idx <= top_idx; ++idx) {
+						SV **restrict val_svp = av_fetch(i_inner_av, idx, 0);
+						
+						/* COMPILER FIX: Substitute undefined array values with &PL_sv_undef */
+						/* ... inside the loop ... */
+						if (val_svp) {
+							SV *restrict val_to_push = *val_svp ? *val_svp : &PL_sv_undef;
+
+							/* Explicitly increment reference count */
+							SV *restrict sv_inc = SvREFCNT_inc(val_to_push);
+
+							/* The compiler now sees 'sv_inc' as an object that is clearly not NULL */
+							av_push(h_row_av, sv_inc);
 						}
 					}
 				}
@@ -7707,7 +7765,7 @@ PREINIT:
 	HV* counts_hv;
 	SV* arg1;
 CODE:
-/* 1. CHECK FOR DATA FIRST to prevent memory leaks if we die */
+// 1. CHECK FOR DATA FIRST to prevent memory leaks if we die
 	if (items == 0) {
 	  croak("value_counts: no data provided. At least one argument is required.");
 	}
@@ -7722,7 +7780,7 @@ CODE:
 	  for (unsigned i = 0; i < items; i++) {
 		   increment_count(aTHX_ counts_hv, ST(i));
 	  }
-	} else {/* CASE 2: Array Reference */
+	} else {// CASE 2: Array Reference
 		SV*restrict rv = SvRV(arg1);
 		if (SvTYPE(rv) == SVt_PVAV) {
 			AV*restrict av = (AV*)rv;
@@ -7741,44 +7799,41 @@ CODE:
 				// DataFrame-style Column-Oriented data check
 				SV**restrict col_svp = hv_fetch(hv, key, klen, 0);
 				if (col_svp && SvROK(*col_svp) && SvTYPE(SvRV(*col_svp)) == SVt_PVAV) {
-				  AV*restrict av = (AV*)SvRV(*col_svp);
-				  SSize_t len = av_len(av) + 1;
-				  for (unsigned i = 0; i < len; i++) {
+					AV*restrict av = (AV*)SvRV(*col_svp);
+					SSize_t len = av_len(av) + 1;
+					for (unsigned i = 0; i < len; i++) {
 						SV**restrict valp = av_fetch(av, i, 0);
 						if (valp) increment_count(aTHX_ counts_hv, *valp);
-				  }
+					}
 				} else {
-				  // Fallback: Row-Oriented nested structure
-				  HE*restrict he;
-				  hv_iterinit(hv);
-				  while ((he = hv_iternext(hv))) {
+					// Fallback: Row-Oriented nested structure
+					HE*restrict he;
+					hv_iterinit(hv);
+					while ((he = hv_iternext(hv))) {
 						SV*restrict inner_sv = HeVAL(he);
 						if (SvROK(inner_sv)) {
 							 SV*restrict inner_rv = SvRV(inner_sv);
-				/* CASE 5: Hash of Hashes */
-							 if (SvTYPE(inner_rv) == SVt_PVHV) {
-								  HV*restrict inner_hv = (HV*)inner_rv;
-								  SV**restrict valp = hv_fetch(inner_hv, key, klen, 0);
-								  if (valp) increment_count(aTHX_ counts_hv, *valp);
-							 } else if (SvTYPE(inner_rv) == SVt_PVAV) {
-				/* CASE 4: Hash of Arrays (Row-Oriented) */
-								  if (looks_like_number(arg2)) {
-								       AV*restrict inner_av = (AV*)inner_rv;
-								       SSize_t idx = SvIV(arg2); 
-								       SV**restrict valp = av_fetch(inner_av, idx, 0);
-								       if (valp) increment_count(aTHX_ counts_hv, *valp);
-								  }
-							 }
+							 if (SvTYPE(inner_rv) == SVt_PVHV) {// CASE 5: Hash of Hashes
+								 HV*restrict inner_hv = (HV*)inner_rv;
+								 SV**restrict valp = hv_fetch(inner_hv, key, klen, 0);
+								 if (valp) increment_count(aTHX_ counts_hv, *valp);
+							 } else if (SvTYPE(inner_rv) == SVt_PVAV) {// CASE 4: Hash of Arrays (Row-Oriented)
+								if (looks_like_number(arg2)) {
+									AV*restrict inner_av = (AV*)inner_rv;
+									SSize_t idx = SvIV(arg2); 
+									SV**restrict valp = av_fetch(inner_av, idx, 0);
+									if (valp) increment_count(aTHX_ counts_hv, *valp);
+								}
+							}
 						}
-				  }
+					}
 				}
-			} else { /* CASE 3: Hash Reference (No 2nd argument) */
+			} else { // CASE 3: Hash Reference (No 2nd argument)
 				 HE*restrict he;
 				 hv_iterinit(hv);
 				 while ((he = hv_iternext(hv))) {
 				     SV*restrict val = HeVAL(he);
-				     /* --- MODIFIED SAFETY CHECK --- */
-				     if (SvROK(val)) {
+				     if (SvROK(val)) {// --- SAFETY CHECK
 				         SV*restrict inner_rv = SvRV(val);
 				         // If it's a Hash of Arrays, count ALL elements in the inner arrays
 				         if (SvTYPE(inner_rv) == SVt_PVAV) {
