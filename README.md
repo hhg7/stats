@@ -1261,13 +1261,15 @@ as of version 0.07, `write_table` determines comma and tab-separated delimiters 
 
 ## 0.12
 
+`add_data` can also take hash of arrays
+
 `ljoin`: Addition of `restrict` keywords in many places; should improve CPU performance
 
 Better POD formatting, correction of output hash for README's `add_data`
 
 `chisq_test` can now accept hash of hashes as input
 
-new `transpose` function
+new `transpose` function for switching 2D hash keys and 2D array indices
 
 removed unused function from C helpers
 

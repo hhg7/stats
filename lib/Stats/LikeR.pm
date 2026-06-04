@@ -1189,7 +1189,7 @@ Data can be further broken down with filter/subs like in C<read_table>:
  my $testosterone = group_by($d, # group testosterone by "Gender"
      'Testosterone, total (nmol/L)',
      'Gender',
-     { 'Race/Hispanic origin w/ NH Asian' => sub { $_ eq $n } },
+     { 'Race/Hispanic origin w/ NH Asian' => sub { $_ eq $n } },# filter
      { 'Testosterone, total (nmol/L)' => sub { $_ ne 'NA' } } # filter
  );
 
@@ -1219,11 +1219,7 @@ I feel that this is better, and more easily read, than what you get in R:
  'obs. airway disease' => [3.8, 2.7, 4.0, 2.4],
  'asbestosis' => [2.8, 3.4, 3.7, 2.2, 2.0]
  );
- $t0 = Time::HiRes::time();
  $kt = kruskal_test(\%x);
- $t1 = Time::HiRes::time();
- printf("Kruskal calculation via HoA in %g seconds.\n", $t1-$t0);
- p $kt;
 
 =head3 R-like array entry
 
@@ -1236,11 +1232,7 @@ I feel that this is better, and more easily read, than what you get in R:
      (map {'Subjects with obstructive airway disease'} 0..3),
      map {'Subjects with asbestosis'} 0..4
  );
- my $t0 = Time::HiRes::time();
  my $kt = kruskal_test(\@x, \@g);
- my $t1 = Time::HiRes::time();
- printf("Kruskal calculation in %g seconds.\n", $t1-$t0);
- p $kt;
 
 =head2 ks_test
 
@@ -2076,6 +2068,52 @@ the two groups compared can be specified, though not necessarily, as C<x> and C<
 
 1
 
+=head2 transpose
+
+Transposes a two-dimensional data structure, swapping rows and columns. Accepts either an array of arrays or a hash of hashes.
+Returns a new reference of the same type; the input is never modified.
+
+=head3 Array of array input
+
+Takes a reference to an array of array references and returns a new AoA where C<output[j][i] = input[i][j]>.
+
+ my $matrix = [[1, 2, 3], [4, 5, 6]];
+ my $t = transpose($matrix);
+ # [[1, 4],
+ #  [2, 5],
+ #  [3, 6]]
+
+All rows must be the same length; a ragged input is a fatal error.
+C<undef> is valid as an element value and is preserved exactly. An empty outer array or an array of empty rows both return C<[]>.
+
+Dies if:
+- any inner element is not an array reference
+- rows differ in length (ragged array)
+
+=head3 Hash of hash input
+
+Takes a reference to a hash of hash references and returns a new HoH where C<output{col}{row} = input{row}{col}>.
+
+ my $table = { alice => { score => 97, grade => 'A' }, bob   => { score => 84, grade => 'B' } };
+ my $t = transpose($table);
+ # { score => { alice => 97,  bob => 84  },
+ #   grade => { alice => 'A', bob => 'B' } }
+
+Inner keys do not need to be uniform across rows. If a given column key appears in only some rows, the output hash for that column will simply contain only those rows — no padding or C<undef>-filling is performed.
+
+ my $sparse = {
+ a => { x => 1, y => 2 },
+ b => { x => 3, z => 4 } };
+ 
+ my $t = transpose($sparse);
+ # { x => { a => 1, b => 3 },
+ #   y => { a => 2 },
+ #   z => { b => 4 } }
+
+An empty outer hash or an outer hash whose inner hashes are all empty both return C<{}>.
+
+Dies if any inner element is not a hash reference
+
 =head2 value_counts
 
 Count the values in a given data set, return a hash reference showing how many times each particular value is present.
@@ -2192,11 +2230,17 @@ as of version 0.07, C<write_table> determines comma and tab-separated delimiters
 
 =head2 0.12
 
+C<add_data> can also take hash of arrays
+
 C<ljoin>: Addition of C<restrict> keywords in many places; should improve CPU performance
 
 Better POD formatting, correction of output hash for README's C<add_data>
 
 C<chisq_test> can now accept hash of hashes as input
+
+new C<transpose> function for switching 2D hash keys and 2D array indices
+
+removed unused function from C helpers
 
 =head2 0.11
 
