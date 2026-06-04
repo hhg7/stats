@@ -456,53 +456,96 @@ There B<are> other modules on CPAN that can do B<PARTS> of this, but this works 
 
 =head2 add_data
 
-Add data to a hash
+Add data to a hash. This function acts as the equivalent of adding new rows, as well as an C<ljoin> (described below). It dynamically infers your target data structure and seamlessly merges incoming data.
+
+=head3 Hash of Hashes (HoH)
+
+When the target is a Hash of Hashes, incoming hash keys update existing rows, and new keys create new rows.
 
  $data = { 'Jack Smith' => { age => 30 } };
+ 
  $n = { 
-     'Jack Smith' => { dept => 'Engineering' },             # Update existing (Hash)
-     'Jane Doe'   => { age => 25, dept => 'Sales' },        # Add new (Hash)
-     'Bob Brown'  => [ 'age', 40, 'dept', 'IT' ],           # Add new (Array)
-     'Invalid'    => 'Not a reference'                      # Edge case safety
+     'Jack Smith' => {    # Update existing (Hash)
+         dept => 'Engineering'
+      },
+     'Jane Doe'   => { age => 25, dept => 'Sales' }, # Add new (Hash)
+     'Invalid'    => 'Not a reference'               # Edge case safety
  };
- add_data($data, $n); # will add data to 'Jack Smith', as well as new keys for Jane and Bob.
+ 
+ add_data($data, $n); 
 
-this is the equivalent of adding new rows, as well as C<ljoin>, which is described below.
-
-where the resulting hash-of-hash looks like:
+Where the resulting hash-of-hash looks like:
 
  {
-     "Bob Brown"    {
-         age    40,
-         dept   "IT"
+     "Jack Smith":  {
+         "age":  30,
+         "dept": "Engineering"
      },
-     "Jack Smith"   {
-         age    30,
-         dept   "Engineering"
-     },
-     "Jane Doe"     {
-         age    25,
-         dept   "Sales"
+     "Jane Doe":    {
+         "age":  25,
+         "dept": "Sales"
      }
  }
 
-=head3 no pivot key/row name
+=head3 Hash of Arrays (HoA)
 
-with no pivot key, each array index becomes a hash key, which is less useful, but necessary for completeness.  The same C<@aoh> above becomes:
+When the target is a Hash of Arrays, incoming arrays are pushed onto the existing arrays, appending the new elements.
+
+ $data = { 'Project Alpha' => [ 'task1', 'task2' ] };
+ 
+ $n = {
+     'Project Alpha' => [ 'task3' ],              # Appends to existing array
+     'Project Beta'  => [ 'task1', 'task2' ]      # Creates new array row
+ };
+ 
+ add_data($data, $n);
+
+Where the resulting hash-of-arrays looks like:
 
  {
-     0   {
-         a   "A",
-         b   "B",
-         r   "1st" (dualvar: 1)
-     },
-     1   {
-         a   "C",
-         b   "D",
-         r   "2nd" (dualvar: 2)
-     }
+     "Project Alpha": [ "task1", "task2", "task3" ],
+     "Project Beta":  [ "task1", "task2" ]
  }
 
+=head3 Cross-Merging and Structural Coercion
+
+C<add_data> strictly enforces the primary structure of your target hash (determined by inspecting its first row). If you mix Array and Hash rows in your source data, the function automatically coerces them to match the target's structure:
+
+=over
+
+=item * B<If Target is HoH:> Source Array rows are automatically read in pairs and converted to key-value pairs.
+
+=item * B<If Target is HoA:> Source Hash rows are automatically flattened into key-value pairs and pushed onto the array.
+
+=back
+
+```perl
+    # Target is a Hash of Arrays
+    $data = { 'Bob Brown' => [ 'age', 40 ] };
+
+ # Source contains a mixed bag of structures
+ $n = {
+     'Bob Brown' => { dept => 'IT' },          # Hash coerced: flattened into [ 'dept', 'IT' ]
+     'Jane Doe'  => { age => 25, dept => 'Sales' }, # Hash coerced to new Array row
+     'Jack Smith'=> [ 'age', 30 ]              # Array merged directly
+ };
+ 
+ add_data($data, $n);
+
+```
+
+Where the resulting structure strictly remains a Hash of Arrays:
+
+```json
+    {
+        "Bob Brown":  [ "age", 40, "dept", "IT" ],
+        "Jane Doe":   [ "age", 25, "dept", "Sales" ],
+        "Jack Smith": [ "age", 30 ]
+    }
+
+```
+
+ > B<Note:> If C<add_data> is called on a completely empty target hash (C<$data = {}>), it will intelligently infer whether to build an HoH or HoA by inspecting the first valid row of the source hash (C<$n>).
 =head2 aov
 
 Warning: assumes normal distribution
@@ -1189,7 +1232,7 @@ Data can be further broken down with filter/subs like in C<read_table>:
  my $testosterone = group_by($d, # group testosterone by "Gender"
      'Testosterone, total (nmol/L)',
      'Gender',
-     { 'Race/Hispanic origin w/ NH Asian' => sub { $_ eq $n } },
+     { 'Race/Hispanic origin w/ NH Asian' => sub { $_ eq $n } },# filter
      { 'Testosterone, total (nmol/L)' => sub { $_ ne 'NA' } } # filter
  );
 
@@ -1219,11 +1262,7 @@ I feel that this is better, and more easily read, than what you get in R:
  'obs. airway disease' => [3.8, 2.7, 4.0, 2.4],
  'asbestosis' => [2.8, 3.4, 3.7, 2.2, 2.0]
  );
- $t0 = Time::HiRes::time();
  $kt = kruskal_test(\%x);
- $t1 = Time::HiRes::time();
- printf("Kruskal calculation via HoA in %g seconds.\n", $t1-$t0);
- p $kt;
 
 =head3 R-like array entry
 
@@ -1236,11 +1275,7 @@ I feel that this is better, and more easily read, than what you get in R:
      (map {'Subjects with obstructive airway disease'} 0..3),
      map {'Subjects with asbestosis'} 0..4
  );
- my $t0 = Time::HiRes::time();
  my $kt = kruskal_test(\@x, \@g);
- my $t1 = Time::HiRes::time();
- printf("Kruskal calculation in %g seconds.\n", $t1-$t0);
- p $kt;
 
 =head2 ks_test
 
@@ -2076,6 +2111,52 @@ the two groups compared can be specified, though not necessarily, as C<x> and C<
 
 1
 
+=head2 transpose
+
+Transposes a two-dimensional data structure, swapping rows and columns. Accepts either an array of arrays or a hash of hashes.
+Returns a new reference of the same type; the input is never modified.
+
+=head3 Array of array input
+
+Takes a reference to an array of array references and returns a new AoA where C<output[j][i] = input[i][j]>.
+
+ my $matrix = [[1, 2, 3], [4, 5, 6]];
+ my $t = transpose($matrix);
+ # [[1, 4],
+ #  [2, 5],
+ #  [3, 6]]
+
+All rows must be the same length; a ragged input is a fatal error.
+C<undef> is valid as an element value and is preserved exactly. An empty outer array or an array of empty rows both return C<[]>.
+
+Dies if:
+- any inner element is not an array reference
+- rows differ in length (ragged array)
+
+=head3 Hash of hash input
+
+Takes a reference to a hash of hash references and returns a new HoH where C<output{col}{row} = input{row}{col}>.
+
+ my $table = { alice => { score => 97, grade => 'A' }, bob   => { score => 84, grade => 'B' } };
+ my $t = transpose($table);
+ # { score => { alice => 97,  bob => 84  },
+ #   grade => { alice => 'A', bob => 'B' } }
+
+Inner keys do not need to be uniform across rows. If a given column key appears in only some rows, the output hash for that column will simply contain only those rows — no padding or C<undef>-filling is performed.
+
+ my $sparse = {
+ a => { x => 1, y => 2 },
+ b => { x => 3, z => 4 } };
+ 
+ my $t = transpose($sparse);
+ # { x => { a => 1, b => 3 },
+ #   y => { a => 2 },
+ #   z => { b => 4 } }
+
+An empty outer hash or an outer hash whose inner hashes are all empty both return C<{}>.
+
+Dies if any inner element is not a hash reference
+
 =head2 value_counts
 
 Count the values in a given data set, return a hash reference showing how many times each particular value is present.
@@ -2192,11 +2273,21 @@ as of version 0.07, C<write_table> determines comma and tab-separated delimiters
 
 =head2 0.12
 
+C<add_data> can also take hash of arrays
+
 C<ljoin>: Addition of C<restrict> keywords in many places; should improve CPU performance
 
 Better POD formatting, correction of output hash for README's C<add_data>
 
 C<chisq_test> can now accept hash of hashes as input
+
+new C<transpose> function for switching 2D hash keys and 2D array indices
+
+removed unused function from C helpers
+
+C<value_counts>: addition of restrict keywords in preinit, should improve CPU performance
+
+MANIFEST.skip changed to MANIFEST.SKIP to improve CPAN testing
 
 =head2 0.11
 

@@ -9,54 +9,120 @@ There **are** other modules on CPAN that can do **PARTS** of this, but this work
 
 # Functions/Subroutines
 
+Here is the completely updated section for your `README.md`. It retains the core concepts while fully documenting the new root-level Array support (AoH, AoA) and the dynamic root-level cross-merging capabilities.
+
+---
+
 ## add_data
 
-Add data to a hash
+Add data to an existing hash or array reference. This function acts as the equivalent of adding new rows, as well as an `ljoin` (described below). It dynamically infers your target data structure, handles deeply nested records, and seamlessly coerces mismatched data shapes to preserve the structural integrity of your primary reference.
+
+### Hash of Hashes (HoH)
+
+When the target is a Hash of Hashes, incoming hash keys update existing rows, and new keys create new rows.
 
     $data = { 'Jack Smith' => { age => 30 } };
+    
     $n = { 
-        'Jack Smith' => { dept => 'Engineering' },             # Update existing (Hash)
-        'Jane Doe'   => { age => 25, dept => 'Sales' },        # Add new (Hash)
-        'Bob Brown'  => [ 'age', 40, 'dept', 'IT' ],           # Add new (Array)
-        'Invalid'    => 'Not a reference'                      # Edge case safety
+        'Jack Smith' => {    # Update existing (Hash)
+            dept => 'Engineering'
+         },
+        'Jane Doe'   => { age => 25, dept => 'Sales' }, # Add new (Hash)
+        'Invalid'    => 'Not a reference'               # Edge case safety
     };
-    add_data($data, $n); # will add data to 'Jack Smith', as well as new keys for Jane and Bob.
+    
+    add_data($data, $n); 
 
-this is the equivalent of adding new rows, as well as `ljoin`, which is described below.
-
-where the resulting hash-of-hash looks like:
+**Resulting Structure:**
 
     {
-        "Bob Brown"    {
-            age    40,
-            dept   "IT"
+        "Jack Smith":  {
+            "age":  30,
+            "dept": "Engineering"
         },
-        "Jack Smith"   {
-            age    30,
-            dept   "Engineering"
-        },
-        "Jane Doe"     {
-            age    25,
-            dept   "Sales"
+        "Jane Doe":    {
+            "age":  25,
+            "dept": "Sales"
         }
     }
 
-### no pivot key/row name
+### Hash of Arrays (HoA)
 
-with no pivot key, each array index becomes a hash key, which is less useful, but necessary for completeness.  The same `@aoh` above becomes:
+When the target is a Hash of Arrays, incoming arrays are pushed onto the existing arrays, appending the new elements, similarly to R's `rbind`.
+
+    $data = { 'Project Alpha' => [ 'task1', 'task2' ] };
+    
+    $n = {
+        'Project Alpha' => [ 'task3' ],              # Appends to existing array
+        'Project Beta'  => [ 'task1', 'task2' ]      # Creates new array row
+    };
+
+    add_data($data, $n);
+
+**Resulting Structure:**
 
     {
-        0   {
-            a   "A",
-            b   "B",
-            r   "1st" (dualvar: 1)
-        },
-        1   {
-            a   "C",
-            b   "D",
-            r   "2nd" (dualvar: 2)
-        }
+        "Project Alpha": [ "task1", "task2", "task3" ],
+        "Project Beta":  [ "task1", "task2" ]
     }
+
+### Array of Hashes / Arrays (AoH / AoA)
+
+`add_data` now natively supports Array references at the root level. When targeting an Array, it iterates through the source array and merges data at the corresponding indices.
+
+    $data = [ 
+        { id => 1, name => 'Alice' } 
+    ];
+    
+    $n = [ 
+        { role => 'Admin' },             # Updates index 0
+        { id => 2, name => 'Bob' }       # Creates index 1
+    ];
+
+    add_data($data, $n);
+
+**Resulting Structure:**
+
+    [
+        { "id": 1, "name": "Alice", "role": "Admin" },
+        { "id": 2, "name": "Bob" }
+    ]
+
+### Advanced Structural Coercion & Cross-Merging
+
+`add_data` strictly enforces the primary structure of your target reference (determined by inspecting its outer and inner bounds). If you mix Array and Hash types, the function automatically coerces the incoming data to match the target.
+
+**1. Inner Coercion (Mixing Rows):**
+
+* **Target is HoH:** Source Array rows are read in pairs and converted to key-value pairs.
+* **Target is HoA:** Source Hash rows are flattened into key-value pairs and pushed onto the array.
+
+**2. Root-Level Coercion (Mixing Outer Containers):**
+
+* **Target is Array, Source is Hash:** The function evaluates the Hash keys as numeric indices. (e.g., source key `"0"` merges into target array index `[0]`). Non-numeric keys are safely ignored.
+* **Target is Hash, Source is Array:** The function converts the Array indices into stringified Hash keys. (e.g., source array index `[1]` merges into target hash key `"1"`).
+
+    # Target is an Array of Hashes
+    $data = [ { x => 10 } ];
+    
+    # Source is a mixed Hash. Keys dictate the target array index!
+    $n = {
+        '0' => { y => 20 },                 # Merges into $data->[0]
+        '1' => [ 'z', 30 ],                 # Array pair coerced to Hash, creates $data->[1]
+        'ignored' => { k => 'v' }           # Ignored: cannot map to an array index
+    };
+
+    add_data($data, $n);
+
+**Resulting Structure strictly remains an Array of Hashes:**
+
+    [
+        { "x": 10, "y": 20 },
+        { "z": 30 }
+    ]
+
+
+NB: If `add_data` is called on a completely empty target reference (e.g., `$data = {}` or `$data = []`), it will intelligently infer the required inner structure (Hashes vs Arrays) by inspecting the first valid row of the source data.
 
 ## aov
 
@@ -1261,7 +1327,7 @@ as of version 0.07, `write_table` determines comma and tab-separated delimiters 
 
 ## 0.12
 
-`add_data` can also take hash of arrays
+`add_data` can also take hash of arrays, and various mixes of data types
 
 `ljoin`: Addition of `restrict` keywords in many places; should improve CPU performance
 
@@ -1272,6 +1338,10 @@ Better POD formatting, correction of output hash for README's `add_data`
 new `transpose` function for switching 2D hash keys and 2D array indices
 
 removed unused function from C helpers
+
+`value_counts`: addition of restrict keywords in preinit, should improve CPU performance
+
+MANIFEST.skip changed to MANIFEST.SKIP to improve CPAN testing
 
 ## 0.11
 

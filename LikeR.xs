@@ -7636,84 +7636,150 @@ void add_data(h_ref, i_ref)
 	SV *h_ref;
 	SV *i_ref;
 PREINIT:
-	HV *restrict h_hv;
-	HV *restrict i_hv;
-	HE *restrict i_entry;
-	int target_mode = 0; /* 0 = Unknown, 1 = HoH, 2 = HoA */
+	short int target_root_mode = 0; // 1 = Hash, 2 = Array
+	short int i_root_mode = 0;      // 1 = Hash, 2 = Array
+	short int target_inner_mode = 0; // 0 = Unknown, 1 = Hash, 2 = Array
 CODE:
-	/* 1. Validate inputs */
-	if (!SvROK(h_ref) || SvTYPE(SvRV(h_ref)) != SVt_PVHV) {
-	  croak("First argument to add_data must be a hash reference");
+	// 1. Validate inputs (Allow both Hash and Array references at the root)
+	if (!SvROK(h_ref) || (SvTYPE(SvRV(h_ref)) != SVt_PVHV && SvTYPE(SvRV(h_ref)) != SVt_PVAV)) {
+		croak("1st argument to add_data must be a hash or array reference");
 	}
-	if (!SvROK(i_ref) || SvTYPE(SvRV(i_ref)) != SVt_PVHV) {
-	  croak("Second argument to add_data must be a hash reference");
+	if (!SvROK(i_ref) || (SvTYPE(SvRV(i_ref)) != SVt_PVHV && SvTYPE(SvRV(i_ref)) != SVt_PVAV)) {
+		croak("2nd argument to add_data must be a hash or array reference");
 	}
-	h_hv = (HV *)SvRV(h_ref);
-	i_hv = (HV *)SvRV(i_ref);
-
-	/* Determine target mode safely */
-	if (HvKEYS(h_hv) > 0) {
-	  HE **probe_array = HvARRAY(h_hv);
-	  STRLEN probe_max = HvMAX(h_hv);
-	  for (STRLEN p_idx = 0; p_idx <= probe_max && target_mode == 0; p_idx++) {
-		   for (HE *p_entry = probe_array[p_idx]; p_entry && target_mode == 0; p_entry = HeNEXT(p_entry)) {
-		       SV *val = HeVAL(p_entry);
-		       if (SvROK(val)) {
-		           if (SvTYPE(SvRV(val)) == SVt_PVHV) target_mode = 1;
-		           else if (SvTYPE(SvRV(val)) == SVt_PVAV) target_mode = 2;
-		       }
-		   }
-	  }
+	target_root_mode = (SvTYPE(SvRV(h_ref)) == SVt_PVHV) ? 1 : 2;
+	i_root_mode      = (SvTYPE(SvRV(i_ref)) == SVt_PVHV) ? 1 : 2;
+	// Probe h_ref for inner structure
+	if (target_root_mode == 1) {
+		HV *restrict h_hv = (HV *)SvRV(h_ref);
+		if (HvKEYS(h_hv) > 0) {
+			HE **restrict probe_array = HvARRAY(h_hv);
+			STRLEN probe_max = HvMAX(h_hv);
+			for (STRLEN p_idx = 0; p_idx <= probe_max && target_inner_mode == 0; p_idx++) {
+				for (HE *restrict p_entry = probe_array[p_idx]; p_entry && target_inner_mode == 0; p_entry = HeNEXT(p_entry)) {
+					SV *restrict val = HeVAL(p_entry);
+					if (SvROK(val)) {
+						if (SvTYPE(SvRV(val)) == SVt_PVHV) target_inner_mode = 1;
+						else if (SvTYPE(SvRV(val)) == SVt_PVAV) target_inner_mode = 2;
+					}
+				}
+			}
+		}
+	} else {
+		AV *restrict h_av = (AV *)SvRV(h_ref);
+		SSize_t top = av_len(h_av);
+		for (SSize_t p_idx = 0; p_idx <= top && target_inner_mode == 0; p_idx++) {
+			SV **restrict svp = av_fetch(h_av, p_idx, 0);
+			if (svp && *svp && SvROK(*svp)) {
+				if (SvTYPE(SvRV(*svp)) == SVt_PVHV) target_inner_mode = 1;
+				else if (SvTYPE(SvRV(*svp)) == SVt_PVAV) target_inner_mode = 2;
+			}
+		}
 	}
-	/* Target is empty, infer intent from source hash */
-	if (target_mode == 0 && HvKEYS(i_hv) > 0) {
-		HE **restrict probe_array = HvARRAY(i_hv);
-		STRLEN probe_max = HvMAX(i_hv);
-		for (STRLEN p_idx = 0; p_idx <= probe_max && target_mode == 0; p_idx++) {
-			for (HE *restrict p_entry = probe_array[p_idx]; p_entry && target_mode == 0; p_entry = HeNEXT(p_entry)) {
-				SV *restrict val = HeVAL(p_entry);
-				if (SvROK(val)) {
-					if (SvTYPE(SvRV(val)) == SVt_PVHV) target_mode = 1;
-					else if (SvTYPE(SvRV(val)) == SVt_PVAV) target_mode = 2;
+	// Target is empty, infer intent from source hash/array
+	if (target_inner_mode == 0) {
+		if (i_root_mode == 1) {
+			HV *restrict i_hv = (HV *)SvRV(i_ref);
+			if (HvKEYS(i_hv) > 0) {
+				HE **restrict probe_array = HvARRAY(i_hv);
+				STRLEN probe_max = HvMAX(i_hv);
+				for (STRLEN p_idx = 0; p_idx <= probe_max && target_inner_mode == 0; p_idx++) {
+					for (HE *restrict p_entry = probe_array[p_idx]; p_entry && target_inner_mode == 0; p_entry = HeNEXT(p_entry)) {
+						SV *restrict val = HeVAL(p_entry);
+						if (SvROK(val)) {
+							if (SvTYPE(SvRV(val)) == SVt_PVHV) target_inner_mode = 1;
+							else if (SvTYPE(SvRV(val)) == SVt_PVAV) target_inner_mode = 2;
+						}
+					}
+				}
+			}
+		} else {
+			AV *restrict i_av = (AV *)SvRV(i_ref);
+			SSize_t top = av_len(i_av);
+			for (SSize_t p_idx = 0; p_idx <= top && target_inner_mode == 0; p_idx++) {
+				SV **restrict svp = av_fetch(i_av, p_idx, 0);
+				if (svp && *svp && SvROK(*svp)) {
+					if (SvTYPE(SvRV(*svp)) == SVt_PVHV) target_inner_mode = 1;
+					else if (SvTYPE(SvRV(*svp)) == SVt_PVAV) target_inner_mode = 2;
 				}
 			}
 		}
 	}
-	if (target_mode == 0) { target_mode = 1; }
-	/* 2. Iterate through the SECONDARY hash ($i) */
-	hv_iterinit(i_hv);
-	while ((i_entry = hv_iternext(i_hv))) {
-		SV *restrict row_key_sv = hv_iterkeysv(i_entry);
-		SV *restrict i_row_sv   = hv_iterval(i_hv, i_entry);
+	if (target_inner_mode == 0) { target_inner_mode = 1; }
+	// 2. Iterate through the SECONDARY structure ($i) using a unified loop
+	SSize_t i_idx = 0, i_top = -1;
+	HV *restrict i_hv = NULL;
+	AV *restrict i_av = NULL;
+	if (i_root_mode == 1) {
+		i_hv = (HV *)SvRV(i_ref);
+		hv_iterinit(i_hv);
+	} else {
+		i_av = (AV *)SvRV(i_ref);
+		i_top = av_len(i_av);
+	}
+	while (1) {
+		SV *restrict row_key_sv = NULL;
+		SV *restrict i_row_sv   = NULL;
+		SSize_t current_idx = 0;
+		if (i_root_mode == 1) {
+			HE *restrict i_entry = hv_iternext(i_hv);
+			if (!i_entry) break;
+			row_key_sv = hv_iterkeysv(i_entry);
+			i_row_sv   = hv_iterval(i_hv, i_entry);
+			// Prep integer index in case target is an Array (Suppress warnings for non-numeric string keys)
+			current_idx = looks_like_number(row_key_sv) ? SvIV(row_key_sv) : -1; 
+		} else {
+			if (i_idx > i_top) break;
+			current_idx = i_idx++;
+			SV **restrict svp = av_fetch(i_av, current_idx, 0);
+			if (!svp || !*svp) continue;
+			i_row_sv = *svp;
+			// Prep string key in case target is a Hash
+			row_key_sv = sv_2mortal(newSViv(current_idx)); 
+		}
 		if (SvROK(i_row_sv)) {
-			HE *restrict h_fetch_he = hv_fetch_ent(h_hv, row_key_sv, 0, 0);
 			SV *restrict h_row_sv   = NULL;
 			HV *restrict h_row_hv   = NULL;
 			AV *restrict h_row_av   = NULL;
-			/* 3. Check if the row exists in $h */
-			if (h_fetch_he) {
-				h_row_sv = HeVAL(h_fetch_he);
-				if (SvROK(h_row_sv)) {
-					if (SvTYPE(SvRV(h_row_sv)) == SVt_PVHV) {
-						h_row_hv = (HV *)SvRV(h_row_sv);
-					} else if (SvTYPE(SvRV(h_row_sv)) == SVt_PVAV) {
-						h_row_av = (AV *)SvRV(h_row_sv);
-					}
+			// 3. Fetch from $h
+			if (target_root_mode == 1) {
+				HE *restrict h_fetch_he = hv_fetch_ent((HV *)SvRV(h_ref), row_key_sv, 0, 0);
+				if (h_fetch_he) h_row_sv = HeVAL(h_fetch_he);
+			} else {
+				if (current_idx >= 0) {
+					SV **restrict h_fetch_svp = av_fetch((AV *)SvRV(h_ref), current_idx, 0);
+					if (h_fetch_svp && *h_fetch_svp) h_row_sv = *h_fetch_svp;
 				}
-			} else {// 4. Row DOES NOT exist in $h: Create it
-				if (target_mode == 2) {
+			}
+
+			if (h_row_sv && SvROK(h_row_sv)) {
+				if (SvTYPE(SvRV(h_row_sv)) == SVt_PVHV) {
+					h_row_hv = (HV *)SvRV(h_row_sv);
+				} else if (SvTYPE(SvRV(h_row_sv)) == SVt_PVAV) {
+					h_row_av = (AV *)SvRV(h_row_sv);
+				}
+			}
+			// 4. Row DOES NOT exist (or is incompatible type): Create it matching target_inner_mode
+			if (!h_row_hv && !h_row_av) {
+				if (target_inner_mode == 2) {
 					h_row_av = newAV();
 					h_row_sv = newRV_noinc((SV *)h_row_av);
 				} else {
 					h_row_hv = newHV();
 					h_row_sv = newRV_noinc((SV *)h_row_hv);
 				}
-				hv_store_ent(h_hv, row_key_sv, h_row_sv, 0);
+				if (target_root_mode == 1) {
+					hv_store_ent((HV *)SvRV(h_ref), row_key_sv, h_row_sv, 0);
+				} else {
+					if (current_idx >= 0) {
+						av_store((AV *)SvRV(h_ref), current_idx, h_row_sv);
+					}
+				}
 			}
-
-			/* 5. Merge data */
+			// 5. Merge data across potentially mismatched inner structures
 			if (h_row_hv) {
 				if (SvTYPE(SvRV(i_row_sv)) == SVt_PVHV) {
+					// Hash into Hash (Direct copy)
 					HV *restrict i_inner_hv = (HV *)SvRV(i_row_sv);
 					HE *restrict i_inner_entry;
 					hv_iterinit(i_inner_hv);
@@ -7723,36 +7789,48 @@ CODE:
 						hv_store_ent(h_row_hv, col_key_sv, SvREFCNT_inc(col_val), 0);
 					}
 				} else if (SvTYPE(SvRV(i_row_sv)) == SVt_PVAV) {
+					// Array into Hash (Read pairs)
 					AV *restrict i_inner_av = (AV *)SvRV(i_row_sv);
-					SSize_t top_idx = av_len(i_inner_av);
-					for (SSize_t idx = 0; idx < top_idx; idx += 2) {
+					SSize_t inner_top_idx = av_len(i_inner_av);
+					for (SSize_t idx = 0; idx < inner_top_idx; idx += 2) {
 						SV **restrict key_svp = av_fetch(i_inner_av, idx, 0);
 						SV **restrict val_svp = av_fetch(i_inner_av, idx + 1, 0);
-						
-						/* COMPILER FIX: Ensure neither pointer nor value is NULL */
 						if (key_svp && *key_svp && val_svp) {
-							 SV *val_to_store = *val_svp ? *val_svp : &PL_sv_undef;
-							 hv_store_ent(h_row_hv, *key_svp, SvREFCNT_inc(val_to_store), 0);
+							SV *restrict val_to_store = *val_svp ? *val_svp : &PL_sv_undef;
+							hv_store_ent(h_row_hv, *key_svp, SvREFCNT_inc(val_to_store), 0);
 						}
 					}
 				}
 			} else if (h_row_av) {
 				if (SvTYPE(SvRV(i_row_sv)) == SVt_PVAV) {
+					// Array into Array (Direct push with non-null pointer assurance)
 					AV *restrict i_inner_av = (AV *)SvRV(i_row_sv);
-					SSize_t top_idx = av_len(i_inner_av);
-					for (SSize_t idx = 0; idx <= top_idx; ++idx) {
+					SSize_t inner_top_idx = av_len(i_inner_av);
+					for (SSize_t idx = 0; idx <= inner_top_idx; ++idx) {
 						SV **restrict val_svp = av_fetch(i_inner_av, idx, 0);
-						
-						/* COMPILER FIX: Substitute undefined array values with &PL_sv_undef */
-						/* ... inside the loop ... */
 						if (val_svp) {
 							SV *restrict val_to_push = *val_svp ? *val_svp : &PL_sv_undef;
-
-							/* Explicitly increment reference count */
 							SV *restrict sv_inc = SvREFCNT_inc(val_to_push);
-
-							/* The compiler now sees 'sv_inc' as an object that is clearly not NULL */
-							av_push(h_row_av, sv_inc);
+							if (sv_inc) {
+								av_push(h_row_av, sv_inc);
+							}
+						}
+					}
+				} else if (SvTYPE(SvRV(i_row_sv)) == SVt_PVHV) {
+					// Hash into Array (Flatten and push pairs with non-null pointer assurance)
+					HV *restrict i_inner_hv = (HV *)SvRV(i_row_sv);
+					HE *restrict i_inner_entry;
+					hv_iterinit(i_inner_hv);
+					while ((i_inner_entry = hv_iternext(i_inner_hv))) {
+						SV *restrict col_key_sv = hv_iterkeysv(i_inner_entry);
+						SV *restrict col_val    = hv_iterval(i_inner_hv, i_inner_entry);
+						if (col_key_sv && col_val) {
+							SV *restrict sv_key_inc = SvREFCNT_inc(col_key_sv);
+							SV *restrict sv_val_inc = SvREFCNT_inc(col_val);
+							if (sv_key_inc && sv_val_inc) {
+								av_push(h_row_av, sv_key_inc);
+								av_push(h_row_av, sv_val_inc);
+							}
 						}
 					}
 				}
@@ -7762,8 +7840,8 @@ CODE:
 
 SV* value_counts(...)
 PREINIT:
-	HV* counts_hv;
-	SV* arg1;
+	HV*restrict counts_hv;
+	SV*restrict arg1;
 CODE:
 // 1. CHECK FOR DATA FIRST to prevent memory leaks if we die
 	if (items == 0) {
@@ -8148,7 +8226,7 @@ CODE:
 	  }
 	}
 
-	if (n_raw == 0 || p == 0 && !is_hoa && !is_hoh) croak("prcomp: input matrix is empty or has zero columns");
+	if (n_raw == 0 || (p == 0 && !is_hoa && !is_hoh)) croak("prcomp: input matrix is empty or has zero columns");
 
 	// 4. Extract and Sort Column Names (for Hash inputs)
 	if (is_hoh) {
