@@ -1,7 +1,6 @@
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #endif
-/* --- C HELPER SECTION --- */
 #define PERL_NO_GET_CONTEXT
 #include "EXTERN.h"
 #include "perl.h"
@@ -27,8 +26,7 @@ SvROK = scalar value reference is OK
  *
  * Seeding is lazy (first call) and reads from /dev/urandom; falls back to
  * time()^PID on systems without it.  No aTHX needed: all calls are plain C.
- * PERL_NO_GET_CONTEXT is therefore not a concern here.
- */
+ * PERL_NO_GET_CONTEXT is therefore not a concern here. */
 static uint64_t sample__state  = 0;
 
 PERL_STATIC_INLINE uint64_t
@@ -46,9 +44,9 @@ static void increment_count(pTHX_ HV* counts_hv, SV* val) {
 	/* Skip null pointers or undef (non-OK) values */
 	if (!val || !SvOK(val)) return; 
 	STRLEN len;
-	/* SvPV forces stringification (so numbers become string keys) */
+	// SvPV forces stringification (so numbers become string keys)
 	char*restrict str = SvPV(val, len);
-	/* hv_fetch with lval=1 creates the key if it doesn't exist */
+	// hv_fetch with lval=1 creates the key if it doesn't exist
 	SV**restrict svp = hv_fetch(counts_hv, str, len, 1);
 	if (svp) {
 		if (!SvOK(*svp)) {
@@ -90,10 +88,8 @@ static double exact_pnt(double t, double df, double ncp) {
 	unsigned short int n_steps = 30000;
 	double step = 1.0 / n_steps;
 	double integral = 0.0, half_df = df / 2.0;
-
 	double log_coef = log(2.0) + half_df * log(half_df) - lgamma(half_df);
 	double root_half = 0.70710678118654752440; // 1 / sqrt(2)
-
 	for (unsigned short i = 1; i < n_steps; i++) {
 		double u = i * step;
 		double w = u / (1.0 - u);
@@ -160,17 +156,14 @@ static double log_choose(size_t n, size_t k) {
 // Log-space tails for non-central hypergeometric
 static void calc_tails_logspace(size_t a, size_t min_x, size_t max_x, double omega, const double *logdc, double *restrict lower_tail, double *restrict upper_tail) {
 	double max_d = -1e300, log_omega = log(omega);
-
 	for(size_t k = 0; k <= max_x - min_x; ++k) {
 	  double d_val = logdc[k] + log_omega * (min_x + k);
 	  if (d_val > max_d) max_d = d_val;
 	}
-
 	double sum_d = 0.0;
 	for(size_t k = 0; k <= max_x - min_x; ++k) {
 	  sum_d += exp(logdc[k] + log_omega * (min_x + k) - max_d);
 	}
-
 	*lower_tail = 0.0;
 	*upper_tail = 0.0;
 
@@ -196,7 +189,6 @@ static void calculate_exact_stats(size_t a, size_t b, size_t c, size_t d, double
 	for(size_t x = min_x; x <= max_x; ++x) {
 	  logdc[x - min_x] = log_choose(r1, x) + log_choose(r2, c1 - x) - denom;
 	}
-
 	// MLE
 	if (a == min_x && a == max_x) *mle_or = 1.0;
 	else if (a == min_x) *mle_or = 0.0;
@@ -223,10 +215,8 @@ static void calculate_exact_stats(size_t a, size_t b, size_t c, size_t d, double
 		}
 		*mle_or = exp(0.5 * (log_low + log_high));
 	}
-
 	*ci_low = 0.0;
 	*ci_high = INFINITY;
-
 	// Lower CI
 	if (!is_less) { 
 		double target_alpha = is_greater ? alpha : alpha / 2.0;
@@ -245,7 +235,6 @@ static void calculate_exact_stats(size_t a, size_t b, size_t c, size_t d, double
 			*ci_low = best;
 		}
 	}
-
 	// Upper CI
 	if (!is_greater) { 
 		double target_alpha = is_less ? alpha : alpha / 2.0;
@@ -272,7 +261,6 @@ static double exact_p_value(size_t a, size_t b, size_t c, size_t d, const char* 
 	size_t r1 = a + b, r2 = c + d, c1 = a + c;
 	size_t min_x = (r2 > c1) ? 0 : c1 - r2;
 	size_t max_x = (r1 < c1) ? r1 : c1;
-
 	double *restrict logdc = (double*)safemalloc((max_x - min_x + 1) * sizeof(double));
 	double denom = log_choose(r1 + r2, c1);
 	for(size_t x = min_x; x <= max_x; ++x) {
@@ -294,23 +282,19 @@ static double exact_p_value(size_t a, size_t b, size_t c, size_t d, const char* 
 	safefree(logdc);
 	return (p_val > 1.0) ? 1.0 : p_val;
 }
-/* -----------------------------------------------------------------------
- * Helpers for lm Linear Regression: OLS Matrix Math & Formula Parsing
+/*Helpers for lm Linear Regression: OLS Matrix Math & Formula Parsing
  * -----------------------------------------------------------------------
  Sweep operator for symmetric positive-definite matrices (e.g., XtX).
  This gracefully handles collinearity by bypassing aliased columns.
- Utilizes a relative tolerance check to prevent dropping micro-variance features.
-*/
+ Utilizes a relative tolerance check to prevent dropping micro-variance features.*/
 static int sweep_matrix_ols(double *restrict A, size_t n, bool *restrict aliased) {
 	int rank = 0;
 	double *restrict orig_diag = (double*)safemalloc(n * sizeof(double));
-
 	// Save the original diagonal values to use as a baseline for relative variance
 	for (size_t k = 0; k < n; k++) {
 		aliased[k] = FALSE;
 		orig_diag[k] = A[k * n + k];
 	}
-
 	for (size_t k = 0; k < n; k++) {
 		// Check pivot for collinearity using a RELATIVE tolerance
 		// (Fallback to a tiny absolute tolerance of 1e-24 to catch literal zero vectors)
@@ -1334,48 +1318,6 @@ static double qf_bisection(double p, double df1, double df2) {
 	}
 	return (low + high) / 2.0;
 }
-/* oneway_test  –  Welch / classic one-way ANOVA
- *
- * ── Mode 1: hash of groups (original behaviour) ───────────────────────────
- *
- *   my $res = oneway_test(\%groups);
- *   my $res = oneway_test(\%groups, var_equal => 1);
- *
- *   \%groups  – keys are group labels, values are array refs of numbers.
- *               Every group must have >= 2 observations.
- *
- * ── Mode 2: formula – response ~ factor ───────────────────────────────────
- *
- *   my $res = oneway_test(\%data, formula => "yield ~ ctrl");
- *   my $res = oneway_test(\%data, formula => "yield ~ ctrl", var_equal => 1);
- *
- *   \%data must contain two keys matching the formula:
- *     "yield" => [ numeric response values ... ]
- *     "ctrl"  => [ group labels (strings or numbers, same length) ... ]
- *
- *   This mirrors R's:
- *     my_data <- stack(list(yield = yield, ctrl = ctrl))
- *     oneway.test(Value ~ Group, data = my_data)
- *
- *   Absence of a formula argument falls back to Mode 1 automatically.
- *
- * ── Return value (both modes)
- *
- *   Hash ref with keys:
- *     statistic => F value
- *     num_df    => numerator degrees of freedom   (k − 1)
- *     denom_df  => denominator degrees of freedom
- *     p_value   => upper-tail p-value  P(F ≥ statistic)
- *     method    => description string
- *     k         => number of groups
- *     n         => total observations
- *     formula   => "response ~ factor"  (only present in Mode 2)
- *
- * =========================================================================
- * Integration: drop the C block above "--- XS SECTION ---", and the XS
- * block inside your MODULE … PACKAGE … PREFIX = section.
- * =========================================================================
- */
 
 typedef struct {
 	double  statistic;
@@ -1388,24 +1330,12 @@ typedef struct {
 	double  ms_within;   /* ss_within  / denom_df         */
 	int     k;           /* number of groups              */
 	IV      n;           /* total observations            */
-	int     var_equal;   /* 0 = Welch, 1 = classic        */
+	bool     var_equal;   /* 0 = Welch, 1 = classic        */
 } OneWayResult;
 
-/* ── c_oneway_test ───────────────────────────────────────────────────────
- *
- *  data      – flat C array of all observations, groups concatenated
- *  sizes     – n_i for each group (length k)
- *  k         – number of groups
- *  var_equal – 0 = Welch (default), 1 = classic equal-variance F-test
- *
- *  Mirrors R's oneway.test() arithmetic exactly.
- *  Calls pf(f, df1, df2) declared elsewhere in the .xs file.
- * ----------------------------------------------------------------------- */
 static OneWayResult
-c_oneway_test(const double *restrict data,
-              const size_t *restrict sizes,
-              size_t k,
-              int var_equal)
+c_oneway_test(const double *restrict data, const size_t *restrict sizes,
+              size_t k, bool var_equal)
 {
 	OneWayResult res;
 	res.var_equal = var_equal;
@@ -1414,14 +1344,12 @@ c_oneway_test(const double *restrict data,
 	double *restrict n_i = (double *)safemalloc(k * sizeof(double));
 	double *restrict m_i = (double *)safemalloc(k * sizeof(double));
 	double *restrict v_i = (double *)safemalloc(k * sizeof(double));
-
 	size_t offset = 0;
 	IV total_n = 0;
 	for (size_t g = 0; g < k; g++) {
 	  size_t ng  = sizes[g];
 	  n_i[g]     = (double)ng;
 	  total_n   += (IV)ng;
-
 	  double sum = 0.0;
 	  for (size_t i = 0; i < ng; i++) sum += data[offset + i];
 	  double mean = sum / (double)ng;
@@ -1435,20 +1363,16 @@ c_oneway_test(const double *restrict data,
 	  v_i[g] = ss / (double)(ng - 1);   /* ng >= 2 guaranteed by caller */
 	  offset += ng;
 	}
-
 	res.n = total_n;
-
-	/* grand mean (simple average over all obs; used only by classic branch) */
+	// grand mean (simple average over all obs; used only by classic branch)/
 	double grand_mean = 0.0;
 	for (IV i = 0; i < (IV)total_n; i++) grand_mean += data[i];
 	grand_mean /= (double)total_n;
 
 	double df1 = (double)(k - 1);
 
-	if (var_equal) {
-		/* ── Classic one-way ANOVA ─────────────────────────────────────── *
-		*  F = [Σ n_i·(m_i − ȳ)² / (k−1)]  /  [Σ (n_i−1)·v_i / (n−k)] *
-		* ─────────────────────────────────────────────────────────────── */
+	if (var_equal) {/* ── Classic one-way ANOVA
+		*  F = [Σ n_i·(m_i − ȳ)² / (k−1)]  /  [Σ (n_i−1)·v_i / (n−k)] */
 		double ssbg = 0.0, sswg = 0.0;
 		for (size_t g = 0; g < k; g++) {
 			double dm = m_i[g] - grand_mean;
@@ -1463,18 +1387,7 @@ c_oneway_test(const double *restrict data,
 		res.ss_within  = sswg;
 		res.ms_between = ssbg / df1;
 		res.ms_within  = sswg / df2;
-	} else {
-		/* ── Welch one-way (heteroscedastic) ───────────────────────────── *
-		*  w_i  = n_i / v_i                                               *
-		*  W    = Σ w_i                                                   *
-		*  m̃    = Σ(w_i·m_i) / W          (weighted grand mean)           *
-		*  tmp  = Σ[(1 − w_i/W)² / (n_i−1)] / (k²−1)                    *
-		*  F    = Σ[w_i·(m_i − m̃)²] / [(k−1)·(1 + 2·(k−2)·tmp)]        *
-		*  df2  = 1 / (3·tmp)                                             *
-		*                                                                 *
-		*  SS values use the unweighted grand mean (same as classic)      *
-		*  so the output table is always populated.                        *
-		* ─────────────────────────────────────────────────────────────── */
+	} else {// ── Welch one-way (heteroscedastic)
 		double *restrict w_i = (double *)safemalloc(k * sizeof(double));
 		double sum_w = 0.0;
 		for (size_t g = 0; g < k; g++) { w_i[g] = n_i[g] / v_i[g]; sum_w += w_i[g]; }
@@ -1508,7 +1421,7 @@ c_oneway_test(const double *restrict data,
 		res.ms_within  = (res.denom_df > 0.0) ? sswg / res.denom_df : 0.0;
 		Safefree(w_i);
 	}
-	/* upper-tail p-value  P(F ≥ statistic) */
+	// upper-tail p-value  P(F ≥ statistic)
 	res.p_value = 1 - pf(res.statistic, res.num_df, res.denom_df);
 	Safefree(n_i);    Safefree(m_i);    Safefree(v_i);
 	return res;
@@ -1519,8 +1432,7 @@ c_oneway_test(const double *restrict data,
  *  Splits "response ~ factor" into two NUL-terminated, heap-allocated
  *  strings.  Leading/trailing whitespace is stripped from each side.
  *  Returns 1 on success, 0 on failure (malformed / missing '~').
- *  Caller must Safefree() both *lhs and *rhs on success.
- * ----------------------------------------------------------------------- */
+ *  Caller must Safefree() both *lhs and *rhs on success. */
 static int
 parse_formula(const char *formula, char **lhs, char **rhs)
 {
@@ -1639,24 +1551,21 @@ static int build_groups_from_formula(pTHX_
 
 	/* validate: every group needs >= 2 observations */
 	for (size_t g = 0; g < ngroups; g++) {
-	  if (out_sizes[g] < 2) {
-		   snprintf(errbuf, errbuf_len,
-		       "formula: group '%s' has only %zu observation(s); need >= 2",
-		       group_names[g], out_sizes[g]);
-		   for (size_t gg = 0; gg < ngroups; gg++) Safefree(group_names[gg]);
-		   Safefree(group_names);  Safefree(obs_group);
-		   return 0;
-	  }
+		if (out_sizes[g] < 2) {
+			snprintf(errbuf, errbuf_len,
+				 "formula: group '%s' has only %zu observation(s); need >= 2",
+				 group_names[g], out_sizes[g]);
+			for (size_t gg = 0; gg < ngroups; gg++) Safefree(group_names[gg]);
+			Safefree(group_names);  Safefree(obs_group);
+			return 0;
+		}
 	}
-
 	/* ── fill flat output array in group order ─────────────────────── *
-	*  We compute a running write-offset per group, then scatter.      *
-	*/
+	*  We compute a running write-offset per group, then scatter*/
 	size_t *restrict write_pos = (size_t *)safemalloc(ngroups * sizeof(size_t));
 	write_pos[0] = 0;
 	for (size_t g = 1; g < ngroups; g++)
 	  write_pos[g] = write_pos[g - 1] + out_sizes[g - 1];
-
 	for (IV i = 0; i < n; i++) {
 	  SV **restrict rsv = av_fetch(response_av, i, 0);
 	  double val = (rsv && *rsv) ? SvNV(*rsv) : 0.0;
@@ -1696,52 +1605,41 @@ static int build_groups_from_formula(pTHX_
 static double c_dnorm(double x, double mu, double sigma, int give_log) {
 	// Propagate NaNs
 	if (isnan(x) || isnan(mu) || isnan(sigma)) return x + mu + sigma; 
-
 	if (sigma < 0.0) {
 	  warn("dnorm: standard deviation must be non-negative");
 	  return NAN;
 	}
 	if (isinf(sigma)) return 0.0;
 	if ((isnan(x) || isinf(x)) && mu == x) return NAN; // x-mu is NaN
-
 	// Dirac delta behavior for zero variance
 	if (sigma == 0.0) return (x == mu) ? INFINITY : 0.0;
 
 	// Standardize x
 	x = (x - mu) / sigma;
 	if (isnan(x) || isinf(x)) return 0.0;
-
 	x = fabs(x);
-
 	// Catch massive limits early to prevent math overflow
 	if (x >= 2.0 * sqrt(DBL_MAX)) return 0.0;
-
 	if (give_log) {
 		return -(M_LN_SQRT_2PI + 0.5 * x * x + log(sigma));
 	}
-
-	/* Naive formula for standard bodies */
+	// Naive formula for standard bodies
 	if (x < 5.0) {
 	  return M_1_SQRT_2PI * exp(-0.5 * x * x) / sigma;
 	}
-
 	// Underflow boundary check using IEEE float characteristics
 	if (x > sqrt(-2.0 * M_LN2 * (DBL_MIN_EXP + 1.0 - DBL_MANT_DIG))) {
 	  return 0.0;
 	}
-
 	/* Splitting x to dodge floating point inaccuracies in x^2 for large x.
 	* x = x1 + x2, where |x2| <= 2^-16
 	* trunc() safely substitutes R_forceint() */
 	double x1 = ldexp(trunc(ldexp(x, 16)), -16);
 	double x2 = x - x1;
-
 	return (M_1_SQRT_2PI / sigma) * (exp(-0.5 * x1 * x1) * exp((-0.5 * x2 - x1) * x2));
 }
-/* -----------------------------------------------------------------------
- * Helper for prcomp: Jacobi Eigenvalue Algorithm for Symmetric Matrices
- * Used to compute the eigendecomposition of the X^T X covariance matrix.
- * ----------------------------------------------------------------------- */
+/*Helper for prcomp: Jacobi Eigenvalue Algorithm for Symmetric Matrices
+ * Used to compute the eigendecomposition of the X^T X covariance matrix.*/
 static void jacobi_eigen(double *restrict A, size_t n, double *restrict d, double *restrict v) {
 	for (size_t i = 0; i < n; i++) {
 	  for (size_t j = 0; j < n; j++) v[i * n + j] = (i == j) ? 1.0 : 0.0;
@@ -1832,8 +1730,237 @@ static void jacobi_eigen(double *restrict A, size_t n, double *restrict d, doubl
 		}
 	}
 }
+
+// --- pull a numeric value out of an SV* slot
+static int c2c_num(pTHX_ SV **restrict ep, double *restrict out) {
+	if (ep && *ep && SvOK(*ep) && looks_like_number(*ep)) {
+		*out = SvNV(*ep);
+		return 1;
+	}
+	return 0;
+}
+
+static SV* c2c_call(pTHX_ SV *restrict cv, SV *restrict rv1, SV *restrict rv2) {
+	dSP;
+	ENTER;
+	SAVETMPS;
+	PUSHMARK(SP);
+	EXTEND(SP, 2);
+	PUSHs(rv1);
+	PUSHs(rv2);
+	PUTBACK;
+	unsigned int count = call_sv(cv, G_SCALAR);
+	SPAGAIN;
+	SV *restrict ret = (count > 0) ? newSVsv(POPs) : newSV(0);
+	PUTBACK;
+	FREETMPS;
+	LEAVE;
+	return ret;
+}
+// Mark col_names[idx] whose name equals (wname,wl) as an outer column; returns
+// 1 if a matching column was found, 0 otherwise.
+static int c2c_mark(SV **col_names, STRLEN *name_len, size_t ncols, const char *wname, STRLEN wl, char *is_outer) {
+	for (size_t cc = 0; cc < ncols; cc++) {
+		if (name_len[cc] == wl && memEQ(SvPVX(col_names[cc]), wname, wl)) { is_outer[cc] = 1; return 1; }
+	}
+	return 0;
+}
 // --- XS SECTION ---
 MODULE = Stats::LikeR  PACKAGE = Stats::LikeR
+
+SV *col2col(data, cmd, cols = &PL_sv_undef)
+		SV *data
+		SV *cmd
+		SV *cols
+	CODE:
+	{
+		// Only these cross the section boundaries (build -> loop -> cleanup);
+		// everything else is declared at its point of use just below.
+		SV *restrict cv_sv = NULL;
+		size_t ncols = 0, nrows = 0;
+		AV *restrict names_av = newAV();
+		double **restrict col_val = NULL;
+		char **restrict col_def = NULL;
+		// 1. resolve the command: a CODE block or a function name. Either way
+		//    we end up with the CV to call as $cv->($col_a, $col_b).
+		if (SvROK(cmd) && SvTYPE(SvRV(cmd)) == SVt_PVCV) cv_sv = SvRV(cmd);
+		else if (SvOK(cmd) && !SvROK(cmd)) {
+			STRLEN nl;
+			const char *restrict name = SvPV(cmd, nl);
+			SV *restrict fq = strstr(name, "::") ? newSVpvn(name, nl) : newSVpvf("Stats::LikeR::%s", name);
+			CV *restrict cv = get_cv(SvPV_nolen(fq), 0);
+			SvREFCNT_dec(fq);
+			if (!cv) croak("col2col: unknown function '%s'", name);
+			cv_sv = (SV*)cv;
+		} else croak("col2col: command must be a CODE ref or a function name");
+		// 2. detect the data shape and build per-column value/defined tables.
+		if (!SvROK(data)) croak("col2col: data must be a reference");
+		{
+			SV *restrict rv = SvRV(data);
+			short int kind;
+			if (SvTYPE(rv) == SVt_PVAV) kind = 1;
+			else if (SvTYPE(rv) == SVt_PVHV) {
+				HV *restrict h = (HV*)rv;
+				hv_iterinit(h);
+				HE *restrict e = hv_iternext(h);
+				if (!e) croak("col2col: empty data hash");
+				SV *restrict first = hv_iterval(h, e);
+				if (SvROK(first) && SvTYPE(SvRV(first)) == SVt_PVAV) kind = 0;
+				else if (SvROK(first) && SvTYPE(SvRV(first)) == SVt_PVHV) kind = 2;
+				else croak("col2col: hash values must be array refs (HoA) or hash refs (HoH)");
+			}
+			else croak("col2col: data must be an array ref or hash ref");
+			if (kind == 0) {
+				// hash of arrays: names = keys, rows = longest column.
+				HV *restrict h = (HV*)rv;
+				AV **restrict src = NULL;
+				HE *restrict e;
+				hv_iterinit(h);
+				while ((e = hv_iternext(h))) {
+					SV *restrict val = hv_iterval(h, e);
+					if (!SvROK(val) || SvTYPE(SvRV(val)) != SVt_PVAV) continue;
+					av_push(names_av, newSVsv(hv_iterkeysv(e)));
+					AV *restrict a = (AV*)SvRV(val);
+					size_t len = (size_t)(av_len(a) + 1);
+					if (len > nrows) nrows = len;
+					Renew(src, av_len(names_av) + 1, AV*);
+					src[av_len(names_av)] = a;
+				}
+				ncols = (size_t)(av_len(names_av) + 1);
+				Newxz(col_val, ncols ? ncols : 1, double*);
+				Newxz(col_def, ncols ? ncols : 1, char*);
+				for (size_t cc = 0; cc < ncols; cc++) {
+					Newxz(col_val[cc], nrows ? nrows : 1, double);
+					Newxz(col_def[cc], nrows ? nrows : 1, char);
+					AV *restrict a = src[cc];
+					for (size_t r = 0; r < nrows; r++) {
+						double v;
+						if (c2c_num(aTHX_ av_fetch(a, (SSize_t)r, 0), &v)) { col_val[cc][r] = v; col_def[cc][r] = 1; }
+					}
+				}
+				Safefree(src);
+			} else {
+				// row-major (array of hashes / hash of hashes): union of keys.
+				HV **restrict row_hv = NULL;
+				if (kind == 1) {
+					AV *restrict a = (AV*)rv;
+					nrows = (size_t)(av_len(a) + 1);
+					Newxz(row_hv, nrows ? nrows : 1, HV*);
+					for (size_t r = 0; r < nrows; r++) {
+						SV **restrict ep = av_fetch(a, (SSize_t)r, 0);
+						if (ep && *ep && SvROK(*ep) && SvTYPE(SvRV(*ep)) == SVt_PVHV) row_hv[r] = (HV*)SvRV(*ep);
+					}
+				} else {
+					HV *restrict h = (HV*)rv;
+					HE *restrict e;
+					size_t r = 0;
+					nrows = (size_t)HvKEYS(h);
+					Newxz(row_hv, nrows ? nrows : 1, HV*);
+					hv_iterinit(h);
+					while ((e = hv_iternext(h)) && r < nrows) {
+						SV *restrict val = hv_iterval(h, e);
+						if (SvROK(val) && SvTYPE(SvRV(val)) == SVt_PVHV) row_hv[r] = (HV*)SvRV(val);
+						r++;
+					}
+				}
+				{
+					HV *restrict seen = newHV();
+					for (size_t r = 0; r < nrows; r++) {
+						if (!row_hv[r]) continue;
+						HE *restrict e;
+						hv_iterinit(row_hv[r]);
+						while ((e = hv_iternext(row_hv[r]))) {
+							STRLEN kl;
+							char *restrict k = HePV(e, kl);
+							if (!hv_exists(seen, k, kl)) { (void)hv_store(seen, k, kl, &PL_sv_yes, 0); av_push(names_av, newSVsv(hv_iterkeysv(e))); }
+						}
+					}
+					SvREFCNT_dec((SV*)seen);
+				}
+				ncols = (size_t)(av_len(names_av) + 1);
+				Newxz(col_val, ncols ? ncols : 1, double*);
+				Newxz(col_def, ncols ? ncols : 1, char*);
+				for (size_t cc = 0; cc < ncols; cc++) {
+					STRLEN kl;
+					char *k = SvPV(*av_fetch(names_av, (SSize_t)cc, 0), kl);
+					Newxz(col_val[cc], nrows ? nrows : 1, double);
+					Newxz(col_def[cc], nrows ? nrows : 1, char);
+					for (size_t r = 0; r < nrows; r++) {
+						double v;
+						if (!row_hv[r]) continue;
+						if (c2c_num(aTHX_ hv_fetch(row_hv[r], k, kl, 0), &v)) { col_val[cc][r] = v; col_def[cc][r] = 1; }
+					}
+				}
+				Safefree(row_hv);
+			}
+		}
+		if (ncols == 0) croak("col2col: no usable columns found");
+		// 3. flatten the column names for fast hv_store keys in the loop.
+		SV **restrict col_names;
+		STRLEN *name_len;
+		Newx(col_names, ncols, SV*);
+		Newx(name_len, ncols, STRLEN);
+		for (size_t cc = 0; cc < ncols; cc++) {
+			col_names[cc] = *av_fetch(names_av, (SSize_t)cc, 0);
+			(void)SvPV(col_names[cc], name_len[cc]);
+		}
+		// 3b. decide which columns may be col_a (the outer/"from" side). With no
+		//     restriction every column qualifies; a name or list narrows it.
+		char *restrict is_outer;
+		Newxz(is_outer, ncols, char);
+		if (!SvOK(cols)) {
+			for (size_t cc = 0; cc < ncols; cc++) is_outer[cc] = 1;
+		}
+		else if (SvROK(cols) && SvTYPE(SvRV(cols)) == SVt_PVAV) {
+			AV *restrict want = (AV*)SvRV(cols);
+			SSize_t n = av_len(want) + 1;
+			for (SSize_t i = 0; i < n; i++) {
+				SV **restrict ep = av_fetch(want, i, 0);
+				STRLEN wl;
+				const char *restrict wname;
+				if (!ep || !*ep || !SvOK(*ep)) croak("col2col: column list contains an undefined entry");
+				wname = SvPV(*ep, wl);
+				if (!c2c_mark(col_names, name_len, ncols, wname, wl, is_outer)) croak("col2col: column '%s' not found in data", wname);
+			}
+		} else if (!SvROK(cols)) {
+			STRLEN wl;
+			const char *restrict wname = SvPV(cols, wl);
+			if (!c2c_mark(col_names, name_len, ncols, wname, wl, is_outer)) croak("col2col: column '%s' not found in data", wname);
+		} else croak("col2col: cols must be a column name or an array ref of names");
+		// 4. each selected column vs every other column, on pairwise complete
+		//    cases. The two columns reach the block as @_ = ($col_a, $col_b).
+		HV *restrict out_hv = newHV();
+		for (size_t a = 0; a < ncols; a++) {
+			HV *restrict inner;
+			if (!is_outer[a]) continue;
+			inner = newHV();
+			for (size_t b = 0; b < ncols; b++) {
+				AV *restrict ca, *restrict cb;
+				SV *restrict rv1, *restrict rv2, *restrict res;
+				if (a == b) continue;
+				ca = newAV();
+				cb = newAV();
+				for (size_t r = 0; r < nrows; r++) {
+					if (col_def[a][r] && col_def[b][r]) { av_push(ca, newSVnv(col_val[a][r])); av_push(cb, newSVnv(col_val[b][r])); }
+				}
+				rv1 = newRV_noinc((SV*)ca);
+				rv2 = newRV_noinc((SV*)cb);
+				res = (av_len(ca) >= 0) ? c2c_call(aTHX_ cv_sv, rv1, rv2) : newSV(0);
+				(void)hv_store(inner, SvPVX(col_names[b]), (I32)name_len[b], res, 0);
+				SvREFCNT_dec(rv1);
+				SvREFCNT_dec(rv2);
+			}
+			(void)hv_store(out_hv, SvPVX(col_names[a]), (I32)name_len[a], newRV_noinc((SV*)inner), 0);
+		}
+		// 5. tidy up.
+		for (size_t cc = 0; cc < ncols; cc++) { Safefree(col_val[cc]); Safefree(col_def[cc]); }
+		Safefree(col_val);	Safefree(col_def);
+		Safefree(col_names);	Safefree(name_len);
+		Safefree(is_outer);	SvREFCNT_dec((SV*)names_av);
+		RETVAL = newRV_noinc((SV*)out_hv);
+	}
+	OUTPUT:
+		RETVAL
 
 SV *oneway_test(data_ref, ...)
 	SV *data_ref
@@ -1855,7 +1982,7 @@ SV *oneway_test(data_ref, ...)
     HV          *restrict ret_hv;
     char         errbuf[512];
     CODE:
-	/* parse named arguments */
+	// parse named arguments
 	for (I32 ai = 1; ai + 1 < items; ai += 2) {
 		const char *restrict key = SvPV_nolen(ST(ai));
 		SV *restrict val = ST(ai + 1);
@@ -1877,7 +2004,7 @@ SV *oneway_test(data_ref, ...)
 		croak("oneway_test: first argument must be a hash or array reference");
 	}
 	if (in_av) {
-		/* MODE 3 – Array of Arrays (AoA) */
+		// MODE 3 – Array of Arrays (AoA)
 		if (formula_str != NULL)
 			croak("oneway_test: formula mode is not supported with an array of arrays");
 
@@ -1886,34 +2013,34 @@ SV *oneway_test(data_ref, ...)
 		  croak("oneway_test: need at least 2 groups, got %zu", k);
 		sizes  = (size_t *)safemalloc(k * sizeof(size_t));
 		gnames = (char  **)safemalloc(k * sizeof(char *));
-		/* first pass: sizes, total_n, and generate index names */
+		// first pass: sizes, total_n, and generate index names
 		for (size_t g = 0; g < k; g++) {
-		  SV **restrict val = av_fetch(in_av, (I32)g, 0);
-		  if (!val || !*val || !SvROK(*val) || SvTYPE(SvRV(*val)) != SVt_PVAV)
+			SV **restrict val = av_fetch(in_av, (I32)g, 0);
+			if (!val || !*val || !SvROK(*val) || SvTYPE(SvRV(*val)) != SVt_PVAV)
 				croak("oneway_test: index %zu is not an array reference", g);
-		  IV len = av_len((AV *)SvRV(*val)) + 1;
-		  if (len < 2)
+			IV len = av_len((AV *)SvRV(*val)) + 1;
+			if (len < 2)
 				 croak("oneway_test: index %zu has fewer than 2 observations", g);
-		  sizes[g] = (size_t)len;
-		  total_n += (IV)len;
-		  /* synthesize group names: "Index 0", "Index 1", ... to match 0-based index */
-		  char buf[64];
-		  snprintf(buf, sizeof(buf), "Index %zu", g);
-		  size_t klen = strlen(buf);
-		  gnames[g] = (char *)safemalloc(klen + 1);
-		  memcpy(gnames[g], buf, klen + 1);
+			sizes[g] = (size_t)len;
+			total_n += (IV)len;
+			/* synthesize group names: "Index 0", "Index 1", ... to match 0-based index */
+			char buf[64];
+			snprintf(buf, sizeof(buf), "Index %zu", g);
+			size_t klen = strlen(buf);
+			gnames[g] = (char *)safemalloc(klen + 1);
+			memcpy(gnames[g], buf, klen + 1);
 		}
-		/* second pass: fill flat array */
+		// second pass: fill flat array
 		flat = (double *)safemalloc((size_t)total_n * sizeof(double));
 		size_t offset = 0;
 		for (size_t g = 0; g < k; g++) {
-		  SV **restrict val = av_fetch(in_av, (I32)g, 0);
-		  AV *restrict av = (AV *)SvRV(*val);
-		  IV len = av_len(av) + 1;
-		  for (IV i = 0; i < len; i++) {
+			SV **restrict val = av_fetch(in_av, (I32)g, 0);
+			AV *restrict av = (AV *)SvRV(*val);
+			IV len = av_len(av) + 1;
+			for (IV i = 0; i < len; i++) {
 				SV **restrict svp = av_fetch(av, i, 0);
 				flat[offset++] = (svp && *svp) ? SvNV(*svp) : 0.0;
-		  }
+			}
 		}
 	} else if (formula_str != NULL) {/* MODE 2 – formula  "response ~ factor" */
 		if (!parse_formula(formula_str, &lhs, &rhs))
@@ -1971,7 +2098,7 @@ SV *oneway_test(data_ref, ...)
 				g++;
 			}
 		}
-		/* second pass: fill flat in the same iteration order */
+		// second pass: fill flat in the same iteration order
 		flat = (double *)safemalloc((size_t)total_n * sizeof(double));
 		{
 			size_t offset = 0;
@@ -1986,7 +2113,7 @@ SV *oneway_test(data_ref, ...)
 			}
 		}
 	}
-	/* per-group means from flat (before c_oneway_test frees nothing) */
+	// per-group means from flat (before c_oneway_test frees nothing)
 	gmeans = (double *)safemalloc(k * sizeof(double));
 	{
 		size_t offset = 0;
@@ -1997,7 +2124,7 @@ SV *oneway_test(data_ref, ...)
 			offset   += sizes[g];
 		}
 	}
-	/* run the arithmetic  */
+	// run the arithmetic
 	res = c_oneway_test(flat, sizes, k, var_equal);
 	Safefree(flat);
 	if (lhs) Safefree(lhs);
@@ -2043,12 +2170,12 @@ SV *oneway_test(data_ref, ...)
 		hv_stores(gs_hv, "size", newRV_noinc((SV *)size_hv));
 		hv_stores(ret_hv, "group_stats", newRV_noinc((SV *)gs_hv));
 	}
-	/* clean up */
+	// clean up
 	Safefree(gmeans);	Safefree(sizes);
 	for (size_t g = 0; g < k; g++) Safefree(gnames[g]);
 	Safefree(gnames);
 	if (rhs) Safefree(rhs);
-	/* freed here, after factor_name is no longer needed */
+	// freed here, after factor_name is no longer needed
 	RETVAL = newRV((SV *)ret_hv);
   OUTPUT:
   	RETVAL
@@ -2165,7 +2292,7 @@ CODE:
 	  }
 	  Safefree(comb);
 	  if (use_exact && has_ties) {
-		   warn("cannot compute exact p-value with ties; falling back to asymptotic");
+		   warn("ks_test: cannot compute exact p-value with ties; falling back to asymptotic");
 		   use_exact = FALSE;
 	  }
 	  if (use_exact) {
@@ -2329,7 +2456,7 @@ CODE:
 		else use_exact = (valid_nx < 50 && valid_ny < 50 && !has_ties);
 		
 		if (use_exact && has_ties) {
-			warn("cannot compute exact p-value with ties; falling back to approximation");
+			warn("wilcox_test: cannot compute exact p-value with ties; falling back to approximation");
 			use_exact = FALSE;
 		}
 		if (use_exact) {
@@ -2389,7 +2516,7 @@ CODE:
 			Safefree(diffs);
 			croak("not enough (non-missing) observations");
 		}
-		RankInfo *ri = (RankInfo *)safemalloc(n_nz * sizeof(RankInfo));
+		RankInfo *restrict ri = (RankInfo *)safemalloc(n_nz * sizeof(RankInfo));
 		for (size_t i = 0; i < n_nz; i++) { 
 			ri[i].val = fabs(diffs[i]); 
 			ri[i].idx = (diffs[i] > 0);
@@ -2508,27 +2635,27 @@ CODE:
 		row_keys = newAV();
 		col_keys = newAV();
 
-		HE* first_entry;
+		HE*restrict first_entry;
 		hv_iterinit(obs_hv);
 		first_entry = hv_iternext(obs_hv);
 
 		if (first_entry) {
-			SV* first_val = hv_iterval(obs_hv, first_entry);
+			SV*restrict first_val = hv_iterval(obs_hv, first_entry);
 			if (SvROK(first_val) && SvTYPE(SvRV(first_val)) == SVt_PVHV) {
 				is_2d = 1;
 				HV*restrict col_idx_map = newHV();
 				hv_iterinit(obs_hv);
-				HE* row_entry;
+				HE*restrict row_entry;
 				while ((row_entry = hv_iternext(obs_hv))) {
 					av_push(row_keys, newSVsv(hv_iterkeysv(row_entry)));
 					r++;
-					SV* inner_sv = hv_iterval(obs_hv, row_entry);
+					SV*restrict inner_sv = hv_iterval(obs_hv, row_entry);
 					if (SvROK(inner_sv) && SvTYPE(SvRV(inner_sv)) == SVt_PVHV) {
 						HV*restrict inner_hv = (HV*)SvRV(inner_sv);
-						HE* col_entry;
+						HE*restrict col_entry;
 						hv_iterinit(inner_hv);
 						while ((col_entry = hv_iternext(inner_hv))) {
-							SV* col_key = hv_iterkeysv(col_entry);
+							SV*restrict col_key = hv_iterkeysv(col_entry);
 							if (!hv_exists_ent(col_idx_map, col_key, 0)) {
 								hv_store_ent(col_idx_map, col_key, newSViv(c), 0);
 								av_push(col_keys, newSVsv(col_key));
@@ -2546,14 +2673,14 @@ CODE:
 					// FIX 1: Extract HE* instead of SV**
 					HE* inner_he = hv_fetch_ent(obs_hv, *row_key_sv, 0, 0);
 					if (inner_he) {
-						SV* inner_sv = HeVAL(inner_he);
+						SV*restrict inner_sv = HeVAL(inner_he);
 						if (SvROK(inner_sv)) {
 							HV*restrict inner_hv = (HV*)SvRV(inner_sv);
 							for (unsigned int j = 0; j < c; j++) {
 								SV**restrict col_key_sv = av_fetch(col_keys, j, 0);
 								
 								// FIX 2: Extract HE* instead of SV**
-								HE* val_he = hv_fetch_ent(inner_hv, *col_key_sv, 0, 0);
+								HE*restrict val_he = hv_fetch_ent(inner_hv, *col_key_sv, 0, 0);
 								if (val_he) {
 									obs_matrix[i][j] = SvNV(HeVAL(val_he));
 								}
@@ -2565,7 +2692,7 @@ CODE:
 			} else {
 				// 1D Hash Handling
 				hv_iterinit(obs_hv);
-				HE* row_entry;
+				HE*restrict row_entry;
 				while ((row_entry = hv_iternext(obs_hv))) {
 					av_push(col_keys, newSVsv(hv_iterkeysv(row_entry)));
 					c++;
@@ -2573,9 +2700,8 @@ CODE:
 				obs_array = (double*)safemalloc(c * sizeof(double));
 				for (unsigned int j = 0; j < c; j++) {
 					SV**restrict col_key_sv = av_fetch(col_keys, j, 0);
-					
 					// FIX 3: Extract HE* instead of SV**
-					HE* val_he = hv_fetch_ent(obs_hv, *col_key_sv, 0, 0);
+					HE*restrict val_he = hv_fetch_ent(obs_hv, *col_key_sv, 0, 0);
 					if (val_he) {
 						obs_array[j] = SvNV(HeVAL(val_he));
 					}
@@ -2592,7 +2718,7 @@ CODE:
 	double stat = 0.0, grand_total = 0.0;
 	unsigned int df = 0;
 	bool yates = (is_2d && r == 2 && c == 2) ? 1 : 0;
-	SV* expected_ref = NULL;
+	SV*restrict expected_ref = NULL;
 
 	if (is_2d) {
 		double *restrict row_sum = (double*)safemalloc(r * sizeof(double));
@@ -6076,7 +6202,6 @@ CODE:
 	p = p_exp;
 	Newx(X, n * p, double); Newx(Y, n, double);
 	Newx(valid_row_names, n, char*);
-
 	//
 	// PHASE 4: Matrix Construction & Listwise Deletion
 	//
@@ -6101,7 +6226,6 @@ CODE:
 		   }
 	  }
 	  if (!row_ok) { Safefree(row_names[i]); Safefree(row_x); continue; }
-
 	  Y[valid_n] = y_val;
 	  for (j = 0; j < p; j++) X[valid_n * p + j] = row_x[j];
 	  valid_row_names[valid_n] = row_names[i];
@@ -6121,9 +6245,7 @@ CODE:
 	  if (row_hashes) Safefree(row_hashes);
 	  croak("lm: 0 degrees of freedom (too many NAs or parameters > observations)");
 	}
-	//
 	// PHASE 5: OLS Math
-	//
 	Newxz(XtX, p * p, double);
 	for (i = 0; i < p; i++)
 	  for (j = 0; j < p; j++) {
@@ -6148,19 +6270,14 @@ CODE:
 		   beta[i] = sum;
 	  }
 	}
-	//
 	// PHASE 6: Metrics & Cleanup
-	//
 	res_hv = newHV(); coef_hv = newHV(); fitted_hv = newHV(); resid_hv = newHV();
 	summary_hv = newHV(); terms_av = newAV();
-
 	df_res = (int)valid_n - final_rank;
-
 	// rss / mss accumulated here — rse_sq computed AFTER this loop (not before)
 	double sum_y = 0.0, mss = 0.0;
 	for (i = 0; i < valid_n; i++) sum_y += Y[i];
 	double mean_y = sum_y / (double)valid_n;
-
 	for (i = 0; i < valid_n; i++) {
 	  double y_hat = 0.0;
 	  for (j = 0; j < p; j++) if (!aliased[j]) y_hat += X[i * p + j] * beta[j];
@@ -6173,7 +6290,6 @@ CODE:
 	  Safefree(valid_row_names[i]);
 	}
 	Safefree(valid_row_names);
-
 	// Single, authoritative rse_sq calculation
 	rse_sq = (df_res > 0) ? (rss / (double)df_res) : NAN;
 
@@ -6232,7 +6348,6 @@ CODE:
 	  hv_store(res_hv, "fstatistic", 10, newRV_noinc((SV*)fstat_av), 0);
 	  hv_store(res_hv, "f.pvalue",    8, newSVnv(f_pvalue),          0);
 	}
-
 	// Deep Cleanup
 	for (i = 0; i < num_terms; i++) Safefree(terms[i]); Safefree(terms);
 	for (i = 0; i < num_uniq; i++) Safefree(uniq_terms[i]); Safefree(uniq_terms);
@@ -6290,11 +6405,9 @@ SV* rnorm(...)
 	{
 	  // Auto-seed the PRNG if the Perl script hasn't done so yet
 	  AUTO_SEED_PRNG();
-
 	  size_t n = 0;
 	  double mean = 0.0, sd = 1.0;
 	  int arg_start = 0;
-
 	  // Check if the first argument is a simple integer (rnorm(33))
 	  if (items > 0 && SvIOK(ST(0)) && (items == 1 || items % 2 != 0)) {
 		   n = (unsigned int)SvUV(ST(0));
@@ -6315,9 +6428,7 @@ SV* rnorm(...)
 		   else if (strEQ(key, "sd"))   sd   = SvNV(val);
 		   else croak("rnorm: unknown argument '%s'", key);
 	  }
-
 	  if (sd < 0.0) croak("rnorm: standard deviation must be non-negative");
-
 	  AV *restrict result_av = newAV();
 	  if (n > 0) {
 		   av_extend(result_av, n - 1);
@@ -6370,7 +6481,6 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 		while ((entry = hv_iternext(input_hv))) {
 		  SV *restrict grp_name_sv = hv_iterkeysv(entry);
 		  SV *restrict arr_ref = hv_iterval(input_hv, entry);
-		  
 		  if (SvROK(arr_ref) && SvTYPE(SvRV(arr_ref)) == SVt_PVAV) {
 				AV *restrict arr = (AV*)SvRV(arr_ref);
 				size_t len = av_len(arr);
@@ -6646,7 +6756,6 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 						  Safefree(str_val);
 					 }
 				}
-				
 				if (num_levels > 0) {
 					 for (size_t l1 = 0; l1 < num_levels - 1; l1++) {
 						  for (size_t l2 = l1 + 1; l2 < num_levels; l2++) {
@@ -6824,14 +6933,12 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 		      SV **restrict col_sv = av_fetch(all_cols, c, 0);
 		      if (!col_sv || !SvOK(*col_sv)) continue;
 		      const char *restrict col_name = SvPV_nolen(*col_sv);
-		      
 		      double col_sum = 0.0;
 		      IV      col_count = 0;
 		      for (i = 0; i < tgt_n; i++) {
 		          double val = evaluate_term(aTHX_ tgt_hoa, tgt_row_hashes, i, col_name);
 		          if (!isnan(val)) { col_sum += val; col_count++; }
 		      }
-		      
 		      double col_mean = (col_count > 0) ? col_sum / col_count : NAN;
 		      hv_store(mean_hv, col_name, strlen(col_name), newSVnv(col_mean), 0);
 		      hv_store(size_hv, col_name, strlen(col_name), newSViv(col_count), 0);
@@ -7751,7 +7858,6 @@ CODE:
 					if (h_fetch_svp && *h_fetch_svp) h_row_sv = *h_fetch_svp;
 				}
 			}
-
 			if (h_row_sv && SvROK(h_row_sv)) {
 				if (SvTYPE(SvRV(h_row_sv)) == SVt_PVHV) {
 					h_row_hv = (HV *)SvRV(h_row_sv);
@@ -8328,12 +8434,10 @@ CODE:
 	for (size_t j = 0; j < p; j++) {
 	  double col_sum = 0.0;
 	  for (size_t i = 0; i < n; i++) col_sum += X_mat[i * p + j];
-	  
 	  if (center) {
 		   cen_vec[j] = col_sum / n;
 		   for (size_t i = 0; i < n; i++) X_mat[i * p + j] -= cen_vec[j];
 	  }
-
 	  if (do_scale) {
 		   double sum_sq = 0.0;
 		   for (size_t i = 0; i < n; i++) {
