@@ -1,6 +1,3 @@
-if [ -f "MANIFEST" ]; then
-	rm MANIFEST
-fi
 perl md2pod.pl
 make realclean
 git rm -r --cached blib/
