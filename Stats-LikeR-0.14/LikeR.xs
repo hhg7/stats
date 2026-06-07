@@ -3097,7 +3097,7 @@ PPCODE:
 
 	const char *restrict sep = ",";
 	bool explicit_sep = 0; // Track if delimiter was manually specified
-	const char *restrict undef_val = NULL;
+	const char *restrict undef_val = "NA";
 	SV *restrict row_names_sv = sv_2mortal(newSViv(1));
 	SV *restrict col_names_sv = NULL;
 

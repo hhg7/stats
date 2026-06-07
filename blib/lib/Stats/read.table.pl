@@ -7,6 +7,7 @@ use autodie ':default';
 use Devel::Confess;
 use DDP {output => 'STDOUT', array_max => 10, show_memsize => 1};
 use Stats::LikeR;
+use File::Temp;
 
 my $table = read_table(
 	't/HepatitisCdata.csv',
@@ -16,3 +17,18 @@ my $table = read_table(
 	}
 );
 p $table;
+my %t = (
+	A => {
+		a => 1,
+		b => 2
+	},
+	B => {
+		a => 2,
+		c => 3
+	}
+);
+my $fh = File::Temp->new( DIR => '/tmp', SUFFIX => '.tsv');
+close $fh;
+write_table(\%t, $fh->filename, 'undef.val' => '');
+my $t = read_table($fh->filename);
+p $t;
