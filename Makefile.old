@@ -60,11 +60,11 @@ DIRFILESEP = /
 DFSEP = $(DIRFILESEP)
 NAME = Stats::LikeR
 NAME_SYM = Stats_LikeR
-VERSION = 0.13
+VERSION = 0.14
 VERSION_MACRO = VERSION
-VERSION_SYM = 0_13
+VERSION_SYM = 0_14
 DEFINE_VERSION = -D$(VERSION_MACRO)=\"$(VERSION)\"
-XS_VERSION = 0.13
+XS_VERSION = 0.14
 XS_VERSION_MACRO = XS_VERSION
 XS_DEFINE_VERSION = -D$(XS_VERSION_MACRO)=\"$(XS_VERSION)\"
 INST_ARCHLIB = blib/arch
@@ -178,7 +178,6 @@ O_FILES  = LikeR.o \
 H_FILES  = ppport.h
 MAN1PODS = 
 MAN3PODS = lib/Stats/LikeR.pm \
-	lib/Stats/bu.LikeR.pm \
 	read.me.pod
 
 # Where to build things
@@ -214,7 +213,6 @@ TO_INST_PM = add_data.pl \
 	kruskal.pl \
 	ks.test.pl \
 	lib/Stats/LikeR.pm \
-	lib/Stats/bu.LikeR.pm \
 	ljoin.pl \
 	lm.pl \
 	matrix.pl \
@@ -326,7 +324,7 @@ RCS_LABEL = rcs -Nv$(VERSION_SYM): -q
 DIST_CP = best
 DIST_DEFAULT = tardist
 DISTNAME = Stats-LikeR
-DISTVNAME = Stats-LikeR-0.13
+DISTVNAME = Stats-LikeR-0.14
 
 
 # --- MakeMaker macro section:
@@ -564,11 +562,9 @@ POD2MAN = $(POD2MAN_EXE)
 
 manifypods : pure_all config  \
 	lib/Stats/LikeR.pm \
-	lib/Stats/bu.LikeR.pm \
 	read.me.pod
 	$(NOECHO) $(POD2MAN) --section=$(MAN3SECTION) --perm_rw=$(PERM_RW) -u \
 	  lib/Stats/LikeR.pm $(INST_MAN3DIR)/Stats::LikeR.$(MAN3EXT) \
-	  lib/Stats/bu.LikeR.pm $(INST_MAN3DIR)/Stats::bu.LikeR.$(MAN3EXT) \
 	  read.me.pod $(INST_MAN3DIR)/Stats::read.me.$(MAN3EXT) 
 
 
@@ -685,7 +681,7 @@ metafile : create_distdir
 	$(NOECHO) $(ECHO) '    - t' >> META_new.yml
 	$(NOECHO) $(ECHO) '    - inc' >> META_new.yml
 	$(NOECHO) $(ECHO) 'requires: {}' >> META_new.yml
-	$(NOECHO) $(ECHO) 'version: '\''0.13'\''' >> META_new.yml
+	$(NOECHO) $(ECHO) 'version: '\''0.14'\''' >> META_new.yml
 	-$(NOECHO) $(MV) META_new.yml $(DISTVNAME)/META.yml
 	$(NOECHO) $(ECHO) Generating META.json
 	$(NOECHO) $(ECHO) '{' > META_new.json
@@ -725,7 +721,7 @@ metafile : create_distdir
 	$(NOECHO) $(ECHO) '      }' >> META_new.json
 	$(NOECHO) $(ECHO) '   },' >> META_new.json
 	$(NOECHO) $(ECHO) '   "release_status" : "stable",' >> META_new.json
-	$(NOECHO) $(ECHO) '   "version" : "0.13"' >> META_new.json
+	$(NOECHO) $(ECHO) '   "version" : "0.14"' >> META_new.json
 	$(NOECHO) $(ECHO) '}' >> META_new.json
 	-$(NOECHO) $(MV) META_new.json $(DISTVNAME)/META.json
 
@@ -1101,7 +1097,7 @@ testdb_static :: static pure_all $(MAP_TARGET)
 # --- MakeMaker ppd section:
 # Creates a PPD (Perl Package Description) for a binary distribution.
 ppd :
-	$(NOECHO) $(ECHO) '<SOFTPKG NAME="Stats-LikeR" VERSION="0.13">' > Stats-LikeR.ppd
+	$(NOECHO) $(ECHO) '<SOFTPKG NAME="Stats-LikeR" VERSION="0.14">' > Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '    <ABSTRACT></ABSTRACT>' >> Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '    <AUTHOR></AUTHOR>' >> Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '    <IMPLEMENTATION>' >> Stats-LikeR.ppd
@@ -1135,7 +1131,6 @@ pm_to_blib : $(FIRST_MAKEFILE) $(TO_INST_PM)
 	  'kruskal.pl' '$(INST_LIB)/Stats/kruskal.pl' \
 	  'ks.test.pl' '$(INST_LIB)/Stats/ks.test.pl' \
 	  'lib/Stats/LikeR.pm' 'blib/lib/Stats/LikeR.pm' \
-	  'lib/Stats/bu.LikeR.pm' 'blib/lib/Stats/bu.LikeR.pm' \
 	  'ljoin.pl' '$(INST_LIB)/Stats/ljoin.pl' \
 	  'lm.pl' '$(INST_LIB)/Stats/lm.pl' \
 	  'matrix.pl' '$(INST_LIB)/Stats/matrix.pl' \

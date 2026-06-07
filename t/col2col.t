@@ -113,4 +113,31 @@ no_leaks_ok { col2col( \%hoa, 'cor' ) } 'no leaks: function-name shorthand';
 no_leaks_ok { col2col( \@aoh, sub { cor( $_[0], $_[1] ) } ) } 'no leaks: array-of-hashes input';
 no_leaks_ok { col2col( \%hoh, sub { cor( $_[0], $_[1] ) } ) } 'no leaks: hash-of-hashes input';
 no_leaks_ok { col2col( \%hoa, sub { cor( $_[0], $_[1] ) }, [ 'x', 'y' ] ) } 'no leaks: column subset';
+# 16. rm.undef (synonym rm.na) toggles the pairwise-complete-cases behaviour.
+#     It defaults to TRUE: a row that is undef in either column is dropped so
+#     both columns reach the block complete and equal length (sections 7-8).
+#     Setting it false keeps every row, passing undef through in the gaps. cols
+#     is positional, so pass it (undef is fine) ahead of any trailing option.
+my %gap2 = ( 'a' => [ 1, 2, 3, 4, 5 ], 'b' => [ 2, undef, 6, 8, 10 ] );
+my $len_block = sub { return scalar( @{ $_[0] } ) . ',' . scalar( @{ $_[1] } ) };
+my $rm_default = col2col( \%gap2, $len_block );
+is( $rm_default->{'a'}{'b'}, '4,4', 'rm.undef defaults to TRUE: gap row dropped pairwise' );
+my $rm_true = col2col( \%gap2, $len_block, undef, 'rm.undef' => 1 );
+is( $rm_true->{'a'}{'b'}, '4,4', 'rm.undef => 1 drops the gap row, like the default' );
+is_deeply( $rm_true, $rm_default, 'omitting rm.undef equals rm.undef => 1 (TRUE by default)' );
+my $rm_false = col2col( \%gap2, $len_block, undef, 'rm.undef' => 0 );
+is( $rm_false->{'a'}{'b'}, '5,5', 'rm.undef => 0 keeps all rows, so columns stay full length' );
+my $na_false = col2col( \%gap2, $len_block, undef, 'rm.na' => 0 );
+is( $na_false->{'a'}{'b'}, '5,5', 'rm.na => 0 is a synonym for rm.undef => 0' );
+is_deeply( $na_false, $rm_false, 'rm.na and rm.undef name the same option' );
+my $mark = col2col( \%gap2, sub { my ( $x, $y ) = @_; return join( ',', map { defined($_) ? 'D' : 'U' } @$y ) }, undef, 'rm.undef' => 0 );
+is( $mark->{'a'}{'b'}, 'D,U,D,D,D', 'rm.undef => 0 passes undef through in place (col b, row 2)' );
+is( $mark->{'b'}{'a'}, 'D,D,D,D,D', 'the gap-free column still has every row defined' );
+my $col_false = col2col( \%gap2, $len_block, 'a', 'rm.na' => 0 );
+is_deeply( [ sort keys %$col_false ], [ 'a' ], 'a cols restriction still applies alongside an option' );
+is( $col_false->{'a'}{'b'}, '5,5', 'cols restriction + rm.na => 0 keeps full length' );
+dies_ok { col2col( \%gap2, $len_block, undef, 'rm.bogus' => 1 ) } 'unknown option name dies';
+dies_ok { col2col( \%gap2, $len_block, undef, 'rm.undef' ) } 'an option without a value dies (odd trailing args)';
+no_leaks_ok { col2col( \%gap2, $len_block, undef, 'rm.undef' => 0 ) } 'no leaks: rm.undef => 0 keeps every row';
+no_leaks_ok { col2col( \%gap2, $len_block, 'a', 'rm.na' => 0 ) } 'no leaks: cols restriction plus rm.na => 0';
 done_testing();

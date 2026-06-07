@@ -1763,10 +1763,198 @@ static int c2c_mark(SV **col_names, STRLEN *name_len, size_t ncols, const char *
 	}
 	return 0;
 }
+// ============================================================================
+// filter() helpers — place this block in the C section, ABOVE the MODULE line
+// ============================================================================
+// Resolve the cell SV for a column in the "current row".
+//   AoH: current row is row_hv         -> hv_fetch(row_hv, col)
+//   HoA: current row is index idx      -> hv_fetch(data_hv,col) -> AV -> av_fetch(idx)
+typedef struct {
+	int is_aoh;
+	HV *restrict row_hv;
+	HV *restrict data_hv;
+	SSize_t idx;
+} filt_ctx;
+static SV* filt_cell(pTHX_ filt_ctx *restrict ctx, const char *restrict col, STRLEN clen) {
+	if (ctx->is_aoh) {
+		SV **restrict p = hv_fetch(ctx->row_hv, col, clen, 0);
+		return (p && *p) ? *p : NULL;
+	}
+	SV **restrict cp = hv_fetch(ctx->data_hv, col, clen, 0);
+	if (!cp || !*cp || !SvROK(*cp) || SvTYPE(SvRV(*cp)) != SVt_PVAV) return NULL;
+	SV **restrict vp = av_fetch((AV*)SvRV(*cp), ctx->idx, 0);
+	return (vp && *vp) ? *vp : NULL;
+}
+// Recursively interpret a Stats::LikeR::Pred tree against the current row.
+static bool filt_eval(pTHX_ SV *restrict pred, filt_ctx *restrict ctx) {
+	if (!pred || !SvROK(pred) || SvTYPE(SvRV(pred)) != SVt_PVHV)
+		croak("filter: malformed predicate (expected an object built with col())");
+	HV *restrict h = (HV*)SvRV(pred);
+	SV **restrict opp = hv_fetchs(h, "op", 0);
+	if (!opp || !*opp) croak("filter: predicate node missing 'op'");
+	const char *restrict op = SvPV_nolen(*opp);
+	if (strEQ(op, "and") || strEQ(op, "or")) {
+		SV **restrict lp = hv_fetchs(h, "l", 0);
+		SV **restrict rp = hv_fetchs(h, "r", 0);
+		bool L = filt_eval(aTHX_ (lp ? *lp : NULL), ctx);
+		if (op[0] == 'a') return L ? filt_eval(aTHX_ (rp ? *rp : NULL), ctx) : 0; // and
+		return L ? 1 : filt_eval(aTHX_ (rp ? *rp : NULL), ctx);                   // or
+	}
+	if (strEQ(op, "not")) {
+		SV **restrict lp = hv_fetchs(h, "l", 0);
+		return !filt_eval(aTHX_ (lp ? *lp : NULL), ctx);
+	}
+	SV **restrict cp = hv_fetchs(h, "col", 0);
+	SV **restrict vp = hv_fetchs(h, "val", 0);
+	if (!cp || !*cp) croak("filter: comparison node missing 'col'");
+	STRLEN clen;
+	const char *restrict col = SvPV(*cp, clen);
+	SV *restrict cell = filt_cell(aTHX_ ctx, col, clen);
+	if (!cell || !SvOK(cell)) return 0; // missing / undef cell never matches
+	SV *restrict val = (vp && *vp) ? *vp : &PL_sv_undef;
+	if (strEQ(op, ">"))  return SvNV(cell) >  SvNV(val);
+	if (strEQ(op, "<"))  return SvNV(cell) <  SvNV(val);
+	if (strEQ(op, ">=")) return SvNV(cell) >= SvNV(val);
+	if (strEQ(op, "<=")) return SvNV(cell) <= SvNV(val);
+	if (strEQ(op, "==")) return SvNV(cell) == SvNV(val);
+	if (strEQ(op, "!=")) return SvNV(cell) != SvNV(val);
+	{
+		STRLEN al, bl;
+		const char *restrict a = SvPV(cell, al);
+		const char *restrict b = SvPV(val, bl);
+		STRLEN m = al < bl ? al : bl;
+		int c = m ? memcmp(a, b, m) : 0;
+		if (c == 0) c = (al > bl) - (al < bl);
+		if (strEQ(op, "eq")) return c == 0;
+		if (strEQ(op, "ne")) return c != 0;
+		if (strEQ(op, "lt")) return c <  0;
+		if (strEQ(op, "gt")) return c >  0;
+		if (strEQ(op, "le")) return c <= 0;
+		if (strEQ(op, "ge")) return c >= 0;
+	}
+	croak("filter: unknown operator '%s' in predicate", op);
+	return 0; // not reached
+}
+// Call a coderef predicate with $_ (and $_[0]) set to the row hashref.
+static bool filt_call(pTHX_ SV *restrict cv, SV *restrict row) {
+	dSP;
+	bool keep;
+	int n;
+	ENTER; SAVETMPS;
+	SAVE_DEFSV;
+	DEFSV_set(row);
+	PUSHMARK(SP);
+	EXTEND(SP, 1);
+	PUSHs(row);
+	PUTBACK;
+	n = call_sv(cv, G_SCALAR);
+	SPAGAIN;
+	keep = (n > 0) ? (bool)SvTRUE(TOPs) : 0;
+	if (n > 0) (void)POPs;
+	PUTBACK;
+	FREETMPS; LEAVE;
+	return keep;
+}
+
 // --- XS SECTION ---
 MODULE = Stats::LikeR  PACKAGE = Stats::LikeR
 
-SV *col2col(data, cmd, cols = &PL_sv_undef)
+void filter(df, pred)
+	SV *df
+	SV *pred
+PPCODE:
+{
+	if (!df || !SvROK(df))
+		croak("filter: first argument must be a HASH or ARRAY reference (a data frame)");
+	bool is_code = (pred && SvROK(pred) && SvTYPE(SvRV(pred)) == SVt_PVCV);
+	if (!is_code && (!pred || !SvROK(pred) || SvTYPE(SvRV(pred)) != SVt_PVHV))
+		croak("filter: second argument must be a CODE ref or a predicate built with col()");
+	SV *restrict ref = SvRV(df);
+	SV *restrict result;
+	if (SvTYPE(ref) == SVt_PVAV) {
+		// ----- Array of Hashes: keep matching row hashrefs (shared, not copied) -----
+		AV *restrict in = (AV*)ref;
+		AV *restrict out = newAV();
+		SSize_t n = av_len(in) + 1, i;
+		filt_ctx ctx; ctx.is_aoh = 1; ctx.data_hv = NULL; ctx.idx = 0;
+		for (i = 0; i < n; i++) {
+			SV **restrict rp = av_fetch(in, i, 0);
+			if (!rp || !*rp || !SvROK(*rp) || SvTYPE(SvRV(*rp)) != SVt_PVHV) {
+				SvREFCNT_dec((SV*)out);
+				croak("filter: array data frame must hold HASH references; element %ld is not one", (long)i);
+			}
+			bool keep;
+			if (is_code) keep = filt_call(aTHX_ pred, *rp);
+			else { ctx.row_hv = (HV*)SvRV(*rp); keep = filt_eval(aTHX_ pred, &ctx); }
+			if (keep) av_push(out, SvREFCNT_inc_simple_NN(*rp));
+		}
+		result = newRV_noinc((SV*)out);
+	} else if (SvTYPE(ref) == SVt_PVHV) {
+		// ----- Hash of Arrays: keep matching row indices across every column -----
+		HV *restrict in = (HV*)ref;
+		I32 ncols = hv_iterinit(in);
+		if (ncols <= 0) {
+			result = newRV_noinc((SV*)newHV());
+		} else {
+			char   **restrict names = (char**)safemalloc(ncols * sizeof(char*));
+			STRLEN  *restrict nlens = (STRLEN*)safemalloc(ncols * sizeof(STRLEN));
+			AV     **restrict inav  = (AV**)safemalloc(ncols * sizeof(AV*));
+			AV     **restrict outav = (AV**)safemalloc(ncols * sizeof(AV*));
+			HV *restrict out = newHV();
+			SSize_t maxrows = 0, i;
+			I32 c = 0, cc;
+			HE *restrict e;
+			while ((e = hv_iternext(in)) && c < ncols) {
+				STRLEN klen;
+				char *restrict k = HePV(e, klen);
+				SV *restrict v = HeVAL(e);
+				if (!v || !SvROK(v) || SvTYPE(SvRV(v)) != SVt_PVAV) {
+					safefree(names); safefree(nlens); safefree(inav); safefree(outav);
+					SvREFCNT_dec((SV*)out);
+					croak("filter: hash data frame must hold ARRAY references (a hash of arrays); column '%s' is not one", k);
+				}
+				AV *restrict a = (AV*)SvRV(v);
+				SSize_t len = av_len(a) + 1;
+				if (len > maxrows) maxrows = len;
+				names[c] = k; nlens[c] = klen; inav[c] = a;
+				outav[c] = newAV();
+				hv_store(out, k, klen, newRV_noinc((SV*)outav[c]), 0);
+				c++;
+			}
+			filt_ctx ctx; ctx.is_aoh = 0; ctx.row_hv = NULL; ctx.data_hv = in;
+			for (i = 0; i < maxrows; i++) {
+				bool keep;
+				if (is_code) {
+					HV *restrict rowh = newHV();
+					for (cc = 0; cc < ncols; cc++) {
+						SV **restrict vp = av_fetch(inav[cc], i, 0);
+						hv_store(rowh, names[cc], nlens[cc], newSVsv((vp && *vp) ? *vp : &PL_sv_undef), 0);
+					}
+					SV *restrict rowrv = newRV_noinc((SV*)rowh);
+					keep = filt_call(aTHX_ pred, rowrv);
+					SvREFCNT_dec(rowrv);
+				} else {
+					ctx.idx = i;
+					keep = filt_eval(aTHX_ pred, &ctx);
+				}
+				if (keep) {
+					for (cc = 0; cc < ncols; cc++) {
+						SV **restrict vp = av_fetch(inav[cc], i, 0);
+						av_push(outav[cc], newSVsv((vp && *vp) ? *vp : &PL_sv_undef));
+					}
+				}
+			}
+			safefree(names); safefree(nlens); safefree(inav); safefree(outav);
+			result = newRV_noinc((SV*)out);
+		}
+	} else {
+		croak("filter: unsupported data frame; expected an array of hashes (AoH) or a hash of arrays (HoA)");
+	}
+	ST(0) = sv_2mortal(result);
+	XSRETURN(1);
+}
+
+SV *col2col(data, cmd, cols = &PL_sv_undef, ...)
 		SV *data
 		SV *cmd
 		SV *cols
@@ -1779,6 +1967,23 @@ SV *col2col(data, cmd, cols = &PL_sv_undef)
 		AV *restrict names_av = newAV();
 		double **restrict col_val = NULL;
 		char **restrict col_def = NULL;
+		bool rm_undef = TRUE;	// rm.undef / rm.na, see section 0
+		// 0. parse any trailing name => value options. The only one understood
+		//    is rm.undef (synonym rm.na): when true (the default) a row whose
+		//    value is undefined in either column is dropped from that pair so
+		//    both columns reach the block at equal, complete length; when false
+		//    the row is kept and the block receives undef in its place. cols is
+		//    positional, so pass it (undef is fine) before any options.
+		if (items > 3) {
+			if ((items - 3) & 1) croak("col2col: trailing options must be name => value pairs");
+			for (int oi = 3; oi < items; oi += 2) {
+				STRLEN ol;
+				const char *restrict oname = SvPV(ST(oi), ol);
+				if ((ol == 8 && memEQ(oname, "rm.undef", 8)) || (ol == 5 && memEQ(oname, "rm.na", 5)))
+					rm_undef = cBOOL(SvTRUE(ST(oi + 1)));
+				else croak("col2col: unknown option '%s'", oname);
+			}
+		}
 		// 1. resolve the command: a CODE block or a function name. Either way
 		//    we end up with the CV to call as $cv->($col_a, $col_b).
 		if (SvROK(cmd) && SvTYPE(SvRV(cmd)) == SVt_PVCV) cv_sv = SvRV(cmd);
@@ -1925,8 +2130,11 @@ SV *col2col(data, cmd, cols = &PL_sv_undef)
 			const char *restrict wname = SvPV(cols, wl);
 			if (!c2c_mark(col_names, name_len, ncols, wname, wl, is_outer)) croak("col2col: column '%s' not found in data", wname);
 		} else croak("col2col: cols must be a column name or an array ref of names");
-		// 4. each selected column vs every other column, on pairwise complete
-		//    cases. The two columns reach the block as @_ = ($col_a, $col_b).
+		// 4. each selected column vs every other column. By default we use the
+		//    pairwise complete cases (rm.undef true), so a gap in either column
+		//    drops that row; with rm.undef false every row is kept and the block
+		//    sees undef in the gaps. Either way the two columns reach the block
+		//    at equal length as @_ = ($col_a, $col_b).
 		HV *restrict out_hv = newHV();
 		for (size_t a = 0; a < ncols; a++) {
 			HV *restrict inner;
@@ -1939,7 +2147,12 @@ SV *col2col(data, cmd, cols = &PL_sv_undef)
 				ca = newAV();
 				cb = newAV();
 				for (size_t r = 0; r < nrows; r++) {
-					if (col_def[a][r] && col_def[b][r]) { av_push(ca, newSVnv(col_val[a][r])); av_push(cb, newSVnv(col_val[b][r])); }
+					if (rm_undef) {
+						if (col_def[a][r] && col_def[b][r]) { av_push(ca, newSVnv(col_val[a][r])); av_push(cb, newSVnv(col_val[b][r])); }
+					} else {
+						av_push(ca, col_def[a][r] ? newSVnv(col_val[a][r]) : newSV(0));
+						av_push(cb, col_def[b][r] ? newSVnv(col_val[b][r]) : newSV(0));
+					}
 				}
 				rv1 = newRV_noinc((SV*)ca);
 				rv2 = newRV_noinc((SV*)cb);

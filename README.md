@@ -1525,6 +1525,10 @@ Args can also be accepted:
 
 # changes
 
+## 0.14
+
+`col2col` no has `undef.rm` and a synonym `na.rm` to remove undefined values from calculations
+
 ## 0.13
 
 `read_table`: speed improvements; commented headers are now allowed

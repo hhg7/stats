@@ -60,11 +60,11 @@ DIRFILESEP = /
 DFSEP = $(DIRFILESEP)
 NAME = Stats::LikeR
 NAME_SYM = Stats_LikeR
-VERSION = 0.13
+VERSION = 0.14
 VERSION_MACRO = VERSION
-VERSION_SYM = 0_13
+VERSION_SYM = 0_14
 DEFINE_VERSION = -D$(VERSION_MACRO)=\"$(VERSION)\"
-XS_VERSION = 0.13
+XS_VERSION = 0.14
 XS_VERSION_MACRO = XS_VERSION
 XS_DEFINE_VERSION = -D$(XS_VERSION_MACRO)=\"$(XS_VERSION)\"
 INST_ARCHLIB = blib/arch
@@ -324,7 +324,7 @@ RCS_LABEL = rcs -Nv$(VERSION_SYM): -q
 DIST_CP = best
 DIST_DEFAULT = tardist
 DISTNAME = Stats-LikeR
-DISTVNAME = Stats-LikeR-0.13
+DISTVNAME = Stats-LikeR-0.14
 
 
 # --- MakeMaker macro section:
@@ -681,7 +681,7 @@ metafile : create_distdir
 	$(NOECHO) $(ECHO) '    - t' >> META_new.yml
 	$(NOECHO) $(ECHO) '    - inc' >> META_new.yml
 	$(NOECHO) $(ECHO) 'requires: {}' >> META_new.yml
-	$(NOECHO) $(ECHO) 'version: '\''0.13'\''' >> META_new.yml
+	$(NOECHO) $(ECHO) 'version: '\''0.14'\''' >> META_new.yml
 	-$(NOECHO) $(MV) META_new.yml $(DISTVNAME)/META.yml
 	$(NOECHO) $(ECHO) Generating META.json
 	$(NOECHO) $(ECHO) '{' > META_new.json
@@ -721,7 +721,7 @@ metafile : create_distdir
 	$(NOECHO) $(ECHO) '      }' >> META_new.json
 	$(NOECHO) $(ECHO) '   },' >> META_new.json
 	$(NOECHO) $(ECHO) '   "release_status" : "stable",' >> META_new.json
-	$(NOECHO) $(ECHO) '   "version" : "0.13"' >> META_new.json
+	$(NOECHO) $(ECHO) '   "version" : "0.14"' >> META_new.json
 	$(NOECHO) $(ECHO) '}' >> META_new.json
 	-$(NOECHO) $(MV) META_new.json $(DISTVNAME)/META.json
 
@@ -1097,7 +1097,7 @@ testdb_static :: static pure_all $(MAP_TARGET)
 # --- MakeMaker ppd section:
 # Creates a PPD (Perl Package Description) for a binary distribution.
 ppd :
-	$(NOECHO) $(ECHO) '<SOFTPKG NAME="Stats-LikeR" VERSION="0.13">' > Stats-LikeR.ppd
+	$(NOECHO) $(ECHO) '<SOFTPKG NAME="Stats-LikeR" VERSION="0.14">' > Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '    <ABSTRACT></ABSTRACT>' >> Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '    <AUTHOR></AUTHOR>' >> Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '    <IMPLEMENTATION>' >> Stats-LikeR.ppd
