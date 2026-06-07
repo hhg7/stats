@@ -2519,6 +2519,8 @@ C<write_table>: fix for
 
 C<write_table> gives better warnings for incorrect types of data given
 
+Numerous changes to dist.ini to improve CPAN testing, especially for Win32
+
 =head2 0.12
 
 C<add_data> can also take hash of arrays, and various mixes of data types

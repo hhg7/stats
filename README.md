@@ -1538,6 +1538,8 @@ Args can also be accepted:
 
 `write_table` gives better warnings for incorrect types of data given
 
+Numerous changes to dist.ini to improve CPAN testing, especially for Win32
+
 ## 0.12
 
 `add_data` can also take hash of arrays, and various mixes of data types
