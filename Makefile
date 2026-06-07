@@ -60,11 +60,11 @@ DIRFILESEP = /
 DFSEP = $(DIRFILESEP)
 NAME = Stats::LikeR
 NAME_SYM = Stats_LikeR
-VERSION = 0.12
+VERSION = 0.13
 VERSION_MACRO = VERSION
-VERSION_SYM = 0_12
+VERSION_SYM = 0_13
 DEFINE_VERSION = -D$(VERSION_MACRO)=\"$(VERSION)\"
-XS_VERSION = 0.12
+XS_VERSION = 0.13
 XS_VERSION_MACRO = XS_VERSION
 XS_DEFINE_VERSION = -D$(XS_VERSION_MACRO)=\"$(XS_VERSION)\"
 INST_ARCHLIB = blib/arch
@@ -165,17 +165,21 @@ BOOTDEP =
 # Handy lists of source code files:
 XS_FILES = LikeR.xs \
 	bu.LikeR.xs \
+	claude.LikeR.xs \
 	con.LikeR.xs
 C_FILES  = LikeR.c \
 	bu.LikeR.c \
+	claude.LikeR.c \
 	con.LikeR.c
 O_FILES  = LikeR.o \
 	bu.LikeR.o \
+	claude.LikeR.o \
 	con.LikeR.o
 H_FILES  = ppport.h
 MAN1PODS = 
 MAN3PODS = lib/Stats/LikeR.pm \
-	lib/Stats/bu.LikeR.pm
+	lib/Stats/bu.LikeR.pm \
+	read.me.pod
 
 # Where to build things
 INST_LIBDIR      = $(INST_LIB)/Stats
@@ -221,6 +225,7 @@ TO_INST_PM = add_data.pl \
 	power.t.test.pl \
 	prcomp.pl \
 	quantile.pl \
+	read.me.pod \
 	read.table.pl \
 	rnorm.pl \
 	runif.pl \
@@ -321,7 +326,7 @@ RCS_LABEL = rcs -Nv$(VERSION_SYM): -q
 DIST_CP = best
 DIST_DEFAULT = tardist
 DISTNAME = Stats-LikeR
-DISTVNAME = Stats-LikeR-0.12
+DISTVNAME = Stats-LikeR-0.13
 
 
 # --- MakeMaker macro section:
@@ -559,10 +564,12 @@ POD2MAN = $(POD2MAN_EXE)
 
 manifypods : pure_all config  \
 	lib/Stats/LikeR.pm \
-	lib/Stats/bu.LikeR.pm
+	lib/Stats/bu.LikeR.pm \
+	read.me.pod
 	$(NOECHO) $(POD2MAN) --section=$(MAN3SECTION) --perm_rw=$(PERM_RW) -u \
 	  lib/Stats/LikeR.pm $(INST_MAN3DIR)/Stats::LikeR.$(MAN3EXT) \
-	  lib/Stats/bu.LikeR.pm $(INST_MAN3DIR)/Stats::bu.LikeR.$(MAN3EXT) 
+	  lib/Stats/bu.LikeR.pm $(INST_MAN3DIR)/Stats::bu.LikeR.$(MAN3EXT) \
+	  read.me.pod $(INST_MAN3DIR)/Stats::read.me.$(MAN3EXT) 
 
 
 
@@ -616,6 +623,10 @@ clean :: clean_subdirs
 	  bu.LikeR.bso bu.LikeR.c \
 	  bu.LikeR.def bu.LikeR.exp \
 	  bu.LikeR.o bu.LikeR_def.old \
+	  claude.LikeR.base claude.LikeR.bs \
+	  claude.LikeR.bso claude.LikeR.c \
+	  claude.LikeR.def claude.LikeR.exp \
+	  claude.LikeR.o claude.LikeR_def.old \
 	  con.LikeR.base con.LikeR.bs \
 	  con.LikeR.bso con.LikeR.c \
 	  con.LikeR.def con.LikeR.exp \
@@ -674,7 +685,7 @@ metafile : create_distdir
 	$(NOECHO) $(ECHO) '    - t' >> META_new.yml
 	$(NOECHO) $(ECHO) '    - inc' >> META_new.yml
 	$(NOECHO) $(ECHO) 'requires: {}' >> META_new.yml
-	$(NOECHO) $(ECHO) 'version: '\''0.12'\''' >> META_new.yml
+	$(NOECHO) $(ECHO) 'version: '\''0.13'\''' >> META_new.yml
 	-$(NOECHO) $(MV) META_new.yml $(DISTVNAME)/META.yml
 	$(NOECHO) $(ECHO) Generating META.json
 	$(NOECHO) $(ECHO) '{' > META_new.json
@@ -714,7 +725,7 @@ metafile : create_distdir
 	$(NOECHO) $(ECHO) '      }' >> META_new.json
 	$(NOECHO) $(ECHO) '   },' >> META_new.json
 	$(NOECHO) $(ECHO) '   "release_status" : "stable",' >> META_new.json
-	$(NOECHO) $(ECHO) '   "version" : "0.12"' >> META_new.json
+	$(NOECHO) $(ECHO) '   "version" : "0.13"' >> META_new.json
 	$(NOECHO) $(ECHO) '}' >> META_new.json
 	-$(NOECHO) $(MV) META_new.json $(DISTVNAME)/META.json
 
@@ -1011,7 +1022,7 @@ PERL_HDRS = \
 
 $(OBJECT) : $(PERL_HDRS)
 
-LikeR.c bu.LikeR.c con.LikeR.c : $(XSUBPPDEPS)
+LikeR.c bu.LikeR.c claude.LikeR.c con.LikeR.c : $(XSUBPPDEPS)
 
 
 # --- MakeMaker makefile section:
@@ -1090,7 +1101,7 @@ testdb_static :: static pure_all $(MAP_TARGET)
 # --- MakeMaker ppd section:
 # Creates a PPD (Perl Package Description) for a binary distribution.
 ppd :
-	$(NOECHO) $(ECHO) '<SOFTPKG NAME="Stats-LikeR" VERSION="0.12">' > Stats-LikeR.ppd
+	$(NOECHO) $(ECHO) '<SOFTPKG NAME="Stats-LikeR" VERSION="0.13">' > Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '    <ABSTRACT></ABSTRACT>' >> Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '    <AUTHOR></AUTHOR>' >> Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '    <IMPLEMENTATION>' >> Stats-LikeR.ppd
@@ -1135,6 +1146,7 @@ pm_to_blib : $(FIRST_MAKEFILE) $(TO_INST_PM)
 	  'power.t.test.pl' '$(INST_LIB)/Stats/power.t.test.pl' \
 	  'prcomp.pl' '$(INST_LIB)/Stats/prcomp.pl' \
 	  'quantile.pl' '$(INST_LIB)/Stats/quantile.pl' \
+	  'read.me.pod' '$(INST_LIB)/Stats/read.me.pod' \
 	  'read.table.pl' '$(INST_LIB)/Stats/read.table.pl' \
 	  'rnorm.pl' '$(INST_LIB)/Stats/rnorm.pl' \
 	  'runif.pl' '$(INST_LIB)/Stats/runif.pl' \
