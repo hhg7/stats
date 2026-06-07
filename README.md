@@ -1529,6 +1529,8 @@ Args can also be accepted:
 
 `col2col` no has `undef.rm` and a synonym `na.rm` to remove undefined values from calculations
 
+`read_table` reads undefined values to `undef` instead of `NA`, which makes calculations easier
+
 ## 0.13
 
 `read_table`: speed improvements; commented headers are now allowed
