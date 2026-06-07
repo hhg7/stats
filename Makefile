@@ -178,7 +178,6 @@ O_FILES  = LikeR.o \
 H_FILES  = ppport.h
 MAN1PODS = 
 MAN3PODS = lib/Stats/LikeR.pm \
-	lib/Stats/bu.LikeR.pm \
 	read.me.pod
 
 # Where to build things
@@ -214,7 +213,6 @@ TO_INST_PM = add_data.pl \
 	kruskal.pl \
 	ks.test.pl \
 	lib/Stats/LikeR.pm \
-	lib/Stats/bu.LikeR.pm \
 	ljoin.pl \
 	lm.pl \
 	matrix.pl \
@@ -564,11 +562,9 @@ POD2MAN = $(POD2MAN_EXE)
 
 manifypods : pure_all config  \
 	lib/Stats/LikeR.pm \
-	lib/Stats/bu.LikeR.pm \
 	read.me.pod
 	$(NOECHO) $(POD2MAN) --section=$(MAN3SECTION) --perm_rw=$(PERM_RW) -u \
 	  lib/Stats/LikeR.pm $(INST_MAN3DIR)/Stats::LikeR.$(MAN3EXT) \
-	  lib/Stats/bu.LikeR.pm $(INST_MAN3DIR)/Stats::bu.LikeR.$(MAN3EXT) \
 	  read.me.pod $(INST_MAN3DIR)/Stats::read.me.$(MAN3EXT) 
 
 
@@ -1135,7 +1131,6 @@ pm_to_blib : $(FIRST_MAKEFILE) $(TO_INST_PM)
 	  'kruskal.pl' '$(INST_LIB)/Stats/kruskal.pl' \
 	  'ks.test.pl' '$(INST_LIB)/Stats/ks.test.pl' \
 	  'lib/Stats/LikeR.pm' 'blib/lib/Stats/LikeR.pm' \
-	  'lib/Stats/bu.LikeR.pm' 'blib/lib/Stats/bu.LikeR.pm' \
 	  'ljoin.pl' '$(INST_LIB)/Stats/ljoin.pl' \
 	  'lm.pl' '$(INST_LIB)/Stats/lm.pl' \
 	  'matrix.pl' '$(INST_LIB)/Stats/matrix.pl' \
