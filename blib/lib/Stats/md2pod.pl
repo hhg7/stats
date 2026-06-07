@@ -1,15 +1,16 @@
 #!/usr/bin/env perl
 
-use 5.042.2;
-no source::encoding;
+require 5.010;
+use feature 'say';
 use warnings FATAL => 'all';
 use autodie ':default';
-use DDP {output => 'STDOUT', array_max => 10, show_memsize => 1};
+#use DDP {output => 'STDOUT', array_max => 10, show_memsize => 1};
 use Devel::Confess 'color';
 use Markdown::To::POD 'markdown_to_pod';
 use List::MoreUtils 'first_index';
 
-sub file2string ($file) {
+sub file2string {
+	my $file = shift;
 	open my $fh, '<', $file;
 	return do { local $/; <$fh> };
 }

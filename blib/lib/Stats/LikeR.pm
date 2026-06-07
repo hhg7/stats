@@ -236,7 +236,7 @@ sub read_table {
 		my %line_hash;
 		for my $i (0 .. $#header) {
 			my $v = $line_ref->[$i];
-			$line_hash{$header[$i]} = (!defined($v) || $v eq '') ? 'NA' : $v;
+			$line_hash{$header[$i]} = (!defined($v) || $v eq '') ? undef : $v;
 		}
 		# --- APPLY FILTERS ---
 		if (@sorted_filter_flds) {
@@ -247,7 +247,7 @@ sub read_table {
 				if (!$mapped_filters{$fld}->($line_ref, \%line_hash)) { $skip = 1; last; }
 				if ($fld > 0) { # write back any mutation the callback made to $_
 					$line_ref->[$fld - 1] = $_;
-					$line_hash{$header[$fld - 1]} = (defined($_) && $_ eq '') ? 'NA' : $_;
+					$line_hash{$header[$fld - 1]} = (!defined($_) || $_ eq '') ? undef : $_;
 				}
 			}
 			return if $skip;
@@ -2361,6 +2361,12 @@ Args can also be accepted:
  write_table( 'data' => \%flat, 'file' => $f );
 
 =head1 changes
+
+=head2 0.14
+
+C<col2col> no has C<undef.rm> and a synonym C<na.rm> to remove undefined values from calculations
+
+C<read_table> reads undefined values to C<undef> instead of C<NA>, which makes calculations easier
 
 =head2 0.13
 

@@ -2085,6 +2085,12 @@ Args can also be accepted:
 
 =head1 changes
 
+=head2 0.14
+
+C<col2col> no has C<undef.rm> and a synonym C<na.rm> to remove undefined values from calculations
+
+C<read_table> reads undefined values to C<undef> instead of C<NA>, which makes calculations easier
+
 =head2 0.13
 
 C<read_table>: speed improvements; commented headers are now allowed
