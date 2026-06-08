@@ -200,6 +200,65 @@ is the equivalent of:
 
 in R
 
+## cfilter
+
+Select **columns** out of a table and return it in the same shape. A column is
+the inner (second-level) key of a **hash of hashes** or an **array of hashes**,
+or the outer key of a **hash of arrays**:
+
+    use Stats::LikeR;
+    my %hoa = ( x => [1,2,3], y => [4,5,6], z => [0,0,0] );
+    cfilter(\%hoa, keep   => ['x','y']);  # { x => [1,2,3], y => [4,5,6] }
+    cfilter(\%hoa, remove => ['z']);      # { x => [1,2,3], y => [4,5,6] }
+
+`cfilter` takes exactly one of `keep` or `remove`. `keep` returns only the
+matching columns; `remove` returns everything except them. The result is the
+same shape as the input (HoH → HoH, HoA → HoA, AoH → AoH), with cell values
+copied and the original structure left untouched.
+
+### Selecting by name
+
+Pass an array ref of column names. Naming a column that is not present in the
+data is an error (it catches typos), and a row that happens not to contain a
+kept column simply comes back without it:
+
+    my @aoh = ( { a => 1, b => 2 }, { a => 3 } );
+    cfilter(\@aoh, keep => ['b']);   # [ { b => 2 }, {} ]
+
+### Selecting by a predicate
+
+Instead of names, `keep`/`remove` accept a **predicate** — a CODE ref or a
+function name — evaluated once per column. It is called as
+
+    $predicate->($column_values, $column_name)
+
+where `$column_values` is an array ref of the column's **defined** cells (undef
+and missing cells are dropped, so functions like `sd` get clean input).
+With `keep`, columns for which the predicate is true are kept; with `remove`,
+those columns are dropped.
+
+    # Keep only the constant columns (standard deviation zero):
+    my $const = cfilter(\%hoa, keep => sub { sd($_[0]) == 0 });   # { z => [0,0,0] }
+    # Drop the constant columns instead:
+    my $varying = cfilter(\%hoa, remove => sub { sd($_[0]) == 0 }); # { x=>..., y=>... }
+    # A bare function name resolves in Stats::LikeR:: (use a package for your own):
+    cfilter(\%hoa, keep => 'some_predicate');
+
+A bare string is always treated as a **function name**, not a single column
+name, so to keep one column by name use an array ref: `keep => ['x']`.
+
+### Errors
+
+`cfilter` dies (via `croak`) when:
+
+- neither `keep` nor `remove` is given, or both are,
+- a named column is not present in the data,
+- the selector is neither an array ref nor a code ref / function name, or the
+  function name cannot be resolved,
+- an unknown option is given, or the options are not `name => value` pairs,
+- the data is not a hash/array reference of the expected shape (a hash of hash
+  refs or array refs, or an array of hash refs).
+
 ## chisq_test
 
 The `chisq_test` function performs chi-squared contingency table tests and goodness-of-fit tests. It natively accepts both arrays and hashes (1D and 2D) and mathematically mirrors R's `chisq.test()`, returning a structured hash reference of the results.

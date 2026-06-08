@@ -280,6 +280,73 @@ is the equivalent of:
 
 in R
 
+=head2 cfilter
+
+Select B<columns> out of a table and return it in the same shape. A column is
+the inner (second-level) key of a B<hash of hashes> or an B<array of hashes>,
+or the outer key of a B<hash of arrays>:
+
+ use Stats::LikeR;
+ my %hoa = ( x => [1,2,3], y => [4,5,6], z => [0,0,0] );
+ cfilter(\%hoa, keep   => ['x','y']);  # { x => [1,2,3], y => [4,5,6] }
+ cfilter(\%hoa, remove => ['z']);      # { x => [1,2,3], y => [4,5,6] }
+
+C<cfilter> takes exactly one of C<keep> or C<remove>. C<keep> returns only the
+matching columns; C<remove> returns everything except them. The result is the
+same shape as the input (HoH → HoH, HoA → HoA, AoH → AoH), with cell values
+copied and the original structure left untouched.
+
+=head3 Selecting by name
+
+Pass an array ref of column names. Naming a column that is not present in the
+data is an error (it catches typos), and a row that happens not to contain a
+kept column simply comes back without it:
+
+ my @aoh = ( { a => 1, b => 2 }, { a => 3 } );
+ cfilter(\@aoh, keep => ['b']);   # [ { b => 2 }, {} ]
+
+=head3 Selecting by a predicate
+
+Instead of names, C<keep>/C<remove> accept a B<predicate> — a CODE ref or a
+function name — evaluated once per column. It is called as
+
+ $predicate->($column_values, $column_name)
+
+where C<$column_values> is an array ref of the column's B<defined> cells (undef
+and missing cells are dropped, so functions like C<sd> get clean input).
+With C<keep>, columns for which the predicate is true are kept; with C<remove>,
+those columns are dropped.
+
+ # Keep only the constant columns (standard deviation zero):
+ my $const = cfilter(\%hoa, keep => sub { sd($_[0]) == 0 });   # { z => [0,0,0] }
+ # Drop the constant columns instead:
+ my $varying = cfilter(\%hoa, remove => sub { sd($_[0]) == 0 }); # { x=>..., y=>... }
+ # A bare function name resolves in Stats::LikeR:: (use a package for your own):
+ cfilter(\%hoa, keep => 'some_predicate');
+
+A bare string is always treated as a B<function name>, not a single column
+name, so to keep one column by name use an array ref: C<< keep =E<gt> ['x'] >>.
+
+=head3 Errors
+
+C<cfilter> dies (via C<croak>) when:
+
+=over
+
+=item * neither C<keep> nor C<remove> is given, or both are,
+
+=item * a named column is not present in the data,
+
+=item * the selector is neither an array ref nor a code ref / function name, or the
+function name cannot be resolved,
+
+=item * an unknown option is given, or the options are not C<< name =E<gt> value >> pairs,
+
+=item * the data is not a hash/array reference of the expected shape (a hash of hash
+refs or array refs, or an array of hash refs).
+
+=back
+
 =head2 chisq_test
 
 The C<chisq_test> function performs chi-squared contingency table tests and goodness-of-fit tests. It natively accepts both arrays and hashes (1D and 2D) and mathematically mirrors R's C<chisq.test()>, returning a structured hash reference of the results.
@@ -1176,6 +1243,119 @@ Data can be further broken down with filter/subs like in C<read_table>:
 where each filter filters on the columns, e.g. second hash keys.
 
 =head2 hoh2hoa
+
+Convert a B<hash of hashes> (row-major: outer key = row, inner key = column)
+into a B<hash of arrays> (column-major: key = column, value = that column's
+cells down the rows).
+
+ use Stats::LikeR;
+ 
+ my %hoh = (
+     'r1' => { 'a' => 1, 'b' => 2 },
+     'r2' => { 'a' => 3, 'b' => 4 },
+ );
+ 
+ my $hoa = hoh2hoa(\%hoh);
+
+which returns
+    {
+      a => [1, 3],
+      b => [2, 4],
+    }
+
+=head3 Behavior
+
+=over
+
+=item * B<Columns> are the union of every inner key, so a key that appears in only
+some rows still becomes a column.
+
+=item * B<Rows> are emitted in sorted outer-key (row-name) order, and that one order
+is used for every column, so the arrays stay aligned and the result is
+reproducible regardless of hash ordering.
+
+=item * B<Gaps> — a missing inner key, or a cell whose value is C<undef> — are filled
+with the fill value (see C<undef.val> below). Every column therefore has
+exactly one entry per row.
+
+=item * Values are B<copied> into the result; the original structure is left
+untouched.
+
+=item * An B<empty> hash of hashes returns an empty hash of arrays (it is not an
+error).
+
+=back
+
+=head3 Options
+
+Options are passed as trailing C<< name =E<gt> value >> pairs.
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>Option</th>
+  <th>Default</th>
+  <th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>undef.val</code></td>
+  <td><code>undef</code></td>
+  <td>Value used to fill a missing key or an <code>undef</code> cell. Any defined scalar works, including <code>0</code> and <code>''</code>. Passing <code>undef</code> keeps the default.</td>
+</tr>
+<tr>
+  <td><code>row.names</code></td>
+  <td><i>(none)</i></td>
+  <td>If set to a string, an extra column of that name is added holding the sorted row labels, aligned with the data. Dies if the name collides with an existing column.</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+ # Ragged input with an explicit fill string:
+ my %ragged = (
+     'r1' => { 'a' => 1, 'b' => 2 },
+     'r2' => { 'a' => 3, 'c' => 9 },
+ );
+ my $hoa = hoh2hoa(\%ragged, 'undef.val' => 'NA');
+ # {
+ #   a => [1,    3   ],
+ #   b => [2,    'NA'],
+ #   c => ['NA', 9   ],
+ # }
+ 
+ # Keep the row labels as a column:
+ my $with_ids = hoh2hoa(\%ragged, 'row.names' => 'id');
+ # {
+ #   id => ['r1', 'r2'],
+ #   a  => [1,    3   ],
+ #   b  => [2,    undef],
+ #   c  => [undef, 9  ],
+ # }
+
+=head3 Errors
+
+C<hoh2hoa> dies (via C<croak>) when:
+
+=over
+
+=item * the argument is not a hash reference,
+
+=item * any value in the hash is not itself a hash reference,
+
+=item * an unknown option is given, or the options are not C<< name =E<gt> value >> pairs,
+
+=item * C<row.names> is not a plain string, or it names an already-present column.
+
+=back
 
 =head2 hist
 
@@ -2247,6 +2427,12 @@ C<filter> function added for rows
 C<read_table> reads undefined values to C<undef> instead of C<NA>, which makes calculations easier
 
 C<write_table> writes undef by default as an empty string C<''>
+
+C<hoh2hoa> transforms a hash of hashes into an hash of arrays
+
+C<quantile> uses C<NV> instead of C<double> to allow for high-precision 128-bit floats to be used on quadmath machines when available: https://www.cpantesters.org/cpan/report/296f4868-631f-11f1-abba-ff15558d240b
+
+Numerous switches from C<double> to C<NV> for local precision, like above
 
 =head2 0.13
 

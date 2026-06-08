@@ -164,17 +164,11 @@ BOOTDEP =
 
 # Handy lists of source code files:
 XS_FILES = LikeR.xs \
-	bu.LikeR.xs \
-	claude.LikeR.xs \
-	con.LikeR.xs
+	bu.LikeR.xs
 C_FILES  = LikeR.c \
-	bu.LikeR.c \
-	claude.LikeR.c \
-	con.LikeR.c
+	bu.LikeR.c
 O_FILES  = LikeR.o \
-	bu.LikeR.o \
-	claude.LikeR.o \
-	con.LikeR.o
+	bu.LikeR.o
 H_FILES  = ppport.h
 MAN1PODS = 
 MAN3PODS = lib/Stats/LikeR.pm \
@@ -619,14 +613,6 @@ clean :: clean_subdirs
 	  bu.LikeR.bso bu.LikeR.c \
 	  bu.LikeR.def bu.LikeR.exp \
 	  bu.LikeR.o bu.LikeR_def.old \
-	  claude.LikeR.base claude.LikeR.bs \
-	  claude.LikeR.bso claude.LikeR.c \
-	  claude.LikeR.def claude.LikeR.exp \
-	  claude.LikeR.o claude.LikeR_def.old \
-	  con.LikeR.base con.LikeR.bs \
-	  con.LikeR.bso con.LikeR.c \
-	  con.LikeR.def con.LikeR.exp \
-	  con.LikeR.o con.LikeR_def.old \
 	  core core.*perl.*.? \
 	  core.[0-9] core.[0-9][0-9] \
 	  core.[0-9][0-9][0-9] core.[0-9][0-9][0-9][0-9] \
@@ -1018,7 +1004,7 @@ PERL_HDRS = \
 
 $(OBJECT) : $(PERL_HDRS)
 
-LikeR.c bu.LikeR.c claude.LikeR.c con.LikeR.c : $(XSUBPPDEPS)
+LikeR.c bu.LikeR.c : $(XSUBPPDEPS)
 
 
 # --- MakeMaker makefile section:

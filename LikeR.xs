@@ -1869,8 +1869,254 @@ int compare_NVs(const void *restrict a, const void *restrict b) {
 	if (arg1 > arg2) return 1;
 	return 0;
 }
+// Call a column predicate as $cv->($col_values, $col_name) and return its truth.
+// $col_values is an array ref of the column's DEFINED cells; $col_name is the
+// column key. Used so a block like sub { sd($_[0]) == 0 } can pick columns out.
+static bool cf_pred(pTHX_ SV *cv_sv, AV *vals_av, SV *name_sv) {
+	dSP;
+	bool truth = FALSE;
+	int count;
+	ENTER;
+	SAVETMPS;
+	PUSHMARK(SP);
+	XPUSHs(sv_2mortal(newRV_inc((SV*)vals_av)));
+	XPUSHs(sv_2mortal(newSVsv(name_sv)));
+	PUTBACK;
+	count = call_sv(cv_sv, G_SCALAR);
+	SPAGAIN;
+	if (count > 0) {
+		SV *restrict ret = POPs;        // POPs has a side effect: pop exactly once,
+		truth = cBOOL(SvTRUE(ret));     // because SvTRUE() may evaluate its arg twice.
+	}
+	PUTBACK;
+	FREETMPS;
+	LEAVE;
+	return truth;
+}
+
 // --- XS SECTION ---
 MODULE = Stats::LikeR  PACKAGE = Stats::LikeR
+
+SV *cfilter(data, ...)
+		SV *data
+	CODE:
+	{
+		// 0. parse the trailing options. Exactly one of keep/remove is required;
+		//    each may be an array ref of column names OR a selector that picks
+		//    columns by value: a CODE ref, or a function name resolved like
+		//    col2col (bare names live in Stats::LikeR::). keep keeps the matches,
+		//    remove drops them.
+		SV *restrict keep_sv = NULL, *restrict remove_sv = NULL;
+		if ((items - 1) & 1) croak("cfilter: trailing options must be name => value pairs");
+		for (int oi = 1; oi < items; oi += 2) {
+			STRLEN ol;
+			const char *restrict oname = SvPV(ST(oi), ol);
+			SV *restrict oval = ST(oi + 1);
+			if (ol == 4 && memEQ(oname, "keep", 4)) keep_sv = oval;
+			else if (ol == 6 && memEQ(oname, "remove", 6)) remove_sv = oval;
+			else croak("cfilter: unknown option '%s'", oname);
+		}
+		if (keep_sv && remove_sv) croak("cfilter: give either keep or remove, not both");
+		if (!keep_sv && !remove_sv) croak("cfilter: need a keep or remove argument");
+		bool removing = (remove_sv != NULL);
+		SV *restrict sel = removing ? remove_sv : keep_sv;
+		// classify the selector: an array ref of names, or a value predicate.
+		bool by_name;
+		SV *restrict cv_sv = NULL;
+		if (SvROK(sel) && SvTYPE(SvRV(sel)) == SVt_PVAV) by_name = TRUE;
+		else if ((SvROK(sel) && SvTYPE(SvRV(sel)) == SVt_PVCV) || (SvOK(sel) && !SvROK(sel))) {
+			by_name = FALSE;
+			if (SvROK(sel)) cv_sv = SvRV(sel);
+			else {
+				STRLEN nl;
+				const char *restrict name = SvPV(sel, nl);
+				SV *restrict fq = strstr(name, "::") ? newSVpvn(name, nl) : newSVpvf("Stats::LikeR::%s", name);
+				CV *restrict cv = get_cv(SvPV_nolen(fq), 0);
+				SvREFCNT_dec(fq);
+				if (!cv) croak("cfilter: unknown function '%s'", name);
+				cv_sv = (SV*)cv;
+			}
+		}
+		else croak("cfilter: keep/remove must be an array ref of column names or a code ref / function name");
+		// 1. detect the data shape: array of hashes, hash of arrays, hash of hashes.
+		if (!SvROK(data)) croak("cfilter: data must be a reference");
+		SV *restrict rv = SvRV(data);
+		short int kind; // 0 = array-of-hashes, 1 = hash-of-arrays, 2 = hash-of-hashes
+		if (SvTYPE(rv) == SVt_PVAV) kind = 0;
+		else if (SvTYPE(rv) == SVt_PVHV) {
+			HV *restrict h = (HV*)rv;
+			hv_iterinit(h);
+			HE *restrict fe = hv_iternext(h);
+			if (!fe) kind = 2; // empty hash: nothing to do, treat as HoH (empty either way)
+			else {
+				SV *restrict fv = hv_iterval(h, fe);
+				if (SvROK(fv) && SvTYPE(SvRV(fv)) == SVt_PVAV) kind = 1;
+				else if (SvROK(fv) && SvTYPE(SvRV(fv)) == SVt_PVHV) kind = 2;
+				else croak("cfilter: hash values must be array refs (HoA) or hash refs (HoH)");
+			}
+		}
+		else croak("cfilter: data must be an array ref or hash ref");
+		// 2. build the column universe, and (predicate only) each column's defined
+		//    values, so the selector can be evaluated once per column.
+		HV *restrict universe = newHV();
+		HV *restrict colvals = by_name ? NULL : newHV();
+		if (kind == 1) {
+			HV *restrict h = (HV*)rv;
+			HE *restrict e;
+			hv_iterinit(h);
+			while ((e = hv_iternext(h))) {
+				SV *restrict val = hv_iterval(h, e);
+				if (!SvROK(val) || SvTYPE(SvRV(val)) != SVt_PVAV) croak("cfilter: every value must be an array ref (hash of arrays)");
+				SV *restrict ck = hv_iterkeysv(e);
+				(void)hv_store_ent(universe, ck, newSViv(1), 0);
+				if (!by_name) {
+					AV *restrict src = (AV*)SvRV(val), *restrict vav = newAV();
+					SSize_t n = av_len(src) + 1;
+					for (SSize_t i = 0; i < n; i++) {
+						SV **restrict ep = av_fetch(src, i, 0);
+						if (ep && *ep && SvOK(*ep)) av_push(vav, newSVsv(*ep));
+					}
+					(void)hv_store_ent(colvals, ck, newRV_noinc((SV*)vav), 0);
+				}
+			}
+		} else {
+			// row-major: HoH (kind 2) iterates outer hash; AoH (kind 0) the array.
+			SSize_t nrows = (kind == 0) ? (av_len((AV*)rv) + 1) : 0;
+			HE *restrict e = NULL;
+			if (kind == 2) hv_iterinit((HV*)rv);
+			SSize_t r = 0;
+			for (;;) {
+				HV *restrict row;
+				if (kind == 0) {
+					if (r >= nrows) break;
+					SV **restrict ep = av_fetch((AV*)rv, r++, 0);
+					if (!ep || !*ep || !SvROK(*ep) || SvTYPE(SvRV(*ep)) != SVt_PVHV) croak("cfilter: array elements must be hash refs (array of hashes)");
+					row = (HV*)SvRV(*ep);
+				} else {
+					if (!(e = hv_iternext((HV*)rv))) break;
+					SV *restrict val = hv_iterval((HV*)rv, e);
+					if (!SvROK(val) || SvTYPE(SvRV(val)) != SVt_PVHV) croak("cfilter: every value must be a hash ref (hash of hashes)");
+					row = (HV*)SvRV(val);
+				}
+				HE *restrict ie;
+				hv_iterinit(row);
+				while ((ie = hv_iternext(row))) {
+					SV *restrict ck = hv_iterkeysv(ie);
+					if (!hv_exists_ent(universe, ck, 0)) {
+						(void)hv_store_ent(universe, ck, newSViv(1), 0);
+						if (!by_name) (void)hv_store_ent(colvals, ck, newRV_noinc((SV*)newAV()), 0);
+					}
+					if (!by_name) {
+						SV *restrict cell = HeVAL(ie);
+						if (SvOK(cell)) {
+							HE *restrict vhe = hv_fetch_ent(colvals, ck, 0, 0);
+							av_push((AV*)SvRV(HeVAL(vhe)), newSVsv(cell));
+						}
+					}
+				}
+			}
+		}
+		// 3. decide which columns to keep.
+		HV *restrict keepset = newHV();
+		if (by_name) {
+			AV *restrict names = (AV*)SvRV(sel);
+			HV *restrict listed = newHV();
+			SSize_t n = av_len(names) + 1;
+			for (SSize_t i = 0; i < n; i++) {
+				SV **restrict ep = av_fetch(names, i, 0);
+				if (!ep || !*ep || !SvOK(*ep)) croak("cfilter: column list contains an undefined entry");
+				if (!hv_exists_ent(universe, *ep, 0)) croak("cfilter: column '%s' not found in data", SvPV_nolen(*ep));
+				(void)hv_store_ent(listed, *ep, newSViv(1), 0);
+			}
+			HE *restrict e;
+			hv_iterinit(universe);
+			while ((e = hv_iternext(universe))) {
+				SV *restrict ck = hv_iterkeysv(e);
+				bool in_list = cBOOL(hv_exists_ent(listed, ck, 0));
+				if (removing ? !in_list : in_list) (void)hv_store_ent(keepset, ck, newSViv(1), 0);
+			}
+			SvREFCNT_dec((SV*)listed);
+		} else {
+			// Snapshot the column names BEFORE evaluating the predicate. The
+			// predicate re-enters Perl (call_sv), and holding a live hv_iternext
+			// cursor on `universe` across that call crashes on perl < 5.18. The
+			// proven col2col path likewise loops over a flat list, never a hash
+			// mid-iteration. So collect the keys first, then call per column.
+			AV *restrict cols = newAV();
+			HE *restrict e;
+			hv_iterinit(universe);
+			while ((e = hv_iternext(universe))) av_push(cols, newSVsv(hv_iterkeysv(e)));
+			SSize_t nc = av_len(cols) + 1;
+			for (SSize_t i = 0; i < nc; i++) {
+				SV *restrict ck = *av_fetch(cols, i, 0);
+				HE *restrict vhe = hv_fetch_ent(colvals, ck, 0, 0);
+				AV *restrict vals = (AV*)SvRV(HeVAL(vhe));
+				bool pass = cf_pred(aTHX_ cv_sv, vals, ck);
+				if (removing ? !pass : pass) (void)hv_store_ent(keepset, ck, newSViv(1), 0);
+			}
+			SvREFCNT_dec((SV*)cols);
+		}
+		// 4. rebuild the data in its original shape with only the kept columns.
+		//    Cell values are copied; missing cells in a row simply stay missing.
+		SV *restrict out;
+		if (kind == 1) {
+			HV *restrict outh = newHV(), *restrict h = (HV*)rv;
+			HE *restrict e;
+			hv_iterinit(h);
+			while ((e = hv_iternext(h))) {
+				SV *restrict ck = hv_iterkeysv(e);
+				if (!hv_exists_ent(keepset, ck, 0)) continue;
+				AV *restrict src = (AV*)SvRV(hv_iterval(h, e)), *restrict dst = newAV();
+				SSize_t n = av_len(src) + 1;
+				if (n > 0) av_extend(dst, n - 1);
+				for (SSize_t i = 0; i < n; i++) {
+					SV **restrict ep = av_fetch(src, i, 0);
+					av_push(dst, (ep && *ep) ? newSVsv(*ep) : newSV(0));
+				}
+				(void)hv_store_ent(outh, ck, newRV_noinc((SV*)dst), 0);
+			}
+			out = (SV*)outh;
+		} else if (kind == 2) {
+			HV *restrict outh = newHV(), *restrict h = (HV*)rv;
+			HE *restrict e;
+			hv_iterinit(h);
+			while ((e = hv_iternext(h))) {
+				SV *restrict rk = hv_iterkeysv(e);
+				HV *restrict row = (HV*)SvRV(hv_iterval(h, e)), *restrict nr = newHV();
+				HE *restrict ie;
+				hv_iterinit(row);
+				while ((ie = hv_iternext(row))) {
+					SV *restrict ck = hv_iterkeysv(ie);
+					if (!hv_exists_ent(keepset, ck, 0)) continue;
+					(void)hv_store_ent(nr, ck, newSVsv(HeVAL(ie)), 0);
+				}
+				(void)hv_store_ent(outh, rk, newRV_noinc((SV*)nr), 0);
+			}
+			out = (SV*)outh;
+		} else {
+			AV *restrict outa = newAV(), *restrict a = (AV*)rv;
+			SSize_t nrows = av_len(a) + 1;
+			for (SSize_t r = 0; r < nrows; r++) {
+				HV *restrict row = (HV*)SvRV(*av_fetch(a, r, 0)), *restrict nr = newHV();
+				HE *restrict ie;
+				hv_iterinit(row);
+				while ((ie = hv_iternext(row))) {
+					SV *restrict ck = hv_iterkeysv(ie);
+					if (!hv_exists_ent(keepset, ck, 0)) continue;
+					(void)hv_store_ent(nr, ck, newSVsv(HeVAL(ie)), 0);
+				}
+				av_push(outa, newRV_noinc((SV*)nr));
+			}
+			out = (SV*)outa;
+		}
+		// 5. tidy up the scratch tables (the result keeps its own copies).
+		SvREFCNT_dec((SV*)universe);
+		SvREFCNT_dec((SV*)keepset);
+		if (colvals) SvREFCNT_dec((SV*)colvals);
+		RETVAL = newRV_noinc(out);
+	}
+	OUTPUT:
+		RETVAL
 
 SV *hoh2hoa(data, ...)
 		SV *data
@@ -2071,7 +2317,7 @@ SV *col2col(data, cmd, cols = &PL_sv_undef, ...)
 		SV *restrict cv_sv = NULL;
 		size_t ncols = 0, nrows = 0;
 		AV *restrict names_av = newAV();
-		double **restrict col_val = NULL;
+		NV **restrict col_val = NULL;
 		char **restrict col_def = NULL;
 		bool rm_undef = TRUE;	// rm.undef / rm.na, see section 0
 		// 0. parse any trailing name => value options. The only one understood
@@ -2679,7 +2925,7 @@ CODE:
 {
 	SV *restrict x_sv = NULL, *restrict y_sv = NULL;
 	bool paired = FALSE, correct = TRUE;
-	double mu = 0.0;
+	NV mu = 0.0;
 	short int exact = -1;
 	const char *restrict alternative = "two.sided";
 	int arg_idx = 0;
@@ -2726,7 +2972,7 @@ CODE:
 		y_av = (AV*)SvRV(y_sv);
 		ny = av_len(y_av) + 1;
 	}
-	double p_value = 0.0, statistic = 0.0;
+	NV p_value = 0.0, statistic = 0.0;
 	const char *restrict method_desc = "";
 	bool use_exact = FALSE;
 	// --- TWO SAMPLE (Mann-Whitney) ---
@@ -2753,10 +2999,10 @@ CODE:
 		if (valid_ny == 0) { Safefree(ri); croak("not enough 'y' observations"); }
 		size_t total_n = valid_nx + valid_ny;
 		bool has_ties = 0;
-		double tie_adj = rank_and_count_ties(ri, total_n, &has_ties);
-		double w_rank_sum = 0.0;
+		NV tie_adj = rank_and_count_ties(ri, total_n, &has_ties);
+		NV w_rank_sum = 0.0;
 		for (size_t i = 0; i < total_n; i++) if (ri[i].idx == 1) w_rank_sum += ri[i].rank;
-		statistic = w_rank_sum - (double)valid_nx * (valid_nx + 1.0) / 2.0;
+		statistic = w_rank_sum - (NV)valid_nx * (valid_nx + 1.0) / 2.0;
 		if (exact == 1) use_exact = TRUE;
 		else if (exact == 0) use_exact = FALSE;
 		else use_exact = (valid_nx < 50 && valid_ny < 50 && !has_ties);
@@ -2766,22 +3012,22 @@ CODE:
 		}
 		if (use_exact) {
 			method_desc = "Wilcoxon rank sum exact test";
-			double p_less = exact_pwilcox(statistic, valid_nx, valid_ny);
-			double p_greater = 1.0 - exact_pwilcox(statistic - 1.0, valid_nx, valid_ny);
+			NV p_less = exact_pwilcox(statistic, valid_nx, valid_ny);
+			NV p_greater = 1.0 - exact_pwilcox(statistic - 1.0, valid_nx, valid_ny);
 
 			if (strcmp(alternative, "less") == 0) p_value = p_less;
 			else if (strcmp(alternative, "greater") == 0) p_value = p_greater;
 			else {
-				double p = (p_less < p_greater) ? p_less : p_greater;
+				NV p = (p_less < p_greater) ? p_less : p_greater;
 				p_value = 2.0 * p;
 			}
 		} else {
 			method_desc = correct ? "Wilcoxon rank sum test with continuity correction" : "Wilcoxon rank sum test";
-			double exp = (double)valid_nx * valid_ny / 2.0;
-			double var = ((double)valid_nx * valid_ny / 12.0) * ((total_n + 1.0) - tie_adj / (total_n * (total_n - 1.0)));
-			double z = statistic - exp;
+			NV exp = (NV)valid_nx * valid_ny / 2.0;
+			NV var = ((NV)valid_nx * valid_ny / 12.0) * ((total_n + 1.0) - tie_adj / (total_n * (total_n - 1.0)));
+			NV z = statistic - exp;
 			
-			double CORRECTION = 0.0;
+			NV CORRECTION = 0.0;
 			if (correct) {
 				if (strcmp(alternative, "two.sided") == 0) CORRECTION = (z > 0 ? 0.5 : -0.5);
 				else if (strcmp(alternative, "greater") == 0) CORRECTION = 0.5;
@@ -2796,23 +3042,23 @@ CODE:
 		Safefree(ri);
 	} else { // --- ONE SAMPLE / PAIRED ---
 		if (paired && (!y_av || nx != ny)) croak("'x' and 'y' must have the same length for paired test");
-		double *restrict diffs = (double *)safemalloc(nx * sizeof(double));
+		NV *restrict diffs = (NV *)safemalloc(nx * sizeof(NV));
 		size_t n_nz = 0;
 		bool has_zeroes = FALSE;
 		for (size_t i = 0; i < nx; i++) {
 			SV**restrict x_el = av_fetch(x_av, i, 0);
 			if (!x_el || !SvOK(*x_el) || !looks_like_number(*x_el)) continue;
-			double dx = SvNV(*x_el);
+			NV dx = SvNV(*x_el);
 
 			if (paired) {
 				SV**restrict y_el = av_fetch(y_av, i, 0);
 				if (!y_el || !SvOK(*y_el) || !looks_like_number(*y_el)) continue;
-				double dy = SvNV(*y_el);
-				double d = dx - dy - mu;
+				NV dy = SvNV(*y_el);
+				NV d = dx - dy - mu;
 				if (d == 0.0) has_zeroes = TRUE; // Drop exact zeroes
 				else diffs[n_nz++] = d;
 			} else {
-				double d = dx - mu;
+				NV d = dx - mu;
 				if (d == 0.0) has_zeroes = TRUE;
 				else diffs[n_nz++] = d;
 			}
@@ -2827,7 +3073,7 @@ CODE:
 			ri[i].idx = (diffs[i] > 0);
 		}
 		bool has_ties = 0;
-		double tie_adj = rank_and_count_ties(ri, n_nz, &has_ties);
+		NV tie_adj = rank_and_count_ties(ri, n_nz, &has_ties);
 		statistic = 0.0;
 		for (size_t i = 0; i < n_nz; i++) {
 			if (ri[i].idx) statistic += ri[i].rank;
