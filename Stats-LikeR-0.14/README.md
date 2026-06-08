@@ -830,79 +830,6 @@ where each filter filters on the columns, e.g. second hash keys.
 
 ## hoh2hoa
 
-Convert a **hash of hashes** (row-major: outer key = row, inner key = column)
-into a **hash of arrays** (column-major: key = column, value = that column's
-cells down the rows).
-
-    use Stats::LikeR;
-
-    my %hoh = (
-        'r1' => { 'a' => 1, 'b' => 2 },
-        'r2' => { 'a' => 3, 'b' => 4 },
-    );
-    
-    my $hoa = hoh2hoa(\%hoh);
-
-which returns
-    {
-      a => [1, 3],
-      b => [2, 4],
-    }
-
-### Behavior
-
-- **Columns** are the union of every inner key, so a key that appears in only
-  some rows still becomes a column.
-- **Rows** are emitted in sorted outer-key (row-name) order, and that one order
-  is used for every column, so the arrays stay aligned and the result is
-  reproducible regardless of hash ordering.
-- **Gaps** — a missing inner key, or a cell whose value is `undef` — are filled
-  with the fill value (see `undef.val` below). Every column therefore has
-  exactly one entry per row.
-- Values are **copied** into the result; the original structure is left
-  untouched.
-- An **empty** hash of hashes returns an empty hash of arrays (it is not an
-  error).
-
-### Options
-
-Options are passed as trailing `name => value` pairs.
-
-| Option | Default | Meaning |
-| --- | --- | --- |
-| `undef.val` | `undef` | Value used to fill a missing key or an `undef` cell. Any defined scalar works, including `0` and `''`. Passing `undef` keeps the default. |
-| `row.names` | *(none)* | If set to a string, an extra column of that name is added holding the sorted row labels, aligned with the data. Dies if the name collides with an existing column. |
-
-    # Ragged input with an explicit fill string:
-    my %ragged = (
-        'r1' => { 'a' => 1, 'b' => 2 },
-        'r2' => { 'a' => 3, 'c' => 9 },
-    );
-    my $hoa = hoh2hoa(\%ragged, 'undef.val' => 'NA');
-    # {
-    #   a => [1,    3   ],
-    #   b => [2,    'NA'],
-    #   c => ['NA', 9   ],
-    # }
-    
-    # Keep the row labels as a column:
-    my $with_ids = hoh2hoa(\%ragged, 'row.names' => 'id');
-    # {
-    #   id => ['r1', 'r2'],
-    #   a  => [1,    3   ],
-    #   b  => [2,    undef],
-    #   c  => [undef, 9  ],
-    # }
-
-### Errors
-
-`hoh2hoa` dies (via `croak`) when:
-
-- the argument is not a hash reference,
-- any value in the hash is not itself a hash reference,
-- an unknown option is given, or the options are not `name => value` pairs,
-- `row.names` is not a plain string, or it names an already-present column.
-
 ## hist
 
 Computes the histogram of the given data values, operating in single $O(N)$ pass performance. It returns the bin counts, computed breaks, midpoints, and density. 
@@ -1696,12 +1623,6 @@ Args can also be accepted:
 `read_table` reads undefined values to `undef` instead of `NA`, which makes calculations easier
 
 `write_table` writes undef by default as an empty string `''`
-
-`hoh2hoa` transforms a hash of hashes into an hash of arrays
-
-`quantile` uses `NV` instead of `double` to allow for high-precision 128-bit floats to be used on quadmath machines when available: https://www.cpantesters.org/cpan/report/296f4868-631f-11f1-abba-ff15558d240b
-
-Numerous switches from `double` to `NV` for local precision, like above
 
 ## 0.13
 

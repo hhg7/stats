@@ -1454,10 +1454,6 @@ no_leaks_ok {
 @ans = (5.9, 10.80, 25.50);
 my @quantile_keys = ('5%', '10%', '25%');
 foreach my $idx (0..$#ans) {
-	if (!defined $quantile->{$quantile_keys[$idx]}) {
-		my $available = join(", ", keys %$quantile);
-		die "Missing key '$key' in quantile hash. Available keys: $available";
-	}
 	is_approx($quantile->{$quantile_keys[$idx]}, $ans[$idx], "quantile: $quantile_keys[$idx]", 10**-14);
 }
 # works without "x" argument

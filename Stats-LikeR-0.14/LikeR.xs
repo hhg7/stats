@@ -1638,62 +1638,62 @@ static double c_dnorm(double x, double mu, double sigma, int give_log) {
 }
 /*Helper for prcomp: Jacobi Eigenvalue Algorithm for Symmetric Matrices
  * Used to compute the eigendecomposition of the X^T X covariance matrix.*/
-static void jacobi_eigen(NV *restrict A, size_t n, NV *restrict d, NV *restrict v) {
+static void jacobi_eigen(double *restrict A, size_t n, double *restrict d, double *restrict v) {
 	for (size_t i = 0; i < n; i++) {
 	  for (size_t j = 0; j < n; j++) v[i * n + j] = (i == j) ? 1.0 : 0.0;
 	  d[i] = A[i * n + i];
 	}
-	NV *restrict b = (NV*)safemalloc(n * sizeof(NV));
-	NV *restrict z = (NV*)safemalloc(n * sizeof(NV));
+	double *restrict b = (double*)safemalloc(n * sizeof(double));
+	double *restrict z = (double*)safemalloc(n * sizeof(double));
 	for (size_t i = 0; i < n; i++) { b[i] = d[i]; z[i] = 0.0; }
 	for (int iter = 1; iter <= 50; iter++) {
-		NV sm = 0.0;
+		double sm = 0.0;
 		for (size_t i = 0; i < n - 1; i++) {
 			for (size_t j = i + 1; j < n; j++) sm += fabs(A[i * n + j]);
 		}
 		if (sm == 0.0) break;
-		NV tresh = (iter < 4) ? 0.2 * sm / (n * n) : 0.0;
+		double tresh = (iter < 4) ? 0.2 * sm / (n * n) : 0.0;
 		for (size_t i = 0; i < n - 1; i++) {
 			for (size_t j = i + 1; j < n; j++) {
-				NV g = 100.0 * fabs(A[i * n + j]);
+				double g = 100.0 * fabs(A[i * n + j]);
 				if (iter > 4 && fabs(d[i]) + g == fabs(d[i]) && fabs(d[j]) + g == fabs(d[j])) {
 					A[i * n + j] = 0.0;
 				} else if (fabs(A[i * n + j]) > tresh) {
-					NV h = d[j] - d[i];
-					NV t;
+					double h = d[j] - d[i];
+					double t;
 					if (fabs(h) + g == fabs(h)) {
 						t = A[i * n + j] / h;
 					} else {
-						NV theta = 0.5 * h / A[i * n + j];
+						double theta = 0.5 * h / A[i * n + j];
 						t = 1.0 / (fabs(theta) + sqrt(1.0 + theta * theta));
 						if (theta < 0.0) t = -t;
 					}
-					NV c = 1.0 / sqrt(1.0 + t * t);
-					NV s = t * c;
-					NV tau = s / (1.0 + c);
-					NV h_t = t * A[i * n + j];
+					double c = 1.0 / sqrt(1.0 + t * t);
+					double s = t * c;
+					double tau = s / (1.0 + c);
+					double h_t = t * A[i * n + j];
 					z[i] -= h_t;
 					z[j] += h_t;
 					d[i] -= h_t;
 					d[j] += h_t;
 					A[i * n + j] = 0.0;
 					for (size_t k = 0; k < i; k++) {
-						g = A[k * n + i]; NV h_val = A[k * n + j];
+						g = A[k * n + i]; double h_val = A[k * n + j];
 						A[k * n + i] = g - s * (h_val + g * tau);
 						A[k * n + j] = h_val + s * (g - h_val * tau);
 					}
 					for (size_t k = i + 1; k < j; k++) {
-						g = A[i * n + k]; NV h_val = A[k * n + j];
+						g = A[i * n + k]; double h_val = A[k * n + j];
 						A[i * n + k] = g - s * (h_val + g * tau);
 						A[k * n + j] = h_val + s * (g - h_val * tau);
 					}
 					for (size_t k = j + 1; k < n; k++) {
-						g = A[i * n + k]; NV h_val = A[j * n + k];
+						g = A[i * n + k]; double h_val = A[j * n + k];
 						A[i * n + k] = g - s * (h_val + g * tau);
 						A[j * n + k] = h_val + s * (g - h_val * tau);
 					}
 					for (size_t k = 0; k < n; k++) {
-						g = v[k * n + i]; NV h_val = v[k * n + j];
+						g = v[k * n + i]; double h_val = v[k * n + j];
 						v[k * n + i] = g - s * (h_val + g * tau);
 						v[k * n + j] = h_val + s * (g - h_val * tau);
 					}
@@ -1710,7 +1710,7 @@ static void jacobi_eigen(NV *restrict A, size_t n, NV *restrict d, NV *restrict 
 	// Sort eigenvalues and corresponding eigenvectors in descending order
 	for (size_t i = 0; i < n - 1; i++) {
 		size_t max_k = i;
-		NV max_val = d[i];
+		double max_val = d[i];
 		for (size_t j = i + 1; j < n; j++) {
 			if (d[j] > max_val) {
 				 max_val = d[j];
@@ -1721,7 +1721,7 @@ static void jacobi_eigen(NV *restrict A, size_t n, NV *restrict d, NV *restrict 
 			d[max_k] = d[i];
 			d[i] = max_val;
 			for (size_t k = 0; k < n; k++) {
-				 NV tmp = v[k * n + i];
+				 double tmp = v[k * n + i];
 				 v[k * n + i] = v[k * n + max_k];
 				 v[k * n + max_k] = tmp;
 			}
@@ -1730,7 +1730,7 @@ static void jacobi_eigen(NV *restrict A, size_t n, NV *restrict d, NV *restrict 
 }
 
 // --- pull a numeric value out of an SV* slot
-static int c2c_num(pTHX_ SV **restrict ep, NV *restrict out) {
+static int c2c_num(pTHX_ SV **restrict ep, double *restrict out) {
 	if (ep && *ep && SvOK(*ep) && looks_like_number(*ep)) {
 		*out = SvNV(*ep);
 		return 1;
@@ -1858,17 +1858,11 @@ static bool filt_call(pTHX_ SV *restrict cv, SV *restrict row) {
 
 static int h2h_keycmp(const void *pa, const void *pb) {
 	dTHX;
-	SV *restrict const *a = (SV * const *)pa;
-	SV *restrict const *b = (SV * const *)pb;
+	SV * const *a = (SV * const *)pa;
+	SV * const *b = (SV * const *)pb;
 	return sv_cmp(*a, *b);
 }
-int compare_NVs(const void *restrict a, const void *restrict b) {
-	NV arg1 = *(const NV *)a;
-	NV arg2 = *(const NV *)b;
-	if (arg1 < arg2) return -1;
-	if (arg1 > arg2) return 1;
-	return 0;
-}
+
 // --- XS SECTION ---
 MODULE = Stats::LikeR  PACKAGE = Stats::LikeR
 
@@ -2289,10 +2283,10 @@ SV *oneway_test(data_ref, ...)
     const char  *restrict formula_str  = NULL;
     const char  *restrict factor_name  = "Group";
     char        *lhs = NULL, *rhs = NULL;
-    NV      *restrict flat   = NULL;
+    double      *restrict flat   = NULL;
     size_t      *restrict sizes  = NULL;
     char       ** gnames = NULL;
-    NV      *restrict gmeans = NULL;
+    double      *restrict gmeans = NULL;
     size_t       k = 0;
     IV           total_n = 0;
     OneWayResult res;
@@ -2347,7 +2341,7 @@ SV *oneway_test(data_ref, ...)
 			memcpy(gnames[g], buf, klen + 1);
 		}
 		// second pass: fill flat array
-		flat = (NV *)safemalloc((size_t)total_n * sizeof(NV));
+		flat = (double *)safemalloc((size_t)total_n * sizeof(double));
 		size_t offset = 0;
 		for (size_t g = 0; g < k; g++) {
 			SV **restrict val = av_fetch(in_av, (I32)g, 0);
@@ -2358,7 +2352,7 @@ SV *oneway_test(data_ref, ...)
 				flat[offset++] = (svp && *svp) ? SvNV(*svp) : 0.0;
 			}
 		}
-	} else if (formula_str != NULL) {// MODE 2 – formula  "response ~ factor"
+	} else if (formula_str != NULL) {/* MODE 2 – formula  "response ~ factor" */
 		if (!parse_formula(formula_str, &lhs, &rhs))
 			croak("oneway_test: cannot parse formula '%s' — "
 				   "expected 'response ~ factor'", formula_str);
@@ -2376,7 +2370,7 @@ SV *oneway_test(data_ref, ...)
 		AV *restrict resp_av  = (AV *)SvRV(*resp_svp);
 		AV *restrict label_av = (AV *)SvRV(*fact_svp);
 		IV  n = av_len(resp_av) + 1;
-		flat  = (NV *)safemalloc((size_t)n * sizeof(NV));
+		flat  = (double *)safemalloc((size_t)n * sizeof(double));
 		sizes = (size_t *)safemalloc((size_t)n * sizeof(size_t));
 		if (!build_groups_from_formula(aTHX_ resp_av, label_av,
 				                        flat, sizes, &k, &gnames,
@@ -2415,7 +2409,7 @@ SV *oneway_test(data_ref, ...)
 			}
 		}
 		// second pass: fill flat in the same iteration order
-		flat = (NV *)safemalloc((size_t)total_n * sizeof(NV));
+		flat = (double *)safemalloc((size_t)total_n * sizeof(double));
 		{
 			size_t offset = 0;
 			hv_iterinit(in_hv);
@@ -2430,13 +2424,13 @@ SV *oneway_test(data_ref, ...)
 		}
 	}
 	// per-group means from flat (before c_oneway_test frees nothing)
-	gmeans = (NV *)safemalloc(k * sizeof(NV));
+	gmeans = (double *)safemalloc(k * sizeof(double));
 	{
 		size_t offset = 0;
 		for (size_t g = 0; g < k; g++) {
-			NV sum = 0.0;
+			double sum = 0.0;
 			for (size_t i = 0; i < sizes[g]; i++) sum += flat[offset + i];
-			gmeans[g] = sum / (NV)sizes[g];
+			gmeans[g] = sum / (double)sizes[g];
 			offset   += sizes[g];
 		}
 	}
@@ -2550,7 +2544,7 @@ CODE:
 	if (nx == 0) croak("Not enough 'x' observations");
 
 	// Extract 'x' array to C-array
-	NV *restrict x_data = (NV *)safemalloc(nx * sizeof(NV));
+	double *restrict x_data = (double *)safemalloc(nx * sizeof(double));
 	size_t valid_nx = 0;
 	for (size_t i = 0; i < nx; i++) {
 	  SV**restrict el = av_fetch(x_av, i, 0);
@@ -2558,13 +2552,13 @@ CODE:
 		   x_data[valid_nx++] = SvNV(*el);
 	  }
 	}
-	NV statistic = 0.0, p_value = 0.0;
+	double statistic = 0.0, p_value = 0.0;
 	const char *restrict method_desc = "";
 	// --- TWO SAMPLE ---
 	if (y_sv && SvROK(y_sv) && SvTYPE(SvRV(y_sv)) == SVt_PVAV) {
 	  AV *restrict y_av = (AV*)SvRV(y_sv);
 	  size_t ny = av_len(y_av) + 1;
-	  NV *restrict y_data = (NV *)safemalloc(ny * sizeof(NV));
+	  double *restrict y_data = (double *)safemalloc(ny * sizeof(double));
 	  size_t valid_ny = 0;
 	  for (size_t i = 0; i < ny; i++) {
 		   SV**restrict el = av_fetch(y_av, i, 0);
@@ -2572,27 +2566,33 @@ CODE:
 		       y_data[valid_ny++] = SvNV(*el);
 		   }
 	  }
+
 	  if (valid_nx < 1 || valid_ny < 1) {
 		   Safefree(x_data); Safefree(y_data);
 		   croak("Not enough non-missing observations for KS test");
 	  }
-	  NV d, d_plus, d_minus;
+
+	  double d, d_plus, d_minus;
 	  calc_2sample_stats(x_data, valid_nx, y_data, valid_ny, &d, &d_plus, &d_minus);
+
 	  // Map alternative to the correct statistic
 	  if (is_greater) statistic = d_plus;
 	  else if (is_less) statistic = d_minus;
 	  else statistic = d;
+
 	  // Determine if exact or asymptotic
 	  bool use_exact = FALSE;
 	  if (exact == 1) use_exact = TRUE;
 	  else if (exact == 0) use_exact = FALSE;
 	  else use_exact = (valid_nx * valid_ny < 10000); 
+
 	  // Check for ties in combined set
 	  size_t total_n = valid_nx + valid_ny;
-	  NV *restrict comb = (NV *)safemalloc(total_n * sizeof(NV));
+	  double *restrict comb = (double *)safemalloc(total_n * sizeof(double));
 	  for(size_t i=0; i<valid_nx; i++) comb[i] = x_data[i];
 	  for(size_t i=0; i<valid_ny; i++) comb[valid_nx+i] = y_data[i];
-	  qsort(comb, total_n, sizeof(NV), compare_NVs);
+	  qsort(comb, total_n, sizeof(double), compare_doubles);
+
 	  bool has_ties = FALSE;
 	  for(size_t i = 1; i < total_n; i++) {
 		   if(comb[i] == comb[i-1]) { has_ties = TRUE; break; }
@@ -2604,11 +2604,11 @@ CODE:
 	  }
 	  if (use_exact) {
 		   method_desc = "Two-sample Kolmogorov-Smirnov exact test";
-		   NV q = (0.5 + floor(statistic * valid_nx * valid_ny - 1e-7)) / ((NV)valid_nx * valid_ny);
+		   double q = (0.5 + floor(statistic * valid_nx * valid_ny - 1e-7)) / ((double)valid_nx * valid_ny);
 		   p_value = psmirnov_exact_uniq_upper(q, valid_nx, valid_ny, is_two_sided);
 	  } else {
 		   method_desc = "Two-sample Kolmogorov-Smirnov test (asymptotic)";
-		   NV z = statistic * sqrt((NV)(valid_nx * valid_ny) / (valid_nx + valid_ny));
+		   double z = statistic * sqrt((double)(valid_nx * valid_ny) / (valid_nx + valid_ny));
 		   if (is_two_sided) {
 		       p_value = K2l(z, 0, 1e-9); 
 		   } else {
@@ -2619,14 +2619,14 @@ CODE:
 	} else if (y_sv && SvPOK(y_sv)) {// --- ONE SAMPLE (e.g. against pnorm) ---
 		const char *restrict dist = SvPV_nolen(y_sv);
 		if (strEQ(dist, "pnorm")) {
-			qsort(x_data, valid_nx, sizeof(NV), compare_NVs);
-			NV max_d = 0.0, max_d_plus = 0.0, max_d_minus = 0.0;
+			qsort(x_data, valid_nx, sizeof(double), compare_doubles);
+			double max_d = 0.0, max_d_plus = 0.0, max_d_minus = 0.0;
 			for(size_t i = 0; i < valid_nx; i++) {
-				NV cdf_obs_low  = (NV)i / valid_nx;
-				NV cdf_obs_high = (NV)(i + 1) / valid_nx;
-				NV cdf_theor    = approx_pnorm(x_data[i]);
-				NV diff1 = cdf_obs_low - cdf_theor;
-				NV diff2 = cdf_obs_high - cdf_theor;
+				double cdf_obs_low  = (double)i / valid_nx;
+				double cdf_obs_high = (double)(i + 1) / valid_nx;
+				double cdf_theor    = approx_pnorm(x_data[i]);
+				double diff1 = cdf_obs_low - cdf_theor;
+				double diff2 = cdf_obs_high - cdf_theor;
 				if (diff1 > max_d_plus) max_d_plus = diff1;
 				if (diff2 > max_d_plus) max_d_plus = diff2;
 				if (-diff1 > max_d_minus) max_d_minus = -diff1;
@@ -2644,12 +2644,12 @@ CODE:
 					p_value = 1.0 - K2x(valid_nx, statistic);
 				} else {
 					warn("exact 1-sample 1-sided KS test not implemented; using asymptotic");
-					NV z = statistic * sqrt((NV)valid_nx);
+					double z = statistic * sqrt((double)valid_nx);
 					p_value = exp(-2.0 * z * z);
 				}
 			} else {
 				 method_desc = "One-sample Kolmogorov-Smirnov test (asymptotic)";
-				 NV z = statistic * sqrt((NV)valid_nx);
+				 double z = statistic * sqrt((double)valid_nx);
 				 if (is_two_sided) p_value = K2l(z, 0, 1e-6); 
 				 else p_value = exp(-2.0 * z * z);
 			}
@@ -4637,7 +4637,7 @@ PPCODE:
 	}
 
 	mean /= n;
-	// Calculate Sum of Squares
+	// Calculate Sum of Squares */
 	for (size_t i = 0; i < n; i++) {
 	  ssq += (x[i] - mean) * (x[i] - mean);
 	}
@@ -4646,83 +4646,83 @@ PPCODE:
 	  croak("Data is perfectly constant; cannot compute Shapiro-Wilk test");
 	}
 	qsort(x, n, sizeof(double), compare_doubles);
-	// --- Core AS R94 Algorithm: Weights and Statistic W
+	// --- Core AS R94 Algorithm: Weights and Statistic W ---
 	if (n == 3) {
-	  double a_val = 0.7071067811865475; // sqrt(1/2)
+	  double a_val = 0.7071067811865475; /* sqrt(1/2) */
 	  double b_val = a_val * (x[2] - x[0]);
 	  w = (b_val * b_val) / ssq;
 	  if (w < 0.75) w = 0.75; 
 	  // Exact P-value for n=3
 	  p_val = 1.90985931710274 * (asin(sqrt(w)) - 1.04719755119660);
 	} else {
-		double *restrict m, *restrict a;
-		double sum_m2 = 0.0, b_val = 0.0;
-		Newx(m, n, double);
-		Newx(a, n, double);
-		for (size_t i = 0; i < n; i++) {
-			m[i] = inverse_normal_cdf((i + 1.0 - 0.375) / (n + 0.25));
-			sum_m2 += m[i] * m[i];
-		}
-		double u = 1.0 / sqrt((double)n);
-		double a_n = -2.706056*pow(u,5) + 4.434685*pow(u,4) - 2.071190*pow(u,3) - 0.147981*pow(u,2) + 0.221157*u + m[n-1]/sqrt(sum_m2);
-		a[n-1] = a_n;
-		a[0]   = -a_n;
-		if (n == 4 || n == 5) {
-			double eps = (sum_m2 - 2.0 * m[n-1]*m[n-1]) / (1.0 - 2.0 * a_n*a_n);
-			for (unsigned int i = 1; i < n-1; i++) {
-				 a[i] = m[i] / sqrt(eps);
-			}
-		} else {
-			double a_n1 = -3.582633*pow(u,5) + 5.682633*pow(u,4) - 1.752461*pow(u,3) - 0.293762*pow(u,2) + 0.042981*u + m[n-2]/sqrt(sum_m2);
-			a[n-2] = a_n1;
-			a[1]   = -a_n1;
-			double eps = (sum_m2 - 2.0 * m[n-1]*m[n-1] - 2.0 * m[n-2]*m[n-2]) / (1.0 - 2.0 * a_n*a_n - 2.0 * a_n1*a_n1);
-			for (unsigned int i = 2; i < n-2; i++) {
-				 a[i] = m[i] / sqrt(eps);
-			}
-		}
-		for (size_t i = 0; i < n; i++) {
-			b_val += a[i] * x[i];
-		}
-		w = (b_val * b_val) / ssq;
-		// --- AS R94 P-Value Calculation: High Precision Refinement ---
-		/* NOTE: p_val is declared in PREINIT above;
+	  double *restrict m, *restrict a;
+	  double sum_m2 = 0.0, b_val = 0.0;
+	  Newx(m, n, double);
+	  Newx(a, n, double);
+	  for (size_t i = 0; i < n; i++) {
+		   m[i] = inverse_normal_cdf((i + 1.0 - 0.375) / (n + 0.25));
+		   sum_m2 += m[i] * m[i];
+	  }
+	  double u = 1.0 / sqrt((double)n);
+	  double a_n = -2.706056*pow(u,5) + 4.434685*pow(u,4) - 2.071190*pow(u,3) - 0.147981*pow(u,2) + 0.221157*u + m[n-1]/sqrt(sum_m2);
+	  a[n-1] = a_n;
+	  a[0]   = -a_n;
+	  if (n == 4 || n == 5) {
+		   double eps = (sum_m2 - 2.0 * m[n-1]*m[n-1]) / (1.0 - 2.0 * a_n*a_n);
+		   for (unsigned int i = 1; i < n-1; i++) {
+		       a[i] = m[i] / sqrt(eps);
+		   }
+	  } else {
+		   double a_n1 = -3.582633*pow(u,5) + 5.682633*pow(u,4) - 1.752461*pow(u,3) - 0.293762*pow(u,2) + 0.042981*u + m[n-2]/sqrt(sum_m2);
+		   a[n-2] = a_n1;
+		   a[1]   = -a_n1;
+		   double eps = (sum_m2 - 2.0 * m[n-1]*m[n-1] - 2.0 * m[n-2]*m[n-2]) / (1.0 - 2.0 * a_n*a_n - 2.0 * a_n1*a_n1);
+		   for (unsigned int i = 2; i < n-2; i++) {
+		       a[i] = m[i] / sqrt(eps);
+		   }
+	  }
+	  for (size_t i = 0; i < n; i++) {
+		   b_val += a[i] * x[i];
+	  }
+	  w = (b_val * b_val) / ssq;
+	// --- AS R94 P-Value Calculation: High Precision Refinement ---
+	  /* NOTE: p_val is declared in PREINIT above;
 		* do NOT shadow it with a local 'double p_val' here or the result will never reach the caller.
 		*/
-		double y = log(1.0 - w);
-		double z;
-		if (n <= 11) {
-			// Royston's branch for 4 <= n <= 11 (AS R94, small-sample path).
-			// gamma is the upper bound on y = log(1-W);
-			// if y reaches gamma the p-value is essentially zero
-			double nn = (double)n;
-			double gamma = 0.459 * nn - 2.273;
-			if (y >= gamma) {
-				 p_val = 1e-19;
-			} else {
-				 // Horner-form polynomials in n for mu and log(sigma)
-				 double mu     = 0.544  + nn * (-0.39978  + nn * ( 0.025054  - nn * 0.0006714));
-				 double sig_val= 1.3822 + nn * (-0.77857  + nn * ( 0.062767  - nn * 0.0020322));
-				 double sigma  = exp(sig_val);
-				 z = (-log(gamma - y) - mu) / sigma;
-				 /* Upper-tail probability P(Z > z): small W → large z → small p-value.
-				 */
-				 p_val = 0.5 * erfc(z * M_SQRT1_2);
-			}
-		} else {
-			// Royston's branch for n >= 12 (AS R94, large-sample path)
-			double ln_n   = log((double)n);
-			// Horner-form polynomials in log(n) for mu and log(sigma). */
-			double mu     = -1.5861 + ln_n * (-0.31082 + ln_n * (-0.083751 + ln_n * 0.0038915));
-			double sig_val= -0.4803 + ln_n * (-0.082676 + ln_n * 0.0030302);
-			double sigma  = exp(sig_val);
-			z = (y - mu) / sigma;
-			p_val = 0.5 * erfc(z * M_SQRT1_2);
-		}
-		// Clamp the p-value
-		if (p_val > 1.0) p_val = 1.0;
-		if (p_val < 0.0) p_val = 0.0;
-		Safefree(m); m = NULL;  Safefree(a); a = NULL;
+	  double y = log(1.0 - w);
+	  double z;
+	  if (n <= 11) {
+		   // Royston's branch for 4 <= n <= 11 (AS R94, small-sample path).
+		   // gamma is the upper bound on y = log(1-W);
+		   // if y reaches gamma the p-value is essentially zero
+		   double nn = (double)n;
+		   double gamma = 0.459 * nn - 2.273;
+		   if (y >= gamma) {
+		       p_val = 1e-19;
+		   } else {
+		       // Horner-form polynomials in n for mu and log(sigma)
+		       double mu     = 0.544  + nn * (-0.39978  + nn * ( 0.025054  - nn * 0.0006714));
+		       double sig_val= 1.3822 + nn * (-0.77857  + nn * ( 0.062767  - nn * 0.0020322));
+		       double sigma  = exp(sig_val);
+		       z = (-log(gamma - y) - mu) / sigma;
+		       /* Upper-tail probability P(Z > z): small W → large z → small p-value.
+		       */
+		       p_val = 0.5 * erfc(z * M_SQRT1_2);
+		   }
+	  } else {
+		   // Royston's branch for n >= 12 (AS R94, large-sample path)
+		   double ln_n   = log((double)n);
+		   // Horner-form polynomials in log(n) for mu and log(sigma). */
+		   double mu     = -1.5861 + ln_n * (-0.31082 + ln_n * (-0.083751 + ln_n * 0.0038915));
+		   double sig_val= -0.4803 + ln_n * (-0.082676 + ln_n * 0.0030302);
+		   double sigma  = exp(sig_val);
+		   z = (y - mu) / sigma;
+		   p_val = 0.5 * erfc(z * M_SQRT1_2);
+	  }
+	  // Clamp the p-value
+	  if (p_val > 1.0) p_val = 1.0;
+	  if (p_val < 0.0) p_val = 0.0;
+	  Safefree(m); m = NULL;  Safefree(a); a = NULL;
 	}
 	Safefree(x); x = NULL;
 	ret_hash = newHV();
@@ -4736,7 +4736,7 @@ PPCODE:
 double min(...)
 	PROTOTYPE: @
 	INIT:
-		NV min_val = 0.0;
+		double min_val = 0.0;
 		size_t count = 0;
 		bool first = TRUE;
 	CODE:
@@ -4748,7 +4748,7 @@ double min(...)
 				for (size_t j = 0; j < len; j++) {
 				     SV** restrict tv = av_fetch(av, j, 0);
 				     if (tv && SvOK(*tv)) {
-				         NV val = SvNV(*tv);
+				         double val = SvNV(*tv);
 				         if (first || val < min_val) {
 				             min_val = val;
 				             first = FALSE;
@@ -4759,7 +4759,7 @@ double min(...)
 				     }
 				 }
 			} else if (SvOK(arg)) {
-				 NV val = SvNV(arg);
+				 double val = SvNV(arg);
 				 if (first || val < min_val) {
 				     min_val = val;
 				     first = FALSE;
@@ -4777,7 +4777,7 @@ double min(...)
 double max(...)
 	PROTOTYPE: @
 	INIT:
-		NV max_val = 0.0;
+		double max_val = 0.0;
 		size_t count = 0;
 		bool first = TRUE;
 	CODE:
@@ -4789,7 +4789,7 @@ double max(...)
 		       for (size_t j = 0; j < len; j++) {
 		           SV** restrict tv = av_fetch(av, j, 0);
 		           if (tv && SvOK(*tv)) {
-		               NV val = SvNV(*tv);
+		               double val = SvNV(*tv);
 		               if (first || val > max_val) {
 		                   max_val = val;
 		                   first = FALSE;
@@ -4800,7 +4800,7 @@ double max(...)
 		           }
 		       }
 		   } else if (SvOK(arg)) {
-		       NV val = SvNV(arg);
+		       double val = SvNV(arg);
 		       if (first || val > max_val) {
 		           max_val = val;
 		           first = FALSE;
@@ -4819,7 +4819,7 @@ SV* runif(...)
 CODE:
 {
 	size_t n = 0;
-	NV min = 0.0, max = 1.0;
+	double min = 0.0, max = 1.0;
 
 	// Flags to track what has been assigned
 	bool n_set = 0, min_set = 0, max_set = 0;
@@ -4876,7 +4876,7 @@ CODE:
 	if (n > 0) {
 		av_extend(results, n - 1);
 	}
-	const NV range = max - min;
+	const double range = max - min;
 	for (size_t j = 0; j < n; j++) {
 		double r;
 		if (max < min) {
@@ -4900,7 +4900,7 @@ SV* rbinom(...)
 		croak("Usage: rbinom(n => 10, size => 100, prob => 0.5)");
 	//Parse named arguments
 	size_t n = 0, size = 0;
-	NV prob = 0.5;
+	double prob = 0.5;
 
 	bool size_set = FALSE, prob_set = FALSE;
 
@@ -4943,15 +4943,15 @@ SV* hist(SV* x_sv, ...)
 		if (n_raw == 0) croak("hist: input array is empty");
 
 		// 2. Extract Data & Find Range
-		NV *restrict x;
+		double *restrict x;
 		Newx(x, n_raw, double);
 		size_t n = 0;
-		NV min_val = DBL_MAX, max_val = -DBL_MAX;
+		double min_val = DBL_MAX, max_val = -DBL_MAX;
 
 		for (size_t i = 0; i < n_raw; i++) {
 			SV**restrict tv = av_fetch(x_av, i, 0);
 			if (tv && SvOK(*tv)) {
-				 NV val = SvNV(*tv);
+				 double val = SvNV(*tv);
 				 x[n++] = val;
 				 if (val < min_val) min_val = val;
 				 if (val > max_val) max_val = val;
@@ -4963,38 +4963,42 @@ SV* hist(SV* x_sv, ...)
 		}
 		// 3. Determine Bin Count (Sturges default or user-provided)
 		size_t n_bins = 0;
+
 		if (items == 2) {
-// Support pure positional argument: hist($data, 22)
+			// Support pure positional argument: hist($data, 22)
 			n_bins = (size_t)SvIV(ST(1));
 		} else if (items > 2) {
-// Support named parameters even if mixed with positional arguments
+			/* Support named parameters even if mixed with positional arguments */
 			for (unsigned short i = 1; i < items - 1; i++) {
-				 // Make sure the SV holds a string before doing string comparison
+				 /* Make sure the SV holds a string before doing string comparison */
 				 if (SvPOK(ST(i)) && strEQ(SvPV_nolen(ST(i)), "breaks")) {
 				     n_bins = (size_t)SvIV(ST(i+1));
 				     break;
 				 }
 			}
-/* Fallback: if 'breaks' wasn't found but a positional number was given first */
+			/* Fallback: if 'breaks' wasn't found but a positional number was given first */
 			if (n_bins == 0 && looks_like_number(ST(1))) {
 				 n_bins = (size_t)SvIV(ST(1));
 			}
 		}
 		if (n_bins == 0) n_bins = calculate_sturges_bins(n);
-// 4. Allocate Result Arrays
-		NV *restrict breaks, *restrict mids, *restrict density;
+		// 4. Allocate Result Arrays
+		double *restrict breaks, *restrict mids, *restrict density;
 		size_t *restrict counts;
 		Newx(breaks,  n_bins + 1, double);
 		Newx(mids,    n_bins,     double);
 		Newx(density, n_bins,     double);
 		Newx(counts,  n_bins,     size_t);
+
 		// Generate simple linear breaks
-		NV step = (max_val - min_val) / (double)n_bins;
+		double step = (max_val - min_val) / (double)n_bins;
 		for (size_t i = 0; i <= n_bins; i++) {
 			breaks[i] = min_val + (double)i * step;
 		}
+
 		// 5. Compute Statistics
 		compute_hist_logic(x, n, breaks, n_bins, counts, mids, density);
+
 		// 6. Build Return HashRef
 		HV*restrict res_hv = newHV();
 		AV*restrict av_breaks  = newAV();
@@ -5013,121 +5017,129 @@ SV* hist(SV* x_sv, ...)
 		hv_stores(res_hv, "counts",  newRV_noinc((SV*)av_counts));
 		hv_stores(res_hv, "mids",    newRV_noinc((SV*)av_mids));
 		hv_stores(res_hv, "density", newRV_noinc((SV*)av_density));
+
 		// Clean
 		Safefree(x); Safefree(breaks); Safefree(mids);
 		Safefree(density); Safefree(counts);
+
 		RETVAL = newRV_noinc((SV*)res_hv);
 	}
 	OUTPUT:
 	  RETVAL
 
 SV* quantile(...)
-    CODE:
-    {
-        SV *restrict x_sv = NULL;
-        SV *restrict probs_sv = NULL;
-        unsigned int arg_idx = 0;
-        // --- 1. Consume first positional arg as 'x' if it's an array ref
-        if (arg_idx < items && SvROK(ST(arg_idx)) && SvTYPE(SvRV(ST(arg_idx))) == SVt_PVAV) {
-             x_sv = ST(arg_idx);
-             arg_idx++;
-        }
-        // --- 2. Remaining args must be key-value pairs
-        if ((items - arg_idx) % 2 != 0)
-             croak("Usage: quantile(\\@data, probs => \\@probs)  OR  quantile(x => \\@data, probs => \\@probs)");
+	CODE:
+	{
+		SV *restrict x_sv = NULL;
+		SV *restrict probs_sv = NULL;
+		int arg_idx = 0;
 
-        for (; arg_idx < items; arg_idx += 2) {
-             const char *restrict key = SvPV_nolen(ST(arg_idx));
-             SV *restrict val = ST(arg_idx + 1);
+		/* --- 1. Consume first positional arg as 'x' if it's an array ref --- */
+		if (arg_idx < items && SvROK(ST(arg_idx)) && SvTYPE(SvRV(ST(arg_idx))) == SVt_PVAV) {
+			 x_sv = ST(arg_idx);
+			 arg_idx++;
+		}
 
-             if      (strEQ(key, "x"))     x_sv     = val;
-             else if (strEQ(key, "probs")) probs_sv = val;
-             else croak("quantile: unknown argument '%s'", key);
-        }
-        if (!x_sv || !SvROK(x_sv) || SvTYPE(SvRV(x_sv)) != SVt_PVAV)
-            croak("quantile: 'x' must be an array reference");
-        
-        AV *restrict x_av = (AV*)SvRV(x_sv);
-        size_t n_raw = av_len(x_av) + 1;
-        if (n_raw == 0) croak("quantile: 'x' is empty");
-        // --- Extract valid numeric data & drop NAs (Upgraded to NV)
-        NV *restrict x;
-        Newx(x, n_raw, NV);
-        size_t n = 0;
-        for (size_t i = 0; i < n_raw; i++) {
-            SV **restrict tv = av_fetch(x_av, i, 0);
-            if (tv && SvOK(*tv)) {
-                 x[n++] = SvNV(*tv);
-            }
-        }
-        if (n == 0) {
-            Safefree(x);
-            croak("quantile: 'x' contains no valid numbers");
-        }
-        // --- Sort Data for Quantile Math ---
-        // Note: You must update `compare_doubles` to accept and compare `NV` types!
-        qsort(x, n, sizeof(NV), compare_NVs); 
-        // --- Parse Probabilities (Upgraded to NV) ---
-        NV default_probs[] = {0.0, 0.25, 0.50, 0.75, 1.0};
-        unsigned int n_probs = 5;
-        NV *restrict probs;
-        if (probs_sv && SvROK(probs_sv) && SvTYPE(SvRV(probs_sv)) == SVt_PVAV) {
-            AV *restrict p_av = (AV*)SvRV(probs_sv);
-            n_probs = av_len(p_av) + 1;
-            Newx(probs, n_probs, NV);
-            for (unsigned int i = 0; i < n_probs; i++) {
-                 SV **tv = av_fetch(p_av, i, 0);
-                 probs[i] = (tv && SvOK(*tv)) ? SvNV(*tv) : 0.0;
-                 if (probs[i] < 0.0 || probs[i] > 1.0) {
-                     Safefree(x); Safefree(probs);
-                     croak("quantile: probabilities must be between 0 and 1");
-                 }
-            }
-        } else {
-            Newx(probs, n_probs, NV);
-            for (unsigned int i = 0; i < n_probs; i++) probs[i] = default_probs[i];
-        }
-        // --- Calculate Quantiles (R Type 7 Algorithm) ---
-        HV *restrict res_hv = newHV();
-        for (size_t i = 0; i < n_probs; i++) {
-            NV p = probs[i];
-            NV q = 0.0;
+		/* --- 2. Remaining args must be key-value pairs --- */
+		if ((items - arg_idx) % 2 != 0)
+			 croak("Usage: quantile(\\@data, probs => \\@probs)  OR  quantile(x => \\@data, probs => \\@probs)");
 
-            if (n == 1) {
-                 q = x[0];
-            } else if (p == 1.0) {
-                 q = x[n - 1]; 
-            } else if (p == 0.0) {
-                 q = x[0];
-            } else {
-                 NV h = (n - 1) * p;
-                 unsigned int j = (unsigned int)h; 
-                 NV gamma = h - j;
-                 q = (1.0 - gamma) * x[j] + gamma * x[j + 1];
-            }
-            // --- Format hash key with Epsilon guarding ---
-            char key[32];
-            double pct = (double)(p * 100.0); // Safe to cast to double just for formatting
-            double pct_rounded = floor(pct + 0.5); // C89 safe rounding
-            // Use 1e-9 epsilon check instead of strict integer equality
-            if (fabs(pct - pct_rounded) < 1e-9) {
-                 snprintf(key, sizeof(key), "%.0f%%", pct_rounded);
-            } else {
-                 snprintf(key, sizeof(key), "%.1f%%", pct);
-            }
-            
-            hv_store(res_hv, key, strlen(key), newSVnv(q), 0);
-        }
-        Safefree(x); Safefree(probs);
-        RETVAL = newRV_noinc((SV*)res_hv);
-    }
-    OUTPUT:
-      RETVAL
+		for (; arg_idx < items; arg_idx += 2) {
+			 const char *restrict key = SvPV_nolen(ST(arg_idx));
+			 SV *restrict val = ST(arg_idx + 1);
+
+			 if      (strEQ(key, "x"))     x_sv     = val;
+			 else if (strEQ(key, "probs")) probs_sv = val;
+			 else croak("quantile: unknown argument '%s'", key);
+		}
+		if (!x_sv || !SvROK(x_sv) || SvTYPE(SvRV(x_sv)) != SVt_PVAV)
+			croak("quantile: 'x' must be an array reference");
+		AV *restrict x_av = (AV*)SvRV(x_sv);
+		size_t n_raw = av_len(x_av) + 1;
+		if (n_raw == 0) croak("quantile: 'x' is empty");
+
+		/* --- Extract valid numeric data & drop NAs --- */
+		double *restrict x;
+		Newx(x, n_raw, double);
+		size_t n = 0;
+		for (size_t i = 0; i < n_raw; i++) {
+			SV **restrict tv = av_fetch(x_av, i, 0);
+			if (tv && SvOK(*tv)) {
+				 x[n++] = SvNV(*tv);
+			}
+		}
+		if (n == 0) {
+			Safefree(x);
+			croak("quantile: 'x' contains no valid numbers");
+		}
+		// --- Sort Data for Quantile Math ---
+		qsort(x, n, sizeof(double), compare_doubles);
+		// --- Parse Probabilities (Default matches R's c(0, .25, .5, .75, 1)) ---
+		double default_probs[] = {0.0, 0.25, 0.50, 0.75, 1.0};
+		unsigned int n_probs = 5;
+		double *restrict probs;
+
+		if (probs_sv && SvROK(probs_sv) && SvTYPE(SvRV(probs_sv)) == SVt_PVAV) {
+			AV *restrict p_av = (AV*)SvRV(probs_sv);
+			n_probs = av_len(p_av) + 1;
+			Newx(probs, n_probs, double);
+			for (unsigned int i = 0; i < n_probs; i++) {
+				 SV **tv = av_fetch(p_av, i, 0);
+				 probs[i] = (tv && SvOK(*tv)) ? SvNV(*tv) : 0.0;
+				 if (probs[i] < 0.0 || probs[i] > 1.0) {
+				     Safefree(x); Safefree(probs);
+				     croak("quantile: probabilities must be between 0 and 1");
+				 }
+			}
+		} else {
+			Newx(probs, n_probs, double);
+			for (unsigned int i = 0; i < n_probs; i++) probs[i] = default_probs[i];
+		}
+
+		/* --- Calculate Quantiles (R Type 7 Algorithm) --- */
+		HV *restrict res_hv = newHV();
+
+		for (size_t i = 0; i < n_probs; i++) {
+			double p = probs[i], q = 0.0;
+
+			if (n == 1) {
+				 q = x[0];
+			} else if (p == 1.0) {
+				 q = x[n - 1]; /* Prevent out-of-bounds mapping */
+			} else if (p == 0.0) {
+				 q = x[0];
+			} else {
+				 /* Continuous sample quantile interpolation (Type 7) */
+				 double h = (n - 1) * p;
+				 unsigned int j = (unsigned int)h; /* floor via cast */
+				 double gamma = h - j;
+				 q = (1.0 - gamma) * x[j] + gamma * x[j + 1];
+			}
+
+			/* Format hash key to exactly match R's naming convention ("25%", "33.3%") */
+			char key[32];
+			double pct = p * 100.0;
+			if (pct == (unsigned int)pct) {
+				 snprintf(key, sizeof(key), "%.0f%%", pct);
+			} else {
+				 snprintf(key, sizeof(key), "%.1f%%", pct);
+			}
+
+			hv_store(res_hv, key, strlen(key), newSVnv(q), 0);
+		}
+
+		Safefree(x);
+		Safefree(probs);
+
+		RETVAL = newRV_noinc((SV*)res_hv);
+	}
+	OUTPUT:
+	  RETVAL
 
 double mean(...)
 	PROTOTYPE: @
 	INIT:
-	  NV total = 0;
+	  double total = 0;
 	  size_t count = 0;
 	CODE:
 		for (size_t i = 0; i < items; i++) {
@@ -5223,7 +5235,7 @@ void mode(...)
 double sum(...)
 	PROTOTYPE: @
 	INIT:
-		NV total = 0;
+		double total = 0;
 		size_t count = 0;
 	CODE:
 		for (size_t i = 0; i < items; i++) {
@@ -5255,7 +5267,7 @@ double sum(...)
 double sd(...)
 	PROTOTYPE: @
 	INIT:
-	  NV mean = 0.0, M2 = 0.0;
+	  double mean = 0.0, M2 = 0.0;
 	  size_t count = 0;
 	CODE:
 		/* Single Pass Standard Deviation via Welford's Algorithm */
@@ -5278,8 +5290,8 @@ double sd(...)
 				}
 			} else if (SvOK(arg)) {
 				 count++;
-				 NV val = SvNV(arg);
-				 NV delta = val - mean;
+				 double val = SvNV(arg);
+				 double delta = val - mean;
 				 mean += delta / count;
 				 M2 += delta * (val - mean);
 			} else {
@@ -5294,10 +5306,10 @@ double sd(...)
 double var(...)
 	PROTOTYPE: @
 	INIT:
-	  NV mean = 0.0, M2 = 0.0;
+	  double mean = 0.0, M2 = 0.0;
 	  size_t count = 0;
 	CODE:
-	// Single Pass Variance via Welford's Algorithm
+	/* Single Pass Variance via Welford's Algorithm */
 		for (size_t i = 0; i < items; i++) {
 			SV* restrict arg = ST(i);
 			if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
@@ -5307,8 +5319,8 @@ double var(...)
 					  SV** restrict tv = av_fetch(av, j, 0);
 					  if (tv && SvOK(*tv)) {
 						   count++;
-						   NV val = SvNV(*tv);
-						   NV delta = val - mean;
+						   double val = SvNV(*tv);
+						   double delta = val - mean;
 						   mean += delta / count;
 						   M2 += delta * (val - mean);
 					  } else {
@@ -5317,8 +5329,8 @@ double var(...)
 				 }
 			} else if (SvOK(arg)) {
 				 count++;
-				 NV val = SvNV(arg);
-				 NV delta = val - mean;
+				 double val = SvNV(arg);
+				 double delta = val - mean;
 				 mean += delta / count;
 				 M2 += delta * (val - mean);
 			} else {
@@ -5335,24 +5347,29 @@ SV* t_test(...)
 	{
 		SV*restrict x_sv = NULL;
 		SV*restrict y_sv = NULL;
-		NV mu = 0.0, conf_level = 0.95;
+		double mu = 0.0, conf_level = 0.95;
 		bool paired = FALSE, var_equal = FALSE;
 		const char*restrict alternative = "two.sided";
+
 		unsigned short int arg_idx = 0;
+
 		// 1. Shift first positional argument as 'x' if it's an array reference
 		if (arg_idx < items && SvROK(ST(arg_idx)) && SvTYPE(SvRV(ST(arg_idx))) == SVt_PVAV) {
 		  x_sv = ST(arg_idx);
 		  arg_idx++;
 		}
+
 		// 2. Shift second positional argument as 'y' if it's an array reference
 		if (arg_idx < items && SvROK(ST(arg_idx)) && SvTYPE(SvRV(ST(arg_idx))) == SVt_PVAV) {
 		  y_sv = ST(arg_idx);
 		  arg_idx++;
 		}
+
 		// Ensure the remaining arguments form complete key-value pairs
 		if ((items - arg_idx) % 2 != 0) {
 		  croak("Usage: t_test(\\@x, [\\@y], key => value, ...)");
 		}
+
 		// --- Parse named arguments from the remaining flat stack ---
 		for (; arg_idx < items; arg_idx += 2) {
 			const char*restrict key = SvPV_nolen(ST(arg_idx));
@@ -5380,12 +5397,12 @@ SV* t_test(...)
 		if (conf_level <= 0.0 || conf_level >= 1.0)
 			croak("t_test: 'conf_level' must be between 0 and 1");
 		// --- Computation via Welford's Algorithm --- */
-		NV mean_x = 0.0, M2_x = 0.0, var_x, t_stat, df, p_val, std_err, cint_est;
+		double mean_x = 0.0, M2_x = 0.0, var_x, t_stat, df, p_val, std_err, cint_est;
 		HV*restrict results = newHV();
 		for (size_t i = 0; i < nx; i++) {
 			SV**restrict tv = av_fetch(x_av, i, 0);
-			NV val = (tv && SvOK(*tv)) ? SvNV(*tv) : 0;
-			NV delta = val - mean_x;
+			double val = (tv && SvOK(*tv)) ? SvNV(*tv) : 0;
+			double delta = val - mean_x;
 			mean_x += delta / (i + 1);
 			M2_x += delta * (val - mean_x);
 		}
@@ -5399,8 +5416,8 @@ SV* t_test(...)
 			double mean_y = 0.0, M2_y = 0.0, var_y;
 			for (size_t i = 0; i < ny; i++) {
 				 SV**restrict tv = av_fetch(y_av, i, 0);
-				 NV val = (tv && SvOK(*tv)) ? SvNV(*tv) : 0;
-				 NV delta = val - mean_y;
+				 double val = (tv && SvOK(*tv)) ? SvNV(*tv) : 0;
+				 double delta = val - mean_y;
 				 mean_y += delta / (i + 1);
 				 M2_y += delta * (val - mean_y);
 			}
@@ -5518,37 +5535,37 @@ void p_adjust(SV* p_sv, const char* method = "holm")
 				adj[arr[i].orig_idx] = (v < 1.0) ? v : 1.0;
 			}
 		} else if (strcmp(meth, "holm") == 0) {
-			NV cummax = 0.0;
+			double cummax = 0.0;
 			for (size_t i = 0; i < n; i++) {
 				 double v = arr[i].p * (n - i);
 				 if (v > cummax) cummax = v;
 				 adj[arr[i].orig_idx] = (cummax < 1.0) ? cummax : 1.0;
 			}
 		} else if (strcmp(meth, "hochberg") == 0) {
-			NV cummin = 1.0;
+			double cummin = 1.0;
 			for (ssize_t i = n - 1; i >= 0; i--) {
 				 double v = arr[i].p * (n - i);
 				 if (v < cummin) cummin = v;
 				 adj[arr[i].orig_idx] = (cummin < 1.0) ? cummin : 1.0;
 			}
 		} else if (strcmp(meth, "bh") == 0) {
-			NV cummin = 1.0;
+			double cummin = 1.0;
 			for (ssize_t i = n - 1; i >= 0; i--) {
 				double v = arr[i].p * n / (i + 1.0);
 				if (v < cummin) cummin = v;
 				adj[arr[i].orig_idx] = (cummin < 1.0) ? cummin : 1.0;
 			}
 		} else if (strcmp(meth, "by") == 0) {
-			NV q = 0.0;
+			double q = 0.0;
 			for (size_t i = 1; i <= n; i++) q += 1.0 / i;
-			NV cummin = 1.0;
+			double cummin = 1.0;
 			for (ssize_t i = n - 1; i >= 0; i--) {
 				double v = arr[i].p * n / (i + 1.0) * q;
 				if (v < cummin) cummin = v;
 				adj[arr[i].orig_idx] = (cummin < 1.0) ? cummin : 1.0;
 			}
 		} else if (strcmp(meth, "hommel") == 0) {
-			NV *restrict pa, *restrict q_arr;
+			double *restrict pa, *restrict q_arr;
 			Newx(pa, n, double);
 			Newx(q_arr, n, double);
 			// Initial: min(n * p[i] / (i + 1))
@@ -5593,7 +5610,7 @@ void p_adjust(SV* p_sv, const char* method = "holm")
 			}
 			// pmin(1, pmax(pa, p))[ro] — map sorted results back to original indices
 			for (size_t i = 0; i < n; i++) {
-				NV v = (pa[i] > arr[i].p) ? pa[i] : arr[i].p;
+				double v = (pa[i] > arr[i].p) ? pa[i] : arr[i].p;
 				if (v > 1.0) v = 1.0;
 				adj[arr[i].orig_idx] = v;
 			}
@@ -5618,10 +5635,10 @@ double median(...)
 	PROTOTYPE: @
 	INIT:
 	  size_t total_count = 0, k = 0;
-	  NV* restrict nums;
-	  NV median_val = 0.0;
+	  double* restrict nums;
+	  double median_val = 0.0;
 	CODE:
-	  // Pass 1: Count valid elements — die immediately on any undef
+	  /* Pass 1: Count valid elements — die immediately on any undef */
 	  for (size_t i = 0; i < items; i++) {
 		   SV* restrict arg = ST(i);
 		   if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
@@ -5668,6 +5685,7 @@ double median(...)
 		       croak("median: undefined value at argument index %zu", i);
 		   }
 	  }
+
 	  /* Sort and calculate median */
 	  qsort(nums, total_count, sizeof(double), compare_doubles);
 	  if (total_count % 2 == 0) {
@@ -5794,23 +5812,25 @@ SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 				     croak("cor: y row %lu is not an array ref", i);
 			}
 		}
+
 		// -- extract x columns
-		NV **restrict col_x;
-		Newx(col_x, ncols_x, NV*);
+		double **restrict col_x;
+		Newx(col_x, ncols_x, double*);
+
 		for (size_t j = 0; j < ncols_x; j++) {
-			Newx(col_x[j], nrows, NV);
+			Newx(col_x[j], nrows, double);
 			bool sd0 = 1;
-			NV first = NAN;
+			double first = NAN;
 			for (size_t i = 0; i < nrows; i++) {
-				SV**restrict rv = av_fetch(x_av, i, 0);
-				AV*restrict  row = (AV*)SvRV(*rv);
-				SV**restrict cv  = av_fetch(row, j, 0);
-				NV val = (cv && SvOK(*cv) && looks_like_number(*cv)) ? SvNV(*cv) : NAN;
-				col_x[j][i] = val;
-				if (!isnan(val)) {
-				  if (isnan(first)) first = val;
-				  else if (val != first) sd0 = 0;
-				}
+				 SV**restrict rv = av_fetch(x_av, i, 0);
+				 AV*restrict  row = (AV*)SvRV(*rv);
+				 SV**restrict cv  = av_fetch(row, j, 0);
+				 double val = (cv && SvOK(*cv) && looks_like_number(*cv)) ? SvNV(*cv) : NAN;
+				 col_x[j][i] = val;
+				 if (!isnan(val)) {
+				     if (isnan(first)) first = val;
+				     else if (val != first) sd0 = 0;
+				 }
 			}
 			if (sd0) {
 				 for (size_t k = 0; k <= j; k++) Safefree(col_x[k]);
@@ -5818,10 +5838,12 @@ SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 				 croak("cor: standard deviation is 0 in x column %lu", j);
 			}
 		}
+
 		// -- resolve y: separate matrix or re-use x (symmetric)
 		size_t ncols_y;
-		NV **restrict col_y = NULL;
+		double **restrict col_y   = NULL;
 		bool symmetric = 0;
+
 		// 1 = cor(X) — result is symmetric
 		if (has_y && y_is_matrix) {
 			// cross-correlation: X (nrows × p) vs Y (nrows × q)
@@ -5829,16 +5851,16 @@ SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 			ncols_y = av_len((AV*)SvRV(*yr0)) + 1;
 			if (ncols_y == 0) croak("cor: y matrix has zero columns");
 
-			Newx(col_y, ncols_y, NV*);
+			Newx(col_y, ncols_y, double*);
 			for (size_t j = 0; j < ncols_y; j++) {
-				 Newx(col_y[j], nrows, NV);
+				 Newx(col_y[j], nrows, double);
 				 bool sd0 = 1;
-				 NV first = NAN;
+				 double first = NAN;
 				 for (size_t i = 0; i < nrows; i++) {
 				     SV**restrict  rv = av_fetch(y_av, i, 0);
 				     AV*restrict  row = (AV*)SvRV(*rv);
 				     SV**restrict cv  = av_fetch(row, j, 0);
-				     NV val = (cv && SvOK(*cv) && looks_like_number(*cv)) ? SvNV(*cv) : NAN;
+				     double val = (cv && SvOK(*cv) && looks_like_number(*cv)) ? SvNV(*cv) : NAN;
 				     col_y[j][i] = val;
 				     if (!isnan(val)) {
 				         if (isnan(first)) first = val;
@@ -5872,15 +5894,15 @@ SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 		}
 		if (symmetric) {
 		/* Upper triangle + diagonal, then mirror. r_cache[i][j] (j >= i) holds the computed value. */
-			NV **restrict r_cache;
-			Newx(r_cache, ncols_x, NV*);
+			double **restrict r_cache;
+			Newx(r_cache, ncols_x, double*);
 			for (size_t i = 0; i < ncols_x; i++)
-				 Newx(r_cache[i], ncols_x, NV);
+				 Newx(r_cache[i], ncols_x, double);
 
 			for (size_t i = 0; i < ncols_x; i++) {
 				 r_cache[i][i] = 1.0; // diagonal
 				 for (size_t j = i + 1; j < ncols_x; j++) {
-				     NV r = compute_cor(col_x[i], col_x[j], nrows, method);
+				     double r = compute_cor(col_x[i], col_x[j], nrows, method);
 				     r_cache[i][j] = r;
 				     r_cache[j][i] = r; // symmetry
 				 }
@@ -5919,7 +5941,7 @@ void scale(...)
 	PPCODE:
 	{
 		bool do_center_mean = TRUE, do_scale_sd = TRUE;
-		NV center_val = 0.0, scale_val = 1.0;
+		double center_val = 0.0, scale_val = 1.0;
 		size_t data_items = items;
 		// 1. Parse Options Hash (if it exists as the last argument)
 		if (items > 0) {
@@ -5993,21 +6015,23 @@ void scale(...)
 			size_t nrow = av_len(mat_av) + 1, ncol = 0;
 			SV**restrict first_row = av_fetch(mat_av, 0, 0);
 			ncol = av_len((AV*)SvRV(*first_row)) + 1;
+
 			if (nrow == 0 || ncol == 0) croak("scale requires non-empty matrix");
+
 			// Create a new matrix for the scaled output
 			AV*restrict result_av = newAV();
 			av_extend(result_av, nrow - 1);
 			AV**restrict row_ptrs = (AV**)safemalloc(nrow * sizeof(AV*));
 			for (size_t r = 0; r < nrow; r++) {
-				row_ptrs[r] = newAV();
-				av_extend(row_ptrs[r], ncol - 1);
-				av_push(result_av, newRV_noinc((SV*)row_ptrs[r]));
+				 row_ptrs[r] = newAV();
+				 av_extend(row_ptrs[r], ncol - 1);
+				 av_push(result_av, newRV_noinc((SV*)row_ptrs[r]));
 			}
 			// Calculate and apply scale per column
 			for (size_t c = 0; c < ncol; c++) {
-				 NV col_sum = 0.0;
-				 NV *restrict col_data;
-				 Newx(col_data, nrow, NV);
+				 double col_sum = 0.0;
+				 double *restrict col_data;
+				 Newx(col_data, nrow, double);
 				 // Extract the column data
 				 for (size_t r = 0; r < nrow; r++) {
 				     SV**restrict row_sv = av_fetch(mat_av, r, 0);
@@ -6021,8 +6045,8 @@ void scale(...)
 				     col_sum += col_data[r];
 				 }
 
-				 NV col_center = do_center_mean ? (col_sum / nrow) : center_val;
-				 NV col_scale = scale_val;
+				 double col_center = do_center_mean ? (col_sum / nrow) : center_val;
+				 double col_scale = scale_val;
 				 // Calculate Standard Deviation for this specific column if needed
 				 if (do_scale_sd) {
 				     if (nrow <= 1) {
@@ -6030,17 +6054,17 @@ void scale(...)
 				         safefree(row_ptrs);
 				         croak("scale needs >= 2 rows to calculate standard deviation for a matrix column");
 				     }
-				     NV sum_sq = 0.0;
+				     double sum_sq = 0.0;
 				     for (size_t r = 0; r < nrow; r++) {
-				         NV diff = col_data[r] - col_center;
+				         double diff = col_data[r] - col_center;
 				         sum_sq += diff * diff;
 				     }
 				     col_scale = sqrt(sum_sq / (nrow - 1));
 				 }
 				 // Store scaled values back into the new matrix rows
 				 for (size_t r = 0; r < nrow; r++) {
-				     NV centered = col_data[r] - col_center;
-				     NV final_val = (col_scale == 0.0) ? (0.0 / 0.0) : (centered / col_scale);
+				     double centered = col_data[r] - col_center;
+				     double final_val = (col_scale == 0.0) ? (0.0 / 0.0) : (centered / col_scale);
 				     av_store(row_ptrs[r], c, newSVnv(final_val));
 				 }
 				 Safefree(col_data);
@@ -6052,8 +6076,8 @@ void scale(...)
 		} else {
 			// FLAT LIST MODE: Original functionality
 			size_t total_count = 0, k = 0;
-			NV *restrict nums;
-			NV sum = 0.0;
+			double *restrict nums;
+			double sum = 0.0;
 			for (size_t i = 0; i < data_items; i++) {
 				SV*restrict arg = ST(i);
 				if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
@@ -6068,7 +6092,7 @@ void scale(...)
 				}
 			}
 			if (total_count == 0) croak("scale requires at least 1 numeric element");
-			Newx(nums, total_count, NV);
+			Newx(nums, total_count, double);
 			for (size_t i = 0; i < data_items; i++) {
 				 SV*restrict arg = ST(i);
 				 if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
@@ -6082,7 +6106,7 @@ void scale(...)
 				         }
 				     }
 				 } else if (SvOK(arg)) {
-				     NV val = SvNV(arg);
+				     double val = SvNV(arg);
 				     nums[k++] = val; sum += val;
 				 }
 			}
@@ -6092,17 +6116,17 @@ void scale(...)
 				     Safefree(nums);
 				     croak("scale needs >= 2 elements to calculate SD");
 				 }
-				 NV sum_sq = 0.0;
+				 double sum_sq = 0.0;
 				 for (size_t i = 0; i < total_count; i++) {
-				     NV diff = nums[i] - center_val;
+				     double diff = nums[i] - center_val;
 				     sum_sq += diff * diff;
 				 }
 				 scale_val = sqrt(sum_sq / (total_count - 1));
 			}
 			EXTEND(SP, total_count);
 			for (size_t i = 0; i < total_count; i++) {
-				NV centered = nums[i] - center_val;
-				NV final_val = (scale_val == 0.0) ? (0.0 / 0.0) : (centered / scale_val);
+				double centered = nums[i] - center_val;
+				double final_val = (scale_val == 0.0) ? (0.0 / 0.0) : (centered / scale_val);
 				PUSHs(sv_2mortal(newSVnv(final_val)));
 			}
 			Safefree(nums); nums = NULL;
@@ -6491,17 +6515,17 @@ CODE:
 		}
 	}
 	p = p_exp;
-	Newx(X, n * p, NV); Newx(Y, n, NV);
+	Newx(X, n * p, double); Newx(Y, n, double);
 	Newx(valid_row_names, n, char*);
 	//
 	// PHASE 4: Matrix Construction & Listwise Deletion
 	//
 	for (i = 0; i < n; i++) {
-	  NV y_val = evaluate_term(aTHX_ data_hoa, row_hashes, i, lhs);
+	  double y_val = evaluate_term(aTHX_ data_hoa, row_hashes, i, lhs);
 	  if (isnan(y_val)) { Safefree(row_names[i]); continue; }
 
 	  bool row_ok = TRUE;
-	  NV *restrict row_x = (NV*)safemalloc(p * sizeof(NV));
+	  double *restrict row_x = (double*)safemalloc(p * sizeof(double));
 	  for (j = 0; j < p; j++) {
 		   if (strcmp(exp_terms[j], "Intercept") == 0) {
 		       row_x[j] = 1.0;
@@ -6537,26 +6561,26 @@ CODE:
 	  croak("lm: 0 degrees of freedom (too many NAs or parameters > observations)");
 	}
 	// PHASE 5: OLS Math
-	Newxz(XtX, p * p, NV);
+	Newxz(XtX, p * p, double);
 	for (i = 0; i < p; i++)
 	  for (j = 0; j < p; j++) {
-		   NV sum = 0.0;
+		   double sum = 0.0;
 		   for (k = 0; k < valid_n; k++) sum += X[k * p + i] * X[k * p + j];
 		   XtX[i * p + j] = sum;
 	  }
-	Newxz(XtY, p, NV);
+	Newxz(XtY, p, double);
 	for (i = 0; i < p; i++) {
-	  NV sum = 0.0;
+	  double sum = 0.0;
 	  for (k = 0; k < valid_n; k++) sum += X[k * p + i] * Y[k];
 	  XtY[i] = sum;
 	}
 	Newx(aliased, p, bool);
 	final_rank = sweep_matrix_ols(XtX, p, aliased);
-	Newxz(beta, p, NV);
+	Newxz(beta, p, double);
 	for (i = 0; i < p; i++) {
 	  if (aliased[i]) { beta[i] = NAN; }
 	  else {
-		   NV sum = 0.0;
+		   double sum = 0.0;
 		   for (j = 0; j < p; j++) if (!aliased[j]) sum += XtX[i * p + j] * XtY[j];
 		   beta[i] = sum;
 	  }
@@ -6566,15 +6590,15 @@ CODE:
 	summary_hv = newHV(); terms_av = newAV();
 	df_res = (int)valid_n - final_rank;
 	// rss / mss accumulated here — rse_sq computed AFTER this loop (not before)
-	NV sum_y = 0.0, mss = 0.0;
+	double sum_y = 0.0, mss = 0.0;
 	for (i = 0; i < valid_n; i++) sum_y += Y[i];
-	NV mean_y = sum_y / (NV)valid_n;
+	double mean_y = sum_y / (double)valid_n;
 	for (i = 0; i < valid_n; i++) {
-	  NV y_hat = 0.0;
+	  double y_hat = 0.0;
 	  for (j = 0; j < p; j++) if (!aliased[j]) y_hat += X[i * p + j] * beta[j];
-	  NV res   = Y[i] - y_hat;
+	  double res   = Y[i] - y_hat;
 	  rss          += res * res;
-	  NV diff_m = has_intercept ? (y_hat - mean_y) : y_hat;
+	  double diff_m = has_intercept ? (y_hat - mean_y) : y_hat;
 	  mss          += diff_m * diff_m;
 	  hv_store(fitted_hv, valid_row_names[i], strlen(valid_row_names[i]), newSVnv(y_hat), 0);
 	  hv_store(resid_hv,  valid_row_names[i], strlen(valid_row_names[i]), newSVnv(res),   0);
@@ -6582,18 +6606,18 @@ CODE:
 	}
 	Safefree(valid_row_names);
 	// Single, authoritative rse_sq calculation
-	rse_sq = (df_res > 0) ? (rss / (NV)df_res) : NAN;
+	rse_sq = (df_res > 0) ? (rss / (double)df_res) : NAN;
 
 	int df_int = has_intercept ? 1 : 0;
-	NV r_squared = 0.0, adj_r_squared = 0.0, f_stat = NAN, f_pvalue = NAN;
+	double r_squared = 0.0, adj_r_squared = 0.0, f_stat = NAN, f_pvalue = NAN;
 	int numdf = final_rank - df_int;
 
 	if (final_rank != df_int && (mss + rss) > 0.0) {
 	  r_squared     = mss / (mss + rss);
-	  adj_r_squared = 1.0 - (1.0 - r_squared) * ((valid_n - df_int) / (NV)df_res);
+	  adj_r_squared = 1.0 - (1.0 - r_squared) * ((valid_n - df_int) / (double)df_res);
 	  if (rse_sq > 0.0 && numdf > 0) {
-		   f_stat   = (mss / (NV)numdf) / rse_sq;
-		   f_pvalue = 1.0 - pf(f_stat, (NV)numdf, (NV)df_res);
+		   f_stat   = (mss / (double)numdf) / rse_sq;
+		   f_pvalue = 1.0 - pf(f_stat, (double)numdf, (double)df_res);
 	  } else if (rse_sq == 0.0) {
 		   f_stat   = INFINITY;
 		   f_pvalue = 0.0;
@@ -6611,9 +6635,9 @@ CODE:
 		   hv_store(row_hv, "t value",    7,  newSVpv("NaN", 0), 0);
 		   hv_store(row_hv, "Pr(>|t|)",   8,  newSVpv("NaN", 0), 0);
 	  } else {
-		   NV se    = sqrt(rse_sq * XtX[j * p + j]);
-		   NV t_val = (se > 0.0) ? (beta[j] / se) : (INFINITY * (beta[j] >= 0.0 ? 1.0 : -1.0));
-		   NV p_val = get_t_pvalue(t_val, df_res, "two.sided");
+		   double se    = sqrt(rse_sq * XtX[j * p + j]);
+		   double t_val = (se > 0.0) ? (beta[j] / se) : (INFINITY * (beta[j] >= 0.0 ? 1.0 : -1.0));
+		   double p_val = get_t_pvalue(t_val, df_res, "two.sided");
 		   hv_store(row_hv, "Estimate",   8,  newSVnv(beta[j]), 0);
 		   hv_store(row_hv, "Std. Error", 10, newSVnv(se),      0);
 		   hv_store(row_hv, "t value",    7,  newSVnv(t_val),   0);
@@ -6657,9 +6681,9 @@ OUTPUT:
     RETVAL
 
 void seq(from, to, by = 1.0)
-	NV from
-	NV to
-	NV by
+	double from
+	double to
+	double by
 PPCODE:
 	{
 		//Handle the zero 'by' case
@@ -6680,7 +6704,7 @@ PPCODE:
 		* R uses a small epsilon (like 1e-10) to avoid dropping the last 
 		* element due to floating point inaccuracies.
 		*/
-		NV n_elements_d = (to - from) / by;
+		double n_elements_d = (to - from) / by;
 		if (n_elements_d < 0.0) n_elements_d = 0.0;
 		size_t n_elements = (n_elements_d + 1e-10) + 1;
 		// Pre-extend the stack to avoid reallocating inside the loop
@@ -6697,7 +6721,7 @@ SV* rnorm(...)
 	  // Auto-seed the PRNG if the Perl script hasn't done so yet
 	  AUTO_SEED_PRNG();
 	  size_t n = 0;
-	  NV mean = 0.0, sd = 1.0;
+	  double mean = 0.0, sd = 1.0;
 	  int arg_start = 0;
 	  // Check if the first argument is a simple integer (rnorm(33))
 	  if (items > 0 && SvIOK(ST(0)) && (items == 1 || items % 2 != 0)) {
@@ -6725,14 +6749,14 @@ SV* rnorm(...)
 		   av_extend(result_av, n - 1);
 		   // Generate random normals using the Box-Muller transform
 		   for (size_t i = 0; i < n; ) {
-		        NV u, v, s;
+		        double u, v, s;
 		        do {
 		            // Drand01() hooks into Perl's internal PRNG, respecting Perl's srand()
 		            u = 2.0 * Drand01() - 1.0;
 		            v = 2.0 * Drand01() - 1.0;
 		            s = u * u + v * v;
 		        } while (s >= 1.0 || s == 0.0);
-		        NV mul = sqrt(-2.0 * log(s) / s);
+		        double mul = sqrt(-2.0 * log(s) / s);
 		        // Box-Muller generates two independent values per iteration
 		        av_store(result_av, i++, newSVnv(mean + sd * u * mul));
 		        if (i < n) {
@@ -6808,8 +6832,8 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 	HV *restrict data_hoa = NULL;
 	SV *restrict ref = NULL;
 	HE *restrict entry;
-	NV **restrict X_mat = NULL;
-	NV *restrict Y = NULL;
+	double **restrict X_mat = NULL;
+	double *restrict Y = NULL;
 	char **restrict term_base_level = NULL;  /* reference level for each uniq_term (NULL if not categorical) */
 	if (!SvROK(data_sv)) croak("aov: data is required and must be a reference");
 	//
@@ -7097,12 +7121,13 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 	X_mat = (double**)safemalloc(n * sizeof(double*));
 	for(i = 0; i < n; i++) X_mat[i] = (double*)safemalloc(p_exp * sizeof(double));
 	Newx(Y, n, double);
-	// PHASE 4: Matrix Construction & Listwise Deletion
+
+	/* PHASE 4: Matrix Construction & Listwise Deletion */
 	for (i = 0; i < n; i++) {
-		NV y_val = evaluate_term(aTHX_ data_hoa, row_hashes, i, lhs);
+		double y_val = evaluate_term(aTHX_ data_hoa, row_hashes, i, lhs);
 		if (isnan(y_val)) { Safefree(row_names[i]); continue; }
 		bool row_ok = TRUE;
-		NV *restrict row_x = (NV*)safemalloc(p_exp * sizeof(NV));
+		double *restrict row_x = (double*)safemalloc(p_exp * sizeof(double));
 		for (j = 0; j < p_exp; j++) {
 			  if (strcmp(exp_terms[j], "Intercept") == 0) {
 				   row_x[j] = 1.0;
@@ -7150,9 +7175,9 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 	bool *restrict aliased_qr = (bool*)safemalloc(p_exp * sizeof(bool));
 	size_t *restrict rank_map = (size_t*)safemalloc(p_exp * sizeof(size_t));
 	apply_householder_aov(X_mat, Y, valid_n, p_exp, aliased_qr, rank_map);
-	NV *restrict term_ss;
+	double *restrict term_ss;
 	int *restrict term_df;
-	Newxz(term_ss, num_uniq, NV);
+	Newxz(term_ss, num_uniq, double);
 	Newxz(term_df, num_uniq, int);
 	for (i = 0; i < p_exp; i++) {
 		if (strcmp(exp_terms[i], "Intercept") == 0) continue; 
@@ -7166,27 +7191,27 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 	for (i = 0; i < p_exp; i++) {
 		  if (!aliased_qr[i]) rank++;
 	}
-	NV rss_prev = 0.0;
+	double rss_prev = 0.0;
 	for (i = rank; i < valid_n; i++) {
 		  rss_prev += Y[i] * Y[i];
 	}
 	int res_df = valid_n - rank;
-	NV ms_res = (res_df > 0) ? rss_prev / res_df : 0.0;
+	double ms_res = (res_df > 0) ? rss_prev / res_df : 0.0;
 	HV*restrict ret_hash = newHV();
 	for (j = 0; j < num_uniq; j++) {
 		  if (strcmp(uniq_terms[j], "Intercept") == 0) continue;
 		  HV*restrict term_stats = newHV();
-		  NV ss = term_ss[j];
+		  double ss = term_ss[j];
 		  int df = term_df[j];
-		  NV ms = (df > 0) ? ss / df : 0.0;
+		  double ms = (df > 0) ? ss / df : 0.0;
 
 		  hv_stores(term_stats, "Df", newSViv(df));
 		  hv_stores(term_stats, "Sum Sq", newSVnv(ss));
 		  hv_stores(term_stats, "Mean Sq", newSVnv(ms));
 		  if (ms_res > 0.0 && df > 0) {
-		        NV f_val = ms / ms_res;
+		        double f_val = ms / ms_res;
 		        hv_stores(term_stats, "F value", newSVnv(f_val));
-		        hv_stores(term_stats, "Pr(>F)", newSVnv(1.0 - pf(f_val, (NV)df, (NV)res_df)));
+		        hv_stores(term_stats, "Pr(>F)", newSVnv(1.0 - pf(f_val, (double)df, (double)res_df)));
 		  } else {
 		        hv_stores(term_stats, "F value", newSVnv(NAN));
 		        hv_stores(term_stats, "Pr(>F)", newSVnv(NAN));
@@ -7222,13 +7247,13 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 		      SV **restrict col_sv = av_fetch(all_cols, c, 0);
 		      if (!col_sv || !SvOK(*col_sv)) continue;
 		      const char *restrict col_name = SvPV_nolen(*col_sv);
-		      NV col_sum = 0.0;
+		      double col_sum = 0.0;
 		      IV      col_count = 0;
 		      for (i = 0; i < tgt_n; i++) {
-		          NV val = evaluate_term(aTHX_ tgt_hoa, tgt_row_hashes, i, col_name);
+		          double val = evaluate_term(aTHX_ tgt_hoa, tgt_row_hashes, i, col_name);
 		          if (!isnan(val)) { col_sum += val; col_count++; }
 		      }
-		      NV col_mean = (col_count > 0) ? col_sum / col_count : NAN;
+		      double col_mean = (col_count > 0) ? col_sum / col_count : NAN;
 		      hv_store(mean_hv, col_name, strlen(col_name), newSVnv(col_mean), 0);
 		      hv_store(size_hv, col_name, strlen(col_name), newSViv(col_count), 0);
 		  }
@@ -7269,7 +7294,7 @@ CODE:
 	if (items < 1) croak("fisher_test requires at least a data reference");
 
 	SV*restrict data_ref = ST(0);
-	NV conf_level = 0.95;
+	double conf_level = 0.95;
 	const char*restrict alternative = "two.sided";
 
 	// Parse named arguments
@@ -7348,8 +7373,8 @@ CODE:
 	}
 
 	// Perform Calculations via Helpers
-	NV p_val = exact_p_value(a, b, c, d, alternative);
-	NV mle_or, ci_low, ci_high;
+	double p_val = exact_p_value(a, b, c, d, alternative);
+	double mle_or, ci_low, ci_high;
 	calculate_exact_stats(a, b, c, d, conf_level, alternative, &mle_or, &ci_low, &ci_high);
 
 	// Construct the Return HashRef purely in C
@@ -7382,7 +7407,7 @@ CODE:
 	const char* restrict type = "two.sample";
 	const char* restrict alternative = "two.sided";
 	bool strict = FALSE;
-	NV tol = pow(2.2204460492503131e-16, 0.25); 
+	double tol = pow(2.2204460492503131e-16, 0.25); 
 
 	if (items % 2 != 0) croak("Usage: power_t_test(n => 30, delta => 0.5, sd => 1.0, ...)");
 	for (unsigned short int i = 0; i < items; i += 2) {
@@ -7418,46 +7443,46 @@ CODE:
 	  croak("power_t_test: exactly one of 'n', 'delta', 'sd', 'power', and 'sig_level' must be undef/NULL");
 	}
 
-	NV n = is_null_n ? 0.0 : SvNV(sv_n);
-	NV delta = is_null_delta ? 0.0 : SvNV(sv_delta);
-	NV sd = (!sv_sd || is_null_sd) ? 1.0 : SvNV(sv_sd);
-	NV sig_level = (!sv_sig_level || is_null_sig_level) ? 0.05 : SvNV(sv_sig_level);
-	NV power = is_null_power ? 0.0 : SvNV(sv_power);
+	double n = is_null_n ? 0.0 : SvNV(sv_n);
+	double delta = is_null_delta ? 0.0 : SvNV(sv_delta);
+	double sd = (!sv_sd || is_null_sd) ? 1.0 : SvNV(sv_sd);
+	double sig_level = (!sv_sig_level || is_null_sig_level) ? 0.05 : SvNV(sv_sig_level);
+	double power = is_null_power ? 0.0 : SvNV(sv_power);
 	short int tsample = (strEQ(type, "one.sample") || strEQ(type, "paired")) ? 1 : 2;
 	short int tside = (strEQ(alternative, "one.sided") || strEQ(alternative, "greater") || strEQ(alternative, "less")) ? 1 : 2;
 	if (tside == 2 && !is_null_delta) delta = fabs(delta);
 	if (is_null_power) {
 	  power = p_body(n, delta, sd, sig_level, tsample, tside, strict);
 	} else if (is_null_n) {
-		NV low = 2.0, high = 1e7;
+		double low = 2.0, high = 1e7;
 		while (p_body(high, delta, sd, sig_level, tsample, tside, strict) < power && high < 1e12) high *= 2.0;
 		while (high - low > tol) {
-			NV mid = low + (high - low) / 2.0;
+			double mid = low + (high - low) / 2.0;
 			if (p_body(mid, delta, sd, sig_level, tsample, tside, strict) < power) low = mid;
 			else high = mid;
 		}
 		n = low + (high - low) / 2.0;
 	} else if (is_null_sd) {
-	  NV low = delta * 1e-7, high = delta * 1e7;
+	  double low = delta * 1e-7, high = delta * 1e7;
 	  while (high - low > tol) {
-		   NV mid = low + (high - low) / 2.0;
+		   double mid = low + (high - low) / 2.0;
 		   if (p_body(n, delta, mid, sig_level, tsample, tside, strict) > power) low = mid;
 		   else high = mid;
 	  }
 	  sd = low + (high - low) / 2.0;
 	} else if (is_null_delta) {
-	  NV low = sd * 1e-7, high = sd * 1e7;
+	  double low = sd * 1e-7, high = sd * 1e7;
 	  while (p_body(n, high, sd, sig_level, tsample, tside, strict) < power && high < 1e12) high *= 2.0;
 	  while (high - low > tol) {
-		   NV mid = low + (high - low) / 2.0;
+		   double mid = low + (high - low) / 2.0;
 		   if (p_body(n, mid, sd, sig_level, tsample, tside, strict) < power) low = mid;
 		   else high = mid;
 	  }
 	  delta = low + (high - low) / 2.0;
 	} else if (is_null_sig_level) {
-	  NV low = 1e-10, high = 1.0 - 1e-10;
+	  double low = 1e-10, high = 1.0 - 1e-10;
 	  while (high - low > tol) {
-		   NV mid = low + (high - low) / 2.0;
+		   double mid = low + (high - low) / 2.0;
 		   if (p_body(n, delta, sd, mid, tsample, tside, strict) < power) low = mid;
 		   else high = mid;
 	  }
@@ -7512,7 +7537,9 @@ CODE:
 	if (h_sv && (x_sv || g_sv))
 	  croak("kruskal_test: cannot mix 'h' (hash-of-arrays) with 'x'/'g' inputs");
 
-	// Shared state filled by whichever input branch runs
+	/* ------------------------------------------------------------------ */
+	/* Shared state filled by whichever input branch runs                 */
+	/* ------------------------------------------------------------------ */
 	RankInfo *restrict ri = NULL;
 	char **restrict group_names = NULL; /* Track names to build group_stats */
 	size_t valid_n = 0, k       = 0;
@@ -7614,10 +7641,10 @@ CODE:
 	}
 	// 6. Ranking and Tie Accumulation (Reusing LikeR Helper)
 	bool   has_ties = 0;
-	NV tie_adj  = rank_and_count_ties(ri, valid_n, &has_ties);
+	double tie_adj  = rank_and_count_ties(ri, valid_n, &has_ties);
 	// 7. Aggregate Sum of Ranks AND Actual Values by Group
-	NV *restrict group_rank_sums = (NV *)safecalloc(k, sizeof(NV));
-	NV *restrict group_val_sums  = (NV *)safecalloc(k, sizeof(NV)); // For Mean
+	double *restrict group_rank_sums = (double *)safecalloc(k, sizeof(double));
+	double *restrict group_val_sums  = (double *)safecalloc(k, sizeof(double)); // For Mean
 	size_t *restrict group_counts    = (size_t *)safecalloc(k, sizeof(size_t));
 	for (size_t i = 0; i < valid_n; i++) {
 		size_t g_id = ri[i].idx;
@@ -7626,20 +7653,20 @@ CODE:
 		group_counts[g_id]++;
 	}
 	// 8. Calculate STATISTIC
-	NV stat_base = 0.0;
+	double stat_base = 0.0;
 	for (size_t i = 0; i < k; i++) {
 	  if (group_counts[i] > 0)
 		   stat_base += (group_rank_sums[i] * group_rank_sums[i])
-		                / (NV)group_counts[i];
+		                / (double)group_counts[i];
 	}
-	NV n_d  = (NV)valid_n;
-	NV stat = (12.0 * stat_base / (n_d * (n_d + 1.0))) - 3.0 * (n_d + 1.0);
+	double n_d  = (double)valid_n;
+	double stat = (12.0 * stat_base / (n_d * (n_d + 1.0))) - 3.0 * (n_d + 1.0);
 	if (tie_adj > 0.0) {
-	  NV tie_denom = 1.0 - (tie_adj / (n_d * n_d * n_d - n_d));
+	  double tie_denom = 1.0 - (tie_adj / (n_d * n_d * n_d - n_d));
 	  stat /= tie_denom;
 	}
 	int    df    = (int)k - 1;
-	NV p_val = get_p_value(stat, df);
+	double p_val = get_p_value(stat, df);
 	// 9. Return structured data exactly like R's htest
 	HV *restrict res = newHV();
 	hv_stores(res, "statistic", newSVnv(stat));
@@ -7660,10 +7687,12 @@ CODE:
 	  }
 	  if (group_names[i]) Safefree(group_names[i]); // Clean up name copy
 	}
+
 	// Embed the nested hashes
 	hv_stores(group_stats, "mean", newRV_noinc((SV*)stats_mean));
 	hv_stores(group_stats, "size", newRV_noinc((SV*)stats_size));
 	hv_stores(res, "group_stats",  newRV_noinc((SV*)group_stats));
+
 	// Memory Cleanup
 	Safefree(group_names);    Safefree(group_rank_sums); 
 	Safefree(group_val_sums); Safefree(group_counts); Safefree(ri);
@@ -7678,7 +7707,7 @@ CODE:
 {
 	SV* restrict x_sv = NULL;
 	SV* restrict y_sv = NULL;
-	NV ratio = 1.0, conf_level = 0.95;
+	double ratio = 1.0, conf_level = 0.95;
 	const char* restrict alternative = "two.sided";
 	unsigned int arg_idx = 0;
 
@@ -7724,30 +7753,30 @@ CODE:
 	size_t nx_raw = av_len(x_av) + 1;
 	size_t ny_raw = av_len(y_av) + 1;
 	// --- Computation via Welford's Algorithm (ignoring NaNs) ---
-	NV mean_x = 0.0, M2_x = 0.0;
+	double mean_x = 0.0, M2_x = 0.0;
 	size_t nx = 0;
 	for (size_t i = 0; i < nx_raw; i++) {
 		SV** restrict tv = av_fetch(x_av, i, 0);
 		if (tv && SvOK(*tv) && looks_like_number(*tv)) {
-			NV val = SvNV(*tv);
+			double val = SvNV(*tv);
 			if (!isnan(val) && isfinite(val)) {
 				nx++;
-				NV delta = val - mean_x;
+				double delta = val - mean_x;
 				mean_x += delta / nx;
 				M2_x += delta * (val - mean_x);
 			}
 		}
 	}
 
-	NV mean_y = 0.0, M2_y = 0.0;
+	double mean_y = 0.0, M2_y = 0.0;
 	size_t ny = 0;
 	for (size_t i = 0; i < ny_raw; i++) {
 		SV** restrict tv = av_fetch(y_av, i, 0);
 		if (tv && SvOK(*tv) && looks_like_number(*tv)) {
-			NV val = SvNV(*tv);
+			double val = SvNV(*tv);
 			if (!isnan(val) && isfinite(val)) {
 				ny++;
-				NV delta = val - mean_y;
+				double delta = val - mean_y;
 				mean_y += delta / ny;
 				M2_y += delta * (val - mean_y);
 			}
@@ -7757,16 +7786,16 @@ CODE:
 	if (nx < 2) croak("not enough 'x' observations");
 	if (ny < 2) croak("not enough 'y' observations");
 
-	NV df_x = (NV)(nx - 1);
-	NV df_y = (NV)(ny - 1);
-	NV var_x = M2_x / df_x;
-	NV var_y = M2_y / df_y;
+	double df_x = (double)(nx - 1);
+	double df_y = (double)(ny - 1);
+	double var_x = M2_x / df_x;
+	double var_y = M2_y / df_y;
 	if (var_y == 0.0) croak("var_test: variance of 'y' is zero (cannot divide by zero)");
 	// --- Statistics Math ---
-	NV estimate = var_x / var_y;
-	NV statistic = estimate / ratio;
-	NV p_val = pf(statistic, df_x, df_y);
-	NV ci_lower = 0.0, ci_upper = INFINITY;
+	double estimate = var_x / var_y;
+	double statistic = estimate / ratio;
+	double p_val = pf(statistic, df_x, df_y);
+	double ci_lower = 0.0, ci_upper = INFINITY;
 	if (strcmp(alternative, "less") == 0) {
 	  ci_upper = estimate / qf_bisection(1.0 - conf_level, df_x, df_y);
 	} else if (strcmp(alternative, "greater") == 0) {
@@ -7774,29 +7803,35 @@ CODE:
 	  ci_lower = estimate / qf_bisection(conf_level, df_x, df_y);
 	} else {
 	  // two.sided
-	  NV p1 = p_val;
-	  NV p2 = 1.0 - p_val;
+	  double p1 = p_val;
+	  double p2 = 1.0 - p_val;
 	  p_val = 2.0 * (p1 < p2 ? p1 : p2);
-	  NV beta = (1.0 - conf_level) / 2.0;
+	  double beta = (1.0 - conf_level) / 2.0;
 	  ci_lower = estimate / qf_bisection(1.0 - beta, df_x, df_y);
 	  ci_upper = estimate / qf_bisection(beta, df_x, df_y);
 	}
+
 	// --- Pack Results ---
 	HV* restrict results = newHV();
 	hv_store(results, "statistic", 9, newSVnv(statistic), 0);
+
 	AV* restrict param_av = newAV();
 	av_push(param_av, newSVnv(df_x));
 	av_push(param_av, newSVnv(df_y));
 	hv_store(results, "parameter", 9, newRV_noinc((SV*)param_av), 0);
+
 	hv_store(results, "p_value", 7, newSVnv(p_val), 0);
+
 	AV* restrict conf_int = newAV();
 	av_push(conf_int, newSVnv(ci_lower));
 	av_push(conf_int, newSVnv(ci_upper));
 	hv_store(results, "conf_int", 8, newRV_noinc((SV*)conf_int), 0);
+
 	hv_store(results, "estimate", 8, newSVnv(estimate), 0);
 	hv_store(results, "null_value", 10, newSVnv(ratio), 0);
 	hv_store(results, "alternative", 11, newSVpv(alternative, 0), 0);
 	hv_store(results, "method", 6, newSVpv("F test to compare two variances", 0), 0);
+
 	RETVAL = newRV_noinc((SV*)results);
 }
 OUTPUT:
@@ -7826,7 +7861,9 @@ CODE:
 				 HE **restrict entries;
 				 HE  *restrict entry;
 				 unsigned i;
+
 				 Newx(entries, count, HE *);
+
 				 /* Collect all HE pointers in one pass */
 				 i = 0;
 				 while ((entry = hv_iternext(hv)))
@@ -7865,9 +7902,11 @@ CODE:
 			size_t count = av_top_index(av) + 1;  /* signed; 0 for empty AV */
 			size_t limit = (n < count) ? (size_t)n : count;
 			AV    *restrict ret_av = newAV();
+
 			/* Pre-allocate the result array to avoid incremental reallocs */
 			if (n > 0)
 				 av_extend(ret_av, (size_t)n - 1);
+
 			if (count > 0) {
 				 SV    **restrict src = AvARRAY(av);   /* direct pointer into AV's C array */
 				 size_t *restrict idx;
@@ -7876,7 +7915,8 @@ CODE:
 				 Newx(idx, count, size_t);
 				 for (size_t i = 0; i < count; i++)
 				     idx[i] = i;
-				 // Partial Fisher-Yates on the index array
+
+				 /* Partial Fisher-Yates on the index array */
 				 for (size_t i = 0; i < limit; i++) {
 				     size_t j   = i + (size_t)(Drand01() * (count - i));
 				     size_t tmp = idx[i];
@@ -7916,7 +7956,7 @@ CODE:
 	  croak("Usage: dnorm(x), dnorm(x, mean => 0, sd => 1, log => 0)");
 	}
 	SV*restrict x_sv = ST(0);
-	NV mean = 0.0, sd = 1.0; /*defaults*/
+	double mean = 0.0, sd = 1.0; /*defaults*/
 	bool give_log = 0;
 	// --- Parse remaining named arguments from the flat stack ---
 	if ((items - 1) % 2 != 0) {
@@ -7940,16 +7980,16 @@ CODE:
 		   av_extend(result_av, n - 1);
 		   for (IV i = 0; i < n; i++) {
 		       SV **restrict elem = av_fetch(x_av, i, 0);
-		       NV x_val = (elem && *elem) ? SvNV(*elem) : NAN;
-		       NV res = c_dnorm(x_val, mean, sd, give_log);
+		       double x_val = (elem && *elem) ? SvNV(*elem) : NAN;
+		       double res = c_dnorm(x_val, mean, sd, give_log);
 		       av_store(result_av, i, newSVnv(res));
 		   }
 	  }
 	  RETVAL = newRV_noinc((SV*)result_av);
 	} else {
 	  // x is a single numeric scalar
-	  NV x_val = SvNV(x_sv);
-	  NV res = c_dnorm(x_val, mean, sd, give_log);
+	  double x_val = SvNV(x_sv);
+	  double res = c_dnorm(x_val, mean, sd, give_log);
 	  RETVAL = newSVnv(res);
 	}
 	}
@@ -8547,7 +8587,7 @@ CODE:
 {
 	SV *restrict x_sv = NULL;
 	bool retx = TRUE, center = TRUE, do_scale = FALSE;
-	NV tol = -1.0;
+	double tol = -1.0;
 	long rank_opt = -1;
 	unsigned int arg_idx = 0;
 	// 1. Shift positional 'x' argument if provided
@@ -8636,7 +8676,7 @@ CODE:
 		qsort(colnames, p, sizeof(char*), cmp_string_wt);
 	}
 	// 5. Extract data & apply listwise deletion for NaNs
-	NV *restrict X_mat = (NV*)safemalloc(n_raw * p * sizeof(NV));
+	double *restrict X_mat = (double*)safemalloc(n_raw * p * sizeof(double));
 	size_t n = 0;
 	if (is_aoa) {
 	  AV *restrict av = (AV*)ref;
@@ -8648,7 +8688,7 @@ CODE:
 		       for (size_t j = 0; j < p; j++) {
 		           SV **restrict cell_sv = av_fetch(row_av, j, 0);
 		           if (cell_sv && SvOK(*cell_sv) && looks_like_number(*cell_sv)) {
-		               NV v = SvNV(*cell_sv);
+		               double v = SvNV(*cell_sv);
 		               if (!isfinite(v)) row_ok = FALSE;
 		               else X_mat[n * p + j] = v;
 		           } else row_ok = FALSE;
@@ -8668,7 +8708,7 @@ CODE:
 			for (size_t j = 0; j < p; j++) {
 				SV **restrict cell = av_fetch(col_arrays[j], i, 0);
 				if (cell && SvOK(*cell) && looks_like_number(*cell)) {
-				  NV v = SvNV(*cell);
+				  double v = SvNV(*cell);
 				  if (!isfinite(v)) row_ok = FALSE;
 				  else X_mat[n * p + j] = v;
 				} else row_ok = FALSE;
@@ -8686,7 +8726,7 @@ CODE:
 			for (size_t j = 0; j < p; j++) {
 				SV **restrict cell = hv_fetch(row_hv, colnames[j], strlen(colnames[j]), 0);
 				if (cell && SvOK(*cell) && looks_like_number(*cell)) {
-				  NV v = SvNV(*cell);
+				  double v = SvNV(*cell);
 				  if (!isfinite(v)) row_ok = FALSE;
 				  else X_mat[n * p + j] = v;
 				} else row_ok = FALSE;
@@ -8703,19 +8743,19 @@ CODE:
 	  croak("prcomp: 0 valid observations after listwise NA deletion");
 	}
 	// 6. Center and Scale
-	NV *restrict cen_vec = (NV*)safecalloc(p, sizeof(NV));
-	NV *restrict sc_vec  = (NV*)safecalloc(p, sizeof(NV));
+	double *restrict cen_vec = (double*)safecalloc(p, sizeof(double));
+	double *restrict sc_vec  = (double*)safecalloc(p, sizeof(double));
 	for (size_t j = 0; j < p; j++) {
-	  NV col_sum = 0.0;
+	  double col_sum = 0.0;
 	  for (size_t i = 0; i < n; i++) col_sum += X_mat[i * p + j];
 	  if (center) {
 		   cen_vec[j] = col_sum / n;
 		   for (size_t i = 0; i < n; i++) X_mat[i * p + j] -= cen_vec[j];
 	  }
 	  if (do_scale) {
-		   NV sum_sq = 0.0;
+		   double sum_sq = 0.0;
 		   for (size_t i = 0; i < n; i++) {
-		       NV val = X_mat[i * p + j] - (center ? 0 : (col_sum / n));
+		       double val = X_mat[i * p + j] - (center ? 0 : (col_sum / n));
 		       sum_sq += val * val;
 		   }
 		   sc_vec[j] = (n > 1) ? sqrt(sum_sq / (n - 1)) : 0.0;
@@ -8728,7 +8768,7 @@ CODE:
 	  }
 	}
 	// 7. Construct Covariance Matrix X^T X
-	NV *restrict XtX = (NV*)safecalloc(p * p, sizeof(NV));
+	double *restrict XtX = (double*)safecalloc(p * p, sizeof(double));
 	for (size_t i = 0; i < n; i++) {
 	  for (size_t j = 0; j < p; j++) {
 		   for (size_t k = j; k < p; k++) {
@@ -8743,22 +8783,22 @@ CODE:
 	  }
 	}
 	// 8. Jacobi Eigen Decomposition
-	NV *restrict eigen_val = (NV*)safemalloc(p * sizeof(NV));
-	NV *restrict eigen_vec = (NV*)safemalloc(p * p * sizeof(NV));
+	double *restrict eigen_val = (double*)safemalloc(p * sizeof(double));
+	double *restrict eigen_vec = (double*)safemalloc(p * p * sizeof(double));
 	jacobi_eigen(XtX, p, eigen_val, eigen_vec);
 	// 9. Calculate singular values (sdev) & handle dimensions (rank/tol)
 	size_t k_cols = (n < p) ? n : p;
 	if (rank_opt > 0 && rank_opt < (long)k_cols) k_cols = (size_t)rank_opt;
-	NV *restrict sdev = (NV*)safemalloc(k_cols * sizeof(NV));
-	NV n_adj = (n > 1) ? (NV)(n - 1) : 1.0;
+	double *restrict sdev = (double*)safemalloc(k_cols * sizeof(double));
+	double n_adj = (n > 1) ? (double)(n - 1) : 1.0;
 	for (size_t j = 0; j < k_cols; j++) {
-	  NV e_val = eigen_val[j];
+	  double e_val = eigen_val[j];
 	  if (e_val < 0.0) e_val = 0.0; // clamp floating point inaccuracy
 	  sdev[j] = sqrt(e_val / n_adj);
 	}
 	if (tol >= 0.0) {
 	  size_t rank_est = 0;
-	  NV threshold = sdev[0] * tol;
+	  double threshold = sdev[0] * tol;
 	  for (size_t j = 0; j < k_cols; j++) {
 		   if (sdev[j] > threshold) rank_est++;
 	  }
@@ -8783,7 +8823,7 @@ CODE:
 	  for (size_t i = 0; i < n; i++) {
 		   AV *restrict row_x = newAV();
 		   for (size_t m = 0; m < k_cols; m++) {
-		       NV x_rot_val = 0.0;
+		       double x_rot_val = 0.0;
 		       for (size_t c = 0; c < p; c++) {
 		           x_rot_val += X_mat[i * p + c] * eigen_vec[c * p + m];
 		       }
