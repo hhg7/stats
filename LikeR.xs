@@ -1763,9 +1763,9 @@ static int c2c_mark(SV **col_names, STRLEN *name_len, size_t ncols, const char *
 	}
 	return 0;
 }
-// ============================================================================
+//
 // filter() helpers — place this block in the C section, ABOVE the MODULE line
-// ============================================================================
+//
 // Resolve the cell SV for a column in the "current row".
 //   AoH: current row is row_hv         -> hv_fetch(row_hv, col)
 //   HoA: current row is index idx      -> hv_fetch(data_hv,col) -> AV -> av_fetch(idx)
@@ -1856,8 +1856,108 @@ static bool filt_call(pTHX_ SV *restrict cv, SV *restrict row) {
 	return keep;
 }
 
+static int h2h_keycmp(const void *pa, const void *pb) {
+	dTHX;
+	SV * const *a = (SV * const *)pa;
+	SV * const *b = (SV * const *)pb;
+	return sv_cmp(*a, *b);
+}
+
 // --- XS SECTION ---
 MODULE = Stats::LikeR  PACKAGE = Stats::LikeR
+
+SV *hoh2hoa(data, ...)
+		SV *data
+	CODE:
+	{
+		// 0. parse trailing name => value options (done before any allocation so
+		//    option/usage errors can't leak). undef.val sets the fill for a
+		//    missing key or an undef cell (default: undef). row.names, if given,
+		//    adds a column of that name holding the sorted row labels.
+		SV *restrict fill = NULL;   // NULL => fill gaps with undef
+		SV *restrict rn_sv = NULL;  // NULL => do not emit a row-names column
+		if ((items - 1) & 1) croak("hoh2hoa: trailing options must be name => value pairs");
+		for (int oi = 1; oi < items; oi += 2) {
+			STRLEN ol;
+			const char *restrict oname = SvPV(ST(oi), ol);
+			SV *restrict oval = ST(oi + 1);
+			if (ol == 9 && memEQ(oname, "undef.val", 9)) fill = SvOK(oval) ? oval : NULL;
+			else if (ol == 9 && memEQ(oname, "row.names", 9)) {
+				if (SvOK(oval) && !SvROK(oval)) rn_sv = oval;
+				else croak("hoh2hoa: row.names must be a column name (string)");
+			}
+			else croak("hoh2hoa: unknown option '%s'", oname);
+		}
+		// 1. the input must be a hash ref (a hash of hashes).
+		if (!SvROK(data) || SvTYPE(SvRV(data)) != SVt_PVHV) croak("hoh2hoa: data must be a hash ref (hash of hashes)");
+		HV *restrict in_hv = (HV*)SvRV(data);
+		// 2. these cross the section boundaries (gather -> build -> cleanup).
+		HV *restrict out_hv = newHV();    // the result: column name -> array ref
+		AV *restrict rows_av = newAV();   // outer keys, sorted into the row order
+		AV *restrict cols_av = newAV();   // union of inner keys (column names)
+		HV *restrict seen = newHV();      // membership test while taking the union
+		// 3. collect the outer keys (row labels) and sort for a stable row order.
+		{
+			HE *restrict e;
+			hv_iterinit(in_hv);
+			while ((e = hv_iternext(in_hv))) {
+				SV *restrict rv = hv_iterval(in_hv, e);
+				if (!SvROK(rv) || SvTYPE(SvRV(rv)) != SVt_PVHV) croak("hoh2hoa: every value must be a hash ref (hash of hashes)");
+				av_push(rows_av, newSVsv(hv_iterkeysv(e)));
+			}
+		}
+		SSize_t nrows = av_len(rows_av) + 1;
+		if (nrows > 1) qsort(AvARRAY(rows_av), (size_t)nrows, sizeof(SV*), h2h_keycmp);
+		// 4. discover the union of inner keys. Each new column gets an empty array
+		//    in the result straight away so step 5 can just push into it.
+		{
+			HE *restrict e;
+			hv_iterinit(in_hv);
+			while ((e = hv_iternext(in_hv))) {
+				HV *restrict row = (HV*)SvRV(hv_iterval(in_hv, e));
+				HE *restrict ie;
+				hv_iterinit(row);
+				while ((ie = hv_iternext(row))) {
+					SV *restrict ck = hv_iterkeysv(ie);
+					if (!hv_exists_ent(seen, ck, 0)) {
+						(void)hv_store_ent(seen, ck, &PL_sv_yes, 0);
+						av_push(cols_av, newSVsv(ck));
+						(void)hv_store_ent(out_hv, ck, newRV_noinc((SV*)newAV()), 0);
+					}
+				}
+			}
+		}
+		SSize_t ncols = av_len(cols_av) + 1;
+		// 5. walk the rows in sorted order; for every column push the cell (a copy)
+		//    or the fill value, so each column ends up exactly nrows long.
+		for (SSize_t r = 0; r < nrows; r++) {
+			SV *restrict rk = *av_fetch(rows_av, r, 0);
+			HE *restrict rhe = hv_fetch_ent(in_hv, rk, 0, 0);
+			HV *restrict row = (HV*)SvRV(HeVAL(rhe));
+			for (SSize_t c = 0; c < ncols; c++) {
+				SV *restrict ck = *av_fetch(cols_av, c, 0);
+				HE *restrict che = hv_fetch_ent(row, ck, 0, 0);
+				SV *restrict src = che ? HeVAL(che) : NULL;
+				SV *restrict cell = (src && SvOK(src)) ? newSVsv(src) : (fill ? newSVsv(fill) : newSV(0));
+				HE *restrict colhe = hv_fetch_ent(out_hv, ck, 0, 0);
+				av_push((AV*)SvRV(HeVAL(colhe)), cell);
+			}
+		}
+		// 6. optional row-names column: the sorted labels under the requested name.
+		if (rn_sv) {
+			if (hv_exists_ent(out_hv, rn_sv, 0)) croak("hoh2hoa: row.names column '%s' collides with an existing column", SvPV_nolen(rn_sv));
+			AV *restrict rn_av = newAV();
+			for (SSize_t r = 0; r < nrows; r++) av_push(rn_av, newSVsv(*av_fetch(rows_av, r, 0)));
+			(void)hv_store_ent(out_hv, rn_sv, newRV_noinc((SV*)rn_av), 0);
+		}
+		// 7. tidy up the scratch structures (the result keeps its own copies).
+		SvREFCNT_dec((SV*)rows_av);
+		SvREFCNT_dec((SV*)cols_av);
+		SvREFCNT_dec((SV*)seen);
+		RETVAL = newRV_noinc((SV*)out_hv);
+	}
+	OUTPUT:
+		RETVAL
 
 void filter(df, pred)
 	SV *df
