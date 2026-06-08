@@ -586,6 +586,93 @@ but default mean, standard deviation, and log can be passed as parameters:
 
     $x = dnorm(0, mean => 0, sd => 2, 'log' => 0);
 
+## filter
+
+Return a new data frame containing only the rows of `$df` that match a predicate. The original `$df` is never modified.
+
+    my $df2 = filter($df, col('column.name') > 4);
+
+`filter` accepts a predicate in one of two forms:
+
+1. a **`col()` expression** — a small, composable comparison built with overloaded operators, and
+2. a **code reference** — for anything the operators can't express (multiple columns, regexes, arbitrary logic), in the same spirit as the `filter` option of [`read_table`](#).
+
+Both `filter` and `col` are exported by default.
+
+### Arguments
+
+| Position | Name | Description |
+| --- | --- | --- |
+| 1 | `$df` | The data frame to filter. Either an **array of hashes** (AoH — e.g. the default output of `read_table`) or a **hash of arrays** (HoA). |
+| 2 | predicate | Either a `col()` comparison object or a `CODE` reference. |
+
+The return value is a **new** data frame of the **same shape** as the input (AoH in → AoH out, HoA in → HoA out). For an HoA, every column is filtered in parallel by row index, so all returned columns stay the same length and aligned.
+
+### The `col()` form
+
+`col('name')` is a deferred reference to a column. It carries no data — only the column name — so it can be compared with a literal (or another value) to build a predicate that `filter` evaluates once per row.
+
+    filter($df, col('age') >= 18);          # keep rows where age >= 18
+    filter($df, col('sex') eq 'f');         # keep rows where sex is 'f'
+    filter($df, 18 <= col('age'));          # operands may be in either order
+
+### Comparison operators
+
+| Kind | Operators | Comparison |
+| --- | --- | --- |
+| Numeric | `>` `<` `>=` `<=` `==` `!=` | numeric (the cell and the value are compared as numbers) |
+| String | `gt` `lt` `ge` `le` `eq` `ne` | string (the cell and the value are compared as strings) |
+
+`col('x')` may appear on either side of the operator; `4 < col('x')` is automatically rewritten to the equivalent `col('x') > 4`.
+
+### Combining predicates: `&`, `|`, `!`
+
+Predicates compose with bitwise `&` (and), `|` (or), and `!` (not):
+
+    filter($df, (col('age') > 18) & (col('sex') eq 'f'));   # and
+    filter($df, (col('grp') eq 'a') | (col('grp') eq 'c')); # or
+    filter($df, !(col('x') > 100));                         # not
+
+Comparison operators bind more tightly than `&` and `|`, so `(col('a') > 4) & (col('b') < 2)` is parsed correctly, but the parentheses are recommended for readability.
+
+### The code-reference form
+
+For logic the operators can't express, pass a `sub`. It is called once per row; the **row is a hash reference**, available both as `$_` and as the first argument `$_[0]`. Return a true value to keep the row.
+
+    filter($df, sub { $_->{x} > 4 && $_->{grp} eq 'a' });
+    filter($df, sub { $_->{name} =~ /^A/ });
+    filter($df, sub { $_[0]{score} > $_[0]{threshold} });
+
+For an HoA, each row is assembled into a temporary hash reference (`{ column => value, ... }`) before the sub is called, so the same `$_->{column}` syntax works regardless of the input shape.
+
+### Examples
+
+    use Stats::LikeR;
+    my $df = read_table('patients.csv');                 # array of hashes
+    # numeric threshold
+    my $adults = filter($df, col('Age') >= 18);
+    # combine conditions
+    my $target = filter($df, (col('Age') >= 18) & (col('Sex') eq 'f'));
+    # arbitrary logic with a coderef
+    my $flagged = filter($df, sub { $_->{ALT} > 40 || $_->{AST} > 40 });
+    # hash-of-arrays input -> hash-of-arrays output, columns filtered in parallel
+    my $hoa = read_table('patients.csv', 'output.type' => 'hoa');
+    my $sub = filter($hoa, col('Age') > 32);
+    # $sub->{Age}, $sub->{Sex}, ... are all the same length and row-aligned
+
+### Behavior and notes
+
+- **The input is never modified.** `filter` builds and returns a new frame; `$df` is left untouched.
+- **A missing or `undef` cell never matches** a `col()` comparison. For example `col('x') > 0` silently drops any row that has no `x` value or whose `x` is `undef`.
+- **AoH rows are shared, not deep-copied**, into the returned frame: the returned array references the *same* row hashes as the input (fast, low-memory). Mutating a row in the result would therefore also change it in the original. HoA values are copied into fresh arrays.
+- **Keep-all / keep-none** are well defined: a predicate true for every row returns a copy-shaped frame with all rows; a predicate true for none returns an empty frame (`[]` for AoH, a hash of empty arrays for HoA).
+- **Supported shapes are AoH and HoA.** Passing a non-reference, an array element that is not a hash reference, or an HoA column that is not an array reference raises a descriptive error.
+- **Perl 5.10 compatible.** The `col()`/operator layer is pure Perl (operator overloading); the per-row evaluation is done in XS.
+
+### See also
+
+`read_table` (whose `filter` option applies the same coderef convention while reading a file), `col2col`.
+
 ## fisher_test
 
 ### array reference entry
@@ -740,6 +827,8 @@ Data can be further broken down with filter/subs like in `read_table`:
     );
 
 where each filter filters on the columns, e.g. second hash keys.
+
+## hoh2hoa
 
 ## hist
 
@@ -1527,10 +1616,13 @@ Args can also be accepted:
 
 ## 0.14
 
-`col2col` no has `undef.rm` and a synonym `na.rm` to remove undefined values from calculations
+`col2col` now has `undef.rm` and a synonym `na.rm` to remove undefined values from calculations; by default this is `TRUE`
+
+`filter` function added for rows
 
 `read_table` reads undefined values to `undef` instead of `NA`, which makes calculations easier
-`write_table` writes undef by default as `''`
+
+`write_table` writes undef by default as an empty string `''`
 
 ## 0.13
 

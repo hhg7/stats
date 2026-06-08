@@ -1016,6 +1016,157 @@ but default mean, standard deviation, and log can be passed as parameters:
 
  $x = dnorm(0, mean => 0, sd => 2, 'log' => 0);
 
+=head2 filter
+
+Return a new data frame containing only the rows of C<$df> that match a predicate. The original C<$df> is never modified.
+
+ my $df2 = filter($df, col('column.name') > 4);
+
+C<filter> accepts a predicate in one of two forms:
+
+=over
+
+=item 1. a B<< C<col()> expression >> — a small, composable comparison built with overloaded operators, and
+
+=item 2. a B<code reference> — for anything the operators can't express (multiple columns, regexes, arbitrary logic), in the same spirit as the C<filter> option of L<#>.
+
+=back
+
+Both C<filter> and C<col> are exported by default.
+
+=head3 Arguments
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>Position</th>
+  <th>Name</th>
+  <th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>1</td>
+  <td><code>$df</code></td>
+  <td>The data frame to filter. Either an <b>array of hashes</b> (AoH — e.g. the default output of <code>read_table</code>) or a <b>hash of arrays</b> (HoA).</td>
+</tr>
+<tr>
+  <td>2</td>
+  <td>predicate</td>
+  <td>Either a <code>col()</code> comparison object or a <code>CODE</code> reference.</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+The return value is a B<new> data frame of the B<same shape> as the input (AoH in → AoH out, HoA in → HoA out). For an HoA, every column is filtered in parallel by row index, so all returned columns stay the same length and aligned.
+
+=head3 The C<col()> form
+
+C<col('name')> is a deferred reference to a column. It carries no data — only the column name — so it can be compared with a literal (or another value) to build a predicate that C<filter> evaluates once per row.
+
+ filter($df, col('age') >= 18);          # keep rows where age >= 18
+ filter($df, col('sex') eq 'f');         # keep rows where sex is 'f'
+ filter($df, 18 <= col('age'));          # operands may be in either order
+
+=head3 Comparison operators
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>Kind</th>
+  <th>Operators</th>
+  <th>Comparison</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>Numeric</td>
+  <td><code>></code> <code><</code> <code>>=</code> <code><=</code> <code>==</code> <code>!=</code></td>
+  <td>numeric (the cell and the value are compared as numbers)</td>
+</tr>
+<tr>
+  <td>String</td>
+  <td><code>gt</code> <code>lt</code> <code>ge</code> <code>le</code> <code>eq</code> <code>ne</code></td>
+  <td>string (the cell and the value are compared as strings)</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+C<col('x')> may appear on either side of the operator; C<< 4 E<lt> col('x') >> is automatically rewritten to the equivalent C<< col('x') E<gt> 4 >>.
+
+=head3 Combining predicates: C<&>, C<|>, C<!>
+
+Predicates compose with bitwise C<&> (and), C<|> (or), and C<!> (not):
+
+ filter($df, (col('age') > 18) & (col('sex') eq 'f'));   # and
+ filter($df, (col('grp') eq 'a') | (col('grp') eq 'c')); # or
+ filter($df, !(col('x') > 100));                         # not
+
+Comparison operators bind more tightly than C<&> and C<|>, so C<< (col('a') E<gt> 4) & (col('b') E<lt> 2) >> is parsed correctly, but the parentheses are recommended for readability.
+
+=head3 The code-reference form
+
+For logic the operators can't express, pass a C<sub>. It is called once per row; the B<row is a hash reference>, available both as C<$_> and as the first argument C<$_[0]>. Return a true value to keep the row.
+
+ filter($df, sub { $_->{x} > 4 && $_->{grp} eq 'a' });
+ filter($df, sub { $_->{name} =~ /^A/ });
+ filter($df, sub { $_[0]{score} > $_[0]{threshold} });
+
+For an HoA, each row is assembled into a temporary hash reference (C<< { column =E<gt> value, ... } >>) before the sub is called, so the same C<< $_-E<gt>{column} >> syntax works regardless of the input shape.
+
+=head3 Examples
+
+ use Stats::LikeR;
+ my $df = read_table('patients.csv');                 # array of hashes
+ # numeric threshold
+ my $adults = filter($df, col('Age') >= 18);
+ # combine conditions
+ my $target = filter($df, (col('Age') >= 18) & (col('Sex') eq 'f'));
+ # arbitrary logic with a coderef
+ my $flagged = filter($df, sub { $_->{ALT} > 40 || $_->{AST} > 40 });
+ # hash-of-arrays input -> hash-of-arrays output, columns filtered in parallel
+ my $hoa = read_table('patients.csv', 'output.type' => 'hoa');
+ my $sub = filter($hoa, col('Age') > 32);
+ # $sub->{Age}, $sub->{Sex}, ... are all the same length and row-aligned
+
+=head3 Behavior and notes
+
+=over
+
+=item * B<The input is never modified.> C<filter> builds and returns a new frame; C<$df> is left untouched.
+
+=item * B<< A missing or C<undef> cell never matches >> a C<col()> comparison. For example C<< col('x') E<gt> 0 >> silently drops any row that has no C<x> value or whose C<x> is C<undef>.
+
+=item * B<AoH rows are shared, not deep-copied>, into the returned frame: the returned array references the I<same> row hashes as the input (fast, low-memory). Mutating a row in the result would therefore also change it in the original. HoA values are copied into fresh arrays.
+
+=item * B<Keep-all / keep-none> are well defined: a predicate true for every row returns a copy-shaped frame with all rows; a predicate true for none returns an empty frame (C<[]> for AoH, a hash of empty arrays for HoA).
+
+=item * B<Supported shapes are AoH and HoA.> Passing a non-reference, an array element that is not a hash reference, or an HoA column that is not an array reference raises a descriptive error.
+
+=item * B<Perl 5.10 compatible.> The C<col()>/operator layer is pure Perl (operator overloading); the per-row evaluation is done in XS.
+
+=back
+
+=head3 See also
+
+C<read_table> (whose C<filter> option applies the same coderef convention while reading a file), C<col2col>.
+
 =head2 fisher_test
 
 =head3 array reference entry
@@ -1300,6 +1451,8 @@ Data can be further broken down with filter/subs like in C<read_table>:
  );
 
 where each filter filters on the columns, e.g. second hash keys.
+
+=head2 hoh2hoa
 
 =head2 hist
 
@@ -2364,9 +2517,13 @@ Args can also be accepted:
 
 =head2 0.14
 
-C<col2col> no has C<undef.rm> and a synonym C<na.rm> to remove undefined values from calculations
+C<col2col> now has C<undef.rm> and a synonym C<na.rm> to remove undefined values from calculations; by default this is C<TRUE>
+
+C<filter> function added for rows
 
 C<read_table> reads undefined values to C<undef> instead of C<NA>, which makes calculations easier
+
+C<write_table> writes undef by default as an empty string C<''>
 
 =head2 0.13
 
