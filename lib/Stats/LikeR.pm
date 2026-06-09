@@ -4,7 +4,7 @@ require 5.010;
 use strict;
 use feature 'say';
 package Stats::LikeR;
-our $VERSION = 0.14;
+our $VERSION = 0.15;
 require XSLoader;
 use Devel::Confess 'color';
 use warnings FATAL => 'all';
@@ -243,7 +243,7 @@ sub read_table {
 			local %_ = %line_hash; # row available as %_; set once per row, not per field
 			my $skip = 0;
 			foreach my $fld (@sorted_filter_flds) {
-				local $_ = $fld == 0 ? $line_ref : $line_ref->[$fld - 1];
+				local $_ = $fld == 0 ? $line_ref : $line_hash{$header[$fld - 1]};
 				if (!$mapped_filters{$fld}->($line_ref, \%line_hash)) { $skip = 1; last; }
 				if ($fld > 0) { # write back any mutation the callback made to $_
 					$line_ref->[$fld - 1] = $_;

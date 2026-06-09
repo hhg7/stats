@@ -1743,6 +1743,15 @@ Args can also be accepted:
 
 # changes
 
+## 0.15
+
+`read_table`:
+    filter => {
+        'Testosterone, total (nmol/L)' => sub { defined $_ },
+    }
+
+was broken by the change in undefined variables in 0.14, but is back to being `undef`
+
 ## 0.14
 
 `filter` function added for rows
