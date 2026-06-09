@@ -1872,14 +1872,15 @@ int compare_NVs(const void *restrict a, const void *restrict b) {
 // Call a column predicate as $cv->($col_values, $col_name) and return its truth.
 // $col_values is an array ref of the column's DEFINED cells; $col_name is the
 // column key. Used so a block like sub { sd($_[0]) == 0 } can pick columns out.
-static bool cf_pred(pTHX_ SV *cv_sv, AV *vals_av, SV *name_sv) {
+static bool cf_pred(pTHX_ SV *cv_sv, AV *a_av, AV *b_av, SV *name_sv) {
 	dSP;
 	bool truth = FALSE;
 	int count;
 	ENTER;
 	SAVETMPS;
 	PUSHMARK(SP);
-	XPUSHs(sv_2mortal(newRV_inc((SV*)vals_av)));
+	XPUSHs(sv_2mortal(newRV_inc((SV*)a_av)));
+	if (b_av) XPUSHs(sv_2mortal(newRV_inc((SV*)b_av)));
 	XPUSHs(sv_2mortal(newSVsv(name_sv)));
 	PUTBACK;
 	count = call_sv(cv_sv, G_SCALAR);
@@ -1901,12 +1902,15 @@ SV *cfilter(data, ...)
 		SV *data
 	CODE:
 	{
-		// 0. parse the trailing options. Exactly one of keep/remove is required;
-		//    each may be an array ref of column names OR a selector that picks
-		//    columns by value: a CODE ref, or a function name resolved like
-		//    col2col (bare names live in Stats::LikeR::). keep keeps the matches,
-		//    remove drops them.
+		// 0. options. Exactly one of keep/remove is required; it is either an
+		//    array ref of column names or a value predicate (CODE ref / function
+		//    name). For a predicate, undef handling is:
+		//      na => 'keep' (default) - the predicate sees every cell, incl undef
+		//      na => 'omit'           - single-column funcs (sd) get defined cells
+		//      against => 'col'       - two-column funcs (cor): the predicate gets
+		//                               ($col, $ref) over rows defined in BOTH.
 		SV *restrict keep_sv = NULL, *restrict remove_sv = NULL;
+		SV *restrict na_sv = NULL, *restrict against_sv = NULL;
 		if ((items - 1) & 1) croak("cfilter: trailing options must be name => value pairs");
 		for (int oi = 1; oi < items; oi += 2) {
 			STRLEN ol;
@@ -1914,13 +1918,15 @@ SV *cfilter(data, ...)
 			SV *restrict oval = ST(oi + 1);
 			if (ol == 4 && memEQ(oname, "keep", 4)) keep_sv = oval;
 			else if (ol == 6 && memEQ(oname, "remove", 6)) remove_sv = oval;
+			else if (ol == 2 && memEQ(oname, "na", 2)) na_sv = oval;
+			else if (ol == 7 && memEQ(oname, "against", 7)) against_sv = oval;
 			else croak("cfilter: unknown option '%s'", oname);
 		}
 		if (keep_sv && remove_sv) croak("cfilter: give either keep or remove, not both");
 		if (!keep_sv && !remove_sv) croak("cfilter: need a keep or remove argument");
 		bool removing = (remove_sv != NULL);
 		SV *restrict sel = removing ? remove_sv : keep_sv;
-		// classify the selector: an array ref of names, or a value predicate.
+		// classify the selector: array ref of names, or a value predicate.
 		bool by_name;
 		SV *restrict cv_sv = NULL;
 		if (SvROK(sel) && SvTYPE(SvRV(sel)) == SVt_PVAV) by_name = TRUE;
@@ -1938,7 +1944,18 @@ SV *cfilter(data, ...)
 			}
 		}
 		else croak("cfilter: keep/remove must be an array ref of column names or a code ref / function name");
-		// 1. detect the data shape: array of hashes, hash of arrays, hash of hashes.
+		// decode the undef policy (predicate only).
+		bool na_omit = FALSE;
+		if (na_sv && SvOK(na_sv)) {
+			STRLEN nl;
+			const char *restrict nv = SvPV(na_sv, nl);
+			if (nl == 4 && memEQ(nv, "omit", 4)) na_omit = TRUE;
+			else if (nl == 4 && memEQ(nv, "keep", 4)) na_omit = FALSE;
+			else croak("cfilter: na must be 'keep' or 'omit'");
+		}
+		if (by_name && (na_sv || against_sv)) croak("cfilter: na/against only apply to a predicate selector");
+		if (against_sv && na_sv) croak("cfilter: give na or against, not both");
+		// 1. detect the data shape.
 		if (!SvROK(data)) croak("cfilter: data must be a reference");
 		SV *restrict rv = SvRV(data);
 		short int kind; // 0 = array-of-hashes, 1 = hash-of-arrays, 2 = hash-of-hashes
@@ -1947,7 +1964,7 @@ SV *cfilter(data, ...)
 			HV *restrict h = (HV*)rv;
 			hv_iterinit(h);
 			HE *restrict fe = hv_iternext(h);
-			if (!fe) kind = 2; // empty hash: nothing to do, treat as HoH (empty either way)
+			if (!fe) kind = 2;
 			else {
 				SV *restrict fv = hv_iterval(h, fe);
 				if (SvROK(fv) && SvTYPE(SvRV(fv)) == SVt_PVAV) kind = 1;
@@ -1956,10 +1973,13 @@ SV *cfilter(data, ...)
 			}
 		}
 		else croak("cfilter: data must be an array ref or hash ref");
-		// 2. build the column universe, and (predicate only) each column's defined
-		//    values, so the selector can be evaluated once per column.
+		// 2. the column universe, and (predicate only) a row-aligned cell table
+		//    `cellmap`: colname -> AV of length nrows, undef in the gaps. The
+		//    alignment lets `against` pair two columns by row.
 		HV *restrict universe = newHV();
-		HV *restrict colvals = by_name ? NULL : newHV();
+		AV *restrict colnames = newAV();
+		HV *restrict cellmap = by_name ? NULL : newHV();
+		SSize_t nrows = 0;
 		if (kind == 1) {
 			HV *restrict h = (HV*)rv;
 			HE *restrict e;
@@ -1967,54 +1987,87 @@ SV *cfilter(data, ...)
 			while ((e = hv_iternext(h))) {
 				SV *restrict val = hv_iterval(h, e);
 				if (!SvROK(val) || SvTYPE(SvRV(val)) != SVt_PVAV) croak("cfilter: every value must be an array ref (hash of arrays)");
+				SSize_t len = av_len((AV*)SvRV(val)) + 1;
+				if (len > nrows) nrows = len;
+			}
+			hv_iterinit(h);
+			while ((e = hv_iternext(h))) {
 				SV *restrict ck = hv_iterkeysv(e);
 				(void)hv_store_ent(universe, ck, newSViv(1), 0);
+				av_push(colnames, newSVsv(ck));
 				if (!by_name) {
-					AV *restrict src = (AV*)SvRV(val), *restrict vav = newAV();
-					SSize_t n = av_len(src) + 1;
-					for (SSize_t i = 0; i < n; i++) {
-						SV **restrict ep = av_fetch(src, i, 0);
-						if (ep && *ep && SvOK(*ep)) av_push(vav, newSVsv(*ep));
+					AV *restrict src = (AV*)SvRV(hv_iterval(h, e)), *restrict col = newAV();
+					if (nrows > 0) av_extend(col, nrows - 1);
+					for (SSize_t r = 0; r < nrows; r++) {
+						SV **restrict ep = (r <= av_len(src)) ? av_fetch(src, r, 0) : NULL;
+						av_push(col, (ep && *ep && SvOK(*ep)) ? newSVsv(*ep) : newSV(0));
 					}
-					(void)hv_store_ent(colvals, ck, newRV_noinc((SV*)vav), 0);
+					(void)hv_store_ent(cellmap, ck, newRV_noinc((SV*)col), 0);
 				}
 			}
 		} else {
-			// row-major: HoH (kind 2) iterates outer hash; AoH (kind 0) the array.
-			SSize_t nrows = (kind == 0) ? (av_len((AV*)rv) + 1) : 0;
-			HE *restrict e = NULL;
-			if (kind == 2) hv_iterinit((HV*)rv);
-			SSize_t r = 0;
-			for (;;) {
-				HV *restrict row;
-				if (kind == 0) {
-					if (r >= nrows) break;
-					SV **restrict ep = av_fetch((AV*)rv, r++, 0);
+			// row-major: collect the rows in a stable order, then build per column.
+			AV *restrict rows = newAV();
+			if (kind == 0) {
+				AV *restrict a = (AV*)rv;
+				SSize_t n = av_len(a) + 1;
+				for (SSize_t r = 0; r < n; r++) {
+					SV **restrict ep = av_fetch(a, r, 0);
 					if (!ep || !*ep || !SvROK(*ep) || SvTYPE(SvRV(*ep)) != SVt_PVHV) croak("cfilter: array elements must be hash refs (array of hashes)");
-					row = (HV*)SvRV(*ep);
-				} else {
-					if (!(e = hv_iternext((HV*)rv))) break;
-					SV *restrict val = hv_iterval((HV*)rv, e);
-					if (!SvROK(val) || SvTYPE(SvRV(val)) != SVt_PVHV) croak("cfilter: every value must be a hash ref (hash of hashes)");
-					row = (HV*)SvRV(val);
+					av_push(rows, newRV_inc(SvRV(*ep)));
 				}
-				HE *restrict ie;
-				hv_iterinit(row);
-				while ((ie = hv_iternext(row))) {
-					SV *restrict ck = hv_iterkeysv(ie);
-					if (!hv_exists_ent(universe, ck, 0)) {
-						(void)hv_store_ent(universe, ck, newSViv(1), 0);
-						if (!by_name) (void)hv_store_ent(colvals, ck, newRV_noinc((SV*)newAV()), 0);
-					}
-					if (!by_name) {
-						SV *restrict cell = HeVAL(ie);
-						if (SvOK(cell)) {
-							HE *restrict vhe = hv_fetch_ent(colvals, ck, 0, 0);
-							av_push((AV*)SvRV(HeVAL(vhe)), newSVsv(cell));
+			} else {
+				HV *restrict h = (HV*)rv;
+				HE *restrict e;
+				hv_iterinit(h);
+				while ((e = hv_iternext(h))) {
+					SV *restrict val = hv_iterval(h, e);
+					if (!SvROK(val) || SvTYPE(SvRV(val)) != SVt_PVHV) croak("cfilter: every value must be a hash ref (hash of hashes)");
+					av_push(rows, newRV_inc(SvRV(val)));
+				}
+			}
+			nrows = av_len(rows) + 1;
+			// union of columns, in first-seen order.
+			{
+				HV *restrict seen = newHV();
+				for (SSize_t r = 0; r < nrows; r++) {
+					HV *restrict row = (HV*)SvRV(*av_fetch(rows, r, 0));
+					HE *restrict ie;
+					hv_iterinit(row);
+					while ((ie = hv_iternext(row))) {
+						SV *restrict ck = hv_iterkeysv(ie);
+						if (!hv_exists_ent(seen, ck, 0)) {
+							(void)hv_store_ent(seen, ck, newSViv(1), 0);
+							(void)hv_store_ent(universe, ck, newSViv(1), 0);
+							av_push(colnames, newSVsv(ck));
 						}
 					}
 				}
+				SvREFCNT_dec((SV*)seen);
 			}
+			if (!by_name) {
+				SSize_t nc = av_len(colnames) + 1;
+				for (SSize_t c = 0; c < nc; c++) {
+					SV *restrict ck = *av_fetch(colnames, c, 0);
+					AV *restrict col = newAV();
+					if (nrows > 0) av_extend(col, nrows - 1);
+					for (SSize_t r = 0; r < nrows; r++) {
+						HV *restrict row = (HV*)SvRV(*av_fetch(rows, r, 0));
+						HE *restrict che = hv_fetch_ent(row, ck, 0, 0);
+						SV *restrict cell = che ? HeVAL(che) : NULL;
+						av_push(col, (cell && SvOK(cell)) ? newSVsv(cell) : newSV(0));
+					}
+					(void)hv_store_ent(cellmap, ck, newRV_noinc((SV*)col), 0);
+				}
+			}
+			SvREFCNT_dec((SV*)rows);
+		}
+		// 2b. resolve the `against` reference column into its cell array.
+		AV *restrict against_av = NULL;
+		if (against_sv) {
+			if (!SvOK(against_sv) || SvROK(against_sv)) croak("cfilter: against must be a column name (string)");
+			if (!hv_exists_ent(universe, against_sv, 0)) croak("cfilter: against column '%s' not found in data", SvPV_nolen(against_sv));
+			against_av = (AV*)SvRV(HeVAL(hv_fetch_ent(cellmap, against_sv, 0, 0)));
 		}
 		// 3. decide which columns to keep.
 		HV *restrict keepset = newHV();
@@ -2028,36 +2081,52 @@ SV *cfilter(data, ...)
 				if (!hv_exists_ent(universe, *ep, 0)) croak("cfilter: column '%s' not found in data", SvPV_nolen(*ep));
 				(void)hv_store_ent(listed, *ep, newSViv(1), 0);
 			}
-			HE *restrict e;
-			hv_iterinit(universe);
-			while ((e = hv_iternext(universe))) {
-				SV *restrict ck = hv_iterkeysv(e);
+			SSize_t nc = av_len(colnames) + 1;
+			for (SSize_t c = 0; c < nc; c++) {
+				SV *restrict ck = *av_fetch(colnames, c, 0);
 				bool in_list = cBOOL(hv_exists_ent(listed, ck, 0));
 				if (removing ? !in_list : in_list) (void)hv_store_ent(keepset, ck, newSViv(1), 0);
 			}
 			SvREFCNT_dec((SV*)listed);
 		} else {
-			// Snapshot the column names BEFORE evaluating the predicate. The
-			// predicate re-enters Perl (call_sv), and holding a live hv_iternext
-			// cursor on `universe` across that call crashes on perl < 5.18. The
-			// proven col2col path likewise loops over a flat list, never a hash
-			// mid-iteration. So collect the keys first, then call per column.
-			AV *restrict cols = newAV();
-			HE *restrict e;
-			hv_iterinit(universe);
-			while ((e = hv_iternext(universe))) av_push(cols, newSVsv(hv_iterkeysv(e)));
-			SSize_t nc = av_len(cols) + 1;
-			for (SSize_t i = 0; i < nc; i++) {
-				SV *restrict ck = *av_fetch(cols, i, 0);
-				HE *restrict vhe = hv_fetch_ent(colvals, ck, 0, 0);
-				AV *restrict vals = (AV*)SvRV(HeVAL(vhe));
-				bool pass = cf_pred(aTHX_ cv_sv, vals, ck);
+			// predicate over the flat colnames list (never a live hash iterator
+			// across call_sv). Apply the undef policy per column.
+			SSize_t nc = av_len(colnames) + 1;
+			for (SSize_t c = 0; c < nc; c++) {
+				SV *restrict ck = *av_fetch(colnames, c, 0);
+				AV *restrict cells = (AV*)SvRV(HeVAL(hv_fetch_ent(cellmap, ck, 0, 0)));
+				bool pass;
+				if (against_av) {
+					// two columns, pairwise complete: rows defined in BOTH.
+					AV *restrict a1 = newAV(), *restrict a2 = newAV();
+					for (SSize_t r = 0; r < nrows; r++) {
+						SV **restrict p1 = av_fetch(cells, r, 0);
+						SV **restrict p2 = av_fetch(against_av, r, 0);
+						if (p1 && *p1 && SvOK(*p1) && p2 && *p2 && SvOK(*p2)) {
+							av_push(a1, newSVsv(*p1));
+							av_push(a2, newSVsv(*p2));
+						}
+					}
+					pass = cf_pred(aTHX_ cv_sv, a1, a2, ck);
+					SvREFCNT_dec((SV*)a1);
+					SvREFCNT_dec((SV*)a2);
+				} else if (na_omit) {
+					// one column, defined cells only.
+					AV *restrict a1 = newAV();
+					for (SSize_t r = 0; r < nrows; r++) {
+						SV **restrict p = av_fetch(cells, r, 0);
+						if (p && *p && SvOK(*p)) av_push(a1, newSVsv(*p));
+					}
+					pass = cf_pred(aTHX_ cv_sv, a1, NULL, ck);
+					SvREFCNT_dec((SV*)a1);
+				} else {
+					// one column, every cell including undef.
+					pass = cf_pred(aTHX_ cv_sv, cells, NULL, ck);
+				}
 				if (removing ? !pass : pass) (void)hv_store_ent(keepset, ck, newSViv(1), 0);
 			}
-			SvREFCNT_dec((SV*)cols);
 		}
 		// 4. rebuild the data in its original shape with only the kept columns.
-		//    Cell values are copied; missing cells in a row simply stay missing.
 		SV *restrict out;
 		if (kind == 1) {
 			HV *restrict outh = newHV(), *restrict h = (HV*)rv;
@@ -2095,8 +2164,8 @@ SV *cfilter(data, ...)
 			out = (SV*)outh;
 		} else {
 			AV *restrict outa = newAV(), *restrict a = (AV*)rv;
-			SSize_t nrows = av_len(a) + 1;
-			for (SSize_t r = 0; r < nrows; r++) {
+			SSize_t n = av_len(a) + 1;
+			for (SSize_t r = 0; r < n; r++) {
 				HV *restrict row = (HV*)SvRV(*av_fetch(a, r, 0)), *restrict nr = newHV();
 				HE *restrict ie;
 				hv_iterinit(row);
@@ -2111,8 +2180,9 @@ SV *cfilter(data, ...)
 		}
 		// 5. tidy up the scratch tables (the result keeps its own copies).
 		SvREFCNT_dec((SV*)universe);
+		SvREFCNT_dec((SV*)colnames);
 		SvREFCNT_dec((SV*)keepset);
-		if (colvals) SvREFCNT_dec((SV*)colvals);
+		if (cellmap) SvREFCNT_dec((SV*)cellmap);
 		RETVAL = newRV_noinc(out);
 	}
 	OUTPUT:
@@ -2312,30 +2382,76 @@ SV *col2col(data, cmd, cols = &PL_sv_undef, ...)
 		SV *cols
 	CODE:
 	{
-		// Only these cross the section boundaries (build -> loop -> cleanup);
-		// everything else is declared at its point of use just below.
+// Only these cross the section boundaries (build -> loop -> cleanup);
+// everything else is declared at its point of use just below.
 		SV *restrict cv_sv = NULL;
 		size_t ncols = 0, nrows = 0;
 		AV *restrict names_av = newAV();
-		NV **restrict col_val = NULL;
+		double **restrict col_val = NULL;
 		char **restrict col_def = NULL;
-		bool rm_undef = TRUE;	// rm.undef / rm.na, see section 0
-		// 0. parse any trailing name => value options. The only one understood
-		//    is rm.undef (synonym rm.na): when true (the default) a row whose
-		//    value is undefined in either column is dropped from that pair so
-		//    both columns reach the block at equal, complete length; when false
-		//    the row is kept and the block receives undef in its place. cols is
-		//    positional, so pass it (undef is fine) before any options.
-		if (items > 3) {
+		short int na_mode = 0;	// 0 = pairwise, 1 = omit, 2 = keep; see section 0
+		bool skip_errors = TRUE;	// skip.errors (default true): trap a croaking block, store its message
+// 0. options. They may be given either as trailing name => value pairs
+//    (after the positional cols), or - so no placeholder is needed when
+//    there is no column restriction - as a single hash ref in cols's
+//    place, e.g. col2col($data, 'cor', { 'skip.errors' => 1 }).
+//    `na` controls how undef is handled when one column is paired with
+//    another:
+//      'pairwise' (default) - a row counts for the (a,b) pair only if
+//          BOTH columns are defined there, so the block gets two equal
+//          length, aligned columns. This is what paired stats (cor) want.
+//      'omit'   - each column independently drops its own undef values,
+//          so the two columns may differ in length. This is what unpaired
+//          tests (t_test, kruskal_test) want: a gap in one column must not
+//          throw away a good value in the other.
+//      'keep'   - every row passes through and undef reaches the block.
+//    rm.undef / rm.na (bool) remain as aliases: true => 'pairwise' (the
+//    old default), false => 'keep'.
+//    skip.errors (bool, default true): a block that croaks for a pair
+//    does not abort col2col; instead the first line of its error message
+//    is stored as that cell's value, so the result shows which
+//    (outer => inner) pair failed and why. Set it false to make a croak
+//    propagate and abort the whole call instead.
+		SV *restrict cols_eff = cols;
+		bool na_set = FALSE, rm_set = FALSE;
+#define C2C_DECODE_OPT(ONAME, OL, OVAL) do { \
+		if ((OL) == 2 && memEQ((ONAME), "na", 2)) { \
+			STRLEN vl_; const char *restrict nv_ = SvPV((OVAL), vl_); \
+			if (vl_ == 8 && memEQ(nv_, "pairwise", 8)) na_mode = 0; \
+			else if (vl_ == 4 && memEQ(nv_, "omit", 4)) na_mode = 1; \
+			else if (vl_ == 4 && memEQ(nv_, "keep", 4)) na_mode = 2; \
+			else croak("col2col: na must be 'pairwise', 'omit' or 'keep'"); \
+			na_set = TRUE; \
+		} else if (((OL) == 8 && memEQ((ONAME), "rm.undef", 8)) || ((OL) == 5 && memEQ((ONAME), "rm.na", 5))) { \
+			na_mode = cBOOL(SvTRUE((OVAL))) ? 0 : 2; rm_set = TRUE; \
+		} else if ((OL) == 11 && memEQ((ONAME), "skip.errors", 11)) { \
+			skip_errors = cBOOL(SvTRUE((OVAL))); \
+		} else croak("col2col: unknown option '%s'", (ONAME)); \
+		} while (0)
+		if (SvROK(cols) && SvTYPE(SvRV(cols)) == SVt_PVHV) {
+			// options supplied as a hash ref instead of cols: no column restriction
+			HV *restrict oh = (HV*)SvRV(cols);
+			HE *restrict he;
+			if (items > 3) croak("col2col: an options hash ref must be the last argument");
+			hv_iterinit(oh);
+			while ((he = hv_iternext(oh))) {
+				STRLEN ol;
+				const char *restrict oname = HePV(he, ol);
+				SV *restrict oval = HeVAL(he);
+				C2C_DECODE_OPT(oname, ol, oval);
+			}
+			cols_eff = &PL_sv_undef;
+		} else if (items > 3) {
 			if ((items - 3) & 1) croak("col2col: trailing options must be name => value pairs");
 			for (int oi = 3; oi < items; oi += 2) {
 				STRLEN ol;
 				const char *restrict oname = SvPV(ST(oi), ol);
-				if ((ol == 8 && memEQ(oname, "rm.undef", 8)) || (ol == 5 && memEQ(oname, "rm.na", 5)))
-					rm_undef = cBOOL(SvTRUE(ST(oi + 1)));
-				else croak("col2col: unknown option '%s'", oname);
+				SV *restrict oval = ST(oi + 1);
+				C2C_DECODE_OPT(oname, ol, oval);
 			}
 		}
+		if (na_set && rm_set) croak("col2col: give na or rm.undef, not both");
+#undef C2C_DECODE_OPT
 		// 1. resolve the command: a CODE block or a function name. Either way
 		//    we end up with the CV to call as $cv->($col_a, $col_b).
 		if (SvROK(cmd) && SvTYPE(SvRV(cmd)) == SVt_PVCV) cv_sv = SvRV(cmd);
@@ -2382,14 +2498,14 @@ SV *col2col(data, cmd, cols = &PL_sv_undef, ...)
 					src[av_len(names_av)] = a;
 				}
 				ncols = (size_t)(av_len(names_av) + 1);
-				Newxz(col_val, ncols ? ncols : 1, double*);
+				Newxz(col_val, ncols ? ncols : 1, NV*);
 				Newxz(col_def, ncols ? ncols : 1, char*);
 				for (size_t cc = 0; cc < ncols; cc++) {
-					Newxz(col_val[cc], nrows ? nrows : 1, double);
+					Newxz(col_val[cc], nrows ? nrows : 1, NV);
 					Newxz(col_def[cc], nrows ? nrows : 1, char);
 					AV *restrict a = src[cc];
 					for (size_t r = 0; r < nrows; r++) {
-						double v;
+						NV v;
 						if (c2c_num(aTHX_ av_fetch(a, (SSize_t)r, 0), &v)) { col_val[cc][r] = v; col_def[cc][r] = 1; }
 					}
 				}
@@ -2437,7 +2553,7 @@ SV *col2col(data, cmd, cols = &PL_sv_undef, ...)
 				Newxz(col_def, ncols ? ncols : 1, char*);
 				for (size_t cc = 0; cc < ncols; cc++) {
 					STRLEN kl;
-					char *k = SvPV(*av_fetch(names_av, (SSize_t)cc, 0), kl);
+					char *restrict k = SvPV(*av_fetch(names_av, (SSize_t)cc, 0), kl);
 					Newxz(col_val[cc], nrows ? nrows : 1, double);
 					Newxz(col_def[cc], nrows ? nrows : 1, char);
 					for (size_t r = 0; r < nrows; r++) {
@@ -2452,7 +2568,7 @@ SV *col2col(data, cmd, cols = &PL_sv_undef, ...)
 		if (ncols == 0) croak("col2col: no usable columns found");
 		// 3. flatten the column names for fast hv_store keys in the loop.
 		SV **restrict col_names;
-		STRLEN *name_len;
+		STRLEN *restrict name_len;
 		Newx(col_names, ncols, SV*);
 		Newx(name_len, ncols, STRLEN);
 		for (size_t cc = 0; cc < ncols; cc++) {
@@ -2463,11 +2579,11 @@ SV *col2col(data, cmd, cols = &PL_sv_undef, ...)
 		//     restriction every column qualifies; a name or list narrows it.
 		char *restrict is_outer;
 		Newxz(is_outer, ncols, char);
-		if (!SvOK(cols)) {
+		if (!SvOK(cols_eff)) {
 			for (size_t cc = 0; cc < ncols; cc++) is_outer[cc] = 1;
 		}
-		else if (SvROK(cols) && SvTYPE(SvRV(cols)) == SVt_PVAV) {
-			AV *restrict want = (AV*)SvRV(cols);
+		else if (SvROK(cols_eff) && SvTYPE(SvRV(cols_eff)) == SVt_PVAV) {
+			AV *restrict want = (AV*)SvRV(cols_eff);
 			SSize_t n = av_len(want) + 1;
 			for (SSize_t i = 0; i < n; i++) {
 				SV **restrict ep = av_fetch(want, i, 0);
@@ -2477,16 +2593,17 @@ SV *col2col(data, cmd, cols = &PL_sv_undef, ...)
 				wname = SvPV(*ep, wl);
 				if (!c2c_mark(col_names, name_len, ncols, wname, wl, is_outer)) croak("col2col: column '%s' not found in data", wname);
 			}
-		} else if (!SvROK(cols)) {
+		} else if (!SvROK(cols_eff)) {
 			STRLEN wl;
-			const char *restrict wname = SvPV(cols, wl);
+			const char *restrict wname = SvPV(cols_eff, wl);
 			if (!c2c_mark(col_names, name_len, ncols, wname, wl, is_outer)) croak("col2col: column '%s' not found in data", wname);
 		} else croak("col2col: cols must be a column name or an array ref of names");
-		// 4. each selected column vs every other column. By default we use the
-		//    pairwise complete cases (rm.undef true), so a gap in either column
-		//    drops that row; with rm.undef false every row is kept and the block
-		//    sees undef in the gaps. Either way the two columns reach the block
-		//    at equal length as @_ = ($col_a, $col_b).
+		// 4. each selected column vs every other column. The two columns reach
+		//    the block as @_ = ($col_a, $col_b); how undef is handled depends on
+		//    na (section 0): 'pairwise' drops a row missing in either side (equal
+		//    aligned lengths, for cor); 'omit' drops each column's own undef
+		//    independently (lengths may differ, for t_test / kruskal_test);
+		//    'keep' passes every row through with undef in the gaps.
 		HV *restrict out_hv = newHV();
 		for (size_t a = 0; a < ncols; a++) {
 			HV *restrict inner;
@@ -2498,17 +2615,49 @@ SV *col2col(data, cmd, cols = &PL_sv_undef, ...)
 				if (a == b) continue;
 				ca = newAV();
 				cb = newAV();
-				for (size_t r = 0; r < nrows; r++) {
-					if (rm_undef) {
+				if (na_mode == 0) { // pairwise complete: keep rows defined in both
+					for (size_t r = 0; r < nrows; r++)
 						if (col_def[a][r] && col_def[b][r]) { av_push(ca, newSVnv(col_val[a][r])); av_push(cb, newSVnv(col_val[b][r])); }
-					} else {
+				} else if (na_mode == 1) { // omit: each column drops its own undef (lengths may differ)
+					for (size_t r = 0; r < nrows; r++) if (col_def[a][r]) av_push(ca, newSVnv(col_val[a][r]));
+					for (size_t r = 0; r < nrows; r++) if (col_def[b][r]) av_push(cb, newSVnv(col_val[b][r]));
+				} else { // keep: every row, undef passed through
+					for (size_t r = 0; r < nrows; r++) {
 						av_push(ca, col_def[a][r] ? newSVnv(col_val[a][r]) : newSV(0));
 						av_push(cb, col_def[b][r] ? newSVnv(col_val[b][r]) : newSV(0));
 					}
 				}
 				rv1 = newRV_noinc((SV*)ca);
 				rv2 = newRV_noinc((SV*)cb);
-				res = (av_len(ca) >= 0) ? c2c_call(aTHX_ cv_sv, rv1, rv2) : newSV(0);
+				if (av_len(ca) < 0 || av_len(cb) < 0) {
+					res = newSV(0);	// a column had no usable values for this pair
+				} else if (!skip_errors) {
+					res = c2c_call(aTHX_ cv_sv, rv1, rv2);	// a croak here propagates
+				} else {
+					// skip.errors: run the block under eval; on a croak keep the
+					// first line of its message as this cell so the caller sees
+					// which pair failed and why instead of the whole call dying.
+					dSP;
+					int n;
+					ENTER; SAVETMPS;
+					PUSHMARK(SP);
+					XPUSHs(rv1); XPUSHs(rv2);
+					PUTBACK;
+					n = call_sv(cv_sv, G_SCALAR | G_EVAL);
+					SPAGAIN;
+					if (SvTRUE(ERRSV)) {
+						STRLEN el;
+						const char *restrict ep = SvPV(ERRSV, el);
+						STRLEN ll = 0;	// length of the first line only
+						while (ll < el && ep[ll] != '\n' && ep[ll] != '\r') ll++;
+						res = newSVpvn(ep, ll);
+						if (n > 0) (void)POPs;	// discard the undef G_SCALAR leaves
+					} else {
+						res = (n > 0) ? newSVsv(POPs) : newSV(0);
+					}
+					PUTBACK;
+					FREETMPS; LEAVE;
+				}
 				(void)hv_store(inner, SvPVX(col_names[b]), (I32)name_len[b], res, 0);
 				SvREFCNT_dec(rv1);
 				SvREFCNT_dec(rv2);
@@ -2517,9 +2666,8 @@ SV *col2col(data, cmd, cols = &PL_sv_undef, ...)
 		}
 		// 5. tidy up.
 		for (size_t cc = 0; cc < ncols; cc++) { Safefree(col_val[cc]); Safefree(col_def[cc]); }
-		Safefree(col_val);	Safefree(col_def);
-		Safefree(col_names);	Safefree(name_len);
-		Safefree(is_outer);	SvREFCNT_dec((SV*)names_av);
+		Safefree(col_val);	Safefree(col_def); Safefree(col_names);
+		Safefree(name_len);	Safefree(is_outer);	SvREFCNT_dec((SV*)names_av);
 		RETVAL = newRV_noinc((SV*)out_hv);
 	}
 	OUTPUT:

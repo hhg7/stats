@@ -381,220 +381,239 @@ Flat Hash References evaluate Goodness of Fit while preserving your categorical 
 	
 	my $res = chisq_test($data);
 
-## col2col
+# `col2col`
 
-    my $result = col2col( $data, $command );
-    my $result = col2col( $data, $command, $cols );   # restrict the "from" columns
+Apply a **two-column function** to every pair of columns in a table and collect
+the answers in a hash of hashes.
 
-Compares **every column against every other column** in a dataset and returns a
-hash of hashes:
+It's the workhorse behind things like correlation matrices: give it your data and
+the name of a function that takes two columns (`cor`, `t_test`, …) and you get
+back every column compared against every other column.
 
-    $result->{ $col_a }{ $col_b }   # outcome of comparing column A with column B
+    use Stats::LikeR;
+    
+    my %data = (
+        height => [ 170, 165, 180, 175 ],
+        weight => [  70,  60,  85,  77 ],
+        age    => [  30,  41,  25,  38 ],
+    );
 
-The diagonal is skipped (a column is never compared with itself), so each inner
-hash holds an entry for every *other* column.
-
-`$data` may be given in any of three shapes — *array of hashes*, *hash of
-arrays*, or *hash of hashes* — and `col2col` detects which one it received.
-
-`$command` is usually a **block (anonymous sub)** that compares the two columns.
-The two columns are passed to the block in `@_`, so you read them as `$_[0]`
-and `$_[1]`:
-
-    my $result = col2col( \%data, sub { cor( $_[0], $_[1], 'spearman' ) } );
-
-`$_[0]` and `$_[1]` are array refs holding the two columns. There are **no
-package globals**, so nothing you declare in your own script (a `$c1`, an `$a`,
-etc.) can ever clash, and you need no `our`/`use vars` declarations. If you
-prefer names, unpack into your own lexicals first:
-
-    my $result = col2col( \%data, sub { my ( $c1, $c2 ) = @_; cor( $c1, $c2, 'spearman' ) } );
-
-> **Pass the columns as explicit scalars.** Because the built-ins are prototyped,
-> write `cor( $_[0], $_[1], 'spearman' )`, not `cor( @_, 'spearman' )` — a
-> prototyped sub forces `@_` into scalar context, collapsing it to the element
-> *count* (`2`) instead of the two columns. (`&cor( @_, 'spearman' )` also works,
-> since the `&` sigil bypasses the prototype, but the explicit form is clearer.)
-
-As a shorthand, `$command` may instead be a **bare function name** (a string),
-which is treated as `fn( $col_a, $col_b )`:
-
-    my $result = col2col( \%data, 'cor' );   # same as sub { cor( $_[0], $_[1] ) }
-
-Whatever the block or function returns is stored verbatim.
-
-**Undefined values are always removed pairwise.** For each pair, any row where
-*either* column is undef or non-numeric is dropped, so the two columns are
-always aligned and the same length — exactly what correlation needs, and a
-sound (complete-case) basis for the two-sample tests too. If you need a column's
-full set of values regardless of the other column, clean it yourself inside the
-block.
-
-### Restricting which columns are compared
-
-By default every column is compared against every other, which is `N * (N-1)`
-calls. When you only care about how one column, or a handful, relates to the
-rest, pass an optional third argument: a **column name**, or an **array ref of
-names**. Only those columns are then used as the *first* (`$col_a`, outer-key)
-side of each comparison; each is still compared against **every other column**.
-This runs faster and returns a smaller result, because the work and the output
-shrink to `(chosen columns) * (N-1)`.
-
-How does just "age" relate to every other column?
-
-    my $r = col2col( $data, sub { cor( $_[0], $_[1] ) }, 'age' );
-    print $r->{age}{weight}, "\n";    # only the "age" row is present
-    # $r has no {height}{...} or {weight}{...} rows
-
-    # A handful of columns of interest, each vs everything else
-    my $r2 = col2col( $data, sub { cor( $_[0], $_[1] ) }, [ 'age', 'height' ] );
-    # $r2 has exactly the {age}{...} and {height}{...} rows
-
-The result is identical to the corresponding rows of an unrestricted run, only
-the rows you didn't ask for are omitted. Naming a column that isn't in the data
-is a fatal error, so typos surface immediately. Omitting the argument (or
-passing `undef`) keeps the original every-column-vs-every-column behavior.
+    my $result = col2col(\%data, 'cor');
+    
+    # $result->{height}{weight}  == correlation of height vs weight
+    # $result->{height}{age}     == correlation of height vs age
+    # ...and so on for every pair
 
 ---
 
-### array of hash input
+## Arguments
 
-Row-major: an array ref whose elements are hash refs (`$data->[$row]{$col}`).
-Column names are the union of the keys seen across all rows.
+    col2col( $data, $command, $cols, %options )
+    col2col( $data, $command, \%options )      # options in place of $cols
 
-    my $rows = [
-        { height => 170, weight => 65, age => 31 },
-        { height => 182, weight => 84, age => 45 },
-        { height => 168, weight => 60, age => 29 },
-        { height => 191, weight => 92, age => 52 },
-        { height => 175, weight => 71, age => 38 },
-    ];
-
-    my $cor = col2col( $rows, 'cor' );
-
-    print $cor->{height}{weight}, "\n";   # Pearson r between height and weight
-    print $cor->{weight}{age},    "\n";
+| Position | Argument    | What it is |
+|----------|-------------|------------|
+| 1        | `$data`     | Your table, as a reference (see **Data shapes** below). |
+| 2        | `$command`  | A code block **or** the name of a two-column function. |
+| 3        | `$cols`     | *(optional)* Which columns to use as the "from" side. Omit for all. |
+| 4+       | `%options`  | *(optional)* `na`, `skip.errors`, … (see **Options**). |
 
 ---
 
-### hash of array input
+## Data shapes
 
-Column-major: a hash ref whose values are array refs (`$data->{$col}[$row]`).
-The keys are the column names. This is the most direct shape — each value is
-already a column.
+`col2col` understands three layouts. In every case a **column** is the thing that
+gets compared, and the result is keyed by column name.
 
-    my $data = {
-        height => [ 170, 182, 168, 191, 175 ],
-        weight => [  65,  84,  60,  92,  71 ],
-        age    => [  31,  45,  29,  52,  38 ],
-    };
+**Hash of arrays (HoA)** — keys are column names:
 
-    my $cov = col2col( $data, 'cov' );
+    my %hoa = ( a => [1, 2, 3], b => [4, 5, 6] );
 
-    print $cov->{height}{weight}, "\n";   # sample covariance
+**Hash of hashes (HoH)** — outer keys are row names, inner keys are columns:
 
-Undefined entries are skipped. For `cor`/`cov`/`cor_test` they are dropped
-pairwise, so the pair below is compared on its three complete rows only:
+    my %hoh = (
+        row1 => { a => 1, b => 4 },
+        row2 => { a => 2, b => 5 },
+    );
 
-    my $data = {
-        a => [ 1,      2,     3,  4,  5 ],
-        b => [ 2,  undef,     6,  8, 10 ],   # row 1 dropped for any pair touching b
-    };
+**Array of hashes (AoH)** — each element is a row, inner keys are columns:
 
-    my $cor = col2col( $data, 'cor' );
-    print $cor->{a}{b}, "\n";              # correlation over rows 0,2,3,4
+    my @aoh = ( { a => 1, b => 4 }, { a => 2, b => 5 } );
+
+All three produce the same result for the same underlying numbers. Missing or
+`undef` cells are handled by the `na` option (below).
 
 ---
 
-### hash of hash input
+## The command
 
-Row-major and keyed: a hash ref whose values are hash refs
-(`$data->{$row}{$col}`). The outer keys label the rows (e.g. sample IDs); the
-inner keys are the column names (the union across all rows).
+The second argument is the function applied to each pair of columns. It is called
+as:
 
-    my $samples = {
-        s1 => { height => 170, weight => 65, age => 31 },
-        s2 => { height => 182, weight => 84, age => 45 },
-        s3 => { height => 168, weight => 60, age => 29 },
-        s4 => { height => 191, weight => 92, age => 52 },
-        s5 => { height => 175, weight => 71, age => 38 },
-    };
+    $command->( $column_a, $column_b )    # two ARRAY refs
 
-    my $cor = col2col( $samples, 'cor' );
+so inside a block the two columns arrive in `@_`:
 
-    print $cor->{age}{weight}, "\n";
+    my $result = col2col(\%data, sub {
+        my ($x, $y) = @_;       # $x and $y are array refs
+        cor($x, $y);
+    });
 
-Because pairing is done within each row, the (unordered) row-key order does not
-affect the result — all three shapes above give the same numbers.
+You can also pass a **function name as a string**. A bare name is looked up in
+`Stats::LikeR::`, so these two are equivalent:
+
+    col2col(\%data, 'cor');
+    col2col(\%data, sub { cor($_[0], $_[1]) });
+
+Use a fully-qualified name (`'My::Mod::myfunc'`) to call something elsewhere.
 
 ---
 
-### Examples with different `Stats::LikeR` functions
+## The result
 
-The same dataset can be run through any comparison function just by changing the
-block. Using the hash-of-arrays `$data` from above:
+Always a hash of hashes: **`$result->{from}{to}`**.
 
-    # Correlation coefficients (Pearson) — returns a number per pair
-    my $r = col2col( $data, sub { cor( $_[0], $_[1] ) } );
-    print $r->{height}{weight}, "\n";
+    for my $from (sort keys %$result) {
+        for my $to (sort keys %{ $result->{$from} }) {
+            printf "%s vs %s = %s\n", $from, $to, $result->{$from}{$to};
+        }
+    }
 
-    # Covariance — returns a number per pair
-    my $c = col2col( $data, sub { cov( $_[0], $_[1] ) } );
+A column is never compared with itself, so `$result->{a}{a}` does not exist.
 
-    # Correlation test — returns whatever cor_test returns
-    # (e.g. estimate, statistic, p_value) for each pair
-    my $ct = col2col( $data, sub { cor_test( $_[0], $_[1] ) } );
-    print $ct->{height}{weight}{p_value}, "\n";
+---
 
-    # Welch two-sample t-test between every pair of columns
-    my $t = col2col( $data, sub { t_test( $_[0], $_[1] ) } );
-    say $t->{height}{age}{p_value};
+## Restricting columns (`$cols`)
 
-    # Two-sample Kolmogorov–Smirnov test
-    my $ks = col2col( $data, sub { ks_test( $_[0], $_[1] ) } );
-    print $ks->{height}{age}{statistic}, "\n";
+By default every column is used as the "from" side. The third argument narrows
+that down — handy when you only care about one variable.
 
-    # Other two-sample comparisons work the same way
-    my $w  = col2col( $data, sub { wilcox_test( $_[0], $_[1] ) } );   # Wilcoxon rank-sum
-    my $f  = col2col( $data, sub { var_test( $_[0], $_[1] ) } );      # F test for equal variances
-    my $kw = col2col( $data, sub { kruskal_test( $_[0], $_[1] ) } );  # Kruskal–Wallis
+    # all columns vs all columns
+    my $all = col2col(\%data, 'cor');
+    # just ONE column vs every other column
+    my $one = col2col(\%data, 'cor', 'height');
+    my $cors = $one->{height};          # { weight => ..., age => ... }
+    # a FEW specific columns vs every other column
+    my $few = col2col(\%data, 'cor', ['height', 'weight']);
 
-    # For the no-argument case, a bare function name is a handy shorthand:
-    my $r2 = col2col( $data, 'cor' );   # same as sub { cor( $_[0], $_[1] ) }
+The "to" side is always every other column; `$cols` only limits the outer keys.
 
-#### Passing arguments
+---
 
-Because the block is just ordinary Perl, you pass arguments exactly the way you
-would call the function directly:
+## Options
 
-    # Spearman instead of the default Pearson correlation (method is cor's 3rd arg)
-    my $sp = col2col( $data, sub { cor( $_[0], $_[1], 'spearman' ) } );
+Options can be given two ways:
 
-    # Whatever extra arguments a function takes, pass them inline. For example, if
-    # t_test accepts a trailing paired flag, t_test($x, $y, $paired):
-    my $tp = col2col( $data, sub { t_test( $_[0], $_[1], 1 ) } );
+```perl
+col2col(\%data, 'cor', $cols, 'skip.errors' => 0);   # after $cols
+col2col(\%data, 'cor', { 'skip.errors' => 0 });      # hash ref, no $cols needed
+```
 
-    # Combine results, scale them, call several functions — anything goes:
-    my $scaled = col2col( $data, sub { cor( $_[0], $_[1] ) * 100 } );
+The hash-ref form is convenient when you have **no** column restriction — it saves
+you from passing a placeholder. (A hash ref *replaces* `$cols`, so you can't use
+it to restrict columns at the same time; use the trailing form for that.)
 
-#### Custom subroutine
+### `na` — how undefined values are handled
 
-The block can run any analysis you like; `$_[0]` and `$_[1]` are the two columns
-(array refs, pairwise complete cases) and the return value is stored verbatim.
+Real data has gaps. `na` decides what the function sees.
 
-    # Mean difference between every pair of columns
-    my $diff = col2col( $data, sub {
-        my ( $x, $y ) = @_;
-        my $mx = 0; $mx += $_ for @$x; $mx /= @$x;
-        my $my = 0; $my += $_ for @$y; $my /= @$y;
-        return $mx - $my;
-    } );
+| Value                   | Behaviour | Use for |
+|-------------------------|-----------|---------|
+| `'pairwise'` *(default)*| A row is used for a pair only if **both** columns are defined there. The two columns arrive aligned and equal-length. | Paired stats like `cor`. |
+| `'omit'`                | Each column drops **its own** undefined values independently. The two columns may end up **different lengths**. | Unpaired tests like `t_test`, `kruskal_test`, where a gap in one sample shouldn't discard a value in the other. |
+| `'keep'`                | Every row is passed through, `undef` and all. | When your function does its own missing-data handling. |
 
-    print $diff->{height}{weight}, "\n";
+```perl
+# correlation: keep only complete pairs (the default)
+col2col(\%data, 'cor');
 
-    # Wrap a built-in and post-process its result — it reads like a normal call
-    my $pct = col2col( $data, sub { cor( $_[0], $_[1] ) * 100 } );
+# two-sample test: each column keeps its own values
+col2col(\%data, 't_test', undef, na => 'omit');
+col2col(\%data, 't_test', { na => 'omit' });        # same, no placeholder
+```
 
+`rm.undef` / `rm.na` remain as boolean aliases for backward compatibility:
+`true` means `'pairwise'`, `false` means `'keep'`. Don't combine them with `na`.
+
+### `skip.errors` — keep going when a pair fails *(default: true)*
+
+Some functions croak on degenerate input — for example `cor` dies if a column has
+zero variance. By default `col2col` **traps** that croak per pair: instead of
+aborting the whole run, it stores the **first line** of the error message in that
+cell, so the result tells you *which* pair failed and *why*. Every other cell is
+computed normally.
+
+```perl
+my $r = col2col(\%data, 'cor');
+# a good pair:   $r->{a}{b} == 0.83
+# a bad pair:    $r->{a}{const} eq 'cor: standard deviation of y is 0'
+```
+
+To restore the old "die on the first error" behaviour, turn it off:
+
+```perl
+col2col(\%data, 'cor', undef, 'skip.errors' => 0);
+col2col(\%data, 'cor', { 'skip.errors' => 0 });
+```
+
+Only errors from **your function** are trapped. Mistakes in the call itself
+(unknown column, bad data, unknown function name, unknown option) always die.
+
+---
+
+## Worked examples
+
+**Full correlation matrix:**
+
+```perl
+my $m = col2col(\%data, 'cor');
+```
+
+**One variable against all others, sorted strongest first, skipping failures:**
+
+```perl
+my $col  = 'Testosterone, total (nmol/L)';
+my $cors = col2col($hoa, 'cor', $col)->{$col};
+
+for my $other (sort { ($cors->{$b} // -2) <=> ($cors->{$a} // -2) } keys %$cors) {
+    next unless $cors->{$other} =~ /^-?\d/;        # skip cells holding an error message
+    printf "%-30s % .3f\n", $other, $cors->{$other};
+}
+```
+
+**Two-sample test across columns of unequal completeness:**
+
+```perl
+my $t = col2col($hoa, 't_test', undef, na => 'omit');
+```
+
+**Find which pairs could not be computed:**
+
+```perl
+my $m = col2col($hoa, 'cor');
+for my $from (sort keys %$m) {
+    for my $to (sort keys %{ $m->{$from} }) {
+        my $v = $m->{$from}{$to};
+        warn "$from vs $to: $v\n" if defined $v && $v !~ /^-?\d/;   # non-numeric = error
+    }
+}
+```
+
+---
+
+## Gotchas
+
+- **Your function receives two array refs**, `($col_a, $col_b)` — not a column and
+  a name. Unpack with `my ($x, $y) = @_;`.
+- **`'pairwise'` can still hit a constant *subset*.** A column with overall
+  variance can be flat on just the rows it shares with one partner, so `cor` may
+  still croak for that pair. With the default `skip.errors`, that shows up as a
+  message in the single offending cell rather than killing the run.
+- **`col2col` does not modify your data.** It reads the table and returns a new
+  hash of hashes.
+- **In the error message, "x" is the first column and "y" is the second** — i.e.
+  `y` is the inner ("to") key. So `$result->{A}{B}` reading `…deviation of y is 0`
+  means column `B` is the degenerate one for that pair.
 ## cor
 
     cor($array1, $array2, $method = 'pearson'),
@@ -1761,6 +1780,8 @@ Args can also be accepted:
 `quantile` uses `NV` instead of `double` to allow for high-precision 128-bit floats to be used on quadmath machines when available: https://www.cpantesters.org/cpan/report/296f4868-631f-11f1-abba-ff15558d240b
 
 Numerous switches from `double` to `NV` for local precision, like above
+
+numerous changes to `col2col` for ease of use and working with datasets with numerous undefined holes
 
 ## 0.13
 

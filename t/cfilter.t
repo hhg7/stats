@@ -8,88 +8,108 @@ use Test::LeakTrace 'no_leaks_ok';
 
 # cfilter selects columns (the inner/2nd-level keys of a HoH or AoH, or the
 # outer keys of a HoA) and returns the data in the same shape. The selector is
-# either keep => [names] / remove => [names], or keep/remove => a predicate
-# (a CODE ref or function name) called per column as $pred->($col_values, $name)
-# where $col_values is the column's defined cells. Exactly one of keep/remove.
+# keep => [names] / remove => [names], or keep/remove => a predicate (CODE ref
+# or function name). Exactly one of keep/remove. For a predicate, undef handling
+# is:
+#   default          - the predicate sees EVERY cell, including undef
+#   na => 'omit'     - a single-column function (sd) gets only the defined cells
+#   against => 'col' - a two-column function (cor) gets ($col, $ref) over rows
+#                      where BOTH are defined (pairwise complete)
+# The predicate is called as $pred->($col, $name), or with against as
+# $pred->($col, $ref, $name).
 
-# The same three-column table (z is constant -> sd 0) in all three shapes.
-my %hoa = ( 'x' => [ 1, 2, 3 ], 'y' => [ 4, 5, 6 ], 'z' => [ 0, 0, 0 ] );
-my %hoh = (
-	'r1' => { 'x' => 1, 'y' => 4, 'z' => 0 },
-	'r2' => { 'x' => 2, 'y' => 5, 'z' => 0 },
-	'r3' => { 'x' => 3, 'y' => 6, 'z' => 0 },
+# Three-column table with gaps, in all three shapes. z is constant where defined
+# (sd 0); y has one gap; z has two.
+my %hoa = (
+	'x' => [ 1, 2, 3, 4, 5 ],
+	'y' => [ 2, undef, 6, 8, 10 ],
+	'z' => [ 7, 7, 7, undef, undef ],
 );
-my @aoh = (
-	{ 'x' => 1, 'y' => 4, 'z' => 0 },
-	{ 'x' => 2, 'y' => 5, 'z' => 0 },
-	{ 'x' => 3, 'y' => 6, 'z' => 0 },
-);
+my @aoh = map {
+	my $i = $_;
+	+{ map { defined $hoa{$_}[$i] ? ( $_ => $hoa{$_}[$i] ) : () } qw(x y z) }
+} 0 .. 4;
+my %hoh = map { ( "r$_" => $aoh[$_] ) } 0 .. 4;
+
+# non-constant fixture for cor() tests: cor() croaks on a constant column (its
+# standard deviation is 0), so a two-column comparison must not feed it one.
+# a and b are perfectly correlated; c is anti-correlated.
+my %corr = ( 'a' => [ 1, 2, 3, 4, 5 ], 'b' => [ 2, 4, 6, 8, 10 ], 'c' => [ 5, 4, 3, 2, 1 ] );
+
+# clean (gap-free) fixtures for the by-name shape tests
+my %choa = ( 'x' => [ 1, 2, 3 ], 'y' => [ 4, 5, 6 ], 'z' => [ 0, 0, 0 ] );
+my @caoh = ( { 'x' => 1, 'y' => 4, 'z' => 0 }, { 'x' => 2, 'y' => 5, 'z' => 0 } );
+my %choh = ( 'r1' => { 'x' => 1, 'y' => 4 }, 'r2' => { 'x' => 2, 'y' => 5 } );
+
+# shape-agnostic set of column (inner-key) names present in a result
+sub cols_of {
+	my $r = shift;
+	my %c;
+	if ( ref $r eq 'ARRAY' ) { $c{$_}++ for map { keys %$_ } @$r }
+	elsif ( ( values %$r )[0] && ref( ( values %$r )[0] ) eq 'HASH' ) { $c{$_}++ for map { keys %$_ } values %$r }
+	else { $c{$_}++ for keys %$r }
+	return [ sort keys %c ];
+}
 
 # 1. cfilter is defined.
 ok( defined &Stats::LikeR::cfilter, 'cfilter is defined in Stats::LikeR' );
 
-# 2. keep / remove by name on a hash of arrays (columns are the outer keys).
-is_deeply( cfilter( \%hoa, 'keep' => [ 'x', 'y' ] ), { 'x' => [ 1, 2, 3 ], 'y' => [ 4, 5, 6 ] }, 'HoA: keep selects the named columns' );
-is_deeply( cfilter( \%hoa, 'remove' => [ 'z' ] ), { 'x' => [ 1, 2, 3 ], 'y' => [ 4, 5, 6 ] }, 'HoA: remove drops the named column' );
-is( ref cfilter( \%hoa, 'keep' => [ 'x' ] ), 'HASH', 'HoA stays a hash ref' );
+# 2. keep / remove by name, all three shapes (shape preserved).
+is_deeply( cfilter( \%choa, 'keep' => [ 'x', 'y' ] ), { 'x' => [ 1, 2, 3 ], 'y' => [ 4, 5, 6 ] }, 'HoA: keep by name' );
+is_deeply( cfilter( \%choa, 'remove' => [ 'z' ] ), { 'x' => [ 1, 2, 3 ], 'y' => [ 4, 5, 6 ] }, 'HoA: remove by name' );
+is_deeply( cfilter( \%choh, 'keep' => [ 'x' ] ), { 'r1' => { 'x' => 1 }, 'r2' => { 'x' => 2 } }, 'HoH: keep by name trims each row' );
+is_deeply( cfilter( \@caoh, 'keep' => [ 'x', 'z' ] ), [ { 'x' => 1, 'z' => 0 }, { 'x' => 2, 'z' => 0 } ], 'AoH: keep by name' );
+is( ref cfilter( \@caoh, 'keep' => [ 'x' ] ), 'ARRAY', 'AoH stays an array ref' );
 
-# 3. keep / remove by name on a hash of hashes (columns are the inner keys).
-is_deeply( cfilter( \%hoh, 'keep' => [ 'x' ] ), { 'r1' => { 'x' => 1 }, 'r2' => { 'x' => 2 }, 'r3' => { 'x' => 3 } }, 'HoH: keep trims each row to the named column' );
-is_deeply( cfilter( \%hoh, 'remove' => [ 'y', 'z' ] ), { 'r1' => { 'x' => 1 }, 'r2' => { 'x' => 2 }, 'r3' => { 'x' => 3 } }, 'HoH: remove drops the named columns from every row' );
+# 3. Default predicate mode: the predicate sees EVERY cell, including undef.
+{
+	my ( %n, %u );
+	cfilter( \%hoa, 'keep' => sub { my ( $v, $name ) = @_; $n{$name} = scalar @$v; $u{$name} = grep { !defined } @$v; 1 } );
+	is_deeply( \%n, { 'x' => 5, 'y' => 5, 'z' => 5 }, 'default: predicate sees every row' );
+	is_deeply( \%u, { 'x' => 0, 'y' => 1, 'z' => 2 }, 'default: undef cells are present' );
+}
 
-# 4. keep / remove by name on an array of hashes.
-is_deeply( cfilter( \@aoh, 'keep' => [ 'x', 'z' ] ), [ { 'x' => 1, 'z' => 0 }, { 'x' => 2, 'z' => 0 }, { 'x' => 3, 'z' => 0 } ], 'AoH: keep trims each row hash' );
-is( ref cfilter( \@aoh, 'keep' => [ 'x' ] ), 'ARRAY', 'AoH stays an array ref' );
+# 4. na => 'omit': single-column functions get only the defined cells.
+{
+	my %n;
+	cfilter( \%hoa, 'keep' => sub { $n{ $_[1] } = scalar @{ $_[0] }; 1 }, 'na' => 'omit' );
+	is_deeply( \%n, { 'x' => 5, 'y' => 4, 'z' => 3 }, 'na=omit: only defined cells passed' );
+}
+is_deeply( cols_of( cfilter( \%hoa, 'keep' => sub { sd( $_[0] ) == 0 }, 'na' => 'omit' ) ), [ 'z' ], 'na=omit: sd keeps the constant column z' );
 
-# 5. A predicate selects columns by their values: keep the constant ones (sd 0).
-my $constant = sub { sd( $_[0] ) == 0 };
-is_deeply( [ sort keys %{ cfilter( \%hoa, 'keep' => $constant ) } ], [ 'z' ], 'predicate keep: only the sd==0 column (z) survives' );
-is_deeply( [ sort keys %{ cfilter( \%hoa, 'remove' => $constant ) } ], [ 'x', 'y' ], 'predicate remove: the sd==0 column (z) is dropped' );
-# The predicate works the same on the row-major shapes.
-is_deeply( cfilter( \@aoh, 'keep' => $constant ), [ { 'z' => 0 }, { 'z' => 0 }, { 'z' => 0 } ], 'predicate keep on AoH keeps the constant column' );
+# 5. against => 'col': two-column comparison, pairwise complete (defined in BOTH).
+{
+	my %paired;
+	cfilter( \%hoa, 'keep' => sub { $paired{ $_[2] } = scalar @{ $_[0] }; 1 }, 'against' => 'x' );
+	# y pairs with x on rows 0,2,3,4 => 4; z pairs on rows 0,1,2 => 3
+	is_deeply( \%paired, { 'x' => 5, 'y' => 4, 'z' => 3 }, 'against: pairwise-complete row counts' );
+}
+is_deeply( cols_of( cfilter( \%corr, 'keep' => sub { cor( $_[0], $_[1] ) > 0.99 }, 'against' => 'a' ) ), [ 'a', 'b' ], 'against: keep columns positively correlated with a (a,b); c dropped' );
 
-# 6. The predicate's second argument is the column name.
-my %named;
-cfilter( \%hoa, 'keep' => sub { $named{ $_[1] } = scalar @{ $_[0] }; 1 } );
-is_deeply( \%named, { 'x' => 3, 'y' => 3, 'z' => 3 }, 'predicate receives the column name and its values' );
+# 6. The same selection agrees across shapes (column = inner key).
+is_deeply( cols_of( cfilter( \%hoh, 'keep' => sub { sd( $_[0] ) == 0 }, 'na' => 'omit' ) ), [ 'z' ], 'HoH na=omit keeps column z' );
+is_deeply( cols_of( cfilter( \@aoh, 'keep' => sub { sd( $_[0] ) == 0 }, 'na' => 'omit' ) ), [ 'z' ], 'AoH na=omit keeps column z' );
 
-# 7. A function name (with a package) is resolved and called as a predicate.
-sub main::is_const { return sd( $_[0] ) == 0 }
-is_deeply( [ sort keys %{ cfilter( \%hoa, 'keep' => 'main::is_const' ) } ], [ 'z' ], 'a function name works as a predicate' );
+# 7. Output preserves undef cells in a kept column; input is not mutated.
+is_deeply( cfilter( \%hoa, 'keep' => [ 'y' ] ), { 'y' => [ 2, undef, 6, 8, 10 ] }, 'kept column keeps its undef cells' );
+is_deeply( \%hoa, { 'x' => [ 1, 2, 3, 4, 5 ], 'y' => [ 2, undef, 6, 8, 10 ], 'z' => [ 7, 7, 7, undef, undef ] }, 'input is left untouched' );
 
-# 8. Only the column's DEFINED cells reach the predicate (undef/missing dropped).
-my %gap = ( 'a' => [ 1, 2, undef, 4 ], 'b' => [ 1, 1, 1, 1 ] );
-is_deeply( [ sort keys %{ cfilter( \%gap, 'keep' => sub { scalar( @{ $_[0] } ) == 4 } ) } ], [ 'b' ], 'predicate sees defined cells only (a has 3, b has 4)' );
-
-# 9. Reconstruction preserves undef cells inside a kept column.
-is_deeply( cfilter( \%gap, 'keep' => [ 'a' ] ), { 'a' => [ 1, 2, undef, 4 ] }, 'a kept column keeps its undef cells in place' );
-
-# 10. Ragged rows: a kept column simply stays absent from rows that lack it.
-is_deeply( cfilter( [ { 'a' => 1, 'b' => 2 }, { 'a' => 3 } ], 'keep' => [ 'b' ] ), [ { 'b' => 2 }, {} ], 'AoH: a row missing the kept column yields an empty row' );
-is_deeply( cfilter( { 'r1' => { 'a' => 1, 'b' => 2 }, 'r2' => { 'a' => 3 } }, 'keep' => [ 'b' ] ), { 'r1' => { 'b' => 2 }, 'r2' => {} }, 'HoH: a row missing the kept column yields an empty row' );
-
-# 11. The input is copied, never mutated.
-my %orig = ( 'x' => [ 1, 2 ], 'y' => [ 3, 4 ] );
-cfilter( \%orig, 'keep' => [ 'x' ] );
-is_deeply( \%orig, { 'x' => [ 1, 2 ], 'y' => [ 3, 4 ] }, 'the original structure is left untouched' );
-
-# 12. Bad inputs and bad selectors die with a clear message.
+# 8. Bad inputs / option misuse die.
 dies_ok { cfilter( \%hoa ) } 'no keep/remove dies';
 dies_ok { cfilter( \%hoa, 'keep' => [ 'x' ], 'remove' => [ 'y' ] ) } 'both keep and remove dies';
-dies_ok { cfilter( \%hoa, 'keep' => [ 'nope' ] ) } 'keeping an unknown column dies';
-dies_ok { cfilter( \%hoa, 'remove' => [ 'nope' ] ) } 'removing an unknown column dies';
-dies_ok { cfilter( \%hoa, 'keep' => {} ) } 'a hash-ref selector dies';
-dies_ok { cfilter( \%hoa, 'keep' => 'no_such_function' ) } 'an unknown function name dies';
-dies_ok { cfilter( \%hoa, 'bogus' => [ 'x' ] ) } 'an unknown option dies';
-dies_ok { cfilter( \%hoa, 'keep' ) } 'an option without a value dies (odd args)';
+dies_ok { cfilter( \%hoa, 'keep' => [ 'nope' ] ) } 'unknown named column dies';
+dies_ok { cfilter( \%hoa, 'keep' => {} ) } 'hash-ref selector dies';
+dies_ok { cfilter( \%hoa, 'keep' => 'no_such_function' ) } 'unknown function name dies';
+dies_ok { cfilter( \%hoa, 'bogus' => [ 'x' ] ) } 'unknown option dies';
+dies_ok { cfilter( \%hoa, 'keep' => [ 'x' ], 'na' => 'omit' ) } 'na with a by-name selector dies';
+dies_ok { cfilter( \%hoa, 'keep' => sub { 1 }, 'na' => 'omit', 'against' => 'x' ) } 'na together with against dies';
+dies_ok { cfilter( \%hoa, 'keep' => sub { 1 }, 'na' => 'bad' ) } 'na must be keep or omit';
+dies_ok { cfilter( \%hoa, 'keep' => sub { 1 }, 'against' => 'nope' ) } 'against on an unknown column dies';
 dies_ok { cfilter( 42, 'keep' => [ 'x' ] ) } 'non-reference data dies';
-dies_ok { cfilter( [ 1, 2, 3 ], 'keep' => [ 'x' ] ) } 'array of plain scalars dies';
 
-# 13. No memory leaks across the name and predicate paths, all three shapes.
-no_leaks_ok { cfilter( \%hoa, 'keep' => [ 'x', 'y' ] ) } 'no leaks: HoA keep by name' unless $INC{'Devel/Cover.pm'};
-no_leaks_ok { cfilter( \%hoh, 'remove' => [ 'z' ] ) } 'no leaks: HoH remove by name' unless $INC{'Devel/Cover.pm'};
-no_leaks_ok { cfilter( \@aoh, 'keep' => [ 'x' ] ) } 'no leaks: AoH keep by name' unless $INC{'Devel/Cover.pm'};
-no_leaks_ok { cfilter( \%hoa, 'keep' => $constant ) } 'no leaks: predicate selector' unless $INC{'Devel/Cover.pm'};
-use Devel::Peek;
-END { Devel::Peek::Dump(1 == 1) }   # dumps PL_sv_yes
+# 9. No memory leaks across the by-name, default, omit and against paths.
+no_leaks_ok { cfilter( \%hoa, 'keep' => [ 'x', 'y' ] ) } 'no leaks: keep by name';
+no_leaks_ok { cfilter( \%hoa, 'keep' => sub { 1 } ) } 'no leaks: default predicate (sees undef)';
+no_leaks_ok { cfilter( \%hoa, 'keep' => sub { sd( $_[0] ) == 0 }, 'na' => 'omit' ) } 'no leaks: na=omit';
+no_leaks_ok { cfilter( \%corr, 'keep' => sub { cor( $_[0], $_[1] ) > 0 }, 'against' => 'a' ) } 'no leaks: against';
 done_testing();
