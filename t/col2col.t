@@ -108,11 +108,11 @@ dies_ok { col2col( \%hoa, 'no_such_function' ) } 'unknown function name dies';
 dies_ok { col2col( \%hoa, undef ) } 'undef command dies';
 dies_ok { col2col( \%hoa, { 'a' => 1 } ) } 'hash-ref command dies';
 # 15. No memory leaks across the block, function-name, and column-subset paths.
-no_leaks_ok { col2col( \%hoa, sub { cor( $_[0], $_[1] ) } ) } 'no leaks: code block';
-no_leaks_ok { col2col( \%hoa, 'cor' ) } 'no leaks: function-name shorthand';
-no_leaks_ok { col2col( \@aoh, sub { cor( $_[0], $_[1] ) } ) } 'no leaks: array-of-hashes input';
-no_leaks_ok { col2col( \%hoh, sub { cor( $_[0], $_[1] ) } ) } 'no leaks: hash-of-hashes input';
-no_leaks_ok { col2col( \%hoa, sub { cor( $_[0], $_[1] ) }, [ 'x', 'y' ] ) } 'no leaks: column subset';
+no_leaks_ok { col2col( \%hoa, sub { cor( $_[0], $_[1] ) } ) } 'no leaks: code block' unless $INC{'Devel/Cover.pm'};
+no_leaks_ok { col2col( \%hoa, 'cor' ) } 'no leaks: function-name shorthand' unless $INC{'Devel/Cover.pm'};
+no_leaks_ok { col2col( \@aoh, sub { cor( $_[0], $_[1] ) } ) } 'no leaks: array-of-hashes input' unless $INC{'Devel/Cover.pm'};
+no_leaks_ok { col2col( \%hoh, sub { cor( $_[0], $_[1] ) } ) } 'no leaks: hash-of-hashes input' unless $INC{'Devel/Cover.pm'};
+no_leaks_ok { col2col( \%hoa, sub { cor( $_[0], $_[1] ) }, [ 'x', 'y' ] ) } 'no leaks: column subset' unless $INC{'Devel/Cover.pm'};
 # 16. rm.undef (synonym rm.na) toggles the pairwise-complete-cases behaviour.
 #     It defaults to TRUE: a row that is undef in either column is dropped so
 #     both columns reach the block complete and equal length (sections 7-8).
@@ -138,8 +138,8 @@ is_deeply( [ sort keys %$col_false ], [ 'a' ], 'a cols restriction still applies
 is( $col_false->{'a'}{'b'}, '5,5', 'cols restriction + rm.na => 0 keeps full length' );
 dies_ok { col2col( \%gap2, $len_block, undef, 'rm.bogus' => 1 ) } 'unknown option name dies';
 dies_ok { col2col( \%gap2, $len_block, undef, 'rm.undef' ) } 'an option without a value dies (odd trailing args)';
-no_leaks_ok { col2col( \%gap2, $len_block, undef, 'rm.undef' => 0 ) } 'no leaks: rm.undef => 0 keeps every row';
-no_leaks_ok { col2col( \%gap2, $len_block, 'a', 'rm.na' => 0 ) } 'no leaks: cols restriction plus rm.na => 0';
+no_leaks_ok { col2col( \%gap2, $len_block, undef, 'rm.undef' => 0 ) } 'no leaks: rm.undef => 0 keeps every row' unless $INC{'Devel/Cover.pm'};
+no_leaks_ok { col2col( \%gap2, $len_block, 'a', 'rm.na' => 0 ) } 'no leaks: cols restriction plus rm.na => 0' unless $INC{'Devel/Cover.pm'};
 # 17. na => 'pairwise' | 'omit' | 'keep' chooses how undef is handled when one
 #     column is paired with another. 'pairwise' (the default) keeps only rows
 #     defined in BOTH, so the block gets equal aligned columns (paired stats
@@ -169,8 +169,8 @@ my $au = col2col( \%allundef, $show3, undef, 'na' => 'omit' );
 ok( !defined $au->{'a'}{'z'}, "na => 'omit' yields undef for a pair with an all-undef column" );
 dies_ok { col2col( \%gap3, $show3, undef, 'na' => 'omit', 'rm.undef' => 1 ) } 'na together with rm.undef dies';
 dies_ok { col2col( \%gap3, $show3, undef, 'na' => 'bogus' ) } 'an invalid na value dies';
-no_leaks_ok { col2col( \%gap3, $show3, undef, 'na' => 'omit' ) } 'no leaks: na => omit';
-no_leaks_ok { col2col( \%gap3, $show3, undef, 'na' => 'keep' ) } 'no leaks: na => keep';
+no_leaks_ok { col2col( \%gap3, $show3, undef, 'na' => 'omit' ) } 'no leaks: na => omit' unless $INC{'Devel/Cover.pm'};
+no_leaks_ok { col2col( \%gap3, $show3, undef, 'na' => 'keep' ) } 'no leaks: na => keep' unless $INC{'Devel/Cover.pm'};
 # 18. skip.errors defaults to TRUE: a block that croaks for a pair does not abort
 #     col2col; the offending cell keeps the FIRST LINE of the error message so the
 #     caller sees which (outer => inner) pair failed and why, while every other
@@ -196,7 +196,7 @@ dies_ok { col2col( \%se, $boom, undef, 'skip.errors' => 0 ) } 'skip.errors => 0 
 my $trace = sub { my ( $a, $b ) = @_; die "bad pair\n at file line 9.\n\tmain::__ANON__ called at x line 3\n" if $b->[0] == 4; return 0 };
 my $tr = col2col( \%se, $trace );
 is( $tr->{'p'}{'q'}, 'bad pair', 'a multi-line (trace-augmented) message keeps only its first line' );
-no_leaks_ok { col2col( \%se, $boom ) } 'no leaks: trapping a croaking block by default';
+no_leaks_ok { col2col( \%se, $boom ) } 'no leaks: trapping a croaking block by default' unless $INC{'Devel/Cover.pm'};
 
 # 19. Options may be passed as a hash ref in place of cols, so no undef
 #     placeholder is needed when there is no column restriction. It is

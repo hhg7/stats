@@ -288,7 +288,7 @@ The function returns a single Hash Reference containing the following key-value 
 | **parameter** | Hash Ref | Contains the degrees of freedom (`df`). |
 | **statistic** | Hash Ref | Contains the test statistic (`X-squared`). |
 
-### 1. Two-Dimensional Array
+### Two-Dimensional Array
 
 Passing an Array of Arrays (AoA) triggers a standard Pearson's Chi-squared test. If the input is exactly a 2x2 matrix, Yates' continuity correction is applied automatically.
 
@@ -317,7 +317,7 @@ Passing an Array of Arrays (AoA) triggers a standard Pearson's Chi-squared test.
     }
 
 
-### 2. One-Dimensional Array (Goodness of Fit)
+### 1-Dimensional Array (Goodness of Fit)
 
 Passing a flat Array Reference triggers a Goodness of Fit test, assuming equal expected probabilities across all items.
 
@@ -336,9 +336,7 @@ Passing a flat Array Reference triggers a Goodness of Fit test, assuming equal e
         'statistic' => { 'X-squared' => 10 }
     }
 
-
-
-### 3. Two-Dimensional Hash (Pearson's Chi-squared)
+### 2-Dimensional Hash (Pearson's Chi-squared)
 
 Passing a Hash of Hashes (HoH) applies the exact same logic as a 2D Array, but preserves your nested string keys in the output. This is particularly useful when mapping data extracted directly from JSON, databases, or categorical mappings.
 
@@ -368,7 +366,7 @@ Passing a Hash of Hashes (HoH) applies the exact same logic as a 2D Array, but p
     }
 
 
-### 4. One-Dimensional Hash (Goodness of Fit)
+### One-Dimensional Hash (Goodness of Fit)
 
 Flat Hash References evaluate Goodness of Fit while preserving your categorical keys in the `expected` and `observed` output blocks.
 
@@ -429,7 +427,7 @@ gets compared, and the result is keyed by column name.
 
     my %hoa = ( a => [1, 2, 3], b => [4, 5, 6] );
 
-**Hash of hashes (HoH)** — outer keys are row names, inner keys are columns:
+**Hash of hashes (HoH)** — First keys are row names, second keys are columns:
 
     my %hoh = (
         row1 => { a => 1, b => 4 },
@@ -465,8 +463,6 @@ You can also pass a **function name as a string**. A bare name is looked up in
     col2col(\%data, 'cor');
     col2col(\%data, sub { cor($_[0], $_[1]) });
 
-Use a fully-qualified name (`'My::Mod::myfunc'`) to call something elsewhere.
-
 ---
 
 ## The result
@@ -474,9 +470,9 @@ Use a fully-qualified name (`'My::Mod::myfunc'`) to call something elsewhere.
 Always a hash of hashes: **`$result->{from}{to}`**.
 
     for my $from (sort keys %$result) {
-        for my $to (sort keys %{ $result->{$from} }) {
-            printf "%s vs %s = %s\n", $from, $to, $result->{$from}{$to};
-        }
+       for my $to (sort keys %{ $result->{$from} }) {
+          printf "%s vs %s = %s\n", $from, $to, $result->{$from}{$to};
+       }
     }
 
 A column is never compared with itself, so `$result->{a}{a}` does not exist.
@@ -504,10 +500,8 @@ The "to" side is always every other column; `$cols` only limits the outer keys.
 
 Options can be given two ways:
 
-```perl
-col2col(\%data, 'cor', $cols, 'skip.errors' => 0);   # after $cols
-col2col(\%data, 'cor', { 'skip.errors' => 0 });      # hash ref, no $cols needed
-```
+    col2col(\%data, 'cor', $cols, 'skip.errors' => 0);   # after $cols
+    col2col(\%data, 'cor', { 'skip.errors' => 0 });      # hash ref, no $cols needed
 
 The hash-ref form is convenient when you have **no** column restriction — it saves
 you from passing a placeholder. (A hash ref *replaces* `$cols`, so you can't use
@@ -523,14 +517,11 @@ Real data has gaps. `na` decides what the function sees.
 | `'omit'`                | Each column drops **its own** undefined values independently. The two columns may end up **different lengths**. | Unpaired tests like `t_test`, `kruskal_test`, where a gap in one sample shouldn't discard a value in the other. |
 | `'keep'`                | Every row is passed through, `undef` and all. | When your function does its own missing-data handling. |
 
-```perl
-# correlation: keep only complete pairs (the default)
-col2col(\%data, 'cor');
-
-# two-sample test: each column keeps its own values
-col2col(\%data, 't_test', undef, na => 'omit');
-col2col(\%data, 't_test', { na => 'omit' });        # same, no placeholder
-```
+    # correlation: keep only complete pairs (the default)
+    col2col(\%data, 'cor');
+    # two-sample test: each column keeps its own values
+    col2col(\%data, 't_test', undef, na => 'omit');
+    col2col(\%data, 't_test', { na => 'omit' });        # same, no placeholder
 
 `rm.undef` / `rm.na` remain as boolean aliases for backward compatibility:
 `true` means `'pairwise'`, `false` means `'keep'`. Don't combine them with `na`.
@@ -543,18 +534,14 @@ aborting the whole run, it stores the **first line** of the error message in tha
 cell, so the result tells you *which* pair failed and *why*. Every other cell is
 computed normally.
 
-```perl
-my $r = col2col(\%data, 'cor');
-# a good pair:   $r->{a}{b} == 0.83
-# a bad pair:    $r->{a}{const} eq 'cor: standard deviation of y is 0'
-```
+    my $r = col2col(\%data, 'cor');
+    # a good pair:   $r->{a}{b} == 0.83
+    # a bad pair:    $r->{a}{const} eq 'cor: standard deviation of y is 0'
 
 To restore the old "die on the first error" behaviour, turn it off:
 
-```perl
-col2col(\%data, 'cor', undef, 'skip.errors' => 0);
-col2col(\%data, 'cor', { 'skip.errors' => 0 });
-```
+    col2col(\%data, 'cor', undef, 'skip.errors' => 0);
+    col2col(\%data, 'cor', { 'skip.errors' => 0 });
 
 Only errors from **your function** are trapped. Mistakes in the call itself
 (unknown column, bad data, unknown function name, unknown option) always die.
@@ -565,39 +552,30 @@ Only errors from **your function** are trapped. Mistakes in the call itself
 
 **Full correlation matrix:**
 
-```perl
-my $m = col2col(\%data, 'cor');
-```
+    my $m = col2col(\%data, 'cor');
 
 **One variable against all others, sorted strongest first, skipping failures:**
 
-```perl
-my $col  = 'Testosterone, total (nmol/L)';
-my $cors = col2col($hoa, 'cor', $col)->{$col};
-
-for my $other (sort { ($cors->{$b} // -2) <=> ($cors->{$a} // -2) } keys %$cors) {
-    next unless $cors->{$other} =~ /^-?\d/;        # skip cells holding an error message
-    printf "%-30s % .3f\n", $other, $cors->{$other};
-}
-```
+    my $col  = 'Testosterone, total (nmol/L)';
+    my $cors = col2col($hoa, 'cor', $col)->{$col};
+    for my $other (sort { ($cors->{$b} // -2) <=> ($cors->{$a} // -2) } keys %$cors) {
+        next unless $cors->{$other} =~ /^-?\d/;        # skip cells holding an error message
+        printf "%-30s % .3f\n", $other, $cors->{$other};
+    }
 
 **Two-sample test across columns of unequal completeness:**
 
-```perl
-my $t = col2col($hoa, 't_test', undef, na => 'omit');
-```
+    my $t = col2col($hoa, 't_test', undef, na => 'omit');
 
 **Find which pairs could not be computed:**
 
-```perl
-my $m = col2col($hoa, 'cor');
-for my $from (sort keys %$m) {
-    for my $to (sort keys %{ $m->{$from} }) {
-        my $v = $m->{$from}{$to};
-        warn "$from vs $to: $v\n" if defined $v && $v !~ /^-?\d/;   # non-numeric = error
+    my $m = col2col($hoa, 'cor');
+    for my $from (sort keys %$m) {
+        for my $to (sort keys %{ $m->{$from} }) {
+            my $v = $m->{$from}{$to};
+            warn "$from vs $to: $v\n" if defined $v && $v !~ /^-?\d/;   # non-numeric = error
+        }
     }
-}
-```
 
 ---
 
@@ -614,6 +592,7 @@ for my $from (sort keys %$m) {
 - **In the error message, "x" is the first column and "y" is the second** — i.e.
   `y` is the inner ("to") key. So `$result->{A}{B}` reading `…deviation of y is 0`
   means column `B` is the degenerate one for that pair.
+
 ## cor
 
     cor($array1, $array2, $method = 'pearson'),
@@ -690,9 +669,9 @@ The return value is a **new** data frame of the **same shape** as the input (AoH
 
 `col('name')` is a deferred reference to a column. It carries no data — only the column name — so it can be compared with a literal (or another value) to build a predicate that `filter` evaluates once per row.
 
-    filter($df, col('age') >= 18);          # keep rows where age >= 18
-    filter($df, col('sex') eq 'f');         # keep rows where sex is 'f'
-    filter($df, 18 <= col('age'));          # operands may be in either order
+    filter($df, col('age') >= 18);   # keep rows where age >= 18
+    filter($df, col('sex') eq 'f');  # keep rows where sex is 'f'
+    filter($df, 18 <= col('age'));   # operands may be in either order
 
 ### Comparison operators
 
@@ -766,14 +745,15 @@ which returns a hash reference:
     {
     alternative   "two.sided",
     conf_int      [
-        [0] 2.75338278824932,
-        [1] 301.462337971516
+        [0] 2.75343836564204,
+        [1] 300.682787419401
     ],
+    conf_level    0.95,
     estimate      {
-        "odds ratio"   21.3053175567504
+        "odds ratio"   21.3053312750168
     },
     method        "Fisher's Exact Test for Count Data",
-    p_value       0.00053672411914343
+    p_value       0.000536724119143435
     }
 
 ### hash reference entry
@@ -786,8 +766,6 @@ which returns a hash reference:
             Milk => 1, Tea => 3
         }
     });
-
-I have the p-value calculated very precisely, but there are some inexactness (approximately 1% for the confidence intervals) which I couldn't rectify.  The answers are very close to R besides the p-value, where they are identical.
 
 ## glm
 
@@ -1767,8 +1745,6 @@ Args can also be accepted:
 
 ## 0.14
 
-`col2col` now has `undef.rm` and a synonym `na.rm` to remove undefined values from calculations; by default this is `TRUE`
-
 `filter` function added for rows
 
 `read_table` reads undefined values to `undef` instead of `NA`, which makes calculations easier
@@ -1781,7 +1757,11 @@ Args can also be accepted:
 
 Numerous switches from `double` to `NV` for local precision, like above
 
-numerous changes to `col2col` for ease of use and working with datasets with numerous undefined holes
+numerous changes to `col2col` for ease of use and working with datasets with numerous undefined values
+
+dist.ini now links to math library when compiling: https://www.cpantesters.org/cpan/report/785e26d8-6397-11f1-89c0-dc066e8775ea
+
+`fisher_test` now should be complete, errors with confidence intervals fixed
 
 ## 0.13
 

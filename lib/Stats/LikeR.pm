@@ -731,7 +731,7 @@ The function returns a single Hash Reference containing the following key-value 
 
 
 
-=head3 1. Two-Dimensional Array
+=head3 Two-Dimensional Array
 
 Passing an Array of Arrays (AoA) triggers a standard Pearson's Chi-squared test. If the input is exactly a 2x2 matrix, Yates' continuity correction is applied automatically.
 
@@ -759,7 +759,7 @@ B<Output:>
      'statistic' => { 'X-squared' => 30.0701490957547 }
  }
 
-=head3 2. One-Dimensional Array (Goodness of Fit)
+=head3 1-Dimensional Array (Goodness of Fit)
 
 Passing a flat Array Reference triggers a Goodness of Fit test, assuming equal expected probabilities across all items.
 
@@ -778,7 +778,7 @@ B<Output:>
      'statistic' => { 'X-squared' => 10 }
  }
 
-=head3 3. Two-Dimensional Hash (Pearson's Chi-squared)
+=head3 2-Dimensional Hash (Pearson's Chi-squared)
 
 Passing a Hash of Hashes (HoH) applies the exact same logic as a 2D Array, but preserves your nested string keys in the output. This is particularly useful when mapping data extracted directly from JSON, databases, or categorical mappings.
 
@@ -807,7 +807,7 @@ B<Output:>
      'statistic' => { 'X-squared' => 6.75 }
  }
 
-=head3 4. One-Dimensional Hash (Goodness of Fit)
+=head3 One-Dimensional Hash (Goodness of Fit)
 
 Flat Hash References evaluate Goodness of Fit while preserving your categorical keys in the C<expected> and C<observed> output blocks.
 
@@ -900,7 +900,7 @@ B<Hash of arrays (HoA)> — keys are column names:
 
  my %hoa = ( a => [1, 2, 3], b => [4, 5, 6] );
 
-B<Hash of hashes (HoH)> — outer keys are row names, inner keys are columns:
+B<Hash of hashes (HoH)> — First keys are row names, second keys are columns:
 
  my %hoh = (
      row1 => { a => 1, b => 4 },
@@ -936,8 +936,6 @@ C<Stats::LikeR::>, so these two are equivalent:
  col2col(\%data, 'cor');
  col2col(\%data, sub { cor($_[0], $_[1]) });
 
-Use a fully-qualified name (C<'My::Mod::myfunc'>) to call something elsewhere.
-
 ========================================================================
 
 =head2 The result
@@ -945,9 +943,9 @@ Use a fully-qualified name (C<'My::Mod::myfunc'>) to call something elsewhere.
 Always a hash of hashes: B<< C<< $result-E<gt>{from}{to} >> >>.
 
  for my $from (sort keys %$result) {
-     for my $to (sort keys %{ $result->{$from} }) {
-         printf "%s vs %s = %s\n", $from, $to, $result->{$from}{$to};
-     }
+    for my $to (sort keys %{ $result->{$from} }) {
+       printf "%s vs %s = %s\n", $from, $to, $result->{$from}{$to};
+    }
  }
 
 A column is never compared with itself, so C<< $result-E<gt>{a}{a} >> does not exist.
@@ -975,10 +973,8 @@ The "to" side is always every other column; C<$cols> only limits the outer keys.
 
 Options can be given two ways:
 
-C<< perl
-col2col(\%data, 'cor', $cols, 'skip.errors' =E<gt> 0);   # after $cols
-col2col(\%data, 'cor', { 'skip.errors' =E<gt> 0 });      # hash ref, no $cols needed
- >>
+ col2col(\%data, 'cor', $cols, 'skip.errors' => 0);   # after $cols
+ col2col(\%data, 'cor', { 'skip.errors' => 0 });      # hash ref, no $cols needed
 
 The hash-ref form is convenient when you have B<no> column restriction — it saves
 you from passing a placeholder. (A hash ref I<replaces> C<$cols>, so you can't use
@@ -1023,16 +1019,11 @@ Real data has gaps. C<na> decides what the function sees.
 
 
 
-```perl
-=head1 correlation: keep only complete pairs (the default)
-
-col2col(\%data, 'cor');
-
-=head1 two-sample test: each column keeps its own values
-
-col2col(\%data, 't_test', undef, na => 'omit');
-col2col(\%data, 't_test', { na => 'omit' });        # same, no placeholder
-```
+ # correlation: keep only complete pairs (the default)
+ col2col(\%data, 'cor');
+ # two-sample test: each column keeps its own values
+ col2col(\%data, 't_test', undef, na => 'omit');
+ col2col(\%data, 't_test', { na => 'omit' });        # same, no placeholder
 
 C<rm.undef> / C<rm.na> remain as boolean aliases for backward compatibility:
 C<true> means C<'pairwise'>, C<false> means C<'keep'>. Don't combine them with C<na>.
@@ -1045,20 +1036,14 @@ aborting the whole run, it stores the B<first line> of the error message in that
 cell, so the result tells you I<which> pair failed and I<why>. Every other cell is
 computed normally.
 
-```perl
-my $r = col2col(\%data, 'cor');
-=head1 a good pair:   $r->{a}{b} == 0.83
-
-=head1 a bad pair:    $r->{a}{const} eq 'cor: standard deviation of y is 0'
-
-```
+ my $r = col2col(\%data, 'cor');
+ # a good pair:   $r->{a}{b} == 0.83
+ # a bad pair:    $r->{a}{const} eq 'cor: standard deviation of y is 0'
 
 To restore the old "die on the first error" behaviour, turn it off:
 
-C<< perl
-col2col(\%data, 'cor', undef, 'skip.errors' =E<gt> 0);
-col2col(\%data, 'cor', { 'skip.errors' =E<gt> 0 });
- >>
+ col2col(\%data, 'cor', undef, 'skip.errors' => 0);
+ col2col(\%data, 'cor', { 'skip.errors' => 0 });
 
 Only errors from B<your function> are trapped. Mistakes in the call itself
 (unknown column, bad data, unknown function name, unknown option) always die.
@@ -1069,39 +1054,30 @@ Only errors from B<your function> are trapped. Mistakes in the call itself
 
 B<Full correlation matrix:>
 
-C<perl
-my $m = col2col(\%data, 'cor');
->
+ my $m = col2col(\%data, 'cor');
 
 B<One variable against all others, sorted strongest first, skipping failures:>
 
-```perl
-my $col  = 'Testosterone, total (nmol/L)';
-my $cors = col2col($hoa, 'cor', $col)->{$col};
-
-for my $other (sort { ($cors->{$b} // -2) <=> ($cors->{$a} // -2) } keys %$cors) {
-    next unless $cors->{$other} =~ /^-?\d/;        # skip cells holding an error message
-    printf "%-30s % .3f\n", $other, $cors->{$other};
-}
-```
+ my $col  = 'Testosterone, total (nmol/L)';
+ my $cors = col2col($hoa, 'cor', $col)->{$col};
+ for my $other (sort { ($cors->{$b} // -2) <=> ($cors->{$a} // -2) } keys %$cors) {
+     next unless $cors->{$other} =~ /^-?\d/;        # skip cells holding an error message
+     printf "%-30s % .3f\n", $other, $cors->{$other};
+ }
 
 B<Two-sample test across columns of unequal completeness:>
 
-C<< perl
-my $t = col2col($hoa, 't_test', undef, na =E<gt> 'omit');
- >>
+ my $t = col2col($hoa, 't_test', undef, na => 'omit');
 
 B<Find which pairs could not be computed:>
 
-C<< perl
-my $m = col2col($hoa, 'cor');
-for my $from (sort keys %$m) {
-    for my $to (sort keys %{ $m-E<gt>{$from} }) {
-        my $v = $m-E<gt>{$from}{$to};
-        warn "$from vs $to: $v\n" if defined $v && $v !~ /^-?\d/;   # non-numeric = error
-    }
-}
- >>
+ my $m = col2col($hoa, 'cor');
+ for my $from (sort keys %$m) {
+     for my $to (sort keys %{ $m->{$from} }) {
+         my $v = $m->{$from}{$to};
+         warn "$from vs $to: $v\n" if defined $v && $v !~ /^-?\d/;   # non-numeric = error
+     }
+ }
 
 ========================================================================
 
@@ -1123,11 +1099,12 @@ hash of hashes.
 =item * B<In the error message, "x" is the first column and "y" is the second> — i.e.
 C<y> is the inner ("to") key. So C<< $result-E<gt>{A}{B} >> reading C<…deviation of y is 0>
 means column C<B> is the degenerate one for that pair.
-=head2 cor
-
-cor($array1, $array2, $method = 'pearson'),
 
 =back
+
+=head2 cor
+
+ cor($array1, $array2, $method = 'pearson'),
 
 that is, C<pearson> is the default and will be used if C<$method> is not specified.
 
@@ -1231,9 +1208,9 @@ The return value is a B<new> data frame of the B<same shape> as the input (AoH i
 
 C<col('name')> is a deferred reference to a column. It carries no data — only the column name — so it can be compared with a literal (or another value) to build a predicate that C<filter> evaluates once per row.
 
- filter($df, col('age') >= 18);          # keep rows where age >= 18
- filter($df, col('sex') eq 'f');         # keep rows where sex is 'f'
- filter($df, 18 <= col('age'));          # operands may be in either order
+ filter($df, col('age') >= 18);   # keep rows where age >= 18
+ filter($df, col('sex') eq 'f');  # keep rows where sex is 'f'
+ filter($df, 18 <= col('age'));   # operands may be in either order
 
 =head3 Comparison operators
 
@@ -1341,14 +1318,15 @@ which returns a hash reference:
  {
  alternative   "two.sided",
  conf_int      [
-     [0] 2.75338278824932,
-     [1] 301.462337971516
+     [0] 2.75343836564204,
+     [1] 300.682787419401
  ],
+ conf_level    0.95,
  estimate      {
-     "odds ratio"   21.3053175567504
+     "odds ratio"   21.3053312750168
  },
  method        "Fisher's Exact Test for Count Data",
- p_value       0.00053672411914343
+ p_value       0.000536724119143435
  }
 
 =head3 hash reference entry
@@ -1361,8 +1339,6 @@ which returns a hash reference:
          Milk => 1, Tea => 3
      }
  });
-
-I have the p-value calculated very precisely, but there are some inexactness (approximately 1% for the confidence intervals) which I couldn't rectify.  The answers are very close to R besides the p-value, where they are identical.
 
 =head2 glm
 
@@ -2789,8 +2765,6 @@ Args can also be accepted:
 
 =head2 0.14
 
-C<col2col> now has C<undef.rm> and a synonym C<na.rm> to remove undefined values from calculations; by default this is C<TRUE>
-
 C<filter> function added for rows
 
 C<read_table> reads undefined values to C<undef> instead of C<NA>, which makes calculations easier
@@ -2803,7 +2777,11 @@ C<quantile> uses C<NV> instead of C<double> to allow for high-precision 128-bit 
 
 Numerous switches from C<double> to C<NV> for local precision, like above
 
-numerous changes to C<col2col> for ease of use and working with datasets with numerous undefined holes
+numerous changes to C<col2col> for ease of use and working with datasets with numerous undefined values
+
+dist.ini now links to math library when compiling: https://www.cpantesters.org/cpan/report/785e26d8-6397-11f1-89c0-dc066e8775ea
+
+C<fisher_test> now should be complete, errors with confidence intervals fixed
 
 =head2 0.13
 

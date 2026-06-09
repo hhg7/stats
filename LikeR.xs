@@ -151,140 +151,192 @@ static size_t generate_binomial(pTHX_ const size_t size, const double prob) {
 	}
 	return successes;
 }
-// Helper: log combination
-static double log_choose(size_t n, size_t k) {
-	return lgamma((double)n + 1.0) - lgamma((double)k + 1.0) - lgamma((double)(n - k) + 1.0);
+
+#define FT_EPS 2.220446049250313e-16
+#define FT_TOL 0.0001220703125  /* .Machine$double.eps^0.25, R uniroot default */
+
+static double ft_lchoose(long n, long k) {
+	if (k < 0 || k > n || n < 0) return -INFINITY;
+	return lgamma((double)n + 1) - lgamma((double)k + 1) - lgamma((double)(n - k) + 1);
 }
 
-// Log-space tails for non-central hypergeometric
-static void calc_tails_logspace(size_t a, size_t min_x, size_t max_x, double omega, const double *logdc, double *restrict lower_tail, double *restrict upper_tail) {
-	double max_d = -1e300, log_omega = log(omega);
-	for(size_t k = 0; k <= max_x - min_x; ++k) {
-	  double d_val = logdc[k] + log_omega * (min_x + k);
-	  if (d_val > max_d) max_d = d_val;
-	}
-	double sum_d = 0.0;
-	for(size_t k = 0; k <= max_x - min_x; ++k) {
-	  sum_d += exp(logdc[k] + log_omega * (min_x + k) - max_d);
-	}
-	*lower_tail = 0.0;
-	*upper_tail = 0.0;
+typedef struct {
+	long lo, hi, ns, m, n, k, x;
+	double *logdc;   /* central log hypergeometric density over the support */
+} ft_support;
 
-	for(size_t k = 0; k <= max_x - min_x; ++k) {
-	  double p_prob = exp(logdc[k] + log_omega * (min_x + k) - max_d) / sum_d;
-	  if (min_x + k <= a) *lower_tail += p_prob;
-	  if (min_x + k >= a) *upper_tail += p_prob;
+static int ft_init(ft_support *S, long a, long b, long c, long d) {
+	S->m = a + c; S->n = b + d; S->k = a + b; S->x = a;
+	S->lo = (S->k - S->n > 0) ? (S->k - S->n) : 0;
+	S->hi = (S->k < S->m) ? S->k : S->m;
+	S->ns = S->hi - S->lo + 1;
+	if (S->ns <= 0) { S->logdc = NULL; return 0; }
+	Newx(S->logdc, S->ns, double);
+	for (long i = 0; i < S->ns; i++) {
+	  long j = S->lo + i;
+	  S->logdc[i] = ft_lchoose(S->m, j) + ft_lchoose(S->n, S->k - j)
+		           - ft_lchoose(S->m + S->n, S->k);
+	}
+	return 1;
+}
+static void ft_free(ft_support *S) { Safefree(S->logdc); S->logdc = NULL; }
+
+static void ft_dnhyper(const ft_support *S, double ncp, double *out) {
+	double lncp = log(ncp), mx = -INFINITY;
+	for (long i = 0; i < S->ns; i++) {
+	  out[i] = S->logdc[i] + lncp * (double)(S->lo + i);
+	  if (out[i] > mx) mx = out[i];
+	}
+	double s = 0;
+	for (long i = 0; i < S->ns; i++) { out[i] = exp(out[i] - mx); s += out[i]; }
+	for (long i = 0; i < S->ns; i++) out[i] /= s;
+}
+
+static double ft_mnhyper(const ft_support *S, double ncp, double *scratch) {
+	if (ncp == 0)     return (double)S->lo;
+	if (isinf(ncp))   return (double)S->hi;
+	ft_dnhyper(S, ncp, scratch);
+	double mu = 0;
+	for (long i = 0; i < S->ns; i++) mu += (double)(S->lo + i) * scratch[i];
+	return mu;
+}
+
+/* upper != 0 => P(X >= q), upper == 0 => P(X <= q) */
+static double ft_pnhyper(const ft_support *S, long q, double ncp, int upper, double *scratch) {
+	if (ncp == 1.0) {
+	  double s = 0;
+	  for (long i = 0; i < S->ns; i++) {
+		   long j = S->lo + i;
+		   if (upper ? (j >= q) : (j <= q)) s += exp(S->logdc[i]);
+	  }
+	  return s;
+	}
+	if (ncp == 0.0)   return upper ? (double)(q <= S->lo) : (double)(q >= S->lo);
+	if (isinf(ncp))   return upper ? (double)(q <= S->hi) : (double)(q >= S->hi);
+	ft_dnhyper(S, ncp, scratch);
+	double s = 0;
+	for (long i = 0; i < S->ns; i++) {
+	  long j = S->lo + i;
+	  if (upper ? (j >= q) : (j <= q)) s += scratch[i];
+	}
+	return s;
+}
+
+/* R's src/library/stats/src/zeroin.c (Brent-Dekker) */
+typedef double (*ft_fn)(double t, void *ctx);
+static double ft_zeroin(double ax, double bx, ft_fn f, void *ctx, double tol, int maxit) {
+	double a = ax, b = bx, fa = f(a, ctx), fb = f(b, ctx), c = a, fc = fa;
+	while (maxit-- > 0) {
+	  double prev = b - a;
+	  if (fabs(fc) < fabs(fb)) { a = b; b = c; c = a; fa = fb; fb = fc; fc = fa; }
+	  double tol_act = 2 * FT_EPS * fabs(b) + tol / 2;
+	  double step = (c - b) / 2;
+	  if (fabs(step) <= tol_act || fb == 0.0) return b;
+	  if (fabs(prev) >= tol_act && fabs(fa) > fabs(fb)) {
+		   double cb = c - b, p, q;
+		   if (a == c) { double t1 = fb / fa; p = cb * t1; q = 1.0 - t1; }
+		   else {
+		       double q0 = fa / fc, t1 = fb / fc, t2 = fb / fa;
+		       p = t2 * (cb * q0 * (q0 - t1) - (b - a) * (t1 - 1.0));
+		       q = (q0 - 1.0) * (t1 - 1.0) * (t2 - 1.0);
+		   }
+		   if (p > 0) q = -q; else p = -p;
+		   if (p < 0.75 * cb * q - fabs(tol_act * q) / 2 && p < fabs(prev * q / 2)) step = p / q;
+	  }
+	  if (fabs(step) < tol_act) step = step > 0 ? tol_act : -tol_act;
+	  a = b; fa = fb; b += step; fb = f(b, ctx);
+	  if ((fb > 0) == (fc > 0)) { c = a; fc = fa; }
+	}
+	return b;
+}
+
+typedef struct { const ft_support *S; double target; double *scratch; int mode; } ft_rc;
+/* mode 0: mnhyper(t)-target      1: mnhyper(1/t)-target
+   mode 2: pnhyper(x,t,low)-tgt   3: pnhyper(x,1/t,low)-tgt
+   mode 4: pnhyper(x,t,up)-tgt    5: pnhyper(x,1/t,up)-tgt */
+static double ft_rootf(double t, void *ctx) {
+	ft_rc *r = (ft_rc *)ctx; const ft_support *S = r->S;
+	switch (r->mode) {
+	  case 0: return ft_mnhyper(S, t, r->scratch) - r->target;
+	  case 1: return ft_mnhyper(S, 1.0 / t, r->scratch) - r->target;
+	  case 2: return ft_pnhyper(S, S->x, t, 0, r->scratch) - r->target;
+	  case 3: return ft_pnhyper(S, S->x, 1.0 / t, 0, r->scratch) - r->target;
+	  case 4: return ft_pnhyper(S, S->x, t, 1, r->scratch) - r->target;
+	  default:return ft_pnhyper(S, S->x, 1.0 / t, 1, r->scratch) - r->target;
 	}
 }
 
-// Exact stats using log-space
-static void calculate_exact_stats(size_t a, size_t b, size_t c, size_t d, double conf_level, const char*restrict alt, double *restrict mle_or, double *restrict ci_low, double *restrict ci_high) {
-	double alpha = 1.0 - conf_level;
-	size_t r1 = a + b, r2 = c + d, c1 = a + c;
-	size_t min_x = (r2 > c1) ? 0 : c1 - r2;
-	size_t max_x = (r1 < c1) ? r1 : c1;
-
-	bool is_less = (strcmp(alt, "less") == 0);
-	bool is_greater = (strcmp(alt, "greater") == 0);
-
-	double *restrict logdc = (double*)safemalloc((max_x - min_x + 1) * sizeof(double));
-	double denom = log_choose(r1 + r2, c1);
-	for(size_t x = min_x; x <= max_x; ++x) {
-	  logdc[x - min_x] = log_choose(r1, x) + log_choose(r2, c1 - x) - denom;
-	}
-	// MLE
-	if (a == min_x && a == max_x) *mle_or = 1.0;
-	else if (a == min_x) *mle_or = 0.0;
-	else if (a == max_x) *mle_or = INFINITY;
+static double exact_p_value(long a, long b, long c, long d, const char *alt) {
+	ft_support S;
+	if (!ft_init(&S, a, b, c, d)) return 1.0;
+	double *restrict sc; Newx(sc, S.ns, double);
+	double p;
+	if (!strcmp(alt, "less"))         p = ft_pnhyper(&S, S.x, 1.0, 0, sc);
+	else if (!strcmp(alt, "greater")) p = ft_pnhyper(&S, S.x, 1.0, 1, sc);
 	else {
-		double log_low = -100.0, log_high = 100.0;
-		for (unsigned short int i = 0; i < 3000; i++) {
-			double log_mid = 0.5 * (log_low + log_high);
-			double max_d = -1e300;
-			for(size_t k = 0; k <= max_x - min_x; ++k) {
-				 double d_val = logdc[k] + log_mid * (min_x + k);
-				 if (d_val > max_d) max_d = d_val;
-			}
-			double sum_d = 0.0, exp_val = 0.0;
-			for(size_t k = 0; k <= max_x - min_x; ++k) {
-				 double p_prob = exp(logdc[k] + log_mid * (min_x + k) - max_d);
-				 sum_d += p_prob;
-				 exp_val += (min_x + k) * p_prob;
-			}
-			exp_val /= sum_d;
-			if (exp_val > a) log_high = log_mid;
-			else log_low = log_mid;
-			if (log_high - log_low < 1e-15) break;
-		}
-		*mle_or = exp(0.5 * (log_low + log_high));
+	  ft_dnhyper(&S, 1.0, sc);
+	  double dx = sc[S.x - S.lo], relErr = 1 + 1e-7, s = 0;
+	  for (long i = 0; i < S.ns; i++) if (sc[i] <= dx * relErr) s += sc[i];
+	  p = s;
 	}
-	*ci_low = 0.0;
-	*ci_high = INFINITY;
-	// Lower CI
-	if (!is_less) { 
-		double target_alpha = is_greater ? alpha : alpha / 2.0;
-		if (a != min_x) {
-			double log_low = -100.0, log_high = 100.0, best = 1.0, best_err = 1e9, lt, ut;
-			for (unsigned short int i = 0; i < 1000; i++) {
-				double log_mid = 0.5 * (log_low + log_high);
-				double mid = exp(log_mid);
-				calc_tails_logspace(a, min_x, max_x, mid, logdc, &lt, &ut);
-				double err = fabs(ut - target_alpha);
-				if (err < best_err) { best_err = err; best = mid; }
-				if (ut > target_alpha) log_high = log_mid;
-				else log_low = log_mid;
-				if (log_high - log_low < 1e-15) break;
-			}
-			*ci_low = best;
-		}
-	}
-	// Upper CI
-	if (!is_greater) { 
-		double target_alpha = is_less ? alpha : alpha / 2.0;
-		if (a != max_x) {
-			double log_low = -100.0, log_high = 100.0, best = 1.0, best_err = 1e9, lt, ut;
-			for (unsigned short int i = 0; i < 1000; i++) {
-				double log_mid = 0.5 * (log_low + log_high);
-				double mid = exp(log_mid);
-				calc_tails_logspace(a, min_x, max_x, mid, logdc, &lt, &ut);
-				double err = fabs(lt - target_alpha);
-				if (err < best_err) { best_err = err; best = mid; }
-				if (lt > target_alpha) log_low = log_mid;
-				else log_high = log_mid;
-				if (log_high - log_low < 1e-15) break;
-			}
-			*ci_high = best;
-		}
-	}
-	safefree(logdc);
+	if (p < 0) p = 0; if (p > 1) p = 1;
+	Safefree(sc); ft_free(&S);
+	return p;
 }
 
-// Exact p-value using log-space
-static double exact_p_value(size_t a, size_t b, size_t c, size_t d, const char* alt) {
-	size_t r1 = a + b, r2 = c + d, c1 = a + c;
-	size_t min_x = (r2 > c1) ? 0 : c1 - r2;
-	size_t max_x = (r1 < c1) ? r1 : c1;
-	double *restrict logdc = (double*)safemalloc((max_x - min_x + 1) * sizeof(double));
-	double denom = log_choose(r1 + r2, c1);
-	for(size_t x = min_x; x <= max_x; ++x) {
-		logdc[x - min_x] = log_choose(r1, x) + log_choose(r2, c1 - x) - denom;
+static void calculate_exact_stats(long a, long b, long c, long d, double conf,
+                                  const char *alt, double *orp, double *lop, double *hip) {
+	ft_support S;
+	if (!ft_init(&S, a, b, c, d)) { *orp = NAN; *lop = NAN; *hip = NAN; return; }
+	double *restrict sc; Newx(sc, S.ns, double);
+	long x = S.x, lo = S.lo, hi = S.hi;
+
+	/* conditional MLE of the odds ratio */
+	double est;
+	if      (x == lo) est = 0.0;
+	else if (x == hi) est = INFINITY;
+	else {
+	  double mu = ft_mnhyper(&S, 1.0, sc);
+	  ft_rc r = { &S, (double)x, sc, 0 };
+	  if      (mu > x) { r.mode = 0; est = ft_zeroin(0, 1, ft_rootf, &r, FT_TOL, 1000); }
+	  else if (mu < x) { r.mode = 1; est = 1.0 / ft_zeroin(FT_EPS, 1, ft_rootf, &r, FT_TOL, 1000); }
+	  else             est = 1.0;
 	}
-	double p_val = 0.0;
-	if (strcmp(alt, "less") == 0) {
-		for(size_t x = min_x; x <= a; ++x) p_val += exp(logdc[x - min_x]);
-	} else if (strcmp(alt, "greater") == 0) {
-		for(size_t x = a; x <= max_x; ++x) p_val += exp(logdc[x - min_x]);
-	} else {
-		double p_obs = exp(logdc[a - min_x]);
-		double relErr = 1.0 + 1e-7;
-		for(size_t x = min_x; x <= max_x; ++x) {
-			double p_cur = exp(logdc[x - min_x]);
-			if (p_cur <= p_obs * relErr) p_val += p_cur;
-		}
-	}
-	safefree(logdc);
-	return (p_val > 1.0) ? 1.0 : p_val;
+	*orp = est;
+
+	/* confidence interval via inversion of the noncentral hypergeometric */
+	double clo, chi;
+	ft_rc r = { &S, 0, sc, 0 };
+	#define FT_NCP_L(alpha, dst) do {                                                    \
+	  if (x == lo) { dst = 0.0; } else {                                               \
+		   double p = ft_pnhyper(&S, x, 1.0, 1, sc);                                     \
+		   if (p > (alpha))      { r.mode = 4; r.target = (alpha); dst = ft_zeroin(0, 1, ft_rootf, &r, FT_TOL, 1000); } \
+		   else if (p < (alpha)) { r.mode = 5; r.target = (alpha); dst = 1.0 / ft_zeroin(FT_EPS, 1, ft_rootf, &r, FT_TOL, 1000); } \
+		   else dst = 1.0; } } while (0)
+	#define FT_NCP_U(alpha, dst) do {                                                    \
+	  if (x == hi) { dst = INFINITY; } else {                                          \
+		   double p = ft_pnhyper(&S, x, 1.0, 0, sc);                                     \
+		   if (p < (alpha))      { r.mode = 2; r.target = (alpha); dst = ft_zeroin(0, 1, ft_rootf, &r, FT_TOL, 1000); } \
+		   else if (p > (alpha)) { r.mode = 3; r.target = (alpha); dst = 1.0 / ft_zeroin(FT_EPS, 1, ft_rootf, &r, FT_TOL, 1000); } \
+		   else dst = 1.0; } } while (0)
+
+	if      (!strcmp(alt, "less"))    { clo = 0.0;            FT_NCP_U(1 - conf, chi); }
+	else if (!strcmp(alt, "greater")) { FT_NCP_L(1 - conf, clo); chi = INFINITY; }
+	else { double al = (1 - conf) / 2; FT_NCP_L(al, clo); FT_NCP_U(al, chi); }
+
+	*lop = clo; *hip = chi;
+	Safefree(sc); ft_free(&S);
 }
+
+// small helper: fetch a nonnegative integer cell from an SV, with validation
+static long ft_cell(pTHX_ SV *sv, const char *what) {
+	if (!sv || !SvOK(sv)) croak("fisher_test: %s is undef", what);
+	if (!looks_like_number(sv)) croak("fisher_test: %s is not a number", what);
+	IV v = SvIV(sv);
+	if (v < 0) croak("fisher_test: %s must be nonnegative (got %" IVdf ")", what, v);
+	return (long)v;
+}
+
 /*Helpers for lm Linear Regression: OLS Matrix Math & Formula Parsing
  * -----------------------------------------------------------------------
  Sweep operator for symmetric positive-definite matrices (e.g., XtX).
@@ -7498,20 +7550,20 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 		bool row_ok = TRUE;
 		NV *restrict row_x = (NV*)safemalloc(p_exp * sizeof(NV));
 		for (j = 0; j < p_exp; j++) {
-			  if (strcmp(exp_terms[j], "Intercept") == 0) {
-				   row_x[j] = 1.0;
-			  } else if (is_interact[j]) {
-				   row_x[j] = row_x[left_idx[j]] * row_x[right_idx[j]];
-			  } else if (is_dummy[j]) {
-				   char*restrict str_val = get_data_string_alloc(aTHX_ data_hoa, row_hashes, i, dummy_base[j]);
-				   if (str_val) {
-				       row_x[j] = (strcmp(str_val, dummy_level[j]) == 0) ? 1.0 : 0.0;
-				       Safefree(str_val);
-				   } else { row_ok = FALSE; break; }
-			  } else {
-				   row_x[j] = evaluate_term(aTHX_ data_hoa, row_hashes, i, parent_term[j]);
-				   if (isnan(row_x[j])) { row_ok = FALSE; break; }
-			  }
+			if (strcmp(exp_terms[j], "Intercept") == 0) {
+				row_x[j] = 1.0;
+			} else if (is_interact[j]) {
+				row_x[j] = row_x[left_idx[j]] * row_x[right_idx[j]];
+			} else if (is_dummy[j]) {
+				char*restrict str_val = get_data_string_alloc(aTHX_ data_hoa, row_hashes, i, dummy_base[j]);
+				if (str_val) {
+					 row_x[j] = (strcmp(str_val, dummy_level[j]) == 0) ? 1.0 : 0.0;
+					 Safefree(str_val);
+				} else { row_ok = FALSE; break; }
+			} else {
+				row_x[j] = evaluate_term(aTHX_ data_hoa, row_hashes, i, parent_term[j]);
+				if (isnan(row_x[j])) { row_ok = FALSE; break; }
+			}
 		}
 		if (!row_ok) { Safefree(row_names[i]); Safefree(row_x); continue; }
 		Y[valid_n] = y_val;
@@ -7540,7 +7592,7 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 		Safefree(term_base_level);
 		croak("aov: 0 degrees of freedom (too many NAs or parameters > observations)");
 	}
-	/* PHASE 5: Math & Output Formatting */
+	// PHASE 5: Math & Output Formatting
 	bool *restrict aliased_qr = (bool*)safemalloc(p_exp * sizeof(bool));
 	size_t *restrict rank_map = (size_t*)safemalloc(p_exp * sizeof(size_t));
 	apply_householder_aov(X_mat, Y, valid_n, p_exp, aliased_qr, rank_map);
@@ -7568,24 +7620,24 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 	NV ms_res = (res_df > 0) ? rss_prev / res_df : 0.0;
 	HV*restrict ret_hash = newHV();
 	for (j = 0; j < num_uniq; j++) {
-		  if (strcmp(uniq_terms[j], "Intercept") == 0) continue;
-		  HV*restrict term_stats = newHV();
-		  NV ss = term_ss[j];
-		  int df = term_df[j];
-		  NV ms = (df > 0) ? ss / df : 0.0;
+		if (strcmp(uniq_terms[j], "Intercept") == 0) continue;
+		HV*restrict term_stats = newHV();
+		NV ss = term_ss[j];
+		int df = term_df[j];
+		NV ms = (df > 0) ? ss / df : 0.0;
 
-		  hv_stores(term_stats, "Df", newSViv(df));
-		  hv_stores(term_stats, "Sum Sq", newSVnv(ss));
-		  hv_stores(term_stats, "Mean Sq", newSVnv(ms));
-		  if (ms_res > 0.0 && df > 0) {
-		        NV f_val = ms / ms_res;
-		        hv_stores(term_stats, "F value", newSVnv(f_val));
-		        hv_stores(term_stats, "Pr(>F)", newSVnv(1.0 - pf(f_val, (NV)df, (NV)res_df)));
-		  } else {
-		        hv_stores(term_stats, "F value", newSVnv(NAN));
-		        hv_stores(term_stats, "Pr(>F)", newSVnv(NAN));
-		  }
-		  hv_store(ret_hash, uniq_terms[j], strlen(uniq_terms[j]), newRV_noinc((SV*)term_stats), 0);
+		hv_stores(term_stats, "Df", newSViv(df));
+		hv_stores(term_stats, "Sum Sq", newSVnv(ss));
+		hv_stores(term_stats, "Mean Sq", newSVnv(ms));
+		if (ms_res > 0.0 && df > 0) {
+			NV f_val = ms / ms_res;
+			hv_stores(term_stats, "F value", newSVnv(f_val));
+			hv_stores(term_stats, "Pr(>F)", newSVnv(1.0 - pf(f_val, (NV)df, (NV)res_df)));
+		} else {
+			hv_stores(term_stats, "F value", newSVnv(NAN));
+			hv_stores(term_stats, "Pr(>F)", newSVnv(NAN));
+		}
+		hv_store(ret_hash, uniq_terms[j], strlen(uniq_terms[j]), newRV_noinc((SV*)term_stats), 0);
 	}
 	HV*restrict res_stats = newHV();
 	hv_stores(res_stats, "Df", newSViv(res_df));
@@ -7593,46 +7645,46 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 	hv_stores(res_stats, "Mean Sq", newSVnv(ms_res));
 	hv_stores(ret_hash, "Residuals", newRV_noinc((SV*)res_stats));
 	{
-		  HV *restrict tgt_hoa = data_hoa;
-		  HV **restrict tgt_row_hashes = row_hashes;
-		  size_t tgt_n = n;
-		  // Route evaluation to the original unstacked HoA when a formula was implied
-		  if (is_stacked) {
-		      tgt_hoa = (HV*)SvRV(orig_data_sv);
-		      tgt_row_hashes = NULL;
-		      hv_iterinit(tgt_hoa);
-		      HE *restrict e = hv_iternext(tgt_hoa);
-		      if (e) {
-		          SV *val = hv_iterval(tgt_hoa, e);
-		          if (SvROK(val) && SvTYPE(SvRV(val)) == SVt_PVAV) {
-		              tgt_n = av_len((AV*)SvRV(val)) + 1;
-		          }
-		      }
-		  }
-		  AV *restrict all_cols = get_all_columns(aTHX_ tgt_hoa, tgt_row_hashes, tgt_n);
-		  HV *restrict mean_hv  = newHV();
-		  HV *restrict size_hv  = newHV();
-		  for (size_t c = 0; c <= (size_t)av_len(all_cols); c++) {
-		      SV **restrict col_sv = av_fetch(all_cols, c, 0);
-		      if (!col_sv || !SvOK(*col_sv)) continue;
-		      const char *restrict col_name = SvPV_nolen(*col_sv);
-		      NV col_sum = 0.0;
-		      IV      col_count = 0;
-		      for (i = 0; i < tgt_n; i++) {
-		          NV val = evaluate_term(aTHX_ tgt_hoa, tgt_row_hashes, i, col_name);
-		          if (!isnan(val)) { col_sum += val; col_count++; }
-		      }
-		      NV col_mean = (col_count > 0) ? col_sum / col_count : NAN;
-		      hv_store(mean_hv, col_name, strlen(col_name), newSVnv(col_mean), 0);
-		      hv_store(size_hv, col_name, strlen(col_name), newSViv(col_count), 0);
-		  }
-		  SvREFCNT_dec(all_cols);
-		  HV *restrict gs_hv = newHV();
-		  hv_stores(gs_hv, "mean", newRV_noinc((SV*)mean_hv));
-		  hv_stores(gs_hv, "size", newRV_noinc((SV*)size_hv));
-		  hv_stores(ret_hash, "group_stats", newRV_noinc((SV*)gs_hv));
+		HV *restrict tgt_hoa = data_hoa;
+		HV **restrict tgt_row_hashes = row_hashes;
+		size_t tgt_n = n;
+		// Route evaluation to the original unstacked HoA when a formula was implied
+		if (is_stacked) {
+			tgt_hoa = (HV*)SvRV(orig_data_sv);
+			tgt_row_hashes = NULL;
+			hv_iterinit(tgt_hoa);
+			HE *restrict e = hv_iternext(tgt_hoa);
+			if (e) {
+				 SV *val = hv_iterval(tgt_hoa, e);
+				 if (SvROK(val) && SvTYPE(SvRV(val)) == SVt_PVAV) {
+				     tgt_n = av_len((AV*)SvRV(val)) + 1;
+				 }
+			}
+		}
+		AV *restrict all_cols = get_all_columns(aTHX_ tgt_hoa, tgt_row_hashes, tgt_n);
+		HV *restrict mean_hv  = newHV();
+		HV *restrict size_hv  = newHV();
+		for (size_t c = 0; c <= (size_t)av_len(all_cols); c++) {
+			SV **restrict col_sv = av_fetch(all_cols, c, 0);
+			if (!col_sv || !SvOK(*col_sv)) continue;
+			const char *restrict col_name = SvPV_nolen(*col_sv);
+			NV col_sum = 0.0;
+			IV      col_count = 0;
+			for (i = 0; i < tgt_n; i++) {
+				 NV val = evaluate_term(aTHX_ tgt_hoa, tgt_row_hashes, i, col_name);
+				 if (!isnan(val)) { col_sum += val; col_count++; }
+			}
+			NV col_mean = (col_count > 0) ? col_sum / col_count : NAN;
+			hv_store(mean_hv, col_name, strlen(col_name), newSVnv(col_mean), 0);
+			hv_store(size_hv, col_name, strlen(col_name), newSViv(col_count), 0);
+		}
+		SvREFCNT_dec(all_cols);
+		HV *restrict gs_hv = newHV();
+		hv_stores(gs_hv, "mean", newRV_noinc((SV*)mean_hv));
+		hv_stores(gs_hv, "size", newRV_noinc((SV*)size_hv));
+		hv_stores(ret_hash, "group_stats", newRV_noinc((SV*)gs_hv));
 	}
-	/* Deep Cleanup */
+	// Deep Cleanup
 	for (i = 0; i < num_terms; i++) Safefree(terms[i]); Safefree(terms);
 	for (i = 0; i < num_uniq; i++) Safefree(uniq_terms[i]); Safefree(uniq_terms);
 	for (j = 0; j < p_exp; j++) {
@@ -7657,109 +7709,102 @@ OUTPUT:
 
 PROTOTYPES: DISABLE
 
+
 SV* fisher_test(...)
 CODE:
 {
 	if (items < 1) croak("fisher_test requires at least a data reference");
 
-	SV*restrict data_ref = ST(0);
+	SV *restrict data_ref = ST(0);
 	NV conf_level = 0.95;
-	const char*restrict alternative = "two.sided";
+	const char *restrict alternative = "two.sided";
 
-	// Parse named arguments
-	for (unsigned short int i = 1; i < items; i += 2) {
-		if (i + 1 >= items) croak("fisher_test: odd number of arguments");
-		const char*restrict key = SvPV_nolen(ST(i));
-		SV*restrict val = ST(i + 1);
+	for (unsigned int i = 1; i < items; i += 2) {
+		if (i + 1 >= items) croak("fisher_test: odd number of named arguments");
+		const char *restrict key = SvPV_nolen(ST(i));
+		SV *restrict val = ST(i + 1);
 		if (strEQ(key, "conf_level") || strEQ(key, "conf.level")) {
 			conf_level = SvNV(val);
+			if (!(conf_level > 0 && conf_level < 1))
+				 croak("fisher_test: conf_level must be between 0 and 1");
 		} else if (strEQ(key, "alternative")) {
 			alternative = SvPV_nolen(val);
+			if (strNE(alternative, "two.sided") && strNE(alternative, "less") &&
+				 strNE(alternative, "greater"))
+				 croak("fisher_test: alternative must be 'two.sided', 'less' or 'greater'");
+		} else {
+			croak("fisher_test: unknown argument '%s'", key);
 		}
 	}
-
-	if (!SvROK(data_ref)) croak("fisher_test requires a reference to an Array or Hash");
-	SV*restrict deref = SvRV(data_ref);
-	size_t a = 0, b = 0, c = 0, d = 0;
-	// Extract Data
+	if (!SvROK(data_ref)) croak("fisher_test requires a reference to a 2x2 Array or Hash");
+	SV *restrict deref = SvRV(data_ref);
+	long a = 0, b = 0, c = 0, d = 0;
 	if (SvTYPE(deref) == SVt_PVAV) {
-		AV*restrict outer = (AV*)deref;
-		if (av_len(outer) != 1) croak("Outer array must have exactly 2 rows");
-		SV**restrict row1_ptr = av_fetch(outer, 0, 0);
-		SV**restrict row2_ptr = av_fetch(outer, 1, 0);
-		if (row1_ptr && row2_ptr && SvROK(*row1_ptr) && SvROK(*row2_ptr)) {
-			AV*restrict row1 = (AV*)SvRV(*row1_ptr);
-			AV*restrict row2 = (AV*)SvRV(*row2_ptr);
-			SV**restrict a_ptr = av_fetch(row1, 0, 0);
-			SV**restrict b_ptr = av_fetch(row1, 1, 0);
-			SV**restrict c_ptr = av_fetch(row2, 0, 0);
-			SV**restrict d_ptr = av_fetch(row2, 1, 0);
-			a = (a_ptr && SvOK(*a_ptr)) ? SvIV(*a_ptr) : 0;
-			b = (b_ptr && SvOK(*b_ptr)) ? SvIV(*b_ptr) : 0;
-			c = (c_ptr && SvOK(*c_ptr)) ? SvIV(*c_ptr) : 0;
-			d = (d_ptr && SvOK(*d_ptr)) ? SvIV(*d_ptr) : 0;
-		} else {
-		  croak("Invalid 2D Array structure");
-		}
+	  AV *restrict outer = (AV *)deref;
+	  if (av_len(outer) != 1) croak("Outer array must have exactly 2 rows");
+	  SV **restrict r1p = av_fetch(outer, 0, 0);
+	  SV **restrict r2p = av_fetch(outer, 1, 0);
+	  if (!(r1p && r2p && SvROK(*r1p) && SvROK(*r2p)
+		     && SvTYPE(SvRV(*r1p)) == SVt_PVAV && SvTYPE(SvRV(*r2p)) == SVt_PVAV))
+		   croak("Invalid 2D array structure: need two array-ref rows");
+	  AV *restrict r1 = (AV *)SvRV(*r1p), *r2 = (AV *)SvRV(*r2p);
+	  if (av_len(r1) != 1 || av_len(r2) != 1)
+		   croak("Each row must have exactly 2 columns");
+	  a = ft_cell(aTHX_ *av_fetch(r1, 0, 0), "cell [0][0]");
+	  b = ft_cell(aTHX_ *av_fetch(r1, 1, 0), "cell [0][1]");
+	  c = ft_cell(aTHX_ *av_fetch(r2, 0, 0), "cell [1][0]");
+	  d = ft_cell(aTHX_ *av_fetch(r2, 1, 0), "cell [1][1]");
 	} else if (SvTYPE(deref) == SVt_PVHV) {
-		// Fixed 2D Hash Logic: Sort keys lexically to enforce structured rows/columns
-		HV*restrict outer = (HV*)deref;
-		if (hv_iterinit(outer) != 2) croak("Outer hash must have exactly 2 keys");
-		HE*restrict he1 = hv_iternext(outer);
-		HE*restrict he2 = hv_iternext(outer);
-		if (!he1 || !he2) croak("Invalid outer hash");
-		const char*restrict k1 = SvPV_nolen(hv_iterkeysv(he1));
-		const char*restrict k2 = SvPV_nolen(hv_iterkeysv(he2));
-		HE*restrict row1_he = (strcmp(k1, k2) < 0) ? he1 : he2;
-		HE*restrict row2_he = (strcmp(k1, k2) < 0) ? he2 : he1;
-		SV*restrict row1_sv = hv_iterval(outer, row1_he);
-		SV*restrict row2_sv = hv_iterval(outer, row2_he);
-		if (!SvROK(row1_sv) || SvTYPE(SvRV(row1_sv)) != SVt_PVHV ||
-			!SvROK(row2_sv) || SvTYPE(SvRV(row2_sv)) != SVt_PVHV) {
-			croak("Inner elements must be hashes");
-		}
-		HV*restrict in1 = (HV*)SvRV(row1_sv);
-		HV*restrict in2 = (HV*)SvRV(row2_sv);
-		if (hv_iterinit(in1) != 2 || hv_iterinit(in2) != 2) croak("Inner hashes must have exactly 2 keys");
-		HE*restrict in1_he1 = hv_iternext(in1);
-		HE*restrict in1_he2 = hv_iternext(in1);
-		const char*restrict in1_k1 = SvPV_nolen(hv_iterkeysv(in1_he1));
-		const char*restrict in1_k2 = SvPV_nolen(hv_iterkeysv(in1_he2));
-		HE*restrict in1_c1 = (strcmp(in1_k1, in1_k2) < 0) ? in1_he1 : in1_he2;
-		HE*restrict in1_c2 = (strcmp(in1_k1, in1_k2) < 0) ? in1_he2 : in1_he1;
-		HE*restrict in2_he1 = hv_iternext(in2);
-		HE*restrict in2_he2 = hv_iternext(in2);
-		const char*restrict in2_k1 = SvPV_nolen(hv_iterkeysv(in2_he1));
-		const char*restrict in2_k2 = SvPV_nolen(hv_iterkeysv(in2_he2));
-		HE*restrict in2_c1 = (strcmp(in2_k1, in2_k2) < 0) ? in2_he1 : in2_he2;
-		HE*restrict in2_c2 = (strcmp(in2_k1, in2_k2) < 0) ? in2_he2 : in2_he1;
-		a = (hv_iterval(in1, in1_c1) && SvOK(hv_iterval(in1, in1_c1))) ? SvIV(hv_iterval(in1, in1_c1)) : 0;
-		b = (hv_iterval(in1, in1_c2) && SvOK(hv_iterval(in1, in1_c2))) ? SvIV(hv_iterval(in1, in1_c2)) : 0;
-		c = (hv_iterval(in2, in2_c1) && SvOK(hv_iterval(in2, in2_c1))) ? SvIV(hv_iterval(in2, in2_c1)) : 0;
-		d = (hv_iterval(in2, in2_c2) && SvOK(hv_iterval(in2, in2_c2))) ? SvIV(hv_iterval(in2, in2_c2)) : 0;
+	  /* 2x2 hash; rows and columns are ordered by lexical key sort so the
+		* result is deterministic regardless of Perl's hash randomization. */
+	  HV *restrict outer = (HV *)deref;
+	  if (HvUSEDKEYS(outer) != 2) croak("Outer hash must have exactly 2 keys");
+	  hv_iterinit(outer);
+	  HE *restrict e1 = hv_iternext(outer), *e2 = hv_iternext(outer);
+	  const char *restrict ok1 = SvPV_nolen(hv_iterkeysv(e1));
+	  int swap_rows = strcmp(ok1, SvPV_nolen(hv_iterkeysv(e2))) > 0;
+	  SV *restrict row1_sv = hv_iterval(outer, swap_rows ? e2 : e1);
+	  SV *restrict row2_sv = hv_iterval(outer, swap_rows ? e1 : e2);
+	  if (!SvROK(row1_sv) || SvTYPE(SvRV(row1_sv)) != SVt_PVHV ||
+		   !SvROK(row2_sv) || SvTYPE(SvRV(row2_sv)) != SVt_PVHV)
+		   croak("Inner elements must be hash refs");
+
+	  HV *restrict rows[2]; rows[0] = (HV *)SvRV(row1_sv); rows[1] = (HV *)SvRV(row2_sv);
+	  long cells[2][2];
+	  for (unsigned int rr = 0; rr < 2; rr++) {
+		   HV *restrict in = rows[rr];
+		   if (HvUSEDKEYS(in) != 2) croak("Inner hashes must have exactly 2 keys");
+		   hv_iterinit(in);
+		   HE *c1 = hv_iternext(in), *c2 = hv_iternext(in);
+		   const char *k1 = SvPV_nolen(hv_iterkeysv(c1));
+		   int swap_cols = strcmp(k1, SvPV_nolen(hv_iterkeysv(c2))) > 0;
+		   HE *col0 = swap_cols ? c2 : c1;
+		   HE *col1 = swap_cols ? c1 : c2;
+		   cells[rr][0] = ft_cell(aTHX_ hv_iterval(in, col0), "hash cell");
+		   cells[rr][1] = ft_cell(aTHX_ hv_iterval(in, col1), "hash cell");
+	  }
+	  a = cells[0][0]; b = cells[0][1]; c = cells[1][0]; d = cells[1][1];
 	} else {
 	  croak("Input must be a 2D Array or 2D Hash");
 	}
-
-	// Perform Calculations via Helpers
+	if (a + b + c + d == 0) croak("fisher_test: table is all zeros");
 	NV p_val = exact_p_value(a, b, c, d, alternative);
 	NV mle_or, ci_low, ci_high;
 	calculate_exact_stats(a, b, c, d, conf_level, alternative, &mle_or, &ci_low, &ci_high);
 
-	// Construct the Return HashRef purely in C
-	HV*restrict ret_hash = newHV();
-	hv_stores(ret_hash, "method", newSVpv("Fisher's Exact Test for Count Data", 0));
-	hv_stores(ret_hash, "alternative", newSVpv(alternative, 0));
-	AV*restrict ci_array = newAV();
-	av_push(ci_array, newSVnv(ci_low));
-	av_push(ci_array, newSVnv(ci_high));
-	hv_stores(ret_hash, "conf_int", newRV_noinc((SV*)ci_array));
-	HV*restrict est_hash = newHV();
-	hv_stores(ret_hash, "estimate", newRV_noinc((SV*)est_hash));
-	hv_stores(est_hash, "odds ratio", newSVnv(mle_or));
-	hv_stores(ret_hash, "p_value", newSVnv(p_val));
-	// Return the HashRef
-	RETVAL = newRV_noinc((SV*)ret_hash);
+	HV *restrict ret = newHV();
+	hv_stores(ret, "method", newSVpv("Fisher's Exact Test for Count Data", 0));
+	hv_stores(ret, "alternative", newSVpv(alternative, 0));
+	AV *restrict ci = newAV();
+	av_push(ci, newSVnv(ci_low));
+	av_push(ci, newSVnv(ci_high));
+	hv_stores(ret, "conf_int", newRV_noinc((SV *)ci));
+	HV *restrict est = newHV();
+	hv_stores(est, "odds ratio", newSVnv(mle_or));
+	hv_stores(ret, "estimate", newRV_noinc((SV *)est));
+	hv_stores(ret, "p_value", newSVnv(p_val));
+	hv_stores(ret, "conf_level", newSVnv(conf_level));
+	RETVAL = newRV_noinc((SV *)ret);
 }
 OUTPUT:
   RETVAL
