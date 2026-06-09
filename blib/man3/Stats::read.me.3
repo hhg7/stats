@@ -58,7 +58,7 @@
 .\" ========================================================================
 .\"
 .IX Title "read.me 3"
-.TH read.me 3 2026-06-08 "perl v5.42.2" "User Contributed Perl Documentation"
+.TH read.me 3 2026-06-09 "perl v5.42.2" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -478,257 +478,248 @@ Flat Hash References evaluate Goodness of Fit while preserving your categorical 
 \& 
 \& my $res = chisq_test($data);
 .Ve
-.SS col2col
-.IX Subsection "col2col"
+.ie n .SH """col2col"""
+.el .SH \f(CWcol2col\fP
+.IX Header "col2col"
+Apply a \fBtwo\-column function\fR to every pair of columns in a table and collect
+the answers in a hash of hashes.
+.PP
+It\*(Aqs the workhorse behind things like correlation matrices: give it your data and
+the name of a function that takes two columns (\f(CW\*(C`cor\*(C'\fR, \f(CW\*(C`t_test\*(C'\fR, …) and you get
+back every column compared against every other column.
+.PP
+.Vb 1
+\& use Stats::LikeR;
+\& 
+\& my %data = (
+\&     height => [ 170, 165, 180, 175 ],
+\&     weight => [  70,  60,  85,  77 ],
+\&     age    => [  30,  41,  25,  38 ],
+\& );
+\& 
+\& my $result = col2col(\e%data, \*(Aqcor\*(Aq);
+\& 
+\& # $result\->{height}{weight}  == correlation of height vs weight
+\& # $result\->{height}{age}     == correlation of height vs age
+\& # ...and so on for every pair
+.Ve
+.PP
+========================================================================
+.SS Arguments
+.IX Subsection "Arguments"
 .Vb 2
-\& my $result = col2col( $data, $command );
-\& my $result = col2col( $data, $command, $cols );   # restrict the "from" columns
-.Ve
-.PP
-Compares \fBevery column against every other column\fR in a dataset and returns a
-hash of hashes:
-.PP
-.Vb 1
-\& $result\->{ $col_a }{ $col_b }   # outcome of comparing column A with column B
-.Ve
-.PP
-The diagonal is skipped (a column is never compared with itself), so each inner
-hash holds an entry for every \fIother\fR column.
-.PP
-\&\f(CW$data\fR may be given in any of three shapes — \fIarray of hashes\fR, \fIhash of
-arrays\fR, or \fIhash of hashes\fR — and \f(CW\*(C`col2col\*(C'\fR detects which one it received.
-.PP
-\&\f(CW$command\fR is usually a \fBblock (anonymous sub)\fR that compares the two columns.
-The two columns are passed to the block in \f(CW@_\fR, so you read them as \f(CW$_[0]\fR
-and \f(CW$_[1]\fR:
-.PP
-.Vb 1
-\& my $result = col2col( \e%data, sub { cor( $_[0], $_[1], \*(Aqspearman\*(Aq ) } );
-.Ve
-.PP
-\&\f(CW$_[0]\fR and \f(CW$_[1]\fR are array refs holding the two columns. There are \fBno
-package globals\fR, so nothing you declare in your own script (a \f(CW$c1\fR, an \f(CW$a\fR,
-etc.) can ever clash, and you need no \f(CW\*(C`our\*(C'\fR/\f(CW\*(C`use vars\*(C'\fR declarations. If you
-prefer names, unpack into your own lexicals first:
-.PP
-.Vb 1
-\& my $result = col2col( \e%data, sub { my ( $c1, $c2 ) = @_; cor( $c1, $c2, \*(Aqspearman\*(Aq ) } );
-\&
-\& > B<Pass the columns as explicit scalars.> Because the built\-ins are prototyped,
-\& > write C<cor( $_[0], $_[1], \*(Aqspearman\*(Aq )>, not C<cor( @_, \*(Aqspearman\*(Aq )> — a
-\& > prototyped sub forces C<@_> into scalar context, collapsing it to the element
-\& > I<count> (C<2>) instead of the two columns. (C<&cor( @_, \*(Aqspearman\*(Aq )> also works,
-\& > since the C<&> sigil bypasses the prototype, but the explicit form is clearer.)
-.Ve
-.PP
-As a shorthand, \f(CW$command\fR may instead be a \fBbare function name\fR (a string),
-which is treated as \f(CW\*(C`fn( $col_a, $col_b )\*(C'\fR:
-.PP
-.Vb 1
-\& my $result = col2col( \e%data, \*(Aqcor\*(Aq );   # same as sub { cor( $_[0], $_[1] ) }
-.Ve
-.PP
-Whatever the block or function returns is stored verbatim.
-.PP
-\&\fBUndefined values are always removed pairwise.\fR For each pair, any row where
-\&\fIeither\fR column is undef or non\-numeric is dropped, so the two columns are
-always aligned and the same length — exactly what correlation needs, and a
-sound (complete\-case) basis for the two\-sample tests too. If you need a column\*(Aqs
-full set of values regardless of the other column, clean it yourself inside the
-block.
-.PP
-\fIRestricting which columns are compared\fR
-.IX Subsection "Restricting which columns are compared"
-.PP
-By default every column is compared against every other, which is \f(CW\*(C`N * (N\-1)\*(C'\fR
-calls. When you only care about how one column, or a handful, relates to the
-rest, pass an optional third argument: a \fBcolumn name\fR, or an \fBarray ref of
-names\fR. Only those columns are then used as the \fIfirst\fR (\f(CW$col_a\fR, outer\-key)
-side of each comparison; each is still compared against \fBevery other column\fR.
-This runs faster and returns a smaller result, because the work and the output
-shrink to \f(CW\*(C`(chosen columns) * (N\-1)\*(C'\fR.
-.PP
-How does just "age" relate to every other column?
-.PP
-.Vb 3
-\& my $r = col2col( $data, sub { cor( $_[0], $_[1] ) }, \*(Aqage\*(Aq );
-\& print $r\->{age}{weight}, "\en";    # only the "age" row is present
-\& # $r has no {height}{...} or {weight}{...} rows
-\& 
-\& # A handful of columns of interest, each vs everything else
-\& my $r2 = col2col( $data, sub { cor( $_[0], $_[1] ) }, [ \*(Aqage\*(Aq, \*(Aqheight\*(Aq ] );
-\& # $r2 has exactly the {age}{...} and {height}{...} rows
-.Ve
-.PP
-The result is identical to the corresponding rows of an unrestricted run, only
-the rows you didn\*(Aqt ask for are omitted. Naming a column that isn\*(Aqt in the data
-is a fatal error, so typos surface immediately. Omitting the argument (or
-passing \f(CW\*(C`undef\*(C'\fR) keeps the original every\-column\-vs\-every\-column behavior.
-.PP
-========================================================================
-.PP
-\fIarray of hash input\fR
-.IX Subsection "array of hash input"
-.PP
-Row\-major: an array ref whose elements are hash refs (\f(CW\*(C`$data\->[$row]{$col}\*(C'\fR).
-Column names are the union of the keys seen across all rows.
-.PP
-.Vb 7
-\& my $rows = [
-\&     { height => 170, weight => 65, age => 31 },
-\&     { height => 182, weight => 84, age => 45 },
-\&     { height => 168, weight => 60, age => 29 },
-\&     { height => 191, weight => 92, age => 52 },
-\&     { height => 175, weight => 71, age => 38 },
-\& ];
-\& 
-\& my $cor = col2col( $rows, \*(Aqcor\*(Aq );
-\& 
-\& print $cor\->{height}{weight}, "\en";   # Pearson r between height and weight
-\& print $cor\->{weight}{age},    "\en";
+\& col2col( $data, $command, $cols, %options )
+\& col2col( $data, $command, \e%options )      # options in place of $cols
 .Ve
 .PP
 ========================================================================
+.SS "Data shapes"
+.IX Subsection "Data shapes"
+\&\f(CW\*(C`col2col\*(C'\fR understands three layouts. In every case a \fBcolumn\fR is the thing that
+gets compared, and the result is keyed by column name.
 .PP
-\fIhash of array input\fR
-.IX Subsection "hash of array input"
+\&\fBHash of arrays (HoA)\fR — keys are column names:
 .PP
-Column\-major: a hash ref whose values are array refs (\f(CW\*(C`$data\->{$col}[$row]\*(C'\fR).
-The keys are the column names. This is the most direct shape — each value is
-already a column.
-.PP
-.Vb 5
-\& my $data = {
-\&     height => [ 170, 182, 168, 191, 175 ],
-\&     weight => [  65,  84,  60,  92,  71 ],
-\&     age    => [  31,  45,  29,  52,  38 ],
-\& };
-\& 
-\& my $cov = col2col( $data, \*(Aqcov\*(Aq );
-\& 
-\& print $cov\->{height}{weight}, "\en";   # sample covariance
+.Vb 1
+\& my %hoa = ( a => [1, 2, 3], b => [4, 5, 6] );
 .Ve
 .PP
-Undefined entries are skipped. For \f(CW\*(C`cor\*(C'\fR/\f(CW\*(C`cov\*(C'\fR/\f(CW\*(C`cor_test\*(C'\fR they are dropped
-pairwise, so the pair below is compared on its three complete rows only:
+\&\fBHash of hashes (HoH)\fR — outer keys are row names, inner keys are columns:
 .PP
 .Vb 4
-\& my $data = {
-\&     a => [ 1,      2,     3,  4,  5 ],
-\&     b => [ 2,  undef,     6,  8, 10 ],   # row 1 dropped for any pair touching b
-\& };
-\& 
-\& my $cor = col2col( $data, \*(Aqcor\*(Aq );
-\& print $cor\->{a}{b}, "\en";              # correlation over rows 0,2,3,4
+\& my %hoh = (
+\&     row1 => { a => 1, b => 4 },
+\&     row2 => { a => 2, b => 5 },
+\& );
 .Ve
+.PP
+\&\fBArray of hashes (AoH)\fR — each element is a row, inner keys are columns:
+.PP
+.Vb 1
+\& my @aoh = ( { a => 1, b => 4 }, { a => 2, b => 5 } );
+.Ve
+.PP
+All three produce the same result for the same underlying numbers. Missing or
+\&\f(CW\*(C`undef\*(C'\fR cells are handled by the \f(CW\*(C`na\*(C'\fR option (below).
 .PP
 ========================================================================
+.SS "The command"
+.IX Subsection "The command"
+The second argument is the function applied to each pair of columns. It is called
+as:
 .PP
-\fIhash of hash input\fR
-.IX Subsection "hash of hash input"
-.PP
-Row\-major and keyed: a hash ref whose values are hash refs
-(\f(CW\*(C`$data\->{$row}{$col}\*(C'\fR). The outer keys label the rows (e.g. sample IDs); the
-inner keys are the column names (the union across all rows).
-.PP
-.Vb 7
-\& my $samples = {
-\&     s1 => { height => 170, weight => 65, age => 31 },
-\&     s2 => { height => 182, weight => 84, age => 45 },
-\&     s3 => { height => 168, weight => 60, age => 29 },
-\&     s4 => { height => 191, weight => 92, age => 52 },
-\&     s5 => { height => 175, weight => 71, age => 38 },
-\& };
-\& 
-\& my $cor = col2col( $samples, \*(Aqcor\*(Aq );
-\& 
-\& print $cor\->{age}{weight}, "\en";
+.Vb 1
+\& $command\->( $column_a, $column_b )    # two ARRAY refs
 .Ve
 .PP
-Because pairing is done within each row, the (unordered) row\-key order does not
-affect the result — all three shapes above give the same numbers.
+so inside a block the two columns arrive in \f(CW@_\fR:
 .PP
-========================================================================
-.PP
-\fIExamples with different \fR\f(CI\*(C`Stats::LikeR\*(C'\fR\fI functions\fR
-.IX Subsection "Examples with different Stats::LikeR functions"
-.PP
-The same dataset can be run through any comparison function just by changing the
-block. Using the hash\-of\-arrays \f(CW$data\fR from above:
-.PP
-.Vb 3
-\& # Correlation coefficients (Pearson) — returns a number per pair
-\& my $r = col2col( $data, sub { cor( $_[0], $_[1] ) } );
-\& print $r\->{height}{weight}, "\en";
-\& 
-\& # Covariance — returns a number per pair
-\& my $c = col2col( $data, sub { cov( $_[0], $_[1] ) } );
-\& 
-\& # Correlation test — returns whatever cor_test returns
-\& # (e.g. estimate, statistic, p_value) for each pair
-\& my $ct = col2col( $data, sub { cor_test( $_[0], $_[1] ) } );
-\& print $ct\->{height}{weight}{p_value}, "\en";
-\& 
-\& # Welch two\-sample t\-test between every pair of columns
-\& my $t = col2col( $data, sub { t_test( $_[0], $_[1] ) } );
-\& say $t\->{height}{age}{p_value};
-\& 
-\& # Two\-sample Kolmogorov–Smirnov test
-\& my $ks = col2col( $data, sub { ks_test( $_[0], $_[1] ) } );
-\& print $ks\->{height}{age}{statistic}, "\en";
-\& 
-\& # Other two\-sample comparisons work the same way
-\& my $w  = col2col( $data, sub { wilcox_test( $_[0], $_[1] ) } );   # Wilcoxon rank\-sum
-\& my $f  = col2col( $data, sub { var_test( $_[0], $_[1] ) } );      # F test for equal variances
-\& my $kw = col2col( $data, sub { kruskal_test( $_[0], $_[1] ) } );  # Kruskal–Wallis
-\& 
-\& # For the no\-argument case, a bare function name is a handy shorthand:
-\& my $r2 = col2col( $data, \*(Aqcor\*(Aq );   # same as sub { cor( $_[0], $_[1] ) }
+.Vb 4
+\& my $result = col2col(\e%data, sub {
+\&     my ($x, $y) = @_;       # $x and $y are array refs
+\&     cor($x, $y);
+\& });
 .Ve
 .PP
-Passing arguments
-.IX Subsection "Passing arguments"
-.PP
-Because the block is just ordinary Perl, you pass arguments exactly the way you
-would call the function directly:
+You can also pass a \fBfunction name as a string\fR. A bare name is looked up in
+\&\f(CW\*(C`Stats::LikeR::\*(C'\fR, so these two are equivalent:
 .PP
 .Vb 2
-\& # Spearman instead of the default Pearson correlation (method is cor\*(Aqs 3rd arg)
-\& my $sp = col2col( $data, sub { cor( $_[0], $_[1], \*(Aqspearman\*(Aq ) } );
-\& 
-\& # Whatever extra arguments a function takes, pass them inline. For example, if
-\& # t_test accepts a trailing paired flag, t_test($x, $y, $paired):
-\& my $tp = col2col( $data, sub { t_test( $_[0], $_[1], 1 ) } );
-\& 
-\& # Combine results, scale them, call several functions — anything goes:
-\& my $scaled = col2col( $data, sub { cor( $_[0], $_[1] ) * 100 } );
+\& col2col(\e%data, \*(Aqcor\*(Aq);
+\& col2col(\e%data, sub { cor($_[0], $_[1]) });
 .Ve
 .PP
-Custom subroutine
-.IX Subsection "Custom subroutine"
+Use a fully\-qualified name (\f(CW\*(AqMy::Mod::myfunc\*(Aq\fR) to call something elsewhere.
 .PP
-The block can run any analysis you like; \f(CW$_[0]\fR and \f(CW$_[1]\fR are the two columns
-(array refs, pairwise complete cases) and the return value is stored verbatim.
+========================================================================
+.SS "The result"
+.IX Subsection "The result"
+Always a hash of hashes: \fR\f(CB\*(C`$result\->{from}{to}\*(C'\fR\fB\fR.
+.PP
+.Vb 5
+\& for my $from (sort keys %$result) {
+\&     for my $to (sort keys %{ $result\->{$from} }) {
+\&         printf "%s vs %s = %s\en", $from, $to, $result\->{$from}{$to};
+\&     }
+\& }
+.Ve
+.PP
+A column is never compared with itself, so \f(CW\*(C`$result\->{a}{a}\*(C'\fR does not exist.
+.PP
+========================================================================
+.ie n .SS "Restricting columns ($cols)"
+.el .SS "Restricting columns (\f(CW$cols\fP)"
+.IX Subsection "Restricting columns ($cols)"
+By default every column is used as the "from" side. The third argument narrows
+that down — handy when you only care about one variable.
 .PP
 .Vb 7
-\& # Mean difference between every pair of columns
-\& my $diff = col2col( $data, sub {
-\&     my ( $x, $y ) = @_;
-\&     my $mx = 0; $mx += $_ for @$x; $mx /= @$x;
-\&     my $my = 0; $my += $_ for @$y; $my /= @$y;
-\&     return $mx \- $my;
-\& } );
-\& 
-\& print $diff\->{height}{weight}, "\en";
-\& 
-\& # Wrap a built\-in and post\-process its result — it reads like a normal call
-\& my $pct = col2col( $data, sub { cor( $_[0], $_[1] ) * 100 } );
+\& # all columns vs all columns
+\& my $all = col2col(\e%data, \*(Aqcor\*(Aq);
+\& # just ONE column vs every other column
+\& my $one = col2col(\e%data, \*(Aqcor\*(Aq, \*(Aqheight\*(Aq);
+\& my $cors = $one\->{height};          # { weight => ..., age => ... }
+\& # a FEW specific columns vs every other column
+\& my $few = col2col(\e%data, \*(Aqcor\*(Aq, [\*(Aqheight\*(Aq, \*(Aqweight\*(Aq]);
 .Ve
-.SS cor
-.IX Subsection "cor"
-.Vb 1
-\& cor($array1, $array2, $method = \*(Aqpearson\*(Aq),
-.Ve
+.PP
+The "to" side is always every other column; \f(CW$cols\fR only limits the outer keys.
+.PP
+========================================================================
+.SS Options
+.IX Subsection "Options"
+Options can be given two ways:
+.PP
+\&\f(CW\*(C`perl
+col2col(\e%data, \*(Aqcor\*(Aq, $cols, \*(Aqskip.errors\*(Aq => 0);   # after $cols
+col2col(\e%data, \*(Aqcor\*(Aq, { \*(Aqskip.errors\*(Aq => 0 });      # hash ref, no $cols needed\*(C'\fR
+.PP
+The hash\-ref form is convenient when you have \fBno\fR column restriction — it saves
+you from passing a placeholder. (A hash ref \fIreplaces\fR \f(CW$cols\fR, so you can\*(Aqt use
+it to restrict columns at the same time; use the trailing form for that.)
+.PP
+\fR\f(CI\*(C`na\*(C'\fR\fI — how undefined values are handled\fR
+.IX Subsection "na — how undefined values are handled"
+.PP
+Real data has gaps. \f(CW\*(C`na\*(C'\fR decides what the function sees.
+.PP
+\&\`\`\`perl
+=head1 correlation: keep only complete pairs (the default)
+.PP
+col2col(\e%data, \*(Aqcor\*(Aq);
+.SH "two\-sample test: each column keeps its own values"
+.IX Header "two-sample test: each column keeps its own values"
+col2col(\e%data, \*(Aqt_test\*(Aq, undef, na => \*(Aqomit\*(Aq);
+col2col(\e%data, \*(Aqt_test\*(Aq, { na => \*(Aqomit\*(Aq });        # same, no placeholder
+\&\`\`\`
+.PP
+\&\f(CW\*(C`rm.undef\*(C'\fR / \f(CW\*(C`rm.na\*(C'\fR remain as boolean aliases for backward compatibility:
+\&\f(CW\*(C`true\*(C'\fR means \f(CW\*(Aqpairwise\*(Aq\fR, \f(CW\*(C`false\*(C'\fR means \f(CW\*(Aqkeep\*(Aq\fR. Don\*(Aqt combine them with \f(CW\*(C`na\*(C'\fR.
+.PP
+\fR\f(CI\*(C`skip.errors\*(C'\fR\fI — keep going when a pair fails (default: true)\fR
+.IX Subsection "skip.errors — keep going when a pair fails (default: true)"
+.PP
+Some functions croak on degenerate input — for example \f(CW\*(C`cor\*(C'\fR dies if a column has
+zero variance. By default \f(CW\*(C`col2col\*(C'\fR \fBtraps\fR that croak per pair: instead of
+aborting the whole run, it stores the \fBfirst line\fR of the error message in that
+cell, so the result tells you \fIwhich\fR pair failed and \fIwhy\fR. Every other cell is
+computed normally.
+.PP
+\&\`\`\`perl
+my \f(CW$r\fR = col2col(\e%data, \*(Aqcor\*(Aq);
+=head1 a good pair:   \f(CW$r\fR\->{a}{b} == 0.83
+.ie n .SH "a bad pair:    $r\->{a}{const} eq \*(Aqcor: standard deviation of y is 0\*(Aq"
+.el .SH "a bad pair:    \f(CW$r\fP\->{a}{const} eq \*(Aqcor: standard deviation of y is 0\*(Aq"
+.IX Header "a bad pair: $r->{a}{const} eq 'cor: standard deviation of y is 0'"
+\&\`\`\`
+.PP
+To restore the old "die on the first error" behaviour, turn it off:
+.PP
+\&\f(CW\*(C`perl
+col2col(\e%data, \*(Aqcor\*(Aq, undef, \*(Aqskip.errors\*(Aq => 0);
+col2col(\e%data, \*(Aqcor\*(Aq, { \*(Aqskip.errors\*(Aq => 0 });\*(C'\fR
+.PP
+Only errors from \fByour function\fR are trapped. Mistakes in the call itself
+(unknown column, bad data, unknown function name, unknown option) always die.
+.PP
+========================================================================
+.SS "Worked examples"
+.IX Subsection "Worked examples"
+\&\fBFull correlation matrix:\fR
+.PP
+\&\f(CW\*(C`perl
+my $m = col2col(\e%data, \*(Aqcor\*(Aq);
+\&\*(C'\fR
+.PP
+\&\fBOne variable against all others, sorted strongest first, skipping failures:\fR
+.PP
+\&\`\`\`perl
+my \f(CW$col\fR  = \*(AqTestosterone, total (nmol/L)\*(Aq;
+my \f(CW$cors\fR = col2col($hoa, \*(Aqcor\*(Aq, \f(CW$col\fR)\->{$col};
+.PP
+for my \f(CW$other\fR (sort { ($cors\->{$b} // \-2) <=> ($cors\->{$a} // \-2) } keys %$cors) {
+    next unless \f(CW$cors\fR\->{$other} =~ /^\-?\ed/;        # skip cells holding an error message
+    printf "%\-30s % .3f\en", \f(CW$other\fR, \f(CW$cors\fR\->{$other};
+}
+\&\`\`\`
+.PP
+\&\fBTwo\-sample test across columns of unequal completeness:\fR
+.PP
+\&\f(CW\*(C`perl
+my $t = col2col($hoa, \*(Aqt_test\*(Aq, undef, na => \*(Aqomit\*(Aq);\*(C'\fR
+.PP
+\&\fBFind which pairs could not be computed:\fR
+.PP
+\&\f(CW\*(C`perl
+my $m = col2col($hoa, \*(Aqcor\*(Aq);
+for my $from (sort keys %$m) {
+    for my $to (sort keys %{ $m\->{$from} }) {
+        my $v = $m\->{$from}{$to};
+        warn "$from vs $to: $v\en" if defined $v && $v !~ /^\-?\ed/;   # non\-numeric = error
+    }
+}\*(C'\fR
+.PP
+========================================================================
+.SS Gotchas
+.IX Subsection "Gotchas"
+.IP \(bu 4
+\&\fBYour function receives two array refs\fR, \f(CW\*(C`($col_a, $col_b)\*(C'\fR — not a column and
+a name. Unpack with \f(CW\*(C`my ($x, $y) = @_;\*(C'\fR.
+.IP \(bu 4
+\&\fR\f(CB\*(Aqpairwise\*(Aq\fR\fB can still hit a constant \fR\f(BIsubset\fR\fB.\fR A column with overall
+variance can be flat on just the rows it shares with one partner, so \f(CW\*(C`cor\*(C'\fR may
+still croak for that pair. With the default \f(CW\*(C`skip.errors\*(C'\fR, that shows up as a
+message in the single offending cell rather than killing the run.
+.IP \(bu 4
+\&\fR\f(CB\*(C`col2col\*(C'\fR\fB does not modify your data.\fR It reads the table and returns a new
+hash of hashes.
+.IP \(bu 4
+\&\fBIn the error message, "x" is the first column and "y" is the second\fR — i.e.
+\&\f(CW\*(C`y\*(C'\fR is the inner ("to") key. So \f(CW\*(C`$result\->{A}{B}\*(C'\fR reading \f(CW\*(C`…deviation of y is 0\*(C'\fR
+means column \f(CW\*(C`B\*(C'\fR is the degenerate one for that pair.
+=head2 cor
+.Sp
+cor($array1, \f(CW$array2\fR, \f(CW$method\fR = \*(Aqpearson\*(Aq),
 .PP
 that is, \f(CW\*(C`pearson\*(C'\fR is the default and will be used if \f(CW$method\fR is not specified.
 .PP
@@ -2019,6 +2010,8 @@ Args can also be accepted:
 \&\f(CW\*(C`quantile\*(C'\fR uses \f(CW\*(C`NV\*(C'\fR instead of \f(CW\*(C`double\*(C'\fR to allow for high\-precision 128\-bit floats to be used on quadmath machines when available: https://www.cpantesters.org/cpan/report/296f4868\-631f\-11f1\-abba\-ff15558d240b
 .PP
 Numerous switches from \f(CW\*(C`double\*(C'\fR to \f(CW\*(C`NV\*(C'\fR for local precision, like above
+.PP
+numerous changes to \f(CW\*(C`col2col\*(C'\fR for ease of use and working with datasets with numerous undefined holes
 .SS 0.13
 .IX Subsection "0.13"
 \&\f(CW\*(C`read_table\*(C'\fR: speed improvements; commented headers are now allowed
