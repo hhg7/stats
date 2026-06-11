@@ -12,7 +12,7 @@ use autodie ':default';
 use Exporter 'import';
 use Scalar::Util 'looks_like_number';
 XSLoader::load('Stats::LikeR', $VERSION);
-our @EXPORT_OK = qw(add_data aov cfilter chisq_test col col2col cor cor_test cov dnorm filter fisher_test glm group_by hoh2hoa hist kruskal_test ks_test ljoin lm matrix max mean median min mode oneway_test p_adjust power_t_test prcomp quantile rbinom read_table rnorm runif sample scale sd seq shapiro_test sum summary t_test transpose value_counts var var_test wilcox_test write_table);
+our @EXPORT_OK = qw(add_data aov cfilter chisq_test col col2col cor cor_test cov dnorm filter fisher_test glm group_by hoh2hoa hist kruskal_test ks_test ljoin lm matrix max mean median min mode oneway_test p_adjust power_t_test prcomp quantile rbinom read_table rnorm runif sample scale sd seq shapiro_test sum summary t_test transpose value_counts var var_test view wilcox_test write_table);
 our @EXPORT = @EXPORT_OK;
 
 require XSLoader;
@@ -272,6 +272,202 @@ sub read_table {
 	} else { # hoa or hoh
 		return \%data;
 	}
+}
+# ---------------------------------------------------------------------------
+# view(): an R-style `head` for the structures read_table() returns.
+#
+# Handles all three output.type values:
+#   aoh  -> ARRAY of HASH refs
+#   hoa  -> HASH of ARRAY refs
+#   hoh  -> HASH of HASH refs
+#
+# Pure Perl; the only dependency is Scalar::Util (core). There is nothing for
+# XS to speed up here: view only touches the first n rows, and the total-row
+# count is O(1) for every structure (scalar @$aoh, array length, scalar keys).
+# Keeping it pure Perl also keeps install portable (no compiler needed).
+#
+# Usage:
+#   view($data);                      # first 6 rows, like head()
+#   view($data, n => 20);             # first 20 rows
+#   view($data, cols => [...]);       # pin explicit column order
+#   view($data, na => '.', max_width => 30, gap => 1, ellipsis => '~');
+#   view($data, 'row.names' => 'id'); # use column 'id' as the row label
+#   view($data, to => \*STDERR);      # print elsewhere
+#   my $s = view($data, return_only => 1);  # capture string, suppress print
+#
+# Column order: read_table stores rows as hashes, so the original CSV column
+# order is gone. view sorts columns by name for a stable layout and treats a
+# column literally named 'row_name' (read_table's label for a leading blank
+# header) as the row label. Pass cols => [...] to override the order.
+# ---------------------------------------------------------------------------
+use Scalar::Util qw(looks_like_number);
+
+sub view {
+	my $data = shift;
+	my %args = @_;
+	my $n     = exists $args{n}         ? $args{n}         : 6;
+	my $na    = exists $args{na}        ? $args{na}        : 'NA';
+	my $maxw  = exists $args{max_width} ? $args{max_width} : 50;
+	my $ell   = exists $args{ellipsis}  ? $args{ellipsis}  : '...';
+	my $gap   = exists $args{gap}       ? (' ' x $args{gap}) : '  ';
+	my $ucols = $args{cols} || $args{columns};
+	my $fh    = $args{to};
+	my $quiet = $args{return_only};
+
+	my $label_col = exists $args{'row.names'} ? $args{'row.names'}
+		         : exists $args{row_names}   ? $args{row_names}
+		         : undef;
+	my $rt = ref $data;
+	die "view: expected an ARRAY (AoH) or HASH (HoA/HoH) reference, got "
+	  . ($rt || 'a non-reference') . "\n"
+	  unless $rt eq 'ARRAY' or $rt eq 'HASH';
+	my ($kind, @cols, @labels, @raw, $total, $lab_header);
+	if ($rt eq 'ARRAY') { # ---- AoH ----
+	  $kind  = 'AoH';
+	  $total = scalar @$data;
+	  my $show = $n < $total ? $n : $total;
+	  $show = 0 if $show < 0;
+
+	  if ($ucols) {
+		   @cols = @$ucols;
+	  } else {
+		   my %seen;
+		   for my $i (0 .. $show - 1) {
+		       my $row = $data->[$i];
+		       next unless ref $row eq 'HASH';
+		       push @cols, grep { !$seen{$_}++ } sort keys %$row;
+		   }
+	  }
+	  my $lc = defined $label_col ? $label_col
+		      : (grep { $_ eq 'row_name' } @cols) ? 'row_name' : undef;
+	  if (defined $lc) {
+		   @cols = grep { $_ ne $lc } @cols;
+		   $lab_header = $lc;
+	  }
+	  for my $i (0 .. $show - 1) {
+		   my $row = $data->[$i] || {};
+		   push @labels, defined $lc ? $row->{$lc} : ($i + 1);
+		   push @raw, [ map { $row->{$_} } @cols ];
+	  }
+	  $lab_header = '' unless defined $lab_header;
+	} elsif ($rt eq 'HASH') {
+	  my @keys = keys %$data;
+	  my $sample;
+	  for my $k (@keys) { $sample = $data->{$k}; last if defined $sample; }
+	  my $vt = ref $sample;
+
+	  if ($vt eq 'ARRAY') {                               # ---- HoA ----
+		   $kind = 'HoA';
+		   my @allcols = $ucols ? @$ucols : sort @keys;
+		   $total = 0;
+		   for my $k (@keys) {
+		       my $l = ref $data->{$k} eq 'ARRAY' ? scalar @{ $data->{$k} } : 0;
+		       $total = $l if $l > $total;
+		   }
+		   my $show = $n < $total ? $n : $total;
+		   $show = 0 if $show < 0;
+		   my $lc = defined $label_col ? $label_col
+		          : (grep { $_ eq 'row_name' } @allcols) ? 'row_name' : undef;
+		   @cols = grep { !defined $lc || $_ ne $lc } @allcols;
+		   $lab_header = defined $lc ? $lc : '';
+		   for my $i (0 .. $show - 1) {
+		       push @labels, defined $lc ? $data->{$lc}[$i] : ($i + 1);
+		       push @raw, [ map { $data->{$_}[$i] } @cols ];
+		   }
+	  } elsif ($vt eq 'HASH') {                             # ---- HoH ----
+		   $kind = 'HoH';
+		   $total = scalar @keys;
+		   my @rk = sort @keys;
+		   my $show = $n < $total ? $n : $total;
+		   $show = 0 if $show < 0;
+		   my @shown = $show > 0 ? @rk[0 .. $show - 1] : ();
+		   if ($ucols) {
+		       @cols = @$ucols;
+		   } else {
+		       my %seen;
+		       for my $rkk (@shown) {
+		           push @cols, grep { !$seen{$_}++ } sort keys %{ $data->{$rkk} };
+		       }
+		   }
+		   @cols = grep { $_ ne $label_col } @cols if defined $label_col;
+		   $lab_header = exists $args{'row.names'} ? $args{'row.names'} : 'row_name';
+		   for my $rkk (@shown) {
+		       push @labels, $rkk;
+		       push @raw, [ map { $data->{$rkk}{$_} } @cols ];
+		   }
+	  } else {
+		   die "view: HASH values are neither ARRAY (HoA) nor HASH (HoH) refs; "
+		     . "cannot interpret as a table\n";
+	  }
+	}
+
+	# numeric detection per column (drives right/left alignment)
+	my @numeric = (1) x scalar @cols;
+	for my $r (@raw) {
+	  for my $j (0 .. $#cols) {
+		   my $v = $r->[$j];
+		   next unless defined $v;
+		   $numeric[$j] = 0 unless looks_like_number($v);
+	  }
+	}
+	my $lab_numeric = @labels ? 1 : 0;
+	for my $l (@labels) { $lab_numeric = 0, last unless defined $l && looks_like_number($l); }
+
+	# stringify + sanitize + truncate cells (column names left intact)
+	my $clean = sub {
+	  my $v = shift;
+	  return $na unless defined $v;
+	  $v = "$v";
+	  $v =~ s/\t/\\t/g; $v =~ s/\r/\\r/g; $v =~ s/\n/\\n/g;
+	  if ($maxw && length($v) > $maxw) {
+		   my $keep = $maxw - length($ell);
+		   $keep = 0 if $keep < 0;
+		   $v = substr($v, 0, $keep) . $ell;
+	  }
+	  return $v;
+	};
+	my @lab_s  = map { $clean->($_) } @labels;
+	my @rows_s = map { [ map { $clean->($_) } @$_ ] } @raw;
+	my @head_s = @cols;
+
+	# column widths
+	my $lab_w = length $lab_header;
+	$lab_w = length $_ > $lab_w ? length $_ : $lab_w for @lab_s;
+	my @w = map { length $_ } @head_s;
+	for my $r (@rows_s) {
+	  for my $j (0 .. $#cols) {
+		   my $l = length $r->[$j];
+		   $w[$j] = $l if $l > $w[$j];
+	  }
+	}
+
+	my $pad = sub {
+	  my ($s, $width, $right) = @_;
+	  my $g = $width - length $s; $g = 0 if $g < 0;
+	  return $right ? (' ' x $g) . $s : $s . (' ' x $g);
+	};
+
+	my @out;
+	my $shown = scalar @rows_s;
+	push @out, sprintf("# %s: %d row%s x %d col%s  (showing %d)",
+	  $kind, $total, ($total == 1 ? '' : 's'),
+	  scalar(@cols), (@cols == 1 ? '' : 's'), $shown);
+
+	my @hcells = ( $pad->($lab_header, $lab_w, 0) );
+	push @hcells, $pad->($head_s[$_], $w[$_], $numeric[$_]) for 0 .. $#cols;
+	push @out, join($gap, @hcells);
+
+	for my $ri (0 .. $#rows_s) {
+	  my @cells = ( $pad->($lab_s[$ri], $lab_w, $lab_numeric) );
+	  push @cells, $pad->($rows_s[$ri][$_], $w[$_], $numeric[$_]) for 0 .. $#cols;
+	  push @out, join($gap, @cells);
+	}
+	push @out, sprintf("# ... %d more row%s", $total - $shown,
+	  ($total - $shown == 1 ? '' : 's')) if $shown < $total;
+
+	my $str = join("\n", @out) . "\n";
+	unless ($quiet) { defined $fh ? print {$fh} $str : print $str; }
+	return $str;
 }
 
 1;

@@ -5,7 +5,6 @@ use feature 'say';
 use File::Temp qw(tempdir tempfile);
 use Stats::LikeR;
 use Test::Exception;
-use Digest::SHA 'sha512_base64';
 use Test::LeakTrace 'no_leaks_ok';
 
 sub file2string {
@@ -20,11 +19,11 @@ my %data = (
 my $tmp_file = '/tmp/test.tsv';
 write_table(\%data, $tmp_file, sep => "\t", 'row.names' => 1, 'undef.val' => 'NA');
 my $str = file2string($tmp_file);
-if (sha512_base64($str) eq 'FInYAXZcS7lK1n7osAhVkp5SiQNpt3h4kql9yZ2YCoPQslHKjwfGAXgdiphDSc6wMhlpU5toNmSifEUz1OgHNQ') {
-	pass('write_table successfully wrote a tab-delimited file');
+my $expected = "\tCol1\tCol2\tCol3\nRow_A\t10\t20\tNA\nRow_B\t30\tNA\t40\n";
+if (is($str, $expected, 'write_table successfully wrote a tab-delimited file')) {
 	unlink $tmp_file;
 } else {
-	fail("sha512 does not match for write_table; see $tmp_file");
+	diag("see $tmp_file");
 }
 no_leaks_ok {
 	eval {
@@ -45,11 +44,11 @@ my %data_hoh = (
 
 write_table(\%data_hoh, $tmp_file, sep => "\t", 'row.names' => 1, 'undef.val' => 'NA');
 $str = file2string($tmp_file);
-if (sha512_base64($str) eq 'ZYK6zmrT47CLrEc4PSFtCtvdkLtv47MCIMHIg70bARlWO5J9MuzybnV5h7dBSyQn8dOKojaX6pinxOvbTVaI+g') {
-	pass('write_table successfully wrote a tab-delimited file (Hash of Hashes)');
+$expected = "\tc1\tc2\tc3\tc4\nr1\t42\thello,world\tNA\tNA\nr2\t99\tNA\t\"quote\"\"here\"\tNA\nr3\tNA\t\"tab\tin\"\tNA\tNA\n";
+if (is($str, $expected, 'write_table successfully wrote a tab-delimited file (Hash of Hashes)')) {
 	unlink $tmp_file;
 } else {
-	fail("sha512 does not match for write_table HoH; see $tmp_file");
+	diag("see $tmp_file");
 }
 no_leaks_ok {
 	eval {
@@ -68,11 +67,11 @@ my %data_hoa = (
 
 write_table(\%data_hoa, $tmp_file, sep => "\t", 'row.names' => 1, 'undef.val' => 'NA');
 $str = file2string($tmp_file);
-if (sha512_base64($str) eq '1wv8uFDVQkQ9UZ+50n+r/Z8oj4VFP4eusApZDAY1DB3dXhT+gFFyCR2Z1ZVQDTOJrUaMRpfWt6vLSlaSsNps7g') {
-    pass('write_table successfully wrote a tab-delimited file (Hash of Arrays)');
+$expected = "\tr1\tr2\tr3\n1\t42\t99\tNA\n2\thello,world\tNA\t\"tab\tin\"\n3\tNA\t\"quote\"\"here\"\tNA\n4\tNA\tNA\tNA\n";
+if (is($str, $expected, 'write_table successfully wrote a tab-delimited file (Hash of Arrays)')) {
     unlink $tmp_file;
 } else {
-    fail("sha512 does not match for write_table HoA; see $tmp_file");
+    diag("see $tmp_file");
 }
 no_leaks_ok {
 	eval {
@@ -82,11 +81,8 @@ no_leaks_ok {
 #---------
 write_table(\%data_hoa, '/tmp/undef.val.tsv', sep => "\t", 'undef.val' => 'nan');
 $str = file2string('/tmp/undef.val.tsv');
-if (sha512_base64($str) eq 'Pbohr5w8D4e6691E0WV3W6RjtjIEvgS1egsPixNkXhZ0Jhu3vmRHoR6Lkxsm0GBJ2c0iT7yYZq4G45w/qwDnKQ') {
-	pass('undefined values are switched to nan');
-} else {
-	fail('undefined values are NOT switched to nan');
-}
+$expected = "\tr1\tr2\tr3\n1\t42\t99\tnan\n2\thello,world\tnan\t\"tab\tin\"\n3\tnan\t\"quote\"\"here\"\tnan\n4\tnan\tnan\tnan\n";
+is($str, $expected, 'undefined values are switched to nan');
 
 # ==============================================================================
 # 4. write_table: Nested Reference Memory Leaks

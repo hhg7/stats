@@ -49,12 +49,10 @@ When the target is a Hash of Hashes, incoming hash keys update existing rows, an
 When the target is a Hash of Arrays, incoming arrays are pushed onto the existing arrays, appending the new elements, similarly to R's `rbind`.
 
     $data = { 'Project Alpha' => [ 'task1', 'task2' ] };
-    
     $n = {
-        'Project Alpha' => [ 'task3' ],              # Appends to existing array
-        'Project Beta'  => [ 'task1', 'task2' ]      # Creates new array row
+        'Project Alpha' => [ 'task3' ],         # Appends to existing array
+        'Project Beta'  => [ 'task1', 'task2' ] # Creates new array row
     };
-
     add_data($data, $n);
 
 **Resulting Structure:**
@@ -379,7 +377,7 @@ Flat Hash References evaluate Goodness of Fit while preserving your categorical 
 	
 	my $res = chisq_test($data);
 
-# `col2col`
+## `col2col`
 
 Apply a **two-column function** to every pair of columns in a table and collect
 the answers in a hash of hashes.
@@ -404,7 +402,7 @@ back every column compared against every other column.
 
 ---
 
-## Arguments
+### Arguments
 
     col2col( $data, $command, $cols, %options )
     col2col( $data, $command, \%options )      # options in place of $cols
@@ -418,7 +416,7 @@ back every column compared against every other column.
 
 ---
 
-## Data shapes
+### Data shapes
 
 `col2col` understands three layouts. In every case a **column** is the thing that
 gets compared, and the result is keyed by column name.
@@ -443,7 +441,7 @@ All three produce the same result for the same underlying numbers. Missing or
 
 ---
 
-## The command
+### The command
 
 The second argument is the function applied to each pair of columns. It is called
 as:
@@ -465,7 +463,7 @@ You can also pass a **function name as a string**. A bare name is looked up in
 
 ---
 
-## The result
+### The result
 
 Always a hash of hashes: **`$result->{from}{to}`**.
 
@@ -479,7 +477,7 @@ A column is never compared with itself, so `$result->{a}{a}` does not exist.
 
 ---
 
-## Restricting columns (`$cols`)
+### Restricting columns (`$cols`)
 
 By default every column is used as the "from" side. The third argument narrows
 that down — handy when you only care about one variable.
@@ -496,7 +494,7 @@ The "to" side is always every other column; `$cols` only limits the outer keys.
 
 ---
 
-## Options
+### Options
 
 Options can be given two ways:
 
@@ -507,7 +505,7 @@ The hash-ref form is convenient when you have **no** column restriction — it s
 you from passing a placeholder. (A hash ref *replaces* `$cols`, so you can't use
 it to restrict columns at the same time; use the trailing form for that.)
 
-### `na` — how undefined values are handled
+#### `na` — how undefined values are handled
 
 Real data has gaps. `na` decides what the function sees.
 
@@ -526,7 +524,7 @@ Real data has gaps. `na` decides what the function sees.
 `rm.undef` / `rm.na` remain as boolean aliases for backward compatibility:
 `true` means `'pairwise'`, `false` means `'keep'`. Don't combine them with `na`.
 
-### `skip.errors` — keep going when a pair fails *(default: true)*
+#### `skip.errors` — keep going when a pair fails *(default: true)*
 
 Some functions croak on degenerate input — for example `cor` dies if a column has
 zero variance. By default `col2col` **traps** that croak per pair: instead of
@@ -548,7 +546,7 @@ Only errors from **your function** are trapped. Mistakes in the call itself
 
 ---
 
-## Worked examples
+### Worked examples
 
 **Full correlation matrix:**
 
@@ -579,7 +577,7 @@ Only errors from **your function** are trapped. Mistakes in the call itself
 
 ---
 
-## Gotchas
+### Gotchas
 
 - **Your function receives two array refs**, `($col_a, $col_b)` — not a column and
   a name. Unpack with `my ($x, $y) = @_;`.
@@ -1712,6 +1710,96 @@ as well as a ratio (from R: the hypothesized ratio of the population variances o
 
     $test_data = var_test(\@xk, \@yk, ratio => 2);
 
+## view
+
+An R-style `head` for the structures `read_table` returns. Prints the first
+few rows of a dataframe as an aligned text table, with numeric columns
+right-justified, string columns left-justified, and undefined cells shown as
+`NA`. Works on all three `output.type` values:
+
+| `output.type` | Perl structure     | What `view` shows                          |
+|---------------|--------------------|--------------------------------------------|
+| `aoh`         | array of hash refs | one line per row, sequential row numbers   |
+| `hoa`         | hash of array refs | values gathered column-wise by row index   |
+| `hoh`         | hash of hash refs  | top-level keys become the row label column |
+
+
+### Synopsis
+
+    my $aoh = read_table('all.data.tsv', 'output.type' => 'aoh');
+
+    view($aoh);                       # first 6 rows, like head()
+    view($aoh, n => 20);              # first 20 rows
+    view($aoh, cols => [qw(id age tt)]);   # force a column order
+    view($aoh, 'row.names' => 'id');  # use column 'id' as the row label
+    view($aoh, na => '.', max_width => 30);
+
+    my $txt = view($aoh, return_only => 1);  # capture the string, print nothing
+    view($aoh, to => \*STDERR);              # print somewhere other than STDOUT
+
+### Output
+
+    # AoH: 7 rows x 3 cols  (showing 6)
+    row_name  Testosterone, total (nmol/L)  age  sex
+    p1                                18.2   41  M
+    p2                                  NA    7  F
+    p3                                1.05   33  F
+    p4                                22.9   55  M
+    p5                                  14   29  M
+    p6                                  NA   62  F
+    # ... 1 more row
+
+The banner reports the structure type, full dimensions, and how many rows are
+displayed. A footer appears only when rows are hidden.
+
+### Arguments
+
+All arguments after the data reference are optional name/value pairs.
+
+| Argument        | Default | Meaning                                                                 |
+|-----------------|---------|-------------------------------------------------------------------------|
+| `n`             | `6`     | Number of rows to show. `n` greater than the table shows everything.    |
+| `cols` / `columns` | —    | Array ref pinning column order (and which columns appear).              |
+| `row.names`     | —       | Column to use as the row label (for `aoh`/`hoa`). See ordering note.    |
+| `na`            | `'NA'`  | Token printed for undefined cells.                                      |
+| `max_width`     | `50`    | Truncate any cell wider than this (column names are never truncated).   |
+| `ellipsis`      | `'...'` | Marker appended to truncated cells.                                     |
+| `gap`           | `2`     | Spaces between columns.                                                 |
+| `to`            | STDOUT  | Filehandle to print to.                                                 |
+| `return_only`   | `0`     | If true, return the string and print nothing.                           |
+
+`view` always returns the formatted string, whether or not it also prints.
+
+### A note on column order
+
+`read_table` stores rows as hashes, so the original CSV column order is not
+preserved. `view` therefore sorts columns by name for a stable, reproducible
+layout. Two conveniences soften this:
+
+* A column literally named `row_name` (the label `read_table` assigns to a
+  leading blank header) is detected automatically and moved to the left as the
+  row label.
+* Pass `cols => [ ... ]` to control both the order and the selection of columns
+  shown.
+
+When no label column is present, `view` numbers the rows `1, 2, 3, …`, the way
+R prints row names for an unnamed data frame.
+
+### Edge cases
+
+* Empty input (`[]` or `{}`) prints a clean `0 rows x 0 cols` banner.
+* Tabs, carriage returns, and newlines inside a cell are escaped (`\t`, `\r`,
+  `\n`) so one record always stays on one line.
+* A non-reference argument, or a hash whose values are plain scalars, dies with
+  a clear message rather than producing garbled output.
+
+### Tests
+
+The behavior above is covered by `view.t` (run with `prove view.t`): the three
+structure types, `n` boundaries, alignment, `NA` rendering, truncation,
+`row.names`/`cols` handling, control-character escaping, the `return_only` and
+`to` output paths, empty structures, and the error cases.
+
 ## wilcox_test
 
     $test_data = wilcox_test(
@@ -1745,12 +1833,22 @@ Args can also be accepted:
 
 ## 0.15
 
+`view` function added, similar to R's `head`
+
 `read_table`:
     filter => {
         'Testosterone, total (nmol/L)' => sub { defined $_ },
     }
 
 was broken by the change in undefined variables in 0.14, but is back to being `undef`
+
+`col2col` improvement in sectioning in README
+
+Numerous changes to prevent quadmath/long double CPAN test failures
+
+Minimum Scalar::Util version in dist.ini is now 1.22, see https://www.cpantesters.org/cpan/report/6b682236-6567-11f1-a3bc-a055f9c4ba34
+
+`Digest::SHA` is no longer needed, and removed as a dependency
 
 ## 0.14
 
