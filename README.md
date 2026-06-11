@@ -1850,6 +1850,79 @@ Minimum Scalar::Util version in dist.ini is now 1.22, see https://www.cpantester
 
 `Digest::SHA` is no longer needed, and removed as a dependency
 
+### `write_table`
+
+#### Behavior change
+
+- **`undef` cells now write as an empty field, not an empty string.** A missing
+  or `undef` value renders as nothing between separators (`a,,c`) rather than a
+  quoted empty string (`a,'',c` / `a,"",c`). Supplying `'undef.val' => 'NA'`
+  (or any other token) still overrides this, exactly as before. This is the
+  only change that can alter the bytes of an existing output file; if you relied
+  on the previous default, pass `'undef.val' => ''` to keep an explicit empty
+  field, or your chosen placeholder.
+
+#### Bug fixes
+
+- **Wide-character / UTF-8 column names and row keys now round-trip.**
+  Previously, cells were looked up with the raw bytes of the column name
+  (`hv_fetch(..., SvPV_nolen(name), strlen(name), ...)`), which fails to match a
+  UTF-8-flagged hash key — the column header printed correctly but every cell
+  under it came back empty. All lookups now fetch by SV (`hv_fetch_ent`), header
+  lists are gathered and sorted as SVs (`sortsv` + `sv_cmp`, preserving the
+  flag) instead of being round-tripped through `char *`, and the `row.names`
+  column is matched with `sv_eq` rather than `strcmp`. Embedded NUL bytes in
+  keys are handled correctly as a side effect.
+
+- **`col.names => []` no longer loops forever.** An empty `col.names` array made
+  `av_len()` return `-1`, which — compared against an unsigned `size_t` loop
+  index — wrapped to `SIZE_MAX` and ran effectively without end. This was fixed
+  for flat hashes previously; it was still present for hash-of-hashes,
+  hash-of-arrays, and array-of-hashes, plus both `row.names` header-filtering
+  loops. All such loops now use a signed index.
+
+- **Tables wider than 65,535 columns no longer hang.** One header loop used an
+  `unsigned short` index that silently wrapped past 65,535 and never terminated.
+  It now uses `size_t` like the rest of the code.
+
+- **Flat-hash cells holding a reference now croak.** Every other input shape
+  rejects a nested reference with
+  *"Cannot write nested reference types to table"*; a flat hash instead
+  stringified it (e.g. `ARRAY(0x55...)`) into the file. It now croaks
+  consistently.
+
+- **`'undef.val' => undef` is handled cleanly.** It previously called
+  `SvPV_nolen` on `undef`, raising an *"uninitialized value"* warning and
+  yielding an empty string by accident. It is now treated explicitly as an empty
+  field, with no warning.
+
+#### Memory-leak fixes (exception paths)
+
+- The row-key list gathered for hash-of-hashes input was leaked when the output
+  file could not be opened.
+- The *"Could not get headers"* croak on hash-of-arrays input leaked both the
+  already-open filehandle and the headers array.
+
+#### Internal / non-behavioral
+
+- Numeric row labels are now formatted into a reused stack buffer instead of a
+  per-row `savepv()` / `safefree()` allocation (no functional change; removes a
+  cast-away-`const` and one allocation per row).
+- Several signed/unsigned index types were made consistent (`SSize_t` vs
+  `size_t`) to match `av_len()` and silence the conditions behind the loop bugs
+  above.
+
+#### Tests
+
+- `t/write_table.t` expanded from 17 to 69 assertions. New coverage targets each
+  fix above: the empty-field default and `undef.val => undef` (no warning),
+  `col.names => []` termination across all four input shapes, the
+  >65,535-column header loop (gated behind `EXTENDED_TESTING=1`), in-sequence
+  numeric row labels, nested-reference rejection, CSV quoting corners
+  (carriage return, separators inside column names, multi-character separators),
+  empty input writing no file, and UTF-8 column names and row keys. Two leak
+  assertions cover the exception paths above.
+
 ## 0.14
 
 `filter` function added for rows
