@@ -1867,7 +1867,7 @@ Minimum Scalar::Util version in dist.ini is now 1.22, see https://www.cpantester
 - **Wide-character / UTF-8 column names and row keys now round-trip.**
   Previously, cells were looked up with the raw bytes of the column name
   (`hv_fetch(..., SvPV_nolen(name), strlen(name), ...)`), which fails to match a
-  UTF-8-flagged hash key — the column header printed correctly but every cell
+  UTF-8-flagged hash key: the column header printed correctly but every cell
   under it came back empty. All lookups now fetch by SV (`hv_fetch_ent`), header
   lists are gathered and sorted as SVs (`sortsv` + `sv_cmp`, preserving the
   flag) instead of being round-tripped through `char *`, and the `row.names`

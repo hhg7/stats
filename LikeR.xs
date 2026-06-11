@@ -1954,6 +1954,49 @@ static bool cf_pred(pTHX_ SV *cv_sv, AV *a_av, AV *b_av, SV *name_sv) {
 	LEAVE;
 	return truth;
 }
+/* ---------------------------------------------------------------------------
+ * Helpers for _parse_csv_file. Place in the C section of the .xs file
+ * (above the first MODULE line).
+ * ------------------------------------------------------------------------- */
+
+/* save-stack destructor: closes the input handle on ANY exit, including a
+ * croak thrown inside the row callback */
+static void S_pclose(pTHX_ void *p)
+{
+	PerlIO_close((PerlIO*)p);
+}
+
+/* Finish the current record: push the pending field, hand the row to the
+ * callback (streaming) or to @$data (slurp), and start a fresh row.
+ *
+ * Ownership: the row AV's single reference is transferred to a MORTAL RV
+ * (newRV_noinc + sv_2mortal). On the normal path the inner FREETMPS releases
+ * it; if the callback dies, the unwind's FREETMPS releases it just the same.
+ * If the callback kept a copy of the ref, that copy bumped the refcount and
+ * the row survives for the caller -- exactly the old semantics, minus the
+ * leak and minus one SvREFCNT_dec per row. */
+static void S_emit_row(pTHX_ AV **rowp, SV *field, bool use_cb, SV *callback, AV *data)
+{
+	av_push(*rowp, newSVsv(field));
+	sv_setpvs(field, "");
+	if (use_cb) {
+		AV *restrict row = *rowp;
+		*rowp = NULL;	/* ownership leaves this function NOW */
+		dSP;
+		ENTER;
+		SAVETMPS;
+		PUSHMARK(SP);
+		XPUSHs(sv_2mortal(newRV_noinc((SV*)row)));
+		PUTBACK;
+		call_sv(callback, G_DISCARD);	/* may die: nothing left to leak */
+		FREETMPS;
+		LEAVE;
+	} else {
+		av_push(data, newRV_noinc((SV*)*rowp));
+		*rowp = NULL;
+	}
+	*rowp = newAV();
+}
 
 // --- XS SECTION ---
 MODULE = Stats::LikeR  PACKAGE = Stats::LikeR
@@ -1962,13 +2005,13 @@ SV *cfilter(data, ...)
 		SV *data
 	CODE:
 	{
-		// 0. options. Exactly one of keep/remove is required; it is either an
-		//    array ref of column names or a value predicate (CODE ref / function
-		//    name). For a predicate, undef handling is:
-		//      na => 'keep' (default) - the predicate sees every cell, incl undef
-		//      na => 'omit'           - single-column funcs (sd) get defined cells
-		//      against => 'col'       - two-column funcs (cor): the predicate gets
-		//                               ($col, $ref) over rows defined in BOTH.
+/* 0. options. Exactly one of keep/remove is required; it is either an
+    array ref of column names or a value predicate (CODE ref / function
+    name). For a predicate, undef handling is:
+      na => 'keep' (default) - the predicate sees every cell, incl undef
+      na => 'omit'           - single-column funcs (sd) get defined cells
+      against => 'col'       - two-column funcs (cor): the predicate gets
+                               ($col, $ref) over rows defined in BOTH.*/
 		SV *restrict keep_sv = NULL, *restrict remove_sv = NULL;
 		SV *restrict na_sv = NULL, *restrict against_sv = NULL;
 		if ((items - 1) & 1) croak("cfilter: trailing options must be name => value pairs");
@@ -4154,124 +4197,154 @@ PPCODE:
 }
 
 SV* _parse_csv_file(char* file, const char* sep_str, const char* comment_str, SV* callback = &PL_sv_undef)
-INIT:
+PREINIT:
+	/* Declarations only -- C declarations cost nothing. ALLOCATIONS are
+	 * deferred into CODE, after every croak-able validation, so that no
+	 * error path can leak. (The old version allocated current_row, field,
+	 * and data in INIT: the open-failure croak leaked all three, and a die
+	 * inside the callback leaked those plus line_sv plus the open handle.) */
 	PerlIO *restrict fp;
 	AV *restrict data = NULL;
-	AV *restrict current_row = newAV();
-	SV *restrict field = newSVpvs("");
-	bool in_quotes = 0, post_quote = 0;
+	AV *current_row = NULL;
+	SV *restrict field = NULL;
+	SV *restrict line_sv = NULL;
+	bool in_quotes = 0, post_quote = 0, use_cb = 0;
 	size_t sep_len, comment_len;
-	SV *restrict line_sv;
-	bool use_cb = 0;
+	char sep0 = 0;
 CODE:
-	if (SvOK(callback) && SvROK(callback) && SvTYPE(SvRV(callback)) == SVt_PVCV) {
-		use_cb = 1;
-	} else {
-		data = newAV();
+	/* ---- validation: nothing is allocated yet, so croaks are leak-free */
+	if (SvOK(callback)) {
+		if (SvROK(callback) && SvTYPE(SvRV(callback)) == SVt_PVCV)
+			use_cb = 1;
+		else
+			/* FIX: a defined non-CODE callback used to be silently ignored
+			 * (falling back to slurp mode); now it is an error. */
+			croak("_parse_csv_file: callback must be a CODE reference");
 	}
 	sep_len = sep_str ? strlen(sep_str) : 0;
 	comment_len = comment_str ? strlen(comment_str) : 0;
-
+	sep0 = sep_len ? sep_str[0] : 0;
 	fp = PerlIO_open(file, "r");
-	if (!fp) {
+	if (!fp)
 		croak("Could not open file '%s'", file);
-	}
-	line_sv = newSV_type(SVt_PV);
-	// Read line by line using PerlIO
+	/* ---- from here on, a die inside the callback must not leak anything:
+	 * tie every long-lived resource to the save stack, which croak unwinds */
+	ENTER;
+	SAVEDESTRUCTOR_X(S_pclose, fp);		/* fp closes on normal LEAVE or die */
+	line_sv = newSV(128);
+	SAVEFREESV(line_sv);
+	field = newSVpvs("");
+	SAVEFREESV(field);
+	if (!use_cb)
+		data = newAV();	/* slurp mode runs no perl code: no die can reach it */
+	current_row = newAV();	/* covered by the ownership dance in S_emit_row */
+	/* The wrapper strips a leading comment marker from the HEADER itself, so
+	 * the first content line must reach the callback even when it begins with
+	 * the comment string. Comment-skipping therefore starts only after the
+	 * first row has been emitted. (In the old code the header-strip logic in
+	 * read_table was dead: the parser ate any '#'-prefixed header first.) */
+	bool seen_first = 0;
 	while (sv_gets(line_sv, fp, 0) != NULL) {
-		char *restrict line = SvPV_nolen(line_sv);
+		char *restrict line = SvPVX(line_sv);
 		size_t len = SvCUR(line_sv);
-		// chomp \r\n (Handles Windows invisible \r natively)
-		if (len > 0 && line[len-1] == '\n') {
+		// chomp \n and a preceding \r (CRLF)
+		if (len && line[len-1] == '\n') {
 			len--;
-			if (len > 0 && line[len-1] == '\r') {
+			if (len && line[len-1] == '\r')
 				len--;
-			}
 		}
 		if (!in_quotes) {
-			// Skip completely empty lines (\h*[\r\n]+$ equivalent)
-			bool is_empty = 1;
-			for (size_t i = 0; i < len; i++) {
-				if (line[i] != ' ' && line[i] != '\t') { is_empty = 0; break; }
-			}
-			if (is_empty) continue;
-
-			// Skip comments
-			if (comment_len > 0 && len >= comment_len && strncmp(line, comment_str, comment_len) == 0) {
+			// skip blank / whitespace-only lines
+			size_t k = 0;
+			while (k < len && (line[k] == ' ' || line[k] == '\t'))
+				k++;
+			if (k == len)
 				continue;
+			// skip comment lines -- but never the first content line
+			if (seen_first && comment_len && len >= comment_len
+					&& memcmp(line, comment_str, comment_len) == 0)
+				continue;
+		}
+		// ---- core parser: chunked copies instead of per-char appends
+		{
+		size_t i = 0;
+		while (i < len) {
+			if (in_quotes) {
+				/* Everything up to the next quote is literal -- including
+				 * \r, which the old parser wrongly stripped inside quotes
+				 * (breaking round-trips of values like "x\ry"). */
+				const char *q = (const char *)memchr(line + i, '"', len - i);
+				if (!q) {
+					sv_catpvn(field, line + i, len - i);
+					i = len;
+					break;
+				}
+				{
+					size_t run = (size_t)(q - (line + i));
+					if (run)
+						sv_catpvn(field, line + i, run);
+					i += run;	/* i is now at the quote */
+				}
+				if (i + 1 < len && line[i+1] == '"') {
+					sv_catpvn(field, "\"", 1);	/* "" -> literal " */
+					i += 2;
+				} else {
+					in_quotes = 0;
+					post_quote = 1;
+					i += 1;
+				}
+			} else {
+				/* copy a run of ordinary bytes in one shot */
+				size_t start = i;
+				while (i < len) {
+					const char c = line[i];
+					if (c == '"' || c == '\r')
+						break;
+					if (c == sep0 && sep_len && (len - i) >= sep_len
+							&& (sep_len == 1
+								|| memcmp(line + i, sep_str, sep_len) == 0))
+						break;
+					i++;
+				}
+				if (i > start)
+					sv_catpvn(field, line + start, i - start);
+				if (i >= len)
+					break;
+				{
+					const char c = line[i];
+					if (c == '"') {
+						/* lenient: a quote after a closed quote is dropped,
+						 * matching the old parser */
+						if (!post_quote)
+							in_quotes = 1;
+						i++;
+					} else if (c == '\r') {
+						i++;	/* stray CR outside quotes: ignored, as before */
+					} else {
+						/* separator */
+						av_push(current_row, newSVsv(field));
+						sv_setpvs(field, "");
+						post_quote = 0;
+						i += sep_len;
+					}
+				}
 			}
 		}
-		for (size_t i = 0; i < len; i++) {// --- CORE PARSING MACHINE
-			const char ch = line[i];
-			if (ch == '\r') continue;
-			if (ch == '"') {
-				if (in_quotes && (i + 1 < len) && line[i+1] == '"') {
-					sv_catpvn(field, "\"", 1);
-					i++; // Skip the escaped second quote
-				} else if (in_quotes) {
-					in_quotes = 0;  // Close quotes
-					post_quote = 1;
-				} else if (!post_quote) {
-					in_quotes = 1; // Open quotes (only when not in post-quote state)
-				}
-			} else if (!in_quotes && sep_len > 0 && (len - i) >= sep_len && strncmp(line + i, sep_str, sep_len) == 0) {
-				av_push(current_row, newSVsv(field));
-				sv_setpvs(field, ""); // Reset for next field
-				i += sep_len - 1;     // Advance past multi-char separators
-				post_quote = 0;
-			} else {
-				sv_catpvn(field, &ch, 1);
-			}
 		}
 		if (in_quotes) {
-			// Line ended but quotes are still open! Append newline and fetch next
+			/* open quote at EOL: logical record continues on the next line */
 			sv_catpvn(field, "\n", 1);
 		} else {
-			post_quote = 0; // Reset post-quote state at row boundary
-			// Push the final field of the record
-			av_push(current_row, newSVsv(field));
-			sv_setpvs(field, "");
-			// If a callback is provided, invoke it in a streaming fashion
-			if (use_cb) {
-				dSP;
-				ENTER;
-				SAVETMPS;
-				PUSHMARK(SP);
-				XPUSHs(sv_2mortal(newRV_inc((SV*)current_row)));
-				PUTBACK;
-				call_sv(callback, G_DISCARD);
-				FREETMPS;
-				LEAVE;
-				SvREFCNT_dec(current_row); // Frees the row from C memory if Perl didn't keep it
-			} else {
-				av_push(data, newRV_noinc((SV*)current_row));
-			}
-			current_row = newAV();
+			post_quote = 0;
+			S_emit_row(aTHX_ &current_row, field, use_cb, callback, data);
+			seen_first = 1;
 		}
 	}
-	PerlIO_close(fp);
-	SvREFCNT_dec(line_sv);
-
-	if (in_quotes) {
-		av_push(current_row, newSVsv(field));
-		if (use_cb) {
-			dSP;
-			ENTER;
-			SAVETMPS;
-			PUSHMARK(SP);
-			XPUSHs(sv_2mortal(newRV_inc((SV*)current_row)));
-			PUTBACK;
-			call_sv(callback, G_DISCARD);
-			FREETMPS;
-			LEAVE;
-			SvREFCNT_dec(current_row);
-		} else {
-			av_push(data, newRV_noinc((SV*)current_row));
-		}
-		current_row = newAV();
+	if (in_quotes) {/* EOF with an unterminated quote: flush the trailing record */
+		S_emit_row(aTHX_ &current_row, field, use_cb, callback, data);
 	}
-	SvREFCNT_dec(field);
-	SvREFCNT_dec(current_row);
+	SvREFCNT_dec((SV*)current_row);// the spare row S_emit_row left behind
+	LEAVE;// closes fp, frees line_sv and field
 	if (use_cb) {
 		RETVAL = newSV(0); // fresh undef; mortalizing immortal &PL_sv_undef underflows it on perl<5.18
 	} else {

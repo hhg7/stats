@@ -152,122 +152,149 @@ sub summary {
 
 sub read_table {
 	my $file = shift;
-	die "\"$file\" is not a file" unless -f $file;
-	die "\"$file\" is not readable" unless -r $file;
+	die "read_table: \"$file\" is not a file\n"   unless -f $file;
+	die "read_table: \"$file\" is not readable\n" unless -r $file;
 
 	my %input_args = @_;
-	if (defined $input_args{delim}) {
-	  $input_args{sep} = delete $input_args{delim};
+	if (exists $input_args{delim}) {
+		# FIX: sep + delim together used to silently prefer delim
+		die "read_table: pass either 'sep' or 'delim', not both\n"
+			if exists $input_args{sep};
+		$input_args{sep} = delete $input_args{delim};
 	}
 
-	my $default_sep = ',';
-	if ($file =~ /\.tsv$/i) {
-	  $default_sep = "\t";
-	} elsif ($file =~ /\.csv$/i) {
-	  $default_sep = ",";
-	}
-
+	my $default_sep = $file =~ /\.tsv$/i ? "\t" : ',';
 	my %args = (
-	  sep     => $default_sep,
-	  comment => '#',
-	  %input_args,
+		sep     => $default_sep,
+		comment => '#',
+		%input_args,
 	);
 
-	my %allowed_args = map {$_ => 1} (
-	  'comment', 'output.type', 'filter', 'row.names', 'sep', 'delim'
+	my %allowed_args = map { $_ => 1 } (
+		'comment', 'output.type', 'filter', 'row.names', 'sep',
 	);
-	my @undef_args = sort grep {!$allowed_args{$_}} keys %args;
-	if (scalar @undef_args > 0) {
-		my $current_sub = (split(/::/,(caller(0))[3]))[-1]; # only needed on the error path
-		say join (', ', @undef_args);
-		die "the above args aren't defined for $current_sub";
+	my @undef_args = sort grep { !$allowed_args{$_} } keys %args;
+	if (@undef_args) {
+		my $current_sub = ( split /::/, (caller(0))[3] )[-1];
+		# FIX: no more printing to STDOUT from a library ('say'); the die
+		# message carries the offending argument names itself
+		die "the args \"@undef_args\" aren't defined for $current_sub\n";
 	}
-	$args{'output.type'} = $args{'output.type'} // 'aoh';
-	if ($args{'output.type'} !~ m/^(?:aoh|hoa|hoh)$/) {
-		die "\"$args{'output.type'}\" isn't allowed";
-	}
+	my $otype = $args{'output.type'} // 'aoh';
+	die "read_table: output.type \"$otype\" isn't allowed (aoh, hoa, hoh)\n"
+		unless $otype =~ m/^(?:aoh|hoa|hoh)$/;
+
 	my $filter = $args{filter};
 	if (defined $filter && ref($filter) eq 'CODE') {
 		$filter = { 0 => $filter };
 	} elsif (defined $filter && ref($filter) ne 'HASH') {
-		die "'filter' must be a CODE or HASH reference";
+		die "'filter' must be a CODE or HASH reference\n";
 	}
-	my (@data, %data, @header, %mapped_filters, @sorted_filter_flds, %seen_rownames);
+
+	my (@data, %data, @header, @uniq_header,
+	    %mapped_filters, @sorted_filter_flds, %seen_rownames);
+	my $data_row = 0;
 	_parse_csv_file($file, $args{sep} // '', $args{comment} // '', sub {
 		my ($line_ref) = @_;
 		if (!@header) {
 			# --- HEADER PROCESSING (copy made only here; runs once) ---
 			my @line = @$line_ref;
-			$line[0] =~ s/^\Q$args{comment}\E// if @line && defined $line[0];
-			# NOTE: trailing-empty stripping removed — the header is now treated like
-			# data rows, so a consistent trailing separator no longer produces a false
-			# "Alignment error". The alignment check still rejects genuinely ragged rows.
+			$line[0] =~ s/^\Q$args{comment}\E//
+				if @line && defined $line[0] && length( $args{comment} // '' );
 			@header = @line;
-			if ((scalar @header > 0) && ($header[0] eq '')) {
+			if (@header && $header[0] eq '') {
 				$header[0] = 'row_name';
 			}
 			my %seen_h;
-			my @dup_cols = grep { $seen_h{$_}++ } @header;
-			warn "read_table: duplicate column name(s) in $file: @dup_cols (later values win)\n" if @dup_cols;
-			if (($args{'output.type'} eq 'hoh') && (not defined $args{'row.names'})) {
+			# FIX: hoa output with duplicate column names used to push the
+			# same cell once PER OCCURRENCE, silently corrupting the column
+			# lengths. Iterate unique names (order preserved) instead.
+			@uniq_header = grep { !$seen_h{$_}++ } @header;
+			my @dup_cols = grep { $seen_h{$_} > 1 } @uniq_header;
+			warn "read_table: duplicate column name(s) in $file: @dup_cols (later values win)\n"
+				if @dup_cols;
+			if ($otype eq 'hoh' && !defined $args{'row.names'}) {
 				$args{'row.names'} = $header[0];
 			}
-			if ((defined $args{'row.names'}) && (!grep {$_ eq $args{'row.names'}} @header)) {
-				die "\"$args{'row.names'}\" isn't in the header of $file";
+			if (defined $args{'row.names'}
+					&& !grep { $_ eq $args{'row.names'} } @header) {
+				die "\"$args{'row.names'}\" isn't in the header of $file\n";
 			}
 			if ($filter) {
 				for my $k (keys %$filter) {
 					if ($k =~ /^\d+$/) {
+						# FIX: a numeric key past the last column used to be
+						# accepted and then silently extended every row via
+						# the $_ write-back
+						die "read_table: numeric filter key $k exceeds the "
+						  . scalar(@header) . " columns of $file\n"
+							if $k > @header;
 						$mapped_filters{$k} = $filter->{$k};
 					} else {
-						my ($idx) = grep { $header[$_] eq $k } 0..$#header;
-						die "Filter column '$k' not found in header" unless defined $idx;
-						$mapped_filters{$idx + 1} = $filter->{$k};
+						my ($idx) = grep { $header[$_] eq $k } 0 .. $#header;
+						die "Filter column '$k' not found in header\n"
+							unless defined $idx;
+						$mapped_filters{ $idx + 1 } = $filter->{$k};
 					}
 				}
-				@sorted_filter_flds = sort { $a <=> $b } keys %mapped_filters; # constant per file
+				@sorted_filter_flds = sort { $a <=> $b } keys %mapped_filters;
 			}
 			return;
 		}
-		# --- DATA PROCESSING (operate on $line_ref directly; no per-row array copy) ---
-		if (scalar @$line_ref != scalar @header) {
-			die "Alignment error on $file (" . scalar(@$line_ref) . " fields vs " . scalar(@header) . " headers).";
+		# --- DATA PROCESSING (operate on $line_ref directly; no row copy) ---
+		$data_row++;
+		if (@$line_ref != @header) {
+			# FIX: alignment errors now say WHICH row is ragged
+			die sprintf "Alignment error on %s data row %d (%d fields vs %d headers).\n",
+				$file, $data_row, scalar @$line_ref, scalar @header;
 		}
 		my %line_hash;
 		for my $i (0 .. $#header) {
 			my $v = $line_ref->[$i];
-			$line_hash{$header[$i]} = (!defined($v) || $v eq '') ? undef : $v;
+			$line_hash{ $header[$i] } = ( !defined($v) || $v eq '' ) ? undef : $v;
 		}
 		# --- APPLY FILTERS ---
 		if (@sorted_filter_flds) {
-			local %_ = %line_hash; # row available as %_; set once per row, not per field
+			# FIX: 'local %_ = %line_hash' copied the whole row for every
+			# filtered row AND went stale after a $_ write-back. Aliasing the
+			# glob makes %_ THE row hash: zero copy, mutations always visible.
+			local *_ = \%line_hash;
 			my $skip = 0;
 			foreach my $fld (@sorted_filter_flds) {
-				local $_ = $fld == 0 ? $line_ref : $line_hash{$header[$fld - 1]};
-				if (!$mapped_filters{$fld}->($line_ref, \%line_hash)) { $skip = 1; last; }
-				if ($fld > 0) { # write back any mutation the callback made to $_
-					$line_ref->[$fld - 1] = $_;
-					$line_hash{$header[$fld - 1]} = (!defined($_) || $_ eq '') ? undef : $_;
+				local $_ = $fld == 0 ? $line_ref : $line_hash{ $header[ $fld - 1 ] };
+				if ( !$mapped_filters{$fld}->( $line_ref, \%line_hash ) ) {
+					$skip = 1;
+					last;
+				}
+				if ( $fld > 0 ) {	# write back any mutation made to $_
+					$line_ref->[ $fld - 1 ] = $_;
+					$line_hash{ $header[ $fld - 1 ] }
+						= ( !defined($_) || $_ eq '' ) ? undef : $_;
 				}
 			}
 			return if $skip;
 		}
 		# Populate requested data structure
-		if ($args{'output.type'} eq 'aoh') {
+		if ($otype eq 'aoh') {
 			push @data, \%line_hash;
-		} elsif ($args{'output.type'} eq 'hoa') {
-			push @{ $data{$_} }, $line_hash{$_} for @header;
-		} elsif ($args{'output.type'} eq 'hoh') {
-			my $row_name = $line_hash{$args{'row.names'}};
+		} elsif ($otype eq 'hoa') {
+			push @{ $data{$_} }, $line_hash{$_} for @uniq_header;
+		} elsif ($otype eq 'hoh') {
+			my $row_name = $line_hash{ $args{'row.names'} };
+			# FIX: an undef/empty row-name cell used to become the '' hash
+			# key with "uninitialized" warnings; now it dies with the row
+			die sprintf "read_table: undefined row name (column '%s') in %s data row %d\n",
+				$args{'row.names'}, $file, $data_row
+				unless defined $row_name;
 			warn "read_table: duplicate row name '$row_name' in $file (later values win)\n"
 				if $seen_rownames{$row_name}++;
-			foreach my $col (@header) {
+			foreach my $col (@uniq_header) {
 				next if $col eq $args{'row.names'};
 				$data{$row_name}{$col} = $line_hash{$col};
 			}
 		}
 	});
-	if ($args{'output.type'} eq 'aoh') {
+	if ($otype eq 'aoh') {
 		return \@data;
 	} else { # hoa or hoh
 		return \%data;
