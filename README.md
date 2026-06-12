@@ -1759,10 +1759,11 @@ All arguments after the data reference are optional name/value pairs.
 | Argument        | Default | Meaning                                                                 |
 |-----------------|---------|-------------------------------------------------------------------------|
 | `n`             | `6`     | Number of rows to show. `n` greater than the table shows everything.    |
+| `rows`          | `6`     | Number of rows to show. `n` greater than the table shows everything  (synonymous with `n`)|
 | `cols` / `columns` | —    | Array ref pinning column order (and which columns appear).              |
 | `row.names`     | —       | Column to use as the row label (for `aoh`/`hoa`). See ordering note.    |
 | `na`            | `'NA'`  | Token printed for undefined cells.                                      |
-| `max_width`     | `50`    | Truncate any cell wider than this (column names are never truncated).   |
+| `max_width`     | `80`    | Truncate any cell wider than this (column names are never truncated).   |
 | `ellipsis`      | `'...'` | Marker appended to truncated cells.                                     |
 | `gap`           | `2`     | Spaces between columns.                                                 |
 | `to`            | STDOUT  | Filehandle to print to.                                                 |
@@ -1831,6 +1832,55 @@ Args can also be accepted:
 
 # changes
 
+## 0.16
+
+### `view`
+
+default view shifted to 80 characters to match Linux window length
+
+#### New features
+
+- **`rows` is accepted as a synonym for `n`** (the number of rows shown).
+  Passing both `n` and `rows` is an error.
+- **Unknown arguments are now rejected.** `view` validates its argument names
+  against the documented set (`n`, `rows`, `na`, `max_width`, `ellipsis`,
+  `gap`, `cols`, `columns`, `to`, `return_only`, `row.names`, `row_names`) and
+  dies listing any it does not recognise, so a misspelt option (e.g. `widht`)
+  is caught instead of silently ignored.
+- **`n` / `rows` is validated.** It must be a non-negative integer; `undef` or
+  a non-numeric value now dies with a clear message instead of producing
+  warnings and being treated as `0`.
+
+#### Bug fixes
+
+- **`n => 0` now still prints the column header.** Column names were collected
+  only from the rows being shown, so requesting zero rows produced an empty
+  header line. At least one row is now scanned (when data exists) so the
+  header always lists the columns.
+- **An empty hash (`{}`) no longer dies.** It was rejected as
+  *"neither ARRAY nor HASH"*; it is now shown as an empty table
+  (`0 rows x 0 cols`), matching the handling of an empty array.
+- **The `row_names` alias now drives the Hash-of-Hashes label header.** The
+  header for the row-label column consulted only `row.names`, so
+  `row_names => 'id'` displayed `row_name` instead of `id`. Both spellings are
+  now honoured consistently.
+- **Malformed nested values degrade gracefully.** A Hash-of-Arrays column or
+  Hash-of-Hashes row whose value is not actually an array/hash reference now
+  renders as empty cells rather than throwing a dereference error.
+
+#### Performance
+
+- Column gathering no longer sorts once per scanned row. Unique column names
+  are collected across the scanned rows and sorted a single time (same output
+  order), and the ellipsis length is computed once rather than per cell.
+
+#### Tests
+
+- `t/view.t` is self-contained (the `view` implementation is inlined; it loads
+  no other files) and covers the new argument handling, the bug fixes above,
+  and the existing AoH / HoA / HoH behaviour, alignment, truncation, and
+  output-path handling.
+
 ## 0.15
 
 `view` function added, similar to R's `head`
@@ -1849,6 +1899,114 @@ Numerous changes to prevent quadmath/long double CPAN test failures
 Minimum Scalar::Util version in dist.ini is now 1.22, see https://www.cpantesters.org/cpan/report/6b682236-6567-11f1-a3bc-a055f9c4ba34
 
 `Digest::SHA` is no longer needed, and removed as a dependency
+
+### `read_table`
+
+#### Bug fixes
+
+- **A comment-prefixed header is now read correctly.** `read_table` strips a
+  leading comment marker from the header line (so a file may begin with
+  `#id,val`), but that strip was dead code: the XS parser skipped *every* line
+  beginning with the comment string before the callback ever saw it, so a
+  commented header was silently dropped and the first data row was mistaken for
+  the header. The parser now delivers the first content line even when it
+  begins with the comment marker, and only skips comment lines after the header
+  has been seen.
+
+- **Carriage returns inside quoted fields are preserved.** The parser stripped
+  `\r` unconditionally, so a quoted value such as `"x\ry"` lost its carriage
+  return and would not survive a `write_table` -> `read_table` round-trip. `\r`
+  is now stripped only as part of a trailing CRLF line ending and as a stray CR
+  *outside* quotes; inside quotes it is literal data.
+
+- **Duplicate column names no longer corrupt `hoa` output.** With
+  `output.type => 'hoa'`, a repeated column name pushed the same cell once per
+  occurrence, so the affected columns came out longer than the others and the
+  arrays no longer lined up by row. Columns are now keyed by unique header name
+  (first-seen order preserved, later values win, one warning emitted).
+
+- **A defined non-CODE callback is now an error.** Passing a defined argument
+  that was not a CODE reference silently fell through to slurp mode and ignored
+  the argument; it now croaks
+  (*"callback must be a CODE reference"*).
+
+- **An undefined/empty `hoh` row-name now dies instead of keying on `""`.**
+  With `output.type => 'hoh'`, a row whose row-name column was empty/undef was
+  stored under the `''` key and raised *"uninitialized value"* warnings. It now
+  dies, naming the column and the offending data row.
+
+- **A numeric filter key past the last column now dies.** A 1-based numeric
+  filter key greater than the column count was accepted, then silently extended
+  every row through the `$_` write-back. It is now rejected up front with a
+  message naming the column count.
+
+- **`sep` and `delim` together now die.** Supplying both silently preferred
+  `delim`; passing both is now an explicit error (`delim` remains an alias for
+  `sep` when used alone).
+
+- **The library no longer prints to STDOUT.** The unknown-argument path used
+  `say` to dump the offending names to STDOUT before dying; the names are now
+  carried in the `die` message itself.
+
+#### Better diagnostics
+
+- Alignment errors now report **which data row** is ragged
+  (*"Alignment error on FILE data row N (X fields vs Y headers)"*), instead of
+  only the field/header counts.
+
+#### Memory-leak fixes (exception paths)
+
+The parser allocated its working buffers (`current_row`, `field`, and — in
+slurp mode — `data`) in the XS `INIT:` block, i.e. *before* any validation, and
+freed them only by falling off the end of the function. Any non-local exit
+therefore leaked:
+
+- the open-failure `croak` leaked the row buffer and field (and the slurp
+  accumulator);
+- far more commonly, a `die` thrown **inside the row callback** — which
+  `read_table` does routinely on alignment errors, bad row names, and filter
+  exceptions — unwound straight out of the XS frame and leaked the field, the
+  current row, the line buffer, the slurp accumulator, *and the open file
+  handle*.
+
+Allocations now happen in `CODE:` after every croak-able check, and every
+long-lived resource (the file handle via `SAVEDESTRUCTOR_X`, the buffers via
+`SAVEFREESV`) is tied to the save stack, which an exception unwinds. Measured
+with `Test::LeakTrace`: a `die` mid-file went from 5 leaked SVs to 0, and an
+open failure from 2 to 0. This is the likely source of the constant-size leaks
+seen in CPAN-tester reports for the exception-path tests.
+
+#### Performance
+
+- **~2.5x faster parsing** (57 -> 145 MB/s on a 100k-row quoted file). The core
+  loop appended one character at a time with `sv_catpvn(field, &ch, 1)`; it now
+  scans runs of ordinary bytes with `memchr` / a bounded scan and appends each
+  run in a single `sv_catpvn`, copying field contents in bulk rather than byte
+  by byte.
+
+#### Internal / non-behavioral
+
+- XS declarations moved from `INIT:` to `PREINIT:`; allocations deferred into
+  `CODE:` (see the leak fixes above).
+- The filter loop now aliases the row hash with `local *_ = \%line_hash`
+  instead of copying it with `local %_ = %line_hash`. This removes a full
+  per-row hash copy for every filtered row and fixes a latent staleness bug:
+  after a filter mutated `$_` and the change was written back, `%_` still
+  reflected the pre-mutation copy, so a subsequent filter in the same row saw
+  stale values. With aliasing, `%_` *is* the row, so write-backs are always
+  visible.
+
+#### Known limitation (not changed)
+
+- **`undef.val` does not round-trip back to `undef`.** `write_table` renders an
+  `undef` cell as an empty field by default, and `read_table` maps an empty
+  field back to `undef`, so the *default* round-trip is clean. But if a file is
+  written with a token such as `'undef.val' => 'NA'`, `read_table` has no
+  inverse option and reads `NA` back as the string `'NA'`. `read_table` also
+  cannot distinguish a deliberately quoted empty string (`""`) from a missing
+  value -- both become `undef`. Adding an `na.strings`-style option to
+  `read_table` (mapping configurable tokens and/or empty fields to `undef`)
+  would close this gap.
 
 ### `write_table`
 

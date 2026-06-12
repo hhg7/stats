@@ -2685,6 +2685,140 @@ Minimum Scalar::Util version in dist.ini is now 1.22, see https://www.cpantester
 
 C<Digest::SHA> is no longer needed, and removed as a dependency
 
+=head3 C<read_table>
+
+=head4 Bug fixes
+
+=over
+
+=item * B<A comment-prefixed header is now read correctly.> C<read_table> strips a
+leading comment marker from the header line (so a file may begin with
+C<#id,val>), but that strip was dead code: the XS parser skipped I<every> line
+beginning with the comment string before the callback ever saw it, so a
+commented header was silently dropped and the first data row was mistaken for
+the header. The parser now delivers the first content line even when it
+begins with the comment marker, and only skips comment lines after the header
+has been seen.
+
+=item * B<Carriage returns inside quoted fields are preserved.> The parser stripped
+C<\r> unconditionally, so a quoted value such as C<"x\ry"> lost its carriage
+return and would not survive a C<write_table> -> C<read_table> round-trip. C<\r>
+is now stripped only as part of a trailing CRLF line ending and as a stray CR
+I<outside> quotes; inside quotes it is literal data.
+
+=item * B<< Duplicate column names no longer corrupt C<hoa> output. >> With
+C<< output.type =E<gt> 'hoa' >>, a repeated column name pushed the same cell once per
+occurrence, so the affected columns came out longer than the others and the
+arrays no longer lined up by row. Columns are now keyed by unique header name
+(first-seen order preserved, later values win, one warning emitted).
+
+=item * B<A defined non-CODE callback is now an error.> Passing a defined argument
+that was not a CODE reference silently fell through to slurp mode and ignored
+the argument; it now croaks
+(I<"callback must be a CODE reference">).
+
+=item * B<< An undefined/empty C<hoh> row-name now dies instead of keying on C<"">. >>
+With C<< output.type =E<gt> 'hoh' >>, a row whose row-name column was empty/undef was
+stored under the C<''> key and raised I<"uninitialized value"> warnings. It now
+dies, naming the column and the offending data row.
+
+=item * B<A numeric filter key past the last column now dies.> A 1-based numeric
+filter key greater than the column count was accepted, then silently extended
+every row through the C<$_> write-back. It is now rejected up front with a
+message naming the column count.
+
+=item * B<< C<sep> and C<delim> together now die. >> Supplying both silently preferred
+C<delim>; passing both is now an explicit error (C<delim> remains an alias for
+C<sep> when used alone).
+
+=item * B<The library no longer prints to STDOUT.> The unknown-argument path used
+C<say> to dump the offending names to STDOUT before dying; the names are now
+carried in the C<die> message itself.
+
+=back
+
+=head4 Better diagnostics
+
+=over
+
+=item * Alignment errors now report B<which data row> is ragged
+(I<"Alignment error on FILE data row N (X fields vs Y headers)">), instead of
+only the field/header counts.
+
+=back
+
+=head4 Memory-leak fixes (exception paths)
+
+The parser allocated its working buffers (C<current_row>, C<field>, and — in
+slurp mode — C<data>) in the XS C<INIT:> block, i.e. I<before> any validation, and
+freed them only by falling off the end of the function. Any non-local exit
+therefore leaked:
+
+=over
+
+=item * the open-failure C<croak> leaked the row buffer and field (and the slurp
+accumulator);
+
+=item * far more commonly, a C<die> thrown B<inside the row callback> — which
+C<read_table> does routinely on alignment errors, bad row names, and filter
+exceptions — unwound straight out of the XS frame and leaked the field, the
+current row, the line buffer, the slurp accumulator, I<and the open file
+handle>.
+
+=back
+
+Allocations now happen in C<CODE:> after every croak-able check, and every
+long-lived resource (the file handle via C<SAVEDESTRUCTOR_X>, the buffers via
+C<SAVEFREESV>) is tied to the save stack, which an exception unwinds. Measured
+with C<Test::LeakTrace>: a C<die> mid-file went from 5 leaked SVs to 0, and an
+open failure from 2 to 0. This is the likely source of the constant-size leaks
+seen in CPAN-tester reports for the exception-path tests.
+
+=head4 Performance
+
+=over
+
+=item * B<~2.5x faster parsing> (57 -> 145 MB/s on a 100k-row quoted file). The core
+loop appended one character at a time with C<sv_catpvn(field, &ch, 1)>; it now
+scans runs of ordinary bytes with C<memchr> / a bounded scan and appends each
+run in a single C<sv_catpvn>, copying field contents in bulk rather than byte
+by byte.
+
+=back
+
+=head4 Internal / non-behavioral
+
+=over
+
+=item * XS declarations moved from C<INIT:> to C<PREINIT:>; allocations deferred into
+C<CODE:> (see the leak fixes above).
+
+=item * The filter loop now aliases the row hash with C<local *_ = \%line_hash>
+instead of copying it with C<local %_ = %line_hash>. This removes a full
+per-row hash copy for every filtered row and fixes a latent staleness bug:
+after a filter mutated C<$_> and the change was written back, C<%_> still
+reflected the pre-mutation copy, so a subsequent filter in the same row saw
+stale values. With aliasing, C<%_> I<is> the row, so write-backs are always
+visible.
+
+=back
+
+=head4 Known limitation (not changed)
+
+=over
+
+=item * B<< C<undef.val> does not round-trip back to C<undef>. >> C<write_table> renders an
+C<undef> cell as an empty field by default, and C<read_table> maps an empty
+field back to C<undef>, so the I<default> round-trip is clean. But if a file is
+written with a token such as C<< 'undef.val' =E<gt> 'NA' >>, C<read_table> has no
+inverse option and reads C<NA> back as the string C<'NA'>. C<read_table> also
+cannot distinguish a deliberately quoted empty string (C<"">) from a missing
+value -- both become C<undef>. Adding an C<na.strings>-style option to
+C<read_table> (mapping configurable tokens and/or empty fields to C<undef>)
+would close this gap.
+
+=back
+
 =head3 C<write_table>
 
 =head4 Behavior change

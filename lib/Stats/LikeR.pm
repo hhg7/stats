@@ -4,7 +4,7 @@ require 5.010;
 use strict;
 use feature 'say';
 package Stats::LikeR;
-our $VERSION = 0.15;
+our $VERSION = 0.16;
 require XSLoader;
 use Devel::Confess 'color';
 use warnings FATAL => 'all';
@@ -327,131 +327,164 @@ sub read_table {
 # column literally named 'row_name' (read_table's label for a leading blank
 # header) as the row label. Pass cols => [...] to override the order.
 # ---------------------------------------------------------------------------
-use Scalar::Util qw(looks_like_number);
 
 sub view {
 	my $data = shift;
 	my %args = @_;
-	my $n     = exists $args{n}         ? $args{n}         : 6;
+	# --- reject unknown arguments (mirrors read_table/write_table) ---
+	my %allowed = map { $_ => 1 } qw(n rows na max_width ellipsis gap cols
+	columns to return_only row.names row_names);
+	my @bad = sort grep { !$allowed{$_} } keys %args;
+	die "view: unknown argument(s): @bad\n" if @bad;
+	# --- n / rows (synonyms); reject conflicting or non-integer values ---
+	die "view: pass either 'n' or 'rows', not both\n"
+		if exists $args{n} && exists $args{rows};
+	my $n = exists $args{rows} ? $args{rows}
+		  : exists $args{n}    ? $args{n}
+		  :                       6;
+	die "view: 'n'/'rows' must be a non-negative integer\n"
+		unless defined $n && $n =~ /^\d+$/;
 	my $na    = exists $args{na}        ? $args{na}        : 'NA';
-	my $maxw  = exists $args{max_width} ? $args{max_width} : 50;
+	my $maxw  = exists $args{max_width} ? $args{max_width} : 80;
 	my $ell   = exists $args{ellipsis}  ? $args{ellipsis}  : '...';
 	my $gap   = exists $args{gap}       ? (' ' x $args{gap}) : '  ';
 	my $ucols = $args{cols} || $args{columns};
 	my $fh    = $args{to};
 	my $quiet = $args{return_only};
-
+	# 'row.names' takes precedence over the row_names alias (both accepted)
 	my $label_col = exists $args{'row.names'} ? $args{'row.names'}
-		         : exists $args{row_names}   ? $args{row_names}
-		         : undef;
+		          : exists $args{row_names}   ? $args{row_names}
+		          : undef;
 	my $rt = ref $data;
 	die "view: expected an ARRAY (AoH) or HASH (HoA/HoH) reference, got "
 	  . ($rt || 'a non-reference') . "\n"
 	  unless $rt eq 'ARRAY' or $rt eq 'HASH';
 	my ($kind, @cols, @labels, @raw, $total, $lab_header);
 	if ($rt eq 'ARRAY') { # ---- AoH ----
-	  $kind  = 'AoH';
-	  $total = scalar @$data;
-	  my $show = $n < $total ? $n : $total;
-	  $show = 0 if $show < 0;
-
-	  if ($ucols) {
-		   @cols = @$ucols;
-	  } else {
-		   my %seen;
-		   for my $i (0 .. $show - 1) {
-		       my $row = $data->[$i];
-		       next unless ref $row eq 'HASH';
-		       push @cols, grep { !$seen{$_}++ } sort keys %$row;
-		   }
-	  }
-	  my $lc = defined $label_col ? $label_col
-		      : (grep { $_ eq 'row_name' } @cols) ? 'row_name' : undef;
-	  if (defined $lc) {
-		   @cols = grep { $_ ne $lc } @cols;
-		   $lab_header = $lc;
-	  }
-	  for my $i (0 .. $show - 1) {
-		   my $row = $data->[$i] || {};
-		   push @labels, defined $lc ? $row->{$lc} : ($i + 1);
-		   push @raw, [ map { $row->{$_} } @cols ];
-	  }
-	  $lab_header = '' unless defined $lab_header;
+		$kind  = 'AoH';
+		$total = scalar @$data;
+		my $show = $n < $total ? $n : $total;
+		if ($ucols) {
+			@cols = @$ucols;
+		} else {
+# BUG FIX: scan at least one row when data exists, so the header
+# still lists columns even when showing 0 rows (n => 0). PERF:
+# collect unique keys once, then sort once -- not sort-per-row.
+			my $scan = $show > 0 ? $show : ($total > 0 ? 1 : 0);
+			my %seen;
+			for my $i (0 .. $scan - 1) {
+				my $row = $data->[$i];
+				next unless ref $row eq 'HASH';
+				$seen{$_} = 1 for keys %$row;
+			}
+			@cols = sort keys %seen;
+		}
+		my $lc = defined $label_col ? $label_col
+			   : (grep { $_ eq 'row_name' } @cols) ? 'row_name' : undef;
+		if (defined $lc) {
+			@cols = grep { $_ ne $lc } @cols;
+			$lab_header = $lc;
+		}
+		for my $i (0 .. $show - 1) {
+			my $row = $data->[$i];
+			$row = {} unless ref $row eq 'HASH';
+			push @labels, defined $lc ? $row->{$lc} : ($i + 1);
+			push @raw, [ map { $row->{$_} } @cols ];
+		}
+		$lab_header = '' unless defined $lab_header;
 	} elsif ($rt eq 'HASH') {
-	  my @keys = keys %$data;
-	  my $sample;
-	  for my $k (@keys) { $sample = $data->{$k}; last if defined $sample; }
-	  my $vt = ref $sample;
+		my @keys = keys %$data;
+		my $sample;
+		for my $k (@keys) { $sample = $data->{$k}; last if defined $sample; }
+		my $vt = ref $sample;
 
-	  if ($vt eq 'ARRAY') {                               # ---- HoA ----
-		   $kind = 'HoA';
-		   my @allcols = $ucols ? @$ucols : sort @keys;
-		   $total = 0;
-		   for my $k (@keys) {
-		       my $l = ref $data->{$k} eq 'ARRAY' ? scalar @{ $data->{$k} } : 0;
-		       $total = $l if $l > $total;
-		   }
-		   my $show = $n < $total ? $n : $total;
-		   $show = 0 if $show < 0;
-		   my $lc = defined $label_col ? $label_col
-		          : (grep { $_ eq 'row_name' } @allcols) ? 'row_name' : undef;
-		   @cols = grep { !defined $lc || $_ ne $lc } @allcols;
-		   $lab_header = defined $lc ? $lc : '';
-		   for my $i (0 .. $show - 1) {
-		       push @labels, defined $lc ? $data->{$lc}[$i] : ($i + 1);
-		       push @raw, [ map { $data->{$_}[$i] } @cols ];
-		   }
-	  } elsif ($vt eq 'HASH') {                             # ---- HoH ----
-		   $kind = 'HoH';
-		   $total = scalar @keys;
-		   my @rk = sort @keys;
-		   my $show = $n < $total ? $n : $total;
-		   $show = 0 if $show < 0;
-		   my @shown = $show > 0 ? @rk[0 .. $show - 1] : ();
-		   if ($ucols) {
-		       @cols = @$ucols;
-		   } else {
-		       my %seen;
-		       for my $rkk (@shown) {
-		           push @cols, grep { !$seen{$_}++ } sort keys %{ $data->{$rkk} };
-		       }
-		   }
-		   @cols = grep { $_ ne $label_col } @cols if defined $label_col;
-		   $lab_header = exists $args{'row.names'} ? $args{'row.names'} : 'row_name';
-		   for my $rkk (@shown) {
-		       push @labels, $rkk;
-		       push @raw, [ map { $data->{$rkk}{$_} } @cols ];
-		   }
-	  } else {
-		   die "view: HASH values are neither ARRAY (HoA) nor HASH (HoH) refs; "
-		     . "cannot interpret as a table\n";
-	  }
+		if (!@keys) {                                       # ---- empty ----
+			# BUG FIX: an empty hash used to die ("neither ARRAY nor HASH");
+			# treat it as an empty table, mirroring an empty AoH.
+			$kind = 'Hash';
+			$total = 0;
+			$lab_header = '';
+		} elsif ($vt eq 'ARRAY') {                          # ---- HoA ----
+			$kind = 'HoA';
+			my @allcols = $ucols ? @$ucols : sort @keys;
+			$total = 0;
+			for my $k (@keys) {
+				next unless ref $data->{$k} eq 'ARRAY';
+				my $l = scalar @{ $data->{$k} };
+				$total = $l if $l > $total;
+			}
+			my $show = $n < $total ? $n : $total;
+			my $lc = defined $label_col ? $label_col
+				   : (grep { $_ eq 'row_name' } @allcols) ? 'row_name' : undef;
+			@cols = grep { !defined $lc || $_ ne $lc } @allcols;
+			$lab_header = defined $lc ? $lc : '';
+			for my $i (0 .. $show - 1) {
+				push @labels, defined $lc
+					? (ref $data->{$lc} eq 'ARRAY' ? $data->{$lc}[$i] : undef)
+					: ($i + 1);
+				push @raw, [ map {
+					ref $data->{$_} eq 'ARRAY' ? $data->{$_}[$i] : undef
+				} @cols ];
+			}
+		} elsif ($vt eq 'HASH') {                           # ---- HoH ----
+			$kind = 'HoH';
+			$total = scalar @keys;
+			my @rk = sort @keys;
+			my $show = $n < $total ? $n : $total;
+			my @shown = $show > 0 ? @rk[0 .. $show - 1] : ();
+			if ($ucols) {
+				@cols = @$ucols;
+			} else {
+				# PERF: gather unique inner keys, sort once.
+				my %seen;
+				for my $rkk (@shown) {
+					next unless ref $data->{$rkk} eq 'HASH';
+					$seen{$_} = 1 for keys %{ $data->{$rkk} };
+				}
+				@cols = sort keys %seen;
+			}
+			@cols = grep { $_ ne $label_col } @cols if defined $label_col;
+			# BUG FIX: honour the row_names alias here too (was 'row.names'
+			# only, so row_names => 'x' showed a 'row_name' header).
+			$lab_header = defined $label_col ? $label_col : 'row_name';
+			for my $rkk (@shown) {
+				push @labels, $rkk;
+				my $inner = ref $data->{$rkk} eq 'HASH' ? $data->{$rkk} : {};
+				push @raw, [ map { $inner->{$_} } @cols ];
+			}
+		} else {
+			die "view: HASH values are neither ARRAY (HoA) nor HASH (HoH) refs; "
+			  . "cannot interpret as a table\n";
+		}
 	}
 
 	# numeric detection per column (drives right/left alignment)
 	my @numeric = (1) x scalar @cols;
 	for my $r (@raw) {
-	  for my $j (0 .. $#cols) {
-		   my $v = $r->[$j];
-		   next unless defined $v;
-		   $numeric[$j] = 0 unless looks_like_number($v);
-	  }
+		for my $j (0 .. $#cols) {
+			my $v = $r->[$j];
+			next unless defined $v;
+			$numeric[$j] = 0 unless looks_like_number($v);
+		}
 	}
 	my $lab_numeric = @labels ? 1 : 0;
-	for my $l (@labels) { $lab_numeric = 0, last unless defined $l && looks_like_number($l); }
+	for my $l (@labels) {
+		$lab_numeric = 0, last unless defined $l && looks_like_number($l);
+	}
 
 	# stringify + sanitize + truncate cells (column names left intact)
+	my $ell_len = length $ell;
 	my $clean = sub {
-	  my $v = shift;
-	  return $na unless defined $v;
-	  $v = "$v";
-	  $v =~ s/\t/\\t/g; $v =~ s/\r/\\r/g; $v =~ s/\n/\\n/g;
-	  if ($maxw && length($v) > $maxw) {
-		   my $keep = $maxw - length($ell);
-		   $keep = 0 if $keep < 0;
-		   $v = substr($v, 0, $keep) . $ell;
-	  }
-	  return $v;
+		my $v = shift;
+		return $na unless defined $v;
+		$v = "$v";
+		$v =~ s/\t/\\t/g; $v =~ s/\r/\\r/g; $v =~ s/\n/\\n/g;
+		if ($maxw && length($v) > $maxw) {
+			my $keep = $maxw - $ell_len;
+			$keep = 0 if $keep < 0;
+			$v = substr($v, 0, $keep) . $ell;
+		}
+		return $v;
 	};
 	my @lab_s  = map { $clean->($_) } @labels;
 	my @rows_s = map { [ map { $clean->($_) } @$_ ] } @raw;
@@ -459,38 +492,38 @@ sub view {
 
 	# column widths
 	my $lab_w = length $lab_header;
-	$lab_w = length $_ > $lab_w ? length $_ : $lab_w for @lab_s;
+	for my $s (@lab_s) { my $l = length $s; $lab_w = $l if $l > $lab_w; }
 	my @w = map { length $_ } @head_s;
 	for my $r (@rows_s) {
-	  for my $j (0 .. $#cols) {
-		   my $l = length $r->[$j];
-		   $w[$j] = $l if $l > $w[$j];
-	  }
+		for my $j (0 .. $#cols) {
+			my $l = length $r->[$j];
+			$w[$j] = $l if $l > $w[$j];
+		}
 	}
 
 	my $pad = sub {
-	  my ($s, $width, $right) = @_;
-	  my $g = $width - length $s; $g = 0 if $g < 0;
-	  return $right ? (' ' x $g) . $s : $s . (' ' x $g);
+		my ($s, $width, $right) = @_;
+		my $g = $width - length $s; $g = 0 if $g < 0;
+		return $right ? (' ' x $g) . $s : $s . (' ' x $g);
 	};
 
 	my @out;
 	my $shown = scalar @rows_s;
 	push @out, sprintf("# %s: %d row%s x %d col%s  (showing %d)",
-	  $kind, $total, ($total == 1 ? '' : 's'),
-	  scalar(@cols), (@cols == 1 ? '' : 's'), $shown);
+		$kind, $total, ($total == 1 ? '' : 's'),
+		scalar(@cols), (@cols == 1 ? '' : 's'), $shown);
 
 	my @hcells = ( $pad->($lab_header, $lab_w, 0) );
 	push @hcells, $pad->($head_s[$_], $w[$_], $numeric[$_]) for 0 .. $#cols;
 	push @out, join($gap, @hcells);
 
 	for my $ri (0 .. $#rows_s) {
-	  my @cells = ( $pad->($lab_s[$ri], $lab_w, $lab_numeric) );
-	  push @cells, $pad->($rows_s[$ri][$_], $w[$_], $numeric[$_]) for 0 .. $#cols;
-	  push @out, join($gap, @cells);
+		my @cells = ( $pad->($lab_s[$ri], $lab_w, $lab_numeric) );
+		push @cells, $pad->($rows_s[$ri][$_], $w[$_], $numeric[$_]) for 0 .. $#cols;
+		push @out, join($gap, @cells);
 	}
 	push @out, sprintf("# ... %d more row%s", $total - $shown,
-	  ($total - $shown == 1 ? '' : 's')) if $shown < $total;
+		($total - $shown == 1 ? '' : 's')) if $shown < $total;
 
 	my $str = join("\n", @out) . "\n";
 	unless ($quiet) { defined $fh ? print {$fh} $str : print $str; }
@@ -3184,6 +3217,140 @@ Numerous changes to prevent quadmath/long double CPAN test failures
 Minimum Scalar::Util version in dist.ini is now 1.22, see https://www.cpantesters.org/cpan/report/6b682236-6567-11f1-a3bc-a055f9c4ba34
 
 C<Digest::SHA> is no longer needed, and removed as a dependency
+
+=head3 C<read_table>
+
+=head4 Bug fixes
+
+=over
+
+=item * B<A comment-prefixed header is now read correctly.> C<read_table> strips a
+leading comment marker from the header line (so a file may begin with
+C<#id,val>), but that strip was dead code: the XS parser skipped I<every> line
+beginning with the comment string before the callback ever saw it, so a
+commented header was silently dropped and the first data row was mistaken for
+the header. The parser now delivers the first content line even when it
+begins with the comment marker, and only skips comment lines after the header
+has been seen.
+
+=item * B<Carriage returns inside quoted fields are preserved.> The parser stripped
+C<\r> unconditionally, so a quoted value such as C<"x\ry"> lost its carriage
+return and would not survive a C<write_table> -> C<read_table> round-trip. C<\r>
+is now stripped only as part of a trailing CRLF line ending and as a stray CR
+I<outside> quotes; inside quotes it is literal data.
+
+=item * B<< Duplicate column names no longer corrupt C<hoa> output. >> With
+C<< output.type =E<gt> 'hoa' >>, a repeated column name pushed the same cell once per
+occurrence, so the affected columns came out longer than the others and the
+arrays no longer lined up by row. Columns are now keyed by unique header name
+(first-seen order preserved, later values win, one warning emitted).
+
+=item * B<A defined non-CODE callback is now an error.> Passing a defined argument
+that was not a CODE reference silently fell through to slurp mode and ignored
+the argument; it now croaks
+(I<"callback must be a CODE reference">).
+
+=item * B<< An undefined/empty C<hoh> row-name now dies instead of keying on C<"">. >>
+With C<< output.type =E<gt> 'hoh' >>, a row whose row-name column was empty/undef was
+stored under the C<''> key and raised I<"uninitialized value"> warnings. It now
+dies, naming the column and the offending data row.
+
+=item * B<A numeric filter key past the last column now dies.> A 1-based numeric
+filter key greater than the column count was accepted, then silently extended
+every row through the C<$_> write-back. It is now rejected up front with a
+message naming the column count.
+
+=item * B<< C<sep> and C<delim> together now die. >> Supplying both silently preferred
+C<delim>; passing both is now an explicit error (C<delim> remains an alias for
+C<sep> when used alone).
+
+=item * B<The library no longer prints to STDOUT.> The unknown-argument path used
+C<say> to dump the offending names to STDOUT before dying; the names are now
+carried in the C<die> message itself.
+
+=back
+
+=head4 Better diagnostics
+
+=over
+
+=item * Alignment errors now report B<which data row> is ragged
+(I<"Alignment error on FILE data row N (X fields vs Y headers)">), instead of
+only the field/header counts.
+
+=back
+
+=head4 Memory-leak fixes (exception paths)
+
+The parser allocated its working buffers (C<current_row>, C<field>, and — in
+slurp mode — C<data>) in the XS C<INIT:> block, i.e. I<before> any validation, and
+freed them only by falling off the end of the function. Any non-local exit
+therefore leaked:
+
+=over
+
+=item * the open-failure C<croak> leaked the row buffer and field (and the slurp
+accumulator);
+
+=item * far more commonly, a C<die> thrown B<inside the row callback> — which
+C<read_table> does routinely on alignment errors, bad row names, and filter
+exceptions — unwound straight out of the XS frame and leaked the field, the
+current row, the line buffer, the slurp accumulator, I<and the open file
+handle>.
+
+=back
+
+Allocations now happen in C<CODE:> after every croak-able check, and every
+long-lived resource (the file handle via C<SAVEDESTRUCTOR_X>, the buffers via
+C<SAVEFREESV>) is tied to the save stack, which an exception unwinds. Measured
+with C<Test::LeakTrace>: a C<die> mid-file went from 5 leaked SVs to 0, and an
+open failure from 2 to 0. This is the likely source of the constant-size leaks
+seen in CPAN-tester reports for the exception-path tests.
+
+=head4 Performance
+
+=over
+
+=item * B<~2.5x faster parsing> (57 -> 145 MB/s on a 100k-row quoted file). The core
+loop appended one character at a time with C<sv_catpvn(field, &ch, 1)>; it now
+scans runs of ordinary bytes with C<memchr> / a bounded scan and appends each
+run in a single C<sv_catpvn>, copying field contents in bulk rather than byte
+by byte.
+
+=back
+
+=head4 Internal / non-behavioral
+
+=over
+
+=item * XS declarations moved from C<INIT:> to C<PREINIT:>; allocations deferred into
+C<CODE:> (see the leak fixes above).
+
+=item * The filter loop now aliases the row hash with C<local *_ = \%line_hash>
+instead of copying it with C<local %_ = %line_hash>. This removes a full
+per-row hash copy for every filtered row and fixes a latent staleness bug:
+after a filter mutated C<$_> and the change was written back, C<%_> still
+reflected the pre-mutation copy, so a subsequent filter in the same row saw
+stale values. With aliasing, C<%_> I<is> the row, so write-backs are always
+visible.
+
+=back
+
+=head4 Known limitation (not changed)
+
+=over
+
+=item * B<< C<undef.val> does not round-trip back to C<undef>. >> C<write_table> renders an
+C<undef> cell as an empty field by default, and C<read_table> maps an empty
+field back to C<undef>, so the I<default> round-trip is clean. But if a file is
+written with a token such as C<< 'undef.val' =E<gt> 'NA' >>, C<read_table> has no
+inverse option and reads C<NA> back as the string C<'NA'>. C<read_table> also
+cannot distinguish a deliberately quoted empty string (C<"">) from a missing
+value -- both become C<undef>. Adding an C<na.strings>-style option to
+C<read_table> (mapping configurable tokens and/or empty fields to C<undef>)
+would close this gap.
+
+=back
 
 =head3 C<write_table>
 

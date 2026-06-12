@@ -4,7 +4,7 @@ require 5.010;
 use strict;
 use feature 'say';
 package Stats::LikeR;
-our $VERSION = 0.15;
+our $VERSION = 0.16;
 require XSLoader;
 use Devel::Confess 'color';
 use warnings FATAL => 'all';
@@ -327,131 +327,164 @@ sub read_table {
 # column literally named 'row_name' (read_table's label for a leading blank
 # header) as the row label. Pass cols => [...] to override the order.
 # ---------------------------------------------------------------------------
-use Scalar::Util qw(looks_like_number);
 
 sub view {
 	my $data = shift;
 	my %args = @_;
-	my $n     = exists $args{n}         ? $args{n}         : 6;
+	# --- reject unknown arguments (mirrors read_table/write_table) ---
+	my %allowed = map { $_ => 1 } qw(n rows na max_width ellipsis gap cols
+	columns to return_only row.names row_names);
+	my @bad = sort grep { !$allowed{$_} } keys %args;
+	die "view: unknown argument(s): @bad\n" if @bad;
+	# --- n / rows (synonyms); reject conflicting or non-integer values ---
+	die "view: pass either 'n' or 'rows', not both\n"
+		if exists $args{n} && exists $args{rows};
+	my $n = exists $args{rows} ? $args{rows}
+		  : exists $args{n}    ? $args{n}
+		  :                       6;
+	die "view: 'n'/'rows' must be a non-negative integer\n"
+		unless defined $n && $n =~ /^\d+$/;
 	my $na    = exists $args{na}        ? $args{na}        : 'NA';
-	my $maxw  = exists $args{max_width} ? $args{max_width} : 50;
+	my $maxw  = exists $args{max_width} ? $args{max_width} : 80;
 	my $ell   = exists $args{ellipsis}  ? $args{ellipsis}  : '...';
 	my $gap   = exists $args{gap}       ? (' ' x $args{gap}) : '  ';
 	my $ucols = $args{cols} || $args{columns};
 	my $fh    = $args{to};
 	my $quiet = $args{return_only};
-
+	# 'row.names' takes precedence over the row_names alias (both accepted)
 	my $label_col = exists $args{'row.names'} ? $args{'row.names'}
-		         : exists $args{row_names}   ? $args{row_names}
-		         : undef;
+		          : exists $args{row_names}   ? $args{row_names}
+		          : undef;
 	my $rt = ref $data;
 	die "view: expected an ARRAY (AoH) or HASH (HoA/HoH) reference, got "
 	  . ($rt || 'a non-reference') . "\n"
 	  unless $rt eq 'ARRAY' or $rt eq 'HASH';
 	my ($kind, @cols, @labels, @raw, $total, $lab_header);
 	if ($rt eq 'ARRAY') { # ---- AoH ----
-	  $kind  = 'AoH';
-	  $total = scalar @$data;
-	  my $show = $n < $total ? $n : $total;
-	  $show = 0 if $show < 0;
-
-	  if ($ucols) {
-		   @cols = @$ucols;
-	  } else {
-		   my %seen;
-		   for my $i (0 .. $show - 1) {
-		       my $row = $data->[$i];
-		       next unless ref $row eq 'HASH';
-		       push @cols, grep { !$seen{$_}++ } sort keys %$row;
-		   }
-	  }
-	  my $lc = defined $label_col ? $label_col
-		      : (grep { $_ eq 'row_name' } @cols) ? 'row_name' : undef;
-	  if (defined $lc) {
-		   @cols = grep { $_ ne $lc } @cols;
-		   $lab_header = $lc;
-	  }
-	  for my $i (0 .. $show - 1) {
-		   my $row = $data->[$i] || {};
-		   push @labels, defined $lc ? $row->{$lc} : ($i + 1);
-		   push @raw, [ map { $row->{$_} } @cols ];
-	  }
-	  $lab_header = '' unless defined $lab_header;
+		$kind  = 'AoH';
+		$total = scalar @$data;
+		my $show = $n < $total ? $n : $total;
+		if ($ucols) {
+			@cols = @$ucols;
+		} else {
+# BUG FIX: scan at least one row when data exists, so the header
+# still lists columns even when showing 0 rows (n => 0). PERF:
+# collect unique keys once, then sort once -- not sort-per-row.
+			my $scan = $show > 0 ? $show : ($total > 0 ? 1 : 0);
+			my %seen;
+			for my $i (0 .. $scan - 1) {
+				my $row = $data->[$i];
+				next unless ref $row eq 'HASH';
+				$seen{$_} = 1 for keys %$row;
+			}
+			@cols = sort keys %seen;
+		}
+		my $lc = defined $label_col ? $label_col
+			   : (grep { $_ eq 'row_name' } @cols) ? 'row_name' : undef;
+		if (defined $lc) {
+			@cols = grep { $_ ne $lc } @cols;
+			$lab_header = $lc;
+		}
+		for my $i (0 .. $show - 1) {
+			my $row = $data->[$i];
+			$row = {} unless ref $row eq 'HASH';
+			push @labels, defined $lc ? $row->{$lc} : ($i + 1);
+			push @raw, [ map { $row->{$_} } @cols ];
+		}
+		$lab_header = '' unless defined $lab_header;
 	} elsif ($rt eq 'HASH') {
-	  my @keys = keys %$data;
-	  my $sample;
-	  for my $k (@keys) { $sample = $data->{$k}; last if defined $sample; }
-	  my $vt = ref $sample;
+		my @keys = keys %$data;
+		my $sample;
+		for my $k (@keys) { $sample = $data->{$k}; last if defined $sample; }
+		my $vt = ref $sample;
 
-	  if ($vt eq 'ARRAY') {                               # ---- HoA ----
-		   $kind = 'HoA';
-		   my @allcols = $ucols ? @$ucols : sort @keys;
-		   $total = 0;
-		   for my $k (@keys) {
-		       my $l = ref $data->{$k} eq 'ARRAY' ? scalar @{ $data->{$k} } : 0;
-		       $total = $l if $l > $total;
-		   }
-		   my $show = $n < $total ? $n : $total;
-		   $show = 0 if $show < 0;
-		   my $lc = defined $label_col ? $label_col
-		          : (grep { $_ eq 'row_name' } @allcols) ? 'row_name' : undef;
-		   @cols = grep { !defined $lc || $_ ne $lc } @allcols;
-		   $lab_header = defined $lc ? $lc : '';
-		   for my $i (0 .. $show - 1) {
-		       push @labels, defined $lc ? $data->{$lc}[$i] : ($i + 1);
-		       push @raw, [ map { $data->{$_}[$i] } @cols ];
-		   }
-	  } elsif ($vt eq 'HASH') {                             # ---- HoH ----
-		   $kind = 'HoH';
-		   $total = scalar @keys;
-		   my @rk = sort @keys;
-		   my $show = $n < $total ? $n : $total;
-		   $show = 0 if $show < 0;
-		   my @shown = $show > 0 ? @rk[0 .. $show - 1] : ();
-		   if ($ucols) {
-		       @cols = @$ucols;
-		   } else {
-		       my %seen;
-		       for my $rkk (@shown) {
-		           push @cols, grep { !$seen{$_}++ } sort keys %{ $data->{$rkk} };
-		       }
-		   }
-		   @cols = grep { $_ ne $label_col } @cols if defined $label_col;
-		   $lab_header = exists $args{'row.names'} ? $args{'row.names'} : 'row_name';
-		   for my $rkk (@shown) {
-		       push @labels, $rkk;
-		       push @raw, [ map { $data->{$rkk}{$_} } @cols ];
-		   }
-	  } else {
-		   die "view: HASH values are neither ARRAY (HoA) nor HASH (HoH) refs; "
-		     . "cannot interpret as a table\n";
-	  }
+		if (!@keys) {                                       # ---- empty ----
+			# BUG FIX: an empty hash used to die ("neither ARRAY nor HASH");
+			# treat it as an empty table, mirroring an empty AoH.
+			$kind = 'Hash';
+			$total = 0;
+			$lab_header = '';
+		} elsif ($vt eq 'ARRAY') {                          # ---- HoA ----
+			$kind = 'HoA';
+			my @allcols = $ucols ? @$ucols : sort @keys;
+			$total = 0;
+			for my $k (@keys) {
+				next unless ref $data->{$k} eq 'ARRAY';
+				my $l = scalar @{ $data->{$k} };
+				$total = $l if $l > $total;
+			}
+			my $show = $n < $total ? $n : $total;
+			my $lc = defined $label_col ? $label_col
+				   : (grep { $_ eq 'row_name' } @allcols) ? 'row_name' : undef;
+			@cols = grep { !defined $lc || $_ ne $lc } @allcols;
+			$lab_header = defined $lc ? $lc : '';
+			for my $i (0 .. $show - 1) {
+				push @labels, defined $lc
+					? (ref $data->{$lc} eq 'ARRAY' ? $data->{$lc}[$i] : undef)
+					: ($i + 1);
+				push @raw, [ map {
+					ref $data->{$_} eq 'ARRAY' ? $data->{$_}[$i] : undef
+				} @cols ];
+			}
+		} elsif ($vt eq 'HASH') {                           # ---- HoH ----
+			$kind = 'HoH';
+			$total = scalar @keys;
+			my @rk = sort @keys;
+			my $show = $n < $total ? $n : $total;
+			my @shown = $show > 0 ? @rk[0 .. $show - 1] : ();
+			if ($ucols) {
+				@cols = @$ucols;
+			} else {
+				# PERF: gather unique inner keys, sort once.
+				my %seen;
+				for my $rkk (@shown) {
+					next unless ref $data->{$rkk} eq 'HASH';
+					$seen{$_} = 1 for keys %{ $data->{$rkk} };
+				}
+				@cols = sort keys %seen;
+			}
+			@cols = grep { $_ ne $label_col } @cols if defined $label_col;
+			# BUG FIX: honour the row_names alias here too (was 'row.names'
+			# only, so row_names => 'x' showed a 'row_name' header).
+			$lab_header = defined $label_col ? $label_col : 'row_name';
+			for my $rkk (@shown) {
+				push @labels, $rkk;
+				my $inner = ref $data->{$rkk} eq 'HASH' ? $data->{$rkk} : {};
+				push @raw, [ map { $inner->{$_} } @cols ];
+			}
+		} else {
+			die "view: HASH values are neither ARRAY (HoA) nor HASH (HoH) refs; "
+			  . "cannot interpret as a table\n";
+		}
 	}
 
 	# numeric detection per column (drives right/left alignment)
 	my @numeric = (1) x scalar @cols;
 	for my $r (@raw) {
-	  for my $j (0 .. $#cols) {
-		   my $v = $r->[$j];
-		   next unless defined $v;
-		   $numeric[$j] = 0 unless looks_like_number($v);
-	  }
+		for my $j (0 .. $#cols) {
+			my $v = $r->[$j];
+			next unless defined $v;
+			$numeric[$j] = 0 unless looks_like_number($v);
+		}
 	}
 	my $lab_numeric = @labels ? 1 : 0;
-	for my $l (@labels) { $lab_numeric = 0, last unless defined $l && looks_like_number($l); }
+	for my $l (@labels) {
+		$lab_numeric = 0, last unless defined $l && looks_like_number($l);
+	}
 
 	# stringify + sanitize + truncate cells (column names left intact)
+	my $ell_len = length $ell;
 	my $clean = sub {
-	  my $v = shift;
-	  return $na unless defined $v;
-	  $v = "$v";
-	  $v =~ s/\t/\\t/g; $v =~ s/\r/\\r/g; $v =~ s/\n/\\n/g;
-	  if ($maxw && length($v) > $maxw) {
-		   my $keep = $maxw - length($ell);
-		   $keep = 0 if $keep < 0;
-		   $v = substr($v, 0, $keep) . $ell;
-	  }
-	  return $v;
+		my $v = shift;
+		return $na unless defined $v;
+		$v = "$v";
+		$v =~ s/\t/\\t/g; $v =~ s/\r/\\r/g; $v =~ s/\n/\\n/g;
+		if ($maxw && length($v) > $maxw) {
+			my $keep = $maxw - $ell_len;
+			$keep = 0 if $keep < 0;
+			$v = substr($v, 0, $keep) . $ell;
+		}
+		return $v;
 	};
 	my @lab_s  = map { $clean->($_) } @labels;
 	my @rows_s = map { [ map { $clean->($_) } @$_ ] } @raw;
@@ -459,38 +492,38 @@ sub view {
 
 	# column widths
 	my $lab_w = length $lab_header;
-	$lab_w = length $_ > $lab_w ? length $_ : $lab_w for @lab_s;
+	for my $s (@lab_s) { my $l = length $s; $lab_w = $l if $l > $lab_w; }
 	my @w = map { length $_ } @head_s;
 	for my $r (@rows_s) {
-	  for my $j (0 .. $#cols) {
-		   my $l = length $r->[$j];
-		   $w[$j] = $l if $l > $w[$j];
-	  }
+		for my $j (0 .. $#cols) {
+			my $l = length $r->[$j];
+			$w[$j] = $l if $l > $w[$j];
+		}
 	}
 
 	my $pad = sub {
-	  my ($s, $width, $right) = @_;
-	  my $g = $width - length $s; $g = 0 if $g < 0;
-	  return $right ? (' ' x $g) . $s : $s . (' ' x $g);
+		my ($s, $width, $right) = @_;
+		my $g = $width - length $s; $g = 0 if $g < 0;
+		return $right ? (' ' x $g) . $s : $s . (' ' x $g);
 	};
 
 	my @out;
 	my $shown = scalar @rows_s;
 	push @out, sprintf("# %s: %d row%s x %d col%s  (showing %d)",
-	  $kind, $total, ($total == 1 ? '' : 's'),
-	  scalar(@cols), (@cols == 1 ? '' : 's'), $shown);
+		$kind, $total, ($total == 1 ? '' : 's'),
+		scalar(@cols), (@cols == 1 ? '' : 's'), $shown);
 
 	my @hcells = ( $pad->($lab_header, $lab_w, 0) );
 	push @hcells, $pad->($head_s[$_], $w[$_], $numeric[$_]) for 0 .. $#cols;
 	push @out, join($gap, @hcells);
 
 	for my $ri (0 .. $#rows_s) {
-	  my @cells = ( $pad->($lab_s[$ri], $lab_w, $lab_numeric) );
-	  push @cells, $pad->($rows_s[$ri][$_], $w[$_], $numeric[$_]) for 0 .. $#cols;
-	  push @out, join($gap, @cells);
+		my @cells = ( $pad->($lab_s[$ri], $lab_w, $lab_numeric) );
+		push @cells, $pad->($rows_s[$ri][$_], $w[$_], $numeric[$_]) for 0 .. $#cols;
+		push @out, join($gap, @cells);
 	}
 	push @out, sprintf("# ... %d more row%s", $total - $shown,
-	  ($total - $shown == 1 ? '' : 's')) if $shown < $total;
+		($total - $shown == 1 ? '' : 's')) if $shown < $total;
 
 	my $str = join("\n", @out) . "\n";
 	unless ($quiet) { defined $fh ? print {$fh} $str : print $str; }
@@ -551,12 +584,10 @@ B<Resulting Structure:>
 When the target is a Hash of Arrays, incoming arrays are pushed onto the existing arrays, appending the new elements, similarly to R's C<rbind>.
 
  $data = { 'Project Alpha' => [ 'task1', 'task2' ] };
- 
  $n = {
-     'Project Alpha' => [ 'task3' ],              # Appends to existing array
-     'Project Beta'  => [ 'task1', 'task2' ]      # Creates new array row
+     'Project Alpha' => [ 'task3' ],         # Appends to existing array
+     'Project Beta'  => [ 'task1', 'task2' ] # Creates new array row
  };
- 
  add_data($data, $n);
 
 B<Resulting Structure:>
@@ -1042,7 +1073,7 @@ Flat Hash References evaluate Goodness of Fit while preserving your categorical 
  
  my $res = chisq_test($data);
 
-=head1 C<col2col>
+=head2 C<col2col>
 
 Apply a B<two-column function> to every pair of columns in a table and collect
 the answers in a hash of hashes.
@@ -1067,7 +1098,7 @@ back every column compared against every other column.
 
 ========================================================================
 
-=head2 Arguments
+=head3 Arguments
 
  col2col( $data, $command, $cols, %options )
  col2col( $data, $command, \%options )      # options in place of $cols
@@ -1114,7 +1145,7 @@ back every column compared against every other column.
 
 ========================================================================
 
-=head2 Data shapes
+=head3 Data shapes
 
 C<col2col> understands three layouts. In every case a B<column> is the thing that
 gets compared, and the result is keyed by column name.
@@ -1139,7 +1170,7 @@ C<undef> cells are handled by the C<na> option (below).
 
 ========================================================================
 
-=head2 The command
+=head3 The command
 
 The second argument is the function applied to each pair of columns. It is called
 as:
@@ -1161,7 +1192,7 @@ C<Stats::LikeR::>, so these two are equivalent:
 
 ========================================================================
 
-=head2 The result
+=head3 The result
 
 Always a hash of hashes: B<< C<< $result-E<gt>{from}{to} >> >>.
 
@@ -1175,7 +1206,7 @@ A column is never compared with itself, so C<< $result-E<gt>{a}{a} >> does not e
 
 ========================================================================
 
-=head2 Restricting columns (C<$cols>)
+=head3 Restricting columns (C<$cols>)
 
 By default every column is used as the "from" side. The third argument narrows
 that down — handy when you only care about one variable.
@@ -1192,7 +1223,7 @@ The "to" side is always every other column; C<$cols> only limits the outer keys.
 
 ========================================================================
 
-=head2 Options
+=head3 Options
 
 Options can be given two ways:
 
@@ -1203,7 +1234,7 @@ The hash-ref form is convenient when you have B<no> column restriction — it sa
 you from passing a placeholder. (A hash ref I<replaces> C<$cols>, so you can't use
 it to restrict columns at the same time; use the trailing form for that.)
 
-=head3 C<na> — how undefined values are handled
+=head4 C<na> — how undefined values are handled
 
 Real data has gaps. C<na> decides what the function sees.
 
@@ -1251,7 +1282,7 @@ Real data has gaps. C<na> decides what the function sees.
 C<rm.undef> / C<rm.na> remain as boolean aliases for backward compatibility:
 C<true> means C<'pairwise'>, C<false> means C<'keep'>. Don't combine them with C<na>.
 
-=head3 C<skip.errors> — keep going when a pair fails I<(default: true)>
+=head4 C<skip.errors> — keep going when a pair fails I<(default: true)>
 
 Some functions croak on degenerate input — for example C<cor> dies if a column has
 zero variance. By default C<col2col> B<traps> that croak per pair: instead of
@@ -1273,7 +1304,7 @@ Only errors from B<your function> are trapped. Mistakes in the call itself
 
 ========================================================================
 
-=head2 Worked examples
+=head3 Worked examples
 
 B<Full correlation matrix:>
 
@@ -1304,7 +1335,7 @@ B<Find which pairs could not be computed:>
 
 ========================================================================
 
-=head2 Gotchas
+=head3 Gotchas
 
 =over
 
@@ -2955,6 +2986,188 @@ as well as a ratio (from R: the hypothesized ratio of the population variances o
 
  $test_data = var_test(\@xk, \@yk, ratio => 2);
 
+=head2 view
+
+An R-style C<head> for the structures C<read_table> returns. Prints the first
+few rows of a dataframe as an aligned text table, with numeric columns
+right-justified, string columns left-justified, and undefined cells shown as
+C<NA>. Works on all three C<output.type> values:
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>`output.type`</th>
+  <th>Perl structure</th>
+  <th>What `view` shows</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>aoh</code></td>
+  <td>array of hash refs</td>
+  <td>one line per row, sequential row numbers</td>
+</tr>
+<tr>
+  <td><code>hoa</code></td>
+  <td>hash of array refs</td>
+  <td>values gathered column-wise by row index</td>
+</tr>
+<tr>
+  <td><code>hoh</code></td>
+  <td>hash of hash refs</td>
+  <td>top-level keys become the row label column</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+=head3 Synopsis
+
+ my $aoh = read_table('all.data.tsv', 'output.type' => 'aoh');
+ 
+ view($aoh);                       # first 6 rows, like head()
+ view($aoh, n => 20);              # first 20 rows
+ view($aoh, cols => [qw(id age tt)]);   # force a column order
+ view($aoh, 'row.names' => 'id');  # use column 'id' as the row label
+ view($aoh, na => '.', max_width => 30);
+ 
+ my $txt = view($aoh, return_only => 1);  # capture the string, print nothing
+ view($aoh, to => \*STDERR);              # print somewhere other than STDOUT
+
+=head3 Output
+
+ # AoH: 7 rows x 3 cols  (showing 6)
+ row_name  Testosterone, total (nmol/L)  age  sex
+ p1                                18.2   41  M
+ p2                                  NA    7  F
+ p3                                1.05   33  F
+ p4                                22.9   55  M
+ p5                                  14   29  M
+ p6                                  NA   62  F
+ # ... 1 more row
+
+The banner reports the structure type, full dimensions, and how many rows are
+displayed. A footer appears only when rows are hidden.
+
+=head3 Arguments
+
+All arguments after the data reference are optional name/value pairs.
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>Argument</th>
+  <th>Default</th>
+  <th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>n</code></td>
+  <td><code>6</code></td>
+  <td>Number of rows to show. <code>n</code> greater than the table shows everything.</td>
+</tr>
+<tr>
+  <td><code>cols</code> / <code>columns</code></td>
+  <td>—</td>
+  <td>Array ref pinning column order (and which columns appear).</td>
+</tr>
+<tr>
+  <td><code>row.names</code></td>
+  <td>—</td>
+  <td>Column to use as the row label (for <code>aoh</code>/<code>hoa</code>). See ordering note.</td>
+</tr>
+<tr>
+  <td><code>na</code></td>
+  <td><code>'NA'</code></td>
+  <td>Token printed for undefined cells.</td>
+</tr>
+<tr>
+  <td><code>max_width</code></td>
+  <td><code>50</code></td>
+  <td>Truncate any cell wider than this (column names are never truncated).</td>
+</tr>
+<tr>
+  <td><code>ellipsis</code></td>
+  <td><code>'...'</code></td>
+  <td>Marker appended to truncated cells.</td>
+</tr>
+<tr>
+  <td><code>gap</code></td>
+  <td><code>2</code></td>
+  <td>Spaces between columns.</td>
+</tr>
+<tr>
+  <td><code>to</code></td>
+  <td>STDOUT</td>
+  <td>Filehandle to print to.</td>
+</tr>
+<tr>
+  <td><code>return_only</code></td>
+  <td><code>0</code></td>
+  <td>If true, return the string and print nothing.</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+C<view> always returns the formatted string, whether or not it also prints.
+
+=head3 A note on column order
+
+C<read_table> stores rows as hashes, so the original CSV column order is not
+preserved. C<view> therefore sorts columns by name for a stable, reproducible
+layout. Two conveniences soften this:
+
+=over
+
+=item * A column literally named C<row_name> (the label C<read_table> assigns to a
+leading blank header) is detected automatically and moved to the left as the
+row label.
+
+=item * Pass C<< cols =E<gt> [ ... ] >> to control both the order and the selection of columns
+shown.
+
+=back
+
+When no label column is present, C<view> numbers the rows C<1, 2, 3, …>, the way
+R prints row names for an unnamed data frame.
+
+=head3 Edge cases
+
+=over
+
+=item * Empty input (C<[]> or C<{}>) prints a clean C<0 rows x 0 cols> banner.
+
+=item * Tabs, carriage returns, and newlines inside a cell are escaped (C<\t>, C<\r>,
+C<\n>) so one record always stays on one line.
+
+=item * A non-reference argument, or a hash whose values are plain scalars, dies with
+a clear message rather than producing garbled output.
+
+=back
+
+=head3 Tests
+
+The behavior above is covered by C<view.t> (run with C<prove view.t>): the three
+structure types, C<n> boundaries, alignment, C<NA> rendering, truncation,
+C<row.names>/C<cols> handling, control-character escaping, the C<return_only> and
+C<to> output paths, empty structures, and the error cases.
+
 =head2 wilcox_test
 
  $test_data = wilcox_test(
@@ -2985,6 +3198,254 @@ Args can also be accepted:
  write_table( 'data' => \%flat, 'file' => $f );
 
 =head1 changes
+
+=head2 0.15
+
+C<view> function added, similar to R's C<head>
+
+C<read_table>:
+    filter => {
+        'Testosterone, total (nmol/L)' => sub { defined $_ },
+    }
+
+was broken by the change in undefined variables in 0.14, but is back to being C<undef>
+
+C<col2col> improvement in sectioning in README
+
+Numerous changes to prevent quadmath/long double CPAN test failures
+
+Minimum Scalar::Util version in dist.ini is now 1.22, see https://www.cpantesters.org/cpan/report/6b682236-6567-11f1-a3bc-a055f9c4ba34
+
+C<Digest::SHA> is no longer needed, and removed as a dependency
+
+=head3 C<read_table>
+
+=head4 Bug fixes
+
+=over
+
+=item * B<A comment-prefixed header is now read correctly.> C<read_table> strips a
+leading comment marker from the header line (so a file may begin with
+C<#id,val>), but that strip was dead code: the XS parser skipped I<every> line
+beginning with the comment string before the callback ever saw it, so a
+commented header was silently dropped and the first data row was mistaken for
+the header. The parser now delivers the first content line even when it
+begins with the comment marker, and only skips comment lines after the header
+has been seen.
+
+=item * B<Carriage returns inside quoted fields are preserved.> The parser stripped
+C<\r> unconditionally, so a quoted value such as C<"x\ry"> lost its carriage
+return and would not survive a C<write_table> -> C<read_table> round-trip. C<\r>
+is now stripped only as part of a trailing CRLF line ending and as a stray CR
+I<outside> quotes; inside quotes it is literal data.
+
+=item * B<< Duplicate column names no longer corrupt C<hoa> output. >> With
+C<< output.type =E<gt> 'hoa' >>, a repeated column name pushed the same cell once per
+occurrence, so the affected columns came out longer than the others and the
+arrays no longer lined up by row. Columns are now keyed by unique header name
+(first-seen order preserved, later values win, one warning emitted).
+
+=item * B<A defined non-CODE callback is now an error.> Passing a defined argument
+that was not a CODE reference silently fell through to slurp mode and ignored
+the argument; it now croaks
+(I<"callback must be a CODE reference">).
+
+=item * B<< An undefined/empty C<hoh> row-name now dies instead of keying on C<"">. >>
+With C<< output.type =E<gt> 'hoh' >>, a row whose row-name column was empty/undef was
+stored under the C<''> key and raised I<"uninitialized value"> warnings. It now
+dies, naming the column and the offending data row.
+
+=item * B<A numeric filter key past the last column now dies.> A 1-based numeric
+filter key greater than the column count was accepted, then silently extended
+every row through the C<$_> write-back. It is now rejected up front with a
+message naming the column count.
+
+=item * B<< C<sep> and C<delim> together now die. >> Supplying both silently preferred
+C<delim>; passing both is now an explicit error (C<delim> remains an alias for
+C<sep> when used alone).
+
+=item * B<The library no longer prints to STDOUT.> The unknown-argument path used
+C<say> to dump the offending names to STDOUT before dying; the names are now
+carried in the C<die> message itself.
+
+=back
+
+=head4 Better diagnostics
+
+=over
+
+=item * Alignment errors now report B<which data row> is ragged
+(I<"Alignment error on FILE data row N (X fields vs Y headers)">), instead of
+only the field/header counts.
+
+=back
+
+=head4 Memory-leak fixes (exception paths)
+
+The parser allocated its working buffers (C<current_row>, C<field>, and — in
+slurp mode — C<data>) in the XS C<INIT:> block, i.e. I<before> any validation, and
+freed them only by falling off the end of the function. Any non-local exit
+therefore leaked:
+
+=over
+
+=item * the open-failure C<croak> leaked the row buffer and field (and the slurp
+accumulator);
+
+=item * far more commonly, a C<die> thrown B<inside the row callback> — which
+C<read_table> does routinely on alignment errors, bad row names, and filter
+exceptions — unwound straight out of the XS frame and leaked the field, the
+current row, the line buffer, the slurp accumulator, I<and the open file
+handle>.
+
+=back
+
+Allocations now happen in C<CODE:> after every croak-able check, and every
+long-lived resource (the file handle via C<SAVEDESTRUCTOR_X>, the buffers via
+C<SAVEFREESV>) is tied to the save stack, which an exception unwinds. Measured
+with C<Test::LeakTrace>: a C<die> mid-file went from 5 leaked SVs to 0, and an
+open failure from 2 to 0. This is the likely source of the constant-size leaks
+seen in CPAN-tester reports for the exception-path tests.
+
+=head4 Performance
+
+=over
+
+=item * B<~2.5x faster parsing> (57 -> 145 MB/s on a 100k-row quoted file). The core
+loop appended one character at a time with C<sv_catpvn(field, &ch, 1)>; it now
+scans runs of ordinary bytes with C<memchr> / a bounded scan and appends each
+run in a single C<sv_catpvn>, copying field contents in bulk rather than byte
+by byte.
+
+=back
+
+=head4 Internal / non-behavioral
+
+=over
+
+=item * XS declarations moved from C<INIT:> to C<PREINIT:>; allocations deferred into
+C<CODE:> (see the leak fixes above).
+
+=item * The filter loop now aliases the row hash with C<local *_ = \%line_hash>
+instead of copying it with C<local %_ = %line_hash>. This removes a full
+per-row hash copy for every filtered row and fixes a latent staleness bug:
+after a filter mutated C<$_> and the change was written back, C<%_> still
+reflected the pre-mutation copy, so a subsequent filter in the same row saw
+stale values. With aliasing, C<%_> I<is> the row, so write-backs are always
+visible.
+
+=back
+
+=head4 Known limitation (not changed)
+
+=over
+
+=item * B<< C<undef.val> does not round-trip back to C<undef>. >> C<write_table> renders an
+C<undef> cell as an empty field by default, and C<read_table> maps an empty
+field back to C<undef>, so the I<default> round-trip is clean. But if a file is
+written with a token such as C<< 'undef.val' =E<gt> 'NA' >>, C<read_table> has no
+inverse option and reads C<NA> back as the string C<'NA'>. C<read_table> also
+cannot distinguish a deliberately quoted empty string (C<"">) from a missing
+value -- both become C<undef>. Adding an C<na.strings>-style option to
+C<read_table> (mapping configurable tokens and/or empty fields to C<undef>)
+would close this gap.
+
+=back
+
+=head3 C<write_table>
+
+=head4 Behavior change
+
+=over
+
+=item * B<< C<undef> cells now write as an empty field, not an empty string. >> A missing
+or C<undef> value renders as nothing between separators (C<a,,c>) rather than a
+quoted empty string (C<a,'',c> / C<a,"",c>). Supplying C<< 'undef.val' =E<gt> 'NA' >>
+(or any other token) still overrides this, exactly as before. This is the
+only change that can alter the bytes of an existing output file; if you relied
+on the previous default, pass C<< 'undef.val' =E<gt> '' >> to keep an explicit empty
+field, or your chosen placeholder.
+
+=back
+
+=head4 Bug fixes
+
+=over
+
+=item * B<Wide-character / UTF-8 column names and row keys now round-trip.>
+Previously, cells were looked up with the raw bytes of the column name
+(C<hv_fetch(..., SvPV_nolen(name), strlen(name), ...)>), which fails to match a
+UTF-8-flagged hash key: the column header printed correctly but every cell
+under it came back empty. All lookups now fetch by SV (C<hv_fetch_ent>), header
+lists are gathered and sorted as SVs (C<sortsv> + C<sv_cmp>, preserving the
+flag) instead of being round-tripped through C<char *>, and the C<row.names>
+column is matched with C<sv_eq> rather than C<strcmp>. Embedded NUL bytes in
+keys are handled correctly as a side effect.
+
+=item * B<< C<< col.names =E<gt> [] >> no longer loops forever. >> An empty C<col.names> array made
+C<av_len()> return C<-1>, which — compared against an unsigned C<size_t> loop
+index — wrapped to C<SIZE_MAX> and ran effectively without end. This was fixed
+for flat hashes previously; it was still present for hash-of-hashes,
+hash-of-arrays, and array-of-hashes, plus both C<row.names> header-filtering
+loops. All such loops now use a signed index.
+
+=item * B<Tables wider than 65,535 columns no longer hang.> One header loop used an
+C<unsigned short> index that silently wrapped past 65,535 and never terminated.
+It now uses C<size_t> like the rest of the code.
+
+=item * B<Flat-hash cells holding a reference now croak.> Every other input shape
+rejects a nested reference with
+I<"Cannot write nested reference types to table">; a flat hash instead
+stringified it (e.g. C<ARRAY(0x55...)>) into the file. It now croaks
+consistently.
+
+=item * B<< C<< 'undef.val' =E<gt> undef >> is handled cleanly. >> It previously called
+C<SvPV_nolen> on C<undef>, raising an I<"uninitialized value"> warning and
+yielding an empty string by accident. It is now treated explicitly as an empty
+field, with no warning.
+
+=back
+
+=head4 Memory-leak fixes (exception paths)
+
+=over
+
+=item * The row-key list gathered for hash-of-hashes input was leaked when the output
+file could not be opened.
+
+=item * The I<"Could not get headers"> croak on hash-of-arrays input leaked both the
+already-open filehandle and the headers array.
+
+=back
+
+=head4 Internal / non-behavioral
+
+=over
+
+=item * Numeric row labels are now formatted into a reused stack buffer instead of a
+per-row C<savepv()> / C<safefree()> allocation (no functional change; removes a
+cast-away-C<const> and one allocation per row).
+
+=item * Several signed/unsigned index types were made consistent (C<SSize_t> vs
+C<size_t>) to match C<av_len()> and silence the conditions behind the loop bugs
+above.
+
+=back
+
+=head4 Tests
+
+=over
+
+=item * C<t/write_table.t> expanded from 17 to 69 assertions. New coverage targets each
+fix above: the empty-field default and C<< undef.val =E<gt> undef >> (no warning),
+C<< col.names =E<gt> [] >> termination across all four input shapes, the
+ >65,535-column header loop (gated behind C<EXTENDED_TESTING=1>), in-sequence
+numeric row labels, nested-reference rejection, CSV quoting corners
+(carriage return, separators inside column names, multi-character separators),
+empty input writing no file, and UTF-8 column names and row keys. Two leak
+assertions cover the exception paths above.
+
+=back
 
 =head2 0.14
 
