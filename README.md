@@ -998,15 +998,79 @@ I feel that this is better, and more easily read, than what you get in R:
 
 ## ks_test
 
-The Kolmogorov-Smirnov test, which tests whether or not two arrays/lists of data are part of the same distribution is implemented simply:
+The Kolmogorov–Smirnov test checks whether two samples are drawn from the
+same distribution (two-sample), or whether a single sample is drawn from a
+given reference distribution (one-sample). It works by comparing the empirical
+cumulative distribution functions (ECDFs) and measuring the largest gap
+between them.
 
+Two-sample form — pass two array references:
+
+    $ks = ks_test(\@x, \@y);
     $ks = ks_test(\@x, \@y, alternative => 'greater');
 
-returning a hash reference.
+One-sample form — pass one array reference and the name of a reference CDF.
+Currently only `'pnorm'` is supported, i.e. the standard normal distribution
+(mean 0, standard deviation 1):
 
-Also, a single array can be tested against a normal distribution:
+    $ks = ks_test(\@x, 'pnorm');
 
-    $ks = ks_test($ksx, 'pnorm');
+Arguments may be given positionally (as above) or by name:
+
+    $ks = ks_test(x => \@x, y => \@y, alternative => 'less', exact => 1);
+
+Non-numeric and undefined elements are silently dropped before the test runs.
+
+`alternative` selects which gap between the ECDFs is measured:
+
+- `'two.sided'` (default) — the largest gap in either direction,
+  D = sup |F_x − F_y|.
+- `'greater'` — the largest gap where x's ECDF rises above the other,
+  D⁺ = sup (F_x − F_y).
+- `'less'` — the largest gap in the other direction, D⁻ = sup (F_y − F_x).
+
+These follow R's `ks.test` convention: `'greater'`/`'less'` describe which CDF
+lies *above* the other, which (because a higher CDF means smaller values) is
+the opposite of which sample tends to be larger.
+
+`exact` controls how the p-value is computed. Omit it to let the test choose:
+the exact distribution is used for small samples (two-sample when nx·ny 
+10000, one-sample when n < 100) and the asymptotic (Kolmogorov limiting)
+approximation otherwise. Pass `exact => 1` to force the exact computation or
+`exact => 0` to force the asymptotic one. Exact p-values cannot be computed
+when the data contain ties; if ties are present on the exact path, the test
+warns and falls back to the asymptotic p-value. (The exact one-sample test is
+only available for the two-sided alternative; a one-sided one-sample request
+also falls back to asymptotic.)
+
+### Return value
+
+`ks_test` returns a hash reference with four keys:
+
+- **`statistic`** — the KS statistic for the chosen `alternative`: D, D⁺, or
+  D⁻. It is the maximum distance between the two ECDFs (or, for the one-sample
+  test, between the ECDF and the reference CDF), always in the range [0, 1].
+  Larger values mean the distributions are further apart.
+- **`p_value`** — the probability, under the null hypothesis that the samples
+  share a distribution, of observing a statistic at least this large. It is
+  clamped to [0, 1]; a small value (e.g. < 0.05) is evidence against the null.
+- **`method`** — a human-readable description of exactly what was run, handy
+  for logging or reproducing a result. One of:
+  `"Two-sample Kolmogorov-Smirnov exact test"`,
+  `"Two-sample Kolmogorov-Smirnov test (asymptotic)"`,
+  `"One-sample Kolmogorov-Smirnov exact test"`, or
+  `"One-sample Kolmogorov-Smirnov test (asymptotic)"`.
+- **`alternative`** — the alternative hypothesis that was applied
+  (`'two.sided'`, `'greater'`, or `'less'`), echoed back so the result is
+  self-describing.
+
+For example:
+
+    my $ks = ks_test(\@x, \@y);
+    if ($ks->{p_value} < 0.05) {
+        printf "reject H0: D=%.4f, p=%.4g (%s)\n",
+            $ks->{statistic}, $ks->{p_value}, $ks->{method};
+    }
 
 ## ljoin
 
