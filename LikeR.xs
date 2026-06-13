@@ -1271,58 +1271,60 @@ static NV K2x(int n, NV d) {
 	Safefree(Q);
 	return s;
 }
-// Calculate D (two-sided), D+ (greater), and D- (less) simultaneously
+/* One comparator, used by every qsort below. Branch form avoids overflow that
+ * a subtraction-based comparator would hit, and is correct for any NV width. */
+static int compare_NVs(const void *a, const void *b) {
+    NV x = *(const NV *)a, y = *(const NV *)b;
+    return (x > y) - (x < y);
+}
+/* Largest m*n for which we will run the exact DP even when exact=>1 is forced.
+ * Time is O(m*n); memory is O(min(m,n)). Beyond this we warn and go asymptotic. */
+#define KS_EXACT_MAX_PRODUCT 10000000.0
 static void calc_2sample_stats(NV *x, size_t nx, NV *y, size_t ny,
-							   NV *d, NV *d_plus, NV *d_minus) {
-	qsort(x, nx, sizeof(NV), compare_doubles);
-	qsort(y, ny, sizeof(NV), compare_doubles);
-	NV max_d = 0.0, max_d_plus = 0.0, max_d_minus = 0.0;
-	size_t i = 0, j = 0;
-	while(i < nx || j < ny) {
-	  NV val;
-	  if (i < nx && j < ny) val = (x[i] < y[j]) ? x[i] : y[j];
-	  else if (i < nx) val = x[i];
-	  else val = y[j];
-	  while(i < nx && x[i] <= val) i++;
-	  while(j < ny && y[j] <= val) j++;
-	  NV cdf1 = (NV)i / nx;
-	  NV cdf2 = (NV)j / ny;
-	  NV diff = cdf1 - cdf2;
-	  if (diff > max_d_plus) max_d_plus = diff;
-	  if (-diff > max_d_minus) max_d_minus = -diff;
-	  if (fabs(diff) > max_d) max_d = fabs(diff);
-	}
-	*d = max_d;
-	*d_plus = max_d_plus;
-	*d_minus = max_d_minus;
+                               NV *d, NV *d_plus, NV *d_minus) {
+    qsort(x, nx, sizeof(NV), compare_NVs);
+    qsort(y, ny, sizeof(NV), compare_NVs);
+    NV max_d = 0.0, max_d_plus = 0.0, max_d_minus = 0.0;
+    size_t i = 0, j = 0;
+    while (i < nx || j < ny) {
+        NV val;
+        if (i < nx && j < ny) val = (x[i] < y[j]) ? x[i] : y[j];
+        else if (i < nx)      val = x[i];
+        else                  val = y[j];
+        while (i < nx && x[i] <= val) i++;
+        while (j < ny && y[j] <= val) j++;
+        NV cdf1 = (NV)i / nx;
+        NV cdf2 = (NV)j / ny;
+        NV diff = cdf1 - cdf2;
+        if (diff > max_d_plus)  max_d_plus  = diff;
+        if (-diff > max_d_minus) max_d_minus = -diff;
+        if (fabs(diff) > max_d)  max_d = fabs(diff);
+    }
+    *d = max_d; *d_plus = max_d_plus; *d_minus = max_d_minus;
 }
 
-// Branch the DP boundary check based on the 'alternative'
 static int psmirnov_exact_test(NV q, NV r, NV s, int two_sided) {
-	if (two_sided) return (fabs(r - s) >= q);
-	return ((r - s) >= q); // Used for both D+ and D- via symmetry
+    if (two_sided) return (fabs(r - s) >= q);
+    return ((r - s) >= q);
 }
 
 // Evaluate the exact 2-sample probability
-static NV psmirnov_exact_uniq_upper(NV q, int m, int n, int two_sided) {
+static NV psmirnov_exact_uniq_upper(NV q, size_t m, size_t n, int two_sided) {
 	NV md = (NV) m, nd = (NV) n;
-	NV *restrict u = (NV *) safecalloc(n + 1, sizeof(NV));
+	NV *u = (NV *) safemalloc((n + 1) * sizeof(NV)); /* malloc + full init below */
 	u[0] = 0.;
-
-	for(unsigned int j = 1; j <= n; j++) {
-	  if(psmirnov_exact_test(q, 0., j / nd, two_sided)) u[j] = 1.;
-	  else u[j] = u[j - 1];
-	}
-	for(unsigned int i = 1; i <= m; i++) {
-		if(psmirnov_exact_test(q, i / md, 0., two_sided)) u[0] = 1.;
-		for(int j = 1; j <= n; j++) {
-			if(psmirnov_exact_test(q, i / md, j / nd, two_sided)) u[j] = 1.;
-			else {
-				 NV v = (NV)(i) / (NV)(i + j);
-				 NV w = (NV)(j) / (NV)(i + j);
-				 u[j] = v * u[j] + w * u[j - 1];
-			}
-		}
+	for (size_t j = 1; j <= n; j++)
+	  u[j] = psmirnov_exact_test(q, 0., j / nd, two_sided) ? 1. : u[j - 1];
+	for (size_t i = 1; i <= m; i++) {
+	  if (psmirnov_exact_test(q, i / md, 0., two_sided)) u[0] = 1.;
+	  for (size_t j = 1; j <= n; j++) {
+		   if (psmirnov_exact_test(q, i / md, j / nd, two_sided)) u[j] = 1.;
+		   else {
+		       NV v = (NV)(i) / (NV)(i + j);
+		       NV w = (NV)(j) / (NV)(i + j);
+		       u[j] = v * u[j] + w * u[j - 1];
+		   }
+	  }
 	}
 	NV res = u[n];
 	Safefree(u);
@@ -1921,13 +1923,6 @@ static int h2h_keycmp(const void *pa, const void *pb) {
 	SV *restrict const *a = (SV * const *)pa;
 	SV *restrict const *b = (SV * const *)pb;
 	return sv_cmp(*a, *b);
-}
-int compare_NVs(const void *restrict a, const void *restrict b) {
-	NV arg1 = *(const NV *)a;
-	NV arg2 = *(const NV *)b;
-	if (arg1 < arg2) return -1;
-	if (arg1 > arg2) return 1;
-	return 0;
 }
 // Call a column predicate as $cv->($col_values, $col_name) and return its truth.
 // $col_values is an array ref of the column's DEFINED cells; $col_name is the
@@ -2996,180 +2991,220 @@ SV *oneway_test(data_ref, ...)
 SV* ks_test(...)
 CODE:
 {
-	SV *restrict x_sv = NULL, *restrict y_sv = NULL;
-	short int exact = -1;
-	const char *restrict alternative = "two.sided";
-	int arg_idx = 0;
+    /* NOTE: these may legitimately alias (e.g. ks_test(\@a, \@a)), so no
+     * `restrict` here — only the private C buffers below get it. */
+    SV *x_sv = NULL, *y_sv = NULL;
+    short int exact = -1;
+    const char *alternative = "two.sided";
+    int arg_idx = 0;
 
-	// Shift arrays if provided positionally
-	if (arg_idx < items && SvROK(ST(arg_idx)) && SvTYPE(SvRV(ST(arg_idx))) == SVt_PVAV) {
-		x_sv = ST(arg_idx);
-		arg_idx++;
-	}
-	// Check if second argument is an array (2-sample) or a string representing a CDF (1-sample)
-	if (arg_idx < items) {
-		if (SvROK(ST(arg_idx)) && SvTYPE(SvRV(ST(arg_idx))) == SVt_PVAV) {
-			y_sv = ST(arg_idx);
-			arg_idx++;
-		} else if (SvPOK(ST(arg_idx))) {
-			y_sv = ST(arg_idx); // Save string (e.g., "pnorm") for 1-sample test logic
-			arg_idx++;
-		}
-	}
-	// Parse named arguments
-	for (; arg_idx < items; arg_idx += 2) {
-		const char *restrict key = SvPV_nolen(ST(arg_idx));
-		SV *restrict val = ST(arg_idx + 1);
-		if      (strEQ(key, "x"))           x_sv = val;
-		else if (strEQ(key, "y"))           y_sv = val;
-		else if (strEQ(key, "exact"))       {
-			if (!SvOK(val)) exact = -1;
-			else exact = SvTRUE(val) ? 1 : 0;
-		}
-		else if (strEQ(key, "alternative")) alternative = SvPV_nolen(val);
-		else croak("ks_test: unknown argument '%s'", key);
-	}
+    /* Leading positional 'x' (array ref). */
+    if (arg_idx < items && SvROK(ST(arg_idx)) && SvTYPE(SvRV(ST(arg_idx))) == SVt_PVAV) {
+        x_sv = ST(arg_idx);
+        arg_idx++;
+    }
 
-	if (!x_sv || !SvROK(x_sv) || SvTYPE(SvRV(x_sv)) != SVt_PVAV) {
-	  croak("ks_test: 'x' is a required argument and must be an ARRAY reference");
-	}
+    /* Optional positional 'y':
+     *   - an ARRAY ref  -> 2-sample (keys are never array refs, so safe)
+     *   - a STRING      -> 1-sample CDF name, BUT only if consuming it leaves
+     *                      an even number of trailing args. Otherwise the
+     *                      "string" is really a named-argument key (e.g.
+     *                      "exact", "alternative") and must not be eaten here.
+     *                      (Fix #1) */
+    if (arg_idx < items) {
+        if (SvROK(ST(arg_idx)) && SvTYPE(SvRV(ST(arg_idx))) == SVt_PVAV) {
+            y_sv = ST(arg_idx);
+            arg_idx++;
+        } else if (SvPOK(ST(arg_idx)) && (((items - arg_idx) % 2) == 1)) {
+            y_sv = ST(arg_idx);   /* positional 1-sample CDF, e.g. "pnorm" */
+            arg_idx++;
+        }
+    }
 
-	bool is_two_sided = strEQ(alternative, "two.sided") ? 1 : 0;
-	bool is_greater   = strEQ(alternative, "greater") ? 1 : 0;
-	bool is_less      = strEQ(alternative, "less") ? 1 : 0;
+    /* Named arguments (key => value pairs). */
+    for (; arg_idx < items; arg_idx += 2) {
+        const char *key = SvPV_nolen(ST(arg_idx));
+        SV *val;
+        if (arg_idx + 1 >= items)      /* Fix #2: no value -> would read off stack */
+            croak("ks_test: argument '%s' is missing a value", key);
+        val = ST(arg_idx + 1);
+        if      (strEQ(key, "x"))           x_sv = val;
+        else if (strEQ(key, "y"))           y_sv = val;
+        else if (strEQ(key, "exact")) {
+            if (!SvOK(val)) exact = -1;
+            else exact = SvTRUE(val) ? 1 : 0;
+        }
+        else if (strEQ(key, "alternative")) alternative = SvPV_nolen(val);
+        else croak("ks_test: unknown argument '%s'", key);
+    }
 
-	if (!is_two_sided && !is_greater && !is_less) {
-		croak("ks_test: alternative must be 'two.sided', 'less', or 'greater'");
-	}
+    if (!x_sv || !SvROK(x_sv) || SvTYPE(SvRV(x_sv)) != SVt_PVAV) {
+        croak("ks_test: 'x' is a required argument and must be an ARRAY reference");
+    }
 
-	AV *restrict x_av = (AV*)SvRV(x_sv);
-	size_t nx = av_len(x_av) + 1;
-	if (nx == 0) croak("Not enough 'x' observations");
+    bool is_two_sided = strEQ(alternative, "two.sided") ? 1 : 0;
+    bool is_greater   = strEQ(alternative, "greater")   ? 1 : 0;
+    bool is_less      = strEQ(alternative, "less")      ? 1 : 0;
 
-	// Extract 'x' array to C-array
-	NV *restrict x_data = (NV *)safemalloc(nx * sizeof(NV));
-	size_t valid_nx = 0;
-	for (size_t i = 0; i < nx; i++) {
-	  SV**restrict el = av_fetch(x_av, i, 0);
-	  if (el && SvOK(*el) && looks_like_number(*el)) {
-		   x_data[valid_nx++] = SvNV(*el);
-	  }
-	}
-	NV statistic = 0.0, p_value = 0.0;
-	const char *restrict method_desc = "";
-	// --- TWO SAMPLE ---
-	if (y_sv && SvROK(y_sv) && SvTYPE(SvRV(y_sv)) == SVt_PVAV) {
-	  AV *restrict y_av = (AV*)SvRV(y_sv);
-	  size_t ny = av_len(y_av) + 1;
-	  NV *restrict y_data = (NV *)safemalloc(ny * sizeof(NV));
-	  size_t valid_ny = 0;
-	  for (size_t i = 0; i < ny; i++) {
-		   SV**restrict el = av_fetch(y_av, i, 0);
-		   if (el && SvOK(*el) && looks_like_number(*el)) {
-			   y_data[valid_ny++] = SvNV(*el);
-		   }
-	  }
-	  if (valid_nx < 1 || valid_ny < 1) {
-		   Safefree(x_data); Safefree(y_data);
-		   croak("Not enough non-missing observations for KS test");
-	  }
-	  NV d, d_plus, d_minus;
-	  calc_2sample_stats(x_data, valid_nx, y_data, valid_ny, &d, &d_plus, &d_minus);
-	  // Map alternative to the correct statistic
-	  if (is_greater) statistic = d_plus;
-	  else if (is_less) statistic = d_minus;
-	  else statistic = d;
-	  // Determine if exact or asymptotic
-	  bool use_exact = FALSE;
-	  if (exact == 1) use_exact = TRUE;
-	  else if (exact == 0) use_exact = FALSE;
-	  else use_exact = (valid_nx * valid_ny < 10000); 
-	  // Check for ties in combined set
-	  size_t total_n = valid_nx + valid_ny;
-	  NV *restrict comb = (NV *)safemalloc(total_n * sizeof(NV));
-	  for(size_t i=0; i<valid_nx; i++) comb[i] = x_data[i];
-	  for(size_t i=0; i<valid_ny; i++) comb[valid_nx+i] = y_data[i];
-	  qsort(comb, total_n, sizeof(NV), compare_NVs);
-	  bool has_ties = FALSE;
-	  for(size_t i = 1; i < total_n; i++) {
-		   if(comb[i] == comb[i-1]) { has_ties = TRUE; break; }
-	  }
-	  Safefree(comb);
-	  if (use_exact && has_ties) {
-		   warn("ks_test: cannot compute exact p-value with ties; falling back to asymptotic");
-		   use_exact = FALSE;
-	  }
-	  if (use_exact) {
-		   method_desc = "Two-sample Kolmogorov-Smirnov exact test";
-		   NV q = (0.5 + floor(statistic * valid_nx * valid_ny - 1e-7)) / ((NV)valid_nx * valid_ny);
-		   p_value = psmirnov_exact_uniq_upper(q, valid_nx, valid_ny, is_two_sided);
-	  } else {
-		   method_desc = "Two-sample Kolmogorov-Smirnov test (asymptotic)";
-		   NV z = statistic * sqrt((NV)(valid_nx * valid_ny) / (valid_nx + valid_ny));
-		   if (is_two_sided) {
-			   p_value = K2l(z, 0, 1e-9); 
-		   } else {
-			   p_value = exp(-2.0 * z * z); // One-sided limit distribution
-		   }
-	  }
-	  Safefree(y_data);
-	} else if (y_sv && SvPOK(y_sv)) {// --- ONE SAMPLE (e.g. against pnorm) ---
-		const char *restrict dist = SvPV_nolen(y_sv);
-		if (strEQ(dist, "pnorm")) {
-			qsort(x_data, valid_nx, sizeof(NV), compare_NVs);
-			NV max_d = 0.0, max_d_plus = 0.0, max_d_minus = 0.0;
-			for(size_t i = 0; i < valid_nx; i++) {
-				NV cdf_obs_low  = (NV)i / valid_nx;
-				NV cdf_obs_high = (NV)(i + 1) / valid_nx;
-				NV cdf_theor    = approx_pnorm(x_data[i]);
-				NV diff1 = cdf_obs_low - cdf_theor;
-				NV diff2 = cdf_obs_high - cdf_theor;
-				if (diff1 > max_d_plus) max_d_plus = diff1;
-				if (diff2 > max_d_plus) max_d_plus = diff2;
-				if (-diff1 > max_d_minus) max_d_minus = -diff1;
-				if (-diff2 > max_d_minus) max_d_minus = -diff2;
-				if (fabs(diff1) > max_d) max_d = fabs(diff1);
-				if (fabs(diff2) > max_d) max_d = fabs(diff2);
-			}
-			if (is_greater) statistic = max_d_plus;
-			else if (is_less) statistic = max_d_minus;
-			else statistic = max_d;
-			bool use_exact = (exact == -1) ? (valid_nx < 100) : (exact == 1);
-			if (use_exact) {
-				method_desc = "One-sample Kolmogorov-Smirnov exact test";
-				if (is_two_sided) {
-					p_value = 1.0 - K2x(valid_nx, statistic);
-				} else {
-					warn("exact 1-sample 1-sided KS test not implemented; using asymptotic");
-					NV z = statistic * sqrt((NV)valid_nx);
-					p_value = exp(-2.0 * z * z);
-				}
-			} else {
-				 method_desc = "One-sample Kolmogorov-Smirnov test (asymptotic)";
-				 NV z = statistic * sqrt((NV)valid_nx);
-				 if (is_two_sided) p_value = K2l(z, 0, 1e-6); 
-				 else p_value = exp(-2.0 * z * z);
-			}
-		} else {
-			 Safefree(x_data);
-			 croak("ks_test: Unsupported 1-sample distribution '%s'. Use arrays for 2-sample.", dist);
-		}
-	} else {
-	  Safefree(x_data);
-	  croak("ks_test: Invalid arguments for 'y'.");
-	}
-	Safefree(x_data);
-	if (p_value > 1.0) p_value = 1.0;
-	if (p_value < 0.0) p_value = 0.0;
-	HV *restrict res = newHV();
-	hv_stores(res, "statistic", newSVnv(statistic));
-	hv_stores(res, "p_value", newSVnv(p_value));
-	hv_stores(res, "method", newSVpv(method_desc, 0));
-	hv_stores(res, "alternative", newSVpv(alternative, 0));
-	RETVAL = newRV_noinc((SV*)res);
+    if (!is_two_sided && !is_greater && !is_less) {
+        croak("ks_test: alternative must be 'two.sided', 'less', or 'greater'");
+    }
+
+    AV *x_av = (AV *)SvRV(x_sv);
+    size_t nx = (size_t)(av_len(x_av) + 1);
+    if (nx == 0) croak("Not enough 'x' observations");
+
+    /* Extract 'x' to a C array (numeric elements only). */
+    NV *restrict x_data = (NV *)safemalloc(nx * sizeof(NV));
+    size_t valid_nx = 0;
+    for (size_t i = 0; i < nx; i++) {
+        SV **el = av_fetch(x_av, i, 0);
+        if (el && *el && (SvNIOK(*el) || (SvOK(*el) && looks_like_number(*el)))) {
+            x_data[valid_nx++] = SvNV(*el);   /* SvNIOK shortcut avoids string parse */
+        }
+    }
+    /* Fix #4: guard before any path can divide by valid_nx. */
+    if (valid_nx < 1) {
+        Safefree(x_data);
+        croak("Not enough non-missing 'x' observations");
+    }
+
+    NV statistic = 0.0, p_value = 0.0;
+    const char *method_desc = "";
+
+    /* ----------------------------- TWO SAMPLE ----------------------------- */
+    if (y_sv && SvROK(y_sv) && SvTYPE(SvRV(y_sv)) == SVt_PVAV) {
+        AV *y_av = (AV *)SvRV(y_sv);
+        size_t ny = (size_t)(av_len(y_av) + 1);
+        NV *restrict y_data = (NV *)safemalloc((ny ? ny : 1) * sizeof(NV));
+        size_t valid_ny = 0;
+        for (size_t i = 0; i < ny; i++) {
+            SV **el = av_fetch(y_av, i, 0);
+            if (el && *el && (SvNIOK(*el) || (SvOK(*el) && looks_like_number(*el)))) {
+                y_data[valid_ny++] = SvNV(*el);
+            }
+        }
+        if (valid_ny < 1) {
+            Safefree(x_data); Safefree(y_data);
+            croak("Not enough non-missing observations for KS test");
+        }
+
+        NV d, d_plus, d_minus;
+        calc_2sample_stats(x_data, valid_nx, y_data, valid_ny, &d, &d_plus, &d_minus);
+        if (is_greater)   statistic = d_plus;
+        else if (is_less) statistic = d_minus;
+        else              statistic = d;
+
+        /* Decide exact vs asymptotic. Use a double product so the threshold
+         * comparison itself can't overflow size_t. */
+        double mn = (double)valid_nx * (double)valid_ny;
+        bool use_exact;
+        if      (exact == 1) use_exact = TRUE;
+        else if (exact == 0) use_exact = FALSE;
+        else                 use_exact = (mn < 10000.0);
+
+        /* Fix #6: cap the cost of a *forced* exact run. */
+        if (use_exact && mn > KS_EXACT_MAX_PRODUCT) {
+            warn("ks_test: sample sizes too large for an exact p-value; using asymptotic");
+            use_exact = FALSE;
+        }
+
+        /* Tie detection is only needed for the exact path. Both arrays are
+         * already sorted by calc_2sample_stats(), so detect ties with an O(N)
+         * merge instead of concatenate + re-sort. (Speed/RAM improvement.) */
+        if (use_exact) {
+            bool has_ties = FALSE;
+            size_t a = 0, b = 0;
+            NV prev = 0; bool have_prev = FALSE;
+            while (a < valid_nx || b < valid_ny) {
+                NV v = (b >= valid_ny || (a < valid_nx && x_data[a] <= y_data[b]))
+                       ? x_data[a++] : y_data[b++];
+                if (have_prev && v == prev) { has_ties = TRUE; break; }
+                prev = v; have_prev = TRUE;
+            }
+            if (has_ties) {
+                warn("ks_test: cannot compute exact p-value with ties; falling back to asymptotic");
+                use_exact = FALSE;
+            }
+        }
+
+        if (use_exact) {
+            method_desc = "Two-sample Kolmogorov-Smirnov exact test";
+            NV q = (0.5 + floor(statistic * valid_nx * valid_ny - 1e-7))
+                   / ((NV)valid_nx * (NV)valid_ny);
+            /* One-sided 'less' uses the D+ routine directly; correct when
+             * valid_nx == valid_ny and a documented approximation otherwise. */
+            p_value = psmirnov_exact_uniq_upper(q, valid_nx, valid_ny, is_two_sided);
+        } else {
+            method_desc = "Two-sample Kolmogorov-Smirnov test (asymptotic)";
+            /* Overflow-safe scaling: cast each operand to NV before multiplying. */
+            NV z = statistic * sqrt(((NV)valid_nx * (NV)valid_ny)
+                                    / ((NV)valid_nx + (NV)valid_ny));
+            if (is_two_sided) p_value = K2l(z, 0, 1e-9);
+            else              p_value = exp(-2.0 * z * z);
+        }
+        Safefree(y_data);
+    // ----------------------------- ONE SAMPLE
+    } else if (y_sv && SvPOK(y_sv)) {
+        const char *dist = SvPV_nolen(y_sv);
+        if (strEQ(dist, "pnorm")) {
+            qsort(x_data, valid_nx, sizeof(NV), compare_NVs);
+            NV max_d = 0.0, max_d_plus = 0.0, max_d_minus = 0.0;
+            for (size_t i = 0; i < valid_nx; i++) {
+                NV cdf_obs_low  = (NV)i / valid_nx;
+                NV cdf_obs_high = (NV)(i + 1) / valid_nx;
+                NV cdf_theor    = approx_pnorm(x_data[i]);
+                NV diff1 = cdf_obs_low  - cdf_theor;
+                NV diff2 = cdf_obs_high - cdf_theor;
+                if (diff1 > max_d_plus)  max_d_plus  = diff1;
+                if (diff2 > max_d_plus)  max_d_plus  = diff2;
+                if (-diff1 > max_d_minus) max_d_minus = -diff1;
+                if (-diff2 > max_d_minus) max_d_minus = -diff2;
+                if (fabs(diff1) > max_d) max_d = fabs(diff1);
+                if (fabs(diff2) > max_d) max_d = fabs(diff2);
+            }
+            if (is_greater)   statistic = max_d_plus;
+            else if (is_less) statistic = max_d_minus;
+            else              statistic = max_d;
+
+            bool use_exact = (exact == -1) ? (valid_nx < 100) : (exact == 1);
+            if (use_exact) {
+                method_desc = "One-sample Kolmogorov-Smirnov exact test";
+                if (is_two_sided) {
+                    p_value = 1.0 - K2x(valid_nx, statistic);
+                } else {
+                    warn("exact 1-sample 1-sided KS test not implemented; using asymptotic");
+                    NV z = statistic * sqrt((NV)valid_nx);
+                    p_value = exp(-2.0 * z * z);
+                }
+            } else {
+                method_desc = "One-sample Kolmogorov-Smirnov test (asymptotic)";
+                NV z = statistic * sqrt((NV)valid_nx);
+                if (is_two_sided) p_value = K2l(z, 0, 1e-6);
+                else              p_value = exp(-2.0 * z * z);
+            }
+        } else {
+            Safefree(x_data);
+            croak("ks_test: Unsupported 1-sample distribution '%s'. Use arrays for 2-sample.", dist);
+        }
+    } else {
+        Safefree(x_data);
+        croak("ks_test: Invalid arguments for 'y'.");
+    }
+
+    Safefree(x_data);
+    if (p_value > 1.0) p_value = 1.0;
+    if (p_value < 0.0) p_value = 0.0;
+
+    HV *res = newHV();
+    hv_stores(res, "statistic",   newSVnv(statistic));
+    hv_stores(res, "p_value",     newSVnv(p_value));
+    hv_stores(res, "method",      newSVpv(method_desc, 0));
+    hv_stores(res, "alternative", newSVpv(alternative, 0));
+    RETVAL = newRV_noinc((SV *)res);
 }
 OUTPUT:
-	RETVAL
+    RETVAL
 
 SV* wilcox_test(...)
 CODE:

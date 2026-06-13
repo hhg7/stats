@@ -1008,8 +1008,6 @@ Also, a single array can be tested against a normal distribution:
 
     $ks = ks_test($ksx, 'pnorm');
 
-The p-value precision is about 1e-8, which I want to improve, but am not sure how.
-
 ## ljoin
 
 Consider a hash: `$h{$row}{$col}`, and another hash `$i{$row}{$col}`.
@@ -1850,6 +1848,7 @@ default view shifted to 80 characters to match Linux window length
 - **`n` / `rows` is validated.** It must be a non-negative integer; `undef` or
   a non-numeric value now dies with a clear message instead of producing
   warnings and being treated as `0`.
+- **flat/simple hashes are accepted as input**
 
 #### Bug fixes
 

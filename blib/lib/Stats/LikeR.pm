@@ -331,11 +331,15 @@ sub read_table {
 sub view {
 	my $data = shift;
 	my %args = @_;
+
 	# --- reject unknown arguments (mirrors read_table/write_table) ---
-	my %allowed = map { $_ => 1 } qw(n rows na max_width ellipsis gap cols
-	columns to return_only row.names row_names);
+	my %allowed = map { $_ => 1 } qw(
+		n rows na max_width ellipsis gap cols columns
+		to return_only row.names row_names
+	);
 	my @bad = sort grep { !$allowed{$_} } keys %args;
 	die "view: unknown argument(s): @bad\n" if @bad;
+
 	# --- n / rows (synonyms); reject conflicting or non-integer values ---
 	die "view: pass either 'n' or 'rows', not both\n"
 		if exists $args{n} && exists $args{rows};
@@ -344,6 +348,7 @@ sub view {
 		  :                       6;
 	die "view: 'n'/'rows' must be a non-negative integer\n"
 		unless defined $n && $n =~ /^\d+$/;
+
 	my $na    = exists $args{na}        ? $args{na}        : 'NA';
 	my $maxw  = exists $args{max_width} ? $args{max_width} : 80;
 	my $ell   = exists $args{ellipsis}  ? $args{ellipsis}  : '...';
@@ -351,25 +356,29 @@ sub view {
 	my $ucols = $args{cols} || $args{columns};
 	my $fh    = $args{to};
 	my $quiet = $args{return_only};
+
 	# 'row.names' takes precedence over the row_names alias (both accepted)
 	my $label_col = exists $args{'row.names'} ? $args{'row.names'}
 		          : exists $args{row_names}   ? $args{row_names}
 		          : undef;
+
 	my $rt = ref $data;
 	die "view: expected an ARRAY (AoH) or HASH (HoA/HoH) reference, got "
 	  . ($rt || 'a non-reference') . "\n"
 	  unless $rt eq 'ARRAY' or $rt eq 'HASH';
+
 	my ($kind, @cols, @labels, @raw, $total, $lab_header);
 	if ($rt eq 'ARRAY') { # ---- AoH ----
 		$kind  = 'AoH';
 		$total = scalar @$data;
 		my $show = $n < $total ? $n : $total;
+
 		if ($ucols) {
 			@cols = @$ucols;
 		} else {
-# BUG FIX: scan at least one row when data exists, so the header
-# still lists columns even when showing 0 rows (n => 0). PERF:
-# collect unique keys once, then sort once -- not sort-per-row.
+			# BUG FIX: scan at least one row when data exists, so the header
+			# still lists columns even when showing 0 rows (n => 0). PERF:
+			# collect unique keys once, then sort once -- not sort-per-row.
 			my $scan = $show > 0 ? $show : ($total > 0 ? 1 : 0);
 			my %seen;
 			for my $i (0 .. $scan - 1) {
@@ -452,9 +461,30 @@ sub view {
 				my $inner = ref $data->{$rkk} eq 'HASH' ? $data->{$rkk} : {};
 				push @raw, [ map { $inner->{$_} } @cols ];
 			}
-		} else {
-			die "view: HASH values are neither ARRAY (HoA) nor HASH (HoH) refs; "
-			  . "cannot interpret as a table\n";
+		} else {                                            # ---- flat hash ----
+			# BUG/FEATURE: a hash whose values are plain scalars
+			# ({ a => 1, b => 2, ... }) used to die ("neither ARRAY nor
+			# HASH"). Render it like write_table's flat hash: one row, keys
+			# as columns, a numeric '1' row label.
+			$kind = 'Hash';
+			$total = 1;
+			my $show = $n < $total ? $n : $total;
+			if ($ucols) {
+				@cols = @$ucols;
+			} else {
+				@cols = sort @keys;
+			}
+			my $lc = defined $label_col ? $label_col
+				   : (grep { $_ eq 'row_name' } @cols) ? 'row_name' : undef;
+			if (defined $lc) {
+				@cols = grep { $_ ne $lc } @cols;
+				$lab_header = $lc;
+			}
+			$lab_header = '' unless defined $lab_header;
+			for my $i (0 .. $show - 1) {
+				push @labels, defined $lc ? $data->{$lc} : ($i + 1);
+				push @raw, [ map { $data->{$_} } @cols ];
+			}
 		}
 	}
 

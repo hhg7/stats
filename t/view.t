@@ -1,13 +1,12 @@
-require 5.010;
 use strict;
 use warnings;
 use Test::More;
-use Scalar::Util 'looks_like_number';
+use Scalar::Util qw(looks_like_number);
 
-#
+# ---------------------------------------------------------------------------
 # view() is inlined here so this test is self-contained (no external files).
 # Keep it in sync with the copy shipped in the module.
-#
+# ---------------------------------------------------------------------------
 sub view {
 	my $data = shift;
 	my %args = @_;
@@ -141,9 +140,30 @@ sub view {
 				my $inner = ref $data->{$rkk} eq 'HASH' ? $data->{$rkk} : {};
 				push @raw, [ map { $inner->{$_} } @cols ];
 			}
-		} else {
-			die "view: HASH values are neither ARRAY (HoA) nor HASH (HoH) refs; "
-			  . "cannot interpret as a table\n";
+		} else {                                            # ---- flat hash ----
+			# BUG/FEATURE: a hash whose values are plain scalars
+			# ({ a => 1, b => 2, ... }) used to die ("neither ARRAY nor
+			# HASH"). Render it like write_table's flat hash: one row, keys
+			# as columns, a numeric '1' row label.
+			$kind = 'Hash';
+			$total = 1;
+			my $show = $n < $total ? $n : $total;
+			if ($ucols) {
+				@cols = @$ucols;
+			} else {
+				@cols = sort @keys;
+			}
+			my $lc = defined $label_col ? $label_col
+				   : (grep { $_ eq 'row_name' } @cols) ? 'row_name' : undef;
+			if (defined $lc) {
+				@cols = grep { $_ ne $lc } @cols;
+				$lab_header = $lc;
+			}
+			$lab_header = '' unless defined $lab_header;
+			for my $i (0 .. $show - 1) {
+				push @labels, defined $lc ? $data->{$lc} : ($i + 1);
+				push @raw, [ map { $data->{$_} } @cols ];
+			}
 		}
 	}
 
@@ -218,6 +238,7 @@ sub view {
 	unless ($quiet) { defined $fh ? print {$fh} $str : print $str; }
 	return $str;
 }
+
 
 my $aoh = [
 	{ row_name => 'p1', age => 41, sex => 'M', tt => 18.2 },
@@ -325,8 +346,32 @@ is( $@, '', 'all documented args accepted' );
 	is( $cap, '', 'return_only prints nothing' );
 	eval { view("scalar", return_only => 1) };
 	like( $@, qr/expected an ARRAY .* or HASH/, 'non-ref input dies' );
-	eval { view({ a => 1 }, return_only => 1) };
-	like( $@, qr/neither ARRAY .* nor HASH/, 'hash of scalars dies' );
+}
+
+# ---- FEATURE: flat (scalar-valued) hash renders as a single row ----
+{
+	my @lines = split /\n/, view({ a => 1, b => 2, c => 3 }, return_only => 1);
+	like( $lines[0], qr/^# Hash: 1 row x 3 cols  \(showing 1\)$/, 'flat hash banner' );
+	like( $lines[1], qr/^\s+a\s+b\s+c$/, 'flat hash header: sorted keys, leading label column' );
+	like( $lines[2], qr/^1\s+1\s+2\s+3$/, 'flat hash row: numeric label then values' );
+
+	# undef values become NA
+	my $s = view({ a => 1, b => undef }, return_only => 1);
+	like( $s, qr/\bNA\b/, 'flat hash: undef value -> NA' );
+
+	# cols selects/orders
+	@lines = split /\n/, view({ a => 1, b => 2, c => 3 }, cols => ['c','a'], return_only => 1);
+	like( $lines[1], qr/c\s+a$/, 'flat hash: cols selects and orders columns' );
+
+	# n => 0 still shows the header
+	@lines = split /\n/, view({ a => 1, b => 2 }, n => 0, return_only => 1);
+	is( scalar @lines, 3, 'flat hash n=0: banner + header + footer' );
+	like( $lines[1], qr/a\s+b$/, 'flat hash n=0: header still lists columns' );
+
+	# row.names names a key to use as the label
+	@lines = split /\n/, view({ id => 'x', v => 9 }, 'row.names' => 'id', return_only => 1);
+	like( $lines[1], qr/^id\s+v$/, 'flat hash: row.names header' );
+	like( $lines[2], qr/^x\s+9$/, 'flat hash: row.names value becomes the label' );
 }
 
 done_testing();
