@@ -1192,76 +1192,121 @@ Takes either an array or an array reference, and returns an array of the most co
 
 ## oneway_test
 
-Like ANOVA/aov but does not assume normality
+A one-way test for equality of group means that, unlike `aov`/ANOVA, **does not
+assume equal variances**. By default it performs **Welch's one-way test** (the
+same default as R's `oneway.test`), so the residual degrees of freedom are
+usually fractional. Pass `var_equal => 1` for the classic equal-variance form.
 
-### hash of array input
+    use Stats::LikeR qw(oneway_test);
 
-    $test_data = oneway_test({
-    	yield => [5.5, 5.4, 5.8, 4.5, 4.8, 4.2],
-    	ctrl  => [1,     1,   1,   0,   0,   0]
+### Input
+
+`oneway_test` accepts your data in one of three shapes. In every case each
+*group* is a vector of at least two numeric observations.
+
+| Shape | What it means | Group labels |
+|-------|---------------|--------------|
+| **Hash of arrays** `{ a => [...], b => [...] }` | Each key is a group (R's `stack()` view of a named list) | the hash keys |
+| **Array of arrays** `[ [...], [...] ]` | Each element is a group | `"Index 0"`, `"Index 1"`, … |
+| **Hash + `formula`** `{ resp => [...], grp => [...] }, formula => 'resp ~ grp'` | Long-format columns split by a factor column | the distinct values of the factor |
+
+### Options
+
+| Option | Default | Meaning |
+|--------|---------|---------|
+| `var_equal` (alias `var.equal`) | `0` (false) | `0` → Welch's test (unequal variances). `1` → pooled-variance test. |
+| `formula` | *none* | `'response ~ factor'`. Only valid with a **hash** input; an error with an array of arrays. |
+
+### Data validation
+
+Every observation must be **defined and numeric**; an `undef` or non-numeric
+cell makes the call `die` with the offending group and position. This matches
+the rest of `Stats::LikeR` (`mean`, `sum`, `cor`, … all die on `undef`) and
+prevents missing values from being silently treated as `0`.
+
+Each group needs at least two observations, and you need at least two groups.
+
+### Output
+
+A hash reference with three top-level keys:
+
+| Key | Value |
+|-----|-------|
+| *factor name* (`Group`, or the formula's factor, e.g. `supp`) | the between-groups row: `Df`, `Sum Sq`, `Mean Sq`, `F value`, `Pr(>F)` |
+| `Residuals` | the within-groups row: `Df`, `Sum Sq`, `Mean Sq` (`Df` is fractional under Welch) |
+| `group_stats` | `{ mean => { group => mean, … }, size => { group => n, … } }` |
+
+### Examples
+
+#### Hash of arrays (each key is a group)
+
+    my $res = oneway_test({
+        yield => [5.5, 5.4, 5.8, 4.5, 4.8, 4.2],
+        ctrl  => [1,   1,   1,   0,   0,   0  ],
     });
 
-which will output a hash reference:
-
     {
-    Group         {
-        Df          1,
-        "F value"   177.504798464491,
-        "Mean Sq"   61.6533333333333,
-        Pr(>F)      1.31343255160843e-07,
-        "Sum Sq"    61.6533333333333
-    },
-    group_stats   {
-        mean   {
-            ctrl    0.5,
-            yield   5.03333333333333
+        Group => {
+            Df        => 1,
+            "Sum Sq"  => 61.6533333333333,
+            "Mean Sq" => 61.6533333333333,
+            "F value" => 177.504798464491,
+            "Pr(>F)"  => 1.31343255160843e-07,
         },
-        size   {
-            ctrl    6,
-            yield   6
-        }
-    },
-    Residuals     {
-        Df          9.81767348326473,
-        "Mean Sq"   0.353783749200256,
-        "Sum Sq"    3.47333333333333
-    }
-}
-
-### array of array input
-
-    oneway_test([
-       [5.5, 5.4, 5.8, 4.5, 4.8, 4.2],
-       [1,     1,   1,   0,   0,   0]
-    	]);
-
-which will output a nearly identical hash reference as for hash of arrays:
-
-    {
-    Group         {
-        Df          1,
-        "F value"   177.504798464491,
-        "Mean Sq"   61.6533333333333,
-        Pr(>F)      1.31343255160843e-07,
-        "Sum Sq"    61.6533333333333
-    },
-    group_stats   {
-        mean   {
-            "Index 0"   5.03333333333333,
-            "Index 1"   0.5
+        Residuals => {
+            Df        => 9.81767348326473,   # fractional: Welch correction
+            "Sum Sq"  => 3.47333333333333,
+            "Mean Sq" => 0.353783749200256,
         },
-        size   {
-            "Index 0"   6,
-            "Index 1"   6
-        }
-    },
-    Residuals     {
-        Df          9.81767348326473,
-        "Mean Sq"   0.353783749200256,
-        "Sum Sq"    3.47333333333333
-    }
+        group_stats => {
+            mean => { ctrl => 0.5, yield => 5.03333333333333 },
+            size => { ctrl => 6,   yield => 6 },
+        },
     }
 
+#### Array of arrays (groups named by index)
+
+    my $res = oneway_test([
+        [5.5, 5.4, 5.8, 4.5, 4.8, 4.2],
+        [1,   1,   1,   0,   0,   0  ],
+    ]);
+
+Identical to the hash form, except `group_stats` is keyed by position:
+
+    group_stats => {
+        mean => { "Index 0" => 5.03333333333333, "Index 1" => 0.5 },
+        size => { "Index 0" => 6,                "Index 1" => 6   },
+    }
+
+#### Long format with a formula
+
+When your data is in columns rather than pre-split groups, name the response
+and factor columns with a formula. The factor's *values* become the groups and
+the factor's *name* becomes the top-level key:
+
+    my $res = oneway_test(
+        {
+            len  => [4.2, 11.5, 7.3, 16.5, 17.3, 13.6, 23.6, 18.5, 33.9],
+            supp => [qw(VC VC VC OJ OJ OJ HI HI HI)],
+        },
+        formula => 'len ~ supp',
+    );
+    # $res->{supp}, $res->{Residuals}, $res->{group_stats} ...
+
+### Classic equal-variance form
+
+    my $res = oneway_test(\%groups, var_equal => 1);   # or 'var.equal' => 1
+
+### Notes
+
+- The default (Welch) does **not** require equal group sizes or equal variances;
+  the pooled form (`var_equal => 1`) assumes equal variances.
+- `formula` is only meaningful for a hash input. Passing it with an array of
+  arrays is an error.
+- Group order in the output is not guaranteed for hash inputs (it follows hash
+  iteration order); read results by name, not position.
+- Avoid naming a factor `Residuals` or `group_stats` in a formula, since those
+  are reserved top-level keys in the result.
 
 ## p_adjust
 
@@ -1895,6 +1940,117 @@ Args can also be accepted:
 # changes
 
 ## 0.16
+
+### `lm`
+
+### Bug fixes
+
+**Memory leak on the zero-degrees-of-freedom error path.** When
+`valid_n <= p`, the cleanup freed the `valid_row_names` *array* but not the
+per-row name strings it held (those had been transferred out of `row_names`,
+whose own array was already freed). The strings leaked on every such error.
+Added the per-entry `Safefree` loop before freeing the array, matching the
+normal path.
+
+**HoH input validated only the first row.** Only the first hash value was
+checked to be a `HASHREF`; subsequent values were `SvRV`'d unconditionally, so
+a malformed row (`{ a => {...}, b => 5 }`) dereferenced a non-reference. Every
+row is now validated, with the partial allocations cleaned up before the
+`croak`, mirroring the existing AoH path.
+
+**`isspace` on a possibly-signed `char`.** `isspace(*src)` is undefined for
+byte values ≥ 0x80 on platforms where `char` is signed. Cast to
+`(unsigned char)` before the call.
+
+### Speed / RAM improvements
+
+**Formula buffer is now heap-allocated to fit.** `char f_cpy[512]` silently
+truncated any longer formula. Replaced with a buffer sized to
+`strlen(formula) + 1`, so there is no fixed limit and no truncation.
+
+**`.`-expansion buffer is now a growable heap buffer.** `char rhs_expanded[2048]`
+silently dropped expanded terms once full. It is now a buffer that doubles on
+demand. Appends also went from `strcat` (which rescans from the start every
+time — O(n²) over many columns) to an O(1) amortised append that tracks the
+write position.
+
+**No more per-row scratch allocation in matrix construction.** The original
+`safemalloc`'d a `row_x` buffer, filled it, copied it into `X`, and freed it
+*for every row* — `n` allocations plus `n*p` copies. Each candidate row is now
+written straight into `X` at its prospective commit slot; a row that fails
+listwise deletion is simply overwritten by the next candidate. This removes the
+`n` allocate/free cycles and the copy loop entirely.
+
+**Categorical levels sorted with `qsort`.** The level list used an O(n²) bubble
+sort; replaced with `qsort` (relevant only for high-cardinality factors).
+
+**Unused tail of `X` reclaimed after listwise deletion.** `X` is allocated for
+all `n` rows up front (`valid_n` is unknown until rows are scanned). When rows
+are dropped, `X` is now `Renew`ed down to `valid_n * p`, returning the unused
+tail to the allocator before the OLS phase.
+
+**Minor robustness.** The argument-parsing index was widened from
+`unsigned short` to `I32` to match `items`, and the HoH row count now uses
+`HvUSEDKEYS` rather than relying on `hv_iterinit`'s return value.
+
+### Known limitations (left unchanged)
+
+- A multi-way term such as `a*b*c` is split only on the first `*`, so it yields
+  `a`, `b*c`, and `a:b*c` rather than a full three-way expansion. Deeper
+  interactions silently fail (the unparsable term evaluates to `NaN` and the
+  rows are dropped). This matches the documented two-way `*` support.
+- HoA input takes the row count from the first column; columns shorter than
+  that simply contribute dropped rows rather than raising an error.
+
+### `oneway_test`
+
+#### Bug fixes
+
+**Memory leaks on error paths.** Nearly every `croak` after an allocation
+leaked memory. `croak` does a `longjmp`, so anything allocated but not yet
+freed is lost. Affected paths:
+
+- AoA and hash first-pass errors leaked `sizes` and any `gnames[]` entries
+  allocated so far.
+- Formula-mode "not found as an array ref" errors leaked `lhs` and `rhs`.
+
+All post-allocation errors now route through a single `fail:` label that frees
+every pointer unconditionally. Pointers are initialised to `NULL` and `gnames`
+is zero-allocated with `Newxz`, so the cleanup is always safe to run.
+
+**Undefined and non-numeric cells silently coerced to `0.0`.** The original
+second pass used `(svp && *svp) ? SvNV(*svp) : 0.0`, meaning an `undef` or
+non-numeric cell was quietly treated as zero, silently corrupting the
+F-statistic. Each cell is now validated with `SvOK` and `looks_like_number`;
+the call dies naming the group and observation index, consistent with the rest
+of `Stats::LikeR` (`mean`, `sum`, `cor`, etc.).
+
+**Unsigned wraparound on empty array input.** `k = (size_t)av_len(in_av) + 1`
+cast to `size_t` *before* adding, so an empty array (`av_len` returns `-1`)
+produced `SIZE_MAX` rather than `0`. Changed to
+`k = (size_t)(av_len(in_av) + 1)` so the `+1` is done in signed arithmetic
+before the cast.
+
+**Unreliable group count from `hv_iterinit`.** `hv_iterinit` returns the
+number of buckets in use rather than the number of keys for tied hashes.
+Replaced with `HvUSEDKEYS`, which always returns the correct key count.
+
+#### Improvements
+
+**`var.equal` accepted as an alias for `var_equal`.** R users write
+`var.equal`; the argument parser now accepts both spellings.
+
+**Perl memory API used throughout.** `safemalloc` and manual `memcpy` replaced
+with `Newx`, `Newxz`, `savepv`, and `savepvn`. `savepvn` additionally
+preserves embedded NUL bytes in group key strings, which the previous
+`strlen`-based copies silently truncated.
+
+#### Known limitations (not changed)
+
+- A factor column named `Residuals` or `group_stats` in a formula call will
+  collide with reserved top-level keys in the result hash.
+- Group names containing an embedded NUL are stored correctly but are still
+  truncated at `strlen` when written into the output hash keys.
 
 ### `view`
 
