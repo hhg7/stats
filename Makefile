@@ -27,7 +27,7 @@
 
 # --- MakeMaker const_config section:
 
-# These definitions are from config.sh (via /home/con/perl5/perlbrew/perls/perl-5.12.5/lib/5.12.5/x86_64-linux-ld/Config.pm).
+# These definitions are from config.sh (via /home/con/perl5/perlbrew/perls/perl-5.10.1/lib/5.10.1/x86_64-linux/Config.pm).
 # They may have been overridden via Makefile.PL or on the command line.
 AR = ar
 CC = cc
@@ -45,10 +45,10 @@ LIBC = /lib/x86_64-linux-gnu/libc.so.6
 LIB_EXT = .a
 OBJ_EXT = .o
 OSNAME = linux
-OSVERS = 6.8.0-124-generic
+OSVERS = 6.8.0-117-generic
 RANLIB = :
-SITELIBEXP = /home/con/perl5/perlbrew/perls/perl-5.12.5/lib/site_perl/5.12.5
-SITEARCHEXP = /home/con/perl5/perlbrew/perls/perl-5.12.5/lib/site_perl/5.12.5/x86_64-linux-ld
+SITELIBEXP = /home/con/perl5/perlbrew/perls/perl-5.10.1/lib/site_perl/5.10.1
+SITEARCHEXP = /home/con/perl5/perlbrew/perls/perl-5.10.1/lib/site_perl/5.10.1/x86_64-linux
 SO = so
 VENDORARCHEXP = 
 VENDORLIBEXP = 
@@ -80,55 +80,55 @@ MAN3SECTION = 3
 INSTALLDIRS = site
 DESTDIR = 
 PREFIX = $(SITEPREFIX)
-PERLPREFIX = /home/con/perl5/perlbrew/perls/perl-5.12.5
-SITEPREFIX = /home/con/perl5/perlbrew/perls/perl-5.12.5
+PERLPREFIX = /home/con/perl5/perlbrew/perls/perl-5.10.1
+SITEPREFIX = /home/con/perl5/perlbrew/perls/perl-5.10.1
 VENDORPREFIX = 
-INSTALLPRIVLIB = /home/con/perl5/perlbrew/perls/perl-5.12.5/lib/5.12.5
+INSTALLPRIVLIB = /home/con/perl5/perlbrew/perls/perl-5.10.1/lib/5.10.1
 DESTINSTALLPRIVLIB = $(DESTDIR)$(INSTALLPRIVLIB)
-INSTALLSITELIB = /home/con/perl5/perlbrew/perls/perl-5.12.5/lib/site_perl/5.12.5
+INSTALLSITELIB = /home/con/perl5/perlbrew/perls/perl-5.10.1/lib/site_perl/5.10.1
 DESTINSTALLSITELIB = $(DESTDIR)$(INSTALLSITELIB)
 INSTALLVENDORLIB = 
 DESTINSTALLVENDORLIB = $(DESTDIR)$(INSTALLVENDORLIB)
-INSTALLARCHLIB = /home/con/perl5/perlbrew/perls/perl-5.12.5/lib/5.12.5/x86_64-linux-ld
+INSTALLARCHLIB = /home/con/perl5/perlbrew/perls/perl-5.10.1/lib/5.10.1/x86_64-linux
 DESTINSTALLARCHLIB = $(DESTDIR)$(INSTALLARCHLIB)
-INSTALLSITEARCH = /home/con/perl5/perlbrew/perls/perl-5.12.5/lib/site_perl/5.12.5/x86_64-linux-ld
+INSTALLSITEARCH = /home/con/perl5/perlbrew/perls/perl-5.10.1/lib/site_perl/5.10.1/x86_64-linux
 DESTINSTALLSITEARCH = $(DESTDIR)$(INSTALLSITEARCH)
 INSTALLVENDORARCH = 
 DESTINSTALLVENDORARCH = $(DESTDIR)$(INSTALLVENDORARCH)
-INSTALLBIN = /home/con/perl5/perlbrew/perls/perl-5.12.5/bin
+INSTALLBIN = /home/con/perl5/perlbrew/perls/perl-5.10.1/bin
 DESTINSTALLBIN = $(DESTDIR)$(INSTALLBIN)
-INSTALLSITEBIN = /home/con/perl5/perlbrew/perls/perl-5.12.5/bin
+INSTALLSITEBIN = /home/con/perl5/perlbrew/perls/perl-5.10.1/bin
 DESTINSTALLSITEBIN = $(DESTDIR)$(INSTALLSITEBIN)
 INSTALLVENDORBIN = 
 DESTINSTALLVENDORBIN = $(DESTDIR)$(INSTALLVENDORBIN)
-INSTALLSCRIPT = /home/con/perl5/perlbrew/perls/perl-5.12.5/bin
+INSTALLSCRIPT = /home/con/perl5/perlbrew/perls/perl-5.10.1/bin
 DESTINSTALLSCRIPT = $(DESTDIR)$(INSTALLSCRIPT)
-INSTALLSITESCRIPT = /home/con/perl5/perlbrew/perls/perl-5.12.5/bin
+INSTALLSITESCRIPT = /home/con/perl5/perlbrew/perls/perl-5.10.1/bin
 DESTINSTALLSITESCRIPT = $(DESTDIR)$(INSTALLSITESCRIPT)
 INSTALLVENDORSCRIPT = 
 DESTINSTALLVENDORSCRIPT = $(DESTDIR)$(INSTALLVENDORSCRIPT)
-INSTALLMAN1DIR = /home/con/perl5/perlbrew/perls/perl-5.12.5/man/man1
+INSTALLMAN1DIR = /home/con/perl5/perlbrew/perls/perl-5.10.1/man/man1
 DESTINSTALLMAN1DIR = $(DESTDIR)$(INSTALLMAN1DIR)
-INSTALLSITEMAN1DIR = /home/con/perl5/perlbrew/perls/perl-5.12.5/man/man1
+INSTALLSITEMAN1DIR = /home/con/perl5/perlbrew/perls/perl-5.10.1/man/man1
 DESTINSTALLSITEMAN1DIR = $(DESTDIR)$(INSTALLSITEMAN1DIR)
 INSTALLVENDORMAN1DIR = 
 DESTINSTALLVENDORMAN1DIR = $(DESTDIR)$(INSTALLVENDORMAN1DIR)
-INSTALLMAN3DIR = /home/con/perl5/perlbrew/perls/perl-5.12.5/man/man3
+INSTALLMAN3DIR = /home/con/perl5/perlbrew/perls/perl-5.10.1/man/man3
 DESTINSTALLMAN3DIR = $(DESTDIR)$(INSTALLMAN3DIR)
-INSTALLSITEMAN3DIR = /home/con/perl5/perlbrew/perls/perl-5.12.5/man/man3
+INSTALLSITEMAN3DIR = /home/con/perl5/perlbrew/perls/perl-5.10.1/man/man3
 DESTINSTALLSITEMAN3DIR = $(DESTDIR)$(INSTALLSITEMAN3DIR)
 INSTALLVENDORMAN3DIR = 
 DESTINSTALLVENDORMAN3DIR = $(DESTDIR)$(INSTALLVENDORMAN3DIR)
-PERL_LIB = /home/con/perl5/perlbrew/perls/perl-5.12.5/lib/5.12.5
-PERL_ARCHLIB = /home/con/perl5/perlbrew/perls/perl-5.12.5/lib/5.12.5/x86_64-linux-ld
+PERL_LIB = /home/con/perl5/perlbrew/perls/perl-5.10.1/lib/5.10.1
+PERL_ARCHLIB = /home/con/perl5/perlbrew/perls/perl-5.10.1/lib/5.10.1/x86_64-linux
 LIBPERL_A = libperl.a
 FIRST_MAKEFILE = Makefile
 MAKEFILE_OLD = Makefile.old
 MAKE_APERL_FILE = Makefile.aperl
 PERLMAINCC = $(CC)
-PERL_INC = /home/con/perl5/perlbrew/perls/perl-5.12.5/lib/5.12.5/x86_64-linux-ld/CORE
-PERL = "/home/con/perl5/perlbrew/perls/perl-5.12.5/bin/perl"
-FULLPERL = "/home/con/perl5/perlbrew/perls/perl-5.12.5/bin/perl"
+PERL_INC = /home/con/perl5/perlbrew/perls/perl-5.10.1/lib/5.10.1/x86_64-linux/CORE
+PERL = "/home/con/perl5/perlbrew/perls/perl-5.10.1/bin/perl"
+FULLPERL = "/home/con/perl5/perlbrew/perls/perl-5.10.1/bin/perl"
 ABSPERL = $(PERL)
 PERLRUN = $(PERL)
 FULLPERLRUN = $(FULLPERL)
@@ -141,7 +141,7 @@ PERM_DIR = 755
 PERM_RW = 644
 PERM_RWX = 755
 
-MAKEMAKER   = /home/con/perl5/perlbrew/perls/perl-5.12.5/lib/site_perl/5.12.5/ExtUtils/MakeMaker.pm
+MAKEMAKER   = /home/con/perl5/perlbrew/perls/perl-5.10.1/lib/5.10.1/ExtUtils/MakeMaker.pm
 MM_VERSION  = 7.78
 MM_REVISION = 77800
 
@@ -237,8 +237,8 @@ TO_INST_PM = add_data.pl \
 	wilcox.text.pl \
 	write.table.pl \
 	xs.check.pl
-PERL_ARCHLIBDEP = /home/con/perl5/perlbrew/perls/perl-5.12.5/lib/5.12.5/x86_64-linux-ld
-PERL_INCDEP = /home/con/perl5/perlbrew/perls/perl-5.12.5/lib/5.12.5/x86_64-linux-ld/CORE
+PERL_ARCHLIBDEP = /home/con/perl5/perlbrew/perls/perl-5.10.1/lib/5.10.1/x86_64-linux
+PERL_INCDEP = /home/con/perl5/perlbrew/perls/perl-5.10.1/lib/5.10.1/x86_64-linux/CORE
 
 
 # Dependencies info
@@ -261,12 +261,12 @@ AUTOSPLITFILE = $(ABSPERLRUN)  -e 'use AutoSplit;  autosplit($$$$ARGV[0], $$$$AR
 
 # --- MakeMaker tool_xsubpp section:
 
-XSUBPPDIR = /home/con/perl5/perlbrew/perls/perl-5.12.5/lib/5.12.5/ExtUtils
+XSUBPPDIR = /home/con/perl5/perlbrew/perls/perl-5.10.1/lib/5.10.1/ExtUtils
 XSUBPP = "$(XSUBPPDIR)$(DFSEP)xsubpp"
 XSUBPPRUN = $(PERLRUN) $(XSUBPP)
 XSPROTOARG = -noprototypes
-XSUBPPDEPS = /home/con/perl5/perlbrew/perls/perl-5.12.5/lib/5.12.5/ExtUtils/typemap /home/con/perl5/perlbrew/perls/perl-5.12.5/lib/5.12.5/ExtUtils$(DFSEP)xsubpp
-XSUBPPARGS = -typemap '/home/con/perl5/perlbrew/perls/perl-5.12.5/lib/5.12.5/ExtUtils/typemap'
+XSUBPPDEPS = /home/con/perl5/perlbrew/perls/perl-5.10.1/lib/5.10.1/ExtUtils/typemap /home/con/perl5/perlbrew/perls/perl-5.10.1/lib/5.10.1/ExtUtils$(DFSEP)xsubpp
+XSUBPPARGS = -typemap '/home/con/perl5/perlbrew/perls/perl-5.10.1/lib/5.10.1/ExtUtils/typemap'
 XSUBPP_EXTRA_ARGS =
 
 
@@ -956,7 +956,6 @@ PERL_HDRS = \
         $(PERL_INCDEP)/INTERN.h            \
         $(PERL_INCDEP)/XSUB.h            \
         $(PERL_INCDEP)/av.h            \
-        $(PERL_INCDEP)/bitcount.h            \
         $(PERL_INCDEP)/cc_runtime.h            \
         $(PERL_INCDEP)/config.h            \
         $(PERL_INCDEP)/cop.h            \
@@ -1004,8 +1003,6 @@ PERL_HDRS = \
         $(PERL_INCDEP)/scope.h            \
         $(PERL_INCDEP)/sv.h            \
         $(PERL_INCDEP)/thread.h            \
-        $(PERL_INCDEP)/time64.h            \
-        $(PERL_INCDEP)/time64_config.h            \
         $(PERL_INCDEP)/uconfig.h            \
         $(PERL_INCDEP)/unixish.h            \
         $(PERL_INCDEP)/utf8.h            \
@@ -1042,8 +1039,8 @@ $(FIRST_MAKEFILE) : Makefile.PL $(CONFIGDEP)
 
 # --- MakeMaker makeaperl section ---
 MAP_TARGET    = perl
-FULLPERL      = "/home/con/perl5/perlbrew/perls/perl-5.12.5/bin/perl"
-MAP_PERLINC   = "-Iblib/arch" "-Iblib/lib" "-I/home/con/perl5/perlbrew/perls/perl-5.12.5/lib/5.12.5/x86_64-linux-ld" "-I/home/con/perl5/perlbrew/perls/perl-5.12.5/lib/5.12.5"
+FULLPERL      = "/home/con/perl5/perlbrew/perls/perl-5.10.1/bin/perl"
+MAP_PERLINC   = "-Iblib/arch" "-Iblib/lib" "-I/home/con/perl5/perlbrew/perls/perl-5.10.1/lib/5.10.1/x86_64-linux" "-I/home/con/perl5/perlbrew/perls/perl-5.10.1/lib/5.10.1"
 
 $(MAP_TARGET) :: $(MAKE_APERL_FILE)
 	$(MAKE) $(USEMAKEFILE) $(MAKE_APERL_FILE) $@
@@ -1099,7 +1096,7 @@ ppd :
 	$(NOECHO) $(ECHO) '    <ABSTRACT></ABSTRACT>' >> Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '    <AUTHOR></AUTHOR>' >> Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '    <IMPLEMENTATION>' >> Stats-LikeR.ppd
-	$(NOECHO) $(ECHO) '        <ARCHITECTURE NAME="x86_64-linux-ld-5.12" />' >> Stats-LikeR.ppd
+	$(NOECHO) $(ECHO) '        <ARCHITECTURE NAME="x86_64-linux-5.10" />' >> Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '        <CODEBASE HREF="" />' >> Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '    </IMPLEMENTATION>' >> Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '</SOFTPKG>' >> Stats-LikeR.ppd

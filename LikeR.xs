@@ -2017,9 +2017,407 @@ lm_str_qsort(const void *a, const void *b)
 {
 	return strcmp(*(const char *const *)a, *(const char *const *)b);
 }
+typedef int (*cs_cmp_fn)(pTHX_ void *restrict ctx, size_t i, size_t j);
 
+/* Sort by a named column: pre-fetched cell SVs plus a numeric/string flag. */
+typedef struct {
+	SV **restrict vals;	/* borrowed cell SV* per row (NULL == missing) */
+	unsigned short numeric;	/* 1 => compare with SvNV, 0 => compare with sv_cmp */
+} cs_col_ctx;
+
+/* Sort by a user comparator: per-row refs handed to $a/$b before each call. */
+typedef struct {
+	SV **restrict rows;	/* row ref per index (RV to HV) */
+	CV  *restrict cv;	/* the comparator */
+	SV  *a_sv;		/* scalar currently aliased to package $a */
+	SV  *b_sv;		/* scalar currently aliased to package $b */
+} cs_code_ctx;
+
+static int cs_col_cmp(pTHX_ void *restrict vctx, size_t i, size_t j) {
+	cs_col_ctx *restrict c = (cs_col_ctx *)vctx;
+	SV *restrict av = c->vals[i];
+	SV *restrict bv = c->vals[j];
+	int a_ok = (av && SvOK(av));
+	int b_ok = (bv && SvOK(bv));
+	if (!a_ok || !b_ok) {		/* undef/missing always sorts last */
+		if (!a_ok && !b_ok) return 0;
+		return a_ok ? -1 : 1;
+	}
+	if (c->numeric) {
+		NV x = SvNV(av), y = SvNV(bv);
+		return (x > y) - (x < y);
+	}
+	return sv_cmp(av, bv);		/* Perl's `cmp` semantics */
+}
+
+static int cs_code_cmp(pTHX_ void *restrict vctx, size_t i, size_t j) {
+	cs_code_ctx *restrict c = (cs_code_ctx *)vctx;
+	dSP;
+	size_t count;
+	NV r;
+	/* alias the two rows into the comparator's $a / $b */
+	sv_setsv(c->a_sv, c->rows[i]);
+	sv_setsv(c->b_sv, c->rows[j]);
+	ENTER;
+	SAVETMPS;
+	PUSHMARK(SP);
+	/* sort comparators read $a/$b, not @_, so we push no arguments */
+	PUTBACK;
+	count = call_sv((SV *)c->cv, G_SCALAR);
+	SPAGAIN;
+	if (count > 0) {
+		/* POPs has a side effect (sp--) and SvNV is a macro that may
+		 * evaluate its argument more than once on older perls (5.10),
+		 * so capture the SV first rather than writing SvNV(POPs). */
+		SV *res = POPs;
+		r = SvNV(res);
+	} else {
+		r = 0.0;
+	}
+	PUTBACK;
+	FREETMPS;
+	LEAVE;
+	return (r > 0) - (r < 0);
+}
+
+/* Stable bottom merge for the index permutation. */
+static void cs_merge(pTHX_ size_t *restrict idx, size_t *restrict tmp,
+					 size_t lo, size_t mid, size_t hi,
+					 cs_cmp_fn cmp, void *restrict ctx) {
+	size_t i = lo, j = mid, k = lo;
+	while (i < mid && j < hi) {
+		/* `<= 0` keeps equal elements in original order => stable */
+		if (cmp(aTHX_ ctx, idx[i], idx[j]) <= 0) tmp[k++] = idx[i++];
+		else                                     tmp[k++] = idx[j++];
+	}
+	while (i < mid) tmp[k++] = idx[i++];
+	while (j < hi)  tmp[k++] = idx[j++];
+	for (size_t t = lo; t < hi; t++) idx[t] = tmp[t];
+}
+
+static void cs_msort(pTHX_ size_t *restrict idx, size_t *restrict tmp,
+					 size_t lo, size_t hi,
+					 cs_cmp_fn cmp, void *restrict ctx) {
+	if (hi - lo < 2) return;
+	size_t mid = lo + (hi - lo) / 2;
+	cs_msort(aTHX_ idx, tmp, lo, mid, cmp, ctx);
+	cs_msort(aTHX_ idx, tmp, mid, hi, cmp, ctx);
+	/* skip the merge when the halves are already in order */
+	if (cmp(aTHX_ ctx, idx[mid - 1], idx[mid]) <= 0) return;
+	cs_merge(aTHX_ idx, tmp, lo, mid, hi, cmp, ctx);
+}
+
+/* Resolve $a / $b in the package where the comparator was compiled, localize
+ * them for the duration of the sort, and point them at two fresh scalars.
+ * Mirrors what Perl's own sort does. The save stack (ENTER must already be in
+ * effect) restores the caller's $a/$b on scope exit, including via croak. */
+static void cs_bind_ab(pTHX_ CV *restrict cv, SV **a_out, SV **b_out) {
+	HV *restrict stash = CvSTASH(cv);
+	if (!stash) stash = PL_curstash;
+	const char *restrict pkg = stash ? HvNAME(stash) : NULL;
+	if (!pkg) pkg = "main";
+	STRLEN plen = strlen(pkg);
+
+	/* build "<pkg>::a" / "<pkg>::b" so the GVs land in the right stash */
+	char *restrict buf;
+	Newx(buf, plen + 4, char);
+	SAVEFREEPV(buf);
+	memcpy(buf, pkg, plen);
+	buf[plen] = ':'; buf[plen + 1] = ':'; buf[plen + 3] = '\0';
+
+	buf[plen + 2] = 'a';
+	GV *agv = gv_fetchpv(buf, GV_ADD, SVt_PV);
+	buf[plen + 2] = 'b';
+	GV *bgv = gv_fetchpv(buf, GV_ADD, SVt_PV);
+
+	SAVESPTR(GvSV(agv));
+	SAVESPTR(GvSV(bgv));
+	SV *a_sv = sv_newmortal();
+	SV *b_sv = sv_newmortal();
+	GvSV(agv) = a_sv;
+	GvSV(bgv) = b_sv;
+	*a_out = a_sv;
+	*b_out = b_sv;
+}
+
+/* Build the sorted result in the requested shape (out_aoh = 1 => AoH, else
+ * HoA), reading from whichever shape the input was. idx[0..n) is the sorted
+ * permutation of original row indices. Handles all four input/output
+ * combinations, including transposing AoH<->HoA. Returns a new owned ref. */
+static SV *cs_materialize(pTHX_ bool out_aoh, bool is_aoh, AV *restrict src_av,
+						  SV **restrict colkeys, AV **restrict colavs,
+						  size_t ncols, size_t *restrict idx, size_t n) {
+	if (out_aoh) {
+		AV *out = newAV();
+		if (n) av_extend(out, (SSize_t)n - 1);
+		if (is_aoh) {
+			/* AoH -> AoH: reorder, sharing the original row hashrefs */
+			for (size_t k = 0; k < n; k++) {
+				SV **restrict rp = av_fetch(src_av, (SSize_t)idx[k], 0);
+				SV *restrict row = (rp && *rp) ? *rp : &PL_sv_undef;
+				av_push(out, SvREFCNT_inc_simple_NN(row));
+			}
+		} else {
+			/* HoA -> AoH: synthesize one hashref per row (copied cells) */
+			for (size_t k = 0; k < n; k++) {
+				HV *rh = newHV();
+				for (size_t c = 0; c < ncols; c++) {
+					SV **cp = av_fetch(colavs[c], (SSize_t)idx[k], 0);
+					hv_store_ent(rh, colkeys[c],
+								 (cp && *cp) ? newSVsv(*cp) : newSV(0), 0);
+				}
+				av_push(out, newRV_noinc((SV *)rh));
+			}
+		}
+		return newRV_noinc((SV *)out);
+	}
+	/* ---- output is HoA */
+	HV *restrict out = newHV();
+	if (!is_aoh) {
+		/* HoA -> HoA: permute every column in lockstep (copied cells) */
+		for (size_t c = 0; c < ncols; c++) {
+			AV *restrict ncol = newAV();
+			if (n) av_extend(ncol, (SSize_t)n - 1);
+			for (size_t k = 0; k < n; k++) {
+				SV **restrict cp = av_fetch(colavs[c], (SSize_t)idx[k], 0);
+				av_push(ncol, (cp && *cp) ? newSVsv(*cp) : newSV(0));
+			}
+			hv_store_ent(out, colkeys[c], newRV_noinc((SV *)ncol), 0);
+		}
+		return newRV_noinc((SV *)out);
+	}
+	/* AoH -> HoA: column set is the union of the rows' keys, ordered by
+	 * first appearance; absent cells become undef. */
+	AV *restrict keylist = (AV *)sv_2mortal((SV *)newAV());
+	HV *restrict seen    = (HV *)sv_2mortal((SV *)newHV());
+	for (size_t i = 0; i < n; i++) {
+		SV **restrict rp = av_fetch(src_av, (SSize_t)i, 0);
+		if (!(rp && *rp && SvROK(*rp) && SvTYPE(SvRV(*rp)) == SVt_PVHV))
+			continue;
+		HV *restrict rh = (HV *)SvRV(*rp);
+		HE *restrict he;
+		hv_iterinit(rh);
+		while ((he = hv_iternext(rh))) {
+			SV *restrict ksv = hv_iterkeysv(he);
+			if (!hv_exists_ent(seen, ksv, 0)) {
+				(void)hv_store_ent(seen, ksv, newSViv(1), 0);
+				av_push(keylist, newSVsv(ksv));
+			}
+		}
+	}
+	SSize_t nk = av_len(keylist) + 1;
+	for (SSize_t c = 0; c < nk; c++) {
+		SV *restrict ksv = *av_fetch(keylist, c, 0);
+		AV *restrict ncol = newAV();
+		if (n) av_extend(ncol, (SSize_t)n - 1);
+		for (size_t k = 0; k < n; k++) {
+			SV **restrict rp = av_fetch(src_av, (SSize_t)idx[k], 0);
+			SV *restrict cell = NULL;
+			if (rp && *rp && SvROK(*rp) && SvTYPE(SvRV(*rp)) == SVt_PVHV) {
+				HE *restrict he = hv_fetch_ent((HV *)SvRV(*rp), ksv, 0, 0);
+				if (he) cell = HeVAL(he);
+			}
+			av_push(ncol, cell ? newSVsv(cell) : newSV(0));
+		}
+		hv_store_ent(out, ksv, newRV_noinc((SV *)ncol), 0);
+	}
+	return newRV_noinc((SV *)out);
+}
 // --- XS SECTION ---
 MODULE = Stats::LikeR  PACKAGE = Stats::LikeR
+
+void
+csort(data, by, output=&PL_sv_undef)
+	SV *data
+	SV *by
+	SV *output
+PREINIT:
+	bool is_aoh, is_code, out_aoh;
+	const char *restrict colname = NULL;
+	STRLEN collen = 0;
+	CV *restrict cmp_cv = NULL;
+	AV *restrict src_av = NULL;	/* AoH input */
+	HV *restrict src_hv = NULL;	/* HoA input */
+	SSize_t n = 0;
+	size_t *restrict idx = NULL, *tmp = NULL;
+	SV **restrict rowrefs = NULL;	/* coderef mode: row ref per index */
+	SV **restrict colkeys = NULL;	/* HoA: column key SVs */
+	AV **restrict colavs  = NULL;	/* HoA: column AVs */
+	size_t ncols = 0;
+	SV *restrict result = NULL;
+PPCODE:
+{
+	/* ---- classify $by: coderef comparator vs column name ------------ */
+	if (SvROK(by) && SvTYPE(SvRV(by)) == SVt_PVCV) {
+		is_code = 1;
+		cmp_cv  = (CV *)SvRV(by);
+	} else if (SvOK(by) && !SvROK(by)) {
+		is_code = 0;
+		colname = SvPV(by, collen);
+	} else {
+		croak("csort: second argument must be a column name or a "
+			  "comparator code-ref using $a and $b");
+	}
+
+	/* ---- classify $data: AoH (arrayref) vs HoA (hashref) ------------ */
+	if (!SvROK(data))
+		croak("csort: first argument must be an array-ref (AoH) or "
+			  "hash-ref (HoA)");
+	if (SvTYPE(SvRV(data)) == SVt_PVAV) {
+		is_aoh  = 1;
+		src_av  = (AV *)SvRV(data);
+		n       = av_len(src_av) + 1;
+	} else if (SvTYPE(SvRV(data)) == SVt_PVHV) {
+		is_aoh  = 0;
+		src_hv  = (HV *)SvRV(data);
+	} else {
+		croak("csort: first argument must be an array-ref (AoH) or "
+			  "hash-ref (HoA)");
+	}
+
+	/* ---- resolve requested output shape (default: match input) ------ */
+	if (!SvOK(output)) {
+		out_aoh = is_aoh;
+	} else {
+		STRLEN ol;
+		const char *restrict os = SvPV(output, ol);
+		if (ol == 3 && toLOWER(os[0]) == 'a' && toLOWER(os[1]) == 'o'
+				&& toLOWER(os[2]) == 'h')
+			out_aoh = 1;
+		else if (ol == 3 && toLOWER(os[0]) == 'h' && toLOWER(os[1]) == 'o'
+				&& toLOWER(os[2]) == 'a')
+			out_aoh = 0;
+		else
+			croak("csort: output type must be 'aoh' or 'hoa' (got '%s')", os);
+	}
+
+	ENTER;	 /* scope for SAVEFREEPV / SAVESPTR cleanups */
+	SAVETMPS; /* reap transient synthesized rows here   */
+
+	// ---- gather HoA column metadata + validate equal lengths --------
+	if (!is_aoh) {
+		HE *restrict he;
+		SSize_t common = -2;	/* -2 = unset sentinel */
+		hv_iterinit(src_hv);
+		while ((he = hv_iternext(src_hv))) {
+			SV *restrict cv = HeVAL(he);
+			if (!cv || !SvROK(cv) || SvTYPE(SvRV(cv)) != SVt_PVAV)
+				croak("csort: HoA value for column '%s' is not an "
+					  "array-ref", HePV(he, PL_na));
+			SSize_t len = av_len((AV *)SvRV(cv)) + 1;
+			if (common == -2) common = len;
+			else if (len != common)
+				croak("csort: HoA columns have unequal lengths "
+					  "(%" IVdf " vs %" IVdf ")",
+					  (IV)common, (IV)len);
+			ncols++;
+		}
+		n = (common < 0) ? 0 : common;
+
+		if (ncols) {
+			Newx(colkeys, ncols, SV *);  SAVEFREEPV(colkeys);
+			Newx(colavs,  ncols, AV *);  SAVEFREEPV(colavs);
+			size_t c = 0;
+			hv_iterinit(src_hv);
+			while ((he = hv_iternext(src_hv))) {
+				colkeys[c] = sv_2mortal(newSVsv(hv_iterkeysv(he)));
+				colavs[c]  = (AV *)SvRV(HeVAL(he));
+				c++;
+			}
+		}
+	}
+
+	/* ---- build the identity permutation (sorted in place below) ----- */
+	Newx(idx, (size_t)(n > 0 ? n : 1), size_t);  SAVEFREEPV(idx);
+	Newx(tmp, (size_t)(n > 0 ? n : 1), size_t);  SAVEFREEPV(tmp);
+	for (size_t i = 0; i < (size_t)n; i++) idx[i] = i;
+
+	if (n > 1) {
+		if (is_code) {
+			/* ---- comparator mode: prepare row refs + bind $a/$b -------- */
+			Newx(rowrefs, (size_t)n, SV *);  SAVEFREEPV(rowrefs);
+	
+			if (is_aoh) {
+				for (size_t i = 0; i < (size_t)n; i++) {
+					SV **restrict rp = av_fetch(src_av, (SSize_t)i, 0);
+					rowrefs[i] = (rp && *rp) ? *rp : &PL_sv_undef;
+				}
+			} else {
+				/* synthesize a per-row hashref view of the columns;
+				 * cells are aliased (shared) -- read-only in a comparator */
+				for (size_t i = 0; i < (size_t)n; i++) {
+					HV *restrict rh = newHV();
+					for (size_t c = 0; c < ncols; c++) {
+						SV **restrict cp = av_fetch(colavs[c], (SSize_t)i, 0);
+						SV *restrict cell = (cp && *cp)
+								 ? SvREFCNT_inc_simple_NN(*cp) : newSV(0);
+						hv_store_ent(rh, colkeys[c], cell, 0);
+					}
+					rowrefs[i] = sv_2mortal(newRV_noinc((SV *)rh));
+				}
+			}
+	
+			cs_code_ctx ctx;
+			ctx.rows = rowrefs;
+			ctx.cv   = cmp_cv;
+			cs_bind_ab(aTHX_ cmp_cv, &ctx.a_sv, &ctx.b_sv);
+			cs_msort(aTHX_ idx, tmp, 0, (size_t)n, cs_code_cmp, &ctx);
+		} else {
+			/* ---- column mode: gather cells, detect numeric, sort ------- */
+			SV **restrict vals;
+			Newx(vals, (size_t)n, SV *);  SAVEFREEPV(vals);
+			bool found = 0;
+			unsigned short numeric = 1;
+	
+			if (is_aoh) {
+				for (size_t i = 0; i < (size_t)n; i++) {
+					SV *restrict cell = NULL;
+					SV **restrict rp = av_fetch(src_av, (SSize_t)i, 0);
+					if (rp && *rp && SvROK(*rp)
+							&& SvTYPE(SvRV(*rp)) == SVt_PVHV) {
+						SV **restrict cp = hv_fetch((HV *)SvRV(*rp),
+										   colname, collen, 0);
+						if (cp && *cp) { cell = *cp; found = 1; }
+					}
+					if (cell && SvOK(cell) && !looks_like_number(cell))
+						numeric = 0;
+					vals[i] = cell;
+				}
+			} else {
+				SV **colp = hv_fetch(src_hv, colname, collen, 0);
+				if (!(colp && *colp && SvROK(*colp)
+						&& SvTYPE(SvRV(*colp)) == SVt_PVAV))
+					croak("csort: column '%s' not found in HoA", colname);
+				found = 1;
+				AV *col = (AV *)SvRV(*colp);
+				for (size_t i = 0; i < (size_t)n; i++) {
+					SV **cp = av_fetch(col, (SSize_t)i, 0);
+					SV *cell = (cp && *cp) ? *cp : NULL;
+					if (cell && SvOK(cell) && !looks_like_number(cell))
+						numeric = 0;
+					vals[i] = cell;
+				}
+			}
+			if (!found)
+				croak("csort: column '%s' not found", colname);
+	
+			cs_col_ctx ctx;
+			ctx.vals    = vals;
+			ctx.numeric = numeric;
+			cs_msort(aTHX_ idx, tmp, 0, (size_t)n, cs_col_cmp, &ctx);
+		}
+	}	/* end if (n > 1) */
+
+	/* ---- materialize the result in the requested shape -------------- */
+	result = cs_materialize(aTHX_ out_aoh, is_aoh, src_av,
+							colkeys, colavs, ncols, idx, (size_t)n);
+
+	FREETMPS;	/* reap synthesized rows; restores $a/$b via the save stack at LEAVE */
+	LEAVE;
+
+	XPUSHs(sv_2mortal(result));
+	XSRETURN(1);
+}
 
 SV *cfilter(data, ...)
 		SV *data

@@ -625,6 +625,49 @@ or
 
     cov($array1, $array2, 'kendall')
 
+## csort
+
+Sort a table by a column or by a custom comparator. Works on both common Perl table shapes and can transpose between them on the way out. Stable, non-destructive.
+
+### Signature
+
+    my $sorted = csort($data, $by);
+    my $sorted = csort($data, $by, $output);
+
+- **`$data`** — your table, in either shape:
+  - **AoH** — arrayref of hashrefs (a list of rows): `[ {id=>1, v=>10}, {id=>2, v=>20} ]`
+  - **HoA** — hashref of arrayrefs (parallel columns): `{ id=>[1,2], v=>[10,20] }`
+- **`$by`** — *how* to sort:
+  - a **column name** (string), or
+  - a **comparator** coderef using `$a` / `$b`, just like Perl's `sort`
+- **`$output`** *(optional)* — `'aoh'` or `'hoa'` (case-insensitive). Defaults to the input shape; `undef` also means "same as input".
+
+Returns a **new** structure. The input is never modified.
+
+### What it does
+
+- **Column-name sort** — numeric if every defined value in that column looks like a number, otherwise string comparison. Missing / `undef` values sort **last** (matching R's `na.last`).
+- **Comparator sort** — `$a` and `$b` are set in the comparator's *own* package, so a named sub from another package still sees its own `$a`/`$b`. For AoH they're the row hashrefs; for HoA they're per-row hashref views synthesized from the columns.
+- **Stable** — equal keys keep their original order (merge sort, same as Perl `sort` and R `order()`).
+- **Shape control** — keep the input shape, or transpose: AoH→HoA builds the union of all row keys (ordered by first appearance, gaps filled with `undef`); HoA→AoH emits one hashref per row.
+
+### Examples
+
+    # by column, ascending numeric, AoH in / AoH out
+    my $rows = csort($aoh, 'score');
+
+    # custom comparator (descending), HoA in / HoA out
+    my $cols = csort($hoa, sub { $b->{score} <=> $a->{score} });
+
+    # sort an AoH but hand it back as columns (HoA)
+    my $cols = csort($aoh, 'name', 'hoa');
+
+### Notes
+
+- **Non-destructive:** AoH output reuses the original row hashrefs (re-ordered); HoA output permutes every column in lockstep.
+- Empty and single-row tables are handled for all four in/out combinations.
+- An invalid `$output` value croaks.
+
 ## dnorm
 
 gives the density of the normal distribution, with the specified mean and standard deviation.
@@ -667,9 +710,9 @@ The return value is a **new** data frame of the **same shape** as the input (AoH
 
 `col('name')` is a deferred reference to a column. It carries no data — only the column name — so it can be compared with a literal (or another value) to build a predicate that `filter` evaluates once per row.
 
-    filter($df, col('age') >= 18);   # keep rows where age >= 18
-    filter($df, col('sex') eq 'f');  # keep rows where sex is 'f'
-    filter($df, 18 <= col('age'));   # operands may be in either order
+    filter($df, col('age') >= 18);  # keep rows where age >= 18
+    filter($df, col('sex') eq 'f'); # keep rows where sex is 'f'
+    filter($df, 18 <= col('age'));  # operands may be in either order
 
 ### Comparison operators
 
@@ -1940,6 +1983,10 @@ Args can also be accepted:
 # changes
 
 ## 0.16
+
+changes to dist.ini, the minimum Perl version disappeared when I fixed other problems
+
+clarifications between run time and test dependencies
 
 ### `lm`
 
