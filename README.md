@@ -1988,6 +1988,8 @@ changes to dist.ini, the minimum Perl version disappeared when I fixed other pro
 
 clarifications between run time and test dependencies
 
+addition of `csort` function to sort AoH and HoA
+
 ### `lm`
 
 ### Bug fixes

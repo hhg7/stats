@@ -42,10 +42,8 @@ is($res->{family}, 'binomial', 'Family parameter tracked properly');
     
 #$res = glm(formula => 'am ~ wt + hp', data => $mtcars, family => 'gaussian');
 
-#use DDP;
-#p $res;
-#ok(exists $res->{'deviance.resid'}{'Mazda RX4'}, 'Residual keys map to car names, not integers');
-#ok(exists $res->{'fitted.values'}{'Datsun 710'}, "Fitted value keys map to car names, not integers");
+ok(exists $res->{'deviance.resid'}{'Mazda RX4'}, 'Residual keys map to car names, not integers');
+ok(exists $res->{'fitted.values'}{'Datsun 710'}, 'Fitted value keys map to car names, not integers');
 #=c
 # --- Test Case 4: Exception Handling & Leak Avoidance ---
 my $invalid_binomial_data = {

@@ -2226,6 +2226,79 @@ static SV *cs_materialize(pTHX_ bool out_aoh, bool is_aoh, AV *restrict src_av,
 // --- XS SECTION ---
 MODULE = Stats::LikeR  PACKAGE = Stats::LikeR
 
+SV *aoh2hoa(data)
+	SV *data
+	CODE:
+	{
+		/* =================================================================
+		 * aoh2hoa($aoh) -- transpose an Array-of-Hashes into a
+		 * Hash-of-Arrays.
+		 *
+		 *   in : arrayref of hashrefs (rows)  [ {a=>1,b=>2}, {a=>3} ]
+		 *   out: hashref of arrayrefs (cols)  { a=>[1,3], b=>[2,undef] }
+		 *
+		 * - Columns are the union of all row keys.
+		 * - Every column has exactly scalar(@$aoh) elements; cells absent
+		 *   from a given row are undef (kept as cheap holes, not SVs).
+		 * - Values are copied, so the result is independent of the input
+		 *   (a value that is itself a reference is copied shallowly, just
+		 *   like Perl's  $col->[$i] = $row->{$k} ).
+		 * - A row that is not a hashref contributes undef to every column
+		 *   at its index (skipped, not fatal).
+		 * ================================================================= */
+		AV *aoh;
+		HV *out;
+		SSize_t n, i;
+		HE *he;
+
+		if (!SvROK(data) || SvTYPE(SvRV(data)) != SVt_PVAV)
+			croak("aoh2hoa: argument must be an arrayref of hashrefs");
+
+		aoh = (AV *)SvRV(data);
+		n   = av_len(aoh) + 1;			/* number of rows */
+		out = newHV();
+
+		for (i = 0; i < n; i++) {
+			SV **rp = av_fetch(aoh, i, 0);
+			HV  *row;
+
+			if (!(rp && *rp && SvROK(*rp)
+			           && SvTYPE(SvRV(*rp)) == SVt_PVHV))
+				continue;		/* non-hashref row -> all undef */
+
+			row = (HV *)SvRV(*rp);
+			hv_iterinit(row);
+			while ((he = hv_iternext(row))) {
+				SV *ksv  = hv_iterkeysv(he);	/* utf8 / SV-key safe */
+				HE *oute = hv_fetch_ent(out, ksv, 0, 0);
+				AV *col;
+
+				if (oute && SvROK(HeVAL(oute))
+				         && SvTYPE(SvRV(HeVAL(oute))) == SVt_PVAV) {
+					col = (AV *)SvRV(HeVAL(oute));
+				} else {
+					col = newAV();
+					if (n > 0) av_extend(col, n - 1);
+					(void)hv_store_ent(out, ksv,
+					                   newRV_noinc((SV *)col), 0);
+				}
+				av_store(col, i, newSVsv(HeVAL(he)));
+			}
+		}
+
+		/* pad every column out to exactly n elements (trailing undefs) */
+		hv_iterinit(out);
+		while ((he = hv_iternext(out))) {
+			AV *col = (AV *)SvRV(HeVAL(he));
+			if (av_len(col) < n - 1)
+				av_fill(col, n - 1);
+		}
+
+		RETVAL = newRV_noinc((SV *)out);
+	}
+	OUTPUT:
+		RETVAL
+
 void
 csort(data, by, output=&PL_sv_undef)
 	SV *data
