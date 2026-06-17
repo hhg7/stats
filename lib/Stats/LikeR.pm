@@ -692,6 +692,41 @@ B<Resulting Structure strictly remains an Array of Hashes:>
 
 NB: If C<add_data> is called on a completely empty target reference (e.g., C<$data = {}> or C<$data = []>), it will intelligently infer the required inner structure (Hashes vs Arrays) by inspecting the first valid row of the source data.
 
+=head2 aoh2hoa
+
+C<aoh2hoa($aoh)> — transpose an B<array-of-hashes> (row-major) into a B<hash-of-arrays> (column-major).
+
+ my $hoa = aoh2hoa([ { a => 1, b => 2 }, { a => 3 } ]);
+ # $hoa = { a => [1, 3], b => [2, undef] }
+
+Rows go in, columns come out: each distinct key across the input rows becomes one output column, and the values are gathered down that column in row order.
+
+=head3 Arguments
+
+C<$aoh> — an array ref of hash refs, one hash per row. This is the only argument, and it is required. Passing anything that is not an array ref is fatal:
+
+ aoh2hoa({ a => 1 });   # dies: argument must be an arrayref of hashrefs
+
+=head3 Returns
+
+A hash ref of array refs. Each key is a column name (the union of all keys seen across the rows); each value is an array ref holding that column's cells. Every column has exactly C<scalar @$aoh> elements, so the result is rectangular even when the input is ragged.
+
+=head3 Behavior
+
+The column set is the B<union> of every row's keys — a key that appears in only some rows still produces a full-length column, with C<undef> in the rows that lacked it.
+
+Each column is padded to exactly the row count. Cells missing from a given row come through as C<undef>, including trailing gaps (a column whose last contributing row is early still runs the full length). These absent cells are cheap holes in the array, not stored SVs.
+
+Values are B<copied> (C<newSVsv>), so the returned structure is independent of the input — mutating C<$aoh> afterward won't disturb the result. The copy is shallow: a value that is itself a reference is copied the same way C<< $col-E<gt>[$i] = $row-E<gt>{$k} >> would, i.e. the ref is duplicated but its referent is shared.
+
+Keys are handled SV-first (C<hv_iterkeysv> / C<hv_fetch_ent>), so UTF-8 and otherwise non-trivial hash keys round-trip correctly.
+
+A row that is B<not> a hash ref is skipped rather than fatal: it contributes C<undef> to every column at its index. So a stray C<undef> or scalar in the input thins the columns at that position instead of dying.
+
+=head3 Notes
+
+The output column order follows hash iteration order and is therefore not guaranteed — sort the keys if you need a stable layout. Round-tripping through C<hoa2aoh> (or the reverse) reconstructs the data but not necessarily the original key/row ordering, and rows originally absent a key will gain it as an explicit C<undef>.
+
 =head2 aov
 
 Warning: assumes normal distribution
@@ -1420,6 +1455,78 @@ or
 
  cov($array1, $array2, 'kendall')
 
+=head2 csort
+
+Sort a table by a column or by a custom comparator. Works on both common Perl table shapes and can transpose between them on the way out. Stable, non-destructive.
+
+=head3 Signature
+
+ my $sorted = csort($data, $by);
+ my $sorted = csort($data, $by, $output);
+
+=over
+
+=item * B<< C<$data> >> — your table, in either shape:
+=over
+
+=item * B<AoH> — arrayref of hashrefs (a list of rows): C<< [ {id=E<gt>1, v=E<gt>10}, {id=E<gt>2, v=E<gt>20} ] >>
+
+=item * B<HoA> — hashref of arrayrefs (parallel columns): C<< { id=E<gt>[1,2], v=E<gt>[10,20] } >>
+
+=back
+
+=item * B<< C<$by> >> — I<how> to sort:
+=over
+
+=item * a B<column name> (string), or
+
+=item * a B<comparator> coderef using C<$a> / C<$b>, just like Perl's C<sort>
+
+=back
+
+=item * B<< C<$output> >> I<(optional)> — C<'aoh'> or C<'hoa'> (case-insensitive). Defaults to the input shape; C<undef> also means "same as input".
+
+=back
+
+Returns a B<new> structure. The input is never modified.
+
+=head3 What it does
+
+=over
+
+=item * B<Column-name sort> — numeric if every defined value in that column looks like a number, otherwise string comparison. Missing / C<undef> values sort B<last> (matching R's C<na.last>).
+
+=item * B<Comparator sort> — C<$a> and C<$b> are set in the comparator's I<own> package, so a named sub from another package still sees its own C<$a>/C<$b>. For AoH they're the row hashrefs; for HoA they're per-row hashref views synthesized from the columns.
+
+=item * B<Stable> — equal keys keep their original order (merge sort, same as Perl C<sort> and R C<order()>).
+
+=item * B<Shape control> — keep the input shape, or transpose: AoH→HoA builds the union of all row keys (ordered by first appearance, gaps filled with C<undef>); HoA→AoH emits one hashref per row.
+
+=back
+
+=head3 Examples
+
+ # by column, ascending numeric, AoH in / AoH out
+ my $rows = csort($aoh, 'score');
+ 
+ # custom comparator (descending), HoA in / HoA out
+ my $cols = csort($hoa, sub { $b->{score} <=> $a->{score} });
+ 
+ # sort an AoH but hand it back as columns (HoA)
+ my $cols = csort($aoh, 'name', 'hoa');
+
+=head3 Notes
+
+=over
+
+=item * B<Non-destructive:> AoH output reuses the original row hashrefs (re-ordered); HoA output permutes every column in lockstep.
+
+=item * Empty and single-row tables are handled for all four in/out combinations.
+
+=item * An invalid C<$output> value croaks.
+
+=back
+
 =head2 dnorm
 
 gives the density of the normal distribution, with the specified mean and standard deviation.
@@ -1492,9 +1599,9 @@ The return value is a B<new> data frame of the B<same shape> as the input (AoH i
 
 C<col('name')> is a deferred reference to a column. It carries no data — only the column name — so it can be compared with a literal (or another value) to build a predicate that C<filter> evaluates once per row.
 
- filter($df, col('age') >= 18);   # keep rows where age >= 18
- filter($df, col('sex') eq 'f');  # keep rows where sex is 'f'
- filter($df, 18 <= col('age'));   # operands may be in either order
+ filter($df, col('age') >= 18);  # keep rows where age >= 18
+ filter($df, col('sex') eq 'f'); # keep rows where sex is 'f'
+ filter($df, 18 <= col('age'));  # operands may be in either order
 
 =head3 Comparison operators
 
@@ -2027,17 +2134,92 @@ I feel that this is better, and more easily read, than what you get in R:
 
 =head2 ks_test
 
-The Kolmogorov-Smirnov test, which tests whether or not two arrays/lists of data are part of the same distribution is implemented simply:
+The Kolmogorov–Smirnov test checks whether two samples are drawn from the
+same distribution (two-sample), or whether a single sample is drawn from a
+given reference distribution (one-sample). It works by comparing the empirical
+cumulative distribution functions (ECDFs) and measuring the largest gap
+between them.
 
+Two-sample form — pass two array references:
+
+ $ks = ks_test(\@x, \@y);
  $ks = ks_test(\@x, \@y, alternative => 'greater');
 
-returning a hash reference.
+One-sample form — pass one array reference and the name of a reference CDF.
+Currently only C<'pnorm'> is supported, i.e. the standard normal distribution
+(mean 0, standard deviation 1):
 
-Also, a single array can be tested against a normal distribution:
+ $ks = ks_test(\@x, 'pnorm');
 
- $ks = ks_test($ksx, 'pnorm');
+Arguments may be given positionally (as above) or by name:
 
-The p-value precision is about 1e-8, which I want to improve, but am not sure how.
+ $ks = ks_test(x => \@x, y => \@y, alternative => 'less', exact => 1);
+
+Non-numeric and undefined elements are silently dropped before the test runs.
+
+C<alternative> selects which gap between the ECDFs is measured:
+
+=over
+
+=item * C<'two.sided'> (default) — the largest gap in either direction,
+D = sup |F_x − F_y|.
+
+=item * C<'greater'> — the largest gap where x's ECDF rises above the other,
+D⁺ = sup (F_x − F_y).
+
+=item * C<'less'> — the largest gap in the other direction, D⁻ = sup (F_y − F_x).
+
+=back
+
+These follow R's C<ks.test> convention: C<'greater'>/C<'less'> describe which CDF
+lies I<above> the other, which (because a higher CDF means smaller values) is
+the opposite of which sample tends to be larger.
+
+C<exact> controls how the p-value is computed. Omit it to let the test choose:
+the exact distribution is used for small samples (two-sample when nx·ny 
+10000, one-sample when n < 100) and the asymptotic (Kolmogorov limiting)
+approximation otherwise. Pass C<< exact =E<gt> 1 >> to force the exact computation or
+C<< exact =E<gt> 0 >> to force the asymptotic one. Exact p-values cannot be computed
+when the data contain ties; if ties are present on the exact path, the test
+warns and falls back to the asymptotic p-value. (The exact one-sample test is
+only available for the two-sided alternative; a one-sided one-sample request
+also falls back to asymptotic.)
+
+=head3 Return value
+
+C<ks_test> returns a hash reference with four keys:
+
+=over
+
+=item * B<< C<statistic> >> — the KS statistic for the chosen C<alternative>: D, D⁺, or
+D⁻. It is the maximum distance between the two ECDFs (or, for the one-sample
+test, between the ECDF and the reference CDF), always in the range [0, 1].
+Larger values mean the distributions are further apart.
+
+=item * B<< C<p_value> >> — the probability, under the null hypothesis that the samples
+share a distribution, of observing a statistic at least this large. It is
+clamped to [0, 1]; a small value (e.g. < 0.05) is evidence against the null.
+
+=item * B<< C<method> >> — a human-readable description of exactly what was run, handy
+for logging or reproducing a result. One of:
+C<"Two-sample Kolmogorov-Smirnov exact test">,
+C<"Two-sample Kolmogorov-Smirnov test (asymptotic)">,
+C<"One-sample Kolmogorov-Smirnov exact test">, or
+C<"One-sample Kolmogorov-Smirnov test (asymptotic)">.
+
+=item * B<< C<alternative> >> — the alternative hypothesis that was applied
+(C<'two.sided'>, C<'greater'>, or C<'less'>), echoed back so the result is
+self-describing.
+
+=back
+
+For example:
+
+ my $ks = ks_test(\@x, \@y);
+ if ($ks->{p_value} < 0.05) {
+     printf "reject H0: D=%.4f, p=%.4g (%s)\n",
+         $ks->{statistic}, $ks->{p_value}, $ks->{method};
+ }
 
 =head2 ljoin
 
@@ -2159,76 +2341,207 @@ Takes either an array or an array reference, and returns an array of the most co
 
 =head2 oneway_test
 
-Like ANOVA/aov but does not assume normality
+A one-way test for equality of group means that, unlike C<aov>/ANOVA, B<does not
+assume equal variances>. By default it performs B<Welch's one-way test> (the
+same default as R's C<oneway.test>), so the residual degrees of freedom are
+usually fractional. Pass C<< var_equal =E<gt> 1 >> for the classic equal-variance form.
 
-=head3 hash of array input
+ use Stats::LikeR qw(oneway_test);
 
- $test_data = oneway_test({
+=head3 Input
+
+C<oneway_test> accepts your data in one of three shapes. In every case each
+I<group> is a vector of at least two numeric observations.
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>Shape</th>
+  <th>What it means</th>
+  <th>Group labels</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><b>Hash of arrays</b> <code>{ a => [...], b => [...] }</code></td>
+  <td>Each key is a group (R's <code>stack()</code> view of a named list)</td>
+  <td>the hash keys</td>
+</tr>
+<tr>
+  <td><b>Array of arrays</b> <code>[ [...], [...] ]</code></td>
+  <td>Each element is a group</td>
+  <td><code>"Index 0"</code>, <code>"Index 1"</code>, …</td>
+</tr>
+<tr>
+  <td><b>Hash + <code>formula</code></b> <code>{ resp => [...], grp => [...] }, formula => 'resp ~ grp'</code></td>
+  <td>Long-format columns split by a factor column</td>
+  <td>the distinct values of the factor</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+=head3 Options
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>Option</th>
+  <th>Default</th>
+  <th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>var_equal</code> (alias <code>var.equal</code>)</td>
+  <td><code>0</code> (false)</td>
+  <td><code>0</code> → Welch's test (unequal variances). <code>1</code> → pooled-variance test.</td>
+</tr>
+<tr>
+  <td><code>formula</code></td>
+  <td><i>none</i></td>
+  <td><code>'response ~ factor'</code>. Only valid with a <b>hash</b> input; an error with an array of arrays.</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+=head3 Data validation
+
+Every observation must be B<defined and numeric>; an C<undef> or non-numeric
+cell makes the call C<die> with the offending group and position. This matches
+the rest of C<Stats::LikeR> (C<mean>, C<sum>, C<cor>, … all die on C<undef>) and
+prevents missing values from being silently treated as C<0>.
+
+Each group needs at least two observations, and you need at least two groups.
+
+=head3 Output
+
+A hash reference with three top-level keys:
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>Key</th>
+  <th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><i>factor name</i> (<code>Group</code>, or the formula's factor, e.g. <code>supp</code>)</td>
+  <td>the between-groups row: <code>Df</code>, <code>Sum Sq</code>, <code>Mean Sq</code>, <code>F value</code>, <code>Pr(>F)</code></td>
+</tr>
+<tr>
+  <td><code>Residuals</code></td>
+  <td>the within-groups row: <code>Df</code>, <code>Sum Sq</code>, <code>Mean Sq</code> (<code>Df</code> is fractional under Welch)</td>
+</tr>
+<tr>
+  <td><code>group_stats</code></td>
+  <td><code>{ mean => { group => mean, … }, size => { group => n, … } }</code></td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+=head3 Examples
+
+=head4 Hash of arrays (each key is a group)
+
+ my $res = oneway_test({
      yield => [5.5, 5.4, 5.8, 4.5, 4.8, 4.2],
-     ctrl  => [1,     1,   1,   0,   0,   0]
+     ctrl  => [1,   1,   1,   0,   0,   0  ],
  });
-
-which will output a hash reference:
-
+ 
  {
- Group         {
-     Df          1,
-     "F value"   177.504798464491,
-     "Mean Sq"   61.6533333333333,
-     Pr(>F)      1.31343255160843e-07,
-     "Sum Sq"    61.6533333333333
- },
- group_stats   {
-     mean   {
-         ctrl    0.5,
-         yield   5.03333333333333
+     Group => {
+         Df        => 1,
+         "Sum Sq"  => 61.6533333333333,
+         "Mean Sq" => 61.6533333333333,
+         "F value" => 177.504798464491,
+         "Pr(>F)"  => 1.31343255160843e-07,
      },
-     size   {
-         ctrl    6,
-         yield   6
-     }
- },
- Residuals     {
-     Df          9.81767348326473,
-     "Mean Sq"   0.353783749200256,
-     "Sum Sq"    3.47333333333333
- }
-
-}
-
-=head3 array of array input
-
- oneway_test([
-    [5.5, 5.4, 5.8, 4.5, 4.8, 4.2],
-    [1,     1,   1,   0,   0,   0]
-     ]);
-
-which will output a nearly identical hash reference as for hash of arrays:
-
- {
- Group         {
-     Df          1,
-     "F value"   177.504798464491,
-     "Mean Sq"   61.6533333333333,
-     Pr(>F)      1.31343255160843e-07,
-     "Sum Sq"    61.6533333333333
- },
- group_stats   {
-     mean   {
-         "Index 0"   5.03333333333333,
-         "Index 1"   0.5
+     Residuals => {
+         Df        => 9.81767348326473,   # fractional: Welch correction
+         "Sum Sq"  => 3.47333333333333,
+         "Mean Sq" => 0.353783749200256,
      },
-     size   {
-         "Index 0"   6,
-         "Index 1"   6
-     }
- },
- Residuals     {
-     Df          9.81767348326473,
-     "Mean Sq"   0.353783749200256,
-     "Sum Sq"    3.47333333333333
+     group_stats => {
+         mean => { ctrl => 0.5, yield => 5.03333333333333 },
+         size => { ctrl => 6,   yield => 6 },
+     },
  }
+
+=head4 Array of arrays (groups named by index)
+
+ my $res = oneway_test([
+     [5.5, 5.4, 5.8, 4.5, 4.8, 4.2],
+     [1,   1,   1,   0,   0,   0  ],
+ ]);
+
+Identical to the hash form, except C<group_stats> is keyed by position:
+
+ group_stats => {
+     mean => { "Index 0" => 5.03333333333333, "Index 1" => 0.5 },
+     size => { "Index 0" => 6,                "Index 1" => 6   },
  }
+
+=head4 Long format with a formula
+
+When your data is in columns rather than pre-split groups, name the response
+and factor columns with a formula. The factor's I<values> become the groups and
+the factor's I<name> becomes the top-level key:
+
+ my $res = oneway_test(
+     {
+         len  => [4.2, 11.5, 7.3, 16.5, 17.3, 13.6, 23.6, 18.5, 33.9],
+         supp => [qw(VC VC VC OJ OJ OJ HI HI HI)],
+     },
+     formula => 'len ~ supp',
+ );
+ # $res->{supp}, $res->{Residuals}, $res->{group_stats} ...
+
+=head3 Classic equal-variance form
+
+ my $res = oneway_test(\%groups, var_equal => 1);   # or 'var.equal' => 1
+
+=head3 Notes
+
+=over
+
+=item * The default (Welch) does B<not> require equal group sizes or equal variances;
+the pooled form (C<< var_equal =E<gt> 1 >>) assumes equal variances.
+
+=item * C<formula> is only meaningful for a hash input. Passing it with an array of
+arrays is an error.
+
+=item * Group order in the output is not guaranteed for hash inputs (it follows hash
+iteration order); read results by name, not position.
+
+=item * Avoid naming a factor C<Residuals> or C<group_stats> in a formula, since those
+are reserved top-level keys in the result.
+
+=back
 
 =head2 p_adjust
 
@@ -3109,6 +3422,11 @@ All arguments after the data reference are optional name/value pairs.
   <td>Number of rows to show. <code>n</code> greater than the table shows everything.</td>
 </tr>
 <tr>
+  <td><code>rows</code></td>
+  <td><code>6</code></td>
+  <td>Number of rows to show. <code>n</code> greater than the table shows everything  (synonymous with <code>n</code>)</td>
+</tr>
+<tr>
   <td><code>cols</code> / <code>columns</code></td>
   <td>—</td>
   <td>Array ref pinning column order (and which columns appear).</td>
@@ -3125,7 +3443,7 @@ All arguments after the data reference are optional name/value pairs.
 </tr>
 <tr>
   <td><code>max_width</code></td>
-  <td><code>50</code></td>
+  <td><code>80</code></td>
   <td>Truncate any cell wider than this (column names are never truncated).</td>
 </tr>
 <tr>
@@ -3205,7 +3523,146 @@ C<to> output paths, empty structures, and the error cases.
      [0.878, 0.647, 0.598, 2.05, 1.06, 1.29, 1.06, 3.14, 1.29]
  );
 
-It fully supports paired tests (C<< paired =E<gt> 1 >>) and can calculate exact p-values (the default for C<< N E<lt> 50 >> without ties). If ties are encountered, it automatically switches to an approximation with continuity correction.
+Computes the Wilcoxon rank-sum / Mann-Whitney test (two samples) or the Wilcoxon signed-rank test (one sample or paired), following R's C<wilcox.test> conventions.
+This is an alternative to the t-test, that does not assume a normal distribution.
+With two array refs and no C<paired> flag it runs the two-sample rank-sum test; with a single sample, or with C<< paired =E<gt> 1 >>, it runs the signed-rank test. It calculates exact p-values by default for C<< N E<lt> 50 >> without ties; when ties (or, for the signed-rank case, zero differences) are present it automatically switches to the normal approximation with continuity correction.
+
+=head3 Calling conventions
+
+The first one or two array-ref arguments are taken positionally as C<x> and C<y>; everything after that is parsed as C<< key =E<gt> value >> pairs. The named forms C<< x =E<gt> >> and C<< y =E<gt> >> are also accepted and override the positional values. The flat argument list following the positional refs must contain an even number of elements, or the call dies with a usage message.
+
+ # positional
+ wilcox_test(\@x, \@y, paired => 1);
+ 
+ # fully named
+ wilcox_test(x => \@x, y => \@y, alternative => "greater", exact => 0);
+
+=head3 Input parameters
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>Parameter</th>
+  <th>Type</th>
+  <th>Default</th>
+  <th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>x</code></td>
+  <td>ARRAY ref</td>
+  <td><i>(required)</i></td>
+  <td>The first sample. Passed positionally or as <code>x =></code>. Non-numeric and undefined elements are silently dropped; an empty or all-missing <code>x</code> is fatal. In the two-sample test <code>mu</code> is subtracted from each <code>x</code> value.</td>
+</tr>
+<tr>
+  <td><code>y</code></td>
+  <td>ARRAY ref</td>
+  <td><code>undef</code></td>
+  <td>The second sample. If present and <code>paired</code> is false, a two-sample rank-sum test is run. If <code>paired</code> is true, <code>y</code> is required and must be the same length as <code>x</code>. Omit it for the one-sample signed-rank test.</td>
+</tr>
+<tr>
+  <td><code>paired</code></td>
+  <td>boolean</td>
+  <td><code>0</code> (false)</td>
+  <td>Run a paired signed-rank test on the per-element differences <code>x[i] - y[i] - mu</code>. Requires <code>y</code> of equal length.</td>
+</tr>
+<tr>
+  <td><code>correct</code></td>
+  <td>boolean</td>
+  <td><code>1</code> (true)</td>
+  <td>Apply the continuity correction (±0.5) when using the normal approximation. Ignored when an exact p-value is computed.</td>
+</tr>
+<tr>
+  <td><code>mu</code></td>
+  <td>number</td>
+  <td><code>0.0</code></td>
+  <td>Null-hypothesis location shift. Subtracted from <code>x</code> (two-sample) or from each difference (one-sample / paired).</td>
+</tr>
+<tr>
+  <td><code>exact</code></td>
+  <td>boolean / undef</td>
+  <td><code>undef</code> (auto)</td>
+  <td>Tri-state. <code>undef</code> (or absent) selects exact automatically: when both group sizes are <code>< 50</code> and there are no ties (two-sample), or <code>n < 50</code> with no ties (signed-rank). A true value forces the exact test, a false value forces the approximation. Exact is impossible with ties — or, for the signed-rank test, with zero differences — and falls back to the approximation with a warning.</td>
+</tr>
+<tr>
+  <td><code>alternative</code></td>
+  <td>string</td>
+  <td><code>"two.sided"</code></td>
+  <td>One of <code>"two.sided"</code>, <code>"less"</code>, or <code>"greater"</code>. Selects the tail(s) used for the p-value.</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+=head3 Output
+
+Returns a hash ref with the following keys:
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>Key</th>
+  <th>Type</th>
+  <th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>statistic</code></td>
+  <td>number</td>
+  <td>The test statistic. For the two-sample test this is the Mann-Whitney <b>W</b> (the <code>x</code> rank sum minus <code>nx*(nx+1)/2</code>). For the signed-rank test it is <b>V</b>, the sum of the ranks assigned to the positive differences.</td>
+</tr>
+<tr>
+  <td><code>p_value</code></td>
+  <td>number</td>
+  <td>The p-value for the chosen <code>alternative</code>, capped at <code>1.0</code>. Two-sided p-values are <code>2 * min(p_less, p_greater)</code>.</td>
+</tr>
+<tr>
+  <td><code>method</code></td>
+  <td>string</td>
+  <td>A human-readable description of the exact test variant that was run (see below).</td>
+</tr>
+<tr>
+  <td><code>alternative</code></td>
+  <td>string</td>
+  <td>Echoes the <code>alternative</code> actually used (<code>"two.sided"</code>, <code>"less"</code>, or <code>"greater"</code>).</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+The C<method> string reports which path executed:
+
+=over
+
+=item * Two-sample: C<"Wilcoxon rank sum exact test">, C<"Wilcoxon rank sum test with continuity correction">, or C<"Wilcoxon rank sum test">.
+
+=item * One-sample / paired: C<"Wilcoxon exact signed rank test">, C<"Wilcoxon signed rank test with continuity correction">, or C<"Wilcoxon signed rank test">.
+
+=back
+
+=head3 Notes and edge cases
+
+Missing data is handled by listwise removal of non-numeric / undefined cells before ranking; in the paired case a pair is dropped if either member is missing. An empty C<x> (or, in the two-sample case, an empty C<y>) after this filtering is fatal.
+
+For the signed-rank test, exact zero differences are discarded before ranking (matching R), and their presence disables the exact computation. Both empty-after-filtering and all-zero-difference inputs are fatal.
+
+Ties are detected during ranking and trigger the tie-corrected variance in the normal approximation; they also rule out the exact p-value. When C<exact> is left on auto, the size thresholds (C<< E<lt> 50 >> per group, or C<< E<lt> 50 >> differences) are what gate the exact vs. approximate decision.
 
 =head2 write_table
 
@@ -3228,6 +3685,262 @@ Args can also be accepted:
  write_table( 'data' => \%flat, 'file' => $f );
 
 =head1 changes
+
+=head2 0.16
+
+changes to dist.ini, the minimum Perl version disappeared when I fixed other problems
+
+clarifications between run time and test dependencies
+
+addition of C<csort> function to sort AoH and HoA
+
+addition of C<aoh2hoa> to translate array of hashes into a hash of arrays
+
+fix of long double functions: https://www.cpantesters.org/cpan/report/5d5d9836-6a5f-11f1-aadb-63fd6d8775ea
+
+=head3 C<glm>
+
+output residual keys now use names, not integers
+
+=head3 C<lm>
+
+=head3 Bug fixes
+
+B<Memory leak on the zero-degrees-of-freedom error path.> When
+C<< valid_n E<lt>= p >>, the cleanup freed the C<valid_row_names> I<array> but not the
+per-row name strings it held (those had been transferred out of C<row_names>,
+whose own array was already freed). The strings leaked on every such error.
+Added the per-entry C<Safefree> loop before freeing the array, matching the
+normal path.
+
+B<HoH input validated only the first row.> Only the first hash value was
+checked to be a C<HASHREF>; subsequent values were C<SvRV>'d unconditionally, so
+a malformed row (C<< { a =E<gt> {...}, b =E<gt> 5 } >>) dereferenced a non-reference. Every
+row is now validated, with the partial allocations cleaned up before the
+C<croak>, mirroring the existing AoH path.
+
+B<< C<isspace> on a possibly-signed C<char>. >> C<isspace(*src)> is undefined for
+byte values ≥ 0x80 on platforms where C<char> is signed. Cast to
+C<(unsigned char)> before the call.
+
+=head3 Speed / RAM improvements
+
+B<Formula buffer is now heap-allocated to fit.> C<char f_cpy[512]> silently
+truncated any longer formula. Replaced with a buffer sized to
+C<strlen(formula) + 1>, so there is no fixed limit and no truncation.
+
+B<< C<.>-expansion buffer is now a growable heap buffer. >> C<char rhs_expanded[2048]>
+silently dropped expanded terms once full. It is now a buffer that doubles on
+demand. Appends also went from C<strcat> (which rescans from the start every
+time — O(n²) over many columns) to an O(1) amortised append that tracks the
+write position.
+
+B<No more per-row scratch allocation in matrix construction.> The original
+C<safemalloc>'d a C<row_x> buffer, filled it, copied it into C<X>, and freed it
+I<for every row> — C<n> allocations plus C<n*p> copies. Each candidate row is now
+written straight into C<X> at its prospective commit slot; a row that fails
+listwise deletion is simply overwritten by the next candidate. This removes the
+C<n> allocate/free cycles and the copy loop entirely.
+
+B<< Categorical levels sorted with C<qsort>. >> The level list used an O(n²) bubble
+sort; replaced with C<qsort> (relevant only for high-cardinality factors).
+
+B<< Unused tail of C<X> reclaimed after listwise deletion. >> C<X> is allocated for
+all C<n> rows up front (C<valid_n> is unknown until rows are scanned). When rows
+are dropped, C<X> is now C<Renew>ed down to C<valid_n * p>, returning the unused
+tail to the allocator before the OLS phase.
+
+B<Minor robustness.> The argument-parsing index was widened from
+C<unsigned short> to C<I32> to match C<items>, and the HoH row count now uses
+C<HvUSEDKEYS> rather than relying on C<hv_iterinit>'s return value.
+
+=head3 Known limitations (left unchanged)
+
+=over
+
+=item * A multi-way term such as C<a*b*c> is split only on the first C<*>, so it yields
+C<a>, C<b*c>, and C<a:b*c> rather than a full three-way expansion. Deeper
+interactions silently fail (the unparsable term evaluates to C<NaN> and the
+rows are dropped). This matches the documented two-way C<*> support.
+
+=item * HoA input takes the row count from the first column; columns shorter than
+that simply contribute dropped rows rather than raising an error.
+
+=back
+
+=head3 C<oneway_test>
+
+=head4 Bug fixes
+
+B<Memory leaks on error paths.> Nearly every C<croak> after an allocation
+leaked memory. C<croak> does a C<longjmp>, so anything allocated but not yet
+freed is lost. Affected paths:
+
+=over
+
+=item * AoA and hash first-pass errors leaked C<sizes> and any C<gnames[]> entries
+allocated so far.
+
+=item * Formula-mode "not found as an array ref" errors leaked C<lhs> and C<rhs>.
+
+=back
+
+All post-allocation errors now route through a single C<fail:> label that frees
+every pointer unconditionally. Pointers are initialised to C<NULL> and C<gnames>
+is zero-allocated with C<Newxz>, so the cleanup is always safe to run.
+
+B<< Undefined and non-numeric cells silently coerced to C<0.0>. >> The original
+second pass used C<(svp && *svp) ? SvNV(*svp) : 0.0>, meaning an C<undef> or
+non-numeric cell was quietly treated as zero, silently corrupting the
+F-statistic. Each cell is now validated with C<SvOK> and C<looks_like_number>;
+the call dies naming the group and observation index, consistent with the rest
+of C<Stats::LikeR> (C<mean>, C<sum>, C<cor>, etc.).
+
+B<Unsigned wraparound on empty array input.> C<k = (size_t)av_len(in_av) + 1>
+cast to C<size_t> I<before> adding, so an empty array (C<av_len> returns C<-1>)
+produced C<SIZE_MAX> rather than C<0>. Changed to
+C<k = (size_t)(av_len(in_av) + 1)> so the C<+1> is done in signed arithmetic
+before the cast.
+
+B<< Unreliable group count from C<hv_iterinit>. >> C<hv_iterinit> returns the
+number of buckets in use rather than the number of keys for tied hashes.
+Replaced with C<HvUSEDKEYS>, which always returns the correct key count.
+
+=head4 Improvements
+
+B<< C<var.equal> accepted as an alias for C<var_equal>. >> R users write
+C<var.equal>; the argument parser now accepts both spellings.
+
+B<Perl memory API used throughout.> C<safemalloc> and manual C<memcpy> replaced
+with C<Newx>, C<Newxz>, C<savepv>, and C<savepvn>. C<savepvn> additionally
+preserves embedded NUL bytes in group key strings, which the previous
+C<strlen>-based copies silently truncated.
+
+=head4 Known limitations (not changed)
+
+=over
+
+=item * A factor column named C<Residuals> or C<group_stats> in a formula call will
+collide with reserved top-level keys in the result hash.
+
+=item * Group names containing an embedded NUL are stored correctly but are still
+truncated at C<strlen> when written into the output hash keys.
+
+=back
+
+=head3 C<view>
+
+default view shifted to 80 characters to match Linux window length
+
+=head4 New features
+
+=over
+
+=item * B<< C<rows> is accepted as a synonym for C<n> >> (the number of rows shown).
+Passing both C<n> and C<rows> is an error.
+
+=item * B<Unknown arguments are now rejected.> C<view> validates its argument names
+against the documented set (C<n>, C<rows>, C<na>, C<max_width>, C<ellipsis>,
+C<gap>, C<cols>, C<columns>, C<to>, C<return_only>, C<row.names>, C<row_names>) and
+dies listing any it does not recognise, so a misspelt option (e.g. C<widht>)
+is caught instead of silently ignored.
+
+=item * B<< C<n> / C<rows> is validated. >> It must be a non-negative integer; C<undef> or
+a non-numeric value now dies with a clear message instead of producing
+warnings and being treated as C<0>.
+
+=item * B<flat/simple hashes are accepted as input>
+
+=back
+
+=head4 Bug fixes
+
+=over
+
+=item * B<< C<< n =E<gt> 0 >> now still prints the column header. >> Column names were collected
+only from the rows being shown, so requesting zero rows produced an empty
+header line. At least one row is now scanned (when data exists) so the
+header always lists the columns.
+
+=item * B<< An empty hash (C<{}>) no longer dies. >> It was rejected as
+I<"neither ARRAY nor HASH">; it is now shown as an empty table
+(C<0 rows x 0 cols>), matching the handling of an empty array.
+
+=item * B<< The C<row_names> alias now drives the Hash-of-Hashes label header. >> The
+header for the row-label column consulted only C<row.names>, so
+C<< row_names =E<gt> 'id' >> displayed C<row_name> instead of C<id>. Both spellings are
+now honoured consistently.
+
+=item * B<Malformed nested values degrade gracefully.> A Hash-of-Arrays column or
+Hash-of-Hashes row whose value is not actually an array/hash reference now
+renders as empty cells rather than throwing a dereference error.
+
+=back
+
+=head4 Performance
+
+=over
+
+=item * Column gathering no longer sorts once per scanned row. Unique column names
+are collected across the scanned rows and sorted a single time (same output
+order), and the ellipsis length is computed once rather than per cell.
+
+=back
+
+=head4 Tests
+
+=over
+
+=item * C<t/view.t> is self-contained (the C<view> implementation is inlined; it loads
+no other files) and covers the new argument handling, the bug fixes above,
+and the existing AoH / HoA / HoH behaviour, alignment, truncation, and
+output-path handling.
+
+=back
+
+=head3 C<wilcox_test>
+
+Corrected four bugs in the C<wilcox_test> XSUB plus a portability fix in its exact signed-rank helper. Behaviour on valid input is unchanged: the R-agreement cases (unpaired C<W = 58>, C<p = 0.13292>; paired one-sided C<V = 40>, C<p = 0.019531>; separated exact C<W = 0>, C<p = 0.028571>) all still match R's C<wilcox.test>.
+
+=head4 Bug fixes
+
+=over
+
+=item * B<< Invalid C<alternative> is now rejected. >> Any value other than C<less> or C<greater> previously fell through to the two-sided branch and returned a two-sided result mislabelled with the bad string, so a typo like C<< alternative =E<gt> "twosided" >> silently "worked". It now croaks unless C<alternative> is one of C<two.sided>, C<less>, C<greater>.
+
+=item * B<Zero/negative variance is guarded.> When every observation is tied the approximation's variance collapses to 0 and the old code divided by C<sqrt(0)>: C<wilcox_test([5,5,5], [5,5,5])> returned C<p = 0> (a "significant" difference between identical samples). It now warns and returns C<p = 1>.
+
+=item * B<< Two-sided continuity correction at C<z = 0>. >> R uses C<sign(z) * 0.5>, so the correction is C<0> when the statistic sits exactly on its mean; the old code used C<-0.5>. Example: C<< wilcox_test([1,4], [2,3], exact =E<gt> 0) >> changed from C<p = 0.698535> to C<p = 1> (matches R).
+
+=item * B<< C<exp> no longer shadows libm. >> The local C<exp> accumulator (mean of the statistic) shadowed the C library C<exp()>; renamed to C<mean_w> (two-sample) and C<mean_v> (signed-rank). No active miscompute, removed as a latent hazard.
+
+=back
+
+=head4 Cosmetic
+
+=over
+
+=item * Collapsed a no-op ternary that assigned the same signed-rank exact method string on both branches; the C<method> field is now simply C<Wilcoxon signed rank exact test>.
+
+=back
+
+=head4 Portability (exact signed-rank helper)
+
+=over
+
+=item * B<< C<exact_psignrank> no longer calls C<powl()>. >> The C<2^n> normaliser is now built by exact repeated doubling, which has no long-double libm dependency. This fixes an C<Undefined symbol "powl"> load failure reported by a CPAN smoker (FreeBSD, perl 5.20, C<nvtype=double>) whose libm lacks the long-double math functions; the symbol resolved on glibc, which is why local builds passed. C<long double> accumulation in the DP is retained — only the C<powl> call was at fault.
+
+=item * B<< C<int> → C<size_t> >> for C<n>, C<max_v>, and the DP loop counters, which also removes a C<size_t>-to-C<int> narrowing at the call site. The C<floor()> result (C<k>) stays signed so its negative-C<q> sentinel still fires, and is cast to C<size_t> only after the C<< k E<lt> 0 >> check.
+
+=back
+
+=head4 Tests
+
+=over
+
+=item * Added C<t/wilcox_test.t> (flat, no subtests): R-agreement cases, option handling (C<paired>, C<correct>, C<exact>, C<mu>, named/positional C<x>/C<y>, NA dropping), regressions for all four bug fixes, argument-error and C<alternative>-validation checks, output shape, and C<no_leaks_ok> coverage of the two-sample, exact, and paired allocation paths.
+
+=back
 
 =head2 0.15
 

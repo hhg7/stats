@@ -117,6 +117,42 @@ When the target is a Hash of Arrays, incoming arrays are pushed onto the existin
 
 NB: If `add_data` is called on a completely empty target reference (e.g., `$data = {}` or `$data = []`), it will intelligently infer the required inner structure (Hashes vs Arrays) by inspecting the first valid row of the source data.
 
+## aoh2hoa
+
+`aoh2hoa($aoh)` — transpose an **array-of-hashes** (row-major) into a **hash-of-arrays** (column-major).
+
+    my $hoa = aoh2hoa([ { a => 1, b => 2 }, { a => 3 } ]);
+    # $hoa = { a => [1, 3], b => [2, undef] }
+
+Rows go in, columns come out: each distinct key across the input rows becomes one output column, and the values are gathered down that column in row order.
+
+### Arguments
+
+`$aoh` — an array ref of hash refs, one hash per row. This is the only argument, and it is required. Passing anything that is not an array ref is fatal:
+
+    aoh2hoa({ a => 1 });   # dies: argument must be an arrayref of hashrefs
+
+### Returns
+
+A hash ref of array refs. Each key is a column name (the union of all keys seen across the rows); each value is an array ref holding that column's cells. Every column has exactly `scalar @$aoh` elements, so the result is rectangular even when the input is ragged.
+
+### Behavior
+
+The column set is the **union** of every row's keys — a key that appears in only some rows still produces a full-length column, with `undef` in the rows that lacked it.
+
+Each column is padded to exactly the row count. Cells missing from a given row come through as `undef`, including trailing gaps (a column whose last contributing row is early still runs the full length). These absent cells are cheap holes in the array, not stored SVs.
+
+Values are **copied** (`newSVsv`), so the returned structure is independent of the input — mutating `$aoh` afterward won't disturb the result. The copy is shallow: a value that is itself a reference is copied the same way `$col->[$i] = $row->{$k}` would, i.e. the ref is duplicated but its referent is shared.
+
+Keys are handled SV-first (`hv_iterkeysv` / `hv_fetch_ent`), so UTF-8 and otherwise non-trivial hash keys round-trip correctly.
+
+A row that is **not** a hash ref is skipped rather than fatal: it contributes `undef` to every column at its index. So a stray `undef` or scalar in the input thins the columns at that position instead of dying.
+
+### Notes
+
+The output column order follows hash iteration order and is therefore not guaranteed — sort the keys if you need a stable layout. Round-tripping through `hoa2aoh` (or the reverse) reconstructs the data but not necessarily the original key/row ordering, and rows originally absent a key will gain it as an explicit `undef`.
+
+
 ## aov
 
 Warning: assumes normal distribution
@@ -1958,7 +1994,55 @@ structure types, `n` boundaries, alignment, `NA` rendering, truncation,
     	[0.878, 0.647, 0.598, 2.05, 1.06, 1.29, 1.06, 3.14, 1.29]
     );
 
-It fully supports paired tests (`paired => 1`) and can calculate exact p-values (the default for `N < 50` without ties). If ties are encountered, it automatically switches to an approximation with continuity correction.
+Computes the Wilcoxon rank-sum / Mann-Whitney test (two samples) or the Wilcoxon signed-rank test (one sample or paired), following R's `wilcox.test` conventions.
+This is an alternative to the t-test, that does not assume a normal distribution.
+With two array refs and no `paired` flag it runs the two-sample rank-sum test; with a single sample, or with `paired => 1`, it runs the signed-rank test. It calculates exact p-values by default for `N < 50` without ties; when ties (or, for the signed-rank case, zero differences) are present it automatically switches to the normal approximation with continuity correction.
+
+### Calling conventions
+
+The first one or two array-ref arguments are taken positionally as `x` and `y`; everything after that is parsed as `key => value` pairs. The named forms `x =>` and `y =>` are also accepted and override the positional values. The flat argument list following the positional refs must contain an even number of elements, or the call dies with a usage message.
+
+    # positional
+    wilcox_test(\@x, \@y, paired => 1);
+
+    # fully named
+    wilcox_test(x => \@x, y => \@y, alternative => "greater", exact => 0);
+
+### Input parameters
+
+| Parameter     | Type            | Default      | Description |
+|---------------|-----------------|--------------|-------------|
+| `x`           | ARRAY ref       | *(required)* | The first sample. Passed positionally or as `x =>`. Non-numeric and undefined elements are silently dropped; an empty or all-missing `x` is fatal. In the two-sample test `mu` is subtracted from each `x` value. |
+| `y`           | ARRAY ref       | `undef`      | The second sample. If present and `paired` is false, a two-sample rank-sum test is run. If `paired` is true, `y` is required and must be the same length as `x`. Omit it for the one-sample signed-rank test. |
+| `paired`      | boolean         | `0` (false)  | Run a paired signed-rank test on the per-element differences `x[i] - y[i] - mu`. Requires `y` of equal length. |
+| `correct`     | boolean         | `1` (true)   | Apply the continuity correction (±0.5) when using the normal approximation. Ignored when an exact p-value is computed. |
+| `mu`          | number          | `0.0`        | Null-hypothesis location shift. Subtracted from `x` (two-sample) or from each difference (one-sample / paired). |
+| `exact`       | boolean / undef | `undef` (auto) | Tri-state. `undef` (or absent) selects exact automatically: when both group sizes are `< 50` and there are no ties (two-sample), or `n < 50` with no ties (signed-rank). A true value forces the exact test, a false value forces the approximation. Exact is impossible with ties — or, for the signed-rank test, with zero differences — and falls back to the approximation with a warning. |
+| `alternative` | string          | `"two.sided"` | One of `"two.sided"`, `"less"`, or `"greater"`. Selects the tail(s) used for the p-value. |
+
+### Output
+
+Returns a hash ref with the following keys:
+
+| Key           | Type   | Description |
+|---------------|--------|-------------|
+| `statistic`   | number | The test statistic. For the two-sample test this is the Mann-Whitney **W** (the `x` rank sum minus `nx*(nx+1)/2`). For the signed-rank test it is **V**, the sum of the ranks assigned to the positive differences. |
+| `p_value`     | number | The p-value for the chosen `alternative`, capped at `1.0`. Two-sided p-values are `2 * min(p_less, p_greater)`. |
+| `method`      | string | A human-readable description of the exact test variant that was run (see below). |
+| `alternative` | string | Echoes the `alternative` actually used (`"two.sided"`, `"less"`, or `"greater"`). |
+
+The `method` string reports which path executed:
+
+- Two-sample: `"Wilcoxon rank sum exact test"`, `"Wilcoxon rank sum test with continuity correction"`, or `"Wilcoxon rank sum test"`.
+- One-sample / paired: `"Wilcoxon exact signed rank test"`, `"Wilcoxon signed rank test with continuity correction"`, or `"Wilcoxon signed rank test"`.
+
+### Notes and edge cases
+
+Missing data is handled by listwise removal of non-numeric / undefined cells before ranking; in the paired case a pair is dropped if either member is missing. An empty `x` (or, in the two-sample case, an empty `y`) after this filtering is fatal.
+
+For the signed-rank test, exact zero differences are discarded before ranking (matching R), and their presence disables the exact computation. Both empty-after-filtering and all-zero-difference inputs are fatal.
+
+Ties are detected during ranking and trigger the tie-corrected variance in the normal approximation; they also rule out the exact p-value. When `exact` is left on auto, the size thresholds (`< 50` per group, or `< 50` differences) are what gate the exact vs. approximate decision.
 
 ## write_table
 
@@ -1989,6 +2073,14 @@ changes to dist.ini, the minimum Perl version disappeared when I fixed other pro
 clarifications between run time and test dependencies
 
 addition of `csort` function to sort AoH and HoA
+
+addition of `aoh2hoa` to translate array of hashes into a hash of arrays
+
+fix of long double functions: https://www.cpantesters.org/cpan/report/5d5d9836-6a5f-11f1-aadb-63fd6d8775ea
+
+### `glm`
+
+output residual keys now use names, not integers
 
 ### `lm`
 
@@ -2148,6 +2240,30 @@ default view shifted to 80 characters to match Linux window length
   no other files) and covers the new argument handling, the bug fixes above,
   and the existing AoH / HoA / HoH behaviour, alignment, truncation, and
   output-path handling.
+
+### `wilcox_test`
+
+Corrected four bugs in the `wilcox_test` XSUB plus a portability fix in its exact signed-rank helper. Behaviour on valid input is unchanged: the R-agreement cases (unpaired `W = 58`, `p = 0.13292`; paired one-sided `V = 40`, `p = 0.019531`; separated exact `W = 0`, `p = 0.028571`) all still match R's `wilcox.test`.
+
+#### Bug fixes
+
+- **Invalid `alternative` is now rejected.** Any value other than `less` or `greater` previously fell through to the two-sided branch and returned a two-sided result mislabelled with the bad string, so a typo like `alternative => "twosided"` silently "worked". It now croaks unless `alternative` is one of `two.sided`, `less`, `greater`.
+- **Zero/negative variance is guarded.** When every observation is tied the approximation's variance collapses to 0 and the old code divided by `sqrt(0)`: `wilcox_test([5,5,5], [5,5,5])` returned `p = 0` (a "significant" difference between identical samples). It now warns and returns `p = 1`.
+- **Two-sided continuity correction at `z = 0`.** R uses `sign(z) * 0.5`, so the correction is `0` when the statistic sits exactly on its mean; the old code used `-0.5`. Example: `wilcox_test([1,4], [2,3], exact => 0)` changed from `p = 0.698535` to `p = 1` (matches R).
+- **`exp` no longer shadows libm.** The local `exp` accumulator (mean of the statistic) shadowed the C library `exp()`; renamed to `mean_w` (two-sample) and `mean_v` (signed-rank). No active miscompute, removed as a latent hazard.
+
+#### Cosmetic
+
+- Collapsed a no-op ternary that assigned the same signed-rank exact method string on both branches; the `method` field is now simply `Wilcoxon signed rank exact test`.
+
+#### Portability (exact signed-rank helper)
+
+- **`exact_psignrank` no longer calls `powl()`.** The `2^n` normaliser is now built by exact repeated doubling, which has no long-double libm dependency. This fixes an `Undefined symbol "powl"` load failure reported by a CPAN smoker (FreeBSD, perl 5.20, `nvtype=double`) whose libm lacks the long-double math functions; the symbol resolved on glibc, which is why local builds passed. `long double` accumulation in the DP is retained — only the `powl` call was at fault.
+- **`int` → `size_t`** for `n`, `max_v`, and the DP loop counters, which also removes a `size_t`-to-`int` narrowing at the call site. The `floor()` result (`k`) stays signed so its negative-`q` sentinel still fires, and is cast to `size_t` only after the `k < 0` check.
+
+#### Tests
+
+- Added `t/wilcox_test.t` (flat, no subtests): R-agreement cases, option handling (`paired`, `correct`, `exact`, `mu`, named/positional `x`/`y`, NA dropping), regressions for all four bug fixes, argument-error and `alternative`-validation checks, output shape, and `no_leaks_ok` coverage of the two-sample, exact, and paired allocation paths.
 
 ## 0.15
 

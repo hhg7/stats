@@ -39,9 +39,7 @@ BEGIN {
 	is_deeply $hoa, { z => [undef, undef, 9] }, 'late key back-filled';
 }
 
-# ---------------------------------------------------------------------------
 # result is an independent copy (mutating output never touches input)
-# ---------------------------------------------------------------------------
 {
 	my $aoh = [ { a => 1 }, { a => 2 } ];
 	my $hoa = aoh2hoa($aoh);
@@ -49,9 +47,7 @@ BEGIN {
 	is $aoh->[0]{a}, 1, 'mutating the HoA does not alter the source AoH';
 }
 
-# ---------------------------------------------------------------------------
 # reference values are copied shallowly (the referent is shared, like Perl =)
-# ---------------------------------------------------------------------------
 {
 	my $shared = [10, 20];
 	my $hoa = aoh2hoa([ { r => $shared } ]);
@@ -84,9 +80,7 @@ is_deeply aoh2hoa([ { a => 1 } ]), { a => [1] }, 'single row';
 	like $@, qr/arrayref/, 'non-ref argument croaks';
 }
 
-# ---------------------------------------------------------------------------
 # no memory leaks
-# ---------------------------------------------------------------------------
 SKIP: {
 	skip 'Test::LeakTrace not installed', 3 unless $HAVE_LEAKTRACE;
 	skip 'running under Devel::Cover', 3 if $INC{'Devel/Cover.pm'};

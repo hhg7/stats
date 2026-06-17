@@ -1087,27 +1087,30 @@ static NV exact_pwilcox(NV q, int m, int n) {
 	return result;
 }
 
-/* Exact CDF for Wilcoxon Signed Rank: P(V <= q) 
-   Mathematically identical to R's csignrank subset-sum DP */
-static NV exact_psignrank(NV q, int n) {
-	int k = (int)floor(q + 1e-7);
-	int max_v = n * (n + 1) / 2;
+/* Exact CDF for Wilcoxon Signed Rank: P(V <= q)
+   Subset-sum DP, same recurrence as R's csignrank.
+   Portable: no long-double libm calls (powl/ldexpl/expl), which are
+   absent on some platforms (e.g. older FreeBSD). 2^n is built exactly
+   by repeated doubling — exact in any radix-2 float format. */
+static NV exact_psignrank(NV q, size_t n) {
+	long k = (long)floor(q + 1e-7);          /* signed: negative q is a valid sentinel */
 	if (k < 0) return 0.0;
-	if (k >= max_v) return 1.0;
+	size_t max_v = n * (n + 1) / 2;
+	if ((size_t)k >= max_v) return 1.0;
 
 	long double *restrict w = (long double *)safecalloc(max_v + 1, sizeof(long double));
 	w[0] = 1.0L;
-
-	for (int i = 1; i <= n; i++) {
-	  for (int j = max_v; j >= i; j--) w[j] += w[j - i];
-	}
+	for (size_t i = 1; i <= n; i++)
+		for (size_t j = max_v; j >= i; j--)
+			w[j] += w[j - i];
 
 	long double cum_p = 0.0L;
-	for (int i = 0; i <= k; i++) cum_p += w[i];
+	for (size_t v = 0; v <= (size_t)k; v++) cum_p += w[v];
 
-	long double total = powl(2.0L, (long double)n);
+	long double total = 1.0L;                /* 2^n, exact, zero libm dependency */
+	for (size_t i = 0; i < n; i++) total *= 2.0L;
+
 	NV result = (NV)(cum_p / total);
-
 	Safefree(w);
 	return result;
 }
@@ -1500,8 +1503,8 @@ parse_formula(const char *formula, char **lhs, char **rhs)
 	if (!tilde) return 0;
 
 	// left-hand side: trim trailing whitespace
-	const char *l_start = formula;
-	const char *l_end   = tilde - 1;
+	const char *restrict l_start = formula;
+	const char *restrict l_end   = tilde - 1;
 	while (l_end >= l_start && isspace((unsigned char)*l_end)) l_end--;
 	if (l_end < l_start) return 0; /* empty LHS */
 
@@ -1604,11 +1607,9 @@ static int build_groups_from_formula(pTHX_
 	  Safefree(group_names);  Safefree(obs_group);
 	  return 0;
 	}
-
 	/* count per-group sizes */
 	memset(out_sizes, 0, ngroups * sizeof(size_t));
 	for (unsigned i = 0; i < n; i++) out_sizes[obs_group[i]]++;
-
 	/* validate: every group needs >= 2 observations */
 	for (size_t g = 0; g < ngroups; g++) {
 		if (out_sizes[g] < 2) {
@@ -1620,7 +1621,7 @@ static int build_groups_from_formula(pTHX_
 			return 0;
 		}
 	}
-	/* ── fill flat output array in group order ─────────────────────── *
+	/* ── fill flat output array in group order *
 	*  We compute a running write-offset per group, then scatter*/
 	size_t *restrict write_pos = (size_t *)safemalloc(ngroups * sizeof(size_t));
 	write_pos[0] = 0;
@@ -1632,9 +1633,7 @@ static int build_groups_from_formula(pTHX_
 	  size_t g   = (size_t)obs_group[i];
 	  out_flat[write_pos[g]++] = val;
 	}
-
 	*out_k = ngroups;
-
 	/* ── clean up or hand off group names */
 	Safefree(write_pos);	Safefree(obs_group);
 	if (out_names) {
@@ -1661,7 +1660,7 @@ static int build_groups_from_formula(pTHX_
  *
  * Mathematically identical to R's dnorm4.
  * Includes Morten Welinder's precision improvements for extreme tails.
- * ----------------------------------------------------------------------- */
+*/
 static NV c_dnorm(NV x, NV mu, NV sigma, int give_log) {
 	// Propagate NaNs
 	if (isnan(x) || isnan(mu) || isnan(sigma)) return x + mu + sigma; 
@@ -2246,8 +2245,8 @@ SV *aoh2hoa(data)
 		 * - A row that is not a hashref contributes undef to every column
 		 *   at its index (skipped, not fatal).
 		 * ================================================================= */
-		AV *aoh;
-		HV *out;
+		AV *restrict aoh;
+		HV *restrict out;
 		SSize_t n, i;
 		HE *he;
 
@@ -3674,9 +3673,9 @@ CODE:
             else              p_value = exp(-2.0 * z * z);
         }
         Safefree(y_data);
-    // ----------------------------- ONE SAMPLE
+    // 1 SAMPLE
     } else if (y_sv && SvPOK(y_sv)) {
-        const char *dist = SvPV_nolen(y_sv);
+        const char *restrict dist = SvPV_nolen(y_sv);
         if (strEQ(dist, "pnorm")) {
             qsort(x_data, valid_nx, sizeof(NV), compare_NVs);
             NV max_d = 0.0, max_d_plus = 0.0, max_d_minus = 0.0;
@@ -3726,7 +3725,7 @@ CODE:
     if (p_value > 1.0) p_value = 1.0;
     if (p_value < 0.0) p_value = 0.0;
 
-    HV *res = newHV();
+    HV *restrict res = newHV();
     hv_stores(res, "statistic",   newSVnv(statistic));
     hv_stores(res, "p_value",     newSVnv(p_value));
     hv_stores(res, "method",      newSVpv(method_desc, 0));
@@ -3775,6 +3774,9 @@ CODE:
 		else if (strEQ(key, "alternative")) alternative = SvPV_nolen(val);
 		else croak("wilcox_test: unknown argument '%s'", key);
 	}
+	// FIX 1: validate 'alternative' rather than silently falling through to two-sided
+	if (strNE(alternative, "two.sided") && strNE(alternative, "less") && strNE(alternative, "greater"))
+		croak("wilcox_test: 'alternative' must be one of 'two.sided', 'less', 'greater'");
 	// --- Validate required / types ---
 	if (!x_sv || !SvROK(x_sv) || SvTYPE(SvRV(x_sv)) != SVt_PVAV)
 		croak("wilcox_test: 'x' is a required argument and must be an ARRAY reference");
@@ -3839,24 +3841,29 @@ CODE:
 			}
 		} else {
 			method_desc = correct ? "Wilcoxon rank sum test with continuity correction" : "Wilcoxon rank sum test";
-			NV exp = (NV)valid_nx * valid_ny / 2.0;
-			NV var = ((NV)valid_nx * valid_ny / 12.0) * ((total_n + 1.0) - tie_adj / (total_n * (total_n - 1.0)));
-			NV z = statistic - exp;
-			
+			NV mean_w = (NV)valid_nx * valid_ny / 2.0;	// FIX 4: was 'exp' (shadowed libm exp)
+			NV var = ((NV)valid_nx * valid_ny / 12.0) * ((total_n + 1.0) - tie_adj / ((NV)total_n * (total_n - 1.0)));
+			NV z = statistic - mean_w;
 			NV CORRECTION = 0.0;
 			if (correct) {
-				if (strcmp(alternative, "two.sided") == 0) CORRECTION = (z > 0 ? 0.5 : -0.5);
+				// FIX 3: sign(z)*0.5, so z == 0 -> 0 (not -0.5)
+				if (strcmp(alternative, "two.sided") == 0) CORRECTION = (z > 0) ? 0.5 : (z < 0) ? -0.5 : 0.0;
 				else if (strcmp(alternative, "greater") == 0) CORRECTION = 0.5;
 				else if (strcmp(alternative, "less") == 0) CORRECTION = -0.5;
 			}
-			z = (z - CORRECTION) / sqrt(var);
-
-			if (strcmp(alternative, "less") == 0) p_value = approx_pnorm(z);
-			else if (strcmp(alternative, "greater") == 0) p_value = 1.0 - approx_pnorm(z);
-			else p_value = 2.0 * approx_pnorm(-fabs(z));
+			// FIX 2: guard against degenerate (all-tied) variance instead of dividing by zero
+			if (var <= 0.0) {
+				warn("wilcox_test: zero variance (all values tied); p-value is undefined");
+				p_value = 1.0;
+			} else {
+				z = (z - CORRECTION) / sqrt(var);
+				if (strcmp(alternative, "less") == 0) p_value = approx_pnorm(z);
+				else if (strcmp(alternative, "greater") == 0) p_value = 1.0 - approx_pnorm(z);
+				else p_value = 2.0 * approx_pnorm(-fabs(z));
+			}
 		}
 		Safefree(ri);
-	} else { // --- ONE SAMPLE / PAIRED ---
+	} else { // --- 1 SAMPLE / PAIRED ---
 		if (paired && (!y_av || nx != ny)) croak("'x' and 'y' must have the same length for paired test");
 		NV *restrict diffs = (NV *)safemalloc(nx * sizeof(NV));
 		size_t n_nz = 0;
@@ -3884,8 +3891,8 @@ CODE:
 			croak("not enough (non-missing) observations");
 		}
 		RankInfo *restrict ri = (RankInfo *)safemalloc(n_nz * sizeof(RankInfo));
-		for (size_t i = 0; i < n_nz; i++) { 
-			ri[i].val = fabs(diffs[i]); 
+		for (size_t i = 0; i < n_nz; i++) {
+			ri[i].val = fabs(diffs[i]);
 			ri[i].idx = (diffs[i] > 0);
 		}
 		bool has_ties = 0;
@@ -3906,7 +3913,7 @@ CODE:
 			use_exact = FALSE;
 		}
 		if (use_exact) {
-			method_desc = paired ? "Wilcoxon exact signed rank test" : "Wilcoxon exact signed rank test";
+			method_desc = "Wilcoxon signed rank exact test";	// FIX 5: was an identical-branch ternary
 			NV p_less = exact_psignrank(statistic, n_nz);
 			NV p_greater = 1.0 - exact_psignrank(statistic - 1.0, n_nz);
 
@@ -3918,20 +3925,27 @@ CODE:
 			}
 		} else {
 			method_desc = correct ? "Wilcoxon signed rank test with continuity correction" : "Wilcoxon signed rank test";
-			NV exp = (NV)n_nz * (n_nz + 1.0) / 4.0;
+			NV mean_v = (NV)n_nz * (n_nz + 1.0) / 4.0;	// FIX 4: was 'exp'
 			NV var = (n_nz * (n_nz + 1.0) * (2.0 * n_nz + 1.0) / 24.0) - (tie_adj / 48.0);
-			NV z = statistic - exp;
+			NV z = statistic - mean_v;
 			NV CORRECTION = 0.0;
 			if (correct) {
-				if (strcmp(alternative, "two.sided") == 0) CORRECTION = (z > 0 ? 0.5 : -0.5);
+				// FIX 3: sign(z)*0.5
+				if (strcmp(alternative, "two.sided") == 0) CORRECTION = (z > 0) ? 0.5 : (z < 0) ? -0.5 : 0.0;
 				else if (strcmp(alternative, "greater") == 0) CORRECTION = 0.5;
 				else if (strcmp(alternative, "less") == 0) CORRECTION = -0.5;
 			}
-			z = (z - CORRECTION) / sqrt(var);
 
-			if (strcmp(alternative, "less") == 0) p_value = approx_pnorm(z);
-			else if (strcmp(alternative, "greater") == 0) p_value = 1.0 - approx_pnorm(z);
-			else p_value = 2.0 * approx_pnorm(-fabs(z));
+			// FIX 2: guard against degenerate variance
+			if (var <= 0.0) {
+				warn("wilcox_test: zero variance (all values tied); p-value is undefined");
+				p_value = 1.0;
+			} else {
+				z = (z - CORRECTION) / sqrt(var);
+				if (strcmp(alternative, "less") == 0) p_value = approx_pnorm(z);
+				else if (strcmp(alternative, "greater") == 0) p_value = 1.0 - approx_pnorm(z);
+				else p_value = 2.0 * approx_pnorm(-fabs(z));
+			}
 		}
 		Safefree(ri); Safefree(diffs);
 	}
@@ -4838,7 +4852,7 @@ CODE:
 				/* Everything up to the next quote is literal -- including
 				 * \r, which the old parser wrongly stripped inside quotes
 				 * (breaking round-trips of values like "x\ry"). */
-				const char *q = (const char *)memchr(line + i, '"', len - i);
+				const char *restrict q = (const char *)memchr(line + i, '"', len - i);
 				if (!q) {
 					sv_catpvn(field, line + i, len - i);
 					i = len;
@@ -5022,16 +5036,15 @@ SV* cov(SV* x_sv, SV* y_sv, const char* method = "pearson")
 	OUTPUT:
 		RETVAL
 
-SV* glm(...)
-CODE:
-{
+SV *glm(...)
+	CODE:
+	{
 	const char *restrict formula  = NULL;
 	SV *restrict data_sv = NULL;
 	const char *restrict family_str = "gaussian";
 	char f_cpy[512];
 	char *restrict src, *restrict dst, *restrict tilde, *restrict lhs, *restrict rhs, *restrict chunk;
 
-	// Dynamic Term Arrays
 	char **restrict terms = NULL, **restrict uniq_terms = NULL, **restrict exp_terms = NULL;
 	bool *restrict is_dummy = NULL;
 	char **restrict dummy_base = NULL, **restrict dummy_level = NULL;
@@ -5074,7 +5087,6 @@ CODE:
 	bool is_gaussian = (strcmp(family_str, "gaussian") == 0);
 	if (!is_binomial && !is_gaussian) croak("glm: unsupported family '%s'", family_str);
 
-	// --- Formula Parsing & Expansion ---
 	Newx(terms, term_cap, char*); Newx(uniq_terms, term_cap, char*);
 	Newx(exp_terms, exp_cap, char*); Newx(is_dummy, exp_cap, bool);
 	Newx(dummy_base, exp_cap, char*); Newx(dummy_level, exp_cap, char*);
@@ -5098,7 +5110,7 @@ CODE:
 	char *restrict minus1 = strstr(rhs, "-1");
 	if (minus1) {
 		has_intercept = FALSE;
-		memmove(/* remove the "-1" token from the RHS */
+		memmove(
 		  minus1,  minus1 + 2,  strlen(minus1 + 2) + 1
 		);
 	}
@@ -5141,7 +5153,6 @@ CODE:
 		if (!found) uniq_terms[num_uniq++] = savepv(terms[i]);
 	}
 	p = num_uniq;
-	// --- Data Extraction ---
 	ref = SvRV(data_sv);
 	if (SvTYPE(ref) == SVt_PVHV) {
 		HV*restrict hv = (HV*)ref;
@@ -5153,9 +5164,34 @@ CODE:
 				 data_hoa = hv;
 				 n = av_len((AV*)SvRV(val)) + 1;
 				 Newx(row_names, n, char*);
-				 for(i = 0; i < n; i++) {
-					 char buf[32]; snprintf(buf, sizeof(buf), "%lu", i+1);
-					 row_names[i] = savepv(buf);
+				 {
+					 /* Row labels: use an explicit row-names column if the
+					  * caller supplied one (R carries these as "row.names");
+					  * otherwise fall back to 1-based integer labels. */
+					 static const char *const rn_keys[] =
+						 { "row.names", "_row", "rownames", ".rownames" };
+					 AV *restrict rn_av = NULL;
+					 for (size_t k = 0; k < sizeof rn_keys / sizeof rn_keys[0]; k++) {
+						 SV **restrict rn = hv_fetch(hv, rn_keys[k],
+							 (I32)strlen(rn_keys[k]), 0);
+						 if (rn && *rn && SvROK(*rn)
+							 && SvTYPE(SvRV(*rn)) == SVt_PVAV) {
+							 rn_av = (AV*)SvRV(*rn);
+							 break;
+						 }
+					 }
+					 for (i = 0; i < n; i++) {
+						 SV **restrict nm = rn_av
+							 ? av_fetch(rn_av, (SSize_t)i, 0) : NULL;
+						 if (nm && *nm && SvOK(*nm)) {
+							 STRLEN l; const char *restrict s = SvPV(*nm, l);
+							 row_names[i] = savepvn(s, l);
+						 } else {
+							 char buf[32];
+							 snprintf(buf, sizeof(buf), "%lu", (unsigned long)(i + 1));
+							 row_names[i] = savepv(buf);
+						 }
+					 }
 				 }
 			} else if (SvROK(val) && SvTYPE(SvRV(val)) == SVt_PVHV) {
 				 n = hv_iterinit(hv);
@@ -5176,9 +5212,27 @@ CODE:
 		for (i = 0; i < n; i++) {
 			SV**restrict val = av_fetch(av, i, 0);
 			if (val && SvROK(*val) && SvTYPE(SvRV(*val)) == SVt_PVHV) {
-				row_hashes[i] = (HV*)SvRV(*val);
-				char buf[32]; snprintf(buf, sizeof(buf), "%lu", i + 1);
-				row_names[i] = savepv(buf);
+				HV *restrict rh = (HV*)SvRV(*val);
+				row_hashes[i] = rh;
+				/* Row label: a "row.names" (etc.) field on the row, else int. */
+				{
+					static const char *const rn_keys[] =
+						{ "row.names", "_row", "rownames", ".rownames" };
+					SV **restrict nm = NULL;
+					for (size_t k = 0; k < sizeof rn_keys / sizeof rn_keys[0]; k++) {
+						nm = hv_fetch(rh, rn_keys[k], (I32)strlen(rn_keys[k]), 0);
+						if (nm && *nm && SvOK(*nm)) break;
+						nm = NULL;
+					}
+					if (nm && *nm && SvOK(*nm)) {
+						STRLEN l; const char *restrict s = SvPV(*nm, l);
+						row_names[i] = savepvn(s, l);
+					} else {
+						char buf[32];
+						snprintf(buf, sizeof(buf), "%lu", (unsigned long)(i + 1));
+						row_names[i] = savepv(buf);
+					}
+				}
 			} else {
 				for (size_t k = 0; k < i; k++) Safefree(row_names[k]);
 				Safefree(row_names); Safefree(row_hashes);
@@ -5186,7 +5240,6 @@ CODE:
 			}
 		}
 	} else croak("glm: Data must be an Array or Hash reference");
-	// --- Categorical Expansion ---
 	for (size_t j = 0; j < p; j++) {
 		if (p_exp + 32 >= exp_cap) {
 			exp_cap *= 2;
@@ -5247,7 +5300,6 @@ CODE:
 	Newx(X, n * p, NV); Newx(Y, n, NV);
 	Newx(valid_row_names, n, char*);
 
-	// --- Listwise Deletion ---
 	for (size_t i = 0; i < n; i++) {
 		NV y_val = evaluate_term(aTHX_ data_hoa, row_hashes, i, lhs);
 		if (isnan(y_val)) { Safefree(row_names[i]); continue; }
@@ -5280,14 +5332,12 @@ CODE:
 	  Safefree(X); Safefree(Y); Safefree(valid_row_names); if (row_hashes) Safefree(row_hashes);
 	  croak("glm: 0 degrees of freedom (too many NAs or parameters > observations)");
 	}
-	// --- R glm.fit IRLS Implementation ---
 	mu = (NV*)safemalloc(valid_n * sizeof(NV)); eta = (NV*)safemalloc(valid_n * sizeof(NV));
 	W = (NV*)safemalloc(valid_n * sizeof(NV)); Z = (NV*)safemalloc(valid_n * sizeof(NV));
 	beta = (NV*)safemalloc(p * sizeof(NV)); beta_old = (NV*)safemalloc(p * sizeof(NV));
 	aliased = (bool*)safemalloc(p * sizeof(bool));
 	XtWX = (NV*)safemalloc(p * p * sizeof(NV)); XtWZ = (NV*)safemalloc(p * sizeof(NV));
 	for (i = 0; i < p; i++) { beta[i] = 0.0; beta_old[i] = 0.0; }
-	// Initialize (mustart / etastart equivalent)
 	NV sum_y = 0.0;
 	for (i = 0; i < valid_n; i++) sum_y += Y[i];
 	NV mean_y = sum_y / valid_n;
@@ -5302,16 +5352,15 @@ CODE:
 			else dev = 2.0 * (Y[i] * log(Y[i] / mu[i]) + (1.0 - Y[i]) * log((1.0 - Y[i]) / (1.0 - mu[i])));
 			deviance_old += dev;
 		} else { 
-			mu[i] = mean_y; // R gaussian init
+			mu[i] = mean_y;
 			eta[i] = mu[i]; 
 		}
 	}
-	// IRLS Loop
 	for (iter = 1; iter <= max_iter; iter++) {
 		for (i = 0; i < valid_n; i++) {
 			if (is_binomial) {
 				 NV varmu = mu[i] * (1.0 - mu[i]);
-				 NV mu_eta = varmu; // Link derivative for logit
+				 NV mu_eta = varmu;
 				 if (varmu < 1e-10) varmu = 1e-10;
 				 Z[i] = eta[i] + (Y[i] - mu[i]) / mu_eta;
 				 W[i] = (mu_eta * mu_eta) / varmu; 
@@ -5320,7 +5369,6 @@ CODE:
 				 Z[i] = Y[i]; 
 			}
 		}
-		// Formulate XtWX and XtWZ
 		for (i = 0; i < p; i++) { XtWZ[i] = 0.0; for (size_t j = 0; j < p; j++) XtWX[i * p + j] = 0.0; }
 		for (size_t k = 0; k < valid_n; k++) {
 			NV w = W[k], z = Z[k];
@@ -5338,7 +5386,6 @@ CODE:
 				 beta[i] = sum;
 			}
 		}
-		// Calculate updated ETA, MU, and Deviance (with Step-Halving)
 		boundary = FALSE;
 		for (unsigned short int half = 0; half < 10; half++) {
 			deviance_new = 0.0;
@@ -5348,7 +5395,6 @@ CODE:
 				 eta[i] = linear_pred;
 				 if (is_binomial) {
 					 mu[i] = 1.0 / (1.0 + exp(-eta[i]));
-					 // Boundary enforcement
 					 if (mu[i] < 10 * DBL_EPSILON) mu[i] = 10 * DBL_EPSILON;
 					 if (mu[i] > 1.0 - 10 * DBL_EPSILON) mu[i] = 1.0 - 10 * DBL_EPSILON;
 					 NV dev = 0.0;
@@ -5362,21 +5408,18 @@ CODE:
 					 deviance_new += res * res;
 				 }
 			}
-			// Step halving divergence check
 			if (!is_binomial || deviance_new <= deviance_old + 1e-7 || !isfinite(deviance_new)) {
 				 continue; 
 			}
 			boundary = TRUE;
 			for (size_t j = 0; j < p; j++) beta[j] = (beta[j] + beta_old[j]) / 2.0;
 		}
-		// Convergence Check
 		if (fabs(deviance_new - deviance_old) / (0.1 + fabs(deviance_new)) < epsilon) { 
 			converged = TRUE; break; 
 		}
 		deviance_old = deviance_new;
 		for (size_t j = 0; j < p; j++) beta_old[j] = beta[j];
 	}
-	// Final accurate calculation of W for standard errors
 	for (i = 0; i < p; i++) { for (size_t j = 0; j < p; j++) XtWX[i * p + j] = 0.0; }
 	for (size_t k = 0; k < valid_n; k++) {
 	  NV w = is_binomial ? (mu[k] * (1.0 - mu[k])) : 1.0;
@@ -5387,8 +5430,6 @@ CODE:
 	  }
 	}
 	final_rank = sweep_matrix_ols(XtWX, p, aliased);
-	// --- Null Deviance Calculation ---
-	// If no intercept, the null model predicts the inverse-link of 0.
 	NV wtdmu = has_intercept ? mean_y : (is_binomial ? 0.5 : 0.0);
 
 	for (i = 0; i < valid_n; i++) {
@@ -5401,29 +5442,22 @@ CODE:
 			null_dev += diff * diff;
 		}
 	}
-	// --- AIC Calculation ---
 	if (is_gaussian) {
 		NV n_f = (NV)valid_n;
 		NV dev_for_aic = deviance_new;
-		// Guard against perfect fits (deviance == 0.0) causing log(0) = -inf.
-		// R's QR decomposition leaves a noise floor of ~1.0355e-30 for perfect integer fits.
-		// Clamping to this exact boundary replicates R's output of -197.91.
 		if (dev_for_aic < 1.0355727742801604e-30) {
 			dev_for_aic = 1.0355727742801604e-30;
 		}
-		// Mathematically matches R's gaussian()$aic + 2*rank 
 		aic = n_f * (log(2.0 * M_PI) + 1.0 + log(dev_for_aic / n_f)) + 2.0 * (final_rank + 1.0);
 	} else if (is_binomial) { 
 		aic = deviance_new + 2.0 * final_rank; 
 	}
-	// --- Return Structures ---
 	res_hv = newHV(); coef_hv = newHV(); fitted_hv = newHV(); resid_hv = newHV();
 	df_res = valid_n - final_rank;
 	dispersion = is_binomial ? 1.0 : ((df_res > 0) ? (deviance_new / df_res) : NAN);
 	for (size_t i = 0; i < valid_n; i++) {
 		NV res = Y[i] - mu[i];
 		if (is_binomial) {
-			// Deviance residuals for binomial
 			NV d_res = 0.0;
 			if (Y[i] == 0.0)      d_res = sqrt(-2.0 * log(1.0 - mu[i]));
 			else if (Y[i] == 1.0) d_res = sqrt(-2.0 * log(mu[i]));
@@ -5472,7 +5506,6 @@ CODE:
 	hv_store(res_hv, "rank",           4, newSVuv(final_rank), 0);
 	hv_store(res_hv, "summary",        7, newRV_noinc((SV*)summary_hv), 0);
 	hv_store(res_hv, "terms",          5, newRV_noinc((SV*)terms_av), 0);
-	// --- Cleanup ---
 	for (i = 0; i < num_terms; i++) Safefree(terms[i]);
 	Safefree(terms);
 	for (i = 0; i < num_uniq; i++) Safefree(uniq_terms[i]);
@@ -5487,9 +5520,9 @@ CODE:
 	Safefree(XtWX); Safefree(XtWZ); Safefree(X); Safefree(Y);
 	if (row_hashes) Safefree(row_hashes);
 	RETVAL = newRV_noinc((SV*)res_hv);
-}
-OUTPUT:
-	RETVAL
+	}
+	OUTPUT:
+		RETVAL
 
 SV* cor_test(...)
 CODE:
