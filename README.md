@@ -234,6 +234,51 @@ is the equivalent of:
 
 in R
 
+## assign
+
+Add new columns to a data frame, computed from the columns already there.
+
+### Usage
+
+    assign($df, new_name => sub { ... }, another => sub { ... }, ...);
+
+- **`$df`** — your data frame, in either shape:
+  - **AoH** — arrayref of row hashrefs: `[ {weight=>70, height=>1.75}, ... ]`
+  - **HoA** — hashref of column arrayrefs: `{ weight=>[70,...], height=>[1.75,...] }`
+- **`new_name => sub { ... }`** — one or more pairs. Each sub computes one cell of the new column and is called once per row:
+  - `$_` is the current row as a hashref, so you read other columns with `$_->{colname}`.
+  - `$_[1]` is the row's index (0-based), if you need it.
+  - whatever the sub returns becomes the cell value.
+
+It changes `$df` in place and also returns it (handy for chaining).
+
+### Example
+
+    my $df = [
+        { weight => 70, height => 1.75 },
+        { weight => 90, height => 1.80 },
+    ];
+    assign($df, bmi => sub { $_->{weight} / $_->{height} ** 2 });
+
+    # $df is now:
+    # [ { weight=>70, height=>1.75, bmi=>22.86 },
+    #   { weight=>90, height=>1.80, bmi=>27.78 } ]
+
+### Good to know
+
+- **Pairs run in order**, so a later column can use one you just made:
+
+    assign($df,
+      bmi   => sub { $_->{weight} / $_->{height} ** 2 },
+      class => sub { $_->{bmi} > 25 ? 'high' : 'ok' },   # uses bmi
+    );
+
+- **Same recipe, both shapes.** The exact same `sub { $_->{weight} / ... }` works whether `$df` is AoH or HoA; you always read the row through `$_`.
+
+- **It modifies your data frame.** If you need to keep the original, pass a copy: `assign(clone($df), ...)`.
+
+- Reusing a column name **overwrites** that column.
+
 ## cfilter
 
 Select **columns** out of a table and return it in the same shape. A column is
@@ -2065,6 +2110,54 @@ Args can also be accepted:
     write_table( 'data' => \%flat, 'file' => $f );
 
 # changes
+
+## 0.17
+
+addition of `assign`, which adds new columns based on calculations from other columns
+
+### read_table
+
+Added an opt-in `auto.row.names` argument so `read_table` can read the file R
+produces by default from `write.table(x, sep="\t")`.
+
+#### The problem
+
+R's `write.table` defaults to `row.names=TRUE, col.names=TRUE`, which writes the
+row-names column in every data row but emits **no header label for it**. So a
+frame with N columns comes out as N header fields over N+1 data fields — e.g.
+`mtcars` gives 11 headers but 12-field rows. By default `read_table` (correctly)
+rejects that as ragged:
+
+    Alignment error on mtcars.tsv data row 1 (12 fields vs 11 headers).
+
+#### The change
+
+`auto.row.names` turns on R's own `read.table` rule: **when, and only when, the
+header is exactly one field short of the data rows, treat the first field of
+each row as an (unlabelled) row-names column.**
+
+    # default: the leading column is named 'row_name'
+    my $df = read_table('mtcars.tsv', 'auto.row.names' => 1);
+
+    # or give it a name
+    my $df = read_table('mtcars.tsv', 'auto.row.names' => 'model');
+
+The synthesized column behaves like any other first column: it appears in `aoh`
+and `hoa` output, and for `hoh` it becomes the default key (so rows are keyed by
+the model name). This also lines up with the existing handling of R's
+`col.names=NA` output (a blank leading header), which still produces a
+`row_name` column with no flag needed.
+
+#### What did not change
+
+The strict alignment check is still the default. Without `auto.row.names` the
+lopsided file still croaks, and even with it, a row that is off by anything
+other than exactly one field still croaks — so the corruption guard only relaxes
+for the one case R itself treats specially.
+
+Tested in `t/read_table.2.t` (16 assertions, Perl 5.10.1 and 5.38): aoh / hoa /
+hoh output, custom column name, the already-aligned file (flag is a no-op), the
+`col.names=NA` path, and the strict / ragged croak paths.
 
 ## 0.16
 

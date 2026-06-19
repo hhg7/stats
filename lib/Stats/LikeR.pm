@@ -12,13 +12,84 @@ use autodie ':default';
 use Exporter 'import';
 use Scalar::Util 'looks_like_number';
 XSLoader::load('Stats::LikeR', $VERSION);
-our @EXPORT_OK = qw(add_data aoh2hoa aov cfilter chisq_test col col2col cor cor_test cov csort dnorm filter fisher_test glm group_by hoh2hoa hist kruskal_test ks_test ljoin lm matrix max mean median min mode oneway_test p_adjust power_t_test prcomp quantile rbinom read_table rnorm runif sample scale sd seq shapiro_test sum summary t_test transpose value_counts var var_test view wilcox_test write_table);
+our @EXPORT_OK = qw(add_data aoh2hoa aov assign cfilter chisq_test col col2col cor cor_test cov csort dnorm filter fisher_test glm group_by hoh2hoa hist kruskal_test ks_test ljoin lm matrix max mean median min mode oneway_test p_adjust power_t_test prcomp quantile rbinom read_table rnorm runif sample scale sd seq shapiro_test sum summary t_test transpose value_counts var var_test view wilcox_test write_table);
 our @EXPORT = @EXPORT_OK;
 
 require XSLoader;
+
+sub assign {
+	my $df = shift;
+	die 'assign: first argument must be a data frame (AoH arrayref or HoA hashref)'
+		unless ref $df;
+	die 'assign: expected an even list of (name => coderef) pairs'
+		if @_ % 2;
+
+	my $r = ref $df;
+	if ($r eq 'ARRAY') {			# ----- AoH: add a key to each row hash -----
+		while (@_) {
+			my ($name, $code) = (shift, shift);
+			die "assign: value for '$name' must be a CODE ref"
+				unless ref $code eq 'CODE';
+			my $i = 0;
+			for my $row (@$df) {
+				die "assign: row $i is not a hashref" unless ref $row eq 'HASH';
+				local $_ = $row;
+				$row->{$name} = $code->($row, $i);
+				$i++;
+			}
+		}
+		return $df;
+	}
+
+	if ($r eq 'HASH') {			# ----- HoA: append a new column array -----
+		# row count = longest existing column
+		my $n = 0;
+		for my $v (values %$df) {
+			$n = @$v if ref $v eq 'ARRAY' && @$v > $n;
+		}
+		while (@_) {
+			my ($name, $code) = (shift, shift);
+			die "assign: value for '$name' must be a CODE ref"
+				unless ref $code eq 'CODE';
+			# snapshot the current columns once (cheap: refs, not data)
+			my @keys = keys %$df;
+			my @col  = map { my $c = $df->{$_}; ref $c eq 'ARRAY' ? $c : undef } @keys;
+			my @new;
+			$#new = $n - 1 if $n;		# preallocate the result column
+			my %view;
+			for (my $i = 0; $i < $n; $i++) {
+				$view{ $keys[$_] } = defined $col[$_] ? $col[$_][$i] : $df->{ $keys[$_] }
+					for 0 .. $#keys;
+				local $_ = \%view;
+				$new[$i] = $code->(\%view, $i);
+			}
+			$df->{$name} = \@new;		# visible to later pairs (re-snapshot above)
+		}
+		return $df;
+	}
+	die 'assign: data frame must be an arrayref (AoH) or hashref (HoA)';
+}
+
 # ---- filter DSL: col() builds a predicate via overloading (pure Perl) -------
 # Exported: filter (XS) and col.  Place col()/Col/Pred near the top of the .pm;
 # they need no XS.  filter() is the XSUB.
+
+# ---------------------------------------------------------------------------
+# assign($df, name => \&code, name2 => \&code2, ...)
+#
+# Add (or overwrite) columns derived from existing ones, dplyr-mutate style.
+# Each coderef is called once per row with the row as $_ (a hashref) and also
+# as $_[0]; $_[1] is the 0-based row index. It returns the new cell value.
+#
+# Works on both data-frame shapes:
+#   AoH  [ {weight=>70, height=>1.8}, ... ]   (arrayref of row hashrefs)
+#   HoA  { weight=>[70,...], height=>[1.8,...] } (hashref of column arrayrefs)
+#
+# Pairs are applied in order, so a later column may use an earlier new one.
+# Modifies $df in place (lowest RAM/CPU) and returns it for chaining.
+# To keep the original intact, hand it a copy: assign(clone($df), ...).
+# ---------------------------------------------------------------------------
+
 sub col { Stats::LikeR::Col->new($_[0]) }
 {
 	package Stats::LikeR::Col;
@@ -172,6 +243,7 @@ sub read_table {
 
 	my %allowed_args = map { $_ => 1 } (
 		'comment', 'output.type', 'filter', 'row.names', 'sep',
+		'auto.row.names',
 	);
 	my @undef_args = sort grep { !$allowed_args{$_} } keys %args;
 	if (@undef_args) {
@@ -184,6 +256,17 @@ sub read_table {
 	die "read_table: output.type \"$otype\" isn't allowed (aoh, hoa, hoh)\n"
 		unless $otype =~ m/^(?:aoh|hoa|hoh)$/;
 
+	# R's write.table(col.names=TRUE) default omits the header label for the
+	# row-names column, so a header comes out one field short of every data
+	# row. With 'auto.row.names' set, mirror read.table's rule: when (and only
+	# when) the header is exactly one field short, treat the first data field
+	# as an (otherwise unlabelled) row-names column. Any truthy value enables
+	# it; a non-1 string is used as the synthesized column name.
+	my $want_auto_rn = $args{'auto.row.names'} ? 1 : 0;
+	my $auto_rn_name =
+		($want_auto_rn && "$args{'auto.row.names'}" ne '1')
+			? $args{'auto.row.names'} : 'row_name';
+
 	my $filter = $args{filter};
 	if (defined $filter && ref($filter) eq 'CODE') {
 		$filter = { 0 => $filter };
@@ -193,54 +276,83 @@ sub read_table {
 
 	my (@data, %data, @header, @uniq_header,
 	    %mapped_filters, @sorted_filter_flds, %seen_rownames);
-	my $data_row = 0;
+	my $data_row    = 0;
+	my $header_seen = 0;
+	my $header_done = 0;
+
+	# Everything that depends on the (possibly augmented) @header lives here so
+	# it can run either right after the header line (strict mode) or deferred
+	# to the first data row (auto.row.names mode, once the width is known).
+	my $finalize_header = sub {
+		if (@header && $header[0] eq '') {
+			$header[0] = 'row_name';
+		}
+		my %seen_h;
+		# FIX: hoa output with duplicate column names used to push the same
+		# cell once PER OCCURRENCE, silently corrupting the column lengths.
+		# Iterate unique names (order preserved) instead.
+		@uniq_header = grep { !$seen_h{$_}++ } @header;
+		my @dup_cols = grep { $seen_h{$_} > 1 } @uniq_header;
+		warn "read_table: duplicate column name(s) in $file: @dup_cols (later values win)\n"
+			if @dup_cols;
+		if ($otype eq 'hoh' && !defined $args{'row.names'}) {
+			$args{'row.names'} = $header[0];
+		}
+		if (defined $args{'row.names'}
+				&& !grep { $_ eq $args{'row.names'} } @header) {
+			die "\"$args{'row.names'}\" isn't in the header of $file\n";
+		}
+		if ($filter) {
+			%mapped_filters = ();
+			for my $k (keys %$filter) {
+				if ($k =~ /^\d+$/) {
+					# FIX: a numeric key past the last column used to be
+					# accepted and then silently extended every row via the
+					# $_ write-back
+					die "read_table: numeric filter key $k exceeds the "
+					  . scalar(@header) . " columns of $file\n"
+						if $k > @header;
+					$mapped_filters{$k} = $filter->{$k};
+				} else {
+					my ($idx) = grep { $header[$_] eq $k } 0 .. $#header;
+					die "Filter column '$k' not found in header\n"
+						unless defined $idx;
+					$mapped_filters{ $idx + 1 } = $filter->{$k};
+				}
+			}
+			@sorted_filter_flds = sort { $a <=> $b } keys %mapped_filters;
+		}
+	};
+
 	_parse_csv_file($file, $args{sep} // '', $args{comment} // '', sub {
 		my ($line_ref) = @_;
-		if (!@header) {
-			# --- HEADER PROCESSING (copy made only here; runs once) ---
+
+		if (!$header_seen) {
+			# --- HEADER CAPTURE (copy made only here; runs once) ---
 			my @line = @$line_ref;
 			$line[0] =~ s/^\Q$args{comment}\E//
 				if @line && defined $line[0] && length( $args{comment} // '' );
-			@header = @line;
-			if (@header && $header[0] eq '') {
-				$header[0] = 'row_name';
-			}
-			my %seen_h;
-			# FIX: hoa output with duplicate column names used to push the
-			# same cell once PER OCCURRENCE, silently corrupting the column
-			# lengths. Iterate unique names (order preserved) instead.
-			@uniq_header = grep { !$seen_h{$_}++ } @header;
-			my @dup_cols = grep { $seen_h{$_} > 1 } @uniq_header;
-			warn "read_table: duplicate column name(s) in $file: @dup_cols (later values win)\n"
-				if @dup_cols;
-			if ($otype eq 'hoh' && !defined $args{'row.names'}) {
-				$args{'row.names'} = $header[0];
-			}
-			if (defined $args{'row.names'}
-					&& !grep { $_ eq $args{'row.names'} } @header) {
-				die "\"$args{'row.names'}\" isn't in the header of $file\n";
-			}
-			if ($filter) {
-				for my $k (keys %$filter) {
-					if ($k =~ /^\d+$/) {
-						# FIX: a numeric key past the last column used to be
-						# accepted and then silently extended every row via
-						# the $_ write-back
-						die "read_table: numeric filter key $k exceeds the "
-						  . scalar(@header) . " columns of $file\n"
-							if $k > @header;
-						$mapped_filters{$k} = $filter->{$k};
-					} else {
-						my ($idx) = grep { $header[$_] eq $k } 0 .. $#header;
-						die "Filter column '$k' not found in header\n"
-							unless defined $idx;
-						$mapped_filters{ $idx + 1 } = $filter->{$k};
-					}
-				}
-				@sorted_filter_flds = sort { $a <=> $b } keys %mapped_filters;
+			@header      = @line;
+			$header_seen = 1;
+			unless ($want_auto_rn) {	# strict: finalize immediately
+				$finalize_header->();
+				$header_done = 1;
 			}
 			return;
 		}
+
+		if (!$header_done) {
+			# First data row in auto.row.names mode: now the data width is
+			# known, so decide whether the file carries an unlabelled leading
+			# row-names column (header exactly one field short).
+			if (@$line_ref == @header + 1) {
+				unshift @header, $auto_rn_name;
+			}
+			$finalize_header->();
+			$header_done = 1;
+			# fall through and process THIS line as data
+		}
+
 		# --- DATA PROCESSING (operate on $line_ref directly; no row copy) ---
 		$data_row++;
 		if (@$line_ref != @header) {
@@ -294,6 +406,9 @@ sub read_table {
 			}
 		}
 	});
+	# header-only files in auto mode never hit a data row: still validate
+	$finalize_header->() if $header_seen && !$header_done;
+
 	if ($otype eq 'aoh') {
 		return \@data;
 	} else { # hoa or hoh
