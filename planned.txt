@@ -1,9 +1,11 @@
-aoh2hoa
 aoh2hoh
-hoa2aoh
 hoa2hoh
-hoh2aoh
-hoh2hoa
-agg(df, 'cols|rows', na.remove => true, min, max,...)
-sort: returning either hoa and aoh (array is sorted in both cases, obviously)
-corrdf
+`filter` should work with HoH
+`filter` shouldn't need `col()` if appropriate, ask Claude
+`filter` should have an output type option
+`filter` is not filtering correctly: filter( $f, 295 < col('crystal_temp')) where $f is AoH
+ncol
+nrow
+`view` should display `undef` rather than `NA`
+`value_counts` should accept array of hashes
+`summary` should have colored and tidier output like new `view` does

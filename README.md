@@ -765,6 +765,62 @@ but default mean, standard deviation, and log can be passed as parameters:
 
     $x = dnorm(0, mean => 0, sd => 2, 'log' => 0);
 
+## dropna
+
+Drop missing data from a data frame, loosely modeled on pandas' `dropna`. Works
+on all three shapes: AoH `[ {A=>..}, .. ]`, HoA `{ A=>[..], .. }`, and
+HoH `{ r1=>{A=>..}, .. }`.
+
+### Usage
+
+    # NA mode: drop rows that are undef in the named columns
+    dropna($df, cols => ['A', 'B']);
+    dropna($df, cols => ['A', 'B'], how => 'all');
+    # deletion mode: remove specific rows outright
+    dropna($df, rows => [2, 5]);          # indices for AoH/HoA, keys for HoH
+
+You pass **exactly one** of `cols` or `rows`.
+
+### `cols` — drop rows with missing values
+
+Inspect only the named columns and drop the rows where they're undef. Columns
+you don't name are never inspected, but they stay aligned (their cell at a
+dropped row goes too). A missing key counts as undef.
+
+`how` controls the threshold:
+
+- **`'any'`** (default) — drop a row if *any* named column is undef there.
+- **`'all'`** — drop a row only if *every* named column is undef there.
+
+    my $df = { A => [1, 2, undef], B => [1, 2, 3], C => [undef, 2, 4] };
+    dropna($df, cols => ['A', 'B']);
+    # { A => [1, 2], B => [1, 2], C => [undef, 2] }
+
+Index 2 is dropped because `A` is undef there. `C` is not consulted, so its own
+undef at index 0 doesn't trigger a drop — but index 2 is still removed from `C`
+so every column stays the same length.
+
+### `rows` — delete specific rows
+
+Remove exactly the rows you list — no missing-value logic. Rows are 0-based
+indices for AoH and HoA, or the outer keys for HoH. Anything not present is
+ignored.
+
+    dropna({ A => [10, 20, 30] }, rows => [1]);   # { A => [10, 30] }
+
+### Good to know
+
+- **Returns a new data frame; the original is never modified.** For HoA the
+  column arrays are rebuilt (cell values copied); for AoH and HoH the surviving
+  row references are reused, not deep-copied (dropna never mutates a row). Clone
+  the result if you need full independence.
+- **It dies** on: a non-ref data frame; passing both or neither of `cols`/`rows`;
+  a non-arrayref selector; a `cols` name absent from a non-empty HoA or AoH; an
+  invalid `how`; an unknown argument; or a hashref that mixes array and hash
+  values (ambiguous HoA vs HoH).
+- An empty AoH or HoA returns empty rather than erroring.
+- HoH results come back in hash order, since HoH rows are unordered.
+
 ## filter
 
 Return a new data frame containing only the rows of `$df` that match a predicate. The original `$df` is never modified.
@@ -818,9 +874,9 @@ Comparison operators bind more tightly than `&` and `|`, so `(col('a') > 4) & (c
 
 For logic the operators can't express, pass a `sub`. It is called once per row; the **row is a hash reference**, available both as `$_` and as the first argument `$_[0]`. Return a true value to keep the row.
 
-    filter($df, sub { $_->{x} > 4 && $_->{grp} eq 'a' });
-    filter($df, sub { $_->{name} =~ /^A/ });
-    filter($df, sub { $_[0]{score} > $_[0]{threshold} });
+    $df = filter($df, sub { $_->{x} > 4 && $_->{grp} eq 'a' });
+    $df = filter($df, sub { $_->{name} =~ /^A/ });
+    $df = filter($df, sub { $_[0]{score} > $_[0]{threshold} });
 
 For an HoA, each row is assembled into a temporary hash reference (`{ column => value, ... }`) before the sub is called, so the same `$_->{column}` syntax works regardless of the input shape.
 
@@ -1005,6 +1061,49 @@ Data can be further broken down with filter/subs like in `read_table`:
     );
 
 where each filter filters on the columns, e.g. second hash keys.
+
+## hoa2aoh
+
+Turn a hash-of-arrays into an array-of-hashes.
+
+### Usage
+
+    my $aoh = hoa2aoh($hoa);
+
+- **`$hoa`** — a hashref whose values are arrayrefs, one per column:
+
+    { id => [1, 2, 3], name => ['a', 'b', 'c'] }
+
+- **returns** — an arrayref of row hashrefs:
+
+    [
+        { id => 1, name => 'a' },
+        { id => 2, name => 'b' },
+        { id => 3, name => 'c' }
+    ]
+
+It builds a brand-new structure and copies every cell, so the result is
+completely independent of the input — changing one never affects the other.
+
+### Example
+
+    my $hoa = { mpg => [21, 22.8, 18.1], cyl => [6, 4, 6] };
+    my $aoh = hoa2aoh($hoa);
+    $aoh->[1]{mpg};        # 22.8
+    $hoa->{mpg}[1];        # still 22.8 — unaffected by edits to $aoh
+
+### Good to know
+
+- **Row count** is the length of the longest column. If columns have different
+  lengths, the short ones are padded with `undef` in the missing rows.
+- **`undef` cells** are kept as `undef`.
+- An **empty hash**, or one whose columns are all empty, gives back `[]`.
+- It **dies** if the argument isn't a hashref, or if any column value isn't an
+  arrayref (the message names the offending column).
+
+### See also
+
+`hoa2aoh` is the reverse of `aoh2hoa`
 
 ## hoh2hoa
 
@@ -1540,6 +1639,68 @@ which returns
 
     my $hoa = { B => [4, 2, 6], A => [2, 4, 6] };
     my $pca = prcomp($hoa);
+
+## predict
+
+R-style prediction for the fitted objects returned by `lm` and `glm`. It rebuilds
+each row's linear predictor from the model's coefficients and (for `glm`) applies
+the inverse link.
+
+### Usage
+
+    my $fit  = lm(formula => 'mpg ~ wt + hp', data => $train);
+    my $yhat = predict($fit, $newdata);              # predictions on new rows
+    my $resp = predict($logit_fit, $newdata);        # glm: response scale (default)
+    my $eta  = predict($logit_fit, $newdata, type => 'link');   # linear predictor
+    my $fitted = predict($fit);                      # no newdata -> stored fitted.values
+
+- **`$model`** — a fitted `lm`/`glm` hashref. `predict` reads its `coefficients`
+  (and, for `glm`, its `family`).
+- **`$newdata`** — a HoA, AoH, or HoH of new observations. Omit it (or pass
+  `undef`) to get the model's own `fitted.values` back.
+- **`type`** — `'response'` (default) returns predictions on the response scale
+  (the inverse link applied — logistic for binomial); `'link'` returns the linear
+  predictor. For `lm` and gaussian `glm` the link is the identity, so the two are
+  the same.
+
+### What it returns
+
+A hashref keyed by row name → prediction, exactly like `lm`/`glm` key
+`fitted.values`: a `row.names` column (or HoH key) if present, otherwise 1-based
+integer labels.
+
+    my $m = lm(formula => 'y ~ x + I(x^2)', data => $train);
+    my $p = predict($m, { x => [1, 2, 3] });
+    # { 1 => ..., 2 => ..., 3 => ... }
+
+### How it works
+
+For each new row the prediction is
+
+    eta = Intercept + Σ  coef[term] · term(row)
+
+where each `term` is evaluated with the same engine used to fit the model, so
+interactions (`x:z` → product) and transforms (`I(x^2)` → power) behave
+identically to fitting. Coefficients that the fit marked aliased (stored as NaN)
+contribute nothing, just as they were excluded from the fitted values. For `glm`
+with `family => 'binomial'` and `type => 'response'`, `eta` is passed through the
+logistic function `1 / (1 + exp(-eta))`; otherwise `eta` is returned as is.
+
+A consequence worth noting: predicting on the *training* data reproduces the
+model's `fitted.values` for any model built from continuous terms, interactions,
+or `I()` transforms.
+
+### Good to know
+
+- A prediction comes back as **NaN** when a required term can't be evaluated in
+  the new data (a missing column, or a value that makes the term undefined).
+- **Factors are a limitation.** The fitted object stores only the dummy term
+  *names* (e.g. `genderM`), not the underlying factor levels, so `predict`
+  cannot re-expand a raw categorical column in new data. Either pass pre-expanded
+  0/1 dummy columns whose names match the coefficient names, or extend `lm`/`glm`
+  to retain the factor levels.
+- **It dies** on: a model that isn't a hashref or has no `coefficients`; an
+  invalid `type`; or `newdata` that isn't a HoA/HoH hashref or AoH arrayref.
 
 ## quantile
 
@@ -2114,6 +2275,12 @@ Args can also be accepted:
 ## 0.17
 
 addition of `assign`, which adds new columns based on calculations from other columns
+
+addition of `hoa2aoh`, transforming hash of arrays to array of hashes
+
+addition of `predict`, using results from `glm` and `lm`
+
+`view` now returns colored output; fixed bug with incorrect widths; undefined values show as `undef` rather than `NA`, as in Data::Printer
 
 ### read_table
 
