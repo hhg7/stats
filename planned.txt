@@ -1,6 +1,5 @@
 aoh2hoh
 hoa2hoh
-`csort` should accept HoH, but cannot return HoH as hashes aren't sorted; output type should be specified as either `hoa` or `aoh` (matching provided by default); undefined values should be at the end
 ncol
 nrow
 `value_counts` should accept array of hashes

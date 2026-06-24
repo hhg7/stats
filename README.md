@@ -2293,6 +2293,8 @@ addition of `predict`, using results from `glm` and `lm`
 
 `view` now returns colored output; fixed bug with incorrect widths; undefined values show as `undef` rather than `NA`, as in Data::Printer
 
+`csort` now accepts Hash of Hashes
+
 ### filter
 
 - **Added hash-of-hashes (HoH) input.** In addition to AoH and HoA, `filter` now accepts an HoH (`{ key => { col => val, ... }, ... }`); each inner hash is one row, and matching keys are preserved by default (HoH -> HoH).

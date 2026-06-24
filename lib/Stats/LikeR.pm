@@ -14,72 +14,102 @@ XSLoader::load('Stats::LikeR', $VERSION);
 our @EXPORT_OK = qw(add_data aoh2hoa aov assign cfilter chisq_test col col2col cor cor_test cov csort dnorm dropna filter fisher_test glm group_by hoa2aoh hoh2hoa hist kruskal_test ks_test ljoin lm matrix max mean median min mode oneway_test p_adjust power_t_test predict prcomp quantile rbinom read_table rnorm runif sample scale sd seq shapiro_test sum summary t_test transpose value_counts var var_test view wilcox_test write_table);
 our @EXPORT = @EXPORT_OK;
 
-# ---------------------------------------------------------------------------
 # assign($df, name => \&code, name2 => \&code2, ...)
 #
 # Add (or overwrite) columns derived from existing ones, dplyr-mutate style.
 # Each coderef is called once per row with the row as $_ (a hashref) and also
-# as $_[0]; $_[1] is the 0-based row index. It returns the new cell value.
+# as $_[0]; $_[1] is the 0-based row index. For HoH inputs, $_[2] is the row key.
+# It returns the new cell value.
 #
-# Works on both data-frame shapes:
-#   AoH  [ {weight=>70, height=>1.8}, ... ]   (arrayref of row hashrefs)
-#   HoA  { weight=>[70,...], height=>[1.8,...] } (hashref of column arrayrefs)
+# Works on all three data-frame shapes:
+#   AoH  [ {weight=>70, height=>1.8}, ... ]        (arrayref of row hashrefs)
+#   HoA  { weight=>[70,...], height=>[1.8,...] }   (hashref of column arrayrefs)
+#   HoH  { r1 => {weight=>70}, r2 => {...} }       (hashref of row hashrefs)
 #
 # Pairs are applied in order, so a later column may use an earlier new one.
 # Modifies $df in place (lowest RAM/CPU) and returns it for chaining.
 # To keep the original intact, hand it a copy: assign(clone($df), ...).
-# ---------------------------------------------------------------------------
+#
 sub assign {
 	my $df = shift;
-	die 'assign: first argument must be a data frame (AoH arrayref or HoA hashref)'
-		unless ref $df;
+	die 'assign: first argument must be a data frame (AoH arrayref or HoA/HoH hashref)'
+	  unless ref $df;
 	die 'assign: expected an even list of (name => coderef) pairs'
-		if @_ % 2;
-
+	  if @_ % 2;
+	my $current_sub = (split(/::/,(caller(0))[3]))[-1];
 	my $r = ref $df;
-	if ($r eq 'ARRAY') {			# ----- AoH: add a key to each row hash -----
-		while (@_) {
-			my ($name, $code) = (shift, shift);
-			die "assign: value for '$name' must be a CODE ref"
-				unless ref $code eq 'CODE';
-			my $i = 0;
-			for my $row (@$df) {
-				die "assign: row $i is not a hashref" unless ref $row eq 'HASH';
-				local $_ = $row;
-				$row->{$name} = $code->($row, $i);
-				$i++;
-			}
-		}
-		return $df;
+	if ($r eq 'ARRAY') { # ----- AoH: add a key to each row hash -----
+	  while (@_) {
+		   my ($name, $code) = (shift, shift);
+		   die "assign: value for '$name' must be a CODE ref"
+		       unless ref $code eq 'CODE';
+		   my $i = 0;
+		   for my $row (@$df) {
+		       die "assign: row $i is not a hashref" unless ref $row eq 'HASH';
+		       local $_ = $row;
+		       $row->{$name} = $code->($row, $i);
+		       $i++;
+		   }
+	  }
+	  return $df;
 	}
 
-	if ($r eq 'HASH') {			# ----- HoA: append a new column array -----
-		# row count = longest existing column
-		my $n = 0;
+	if ($r eq 'HASH') {
+		# Determine if it's HoA or HoH
+		my $is_hoh = 0;
 		for my $v (values %$df) {
-			$n = @$v if ref $v eq 'ARRAY' && @$v > $n;
-		}
-		while (@_) {
-			my ($name, $code) = (shift, shift);
-			die "assign: value for '$name' must be a CODE ref"
-				unless ref $code eq 'CODE';
-			# snapshot the current columns once (cheap: refs, not data)
-			my @keys = keys %$df;
-			my @col  = map { my $c = $df->{$_}; ref $c eq 'ARRAY' ? $c : undef } @keys;
-			my @new;
-			$#new = $n - 1 if $n;		# preallocate the result column
-			my %view;
-			for (my $i = 0; $i < $n; $i++) {
-				$view{ $keys[$_] } = defined $col[$_] ? $col[$_][$i] : $df->{ $keys[$_] }
-					for 0 .. $#keys;
-				local $_ = \%view;
-				$new[$i] = $code->(\%view, $i);
+			my $ref = ref $v;
+			if ($ref eq 'HASH') {
+				$is_hoh = 1; last;
+			} elsif ($ref eq 'ARRAY') {
+				$is_hoh = 0; last;
+			} else {
+				die "$current_sub: \$v is a \"$ref\" which is neither a HASH nor an ARRAY";
 			}
-			$df->{$name} = \@new;		# visible to later pairs (re-snapshot above)
 		}
-		return $df;
+		if ($is_hoh) { # ----- HoH: add a key to each inner hash -----
+			while (@_) {
+				 my ($name, $code) = (shift, shift);
+				 die "assign: value for '$name' must be a CODE ref"
+				     unless ref $code eq 'CODE';
+				 my $i = 0;
+				 for my $row_key (sort keys %$df) {
+				     my $row = $df->{$row_key};
+				     die "assign: row '$row_key' is not a hashref" unless ref $row eq 'HASH';
+				     local $_ = $row;
+				     $row->{$name} = $code->($row, $i, $row_key);
+				     $i++;
+				 }
+			}
+			return $df;
+		} else { # ----- HoA: append a new column array -----
+			# row count = longest existing column
+			my $n = 0;
+			for my $v (values %$df) {
+				 $n = @$v if ref $v eq 'ARRAY' && @$v > $n;
+			}
+			while (@_) {
+				 my ($name, $code) = (shift, shift);
+				 die "assign: value for '$name' must be a CODE ref"
+				     unless ref $code eq 'CODE';
+				 # snapshot the current columns once (cheap: refs, not data)
+				 my @keys = keys %$df;
+				 my @col  = map { my $c = $df->{$_}; ref $c eq 'ARRAY' ? $c : undef } @keys;
+				 my @new;
+				 $#new = $n - 1 if $n;        # preallocate the result column
+				 my %view;
+				 for (my $i = 0; $i < $n; $i++) {
+				     $view{ $keys[$_] } = defined $col[$_] ? $col[$_][$i] : $df->{ $keys[$_] }
+				         for 0 .. $#keys;
+				     local $_ = \%view;
+				     $new[$i] = $code->(\%view, $i);
+				 }
+				 $df->{$name} = \@new;        # visible to later pairs (re-snapshot above)
+			}
+			return $df;
+		}
 	}
-	die 'assign: data frame must be an arrayref (AoH) or hashref (HoA)';
+	die 'assign: data frame must be an arrayref (AoH) or hashref (HoA/HoH)';
 }
 
 # ---- filter DSL: col() builds a predicate via overloading (pure Perl) -------
@@ -182,7 +212,7 @@ sub col { Stats::LikeR::col::_new(@_) }
 	}
 }
 
-# ---------------------------------------------------------------------------
+#
 # dropna($df, cols => \@cols, how => 'any'|'all')	# NA mode
 # dropna($df, rows => \@rows)						 # literal deletion
 #
@@ -203,7 +233,7 @@ sub col { Stats::LikeR::col::_new(@_) }
 # Returns a NEW top-level data frame; the original is never modified. For HoA
 # the column arrays are rebuilt (cell values copied); for AoH/HoH the surviving
 # row references are reused, not deep-copied (dropna never mutates a row).
-# ---------------------------------------------------------------------------
+#
 sub dropna {
 	my $df = shift;
 	die "dropna: first argument must be a data frame (HoA/HoH hashref or AoH arrayref)\n"
