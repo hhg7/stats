@@ -825,7 +825,7 @@ ignored.
 
 Return a new data frame containing only the rows of `$df` that match a predicate. The original `$df` is never modified.
 
-    my $df2 = filter($df, col('column.name') > 4);
+    my $adults = filter($df, col('age') >= 18);
 
 `filter` accepts a predicate in one of two forms:
 
@@ -838,29 +838,22 @@ Both `filter` and `col` are exported by default.
 
 | Position | Name | Description |
 | --- | --- | --- |
-| 1 | `$df` | The data frame to filter. Either an **array of hashes** (AoH — e.g. the default output of `read_table`) or a **hash of arrays** (HoA). |
-| 2 | predicate | Either a `col()` comparison object or a `CODE` reference. |
-
-The return value is a **new** data frame of the **same shape** as the input (AoH in → AoH out, HoA in → HoA out). For an HoA, every column is filtered in parallel by row index, so all returned columns stay the same length and aligned.
+| 1 | `$df` | The data frame: an **array of hashes** (AoH, the default `read_table` output), a **hash of arrays** (HoA), or a **hash of hashes** (HoH, e.g. `read_table` with `'output.type' => 'hoh'`). |
+| 2 | predicate | A `col()` comparison object **or** a `CODE` reference. |
+| 3 + | `'output.type' => 'aoh'\|'hoa'` | *Optional.* The shape of the returned frame. Omit it to keep the input's own shape. `'out'` and `'output_type'` are accepted aliases, and a bare `filter($df, $pred, 'aoh')` also works. |
 
 ### The `col()` form
 
-`col('name')` is a deferred reference to a column. It carries no data — only the column name — so it can be compared with a literal (or another value) to build a predicate that `filter` evaluates once per row.
+`col('name')` is a deferred reference to a column. It carries no data — only the column name — so it can be compared with a literal to build a predicate that `filter` evaluates once per row.
 
     filter($df, col('age') >= 18);  # keep rows where age >= 18
     filter($df, col('sex') eq 'f'); # keep rows where sex is 'f'
     filter($df, 18 <= col('age'));  # operands may be in either order
 
-### Comparison operators
-
 | Kind | Operators | Comparison |
 | --- | --- | --- |
-| Numeric | `>` `<` `>=` `<=` `==` `!=` | numeric (the cell and the value are compared as numbers) |
-| String | `gt` `lt` `ge` `le` `eq` `ne` | string (the cell and the value are compared as strings) |
-
-`col('x')` may appear on either side of the operator; `4 < col('x')` is automatically rewritten to the equivalent `col('x') > 4`.
-
-### Combining predicates: `&`, `|`, `!`
+| Numeric | `>` `<` `>=` `<=` `==` `!=` | numeric (cell and value compared as numbers) |
+| String | `gt` `lt` `ge` `le` `eq` `ne` | string (cell and value compared as strings) |
 
 Predicates compose with bitwise `&` (and), `|` (or), and `!` (not):
 
@@ -870,39 +863,57 @@ Predicates compose with bitwise `&` (and), `|` (or), and `!` (not):
 
 Comparison operators bind more tightly than `&` and `|`, so `(col('a') > 4) & (col('b') < 2)` is parsed correctly, but the parentheses are recommended for readability.
 
+> Note: `col('age') > 32` works because `col('age')` is an object whose `>` is overloaded. A **bare string** cannot do this — `'age' > 32` is computed by Perl to a plain boolean (the string numifies to 0) before `filter` is ever called, so the column name is lost. Always wrap the column in `col(...)`.
+
 ### The code-reference form
 
 For logic the operators can't express, pass a `sub`. It is called once per row; the **row is a hash reference**, available both as `$_` and as the first argument `$_[0]`. Return a true value to keep the row.
 
-    $df = filter($df, sub { $_->{x} > 4 && $_->{grp} eq 'a' });
-    $df = filter($df, sub { $_->{name} =~ /^A/ });
-    $df = filter($df, sub { $_[0]{score} > $_[0]{threshold} });
+    filter($df, sub { $_->{x} > 4 && $_->{grp} eq 'a' });
+    filter($df, sub { $_->{name} =~ /^A/ });
+    filter($df, sub { $_->{age} % 2 == 0 });            # things col() has no operator for
+    filter($df, sub { $_[0]{score} > $_[0]{threshold} });
 
-For an HoA, each row is assembled into a temporary hash reference (`{ column => value, ... }`) before the sub is called, so the same `$_->{column}` syntax works regardless of the input shape.
+For a HoA, each row is assembled into a temporary `{ column => value, ... }` hash before the sub (or the `col()` test) is called, so the same `$_->{column}` syntax works regardless of the input shape.
+
+### Choosing the output shape
+
+By default `filter` returns a frame of the **same shape** as the input (AoH → AoH, HoA → HoA, HoH → HoH). Pass `output.type` to convert while filtering:
+
+    my $aoh = read_table('patients.csv');                          # array of hashes
+    my $hoa = filter($aoh, col('Age') >= 18, 'output.type' => 'hoa');
+    # $hoa->{Age}, $hoa->{Sex}, ... are all the same length and row-aligned
+
+The two selectable output types are `'aoh'` and `'hoa'`. `'hoh'` is **not** selectable, because producing a hash of hashes would require choosing which column becomes the row key; an HoH input keeps its keys only when the output shape is left at the default (HoH → HoH).
 
 ### Examples
 
     use Stats::LikeR;
     my $df = read_table('patients.csv');                 # array of hashes
-    # numeric threshold
-    my $adults = filter($df, col('Age') >= 18);
-    # combine conditions
-    my $target = filter($df, (col('Age') >= 18) & (col('Sex') eq 'f'));
-    # arbitrary logic with a coderef
-    my $flagged = filter($df, sub { $_->{ALT} > 40 || $_->{AST} > 40 });
-    # hash-of-arrays input -> hash-of-arrays output, columns filtered in parallel
+
+    my $adults = filter($df, col('Age') >= 18);          # numeric threshold
+    my $target = filter($df, (col('Age') >= 18) & (col('Sex') eq 'f'));   # combine
+    my $flagged = filter($df, sub { $_->{ALT} > 40 || $_->{AST} > 40 });  # coderef
+
+    # hash of arrays in -> hash of arrays out (columns filtered in parallel)
     my $hoa = read_table('patients.csv', 'output.type' => 'hoa');
     my $sub = filter($hoa, col('Age') > 32);
-    # $sub->{Age}, $sub->{Sex}, ... are all the same length and row-aligned
+
+    # hash of hashes in -> the same row keys, fewer of them
+    my $hoh = read_table('patients.csv', 'output.type' => 'hoh');
+    my $keep = filter($hoh, col('Age') > 32);
+
+    # convert shape while filtering
+    my $as_hoa = filter($df, col('Age') > 32, 'output.type' => 'hoa');
 
 ### Behavior and notes
 
 - **The input is never modified.** `filter` builds and returns a new frame; `$df` is left untouched.
-- **A missing or `undef` cell never matches** a `col()` comparison. For example `col('x') > 0` silently drops any row that has no `x` value or whose `x` is `undef`.
-- **AoH rows are shared, not deep-copied**, into the returned frame: the returned array references the *same* row hashes as the input (fast, low-memory). Mutating a row in the result would therefore also change it in the original. HoA values are copied into fresh arrays.
-- **Keep-all / keep-none** are well defined: a predicate true for every row returns a copy-shaped frame with all rows; a predicate true for none returns an empty frame (`[]` for AoH, a hash of empty arrays for HoA).
-- **Supported shapes are AoH and HoA.** Passing a non-reference, an array element that is not a hash reference, or an HoA column that is not an array reference raises a descriptive error.
-- **Perl 5.10 compatible.** The `col()`/operator layer is pure Perl (operator overloading); the per-row evaluation is done in XS.
+- **A missing or `undef` cell never matches a `col()` comparison.** `col('x') > 0` silently drops any row whose `x` is absent or `undef`; for numeric operators a non-numeric cell is likewise dropped. With a coderef, `undef` is whatever your sub makes of it.
+- **Rows are shared, not deep-copied, wherever possible.** When an AoH or HoH row is kept (output left as AoH/HoH, or converted to `aoh`), the returned frame references the *same* inner row hashes as the input. Mutating such a row in the result would also change it in the original. HoA inputs and any `hoa` output build fresh arrays and fresh cell values.
+- **Keep-all / keep-none are well defined.** A predicate true for every row returns the whole frame in the chosen shape; true for none returns an empty frame: `[]` for `aoh`, a hash of empty (but present) columns for `hoa`, and `{}` for `hoh`.
+- **Supported shapes are AoH, HoA, and HoH.** A non-reference, an AoH element that is not a hash reference, a HoA column that is not an array reference, or a HoH row that is not a hash reference all raise a descriptive error; a bare `col('x')` with no comparison is also an error. An empty hash `{}` is treated as an empty frame.
+- **Perl 5.10 compatible.** The `col()`/operator layer is pure Perl (operator overloading building a per-row closure); filtering and any reshaping run in XS.
 
 ### See also
 
@@ -2282,6 +2293,13 @@ addition of `predict`, using results from `glm` and `lm`
 
 `view` now returns colored output; fixed bug with incorrect widths; undefined values show as `undef` rather than `NA`, as in Data::Printer
 
+### filter
+
+- **Added hash-of-hashes (HoH) input.** In addition to AoH and HoA, `filter` now accepts an HoH (`{ key => { col => val, ... }, ... }`); each inner hash is one row, and matching keys are preserved by default (HoH -> HoH).
+- **Added `output.type`.** `filter($df, $pred, 'output.type' => 'aoh'|'hoa')` selects the returned shape (aliases `out` / `output_type`; a bare positional type also works). When omitted, the input shape is preserved. `hoh` is not a selectable output, since it would require choosing a key column.
+- **`col()` reworked, not removed.** Both predicate forms are kept: `col('age') >= 18` still works and is the concise/composable option, while a coderef covers everything else. Internally `col()` is now **pure Perl** — an overloaded class that builds a per-row closure — and `filter` unwraps that closure so `col()` and a coderef share one evaluation path. The previous standalone XS predicate evaluator (`filt_eval`/`filt_ctx`) is gone; delete it if your tree still has it. One consequence: a `col()` comparison now costs the same per row as the equivalent coderef (a Perl call), rather than being evaluated in C.
+- **Unchanged guarantees:** the input frame is never modified; `undef` (and, for numeric ops, non-numeric) cells never match a `col()` comparison; AoH/HoH rows are shared rather than copied where possible; keep-all/keep-none shapes are well defined per output type; Perl 5.10 compatibility is retained. A latent `SvTRUE(POPs)` double-evaluation in the per-row call helper (which crashed on perls where `SvTRUE` is a multi-eval macro) was fixed along the way.
+
 ### read_table
 
 Added an opt-in `auto.row.names` argument so `read_table` can read the file R
@@ -2325,6 +2343,16 @@ for the one case R itself treats specially.
 Tested in `t/read_table.2.t` (16 assertions, Perl 5.10.1 and 5.38): aoh / hoa /
 hoh output, custom column name, the already-aligned file (flag is a no-op), the
 `col.names=NA` path, and the strict / ragged croak paths.
+
+#### additional bugfix
+
+    # This is a comment
+    id,name,val
+    1,Alice,10.5
+    2,Bob,
+    3,Charlie,15.2
+
+would not be read correctly using `read_table`, but now is read correctly
 
 ## 0.16
 

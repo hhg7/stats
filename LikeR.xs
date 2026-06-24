@@ -33,8 +33,7 @@ PERL_NO_GET_CONTEXT is therefore not a concern here. */
 static uint64_t sample__state  = 0;
 
 PERL_STATIC_INLINE uint64_t
-sample__mix64(void)
-{
+sample__mix64(void){
 	uint64_t z = (sample__state += UINT64_C(0x9e3779b97f4a7c15));
 	z = (z ^ (z >> 30)) * UINT64_C(0xbf58476d1ce4e5b9);
 	z = (z ^ (z >> 27)) * UINT64_C(0x94d049bb133111eb);
@@ -255,7 +254,7 @@ typedef struct { const ft_support *S; NV target; NV *scratch; int mode; } ft_rc;
    mode 2: pnhyper(x,t,low)-tgt   3: pnhyper(x,1/t,low)-tgt
    mode 4: pnhyper(x,t,up)-tgt    5: pnhyper(x,1/t,up)-tgt */
 static NV ft_rootf(NV t, void *ctx) {
-	ft_rc *r = (ft_rc *)ctx; const ft_support *S = r->S;
+	ft_rc *restrict r = (ft_rc *)ctx; const ft_support *restrict S = r->S;
 	switch (r->mode) {
 	  case 0: return ft_mnhyper(S, t, r->scratch) - r->target;
 	  case 1: return ft_mnhyper(S, 1.0 / t, r->scratch) - r->target;
@@ -1831,90 +1830,47 @@ static int c2c_mark(SV **col_names, STRLEN *name_len, size_t ncols, const char *
 //   AoH: current row is row_hv         -> hv_fetch(row_hv, col)
 //   HoA: current row is index idx      -> hv_fetch(data_hv,col) -> AV -> av_fetch(idx)
 typedef struct {
-	int is_aoh;
+	bool is_aoh;
 	HV *restrict row_hv;
 	HV *restrict data_hv;
 	SSize_t idx;
 } filt_ctx;
-static SV* filt_cell(pTHX_ filt_ctx *restrict ctx, const char *restrict col, STRLEN clen) {
-	if (ctx->is_aoh) {
-		SV **restrict p = hv_fetch(ctx->row_hv, col, clen, 0);
-		return (p && *p) ? *p : NULL;
-	}
-	SV **restrict cp = hv_fetch(ctx->data_hv, col, clen, 0);
-	if (!cp || !*cp || !SvROK(*cp) || SvTYPE(SvRV(*cp)) != SVt_PVAV) return NULL;
-	SV **restrict vp = av_fetch((AV*)SvRV(*cp), ctx->idx, 0);
-	return (vp && *vp) ? *vp : NULL;
-}
-// Recursively interpret a Stats::LikeR::Pred tree against the current row.
-static bool filt_eval(pTHX_ SV *restrict pred, filt_ctx *restrict ctx) {
-	if (!pred || !SvROK(pred) || SvTYPE(SvRV(pred)) != SVt_PVHV)
-		croak("filter: malformed predicate (expected an object built with col())");
-	HV *restrict h = (HV*)SvRV(pred);
-	SV **restrict opp = hv_fetchs(h, "op", 0);
-	if (!opp || !*opp) croak("filter: predicate node missing 'op'");
-	const char *restrict op = SvPV_nolen(*opp);
-	if (strEQ(op, "and") || strEQ(op, "or")) {
-		SV **restrict lp = hv_fetchs(h, "l", 0);
-		SV **restrict rp = hv_fetchs(h, "r", 0);
-		bool L = filt_eval(aTHX_ (lp ? *lp : NULL), ctx);
-		if (op[0] == 'a') return L ? filt_eval(aTHX_ (rp ? *rp : NULL), ctx) : 0; // and
-		return L ? 1 : filt_eval(aTHX_ (rp ? *rp : NULL), ctx);                   // or
-	}
-	if (strEQ(op, "not")) {
-		SV **restrict lp = hv_fetchs(h, "l", 0);
-		return !filt_eval(aTHX_ (lp ? *lp : NULL), ctx);
-	}
-	SV **restrict cp = hv_fetchs(h, "col", 0);
-	SV **restrict vp = hv_fetchs(h, "val", 0);
-	if (!cp || !*cp) croak("filter: comparison node missing 'col'");
-	STRLEN clen;
-	const char *restrict col = SvPV(*cp, clen);
-	SV *restrict cell = filt_cell(aTHX_ ctx, col, clen);
-	if (!cell || !SvOK(cell)) return 0; // missing / undef cell never matches
-	SV *restrict val = (vp && *vp) ? *vp : &PL_sv_undef;
-	if (strEQ(op, ">"))  return SvNV(cell) >  SvNV(val);
-	if (strEQ(op, "<"))  return SvNV(cell) <  SvNV(val);
-	if (strEQ(op, ">=")) return SvNV(cell) >= SvNV(val);
-	if (strEQ(op, "<=")) return SvNV(cell) <= SvNV(val);
-	if (strEQ(op, "==")) return SvNV(cell) == SvNV(val);
-	if (strEQ(op, "!=")) return SvNV(cell) != SvNV(val);
-	{
-		STRLEN al, bl;
-		const char *restrict a = SvPV(cell, al);
-		const char *restrict b = SvPV(val, bl);
-		STRLEN m = al < bl ? al : bl;
-		int c = m ? memcmp(a, b, m) : 0;
-		if (c == 0) c = (al > bl) - (al < bl);
-		if (strEQ(op, "eq")) return c == 0;
-		if (strEQ(op, "ne")) return c != 0;
-		if (strEQ(op, "lt")) return c <  0;
-		if (strEQ(op, "gt")) return c >  0;
-		if (strEQ(op, "le")) return c <= 0;
-		if (strEQ(op, "ge")) return c >= 0;
-	}
-	croak("filter: unknown operator '%s' in predicate", op);
-	return 0; // not reached
-}
-// Call a coderef predicate with $_ (and $_[0]) set to the row hashref.
-static bool filt_call(pTHX_ SV *restrict cv, SV *restrict row) {
+
+#define FLT_AOH 1
+#define FLT_HOA 2
+#define FLT_HOH 3
+
+/* Call the predicate coderef with the row as both $_ and $_[0]; true => keep. */
+static bool filt_call(pTHX_ SV *code, SV *row_rv) {
 	dSP;
 	bool keep;
-	int n;
 	ENTER; SAVETMPS;
 	SAVE_DEFSV;
-	DEFSV_set(row);
+	DEFSV_set(row_rv);
 	PUSHMARK(SP);
 	EXTEND(SP, 1);
-	PUSHs(row);
+	PUSHs(row_rv);
 	PUTBACK;
-	n = call_sv(cv, G_SCALAR);
+	(void)call_sv(code, G_SCALAR);
 	SPAGAIN;
-	keep = (n > 0) ? (bool)SvTRUE(TOPs) : 0;
-	if (n > 0) (void)POPs;
+	{
+		SV *restrict res = POPs;	/* POP once; SvTRUE is a multi-eval macro */
+		keep = SvTRUE(res) ? 1 : 0;
+	}
 	PUTBACK;
 	FREETMPS; LEAVE;
 	return keep;
+}
+
+/* register column NAME in (reg,order) the first time it is seen, creating its
+ * output array in OUT; used to build HoA output from AoH/HoH input. */
+static void
+flt_reg_col(pTHX_ HV *reg, AV *order, HV *out, const char *name, STRLEN nlen){
+	if (!hv_exists(reg, name, nlen)) {
+		hv_store(reg, name, nlen, newSViv(1), 0);
+		hv_store(out, name, nlen, newRV_noinc((SV*)newAV()), 0);
+		av_push(order, newSVpvn(name, nlen));
+	}
 }
 
 static int h2h_keycmp(const void *pa, const void *pb) {
@@ -1929,7 +1885,7 @@ static int h2h_keycmp(const void *pa, const void *pb) {
 static bool cf_pred(pTHX_ SV *cv_sv, AV *a_av, AV *b_av, SV *name_sv) {
 	dSP;
 	bool truth = FALSE;
-	int count;
+	unsigned int count;
 	ENTER;
 	SAVETMPS;
 	PUSHMARK(SP);
@@ -1955,8 +1911,7 @@ static bool cf_pred(pTHX_ SV *cv_sv, AV *a_av, AV *b_av, SV *name_sv) {
 
 /* save-stack destructor: closes the input handle on ANY exit, including a
  * croak thrown inside the row callback */
-static void S_pclose(pTHX_ void *p)
-{
+static void S_pclose(pTHX_ void *p) {
 	PerlIO_close((PerlIO*)p);
 }
 
@@ -1992,8 +1947,7 @@ static void S_emit_row(pTHX_ AV **rowp, SV *field, bool use_cb, SV *callback, AV
 	*rowp = newAV();
 }
 
-static void
-lm_append(pTHX_ char **bufp, size_t *lenp, size_t *capp, const char *s)
+static void lm_append(pTHX_ char **bufp, size_t *lenp, size_t *capp, const char *s)
 {
 	size_t slen = strlen(s);
 	size_t sep  = (*lenp > 0) ? 1 : 0;
@@ -2004,16 +1958,14 @@ lm_append(pTHX_ char **bufp, size_t *lenp, size_t *capp, const char *s)
 		Renew(*bufp, nc, char);
 		*capp = nc;
 	}
-	char *dst = *bufp + *lenp;
+	char *restrict dst = *bufp + *lenp;
 	if (sep) *dst++ = '+';
 	memcpy(dst, s, slen);
 	dst[slen] = '\0';
 	*lenp += sep + slen;
 }
 
-static int
-lm_str_qsort(const void *a, const void *b)
-{
+static int lm_str_qsort(const void *a, const void *b) {
 	return strcmp(*(const char *const *)a, *(const char *const *)b);
 }
 typedef int (*cs_cmp_fn)(pTHX_ void *restrict ctx, size_t i, size_t j);
@@ -2125,14 +2077,14 @@ static void cs_bind_ab(pTHX_ CV *restrict cv, SV **a_out, SV **b_out) {
 	buf[plen] = ':'; buf[plen + 1] = ':'; buf[plen + 3] = '\0';
 
 	buf[plen + 2] = 'a';
-	GV *agv = gv_fetchpv(buf, GV_ADD, SVt_PV);
+	GV *restrict agv = gv_fetchpv(buf, GV_ADD, SVt_PV);
 	buf[plen + 2] = 'b';
-	GV *bgv = gv_fetchpv(buf, GV_ADD, SVt_PV);
+	GV *restrict bgv = gv_fetchpv(buf, GV_ADD, SVt_PV);
 
 	SAVESPTR(GvSV(agv));
 	SAVESPTR(GvSV(bgv));
-	SV *a_sv = sv_newmortal();
-	SV *b_sv = sv_newmortal();
+	SV *restrict a_sv = sv_newmortal();
+	SV *restrict b_sv = sv_newmortal();
 	GvSV(agv) = a_sv;
 	GvSV(bgv) = b_sv;
 	*a_out = a_sv;
@@ -2229,26 +2181,26 @@ SV *aoh2hoa(data)
 	SV *data
 	CODE:
 	{
-		/* =================================================================
-		 * aoh2hoa($aoh) -- transpose an Array-of-Hashes into a
-		 * Hash-of-Arrays.
-		 *
-		 *   in : arrayref of hashrefs (rows)  [ {a=>1,b=>2}, {a=>3} ]
-		 *   out: hashref of arrayrefs (cols)  { a=>[1,3], b=>[2,undef] }
-		 *
-		 * - Columns are the union of all row keys.
-		 * - Every column has exactly scalar(@$aoh) elements; cells absent
-		 *   from a given row are undef (kept as cheap holes, not SVs).
-		 * - Values are copied, so the result is independent of the input
-		 *   (a value that is itself a reference is copied shallowly, just
-		 *   like Perl's  $col->[$i] = $row->{$k} ).
-		 * - A row that is not a hashref contributes undef to every column
-		 *   at its index (skipped, not fatal).
-		 * ================================================================= */
+/*
+ * aoh2hoa($aoh) -- transpose an Array-of-Hashes into a
+ * Hash-of-Arrays.
+ *
+ *   in : arrayref of hashrefs (rows)  [ {a=>1,b=>2}, {a=>3} ]
+ *   out: hashref of arrayrefs (cols)  { a=>[1,3], b=>[2,undef] }
+ *
+ * - Columns are the union of all row keys.
+ * - Every column has exactly scalar(@$aoh) elements; cells absent
+ *   from a given row are undef (kept as cheap holes, not SVs).
+ * - Values are copied, so the result is independent of the input
+ *   (a value that is itself a reference is copied shallowly, just
+ *   like Perl's  $col->[$i] = $row->{$k} ).
+ * - A row that is not a hashref contributes undef to every column
+ *   at its index (skipped, not fatal).
+*/
 		AV *restrict aoh;
 		HV *restrict out;
 		SSize_t n, i;
-		HE *he;
+		HE *restrict he;
 
 		if (!SvROK(data) || SvTYPE(SvRV(data)) != SVt_PVAV)
 			croak("aoh2hoa: argument must be an arrayref of hashrefs");
@@ -2258,8 +2210,8 @@ SV *aoh2hoa(data)
 		out = newHV();
 
 		for (i = 0; i < n; i++) {
-			SV **rp = av_fetch(aoh, i, 0);
-			HV  *row;
+			SV **restrict rp = av_fetch(aoh, i, 0);
+			HV  *restrict row;
 
 			if (!(rp && *rp && SvROK(*rp)
 			           && SvTYPE(SvRV(*rp)) == SVt_PVHV))
@@ -2268,10 +2220,9 @@ SV *aoh2hoa(data)
 			row = (HV *)SvRV(*rp);
 			hv_iterinit(row);
 			while ((he = hv_iternext(row))) {
-				SV *ksv  = hv_iterkeysv(he);	/* utf8 / SV-key safe */
-				HE *oute = hv_fetch_ent(out, ksv, 0, 0);
-				AV *col;
-
+				SV *restrict ksv  = hv_iterkeysv(he);	/* utf8 / SV-key safe */
+				HE *restrict oute = hv_fetch_ent(out, ksv, 0, 0);
+				AV *restrict col;
 				if (oute && SvROK(HeVAL(oute))
 				         && SvTYPE(SvRV(HeVAL(oute))) == SVt_PVAV) {
 					col = (AV *)SvRV(HeVAL(oute));
@@ -2284,15 +2235,13 @@ SV *aoh2hoa(data)
 				av_store(col, i, newSVsv(HeVAL(he)));
 			}
 		}
-
-		/* pad every column out to exactly n elements (trailing undefs) */
+		// pad every column out to exactly n elements (trailing undefs)
 		hv_iterinit(out);
 		while ((he = hv_iternext(out))) {
-			AV *col = (AV *)SvRV(HeVAL(he));
+			AV *restrict col = (AV *)SvRV(HeVAL(he));
 			if (av_len(col) < n - 1)
 				av_fill(col, n - 1);
 		}
-
 		RETVAL = newRV_noinc((SV *)out);
 	}
 	OUTPUT:
@@ -2440,7 +2389,6 @@ PPCODE:
 			Newx(vals, (size_t)n, SV *);  SAVEFREEPV(vals);
 			bool found = 0;
 			unsigned short numeric = 1;
-	
 			if (is_aoh) {
 				for (size_t i = 0; i < (size_t)n; i++) {
 					SV *restrict cell = NULL;
@@ -2461,7 +2409,7 @@ PPCODE:
 						&& SvTYPE(SvRV(*colp)) == SVt_PVAV))
 					croak("csort: column '%s' not found in HoA", colname);
 				found = 1;
-				AV *col = (AV *)SvRV(*colp);
+				AV *restrict col = (AV *)SvRV(*colp);
 				for (size_t i = 0; i < (size_t)n; i++) {
 					SV **cp = av_fetch(col, (SSize_t)i, 0);
 					SV *cell = (cp && *cp) ? *cp : NULL;
@@ -2874,97 +2822,226 @@ SV *hoh2hoa(data, ...)
 	OUTPUT:
 		RETVAL
 
-void filter(df, pred)
-	SV *df
-	SV *pred
+
+void filter(...)
 PPCODE:
 {
-	if (!df || !SvROK(df))
-		croak("filter: first argument must be a HASH or ARRAY reference (a data frame)");
-	bool is_code = (pred && SvROK(pred) && SvTYPE(SvRV(pred)) == SVt_PVCV);
-	if (!is_code && (!pred || !SvROK(pred) || SvTYPE(SvRV(pred)) != SVt_PVHV))
-		croak("filter: second argument must be a CODE ref or a predicate built with col()");
-	SV *restrict ref = SvRV(df);
-	SV *restrict result;
-	if (SvTYPE(ref) == SVt_PVAV) {
-		// ----- Array of Hashes: keep matching row hashrefs (shared, not copied) -----
-		AV *restrict in = (AV*)ref;
-		AV *restrict out = newAV();
-		SSize_t n = av_len(in) + 1, i;
-		filt_ctx ctx; ctx.is_aoh = 1; ctx.data_hv = NULL; ctx.idx = 0;
-		for (i = 0; i < n; i++) {
-			SV **restrict rp = av_fetch(in, i, 0);
-			if (!rp || !*rp || !SvROK(*rp) || SvTYPE(SvRV(*rp)) != SVt_PVHV) {
-				SvREFCNT_dec((SV*)out);
-				croak("filter: array data frame must hold HASH references; element %ld is not one", (long)i);
-			}
-			bool keep;
-			if (is_code) keep = filt_call(aTHX_ pred, *rp);
-			else { ctx.row_hv = (HV*)SvRV(*rp); keep = filt_eval(aTHX_ pred, &ctx); }
-			if (keep) av_push(out, SvREFCNT_inc_simple_NN(*rp));
-		}
-		result = newRV_noinc((SV*)out);
-	} else if (SvTYPE(ref) == SVt_PVHV) {
-		// ----- Hash of Arrays: keep matching row indices across every column -----
-		HV *restrict in = (HV*)ref;
-		U32 ncols = hv_iterinit(in);
-		if (ncols <= 0) {
-			result = newRV_noinc((SV*)newHV());
-		} else {
-			char   **restrict names = (char**)safemalloc(ncols * sizeof(char*));
-			STRLEN  *restrict nlens = (STRLEN*)safemalloc(ncols * sizeof(STRLEN));
-			AV     **restrict inav  = (AV**)safemalloc(ncols * sizeof(AV*));
-			AV     **restrict outav = (AV**)safemalloc(ncols * sizeof(AV*));
-			HV *restrict out = newHV();
-			SSize_t maxrows = 0, i;
-			U32 c = 0, cc;
-			HE *restrict e;
-			while ((e = hv_iternext(in)) && c < ncols) {
-				STRLEN klen;
-				char *restrict k = HePV(e, klen);
-				SV *restrict v = HeVAL(e);
-				if (!v || !SvROK(v) || SvTYPE(SvRV(v)) != SVt_PVAV) {
-					safefree(names); safefree(nlens); safefree(inav); safefree(outav);
-					SvREFCNT_dec((SV*)out);
-					croak("filter: hash data frame must hold ARRAY references (a hash of arrays); column '%s' is not one", k);
-				}
-				AV *restrict a = (AV*)SvRV(v);
-				SSize_t len = av_len(a) + 1;
-				if (len > maxrows) maxrows = len;
-				names[c] = k; nlens[c] = klen; inav[c] = a;
-				outav[c] = newAV();
-				hv_store(out, k, klen, newRV_noinc((SV*)outav[c]), 0);
-				c++;
-			}
-			filt_ctx ctx; ctx.is_aoh = 0; ctx.row_hv = NULL; ctx.data_hv = in;
-			for (i = 0; i < maxrows; i++) {
-				bool keep;
-				if (is_code) {
-					HV *restrict rowh = newHV();
-					for (cc = 0; cc < ncols; cc++) {
-						SV **restrict vp = av_fetch(inav[cc], i, 0);
-						hv_store(rowh, names[cc], nlens[cc], newSVsv((vp && *vp) ? *vp : &PL_sv_undef), 0);
-					}
-					SV *restrict rowrv = newRV_noinc((SV*)rowh);
-					keep = filt_call(aTHX_ pred, rowrv);
-					SvREFCNT_dec(rowrv);
-				} else {
-					ctx.idx = i;
-					keep = filt_eval(aTHX_ pred, &ctx);
-				}
-				if (keep) {
-					for (cc = 0; cc < ncols; cc++) {
-						SV **restrict vp = av_fetch(inav[cc], i, 0);
-						av_push(outav[cc], newSVsv((vp && *vp) ? *vp : &PL_sv_undef));
-					}
-				}
-			}
-			safefree(names); safefree(nlens); safefree(inav); safefree(outav);
-			result = newRV_noinc((SV*)out);
-		}
-	} else {
-		croak("filter: unsupported data frame; expected an array of hashes (AoH) or a hash of arrays (HoA)");
+	if (items < 2)
+		croak("Usage: filter($df, $code [, 'output.type' => 'aoh'|'hoa'])");
+	SV *restrict df      = ST(0);
+	SV *restrict predarg = ST(1);
+	const char *restrict otype = NULL;
+	if (items == 3) {
+		otype = SvPV_nolen(ST(2));
+	} else if (items == 4) {
+		const char *restrict key = SvPV_nolen(ST(2));
+		if (strNE(key, "output.type") && strNE(key, "out") && strNE(key, "output_type"))
+			croak("filter: unknown option '%s' (expected 'output.type')", key);
+		otype = SvPV_nolen(ST(3));
+	} else if (items > 4) {
+		croak("Usage: filter($df, $code [, 'output.type' => 'aoh'|'hoa'])");
 	}
+	int want = 0;	/* 0 = preserve input shape */
+	if (otype) {
+		if      (strEQ(otype, "aoh")) want = FLT_AOH;
+		else if (strEQ(otype, "hoa")) want = FLT_HOA;
+		else croak("filter: output.type must be 'aoh' or 'hoa' (got '%s')", otype);
+	}
+	if (!df || !SvROK(df))
+		croak("filter: first argument must be a data frame (AoH, HoA, or HoH reference)");
+	/* The predicate is a CODE ref, or a col() object carrying a CODE ref in
+	 * its {code} field; either way we end up calling a single CV per row. */
+	SV *restrict code = NULL;
+	if (predarg && SvROK(predarg) && SvTYPE(SvRV(predarg)) == SVt_PVCV) {
+		code = predarg;
+	} else if (predarg && sv_isobject(predarg)
+			&& sv_derived_from(predarg, "Stats::LikeR::col")) {
+		SV **restrict cp = hv_fetchs((HV*)SvRV(predarg), "code", 0);
+		if (!cp || !*cp || !SvROK(*cp) || SvTYPE(SvRV(*cp)) != SVt_PVCV)
+			croak("filter: incomplete col() predicate -- a bare column needs a comparison, e.g. col('x') > 0");
+		code = *cp;
+	} else {
+		croak("filter: predicate must be a CODE reference or a col() expression");
+	}
+
+	SV *restrict ref = SvRV(df);
+	int in_shape;
+	HV *restrict inhv = NULL;
+	AV *restrict inav = NULL;
+	if (SvTYPE(ref) == SVt_PVAV) {
+		in_shape = FLT_AOH; inav = (AV*)ref;
+	} else if (SvTYPE(ref) == SVt_PVHV) {
+		inhv = (HV*)ref;
+		hv_iterinit(inhv);
+		HE *restrict e0 = hv_iternext(inhv);
+		if (!e0) {
+			/* empty hash: ambiguous shape -> empty result of the chosen/own shape */
+			SV *restrict r = (want == FLT_AOH) ? newRV_noinc((SV*)newAV())
+			                                   : newRV_noinc((SV*)newHV());
+			ST(0) = sv_2mortal(r);
+			XSRETURN(1);
+		}
+		SV *restrict v0 = HeVAL(e0);
+		if (v0 && SvROK(v0) && SvTYPE(SvRV(v0)) == SVt_PVAV)      in_shape = FLT_HOA;
+		else if (v0 && SvROK(v0) && SvTYPE(SvRV(v0)) == SVt_PVHV) in_shape = FLT_HOH;
+		else croak("filter: hash data frame must be a hash of arrays (HoA) or a hash of hashes (HoH)");
+	} else {
+		croak("filter: unsupported data frame; expected AoH, HoA, or HoH");
+	}
+	int out_shape = want ? want : in_shape;
+
+	SV *restrict result = NULL;
+	ENTER; SAVETMPS;
+
+	if (in_shape == FLT_AOH) {
+		SSize_t n = av_len(inav) + 1, i;
+		if (out_shape == FLT_AOH) {
+			AV *restrict out = (AV*)sv_2mortal((SV*)newAV());
+			for (i = 0; i < n; i++) {
+				SV **restrict rp = av_fetch(inav, i, 0);
+				if (!rp || !*rp || !SvROK(*rp) || SvTYPE(SvRV(*rp)) != SVt_PVHV)
+					croak("filter: AoH element %ld is not a HASH reference", (long)i);
+				if (filt_call(aTHX_ code, *rp))
+					av_push(out, SvREFCNT_inc_simple_NN(*rp));	/* share row */
+			}
+			result = newRV_inc((SV*)out);
+		} else {	/* AoH -> HoA */
+			HV *restrict out   = (HV*)sv_2mortal((SV*)newHV());
+			HV *restrict reg   = (HV*)sv_2mortal((SV*)newHV());
+			AV *restrict order = (AV*)sv_2mortal((SV*)newAV());
+			for (i = 0; i < n; i++) {	/* pass 1: every column from every row */
+				SV **restrict rp = av_fetch(inav, i, 0);
+				if (!rp || !*rp || !SvROK(*rp) || SvTYPE(SvRV(*rp)) != SVt_PVHV)
+					croak("filter: AoH element %ld is not a HASH reference", (long)i);
+				HV *restrict rh = (HV*)SvRV(*rp);
+				hv_iterinit(rh); HE *restrict e;
+				while ((e = hv_iternext(rh))) {
+					STRLEN kl; char *restrict k = HePV(e, kl);
+					flt_reg_col(aTHX_ reg, order, out, k, kl);
+				}
+			}
+			SSize_t ncn = av_len(order) + 1, j;
+			for (i = 0; i < n; i++) {	/* pass 2: filter + fill */
+				SV **restrict rp = av_fetch(inav, i, 0);
+				HV *restrict rh = (HV*)SvRV(*rp);
+				if (!filt_call(aTHX_ code, *rp)) continue;
+				for (j = 0; j < ncn; j++) {
+					SV **restrict np = av_fetch(order, j, 0);
+					STRLEN kl; char *restrict k = SvPV(*np, kl);
+					SV **restrict cp = hv_fetch(rh, k, kl, 0);
+					SV **restrict op = hv_fetch(out, k, kl, 0);
+					av_push((AV*)SvRV(*op), newSVsv((cp && *cp) ? *cp : &PL_sv_undef));
+				}
+			}
+			result = newRV_inc((SV*)out);
+		}
+	} else if (in_shape == FLT_HOA) {
+		U32 ncols = hv_iterinit(inhv), c;
+		char   **restrict names = (char**)safemalloc((ncols?ncols:1) * sizeof(char*));
+		STRLEN  *restrict nlens = (STRLEN*)safemalloc((ncols?ncols:1) * sizeof(STRLEN));
+		AV     **restrict cols  = (AV**)safemalloc((ncols?ncols:1) * sizeof(AV*));
+		SAVEFREEPV(names); SAVEFREEPV(nlens); SAVEFREEPV(cols);
+		SSize_t maxrows = 0, i; HE *restrict e; c = 0;
+		while ((e = hv_iternext(inhv)) && c < ncols) {
+			SV *restrict v = HeVAL(e);
+			STRLEN kl; char *restrict k = HePV(e, kl);
+			if (!v || !SvROK(v) || SvTYPE(SvRV(v)) != SVt_PVAV)
+				croak("filter: HoA column '%s' is not an ARRAY reference", k);
+			AV *restrict a = (AV*)SvRV(v);
+			SSize_t len = av_len(a) + 1;
+			if (len > maxrows) maxrows = len;
+			names[c] = k; nlens[c] = kl; cols[c] = a; c++;
+		}
+		if (out_shape == FLT_HOA) {
+			HV *restrict out = (HV*)sv_2mortal((SV*)newHV());
+			AV **restrict ocol = (AV**)safemalloc((c?c:1) * sizeof(AV*));
+			SAVEFREEPV(ocol);
+			for (U32 cc = 0; cc < c; cc++) {
+				ocol[cc] = newAV();
+				hv_store(out, names[cc], nlens[cc], newRV_noinc((SV*)ocol[cc]), 0);
+			}
+			for (i = 0; i < maxrows; i++) {
+				HV *restrict rowh = newHV();
+				for (U32 cc = 0; cc < c; cc++) {
+					SV **restrict vp = av_fetch(cols[cc], i, 0);
+					hv_store(rowh, names[cc], nlens[cc], newSVsv((vp && *vp) ? *vp : &PL_sv_undef), 0);
+				}
+				SV *restrict rv = newRV_noinc((SV*)rowh);
+				bool keep = filt_call(aTHX_ code, rv);
+				SvREFCNT_dec(rv);
+				if (keep)
+					for (U32 cc = 0; cc < c; cc++) {
+						SV **restrict vp = av_fetch(cols[cc], i, 0);
+						av_push(ocol[cc], newSVsv((vp && *vp) ? *vp : &PL_sv_undef));
+					}
+			}
+			result = newRV_inc((SV*)out);
+		} else {	/* HoA -> AoH */
+			AV *restrict out = (AV*)sv_2mortal((SV*)newAV());
+			for (i = 0; i < maxrows; i++) {
+				HV *restrict rowh = newHV();
+				for (U32 cc = 0; cc < c; cc++) {
+					SV **restrict vp = av_fetch(cols[cc], i, 0);
+					hv_store(rowh, names[cc], nlens[cc], newSVsv((vp && *vp) ? *vp : &PL_sv_undef), 0);
+				}
+				SV *restrict rv = newRV_noinc((SV*)rowh);
+				if (filt_call(aTHX_ code, rv)) av_push(out, rv);
+				else SvREFCNT_dec(rv);
+			}
+			result = newRV_inc((SV*)out);
+		}
+	} else {	/* FLT_HOH */
+		if (out_shape == FLT_HOA) {
+			HV *restrict out   = (HV*)sv_2mortal((SV*)newHV());
+			HV *restrict reg   = (HV*)sv_2mortal((SV*)newHV());
+			AV *restrict order = (AV*)sv_2mortal((SV*)newAV());
+			HE *restrict e;
+			hv_iterinit(inhv);		/* pass 1: columns from every inner row */
+			while ((e = hv_iternext(inhv))) {
+				SV *restrict v = HeVAL(e);
+				STRLEN kl; char *restrict k = HePV(e, kl);
+				if (!v || !SvROK(v) || SvTYPE(SvRV(v)) != SVt_PVHV)
+					croak("filter: HoH row '%s' is not a HASH reference", k);
+				HV *restrict rh = (HV*)SvRV(v);
+				hv_iterinit(rh); HE *ie;
+				while ((ie = hv_iternext(rh))) {
+					STRLEN il; char *restrict ik = HePV(ie, il);
+					flt_reg_col(aTHX_ reg, order, out, ik, il);
+				}
+			}
+			SSize_t ncn = av_len(order) + 1, j;
+			hv_iterinit(inhv);		/* pass 2: filter + fill */
+			while ((e = hv_iternext(inhv))) {
+				SV *restrict v = HeVAL(e);
+				if (!filt_call(aTHX_ code, v)) continue;
+				HV *restrict rh = (HV*)SvRV(v);
+				for (j = 0; j < ncn; j++) {
+					SV **restrict np = av_fetch(order, j, 0);
+					STRLEN kl; char *restrict k = SvPV(*np, kl);
+					SV **restrict cp = hv_fetch(rh, k, kl, 0);
+					SV **restrict op = hv_fetch(out, k, kl, 0);
+					av_push((AV*)SvRV(*op), newSVsv((cp && *cp) ? *cp : &PL_sv_undef));
+				}
+			}
+			result = newRV_inc((SV*)out);
+		} else {	/* HoH -> HoH (preserve) or HoH -> AoH */
+			HV *restrict outh = NULL; AV *restrict outa = NULL;
+			if (out_shape == FLT_HOH) outh = (HV*)sv_2mortal((SV*)newHV());
+			else                      outa = (AV*)sv_2mortal((SV*)newAV());
+			HE *restrict e; hv_iterinit(inhv);
+			while ((e = hv_iternext(inhv))) {
+				SV *restrict v = HeVAL(e);
+				STRLEN kl; char *restrict k = HePV(e, kl);
+				if (!v || !SvROK(v) || SvTYPE(SvRV(v)) != SVt_PVHV)
+					croak("filter: HoH row '%s' is not a HASH reference", k);
+				if (!filt_call(aTHX_ code, v)) continue;
+				if (outh) hv_store(outh, k, kl, SvREFCNT_inc_simple_NN(v), 0);
+				else      av_push(outa, SvREFCNT_inc_simple_NN(v));
+			}
+			result = newRV_inc(outh ? (SV*)outh : (SV*)outa);
+		}
+	}
+	FREETMPS; LEAVE;
 	ST(0) = sv_2mortal(result);
 	XSRETURN(1);
 }
@@ -4777,11 +4854,6 @@ PPCODE:
 
 SV* _parse_csv_file(char* file, const char* sep_str, const char* comment_str, SV* callback = &PL_sv_undef)
 PREINIT:
-	/* Declarations only -- C declarations cost nothing. ALLOCATIONS are
-	 * deferred into CODE, after every croak-able validation, so that no
-	 * error path can leak. (The old version allocated current_row, field,
-	 * and data in INIT: the open-failure croak leaked all three, and a die
-	 * inside the callback leaked those plus line_sv plus the open handle.) */
 	PerlIO *restrict fp;
 	AV *restrict data = NULL;
 	AV *current_row = NULL;
@@ -4791,13 +4863,10 @@ PREINIT:
 	size_t sep_len, comment_len;
 	char sep0 = 0;
 CODE:
-	/* ---- validation: nothing is allocated yet, so croaks are leak-free */
 	if (SvOK(callback)) {
 		if (SvROK(callback) && SvTYPE(SvRV(callback)) == SVt_PVCV)
 			use_cb = 1;
 		else
-			/* FIX: a defined non-CODE callback used to be silently ignored
-			 * (falling back to slurp mode); now it is an error. */
 			croak("_parse_csv_file: callback must be a CODE reference");
 	}
 	sep_len = sep_str ? strlen(sep_str) : 0;
@@ -4806,52 +4875,43 @@ CODE:
 	fp = PerlIO_open(file, "r");
 	if (!fp)
 		croak("Could not open file '%s'", file);
-	/* ---- from here on, a die inside the callback must not leak anything:
-	 * tie every long-lived resource to the save stack, which croak unwinds */
 	ENTER;
-	SAVEDESTRUCTOR_X(S_pclose, fp);		/* fp closes on normal LEAVE or die */
+	SAVEDESTRUCTOR_X(S_pclose, fp);
 	line_sv = newSV(128);
 	SAVEFREESV(line_sv);
 	field = newSVpvs("");
 	SAVEFREESV(field);
 	if (!use_cb)
-		data = newAV();	/* slurp mode runs no perl code: no die can reach it */
-	current_row = newAV();	/* covered by the ownership dance in S_emit_row */
-	/* The wrapper strips a leading comment marker from the HEADER itself, so
-	 * the first content line must reach the callback even when it begins with
-	 * the comment string. Comment-skipping therefore starts only after the
-	 * first row has been emitted. (In the old code the header-strip logic in
-	 * read_table was dead: the parser ate any '#'-prefixed header first.) */
-	bool seen_first = 0;
+		data = newAV();
+	current_row = newAV();
 	while (sv_gets(line_sv, fp, 0) != NULL) {
 		char *restrict line = SvPVX(line_sv);
 		size_t len = SvCUR(line_sv);
-		// chomp \n and a preceding \r (CRLF)
 		if (len && line[len-1] == '\n') {
 			len--;
 			if (len && line[len-1] == '\r')
 				len--;
 		}
 		if (!in_quotes) {
-			// skip blank / whitespace-only lines
 			size_t k = 0;
 			while (k < len && (line[k] == ' ' || line[k] == '\t'))
 				k++;
 			if (k == len)
 				continue;
-			// skip comment lines -- but never the first content line
-			if (seen_first && comment_len && len >= comment_len
-					&& memcmp(line, comment_str, comment_len) == 0)
+/* A line is a comment only when the marker is followed by whitespace
+ * or end-of-line: "# prose" and a bare "#" are skipped, but "#id,val"
+ * (marker hugging content) is treated as content so a "#"-prefixed
+ * header survives to read_table for stripping. */
+			if (comment_len && len >= comment_len
+					&& memcmp(line, comment_str, comment_len) == 0
+					&& (len == comment_len
+						|| line[comment_len] == 0x20 || line[comment_len] == 0x09))
 				continue;
 		}
-		// ---- core parser: chunked copies instead of per-char appends
 		{
 		size_t i = 0;
 		while (i < len) {
 			if (in_quotes) {
-				/* Everything up to the next quote is literal -- including
-				 * \r, which the old parser wrongly stripped inside quotes
-				 * (breaking round-trips of values like "x\ry"). */
 				const char *restrict q = (const char *)memchr(line + i, '"', len - i);
 				if (!q) {
 					sv_catpvn(field, line + i, len - i);
@@ -4862,10 +4922,10 @@ CODE:
 					size_t run = (size_t)(q - (line + i));
 					if (run)
 						sv_catpvn(field, line + i, run);
-					i += run;	/* i is now at the quote */
+					i += run;
 				}
 				if (i + 1 < len && line[i+1] == '"') {
-					sv_catpvn(field, "\"", 1);	/* "" -> literal " */
+					sv_catpvn(field, "\"", 1);
 					i += 2;
 				} else {
 					in_quotes = 0;
@@ -4873,7 +4933,6 @@ CODE:
 					i += 1;
 				}
 			} else {
-				/* copy a run of ordinary bytes in one shot */
 				size_t start = i;
 				while (i < len) {
 					const char c = line[i];
@@ -4892,15 +4951,12 @@ CODE:
 				{
 					const char c = line[i];
 					if (c == '"') {
-						/* lenient: a quote after a closed quote is dropped,
-						 * matching the old parser */
 						if (!post_quote)
 							in_quotes = 1;
 						i++;
 					} else if (c == '\r') {
-						i++;	/* stray CR outside quotes: ignored, as before */
+						i++;
 					} else {
-						/* separator */
 						av_push(current_row, newSVsv(field));
 						sv_setpvs(field, "");
 						post_quote = 0;
@@ -4911,21 +4967,19 @@ CODE:
 		}
 		}
 		if (in_quotes) {
-			/* open quote at EOL: logical record continues on the next line */
 			sv_catpvn(field, "\n", 1);
 		} else {
 			post_quote = 0;
 			S_emit_row(aTHX_ &current_row, field, use_cb, callback, data);
-			seen_first = 1;
 		}
 	}
-	if (in_quotes) {/* EOF with an unterminated quote: flush the trailing record */
+	if (in_quotes) {
 		S_emit_row(aTHX_ &current_row, field, use_cb, callback, data);
 	}
-	SvREFCNT_dec((SV*)current_row);// the spare row S_emit_row left behind
-	LEAVE;// closes fp, frees line_sv and field
+	SvREFCNT_dec((SV*)current_row);
+	LEAVE;
 	if (use_cb) {
-		RETVAL = newSV(0); // fresh undef; mortalizing immortal &PL_sv_undef underflows it on perl<5.18
+		RETVAL = newSV(0);
 	} else {
 		RETVAL = newRV_noinc((SV*)data);
 	}
@@ -5067,7 +5121,7 @@ SV *predict(...)
 		if (items > 2) {
 			if ((items - 2) % 2 != 0)
 				croak("predict: options after newdata must be name => value pairs");
-			for (I32 a = 2; a < items; a += 2) {
+			for (unsigned short a = 2; a < items; a += 2) {
 				const char *restrict key = SvPV_nolen(ST(a));
 				if (strEQ(key, "type")) type = SvPV_nolen(ST(a + 1));
 				else croak("predict: unknown argument '%s'", key);

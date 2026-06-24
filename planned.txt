@@ -1,11 +1,9 @@
 aoh2hoh
 hoa2hoh
-`filter` should work with HoH
-`filter` shouldn't need `col()` if appropriate, ask Claude
-`filter` should have an output type option
-`filter` is not filtering correctly: filter( $f, 295 < col('crystal_temp')) where $f is AoH
+`csort` should accept HoH, but cannot return HoH as hashes aren't sorted; output type should be specified as either `hoa` or `aoh` (matching provided by default); undefined values should be at the end
 ncol
 nrow
-`view` should display `undef` rather than `NA`
 `value_counts` should accept array of hashes
 `summary` should have colored and tidier output like new `view` does
+`view` can accept hashes and arrays without needing a reference
+`to_list` or `col2arr` or `vals` like Pandas

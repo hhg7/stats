@@ -20,8 +20,8 @@ for (my $age = 10; $age <= 90; $age += 10) {
 		age => $age, class => '3rd', gender => 'male', fare => 7.11
 	};
 }
-my $p = predict($glm, \@predict );
-p $p;
+#my $p = predict($glm, \@predict );
+#p $p;
 $titanic = aoh2hoa( $titanic );
 my $vc = value_counts($titanic, 'country');
 p $vc;

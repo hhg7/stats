@@ -6,7 +6,6 @@ use feature 'say';
 package Stats::LikeR;
 our $VERSION = 0.17;
 require XSLoader;
-use Devel::Confess 'color';
 use warnings FATAL => 'all';
 use autodie ':default';
 use Exporter 'import';
@@ -15,8 +14,21 @@ XSLoader::load('Stats::LikeR', $VERSION);
 our @EXPORT_OK = qw(add_data aoh2hoa aov assign cfilter chisq_test col col2col cor cor_test cov csort dnorm dropna filter fisher_test glm group_by hoa2aoh hoh2hoa hist kruskal_test ks_test ljoin lm matrix max mean median min mode oneway_test p_adjust power_t_test predict prcomp quantile rbinom read_table rnorm runif sample scale sd seq shapiro_test sum summary t_test transpose value_counts var var_test view wilcox_test write_table);
 our @EXPORT = @EXPORT_OK;
 
-require XSLoader;
-
+# ---------------------------------------------------------------------------
+# assign($df, name => \&code, name2 => \&code2, ...)
+#
+# Add (or overwrite) columns derived from existing ones, dplyr-mutate style.
+# Each coderef is called once per row with the row as $_ (a hashref) and also
+# as $_[0]; $_[1] is the 0-based row index. It returns the new cell value.
+#
+# Works on both data-frame shapes:
+#   AoH  [ {weight=>70, height=>1.8}, ... ]   (arrayref of row hashrefs)
+#   HoA  { weight=>[70,...], height=>[1.8,...] } (hashref of column arrayrefs)
+#
+# Pairs are applied in order, so a later column may use an earlier new one.
+# Modifies $df in place (lowest RAM/CPU) and returns it for chaining.
+# To keep the original intact, hand it a copy: assign(clone($df), ...).
+# ---------------------------------------------------------------------------
 sub assign {
 	my $df = shift;
 	die 'assign: first argument must be a data frame (AoH arrayref or HoA hashref)'
@@ -71,58 +83,103 @@ sub assign {
 }
 
 # ---- filter DSL: col() builds a predicate via overloading (pure Perl) -------
-# Exported: filter (XS) and col.  Place col()/Col/Pred near the top of the .pm;
-# they need no XS.  filter() is the XSUB.
-
-# ---------------------------------------------------------------------------
-# assign($df, name => \&code, name2 => \&code2, ...)
+# col('name') returns an overloaded object; comparing it (col('age') >= 18) or
+# combining comparisons with & | ! builds a predicate that carries its per-row
+# test in a {code} closure. filter() (XS) unwraps that closure, so col() and a
+# plain coderef share one evaluation path -- no XS evaluator, no Carp.
 #
-# Add (or overwrite) columns derived from existing ones, dplyr-mutate style.
-# Each coderef is called once per row with the row as $_ (a hashref) and also
-# as $_[0]; $_[1] is the 0-based row index. It returns the new cell value.
-#
-# Works on both data-frame shapes:
-#   AoH  [ {weight=>70, height=>1.8}, ... ]   (arrayref of row hashrefs)
-#   HoA  { weight=>[70,...], height=>[1.8,...] } (hashref of column arrayrefs)
-#
-# Pairs are applied in order, so a later column may use an earlier new one.
-# Modifies $df in place (lowest RAM/CPU) and returns it for chaining.
-# To keep the original intact, hand it a copy: assign(clone($df), ...).
-# ---------------------------------------------------------------------------
-
-sub col { Stats::LikeR::Col->new($_[0]) }
+# Rules: numeric ops > < >= <= == != compare as numbers; string ops gt lt ge le
+# eq ne compare as strings; & | ! combine; operands may be in either order; a
+# missing/undef cell (and, for numeric ops, a non-numeric cell) never matches.
+sub col { Stats::LikeR::col::_new(@_) }
 {
-	package Stats::LikeR::Col;
-	sub new { bless { name => $_[1] }, ref($_[0]) || $_[0] }
-	# build a comparison leaf; if operands were swapped (4 > col('x')), flip the op
-	sub _c {
-		my ($self, $val, $swapped, $op, $flip) = @_;
-		Stats::LikeR::Pred->_leaf($self->{name}, $swapped ? $flip : $op, $val);
+	package Stats::LikeR::col;
+	use warnings;
+	use Scalar::Util qw(blessed looks_like_number);
+	use overload
+		'>'	 => sub { _num($_[0], '>',	$_[1], $_[2]) },
+		'<'	 => sub { _num($_[0], '<',	$_[1], $_[2]) },
+		'>=' => sub { _num($_[0], '>=', $_[1], $_[2]) },
+		'<=' => sub { _num($_[0], '<=', $_[1], $_[2]) },
+		'==' => sub { _num($_[0], '==', $_[1], $_[2]) },
+		'!=' => sub { _num($_[0], '!=', $_[1], $_[2]) },
+		'gt' => sub { _str($_[0], 'gt', $_[1], $_[2]) },
+		'lt' => sub { _str($_[0], 'lt', $_[1], $_[2]) },
+		'ge' => sub { _str($_[0], 'ge', $_[1], $_[2]) },
+		'le' => sub { _str($_[0], 'le', $_[1], $_[2]) },
+		'eq' => sub { _str($_[0], 'eq', $_[1], $_[2]) },
+		'ne' => sub { _str($_[0], 'ne', $_[1], $_[2]) },
+		'&'	 => sub { _logic($_[0], '&', $_[1]) },
+		'|'	 => sub { _logic($_[0], '|', $_[1]) },
+		'!'	 => sub { _not($_[0]) },
+		'""'   => sub { 'Stats::LikeR::col predicate' },
+		'bool' => sub { 1 },
+		fallback => 0;
+
+	sub _new {
+		my ($name) = @_;
+		die "col(): expects a single column name\n" if !defined($name) || ref $name;
+		return bless { name => $name }, __PACKAGE__;
 	}
-	use overload
-		'>'  => sub { $_[0]->_c($_[1],$_[2],'>','<')  },
-		'<'  => sub { $_[0]->_c($_[1],$_[2],'<','>')  },
-		'>=' => sub { $_[0]->_c($_[1],$_[2],'>=','<=') },
-		'<=' => sub { $_[0]->_c($_[1],$_[2],'<=','>=') },
-		'==' => sub { $_[0]->_c($_[1],$_[2],'==','==') },
-		'!=' => sub { $_[0]->_c($_[1],$_[2],'!=','!=') },
-		'lt' => sub { $_[0]->_c($_[1],$_[2],'lt','gt') },
-		'gt' => sub { $_[0]->_c($_[1],$_[2],'gt','lt') },
-		'le' => sub { $_[0]->_c($_[1],$_[2],'le','ge') },
-		'ge' => sub { $_[0]->_c($_[1],$_[2],'ge','le') },
-		'eq' => sub { $_[0]->_c($_[1],$_[2],'eq','eq') },
-		'ne' => sub { $_[0]->_c($_[1],$_[2],'ne','ne') },
-		fallback => 1;
-}
-{
-	package Stats::LikeR::Pred;
-	sub _leaf { bless { op => $_[2], col => $_[1], val => $_[3] }, 'Stats::LikeR::Pred' }
-	sub _node { bless { op => $_[0], l => $_[1], r => $_[2] }, 'Stats::LikeR::Pred' }
-	use overload
-		'&' => sub { Stats::LikeR::Pred::_node('and', $_[0], $_[1]) },
-		'|' => sub { Stats::LikeR::Pred::_node('or',  $_[0], $_[1]) },
-		'!' => sub { Stats::LikeR::Pred::_node('not', $_[0], undef) },
-		fallback => 1;
+
+	my %NUM = (
+		'>'	 => sub { $_[0] >  $_[1] }, '<'	 => sub { $_[0] <  $_[1] },
+		'>=' => sub { $_[0] >= $_[1] }, '<=' => sub { $_[0] <= $_[1] },
+		'==' => sub { $_[0] == $_[1] }, '!=' => sub { $_[0] != $_[1] },
+	);
+	my %STR = (
+		'gt' => sub { $_[0] gt $_[1] }, 'lt' => sub { $_[0] lt $_[1] },
+		'ge' => sub { $_[0] ge $_[1] }, 'le' => sub { $_[0] le $_[1] },
+		'eq' => sub { $_[0] eq $_[1] }, 'ne' => sub { $_[0] ne $_[1] },
+	);
+
+	# numeric comparison: undef OR non-numeric cells never match
+	sub _num {
+		my ($self, $op, $other, $swap) = @_;
+		my $name = $self->{name};
+		die "col(): the '$op' comparison must start from a bare column, e.g. col('x') $op ...\n"
+			unless defined $name;
+		my $f = $NUM{$op};
+		my $code = $swap
+			? sub { my $c = $_[0]{$name}; (defined($c) && looks_like_number($c)) ? ($f->($other, $c) ? 1 : 0) : 0 }
+			: sub { my $c = $_[0]{$name}; (defined($c) && looks_like_number($c)) ? ($f->($c, $other) ? 1 : 0) : 0 };
+		return bless { code => $code }, __PACKAGE__;
+	}
+
+	# string comparison: undef cells never match
+	sub _str {
+		my ($self, $op, $other, $swap) = @_;
+		my $name = $self->{name};
+		die "col(): the '$op' comparison must start from a bare column, e.g. col('x') $op ...\n"
+			unless defined $name;
+		my $f = $STR{$op};
+		my $code = $swap
+			? sub { my $c = $_[0]{$name}; defined($c) ? ($f->($other, $c) ? 1 : 0) : 0 }
+			: sub { my $c = $_[0]{$name}; defined($c) ? ($f->($c, $other) ? 1 : 0) : 0 };
+		return bless { code => $code }, __PACKAGE__;
+	}
+
+	sub _logic {
+		my ($self, $op, $other) = @_;
+		my $lc = $self->{code};
+		die "col(): the left operand of '$op' is not a comparison (build it like (col('x') > 0))\n"
+			unless ref $lc eq 'CODE';
+		my $rc = (blessed($other) && $other->isa(__PACKAGE__)) ? $other->{code} : undef;
+		die "col(): the right operand of '$op' must be a col() comparison too\n"
+			unless ref $rc eq 'CODE';
+		my $code = $op eq '&'
+			? sub { ($lc->($_[0]) && $rc->($_[0])) ? 1 : 0 }
+			: sub { ($lc->($_[0]) || $rc->($_[0])) ? 1 : 0 };
+		return bless { code => $code }, __PACKAGE__;
+	}
+
+	sub _not {
+		my ($self) = @_;
+		my $c = $self->{code};
+		die "col(): the operand of '!' is not a comparison (build it like !(col('x') > 0))\n"
+			unless ref $c eq 'CODE';
+		return bless { code => sub { $c->($_[0]) ? 0 : 1 } }, __PACKAGE__;
+	}
 }
 
 # ---------------------------------------------------------------------------
@@ -284,7 +341,7 @@ sub summary {
 	$args{nrows} //= delete($args{nrow}) // 10;
 	my $ref_type = ref $data;
 	if (($ref_type ne 'ARRAY') && ($ref_type ne 'HASH')) {
-		die "$current_sub' data must either be a hash or an array, not \"$ref_type\"";
+		die "$current_sub: data must either be a hash or an array, not \"$ref_type\"";
 	}
 	my $single_arr = 0;
 	if (($ref_type eq 'ARRAY') && (ref $data->[0] eq '')) {
@@ -856,7 +913,6 @@ sub view {
 	unless ($quiet) { defined $fh ? print {$fh} $str : print $str; }
 	return $str;
 }
-
 1;
 =encoding utf8
 
