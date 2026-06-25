@@ -313,6 +313,71 @@ is the equivalent of:
 
 in R
 
+=head2 assign
+
+Add new columns to a data frame, computed from the columns already there.
+
+=head3 Usage
+
+ assign($df, new_name => sub { ... }, another => sub { ... }, ...);
+
+=over
+
+=item * B<< C<$df> >> — your data frame, in either shape:
+=over
+
+=item * B<AoH> — arrayref of row hashrefs: C<< [ {weight=E<gt>70, height=E<gt>1.75}, ... ] >>
+
+=item * B<HoA> — hashref of column arrayrefs: C<< { weight=E<gt>[70,...], height=E<gt>[1.75,...] } >>
+
+=back
+
+=item * B<< C<< new_name =E<gt> sub { ... } >> >> — one or more pairs. Each sub computes one cell of the new column and is called once per row:
+=over
+
+=item * C<$_> is the current row as a hashref, so you read other columns with C<< $_-E<gt>{colname} >>.
+
+=item * C<$_[1]> is the row's index (0-based), if you need it.
+
+=item * whatever the sub returns becomes the cell value.
+
+=back
+
+=back
+
+It changes C<$df> in place and also returns it (handy for chaining).
+
+=head3 Example
+
+ my $df = [
+     { weight => 70, height => 1.75 },
+     { weight => 90, height => 1.80 },
+ ];
+ assign($df, bmi => sub { $_->{weight} / $_->{height} ** 2 });
+ 
+ # $df is now:
+ # [ { weight=>70, height=>1.75, bmi=>22.86 },
+ #   { weight=>90, height=>1.80, bmi=>27.78 } ]
+
+=head3 Good to know
+
+=over
+
+=item * B<Pairs run in order>, so a later column can use one you just made:
+
+assign($df,
+  bmi   => sub { $I<< ->{weight} / $ >>->{height} ** 2 },
+  class => sub { $_->{bmi} > 25 ? 'high' : 'ok' },   # uses bmi
+);
+
+=item * B<Same recipe, both shapes.> The exact same C<< sub { $_-E<gt>{weight} / ... } >> works whether C<$df> is AoH or HoA; you always read the row through C<$_>.
+
+=item * B<It modifies your data frame.> If you need to keep the original, pass a copy: C<assign(clone($df), ...)>.
+
+=item * Reusing a column name B<overwrites> that column.
+
+=back
+
 =head2 cfilter
 
 Select B<columns> out of a table and return it in the same shape. A column is
@@ -980,11 +1045,79 @@ but default mean, standard deviation, and log can be passed as parameters:
 
  $x = dnorm(0, mean => 0, sd => 2, 'log' => 0);
 
+=head2 dropna
+
+Drop missing data from a data frame, loosely modeled on pandas' C<dropna>. Works
+on all three shapes: AoH C<< [ {A=E<gt>..}, .. ] >>, HoA C<< { A=E<gt>[..], .. } >>, and
+HoH C<< { r1=E<gt>{A=E<gt>..}, .. } >>.
+
+=head3 Usage
+
+ # NA mode: drop rows that are undef in the named columns
+ dropna($df, cols => ['A', 'B']);
+ dropna($df, cols => ['A', 'B'], how => 'all');
+ # deletion mode: remove specific rows outright
+ dropna($df, rows => [2, 5]);          # indices for AoH/HoA, keys for HoH
+
+You pass B<exactly one> of C<cols> or C<rows>.
+
+=head3 C<cols> — drop rows with missing values
+
+Inspect only the named columns and drop the rows where they're undef. Columns
+you don't name are never inspected, but they stay aligned (their cell at a
+dropped row goes too). A missing key counts as undef.
+
+C<how> controls the threshold:
+
+=over
+
+=item * B<< C<'any'> >> (default) — drop a row if I<any> named column is undef there.
+
+=item * B<< C<'all'> >> — drop a row only if I<every> named column is undef there.
+
+my $df = { A => [1, 2, undef], B => [1, 2, 3], C => [undef, 2, 4] };
+dropna($df, cols => ['A', 'B']);
+=head1 { A => [1, 2], B => [1, 2], C => [undef, 2] }
+
+=back
+
+Index 2 is dropped because C<A> is undef there. C<C> is not consulted, so its own
+undef at index 0 doesn't trigger a drop — but index 2 is still removed from C<C>
+so every column stays the same length.
+
+=head3 C<rows> — delete specific rows
+
+Remove exactly the rows you list — no missing-value logic. Rows are 0-based
+indices for AoH and HoA, or the outer keys for HoH. Anything not present is
+ignored.
+
+ dropna({ A => [10, 20, 30] }, rows => [1]);   # { A => [10, 30] }
+
+=head3 Good to know
+
+=over
+
+=item * B<Returns a new data frame; the original is never modified.> For HoA the
+column arrays are rebuilt (cell values copied); for AoH and HoH the surviving
+row references are reused, not deep-copied (dropna never mutates a row). Clone
+the result if you need full independence.
+
+=item * B<It dies> on: a non-ref data frame; passing both or neither of C<cols>/C<rows>;
+a non-arrayref selector; a C<cols> name absent from a non-empty HoA or AoH; an
+invalid C<how>; an unknown argument; or a hashref that mixes array and hash
+values (ambiguous HoA vs HoH).
+
+=item * An empty AoH or HoA returns empty rather than erroring.
+
+=item * HoH results come back in hash order, since HoH rows are unordered.
+
+=back
+
 =head2 filter
 
 Return a new data frame containing only the rows of C<$df> that match a predicate. The original C<$df> is never modified.
 
- my $df2 = filter($df, col('column.name') > 4);
+ my $adults = filter($df, col('age') >= 18);
 
 C<filter> accepts a predicate in one of two forms:
 
@@ -1016,12 +1149,18 @@ Both C<filter> and C<col> are exported by default.
 <tr>
   <td>1</td>
   <td><code>$df</code></td>
-  <td>The data frame to filter. Either an <b>array of hashes</b> (AoH — e.g. the default output of <code>read_table</code>) or a <b>hash of arrays</b> (HoA).</td>
+  <td>The data frame: an <b>array of hashes</b> (AoH, the default <code>read_table</code> output), a <b>hash of arrays</b> (HoA), or a <b>hash of hashes</b> (HoH, e.g. <code>read_table</code> with <code>'output.type' => 'hoh'</code>).</td>
 </tr>
 <tr>
   <td>2</td>
   <td>predicate</td>
-  <td>Either a <code>col()</code> comparison object or a <code>CODE</code> reference.</td>
+  <td>A <code>col()</code> comparison object <b>or</b> a <code>CODE</code> reference.</td>
+</tr>
+<tr>
+  <td>3 +</td>
+  <td>`'output.type' => 'aoh'\</td>
+  <td>'hoa'`</td>
+  <td><i>Optional.</i> The shape of the returned frame. Omit it to keep the input's own shape. <code>'out'</code> and <code>'output_type'</code> are accepted aliases, and a bare <code>filter($df, $pred, 'aoh')</code> also works.</td>
 </tr>
 </tbody>
 </table>
@@ -1030,17 +1169,13 @@ Both C<filter> and C<col> are exported by default.
 
 
 
-The return value is a B<new> data frame of the B<same shape> as the input (AoH in → AoH out, HoA in → HoA out). For an HoA, every column is filtered in parallel by row index, so all returned columns stay the same length and aligned.
-
 =head3 The C<col()> form
 
-C<col('name')> is a deferred reference to a column. It carries no data — only the column name — so it can be compared with a literal (or another value) to build a predicate that C<filter> evaluates once per row.
+C<col('name')> is a deferred reference to a column. It carries no data — only the column name — so it can be compared with a literal to build a predicate that C<filter> evaluates once per row.
 
  filter($df, col('age') >= 18);  # keep rows where age >= 18
  filter($df, col('sex') eq 'f'); # keep rows where sex is 'f'
  filter($df, 18 <= col('age'));  # operands may be in either order
-
-=head3 Comparison operators
 
 
 
@@ -1058,12 +1193,12 @@ C<col('name')> is a deferred reference to a column. It carries no data — only 
 <tr>
   <td>Numeric</td>
   <td><code>></code> <code><</code> <code>>=</code> <code><=</code> <code>==</code> <code>!=</code></td>
-  <td>numeric (the cell and the value are compared as numbers)</td>
+  <td>numeric (cell and value compared as numbers)</td>
 </tr>
 <tr>
   <td>String</td>
   <td><code>gt</code> <code>lt</code> <code>ge</code> <code>le</code> <code>eq</code> <code>ne</code></td>
-  <td>string (the cell and the value are compared as strings)</td>
+  <td>string (cell and value compared as strings)</td>
 </tr>
 </tbody>
 </table>
@@ -1071,10 +1206,6 @@ C<col('name')> is a deferred reference to a column. It carries no data — only 
 =end html
 
 
-
-C<col('x')> may appear on either side of the operator; C<< 4 E<lt> col('x') >> is automatically rewritten to the equivalent C<< col('x') E<gt> 4 >>.
-
-=head3 Combining predicates: C<&>, C<|>, C<!>
 
 Predicates compose with bitwise C<&> (and), C<|> (or), and C<!> (not):
 
@@ -1084,30 +1215,48 @@ Predicates compose with bitwise C<&> (and), C<|> (or), and C<!> (not):
 
 Comparison operators bind more tightly than C<&> and C<|>, so C<< (col('a') E<gt> 4) & (col('b') E<lt> 2) >> is parsed correctly, but the parentheses are recommended for readability.
 
+ > Note: C<< col('age') E<gt> 32 >> works because C<col('age')> is an object whose C<< E<gt> >> is overloaded. A B<bare string> cannot do this — C<< 'age' E<gt> 32 >> is computed by Perl to a plain boolean (the string numifies to 0) before C<filter> is ever called, so the column name is lost. Always wrap the column in C<col(...)>.
+
 =head3 The code-reference form
 
 For logic the operators can't express, pass a C<sub>. It is called once per row; the B<row is a hash reference>, available both as C<$_> and as the first argument C<$_[0]>. Return a true value to keep the row.
 
  filter($df, sub { $_->{x} > 4 && $_->{grp} eq 'a' });
  filter($df, sub { $_->{name} =~ /^A/ });
+ filter($df, sub { $_->{age} % 2 == 0 });            # things col() has no operator for
  filter($df, sub { $_[0]{score} > $_[0]{threshold} });
 
-For an HoA, each row is assembled into a temporary hash reference (C<< { column =E<gt> value, ... } >>) before the sub is called, so the same C<< $_-E<gt>{column} >> syntax works regardless of the input shape.
+For a HoA, each row is assembled into a temporary C<< { column =E<gt> value, ... } >> hash before the sub (or the C<col()> test) is called, so the same C<< $_-E<gt>{column} >> syntax works regardless of the input shape.
+
+=head3 Choosing the output shape
+
+By default C<filter> returns a frame of the B<same shape> as the input (AoH → AoH, HoA → HoA, HoH → HoH). Pass C<output.type> to convert while filtering:
+
+ my $aoh = read_table('patients.csv');                          # array of hashes
+ my $hoa = filter($aoh, col('Age') >= 18, 'output.type' => 'hoa');
+ # $hoa->{Age}, $hoa->{Sex}, ... are all the same length and row-aligned
+
+The two selectable output types are C<'aoh'> and C<'hoa'>. C<'hoh'> is B<not> selectable, because producing a hash of hashes would require choosing which column becomes the row key; an HoH input keeps its keys only when the output shape is left at the default (HoH → HoH).
 
 =head3 Examples
 
  use Stats::LikeR;
  my $df = read_table('patients.csv');                 # array of hashes
- # numeric threshold
- my $adults = filter($df, col('Age') >= 18);
- # combine conditions
- my $target = filter($df, (col('Age') >= 18) & (col('Sex') eq 'f'));
- # arbitrary logic with a coderef
- my $flagged = filter($df, sub { $_->{ALT} > 40 || $_->{AST} > 40 });
- # hash-of-arrays input -> hash-of-arrays output, columns filtered in parallel
+ 
+ my $adults = filter($df, col('Age') >= 18);          # numeric threshold
+ my $target = filter($df, (col('Age') >= 18) & (col('Sex') eq 'f'));   # combine
+ my $flagged = filter($df, sub { $_->{ALT} > 40 || $_->{AST} > 40 });  # coderef
+ 
+ # hash of arrays in -> hash of arrays out (columns filtered in parallel)
  my $hoa = read_table('patients.csv', 'output.type' => 'hoa');
  my $sub = filter($hoa, col('Age') > 32);
- # $sub->{Age}, $sub->{Sex}, ... are all the same length and row-aligned
+ 
+ # hash of hashes in -> the same row keys, fewer of them
+ my $hoh = read_table('patients.csv', 'output.type' => 'hoh');
+ my $keep = filter($hoh, col('Age') > 32);
+ 
+ # convert shape while filtering
+ my $as_hoa = filter($df, col('Age') > 32, 'output.type' => 'hoa');
 
 =head3 Behavior and notes
 
@@ -1115,15 +1264,15 @@ For an HoA, each row is assembled into a temporary hash reference (C<< { column 
 
 =item * B<The input is never modified.> C<filter> builds and returns a new frame; C<$df> is left untouched.
 
-=item * B<< A missing or C<undef> cell never matches >> a C<col()> comparison. For example C<< col('x') E<gt> 0 >> silently drops any row that has no C<x> value or whose C<x> is C<undef>.
+=item * B<< A missing or C<undef> cell never matches a C<col()> comparison. >> C<< col('x') E<gt> 0 >> silently drops any row whose C<x> is absent or C<undef>; for numeric operators a non-numeric cell is likewise dropped. With a coderef, C<undef> is whatever your sub makes of it.
 
-=item * B<AoH rows are shared, not deep-copied>, into the returned frame: the returned array references the I<same> row hashes as the input (fast, low-memory). Mutating a row in the result would therefore also change it in the original. HoA values are copied into fresh arrays.
+=item * B<Rows are shared, not deep-copied, wherever possible.> When an AoH or HoH row is kept (output left as AoH/HoH, or converted to C<aoh>), the returned frame references the I<same> inner row hashes as the input. Mutating such a row in the result would also change it in the original. HoA inputs and any C<hoa> output build fresh arrays and fresh cell values.
 
-=item * B<Keep-all / keep-none> are well defined: a predicate true for every row returns a copy-shaped frame with all rows; a predicate true for none returns an empty frame (C<[]> for AoH, a hash of empty arrays for HoA).
+=item * B<Keep-all / keep-none are well defined.> A predicate true for every row returns the whole frame in the chosen shape; true for none returns an empty frame: C<[]> for C<aoh>, a hash of empty (but present) columns for C<hoa>, and C<{}> for C<hoh>.
 
-=item * B<Supported shapes are AoH and HoA.> Passing a non-reference, an array element that is not a hash reference, or an HoA column that is not an array reference raises a descriptive error.
+=item * B<Supported shapes are AoH, HoA, and HoH.> A non-reference, an AoH element that is not a hash reference, a HoA column that is not an array reference, or a HoH row that is not a hash reference all raise a descriptive error; a bare C<col('x')> with no comparison is also an error. An empty hash C<{}> is treated as an empty frame.
 
-=item * B<Perl 5.10 compatible.> The C<col()>/operator layer is pure Perl (operator overloading); the per-row evaluation is done in XS.
+=item * B<Perl 5.10 compatible.> The C<col()>/operator layer is pure Perl (operator overloading building a per-row closure); filtering and any reshaping run in XS.
 
 =back
 
@@ -1414,6 +1563,60 @@ Data can be further broken down with filter/subs like in C<read_table>:
  );
 
 where each filter filters on the columns, e.g. second hash keys.
+
+=head2 hoa2aoh
+
+Turn a hash-of-arrays into an array-of-hashes.
+
+=head3 Usage
+
+ my $aoh = hoa2aoh($hoa);
+
+=over
+
+=item * B<< C<$hoa> >> — a hashref whose values are arrayrefs, one per column:
+
+{ id => [1, 2, 3], name => ['a', 'b', 'c'] }
+
+=item * B<returns> — an arrayref of row hashrefs:
+
+[
+    { id => 1, name => 'a' },
+    { id => 2, name => 'b' },
+    { id => 3, name => 'c' }
+]
+
+=back
+
+It builds a brand-new structure and copies every cell, so the result is
+completely independent of the input — changing one never affects the other.
+
+=head3 Example
+
+ my $hoa = { mpg => [21, 22.8, 18.1], cyl => [6, 4, 6] };
+ my $aoh = hoa2aoh($hoa);
+ $aoh->[1]{mpg};        # 22.8
+ $hoa->{mpg}[1];        # still 22.8 — unaffected by edits to $aoh
+
+=head3 Good to know
+
+=over
+
+=item * B<Row count> is the length of the longest column. If columns have different
+lengths, the short ones are padded with C<undef> in the missing rows.
+
+=item * B<< C<undef> cells >> are kept as C<undef>.
+
+=item * An B<empty hash>, or one whose columns are all empty, gives back C<[]>.
+
+=item * It B<dies> if the argument isn't a hashref, or if any column value isn't an
+arrayref (the message names the offending column).
+
+=back
+
+=head3 See also
+
+C<hoa2aoh> is the reverse of C<aoh2hoa>
 
 =head2 hoh2hoa
 
@@ -2236,6 +2439,80 @@ which returns
  my $hoa = { B => [4, 2, 6], A => [2, 4, 6] };
  my $pca = prcomp($hoa);
 
+=head2 predict
+
+R-style prediction for the fitted objects returned by C<lm> and C<glm>. It rebuilds
+each row's linear predictor from the model's coefficients and (for C<glm>) applies
+the inverse link.
+
+=head3 Usage
+
+ my $fit  = lm(formula => 'mpg ~ wt + hp', data => $train);
+ my $yhat = predict($fit, $newdata);              # predictions on new rows
+ my $resp = predict($logit_fit, $newdata);        # glm: response scale (default)
+ my $eta  = predict($logit_fit, $newdata, type => 'link');   # linear predictor
+ my $fitted = predict($fit);                      # no newdata -> stored fitted.values
+
+=over
+
+=item * B<< C<$model> >> — a fitted C<lm>/C<glm> hashref. C<predict> reads its C<coefficients>
+(and, for C<glm>, its C<family>).
+
+=item * B<< C<$newdata> >> — a HoA, AoH, or HoH of new observations. Omit it (or pass
+C<undef>) to get the model's own C<fitted.values> back.
+
+=item * B<< C<type> >> — C<'response'> (default) returns predictions on the response scale
+(the inverse link applied — logistic for binomial); C<'link'> returns the linear
+predictor. For C<lm> and gaussian C<glm> the link is the identity, so the two are
+the same.
+
+=back
+
+=head3 What it returns
+
+A hashref keyed by row name → prediction, exactly like C<lm>/C<glm> key
+C<fitted.values>: a C<row.names> column (or HoH key) if present, otherwise 1-based
+integer labels.
+
+ my $m = lm(formula => 'y ~ x + I(x^2)', data => $train);
+ my $p = predict($m, { x => [1, 2, 3] });
+ # { 1 => ..., 2 => ..., 3 => ... }
+
+=head3 How it works
+
+For each new row the prediction is
+
+ eta = Intercept + Σ  coef[term] · term(row)
+
+where each C<term> is evaluated with the same engine used to fit the model, so
+interactions (C<x:z> → product) and transforms (C<I(x^2)> → power) behave
+identically to fitting. Coefficients that the fit marked aliased (stored as NaN)
+contribute nothing, just as they were excluded from the fitted values. For C<glm>
+with C<< family =E<gt> 'binomial' >> and C<< type =E<gt> 'response' >>, C<eta> is passed through the
+logistic function C<1 / (1 + exp(-eta))>; otherwise C<eta> is returned as is.
+
+A consequence worth noting: predicting on the I<training> data reproduces the
+model's C<fitted.values> for any model built from continuous terms, interactions,
+or C<I()> transforms.
+
+=head3 Good to know
+
+=over
+
+=item * A prediction comes back as B<NaN> when a required term can't be evaluated in
+the new data (a missing column, or a value that makes the term undefined).
+
+=item * B<Factors are a limitation.> The fitted object stores only the dummy term
+I<names> (e.g. C<genderM>), not the underlying factor levels, so C<predict>
+cannot re-expand a raw categorical column in new data. Either pass pre-expanded
+0/1 dummy columns whose names match the coefficient names, or extend C<lm>/C<glm>
+to retain the factor levels.
+
+=item * B<It dies> on: a model that isn't a hashref or has no C<coefficients>; an
+invalid C<type>; or C<newdata> that isn't a HoA/HoH hashref or AoH arrayref.
+
+=back
+
 =head2 quantile
 
 Calculates sample quantiles using R's continuous Type 7 interpolation. 
@@ -2734,6 +3011,86 @@ With a key, like C<a> for above, only values within that hash key are counted:
 
 the column, or second hash key, that you wish to count, is specified at the command line
 
+=head2 vals
+
+Extract a single column from a data frame as a flat array reference, similar to pandas' C<to_list>
+
+ my $ages = vals($df, 'age');
+
+C<vals> accepts all three data-frame shapes and always returns a new arrayref of that column's values:
+
+=over
+
+=item * B<AoH> (array of hashes) -- one value per row, in row order.
+
+=item * B<HoA> (hash of arrays) -- the named column array, copied.
+
+=item * B<HoH> (hash of hashes) -- one value per row, in B<ascending key order> (a HoH has no inherent row order, so keys are sorted as strings).
+
+=back
+
+=head3 Arguments
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>Position</th>
+  <th>Name</th>
+  <th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>1</td>
+  <td><code>$df</code></td>
+  <td>An AoH (arrayref), or a HoA/HoH (hashref). The shape is auto-detected by peeking the first hash value: a hashref value means HoH, otherwise HoA.</td>
+</tr>
+<tr>
+  <td>2</td>
+  <td><code>$col</code></td>
+  <td>The column name (must be defined).</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+=head3 Behavior and notes
+
+=over
+
+=item * B<The result is a copy.> Every value is duplicated, so mutating the returned array never touches C<$df>, and C<undef> slots are ordinary writable scalars.
+
+=item * B<< A missing cell is C<undef>. >> For AoH and HoH, a row that lacks the column (or isn't a hashref) yields C<undef> for that row.
+
+=item * B<An absent column is strict only for HoA.> Because a HoA column I<is> the structure, asking for a column the hash doesn't have dies. For AoH/HoH the column is per-row, so an entirely-absent column simply yields all-C<undef> (it is not an error). This asymmetry is deliberate; pass the column name carefully for AoH/HoH, since a typo returns C<undef>s rather than dying.
+
+=item * B<< Empty frames return C<[]> >> -- an empty AoH or an empty hash both give a clean empty arrayref.
+
+=item * UTF-8 column names and HoH keys are handled correctly (lookups use the key SV; HoH keys sort by Perl string order).
+
+=back
+
+=head3 Examples
+
+ my $aoh = read_table('patients.csv');                 # array of hashes
+ my $age = vals($aoh, 'Age');                           # [ 34, 51, ... ]
+ 
+ my $hoa = read_table('patients.csv', 'output.type' => 'hoa');
+ my $sex = vals($hoa, 'Sex');                           # copy of the Sex column
+ 
+ my $hoh = read_table('patients.csv', 'output.type' => 'hoh');
+ my $age2 = vals($hoh, 'Age');                          # values in sorted row-key order
+ 
+ # feed straight into the numeric routines
+ my $m = mean( vals($aoh, 'Age') );
+
 =head2 var
 
 as simple as possible:
@@ -3122,6 +3479,88 @@ Args can also be accepted:
  write_table( 'data' => \%flat, 'file' => $f );
 
 =head1 changes
+
+=head2 0.17
+
+addition of C<assign>, which adds new columns based on calculations from other columns
+
+addition of C<hoa2aoh>, transforming hash of arrays to array of hashes
+
+addition of C<predict>, using results from C<glm> and C<lm>
+
+addition of C<vals>
+
+C<view> now returns colored output; fixed bug with incorrect widths; undefined values show as C<undef> rather than C<NA>, as in Data::Printer
+
+C<csort> now accepts Hash of Hashes
+
+=head3 filter
+
+=over
+
+=item * B<Added hash-of-hashes (HoH) input.> In addition to AoH and HoA, C<filter> now accepts an HoH (C<< { key =E<gt> { col =E<gt> val, ... }, ... } >>); each inner hash is one row, and matching keys are preserved by default (HoH -> HoH).
+
+=item * B<< Added C<output.type>. >> C<< filter($df, $pred, 'output.type' =E<gt> 'aoh'|'hoa') >> selects the returned shape (aliases C<out> / C<output_type>; a bare positional type also works). When omitted, the input shape is preserved. C<hoh> is not a selectable output, since it would require choosing a key column.
+
+=item * B<< C<col()> reworked, not removed. >> Both predicate forms are kept: C<< col('age') E<gt>= 18 >> still works and is the concise/composable option, while a coderef covers everything else. Internally C<col()> is now B<pure Perl> — an overloaded class that builds a per-row closure — and C<filter> unwraps that closure so C<col()> and a coderef share one evaluation path. The previous standalone XS predicate evaluator (C<filt_eval>/C<filt_ctx>) is gone; delete it if your tree still has it. One consequence: a C<col()> comparison now costs the same per row as the equivalent coderef (a Perl call), rather than being evaluated in C.
+
+=item * B<Unchanged guarantees:> the input frame is never modified; C<undef> (and, for numeric ops, non-numeric) cells never match a C<col()> comparison; AoH/HoH rows are shared rather than copied where possible; keep-all/keep-none shapes are well defined per output type; Perl 5.10 compatibility is retained. A latent C<SvTRUE(POPs)> double-evaluation in the per-row call helper (which crashed on perls where C<SvTRUE> is a multi-eval macro) was fixed along the way.
+
+=back
+
+=head3 read_table
+
+Added an opt-in C<auto.row.names> argument so C<read_table> can read the file R
+produces by default from C<write.table(x, sep="\t")>.
+
+=head4 The problem
+
+R's C<write.table> defaults to C<row.names=TRUE, col.names=TRUE>, which writes the
+row-names column in every data row but emits B<no header label for it>. So a
+frame with N columns comes out as N header fields over N+1 data fields — e.g.
+C<mtcars> gives 11 headers but 12-field rows. By default C<read_table> (correctly)
+rejects that as ragged:
+
+ Alignment error on mtcars.tsv data row 1 (12 fields vs 11 headers).
+
+=head4 The change
+
+C<auto.row.names> turns on R's own C<read.table> rule: B<when, and only when, the
+header is exactly one field short of the data rows, treat the first field of
+each row as an (unlabelled) row-names column.>
+
+ # default: the leading column is named 'row_name'
+ my $df = read_table('mtcars.tsv', 'auto.row.names' => 1);
+ 
+ # or give it a name
+ my $df = read_table('mtcars.tsv', 'auto.row.names' => 'model');
+
+The synthesized column behaves like any other first column: it appears in C<aoh>
+and C<hoa> output, and for C<hoh> it becomes the default key (so rows are keyed by
+the model name). This also lines up with the existing handling of R's
+C<col.names=NA> output (a blank leading header), which still produces a
+C<row_name> column with no flag needed.
+
+=head4 What did not change
+
+The strict alignment check is still the default. Without C<auto.row.names> the
+lopsided file still croaks, and even with it, a row that is off by anything
+other than exactly one field still croaks — so the corruption guard only relaxes
+for the one case R itself treats specially.
+
+Tested in C<t/read_table.2.t> (16 assertions, Perl 5.10.1 and 5.38): aoh / hoa /
+hoh output, custom column name, the already-aligned file (flag is a no-op), the
+C<col.names=NA> path, and the strict / ragged croak paths.
+
+=head4 additional bugfix
+
+ # This is a comment
+ id,name,val
+ 1,Alice,10.5
+ 2,Bob,
+ 3,Charlie,15.2
+
+would not be read correctly using C<read_table>, but now is read correctly
 
 =head2 0.16
 

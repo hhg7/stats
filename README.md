@@ -2083,7 +2083,7 @@ the column, or second hash key, that you wish to count, is specified at the comm
 
 ## vals
 
-Extract a single column from a data frame as a flat array reference.
+Extract a single column from a data frame as a flat array reference, similar to pandas' `to_list`
 
     my $ages = vals($df, 'age');
 
@@ -2331,6 +2331,8 @@ addition of `assign`, which adds new columns based on calculations from other co
 addition of `hoa2aoh`, transforming hash of arrays to array of hashes
 
 addition of `predict`, using results from `glm` and `lm`
+
+addition of `vals`
 
 `view` now returns colored output; fixed bug with incorrect widths; undefined values show as `undef` rather than `NA`, as in Data::Printer
 
