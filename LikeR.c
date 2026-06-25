@@ -11484,6 +11484,140 @@ XS(XS_Stats__LikeR_hoa2aoh)
     XSRETURN(1);
 }
 
+
+XS(XS_Stats__LikeR_vals); /* prototype to pass -Wmissing-prototypes */
+XS(XS_Stats__LikeR_vals)
+{
+#ifdef dVAR
+    dVAR; dXSARGS;
+#else
+    dXSARGS;
+#endif
+    if (items != 2)
+       croak_xs_usage(cv,  "data, colname_sv");
+    PERL_UNUSED_VAR(ax); /* -Wall */
+    SP -= items;
+    {
+	SV *	data = ST(0);
+	SV *	colname_sv = ST(1);
+#line 10564 "LikeR.xs"
+	bool is_aoh = 0, is_hoh = 0;
+	const char *restrict colname = NULL;
+	STRLEN collen = 0;
+	AV *restrict src_av = NULL;
+	HV *restrict src_hv = NULL;
+	SSize_t n = 0;
+	AV *restrict out_av = NULL;
+#line 11512 "LikeR.c"
+#line 10572 "LikeR.xs"
+{
+	if (!SvOK(colname_sv))
+		croak("vals: column name must be defined");
+	colname = SvPV(colname_sv, collen);		/* kept for the error message */
+	if (!SvROK(data))
+		croak("vals: first argument must be an array-ref (AoH) or hash-ref (HoA, HoH)");
+	/* ---- classify $data: AoH (arrayref) vs HoA/HoH (hashref) -------- */
+	if (SvTYPE(SvRV(data)) == SVt_PVAV) {
+		is_aoh = 1;
+		src_av = (AV *)SvRV(data);
+		n      = av_len(src_av) + 1;
+	} else if (SvTYPE(SvRV(data)) == SVt_PVHV) {
+		src_hv = (HV *)SvRV(data);
+		hv_iterinit(src_hv);
+		HE *restrict he = hv_iternext(src_hv);
+		if (he) {
+			SV *restrict val = HeVAL(he);
+			if (val && SvROK(val) && SvTYPE(SvRV(val)) == SVt_PVHV)
+				is_hoh = 1;			/* a hash whose values are hashes => HoH */
+			/* else leave is_aoh/is_hoh = 0 => HoA path below */
+		}
+		/* empty hash: is_aoh = is_hoh = 0 => HoA path yields [] */
+	} else {
+		croak("vals: first argument must be an array-ref (AoH) or hash-ref (HoA, HoH)");
+	}
+	/* out_av is mortalised up front so any later croak frees it cleanly */
+	out_av = newAV();
+	sv_2mortal((SV *)out_av);
+
+	if (is_aoh) { /* AoH */
+		if (n > 0) av_extend(out_av, n - 1);
+		for (SSize_t i = 0; i < n; i++) {
+			SV **restrict rp = av_fetch(src_av, i, 0);
+			SV *restrict cell = &PL_sv_undef;
+			if (rp && *rp && SvROK(*rp) && SvTYPE(SvRV(*rp)) == SVt_PVHV) {
+				HE *restrict ent = hv_fetch_ent((HV *)SvRV(*rp), colname_sv, 0, 0);
+				if (ent && HeVAL(ent)) cell = HeVAL(ent);
+			}
+			/* FIX: copy, so the result is independent of the source and undef
+			 * slots are writable (not the shared read-only PL_sv_undef) */
+			av_push(out_av, newSVsv(cell));
+		}
+	} else if (is_hoh) { /*   HoH   */
+		n = hv_iterinit(src_hv);
+		if (n > 0) {
+			av_extend(out_av, n - 1);
+			ENTER;
+			SV **restrict keys; SV **restrict rows;
+			Newx(keys, n, SV *);  SAVEFREEPV(keys);
+			Newx(rows, n, SV *);  SAVEFREEPV(rows);
+			SSize_t cnt = 0;
+			HE *restrict he;
+			while ((he = hv_iternext(src_hv)) && cnt < n) {
+				keys[cnt] = hv_iterkeysv(he);	/* mortal copy of the key */
+				rows[cnt] = HeVAL(he);
+				cnt++;
+			}
+			/* stable insertion sort by key (sv_cmp = Perl string order, UTF-8 aware),
+			 * carrying the matching row value alongside each key */
+			for (SSize_t i = 1; i < cnt; i++) {
+				SV *restrict k = keys[i], *r = rows[i];
+				SSize_t j = i - 1;
+				while (j >= 0 && sv_cmp(keys[j], k) > 0) {
+					keys[j + 1] = keys[j];
+					rows[j + 1] = rows[j];
+					j--;
+				}
+				keys[j + 1] = k;
+				rows[j + 1] = r;
+			}
+			for (SSize_t i = 0; i < cnt; i++) {
+				SV *restrict row_sv = rows[i];
+				SV *restrict cell = &PL_sv_undef;
+				if (row_sv && SvROK(row_sv) && SvTYPE(SvRV(row_sv)) == SVt_PVHV) {
+					HE *restrict ent = hv_fetch_ent((HV *)SvRV(row_sv), colname_sv, 0, 0);
+					if (ent && HeVAL(ent)) cell = HeVAL(ent);
+				}
+				av_push(out_av, newSVsv(cell));
+			}
+			LEAVE;
+		}
+	} else { /* HoA  */
+		if (hv_iterinit(src_hv) > 0) {		/* non-empty hash */
+			HE *restrict colent = hv_fetch_ent(src_hv, colname_sv, 0, 0);
+			SV *restrict cv = colent ? HeVAL(colent) : NULL;
+			if (!cv || !SvROK(cv) || SvTYPE(SvRV(cv)) != SVt_PVAV)
+				croak("vals: column '%s' not found or is not an array-ref", colname);
+			AV *restrict col_av = (AV *)SvRV(cv);
+			n = av_len(col_av) + 1;
+			if (n > 0) av_extend(out_av, n - 1);
+			for (SSize_t i = 0; i < n; i++) {
+				SV **restrict cellp = av_fetch(col_av, i, 0);
+				av_push(out_av, newSVsv((cellp && *cellp) ? *cellp : &PL_sv_undef));
+			}
+		}
+	}
+	/* out_av is mortal (freed on any croak); newRV_inc balances that so the
+	 * returned RV holds the surviving reference -- newRV_noinc here would
+	 * double-free with the mortal. */
+	XPUSHs(sv_2mortal(newRV_inc((SV *)out_av)));
+	XSRETURN(1);
+}
+#line 11616 "LikeR.c"
+	PUTBACK;
+	return;
+    }
+}
+
 #ifdef __cplusplus
 extern "C"
 #endif
@@ -11552,6 +11686,7 @@ XS(boot_Stats__LikeR)
         newXS("Stats::LikeR::prcomp", XS_Stats__LikeR_prcomp, file);
         newXS("Stats::LikeR::transpose", XS_Stats__LikeR_transpose, file);
         newXS("Stats::LikeR::hoa2aoh", XS_Stats__LikeR_hoa2aoh, file);
+        newXS("Stats::LikeR::vals", XS_Stats__LikeR_vals, file);
     if (PL_unitcheckav)
          call_list(PL_scopestack_ix, PL_unitcheckav);
     XSRETURN_YES;

@@ -2081,6 +2081,47 @@ With a key, like `a` for above, only values within that hash key are counted:
 
 the column, or second hash key, that you wish to count, is specified at the command line
 
+## vals
+
+Extract a single column from a data frame as a flat array reference.
+
+    my $ages = vals($df, 'age');
+
+`vals` accepts all three data-frame shapes and always returns a new arrayref of that column's values:
+
+- **AoH** (array of hashes) -- one value per row, in row order.
+- **HoA** (hash of arrays) -- the named column array, copied.
+- **HoH** (hash of hashes) -- one value per row, in **ascending key order** (a HoH has no inherent row order, so keys are sorted as strings).
+
+### Arguments
+
+| Position | Name | Description |
+| --- | --- | --- |
+| 1 | `$df` | An AoH (arrayref), or a HoA/HoH (hashref). The shape is auto-detected by peeking the first hash value: a hashref value means HoH, otherwise HoA. |
+| 2 | `$col` | The column name (must be defined). |
+
+### Behavior and notes
+
+- **The result is a copy.** Every value is duplicated, so mutating the returned array never touches `$df`, and `undef` slots are ordinary writable scalars.
+- **A missing cell is `undef`.** For AoH and HoH, a row that lacks the column (or isn't a hashref) yields `undef` for that row.
+- **An absent column is strict only for HoA.** Because a HoA column *is* the structure, asking for a column the hash doesn't have dies. For AoH/HoH the column is per-row, so an entirely-absent column simply yields all-`undef` (it is not an error). This asymmetry is deliberate; pass the column name carefully for AoH/HoH, since a typo returns `undef`s rather than dying.
+- **Empty frames return `[]`** -- an empty AoH or an empty hash both give a clean empty arrayref.
+- UTF-8 column names and HoH keys are handled correctly (lookups use the key SV; HoH keys sort by Perl string order).
+
+### Examples
+
+    my $aoh = read_table('patients.csv');                 # array of hashes
+    my $age = vals($aoh, 'Age');                           # [ 34, 51, ... ]
+
+    my $hoa = read_table('patients.csv', 'output.type' => 'hoa');
+    my $sex = vals($hoa, 'Sex');                           # copy of the Sex column
+
+    my $hoh = read_table('patients.csv', 'output.type' => 'hoh');
+    my $age2 = vals($hoh, 'Age');                          # values in sorted row-key order
+
+    # feed straight into the numeric routines
+    my $m = mean( vals($aoh, 'Age') );
+
 ## var
 
 as simple as possible:

@@ -11,7 +11,7 @@ use autodie ':default';
 use Exporter 'import';
 use Scalar::Util 'looks_like_number';
 XSLoader::load('Stats::LikeR', $VERSION);
-our @EXPORT_OK = qw(add_data aoh2hoa aov assign cfilter chisq_test col col2col cor cor_test cov csort dnorm dropna filter fisher_test glm group_by hoa2aoh hoh2hoa hist kruskal_test ks_test ljoin lm matrix max mean median min mode oneway_test p_adjust power_t_test predict prcomp quantile rbinom read_table rnorm runif sample scale sd seq shapiro_test sum summary t_test transpose value_counts var var_test view wilcox_test write_table);
+our @EXPORT_OK = qw(add_data aoh2hoa aov assign cfilter chisq_test col col2col cor cor_test cov csort dnorm dropna filter fisher_test glm group_by hoa2aoh hoh2hoa hist kruskal_test ks_test ljoin lm matrix max mean median min mode oneway_test p_adjust power_t_test predict prcomp quantile rbinom read_table rnorm runif sample scale sd seq shapiro_test sum summary t_test transpose vals value_counts var var_test view wilcox_test write_table);
 our @EXPORT = @EXPORT_OK;
 
 # assign($df, name => \&code, name2 => \&code2, ...)
