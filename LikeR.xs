@@ -2247,13 +2247,12 @@ SV *aoh2hoa(data)
 	OUTPUT:
 		RETVAL
 
-void
-csort(data, by, output=&PL_sv_undef)
+void csort(data, by, output=&PL_sv_undef)
 	SV *data
 	SV *by
 	SV *output
 PREINIT:
-	bool is_aoh, is_hoh = 0, is_code, out_aoh;
+	bool is_aoh = 0, is_hoh = 0, is_code = 0, out_aoh = 0;
 	const char *restrict colname = NULL;
 	STRLEN collen = 0;
 	CV *restrict cmp_cv = NULL;
@@ -2319,7 +2318,7 @@ PPCODE:
 		n = hv_iterinit(src_hv);
 		src_av = newAV();
 		sv_2mortal((SV *)src_av); /* cleanup on LEAVE */
-		
+
 		if (n > 0) {
 			SV **keys;
 			Newx(keys, n, SV*);
@@ -2358,7 +2357,7 @@ PPCODE:
 			}
 		}
 		/* Route through the standard AoH logic hereafter */
-		is_aoh = 1; 
+		is_aoh = 1;
 	}
 
 	/* ---- resolve requested output shape (default: match input) ------ */
@@ -2491,10 +2490,9 @@ PPCODE:
 	}    /* end if (n > 1) */
 
 	/* ---- materialize the result in the requested shape -------------- */
-	result = cs_materialize(aTHX_ out_aoh, is_aoh, src_av,
-	                        colkeys, colavs, ncols, idx, (size_t)n);
-
-	FREETMPS;	/* reap synthesized rows; restores $a/$b via the save stack at LEAVE */
+result = cs_materialize(aTHX_ out_aoh, is_aoh, src_av,
+                        colkeys, colavs, ncols, idx, (size_t)n);
+	FREETMPS;
 	LEAVE;
 
 	XPUSHs(sv_2mortal(result));
@@ -9790,9 +9788,44 @@ CODE:
 		if (SvTYPE(rv) == SVt_PVAV) {
 			AV*restrict av = (AV*)rv;
 			SSize_t len = av_len(av) + 1;
-			for (unsigned i = 0; i < len; i++) {
-				SV**restrict valp = av_fetch(av, i, 0);
-				if (valp) increment_count(aTHX_ counts_hv, *valp);
+			if (items > 1) {
+				// CASE 2b: Array of Hashes (string key) or Array of Arrays (numeric index)
+				SV*restrict arg2 = ST(1);
+				STRLEN klen;
+				const char*restrict key = SvPV(arg2, klen);
+				for (unsigned i = 0; i < len; i++) {
+					SV**restrict elemp = av_fetch(av, i, 0);
+					if (!elemp) continue;
+					SV*restrict elem = *elemp;
+					if (!SvROK(elem)) {
+						SvREFCNT_dec((SV*)counts_hv);
+						croak("value_counts: array element %u is not a reference; a HASH ref (Array of Hashes) or ARRAY ref (Array of Arrays) is required when a key/index is given", i);
+					}
+					SV*restrict inner_rv = SvRV(elem);
+					if (SvTYPE(inner_rv) == SVt_PVHV) {// Array of Hashes: extract column by key
+						HV*restrict inner_hv = (HV*)inner_rv;
+						SV**restrict valp = hv_fetch(inner_hv, key, klen, 0);
+						if (valp) increment_count(aTHX_ counts_hv, *valp);// missing key -> skip row
+					} else if (SvTYPE(inner_rv) == SVt_PVAV) {// Array of Arrays: extract column by index
+						if (!looks_like_number(arg2)) {
+							SvREFCNT_dec((SV*)counts_hv);
+							croak("value_counts: array element %u is an ARRAY ref but index '%s' is not numeric", i, key);
+						}
+						AV*restrict inner_av = (AV*)inner_rv;
+						SSize_t idx = SvIV(arg2);
+						SV**restrict valp = av_fetch(inner_av, idx, 0);
+						if (valp) increment_count(aTHX_ counts_hv, *valp);
+					} else {
+						SvREFCNT_dec((SV*)counts_hv);
+						croak("value_counts: unsupported nested reference type in array element %u", i);
+					}
+				}
+			} else {
+				// CASE 2a: Flattened/simple array (one value per element)
+				for (unsigned i = 0; i < len; i++) {
+					SV**restrict valp = av_fetch(av, i, 0);
+					if (valp) increment_count(aTHX_ counts_hv, *valp);
+				}
 			}
 		} else if (SvTYPE(rv) == SVt_PVHV) { // CASES 3, 4, 5: Hash Reference
 			HV*restrict hv = (HV*)rv;
@@ -9800,7 +9833,7 @@ CODE:
 			if (items > 1) {
 				SV*restrict arg2 = ST(1);
 				STRLEN klen;
-				const char*restrict key = SvPV(arg2, klen); 
+				const char*restrict key = SvPV(arg2, klen);
 				// DataFrame-style Column-Oriented data check
 				SV**restrict col_svp = hv_fetch(hv, key, klen, 0);
 				if (col_svp && SvROK(*col_svp) && SvTYPE(SvRV(*col_svp)) == SVt_PVAV) {
@@ -9825,7 +9858,7 @@ CODE:
 							 } else if (SvTYPE(inner_rv) == SVt_PVAV) {// CASE 4: Hash of Arrays (Row-Oriented)
 								if (looks_like_number(arg2)) {
 									AV*restrict inner_av = (AV*)inner_rv;
-									SSize_t idx = SvIV(arg2); 
+									SSize_t idx = SvIV(arg2);
 									SV**restrict valp = av_fetch(inner_av, idx, 0);
 									if (valp) increment_count(aTHX_ counts_hv, *valp);
 								}

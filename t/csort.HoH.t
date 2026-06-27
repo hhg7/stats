@@ -3,7 +3,6 @@
 require 5.010;
 use warnings FATAL => 'all';
 use feature 'say';
-use Scalar::Util 'looks_like_number';
 use Test::Exception; # dies_ok
 use Test::More;
 use Stats::LikeR;
@@ -46,32 +45,27 @@ my $hoh_data = {
 # --------
 # 1. Default output for HoH (AoH) sorted by column name
 # --------
-my $res_aoh;
+my $res_aoh = csort($hoh_data, 'val');
 no_leaks_ok {
-	$res_aoh = csort($hoh_data, 'val');
+	csort($hoh_data, 'val');
 } 'csort(HoH) by column name: no memory leaks' unless $INC{'Devel/Cover.pm'};
-
 is(ref $res_aoh, 'ARRAY', 'csort(HoH) safely defaults to Array-of-Hashes (AoH) output');
 is(scalar @$res_aoh, 3, 'All rows returned');
 is($res_aoh->[0]{id}, 1, 'First returned row has ID 1');
 is($res_aoh->[1]{id}, 2, 'Second returned row has ID 2');
 is($res_aoh->[2]{id}, 3, 'Third returned row has ID 3');
-
 # --------
 # 2. Output as HoA sorted using coderef comparator
 # --------
-my $res_hoa;
+no warnings 'once';
+my $res_hoa = csort($hoh_data, sub { $b->{id} <=> $a->{id} }, 'hoa');
 no_leaks_ok {
-	# Sort descending by ID, output cleanly as Hash-of-Arrays
-	no warnings 'once';
-	$res_hoa = csort($hoh_data, sub { $b->{id} <=> $a->{id} }, 'hoa');
+	csort($hoh_data, sub { $b->{id} <=> $a->{id} }, 'hoa');
 } 'csort(HoH, hoa) descending via coderef: no memory leaks' unless $INC{'Devel/Cover.pm'};
-
 is(ref $res_hoa, 'HASH', 'csort(HoH, hoa) returns Hash-of-Arrays (HoA) output successfully');
-is_deeply($res_hoa->{id}, [3, 2, 1], 'Column ID correctly mapped and sorted descending');
-is_deeply($res_hoa->{val}, [30, 20, 10], 'Values vector aligns cleanly with sorted ID row index');
-is_deeply($res_hoa->{tag}, ['C', 'B', 'A'], 'String tags follow identical positional sort logic');
-
+is_deeply($res_hoa->{id},  [3, 2, 1],         'Column ID correctly mapped and sorted descending');
+is_deeply($res_hoa->{val}, [30, 20, 10],      'Values vector aligns cleanly with sorted ID row index');
+is_deeply($res_hoa->{tag}, ['C', 'B', 'A'],   'String tags follow identical positional sort logic');
 # --------
 # 3. Handling Edge Cases
 # --------

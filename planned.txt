@@ -2,6 +2,10 @@ aoh2hoh
 hoa2hoh
 ncol
 nrow
-`value_counts` should accept array of hashes
 `summary` should have colored and tidier output like new `view` does
-`to_list` or `col2arr` or `vals` like Pandas
+#
+# set math
+#
+`unique` should take a single list/array ref and return values that only occur once; use `sum` as a mnodel
+`intersection` should take a series of array references, and return values that are common in all array references
+`union` like above

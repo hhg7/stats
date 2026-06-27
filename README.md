@@ -2026,61 +2026,6 @@ An empty outer hash or an outer hash whose inner hashes are all empty both retur
 
 Dies if any inner element is not a hash reference
 
-## value_counts
-
-Count the values in a given data set, return a hash reference showing how many times each particular value is present.
-
-### Scalar
-
-    $hash = value_counts('c');
-
-returns `{ c => 1 }`
-
-### Array reference
-
-    value_counts(['a','b','b']);
-
-returns `{ a => 1, b => 2}`
-
-### Array
-
-    my $value_counts = value_counts('a','b','b');
-
-like an array reference above, returns `{ a => 1, b => 2}`
-
-### Hash
-
-    my $value_counts = value_counts( { A => 'a', B => 'a', C => 'b' } );
-
-returns `{ a => 2, b => 1}`
-
-### Hash of array
-
-    my $value_counts = value_counts({ 'a' => ['j', 't', 't'], 'b' => ['j', 't', 'v']});
-
-without a key (like above), the occurences of `j`, `t`, and `v` are counted.
-
-With a key, like `a` for above, only values within that hash key are counted:
-
-    my $vc = value_counts({ 'a' => ['j', 't', 't'], 'b' => ['j', 't', 'v']}, 'a');
-
-### Hash of hash (table)
-
-    $hash = value_counts( {
-        A => {
-            a => 'x',
-            b => 'z'
-        },
-        B => {
-            a => 'x'
-        },
-        C => {
-	        a => 'y'
-        }
-    }, 'a');
-
-the column, or second hash key, that you wish to count, is specified at the command line
-
 ## vals
 
 Extract a single column from a data frame as a flat array reference, similar to pandas' `to_list`
@@ -2121,6 +2066,75 @@ Extract a single column from a data frame as a flat array reference, similar to 
 
     # feed straight into the numeric routines
     my $m = mean( vals($aoh, 'Age') );
+
+## value_counts
+
+Count the values in a given data set, return a hash reference showing how many times each particular value is present.
+
+### Scalar
+    $hash = value_counts('c');
+
+returns `{ c => 1 }`
+
+### Array reference
+    value_counts(['a','b','b']);
+
+returns `{ a => 1, b => 2}`
+
+### Array
+    my $value_counts = value_counts('a','b','b');
+
+like an array reference above, returns `{ a => 1, b => 2}`
+
+### Array of hashes
+
+    my @records = (
+        { name => 'Alice', dept => 'Sales' },
+        { name => 'Bob',   dept => 'Eng'   },
+        { name => 'Carol', dept => 'Sales' },
+    );
+    my $vc = value_counts(\@records, 'dept');
+
+with a key, the value at that key is counted in each hash, so the above returns `{ Sales => 2, Eng => 1 }`. A record that lacks the key is skipped. Passing an array of hashes without a key, or with an element that is not a hash reference, is a fatal error.
+
+### Array of arrays
+    my @rows = (['a', 1], ['b', 1], ['a', 2]);
+    my $vc = value_counts(\@rows, 0);
+
+when the elements are array references, the key is treated as a numeric column index, so the above returns `{ a => 2, b => 1 }`. A non-numeric index against array-reference elements is a fatal error.
+
+### Hash
+    my $value_counts = value_counts( { A => 'a', B => 'a', C => 'b' } );
+
+returns `{ a => 2, b => 1}`
+
+### Hash of array
+
+    my $value_counts = value_counts({ 'a' => ['j', 't', 't'], 'b' => ['j', 't', 'v']});
+
+without a key (like above), the occurences of `j`, `t`, and `v` are counted.
+With a key, like `a` for above, only values within that hash key are counted:
+
+    my $vc = value_counts({ 'a' => ['j', 't', 't'], 'b' => ['j', 't', 'v']}, 'a');
+
+### Hash of hash (table)
+
+    $hash = value_counts( {
+        A => {
+            a => 'x',
+            b => 'z'
+        },
+        B => {
+            a => 'x'
+        },
+        C => {
+	        a => 'y'
+        }
+    }, 'a');
+
+the column, or second hash key, that you wish to count, is specified at the command line
+
+The two new subsections (Array of hashes, Array of arrays) are the only additions; everything else is unchanged. They're placed after the array-container forms to keep array inputs grouped, mirroring how Hash of array / Hash of hash sit together. If you'd rather I drop this into a `.md` file or fold it into POD (`=head3` headers, `C<>` for the inline code) for the actual module docs, say the word.
 
 ## var
 
@@ -2334,9 +2348,13 @@ addition of `predict`, using results from `glm` and `lm`
 
 addition of `vals`
 
-`view` now returns colored output; fixed bug with incorrect widths; undefined values show as `undef` rather than `NA`, as in Data::Printer
+### `view`
 
-`csort` now accepts Hash of Hashes
+now returns colored output; fixed bug with incorrect widths; undefined values show as `undef` rather than `NA`, as in Data::Printer
+
+### `csort`
+
+now accepts Hash of Hashes
 
 ### filter
 

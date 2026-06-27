@@ -2,7 +2,6 @@
 
 require 5.010;
 use warnings FATAL => 'all';
-use feature 'say';
 use Test::Exception; # dies_ok
 use Test::More;
 use Stats::LikeR;
@@ -59,9 +58,9 @@ my $hoh = {
 # --------
 # Array of Hashes (AoH) Tests
 # --------
-my $res_aoh;
+my $res_aoh = vals($aoh, 'val');
 no_leaks_ok {
-	$res_aoh = vals($aoh, 'val');
+	vals($aoh, 'val');
 } 'vals(AoH): no memory leaks' unless $INC{'Devel/Cover.pm'};
 
 is(ref $res_aoh, 'ARRAY', 'vals(AoH) successfully returns an array reference');
@@ -73,9 +72,9 @@ is($res_aoh->[2], undef, 'vals(AoH) missing cell safely yields undef');
 # --------
 # Hash of Arrays (HoA) Tests
 # --------
-my $res_hoa;
+my $res_hoa = vals($hoa, 'val');
 no_leaks_ok {
-    $res_hoa = vals($hoa, 'val');
+    vals($hoa, 'val');
 } 'vals(HoA): no memory leaks' unless $INC{'Devel/Cover.pm'};
 
 is(ref $res_hoa, 'ARRAY', 'vals(HoA) successfully returns an array reference');
@@ -89,9 +88,9 @@ dies_ok { vals($hoa, 'missing_col') } 'vals(HoA) gracefully dies when asked for 
 # --------
 # Hash of Hashes (HoH) Tests
 # --------
-my $res_hoh;
+my $res_hoh = vals($hoh, 'val');
 no_leaks_ok {
-	$res_hoh = vals($hoh, 'val');
+	vals($hoh, 'val');
 } 'vals(HoH): no memory leaks' unless $INC{'Devel/Cover.pm'};
 
 is(ref $res_hoh, 'ARRAY', 'vals(HoH) successfully returns an array reference');

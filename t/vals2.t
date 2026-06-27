@@ -1,8 +1,6 @@
 #!/usr/bin/env perl
 require 5.010;
 use warnings FATAL => 'all';
-use feature 'say';
-use Scalar::Util 'looks_like_number';
 use Test::Exception; # dies_ok
 use Test::More;
 use Stats::LikeR;
@@ -52,8 +50,8 @@ my $hoh = {
 #--------
 # AoH
 #--------
-my $res_aoh;
-no_leaks_ok { $res_aoh = vals($aoh, 'val') } 'vals(AoH): no memory leaks' unless $INC{'Devel/Cover.pm'};
+my $res_aoh = vals($aoh, 'val');
+no_leaks_ok { vals($aoh, 'val') } 'vals(AoH): no memory leaks' unless $INC{'Devel/Cover.pm'};
 is(ref $res_aoh, 'ARRAY', 'vals(AoH) returns an array reference');
 is(scalar @$res_aoh, 3, 'vals(AoH) returns the column length');
 is_deeply($res_aoh, [10, 20, undef], 'vals(AoH) extracts the column, missing cell -> undef');
@@ -61,8 +59,8 @@ is_deeply($res_aoh, [10, 20, undef], 'vals(AoH) extracts the column, missing cel
 #--------
 # HoA
 #--------
-my $res_hoa;
-no_leaks_ok { $res_hoa = vals($hoa, 'val') } 'vals(HoA): no memory leaks' unless $INC{'Devel/Cover.pm'};
+my $res_hoa = vals($hoa, 'val');
+no_leaks_ok { vals($hoa, 'val') } 'vals(HoA): no memory leaks' unless $INC{'Devel/Cover.pm'};
 is(ref $res_hoa, 'ARRAY', 'vals(HoA) returns an array reference');
 is_deeply($res_hoa, [10, 20, undef], 'vals(HoA) extracts the column, explicit undef preserved');
 dies_ok { vals($hoa, 'missing_col') } 'vals(HoA) dies on a non-existent column';
@@ -71,8 +69,8 @@ no_leaks_ok { eval { vals($hoa, 'missing_col') } } 'vals(HoA) croak path: no lea
 #--------
 # HoH (values returned in sorted-key order)
 #--------
-my $res_hoh;
-no_leaks_ok { $res_hoh = vals($hoh, 'val') } 'vals(HoH): no memory leaks' unless $INC{'Devel/Cover.pm'};
+my $res_hoh = vals($hoh, 'val');
+no_leaks_ok { vals($hoh, 'val') } 'vals(HoH): no memory leaks' unless $INC{'Devel/Cover.pm'};
 is(ref $res_hoh, 'ARRAY', 'vals(HoH) returns an array reference');
 is(scalar @$res_hoh, 4, 'vals(HoH) returns the row count');
 is_deeply($res_hoh, [10, 20, 30, undef], 'vals(HoH) in alphabetical key order (row_a..row_d), missing -> undef');
