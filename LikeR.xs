@@ -885,7 +885,6 @@ static NV pf(NV f, NV df1, NV df2) {
 }
 
 /* Householder QR Decomposition for Sequential Sums of Squares */
-/* Householder QR Decomposition for Sequential Sums of Squares */
 static void apply_householder_aov(NV** restrict X, NV* restrict y, size_t n, size_t p, bool* restrict aliased, size_t* restrict rank_map) {
 	size_t r = 0; // Rank/Row tracker
 	for (size_t k = 0; k < p; k++) {
@@ -5166,12 +5165,24 @@ SV *predict(...)
 		AV  **restrict flev = NULL;            /* factor level lists      (borrowed) */
 		size_t nbase = 0, scratch_cap = 16;
 		char  *restrict scratch = NULL;        /* buffer for "base"."level" */
-		const char **restrict cterm = NULL;    /* non-dummy coef terms (borrowed) */
+		const char **restrict cterm = NULL;    /* non-dummy, non-factor-interaction coef terms (borrowed) */
 		NV   *restrict cbeta = NULL;
 		size_t n = 0, ncoef = 0, i, j, kk;
 		SV   *restrict ref = NULL;
 		HV   *restrict out_hv = NULL;
 		HE   *restrict he = NULL;
+
+		/* NEW: factor-bearing interaction terms, parsed into components */
+		char  **restrict icopy   = NULL;       /* writable "GroupB:Sexmale" copies (split in place) */
+		NV     *restrict ibeta   = NULL;       /* their betas */
+		size_t  nint = 0;
+		bool        *restrict cf_isfac = NULL; /* per flat component: is it a factor dummy? */
+		int         *restrict cf_base  = NULL; /* component's factor base index (into fbase/flev) */
+		const char **restrict cf_lvl   = NULL; /* component's level string (borrowed into icopy) */
+		const char **restrict cf_term  = NULL; /* component's continuous term string (borrowed into icopy) */
+		size_t      *restrict ic_off   = NULL; /* per interaction: offset into flat component arrays */
+		size_t      *restrict ic_cnt   = NULL; /* per interaction: component count */
+		char       **restrict raw_lv   = NULL; /* per-row raw level string per factor base */
 
 		if (items < 1)
 			croak("Usage: predict($model, $newdata, type => 'response')");
@@ -5333,7 +5344,9 @@ SV *predict(...)
 								memcpy(dn, fbase[kk], blen2);
 								memcpy(dn + blen2, lp, ll);
 								dn[blen2 + ll] = '\0';
-								hv_store(dummy_hv, dn, (I32)(blen2 + ll), &PL_sv_yes, 0);
+								/* CHANGED: store the base index so interaction parsing can
+								   recover (base, level) from a dummy name in O(1) */
+								hv_store(dummy_hv, dn, (I32)(blen2 + ll), newSViv((IV)kk), 0);
 								Safefree(dn);
 							}
 						}
@@ -5344,11 +5357,13 @@ SV *predict(...)
 				Newx(scratch, scratch_cap, char); SAVEFREEPV(scratch);
 			}
 
-			/* ---- cache the non-dummy coefficient terms (drop aliased NaN) ---- */
+			/* ---- cache coef terms; route factor-bearing interactions aside ---- */
 			{
 				I32 nk = (I32)HvUSEDKEYS(coef_hv);
 				Newx(cterm, nk ? nk : 1, const char*); SAVEFREEPV(cterm);
 				Newx(cbeta, nk ? nk : 1, NV);          SAVEFREEPV(cbeta);
+				Newx(icopy, nk ? nk : 1, char*);       SAVEFREEPV(icopy);   /* NEW */
+				Newx(ibeta, nk ? nk : 1, NV);          SAVEFREEPV(ibeta);   /* NEW */
 				hv_iterinit(coef_hv);
 				ncoef = 0;
 				while ((he = hv_iternext(coef_hv))) {
@@ -5356,10 +5371,81 @@ SV *predict(...)
 					const char *restrict t = hv_iterkey(he, &klen);
 					NV b = SvNV(HeVAL(he));
 					if (isnan(b)) continue;                         /* aliased -> drop */
-					if (dummy_hv && hv_exists(dummy_hv, t, klen)) continue;  /* handled as factor */
-					cterm[ncoef] = t;
+					if (dummy_hv && hv_exists(dummy_hv, t, klen)) continue;  /* main-effect factor */
+
+					/* NEW: an interaction with >=1 factor component needs special handling;
+					   pure-continuous interactions (e.g. x:z) stay on the evaluate_term path */
+					if (strchr(t, ':')) {
+						char tbuf[512];
+						snprintf(tbuf, sizeof(tbuf), "%s", t);
+						bool has_factor = FALSE;
+						char *restrict cp = tbuf;
+						while (cp) {
+							char *restrict cl = strchr(cp, ':');
+							if (cl) *cl = '\0';
+							if (dummy_hv && hv_exists(dummy_hv, cp, (I32)strlen(cp)))
+								has_factor = TRUE;
+							cp = cl ? cl + 1 : NULL;
+						}
+						if (has_factor) {
+							icopy[nint] = savepv(t); SAVEFREEPV(icopy[nint]);
+							ibeta[nint] = b;
+							nint++;
+							continue;
+						}
+					}
+
+					cterm[ncoef] = t;     /* continuous term or pure-continuous interaction */
 					cbeta[ncoef] = b;
 					ncoef++;
+				}
+			}
+
+			/* ---- NEW: parse factor-bearing interactions into flat components ---- */
+			{
+				size_t total_comp = 0, k, pos = 0;
+				for (k = 0; k < nint; k++) {
+					const char *restrict s = icopy[k];
+					total_comp++;
+					for (; *s; s++) if (*s == ':') total_comp++;
+				}
+				Newx(cf_isfac, total_comp ? total_comp : 1, bool);        SAVEFREEPV(cf_isfac);
+				Newx(cf_base,  total_comp ? total_comp : 1, int);         SAVEFREEPV(cf_base);
+				Newx(cf_lvl,   total_comp ? total_comp : 1, const char*); SAVEFREEPV(cf_lvl);
+				Newx(cf_term,  total_comp ? total_comp : 1, const char*); SAVEFREEPV(cf_term);
+				Newx(ic_off,   nint ? nint : 1, size_t);                  SAVEFREEPV(ic_off);
+				Newx(ic_cnt,   nint ? nint : 1, size_t);                  SAVEFREEPV(ic_cnt);
+				for (k = 0; k < nint; k++) {
+					char *restrict comp = icopy[k];   /* split in place on ':' */
+					ic_off[k] = pos;
+					while (comp) {
+						char *restrict colon = strchr(comp, ':');
+						if (colon) *colon = '\0';
+						SV **restrict dv = dummy_hv ? hv_fetch(dummy_hv, comp, (I32)strlen(comp), 0) : NULL;
+						if (dv && *dv && SvOK(*dv)) {
+							int bidx = (int)SvIV(*dv);
+							cf_isfac[pos] = TRUE;
+							cf_base[pos]  = bidx;
+							cf_lvl[pos]   = comp + strlen(fbase[bidx]);  /* level part of base.level */
+							cf_term[pos]  = NULL;
+						} else {
+							cf_isfac[pos] = FALSE;
+							cf_base[pos]  = -1;
+							cf_lvl[pos]   = NULL;
+							cf_term[pos]  = comp;
+							/* validate a simple continuous component up front (parity with main terms) */
+							if (strNE(comp, "Intercept") && strncmp(comp, "I(", 2) != 0) {
+								bool okc = data_hoa
+									? (hv_exists(data_hoa, comp, (I32)strlen(comp)) ? TRUE : FALSE)
+									: (n > 0 ? (hv_exists(row_hashes[0], comp, (I32)strlen(comp)) ? TRUE : FALSE) : TRUE);
+								if (!okc)
+									croak("predict: newdata is missing column '%s' (in interaction)", comp);
+							}
+						}
+						pos++;
+						comp = colon ? colon + 1 : NULL;
+					}
+					ic_cnt[k] = pos - ic_off[k];
 				}
 			}
 
@@ -5379,31 +5465,38 @@ SV *predict(...)
 				if (!ok) croak("predict: newdata is missing column '%s'", t);
 			}
 
+			/* per-row raw level scratch */
+			if (nbase) { Newx(raw_lv, nbase, char*); SAVEFREEPV(raw_lv); }
+
 			/* ---- per row: linear predictor, then inverse link ---- */
 			out_hv = newHV();
 			for (i = 0; i < n; i++) {
 				NV   eta = 0.0, pred;
 				bool ok  = TRUE;
 
-				/* factor terms: read the raw level, look up its dummy's beta */
+				for (kk = 0; kk < nbase; kk++) raw_lv[kk] = NULL;
+
+				/* read each factor's raw level once; reused by main effects + interactions */
 				for (kk = 0; ok && kk < nbase; kk++) {
 					char *restrict raw = get_data_string_alloc(aTHX_ data_hoa, row_hashes, (unsigned int)i, fbase[kk]);
 					SSize_t nl, l1, found = -1;
-					if (!raw) { ok = FALSE; break; }              /* missing value -> NaN row */
+					if (!raw) { ok = FALSE; break; }             /* missing value -> NaN row */
 					nl = av_len(flev[kk]) + 1;
 					for (l1 = 0; l1 < nl; l1++) {
 						SV **restrict ls = av_fetch(flev[kk], l1, 0);
 						if (ls && *ls && SvOK(*ls) && strcmp(SvPV_nolen(*ls), raw) == 0) { found = l1; break; }
 					}
 					if (found < 0) {
-						char base_cpy[256];
+						char base_cpy[256], lvl_cpy[256];
+						size_t z;
 						snprintf(base_cpy, sizeof(base_cpy), "%s", fbase[kk]);
-						char lvl_cpy[256];
-						snprintf(lvl_cpy, sizeof(lvl_cpy), "%s", raw);
+						snprintf(lvl_cpy,  sizeof(lvl_cpy),  "%s", raw);
 						Safefree(raw);
+						for (z = 0; z < kk; z++) if (raw_lv[z]) Safefree(raw_lv[z]);
 						croak("predict: factor '%s' has unseen level '%s'", base_cpy, lvl_cpy);
 					}
-					if (found > 0) {                              /* non-reference -> add its dummy beta */
+					raw_lv[kk] = raw;                            /* keep; freed at row end */
+					if (found > 0) {                             /* non-reference -> add its dummy beta */
 						snprintf(scratch, scratch_cap, "%s%s", fbase[kk], raw);
 						svp = hv_fetch(coef_hv, scratch, (I32)strlen(scratch), 0);
 						if (svp && *svp) {
@@ -5411,7 +5504,6 @@ SV *predict(...)
 							if (!isnan(b)) eta += b;
 						}
 					}
-					Safefree(raw);
 				}
 
 				/* non-factor terms via the same engine used at fit time */
@@ -5422,6 +5514,28 @@ SV *predict(...)
 					if (isnan(v)) { ok = FALSE; break; }
 					eta += cbeta[j] * v;
 				}
+
+				/* NEW: factor-bearing interactions — product of component values */
+				for (size_t k = 0; ok && k < nint; k++) {
+					NV prod = 1.0;
+					size_t off = ic_off[k], cnt = ic_cnt[k], m;
+					for (m = off; m < off + cnt; m++) {
+						if (cf_isfac[m]) {
+							int bidx = cf_base[m];
+							/* indicator: 1 iff this row's level for that base equals the dummy's level */
+							prod *= (raw_lv[bidx] && strcmp(raw_lv[bidx], cf_lvl[m]) == 0) ? 1.0 : 0.0;
+						} else {
+							NV v = evaluate_term(aTHX_ data_hoa, row_hashes, (unsigned int)i, cf_term[m]);
+							if (isnan(v)) { ok = FALSE; break; }
+							prod *= v;
+						}
+					}
+					if (!ok) break;
+					eta += ibeta[k] * prod;
+				}
+
+				for (kk = 0; kk < nbase; kk++)
+					if (raw_lv[kk]) { Safefree(raw_lv[kk]); raw_lv[kk] = NULL; }
 
 				pred = (!ok) ? NAN
 				     : (is_binomial && want_response) ? (1.0 / (1.0 + exp(-eta)))
@@ -8302,7 +8416,7 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 	CODE:
 	{
 	const char *restrict formula;
-	SV *restrict orig_data_sv = data_sv;
+	SV *orig_data_sv = data_sv;   /* CHANGED: dropped `restrict` — this aliases data_sv (UB) */
 	bool is_stacked = FALSE;
 	//
 	// PHASE 0: R-style stack() for missing formula
@@ -8324,8 +8438,8 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 		  SV *restrict arr_ref = hv_iterval(input_hv, entry);
 		  if (SvROK(arr_ref) && SvTYPE(SvRV(arr_ref)) == SVt_PVAV) {
 				AV *restrict arr = (AV*)SvRV(arr_ref);
-				size_t len = av_len(arr);
-				for (size_t k = 0; k <= len; k++) {
+				SSize_t len = av_len(arr);                 /* CHANGED: signed — av_len is -1 when empty */
+				for (SSize_t k = 0; k <= len; k++) {        /* CHANGED: SSize_t, no SIZE_MAX underflow */
 					SV **restrict v = av_fetch(arr, k, 0);
 					if (v && *v && SvOK(*v)) {
 						av_push(val_av, newSVsv(*v));
@@ -8377,12 +8491,13 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 				  data_hoa = hv;
 				  n = av_len((AV*)SvRV(val)) + 1;
 				  Newx(row_names, n, char*);
-				  for(i = 0; i < n; i++) { 
+				  for(i = 0; i < n; i++) {
 					  char buf[32]; snprintf(buf, sizeof(buf), "%lu", (unsigned long)(i+1));
-					  row_names[i] = savepv(buf); 
+					  row_names[i] = savepv(buf);
 				  }
 			 } else if (SvROK(val) && SvTYPE(SvRV(val)) == SVt_PVHV) {
-				  n = hv_iterinit(hv);
+				  n = (size_t)HvUSEDKEYS(hv);     /* CHANGED: real key count, not hv_iterinit's return */
+				  hv_iterinit(hv);
 				  Newx(row_names, n, char*); Newx(row_hashes, n, HV*);
 				  i = 0;
 				  while ((entry = hv_iternext(hv))) {
@@ -8433,7 +8548,7 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 	while ((p_idx = strstr(rhs, "0+")) != NULL) { has_intercept = FALSE; memmove(p_idx, p_idx + 2, strlen(p_idx + 2) + 1); }
 	if (rhs[0] == '0' && rhs[1] == '\0')        { has_intercept = FALSE; rhs[0] = '\0'; }
 	while ((p_idx = strstr(rhs, "+1")) != NULL) { memmove(p_idx, p_idx + 2, strlen(p_idx + 2) + 1); }
-	if (rhs[0] == '1' && rhs[1] == '\0')        { rhs[0] = '\0'; } 
+	if (rhs[0] == '1' && rhs[1] == '\0')        { rhs[0] = '\0'; }
 	else if (rhs[0] == '1' && rhs[1] == '+')    { memmove(rhs, rhs + 2, strlen(rhs + 2) + 1); }
 
 	while ((p_idx = strstr(rhs, "++")) != NULL) memmove(p_idx, p_idx + 1, strlen(p_idx + 1) + 1);
@@ -8446,7 +8561,8 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 	while (chunk != NULL) {
 		if (strcmp(chunk, ".") == 0) {
 			AV *restrict cols = get_all_columns(aTHX_ data_hoa, row_hashes, n);
-			for (size_t c = 0; c <= av_len(cols); c++) {
+			SSize_t ncols = av_len(cols);                  /* CHANGED: signed bound */
+			for (SSize_t c = 0; c <= ncols; c++) {          /* CHANGED: SSize_t loop */
 			  SV **restrict col_sv = av_fetch(cols, c, 0);
 			  if (col_sv && SvOK(*col_sv)) {
 					const char *restrict col_name = SvPV_nolen(*col_sv);
@@ -8500,7 +8616,7 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 				  terms[num_terms] = (char*)safemalloc(inter_len);
 				  snprintf(terms[num_terms++], inter_len, "%s:%s", left, right);
 			 } else {
-				  char *restrict c_chunk = strchr(chunk, '^'); 
+				  char *restrict c_chunk = strchr(chunk, '^');
 				  if (c_chunk && strncmp(chunk, "I(", 2) != 0) *c_chunk = '\0';
 				  terms[num_terms++] = savepv(chunk);
 			 }
@@ -8518,6 +8634,8 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 	p = num_uniq;
 
 	Newxz(term_base_level, num_uniq, char*);
+
+	HV *restrict xlevels_hv = newHV();   /* NEW: factor base -> [sorted levels], idx 0 = reference */
 
 	/* PHASE 3: Categorical & Interaction Expansion */
 	for (j = 0; j < p; j++) {
@@ -8543,7 +8661,7 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 			char left[256], right[256];
 			strncpy(left, uniq_terms[j], colon - uniq_terms[j]);
 			left[colon - uniq_terms[j]] = '\0';
-			strcpy(right, colon + 1);
+			snprintf(right, sizeof(right), "%s", colon + 1);   /* CHANGED: snprintf, was strcpy (overflow) */
 
 			int *restrict l_indices = (int*)safemalloc(p_exp * sizeof(int)); int l_count = 0;
 			int *restrict r_indices = (int*)safemalloc(p_exp * sizeof(int)); int r_count = 0;
@@ -8554,6 +8672,7 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 
 			if (l_count == 0 || r_count == 0) {
 				Safefree(l_indices); Safefree(r_indices);
+				SvREFCNT_dec((SV*)xlevels_hv);   /* NEW */
 				croak("aov: Interaction term '%s' requires its main effects to be explicitly included in the formula", uniq_terms[j]);
 			} else {
 				for (unsigned int li = 0; li < l_count; li++) {
@@ -8608,6 +8727,15 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 
 					 term_base_level[j] = savepv(levels[0]);
 
+					 /* NEW: expose full sorted level list for predict (idx 0 = reference) */
+					 {
+						 AV *restrict lv_av = newAV();
+						 for (size_t l = 0; l < num_levels; l++)
+							 av_push(lv_av, newSVpv(levels[l], 0));
+						 hv_store(xlevels_hv, uniq_terms[j], (I32)strlen(uniq_terms[j]),
+							 newRV_noinc((SV*)lv_av), 0);
+					 }
+
 					 for (size_t l = 1; l < num_levels; l++) {
 						  if (p_exp >= exp_cap) {
 							  exp_cap *= 2;
@@ -8647,18 +8775,21 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 	}
 	X_mat = (NV**)safemalloc(n * sizeof(NV*));
 	for(i = 0; i < n; i++) X_mat[i] = (NV*)safemalloc(p_exp * sizeof(NV));
+	NV **restrict Dsav = (NV**)safemalloc(n * sizeof(NV*));   /* NEW: preserved design rows for fitted.values */
+	char **restrict surv_names = NULL;                        /* NEW: row names of surviving rows */
+	Newx(surv_names, n ? n : 1, char*);
 	Newx(Y, n, NV);
 	// PHASE 4: Matrix Construction & Listwise Deletion
 	for (i = 0; i < n; i++) {
 		NV y_val = evaluate_term(aTHX_ data_hoa, row_hashes, i, lhs);
-		if (isnan(y_val)) { Safefree(row_names[i]); continue; }
+		if (isnan(y_val)) { Safefree(row_names[i]); row_names[i] = NULL; continue; }
 		bool row_ok = TRUE;
-		NV *restrict row_x = (NV*)safemalloc(p_exp * sizeof(NV));
+		NV *restrict row_x = X_mat[valid_n];   /* CHANGED: build straight into the QR row (no per-row temp) */
 		for (j = 0; j < p_exp; j++) {
 			if (strcmp(exp_terms[j], "Intercept") == 0) {
 				row_x[j] = 1.0;
 			} else if (is_interact[j]) {
-				row_x[j] = row_x[left_idx[j]] * row_x[right_idx[j]];
+				row_x[j] = row_x[left_idx[j]] * row_x[right_idx[j]];   /* left/right already filled this row */
 			} else if (is_dummy[j]) {
 				char*restrict str_val = get_data_string_alloc(aTHX_ data_hoa, row_hashes, i, dummy_base[j]);
 				if (str_val) {
@@ -8670,28 +8801,34 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 				if (isnan(row_x[j])) { row_ok = FALSE; break; }
 			}
 		}
-		if (!row_ok) { Safefree(row_names[i]); Safefree(row_x); continue; }
+		if (!row_ok) { Safefree(row_names[i]); row_names[i] = NULL; continue; }  /* X_mat[valid_n] reused next iter */
 		Y[valid_n] = y_val;
-		for (j = 0; j < p_exp; j++) X_mat[valid_n][j] = row_x[j];
+		Dsav[valid_n] = (NV*)safemalloc(p_exp * sizeof(NV));   /* NEW: snapshot before QR destroys X_mat */
+		memcpy(Dsav[valid_n], row_x, p_exp * sizeof(NV));
+		surv_names[valid_n] = row_names[i];                    /* NEW: transfer ownership */
+		row_names[i] = NULL;
 		valid_n++;
-		Safefree(row_x);
-		Safefree(row_names[i]);
 	}
-	Safefree(row_names);
+	Safefree(row_names);   /* entries either transferred to surv_names or already freed */
 	if (valid_n <= p_exp) {
-		// Full Clean Up 
+		// Full Clean Up
 		for (i = 0; i < num_terms; i++) Safefree(terms[i]); Safefree(terms);
 		for (i = 0; i < num_uniq; i++) Safefree(uniq_terms[i]); Safefree(uniq_terms);
 		for (j = 0; j < p_exp; j++) {
 			 Safefree(exp_terms[j]); Safefree(parent_term[j]);
 			 if (is_dummy[j]) { Safefree(dummy_base[j]); Safefree(dummy_level[j]); }
 		}
-		Safefree(exp_terms); Safefree(parent_term); 
-		Safefree(is_dummy); Safefree(is_interact); 
+		Safefree(exp_terms); Safefree(parent_term);
+		Safefree(is_dummy); Safefree(is_interact);
 		Safefree(dummy_base); Safefree(dummy_level);
 		Safefree(term_map); Safefree(left_idx); Safefree(right_idx);
 		for(i = 0; i < n; i++) Safefree(X_mat[i]);
 		Safefree(X_mat); Safefree(Y);
+		for (i = 0; i < valid_n; i++) Safefree(Dsav[i]);   /* NEW */
+		Safefree(Dsav);                                     /* NEW */
+		for (i = 0; i < valid_n; i++) Safefree(surv_names[i]);   /* NEW */
+		Safefree(surv_names);                                    /* NEW */
+		SvREFCNT_dec((SV*)xlevels_hv);                      /* NEW: ret_hash doesn't exist on this path */
 		if (row_hashes) Safefree(row_hashes);
 		for (i = 0; i < num_uniq; i++) { if (term_base_level[i]) Safefree(term_base_level[i]); }
 		Safefree(term_base_level);
@@ -8706,7 +8843,7 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 	Newxz(term_ss, num_uniq, NV);
 	Newxz(term_df, num_uniq, int);
 	for (i = 0; i < p_exp; i++) {
-		if (strcmp(exp_terms[i], "Intercept") == 0) continue; 
+		if (strcmp(exp_terms[i], "Intercept") == 0) continue;
 		if (aliased_qr[i]) continue;
 		int t_idx = term_map[i];
 		size_t r_k = rank_map[i];
@@ -8769,7 +8906,8 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 		AV *restrict all_cols = get_all_columns(aTHX_ tgt_hoa, tgt_row_hashes, tgt_n);
 		HV *restrict mean_hv  = newHV();
 		HV *restrict size_hv  = newHV();
-		for (size_t c = 0; c <= (size_t)av_len(all_cols); c++) {
+		SSize_t ncols = av_len(all_cols);                  /* CHANGED: signed bound */
+		for (SSize_t c = 0; c <= ncols; c++) {              /* CHANGED: SSize_t loop */
 			SV **restrict col_sv = av_fetch(all_cols, c, 0);
 			if (!col_sv || !SvOK(*col_sv)) continue;
 			const char *restrict col_name = SvPV_nolen(*col_sv);
@@ -8789,6 +8927,49 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 		hv_stores(gs_hv, "size", newRV_noinc((SV*)size_hv));
 		hv_stores(ret_hash, "group_stats", newRV_noinc((SV*)gs_hv));
 	}
+	//
+	// NEW: predict-compatible output -- coefficients, fitted.values, xlevels, family
+	// X_mat now holds R (rows 0..rank-1, original column index, original units);
+	// Y holds Q'y (effects in y[0..rank-1]). Recover beta by back-substitution.
+	//
+	{
+		size_t *restrict col_of_rank = (size_t*)safemalloc((rank ? (size_t)rank : 1) * sizeof(size_t));
+		NV     *restrict beta        = (NV*)safemalloc((p_exp ? p_exp : 1) * sizeof(NV));
+		for (j = 0; j < p_exp; j++) {
+			beta[j] = NAN;
+			if (!aliased_qr[j]) col_of_rank[rank_map[j]] = j;   /* rank row -> actual column */
+		}
+		for (size_t mi = (size_t)rank; mi-- > 0; ) {            /* unsigned countdown */
+			size_t km = col_of_rank[mi];
+			NV acc = Y[mi];
+			for (size_t l = mi + 1; l < (size_t)rank; l++) {
+				size_t kl = col_of_rank[l];
+				acc -= X_mat[mi][kl] * beta[kl];                /* R[mi][kl] * beta[kl] */
+			}
+			beta[km] = acc / X_mat[mi][km];                     /* diagonal nonzero by construction */
+		}
+
+		HV *restrict coef_hv = newHV();
+		for (j = 0; j < p_exp; j++)
+			hv_store(coef_hv, exp_terms[j], (I32)strlen(exp_terms[j]), newSVnv(beta[j]), 0);
+		hv_stores(ret_hash, "coefficients", newRV_noinc((SV*)coef_hv));
+
+		/* fitted.values: Xb over non-aliased columns, keyed by surviving row name */
+		HV *restrict fitted_hv = newHV();
+		for (i = 0; i < valid_n; i++) {
+			NV fit = 0.0;
+			for (j = 0; j < p_exp; j++)
+				if (!aliased_qr[j]) fit += Dsav[i][j] * beta[j];
+			hv_store(fitted_hv, surv_names[i], (I32)strlen(surv_names[i]), newSVnv(fit), 0);
+		}
+		hv_stores(ret_hash, "fitted.values", newRV_noinc((SV*)fitted_hv));
+
+		hv_stores(ret_hash, "xlevels", newRV_noinc((SV*)xlevels_hv));
+		hv_stores(ret_hash, "family",  newSVpvn("gaussian", 8));
+
+		Safefree(col_of_rank);
+		Safefree(beta);
+	}
 	// Deep Cleanup
 	for (i = 0; i < num_terms; i++) Safefree(terms[i]); Safefree(terms);
 	for (i = 0; i < num_uniq; i++) Safefree(uniq_terms[i]); Safefree(uniq_terms);
@@ -8796,24 +8977,28 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 		  Safefree(exp_terms[j]); Safefree(parent_term[j]);
 		  if (is_dummy[j]) { Safefree(dummy_base[j]); Safefree(dummy_level[j]); }
 	}
-	Safefree(exp_terms); Safefree(parent_term); 
-	Safefree(is_dummy); Safefree(is_interact); 
+	Safefree(exp_terms); Safefree(parent_term);
+	Safefree(is_dummy); Safefree(is_interact);
 	Safefree(dummy_base); Safefree(dummy_level);
 	Safefree(term_map); Safefree(left_idx); Safefree(right_idx);
 	Safefree(term_ss); Safefree(term_df);
 	for (i = 0; i < n; i++) Safefree(X_mat[i]);
 	Safefree(X_mat); Safefree(Y);
+	for (i = 0; i < valid_n; i++) Safefree(Dsav[i]);        /* NEW */
+	Safefree(Dsav);                                          /* NEW */
+	for (i = 0; i < valid_n; i++) Safefree(surv_names[i]);   /* NEW */
+	Safefree(surv_names);                                    /* NEW */
 	Safefree(aliased_qr); Safefree(rank_map);
 	for (i = 0; i < num_uniq; i++) { if (term_base_level[i]) Safefree(term_base_level[i]); }
 	Safefree(term_base_level);
 	if (row_hashes) Safefree(row_hashes);
+	/* xlevels_hv ownership transferred to ret_hash; do not dec here */
 	RETVAL = newRV_noinc((SV*)ret_hash);
 	}
 OUTPUT:
 	RETVAL
 
 PROTOTYPES: DISABLE
-
 
 SV* fisher_test(...)
 CODE:

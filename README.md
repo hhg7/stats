@@ -152,6 +152,86 @@ A row that is **not** a hash ref is skipped rather than fatal: it contributes `u
 
 The output column order follows hash iteration order and is therefore not guaranteed — sort the keys if you need a stable layout. Round-tripping through `hoa2aoh` (or the reverse) reconstructs the data but not necessarily the original key/row ordering, and rows originally absent a key will gain it as an explicit `undef`.
 
+## `aoh2hoh`
+
+Index an **A**rray-**o**f-**H**ashes into a **H**ash-**o**f-**H**ashes, keyed by the value of one column.
+
+    my $hoh = aoh2hoh($aoh, $key);
+
+Where `aoh2hoa` *transposes* rows into columns, `aoh2hoh` *indexes* rows by a chosen field, turning a sequential list into a lookup table. The chosen field is treated as a **primary key**: it must be unique across the rows, and a repeat is fatal.
+
+### Signature
+
+| Argument | Type        | Meaning                                              |
+|----------|-------------|------------------------------------------------------|
+| `$aoh`   | arrayref    | The rows: an arrayref of hashrefs.                   |
+| `$key`   | scalar      | The column name whose value indexes each row.        |
+
+Returns a hashref. Each top-level key is a row's `$row->{$key}` value; each value is a shallow copy of that row.
+
+    my $rows = [
+        { id => 'p1', kd => 12.4, chain => 'A' },
+        { id => 'p2', kd =>  3.1, chain => 'B' },
+    ];
+
+    my $by_id = aoh2hoh($rows, 'id');
+    # {
+    #   p1 => { id => 'p1', kd => 12.4, chain => 'A' },
+    #   p2 => { id => 'p2', kd =>  3.1, chain => 'B' },
+    # }
+
+    $by_id->{p2}{kd};   # 3.1 -- O(1) lookup instead of a linear scan
+
+### Semantics
+
+These choices are the parts most worth keeping in mind, because the AoH->HoH mapping is ambiguous where a transpose is not.
+
+**Duplicate keys are fatal.** If two rows share the same key value, the call dies rather than silently dropping a row:
+
+    aoh2hoh([ { id => 'a', x => 1 }, { id => 'a', x => 9 } ], 'id');
+    # dies: aoh2hoh: duplicate key 'a' has >= 2 occurrences
+
+This makes the chosen column an enforced primary key: the result is only returned if every row maps to a distinct bucket. If your data legitimately has repeats and you want to *keep* them, you want a hash-of-arrays-of-rows instead -- a different return shape. If you want last-wins or first-wins collapse, dedup the input before calling.
+
+**The key column is retained** inside each inner hash (the copy is of the whole row). Drop it deliberately if you don't want the redundancy.
+
+**Shallow copy.** Inner hashes are fresh, so adding or removing keys on the output never touches the input. But a *value* that is itself a reference is shared, exactly like `$out{$rk}{$_} = $row->{$_}`:
+
+    my $shared = [ 1, 2, 3 ];
+    my $out = aoh2hoh([ { id => 'a', data => $shared } ], 'id');
+    push @{ $out->{a}{data} }, 4;   # $shared now has 4 elements too
+
+**Skipped, not fatal.** A row that is not a hashref, or that lacks a defined value at `$key`, contributes nothing and does not raise an error -- only a *duplicate* defined key is fatal. A non-arrayref first argument or an undefined `$key` is also fatal.
+
+**Numeric vs string keys collide.** Hash keys are strings, so `1` and `"1"` map to the same bucket and therefore trip the duplicate-key die. Normalize the key column first if a row could carry both forms.
+
+### Use cases
+
+**Join / enrichment lookups.** Build an index once, then attach fields from one dataset onto another by shared id without an O(n*m) nested loop -- and the duplicate-key die guarantees the join side really is keyed uniquely:
+
+    my $meta = aoh2hoh($pdb_metadata, 'pdb_id');
+    for my $hit (@$results) {
+        $hit->{resolution} = $meta->{ $hit->{pdb_id} }{resolution};
+    }
+
+**Primary-key validation.** Because a repeat is fatal, the call doubles as an assertion that a column is unique -- a cheap way to catch a malformed table (duplicate accession, duplicate peptide id) at load time rather than downstream.
+
+**Random-access reshaping of tabular data.** After parsing a CSV/TSV into an array of row-hashes, re-index by a primary key so downstream code can fetch a row by name rather than scanning. Pairs naturally with the CSV-parsing side of the toolkit.
+
+**Set membership and difference.** `exists $hoh->{$k}` gives a cheap presence test, useful for asking which ids in one table are missing from another.
+
+### Relationship to `aoh2hoa`
+
+| Function   | Output shape           | Indexed by      | Typical question it answers              |
+|------------|------------------------|-----------------|------------------------------------------|
+| `aoh2hoa`  | hash of arrayrefs      | column name     | "give me every value in column X"        |
+| `aoh2hoh`  | hash of hashrefs       | a row's key val | "give me the whole row whose id is Y"    |
+
+Reach for `aoh2hoa` when you want columns (vectors to feed a statistic or a plot); reach for `aoh2hoh` when you want addressable rows keyed by a unique field.
+
+### Implementation note
+
+The operation is a single pass over the rows with one hash insert per row -- the same asymptotics in pure Perl as in XS, and Perl's hash operations are already C underneath. There is no meaningful speed or memory advantage to an XS implementation here, so pure Perl is preferred unless it must live in the same `.xs` for packaging parity. The duplicate check is a single `exists` per row and does not change that. (An XS version would `croak` on the duplicate before allocating the second copy, so there is no extra cleanup to manage.)
 
 ## aov
 
@@ -2346,7 +2426,7 @@ addition of `hoa2aoh`, transforming hash of arrays to array of hashes
 
 addition of `predict`, using results from `glm` and `lm`
 
-addition of `vals`
+addition of `aoh2hoh` and `vals`
 
 ### `view`
 

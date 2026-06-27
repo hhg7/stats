@@ -22,15 +22,35 @@ use Test::LeakTrace 'no_leaks_ok';
 }
 
 #--------
-# last-wins on duplicate key values
+# duplicate key value is fatal (primary-key enforcement)
 #--------
 {
-	my $in  = [ { id => 'a', x => 1 }, { id => 'a', x => 9 } ];
-	my $out = aoh2hoh($in, 'id');
+	my $in = [ { id => 'a', x => 1 }, { id => 'a', x => 9 } ];
+	throws_ok { aoh2hoh($in, 'id') } qr/duplicate key/,
+		'aoh2hoh: duplicate key value dies';
+}
+
+#--------
+# the die fires on the SECOND occurrence, so a single key never dies
+#--------
+{
+	my $in = [ { id => 'a', x => 1 }, { id => 'b', x => 2 }, { id => 'c', x => 3 } ];
+	lives_ok { aoh2hoh($in, 'id') } 'aoh2hoh: all-distinct keys do not die';
+}
+
+#--------
+# rows skipped before the key check do NOT count toward a collision:
+# two rows both missing the key are both skipped, not a duplicate
+#--------
+{
+	my $in  = [ { id => 'a', x => 1 }, { x => 5 }, { x => 6 } ];
+	my $out;
+	lives_ok { $out = aoh2hoh($in, 'id') }
+		'aoh2hoh: two keyless rows are skipped, not a duplicate';
 	is_deeply(
 		$out,
-		{ a => { id => 'a', x => 9 } },
-		'aoh2hoh: duplicate key -> last row wins'
+		{ a => { id => 'a', x => 1 } },
+		'aoh2hoh: keyless rows contribute nothing'
 	);
 }
 
@@ -92,13 +112,12 @@ use Test::LeakTrace 'no_leaks_ok';
 }
 
 #--------
-# numeric key values coerce to string hash keys (1 and "1" collide)
+# numeric and string key values collide (1 vs "1") -> duplicate -> dies
 #--------
 {
-	my $in  = [ { id => 1, x => 'int' }, { id => '1', x => 'str' } ];
-	my $out = aoh2hoh($in, 'id');
-	is(scalar(keys %$out), 1, 'aoh2hoh: numeric/string key collapse to one key');
-	is($out->{1}{x}, 'str', 'aoh2hoh: last-wins holds across numeric/string key');
+	my $in = [ { id => 1, x => 'int' }, { id => '1', x => 'str' } ];
+	throws_ok { aoh2hoh($in, 'id') } qr/duplicate key/,
+		'aoh2hoh: numeric/string key collision is a duplicate';
 }
 
 #--------
@@ -133,7 +152,7 @@ unless ($INC{'Devel/Cover.pm'}) {
 		eval {
 			aoh2hoh([ { id => 'a', x => 1 }, { id => 'a', x => 9 } ], 'id')
 		}
-	} 'aoh2hoh(): no leaks on duplicate-key overwrite';
+	} 'aoh2hoh(): no leaks when dying on a duplicate key (partial result cleaned up)';
 
 	no_leaks_ok {
 		eval {
