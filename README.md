@@ -2354,7 +2354,7 @@ now returns colored output; fixed bug with incorrect widths; undefined values sh
 
 ### `csort`
 
-now accepts Hash of Hashes
+now accepts Hash of Hashes; addition of `restrict` which should decrease calculation time
 
 ### filter
 
@@ -2416,6 +2416,10 @@ hoh output, custom column name, the already-aligned file (flag is a no-op), the
     3,Charlie,15.2
 
 would not be read correctly using `read_table`, but now is read correctly
+
+### value_counts
+
+now accepts array of hashes
 
 ## 0.16
 

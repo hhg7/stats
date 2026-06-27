@@ -2293,12 +2293,12 @@ PPCODE:
 	} else if (SvTYPE(SvRV(data)) == SVt_PVHV) {
 		src_hv = (HV *)SvRV(data);
 		hv_iterinit(src_hv);
-		HE *he = hv_iternext(src_hv);
+		HE *restrict he = hv_iternext(src_hv);
 		if (!he) {
 			/* Empty hash defaults safely to HoA path with 0 items */
 			is_aoh = 0;
 		} else {
-			SV *val = HeVAL(he);
+			SV *restrict val = HeVAL(he);
 			/* If it is explicitly a Hash of Hashes */
 			if (SvROK(val) && SvTYPE(SvRV(val)) == SVt_PVHV) {
 				is_hoh = 1;
@@ -2320,22 +2320,22 @@ PPCODE:
 		sv_2mortal((SV *)src_av); /* cleanup on LEAVE */
 
 		if (n > 0) {
-			SV **keys;
+			SV **restrict keys;
 			Newx(keys, n, SV*);
 			SAVEFREEPV(keys);
 			size_t i = 0;
-			HE *he;
+			HE *restrict he;
 			while ((he = hv_iternext(src_hv))) {
 				keys[i++] = hv_iterkeysv(he);
 			}
 			/* Sort keys alphabetically via insertion sort to guarantee
 			 * stable and fully deterministic row initialization */
 			for (size_t i = 1; i < (size_t)n; i++) {
-				SV *k = keys[i];
-				STRLEN kl; const char *kp = SvPV_const(k, kl);
+				SV *restrict k = keys[i];
+				STRLEN kl; const char *restrict kp = SvPV_const(k, kl);
 				SSize_t j = i - 1;
 				while (j >= 0) {
-					STRLEN jl; const char *jp = SvPV_const(keys[j], jl);
+					STRLEN jl; const char *restrict jp = SvPV_const(keys[j], jl);
 					int cmp = memcmp(jp, kp, jl < kl ? jl : kl);
 					if (cmp == 0) cmp = (jl > kl) - (jl < kl);
 					if (cmp <= 0) break;
@@ -2346,9 +2346,9 @@ PPCODE:
 			}
 			/* Push the row hashes sequentially into our temporary AV */
 			for (size_t i = 0; i < (size_t)n; i++) {
-				HE *entry = hv_fetch_ent(src_hv, keys[i], 0, 0);
+				HE *restrict entry = hv_fetch_ent(src_hv, keys[i], 0, 0);
 				if (entry) {
-					SV *val = HeVAL(entry);
+					SV *restrict val = HeVAL(entry);
 					/* Explicit Type Validation to catch mixed structures */
 					if (!val || !SvROK(val) || SvTYPE(SvRV(val)) != SVt_PVHV)
 						croak("csort: HoH row '%s' is not a hash-ref", SvPV_nolen(keys[i]));
@@ -2465,15 +2465,15 @@ PPCODE:
 					vals[i] = cell;
 				}
 			} else {
-				SV **colp = hv_fetch(src_hv, colname, collen, 0);
+				SV **restrict colp = hv_fetch(src_hv, colname, collen, 0);
 				if (!(colp && *colp && SvROK(*colp)
 				        && SvTYPE(SvRV(*colp)) == SVt_PVAV))
 					croak("csort: column '%s' not found in HoA", colname);
 				found = 1;
 				AV *restrict col = (AV *)SvRV(*colp);
 				for (size_t i = 0; i < (size_t)n; i++) {
-					SV **cp = av_fetch(col, (SSize_t)i, 0);
-					SV *cell = (cp && *cp) ? *cp : NULL;
+					SV **restrict cp = av_fetch(col, (SSize_t)i, 0);
+					SV *restrict cell = (cp && *cp) ? *cp : NULL;
 					if (cell && SvOK(cell) && !looks_like_number(cell))
 						numeric = 0;
 					vals[i] = cell;
@@ -2488,9 +2488,8 @@ PPCODE:
 			cs_msort(aTHX_ idx, tmp, 0, (size_t)n, cs_col_cmp, &ctx);
 		}
 	}    /* end if (n > 1) */
-
-	/* ---- materialize the result in the requested shape -------------- */
-result = cs_materialize(aTHX_ out_aoh, is_aoh, src_av,
+	// ---- materialize the result in the requested shape
+	result = cs_materialize(aTHX_ out_aoh, is_aoh, src_av,
                         colkeys, colavs, ncols, idx, (size_t)n);
 	FREETMPS;
 	LEAVE;
