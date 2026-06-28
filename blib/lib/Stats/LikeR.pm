@@ -11,15 +11,14 @@ use autodie ':default';
 use Exporter 'import';
 use Scalar::Util 'looks_like_number';
 XSLoader::load('Stats::LikeR', $VERSION);
-our @EXPORT_OK = qw(add_data aoh2hoa aoh2hoh aov assign cfilter chisq_test col col2col cor cor_test cov csort dnorm dropna filter fisher_test glm group_by hoa2aoh hoh2hoa hist kruskal_test ks_test ljoin lm matrix max mean median min mode oneway_test p_adjust power_t_test predict prcomp quantile rbinom read_table rnorm runif sample scale sd seq shapiro_test sum summary t_test transpose uniq vals value_counts var var_test view wilcox_test write_table);
+our @EXPORT_OK = qw(add_data aoh2hoa aoh2hoh aov assign cfilter chisq_test col col2col cor cor_test cov csort dnorm dropna filter fisher_test glm group_by hoa2aoh hoh2hoa hist intersection kruskal_test ks_test ljoin lm matrix max mean median min mode oneway_test p_adjust power_t_test predict prcomp quantile rbinom read_table rnorm runif sample scale sd seq shapiro_test sum summary t_test transpose uniq vals value_counts var var_test view wilcox_test write_table);
 our @EXPORT = @EXPORT_OK;
 
 sub aoh2hoh {
 	my ($aoh, $key) = @_;
 	die 'aoh2hoh: first argument must be an arrayref of hashrefs'
 	  unless ref($aoh) eq 'ARRAY';
-	die 'aoh2hoh: a row key must be defined'
-	  unless defined $key;
+	die 'aoh2hoh: a row key must be defined' unless defined $key;
 	my %out;
 	my $i = 0;
 	for my $row (@$aoh) {
@@ -53,8 +52,7 @@ sub assign {
 	my $df = shift;
 	die 'assign: first argument must be a data frame (AoH arrayref or HoA/HoH hashref)'
 	  unless ref $df;
-	die 'assign: expected an even list of (name => coderef) pairs'
-	  if @_ % 2;
+	die 'assign: expected an even list of (name => coderef) pairs' if @_ % 2;
 	my $current_sub = (split(/::/,(caller(0))[3]))[-1];
 	my $r = ref $df;
 	if ($r eq 'ARRAY') { # ----- AoH: add a key to each row hash -----

@@ -7409,6 +7409,77 @@ NV median(...)
 	OUTPUT:
 	  RETVAL
 
+void intersection(...)
+	PROTOTYPE: @
+	PREINIT:
+		HV* count;
+		AV* order;
+		size_t nrefs;
+		size_t n;
+		size_t oi;
+		size_t olen;
+		int gimme;
+	PPCODE:
+		gimme = GIMME_V;
+		nrefs = items;
+		if (nrefs == 0)
+			croak("intersection needs >= 1 array ref");
+		count = (HV*)sv_2mortal((SV*)newHV());
+		order = (AV*)sv_2mortal((SV*)newAV());
+		for (size_t i = 0; i < nrefs; i++) {
+			SV* restrict arg = ST(i);
+			HV* loc;
+			AV* restrict av;
+			size_t len;
+			if (!(SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV))
+				croak("intersection: argument %" UVuf " is not an array ref", (UV)i);
+			av = (AV*)SvRV(arg);
+			len = av_len(av) + 1;
+			loc = (HV*)sv_2mortal((SV*)newHV());   /* per-ref dedup */
+			for (size_t j = 0; j < len; j++) {
+				SV** restrict tv = av_fetch(av, j, 0);
+				STRLEN klen;
+				const char* key;
+				I32 hklen;
+				SV** cv;
+				if (!(tv && SvOK(*tv)))
+					croak("intersection: undefined value at array ref index %" UVuf " (argument %" UVuf ")", (UV)j, (UV)i);
+				key = SvPV(*tv, klen);
+				hklen = SvUTF8(*tv) ? -(I32)klen : (I32)klen;
+				if (hv_exists(loc, key, hklen))
+					continue;                      /* already counted for this ref */
+				(void)hv_store(loc, key, hklen, &PL_sv_undef, 0);
+				cv = hv_fetch(count, key, hklen, 1);
+				if (cv && *cv) {
+					if (SvOK(*cv)) sv_setiv(*cv, SvIV(*cv) + 1);
+					else           sv_setiv(*cv, 1);
+				}
+				if (i == 0)
+					av_push(order, newSVsv(*tv));  /* candidates, in first ref's order */
+			}
+		}
+		n = 0;
+		olen = av_len(order) + 1;
+		for (oi = 0; oi < olen; oi++) {
+			SV** e = av_fetch(order, oi, 0);
+			STRLEN klen;
+			const char* key;
+			I32 hklen;
+			SV** cv;
+			if (!(e && *e))
+				continue;
+			key = SvPV(*e, klen);
+			hklen = SvUTF8(*e) ? -(I32)klen : (I32)klen;
+			cv = hv_fetch(count, key, hklen, 0);
+			if (cv && *cv && (size_t)SvIV(*cv) == nrefs) {
+				if (gimme != G_SCALAR)
+					XPUSHs(sv_2mortal(newSVsv(*e)));
+				n++;
+			}
+		}
+		if (gimme == G_SCALAR)
+			XPUSHs(sv_2mortal(newSVuv(n)));
+
 SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 	INIT:
 	// --- validate method -------------------------------------------

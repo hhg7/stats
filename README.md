@@ -1279,6 +1279,46 @@ Computes the histogram of the given data values, operating in single $O(N)$ pass
 
 If `breaks` is not explicitly provided, it defaults to calculating the number of bins using Sturges' formula.
 
+## intersection
+
+Returns the set intersection (∩) of a list of array references: the values
+that appear in **every** array ref given.
+
+	use Stats::LikeR;
+
+	my @i = intersection([1, 2, 3], [2, 3, 4]);          # (2, 3)
+	my @t = intersection([1, 2, 3, 4], [2, 3, 4], [3, 4]); # (3, 4)
+	my $n = intersection([1, 2, 3], [2, 3, 4]);          # 2
+
+Every argument must be an array reference — each one is treated as a set.
+Unlike `mean` and `uniq`, bare scalars are not accepted; passing a non-reference
+(or a non-array reference) croaks.
+
+The result is **deduplicated** and ordered by first appearance in the *first*
+array ref. Duplicate values within any single ref are counted once, so
+`intersection([1, 2, 2, 3], [2, 3, 3, 4])` is `(2, 3)`, not `(2, 2, 3)`.
+
+Values are compared by stringification — the same `eq` semantics used by
+`uniq`. `1`, `1.0`, and `"1"` are treated as equal, while `"3"` and `"3.0"`
+are distinct. The UTF-8 flag is part of the comparison key, so a UTF-8 string
+and a byte-identical non-UTF-8 string are kept separate.
+
+In list context `intersection` returns the shared values; in scalar context it
+returns the cardinality (the number of shared values).
+
+With a single array ref, the result is simply that ref's unique values. If any
+ref is empty, the intersection is empty.
+
+`intersection` croaks on degenerate or ill-formed input, reporting the
+offending position:
+
+	intersection();              # croaks: intersection needs >= 1 array ref
+	intersection([1, 2], 3);     # croaks: argument 1 is not an array ref
+	intersection([1, undef, 3]); # croaks: undefined value at array ref index 1 (argument 0)
+
+This matches the undef-handling of `mean` and `uniq` and the rest of the
+numeric reducers in Stats::LikeR.
+
 ## kruskal_test
 
 Essentially the test determines if all groups have the same median (same distribution) (an excellent review is at https://library.virginia.edu/data/articles/getting-started-with-the-kruskal-wallis-test)
@@ -2461,9 +2501,9 @@ addition of `assign`, which adds new columns based on calculations from other co
 
 addition of `hoa2aoh`, transforming hash of arrays to array of hashes
 
-addition of `predict`, using results from `glm` and `lm`
+addition of `predict`, using results from `aov`, `glm`, and `lm`
 
-addition of `aoh2hoh`, `uniq`, and `vals`
+addition of `aoh2hoh` transforming array of hash into hash of hashes, `intersection`, `uniq`, and `vals`
 
 ### `aov`
 

@@ -11,15 +11,14 @@ use autodie ':default';
 use Exporter 'import';
 use Scalar::Util 'looks_like_number';
 XSLoader::load('Stats::LikeR', $VERSION);
-our @EXPORT_OK = qw(add_data aoh2hoa aoh2hoh aov assign cfilter chisq_test col col2col cor cor_test cov csort dnorm dropna filter fisher_test glm group_by hoa2aoh hoh2hoa hist kruskal_test ks_test ljoin lm matrix max mean median min mode oneway_test p_adjust power_t_test predict prcomp quantile rbinom read_table rnorm runif sample scale sd seq shapiro_test sum summary t_test transpose uniq vals value_counts var var_test view wilcox_test write_table);
+our @EXPORT_OK = qw(add_data aoh2hoa aoh2hoh aov assign cfilter chisq_test col col2col cor cor_test cov csort dnorm dropna filter fisher_test glm group_by hoa2aoh hoh2hoa hist intersection kruskal_test ks_test ljoin lm matrix max mean median min mode oneway_test p_adjust power_t_test predict prcomp quantile rbinom read_table rnorm runif sample scale sd seq shapiro_test sum summary t_test transpose uniq vals value_counts var var_test view wilcox_test write_table);
 our @EXPORT = @EXPORT_OK;
 
 sub aoh2hoh {
 	my ($aoh, $key) = @_;
 	die 'aoh2hoh: first argument must be an arrayref of hashrefs'
 	  unless ref($aoh) eq 'ARRAY';
-	die 'aoh2hoh: a row key must be defined'
-	  unless defined $key;
+	die 'aoh2hoh: a row key must be defined' unless defined $key;
 	my %out;
 	my $i = 0;
 	for my $row (@$aoh) {
@@ -53,8 +52,7 @@ sub assign {
 	my $df = shift;
 	die 'assign: first argument must be a data frame (AoH arrayref or HoA/HoH hashref)'
 	  unless ref $df;
-	die 'assign: expected an even list of (name => coderef) pairs'
-	  if @_ % 2;
+	die 'assign: expected an even list of (name => coderef) pairs' if @_ % 2;
 	my $current_sub = (split(/::/,(caller(0))[3]))[-1];
 	my $r = ref $df;
 	if ($r eq 'ARRAY') { # ----- AoH: add a key to each row hash -----
@@ -1128,6 +1126,140 @@ A row that is B<not> a hash ref is skipped rather than fatal: it contributes C<u
 =head3 Notes
 
 The output column order follows hash iteration order and is therefore not guaranteed — sort the keys if you need a stable layout. Round-tripping through C<hoa2aoh> (or the reverse) reconstructs the data but not necessarily the original key/row ordering, and rows originally absent a key will gain it as an explicit C<undef>.
+
+=head2 C<aoh2hoh>
+
+Index an B<A>rray-B<o>f-B<H>ashes into a B<H>ash-B<o>f-B<H>ashes, keyed by the value of one column.
+
+ my $hoh = aoh2hoh($aoh, $key);
+
+Where C<aoh2hoa> I<transposes> rows into columns, C<aoh2hoh> I<indexes> rows by a chosen field, turning a sequential list into a lookup table. The chosen field is treated as a B<primary key>: it must be unique across the rows, and a repeat is fatal.
+
+=head3 Signature
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>Argument</th>
+  <th>Type</th>
+  <th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>$aoh</code></td>
+  <td>arrayref</td>
+  <td>The rows: an arrayref of hashrefs.</td>
+</tr>
+<tr>
+  <td><code>$key</code></td>
+  <td>scalar</td>
+  <td>The column name whose value indexes each row.</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+Returns a hashref. Each top-level key is a row's C<< $row-E<gt>{$key} >> value; each value is a shallow copy of that row.
+
+ my $rows = [
+     { id => 'p1', kd => 12.4, chain => 'A' },
+     { id => 'p2', kd =>  3.1, chain => 'B' },
+ ];
+ 
+ my $by_id = aoh2hoh($rows, 'id');
+ # {
+ #   p1 => { id => 'p1', kd => 12.4, chain => 'A' },
+ #   p2 => { id => 'p2', kd =>  3.1, chain => 'B' },
+ # }
+ 
+ $by_id->{p2}{kd};   # 3.1 -- O(1) lookup instead of a linear scan
+
+=head3 Semantics
+
+These choices are the parts most worth keeping in mind, because the AoH->HoH mapping is ambiguous where a transpose is not.
+
+B<Duplicate keys are fatal.> If two rows share the same key value, the call dies rather than silently dropping a row:
+
+ aoh2hoh([ { id => 'a', x => 1 }, { id => 'a', x => 9 } ], 'id');
+ # dies: aoh2hoh: duplicate key 'a' has >= 2 occurrences
+
+This makes the chosen column an enforced primary key: the result is only returned if every row maps to a distinct bucket. If your data legitimately has repeats and you want to I<keep> them, you want a hash-of-arrays-of-rows instead -- a different return shape. If you want last-wins or first-wins collapse, dedup the input before calling.
+
+B<The key column is retained> inside each inner hash (the copy is of the whole row). Drop it deliberately if you don't want the redundancy.
+
+B<Shallow copy.> Inner hashes are fresh, so adding or removing keys on the output never touches the input. But a I<value> that is itself a reference is shared, exactly like C<< $out{$rk}{$_} = $row-E<gt>{$_} >>:
+
+ my $shared = [ 1, 2, 3 ];
+ my $out = aoh2hoh([ { id => 'a', data => $shared } ], 'id');
+ push @{ $out->{a}{data} }, 4;   # $shared now has 4 elements too
+
+A row that is not a hashref, or that lacks a defined value at C<$key>, is fatal.
+
+B<Numeric vs string keys collide.> Hash keys are strings, so C<1> and C<"1"> map to the same bucket and therefore trip the duplicate-key die. Normalize the key column first if a row could carry both forms.
+
+=head3 Use cases
+
+B<Join / enrichment lookups.> Build an index once, then attach fields from one dataset onto another by shared id without an O(n*m) nested loop -- and the duplicate-key die guarantees the join side really is keyed uniquely:
+
+ my $meta = aoh2hoh($pdb_metadata, 'pdb_id');
+ for my $hit (@$results) {
+     $hit->{resolution} = $meta->{ $hit->{pdb_id} }{resolution};
+ }
+
+B<Primary-key validation.> Because a repeat is fatal, the call doubles as an assertion that a column is unique -- a cheap way to catch a malformed table (duplicate accession, duplicate peptide id) at load time rather than downstream.
+
+B<Random-access reshaping of tabular data.> After parsing a CSV/TSV into an array of row-hashes, re-index by a primary key so downstream code can fetch a row by name rather than scanning. Pairs naturally with the CSV-parsing side of the toolkit.
+
+B<Set membership and difference.> C<< exists $hoh-E<gt>{$k} >> gives a cheap presence test, useful for asking which ids in one table are missing from another.
+
+=head3 Relationship to C<aoh2hoa>
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>Function</th>
+  <th>Output shape</th>
+  <th>Indexed by</th>
+  <th>Typical question it answers</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>aoh2hoa</code></td>
+  <td>hash of arrayrefs</td>
+  <td>column name</td>
+  <td>"give me every value in column X"</td>
+</tr>
+<tr>
+  <td><code>aoh2hoh</code></td>
+  <td>hash of hashrefs</td>
+  <td>a row's key val</td>
+  <td>"give me the whole row whose id is Y"</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+Reach for C<aoh2hoa> when you want columns (vectors to feed a statistic or a plot); reach for C<aoh2hoh> when you want addressable rows keyed by a unique field.
+
+=head3 Implementation note
+
+The operation is a single pass over the rows with one hash insert per row -- the same asymptotics in pure Perl as in XS, and Perl's hash operations are already C underneath. There is no meaningful speed or memory advantage to an XS implementation here, so pure Perl is preferred unless it must live in the same C<.xs> for packaging parity. The duplicate check is a single C<exists> per row and does not change that. (An XS version would C<croak> on the duplicate before allocating the second copy, so there is no extra cleanup to manage.)
 
 =head2 aov
 
@@ -2706,6 +2838,46 @@ Computes the histogram of the given data values, operating in single $O(N)$ pass
 
 If C<breaks> is not explicitly provided, it defaults to calculating the number of bins using Sturges' formula.
 
+=head2 intersection
+
+Returns the set intersection (∩) of a list of array references: the values
+that appear in B<every> array ref given.
+
+ use Stats::LikeR;
+ 
+ my @i = intersection([1, 2, 3], [2, 3, 4]);          # (2, 3)
+ my @t = intersection([1, 2, 3, 4], [2, 3, 4], [3, 4]); # (3, 4)
+ my $n = intersection([1, 2, 3], [2, 3, 4]);          # 2
+
+Every argument must be an array reference — each one is treated as a set.
+Unlike C<mean> and C<uniq>, bare scalars are not accepted; passing a non-reference
+(or a non-array reference) croaks.
+
+The result is B<deduplicated> and ordered by first appearance in the I<first>
+array ref. Duplicate values within any single ref are counted once, so
+C<intersection([1, 2, 2, 3], [2, 3, 3, 4])> is C<(2, 3)>, not C<(2, 2, 3)>.
+
+Values are compared by stringification — the same C<eq> semantics used by
+C<uniq>. C<1>, C<1.0>, and C<"1"> are treated as equal, while C<"3"> and C<"3.0">
+are distinct. The UTF-8 flag is part of the comparison key, so a UTF-8 string
+and a byte-identical non-UTF-8 string are kept separate.
+
+In list context C<intersection> returns the shared values; in scalar context it
+returns the cardinality (the number of shared values).
+
+With a single array ref, the result is simply that ref's unique values. If any
+ref is empty, the intersection is empty.
+
+C<intersection> croaks on degenerate or ill-formed input, reporting the
+offending position:
+
+ intersection();              # croaks: intersection needs >= 1 array ref
+ intersection([1, 2], 3);     # croaks: argument 1 is not an array ref
+ intersection([1, undef, 3]); # croaks: undefined value at array ref index 1 (argument 0)
+
+This matches the undef-handling of C<mean> and C<uniq> and the rest of the
+numeric reducers in Stats::LikeR.
+
 =head2 kruskal_test
 
 Essentially the test determines if all groups have the same median (same distribution) (an excellent review is at https://library.virginia.edu/data/articles/getting-started-with-the-kruskal-wallis-test)
@@ -3921,60 +4093,42 @@ An empty outer hash or an outer hash whose inner hashes are all empty both retur
 
 Dies if any inner element is not a hash reference
 
-=head2 value_counts
+=head2 uniq
 
-Count the values in a given data set, return a hash reference showing how many times each particular value is present.
+Returns the distinct values of its arguments, in first-seen order.
 
-=head3 Scalar
+ use Stats::LikeR;
+ 
+ my @u = uniq(1, 2, 2, 3, 1);         # (1, 2, 3)
+ my @s = uniq(qw/a b a c/);           # ('a', 'b', 'c')
+ my @f = uniq(1, [2, 2, 3], [3, 4]);  # (1, 2, 3, 4)
+ my $n = uniq(1, 2, 2, 3, 1);         # 3
 
- $hash = value_counts('c');
+C<uniq> accepts a flat list of scalars, array references, or any mix of the
+two. Array references are expanded B<one level> — their elements are treated
+as additional arguments, but nested array references are not recursed into and
+are compared as opaque values.
 
-returns C<< { c =E<gt> 1 } >>
+Values are compared by stringification, the same C<eq> semantics used by
+C<List::Util::uniq>: C<1>, C<1.0>, and C<"1"> all collapse to a single result, and
+the first value seen is the one returned (as a fresh copy, never an alias to
+the input). Order of first appearance is preserved.
 
-=head3 Array reference
+In list context C<uniq> returns the distinct values. In scalar context it
+returns the I<count> of distinct values, matching C<List::Util::uniq>.
 
- value_counts(['a','b','b']);
+The UTF-8 flag is part of the comparison key, so a UTF-8 string and a
+byte-identical non-UTF-8 string are kept distinct — they are different strings.
+Strings that are logically equal and consistently encoded collapse as expected.
 
-returns C<< { a =E<gt> 1, b =E<gt> 2} >>
+Unlike C<List::Util::uniq>, which passes a single C<undef> through, C<uniq>
+B<croaks> on any undefined value, reporting the offending argument index (and
+the array-ref index, when the undef came from inside a reference):
 
-=head3 Array
+ uniq(1, undef, 3);     # croaks: undefined value at argument index 1
+ uniq([1, undef, 3]);   # croaks: undefined value at array ref index 1 (argument 0)
 
- my $value_counts = value_counts('a','b','b');
-
-like an array reference above, returns C<< { a =E<gt> 1, b =E<gt> 2} >>
-
-=head3 Hash
-
- my $value_counts = value_counts( { A => 'a', B => 'a', C => 'b' } );
-
-returns C<< { a =E<gt> 2, b =E<gt> 1} >>
-
-=head3 Hash of array
-
- my $value_counts = value_counts({ 'a' => ['j', 't', 't'], 'b' => ['j', 't', 'v']});
-
-without a key (like above), the occurences of C<j>, C<t>, and C<v> are counted.
-
-With a key, like C<a> for above, only values within that hash key are counted:
-
- my $vc = value_counts({ 'a' => ['j', 't', 't'], 'b' => ['j', 't', 'v']}, 'a');
-
-=head3 Hash of hash (table)
-
- $hash = value_counts( {
-     A => {
-         a => 'x',
-         b => 'z'
-     },
-     B => {
-         a => 'x'
-     },
-     C => {
-         a => 'y'
-     }
- }, 'a');
-
-the column, or second hash key, that you wish to count, is specified at the command line
+This matches the undef-handling of C<mean> and the other functions in Stats::LikeR.
 
 =head2 vals
 
@@ -4055,6 +4209,80 @@ C<vals> accepts all three data-frame shapes and always returns a new arrayref of
  
  # feed straight into the numeric routines
  my $m = mean( vals($aoh, 'Age') );
+
+=head2 value_counts
+
+Count the values in a given data set, return a hash reference showing how many times each particular value is present.
+
+=head3 Scalar
+
+ $hash = value_counts('c');
+
+returns C<< { c =E<gt> 1 } >>
+
+=head3 Array reference
+
+ value_counts(['a','b','b']);
+
+returns C<< { a =E<gt> 1, b =E<gt> 2} >>
+
+=head3 Array
+
+ my $value_counts = value_counts('a','b','b');
+
+like an array reference above, returns C<< { a =E<gt> 1, b =E<gt> 2} >>
+
+=head3 Array of hashes
+
+ my @records = (
+     { name => 'Alice', dept => 'Sales' },
+     { name => 'Bob',   dept => 'Eng'   },
+     { name => 'Carol', dept => 'Sales' },
+ );
+ my $vc = value_counts(\@records, 'dept');
+
+with a key, the value at that key is counted in each hash, so the above returns C<< { Sales =E<gt> 2, Eng =E<gt> 1 } >>. A record that lacks the key is skipped. Passing an array of hashes without a key, or with an element that is not a hash reference, is a fatal error.
+
+=head3 Array of arrays
+
+ my @rows = (['a', 1], ['b', 1], ['a', 2]);
+ my $vc = value_counts(\@rows, 0);
+
+when the elements are array references, the key is treated as a numeric column index, so the above returns C<< { a =E<gt> 2, b =E<gt> 1 } >>. A non-numeric index against array-reference elements is a fatal error.
+
+=head3 Hash
+
+ my $value_counts = value_counts( { A => 'a', B => 'a', C => 'b' } );
+
+returns C<< { a =E<gt> 2, b =E<gt> 1} >>
+
+=head3 Hash of array
+
+ my $value_counts = value_counts({ 'a' => ['j', 't', 't'], 'b' => ['j', 't', 'v']});
+
+without a key (like above), the occurences of C<j>, C<t>, and C<v> are counted.
+With a key, like C<a> for above, only values within that hash key are counted:
+
+ my $vc = value_counts({ 'a' => ['j', 't', 't'], 'b' => ['j', 't', 'v']}, 'a');
+
+=head3 Hash of hash (table)
+
+ $hash = value_counts( {
+     A => {
+         a => 'x',
+         b => 'z'
+     },
+     B => {
+         a => 'x'
+     },
+     C => {
+         a => 'y'
+     }
+ }, 'a');
+
+the column, or second hash key, that you wish to count, is specified at the command line
+
+The two new subsections (Array of hashes, Array of arrays) are the only additions; everything else is unchanged. They're placed after the array-container forms to keep array inputs grouped, mirroring how Hash of array / Hash of hash sit together. If you'd rather I drop this into a C<.md> file or fold it into POD (C<=head3> headers, C<< CE<lt>E<gt> >> for the inline code) for the actual module docs, say the word.
 
 =head2 var
 
@@ -4451,13 +4679,180 @@ addition of C<assign>, which adds new columns based on calculations from other c
 
 addition of C<hoa2aoh>, transforming hash of arrays to array of hashes
 
-addition of C<predict>, using results from C<glm> and C<lm>
+addition of C<predict>, using results from C<aov>, C<glm>, and C<lm>
 
-addition of C<vals>
+addition of C<aoh2hoh> transforming array of hash into hash of hashes, C<intersection>, C<uniq>, and C<vals>
 
-C<view> now returns colored output; fixed bug with incorrect widths; undefined values show as C<undef> rather than C<NA>, as in Data::Printer
+=head3 C<aov>
 
-C<csort> now accepts Hash of Hashes
+=head4 Bug fixes
+
+=over
+
+=item * B<< C<size_t> underflow on empty arrays. >> Three loops were bounded by C<av_len(...)>
+compared against an unsigned counter; C<av_len> returns C<-1> for an empty array,
+which turned C<< k E<lt>= len >> into a C<SIZE_MAX> loop. The C<stack()> value loop, the C<.>
+column-expansion loop, and the C<group_stats> column loop now use a signed
+C<SSize_t> bound.
+
+=item * B<HoH row count.> Row count for hash-of-hashes input was taken from the return
+value of C<hv_iterinit>; it now uses C<HvUSEDKEYS(hv)> with a separate
+C<hv_iterinit>, matching C<predict>.
+
+=item * B<Buffer overflow in interaction parsing.> C<strcpy(right, colon + 1)> into a
+fixed C<char right[256]> is now C<snprintf(right, sizeof(right), ...)>.
+
+=back
+
+=head4 Performance / memory
+
+=over
+
+=item * B<< Removed the per-row C<row_x> scratch allocation. >> Design rows are built
+directly into C<X_mat[valid_n]>; C<valid_n> simply does not advance on a rejected
+row. Interaction columns read their operands from the same in-progress row, so
+the logic is unchanged.
+
+=item * B<< C<row_names> is no longer dead. >> Surviving row names are transferred (pointer
+move, no copy) into C<surv_names> to key C<fitted.values>; rejected rows are freed
+in place.
+
+=item * B<< Dropped a C<restrict> UB. >> C<orig_data_sv> aliases C<data_sv>; the C<restrict>
+qualifier was removed.
+
+=back
+
+=head4 New, C<predict>-compatible output keys
+
+=over
+
+=item * B<< C<coefficients> >> — OLS estimates recovered by back-substitution on the R factor
+left in C<X_mat> against Q'y in C<Y> (no re-derivation). Keys are the expanded term
+names (C<Intercept>, continuous names, C<base.level> dummies, and C<a:b> interaction
+products). Aliased columns are reported as C<NaN>, which C<predict> drops.
+
+=item * B<< C<fitted.values> >> — C<Xb> over the non-aliased columns, keyed by surviving row
+name. Computed from a snapshot of the design (C<Dsav>) taken before the QR
+overwrites C<X_mat>. Costs one transient copy of the design matrix; negligible for
+typical ANOVA where the column count is small.
+
+=item * B<< C<xlevels> >> — sorted level list per factor, index 0 = reference, aligned with
+the contrast coding used to build the dummies.
+
+=item * B<< C<family> >> — C<"gaussian">.
+
+=back
+
+=head4 Cleanup-path correctness
+
+=over
+
+=item * C<xlevels_hv>, C<Dsav>, and C<surv_names> are freed on both the "0 degrees of
+freedom" croak and the normal exit. The interaction-main-effects croak in
+PHASE 3 also frees C<xlevels_hv>.
+
+=back
+
+=head4 Known limitations (unchanged)
+
+=over
+
+=item * The intercept-stripping string surgery (C<-1>, C<+0>, C<+1>, ...) operates on the
+whole RHS and can still mangle C<I(x-1)>-style transforms; treat C<I()> with
+arithmetic constants carefully.
+
+=item * Top-level keys C<coefficients> / C<fitted.values> / C<xlevels> / C<family> /
+C<group_stats> share the return hash with the ANOVA rows; a predictor literally
+named one of those would collide.
+
+=back
+
+=head3 C<predict>
+
+=head4 New: factor-bearing interaction terms
+
+Previously, interaction coefficients such as C<GroupB:Sexmale> or C<GroupB:x> fell
+through to the continuous C<evaluate_term> path and died on a nonexistent column.
+They are now handled directly:
+
+=over
+
+=item * B<< C<dummy_hv> >> stores each dummy's factor base index (an C<IV>) instead of
+C<&PL_sv_yes>, so a dummy name maps back to its C<(base, level)> in O(1)
+(C<level == name + strlen(base)>). C<hv_exists> lookups are unaffected.
+
+=item * During coefficient caching, any C<:> term with at least one factor-dummy component
+is routed to a separate list (C<icopy> / C<ibeta>); pure-continuous interactions
+(e.g. C<x:z>) stay on the existing C<evaluate_term> path, so prior behavior is
+preserved.
+
+=item * Each routed term is parsed once into flat component arrays. Factor components
+store a base index and level pointer; continuous components store the term string
+and get the same up-front column-existence validation as main terms.
+
+=item * Per row, each factor's raw level is read once into C<raw_lv[]> and reused by both
+main effects and interactions (no duplicate C<get_data_string_alloc>). An
+interaction's value is the product of its components: a factor component
+contributes C<1.0> iff the row's level matches the dummy's level (reference levels
+give C<0>), continuous components go through C<evaluate_term>.
+
+=back
+
+This covers factor×factor, factor×continuous, continuous×continuous, and n-way
+combinations.
+
+=head4 Other
+
+=over
+
+=item * HoH row count uses C<HvUSEDKEYS> (already present).
+
+=item * The unseen-factor-level croak now frees every level string already read for the
+current row, not just the current one.
+
+=back
+
+=head3 Tests
+
+=over
+
+=item * B<< C<aov.t> >> — one-way ANOVA against hand-computed values (Df / Sum Sq / Mean Sq /
+F / decomposition); identical results across HoA / HoH / AoH / stacked input;
+simple regression; C<.> expansion; intercept removal (C<-1>); two-way with
+interaction (Type I SS on a balanced design); NaN listwise deletion; all croak
+paths; leak checks.
+
+=item * B<< C<predict.t> >> — C<predict(training) == fitted.values> round-trips for one-way,
+regression, factor×factor, factor×continuous, and continuous×continuous models;
+explicit predicted values; agreement across HoA / AoH / HoH / flat newdata;
+no-newdata path; binomial C<link> vs C<response>; gaussian identity link; all croak
+paths; leak checks.
+
+=back
+
+Leak tests use C<no_leaks_ok> guarded by C<unless $INC{'Devel/Cover.pm'}> and skipped
+when C<Test::LeakTrace> is absent.
+
+=head4 Assumptions worth confirming
+
+=over
+
+=item * The NaN-deletion test relies on C<evaluate_term> returning C<NaN> for a non-finite
+response value (an C<Inf - Inf> NaN is fed in deterministically).
+
+=item * The continuous×continuous round-trip relies on C<evaluate_term("x:z")> yielding
+C<x * z> — the same assumption the pre-existing C<predict> continuous-interaction
+path already made. If that path was untested, this round-trip now exercises it.
+
+=back
+
+=head3 C<view>
+
+now returns colored output; fixed bug with incorrect widths; undefined values show as C<undef> rather than C<NA>, as in Data::Printer
+
+=head3 C<csort>
+
+now accepts Hash of Hashes; addition of C<restrict> which should decrease calculation time
 
 =head3 filter
 
@@ -4526,6 +4921,10 @@ C<col.names=NA> path, and the strict / ragged croak paths.
  3,Charlie,15.2
 
 would not be read correctly using C<read_table>, but now is read correctly
+
+=head3 value_counts
+
+now accepts array of hashes
 
 =head2 0.16
 
