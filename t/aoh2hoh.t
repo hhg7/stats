@@ -3,7 +3,7 @@ require 5.010;
 use warnings FATAL => 'all';
 use Scalar::Util 'reftype';
 use Stats::LikeR;
-use Test::Exception;	# dies_ok, throws_ok
+use Test::Exception;	# dies_ok, throws_ok, lives_ok
 use Test::More;
 use Test::LeakTrace 'no_leaks_ok';
 
@@ -22,6 +22,14 @@ use Test::LeakTrace 'no_leaks_ok';
 }
 
 #--------
+# all-distinct keys do not die
+#--------
+{
+	my $in = [ { id => 'a', x => 1 }, { id => 'b', x => 2 }, { id => 'c', x => 3 } ];
+	lives_ok { aoh2hoh($in, 'id') } 'aoh2hoh: all-distinct keys do not die';
+}
+
+#--------
 # duplicate key value is fatal (primary-key enforcement)
 #--------
 {
@@ -31,57 +39,52 @@ use Test::LeakTrace 'no_leaks_ok';
 }
 
 #--------
-# the die fires on the SECOND occurrence, so a single key never dies
+# a non-hashref row is now fatal, and the message names its index
 #--------
 {
-	my $in = [ { id => 'a', x => 1 }, { id => 'b', x => 2 }, { id => 'c', x => 3 } ];
-	lives_ok { aoh2hoh($in, 'id') } 'aoh2hoh: all-distinct keys do not die';
+	my $in = [ { id => 'a', x => 1 }, 42, { id => 'b', x => 2 } ];
+	throws_ok { aoh2hoh($in, 'id') } qr/index 1 is not a hash/,
+		'aoh2hoh: non-hashref row dies, naming its index';
 }
 
 #--------
-# rows skipped before the key check do NOT count toward a collision:
-# two rows both missing the key are both skipped, not a duplicate
+# a ref that is not a hashref (e.g. arrayref) is also "not a hash"
 #--------
 {
-	my $in  = [ { id => 'a', x => 1 }, { x => 5 }, { x => 6 } ];
-	my $out;
-	lives_ok { $out = aoh2hoh($in, 'id') }
-		'aoh2hoh: two keyless rows are skipped, not a duplicate';
-	is_deeply(
-		$out,
-		{ a => { id => 'a', x => 1 } },
-		'aoh2hoh: keyless rows contribute nothing'
-	);
+	my $in = [ { id => 'a', x => 1 }, [qw/not a hash/] ];
+	throws_ok { aoh2hoh($in, 'id') } qr/index 1 is not a hash/,
+		'aoh2hoh: arrayref row dies (ref but not HASH)';
 }
 
 #--------
-# non-hashref rows are skipped, not fatal
+# failure at the very first row reports index 0
 #--------
 {
-	my $in  = [ { id => 'a', x => 1 }, 42, [qw/not a hash/], { id => 'b', x => 2 } ];
-	my $out = aoh2hoh($in, 'id');
-	is_deeply(
-		$out,
-		{ a => { id => 'a', x => 1 }, b => { id => 'b', x => 2 } },
-		'aoh2hoh: non-hashref rows skipped'
-	);
+	my $in = [ 42, { id => 'a', x => 1 } ];
+	throws_ok { aoh2hoh($in, 'id') } qr/index 0 is not a hash/,
+		'aoh2hoh: failure at first row names index 0';
 }
 
 #--------
-# rows with missing / undef key value are skipped
+# a row missing the key is fatal, naming both the index and the key
 #--------
 {
-	my $in  = [ { id => 'a', x => 1 }, { x => 5 }, { id => undef, x => 6 } ];
-	my $out = aoh2hoh($in, 'id');
-	is_deeply(
-		$out,
-		{ a => { id => 'a', x => 1 } },
-		'aoh2hoh: missing/undef key rows skipped'
-	);
+	my $in = [ { id => 'a', x => 1 }, { x => 5 } ];
+	throws_ok { aoh2hoh($in, 'id') } qr/index 1 has no key "id"/,
+		'aoh2hoh: row missing the key dies, naming index and key';
 }
 
 #--------
-# empty input -> empty hash
+# a defined-but-undef key value is fatal (defined check, not exists)
+#--------
+{
+	my $in = [ { id => 'a', x => 1 }, { id => undef, x => 6 } ];
+	throws_ok { aoh2hoh($in, 'id') } qr/index 1 has no key "id"/,
+		'aoh2hoh: undef key value dies';
+}
+
+#--------
+# empty input -> empty hash (loop body never runs)
 #--------
 {
 	my $out = aoh2hoh([], 'id');
@@ -156,9 +159,15 @@ unless ($INC{'Devel/Cover.pm'}) {
 
 	no_leaks_ok {
 		eval {
-			aoh2hoh([ { id => 'a' }, 42, { x => 5 } ], 'id')
+			aoh2hoh([ { id => 'a', x => 1 }, 42 ], 'id')
 		}
-	} 'aoh2hoh(): no leaks when rows are skipped';
+	} 'aoh2hoh(): no leaks when dying on a non-hash row';
+
+	no_leaks_ok {
+		eval {
+			aoh2hoh([ { id => 'a', x => 1 }, { x => 5 } ], 'id')
+		}
+	} 'aoh2hoh(): no leaks when dying on a missing-key row';
 }
 
 done_testing();

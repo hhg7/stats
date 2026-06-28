@@ -6799,8 +6799,8 @@ SV* quantile(...)
 NV mean(...)
 	PROTOTYPE: @
 	INIT:
-	  NV total = 0;
-	  size_t count = 0;
+		NV total = 0;
+		size_t count = 0;
 	CODE:
 		for (size_t i = 0; i < items; i++) {
 			SV* restrict arg = ST(i);
@@ -6808,25 +6808,25 @@ NV mean(...)
 				AV* restrict av = (AV*)SvRV(arg);
 				size_t len = av_len(av) + 1;
 				for (size_t j = 0; j < len; j++) {
-					 SV** restrict tv = av_fetch(av, j, 0);
-					 if (tv && SvOK(*tv)) {
-						 total += SvNV(*tv);
-						 count++;
-					 } else {
-						 croak("mean: undefined value at array ref index %zu (argument %zu)", j, i);
-					 }
+					SV** restrict tv = av_fetch(av, j, 0);
+					if (tv && SvOK(*tv)) {
+						total += SvNV(*tv);
+						count++;
+					} else {
+						croak("mean: undefined value at array ref index %" UVuf " (argument %" UVuf ")", (UV)j, (UV)i);
+					}
 				}
 			} else if (SvOK(arg)) {
-				 total += SvNV(arg);
-				 count++;
+				total += SvNV(arg);
+				count++;
 			} else {
-				 croak("mean: undefined value at argument index %zu", i);
+				croak("mean: undefined value at argument index %" UVuf, (UV)i);
 			}
 		}
 		if (count == 0) croak("mean needs >= 1 element");
 		RETVAL = total / count;
 	OUTPUT:
-	  RETVAL
+		RETVAL
 
 void mode(...)
 	PROTOTYPE: @
@@ -6962,6 +6962,63 @@ NV sd(...)
 		RETVAL = sqrt(M2 / (count - 1));
 	OUTPUT:
 	  RETVAL
+
+void uniq(...)
+	PROTOTYPE: @
+	PREINIT:
+		HV*restrict seen;
+		AV*restrict out;
+		size_t n;
+		size_t k;
+		int gimme;
+	PPCODE:
+		n = 0;
+		gimme = GIMME_V;
+		seen = (HV*)sv_2mortal((SV*)newHV());
+		out  = (AV*)sv_2mortal((SV*)newAV());
+		for (size_t i = 0; i < items; i++) {
+			SV* restrict arg = ST(i);
+			if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
+				AV* restrict av = (AV*)SvRV(arg);
+				size_t len = av_len(av) + 1;
+				for (size_t j = 0; j < len; j++) {
+					SV** restrict tv = av_fetch(av, j, 0);
+					if (tv && SvOK(*tv)) {
+						STRLEN klen;
+						const char*restrict key = SvPV(*tv, klen);
+						I32 hklen = SvUTF8(*tv) ? -(I32)klen : (I32)klen;
+						if (!hv_exists(seen, key, hklen)) {
+							(void)hv_store(seen, key, hklen, &PL_sv_undef, 0);
+							if (gimme != G_SCALAR)
+								av_push(out, newSVsv(*tv));
+							n++;
+						}
+					} else {
+						croak("uniq: undefined value at array ref index %" UVuf " (argument %" UVuf ")", (UV)j, (UV)i);
+					}
+				}
+			} else if (SvOK(arg)) {
+				STRLEN klen;
+				const char* key = SvPV(arg, klen);
+				I32 hklen = SvUTF8(arg) ? -(I32)klen : (I32)klen;
+				if (!hv_exists(seen, key, hklen)) {
+					(void)hv_store(seen, key, hklen, &PL_sv_undef, 0);
+					if (gimme != G_SCALAR)
+						av_push(out, newSVsv(arg));
+					n++;
+				}
+			} else {
+				croak("uniq: undefined value at argument index %" UVuf, (UV)i);
+			}
+		}
+		if (gimme == G_SCALAR) {
+			XPUSHs(sv_2mortal(newSVuv(n)));
+		} else {
+			size_t outlen = av_len(out) + 1;
+			EXTEND(SP, (SSize_t)outlen);
+			for (k = 0; k < outlen; k++)
+				PUSHs(sv_2mortal(av_shift(out)));
+		}
 
 NV var(...)
 	PROTOTYPE: @

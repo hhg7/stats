@@ -201,7 +201,7 @@ This makes the chosen column an enforced primary key: the result is only returne
     my $out = aoh2hoh([ { id => 'a', data => $shared } ], 'id');
     push @{ $out->{a}{data} }, 4;   # $shared now has 4 elements too
 
-**Skipped, not fatal.** A row that is not a hashref, or that lacks a defined value at `$key`, contributes nothing and does not raise an error -- only a *duplicate* defined key is fatal. A non-arrayref first argument or an undefined `$key` is also fatal.
+A row that is not a hashref, or that lacks a defined value at `$key`, is fatal.
 
 **Numeric vs string keys collide.** Hash keys are strings, so `1` and `"1"` map to the same bucket and therefore trip the duplicate-key die. Normalize the key column first if a row could carry both forms.
 
@@ -2106,6 +2106,43 @@ An empty outer hash or an outer hash whose inner hashes are all empty both retur
 
 Dies if any inner element is not a hash reference
 
+## uniq
+
+Returns the distinct values of its arguments, in first-seen order.
+
+	use Stats::LikeR;
+
+	my @u = uniq(1, 2, 2, 3, 1);         # (1, 2, 3)
+	my @s = uniq(qw/a b a c/);           # ('a', 'b', 'c')
+	my @f = uniq(1, [2, 2, 3], [3, 4]);  # (1, 2, 3, 4)
+	my $n = uniq(1, 2, 2, 3, 1);         # 3
+
+`uniq` accepts a flat list of scalars, array references, or any mix of the
+two. Array references are expanded **one level** — their elements are treated
+as additional arguments, but nested array references are not recursed into and
+are compared as opaque values.
+
+Values are compared by stringification, the same `eq` semantics used by
+`List::Util::uniq`: `1`, `1.0`, and `"1"` all collapse to a single result, and
+the first value seen is the one returned (as a fresh copy, never an alias to
+the input). Order of first appearance is preserved.
+
+In list context `uniq` returns the distinct values. In scalar context it
+returns the *count* of distinct values, matching `List::Util::uniq`.
+
+The UTF-8 flag is part of the comparison key, so a UTF-8 string and a
+byte-identical non-UTF-8 string are kept distinct — they are different strings.
+Strings that are logically equal and consistently encoded collapse as expected.
+
+Unlike `List::Util::uniq`, which passes a single `undef` through, `uniq`
+**croaks** on any undefined value, reporting the offending argument index (and
+the array-ref index, when the undef came from inside a reference):
+
+	uniq(1, undef, 3);     # croaks: undefined value at argument index 1
+	uniq([1, undef, 3]);   # croaks: undefined value at array ref index 1 (argument 0)
+
+This matches the undef-handling of `mean` and the other functions in Stats::LikeR.
+
 ## vals
 
 Extract a single column from a data frame as a flat array reference, similar to pandas' `to_list`
@@ -2426,7 +2463,7 @@ addition of `hoa2aoh`, transforming hash of arrays to array of hashes
 
 addition of `predict`, using results from `glm` and `lm`
 
-addition of `aoh2hoh` and `vals`
+addition of `aoh2hoh`, `uniq`, and `vals`
 
 ### `view`
 
