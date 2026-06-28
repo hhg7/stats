@@ -1,7 +1,6 @@
 #!/usr/bin/env perl
 require 5.010;
 use warnings FATAL => 'all';
-use feature 'say';
 use Scalar::Util 'looks_like_number';
 use Stats::LikeR;
 use Test::Exception; # dies_ok
@@ -213,12 +212,12 @@ throws_ok { aov({ y => [1, 2], g => [qw(A B)] }, 'y~g') } qr/degrees of freedom/
 #--------
 no_leaks_ok {
 	eval { aov(\%oneway, 'y~g') }
-} 'aov one-way: no leaks';
+} 'aov one-way: no leaks' unless $INC{'Devel/Cover.pm'};
 no_leaks_ok {
 	eval { aov(\%twoway, 'y~A*B') }
-} 'aov two-way interaction: no leaks';
+} 'aov two-way interaction: no leaks' unless $INC{'Devel/Cover.pm'};
 no_leaks_ok {
 	eval { aov({}, 'y~x') }
-} 'aov croak path: no leaks';
+} 'aov croak path: no leaks' unless $INC{'Devel/Cover.pm'};
 
 done_testing();

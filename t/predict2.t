@@ -183,15 +183,15 @@ throws_ok { predict($m_fxc, { g => ['g1'] }) } qr/missing column 'x'/, 'interact
 #--------
 no_leaks_ok {
 	eval { predict($m_oneway, { g => [qw(A B C)] }) }
-} 'predict factor: no leaks';
+} 'predict factor: no leaks' unless $INC{'Devel/Cover.pm'};
 no_leaks_ok {
 	eval { predict($m_two, \%twoway) }
-} 'predict fxf interaction: no leaks';
+} 'predict fxf interaction: no leaks' unless $INC{'Devel/Cover.pm'};
 no_leaks_ok {
 	eval { predict($m_fxc, \%fxc) }
-} 'predict fxc interaction: no leaks';
+} 'predict fxc interaction: no leaks' unless $INC{'Devel/Cover.pm'};
 no_leaks_ok {
 	eval { predict($m_oneway, { g => ['Z'] }) }
-} 'predict croak path: no leaks';
+} 'predict croak path: no leaks' unless $INC{'Devel/Cover.pm'};
 
 done_testing();

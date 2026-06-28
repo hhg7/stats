@@ -6806,8 +6806,8 @@ NV mean(...)
 			SV* restrict arg = ST(i);
 			if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
 				AV* restrict av = (AV*)SvRV(arg);
-				size_t len = av_len(av) + 1;
-				for (size_t j = 0; j < len; j++) {
+				SSize_t len = av_len(av) + 1;
+				for (SSize_t j = 0; j < len; j++) {
 					SV** restrict tv = av_fetch(av, j, 0);
 					if (tv && SvOK(*tv)) {
 						total += SvNV(*tv);
@@ -6845,7 +6845,7 @@ void mode(...)
 		SV *restrict arg = ST(i);
 		if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
 			AV *restrict av = (AV *)SvRV(arg);
-			size_t len = av_len(av) + 1;
+			SSize_t len = av_len(av) + 1;
 			for (size_t j = 0; j < len; j++) {
 				SV **restrict tv = av_fetch(av, j, 0);
 				if (tv && SvOK(*tv)) {
@@ -6902,7 +6902,7 @@ NV sum(...)
 			SV* restrict arg = ST(i);
 			if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
 				 AV* restrict av = (AV*)SvRV(arg);
-				 size_t len = av_len(av) + 1;
+				 SSize_t len = av_len(av) + 1;
 				 for (size_t j = 0; j < len; j++) {
 					 SV** restrict tv = av_fetch(av, j, 0);
 					 if (tv && SvOK(*tv)) {
@@ -6935,7 +6935,7 @@ NV sd(...)
 			SV* restrict arg = ST(i);
 			if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
 				AV* restrict av = (AV*)SvRV(arg);
-				size_t len = av_len(av) + 1;
+				SSize_t len = av_len(av) + 1;
 				for (size_t j = 0; j < len; j++) {
 				  SV** restrict tv = av_fetch(av, j, 0);
 				  if (tv && SvOK(*tv)) {
@@ -6968,8 +6968,7 @@ void uniq(...)
 	PREINIT:
 		HV*restrict seen;
 		AV*restrict out;
-		size_t n;
-		size_t k;
+		size_t n, k;
 		int gimme;
 	PPCODE:
 		n = 0;
@@ -6999,7 +6998,7 @@ void uniq(...)
 				}
 			} else if (SvOK(arg)) {
 				STRLEN klen;
-				const char* key = SvPV(arg, klen);
+				const char*restrict key = SvPV(arg, klen);
 				I32 hklen = SvUTF8(arg) ? -(I32)klen : (I32)klen;
 				if (!hv_exists(seen, key, hklen)) {
 					(void)hv_store(seen, key, hklen, &PL_sv_undef, 0);
@@ -7031,7 +7030,7 @@ NV var(...)
 			SV* restrict arg = ST(i);
 			if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
 				 AV* restrict av = (AV*)SvRV(arg);
-				 size_t len = av_len(av) + 1;
+				 SSize_t len = av_len(av) + 1;
 				 for (size_t j = 0; j < len; j++) {
 					  SV** restrict tv = av_fetch(av, j, 0);
 					  if (tv && SvOK(*tv)) {
@@ -7101,7 +7100,7 @@ SV* t_test(...)
 		if (!x_sv || !SvROK(x_sv) || SvTYPE(SvRV(x_sv)) != SVt_PVAV)
 			croak("t_test: 'x' is a required argument and must be an ARRAY reference");
 		AV*restrict x_av = (AV*)SvRV(x_sv);
-		size_t nx = av_len(x_av) + 1;
+		SSize_t nx = av_len(x_av) + 1;
 		if (nx < 2) croak("t_test: 'x' needs at least 2 elements");
 		AV*restrict y_av = NULL;
 		if (y_sv && SvROK(y_sv) && SvTYPE(SvRV(y_sv)) == SVt_PVAV)
@@ -7123,7 +7122,7 @@ SV* t_test(...)
 
 		if (paired || y_av) {
 			if (!y_av) croak("t_test: 'y' must be provided for paired or two-sample tests");
-			size_t ny = av_len(y_av) + 1;
+			SSize_t ny = av_len(y_av) + 1;
 			if (paired && ny != nx) croak("t_test: Paired arrays must be same length");
 			NV mean_y = 0.0, M2_y = 0.0, var_y;
 			for (size_t i = 0; i < ny; i++) {
@@ -7214,7 +7213,7 @@ void p_adjust(SV* p_sv, const char* method = "holm")
 			croak("p_adjust: first argument must be an ARRAY reference of p-values");
 		}
 		AV *restrict p_av = (AV*)SvRV(p_sv);
-		size_t n = av_len(p_av) + 1;
+		SSize_t n = av_len(p_av) + 1;
 		// Handle empty input
 		if (n == 0) {
 			XSRETURN_EMPTY;

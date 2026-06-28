@@ -2465,6 +2465,111 @@ addition of `predict`, using results from `glm` and `lm`
 
 addition of `aoh2hoh`, `uniq`, and `vals`
 
+### `aov`
+
+#### Bug fixes
+- **`size_t` underflow on empty arrays.** Three loops were bounded by `av_len(...)`
+  compared against an unsigned counter; `av_len` returns `-1` for an empty array,
+  which turned `k <= len` into a `SIZE_MAX` loop. The `stack()` value loop, the `.`
+  column-expansion loop, and the `group_stats` column loop now use a signed
+  `SSize_t` bound.
+- **HoH row count.** Row count for hash-of-hashes input was taken from the return
+  value of `hv_iterinit`; it now uses `HvUSEDKEYS(hv)` with a separate
+  `hv_iterinit`, matching `predict`.
+- **Buffer overflow in interaction parsing.** `strcpy(right, colon + 1)` into a
+  fixed `char right[256]` is now `snprintf(right, sizeof(right), ...)`.
+
+#### Performance / memory
+- **Removed the per-row `row_x` scratch allocation.** Design rows are built
+  directly into `X_mat[valid_n]`; `valid_n` simply does not advance on a rejected
+  row. Interaction columns read their operands from the same in-progress row, so
+  the logic is unchanged.
+- **`row_names` is no longer dead.** Surviving row names are transferred (pointer
+  move, no copy) into `surv_names` to key `fitted.values`; rejected rows are freed
+  in place.
+- **Dropped a `restrict` UB.** `orig_data_sv` aliases `data_sv`; the `restrict`
+  qualifier was removed.
+
+#### New, `predict`-compatible output keys
+- **`coefficients`** — OLS estimates recovered by back-substitution on the R factor
+  left in `X_mat` against Q'y in `Y` (no re-derivation). Keys are the expanded term
+  names (`Intercept`, continuous names, `base.level` dummies, and `a:b` interaction
+  products). Aliased columns are reported as `NaN`, which `predict` drops.
+- **`fitted.values`** — `Xb` over the non-aliased columns, keyed by surviving row
+  name. Computed from a snapshot of the design (`Dsav`) taken before the QR
+  overwrites `X_mat`. Costs one transient copy of the design matrix; negligible for
+  typical ANOVA where the column count is small.
+- **`xlevels`** — sorted level list per factor, index 0 = reference, aligned with
+  the contrast coding used to build the dummies.
+- **`family`** — `"gaussian"`.
+
+#### Cleanup-path correctness
+- `xlevels_hv`, `Dsav`, and `surv_names` are freed on both the "0 degrees of
+  freedom" croak and the normal exit. The interaction-main-effects croak in
+  PHASE 3 also frees `xlevels_hv`.
+
+#### Known limitations (unchanged)
+- The intercept-stripping string surgery (`-1`, `+0`, `+1`, ...) operates on the
+  whole RHS and can still mangle `I(x-1)`-style transforms; treat `I()` with
+  arithmetic constants carefully.
+- Top-level keys `coefficients` / `fitted.values` / `xlevels` / `family` /
+  `group_stats` share the return hash with the ANOVA rows; a predictor literally
+  named one of those would collide.
+
+### `predict`
+
+#### New: factor-bearing interaction terms
+Previously, interaction coefficients such as `GroupB:Sexmale` or `GroupB:x` fell
+through to the continuous `evaluate_term` path and died on a nonexistent column.
+They are now handled directly:
+
+- **`dummy_hv`** stores each dummy's factor base index (an `IV`) instead of
+  `&PL_sv_yes`, so a dummy name maps back to its `(base, level)` in O(1)
+  (`level == name + strlen(base)`). `hv_exists` lookups are unaffected.
+- During coefficient caching, any `:` term with at least one factor-dummy component
+  is routed to a separate list (`icopy` / `ibeta`); pure-continuous interactions
+  (e.g. `x:z`) stay on the existing `evaluate_term` path, so prior behavior is
+  preserved.
+- Each routed term is parsed once into flat component arrays. Factor components
+  store a base index and level pointer; continuous components store the term string
+  and get the same up-front column-existence validation as main terms.
+- Per row, each factor's raw level is read once into `raw_lv[]` and reused by both
+  main effects and interactions (no duplicate `get_data_string_alloc`). An
+  interaction's value is the product of its components: a factor component
+  contributes `1.0` iff the row's level matches the dummy's level (reference levels
+  give `0`), continuous components go through `evaluate_term`.
+
+This covers factor×factor, factor×continuous, continuous×continuous, and n-way
+combinations.
+
+#### Other
+- HoH row count uses `HvUSEDKEYS` (already present).
+- The unseen-factor-level croak now frees every level string already read for the
+  current row, not just the current one.
+
+### Tests
+
+- **`aov.t`** — one-way ANOVA against hand-computed values (Df / Sum Sq / Mean Sq /
+  F / decomposition); identical results across HoA / HoH / AoH / stacked input;
+  simple regression; `.` expansion; intercept removal (`-1`); two-way with
+  interaction (Type I SS on a balanced design); NaN listwise deletion; all croak
+  paths; leak checks.
+- **`predict.t`** — `predict(training) == fitted.values` round-trips for one-way,
+  regression, factor×factor, factor×continuous, and continuous×continuous models;
+  explicit predicted values; agreement across HoA / AoH / HoH / flat newdata;
+  no-newdata path; binomial `link` vs `response`; gaussian identity link; all croak
+  paths; leak checks.
+
+Leak tests use `no_leaks_ok` guarded by `unless $INC{'Devel/Cover.pm'}` and skipped
+when `Test::LeakTrace` is absent.
+
+#### Assumptions worth confirming
+- The NaN-deletion test relies on `evaluate_term` returning `NaN` for a non-finite
+  response value (an `Inf - Inf` NaN is fed in deterministically).
+- The continuous×continuous round-trip relies on `evaluate_term("x:z")` yielding
+  `x * z` — the same assumption the pre-existing `predict` continuous-interaction
+  path already made. If that path was untested, this round-trip now exercises it.
+
 ### `view`
 
 now returns colored output; fixed bug with incorrect widths; undefined values show as `undef` rather than `NA`, as in Data::Printer
