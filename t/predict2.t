@@ -1,8 +1,6 @@
 #!/usr/bin/env perl
 require 5.010;
 use warnings FATAL => 'all';
-use feature 'say';
-use Scalar::Util 'looks_like_number';
 use Stats::LikeR;
 use Test::Exception; # dies_ok
 use Test::More;
