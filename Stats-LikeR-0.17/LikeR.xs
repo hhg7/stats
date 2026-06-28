@@ -7412,9 +7412,12 @@ NV median(...)
 void intersection(...)
 	PROTOTYPE: @
 	PREINIT:
-		HV*restrict count;
-		AV*restrict order;
-		size_t nrefs, n, oi, olen;
+		HV* count;
+		AV* order;
+		size_t nrefs;
+		size_t n;
+		size_t oi;
+		size_t olen;
 		int gimme;
 	PPCODE:
 		gimme = GIMME_V;
@@ -7425,7 +7428,7 @@ void intersection(...)
 		order = (AV*)sv_2mortal((SV*)newAV());
 		for (size_t i = 0; i < nrefs; i++) {
 			SV* restrict arg = ST(i);
-			HV*restrict loc;
+			HV* loc;
 			AV* restrict av;
 			size_t len;
 			if (!(SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV))
@@ -7436,9 +7439,9 @@ void intersection(...)
 			for (size_t j = 0; j < len; j++) {
 				SV** restrict tv = av_fetch(av, j, 0);
 				STRLEN klen;
-				const char*restrict key;
+				const char* key;
 				I32 hklen;
-				SV**restrict cv;
+				SV** cv;
 				if (!(tv && SvOK(*tv)))
 					croak("intersection: undefined value at array ref index %" UVuf " (argument %" UVuf ")", (UV)j, (UV)i);
 				key = SvPV(*tv, klen);
@@ -7458,11 +7461,11 @@ void intersection(...)
 		n = 0;
 		olen = av_len(order) + 1;
 		for (oi = 0; oi < olen; oi++) {
-			SV**restrict e = av_fetch(order, oi, 0);
+			SV** e = av_fetch(order, oi, 0);
 			STRLEN klen;
-			const char*restrict key;
+			const char* key;
 			I32 hklen;
-			SV**restrict cv;
+			SV** cv;
 			if (!(e && *e))
 				continue;
 			key = SvPV(*e, klen);
@@ -7497,9 +7500,9 @@ SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 	// --- detect whether x is a flat vector or a matrix (AoA) -------
 	bool x_is_matrix = 0;
 	{
-		SV**restrict fp = av_fetch(x_av, 0, 0);
-		if (fp && SvROK(*fp) && SvTYPE(SvRV(*fp)) == SVt_PVAV)
-			x_is_matrix = 1;
+		  SV**restrict fp = av_fetch(x_av, 0, 0);
+		  if (fp && SvROK(*fp) && SvTYPE(SvRV(*fp)) == SVt_PVAV)
+			  x_is_matrix = 1;
 	}
 
 	// --- detect y ----------------------------

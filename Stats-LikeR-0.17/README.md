@@ -2495,10 +2495,6 @@ Args can also be accepted:
 
 # changes
 
-## 0.18
-
-`restrict` keyword added to numerous places within `intersection` to decrease CPU time
-
 ## 0.17
 
 addition of `assign`, which adds new columns based on calculations from other columns
