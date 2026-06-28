@@ -4673,6 +4673,10 @@ Args can also be accepted:
 
 =head1 changes
 
+=head2 0.18
+
+C<restrict> keyword added to numerous places within C<intersection> to decrease CPU time
+
 =head2 0.17
 
 addition of C<assign>, which adds new columns based on calculations from other columns
