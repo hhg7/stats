@@ -2499,6 +2499,10 @@ Args can also be accepted:
 
 `restrict` keyword added to numerous places within `intersection` to decrease CPU time
 
+fix to dist.ini for dependencies
+
+fixed POD rendering
+
 ## 0.17
 
 addition of `assign`, which adds new columns based on calculations from other columns
