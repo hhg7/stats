@@ -5469,7 +5469,7 @@ SV *predict(...)
 			if (nbase) { Newx(raw_lv, nbase, char*); SAVEFREEPV(raw_lv); }
 
 			/* ---- per row: linear predictor, then inverse link ---- */
-			out_hv = newHV();
+			out_hv = newHV(); SAVEFREESV((SV*)out_hv);   /* freed on croak; ref taken before LEAVE on success */
 			for (i = 0; i < n; i++) {
 				NV   eta = 0.0, pred;
 				bool ok  = TRUE;
@@ -5543,8 +5543,8 @@ SV *predict(...)
 				hv_store(out_hv, row_names[i], (I32)strlen(row_names[i]), newSVnv(pred), 0);
 			}
 
+			RETVAL = newRV_inc((SV*)out_hv);   /* +1 -> survives the SAVEFREESV decrement at LEAVE */
 			FREETMPS; LEAVE;
-			RETVAL = newRV_noinc((SV*)out_hv);
 		}
 	}
 	OUTPUT:
