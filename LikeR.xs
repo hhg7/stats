@@ -11013,15 +11013,17 @@ PPCODE:
 	XSRETURN(1);
 }
 
-void _qcut_core(data_ref, probs_ref, drop_dups)
+void
+_qcut_core(data_ref, probs_ref, drop_dups, want_codes)
 	SV *data_ref
 	SV *probs_ref
 	IV drop_dups
+	IV want_codes
 PREINIT:
 	AV  *data_av;
 	AV  *probs_av;
 	AV  *edge_av;
-	AV  *code_av;
+	AV  *code_av = NULL;
 	SV **el;
 	IV   n, m, i, j, ne, w;
 	NV  *srt  = NULL;
@@ -11095,37 +11097,43 @@ PPCODE:
 	for (j = 0; j < ne; j++)
 		av_push(edge_av, newSVnv(edges[j]));
 
-	/* assign each original value to a 0-based bin; lowest is inclusive */
-	code_av = newAV();
-	av_extend(code_av, n - 1);
-	for (i = 0; i < n; i++) {
-		el = av_fetch(data_av, i, 0);
-		v  = (el && SvOK(*el)) ? SvNV(*el) : 0.0;
-		if (v <= edges[0]) {
-			bin = 0;
-		} else if (v >= edges[ne - 1]) {
-			bin = ne - 2;
-		} else {
-			lo2 = 1;
-			hi2 = ne - 1;
-			k   = ne - 1;
-			while (lo2 <= hi2) {
-				mid = lo2 + ((hi2 - lo2) >> 1);
-				if (edges[mid] >= v) {
-					k   = mid;
-					hi2 = mid - 1;
-				} else {
-					lo2 = mid + 1;
+	/* assign each original value to a 0-based bin only if codes are wanted;
+	   lowest bin is inclusive on both ends */
+	if (want_codes) {
+		code_av = newAV();
+		av_extend(code_av, n - 1);
+		for (i = 0; i < n; i++) {
+			el = av_fetch(data_av, i, 0);
+			v  = (el && SvOK(*el)) ? SvNV(*el) : 0.0;
+			if (v <= edges[0]) {
+				bin = 0;
+			} else if (v >= edges[ne - 1]) {
+				bin = ne - 2;
+			} else {
+				lo2 = 1;
+				hi2 = ne - 1;
+				k   = ne - 1;
+				while (lo2 <= hi2) {
+					mid = lo2 + ((hi2 - lo2) >> 1);
+					if (edges[mid] >= v) {
+						k   = mid;
+						hi2 = mid - 1;
+					} else {
+						lo2 = mid + 1;
+					}
 				}
+				bin = k - 1;
 			}
-			bin = k - 1;
+			av_push(code_av, newSViv(bin));
 		}
-		av_push(code_av, newSViv(bin));
 	}
 
 	Safefree(edges);
 
 	EXTEND(SP, 2);
-	PUSHs(sv_2mortal(newRV_noinc((SV *) code_av)));
+	if (want_codes)
+		PUSHs(sv_2mortal(newRV_noinc((SV *) code_av)));
+	else
+		PUSHs(&PL_sv_undef);
 	PUSHs(sv_2mortal(newRV_noinc((SV *) edge_av)));
 

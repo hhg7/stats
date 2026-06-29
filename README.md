@@ -1835,7 +1835,7 @@ or `I()` transforms.
 
 ## qcut
 
-Equal-frequency binning of a numeric column; the analog of pandas `qcut`.
+Equal-frequency binning of a numeric column — the analog of pandas `qcut`.
 Where `cut` would slice a value range into equal-*width* intervals (and dump
 most of a skewed distribution into one bin), `qcut` chooses cutpoints so each
 bin holds roughly the same *number* of observations. This is the binning you
@@ -1851,51 +1851,73 @@ the minimum value is always included.
     qcut($data, $q, %options)
 
   - `$data` — an array reference of numbers. `undef` entries are treated as
-    missing (NA): they are skipped when computing cutpoints and come back as
-    `undef` in the result, in their original positions.
+    missing (NA): they are skipped when computing cutpoints and, when codes are
+    requested, come back as `undef` in their original positions.
   - `$q` — either a positive integer (the number of equal-frequency bins) or an
     array reference of probabilities in `[0, 1]` giving explicit cut
     boundaries, e.g. `[0, 0.5, 0.95, 1]`.
 
-Options:
+For a usage reminder at the prompt, call `qcut('h')` (or `qcut('H')`); it dies
+with a short help message.
 
-  - `labels => [...]` — map the integer bin codes onto your own labels. The
-    list length must equal the number of bins.
+### What it returns
+
+By default `qcut` returns the **edge vector as a flat list** — the cheap,
+common query — so call it in list context:
+
+    my @edges = qcut($data, 4);          # ($e0, $e1, $e2, $e3, $e4)
+
+The per-element bin assignment (the expensive part) is opt-in. Ask for it with
+`codes => 1` and you get an array reference parallel to `$data`:
+
+    my $codes = qcut($data, 4, codes => 1);
+
+Ask for both in a single pass and you get two references, `($codes, $edges)`:
+
+    my ($codes, $edges) = qcut($data, 4, codes => 1, edges => 1);
+
+### Options
+
+  - `edges => 1` — include the edge vector. On by default; turned off
+    automatically when you request codes, so set it explicitly to get both.
+  - `codes => 1` — include the 0-based integer bin codes.
+  - `labels => [...]` — map the bin codes onto your own labels (implies
+    `codes => 1`). The list length must equal the number of bins.
   - `labels => 'interval'` — label each element with its interval string,
-    e.g. `(3.25, 5.5]`.
+    e.g. `(3.25, 5.5]` (also implies codes).
   - `duplicates => 'drop'` — if tied data produces non-unique cutpoints, merge
     them into fewer bins instead of dying. The default, `'raise'`, throws an
     error (as pandas does).
 
-### Return value
-
-In scalar context `qcut` returns an array reference of bin assignments,
-parallel to `$data` (0-based integer codes, or your labels). In list context it
-also returns the edge vector:
-
-    my $codes          = qcut($data, 4);          # arrayref of codes
-    my ($codes, $edges) = qcut($data, 4);         # codes plus edge vector
-
 ### Examples
 
-Quartiles. The codes are 0-based; note the tie distribution matches pandas
-(the inner bins each take 2 here, the outer bins 3):
+Quartile edges (the default). The cutpoints match pandas exactly:
 
-    my ($codes, $edges) = qcut([1 .. 10], 4);
-    # $edges = [1, 3.25, 5.5, 7.75, 10]
+    my @edges = qcut([1 .. 10], 4);
+    # @edges = (1, 3.25, 5.5, 7.75, 10)
+
+Bin codes. They are 0-based; note the tie distribution matches pandas (inner
+bins take 2 here, outer bins 3):
+
+    my $codes = qcut([1 .. 10], 4, codes => 1);
     # $codes = [0, 0, 0, 1, 1, 2, 2, 3, 3, 3]
+
+Edges and codes together, computed in one pass:
+
+    my ($codes, $edges) = qcut([1 .. 10], 4, codes => 1, edges => 1);
 
 Equal frequency on clean data — 100 values into 4 bins of 25:
 
-    my $codes = qcut([1 .. 100], 4);
+    my $codes = qcut([1 .. 100], 4, codes => 1);
     # 25 elements in each of bins 0, 1, 2, 3
 
 An explicit probability vector, for an asymmetric top-5% tranche:
 
-    my ($codes, $edges) = qcut([1 .. 100], [0, 0.5, 0.95, 1]);
+    my @edges = qcut([1 .. 100], [0, 0.5, 0.95, 1]);
+    my $codes = qcut([1 .. 100], [0, 0.5, 0.95, 1], codes => 1);
     # bin 0: lower half (50), bin 1: next 45%, bin 2: top 5%
 
-Named labels instead of integer codes:
+Named labels instead of integer codes (implies codes):
 
     my $labels = qcut([1 .. 10], 4, labels => [qw/Q1 Q2 Q3 Q4/]);
     # ['Q1','Q1','Q1','Q2','Q2','Q3','Q3','Q4','Q4','Q4']
@@ -1906,9 +1928,10 @@ Interval-string labels:
     # $iv->[0]  eq '[1, 3.25]'
     # $iv->[-1] eq '(7.75, 10]'
 
-Missing values pass straight through:
+Missing values are ignored for cutpoints, and (when codes are requested) pass
+straight through:
 
-    my $codes = qcut([1, 2, undef, 4, 5, 6, 7, 8, 9, 10], 4);
+    my $codes = qcut([1, 2, undef, 4, 5, 6, 7, 8, 9, 10], 4, codes => 1);
     # $codes->[2] is undef; the rest are binned as usual
 
 Tied data and `duplicates`. Heavy ties can make adjacent cutpoints equal; the
@@ -1916,8 +1939,12 @@ default raises, `'drop'` merges:
 
     my @tied = ((0) x 8, 1, 2, 3, 4);
     qcut(\@tied, 4);                         # dies: bin edges are not unique
-    my ($codes, $edges) = qcut(\@tied, 4, duplicates => 'drop');
+    my @edges = qcut(\@tied, 4, duplicates => 'drop');
     # fewer than 5 edges; the empty quantile bands are collapsed
+
+Get the usage summary and stop:
+
+    qcut('h');   # dies with the help text above
 
 ## quantile
 

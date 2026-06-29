@@ -365,32 +365,83 @@ sub dropna {
 	die "dropna: data frame must be an arrayref (AoH) or hashref (HoA/HoH)\n";
 }
 
+sub _qcut_help {
+	return <<'HELP';
+qcut - equal-frequency binning of a numeric column (analog of pandas qcut)
+
+  USAGE
+    my @edges            = qcut($data, $q);                 # default: edge list
+    my @edges            = qcut($data, $q, edges => 1);     # same, explicit
+    my $codes            = qcut($data, $q, codes => 1);     # bin codes (arrayref)
+    my ($codes, $edges)  = qcut($data, $q, codes => 1, edges => 1);
+    my $labels           = qcut($data, $q, labels => [...]);
+    qcut('h');  # or qcut('H')  -> print this help and die
+
+  ARGUMENTS
+    $data   arrayref of numbers; undef entries are missing (NA) and are
+            skipped for cutpoints, returned as undef in code output
+    $q      positive integer (number of equal-frequency bins) OR an arrayref
+            of probabilities in [0,1], e.g. [0, 0.5, 0.95, 1]
+
+  OPTIONS
+    edges => 1        include the edge vector (default unless codes requested)
+    codes => 1        include 0-based bin codes (one per element)
+    labels => [...]   map codes onto your labels; implies codes => 1
+    labels => 'interval'   label each element with its interval, e.g. "(3.25, 5.5]"
+    duplicates => 'drop'   merge non-unique cutpoints instead of dying ('raise')
+
+  RETURN
+    edges only (default) .... a flat list of edges  (call in list context)
+    codes only .............. an arrayref of codes/labels
+    both .................... ($codes_ref, $edges_ref)
+
+  NOTES
+    Cutpoints use linear interpolation between order statistics (numpy/pandas
+    default), so results match pandas.qcut. Bins are right-closed (a, b] with
+    the lowest bin closed on both ends [a, b].
+HELP
+}
+
 sub qcut {
 	my ($data, $q, %opt) = @_;
-	die "qcut: first argument must be an ARRAY reference\n"
+
+	# help: qcut('h') / qcut('H'), or that string in the q slot
+	if ( (!ref $data && defined $data && $data =~ /\A[hH]\z/)
+	  || (!ref $q    && defined $q    && $q    =~ /\A[hH]\z/) ) {
+		die _qcut_help();
+	}
+
+	die "qcut: first argument must be an ARRAY reference (try qcut('h'))\n"
 		unless ref $data eq 'ARRAY';
 
-	# build the probability vector (q+1 evenly spaced points) or accept one
+	# probability vector: q+1 evenly spaced points, or an explicit list
 	my $probs;
 	if (ref $q eq 'ARRAY') {
 		$probs = [ sort { $a <=> $b } @$q ];
 	} else {
 		die "qcut: number of quantiles must be a positive integer\n"
-			unless $q =~ /\A[1-9][0-9]*\z/;
+			unless defined $q && $q =~ /\A[1-9][0-9]*\z/;
 		$probs = [ map { $_ / $q } 0 .. $q ];
 	}
 
-	my $drop = (($opt{duplicates} // 'raise') eq 'drop') ? 1 : 0;
+	my $drop   = (($opt{duplicates} // 'raise') eq 'drop') ? 1 : 0;
+	my $labels = $opt{labels};
 
-	# fast path: nothing missing -> hand the original arrayref straight to
-	# XS (no copy, no scatter); the common case for clean columns
+	# codes are opt-in (labels imply them); edges are on unless codes asked for
+	my $want_codes = ($opt{codes} || defined $labels) ? 1 : 0;
+	my $want_edges = exists $opt{edges}
+		? ($opt{edges} ? 1 : 0)
+		: ($want_codes ? 0 : 1);
+	die "qcut: nothing to return (set edges => 1 or codes => 1)\n"
+		unless $want_edges || $want_codes;
+
+	# does the column contain any NA?
 	my $has_na = 0;
 	for my $x (@$data) { if (!defined $x) { $has_na = 1; last } }
 
 	my ($codes, $edges, @pos);
-	if (!$has_na) {
-		($codes, $edges) = _qcut_core($data, $probs, $drop);
-	} else {
+	if ($want_codes && $has_na) {
+		# strip NA, remember positions, scatter codes back afterwards
 		my @vals;
 		for my $i (0 .. $#$data) {
 			next unless defined $data->[$i];
@@ -398,11 +449,21 @@ sub qcut {
 			push @pos,  $i;
 		}
 		die "qcut: no non-missing values\n" unless @vals;
-		($codes, $edges) = _qcut_core(\@vals, $probs, $drop);
+		($codes, $edges) = _qcut_core(\@vals, $probs, $drop, 1);
+	} elsif ($has_na) {
+		# edges only: drop NA so cutpoints ignore them, positions don't matter
+		my @vals = grep { defined } @$data;
+		die "qcut: no non-missing values\n" unless @vals;
+		($codes, $edges) = _qcut_core(\@vals, $probs, $drop, 0);
+	} else {
+		# no NA: hand the original arrayref straight to XS (no copy)
+		($codes, $edges) = _qcut_core($data, $probs, $drop, $want_codes);
 	}
 
-	# integer codes -> requested labels, or keep the XS arrayref as-is
-	my $labels = $opt{labels};
+	# edges-only: return the flat list
+	return @$edges unless $want_codes;
+
+	# turn integer codes into requested labels, or keep the XS arrayref as-is
 	my $out;
 	if (defined $labels && ref $labels eq 'ARRAY') {
 		my $nbin = scalar(@$edges) - 1;
@@ -421,17 +482,14 @@ sub qcut {
 		$out = $codes;			# reuse XS result; no copy
 	}
 
-	# place into a full-length list only if NAs were removed
-	my $result;
-	if (!$has_na) {
-		$result = $out;
-	} else {
+	# scatter NA positions back in (codes path only)
+	if ($has_na) {
 		my @r = (undef) x scalar(@$data);
 		@r[@pos] = @$out;
-		$result = \@r;
+		$out = \@r;
 	}
 
-	return wantarray ? ($result, $edges) : $result;
+	return $want_edges ? ($out, $edges) : $out;
 }
 
 sub summary {
