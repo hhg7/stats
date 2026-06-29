@@ -1275,8 +1275,8 @@ static NV K2x(int n, NV d) {
 /* One comparator, used by every qsort below. Branch form avoids overflow that
  * a subtraction-based comparator would hit, and is correct for any NV width. */
 static int compare_NVs(const void *a, const void *b) {
-    NV x = *(const NV *)a, y = *(const NV *)b;
-    return (x > y) - (x < y);
+	NV x = *(const NV *)a, y = *(const NV *)b;
+	return (x > y) - (x < y);
 }
 /* Largest m*n for which we will run the exact DP even when exact=>1 is forced.
  * Time is O(m*n); memory is O(min(m,n)). Beyond this we warn and go asymptotic. */
@@ -11012,4 +11012,120 @@ PPCODE:
 	XPUSHs(sv_2mortal(newRV_inc((SV *)out_av)));
 	XSRETURN(1);
 }
+
+void _qcut_core(data_ref, probs_ref, drop_dups)
+	SV *data_ref
+	SV *probs_ref
+	IV drop_dups
+PREINIT:
+	AV  *data_av;
+	AV  *probs_av;
+	AV  *edge_av;
+	AV  *code_av;
+	SV **el;
+	IV   n, m, i, j, ne, w;
+	NV  *srt  = NULL;
+	NV  *edges = NULL;
+	NV   p, h, frac, v;
+	IV   lo, bin, lo2, hi2, mid, k;
+PPCODE:
+	if (!SvROK(data_ref) || SvTYPE(SvRV(data_ref)) != SVt_PVAV)
+		croak("_qcut_core: data must be an ARRAY reference");
+	if (!SvROK(probs_ref) || SvTYPE(SvRV(probs_ref)) != SVt_PVAV)
+		croak("_qcut_core: probs must be an ARRAY reference");
+
+	data_av  = (AV *) SvRV(data_ref);
+	probs_av = (AV *) SvRV(probs_ref);
+	n = av_len(data_av)  + 1;
+	m = av_len(probs_av) + 1;
+	if (n < 1)
+		croak("_qcut_core: need at least one data value");
+	if (m < 2)
+		croak("_qcut_core: need at least two probabilities (one bin)");
+
+	Newx(srt, n, NV);
+	for (i = 0; i < n; i++) {
+		el = av_fetch(data_av, i, 0);
+		srt[i] = (el && SvOK(*el)) ? SvNV(*el) : 0.0;
+	}
+	qsort(srt, (size_t) n, sizeof(NV), compare_NVs);
+
+	/* quantile cutpoints via linear interpolation (numpy/pandas default) */
+	Newx(edges, m, NV);
+	for (j = 0; j < m; j++) {
+		el = av_fetch(probs_av, j, 0);
+		p = el ? SvNV(*el) : 0.0;
+		if (p < 0.0) p = 0.0;
+		if (p > 1.0) p = 1.0;
+		h    = (NV)(n - 1) * p;
+		lo   = (IV) floor((double) h);
+		frac = h - (NV) lo;
+		if (lo + 1 < n)
+			edges[j] = srt[lo] + frac * (srt[lo + 1] - srt[lo]);
+		else
+			edges[j] = srt[lo];
+	}
+	/* guard fp drift: enforce non-decreasing edges */
+	for (j = 1; j < m; j++)
+		if (edges[j] < edges[j - 1])
+			edges[j] = edges[j - 1];
+
+	Safefree(srt);		/* no longer needed once cutpoints exist */
+
+	/* duplicate edges: raise (default) or drop */
+	w = 1;
+	for (j = 1; j < m; j++) {
+		if (edges[j] == edges[w - 1]) {
+			if (!drop_dups) {
+				Safefree(edges);
+				croak("_qcut_core: bin edges are not unique; pass duplicates => 'drop' (or use fewer bins)");
+			}
+		} else {
+			edges[w++] = edges[j];
+		}
+	}
+	ne = w;
+	if (ne < 2) {
+		Safefree(edges);
+		croak("_qcut_core: data has too few distinct values to form bins");
+	}
+
+	edge_av = newAV();
+	av_extend(edge_av, ne - 1);
+	for (j = 0; j < ne; j++)
+		av_push(edge_av, newSVnv(edges[j]));
+
+	/* assign each original value to a 0-based bin; lowest is inclusive */
+	code_av = newAV();
+	av_extend(code_av, n - 1);
+	for (i = 0; i < n; i++) {
+		el = av_fetch(data_av, i, 0);
+		v  = (el && SvOK(*el)) ? SvNV(*el) : 0.0;
+		if (v <= edges[0]) {
+			bin = 0;
+		} else if (v >= edges[ne - 1]) {
+			bin = ne - 2;
+		} else {
+			lo2 = 1;
+			hi2 = ne - 1;
+			k   = ne - 1;
+			while (lo2 <= hi2) {
+				mid = lo2 + ((hi2 - lo2) >> 1);
+				if (edges[mid] >= v) {
+					k   = mid;
+					hi2 = mid - 1;
+				} else {
+					lo2 = mid + 1;
+				}
+			}
+			bin = k - 1;
+		}
+		av_push(code_av, newSViv(bin));
+	}
+
+	Safefree(edges);
+
+	EXTEND(SP, 2);
+	PUSHs(sv_2mortal(newRV_noinc((SV *) code_av)));
+	PUSHs(sv_2mortal(newRV_noinc((SV *) edge_av)));
 

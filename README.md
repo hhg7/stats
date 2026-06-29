@@ -1290,7 +1290,7 @@ that appear in **every** array ref given.
 	my @t = intersection([1, 2, 3, 4], [2, 3, 4], [3, 4]); # (3, 4)
 	my $n = intersection([1, 2, 3], [2, 3, 4]);          # 2
 
-Every argument must be an array reference — each one is treated as a set.
+Every argument must be an array reference: each one is treated as a set.
 Unlike `mean` and `uniq`, bare scalars are not accepted; passing a non-reference
 (or a non-array reference) croaks.
 
@@ -1832,6 +1832,92 @@ or `I()` transforms.
   to retain the factor levels.
 - **It dies** on: a model that isn't a hashref or has no `coefficients`; an
   invalid `type`; or `newdata` that isn't a HoA/HoH hashref or AoH arrayref.
+
+## qcut
+
+Equal-frequency binning of a numeric column; the analog of pandas `qcut`.
+Where `cut` would slice a value range into equal-*width* intervals (and dump
+most of a skewed distribution into one bin), `qcut` chooses cutpoints so each
+bin holds roughly the same *number* of observations. This is the binning you
+usually want for ranked-list work: deciles, quartiles, top-5% tranches.
+
+Cutpoints are computed by linear interpolation between order statistics, the
+same method as numpy/pandas, so results match `pandas.qcut` exactly. Bins are
+right-closed, `(a, b]`, with the lowest bin closed on both ends, `[a, b]`, so
+the minimum value is always included.
+
+### Signature
+
+    qcut($data, $q, %options)
+
+  - `$data` — an array reference of numbers. `undef` entries are treated as
+    missing (NA): they are skipped when computing cutpoints and come back as
+    `undef` in the result, in their original positions.
+  - `$q` — either a positive integer (the number of equal-frequency bins) or an
+    array reference of probabilities in `[0, 1]` giving explicit cut
+    boundaries, e.g. `[0, 0.5, 0.95, 1]`.
+
+Options:
+
+  - `labels => [...]` — map the integer bin codes onto your own labels. The
+    list length must equal the number of bins.
+  - `labels => 'interval'` — label each element with its interval string,
+    e.g. `(3.25, 5.5]`.
+  - `duplicates => 'drop'` — if tied data produces non-unique cutpoints, merge
+    them into fewer bins instead of dying. The default, `'raise'`, throws an
+    error (as pandas does).
+
+### Return value
+
+In scalar context `qcut` returns an array reference of bin assignments,
+parallel to `$data` (0-based integer codes, or your labels). In list context it
+also returns the edge vector:
+
+    my $codes          = qcut($data, 4);          # arrayref of codes
+    my ($codes, $edges) = qcut($data, 4);         # codes plus edge vector
+
+### Examples
+
+Quartiles. The codes are 0-based; note the tie distribution matches pandas
+(the inner bins each take 2 here, the outer bins 3):
+
+    my ($codes, $edges) = qcut([1 .. 10], 4);
+    # $edges = [1, 3.25, 5.5, 7.75, 10]
+    # $codes = [0, 0, 0, 1, 1, 2, 2, 3, 3, 3]
+
+Equal frequency on clean data — 100 values into 4 bins of 25:
+
+    my $codes = qcut([1 .. 100], 4);
+    # 25 elements in each of bins 0, 1, 2, 3
+
+An explicit probability vector, for an asymmetric top-5% tranche:
+
+    my ($codes, $edges) = qcut([1 .. 100], [0, 0.5, 0.95, 1]);
+    # bin 0: lower half (50), bin 1: next 45%, bin 2: top 5%
+
+Named labels instead of integer codes:
+
+    my $labels = qcut([1 .. 10], 4, labels => [qw/Q1 Q2 Q3 Q4/]);
+    # ['Q1','Q1','Q1','Q2','Q2','Q3','Q3','Q4','Q4','Q4']
+
+Interval-string labels:
+
+    my $iv = qcut([1 .. 10], 4, labels => 'interval');
+    # $iv->[0]  eq '[1, 3.25]'
+    # $iv->[-1] eq '(7.75, 10]'
+
+Missing values pass straight through:
+
+    my $codes = qcut([1, 2, undef, 4, 5, 6, 7, 8, 9, 10], 4);
+    # $codes->[2] is undef; the rest are binned as usual
+
+Tied data and `duplicates`. Heavy ties can make adjacent cutpoints equal; the
+default raises, `'drop'` merges:
+
+    my @tied = ((0) x 8, 1, 2, 3, 4);
+    qcut(\@tied, 4);                         # dies: bin edges are not unique
+    my ($codes, $edges) = qcut(\@tied, 4, duplicates => 'drop');
+    # fewer than 5 edges; the empty quantile bands are collapsed
 
 ## quantile
 

@@ -458,6 +458,7 @@ Add new columns to a data frame, computed from the columns already there.
 =over
 
 =item * B<< C<$df> >> — your data frame, in either shape:
+
 =over
 
 =item * B<AoH> — arrayref of row hashrefs: C<< [ {weight=E<gt>70, height=E<gt>1.75}, ... ] >>
@@ -467,6 +468,7 @@ Add new columns to a data frame, computed from the columns already there.
 =back
 
 =item * B<< C<< new_name =E<gt> sub { ... } >> >> — one or more pairs. Each sub computes one cell of the new column and is called once per row:
+
 =over
 
 =item * C<$_> is the current row as a hashref, so you read other columns with C<< $_-E<gt>{colname} >>.
@@ -1103,6 +1105,7 @@ Sort a table by a column or by a custom comparator. Works on both common Perl ta
 =over
 
 =item * B<< C<$data> >> — your table, in either shape:
+
 =over
 
 =item * B<AoH> — arrayref of hashrefs (a list of rows): C<< [ {id=E<gt>1, v=E<gt>10}, {id=E<gt>2, v=E<gt>20} ] >>
@@ -1112,6 +1115,7 @@ Sort a table by a column or by a custom comparator. Works on both common Perl ta
 =back
 
 =item * B<< C<$by> >> — I<how> to sort:
+
 =over
 
 =item * a B<column name> (string), or
@@ -1211,9 +1215,12 @@ C<how> controls the threshold:
 
 my $df = { A => [1, 2, undef], B => [1, 2, 3], C => [undef, 2, 4] };
 dropna($df, cols => ['A', 'B']);
-=head1 { A => [1, 2], B => [1, 2], C => [undef, 2] }
+
 
 =back
+
+=head1 { A => [1, 2], B => [1, 2], C => [undef, 2] }
+
 
 Index 2 is dropped because C<A> is undef there. C<C> is not consulted, so its own
 undef at index 0 doesn't trigger a drop — but index 2 is still removed from C<C>
@@ -2922,6 +2929,7 @@ An option C<nrows> or its synonym C<nrow> specifies the maximum number of rows t
 and then C<summary(\@arr)>, or C<summary(@arr)>
 
  ---------------------------------------------------------------------------
+ 
  Index  # values      Min.   1st Qu.    Median      Mean   3rd Qu.      Max. 
  ---------------------------------------------------------------------------
       0       22   0.04312     0.286    0.4975    0.5121    0.7296    0.9633 
@@ -3709,6 +3717,14 @@ Args can also be accepted:
  write_table( 'data' => \%flat, 'file' => $f );
 
 =head1 changes
+
+=head2 0.18
+
+C<restrict> keyword added to numerous places within C<intersection> to decrease CPU time
+
+fix to dist.ini for dependencies
+
+fixed POD rendering
 
 =head2 0.17
 

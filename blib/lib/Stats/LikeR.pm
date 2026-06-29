@@ -4,14 +4,14 @@ require 5.010;
 use strict;
 use feature 'say';
 package Stats::LikeR;
-our $VERSION = 0.18;
+our $VERSION = 0.19;
 require XSLoader;
 use warnings FATAL => 'all';
 use autodie ':default';
 use Exporter 'import';
 use Scalar::Util 'looks_like_number';
 XSLoader::load('Stats::LikeR', $VERSION);
-our @EXPORT_OK = qw(add_data aoh2hoa aoh2hoh aov assign cfilter chisq_test col col2col cor cor_test cov csort dnorm dropna filter fisher_test glm group_by hoa2aoh hoh2hoa hist intersection kruskal_test ks_test ljoin lm matrix max mean median min mode oneway_test p_adjust power_t_test predict prcomp quantile rbinom read_table rnorm runif sample scale sd seq shapiro_test sum summary t_test transpose uniq vals value_counts var var_test view wilcox_test write_table);
+our @EXPORT_OK = qw(add_data aoh2hoa aoh2hoh aov assign cfilter chisq_test col col2col cor cor_test cov csort dnorm dropna filter fisher_test glm group_by hoa2aoh hoh2hoa hist intersection kruskal_test ks_test ljoin lm matrix max mean median min mode oneway_test p_adjust power_t_test predict prcomp qcut quantile rbinom read_table rnorm runif sample scale sd seq shapiro_test sum summary t_test transpose uniq vals value_counts var var_test view wilcox_test write_table);
 our @EXPORT = @EXPORT_OK;
 
 sub aoh2hoh {
@@ -364,6 +364,76 @@ sub dropna {
 
 	die "dropna: data frame must be an arrayref (AoH) or hashref (HoA/HoH)\n";
 }
+
+sub qcut {
+	my ($data, $q, %opt) = @_;
+	die "qcut: first argument must be an ARRAY reference\n"
+		unless ref $data eq 'ARRAY';
+
+	# build the probability vector (q+1 evenly spaced points) or accept one
+	my $probs;
+	if (ref $q eq 'ARRAY') {
+		$probs = [ sort { $a <=> $b } @$q ];
+	} else {
+		die "qcut: number of quantiles must be a positive integer\n"
+			unless $q =~ /\A[1-9][0-9]*\z/;
+		$probs = [ map { $_ / $q } 0 .. $q ];
+	}
+
+	my $drop = (($opt{duplicates} // 'raise') eq 'drop') ? 1 : 0;
+
+	# fast path: nothing missing -> hand the original arrayref straight to
+	# XS (no copy, no scatter); the common case for clean columns
+	my $has_na = 0;
+	for my $x (@$data) { if (!defined $x) { $has_na = 1; last } }
+
+	my ($codes, $edges, @pos);
+	if (!$has_na) {
+		($codes, $edges) = _qcut_core($data, $probs, $drop);
+	} else {
+		my @vals;
+		for my $i (0 .. $#$data) {
+			next unless defined $data->[$i];
+			push @vals, $data->[$i] + 0;
+			push @pos,  $i;
+		}
+		die "qcut: no non-missing values\n" unless @vals;
+		($codes, $edges) = _qcut_core(\@vals, $probs, $drop);
+	}
+
+	# integer codes -> requested labels, or keep the XS arrayref as-is
+	my $labels = $opt{labels};
+	my $out;
+	if (defined $labels && ref $labels eq 'ARRAY') {
+		my $nbin = scalar(@$edges) - 1;
+		die "qcut: got $nbin bins but " . scalar(@$labels) . " labels\n"
+			unless @$labels == $nbin;
+		$out = [ map { $labels->[$_] } @$codes ];
+	} elsif (defined $labels && $labels eq 'interval') {
+		my @iv;
+		for my $b (0 .. $#$edges - 1) {
+			my $l = $edges->[$b];
+			my $r = $edges->[$b + 1];
+			$iv[$b] = $b == 0 ? "[$l, $r]" : "($l, $r]";
+		}
+		$out = [ map { $iv[$_] } @$codes ];
+	} else {
+		$out = $codes;			# reuse XS result; no copy
+	}
+
+	# place into a full-length list only if NAs were removed
+	my $result;
+	if (!$has_na) {
+		$result = $out;
+	} else {
+		my @r = (undef) x scalar(@$data);
+		@r[@pos] = @$out;
+		$result = \@r;
+	}
+
+	return wantarray ? ($result, $edges) : $result;
+}
+
 sub summary {
 	my ($data, %args);
 	my $current_sub = (split(/::/,(caller(0))[3]))[-1];
@@ -1421,6 +1491,7 @@ Add new columns to a data frame, computed from the columns already there.
 =over
 
 =item * B<< C<$df> >> — your data frame, in either shape:
+
 =over
 
 =item * B<AoH> — arrayref of row hashrefs: C<< [ {weight=E<gt>70, height=E<gt>1.75}, ... ] >>
@@ -1430,6 +1501,7 @@ Add new columns to a data frame, computed from the columns already there.
 =back
 
 =item * B<< C<< new_name =E<gt> sub { ... } >> >> — one or more pairs. Each sub computes one cell of the new column and is called once per row:
+
 =over
 
 =item * C<$_> is the current row as a hashref, so you read other columns with C<< $_-E<gt>{colname} >>.
@@ -2066,6 +2138,7 @@ Sort a table by a column or by a custom comparator. Works on both common Perl ta
 =over
 
 =item * B<< C<$data> >> — your table, in either shape:
+
 =over
 
 =item * B<AoH> — arrayref of hashrefs (a list of rows): C<< [ {id=E<gt>1, v=E<gt>10}, {id=E<gt>2, v=E<gt>20} ] >>
@@ -2075,6 +2148,7 @@ Sort a table by a column or by a custom comparator. Works on both common Perl ta
 =back
 
 =item * B<< C<$by> >> — I<how> to sort:
+
 =over
 
 =item * a B<column name> (string), or
@@ -2174,9 +2248,12 @@ C<how> controls the threshold:
 
 my $df = { A => [1, 2, undef], B => [1, 2, 3], C => [undef, 2, 4] };
 dropna($df, cols => ['A', 'B']);
-=head1 { A => [1, 2], B => [1, 2], C => [undef, 2] }
+
 
 =back
+
+=head1 { A => [1, 2], B => [1, 2], C => [undef, 2] }
+
 
 Index 2 is dropped because C<A> is undef there. C<C> is not consulted, so its own
 undef at index 0 doesn't trigger a drop — but index 2 is still removed from C<C>
@@ -3885,6 +3962,7 @@ An option C<nrows> or its synonym C<nrow> specifies the maximum number of rows t
 and then C<summary(\@arr)>, or C<summary(@arr)>
 
  ---------------------------------------------------------------------------
+ 
  Index  # values      Min.   1st Qu.    Median      Mean   3rd Qu.      Max. 
  ---------------------------------------------------------------------------
       0       22   0.04312     0.286    0.4975    0.5121    0.7296    0.9633 
@@ -4672,6 +4750,14 @@ Args can also be accepted:
  write_table( 'data' => \%flat, 'file' => $f );
 
 =head1 changes
+
+=head2 0.18
+
+C<restrict> keyword added to numerous places within C<intersection> to decrease CPU time
+
+fix to dist.ini for dependencies
+
+fixed POD rendering
 
 =head2 0.17
 

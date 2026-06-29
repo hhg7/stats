@@ -27,28 +27,28 @@
 
 # --- MakeMaker const_config section:
 
-# These definitions are from config.sh (via /home/con/perl5/perlbrew/perls/perl-5.10.1/lib/5.10.1/x86_64-linux/Config.pm).
+# These definitions are from config.sh (via /home/con/perl5/perlbrew/perls/perl-5.42.2/lib/5.42.2/x86_64-linux/Config.pm).
 # They may have been overridden via Makefile.PL or on the command line.
 AR = ar
 CC = cc
 CCCDLFLAGS = -fPIC
 CCDLFLAGS = -Wl,-E
-CPPRUN = cc -E
+CPPRUN = cc  -E
 DLEXT = so
 DLSRC = dl_dlopen.xs
 EXE_EXT = 
 FULL_AR = /usr/bin/ar
 LD = cc
-LDDLFLAGS = -shared -O2 -L/usr/local/lib -fstack-protector
-LDFLAGS =  -fstack-protector -L/usr/local/lib
+LDDLFLAGS = -shared -O2 -L/usr/local/lib -fstack-protector-strong
+LDFLAGS =  -fstack-protector-strong -L/usr/local/lib
 LIBC = /lib/x86_64-linux-gnu/libc.so.6
 LIB_EXT = .a
 OBJ_EXT = .o
 OSNAME = linux
-OSVERS = 6.8.0-117-generic
+OSVERS = 6.8.0-106-generic
 RANLIB = :
-SITELIBEXP = /home/con/perl5/perlbrew/perls/perl-5.10.1/lib/site_perl/5.10.1
-SITEARCHEXP = /home/con/perl5/perlbrew/perls/perl-5.10.1/lib/site_perl/5.10.1/x86_64-linux
+SITELIBEXP = /home/con/perl5/perlbrew/perls/perl-5.42.2/lib/site_perl/5.42.2
+SITEARCHEXP = /home/con/perl5/perlbrew/perls/perl-5.42.2/lib/site_perl/5.42.2/x86_64-linux
 SO = so
 VENDORARCHEXP = 
 VENDORLIBEXP = 
@@ -60,11 +60,11 @@ DIRFILESEP = /
 DFSEP = $(DIRFILESEP)
 NAME = Stats::LikeR
 NAME_SYM = Stats_LikeR
-VERSION = 0.18
+VERSION = 0.19
 VERSION_MACRO = VERSION
-VERSION_SYM = 0_18
+VERSION_SYM = 0_19
 DEFINE_VERSION = -D$(VERSION_MACRO)=\"$(VERSION)\"
-XS_VERSION = 0.18
+XS_VERSION = 0.19
 XS_VERSION_MACRO = XS_VERSION
 XS_DEFINE_VERSION = -D$(XS_VERSION_MACRO)=\"$(XS_VERSION)\"
 INST_ARCHLIB = blib/arch
@@ -80,55 +80,55 @@ MAN3SECTION = 3
 INSTALLDIRS = site
 DESTDIR = 
 PREFIX = $(SITEPREFIX)
-PERLPREFIX = /home/con/perl5/perlbrew/perls/perl-5.10.1
-SITEPREFIX = /home/con/perl5/perlbrew/perls/perl-5.10.1
+PERLPREFIX = /home/con/perl5/perlbrew/perls/perl-5.42.2
+SITEPREFIX = /home/con/perl5/perlbrew/perls/perl-5.42.2
 VENDORPREFIX = 
-INSTALLPRIVLIB = /home/con/perl5/perlbrew/perls/perl-5.10.1/lib/5.10.1
+INSTALLPRIVLIB = /home/con/perl5/perlbrew/perls/perl-5.42.2/lib/5.42.2
 DESTINSTALLPRIVLIB = $(DESTDIR)$(INSTALLPRIVLIB)
-INSTALLSITELIB = /home/con/perl5/perlbrew/perls/perl-5.10.1/lib/site_perl/5.10.1
+INSTALLSITELIB = /home/con/perl5/perlbrew/perls/perl-5.42.2/lib/site_perl/5.42.2
 DESTINSTALLSITELIB = $(DESTDIR)$(INSTALLSITELIB)
 INSTALLVENDORLIB = 
 DESTINSTALLVENDORLIB = $(DESTDIR)$(INSTALLVENDORLIB)
-INSTALLARCHLIB = /home/con/perl5/perlbrew/perls/perl-5.10.1/lib/5.10.1/x86_64-linux
+INSTALLARCHLIB = /home/con/perl5/perlbrew/perls/perl-5.42.2/lib/5.42.2/x86_64-linux
 DESTINSTALLARCHLIB = $(DESTDIR)$(INSTALLARCHLIB)
-INSTALLSITEARCH = /home/con/perl5/perlbrew/perls/perl-5.10.1/lib/site_perl/5.10.1/x86_64-linux
+INSTALLSITEARCH = /home/con/perl5/perlbrew/perls/perl-5.42.2/lib/site_perl/5.42.2/x86_64-linux
 DESTINSTALLSITEARCH = $(DESTDIR)$(INSTALLSITEARCH)
 INSTALLVENDORARCH = 
 DESTINSTALLVENDORARCH = $(DESTDIR)$(INSTALLVENDORARCH)
-INSTALLBIN = /home/con/perl5/perlbrew/perls/perl-5.10.1/bin
+INSTALLBIN = /home/con/perl5/perlbrew/perls/perl-5.42.2/bin
 DESTINSTALLBIN = $(DESTDIR)$(INSTALLBIN)
-INSTALLSITEBIN = /home/con/perl5/perlbrew/perls/perl-5.10.1/bin
+INSTALLSITEBIN = /home/con/perl5/perlbrew/perls/perl-5.42.2/bin
 DESTINSTALLSITEBIN = $(DESTDIR)$(INSTALLSITEBIN)
 INSTALLVENDORBIN = 
 DESTINSTALLVENDORBIN = $(DESTDIR)$(INSTALLVENDORBIN)
-INSTALLSCRIPT = /home/con/perl5/perlbrew/perls/perl-5.10.1/bin
+INSTALLSCRIPT = /home/con/perl5/perlbrew/perls/perl-5.42.2/bin
 DESTINSTALLSCRIPT = $(DESTDIR)$(INSTALLSCRIPT)
-INSTALLSITESCRIPT = /home/con/perl5/perlbrew/perls/perl-5.10.1/bin
+INSTALLSITESCRIPT = /home/con/perl5/perlbrew/perls/perl-5.42.2/bin
 DESTINSTALLSITESCRIPT = $(DESTDIR)$(INSTALLSITESCRIPT)
 INSTALLVENDORSCRIPT = 
 DESTINSTALLVENDORSCRIPT = $(DESTDIR)$(INSTALLVENDORSCRIPT)
-INSTALLMAN1DIR = /home/con/perl5/perlbrew/perls/perl-5.10.1/man/man1
+INSTALLMAN1DIR = /home/con/perl5/perlbrew/perls/perl-5.42.2/man/man1
 DESTINSTALLMAN1DIR = $(DESTDIR)$(INSTALLMAN1DIR)
-INSTALLSITEMAN1DIR = /home/con/perl5/perlbrew/perls/perl-5.10.1/man/man1
+INSTALLSITEMAN1DIR = /home/con/perl5/perlbrew/perls/perl-5.42.2/man/man1
 DESTINSTALLSITEMAN1DIR = $(DESTDIR)$(INSTALLSITEMAN1DIR)
 INSTALLVENDORMAN1DIR = 
 DESTINSTALLVENDORMAN1DIR = $(DESTDIR)$(INSTALLVENDORMAN1DIR)
-INSTALLMAN3DIR = /home/con/perl5/perlbrew/perls/perl-5.10.1/man/man3
+INSTALLMAN3DIR = /home/con/perl5/perlbrew/perls/perl-5.42.2/man/man3
 DESTINSTALLMAN3DIR = $(DESTDIR)$(INSTALLMAN3DIR)
-INSTALLSITEMAN3DIR = /home/con/perl5/perlbrew/perls/perl-5.10.1/man/man3
+INSTALLSITEMAN3DIR = /home/con/perl5/perlbrew/perls/perl-5.42.2/man/man3
 DESTINSTALLSITEMAN3DIR = $(DESTDIR)$(INSTALLSITEMAN3DIR)
 INSTALLVENDORMAN3DIR = 
 DESTINSTALLVENDORMAN3DIR = $(DESTDIR)$(INSTALLVENDORMAN3DIR)
-PERL_LIB = /home/con/perl5/perlbrew/perls/perl-5.10.1/lib/5.10.1
-PERL_ARCHLIB = /home/con/perl5/perlbrew/perls/perl-5.10.1/lib/5.10.1/x86_64-linux
+PERL_LIB = /home/con/perl5/perlbrew/perls/perl-5.42.2/lib/5.42.2
+PERL_ARCHLIB = /home/con/perl5/perlbrew/perls/perl-5.42.2/lib/5.42.2/x86_64-linux
 LIBPERL_A = libperl.a
 FIRST_MAKEFILE = Makefile
 MAKEFILE_OLD = Makefile.old
 MAKE_APERL_FILE = Makefile.aperl
 PERLMAINCC = $(CC)
-PERL_INC = /home/con/perl5/perlbrew/perls/perl-5.10.1/lib/5.10.1/x86_64-linux/CORE
-PERL = "/home/con/perl5/perlbrew/perls/perl-5.10.1/bin/perl"
-FULLPERL = "/home/con/perl5/perlbrew/perls/perl-5.10.1/bin/perl"
+PERL_INC = /home/con/perl5/perlbrew/perls/perl-5.42.2/lib/5.42.2/x86_64-linux/CORE
+PERL = "/home/con/perl5/perlbrew/perls/perl-5.42.2/bin/perl"
+FULLPERL = "/home/con/perl5/perlbrew/perls/perl-5.42.2/bin/perl"
 ABSPERL = $(PERL)
 PERLRUN = $(PERL)
 FULLPERLRUN = $(FULLPERL)
@@ -141,7 +141,7 @@ PERM_DIR = 755
 PERM_RW = 644
 PERM_RWX = 755
 
-MAKEMAKER   = /home/con/perl5/perlbrew/perls/perl-5.10.1/lib/5.10.1/ExtUtils/MakeMaker.pm
+MAKEMAKER   = /home/con/perl5/perlbrew/perls/perl-5.42.2/lib/site_perl/5.42.2/ExtUtils/MakeMaker.pm
 MM_VERSION  = 7.78
 MM_REVISION = 77800
 
@@ -171,7 +171,8 @@ O_FILES  = LikeR.o \
 	fisher.o
 H_FILES  = ppport.h
 MAN1PODS = 
-MAN3PODS = lib/Stats/LikeR.pm \
+MAN3PODS = bu.LikeR.pm \
+	lib/Stats/LikeR.pm \
 	read.me.pod
 
 # Where to build things
@@ -195,6 +196,7 @@ TO_INST_PM = add_data.pl \
 	aoh2hoh.pl \
 	aov.pl \
 	benchmark.pl \
+	bu.LikeR.pm \
 	chisq.test.pl \
 	col2col.pl \
 	cor.pl \
@@ -235,8 +237,8 @@ TO_INST_PM = add_data.pl \
 	wilcox.text.pl \
 	write.table.pl \
 	xs.check.pl
-PERL_ARCHLIBDEP = /home/con/perl5/perlbrew/perls/perl-5.10.1/lib/5.10.1/x86_64-linux
-PERL_INCDEP = /home/con/perl5/perlbrew/perls/perl-5.10.1/lib/5.10.1/x86_64-linux/CORE
+PERL_ARCHLIBDEP = /home/con/perl5/perlbrew/perls/perl-5.42.2/lib/5.42.2/x86_64-linux
+PERL_INCDEP = /home/con/perl5/perlbrew/perls/perl-5.42.2/lib/5.42.2/x86_64-linux/CORE
 
 
 # Dependencies info
@@ -259,12 +261,12 @@ AUTOSPLITFILE = $(ABSPERLRUN)  -e 'use AutoSplit;  autosplit($$$$ARGV[0], $$$$AR
 
 # --- MakeMaker tool_xsubpp section:
 
-XSUBPPDIR = /home/con/perl5/perlbrew/perls/perl-5.10.1/lib/5.10.1/ExtUtils
+XSUBPPDIR = /home/con/perl5/perlbrew/perls/perl-5.42.2/lib/5.42.2/ExtUtils
 XSUBPP = "$(XSUBPPDIR)$(DFSEP)xsubpp"
 XSUBPPRUN = $(PERLRUN) $(XSUBPP)
 XSPROTOARG = -noprototypes
-XSUBPPDEPS = /home/con/perl5/perlbrew/perls/perl-5.10.1/lib/5.10.1/ExtUtils/typemap /home/con/perl5/perlbrew/perls/perl-5.10.1/lib/5.10.1/ExtUtils$(DFSEP)xsubpp
-XSUBPPARGS = -typemap '/home/con/perl5/perlbrew/perls/perl-5.10.1/lib/5.10.1/ExtUtils/typemap'
+XSUBPPDEPS = /home/con/perl5/perlbrew/perls/perl-5.42.2/lib/5.42.2/ExtUtils/typemap /home/con/perl5/perlbrew/perls/perl-5.42.2/lib/5.42.2/ExtUtils$(DFSEP)xsubpp
+XSUBPPARGS = -typemap '/home/con/perl5/perlbrew/perls/perl-5.42.2/lib/5.42.2/ExtUtils/typemap'
 XSUBPP_EXTRA_ARGS =
 
 
@@ -321,7 +323,7 @@ RCS_LABEL = rcs -Nv$(VERSION_SYM): -q
 DIST_CP = best
 DIST_DEFAULT = tardist
 DISTNAME = Stats-LikeR
-DISTVNAME = Stats-LikeR-0.18
+DISTVNAME = Stats-LikeR-0.19
 
 
 # --- MakeMaker macro section:
@@ -558,9 +560,11 @@ POD2MAN = $(POD2MAN_EXE)
 
 
 manifypods : pure_all config  \
+	bu.LikeR.pm \
 	lib/Stats/LikeR.pm \
 	read.me.pod
 	$(NOECHO) $(POD2MAN) --section=$(MAN3SECTION) --perm_rw=$(PERM_RW) -u \
+	  bu.LikeR.pm $(INST_MAN3DIR)/Stats::bu.LikeR.$(MAN3EXT) \
 	  lib/Stats/LikeR.pm $(INST_MAN3DIR)/Stats::LikeR.$(MAN3EXT) \
 	  read.me.pod $(INST_MAN3DIR)/Stats::read.me.$(MAN3EXT) 
 
@@ -659,7 +663,7 @@ metafile : create_distdir
 	$(NOECHO) $(ECHO) 'configure_requires:' >> META_new.yml
 	$(NOECHO) $(ECHO) '  ExtUtils::MakeMaker: '\''0'\''' >> META_new.yml
 	$(NOECHO) $(ECHO) 'dynamic_config: 1' >> META_new.yml
-	$(NOECHO) $(ECHO) 'generated_by: '\''ExtUtils::MakeMaker version 7.78, CPAN::Meta::Converter version 2.143240'\''' >> META_new.yml
+	$(NOECHO) $(ECHO) 'generated_by: '\''ExtUtils::MakeMaker version 7.78, CPAN::Meta::Converter version 2.150010'\''' >> META_new.yml
 	$(NOECHO) $(ECHO) 'license: unknown' >> META_new.yml
 	$(NOECHO) $(ECHO) 'meta-spec:' >> META_new.yml
 	$(NOECHO) $(ECHO) '  url: http://module-build.sourceforge.net/META-spec-v1.4.html' >> META_new.yml
@@ -670,7 +674,8 @@ metafile : create_distdir
 	$(NOECHO) $(ECHO) '    - t' >> META_new.yml
 	$(NOECHO) $(ECHO) '    - inc' >> META_new.yml
 	$(NOECHO) $(ECHO) 'requires: {}' >> META_new.yml
-	$(NOECHO) $(ECHO) 'version: 0.18' >> META_new.yml
+	$(NOECHO) $(ECHO) 'version: 0.19' >> META_new.yml
+	$(NOECHO) $(ECHO) 'x_serialization_backend: '\''CPAN::Meta::YAML version 0.020'\''' >> META_new.yml
 	-$(NOECHO) $(MV) META_new.yml $(DISTVNAME)/META.yml
 	$(NOECHO) $(ECHO) Generating META.json
 	$(NOECHO) $(ECHO) '{' > META_new.json
@@ -679,7 +684,7 @@ metafile : create_distdir
 	$(NOECHO) $(ECHO) '      "unknown"' >> META_new.json
 	$(NOECHO) $(ECHO) '   ],' >> META_new.json
 	$(NOECHO) $(ECHO) '   "dynamic_config" : 1,' >> META_new.json
-	$(NOECHO) $(ECHO) '   "generated_by" : "ExtUtils::MakeMaker version 7.78, CPAN::Meta::Converter version 2.143240",' >> META_new.json
+	$(NOECHO) $(ECHO) '   "generated_by" : "ExtUtils::MakeMaker version 7.78, CPAN::Meta::Converter version 2.150010",' >> META_new.json
 	$(NOECHO) $(ECHO) '   "license" : [' >> META_new.json
 	$(NOECHO) $(ECHO) '      "unknown"' >> META_new.json
 	$(NOECHO) $(ECHO) '   ],' >> META_new.json
@@ -710,7 +715,8 @@ metafile : create_distdir
 	$(NOECHO) $(ECHO) '      }' >> META_new.json
 	$(NOECHO) $(ECHO) '   },' >> META_new.json
 	$(NOECHO) $(ECHO) '   "release_status" : "stable",' >> META_new.json
-	$(NOECHO) $(ECHO) '   "version" : 0.18' >> META_new.json
+	$(NOECHO) $(ECHO) '   "version" : 0.19,' >> META_new.json
+	$(NOECHO) $(ECHO) '   "x_serialization_backend" : "JSON::PP version 4.18"' >> META_new.json
 	$(NOECHO) $(ECHO) '}' >> META_new.json
 	-$(NOECHO) $(MV) META_new.json $(DISTVNAME)/META.json
 
@@ -950,28 +956,40 @@ PERL_HDRS = \
         $(PERL_INCDEP)/INTERN.h            \
         $(PERL_INCDEP)/XSUB.h            \
         $(PERL_INCDEP)/av.h            \
-        $(PERL_INCDEP)/cc_runtime.h            \
+        $(PERL_INCDEP)/bitcount.h            \
         $(PERL_INCDEP)/config.h            \
         $(PERL_INCDEP)/cop.h            \
         $(PERL_INCDEP)/cv.h            \
         $(PERL_INCDEP)/dosish.h            \
+        $(PERL_INCDEP)/ebcdic_tables.h            \
         $(PERL_INCDEP)/embed.h            \
         $(PERL_INCDEP)/embedvar.h            \
         $(PERL_INCDEP)/fakesdio.h            \
-        $(PERL_INCDEP)/fakethr.h            \
+        $(PERL_INCDEP)/feature.h            \
         $(PERL_INCDEP)/form.h            \
         $(PERL_INCDEP)/git_version.h            \
         $(PERL_INCDEP)/gv.h            \
         $(PERL_INCDEP)/handy.h            \
         $(PERL_INCDEP)/hv.h            \
+        $(PERL_INCDEP)/hv_func.h            \
+        $(PERL_INCDEP)/hv_macro.h            \
+        $(PERL_INCDEP)/inline.h            \
         $(PERL_INCDEP)/intrpvar.h            \
+        $(PERL_INCDEP)/invlist_inline.h            \
         $(PERL_INCDEP)/iperlsys.h            \
         $(PERL_INCDEP)/keywords.h            \
+        $(PERL_INCDEP)/l1_char_class_tab.h            \
+        $(PERL_INCDEP)/locale_table.h            \
         $(PERL_INCDEP)/malloc_ctl.h            \
+        $(PERL_INCDEP)/metaconfig.h            \
         $(PERL_INCDEP)/mg.h            \
+        $(PERL_INCDEP)/mg_data.h            \
+        $(PERL_INCDEP)/mg_raw.h            \
+        $(PERL_INCDEP)/mg_vtable.h            \
         $(PERL_INCDEP)/mydtrace.h            \
         $(PERL_INCDEP)/nostdio.h            \
         $(PERL_INCDEP)/op.h            \
+        $(PERL_INCDEP)/op_reg_common.h            \
         $(PERL_INCDEP)/opcode.h            \
         $(PERL_INCDEP)/opnames.h            \
         $(PERL_INCDEP)/overload.h            \
@@ -979,11 +997,14 @@ PERL_HDRS = \
         $(PERL_INCDEP)/parser.h            \
         $(PERL_INCDEP)/patchlevel.h            \
         $(PERL_INCDEP)/perl.h            \
+        $(PERL_INCDEP)/perl_inc_macro.h            \
+        $(PERL_INCDEP)/perl_langinfo.h            \
+        $(PERL_INCDEP)/perl_siphash.h            \
         $(PERL_INCDEP)/perlapi.h            \
         $(PERL_INCDEP)/perlio.h            \
         $(PERL_INCDEP)/perliol.h            \
         $(PERL_INCDEP)/perlsdio.h            \
-        $(PERL_INCDEP)/perlsfio.h            \
+        $(PERL_INCDEP)/perlstatic.h            \
         $(PERL_INCDEP)/perlvars.h            \
         $(PERL_INCDEP)/perly.h            \
         $(PERL_INCDEP)/pp.h            \
@@ -992,18 +1013,29 @@ PERL_HDRS = \
         $(PERL_INCDEP)/reentr.h            \
         $(PERL_INCDEP)/regcharclass.h            \
         $(PERL_INCDEP)/regcomp.h            \
+        $(PERL_INCDEP)/regcomp_internal.h            \
         $(PERL_INCDEP)/regexp.h            \
+        $(PERL_INCDEP)/regexp_constants.h            \
+        $(PERL_INCDEP)/reginline.h            \
         $(PERL_INCDEP)/regnodes.h            \
+        $(PERL_INCDEP)/sbox32_hash.h            \
         $(PERL_INCDEP)/scope.h            \
+        $(PERL_INCDEP)/scope_types.h            \
         $(PERL_INCDEP)/sv.h            \
+        $(PERL_INCDEP)/sv_inline.h            \
         $(PERL_INCDEP)/thread.h            \
-        $(PERL_INCDEP)/uconfig.h            \
+        $(PERL_INCDEP)/time64.h            \
+        $(PERL_INCDEP)/time64_config.h            \
+        $(PERL_INCDEP)/uni_keywords.h            \
+        $(PERL_INCDEP)/unicode_constants.h            \
         $(PERL_INCDEP)/unixish.h            \
         $(PERL_INCDEP)/utf8.h            \
         $(PERL_INCDEP)/utfebcdic.h            \
         $(PERL_INCDEP)/util.h            \
         $(PERL_INCDEP)/uudmap.h            \
-        $(PERL_INCDEP)/warnings.h            
+        $(PERL_INCDEP)/vutil.h            \
+        $(PERL_INCDEP)/warnings.h            \
+        $(PERL_INCDEP)/zaphod32_hash.h            
 
 $(OBJECT) : $(PERL_HDRS)
 
@@ -1033,8 +1065,8 @@ $(FIRST_MAKEFILE) : Makefile.PL $(CONFIGDEP)
 
 # --- MakeMaker makeaperl section ---
 MAP_TARGET    = perl
-FULLPERL      = "/home/con/perl5/perlbrew/perls/perl-5.10.1/bin/perl"
-MAP_PERLINC   = "-Iblib/arch" "-Iblib/lib" "-I/home/con/perl5/perlbrew/perls/perl-5.10.1/lib/5.10.1/x86_64-linux" "-I/home/con/perl5/perlbrew/perls/perl-5.10.1/lib/5.10.1"
+FULLPERL      = "/home/con/perl5/perlbrew/perls/perl-5.42.2/bin/perl"
+MAP_PERLINC   = "-Iblib/arch" "-Iblib/lib" "-I/home/con/perl5/perlbrew/perls/perl-5.42.2/lib/5.42.2/x86_64-linux" "-I/home/con/perl5/perlbrew/perls/perl-5.42.2/lib/5.42.2"
 
 $(MAP_TARGET) :: $(MAKE_APERL_FILE)
 	$(MAKE) $(USEMAKEFILE) $(MAKE_APERL_FILE) $@
@@ -1086,11 +1118,11 @@ testdb_static :: static pure_all $(MAP_TARGET)
 # --- MakeMaker ppd section:
 # Creates a PPD (Perl Package Description) for a binary distribution.
 ppd :
-	$(NOECHO) $(ECHO) '<SOFTPKG NAME="Stats-LikeR" VERSION="0.18">' > Stats-LikeR.ppd
+	$(NOECHO) $(ECHO) '<SOFTPKG NAME="Stats-LikeR" VERSION="0.19">' > Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '    <ABSTRACT></ABSTRACT>' >> Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '    <AUTHOR></AUTHOR>' >> Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '    <IMPLEMENTATION>' >> Stats-LikeR.ppd
-	$(NOECHO) $(ECHO) '        <ARCHITECTURE NAME="x86_64-linux-5.10" />' >> Stats-LikeR.ppd
+	$(NOECHO) $(ECHO) '        <ARCHITECTURE NAME="x86_64-linux-5.42" />' >> Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '        <CODEBASE HREF="" />' >> Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '    </IMPLEMENTATION>' >> Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '</SOFTPKG>' >> Stats-LikeR.ppd
@@ -1108,6 +1140,7 @@ pm_to_blib : $(FIRST_MAKEFILE) $(TO_INST_PM)
 	  'aoh2hoh.pl' '$(INST_LIB)/Stats/aoh2hoh.pl' \
 	  'aov.pl' '$(INST_LIB)/Stats/aov.pl' \
 	  'benchmark.pl' '$(INST_LIB)/Stats/benchmark.pl' \
+	  'bu.LikeR.pm' '$(INST_LIB)/Stats/bu.LikeR.pm' \
 	  'chisq.test.pl' '$(INST_LIB)/Stats/chisq.test.pl' \
 	  'col2col.pl' '$(INST_LIB)/Stats/col2col.pl' \
 	  'cor.pl' '$(INST_LIB)/Stats/cor.pl' \
