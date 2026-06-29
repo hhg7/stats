@@ -3,7 +3,6 @@
 require 5.010;
 use strict;
 use warnings FATAL => 'all';
-
 use Test::More;
 use Test::LeakTrace;
 use Stats::LikeR;

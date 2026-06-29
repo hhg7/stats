@@ -7030,7 +7030,7 @@ NV var(...)
 			SV* restrict arg = ST(i);
 			if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
 				 AV* restrict av = (AV*)SvRV(arg);
-				 SSize_t len = av_len(av) + 1;
+				 size_t len = av_len(av) + 1;
 				 for (size_t j = 0; j < len; j++) {
 					  SV** restrict tv = av_fetch(av, j, 0);
 					  if (tv && SvOK(*tv)) {
@@ -7100,7 +7100,7 @@ SV* t_test(...)
 		if (!x_sv || !SvROK(x_sv) || SvTYPE(SvRV(x_sv)) != SVt_PVAV)
 			croak("t_test: 'x' is a required argument and must be an ARRAY reference");
 		AV*restrict x_av = (AV*)SvRV(x_sv);
-		SSize_t nx = av_len(x_av) + 1;
+		size_t nx = av_len(x_av) + 1;
 		if (nx < 2) croak("t_test: 'x' needs at least 2 elements");
 		AV*restrict y_av = NULL;
 		if (y_sv && SvROK(y_sv) && SvTYPE(SvRV(y_sv)) == SVt_PVAV)
@@ -7122,7 +7122,7 @@ SV* t_test(...)
 
 		if (paired || y_av) {
 			if (!y_av) croak("t_test: 'y' must be provided for paired or two-sample tests");
-			SSize_t ny = av_len(y_av) + 1;
+			size_t ny = av_len(y_av) + 1;
 			if (paired && ny != nx) croak("t_test: Paired arrays must be same length");
 			NV mean_y = 0.0, M2_y = 0.0, var_y;
 			for (size_t i = 0; i < ny; i++) {
@@ -7136,8 +7136,8 @@ SV* t_test(...)
 			if (paired) {
 				 NV mean_d = 0.0, M2_d = 0.0;
 				 for (size_t i = 0; i < nx; i++) {
-					  SV**restrict dx_ptr = av_fetch(x_av, i, 0);
-					  SV**restrict dy_ptr = av_fetch(y_av, i, 0);
+					 SV**restrict dx_ptr = av_fetch(x_av, i, 0);
+					 SV**restrict dy_ptr = av_fetch(y_av, i, 0);
 					 NV dx = (dx_ptr && SvOK(*dx_ptr)) ? SvNV(*dx_ptr) : 0.0;
 					 NV dy = (dy_ptr && SvOK(*dy_ptr)) ? SvNV(*dy_ptr) : 0.0;
 					 NV val = dx - dy;
@@ -7213,7 +7213,7 @@ void p_adjust(SV* p_sv, const char* method = "holm")
 			croak("p_adjust: first argument must be an ARRAY reference of p-values");
 		}
 		AV *restrict p_av = (AV*)SvRV(p_sv);
-		SSize_t n = av_len(p_av) + 1;
+		size_t n = av_len(p_av) + 1;
 		// Handle empty input
 		if (n == 0) {
 			XSRETURN_EMPTY;
@@ -7429,7 +7429,7 @@ void intersection(...)
 			AV* restrict av;
 			size_t len;
 			if (!(SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV))
-				croak("intersection: argument %" UVuf " is not an array ref", (UV)i);
+				croak("intersection: argument index %" UVuf " of %" UVuf " total (max index %" UVuf ") is not an array reference", (UV)i, (UV)nrefs, (UV)(nrefs - 1));
 			av = (AV*)SvRV(arg);
 			len = av_len(av) + 1;
 			loc = (HV*)sv_2mortal((SV*)newHV());   /* per-ref dedup */
@@ -10771,8 +10771,8 @@ CODE:
 	} else if (ref_type == SVt_PVAV) { // Array-of-Arrays
 		AV     *restrict in_av  = (AV *)SvRV(input_ref);
 		AV     *restrict out_av = newAV();
-		SSize_t nrows  = av_len(in_av) + 1;
-		SSize_t ncols  = 0;
+		size_t nrows  = av_len(in_av) + 1;
+		size_t ncols  = 0;
 		retval_sv = sv_2mortal(newRV_noinc((SV *)out_av));
 		if (nrows > 0) {// Pass 1: validate all rows; fix ncols from row 0
 			{
@@ -10801,7 +10801,7 @@ CODE:
 			// Pass 2: output[j][i] = input[i][j]
 			if (ncols > 0) {
 				av_extend(out_av, ncols - 1);
-				for (SSize_t j = 0; j < ncols; j++) {
+				for (size_t j = 0; j < ncols; j++) {
 					AV *restrict out_col_av = newAV();
 					SV *restrict col_ref    = newRV_noinc((SV *)out_col_av);
 					if (!av_store(out_av, j, col_ref)) {
@@ -10810,7 +10810,7 @@ CODE:
 								"failed to allocate output column %d", (int)j);
 					}
 					av_extend(out_col_av, nrows - 1);
-					for (SSize_t i = 0; i < nrows; i++) {
+					for (size_t i = 0; i < nrows; i++) {
 						SV **restrict elem = av_fetch(in_av, i, 0);
 						if (elem && *elem) {
 							SvGETMAGIC(*elem); 

@@ -11,7 +11,7 @@ use autodie ':default';
 use Exporter 'import';
 use Scalar::Util 'looks_like_number';
 XSLoader::load('Stats::LikeR', $VERSION);
-our @EXPORT_OK = qw(add_data aoh2hoa aoh2hoh aov assign cfilter chisq_test col col2col cor cor_test cov csort dnorm dropna filter fisher_test glm group_by hoa2aoh hoh2hoa hist intersection kruskal_test ks_test ljoin lm matrix max mean median min mode oneway_test p_adjust power_t_test predict prcomp qcut quantile rbinom read_table rnorm runif sample scale sd seq shapiro_test sum summary t_test transpose uniq vals value_counts var var_test view wilcox_test write_table);
+our @EXPORT_OK = qw(add_data aoh2hoa aoh2hoh aov assign cfilter chisq_test chunk col col2col cor cor_test cov csort dnorm dropna filter fisher_test glm group_by hoa2aoh hoh2hoa hist intersection kruskal_test ks_test ljoin lm matrix max mean median min mode oneway_test p_adjust power_t_test predict prcomp qcut quantile rbinom read_table rnorm runif sample scale sd seq shapiro_test sum summary t_test transpose uniq vals value_counts var var_test view wilcox_test write_table);
 our @EXPORT = @EXPORT_OK;
 
 sub aoh2hoh {
@@ -127,6 +127,41 @@ sub assign {
 		}
 	}
 	die 'assign: data frame must be an arrayref (AoH) or hashref (HoA/HoH)';
+}
+
+sub chunk {
+	my ($aref, %opt) = @_;
+	die "chunk: first argument must be an ARRAY reference\n"
+		unless ref $aref eq 'ARRAY';
+
+	die "chunk: pass exactly one of size => N or parts => K\n"
+		if  (defined $opt{size} && defined $opt{parts})
+		||  (!defined $opt{size} && !defined $opt{parts});
+
+	my $n = scalar @$aref;
+	return () unless $n; # empty input -> no groups
+
+	my @groups;
+	if (defined $opt{size}) {
+		my $sz = $opt{size};
+		die "chunk: size must be a positive integer\n"
+			unless $sz =~ /\A[1-9][0-9]*\z/;
+		for (my $i = 0; $i < $n; $i += $sz) {
+			my $hi = $i + $sz - 1;
+			$hi = $n - 1 if $hi > $n - 1;
+			push @groups, [ @{$aref}[$i .. $hi] ];
+		}
+	} else {
+		my $k = $opt{parts};
+		die "chunk: parts must be a positive integer\n"
+			unless $k =~ /\A[1-9][0-9]*\z/;
+		for my $i (0 .. $k - 1) {
+			my $lo = int( $i       * $n / $k );
+			my $hi = int( ($i + 1) * $n / $k );
+			push @groups, [ @{$aref}[$lo .. $hi - 1] ];
+		}
+	}
+	return @groups;
 }
 
 # ---- filter DSL: col() builds a predicate via overloading (pure Perl) -------
@@ -365,8 +400,13 @@ sub dropna {
 	die "dropna: data frame must be an arrayref (AoH) or hashref (HoA/HoH)\n";
 }
 
-sub _qcut_help {
-	return <<'HELP';
+sub qcut {
+	my ($data, $q, %opt) = @_;
+
+	# help: qcut('h') / qcut('H'), or that string in the q slot
+	if ( (!ref $data && defined $data && $data =~ /\A[hH]\z/)
+	  || (!ref $q    && defined $q    && $q    =~ /\A[hH]\z/) ) {
+		my $h = <<'HELP';
 qcut - equal-frequency binning of a numeric column (analog of pandas qcut)
 
   USAGE
@@ -400,15 +440,7 @@ qcut - equal-frequency binning of a numeric column (analog of pandas qcut)
     default), so results match pandas.qcut. Bins are right-closed (a, b] with
     the lowest bin closed on both ends [a, b].
 HELP
-}
-
-sub qcut {
-	my ($data, $q, %opt) = @_;
-
-	# help: qcut('h') / qcut('H'), or that string in the q slot
-	if ( (!ref $data && defined $data && $data =~ /\A[hH]\z/)
-	  || (!ref $q    && defined $q    && $q    =~ /\A[hH]\z/) ) {
-		die _qcut_help();
+		die $h;
 	}
 
 	die "qcut: first argument must be an ARRAY reference (try qcut('h'))\n"

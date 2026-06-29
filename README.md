@@ -538,6 +538,73 @@ Flat Hash References evaluate Goodness of Fit while preserving your categorical 
 	
 	my $res = chisq_test($data);
 
+## chunk
+
+Split an array into contiguous, roughly equal groups by *position*. Unlike
+[`qcut`](#qcut), `chunk` does not inspect values, sort, or compute cutpoints; it
+slices the array in the order given. Use it for batching work, paginating, or
+grouping non-numeric data such as strings.
+
+### Signature
+
+    my @groups = chunk($data, size  => $n);   # fixed elements per group
+    my @groups = chunk($data, parts => $k);   # fixed number of groups
+
+  - `$data` — an array reference. Its contents are never examined or sorted;
+    elements are grouped in input order.
+
+Pass exactly one of `size` or `parts`. Passing both, or neither, is a fatal
+error — the two readings of "equal groups" differ (see below), so the caller
+chooses which one is meant rather than relying on a default.
+
+  - `size => $n` — each group holds `$n` elements; the final group holds
+    whatever remains.
+  - `parts => $k` — the array is divided into `$k` groups as equal as possible,
+    with any remainder spread across the leading groups.
+
+### Return value
+
+A list of array references, in input order — call it in list context:
+
+    my @groups = chunk($data, parts => 4);
+
+Passing more `parts` than there are elements yields trailing empty groups
+(matching `numpy.array_split`), so no elements are ever dropped. An empty input
+array returns an empty list.
+
+### Examples
+
+`size` fixes the elements per group; the last group is the remainder. Splitting
+the 26 letters into groups of five leaves one over:
+
+    my @groups = chunk(['a' .. 'z'], size => 5);
+    # 6 groups, sizes 5,5,5,5,5,1
+    # [a b c d e] [f g h i j] [k l m n o] [p q r s t] [u v w x y] [z]
+
+`parts` fixes the number of groups; the remainder is absorbed by the leading
+groups instead:
+
+    my @groups = chunk(['a' .. 'z'], parts => 5);
+    # 5 groups, sizes 5,5,5,5,6
+    # [a b c d e] [f g h i j] [k l m n o] [p q r s t] [u v w x y z]
+
+When the split is even the two forms agree:
+
+    my @a = chunk([1 .. 10], size  => 2);
+    my @b = chunk([1 .. 10], parts => 5);
+    # identical: 5 groups of 2
+
+Order is preserved — `chunk` never sorts. Sort the array yourself first if you
+want ordered groups:
+
+    my @groups = chunk([3, 1, 2], size => 2);
+    # ([3, 1], [2])
+
+More parts than elements gives empty trailing groups, losing nothing:
+
+    my @groups = chunk([1, 2, 3], parts => 5);
+    # 5 groups; flattening them back gives (1, 2, 3)
+
 ## `col2col`
 
 Apply a **two-column function** to every pair of columns in a table and collect
@@ -1835,7 +1902,7 @@ or `I()` transforms.
 
 ## qcut
 
-Equal-frequency binning of a numeric column — the analog of pandas `qcut`.
+Equal-frequency binning of a numeric column, which is the analog of pandas `qcut`.
 Where `cut` would slice a value range into equal-*width* intervals (and dump
 most of a skewed distribution into one bin), `qcut` chooses cutpoints so each
 bin holds roughly the same *number* of observations. This is the binning you
@@ -2606,7 +2673,15 @@ Args can also be accepted:
 
     write_table( 'data' => \%flat, 'file' => $f );
 
-# changes
+# Changes
+
+## 0.19
+
+numerous `SSize_t var1 = av_len(var) + 1` are changed to `size_t var1 = av_len(var) + 1` as `size_t` as the result cannot be negative, in order to expand numerical range
+
+Addition of `chunk` and `qcut` functions
+
+Better warnings when non-array references are given to `intersection`
 
 ## 0.18
 
