@@ -5,5 +5,4 @@ nrow
 #
 # set math
 #
-`union` like above
-`qcut` or `cut`, taking an integer of n to cut it
+`union`, getR_only, getL_only (spelling?)

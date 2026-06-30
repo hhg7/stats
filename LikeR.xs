@@ -2173,6 +2173,162 @@ static SV *cs_materialize(pTHX_ bool out_aoh, bool is_aoh, AV *restrict src_av,
 	}
 	return newRV_noinc((SV *)out);
 }
+
+#ifndef M_LN_SQRT_2PI
+#define M_LN_SQRT_2PI 0.918938533204672741780329736406  /* log(sqrt(2*pi)) */
+#endif
+#ifndef M_LN_2PI
+#define M_LN_2PI      1.837877066409345483560659472811  /* log(2*pi) */
+#endif
+#ifndef DBL_MIN
+#define DBL_MIN 2.2250738585072014e-308
+#endif
+
+/* Stirling's error  stirlerr(n) = log(n!) - log( sqrt(2*pi*n) * (n/e)^n )
+ * (Catherine Loader 2000; same table + series R uses) */
+static NV bt_stirlerr(NV n) {
+	static const NV S0 = 0.083333333333333333333;        /* 1/12   */
+	static const NV S1 = 0.00277777777777777777778;      /* 1/360  */
+	static const NV S2 = 0.00079365079365079365079365;   /* 1/1260 */
+	static const NV S3 = 0.000595238095238095238095238;  /* 1/1680 */
+	static const NV S4 = 0.0008417508417508417508417508; /* 1/1188 */
+	static const NV halves[31] = {
+		0.0,                            /* 0.0 (placeholder; unreachable here) */
+		0.1534264097200273452913848,    /* 0.5  */
+		0.0810614667953272582196702,    /* 1.0  */
+		0.0548141210519176538961390,    /* 1.5  */
+		0.0413406959554092940938221,    /* 2.0  */
+		0.03316287351993628748511048,   /* 2.5  */
+		0.02767792568499833914878929,   /* 3.0  */
+		0.02374616365629749597132920,   /* 3.5  */
+		0.02079067210376509311152277,   /* 4.0  */
+		0.01848845053267318523077934,   /* 4.5  */
+		0.01664469118982119216319487,   /* 5.0  */
+		0.01513497322191737887351255,   /* 5.5  */
+		0.01387612882307074799874573,   /* 6.0  */
+		0.01281046524292022692424986,   /* 6.5  */
+		0.01189670994589177009505572,   /* 7.0  */
+		0.01110455975820691732662991,   /* 7.5  */
+		0.010411265261972096497478567,  /* 8.0  */
+		0.009799416126158803298389475,  /* 8.5  */
+		0.009255462182712732917728637,  /* 9.0  */
+		0.008768700134139385462952823,  /* 9.5  */
+		0.008330563433362871256469318,  /* 10.0 */
+		0.007934114564314020547248100,  /* 10.5 */
+		0.007573675487951840794972024,  /* 11.0 */
+		0.007244554301320383179543912,  /* 11.5 */
+		0.006942840107209529865664152,  /* 12.0 */
+		0.006665247032707682442354394,  /* 12.5 */
+		0.006408994188004207068439631,  /* 13.0 */
+		0.006171712263039457647532867,  /* 13.5 */
+		0.005951370112758847735624416,  /* 14.0 */
+		0.005746216513010115682023589,  /* 14.5 */
+		0.005554733551962801371038690   /* 15.0 */
+	};
+	NV nn;
+	if (n <= 15.0) {
+		nn = n + n;
+		if (nn == floor(nn)) return halves[(int)nn];
+		return lgamma(n + 1.0) - (n + 0.5) * log(n) + n - M_LN_SQRT_2PI;
+	}
+	nn = n * n;
+	if (n > 500.0) return (S0 - S1 / nn) / n;
+	if (n >  80.0) return (S0 - (S1 - S2 / nn) / nn) / n;
+	if (n >  35.0) return (S0 - (S1 - (S2 - S3 / nn) / nn) / nn) / n;
+	return (S0 - (S1 - (S2 - (S3 - S4 / nn) / nn) / nn) / nn) / n;
+}
+
+/* Deviance term  bd0(x, np) = x*log(x/np) + np - x, summed as a Taylor series
+ * when x is close to np to avoid catastrophic cancellation. */
+static NV bt_bd0(NV x, NV np) {
+	if (np == 0.0) return 0.0;            /* unreachable: callers guarantee np > 0 */
+	if (fabs(x - np) < 0.1 * (x + np)) {
+		NV v = (x - np) / (x + np);
+		NV s = (x - np) * v;
+		if (fabs(s) < DBL_MIN) return s;
+		NV ej = 2.0 * x * v;
+		v *= v;
+		for (int j = 1; ; j++) {          /* |v| < 0.1, so this converges quickly */
+			ej *= v;
+			NV s1 = s + ej / (NV)(2 * j + 1);
+			if (s1 == s) return s1;
+			s = s1;
+		}
+	}
+	return x * log(x / np) + np - x;
+}
+
+/* Binomial PMF via R's dbinom_raw (q = 1 - p) */
+static NV bt_dbinom_raw(NV x, NV n, NV p, NV q) {
+	if (p == 0.0) return (x == 0.0) ? 1.0 : 0.0;
+	if (q == 0.0) return (x == n)   ? 1.0 : 0.0;
+	if (x == 0.0) {
+		if (n == 0.0) return 1.0;
+		NV lc = (p < 0.1) ? -bt_bd0(n, n * q) - n * p : n * log(q);
+		return exp(lc);
+	}
+	if (x == n) {
+		NV lc = (q < 0.1) ? -bt_bd0(n, n * p) - n * q : n * log(p);
+		return exp(lc);
+	}
+	if (x < 0.0 || x > n) return 0.0;
+	NV lc = bt_stirlerr(n) - bt_stirlerr(x) - bt_stirlerr(n - x)
+	      - bt_bd0(x, n * p) - bt_bd0(n - x, n * q);
+	NV lf = M_LN_2PI + log(x) + log1p(-x / n);   /* better than log(n-x)-log(n) for x<<n */
+	return exp(lc - 0.5 * lf);
+}
+
+static NV bt_dbinom(long x, long n, NV p) {
+	if (x < 0 || x > n) return 0.0;
+	return bt_dbinom_raw((NV)x, (NV)n, p, 1.0 - p);
+}
+
+/* Lower tail P(X <= k) = I_{1-p}(n-k, k+1); upper P(X > k) = I_p(k+1, n-k) */
+static NV bt_pbinom_lower(long k, long n, NV p) {
+	if (k < 0)  return 0.0;
+	if (k >= n) return 1.0;
+	return incbeta((NV)(n - k), (NV)(k + 1), 1.0 - p);
+}
+static NV bt_pbinom_upper(long k, long n, NV p) {
+	if (k < 0)  return 1.0;
+	if (k >= n) return 0.0;
+	return incbeta((NV)(k + 1), (NV)(n - k), p);
+}
+
+/* Inverse regularized incomplete beta (R's qbeta): incbeta is monotone in x,
+ * so safeguarded bisection converges to full double precision. */
+static NV bt_qbeta(NV alpha, NV a, NV b) {
+	if (alpha <= 0.0) return 0.0;
+	if (alpha >= 1.0) return 1.0;
+	NV lo = 0.0, hi = 1.0, mid = 0.5;
+	for (unsigned short int i = 0; i < 200; i++) {
+		mid = 0.5 * (lo + hi);
+		if (incbeta(a, b, mid) < alpha) lo = mid; else hi = mid;
+		if (hi - lo < 1e-15) break;
+	}
+	return 0.5 * (lo + hi);
+}
+
+/* Clopper-Pearson endpoints (R's p.L / p.U) */
+static NV bt_pL(NV alpha, long x, long n) {
+	if (x == 0) return 0.0;
+	return bt_qbeta(alpha, (NV)x, (NV)(n - x + 1));
+}
+static NV bt_pU(NV alpha, long x, long n) {
+	if (x == n) return 1.0;
+	return bt_qbeta(1.0 - alpha, (NV)(x + 1), (NV)(n - x));
+}
+
+/* Validate one count argument: a nonnegative integer */
+static long bt_check_count(pTHX_ SV *sv, const char *what) {
+	if (!sv || !SvOK(sv)) croak("binom_test: %s is undef", what);
+	if (!looks_like_number(sv)) croak("binom_test: %s is not a number", what);
+	NV v = SvNV(sv);
+	NV r = floor(v + 0.5);
+	if (v < 0 || fabs(v - r) > 1e-7)
+		croak("binom_test: %s must be a nonnegative integer", what);
+	return (long)r;
+}
 // --- XS SECTION ---
 MODULE = Stats::LikeR  PACKAGE = Stats::LikeR
 
@@ -2245,6 +2401,129 @@ SV *aoh2hoa(data)
 	}
 	OUTPUT:
 		RETVAL
+
+SV* binom_test(...)
+CODE:
+{
+	if (items < 1) croak("binom_test requires at least the number of successes");
+
+	long x = 0, n = 0;
+	bool have_n = 0;
+	unsigned int pos = 1; // index where named args begin
+
+	SV *restrict x_sv = ST(0);
+	if (SvROK(x_sv) && SvTYPE(SvRV(x_sv)) == SVt_PVAV) {
+		/* x = [successes, failures]; n is derived */
+		AV *restrict xa = (AV *)SvRV(x_sv);
+		if (av_len(xa) != 1)
+			croak("binom_test: x as an array ref must hold exactly 2 elements "
+			      "(successes, failures)");
+		long s = bt_check_count(aTHX_ *av_fetch(xa, 0, 0), "successes");
+		long f = bt_check_count(aTHX_ *av_fetch(xa, 1, 0), "failures");
+		x = s;
+		n = s + f;
+		have_n = 1;
+	} else {
+		/* x = successes (scalar); n must follow positionally */
+		x = bt_check_count(aTHX_ x_sv, "x");
+		if (items >= 2 && SvOK(ST(1)) && looks_like_number(ST(1))) {
+			n = bt_check_count(aTHX_ ST(1), "n");
+			have_n = 1;
+			pos = 2;
+		}
+	}
+	if (!have_n)
+		croak("binom_test: number of trials n is required when x is a scalar");
+
+	NV   p          = 0.5;
+	NV   conf_level = 0.95;
+	const char *restrict alternative = "two.sided";
+
+	for (unsigned int i = pos; i < items; i += 2) {
+		if (i + 1 >= items) croak("binom_test: odd number of named arguments");
+		const char *restrict key = SvPV_nolen(ST(i));
+		SV *restrict val = ST(i + 1);
+		if (strEQ(key, "p")) {
+			p = SvNV(val);
+			if (!(p >= 0.0 && p <= 1.0))
+				croak("binom_test: p must be between 0 and 1");
+		} else if (strEQ(key, "conf_level") || strEQ(key, "conf.level")) {
+			conf_level = SvNV(val);
+			if (!(conf_level > 0.0 && conf_level < 1.0))
+				croak("binom_test: conf_level must be between 0 and 1");
+		} else if (strEQ(key, "alternative")) {
+			alternative = SvPV_nolen(val);
+			if (strNE(alternative, "two.sided") && strNE(alternative, "less") &&
+			    strNE(alternative, "greater"))
+				croak("binom_test: alternative must be 'two.sided', 'less' or 'greater'");
+		} else {
+			croak("binom_test: unknown argument '%s'", key);
+		}
+	}
+	if (n < 1) croak("binom_test: n must be a positive integer >= x");
+	if (x > n) croak("binom_test: number of successes cannot exceed trials");
+	// ---- p-value (switch on alternative, as R does)
+	NV PVAL;
+	if (strEQ(alternative, "less")) {
+		PVAL = bt_pbinom_lower(x, n, p);              /* P(X <= x) */
+	} else if (strEQ(alternative, "greater")) {
+		PVAL = bt_pbinom_upper(x - 1, n, p);          /* P(X >= x) */
+	} else {                                          /* two.sided */
+		if (p == 0.0) {
+			PVAL = (x == 0) ? 1.0 : 0.0;
+		} else if (p == 1.0) {
+			PVAL = (x == n) ? 1.0 : 0.0;
+		} else {
+			const NV relErr = 1.0 + 1e-7;
+			NV d = bt_dbinom(x, n, p);
+			NV m = (NV)n * p;
+			if ((NV)x == m) {
+				PVAL = 1.0;
+			} else if ((NV)x < m) {
+				long y = 0;
+				for (long i = (long)ceil(m); i <= n; i++)
+					if (bt_dbinom(i, n, p) <= d * relErr) y++;
+				PVAL = bt_pbinom_lower(x, n, p) + bt_pbinom_upper(n - y, n, p);
+			} else {
+				long y = 0;
+				for (long i = 0; i <= (long)floor(m); i++)
+					if (bt_dbinom(i, n, p) <= d * relErr) y++;
+				PVAL = bt_pbinom_lower(y - 1, n, p) + bt_pbinom_upper(x - 1, n, p);
+			}
+		}
+	}
+	if (PVAL > 1.0) PVAL = 1.0;
+	// confidence interval (Clopper-Pearson)
+	NV ci_lo, ci_hi;
+	if (strEQ(alternative, "less")) {
+		ci_lo = 0.0;
+		ci_hi = bt_pU(1.0 - conf_level, x, n);
+	} else if (strEQ(alternative, "greater")) {
+		ci_lo = bt_pL(1.0 - conf_level, x, n);
+		ci_hi = 1.0;
+	} else {
+		NV a = (1.0 - conf_level) / 2.0;
+		ci_lo = bt_pL(a, x, n);
+		ci_hi = bt_pU(a, x, n);
+	}
+	// ---- htest-style result ----
+	HV *restrict ret = newHV();
+	hv_stores(ret, "method",      newSVpv("Exact binomial test", 0));
+	hv_stores(ret, "alternative", newSVpv(alternative, 0));
+	hv_stores(ret, "statistic",   newSViv(x));             /* number of successes    */
+	hv_stores(ret, "parameter",   newSViv(n));             /* number of trials       */
+	hv_stores(ret, "estimate",    newSVnv((NV)x / (NV)n)); /* probability of success */
+	hv_stores(ret, "null_value",  newSVnv(p));
+	hv_stores(ret, "p_value",     newSVnv(PVAL));
+	hv_stores(ret, "conf_level",  newSVnv(conf_level));
+	AV *restrict ci = newAV();
+	av_push(ci, newSVnv(ci_lo));
+	av_push(ci, newSVnv(ci_hi));
+	hv_stores(ret, "conf_int",    newRV_noinc((SV *)ci));
+	RETVAL = newRV_noinc((SV *)ret);
+}
+OUTPUT:
+  RETVAL
 
 void csort(data, by, output=&PL_sv_undef)
 	SV *data

@@ -359,6 +359,83 @@ It changes `$df` in place and also returns it (handy for chaining).
 
 - Reusing a column name **overwrites** that column.
 
+## binom_test
+
+`binom_test` answers one question: you ran a yes/no experiment `n` times and
+got `x` successes — is that consistent with some assumed success rate, or is it
+too far off to be chance? It is the exact binomial test, the same as R's
+`binom.test`.
+
+### A toddler and two cards
+
+Show a toddler two cards each round and ask them to point at the one with the
+star. If he/she is only guessing, he/she will be right half the time, so the
+"pure guessing" success rate is `p = 0.5`.
+
+You play 10 rounds and the toddler gets 6 right. Real skill, or just luck?
+
+    use Stats::LikeR 'binom_test';
+
+    my $r = binom_test(6, 10, p => 0.5);   # 6 wins, 10 rounds, guessing rate 0.5
+
+    print $r->{p_value};                   # 0.7539
+
+The full result is a hashref:
+
+    {
+        statistic   => 6,            # times the toddler was right
+        parameter   => 10,           # rounds played
+        estimate    => 0.6,          # observed rate, 6/10
+        null_value  => 0.5,          # the "pure guessing" rate we test against
+        p_value     => 0.7539,
+        conf_int    => [0.262, 0.878],
+        conf_level  => 0.95,
+        alternative => 'two.sided',
+        method      => 'Exact binomial test',
+    }
+
+### Reading the p-value
+
+The p-value is the chance of seeing a result **at least this surprising** if the
+toddler were really just guessing.
+
+Here `p = 0.75`. That is enormous: a pure guesser scores 6/10 (or something
+even further from 5) about three times out of four. So 6/10 is completely
+ordinary luck — no evidence of skill.
+
+The common cutoff is `0.05`. Below it, you start to believe something real is
+going on. Above it, chance explains the result fine. `0.75` is nowhere close,
+so we call this **just chance**.
+
+### What "legit" would look like
+
+Suppose the toddler had gone 9 for 10 instead:
+
+    my $r = binom_test(9, 10, p => 0.5);
+
+    print $r->{p_value};                   # 0.0215
+
+Now `p = 0.02`, under `0.05`. A pure guesser almost never does that well, so
+this **is** good evidence the toddler can actually tell the cards apart.
+
+### The confidence interval
+
+`conf_int` is the plausible range for the toddler's true success rate. For
+6/10 it runs from about `0.26` to `0.88` — wide, and it comfortably includes
+`0.5`. That overlap with the guessing rate is another way of seeing that luck
+cannot be ruled out. For 9/10 the interval would sit well above `0.5`.
+
+### Options
+
+  - `p` is the assumed success rate (default `0.5`).
+  - `alternative` is `'two.sided'` (default), `'less'`, or `'greater'`. Use
+    `'greater'` when you only care whether the toddler beats guessing, not
+    whether they do worse.
+  - `conf_level` sets the interval width (default `0.95`).
+
+You can also pass the counts as `binom_test([6, 4])` — 6 right, 4 wrong — when
+you have wins and losses instead of wins and a total.
+
 ## cfilter
 
 Select **columns** out of a table and return it in the same shape. A column is
@@ -2679,7 +2756,7 @@ Args can also be accepted:
 
 numerous `SSize_t var1 = av_len(var) + 1` are changed to `size_t var1 = av_len(var) + 1` as `size_t` as the result cannot be negative, in order to expand numerical range
 
-Addition of `chunk` and `qcut` functions
+Addition of `binom_test`, `chunk`, and `qcut` functions
 
 Better warnings when non-array references are given to `intersection`
 
