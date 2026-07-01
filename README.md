@@ -1607,8 +1607,9 @@ For example:
 
 ## ljoin
 
-Consider a hash: `$h{$row}{$col}`, and another hash `$i{$row}{$col}`.
-`ljoin` will add information for `$col` in `%i` for each `$row` to `%h`, where `$row` exists in both `%h` and `%i`
+Consider a hash: `$h{$row}{$col}`, and another hash `$i{$row}{$col2}`.
+`ljoin` will add information for `$col` in `%i` for each `$row` to `%h`, where `$row` exists in both `%h` and `%i`.
+Similar to `cbind` in R.
 
 For example,
 
