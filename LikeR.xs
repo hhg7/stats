@@ -8041,14 +8041,14 @@ void intersection(...)
 
 SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 	INIT:
-	// --- validate method -------------------------------------------
+	// --- validate method
 	if (strcmp(method, "pearson")  != 0 &&
 		strcmp(method, "spearman") != 0 &&
 		strcmp(method, "kendall")  != 0)
 		  croak("cor: unknown method '%s' (use 'pearson', 'spearman', or 'kendall')",
 				method);
 
-	// --- validate x ------------------------------------------------
+	// --- validate x
 	if (!SvROK(x_sv) || SvTYPE(SvRV(x_sv)) != SVt_PVAV)
 		  croak("cor: x must be an ARRAY reference");
 
@@ -8056,7 +8056,7 @@ SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 	size_t nx   = av_len(x_av) + 1;
 	if (nx == 0) croak("cor: x is empty");
 
-	// --- detect whether x is a flat vector or a matrix (AoA) -------
+	// --- detect whether x is a flat vector or a matrix (AoA)
 	bool x_is_matrix = 0;
 	{
 		SV**restrict fp = av_fetch(x_av, 0, 0);
@@ -8064,7 +8064,7 @@ SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 			x_is_matrix = 1;
 	}
 
-	// --- detect y ----------------------------
+	// --- detect y
 	bool has_y = (SvOK(y_sv) && SvROK(y_sv) &&
 				   SvTYPE(SvRV(y_sv)) == SVt_PVAV);
 
@@ -8082,7 +8082,7 @@ SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 	// Branch 1: both inputs are flat vectors  →  scalar result
 	if (!x_is_matrix && !y_is_matrix) {
 		if (!has_y) {
-			/* cor(vector) == 1 by definition */
+			// cor(vector) == 1 by definition
 			RETVAL = newSVnv(1.0);
 		} else {
 			if (nx != ny)
@@ -8229,7 +8229,7 @@ SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 			av_extend(rows_out[i], ncols_y - 1);
 		}
 		if (symmetric) {
-		/* Upper triangle + diagonal, then mirror. r_cache[i][j] (j >= i) holds the computed value. */
+		// Upper triangle + diagonal, then mirror. r_cache[i][j] (j >= i) holds the computed value
 			NV **restrict r_cache;
 			Newx(r_cache, ncols_x, NV*);
 			for (size_t i = 0; i < ncols_x; i++)
@@ -11699,3 +11699,244 @@ PPCODE:
 		PUSHs(&PL_sv_undef);
 	PUSHs(sv_2mortal(newRV_noinc((SV *) edge_av)));
 
+
+void get_union(...)
+	PROTOTYPE: @
+	PREINIT:
+		HV*restrict seen;
+		AV*restrict order;
+		size_t nrefs, n, oi, olen;
+		int gimme;
+	PPCODE:
+		gimme = GIMME_V;
+		nrefs = items;
+		if (nrefs == 0)
+			croak("union needs >= 1 array ref");
+		seen  = (HV*)sv_2mortal((SV*)newHV());
+		order = (AV*)sv_2mortal((SV*)newAV()); /* buffer: pushing to the stack while still reading ST() would clobber the args */
+		n = 0;
+		for (size_t i = 0; i < nrefs; i++) {
+			SV*restrict arg = ST(i);
+			AV*restrict av;
+			size_t len;
+			if (!(SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV))
+				croak("union: argument index %" UVuf " of %" UVuf " total (max index %" UVuf ") is not an array reference", (UV)i, (UV)nrefs, (UV)(nrefs - 1));
+			av = (AV*)SvRV(arg);
+			len = (size_t)(av_len(av) + 1);
+			for (size_t j = 0; j < len; j++) {
+				SV**restrict tv = av_fetch(av, j, 0);
+				STRLEN klen;
+				const char*restrict key;
+				I32 hklen;
+				if (!(tv && SvOK(*tv)))
+					croak("union: undefined value at array ref index %" UVuf " (argument %" UVuf ")", (UV)j, (UV)i);
+				key = SvPV(*tv, klen);
+				hklen = SvUTF8(*tv) ? -(I32)klen : (I32)klen;
+				if (hv_exists(seen, key, hklen))
+					continue;
+				(void)hv_store(seen, key, hklen, &PL_sv_undef, 0);
+				n++;
+				if (gimme != G_SCALAR)
+					av_push(order, newSVsv(*tv));
+			}
+		}
+		if (gimme == G_SCALAR) {
+			XPUSHs(sv_2mortal(newSVuv(n)));
+		} else {
+			olen = (size_t)(av_len(order) + 1);
+			for (oi = 0; oi < olen; oi++) {
+				SV**restrict e = av_fetch(order, oi, 0);
+				if (e && *e)
+					XPUSHs(sv_2mortal(newSVsv(*e)));
+			}
+		}
+
+void get_unique(...)
+	PROTOTYPE: @
+	PREINIT:
+		HV*restrict count;
+		AV*restrict order;
+		size_t nrefs, n, oi, olen;
+		int gimme;
+	PPCODE:
+		gimme = GIMME_V;
+		nrefs = items;
+		if (nrefs == 0)
+			croak("get_unique needs >= 1 array ref");
+		count = (HV*)sv_2mortal((SV*)newHV());
+		order = (AV*)sv_2mortal((SV*)newAV());
+		for (size_t i = 0; i < nrefs; i++) {
+			SV*restrict arg = ST(i);
+			HV*restrict loc;
+			AV*restrict av;
+			size_t len;
+			if (!(SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV))
+				croak("get_unique: argument index %" UVuf " of %" UVuf " total (max index %" UVuf ") is not an array reference", (UV)i, (UV)nrefs, (UV)(nrefs - 1));
+			av = (AV*)SvRV(arg);
+			len = (size_t)(av_len(av) + 1);
+			loc = (HV*)sv_2mortal((SV*)newHV());   /* per-ref dedup */
+			for (size_t j = 0; j < len; j++) {
+				SV**restrict tv = av_fetch(av, j, 0);
+				STRLEN klen;
+				const char*restrict key;
+				I32 hklen;
+				SV**restrict cv;
+				if (!(tv && SvOK(*tv)))
+					croak("get_unique: undefined value at array ref index %" UVuf " (argument %" UVuf ")", (UV)j, (UV)i);
+				key = SvPV(*tv, klen);
+				hklen = SvUTF8(*tv) ? -(I32)klen : (I32)klen;
+				if (hv_exists(loc, key, hklen))
+					continue;
+				(void)hv_store(loc, key, hklen, &PL_sv_undef, 0);
+				cv = hv_fetch(count, key, hklen, 1);
+				if (cv && *cv) {
+					if (SvOK(*cv)) sv_setiv(*cv, SvIV(*cv) + 1);
+					else           sv_setiv(*cv, 1);
+				}
+				if (i == 0)
+					av_push(order, newSVsv(*tv));  /* candidates, in first ref's order */
+			}
+		}
+		n = 0;
+		olen = (size_t)(av_len(order) + 1);
+		for (oi = 0; oi < olen; oi++) {
+			SV**restrict e = av_fetch(order, oi, 0);
+			STRLEN klen;
+			const char*restrict key;
+			I32 hklen;
+			SV**restrict cv;
+			if (!(e && *e))
+				continue;
+			key = SvPV(*e, klen);
+			hklen = SvUTF8(*e) ? -(I32)klen : (I32)klen;
+			cv = hv_fetch(count, key, hklen, 0);
+			if (cv && *cv && SvIV(*cv) == 1) {
+				if (gimme != G_SCALAR)
+					XPUSHs(sv_2mortal(newSVsv(*e)));
+				n++;
+			}
+		}
+		if (gimme == G_SCALAR)
+			XPUSHs(sv_2mortal(newSVuv(n)));
+
+void Lonly(...)
+	PROTOTYPE: $$
+	PREINIT:
+		HV*restrict inOther;
+		HV*restrict seen;
+		AV*restrict keep;
+		AV*restrict other;
+		size_t nrefs, n, klen_a, olen;
+		int gimme;
+	PPCODE:
+		gimme = GIMME_V;
+		nrefs = items;
+		if (nrefs != 2)
+			croak("Lonly needs exactly 2 array refs (got %" UVuf ")", (UV)nrefs);
+		{
+			SV*restrict aL = ST(0);
+			SV*restrict aR = ST(1);
+			if (!(SvROK(aL) && SvTYPE(SvRV(aL)) == SVt_PVAV))
+				croak("Lonly: first (left) argument is not an array reference");
+			if (!(SvROK(aR) && SvTYPE(SvRV(aR)) == SVt_PVAV))
+				croak("Lonly: second (right) argument is not an array reference");
+			keep  = (AV*)SvRV(aL); // items we may return
+			other = (AV*)SvRV(aR); // items to subtract
+		}
+		inOther = (HV*)sv_2mortal((SV*)newHV());
+		seen    = (HV*)sv_2mortal((SV*)newHV());
+		olen = (size_t)(av_len(other) + 1);
+		for (size_t j = 0; j < olen; j++) {
+			SV**restrict tv = av_fetch(other, j, 0);
+			STRLEN klen;
+			const char*restrict key;
+			I32 hklen;
+			if (!(tv && SvOK(*tv)))
+				croak("Lonly: undefined value in right array ref at index %" UVuf, (UV)j);
+			key = SvPV(*tv, klen);
+			hklen = SvUTF8(*tv) ? -(I32)klen : (I32)klen;
+			(void)hv_store(inOther, key, hklen, &PL_sv_undef, 0);
+		}
+		n = 0;
+		klen_a = (size_t)(av_len(keep) + 1);
+		for (size_t j = 0; j < klen_a; j++) {
+			SV**restrict tv = av_fetch(keep, j, 0);
+			STRLEN klen;
+			const char*restrict key;
+			I32 hklen;
+			if (!(tv && SvOK(*tv)))
+				croak("Lonly: undefined value in left array ref at index %" UVuf, (UV)j);
+			key = SvPV(*tv, klen);
+			hklen = SvUTF8(*tv) ? -(I32)klen : (I32)klen;
+			if (hv_exists(inOther, key, hklen))
+				continue;                      /* present in R -> not left-only */
+			if (hv_exists(seen, key, hklen))
+				continue;                      /* dedup within L */
+			(void)hv_store(seen, key, hklen, &PL_sv_undef, 0);
+			n++;
+			if (gimme != G_SCALAR)
+				XPUSHs(sv_2mortal(newSVsv(*tv)));
+		}
+		if (gimme == G_SCALAR)
+			XPUSHs(sv_2mortal(newSVuv(n)));
+
+void Ronly(...)
+	PROTOTYPE: $$
+	PREINIT:
+		HV*restrict inOther;
+		HV*restrict seen;
+		AV*restrict keep;
+		AV*restrict other;
+		size_t nrefs, n, klen_a, olen;
+		int gimme;
+	PPCODE:
+		gimme = GIMME_V;
+		nrefs = items;
+		if (nrefs != 2)
+			croak("Ronly needs exactly 2 array refs (got %" UVuf ")", (UV)nrefs);
+		{
+			SV*restrict aL = ST(0);
+			SV*restrict aR = ST(1);
+			if (!(SvROK(aL) && SvTYPE(SvRV(aL)) == SVt_PVAV))
+				croak("Ronly: first (left) argument is not an array reference");
+			if (!(SvROK(aR) && SvTYPE(SvRV(aR)) == SVt_PVAV))
+				croak("Ronly: second (right) argument is not an array reference");
+			other = (AV*)SvRV(aL);  /* items to subtract    */
+			keep  = (AV*)SvRV(aR);  /* items we may return  */
+		}
+		inOther = (HV*)sv_2mortal((SV*)newHV());
+		seen    = (HV*)sv_2mortal((SV*)newHV());
+		olen = (size_t)(av_len(other) + 1);
+		for (size_t j = 0; j < olen; j++) {
+			SV**restrict tv = av_fetch(other, j, 0);
+			STRLEN klen;
+			const char*restrict key;
+			I32 hklen;
+			if (!(tv && SvOK(*tv)))
+				croak("Ronly: undefined value in left array ref at index %" UVuf, (UV)j);
+			key = SvPV(*tv, klen);
+			hklen = SvUTF8(*tv) ? -(I32)klen : (I32)klen;
+			(void)hv_store(inOther, key, hklen, &PL_sv_undef, 0);
+		}
+		n = 0;
+		klen_a = (size_t)(av_len(keep) + 1);
+		for (size_t j = 0; j < klen_a; j++) {
+			SV**restrict tv = av_fetch(keep, j, 0);
+			STRLEN klen;
+			const char*restrict key;
+			I32 hklen;
+			if (!(tv && SvOK(*tv)))
+				croak("Ronly: undefined value in right array ref at index %" UVuf, (UV)j);
+			key = SvPV(*tv, klen);
+			hklen = SvUTF8(*tv) ? -(I32)klen : (I32)klen;
+			if (hv_exists(inOther, key, hklen))
+				continue; // present in L -> not right-only
+			if (hv_exists(seen, key, hklen))
+				continue; // dedup within R
+			(void)hv_store(seen, key, hklen, &PL_sv_undef, 0);
+			n++;
+			if (gimme != G_SCALAR)
+				XPUSHs(sv_2mortal(newSVsv(*tv)));
+		}
+		if (gimme == G_SCALAR)
+			XPUSHs(sv_2mortal(newSVuv(n)));

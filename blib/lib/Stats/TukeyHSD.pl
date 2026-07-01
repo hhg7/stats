@@ -23,5 +23,4 @@ my %pg = (
 my $fit = aov(\%pg);#, 'weight ~ group');
 my $hsd = TukeyHSD($fit, data => \%pg);#, formula => 'weight ~ group');
 p $hsd;
-view( $hsd->{Group});
-summary( $hsd->{Group} );
+view( $hsd->{group});

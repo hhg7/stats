@@ -1180,6 +1180,41 @@ which returns a hash reference:
         }
     });
 
+## get_union
+
+    my @all   = get_union(\@a, \@b, \@c); # every distinct value, any list
+    my $count = get_union(\@a, \@b, \@c); # how many distinct values
+
+Takes one or more array references and returns every value that appears in at
+least one of them. Duplicates collapse and the result keeps first-appearance
+order. In scalar context it returns the count. Values are compared by their
+string form (like Perl hash keys), so `1`, `"1"` and `1.0` are one element,
+while a UTF-8 flagged string stays distinct from the same bytes without the
+flag. A non-array-ref argument or an `undef` element is fatal. Mirrors
+`List::Compare`'s `get_union`.
+
+    my @a = (1, 2, 3, 3);
+    my @b = (3, 4);
+    my @u = get_union(\@a, \@b);            # (1, 2, 3, 4)
+
+## get_unique
+
+    my @only_first = get_unique(\@a, \@b, \@c);
+    my $count      = get_unique(\@a, \@b, \@c);
+
+Takes one or more array references and returns the values that appear in the
+**first** reference and in **no other** reference; with a single reference it
+returns that list's distinct values. Duplicates collapse, the result keeps
+first-appearance order, and scalar context returns the count. Values are
+compared by string form (see `get_union`). A non-array-ref argument or an
+`undef` element is fatal. Mirrors `List::Compare`'s `get_unique`, which
+likewise defaults to the first list.
+
+    my @a = (1, 2, 3);
+    my @b = (3, 4, 5);
+    my @c = (5, 6);
+    my @u = get_unique(\@a, \@b, \@c);      # (1, 2)  -- 3 is also in @b
+
 ## glm
 
 takes a hash of an array as input
@@ -1619,6 +1654,22 @@ If your data contains missing numbers (`NA` or `undef`), `lm` handles listwise d
 the dot operator also works:
 
     $lm = lm(formula => 'y ~ .', data => $dot_data);
+
+## Lonly
+
+    my @left_only = Lonly(\@left, \@right);
+    my $count     = Lonly(\@left, \@right);
+
+Takes **exactly two** array references and returns the values in the left list
+that are absent from the right list. Duplicates collapse, the result keeps
+left-list order, and scalar context returns the count. Values are compared by
+string form (see `get_union`). A non-array-ref argument, an `undef` element,
+or anything other than two references is fatal. Mirrors `List::Compare`'s
+`get_Lonly`.
+
+    my @a = (1, 2, 3, 4);
+    my @b = (3, 4, 5);
+    my @l = Lonly(\@a, \@b);                # (1, 2)
 
 ## matrix
 
@@ -2097,6 +2148,23 @@ Calculates sample quantiles using R's continuous Type 7 interpolation.
     my $quantile = quantile('x' => [1..99], probs => [0.05, 0.1, 0.25]);
 
 If the `probs` parameter is omitted, it behaves identically to R by defaulting to the 0, 25, 50, 75, and 100 percentiles (`c(0, .25, .5, .75, 1)`). The returned hash keys match R's standardized naming convention (e.g., `"25%"`, `"33.3%"`).
+
+## Ronly
+
+    my @right_only = Ronly(\@left, \@right);
+    my $count      = Ronly(\@left, \@right);
+
+Takes **exactly two** array references and returns the values in the right list
+that are absent from the left list. Duplicates collapse, the result keeps
+right-list order, and scalar context returns the count. Values are compared by
+string form (see `get_union`). A non-array-ref argument, an `undef` element,
+or anything other than two references is fatal. Mirrors `List::Compare`'s
+`get_Ronly`, and is the reverse of `Lonly`: `Ronly(\@a, \@b)` equals
+`Lonly(\@b, \@a)`.
+
+    my @a = (1, 2, 3, 4);
+    my @b = (3, 4, 5);
+    my @r = Ronly(\@a, \@b); # (5)
 
 ## rbinom
 
@@ -2754,9 +2822,9 @@ Args can also be accepted:
 
 ## 0.19
 
-numerous `SSize_t var1 = av_len(var) + 1` are changed to `size_t var1 = av_len(var) + 1` as `size_t` as the result cannot be negative, in order to expand numerical range
+numerous `SSize_t var1 = av_len(var) + 1` are changed to `size_t var1 = av_len(var) + 1` as `size_t`; as the result cannot be negative, in order to expand numerical range
 
-Addition of `binom_test`, `chunk`, `qcut`, and 3 tukey functions
+Addition of `binom_test`, `chunk`, `get_union`, `get_unique`, `Lonly`, `Ronly`, `qcut`, and 3 tukey functions
 
 Better warnings when non-array references are given to `intersection`
 
