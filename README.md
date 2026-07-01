@@ -2756,7 +2756,7 @@ Args can also be accepted:
 
 numerous `SSize_t var1 = av_len(var) + 1` are changed to `size_t var1 = av_len(var) + 1` as `size_t` as the result cannot be negative, in order to expand numerical range
 
-Addition of `binom_test`, `chunk`, and `qcut` functions
+Addition of `binom_test`, `chunk`, `qcut`, and 3 tukey functions
 
 Better warnings when non-array references are given to `intersection`
 
