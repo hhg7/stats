@@ -2,7 +2,3 @@ hoa2hoh
 ncol
 nrow
 `summary` should have colored and tidier output like new `view` does
-#
-# set math
-#
-`union`, getR_only, getL_only (spelling?)

@@ -11460,6 +11460,87 @@ SV *hoa2aoh(hoa)
 	OUTPUT:
 		RETVAL
 
+SV *hoa2hoh(hoa, key)
+	SV *hoa
+	SV *key
+	PREINIT:
+		HV *restrict in;
+		HV *restrict out;
+		AV *restrict keycol;
+		HE *restrict he;
+		SV **restrict kv;	// per-column key SVs (mortal)
+		AV **restrict cv;	// per-column array bodies (borrowed)
+		size_t n, i;
+		size_t ncols, ci;
+	CODE:
+	{
+		if (!SvROK(hoa) || SvTYPE(SvRV(hoa)) != SVt_PVHV)
+			croak("hoa2hoh: first argument must be a hash-of-arrays (hashref)");
+		if (!SvOK(key))
+			croak("hoa2hoh: key column name is undefined");
+		in    = (HV *)SvRV(hoa);
+		ncols = (size_t)HvUSEDKEYS(in);
+		/* the key column must exist and be an arrayref */
+		{
+			HE *restrict khe  = hv_fetch_ent(in, key, 0, 0);
+			SV *restrict kval = khe ? HeVAL(khe) : NULL;
+			if (!khe || !kval || !SvROK(kval) || SvTYPE(SvRV(kval)) != SVt_PVAV)
+				croak("hoa2hoh: key column '%s' is not present as an arrayref",
+					SvPV_nolen(key));
+			keycol = (AV *)SvRV(kval);
+		}
+		/* SAVEFREEPV makes these scratch arrays croak-safe */
+		ENTER;
+		SAVETMPS;
+		Newx(kv, ncols ? ncols : 1, SV *);
+		SAVEFREEPV(kv);
+		Newx(cv, ncols ? ncols : 1, AV *);
+		SAVEFREEPV(cv);
+		/* one pass to collect columns and find the longest */
+		n  = 0;
+		ci = 0;
+		hv_iterinit(in);
+		while ((he = hv_iternext(in))) {
+			SV *restrict val = HeVAL(he);
+			size_t len;
+			if (!val || !SvROK(val) || SvTYPE(SvRV(val)) != SVt_PVAV)
+				croak("hoa2hoh: column '%s' is not an arrayref",
+					SvPV_nolen(hv_iterkeysv(he)));
+			kv[ci] = hv_iterkeysv(he);	/* mortal; valid until our LEAVE */
+			cv[ci] = (AV *)SvRV(val);
+			len = (size_t)(av_len(cv[ci]) + 1);
+			if (len > n)
+				n = len;
+			ci++;
+		}
+		ncols = ci;
+		out = newHV();
+		sv_2mortal((SV *)out);	/* reclaimed on croak; +1'd below on success */
+		for (i = 0; i < n; i++) {
+			HV  *restrict row;
+			SV  *restrict rowname;
+			SV **restrict kp = av_fetch(keycol, i, 0);
+			if (!kp || !*kp || !SvOK(*kp))
+				croak("hoa2hoh: key column '%s' has an undefined value at row %zu",
+					SvPV_nolen(key), i);
+			rowname = *kp;
+			if (hv_exists_ent(out, rowname, 0))
+				croak("hoa2hoh: duplicate row name '%s'", SvPV_nolen(rowname));
+			row = newHV();
+			for (ci = 0; ci < ncols; ci++) {
+				SV **restrict cp   = av_fetch(cv[ci], i, 0);
+				SV	*restrict cell = (cp && *cp) ? newSVsv(*cp) : newSV(0);
+				(void)hv_store_ent(row, kv[ci], cell, 0);
+			}
+			(void)hv_store_ent(out, rowname, newRV_noinc((SV *)row), 0);
+		}
+		RETVAL = newRV_inc((SV *)out);
+		FREETMPS;
+		LEAVE;
+	}
+	OUTPUT:
+		RETVAL
+
 void vals(data, colname_sv)
 	SV *data
 	SV *colname_sv

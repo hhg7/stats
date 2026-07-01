@@ -1375,6 +1375,27 @@ completely independent of the input — changing one never affects the other.
 
 `hoa2aoh` is the reverse of `aoh2hoa`
 
+## hoa2hoh( \%hoa, $key )
+
+Converts a hash-of-arrays (column-major) into a hash-of-hashes keyed by the
+`$key` column, i.e. `{ $rowname => { col => value, ... } }`. Analogous to
+`hoa2aoh`, but rows are indexed by their `$key` value instead of positionally.
+
+    my %hoa = (
+        id => [ qw(a b c) ],
+        x  => [ 1, 2, 3 ],
+        y  => [ 4, 5, 6 ],
+    );
+    my $hoh = hoa2hoh( \%hoa, 'id' );
+    # { a => { id => 'a', x => 1, y => 4 }, b => {...}, c => {...} }
+
+The `$key` column is retained in each inner row. Columns are copied by value.
+Shorter columns are padded with `undef`, matching `hoa2aoh`.
+
+Dies if: the first argument is not a hashref of arrayrefs; `$key` is undef or
+names a missing/non-array column; the `$key` column holds an undefined value
+for any row; or two rows share the same `$key` value.
+
 ## hoh2hoa
 
 Convert a **hash of hashes** (row-major: outer key = row, inner key = column)
@@ -2825,9 +2846,11 @@ Args can also be accepted:
 
 numerous `SSize_t var1 = av_len(var) + 1` are changed to `size_t var1 = av_len(var) + 1` as `size_t`; as the result cannot be negative, in order to expand numerical range
 
-Addition of `binom_test`, `chunk`, `get_union`, `get_unique`, `Lonly`, `Ronly`, `qcut`, and 3 tukey functions
+Addition of `hoa2hoh`, `binom_test`, `chunk`, `get_union`, `get_unique`, `Lonly`, `Ronly`, `qcut`, and 3 tukey functions
 
 Better warnings when non-array references are given to `intersection`
+
+`view` now breaks columns into chunks for very wide data sets, more closely matching R's behavior
 
 ## 0.18
 

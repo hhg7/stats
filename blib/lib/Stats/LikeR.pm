@@ -11,7 +11,7 @@ use autodie ':default';
 use Exporter 'import';
 use Scalar::Util 'looks_like_number';
 XSLoader::load('Stats::LikeR', $VERSION);
-our @EXPORT_OK = qw(add_data aoh2hoa aoh2hoh aov assign binom_test cfilter chisq_test chunk col col2col cor cor_test cov csort dnorm dropna filter fisher_test get_union get_unique glm group_by hoa2aoh hoh2hoa hist intersection kruskal_test ks_test Lonly ljoin lm matrix max mean median min mode oneway_test p_adjust power_t_test predict prcomp ptukey qcut qtukey quantile Ronly rbinom read_table rnorm runif sample scale sd seq shapiro_test sum summary t_test transpose TukeyHSD uniq vals value_counts var var_test view wilcox_test write_table);
+our @EXPORT_OK = qw(add_data aoh2hoa aoh2hoh aov assign binom_test cfilter chisq_test chunk col col2col cor cor_test cov csort dnorm dropna filter fisher_test get_union get_unique glm group_by hoa2aoh hoa2hoh hoh2hoa hist intersection kruskal_test ks_test Lonly ljoin lm matrix max mean median min mode oneway_test p_adjust power_t_test predict prcomp ptukey qcut qtukey quantile Ronly rbinom read_table rnorm runif sample scale sd seq shapiro_test sum summary t_test transpose TukeyHSD uniq vals value_counts var var_test view wilcox_test write_table);
 our @EXPORT = @EXPORT_OK;
 
 sub aoh2hoh {
@@ -836,10 +836,13 @@ sub read_table {
 #
 sub view {
 	my $data = shift;
+	if (not defined $data) {
+		die 'view received undefined data';
+	}
 	my %args = @_;
 	# --- reject unknown arguments (mirrors read_table/write_table) ---
 	my %allowed = map { $_ => 1 } qw(
-		n rows na max_width ellipsis gap cols columns
+		n rows na max_width ellipsis gap cols columns width
 		to return_only row.names row_names color colors
 	);
 	my @bad = sort grep { !$allowed{$_} } keys %args;
@@ -859,6 +862,14 @@ sub view {
 	my $ucols = $args{cols} || $args{columns};
 	my $fh	  = $args{to};
 	my $quiet = $args{return_only};
+	# terminal width used to break wide tables into column chunks (R-style).
+	# precedence: explicit 'width' arg -> $ENV{COLUMNS} -> 80 (R's default).
+	my $tw = exists $args{width} ? $args{width}
+		   : (defined $ENV{COLUMNS} && $ENV{COLUMNS} =~ /^[1-9][0-9]*\z/)
+			 ? $ENV{COLUMNS}
+			 : 80;
+	die "view: 'width' must be a positive integer\n"
+		unless defined $tw && $tw =~ /^[1-9][0-9]*\z/;
 	# 'row.names' takes precedence over the row_names alias (both accepted)
 	my $label_col = exists $args{'row.names'} ? $args{'row.names'}
 				  : exists $args{row_names}	  ? $args{row_names}
@@ -1097,6 +1108,30 @@ sub view {
 		return $right ? $sp . $painted : $painted . $sp;
 	};
 
+	# ---- break columns into chunks that fit within $tw (R-style) ----
+	# the label column (width $lab_w) is repeated at the front of every chunk.
+	# $gap is spaces only, so its display width is length($gap).
+	my $gap_w = length $gap;
+	my @chunks;
+	if (@cols) {
+		my $j = 0;
+		while ($j <= $#cols) {
+			my $used = $lab_w;
+			my @chunk;
+			while ($j <= $#cols) {
+				my $add = $gap_w + $w[$j];
+				# always keep at least one column per chunk, even if it overflows
+				last if @chunk && $used + $add > $tw;
+				push @chunk, $j;
+				$used += $add;
+				$j++;
+			}
+			push @chunks, \@chunk;
+		}
+	} else {
+		@chunks = ( [] );	# no data columns: just the label column
+	}
+
 	my @out;
 	my $shown = scalar @row_cell;
 	push @out, $paint->(
@@ -1104,14 +1139,18 @@ sub view {
 			$kind, $total, ($total == 1 ? '' : 's'),
 			scalar(@cols), (@cols == 1 ? '' : 's'), $shown),
 		'caller_info');
-	my @hcells = ( $field->($lh_b, $lh_w, $lab_w, 0, 'hash') );
-	push @hcells, $field->($head_cell[$_][0], $head_cell[$_][1], $w[$_], $numeric[$_], 'hash') for 0 .. $#cols;
-	push @out, join($gap, @hcells);
-	for my $ri (0 .. $#row_cell) {
-		my @cells = ( $field->($lab_cell[$ri][0], $lab_cell[$ri][1], $lab_w, $lab_numeric, $lab_cell[$ri][2]) );
-		push @cells, $field->($row_cell[$ri][$_][0], $row_cell[$ri][$_][1], $w[$_], $numeric[$_], $row_cell[$ri][$_][2]) for 0 .. $#cols;
-		push @out, join($gap, @cells);
+
+	for my $chunk (@chunks) {
+		my @hcells = ( $field->($lh_b, $lh_w, $lab_w, 0, 'hash') );
+		push @hcells, $field->($head_cell[$_][0], $head_cell[$_][1], $w[$_], $numeric[$_], 'hash') for @$chunk;
+		push @out, join($gap, @hcells);
+		for my $ri (0 .. $#row_cell) {
+			my @cells = ( $field->($lab_cell[$ri][0], $lab_cell[$ri][1], $lab_w, $lab_numeric, $lab_cell[$ri][2]) );
+			push @cells, $field->($row_cell[$ri][$_][0], $row_cell[$ri][$_][1], $w[$_], $numeric[$_], $row_cell[$ri][$_][2]) for @$chunk;
+			push @out, join($gap, @cells);
+		}
 	}
+
 	push @out, $paint->(
 		sprintf("# ... %d more row%s", $total - $shown, ($total - $shown == 1 ? '' : 's')),
 		'caller_info') if $shown < $total;
