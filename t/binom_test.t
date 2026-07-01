@@ -124,9 +124,7 @@ sub is_approx {
 	       'C10 99% interval wider than 95%');
 }
 
-#----------------------------------------
 #	input validation
-#----------------------------------------
 dies_ok { binom_test(5) }                       'E1 scalar x without n dies';
 dies_ok { binom_test(25, 20) }                  'E2 successes > trials dies';
 dies_ok { binom_test(-1, 20) }                  'E3 negative successes dies';
@@ -138,28 +136,26 @@ dies_ok { binom_test(8, 20, bogus => 1) }       'E8 unknown argument dies';
 dies_ok { binom_test([1, 2, 3]) }               'E9 wrong-length array ref dies';
 lives_ok { binom_test(0, 1, p => 0) }           'E10 degenerate p=0 lives';
 
-#----------------------------------------
 #	binom_test: memory  (inputs hoisted out of the closures)
-#----------------------------------------
-my @sf = (8, 12);
-no_leaks_ok {
-	eval { binom_test(8, 20) }
-} 'binom_test(): no memory leaks (scalar form)' unless $INC{'Devel/Cover.pm'};
+unless ($INC{'Devel/Cover.pm'}) {
+	no_leaks_ok {
+		eval { binom_test(8, 20) }
+	} 'binom_test(): no memory leaks (scalar form)';
+	my @sf = (8, 12);
+	no_leaks_ok {
+		eval { binom_test(\@sf, p => 0.3) }
+	} 'binom_test(): no memory leaks (array-ref form)';
 
-no_leaks_ok {
-	eval { binom_test(\@sf, p => 0.3) }
-} 'binom_test(): no memory leaks (array-ref form)' unless $INC{'Devel/Cover.pm'};
+	no_leaks_ok {
+		eval { binom_test(15, 20, alternative => 'less', conf_level => 0.99) }
+	} 'binom_test(): no memory leaks (named options)';
 
-no_leaks_ok {
-	eval { binom_test(15, 20, alternative => 'less', conf_level => 0.99) }
-} 'binom_test(): no memory leaks (named options)' unless $INC{'Devel/Cover.pm'};
+	no_leaks_ok {
+		eval { binom_test(683, 1000, p => 0.7, alternative => 'greater') }
+	} 'binom_test(): no memory leaks (large n)';
 
-no_leaks_ok {
-	eval { binom_test(683, 1000, p => 0.7, alternative => 'greater') }
-} 'binom_test(): no memory leaks (large n)' unless $INC{'Devel/Cover.pm'};
-
-no_leaks_ok {
-	eval { binom_test(25, 20) }     # the croak path must not leak either
-} 'binom_test(): no memory leaks (error path)' unless $INC{'Devel/Cover.pm'};
-
+	no_leaks_ok {
+		eval { binom_test(25, 20) }     # the croak path must not leak either
+	} 'binom_test(): no memory leaks (error path)';
+}
 done_testing();

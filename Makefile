@@ -192,7 +192,8 @@ PERL_ARCHIVE       =
 PERL_ARCHIVE_AFTER = 
 
 
-TO_INST_PM = add_data.pl \
+TO_INST_PM = TukeyHSD.pl \
+	add_data.pl \
 	aoh2hoh.pl \
 	aov.pl \
 	benchmark.pl \
@@ -1136,6 +1137,7 @@ pm_to_blib : $(FIRST_MAKEFILE) $(TO_INST_PM)
 	  -e '@parts=splice @ARGV,0,$$i+1;' \
 	  -e 'pop @parts; $$filter=join q{ }, map qq{"$$_"}, @parts;' \
 	  -e 'pm_to_blib({@ARGV}, '\''$(INST_LIB)/auto'\'', $$filter, '\''$(PERM_DIR)'\'')' -- $(PM_FILTER) -- \
+	  'TukeyHSD.pl' '$(INST_LIB)/Stats/TukeyHSD.pl' \
 	  'add_data.pl' '$(INST_LIB)/Stats/add_data.pl' \
 	  'aoh2hoh.pl' '$(INST_LIB)/Stats/aoh2hoh.pl' \
 	  'aov.pl' '$(INST_LIB)/Stats/aov.pl' \

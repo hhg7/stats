@@ -11,7 +11,7 @@ use autodie ':default';
 use Exporter 'import';
 use Scalar::Util 'looks_like_number';
 XSLoader::load('Stats::LikeR', $VERSION);
-our @EXPORT_OK = qw(add_data aoh2hoa aoh2hoh aov assign binom_test cfilter chisq_test chunk col col2col cor cor_test cov csort dnorm dropna filter fisher_test glm group_by hoa2aoh hoh2hoa hist intersection kruskal_test ks_test ljoin lm matrix max mean median min mode oneway_test p_adjust power_t_test predict prcomp qcut quantile rbinom read_table rnorm runif sample scale sd seq shapiro_test sum summary t_test transpose uniq vals value_counts var var_test view wilcox_test write_table);
+our @EXPORT_OK = qw(add_data aoh2hoa aoh2hoh aov assign binom_test cfilter chisq_test chunk col col2col cor cor_test cov csort dnorm dropna filter fisher_test glm group_by hoa2aoh hoh2hoa hist intersection kruskal_test ks_test ljoin lm matrix max mean median min mode oneway_test p_adjust power_t_test predict prcomp ptukey qcut qtukey quantile rbinom read_table rnorm runif sample scale sd seq shapiro_test sum summary t_test transpose TukeyHSD uniq vals value_counts var var_test view wilcox_test write_table);
 our @EXPORT = @EXPORT_OK;
 
 sub aoh2hoh {
@@ -1119,6 +1119,223 @@ sub view {
 	my $str = join("\n", @out) . "\n";
 	unless ($quiet) { defined $fh ? print {$fh} $str : print $str; }
 	return $str;
+}
+
+# TukeyHSD($fit, %opts) -- Tukey Honest Significant Differences.
+#
+# Mirrors R's stats::TukeyHSD for the fitted objects produced by this
+# module's aov(), lm() and glm().  Base R only defines TukeyHSD.aov; this
+# extends the same all-pairwise studentized-range comparison to lm and glm
+# outputs as well.
+#
+# The fitted objects here do not retain the model frame, so unlike R the
+# response values and per-level replication counts are recomputed from the
+# data.  Therefore the caller supplies the data frame and the response name:
+#
+#   my $fit = aov({ weight => \@w, group => \@g }, 'weight ~ group');
+#   my $hsd = TukeyHSD($fit, data => $df, formula => 'weight ~ group');
+#   # or:    TukeyHSD($fit, data => $df, response => 'weight');
+#
+# Options:
+#   data        (required) the AoH / HoA / HoH used to fit the model
+#   response    response column name; or give formula => 'y ~ ...'
+#   formula     alternative to response: LHS is parsed for the response
+#   which       factor name or arrayref of names (default: all factors)
+#   conf.level  confidence level, default 0.95 (conf_level also accepted)
+#   ordered     if true, order each factor's levels by increasing mean
+#
+# Returns a hashref: one entry per factor mapping to an arrayref of
+# comparison hashes { comparison, diff, lwr, upr, 'p adj' } in R's
+# lower-triangle order, plus the attributes 'conf.level' and 'ordered'.
+#
+# Scope: main-effect factors (those present in $fit->{xlevels}); a grouping
+# variable must be categorical (string levels) to be treated as a factor,
+# exactly as R requires factor().  MSE is the residual mean square (for glm
+# this is deviance/df.residual: exact for the gaussian family, a Wald-type
+# scale otherwise).  Per-level means are observed marginal means, which
+# match R's model.tables means for one-way (and balanced) designs.
+sub TukeyHSD {
+	my ($fit, %opt) = @_;
+	die 'TukeyHSD: first argument must be a fitted-model hashref (from aov/lm/glm)'
+		unless ref($fit) eq 'HASH';
+
+	my $conf = exists $opt{'conf.level'} ? $opt{'conf.level'}
+	         : exists $opt{conf_level}   ? $opt{conf_level}
+	         : 0.95;
+	die 'TukeyHSD: conf.level must be between 0 and 1'
+		unless $conf > 0 && $conf < 1;
+	my $ordered = $opt{ordered} ? 1 : 0;
+
+	my $data = $opt{data}
+		or die "TukeyHSD: 'data' (the data frame used to fit the model) is required";
+
+	# --- residual mean square (MSE) and residual d.f., per model type ---
+	my ($mse, $df);
+	if (ref($fit->{Residuals}) eq 'HASH') {                 # aov
+		$df  = $fit->{Residuals}{Df};
+		$mse = $fit->{Residuals}{'Mean Sq'};
+	} elsif (exists($fit->{rss}) && exists($fit->{'df.residual'})) {         # lm
+		$df  = $fit->{'df.residual'};
+		$mse = ($df > 0) ? $fit->{rss} / $df : undef;
+	} elsif (exists($fit->{deviance}) && exists($fit->{'df.residual'})) {    # glm
+		$df  = $fit->{'df.residual'};
+		$mse = ($df > 0) ? $fit->{deviance} / $df : undef;
+	} else {
+		die 'TukeyHSD: could not find residual MSE/df in the fit (expected aov/lm/glm output)';
+	}
+	die 'TukeyHSD: residual degrees of freedom must be >= 2 (got '
+		. (defined($df) ? $df : 'undef') . ')'
+		unless defined($df) && $df >= 2;
+	die 'TukeyHSD: could not determine a positive residual mean square'
+		unless defined($mse) && $mse > 0;
+
+	# --- WIDE one-way layout ------------------------------------------------
+	# data = { level => [observations], ... } with no response/formula: each
+	# key is a group and its arrayref holds that group's values -- the same
+	# shape aov() auto-stacks when the formula is omitted. Simpler than R's
+	# long format: no stacked response column, no separate factor column.
+	if (   !defined($opt{response}) && !defined($opt{formula})
+		&& ref($data) eq 'HASH' && keys(%$data) >= 2
+		&& (!grep { ref($_) ne 'ARRAY' } values %$data)
+		&& (!grep { !grep { defined && looks_like_number($_) } @$_ } values %$data)) {
+		my $label = (defined $opt{which} && !ref $opt{which}) ? $opt{which} : 'group';
+		my (%sum, %cnt);
+		for my $lev (keys %$data) {
+			for my $yv (@{ $data->{$lev} }) {
+				next unless defined($yv) && looks_like_number($yv);
+				$sum{$lev} += $yv;
+				$cnt{$lev}++;
+			}
+		}
+		my @levels = grep { $cnt{$_} } sort keys %$data;  # R orders levels alphabetically
+		die 'TukeyHSD: need at least 2 non-empty groups' unless @levels >= 2;
+		my @means = map { $sum{$_} / $cnt{$_} } @levels;
+		my @n     = map { $cnt{$_} }            @levels;
+		return {
+			$label       => _tukey_compare(\@levels, \@means, \@n, $mse, $df, $conf, $ordered),
+			'conf.level' => $conf,
+			ordered      => $ordered,
+		};
+	}
+
+	# --- LONG layout (R-style): a response column + one or more factor columns
+	my $resp = $opt{response};
+	if (!defined($resp) && defined $opt{formula}) {
+		($resp) = $opt{formula} =~ /\A\s*([^~]+?)\s*~/;
+	}
+	die "TukeyHSD: need the response variable; pass response => 'name' or formula => 'y ~ ...'"
+		unless defined($resp) && length $resp;
+
+	# --- factors present in the model (idx 0 of each xlevels entry = reference) ---
+	my $xl = $fit->{xlevels};
+	die 'TukeyHSD: no factors in the fitted model (nothing to compare)'
+		unless ref($xl) eq 'HASH' && keys %$xl;
+
+	my @which = defined($opt{which})
+		? (ref($opt{which}) eq 'ARRAY' ? @{ $opt{which} } : ($opt{which}))
+		: (sort keys %$xl);
+
+	my @factors;
+	for my $f (@which) {
+		if (exists $xl->{$f}) { push @factors, $f }
+		else { warn "TukeyHSD: '$f' is not a factor in the model and will be dropped\n" }
+	}
+	die "TukeyHSD: 'which' specified no factors" unless @factors;
+
+	my $y = _tukey_col($data, $resp);
+
+	my %out;
+	for my $f (@factors) {
+		my $g = _tukey_col($data, $f);
+		die "TukeyHSD: response '$resp' and factor '$f' differ in length"
+			unless scalar(@$y) == scalar(@$g);
+
+		my (%sum, %cnt);
+		for my $i (0 .. $#$g) {
+			my $gv = $g->[$i];
+			my $yv = $y->[$i];
+			next unless defined($gv) && defined($yv) && looks_like_number($yv);
+			$sum{$gv} += $yv;
+			$cnt{$gv}++;
+		}
+
+		# canonical level order from xlevels, then any extra observed levels
+		my @levels = @{ $xl->{$f} };
+		my %seen = map { $_ => 1 } @levels;
+		push @levels, sort grep { !$seen{$_} } keys %cnt;
+		@levels = grep { $cnt{$_} } @levels;      # only levels that carry data
+
+		die "TukeyHSD: factor '$f' needs at least 2 non-empty levels"
+			unless scalar(@levels) >= 2;
+
+		my @means = map { $sum{$_} / $cnt{$_} } @levels;
+		my @n     = map { $cnt{$_} }            @levels;
+
+		$out{$f} = _tukey_compare(\@levels, \@means, \@n, $mse, $df, $conf, $ordered);
+	}
+
+	$out{'conf.level'} = $conf;      # attributes, R-style
+	$out{ordered}      = $ordered;
+	return \%out;
+}
+
+# _tukey_compare(\@levels, \@means, \@n, $mse, $df, $conf, $ordered)
+# Shared HSD math for one factor: builds the pairwise-comparison rows in R's
+# lower-triangle, column-major order. Used by both the wide and long paths.
+sub _tukey_compare {
+	my ($levels, $means, $n, $mse, $df, $conf, $ordered) = @_;
+	my @levels = @$levels;
+	my @means  = @$means;
+	my @n      = @$n;
+	if ($ordered) {
+		my @ord = sort { $means[$a] <=> $means[$b] } 0 .. $#means;
+		@levels = @levels[@ord];
+		@means  = @means[@ord];
+		@n      = @n[@ord];
+	}
+	my $k    = scalar @means;
+	my $crit = Stats::LikeR::qtukey($conf, $k, $df);    # nranges = 1
+	my @rows;
+	for my $j (0 .. $k - 1) {                            # column-major lower triangle
+		for my $i ($j + 1 .. $k - 1) {
+			my $diff  = $means[$i] - $means[$j];
+			my $se    = sqrt( ($mse / 2) * (1 / $n[$i] + 1 / $n[$j]) );
+			my $width = $crit * $se;
+			my $est   = ($se > 0)
+				? $diff / $se
+				: ($diff >= 0 ? 9**9**9 : -(9**9**9));
+			my $padj  = Stats::LikeR::ptukey(abs($est), $k, $df, 'lower.tail' => 0);
+			push @rows, {
+				comparison => "$levels[$i]-$levels[$j]",
+				diff       => $diff,
+				lwr        => $diff - $width,
+				upr        => $diff + $width,
+				'p adj'    => $padj,
+			};
+		}
+	}
+	return \@rows;
+}
+
+# _tukey_col($data, $col) -- pull one column's cells, in row order, from any
+# of the three data-frame shapes (AoH arrayref, HoA/HoH hashref).
+sub _tukey_col {
+	my ($data, $col) = @_;
+	die 'TukeyHSD: data must be a reference (AoH / HoA / HoH)' unless ref $data;
+	my $r = ref $data;
+	if ($r eq 'ARRAY') {                              # AoH
+		return [ map { $_->{$col} } @$data ];
+	} elsif ($r eq 'HASH') {
+		my ($first) = values %$data;
+		if (ref($first) eq 'ARRAY') {                 # HoA
+			die "TukeyHSD: column '$col' not found in data"
+				unless exists $data->{$col};
+			return [ @{ $data->{$col} } ];
+		} else {                                      # HoH (row-name keyed)
+			return [ map { $data->{$_}{$col} } sort keys %$data ];
+		}
+	}
+	die 'TukeyHSD: unsupported data shape';
 }
 1;
 =encoding utf8
