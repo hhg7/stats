@@ -10814,7 +10814,7 @@ XS_EUPXS(XS_Stats__LikeR_kruskal_test)
 			}
 			group_id++;
 		}
-		k = group_id;   /* number of unique groups = number of hash keys */
+		k = group_id; // number of unique groups = number of hash keys
 	/* 4b. Original x / g array-pair input path */
 	} else {
 		if (!x_sv || !SvROK(x_sv) || SvTYPE(SvRV(x_sv)) != SVt_PVAV)

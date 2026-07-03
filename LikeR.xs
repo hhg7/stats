@@ -9977,7 +9977,7 @@ CODE:
 			}
 			group_id++;
 		}
-		k = group_id;   /* number of unique groups = number of hash keys */
+		k = group_id; // number of unique groups = number of hash keys
 	/* 4b. Original x / g array-pair input path */
 	} else {
 		if (!x_sv || !SvROK(x_sv) || SvTYPE(SvRV(x_sv)) != SVt_PVAV)
