@@ -2,7 +2,6 @@
 require 5.010;
 use strict;
 use warnings FATAL => 'all';
-use feature 'say';
 use Test::More;
 use Stats::LikeR;
 

@@ -9,6 +9,7 @@ use DDP {output => 'STDOUT', array_max => 10, show_memsize => 1};
 use Devel::Confess 'color';
 use Time::HiRes;
 use File::Temp;
+use Matplotlib::Simple 'plt';
 
 sub old_read_table {
 	my $file = shift;
@@ -350,6 +351,25 @@ say 'New mean: ' . mean(\@new);
 say 'Mean old / Mean new: ' . mean(\@old) / mean(\@new);
 my $t = t_test('x' => \@old, 'y' => \@new);
 p $t;
+my $py = read_table('python.read_table.tsv', 'output.type' => 'hoa');
+my $r  = read_table('R.read_table.tsv', 'output.type' => 'hoa');
+my ($min, $max) = (
+	min(@old, @new, $py->{seconds}, $r->{seconds}),
+	max(@old, @new, $py->{seconds}, $r->{seconds})
+);
+my $read_table = {
+	data =>  {
+		'Perl5.42.2'   => [@old],
+		'Stats::LikeR' => [@new],
+		'Python3.14.2' => [@{ $py->{seconds} }],
+		'R4.3.3'       => [@{ $r->{seconds} }],
+	},
+	orientation => 'horizontal',
+	title => 'read_table',
+	xlabel => 'seconds',
+	ylabel => 'Language',
+	'plot.type' => 'violin',
+};
 # write_table
 my $fh = File::Temp->new(DIR => '/tmp', SUFFIX => '.csv', UNLINK => 1);
 close $fh;
@@ -376,6 +396,35 @@ say 'New mean: ' . mean(\@new);
 say 'Mean old / Mean new: ' . mean(\@old) / mean(\@new);
 $t = t_test('x' => \@old, 'y' => \@new);
 p $t;
+$py = read_table('python.write_table.tsv', 'output.type' => 'hoa');
+$r  = read_table('R.write_table.tsv', 'output.type' => 'hoa');
+($min, $max) = (
+	min(@old, @new, $min, $py->{seconds}, $r->{seconds}),
+	max(@old, @new, $max, $py->{seconds}, $r->{seconds})
+);
+my $write_table = {
+	data =>  {
+		'Perl5.42.2'   => [@old],
+		'Stats::LikeR' => [@new],
+		'Python3.14.2' => [@{ $py->{seconds} }],
+		'R4.3.3'       => [@{ $r->{seconds} }],
+	},
+	orientation => 'horizontal',
+	'plot.type' => 'violin',
+	set_xlim    => "$min, $max",
+	title       => 'write_table',
+	xlabel      => 'seconds'
+};
+$read_table->{set_xlim} = "$min, $max";
+p $read_table;
+mkdir 'svg' unless -d 'svg';
+plt(
+	p => [[$read_table], [$write_table]],
+	suptitle => 'Reading/Writing file times',
+	'output.file' => 'svg/read.write.violin.svg',
+	ncol => 2,
+	sharey => true
+);
 =x
 =my %hoa = (
 	'r1' => [42, 'hello,world', undef, undef],

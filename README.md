@@ -1054,7 +1054,7 @@ Return a new data frame containing only the rows of `$df` that match a predicate
 `filter` accepts a predicate in one of two forms:
 
 1. a **`col()` expression** — a small, composable comparison built with overloaded operators, and
-2. a **code reference** — for anything the operators can't express (multiple columns, regexes, arbitrary logic), in the same spirit as the `filter` option of [`read_table`](#).
+2. a **code reference** — for anything the operators can't express (multiple columns, regexes, matching on the row name, arbitrary logic), in the same spirit as the `filter` option of [`read_table`](#).
 
 Both `filter` and `col` are exported by default.
 
@@ -1063,7 +1063,7 @@ Both `filter` and `col` are exported by default.
 | Position | Name | Description |
 | --- | --- | --- |
 | 1 | `$df` | The data frame: an **array of hashes** (AoH, the default `read_table` output), a **hash of arrays** (HoA), or a **hash of hashes** (HoH, e.g. `read_table` with `'output.type' => 'hoh'`). |
-| 2 | predicate | A `col()` comparison object **or** a `CODE` reference. |
+| 2 | predicate | A `col()` comparison object **or** a `CODE` reference. A coderef receives the row as `$_` / `$_[0]` and the row identifier as `$_[1]` (see below). |
 | 3 + | `'output.type' => 'aoh'\|'hoa'` | *Optional.* The shape of the returned frame. Omit it to keep the input's own shape. `'out'` and `'output_type'` are accepted aliases, and a bare `filter($df, $pred, 'aoh')` also works. |
 
 ### The `col()` form
@@ -1089,9 +1089,16 @@ Comparison operators bind more tightly than `&` and `|`, so `(col('a') > 4) & (c
 
 > Note: `col('age') > 32` works because `col('age')` is an object whose `>` is overloaded. A **bare string** cannot do this — `'age' > 32` is computed by Perl to a plain boolean (the string numifies to 0) before `filter` is ever called, so the column name is lost. Always wrap the column in `col(...)`.
 
+> `col()` addresses **columns only** — it has no handle on a HoH's row name (the outer key). It also cannot express a regex match: there is no `=~` operator to overload, so `col('name') =~ /re/` runs the match immediately on the stringified object and never reaches `filter`. For either case, use the code-reference form below.
+
 ### The code-reference form
 
-For logic the operators can't express, pass a `sub`. It is called once per row; the **row is a hash reference**, available both as `$_` and as the first argument `$_[0]`. Return a true value to keep the row.
+For logic the operators can't express, pass a `sub`. It is called once per row and is given:
+
+- the **row** as a hash reference, available both as `$_` and as the first argument `$_[0]`, and
+- the **row identifier** as the second argument, `$_[1]` — the **outer key (the row name)** for a HoH, or the **0-based row index** for an AoH or HoA.
+
+Return a true value to keep the row.
 
     filter($df, sub { $_->{x} > 4 && $_->{grp} eq 'a' });
     filter($df, sub { $_->{name} =~ /^A/ });
@@ -1099,6 +1106,22 @@ For logic the operators can't express, pass a `sub`. It is called once per row; 
     filter($df, sub { $_[0]{score} > $_[0]{threshold} });
 
 For a HoA, each row is assembled into a temporary `{ column => value, ... }` hash before the sub (or the `col()` test) is called, so the same `$_->{column}` syntax works regardless of the input shape.
+
+#### Filtering on the row name (`$_[1]`)
+
+In a HoH the row name is the **outer key**, not a field inside each row hash — so `$_->{row_name}` is `undef`. Match on `$_[1]` instead:
+
+    # HoH keyed by structure id; keep the rows named in @ids
+    my $grps = join '|', @ids;
+    my $keep = filter($score, sub { $_[1] =~ m/^(?:$grps)$/ });
+
+    # combine the row name with an ordinary column test
+    filter($score, sub { $_[1] =~ /^1/ && $_->{anomaly_rank} < 100 });
+
+For an AoH or HoA, `$_[1]` is the 0-based row index:
+
+    filter($aoh, sub { $_[1] % 2 == 0 });   # keep even-indexed rows
+    filter($hoa, sub { $_[1] < 10 });        # keep the first ten rows
 
 ### Choosing the output shape
 
@@ -1127,12 +1150,17 @@ The two selectable output types are `'aoh'` and `'hoa'`. `'hoh'` is **not** sele
     my $hoh = read_table('patients.csv', 'output.type' => 'hoh');
     my $keep = filter($hoh, col('Age') > 32);
 
+    # hash of hashes: filter on the row name (the outer key) via $_[1]
+    my $grps    = join '|', qw(1cka 1d4t);
+    my $by_name = filter($hoh, sub { $_[1] =~ m/^(?:$grps)$/ });
+
     # convert shape while filtering
     my $as_hoa = filter($df, col('Age') > 32, 'output.type' => 'hoa');
 
 ### Behavior and notes
 
 - **The input is never modified.** `filter` builds and returns a new frame; `$df` is left untouched.
+- **The predicate receives the row identifier as `$_[1]`.** For a HoH it is the outer key (the row name); for an AoH or HoA it is the 0-based row index. In a HoH the row name lives in the *key*, not inside each row hash, so `$_->{row_name}` is `undef` — filter on `$_[1]` instead. `col()` expressions see only columns, never the row key.
 - **A missing or `undef` cell never matches a `col()` comparison.** `col('x') > 0` silently drops any row whose `x` is absent or `undef`; for numeric operators a non-numeric cell is likewise dropped. With a coderef, `undef` is whatever your sub makes of it.
 - **Rows are shared, not deep-copied, wherever possible.** When an AoH or HoH row is kept (output left as AoH/HoH, or converted to `aoh`), the returned frame references the *same* inner row hashes as the input. Mutating such a row in the result would also change it in the original. HoA inputs and any `hoa` output build fresh arrays and fresh cell values.
 - **Keep-all / keep-none are well defined.** A predicate true for every row returns the whole frame in the chosen shape; true for none returns an empty frame: `[]` for `aoh`, a hash of empty (but present) columns for `hoa`, and `{}` for `hoh`.
@@ -1905,6 +1933,46 @@ It also allows configuring the test type (`type => 'one.sample'`, `'two.sample'`
 | `alternative` | String | `"two.sided"` | One- or two-sided test: `"two.sided"`, `"one.sided"`, `"greater"`, or `"less"`. |
 | `strict` | Boolean | 0 (False) | Use strict interpretation of two-sided power calculations. |
 | `tol` | Float | ~`1.22e-4` | Numerical tolerance used for the internal root-finding algorithm. |
+
+## pnorm
+
+The normal cumulative distribution function: the probability that a normal random variable is `<= x`. Ports R's `pnorm`.
+That is, take the integral from negative infinity to the point that you want.
+
+    my $p = pnorm(1.96);            # 0.9750021  (standard normal, P(X <= 1.96))
+
+`x` may be a single number or an array reference; an array reference returns an array reference of the same length.
+
+    my $ps = pnorm([-1.96, 0, 1.96]);   # [0.0249979, 0.5, 0.9750021]
+
+### Arguments
+
+| Position | Name | Default | Description |
+| --- | --- | --- | --- |
+| 1 | `x` | — | A number, or an array reference of numbers. |
+| 2 + | `mean` | `0` | Mean of the distribution. |
+| | `sd` | `1` | Standard deviation. |
+| | `lower` | `1` (true) | `1` = lower tail `P(X <= x)`; `0` = upper tail `P(X > x)`. `'lower.tail'` is an accepted alias. |
+| | `log` | `0` (false) | If true, return the log of the probability. `'log.p'` is an accepted alias. |
+
+### Examples
+
+    pnorm(1.96);                    # lower tail:  0.9750021
+    pnorm(1.96, lower => 0);        # upper tail:  0.0249979
+    pnorm(1.96, log => 1);          # log lower tail: -0.02531565
+    pnorm(2, mean => 1, sd => 0.5); # standardizes to z = 2: 0.9772499
+
+Use `log => 1` for tails that would otherwise underflow to `0`:
+
+    pnorm(-40);           # 0  (underflows)
+    pnorm(-40, log => 1); # -804.6084
+
+### Notes
+
+- `sd => 0` gives a step at the mean: `x < mean` returns `0`, otherwise `1`.
+- `sd < 0` returns `NaN` and warns.
+- A `NaN` input (or an `undef` element of an array reference) yields `NaN`.
+- `+Inf` returns `1`, `-Inf` returns `0`.
 
 ## prcomp
 
@@ -2842,21 +2910,15 @@ Args can also be accepted:
 
 # Changes
 
-## 0.19
+## 0.20
 
-numerous `SSize_t var1 = av_len(var) + 1` are changed to `size_t var1 = av_len(var) + 1` as `size_t`; as the result cannot be negative, in order to expand numerical range
+addition of `pnorm` function
 
-Addition of `hoa2hoh`, `binom_test`, `chunk`, `get_union`, `get_unique`, `Lonly`, `Ronly`, `qcut`, and 3 tukey functions
+`filter` can filter by row names with `$_[1]`
 
-Better warnings when non-array references are given to `intersection`
+### XS refactor
 
-`view` now breaks columns into chunks for very wide data sets, more closely matching R's behavior
-
-### `LikeR.xs` refactor
-
-Work on the ~12,000-line `LikeR.xs`: consolidate helper functions to reduce
-binary size, find bugs, and back the changes with tests. Every change was
-validated by translating the XS (`ExtUtils::ParseXS`) and compiling the result
+Consolidate helper functions to reduce binary size, find bugs, and back the changes with tests. Every change was validated by translating the XS (`ExtUtils::ParseXS`) and compiling the result
 with the module's own `ccflags`.
 
 #### Outcome
@@ -2895,6 +2957,18 @@ It is a portability/UB issue, not a runtime failure, which is why no functional
 test detects it (see "Testing", below).
 
  `LikeR.xs` — consolidated helpers; `compare_index` removed; `cmp_pval` fixed.
+
+
+## 0.19
+
+numerous `SSize_t var1 = av_len(var) + 1` are changed to `size_t var1 = av_len(var) + 1` as `size_t`; as the result cannot be negative, in order to expand numerical range
+
+Addition of `hoa2hoh`, `binom_test`, `chunk`, `get_union`, `get_unique`, `Lonly`, `Ronly`, `qcut`, and 3 tukey functions
+
+Better warnings when non-array references are given to `intersection`
+
+`view` now breaks columns into chunks for very wide data sets, more closely matching R's behavior
+
 
 ## 0.18
 

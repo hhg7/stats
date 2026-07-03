@@ -1807,16 +1807,19 @@ typedef struct {
 #define FLT_HOA 2
 #define FLT_HOH 3
 
-/* Call the predicate coderef with the row as both $_ and $_[0]; true => keep. */
-static bool filt_call(pTHX_ SV *code, SV *row_rv) {
+/* Call the predicate coderef with the row as $_ and $_[0], and the row
+ * identifier as $_[1] (the outer key for HoH, the 0-based row index for
+ * AoH/HoA; undef if none). true => keep. */
+static bool filt_call(pTHX_ SV *code, SV *row_rv, SV *id) {
 	dSP;
 	bool keep;
 	ENTER; SAVETMPS;
 	SAVE_DEFSV;
 	DEFSV_set(row_rv);
 	PUSHMARK(SP);
-	EXTEND(SP, 1);
+	EXTEND(SP, 2);
 	PUSHs(row_rv);
+	PUSHs(id ? id : &PL_sv_undef);
 	PUTBACK;
 	(void)call_sv(code, G_SCALAR);
 	SPAGAIN;
@@ -2294,7 +2297,7 @@ static long bt_check_count(pTHX_ SV *sv, const char *what) {
 		croak("binom_test: %s must be a nonnegative integer", what);
 	return (long)r;
 }
-/* =====================================================================
+/*
  * Studentized range distribution (Tukey's) -- ptukey() / qtukey().
  *
  * Faithful C port of R's src/nmath/{ptukey,qtukey}.c (Copenhaver &
@@ -2311,7 +2314,7 @@ static long bt_check_count(pTHX_ SV *sv, const char *what) {
  *
  * rr = number of groups/ranges (1 for a single ANOVA factor),
  * cc = number of means, df = residual degrees of freedom.
- * ===================================================================== */
+  */
 static NV st_wprob(NV w, NV rr, NV cc)
 {
 #define TK_NLEG  12
@@ -2620,7 +2623,151 @@ static SV** set_multiplicity(pTHX_ SV **sp, SV **restrict args, size_t nrefs,
 	if (gimme == G_SCALAR) XPUSHs(sv_2mortal(newSVuv(n)));
 	return sp;
 }
+/* ---- pnorm helpers: normal CDF via Cody's rational approximation ----------
+ * Ported from R's src/nmath/pnorm.c (Cody 1969; "_both"/lower/upper/log_p
+ * variants by Martin Maechler). The Cody approximation is a double-precision
+ * algorithm -- R itself computes pnorm in double and the coefficients carry
+ * only double precision -- so the core runs in `double` regardless of the
+ * module's NV width, and results match R to full double precision. The XS
+ * wrapper converts at the NV boundary. */
 
+#ifndef M_SQRT_32
+#define M_SQRT_32     5.656854249492380195206754896838  /* sqrt(32) */
+#endif
+#ifndef M_1_SQRT_2PI
+#define M_1_SQRT_2PI  0.398942280401432677939946059934  /* 1/sqrt(2*pi) */
+#endif
+
+/* d_2(x) == x/2, exactly; and R's do_del / swap_tail body macros. */
+#define pn_d2(_x_)  ldexp(_x_, -1)
+#define pn_do_del(X)                                                       \
+	xsq = ldexp(trunc(ldexp(X, 4)), -4);                               \
+	del = (X - xsq) * (X + xsq);                                       \
+	if (log_p) {                                                       \
+		*cum = (-xsq * pn_d2(xsq)) - pn_d2(del) + log(temp);       \
+		if ((lower && x > 0.) || (upper && x <= 0.))               \
+			*ccum = log1p(-exp(-xsq * pn_d2(xsq)) *            \
+			              exp(-pn_d2(del)) * temp);            \
+	} else {                                                           \
+		*cum  = exp(-xsq * pn_d2(xsq)) * exp(-pn_d2(del)) * temp;  \
+		*ccum = 1.0 - *cum;                                        \
+	}
+#define pn_swap_tail                                                       \
+	if (x > 0.) { temp = *cum; if (lower) *cum = *ccum; *ccum = temp; }
+
+static void c_pnorm_both(double x, double *cum, double *ccum, int i_tail, int log_p) {
+	const static double a[5] = {
+		2.2352520354606839287, 161.02823106855587881, 1067.6894854603709582,
+		18154.981253343561249, 0.065682337918207449113
+	};
+	const static double b[4] = {
+		47.20258190468824187, 976.09855173777669322,
+		10260.932208618978205, 45507.789335026729956
+	};
+	const static double c[9] = {
+		0.39894151208813466764, 8.8831497943883759412, 93.506656132177855979,
+		597.27027639480026226, 2494.5375852903726711, 6848.1904505362823326,
+		11602.651437647350124, 9842.7148383839780218, 1.0765576773720192317e-8
+	};
+	const static double d[8] = {
+		22.266688044328115691, 235.38790178262499861, 1519.377599407554805,
+		6485.558298266760755, 18615.571640885098091, 34900.952721145977266,
+		38912.003286093271411, 19685.429676859990727
+	};
+	const static double p[6] = {
+		0.21589853405795699, 0.1274011611602473639, 0.022235277870649807,
+		0.001421619193227893466, 2.9112874951168792e-5, 0.02307344176494017303
+	};
+	const static double q[5] = {
+		1.28426009614491121, 0.468238212480865118, 0.0659881378689285515,
+		0.00378239633202758244, 7.29751555083966205e-5
+	};
+	double xden, xnum, temp, del, eps, xsq, y;
+	int i, lower, upper;
+
+	if (isnan(x)) { *cum = *ccum = x; return; }
+
+	eps = DBL_EPSILON * 0.5;
+	lower = i_tail != 1;
+	upper = i_tail != 0;
+
+	y = fabs(x);
+	if (y <= 0.67448975) { /* qnorm(3/4) */
+		if (y > eps) {
+			xsq = x * x;
+			xnum = a[4] * xsq;
+			xden = xsq;
+			for (i = 0; i < 3; ++i) {
+				xnum = (xnum + a[i]) * xsq;
+				xden = (xden + b[i]) * xsq;
+			}
+		} else xnum = xden = 0.0;
+		temp = x * (xnum + a[3]) / (xden + b[3]);
+		if (lower)  *cum  = 0.5 + temp;
+		if (upper)  *ccum = 0.5 - temp;
+		if (log_p) {
+			if (lower)  *cum  = log(*cum);
+			if (upper)  *ccum = log(*ccum);
+		}
+	} else if (y <= M_SQRT_32) { /* 0.674.. < |x| <= sqrt(32) ~= 5.657 */
+		xnum = c[8] * y;
+		xden = y;
+		for (i = 0; i < 7; ++i) {
+			xnum = (xnum + c[i]) * y;
+			xden = (xden + d[i]) * y;
+		}
+		temp = (xnum + c[7]) / (xden + d[7]);
+		pn_do_del(y);
+		pn_swap_tail;
+	} else if ((log_p && y < 1e170)
+	           || (lower && -38.4674 < x && x < 8.2924)
+	           || (upper && -8.2924  < x && x < 38.4674)) {
+		/* |x| in the (5.657, 37.5) region */
+		xsq = 1.0 / (x * x);
+		xnum = p[5] * xsq;
+		xden = xsq;
+		for (i = 0; i < 4; ++i) {
+			xnum = (xnum + p[i]) * xsq;
+			xden = (xden + q[i]) * xsq;
+		}
+		temp = xsq * (xnum + p[4]) / (xden + q[4]);
+		temp = (M_1_SQRT_2PI - temp) / y;
+		pn_do_del(x);
+		pn_swap_tail;
+	} else { /* large |x|: probs are 0 or 1 */
+		if (x > 0) { *cum  = log_p ? 0.0 : 1.0; *ccum = log_p ? -INFINITY : 0.0; }
+		else       { *cum  = log_p ? -INFINITY : 0.0; *ccum = log_p ? 0.0 : 1.0; }
+	}
+	return;
+}
+
+#undef pn_do_del
+#undef pn_swap_tail
+#undef pn_d2
+
+/* Scalar normal CDF. lower_tail / log_p as in R's pnorm(). sigma < 0 -> NaN. */
+static double c_pnorm(double x, double mu, double sigma, int lower_tail, int log_p) {
+	double pp, cp;
+#define PN_D__0 (log_p ? -INFINITY : 0.0)
+#define PN_D__1 (log_p ? 0.0 : 1.0)
+#define PN_DT_0 (lower_tail ? PN_D__0 : PN_D__1)
+#define PN_DT_1 (lower_tail ? PN_D__1 : PN_D__0)
+	if (isnan(x) || isnan(mu) || isnan(sigma)) return x + mu + sigma;
+	if (!isfinite(x) && mu == x) return NAN; /* x - mu = NaN */
+	if (sigma <= 0) {
+		if (sigma < 0) return NAN;
+		return (x < mu) ? PN_DT_0 : PN_DT_1; /* sigma == 0 */
+	}
+	pp = (x - mu) / sigma;
+	if (!isfinite(pp)) return (x < mu) ? PN_DT_0 : PN_DT_1;
+	x = pp;
+	c_pnorm_both(x, &pp, &cp, (lower_tail ? 0 : 1), log_p);
+	return lower_tail ? pp : cp;
+#undef PN_D__0
+#undef PN_D__1
+#undef PN_DT_0
+#undef PN_DT_1
+}
 // --- XS SECTION ---
 MODULE = Stats::LikeR  PACKAGE = Stats::LikeR
 
@@ -3590,7 +3737,7 @@ PPCODE:
 				SV **restrict rp = av_fetch(inav, i, 0);
 				if (!rp || !*rp || !SvROK(*rp) || SvTYPE(SvRV(*rp)) != SVt_PVHV)
 					croak("filter: AoH element %ld is not a HASH reference", (long)i);
-				if (filt_call(aTHX_ code, *rp))
+				if (filt_call(aTHX_ code, *rp, sv_2mortal(newSViv(i))))
 					av_push(out, SvREFCNT_inc_simple_NN(*rp));	/* share row */
 			}
 			result = newRV_inc((SV*)out);
@@ -3613,7 +3760,7 @@ PPCODE:
 			for (i = 0; i < n; i++) {	/* pass 2: filter + fill */
 				SV **restrict rp = av_fetch(inav, i, 0);
 				HV *restrict rh = (HV*)SvRV(*rp);
-				if (!filt_call(aTHX_ code, *rp)) continue;
+				if (!filt_call(aTHX_ code, *rp, sv_2mortal(newSViv(i)))) continue;
 				for (j = 0; j < ncn; j++) {
 					SV **restrict np = av_fetch(order, j, 0);
 					STRLEN kl; char *restrict k = SvPV(*np, kl);
@@ -3656,7 +3803,7 @@ PPCODE:
 					hv_store(rowh, names[cc], nlens[cc], newSVsv((vp && *vp) ? *vp : &PL_sv_undef), 0);
 				}
 				SV *restrict rv = newRV_noinc((SV*)rowh);
-				bool keep = filt_call(aTHX_ code, rv);
+				bool keep = filt_call(aTHX_ code, rv, sv_2mortal(newSViv(i)));
 				SvREFCNT_dec(rv);
 				if (keep)
 					for (U32 cc = 0; cc < c; cc++) {
@@ -3674,7 +3821,7 @@ PPCODE:
 					hv_store(rowh, names[cc], nlens[cc], newSVsv((vp && *vp) ? *vp : &PL_sv_undef), 0);
 				}
 				SV *restrict rv = newRV_noinc((SV*)rowh);
-				if (filt_call(aTHX_ code, rv)) av_push(out, rv);
+				if (filt_call(aTHX_ code, rv, sv_2mortal(newSViv(i)))) av_push(out, rv);
 				else SvREFCNT_dec(rv);
 			}
 			result = newRV_inc((SV*)out);
@@ -3702,7 +3849,7 @@ PPCODE:
 			hv_iterinit(inhv);		/* pass 2: filter + fill */
 			while ((e = hv_iternext(inhv))) {
 				SV *restrict v = HeVAL(e);
-				if (!filt_call(aTHX_ code, v)) continue;
+				if (!filt_call(aTHX_ code, v, hv_iterkeysv(e))) continue;
 				HV *restrict rh = (HV*)SvRV(v);
 				for (j = 0; j < ncn; j++) {
 					SV **restrict np = av_fetch(order, j, 0);
@@ -3723,7 +3870,7 @@ PPCODE:
 				STRLEN kl; char *restrict k = HePV(e, kl);
 				if (!v || !SvROK(v) || SvTYPE(SvRV(v)) != SVt_PVHV)
 					croak("filter: HoH row '%s' is not a HASH reference", k);
-				if (!filt_call(aTHX_ code, v)) continue;
+				if (!filt_call(aTHX_ code, v, hv_iterkeysv(e))) continue;
 				if (outh) hv_store(outh, k, kl, SvREFCNT_inc_simple_NN(v), 0);
 				else      av_push(outa, SvREFCNT_inc_simple_NN(v));
 			}
@@ -9977,7 +10124,7 @@ CODE:
 			}
 			group_id++;
 		}
-		k = group_id; // number of unique groups = number of hash keys
+		k = group_id;   /* number of unique groups = number of hash keys */
 	/* 4b. Original x / g array-pair input path */
 	} else {
 		if (!x_sv || !SvROK(x_sv) || SvTYPE(SvRV(x_sv)) != SVt_PVAV)
@@ -11869,3 +12016,50 @@ void Ronly(...)
 			croak("Ronly: second (right) argument is not an array reference");
 		/* Ronly(a,b) == Lonly(b,a): keep = right (ST1), other = left (ST0) */
 		SP = set_difference(aTHX_ SP, ST(1), ST(0), "right", "left", "Ronly", GIMME_V);
+
+SV* pnorm(...)
+CODE:
+{
+	if (items < 1)
+		croak("Usage: pnorm(x), pnorm(x, mean => 0, sd => 1, lower => 1, log => 0)");
+	SV *restrict x_sv = ST(0);
+	NV mean = 0.0, sd = 1.0;              /* defaults */
+	bool lower_tail = 1, give_log = 0;
+	if ((items - 1) % 2 != 0)
+		croak("pnorm: Expected an even number of key-value named arguments after 'x'");
+	for (size_t i = 1; i < items; i += 2) {
+		const char *restrict key = SvPV_nolen(ST(i));
+		SV *restrict val = ST(i + 1);
+		if      (strEQ(key, "mean"))                              mean       = SvNV(val);
+		else if (strEQ(key, "sd"))                                sd         = SvNV(val);
+		else if (strEQ(key, "lower") || strEQ(key, "lower.tail")) lower_tail = SvTRUE(val) ? 1 : 0;
+		else if (strEQ(key, "log")   || strEQ(key, "log.p"))      give_log   = SvTRUE(val) ? 1 : 0;
+		else croak("pnorm: unknown argument '%s'", key);
+	}
+	if (sd < 0.0)
+		warn("pnorm: standard deviation must be non-negative");
+	if (SvROK(x_sv) && SvTYPE(SvRV(x_sv)) == SVt_PVAV) {
+		AV *restrict x_av = (AV*)SvRV(x_sv);
+		IV n = av_len(x_av) + 1;
+		AV *restrict result_av = newAV();
+		if (n > 0) {
+			av_extend(result_av, n - 1);
+			for (IV i = 0; i < n; i++) {
+				SV **restrict elem = av_fetch(x_av, i, 0);
+				NV x_val = (elem && *elem) ? SvNV(*elem) : NAN;
+				NV res = (NV)c_pnorm((double)x_val, (double)mean, (double)sd,
+				                     lower_tail, give_log);
+				av_store(result_av, i, newSVnv(res));
+			}
+		}
+		RETVAL = newRV_noinc((SV*)result_av);
+	} else {
+		NV x_val = SvNV(x_sv);
+		NV res = (NV)c_pnorm((double)x_val, (double)mean, (double)sd,
+		                     lower_tail, give_log);
+		RETVAL = newSVnv(res);
+	}
+}
+OUTPUT:
+	RETVAL
+

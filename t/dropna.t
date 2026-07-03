@@ -1,8 +1,6 @@
 #!/usr/bin/env perl
 require 5.010;
 use warnings FATAL => 'all';
-use feature 'say';
-use File::Temp;
 use Scalar::Util 'looks_like_number';
 use Test::Exception; # die_ok
 use Test::More;

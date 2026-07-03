@@ -2,12 +2,10 @@
 
 require 5.010;
 use warnings FATAL => 'all';
-use feature 'say';
-use Scalar::Util qw(looks_like_number refaddr);
+use Scalar::Util 'refaddr';
 use Test::Exception; # dies_ok
 use Test::More;
 use Test::LeakTrace 'no_leaks_ok';
-use Scalar::Util 'looks_like_number';
 use Stats::LikeR;
 
 # Assume Stats::LikeR handles the `assign` export natively in your build.
