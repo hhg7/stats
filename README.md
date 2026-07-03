@@ -1547,6 +1547,56 @@ offending position:
 This matches the undef-handling of `mean` and `uniq` and the rest of the
 numeric reducers in Stats::LikeR.
 
+## is_equivalent
+
+`is_equivalent(\@a, \@b, ...)` returns **1** if every list holds the same
+*set* of distinct values, and **0** otherwise. Order and duplicates don't
+count — only which values are present.
+
+Think of each list as a bag, dump each bag into its own set, and ask: are all
+the sets identical?
+
+    is_equivalent([1,2,3], [3,2,1])     # 1  same values, different order
+    is_equivalent([1,1,2], [2,1])       # 1  duplicates ignored
+    is_equivalent([1,2,3], [1,2])       # 0  right is missing 3
+    is_equivalent([1,2],   [1,2,3])     # 0  right has an extra 4
+    is_equivalent([1,2], [2,1], [1,2])  # 1  works for any number of lists
+
+It generalises `List::Compare`'s `is_LequivalentR()` from two lists to N.
+
+### How it decides
+
+Equivalence is transitive: if every list equals the first list, they all equal
+each other. So the check is simple — build the distinct-value set of the
+**first** list, then hold each other list up against it. A list matches when:
+
+1. it contains **no value outside** the first set, and
+2. it **covers every value** in the first set.
+
+Fail either test for any list and the answer is 0.
+
+### Edge cases
+
+    is_equivalent([], [])        # 1  two empty sets are equal
+    is_equivalent([], [1])       # 0  empty vs non-empty
+    is_equivalent([1], [1], [1]) # 1
+
+Values are compared **as strings** (like hash keys), so `1` and `"1"` are the
+same, but `2` and `"2.0"` are not.
+
+### Rules
+
+- Pass **at least two** array refs. Fewer croaks.
+- Every argument must be an **array ref**; anything else croaks.
+- **`undef` inside a list croaks** — decide what a missing value means before
+  calling, rather than letting it silently match.
+
+### Why it's cheap
+
+One pass over each list. Memory is just the first list's set plus one small
+reusable set for de-duping the list currently being checked. A mismatch bails
+out immediately, so unequal lists are usually rejected quickly
+
 ## kruskal_test
 
 Essentially the test determines if all groups have the same median (same distribution) (an excellent review is at https://library.virginia.edu/data/articles/getting-started-with-the-kruskal-wallis-test)

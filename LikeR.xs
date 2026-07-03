@@ -501,10 +501,8 @@ static int cmp_pval(const void *restrict a, const void *restrict b) {
 	size_t ai = ((PVal*)a)->orig_idx, bi = ((PVal*)b)->orig_idx;
 	return (ai > bi) - (ai < bi);
 }
-/* -----------------------------------------------------------------------
- * Helpers for cor(): ranking (Spearman), Pearson r, Kendall tau-b
- * ----------------------------------------------------------------------- */
-/* Item used to sort values while remembering their original index,
+/* Helpers for cor(): ranking (Spearman), Pearson r, Kendall tau-b/
+ Item used to sort values while remembering their original index,
  * needed for average-rank tie-breaking in Spearman correlation.        */
 typedef struct {
 	NV val;
@@ -1791,7 +1789,7 @@ static int c2c_mark(SV **col_names, STRLEN *name_len, size_t ncols, const char *
 	return 0;
 }
 //
-// filter() helpers — place this block in the C section, ABOVE the MODULE line
+// filter() helpers
 //
 // Resolve the cell SV for a column in the "current row".
 //   AoH: current row is row_hv         -> hv_fetch(row_hv, col)
@@ -1874,11 +1872,7 @@ static bool cf_pred(pTHX_ SV *cv_sv, AV *a_av, AV *b_av, SV *name_sv) {
 	LEAVE;
 	return truth;
 }
-/*
- * Helpers for _parse_csv_file. Place in the C section of the .xs file
- * (above the first MODULE line).
-*/
-
+// Helpers for _parse_csv_file
 /* save-stack destructor: closes the input handle on ANY exit, including a
  * croak thrown inside the row callback */
 static void S_pclose(pTHX_ void *p) {
@@ -1917,8 +1911,7 @@ static void S_emit_row(pTHX_ AV **rowp, SV *field, bool use_cb, SV *callback, AV
 	*rowp = newAV();
 }
 
-static void lm_append(pTHX_ char **bufp, size_t *lenp, size_t *capp, const char *s)
-{
+static void lm_append(pTHX_ char **bufp, size_t *lenp, size_t *capp, const char *s){
 	size_t slen = strlen(s);
 	size_t sep  = (*lenp > 0) ? 1 : 0;
 	size_t need = *lenp + sep + slen + 1;            /* + NUL */
@@ -1945,10 +1938,10 @@ typedef struct {
 
 /* Sort by a user comparator: per-row refs handed to $a/$b before each call. */
 typedef struct {
-	SV **restrict rows;	/* row ref per index (RV to HV) */
-	CV  *restrict cv;	/* the comparator */
-	SV  *a_sv;		/* scalar currently aliased to package $a */
-	SV  *b_sv;		/* scalar currently aliased to package $b */
+	SV **restrict rows;	// row ref per index (RV to HV)
+	CV  *restrict cv;	// the comparator
+	SV  *a_sv;		// scalar currently aliased to package $a
+	SV  *b_sv;		// scalar currently aliased to package $b
 } cs_code_ctx;
 
 static int cs_col_cmp(pTHX_ void *restrict vctx, size_t i, size_t j) {
@@ -1957,7 +1950,7 @@ static int cs_col_cmp(pTHX_ void *restrict vctx, size_t i, size_t j) {
 	SV *restrict bv = c->vals[j];
 	int a_ok = (av && SvOK(av));
 	int b_ok = (bv && SvOK(bv));
-	if (!a_ok || !b_ok) {		/* undef/missing always sorts last */
+	if (!a_ok || !b_ok) { // undef/missing always sorts last
 		if (!a_ok && !b_ok) return 0;
 		return a_ok ? -1 : 1;
 	}
@@ -1973,13 +1966,13 @@ static int cs_code_cmp(pTHX_ void *restrict vctx, size_t i, size_t j) {
 	dSP;
 	size_t count;
 	NV r;
-	/* alias the two rows into the comparator's $a / $b */
+	// alias the two rows into the comparator's $a / $b
 	sv_setsv(c->a_sv, c->rows[i]);
 	sv_setsv(c->b_sv, c->rows[j]);
 	ENTER;
 	SAVETMPS;
 	PUSHMARK(SP);
-	/* sort comparators read $a/$b, not @_, so we push no arguments */
+	// sort comparators read $a/$b, not @_, so we push no arguments
 	PUTBACK;
 	count = call_sv((SV *)c->cv, G_SCALAR);
 	SPAGAIN;
@@ -2068,19 +2061,17 @@ static SV *cs_materialize(pTHX_ bool out_aoh, bool is_aoh, AV *restrict src_av,
 	if (out_aoh) {
 		AV *out = newAV();
 		if (n) av_extend(out, (SSize_t)n - 1);
-		if (is_aoh) {
-			/* AoH -> AoH: reorder, sharing the original row hashrefs */
+		if (is_aoh) {// AoH -> AoH: reorder, sharing the original row hashrefs
 			for (size_t k = 0; k < n; k++) {
 				SV **restrict rp = av_fetch(src_av, (SSize_t)idx[k], 0);
 				SV *restrict row = (rp && *rp) ? *rp : &PL_sv_undef;
 				av_push(out, SvREFCNT_inc_simple_NN(row));
 			}
-		} else {
-			/* HoA -> AoH: synthesize one hashref per row (copied cells) */
+		} else {// HoA -> AoH: synthesize one hashref per row (copied cells)
 			for (size_t k = 0; k < n; k++) {
 				HV *rh = newHV();
 				for (size_t c = 0; c < ncols; c++) {
-					SV **cp = av_fetch(colavs[c], (SSize_t)idx[k], 0);
+					SV **restrict cp = av_fetch(colavs[c], (SSize_t)idx[k], 0);
 					hv_store_ent(rh, colkeys[c],
 								 (cp && *cp) ? newSVsv(*cp) : newSV(0), 0);
 				}
@@ -2089,10 +2080,9 @@ static SV *cs_materialize(pTHX_ bool out_aoh, bool is_aoh, AV *restrict src_av,
 		}
 		return newRV_noinc((SV *)out);
 	}
-	/* ---- output is HoA */
+	// ---- output is HoA
 	HV *restrict out = newHV();
-	if (!is_aoh) {
-		/* HoA -> HoA: permute every column in lockstep (copied cells) */
+	if (!is_aoh) {// HoA -> HoA: permute every column in lockstep (copied cells)
 		for (size_t c = 0; c < ncols; c++) {
 			AV *restrict ncol = newAV();
 			if (n) av_extend(ncol, (SSize_t)n - 1);
@@ -2242,7 +2232,7 @@ static NV bt_dbinom_raw(NV x, NV n, NV p, NV q) {
 	if (x < 0.0 || x > n) return 0.0;
 	NV lc = bt_stirlerr(n) - bt_stirlerr(x) - bt_stirlerr(n - x)
 	      - bt_bd0(x, n * p) - bt_bd0(n - x, n * q);
-	NV lf = M_LN_2PI + log(x) + log1p(-x / n);   /* better than log(n-x)-log(n) for x<<n */
+	NV lf = M_LN_2PI + log(x) + log1p(-x / n); // better than log(n-x)-log(n) for x<<n
 	return exp(lc - 0.5 * lf);
 }
 
@@ -2391,8 +2381,7 @@ static NV st_wprob(NV w, NV rr, NV cc)
 #undef TK_IHALF
 }
 
-static NV st_ptukey(NV q, NV rr, NV cc, NV df)
-{
+static NV st_ptukey(NV q, NV rr, NV cc, NV df){
 #define TK_NLEGQ  16
 #define TK_IHALFQ 8
 	const double eps1 = -30.0, eps2 = 1.0e-14;
@@ -2520,12 +2509,12 @@ static NV st_qtukey(NV p, NV rr, NV cc, NV df)
 	return ans; /* did not converge in maxiter; best estimate */
 }
 
-/* ---------------------------------------------------------------------------
+/*
  * Shared engines for the set-operation XSUBs. Each pushes its result list
  * (or a single count in scalar context) onto the Perl stack and returns the
  * updated stack pointer, so callers use:  sp = helper(aTHX_ sp, ...);
  * XPUSHs/EXTEND operate on the local `sp`, hence the in/out pointer.
- * ------------------------------------------------------------------------- */
+ */
 
 /* Backs Lonly() and Ronly(): the values in `keep` (deduped, first-seen order)
  * that do not occur in `other`. Ronly is just Lonly with the two arrays
@@ -2568,7 +2557,56 @@ static SV** set_difference(pTHX_ SV **sp, SV *keep_sv, SV *other_sv,
 	if (gimme == G_SCALAR) XPUSHs(sv_2mortal(newSVuv(n)));
 	return sp;
 }
-
+/* Backs is_equivalent(). Returns 1 iff all `nrefs` array refs share one
+ * distinct-value set (multiplicity/order ignored), matching List::Compare's
+ * is_LequivalentR() generalised to N lists; else 0. Equivalence is transitive,
+ * so each ref is checked against the distinct-value set of the FIRST ref:
+ * ref i matches iff it holds no value outside that set (foreign key => 0) AND
+ * covers every value in it (matched == ref_size). Single pass per array;
+ * memory is the first ref's set plus one reusable per-ref dedup set. */
+static int set_equivalent(pTHX_ SV **restrict args, size_t nrefs, const char *name) {
+	HV *restrict ref;   /* distinct values of the first array ref */
+	AV *restrict av;
+	size_t len;
+	IV ref_size;
+	if (!(SvROK(args[0]) && SvTYPE(SvRV(args[0])) == SVt_PVAV))
+		croak("%s: argument index 0 of %" UVuf " total (max index %" UVuf ") is not an array reference", name, (UV)nrefs, (UV)(nrefs - 1));
+	ref = (HV*)sv_2mortal((SV*)newHV());
+	av  = (AV*)SvRV(args[0]);
+	len = (size_t)(av_len(av) + 1);
+	for (size_t j = 0; j < len; j++) {
+		SV **restrict tv = av_fetch(av, j, 0);
+		STRLEN klen; const char *restrict key; I32 hklen;
+		if (!(tv && SvOK(*tv)))
+			croak("%s: undefined value at array ref index %" UVuf " (argument 0)", name, (UV)j);
+		key   = SvPV(*tv, klen);
+		hklen = SvUTF8(*tv) ? -(I32)klen : (I32)klen;
+		(void)hv_store(ref, key, hklen, &PL_sv_undef, 0);
+	}
+	ref_size = (IV)HvUSEDKEYS(ref);
+	for (size_t i = 1; i < nrefs; i++) {
+		HV *restrict seen; IV matched = 0;
+		if (!(SvROK(args[i]) && SvTYPE(SvRV(args[i])) == SVt_PVAV))
+			croak("%s: argument index %" UVuf " of %" UVuf " total (max index %" UVuf ") is not an array reference", name, (UV)i, (UV)nrefs, (UV)(nrefs - 1));
+		av   = (AV*)SvRV(args[i]);
+		len  = (size_t)(av_len(av) + 1);
+		seen = (HV*)sv_2mortal((SV*)newHV());   /* per-ref dedup */
+		for (size_t j = 0; j < len; j++) {
+			SV **restrict tv = av_fetch(av, j, 0);
+			STRLEN klen; const char *restrict key; I32 hklen;
+			if (!(tv && SvOK(*tv)))
+				croak("%s: undefined value at array ref index %" UVuf " (argument %" UVuf ")", name, (UV)j, (UV)i);
+			key   = SvPV(*tv, klen);
+			hklen = SvUTF8(*tv) ? -(I32)klen : (I32)klen;
+			if (hv_exists(seen, key, hklen)) continue;   /* already counted for this ref */
+			(void)hv_store(seen, key, hklen, &PL_sv_undef, 0);
+			if (!hv_exists(ref, key, hklen)) return 0;   /* value absent from first ref */
+			matched++;
+		}
+		if (matched != ref_size) return 0;              /* first ref has a value this ref lacks */
+	}
+	return 1;
+}
 /* Backs intersection() and get_unique(). For every distinct value it counts
  * how many of the input arrays contain it (per-array dedup via `loc`), building
  * the candidate list `order` from the FIRST array only, in first-appearance
@@ -12017,13 +12055,20 @@ void Ronly(...)
 		/* Ronly(a,b) == Lonly(b,a): keep = right (ST1), other = left (ST0) */
 		SP = set_difference(aTHX_ SP, ST(1), ST(0), "right", "left", "Ronly", GIMME_V);
 
+void is_equivalent(...)
+	PROTOTYPE: @
+	PPCODE:
+		if (items < 2)
+			croak("is_equivalent needs >= 2 array refs (got %" UVuf ")", (UV)items);
+		XPUSHs(sv_2mortal(newSViv(set_equivalent(aTHX_ &ST(0), (size_t)items, "is_equivalent"))));
+
 SV* pnorm(...)
 CODE:
 {
 	if (items < 1)
 		croak("Usage: pnorm(x), pnorm(x, mean => 0, sd => 1, lower => 1, log => 0)");
 	SV *restrict x_sv = ST(0);
-	NV mean = 0.0, sd = 1.0;              /* defaults */
+	NV mean = 0.0, sd = 1.0; // defaults
 	bool lower_tail = 1, give_log = 0;
 	if ((items - 1) % 2 != 0)
 		croak("pnorm: Expected an even number of key-value named arguments after 'x'");
