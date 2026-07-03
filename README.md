@@ -2852,6 +2852,50 @@ Better warnings when non-array references are given to `intersection`
 
 `view` now breaks columns into chunks for very wide data sets, more closely matching R's behavior
 
+### `LikeR.xs` refactor
+
+Work on the ~12,000-line `LikeR.xs`: consolidate helper functions to reduce
+binary size, find bugs, and back the changes with tests. Every change was
+validated by translating the XS (`ExtUtils::ParseXS`) and compiling the result
+with the module's own `ccflags`.
+
+#### Outcome
+
+- **Net change to the source:** ~154 fewer lines; helper-function count down by 4 (7 removed, 3 added).
+- **Genuine bugs fixed:** two instances of the same latent defect (see below). The rest of the work was behavior-preserving consolidation.
+
+#### Function consolidation
+
+| Change | Before | After |
+|---|---|---|
+| Three-way `NV` comparator | `compare_rank`, `cmp_rank_item`, `cmp_rank_info`, `compare_NVs` | single `cmp_nv3` (reads the leading `NV` member, valid for `RankInfo`/`RankItem`/raw `NV`) |
+| Average-rank routine | `compute_ranks` + `compare_index` restoration sort | existing `rank_data` (scatters ranks into `out[idx]`, no second sort) |
+| String comparator | `cmp_string_wt`, `lm_str_qsort` (byte-identical) | single `cmp_string_wt` |
+| Set difference | `Lonly` + `Ronly` (duplicated bodies) | shared `set_difference()`; `Ronly` passes the arrays swapped |
+| Multiplicity filter | `intersection` + `get_unique` (~90% shared) | shared `set_multiplicity()` with an "all vs. one" mode flag |
+
+All merges were confirmed behavior-preserving: the collapsed comparators are
+equivalent on ordinary values, `NaN`, and infinities, and `compute_ranks` and
+`rank_data` produce identical average ranks.
+
+#### Bugs
+
+Two comparators stabilized their sort by returning `a->idx - b->idx` directly,
+where the index field is an unsigned `size_t`. The subtraction wraps and is then
+truncated to `int`, which is implementation-defined and gives the wrong sign
+once a difference exceeds `INT_MAX`.
+
+- `compare_index` — removed entirely (the routine that used it, `compute_ranks`, was replaced by `rank_data`).
+- `cmp_pval` — the tie-break comparator in the p-adjust path. **Missed in the initial review; found later** via a `-Wconversion` compile of the earlier source. Fixed to compare with the `(a > b) - (a < b)` idiom.
+
+**Caveat on severity:** on every mainstream ABI (LP64, LLP64, ILP32), the
+low-word truncation happens to reproduce the correct sign for any array smaller
+than ~2^31 elements, so this never produces a wrong result at realistic sizes.
+It is a portability/UB issue, not a runtime failure, which is why no functional
+test detects it (see "Testing", below).
+
+ `LikeR.xs` — consolidated helpers; `compare_index` removed; `cmp_pval` fixed.
+
 ## 0.18
 
 `restrict` keyword added to numerous places within `intersection` to decrease CPU time

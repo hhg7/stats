@@ -58,7 +58,7 @@
 .\" ========================================================================
 .\"
 .IX Title "read.me 3"
-.TH read.me 3 2026-06-28 "perl v5.42.2" "User Contributed Perl Documentation"
+.TH read.me 3 2026-07-01 "perl v5.42.2" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -477,6 +477,95 @@ assign($df,
 \&\fBIt modifies your data frame.\fR If you need to keep the original, pass a copy: \f(CW\*(C`assign(clone($df), ...)\*(C'\fR.
 .IP \(bu 4
 Reusing a column name \fBoverwrites\fR that column.
+.SS binom_test
+.IX Subsection "binom_test"
+\&\f(CW\*(C`binom_test\*(C'\fR answers one question: you ran a yes/no experiment \f(CW\*(C`n\*(C'\fR times and
+got \f(CW\*(C`x\*(C'\fR successes — is that consistent with some assumed success rate, or is it
+too far off to be chance? It is the exact binomial test, the same as R\*(Aqs
+\&\f(CW\*(C`binom.test\*(C'\fR.
+.PP
+\fIA toddler and two cards\fR
+.IX Subsection "A toddler and two cards"
+.PP
+Show a toddler two cards each round and ask them to point at the one with the
+star. If he/she is only guessing, he/she will be right half the time, so the
+"pure guessing" success rate is \f(CW\*(C`p = 0.5\*(C'\fR.
+.PP
+You play 10 rounds and the toddler gets 6 right. Real skill, or just luck?
+.PP
+.Vb 1
+\& use Stats::LikeR \*(Aqbinom_test\*(Aq;
+\& 
+\& my $r = binom_test(6, 10, p => 0.5);   # 6 wins, 10 rounds, guessing rate 0.5
+\& 
+\& print $r\->{p_value};                   # 0.7539
+.Ve
+.PP
+The full result is a hashref:
+.PP
+.Vb 11
+\& {
+\&     statistic   => 6,            # times the toddler was right
+\&     parameter   => 10,           # rounds played
+\&     estimate    => 0.6,          # observed rate, 6/10
+\&     null_value  => 0.5,          # the "pure guessing" rate we test against
+\&     p_value     => 0.7539,
+\&     conf_int    => [0.262, 0.878],
+\&     conf_level  => 0.95,
+\&     alternative => \*(Aqtwo.sided\*(Aq,
+\&     method      => \*(AqExact binomial test\*(Aq,
+\& }
+.Ve
+.PP
+\fIReading the p\-value\fR
+.IX Subsection "Reading the p-value"
+.PP
+The p\-value is the chance of seeing a result \fBat least this surprising\fR if the
+toddler were really just guessing.
+.PP
+Here \f(CW\*(C`p = 0.75\*(C'\fR. That is enormous: a pure guesser scores 6/10 (or something
+even further from 5) about three times out of four. So 6/10 is completely
+ordinary luck — no evidence of skill.
+.PP
+The common cutoff is \f(CW0.05\fR. Below it, you start to believe something real is
+going on. Above it, chance explains the result fine. \f(CW0.75\fR is nowhere close,
+so we call this \fBjust chance\fR.
+.PP
+\fIWhat "legit" would look like\fR
+.IX Subsection "What ""legit"" would look like"
+.PP
+Suppose the toddler had gone 9 for 10 instead:
+.PP
+.Vb 1
+\& my $r = binom_test(9, 10, p => 0.5);
+\& 
+\& print $r\->{p_value};                   # 0.0215
+.Ve
+.PP
+Now \f(CW\*(C`p = 0.02\*(C'\fR, under \f(CW0.05\fR. A pure guesser almost never does that well, so
+this \fBis\fR good evidence the toddler can actually tell the cards apart.
+.PP
+\fIThe confidence interval\fR
+.IX Subsection "The confidence interval"
+.PP
+\&\f(CW\*(C`conf_int\*(C'\fR is the plausible range for the toddler\*(Aqs true success rate. For
+6/10 it runs from about \f(CW0.26\fR to \f(CW0.88\fR — wide, and it comfortably includes
+\&\f(CW0.5\fR. That overlap with the guessing rate is another way of seeing that luck
+cannot be ruled out. For 9/10 the interval would sit well above \f(CW0.5\fR.
+.PP
+\fIOptions\fR
+.IX Subsection "Options"
+.IP \(bu 4
+\&\f(CW\*(C`p\*(C'\fR is the assumed success rate (default \f(CW0.5\fR).
+.IP \(bu 4
+\&\f(CW\*(C`alternative\*(C'\fR is \f(CW\*(Aqtwo.sided\*(Aq\fR (default), \f(CW\*(Aqless\*(Aq\fR, or \f(CW\*(Aqgreater\*(Aq\fR. Use
+\&\f(CW\*(Aqgreater\*(Aq\fR when you only care whether the toddler beats guessing, not
+whether they do worse.
+.IP \(bu 4
+\&\f(CW\*(C`conf_level\*(C'\fR sets the interval width (default \f(CW0.95\fR).
+.PP
+You can also pass the counts as \f(CW\*(C`binom_test([6, 4])\*(C'\fR — 6 right, 4 wrong — when
+you have wins and losses instead of wins and a total.
 .SS cfilter
 .IX Subsection "cfilter"
 Select \fBcolumns\fR out of a table and return it in the same shape. A column is
@@ -668,6 +757,90 @@ Flat Hash References evaluate Goodness of Fit while preserving your categorical 
 \& };
 \& 
 \& my $res = chisq_test($data);
+.Ve
+.SS chunk
+.IX Subsection "chunk"
+Split an array into contiguous, roughly equal groups by \fIposition\fR. Unlike
+#qcut, \f(CW\*(C`chunk\*(C'\fR does not inspect values, sort, or compute cutpoints; it
+slices the array in the order given. Use it for batching work, paginating, or
+grouping non\-numeric data such as strings.
+.PP
+\fISignature\fR
+.IX Subsection "Signature"
+.PP
+.Vb 2
+\& my @groups = chunk($data, size  => $n);   # fixed elements per group
+\& my @groups = chunk($data, parts => $k);   # fixed number of groups
+.Ve
+.IP \(bu 4
+\&\f(CW$data\fR — an array reference. Its contents are never examined or sorted;
+elements are grouped in input order.
+.PP
+Pass exactly one of \f(CW\*(C`size\*(C'\fR or \f(CW\*(C`parts\*(C'\fR. Passing both, or neither, is a fatal
+error — the two readings of "equal groups" differ (see below), so the caller
+chooses which one is meant rather than relying on a default.
+.IP \(bu 4
+\&\f(CW\*(C`size => $n\*(C'\fR — each group holds \f(CW$n\fR elements; the final group holds
+whatever remains.
+.IP \(bu 4
+\&\f(CW\*(C`parts => $k\*(C'\fR — the array is divided into \f(CW$k\fR groups as equal as possible,
+with any remainder spread across the leading groups.
+.PP
+\fIReturn value\fR
+.IX Subsection "Return value"
+.PP
+A list of array references, in input order — call it in list context:
+.PP
+.Vb 1
+\& my @groups = chunk($data, parts => 4);
+.Ve
+.PP
+Passing more \f(CW\*(C`parts\*(C'\fR than there are elements yields trailing empty groups
+(matching \f(CW\*(C`numpy.array_split\*(C'\fR), so no elements are ever dropped. An empty input
+array returns an empty list.
+.PP
+\fIExamples\fR
+.IX Subsection "Examples"
+.PP
+\&\f(CW\*(C`size\*(C'\fR fixes the elements per group; the last group is the remainder. Splitting
+the 26 letters into groups of five leaves one over:
+.PP
+.Vb 3
+\& my @groups = chunk([\*(Aqa\*(Aq .. \*(Aqz\*(Aq], size => 5);
+\& # 6 groups, sizes 5,5,5,5,5,1
+\& # [a b c d e] [f g h i j] [k l m n o] [p q r s t] [u v w x y] [z]
+.Ve
+.PP
+\&\f(CW\*(C`parts\*(C'\fR fixes the number of groups; the remainder is absorbed by the leading
+groups instead:
+.PP
+.Vb 3
+\& my @groups = chunk([\*(Aqa\*(Aq .. \*(Aqz\*(Aq], parts => 5);
+\& # 5 groups, sizes 5,5,5,5,6
+\& # [a b c d e] [f g h i j] [k l m n o] [p q r s t] [u v w x y z]
+.Ve
+.PP
+When the split is even the two forms agree:
+.PP
+.Vb 3
+\& my @a = chunk([1 .. 10], size  => 2);
+\& my @b = chunk([1 .. 10], parts => 5);
+\& # identical: 5 groups of 2
+.Ve
+.PP
+Order is preserved — \f(CW\*(C`chunk\*(C'\fR never sorts. Sort the array yourself first if you
+want ordered groups:
+.PP
+.Vb 2
+\& my @groups = chunk([3, 1, 2], size => 2);
+\& # ([3, 1], [2])
+.Ve
+.PP
+More parts than elements gives empty trailing groups, losing nothing:
+.PP
+.Vb 2
+\& my @groups = chunk([1, 2, 3], parts => 5);
+\& # 5 groups; flattening them back gives (1, 2, 3)
 .Ve
 .ie n .SS """col2col"""
 .el .SS \f(CWcol2col\fP
@@ -1276,6 +1449,47 @@ which returns a hash reference:
 \&     }
 \& });
 .Ve
+.SS get_union
+.IX Subsection "get_union"
+.Vb 2
+\& my @all   = get_union(\e@a, \e@b, \e@c); # every distinct value, any list
+\& my $count = get_union(\e@a, \e@b, \e@c); # how many distinct values
+.Ve
+.PP
+Takes one or more array references and returns every value that appears in at
+least one of them. Duplicates collapse and the result keeps first\-appearance
+order. In scalar context it returns the count. Values are compared by their
+string form (like Perl hash keys), so \f(CW1\fR, \f(CW"1"\fR and \f(CW1.0\fR are one element,
+while a UTF\-8 flagged string stays distinct from the same bytes without the
+flag. A non\-array\-ref argument or an \f(CW\*(C`undef\*(C'\fR element is fatal. Mirrors
+\&\f(CW\*(C`List::Compare\*(C'\fR\*(Aqs \f(CW\*(C`get_union\*(C'\fR.
+.PP
+.Vb 3
+\& my @a = (1, 2, 3, 3);
+\& my @b = (3, 4);
+\& my @u = get_union(\e@a, \e@b);            # (1, 2, 3, 4)
+.Ve
+.SS get_unique
+.IX Subsection "get_unique"
+.Vb 2
+\& my @only_first = get_unique(\e@a, \e@b, \e@c);
+\& my $count      = get_unique(\e@a, \e@b, \e@c);
+.Ve
+.PP
+Takes one or more array references and returns the values that appear in the
+\&\fBfirst\fR reference and in \fBno other\fR reference; with a single reference it
+returns that list\*(Aqs distinct values. Duplicates collapse, the result keeps
+first\-appearance order, and scalar context returns the count. Values are
+compared by string form (see \f(CW\*(C`get_union\*(C'\fR). A non\-array\-ref argument or an
+\&\f(CW\*(C`undef\*(C'\fR element is fatal. Mirrors \f(CW\*(C`List::Compare\*(C'\fR\*(Aqs \f(CW\*(C`get_unique\*(C'\fR, which
+likewise defaults to the first list.
+.PP
+.Vb 4
+\& my @a = (1, 2, 3);
+\& my @b = (3, 4, 5);
+\& my @c = (5, 6);
+\& my @u = get_unique(\e@a, \e@b, \e@c);      # (1, 2)  \-\- 3 is also in @b
+.Ve
 .SS glm
 .IX Subsection "glm"
 takes a hash of an array as input
@@ -1439,6 +1653,29 @@ arrayref (the message names the offending column).
 .IX Subsection "See also"
 .PP
 \&\f(CW\*(C`hoa2aoh\*(C'\fR is the reverse of \f(CW\*(C`aoh2hoa\*(C'\fR
+.ie n .SS "hoa2hoh( \e%hoa, $key )"
+.el .SS "hoa2hoh( \e%hoa, \f(CW$key\fP )"
+.IX Subsection "hoa2hoh( %hoa, $key )"
+Converts a hash\-of\-arrays (column\-major) into a hash\-of\-hashes keyed by the
+\&\f(CW$key\fR column, i.e. \f(CW\*(C`{ $rowname => { col => value, ... } }\*(C'\fR. Analogous to
+\&\f(CW\*(C`hoa2aoh\*(C'\fR, but rows are indexed by their \f(CW$key\fR value instead of positionally.
+.PP
+.Vb 7
+\& my %hoa = (
+\&     id => [ qw(a b c) ],
+\&     x  => [ 1, 2, 3 ],
+\&     y  => [ 4, 5, 6 ],
+\& );
+\& my $hoh = hoa2hoh( \e%hoa, \*(Aqid\*(Aq );
+\& # { a => { id => \*(Aqa\*(Aq, x => 1, y => 4 }, b => {...}, c => {...} }
+.Ve
+.PP
+The \f(CW$key\fR column is retained in each inner row. Columns are copied by value.
+Shorter columns are padded with \f(CW\*(C`undef\*(C'\fR, matching \f(CW\*(C`hoa2aoh\*(C'\fR.
+.PP
+Dies if: the first argument is not a hashref of arrayrefs; \f(CW$key\fR is undef or
+names a missing/non\-array column; the \f(CW$key\fR column holds an undefined value
+for any row; or two rows share the same \f(CW$key\fR value.
 .SS hoh2hoa
 .IX Subsection "hoh2hoa"
 Convert a \fBhash of hashes\fR (row\-major: outer key = row, inner key = column)
@@ -1544,7 +1781,7 @@ that appear in \fBevery\fR array ref given.
 \& my $n = intersection([1, 2, 3], [2, 3, 4]);          # 2
 .Ve
 .PP
-Every argument must be an array reference — each one is treated as a set.
+Every argument must be an array reference: each one is treated as a set.
 Unlike \f(CW\*(C`mean\*(C'\fR and \f(CW\*(C`uniq\*(C'\fR, bare scalars are not accepted; passing a non\-reference
 (or a non\-array reference) croaks.
 .PP
@@ -1701,8 +1938,9 @@ For example:
 .Ve
 .SS ljoin
 .IX Subsection "ljoin"
-Consider a hash: \f(CW\*(C`$h{$row}{$col}\*(C'\fR, and another hash \f(CW\*(C`$i{$row}{$col}\*(C'\fR.
-\&\f(CW\*(C`ljoin\*(C'\fR will add information for \f(CW$col\fR in \f(CW%i\fR for each \f(CW$row\fR to \f(CW%h\fR, where \f(CW$row\fR exists in both \f(CW%h\fR and \f(CW%i\fR
+Consider a hash: \f(CW\*(C`$h{$row}{$col}\*(C'\fR, and another hash \f(CW\*(C`$i{$row}{$col2}\*(C'\fR.
+\&\f(CW\*(C`ljoin\*(C'\fR will add information for \f(CW$col\fR in \f(CW%i\fR for each \f(CW$row\fR to \f(CW%h\fR, where \f(CW$row\fR exists in both \f(CW%h\fR and \f(CW%i\fR.
+Similar to \f(CW\*(C`cbind\*(C'\fR in R.
 .PP
 For example,
 .PP
@@ -1756,6 +1994,25 @@ the dot operator also works:
 .PP
 .Vb 1
 \& $lm = lm(formula => \*(Aqy ~ .\*(Aq, data => $dot_data);
+.Ve
+.SS Lonly
+.IX Subsection "Lonly"
+.Vb 2
+\& my @left_only = Lonly(\e@left, \e@right);
+\& my $count     = Lonly(\e@left, \e@right);
+.Ve
+.PP
+Takes \fBexactly two\fR array references and returns the values in the left list
+that are absent from the right list. Duplicates collapse, the result keeps
+left\-list order, and scalar context returns the count. Values are compared by
+string form (see \f(CW\*(C`get_union\*(C'\fR). A non\-array\-ref argument, an \f(CW\*(C`undef\*(C'\fR element,
+or anything other than two references is fatal. Mirrors \f(CW\*(C`List::Compare\*(C'\fR\*(Aqs
+\&\f(CW\*(C`get_Lonly\*(C'\fR.
+.PP
+.Vb 3
+\& my @a = (1, 2, 3, 4);
+\& my @b = (3, 4, 5);
+\& my @l = Lonly(\e@a, \e@b);                # (1, 2)
 .Ve
 .SS matrix
 .IX Subsection "matrix"
@@ -2133,6 +2390,155 @@ to retain the factor levels.
 .IP \(bu 4
 \&\fBIt dies\fR on: a model that isn\*(Aqt a hashref or has no \f(CW\*(C`coefficients\*(C'\fR; an
 invalid \f(CW\*(C`type\*(C'\fR; or \f(CW\*(C`newdata\*(C'\fR that isn\*(Aqt a HoA/HoH hashref or AoH arrayref.
+.SS qcut
+.IX Subsection "qcut"
+Equal\-frequency binning of a numeric column, which is the analog of pandas \f(CW\*(C`qcut\*(C'\fR.
+Where \f(CW\*(C`cut\*(C'\fR would slice a value range into equal\-\fIwidth\fR intervals (and dump
+most of a skewed distribution into one bin), \f(CW\*(C`qcut\*(C'\fR chooses cutpoints so each
+bin holds roughly the same \fInumber\fR of observations. This is the binning you
+usually want for ranked\-list work: deciles, quartiles, top\-5% tranches.
+.PP
+Cutpoints are computed by linear interpolation between order statistics, the
+same method as numpy/pandas, so results match \f(CW\*(C`pandas.qcut\*(C'\fR exactly. Bins are
+right\-closed, \f(CW\*(C`(a, b]\*(C'\fR, with the lowest bin closed on both ends, \f(CW\*(C`[a, b]\*(C'\fR, so
+the minimum value is always included.
+.PP
+\fISignature\fR
+.IX Subsection "Signature"
+.PP
+.Vb 1
+\& qcut($data, $q, %options)
+.Ve
+.IP \(bu 4
+\&\f(CW$data\fR — an array reference of numbers. \f(CW\*(C`undef\*(C'\fR entries are treated as
+missing (NA): they are skipped when computing cutpoints and, when codes are
+requested, come back as \f(CW\*(C`undef\*(C'\fR in their original positions.
+.IP \(bu 4
+\&\f(CW$q\fR — either a positive integer (the number of equal\-frequency bins) or an
+array reference of probabilities in \f(CW\*(C`[0, 1]\*(C'\fR giving explicit cut
+boundaries, e.g. \f(CW\*(C`[0, 0.5, 0.95, 1]\*(C'\fR.
+.PP
+For a usage reminder at the prompt, call \f(CWqcut(\*(Aqh\*(Aq)\fR (or \f(CWqcut(\*(AqH\*(Aq)\fR); it dies
+with a short help message.
+.PP
+\fIWhat it returns\fR
+.IX Subsection "What it returns"
+.PP
+By default \f(CW\*(C`qcut\*(C'\fR returns the \fBedge vector as a flat list\fR — the cheap,
+common query — so call it in list context:
+.PP
+.Vb 1
+\& my @edges = qcut($data, 4);          # ($e0, $e1, $e2, $e3, $e4)
+.Ve
+.PP
+The per\-element bin assignment (the expensive part) is opt\-in. Ask for it with
+\&\f(CW\*(C`codes => 1\*(C'\fR and you get an array reference parallel to \f(CW$data\fR:
+.PP
+.Vb 1
+\& my $codes = qcut($data, 4, codes => 1);
+.Ve
+.PP
+Ask for both in a single pass and you get two references, \f(CW\*(C`($codes, $edges)\*(C'\fR:
+.PP
+.Vb 1
+\& my ($codes, $edges) = qcut($data, 4, codes => 1, edges => 1);
+.Ve
+.PP
+\fIOptions\fR
+.IX Subsection "Options"
+.IP \(bu 4
+\&\f(CW\*(C`edges => 1\*(C'\fR — include the edge vector. On by default; turned off
+automatically when you request codes, so set it explicitly to get both.
+.IP \(bu 4
+\&\f(CW\*(C`codes => 1\*(C'\fR — include the 0\-based integer bin codes.
+.IP \(bu 4
+\&\f(CW\*(C`labels => [...]\*(C'\fR — map the bin codes onto your own labels (implies
+\&\f(CW\*(C`codes => 1\*(C'\fR). The list length must equal the number of bins.
+.IP \(bu 4
+\&\f(CW\*(C`labels => \*(Aqinterval\*(Aq\*(C'\fR — label each element with its interval string,
+e.g. \f(CW\*(C`(3.25, 5.5]\*(C'\fR (also implies codes).
+.IP \(bu 4
+\&\f(CW\*(C`duplicates => \*(Aqdrop\*(Aq\*(C'\fR — if tied data produces non\-unique cutpoints, merge
+them into fewer bins instead of dying. The default, \f(CW\*(Aqraise\*(Aq\fR, throws an
+error (as pandas does).
+.PP
+\fIExamples\fR
+.IX Subsection "Examples"
+.PP
+Quartile edges (the default). The cutpoints match pandas exactly:
+.PP
+.Vb 2
+\& my @edges = qcut([1 .. 10], 4);
+\& # @edges = (1, 3.25, 5.5, 7.75, 10)
+.Ve
+.PP
+Bin codes. They are 0\-based; note the tie distribution matches pandas (inner
+bins take 2 here, outer bins 3):
+.PP
+.Vb 2
+\& my $codes = qcut([1 .. 10], 4, codes => 1);
+\& # $codes = [0, 0, 0, 1, 1, 2, 2, 3, 3, 3]
+.Ve
+.PP
+Edges and codes together, computed in one pass:
+.PP
+.Vb 1
+\& my ($codes, $edges) = qcut([1 .. 10], 4, codes => 1, edges => 1);
+.Ve
+.PP
+Equal frequency on clean data — 100 values into 4 bins of 25:
+.PP
+.Vb 2
+\& my $codes = qcut([1 .. 100], 4, codes => 1);
+\& # 25 elements in each of bins 0, 1, 2, 3
+.Ve
+.PP
+An explicit probability vector, for an asymmetric top\-5% tranche:
+.PP
+.Vb 3
+\& my @edges = qcut([1 .. 100], [0, 0.5, 0.95, 1]);
+\& my $codes = qcut([1 .. 100], [0, 0.5, 0.95, 1], codes => 1);
+\& # bin 0: lower half (50), bin 1: next 45%, bin 2: top 5%
+.Ve
+.PP
+Named labels instead of integer codes (implies codes):
+.PP
+.Vb 2
+\& my $labels = qcut([1 .. 10], 4, labels => [qw/Q1 Q2 Q3 Q4/]);
+\& # [\*(AqQ1\*(Aq,\*(AqQ1\*(Aq,\*(AqQ1\*(Aq,\*(AqQ2\*(Aq,\*(AqQ2\*(Aq,\*(AqQ3\*(Aq,\*(AqQ3\*(Aq,\*(AqQ4\*(Aq,\*(AqQ4\*(Aq,\*(AqQ4\*(Aq]
+.Ve
+.PP
+Interval\-string labels:
+.PP
+.Vb 3
+\& my $iv = qcut([1 .. 10], 4, labels => \*(Aqinterval\*(Aq);
+\& # $iv\->[0]  eq \*(Aq[1, 3.25]\*(Aq
+\& # $iv\->[\-1] eq \*(Aq(7.75, 10]\*(Aq
+.Ve
+.PP
+Missing values are ignored for cutpoints, and (when codes are requested) pass
+straight through:
+.PP
+.Vb 2
+\& my $codes = qcut([1, 2, undef, 4, 5, 6, 7, 8, 9, 10], 4, codes => 1);
+\& # $codes\->[2] is undef; the rest are binned as usual
+.Ve
+.PP
+Tied data and \f(CW\*(C`duplicates\*(C'\fR. Heavy ties can make adjacent cutpoints equal; the
+default raises, \f(CW\*(Aqdrop\*(Aq\fR merges:
+.PP
+.Vb 4
+\& my @tied = ((0) x 8, 1, 2, 3, 4);
+\& qcut(\e@tied, 4);                         # dies: bin edges are not unique
+\& my @edges = qcut(\e@tied, 4, duplicates => \*(Aqdrop\*(Aq);
+\& # fewer than 5 edges; the empty quantile bands are collapsed
+.Ve
+.PP
+Get the usage summary and stop:
+.PP
+.Vb 1
+\& qcut(\*(Aqh\*(Aq);   # dies with the help text above
+.Ve
 .SS quantile
 .IX Subsection "quantile"
 Calculates sample quantiles using R\*(Aqs continuous Type 7 interpolation.
@@ -2142,6 +2548,26 @@ Calculates sample quantiles using R\*(Aqs continuous Type 7 interpolation.
 .Ve
 .PP
 If the \f(CW\*(C`probs\*(C'\fR parameter is omitted, it behaves identically to R by defaulting to the 0, 25, 50, 75, and 100 percentiles (\f(CW\*(C`c(0, .25, .5, .75, 1)\*(C'\fR). The returned hash keys match R\*(Aqs standardized naming convention (e.g., \f(CW"25%"\fR, \f(CW"33.3%"\fR).
+.SS Ronly
+.IX Subsection "Ronly"
+.Vb 2
+\& my @right_only = Ronly(\e@left, \e@right);
+\& my $count      = Ronly(\e@left, \e@right);
+.Ve
+.PP
+Takes \fBexactly two\fR array references and returns the values in the right list
+that are absent from the left list. Duplicates collapse, the result keeps
+right\-list order, and scalar context returns the count. Values are compared by
+string form (see \f(CW\*(C`get_union\*(C'\fR). A non\-array\-ref argument, an \f(CW\*(C`undef\*(C'\fR element,
+or anything other than two references is fatal. Mirrors \f(CW\*(C`List::Compare\*(C'\fR\*(Aqs
+\&\f(CW\*(C`get_Ronly\*(C'\fR, and is the reverse of \f(CW\*(C`Lonly\*(C'\fR: \f(CW\*(C`Ronly(\e@a, \e@b)\*(C'\fR equals
+\&\f(CW\*(C`Lonly(\e@b, \e@a)\*(C'\fR.
+.PP
+.Vb 3
+\& my @a = (1, 2, 3, 4);
+\& my @b = (3, 4, 5);
+\& my @r = Ronly(\e@a, \e@b); # (5)
+.Ve
 .SS rbinom
 .IX Subsection "rbinom"
 Create a binomial distribution of numbers
@@ -2866,8 +3292,17 @@ Args can also be accepted:
 .Vb 1
 \& write_table( \*(Aqdata\*(Aq => \e%flat, \*(Aqfile\*(Aq => $f );
 .Ve
-.SH changes
-.IX Header "changes"
+.SH Changes
+.IX Header "Changes"
+.SS 0.19
+.IX Subsection "0.19"
+numerous \f(CW\*(C`SSize_t var1 = av_len(var) + 1\*(C'\fR are changed to \f(CW\*(C`size_t var1 = av_len(var) + 1\*(C'\fR as \f(CW\*(C`size_t\*(C'\fR; as the result cannot be negative, in order to expand numerical range
+.PP
+Addition of \f(CW\*(C`hoa2hoh\*(C'\fR, \f(CW\*(C`binom_test\*(C'\fR, \f(CW\*(C`chunk\*(C'\fR, \f(CW\*(C`get_union\*(C'\fR, \f(CW\*(C`get_unique\*(C'\fR, \f(CW\*(C`Lonly\*(C'\fR, \f(CW\*(C`Ronly\*(C'\fR, \f(CW\*(C`qcut\*(C'\fR, and 3 tukey functions
+.PP
+Better warnings when non\-array references are given to \f(CW\*(C`intersection\*(C'\fR
+.PP
+\&\f(CW\*(C`view\*(C'\fR now breaks columns into chunks for very wide data sets, more closely matching R\*(Aqs behavior
 .SS 0.18
 .IX Subsection "0.18"
 \&\f(CW\*(C`restrict\*(C'\fR keyword added to numerous places within \f(CW\*(C`intersection\*(C'\fR to decrease CPU time

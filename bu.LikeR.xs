@@ -110,15 +110,33 @@ static NV exact_pnt(NV t, NV df, NV ncp) {
 
 // Ranking helper with tie adjustment (matches R's tie handling)
 typedef struct { NV val; size_t idx; NV rank; } RankInfo;
-/* Single three-way ascending comparator for qsort. Works on raw NV arrays
- * and on any struct whose first member is an NV (RankInfo, RankItem): a
- * pointer to such a struct converts to a pointer to its leading NV. Replaces
- * the former compare_rank/compare_index/cmp_rank_item/cmp_rank_info/compare_NVs
- * family. Order-restoring re-sorts (the old compare_index pass) are gone:
- * rank_data() scatters averaged ranks straight into out[idx]. */
-static int cmp_nv3(const void *a, const void *b) {
-	NV x = *(const NV *)a, y = *(const NV *)b;
-	return (x > y) - (x < y);
+static int compare_rank(const void *restrict a, const void *restrict b) {
+	NV diff = ((RankInfo*)a)->val - ((RankInfo*)b)->val;
+	return (diff > 0) - (diff < 0);
+}
+
+static int compare_index(const void *restrict a, const void *restrict b) {
+	return ((RankInfo*)a)->idx - ((RankInfo*)b)->idx;
+}
+
+static void compute_ranks(NV *restrict data, NV *restrict ranks, size_t n) {
+	RankInfo *restrict items = safemalloc(n * sizeof(RankInfo));
+	for (size_t i = 0; i < n; i++) {
+		items[i].val = data[i];
+		items[i].idx = i;
+	}
+	qsort(items, n, sizeof(RankInfo), compare_rank);
+	// Handle ties by averaging ranks
+	for (size_t i = 0; i < n; ) {
+		size_t j = i + 1;
+		while (j < n && items[j].val == items[i].val) j++;
+		NV avg_rank = (i + 1 + j) / 2.0;
+		for (size_t k = i; k < j; k++) items[k].rank = avg_rank;
+		i = j;
+	}
+	qsort(items, n, sizeof(RankInfo), compare_index);
+	for (size_t i = 0; i < n; i++) ranks[i] = items[i].rank;
+	Safefree(items);
 }
 // Generates a single binomial random variate. 
 //Uses the standard Bernoulli trial loop. Drand01() taps into Perl's PRNG.
@@ -495,11 +513,8 @@ static int cmp_pval(const void *restrict a, const void *restrict b) {
 	NV diff = ((PVal*)a)->p - ((PVal*)b)->p;
 	if (diff < 0) return -1;
 	if (diff > 0) return 1;
-	/* Stabilize sort by falling back to original index. Compare as size_t
-	 * rather than returning the subtraction: orig_idx is unsigned, so
-	 * a - b would wrap and then truncate to int with the wrong sign. */
-	size_t ai = ((PVal*)a)->orig_idx, bi = ((PVal*)b)->orig_idx;
-	return (ai > bi) - (ai < bi);
+	/* Stabilize sort by falling back to original index */
+	return ((PVal*)a)->orig_idx - ((PVal*)b)->orig_idx; 
 }
 /* -----------------------------------------------------------------------
  * Helpers for cor(): ranking (Spearman), Pearson r, Kendall tau-b
@@ -511,13 +526,20 @@ typedef struct {
 	size_t idx;
 } RankItem;
 
+static int cmp_rank_item(const void *restrict a, const void *restrict b) {
+	NV diff = ((RankItem*)a)->val - ((RankItem*)b)->val;
+	if (diff < 0) return -1;
+	if (diff > 0) return  1;
+	return 0;
+}
+
 /* Compute 1-based average ranks with tie-breaking into out[].
  * in[] is not modified.                                                 */
 static void rank_data(const NV *restrict in, NV *restrict out, size_t n) {
 	RankItem *restrict ri;
 	Newx(ri, n, RankItem);
 	for (size_t i = 0; i < n; i++) { ri[i].val = in[i]; ri[i].idx = i; }
-	qsort(ri, n, sizeof(RankItem), cmp_nv3);
+	qsort(ri, n, sizeof(RankItem), cmp_rank_item);
 
 	size_t i = 0;
 	while (i < n) {
@@ -1091,9 +1113,15 @@ static NV exact_psignrank(NV q, size_t n) {
 	return result;
 }
 
+static int cmp_rank_info(const void *a, const void *b) {
+	NV da = ((const RankInfo*)a)->val;
+	NV db = ((const RankInfo*)b)->val;
+	return (da > db) - (da < db);
+}
+
 static NV rank_and_count_ties(RankInfo *restrict ri, size_t n, bool *restrict has_ties) {
 	if (n == 0) return 0.0;
-	qsort(ri, n, sizeof(RankInfo), cmp_nv3);
+	qsort(ri, n, sizeof(RankInfo), cmp_rank_info);
 	size_t i = 0;
 	NV tie_adj = 0.0;
 	*has_ties = 0;
@@ -1246,13 +1274,17 @@ static NV K2x(int n, NV d) {
 }
 /* One comparator, used by every qsort below. Branch form avoids overflow that
  * a subtraction-based comparator would hit, and is correct for any NV width. */
+static int compare_NVs(const void *a, const void *b) {
+	NV x = *(const NV *)a, y = *(const NV *)b;
+	return (x > y) - (x < y);
+}
 /* Largest m*n for which we will run the exact DP even when exact=>1 is forced.
  * Time is O(m*n); memory is O(min(m,n)). Beyond this we warn and go asymptotic. */
 #define KS_EXACT_MAX_PRODUCT 10000000.0
 static void calc_2sample_stats(NV *x, size_t nx, NV *y, size_t ny,
                                NV *d, NV *d_plus, NV *d_minus) {
-	qsort(x, nx, sizeof(NV), cmp_nv3);
-	qsort(y, ny, sizeof(NV), cmp_nv3);
+	qsort(x, nx, sizeof(NV), compare_NVs);
+	qsort(y, ny, sizeof(NV), compare_NVs);
 	NV max_d = 0.0, max_d_plus = 0.0, max_d_minus = 0.0;
 	size_t i = 0, j = 0;
 	while (i < nx || j < ny) {
@@ -1932,6 +1964,9 @@ static void lm_append(pTHX_ char **bufp, size_t *lenp, size_t *capp, const char 
 	*lenp += sep + slen;
 }
 
+static int lm_str_qsort(const void *a, const void *b) {
+	return strcmp(*(const char *const *)a, *(const char *const *)b);
+}
 typedef int (*cs_cmp_fn)(pTHX_ void *restrict ctx, size_t i, size_t j);
 
 /* Sort by a named column: pre-fetched cell SVs plus a numeric/string flag. */
@@ -2515,110 +2550,6 @@ static NV st_qtukey(NV p, NV rr, NV cc, NV df)
 		if (xabs < eps) return ans;
 	}
 	return ans; /* did not converge in maxiter; best estimate */
-}
-
-/* ---------------------------------------------------------------------------
- * Shared engines for the set-operation XSUBs. Each pushes its result list
- * (or a single count in scalar context) onto the Perl stack and returns the
- * updated stack pointer, so callers use:  sp = helper(aTHX_ sp, ...);
- * XPUSHs/EXTEND operate on the local `sp`, hence the in/out pointer.
- * ------------------------------------------------------------------------- */
-
-/* Backs Lonly() and Ronly(): the values in `keep` (deduped, first-seen order)
- * that do not occur in `other`. Ronly is just Lonly with the two arrays
- * swapped, so both XSUBs call this. */
-static SV** set_difference(pTHX_ SV **sp, SV *keep_sv, SV *other_sv,
-                           const char *keep_side, const char *other_side,
-                           const char *name, int gimme) {
-	HV *restrict inOther = (HV*)sv_2mortal((SV*)newHV());
-	HV *restrict seen    = (HV*)sv_2mortal((SV*)newHV());
-	AV *restrict other   = (AV*)SvRV(other_sv);
-	AV *restrict keep    = (AV*)SvRV(keep_sv);
-	size_t olen = (size_t)(av_len(other) + 1);
-	size_t klen_a, n = 0;
-	/* keep_side/other_side name the physical (left/right) position of each
-	 * array so the croak matches how the value was passed, regardless of the
-	 * keep/subtract role (Ronly swaps the roles but not the positions). */
-	for (size_t j = 0; j < olen; j++) {
-		SV **restrict tv = av_fetch(other, j, 0);
-		STRLEN klen; const char *restrict key; I32 hklen;
-		if (!(tv && SvOK(*tv)))
-			croak("%s: undefined value in %s array ref at index %" UVuf, name, other_side, (UV)j);
-		key   = SvPV(*tv, klen);
-		hklen = SvUTF8(*tv) ? -(I32)klen : (I32)klen;
-		(void)hv_store(inOther, key, hklen, &PL_sv_undef, 0);
-	}
-	klen_a = (size_t)(av_len(keep) + 1);
-	for (size_t j = 0; j < klen_a; j++) {
-		SV **restrict tv = av_fetch(keep, j, 0);
-		STRLEN klen; const char *restrict key; I32 hklen;
-		if (!(tv && SvOK(*tv)))
-			croak("%s: undefined value in %s array ref at index %" UVuf, name, keep_side, (UV)j);
-		key   = SvPV(*tv, klen);
-		hklen = SvUTF8(*tv) ? -(I32)klen : (I32)klen;
-		if (hv_exists(inOther, key, hklen)) continue;   /* present in other set   */
-		if (hv_exists(seen,    key, hklen)) continue;   /* dedup within keep set  */
-		(void)hv_store(seen, key, hklen, &PL_sv_undef, 0);
-		n++;
-		if (gimme != G_SCALAR) XPUSHs(sv_2mortal(newSVsv(*tv)));
-	}
-	if (gimme == G_SCALAR) XPUSHs(sv_2mortal(newSVuv(n)));
-	return sp;
-}
-
-/* Backs intersection() and get_unique(). For every distinct value it counts
- * how many of the input arrays contain it (per-array dedup via `loc`), building
- * the candidate list `order` from the FIRST array only, in first-appearance
- * order, then emits the candidates whose count matches the wanted multiplicity:
- *   want_all != 0 -> count == nrefs (in every array: intersection)
- *   want_all == 0 -> count == 1     (in the first array and no other: get_unique)
- * Both semantics only ever return values present in the first array, so
- * collecting candidates from the first array is correct and matches the
- * historical behaviour of both functions. */
-static SV** set_multiplicity(pTHX_ SV **sp, SV **restrict args, size_t nrefs,
-                             int want_all, const char *name, int gimme) {
-	HV *restrict count = (HV*)sv_2mortal((SV*)newHV());
-	AV *restrict order = (AV*)sv_2mortal((SV*)newAV());
-	size_t n = 0, olen;
-	IV want = want_all ? (IV)nrefs : 1;
-	for (size_t i = 0; i < nrefs; i++) {
-		SV *restrict arg = args[i];
-		HV *restrict loc; AV *restrict av; size_t len;
-		if (!(SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV))
-			croak("%s: argument index %" UVuf " of %" UVuf " total (max index %" UVuf ") is not an array reference", name, (UV)i, (UV)nrefs, (UV)(nrefs - 1));
-		av  = (AV*)SvRV(arg);
-		len = (size_t)(av_len(av) + 1);
-		loc = (HV*)sv_2mortal((SV*)newHV());   /* per-ref dedup */
-		for (size_t j = 0; j < len; j++) {
-			SV **restrict tv = av_fetch(av, j, 0);
-			STRLEN klen; const char *restrict key; I32 hklen; SV **restrict cv;
-			if (!(tv && SvOK(*tv)))
-				croak("%s: undefined value at array ref index %" UVuf " (argument %" UVuf ")", name, (UV)j, (UV)i);
-			key   = SvPV(*tv, klen);
-			hklen = SvUTF8(*tv) ? -(I32)klen : (I32)klen;
-			if (hv_exists(loc, key, hklen)) continue;   /* already counted for this ref */
-			(void)hv_store(loc, key, hklen, &PL_sv_undef, 0);
-			cv = hv_fetch(count, key, hklen, 1);
-			if (cv && *cv) sv_setiv(*cv, SvOK(*cv) ? SvIV(*cv) + 1 : 1);
-			if (i == 0)                                 /* candidates: first ref only */
-				av_push(order, newSVsv(*tv));
-		}
-	}
-	olen = (size_t)(av_len(order) + 1);
-	for (size_t oi = 0; oi < olen; oi++) {
-		SV **restrict e = av_fetch(order, oi, 0);
-		STRLEN klen; const char *restrict key; I32 hklen; SV **restrict cv;
-		if (!(e && *e)) continue;
-		key   = SvPV(*e, klen);
-		hklen = SvUTF8(*e) ? -(I32)klen : (I32)klen;
-		cv    = hv_fetch(count, key, hklen, 0);
-		if (cv && *cv && SvIV(*cv) == want) {
-			if (gimme != G_SCALAR) XPUSHs(sv_2mortal(newSVsv(*e)));
-			n++;
-		}
-	}
-	if (gimme == G_SCALAR) XPUSHs(sv_2mortal(newSVuv(n)));
-	return sp;
 }
 
 // --- XS SECTION ---
@@ -4441,7 +4372,7 @@ CODE:
 	} else if (y_sv && SvPOK(y_sv)) {
 	  const char *restrict dist = SvPV_nolen(y_sv);
 	  if (strEQ(dist, "pnorm")) {
-		   qsort(x_data, valid_nx, sizeof(NV), cmp_nv3);
+		   qsort(x_data, valid_nx, sizeof(NV), compare_NVs);
 		   NV max_d = 0.0, max_d_plus = 0.0, max_d_minus = 0.0;
 		   for (size_t i = 0; i < valid_nx; i++) {
 		       NV cdf_obs_low  = (NV)i / valid_nx;
@@ -6810,8 +6741,8 @@ CODE:
 	} else if (is_spearman) {
 	  NV *restrict rank_x = safemalloc(n * sizeof(NV));
 	  NV *restrict rank_y = safemalloc(n * sizeof(NV));
-	  rank_data(x, rank_x, n);
-	  rank_data(y, rank_y, n);
+	  compute_ranks(x, rank_x, n);
+	  compute_ranks(y, rank_y, n);
 
 	  /* Spearman rho = Pearson r of the ranks (Welford's algorithm) */
 	  NV mean_x = 0.0, mean_y = 0.0, M2_x = 0.0, M2_y = 0.0, cov = 0.0;
@@ -7367,7 +7298,7 @@ SV* quantile(...)
 		}
 		// --- Sort Data for Quantile Math ---
 		// Note: You must update `compare_doubles` to accept and compare `NV` types!
-		qsort(x, n, sizeof(NV), cmp_nv3); 
+		qsort(x, n, sizeof(NV), compare_NVs); 
 		// --- Parse Probabilities (Upgraded to NV) ---
 		NV default_probs[] = {0.0, 0.25, 0.50, 0.75, 1.0};
 		unsigned int n_probs = 5;
@@ -8039,11 +7970,71 @@ NV median(...)
 
 void intersection(...)
 	PROTOTYPE: @
+	PREINIT:
+		HV*restrict count;
+		AV*restrict order;
+		size_t nrefs, n, oi, olen;
+		int gimme;
 	PPCODE:
-		if (items == 0)
+		gimme = GIMME_V;
+		nrefs = items;
+		if (nrefs == 0)
 			croak("intersection needs >= 1 array ref");
-		SP = set_multiplicity(aTHX_ SP, &ST(0), (size_t)items, 1,
-		                      "intersection", GIMME_V);
+		count = (HV*)sv_2mortal((SV*)newHV());
+		order = (AV*)sv_2mortal((SV*)newAV());
+		for (size_t i = 0; i < nrefs; i++) {
+			SV* restrict arg = ST(i);
+			HV*restrict loc;
+			AV* restrict av;
+			size_t len;
+			if (!(SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV))
+				croak("intersection: argument index %" UVuf " of %" UVuf " total (max index %" UVuf ") is not an array reference", (UV)i, (UV)nrefs, (UV)(nrefs - 1));
+			av = (AV*)SvRV(arg);
+			len = av_len(av) + 1;
+			loc = (HV*)sv_2mortal((SV*)newHV());   /* per-ref dedup */
+			for (size_t j = 0; j < len; j++) {
+				SV** restrict tv = av_fetch(av, j, 0);
+				STRLEN klen;
+				const char*restrict key;
+				I32 hklen;
+				SV**restrict cv;
+				if (!(tv && SvOK(*tv)))
+					croak("intersection: undefined value at array ref index %" UVuf " (argument %" UVuf ")", (UV)j, (UV)i);
+				key = SvPV(*tv, klen);
+				hklen = SvUTF8(*tv) ? -(I32)klen : (I32)klen;
+				if (hv_exists(loc, key, hklen))
+					continue;                      /* already counted for this ref */
+				(void)hv_store(loc, key, hklen, &PL_sv_undef, 0);
+				cv = hv_fetch(count, key, hklen, 1);
+				if (cv && *cv) {
+					if (SvOK(*cv)) sv_setiv(*cv, SvIV(*cv) + 1);
+					else           sv_setiv(*cv, 1);
+				}
+				if (i == 0)
+					av_push(order, newSVsv(*tv));  /* candidates, in first ref's order */
+			}
+		}
+		n = 0;
+		olen = av_len(order) + 1;
+		for (oi = 0; oi < olen; oi++) {
+			SV**restrict e = av_fetch(order, oi, 0);
+			STRLEN klen;
+			const char*restrict key;
+			I32 hklen;
+			SV**restrict cv;
+			if (!(e && *e))
+				continue;
+			key = SvPV(*e, klen);
+			hklen = SvUTF8(*e) ? -(I32)klen : (I32)klen;
+			cv = hv_fetch(count, key, hklen, 0);
+			if (cv && *cv && (size_t)SvIV(*cv) == nrefs) {
+				if (gimme != G_SCALAR)
+					XPUSHs(sv_2mortal(newSVsv(*e)));
+				n++;
+			}
+		}
+		if (gimme == G_SCALAR)
+			XPUSHs(sv_2mortal(newSVuv(n)));
 
 SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 	INIT:
@@ -8820,7 +8811,7 @@ SV *lm(...)
 					}
 				}
 				if (num_levels > 0) {
-					qsort(levels, num_levels, sizeof(char*), cmp_string_wt);
+					qsort(levels, num_levels, sizeof(char*), lm_str_qsort);
 					{ AV *lv = newAV(); for (l = 0; l < num_levels; l++) av_push(lv, newSVpv(levels[l], 0)); hv_store(xlevels_hv, uniq_terms[j], strlen(uniq_terms[j]), newRV_noinc((SV*)lv), 0); }
 					for (l = 1; l < num_levels; l++) {
 						if (p_exp >= exp_cap) {
@@ -11699,7 +11690,7 @@ PPCODE:
 		el = av_fetch(data_av, i, 0);
 		srt[i] = (el && SvOK(*el)) ? SvNV(*el) : 0.0;
 	}
-	qsort(srt, (size_t) n, sizeof(NV), cmp_nv3);
+	qsort(srt, (size_t) n, sizeof(NV), compare_NVs);
 
 	/* quantile cutpoints via linear interpolation (numpy/pandas default) */
 	Newx(edges, m, NV);
@@ -11840,32 +11831,190 @@ void get_union(...)
 
 void get_unique(...)
 	PROTOTYPE: @
+	PREINIT:
+		HV*restrict count;
+		AV*restrict order;
+		size_t nrefs, n, oi, olen;
+		int gimme;
 	PPCODE:
-		if (items == 0)
+		gimme = GIMME_V;
+		nrefs = items;
+		if (nrefs == 0)
 			croak("get_unique needs >= 1 array ref");
-		SP = set_multiplicity(aTHX_ SP, &ST(0), (size_t)items, 0,
-		                      "get_unique", GIMME_V);
+		count = (HV*)sv_2mortal((SV*)newHV());
+		order = (AV*)sv_2mortal((SV*)newAV());
+		for (size_t i = 0; i < nrefs; i++) {
+			SV*restrict arg = ST(i);
+			HV*restrict loc;
+			AV*restrict av;
+			size_t len;
+			if (!(SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV))
+				croak("get_unique: argument index %" UVuf " of %" UVuf " total (max index %" UVuf ") is not an array reference", (UV)i, (UV)nrefs, (UV)(nrefs - 1));
+			av = (AV*)SvRV(arg);
+			len = (size_t)(av_len(av) + 1);
+			loc = (HV*)sv_2mortal((SV*)newHV());   /* per-ref dedup */
+			for (size_t j = 0; j < len; j++) {
+				SV**restrict tv = av_fetch(av, j, 0);
+				STRLEN klen;
+				const char*restrict key;
+				I32 hklen;
+				SV**restrict cv;
+				if (!(tv && SvOK(*tv)))
+					croak("get_unique: undefined value at array ref index %" UVuf " (argument %" UVuf ")", (UV)j, (UV)i);
+				key = SvPV(*tv, klen);
+				hklen = SvUTF8(*tv) ? -(I32)klen : (I32)klen;
+				if (hv_exists(loc, key, hklen))
+					continue;
+				(void)hv_store(loc, key, hklen, &PL_sv_undef, 0);
+				cv = hv_fetch(count, key, hklen, 1);
+				if (cv && *cv) {
+					if (SvOK(*cv)) sv_setiv(*cv, SvIV(*cv) + 1);
+					else           sv_setiv(*cv, 1);
+				}
+				if (i == 0)
+					av_push(order, newSVsv(*tv));  /* candidates, in first ref's order */
+			}
+		}
+		n = 0;
+		olen = (size_t)(av_len(order) + 1);
+		for (oi = 0; oi < olen; oi++) {
+			SV**restrict e = av_fetch(order, oi, 0);
+			STRLEN klen;
+			const char*restrict key;
+			I32 hklen;
+			SV**restrict cv;
+			if (!(e && *e))
+				continue;
+			key = SvPV(*e, klen);
+			hklen = SvUTF8(*e) ? -(I32)klen : (I32)klen;
+			cv = hv_fetch(count, key, hklen, 0);
+			if (cv && *cv && SvIV(*cv) == 1) {
+				if (gimme != G_SCALAR)
+					XPUSHs(sv_2mortal(newSVsv(*e)));
+				n++;
+			}
+		}
+		if (gimme == G_SCALAR)
+			XPUSHs(sv_2mortal(newSVuv(n)));
 
 void Lonly(...)
 	PROTOTYPE: $$
+	PREINIT:
+		HV*restrict inOther;
+		HV*restrict seen;
+		AV*restrict keep;
+		AV*restrict other;
+		size_t nrefs, n, klen_a, olen;
+		int gimme;
 	PPCODE:
-		if (items != 2)
-			croak("Lonly needs exactly 2 array refs (got %" UVuf ")", (UV)items);
-		if (!(SvROK(ST(0)) && SvTYPE(SvRV(ST(0))) == SVt_PVAV))
-			croak("Lonly: first (left) argument is not an array reference");
-		if (!(SvROK(ST(1)) && SvTYPE(SvRV(ST(1))) == SVt_PVAV))
-			croak("Lonly: second (right) argument is not an array reference");
-		/* keep = left (ST0), other = right (ST1) */
-		SP = set_difference(aTHX_ SP, ST(0), ST(1), "left", "right", "Lonly", GIMME_V);
+		gimme = GIMME_V;
+		nrefs = items;
+		if (nrefs != 2)
+			croak("Lonly needs exactly 2 array refs (got %" UVuf ")", (UV)nrefs);
+		{
+			SV*restrict aL = ST(0);
+			SV*restrict aR = ST(1);
+			if (!(SvROK(aL) && SvTYPE(SvRV(aL)) == SVt_PVAV))
+				croak("Lonly: first (left) argument is not an array reference");
+			if (!(SvROK(aR) && SvTYPE(SvRV(aR)) == SVt_PVAV))
+				croak("Lonly: second (right) argument is not an array reference");
+			keep  = (AV*)SvRV(aL); // items we may return
+			other = (AV*)SvRV(aR); // items to subtract
+		}
+		inOther = (HV*)sv_2mortal((SV*)newHV());
+		seen    = (HV*)sv_2mortal((SV*)newHV());
+		olen = (size_t)(av_len(other) + 1);
+		for (size_t j = 0; j < olen; j++) {
+			SV**restrict tv = av_fetch(other, j, 0);
+			STRLEN klen;
+			const char*restrict key;
+			I32 hklen;
+			if (!(tv && SvOK(*tv)))
+				croak("Lonly: undefined value in right array ref at index %" UVuf, (UV)j);
+			key = SvPV(*tv, klen);
+			hklen = SvUTF8(*tv) ? -(I32)klen : (I32)klen;
+			(void)hv_store(inOther, key, hklen, &PL_sv_undef, 0);
+		}
+		n = 0;
+		klen_a = (size_t)(av_len(keep) + 1);
+		for (size_t j = 0; j < klen_a; j++) {
+			SV**restrict tv = av_fetch(keep, j, 0);
+			STRLEN klen;
+			const char*restrict key;
+			I32 hklen;
+			if (!(tv && SvOK(*tv)))
+				croak("Lonly: undefined value in left array ref at index %" UVuf, (UV)j);
+			key = SvPV(*tv, klen);
+			hklen = SvUTF8(*tv) ? -(I32)klen : (I32)klen;
+			if (hv_exists(inOther, key, hklen))
+				continue;                      /* present in R -> not left-only */
+			if (hv_exists(seen, key, hklen))
+				continue;                      /* dedup within L */
+			(void)hv_store(seen, key, hklen, &PL_sv_undef, 0);
+			n++;
+			if (gimme != G_SCALAR)
+				XPUSHs(sv_2mortal(newSVsv(*tv)));
+		}
+		if (gimme == G_SCALAR)
+			XPUSHs(sv_2mortal(newSVuv(n)));
 
 void Ronly(...)
 	PROTOTYPE: $$
+	PREINIT:
+		HV*restrict inOther;
+		HV*restrict seen;
+		AV*restrict keep;
+		AV*restrict other;
+		size_t nrefs, n, klen_a, olen;
+		int gimme;
 	PPCODE:
-		if (items != 2)
-			croak("Ronly needs exactly 2 array refs (got %" UVuf ")", (UV)items);
-		if (!(SvROK(ST(0)) && SvTYPE(SvRV(ST(0))) == SVt_PVAV))
-			croak("Ronly: first (left) argument is not an array reference");
-		if (!(SvROK(ST(1)) && SvTYPE(SvRV(ST(1))) == SVt_PVAV))
-			croak("Ronly: second (right) argument is not an array reference");
-		/* Ronly(a,b) == Lonly(b,a): keep = right (ST1), other = left (ST0) */
-		SP = set_difference(aTHX_ SP, ST(1), ST(0), "right", "left", "Ronly", GIMME_V);
+		gimme = GIMME_V;
+		nrefs = items;
+		if (nrefs != 2)
+			croak("Ronly needs exactly 2 array refs (got %" UVuf ")", (UV)nrefs);
+		{
+			SV*restrict aL = ST(0);
+			SV*restrict aR = ST(1);
+			if (!(SvROK(aL) && SvTYPE(SvRV(aL)) == SVt_PVAV))
+				croak("Ronly: first (left) argument is not an array reference");
+			if (!(SvROK(aR) && SvTYPE(SvRV(aR)) == SVt_PVAV))
+				croak("Ronly: second (right) argument is not an array reference");
+			other = (AV*)SvRV(aL);  /* items to subtract    */
+			keep  = (AV*)SvRV(aR);  /* items we may return  */
+		}
+		inOther = (HV*)sv_2mortal((SV*)newHV());
+		seen    = (HV*)sv_2mortal((SV*)newHV());
+		olen = (size_t)(av_len(other) + 1);
+		for (size_t j = 0; j < olen; j++) {
+			SV**restrict tv = av_fetch(other, j, 0);
+			STRLEN klen;
+			const char*restrict key;
+			I32 hklen;
+			if (!(tv && SvOK(*tv)))
+				croak("Ronly: undefined value in left array ref at index %" UVuf, (UV)j);
+			key = SvPV(*tv, klen);
+			hklen = SvUTF8(*tv) ? -(I32)klen : (I32)klen;
+			(void)hv_store(inOther, key, hklen, &PL_sv_undef, 0);
+		}
+		n = 0;
+		klen_a = (size_t)(av_len(keep) + 1);
+		for (size_t j = 0; j < klen_a; j++) {
+			SV**restrict tv = av_fetch(keep, j, 0);
+			STRLEN klen;
+			const char*restrict key;
+			I32 hklen;
+			if (!(tv && SvOK(*tv)))
+				croak("Ronly: undefined value in right array ref at index %" UVuf, (UV)j);
+			key = SvPV(*tv, klen);
+			hklen = SvUTF8(*tv) ? -(I32)klen : (I32)klen;
+			if (hv_exists(inOther, key, hklen))
+				continue; // present in L -> not right-only
+			if (hv_exists(seen, key, hklen))
+				continue; // dedup within R
+			(void)hv_store(seen, key, hklen, &PL_sv_undef, 0);
+			n++;
+			if (gimme != G_SCALAR)
+				XPUSHs(sv_2mortal(newSVsv(*tv)));
+		}
+		if (gimme == G_SCALAR)
+			XPUSHs(sv_2mortal(newSVuv(n)));

@@ -164,10 +164,13 @@ BOOTDEP =
 
 # Handy lists of source code files:
 XS_FILES = LikeR.xs \
+	bu.LikeR.xs \
 	fisher.xs
 C_FILES  = LikeR.c \
+	bu.LikeR.c \
 	fisher.c
 O_FILES  = LikeR.o \
+	bu.LikeR.o \
 	fisher.o
 H_FILES  = ppport.h
 MAN1PODS = 
@@ -613,6 +616,10 @@ clean :: clean_subdirs
 	  LikeR.exp LikeR.o \
 	  LikeR_def.old MYMETA.json \
 	  MYMETA.yml blibdirs.ts \
+	  bu.LikeR.base bu.LikeR.bs \
+	  bu.LikeR.bso bu.LikeR.c \
+	  bu.LikeR.def bu.LikeR.exp \
+	  bu.LikeR.o bu.LikeR_def.old \
 	  core core.*perl.*.? \
 	  core.[0-9] core.[0-9][0-9] \
 	  core.[0-9][0-9][0-9] core.[0-9][0-9][0-9][0-9] \
@@ -1036,7 +1043,7 @@ PERL_HDRS = \
 
 $(OBJECT) : $(PERL_HDRS)
 
-LikeR.c fisher.c : $(XSUBPPDEPS)
+LikeR.c bu.LikeR.c fisher.c : $(XSUBPPDEPS)
 
 
 # --- MakeMaker makefile section:
