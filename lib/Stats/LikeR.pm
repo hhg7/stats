@@ -9,9 +9,9 @@ require XSLoader;
 use warnings FATAL => 'all';
 use autodie ':default';
 use Exporter 'import';
-use Scalar::Util 'looks_like_number';
+use Scalar::Util qw(reftype looks_like_number);
 XSLoader::load('Stats::LikeR', $VERSION);
-our @EXPORT_OK = qw(add_data aoh2hoa aoh2hoh aov assign binom_test cfilter chisq_test chunk col col2col cor cor_test cov csort dnorm dropna filter fisher_test get_union get_unique glm group_by hoa2aoh hoa2hoh hoh2hoa hist intersection is_equivalent kruskal_test ks_test Lonly ljoin lm matrix max mean median min mode oneway_test p_adjust pnorm power_t_test predict prcomp ptukey qcut qtukey quantile Ronly rbinom read_table rnorm runif sample scale sd seq shapiro_test sum summary t_test transpose TukeyHSD uniq vals value_counts var var_test view wilcox_test write_table);
+our @EXPORT_OK = qw(add_data anova aoh2hoa aoh2hoh aov assign binom_test cfilter chisq_test chunk col col2col cor cor_test cov csort dnorm dropna filter fisher_test get_union get_unique glm group_by hoa2aoh hoa2hoh hoh2hoa hist intersection is_equivalent kruskal_test ks_test Lonly ljoin lm matrix max mean median min mode ncol nrow oneway_test p_adjust pnorm power_t_test predict prcomp ptukey qcut qtukey quantile Ronly rbinom read_table rnorm runif sample scale sd seq shapiro_test sum summary t_test transpose TukeyHSD uniq vals value_counts var var_test view wilcox_test write_table);
 our @EXPORT = @EXPORT_OK;
 
 sub aoh2hoh {
@@ -399,7 +399,134 @@ sub dropna {
 
 	die "dropna: data frame must be an arrayref (AoH) or hashref (HoA/HoH)\n";
 }
+# Count rows across Stats::LikeR frame forms: AoH, AoA, HoA, HoH.
 
+# Count columns across Stats::LikeR frame forms: AoH, AoA, HoA, HoH
+# (plain vector => 1 column). Uses die, not croak. reftype => blessed frames ok.
+sub ncol {
+	my ($data) = @_;
+	my $type = reftype $data;
+	die 'ncol: expected an ARRAY or HASH ref (got '
+		. (defined $data ? (ref($data) || 'non-ref scalar') : 'undef') . ")\n"
+		unless defined $type && ($type eq 'ARRAY' || $type eq 'HASH');
+
+	if ($type eq 'ARRAY') {
+		return 0 unless @$data;                     # empty frame
+		my $r0 = reftype $data->[0];                # element 0 decides the form
+
+		# AoH: columns = keys per row; every row a hash ref of equal key count
+		if (defined $r0 && $r0 eq 'HASH') {
+			my $ncol = scalar keys %{ $data->[0] };
+			for my $i (1 .. $#$data) {
+				my $row = $data->[$i];
+				die "ncol: AoH row $i is not a hash ref\n"
+					unless defined(reftype $row) && reftype($row) eq 'HASH';
+				my $k = scalar keys %$row;
+				die "ncol: ragged AoH — row $i has $k columns, but row 0 has $ncol\n"
+					if $k != $ncol;
+			}
+			return $ncol;
+		}
+
+		# AoA: columns = row length; every row an array ref of equal length
+		if (defined $r0 && $r0 eq 'ARRAY') {
+			my $ncol = scalar @{ $data->[0] };
+			for my $i (1 .. $#$data) {
+				my $row = $data->[$i];
+				die "ncol: AoA row $i is not an array ref\n"
+					unless defined(reftype $row) && reftype($row) eq 'ARRAY';
+				my $len = scalar @$row;
+				die "ncol: ragged AoA — row $i has $len columns, but row 0 has $ncol\n"
+					if $len != $ncol;
+			}
+			return $ncol;
+		}
+
+		return 1 unless defined $r0;                # plain 1-D vector: one column
+
+		die "ncol: array element 0 is a $r0 ref; expected HASH (AoH), ARRAY (AoA), or plain scalars (vector)\n";
+	}
+
+	# HASH: HoA (keys are columns) or HoH (keys are rows)
+	return 0 unless %$data;
+
+	my $probe;                                      # first defined value decides the form
+	foreach my $k (keys %$data) {
+		next unless defined $data->{$k};
+		$probe = $data->{$k};
+		last;
+	}
+	my $vtype = reftype $probe;
+
+	# HoA: keys ARE the columns. Validate values are array refs so a malformed
+	# frame dies deterministically rather than depending on which key `probe` hit.
+	if (defined $vtype && $vtype eq 'ARRAY') {
+		foreach my $col (keys %$data) {
+			die "ncol: HoA column '$col' is not an array ref\n"
+				unless defined(reftype $data->{$col}) && reftype($data->{$col}) eq 'ARRAY';
+		}
+		return scalar keys %$data;
+	}
+
+	# HoH: keys are rows; columns = keys of a row hash, consistent across rows
+	if (defined $vtype && $vtype eq 'HASH') {
+		my ($ncol, $ref_row);
+		foreach my $row_key (keys %$data) {
+			my $row = $data->{$row_key};
+			die "ncol: HoH row '$row_key' is not a hash ref\n"
+				unless defined(reftype $row) && reftype($row) eq 'HASH';
+			my $k = scalar keys %$row;
+			if (not defined $ncol) { $ncol = $k; $ref_row = $row_key }
+			elsif ($k != $ncol) {
+				die "ncol: ragged HoH — row '$row_key' has $k columns, but '$ref_row' has $ncol\n";
+			}
+		}
+		return $ncol;
+	}
+
+	die "ncol: HASH values are neither ARRAY refs (HoA) nor HASH refs (HoH)\n";
+}
+
+sub nrow {
+	my ($data) = @_;
+	my $type = reftype $data;
+	die 'nrow: expected an ARRAY or HASH ref (got '
+		. (defined $data ? (ref($data) || 'non-ref scalar') : 'undef') . ')'
+		unless defined $type;
+
+	# AoH / AoA (and a plain vector): one top-level element per row.
+	return scalar @$data if $type eq 'ARRAY';
+
+	# HASH: HoA (keys are columns) or HoH (keys are rows).
+	return 0 unless %$data;                     # empty frame, either form
+
+	my $probe;                                  # first defined value decides the form
+	foreach my $k (keys %$data) {
+		next unless defined $data->{$k};
+		$probe = $data->{$k};
+		last;
+	}
+	my $vtype = reftype $probe;
+
+	return scalar keys %$data                   # HoH: one key per row
+		if defined $vtype && $vtype eq 'HASH';
+
+	if (defined $vtype && $vtype eq 'ARRAY') {  # HoA: rows = common column length
+		my ($n, $ref_col);
+		foreach my $col (keys %$data) {         # verify columns agree, so a ragged
+			my $vec = $data->{$col};            # frame can't return a silently-wrong
+			die "nrow: HoA column '$col' is not an array ref"  # (and, given hash
+				unless defined(reftype $vec) && reftype($vec) eq 'ARRAY'; # ordering,
+			my $len = scalar @$vec;             # nondeterministic) count
+			if (not defined $n) { $n = $len; $ref_col = $col }
+			elsif ($len != $n) {
+				die "nrow: ragged HoA — column '$col' has $len rows, but '$ref_col' has $n";
+			}
+		}
+		return $n;
+	}
+	die 'nrow: HASH values are neither ARRAY refs (HoA) nor HASH refs (HoH)';
+}
 sub qcut {
 	my ($data, $q, %opt) = @_;
 
@@ -656,12 +783,12 @@ sub read_table {
 	die "read_table: output.type \"$otype\" isn't allowed (aoh, hoa, hoh)\n"
 		unless $otype =~ m/^(?:aoh|hoa|hoh)$/;
 
-	# R's write.table(col.names=TRUE) default omits the header label for the
-	# row-names column, so a header comes out one field short of every data
-	# row. With 'auto.row.names' set, mirror read.table's rule: when (and only
-	# when) the header is exactly one field short, treat the first data field
-	# as an (otherwise unlabelled) row-names column. Any truthy value enables
-	# it; a non-1 string is used as the synthesized column name.
+# R's write.table(col.names=TRUE) default omits the header label for the
+# row-names column, so a header comes out one field short of every data
+# row. With 'auto.row.names' set, mirror read.table's rule: when (and only
+# when) the header is exactly one field short, treat the first data field
+# as an (otherwise unlabelled) row-names column. Any truthy value enables
+# it; a non-1 string is used as the synthesized column name.
 	my $want_auto_rn = $args{'auto.row.names'} ? 1 : 0;
 	my $auto_rn_name =
 		($want_auto_rn && "$args{'auto.row.names'}" ne '1')
@@ -676,9 +803,7 @@ sub read_table {
 
 	my (@data, %data, @header, @uniq_header,
 	    %mapped_filters, @sorted_filter_flds, %seen_rownames);
-	my $data_row    = 0;
-	my $header_seen = 0;
-	my $header_done = 0;
+	my ($data_row, $header_seen, $header_done) = (0, 0, 0);
 
 	# Everything that depends on the (possibly augmented) @header lives here so
 	# it can run either right after the header line (strict mode) or deferred
@@ -817,23 +942,6 @@ sub read_table {
 }
 # view($data, %opts) -- pretty-print an AoH / HoA / HoH / flat-hash table.
 #
-# Changes in this version:
-#   * Column widths, truncation, and padding are measured in DISPLAY COLUMNS,
-#     not bytes: UTF-8 cells (e.g. "Jorgensen" with an o-slash) no longer push
-#     later columns out of alignment, and East-Asian wide chars count as 2.
-#     Cell text is decoded for measurement and re-encoded to UTF-8 for output,
-#     so the printed bytes are unchanged -- only the spacing is corrected.
-#   * Data::Printer-style ANSI colouring. New options:
-#         color  => 'auto' (default) | 1 | 0
-#                   'auto' = colour only when writing to a terminal
-#         colors => { number => '#87afff', string => 'bright_yellow', ... }
-#                   per-type overrides; values may be a #rrggbb truecolour hex,
-#                   a named ANSI colour, or a raw SGR string ("38;5;110").
-#     Colour types used: number, string, undef, hash (column headers / named
-#     row labels), array (numeric row labels), caller_info (the "# AoH: ..."
-#     lines). Only the value text is wrapped in escapes; padding stays plain
-#     so alignment is identical with or without colour.
-#
 sub view {
 	my $data = shift;
 	if (not defined $data) {
@@ -851,16 +959,16 @@ sub view {
 	die "view: pass either 'n' or 'rows', not both\n"
 		if exists $args{n} && exists $args{rows};
 	my $n = exists $args{rows} ? $args{rows}
-		  : exists $args{n}	   ? $args{n}
-		  :						  6;
+		  : exists $args{n}    ? $args{n}
+		  :                      6;
 	die "view: 'n'/'rows' must be a non-negative integer\n"
 		unless defined $n && $n =~ /^\d+$/;
-	my $na	  = exists $args{na}		? $args{na}		   : 'undef';
+	my $na    = exists $args{na}        ? $args{na}       : 'undef';
 	my $maxw  = exists $args{max_width} ? $args{max_width} : 80;
-	my $ell	  = exists $args{ellipsis}	? $args{ellipsis}  : '...';
-	my $gap	  = exists $args{gap}		? (' ' x $args{gap}) : '  ';
+	my $ell   = exists $args{ellipsis}  ? $args{ellipsis}  : '...';
+	my $gap   = exists $args{gap}       ? (' ' x $args{gap}) : '  ';
 	my $ucols = $args{cols} || $args{columns};
-	my $fh	  = $args{to};
+	my $fh    = $args{to};
 	my $quiet = $args{return_only};
 	# terminal width used to break wide tables into column chunks (R-style).
 	# precedence: explicit 'width' arg -> $ENV{COLUMNS} -> 80 (R's default).
@@ -872,42 +980,74 @@ sub view {
 		unless defined $tw && $tw =~ /^[1-9][0-9]*\z/;
 	# 'row.names' takes precedence over the row_names alias (both accepted)
 	my $label_col = exists $args{'row.names'} ? $args{'row.names'}
-				  : exists $args{row_names}	  ? $args{row_names}
+				  : exists $args{row_names}   ? $args{row_names}
 				  : undef;
 	my $rt = ref $data;
 	die "view: expected an ARRAY (AoH) or HASH (HoA/HoH) reference, got "
 	  . ($rt || 'a non-reference') . "\n"
 	  unless $rt eq 'ARRAY' or $rt eq 'HASH';
 	my ($kind, @cols, @labels, @raw, $total, $lab_header);
-	if ($rt eq 'ARRAY') { # ---- AoH ----
-		$kind  = 'AoH';
-		$total = scalar @$data;
-		my $show = $n < $total ? $n : $total;
-		if ($ucols) {
-			@cols = @$ucols;
-		} else {
+	if ($rt eq 'ARRAY') {
+		# distinguish AoA (rows are arrayrefs) from AoH (rows are hashrefs)
+		# by the first defined element; an empty array stays the AoH path.
+		my $first;
+		for my $e (@$data) { if (defined $e) { $first = $e; last } }
+		if (ref $first eq 'ARRAY') { # ---- AoA ----
+			$kind  = 'AoA';
+			$total = scalar @$data;
+			my $show = $n < $total ? $n : $total;
+			# column count from the shown rows (at least one row if any exist)
 			my $scan = $show > 0 ? $show : ($total > 0 ? 1 : 0);
-			my %seen;
+			my $m = 0;
 			for my $i (0 .. $scan - 1) {
 				my $row = $data->[$i];
-				next unless ref $row eq 'HASH';
-				$seen{$_} = 1 for keys %$row;
+				next unless ref $row eq 'ARRAY';
+				$m = scalar @$row if scalar @$row > $m;
 			}
-			@cols = sort keys %seen;
+			# 'cols'/'columns' selects & orders by 0-based column index
+			my @idx = $ucols ? @$ucols : (0 .. $m - 1);
+			# an integer 'row.names'/'row_names' names the label column index
+			my $lc = (defined $label_col && $label_col =~ /^\d+$/ && $label_col < $m)
+				   ? $label_col : undef;
+			@idx = grep { $_ != $lc } @idx if defined $lc;
+			@cols       = @idx;              # header = the 0-based array index
+			$lab_header = defined $lc ? $lc : '';
+			for my $i (0 .. $show - 1) {
+				my $row = $data->[$i];
+				$row = [] unless ref $row eq 'ARRAY';
+				push @labels, defined $lc ? $row->[$lc] : $i;
+				push @raw, [ map { $row->[$_] } @idx ];   # missing -> undef -> na
+			}
+		} else { # ---- AoH ----
+			$kind  = 'AoH';
+			$total = scalar @$data;
+			my $show = $n < $total ? $n : $total;
+			if ($ucols) {
+				@cols = @$ucols;
+			} else {
+				my $scan = $show > 0 ? $show : ($total > 0 ? 1 : 0);
+				my %seen;
+				for my $i (0 .. $scan - 1) {
+					my $row = $data->[$i];
+					next unless ref $row eq 'HASH';
+					$seen{$_} = 1 for keys %$row;
+				}
+				@cols = sort keys %seen;
+			}
+			my $lc = defined $label_col ? $label_col
+				   : (grep { $_ eq 'row_name' } @cols) ? 'row_name' : undef;
+			if (defined $lc) {
+				@cols = grep { $_ ne $lc } @cols;
+				$lab_header = $lc;
+			}
+			for my $i (0 .. $show - 1) {
+				my $row = $data->[$i];
+				$row = {} unless ref $row eq 'HASH';
+				push @labels, defined $lc ? $row->{$lc} : $i;
+				push @raw, [ map { $row->{$_} } @cols ];
+			}
+			$lab_header = '' unless defined $lab_header;
 		}
-		my $lc = defined $label_col ? $label_col
-			   : (grep { $_ eq 'row_name' } @cols) ? 'row_name' : undef;
-		if (defined $lc) {
-			@cols = grep { $_ ne $lc } @cols;
-			$lab_header = $lc;
-		}
-		for my $i (0 .. $show - 1) {
-			my $row = $data->[$i];
-			$row = {} unless ref $row eq 'HASH';
-			push @labels, defined $lc ? $row->{$lc} : ($i + 1);
-			push @raw, [ map { $row->{$_} } @cols ];
-		}
-		$lab_header = '' unless defined $lab_header;
 	} elsif ($rt eq 'HASH') {
 		my @keys = keys %$data;
 		my $sample;
@@ -932,7 +1072,7 @@ sub view {
 			for my $i (0 .. $show - 1) {
 				push @labels, defined $lc
 					? (ref $data->{$lc} eq 'ARRAY' ? $data->{$lc}[$i] : undef)
-					: ($i + 1);
+					: $i;
 				push @raw, [ map {
 					ref $data->{$_} eq 'ARRAY' ? $data->{$_}[$i] : undef
 				} @cols ];
@@ -968,7 +1108,7 @@ sub view {
 			if (defined $lc) { @cols = grep { $_ ne $lc } @cols; $lab_header = $lc; }
 			$lab_header = '' unless defined $lab_header;
 			for my $i (0 .. $show - 1) {
-				push @labels, defined $lc ? $data->{$lc} : ($i + 1);
+				push @labels, defined $lc ? $data->{$lc} : $i;
 				push @raw, [ map { $data->{$_} } @cols ];
 			}
 		}
@@ -978,7 +1118,7 @@ sub view {
 	my $RESET = "\e[0m";
 	my $decode = sub {
 		my $s = shift;
-		return ($s, 0) if utf8::is_utf8($s);
+		return ($s, 1) if utf8::is_utf8($s);	   # already-decoded chars: encode to bytes on output
 		my $d = $s;
 		return ($d, 1) if utf8::decode($d);	   # valid UTF-8 byte string -> chars
 		return ($s, 0);						   # not UTF-8: leave bytes untouched

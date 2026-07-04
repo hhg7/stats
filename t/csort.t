@@ -164,20 +164,15 @@ BEGIN {
 #
 {
 	eval { csort('notaref', 'x') };
-	like $@, qr/array-ref \(AoH\) or hash-ref \(HoA, HoH\)/, 'rejects non-ref data';
-
+	like $@, qr/array-ref \(AoH\) or hash-ref \(HoA or HoH\)/, 'rejects non-ref data';
 	eval { csort([ { x => 1 } ], undef) };
-	like $@, qr/column name or a comparator/, 'rejects undef $by';
-
+	like $@, qr/column name.*or a comparator/, 'rejects undef $by';
 	eval { csort([ { x => 1 } ], [1,2,3]) };
-	like $@, qr/column name or a comparator/, 'rejects non-code ref $by';
-
+	like $@, qr/column name.*or a comparator/, 'rejects non-code ref $by';
 	eval { csort({ a => [1,2], b => [1] }, 'a') };
 	like $@, qr/unequal lengths/, 'HoA unequal column lengths croaks';
-
 	eval { csort({ a => [1,2] }, 'missing') };
 	like $@, qr/not found/, 'HoA missing sort column croaks';
-
 	eval { csort({ a => 'notarray' }, 'a') };
 	like $@, qr/not an array-ref/, 'HoA non-array column croaks';
 }

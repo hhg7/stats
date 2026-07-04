@@ -117,6 +117,92 @@ When the target is a Hash of Arrays, incoming arrays are pushed onto the existin
 
 NB: If `add_data` is called on a completely empty target reference (e.g., `$data = {}` or `$data = []`), it will intelligently infer the required inner structure (Hashes vs Arrays) by inspecting the first valid row of the source data.
 
+## anova
+
+Sequential (Type-I) ANOVA table for a linear model, in the same shape `aov`
+returns. `anova` fits `response ~ terms`, then decomposes the model sum of
+squares one term at a time, **in formula order**, and F-tests each term
+against the residual mean square.
+
+    anova(
+    {
+        yield => [5.5, 5.4, 5.8, 4.5, 4.8, 4.2],
+        ctrl  => [1,     1,   1,   0,   0,   0]
+    },
+    'yield ~ ctrl');
+
+returns
+
+    {
+        ctrl        {
+            Df          1,
+            "F value"   25.6000000000001,
+            "Mean Sq"   1.70666666666667,
+            "Pr(>F)"    0.00718232855871859,
+            "Sum Sq"    1.70666666666667
+        },
+        Residuals   {
+            Df          4,
+            "Mean Sq"   0.0666666666666665,
+            "Sum Sq"    0.266666666666666
+        }
+    }
+
+Two-way (and higher) models use the `*` operator, which implicitly evaluates
+the main effects alongside the interaction (`a * b` expands to `a + b + a:b`;
+`a * b * c` to the full factorial `a + b + c + a:b + a:c + b:c + a:b:c`):
+
+    my $res_2way = anova($data_2way, 'len ~ supp * dose');
+
+Bare string columns are treated as factors and treatment-coded (first level =
+reference); numeric columns and `I(x^2)` enter as single regressors. It is
+robust against rank deficiency: collinear terms gracefully receive 0 degrees
+of freedom and 0 sum of squares, matching R's behavior.
+
+### Input Parameters
+| Parameter | Type | Default | Description | Example |
+| --- | --- | --- | --- | --- |
+| `data_sv` | `HashRef` or `ArrayRef` | *(Required)* | The dataset. A Hash of Arrays (HoA, columns) or Array of Hashes (AoH, rows) — the same forms `aov`/`lm` accept. |
+| `formula_sv` | `String` | *(Required)* | Symbolic model `'response ~ rhs'`, with `+`, `:` and `*`. Unlike `aov`, `anova` does **not** auto-stack, so a formula is mandatory. | `'yield ~ N * P'` |
+
+### Output Variables
+A single `HashRef`; keys are the parsed term names, so the structure varies
+with the formula.
+| Parameter | Type | Description | Example |
+| --- | --- | --- | --- |
+| *(Term Name)* | `HashRef` | ANOVA-table stats for each term (`'ctrl'`, `'N:P'`, …). `'Mean Sq'`, `'F value'` and `'Pr(>F)'` are omitted for 0-df (aliased) terms. | `{'Df'=>1,'Sum Sq'=>14.2,'Mean Sq'=>14.2,'F value'=>25.81,'Pr(>F)'=>0.0004}` |
+| `Residuals` | `HashRef` | Residual (error) statistics; never carries an F test. | `{'Df'=>10,'Sum Sq'=>5.5,'Mean Sq'=>0.55}` |
+
+### `anova` vs `aov` — what's the difference?
+
+For a **single model they compute the identical Type-I table** — in R,
+`anova(lm(f))` and `summary(aov(f))` return the same sums of squares, and the
+same holds here (`anova(\%d,'yield ~ ctrl')` reproduces the `aov` table
+above exactly). The difference is one of role, not arithmetic:
+
+- **`aov` is the model-*fitting* idiom for designed experiments.** It leans
+  toward factors and balanced designs, and in this module it adds two
+  conveniences `anova` deliberately leaves out: it can **auto-stack** a named
+  list when you omit the formula (R's `stack()` + `Value ~ Group`), and it
+  returns a `group_stats` block of per-group means and counts alongside the
+  table. Reach for `aov` when your question is "do these treatment groups
+  differ, and what do the groups look like?"
+
+- **`anova` is the model-*table* idiom.** It always wants an explicit formula
+  and returns just the decomposition — nothing descriptive. Reach for it when
+  you already have a model in mind and only want its term-by-term SS /
+  F-tests, or when you want the leaner object to feed onward.
+
+In short: same numbers for one model; `aov` is the richer "fit + describe"
+call (and the only one that stacks), `anova` is the minimal "give me the
+table" call. Note that both are **Type-I / sequential**, so term order in the
+formula matters, and both share this module's `pf`, so p-values agree with
+`oneway_test` and the rest of Stats::LikeR.
+
+*(R's `anova` generic can additionally compare several nested models,
+`anova(m1, m2)`, giving an F/LRT between them — a capability neither this
+`anova` nor `aov` currently provides. Ask if that would be useful.)*
+
 ## aoh2hoa
 
 `aoh2hoa($aoh)` — transpose an **array-of-hashes** (row-major) into a **hash-of-arrays** (column-major).
@@ -1838,6 +1924,110 @@ Takes either an array or an array reference, and returns an array of the most co
     @arr = mode([1,3,3,3]); # returns (3)
 
     @arr = mode('a','a','c','c','z'); # returns ('a', 'c')
+## ncol
+
+`ncol($frame)` returns how many **columns** a data frame has. Like `nrow`, it
+works on all the Stats::LikeR frame shapes, so you don't have to remember which
+one you're holding:
+
+    ncol([ {a=>1,b=>2}, {a=>3,b=>4} ])   # 2   array of hashes  (AoH)
+    ncol([ [1,2,3], [4,5,6] ])           # 3   array of arrays  (AoA)
+    ncol({ a=>[1,2], b=>[3,4] })         # 2   hash of arrays   (HoA)
+    ncol({ r1=>{...}, r2=>{...} })       # 2   hash of hashes   (HoH)
+
+### The one rule to remember
+
+A **column** is one field of each record. Where the fields live depends on the
+shape:
+
+- **Array of hashes** (AoH) — each row is a hash; the columns are its keys, so
+  the count is how many keys a row has.
+- **Array of arrays** (AoA) — each row is a list; the columns are its slots, so
+  the count is how long a row is.
+- **Hash of arrays** (HoA) — the keys *are* the columns, so the count is the
+  number of keys.
+- **Hash of hashes** (HoH) — each value is a row hash; the columns are that
+  hash's keys, so the count is how many keys a row has.
+
+A plain flat list (`[1,2,3]`) is treated as a single column.
+
+### Edge cases
+
+    ncol([])                    # 0
+    ncol({})                    # 0
+    ncol({ a=>[], b=>[] })      # 2
+
+Empty frames are 0 columns. Note the last one: a HoA still has its columns even
+when they hold no rows — the keys are the columns, rows or not.
+
+### What it refuses to do
+
+`ncol` would rather stop than hand back a wrong number:
+
+- **Ragged frame** — if the rows disagree on how many columns they have (AoH,
+  AoA, or HoH), there is no single column count, so it dies instead of guessing.
+- **Junk input** — `undef`, a plain scalar, a SCALAR/CODE/GLOB ref, or a hash
+  whose values aren't all arrays (HoA) or all hashes (HoH) dies with a message
+  saying what it got.
+
+Blessed frames are fine — it looks at the underlying array/hash, so your
+objects count just like plain refs.
+
+### Speed
+
+Each count is a cheap read of a length or a key-count. The only extra work is a
+quick pass over the rows to confirm they agree on their width (and, for a hash
+frame, that its values are the shape they claim). No copies, no walking the
+data. It's pure Perl on purpose: there's nothing here fast enough to be worth
+doing in C.
+
+## nrow
+
+`nrow($frame)` returns how many **rows** a data frame has. It works on all the
+Stats::LikeR frame shapes, so you don't have to remember which one you're
+holding:
+
+    nrow([ {a=>1}, {a=>2} ])          # 2   array of hashes  (AoH)
+    nrow([ [1,2,3], [4,5,6] ])        # 2   array of arrays  (AoA)
+    nrow({ a=>[1,2,3], b=>[4,5,6] })  # 3   hash of arrays   (HoA)
+    nrow({ r1=>{...}, r2=>{...} })    # 2   hash of hashes   (HoH)
+
+### The one rule to remember
+
+A **row** is one record. Where the records live depends on the shape:
+
+- **Array on the outside** (AoH, AoA, or a plain list) — each top-level
+  element is a row, so the count is just the array's length.
+- **Hash of hashes** (HoH) — each key is a row, so the count is the number of
+  keys.
+- **Hash of arrays** (HoA) — the keys are *columns*, not rows; the row count is
+  how long those columns are.
+
+### Edge cases
+
+    nrow([])   # 0
+    nrow({})   # 0
+
+Empty frames are 0 rows, whatever the shape.
+
+### What it refuses to do
+
+`nrow` would rather stop than hand back a wrong number:
+
+- **Ragged HoA** — if the columns have different lengths there is no single row
+  count, so it croaks instead of guessing.
+- **Junk input** — `undef`, a plain scalar, or a hash whose values aren't all
+  arrays (HoA) or all hashes (HoH) croaks with a message saying what it got.
+
+Blessed frames are fine — it looks at the underlying array/hash, so your
+objects count just like plain refs.
+
+### Speed
+
+Every count is a single cheap read of length or key-count — no walking the
+data, no copies. The only loop is a quick pass over HoA columns to confirm they
+line up. It's pure Perl on purpose: there's nothing here fast enough to be
+worth doing in C.
 
 ## oneway_test
 
@@ -2795,14 +2985,14 @@ as well as a ratio (from R: the hypothesized ratio of the population variances o
 An R-style `head` for the structures `read_table` returns. Prints the first
 few rows of a dataframe as an aligned text table, with numeric columns
 right-justified, string columns left-justified, and undefined cells shown as
-`NA`. Works on all three `output.type` values:
+`NA`.
 
-| `output.type` | Perl structure     | What `view` shows                          |
-|---------------|--------------------|--------------------------------------------|
-| `aoh`         | array of hash refs | one line per row, sequential row numbers   |
-| `hoa`         | hash of array refs | values gathered column-wise by row index   |
-| `hoh`         | hash of hash refs  | top-level keys become the row label column |
-
+| Input type | Perl structure     | What `view` shows                          |
+|------------|--------------------|--------------------------------------------|
+| `aoa`      | array of array refs| values gathered column-wise by row index   |
+| `aoh`      | array of hash refs | one line per row, sequential row numbers   |
+| `hoa`      | hash of array refs | values gathered column-wise by row index   |
+| `hoh`      | hash of hash refs  | top-level keys become the row label column |
 
 ### Synopsis
 
@@ -2836,18 +3026,18 @@ displayed. A footer appears only when rows are hidden.
 
 All arguments after the data reference are optional name/value pairs.
 
-| Argument        | Default | Meaning                                                                 |
+| Argument        | Default | Meaning |
 |-----------------|---------|-------------------------------------------------------------------------|
 | `n`             | `6`     | Number of rows to show. `n` greater than the table shows everything.    |
 | `rows`          | `6`     | Number of rows to show. `n` greater than the table shows everything  (synonymous with `n`)|
 | `cols` / `columns` | —    | Array ref pinning column order (and which columns appear).              |
 | `row.names`     | —       | Column to use as the row label (for `aoh`/`hoa`). See ordering note.    |
-| `na`            | `'NA'`  | Token printed for undefined cells.                                      |
-| `max_width`     | `80`    | Truncate any cell wider than this (column names are never truncated).   |
-| `ellipsis`      | `'...'` | Marker appended to truncated cells.                                     |
-| `gap`           | `2`     | Spaces between columns.                                                 |
-| `to`            | STDOUT  | Filehandle to print to.                                                 |
-| `return_only`   | `0`     | If true, return the string and print nothing.                           |
+| `na`            | `'NA'`  | Token printed for undefined cells |
+| `max_width`     | `80`    | Truncate any cell wider than this (column names are never truncated)   |
+| `ellipsis`      | `'...'` | Marker appended to truncated cells |
+| `gap`           | `2`     | Spaces between columns |
+| `to`            | STDOUT  | Filehandle to print to.   |
+| `return_only`   | `0`     | If true, return the string and print nothing |
 
 `view` always returns the formatted string, whether or not it also prints.
 
@@ -2962,9 +3152,73 @@ Args can also be accepted:
 
 ## 0.20
 
-addition of `pnorm` function
+addition of `ncol`, `nrow`, and `pnorm` functions
 
 `filter` can filter by row names with `$_[1]`
+
+`view` now accepts array of arrays in addition to AoH, HoA, and HoH
+
+### csort
+
+Two behavioural changes, both contained to the `csort` XSUB (the `cs_*` helpers are untouched).
+
+**Row names survive a Hash-of-Hashes sort.** Sorting a HoH previously discarded the outer keys. Now each row is folded into a *fresh* row hash (a private container over aliased, read-only cells) that carries its outer key under a `row.name` column, so the name flows into whichever shape you request:
+
+    my $hoh = { alpha => { id => 1 }, beta => { id => 2 } };
+
+    csort($hoh, 'id');          # AoH: each row gains a row.name field
+    csort($hoh, 'id', 'hoa');   # HoA: an aligned row.name column
+
+- The column name defaults to `row.name` and can be overridden with an optional 4th argument (mirroring `hoa2hoh`'s named-key style): `csort($df, 'id', 'aoh', 'sample')`.
+- The outer key is authoritative — it wins over any pre-existing same-named field in the row.
+- Once present, the column is sortable like any other: `csort($hoh, 'row.name')`.
+- Because rows are now *copied* rather than shared, the caller's HoH is never mutated by the injection. (Minor behaviour change: output rows are no longer the same refs as the source rows.)
+
+**Clearer usage message.** The signature is now `csort(...)`, so xsubpp no longer emits the misleading auto-generated `Usage: Stats::LikeR::csort(data, by, output=&PL_sv_undef)`. Argument count is checked by hand, and the croak now shows both real calling forms:
+
+    Usage: csort($df, 'column.name', 'HoA')
+       or  csort($df, sub { $b->{'No.'} <=> $a->{'No.'} }, 'hoa')
+      (optional 4th arg names the row-name column when sorting a HoH; default 'row.name')
+
+`data`/`by`/`output` are read as `ST(0..2)`; `output` still defaults to matching the input shape.
+
+**Tightened validation messages.** The `$data` croak now reads `hash-ref (HoA or HoH)`, and the `$by` croak includes a concrete example: `a column name (e.g. 'No.') or a comparator code-ref using $a and $b, e.g. sub { $b->{'No.'} <=> $a->{'No.'} }`. Existing HoA croaks (`unequal lengths`, `not found`, `not an array-ref`) are unchanged.
+
+### cor
+
+Fixed an unsigned-integer underflow in `kendall_tau_b` and added a regression test.
+
+#### Bug
+
+In `kendall_tau_b`, concordant/discordant counts `C` and `D` are declared `size_t` (unsigned). The numerator was computed as:
+
+    return (NV)(C - D) / denom;
+
+The subtraction `C - D` happens in unsigned arithmetic *before* the cast to `NV`. When discordant pairs dominate (`D > C`), the result wraps to a huge positive value instead of going negative.
+
+For the arrays:
+
+    dG_kcal_mol:  -7.765, -9.328, -10.326, -9.038, -9.608, -9.779, -9.975, -6.906
+    anomaly_rank: 154, 155, 161, 188, 76, 172, 173, 69
+
+there are `C = 9` concordant and `D = 19` discordant pairs (no ties). `9 - 19` wraps to `18446744073709551607`, so the function returned ~`6.6e17` instead of the correct `-10/28 = -0.3571428571`.
+
+#### Fix
+
+Cast each operand to `NV` before subtracting, so the arithmetic is signed:
+
+    return ((NV)C - (NV)D) / denom;
+
+Only that one line changed. The denominator sums (`C + D + tie_x`, `C + D + tie_y`) are non-negative, so they were left as-is.
+
+#### Regression test — `cor.t`
+
+- Kendall on the offending arrays pinned to `-0.3571428571`.
+- Explicit `[-1, 1]` range guard (the real backstop — the pre-fix value `~6.6e17` blows past the bound regardless of exact magnitude), plus a negative-sign assertion.
+- Pearson (`-0.4889102301`), Spearman (`-0.4761904762`), and default-method coverage of the three `compute_cor` branches.
+- Kendall boundary cases: perfectly concordant (`+1`), perfectly discordant (`-1`), self-correlation (`+1`), and a tie case exercising `tie_x` in the denominator.
+- `no_leaks_ok` per method (guarded with `unless $INC{'Devel/Cover.pm'}`).
+- Croak paths: length mismatch, unknown method, zero-variance input.
 
 ### XS refactor
 
@@ -3008,6 +3262,8 @@ test detects it (see "Testing", below).
 
  `LikeR.xs` — consolidated helpers; `compare_index` removed; `cmp_pval` fixed.
 
+### `view`
+ non-ASCII characters now print
 
 ## 0.19
 

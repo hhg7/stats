@@ -1,7 +1,6 @@
 use strict;
 use warnings;
 use Test::More;
-use feature 'say';
 use File::Temp qw(tempdir tempfile);
 use Stats::LikeR;
 use Test::Exception;
@@ -117,7 +116,6 @@ write_table(
 	'row.names' => 0, 'undef.val' => 'NA'
 );
 $str = file2string($fh->filename);
-say $str;
 if ($str eq 'a	b
 1	4
 2	5
@@ -394,5 +392,87 @@ SKIP: {
 	is( slurp($f), ",a\nzeile\x{e2}\x{98}\x{ba},9\n",
 		'wide-character HoH row key sorts and fetches correctly (UTF-8 bytes on disk)' );
 }
+
+# ==============================================================================
+# 31+. Non-ASCII / UTF-8 write coverage and full write->read round trips.
+#
+# write_table opens the output as a byte stream (PerlIO_open ... "w") and writes
+# each cell's bytes verbatim via SvPV: a byte string is written as-is, and a
+# wide-character (UTF-8-flagged) string is written as its internal UTF-8 bytes.
+# Test 30 above covered wide-character KEYS; the tests below cover non-ASCII
+# VALUES and prove that write_table + read_table round-trip non-ASCII data
+# byte-for-byte. Byte values are spelled out explicitly (\xC3\xA9 = LATIN SMALL
+# LETTER E WITH ACUTE, \xE2\x98\x83 = SNOWMAN) so the expectations never depend
+# on this file's own on-disk encoding.
+# ==============================================================================
+my $utf8_cafe = "caf\xC3\xA9";	# 'cafe' + e-acute  (byte string, no UTF-8 flag)
+my $utf8_ole  = "ol\xC3\xA9";	# 'ol'  + e-acute
+my $utf8_snow = "\xE2\x98\x83";	# U+2603 SNOWMAN
+
+# 31. A non-ASCII byte value is written verbatim (flat hash, no quoting needed).
+wrote_ok( "greeting\n$utf8_cafe\n", 'UTF-8 bytes in a value are written verbatim',
+	{ 'greeting' => $utf8_cafe }, 'row.names' => 0 );
+
+# 32. A non-ASCII value that also contains the separator is quoted, bytes intact.
+wrote_ok( qq{,a\n1,"$utf8_cafe,$utf8_ole"\n},
+	'UTF-8 value containing the separator is quoted, bytes preserved',
+	{ 'a' => [ "$utf8_cafe,$utf8_ole" ] } );
+
+# 33. A wide-character (UTF-8-flagged, code point > 0xFF) VALUE is written as
+#     its UTF-8 bytes -- the value-side analogue of test 30's key check.
+{
+	my $f = path();
+	write_table( { 'r1' => { 'a' => "\x{263a}" } }, $f );
+	is( slurp($f), ",a\nr1,\x{e2}\x{98}\x{ba}\n",
+		'a wide-character value is written as its UTF-8 bytes on disk' );
+}
+
+# 34. Writing a wide-character value emits no "Wide character in print" warning:
+#     the XS writes bytes straight to a byte stream, bypassing Perl's print.
+{
+	my @warnings;
+	local $SIG{__WARN__} = sub { push @warnings, @_ };
+	write_table( { 'r1' => { 'a' => "\x{263a}" } }, path() );
+	is( scalar @warnings, 0, 'writing a wide-character value emits no warnings' )
+		or diag "warnings seen: @warnings";
+}
+no_leaks_ok {
+	eval { write_table( { 'r1' => { 'a' => "\x{263a}" } }, path() ) };
+} 'write_table: no memory leaks writing a wide-character value' unless $INC{'Devel/Cover.pm'};
+
+# 35. Full round trip: write non-ASCII column names and values, then read them
+#     back in the aoh and hoa shapes. Both functions are byte-transparent, so
+#     the bytes must survive identically.
+{
+	my $f = path();
+	write_table( [ { $utf8_cafe => $utf8_ole, 'city' => $utf8_snow } ], $f, 'row.names' => 0 );
+	ok( index( slurp($f), $utf8_ole )  >= 0, 'round trip: UTF-8 value bytes reached the disk' );
+	ok( index( slurp($f), $utf8_cafe ) >= 0, 'round trip: UTF-8 column-name bytes reached the disk' );
+
+	my $aoh = read_table( $f );
+	is( $aoh->[0]{$utf8_cafe}, $utf8_ole,  'round trip (aoh): value under a non-ASCII column name is byte-identical' );
+	is( $aoh->[0]{'city'},     $utf8_snow, 'round trip (aoh): a non-ASCII value is byte-identical' );
+
+	my $hoa = read_table( $f, 'output.type' => 'hoa' );
+	is( $hoa->{$utf8_cafe}[0], $utf8_ole,  'round trip (hoa): value under a non-ASCII column key is byte-identical' );
+	is( $hoa->{'city'}[0],     $utf8_snow, 'round trip (hoa): a non-ASCII column value is byte-identical' );
+}
+
+# 36. Round trip through the hoh shape with a non-ASCII row key and value.
+{
+	my $f = path();
+	write_table( [ { 'id' => $utf8_snow, 'val' => $utf8_cafe } ], $f, 'row.names' => 0 );
+	my $hoh = read_table( $f, 'output.type' => 'hoh', 'row.names' => 'id' );
+	ok( exists $hoh->{$utf8_snow}, 'round trip (hoh): a non-ASCII row key survives' );
+	is( $hoh->{$utf8_snow}{'val'}, $utf8_cafe,
+		'round trip (hoh): the value under a non-ASCII row key is byte-identical' );
+}
+no_leaks_ok {
+	eval {
+		my $f = path();
+		write_table( [ { $utf8_cafe => $utf8_ole, 'city' => $utf8_snow } ], $f, 'row.names' => 0 );
+		read_table( $f );
+	};
+} 'write_table/read_table: no memory leaks on a UTF-8 round trip' unless $INC{'Devel/Cover.pm'};
 
 done_testing();

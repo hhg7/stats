@@ -551,12 +551,12 @@ static NV pearson_corr(const NV *restrict x, const NV *restrict y, size_t n) {
  * where C = concordant pairs, D = discordant, T_x = pairs tied only on
  * x, T_y = pairs tied only on y.  Joint ties (both zero) are excluded
  * from numerator and denominator, matching R's cor(method="kendall").
- * Returns NAN when the denominator is zero.                             */
-static NV kendall_tau_b(const NV *restrict x, const NV *restrict y, unsigned int n) {
+ * Returns NAN when the denominator is zero. */
+static NV kendall_tau_b(const NV *restrict x, const NV *restrict y, size_t n) {
 	size_t C = 0, D = 0, tie_x = 0, tie_y = 0;
 	for (size_t i = 0; i < n - 1; i++) {
 		for (size_t j = i + 1; j < n; j++) {
-			int sx = (x[i] > x[j]) - (x[i] < x[j]);   /* sign of x[i]-x[j] */
+			int sx = (x[i] > x[j]) - (x[i] < x[j]); // sign of x[i]-x[j]
 			int sy = (y[i] > y[j]) - (y[i] < y[j]);
 			if      (sx == 0 && sy == 0) { /* joint tie — not counted */ }
 			else if (sx == 0)            tie_x++;
@@ -567,7 +567,7 @@ static NV kendall_tau_b(const NV *restrict x, const NV *restrict y, unsigned int
 	}
 	NV denom = sqrt((NV)(C + D + tie_x) * (NV)(C + D + tie_y));
 	if (denom == 0.0) return NAN;
-	return (NV)(C - D) / denom;
+	return ((NV)C - (NV)D) / denom;
 }
 
 /* Single dispatch: compute correlation according to method string.
@@ -813,10 +813,8 @@ static NV spearman_exact_pvalue(NV s_obs, size_t n, const char *restrict alt) {
 	NV p = 2.0 * (p_le < p_ge ? p_le : p_ge);
 	return (p > 1.0) ? 1.0 : p;
 }
-/* -----------------------------------------------------------------------
- * Exact Kendall p-value via Mahonian Numbers (Inversions distribution)
- * Matches R's behavior for N < 50 without ties.
- * ----------------------------------------------------------------------- */
+/* Exact Kendall p-value via Mahonian Numbers (Inversions distribution)
+ * Matches R's behavior for N < 50 without ties.*/
 static NV kendall_exact_pvalue(size_t n, NV s_obs, const char *restrict alt) {
 	long max_inv = (long)n * (n - 1) / 2;
 	NV *restrict dp = (NV*)safemalloc((max_inv + 1) * sizeof(NV));
@@ -2806,8 +2804,730 @@ static double c_pnorm(double x, double mu, double sigma, int lower_tail, int log
 #undef PN_DT_0
 #undef PN_DT_1
 }
+/*
+ * anova() : sequential (Type-I) ANOVA table for a linear model, returned in
+ *           the same shape as aov() in this module, OR an F-test comparison
+ *           of two or more nested models (R's anova(m1, m2, ...) generic).
+ *
+ *   my $tab = anova(\%data, 'yield ~ ctrl');            # one model  -> HashRef
+ *   my $tab = anova(\%data, 'len ~ supp * dose');       # one model  -> HashRef
+ *   my $cmp = anova(\%data, 'y ~ a', 'y ~ a + b');      # 2+ models  -> ArrayRef
+ *
+ * ---- single-model form (one formula) --------------------------------------
+ * Input mirrors aov(): a Hash-of-Arrays (\%h, columns) or Array-of-Hashes
+ * (\@a, rows), plus a formula string 'response ~ rhs'. The RHS understands
+ * '+', ':' (interaction) and '*' (factorial expansion: a*b -> a + b + a:b,
+ * a*b*c -> a + b + c + a:b + a:c + b:c + a:b:c). Bare string columns are
+ * treated as factors and treatment-coded (first level = reference); numeric
+ * columns and I(x^2) enter as single regressors. Interactions form the
+ * product of their factors' coded columns, so factor:factor uses
+ * (la-1)*(lb-1) columns exactly as R's treatment contrasts do.
+ *
+ * The model is fit sequentially by Householder QR (apply_householder_aov)
+ * and the model SS is decomposed term by term, in formula order (Type I).
+ * Collinear / rank-deficient terms gracefully receive 0 df and 0 Sum Sq.
+ * Rows with any missing / non-numeric response or predictor are dropped
+ * listwise (R's default na.omit).
+ *
+ * Returns a HashRef keyed by term name (plus "Residuals"); each value is a
+ * nested hash using R's column names:
+ *     term        => { Df, "Sum Sq", "Mean Sq", "F value", "Pr(>F)" }
+ *     Residuals   => { Df, "Sum Sq", "Mean Sq" }
+ * "Mean Sq"/"F value"/"Pr(>F)" are omitted where undefined (0-df terms; the
+ * Residuals row never carries an F test), matching aov()'s output.
+ *
+ * ---- model-comparison form (two or more formulas) -------------------------
+ * anova(\%data, 'y ~ a', 'y ~ a + b', ...) fits every model and returns an
+ * ArrayRef with one HashRef per model, in the order supplied, mirroring R's
+ * anova(m1, m2, ...) table (columns Res.Df, RSS, Df, Sum of Sq, F, Pr(>F)):
+ *     [ { "Res.Df", "RSS", formula },
+ *       { "Res.Df", "RSS", "Df", "Sum of Sq", "F", "Pr(>F)", formula }, ... ]
+ * The first row carries no comparison stats (nothing precedes it). For each
+ * later row: Df = drop in residual df from the previous model, "Sum of Sq" =
+ * drop in RSS, and F = ("Sum of Sq"/Df) / scale, where scale is the residual
+ * mean square of the *largest* model in the set (smallest residual df) --
+ * the common denominator R uses for the whole table. "F"/"Pr(>F)" are omitted
+ * for any row whose Df is not positive (non-nested / equal-size steps).
+ *
+ * All models are fit on ONE shared row set: completeness is evaluated
+ * listwise over the UNION of every response and predictor across every
+ * formula, so the fits are always mutually comparable (unlike R, which fits
+ * each model on its own na.omit and then errors if the sizes disagree).
+ *
+ * This form performs the F-test only. R's Chisq/LRT variant would need a
+ * chi-square CDF; it can be layered on later behind a test option.
+ *
+ * Depends on: parse_formula(), apply_householder_aov(), pf(),
+ * evaluate_term(), is_column_categorical(), get_data_string_alloc().
+ */
+
+/* A factor token may be treated as categorical only when it is a plain
+ * column name (no ':' interaction, no 'I(...)' / '^' transform). */
+static bool anova_is_bare(const char *restrict t) {
+	return !(strchr(t, ':') || strchr(t, '(') || strchr(t, '^'));
+}
+
+/* First-appearance distinct string levels of a bare column over the rows
+ * flagged complete[]. Returns count; *out gets a malloc'd array of savepv'd
+ * strings (caller frees each + the array). */
+static size_t anova_levels(pTHX_ HV *restrict hoa, HV **restrict rows,
+		size_t n, const bool *restrict complete,
+		const char *restrict var, char ***restrict out) {
+	char **restrict lv = NULL;
+	size_t cnt = 0, cap = 0;
+	for (size_t i = 0; i < n; i++) {
+		if (!complete[i]) continue;
+		char *restrict s = get_data_string_alloc(aTHX_ hoa, rows, i, var);
+		if (!s) continue;
+		bool seen = FALSE;
+		for (size_t j = 0; j < cnt; j++)
+			if (strcmp(lv[j], s) == 0) { seen = TRUE; break; }
+		if (seen) { Safefree(s); continue; }
+		if (cnt == cap) { cap = cap ? cap * 2 : 4; Renew(lv, cap, char*); }
+		lv[cnt++] = s;
+	}
+	*out = lv;
+	return cnt;
+}
+
+/* Split str on separator `sep` at parenthesis depth 0. Returns a malloc'd
+ * array of savepv'd, whitespace-trimmed tokens; empty tokens are dropped. */
+static char** anova_split0(pTHX_ const char *restrict str, char sep, size_t *restrict cnt) {
+	char **restrict out = NULL;
+	size_t n = 0, cap = 0, depth = 0;
+	const char *restrict start = str, *restrict p = str;
+	for (;; p++) {
+		if (*p == '(') depth++;
+		else if (*p == ')') { if (depth) depth--; }
+		if ((*p == sep && depth == 0) || *p == '\0') {
+			const char *a = start, *b = p;
+			while (a < b && isspace((unsigned char)*a)) a++;
+			while (b > a && isspace((unsigned char)b[-1])) b--;
+			if (b > a) {
+				if (n == cap) { cap = cap ? cap * 2 : 4; Renew(out, cap, char*); }
+				out[n++] = savepvn(a, (STRLEN)(b - a));
+			}
+			start = p + 1;
+		}
+		if (*p == '\0') break;
+	}
+	*cnt = n;
+	return out;
+}
+
+/* Does s contain char c at paren depth 0? */
+static int anova_has0(const char *restrict s, char c) {
+	size_t d = 0;
+	for (; *s; s++) {
+		if (*s == '(') d++;
+		else if (*s == ')') { if (d) d--; }
+		else if (*s == c && d == 0) return 1;
+	}
+	return 0;
+}
+
+// Join f[idx[0..m-1]] with ':' into a fresh savemalloc'd string
+static char* anova_joinf(pTHX_ char **restrict f, const size_t *restrict idx, size_t m) {
+	size_t len = 0;
+	for (size_t i = 0; i < m; i++) len += strlen(f[idx[i]]) + 1;
+	char *restrict out = (char*)safemalloc(len + 1);
+	out[0] = '\0';
+	for (size_t i = 0; i < m; i++) { if (i) strcat(out, ":"); strcat(out, f[idx[i]]); }
+	return out;
+}
+
+typedef struct { char **factors; size_t *fi; size_t nf; char *name; size_t width, start; } AnTerm;
+typedef struct { char *name; int is_cat; size_t width, nlv; NV *col; char **lv; } AnFac;
+
+/* Append a term built from f[idx[0..m-1]] unless a term with the same
+ * canonical name already exists (R merges duplicate terms). */
+static void anova_term_add(pTHX_ AnTerm **restrict tp, size_t *restrict np,
+		size_t *restrict cp, char **restrict f, const size_t *restrict idx, size_t m) {
+	char *restrict name = anova_joinf(aTHX_ f, idx, m);
+	for (size_t i = 0; i < *np; i++)
+		if (strcmp((*tp)[i].name, name) == 0) { Safefree(name); return; }
+	if (*np == *cp) { *cp = *cp ? *cp * 2 : 8; Renew(*tp, *cp, AnTerm); }
+	AnTerm *restrict t = &(*tp)[*np];
+	t->nf = m; t->name = name; t->width = 0; t->start = 0; t->fi = NULL;
+	Newx(t->factors, m, char*);
+	for (size_t i = 0; i < m; i++) t->factors[i] = savepv(f[idx[i]]);
+	(*np)++;
+}
+
+static void anova_free_terms(pTHX_ AnTerm *restrict t, size_t n) {
+	if (!t) return;
+	for (size_t i = 0; i < n; i++) {
+		for (size_t j = 0; j < t[i].nf; j++) Safefree(t[i].factors[j]);
+		Safefree(t[i].factors);
+		Safefree(t[i].fi);
+		Safefree(t[i].name);
+	}
+	Safefree(t);
+}
+
+static void anova_free_facs(pTHX_ AnFac *restrict f, size_t n) {
+	if (!f) return;
+	for (size_t i = 0; i < n; i++) {
+		Safefree(f[i].name);
+		Safefree(f[i].col);
+		if (f[i].lv) {
+			for (size_t j = 0; j < f[i].nlv; j++) Safefree(f[i].lv[j]);
+			Safefree(f[i].lv);
+		}
+	}
+	Safefree(f);
+}
+
+/* Free the parsed lhs/rhs pairs produced by parse_formula for the multi-model
+ * form (parse_formula allocates with the safefree-compatible allocator, the
+ * same convention the single-model path frees under). Tolerates NULL slots so
+ * it is safe to call after a partial parse. */
+static void anova_free_formulas(pTHX_ char **restrict lhss, char **restrict rhss, size_t nf) {
+	if (lhss) for (size_t i = 0; i < nf; i++) if (lhss[i]) safefree(lhss[i]);
+	if (rhss) for (size_t i = 0; i < nf; i++) if (rhss[i]) safefree(rhss[i]);
+	Safefree(lhss);
+	Safefree(rhss);
+}
+
+/* Find-or-add a factor token in the registry; classifies on insertion. */
+static size_t anova_fac(pTHX_ AnFac **restrict fp, size_t *restrict np, size_t *restrict cp,
+		HV *restrict hoa, HV **restrict rows, size_t n, const char *restrict name) {
+	for (size_t i = 0; i < *np; i++) if (strcmp((*fp)[i].name, name) == 0) return i;
+	if (*np == *cp) { *cp = *cp ? *cp * 2 : 8; Renew(*fp, *cp, AnFac); }
+	AnFac *restrict f = &(*fp)[*np];
+	f->name  = savepv(name);
+	f->is_cat = anova_is_bare(name) && is_column_categorical(aTHX_ hoa, rows, n, name);
+	f->width = 0; f->nlv = 0; f->col = NULL; f->lv = NULL;
+	return (*np)++;
+}
+
+/* Expand a formula RHS string into ordered, de-duplicated terms, appending to
+ * *tp (with count *np / capacity *cp). Understands '+', ':' and the '*'
+ * factorial expansion. Shared by the single-model table path and the
+ * per-model fitter below so both parse identically. */
+static void anova_expand_rhs(pTHX_ const char *restrict rhs,
+		AnTerm **restrict tp, size_t *restrict np, size_t *restrict cp) {
+	size_t nsum;
+	char **restrict sum = anova_split0(aTHX_ rhs, '+', &nsum);
+	for (size_t si = 0; si < nsum; si++) {
+		char *restrict s = sum[si];
+		if (!strcmp(s, "1") || !strcmp(s, "0") || !strcmp(s, "-1")) continue;
+		if (anova_has0(s, '*')) {
+			size_t k;
+			char **fk = anova_split0(aTHX_ s, '*', &k);
+			for (size_t sz = 1; sz <= k; sz++) {
+				size_t *idx; Newx(idx, sz, size_t);
+				for (size_t i = 0; i < sz; i++) idx[i] = i;
+				for (;;) {
+					anova_term_add(aTHX_ tp, np, cp, fk, idx, sz);
+					long i = (long)sz - 1;
+					while (i >= 0 && idx[i] == k - sz + (size_t)i) i--;
+					if (i < 0) break;
+					idx[i]++;
+					for (size_t j = (size_t)i + 1; j < sz; j++) idx[j] = idx[j-1] + 1;
+				}
+				Safefree(idx);
+			}
+			for (size_t j = 0; j < k; j++) Safefree(fk[j]);
+			Safefree(fk);
+		} else if (anova_has0(s, ':')) {
+			size_t k;
+			char **fk = anova_split0(aTHX_ s, ':', &k);
+			size_t *idx; Newx(idx, k, size_t);
+			for (size_t i = 0; i < k; i++) idx[i] = i;
+			anova_term_add(aTHX_ tp, np, cp, fk, idx, k);
+			Safefree(idx);
+			for (size_t j = 0; j < k; j++) Safefree(fk[j]);
+			Safefree(fk);
+		} else {
+			char *one[1]; size_t z = 0; one[0] = s;
+			anova_term_add(aTHX_ tp, np, cp, one, &z, 1);
+		}
+	}
+	for (size_t si = 0; si < nsum; si++) Safefree(sum[si]);
+	Safefree(sum);
+}
+
+/* Fit a single model `lhs ~ rhs` on the shared complete-case row set
+ * (ridx[0..n_used-1]) and report its residual SS and model rank. Builds its
+ * own term/factor registries and design matrix, runs the sequential QR, then
+ * frees all of its own scratch. Returns 1 on success, 0 if the RHS expands to
+ * no predictor terms (caller croaks). Used only by the model-comparison form;
+ * the single-model table path below is unchanged. */
+static int anova_fit_one(pTHX_ HV *restrict hoa, HV **restrict rows, size_t n,
+		const bool *restrict complete, const size_t *restrict ridx, size_t n_used,
+		const char *restrict lhs, const char *restrict rhs,
+		NV *restrict rss_out, size_t *restrict rank_out) {
+	AnTerm *terms = NULL;
+	AnFac  *facs  = NULL;
+	size_t nterms = 0, tcap = 0, nfac = 0, fcap = 0;
+
+	anova_expand_rhs(aTHX_ rhs, &terms, &nterms, &tcap);
+	if (nterms == 0) { anova_free_terms(aTHX_ terms, nterms); return 0; }
+
+	/* factor registry + per-term factor indices */
+	for (size_t t = 0; t < nterms; t++) {
+		Newx(terms[t].fi, terms[t].nf, size_t);
+		for (size_t j = 0; j < terms[t].nf; j++)
+			terms[t].fi[j] = anova_fac(aTHX_ &facs, &nfac, &fcap, hoa, rows, n, terms[t].factors[j]);
+	}
+
+	/* factor widths + coded columns (levels taken over the shared row set) */
+	for (size_t f = 0; f < nfac; f++) {
+		if (facs[f].is_cat) {
+			facs[f].nlv = anova_levels(aTHX_ hoa, rows, n, complete, facs[f].name, &facs[f].lv);
+			facs[f].width = facs[f].nlv > 1 ? facs[f].nlv - 1 : 0;
+		} else {
+			facs[f].width = 1;
+		}
+		if (facs[f].width == 0) continue;
+		Newx(facs[f].col, n_used * facs[f].width, NV);
+		if (facs[f].is_cat) {
+			for (size_t r = 0; r < n_used; r++) {
+				char *sv = get_data_string_alloc(aTHX_ hoa, rows, ridx[r], facs[f].name);
+				for (size_t j = 1; j < facs[f].nlv; j++)
+					facs[f].col[r * facs[f].width + (j - 1)] =
+						(sv && strcmp(sv, facs[f].lv[j]) == 0) ? 1.0 : 0.0;
+				Safefree(sv);
+			}
+		} else {
+			for (size_t r = 0; r < n_used; r++)
+				facs[f].col[r] = evaluate_term(aTHX_ hoa, rows, (unsigned)ridx[r], facs[f].name);
+		}
+	}
+
+	// term widths + design layout */
+	size_t p = 1;
+	for (size_t t = 0; t < nterms; t++) {
+		size_t w = 1;
+		for (size_t j = 0; j < terms[t].nf; j++) w *= facs[terms[t].fi[j]].width;
+		terms[t].width = w;
+		terms[t].start = p;
+		p += w;
+	}
+	// design matrix (intercept + term blocks)
+	NV **restrict X = NULL, *restrict y = NULL;
+	Newx(y, n_used, NV);
+	Newx(X, n_used, NV*);
+	for (size_t r = 0; r < n_used; r++) {
+		Newx(X[r], p, NV);
+		X[r][0] = 1.0;
+		y[r] = evaluate_term(aTHX_ hoa, rows, (unsigned)ridx[r], lhs);
+	}
+	for (size_t t = 0; t < nterms; t++) {
+		size_t w = terms[t].width;
+		if (w == 0) continue;
+		for (size_t r = 0; r < n_used; r++) {
+			for (size_t c = 0; c < w; c++) {
+				size_t rem = c; NV v = 1.0;
+				for (size_t j = 0; j < terms[t].nf; j++) {
+					AnFac *fj = &facs[terms[t].fi[j]];
+					size_t d = rem % fj->width; rem /= fj->width;
+					v *= fj->col[r * fj->width + d];
+				}
+				X[r][terms[t].start + c] = v;
+			}
+		}
+	}
+
+	/* sequential QR (X, y overwritten in place) -> residual SS + rank */
+	bool   *aliased  = NULL;
+	size_t *rank_map = NULL;
+	Newx(aliased,  p, bool);
+	Newx(rank_map, p, size_t);
+	for (size_t k = 0; k < p; k++) rank_map[k] = 0;
+	apply_householder_aov(X, y, n_used, p, aliased, rank_map);
+
+	size_t rank = 0;
+	for (size_t k = 0; k < p; k++) if (!aliased[k]) rank++;
+	NV rss = 0.0;
+	for (size_t r = rank; r < n_used; r++) rss += y[r] * y[r];
+
+	*rss_out  = rss;
+	*rank_out = rank;
+
+	for (size_t r = 0; r < n_used; r++) Safefree(X[r]);
+	Safefree(X); Safefree(y);
+	Safefree(aliased); Safefree(rank_map);
+	anova_free_terms(aTHX_ terms, nterms);
+	anova_free_facs(aTHX_ facs, nfac);
+	return 1;
+}
+
 // --- XS SECTION ---
 MODULE = Stats::LikeR  PACKAGE = Stats::LikeR
+
+void anova(...)
+	PROTOTYPE: $@
+	PREINIT:
+		SV *restrict data;
+		char *lhs = NULL, *rhs = NULL;
+		HV *restrict hoa = NULL, *restrict result = NULL;
+		HV **restrict rows = NULL;
+		AnTerm *terms = NULL;
+		AnFac  *facs  = NULL;
+		size_t nterms = 0, tcap = 0, nfac = 0, fcap = 0;
+		bool *restrict complete = NULL, *restrict aliased = NULL;
+		size_t *restrict ridx = NULL, *rank_map = NULL;
+		size_t n = 0, n_used = 0, p, rank;
+		NV **restrict X = NULL, *restrict y = NULL, rss, msres;
+		IV dfres;
+	PPCODE:
+	{
+		if (items < 2)
+			croak("anova: usage anova(\\%%data, 'response ~ terms' [, 'model2', ...])");
+		data = ST(0);
+
+		if (items > 2) {
+			/*  nested model comparison  *
+			 * anova(\%data, 'y ~ a', 'y ~ a + b', ...) -> ArrayRef table.  */
+			size_t nform = (size_t)items - 1;
+			char **lhss = NULL, **rhss = NULL;
+			Newxz(lhss, nform, char*);
+			Newxz(rhss, nform, char*);
+
+			/* ---- parse every formula */
+			for (size_t fi = 0; fi < nform; fi++) {
+				SV *restrict fsv = ST(1 + fi);
+				if (!(SvPOK(fsv) || SvOK(fsv))) {
+					anova_free_formulas(aTHX_ lhss, rhss, nform);
+					croak("anova: model argument %" UVuf " must be a formula string", (UV)(fi + 1));
+				}
+				if (!parse_formula(SvPV_nolen(fsv), &lhss[fi], &rhss[fi])) {
+					anova_free_formulas(aTHX_ lhss, rhss, nform);
+					croak("anova: could not parse formula %" UVuf " (need 'response ~ terms')", (UV)(fi + 1));
+				}
+			}
+
+			/* ---- resolve data form + row count (response 1 length) --- */
+			if (!SvROK(data)) {
+				anova_free_formulas(aTHX_ lhss, rhss, nform);
+				croak("anova: first argument must be a hash or array reference");
+			}
+			{
+				SV *rv = SvRV(data);
+				if (SvTYPE(rv) == SVt_PVHV) {
+					hoa = (HV*)rv;
+					SV **col = hv_fetch(hoa, lhss[0], (I32)strlen(lhss[0]), 0);
+					if (col && SvROK(*col) && SvTYPE(SvRV(*col)) == SVt_PVAV)
+						n = (size_t)(av_len((AV*)SvRV(*col)) + 1);
+					else {
+						hv_iterinit(hoa);
+						HE *e;
+						while ((e = hv_iternext(hoa))) {
+							SV *v = hv_iterval(hoa, e);
+							if (SvROK(v) && SvTYPE(SvRV(v)) == SVt_PVAV) {
+								size_t l = (size_t)(av_len((AV*)SvRV(v)) + 1);
+								if (l > n) n = l;
+							}
+						}
+					}
+				} else if (SvTYPE(rv) == SVt_PVAV) {
+					AV *top = (AV*)rv;
+					n = (size_t)(av_len(top) + 1);
+					Newx(rows, n ? n : 1, HV*);
+					for (size_t i = 0; i < n; i++) {
+						SV **ep = av_fetch(top, i, 0);
+						if (!(ep && SvROK(*ep) && SvTYPE(SvRV(*ep)) == SVt_PVHV)) {
+							Safefree(rows);
+							anova_free_formulas(aTHX_ lhss, rhss, nform);
+							croak("anova: element %" UVuf " is not a hash reference", (UV)i);
+						}
+						rows[i] = (HV*)SvRV(*ep);
+					}
+				} else {
+					anova_free_formulas(aTHX_ lhss, rhss, nform);
+					croak("anova: first argument must be a hash or array reference");
+				}
+			}
+			/* union factor registry across all formulas */
+			{
+				AnFac *ufacs = NULL; size_t unfac = 0, ufcap = 0;
+				for (size_t fi = 0; fi < nform; fi++) {
+					AnTerm *tt = NULL; size_t ntt = 0, ttcap = 0;
+					anova_expand_rhs(aTHX_ rhss[fi], &tt, &ntt, &ttcap);
+					for (size_t t = 0; t < ntt; t++)
+						for (size_t j = 0; j < tt[t].nf; j++)
+							(void)anova_fac(aTHX_ &ufacs, &unfac, &ufcap, hoa, rows, n, tt[t].factors[j]);
+					anova_free_terms(aTHX_ tt, ntt);
+				}
+
+				/* ---- listwise completeness over the union */
+				Newx(complete, n ? n : 1, bool);
+				n_used = 0;
+				for (size_t i = 0; i < n; i++) {
+					bool ok = TRUE;
+					for (size_t fi = 0; ok && fi < nform; fi++)
+						if (!isfinite(evaluate_term(aTHX_ hoa, rows, (unsigned)i, lhss[fi]))) ok = FALSE;
+					for (size_t f = 0; ok && f < unfac; f++) {
+						if (ufacs[f].is_cat) {
+							char *sv = get_data_string_alloc(aTHX_ hoa, rows, i, ufacs[f].name);
+							if (!sv) ok = FALSE; else Safefree(sv);
+						} else if (!isfinite(evaluate_term(aTHX_ hoa, rows, (unsigned)i, ufacs[f].name))) {
+							ok = FALSE;
+						}
+					}
+					complete[i] = ok;
+					if (ok) n_used++;
+				}
+				anova_free_facs(aTHX_ ufacs, unfac);
+			}
+
+			if (n_used < 2) {
+				Safefree(complete); Safefree(rows);
+				anova_free_formulas(aTHX_ lhss, rhss, nform);
+				croak("anova: fewer than 2 complete observations after dropping NA");
+			}
+
+			Newx(ridx, n_used, size_t);
+			{ size_t r = 0; for (size_t i = 0; i < n; i++) if (complete[i]) ridx[r++] = i; }
+
+			/* fit every model on the shared row set */
+			{
+				NV *restrict mrss = NULL; IV *restrict mresdf = NULL;
+				Newx(mrss,   nform, NV);
+				Newx(mresdf, nform, IV);
+				for (size_t fi = 0; fi < nform; fi++) {
+					NV rss_i; size_t rank_i;
+					if (!anova_fit_one(aTHX_ hoa, rows, n, complete, ridx, n_used,
+					                   lhss[fi], rhss[fi], &rss_i, &rank_i)) {
+						Safefree(mrss); Safefree(mresdf);
+						Safefree(ridx); Safefree(complete); Safefree(rows);
+						anova_free_formulas(aTHX_ lhss, rhss, nform);
+						croak("anova: formula %" UVuf " has no predictor terms", (UV)(fi + 1));
+					}
+					mrss[fi]   = rss_i;
+					mresdf[fi] = (IV)n_used - (IV)rank_i;
+				}
+
+				/* common scale = residual MS of the largest model
+				 * (smallest residual df), exactly as R's anova.lmlist. */
+				size_t big = 0;
+				for (size_t fi = 1; fi < nform; fi++)
+					if (mresdf[fi] < mresdf[big]) big = fi;
+				NV scale  = (mresdf[big] > 0) ? mrss[big] / (NV)mresdf[big] : NAN;
+				IV df_big = mresdf[big];
+
+				// one row per model, in supplied order
+				AV *restrict table = newAV();
+				for (size_t fi = 0; fi < nform; fi++) {
+					HV *row = newHV();
+					(void)hv_store(row, "Res.Df", 6, newSViv(mresdf[fi]), 0);
+					(void)hv_store(row, "RSS",    3, newSVnv(mrss[fi]),   0);
+					(void)hv_store(row, "formula", 7,
+					               newSVpvf("%s ~ %s", lhss[fi], rhss[fi]), 0);
+					if (fi > 0) {
+						IV ddf = mresdf[fi - 1] - mresdf[fi];
+						NV dss = mrss[fi - 1] - mrss[fi];
+						(void)hv_store(row, "Df", 2, newSViv(ddf), 0);
+						(void)hv_store(row, "Sum of Sq", 9, newSVnv(dss), 0);
+						if (ddf > 0 && isfinite(scale) && scale > 0.0) {
+							NV F = (dss / (NV)ddf) / scale;
+							(void)hv_store(row, "F", 1, newSVnv(F), 0);
+							(void)hv_store(row, "Pr(>F)", 6,
+							               newSVnv(1.0 - pf(F, (NV)ddf, (NV)df_big)), 0);
+						}
+					}
+					av_push(table, newRV_noinc((SV*)row));
+				}
+
+				Safefree(mrss); Safefree(mresdf);
+				Safefree(ridx); Safefree(complete); Safefree(rows);
+				anova_free_formulas(aTHX_ lhss, rhss, nform);
+
+				XPUSHs(sv_2mortal(newRV_noinc((SV*)table)));
+			}
+		} else {
+			/* single-model Type-I table */
+			if (!(SvPOK(ST(1)) || SvOK(ST(1))))
+				croak("anova: second argument must be a formula string");
+			if (!parse_formula(SvPV_nolen(ST(1)), &lhs, &rhs))
+				croak("anova: could not parse formula (need 'response ~ terms')");
+
+			/* ---- resolve data form + row count */
+			if (!SvROK(data)) { safefree(lhs); safefree(rhs); croak("anova: first argument must be a hash or array reference"); }
+			{
+				SV *restrict rv = SvRV(data);
+				if (SvTYPE(rv) == SVt_PVHV) {
+					hoa = (HV*)rv;
+					SV **restrict col = hv_fetch(hoa, lhs, (I32)strlen(lhs), 0);
+					if (col && SvROK(*col) && SvTYPE(SvRV(*col)) == SVt_PVAV)
+						n = (size_t)(av_len((AV*)SvRV(*col)) + 1);
+					else {
+						/* response may be an expression; fall back to longest column */
+						hv_iterinit(hoa);
+						HE *e;
+						while ((e = hv_iternext(hoa))) {
+							SV *v = hv_iterval(hoa, e);
+							if (SvROK(v) && SvTYPE(SvRV(v)) == SVt_PVAV) {
+								size_t l = (size_t)(av_len((AV*)SvRV(v)) + 1);
+								if (l > n) n = l;
+							}
+						}
+					}
+				} else if (SvTYPE(rv) == SVt_PVAV) {
+					AV *restrict top = (AV*)rv;
+					n = (size_t)(av_len(top) + 1);
+					Newx(rows, n ? n : 1, HV*);
+					for (size_t i = 0; i < n; i++) {
+						SV **ep = av_fetch(top, i, 0);
+						if (!(ep && SvROK(*ep) && SvTYPE(SvRV(*ep)) == SVt_PVHV)) {
+							Safefree(rows); safefree(lhs); safefree(rhs);
+							croak("anova: element %" UVuf " is not a hash reference", (UV)i);
+						}
+						rows[i] = (HV*)SvRV(*ep);
+					}
+				} else {
+					safefree(lhs); safefree(rhs);
+					croak("anova: first argument must be a hash or array reference");
+				}
+			}
+			/* expand RHS into ordered, de-duplicated terms  */
+			anova_expand_rhs(aTHX_ rhs, &terms, &nterms, &tcap);
+			if (nterms == 0) {
+				anova_free_terms(aTHX_ terms, nterms); Safefree(rows);
+				safefree(lhs); safefree(rhs);
+				croak("anova: formula has no predictor terms");
+			}
+			/* factor registry + per-term factor indices  */
+			for (size_t t = 0; t < nterms; t++) {
+				Newx(terms[t].fi, terms[t].nf, size_t);
+				for (size_t j = 0; j < terms[t].nf; j++)
+					terms[t].fi[j] = anova_fac(aTHX_ &facs, &nfac, &fcap, hoa, rows, n, terms[t].factors[j]);
+			}
+			// listwise completeness
+			Newx(complete, n ? n : 1, bool);
+			n_used = 0;
+			for (size_t i = 0; i < n; i++) {
+				bool ok = isfinite(evaluate_term(aTHX_ hoa, rows, (unsigned)i, lhs)) ? TRUE : FALSE;
+				for (size_t f = 0; ok && f < nfac; f++) {
+					if (facs[f].is_cat) {
+						char *sv = get_data_string_alloc(aTHX_ hoa, rows, i, facs[f].name);
+						if (!sv) ok = FALSE; else Safefree(sv);
+					} else if (!isfinite(evaluate_term(aTHX_ hoa, rows, (unsigned)i, facs[f].name))) {
+						ok = FALSE;
+					}
+				}
+				complete[i] = ok;
+				if (ok) n_used++;
+			}
+			if (n_used < 2) {
+				anova_free_terms(aTHX_ terms, nterms);
+				anova_free_facs(aTHX_ facs, nfac);
+				Safefree(complete); Safefree(rows); safefree(lhs); safefree(rhs);
+				croak("anova: fewer than 2 complete observations after dropping NA");
+			}
+			Newx(ridx, n_used, size_t);
+			{ size_t r = 0; for (size_t i = 0; i < n; i++) if (complete[i]) ridx[r++] = i; }
+
+			/* ---- factor widths + coded columns ------------------------- */
+			for (size_t f = 0; f < nfac; f++) {
+				if (facs[f].is_cat) {
+					facs[f].nlv = anova_levels(aTHX_ hoa, rows, n, complete, facs[f].name, &facs[f].lv);
+					facs[f].width = facs[f].nlv > 1 ? facs[f].nlv - 1 : 0;
+				} else {
+					facs[f].width = 1;
+				}
+				if (facs[f].width == 0) continue;
+				Newx(facs[f].col, n_used * facs[f].width, NV);
+				if (facs[f].is_cat) {
+					for (size_t r = 0; r < n_used; r++) {
+						char *sv = get_data_string_alloc(aTHX_ hoa, rows, ridx[r], facs[f].name);
+						for (size_t j = 1; j < facs[f].nlv; j++)
+							facs[f].col[r * facs[f].width + (j - 1)] =
+								(sv && strcmp(sv, facs[f].lv[j]) == 0) ? 1.0 : 0.0;
+						Safefree(sv);
+					}
+				} else {
+					for (size_t r = 0; r < n_used; r++)
+						facs[f].col[r] = evaluate_term(aTHX_ hoa, rows, (unsigned)ridx[r], facs[f].name);
+				}
+			}
+			/* ---- term widths + design layout ------------------*/
+			p = 1;
+			for (size_t t = 0; t < nterms; t++) {
+				size_t w = 1;
+				for (size_t j = 0; j < terms[t].nf; j++) w *= facs[terms[t].fi[j]].width;
+				terms[t].width = w;
+				terms[t].start = p;
+				p += w;
+			}
+			/* ---- build design matrix (intercept + term blocks) */
+			Newx(y, n_used, NV);
+			Newx(X, n_used, NV*);
+			for (size_t r = 0; r < n_used; r++) {
+				Newx(X[r], p, NV);
+				X[r][0] = 1.0;
+				y[r] = evaluate_term(aTHX_ hoa, rows, (unsigned)ridx[r], lhs);
+			}
+			for (size_t t = 0; t < nterms; t++) {
+				size_t w = terms[t].width;
+				if (w == 0) continue;                    /* degenerate: no columns */
+				for (size_t r = 0; r < n_used; r++) {
+					for (size_t c = 0; c < w; c++) {
+						size_t rem = c; NV v = 1.0;
+						for (size_t j = 0; j < terms[t].nf; j++) {
+							AnFac *fj = &facs[terms[t].fi[j]];
+							size_t d = rem % fj->width; rem /= fj->width;
+							v *= fj->col[r * fj->width + d];
+						}
+						X[r][terms[t].start + c] = v;
+					}
+				}
+			}
+			// sequential QR (X, y overwritten in place)
+			Newx(aliased,  p, bool);
+			Newx(rank_map, p, size_t);
+			for (size_t k = 0; k < p; k++) rank_map[k] = 0;
+			apply_householder_aov(X, y, n_used, p, aliased, rank_map);
+
+			rank = 0;
+			for (size_t k = 0; k < p; k++) if (!aliased[k]) rank++;
+			rss = 0.0;
+			for (size_t r = rank; r < n_used; r++) rss += y[r] * y[r];
+			dfres = (IV)n_used - (IV)rank;
+			msres = dfres > 0 ? rss / (NV)dfres : NAN;
+
+			// assemble term-keyed table
+			result = newHV();
+			for (size_t t = 0; t < nterms; t++) {
+				NV ss = 0.0; IV df = 0;
+				for (size_t k = terms[t].start; k < terms[t].start + terms[t].width; k++)
+					if (!aliased[k]) { ss += y[rank_map[k]] * y[rank_map[k]]; df++; }
+
+				HV *restrict in = newHV();
+				(void)hv_store(in, "Df", 2, newSViv(df), 0);
+				(void)hv_store(in, "Sum Sq", 6, newSVnv(ss), 0);
+				if (df > 0) {
+					(void)hv_store(in, "Mean Sq", 7, newSVnv(ss / (NV)df), 0);
+					if (dfres > 0 && rss > 0.0) {
+						NV F = (ss / (NV)df) / msres;
+						(void)hv_store(in, "F value", 7, newSVnv(F), 0);
+						(void)hv_store(in, "Pr(>F)", 6, newSVnv(1.0 - pf(F, (NV)df, (NV)dfres)), 0);
+					}
+				}
+				(void)hv_store(result, terms[t].name, (I32)strlen(terms[t].name),
+				               newRV_noinc((SV*)in), 0);
+			}
+			{
+				HV *restrict in = newHV();
+				(void)hv_store(in, "Df", 2, newSViv(dfres), 0);
+				(void)hv_store(in, "Sum Sq", 6, newSVnv(rss), 0);
+				if (dfres > 0) (void)hv_store(in, "Mean Sq", 7, newSVnv(msres), 0);
+				(void)hv_store(result, "Residuals", 9, newRV_noinc((SV*)in), 0);
+			}
+			// teardown
+			for (size_t r = 0; r < n_used; r++) Safefree(X[r]);
+			Safefree(X); Safefree(y);
+			Safefree(aliased); Safefree(rank_map); Safefree(ridx); Safefree(complete);
+			anova_free_terms(aTHX_ terms, nterms);
+			anova_free_facs(aTHX_ facs, nfac);
+			Safefree(rows);
+			safefree(lhs); safefree(rhs);
+
+			XPUSHs(sv_2mortal(newRV_noinc((SV*)result)));
+		}
+	}
 
 NV ptukey(q, nmeans, df, ...)
 	NV q
@@ -2873,13 +3593,11 @@ SV *aoh2hoa(data)
 	SV *data
 	CODE:
 	{
-/*
- * aoh2hoa($aoh) -- transpose an Array-of-Hashes into a
- * Hash-of-Arrays.
- *
+/* aoh2hoa($aoh) -- transpose an Array-of-Hashes into a Hash-of-Arrays.
+
  *   in : arrayref of hashrefs (rows)  [ {a=>1,b=>2}, {a=>3} ]
  *   out: hashref of arrayrefs (cols)  { a=>[1,3], b=>[2,undef] }
- *
+
  * - Columns are the union of all row keys.
  * - Every column has exactly scalar(@$aoh) elements; cells absent
  *   from a given row are undef (kept as cheap holes, not SVs).
@@ -3062,14 +3780,14 @@ CODE:
 OUTPUT:
   RETVAL
 
-void csort(data, by, output=&PL_sv_undef)
-	SV *data
-	SV *by
-	SV *output
+void csort(...)
 PREINIT:
+	SV *data = NULL, *by = NULL, *output = NULL;
 	bool is_aoh = 0, is_hoh = 0, is_code = 0, out_aoh = 0;
 	const char *restrict colname = NULL;
 	STRLEN collen = 0;
+	const char *restrict rowname_col = NULL;	/* HoH: name of the row-name column */
+	STRLEN rowname_len = 0;
 	CV *restrict cmp_cv = NULL;
 	AV *restrict src_av = NULL;	/* AoH input */
 	HV *restrict src_hv = NULL;	/* HoA/HoH input */
@@ -3082,6 +3800,23 @@ PREINIT:
 	SV *restrict result = NULL;
 PPCODE:
 {
+	/* ---- own the usage message (variadic: xsubpp won't invent one) --- */
+	if (items < 2 || items > 4)
+		croak("Usage: csort($df, 'column.name', 'HoA')\n"
+		      "   or  csort($df, sub { $b->{'No.'} <=> $a->{'No.'} }, 'hoa')\n"
+		      "  (optional 4th arg names the row-name column when sorting a "
+		      "HoH; default 'row.name')");
+
+	data   = ST(0);
+	by     = ST(1);
+	output = (items >= 3) ? ST(2) : &PL_sv_undef;
+	if (items >= 4 && SvOK(ST(3)))
+		rowname_col = SvPV(ST(3), rowname_len);
+	else {
+		rowname_col = "row.name";
+		rowname_len = 8;
+	}
+
 	ENTER;    /* scope for SAVEFREEPV / SAVESPTR cleanups */
 	SAVETMPS; /* reap transient synthesized rows and mortals here */
 
@@ -3093,14 +3828,15 @@ PPCODE:
 		is_code = 0;
 		colname = SvPV(by, collen);
 	} else {
-		croak("csort: second argument must be a column name or a "
-		      "comparator code-ref using $a and $b");
+		croak("csort: second argument must be a column name (e.g. 'No.') or "
+		      "a comparator code-ref using $a and $b, e.g. "
+		      "sub { $b->{'No.'} <=> $a->{'No.'} }");
 	}
 
 	/* ---- classify $data: AoH (arrayref) vs HoA/HoH (hashref) -------- */
 	if (!SvROK(data))
-		croak("csort: first argument must be an array-ref (AoH) or "
-		      "hash-ref (HoA, HoH)");
+		croak("csort: first argument must be an array-ref (AoH) or hash-ref "
+		      "(HoA or HoH); Usage: csort($df, 'column.name', 'HoA')");
 	if (SvTYPE(SvRV(data)) == SVt_PVAV) {
 		is_aoh  = 1;
 		src_av  = (AV *)SvRV(data);
@@ -3124,8 +3860,8 @@ PPCODE:
 			}
 		}
 	} else {
-		croak("csort: first argument must be an array-ref (AoH) or "
-		      "hash-ref (HoA, HoH)");
+		croak("csort: first argument must be an array-ref (AoH) or hash-ref "
+		      "(HoA or HoH); Usage: csort($df, 'column.name', 'HoA')");
 	}
 
 	/* ---- gracefully fold HoH into a stable AoH for sorting ---------- */
@@ -3159,23 +3895,41 @@ PPCODE:
 				}
 				keys[j + 1] = k;
 			}
-			/* Push the row hashes sequentially into our temporary AV */
+			/* Materialize each HoH row as a fresh AoH row that also carries
+			 * its outer key under the row-name column, so the name survives
+			 * into either output shape.  The row *container* is a private
+			 * copy (leaf cells are aliased/shared read-only), so injecting
+			 * the row-name column never mutates the caller's data. */
 			for (size_t i = 0; i < (size_t)n; i++) {
 				HE *restrict entry = hv_fetch_ent(src_hv, keys[i], 0, 0);
-				if (entry) {
-					SV *restrict val = HeVAL(entry);
-					/* Explicit Type Validation to catch mixed structures */
-					if (!val || !SvROK(val) || SvTYPE(SvRV(val)) != SVt_PVHV)
-						croak("csort: HoH row '%s' is not a hash-ref", SvPV_nolen(keys[i]));
-					av_push(src_av, SvREFCNT_inc_simple_NN(val));
+				if (!entry) continue;
+				SV *restrict val = HeVAL(entry);
+				/* Explicit Type Validation to catch mixed structures */
+				if (!val || !SvROK(val) || SvTYPE(SvRV(val)) != SVt_PVHV)
+					croak("csort: HoH row '%s' is not a hash-ref",
+					      SvPV_nolen(keys[i]));
+
+				HV *restrict orig = (HV *)SvRV(val);
+				HV *restrict rowh = newHV();
+				hv_iterinit(orig);
+				HE *restrict cell;
+				while ((cell = hv_iternext(orig))) {
+					SV *restrict cv = HeVAL(cell);
+					(void)hv_store_ent(rowh, hv_iterkeysv(cell),
+					        cv ? SvREFCNT_inc_simple_NN(cv) : newSV(0), 0);
 				}
+				/* the outer hash key is the authoritative row name; it wins
+				 * over any pre-existing same-named column in the row */
+				(void)hv_store(rowh, rowname_col, (I32)rowname_len,
+				               newSVsv(keys[i]), 0);
+				av_push(src_av, newRV_noinc((SV *)rowh));
 			}
 		}
 		/* Route through the standard AoH logic hereafter */
 		is_aoh = 1;
 	}
 
-	/* ---- resolve requested output shape (default: match input) ------ */
+	/* ---- resolve requested output shape (default: match input) */
 	if (!SvOK(output)) {
 		out_aoh = is_aoh;
 	} else {
@@ -3191,7 +3945,7 @@ PPCODE:
 			croak("csort: output type must be 'aoh' or 'hoa' (got '%s')", os);
 	}
 
-	/* ---- gather HoA column metadata + validate equal lengths -------- */
+	/* ---- gather HoA column metadata + validate equal lengths */
 	if (!is_aoh) {
 		HE *restrict he;
 		SSize_t common = -2;	/* -2 = unset sentinel */
@@ -3386,11 +4140,10 @@ SV *cfilter(data, ...)
 				else if (SvROK(fv) && SvTYPE(SvRV(fv)) == SVt_PVHV) kind = 2;
 				else croak("cfilter: hash values must be array refs (HoA) or hash refs (HoH)");
 			}
-		}
-		else croak("cfilter: data must be an array ref or hash ref");
-		// 2. the column universe, and (predicate only) a row-aligned cell table
-		//    `cellmap`: colname -> AV of length nrows, undef in the gaps. The
-		//    alignment lets `against` pair two columns by row.
+		} else croak("cfilter: data must be an array ref or hash ref");
+/* 2. the column universe, and (predicate only) a row-aligned cell table
+    `cellmap`: colname -> AV of length nrows, undef in the gaps. The
+    alignment lets `against` pair two columns by row.*/
 		HV *restrict universe = newHV();
 		AV *restrict colnames = newAV();
 		HV *restrict cellmap = by_name ? NULL : newHV();

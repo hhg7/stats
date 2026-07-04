@@ -29,7 +29,8 @@ my $hoh = {
  chrY => { start =>  500, end => 1500, strand => '-' },
  chr1 => { start =>   10, end =>  9999, strand => '+' },
 };
-
+my $aoa = [ [1, 2, 3], [4, 5, 6] ];
+view( $aoa );
 view( $aoh );
 view( $hoa );
 view( $hoh );
