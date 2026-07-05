@@ -2020,7 +2020,7 @@ static void cs_msort(pTHX_ size_t *restrict idx, size_t *restrict tmp,
 	size_t mid = lo + (hi - lo) / 2;
 	cs_msort(aTHX_ idx, tmp, lo, mid, cmp, ctx);
 	cs_msort(aTHX_ idx, tmp, mid, hi, cmp, ctx);
-	/* skip the merge when the halves are already in order */
+	// skip the merge when the halves are already in order
 	if (cmp(aTHX_ ctx, idx[mid - 1], idx[mid]) <= 0) return;
 	cs_merge(aTHX_ idx, tmp, lo, mid, hi, cmp, ctx);
 }
@@ -4057,10 +4057,10 @@ XS_EUPXS(XS_Stats__LikeR_csort)
 		rowname_len = 8;
 	}
 
-	ENTER;    /* scope for SAVEFREEPV / SAVESPTR cleanups */
-	SAVETMPS; /* reap transient synthesized rows and mortals here */
+	ENTER;    // scope for SAVEFREEPV / SAVESPTR cleanups
+	SAVETMPS; // reap transient synthesized rows and mortals here
 
-	/* ---- classify $by: coderef comparator vs column name ------------ */
+	// classify $by: coderef comparator vs column name
 	if (SvROK(by) && SvTYPE(SvRV(by)) == SVt_PVCV) {
 		is_code = 1;
 		cmp_cv  = (CV *)SvRV(by);
@@ -4073,7 +4073,7 @@ XS_EUPXS(XS_Stats__LikeR_csort)
 		      "sub { $b->{'No.'} <=> $a->{'No.'} }");
 	}
 
-	/* ---- classify $data: AoH (arrayref) vs HoA/HoH (hashref) -------- */
+	// ---- classify $data: AoH (arrayref) vs HoA/HoH (hashref)
 	if (!SvROK(data))
 		croak("csort: first argument must be an array-ref (AoH) or hash-ref "
 		      "(HoA or HoH); Usage: csort($df, 'column.name', 'HoA')");
@@ -4090,7 +4090,7 @@ XS_EUPXS(XS_Stats__LikeR_csort)
 			is_aoh = 0;
 		} else {
 			SV *restrict val = HeVAL(he);
-			/* If it is explicitly a Hash of Hashes */
+			// If it is explicitly a Hash of Hashes
 			if (SvROK(val) && SvTYPE(SvRV(val)) == SVt_PVHV) {
 				is_hoh = 1;
 			} else {
@@ -4135,11 +4135,11 @@ XS_EUPXS(XS_Stats__LikeR_csort)
 				}
 				keys[j + 1] = k;
 			}
-			/* Materialize each HoH row as a fresh AoH row that also carries
-			 * its outer key under the row-name column, so the name survives
-			 * into either output shape.  The row *container* is a private
-			 * copy (leaf cells are aliased/shared read-only), so injecting
-			 * the row-name column never mutates the caller's data. */
+/* Materialize each HoH row as a fresh AoH row that also carries
+ its outer key under the row-name column, so the name survives
+ into either output shape.  The row *container* is a private
+ copy (leaf cells are aliased/shared read-only), so injecting
+ the row-name column never mutates the caller's data. */
 			for (size_t i = 0; i < (size_t)n; i++) {
 				HE *restrict entry = hv_fetch_ent(src_hv, keys[i], 0, 0);
 				if (!entry) continue;
@@ -4165,11 +4165,11 @@ XS_EUPXS(XS_Stats__LikeR_csort)
 				av_push(src_av, newRV_noinc((SV *)rowh));
 			}
 		}
-		/* Route through the standard AoH logic hereafter */
+		// Route through the standard AoH logic hereafter */
 		is_aoh = 1;
 	}
 
-	/* ---- resolve requested output shape (default: match input) */
+	// resolve requested output shape (default: match input)
 	if (!SvOK(output)) {
 		out_aoh = is_aoh;
 	} else {
@@ -4185,10 +4185,10 @@ XS_EUPXS(XS_Stats__LikeR_csort)
 			croak("csort: output type must be 'aoh' or 'hoa' (got '%s')", os);
 	}
 
-	/* ---- gather HoA column metadata + validate equal lengths */
+	// gather HoA column metadata + validate equal lengths
 	if (!is_aoh) {
 		HE *restrict he;
-		SSize_t common = -2;	/* -2 = unset sentinel */
+		SSize_t common = -2;	// -2 = unset sentinel */
 		hv_iterinit(src_hv);
 		while ((he = hv_iternext(src_hv))) {
 			SV *restrict cv = HeVAL(he);
@@ -4254,7 +4254,7 @@ XS_EUPXS(XS_Stats__LikeR_csort)
 			cs_bind_ab(aTHX_ cmp_cv, &ctx.a_sv, &ctx.b_sv);
 			cs_msort(aTHX_ idx, tmp, 0, (size_t)n, cs_code_cmp, &ctx);
 		} else {
-			/* ---- column mode: gather cells, detect numeric, sort ------- */
+			// ---- column mode: gather cells, detect numeric, sort
 			SV **restrict vals;
 			Newx(vals, (size_t)n, SV *);  SAVEFREEPV(vals);
 			bool found = 0;
@@ -4297,7 +4297,7 @@ XS_EUPXS(XS_Stats__LikeR_csort)
 			cs_msort(aTHX_ idx, tmp, 0, (size_t)n, cs_col_cmp, &ctx);
 		}
 	}    /* end if (n > 1) */
-	// ---- materialize the result in the requested shape
+	// materialize the result in the requested shape
 	result = cs_materialize(aTHX_ out_aoh, is_aoh, src_av,
                         colkeys, colavs, ncols, idx, (size_t)n);
 	FREETMPS;

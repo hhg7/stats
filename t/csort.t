@@ -284,7 +284,7 @@ SKIP: {
 				w  => [ map { "s$_" }          1 .. 40 ] );
 	my $cmp = sub { $a->{v} <=> $b->{v} };
 
-	# --- clean (successful) paths --------------------------------------
+	# --- clean (successful) paths
 	no_leaks_ok { my $s = csort([@aoh], 'v') }
 		'no leaks: AoH column sort' unless $INC{'Devel/Cover.pm'};
 	no_leaks_ok { my $s = csort({%hoa}, 'v') }
@@ -294,7 +294,7 @@ SKIP: {
 	no_leaks_ok { my $s = csort({%hoa}, $cmp, 'aoh') }
 		'no leaks: HoA->AoH comparator sort (synthesizes per-row views)';
 
-	# --- croak paths: allocations must unwind cleanly ------------------
+	# --- croak paths: allocations must unwind cleanly
 	no_leaks_ok {
 		eval { csort({%hoa}, sub { die "boom\n" }) };
 	} 'no leaks (synthesized rows) when the comparator dies mid-sort';

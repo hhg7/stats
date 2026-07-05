@@ -783,12 +783,12 @@ sub read_table {
 	die "read_table: output.type \"$otype\" isn't allowed (aoh, hoa, hoh)\n"
 		unless $otype =~ m/^(?:aoh|hoa|hoh)$/;
 
-	# R's write.table(col.names=TRUE) default omits the header label for the
-	# row-names column, so a header comes out one field short of every data
-	# row. With 'auto.row.names' set, mirror read.table's rule: when (and only
-	# when) the header is exactly one field short, treat the first data field
-	# as an (otherwise unlabelled) row-names column. Any truthy value enables
-	# it; a non-1 string is used as the synthesized column name.
+# R's write.table(col.names=TRUE) default omits the header label for the
+# row-names column, so a header comes out one field short of every data
+# row. With 'auto.row.names' set, mirror read.table's rule: when (and only
+# when) the header is exactly one field short, treat the first data field
+# as an (otherwise unlabelled) row-names column. Any truthy value enables
+# it; a non-1 string is used as the synthesized column name.
 	my $want_auto_rn = $args{'auto.row.names'} ? 1 : 0;
 	my $auto_rn_name =
 		($want_auto_rn && "$args{'auto.row.names'}" ne '1')
@@ -803,9 +803,7 @@ sub read_table {
 
 	my (@data, %data, @header, @uniq_header,
 	    %mapped_filters, @sorted_filter_flds, %seen_rownames);
-	my $data_row    = 0;
-	my $header_seen = 0;
-	my $header_done = 0;
+	my ($data_row, $header_seen, $header_done) = (0, 0, 0);
 
 	# Everything that depends on the (possibly augmented) @header lives here so
 	# it can run either right after the header line (strict mode) or deferred
