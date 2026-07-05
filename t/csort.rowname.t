@@ -2,9 +2,6 @@
 
 require 5.010;
 use warnings FATAL => 'all';
-use feature 'say';
-use File::Temp;
-use Scalar::Util 'looks_like_number';
 use Stats::LikeR;
 use Test::Exception; # die_ok
 use Test::More;
@@ -121,7 +118,8 @@ throws_ok { csort( fresh_hoh(), [] ) } qr/second argument/,
 	'non-scalar, non-code $by croaks';
 throws_ok { csort( fresh_hoh(), 'id', 'xyz' ) } qr/output type must be/,
 	'bad output type croaks';
-throws_ok { csort( { a => { x => 1 }, b => 42 }, 'x' ) } qr/is not a hash-ref/,
+throws_ok { csort( { a => { x => 1 }, b => 42 }, 'x' ) }
+	qr/is not (?:a hash-ref|an array-ref)/,
 	'mixed HoH row croaks';
 
 #--------

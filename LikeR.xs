@@ -2049,38 +2049,242 @@ static void cs_bind_ab(pTHX_ CV *restrict cv, SV **a_out, SV **b_out) {
 	*b_out = b_sv;
 }
 
-/* Build the sorted result in the requested shape (out_aoh = 1 => AoH, else
- * HoA), reading from whichever shape the input was. idx[0..n) is the sorted
- * permutation of original row indices. Handles all four input/output
- * combinations, including transposing AoH<->HoA. Returns a new owned ref. */
-static SV *cs_materialize(pTHX_ bool out_aoh, bool is_aoh, AV *restrict src_av,
-						  SV **restrict colkeys, AV **restrict colavs,
-						  size_t ncols, size_t *restrict idx, size_t n) {
-	if (out_aoh) {
-		AV *out = newAV();
+/* ---- 1. NEW: shape tag for input/output (put beside the ctx structs) -- */
+typedef enum { CS_AOH = 0, CS_HOA = 1, CS_AOA = 2 } cs_shape;
+
+
+/* ---- 2. NEW: comparator undef-probe (put right after cs_code_cmp) ---- */
+/* ---- undef-last for comparator mode -------------------------------------
+ * A comparator is opaque: csort can't see which column it keys on, so it
+ * can't read undef-ness off the data the way column mode does.  Instead we
+ * probe each row once, comparing it against itself; a comparator that reads
+ * an undef value raises an "uninitialized" warning (or dies, under fatal
+ * warnings).  We trap that here.  Rows that trip it are moved to the end (in
+ * stable order); the rest are sorted normally and never see an undef, so the
+ * user's comparator runs cleanly even under `use warnings FATAL => 'all'`.
+ *
+ * __cs_uninit_catcher is installed as $SIG{__WARN__} for the probe only; it
+ * flags $Stats::LikeR::_cs_uninit on an uninitialized warning and passes any
+ * other warning through.  (Both the flag and catcher are interpreter-local.)
+ */
+XS(cs_uninit_catcher);
+XS(cs_uninit_catcher) {
+	dXSARGS;
+	if (items >= 1) {
+		STRLEN l;
+		const char *restrict m = SvPV(ST(0), l);
+		if (strstr(m, "uninitialized"))
+			sv_setiv(get_sv("Stats::LikeR::_cs_uninit", GV_ADD), 1);
+		else
+			warn("%s", m);		/* pass unrelated warnings through */
+	}
+	XSRETURN_EMPTY;
+}
+
+static int cs_row_touches_undef(pTHX_ cs_code_ctx *restrict c, size_t i) {
+	sv_setsv(c->a_sv, c->rows[i]);
+	sv_setsv(c->b_sv, c->rows[i]);
+
+	SV *restrict flag = get_sv("Stats::LikeR::_cs_uninit", GV_ADD);
+	sv_setiv(flag, 0);
+	CV *restrict catcher = get_cv("Stats::LikeR::__cs_uninit_catcher", 0);
+
+	dSP;
+	ENTER;
+	SAVETMPS;
+	if (catcher) {
+		/* install our $SIG{__WARN__} for the probe; the save stack restores
+		 * the previous hook (and frees ours) on LEAVE *and* on croak-unwind */
+		SAVESPTR(PL_warnhook);
+		PL_warnhook = newRV_inc((SV *)catcher);
+		SAVEFREESV(PL_warnhook);
+	}
+	PUSHMARK(SP);
+	int count = call_sv((SV *)c->cv, G_SCALAR | G_NOARGS | G_EVAL);
+	SPAGAIN;
+	if (count) (void)POPs;
+	PUTBACK;
+
+	int undef = SvTRUE(flag) ? 1 : 0;
+	if (SvTRUE(ERRSV)) {
+		STRLEN el;
+		const char *restrict em = SvPV(ERRSV, el);
+		if (strstr(em, "uninitialized")) {
+			undef = 1;
+			sv_setsv(ERRSV, &PL_sv_no);	/* clear $@ */
+		} else {
+			/* a genuine error from the comparator: propagate it verbatim.
+			 * croak reads the string now; the die unwinds the save stack,
+			 * which restores PL_warnhook for us. */
+			croak("%s", em);
+		}
+	}
+	FREETMPS;
+	LEAVE;
+	return undef;
+}
+
+static SV *cs_materialize(pTHX_ cs_shape out_shape, cs_shape in_shape,
+                          AV *restrict src_av,
+                          SV **restrict colkeys, AV **restrict colavs,
+                          size_t ncols, size_t *restrict idx, size_t n) {
+
+	/* ===== output: AoA =================================================== */
+	if (out_shape == CS_AOA) {
+		AV *restrict out = newAV();
 		if (n) av_extend(out, (SSize_t)n - 1);
-		if (is_aoh) {// AoH -> AoH: reorder, sharing the original row hashrefs
+
+		if (in_shape == CS_AOA) {
+			/* AoA -> AoA: reorder, sharing the original row arrayrefs */
 			for (size_t k = 0; k < n; k++) {
 				SV **restrict rp = av_fetch(src_av, (SSize_t)idx[k], 0);
 				SV *restrict row = (rp && *rp) ? *rp : &PL_sv_undef;
 				av_push(out, SvREFCNT_inc_simple_NN(row));
 			}
-		} else {// HoA -> AoH: synthesize one hashref per row (copied cells)
-			for (size_t k = 0; k < n; k++) {
-				HV *rh = newHV();
-				for (size_t c = 0; c < ncols; c++) {
-					SV **restrict cp = av_fetch(colavs[c], (SSize_t)idx[k], 0);
-					hv_store_ent(rh, colkeys[c],
-								 (cp && *cp) ? newSVsv(*cp) : newSV(0), 0);
+			return newRV_noinc((SV *)out);
+		}
+		if (in_shape == CS_HOA) {
+			/* HoA -> AoA: positional rows ordered by sorted column-key name
+			 * (hash iteration order is randomized, so sort for determinism) */
+			size_t *restrict ord;
+			Newx(ord, ncols ? ncols : 1, size_t);
+			SAVEFREEPV(ord);
+			for (size_t c = 0; c < ncols; c++) ord[c] = c;
+			for (size_t a = 1; a < ncols; a++) {
+				size_t o = ord[a];
+				STRLEN al; const char *restrict ap = SvPV_const(colkeys[o], al);
+				SSize_t b = (SSize_t)a - 1;
+				while (b >= 0) {
+					STRLEN bl;
+					const char *restrict bp = SvPV_const(colkeys[ord[b]], bl);
+					int cmp = memcmp(bp, ap, bl < al ? bl : al);
+					if (cmp == 0) cmp = (bl > al) - (bl < al);
+					if (cmp <= 0) break;
+					ord[b + 1] = ord[b];
+					b--;
 				}
-				av_push(out, newRV_noinc((SV *)rh));
+				ord[b + 1] = o;
 			}
+			for (size_t k = 0; k < n; k++) {
+				AV *restrict row = newAV();
+				if (ncols) av_extend(row, (SSize_t)ncols - 1);
+				for (size_t c = 0; c < ncols; c++) {
+					SV **restrict cp =
+					        av_fetch(colavs[ord[c]], (SSize_t)idx[k], 0);
+					av_push(row, (cp && *cp) ? newSVsv(*cp) : newSV(0));
+				}
+				av_push(out, newRV_noinc((SV *)row));
+			}
+			return newRV_noinc((SV *)out);
+		}
+		/* AoH -> AoA: union of keys (first appearance) -> positional rows */
+		AV *restrict keylist = (AV *)sv_2mortal((SV *)newAV());
+		HV *restrict seen    = (HV *)sv_2mortal((SV *)newHV());
+		for (size_t i = 0; i < n; i++) {
+			SV **restrict rp = av_fetch(src_av, (SSize_t)i, 0);
+			if (!(rp && *rp && SvROK(*rp) && SvTYPE(SvRV(*rp)) == SVt_PVHV))
+				continue;
+			HV *restrict rh = (HV *)SvRV(*rp);
+			HE *restrict he;
+			hv_iterinit(rh);
+			while ((he = hv_iternext(rh))) {
+				SV *restrict ksv = hv_iterkeysv(he);
+				if (!hv_exists_ent(seen, ksv, 0)) {
+					(void)hv_store_ent(seen, ksv, newSViv(1), 0);
+					av_push(keylist, newSVsv(ksv));
+				}
+			}
+		}
+		SSize_t nk = av_len(keylist) + 1;
+		/* positional columns need a deterministic order: sort the union of
+		 * keys by name (the keylist AV keeps them alive; korder just points) */
+		SV **restrict korder;
+		Newx(korder, (size_t)(nk > 0 ? nk : 1), SV *);
+		SAVEFREEPV(korder);
+		for (SSize_t c = 0; c < nk; c++) korder[c] = *av_fetch(keylist, c, 0);
+		for (SSize_t a = 1; a < nk; a++) {
+			SV *restrict key = korder[a];
+			STRLEN al; const char *restrict ap = SvPV_const(key, al);
+			SSize_t b = a - 1;
+			while (b >= 0) {
+				STRLEN bl; const char *restrict bp = SvPV_const(korder[b], bl);
+				int cmp = memcmp(bp, ap, bl < al ? bl : al);
+				if (cmp == 0) cmp = (bl > al) - (bl < al);
+				if (cmp <= 0) break;
+				korder[b + 1] = korder[b];
+				b--;
+			}
+			korder[b + 1] = key;
+		}
+		for (size_t k = 0; k < n; k++) {
+			AV *restrict row = newAV();
+			if (nk > 0) av_extend(row, nk - 1);
+			SV **restrict rp = av_fetch(src_av, (SSize_t)idx[k], 0);
+			HV *restrict rh = (rp && *rp && SvROK(*rp)
+			        && SvTYPE(SvRV(*rp)) == SVt_PVHV) ? (HV *)SvRV(*rp) : NULL;
+			for (SSize_t c = 0; c < nk; c++) {
+				SV *restrict cell = NULL;
+				if (rh) {
+					HE *restrict he = hv_fetch_ent(rh, korder[c], 0, 0);
+					if (he) cell = HeVAL(he);
+				}
+				av_push(row, cell ? newSVsv(cell) : newSV(0));
+			}
+			av_push(out, newRV_noinc((SV *)row));
 		}
 		return newRV_noinc((SV *)out);
 	}
-	// ---- output is HoA
+
+	/* output: AoH  */
+	if (out_shape == CS_AOH) {
+		AV *restrict out = newAV();
+		if (n) av_extend(out, (SSize_t)n - 1);
+
+		if (in_shape == CS_AOH) {
+			/* AoH -> AoH: reorder, sharing the original row hashrefs */
+			for (size_t k = 0; k < n; k++) {
+				SV **restrict rp = av_fetch(src_av, (SSize_t)idx[k], 0);
+				SV *restrict row = (rp && *rp) ? *rp : &PL_sv_undef;
+				av_push(out, SvREFCNT_inc_simple_NN(row));
+			}
+			return newRV_noinc((SV *)out);
+		}
+		if (in_shape == CS_HOA) {
+			/* HoA -> AoH: synthesize one hashref per row (copied cells) */
+			for (size_t k = 0; k < n; k++) {
+				HV *restrict rh = newHV();
+				for (size_t c = 0; c < ncols; c++) {
+					SV **restrict cp = av_fetch(colavs[c], (SSize_t)idx[k], 0);
+					hv_store_ent(rh, colkeys[c],
+					             (cp && *cp) ? newSVsv(*cp) : newSV(0), 0);
+				}
+				av_push(out, newRV_noinc((SV *)rh));
+			}
+			return newRV_noinc((SV *)out);
+		}
+		/* AoA -> AoH: keys are the integer indices "0".."ncols-1" */
+		for (size_t k = 0; k < n; k++) {
+			HV *restrict rh = newHV();
+			SV **restrict rp = av_fetch(src_av, (SSize_t)idx[k], 0);
+			AV *restrict row = (rp && *rp && SvROK(*rp)
+			        && SvTYPE(SvRV(*rp)) == SVt_PVAV) ? (AV *)SvRV(*rp) : NULL;
+			for (size_t c = 0; c < ncols; c++) {
+				SV **restrict cp = row ? av_fetch(row, (SSize_t)c, 0) : NULL;
+				char kb[24];
+				int kl = snprintf(kb, sizeof kb, "%zu", c);
+				(void)hv_store(rh, kb, (I32)kl,
+				               (cp && *cp) ? newSVsv(*cp) : newSV(0), 0);
+			}
+			av_push(out, newRV_noinc((SV *)rh));
+		}
+		return newRV_noinc((SV *)out);
+	}
+
+	/* output: HoA */
 	HV *restrict out = newHV();
-	if (!is_aoh) {// HoA -> HoA: permute every column in lockstep (copied cells)
+
+	if (in_shape == CS_HOA) {
+		/* HoA -> HoA: permute every column in lockstep (copied cells) */
 		for (size_t c = 0; c < ncols; c++) {
 			AV *restrict ncol = newAV();
 			if (n) av_extend(ncol, (SSize_t)n - 1);
@@ -2089,6 +2293,27 @@ static SV *cs_materialize(pTHX_ bool out_aoh, bool is_aoh, AV *restrict src_av,
 				av_push(ncol, (cp && *cp) ? newSVsv(*cp) : newSV(0));
 			}
 			hv_store_ent(out, colkeys[c], newRV_noinc((SV *)ncol), 0);
+		}
+		return newRV_noinc((SV *)out);
+	}
+	if (in_shape == CS_AOA) {
+		/* AoA -> HoA: keys "0".."ncols-1", columns permuted (copied cells) */
+		for (size_t c = 0; c < ncols; c++) {
+			AV *restrict ncol = newAV();
+			if (n) av_extend(ncol, (SSize_t)n - 1);
+			for (size_t k = 0; k < n; k++) {
+				SV **restrict rp = av_fetch(src_av, (SSize_t)idx[k], 0);
+				SV *restrict cell = NULL;
+				if (rp && *rp && SvROK(*rp)
+				        && SvTYPE(SvRV(*rp)) == SVt_PVAV) {
+					SV **restrict cp = av_fetch((AV *)SvRV(*rp), (SSize_t)c, 0);
+					if (cp && *cp) cell = *cp;
+				}
+				av_push(ncol, cell ? newSVsv(cell) : newSV(0));
+			}
+			char kb[24];
+			int kl = snprintf(kb, sizeof kb, "%zu", c);
+			(void)hv_store(out, kb, (I32)kl, newRV_noinc((SV *)ncol), 0);
 		}
 		return newRV_noinc((SV *)out);
 	}
@@ -3780,22 +4005,27 @@ CODE:
 OUTPUT:
   RETVAL
 
+BOOT:
+	newXS("Stats::LikeR::__cs_uninit_catcher", cs_uninit_catcher, __FILE__);
+
 void csort(...)
 PREINIT:
-	SV *data = NULL, *by = NULL, *output = NULL;
-	bool is_aoh = 0, is_hoh = 0, is_code = 0, out_aoh = 0;
+	SV *restrict data = NULL, *restrict by = NULL, *restrict output = NULL;
+	cs_shape in_shape = CS_AOH, out_shape = CS_AOH;
+	bool is_hoh = 0, is_code = 0;
 	const char *restrict colname = NULL;
 	STRLEN collen = 0;
-	const char *restrict rowname_col = NULL;	/* HoH: name of the row-name column */
+	IV aoa_col = 0;				// AoA: parsed non-negative column index
+	const char *restrict rowname_col = NULL;	// HoH: row-name column name
 	STRLEN rowname_len = 0;
 	CV *restrict cmp_cv = NULL;
-	AV *restrict src_av = NULL;	/* AoH input */
-	HV *restrict src_hv = NULL;	/* HoA/HoH input */
+	AV *restrict src_av = NULL;	// AoH / AoA input
+	HV *restrict src_hv = NULL;	// HoA / HoH input
 	SSize_t n = 0;
 	size_t *restrict idx = NULL, *tmp = NULL;
-	SV **restrict rowrefs = NULL;	/* coderef mode: row ref per index */
-	SV **restrict colkeys = NULL;	/* HoA: column key SVs */
-	AV **restrict colavs  = NULL;	/* HoA: column AVs */
+	SV **restrict rowrefs = NULL;	// coderef mode: row ref per index
+	SV **restrict colkeys = NULL;	// HoA: column key SVs
+	AV **restrict colavs  = NULL;	// HoA: column AVs
 	size_t ncols = 0;
 	SV *restrict result = NULL;
 PPCODE:
@@ -3804,6 +4034,7 @@ PPCODE:
 	if (items < 2 || items > 4)
 		croak("Usage: csort($df, 'column.name', 'HoA')\n"
 		      "   or  csort($df, sub { $b->{'No.'} <=> $a->{'No.'} }, 'hoa')\n"
+		      "   or  csort($aoa, 0, 'aoa')   # array-of-arrays, integer column\n"
 		      "  (optional 4th arg names the row-name column when sorting a "
 		      "HoH; default 'row.name')");
 
@@ -3817,10 +4048,10 @@ PPCODE:
 		rowname_len = 8;
 	}
 
-	ENTER;    // scope for SAVEFREEPV / SAVESPTR cleanups
-	SAVETMPS; // reap transient synthesized rows and mortals here
+	ENTER;    /* scope for SAVEFREEPV / SAVESPTR cleanups */
+	SAVETMPS; /* reap transient synthesized rows and mortals here */
 
-	// classify $by: coderef comparator vs column name
+	/* classify $by: coderef comparator vs column name/index */
 	if (SvROK(by) && SvTYPE(SvRV(by)) == SVt_PVCV) {
 		is_code = 1;
 		cmp_cv  = (CV *)SvRV(by);
@@ -3828,40 +4059,41 @@ PPCODE:
 		is_code = 0;
 		colname = SvPV(by, collen);
 	} else {
-		croak("csort: second argument must be a column name (e.g. 'No.') or "
-		      "a comparator code-ref using $a and $b, e.g. "
-		      "sub { $b->{'No.'} <=> $a->{'No.'} }");
+		croak("csort: second argument must be a column name (e.g. 'No.'), an "
+		      "integer column index for an AoA, or a comparator code-ref "
+		      "using $a and $b, e.g. sub { $b->{'No.'} <=> $a->{'No.'} }");
 	}
 
-	// ---- classify $data: AoH (arrayref) vs HoA/HoH (hashref)
+	/* ---- classify $data: AoH/AoA (arrayref) vs HoA/HoH (hashref) ------ */
 	if (!SvROK(data))
-		croak("csort: first argument must be an array-ref (AoH) or hash-ref "
-		      "(HoA or HoH); Usage: csort($df, 'column.name', 'HoA')");
+		croak("csort: first argument must be an array-ref (AoH or AoA) or "
+		      "hash-ref (HoA or HoH); Usage: csort($df, 'column.name', 'HoA')");
 	if (SvTYPE(SvRV(data)) == SVt_PVAV) {
-		is_aoh  = 1;
-		src_av  = (AV *)SvRV(data);
-		n       = av_len(src_av) + 1;
+		src_av   = (AV *)SvRV(data);
+		n        = av_len(src_av) + 1;
+		in_shape = CS_AOH;		/* default; refine by peeking at row 0 */
+		if (n > 0) {
+			SV **restrict rp = av_fetch(src_av, 0, 0);
+			if (rp && *rp && SvROK(*rp)
+			        && SvTYPE(SvRV(*rp)) == SVt_PVAV)
+				in_shape = CS_AOA;	/* first row is an arrayref => AoA */
+		}
 	} else if (SvTYPE(SvRV(data)) == SVt_PVHV) {
 		src_hv = (HV *)SvRV(data);
 		hv_iterinit(src_hv);
 		HE *restrict he = hv_iternext(src_hv);
 		if (!he) {
-			/* Empty hash defaults safely to HoA path with 0 items */
-			is_aoh = 0;
+			in_shape = CS_HOA;	/* empty hash defaults to HoA path */
 		} else {
 			SV *restrict val = HeVAL(he);
-			// If it is explicitly a Hash of Hashes
-			if (SvROK(val) && SvTYPE(SvRV(val)) == SVt_PVHV) {
+			if (SvROK(val) && SvTYPE(SvRV(val)) == SVt_PVHV)
 				is_hoh = 1;
-			} else {
-				/* Otherwise, assume HoA and let the downstream HoA metadata
-				   loop strictly validate it and throw legacy exceptions */
-				is_aoh = 0;
-			}
+			else
+				in_shape = CS_HOA;
 		}
 	} else {
-		croak("csort: first argument must be an array-ref (AoH) or hash-ref "
-		      "(HoA or HoH); Usage: csort($df, 'column.name', 'HoA')");
+		croak("csort: first argument must be an array-ref (AoH or AoA) or "
+		      "hash-ref (HoA or HoH); Usage: csort($df, 'column.name', 'HoA')");
 	}
 
 	/* ---- gracefully fold HoH into a stable AoH for sorting ---------- */
@@ -3895,16 +4127,15 @@ PPCODE:
 				}
 				keys[j + 1] = k;
 			}
-/* Materialize each HoH row as a fresh AoH row that also carries
- its outer key under the row-name column, so the name survives
- into either output shape.  The row *container* is a private
- copy (leaf cells are aliased/shared read-only), so injecting
- the row-name column never mutates the caller's data. */
+			/* Materialize each HoH row as a fresh AoH row that also carries
+			 * its outer key under the row-name column, so the name survives
+			 * into either output shape.  The row *container* is a private
+			 * copy (leaf cells are aliased/shared read-only), so injecting
+			 * the row-name column never mutates the caller's data. */
 			for (size_t i = 0; i < (size_t)n; i++) {
 				HE *restrict entry = hv_fetch_ent(src_hv, keys[i], 0, 0);
 				if (!entry) continue;
 				SV *restrict val = HeVAL(entry);
-				/* Explicit Type Validation to catch mixed structures */
 				if (!val || !SvROK(val) || SvTYPE(SvRV(val)) != SVt_PVHV)
 					croak("csort: HoH row '%s' is not a hash-ref",
 					      SvPV_nolen(keys[i]));
@@ -3918,37 +4149,39 @@ PPCODE:
 					(void)hv_store_ent(rowh, hv_iterkeysv(cell),
 					        cv ? SvREFCNT_inc_simple_NN(cv) : newSV(0), 0);
 				}
-				/* the outer hash key is the authoritative row name; it wins
-				 * over any pre-existing same-named column in the row */
+				/* the outer hash key is the authoritative row name */
 				(void)hv_store(rowh, rowname_col, (I32)rowname_len,
 				               newSVsv(keys[i]), 0);
 				av_push(src_av, newRV_noinc((SV *)rowh));
 			}
 		}
-		// Route through the standard AoH logic hereafter */
-		is_aoh = 1;
+		in_shape = CS_AOH;	/* route through the standard AoH logic hereafter */
 	}
 
-	// resolve requested output shape (default: match input)
+	/* ---- resolve requested output shape (default: match input) ------ */
 	if (!SvOK(output)) {
-		out_aoh = is_aoh;
+		out_shape = in_shape;
 	} else {
 		STRLEN ol;
 		const char *restrict os = SvPV(output, ol);
 		if (ol == 3 && toLOWER(os[0]) == 'a' && toLOWER(os[1]) == 'o'
 		    && toLOWER(os[2]) == 'h')
-			out_aoh = 1;
+			out_shape = CS_AOH;
 		else if (ol == 3 && toLOWER(os[0]) == 'h' && toLOWER(os[1]) == 'o'
 		         && toLOWER(os[2]) == 'a')
-			out_aoh = 0;
+			out_shape = CS_HOA;
+		else if (ol == 3 && toLOWER(os[0]) == 'a' && toLOWER(os[1]) == 'o'
+		         && toLOWER(os[2]) == 'a')
+			out_shape = CS_AOA;
 		else
-			croak("csort: output type must be 'aoh' or 'hoa' (got '%s')", os);
+			croak("csort: output type must be 'aoh', 'hoa', or 'aoa' "
+			      "(got '%s')", os);
 	}
 
-	// gather HoA column metadata + validate equal lengths
-	if (!is_aoh) {
+	/* ---- gather HoA column metadata + validate equal lengths -------- */
+	if (in_shape == CS_HOA) {
 		HE *restrict he;
-		SSize_t common = -2;	// -2 = unset sentinel */
+		SSize_t common = -2;	/* -2 = unset sentinel */
 		hv_iterinit(src_hv);
 		while ((he = hv_iternext(src_hv))) {
 			SV *restrict cv = HeVAL(he);
@@ -3978,6 +4211,33 @@ PPCODE:
 		}
 	}
 
+	/* ---- AoA: validate the integer column index + measure width ----- */
+	if (in_shape == CS_AOA) {
+		if (!is_code) {
+			if (collen == 0)
+				croak("csort: AoA column must be a non-negative integer "
+				      "index (got empty string)");
+			STRLEN p = 0;
+			IV v = 0;
+			for (; p < collen; p++) {
+				if (colname[p] < '0' || colname[p] > '9') break;
+				v = v * 10 + (colname[p] - '0');
+			}
+			if (p != collen)
+				croak("csort: AoA column must be a non-negative integer "
+				      "index (got '%s')", colname);
+			aoa_col = v;
+		}
+		/* widest row governs how many positional columns a transpose emits */
+		for (size_t i = 0; i < (size_t)n; i++) {
+			SV **restrict rp = av_fetch(src_av, (SSize_t)i, 0);
+			if (rp && *rp && SvROK(*rp) && SvTYPE(SvRV(*rp)) == SVt_PVAV) {
+				SSize_t w = av_len((AV *)SvRV(*rp)) + 1;
+				if (w > 0 && (size_t)w > ncols) ncols = (size_t)w;
+			}
+		}
+	}
+
 	/* ---- build the identity permutation (sorted in place below) ----- */
 	Newx(idx, (size_t)(n > 0 ? n : 1), size_t);  SAVEFREEPV(idx);
 	Newx(tmp, (size_t)(n > 0 ? n : 1), size_t);  SAVEFREEPV(tmp);
@@ -3988,13 +4248,14 @@ PPCODE:
 			/* ---- comparator mode: prepare row refs + bind $a/$b -------- */
 			Newx(rowrefs, (size_t)n, SV *);  SAVEFREEPV(rowrefs);
 
-			if (is_aoh) {
+			if (in_shape == CS_AOH || in_shape == CS_AOA) {
+				/* rows are already refs (hashref or arrayref); alias them */
 				for (size_t i = 0; i < (size_t)n; i++) {
 					SV **restrict rp = av_fetch(src_av, (SSize_t)i, 0);
 					rowrefs[i] = (rp && *rp) ? *rp : &PL_sv_undef;
 				}
 			} else {
-				/* synthesize a per-row hashref view of the columns;
+				/* HoA: synthesize a per-row hashref view of the columns;
 				 * cells are aliased (shared) -- read-only in a comparator */
 				for (size_t i = 0; i < (size_t)n; i++) {
 					HV *restrict rh = newHV();
@@ -4012,14 +4273,28 @@ PPCODE:
 			ctx.rows = rowrefs;
 			ctx.cv   = cmp_cv;
 			cs_bind_ab(aTHX_ cmp_cv, &ctx.a_sv, &ctx.b_sv);
-			cs_msort(aTHX_ idx, tmp, 0, (size_t)n, cs_code_cmp, &ctx);
+
+			/* undef-last: probe each row once; rows whose comparator touches
+			 * an undef go to the end in stable order, the rest are sorted so
+			 * the comparator never sees an undef (safe under fatal warnings) */
+			{
+				size_t *restrict undefs;
+				Newx(undefs, (size_t)n, size_t);  SAVEFREEPV(undefs);
+				size_t d = 0, u = 0;
+				for (size_t i = 0; i < (size_t)n; i++) {
+					if (cs_row_touches_undef(aTHX_ &ctx, i)) undefs[u++] = i;
+					else                                     idx[d++]   = i;
+				}
+				for (size_t k = 0; k < u; k++) idx[d + k] = undefs[k];
+				cs_msort(aTHX_ idx, tmp, 0, d, cs_code_cmp, &ctx);
+			}
 		} else {
-			// ---- column mode: gather cells, detect numeric, sort
+			/* ---- column mode: gather cells, detect numeric, sort ------- */
 			SV **restrict vals;
 			Newx(vals, (size_t)n, SV *);  SAVEFREEPV(vals);
 			bool found = 0;
 			unsigned short numeric = 1;
-			if (is_aoh) {
+			if (in_shape == CS_AOH) {
 				for (size_t i = 0; i < (size_t)n; i++) {
 					SV *restrict cell = NULL;
 					SV **restrict rp = av_fetch(src_av, (SSize_t)i, 0);
@@ -4027,6 +4302,20 @@ PPCODE:
 					        && SvTYPE(SvRV(*rp)) == SVt_PVHV) {
 						SV **restrict cp = hv_fetch((HV *)SvRV(*rp),
 						                   colname, collen, 0);
+						if (cp && *cp) { cell = *cp; found = 1; }
+					}
+					if (cell && SvOK(cell) && !looks_like_number(cell))
+						numeric = 0;
+					vals[i] = cell;
+				}
+			} else if (in_shape == CS_AOA) {
+				for (size_t i = 0; i < (size_t)n; i++) {
+					SV *restrict cell = NULL;
+					SV **restrict rp = av_fetch(src_av, (SSize_t)i, 0);
+					if (rp && *rp && SvROK(*rp)
+					        && SvTYPE(SvRV(*rp)) == SVt_PVAV) {
+						SV **restrict cp = av_fetch((AV *)SvRV(*rp),
+						                   (SSize_t)aoa_col, 0);
 						if (cp && *cp) { cell = *cp; found = 1; }
 					}
 					if (cell && SvOK(cell) && !looks_like_number(cell))
@@ -4057,9 +4346,10 @@ PPCODE:
 			cs_msort(aTHX_ idx, tmp, 0, (size_t)n, cs_col_cmp, &ctx);
 		}
 	}    /* end if (n > 1) */
-	// materialize the result in the requested shape
-	result = cs_materialize(aTHX_ out_aoh, is_aoh, src_av,
-                        colkeys, colavs, ncols, idx, (size_t)n);
+
+	/* ---- materialize the result in the requested shape -------------- */
+	result = cs_materialize(aTHX_ out_shape, in_shape, src_av,
+	                        colkeys, colavs, ncols, idx, (size_t)n);
 	FREETMPS;
 	LEAVE;
 
