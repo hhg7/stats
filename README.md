@@ -3231,34 +3231,36 @@ Args can also be accepted:
 
     write_table( 'data' => \%flat, 'file' => $f );
 
-### LaTeX output (`tex.tab.file`)
+### LaTeX output (`tex`)
 
-Passing `tex.tab.file` writes a LaTeX `tabular` in addition to the delimited file. The delimited file at `file` is always written; the LaTeX file is built from the same rows, so the two never disagree, and it works for every shape above (including arrays of arrays).
+`write_table` can write the output file as a LaTeX `tabular` instead of a delimited table. This is selected either by naming the file `*.tex` (auto-detected) or by passing `tex => 1`; an explicit `tex => 0` forces a delimited file even when the name ends in `.tex`. The LaTeX table is built from the same rows as the delimited writer, so it works for every shape above (including arrays of arrays):
 
-    write_table(\@data_aoh, $tmp_file, 'tex.tab.file' => 'table.tex');
+    write_table(\@data_aoh, 'table.tex');            # .tex name selects LaTeX
+    write_table(\@data_aoh, $tmp_file, 'tex' => 1);  # force LaTeX for any name
 
-The header row is bold and the table is ruled with `\hline`. Cell text is LaTeX-escaped: `#`, `_`, `%`, and `&` are backslash-escaped, `>` becomes `\textgreater{}`, and a cell consisting solely of `\includesvg{...svg}` is passed through untouched. The `tex.*` options tune the output:
+The file begins with a `%written by <cwd>/<script>` provenance comment (the working directory and script name). The header row is bold and the table is ruled with `\hline`. Cell text is LaTeX-escaped: `#`, `_`, `%`, and `&` are backslash-escaped, `>` becomes `\textgreater{}`, and a cell consisting solely of `\includesvg{...svg}` is passed through untouched. The `tex.*` options tune the output:
 
-    write_table(\@rows, $tmp_file,
-        'tex.tab.file'     => 'table.tex',
-        'tex.col.align'    => 'l',                   # 'c' (default), 'l', or 'r'
-        'tex.bold.1st.col' => 0,                     # default 1: bold the first column
-        'tex.format'       => 1,                     # %.4g-format numeric cells
-        'tex.size'         => '\small',              # size directive after \begin{tabular}
-        'tex.comment'      => ['run 3', 'q < 0.05'], # % comment line(s): string or array ref
+    write_table(\@rows, 'table.tex',
+        'tex.col.align'    => 'l',                     # 'c' (default), 'l', or 'r'
+        'tex.bold.1st.col' => 0,                        # default 1: bold the first column
+        'tex.format'       => 1,                        # %.4g-format numeric cells
+        'tex.size'         => '\small',                 # size directive after \begin{tabular}
+        'tex.comment'      => ['run 3', 'q < 0.05'],    # % comment line(s): string or array ref
     );
+
+The `xlsx`, worksheet, and JSON side outputs of the original stand-alone routine are not included.
 
 ### Options
 
 | option | default | applies to | meaning |
 |---|---|---|---|
 | `data` (1st positional, or `data =>`) | *required* | both | the table: flat hash, HoA, HoH, AoH, or AoA |
-| `file` (2nd positional, or `file =>`) | *required* | delimited | output path for the delimited table |
+| `file` (2nd positional, or `file =>`) | *required* | both | output path; written as a delimited table, or as LaTeX when `tex` is on |
 | `sep` / `delim` | from extension (`,` for `.csv`, tab for `.tsv`), else `,` | delimited | field separator; the two are aliases |
 | `row.names` | `1` (on) | both | true prepends a label column (numeric index, or the outer key for a HoH); `0` omits it; for a HoA/AoH a non-numeric *column name* uses that column's values as the labels and drops it from the body |
 | `col.names` | all columns, sorted | both | array ref selecting and ordering columns; for an AoA it also supplies the column names |
 | `undef.val` | `''` (empty field) | both | text written for an undefined/missing cell, e.g. `'NA'` |
-| `tex.tab.file` | *(off)* | LaTeX | filename; when set, also write a LaTeX `tabular` here |
+| `tex` | auto: `1` when `file` ends in `.tex`, else `0` | LaTeX | write the output file as a LaTeX `tabular` instead of a delimited table; `tex => 0` forces delimited even for a `.tex` name |
 | `tex.col.align` | `'c'` | LaTeX | per-column alignment: `'c'`, `'l'`, or `'r'` |
 | `tex.bold.1st.col` | `1` (on) | LaTeX | bold the first column of each data row |
 | `tex.format` | `0` (off) | LaTeX | render numeric cells with `%.4g` |
@@ -3397,7 +3399,6 @@ Addition of `hoa2hoh`, `binom_test`, `chunk`, `get_union`, `get_unique`, `Lonly`
 Better warnings when non-array references are given to `intersection`
 
 `view` now breaks columns into chunks for very wide data sets, more closely matching R's behavior
-
 
 ## 0.18
 

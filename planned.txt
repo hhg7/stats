@@ -1,4 +1,27 @@
-hoa2hoh
-ncol
-nrow
 `summary` should have colored and tidier output like new `view` does
+3x3 Fisher test
+fix `write_table`
+`explode` like in Pandas
+`colnames` like in R
+------
+from Claude:
+
+in Tier 1 — the primitives that make it a real data-frame library
+
+    Aggregating group_by / an agg. Right now group_by only does the split — it returns {group => [target values]} for one target column, one group key. There's no combine step, no multi-key grouping, no agg(['mean','sum','count']). df.groupby(...).agg(...) is the pandas idiom; closing this is the highest-leverage single addition. Since you already have mean/sum/sd/median, an agg layer on top of the existing split is mostly plumbing.
+    rbind / cbind (concat). There's currently no way to stack two AoH/HoA frames vertically or bind columns — pd.concat / df.append have no equivalent. Fundamental for assembling feature tables from multiple runs.
+    Full merge (join types). ljoin is left-join-only. Add inner/right/outer/cross and multi-key join keys (how =>, on => [...]).
+
+Tier 2 — reshaping and missing-data
+
+    melt / pivot_table. aoh2hoh is a primitive pivot with no aggfunc, and there's no melt at all. Long↔wide with an aggregation is a defining pandas feature.
+    fillna / ffill / bfill. You have dropna but no imputation — the natural companion.
+    Column select / drop / rename. filter handles rows via the col() DSL, but there's no first-class column subsetter (df[['a','b']]), dropper, or renamer in the exports.
+
+Tier 3 — nice-to-have
+
+    Window/cumulative ops: cumsum, rank, diff, shift, pct_change, rolling(n).mean().
+    drop_duplicates at the row level (uniq is vector-only).
+    crosstab — you already have fisher_test/chisq_test, so a 2-D contingency builder would feed them directly.
+    cut (fixed-width bins) to complement qcut.
+

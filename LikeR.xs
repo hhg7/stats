@@ -1,8 +1,8 @@
 #ifndef _GNU_SOURCE
-#define _GNU_SOURCE        // glibc / Linux
+#define _GNU_SOURCE // glibc / Linux
 #endif
 #ifndef __EXTENSIONS__
-#define __EXTENSIONS__ 1   // Solaris/illumos: expose off64_t, sigjmp_buf under -std=c99
+#define __EXTENSIONS__ 1 // Solaris/illumos: expose off64_t, sigjmp_buf under -std=c99
 #endif
 #define PERL_NO_GET_CONTEXT
 #include "EXTERN.h"
@@ -17,7 +17,6 @@
 #include <strings.h>
 #include <stdint.h> // uint64_t — harmless if perl.h already pulled it in
 /*
-XS words:
 SvROK = scalar value reference is OK
 */
 /* sample(): private splitmix64 PRNG
@@ -43,8 +42,7 @@ sample__mix64(void){
 /* * Helper function to increment the count for a given SV.
  * Skips NULL or Undefined values as requested. */
 static void increment_count(pTHX_ HV* counts_hv, SV* val) {
-	/* Skip null pointers or undef (non-OK) values */
-	if (!val || !SvOK(val)) return; 
+	if (!val || !SvOK(val)) return; // Skip null pointers or undef (non-OK) values
 	STRLEN len;
 	// SvPV forces stringification (so numbers become string keys)
 	char*restrict str = SvPV(val, len);
@@ -930,16 +928,30 @@ static void print_string_row(pTHX_ PerlIO *restrict fh,
 	AV *restrict collect)
 {
 	const size_t sep_len = sep ? strlen(sep) : 0;
-	/* When 'collect' is non-NULL the caller wants a second rendering of the
-	 * table (LaTeX via tex.tab.file): stash a copy of this record's fields as
-	 * an array of SVs so write_tex_tabular() can format them afterwards. The
-	 * copy captures exactly what is written to the delimited file, including
-	 * undef.val substitution, so the two outputs never diverge. */
+	/* When 'collect' is non-NULL the caller wants the rows captured for the
+	 * LaTeX renderer (the 'tex' option): stash a copy of this record's fields
+	 * as an array of SVs so write_tex_tabular() can format them afterwards.
+	 * The copy captures exactly the fields that would be written to the
+	 * delimited file, including undef.val substitution. When 'fh' is NULL the
+	 * row is only collected, not rendered (tex-only output). */
 	AV *restrict crow = collect ? newAV() : NULL;
 	for (size_t i = 0; i < n; i++) {
-		if (i && sep_len) PerlIO_write(fh, sep, sep_len);
 		const char *restrict f = fields[i];
-		if (crow) av_push(crow, newSVpv(f ? f : "", 0));
+		if (crow) {
+			SV *restrict fsv = newSVpv(f ? f : "", 0);
+			// Flattening the cell to a C string dropped its UTF-8 flag; put it
+			// back so write_tex_tabular() decodes code points (and can map
+			// Greek). Only when the bytes are valid UTF-8 with a byte >= 0x80:
+			// pure ASCII needs no flag, and invalid/Latin-1 bytes stay bytes.
+			STRLEN flen = SvCUR(fsv);
+			const U8 *restrict fb = (const U8*)SvPVX(fsv);
+			bool high = 0;
+			for (STRLEN k = 0; k < flen; k++) if (fb[k] >= 0x80) { high = 1; break; }
+			if (high && is_utf8_string(fb, flen)) SvUTF8_on(fsv);
+			av_push(crow, fsv);
+		}
+		if (!fh) continue; /* collect-only mode: no delimited rendering */
+		if (i && sep_len) PerlIO_write(fh, sep, sep_len);
 		if (!f || !*f) continue; /* undef/empty -> print nothing */
 		/* Does this field need quoting? */
 		bool need_quotes = 0;
@@ -959,12 +971,12 @@ static void print_string_row(pTHX_ PerlIO *restrict fh,
 			PerlIO_putc(fh, '"');
 		}
 	}
-	PerlIO_putc(fh, '\n');
+	if (fh) PerlIO_putc(fh, '\n');
 	if (collect) av_push(collect, newRV_noinc((SV*)crow));
 }
 
-/*
- * write_table: optional LaTeX tabular output (the tex.tab.file option).
+/* 
+ * write_table: LaTeX tabular output (the 'tex' option / a ".tex" file name).
  *
  * Modeled on a stand-alone "2D array -> LaTeX tabular" routine, but driven by
  * the rows print_string_row() already assembled, so every data shape the
@@ -982,11 +994,74 @@ static bool tex_is_includesvg(const char *restrict s) {
 	return strcmp(s + n - 5, ".svg}") == 0;
 }
 
+// Map a Greek code point to its textgreek macro (\usepackage{textgreek}),
+// e.g. U+0394 -> \textDelta. Covers the monotonic Greek block, upper and
+// lower case, plus both sigma forms; returns NULL for anything else so the
+// caller passes it through unchanged. Add rows here for other symbols.
+static const char *tex_greek_macro(UV cp) {
+	switch (cp) {
+	case 0x0391: return "\\textAlpha";
+	case 0x0392: return "\\textBeta";
+	case 0x0393: return "\\textGamma";
+	case 0x0394: return "\\textDelta";
+	case 0x0395: return "\\textEpsilon";
+	case 0x0396: return "\\textZeta";
+	case 0x0397: return "\\textEta";
+	case 0x0398: return "\\textTheta";
+	case 0x0399: return "\\textIota";
+	case 0x039A: return "\\textKappa";
+	case 0x039B: return "\\textLambda";
+	case 0x039C: return "\\textMu";
+	case 0x039D: return "\\textNu";
+	case 0x039E: return "\\textXi";
+	case 0x039F: return "\\textOmikron";
+	case 0x03A0: return "\\textPi";
+	case 0x03A1: return "\\textRho";
+	case 0x03A3: return "\\textSigma";
+	case 0x03A4: return "\\textTau";
+	case 0x03A5: return "\\textUpsilon";
+	case 0x03A6: return "\\textPhi";
+	case 0x03A7: return "\\textChi";
+	case 0x03A8: return "\\textPsi";
+	case 0x03A9: return "\\textOmega";
+	case 0x03B1: return "\\textalpha";
+	case 0x03B2: return "\\textbeta";
+	case 0x03B3: return "\\textgamma";
+	case 0x03B4: return "\\textdelta";
+	case 0x03B5: return "\\textepsilon";
+	case 0x03B6: return "\\textzeta";
+	case 0x03B7: return "\\texteta";
+	case 0x03B8: return "\\texttheta";
+	case 0x03B9: return "\\textiota";
+	case 0x03BA: return "\\textkappa";
+	case 0x03BB: return "\\textlambda";
+	case 0x03BC: return "\\textmu";
+	case 0x03BD: return "\\textnu";
+	case 0x03BE: return "\\textxi";
+	case 0x03BF: return "\\textomikron";
+	case 0x03C0: return "\\textpi";
+	case 0x03C1: return "\\textrho";
+	case 0x03C2: return "\\textvarsigma";
+	case 0x03C3: return "\\textsigma";
+	case 0x03C4: return "\\texttau";
+	case 0x03C5: return "\\textupsilon";
+	case 0x03C6: return "\\textphi";
+	case 0x03C7: return "\\textchi";
+	case 0x03C8: return "\\textpsi";
+	case 0x03C9: return "\\textomega";
+	default:     return NULL;
+	}
+}
+
 /* Escape one cell into 'out' (reset first): the LaTeX-active characters
- * # _ % & gain a leading backslash and '>' becomes \textgreater. With
- * do_format set, a numeric cell is first rendered with %.4g (mirrors the
- * original routine's 'format' option). */
-static void tex_escape_sv(pTHX_ SV *restrict out, const char *restrict s, int do_format) {
+ * # _ % & gain a leading backslash and '>' becomes \textgreater. When the
+ * source SV is UTF-8, Greek letters are turned into their textgreek macros
+ * (e.g. U+0394 Greek Delta -> \textDelta{}; the trailing {} keeps a following letter
+ * from being swallowed into the control word). With do_format set, a numeric
+ * cell is first rendered with %.4g (mirrors the original 'format' option). */
+static void tex_escape_sv(pTHX_ SV *restrict out, const char *restrict s,
+	int is_utf8, int do_format)
+{
 	sv_setpvs(out, "");
 	if (!s) return;
 	char numbuf[64];
@@ -995,9 +1070,38 @@ static void tex_escape_sv(pTHX_ SV *restrict out, const char *restrict s, int do
 		if (looks_like_number(tmp)) {
 			snprintf(numbuf, sizeof(numbuf), "%.4g", strtod(s, NULL));
 			s = numbuf;
+			is_utf8 = 0; // the formatted number is plain ASCII
 		}
 	}
 	if (tex_is_includesvg(s)) { sv_catpv(out, s); return; }
+	if (is_utf8) {
+		// Walk one Unicode code point at a time so multi-byte letters can be
+		// remapped. utf8n_to_uvchr (not the _buf form) keeps this on 5.10.
+		const U8 *restrict p   = (const U8*)s;
+		const U8 *restrict end = p + strlen(s);
+		while (p < end) {
+			STRLEN clen;
+			UV cp = utf8n_to_uvchr(p, (STRLEN)(end - p), &clen, 0);
+			if (clen == 0) clen = 1; // never stall on malformed input
+			if (cp < 0x80) {
+				const char c = (char)cp;
+				if (c == '#' || c == '_' || c == '%' || c == '&') {
+					sv_catpvn(out, "\\", 1);
+					sv_catpvn(out, (const char*)p, 1);
+				} else if (c == '>') {
+					sv_catpvn(out, "\\textgreater{}", 14);
+				} else {
+					sv_catpvn(out, (const char*)p, 1);
+				}
+			} else {
+				const char *restrict mac = tex_greek_macro(cp);
+				if (mac) { sv_catpv(out, mac); sv_catpvn(out, "{}", 2); }
+				else sv_catpvn(out, (const char*)p, clen); // pass through
+			}
+			p += clen;
+		}
+		return;
+	}
 	for (const char *restrict p = s; *p; p++) {
 		const char c = *p;
 		if (c == '#' || c == '_' || c == '%' || c == '&') {
@@ -1011,6 +1115,57 @@ static void tex_escape_sv(pTHX_ SV *restrict out, const char *restrict s, int do
 	}
 }
 
+// Build the "%written by <cwd>/<RealScript>" provenance line as a mortal SV,
+// mirroring the original pure-Perl:
+//     say $tex '%written by ' . getcwd() . '/' . $RealScript;
+// getcwd() is Cwd::getcwd (core, cross-platform) and $RealScript is
+// $FindBin::RealScript; both are read from Perl-land so behaviour matches the
+// original. Returns NULL if neither the cwd nor a script name is available.
+static SV *tex_written_by(pTHX) {
+	SV *restrict out = sv_2mortal(newSVpvs("%written by "));
+	bool have = 0;
+// cwd via Cwd::getcwd() -- load Cwd (core) if it is not already in.
+	if (!get_cv("Cwd::getcwd", 0))
+		load_module(PERL_LOADMOD_NOIMPORT, newSVpvs("Cwd"), NULL);
+	if (get_cv("Cwd::getcwd", 0)) {
+		dSP;
+		ENTER; SAVETMPS;
+		PUSHMARK(SP);
+		PUTBACK;
+		int cnt = call_pv("Cwd::getcwd", G_SCALAR);
+		SPAGAIN;
+		SV *restrict cwd = (cnt > 0) ? POPs : NULL;
+		if (cwd && SvOK(cwd)) {
+			STRLEN l; const char *restrict cs = SvPV(cwd, l);
+			if (l) { sv_catpvn(out, cs, l); have = 1; }
+		}
+		PUTBACK;
+		FREETMPS; LEAVE;
+	}
+// Script name: prefer $FindBin::RealScript (what the original used); fall
+// back to basename($0) when FindBin was never loaded.
+	SV *restrict rs = get_sv("FindBin::RealScript", 0);
+	const char *restrict script = NULL;
+	STRLEN sl = 0;
+	if (rs && SvOK(rs)) {
+		script = SvPV(rs, sl);
+	} else {
+		SV *restrict dollar0 = get_sv("0", 0);
+		if (dollar0 && SvOK(dollar0)) {
+			STRLEN l0; const char *restrict s0 = SvPV(dollar0, l0);
+			const char *restrict slash = strrchr(s0, '/');
+			script = slash ? slash + 1 : s0;
+			sl = strlen(script);
+		}
+	}
+	if (script && sl) {
+		sv_catpvn(out, "/", 1);
+		sv_catpvn(out, script, sl);
+		have = 1;
+	}
+	return have ? out : NULL;
+}
+
 /* Write the full LaTeX tabular. 'rows' is the collected table: element 0 is
  * the header record, the rest are data records (each an AV of SVs). */
 static void write_tex_tabular(pTHX_ AV *restrict rows, const char *restrict file,
@@ -1019,9 +1174,16 @@ static void write_tex_tabular(pTHX_ AV *restrict rows, const char *restrict file
 {
 	PerlIO *restrict fh = PerlIO_open(file, "w");
 	if (!fh)
-		croak("write_table: Could not open tex.tab.file '%s' for writing", file);
+		croak("write_table: Could not open '%s' for writing", file);
 	SV *restrict scratch = sv_2mortal(newSVpvs(""));
-	TEX_PUTS(fh, "% written by Stats::LikeR write_table\n");
+	// Provenance banner (see tex_written_by); fall back to a generic line.
+	SV *restrict prov = tex_written_by(aTHX);
+	if (prov) {
+		STRLEN pl; const char *restrict ps = SvPV(prov, pl);
+		PerlIO_write(fh, ps, pl); PerlIO_putc(fh, '\n');
+	} else {
+		TEX_PUTS(fh, "%written by Stats::LikeR write_table\n");
+	}
 	if (comment && SvOK(comment)) {
 		if (SvROK(comment) && SvTYPE(SvRV(comment)) == SVt_PVAV) {
 			AV *restrict ca = (AV*)SvRV(comment);
@@ -1051,9 +1213,10 @@ static void write_tex_tabular(pTHX_ AV *restrict rows, const char *restrict file
 		for (size_t j = 0; j < ncols; j++) {
 			if (j) TEX_PUTS(fh, " & ");
 			SV **restrict cp = av_fetch(header, (SSize_t)j, 0);
-			const char *restrict cs = (cp && *cp && SvOK(*cp)) ? SvPV_nolen(*cp) : "";
+			SV *restrict cv = (cp && *cp && SvOK(*cp)) ? *cp : NULL;
+			const char *restrict cs = cv ? SvPV_nolen(cv) : "";
 			TEX_PUTS(fh, "\\textbf{");
-			tex_escape_sv(aTHX_ scratch, cs, 0);
+			tex_escape_sv(aTHX_ scratch, cs, cv ? (SvUTF8(cv) ? 1 : 0) : 0, 0);
 			PerlIO_write(fh, SvPVX(scratch), SvCUR(scratch));
 			PerlIO_putc(fh, '}');
 		}
@@ -1068,9 +1231,10 @@ static void write_tex_tabular(pTHX_ AV *restrict rows, const char *restrict file
 			if (j) TEX_PUTS(fh, " & ");
 			const int bold = (bold_first_col && j == 0);
 			SV **restrict cp = av_fetch(row, (SSize_t)j, 0);
-			const char *restrict cs = (cp && *cp && SvOK(*cp)) ? SvPV_nolen(*cp) : "";
+			SV *restrict cv = (cp && *cp && SvOK(*cp)) ? *cp : NULL;
+			const char *restrict cs = cv ? SvPV_nolen(cv) : "";
 			if (bold) TEX_PUTS(fh, "\\textbf{");
-			tex_escape_sv(aTHX_ scratch, cs, do_format);
+			tex_escape_sv(aTHX_ scratch, cs, cv ? (SvUTF8(cv) ? 1 : 0) : 0, do_format);
 			PerlIO_write(fh, SvPVX(scratch), SvCUR(scratch));
 			if (bold) PerlIO_putc(fh, '}');
 		}
@@ -5894,7 +6058,7 @@ CODE:
 	NV p_value = 0.0, statistic = 0.0;
 	const char *restrict method_desc = "";
 	bool use_exact = FALSE;
-	// --- TWO SAMPLE (Mann-Whitney) ---
+	// --- 2 SAMPLE (Mann-Whitney)
 	if (ny > 0 && !paired) {
 		RankInfo *restrict ri = (RankInfo *)safemalloc((nx + ny) * sizeof(RankInfo));
 		size_t valid_nx = 0, valid_ny = 0;
@@ -5952,7 +6116,7 @@ CODE:
 				else if (strcmp(alternative, "greater") == 0) CORRECTION = 0.5;
 				else if (strcmp(alternative, "less") == 0) CORRECTION = -0.5;
 			}
-			// FIX 2: guard against degenerate (all-tied) variance instead of dividing by zero
+			// guard against degenerate (all-tied) variance instead of dividing by zero
 			if (var <= 0.0) {
 				warn("wilcox_test: zero variance (all values tied); p-value is undefined");
 				p_value = 1.0;
@@ -6031,13 +6195,10 @@ CODE:
 			NV z = statistic - mean_v;
 			NV CORRECTION = 0.0;
 			if (correct) {
-				// FIX 3: sign(z)*0.5
 				if (strcmp(alternative, "two.sided") == 0) CORRECTION = (z > 0) ? 0.5 : (z < 0) ? -0.5 : 0.0;
 				else if (strcmp(alternative, "greater") == 0) CORRECTION = 0.5;
 				else if (strcmp(alternative, "less") == 0) CORRECTION = -0.5;
 			}
-
-			// FIX 2: guard against degenerate variance
 			if (var <= 0.0) {
 				warn("wilcox_test: zero variance (all values tied); p-value is undefined");
 				p_value = 1.0;
@@ -6065,23 +6226,19 @@ SV* chisq_test(data_ref)
 	SV* data_ref;
 CODE:
 {
-	// 1. Input Validation & Data Matrix Construction
-	if (!SvROK(data_ref)) {
+	if (!SvROK(data_ref)) {// 1. Input Validation & Data Matrix Construction
 		croak("Input must be a reference");
 	}
-
 	svtype input_type = SvTYPE(SvRV(data_ref));
 	if (input_type != SVt_PVAV && input_type != SVt_PVHV) {
 		croak("Input must be an array reference or a hash reference");
 	}
-
 	NV **restrict obs_matrix = NULL;
 	NV *restrict obs_array = NULL;
 	AV*restrict row_keys = NULL;
 	AV*restrict col_keys = NULL;
 	unsigned int r = 0, c = 0;
 	bool is_2d = 0;
-
 	if (input_type == SVt_PVAV) {
 		AV*restrict obs_av = (AV*)SvRV(data_ref);
 		r = av_top_index(obs_av) + 1;
@@ -6146,13 +6303,11 @@ CODE:
 						}
 					}
 				}
-
 				obs_matrix = (NV**)safemalloc(r * sizeof(NV*));
 				for (unsigned int i = 0; i < r; i++) {
 					obs_matrix[i] = (NV*)safecalloc(c, sizeof(NV));
 					SV**restrict row_key_sv = av_fetch(row_keys, i, 0);
 					
-					// FIX 1: Extract HE* instead of SV**
 					HE* inner_he = hv_fetch_ent(obs_hv, *row_key_sv, 0, 0);
 					if (inner_he) {
 						SV*restrict inner_sv = HeVAL(inner_he);
@@ -6160,8 +6315,6 @@ CODE:
 							HV*restrict inner_hv = (HV*)SvRV(inner_sv);
 							for (unsigned int j = 0; j < c; j++) {
 								SV**restrict col_key_sv = av_fetch(col_keys, j, 0);
-								
-								// FIX 2: Extract HE* instead of SV**
 								HE*restrict val_he = hv_fetch_ent(inner_hv, *col_key_sv, 0, 0);
 								if (val_he) {
 									obs_matrix[i][j] = SvNV(HeVAL(val_he));
@@ -6196,7 +6349,6 @@ CODE:
 		croak("Empty data structure");
 	}
 
-	// 2. Perform Math Algorithm
 	NV stat = 0.0, grand_total = 0.0;
 	unsigned int df = 0;
 	bool yates = (is_2d && r == 2 && c == 2) ? 1 : 0;
@@ -6289,9 +6441,7 @@ CODE:
 		}
 		df = c - 1;
 	}
-
-	// Memory Cleanup for Matrices/Arrays
-	if (obs_matrix) {
+	if (obs_matrix) {// Memory Cleanup for Matrices/Arrays
 		for (unsigned int i = 0; i < r; i++) {
 			safefree(obs_matrix[i]);
 		}
@@ -6364,7 +6514,7 @@ PPCODE:
 			const char *restrict k = SvPV_nolen(cand);
 			if (!(strEQ(k, "data") || strEQ(k, "file") || strEQ(k, "col.names") ||
 				  strEQ(k, "row.names") || strEQ(k, "sep") || strEQ(k, "delim") ||
-				  strEQ(k, "undef.val") || strEQ(k, "tex.tab.file") ||
+				  strEQ(k, "undef.val") || strEQ(k, "tex") ||
 				  strEQ(k, "tex.col.align") || strEQ(k, "tex.size") ||
 				  strEQ(k, "tex.comment") || strEQ(k, "tex.bold.1st.col") ||
 				  strEQ(k, "tex.format"))) {
@@ -6375,15 +6525,17 @@ PPCODE:
 	}
 	const char *restrict sep = ",";
 	bool explicit_sep = 0; // Track if delimiter was manually specified
-	// CHANGED: default undef cells to a true empty value ("") instead of NULL.
-	// With print_string_row emitting zero-length fields bare (no quotes), an
-	// undef cell now prints as nothing at all: a,,c -- not a,'',c or a,"",c.
-	// 'undef.val' => 'NA' (etc.) still overrides this.
+// default undef cells to a true empty value ("") instead of NULL.
+// With print_string_row emitting zero-length fields bare (no quotes), an
+// undef cell now prints as nothing at all: a,,c -- not a,'',c or a,"",c.
+// 'undef.val' => 'NA' (etc.) still overrides this.
 	const char *restrict undef_val = "";
-	SV *restrict row_names_sv = sv_2mortal(newSViv(1));
+	SV *restrict row_names_sv = sv_2mortal(newSViv(0));
 	SV *restrict col_names_sv = NULL;
-	// tex.tab.file and its formatting options (LaTeX tabular side output).
-	const char *restrict tex_file  = NULL;   // filename; NULL => no LaTeX output
+// LaTeX tabular output. 'tex' selects LaTeX for the main output file; the
+// remaining tex.* keys tune the rendering. tex_opt is tri-state: -1 = not
+// given (auto-detect from a ".tex" file name), 0 = off, 1 = on.
+	int tex_opt = -1;
 	const char *restrict tex_align = "c";     // per-column alignment: c / l / r
 	const char *restrict tex_size  = NULL;    // optional size directive, e.g. \small
 	SV *restrict tex_comment       = NULL;    // string or array ref of % comment lines
@@ -6403,10 +6555,8 @@ PPCODE:
 			sep = SvPV_nolen(val);
 			explicit_sep = 1;
 		}
-		// FIX: 'undef.val' => undef used to call SvPV_nolen(&PL_sv_undef)
-		// (warning + empty string by accident); make it explicit.
 		else if (strEQ(key, "undef.val")) undef_val = SvOK(val) ? SvPV_nolen(val) : "";
-		else if (strEQ(key, "tex.tab.file"))    tex_file    = SvOK(val) ? SvPV_nolen(val) : NULL;
+		else if (strEQ(key, "tex"))              tex_opt     = SvTRUE(val) ? 1 : 0;
 		else if (strEQ(key, "tex.col.align"))  { if (SvOK(val)) tex_align = SvPV_nolen(val); }
 		else if (strEQ(key, "tex.size"))         tex_size    = SvOK(val) ? SvPV_nolen(val) : NULL;
 		else if (strEQ(key, "tex.comment"))      tex_comment = SvOK(val) ? val : NULL;
@@ -6423,6 +6573,19 @@ PPCODE:
 	}
 	if (!file_sv || !SvOK(file_sv)) croak("write_table: file name missing\n");
 	const char *restrict file = SvPV_nolen(file_sv);
+	// Decide LaTeX vs delimited. A ".tex" file name turns LaTeX on by default;
+	// an explicit tex => 0/1 always wins (so tex => 0 forces a delimited file
+	// even when it is named *.tex, and tex => 1 forces LaTeX for any name).
+	bool tex = 0;
+	if (tex_opt == -1) {
+		size_t file_len = strlen(file);
+		if (file_len >= 4) {
+			const char *restrict ext = file + file_len - 4;
+			if (strEQ(ext, ".tex") || strEQ(ext, ".TEX")) tex = 1;
+		}
+	} else {
+		tex = tex_opt ? 1 : 0;
+	}
 	// Auto-detect separator from file extension if not overridden
 	if (!explicit_sep) {
 		size_t file_len = strlen(file);
@@ -6489,7 +6652,7 @@ PPCODE:
 		SV **restrict first_ptr = av_fetch(av, 0, 0);
 		if (first_ptr && *first_ptr && SvROK(*first_ptr)
 				&& SvTYPE(SvRV(*first_ptr)) == SVt_PVAV) {
-			// Array of Arrays: every element must be an ARRAY reference.
+// Array of Arrays: every element must be an ARRAY reference.
 			for (SSize_t i = 0; i <= av_len(av); i++) {
 				SV **restrict ptr = av_fetch(av, i, 0);
 				if (!ptr || !*ptr || !SvROK(*ptr) || SvTYPE(SvRV(*ptr)) != SVt_PVAV) {
@@ -6521,26 +6684,26 @@ PPCODE:
 			is_aoh = 1;
 		}
 	}
-	PerlIO *restrict fh = PerlIO_open(file, "w");
-	if (!fh) {
-		// FIX: rows_av was leaked here when the open failed on HoH input.
+// With 'tex' on, the main file receives the LaTeX rendering, written by
+// write_tex_tabular() once the rows have been collected; no delimited
+// handle is opened here (fh stays NULL and print_string_row() collects
+// each record without emitting it).
+	PerlIO *restrict fh = tex ? NULL : PerlIO_open(file, "w");
+	if (!tex && !fh) {
 		if (rows_av) SvREFCNT_dec(rows_av);
 		croak("write_table: Could not open '%s' for writing", file);
 	}
 	AV *restrict headers_av = newAV();
 	bool inc_rownames = (row_names_sv && SvTRUE(row_names_sv)) ? 1 : 0;
 	const char *restrict rownames_col = NULL;
-	// When tex.tab.file is requested, collect every emitted record here (as an
-	// AV of AVs of SVs) so write_tex_tabular() can render a LaTeX version of
-	// the same table afterwards. Mortal => reclaimed automatically if any of
-	// the croak paths below fire.
-	AV *restrict collect_av = tex_file ? (AV*)sv_2mortal((SV*)newAV()) : NULL;
+// When 'tex' is on, collect every record here (as an AV of AVs of SVs) so
+// write_tex_tabular() can render the LaTeX table afterwards. Mortal =>
+// reclaimed automatically if any of the croak paths below fire.
+	AV *restrict collect_av = tex ? (AV*)sv_2mortal((SV*)newAV()) : NULL;
 	// ----- Hash of Hashes -----
 	if (is_hoh) {
 		if (col_names_sv && SvOK(col_names_sv)) {
 			AV *restrict c_av = (AV*)SvRV(col_names_sv);
-			// FIX: i was size_t; av_len() == -1 on an empty col.names array
-			// converted to SIZE_MAX and looped (effectively) forever.
 			for (SSize_t i = 0; i <= av_len(c_av); i++) {
 				SV **restrict c = av_fetch(c_av, i, 0);
 				if (c && SvOK(*c)) av_push(headers_av, newSVsv(*c));
@@ -6558,8 +6721,6 @@ PPCODE:
 				}
 			}
 			unsigned num_cols = hv_iterinit(col_map);
-			// FIX (UTF-8 safety): keep the key SVs (flags intact) and sort
-			// them with sv_cmp instead of round-tripping through char*.
 			for (unsigned i = 0; i < num_cols; i++) {
 				HE *restrict ce = hv_iternext(col_map);
 				av_push(headers_av, newSVsv(hv_iterkeysv(ce)));
@@ -6572,8 +6733,6 @@ PPCODE:
 		const char **restrict header_row = safemalloc((num_headers + 1) * sizeof(char*));
 		size_t h_idx = 0;
 		if (inc_rownames) header_row[h_idx++] = "";
-		// FIX: loop index was 'unsigned short int' -- silently wraps (and
-		// loops forever) past 65535 columns. Use size_t like everywhere else.
 		for (size_t i = 0; i < num_headers; i++) {
 			SV **restrict h_ptr = av_fetch(headers_av, (SSize_t)i, 0);
 			header_row[h_idx++] = (h_ptr && SvOK(*h_ptr)) ? SvPV_nolen(*h_ptr) : "";
@@ -6581,9 +6740,6 @@ PPCODE:
 		print_string_row(aTHX_ fh, header_row, h_idx, sep, collect_av);
 		safefree(header_row);
 		size_t num_rows = (size_t)(av_len(rows_av) + 1);
-		// FIX (UTF-8/NUL safety): sort the key SVs themselves and look rows
-		// up by SV (hv_fetch_ent) so UTF-8-flagged or NUL-containing outer
-		// keys still match. sortsv+sv_cmp is plain string order, as before.
 		sortsv(AvARRAY(rows_av), num_rows, Perl_sv_cmp);
 		HV *restrict data_hv = (HV*)data_ref;
 		const char **restrict row_data = safemalloc((num_headers + 1) * sizeof(char*));
@@ -6602,7 +6758,7 @@ PPCODE:
 				SV *restrict cell_sv = cell_he ? HeVAL(cell_he) : NULL;
 				if (cell_sv && SvOK(cell_sv)) {
 					if (SvROK(cell_sv)) {
-						PerlIO_close(fh);
+						if (fh) PerlIO_close(fh);
 						safefree(row_data);
 						if (headers_av) SvREFCNT_dec(headers_av);
 						if (rows_av) SvREFCNT_dec(rows_av);
@@ -6616,8 +6772,7 @@ PPCODE:
 			print_string_row(aTHX_ fh, row_data, d_idx, sep, collect_av);
 		}
 		safefree(row_data);
-	// ----- Flat Hash -----
-	} else if (is_flat_hash) {
+	} else if (is_flat_hash) {// ----- Flat Hash
 		HV *restrict data_hv = (HV*)data_ref;
 		if (col_names_sv && SvOK(col_names_sv)) {
 			AV *restrict c_av = (AV*)SvRV(col_names_sv);
@@ -6648,19 +6803,16 @@ PPCODE:
 		safefree(header_row);
 		const char **restrict row_data = safemalloc((num_headers + 1) * sizeof(char*));
 		size_t d_idx = 0;
-		// Give the single row a default numeric identifier if row names are on
+// Give the single row a default numeric identifier if row names are on
 		if (inc_rownames) row_data[d_idx++] = "1";
 		for (size_t j = 0; j < num_headers; j++) {
 			SV **restrict h_ptr = av_fetch(headers_av, (SSize_t)j, 0);
 			SV *restrict h_sv = (h_ptr && SvOK(*h_ptr)) ? *h_ptr : NULL;
-			// FIX (UTF-8/NUL safety): fetch by SV, not by raw bytes
 			HE *restrict val_he = h_sv ? hv_fetch_ent(data_hv, h_sv, 0, 0) : NULL;
 			SV *restrict val_sv = val_he ? HeVAL(val_he) : NULL;
-			// FIX: a flat-hash cell holding a reference was stringified
-			// (e.g. ARRAY(0x...)) instead of croaking like every other shape.
 			if (val_sv && SvOK(val_sv)) {
 				if (SvROK(val_sv)) {
-					PerlIO_close(fh);
+					if (fh) PerlIO_close(fh);
 					safefree(row_data);
 					if (headers_av) SvREFCNT_dec(headers_av);
 					croak("write_table: Cannot write nested reference types to table\n");
@@ -6672,8 +6824,7 @@ PPCODE:
 		}
 		print_string_row(aTHX_ fh, row_data, d_idx, sep, collect_av);
 		safefree(row_data);
-	// ----- Hash of Arrays -----
-	} else if (is_hoa) {
+	} else if (is_hoa) {// ----- Hash of Arrays
 		HV *restrict data_hv = (HV*)data_ref;
 		size_t max_rows = 0;
 		hv_iterinit(data_hv);
@@ -6685,14 +6836,11 @@ PPCODE:
 		}
 		if (col_names_sv && SvOK(col_names_sv)) {
 			AV *restrict c_av = (AV*)SvRV(col_names_sv);
-			// FIX: size_t vs av_len() == -1 (empty col.names looped forever)
 			for (SSize_t i = 0; i <= av_len(c_av); i++) {
 				SV **restrict c = av_fetch(c_av, i, 0);
 				if (c && SvOK(*c)) av_push(headers_av, newSVsv(*c));
 			}
 		} else {
-			// FIX (UTF-8 safety): keep the key SVs (flags intact) and sort
-			// them with sv_cmp instead of round-tripping through char*.
 			unsigned int num_cols = hv_iterinit(data_hv);
 			for (unsigned int i = 0; i < num_cols; i++) {
 				HE *restrict ce = hv_iternext(data_hv);
@@ -6702,20 +6850,17 @@ PPCODE:
 				sortsv(AvARRAY(headers_av), num_cols, Perl_sv_cmp);
 		}
 		if (av_len(headers_av) < 0) {
-			// FIX: this croak leaked the open filehandle and headers_av.
-			PerlIO_close(fh);
+			if (fh) PerlIO_close(fh);
 			SvREFCNT_dec(headers_av);
 			croak("Could not get headers in write_table");
 		}
 		if (inc_rownames && contains_nondigit(aTHX_ row_names_sv)) {
 			rownames_col = SvPV_nolen(row_names_sv);
 			AV *restrict filtered_headers = newAV();
-			// FIX: size_t vs av_len() (same wrap as above if headers empty)
 			for (SSize_t i = 0; i <= av_len(headers_av); i++) {
 				SV **restrict h_ptr = av_fetch(headers_av, i, 0);
 				if (!h_ptr || !*h_ptr) continue;
 				SV *restrict h_sv = *h_ptr;
-				// FIX (UTF-8 safety): sv_eq, not strcmp on raw bytes
 				if (!sv_eq(h_sv, row_names_sv)) {
 					av_push(filtered_headers, newSVsv(h_sv));
 				}
@@ -6734,15 +6879,11 @@ PPCODE:
 		print_string_row(aTHX_ fh, header_row, h_idx, sep, collect_av);
 		safefree(header_row);
 		const char **restrict row_data = safemalloc((num_headers + 1) * sizeof(char*));
-		// FIX: numeric row labels used savepv() + safefree() every row; a
-		// stack buffer reused per row does the same job with no allocation
-		// (and removes the const-away cast in the old safefree call).
 		char rn_buf[32];
 		for (size_t i = 0; i < max_rows; i++) {
 			size_t d_idx = 0;
 			if (inc_rownames) {
 				if (rownames_col) {
-					// FIX (UTF-8 safety): fetch the row-name column by SV
 					HE *restrict rn_arr_he = hv_fetch_ent(data_hv, row_names_sv, 0, 0);
 					SV *restrict rn_arr_sv = rn_arr_he ? HeVAL(rn_arr_he) : NULL;
 					if (rn_arr_sv && SvROK(rn_arr_sv)) {
@@ -6750,7 +6891,7 @@ PPCODE:
 						SV **restrict rn_val_ptr = av_fetch(rn_arr, (SSize_t)i, 0);
 						if (rn_val_ptr && SvOK(*rn_val_ptr)) {
 							if (SvROK(*rn_val_ptr)) {
-								PerlIO_close(fh);
+								if (fh) PerlIO_close(fh);
 								safefree(row_data);
 								if (headers_av) SvREFCNT_dec(headers_av);
 								croak("write_table: Cannot write nested reference types to table\n");
@@ -6770,7 +6911,6 @@ PPCODE:
 			for (size_t j = 0; j < num_headers; j++) {
 				SV **restrict h_ptr = av_fetch(headers_av, (SSize_t)j, 0);
 				SV *restrict h_sv = (h_ptr && SvOK(*h_ptr)) ? *h_ptr : NULL;
-				// FIX (UTF-8/NUL safety): fetch by SV, not by raw bytes
 				HE *restrict arr_he = h_sv ? hv_fetch_ent(data_hv, h_sv, 0, 0) : NULL;
 				SV *restrict arr_sv = arr_he ? HeVAL(arr_he) : NULL;
 				if (arr_sv && SvROK(arr_sv)) {
@@ -6778,7 +6918,7 @@ PPCODE:
 					SV **restrict cell_ptr = av_fetch(arr, (SSize_t)i, 0);
 					if (cell_ptr && SvOK(*cell_ptr)) {
 						if (SvROK(*cell_ptr)) {
-							PerlIO_close(fh);
+							if (fh) PerlIO_close(fh);
 							safefree(row_data);
 							if (headers_av) SvREFCNT_dec(headers_av);
 							croak("write_table: Cannot write nested reference types to table\n");
@@ -6794,12 +6934,11 @@ PPCODE:
 			print_string_row(aTHX_ fh, row_data, d_idx, sep, collect_av);
 		}
 		safefree(row_data);
-	} else if (is_aoh) { // ----- Array of Hashes
+	} else if (is_aoh) { // Array of Hashes
 		AV *restrict data_av = (AV*)data_ref;
 		size_t num_rows = (size_t)(av_len(data_av) + 1);
 		if (col_names_sv && SvOK(col_names_sv)) {
 			AV *restrict c_av = (AV*)SvRV(col_names_sv);
-			// FIX: size_t vs av_len() == -1 (empty col.names looped forever)
 			for (SSize_t i = 0; i <= av_len(c_av); i++) {
 				SV **restrict c = av_fetch(c_av, i, 0);
 				if (c && SvOK(*c)) av_push(headers_av, newSVsv(*c));
@@ -6831,12 +6970,10 @@ PPCODE:
 		if (inc_rownames && contains_nondigit(aTHX_ row_names_sv)) {
 			rownames_col = SvPV_nolen(row_names_sv);
 			AV *restrict filtered_headers = newAV();
-			// FIX: size_t vs av_len() (same wrap as above if headers empty)
 			for (SSize_t i = 0; i <= av_len(headers_av); i++) {
 				SV **restrict h_ptr = av_fetch(headers_av, i, 0);
 				if (!h_ptr || !*h_ptr) continue;
 				SV *restrict h_sv = *h_ptr;
-				// FIX (UTF-8 safety): sv_eq, not strcmp on raw bytes
 				if (!sv_eq(h_sv, row_names_sv)) {
 					av_push(filtered_headers, newSVsv(h_sv));
 				}
@@ -6855,19 +6992,18 @@ PPCODE:
 		print_string_row(aTHX_ fh, header_row, h_idx, sep, collect_av);
 		safefree(header_row);
 		const char **restrict row_data = safemalloc((num_headers + 1) * sizeof(char*));
-		char rn_buf[32]; // FIX: replaces per-row savepv/safefree (see HoA)
+		char rn_buf[32];
 		for (size_t i = 0; i < num_rows; i++) {
 			size_t d_idx = 0;
 			SV **restrict row_ptr = av_fetch(data_av, (SSize_t)i, 0);
 			HV *restrict row_hv = (row_ptr && SvROK(*row_ptr)) ? (HV*)SvRV(*row_ptr) : NULL;
 			if (inc_rownames) {
 				if (rownames_col) {
-					// FIX (UTF-8 safety): fetch the row-name cell by SV
 					HE *restrict rn_he = row_hv ? hv_fetch_ent(row_hv, row_names_sv, 0, 0) : NULL;
 					SV *restrict rn_sv = rn_he ? HeVAL(rn_he) : NULL;
 					if (rn_sv && SvOK(rn_sv)) {
 						if (SvROK(rn_sv)) {
-							PerlIO_close(fh);
+							if (fh) PerlIO_close(fh);
 							safefree(row_data);
 							if (headers_av) SvREFCNT_dec(headers_av);
 							croak("write_table: Cannot write nested reference types to table\n");
@@ -6884,12 +7020,11 @@ PPCODE:
 			for (size_t j = 0; j < num_headers; j++) {
 				SV **restrict h_ptr = av_fetch(headers_av, (SSize_t)j, 0);
 				SV *restrict h_sv = (h_ptr && SvOK(*h_ptr)) ? *h_ptr : NULL;
-				// FIX (UTF-8/NUL safety): fetch by SV, not by raw bytes
 				HE *restrict cell_he = (row_hv && h_sv) ? hv_fetch_ent(row_hv, h_sv, 0, 0) : NULL;
 				SV *restrict cell_sv = cell_he ? HeVAL(cell_he) : NULL;
 				if (cell_sv && SvOK(cell_sv)) {
 					if (SvROK(cell_sv)) {
-						PerlIO_close(fh);
+						if (fh) PerlIO_close(fh);
 						safefree(row_data);
 						if (headers_av) SvREFCNT_dec(headers_av);
 						croak("write_table: Cannot write nested reference types to table\n");
@@ -6902,13 +7037,12 @@ PPCODE:
 			print_string_row(aTHX_ fh, row_data, d_idx, sep, collect_av);
 		}
 		safefree(row_data);
-	// ----- Array of Arrays -----
-	} else if (is_aoa) {
+	} else if (is_aoa) {// ----- Array of Arrays 
 		AV *restrict data_av = (AV*)data_ref;
 		SSize_t last = av_len(data_av);   // index of last element
 		SSize_t data_start = 0;            // first data-row index
-		// Headers: explicit col.names, else the first inner array (which is
-		// then consumed as the header rather than emitted as data).
+// Headers: explicit col.names, else the first inner array (which is
+// then consumed as the header rather than emitted as data).
 		if (col_names_sv && SvOK(col_names_sv)) {
 			AV *restrict c_av = (AV*)SvRV(col_names_sv);
 			for (SSize_t i = 0; i <= av_len(c_av); i++) {
@@ -6951,7 +7085,7 @@ PPCODE:
 				SV **restrict cell_ptr = row_av ? av_fetch(row_av, (SSize_t)j, 0) : NULL;
 				if (cell_ptr && *cell_ptr && SvOK(*cell_ptr)) {
 					if (SvROK(*cell_ptr)) {
-						PerlIO_close(fh);
+						if (fh) PerlIO_close(fh);
 						safefree(row_data);
 						if (headers_av) SvREFCNT_dec(headers_av);
 						croak("write_table: Cannot write nested reference types to table\n");
@@ -6967,12 +7101,27 @@ PPCODE:
 	}
 	if (headers_av) SvREFCNT_dec(headers_av);
 	if (rows_av) SvREFCNT_dec(rows_av);
-	PerlIO_close(fh);
-	// LaTeX side output: render the collected table now that the delimited
-	// file is complete (and its handle closed).
-	if (collect_av && av_len(collect_av) >= 0) {
-		write_tex_tabular(aTHX_ collect_av, tex_file, tex_align,
+	if (fh) PerlIO_close(fh);
+// LaTeX output: render the collected table to the main file now that the
+// rows are gathered. With 'tex' on nothing was written above, so this is
+// the only writer of 'file'.
+	if (tex && collect_av && av_len(collect_av) >= 0) {
+		write_tex_tabular(aTHX_ collect_av, file, tex_align,
 			tex_bold1, tex_format, tex_size, tex_comment);
+		if (tex && collect_av && av_len(collect_av) >= 0) {
+			write_tex_tabular(aTHX_ collect_av, file, tex_align,
+				tex_bold1, tex_format, tex_size, tex_comment);
+// say 'wrote ' . colored(['black on_cyan'], $file), with the SGR codes
+// inline (black fg 30, cyan bg 46, reset 0) so no Term::ANSIColor dep.
+			PerlIO *restrict out = PerlIO_stdout();
+			if (out) {
+				static const char pre[]  = "wrote \033[30;46m";
+				static const char post[] = "\033[0m\n";
+				PerlIO_write(out, pre, sizeof(pre) - 1);
+				PerlIO_write(out, file, strlen(file));
+				PerlIO_write(out, post, sizeof(post) - 1);
+			}
+		}
 	}
 	XSRETURN_EMPTY;
 }
@@ -8179,7 +8328,7 @@ CODE:
 	  if      (estimate >  1.0) estimate =  1.0;
 	  else if (estimate < -1.0) estimate = -1.0;
 	  df = (NV)(n - 2);
-	  /* BUG FIX: guard divide-by-zero when |estimate| == 1 exactly.
+	  /* guard divide-by-zero when |estimate| == 1 exactly.
 	   * A perfect correlation gives t = ±Inf, matching R's behaviour. */
 	  NV denom_t = 1.0 - estimate * estimate;
 	  if (denom_t <= 0.0)
@@ -8201,7 +8350,7 @@ CODE:
 	  // High-precision p-value using incomplete beta
 	  p_value = get_t_pvalue(statistic, df, alternative);
 	} else if (is_kendall) {
-	  // BUG FIX: use long to avoid int overflow for large n
+	  // use long to avoid int overflow for large n
 	  long c = 0, d = 0, tie_x = 0, tie_y = 0;
 	  for (size_t i = 0; i < n - 1; i++) {
 		  for (size_t j = i + 1; j < n; j++) {
@@ -8215,11 +8364,10 @@ CODE:
 		  }
 	  }
 	  NV denom = sqrt((NV)(c + d + tie_x) * (NV)(c + d + tie_y));
-	  // BUG FIX: use NAN (from <math.h>) instead of 0.0/0.0 (UB in C)
 	  estimate = (denom == 0.0) ? NAN : (NV)(c - d) / denom;
 	  bool has_ties = (tie_x > 0 || tie_y > 0);
 	  bool do_exact;
-	  /* Mirror R: exact defaults to TRUE if n < 50 and no ties */
+	  // Mirror R: exact defaults to TRUE if n < 50 and no ties
 	  if (!exact_sv || !SvOK(exact_sv))
 		  do_exact = (n < 50) && !has_ties;
 	  else
@@ -8250,7 +8398,6 @@ CODE:
 	  NV *restrict rank_y = safemalloc(n * sizeof(NV));
 	  rank_data(x, rank_x, n);
 	  rank_data(y, rank_y, n);
-
 	  /* Spearman rho = Pearson r of the ranks (Welford's algorithm) */
 	  NV mean_x = 0.0, mean_y = 0.0, M2_x = 0.0, M2_y = 0.0, cov = 0.0;
 	  for (size_t i = 0; i < n; i++) {
@@ -8274,7 +8421,6 @@ CODE:
 		  NV diff = rank_x[i] - rank_y[i];
 		  S_stat += diff * diff;
 	  }
-
 	  /* Ties produce fractional (averaged) ranks — detect them */
 	  bool has_ties = 0;
 	  for (size_t i = 0; i < n; i++) {
@@ -8283,13 +8429,11 @@ CODE:
 			  break;
 		  }
 	  }
-
 	  bool do_exact;
 	  if (!exact_sv || !SvOK(exact_sv))
 		  do_exact = (n < 10) && !has_ties;
 	  else
 		  do_exact = SvTRUE(exact_sv) ? 1 : 0;
-
 	  if (do_exact) {
 		  statistic = S_stat;
 		  p_value   = spearman_exact_pvalue(S_stat, n, alternative);
@@ -8301,7 +8445,6 @@ CODE:
 		  if (continuity) {
 			  warn("cor_test: continuity correction is not defined for Spearman in R and is ignored here");
 		  }
-		  /* BUG FIX: guard divide-by-zero when |r| == 1 exactly */
 		  NV denom_t = 1.0 - r * r;
 		  if (denom_t <= 0.0)
 			  statistic = (r > 0.0) ? INFINITY : -INFINITY;
@@ -8309,18 +8452,12 @@ CODE:
 			  statistic = r * sqrt((NV)(n - 2) / denom_t);
 		  p_value = get_t_pvalue(statistic, (NV)(n - 2), alternative);
 	  }
-	  Safefree(rank_x);
-	  Safefree(rank_y);
-
+	  Safefree(rank_x);	  Safefree(rank_y);
 	} else {
-	  Safefree(x);
-	  Safefree(y);
+	  Safefree(x);	  Safefree(y);
 	  croak("Unknown method '%s': must be 'pearson', 'kendall', or 'spearman'", method);
 	}
-
-	Safefree(x);
-	Safefree(y);
-
+	Safefree(x);	Safefree(y);
 	rhv = newHV();
 	hv_stores(rhv, "estimate",    newSVnv(estimate));
 	hv_stores(rhv, "p.value",     newSVnv(p_value));
@@ -8334,7 +8471,6 @@ CODE:
 	  av_push(ci_av, newSVnv(ci_upper));
 	  hv_stores(rhv, "conf.int", newRV_noinc((SV*)ci_av));
 	}
-
 	RETVAL = newRV_noinc((SV*)rhv);
 }
 OUTPUT:
@@ -8351,38 +8487,32 @@ PPCODE:
 	if (!SvROK(data) || SvTYPE(SvRV(data)) != SVt_PVAV) {
 	  croak("Expected an array reference");
 	}
-
 	av = (AV *)SvRV(data);
 	n_raw = av_len(av) + 1;
-
 	Newx(x, n_raw, NV);
-
 	// Extract variables and calculate mean (skipping undefined/NaN values)
 	for (size_t i = 0; i < n_raw; i++) {
-	  SV **restrict elem = av_fetch(av, i, 0);
-	  if (elem && SvOK(*elem)) {
-		   NV val = SvNV(*elem);
-		   if (!isnan(val)) {
-			   x[n] = val;
-			   mean += val;
-			   n++;
-		   }
-	  }
+		SV **restrict elem = av_fetch(av, i, 0);
+		if (elem && SvOK(*elem)) {
+			NV val = SvNV(*elem);
+			if (!isnan(val)) {
+				x[n] = val;
+				mean += val;
+				n++;
+			}
+		}
 	}
-
 	if (n < 3 || n > 5000) {
 	  Safefree(x);
 	  croak("Sample size must be between 3 and 5000 (R's limit)");
 	}
-
 	mean /= n;
-	// Calculate Sum of Squares
-	for (size_t i = 0; i < n; i++) {
+	for (size_t i = 0; i < n; i++) {// Calculate Sum of Squares
 	  ssq += (x[i] - mean) * (x[i] - mean);
 	}
 	if (ssq == 0.0) {
-	  Safefree(x);
-	  croak("Data is perfectly constant; cannot compute Shapiro-Wilk test");
+		Safefree(x);
+		croak("Data is perfectly constant; cannot compute Shapiro-Wilk test");
 	}
 	qsort(x, n, sizeof(NV), compare_doubles);
 	// --- Core AS R94 Algorithm: Weights and Statistic W
@@ -8426,8 +8556,7 @@ PPCODE:
 		w = (b_val * b_val) / ssq;
 		// --- AS R94 P-Value Calculation: High Precision Refinement ---
 		/* NOTE: p_val is declared in PREINIT above;
-		* do NOT shadow it with a local 'double p_val' here or the result will never reach the caller.
-		*/
+		* do NOT shadow it with a local 'double p_val' here or the result will never reach the caller.*/
 		NV y = log(1.0 - w);
 		NV z;
 		if (n <= 11) {
@@ -8437,16 +8566,15 @@ PPCODE:
 			NV nn = (NV)n;
 			NV gamma = 0.459 * nn - 2.273;
 			if (y >= gamma) {
-				 p_val = 1e-19;
+				p_val = 1e-19;
 			} else {
-				 // Horner-form polynomials in n for mu and log(sigma)
-				 NV mu     = 0.544  + nn * (-0.39978  + nn * ( 0.025054  - nn * 0.0006714));
-				 NV sig_val= 1.3822 + nn * (-0.77857  + nn * ( 0.062767  - nn * 0.0020322));
-				 NV sigma  = exp(sig_val);
-				 z = (-log(gamma - y) - mu) / sigma;
-				 /* Upper-tail probability P(Z > z): small W → large z → small p-value.
-				 */
-				 p_val = 0.5 * erfc(z * M_SQRT1_2);
+				// Horner-form polynomials in n for mu and log(sigma)
+				NV mu     = 0.544  + nn * (-0.39978  + nn * ( 0.025054  - nn * 0.0006714));
+				NV sig_val= 1.3822 + nn * (-0.77857  + nn * ( 0.062767  - nn * 0.0020322));
+				NV sigma  = exp(sig_val);
+				z = (-log(gamma - y) - mu) / sigma;
+				// Upper-tail probability P(Z > z): small W → large z → small p-value
+				p_val = 0.5 * erfc(z * M_SQRT1_2);
 			}
 		} else {
 			// Royston's branch for n >= 12 (AS R94, large-sample path)
@@ -8559,16 +8687,12 @@ CODE:
 {
 	size_t n = 0;
 	NV min = 0.0, max = 1.0;
-
 	// Flags to track what has been assigned
 	bool n_set = 0, min_set = 0, max_set = 0;
-
 	unsigned int i = 0;
-
 	if (items == 0) {
 	  croak("Usage: runif(n, [min=0], [max=1]) or runif(n => $n, ...)");
 	}
-
 	while (i < items) {
 		// 1. Check if the current argument is a string key for a named parameter
 		if (i + 1 < items && SvPOK(ST(i))) {
@@ -8640,7 +8764,6 @@ SV* rbinom(...)
 	//Parse named arguments
 	size_t n = 0, size = 0;
 	NV prob = 0.5;
-
 	bool size_set = FALSE, prob_set = FALSE;
 
 	for (unsigned short i = 0; i < items; i += 2) {
