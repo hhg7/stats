@@ -1018,46 +1018,124 @@ or
 
 ## csort
 
-Sort a table by a column or by a custom comparator. Works on both common Perl table shapes and can transpose between them on the way out. Stable, non-destructive.
-
-### Signature
+Sort a data frame by a column or a custom comparator, returning a new
+(sorted) copy. The input is never mutated.
 
     my $sorted = csort($data, $by);
-    my $sorted = csort($data, $by, $output);
+    my $sorted = csort($data, $by, $output_shape);
+    my $sorted = csort($hoh,  $by, 'aoh', 'row.name');   # HoH only
 
-- **`$data`** — your table, in either shape:
-  - **AoH** — arrayref of hashrefs (a list of rows): `[ {id=>1, v=>10}, {id=>2, v=>20} ]`
-  - **HoA** — hashref of arrayrefs (parallel columns): `{ id=>[1,2], v=>[10,20] }`
-- **`$by`** — *how* to sort:
-  - a **column name** (string), or
-  - a **comparator** coderef using `$a` / `$b`, just like Perl's `sort`
-- **`$output`** *(optional)* — `'aoh'` or `'hoa'` (case-insensitive). Defaults to the input shape; `undef` also means "same as input".
+`$data` may be any of four shapes:
 
-Returns a **new** structure. The input is never modified.
+    AoH   array-of-hashes    [ { col => val, ... }, ... ]   columns are hash keys
+    HoA   hash-of-arrays      { col => [ val, ... ], ... }   columns are hash keys
+    HoH   hash-of-hashes      { rowname => { col => val }, ... }
+    AoA   array-of-arrays    [ [ val, ... ], ... ]           columns are integer indices
 
-### What it does
+The shape is detected automatically. An array-ref whose first row is
+itself an array-ref is treated as an AoA; otherwise an array-ref is an
+AoH. A hash-ref whose first value is a hash-ref is a HoH (its outer keys
+are folded into a row-name column, see below); any other hash-ref is a
+HoA.
 
-- **Column-name sort** — numeric if every defined value in that column looks like a number, otherwise string comparison. Missing / `undef` values sort **last** (matching R's `na.last`).
-- **Comparator sort** — `$a` and `$b` are set in the comparator's *own* package, so a named sub from another package still sees its own `$a`/`$b`. For AoH they're the row hashrefs; for HoA they're per-row hashref views synthesized from the columns.
-- **Stable** — equal keys keep their original order (merge sort, same as Perl `sort` and R `order()`).
-- **Shape control** — keep the input shape, or transpose: AoH→HoA builds the union of all row keys (ordered by first appearance, gaps filled with `undef`); HoA→AoH emits one hashref per row.
+`$by` selects the sort key:
 
-### Examples
+    'No.'                          # a column: name (AoH/HoA/HoH) or integer index (AoA)
+    2                              # AoA: sort by column index 2
+    sub { $a->{'No.'} <=> $b->{'No.'} }   # comparator; $a/$b are the rows
 
-    # by column, ascending numeric, AoH in / AoH out
-    my $rows = csort($aoh, 'score');
+For a column sort the values are compared numerically when every present
+value looks like a number, and with string `cmp` otherwise. For a
+comparator, `$a` and `$b` are the row references (a hash-ref for
+AoH/HoA/HoH, an array-ref for AoA), exactly as with Perl's own `sort`.
 
-    # custom comparator (descending), HoA in / HoA out
-    my $cols = csort($hoa, sub { $b->{score} <=> $a->{score} });
+### Sorting an AoA
 
-    # sort an AoH but hand it back as columns (HoA)
-    my $cols = csort($aoh, 'name', 'hoa');
+Columns in an AoA are addressed by non-negative integer index:
 
-### Notes
+    my $rows = [
+        [ 3, 30, 'gamma' ],
+        [ 1, 10, 'alpha' ],
+        [ 2, 20, 'beta'  ],
+    ];
 
-- **Non-destructive:** AoH output reuses the original row hashrefs (re-ordered); HoA output permutes every column in lockstep.
-- Empty and single-row tables are handled for all four in/out combinations.
-- An invalid `$output` value croaks.
+    my $s = csort($rows, 0);       # by column 0 -> id 1, 2, 3
+    my $s = csort($rows, 2);       # by column 2 -> alpha, beta, gamma
+    my $s = csort($rows, sub { $b->[1] <=> $a->[1] });   # by column 1, descending
+
+The result reuses the original row array-refs (a reorder, not a deep
+copy), so it is cheap and the caller's data is left untouched. A
+non-integer or negative index croaks; an index no row contains is
+reported as a missing column.
+
+### Undefined and missing values
+
+Undefined or missing cells always sort to the end. A "missing" cell is a
+row that lacks the key (AoH/HoH) or is shorter than the index (AoA); it
+is treated the same as an explicit `undef`. Defined values are ordered
+first (ascending, or per the comparison type), undef/missing last, and
+undef rows keep their original relative order.
+
+    my $rows = [
+        [ 1, 5 ],
+        [ 2 ],           # no column 1
+        [ 3, undef ],
+        [ 4, 1 ],
+    ];
+    my $s = csort($rows, 1);       # column-0 order: 4, 1, 2, 3
+
+This holds for every shape, for numeric and string columns, and for
+**both** a column/index sort and a comparator sort:
+
+    # no need to guard undef yourself -- this does not warn or die,
+    # even under  use warnings FATAL => 'all'
+    my $s = csort($df, sub { $a->{'tau p'} <=> $b->{'tau p'} }, 'hoa');
+
+For a comparator, csort can't see which field you key on, so it probes
+each row once (comparing the row to itself) to find rows whose comparator
+would read an `undef`; those rows are moved to the end and the rest are
+sorted normally, so your comparator never sees an `undef`. A few
+consequences worth knowing:
+
+* If your comparator reads several keys (a tie-break), a row is treated as
+  undef-keyed when *any* key the comparator actually evaluates for that
+  row is undef. Such rows go to the bottom.
+* A comparator that handles undef itself (e.g. `$a->{v} // 0`) never trips
+  the probe, so csort leaves its ordering completely alone.
+* A comparator that dies for a real reason still propagates that error
+  unchanged.
+* The probe calls your comparator once per row, so keep comparators free
+  of side effects (they should be anyway).
+
+### Choosing the output shape
+
+The optional third argument picks the returned shape, one of `'aoh'`,
+`'hoa'`, or `'aoa'` (case-insensitive). It defaults to the input shape
+(HoH defaults to AoH). Any shape can be converted to any other:
+
+    csort($aoa, 0)               # AoA -> AoA (default)
+    csort($aoa, 0, 'hoa')        # AoA -> HoA
+    csort($aoh, 'No.', 'aoa')    # AoH -> AoA
+
+When the target is AoH or HoA, an AoA's columns are keyed by their
+stringified index (`'0'`, `'1'`, ...). When the target is AoA, the
+positional column order is deterministic:
+
+    from HoA   sorted column-key name
+    from AoH   union of the rows' keys, sorted by name
+    from AoA   integer index 0 .. widest-row-1 (ragged rows pad with undef)
+
+Because Perl randomizes hash iteration order, the sort of key names is
+what makes keyed-to-AoA conversions reproducible from run to run.
+
+### Sorting a HoH
+
+For a HoH, each outer key is the row name. It is folded into a real
+column so it survives into the output; the column is named `row.name` by
+default, overridable with a fourth argument:
+
+    my $s = csort($hoh, 'score', 'aoh');           # row name in 'row.name'
+    my $s = csort($hoh, 'score', 'aoh', 'sample'); # ... named 'sample' instead
 
 ## dnorm
 
@@ -3134,6 +3212,11 @@ mimics R's `write.table`, with data as first argument to subroutine, and output 
 
     write_table(\@data_aoh, $tmp_file, sep => "\t", 'row.names' => 1);
 
+`write_table` accepts every data-frame shape: a flat hash (one row), a hash of arrays (HoA), a hash of hashes (HoH), an array of hashes (AoH), and an array of arrays (AoA). For an AoA the first inner array is taken as the header row unless `col.names` is given, in which case every inner array is treated as data:
+
+    write_table([[qw(gene score)], ['TP53', 0.9], ['BRCA1', 0.7]], $tmp_file, 'row.names' => 0);
+    write_table([['TP53', 0.9], ['BRCA1', 0.7]], $tmp_file, 'col.names' => [qw(gene score)]);
+
 You can also precisely filter and reorder which columns are written by passing an array reference to `col.names`:
 
     write_table(\@data, $tmp_file, sep => "\t", 'col.names' => ['c', 'a']);
@@ -3147,6 +3230,40 @@ as of version 0.07, `write_table` determines comma and tab-separated delimiters 
 Args can also be accepted:
 
     write_table( 'data' => \%flat, 'file' => $f );
+
+### LaTeX output (`tex.tab.file`)
+
+Passing `tex.tab.file` writes a LaTeX `tabular` in addition to the delimited file. The delimited file at `file` is always written; the LaTeX file is built from the same rows, so the two never disagree, and it works for every shape above (including arrays of arrays).
+
+    write_table(\@data_aoh, $tmp_file, 'tex.tab.file' => 'table.tex');
+
+The header row is bold and the table is ruled with `\hline`. Cell text is LaTeX-escaped: `#`, `_`, `%`, and `&` are backslash-escaped, `>` becomes `\textgreater{}`, and a cell consisting solely of `\includesvg{...svg}` is passed through untouched. The `tex.*` options tune the output:
+
+    write_table(\@rows, $tmp_file,
+        'tex.tab.file'     => 'table.tex',
+        'tex.col.align'    => 'l',                   # 'c' (default), 'l', or 'r'
+        'tex.bold.1st.col' => 0,                     # default 1: bold the first column
+        'tex.format'       => 1,                     # %.4g-format numeric cells
+        'tex.size'         => '\small',              # size directive after \begin{tabular}
+        'tex.comment'      => ['run 3', 'q < 0.05'], # % comment line(s): string or array ref
+    );
+
+### Options
+
+| option | default | applies to | meaning |
+|---|---|---|---|
+| `data` (1st positional, or `data =>`) | *required* | both | the table: flat hash, HoA, HoH, AoH, or AoA |
+| `file` (2nd positional, or `file =>`) | *required* | delimited | output path for the delimited table |
+| `sep` / `delim` | from extension (`,` for `.csv`, tab for `.tsv`), else `,` | delimited | field separator; the two are aliases |
+| `row.names` | `1` (on) | both | true prepends a label column (numeric index, or the outer key for a HoH); `0` omits it; for a HoA/AoH a non-numeric *column name* uses that column's values as the labels and drops it from the body |
+| `col.names` | all columns, sorted | both | array ref selecting and ordering columns; for an AoA it also supplies the column names |
+| `undef.val` | `''` (empty field) | both | text written for an undefined/missing cell, e.g. `'NA'` |
+| `tex.tab.file` | *(off)* | LaTeX | filename; when set, also write a LaTeX `tabular` here |
+| `tex.col.align` | `'c'` | LaTeX | per-column alignment: `'c'`, `'l'`, or `'r'` |
+| `tex.bold.1st.col` | `1` (on) | LaTeX | bold the first column of each data row |
+| `tex.format` | `0` (off) | LaTeX | render numeric cells with `%.4g` |
+| `tex.size` | *(none)* | LaTeX | size directive emitted after `\begin{tabular}`, e.g. `\small` |
+| `tex.comment` | *(none)* | LaTeX | `%` comment line(s) at the top of the LaTeX file: a string, or an array ref of strings |
 
 # Changes
 
@@ -3183,6 +3300,8 @@ Two behavioural changes, both contained to the `csort` XSUB (the `cs_*` helpers 
 `data`/`by`/`output` are read as `ST(0..2)`; `output` still defaults to matching the input shape.
 
 **Tightened validation messages.** The `$data` croak now reads `hash-ref (HoA or HoH)`, and the `$by` croak includes a concrete example: `a column name (e.g. 'No.') or a comparator code-ref using $a and $b, e.g. sub { $b->{'No.'} <=> $a->{'No.'} }`. Existing HoA croaks (`unequal lengths`, `not found`, `not an array-ref`) are unchanged.
+
+When sorting, undefined values in the sorting column are placed at the bottom
 
 ### cor
 
@@ -3264,6 +3383,10 @@ test detects it (see "Testing", below).
 
 ### `view`
  non-ASCII characters now print
+
+### `write_table`
+
+new option to output to LaTeX table
 
 ## 0.19
 
