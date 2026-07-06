@@ -2008,12 +2008,12 @@ Takes either an array or an array reference, and returns an array of the most co
 works on all the Stats::LikeR frame shapes, so you don't have to remember which
 one you're holding:
 
-    ncol([ {a=>1,b=>2}, {a=>3,b=>4} ])   # 2   array of hashes  (AoH)
-    ncol([ [1,2,3], [4,5,6] ])           # 3   array of arrays  (AoA)
-    ncol({ a=>[1,2], b=>[3,4] })         # 2   hash of arrays   (HoA)
-    ncol({ r1=>{...}, r2=>{...} })       # 2   hash of hashes   (HoH)
+    ncol([ [1,2,3], [4,5,6] ])         # 3   array of arrays  (AoA)
+    ncol([ {a=>1,b=>2}, {a=>3,b=>4} ]) # 2   array of hashes  (AoH)
+    ncol({ a=>[1,2], b=>[3,4] })       # 2   hash of arrays   (HoA)
+    ncol({ r1=>{...}, r2=>{...} })     # 2   hash of hashes   (HoH)
 
-### The one rule to remember
+### NB
 
 A **column** is one field of each record. Where the fields live depends on the
 shape:
@@ -2051,26 +2051,18 @@ when they hold no rows — the keys are the columns, rows or not.
 Blessed frames are fine — it looks at the underlying array/hash, so your
 objects count just like plain refs.
 
-### Speed
-
-Each count is a cheap read of a length or a key-count. The only extra work is a
-quick pass over the rows to confirm they agree on their width (and, for a hash
-frame, that its values are the shape they claim). No copies, no walking the
-data. It's pure Perl on purpose: there's nothing here fast enough to be worth
-doing in C.
-
 ## nrow
 
 `nrow($frame)` returns how many **rows** a data frame has. It works on all the
 Stats::LikeR frame shapes, so you don't have to remember which one you're
 holding:
 
-    nrow([ {a=>1}, {a=>2} ])          # 2   array of hashes  (AoH)
-    nrow([ [1,2,3], [4,5,6] ])        # 2   array of arrays  (AoA)
-    nrow({ a=>[1,2,3], b=>[4,5,6] })  # 3   hash of arrays   (HoA)
-    nrow({ r1=>{...}, r2=>{...} })    # 2   hash of hashes   (HoH)
+    nrow([ [1,2,3], [4,5,6] ])       # 2   array of arrays  (AoA)
+    nrow([ {a=>1}, {a=>2} ])         # 2   array of hashes  (AoH)
+    nrow({ a=>[1,2,3], b=>[4,5,6] }) # 3   hash of arrays   (HoA)
+    nrow({ r1=>{...}, r2=>{...} })   # 2   hash of hashes   (HoH)
 
-### The one rule to remember
+### NB
 
 A **row** is one record. Where the records live depends on the shape:
 
@@ -2099,13 +2091,6 @@ Empty frames are 0 rows, whatever the shape.
 
 Blessed frames are fine — it looks at the underlying array/hash, so your
 objects count just like plain refs.
-
-### Speed
-
-Every count is a single cheap read of length or key-count — no walking the
-data, no copies. The only loop is a quick pass over HoA columns to confirm they
-line up. It's pure Perl on purpose: there's nothing here fast enough to be
-worth doing in C.
 
 ## oneway_test
 
