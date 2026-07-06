@@ -43,6 +43,9 @@ sub is_approx {
 	}
 }
 
+dies_ok {
+	assign(undef, 'x');
+} 'assign: dies when given undefined data';
 # AoH: basic derivation, in-place return, chaining, originals preserved
 {
 	my $aoh = [

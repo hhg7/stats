@@ -4,18 +4,19 @@ require 5.010;
 use strict;
 use feature 'say';
 package Stats::LikeR;
-our $VERSION = 0.20;
+our $VERSION = 0.21;
 require XSLoader;
 use warnings FATAL => 'all';
 use autodie ':default';
 use Exporter 'import';
 use Scalar::Util qw(reftype looks_like_number);
 XSLoader::load('Stats::LikeR', $VERSION);
-our @EXPORT_OK = qw(add_data anova aoh2hoa aoh2hoh aov assign binom_test cfilter chisq_test chunk col col2col cor cor_test cov csort dnorm dropna filter fisher_test get_union get_unique glm group_by hoa2aoh hoa2hoh hoh2hoa hist intersection is_equivalent kruskal_test ks_test Lonly ljoin lm matrix max mean median min mode ncol nrow oneway_test p_adjust pnorm power_t_test predict prcomp ptukey qcut qtukey quantile Ronly rbinom read_table rnorm runif sample scale sd seq shapiro_test sum summary t_test transpose TukeyHSD uniq vals value_counts var var_test view wilcox_test write_table);
+our @EXPORT_OK = qw(add_data agg anova aoh2hoa aoh2hoh aov assign binom_test cfilter chisq_test chunk col col2col concat cor cor_test cov csort dnorm dropna filter fisher_test get_union get_unique glm group_by hoa2aoh hoa2hoh hoh2hoa hist intersection is_equivalent kruskal_test ks_test Lonly ljoin lm matrix max mean median min mode ncol nrow oneway_test p_adjust pnorm power_t_test predict prcomp ptukey qcut qtukey quantile Ronly rbind rbinom read_table rnorm runif sample scale sd seq shapiro_test sum summary t_test transpose TukeyHSD uniq vals value_counts var var_test view wilcox_test write_table);
 our @EXPORT = @EXPORT_OK;
 
 sub aoh2hoh {
 	my ($aoh, $key) = @_;
+	die 'aoh2hoh: first argument is undefined' unless defined $aoh;
 	die 'aoh2hoh: first argument must be an arrayref of hashrefs'
 	  unless ref($aoh) eq 'ARRAY';
 	die 'aoh2hoh: a row key must be defined' unless defined $key;
@@ -32,6 +33,282 @@ sub aoh2hoh {
 	}
 	return \%out;
 }
+# =======================================================================
+# agg / concat / rbind  --  additions to lib/Stats/LikeR.pm
+# Splice these in after the dropna sub. Also add  agg concat rbind  to
+# @EXPORT_OK. rbind is a true glob-alias synonym for concat.
+# =======================================================================
+
+sub _df_shape {
+	my ($df, $caller) = @_;
+	$caller = 'data frame' unless defined $caller;
+	die "$caller: data frame must be an ARRAY (AoA/AoH) or HASH (HoA/HoH) ref\n"
+		unless ref $df;
+	if (ref $df eq 'ARRAY') {
+		for my $e (@$df) {
+			next unless defined $e;
+			return 'AoA' if ref $e eq 'ARRAY';
+			return 'AoH' if ref $e eq 'HASH';
+			die "$caller: array elements must be ARRAY (AoA) or HASH (AoH) refs\n";
+		}
+		return 'AoH';                         # empty -> harmless default
+	}
+	# HASH: HoA vs HoH, rejecting a mix
+	my ($saw_arr, $saw_hash) = (0, 0);
+	for my $v (values %$df) {
+		next unless ref $v;
+		$saw_arr++  if ref $v eq 'ARRAY';
+		$saw_hash++ if ref $v eq 'HASH';
+	}
+	die "$caller: hashref mixes array and hash values (ambiguous HoA/HoH)\n"
+		if $saw_arr and $saw_hash;
+	return 'HoH' if $saw_hash;
+	return 'HoA';                             # arrays, or empty -> default
+}
+
+# ---------------------------------------------------------------------------
+# agg($df, agg => { col => 'mean' | [ 'mean', 'sd', .. ] | \&code, .. }, %opts)
+#
+# Split-apply-combine over any of the four data-frame shapes.  With `by` it is
+# the combine half of group_by (which only splits); without `by` it collapses
+# the whole frame to a single row, like pandas df.agg(...).
+#
+# $df   : AoA | AoH | HoA | HoH.  For AoA the column identifiers in `by` and in
+#         the `agg` spec are integer positions; for the other three they are
+#         column names.
+#
+# OPTIONS
+#   agg  => { col => spec, .. }   REQUIRED.  spec is one aggregator name, an
+#           arrayref of names, or a coderef.  Named aggregators:
+#             mean median sum sd var min max  (numeric; call the XS functions)
+#             count    number of defined (non-undef) cells
+#             n        number of cells, undef included
+#             nunique  number of distinct defined cells
+#             first    first defined cell   (undef if none)
+#             last     last  defined cell   (undef if none)
+#             mode     modal defined cell; ties resolved deterministically
+#                      (smallest number, else lowest string)
+#           A coderef is called as $code->(\@cells) with every cell for that
+#           column in the group (undef included) and must return one scalar.
+#   by   => $col | \@cols         optional grouping column(s).
+#   skipna => 0|1                 default 1.  When 0, a numeric named aggregator
+#           (mean median sum sd var mode) over a group that contains any undef
+#           yields undef, matching pandas skipna=False; count/n/nunique/first/
+#           last always ignore this flag.
+#   sort => 0|1                   default 1.  Sort output groups by key
+#           (numeric if every key looks like a number, else string); 0 keeps
+#           first-seen order.
+#   'output.type' => aoa|aoh|hoa|hoh    default: same family as $df.
+#
+# OUTPUT COLUMN ORDER is deterministic: the `by` columns in the given order,
+# then the aggregated columns sorted (numerically for AoA integer columns, else
+# as strings), each expanded over its aggregator list in the order supplied.  A
+# column reduced by a single aggregator keeps its own name; with two or more it
+# becomes "<col>_<func>" (e.g. age_mean, age_sd).  For hoh output the row label
+# is the group value (multiple `by` columns joined with '.'), 'all' when there
+# is no grouping, and made unique with a .N suffix on collision.
+#
+# Numeric aggregators need enough defined cells or the cell is undef: mean /
+# median / sum / min / max need >= 1, sd / var need >= 2.  The original $df is
+# never modified.
+# ---------------------------------------------------------------------------
+{
+	my %AGG_MIN = (          # minimum defined count for the XS numeric reducers
+		mean => 1, median => 1, sum => 1, min => 1, max => 1,
+		sd   => 2, var    => 2,
+	);
+	my %AGG_NUMERIC = map { $_ => 1 } qw(mean median sum sd var mode);
+
+	sub _agg_reduce {
+		my ($func, $raw, $def, $skipna) = @_;   # $raw, $def: arrayrefs (def excl. undef)
+		return $func->($raw) if ref $func eq 'CODE';
+		# NA policy for numeric reducers when the caller asked for skipna => 0
+		return undef if !$skipna && $AGG_NUMERIC{$func} && @$def != @$raw;
+		if ($func eq 'count')   { return scalar @$def }
+		if ($func eq 'n')       { return scalar @$raw }
+		if ($func eq 'nunique') { my %s; @s{ @$def } = (); return scalar keys %s }
+		if ($func eq 'first')   { return @$def ? $def->[0]  : undef }
+		if ($func eq 'last')    { return @$def ? $def->[-1] : undef }
+		if ($func eq 'mode') {
+			return undef unless @$def;
+			my @m = mode($def);
+			return (grep { !looks_like_number($_) } @m)
+				? (sort @m)[0]
+				: (sort { $a <=> $b } @m)[0];
+		}
+		die "agg: unknown aggregator '$func'\n" unless exists $AGG_MIN{$func};
+		return undef if @$def < $AGG_MIN{$func};
+		return mean($def)   if $func eq 'mean';
+		return median($def) if $func eq 'median';
+		return sum($def)    if $func eq 'sum';
+		return sd($def)     if $func eq 'sd';
+		return var($def)    if $func eq 'var';
+		return min($def)    if $func eq 'min';
+		return max($def)    if $func eq 'max';
+	}
+
+	sub agg {
+		my $df = shift;
+		die 'agg: undefined data in first position' unless defined $df;
+		my $shape = _df_shape($df, 'agg');
+		die "agg: arguments after the data frame must be name => value pairs\n"
+			if @_ % 2;
+		my %arg = @_;
+		my %known = ( agg => 1, by => 1, skipna => 1, sort => 1, 'output.type' => 1 );
+		my @bad = sort grep { !$known{$_} } keys %arg;
+		die "agg: unknown argument(s): @bad\n" if @bad;
+
+		my $spec = $arg{agg};
+		die "agg: an 'agg' spec (hashref of column => aggregator) is required\n"
+			unless ref $spec eq 'HASH' and %$spec;
+
+		my @by = !defined $arg{by}          ? ()
+		       : ref $arg{by} eq 'ARRAY'    ? @{ $arg{by} }
+		       :                              ( $arg{by} );
+		my $skipna = exists $arg{skipna} ? ($arg{skipna} ? 1 : 0) : 1;
+		my $dosort = exists $arg{sort}   ? ($arg{sort}   ? 1 : 0) : 1;
+		my $otype  = defined $arg{'output.type'} ? lc $arg{'output.type'}
+		           : lc $shape;
+		my %ok_otype = ( aoa => 1, aoh => 1, hoa => 1, hoh => 1 );
+		die "agg: output.type '$otype' isn't allowed (aoa, aoh, hoa, hoh)\n"
+			unless $ok_otype{$otype};
+
+		# columns actually needed (grouping + aggregated), classified once ---
+		my @agg_cols = keys %$spec;
+		{
+			my $all_num = !grep { !looks_like_number($_) } @agg_cols;
+			@agg_cols = $all_num ? sort { $a <=> $b } @agg_cols : sort @agg_cols;
+		}
+		my %need; $need{$_} = 1 for @by, @agg_cols;
+
+		# extract each needed column ONCE, aligned to row positions 0 .. R-1.
+		# access is specialised per shape (no per-cell closure); for HoA the
+		# columns already are arrays, so they are aliased rather than rebuilt.
+		my (%col, $R);
+		if ($shape eq 'AoA') {
+			my @h = grep { defined } @$df;
+			$R = scalar @h;
+			for my $c (keys %need) { $col{$c} = [ map { $_->[$c] } @h ] }
+		} elsif ($shape eq 'AoH') {
+			my @h = grep { defined } @$df;
+			$R = scalar @h;
+			for my $c (keys %need) { $col{$c} = [ map { $_->{$c} } @h ] }
+		} elsif ($shape eq 'HoA') {
+			$R = 0;
+			for my $v (values %$df) { $R = @$v if ref $v eq 'ARRAY' && @$v > $R }
+			for my $c (keys %need) {
+				$col{$c} = ref $df->{$c} eq 'ARRAY' ? $df->{$c} : [];
+			}
+		} else { # HoH
+			my @h = map { $df->{$_} } sort keys %$df;
+			$R = scalar @h;
+			for my $c (keys %need) { $col{$c} = [ map { $_->{$c} } @h ] }
+		}
+
+		# split row indices into groups, preserving first-seen order --------
+		my (%group, @order, %repr);
+		my $one = @by == 1 ? $by[0] : undef;   # single-key fast path
+		for (my $i = 0; $i < $R; $i++) {
+			my $key;
+			if (!@by) {
+				$key = "\0all";
+			} elsif (defined $one) {
+				my $v = $col{$one}[$i];
+				$key = defined $v ? "v$v" : "\0";
+			} else {
+				$key = join "\x1e",
+					map { my $v = $col{$_}[$i]; defined $v ? "v$v" : "\0" } @by;
+			}
+			my $g = $group{$key};
+			unless ($g) {
+				$group{$key} = $g = [];
+				push @order, $key;
+				$repr{$key} = [ map { $col{$_}[$i] } @by ];
+			}
+			push @$g, $i;
+		}
+		if ($dosort && @by) {                  # sort by the group value(s)
+			my $all_num = 1;
+			SORTNUM: for my $k (@order) {
+				for my $v (@{ $repr{$k} }) {
+					unless (defined $v && looks_like_number($v)) { $all_num = 0; last SORTNUM }
+				}
+			}
+			if ($all_num) {
+				@order = sort {
+					my ($ra, $rb) = ($repr{$a}, $repr{$b});
+					my $c = 0;
+					for my $j (0 .. $#$ra) { last if $c = $ra->[$j] <=> $rb->[$j] }
+					$c;
+				} @order;
+			} else {
+				@order = sort {
+					my ($ra, $rb) = ($repr{$a}, $repr{$b});
+					my $c = 0;
+					for my $j (0 .. $#$ra) {
+						my $x = defined $ra->[$j] ? $ra->[$j] : '';
+						my $y = defined $rb->[$j] ? $rb->[$j] : '';
+						last if $c = $x cmp $y;
+					}
+					$c;
+				} @order;
+			}
+		}
+
+# output plan: by-columns pass through, then each agg column with its
+# aggregator list contiguous.  A single aggregator keeps the column
+# name; two or more become "<col>_<func>".
+		my @agg_plan; # [ col, [funcs], [out_names] ]
+		for my $c (@agg_cols) {
+			my $s = $spec->{$c};
+			my @funcs = ref $s eq 'ARRAY' ? @$s : ($s);
+			die "agg: empty aggregator list for column '$c'\n" unless @funcs;
+			my $multi = @funcs > 1;
+			my @names = map {
+				my $l = ref $_ eq 'CODE' ? 'fn' : $_;
+				$multi ? "${c}_${l}" : $c;
+			} @funcs;
+			push @agg_plan, [ $c, \@funcs, \@names ];
+		}
+		my @out_names = ( @by, map { @{ $_->[2] } } @agg_plan );
+
+# combine + materialise straight into the requested shape -----------
+		my (@aoa_rows, @aoh_rows, %hoa, %hoh, %seen);
+		if ($otype eq 'hoa') { $hoa{$_} = [] for @out_names }
+
+		for my $key (@order) {
+			my $idx = $group{$key};
+			my @vals = @{ $repr{$key} };            # by-column values, in order
+			for my $ap (@agg_plan) {
+				my ($c, $funcs, undef) = @$ap;
+				my @raw = @{ $col{$c} }[ @$idx ];   # one slice, shared by all funcs
+				my @def = grep { defined } @raw;
+				push @vals, _agg_reduce($_, \@raw, \@def, $skipna) for @$funcs;
+			}
+			if ($otype eq 'aoa') {
+				push @aoa_rows, \@vals;
+			} elsif ($otype eq 'aoh') {
+				my %h; @h{ @out_names } = @vals; push @aoh_rows, \%h;
+			} elsif ($otype eq 'hoa') {
+				push @{ $hoa{ $out_names[$_] } }, $vals[$_] for 0 .. $#out_names;
+			} else { # hoh
+				my $label = @by
+					? join('.', map { defined $_ ? $_ : '' } @{ $repr{$key} })
+					: 'all';
+				my $uniq = $label; my $j = 0;
+				while (exists $seen{$uniq}) { $uniq = $label . '.' . (++$j) }
+				$seen{$uniq} = 1;
+				my %h; @h{ @out_names } = @vals; $hoh{$uniq} = \%h;
+			}
+		}
+		return \@aoa_rows if $otype eq 'aoa';
+		return \@aoh_rows if $otype eq 'aoh';
+		return \%hoa      if $otype eq 'hoa';
+		return \%hoh;
+	}
+}
+
+
 # assign($df, name => \&code, name2 => \&code2, ...)
 #
 # Add (or overwrite) columns derived from existing ones, dplyr-mutate style.
@@ -48,8 +325,10 @@ sub aoh2hoh {
 # Modifies $df in place (lowest RAM/CPU) and returns it for chaining.
 # To keep the original intact, hand it a copy: assign(clone($df), ...).
 #
+
 sub assign {
 	my $df = shift;
+	die 'assign: first argument is undefined' unless defined $df;
 	die 'assign: first argument must be a data frame (AoH arrayref or HoA/HoH hashref)'
 	  unless ref $df;
 	die 'assign: expected an even list of (name => coderef) pairs' if @_ % 2;
@@ -264,6 +543,117 @@ sub col { Stats::LikeR::col::_new(@_) }
 	}
 }
 
+# ---------------------------------------------------------------------------
+# concat(@frames)   /   rbind(@frames)   -- row-bind data frames (pandas concat
+# axis=0, R rbind).  rbind is a true synonym (same subroutine).
+#
+# Every frame must be the same shape (AoA/AoH/HoA/HoH); a mix dies with a hint
+# to convert first (aoh2hoa, hoa2aoh, hoh2hoa, aoh2hoh).  undef frames and
+# empty frames are skipped, and shape is taken from the first non-empty frame;
+# passing nothing usable dies.  A NEW top-level frame of that shape is returned;
+# the original frames are never modified.
+#
+#   AoA  outer arrays concatenated in order (row arrayrefs reused by ref).
+#        Ragged rows are kept as-is; a short row reads undef past its end.
+#   AoH  rows concatenated in order (row hashrefs reused by ref).  The result is
+#        the union of columns; a column absent from a given row reads undef,
+#        matching this library's "missing key == undef" convention (dropna,
+#        view, summary).
+#   HoA  union of columns (sorted for a deterministic layout).  Each column is
+#        the per-frame arrays joined in frame order; a frame lacking a column,
+#        or a ragged short column, is padded with undef so every column ends up
+#        the same length (= total rows).
+#   HoH  outer hashes merged in frame order (inner row hashrefs reused by ref).
+#        Because a Perl hash cannot hold duplicate keys, a repeated row name is
+#        made unique R-style (name, name.1, name.2, ...) and a single warning is
+#        emitted noting that row names collided.
+# ---------------------------------------------------------------------------
+sub concat {
+	my @frames = grep { defined } @_;
+	die "concat: needs at least one data frame\n" unless @frames;
+
+	# reference shape = first non-empty frame; remember a fallback for all-empty
+	my $ref_shape;
+	for my $f (@frames) {
+		my $nonempty = ref $f eq 'ARRAY' ? scalar(@$f)
+		             : ref $f eq 'HASH'  ? scalar(keys %$f)
+		             : die "concat: every frame must be an ARRAY or HASH ref\n";
+		next unless $nonempty;
+		$ref_shape = _df_shape($f, 'concat');
+		last;
+	}
+	unless (defined $ref_shape) {           # all frames empty
+		return ref $frames[0] eq 'ARRAY' ? [] : {};
+	}
+	# all non-empty frames must agree
+	for my $f (@frames) {
+		my $nonempty = ref $f eq 'ARRAY' ? scalar(@$f) : scalar(keys %$f);
+		next unless $nonempty;
+		my $s = _df_shape($f, 'concat');
+		die "concat: cannot mix a $s frame with a $ref_shape frame; "
+		  . "convert them to one shape first (aoh2hoa, hoa2aoh, hoh2hoa, aoh2hoh)\n"
+			if $s ne $ref_shape;
+	}
+
+	if ($ref_shape eq 'AoA') {
+		my @out;
+		for my $f (@frames) {
+			for my $row (@$f) {
+				die "concat: AoA row is not an ARRAY ref\n" unless ref $row eq 'ARRAY';
+				push @out, $row;
+			}
+		}
+		return \@out;
+	}
+	if ($ref_shape eq 'AoH') {
+		my @out;
+		for my $f (@frames) {
+			for my $row (@$f) {
+				die "concat: AoH row is not a HASH ref\n" unless ref $row eq 'HASH';
+				push @out, $row;
+			}
+		}
+		return \@out;
+	}
+	if ($ref_shape eq 'HoA') {
+		my (@cols, %seen);                  # union of columns, sorted
+		for my $f (@frames) { $seen{$_} = 1 for keys %$f }
+		@cols = sort keys %seen;
+		my %out = map { $_ => [] } @cols;
+		for my $f (@frames) {
+			my $n = 0;
+			for my $c (keys %$f) {
+				$n = @{ $f->{$c} } if ref $f->{$c} eq 'ARRAY' && @{ $f->{$c} } > $n;
+			}
+			for my $c (@cols) {
+				if (ref $f->{$c} eq 'ARRAY') {
+					push @{ $out{$c} }, @{ $f->{$c} };
+					push @{ $out{$c} }, (undef) x ($n - @{ $f->{$c} })
+						if @{ $f->{$c} } < $n;   # ragged short column
+				} else {
+					push @{ $out{$c} }, (undef) x $n; # column absent in this frame
+				}
+			}
+		}
+		return \%out;
+	}
+	# HoH
+	my (%out, $collided);
+	for my $f (@frames) {
+		for my $rk (sort keys %$f) {
+			die "concat: HoH row '$rk' is not a HASH ref\n"
+				unless ref $f->{$rk} eq 'HASH';
+			my $label = $rk;
+			my $j = 0;
+			while (exists $out{$label}) { $collided = 1; $label = $rk . '.' . (++$j) }
+			$out{$label} = $f->{$rk};       # reuse the row ref
+		}
+	}
+	warn "concat: duplicate HoH row name(s) made unique with a .N suffix\n"
+		if $collided;
+	return \%out;
+}
+{ no warnings 'once'; *rbind = \&concat; }  # true synonym
 #
 # dropna($df, cols => \@cols, how => 'any'|'all')	# NA mode
 # dropna($df, rows => \@rows)						 # literal deletion
@@ -288,6 +678,7 @@ sub col { Stats::LikeR::col::_new(@_) }
 #
 sub dropna {
 	my $df = shift;
+	die 'dropna: first argument is undefined' unless defined $df;
 	die "dropna: first argument must be a data frame (HoA/HoH hashref or AoH arrayref)\n"
 		unless ref $df;
 	die "dropna: arguments after the data frame must be name => value pairs\n"
@@ -654,7 +1045,6 @@ HELP
 sub summary {
 	my ($data, %args);
 	my $current_sub = (split(/::/,(caller(0))[3]))[-1];
-
 	if (@_ && ref $_[0]) {
 	  # Handles: summary(\@arr) or summary(\@arr, nrows => 5) or summary(\%h, nrow => 3)
 	  $data = shift;
@@ -1646,6 +2036,158 @@ B<Resulting Structure strictly remains an Array of Hashes:>
  ]
 
 NB: If C<add_data> is called on a completely empty target reference (e.g., C<$data = {}> or C<$data = []>), it will intelligently infer the required inner structure (Hashes vs Arrays) by inspecting the first valid row of the source data.
+
+=head2 anova
+
+Sequential (Type-I) ANOVA table for a linear model, in the same shape C<aov>
+returns. C<anova> fits C<response ~ terms>, then decomposes the model sum of
+squares one term at a time, B<in formula order>, and F-tests each term
+against the residual mean square.
+
+ anova(
+ {
+     yield => [5.5, 5.4, 5.8, 4.5, 4.8, 4.2],
+     ctrl  => [1,     1,   1,   0,   0,   0]
+ },
+ 'yield ~ ctrl');
+
+returns
+
+ {
+     ctrl        {
+         Df          1,
+         "F value"   25.6000000000001,
+         "Mean Sq"   1.70666666666667,
+         "Pr(>F)"    0.00718232855871859,
+         "Sum Sq"    1.70666666666667
+     },
+     Residuals   {
+         Df          4,
+         "Mean Sq"   0.0666666666666665,
+         "Sum Sq"    0.266666666666666
+     }
+ }
+
+Two-way (and higher) models use the C<*> operator, which implicitly evaluates
+the main effects alongside the interaction (C<a * b> expands to C<a + b + a:b>;
+C<a * b * c> to the full factorial C<a + b + c + a:b + a:c + b:c + a:b:c>):
+
+ my $res_2way = anova($data_2way, 'len ~ supp * dose');
+
+Bare string columns are treated as factors and treatment-coded (first level =
+reference); numeric columns and C<I(x^2)> enter as single regressors. It is
+robust against rank deficiency: collinear terms gracefully receive 0 degrees
+of freedom and 0 sum of squares, matching R's behavior.
+
+=head3 Input Parameters
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>Parameter</th>
+  <th>Type</th>
+  <th>Default</th>
+  <th>Description</th>
+  <th>Example</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>data_sv</code></td>
+  <td><code>HashRef</code> or <code>ArrayRef</code></td>
+  <td><i>(Required)</i></td>
+  <td>The dataset. A Hash of Arrays (HoA, columns) or Array of Hashes (AoH, rows) — the same forms <code>aov</code>/<code>lm</code> accept.</td>
+  <td></td>
+</tr>
+<tr>
+  <td><code>formula_sv</code></td>
+  <td><code>String</code></td>
+  <td><i>(Required)</i></td>
+  <td>Symbolic model <code>'response ~ rhs'</code>, with <code>+</code>, <code>:</code> and <code>*</code>. Unlike <code>aov</code>, <code>anova</code> does <b>not</b> auto-stack, so a formula is mandatory.</td>
+  <td><code>'yield ~ N * P'</code></td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+=head3 Output Variables
+
+A single C<HashRef>; keys are the parsed term names, so the structure varies
+with the formula.
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>Parameter</th>
+  <th>Type</th>
+  <th>Description</th>
+  <th>Example</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><i>(Term Name)</i></td>
+  <td><code>HashRef</code></td>
+  <td>ANOVA-table stats for each term (<code>'ctrl'</code>, <code>'N:P'</code>, …). <code>'Mean Sq'</code>, <code>'F value'</code> and <code>'Pr(>F)'</code> are omitted for 0-df (aliased) terms.</td>
+  <td><code>{'Df'=>1,'Sum Sq'=>14.2,'Mean Sq'=>14.2,'F value'=>25.81,'Pr(>F)'=>0.0004}</code></td>
+</tr>
+<tr>
+  <td><code>Residuals</code></td>
+  <td><code>HashRef</code></td>
+  <td>Residual (error) statistics; never carries an F test.</td>
+  <td><code>{'Df'=>10,'Sum Sq'=>5.5,'Mean Sq'=>0.55}</code></td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+=head3 C<anova> vs C<aov> — what's the difference?
+
+For a B<single model they compute the identical Type-I table> — in R,
+C<anova(lm(f))> and C<summary(aov(f))> return the same sums of squares, and the
+same holds here (C<anova(\%d,'yield ~ ctrl')> reproduces the C<aov> table
+above exactly). The difference is one of role, not arithmetic:
+
+=over
+
+=item * B<< C<aov> is the model-I<fitting> idiom for designed experiments. >> It leans
+toward factors and balanced designs, and in this module it adds two
+conveniences C<anova> deliberately leaves out: it can B<auto-stack> a named
+list when you omit the formula (R's C<stack()> + C<Value ~ Group>), and it
+returns a C<group_stats> block of per-group means and counts alongside the
+table. Reach for C<aov> when your question is "do these treatment groups
+differ, and what do the groups look like?"
+
+=item * B<< C<anova> is the model-I<table> idiom. >> It always wants an explicit formula
+and returns just the decomposition — nothing descriptive. Reach for it when
+you already have a model in mind and only want its term-by-term SS /
+F-tests, or when you want the leaner object to feed onward.
+
+=back
+
+In short: same numbers for one model; C<aov> is the richer "fit + describe"
+call (and the only one that stacks), C<anova> is the minimal "give me the
+table" call. Note that both are B<Type-I / sequential>, so term order in the
+formula matters, and both share this module's C<pf>, so p-values agree with
+C<oneway_test> and the rest of Stats::LikeR.
+
+I<< (R's C<anova> generic can additionally compare several nested models,
+C<anova(m1, m2)>, giving an F/LRT between them — a capability neither this
+C<anova> nor C<aov> currently provides. Ask if that would be useful.) >>
 
 =head2 aoh2hoa
 
@@ -2772,77 +3314,131 @@ or
 
 =head2 csort
 
-Sort a table by a column or by a custom comparator. Works on both common Perl table shapes and can transpose between them on the way out. Stable, non-destructive.
-
-=head3 Signature
+Sort a data frame by a column or a custom comparator, returning a new
+(sorted) copy. The input is never mutated.
 
  my $sorted = csort($data, $by);
- my $sorted = csort($data, $by, $output);
+ my $sorted = csort($data, $by, $output_shape);
+ my $sorted = csort($hoh,  $by, 'aoh', 'row.name');   # HoH only
 
-=over
+C<$data> may be any of four shapes:
 
-=item * B<< C<$data> >> — your table, in either shape:
+ AoH   array-of-hashes    [ { col => val, ... }, ... ]   columns are hash keys
+ HoA   hash-of-arrays      { col => [ val, ... ], ... }   columns are hash keys
+ HoH   hash-of-hashes      { rowname => { col => val }, ... }
+ AoA   array-of-arrays    [ [ val, ... ], ... ]           columns are integer indices
 
-=over
+The shape is detected automatically. An array-ref whose first row is
+itself an array-ref is treated as an AoA; otherwise an array-ref is an
+AoH. A hash-ref whose first value is a hash-ref is a HoH (its outer keys
+are folded into a row-name column, see below); any other hash-ref is a
+HoA.
 
-=item * B<AoH> — arrayref of hashrefs (a list of rows): C<< [ {id=E<gt>1, v=E<gt>10}, {id=E<gt>2, v=E<gt>20} ] >>
+C<$by> selects the sort key:
 
-=item * B<HoA> — hashref of arrayrefs (parallel columns): C<< { id=E<gt>[1,2], v=E<gt>[10,20] } >>
+ 'No.'                          # a column: name (AoH/HoA/HoH) or integer index (AoA)
+ 2                              # AoA: sort by column index 2
+ sub { $a->{'No.'} <=> $b->{'No.'} }   # comparator; $a/$b are the rows
 
-=back
+For a column sort the values are compared numerically when every present
+value looks like a number, and with string C<cmp> otherwise. For a
+comparator, C<$a> and C<$b> are the row references (a hash-ref for
+AoH/HoA/HoH, an array-ref for AoA), exactly as with Perl's own C<sort>.
 
-=item * B<< C<$by> >> — I<how> to sort:
+=head3 Sorting an AoA
 
-=over
+Columns in an AoA are addressed by non-negative integer index:
 
-=item * a B<column name> (string), or
-
-=item * a B<comparator> coderef using C<$a> / C<$b>, just like Perl's C<sort>
-
-=back
-
-=item * B<< C<$output> >> I<(optional)> — C<'aoh'> or C<'hoa'> (case-insensitive). Defaults to the input shape; C<undef> also means "same as input".
-
-=back
-
-Returns a B<new> structure. The input is never modified.
-
-=head3 What it does
-
-=over
-
-=item * B<Column-name sort> — numeric if every defined value in that column looks like a number, otherwise string comparison. Missing / C<undef> values sort B<last> (matching R's C<na.last>).
-
-=item * B<Comparator sort> — C<$a> and C<$b> are set in the comparator's I<own> package, so a named sub from another package still sees its own C<$a>/C<$b>. For AoH they're the row hashrefs; for HoA they're per-row hashref views synthesized from the columns.
-
-=item * B<Stable> — equal keys keep their original order (merge sort, same as Perl C<sort> and R C<order()>).
-
-=item * B<Shape control> — keep the input shape, or transpose: AoH→HoA builds the union of all row keys (ordered by first appearance, gaps filled with C<undef>); HoA→AoH emits one hashref per row.
-
-=back
-
-=head3 Examples
-
- # by column, ascending numeric, AoH in / AoH out
- my $rows = csort($aoh, 'score');
+ my $rows = [
+     [ 3, 30, 'gamma' ],
+     [ 1, 10, 'alpha' ],
+     [ 2, 20, 'beta'  ],
+ ];
  
- # custom comparator (descending), HoA in / HoA out
- my $cols = csort($hoa, sub { $b->{score} <=> $a->{score} });
- 
- # sort an AoH but hand it back as columns (HoA)
- my $cols = csort($aoh, 'name', 'hoa');
+ my $s = csort($rows, 0);       # by column 0 -> id 1, 2, 3
+ my $s = csort($rows, 2);       # by column 2 -> alpha, beta, gamma
+ my $s = csort($rows, sub { $b->[1] <=> $a->[1] });   # by column 1, descending
 
-=head3 Notes
+The result reuses the original row array-refs (a reorder, not a deep
+copy), so it is cheap and the caller's data is left untouched. A
+non-integer or negative index croaks; an index no row contains is
+reported as a missing column.
+
+=head3 Undefined and missing values
+
+Undefined or missing cells always sort to the end. A "missing" cell is a
+row that lacks the key (AoH/HoH) or is shorter than the index (AoA); it
+is treated the same as an explicit C<undef>. Defined values are ordered
+first (ascending, or per the comparison type), undef/missing last, and
+undef rows keep their original relative order.
+
+ my $rows = [
+     [ 1, 5 ],
+     [ 2 ],           # no column 1
+     [ 3, undef ],
+     [ 4, 1 ],
+ ];
+ my $s = csort($rows, 1);       # column-0 order: 4, 1, 2, 3
+
+This holds for every shape, for numeric and string columns, and for
+B<both> a column/index sort and a comparator sort:
+
+ # no need to guard undef yourself -- this does not warn or die,
+ # even under  use warnings FATAL => 'all'
+ my $s = csort($df, sub { $a->{'tau p'} <=> $b->{'tau p'} }, 'hoa');
+
+For a comparator, csort can't see which field you key on, so it probes
+each row once (comparing the row to itself) to find rows whose comparator
+would read an C<undef>; those rows are moved to the end and the rest are
+sorted normally, so your comparator never sees an C<undef>. A few
+consequences worth knowing:
 
 =over
 
-=item * B<Non-destructive:> AoH output reuses the original row hashrefs (re-ordered); HoA output permutes every column in lockstep.
+=item * If your comparator reads several keys (a tie-break), a row is treated as
+undef-keyed when I<any> key the comparator actually evaluates for that
+row is undef. Such rows go to the bottom.
 
-=item * Empty and single-row tables are handled for all four in/out combinations.
+=item * A comparator that handles undef itself (e.g. C<< $a-E<gt>{v} // 0 >>) never trips
+the probe, so csort leaves its ordering completely alone.
 
-=item * An invalid C<$output> value croaks.
+=item * A comparator that dies for a real reason still propagates that error
+unchanged.
+
+=item * The probe calls your comparator once per row, so keep comparators free
+of side effects (they should be anyway).
 
 =back
+
+=head3 Choosing the output shape
+
+The optional third argument picks the returned shape, one of C<'aoh'>,
+C<'hoa'>, or C<'aoa'> (case-insensitive). It defaults to the input shape
+(HoH defaults to AoH). Any shape can be converted to any other:
+
+ csort($aoa, 0)               # AoA -> AoA (default)
+ csort($aoa, 0, 'hoa')        # AoA -> HoA
+ csort($aoh, 'No.', 'aoa')    # AoH -> AoA
+
+When the target is AoH or HoA, an AoA's columns are keyed by their
+stringified index (C<'0'>, C<'1'>, ...). When the target is AoA, the
+positional column order is deterministic:
+
+ from HoA   sorted column-key name
+ from AoH   union of the rows' keys, sorted by name
+ from AoA   integer index 0 .. widest-row-1 (ragged rows pad with undef)
+
+Because Perl randomizes hash iteration order, the sort of key names is
+what makes keyed-to-AoA conversions reproducible from run to run.
+
+=head3 Sorting a HoH
+
+For a HoH, each outer key is the row name. It is folded into a real
+column so it survives into the output; the column is named C<row.name> by
+default, overridable with a fourth argument:
+
+ my $s = csort($hoh, 'score', 'aoh');           # row name in 'row.name'
+ my $s = csort($hoh, 'score', 'aoh', 'sample'); # ... named 'sample' instead
 
 =head2 dnorm
 
@@ -2943,7 +3539,7 @@ C<filter> accepts a predicate in one of two forms:
 
 =item 1. a B<< C<col()> expression >> — a small, composable comparison built with overloaded operators, and
 
-=item 2. a B<code reference> — for anything the operators can't express (multiple columns, regexes, arbitrary logic), in the same spirit as the C<filter> option of L<#>.
+=item 2. a B<code reference> — for anything the operators can't express (multiple columns, regexes, matching on the row name, arbitrary logic), in the same spirit as the C<filter> option of L<#>.
 
 =back
 
@@ -2972,7 +3568,7 @@ Both C<filter> and C<col> are exported by default.
 <tr>
   <td>2</td>
   <td>predicate</td>
-  <td>A <code>col()</code> comparison object <b>or</b> a <code>CODE</code> reference.</td>
+  <td>A <code>col()</code> comparison object <b>or</b> a <code>CODE</code> reference. A coderef receives the row as <code>$_</code> / <code>$_[0]</code> and the row identifier as <code>$_[1]</code> (see below).</td>
 </tr>
 <tr>
   <td>3 +</td>
@@ -3035,9 +3631,21 @@ Comparison operators bind more tightly than C<&> and C<|>, so C<< (col('a') E<gt
 
  > Note: C<< col('age') E<gt> 32 >> works because C<col('age')> is an object whose C<< E<gt> >> is overloaded. A B<bare string> cannot do this — C<< 'age' E<gt> 32 >> is computed by Perl to a plain boolean (the string numifies to 0) before C<filter> is ever called, so the column name is lost. Always wrap the column in C<col(...)>.
 
+ > C<col()> addresses B<columns only> — it has no handle on a HoH's row name (the outer key). It also cannot express a regex match: there is no C<=~> operator to overload, so C<col('name') =~ /re/> runs the match immediately on the stringified object and never reaches C<filter>. For either case, use the code-reference form below.
+
 =head3 The code-reference form
 
-For logic the operators can't express, pass a C<sub>. It is called once per row; the B<row is a hash reference>, available both as C<$_> and as the first argument C<$_[0]>. Return a true value to keep the row.
+For logic the operators can't express, pass a C<sub>. It is called once per row and is given:
+
+=over
+
+=item * the B<row> as a hash reference, available both as C<$_> and as the first argument C<$_[0]>, and
+
+=item * the B<row identifier> as the second argument, C<$_[1]> — the B<outer key (the row name)> for a HoH, or the B<0-based row index> for an AoH or HoA.
+
+=back
+
+Return a true value to keep the row.
 
  filter($df, sub { $_->{x} > 4 && $_->{grp} eq 'a' });
  filter($df, sub { $_->{name} =~ /^A/ });
@@ -3045,6 +3653,22 @@ For logic the operators can't express, pass a C<sub>. It is called once per row;
  filter($df, sub { $_[0]{score} > $_[0]{threshold} });
 
 For a HoA, each row is assembled into a temporary C<< { column =E<gt> value, ... } >> hash before the sub (or the C<col()> test) is called, so the same C<< $_-E<gt>{column} >> syntax works regardless of the input shape.
+
+=head4 Filtering on the row name (C<$_[1]>)
+
+In a HoH the row name is the B<outer key>, not a field inside each row hash — so C<< $_-E<gt>{row_name} >> is C<undef>. Match on C<$_[1]> instead:
+
+ # HoH keyed by structure id; keep the rows named in @ids
+ my $grps = join '|', @ids;
+ my $keep = filter($score, sub { $_[1] =~ m/^(?:$grps)$/ });
+ 
+ # combine the row name with an ordinary column test
+ filter($score, sub { $_[1] =~ /^1/ && $_->{anomaly_rank} < 100 });
+
+For an AoH or HoA, C<$_[1]> is the 0-based row index:
+
+ filter($aoh, sub { $_[1] % 2 == 0 });   # keep even-indexed rows
+ filter($hoa, sub { $_[1] < 10 });        # keep the first ten rows
 
 =head3 Choosing the output shape
 
@@ -3073,6 +3697,10 @@ The two selectable output types are C<'aoh'> and C<'hoa'>. C<'hoh'> is B<not> se
  my $hoh = read_table('patients.csv', 'output.type' => 'hoh');
  my $keep = filter($hoh, col('Age') > 32);
  
+ # hash of hashes: filter on the row name (the outer key) via $_[1]
+ my $grps    = join '|', qw(1cka 1d4t);
+ my $by_name = filter($hoh, sub { $_[1] =~ m/^(?:$grps)$/ });
+ 
  # convert shape while filtering
  my $as_hoa = filter($df, col('Age') > 32, 'output.type' => 'hoa');
 
@@ -3081,6 +3709,8 @@ The two selectable output types are C<'aoh'> and C<'hoa'>. C<'hoh'> is B<not> se
 =over
 
 =item * B<The input is never modified.> C<filter> builds and returns a new frame; C<$df> is left untouched.
+
+=item * B<< The predicate receives the row identifier as C<$_[1]>. >> For a HoH it is the outer key (the row name); for an AoH or HoA it is the 0-based row index. In a HoH the row name lives in the I<key>, not inside each row hash, so C<< $_-E<gt>{row_name} >> is C<undef> — filter on C<$_[1]> instead. C<col()> expressions see only columns, never the row key.
 
 =item * B<< A missing or C<undef> cell never matches a C<col()> comparison. >> C<< col('x') E<gt> 0 >> silently drops any row whose C<x> is absent or C<undef>; for numeric operators a non-numeric cell is likewise dropped. With a coderef, C<undef> is whatever your sub makes of it.
 
@@ -3655,6 +4285,67 @@ offending position:
 This matches the undef-handling of C<mean> and C<uniq> and the rest of the
 numeric reducers in Stats::LikeR.
 
+=head2 is_equivalent
+
+C<is_equivalent(\@a, \@b, ...)> returns B<1> if every list holds the same
+I<set> of distinct values, and B<0> otherwise. Order and duplicates don't
+count — only which values are present.
+
+Think of each list as a bag, dump each bag into its own set, and ask: are all
+the sets identical?
+
+ is_equivalent([1,2,3], [3,2,1])     # 1  same values, different order
+ is_equivalent([1,1,2], [2,1])       # 1  duplicates ignored
+ is_equivalent([1,2,3], [1,2])       # 0  right is missing 3
+ is_equivalent([1,2],   [1,2,3])     # 0  right has an extra 4
+ is_equivalent([1,2], [2,1], [1,2])  # 1  works for any number of lists
+
+It generalises C<List::Compare>'s C<is_LequivalentR()> from two lists to N.
+
+=head3 How it decides
+
+Equivalence is transitive: if every list equals the first list, they all equal
+each other. So the check is simple — build the distinct-value set of the
+B<first> list, then hold each other list up against it. A list matches when:
+
+=over
+
+=item 1. it contains B<no value outside> the first set, and
+
+=item 2. it B<covers every value> in the first set.
+
+=back
+
+Fail either test for any list and the answer is 0.
+
+=head3 Edge cases
+
+ is_equivalent([], [])        # 1  two empty sets are equal
+ is_equivalent([], [1])       # 0  empty vs non-empty
+ is_equivalent([1], [1], [1]) # 1
+
+Values are compared B<as strings> (like hash keys), so C<1> and C<"1"> are the
+same, but C<2> and C<"2.0"> are not.
+
+=head3 Rules
+
+=over
+
+=item * Pass B<at least two> array refs. Fewer croaks.
+
+=item * Every argument must be an B<array ref>; anything else croaks.
+
+=item * B<< C<undef> inside a list croaks >> — decide what a missing value means before
+calling, rather than letting it silently match.
+
+=back
+
+=head3 Why it's cheap
+
+One pass over each list. Memory is just the first list's set plus one small
+reusable set for de-duping the list currently being checked. A mismatch bails
+out immediately, so unequal lists are usually rejected quickly
+
 =head2 kruskal_test
 
 Essentially the test determines if all groups have the same median (same distribution) (an excellent review is at https://library.virginia.edu/data/articles/getting-started-with-the-kruskal-wallis-test)
@@ -3909,6 +4600,134 @@ Takes either an array or an array reference, and returns an array of the most co
  @arr = mode([1,3,3,3]); # returns (3)
  
  @arr = mode('a','a','c','c','z'); # returns ('a', 'c')
+
+=head2 ncol
+
+C<ncol($frame)> returns how many B<columns> a data frame has. Like C<nrow>, it
+works on all the Stats::LikeR frame shapes, so you don't have to remember which
+one you're holding:
+
+ ncol([ {a=>1,b=>2}, {a=>3,b=>4} ])   # 2   array of hashes  (AoH)
+ ncol([ [1,2,3], [4,5,6] ])           # 3   array of arrays  (AoA)
+ ncol({ a=>[1,2], b=>[3,4] })         # 2   hash of arrays   (HoA)
+ ncol({ r1=>{...}, r2=>{...} })       # 2   hash of hashes   (HoH)
+
+=head3 The one rule to remember
+
+A B<column> is one field of each record. Where the fields live depends on the
+shape:
+
+=over
+
+=item * B<Array of hashes> (AoH) — each row is a hash; the columns are its keys, so
+the count is how many keys a row has.
+
+=item * B<Array of arrays> (AoA) — each row is a list; the columns are its slots, so
+the count is how long a row is.
+
+=item * B<Hash of arrays> (HoA) — the keys I<are> the columns, so the count is the
+number of keys.
+
+=item * B<Hash of hashes> (HoH) — each value is a row hash; the columns are that
+hash's keys, so the count is how many keys a row has.
+
+=back
+
+A plain flat list (C<[1,2,3]>) is treated as a single column.
+
+=head3 Edge cases
+
+ ncol([])                    # 0
+ ncol({})                    # 0
+ ncol({ a=>[], b=>[] })      # 2
+
+Empty frames are 0 columns. Note the last one: a HoA still has its columns even
+when they hold no rows — the keys are the columns, rows or not.
+
+=head3 What it refuses to do
+
+C<ncol> would rather stop than hand back a wrong number:
+
+=over
+
+=item * B<Ragged frame> — if the rows disagree on how many columns they have (AoH,
+AoA, or HoH), there is no single column count, so it dies instead of guessing.
+
+=item * B<Junk input> — C<undef>, a plain scalar, a SCALAR/CODE/GLOB ref, or a hash
+whose values aren't all arrays (HoA) or all hashes (HoH) dies with a message
+saying what it got.
+
+=back
+
+Blessed frames are fine — it looks at the underlying array/hash, so your
+objects count just like plain refs.
+
+=head3 Speed
+
+Each count is a cheap read of a length or a key-count. The only extra work is a
+quick pass over the rows to confirm they agree on their width (and, for a hash
+frame, that its values are the shape they claim). No copies, no walking the
+data. It's pure Perl on purpose: there's nothing here fast enough to be worth
+doing in C.
+
+=head2 nrow
+
+C<nrow($frame)> returns how many B<rows> a data frame has. It works on all the
+Stats::LikeR frame shapes, so you don't have to remember which one you're
+holding:
+
+ nrow([ {a=>1}, {a=>2} ])          # 2   array of hashes  (AoH)
+ nrow([ [1,2,3], [4,5,6] ])        # 2   array of arrays  (AoA)
+ nrow({ a=>[1,2,3], b=>[4,5,6] })  # 3   hash of arrays   (HoA)
+ nrow({ r1=>{...}, r2=>{...} })    # 2   hash of hashes   (HoH)
+
+=head3 The one rule to remember
+
+A B<row> is one record. Where the records live depends on the shape:
+
+=over
+
+=item * B<Array on the outside> (AoH, AoA, or a plain list) — each top-level
+element is a row, so the count is just the array's length.
+
+=item * B<Hash of hashes> (HoH) — each key is a row, so the count is the number of
+keys.
+
+=item * B<Hash of arrays> (HoA) — the keys are I<columns>, not rows; the row count is
+how long those columns are.
+
+=back
+
+=head3 Edge cases
+
+ nrow([])   # 0
+ nrow({})   # 0
+
+Empty frames are 0 rows, whatever the shape.
+
+=head3 What it refuses to do
+
+C<nrow> would rather stop than hand back a wrong number:
+
+=over
+
+=item * B<Ragged HoA> — if the columns have different lengths there is no single row
+count, so it croaks instead of guessing.
+
+=item * B<Junk input> — C<undef>, a plain scalar, or a hash whose values aren't all
+arrays (HoA) or all hashes (HoH) croaks with a message saying what it got.
+
+=back
+
+Blessed frames are fine — it looks at the underlying array/hash, so your
+objects count just like plain refs.
+
+=head3 Speed
+
+Every count is a single cheap read of length or key-count — no walking the
+data, no copies. The only loop is a quick pass over HoA columns to confirm they
+line up. It's pure Perl on purpose: there's nothing here fast enough to be
+worth doing in C.
 
 =head2 oneway_test
 
@@ -4203,6 +5022,96 @@ It also allows configuring the test type (C<< type =E<gt> 'one.sample' >>, C<'tw
 =end html
 
 
+
+=head2 pnorm
+
+The normal cumulative distribution function: the probability that a normal random variable is C<< E<lt>= x >>. Ports R's C<pnorm>.
+That is, take the integral from negative infinity to the point that you want.
+
+ my $p = pnorm(1.96);            # 0.9750021  (standard normal, P(X <= 1.96))
+
+C<x> may be a single number or an array reference; an array reference returns an array reference of the same length.
+
+ my $ps = pnorm([-1.96, 0, 1.96]);   # [0.0249979, 0.5, 0.9750021]
+
+=head3 Arguments
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>Position</th>
+  <th>Name</th>
+  <th>Default</th>
+  <th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>1</td>
+  <td><code>x</code></td>
+  <td>—</td>
+  <td>A number, or an array reference of numbers.</td>
+</tr>
+<tr>
+  <td>2 +</td>
+  <td><code>mean</code></td>
+  <td><code>0</code></td>
+  <td>Mean of the distribution.</td>
+</tr>
+<tr>
+  <td></td>
+  <td><code>sd</code></td>
+  <td><code>1</code></td>
+  <td>Standard deviation.</td>
+</tr>
+<tr>
+  <td></td>
+  <td><code>lower</code></td>
+  <td><code>1</code> (true)</td>
+  <td><code>1</code> = lower tail <code>P(X <= x)</code>; <code>0</code> = upper tail <code>P(X > x)</code>. <code>'lower.tail'</code> is an accepted alias.</td>
+</tr>
+<tr>
+  <td></td>
+  <td><code>log</code></td>
+  <td><code>0</code> (false)</td>
+  <td>If true, return the log of the probability. <code>'log.p'</code> is an accepted alias.</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+=head3 Examples
+
+ pnorm(1.96);                    # lower tail:  0.9750021
+ pnorm(1.96, lower => 0);        # upper tail:  0.0249979
+ pnorm(1.96, log => 1);          # log lower tail: -0.02531565
+ pnorm(2, mean => 1, sd => 0.5); # standardizes to z = 2: 0.9772499
+
+Use C<< log =E<gt> 1 >> for tails that would otherwise underflow to C<0>:
+
+ pnorm(-40);           # 0  (underflows)
+ pnorm(-40, log => 1); # -804.6084
+
+=head3 Notes
+
+=over
+
+=item * C<< sd =E<gt> 0 >> gives a step at the mean: C<< x E<lt> mean >> returns C<0>, otherwise C<1>.
+
+=item * C<< sd E<lt> 0 >> returns C<NaN> and warns.
+
+=item * A C<NaN> input (or an C<undef> element of an array reference) yields C<NaN>.
+
+=item * C<+Inf> returns C<1>, C<-Inf> returns C<0>.
+
+=back
 
 =head2 prcomp
 
@@ -5259,7 +6168,7 @@ as well as a ratio (from R: the hypothesized ratio of the population variances o
 An R-style C<head> for the structures C<read_table> returns. Prints the first
 few rows of a dataframe as an aligned text table, with numeric columns
 right-justified, string columns left-justified, and undefined cells shown as
-C<NA>. Works on all three C<output.type> values:
+C<NA>.
 
 
 
@@ -5268,12 +6177,17 @@ C<NA>. Works on all three C<output.type> values:
 <table>
 <thead>
 <tr>
-  <th>`output.type`</th>
+  <th>Input type</th>
   <th>Perl structure</th>
   <th>What `view` shows</th>
 </tr>
 </thead>
 <tbody>
+<tr>
+  <td><code>aoa</code></td>
+  <td>array of array refs</td>
+  <td>values gathered column-wise by row index</td>
+</tr>
 <tr>
   <td><code>aoh</code></td>
   <td>array of hash refs</td>
@@ -5364,22 +6278,22 @@ All arguments after the data reference are optional name/value pairs.
 <tr>
   <td><code>na</code></td>
   <td><code>'NA'</code></td>
-  <td>Token printed for undefined cells.</td>
+  <td>Token printed for undefined cells</td>
 </tr>
 <tr>
   <td><code>max_width</code></td>
   <td><code>80</code></td>
-  <td>Truncate any cell wider than this (column names are never truncated).</td>
+  <td>Truncate any cell wider than this (column names are never truncated)</td>
 </tr>
 <tr>
   <td><code>ellipsis</code></td>
   <td><code>'...'</code></td>
-  <td>Marker appended to truncated cells.</td>
+  <td>Marker appended to truncated cells</td>
 </tr>
 <tr>
   <td><code>gap</code></td>
   <td><code>2</code></td>
-  <td>Spaces between columns.</td>
+  <td>Spaces between columns</td>
 </tr>
 <tr>
   <td><code>to</code></td>
@@ -5389,7 +6303,7 @@ All arguments after the data reference are optional name/value pairs.
 <tr>
   <td><code>return_only</code></td>
   <td><code>0</code></td>
-  <td>If true, return the string and print nothing.</td>
+  <td>If true, return the string and print nothing</td>
 </tr>
 </tbody>
 </table>
@@ -5595,6 +6509,11 @@ mimics R's C<write.table>, with data as first argument to subroutine, and output
 
  write_table(\@data_aoh, $tmp_file, sep => "\t", 'row.names' => 1);
 
+C<write_table> accepts every data-frame shape: a flat hash (one row), a hash of arrays (HoA), a hash of hashes (HoH), an array of hashes (AoH), and an array of arrays (AoA). For an AoA the first inner array is taken as the header row unless C<col.names> is given, in which case every inner array is treated as data:
+
+ write_table([[qw(gene score)], ['TP53', 0.9], ['BRCA1', 0.7]], $tmp_file, 'row.names' => 0);
+ write_table([['TP53', 0.9], ['BRCA1', 0.7]], $tmp_file, 'col.names' => [qw(gene score)]);
+
 You can also precisely filter and reorder which columns are written by passing an array reference to C<col.names>:
 
  write_table(\@data, $tmp_file, sep => "\t", 'col.names' => ['c', 'a']);
@@ -5609,7 +6528,306 @@ Args can also be accepted:
 
  write_table( 'data' => \%flat, 'file' => $f );
 
+=head3 LaTeX output (C<tex>)
+
+C<write_table> can write the output file as a LaTeX C<tabular> instead of a delimited table. This is selected either by naming the file C<*.tex> (auto-detected) or by passing C<< tex =E<gt> 1 >>; an explicit C<< tex =E<gt> 0 >> forces a delimited file even when the name ends in C<.tex>. The LaTeX table is built from the same rows as the delimited writer, so it works for every shape above (including arrays of arrays):
+
+ write_table(\@data_aoh, 'table.tex');            # .tex name selects LaTeX
+ write_table(\@data_aoh, $tmp_file, 'tex' => 1);  # force LaTeX for any name
+
+The file begins with a C<< %written by E<lt>cwdE<gt>/E<lt>scriptE<gt> >> provenance comment (the working directory and script name). The header row is bold and the table is ruled with C<\hline>. Cell text is LaTeX-escaped: C<#>, C<_>, C<%>, and C<&> are backslash-escaped, C<< E<gt> >> becomes C<\textgreater{}>, and a cell consisting solely of C<\includesvg{...svg}> is passed through untouched. The C<tex.*> options tune the output:
+
+ write_table(\@rows, 'table.tex',
+     'tex.col.align'    => 'l',                     # 'c' (default), 'l', or 'r'
+     'tex.bold.1st.col' => 0,                        # default 1: bold the first column
+     'tex.format'       => 1,                        # %.4g-format numeric cells
+     'tex.size'         => '\small',                 # size directive after \begin{tabular}
+     'tex.comment'      => ['run 3', 'q < 0.05'],    # % comment line(s): string or array ref
+ );
+
+The C<xlsx>, worksheet, and JSON side outputs of the original stand-alone routine are not included.
+
+=head3 Options
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>option</th>
+  <th>default</th>
+  <th>applies to</th>
+  <th>meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>data</code> (1st positional, or <code>data =></code>)</td>
+  <td><i>required</i></td>
+  <td>both</td>
+  <td>the table: flat hash, HoA, HoH, AoH, or AoA</td>
+</tr>
+<tr>
+  <td><code>file</code> (2nd positional, or <code>file =></code>)</td>
+  <td><i>required</i></td>
+  <td>both</td>
+  <td>output path; written as a delimited table, or as LaTeX when <code>tex</code> is on</td>
+</tr>
+<tr>
+  <td><code>sep</code> / <code>delim</code></td>
+  <td>from extension (<code>,</code> for <code>.csv</code>, tab for <code>.tsv</code>), else <code>,</code></td>
+  <td>delimited</td>
+  <td>field separator; the two are aliases</td>
+</tr>
+<tr>
+  <td><code>row.names</code></td>
+  <td><code>1</code> (on)</td>
+  <td>both</td>
+  <td>true prepends a label column (numeric index, or the outer key for a HoH); <code>0</code> omits it; for a HoA/AoH a non-numeric <i>column name</i> uses that column's values as the labels and drops it from the body</td>
+</tr>
+<tr>
+  <td><code>col.names</code></td>
+  <td>all columns, sorted</td>
+  <td>both</td>
+  <td>array ref selecting and ordering columns; for an AoA it also supplies the column names</td>
+</tr>
+<tr>
+  <td><code>undef.val</code></td>
+  <td><code>''</code> (empty field)</td>
+  <td>both</td>
+  <td>text written for an undefined/missing cell, e.g. <code>'NA'</code></td>
+</tr>
+<tr>
+  <td><code>tex</code></td>
+  <td>auto: <code>1</code> when <code>file</code> ends in <code>.tex</code>, else <code>0</code></td>
+  <td>LaTeX</td>
+  <td>write the output file as a LaTeX <code>tabular</code> instead of a delimited table; <code>tex => 0</code> forces delimited even for a <code>.tex</code> name</td>
+</tr>
+<tr>
+  <td><code>tex.col.align</code></td>
+  <td><code>'c'</code></td>
+  <td>LaTeX</td>
+  <td>per-column alignment: <code>'c'</code>, <code>'l'</code>, or <code>'r'</code></td>
+</tr>
+<tr>
+  <td><code>tex.bold.1st.col</code></td>
+  <td><code>1</code> (on)</td>
+  <td>LaTeX</td>
+  <td>bold the first column of each data row</td>
+</tr>
+<tr>
+  <td><code>tex.format</code></td>
+  <td><code>0</code> (off)</td>
+  <td>LaTeX</td>
+  <td>render numeric cells with <code>%.4g</code></td>
+</tr>
+<tr>
+  <td><code>tex.size</code></td>
+  <td><i>(none)</i></td>
+  <td>LaTeX</td>
+  <td>size directive emitted after <code>\begin{tabular}</code>, e.g. <code>\small</code></td>
+</tr>
+<tr>
+  <td><code>tex.comment</code></td>
+  <td><i>(none)</i></td>
+  <td>LaTeX</td>
+  <td><code>%</code> comment line(s) at the top of the LaTeX file: a string, or an array ref of strings</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
 =head1 Changes
+
+=head2 0.20
+
+addition of C<ncol>, C<nrow>, and C<pnorm> functions
+
+C<filter> can filter by row names with C<$_[1]>
+
+C<view> now accepts array of arrays in addition to AoH, HoA, and HoH
+
+=head3 csort
+
+Two behavioural changes, both contained to the C<csort> XSUB (the C<cs_*> helpers are untouched).
+
+B<Row names survive a Hash-of-Hashes sort.> Sorting a HoH previously discarded the outer keys. Now each row is folded into a I<fresh> row hash (a private container over aliased, read-only cells) that carries its outer key under a C<row.name> column, so the name flows into whichever shape you request:
+
+ my $hoh = { alpha => { id => 1 }, beta => { id => 2 } };
+ 
+ csort($hoh, 'id');          # AoH: each row gains a row.name field
+ csort($hoh, 'id', 'hoa');   # HoA: an aligned row.name column
+
+=over
+
+=item * The column name defaults to C<row.name> and can be overridden with an optional 4th argument (mirroring C<hoa2hoh>'s named-key style): C<csort($df, 'id', 'aoh', 'sample')>.
+
+=item * The outer key is authoritative — it wins over any pre-existing same-named field in the row.
+
+=item * Once present, the column is sortable like any other: C<csort($hoh, 'row.name')>.
+
+=item * Because rows are now I<copied> rather than shared, the caller's HoH is never mutated by the injection. (Minor behaviour change: output rows are no longer the same refs as the source rows.)
+
+=back
+
+B<Clearer usage message.> The signature is now C<csort(...)>, so xsubpp no longer emits the misleading auto-generated C<Usage: Stats::LikeR::csort(data, by, output=&PL_sv_undef)>. Argument count is checked by hand, and the croak now shows both real calling forms:
+
+ Usage: csort($df, 'column.name', 'HoA')
+    or  csort($df, sub { $b->{'No.'} <=> $a->{'No.'} }, 'hoa')
+   (optional 4th arg names the row-name column when sorting a HoH; default 'row.name')
+
+C<data>/C<by>/C<output> are read as C<ST(0..2)>; C<output> still defaults to matching the input shape.
+
+B<Tightened validation messages.> The C<$data> croak now reads C<hash-ref (HoA or HoH)>, and the C<$by> croak includes a concrete example: C<< a column name (e.g. 'No.') or a comparator code-ref using $a and $b, e.g. sub { $b-E<gt>{'No.'} E<lt>=E<gt> $a-E<gt>{'No.'} } >>. Existing HoA croaks (C<unequal lengths>, C<not found>, C<not an array-ref>) are unchanged.
+
+When sorting, undefined values in the sorting column are placed at the bottom
+
+=head3 cor
+
+Fixed an unsigned-integer underflow in C<kendall_tau_b> and added a regression test.
+
+=head4 Bug
+
+In C<kendall_tau_b>, concordant/discordant counts C<C> and C<D> are declared C<size_t> (unsigned). The numerator was computed as:
+
+ return (NV)(C - D) / denom;
+
+The subtraction C<C - D> happens in unsigned arithmetic I<before> the cast to C<NV>. When discordant pairs dominate (C<< D E<gt> C >>), the result wraps to a huge positive value instead of going negative.
+
+For the arrays:
+
+ dG_kcal_mol:  -7.765, -9.328, -10.326, -9.038, -9.608, -9.779, -9.975, -6.906
+ anomaly_rank: 154, 155, 161, 188, 76, 172, 173, 69
+
+there are C<C = 9> concordant and C<D = 19> discordant pairs (no ties). C<9 - 19> wraps to C<18446744073709551607>, so the function returned ~C<6.6e17> instead of the correct C<-10/28 = -0.3571428571>.
+
+=head4 Fix
+
+Cast each operand to C<NV> before subtracting, so the arithmetic is signed:
+
+ return ((NV)C - (NV)D) / denom;
+
+Only that one line changed. The denominator sums (C<C + D + tie_x>, C<C + D + tie_y>) are non-negative, so they were left as-is.
+
+=head4 Regression test — C<cor.t>
+
+=over
+
+=item * Kendall on the offending arrays pinned to C<-0.3571428571>.
+
+=item * Explicit C<[-1, 1]> range guard (the real backstop — the pre-fix value C<~6.6e17> blows past the bound regardless of exact magnitude), plus a negative-sign assertion.
+
+=item * Pearson (C<-0.4889102301>), Spearman (C<-0.4761904762>), and default-method coverage of the three C<compute_cor> branches.
+
+=item * Kendall boundary cases: perfectly concordant (C<+1>), perfectly discordant (C<-1>), self-correlation (C<+1>), and a tie case exercising C<tie_x> in the denominator.
+
+=item * C<no_leaks_ok> per method (guarded with C<unless $INC{'Devel/Cover.pm'}>).
+
+=item * Croak paths: length mismatch, unknown method, zero-variance input.
+
+=back
+
+=head3 XS refactor
+
+Consolidate helper functions to reduce binary size, find bugs, and back the changes with tests. Every change was validated by translating the XS (C<ExtUtils::ParseXS>) and compiling the result
+with the module's own C<ccflags>.
+
+=head4 Outcome
+
+=over
+
+=item * B<Net change to the source:> ~154 fewer lines; helper-function count down by 4 (7 removed, 3 added).
+
+=item * B<Genuine bugs fixed:> two instances of the same latent defect (see below). The rest of the work was behavior-preserving consolidation.
+
+=back
+
+=head4 Function consolidation
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>Change</th>
+  <th>Before</th>
+  <th>After</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>Three-way <code>NV</code> comparator</td>
+  <td><code>compare_rank</code>, <code>cmp_rank_item</code>, <code>cmp_rank_info</code>, <code>compare_NVs</code></td>
+  <td>single <code>cmp_nv3</code> (reads the leading <code>NV</code> member, valid for <code>RankInfo</code>/<code>RankItem</code>/raw <code>NV</code>)</td>
+</tr>
+<tr>
+  <td>Average-rank routine</td>
+  <td><code>compute_ranks</code> + <code>compare_index</code> restoration sort</td>
+  <td>existing <code>rank_data</code> (scatters ranks into <code>out[idx]</code>, no second sort)</td>
+</tr>
+<tr>
+  <td>String comparator</td>
+  <td><code>cmp_string_wt</code>, <code>lm_str_qsort</code> (byte-identical)</td>
+  <td>single <code>cmp_string_wt</code></td>
+</tr>
+<tr>
+  <td>Set difference</td>
+  <td><code>Lonly</code> + <code>Ronly</code> (duplicated bodies)</td>
+  <td>shared <code>set_difference()</code>; <code>Ronly</code> passes the arrays swapped</td>
+</tr>
+<tr>
+  <td>Multiplicity filter</td>
+  <td><code>intersection</code> + <code>get_unique</code> (~90% shared)</td>
+  <td>shared <code>set_multiplicity()</code> with an "all vs. one" mode flag</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+All merges were confirmed behavior-preserving: the collapsed comparators are
+equivalent on ordinary values, C<NaN>, and infinities, and C<compute_ranks> and
+C<rank_data> produce identical average ranks.
+
+=head4 Bugs
+
+Two comparators stabilized their sort by returning C<< a-E<gt>idx - b-E<gt>idx >> directly,
+where the index field is an unsigned C<size_t>. The subtraction wraps and is then
+truncated to C<int>, which is implementation-defined and gives the wrong sign
+once a difference exceeds C<INT_MAX>.
+
+=over
+
+=item * C<compare_index> — removed entirely (the routine that used it, C<compute_ranks>, was replaced by C<rank_data>).
+
+=item * C<cmp_pval> — the tie-break comparator in the p-adjust path. B<Missed in the initial review; found later> via a C<-Wconversion> compile of the earlier source. Fixed to compare with the C<< (a E<gt> b) - (a E<lt> b) >> idiom.
+
+=back
+
+B<Caveat on severity:> on every mainstream ABI (LP64, LLP64, ILP32), the
+low-word truncation happens to reproduce the correct sign for any array smaller
+than ~2^31 elements, so this never produces a wrong result at realistic sizes.
+It is a portability/UB issue, not a runtime failure, which is why no functional
+test detects it (see "Testing", below).
+
+ C<LikeR.xs> — consolidated helpers; C<compare_index> removed; C<cmp_pval> fixed.
+
+=head3 C<view>
+
+ non-ASCII characters now print
+
+=head3 C<write_table>
+
+new option to output to LaTeX table
 
 =head2 0.19
 
@@ -6540,3 +7758,7 @@ mean, min, sum, median, var, and max die with undefined values, and print the of
 "cor" dies when given data with standard deviation of 0
 
 C<write_table> now has C<undef.val> option, which shows how undefined values are printed to tables, which is C<NA> by default.
+
+=head1 COPYRIGHT AND LICENSE
+
+This software is free.  It is licensed under the same terms as Perl itself

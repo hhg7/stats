@@ -3254,6 +3254,12 @@ The `xlsx`, worksheet, and JSON side outputs of the original stand-alone routine
 
 # Changes
 
+## 0.21
+
+Better warning for undefined data for `aoh2hoh`, `assign`, `dropna`
+
+addition of `agg`, `concat` functions
+
 ## 0.20
 
 addition of `ncol`, `nrow`, and `pnorm` functions

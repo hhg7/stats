@@ -4,18 +4,19 @@ require 5.010;
 use strict;
 use feature 'say';
 package Stats::LikeR;
-our $VERSION = 0.20;
+our $VERSION = 0.21;
 require XSLoader;
 use warnings FATAL => 'all';
 use autodie ':default';
 use Exporter 'import';
 use Scalar::Util qw(reftype looks_like_number);
 XSLoader::load('Stats::LikeR', $VERSION);
-our @EXPORT_OK = qw(add_data anova aoh2hoa aoh2hoh aov assign binom_test cfilter chisq_test chunk col col2col cor cor_test cov csort dnorm dropna filter fisher_test get_union get_unique glm group_by hoa2aoh hoa2hoh hoh2hoa hist intersection is_equivalent kruskal_test ks_test Lonly ljoin lm matrix max mean median min mode ncol nrow oneway_test p_adjust pnorm power_t_test predict prcomp ptukey qcut qtukey quantile Ronly rbinom read_table rnorm runif sample scale sd seq shapiro_test sum summary t_test transpose TukeyHSD uniq vals value_counts var var_test view wilcox_test write_table);
+our @EXPORT_OK = qw(add_data agg anova aoh2hoa aoh2hoh aov assign binom_test cfilter chisq_test chunk col col2col concat cor cor_test cov csort dnorm dropna filter fisher_test get_union get_unique glm group_by hoa2aoh hoa2hoh hoh2hoa hist intersection is_equivalent kruskal_test ks_test Lonly ljoin lm matrix max mean median min mode ncol nrow oneway_test p_adjust pnorm power_t_test predict prcomp ptukey qcut qtukey quantile Ronly rbind rbinom read_table rnorm runif sample scale sd seq shapiro_test sum summary t_test transpose TukeyHSD uniq vals value_counts var var_test view wilcox_test write_table);
 our @EXPORT = @EXPORT_OK;
 
 sub aoh2hoh {
 	my ($aoh, $key) = @_;
+	die 'aoh2hoh: first argument is undefined' unless defined $aoh;
 	die 'aoh2hoh: first argument must be an arrayref of hashrefs'
 	  unless ref($aoh) eq 'ARRAY';
 	die 'aoh2hoh: a row key must be defined' unless defined $key;
@@ -32,6 +33,282 @@ sub aoh2hoh {
 	}
 	return \%out;
 }
+# =======================================================================
+# agg / concat / rbind  --  additions to lib/Stats/LikeR.pm
+# Splice these in after the dropna sub. Also add  agg concat rbind  to
+# @EXPORT_OK. rbind is a true glob-alias synonym for concat.
+# =======================================================================
+
+sub _df_shape {
+	my ($df, $caller) = @_;
+	$caller = 'data frame' unless defined $caller;
+	die "$caller: data frame must be an ARRAY (AoA/AoH) or HASH (HoA/HoH) ref\n"
+		unless ref $df;
+	if (ref $df eq 'ARRAY') {
+		for my $e (@$df) {
+			next unless defined $e;
+			return 'AoA' if ref $e eq 'ARRAY';
+			return 'AoH' if ref $e eq 'HASH';
+			die "$caller: array elements must be ARRAY (AoA) or HASH (AoH) refs\n";
+		}
+		return 'AoH';                         # empty -> harmless default
+	}
+	# HASH: HoA vs HoH, rejecting a mix
+	my ($saw_arr, $saw_hash) = (0, 0);
+	for my $v (values %$df) {
+		next unless ref $v;
+		$saw_arr++  if ref $v eq 'ARRAY';
+		$saw_hash++ if ref $v eq 'HASH';
+	}
+	die "$caller: hashref mixes array and hash values (ambiguous HoA/HoH)\n"
+		if $saw_arr and $saw_hash;
+	return 'HoH' if $saw_hash;
+	return 'HoA';                             # arrays, or empty -> default
+}
+
+# ---------------------------------------------------------------------------
+# agg($df, agg => { col => 'mean' | [ 'mean', 'sd', .. ] | \&code, .. }, %opts)
+#
+# Split-apply-combine over any of the four data-frame shapes.  With `by` it is
+# the combine half of group_by (which only splits); without `by` it collapses
+# the whole frame to a single row, like pandas df.agg(...).
+#
+# $df   : AoA | AoH | HoA | HoH.  For AoA the column identifiers in `by` and in
+#         the `agg` spec are integer positions; for the other three they are
+#         column names.
+#
+# OPTIONS
+#   agg  => { col => spec, .. }   REQUIRED.  spec is one aggregator name, an
+#           arrayref of names, or a coderef.  Named aggregators:
+#             mean median sum sd var min max  (numeric; call the XS functions)
+#             count    number of defined (non-undef) cells
+#             n        number of cells, undef included
+#             nunique  number of distinct defined cells
+#             first    first defined cell   (undef if none)
+#             last     last  defined cell   (undef if none)
+#             mode     modal defined cell; ties resolved deterministically
+#                      (smallest number, else lowest string)
+#           A coderef is called as $code->(\@cells) with every cell for that
+#           column in the group (undef included) and must return one scalar.
+#   by   => $col | \@cols         optional grouping column(s).
+#   skipna => 0|1                 default 1.  When 0, a numeric named aggregator
+#           (mean median sum sd var mode) over a group that contains any undef
+#           yields undef, matching pandas skipna=False; count/n/nunique/first/
+#           last always ignore this flag.
+#   sort => 0|1                   default 1.  Sort output groups by key
+#           (numeric if every key looks like a number, else string); 0 keeps
+#           first-seen order.
+#   'output.type' => aoa|aoh|hoa|hoh    default: same family as $df.
+#
+# OUTPUT COLUMN ORDER is deterministic: the `by` columns in the given order,
+# then the aggregated columns sorted (numerically for AoA integer columns, else
+# as strings), each expanded over its aggregator list in the order supplied.  A
+# column reduced by a single aggregator keeps its own name; with two or more it
+# becomes "<col>_<func>" (e.g. age_mean, age_sd).  For hoh output the row label
+# is the group value (multiple `by` columns joined with '.'), 'all' when there
+# is no grouping, and made unique with a .N suffix on collision.
+#
+# Numeric aggregators need enough defined cells or the cell is undef: mean /
+# median / sum / min / max need >= 1, sd / var need >= 2.  The original $df is
+# never modified.
+# ---------------------------------------------------------------------------
+{
+	my %AGG_MIN = (          # minimum defined count for the XS numeric reducers
+		mean => 1, median => 1, sum => 1, min => 1, max => 1,
+		sd   => 2, var    => 2,
+	);
+	my %AGG_NUMERIC = map { $_ => 1 } qw(mean median sum sd var mode);
+
+	sub _agg_reduce {
+		my ($func, $raw, $def, $skipna) = @_;   # $raw, $def: arrayrefs (def excl. undef)
+		return $func->($raw) if ref $func eq 'CODE';
+		# NA policy for numeric reducers when the caller asked for skipna => 0
+		return undef if !$skipna && $AGG_NUMERIC{$func} && @$def != @$raw;
+		if ($func eq 'count')   { return scalar @$def }
+		if ($func eq 'n')       { return scalar @$raw }
+		if ($func eq 'nunique') { my %s; @s{ @$def } = (); return scalar keys %s }
+		if ($func eq 'first')   { return @$def ? $def->[0]  : undef }
+		if ($func eq 'last')    { return @$def ? $def->[-1] : undef }
+		if ($func eq 'mode') {
+			return undef unless @$def;
+			my @m = mode($def);
+			return (grep { !looks_like_number($_) } @m)
+				? (sort @m)[0]
+				: (sort { $a <=> $b } @m)[0];
+		}
+		die "agg: unknown aggregator '$func'\n" unless exists $AGG_MIN{$func};
+		return undef if @$def < $AGG_MIN{$func};
+		return mean($def)   if $func eq 'mean';
+		return median($def) if $func eq 'median';
+		return sum($def)    if $func eq 'sum';
+		return sd($def)     if $func eq 'sd';
+		return var($def)    if $func eq 'var';
+		return min($def)    if $func eq 'min';
+		return max($def)    if $func eq 'max';
+	}
+
+	sub agg {
+		my $df = shift;
+		die 'agg: undefined data in first position' unless defined $df;
+		my $shape = _df_shape($df, 'agg');
+		die "agg: arguments after the data frame must be name => value pairs\n"
+			if @_ % 2;
+		my %arg = @_;
+		my %known = ( agg => 1, by => 1, skipna => 1, sort => 1, 'output.type' => 1 );
+		my @bad = sort grep { !$known{$_} } keys %arg;
+		die "agg: unknown argument(s): @bad\n" if @bad;
+
+		my $spec = $arg{agg};
+		die "agg: an 'agg' spec (hashref of column => aggregator) is required\n"
+			unless ref $spec eq 'HASH' and %$spec;
+
+		my @by = !defined $arg{by}          ? ()
+		       : ref $arg{by} eq 'ARRAY'    ? @{ $arg{by} }
+		       :                              ( $arg{by} );
+		my $skipna = exists $arg{skipna} ? ($arg{skipna} ? 1 : 0) : 1;
+		my $dosort = exists $arg{sort}   ? ($arg{sort}   ? 1 : 0) : 1;
+		my $otype  = defined $arg{'output.type'} ? lc $arg{'output.type'}
+		           : lc $shape;
+		my %ok_otype = ( aoa => 1, aoh => 1, hoa => 1, hoh => 1 );
+		die "agg: output.type '$otype' isn't allowed (aoa, aoh, hoa, hoh)\n"
+			unless $ok_otype{$otype};
+
+		# columns actually needed (grouping + aggregated), classified once ---
+		my @agg_cols = keys %$spec;
+		{
+			my $all_num = !grep { !looks_like_number($_) } @agg_cols;
+			@agg_cols = $all_num ? sort { $a <=> $b } @agg_cols : sort @agg_cols;
+		}
+		my %need; $need{$_} = 1 for @by, @agg_cols;
+
+		# extract each needed column ONCE, aligned to row positions 0 .. R-1.
+		# access is specialised per shape (no per-cell closure); for HoA the
+		# columns already are arrays, so they are aliased rather than rebuilt.
+		my (%col, $R);
+		if ($shape eq 'AoA') {
+			my @h = grep { defined } @$df;
+			$R = scalar @h;
+			for my $c (keys %need) { $col{$c} = [ map { $_->[$c] } @h ] }
+		} elsif ($shape eq 'AoH') {
+			my @h = grep { defined } @$df;
+			$R = scalar @h;
+			for my $c (keys %need) { $col{$c} = [ map { $_->{$c} } @h ] }
+		} elsif ($shape eq 'HoA') {
+			$R = 0;
+			for my $v (values %$df) { $R = @$v if ref $v eq 'ARRAY' && @$v > $R }
+			for my $c (keys %need) {
+				$col{$c} = ref $df->{$c} eq 'ARRAY' ? $df->{$c} : [];
+			}
+		} else { # HoH
+			my @h = map { $df->{$_} } sort keys %$df;
+			$R = scalar @h;
+			for my $c (keys %need) { $col{$c} = [ map { $_->{$c} } @h ] }
+		}
+
+		# split row indices into groups, preserving first-seen order --------
+		my (%group, @order, %repr);
+		my $one = @by == 1 ? $by[0] : undef;   # single-key fast path
+		for (my $i = 0; $i < $R; $i++) {
+			my $key;
+			if (!@by) {
+				$key = "\0all";
+			} elsif (defined $one) {
+				my $v = $col{$one}[$i];
+				$key = defined $v ? "v$v" : "\0";
+			} else {
+				$key = join "\x1e",
+					map { my $v = $col{$_}[$i]; defined $v ? "v$v" : "\0" } @by;
+			}
+			my $g = $group{$key};
+			unless ($g) {
+				$group{$key} = $g = [];
+				push @order, $key;
+				$repr{$key} = [ map { $col{$_}[$i] } @by ];
+			}
+			push @$g, $i;
+		}
+		if ($dosort && @by) {                  # sort by the group value(s)
+			my $all_num = 1;
+			SORTNUM: for my $k (@order) {
+				for my $v (@{ $repr{$k} }) {
+					unless (defined $v && looks_like_number($v)) { $all_num = 0; last SORTNUM }
+				}
+			}
+			if ($all_num) {
+				@order = sort {
+					my ($ra, $rb) = ($repr{$a}, $repr{$b});
+					my $c = 0;
+					for my $j (0 .. $#$ra) { last if $c = $ra->[$j] <=> $rb->[$j] }
+					$c;
+				} @order;
+			} else {
+				@order = sort {
+					my ($ra, $rb) = ($repr{$a}, $repr{$b});
+					my $c = 0;
+					for my $j (0 .. $#$ra) {
+						my $x = defined $ra->[$j] ? $ra->[$j] : '';
+						my $y = defined $rb->[$j] ? $rb->[$j] : '';
+						last if $c = $x cmp $y;
+					}
+					$c;
+				} @order;
+			}
+		}
+
+# output plan: by-columns pass through, then each agg column with its
+# aggregator list contiguous.  A single aggregator keeps the column
+# name; two or more become "<col>_<func>".
+		my @agg_plan; # [ col, [funcs], [out_names] ]
+		for my $c (@agg_cols) {
+			my $s = $spec->{$c};
+			my @funcs = ref $s eq 'ARRAY' ? @$s : ($s);
+			die "agg: empty aggregator list for column '$c'\n" unless @funcs;
+			my $multi = @funcs > 1;
+			my @names = map {
+				my $l = ref $_ eq 'CODE' ? 'fn' : $_;
+				$multi ? "${c}_${l}" : $c;
+			} @funcs;
+			push @agg_plan, [ $c, \@funcs, \@names ];
+		}
+		my @out_names = ( @by, map { @{ $_->[2] } } @agg_plan );
+
+# combine + materialise straight into the requested shape -----------
+		my (@aoa_rows, @aoh_rows, %hoa, %hoh, %seen);
+		if ($otype eq 'hoa') { $hoa{$_} = [] for @out_names }
+
+		for my $key (@order) {
+			my $idx = $group{$key};
+			my @vals = @{ $repr{$key} };            # by-column values, in order
+			for my $ap (@agg_plan) {
+				my ($c, $funcs, undef) = @$ap;
+				my @raw = @{ $col{$c} }[ @$idx ];   # one slice, shared by all funcs
+				my @def = grep { defined } @raw;
+				push @vals, _agg_reduce($_, \@raw, \@def, $skipna) for @$funcs;
+			}
+			if ($otype eq 'aoa') {
+				push @aoa_rows, \@vals;
+			} elsif ($otype eq 'aoh') {
+				my %h; @h{ @out_names } = @vals; push @aoh_rows, \%h;
+			} elsif ($otype eq 'hoa') {
+				push @{ $hoa{ $out_names[$_] } }, $vals[$_] for 0 .. $#out_names;
+			} else { # hoh
+				my $label = @by
+					? join('.', map { defined $_ ? $_ : '' } @{ $repr{$key} })
+					: 'all';
+				my $uniq = $label; my $j = 0;
+				while (exists $seen{$uniq}) { $uniq = $label . '.' . (++$j) }
+				$seen{$uniq} = 1;
+				my %h; @h{ @out_names } = @vals; $hoh{$uniq} = \%h;
+			}
+		}
+		return \@aoa_rows if $otype eq 'aoa';
+		return \@aoh_rows if $otype eq 'aoh';
+		return \%hoa      if $otype eq 'hoa';
+		return \%hoh;
+	}
+}
+
+
 # assign($df, name => \&code, name2 => \&code2, ...)
 #
 # Add (or overwrite) columns derived from existing ones, dplyr-mutate style.
@@ -48,8 +325,10 @@ sub aoh2hoh {
 # Modifies $df in place (lowest RAM/CPU) and returns it for chaining.
 # To keep the original intact, hand it a copy: assign(clone($df), ...).
 #
+
 sub assign {
 	my $df = shift;
+	die 'assign: first argument is undefined' unless defined $df;
 	die 'assign: first argument must be a data frame (AoH arrayref or HoA/HoH hashref)'
 	  unless ref $df;
 	die 'assign: expected an even list of (name => coderef) pairs' if @_ % 2;
@@ -264,6 +543,117 @@ sub col { Stats::LikeR::col::_new(@_) }
 	}
 }
 
+# ---------------------------------------------------------------------------
+# concat(@frames)   /   rbind(@frames)   -- row-bind data frames (pandas concat
+# axis=0, R rbind).  rbind is a true synonym (same subroutine).
+#
+# Every frame must be the same shape (AoA/AoH/HoA/HoH); a mix dies with a hint
+# to convert first (aoh2hoa, hoa2aoh, hoh2hoa, aoh2hoh).  undef frames and
+# empty frames are skipped, and shape is taken from the first non-empty frame;
+# passing nothing usable dies.  A NEW top-level frame of that shape is returned;
+# the original frames are never modified.
+#
+#   AoA  outer arrays concatenated in order (row arrayrefs reused by ref).
+#        Ragged rows are kept as-is; a short row reads undef past its end.
+#   AoH  rows concatenated in order (row hashrefs reused by ref).  The result is
+#        the union of columns; a column absent from a given row reads undef,
+#        matching this library's "missing key == undef" convention (dropna,
+#        view, summary).
+#   HoA  union of columns (sorted for a deterministic layout).  Each column is
+#        the per-frame arrays joined in frame order; a frame lacking a column,
+#        or a ragged short column, is padded with undef so every column ends up
+#        the same length (= total rows).
+#   HoH  outer hashes merged in frame order (inner row hashrefs reused by ref).
+#        Because a Perl hash cannot hold duplicate keys, a repeated row name is
+#        made unique R-style (name, name.1, name.2, ...) and a single warning is
+#        emitted noting that row names collided.
+# ---------------------------------------------------------------------------
+sub concat {
+	my @frames = grep { defined } @_;
+	die "concat: needs at least one data frame\n" unless @frames;
+
+	# reference shape = first non-empty frame; remember a fallback for all-empty
+	my $ref_shape;
+	for my $f (@frames) {
+		my $nonempty = ref $f eq 'ARRAY' ? scalar(@$f)
+		             : ref $f eq 'HASH'  ? scalar(keys %$f)
+		             : die "concat: every frame must be an ARRAY or HASH ref\n";
+		next unless $nonempty;
+		$ref_shape = _df_shape($f, 'concat');
+		last;
+	}
+	unless (defined $ref_shape) {           # all frames empty
+		return ref $frames[0] eq 'ARRAY' ? [] : {};
+	}
+	# all non-empty frames must agree
+	for my $f (@frames) {
+		my $nonempty = ref $f eq 'ARRAY' ? scalar(@$f) : scalar(keys %$f);
+		next unless $nonempty;
+		my $s = _df_shape($f, 'concat');
+		die "concat: cannot mix a $s frame with a $ref_shape frame; "
+		  . "convert them to one shape first (aoh2hoa, hoa2aoh, hoh2hoa, aoh2hoh)\n"
+			if $s ne $ref_shape;
+	}
+
+	if ($ref_shape eq 'AoA') {
+		my @out;
+		for my $f (@frames) {
+			for my $row (@$f) {
+				die "concat: AoA row is not an ARRAY ref\n" unless ref $row eq 'ARRAY';
+				push @out, $row;
+			}
+		}
+		return \@out;
+	}
+	if ($ref_shape eq 'AoH') {
+		my @out;
+		for my $f (@frames) {
+			for my $row (@$f) {
+				die "concat: AoH row is not a HASH ref\n" unless ref $row eq 'HASH';
+				push @out, $row;
+			}
+		}
+		return \@out;
+	}
+	if ($ref_shape eq 'HoA') {
+		my (@cols, %seen);                  # union of columns, sorted
+		for my $f (@frames) { $seen{$_} = 1 for keys %$f }
+		@cols = sort keys %seen;
+		my %out = map { $_ => [] } @cols;
+		for my $f (@frames) {
+			my $n = 0;
+			for my $c (keys %$f) {
+				$n = @{ $f->{$c} } if ref $f->{$c} eq 'ARRAY' && @{ $f->{$c} } > $n;
+			}
+			for my $c (@cols) {
+				if (ref $f->{$c} eq 'ARRAY') {
+					push @{ $out{$c} }, @{ $f->{$c} };
+					push @{ $out{$c} }, (undef) x ($n - @{ $f->{$c} })
+						if @{ $f->{$c} } < $n;   # ragged short column
+				} else {
+					push @{ $out{$c} }, (undef) x $n; # column absent in this frame
+				}
+			}
+		}
+		return \%out;
+	}
+	# HoH
+	my (%out, $collided);
+	for my $f (@frames) {
+		for my $rk (sort keys %$f) {
+			die "concat: HoH row '$rk' is not a HASH ref\n"
+				unless ref $f->{$rk} eq 'HASH';
+			my $label = $rk;
+			my $j = 0;
+			while (exists $out{$label}) { $collided = 1; $label = $rk . '.' . (++$j) }
+			$out{$label} = $f->{$rk};       # reuse the row ref
+		}
+	}
+	warn "concat: duplicate HoH row name(s) made unique with a .N suffix\n"
+		if $collided;
+	return \%out;
+}
+{ no warnings 'once'; *rbind = \&concat; }  # true synonym
 #
 # dropna($df, cols => \@cols, how => 'any'|'all')	# NA mode
 # dropna($df, rows => \@rows)						 # literal deletion
@@ -288,6 +678,7 @@ sub col { Stats::LikeR::col::_new(@_) }
 #
 sub dropna {
 	my $df = shift;
+	die 'dropna: first argument is undefined' unless defined $df;
 	die "dropna: first argument must be a data frame (HoA/HoH hashref or AoH arrayref)\n"
 		unless ref $df;
 	die "dropna: arguments after the data frame must be name => value pairs\n"
@@ -654,7 +1045,6 @@ HELP
 sub summary {
 	my ($data, %args);
 	my $current_sub = (split(/::/,(caller(0))[3]))[-1];
-
 	if (@_ && ref $_[0]) {
 	  # Handles: summary(\@arr) or summary(\@arr, nrows => 5) or summary(\%h, nrow => 3)
 	  $data = shift;
