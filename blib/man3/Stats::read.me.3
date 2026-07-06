@@ -202,6 +202,229 @@ When the target is a Hash of Arrays, incoming arrays are pushed onto the existin
 .Ve
 .PP
 NB: If \f(CW\*(C`add_data\*(C'\fR is called on a completely empty target reference (e.g., \f(CW\*(C`$data = {}\*(C'\fR or \f(CW\*(C`$data = []\*(C'\fR), it will intelligently infer the required inner structure (Hashes vs Arrays) by inspecting the first valid row of the source data.
+.SS agg
+.IX Subsection "agg"
+Split\-apply\-combine over a data frame: split the rows into groups, apply one or
+more aggregators to chosen columns, and combine the results into a new frame.
+This is the \fIcombine\fR half that \f(CW\*(C`group_by\*(C'\fR (which only splits) leaves to you,
+and the analog of pandas \f(CW\*(C`df.groupby(...).agg(...)\*(C'\fR. With no \f(CW\*(C`by\*(C'\fR it collapses
+the whole frame to a single row, like pandas \f(CW\*(C`df.agg(...)\*(C'\fR.
+.PP
+\&\f(CW\*(C`agg\*(C'\fR accepts all four data\-frame shapes and, by default, returns the same shape
+it was given:
+.PP
+.Vb 4
+\& AoA  [ [ .. ], [ .. ] ]      array of arrayrefs   (positional columns)
+\& AoH  [ { .. }, { .. } ]      array of hashrefs    (the read_table default)
+\& HoA  { c => [ .. ], .. }     hash of arrayrefs    (column\-major)
+\& HoH  { r => { .. }, .. }     hash of hashrefs     (named rows)
+.Ve
+.PP
+For AoA the column identifiers in \f(CW\*(C`by\*(C'\fR and in the \f(CW\*(C`agg\*(C'\fR spec are integer
+positions; for the other three shapes they are column names. The original frame
+is never modified.
+.PP
+\fIUsage\fR
+.IX Subsection "Usage"
+.PP
+.Vb 1
+\& use Stats::LikeR;
+\& 
+\& # grouped, one aggregator per column
+\& my $out = agg($df, by => \*(Aqsex\*(Aq, agg => { wt => \*(Aqmean\*(Aq });
+\& 
+\& # grouped, several aggregators, several columns
+\& my $out = agg($df,
+\&     by  => \*(Aqsex\*(Aq,
+\&     agg => { wt => [ \*(Aqmean\*(Aq, \*(Aqsd\*(Aq ], age => [ \*(Aqmean\*(Aq, \*(Aqcount\*(Aq ] },
+\& );
+\& 
+\& # ungrouped: the whole frame becomes one row
+\& my $out = agg($df, agg => { wt => \*(Aqmean\*(Aq, age => \*(Aqcount\*(Aq });
+\& 
+\& # group on two columns and emit a hash of hashes
+\& my $out = agg($df,
+\&     by            => [ \*(Aqa\*(Aq, \*(Aqb\*(Aq ],
+\&     agg           => { v => \*(Aqsum\*(Aq },
+\&     \*(Aqoutput.type\*(Aq => \*(Aqhoh\*(Aq,
+\& );
+.Ve
+.PP
+\fIArguments\fR
+.IX Subsection "Arguments"
+.PP
+\&\f(CW\*(C`agg\*(C'\fR takes the data frame first, then \f(CW\*(C`name => value\*(C'\fR pairs.
+.IP \(bu 4
+\&\fBagg\fR (required) — a hashref mapping each column to an aggregator
+\&\fIspec\fR. A spec is one of: a single aggregator name (string), an arrayref of
+names, or a coderef. See #aggregators below.
+.IP \(bu 4
+\&\fBby\fR — a single column or an arrayref of columns to group on. Omit it to
+aggregate the entire frame into one row.
+.IP \(bu 4
+\&\fBskipna\fR — \f(CW1\fR (default) drops undef cells before a numeric aggregator
+runs. \f(CW0\fR makes any undef in a group poison the numeric result for that group
+(the cell comes back undef), matching pandas \f(CW\*(C`skipna=False\*(C'\fR. \f(CW\*(C`count\*(C'\fR, \f(CW\*(C`n\*(C'\fR,
+\&\f(CW\*(C`nunique\*(C'\fR, \f(CW\*(C`first\*(C'\fR, and \f(CW\*(C`last\*(C'\fR ignore this flag.
+.IP \(bu 4
+\&\fBsort\fR — \f(CW1\fR (default) sorts the output groups by key (numerically when
+every key looks like a number, otherwise as strings); \f(CW0\fR keeps first\-seen
+order.
+.IP \(bu 4
+\&\fBoutput.type\fR — \f(CW\*(C`aoa\*(C'\fR, \f(CW\*(C`aoh\*(C'\fR, \f(CW\*(C`hoa\*(C'\fR, or \f(CW\*(C`hoh\*(C'\fR. Defaults to the same family
+as the input frame.
+.PP
+\fIAggregators\fR
+.IX Subsection "Aggregators"
+.PP
+Named aggregators may be combined in any order per column:
+.PP
+The numeric aggregators call the module\*(Aqs XS functions of the same name, so they
+inherit their precision. \f(CW\*(C`agg\*(C'\fR filters undef itself before calling them, so they
+never croak on missing cells. \f(CW\*(C`mode\*(C'\fR is made deterministic: on a tie it returns
+the smallest number, or the lowest string when the values are not numeric.
+.PP
+A \fBcoderef\fR may be supplied instead of a name for full control. It is called
+once per group as \f(CW$code\->(\e@cells)\fR, where \f(CW@cells\fR are every cell for that
+column in the group \fBincluding undef\fR, and must return a single scalar:
+.PP
+.Vb 7
+\& # count the missing values in each group
+\& my $out = agg($df, by => \*(Aqsex\*(Aq, agg => {
+\&     age => sub {
+\&         my $cells = shift;
+\&         scalar grep { !defined } @$cells;
+\&     },
+\& });
+.Ve
+.PP
+\fIOutput shape and column naming\fR
+.IX Subsection "Output shape and column naming"
+.PP
+Output columns are laid out deterministically: the \f(CW\*(C`by\*(C'\fR columns first, in the
+order given, then the aggregated columns sorted (numerically for AoA integer
+columns, otherwise as strings), each expanded over its aggregator list in the
+order supplied.
+.PP
+A column reduced by a \fBsingle\fR aggregator keeps its own name; reduced by
+\&\fBtwo or more\fR it becomes \f(CW\*(C`<col>_<func>\*(C'\fR:
+.PP
+.Vb 6
+\& my $df = [
+\&     { sex => \*(AqM\*(Aq, wt => 70, age => 30    },
+\&     { sex => \*(AqF\*(Aq, wt => 60, age => 25    },
+\&     { sex => \*(AqM\*(Aq, wt => 80, age => 40    },
+\&     { sex => \*(AqF\*(Aq, wt => 55, age => undef },
+\& ];
+\& 
+\& my $out = agg($df,
+\&     by  => \*(Aqsex\*(Aq,
+\&     agg => { wt => [ \*(Aqmean\*(Aq, \*(Aqsd\*(Aq ], age => [ \*(Aqmean\*(Aq, \*(Aqcount\*(Aq ] },
+\& );
+.Ve
+.PP
+\&\fBResulting Structure\fR (AoH in, AoH out):
+.PP
+.Vb 10
+\& [
+\&     {
+\&         sex       => \*(AqF\*(Aq,
+\&         wt_mean   => 57.5,
+\&         wt_sd     => 3.53553390593274,
+\&         age_mean  => 25,     # the undef age was skipped
+\&         age_count => 1,      # count excludes the undef
+\&     },
+\&     {
+\&         sex       => \*(AqM\*(Aq,
+\&         wt_mean   => 75,
+\&         wt_sd     => 7.07106781186548,
+\&         age_mean  => 35,
+\&         age_count => 2,
+\&     },
+\& ]
+.Ve
+.PP
+\fIUngrouped\fR
+.IX Subsection "Ungrouped"
+.PP
+Without \f(CW\*(C`by\*(C'\fR, the frame collapses to one row:
+.PP
+.Vb 1
+\& my $out = agg($df, agg => { wt => \*(Aqmean\*(Aq, age => \*(Aqcount\*(Aq });
+\& 
+\& # [ { wt => 66.25, age => 3 } ]
+.Ve
+.PP
+\fIArray of Arrays (AoA)\fR
+.IX Subsection "Array of Arrays (AoA)"
+.PP
+Columns are integer positions. Grouping on column 0 and reducing column 1:
+.PP
+.Vb 2
+\& my $aoa = [ [ \*(AqM\*(Aq, 70 ], [ \*(AqF\*(Aq, 60 ], [ \*(AqM\*(Aq, 80 ] ];
+\& my $out = agg($aoa, by => 0, agg => { 1 => [ \*(Aqmean\*(Aq, \*(Aqmax\*(Aq ] });
+\& 
+\& # [ [ \*(AqF\*(Aq, 60, 60 ], [ \*(AqM\*(Aq, 75, 80 ] ]
+\& #     ^grp  ^mean ^max
+.Ve
+.PP
+The output row is positional: the \f(CW\*(C`by\*(C'\fR columns first, then each aggregated
+column in the plan order.
+.PP
+\fIHash of Hashes (HoH) output\fR
+.IX Subsection "Hash of Hashes (HoH) output"
+.PP
+With \f(CW\*(C`output.type => \*(Aqhoh\*(Aq\*(C'\fR the row label is the group value; multiple \f(CW\*(C`by\*(C'\fR
+columns are joined with a dot, an ungrouped result is keyed \f(CW\*(C`all\*(C'\fR, and a
+collision is made unique with a \f(CW\*(C`.N\*(C'\fR suffix.
+.PP
+.Vb 1
+\& my $out = agg($df, by => \*(Aqsex\*(Aq, agg => { wt => \*(Aqmean\*(Aq }, \*(Aqoutput.type\*(Aq => \*(Aqhoh\*(Aq);
+\& 
+\& # {
+\& #     F => { sex => \*(AqF\*(Aq, wt => 57.5 },
+\& #     M => { sex => \*(AqM\*(Aq, wt => 75   },
+\& # }
+.Ve
+.PP
+\fIMissing values\fR
+.IX Subsection "Missing values"
+.PP
+By default (\f(CW\*(C`skipna => 1\*(C'\fR) undef cells are removed before a numeric aggregator
+runs, so a group of \f(CW\*(C`(60, 55)\*(C'\fR with a third undef still yields the mean of the
+two defined values. \f(CW\*(C`count\*(C'\fR reports only defined cells while \f(CW\*(C`n\*(C'\fR counts undef
+too. With \f(CW\*(C`skipna => 0\*(C'\fR, a group containing any undef returns undef for the
+numeric aggregators (\f(CW\*(C`mean median sum sd var mode\*(C'\fR); the counting and
+positional aggregators are unaffected.
+.PP
+A group without enough data yields undef rather than an error: \f(CW\*(C`sd\*(C'\fR and \f(CW\*(C`var\*(C'\fR
+need at least two defined cells, the other numeric aggregators need at least
+one.
+.PP
+\fIErrors\fR
+.IX Subsection "Errors"
+.PP
+\&\f(CW\*(C`agg\*(C'\fR dies (with a trailing newline, so the message prints cleanly) when:
+.IP \(bu 4
+the first argument is not an ARRAY or HASH ref;
+.IP \(bu 4
+no \f(CW\*(C`agg\*(C'\fR spec is given, or it is not a non\-empty hashref;
+.IP \(bu 4
+an unknown option is passed;
+.IP \(bu 4
+an aggregator name is not recognized;
+.IP \(bu 4
+an aggregator list for a column is empty;
+.IP \(bu 4
+\&\f(CW\*(C`output.type\*(C'\fR is not one of \f(CW\*(C`aoa\*(C'\fR, \f(CW\*(C`aoh\*(C'\fR, \f(CW\*(C`hoa\*(C'\fR, \f(CW\*(C`hoh\*(C'\fR;
+.IP \(bu 4
+the trailing arguments are not \f(CW\*(C`name => value\*(C'\fR pairs.
+.PP
+\fISee also\fR
+.IX Subsection "See also"
+.PP
+\&\f(CW\*(C`group_by\*(C'\fR (the split step), \f(CW\*(C`concat\*(C'\fR / \f(CW\*(C`rbind\*(C'\fR (row\-binding frames),
+\&\f(CW\*(C`dropna\*(C'\fR, \f(CW\*(C`assign\*(C'\fR, \f(CW\*(C`value_counts\*(C'\fR.
 .SS anova
 .IX Subsection "anova"
 Sequential (Type\-I) ANOVA table for a linear model, in the same shape \f(CW\*(C`aov\*(C'\fR
@@ -1179,6 +1402,174 @@ hash of hashes.
 \&\fBIn the error message, "x" is the first column and "y" is the second\fR — i.e.
 \&\f(CW\*(C`y\*(C'\fR is the inner ("to") key. So \f(CW\*(C`$result\->{A}{B}\*(C'\fR reading \f(CW\*(C`…deviation of y is 0\*(C'\fR
 means column \f(CW\*(C`B\*(C'\fR is the degenerate one for that pair.
+.SS concat
+.IX Subsection "concat"
+Row\-bind two or more data frames: stack their rows into one new frame, the
+analog of pandas \f(CW\*(C`concat(..., axis=0)\*(C'\fR and R\*(Aqs \f(CW\*(C`rbind\*(C'\fR. \f(CW\*(C`rbind\*(C'\fR is provided as a
+true synonym (the same subroutine), so the two names are interchangeable.
+.PP
+\&\f(CW\*(C`concat\*(C'\fR accepts all four data\-frame shapes and returns a new frame of that same
+shape:
+.PP
+.Vb 4
+\& AoA  [ [ .. ], [ .. ] ]      array of arrayrefs   (positional columns)
+\& AoH  [ { .. }, { .. } ]      array of hashrefs    (the read_table default)
+\& HoA  { c => [ .. ], .. }     hash of arrayrefs    (column\-major)
+\& HoH  { r => { .. }, .. }     hash of hashrefs     (named rows)
+.Ve
+.PP
+Every frame must be the same shape; mixing shapes dies with a hint to convert
+first (\f(CW\*(C`aoh2hoa\*(C'\fR, \f(CW\*(C`hoa2aoh\*(C'\fR, \f(CW\*(C`hoh2hoa\*(C'\fR, \f(CW\*(C`aoh2hoh\*(C'\fR). undef frames and empty
+frames are skipped, and the shape is taken from the first non\-empty frame. The
+original frames are never modified.
+.PP
+\fIUsage\fR
+.IX Subsection "Usage"
+.PP
+.Vb 1
+\& use Stats::LikeR;
+\& 
+\& my $all = concat($df1, $df2, $df3);   # any number of frames
+\& my $all = rbind($df1, $df2);          # identical: rbind is a synonym
+.Ve
+.PP
+\fIArray of Arrays (AoA)\fR
+.IX Subsection "Array of Arrays (AoA)"
+.PP
+The outer arrays are concatenated in order and the row arrayrefs are reused by
+reference (not copied). Ragged rows are kept as\-is; reading past a short row
+yields undef.
+.PP
+.Vb 3
+\& my $a = [ [ 1, 2 ], [ 3, 4 ] ];
+\& my $b = [ [ 5, 6 ], [ 7 ]    ];   # ragged last row
+\& my $c = concat($a, $b);
+.Ve
+.PP
+\&\fBResulting Structure:\fR
+.PP
+.Vb 1
+\& [ [ 1, 2 ], [ 3, 4 ], [ 5, 6 ], [ 7 ] ]
+.Ve
+.PP
+\fIArray of Hashes (AoH)\fR
+.IX Subsection "Array of Hashes (AoH)"
+.PP
+The rows are concatenated in order and the row hashrefs are reused by reference.
+The result is the union of columns; a column absent from a given row simply
+reads as undef, matching this module\*(Aqs "missing key means undef" convention
+(as used by \f(CW\*(C`dropna\*(C'\fR, \f(CW\*(C`view\*(C'\fR, and \f(CW\*(C`summary\*(C'\fR).
+.PP
+.Vb 3
+\& my $a = [ { id => 1, x => 10 } ];
+\& my $b = [ { id => 2, x => 20, y => 99 } ];   # extra column y
+\& my $c = concat($a, $b);
+.Ve
+.PP
+\&\fBResulting Structure:\fR
+.PP
+.Vb 4
+\& [
+\&     { id => 1, x => 10           },   # no \*(Aqy\*(Aq key \-> reads as undef
+\&     { id => 2, x => 20, y => 99  },
+\& ]
+.Ve
+.PP
+\fIHash of Arrays (HoA)\fR
+.IX Subsection "Hash of Arrays (HoA)"
+.PP
+The output columns are the union of all input columns, sorted for a
+deterministic layout. Each column is the per\-frame arrays joined in frame order.
+Because HoA is column\-major, a column missing from a frame — or a ragged short
+column within a frame — is padded with undef so every output column ends up the
+same length (the total number of rows).
+.PP
+.Vb 3
+\& my $a = { g => [ \*(Aqa\*(Aq, \*(Aqa\*(Aq ], v => [ 1, 2 ] };
+\& my $b = { g => [ \*(Aqb\*(Aq ],      w => [ 9 ]    };   # v absent here, w is new
+\& my $c = concat($a, $b);
+.Ve
+.PP
+\&\fBResulting Structure:\fR
+.PP
+.Vb 5
+\& {
+\&     g => [ \*(Aqa\*(Aq,   \*(Aqa\*(Aq,   \*(Aqb\*(Aq ],
+\&     v => [ 1,     2,     undef ],   # padded for the frame that lacked \*(Aqv\*(Aq
+\&     w => [ undef, undef, 9     ],   # padded for the frame that lacked \*(Aqw\*(Aq
+\& }
+.Ve
+.PP
+\fIHash of Hashes (HoH)\fR
+.IX Subsection "Hash of Hashes (HoH)"
+.PP
+The outer hashes are merged in frame order and the inner row hashrefs are reused
+by reference. Because a Perl hash cannot hold duplicate keys, a repeated row
+name is made unique R\-style — \f(CW\*(C`name\*(C'\fR, \f(CW\*(C`name.1\*(C'\fR, \f(CW\*(C`name.2\*(C'\fR, … — and a single
+warning is emitted noting that row names collided.
+.PP
+.Vb 4
+\& my $a = { r => { v => 1 } };
+\& my $b = { r => { v => 2 } };
+\& my $c = concat($a, $b);
+\& # warns: concat: duplicate HoH row name(s) made unique with a .N suffix
+.Ve
+.PP
+\&\fBResulting Structure:\fR
+.PP
+.Vb 4
+\& {
+\&     r     => { v => 1 },
+\&     \*(Aqr.1\*(Aq => { v => 2 },
+\& }
+.Ve
+.PP
+\fIEmpty and single inputs\fR
+.IX Subsection "Empty and single inputs"
+.PP
+undef and empty frames are skipped, so they can be threaded through a pipeline
+harmlessly:
+.PP
+.Vb 1
+\& concat(undef, [], [ { n => 1 } ], [ { n => 2 } ]);   # two rows
+.Ve
+.PP
+When every frame is empty the result is an empty frame matching the first
+argument\*(Aqs reference type (\f(CW\*(C`[]\*(C'\fR for an arrayref, \f(CW\*(C`{}\*(C'\fR for a hashref). A single
+frame round\-trips unchanged.
+.PP
+\fIrbind\fR
+.IX Subsection "rbind"
+.PP
+\&\f(CW\*(C`rbind\*(C'\fR is the same subroutine as \f(CW\*(C`concat\*(C'\fR, exported under a second name for
+readers who know it from R:
+.PP
+.Vb 1
+\& my $c = rbind($df1, $df2);
+\& 
+\& # they are literally the same code reference:
+\& \e&Stats::LikeR::rbind == \e&Stats::LikeR::concat;   # true
+.Ve
+.PP
+\fIErrors\fR
+.IX Subsection "Errors"
+.PP
+\&\f(CW\*(C`concat\*(C'\fR (and therefore \f(CW\*(C`rbind\*(C'\fR) dies (with a trailing newline) when:
+.IP \(bu 4
+no usable frame is given;
+.IP \(bu 4
+a frame is neither an ARRAY nor a HASH ref;
+.IP \(bu 4
+the frames are not all the same shape (the message names the two shapes and
+suggests the relevant converter);
+.IP \(bu 4
+an AoA element is not an arrayref, or an AoH/HoH row is not a hashref.
+.PP
+\fISee also\fR
+.IX Subsection "See also"
+.PP
+\&\f(CW\*(C`agg\*(C'\fR (split\-apply\-combine), \f(CW\*(C`add_data\*(C'\fR (which also appends HoA columns and
+merges HoH rows), \f(CW\*(C`ljoin\*(C'\fR, \f(CW\*(C`aoh2hoa\*(C'\fR, \f(CW\*(C`hoa2aoh\*(C'\fR, \f(CW\*(C`hoh2hoa\*(C'\fR, \f(CW\*(C`aoh2hoh\*(C'\fR.
 .SS cor
 .IX Subsection "cor"
 .Vb 1
@@ -2365,14 +2756,14 @@ works on all the Stats::LikeR frame shapes, so you don\*(Aqt have to remember wh
 one you\*(Aqre holding:
 .PP
 .Vb 4
-\& ncol([ {a=>1,b=>2}, {a=>3,b=>4} ])   # 2   array of hashes  (AoH)
-\& ncol([ [1,2,3], [4,5,6] ])           # 3   array of arrays  (AoA)
-\& ncol({ a=>[1,2], b=>[3,4] })         # 2   hash of arrays   (HoA)
-\& ncol({ r1=>{...}, r2=>{...} })       # 2   hash of hashes   (HoH)
+\& ncol([ [1,2,3], [4,5,6] ])         # 3   array of arrays  (AoA)
+\& ncol([ {a=>1,b=>2}, {a=>3,b=>4} ]) # 2   array of hashes  (AoH)
+\& ncol({ a=>[1,2], b=>[3,4] })       # 2   hash of arrays   (HoA)
+\& ncol({ r1=>{...}, r2=>{...} })     # 2   hash of hashes   (HoH)
 .Ve
 .PP
-\fIThe one rule to remember\fR
-.IX Subsection "The one rule to remember"
+\fINB\fR
+.IX Subsection "NB"
 .PP
 A \fBcolumn\fR is one field of each record. Where the fields live depends on the
 shape:
@@ -2417,15 +2808,6 @@ saying what it got.
 .PP
 Blessed frames are fine — it looks at the underlying array/hash, so your
 objects count just like plain refs.
-.PP
-\fISpeed\fR
-.IX Subsection "Speed"
-.PP
-Each count is a cheap read of a length or a key\-count. The only extra work is a
-quick pass over the rows to confirm they agree on their width (and, for a hash
-frame, that its values are the shape they claim). No copies, no walking the
-data. It\*(Aqs pure Perl on purpose: there\*(Aqs nothing here fast enough to be worth
-doing in C.
 .SS nrow
 .IX Subsection "nrow"
 \&\f(CWnrow($frame)\fR returns how many \fBrows\fR a data frame has. It works on all the
@@ -2433,14 +2815,14 @@ Stats::LikeR frame shapes, so you don\*(Aqt have to remember which one you\*(Aqr
 holding:
 .PP
 .Vb 4
-\& nrow([ {a=>1}, {a=>2} ])          # 2   array of hashes  (AoH)
-\& nrow([ [1,2,3], [4,5,6] ])        # 2   array of arrays  (AoA)
-\& nrow({ a=>[1,2,3], b=>[4,5,6] })  # 3   hash of arrays   (HoA)
-\& nrow({ r1=>{...}, r2=>{...} })    # 2   hash of hashes   (HoH)
+\& nrow([ [1,2,3], [4,5,6] ])       # 2   array of arrays  (AoA)
+\& nrow([ {a=>1}, {a=>2} ])         # 2   array of hashes  (AoH)
+\& nrow({ a=>[1,2,3], b=>[4,5,6] }) # 3   hash of arrays   (HoA)
+\& nrow({ r1=>{...}, r2=>{...} })   # 2   hash of hashes   (HoH)
 .Ve
 .PP
-\fIThe one rule to remember\fR
-.IX Subsection "The one rule to remember"
+\fINB\fR
+.IX Subsection "NB"
 .PP
 A \fBrow\fR is one record. Where the records live depends on the shape:
 .IP \(bu 4
@@ -2476,14 +2858,6 @@ arrays (HoA) or all hashes (HoH) croaks with a message saying what it got.
 .PP
 Blessed frames are fine — it looks at the underlying array/hash, so your
 objects count just like plain refs.
-.PP
-\fISpeed\fR
-.IX Subsection "Speed"
-.PP
-Every count is a single cheap read of length or key\-count — no walking the
-data, no copies. The only loop is a quick pass over HoA columns to confirm they
-line up. It\*(Aqs pure Perl on purpose: there\*(Aqs nothing here fast enough to be
-worth doing in C.
 .SS oneway_test
 .IX Subsection "oneway_test"
 A one\-way test for equality of group means that, unlike \f(CW\*(C`aov\*(C'\fR/ANOVA, \fBdoes not
@@ -3006,11 +3380,9 @@ Create a binomial distribution of numbers
 .Vb 1
 \& my $binom = rbinom( n => $n, prob => 0.5, size => 9);
 .Ve
-.PP
-It hooks directly into Perl\*(Aqs internal PRNG system, respecting \f(CWsrand()\fR seeds.
 .SS read_table
 .IX Subsection "read_table"
-I\*(Aqve tried to make this as simple as possible, trying to follow from R:
+minimal example:
 .PP
 .Vb 1
 \& my $test_data = read_table(\*(Aqt/HepatitisCdata.csv\*(Aq);
@@ -3019,28 +3391,33 @@ I\*(Aqve tried to make this as simple as possible, trying to follow from R:
 \fIoptions\fR
 .IX Subsection "options"
 .PP
-output types can be AOH (aoa), HOA (hoa), HOH (hoh)
-.PP
-.Vb 1
-\& read_table($filename, \*(Aqoutput.type\*(Aq => \*(Aqaoh\*(Aq);
-\& 
-\& read_table($filename, \*(Aqoutput.type\*(Aq => \*(Aqhoa\*(Aq);
-.Ve
-.PP
+output types can be AOH (aoh), HOA (hoa), HOH (hoh)
+    read_table($filename, \*(Aqoutput.type\*(Aq => \*(Aqaoh\*(Aq);
+    read_table($filename, \*(Aqoutput.type\*(Aq => \*(Aqhoa\*(Aq);
 and, like Text::CSV_XS, filters can be applied in order to save RAM on big files:
-.PP
-.Vb 7
-\& $test_data = read_table(
-\&     \*(Aqt/HepatitisCdata.csv\*(Aq,
-\&     filter => {
-\&         Sex => sub {$_ eq \*(Aqf\*(Aq} # where "Sex" is the column name, and "$_" is the value for that column
-\&     },
-\&     \*(Aqoutput.type\*(Aq => \*(Aqaoh\*(Aq
-\& );
-.Ve
-.PP
+    \f(CW$test_data\fR = read_table(
+        \*(Aqt/HepatitisCdata.csv\*(Aq,
+        filter => {
+            Sex => sub {$_ eq \*(Aqf\*(Aq} # where "Sex" is the column name, and "$_" is the value for that column
+        },
+        \*(Aqoutput.type\*(Aq => \*(Aqaoh\*(Aq
+    );
 the default delimiter is \f(CW\*(C`,\*(C'\fR
 Suffixes \f(CW\*(C`.csv\*(C'\fR and \f(CW\*(C`.tsv\*(C'\fR are automatically detected from file names, but if specified, are overridden by \f(CW\*(C`delim\*(C'\fR and/or \f(CW\*(C`sep\*(C'\fR. \f(CW\*(C`sep\*(C'\fR is given priority.
+.PP
+\fIcommented\-out headers\fR
+.IX Subsection "commented-out headers"
+.PP
+A header that is itself commented out is detected and used automatically, so
+    # PDB   score
+    1a2b    10
+    3c4d    20
+reads as though the header were \f(CW\*(C`PDB, score\*(C'\fR (the comment marker and any
+following whitespace are stripped from the first column). A commented line is
+only taken as the header when its field count matches the data, so ordinary
+leading comments are never mistaken for one. You may name such a column in a
+\&\f(CW\*(C`filter\*(C'\fR either as it appears in the file or by its clean name:
+    read_table(\*(Aqranks.tabular.tsv\*(Aq, filter => { \*(Aq# PDB\*(Aq => sub { \f(CW$_\fR == 2 } });
 .SS rnorm
 .IX Subsection "rnorm"
 Make a normal distribution of numbers, with pre\-set mean \f(CW\*(C`mean\*(C'\fR, standard deviation \f(CW\*(C`sd\*(C'\fR, and number \f(CW\*(C`n\*(C'\fR.
@@ -3759,6 +4136,53 @@ The \f(CW\*(C`xlsx\*(C'\fR, worksheet, and JSON side outputs of the original sta
 .IX Subsection "Options"
 .SH Changes
 .IX Header "Changes"
+.SS 0.21
+.IX Subsection "0.21"
+Better warning for undefined data for \f(CW\*(C`aoh2hoh\*(C'\fR, \f(CW\*(C`assign\*(C'\fR, \f(CW\*(C`dropna\*(C'\fR
+.PP
+addition of \f(CW\*(C`agg\*(C'\fR, \f(CW\*(C`concat\*(C'\fR functions
+.PP
+\fIread_table\fR
+.IX Subsection "read_table"
+.PP
+Fixed handling of commented\-out header lines and made filter columns
+referenceable by the name as it appears in the file.
+.IP \(bu 4
+\&\fBCommented\-out header recovery.\fR \f(CW\*(C`_parse_csv_file\*(C'\fR treats a line whose
+comment marker is followed by whitespace (e.g. \f(CW\*(C`# PDB<TAB>score\*(C'\fR) as a
+comment and drops it, so a header written that way never reached the
+callback and the first \fIdata\fR row was silently mistaken for the header.
+\&\f(CW\*(C`read_table\*(C'\fR now recovers it: the first physical line, if it is
+\&\f(CW\*(C`marker + whitespace\*(C'\fR and splits into two or more fields, is held as a
+candidate header and confirmed only when its field count matches the first
+data row. If the counts disagree the candidate was an ordinary leading
+comment and is discarded, so a prose comment that happens to contain the
+separator (e.g. \f(CW\*(C`# note, see README\*(C'\fR) is never mistaken for a header. A
+marker hugging its text (\f(CW\*(C`#id,val\*(C'\fR) is delivered by the parser and
+un\-commented in the callback as before. The marker and any following
+whitespace are stripped, so \f(CW\*(C`# PDB\*(C'\fR is stored as the clean name \f(CW\*(C`PDB\*(C'\fR.
+.IP \(bu 4
+\&\fBFilter columns may be named as written in the file.\fR Filter keys are
+matched against the header by exact name first, then retried with the
+leading comment marker (and surrounding whitespace) stripped, so a
+commented\-header column resolves whether it is referenced as \f(CW\*(C`# PDB\*(C'\fR or by
+its clean name \f(CW\*(C`PDB\*(C'\fR:
+.Sp
+.Vb 4
+\& read_table(
+\&     \*(Aqregression_rank.tabular.tsv\*(Aq,
+\&     filter => { \*(Aq# PDB\*(Aq => sub { $_ == 2 } },
+\& );
+.Ve
+.IP \(bu 4
+\&\fBClearer "column not found" error.\fR The failure now names the file and
+lists the actual header instead of printing it to STDOUT (a library
+shouldn\*(Aqt print):
+.Sp
+.Vb 2
+\& read_table: Filter column \*(Aqnope\*(Aq not found in the header of FILE;
+\& header is: \*(AqPDB\*(Aq, \*(Aqscore\*(Aq
+.Ve
 .SS 0.20
 .IX Subsection "0.20"
 addition of \f(CW\*(C`ncol\*(C'\fR, \f(CW\*(C`nrow\*(C'\fR, and \f(CW\*(C`pnorm\*(C'\fR functions

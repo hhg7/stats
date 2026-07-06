@@ -10,6 +10,7 @@ use Markdown::To::POD 'markdown_to_pod';
 use List::MoreUtils 'first_index';
 use Test::More;
 use Test::Pod;
+use Test::CPAN::Changes;
 
 sub file2string {
 	my $file = shift;
@@ -271,4 +272,78 @@ say $out_fh join ("\n", @lib);
 close $out_fh;
 
 pod_file_ok( 'lib/Stats/LikeR.pm' );
+
+#!/usr/bin/env perl
+
+my $infile  = 'README.md';
+my $outfile = 'Changes';
+my $dist    = 'Stats-LikeR'; # Inferred from your documentation
+
+open my $in, '<', $infile or die "Cannot read $infile: $!\n";
+open my $out, '>', $outfile or die "Cannot write $outfile: $!\n";
+
+# Write the mandatory CPAN::Changes::Spec header
+say $out "Revision history for $dist\n";
+
+my ($needs_bullet, $in_changes, $in_code_block) = (0, 0, 0);
+
+while (my $line = <$in>) {
+	chomp $line;
+	if ($line eq '# Changes') {
+		$in_changes = 1;
+		next;
+	}
+	next unless $in_changes == 1;
+	# Skip the top-level Markdown title and stop at the copyright footer
+	last if $line =~ /^#\s+COPYRIGHT AND LICENSE\s*$/i;
+	# Toggle markdown code blocks (```)
+	if ($line =~ /^```/) {
+	  $in_code_block = !$in_code_block;
+	  next;
+	}
+	# Handle Versions (e.g., "## 0.21")
+	if ($line =~ /^##\s+([\d\._]+)/) {
+	  print $out "$1 Unknown Release Date\n";
+	  $needs_bullet = 1;
+	} elsif ($line =~ /^###\s+(.+)/) {# Handle Groups (e.g., "### read_table")
+	  print $out " [$1]\n";
+	  $needs_bullet = 1;
+	} elsif ($line =~ /^####\s+(.+)/) {
+	# Handle Sub-Groups (e.g., "#### Bug fixes")
+	  # CPAN Spec doesn't formally have sub-groups, so we format it as a distinct bulleted header
+	  say $out " - $1:";
+	  $needs_bullet = 1;
+	} elsif ($line =~ /^\s*[-*]\s+(.+)/) {	# Handle explicit Markdown bullets
+	  print $out " - $1\n";
+	  $needs_bullet = 0;
+	} elsif ($line =~ /^\s*$/) {# Handle empty lines
+	  say $out '';
+	  $needs_bullet = 1; # Reset so the next text block gets a bullet
+	} else {# Handle normal text or indented code
+		# If it's 4-space indented code from Markdown, keep it indented for CPAN
+		if ($line =~ /^\s{4,}(.+)/ || $in_code_block) {
+			my $code_line = $1 || $line;
+			$code_line =~ s/^\s+//; # strip leading space to normalize
+			say $out "     $code_line";
+		} else {
+			# Strip leading/trailing formatting like **bold** just in case it breaks flow, 
+			# though CPAN::Changes technically allows it as raw text.
+			$line =~ s/\*\*(.+?)\*\*/$1/g; 
+			if ($needs_bullet) {
+				 print $out " - $line\n";
+				 $needs_bullet = 0;
+			} else {
+				 # Continuation of the previous bullet
+				 print $out "   $line\n";
+			}
+		}
+	}
+}
+
+close $in;
+close $out;
+
+say "Successfully generated '$outfile' from '$infile'";
+changes_file_ok('Changes');
 done_testing();
+

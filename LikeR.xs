@@ -12224,7 +12224,7 @@ CODE:
 		SV*restrict rv = SvRV(arg1);
 		if (SvTYPE(rv) == SVt_PVAV) {
 			AV*restrict av = (AV*)rv;
-			SSize_t len = av_len(av) + 1;
+			size_t len = av_len(av) + 1;
 			if (items > 1) {
 				// CASE 2b: Array of Hashes (string key) or Array of Arrays (numeric index)
 				SV*restrict arg2 = ST(1);
@@ -12275,8 +12275,8 @@ CODE:
 				SV**restrict col_svp = hv_fetch(hv, key, klen, 0);
 				if (col_svp && SvROK(*col_svp) && SvTYPE(SvRV(*col_svp)) == SVt_PVAV) {
 					AV*restrict av = (AV*)SvRV(*col_svp);
-					SSize_t len = av_len(av) + 1;
-					for (unsigned i = 0; i < len; i++) {
+					size_t len = av_len(av) + 1;
+					for (size_t i = 0; i < len; i++) {
 						SV**restrict valp = av_fetch(av, i, 0);
 						if (valp) increment_count(aTHX_ counts_hv, *valp);
 					}
@@ -12313,8 +12313,8 @@ CODE:
 						 // If it's a Hash of Arrays, count ALL elements in the inner arrays
 						 if (SvTYPE(inner_rv) == SVt_PVAV) {
 							 AV*restrict inner_av = (AV*)inner_rv;
-							 SSize_t len = av_len(inner_av) + 1;
-							 for (unsigned i = 0; i < len; i++) {
+							 size_t len = av_len(inner_av) + 1;
+							 for (size_t i = 0; i < len; i++) {
 								 SV**restrict valp = av_fetch(inner_av, i, 0);
 								 if (valp) increment_count(aTHX_ counts_hv, *valp);
 							 }
@@ -12338,7 +12338,7 @@ CODE:
 				 }
 			}
 		} else {
-		/* Safely decrement the reference count of our hash before dying to prevent a leak */
+		// Safely decrement the reference count of our hash before dying to prevent a leak
 			SvREFCNT_dec((SV*)counts_hv);
 			croak("value_counts: Unsupported reference type.");
 		}
