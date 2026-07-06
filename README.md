@@ -117,6 +117,210 @@ When the target is a Hash of Arrays, incoming arrays are pushed onto the existin
 
 NB: If `add_data` is called on a completely empty target reference (e.g., `$data = {}` or `$data = []`), it will intelligently infer the required inner structure (Hashes vs Arrays) by inspecting the first valid row of the source data.
 
+## agg
+
+Split-apply-combine over a data frame: split the rows into groups, apply one or
+more aggregators to chosen columns, and combine the results into a new frame.
+This is the *combine* half that `group_by` (which only splits) leaves to you,
+and the analog of pandas `df.groupby(...).agg(...)`. With no `by` it collapses
+the whole frame to a single row, like pandas `df.agg(...)`.
+
+`agg` accepts all four data-frame shapes and, by default, returns the same shape
+it was given:
+
+    AoA  [ [ .. ], [ .. ] ]      array of arrayrefs   (positional columns)
+    AoH  [ { .. }, { .. } ]      array of hashrefs    (the read_table default)
+    HoA  { c => [ .. ], .. }     hash of arrayrefs    (column-major)
+    HoH  { r => { .. }, .. }     hash of hashrefs     (named rows)
+
+For AoA the column identifiers in `by` and in the `agg` spec are integer
+positions; for the other three shapes they are column names. The original frame
+is never modified.
+
+### Usage
+
+    use Stats::LikeR;
+
+    # grouped, one aggregator per column
+    my $out = agg($df, by => 'sex', agg => { wt => 'mean' });
+
+    # grouped, several aggregators, several columns
+    my $out = agg($df,
+        by  => 'sex',
+        agg => { wt => [ 'mean', 'sd' ], age => [ 'mean', 'count' ] },
+    );
+
+    # ungrouped: the whole frame becomes one row
+    my $out = agg($df, agg => { wt => 'mean', age => 'count' });
+
+    # group on two columns and emit a hash of hashes
+    my $out = agg($df,
+        by            => [ 'a', 'b' ],
+        agg           => { v => 'sum' },
+        'output.type' => 'hoh',
+    );
+
+### Arguments
+
+`agg` takes the data frame first, then `name => value` pairs.
+
+- **agg** (required) — a hashref mapping each column to an aggregator
+  *spec*. A spec is one of: a single aggregator name (string), an arrayref of
+  names, or a coderef. See [Aggregators](#aggregators) below.
+- **by** — a single column or an arrayref of columns to group on. Omit it to
+  aggregate the entire frame into one row.
+- **skipna** — `1` (default) drops undef cells before a numeric aggregator
+  runs. `0` makes any undef in a group poison the numeric result for that group
+  (the cell comes back undef), matching pandas `skipna=False`. `count`, `n`,
+  `nunique`, `first`, and `last` ignore this flag.
+- **sort** — `1` (default) sorts the output groups by key (numerically when
+  every key looks like a number, otherwise as strings); `0` keeps first-seen
+  order.
+- **output.type** — `aoa`, `aoh`, `hoa`, or `hoh`. Defaults to the same family
+  as the input frame.
+
+### Aggregators
+
+Named aggregators may be combined in any order per column:
+
+| name      | result                                                      |
+|-----------|-------------------------------------------------------------|
+| `mean`    | arithmetic mean (needs ≥ 1 defined cell, else undef)        |
+| `median`  | median (needs ≥ 1)                                          |
+| `sum`     | sum (needs ≥ 1)                                             |
+| `sd`      | sample standard deviation (needs ≥ 2, else undef)           |
+| `var`     | sample variance (needs ≥ 2, else undef)                     |
+| `min`     | minimum (needs ≥ 1)                                          |
+| `max`     | maximum (needs ≥ 1)                                          |
+| `count`   | number of *defined* cells                                   |
+| `n`       | number of cells, undef included                             |
+| `nunique` | number of distinct defined cells                            |
+| `first`   | first defined cell (undef if none)                          |
+| `last`    | last defined cell (undef if none)                           |
+| `mode`    | modal defined cell; ties broken deterministically           |
+
+The numeric aggregators call the module's XS functions of the same name, so they
+inherit their precision. `agg` filters undef itself before calling them, so they
+never croak on missing cells. `mode` is made deterministic: on a tie it returns
+the smallest number, or the lowest string when the values are not numeric.
+
+A **coderef** may be supplied instead of a name for full control. It is called
+once per group as `$code->(\@cells)`, where `@cells` are every cell for that
+column in the group **including undef**, and must return a single scalar:
+
+    # count the missing values in each group
+    my $out = agg($df, by => 'sex', agg => {
+        age => sub {
+            my $cells = shift;
+            scalar grep { !defined } @$cells;
+        },
+    });
+
+### Output shape and column naming
+
+Output columns are laid out deterministically: the `by` columns first, in the
+order given, then the aggregated columns sorted (numerically for AoA integer
+columns, otherwise as strings), each expanded over its aggregator list in the
+order supplied.
+
+A column reduced by a **single** aggregator keeps its own name; reduced by
+**two or more** it becomes `<col>_<func>`:
+
+    my $df = [
+        { sex => 'M', wt => 70, age => 30    },
+        { sex => 'F', wt => 60, age => 25    },
+        { sex => 'M', wt => 80, age => 40    },
+        { sex => 'F', wt => 55, age => undef },
+    ];
+
+    my $out = agg($df,
+        by  => 'sex',
+        agg => { wt => [ 'mean', 'sd' ], age => [ 'mean', 'count' ] },
+    );
+
+**Resulting Structure** (AoH in, AoH out):
+
+    [
+        {
+            sex       => 'F',
+            wt_mean   => 57.5,
+            wt_sd     => 3.53553390593274,
+            age_mean  => 25,     # the undef age was skipped
+            age_count => 1,      # count excludes the undef
+        },
+        {
+            sex       => 'M',
+            wt_mean   => 75,
+            wt_sd     => 7.07106781186548,
+            age_mean  => 35,
+            age_count => 2,
+        },
+    ]
+
+### Ungrouped
+
+Without `by`, the frame collapses to one row:
+
+    my $out = agg($df, agg => { wt => 'mean', age => 'count' });
+
+    # [ { wt => 66.25, age => 3 } ]
+
+### Array of Arrays (AoA)
+
+Columns are integer positions. Grouping on column 0 and reducing column 1:
+
+    my $aoa = [ [ 'M', 70 ], [ 'F', 60 ], [ 'M', 80 ] ];
+    my $out = agg($aoa, by => 0, agg => { 1 => [ 'mean', 'max' ] });
+
+    # [ [ 'F', 60, 60 ], [ 'M', 75, 80 ] ]
+    #     ^grp  ^mean ^max
+
+The output row is positional: the `by` columns first, then each aggregated
+column in the plan order.
+
+### Hash of Hashes (HoH) output
+
+With `output.type => 'hoh'` the row label is the group value; multiple `by`
+columns are joined with a dot, an ungrouped result is keyed `all`, and a
+collision is made unique with a `.N` suffix.
+
+    my $out = agg($df, by => 'sex', agg => { wt => 'mean' }, 'output.type' => 'hoh');
+
+    # {
+    #     F => { sex => 'F', wt => 57.5 },
+    #     M => { sex => 'M', wt => 75   },
+    # }
+
+### Missing values
+
+By default (`skipna => 1`) undef cells are removed before a numeric aggregator
+runs, so a group of `(60, 55)` with a third undef still yields the mean of the
+two defined values. `count` reports only defined cells while `n` counts undef
+too. With `skipna => 0`, a group containing any undef returns undef for the
+numeric aggregators (`mean median sum sd var mode`); the counting and
+positional aggregators are unaffected.
+
+A group without enough data yields undef rather than an error: `sd` and `var`
+need at least two defined cells, the other numeric aggregators need at least
+one.
+
+### Errors
+
+`agg` dies (with a trailing newline, so the message prints cleanly) when:
+
+- the first argument is not an ARRAY or HASH ref;
+- no `agg` spec is given, or it is not a non-empty hashref;
+- an unknown option is passed;
+- an aggregator name is not recognized;
+- an aggregator list for a column is empty;
+- `output.type` is not one of `aoa`, `aoh`, `hoa`, `hoh`;
+- the trailing arguments are not `name => value` pairs.
+
+### See also
+
+`group_by` (the split step), `concat` / `rbind` (row-binding frames),
+`dropna`, `assign`, `value_counts`.
+
 ## anova
 
 Sequential (Type-I) ANOVA table for a linear model, in the same shape `aov`
@@ -981,6 +1185,139 @@ Only errors from **your function** are trapped. Mistakes in the call itself
 - **In the error message, "x" is the first column and "y" is the second** — i.e.
   `y` is the inner ("to") key. So `$result->{A}{B}` reading `…deviation of y is 0`
   means column `B` is the degenerate one for that pair.
+
+## concat
+
+Row-bind two or more data frames: stack their rows into one new frame, the
+analog of pandas `concat(..., axis=0)` and R's `rbind`. `rbind` is provided as a
+true synonym (the same subroutine), so the two names are interchangeable.
+
+`concat` accepts all four data-frame shapes and returns a new frame of that same
+shape:
+
+    AoA  [ [ .. ], [ .. ] ]      array of arrayrefs   (positional columns)
+    AoH  [ { .. }, { .. } ]      array of hashrefs    (the read_table default)
+    HoA  { c => [ .. ], .. }     hash of arrayrefs    (column-major)
+    HoH  { r => { .. }, .. }     hash of hashrefs     (named rows)
+
+Every frame must be the same shape; mixing shapes dies with a hint to convert
+first (`aoh2hoa`, `hoa2aoh`, `hoh2hoa`, `aoh2hoh`). undef frames and empty
+frames are skipped, and the shape is taken from the first non-empty frame. The
+original frames are never modified.
+
+### Usage
+
+    use Stats::LikeR;
+
+    my $all = concat($df1, $df2, $df3);   # any number of frames
+    my $all = rbind($df1, $df2);          # identical: rbind is a synonym
+
+### Array of Arrays (AoA)
+
+The outer arrays are concatenated in order and the row arrayrefs are reused by
+reference (not copied). Ragged rows are kept as-is; reading past a short row
+yields undef.
+
+    my $a = [ [ 1, 2 ], [ 3, 4 ] ];
+    my $b = [ [ 5, 6 ], [ 7 ]    ];   # ragged last row
+    my $c = concat($a, $b);
+
+**Resulting Structure:**
+
+    [ [ 1, 2 ], [ 3, 4 ], [ 5, 6 ], [ 7 ] ]
+
+### Array of Hashes (AoH)
+
+The rows are concatenated in order and the row hashrefs are reused by reference.
+The result is the union of columns; a column absent from a given row simply
+reads as undef, matching this module's "missing key means undef" convention
+(as used by `dropna`, `view`, and `summary`).
+
+    my $a = [ { id => 1, x => 10 } ];
+    my $b = [ { id => 2, x => 20, y => 99 } ];   # extra column y
+    my $c = concat($a, $b);
+
+**Resulting Structure:**
+
+    [
+        { id => 1, x => 10           },   # no 'y' key -> reads as undef
+        { id => 2, x => 20, y => 99  },
+    ]
+
+### Hash of Arrays (HoA)
+
+The output columns are the union of all input columns, sorted for a
+deterministic layout. Each column is the per-frame arrays joined in frame order.
+Because HoA is column-major, a column missing from a frame — or a ragged short
+column within a frame — is padded with undef so every output column ends up the
+same length (the total number of rows).
+
+    my $a = { g => [ 'a', 'a' ], v => [ 1, 2 ] };
+    my $b = { g => [ 'b' ],      w => [ 9 ]    };   # v absent here, w is new
+    my $c = concat($a, $b);
+
+**Resulting Structure:**
+
+    {
+        g => [ 'a',   'a',   'b' ],
+        v => [ 1,     2,     undef ],   # padded for the frame that lacked 'v'
+        w => [ undef, undef, 9     ],   # padded for the frame that lacked 'w'
+    }
+
+### Hash of Hashes (HoH)
+
+The outer hashes are merged in frame order and the inner row hashrefs are reused
+by reference. Because a Perl hash cannot hold duplicate keys, a repeated row
+name is made unique R-style — `name`, `name.1`, `name.2`, … — and a single
+warning is emitted noting that row names collided.
+
+    my $a = { r => { v => 1 } };
+    my $b = { r => { v => 2 } };
+    my $c = concat($a, $b);
+    # warns: concat: duplicate HoH row name(s) made unique with a .N suffix
+
+**Resulting Structure:**
+
+    {
+        r     => { v => 1 },
+        'r.1' => { v => 2 },
+    }
+
+### Empty and single inputs
+
+undef and empty frames are skipped, so they can be threaded through a pipeline
+harmlessly:
+
+    concat(undef, [], [ { n => 1 } ], [ { n => 2 } ]);   # two rows
+
+When every frame is empty the result is an empty frame matching the first
+argument's reference type (`[]` for an arrayref, `{}` for a hashref). A single
+frame round-trips unchanged.
+
+### rbind
+
+`rbind` is the same subroutine as `concat`, exported under a second name for
+readers who know it from R:
+
+    my $c = rbind($df1, $df2);
+
+    # they are literally the same code reference:
+    \&Stats::LikeR::rbind == \&Stats::LikeR::concat;   # true
+
+### Errors
+
+`concat` (and therefore `rbind`) dies (with a trailing newline) when:
+
+- no usable frame is given;
+- a frame is neither an ARRAY nor a HASH ref;
+- the frames are not all the same shape (the message names the two shapes and
+  suggests the relevant converter);
+- an AoA element is not an arrayref, or an AoH/HoH row is not a hashref.
+
+### See also
+
+`agg` (split-apply-combine), `add_data` (which also appends HoA columns and
+merges HoH rows), `ljoin`, `aoh2hoa`, `hoa2aoh`, `hoh2hoa`, `aoh2hoh`.
 
 ## cor
 
@@ -2565,33 +2902,25 @@ Create a binomial distribution of numbers
 
     my $binom = rbinom( n => $n, prob => 0.5, size => 9);
 
-It hooks directly into Perl's internal PRNG system, respecting `srand()` seeds. 
-
 ## read_table
 
-I've tried to make this as simple as possible, trying to follow from R:
+minimal example:
 
     my $test_data = read_table('t/HepatitisCdata.csv');
 
 ### options
-
 | Option | Description | Example |
 | -------- | ------- | ------- |
-|`comment` | Comment character, by default `#` | `comment => %` or whatever; does not apply with header|
+|`comment` | Comment character, by default `#`; lines beginning with it are skipped | `comment => '%'` |
 |`output.type`| data type for output: array of hash, hash of array, or hash of hash | `'output.type' => 'aoh'`|
-|`filter`| Only take in rows with a certain filter | `filter => {	Sex => sub {$_ eq 'f'} }`|
+|`filter`| Only take in rows matching a filter | `filter => { Sex => sub {$_ eq 'f'} }`|
 |`row.names` | include row names in retrieved data; off by default | |
 |`sep` | field separator character; synonym with `delim`| `sep => "\t"` |
 | `delim`| field separator character; synonym with `sep`| `delim => "\t"` |
-
-output types can be AOH (aoa), HOA (hoa), HOH (hoh)
-
+output types can be AOH (aoh), HOA (hoa), HOH (hoh)
     read_table($filename, 'output.type' => 'aoh');
-
     read_table($filename, 'output.type' => 'hoa');
-
 and, like Text::CSV_XS, filters can be applied in order to save RAM on big files:
-
     $test_data = read_table(
         't/HepatitisCdata.csv',
         filter => {
@@ -2599,9 +2928,19 @@ and, like Text::CSV_XS, filters can be applied in order to save RAM on big files
         },
         'output.type' => 'aoh'
     );
-
 the default delimiter is `,`
 Suffixes `.csv` and `.tsv` are automatically detected from file names, but if specified, are overridden by `delim` and/or `sep`. `sep` is given priority.
+### commented-out headers
+A header that is itself commented out is detected and used automatically, so
+    # PDB	score
+    1a2b	10
+    3c4d	20
+reads as though the header were `PDB, score` (the comment marker and any
+following whitespace are stripped from the first column). A commented line is
+only taken as the header when its field count matches the data, so ordinary
+leading comments are never mistaken for one. You may name such a column in a
+`filter` either as it appears in the file or by its clean name:
+    read_table('ranks.tabular.tsv', filter => { '# PDB' => sub { $_ == 2 } });
 
 ## rnorm
 
@@ -3259,6 +3598,43 @@ The `xlsx`, worksheet, and JSON side outputs of the original stand-alone routine
 Better warning for undefined data for `aoh2hoh`, `assign`, `dropna`
 
 addition of `agg`, `concat` functions
+
+### read_table
+
+Fixed handling of commented-out header lines and made filter columns
+referenceable by the name as it appears in the file.
+
+- **Commented-out header recovery.** `_parse_csv_file` treats a line whose
+  comment marker is followed by whitespace (e.g. `# PDB<TAB>score`) as a
+  comment and drops it, so a header written that way never reached the
+  callback and the first *data* row was silently mistaken for the header.
+  `read_table` now recovers it: the first physical line, if it is
+  `marker + whitespace` and splits into two or more fields, is held as a
+  candidate header and confirmed only when its field count matches the first
+  data row. If the counts disagree the candidate was an ordinary leading
+  comment and is discarded, so a prose comment that happens to contain the
+  separator (e.g. `# note, see README`) is never mistaken for a header. A
+  marker hugging its text (`#id,val`) is delivered by the parser and
+  un-commented in the callback as before. The marker and any following
+  whitespace are stripped, so `# PDB` is stored as the clean name `PDB`.
+
+- **Filter columns may be named as written in the file.** Filter keys are
+  matched against the header by exact name first, then retried with the
+  leading comment marker (and surrounding whitespace) stripped, so a
+  commented-header column resolves whether it is referenced as `# PDB` or by
+  its clean name `PDB`:
+
+        read_table(
+            'regression_rank.tabular.tsv',
+            filter => { '# PDB' => sub { $_ == 2 } },
+        );
+
+- **Clearer "column not found" error.** The failure now names the file and
+  lists the actual header instead of printing it to STDOUT (a library
+  shouldn't print):
+
+        read_table: Filter column 'nope' not found in the header of FILE;
+        header is: 'PDB', 'score'
 
 ## 0.20
 

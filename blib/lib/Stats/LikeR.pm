@@ -1153,9 +1153,7 @@ sub read_table {
 
 	my $default_sep = $file =~ /\.tsv$/i ? "\t" : ',';
 	my %args = (
-		sep     => $default_sep,
-		comment => '#',
-		%input_args,
+		sep => $default_sep, comment => '#', %input_args,
 	);
 
 	my %allowed_args = map { $_ => 1 } (
@@ -1165,8 +1163,6 @@ sub read_table {
 	my @undef_args = sort grep { !$allowed_args{$_} } keys %args;
 	if (@undef_args) {
 		my $current_sub = ( split /::/, (caller(0))[3] )[-1];
-		# FIX: no more printing to STDOUT from a library ('say'); the die
-		# message carries the offending argument names itself
 		die "the args \"@undef_args\" aren't defined for $current_sub\n";
 	}
 	my $otype = $args{'output.type'} // 'aoh';
@@ -1193,7 +1189,7 @@ sub read_table {
 
 	my (@data, %data, @header, @uniq_header,
 	    %mapped_filters, @sorted_filter_flds, %seen_rownames);
-	my ($data_row, $header_seen, $header_done) = (0, 0, 0);
+	my ($data_row, $header_seen, $header_done, $provisional_hdr) = (0, 0, 0, 0);
 
 	# Everything that depends on the (possibly augmented) @header lives here so
 	# it can run either right after the header line (strict mode) or deferred
@@ -1203,9 +1199,6 @@ sub read_table {
 			$header[0] = 'row_name';
 		}
 		my %seen_h;
-		# FIX: hoa output with duplicate column names used to push the same
-		# cell once PER OCCURRENCE, silently corrupting the column lengths.
-		# Iterate unique names (order preserved) instead.
 		@uniq_header = grep { !$seen_h{$_}++ } @header;
 		my @dup_cols = grep { $seen_h{$_} > 1 } @uniq_header;
 		warn "read_table: duplicate column name(s) in $file: @dup_cols (later values win)\n"
@@ -1221,17 +1214,26 @@ sub read_table {
 			%mapped_filters = ();
 			for my $k (keys %$filter) {
 				if ($k =~ /^\d+$/) {
-					# FIX: a numeric key past the last column used to be
-					# accepted and then silently extended every row via the
-					# $_ write-back
 					die "read_table: numeric filter key $k exceeds the "
 					  . scalar(@header) . " columns of $file\n"
 						if $k > @header;
 					$mapped_filters{$k} = $filter->{$k};
 				} else {
 					my ($idx) = grep { $header[$_] eq $k } 0 .. $#header;
-					die "Filter column '$k' not found in header\n"
-						unless defined $idx;
+					if (!defined $idx && length( $args{comment} // '' )) {
+						# A commented-out header has its marker (and any
+						# following whitespace) stripped from the first
+						# column, so a key written as it appears in the file
+						# (e.g. "# PDB") won't match the clean name ("PDB").
+						# Normalize the key the same way and retry.
+						(my $nk = $k) =~ s/^\s*\Q$args{comment}\E\s*//;
+						($idx) = grep { $header[$_] eq $nk } 0 .. $#header;
+					}
+					unless (defined $idx) {
+						die "read_table: Filter column '$k' not found in the "
+						  . "header of $file; header is: "
+						  . join( ', ', map { "'$_'" } @header ) . "\n";
+					}
 					$mapped_filters{ $idx + 1 } = $filter->{$k};
 				}
 			}
@@ -1239,13 +1241,40 @@ sub read_table {
 		}
 	};
 
+	# _parse_csv_file() treats a line whose comment marker is followed by
+	# whitespace (e.g. "# PDB\tscore") as a comment and drops it, so a header
+	# written that way never reaches the callback and the first data row would
+	# be mistaken for the header. Recover it: read the first physical line, and
+	# if it is marker + whitespace and splits into >=2 fields, hold it as a
+	# CANDIDATE header. It is confirmed (in the callback) only if its field
+	# count matches the first data row; otherwise it was an ordinary leading
+	# comment and is discarded. A marker hugging its text ("#id,val") is
+	# delivered by the parser and un-commented in the callback as usual, so it
+	# never reaches this branch.
+	if (length( $args{comment} // '' ) && length( $args{sep} // '' )) {
+		open my $fh, '<', $file
+			or die "read_table: can't open $file: $!\n";
+		my $first = <$fh>;
+		close $fh;
+		if (defined $first && $first =~ /^\Q$args{comment}\E\s/) {
+			$first =~ s/\r?\n\z//;
+			my @cols = split /\Q$args{sep}\E/, $first, -1;
+			if (@cols >= 2) {
+				$cols[0] =~ s/^\Q$args{comment}\E\s*//;
+				@header          = @cols;
+				$header_seen     = 1;
+				$provisional_hdr = 1;	# confirm against the first data row
+			}
+		}
+	}
+
 	_parse_csv_file($file, $args{sep} // '', $args{comment} // '', sub {
 		my ($line_ref) = @_;
 
 		if (!$header_seen) {
 			# --- HEADER CAPTURE (copy made only here; runs once) ---
 			my @line = @$line_ref;
-			$line[0] =~ s/^\Q$args{comment}\E//
+			$line[0] =~ s/^\Q$args{comment}\E\s*//
 				if @line && defined $line[0] && length( $args{comment} // '' );
 			@header      = @line;
 			$header_seen = 1;
@@ -1257,10 +1286,31 @@ sub read_table {
 		}
 
 		if (!$header_done) {
+			# Confirm or reject a provisionally-captured commented-out header:
+			# it is a real header only if its field count matches the first
+			# data row. If not, the candidate was an ordinary leading comment;
+			# discard it and treat THIS delivered line as the header instead.
+			if ($provisional_hdr) {
+				$provisional_hdr = 0;
+				if (@$line_ref != @header) {
+					@header = @$line_ref;
+					$header[0] =~ s/^\Q$args{comment}\E\s*//
+						if @header && defined $header[0]
+						&& length( $args{comment} // '' );
+					unless ($want_auto_rn) {
+						$finalize_header->();
+						$header_done = 1;
+					}
+					return;	# this line WAS the header, not data
+				}
+				# widths match: accept the commented header, and let the
+				# auto.row.names / finalize logic below run on THIS data row.
+			}
+
 # First data row in auto.row.names mode: now the data width is
 # known, so decide whether the file carries an unlabelled leading
 # row-names column (header exactly one field short).
-			if (@$line_ref == @header + 1) {
+			if ($want_auto_rn && @$line_ref == @header + 1) {
 				unshift @header, $auto_rn_name;
 			}
 			$finalize_header->();
@@ -1282,9 +1332,6 @@ sub read_table {
 		}
 # --- APPLY FILTERS ---
 		if (@sorted_filter_flds) {
-# FIX: 'local %_ = %line_hash' copied the whole row for every
-# filtered row AND went stale after a $_ write-back. Aliasing the
-# glob makes %_ THE row hash: zero copy, mutations always visible.
 			local *_ = \%line_hash;
 			my $skip = 0;
 			foreach my $fld (@sorted_filter_flds) {
@@ -1308,8 +1355,6 @@ sub read_table {
 			push @{ $data{$_} }, $line_hash{$_} for @uniq_header;
 		} elsif ($otype eq 'hoh') {
 			my $row_name = $line_hash{ $args{'row.names'} };
-			# FIX: an undef/empty row-name cell used to become the '' hash
-			# key with "uninitialized" warnings; now it dies with the row
 			die sprintf "read_table: undefined row name (column '%s') in %s data row %d\n",
 				$args{'row.names'}, $file, $data_row
 				unless defined $row_name;
@@ -1321,7 +1366,9 @@ sub read_table {
 			}
 		}
 	});
-	# header-only files in auto mode never hit a data row: still validate
+	# header-only files never hit a data row. A provisional (commented-out)
+	# header was never confirmed against a data row, but with no data to
+	# contradict it we accept it; either way still validate.
 	$finalize_header->() if $header_seen && !$header_done;
 	if ($otype eq 'aoh') {
 		return \@data;

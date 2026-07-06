@@ -2883,6 +2883,7 @@ no_leaks_ok {
 		);
 	};
 } 'write_table: no leaks with hash-of-array input'  unless $INC{'Devel/Cover.pm'};
+unlink '/tmp/hoa.test.tsv';
 my $f = '/tmp/hoa.test2.tsv';
 write_table(
 	\%hoa, $f,	sep => "\t", 'col.names' => ['B', 'C', 'A'], 'row.names' => 1, 'undef.val' => 'NA'
@@ -2901,6 +2902,7 @@ write_table(
 	\%hoa, $f,	sep => "\t", 'col.names' => ['B', 'C', 'A'], 'row.names' => 1, 'undef.val' => 'NA'
 );
 $str = file2string($f);
+unlink $f;
 $expected = "\tB\tC\tA\n1\ty\tz\tx\n2\t-3\t9\t1\n3\t-2\t3\t2\n4\t-1\t4\t3\n5\t0\tNA\t4\n6\t1\tNA\tNA\n7\t2\tNA\tNA\n8\t3\tNA\tNA\n";
 is($str, $expected, 'write_table: hoa input with col.names and nondigit input');
 %correct = (
@@ -2908,7 +2910,7 @@ is($str, $expected, 'write_table: hoa input with col.names and nondigit input');
 	'r2' => [99, undef, 'quote"here', undef],
 	'r3' => [undef, "tab\tin", undef, undef],
 );
-$fh = File::Temp->new(DIR => '/tmp', SUFFIX => '.tsv', UNLINK => 0);
+$fh = File::Temp->new(DIR => '/tmp', SUFFIX => '.tsv', UNLINK => 1);
 close $fh;
 write_table(
 	\%correct,	$fh->filename,	sep => "\t", 'undef.val' => 'NA'
