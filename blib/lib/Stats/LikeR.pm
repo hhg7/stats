@@ -867,9 +867,9 @@ sub read_table {
 		}
 
 		if (!$header_done) {
-			# First data row in auto.row.names mode: now the data width is
-			# known, so decide whether the file carries an unlabelled leading
-			# row-names column (header exactly one field short).
+# First data row in auto.row.names mode: now the data width is
+# known, so decide whether the file carries an unlabelled leading
+# row-names column (header exactly one field short).
 			if (@$line_ref == @header + 1) {
 				unshift @header, $auto_rn_name;
 			}
@@ -878,7 +878,7 @@ sub read_table {
 			# fall through and process THIS line as data
 		}
 
-		# --- DATA PROCESSING (operate on $line_ref directly; no row copy) ---
+# --- DATA PROCESSING (operate on $line_ref directly; no row copy)
 		$data_row++;
 		if (@$line_ref != @header) {
 			# FIX: alignment errors now say WHICH row is ragged
@@ -890,11 +890,11 @@ sub read_table {
 			my $v = $line_ref->[$i];
 			$line_hash{ $header[$i] } = ( !defined($v) || $v eq '' ) ? undef : $v;
 		}
-		# --- APPLY FILTERS ---
+# --- APPLY FILTERS ---
 		if (@sorted_filter_flds) {
-			# FIX: 'local %_ = %line_hash' copied the whole row for every
-			# filtered row AND went stale after a $_ write-back. Aliasing the
-			# glob makes %_ THE row hash: zero copy, mutations always visible.
+# FIX: 'local %_ = %line_hash' copied the whole row for every
+# filtered row AND went stale after a $_ write-back. Aliasing the
+# glob makes %_ THE row hash: zero copy, mutations always visible.
 			local *_ = \%line_hash;
 			my $skip = 0;
 			foreach my $fld (@sorted_filter_flds) {
@@ -911,7 +911,7 @@ sub read_table {
 			}
 			return if $skip;
 		}
-		# Populate requested data structure
+# Populate requested data structure
 		if ($otype eq 'aoh') {
 			push @data, \%line_hash;
 		} elsif ($otype eq 'hoa') {
@@ -933,7 +933,6 @@ sub read_table {
 	});
 	# header-only files in auto mode never hit a data row: still validate
 	$finalize_header->() if $header_seen && !$header_done;
-
 	if ($otype eq 'aoh') {
 		return \@data;
 	} else { # hoa or hoh

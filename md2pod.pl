@@ -8,6 +8,8 @@ use autodie ':default';
 use Devel::Confess 'color';
 use Markdown::To::POD 'markdown_to_pod';
 use List::MoreUtils 'first_index';
+use Test::More;
+use Test::Pod;
 
 sub file2string {
 	my $file = shift;
@@ -267,3 +269,6 @@ push @lib, @pod;
 open my $out_fh, '>', 'lib/Stats/LikeR.pm';
 say $out_fh join ("\n", @lib);
 close $out_fh;
+
+pod_file_ok( 'lib/Stats/LikeR.pm' );
+done_testing();

@@ -2911,7 +2911,7 @@ is($str, $expected, 'write_table: hoa input with col.names and nondigit input');
 $fh = File::Temp->new(DIR => '/tmp', SUFFIX => '.tsv', UNLINK => 0);
 close $fh;
 write_table(
-	\%correct,	$fh->filename,	sep => "\t"
+	\%correct,	$fh->filename,	sep => "\t", 'undef.val' => 'NA'
 );
 $test_data = read_table( $fh->filename, sep => "\t", 'output.type' => 'hoa');
 

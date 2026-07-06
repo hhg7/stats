@@ -4150,3 +4150,6 @@ mean, min, sum, median, var, and max die with undefined values, and print the of
 
 `write_table` now has `undef.val` option, which shows how undefined values are printed to tables, which is `NA` by default.
 
+# COPYRIGHT AND LICENSE
+
+This software is free.  It is licensed under the same terms as Perl itself
