@@ -3811,13 +3811,13 @@ The `xlsx`, worksheet, and JSON side outputs of the original stand-alone routine
 
 # Changes
 
-## 0.21
+## 0.21 2026-07-06 CDT
 
 Better warning message for undefined data for `aoh2hoh`, `assign`, `dropna`
 
 addition of `agg`, `concat`, `drop_cols`, `rank`, `rename_cols`, `select_cols` functions
 
-For improving Kwalitee (sic): added `[PodWeaver]` to dist.ini; as well as `Changes` file
+Improving Kwalitee (sic): added `[PodWeaver]` to dist.ini; as well as `Changes` file
 
 ### assign
 
@@ -4723,7 +4723,7 @@ switched several `unsigned int` variable to `I32` so that clang doesn't complain
 
 added restrict keyword for `sample`
 
-## 0.04
+## 0.04 2026-5-17 CDT
 
 addition of `sample` function
 
@@ -4731,11 +4731,11 @@ GNU source, to maximize compatibility and ease installation
 
 removal of JSON dependency to ease installation
 
-## 0.03
+## 0.03 2026-5-13 CDT
 
 Compatibility back to Perl 5.10
 
-## 0.02
+## 0.02 2026-5-7 CDT
 
 back-compatible to Perl 5.10, instead of original 5.40, ensuring more people can use it
 

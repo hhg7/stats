@@ -1,13 +1,14 @@
 Revision history for Stats-LikeR
 
+   # Changes
 
-0.21 Unknown Release Date
+0.21 2026-07-06 CDT
 
  - Better warning message for undefined data for `aoh2hoh`, `assign`, `dropna`
 
  - addition of `agg`, `concat`, `drop_cols`, `rank`, `rename_cols`, `select_cols` functions
 
- - For improving Kwalitee (sic): added `[PodWeaver]` to dist.ini; as well as `Changes` file
+ - Improving Kwalitee (sic): added `[PodWeaver]` to dist.ini; as well as `Changes` file
 
  [assign]
 
@@ -58,7 +59,7 @@ Revision history for Stats-LikeR
      read_table: Filter column 'nope' not found in the header of FILE;
      header is: 'PDB', 'score'
 
-0.20 Unknown Release Date
+ - ## 0.20
 
  - addition of `ncol`, `nrow`, and `pnorm` functions
 
@@ -179,7 +180,7 @@ Revision history for Stats-LikeR
 
  - new option to output to LaTeX table
 
-0.19 Unknown Release Date
+ - ## 0.19
 
  - numerous `SSize_t var1 = av_len(var) + 1` are changed to `size_t var1 = av_len(var) + 1` as `size_t`; as the result cannot be negative, in order to expand numerical range
 
@@ -189,7 +190,7 @@ Revision history for Stats-LikeR
 
  - `view` now breaks columns into chunks for very wide data sets, more closely matching R's behavior
 
-0.18 Unknown Release Date
+ - ## 0.18
 
  - `restrict` keyword added to numerous places within `intersection` to decrease CPU time
 
@@ -197,7 +198,7 @@ Revision history for Stats-LikeR
 
  - fixed POD rendering
 
-0.17 Unknown Release Date
+ - ## 0.17
 
  - addition of `assign`, which adds new columns based on calculations from other columns
 
@@ -385,7 +386,7 @@ Revision history for Stats-LikeR
 
  - now accepts array of hashes
 
-0.16 Unknown Release Date
+ - ## 0.16
 
  - changes to dist.ini, the minimum Perl version disappeared when I fixed other problems
 
@@ -584,7 +585,7 @@ Revision history for Stats-LikeR
 
  - Added `t/wilcox_test.t` (flat, no subtests): R-agreement cases, option handling (`paired`, `correct`, `exact`, `mu`, named/positional `x`/`y`, NA dropping), regressions for all four bug fixes, argument-error and `alternative`-validation checks, output shape, and `no_leaks_ok` coverage of the two-sample, exact, and paired allocation paths.
 
-0.15 Unknown Release Date
+ - ## 0.15
 
  - `view` function added, similar to R's `head`
 
@@ -784,7 +785,7 @@ Revision history for Stats-LikeR
      empty input writing no file, and UTF-8 column names and row keys. Two leak
      assertions cover the exception paths above.
 
-0.14 Unknown Release Date
+ - ## 0.14
 
  - `filter` function added for rows
 
@@ -804,7 +805,7 @@ Revision history for Stats-LikeR
 
  - `fisher_test` now should be complete, errors with confidence intervals fixed
 
-0.13 Unknown Release Date
+ - ## 0.13
 
  - `read_table`: speed improvements; commented headers are now allowed
 
@@ -819,7 +820,7 @@ Revision history for Stats-LikeR
 
  - Numerous changes to dist.ini to improve CPAN testing, especially for Win32
 
-0.12 Unknown Release Date
+ - ## 0.12
 
  - `add_data` can also take hash of arrays, and various mixes of data types
 
@@ -847,7 +848,7 @@ Revision history for Stats-LikeR
 
  - Added `__EXTENSIONS__` to source XS file for better CPAN testing
 
-0.11 Unknown Release Date
+ - ## 0.11
 
  - better POD formatting for tables
 
@@ -859,7 +860,7 @@ Revision history for Stats-LikeR
 
  - Better documentation for t-test
 
-0.10 Unknown Release Date
+ - ## 0.10
 
  - changes to compilation for CPAN, trying to get this work on Windows
 
@@ -867,13 +868,13 @@ Revision history for Stats-LikeR
 
  - `matrix` will work without key names, just like in R.  Testing for `matrix` has improved.
 
-0.09 Unknown Release Date
+ - ## 0.09
 
  - context changes in XS `dTHX`, `pTHX_`, and `aTHX_` to get better CPAN testing results
 
  - `restrict` keywords added to `lm` to increase speed
 
-0.08 Unknown Release Date
+ - ## 0.08
 
  - Speed improvement in `summary` of hashes.
 
@@ -885,7 +886,7 @@ Revision history for Stats-LikeR
 
  - `read_table` now returns hash-of-hash in {row}{column}
 
-0.07 Unknown Release Date
+ - ## 0.07
 
  - Addition of `summary` function.
 
@@ -895,7 +896,7 @@ Revision history for Stats-LikeR
 
  - `read_table` and `write_table` now automatically set separators for `.csv` files as `,` and `.tsv` files as `"\t"`, respectively, so these values no longer need to be specified separately from the file name.
 
-0.06 Unknown Release Date
+ - ## 0.06
 
  - Changed compiler options so that Solaris will work
 
@@ -903,7 +904,7 @@ Revision history for Stats-LikeR
 
  - Added restrict keywords to `power_t_test`, and made `int` to `unsigned int`
 
-0.05 Unknown Release Date
+ - ## 0.05
 
  - Leak testing for `sample`
 
@@ -913,7 +914,7 @@ Revision history for Stats-LikeR
 
  - added restrict keyword for `sample`
 
-0.04 Unknown Release Date
+0.04 2026-5-17 CDT
 
  - addition of `sample` function
 
@@ -921,11 +922,11 @@ Revision history for Stats-LikeR
 
  - removal of JSON dependency to ease installation
 
-0.03 Unknown Release Date
+0.03 2026-5-13 CDT
 
  - Compatibility back to Perl 5.10
 
-0.02 Unknown Release Date
+0.02 2026-5-7 CDT
 
  - back-compatible to Perl 5.10, instead of original 5.40, ensuring more people can use it
 

@@ -7790,13 +7790,13 @@ The C<xlsx>, worksheet, and JSON side outputs of the original stand-alone routin
 
 =head1 Changes
 
-=head2 0.21
+=head2 0.21 2026-07-06 CDT
 
 Better warning message for undefined data for C<aoh2hoh>, C<assign>, C<dropna>
 
 addition of C<agg>, C<concat>, C<drop_cols>, C<rank>, C<rename_cols>, C<select_cols> functions
 
-For improving Kwalitee (sic): added C<[PodWeaver]> to dist.ini; as well as C<Changes> file
+Improving Kwalitee (sic): added C<[PodWeaver]> to dist.ini; as well as C<Changes> file
 
 =head3 assign
 
@@ -8946,7 +8946,7 @@ switched several C<unsigned int> variable to C<I32> so that clang doesn't compla
 
 added restrict keyword for C<sample>
 
-=head2 0.04
+=head2 0.04 2026-5-17 CDT
 
 addition of C<sample> function
 
@@ -8954,11 +8954,11 @@ GNU source, to maximize compatibility and ease installation
 
 removal of JSON dependency to ease installation
 
-=head2 0.03
+=head2 0.03 2026-5-13 CDT
 
 Compatibility back to Perl 5.10
 
-=head2 0.02
+=head2 0.02 2026-5-7 CDT
 
 back-compatible to Perl 5.10, instead of original 5.40, ensuring more people can use it
 
