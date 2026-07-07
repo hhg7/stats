@@ -11,8 +11,266 @@ use autodie ':default';
 use Exporter 'import';
 use Scalar::Util qw(reftype looks_like_number);
 XSLoader::load('Stats::LikeR', $VERSION);
-our @EXPORT_OK = qw(add_data agg anova aoh2hoa aoh2hoh aov assign binom_test cfilter chisq_test chunk col col2col concat cor cor_test cov csort dnorm dropna filter fisher_test get_union get_unique glm group_by hoa2aoh hoa2hoh hoh2hoa hist intersection is_equivalent kruskal_test ks_test Lonly ljoin lm matrix max mean median min mode ncol nrow oneway_test p_adjust pnorm power_t_test predict prcomp ptukey qcut qtukey quantile Ronly rbind rbinom read_table rnorm runif sample scale sd seq shapiro_test sum summary t_test transpose TukeyHSD uniq vals value_counts var var_test view wilcox_test write_table);
+our @EXPORT_OK = qw(add_data agg anova aoh2hoa aoh2hoh aov assign binom_test cfilter chisq_test chunk col col2col colnames concat cor cor_test cov csort dnorm drop_cols dropna filter fisher_test get_union get_unique glm group_by hoa2aoh hoa2hoh hoh2hoa hist intersection is_equivalent kruskal_test ks_test Lonly ljoin lm matrix max mean median min mode ncol nrow oneway_test p_adjust pnorm power_t_test predict prcomp ptukey qcut qtukey quantile rank Ronly rbind rbinom read_table rename_cols rnorm rownames runif sample scale sd select_cols seq shapiro_test sum summary t_test transpose TukeyHSD uniq vals value_counts var var_test view wilcox_test write_table);
 our @EXPORT = @EXPORT_OK;
+
+# =====================================================================
+# 1) Add to @EXPORT_OK (line 14).  @EXPORT = @EXPORT_OK, so nothing else
+#    to touch.  Insert `colnames` after `col2col` and `rownames` after
+#    `rnorm` to keep the run roughly alphabetical:
+#
+#    ... chunk col col2col colnames concat cor cor_test ...
+#    ... rbinom read_table rnorm rownames runif sample ...
+# =====================================================================
+
+
+# colnames($df) / rownames($df)
+#
+# Return the column names and row names of any of the four Stats::LikeR
+# frame shapes, as a list (R's colnames()/rownames()).  In scalar context
+# each returns the count, so `scalar colnames($df) == ncol($df)` and
+# `scalar rownames($df) == nrow($df)` on a rectangular frame.
+#
+# Ordering mirrors view() exactly, so what you name is what you would see:
+#   * positional axes are 0-based integer indices --
+#       AoA columns, and the rows of AoA / AoH / HoA
+#   * key-based axes are the string-sorted union of keys --
+#       AoH / HoH columns (union across every row), HoA columns,
+#       and HoH rows (the outer keys)
+#
+# Shape is classified by _df_shape (the same detector agg() uses), so a
+# ragged AoA/HoA is tolerated for enumeration: colnames() spans the widest
+# row and rownames() the longest column.  Empty frames yield an empty list.
+# Like agg()/view(), the classifier is ref-based (not reftype), so hand it
+# an unblessed frame -- blessed frames are the one case ncol()/nrow() take
+# that this family does not.
+
+sub colnames {
+	my ($df) = @_;
+	die "colnames: undefined data in first position\n" unless defined $df;
+	my $shape = _df_shape($df, 'colnames');
+	my @cols;
+	if ($shape eq 'AoA') {                       # widest row -> 0 .. m-1
+		my $m = 0;
+		for my $row (@$df) {
+			next unless ref $row eq 'ARRAY';
+			$m = scalar @$row if scalar @$row > $m;
+		}
+		@cols = (0 .. $m - 1);
+	} elsif ($shape eq 'HoA') {                  # keys ARE the columns
+		@cols = sort keys %$df;
+	} else {                                     # AoH / HoH: union of row keys
+		my @rows = $shape eq 'AoH' ? @$df : values %$df;
+		my %seen;
+		for my $row (@rows) {
+			next unless ref $row eq 'HASH';
+			$seen{$_} = 1 for keys %$row;
+		}
+		@cols = sort keys %seen;
+	}
+	return wantarray ? @cols : scalar @cols;
+}
+
+sub rownames {
+	my ($df) = @_;
+	die "rownames: undefined data in first position\n" unless defined $df;
+	my $shape = _df_shape($df, 'rownames');
+	my @rows;
+	if ($shape eq 'HoH') {                        # outer keys ARE the rows
+		@rows = sort keys %$df;
+	} elsif ($shape eq 'HoA') {                   # longest column -> 0 .. n-1
+		my $n = 0;
+		for my $v (values %$df) {
+			next unless ref $v eq 'ARRAY';
+			$n = scalar @$v if scalar @$v > $n;
+		}
+		@rows = (0 .. $n - 1);
+	} else {                                      # AoA / AoH: one row per element
+		@rows = (0 .. $#$df);
+	}
+	return wantarray ? @rows : scalar @rows;
+}
+
+# =====================================================================
+# The XSUBs _cols_select / _cols_drop / _cols_rename are PRIVATE -- do NOT
+# export them.  (See select_drop_rename_cols.xs for the C side.)
+#
+# NAMING: `select` and `rename` are Perl core builtins, so exporting bare
+# `select`/`rename` would shadow them in the caller.  The `_cols` suffix
+# avoids that and reads as a trio.
+# =====================================================================
+
+
+# select_cols($df, @cols) | select_cols($df, \@cols)
+# drop_cols($df,   @cols) | drop_cols($df,   \@cols)
+# rename_cols($df, old => new, ...) | rename_cols($df, { old => new, ... })
+#
+# Column subset / drop / rename over the four frame shapes -- the Stats::LikeR
+# form of pandas df[['a','b']] / df.drop(columns=..) / df.rename(columns=..).
+#
+#   * AoA  -- identifiers are 0-based integer positions; rename_cols dies
+#            (an AoA has no labels; convert to AoH/HoA first).
+#   * AoH  -- identifiers are the row-hash keys.
+#   * HoA  -- identifiers are the top-level keys (the columns themselves).
+#   * HoH  -- identifiers are the inner-row keys.
+#
+# VIEW SEMANTICS (fast + low RAM).  Every result is a shallow view of the
+# source, so huge frames cost almost nothing to slice:
+#   * the row shapes (AoH/HoH/AoA) build fresh row containers but SHARE the
+#     cell scalars by reference -- no per-cell copy, no duplicate scalar
+#     bodies (this is the XS path; see below);
+#   * HoA shares the whole column arrayrefs (a pure-Perl alias).
+# The operation never mutates the source.  But because cells/columns are
+# shared, later IN-PLACE mutation of a result cell (e.g. $r->[0]{a}++) or a
+# push/splice on a result HoA column reaches the source.  Assigning a whole
+# cell ($r->[0]{a} = ...) is always safe.  Need an independent copy?  Clone
+# the result (e.g. Storable::dclone).
+#
+# The row shapes are dispatched to XS (_cols_* ), which shares cells and
+# hashes each column key once instead of once per row -- ~2x (select), ~3x
+# (drop), ~4x (rename) faster than the pure-Perl rebuild at scale, and lower
+# peak RAM (no copied cells).  HoA/AoA-by-alias need no XS.  All validation
+# stays here in Perl, so the XS never has to croak mid-build.
+#
+# STRICT: a missing/renamed-away column, a duplicate in a select/drop list,
+# or a rename whose targets are not distinct, all die with a labelled message.
+# A column present in only some AoH/HoH rows is filled with undef by
+# select_cols (rectangular); drop_cols/rename_cols leave ragged frames ragged.
+
+sub _cols_arg {                         # normalise + validate a column list
+	my ($fn, @a) = @_;
+	my @cols = (@a == 1 && ref $a[0] eq 'ARRAY') ? @{ $a[0] } : @a;
+	die "$fn: at least one column is required\n" unless @cols;
+	my %seen;
+	for my $c (@cols) {
+		die "$fn: column identifier is undefined\n" unless defined $c;
+		die "$fn: duplicate column '$c' in the list\n" if $seen{$c}++;
+	}
+	return @cols;
+}
+
+sub _aoa_width {                        # widest row of an AoA (ragged-safe)
+	my $df = shift;
+	my $w = 0;
+	for my $r (@$df) { $w = scalar @$r if ref $r eq 'ARRAY' && @$r > $w }
+	return $w;
+}
+
+sub _aoa_int_cols {                     # validate integer positions in range
+	my ($fn, $df, @cols) = @_;
+	my $w = _aoa_width($df);
+	for my $c (@cols) {
+		die "$fn: AoA column '$c' is not a non-negative integer\n"
+			unless $c =~ /^\d+$/;
+		die "$fn: AoA column index $c out of range (max index " . ($w - 1) . ")\n"
+			if $c >= $w;
+	}
+	return $w;
+}
+
+sub _present_keys {                     # union of keys over AoH/HoH rows
+	my ($df, $shape) = @_;
+	my @rows = $shape eq 'AoH' ? @$df : values %$df;
+	my %seen;
+	for my $r (@rows) { next unless ref $r eq 'HASH'; $seen{$_} = 1 for keys %$r }
+	return \%seen;
+}
+
+# shape code passed to the XS: 1 = AoH, 2 = HoH, 3 = AoA
+sub select_cols {
+	my $df = shift;
+	die "select_cols: undefined data in first position\n" unless defined $df;
+	my @cols  = _cols_arg('select_cols', @_);
+	my $shape = _df_shape($df, 'select_cols');
+
+	if ($shape eq 'HoA') {                          # alias columns (pure Perl)
+		for my $c (@cols) {
+			die "select_cols: column '$c' not found\n" unless exists $df->{$c};
+		}
+		my %out;
+		$out{$_} = $df->{$_} for @cols;
+		return \%out;
+	}
+	if ($shape eq 'AoA') {
+		_aoa_int_cols('select_cols', $df, @cols);
+		return _cols_select($df, 3, [ @cols ]);
+	}
+	my $present = _present_keys($df, $shape);
+	for my $c (@cols) {
+		die "select_cols: column '$c' not found\n" unless $present->{$c};
+	}
+	return _cols_select($df, $shape eq 'AoH' ? 1 : 2, [ @cols ]);
+}
+
+sub drop_cols {
+	my $df = shift;
+	die "drop_cols: undefined data in first position\n" unless defined $df;
+	my @cols  = _cols_arg('drop_cols', @_);
+	my %drop  = map { $_ => 1 } @cols;
+	my $shape = _df_shape($df, 'drop_cols');
+
+	if ($shape eq 'HoA') {                          # alias survivors (pure Perl)
+		for my $c (@cols) {
+			die "drop_cols: column '$c' not found\n" unless exists $df->{$c};
+		}
+		my %out;
+		for my $k (keys %$df) { next if $drop{$k}; $out{$k} = $df->{$k} }
+		return \%out;
+	}
+	if ($shape eq 'AoA') {
+		my $w    = _aoa_int_cols('drop_cols', $df, @cols);
+		my @keep = grep { !$drop{$_} } 0 .. $w - 1;
+		return _cols_select($df, 3, [ @keep ]);     # keep == select the rest
+	}
+	my $present = _present_keys($df, $shape);
+	for my $c (@cols) {
+		die "drop_cols: column '$c' not found\n" unless $present->{$c};
+	}
+	return _cols_drop($df, $shape eq 'AoH' ? 1 : 2, \%drop);
+}
+
+sub rename_cols {
+	my $df = shift;
+	die "rename_cols: undefined data in first position\n" unless defined $df;
+	my %map;
+	if (@_ == 1 && ref $_[0] eq 'HASH') {
+		%map = %{ $_[0] };
+	} else {
+		die "rename_cols: arguments after the data frame must be old => new pairs (or one hashref)\n"
+			if @_ % 2;
+		%map = @_;
+	}
+	die "rename_cols: at least one old => new mapping is required\n" unless %map;
+	for my $o (keys %map) {
+		die "rename_cols: new name for '$o' is undefined\n" unless defined $map{$o};
+	}
+	my $shape = _df_shape($df, 'rename_cols');
+	die "rename_cols: an AoA has no column names to rename (convert to AoH/HoA first)\n"
+		if $shape eq 'AoA';
+
+	my @present = $shape eq 'HoA' ? keys %$df
+	                              : keys %{ _present_keys($df, $shape) };
+	my %present = map { $_ => 1 } @present;
+	for my $o (keys %map) {
+		die "rename_cols: column '$o' not found\n" unless $present{$o};
+	}
+	my %final;                                      # target names stay distinct
+	for my $c (@present) {
+		my $nn = exists $map{$c} ? $map{$c} : $c;
+		die "rename_cols: rename collides -- two columns would both become '$nn'\n"
+			if $final{$nn}++;
+	}
+
+	if ($shape eq 'HoA') {                          # alias under new keys
+		my %out;
+		for my $k (keys %$df) {
+			my $nk = exists $map{$k} ? $map{$k} : $k;
+			$out{$nk} = $df->{$k};
+		}
+		return \%out;
+	}
+	return _cols_rename($df, $shape eq 'AoH' ? 1 : 2, \%map);
+}
 
 sub aoh2hoh {
 	my ($aoh, $key) = @_;

@@ -570,12 +570,6 @@ manifypods : pure_all config  \
 
 # --- MakeMaker processPL section:
 
-pure_all :: bu.Makefile
-	$(NOECHO) $(NOOP)
-
-bu.Makefile :: bu.Makefile.PL pm_to_blib 
-	$(PERLRUNINST) bu.Makefile.PL bu.Makefile 
-
 pure_all :: dev.Makefile
 	$(NOECHO) $(NOOP)
 

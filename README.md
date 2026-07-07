@@ -1186,6 +1186,31 @@ Only errors from **your function** are trapped. Mistakes in the call itself
   `y` is the inner ("to") key. So `$result->{A}{B}` reading `…deviation of y is 0`
   means column `B` is the degenerate one for that pair.
 
+## colnames
+
+Return the column names of a data frame, as a list (like R's `colnames`).
+Works on all four Stats::LikeR frame shapes and mirrors the column order
+`view` shows:
+
+  * `AoA` — 0-based integer indices, `0 .. widest_row-1`
+  * `AoH` — the string-sorted union of the keys of every row
+  * `HoA` — the string-sorted keys (the keys *are* the columns)
+  * `HoH` — the string-sorted union of the inner-row keys
+
+In scalar context it returns the count, so `scalar colnames($df)` equals
+`ncol($df)` for a rectangular frame.
+
+    my $aoh = [ { b => 2, a => 1 }, { a => 3, c => 9 } ];
+    my @cols = colnames($aoh);        # ('a', 'b', 'c')  -- union, sorted
+
+    my $hoa = { z => [1,2], a => [3,4], m => [5,6] };
+    my @cols = colnames($hoa);        # ('a', 'm', 'z')
+
+    my $aoa = [ [1,2,3], [4,5,6] ];
+    my @cols = colnames($aoa);        # (0, 1, 2)
+
+    my $n = colnames($hoa);           # 3  (scalar context == ncol)
+
 ## concat
 
 Row-bind two or more data frames: stack their rows into one new frame, the
@@ -1489,6 +1514,26 @@ Usage:
 but default mean, standard deviation, and log can be passed as parameters:
 
     $x = dnorm(0, mean => 0, sd => 2, 'log' => 0);
+
+## drop_cols
+
+Return a new data frame with the named columns removed and the rest kept —
+`df.drop(columns=[...])`. Same identifiers and argument forms as
+`select_cols`.
+
+    my $hoa = { a => [1,4], b => [2,5], c => [3,6] };
+    drop_cols($hoa, 'b');
+    # { a => [1,4], c => [3,6] }
+
+    my $aoa = [ [1,2,3], [4,5,6] ];
+    drop_cols($aoa, 1);          # result is re-indexed 0,1
+    # [ [1,3], [4,6] ]
+
+Unlike `select_cols`, `drop_cols` touches only the keys a row actually has,
+so a ragged frame stays ragged:
+
+    drop_cols([ {a=>1,b=>2}, {a=>3,c=>9} ], 'a');
+    # [ { b => 2 }, { c => 9 } ]
 
 ## dropna
 
@@ -2879,6 +2924,39 @@ Calculates sample quantiles using R's continuous Type 7 interpolation.
 
 If the `probs` parameter is omitted, it behaves identically to R by defaulting to the 0, 25, 50, 75, and 100 percentiles (`c(0, .25, .5, .75, 1)`). The returned hash keys match R's standardized naming convention (e.g., `"25%"`, `"33.3%"`).
 
+## rank
+
+Rank values like R's `rank()`. Takes flat scalars and/or array refs (like `min`), with optional trailing `ties.method` / `na.last` options. Returns the list of ranks in input order.
+
+    my @r = rank(3, 1, 4, 1, 5);                           # 3, 1.5, 4, 1.5, 5
+    my @r = rank([3, 1, 4, 1, 5], 'ties.method' => 'min'); # 3, 1, 4, 1, 5
+
+Ranks are 1-based; `average` may return half-ranks. `undef` and NaN are treated as NA.
+
+### ties.method
+
+How tied values share ranks (default `average`):
+
+| value     | behavior                       | `rank(3, 1, 4, 1, 5)` |
+| --------- | ------------------------------ | --------------------- |
+| `average` | mean of the tied ranks         | 3, 1.5, 4, 1.5, 5     |
+| `min`     | lowest rank in the group       | 3, 1, 4, 1, 5         |
+| `max`     | highest rank in the group      | 3, 2, 4, 2, 5         |
+| `first`   | ties keep input order          | 3, 1, 4, 2, 5         |
+| `last`    | ties keep reverse input order  | 3, 2, 4, 1, 5         |
+| `random`  | ties broken randomly (srand-aware) | varies            |
+
+### na.last
+
+How `undef`/NaN elements are placed (default `true`):
+
+| value           | behavior                   | `rank(5, undef, 1, ...)` |
+| --------------- | -------------------------- | ------------------------ |
+| `true`          | NAs get the highest ranks  | 2, 3, 1                  |
+| `false`         | NAs get the lowest ranks   | 3, 1, 2                  |
+| `keep`          | NAs stay undef, in place   | 2, undef, 1              |
+| `na` (or undef) | NAs dropped (shorter list) | 2, 1                     |
+
 ## Ronly
 
     my @right_only = Ronly(\@left, \@right);
@@ -2942,12 +3020,110 @@ leading comments are never mistaken for one. You may name such a column in a
 `filter` either as it appears in the file or by its clean name:
     read_table('ranks.tabular.tsv', filter => { '# PDB' => sub { $_ == 2 } });
 
+## rename_cols
+
+Return a new data frame with columns renamed — `df.rename(columns={...})`.
+Columns not named are kept unchanged. The mapping may be given as
+`old => new` pairs or as a single hashref. `AoA` frames have no column
+labels, so `rename_cols` on an `AoA` dies (convert to `AoH`/`HoA` first).
+
+    my $aoh = [ { a => 1, b => 2 }, { a => 3, b => 4 } ];
+    rename_cols($aoh, a => 'x');
+    # [ { x => 1, b => 2 }, { x => 3, b => 4 } ]
+
+    my $hoa = { a => [1,4], b => [2,5] };
+    rename_cols($hoa, { b => 'B' });
+    # { a => [1,4], B => [2,5] }
+
+A swap is fine because the target names stay distinct:
+
+    rename_cols($aoh, a => 'b', b => 'a');   # columns exchanged
+
+### views, speed, and memory
+
+All three verbs return a **new frame** and never modify the source, but the
+result is a **shallow view** built for speed on large frames:
+
+  * the row shapes (`AoH`, `HoH`, `AoA`) build fresh row containers but
+    **share the cell scalars** with the source — no per-cell copy;
+  * `HoA` **shares the whole column arrayrefs**.
+
+The operation itself never mutates the source. Because the underlying data is
+shared, a later *in-place* change reaches the source: mutating a result cell
+(`$r->[0]{a}++`, `chomp $r->[0]{a}`) or a `push`/`splice` on a result `HoA`
+column will be visible through the original. Assigning a whole cell
+(`$r->[0]{a} = ...`) is always safe. If you need a fully independent frame,
+clone the result (e.g. `Storable::dclone`).
+
+The row shapes run in XS, which shares cells and hashes each column key once
+instead of once per row. Measured against the equivalent pure-Perl rebuild
+(300k-row `AoH`, 8 columns):
+
+    select 3/8 cols :  ~2x faster, and lower peak RAM (no copied cells)
+    drop   2/8 cols :  ~3x faster
+    rename 2/8 cols :  ~4x faster
+
+`HoA` and `AoA`-by-drop are pure-Perl aliases and already near-free (a slice
+of an 8-column, million-row `HoA` is sub-second). The memory saving grows
+with rows × selected columns: at scale the row shapes allocate only the new
+row containers, never a second copy of every cell.
+
+### strictness
+
+Mistakes are fatal rather than silently corrupting a frame (validated in Perl
+before any XS runs):
+
+  * a requested (or renamed) column not present anywhere dies;
+  * a duplicate column in a `select_cols`/`drop_cols` list dies (a hash-keyed
+    shape would otherwise collapse it);
+  * a `rename_cols` whose targets are not distinct — two columns landing on
+    one name — dies (checked against the whole column set, so an `a<->b` swap
+    is fine but `a->b` onto an existing `b` is caught).
+
+Shape is classified by the same `_df_shape` detector `agg` uses, so these
+accept exactly the frames `agg`/`view` accept; as with that family the check
+is `ref`-based, so hand it an unblessed frame.
+
+
 ## rnorm
 
 Make a normal distribution of numbers, with pre-set mean `mean`, standard deviation `sd`, and number `n`.
 
     my ($rmean, $sd, $n) = (10, 2, 9999);
     my $normals = rnorm( n => $n, mean => $rmean, sd => $sd);
+
+## rownames
+
+Return the row names of a data frame, as a list (like R's `rownames`).
+Only `HoH` carries genuine row labels; the other shapes are positional and
+so yield 0-based indices, again matching `view`:
+
+  * `AoA` / `AoH` — `0 .. $#$df` (one index per top-level element)
+  * `HoA` — `0 .. longest_column-1`
+  * `HoH` — the string-sorted outer keys (the row labels)
+
+In scalar context it returns the count, so `scalar rownames($df)` equals
+`nrow($df)` for a rectangular frame.
+
+    my $hoh = { r2 => { x => 1 }, r1 => { x => 2 }, r3 => { x => 3 } };
+    my @rows = rownames($hoh);        # ('r1', 'r2', 'r3')  -- sorted labels
+
+    my $aoh = [ { a => 1 }, { a => 2 } ];
+    my @rows = rownames($aoh);        # (0, 1)
+
+    my $hoa = { a => [1,2,3], b => [4,5,6] };
+    my @rows = rownames($hoa);        # (0, 1, 2)
+
+    my $n = rownames($hoh);           # 3  (scalar context == nrow)
+
+### notes
+
+Shape is detected with the same `_df_shape` classifier `agg` uses, so both
+functions accept exactly the frames `agg`/`view` accept. A ragged frame is
+tolerated for enumeration: `colnames` spans the widest row and `rownames`
+the longest column. An empty frame returns an empty list. Because the
+classifier is `ref`-based (not `reftype`), pass an unblessed frame — blessed
+frames are the one case `ncol`/`nrow` accept that this family does not.
 
 ## runif
 
@@ -3004,6 +3180,33 @@ Correct answer is 2.1380899352994
     my $stdev = sd([2,4,4,4,5,5,7,9]);
 
 As of version 0.02, sd will croak/die if any undefined values are provided.
+
+## select_cols
+
+Return a new data frame containing only the named columns, in the order
+requested — the Stats::LikeR form of pandas `df[['a','b']]`. Works on all
+four frame shapes. For `AoA` the identifiers are 0-based integer positions;
+for `AoH`, `HoA`, and `HoH` they are column names. Columns may be given as a
+list or as a single arrayref.
+
+    my $aoh = [ { a => 1, b => 2, c => 3 },
+                { a => 4, b => 5, c => 6 } ];
+    my $sub = select_cols($aoh, 'a', 'c');
+    # [ { a => 1, c => 3 }, { a => 4, c => 6 } ]
+
+    my $hoa = { a => [1,4], b => [2,5], c => [3,6] };
+    my $sub = select_cols($hoa, ['c', 'a']);   # order preserved
+    # { c => [3,6], a => [1,4] }
+
+    my $aoa = [ [1,2,3], [4,5,6] ];
+    my $sub = select_cols($aoa, 0, 2);
+    # [ [1,3], [4,6] ]
+
+A column that appears in only some `AoH`/`HoH` rows is filled with `undef` in
+the rows that lack it, so the selection comes back rectangular:
+
+    select_cols([ {a=>1,b=>2}, {a=>3,c=>9} ], 'a', 'c');
+    # [ { a => 1, c => undef }, { a => 3, c => 9 } ]
 
 ## seq
 
@@ -3595,9 +3798,9 @@ The `xlsx`, worksheet, and JSON side outputs of the original stand-alone routine
 
 ## 0.21
 
-Better warning for undefined data for `aoh2hoh`, `assign`, `dropna`
+Better warning message for undefined data for `aoh2hoh`, `assign`, `dropna`
 
-addition of `agg`, `concat` functions
+addition of `agg`, `concat`, `drop_cols`, `rank`, `rename_cols`, `select_cols` functions
 
 ### read_table
 
