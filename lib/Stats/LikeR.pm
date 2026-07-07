@@ -3188,15 +3188,15 @@ in R
 
 =head2 assign
 
-Add new columns to a data frame, computed from the columns already there.
+Add new columns to a data frame, computed from the columns already there — or handed in ready-made.
 
 =head3 Usage
 
- assign($df, new_name => sub { ... }, another => sub { ... }, ...);
+ assign($df, new_name => VALUE, another => VALUE, ...);
 
 =over
 
-=item * B<< C<$df> >> — your data frame, in either shape:
+=item * B<< C<$df> >> — your data frame, in any of three shapes:
 
 =over
 
@@ -3204,23 +3204,60 @@ Add new columns to a data frame, computed from the columns already there.
 
 =item * B<HoA> — hashref of column arrayrefs: C<< { weight=E<gt>[70,...], height=E<gt>[1.75,...] } >>
 
-=back
-
-=item * B<< C<< new_name =E<gt> sub { ... } >> >> — one or more pairs. Each sub computes one cell of the new column and is called once per row:
-
-=over
-
-=item * C<$_> is the current row as a hashref, so you read other columns with C<< $_-E<gt>{colname} >>.
-
-=item * C<$_[1]> is the row's index (0-based), if you need it.
-
-=item * whatever the sub returns becomes the cell value.
+=item * B<HoH> — hashref of row hashrefs, keyed by row name: C<< { Alice=E<gt>{weight=E<gt>65}, ... } >>
 
 =back
+
+=item * B<< C<< new_name =E<gt> VALUE >> >> — one or more pairs. C<VALUE> is either a B<coderef> (computed) or an B<arrayref> (a ready-made column).
 
 =back
 
 It changes C<$df> in place and also returns it (handy for chaining).
+
+=head3 Coderef values
+
+A coderef is classified by what it returns in list context:
+
+=over
+
+=item * B<One scalar → per-row.> The sub is called once per row and that scalar is the cell.
+
+=over
+
+=item * C<$_> (and C<$_[0]>) is the current row as a hashref, so you read other columns with C<< $_-E<gt>{colname} >>.
+
+=item * C<$_[1]> is the row's index (0-based).
+
+=item * C<$_[2]> is the row key — B<HoH only>.
+
+=item * A single arrayref return is stored I<as the cell>, so C<< sub { [split /,/, $_-E<gt>{tags}] } >> gives an arrayref-valued column.
+
+=back
+
+=item * B<A list of more than one value → whole column.> The list becomes the entire column, distributed positionally. This is the natural fit for column functions like C<rank>:
+
+ assign($df, 'ΔG rank' => sub { rank( vals($df, 'dG_kcal_mol') ) });
+ # rank() returns a list, so the whole ranking lands in one column.
+
+=back
+
+=head3 Arrayref values
+
+Pass a column you already have and it is copied in:
+
+ assign($df, 'ΔG rank' => [ rank( vals($df, 'dG_kcal_mol') ) ]);
+
+This is also how you install a computed I<list> when you'd otherwise trip the "single arrayref = one cell" rule above.
+
+=head3 Ordering and length
+
+=over
+
+=item * B<AoH> distributes by array order; B<HoH> by B<sorted key order> — so any list you compute or hand in must be in C<sort keys %$df> order.
+
+=item * Whole-column and arrayref values must have exactly one entry per row; a length mismatch dies.
+
+=back
 
 =head3 Example
 
@@ -3229,7 +3266,6 @@ It changes C<$df> in place and also returns it (handy for chaining).
      { weight => 90, height => 1.80 },
  ];
  assign($df, bmi => sub { $_->{weight} / $_->{height} ** 2 });
- 
  # $df is now:
  # [ { weight=>70, height=>1.75, bmi=>22.86 },
  #   { weight=>90, height=>1.80, bmi=>27.78 } ]
@@ -3240,12 +3276,12 @@ It changes C<$df> in place and also returns it (handy for chaining).
 
 =item * B<Pairs run in order>, so a later column can use one you just made:
 
-assign($df,
-  bmi   => sub { $I<< ->{weight} / $ >>->{height} ** 2 },
-  class => sub { $_->{bmi} > 25 ? 'high' : 'ok' },   # uses bmi
-);
+ assign($df,
+     bmi   => sub { $_->{weight} / $_->{height} ** 2 },
+     class => sub { $_->{bmi} > 25 ? 'high' : 'ok' },   # uses bmi
+ );
 
-=item * B<Same recipe, both shapes.> The exact same C<< sub { $_-E<gt>{weight} / ... } >> works whether C<$df> is AoH or HoA; you always read the row through C<$_>.
+=item * B<Same recipe, all shapes.> The same per-row C<< sub { $_-E<gt>{weight} / ... } >> works for AoH, HoA, and HoH; you always read the row through C<$_>.
 
 =item * B<It modifies your data frame.> If you need to keep the original, pass a copy: C<assign(clone($df), ...)>.
 
@@ -3957,6 +3993,38 @@ means column C<B> is the degenerate one for that pair.
 
 =back
 
+=head2 colnames
+
+Return the column names of a data frame, as a list (like R's C<colnames>).
+Works on all four Stats::LikeR frame shapes and mirrors the column order
+C<view> shows:
+
+=over
+
+=item * C<AoA> — 0-based integer indices, C<0 .. widest_row-1>
+
+=item * C<AoH> — the string-sorted union of the keys of every row
+
+=item * C<HoA> — the string-sorted keys (the keys I<are> the columns)
+
+=item * C<HoH> — the string-sorted union of the inner-row keys
+
+=back
+
+In scalar context it returns the count, so C<scalar colnames($df)> equals
+C<ncol($df)> for a rectangular frame.
+
+ my $aoh = [ { b => 2, a => 1 }, { a => 3, c => 9 } ];
+ my @cols = colnames($aoh);        # ('a', 'b', 'c')  -- union, sorted
+ 
+ my $hoa = { z => [1,2], a => [3,4], m => [5,6] };
+ my @cols = colnames($hoa);        # ('a', 'm', 'z')
+ 
+ my $aoa = [ [1,2,3], [4,5,6] ];
+ my @cols = colnames($aoa);        # (0, 1, 2)
+ 
+ my $n = colnames($hoa);           # 3  (scalar context == ncol)
+
 =head2 concat
 
 Row-bind two or more data frames: stack their rows into one new frame, the
@@ -4274,6 +4342,26 @@ Usage:
 but default mean, standard deviation, and log can be passed as parameters:
 
  $x = dnorm(0, mean => 0, sd => 2, 'log' => 0);
+
+=head2 drop_cols
+
+Return a new data frame with the named columns removed and the rest kept —
+C<df.drop(columns=[...])>. Same identifiers and argument forms as
+C<select_cols>.
+
+ my $hoa = { a => [1,4], b => [2,5], c => [3,6] };
+ drop_cols($hoa, 'b');
+ # { a => [1,4], c => [3,6] }
+ 
+ my $aoa = [ [1,2,3], [4,5,6] ];
+ drop_cols($aoa, 1);          # result is re-indexed 0,1
+ # [ [1,3], [4,6] ]
+
+Unlike C<select_cols>, C<drop_cols> touches only the keys a row actually has,
+so a ragged frame stays ragged:
+
+ drop_cols([ {a=>1,b=>2}, {a=>3,c=>9} ], 'a');
+ # [ { b => 2 }, { c => 9 } ]
 
 =head2 dropna
 
@@ -6291,6 +6379,113 @@ Calculates sample quantiles using R's continuous Type 7 interpolation.
 
 If the C<probs> parameter is omitted, it behaves identically to R by defaulting to the 0, 25, 50, 75, and 100 percentiles (C<c(0, .25, .5, .75, 1)>). The returned hash keys match R's standardized naming convention (e.g., C<"25%">, C<"33.3%">).
 
+=head2 rank
+
+Rank values like R's C<rank()>. Takes flat scalars and/or array refs (like C<min>), with optional trailing C<ties.method> / C<na.last> options. Returns the list of ranks in input order.
+
+ my @r = rank(3, 1, 4, 1, 5);                           # 3, 1.5, 4, 1.5, 5
+ my @r = rank([3, 1, 4, 1, 5], 'ties.method' => 'min'); # 3, 1, 4, 1, 5
+
+Ranks are 1-based; C<average> may return half-ranks. C<undef> and NaN are treated as NA.
+
+=head3 ties.method
+
+How tied values share ranks (default C<average>):
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>value</th>
+  <th>behavior</th>
+  <th>`rank(3, 1, 4, 1, 5)`</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>average</code></td>
+  <td>mean of the tied ranks</td>
+  <td>3, 1.5, 4, 1.5, 5</td>
+</tr>
+<tr>
+  <td><code>min</code></td>
+  <td>lowest rank in the group</td>
+  <td>3, 1, 4, 1, 5</td>
+</tr>
+<tr>
+  <td><code>max</code></td>
+  <td>highest rank in the group</td>
+  <td>3, 2, 4, 2, 5</td>
+</tr>
+<tr>
+  <td><code>first</code></td>
+  <td>ties keep input order</td>
+  <td>3, 1, 4, 2, 5</td>
+</tr>
+<tr>
+  <td><code>last</code></td>
+  <td>ties keep reverse input order</td>
+  <td>3, 2, 4, 1, 5</td>
+</tr>
+<tr>
+  <td><code>random</code></td>
+  <td>ties broken randomly (srand-aware)</td>
+  <td>varies</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+=head3 na.last
+
+How C<undef>/NaN elements are placed (default C<true>):
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>value</th>
+  <th>behavior</th>
+  <th>`rank(5, undef, 1, ...)`</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>true</code></td>
+  <td>NAs get the highest ranks</td>
+  <td>2, 3, 1</td>
+</tr>
+<tr>
+  <td><code>false</code></td>
+  <td>NAs get the lowest ranks</td>
+  <td>3, 1, 2</td>
+</tr>
+<tr>
+  <td><code>keep</code></td>
+  <td>NAs stay undef, in place</td>
+  <td>2, undef, 1</td>
+</tr>
+<tr>
+  <td><code>na</code> (or undef)</td>
+  <td>NAs dropped (shorter list)</td>
+  <td>2, 1</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
 =head2 Ronly
 
  my @right_only = Ronly(\@left, \@right);
@@ -6399,12 +6594,126 @@ leading comments are never mistaken for one. You may name such a column in a
 C<filter> either as it appears in the file or by its clean name:
     read_table('ranks.tabular.tsv', filter => { '# PDB' => sub { $_ == 2 } });
 
+=head2 rename_cols
+
+Return a new data frame with columns renamed — C<df.rename(columns={...})>.
+Columns not named are kept unchanged. The mapping may be given as
+C<< old =E<gt> new >> pairs or as a single hashref. C<AoA> frames have no column
+labels, so C<rename_cols> on an C<AoA> dies (convert to C<AoH>/C<HoA> first).
+
+ my $aoh = [ { a => 1, b => 2 }, { a => 3, b => 4 } ];
+ rename_cols($aoh, a => 'x');
+ # [ { x => 1, b => 2 }, { x => 3, b => 4 } ]
+ 
+ my $hoa = { a => [1,4], b => [2,5] };
+ rename_cols($hoa, { b => 'B' });
+ # { a => [1,4], B => [2,5] }
+
+A swap is fine because the target names stay distinct:
+
+ rename_cols($aoh, a => 'b', b => 'a');   # columns exchanged
+
+=head3 views, speed, and memory
+
+All three verbs return a B<new frame> and never modify the source, but the
+result is a B<shallow view> built for speed on large frames:
+
+=over
+
+=item * the row shapes (C<AoH>, C<HoH>, C<AoA>) build fresh row containers but
+B<share the cell scalars> with the source — no per-cell copy;
+
+=item * C<HoA> B<shares the whole column arrayrefs>.
+
+=back
+
+The operation itself never mutates the source. Because the underlying data is
+shared, a later I<in-place> change reaches the source: mutating a result cell
+(C<< $r-E<gt>[0]{a}++ >>, C<< chomp $r-E<gt>[0]{a} >>) or a C<push>/C<splice> on a result C<HoA>
+column will be visible through the original. Assigning a whole cell
+(C<< $r-E<gt>[0]{a} = ... >>) is always safe. If you need a fully independent frame,
+clone the result (e.g. C<Storable::dclone>).
+
+The row shapes run in XS, which shares cells and hashes each column key once
+instead of once per row. Measured against the equivalent pure-Perl rebuild
+(300k-row C<AoH>, 8 columns):
+
+ select 3/8 cols :  ~2x faster, and lower peak RAM (no copied cells)
+ drop   2/8 cols :  ~3x faster
+ rename 2/8 cols :  ~4x faster
+
+C<HoA> and C<AoA>-by-drop are pure-Perl aliases and already near-free (a slice
+of an 8-column, million-row C<HoA> is sub-second). The memory saving grows
+with rows × selected columns: at scale the row shapes allocate only the new
+row containers, never a second copy of every cell.
+
+=head3 strictness
+
+Mistakes are fatal rather than silently corrupting a frame (validated in Perl
+before any XS runs):
+
+=over
+
+=item * a requested (or renamed) column not present anywhere dies;
+
+=item * a duplicate column in a C<select_cols>/C<drop_cols> list dies (a hash-keyed
+shape would otherwise collapse it);
+
+=item * a C<rename_cols> whose targets are not distinct — two columns landing on
+one name — dies (checked against the whole column set, so an C<< aE<lt>-E<gt>b >> swap
+is fine but C<< a-E<gt>b >> onto an existing C<b> is caught).
+
+=back
+
+Shape is classified by the same C<_df_shape> detector C<agg> uses, so these
+accept exactly the frames C<agg>/C<view> accept; as with that family the check
+is C<ref>-based, so hand it an unblessed frame.
+
 =head2 rnorm
 
 Make a normal distribution of numbers, with pre-set mean C<mean>, standard deviation C<sd>, and number C<n>.
 
  my ($rmean, $sd, $n) = (10, 2, 9999);
  my $normals = rnorm( n => $n, mean => $rmean, sd => $sd);
+
+=head2 rownames
+
+Return the row names of a data frame, as a list (like R's C<rownames>).
+Only C<HoH> carries genuine row labels; the other shapes are positional and
+so yield 0-based indices, again matching C<view>:
+
+=over
+
+=item * C<AoA> / C<AoH> — C<0 .. $#$df> (one index per top-level element)
+
+=item * C<HoA> — C<0 .. longest_column-1>
+
+=item * C<HoH> — the string-sorted outer keys (the row labels)
+
+=back
+
+In scalar context it returns the count, so C<scalar rownames($df)> equals
+C<nrow($df)> for a rectangular frame.
+
+ my $hoh = { r2 => { x => 1 }, r1 => { x => 2 }, r3 => { x => 3 } };
+ my @rows = rownames($hoh);        # ('r1', 'r2', 'r3')  -- sorted labels
+ 
+ my $aoh = [ { a => 1 }, { a => 2 } ];
+ my @rows = rownames($aoh);        # (0, 1)
+ 
+ my $hoa = { a => [1,2,3], b => [4,5,6] };
+ my @rows = rownames($hoa);        # (0, 1, 2)
+ 
+ my $n = rownames($hoh);           # 3  (scalar context == nrow)
+
+=head3 notes
+
+Shape is detected with the same C<_df_shape> classifier C<agg> uses, so both
+functions accept exactly the frames C<agg>/C<view> accept. A ragged frame is
+tolerated for enumeration: C<colnames> spans the widest row and C<rownames>
+the longest column. An empty frame returns an empty list. Because the
+classifier is C<ref>-based (not C<reftype>), pass an unblessed frame — blessed
+frames are the one case C<ncol>/C<nrow> accept that this family does not.
 
 =head2 runif
 
@@ -6461,6 +6770,33 @@ C<sd> can accept both array references as well as arrays:
  my $stdev = sd([2,4,4,4,5,5,7,9]);
 
 As of version 0.02, sd will croak/die if any undefined values are provided.
+
+=head2 select_cols
+
+Return a new data frame containing only the named columns, in the order
+requested — the Stats::LikeR form of pandas C<df[['a','b']]>. Works on all
+four frame shapes. For C<AoA> the identifiers are 0-based integer positions;
+for C<AoH>, C<HoA>, and C<HoH> they are column names. Columns may be given as a
+list or as a single arrayref.
+
+ my $aoh = [ { a => 1, b => 2, c => 3 },
+             { a => 4, b => 5, c => 6 } ];
+ my $sub = select_cols($aoh, 'a', 'c');
+ # [ { a => 1, c => 3 }, { a => 4, c => 6 } ]
+ 
+ my $hoa = { a => [1,4], b => [2,5], c => [3,6] };
+ my $sub = select_cols($hoa, ['c', 'a']);   # order preserved
+ # { c => [3,6], a => [1,4] }
+ 
+ my $aoa = [ [1,2,3], [4,5,6] ];
+ my $sub = select_cols($aoa, 0, 2);
+ # [ [1,3], [4,6] ]
+
+A column that appears in only some C<AoH>/C<HoH> rows is filled with C<undef> in
+the rows that lack it, so the selection comes back rectangular:
+
+ select_cols([ {a=>1,b=>2}, {a=>3,c=>9} ], 'a', 'c');
+ # [ { a => 1, c => undef }, { a => 3, c => 9 } ]
 
 =head2 seq
 
@@ -7456,9 +7792,29 @@ The C<xlsx>, worksheet, and JSON side outputs of the original stand-alone routin
 
 =head2 0.21
 
-Better warning for undefined data for C<aoh2hoh>, C<assign>, C<dropna>
+Better warning message for undefined data for C<aoh2hoh>, C<assign>, C<dropna>
 
-addition of C<agg>, C<concat> functions
+addition of C<agg>, C<concat>, C<drop_cols>, C<rank>, C<rename_cols>, C<select_cols> functions
+
+For improving Kwalitee (sic): added C<[PodWeaver]> to dist.ini; as well as C<Changes> file
+
+=head3 assign
+
+C<assign> now accepts two kinds of column value, so a function that already returns a whole column (like C<rank>) drops in without wrapping.
+
+=over
+
+=item * B<Per-row coderef> (unchanged): called once per row, C<$_> is the row, and the single scalar it returns is the cell. A single arrayref return is still stored I<as the cell>, so arrayref-valued columns keep working.
+
+=item * B<Whole-column coderef> (new): if the coderef returns a I<list> of more than one value, that whole list becomes the column, laid down positionally. This is what makes C<< 'ΔG rank' =E<gt> sub { rank( vals($df, 'dG_kcal_mol') ) } >> work directly — no C<[ ... ]> needed.
+
+=item * B<Arrayref value> (new): a ready-made column, e.g. C<< col =E<gt> [ rank(...) ] >>, copied into the frame.
+
+=back
+
+The coderef is probed once (row 0 for AoH/HoH, the first synthesized view for HoA) to decide per-row vs whole-column, so per-row code is never run twice on row 0. Every column value is length-checked against the row count and a mismatch dies. B<HoH> is now a supported, documented shape alongside AoH and HoA; whole-column and arrayref values align to B<sorted key order>.
+
+Tests: C<assign.t> (AoH + HoA) and C<assign_HoH.t> were expanded to cover every shape × value-kind combination — per-row scalar, whole-column list, arrayref value, single-arrayref-as-cell, C<rank()> integration, chaining, C<$_[1]> index, C<$_[2]> row key (HoH), overwrite, ragged HoA columns, empty frames, length-mismatch and bad-value / odd-arg / non-hash-row death paths, and C<no_leaks_ok> guards on the new whole-column and arrayref paths.
 
 =head3 read_table
 

@@ -3817,6 +3817,8 @@ Better warning message for undefined data for `aoh2hoh`, `assign`, `dropna`
 
 addition of `agg`, `concat`, `drop_cols`, `rank`, `rename_cols`, `select_cols` functions
 
+For improving Kwalitee (sic): added `[PodWeaver]` to dist.ini; as well as `Changes` file
+
 ### assign
 
 `assign` now accepts two kinds of column value, so a function that already returns a whole column (like `rank`) drops in without wrapping.

@@ -3,9 +3,23 @@ Revision history for Stats-LikeR
 
 0.21 Unknown Release Date
 
- - Better warning for undefined data for `aoh2hoh`, `assign`, `dropna`
+ - Better warning message for undefined data for `aoh2hoh`, `assign`, `dropna`
 
- - addition of `agg`, `concat` functions
+ - addition of `agg`, `concat`, `drop_cols`, `rank`, `rename_cols`, `select_cols` functions
+
+ - For improving Kwalitee (sic): added `[PodWeaver]` to dist.ini; as well as `Changes` file
+
+ [assign]
+
+ - `assign` now accepts two kinds of column value, so a function that already returns a whole column (like `rank`) drops in without wrapping.
+
+ - **Per-row coderef** (unchanged): called once per row, `$_` is the row, and the single scalar it returns is the cell. A single arrayref return is still stored *as the cell*, so arrayref-valued columns keep working.
+ - **Whole-column coderef** (new): if the coderef returns a *list* of more than one value, that whole list becomes the column, laid down positionally. This is what makes `'ΔG rank' => sub { rank( vals($df, 'dG_kcal_mol') ) }` work directly — no `[ ... ]` needed.
+ - **Arrayref value** (new): a ready-made column, e.g. `col => [ rank(...) ]`, copied into the frame.
+
+ - The coderef is probed once (row 0 for AoH/HoH, the first synthesized view for HoA) to decide per-row vs whole-column, so per-row code is never run twice on row 0. Every column value is length-checked against the row count and a mismatch dies. HoH is now a supported, documented shape alongside AoH and HoA; whole-column and arrayref values align to sorted key order.
+
+ - Tests: `assign.t` (AoH + HoA) and `assign_HoH.t` were expanded to cover every shape × value-kind combination — per-row scalar, whole-column list, arrayref value, single-arrayref-as-cell, `rank()` integration, chaining, `$_[1]` index, `$_[2]` row key (HoH), overwrite, ragged HoA columns, empty frames, length-mismatch and bad-value / odd-arg / non-hash-row death paths, and `no_leaks_ok` guards on the new whole-column and arrayref paths.
 
  [read_table]
 
