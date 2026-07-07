@@ -3811,7 +3811,7 @@ The `xlsx`, worksheet, and JSON side outputs of the original stand-alone routine
 
 # Changes
 
-## 0.21 2026-07-06 CDT
+## 0.21 2026-07-07 CDT
 
 Better warning message for undefined data for `aoh2hoh`, `assign`, `dropna`
 

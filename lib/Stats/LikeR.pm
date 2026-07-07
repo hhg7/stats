@@ -7790,7 +7790,7 @@ The C<xlsx>, worksheet, and JSON side outputs of the original stand-alone routin
 
 =head1 Changes
 
-=head2 0.21 2026-07-06 CDT
+=head2 0.21 2026-07-07 CDT
 
 Better warning message for undefined data for C<aoh2hoh>, C<assign>, C<dropna>
 
