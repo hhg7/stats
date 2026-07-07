@@ -605,48 +605,63 @@ is the equivalent of:
 in R
 
 ## assign
-
-Add new columns to a data frame, computed from the columns already there.
+Add new columns to a data frame, computed from the columns already there — or handed in ready-made.
 
 ### Usage
+    assign($df, new_name => VALUE, another => VALUE, ...);
 
-    assign($df, new_name => sub { ... }, another => sub { ... }, ...);
-
-- **`$df`** — your data frame, in either shape:
+- **`$df`** — your data frame, in any of three shapes:
   - **AoH** — arrayref of row hashrefs: `[ {weight=>70, height=>1.75}, ... ]`
   - **HoA** — hashref of column arrayrefs: `{ weight=>[70,...], height=>[1.75,...] }`
-- **`new_name => sub { ... }`** — one or more pairs. Each sub computes one cell of the new column and is called once per row:
-  - `$_` is the current row as a hashref, so you read other columns with `$_->{colname}`.
-  - `$_[1]` is the row's index (0-based), if you need it.
-  - whatever the sub returns becomes the cell value.
+  - **HoH** — hashref of row hashrefs, keyed by row name: `{ Alice=>{weight=>65}, ... }`
+- **`new_name => VALUE`** — one or more pairs. `VALUE` is either a **coderef** (computed) or an **arrayref** (a ready-made column).
 
 It changes `$df` in place and also returns it (handy for chaining).
 
-### Example
+### Coderef values
+A coderef is classified by what it returns in list context:
 
+- **One scalar → per-row.** The sub is called once per row and that scalar is the cell.
+  - `$_` (and `$_[0]`) is the current row as a hashref, so you read other columns with `$_->{colname}`.
+  - `$_[1]` is the row's index (0-based).
+  - `$_[2]` is the row key — **HoH only**.
+  - A single arrayref return is stored *as the cell*, so `sub { [split /,/, $_->{tags}] }` gives an arrayref-valued column.
+- **A list of more than one value → whole column.** The list becomes the entire column, distributed positionally. This is the natural fit for column functions like `rank`:
+
+        assign($df, 'ΔG rank' => sub { rank( vals($df, 'dG_kcal_mol') ) });
+        # rank() returns a list, so the whole ranking lands in one column.
+
+### Arrayref values
+Pass a column you already have and it is copied in:
+
+    assign($df, 'ΔG rank' => [ rank( vals($df, 'dG_kcal_mol') ) ]);
+
+This is also how you install a computed *list* when you'd otherwise trip the "single arrayref = one cell" rule above.
+
+### Ordering and length
+- **AoH** distributes by array order; **HoH** by **sorted key order** — so any list you compute or hand in must be in `sort keys %$df` order.
+- Whole-column and arrayref values must have exactly one entry per row; a length mismatch dies.
+
+### Example
     my $df = [
         { weight => 70, height => 1.75 },
         { weight => 90, height => 1.80 },
     ];
     assign($df, bmi => sub { $_->{weight} / $_->{height} ** 2 });
-
     # $df is now:
     # [ { weight=>70, height=>1.75, bmi=>22.86 },
     #   { weight=>90, height=>1.80, bmi=>27.78 } ]
 
 ### Good to know
-
 - **Pairs run in order**, so a later column can use one you just made:
 
-    assign($df,
-      bmi   => sub { $_->{weight} / $_->{height} ** 2 },
-      class => sub { $_->{bmi} > 25 ? 'high' : 'ok' },   # uses bmi
-    );
+        assign($df,
+            bmi   => sub { $_->{weight} / $_->{height} ** 2 },
+            class => sub { $_->{bmi} > 25 ? 'high' : 'ok' },   # uses bmi
+        );
 
-- **Same recipe, both shapes.** The exact same `sub { $_->{weight} / ... }` works whether `$df` is AoH or HoA; you always read the row through `$_`.
-
+- **Same recipe, all shapes.** The same per-row `sub { $_->{weight} / ... }` works for AoH, HoA, and HoH; you always read the row through `$_`.
 - **It modifies your data frame.** If you need to keep the original, pass a copy: `assign(clone($df), ...)`.
-
 - Reusing a column name **overwrites** that column.
 
 ## binom_test
@@ -3801,6 +3816,18 @@ The `xlsx`, worksheet, and JSON side outputs of the original stand-alone routine
 Better warning message for undefined data for `aoh2hoh`, `assign`, `dropna`
 
 addition of `agg`, `concat`, `drop_cols`, `rank`, `rename_cols`, `select_cols` functions
+
+### assign
+
+`assign` now accepts two kinds of column value, so a function that already returns a whole column (like `rank`) drops in without wrapping.
+
+- **Per-row coderef** (unchanged): called once per row, `$_` is the row, and the single scalar it returns is the cell. A single arrayref return is still stored *as the cell*, so arrayref-valued columns keep working.
+- **Whole-column coderef** (new): if the coderef returns a *list* of more than one value, that whole list becomes the column, laid down positionally. This is what makes `'ΔG rank' => sub { rank( vals($df, 'dG_kcal_mol') ) }` work directly — no `[ ... ]` needed.
+- **Arrayref value** (new): a ready-made column, e.g. `col => [ rank(...) ]`, copied into the frame.
+
+The coderef is probed once (row 0 for AoH/HoH, the first synthesized view for HoA) to decide per-row vs whole-column, so per-row code is never run twice on row 0. Every column value is length-checked against the row count and a mismatch dies. **HoH** is now a supported, documented shape alongside AoH and HoA; whole-column and arrayref values align to **sorted key order**.
+
+Tests: `assign.t` (AoH + HoA) and `assign_HoH.t` were expanded to cover every shape × value-kind combination — per-row scalar, whole-column list, arrayref value, single-arrayref-as-cell, `rank()` integration, chaining, `$_[1]` index, `$_[2]` row key (HoH), overwrite, ragged HoA columns, empty frames, length-mismatch and bad-value / odd-arg / non-hash-row death paths, and `no_leaks_ok` guards on the new whole-column and arrayref paths.
 
 ### read_table
 

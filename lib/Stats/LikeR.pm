@@ -586,84 +586,179 @@ sub _df_shape {
 
 sub assign {
 	my $df = shift;
-	die 'assign: first argument is undefined' unless defined $df;
-	die 'assign: first argument must be a data frame (AoH arrayref or HoA/HoH hashref)'
-	  unless ref $df;
-	die 'assign: expected an even list of (name => coderef) pairs' if @_ % 2;
 	my $current_sub = (split(/::/,(caller(0))[3]))[-1];
+	die "$current_sub: first argument is undefined" unless defined $df;
+	die "$current_sub: first argument must be a data frame (AoH arrayref or HoA/HoH hashref)"
+		unless ref $df;
+	die "$current_sub: expected an even list of (name => value) pairs" if @_ % 2;
+
 	my $r = ref $df;
-	if ($r eq 'ARRAY') { # ----- AoH: add a key to each row hash -----
-	  while (@_) {
-		   my ($name, $code) = (shift, shift);
-		   die "assign: value for '$name' must be a CODE ref"
-		       unless ref $code eq 'CODE';
-		   my $i = 0;
-		   for my $row (@$df) {
-		       die "assign: row $i is not a hashref" unless ref $row eq 'HASH';
-		       local $_ = $row;
-		       $row->{$name} = $code->($row, $i);
-		       $i++;
-		   }
-	  }
-	  return $df;
+
+	# Each value is CODE (per-row scalar OR whole-column list) or ARRAY (ready column).
+	# CODE is probed once in list context: >1 return value => whole column.
+
+	if ($r eq 'ARRAY') {                            # ----- AoH -----
+		my $n = @$df;
+		while (@_) {
+			my ($name, $spec) = (shift, shift);
+			my $sref = ref $spec;
+			die "$current_sub: value for '$name' must be a CODE or ARRAY ref"
+				unless $sref eq 'CODE' or $sref eq 'ARRAY';
+
+			if ($sref eq 'ARRAY') {                 # ready-made column
+				die "$current_sub: column '$name' has " . @$spec . " values but data frame has $n rows"
+					unless @$spec == $n;
+				for my $i (0 .. $n - 1) {
+					die "$current_sub: row $i is not a hashref" unless ref $df->[$i] eq 'HASH';
+					$df->[$i]{$name} = $spec->[$i];
+				}
+				next;
+			}
+
+			next unless $n;                         # empty AoH: nothing to compute
+
+			my $row0 = $df->[0];
+			die "$current_sub: row 0 is not a hashref" unless ref $row0 eq 'HASH';
+			my @out;
+			{
+				local $_ = $row0;
+				@out = $spec->($row0, 0);
+			}
+			if (@out > 1) {                         # whole-column list (e.g. rank())
+				die "$current_sub: column '$name' produced " . @out . " values but data frame has $n rows"
+					unless @out == $n;
+				for my $i (0 .. $n - 1) {
+					die "$current_sub: row $i is not a hashref" unless ref $df->[$i] eq 'HASH';
+					$df->[$i]{$name} = $out[$i];
+				}
+				next;
+			}
+			$row0->{$name} = $out[0];               # per-row: row 0 already computed
+			for my $i (1 .. $n - 1) {
+				my $row = $df->[$i];
+				die "$current_sub: row $i is not a hashref" unless ref $row eq 'HASH';
+				local $_ = $row;
+				$row->{$name} = $spec->($row, $i);
+			}
+		}
+		return $df;
 	}
 
 	if ($r eq 'HASH') {
-		# Determine if it's HoA or HoH
 		my $is_hoh = 0;
 		for my $v (values %$df) {
 			my $ref = ref $v;
-			if ($ref eq 'HASH') {
-				$is_hoh = 1; last;
-			} elsif ($ref eq 'ARRAY') {
-				$is_hoh = 0; last;
-			} else {
-				die "$current_sub: \$v is a \"$ref\" which is neither a HASH nor an ARRAY";
-			}
+			if    ($ref eq 'HASH')  { $is_hoh = 1; last }
+			elsif ($ref eq 'ARRAY') { $is_hoh = 0; last }
+			else { die "$current_sub: value is a \"$ref\" which is neither a HASH nor an ARRAY" }
 		}
-		if ($is_hoh) { # ----- HoH: add a key to each inner hash -----
+
+		if ($is_hoh) {                              # ----- HoH -----
+			my @rk = sort keys %$df;
+			my $n  = @rk;
 			while (@_) {
-				 my ($name, $code) = (shift, shift);
-				 die "assign: value for '$name' must be a CODE ref"
-				     unless ref $code eq 'CODE';
-				 my $i = 0;
-				 for my $row_key (sort keys %$df) {
-				     my $row = $df->{$row_key};
-				     die "assign: row '$row_key' is not a hashref" unless ref $row eq 'HASH';
-				     local $_ = $row;
-				     $row->{$name} = $code->($row, $i, $row_key);
-				     $i++;
-				 }
+				my ($name, $spec) = (shift, shift);
+				my $sref = ref $spec;
+				die "$current_sub: value for '$name' must be a CODE or ARRAY ref"
+					unless $sref eq 'CODE' or $sref eq 'ARRAY';
+
+				if ($sref eq 'ARRAY') {
+					die "$current_sub: column '$name' has " . @$spec . " values but data frame has $n rows"
+						unless @$spec == $n;
+					for my $i (0 .. $n - 1) {
+						my $row = $df->{ $rk[$i] };
+						die "$current_sub: row '$rk[$i]' is not a hashref" unless ref $row eq 'HASH';
+						$row->{$name} = $spec->[$i];
+					}
+					next;
+				}
+
+				next unless $n;
+
+				my $row0 = $df->{ $rk[0] };
+				die "$current_sub: row '$rk[0]' is not a hashref" unless ref $row0 eq 'HASH';
+				my @out;
+				{
+					local $_ = $row0;
+					@out = $spec->($row0, 0, $rk[0]);
+				}
+				if (@out > 1) {
+					die "$current_sub: column '$name' produced " . @out . " values but data frame has $n rows"
+						unless @out == $n;
+					for my $i (0 .. $n - 1) {
+						my $row = $df->{ $rk[$i] };
+						die "$current_sub: row '$rk[$i]' is not a hashref" unless ref $row eq 'HASH';
+						$row->{$name} = $out[$i];
+					}
+					next;
+				}
+				$row0->{$name} = $out[0];
+				for my $i (1 .. $n - 1) {
+					my $row = $df->{ $rk[$i] };
+					die "$current_sub: row '$rk[$i]' is not a hashref" unless ref $row eq 'HASH';
+					local $_ = $row;
+					$row->{$name} = $spec->($row, $i, $rk[$i]);
+				}
 			}
 			return $df;
-		} else { # ----- HoA: append a new column array -----
-			# row count = longest existing column
+		}
+		else {                                      # ----- HoA -----
 			my $n = 0;
 			for my $v (values %$df) {
-				 $n = @$v if ref $v eq 'ARRAY' && @$v > $n;
+				$n = @$v if ref $v eq 'ARRAY' and @$v > $n;
 			}
 			while (@_) {
-				 my ($name, $code) = (shift, shift);
-				 die "assign: value for '$name' must be a CODE ref"
-				     unless ref $code eq 'CODE';
-				 # snapshot the current columns once (cheap: refs, not data)
-				 my @keys = keys %$df;
-				 my @col  = map { my $c = $df->{$_}; ref $c eq 'ARRAY' ? $c : undef } @keys;
-				 my @new;
-				 $#new = $n - 1 if $n;        # preallocate the result column
-				 my %view;
-				 for (my $i = 0; $i < $n; $i++) {
-				     $view{ $keys[$_] } = defined $col[$_] ? $col[$_][$i] : $df->{ $keys[$_] }
-				         for 0 .. $#keys;
-				     local $_ = \%view;
-				     $new[$i] = $code->(\%view, $i);
-				 }
-				 $df->{$name} = \@new;        # visible to later pairs (re-snapshot above)
+				my ($name, $spec) = (shift, shift);
+				my $sref = ref $spec;
+				die "$current_sub: value for '$name' must be a CODE or ARRAY ref"
+					unless $sref eq 'CODE' or $sref eq 'ARRAY';
+
+				if ($sref eq 'ARRAY') {
+					die "$current_sub: column '$name' has " . @$spec . " values but data frame has $n rows"
+						unless @$spec == $n;
+					$df->{$name} = [ @$spec ];
+					next;
+				}
+
+				if (not $n) { $df->{$name} = []; next }
+
+				# snapshot current columns once (refs, not data)
+				my @keys = keys %$df;
+				my @col  = map { my $c = $df->{$_}; ref $c eq 'ARRAY' ? $c : undef } @keys;
+				my $view_for = sub {
+					my $i = shift;
+					my %view;
+					$view{ $keys[$_] } = defined $col[$_] ? $col[$_][$i] : $df->{ $keys[$_] }
+						for 0 .. $#keys;
+					return \%view;
+				};
+
+				my $v0 = $view_for->(0);
+				my @out;
+				{
+					local $_ = $v0;
+					@out = $spec->($v0, 0);
+				}
+				if (@out > 1) {                     # whole-column list
+					die "$current_sub: column '$name' produced " . @out . " values but data frame has $n rows"
+						unless @out == $n;
+					$df->{$name} = [ @out ];
+					next;
+				}
+				my @new;
+				$#new = $n - 1;                     # preallocate
+				$new[0] = $out[0];
+				for (my $i = 1; $i < $n; $i++) {
+					my $view = $view_for->($i);
+					local $_ = $view;
+					$new[$i] = $spec->($view, $i);
+				}
+				$df->{$name} = \@new;
 			}
 			return $df;
 		}
 	}
-	die 'assign: data frame must be an arrayref (AoH) or hashref (HoA/HoH)';
+	die "$current_sub: data frame must be an arrayref (AoH) or hashref (HoA/HoH)";
 }
 
 sub chunk {
