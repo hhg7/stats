@@ -4,7 +4,7 @@ require 5.010;
 use strict;
 use feature 'say';
 package Stats::LikeR;
-our $VERSION = 0.21;
+our $VERSION = 0.22;
 require XSLoader;
 use warnings FATAL => 'all';
 use autodie ':default';
@@ -7684,11 +7684,11 @@ C<write_table> can write the output file as a LaTeX C<tabular> instead of a deli
 The file begins with a C<< %written by E<lt>cwdE<gt>/E<lt>scriptE<gt> >> provenance comment (the working directory and script name). The header row is bold and the table is ruled with C<\hline>. Cell text is LaTeX-escaped: C<#>, C<_>, C<%>, and C<&> are backslash-escaped, C<< E<gt> >> becomes C<\textgreater{}>, and a cell consisting solely of C<\includesvg{...svg}> is passed through untouched. The C<tex.*> options tune the output:
 
  write_table(\@rows, 'table.tex',
-     'tex.col.align'    => 'l',                     # 'c' (default), 'l', or 'r'
-     'tex.bold.1st.col' => 0,                        # default 1: bold the first column
-     'tex.format'       => 1,                        # %.4g-format numeric cells
-     'tex.size'         => '\small',                 # size directive after \begin{tabular}
-     'tex.comment'      => ['run 3', 'q < 0.05'],    # % comment line(s): string or array ref
+     'tex.col.align'    => 'l',                   # 'c' (default), 'l', or 'r'
+     'tex.bold.1st.col' => 0,                     # default 1: bold the first column
+     'tex.format'       => 1,                     # %.4g-format numeric cells
+     'tex.size'         => '\small',              # size directive after \begin{tabular}
+     'tex.comment'      => ['run 3', 'q < 0.05'], # % comment line(s): string or array ref
  );
 
 The C<xlsx>, worksheet, and JSON side outputs of the original stand-alone routine are not included.
@@ -7789,6 +7789,10 @@ The C<xlsx>, worksheet, and JSON side outputs of the original stand-alone routin
 
 
 =head1 Changes
+
+=head2 0.22 2026-07-07 CDT
+
+returned C<Devel::Confess> to required dependencies to fix for CPAN testers.
 
 =head2 0.21 2026-07-07 CDT
 

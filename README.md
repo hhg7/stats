@@ -3783,11 +3783,11 @@ Args can also be accepted:
 The file begins with a `%written by <cwd>/<script>` provenance comment (the working directory and script name). The header row is bold and the table is ruled with `\hline`. Cell text is LaTeX-escaped: `#`, `_`, `%`, and `&` are backslash-escaped, `>` becomes `\textgreater{}`, and a cell consisting solely of `\includesvg{...svg}` is passed through untouched. The `tex.*` options tune the output:
 
     write_table(\@rows, 'table.tex',
-        'tex.col.align'    => 'l',                     # 'c' (default), 'l', or 'r'
-        'tex.bold.1st.col' => 0,                        # default 1: bold the first column
-        'tex.format'       => 1,                        # %.4g-format numeric cells
-        'tex.size'         => '\small',                 # size directive after \begin{tabular}
-        'tex.comment'      => ['run 3', 'q < 0.05'],    # % comment line(s): string or array ref
+        'tex.col.align'    => 'l',                   # 'c' (default), 'l', or 'r'
+        'tex.bold.1st.col' => 0,                     # default 1: bold the first column
+        'tex.format'       => 1,                     # %.4g-format numeric cells
+        'tex.size'         => '\small',              # size directive after \begin{tabular}
+        'tex.comment'      => ['run 3', 'q < 0.05'], # % comment line(s): string or array ref
     );
 
 The `xlsx`, worksheet, and JSON side outputs of the original stand-alone routine are not included.
@@ -3810,6 +3810,10 @@ The `xlsx`, worksheet, and JSON side outputs of the original stand-alone routine
 | `tex.comment` | *(none)* | LaTeX | `%` comment line(s) at the top of the LaTeX file: a string, or an array ref of strings |
 
 # Changes
+
+## 0.22 2026-07-07 CDT
+
+returned `Devel::Confess` to required dependencies to fix for CPAN testers.
 
 ## 0.21 2026-07-07 CDT
 

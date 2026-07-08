@@ -2,6 +2,10 @@ Revision history for Stats-LikeR
 
    # Changes
 
+0.22 2026-07-07 CDT
+
+ - returned `Devel::Confess` to required dependencies to fix for CPAN testers.
+
 0.21 2026-07-07 CDT
 
  - Better warning message for undefined data for `aoh2hoh`, `assign`, `dropna`

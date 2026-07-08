@@ -13618,28 +13618,32 @@ PPCODE:
 				is_hoh = 1;			/* a hash whose values are hashes => HoH */
 			/* else leave is_aoh/is_hoh = 0 => HoA path below */
 		}
-		/* empty hash: is_aoh = is_hoh = 0 => HoA path yields [] */
+		// empty hash: is_aoh = is_hoh = 0 => HoA path yields []
 	} else {
 		croak("vals: first argument must be an array-ref (AoH) or hash-ref (HoA, HoH)");
 	}
 	/* out_av is mortalised up front so any later croak frees it cleanly */
 	out_av = newAV();
 	sv_2mortal((SV *)out_av);
-
-	if (is_aoh) { /* AoH */
+	if (is_aoh) { // AoH
 		if (n > 0) av_extend(out_av, n - 1);
 		for (SSize_t i = 0; i < n; i++) {
-			SV **restrict rp = av_fetch(src_av, i, 0);
-			SV *restrict cell = &PL_sv_undef;
-			if (rp && *rp && SvROK(*rp) && SvTYPE(SvRV(*rp)) == SVt_PVHV) {
-				HE *restrict ent = hv_fetch_ent((HV *)SvRV(*rp), colname_sv, 0, 0);
-				if (ent && HeVAL(ent)) cell = HeVAL(ent);
-			}
-			/* FIX: copy, so the result is independent of the source and undef
+			SV **restrict rp  = av_fetch(src_av, i, 0);
+			SV *restrict  row = (rp && *rp) ? *rp : &PL_sv_undef;
+			// strict: a row must be a hash-ref, else fail here with the index
+			// rather than returning undef and letting the caller die vaguely
+			if (!SvOK(row))
+				croak("vals: AoH row %" IVdf " is undef (expected a hash-ref)", (IV)i);
+			if (!SvROK(row) || SvTYPE(SvRV(row)) != SVt_PVHV)
+				croak("vals: AoH row %" IVdf " is not a hash-ref", (IV)i);
+			HE *restrict ent = hv_fetch_ent((HV *)SvRV(row), colname_sv, 0, 0);
+			// a valid row that simply lacks the column still yields undef (R-like NA)
+			SV *restrict cell = (ent && HeVAL(ent)) ? HeVAL(ent) : &PL_sv_undef;
+			/* copy, so the result is independent of the source and undef
 			 * slots are writable (not the shared read-only PL_sv_undef) */
 			av_push(out_av, newSVsv(cell));
 		}
-	} else if (is_hoh) { /*   HoH   */
+	} else if (is_hoh) { // HoH
 		n = hv_iterinit(src_hv);
 		if (n > 0) {
 			av_extend(out_av, n - 1);
@@ -13669,16 +13673,17 @@ PPCODE:
 			}
 			for (SSize_t i = 0; i < cnt; i++) {
 				SV *restrict row_sv = rows[i];
-				SV *restrict cell = &PL_sv_undef;
-				if (row_sv && SvROK(row_sv) && SvTYPE(SvRV(row_sv)) == SVt_PVHV) {
-					HE *restrict ent = hv_fetch_ent((HV *)SvRV(row_sv), colname_sv, 0, 0);
-					if (ent && HeVAL(ent)) cell = HeVAL(ent);
-				}
+				// strict: name the offending key instead of silently emitting undef
+				if (!row_sv || !SvROK(row_sv) || SvTYPE(SvRV(row_sv)) != SVt_PVHV)
+					croak("vals: HoH value for key '%s' is not a hash-ref",
+						SvPV_nolen(keys[i]));
+				HE *restrict ent = hv_fetch_ent((HV *)SvRV(row_sv), colname_sv, 0, 0);
+				SV *restrict cell = (ent && HeVAL(ent)) ? HeVAL(ent) : &PL_sv_undef;
 				av_push(out_av, newSVsv(cell));
 			}
 			LEAVE;
 		}
-	} else { /* HoA  */
+	} else { // HoA
 		if (hv_iterinit(src_hv) > 0) {		/* non-empty hash */
 			HE *restrict colent = hv_fetch_ent(src_hv, colname_sv, 0, 0);
 			SV *restrict cv = colent ? HeVAL(colent) : NULL;

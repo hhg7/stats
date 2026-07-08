@@ -224,6 +224,7 @@ my $md = file2string('README.md');
 # 0. Ensure headings are separated from preceding blocks so the converter's
 #    list detection terminates correctly before them
 $md = ensure_blank_before_headings($md);
+my $md_later = $md;
 
 # 1. Pre-process the Markdown to convert GFM tables into POD HTML blocks
 my ($md_processed, $tables_ref) = extract_and_convert_tables($md);
@@ -273,27 +274,19 @@ close $out_fh;
 
 pod_file_ok( 'lib/Stats/LikeR.pm' );
 
-#!/usr/bin/env perl
-
-my $infile  = 'README.md';
 my $outfile = 'Changes';
 my $dist    = 'Stats-LikeR'; # Inferred from your documentation
 
-open my $in, '<', $infile or die "Cannot read $infile: $!\n";
 open my $out, '>', $outfile or die "Cannot write $outfile: $!\n";
 
 # Write the mandatory CPAN::Changes::Spec header
 say $out "Revision history for $dist\n";
 
-my ($needs_bullet, $in_changes, $in_code_block) = (0, 0, 0);
-
-while (my $line = <$in>) {
-	chomp $line;
-	if ($line eq '# Changes') {
-		$in_changes = 1;
-		next;
-	}
-	next unless $in_changes == 1;
+my ($needs_bullet, $in_code_block) = (0, 0);
+my @md_later = split /\n/, $md_later;
+my $fi = first_index {$_ eq '# Changes'} @md_later;
+foreach my $i ($fi .. $#md_later) {
+	my $line = $md_later[$i];
 	# Skip the top-level Markdown title and stop at the copyright footer
 	last if $line =~ /^#\s+COPYRIGHT AND LICENSE\s*$/i;
 	# Toggle markdown code blocks (```)
@@ -302,8 +295,8 @@ while (my $line = <$in>) {
 	  next;
 	}
 	# Handle Versions (e.g., "## 0.21")
-	if ($line =~ /^##\s+([\d\._]+)/) {
-	  print $out "$1 Unknown Release Date\n";
+	if ($line =~ /^##\h+([\d\._]+) (.+)/) {
+	  say $out "$1 $2";
 	  $needs_bullet = 1;
 	} elsif ($line =~ /^###\s+(.+)/) {# Handle Groups (e.g., "### read_table")
 	  print $out " [$1]\n";
@@ -340,10 +333,9 @@ while (my $line = <$in>) {
 	}
 }
 
-close $in;
 close $out;
 
-say "Successfully generated '$outfile' from '$infile'";
+say "Successfully generated '$outfile' from 'README.md'";
 changes_file_ok('Changes');
 done_testing();
 

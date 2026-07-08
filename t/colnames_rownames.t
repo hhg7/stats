@@ -80,7 +80,7 @@ is( scalar rownames([ [1],[2],[3] ]),              3, 'scalar rownames == nrow (
 # list context -- every name is returned, not just the last
 #--------
 {
-	my @c = colnames({ z=>[1], a=>[2], m=>[3] });
+	my @c = colnames({ z=>[1], a=>[2], 'm'=>[3] });
 	is( scalar(@c), 3, 'HoA colnames: list context yields all three names' );
 }
 
