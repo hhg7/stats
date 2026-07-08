@@ -1168,8 +1168,8 @@ static SV *tex_written_by(pTHX) {
 /* Write the full LaTeX tabular. 'rows' is the collected table: element 0 is
  * the header record, the rest are data records (each an AV of SVs). */
 static void write_tex_tabular(pTHX_ AV *restrict rows, const char *restrict file,
-	const char *restrict col_align, int bold_first_col, int do_format,
-	const char *restrict size, SV *restrict comment)
+	const char *restrict col_align, bool bold_first_col, bool do_format,
+	const char *restrict size, SV *restrict comment, bool longtable)
 {
 	PerlIO *restrict fh = PerlIO_open(file, "w");
 	if (!fh)
@@ -1201,12 +1201,30 @@ static void write_tex_tabular(pTHX_ AV *restrict rows, const char *restrict file
 	SV **restrict h0 = av_fetch(rows, 0, 0);
 	AV *restrict header = (h0 && *h0 && SvROK(*h0)) ? (AV*)SvRV(*h0) : NULL;
 	const size_t ncols = header ? (size_t)(av_len(header) + 1) : 0;
-	TEX_PUTS(fh, "\\begin{tabular}{|");
-	for (size_t i = 0; i < ncols; i++) {
-		PerlIO_write(fh, col_align, strlen(col_align));
-		PerlIO_putc(fh, '|');
+// With 'tex.longtable' the caller writes the surrounding
+// \begin{longtable}{...} ... \end{longtable} (and any \caption / \label)
+// and \input{}s this file, so emit only the body: a top rule, the header,
+// the data rows, a bottom rule -- no \begin{tabular}/\end{tabular}. The real
+// column spec lives on the caller's \begin{longtable}; we emit it once as a
+// % comment so the caller can copy a spec with the right number of columns.
+	if (longtable) {
+// Copy-paste hint for the wrapper the caller must supply, e.g.
+//   % \begin{longtable}{ccc}
+// one 'tex.col.align' char per column. It is a comment, so it never affects
+// typesetting -- the caller still writes the real \begin{longtable}{...}.
+		TEX_PUTS(fh, "% \\begin{longtable}{");
+		for (size_t i = 0; i < ncols; i++)
+			PerlIO_write(fh, col_align, strlen(col_align));
+		TEX_PUTS(fh, "}\n");
+//		TEX_PUTS(fh, "\\hline\n");
+	} else {
+		TEX_PUTS(fh, "\\begin{tabular}{|");
+		for (size_t i = 0; i < ncols; i++) {
+			PerlIO_write(fh, col_align, strlen(col_align));
+			PerlIO_putc(fh, '|');
+		}
+		TEX_PUTS(fh, "} \\hline\n");
 	}
-	TEX_PUTS(fh, "} \\hline\n");
 	if (size && *size) { PerlIO_write(fh, size, strlen(size)); PerlIO_putc(fh, '\n'); }
 	if (header) {
 		for (size_t j = 0; j < ncols; j++) {
@@ -1221,14 +1239,14 @@ static void write_tex_tabular(pTHX_ AV *restrict rows, const char *restrict file
 		}
 		TEX_PUTS(fh, " \\\\ \\hline\n");
 	}
-	const SSize_t nrows = av_len(rows) + 1;
-	for (SSize_t i = 1; i < nrows; i++) {
+	const size_t nrows = av_len(rows) + 1;
+	for (size_t i = 1; i < nrows; i++) {
 		SV **restrict rp = av_fetch(rows, i, 0);
 		AV *restrict row = (rp && *rp && SvROK(*rp)) ? (AV*)SvRV(*rp) : NULL;
 		const size_t rc = row ? (size_t)(av_len(row) + 1) : 0;
 		for (size_t j = 0; j < rc; j++) {
 			if (j) TEX_PUTS(fh, " & ");
-			const int bold = (bold_first_col && j == 0);
+			const bool bold = (bold_first_col && j == 0);
 			SV **restrict cp = av_fetch(row, (SSize_t)j, 0);
 			SV *restrict cv = (cp && *cp && SvOK(*cp)) ? *cp : NULL;
 			const char *restrict cs = cv ? SvPV_nolen(cv) : "";
@@ -1239,12 +1257,14 @@ static void write_tex_tabular(pTHX_ AV *restrict rows, const char *restrict file
 		}
 		TEX_PUTS(fh, "\\\\\n");
 	}
-	TEX_PUTS(fh, "\\hline \\end{tabular}\n");
+	if (!longtable) {
+		TEX_PUTS(fh, "\\hline \\end{tabular}\n");
+	}
 	PerlIO_close(fh);
 }
 
 // Calculates the Regularized Upper Incomplete Gamma Function Q(a, x)
-// This perfectly replicates R's pchisq(..., lower.tail=FALSE)
+// Perfectly replicates R's pchisq(..., lower.tail=FALSE)
 NV igamc(NV a, NV x) {
 	if (x < 0.0 || a <= 0.0) return 1.0;
 	if (x == 0.0) return 1.0;
@@ -6993,7 +7013,7 @@ PPCODE:
 				  strEQ(k, "undef.val") || strEQ(k, "tex") ||
 				  strEQ(k, "tex.col.align") || strEQ(k, "tex.size") ||
 				  strEQ(k, "tex.comment") || strEQ(k, "tex.bold.1st.col") ||
-				  strEQ(k, "tex.format"))) {
+				  strEQ(k, "tex.format") || strEQ(k, "tex.longtable"))) {
 				file_sv = cand;
 				arg_idx++;
 			}
@@ -7018,6 +7038,7 @@ PPCODE:
 	SV *restrict tex_comment       = NULL; // string or array ref of % comment lines
 	bool tex_bold1  = 1;                    // bold the first column of each data row
 	bool tex_format = 0;                    // %.4g-format numeric cells
+	bool tex_longtable = 0;                 // body only, for \input into a longtable
 	// Read the remaining Hash-style arguments
 	for (; arg_idx < items; arg_idx += 2) {
 		if (arg_idx + 1 >= items) croak("write_table: Odd number of arguments passed");
@@ -7039,6 +7060,7 @@ PPCODE:
 		else if (strEQ(key, "tex.comment"))      tex_comment = SvOK(val) ? val : NULL;
 		else if (strEQ(key, "tex.bold.1st.col")) tex_bold1   = SvTRUE(val) ? 1 : 0;
 		else if (strEQ(key, "tex.format"))       tex_format  = SvTRUE(val) ? 1 : 0;
+		else if (strEQ(key, "tex.longtable"))    tex_longtable = SvTRUE(val) ? 1 : 0;
 		else croak("write_table: Unknown arguments passed: %s", key);
 	}
 	if (!data_sv || !SvROK(data_sv)) {
@@ -7063,8 +7085,11 @@ PPCODE:
 	} else {
 		tex = tex_opt ? 1 : 0;
 	}
-	// Auto-detect separator from file extension if not overridden
-	if (!explicit_sep) {
+// Requesting a longtable body is a LaTeX request; force 'tex' on even for
+// a non-".tex" file name or tex => 0. (tex.longtable only affects the
+// LaTeX renderer, so without this it would be silently ignored.)
+	if (tex_longtable) tex = 1;
+	if (!explicit_sep) {// Auto-detect separator from file extension if not overridden
 		size_t file_len = strlen(file);
 		if (file_len >= 4) {
 			const char *restrict ext = file + file_len - 4;
@@ -7183,8 +7208,7 @@ PPCODE:
 // write_tex_tabular() can render the LaTeX table afterwards. Mortal =>
 // reclaimed automatically if any of the croak paths below fire.
 	AV *restrict collect_av = tex ? (AV*)sv_2mortal((SV*)newAV()) : NULL;
-	// ----- Hash of Hashes -----
-	if (is_hoh) {
+	if (is_hoh) {// ----- Hash of Hashes -----
 		if (col_names_sv && SvOK(col_names_sv)) {
 			AV *restrict c_av = (AV*)SvRV(col_names_sv);
 			for (SSize_t i = 0; i <= av_len(c_av); i++) {
@@ -7255,7 +7279,7 @@ PPCODE:
 			print_string_row(aTHX_ fh, row_data, d_idx, sep, collect_av);
 		}
 		safefree(row_data);
-	} else if (is_flat_hash) {// ----- Flat Hash
+	} else if (is_flat_hash) {// Flat Hash
 		HV *restrict data_hv = (HV*)data_ref;
 		if (col_names_sv && SvOK(col_names_sv)) {
 			AV *restrict c_av = (AV*)SvRV(col_names_sv);
@@ -7307,7 +7331,7 @@ PPCODE:
 		}
 		print_string_row(aTHX_ fh, row_data, d_idx, sep, collect_av);
 		safefree(row_data);
-	} else if (is_hoa) {// ----- Hash of Arrays
+	} else if (is_hoa) {// Hash of Arrays
 		HV *restrict data_hv = (HV*)data_ref;
 		size_t max_rows = 0;
 		hv_iterinit(data_hv);
@@ -7590,7 +7614,7 @@ PPCODE:
 // the only writer of 'file'.
 	if (tex && collect_av && av_len(collect_av) >= 0) {
 		write_tex_tabular(aTHX_ collect_av, file, tex_align,
-			tex_bold1, tex_format, tex_size, tex_comment);
+			tex_bold1, tex_format, tex_size, tex_comment, tex_longtable);
 // say 'wrote ' . colored(['black on_cyan'], $file), with the SGR codes
 // inline (black fg 30, cyan bg 46, reset 0) so no Term::ANSIColor dep.
 		PerlIO *restrict out = PerlIO_stdout();

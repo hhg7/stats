@@ -3775,6 +3775,21 @@ The file begins with a `%written by <cwd>/<script>` provenance comment (the work
         'tex.size'         => '\small',              # size directive after \begin{tabular}
         'tex.comment'      => ['run 3', 'q < 0.05'], # % comment line(s): string or array ref
     );
+For a table that must span page breaks, `tex.longtable => 1` writes only the table *body* — the bold header row and the data rows, ruled with `\hline` — but no `\begin{tabular}`/`\end{tabular}` and no column spec, so you can `\input{}` it into a `longtable` environment you write yourself. Setting `tex.longtable` implies `tex => 1`, so it applies to any file name (and overrides `tex => 0`). After the provenance comment (and any `tex.comment` lines) the file emits a `% \begin{longtable}{...}` hint with one `tex.col.align` character per column, so you can copy a column spec with the right count. In this mode `tex.col.align` affects only that hint — the real alignment lives on your own `\begin{longtable}`; the other `tex.*` options (`tex.bold.1st.col`, `tex.format`, `tex.size`, `tex.comment`) still apply:
+    write_table(\@rows, 'output.file.tex', 'tex.longtable' => 1);
+writes a body-only file such as
+    %written by /home/con/Scripts/stats/make_table.pl
+    % \begin{longtable}{ccc}
+    \hline
+    \textbf{a} & \textbf{b} & \textbf{c} \\ \hline
+    1 & 2 & 3\\
+    \hline
+which you wrap yourself:
+    \begin{longtable}{ccc}
+    \input{output.file.tex}
+    \caption{}
+    \label{}
+    \end{longtable}
 The `xlsx`, worksheet, and JSON side outputs of the original stand-alone routine are not included.
 ### Options
 | option | default | applies to | meaning |
@@ -3786,18 +3801,20 @@ The `xlsx`, worksheet, and JSON side outputs of the original stand-alone routine
 | `col.names` | all columns, sorted | both | array ref selecting and ordering columns; for an AoA it also supplies the column names |
 | `undef.val` | `''` (empty field) | both | text written for an undefined/missing cell, e.g. `'NA'` |
 | `tex` | auto: `1` when `file` ends in `.tex`, else `0` | LaTeX | write the output file as a LaTeX `tabular` instead of a delimited table; `tex => 0` forces delimited even for a `.tex` name |
-| `tex.col.align` | `'c'` | LaTeX | per-column alignment: `'c'`, `'l'`, or `'r'` |
+| `tex.col.align` | `'c'` | LaTeX | per-column alignment: `'c'`, `'l'`, or `'r'`; with `tex.longtable` on it sets only the `% \begin{longtable}{...}` hint |
 | `tex.bold.1st.col` | `1` (on) | LaTeX | bold the first column of each data row |
 | `tex.format` | `0` (off) | LaTeX | render numeric cells with `%.4g` |
 | `tex.size` | *(none)* | LaTeX | size directive emitted after `\begin{tabular}`, e.g. `\small` |
 | `tex.comment` | *(none)* | LaTeX | `%` comment line(s) at the top of the LaTeX file: a string, or an array ref of strings |
+| `tex.longtable` | `0` (off) | LaTeX | write only the table body (header + data rows + `\hline`, no `\begin{tabular}`/`\end{tabular}` or column spec) for `\input{}` into a caller-supplied `longtable`; implies `tex => 1`, and emits a `% \begin{longtable}{...}` hint with one `tex.col.align` char per column |
+
 # Changes
 
 ## 0.23
 
 `rename_cols` takes HoH as input
 
-`write_table` has row names as first column
+`write_table` has row names as first column; writes longtable with comments
 
 ## 0.22 2026-07-07 CDT
 
