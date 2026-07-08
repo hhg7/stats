@@ -126,6 +126,19 @@ sub rownames {
 # cell ($r->[0]{a} = ...) is always safe.  Need an independent copy?  Clone
 # the result (e.g. Storable::dclone).
 #
+# IN-PLACE RENAME (rename_cols only).  Called in VOID context, rename_cols
+# mutates the source frame in place -- it renames the keys inside each AoH/HoH
+# row, or the column keys of a HoA -- and returns nothing.  In ANY other
+# context it returns a fresh view (as above) and never touches the source:
+#
+#     rename_cols(\%d, resolution => 'Resolution (A)'); # void   -> %d in place
+#     %d = %{ rename_cols(\%d, resolution => 'Resolution (A)') }; # capture view
+#
+# (select_cols/drop_cols are always pure and ignore calling context -- a void
+# call to either is a no-op.)  Note: `\%d = rename_cols(...)` is not valid Perl
+# (a reference constructor is not an lvalue before 5.22 refaliasing); use one
+# of the two forms above.
+#
 # The row shapes are dispatched to XS (_cols_* ), which shares cells and
 # hashes each column key once instead of once per row -- ~2x (select), ~3x
 # (drop), ~4x (rename) faster than the pure-Perl rebuild at scale, and lower
@@ -174,6 +187,30 @@ sub _present_keys {                     # union of keys over AoH/HoH rows
 	my %seen;
 	for my $r (@rows) { next unless ref $r eq 'HASH'; $seen{$_} = 1 for keys %$r }
 	return \%seen;
+}
+
+sub _rename_inplace {                   # VOID-context rename: mutate the source
+	my ($df, $shape, $map) = @_;
+	if ($shape eq 'HoA') {                          # rename the column keys
+		my %vals;                                   # gather-then-set = swap-safe
+		for my $o (keys %$map) {
+			next unless exists $df->{$o};
+			$vals{ $map->{$o} } = delete $df->{$o};
+		}
+		$df->{$_} = $vals{$_} for keys %vals;
+		return;
+	}
+	my @rows = $shape eq 'AoH' ? @$df : values %$df;    # AoH / HoH row hashes
+	for my $row (@rows) {
+		next unless ref $row eq 'HASH';
+		my %vals;                                   # gather-then-set = swap-safe
+		for my $o (keys %$map) {
+			next unless exists $row->{$o};
+			$vals{ $map->{$o} } = delete $row->{$o};
+		}
+		$row->{$_} = $vals{$_} for keys %vals;
+	}
+	return;
 }
 
 # shape code passed to the XS: 1 = AoH, 2 = HoH, 3 = AoA
@@ -259,6 +296,13 @@ sub rename_cols {
 		my $nn = exists $map{$c} ? $map{$c} : $c;
 		die "rename_cols: rename collides -- two columns would both become '$nn'\n"
 			if $final{$nn}++;
+	}
+
+	# VOID context -> mutate the source in place and return nothing; any other
+	# context returns a fresh shallow view exactly as before.
+	unless (defined wantarray) {
+		_rename_inplace($df, $shape, \%map);
+		return;
 	}
 
 	if ($shape eq 'HoA') {                          # alias under new keys
@@ -7684,11 +7728,11 @@ C<write_table> can write the output file as a LaTeX C<tabular> instead of a deli
 The file begins with a C<< %written by E<lt>cwdE<gt>/E<lt>scriptE<gt> >> provenance comment (the working directory and script name). The header row is bold and the table is ruled with C<\hline>. Cell text is LaTeX-escaped: C<#>, C<_>, C<%>, and C<&> are backslash-escaped, C<< E<gt> >> becomes C<\textgreater{}>, and a cell consisting solely of C<\includesvg{...svg}> is passed through untouched. The C<tex.*> options tune the output:
 
  write_table(\@rows, 'table.tex',
-     'tex.col.align'    => 'l',                     # 'c' (default), 'l', or 'r'
-     'tex.bold.1st.col' => 0,                        # default 1: bold the first column
-     'tex.format'       => 1,                        # %.4g-format numeric cells
-     'tex.size'         => '\small',                 # size directive after \begin{tabular}
-     'tex.comment'      => ['run 3', 'q < 0.05'],    # % comment line(s): string or array ref
+     'tex.col.align'    => 'l',                   # 'c' (default), 'l', or 'r'
+     'tex.bold.1st.col' => 0,                     # default 1: bold the first column
+     'tex.format'       => 1,                     # %.4g-format numeric cells
+     'tex.size'         => '\small',              # size directive after \begin{tabular}
+     'tex.comment'      => ['run 3', 'q < 0.05'], # % comment line(s): string or array ref
  );
 
 The C<xlsx>, worksheet, and JSON side outputs of the original stand-alone routine are not included.
@@ -7789,6 +7833,10 @@ The C<xlsx>, worksheet, and JSON side outputs of the original stand-alone routin
 
 
 =head1 Changes
+
+=head2 0.22 2026-07-07 CDT
+
+returned C<Devel::Confess> to required dependencies to fix for CPAN testers.
 
 =head2 0.21 2026-07-07 CDT
 
