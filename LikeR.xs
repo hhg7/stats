@@ -906,7 +906,6 @@ static void apply_householder_aov(NV** restrict X, NV* restrict y, size_t n, siz
 }
 
 // --- write_table Helpers ---
-
 // Sorts string arrays alphabetically
 static int cmp_string_wt(const void *a, const void *b) {
 	return strcmp(*(const char**)a, *(const char**)b);
@@ -928,21 +927,21 @@ static void print_string_row(pTHX_ PerlIO *restrict fh,
 	AV *restrict collect)
 {
 	const size_t sep_len = sep ? strlen(sep) : 0;
-	/* When 'collect' is non-NULL the caller wants the rows captured for the
-	 * LaTeX renderer (the 'tex' option): stash a copy of this record's fields
-	 * as an array of SVs so write_tex_tabular() can format them afterwards.
-	 * The copy captures exactly the fields that would be written to the
-	 * delimited file, including undef.val substitution. When 'fh' is NULL the
-	 * row is only collected, not rendered (tex-only output). */
+/* When 'collect' is non-NULL the caller wants the rows captured for the
+ * LaTeX renderer (the 'tex' option): stash a copy of this record's fields
+ * as an array of SVs so write_tex_tabular() can format them afterwards.
+ * The copy captures exactly the fields that would be written to the
+ * delimited file, including undef.val substitution. When 'fh' is NULL the
+ * row is only collected, not rendered (tex-only output). */
 	AV *restrict crow = collect ? newAV() : NULL;
 	for (size_t i = 0; i < n; i++) {
 		const char *restrict f = fields[i];
 		if (crow) {
 			SV *restrict fsv = newSVpv(f ? f : "", 0);
-			// Flattening the cell to a C string dropped its UTF-8 flag; put it
-			// back so write_tex_tabular() decodes code points (and can map
-			// Greek). Only when the bytes are valid UTF-8 with a byte >= 0x80:
-			// pure ASCII needs no flag, and invalid/Latin-1 bytes stay bytes.
+// Flattening the cell to a C string dropped its UTF-8 flag; put it
+// back so write_tex_tabular() decodes code points (and can map
+// Greek). Only when the bytes are valid UTF-8 with a byte >= 0x80:
+// pure ASCII needs no flag, and invalid/Latin-1 bytes stay bytes.
 			STRLEN flen = SvCUR(fsv);
 			const U8 *restrict fb = (const U8*)SvPVX(fsv);
 			bool high = 0;
@@ -978,12 +977,12 @@ static void print_string_row(pTHX_ PerlIO *restrict fh,
 /* 
  * write_table: LaTeX tabular output (the 'tex' option / a ".tex" file name).
  *
- * Modeled on a stand-alone "2D array -> LaTeX tabular" routine, but driven by
- * the rows print_string_row() already assembled, so every data shape the
- * delimited writer supports (flat hash, HoA, HoH, AoH, AoA) produces a table
- * with no shape-specific code here. The xlsx / worksheet / JSON side outputs
- * of the original routine are intentionally omitted.
- */
+ Modeled on a stand-alone "2D array -> LaTeX tabular" routine, but driven by
+ the rows print_string_row() already assembled, so every data shape the
+ delimited writer supports (flat hash, HoA, HoH, AoH, AoA) produces a table
+ with no shape-specific code here. The xlsx / worksheet / JSON side outputs
+ of the original routine are intentionally omitted.
+*/
 #define TEX_PUTS(fh, lit) PerlIO_write((fh), (lit), sizeof(lit) - 1)
 
 /* Loose match for /^\includesvg.*\{.+\.svg\}$/: such cells pass through
@@ -6785,7 +6784,7 @@ CODE:
 					obs_matrix[i] = (NV*)safecalloc(c, sizeof(NV));
 					SV**restrict row_key_sv = av_fetch(row_keys, i, 0);
 					
-					HE* inner_he = hv_fetch_ent(obs_hv, *row_key_sv, 0, 0);
+					HE*restrict inner_he = hv_fetch_ent(obs_hv, *row_key_sv, 0, 0);
 					if (inner_he) {
 						SV*restrict inner_sv = HeVAL(inner_he);
 						if (SvROK(inner_sv)) {
@@ -7002,6 +7001,7 @@ PPCODE:
 	}
 	const char *restrict sep = ",";
 	bool explicit_sep = 0; // Track if delimiter was manually specified
+	bool explicit_rownames = 0; // Track if row.names was manually specified
 // default undef cells to a true empty value ("") instead of NULL.
 // With print_string_row emitting zero-length fields bare (no quotes), an
 // undef cell now prints as nothing at all: a,,c -- not a,'',c or a,"",c.
@@ -7012,12 +7012,12 @@ PPCODE:
 // LaTeX tabular output. 'tex' selects LaTeX for the main output file; the
 // remaining tex.* keys tune the rendering. tex_opt is tri-state: -1 = not
 // given (auto-detect from a ".tex" file name), 0 = off, 1 = on.
-	int tex_opt = -1;
-	const char *restrict tex_align = "c";     // per-column alignment: c / l / r
-	const char *restrict tex_size  = NULL;    // optional size directive, e.g. \small
-	SV *restrict tex_comment       = NULL;    // string or array ref of % comment lines
-	int tex_bold1  = 1;                        // bold the first column of each data row
-	int tex_format = 0;                        // %.4g-format numeric cells
+	short int tex_opt = -1;
+	const char *restrict tex_align = "c";  // per-column alignment: c / l / r
+	const char *restrict tex_size  = NULL; // optional size directive, e.g. \small
+	SV *restrict tex_comment       = NULL; // string or array ref of % comment lines
+	bool tex_bold1  = 1;                    // bold the first column of each data row
+	bool tex_format = 0;                    // %.4g-format numeric cells
 	// Read the remaining Hash-style arguments
 	for (; arg_idx < items; arg_idx += 2) {
 		if (arg_idx + 1 >= items) croak("write_table: Odd number of arguments passed");
@@ -7026,7 +7026,7 @@ PPCODE:
 		if (strEQ(key, "data")) data_sv = val;
 		else if (strEQ(key, "col.names")) col_names_sv = val;
 		else if (strEQ(key, "file")) file_sv = val;
-		else if (strEQ(key, "row.names")) row_names_sv = val;
+		else if (strEQ(key, "row.names")) { row_names_sv = val; explicit_rownames = 1; }
 		// Check for either "sep" or "delim" and mark as explicitly provided
 		else if (strEQ(key, "sep") || strEQ(key, "delim")) {
 			sep = SvPV_nolen(val);
@@ -7172,6 +7172,12 @@ PPCODE:
 	}
 	AV *restrict headers_av = newAV();
 	bool inc_rownames = (row_names_sv && SvTRUE(row_names_sv)) ? 1 : 0;
+// R-compatible default: LaTeX output leads with the row names (row labels) as
+// the first column. write.table() in R defaults row.names to TRUE; the delimited
+// writer keeps its historical off-by-default, but for 'tex' we honour the R
+// default so the first item of every row is its row name unless the caller passed
+// row.names explicitly (row.names => 0 opts back out).
+	if (tex && !explicit_rownames) inc_rownames = 1;
 	const char *restrict rownames_col = NULL;
 // When 'tex' is on, collect every record here (as an AV of AVs of SVs) so
 // write_tex_tabular() can render the LaTeX table afterwards. Mortal =>
@@ -7258,8 +7264,8 @@ PPCODE:
 				if (c && SvOK(*c)) av_push(headers_av, newSVsv(*c));
 			}
 		} else {
-			// FIX (UTF-8 safety): keep the key SVs (flags intact) and sort
-			// them with sv_cmp instead of round-tripping through char*.
+// UTF-8 safety: keep the key SVs (flags intact) and sort
+// them with sv_cmp instead of round-tripping through char*.
 			unsigned int num_cols = hv_iterinit(data_hv);
 			for (unsigned int i = 0; i < num_cols; i++) {
 				HE *restrict ce = hv_iternext(data_hv);
@@ -7434,8 +7440,8 @@ PPCODE:
 				}
 			}
 			unsigned num_cols = hv_iterinit(col_map);
-			// FIX (UTF-8 safety): keep the key SVs (flags intact) and sort
-			// them with sv_cmp instead of round-tripping through char*.
+// UTF-8 safety: keep the key SVs (flags intact) and sort
+// them with sv_cmp instead of round-tripping through char*.
 			for (unsigned int i = 0; i < num_cols; i++) {
 				HE *restrict ce = hv_iternext(col_map);
 				av_push(headers_av, newSVsv(hv_iterkeysv(ce)));
@@ -7585,19 +7591,15 @@ PPCODE:
 	if (tex && collect_av && av_len(collect_av) >= 0) {
 		write_tex_tabular(aTHX_ collect_av, file, tex_align,
 			tex_bold1, tex_format, tex_size, tex_comment);
-		if (tex && collect_av && av_len(collect_av) >= 0) {
-			write_tex_tabular(aTHX_ collect_av, file, tex_align,
-				tex_bold1, tex_format, tex_size, tex_comment);
 // say 'wrote ' . colored(['black on_cyan'], $file), with the SGR codes
 // inline (black fg 30, cyan bg 46, reset 0) so no Term::ANSIColor dep.
-			PerlIO *restrict out = PerlIO_stdout();
-			if (out) {
-				static const char pre[]  = "wrote \033[30;46m";
-				static const char post[] = "\033[0m\n";
-				PerlIO_write(out, pre, sizeof(pre) - 1);
-				PerlIO_write(out, file, strlen(file));
-				PerlIO_write(out, post, sizeof(post) - 1);
-			}
+		PerlIO *restrict out = PerlIO_stdout();
+		if (out) {
+			static const char pre[]  = "wrote \033[30;46m";
+			static const char post[] = "\033[0m\n";
+			PerlIO_write(out, pre, sizeof(pre) - 1);
+			PerlIO_write(out, file, strlen(file));
+			PerlIO_write(out, post, sizeof(post) - 1);
 		}
 	}
 	XSRETURN_EMPTY;

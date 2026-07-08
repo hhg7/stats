@@ -3751,39 +3751,23 @@ For the signed-rank test, exact zero differences are discarded before ranking (m
 Ties are detected during ranking and trigger the tie-corrected variance in the normal approximation; they also rule out the exact p-value. When `exact` is left on auto, the size thresholds (`< 50` per group, or `< 50` differences) are what gate the exact vs. approximate decision.
 
 ## write_table
-
 mimics R's `write.table`, with data as first argument to subroutine, and output file as second
-
     write_table(\@data_aoh, $tmp_file, sep => "\t", 'row.names' => 1);
-
 `write_table` accepts every data-frame shape: a flat hash (one row), a hash of arrays (HoA), a hash of hashes (HoH), an array of hashes (AoH), and an array of arrays (AoA). For an AoA the first inner array is taken as the header row unless `col.names` is given, in which case every inner array is treated as data:
-
     write_table([[qw(gene score)], ['TP53', 0.9], ['BRCA1', 0.7]], $tmp_file, 'row.names' => 0);
     write_table([['TP53', 0.9], ['BRCA1', 0.7]], $tmp_file, 'col.names' => [qw(gene score)]);
-
 You can also precisely filter and reorder which columns are written by passing an array reference to `col.names`:
-
     write_table(\@data, $tmp_file, sep => "\t", 'col.names' => ['c', 'a']);
-
 undefined variables are printed as `NA` by default, but can be set as you wish using `undef.val`
-
     write_table(\%data_hoa, '/tmp/undef.val.tsv', sep => "\t", 'undef.val' => 'nan')
-
 as of version 0.07, `write_table` determines comma and tab-separated delimiters from the filename, but will override if `sep` or `delim` are explicitly set.
-
 Args can also be accepted:
-
     write_table( 'data' => \%flat, 'file' => $f );
-
 ### LaTeX output (`tex`)
-
 `write_table` can write the output file as a LaTeX `tabular` instead of a delimited table. This is selected either by naming the file `*.tex` (auto-detected) or by passing `tex => 1`; an explicit `tex => 0` forces a delimited file even when the name ends in `.tex`. The LaTeX table is built from the same rows as the delimited writer, so it works for every shape above (including arrays of arrays):
-
     write_table(\@data_aoh, 'table.tex');            # .tex name selects LaTeX
     write_table(\@data_aoh, $tmp_file, 'tex' => 1);  # force LaTeX for any name
-
-The file begins with a `%written by <cwd>/<script>` provenance comment (the working directory and script name). The header row is bold and the table is ruled with `\hline`. Cell text is LaTeX-escaped: `#`, `_`, `%`, and `&` are backslash-escaped, `>` becomes `\textgreater{}`, and a cell consisting solely of `\includesvg{...svg}` is passed through untouched. The `tex.*` options tune the output:
-
+The file begins with a `%written by <cwd>/<script>` provenance comment (the working directory and script name). The header row is bold and the table is ruled with `\hline`. Unlike the delimited writer, LaTeX output includes a row-label column as its first column by default: `row.names` defaults on for LaTeX (matching R's `write.table`), so pass `row.names => 0` to omit it. The labels are the outer keys for a HoH and a 1-based index otherwise. Cell text is LaTeX-escaped: `#`, `_`, `%`, and `&` are backslash-escaped, `>` becomes `\textgreater{}`, and a cell consisting solely of `\includesvg{...svg}` is passed through untouched. The `tex.*` options tune the output:
     write_table(\@rows, 'table.tex',
         'tex.col.align'    => 'l',                   # 'c' (default), 'l', or 'r'
         'tex.bold.1st.col' => 0,                     # default 1: bold the first column
@@ -3791,17 +3775,14 @@ The file begins with a `%written by <cwd>/<script>` provenance comment (the work
         'tex.size'         => '\small',              # size directive after \begin{tabular}
         'tex.comment'      => ['run 3', 'q < 0.05'], # % comment line(s): string or array ref
     );
-
 The `xlsx`, worksheet, and JSON side outputs of the original stand-alone routine are not included.
-
 ### Options
-
 | option | default | applies to | meaning |
 |---|---|---|---|
 | `data` (1st positional, or `data =>`) | *required* | both | the table: flat hash, HoA, HoH, AoH, or AoA |
 | `file` (2nd positional, or `file =>`) | *required* | both | output path; written as a delimited table, or as LaTeX when `tex` is on |
 | `sep` / `delim` | from extension (`,` for `.csv`, tab for `.tsv`), else `,` | delimited | field separator; the two are aliases |
-| `row.names` | `1` (on) | both | true prepends a label column (numeric index, or the outer key for a HoH); `0` omits it; for a HoA/AoH a non-numeric *column name* uses that column's values as the labels and drops it from the body |
+| `row.names` | LaTeX: `1` (on); delimited: `0` (off) | both | true prepends a label column (numeric 1-based index, or the outer key for a HoH); `0` omits it. LaTeX output defaults on (R-compatible); delimited output defaults off; an explicit value overrides in either case. For a HoA/AoH a non-numeric *column name* uses that column's values as the labels and drops it from the body |
 | `col.names` | all columns, sorted | both | array ref selecting and ordering columns; for an AoA it also supplies the column names |
 | `undef.val` | `''` (empty field) | both | text written for an undefined/missing cell, e.g. `'NA'` |
 | `tex` | auto: `1` when `file` ends in `.tex`, else `0` | LaTeX | write the output file as a LaTeX `tabular` instead of a delimited table; `tex => 0` forces delimited even for a `.tex` name |
@@ -3810,12 +3791,13 @@ The `xlsx`, worksheet, and JSON side outputs of the original stand-alone routine
 | `tex.format` | `0` (off) | LaTeX | render numeric cells with `%.4g` |
 | `tex.size` | *(none)* | LaTeX | size directive emitted after `\begin{tabular}`, e.g. `\small` |
 | `tex.comment` | *(none)* | LaTeX | `%` comment line(s) at the top of the LaTeX file: a string, or an array ref of strings |
-
 # Changes
 
 ## 0.23
 
 `rename_cols` takes HoH as input
+
+`write_table` has row names as first column
 
 ## 0.22 2026-07-07 CDT
 
