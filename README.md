@@ -3037,68 +3037,70 @@ leading comments are never mistaken for one. You may name such a column in a
 
 ## rename_cols
 
-Return a new data frame with columns renamed — `df.rename(columns={...})`.
-Columns not named are kept unchanged. The mapping may be given as
-`old => new` pairs or as a single hashref. `AoA` frames have no column
-labels, so `rename_cols` on an `AoA` dies (convert to `AoH`/`HoA` first).
+    rename_cols($df, old => new, ...)
+    rename_cols($df, { old => new, ... })
 
-    my $aoh = [ { a => 1, b => 2 }, { a => 3, b => 4 } ];
-    rename_cols($aoh, a => 'x');
-    # [ { x => 1, b => 2 }, { x => 3, b => 4 } ]
+Rename one or more columns of a data frame. Works on the labelled shapes
+(`AoH`, `HoA`, `HoH`); an `AoA` has no column names and dies (convert to
+`AoH`/`HoA` first). Identifiers are the inner-row keys for `AoH`/`HoH` and the
+top-level keys for `HoA`.
 
-    my $hoa = { a => [1,4], b => [2,5] };
-    rename_cols($hoa, { b => 'B' });
-    # { a => [1,4], B => [2,5] }
+Behaviour depends on calling context:
 
-A swap is fine because the target names stay distinct:
+* **Non-void** (scalar or list context) returns a fresh shallow **view** and
+  never mutates the source. Row shapes (`AoH`/`HoH`) share the cell scalars by
+  reference via XS; a `HoA` aliases the whole column arrayrefs under their new
+  keys.
+* **Void** context renames the source **in place** and returns nothing: the
+  edit lands in each `AoH`/`HoH` row hash, or on the top-level keys of a `HoA`.
 
-    rename_cols($aoh, a => 'b', b => 'a');   # columns exchanged
+<!-- -->
 
-### views, speed, and memory
+    # HoH: rename an inner-row key in every row, in place
+    rename_cols(\%d, resolution => 'Resolution (Å)');
 
-All three verbs return a **new frame** and never modify the source, but the
-result is a **shallow view** built for speed on large frames:
+    # capture a fresh view instead; %d is left untouched by rename_cols itself
+    %d = %{ rename_cols(\%d, resolution => 'Resolution (Å)') };
 
-  * the row shapes (`AoH`, `HoH`, `AoA`) build fresh row containers but
-    **share the cell scalars** with the source — no per-cell copy;
-  * `HoA` **shares the whole column arrayrefs**.
+    # pairs or a single hashref; both forms are equivalent
+    my $view = rename_cols($aoh, a => 'x', c => 'z');
+    my $view = rename_cols($hoa, { b => 'B' });
 
-The operation itself never mutates the source. Because the underlying data is
-shared, a later *in-place* change reaches the source: mutating a result cell
-(`$r->[0]{a}++`, `chomp $r->[0]{a}`) or a `push`/`splice` on a result `HoA`
-column will be visible through the original. Assigning a whole cell
-(`$r->[0]{a} = ...`) is always safe. If you need a fully independent frame,
-clone the result (e.g. `Storable::dclone`).
+Both the in-place and view paths are swap-safe (gather-then-set), so an
+exchange renames correctly:
 
-The row shapes run in XS, which shares cells and hashes each column key once
-instead of once per row. Measured against the equivalent pure-Perl rebuild
-(300k-row `AoH`, 8 columns):
+    rename_cols($sw, a => 'b', b => 'a');   # {a=>1,b=>2} -> {b=>1,a=>2}
 
-    select 3/8 cols :  ~2x faster, and lower peak RAM (no copied cells)
-    drop   2/8 cols :  ~3x faster
-    rename 2/8 cols :  ~4x faster
+Ragged `AoH`/`HoH` frames stay ragged: an old key that is absent from a given
+row is simply skipped for that row. For a `HoA`, the renamed key points at the
+*same* column arrayref (no copy), so a later `push`/`splice` on it is shared
+with the source.
 
-`HoA` and `AoA`-by-drop are pure-Perl aliases and already near-free (a slice
-of an 8-column, million-row `HoA` is sub-second). The memory saving grows
-with rows × selected columns: at scale the row shapes allocate only the new
-row containers, never a second copy of every cell.
+Dies (all validation runs **before** any mutation, so a dying void call leaves
+the source unchanged):
 
-### strictness
+* an old column that is not present anywhere in the frame,
+* a new name that is `undef`,
+* a rename whose target collides with a kept column or another renamed target,
+* an odd-length `old => new` argument list,
+* an `AoA` (no column names to rename).
 
-Mistakes are fatal rather than silently corrupting a frame (validated in Perl
-before any XS runs):
+Note: `\%d = rename_cols(...)` is **not** valid Perl — a reference constructor
+is not an lvalue before 5.22 refaliasing, which is out under the module's 5.10
+back-compatibility. Use the void form or the `%d = %{ ... }` capture idiom
+above.
 
-  * a requested (or renamed) column not present anywhere dies;
-  * a duplicate column in a `select_cols`/`drop_cols` list dies (a hash-keyed
-    shape would otherwise collapse it);
-  * a `rename_cols` whose targets are not distinct — two columns landing on
-    one name — dies (checked against the whole column set, so an `a<->b` swap
-    is fine but `a->b` onto an existing `b` is caught).
+## _rename_inplace
 
-Shape is classified by the same `_df_shape` detector `agg` uses, so these
-accept exactly the frames `agg`/`view` accept; as with that family the check
-is `ref`-based, so hand it an unblessed frame.
+    _rename_inplace($df, $shape, \%map)
 
+Private helper (not exported) that backs `rename_cols`'s void-context path;
+`rename_cols` performs all argument checking first, so this never has to croak.
+For a `HoA` it renames the top-level column keys; for `AoH`/`HoH` it renames
+the keys inside each row hash. It gathers the moved values before re-storing
+them, which makes it swap-safe, and it only touches keys that actually `exists`
+in a given row, which preserves ragged frames. Mutates `$df` and returns
+nothing.
 
 ## rnorm
 
@@ -3810,6 +3812,10 @@ The `xlsx`, worksheet, and JSON side outputs of the original stand-alone routine
 | `tex.comment` | *(none)* | LaTeX | `%` comment line(s) at the top of the LaTeX file: a string, or an array ref of strings |
 
 # Changes
+
+## 0.23
+
+`rename_cols` takes HoH as input
 
 ## 0.22 2026-07-07 CDT
 
