@@ -3810,11 +3810,11 @@ The `xlsx`, worksheet, and JSON side outputs of the original stand-alone routine
 
 # Changes
 
-## 0.23
+## 0.23 2026-07-08 CDT
 
 `rename_cols` takes HoH as input
 
-`write_table` has row names as first column; writes longtable with comments
+`write_table` prints row names as first column; writes longtable with comments
 
 ## 0.22 2026-07-07 CDT
 

@@ -1059,7 +1059,7 @@ static const char *tex_greek_macro(UV cp) {
  * from being swallowed into the control word). With do_format set, a numeric
  * cell is first rendered with %.4g (mirrors the original 'format' option). */
 static void tex_escape_sv(pTHX_ SV *restrict out, const char *restrict s,
-	int is_utf8, int do_format)
+	bool is_utf8, bool do_format)
 {
 	sv_setpvs(out, "");
 	if (!s) return;
@@ -1067,7 +1067,7 @@ static void tex_escape_sv(pTHX_ SV *restrict out, const char *restrict s,
 	if (do_format && *s) {
 		SV *restrict tmp = sv_2mortal(newSVpv(s, 0));
 		if (looks_like_number(tmp)) {
-			snprintf(numbuf, sizeof(numbuf), "%.4g", strtod(s, NULL));
+			snprintf(numbuf, sizeof(numbuf), "%.4" NVgf, SvNV(tmp));   // NVgf expands to "Lg" on long-double builds
 			s = numbuf;
 			is_utf8 = 0; // the formatted number is plain ASCII
 		}
@@ -1175,7 +1175,7 @@ static void write_tex_tabular(pTHX_ AV *restrict rows, const char *restrict file
 	if (!fh)
 		croak("write_table: Could not open '%s' for writing", file);
 	SV *restrict scratch = sv_2mortal(newSVpvs(""));
-	// Provenance banner (see tex_written_by); fall back to a generic line.
+// Provenance banner (see tex_written_by); fall back to a generic line.
 	SV *restrict prov = tex_written_by(aTHX);
 	if (prov) {
 		STRLEN pl; const char *restrict ps = SvPV(prov, pl);
@@ -7197,12 +7197,12 @@ PPCODE:
 	}
 	AV *restrict headers_av = newAV();
 	bool inc_rownames = (row_names_sv && SvTRUE(row_names_sv)) ? 1 : 0;
-// R-compatible default: LaTeX output leads with the row names (row labels) as
-// the first column. write.table() in R defaults row.names to TRUE; the delimited
-// writer keeps its historical off-by-default, but for 'tex' we honour the R
-// default so the first item of every row is its row name unless the caller passed
-// row.names explicitly (row.names => 0 opts back out).
-	if (tex && !explicit_rownames) inc_rownames = 1;
+// R-compatible default: row names (row labels) lead every record as the first
+// column, matching write.table() in R (row.names defaults to TRUE). This now
+// applies to delimited output (csv/tsv) as well as LaTeX: unless the caller
+// passed row.names explicitly, the first item of every row is its row name.
+// row.names => 0 opts back out; row.names => 'col' names the label column.
+	if (!explicit_rownames) inc_rownames = 1;
 	const char *restrict rownames_col = NULL;
 // When 'tex' is on, collect every record here (as an AV of AVs of SVs) so
 // write_tex_tabular() can render the LaTeX table afterwards. Mortal =>

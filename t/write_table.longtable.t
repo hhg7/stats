@@ -8,9 +8,7 @@ use Test::Exception; # dies_ok
 use Test::More;
 use Test::LeakTrace 'no_leaks_ok';
 
-# ---------------------------------------------------------------------------
 # Helpers: read a written .tex file and pick apart its body-only structure.
-# ---------------------------------------------------------------------------
 sub read_tex {
 	my ($file) = @_;
 	open my $fh, '<', $file or die "read $file: $!";
@@ -50,12 +48,10 @@ sub ncols {
 
 my $dir = File::Temp->newdir; # cleaned up at scope end
 
-# ---------------------------------------------------------------------------
 # One shape at a time. Each writes a body-only file, then checks it carries
 # no tabular wrapper / no column spec but does carry the hint, header, and
 # data rows. The body opens with the header row (which ends in \\ \hline) and
 # closes with the last data row; no standalone \hline rules are emitted.
-# ---------------------------------------------------------------------------
 sub check_shape {
 	my ($name, $data, $exp_rows, $exp_cols) = @_;
 	subtest $name => sub {
@@ -113,10 +109,8 @@ check_shape('aoa', [
 	[3, 4],
 ], 2, 2);
 
-# ---------------------------------------------------------------------------
 # Equivalence: tex.longtable output differs from a full tabular only in the
 # environment wrapper and rules. The header and data rows are byte-identical.
-# ---------------------------------------------------------------------------
 subtest 'body identical to full tabular minus wrapper' => sub {
 	my %data = ( x => [1, 2, 3], y => [4, 5, 6] );
 	my $full = "$dir/full.tex";
@@ -133,9 +127,7 @@ subtest 'body identical to full tabular minus wrapper' => sub {
 	is_deeply([data_rows_of($cl)], [data_rows_of($cf)], 'identical data rows');
 };
 
-# ---------------------------------------------------------------------------
 # tex.longtable implies LaTeX even when the file name / tex flag say otherwise.
-# ---------------------------------------------------------------------------
 subtest 'tex.longtable implies tex' => sub {
 	my %flat = ( a => 1, b => 2 );
 
@@ -151,10 +143,8 @@ subtest 'tex.longtable implies tex' => sub {
 	like($c2, qr/\\textbf\{/, 'tex => 0 is overridden by tex.longtable');
 };
 
-# ---------------------------------------------------------------------------
 # tex.col.align shows up only in the copy-paste hint; the rendered header and
 # data rows are alignment-independent.
-# ---------------------------------------------------------------------------
 subtest 'tex.col.align reflected only in the longtable hint' => sub {
 	my %flat = ( a => 1, b => 2, c => 3 );
 	my $l = "$dir/align_l.tex";
@@ -176,23 +166,19 @@ subtest 'tex.col.align reflected only in the longtable hint' => sub {
 	like(read_tex($full), qr/\{\|l\|l\|l\|\}/, 'full tabular still emits {|l|l|l|}');
 };
 
-# ---------------------------------------------------------------------------
 # The other tex.* knobs still apply in longtable mode.
-# ---------------------------------------------------------------------------
-subtest 'tex.size / tex.comment still apply' => sub {
-	my %flat = ( a => 1, b => 2 );
-	my $file = "$dir/knobs.tex";
-	write_table(\%flat, $file,
-		'row.names'     => 0,
-		'tex.longtable' => 1,
-		'tex.size'      => '\small',
-		'tex.comment'   => ['first note', 'second note'],
-	);
-	my $c = read_tex($file);
-	like($c, qr/^\\small$/m,       'size directive emitted');
-	like($c, qr/^% first note$/m,  'first comment emitted');
-	like($c, qr/^% second note$/m, 'second comment emitted');
-};
+my %flat = ( a => 1, b => 2 );
+my $file = "$dir/knobs.tex";
+write_table(\%flat, $file,
+	'row.names'     => 0,
+	'tex.longtable' => 1,
+	'tex.size'      => '\small',
+	'tex.comment'   => ['first note', 'second note'],
+);
+my $c = read_tex($file);
+like($c, qr/^\\small$/m,       'size directive emitted');
+like($c, qr/^% first note$/m,  'first comment emitted');
+like($c, qr/^% second note$/m, 'second comment emitted');
 
 subtest 'tex.comment accepts a plain string' => sub {
 	my $file = "$dir/comment_str.tex";
@@ -221,10 +207,8 @@ subtest 'tex.bold.1st.col toggles first-column bolding' => sub {
 	like($r_off, qr/^x & 1/,        'first cell not bolded when disabled');
 };
 
-# ---------------------------------------------------------------------------
 # Row-name handling: LaTeX defaults row.names ON, so the body leads with an
 # empty header cell and each row with its label.
-# ---------------------------------------------------------------------------
 subtest 'row.names default on for tex' => sub {
 	my %hoh = (
 		r1 => { c1 => 'a', c2 => 'b' },
@@ -239,9 +223,7 @@ subtest 'row.names default on for tex' => sub {
 	like($c, qr/\\textbf\{r1\} & a & b/, 'r1 row carries its (bolded) label');
 };
 
-# ---------------------------------------------------------------------------
 # Escaping and Greek mapping still run through the shared cell escaper.
-# ---------------------------------------------------------------------------
 subtest 'cell escaping still applies' => sub {
 	my $file = "$dir/escape.tex";
 	write_table({ 'a_b' => 1 }, $file, 'row.names' => 0, 'tex.longtable' => 1);
@@ -254,18 +236,14 @@ subtest 'Greek letters mapped to textgreek macros' => sub {
 	like(read_tex($file), qr/\\textDelta\{\}/, 'U+0394 -> \textDelta{}');
 };
 
-# ---------------------------------------------------------------------------
 # Error paths still fire with longtable on.
-# ---------------------------------------------------------------------------
 subtest 'nested references still croak' => sub {
 	dies_ok {
 		write_table({ x => { y => [1, 2] } }, "$dir/bad.tex", 'tex.longtable' => 1);
 	} 'nested reference cell croaks in longtable mode';
 };
 
-# ---------------------------------------------------------------------------
 # No leaks.
-# ---------------------------------------------------------------------------
 my $leak = "$dir/leak.tex";
 no_leaks_ok {
 	eval {

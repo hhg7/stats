@@ -2872,7 +2872,7 @@ is($str, $expected_str, 'write_table: col.names correctly forces order and pads 
 dies_ok {
 	write_table(\%data_hoh_col, $tmp_file, 'col.names' => 'Not an array ref');
 } 'write_table: dies when col.names is not an array reference';
-
+unlink $tmp_file;
 my %hoa = (A => [1..4], B => [-3..3], C => [9,3,4]);
 no_leaks_ok {
 	eval {
