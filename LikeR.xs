@@ -1112,14 +1112,13 @@ static void tex_escape_sv(pTHX_ SV *restrict out, const char *restrict s,
 	}
 }
 
-// Build the "%written by <cwd>/<RealScript>" provenance line as a mortal SV,
-// mirroring the original pure-Perl:
-//     say $tex '%written by ' . getcwd() . '/' . $RealScript;
-// getcwd() is Cwd::getcwd (core, cross-platform) and $RealScript is
-// $FindBin::RealScript; both are read from Perl-land so behaviour matches the
-// original. Returns NULL if neither the cwd nor a script name is available.
-static SV *tex_written_by(pTHX) {
-	SV *restrict out = sv_2mortal(newSVpvs("%written by "));
+// Build the provenance path "<cwd>/<RealScript>" as a mortal SV, mirroring the
+// original pure-Perl `getcwd() . '/' . $RealScript`. getcwd() is Cwd::getcwd
+// (core, cross-platform) and $RealScript is $FindBin::RealScript; both are read
+// from Perl-land so behaviour matches the original. Returns NULL if neither the
+// cwd nor a script name is available. Shared by the LaTeX and xlsx writers.
+static SV *provenance_path(pTHX) {
+	SV *restrict out = sv_2mortal(newSVpvs(""));
 	bool have = 0;
 // cwd via Cwd::getcwd() -- load Cwd (core) if it is not already in.
 	if (!get_cv("Cwd::getcwd", 0))
@@ -1161,6 +1160,26 @@ static SV *tex_written_by(pTHX) {
 		have = 1;
 	}
 	return have ? out : NULL;
+}
+
+// The LaTeX provenance banner "%written by <cwd>/<script>", or NULL when no
+// path is available (the caller then emits a generic fallback line).
+static SV *tex_written_by(pTHX) {
+	SV *restrict path = provenance_path(aTHX);
+	if (!path) return NULL;
+	SV *restrict out = sv_2mortal(newSVpvs("%written by "));
+	sv_catsv(out, path);
+	return out;
+}
+
+// The xlsx provenance string "written by <cwd>/<script>" for the workbook's
+// document "comments" property; a generic line when no path is available.
+static SV *xlsx_written_by(pTHX) {
+	SV *restrict path = provenance_path(aTHX);
+	SV *restrict out = sv_2mortal(newSVpvs("written by "));
+	if (path) sv_catsv(out, path);
+	else      sv_catpvn(out, "Stats::LikeR write_table", 24);
+	return out;
 }
 
 /* Write the full LaTeX tabular. 'rows' is the collected table: element 0 is
@@ -1258,6 +1277,302 @@ static void write_tex_tabular(pTHX_ AV *restrict rows, const char *restrict file
 	if (!longtable) {
 		TEX_PUTS(fh, "\\hline \\end{tabular}\n");
 	}
+	PerlIO_close(fh);
+}
+
+/* ---- write_table: .xlsx (Excel) output, dependency-free ------------------
+ * An .xlsx file is a ZIP of XML parts. We build the parts as strings and pack
+ * them into a STORED (uncompressed) ZIP ourselves, so there is no zlib / CPAN
+ * dependency and everything stays in XS. The provenance line (provenance_path)
+ * is written into the workbook's document properties as the "comments" field
+ * -- dc:description in docProps/core.xml -- mirroring
+ *     $workbook->set_properties(comments => comments());
+ * from Excel::Writer::XLSX. A numeric-looking cell is written as a number;
+ * every other non-empty cell as an inline string. read_table reads it back.
+ */
+#define SV_CATLIT(sv, lit) sv_catpvn((sv), "" lit, sizeof(lit) - 1)
+
+/* CRC-32/IEEE over a byte buffer (each stored ZIP member needs its checksum). */
+static uint32_t xlsx_crc32(const unsigned char *restrict data, size_t len) {
+	uint32_t table[256];
+	for (uint32_t i = 0; i < 256; i++) {
+		uint32_t c = i;
+		for (int k = 0; k < 8; k++)
+			c = (c & 1u) ? (0xEDB88320u ^ (c >> 1)) : (c >> 1);
+		table[i] = c;
+	}
+	uint32_t crc = 0xFFFFFFFFu;
+	for (size_t i = 0; i < len; i++)
+		crc = table[(crc ^ data[i]) & 0xFFu] ^ (crc >> 8);
+	return crc ^ 0xFFFFFFFFu;
+}
+
+/* little-endian field writers, appending to a byte-buffer SV */
+static void zip_le16(pTHX_ SV *restrict b, unsigned v) {
+	unsigned char x[2] = { (unsigned char)(v & 0xFF), (unsigned char)((v >> 8) & 0xFF) };
+	sv_catpvn(b, (char*)x, 2);
+}
+static void zip_le32(pTHX_ SV *restrict b, uint32_t v) {
+	unsigned char x[4] = { (unsigned char)(v & 0xFF), (unsigned char)((v >> 8) & 0xFF),
+		(unsigned char)((v >> 16) & 0xFF), (unsigned char)((v >> 24) & 0xFF) };
+	sv_catpvn(b, (char*)x, 4);
+}
+
+/* Append an unsigned integer's decimal text to an SV. */
+static void xlsx_cat_uint(pTHX_ SV *restrict b, unsigned long v) {
+	char tmp[24];
+	int n = snprintf(tmp, sizeof(tmp), "%lu", v);
+	if (n > 0) sv_catpvn(b, tmp, (STRLEN)n);
+}
+
+/* Append s (UTF-8 bytes) to out, escaping XML metacharacters and dropping the
+ * control characters XML 1.0 forbids (all but tab / newline / carriage-return). */
+static void xlsx_xml_cat(pTHX_ SV *restrict out, const char *restrict s, STRLEN len) {
+	for (STRLEN i = 0; i < len; i++) {
+		unsigned char c = (unsigned char)s[i];
+		switch (c) {
+		case '&':  SV_CATLIT(out, "&amp;");  break;
+		case '<':  SV_CATLIT(out, "&lt;");   break;
+		case '>':  SV_CATLIT(out, "&gt;");   break;
+		case '"':  SV_CATLIT(out, "&quot;"); break;
+		case '\'': SV_CATLIT(out, "&apos;"); break;
+		default:
+			if (c < 0x20 && c != '\t' && c != '\n' && c != '\r') break;
+			sv_catpvn(out, (const char*)&s[i], 1);
+		}
+	}
+}
+
+/* 0-based column index -> A1-style letters (A, B, ..., Z, AA, ...) appended. */
+static void xlsx_col_letters(pTHX_ SV *restrict b, size_t idx) {
+	char tmp[16];
+	int n = 0;
+	size_t v = idx + 1;			/* bijective base-26 */
+	while (v > 0 && n < (int)sizeof(tmp)) {
+		v -= 1;
+		tmp[n++] = (char)('A' + (int)(v % 26));
+		v /= 26;
+	}
+	while (n > 0) { char c = tmp[--n]; sv_catpvn(b, &c, 1); }
+}
+
+/* True when a cell should be written as an xlsx number: looks_like_number and
+ * made only of the characters a plain/scientific decimal uses, so "Inf"/"NaN"
+ * and space-padded values fall back to text and never produce an invalid <v>. */
+static bool xlsx_plain_number(pTHX_ SV *restrict cell) {
+	if (!cell || !SvOK(cell) || !looks_like_number(cell)) return 0;
+	STRLEN l; const char *restrict s = SvPV(cell, l);
+	if (l == 0) return 0;
+	for (STRLEN i = 0; i < l; i++) {
+		char c = s[i];
+		if (!((c >= '0' && c <= '9') || c == '.' || c == 'e' || c == 'E'
+				|| c == '+' || c == '-')) return 0;
+	}
+	return 1;
+}
+
+/* Append one STORED (uncompressed) member to the ZIP under construction: 'zip'
+ * is the growing archive, 'cdir' accumulates its central-directory records and
+ * '*count' the member count. */
+static void xlsx_zip_add(pTHX_ SV *restrict zip, SV *restrict cdir,
+	unsigned *restrict count, const char *restrict name, SV *restrict content)
+{
+	STRLEN nlen = strlen(name);
+	STRLEN clen; const char *restrict cdata = SvPV(content, clen);
+	uint32_t crc = xlsx_crc32((const unsigned char*)cdata, (size_t)clen);
+	uint32_t off = (uint32_t)SvCUR(zip);
+	/* local file header */
+	zip_le32(aTHX_ zip, 0x04034b50);
+	zip_le16(aTHX_ zip, 20);		/* version needed to extract */
+	zip_le16(aTHX_ zip, 0);			/* general-purpose flags */
+	zip_le16(aTHX_ zip, 0);			/* method 0 = stored */
+	zip_le16(aTHX_ zip, 0);			/* mod time */
+	zip_le16(aTHX_ zip, 0x21);		/* mod date = 1980-01-01 */
+	zip_le32(aTHX_ zip, crc);
+	zip_le32(aTHX_ zip, (uint32_t)clen);	/* compressed size */
+	zip_le32(aTHX_ zip, (uint32_t)clen);	/* uncompressed size */
+	zip_le16(aTHX_ zip, (unsigned)nlen);
+	zip_le16(aTHX_ zip, 0);			/* extra length */
+	sv_catpvn(zip, name, nlen);
+	sv_catpvn(zip, cdata, clen);
+	/* central-directory header */
+	zip_le32(aTHX_ cdir, 0x02014b50);
+	zip_le16(aTHX_ cdir, 20);		/* version made by */
+	zip_le16(aTHX_ cdir, 20);		/* version needed */
+	zip_le16(aTHX_ cdir, 0);
+	zip_le16(aTHX_ cdir, 0);
+	zip_le16(aTHX_ cdir, 0);
+	zip_le16(aTHX_ cdir, 0x21);
+	zip_le32(aTHX_ cdir, crc);
+	zip_le32(aTHX_ cdir, (uint32_t)clen);
+	zip_le32(aTHX_ cdir, (uint32_t)clen);
+	zip_le16(aTHX_ cdir, (unsigned)nlen);
+	zip_le16(aTHX_ cdir, 0);		/* extra length */
+	zip_le16(aTHX_ cdir, 0);		/* comment length */
+	zip_le16(aTHX_ cdir, 0);		/* disk number start */
+	zip_le16(aTHX_ cdir, 0);		/* internal attributes */
+	zip_le32(aTHX_ cdir, 0);		/* external attributes */
+	zip_le32(aTHX_ cdir, off);		/* local-header offset */
+	sv_catpvn(cdir, name, nlen);
+	(*count)++;
+}
+
+/* Build a complete .xlsx from the collected rows (element 0 = header record,
+ * the rest data records, each an AV of SVs -- exactly what print_string_row()
+ * gathers for the tex path) and write it to 'file'. freeze_rows / freeze_cols
+ * give the number of leading rows / columns to freeze in place (0 = none). */
+static void write_xlsx_workbook(pTHX_ AV *restrict rows, const char *restrict file,
+	const char *restrict sheet_name, SV *restrict comment,
+	unsigned freeze_rows, unsigned freeze_cols)
+{
+	/* ---- worksheet ---- */
+	SV *restrict sheet = sv_2mortal(newSVpvs(
+		"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
+		"<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">"));
+	/* Freeze panes: a <sheetViews> block, which the schema requires *before*
+	 * <sheetData>. topLeftCell is the first cell below/right of the frozen
+	 * region -- e.g. freezing 1 row gives "A2"; 1 row + 2 cols gives "C2". */
+	if (freeze_rows || freeze_cols) {
+		SV *restrict tl = sv_2mortal(newSVpvs(""));
+		xlsx_col_letters(aTHX_ tl, (size_t)freeze_cols);
+		xlsx_cat_uint(aTHX_ tl, (unsigned long)freeze_rows + 1);
+		STRLEN tll; const char *restrict tls = SvPV(tl, tll);
+		const char *restrict ap = (freeze_rows && freeze_cols) ? "bottomRight"
+			: freeze_cols ? "topRight" : "bottomLeft";
+		SV_CATLIT(sheet, "<sheetViews><sheetView workbookViewId=\"0\"><pane ");
+		if (freeze_cols) {
+			SV_CATLIT(sheet, "xSplit=\"");
+			xlsx_cat_uint(aTHX_ sheet, (unsigned long)freeze_cols);
+			SV_CATLIT(sheet, "\" ");
+		}
+		if (freeze_rows) {
+			SV_CATLIT(sheet, "ySplit=\"");
+			xlsx_cat_uint(aTHX_ sheet, (unsigned long)freeze_rows);
+			SV_CATLIT(sheet, "\" ");
+		}
+		SV_CATLIT(sheet, "topLeftCell=\"");
+		sv_catpvn(sheet, tls, tll);
+		SV_CATLIT(sheet, "\" activePane=\"");
+		sv_catpv(sheet, ap);
+		SV_CATLIT(sheet, "\" state=\"frozen\"/><selection pane=\"");
+		sv_catpv(sheet, ap);
+		SV_CATLIT(sheet, "\" activeCell=\"");
+		sv_catpvn(sheet, tls, tll);
+		SV_CATLIT(sheet, "\" sqref=\"");
+		sv_catpvn(sheet, tls, tll);
+		SV_CATLIT(sheet, "\"/></sheetView></sheetViews>");
+	}
+	SV_CATLIT(sheet, "<sheetData>");
+	SSize_t nrows = av_len(rows) + 1;
+	for (SSize_t r = 0; r < nrows; r++) {
+		SV **restrict rp = av_fetch(rows, r, 0);
+		AV *restrict row = (rp && *rp && SvROK(*rp)
+			&& SvTYPE(SvRV(*rp)) == SVt_PVAV) ? (AV*)SvRV(*rp) : NULL;
+		SSize_t ncols = row ? av_len(row) + 1 : 0;
+		SV_CATLIT(sheet, "<row r=\"");
+		xlsx_cat_uint(aTHX_ sheet, (unsigned long)(r + 1));
+		SV_CATLIT(sheet, "\">");
+		for (SSize_t c = 0; c < ncols; c++) {
+			SV **restrict cp = av_fetch(row, c, 0);
+			SV *restrict cell = (cp && *cp) ? *cp : NULL;
+			if (!cell || !SvOK(cell)) continue;	/* undef -> omit cell */
+			if (xlsx_plain_number(aTHX_ cell)) {
+				STRLEN vl; const char *restrict vs = SvPV(cell, vl);
+				SV_CATLIT(sheet, "<c r=\"");
+				xlsx_col_letters(aTHX_ sheet, (size_t)c);
+				xlsx_cat_uint(aTHX_ sheet, (unsigned long)(r + 1));
+				SV_CATLIT(sheet, "\"><v>");
+				sv_catpvn(sheet, vs, vl);
+				SV_CATLIT(sheet, "</v></c>");
+			} else {
+				STRLEN vl; const char *restrict vs = SvPVutf8(cell, vl);
+				if (vl == 0) continue;		/* empty string -> omit cell */
+				SV_CATLIT(sheet, "<c r=\"");
+				xlsx_col_letters(aTHX_ sheet, (size_t)c);
+				xlsx_cat_uint(aTHX_ sheet, (unsigned long)(r + 1));
+				SV_CATLIT(sheet, "\" t=\"inlineStr\"><is><t xml:space=\"preserve\">");
+				xlsx_xml_cat(aTHX_ sheet, vs, vl);
+				SV_CATLIT(sheet, "</t></is></c>");
+			}
+		}
+		SV_CATLIT(sheet, "</row>");
+	}
+	SV_CATLIT(sheet, "</sheetData></worksheet>");
+
+	/* ---- document properties: provenance goes in the "comments" field ---- */
+	SV *restrict core = sv_2mortal(newSVpvs(
+		"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
+		"<cp:coreProperties "
+		"xmlns:cp=\"http://schemas.openxmlformats.org/package/2006/metadata/core-properties\" "
+		"xmlns:dc=\"http://purl.org/dc/elements/1.1/\" "
+		"xmlns:dcterms=\"http://purl.org/dc/terms/\" "
+		"xmlns:dcmitype=\"http://purl.org/dc/dcmitype/\" "
+		"xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\">"
+		"<dc:creator>Stats::LikeR</dc:creator>"
+		"<cp:lastModifiedBy>Stats::LikeR</cp:lastModifiedBy>"
+		"<dc:description>"));
+	if (comment && SvOK(comment)) {
+		STRLEN dl; const char *restrict ds = SvPVutf8(comment, dl);
+		xlsx_xml_cat(aTHX_ core, ds, dl);
+	}
+	SV_CATLIT(core, "</dc:description></cp:coreProperties>");
+
+	/* ---- fixed package parts ---- */
+	SV *restrict ctypes = sv_2mortal(newSVpvs(
+		"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
+		"<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">"
+		"<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>"
+		"<Default Extension=\"xml\" ContentType=\"application/xml\"/>"
+		"<Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/>"
+		"<Override PartName=\"/xl/worksheets/sheet1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>"
+		"<Override PartName=\"/docProps/core.xml\" ContentType=\"application/vnd.openxmlformats-package.core-properties+xml\"/>"
+		"</Types>"));
+	SV *restrict rels = sv_2mortal(newSVpvs(
+		"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
+		"<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
+		"<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"xl/workbook.xml\"/>"
+		"<Relationship Id=\"rId2\" Type=\"http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties\" Target=\"docProps/core.xml\"/>"
+		"</Relationships>"));
+	SV *restrict wbrels = sv_2mortal(newSVpvs(
+		"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
+		"<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
+		"<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet1.xml\"/>"
+		"</Relationships>"));
+	SV *restrict workbook = sv_2mortal(newSVpvs(
+		"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
+		"<workbook xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" "
+		"xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">"
+		"<sheets><sheet name=\""));
+	xlsx_xml_cat(aTHX_ workbook, sheet_name, strlen(sheet_name));
+	SV_CATLIT(workbook, "\" sheetId=\"1\" r:id=\"rId1\"/></sheets></workbook>");
+
+	/* ---- pack the ZIP (stored, no compression) ---- */
+	SV *restrict zip  = sv_2mortal(newSVpvs(""));
+	SV *restrict cdir = sv_2mortal(newSVpvs(""));
+	unsigned count = 0;
+	xlsx_zip_add(aTHX_ zip, cdir, &count, "[Content_Types].xml",        ctypes);
+	xlsx_zip_add(aTHX_ zip, cdir, &count, "_rels/.rels",                rels);
+	xlsx_zip_add(aTHX_ zip, cdir, &count, "docProps/core.xml",          core);
+	xlsx_zip_add(aTHX_ zip, cdir, &count, "xl/workbook.xml",            workbook);
+	xlsx_zip_add(aTHX_ zip, cdir, &count, "xl/_rels/workbook.xml.rels", wbrels);
+	xlsx_zip_add(aTHX_ zip, cdir, &count, "xl/worksheets/sheet1.xml",   sheet);
+	/* central directory, then end-of-central-directory record */
+	uint32_t cd_off = (uint32_t)SvCUR(zip);
+	STRLEN cd_len; const char *restrict cd = SvPV(cdir, cd_len);
+	sv_catpvn(zip, cd, cd_len);
+	zip_le32(aTHX_ zip, 0x06054b50);
+	zip_le16(aTHX_ zip, 0);			/* number of this disk */
+	zip_le16(aTHX_ zip, 0);			/* disk with central directory */
+	zip_le16(aTHX_ zip, (unsigned)count);	/* central-dir entries this disk */
+	zip_le16(aTHX_ zip, (unsigned)count);	/* total central-dir entries */
+	zip_le32(aTHX_ zip, (uint32_t)cd_len);
+	zip_le32(aTHX_ zip, cd_off);
+	zip_le16(aTHX_ zip, 0);			/* archive comment length */
+
+	PerlIO *restrict fh = PerlIO_open(file, "wb");
+	if (!fh) croak("write_table: Could not open '%s' for writing", file);
+	STRLEN zl; const char *restrict zb = SvPV(zip, zl);
+	PerlIO_write(fh, zb, zl);
 	PerlIO_close(fh);
 }
 
@@ -6978,7 +7293,10 @@ PPCODE:
 				  strEQ(k, "undef.val") || strEQ(k, "tex") ||
 				  strEQ(k, "tex.col.align") || strEQ(k, "tex.size") ||
 				  strEQ(k, "tex.comment") || strEQ(k, "tex.bold.1st.col") ||
-				  strEQ(k, "tex.format") || strEQ(k, "tex.longtable"))) {
+				  strEQ(k, "tex.format") || strEQ(k, "tex.longtable") ||
+				  strEQ(k, "xlsx") || strEQ(k, "xlsx.sheet") ||
+				  strEQ(k, "xlsx.comment") || strEQ(k, "xlsx.freeze.rows") ||
+				  strEQ(k, "xlsx.freeze.cols"))) {
 				file_sv = cand;
 				arg_idx++;
 			}
@@ -7004,6 +7322,13 @@ PPCODE:
 	bool tex_bold1  = 1;                    // bold the first column of each data row
 	bool tex_format = 0;                    // %.4g-format numeric cells
 	bool tex_longtable = 0;                 // body only, for \input into a longtable
+	// .xlsx (Excel) output, dependency-free. xlsx_opt is tri-state like tex_opt:
+	// -1 = auto-detect from a ".xlsx" file name, 0 = off, 1 = on.
+	short int xlsx_opt = -1;
+	const char *restrict xlsx_sheet = "Sheet1"; // worksheet name
+	SV *restrict xlsx_comment = NULL;            // extra comment line(s) appended after the provenance
+	IV xlsx_freeze_rows = 0;                     // leading rows to freeze (0 = none)
+	IV xlsx_freeze_cols = 0;                     // leading columns to freeze (0 = none)
 	// Read the remaining Hash-style arguments
 	for (; arg_idx < items; arg_idx += 2) {
 		if (arg_idx + 1 >= items) croak("write_table: Odd number of arguments passed");
@@ -7026,6 +7351,23 @@ PPCODE:
 		else if (strEQ(key, "tex.bold.1st.col")) tex_bold1   = SvTRUE(val) ? 1 : 0;
 		else if (strEQ(key, "tex.format"))       tex_format  = SvTRUE(val) ? 1 : 0;
 		else if (strEQ(key, "tex.longtable"))    tex_longtable = SvTRUE(val) ? 1 : 0;
+		else if (strEQ(key, "xlsx"))             xlsx_opt    = SvTRUE(val) ? 1 : 0;
+		else if (strEQ(key, "xlsx.sheet"))     { if (SvOK(val)) xlsx_sheet = SvPV_nolen(val); }
+		else if (strEQ(key, "xlsx.comment"))     xlsx_comment = SvOK(val) ? val : NULL;
+		else if (strEQ(key, "xlsx.freeze.rows")) {
+			if (SvOK(val)) {
+				xlsx_freeze_rows = SvIV(val);
+				if (xlsx_freeze_rows < 0)
+					croak("write_table: 'xlsx.freeze.rows' must be a non-negative integer\n");
+			}
+		}
+		else if (strEQ(key, "xlsx.freeze.cols")) {
+			if (SvOK(val)) {
+				xlsx_freeze_cols = SvIV(val);
+				if (xlsx_freeze_cols < 0)
+					croak("write_table: 'xlsx.freeze.cols' must be a non-negative integer\n");
+			}
+		}
 		else croak("write_table: Unknown arguments passed: %s", key);
 	}
 	if (!data_sv || !SvROK(data_sv)) {
@@ -7054,6 +7396,23 @@ PPCODE:
 // a non-".tex" file name or tex => 0. (tex.longtable only affects the
 // LaTeX renderer, so without this it would be silently ignored.)
 	if (tex_longtable) tex = 1;
+// .xlsx decision, mirroring the tex logic: a ".xlsx" file name turns it on
+// unless an explicit xlsx => 0/1 says otherwise.
+	bool xlsx = 0;
+	if (xlsx_opt == -1) {
+		size_t file_len = strlen(file);
+		if (file_len >= 5) {
+			const char *restrict ext = file + file_len - 5;
+			if (strEQ(ext, ".xlsx") || strEQ(ext, ".XLSX")) xlsx = 1;
+		}
+	} else {
+		xlsx = xlsx_opt ? 1 : 0;
+	}
+	if (tex && xlsx)
+		croak("write_table: 'tex' and 'xlsx' output are mutually exclusive\n");
+// LaTeX and xlsx are both rendered from collected rows, not streamed to a
+// delimited file handle.
+	bool collect = tex || xlsx;
 	if (!explicit_sep) {// Auto-detect separator from file extension if not overridden
 		size_t file_len = strlen(file);
 		if (file_len >= 4) {
@@ -7151,12 +7510,11 @@ PPCODE:
 			is_aoh = 1;
 		}
 	}
-// With 'tex' on, the main file receives the LaTeX rendering, written by
-// write_tex_tabular() once the rows have been collected; no delimited
-// handle is opened here (fh stays NULL and print_string_row() collects
-// each record without emitting it).
-	PerlIO *restrict fh = tex ? NULL : PerlIO_open(file, "w");
-	if (!tex && !fh) {
+// With 'tex' or 'xlsx' on, the main file receives the rendered output, written
+// once the rows have been collected; no delimited handle is opened here (fh
+// stays NULL and print_string_row() collects each record without emitting it).
+	PerlIO *restrict fh = collect ? NULL : PerlIO_open(file, "w");
+	if (!collect && !fh) {
 		if (rows_av) SvREFCNT_dec(rows_av);
 		croak("write_table: Could not open '%s' for writing", file);
 	}
@@ -7169,10 +7527,10 @@ PPCODE:
 // row.names => 0 opts back out; row.names => 'col' names the label column.
 	if (!explicit_rownames) inc_rownames = 1;
 	const char *restrict rownames_col = NULL;
-// When 'tex' is on, collect every record here (as an AV of AVs of SVs) so
-// write_tex_tabular() can render the LaTeX table afterwards. Mortal =>
-// reclaimed automatically if any of the croak paths below fire.
-	AV *restrict collect_av = tex ? (AV*)sv_2mortal((SV*)newAV()) : NULL;
+// When 'tex' or 'xlsx' is on, collect every record here (as an AV of AVs of
+// SVs) so the renderer can build the output afterwards. Mortal => reclaimed
+// automatically if any of the croak paths below fire.
+	AV *restrict collect_av = collect ? (AV*)sv_2mortal((SV*)newAV()) : NULL;
 	if (is_hoh) {// ----- Hash of Hashes -----
 		if (col_names_sv && SvOK(col_names_sv)) {
 			AV *restrict c_av = (AV*)SvRV(col_names_sv);
@@ -7582,6 +7940,33 @@ PPCODE:
 			tex_bold1, tex_format, tex_size, tex_comment, tex_longtable);
 // say 'wrote ' . colored(['black on_cyan'], $file), with the SGR codes
 // inline (black fg 30, cyan bg 46, reset 0) so no Term::ANSIColor dep.
+		PerlIO *restrict out = PerlIO_stdout();
+		if (out) {
+			static const char pre[]  = "wrote \033[30;46m";
+			static const char post[] = "\033[0m\n";
+			PerlIO_write(out, pre, sizeof(pre) - 1);
+			PerlIO_write(out, file, strlen(file));
+			PerlIO_write(out, post, sizeof(post) - 1);
+		}
+	}
+// .xlsx output: build the workbook from the collected rows. The provenance
+// line goes into the workbook's document "comments" property (dc:description),
+// with any user-supplied xlsx.comment line(s) appended after it.
+	if (xlsx && collect_av && av_len(collect_av) >= 0) {
+		SV *restrict prov = xlsx_written_by(aTHX);
+		if (xlsx_comment && SvOK(xlsx_comment)) {
+			if (SvROK(xlsx_comment) && SvTYPE(SvRV(xlsx_comment)) == SVt_PVAV) {
+				AV *restrict ca = (AV*)SvRV(xlsx_comment);
+				for (SSize_t i = 0; i <= av_len(ca); i++) {
+					SV **restrict c = av_fetch(ca, i, 0);
+					if (c && *c && SvOK(*c)) { SV_CATLIT(prov, "\n"); sv_catsv(prov, *c); }
+				}
+			} else if (!SvROK(xlsx_comment)) {
+				SV_CATLIT(prov, "\n"); sv_catsv(prov, xlsx_comment);
+			}
+		}
+		write_xlsx_workbook(aTHX_ collect_av, file, xlsx_sheet, prov,
+			(unsigned)xlsx_freeze_rows, (unsigned)xlsx_freeze_cols);
 		PerlIO *restrict out = PerlIO_stdout();
 		if (out) {
 			static const char pre[]  = "wrote \033[30;46m";

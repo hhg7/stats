@@ -8040,7 +8040,43 @@ The file begins with a C<< %written by E<lt>cwdE<gt>/E<lt>scriptE<gt> >> provena
      'tex.comment'      => ['run 3', 'q < 0.05'], # % comment line(s): string or array ref
  );
 
-The C<xlsx>, worksheet, and JSON side outputs of the original stand-alone routine are not included.
+=head3 Excel output (C<xlsx>)
+
+C<write_table> can write a real Excel C<.xlsx> workbook with B<no extra
+dependencies>: it is built entirely in XS, packing hand-written XML parts into
+an (uncompressed) ZIP, so no C<Excel::Writer::XLSX> or other CPAN module is
+required. Select it by naming the file C<*.xlsx> (auto-detected) or by passing
+C<< xlsx =E<gt> 1 >>; C<< xlsx =E<gt> 0 >> forces a delimited file even for a
+C<.xlsx> name. It is built from the same rows as the delimited writer, so it
+works for every shape above:
+
+ write_table(\@data_aoh, 'table.xlsx');            # .xlsx name selects Excel
+ write_table(\%data_hoa, $tmp_file, 'xlsx' => 1);  # force Excel for any name
+
+A numeric-looking cell is written as a number; every other non-empty cell as an
+inline string. The workbook reads straight back with C<read_table>. Mirroring
+C<Excel::Writer::XLSX>'s C<< $workbook-E<gt>set_properties(comments =E<gt> comments()) >>,
+the same C<< written by E<lt>cwdE<gt>/E<lt>scriptE<gt> >> provenance line the
+LaTeX writer emits is stored in the workbook's document B<comments> property
+(C<dc:description> in C<docProps/core.xml>); a C<xlsx.comment> string (or array
+ref of strings) is appended after it, and C<xlsx.sheet> sets the worksheet name
+(default C<Sheet1>):
+
+ write_table(\@rows, 'report.xlsx',
+     'xlsx.sheet'   => 'Results',
+     'xlsx.comment' => 'batch 9',
+ );
+
+C<xlsx.freeze.rows> and C<xlsx.freeze.cols> freeze that many leading rows /
+columns in place (Excel's I<freeze panes>) so they stay visible while
+scrolling; the common case is pinning the header row:
+
+ write_table(\@rows, 'report.xlsx', 'xlsx.freeze.rows' => 1);   # pin the header row
+ write_table(\@rows, 'report.xlsx',
+     'xlsx.freeze.rows' => 1, 'xlsx.freeze.cols' => 2);         # header + first two columns
+
+C<tex> and C<xlsx> are mutually exclusive. Dates/times are written as their raw
+values (no cell number formats), matching C<read_table>'s round-trip behaviour.
 
 =head3 Options
 
@@ -8129,6 +8165,36 @@ The C<xlsx>, worksheet, and JSON side outputs of the original stand-alone routin
   <td><i>(none)</i></td>
   <td>LaTeX</td>
   <td><code>%</code> comment line(s) at the top of the LaTeX file: a string, or an array ref of strings</td>
+</tr>
+<tr>
+  <td><code>xlsx</code></td>
+  <td>auto: <code>1</code> when <code>file</code> ends in <code>.xlsx</code>, else <code>0</code></td>
+  <td>Excel</td>
+  <td>write a real <code>.xlsx</code> workbook (dependency-free, built in XS) instead of a delimited table; <code>xlsx => 0</code> forces delimited even for a <code>.xlsx</code> name. Mutually exclusive with <code>tex</code></td>
+</tr>
+<tr>
+  <td><code>xlsx.sheet</code></td>
+  <td><code>'Sheet1'</code></td>
+  <td>Excel</td>
+  <td>worksheet name</td>
+</tr>
+<tr>
+  <td><code>xlsx.comment</code></td>
+  <td><i>(none)</i></td>
+  <td>Excel</td>
+  <td>extra line(s) appended after the provenance in the workbook's document <i>comments</i> property (<code>dc:description</code>): a string, or an array ref of strings</td>
+</tr>
+<tr>
+  <td><code>xlsx.freeze.rows</code></td>
+  <td><code>0</code> (none)</td>
+  <td>Excel</td>
+  <td>number of leading rows to freeze in place (freeze panes), e.g. <code>1</code> to pin the header row</td>
+</tr>
+<tr>
+  <td><code>xlsx.freeze.cols</code></td>
+  <td><code>0</code> (none)</td>
+  <td>Excel</td>
+  <td>number of leading columns to freeze in place (freeze panes)</td>
 </tr>
 </tbody>
 </table>

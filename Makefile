@@ -239,6 +239,7 @@ TO_INST_PM = TukeyHSD.pl \
 	view.pl \
 	wilcox.text.pl \
 	write.table.pl \
+	xlsx.write.pl \
 	xs.check.pl \
 	xs.sxn.pl
 PERL_ARCHLIBDEP = /home/con/perl5/perlbrew/perls/perl-5.42.2/lib/5.42.2/x86_64-linux
@@ -1181,6 +1182,7 @@ pm_to_blib : $(FIRST_MAKEFILE) $(TO_INST_PM)
 	  'view.pl' '$(INST_LIB)/Stats/view.pl' \
 	  'wilcox.text.pl' '$(INST_LIB)/Stats/wilcox.text.pl' \
 	  'write.table.pl' '$(INST_LIB)/Stats/write.table.pl' \
+	  'xlsx.write.pl' '$(INST_LIB)/Stats/xlsx.write.pl' \
 	  'xs.check.pl' '$(INST_LIB)/Stats/xs.check.pl' \
 	  'xs.sxn.pl' '$(INST_LIB)/Stats/xs.sxn.pl' 
 	$(NOECHO) $(TOUCH) pm_to_blib

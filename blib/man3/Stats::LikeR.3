@@ -4415,7 +4415,40 @@ The file begins with a \f(CW\*(C`%written by <cwd>/<script>\*(C'\fR provenance c
 \& );
 .Ve
 .PP
-The \f(CW\*(C`xlsx\*(C'\fR, worksheet, and JSON side outputs of the original stand\-alone routine are not included.
+\fIExcel output (\fR\f(CI\*(C`xlsx\*(C'\fR\fI)\fR
+.IX Subsection "Excel output (xlsx)"
+.PP
+\&\f(CW\*(C`write_table\*(C'\fR can write a real Excel \f(CW\*(C`.xlsx\*(C'\fR workbook with \fBno extra
+dependencies\fR: it is built entirely in XS, packing hand\-written XML parts into
+an (uncompressed) ZIP, so no \f(CW\*(C`Excel::Writer::XLSX\*(C'\fR or other CPAN module is
+required. Select it by naming the file \f(CW\*(C`*.xlsx\*(C'\fR (auto\-detected) or by passing
+\&\f(CW\*(C`xlsx => 1\*(C'\fR; \f(CW\*(C`xlsx => 0\*(C'\fR forces a delimited file even for a
+\&\f(CW\*(C`.xlsx\*(C'\fR name. It is built from the same rows as the delimited writer, so it
+works for every shape above:
+.PP
+.Vb 2
+\& write_table(\e@data_aoh, \*(Aqtable.xlsx\*(Aq);            # .xlsx name selects Excel
+\& write_table(\e%data_hoa, $tmp_file, \*(Aqxlsx\*(Aq => 1);  # force Excel for any name
+.Ve
+.PP
+A numeric\-looking cell is written as a number; every other non\-empty cell as an
+inline string. The workbook reads straight back with \f(CW\*(C`read_table\*(C'\fR. Mirroring
+\&\f(CW\*(C`Excel::Writer::XLSX\*(C'\fR\*(Aqs \f(CW\*(C`$workbook\->set_properties(comments => comments())\*(C'\fR,
+the same \f(CW\*(C`written by <cwd>/<script>\*(C'\fR provenance line the
+LaTeX writer emits is stored in the workbook\*(Aqs document \fBcomments\fR property
+(\f(CW\*(C`dc:description\*(C'\fR in \f(CW\*(C`docProps/core.xml\*(C'\fR); a \f(CW\*(C`xlsx.comment\*(C'\fR string (or array
+ref of strings) is appended after it, and \f(CW\*(C`xlsx.sheet\*(C'\fR sets the worksheet name
+(default \f(CW\*(C`Sheet1\*(C'\fR):
+.PP
+.Vb 4
+\& write_table(\e@rows, \*(Aqreport.xlsx\*(Aq,
+\&     \*(Aqxlsx.sheet\*(Aq   => \*(AqResults\*(Aq,
+\&     \*(Aqxlsx.comment\*(Aq => \*(Aqbatch 9\*(Aq,
+\& );
+.Ve
+.PP
+\&\f(CW\*(C`tex\*(C'\fR and \f(CW\*(C`xlsx\*(C'\fR are mutually exclusive. Dates/times are written as their raw
+values (no cell number formats), matching \f(CW\*(C`read_table\*(C'\fR\*(Aqs round\-trip behaviour.
 .PP
 \fIOptions\fR
 .IX Subsection "Options"

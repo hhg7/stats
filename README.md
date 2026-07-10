@@ -3845,6 +3845,43 @@ which you wrap yourself:
     \label{}
     \end{longtable}
 
+### Excel output (`xlsx`)
+`write_table` can write a real Excel `.xlsx` workbook with **no extra
+dependencies** — it is built entirely in XS, packing hand-written XML parts into
+an (uncompressed) ZIP, so there is no `Excel::Writer::XLSX` or other CPAN
+requirement. It is selected either by naming the file `*.xlsx` (auto-detected)
+or by passing `xlsx => 1`; an explicit `xlsx => 0` forces a delimited file even
+for a `.xlsx` name. Like LaTeX, it is built from the same rows as the delimited
+writer, so it works for every shape above:
+
+    write_table(\@data_aoh, 'table.xlsx');            # .xlsx name selects Excel
+    write_table(\%data_hoa, $tmp_file, 'xlsx' => 1);  # force Excel for any name
+
+A numeric-looking cell is written as a number; every other non-empty cell as an
+inline string (`undef`/empty cells are omitted). The result reads straight back
+with [`read_table`](#read_table).
+
+Mirroring `Excel::Writer::XLSX`'s
+`$workbook->set_properties(comments => comments())`, the same
+`written by <cwd>/<script>` provenance line the LaTeX writer emits is stored in
+the workbook's document **comments** property (`dc:description` in
+`docProps/core.xml`); a `xlsx.comment` string (or array ref of strings) is
+appended after it. `xlsx.sheet` sets the worksheet name (default `Sheet1`):
+
+    write_table(\@rows, 'report.xlsx',
+        'xlsx.sheet'   => 'Results',
+        'xlsx.comment' => 'batch 9',
+    );
+
+`xlsx.freeze.rows` and `xlsx.freeze.cols` freeze that many leading rows/columns in place (Excel's *freeze panes*), so they stay visible while scrolling — most often used to pin the header row:
+
+    write_table(\@rows, 'report.xlsx', 'xlsx.freeze.rows' => 1);                        # pin the header row
+    write_table(\@rows, 'report.xlsx', 'xlsx.freeze.rows' => 1, 'xlsx.freeze.cols' => 2); # pin header + first two columns
+
+`tex` and `xlsx` are mutually exclusive. Note: dates/times are written as their
+raw values (no cell number formats), matching the round-trip behaviour of
+`read_table`.
+
 ### Options
 | option | default | applies to | meaning |
 |---|---|---|---|
@@ -3861,6 +3898,11 @@ which you wrap yourself:
 | `tex.size` | *(none)* | LaTeX | size directive emitted after `\begin{tabular}`, e.g. `\small` |
 | `tex.comment` | *(none)* | LaTeX | `%` comment line(s) at the top of the LaTeX file: a string, or an array ref of strings |
 | `tex.longtable` | `0` (off) | LaTeX | write only the table body (header + data rows + `\hline`, no `\begin{tabular}`/`\end{tabular}` or column spec) for `\input{}` into a caller-supplied `longtable`; implies `tex => 1`, and emits a `% \begin{longtable}{...}` hint with one `tex.col.align` char per column |
+| `xlsx` | auto: `1` when `file` ends in `.xlsx`, else `0` | Excel | write a real `.xlsx` workbook (dependency-free, built in XS) instead of a delimited table; `xlsx => 0` forces delimited even for a `.xlsx` name. Mutually exclusive with `tex` |
+| `xlsx.sheet` | `'Sheet1'` | Excel | worksheet name |
+| `xlsx.comment` | *(none)* | Excel | extra line(s) appended after the provenance in the workbook's document *comments* property (`dc:description`): a string, or an array ref of strings |
+| `xlsx.freeze.rows` | `0` (none) | Excel | number of leading rows to freeze in place (freeze panes), e.g. `1` to pin the header row |
+| `xlsx.freeze.cols` | `0` (none) | Excel | number of leading columns to freeze in place (freeze panes) |
 
 # Changes
 
