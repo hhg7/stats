@@ -9,4 +9,8 @@ use Devel::Confess 'color';
 use Stats::LikeR;
 
 my $titanic = read_table('titanic.more.complete.csv');
-write_table( $titanic, 'titanic.more.complete.xlsx');
+write_table(
+	$titanic,
+	'titanic.more.complete.xlsx',
+	'xlsx.freeze.rows' => 1
+);
