@@ -3989,6 +3989,31 @@ dies_ok {
 	group_by( { A => [1,2] }, 'b', undef);
 } 'group_by: dies when target key reference (col. name in HoH) is not defined';
 
+# A column name that isn't present in the data is fatal (target, group, or a
+# filter column), across all three input shapes.
+my $no_col = qr/group_by: ".*" is not present in the dataset/;
+throws_ok {
+	group_by( [ { Gender => 'M', T => 5 } ], 'NOPE', 'Gender');
+} $no_col, 'group_by (AoH): dies when the target column is absent';
+throws_ok {
+	group_by( [ { Gender => 'M', T => 5 } ], 'T', 'NOPE');
+} $no_col, 'group_by (AoH): dies when the group column is absent';
+throws_ok {
+	group_by( [ { Gender => 'M', T => 5 } ], 'T', 'Gender', { Ghost => sub { 1 } });
+} $no_col, 'group_by (AoH): dies when a filter column is absent';
+throws_ok {
+	group_by( { Gender => ['M'], T => [5] }, 'T', 'NOPE');
+} $no_col, 'group_by (HoA): dies when the group column is absent';
+throws_ok {
+	group_by( { Gender => ['M'], T => [5] }, 'T', 'Gender', { Ghost => sub { 1 } });
+} $no_col, 'group_by (HoA): dies when a filter column is absent';
+throws_ok {
+	group_by( { A => { Gender => 'M', T => 5 } }, 'NOPE', 'Gender');
+} $no_col, 'group_by (HoH): dies when the target column is absent';
+throws_ok {
+	group_by( { A => { Gender => 'M', T => 5 } }, 'T', 'Gender', { Ghost => sub { 1 } });
+} $no_col, 'group_by (HoH): dies when a filter column is absent';
+
 #
 # TEST SET 1: Array of Hashes (AoH)
 #

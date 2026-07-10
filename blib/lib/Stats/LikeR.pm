@@ -11,7 +11,7 @@ use autodie ':default';
 use Exporter 'import';
 use Scalar::Util qw(reftype looks_like_number);
 XSLoader::load('Stats::LikeR', $VERSION);
-our @EXPORT_OK = qw(add_data agg anova aoh2hoa aoh2hoh aov assign binom_test cfilter chisq_test chunk col col2col colnames concat cor cor_test cov csort dnorm drop_cols dropna filter fisher_test get_union get_unique glm group_by hoa2aoh hoa2hoh hoh2hoa hist intersection is_equivalent kruskal_test ks_test Lonly ljoin lm matrix max mean median min mode ncol nrow oneway_test p_adjust pnorm power_t_test predict prcomp ptukey qcut qtukey quantile rank Ronly rbind rbinom read_table rename_cols rnorm rownames runif sample scale sd select_cols seq shapiro_test sum summary t_test transpose TukeyHSD uniq vals value_counts var var_test view wilcox_test write_table);
+our @EXPORT_OK = qw(add_data agg anova aoh2hoa aoh2hoh aov assign binom_test cfilter chisq_test chunk col col2col colnames concat cor cor_test cov csort dnorm drop_cols dropna filter fisher_test get_union get_unique glm group_by hoa2aoh hoa2hoh hoh2hoa hist intersection is_equivalent kruskal_test ks_test Lonly ljoin lm map_cell matrix max mean median min mode ncol nrow oneway_test p_adjust pnorm power_t_test predict prcomp ptukey qcut qtukey quantile rank Ronly rbind rbinom read_table rename_cols rnorm rownames runif sample scale sd select_cols seq shapiro_test sum summary t_test transpose TukeyHSD uniq vals value_counts var var_test view wilcox_test write_table);
 our @EXPORT = @EXPORT_OK;
 
 # =====================================================================
@@ -627,6 +627,37 @@ sub _df_shape {
 # Modifies $df in place (lowest RAM/CPU) and returns it for chaining.
 # To keep the original intact, hand it a copy: assign(clone($df), ...).
 #
+# A value may also be a map_cell { ... } block (see below) for an in-place
+# per-cell edit of the named column, instead of a CODE ref or ready-made ARRAY.
+#
+
+# ---------------------------------------------------------------------------
+# map_cell { ... }   -- in-place per-cell transform for assign().
+#
+# Wraps a block so assign() runs it once per row with $_ aliased to a copy of
+# the NAMED column's current cell; the (possibly modified) $_ is stored back and
+# the block's return value is ignored.  This makes an in-place edit read
+# naturally, without the "copy, substitute, return" dance a plain sub needs
+# (perl 5.10 has no s///r):
+#
+#   assign($tbl, 'Res.' => map_cell { s/^[A-Z]:// });   # strip a leading "X:"
+#   assign($tbl, 'Res.' => map_cell { $_ = uc });        # upper-case in place
+#
+# The row is still available as $_[0] (and the index as $_[1]) if the transform
+# needs a sibling column.  A plain sub { ... } keeps its existing meaning
+# ($_ = the whole row, the return value is stored), so map_cell is purely
+# additive and changes nothing for existing callers.
+#
+# An undef cell is left untouched (undef in -> undef out): the block never runs
+# on it, so s/// and friends don't warn on uninitialized values and a missing
+# cell stays missing rather than becoming ''.
+# ---------------------------------------------------------------------------
+sub map_cell (&) {
+	my ($code) = @_;
+	die "map_cell: expects a code block, e.g. map_cell { s/x//g }\n"
+		unless ref $code eq 'CODE';
+	return bless { code => $code }, 'Stats::LikeR::map_cell';
+}
 
 sub assign {
 	my $df = shift;
@@ -646,6 +677,18 @@ sub assign {
 		while (@_) {
 			my ($name, $spec) = (shift, shift);
 			my $sref = ref $spec;
+			if ($sref eq 'Stats::LikeR::map_cell') {   # in-place per-cell edit; $_ = current cell
+				my $code = $spec->{code};
+				for my $i (0 .. $n - 1) {
+					my $row = $df->[$i];
+					die "$current_sub: row $i is not a hashref" unless ref $row eq 'HASH';
+					local $_ = $row->{$name};
+					next unless defined $_;   # undef cells pass through untouched (undef in -> undef out)
+					$code->($row, $i);
+					$row->{$name} = $_;
+				}
+				next;
+			}
 			die "$current_sub: value for '$name' must be a CODE or ARRAY ref"
 				unless $sref eq 'CODE' or $sref eq 'ARRAY';
 
@@ -703,6 +746,18 @@ sub assign {
 			while (@_) {
 				my ($name, $spec) = (shift, shift);
 				my $sref = ref $spec;
+				if ($sref eq 'Stats::LikeR::map_cell') {   # in-place per-cell edit; $_ = current cell
+					my $code = $spec->{code};
+					for my $i (0 .. $n - 1) {
+						my $row = $df->{ $rk[$i] };
+						die "$current_sub: row '$rk[$i]' is not a hashref" unless ref $row eq 'HASH';
+						local $_ = $row->{$name};
+						next unless defined $_;   # undef cells pass through untouched (undef in -> undef out)
+						$code->($row, $i, $rk[$i]);
+						$row->{$name} = $_;
+					}
+					next;
+				}
 				die "$current_sub: value for '$name' must be a CODE or ARRAY ref"
 					unless $sref eq 'CODE' or $sref eq 'ARRAY';
 
@@ -754,6 +809,24 @@ sub assign {
 			while (@_) {
 				my ($name, $spec) = (shift, shift);
 				my $sref = ref $spec;
+				if ($sref eq 'Stats::LikeR::map_cell') {   # in-place per-cell edit; $_ = current cell
+					my $code = $spec->{code};
+					my $tgt  = $df->{$name};
+					die "$current_sub: map_cell target column '$name' must already exist as an ARRAY ref\n"
+						unless ref $tgt eq 'ARRAY';
+					my @keys = keys %$df;
+					my @col  = map { my $c = $df->{$_}; ref $c eq 'ARRAY' ? $c : undef } @keys;
+					for my $i (0 .. $n - 1) {
+						my %view;
+						$view{ $keys[$_] } = defined $col[$_] ? $col[$_][$i] : $df->{ $keys[$_] }
+							for 0 .. $#keys;
+						local $_ = $tgt->[$i];
+						next unless defined $_;   # undef cells pass through untouched (undef in -> undef out)
+						$code->(\%view, $i);
+						$tgt->[$i] = $_;
+					}
+					next;
+				}
 				die "$current_sub: value for '$name' must be a CODE or ARRAY ref"
 					unless $sref eq 'CODE' or $sref eq 'ARRAY';
 
@@ -4983,7 +5056,10 @@ all become hash of arrays:
      ]
  }
 
-returns an empty array of hashes if neither target nor group keys are found.
+A column that is present in some rows but missing in others is fine (those rows
+are simply skipped), but naming a target, group, or filter column that is absent
+from the data entirely is fatal: C<group_by> dies with
+S<C<< group_by: "<column>" is not present in the dataset >>>.
 
 =head3 Filtering
 

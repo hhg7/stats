@@ -614,7 +614,7 @@ Add new columns to a data frame, computed from the columns already there — or 
   - **AoH** — arrayref of row hashrefs: `[ {weight=>70, height=>1.75}, ... ]`
   - **HoA** — hashref of column arrayrefs: `{ weight=>[70,...], height=>[1.75,...] }`
   - **HoH** — hashref of row hashrefs, keyed by row name: `{ Alice=>{weight=>65}, ... }`
-- **`new_name => VALUE`** — one or more pairs. `VALUE` is either a **coderef** (computed) or an **arrayref** (a ready-made column).
+- **`new_name => VALUE`** — one or more pairs. `VALUE` is a **coderef** (computed from the row), an **arrayref** (a ready-made column), or a **`map_cell { ... }`** block (an in-place edit of the named column — see below).
 
 It changes `$df` in place and also returns it (handy for chaining).
 
@@ -638,11 +638,34 @@ Pass a column you already have and it is copied in:
 
 This is also how you install a computed *list* when you'd otherwise trip the "single arrayref = one cell" rule above.
 
+### In-place edits with `map_cell`
+A plain coderef stores its **return value**, so an in-place transform of an existing column means the "copy, edit, return" dance — and `s///r` isn't available on the older perls this module supports:
+
+    # awkward: copy to $v, edit $v, return $v
+    assign($df, 'Res.' => sub { (my $v = $_->{'Res.'}) =~ s/^[A-Z]://; $v });
+
+`map_cell { ... }` removes the ceremony. Inside the block, **`$_` is the named column's current cell** (not the whole row), the block's return value is **ignored**, and the modified `$_` is stored back:
+
+    use Stats::LikeR;   # exports map_cell alongside assign
+
+    assign($df, 'Res.' => map_cell { s/^[A-Z]:// });   # strip a leading "X:"
+    assign($df, 'Res.' => map_cell { $_ = uc });        # upper-case in place
+
+The row is still reachable as **`$_[0]`** for sibling columns, the index as **`$_[1]`**, and (HoH only) the row key as **`$_[2]`**:
+
+    assign($df, label => map_cell { $_ = "$_[0]{name} ($_[1])" });
+
+Notes:
+- **Undef cells pass through untouched** (undef in → undef out). The block never runs on an undefined or missing cell, so `s///` and friends don't warn on uninitialized values and a missing cell stays missing rather than becoming `''`.
+- Works on all three shapes (AoH, HoA, HoH). For HoA the target column **must already exist** (there's no column to edit otherwise) — `map_cell` on a missing HoA column dies.
+- A plain `sub { ... }` keeps its existing meaning (`$_` = the whole row, return value stored); `map_cell` is purely additive and changes nothing for existing callers.
+
 ### Ordering and length
 - **AoH** distributes by array order; **HoH** by **sorted key order** — so any list you compute or hand in must be in `sort keys %$df` order.
 - Whole-column and arrayref values must have exactly one entry per row; a length mismatch dies.
 
 ### Example
+
     my $df = [
         { weight => 70, height => 1.75 },
         { weight => 90, height => 1.80 },
@@ -987,7 +1010,7 @@ More parts than elements gives empty trailing groups, losing nothing:
     my @groups = chunk([1, 2, 3], parts => 5);
     # 5 groups; flattening them back gives (1, 2, 3)
 
-## `col2col`
+## col2col
 
 Apply a **two-column function** to every pair of columns in a table and collect
 the answers in a hash of hashes.
@@ -1906,7 +1929,10 @@ all become hash of arrays:
         ]
     }
 
-returns an empty array of hashes if neither target nor group keys are found.
+A column that is present in some rows but missing in others is fine (those rows
+are simply skipped), but naming a target, group, or filter column that is absent
+from the data entirely is fatal: `group_by` dies with
+`group_by: "<column>" is not present in the dataset`.
 
 ### Filtering
 
@@ -3816,6 +3842,38 @@ The `xlsx`, worksheet, and JSON side outputs of the original stand-alone routine
 
 `write_table` prints row names as first column; writes longtable with comments
 
+`assign` gains `map_cell { ... }` for in-place per-cell column edits
+
+### assign
+
+`assign` now accepts a third kind of column value, `map_cell { ... }`, for editing an existing column in place — no "copy, substitute, return" boilerplate and no dependence on `s///r` (unavailable on the older perls this module supports).
+
+- Inside a `map_cell` block, `$_` is the **named column's current cell** (not the whole row), the block's return value is **ignored**, and the modified `$_` is stored back: `assign($df, 'Res.' => map_cell { s/^[A-Z]:// })`.
+- The row is still available as `$_[0]` (sibling columns), the index as `$_[1]`, and the row key as `$_[2]` (HoH only).
+- **Undef/missing cells pass through untouched** (undef in → undef out): the block is skipped for them, so `s///` never warns on an uninitialized value.
+- Supported on all three shapes; for HoA the target column must already exist. A plain `sub { ... }` is unchanged, so `map_cell` is purely additive.
+- `map_cell` is exported alongside `assign`.
+
+Tests: `assign.t` (AoH + HoA) and `assign.HoH.t` gained `map_cell` coverage — in-place `s///`, `$_[0]`/`$_[1]`/`$_[2]` context, new-column-from-undef, the missing-HoA-column death path, and `no_leaks_ok` guards. Verified building and passing the full suite on perl 5.10.1, 5.12.5 (long-double), and 5.42.2.
+
+### `group_by`
+
+Fixed group_by to honor all filter hashrefs (option 1)
+
+Root cause: the XS captured only ST(3), so every filter hashref after the first was silently dropped — including the README's documented multi-hashref form.
+
+Change (LikeR.xs):
+- Removed the single-ST(3) capture and the filter_hv PREINIT var.
+- Added a FOR_EACH_FILTER(body) macro that walks the arg stack from ST(3) to ST(items-1), iterating every { column => sub } pair and ANDing them together. It iterates the stack directly rather than heap-collecting the hashrefs, so a croaking filter sub still can't leak anything (verified). Non-hashref args are skipped.
+- Rewrote the filter loop in all three branches (AoH / HoA / HoH) to use the macro, keeping each branch's own value-fetch logic.
+
+One build wrinkle worth noting: xsubpp parses every non-# line in the inter-XSUB region as a candidate function signature, so a /* ... */ comment there breaks the build (it tried to parse column => sub / (ST(3)..) as a signature). I moved the macro's documentation into the XSUB body (real C) and left the macro comment-free, matching the existing EVAL_FILTER style.
+
+Tests (t/group_by.HoH.filter.t, 17 assertions):
+- HoH single-column filter, AND filter (both the one-hashref and separate-hashref forms now give identical results), no-match → empty hash, missing/undef target excluded despite passing the filter, and no_leaks_ok
+
+Mentioning a non-existent column is now fatal.
+
 ## 0.22 2026-07-07 CDT
 
 returned `Devel::Confess` to required dependencies to fix for CPAN testers.
@@ -3828,7 +3886,7 @@ addition of `agg`, `concat`, `drop_cols`, `rank`, `rename_cols`, `select_cols` f
 
 Improving Kwalitee (sic): added `[PodWeaver]` to dist.ini; as well as `Changes` file
 
-### assign
+### `assign`
 
 `assign` now accepts two kinds of column value, so a function that already returns a whole column (like `rank`) drops in without wrapping.
 
@@ -3840,7 +3898,7 @@ The coderef is probed once (row 0 for AoH/HoH, the first synthesized view for Ho
 
 Tests: `assign.t` (AoH + HoA) and `assign_HoH.t` were expanded to cover every shape × value-kind combination — per-row scalar, whole-column list, arrayref value, single-arrayref-as-cell, `rank()` integration, chaining, `$_[1]` index, `$_[2]` row key (HoH), overwrite, ragged HoA columns, empty frames, length-mismatch and bad-value / odd-arg / non-hash-row death paths, and `no_leaks_ok` guards on the new whole-column and arrayref paths.
 
-### read_table
+### `read_table`
 
 Fixed handling of commented-out header lines and made filter columns
 referenceable by the name as it appears in the file.

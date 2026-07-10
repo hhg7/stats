@@ -82,6 +82,7 @@ sub check_shape {
 			is(ncols($rows[0]), $exp_cols, "data row has $exp_cols columns");
 			like($rows[0], qr/\\\\\s*$/, 'data row ends with \\\\');
 		}
+		done_testing();
 	};
 }
 
@@ -93,8 +94,8 @@ check_shape('hoh', {
 }, 2, 2);
 
 check_shape('hoa', {
-	x => [1, 2, 3],
-	y => [4, 5, 6],
+	'x' => [1, 2, 3],
+	'y' => [4, 5, 6],
 }, 3, 2);
 
 check_shape('aoh', [
@@ -111,63 +112,57 @@ check_shape('aoa', [
 
 # Equivalence: tex.longtable output differs from a full tabular only in the
 # environment wrapper and rules. The header and data rows are byte-identical.
-subtest 'body identical to full tabular minus wrapper' => sub {
-	my %data = ( x => [1, 2, 3], y => [4, 5, 6] );
-	my $full = "$dir/full.tex";
-	my $long = "$dir/long.tex";
-	write_table(\%data, $full, 'row.names' => 0, tex => 1);
-	write_table(\%data, $long, 'row.names' => 0, 'tex.longtable' => 1);
-	my $cf = read_tex($full);
-	my $cl = read_tex($long);
+my %data = ( x => [1, 2, 3], y => [4, 5, 6] );
+my $full = "$dir/full.tex";
+my $long = "$dir/long.tex";
+write_table(\%data, $full, 'row.names' => 0, tex => 1);
+write_table(\%data, $long, 'row.names' => 0, 'tex.longtable' => 1);
+my $cf = read_tex($full);
+my $cl = read_tex($long);
 
-	like($cf, qr/\\begin\{tabular\}/,   'full form has \begin{tabular}');
-	unlike($cl, qr/\\begin\{tabular\}/, 'longtable form does not');
+like($cf, qr/\\begin\{tabular\}/,   'full form has \begin{tabular}');
+unlike($cl, qr/\\begin\{tabular\}/, 'longtable form does not');
 
-	is(header_of($cl), header_of($cf), 'identical header row');
-	is_deeply([data_rows_of($cl)], [data_rows_of($cf)], 'identical data rows');
-};
+is(header_of($cl), header_of($cf), 'identical header row');
+is_deeply([data_rows_of($cl)], [data_rows_of($cf)], 'identical data rows');
 
 # tex.longtable implies LaTeX even when the file name / tex flag say otherwise.
-subtest 'tex.longtable implies tex' => sub {
-	my %flat = ( a => 1, b => 2 );
+my %flat = ( a => 1, b => 2 );
 
-	my $txt = "$dir/nodotex.txt"; # not a .tex name
-	write_table(\%flat, $txt, 'row.names' => 0, 'tex.longtable' => 1);
-	my $c1 = read_tex($txt);
-	like($c1, qr/\\textbf\{/, 'non-.tex name still rendered as LaTeX');
-	unlike($c1, qr/\\begin\{tabular\}/, 'and still body-only');
+my $txt = "$dir/nodotex.txt"; # not a .tex name
+write_table(\%flat, $txt, 'row.names' => 0, 'tex.longtable' => 1);
+my $c1 = read_tex($txt);
+like($c1, qr/\\textbf\{/, 'non-.tex name still rendered as LaTeX');
+unlike($c1, qr/\\begin\{tabular\}/, 'and still body-only');
 
-	my $off = "$dir/texoff.txt";
-	write_table(\%flat, $off, 'row.names' => 0, tex => 0, 'tex.longtable' => 1);
-	my $c2 = read_tex($off);
-	like($c2, qr/\\textbf\{/, 'tex => 0 is overridden by tex.longtable');
-};
+my $off = "$dir/texoff.txt";
+write_table(\%flat, $off, 'row.names' => 0, tex => 0, 'tex.longtable' => 1);
+my $c2 = read_tex($off);
+like($c2, qr/\\textbf\{/, 'tex => 0 is overridden by tex.longtable');
 
 # tex.col.align shows up only in the copy-paste hint; the rendered header and
 # data rows are alignment-independent.
-subtest 'tex.col.align reflected only in the longtable hint' => sub {
-	my %flat = ( a => 1, b => 2, c => 3 );
-	my $l = "$dir/align_l.tex";
-	my $r = "$dir/align_r.tex";
-	write_table(\%flat, $l, 'row.names' => 0, 'tex.longtable' => 1, 'tex.col.align' => 'l');
-	write_table(\%flat, $r, 'row.names' => 0, 'tex.longtable' => 1, 'tex.col.align' => 'r');
-	my $cl = read_tex($l);
-	my $cr = read_tex($r);
+%flat = ( a => 1, b => 2, c => 3 );
+my $l = "$dir/align_l.tex";
+my $r = "$dir/align_r.tex";
+write_table(\%flat, $l, 'row.names' => 0, 'tex.longtable' => 1, 'tex.col.align' => 'l');
+write_table(\%flat, $r, 'row.names' => 0, 'tex.longtable' => 1, 'tex.col.align' => 'r');
+$cl = read_tex($l);
+my $cr = read_tex($r);
 
-	like($cl, qr/^% \\begin\{longtable\}\{lll\}$/m, 'l hint shows {lll}');
-	like($cr, qr/^% \\begin\{longtable\}\{rrr\}$/m, 'r hint shows {rrr}');
+like($cl, qr/^% \\begin\{longtable\}\{lll\}$/m, 'l hint shows {lll}');
+like($cr, qr/^% \\begin\{longtable\}\{rrr\}$/m, 'r hint shows {rrr}');
 
-	is(header_of($cl), header_of($cr), 'identical header regardless of align');
-	is_deeply([data_rows_of($cl)], [data_rows_of($cr)], 'identical data rows');
+is(header_of($cl), header_of($cr), 'identical header regardless of align');
+is_deeply([data_rows_of($cl)], [data_rows_of($cr)], 'identical data rows');
 
-	# ...and the full tabular still honours alignment in its column spec.
-	my $full = "$dir/align_full.tex";
-	write_table(\%flat, $full, 'row.names' => 0, tex => 1, 'tex.col.align' => 'l');
-	like(read_tex($full), qr/\{\|l\|l\|l\|\}/, 'full tabular still emits {|l|l|l|}');
-};
+# ...and the full tabular still honours alignment in its column spec.
+$full = "$dir/align_full.tex";
+write_table(\%flat, $full, 'row.names' => 0, tex => 1, 'tex.col.align' => 'l');
+like(read_tex($full), qr/\{\|l\|l\|l\|\}/, 'full tabular still emits {|l|l|l|}');
 
 # The other tex.* knobs still apply in longtable mode.
-my %flat = ( a => 1, b => 2 );
+%flat = ( a => 1, b => 2 );
 my $file = "$dir/knobs.tex";
 write_table(\%flat, $file,
 	'row.names'     => 0,
@@ -180,75 +175,61 @@ like($c, qr/^\\small$/m,       'size directive emitted');
 like($c, qr/^% first note$/m,  'first comment emitted');
 like($c, qr/^% second note$/m, 'second comment emitted');
 
-subtest 'tex.comment accepts a plain string' => sub {
-	my $file = "$dir/comment_str.tex";
-	write_table({ a => 1 }, $file,
-		'row.names' => 0, 'tex.longtable' => 1, 'tex.comment' => 'solo');
-	like(read_tex($file), qr/^% solo$/m, 'scalar comment emitted');
-};
+$file = "$dir/comment_str.tex";
+write_table({ a => 1 }, $file,
+	'row.names' => 0, 'tex.longtable' => 1, 'tex.comment' => 'solo');
+like(read_tex($file), qr/^% solo$/m, 'scalar comment emitted');
 
-subtest 'tex.format numeric formatting' => sub {
-	my $file = "$dir/fmt.tex";
-	write_table({ v => 3.14159265 }, $file,
-		'row.names' => 0, 'tex.longtable' => 1, 'tex.format' => 1);
-	like(read_tex($file), qr/3\.142/, 'numeric cell formatted with %.4g');
-};
+$file = "$dir/fmt.tex";
+write_table({ v => 3.14159265 }, $file,
+	'row.names' => 0, 'tex.longtable' => 1, 'tex.format' => 1);
+like(read_tex($file), qr/3\.142/, 'numeric cell formatted with %.4g');
 
-subtest 'tex.bold.1st.col toggles first-column bolding' => sub {
-	my @aoa = (['c1', 'c2'], ['x', 1], ['y', 2]);
-	my $on  = "$dir/bold_on.tex";
-	my $off = "$dir/bold_off.tex";
-	write_table(\@aoa, $on,  'row.names' => 0, 'tex.longtable' => 1); # default on
-	write_table(\@aoa, $off, 'row.names' => 0, 'tex.longtable' => 1, 'tex.bold.1st.col' => 0);
+my @aoa = (['c1', 'c2'], ['x', 1], ['y', 2]);
+my $on  = "$dir/bold_on.tex";
+$off = "$dir/bold_off.tex";
+write_table(\@aoa, $on,  'row.names' => 0, 'tex.longtable' => 1); # default on
+write_table(\@aoa, $off, 'row.names' => 0, 'tex.longtable' => 1, 'tex.bold.1st.col' => 0);
 
-	my ($r_on)  = data_rows_of(read_tex($on));
-	my ($r_off) = data_rows_of(read_tex($off));
-	like($r_on,  qr/\\textbf\{x\}/, 'first cell bolded by default');
-	like($r_off, qr/^x & 1/,        'first cell not bolded when disabled');
-};
+my ($r_on)  = data_rows_of(read_tex($on));
+my ($r_off) = data_rows_of(read_tex($off));
+like($r_on,  qr/\\textbf\{x\}/, 'first cell bolded by default');
+like($r_off, qr/^x & 1/,        'first cell not bolded when disabled');
 
 # Row-name handling: LaTeX defaults row.names ON, so the body leads with an
 # empty header cell and each row with its label.
-subtest 'row.names default on for tex' => sub {
-	my %hoh = (
-		r1 => { c1 => 'a', c2 => 'b' },
-		r2 => { c1 => 'c', c2 => 'd' },
-	);
-	my $file = "$dir/rownames.tex";
-	write_table(\%hoh, $file, 'tex.longtable' => 1); # no row.names arg
-	my $c = read_tex($file);
-	my $h = header_of($c);
-	like($h, qr/^\\textbf\{\} & /, 'header leads with an empty label cell');
-	is(ncols($h), 3, 'label column plus c1, c2');
-	like($c, qr/\\textbf\{r1\} & a & b/, 'r1 row carries its (bolded) label');
-};
+my %hoh = (
+	r1 => { c1 => 'a', c2 => 'b' },
+	r2 => { c1 => 'c', c2 => 'd' },
+);
+$file = "$dir/rownames.tex";
+write_table(\%hoh, $file, 'tex.longtable' => 1); # no row.names arg
+$c = read_tex($file);
+my $h = header_of($c);
+like($h, qr/^\\textbf\{\} & /, 'header leads with an empty label cell');
+is(ncols($h), 3, 'label column plus c1, c2');
+like($c, qr/\\textbf\{r1\} & a & b/, 'r1 row carries its (bolded) label');
 
 # Escaping and Greek mapping still run through the shared cell escaper.
-subtest 'cell escaping still applies' => sub {
-	my $file = "$dir/escape.tex";
-	write_table({ 'a_b' => 1 }, $file, 'row.names' => 0, 'tex.longtable' => 1);
-	like(read_tex($file), qr/a\\_b/, 'underscore escaped in header');
-};
+$file = "$dir/escape.tex";
+write_table({ 'a_b' => 1 }, $file, 'row.names' => 0, 'tex.longtable' => 1);
+like(read_tex($file), qr/a\\_b/, 'underscore escaped in header');
 
-subtest 'Greek letters mapped to textgreek macros' => sub {
-	my $file = "$dir/greek.tex";
-	write_table({ "\x{0394}" => 1 }, $file, 'row.names' => 0, 'tex.longtable' => 1);
-	like(read_tex($file), qr/\\textDelta\{\}/, 'U+0394 -> \textDelta{}');
-};
+$file = "$dir/greek.tex";
+write_table({ "\x{0394}" => 1 }, $file, 'row.names' => 0, 'tex.longtable' => 1);
+like(read_tex($file), qr/\\textDelta\{\}/, 'U+0394 -> \textDelta{}');
 
 # Error paths still fire with longtable on.
-subtest 'nested references still croak' => sub {
-	dies_ok {
-		write_table({ x => { y => [1, 2] } }, "$dir/bad.tex", 'tex.longtable' => 1);
-	} 'nested reference cell croaks in longtable mode';
-};
+dies_ok {
+	write_table({ 'x' => { 'y' => [1, 2] } }, "$dir/bad.tex", 'tex.longtable' => 1);
+} 'nested reference cell croaks in longtable mode';
 
 # No leaks.
 my $leak = "$dir/leak.tex";
 no_leaks_ok {
 	eval {
 		write_table(
-			{ x => [1, 2, 3], y => [4, 5, 6] },
+			{ x => [1, 2, 3], 'y' => [4, 5, 6] },
 			$leak, 'row.names' => 0, 'tex.longtable' => 1,
 		);
 	}
