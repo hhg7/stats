@@ -3036,6 +3036,7 @@ minimal example:
 |`row.names` | include row names in retrieved data; off by default | |
 |`sep` | field separator character; synonym with `delim`| `sep => "\t"` |
 | `delim`| field separator character; synonym with `sep`| `delim => "\t"` |
+| `sheet`| which worksheet to read from an `.xlsx` file: a 1-based index or a sheet name (default: first sheet). Ignored for text files | `sheet => 'Sheet2'` |
 output types can be AOH (aoh), HOA (hoa), HOH (hoh)
     read_table($filename, 'output.type' => 'aoh');
     read_table($filename, 'output.type' => 'hoa');
@@ -3060,6 +3061,33 @@ only taken as the header when its field count matches the data, so ordinary
 leading comments are never mistaken for one. You may name such a column in a
 `filter` either as it appears in the file or by its clean name:
     read_table('ranks.tabular.tsv', filter => { '# PDB' => sub { $_ == 2 } });
+
+### Excel (.xlsx) files
+A file whose name ends in `.xlsx` is read directly, with **no extra
+dependencies** — the parser uses the core `IO::Uncompress::Unzip` module to pull
+the parts out of the (zipped) workbook and reads the XML itself. All
+`output.type`, `filter`, and `row.names` options work exactly as they do for
+text files:
+
+    my $data = read_table('samples.xlsx');
+    my $data = read_table('samples.xlsx', sheet => 'Results');   # by name
+    my $data = read_table('samples.xlsx', sheet => 2);           # 1-based index
+
+**Multiple worksheets.** If the workbook has more than one worksheet and no
+`sheet` is given, `read_table` returns a **hashref keyed by worksheet name**,
+each value being that sheet parsed just as a single table would be (honouring
+`output.type`, `filter`, etc.):
+
+    my $book = read_table('report.xlsx');   # { Sheet1 => [...], Sheet2 => [...] }
+    my $rows = $book->{Results};
+
+A workbook with a single worksheet, or a call that names a `sheet` explicitly,
+returns that one table directly (not wrapped in a hash).
+
+Limitations: dates and times are returned as their raw Excel serial numbers
+(cell number formats are not applied); and shared-string rich-text runs are
+concatenated into a single value. The `sep`, `delim`, and `comment` options do
+not apply to `.xlsx` files. Tested in `t/read_table.xlsx.t`.
 
 ## rename_cols
 
@@ -3816,7 +3844,7 @@ which you wrap yourself:
     \caption{}
     \label{}
     \end{longtable}
-The `xlsx`, worksheet, and JSON side outputs of the original stand-alone routine are not included.
+
 ### Options
 | option | default | applies to | meaning |
 |---|---|---|---|

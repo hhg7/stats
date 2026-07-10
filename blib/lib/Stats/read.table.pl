@@ -31,4 +31,9 @@ my $fh = File::Temp->new( DIR => '/tmp', SUFFIX => '.tsv');
 close $fh;
 write_table(\%t, $fh->filename, 'undef.val' => '');
 my $t = read_table($fh->filename);
-p $t;
+view($t);
+$t = read_table(
+	'../python/matplotlib/applications.xlsx'
+);
+view($t);
+say ref $t;

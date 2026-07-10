@@ -1013,8 +1013,6 @@ sub col { Stats::LikeR::col::_new(@_) }
 	}
 }
 
-use Scalar::Util qw(reftype);
-
 # ---------------------------------------------------------------------------
 # concat(@frames)   /   rbind(@frames)   -- row-bind data frames (pandas concat
 # axis=0, R rbind).  rbind is a true synonym (same subroutine).
@@ -1610,6 +1608,178 @@ sub summary {
 	return \@out;
 }
 
+# --- .xlsx support (pure Perl, no CPAN deps) -------------------------------
+# An .xlsx file is a ZIP archive of XML parts. IO::Uncompress::Unzip is a core
+# module, so we can pull the parts out and parse the (very regular) XML with
+# regexes, then feed rows to read_table's callback exactly like _parse_csv_file
+# does. A workbook with more than one worksheet is read into a hash keyed by
+# sheet name (see read_table). Limitations: dates/times come back as their raw
+# serial numbers (no style-based formatting); shared-string rich-text runs are
+# concatenated.
+
+# Return the decompressed bytes of a named archive member, or undef if absent.
+sub _unzip_member {
+	my ($file, $member) = @_;
+	require IO::Uncompress::Unzip;
+	my $z = IO::Uncompress::Unzip->new($file, Name => $member)
+		or return undef;
+	my $content = '';
+	my $buf;
+	while ((my $n = $z->read($buf)) > 0) { $content .= $buf }
+	$z->close;
+	return $content;
+}
+
+# Decode the five predefined XML entities plus numeric character references.
+# Numeric refs are re-encoded to UTF-8 bytes so the result stays byte-consistent
+# with the rest of the file (which we read, and return, as raw UTF-8 bytes).
+sub _xml_unescape {
+	my ($s) = @_;
+	return $s unless defined $s && index($s, '&') >= 0;
+	$s =~ s/&#x([0-9a-fA-F]+);/my $c = chr hex $1; utf8::encode($c); $c/ge;
+	$s =~ s/&#([0-9]+);/my $c = chr $1; utf8::encode($c); $c/ge;
+	$s =~ s/&lt;/</g;
+	$s =~ s/&gt;/>/g;
+	$s =~ s/&quot;/"/g;
+	$s =~ s/&apos;/'/g;
+	$s =~ s/&amp;/&/g;	# must be last so "&amp;lt;" -> "&lt;", not "<"
+	return $s;
+}
+
+# "AB12" (or "AB") -> 0-based column index (A=0, Z=25, AA=26, ...).
+sub _xlsx_col_idx {
+	my ($ref) = @_;
+	(my $letters = $ref) =~ s/[^A-Za-z].*\z//s;
+	my $idx = 0;
+	$idx = $idx * 26 + (ord(uc $_) - ord('A') + 1) for split //, $letters;
+	return $idx - 1;
+}
+
+# Shared strings (optional part): each <si> may hold several <t> runs, which
+# are concatenated. Returns an arrayref indexed by shared-string id.
+sub _xlsx_shared_strings {
+	my ($file) = @_;
+	my @sst;
+	if (defined(my $ss = _unzip_member($file, 'xl/sharedStrings.xml'))) {
+		while ($ss =~ m{<si\b[^>]*>(.*?)</si>}gs) {
+			my $si  = $1;
+			my $str = '';
+			$str .= _xml_unescape($1) while $si =~ m{<t\b[^>]*>(.*?)</t>}gs;
+			push @sst, $str;
+		}
+	}
+	return \@sst;
+}
+
+# The workbook's worksheets, in document order, as a list of
+# { name => $sheet_name, path => 'xl/worksheets/sheetN.xml' } hashrefs. The path
+# is resolved through workbook.xml.rels; a sheet with no resolvable relationship
+# (or a workbook with no metadata at all) falls back to a positional sheetN.xml.
+sub _xlsx_sheets {
+	my ($file) = @_;
+	my %target;
+	if (defined(my $rels = _unzip_member($file, 'xl/_rels/workbook.xml.rels'))) {
+		while ($rels =~ m{<Relationship\b([^>]*?)/?>}gs) {
+			my $a = $1;
+			my ($id) = $a =~ /\bId="([^"]*)"/;
+			my ($tg) = $a =~ /\bTarget="([^"]*)"/;
+			$target{$id} = $tg if defined $id && defined $tg;
+		}
+	}
+	my @sheets;
+	if (defined(my $wb = _unzip_member($file, 'xl/workbook.xml'))) {
+		while ($wb =~ m{<sheet\b([^>]*?)/?>}gs) {
+			my $a = $1;
+			my ($name) = $a =~ /\bname="([^"]*)"/;
+			my ($rid)  = $a =~ /\br:id="([^"]*)"/;
+			my $path;
+			if (defined $rid && defined $target{$rid}) {
+				(my $tg = $target{$rid}) =~ s{^/}{};	# strip absolute-package "/"
+				$path = $tg =~ m{^xl/} ? $tg : "xl/$tg";	# else relative to xl/
+			}
+			push @sheets, {
+				name => defined $name ? _xml_unescape($name) : undef,
+				path => $path,
+			};
+		}
+	}
+	@sheets = ({ name => undef, path => undef }) unless @sheets;	# no metadata
+	# any sheet still lacking a path falls back to its positional worksheet file
+	$sheets[$_]{path} //= 'xl/worksheets/sheet' . ($_ + 1) . '.xml'
+		for 0 .. $#sheets;
+	return \@sheets;
+}
+
+# Resolve a 'sheet' argument (undef -> first; a 1-based index; or a name) to one
+# of the hashrefs from _xlsx_sheets, dying with a clear message on a bad request.
+sub _xlsx_choose_sheet {
+	my ($file, $sheets, $sheet) = @_;
+	return $sheets->[0] unless defined $sheet;
+	if ($sheet =~ /^\d+\z/) {
+		die "read_table: sheet index $sheet is out of range (1..${\ scalar @$sheets}) in $file\n"
+			if $sheet < 1 || $sheet > @$sheets;
+		return $sheets->[$sheet - 1];
+	}
+	my ($chosen) = grep { defined $_->{name} && $_->{name} eq $sheet } @$sheets;
+	die "read_table: sheet '$sheet' not found in $file (have: "
+		. join(', ', map { defined $_->{name} ? "'$_->{name}'" : '?' } @$sheets)
+		. ")\n"
+		unless $chosen;
+	return $chosen;
+}
+
+# Parse one worksheet, invoking $callback->(\@fields) once per non-empty row
+# (header row included) with all rows padded to the same width -- the same
+# contract _parse_csv_file offers read_table's callback. $sst is the shared
+# strings arrayref from _xlsx_shared_strings.
+sub _parse_xlsx_sheet {
+	my ($file, $sst, $path, $callback) = @_;
+	my $ws = _unzip_member($file, $path);
+	die "read_table: could not read worksheet '$path' in $file\n"
+		unless defined $ws;
+
+	# collect cells, positioning each by its column reference so gaps stay
+	# aligned, then pad every row to the widest row seen.
+	my @rows;
+	my $global_max = -1;
+	while ($ws =~ m{<row\b[^>]*>(.*?)</row>}gs) {
+		my $rowxml = $1;
+		my @cells;
+		my $maxc = -1;
+		while ($rowxml =~ m{<c\b([^>]*?)(?:/>|>(.*?)</c>)}gs) {
+			my ($cattrs, $cbody) = ($1, $2);
+			my ($r) = $cattrs =~ /\br="([^"]*)"/;
+			my ($t) = $cattrs =~ /\bt="([^"]*)"/;
+			my $ci  = defined $r ? _xlsx_col_idx($r) : $maxc + 1;
+			my $val = '';
+			if (!defined $cbody) {			# <c .../> -- empty cell
+				$val = '';
+			} elsif (defined $t && $t eq 's') {	# shared-string index
+				my ($v) = $cbody =~ m{<v\b[^>]*>(.*?)</v>}s;
+				$val = (defined $v && $v =~ /^\d+\z/) ? ($sst->[$v] // '') : '';
+			} elsif (defined $t && $t eq 'inlineStr') {
+				my $s = '';
+				$s .= _xml_unescape($1) while $cbody =~ m{<t\b[^>]*>(.*?)</t>}gs;
+				$val = $s;
+			} else {				# number / formula str / bool / error
+				my ($v) = $cbody =~ m{<v\b[^>]*>(.*?)</v>}s;
+				$val = defined $v ? _xml_unescape($v) : '';
+			}
+			$cells[$ci] = $val;
+			$maxc = $ci if $ci > $maxc;
+		}
+		push @rows, \@cells;
+		$global_max = $maxc if $maxc > $global_max;
+	}
+
+	for my $cells (@rows) {
+		my @line = map { defined $_ ? $_ : '' } @{$cells}[0 .. $global_max];
+		next unless grep { length } @line;	# skip fully blank rows, as CSV does
+		$callback->(\@line);
+	}
+	return;
+}
+
 sub read_table {
 	my $file = shift;
 	die "read_table: \"$file\" is not a file\n"   unless -f $file;
@@ -1623,6 +1793,7 @@ sub read_table {
 		$input_args{sep} = delete $input_args{delim};
 	}
 
+	my $is_xlsx = $file =~ /\.xlsx\z/i;
 	my $default_sep = $file =~ /\.tsv$/i ? "\t" : ',';
 	my %args = (
 		sep => $default_sep, comment => '#', %input_args,
@@ -1630,7 +1801,7 @@ sub read_table {
 
 	my %allowed_args = map { $_ => 1 } (
 		'comment', 'output.type', 'filter', 'row.names', 'sep',
-		'auto.row.names',
+		'auto.row.names', 'sheet',
 	);
 	my @undef_args = sort grep { !$allowed_args{$_} } keys %args;
 	if (@undef_args) {
@@ -1640,6 +1811,24 @@ sub read_table {
 	my $otype = $args{'output.type'} // 'aoh';
 	die "read_table: output.type \"$otype\" isn't allowed (aoh, hoa, hoh)\n"
 		unless $otype =~ m/^(?:aoh|hoa|hoh)$/;
+
+	# A multi-worksheet .xlsx with no explicit 'sheet' is returned as a hash
+	# keyed by worksheet name, each value being that sheet parsed with the same
+	# options (recursing one sheet at a time keeps every table's state, and any
+	# hoh row.names default, independent). A single-worksheet workbook, or an
+	# explicit 'sheet', still returns that one table directly.
+	if ($is_xlsx && !defined $args{sheet}) {
+		my $sheets = _xlsx_sheets($file);
+		if (@$sheets > 1) {
+			my %book;
+			for my $i (0 .. $#$sheets) {
+				my $name = $sheets->[$i]{name};
+				$name = 'Sheet' . ($i + 1) unless defined $name;
+				$book{$name} = read_table($file, %input_args, sheet => $i + 1);
+			}
+			return \%book;
+		}
+	}
 
 # R's write.table(col.names=TRUE) default omits the header label for the
 # row-names column, so a header comes out one field short of every data
@@ -1723,7 +1912,7 @@ sub read_table {
 	# comment and is discarded. A marker hugging its text ("#id,val") is
 	# delivered by the parser and un-commented in the callback as usual, so it
 	# never reaches this branch.
-	if (length( $args{comment} // '' ) && length( $args{sep} // '' )) {
+	if (!$is_xlsx && length( $args{comment} // '' ) && length( $args{sep} // '' )) {
 		open my $fh, '<', $file
 			or die "read_table: can't open $file: $!\n";
 		my $first = <$fh>;
@@ -1740,7 +1929,7 @@ sub read_table {
 		}
 	}
 
-	_parse_csv_file($file, $args{sep} // '', $args{comment} // '', sub {
+	my $on_line = sub {
 		my ($line_ref) = @_;
 
 		if (!$header_seen) {
@@ -1837,7 +2026,15 @@ sub read_table {
 				$data{$row_name}{$col} = $line_hash{$col};
 			}
 		}
-	});
+	};
+	if ($is_xlsx) {
+		my $sst    = _xlsx_shared_strings($file);
+		my $sheets = _xlsx_sheets($file);
+		my $chosen = _xlsx_choose_sheet($file, $sheets, $args{sheet});
+		_parse_xlsx_sheet($file, $sst, $chosen->{path}, $on_line);
+	} else {
+		_parse_csv_file($file, $args{sep} // '', $args{comment} // '', $on_line);
+	}
 	# header-only files never hit a data row. A provisional (commented-out)
 	# header was never confirmed against a data row, but with no data to
 	# contradict it we accept it; either way still validate.
@@ -6680,6 +6877,11 @@ minimal example:
   <td>field separator character; synonym with <code>sep</code></td>
   <td><code>delim => "\t"</code></td>
 </tr>
+<tr>
+  <td><code>sheet</code></td>
+  <td>which worksheet to read from an <code>.xlsx</code> file: a 1-based index or a sheet name (default: first sheet). Ignored for text files.</td>
+  <td><code>sheet => 'Sheet2'</code></td>
+</tr>
 </tbody>
 </table>
 
@@ -6713,6 +6915,33 @@ only taken as the header when its field count matches the data, so ordinary
 leading comments are never mistaken for one. You may name such a column in a
 C<filter> either as it appears in the file or by its clean name:
     read_table('ranks.tabular.tsv', filter => { '# PDB' => sub { $_ == 2 } });
+
+=head3 Excel (.xlsx) files
+
+A file whose name ends in C<.xlsx> is read directly, with no extra
+dependencies — the parser uses the core C<IO::Uncompress::Unzip> module to pull
+the parts out of the (zipped) workbook and reads the XML itself. All
+C<output.type>, C<filter>, and C<row.names> options work exactly as they do for
+text files:
+
+    my $data = read_table('samples.xlsx');
+    my $data = read_table('samples.xlsx', sheet => 'Results');   # by name
+    my $data = read_table('samples.xlsx', sheet => 2);           # 1-based index
+
+B<Multiple worksheets.> If the workbook has more than one worksheet and no
+C<sheet> is given, C<read_table> returns a hashref keyed by worksheet name, with
+each value being that sheet parsed just as a single table would be (honouring
+C<output.type>, C<filter>, etc.):
+
+    my $book = read_table('report.xlsx');       # { 'Sheet1' => ..., 'Sheet2' => ... }
+    my $rows = $book->{Results};
+
+A workbook with a single worksheet, or a call that names a C<sheet> explicitly,
+returns that one table directly (not wrapped in a hash). Limitations: dates and
+times are returned as their raw Excel serial numbers (cell number formats are
+not applied); and shared-string rich-text runs are concatenated into a single
+value. The C<sep>, C<delim>, and C<comment> options do not apply to C<.xlsx>
+files.
 
 =head2 rename_cols
 
