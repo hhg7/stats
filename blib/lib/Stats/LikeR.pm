@@ -4,7 +4,7 @@ require 5.010;
 use strict;
 use feature 'say';
 package Stats::LikeR;
-our $VERSION = 0.23;
+our $VERSION = 0.24;
 require XSLoader;
 use warnings FATAL => 'all';
 use autodie ':default';

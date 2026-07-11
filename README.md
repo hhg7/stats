@@ -780,6 +780,15 @@ matching columns; `remove` returns everything except them. The result is the
 same shape as the input (HoH → HoH, HoA → HoA, AoH → AoH), with cell values
 copied and the original structure left untouched.
 
+The selector — the value of `keep` or `remove` — can be given three ways:
+
+- an **array ref** of exact column names,
+- a **`qr//` regex** matched against column names,
+- a **predicate** (CODE ref or function name) evaluated against a column's
+  values.
+
+The first two select by name; the predicate is the one that looks at the data.
+
 ### Selecting by name
 
 Pass an array ref of column names. Naming a column that is not present in the
@@ -788,6 +797,20 @@ kept column simply comes back without it:
 
     my @aoh = ( { a => 1, b => 2 }, { a => 3 } );
     cfilter(\@aoh, keep => ['b']);   # [ { b => 2 }, {} ]
+
+### Selecting by a name pattern
+
+Pass a `qr//` regex, and columns are kept (or removed) according to whether
+their **name** matches. This is the concise way to act on a family of columns:
+
+    # drop every column whose name contains "step" or "bias_"
+    cfilter(\%md, remove => qr/(?:step|bias_)/);
+    # keep only the y0, y1, ... columns
+    cfilter(\%md, keep => qr/^y\d+$/);
+
+The pattern matches anywhere in the name (it is not anchored), exactly like
+Perl's `=~`. Unlike a named column, a pattern that matches nothing is not an
+error — it simply keeps or removes nothing.
 
 ### Selecting by a predicate
 
@@ -817,8 +840,10 @@ name, so to keep one column by name use an array ref: `keep => ['x']`.
 
 - neither `keep` nor `remove` is given, or both are,
 - a named column is not present in the data,
-- the selector is neither an array ref nor a code ref / function name, or the
-  function name cannot be resolved,
+- the selector is not an array ref, a `qr//` regex, or a code ref / function
+  name, or the function name cannot be resolved,
+- `na` or `against` is given with a by-name or regex selector (they apply only
+  to a value predicate),
 - an unknown option is given, or the options are not `name => value` pairs,
 - the data is not a hash/array reference of the expected shape (a hash of hash
   refs or array refs, or an array of hash refs).
@@ -3901,6 +3926,8 @@ raw values (no cell number formats), matching the round-trip behaviour of
 # Changes
 
 ## 0.24
+
+`cfilter` simplification, use of `qr///` filtering on columns
 
 `summary` output now looks more like `view`, and accepts HoH
 

@@ -5439,12 +5439,13 @@ SV *cfilter(data, ...)
 		if (!keep_sv && !remove_sv) croak("cfilter: need a keep or remove argument");
 		bool removing = (remove_sv != NULL);
 		SV *restrict sel = removing ? remove_sv : keep_sv;
-		// classify the selector: array ref of names, or a value predicate.
-		bool by_name;
+		// classify the selector: array ref of names, a qr// name pattern, or a
+		// value predicate.
+		bool by_name = FALSE, by_regex = FALSE;
 		SV *restrict cv_sv = NULL;
 		if (SvROK(sel) && SvTYPE(SvRV(sel)) == SVt_PVAV) by_name = TRUE;
+		else if (SvRXOK(sel)) by_regex = TRUE;
 		else if ((SvROK(sel) && SvTYPE(SvRV(sel)) == SVt_PVCV) || (SvOK(sel) && !SvROK(sel))) {
-			by_name = FALSE;
 			if (SvROK(sel)) cv_sv = SvRV(sel);
 			else {
 				STRLEN nl;
@@ -5456,7 +5457,7 @@ SV *cfilter(data, ...)
 				cv_sv = (SV*)cv;
 			}
 		}
-		else croak("cfilter: keep/remove must be an array ref of column names or a code ref / function name");
+		else croak("cfilter: keep/remove must be an array ref of column names, a qr// regex, or a code ref / function name");
 		// decode the undef policy (predicate only).
 		bool na_omit = FALSE;
 		if (na_sv && SvOK(na_sv)) {
@@ -5466,7 +5467,7 @@ SV *cfilter(data, ...)
 			else if (nl == 4 && memEQ(nv, "keep", 4)) na_omit = FALSE;
 			else croak("cfilter: na must be 'keep' or 'omit'");
 		}
-		if (by_name && (na_sv || against_sv)) croak("cfilter: na/against only apply to a predicate selector");
+		if ((by_name || by_regex) && (na_sv || against_sv)) croak("cfilter: na/against only apply to a predicate selector");
 		if (against_sv && na_sv) croak("cfilter: give na or against, not both");
 		// 1. detect the data shape.
 		if (!SvROK(data)) croak("cfilter: data must be a reference");
@@ -5490,7 +5491,7 @@ SV *cfilter(data, ...)
     alignment lets `against` pair two columns by row.*/
 		HV *restrict universe = newHV();
 		AV *restrict colnames = newAV();
-		HV *restrict cellmap = by_name ? NULL : newHV();
+		HV *restrict cellmap = (by_name || by_regex) ? NULL : newHV();
 		SSize_t nrows = 0;
 		if (kind == 1) {
 			HV *restrict h = (HV*)rv;
@@ -5507,7 +5508,7 @@ SV *cfilter(data, ...)
 				SV *restrict ck = hv_iterkeysv(e);
 				(void)hv_store_ent(universe, ck, newSViv(1), 0);
 				av_push(colnames, newSVsv(ck));
-				if (!by_name) {
+				if (!by_name && !by_regex) {
 					AV *restrict src = (AV*)SvRV(hv_iterval(h, e)), *restrict col = newAV();
 					if (nrows > 0) av_extend(col, nrows - 1);
 					for (SSize_t r = 0; r < nrows; r++) {
@@ -5557,7 +5558,7 @@ SV *cfilter(data, ...)
 				}
 				SvREFCNT_dec((SV*)seen);
 			}
-			if (!by_name) {
+			if (!by_name && !by_regex) {
 				SSize_t nc = av_len(colnames) + 1;
 				for (SSize_t c = 0; c < nc; c++) {
 					SV *restrict ck = *av_fetch(colnames, c, 0);
@@ -5600,6 +5601,18 @@ SV *cfilter(data, ...)
 				if (removing ? !in_list : in_list) (void)hv_store_ent(keepset, ck, newSViv(1), 0);
 			}
 			SvREFCNT_dec((SV*)listed);
+		} else if (by_regex) {
+			// name pattern: keep/drop each column by matching its name against
+			// the compiled qr//. No data is inspected, so na/against don't apply.
+			REGEXP *restrict rx = SvRX(sel);
+			SSize_t nc = av_len(colnames) + 1;
+			for (SSize_t c = 0; c < nc; c++) {
+				SV *restrict ck = *av_fetch(colnames, c, 0);
+				STRLEN len;
+				char *restrict s = SvPV(ck, len);
+				bool match = cBOOL(pregexec(rx, s, s + len, s, 0, ck, 1));
+				if (removing ? !match : match) (void)hv_store_ent(keepset, ck, newSViv(1), 0);
+			}
 		} else {
 			// predicate over the flat colnames list (never a live hash iterator
 			// across call_sv). Apply the undef policy per column.
