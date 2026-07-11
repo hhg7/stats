@@ -3344,38 +3344,32 @@ as of version 0.02, `sum` will cause the script to die if any undefined values a
 
 ## summary
 
-Analogous to R's `summary`, but does not deal with outputs from other functions.
-`summary` only describes data as it is entered.
-An option `nrows` or its synonym `nrow` specifies the maximum number of rows that will print.
+Analogous to R's `summary`: a five-number-plus-mean description (`# values`, `Min.`, `1st Qu.`, `Median`, `Mean`, `3rd Qu.`, `Max.`) of the data as entered (it does not summarise fitted-model objects). It produces one statistics row per numeric *variable* and renders the table exactly like [`view`](#view) — the same colourised, wide-character-aware, terminal-fitting output — through the same internal renderer, so all of `view`'s display options apply.
 
-### array of array input
+Which variable becomes a row depends on the shape (every shape `view` accepts is accepted here):
 
-    my @arr;
-    foreach my $i (0..18) {
-    	push @arr, runif(22);
-    }
+| input | one row per… | label column |
+|---|---|---|
+| flat vector — `summary(@x)`, `summary(\@x)`, or a bare list | the whole vector | *(none)* |
+| array of arrays (AoA) | inner array | `Index` |
+| hash of arrays (HoA) | key | `Key` |
+| array of hashes (AoH) / hash of hashes (HoH) | column, gathered across rows | `Column` |
 
-and then `summary(\@arr)`, or `summary(@arr)`
+The AoH/HoH case is the per-column summary R gives for a data frame — so the array-of-hashes that `read_table` returns by default summarises column-by-column:
 
-    ---------------------------------------------------------------------------
-    Index  # values      Min.   1st Qu.    Median      Mean   3rd Qu.      Max. 
-    ---------------------------------------------------------------------------
-         0       22   0.04312     0.286    0.4975    0.5121    0.7296    0.9633 
-         1       22   0.05932    0.1483     0.495    0.4737    0.7699    0.9371 
-         2       22   0.02742    0.1588    0.4045    0.4325    0.6682    0.9878 
-         3       22  0.009233    0.2552    0.5398    0.5147    0.7755    0.9808 
-         4       22   0.06727    0.2432    0.5019    0.4855    0.7121    0.9043 
-         5       22  0.001032    0.1646    0.3021    0.3727    0.5704    0.9556 
+    summary(read_table('data.csv'));       # one row per column
+    summary(\%hoh, nrows => 20);            # cap the rows shown
+    summary(\@x, color => 1);               # force colour (default: auto on a TTY)
+    my $txt = summary(\%hoa, return_only => 1);   # capture instead of printing
 
-### hash of array input
+Non-numeric and undefined cells are ignored: they never count toward `# values`, and a variable with no numeric values shows `0` and `na`. For example, `summary` of an AoH:
 
-    $test_data = summary(
-    	{
-    		A => runif(9),
-    		B => runif(9)
-    	},
-    );
+    # summary: 2 rows x 7 cols	(showing 2)
+    Column  # values  Min.  1st Qu.  Median  Mean  3rd Qu.  Max.
+    x              3     1      1.5       2     2      2.5     3
+    y              3    10       15      20    20       25    30
 
+`summary` prints the table (unless `return_only` is set) and returns it as a string. `nrows` (synonyms `nrow`, `n`, `rows`) caps the rows shown, and the `view` display options `na`, `color`, `colors`, `max_width`, `ellipsis`, `gap`, `width`, `to`, and `return_only` all apply.
 
 ## t_test
 
@@ -3906,7 +3900,11 @@ raw values (no cell number formats), matching the round-trip behaviour of
 
 # Changes
 
-## 0.23 2026-07-08 CDT
+## 0.24
+
+`summary` output now looks more like `view`, and accepts HoH
+
+## 0.23 2026-07-10 CDT
 
 `rename_cols` takes HoH as input
 

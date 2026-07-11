@@ -4,7 +4,7 @@ require 5.010;
 use strict;
 use feature 'say';
 package Stats::LikeR;
-our $VERSION = 0.23;
+our $VERSION = 0.24;
 require XSLoader;
 use warnings FATAL => 'all';
 use autodie ':default';
@@ -1512,100 +1512,136 @@ HELP
 	return $want_edges ? ($out, $edges) : $out;
 }
 
+# summary($data, %opts) -- R-style five-number-plus-mean summary.
+#
+# Accepts every shape view() does and computes one statistics row per numeric
+# "variable": a flat vector (one row); an AoA (one row per inner array, labelled
+# by Index); a HoA (one row per key); and -- like view() -- an AoH or HoH (one
+# row per column, gathered across the rows). Non-numeric and undefined cells are
+# ignored (they never count toward '# values'); an all-non-numeric variable
+# shows 0 values and 'na' statistics. Output, colour, and the display options
+# are rendered exactly like view() via the shared _render_grid().
 sub summary {
-	my ($data, %args);
 	my $current_sub = (split(/::/,(caller(0))[3]))[-1];
+	# options view() understands, plus the row-cap synonyms
+	my %opt_key = map { $_ => 1 } qw(
+		nrows nrow n rows
+		na color colors max_width ellipsis gap width to return_only
+	);
+	my ($data, %args);
 	if (@_ && ref $_[0]) {
-	  # Handles: summary(\@arr) or summary(\@arr, nrows => 5) or summary(\%h, nrow => 3)
-	  $data = shift;
-	  %args = @_; # capture any trailing key/value pairs
+		# summary(\@arr, ...) / summary(\%h, ...)
+		$data = shift;
+		%args = @_;
 	} else {
-	  # Handles: summary(@runif) or summary(@runif, nrows => 2)
-	  # Extract known trailing named arguments from the flat list
-	  while (@_ >= 2 && defined $_[-2] && !ref($_[-2]) && $_[-2] =~ /^(?:nrows|nrow)$/) {
-	  	  my $val = pop @_;
-		  my $key = pop @_;
-		  $args{$key} = $val;
-	  }
-	  # The remaining items in @_ make up the actual data array
-	  my @list = @_;
-	  $data = \@list;
-	}
-	# Normalize nrow -> nrows, default to 10
-	$args{nrows} //= delete($args{nrow}) // 10;
-	my $ref_type = ref $data;
-	if (($ref_type ne 'ARRAY') && ($ref_type ne 'HASH')) {
-		die "$current_sub: data must either be a hash or an array, not \"$ref_type\"";
-	}
-	my $single_arr = 0;
-	if (($ref_type eq 'ARRAY') && (ref $data->[0] eq '')) {
-		$single_arr = 1;
-	}
-	my @header = ('# values', 'Min.', '1st Qu.', 'Median', 'Mean', '3rd Qu.', 'Max.');
-	my @out;
-	if ($single_arr == 1) {
-		push @out, '-' x 75;
-		my $header = sprintf('%9s ' x scalar @header, @header);
-		push @out, $header;
-		push @out, '-' x 75;
-		my @undef = grep {!defined $data->[$_]} 0..scalar @{ $data }-1;
-		if (scalar @undef > 0) {
-			say STDERR join (',', @undef);
-			die "The above indices are not defined in $current_sub";
+		# summary(@vector) / summary(@vector, nrows => N): peel recognised
+		# trailing key/value option pairs off the flat list; the rest is data.
+		while (@_ >= 2 && defined $_[-2] && !ref($_[-2]) && $opt_key{ $_[-2] }) {
+			my $val = pop @_;
+			my $key = pop @_;
+			$args{$key} = $val;
 		}
-		my @numeric = grep {looks_like_number($_)} @{ $data };
+		my @list = @_;
+		$data = \@list;
+	}
+	my @bad = sort grep { !$opt_key{$_} } keys %args;
+	die "$current_sub: unknown argument(s): @bad\n" if @bad;
+	# row cap: nrows / nrow / n / rows are synonyms (default 10)
+	my $nrows = exists $args{nrows} ? $args{nrows} : exists $args{nrow} ? $args{nrow}
+			  : exists $args{n}     ? $args{n}     : exists $args{rows} ? $args{rows}
+			  :                       10;
+	die "$current_sub: 'nrows' must be a non-negative integer\n"
+		unless defined $nrows && $nrows =~ /^\d+$/;
+
+	my $rt = ref $data;
+	die "$current_sub: data must either be a hash or an array, not \"$rt\"\n"
+		unless $rt eq 'ARRAY' or $rt eq 'HASH';
+
+	# --- resolve the data shape into (label, numeric-vector) series ---
+	my (@labels, @vecs, $lab_header);
+	if ($rt eq 'ARRAY') {
+		my $first;
+		for my $e (@$data) { if (defined $e) { $first = $e; last } }
+		my $ft = ref $first;
+		if ($ft eq 'HASH') {			# AoH: one series per column
+			$lab_header = 'Column';
+			my %seen;
+			for my $row (@$data) { next unless ref $row eq 'HASH'; $seen{$_} = 1 for keys %$row }
+			for my $col (sort keys %seen) {
+				push @labels, $col;
+				push @vecs, [ map { ref $_ eq 'HASH' ? $_->{$col} : undef } @$data ];
+			}
+		} elsif ($ft eq 'ARRAY') {		# AoA: one series per inner array
+			$lab_header = 'Index';
+			for my $i (0 .. $#$data) {
+				push @labels, $i;
+				push @vecs, (ref $data->[$i] eq 'ARRAY' ? [ @{ $data->[$i] } ] : []);
+			}
+		} else {						# flat vector: a single series
+			$lab_header = '';
+			push @labels, '';
+			push @vecs, [ @$data ];
+		}
+	} else { # HASH
+		my @keys = keys %$data;
+		my $sample;
+		for my $k (@keys) { $sample = $data->{$k}; last if defined $sample }
+		my $vt = ref $sample;
+		if ($vt eq 'ARRAY') {			# HoA: one series per key
+			$lab_header = 'Key';
+			for my $k (sort { lc $a cmp lc $b } @keys) {
+				push @labels, $k;
+				push @vecs, (ref $data->{$k} eq 'ARRAY' ? [ @{ $data->{$k} } ] : []);
+			}
+		} elsif ($vt eq 'HASH') {		# HoH: one series per column (inner key)
+			$lab_header = 'Column';
+			my %seen;
+			for my $k (@keys) { next unless ref $data->{$k} eq 'HASH'; $seen{$_} = 1 for keys %{ $data->{$k} } }
+			for my $col (sort keys %seen) {
+				push @labels, $col;
+				push @vecs, [ map { ref $data->{$_} eq 'HASH' ? $data->{$_}{$col} : undef } @keys ];
+			}
+		} else {						# flat hash: its values as one series
+			$lab_header = '';
+			push @labels, '';
+			push @vecs, [ map { $data->{$_} } @keys ];
+		}
+	}
+
+	# --- compute the statistics grid ---
+	my @colnames = ('# values', 'Min.', '1st Qu.', 'Median', 'Mean', '3rd Qu.', 'Max.');
+	my @raw;
+	for my $vec (@vecs) {
+		my @numeric = grep { defined $_ && looks_like_number($_) } @$vec;
+		if (!@numeric) { push @raw, [ 0, (undef) x 6 ]; next }	# empty -> na stats
 		my $q = quantile(\@numeric, probs => [0.25, 0.75]);
-		my $vals = sprintf('%9.4g ' x scalar @header, scalar @numeric, min(\@numeric), $q->{'25%'}, median(\@numeric), mean(\@numeric), $q->{'75%'}, max(\@numeric));
-		push @out, $vals;
-	} elsif ($ref_type eq 'ARRAY') {
-		push @out, '-' x 75;
-		my $header = sprintf('%9s ' x scalar @header, @header);
-		unshift @header, 'Index';
-		$header = 'Index ' . $header;
-		push @out, $header;
-		push @out, '-' x 75;
-		my $rows_printed = 0;
-		foreach my $index (0..$#$data) {
-			my @undef = grep {!defined $data->[$index][$_]} 0..scalar @{ $data->[$index] }-1;
-			if (scalar @undef > 0) {
-				say STDERR join (',', @undef);
-				die "The above indices are not defined for index $index in $current_sub";
-			}
-			my @numeric = grep {looks_like_number($_)} @{ $data->[$index] };
-			my $q = quantile(\@numeric, probs => [0.25, 0.75]);
-			my $vals = sprintf('%6.4g', $index) . sprintf('%9.4g ' x (scalar @header - 1), scalar @numeric, min(\@numeric), $q->{'25%'}, median(\@numeric), mean(\@numeric), $q->{'75%'}, max(\@numeric));
-			push @out, $vals;
-			$rows_printed++;
-			last if $rows_printed >= $args{nrows}; # Changed to >= just to be safe
-		}
-	} elsif ($ref_type eq 'HASH') {
-		push @out, '-' x 78;
-		my $header = sprintf('%9s ' x scalar @header, @header);
-		unshift @header, 'Key';
-		$header = '  Key    ' . $header;
-		push @out, $header;
-		push @out, '-' x 78;
-		my $rows_printed = 0;
-		foreach my $key (sort {lc $a cmp lc $b} keys %{ $data }) {
-			my @undef = grep {!defined $data->{$key}[$_]} 0..scalar @{ $data->{$key} }-1;
-			if (scalar @undef > 0) {
-				say STDERR join (',', @undef);
-				die "The above indices are not defined for key $key in $current_sub";
-			}
-			my @numeric = grep {looks_like_number($_)} @{ $data->{$key} };
-			my $q = quantile(\@numeric, probs => [0.25, 0.75]);
-			my $print_key = substr($key, 0, 9);
-			if ((length $print_key) < 9) { # make sure that short keys line up correctly
-				$print_key .= ' ' x (9 - length $print_key);
-			}
-			my $vals = $print_key . sprintf('%9.4g ' x (scalar @header - 1), scalar @numeric, min(\@numeric), $q->{'25%'}, median(\@numeric), mean(\@numeric), $q->{'75%'}, max(\@numeric));
-			push @out, $vals;
-			$rows_printed++;
-			last if $rows_printed >= $args{nrows};
-		}
+		# format as %.4g strings; they still look numeric, so _render_grid
+		# right-aligns and colours them as numbers.
+		push @raw, [
+			scalar @numeric,
+			sprintf('%.4g', min(\@numeric)),    sprintf('%.4g', $q->{'25%'}),
+			sprintf('%.4g', median(\@numeric)), sprintf('%.4g', mean(\@numeric)),
+			sprintf('%.4g', $q->{'75%'}),       sprintf('%.4g', max(\@numeric)),
+		];
 	}
-	say join ("\n", @out);
-	return \@out;
+
+	# cap the number of series shown (keep the true total for the "... more" note)
+	my $total = scalar @labels;
+	if ($nrows < $total) { $#labels = $nrows - 1; $#raw = $nrows - 1; }
+
+	return _render_grid(
+		kind => 'summary', total => $total,
+		cols => \@colnames, labels => \@labels, raw => \@raw, lab_header => $lab_header,
+		na          => $args{na},
+		max_width   => $args{max_width},
+		ellipsis    => $args{ellipsis},
+		gap         => (exists $args{gap} ? ' ' x $args{gap} : undef),
+		width       => $args{width},
+		to          => $args{to},
+		return_only => $args{return_only},
+		color       => (exists $args{color} ? $args{color} : undef),
+		colors      => $args{colors},
+	);
 }
 
 # --- .xlsx support (pure Perl, no CPAN deps) -------------------------------
@@ -2219,6 +2255,39 @@ sub view {
 		}
 	}
 
+	return _render_grid(
+		kind => $kind, total => $total,
+		cols => \@cols, labels => \@labels, raw => \@raw, lab_header => $lab_header,
+		na => $na, max_width => $maxw, ellipsis => $ell, gap => $gap,
+		width => $tw, to => $fh, return_only => $quiet,
+		color => (exists $args{color} ? $args{color} : undef), colors => $args{colors},
+	);
+}
+
+# _render_grid(%spec) -- shared, colourised table renderer used by view() and
+# summary(). Given a fully-resolved grid (row labels + column headers + a
+# row-major @raw of cell values) plus the display options, it produces the
+# output view() has always emitted: a "# Kind: R rows x C cols" banner,
+# wide-char-aware column widths, R-style column chunking to fit the terminal,
+# optional Data::Printer-style colour, and a trailing "... N more rows" note.
+sub _render_grid {
+	my %s = @_;
+	my $kind       = $s{kind};
+	my $total      = $s{total};
+	my @cols       = @{ $s{cols}   || [] };
+	my @labels     = @{ $s{labels} || [] };
+	my @raw        = @{ $s{raw}    || [] };
+	my $lab_header = defined $s{lab_header} ? $s{lab_header} : '';
+	my $na    = defined $s{na}        ? $s{na}        : 'undef';
+	my $maxw  = defined $s{max_width} ? $s{max_width} : 80;
+	my $ell   = defined $s{ellipsis}  ? $s{ellipsis}  : '...';
+	my $gap   = defined $s{gap}       ? $s{gap}       : '  ';
+	my $tw    = defined $s{width}     ? $s{width}     : 80;
+	my $fh    = $s{to};
+	my $quiet = $s{return_only};
+	my $color  = $s{color};
+	my $colors = $s{colors};
+
 	# ---- display helpers (UTF-8 / wide-char aware) ----
 	my $RESET = "\e[0m";
 	my $decode = sub {
@@ -2276,7 +2345,7 @@ sub view {
 		undef		=> 'bright_red',	hash   => 'magenta',
 		caller_info => 'bright_cyan',	separator => 'white',
 	);
-	my %color = (%default_colors, %{ $args{colors} || {} });
+	my %color = (%default_colors, %{ $colors || {} });
 	my %fg = (
 		black=>30, red=>31, green=>32, yellow=>33, blue=>34, magenta=>35, cyan=>36, white=>37,
 		bright_black=>90, bright_red=>91, bright_green=>92, bright_yellow=>93,
@@ -2294,11 +2363,11 @@ sub view {
 		return '';
 	};
 	my $want_color;
-	if (!defined $args{color} || (!ref $args{color} && $args{color} eq 'auto')) {
+	if (!defined $color || (!ref $color && $color eq 'auto')) {
 		my $target = defined $fh ? $fh : \*STDOUT;
 		$want_color = (!$quiet && -t $target) ? 1 : 0;
 	} else {
-		$want_color = $args{color} ? 1 : 0;
+		$want_color = $color ? 1 : 0;
 	}
 	my $paint = sub {
 		my ($text, $type) = @_;
@@ -7241,38 +7310,44 @@ as of version 0.02, C<sum> will cause the script to die if any undefined values 
 
 =head2 summary
 
-Analogous to R's C<summary>, but does not deal with outputs from other functions.
-C<summary> only describes data as it is entered.
-An option C<nrows> or its synonym C<nrow> specifies the maximum number of rows that will print.
+Analogous to R's C<summary>: a five-number-plus-mean description
+(C<# values>, C<Min.>, C<1st Qu.>, C<Median>, C<Mean>, C<3rd Qu.>, C<Max.>) of
+the data as entered (it does not summarise fitted-model objects). One statistics
+row is produced per numeric I<variable>, and the table is rendered exactly like
+L</view> -- same colourised, wide-character-aware, terminal-fitting layout --
+via the same internal renderer, so all of C<view>'s display options apply.
 
-=head3 array of array input
+The variable that becomes a row depends on the shape, and every shape L</view>
+accepts is accepted here:
 
- my @arr;
- foreach my $i (0..18) {
-     push @arr, runif(22);
- }
+=over
 
-and then C<summary(\@arr)>, or C<summary(@arr)>
+=item * a B<flat vector> (C<summary(@x)>, C<summary(\@x)>, or a bare list) is one
+row;
 
- ---------------------------------------------------------------------------
- 
- Index  # values      Min.   1st Qu.    Median      Mean   3rd Qu.      Max. 
- ---------------------------------------------------------------------------
-      0       22   0.04312     0.286    0.4975    0.5121    0.7296    0.9633 
-      1       22   0.05932    0.1483     0.495    0.4737    0.7699    0.9371 
-      2       22   0.02742    0.1588    0.4045    0.4325    0.6682    0.9878 
-      3       22  0.009233    0.2552    0.5398    0.5147    0.7755    0.9808 
-      4       22   0.06727    0.2432    0.5019    0.4855    0.7121    0.9043 
-      5       22  0.001032    0.1646    0.3021    0.3727    0.5704    0.9556 
+=item * an B<array of arrays> is one row per inner array, labelled by C<Index>;
 
-=head3 hash of array input
+=item * a B<hash of arrays> is one row per key, labelled by C<Key>;
 
- $test_data = summary(
-     {
-         A => runif(9),
-         B => runif(9)
-     },
- );
+=item * an B<array of hashes> or a B<hash of hashes> is one row per column
+(gathered across the rows), labelled by C<Column> -- the same per-column summary
+R gives for a data frame.
+
+=back
+
+Non-numeric and undefined cells are ignored: they never count toward
+C<# values>, and a variable with no numeric values shows C<0> and C<na> (the
+C<na> text is configurable, as in C<view>).
+
+ summary(\@aoh);                    # one row per column
+ summary(\%hoh, nrows => 20);       # cap the rows shown
+ summary(\@x, color => 1);          # force colour on (default: auto for a TTY)
+ my $txt = summary(\%hoa, return_only => 1);   # capture, don't print
+
+C<summary> prints the table (unless C<return_only> is set) and returns it as a
+string. Options: C<nrows> (synonyms C<nrow>, C<n>, C<rows>) caps the number of
+variable rows shown; and the C<view> display options C<na>, C<color>, C<colors>,
+C<max_width>, C<ellipsis>, C<gap>, C<width>, C<to>, and C<return_only> all apply.
 
 =head2 t_test
 
