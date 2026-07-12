@@ -3589,6 +3589,7 @@ returns `{ c => 1 }`
 returns `{ a => 1, b => 2}`
 
 ### Array
+
     my $value_counts = value_counts('a','b','b');
 
 like an array reference above, returns `{ a => 1, b => 2}`
