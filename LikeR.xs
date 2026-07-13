@@ -4118,6 +4118,189 @@ static AV *rowA_select(pTHX_ AV *src, IV *idx, SSize_t n) {
 	return out;
 }
 
+/* ======================================================================
+ * merge() helpers -- full relational join (R merge / pandas merge).
+ *
+ * Every frame is normalised to an AoH (array of row hashrefs); the join is
+ * performed on that and the result materialised back to AoH or HoA.  Join
+ * keys match on the *stringified* cell value (canonical, length-prefixed),
+ * the natural Perl hash-join semantics; an undef/missing key cell never
+ * matches (pandas NaN rule).
+ * ====================================================================== */
+#define MG_KEYSEP "\x1e"
+#define MG_INNER 0
+#define MG_LEFT  1
+#define MG_RIGHT 2
+#define MG_OUTER 3
+#define MG_CROSS 4
+
+/* Normalise any supported frame shape to a mortal AV of row hashrefs.
+ * AoH rows are aliased (shared by ref); HoA/HoH rows are freshly built. */
+static AV *
+mg_to_aoh(pTHX_ SV *restrict frame, const char *restrict side) {
+	if (!frame || !SvROK(frame))
+		croak("merge: %s frame must be an array-ref (AoH) or hash-ref (HoA/HoH)", side);
+	SV *restrict rv = SvRV(frame);
+	AV *restrict out = (AV *)sv_2mortal((SV *)newAV());
+	if (SvTYPE(rv) == SVt_PVAV) {			/* AoH */
+		AV *restrict av = (AV *)rv;
+		SSize_t n = av_len(av) + 1;
+		for (SSize_t i = 0; i < n; i++) {
+			SV **restrict rp = av_fetch(av, i, 0);
+			if (!rp || !*rp || !SvOK(*rp)) continue;
+			SV *restrict r = *rp;
+			if (!SvROK(r) || SvTYPE(SvRV(r)) != SVt_PVHV) {
+				if (SvROK(r) && SvTYPE(SvRV(r)) == SVt_PVAV)
+					croak("merge: %s frame is an array-of-arrays; merge needs "
+					      "named columns (give it an AoH, HoA, or HoH)", side);
+				croak("merge: %s frame row %ld is not a hash-ref (need an AoH)",
+				      side, (long)i);
+			}
+			av_push(out, SvREFCNT_inc_simple_NN(r));
+		}
+		return out;
+	}
+	if (SvTYPE(rv) != SVt_PVHV)
+		croak("merge: %s frame must be AoH/HoA/HoH", side);
+	HV *restrict hv = (HV *)rv;
+	hv_iterinit(hv);
+	HE *restrict e0 = hv_iternext(hv);
+	if (!e0) return out;				/* empty hash -> empty frame */
+	SV *restrict v0 = HeVAL(e0);
+	if (SvROK(v0) && SvTYPE(SvRV(v0)) == SVt_PVHV) {	/* HoH: inner hashes are rows */
+		HE *restrict e;
+		hv_iterinit(hv);
+		while ((e = hv_iternext(hv))) {
+			SV *restrict v = HeVAL(e);
+			if (!SvROK(v) || SvTYPE(SvRV(v)) != SVt_PVHV)
+				croak("merge: %s frame (HoH) value for row '%s' is not a hash-ref",
+				      side, HePV(e, PL_na));
+			av_push(out, SvREFCNT_inc_simple_NN(v));
+		}
+		return out;
+	}
+	if (!(SvROK(v0) && SvTYPE(SvRV(v0)) == SVt_PVAV))
+		croak("merge: %s frame hash values must be array-refs (HoA) or hash-refs (HoH)", side);
+	/* HoA -> transpose to AoH */
+	AV *restrict colk = (AV *)sv_2mortal((SV *)newAV());
+	SSize_t maxlen = 0;
+	HE *restrict e;
+	hv_iterinit(hv);
+	while ((e = hv_iternext(hv))) {
+		SV *restrict v = HeVAL(e);
+		if (!SvROK(v) || SvTYPE(SvRV(v)) != SVt_PVAV)
+			croak("merge: %s frame (HoA) column '%s' is not an array-ref",
+			      side, HePV(e, PL_na));
+		SSize_t l = av_len((AV *)SvRV(v)) + 1;
+		if (l > maxlen) maxlen = l;
+		av_push(colk, newSVsv(hv_iterkeysv(e)));
+	}
+	SSize_t nc = av_len(colk) + 1;
+	for (SSize_t i = 0; i < maxlen; i++) {
+		HV *restrict row = newHV();
+		for (SSize_t c = 0; c < nc; c++) {
+			SV *restrict ck = *av_fetch(colk, c, 0);
+			HE *restrict che = hv_fetch_ent(hv, ck, 0, 0);
+			SV *restrict cell = NULL;
+			if (che) {
+				SV **restrict cp = av_fetch((AV *)SvRV(HeVAL(che)), i, 0);
+				if (cp && *cp) cell = *cp;
+			}
+			(void)hv_store_ent(row, ck, cell ? newSVsv(cell) : newSV(0), 0);
+		}
+		av_push(out, newRV_noinc((SV *)row));
+	}
+	return out;
+}
+
+/* 0 = AoH, 1 = HoA, 2 = HoH (used only to pick the default output shape). */
+static int
+mg_shape(pTHX_ SV *restrict frame) {
+	SV *restrict rv = SvRV(frame);
+	if (SvTYPE(rv) == SVt_PVAV) return 0;
+	HV *restrict hv = (HV *)rv;
+	hv_iterinit(hv);
+	HE *restrict e = hv_iternext(hv);
+	if (!e) return 1;
+	SV *restrict v = HeVAL(e);
+	if (SvROK(v) && SvTYPE(SvRV(v)) == SVt_PVHV) return 2;
+	return 1;
+}
+
+/* Expand a scalar-or-arrayref option into a mortal AV of name SVs. */
+static AV *
+mg_names(pTHX_ SV *restrict v) {
+	AV *restrict a = (AV *)sv_2mortal((SV *)newAV());
+	if (SvROK(v) && SvTYPE(SvRV(v)) == SVt_PVAV) {
+		AV *restrict s = (AV *)SvRV(v);
+		SSize_t n = av_len(s) + 1;
+		for (SSize_t i = 0; i < n; i++) {
+			SV **restrict p = av_fetch(s, i, 0);
+			av_push(a, newSVsv((p && *p) ? *p : &PL_sv_undef));
+		}
+	} else {
+		av_push(a, newSVsv(v));
+	}
+	return a;
+}
+
+/* Canonical, length-prefixed join key over `nkeys` columns of `row`.
+ * Returns a mortal SV; sets *ok = 0 if any key cell is missing/undef. */
+static SV *
+mg_key(pTHX_ HV *restrict row, AV *restrict keys, SSize_t nkeys, int *restrict ok) {
+	SV *restrict k = sv_2mortal(newSVpvs(""));
+	*ok = 1;
+	for (SSize_t j = 0; j < nkeys; j++) {
+		SV *restrict kn = *av_fetch(keys, j, 0);
+		HE *restrict e = hv_fetch_ent(row, kn, 0, 0);
+		if (!e || !SvOK(HeVAL(e))) { *ok = 0; break; }
+		STRLEN l;
+		const char *restrict p = SvPV(HeVAL(e), l);
+		sv_catpvf(k, "%lu" MG_KEYSEP, (unsigned long)l);
+		sv_catpvn(k, p, l);
+		sv_catpvn(k, MG_KEYSEP, 1);
+	}
+	return k;
+}
+
+/* Build one output row hashref from a left row (or NULL) and a right row
+ * (or NULL) and push it onto `result`. */
+static void
+mg_emit(pTHX_ AV *restrict result, HV *restrict li, HV *restrict ri,
+        AV *restrict lkeys, AV *restrict rkeys, SSize_t nkeys,
+        AV *restrict lc_src, AV *restrict lc_out, SSize_t nlc,
+        AV *restrict rc_src, AV *restrict rc_out, SSize_t nrc) {
+	HV *restrict row = newHV();
+	for (SSize_t k = 0; k < nkeys; k++) {
+		SV *restrict outn = *av_fetch(lkeys, k, 0);
+		SV *restrict val = NULL;
+		if (li) {
+			HE *restrict e = hv_fetch_ent(li, *av_fetch(lkeys, k, 0), 0, 0);
+			if (e && SvOK(HeVAL(e))) val = HeVAL(e);
+		}
+		if (!val && ri) {
+			HE *restrict e = hv_fetch_ent(ri, *av_fetch(rkeys, k, 0), 0, 0);
+			if (e) val = HeVAL(e);
+		}
+		(void)hv_store_ent(row, outn, val ? newSVsv(val) : newSV(0), 0);
+	}
+	for (SSize_t c = 0; c < nlc; c++) {
+		SV *restrict src = *av_fetch(lc_src, c, 0);
+		SV *restrict outn = *av_fetch(lc_out, c, 0);
+		SV *restrict val = NULL;
+		if (li) { HE *restrict e = hv_fetch_ent(li, src, 0, 0); if (e) val = HeVAL(e); }
+		(void)hv_store_ent(row, outn, val ? newSVsv(val) : newSV(0), 0);
+	}
+	for (SSize_t c = 0; c < nrc; c++) {
+		SV *restrict src = *av_fetch(rc_src, c, 0);
+		SV *restrict outn = *av_fetch(rc_out, c, 0);
+		SV *restrict val = NULL;
+		if (ri) { HE *restrict e = hv_fetch_ent(ri, src, 0, 0); if (e) val = HeVAL(e); }
+		(void)hv_store_ent(row, outn, val ? newSVsv(val) : newSV(0), 0);
+	}
+	av_push(result, newRV_noinc((SV *)row));
+}
+
 // --- XS SECTION ---
 MODULE = Stats::LikeR  PACKAGE = Stats::LikeR
 
@@ -12803,6 +12986,341 @@ CODE:
 	}
 OUTPUT:
 	RETVAL
+
+void merge(...)
+PPCODE:
+{
+	if (items < 2)
+		croak("Usage: merge($left, $right, how => 'inner'|'left'|'right'|"
+		      "'outer'|'cross', on => 'col' | ['c1','c2'] "
+		      "[, 'left.on' => .., 'right.on' => ..] "
+		      "[, suffixes => ['.x','.y']] [, 'output.type' => 'aoh'|'hoa'])");
+	if ((items - 2) & 1)
+		croak("merge: options after the two frames must be name => value pairs");
+
+	SV *restrict left  = ST(0);
+	SV *restrict right = ST(1);
+
+	SV *restrict how_sv = NULL, *restrict on_sv = NULL;
+	SV *restrict lon_sv = NULL, *restrict ron_sv = NULL;
+	SV *restrict suf_sv = NULL, *restrict out_sv = NULL;
+	for (int oi = 2; oi < items; oi += 2) {
+		STRLEN ol;
+		const char *restrict on = SvPV(ST(oi), ol);
+		SV *restrict ov = ST(oi + 1);
+		if      (strEQ(on, "how"))                              how_sv = ov;
+		else if (strEQ(on, "on") || strEQ(on, "by"))            on_sv  = ov;
+		else if (strEQ(on, "left.on")  || strEQ(on, "left_on")
+		      || strEQ(on, "by.x"))                             lon_sv = ov;
+		else if (strEQ(on, "right.on") || strEQ(on, "right_on")
+		      || strEQ(on, "by.y"))                             ron_sv = ov;
+		else if (strEQ(on, "suffixes"))                         suf_sv = ov;
+		else if (strEQ(on, "output.type") || strEQ(on, "output_type")
+		      || strEQ(on, "out"))                              out_sv = ov;
+		else croak("merge: unknown option '%s'", on);
+	}
+
+	/* how */
+	int how = MG_INNER;
+	if (how_sv && SvOK(how_sv)) {
+		const char *restrict h = SvPV_nolen(how_sv);
+		if      (strEQ(h, "inner"))                 how = MG_INNER;
+		else if (strEQ(h, "left"))                  how = MG_LEFT;
+		else if (strEQ(h, "right"))                 how = MG_RIGHT;
+		else if (strEQ(h, "outer") || strEQ(h, "full")) how = MG_OUTER;
+		else if (strEQ(h, "cross"))                 how = MG_CROSS;
+		else croak("merge: how must be 'inner', 'left', 'right', 'outer', or "
+		           "'cross' (got '%s')", h);
+	}
+
+	if (on_sv && (lon_sv || ron_sv))
+		croak("merge: give either 'on'/'by' or 'left.on'/'right.on', not both");
+	if ((lon_sv && !ron_sv) || (ron_sv && !lon_sv))
+		croak("merge: 'left.on' and 'right.on' must be given together");
+	if (how == MG_CROSS && (on_sv || lon_sv || ron_sv))
+		croak("merge: a cross join takes no join keys");
+
+	ENTER; SAVETMPS;
+
+	/* suffixes */
+	SV *restrict suf0 = NULL, *restrict suf1 = NULL;
+	if (suf_sv) {
+		if (!SvROK(suf_sv) || SvTYPE(SvRV(suf_sv)) != SVt_PVAV
+		    || av_len((AV *)SvRV(suf_sv)) != 1)
+			croak("merge: suffixes must be a two-element array-ref, e.g. ['.x','.y']");
+		AV *restrict sa = (AV *)SvRV(suf_sv);
+		suf0 = *av_fetch(sa, 0, 0);
+		suf1 = *av_fetch(sa, 1, 0);
+	} else {
+		suf0 = sv_2mortal(newSVpvs(".x"));
+		suf1 = sv_2mortal(newSVpvs(".y"));
+	}
+
+	/* default output shape follows the left frame */
+	int def_shape = SvROK(left) ? mg_shape(aTHX_ left) : 0;
+	int out_hoa = (def_shape == 1);		/* AoH & HoH default to AoH */
+	if (out_sv && SvOK(out_sv)) {
+		const char *restrict os = SvPV_nolen(out_sv);
+		if      (strEQ(os, "aoh")) out_hoa = 0;
+		else if (strEQ(os, "hoa")) out_hoa = 1;
+		else croak("merge: output.type must be 'aoh' or 'hoa' (got '%s')", os);
+	}
+
+	AV *restrict Lrows = mg_to_aoh(aTHX_ left,  "left");
+	AV *restrict Rrows = mg_to_aoh(aTHX_ right, "right");
+	SSize_t nL = av_len(Lrows) + 1;
+	SSize_t nR = av_len(Rrows) + 1;
+
+	/* column-name universes (first-seen order) for each frame */
+	AV *restrict Lall = (AV *)sv_2mortal((SV *)newAV());
+	HV *restrict Lseen = (HV *)sv_2mortal((SV *)newHV());
+	for (SSize_t i = 0; i < nL; i++) {
+		HV *restrict r = (HV *)SvRV(*av_fetch(Lrows, i, 0));
+		HE *restrict e; hv_iterinit(r);
+		while ((e = hv_iternext(r))) {
+			SV *restrict kn = hv_iterkeysv(e);
+			if (!hv_exists_ent(Lseen, kn, 0)) {
+				(void)hv_store_ent(Lseen, kn, newSViv(1), 0);
+				av_push(Lall, newSVsv(kn));
+			}
+		}
+	}
+	AV *restrict Rall = (AV *)sv_2mortal((SV *)newAV());
+	HV *restrict Rseen = (HV *)sv_2mortal((SV *)newHV());
+	for (SSize_t i = 0; i < nR; i++) {
+		HV *restrict r = (HV *)SvRV(*av_fetch(Rrows, i, 0));
+		HE *restrict e; hv_iterinit(r);
+		while ((e = hv_iternext(r))) {
+			SV *restrict kn = hv_iterkeysv(e);
+			if (!hv_exists_ent(Rseen, kn, 0)) {
+				(void)hv_store_ent(Rseen, kn, newSViv(1), 0);
+				av_push(Rall, newSVsv(kn));
+			}
+		}
+	}
+
+	/* resolve join keys into lkeys / rkeys */
+	AV *restrict lkeys, *restrict rkeys;
+	if (how == MG_CROSS) {
+		lkeys = (AV *)sv_2mortal((SV *)newAV());
+		rkeys = (AV *)sv_2mortal((SV *)newAV());
+	} else if (lon_sv) {
+		lkeys = mg_names(aTHX_ lon_sv);
+		rkeys = mg_names(aTHX_ ron_sv);
+		if (av_len(lkeys) != av_len(rkeys))
+			croak("merge: 'left.on' and 'right.on' must name the same number of columns");
+	} else if (on_sv) {
+		lkeys = mg_names(aTHX_ on_sv);
+		rkeys = lkeys;
+	} else {
+		/* natural join: sorted intersection of column names. Gather the
+		 * shared names (aliases into Lall), insertion-sort the pointers,
+		 * then copy them into lkeys. */
+		lkeys = (AV *)sv_2mortal((SV *)newAV());
+		SSize_t na = av_len(Lall) + 1;
+		SV **restrict names;
+		Newx(names, (size_t)(na > 0 ? na : 1), SV *);
+		SAVEFREEPV(names);
+		SSize_t cnt = 0;
+		for (SSize_t i = 0; i < na; i++) {
+			SV *restrict kn = *av_fetch(Lall, i, 0);
+			if (hv_exists_ent(Rseen, kn, 0)) names[cnt++] = kn;
+		}
+		if (cnt == 0)
+			croak("merge: no common columns to join on; pass 'on' or "
+			      "'left.on'/'right.on'");
+		for (SSize_t a = 1; a < cnt; a++) {
+			SV *restrict cur = names[a];
+			STRLEN al; const char *restrict ap = SvPV_const(cur, al);
+			SSize_t b = a - 1;
+			while (b >= 0) {
+				STRLEN bl; const char *restrict bp = SvPV_const(names[b], bl);
+				int cmp = memcmp(bp, ap, bl < al ? bl : al);
+				if (cmp == 0) cmp = (bl > al) - (bl < al);
+				if (cmp <= 0) break;
+				names[b + 1] = names[b];
+				b--;
+			}
+			names[b + 1] = cur;
+		}
+		for (SSize_t c = 0; c < cnt; c++) av_push(lkeys, newSVsv(names[c]));
+		rkeys = lkeys;
+	}
+	SSize_t nkeys = av_len(lkeys) + 1;
+
+	/* validate that the named keys exist in each frame */
+	for (SSize_t j = 0; j < nkeys; j++) {
+		SV *restrict kn = *av_fetch(lkeys, j, 0);
+		if (!hv_exists_ent(Lseen, kn, 0))
+			croak("merge: left frame has no join column '%s'", SvPV_nolen(kn));
+	}
+	for (SSize_t j = 0; j < nkeys; j++) {
+		SV *restrict kn = *av_fetch(rkeys, j, 0);
+		if (!hv_exists_ent(Rseen, kn, 0))
+			croak("merge: right frame has no join column '%s'", SvPV_nolen(kn));
+	}
+
+	/* key-name sets, to exclude keys from the data-column universe */
+	HV *restrict lkset = (HV *)sv_2mortal((SV *)newHV());
+	HV *restrict rkset = (HV *)sv_2mortal((SV *)newHV());
+	for (SSize_t j = 0; j < nkeys; j++) {
+		(void)hv_store_ent(lkset, *av_fetch(lkeys, j, 0), newSViv(1), 0);
+		(void)hv_store_ent(rkset, *av_fetch(rkeys, j, 0), newSViv(1), 0);
+	}
+
+	/* non-key data columns for each side, plus name-membership sets */
+	AV *restrict lc_src = (AV *)sv_2mortal((SV *)newAV());
+	HV *restrict lc_set = (HV *)sv_2mortal((SV *)newHV());
+	for (SSize_t i = 0, n = av_len(Lall) + 1; i < n; i++) {
+		SV *restrict kn = *av_fetch(Lall, i, 0);
+		if (hv_exists_ent(lkset, kn, 0)) continue;
+		av_push(lc_src, newSVsv(kn));
+		(void)hv_store_ent(lc_set, kn, newSViv(1), 0);
+	}
+	AV *restrict rc_src = (AV *)sv_2mortal((SV *)newAV());
+	HV *restrict rc_set = (HV *)sv_2mortal((SV *)newHV());
+	for (SSize_t i = 0, n = av_len(Rall) + 1; i < n; i++) {
+		SV *restrict kn = *av_fetch(Rall, i, 0);
+		if (hv_exists_ent(rkset, kn, 0)) continue;
+		av_push(rc_src, newSVsv(kn));
+		(void)hv_store_ent(rc_set, kn, newSViv(1), 0);
+	}
+	SSize_t nlc = av_len(lc_src) + 1;
+	SSize_t nrc = av_len(rc_src) + 1;
+
+	/* output column names: overlapping non-key columns get suffixed. Guard
+	 * the resulting universe against accidental collisions. */
+	AV *restrict lc_out = (AV *)sv_2mortal((SV *)newAV());
+	AV *restrict rc_out = (AV *)sv_2mortal((SV *)newAV());
+	HV *restrict uni = (HV *)sv_2mortal((SV *)newHV());
+	for (SSize_t j = 0; j < nkeys; j++) {
+		SV *restrict kn = *av_fetch(lkeys, j, 0);
+		if (hv_exists_ent(uni, kn, 0))
+			croak("merge: duplicate join column '%s'", SvPV_nolen(kn));
+		(void)hv_store_ent(uni, kn, newSViv(1), 0);
+	}
+	for (SSize_t c = 0; c < nlc; c++) {
+		SV *restrict kn = *av_fetch(lc_src, c, 0);
+		SV *restrict outn;
+		if (hv_exists_ent(rc_set, kn, 0)) {
+			outn = newSVsv(kn); sv_catsv(outn, suf0);
+		} else outn = newSVsv(kn);
+		if (hv_exists_ent(uni, outn, 0))
+			croak("merge: output column '%s' collides; adjust 'suffixes'",
+			      SvPV_nolen(outn));
+		(void)hv_store_ent(uni, outn, newSViv(1), 0);
+		av_push(lc_out, outn);
+	}
+	for (SSize_t c = 0; c < nrc; c++) {
+		SV *restrict kn = *av_fetch(rc_src, c, 0);
+		SV *restrict outn;
+		if (hv_exists_ent(lc_set, kn, 0)) {
+			outn = newSVsv(kn); sv_catsv(outn, suf1);
+		} else outn = newSVsv(kn);
+		if (hv_exists_ent(uni, outn, 0))
+			croak("merge: output column '%s' collides; adjust 'suffixes'",
+			      SvPV_nolen(outn));
+		(void)hv_store_ent(uni, outn, newSViv(1), 0);
+		av_push(rc_out, outn);
+	}
+
+	/* ---- perform the join, building an AoH result ---- */
+	AV *restrict result = (AV *)sv_2mortal((SV *)newAV());
+
+	if (how == MG_CROSS) {
+		for (SSize_t i = 0; i < nL; i++) {
+			HV *restrict li = (HV *)SvRV(*av_fetch(Lrows, i, 0));
+			for (SSize_t j = 0; j < nR; j++) {
+				HV *restrict ri = (HV *)SvRV(*av_fetch(Rrows, j, 0));
+				mg_emit(aTHX_ result, li, ri, lkeys, rkeys, nkeys,
+				        lc_src, lc_out, nlc, rc_src, rc_out, nrc);
+			}
+		}
+	} else {
+		/* index the right frame: key -> arrayref of row indices */
+		HV *restrict ridx = (HV *)sv_2mortal((SV *)newHV());
+		for (SSize_t j = 0; j < nR; j++) {
+			HV *restrict ri = (HV *)SvRV(*av_fetch(Rrows, j, 0));
+			int ok;
+			SV *restrict key = mg_key(aTHX_ ri, rkeys, nkeys, &ok);
+			if (!ok) continue;
+			HE *restrict he = hv_fetch_ent(ridx, key, 1, 0);
+			SV *restrict slot = HeVAL(he);
+			if (!SvROK(slot)) {
+				SV *restrict rvv = newRV_noinc((SV *)newAV());
+				sv_setsv(slot, rvv);
+				SvREFCNT_dec(rvv);
+			}
+			av_push((AV *)SvRV(slot), newSViv(j));
+		}
+
+		char *restrict matched = NULL;
+		Newxz(matched, (size_t)(nR > 0 ? nR : 1), char);
+		SAVEFREEPV(matched);
+
+		for (SSize_t i = 0; i < nL; i++) {
+			HV *restrict li = (HV *)SvRV(*av_fetch(Lrows, i, 0));
+			int ok;
+			SV *restrict key = mg_key(aTHX_ li, lkeys, nkeys, &ok);
+			HE *restrict he = ok ? hv_fetch_ent(ridx, key, 0, 0) : NULL;
+			if (he) {
+				AV *restrict matches = (AV *)SvRV(HeVAL(he));
+				SSize_t m = av_len(matches) + 1;
+				for (SSize_t t = 0; t < m; t++) {
+					IV j = SvIV(*av_fetch(matches, t, 0));
+					HV *restrict ri = (HV *)SvRV(*av_fetch(Rrows, j, 0));
+					mg_emit(aTHX_ result, li, ri, lkeys, rkeys, nkeys,
+					        lc_src, lc_out, nlc, rc_src, rc_out, nrc);
+					matched[j] = 1;
+				}
+			} else if (how == MG_LEFT || how == MG_OUTER) {
+				mg_emit(aTHX_ result, li, NULL, lkeys, rkeys, nkeys,
+				        lc_src, lc_out, nlc, rc_src, rc_out, nrc);
+			}
+		}
+		if (how == MG_RIGHT || how == MG_OUTER) {
+			for (SSize_t j = 0; j < nR; j++) {
+				if (matched[j]) continue;
+				HV *restrict ri = (HV *)SvRV(*av_fetch(Rrows, j, 0));
+				mg_emit(aTHX_ result, NULL, ri, lkeys, rkeys, nkeys,
+				        lc_src, lc_out, nlc, rc_src, rc_out, nrc);
+			}
+		}
+	}
+
+	/* ---- materialise ---- */
+	SV *restrict retval;
+	if (!out_hoa) {
+		SvREFCNT_inc((SV *)result);	/* survive FREETMPS */
+		retval = newRV_noinc((SV *)result);
+	} else {
+		/* transpose the AoH result to a HoA over the full column universe */
+		SSize_t nrows = av_len(result) + 1;
+		HV *restrict out = newHV();
+		/* ordered universe: keys, then left cols, then right cols */
+		AV *restrict order = (AV *)sv_2mortal((SV *)newAV());
+		for (SSize_t j = 0; j < nkeys; j++) av_push(order, newSVsv(*av_fetch(lkeys, j, 0)));
+		for (SSize_t c = 0; c < nlc; c++)   av_push(order, newSVsv(*av_fetch(lc_out, c, 0)));
+		for (SSize_t c = 0; c < nrc; c++)   av_push(order, newSVsv(*av_fetch(rc_out, c, 0)));
+		SSize_t nu = av_len(order) + 1;
+		for (SSize_t c = 0; c < nu; c++) {
+			SV *restrict cn = *av_fetch(order, c, 0);
+			AV *restrict col = newAV();
+			if (nrows) av_extend(col, nrows - 1);
+			for (SSize_t i = 0; i < nrows; i++) {
+				HV *restrict r = (HV *)SvRV(*av_fetch(result, i, 0));
+				HE *restrict e = hv_fetch_ent(r, cn, 0, 0);
+				av_push(col, (e && SvOK(HeVAL(e))) ? newSVsv(HeVAL(e)) : newSV(0));
+			}
+			(void)hv_store_ent(out, cn, newRV_noinc((SV *)col), 0);
+		}
+		retval = newRV_noinc((SV *)out);
+	}
+
+	FREETMPS; LEAVE;
+	XPUSHs(sv_2mortal(retval));
+	XSRETURN(1);
+}
 
 void ljoin(h_ref, i_ref)
 	SV *h_ref;

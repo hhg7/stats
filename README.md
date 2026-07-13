@@ -2432,6 +2432,53 @@ works like mean, taking array references and arrays:
 
 as of version 0.02, median will die if any undefined values are provided
 
+## merge
+
+A full relational join of two data frames, in the spirit of R's `merge` and pandas' `DataFrame.merge`. Where [`ljoin`](#ljoin) only does an in-place left join of a hash-of-hashes keyed by row name, `merge` supports every common join type, single- or multi-column keys, keys with different names on each side, column-collision suffixes, and any mix of input/output shapes.
+
+    my $joined = merge($left, $right, how => 'inner', on => 'id');
+
+`$left` and `$right` may each be an **AoH** (array of row hash references), a **HoA** (hash of column array references), or a **HoH** (hash of row hash references; the outer key is treated as a row and is **not** used as a join key). Both frames are read non-destructively.
+
+### Join types (`how`)
+
+- `inner` (default) — only rows whose keys match in both frames.
+- `left` — every `$left` row, plus matching `$right` columns (unmatched `$right` columns become `undef`).
+- `right` — every `$right` row; the mirror image of `left`.
+- `outer` (alias `full`) — the union: all rows from both frames.
+- `cross` — the Cartesian product of the two frames; takes no keys.
+
+### Choosing the keys
+
+- `on => 'col'` or `on => ['c1', 'c2']` — join on one or more columns present under the same name in both frames. `by` is an accepted synonym (R spelling).
+- `'left.on' => .., 'right.on' => ..` — keys with different names on each side (each a name or an array reference of equal length). `by.x`/`by.y` and `left_on`/`right_on` are accepted synonyms. The result carries a single key column under the **left** name.
+- If neither is given, `merge` performs a **natural join** on the sorted intersection of the two frames' column names (it dies if that intersection is empty).
+
+Keys are matched on the **stringified** cell value. A row whose key cell is `undef` (or absent) never matches — the pandas `NaN` rule — so such a row is dropped by an inner/right join and appears only as a left- or right-only row in a left/outer/right join.
+
+### Colliding columns (`suffixes`)
+
+A non-key column that appears in **both** frames would collide, so each copy is renamed by appending a suffix: `.x` to the left copy and `.y` to the right by default (R's convention). Override with `suffixes => ['_left', '_right']`.
+
+### Output shape
+
+By default the result matches the shape of `$left` (a HoH left frame yields an AoH, since a joined frame has no single row-name key). Force it with `'output.type' => 'aoh'` or `'output.type' => 'hoa'`.
+
+### Example
+
+    my $emp  = [ { id => 1, name => 'Alice', dept => 10 },
+                 { id => 2, name => 'Bob',   dept => 20 },
+                 { id => 3, name => 'Carol', dept => 30 } ];
+    my $dept = [ { dept => 10, dname => 'Sales' },
+                 { dept => 20, dname => 'Engineering' } ];
+
+    my $left = merge($emp, $dept, how => 'left', on => 'dept');
+    #  [ { id => 1, name => 'Alice', dept => 10, dname => 'Sales' },
+    #    { id => 2, name => 'Bob',   dept => 20, dname => 'Engineering' },
+    #    { id => 3, name => 'Carol', dept => 30, dname => undef } ]
+
+See also [`ljoin`](#ljoin) (in-place HoH left join), [`concat`](#concat) / [`rbind`](#rbind) (stacking frames row-wise), and [`group_by`](#group_by).
+
 ## min
 
     min(1,2,3);
@@ -2450,6 +2497,7 @@ Takes either an array or an array reference, and returns an array of the most co
     @arr = mode([1,3,3,3]); # returns (3)
 
     @arr = mode('a','a','c','c','z'); # returns ('a', 'c')
+
 ## ncol
 
 `ncol($frame)` returns how many **columns** a data frame has. Like `nrow`, it

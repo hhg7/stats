@@ -217,6 +217,7 @@ TO_INST_PM = TukeyHSD.pl \
 	lm.pl \
 	matrix.pl \
 	md2pod.pl \
+	merge.pl \
 	min.pl \
 	mode.pl \
 	oneway_test.pl \
@@ -1161,6 +1162,7 @@ pm_to_blib : $(FIRST_MAKEFILE) $(TO_INST_PM)
 	  'lm.pl' '$(INST_LIB)/Stats/lm.pl' \
 	  'matrix.pl' '$(INST_LIB)/Stats/matrix.pl' \
 	  'md2pod.pl' '$(INST_LIB)/Stats/md2pod.pl' \
+	  'merge.pl' '$(INST_LIB)/Stats/merge.pl' \
 	  'min.pl' '$(INST_LIB)/Stats/min.pl' \
 	  'mode.pl' '$(INST_LIB)/Stats/mode.pl' \
 	  'oneway_test.pl' '$(INST_LIB)/Stats/oneway_test.pl' \

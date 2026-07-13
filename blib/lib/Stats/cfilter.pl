@@ -11,5 +11,5 @@ use Stats::LikeR;
 
 my $ti = read_table('titanic.more.complete.csv');
 view($ti);
-cfilter($ti, remove => ['ticketno']);
+$ti = cfilter($ti, remove => ['ticketno']);
 view($ti);
