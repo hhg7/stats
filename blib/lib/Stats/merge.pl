@@ -1,13 +1,13 @@
 #!/usr/bin/env perl
 # Exercises Stats::LikeR::merge across join types, key specs, and shapes,
 # comparing the XS result against a pure-Perl reference implementation.
-use 5.010;
+require 5.010;
+use feature 'say';
 use warnings FATAL => 'all';
 use autodie ':default';
 use Devel::Confess 'color';
-use DDP {output => 'STDOUT', array_max => 20};
 use Stats::LikeR;
-use List::Util qw(any);
+use List::Util 'any';
 
 # ---- pure-Perl reference merge (AoH in, AoH out) ------------------------
 sub ref_merge {
@@ -103,8 +103,7 @@ sub sig {
 	return join("\n", sort @sigs);
 }
 
-my $pass = 0;
-my $fail = 0;
+my ($pass, $fail) = (0,0);
 sub check {
 	my ($name, $got, $want) = @_;
 	if (sig($got) eq sig($want)) { $pass++; say "ok   - $name"; }
@@ -181,6 +180,6 @@ check("output.type hoa",
 	Stats::LikeR::merge($emp,$dept, on=>'dept', how=>'inner', 'output.type'=>'hoa'),
 	ref_merge($emp,$dept, on=>'dept', how=>'inner'));
 
-say "";
+say '';
 say "pass=$pass fail=$fail";
 exit($fail ? 1 : 0);

@@ -687,6 +687,43 @@ Notes:
 - **It modifies your data frame.** If you need to keep the original, pass a copy: `assign(clone($df), ...)`.
 - Reusing a column name **overwrites** that column.
 
+## bfill
+
+Back-fill NA (undef) cells with the next valid value seen below them along the
+row axis, like `pandas.DataFrame.bfill`. See `ffill` for the forward direction
+and `fillna` for constant fills.
+
+    bfill($df,
+        cols  => [ 'v' ],   # restrict to these columns (default: every column)
+        limit => 2,         # max consecutive fills per gap (default: unlimited)
+    );
+
+Column identifiers are names for AoH/HoA/HoH and 0-based positions for AoA. The
+row axis is positional for AoA/AoH/HoA and string-sorted key order for HoH (the
+only deterministic order a HoH has). Filling stays within each column's
+existing length: ragged HoA columns are not extended, and AoA rows are not
+extended past their own length.
+
+`limit` caps the number of consecutive NA cells filled in a single gap; the
+remaining cells in an over-long gap stay NA, and the count resets after the
+next real value. A trailing run of NA (with nothing below it) is left as NA.
+
+Returns a NEW frame; the input is never modified.
+
+### Example
+
+    bfill([ { v => undef }, { v => 2 }, { v => undef } ], cols => [ 'v' ]);
+    # [ { v => 2 }, { v => 2 }, { v => undef } ]   # trailing NA stays
+
+    bfill({ b => { x => undef }, a => { x => 5 }, c => { x => undef } }, cols => [ 'x' ]);
+    # sorted-key order a,b,c; nothing after a to pull back, so:
+    # { a => { x => 5 }, b => { x => undef }, c => { x => undef } }
+
+### Errors
+
+Dies on: undefined data; an odd trailing argument list; an unknown argument; a
+`cols` column that does not exist; or a `limit` that is not a positive integer.
+
 ## binom_test
 
 `binom_test` answers one question: you ran a yes/no experiment `n` times and
@@ -1654,6 +1691,86 @@ ignored.
 - An empty AoH or HoA returns empty rather than erroring.
 - HoH results come back in hash order, since HoH rows are unordered.
 
+## ffill
+
+Forward-fill NA (undef) cells with the last valid value seen above them along
+the row axis, like `pandas.DataFrame.ffill`. See `bfill` for the backward
+direction and `fillna` for constant fills.
+
+    ffill($df,
+        cols  => [ 'v' ],   # restrict to these columns (default: every column)
+        limit => 2,         # max consecutive fills per gap (default: unlimited)
+    );
+
+Column identifiers are names for AoH/HoA/HoH and 0-based positions for AoA. The
+row axis is positional for AoA/AoH/HoA and string-sorted key order for HoH (the
+only deterministic order a HoH has). Filling stays within each column's
+existing length: ragged HoA columns are not extended, and AoA rows are not
+extended past their own length.
+
+`limit` caps the number of consecutive NA cells filled in a single gap; the
+remaining cells in an over-long gap stay NA, and the count resets after the
+next real value. A leading run of NA (with nothing above it) is left as NA.
+
+Returns a NEW frame; the input is never modified.
+
+### Example
+
+    ffill([ { v => 1 }, { v => undef }, { v => undef }, { v => 4 }, { v => undef } ],
+        cols => [ 'v' ]);
+    # [ { v => 1 }, { v => 1 }, { v => 1 }, { v => 4 }, { v => 4 } ]
+
+    ffill([ { v => 1 }, { v => undef }, { v => undef }, { v => 4 } ],
+        cols => [ 'v' ], limit => 1);
+    # [ { v => 1 }, { v => 1 }, { v => undef }, { v => 4 } ]
+
+### Errors
+
+Dies on: undefined data; an odd trailing argument list; an unknown argument; a
+`cols` column that does not exist; or a `limit` that is not a positive integer.
+
+## fillna
+
+Replace NA (undef) cells with a constant, like `pandas.DataFrame.fillna` with
+a scalar or a dict. For propagation from neighbouring rows instead of a
+constant, use `ffill`/`bfill`.
+
+    fillna($df,
+        value => 0,                    # scalar: fill every NA (or only within `cols`)
+        value => { a => 9, b => -1 },  # dict: fill only these columns
+        cols  => [ 'a', 'b' ],         # restrict a scalar fill (forbidden with a dict)
+    );
+
+`value` is required. Column identifiers are names for AoH/HoA/HoH and 0-based
+positions for AoA. A missing hash key counts as NA and is materialised when
+filled (as in `dropna`'s NA view). AoA rows are never extended past their own
+length. Ragged HoA columns are extended to the longest column's length before
+filling.
+
+A **scalar** `value` fills every NA in the frame, or — with `cols` — only NA
+cells in the named columns. A **hashref** `value` fills only the columns it
+names; a dict key that matches no existing column is ignored (matching
+pandas), and `cols` may not be combined with a dict.
+
+Returns a NEW frame; the input is never modified.
+
+### Example
+
+    fillna([ { a => 1, b => undef }, { a => undef, b => 4 } ], value => 0);
+    # [ { a => 1, b => 0 }, { a => 0, b => 4 } ]
+
+    fillna([ { a => undef, b => undef } ], value => { a => 9, Z => 1 });
+    # [ { a => 9, b => undef } ]   # Z ignored, b left NA
+
+    fillna([ { a => undef, b => undef } ], value => 7, cols => [ 'b' ]);
+    # [ { a => undef, b => 7 } ]
+
+### Errors
+
+Dies on: undefined data; an odd trailing argument list; an unknown argument; a
+missing `value`; combining `cols` with a dict `value`; or a scalar-fill `cols`
+naming a column that does not exist.
+
 ## filter
 
 Return a new data frame containing only the rows of `$df` that match a predicate. The original `$df` is never modified.
@@ -2432,6 +2549,50 @@ works like mean, taking array references and arrays:
 
 as of version 0.02, median will die if any undefined values are provided
 
+## melt
+
+Reshape a wide frame to long form, like `pandas.DataFrame.melt`. One or more
+identifier columns (`id_vars`) are repeated down the output; every other
+selected column (`value_vars`) is unpivoted into a `variable`/`value` pair.
+
+    melt($df,
+        id_vars      => 'A' | [ 'A', 'B' ],   # kept, repeated (default: none)
+        value_vars   => 'C' | [ 'C', 'D' ],   # unpivoted (default: all non-id cols)
+        var_name     => 'variable',           # name of the column-name column
+        value_name   => 'value',              # name of the value column
+        'output.type' => 'aoh',               # aoa|aoh|hoa|hoh (default: input family)
+    );
+
+Column identifiers are names for AoH/HoA/HoH frames and 0-based integer
+positions for AoA. `value_vars` defaults to every column not in `id_vars`, in
+`colnames()` order.
+
+Output row order is **column-major**: all rows for `value_vars[0]`, then all
+rows for `value_vars[1]`, and so on, preserving input row order within each
+block. HoH output has no natural row axis, so labels are reset to a
+`0 .. N-1` range index.
+
+Returns a NEW frame; the input is never modified.
+
+### Example
+
+    my $df = [ { A => 'a', B => 1, C => 2 },
+               { A => 'b', B => 3, C => 4 } ];
+    melt($df, id_vars => 'A', value_vars => [ 'B', 'C' ]);
+    # [ { A => 'a', variable => 'B', value => 1 },
+    #   { A => 'b', variable => 'B', value => 3 },
+    #   { A => 'a', variable => 'C', value => 2 },
+    #   { A => 'b', variable => 'C', value => 4 } ]
+
+NA cells (undef, or a missing hash key) melt through to `value => undef`.
+
+### Errors
+
+Dies on: undefined data; an odd trailing argument list; an unknown argument; an
+unknown `output.type`; a `value_vars`/`id_vars` column that does not exist;
+`var_name` equal to `value_name`; or `var_name`/`value_name` colliding with an
+`id_vars` column name.
+
 ## merge
 
 A full relational join of two data frames, in the spirit of R's `merge` and pandas' `DataFrame.merge`. Where [`ljoin`](#ljoin) only does an in-place left join of a hash-of-hashes keyed by row name, `merge` supports every common join type, single- or multi-column keys, keys with different names on each side, column-collision suffixes, and any mix of input/output shapes.
@@ -2711,6 +2872,74 @@ the factor's *name* becomes the top-level key:
 Returns array of false-discovery-rate-corrected p-values, where methods available are "holm", "hochberg", "hommel", "bonferroni", "BH", "BY", "fdr"
 
     my @q = p_adjust(\@pvalues, $method);
+
+## pivot_table
+
+Aggregate a long frame into a wide one, like `pandas.pivot_table`. Rows are
+grouped by an `index` key, spread across columns generated from a `columns`
+key, and reduced with `aggfunc`.
+
+    pivot_table($df,
+        index       => 'city' | [ 'city', 'q' ],  # row key (default: none -> one row)
+        columns     => 'year' | [ 'a', 'b' ],      # REQUIRED, generates output columns
+        values      => 'temp' | [ 't', 'h' ],      # aggregated (default: all remaining cols)
+        aggfunc     => 'mean' | [ 'sum', ... ] | sub { ... },
+        skipna      => 1,        # 0 -> any NA in a bucket poisons a numeric reducer
+        fill_value  => 0,        # substitute for NA result cells (default: leave undef)
+        sort        => 1,        # 0 -> keep first-seen row/column order
+        sep         => '.',      # joins pieces of generated column names
+        'output.type' => 'aoh',  # aoa|aoh|hoa|hoh (default: input family)
+    );
+
+`columns` is required. `values` defaults to every column that is neither
+`index` nor `columns`. Column identifiers are names for AoH/HoA/HoH and
+0-based positions for AoA.
+
+`aggfunc` accepts the same vocabulary as `agg()` — `mean median sum sd var min
+max count n nunique first last mode` — or a coderef (called as
+`$code->(\@cells)` with every cell in the bucket, including undef), or an
+arrayref of any of these. With `skipna => 1` (default) undef cells are dropped
+before a numeric reduction; `skipna => 0` makes a numeric reducer return NA if
+its bucket contains any NA.
+
+Rows whose `columns`-tuple contains NA are skipped (an unnameable column).
+With no `index`, all rows collapse to a single `all` row.
+
+### Generated column names
+
+A single value column reduced by a single function names each output column
+after the `columns`-tuple value alone (flat, pandas-like). Multiple functions
+and/or multiple value columns prefix the function and/or value, joined by
+`sep`, in **aggfunc-major** order (function, then value, then columns-tuple).
+A collision between two generated names dies — pass a different `sep` or
+rename inputs.
+
+### Example
+
+    my $df = [ { city => 'NY', year => 2020, temp => 10 },
+               { city => 'NY', year => 2020, temp => 20 },
+               { city => 'NY', year => 2021, temp => 30 },
+               { city => 'LA', year => 2020, temp => 40 } ];
+    pivot_table($df, index => 'city', columns => 'year', values => 'temp');
+    # [ { city => 'LA', 2020 => 40,  2021 => undef },
+    #   { city => 'NY', 2020 => 15,  2021 => 30    } ]
+
+    pivot_table($df, index => 'city', columns => 'year', values => 'temp',
+        aggfunc => [ 'count', 'sum' ]);
+    # names: count.2020 count.2021 sum.2020 sum.2021
+
+Rows and columns are sorted by default (numeric if every key is numeric, else
+string); `sort => 0` keeps first-seen order. HoH output labels come from the
+`index` values (`'all'` with no index) and are uniquified with a numeric
+suffix if two joined labels collide. Returns a NEW frame; the input is never
+modified.
+
+### Errors
+
+Dies on: undefined data; an odd trailing argument list; an unknown argument; a
+missing `columns`; an `index`/`columns`/`values` column that does not exist; an
+unknown `aggfunc` string; an empty `aggfunc` list; an unknown `output.type`; or
+a generated duplicate column name.
 
 ## power_t_test
 
@@ -3979,6 +4208,8 @@ raw values (no cell number formats), matching the round-trip behaviour of
 `cfilter` simplification, use of `qr///` filtering on columns
 
 `summary` output now looks more like `view`, and accepts HoH
+
+Addition of `bfill`, `ffill`, `melt`, and `pivot_table`
 
 ## 0.23 2026-07-10 CDT
 

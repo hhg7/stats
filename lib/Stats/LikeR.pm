@@ -11,18 +11,8 @@ use autodie ':default';
 use Exporter 'import';
 use Scalar::Util qw(reftype looks_like_number);
 XSLoader::load('Stats::LikeR', $VERSION);
-our @EXPORT_OK = qw(add_data agg anova aoh2hoa aoh2hoh aov assign binom_test cfilter chisq_test chunk col col2col colnames concat cor cor_test cov csort dnorm drop_cols dropna filter fisher_test get_union get_unique glm group_by hoa2aoh hoa2hoh hoh2hoa hist intersection is_equivalent kruskal_test ks_test Lonly ljoin lm map_cell matrix max mean median merge min mode ncol nrow oneway_test p_adjust pnorm power_t_test predict prcomp ptukey qcut qtukey quantile rank Ronly rbind rbinom read_table rename_cols rnorm rownames runif sample scale sd select_cols seq shapiro_test sum summary t_test transpose TukeyHSD uniq vals value_counts var var_test view wilcox_test write_table);
+our @EXPORT_OK = qw(add_data agg anova aoh2hoa aoh2hoh aov assign bfill binom_test cfilter chisq_test chunk col col2col colnames concat cor cor_test cov csort dnorm drop_cols dropna ffill fillna filter fisher_test get_union get_unique glm group_by hoa2aoh hoa2hoh hoh2hoa hist intersection is_equivalent kruskal_test ks_test Lonly ljoin lm map_cell matrix max mean median melt merge min mode ncol nrow oneway_test p_adjust pivot_table pnorm power_t_test predict prcomp ptukey qcut qtukey quantile rank Ronly rbind rbinom read_table rename_cols rnorm rownames runif sample scale sd select_cols seq shapiro_test sum summary t_test transpose TukeyHSD uniq vals value_counts var var_test view wilcox_test write_table);
 our @EXPORT = @EXPORT_OK;
-
-# =====================================================================
-# 1) Add to @EXPORT_OK (line 14).  @EXPORT = @EXPORT_OK, so nothing else
-#    to touch.  Insert `colnames` after `col2col` and `rownames` after
-#    `rnorm` to keep the run roughly alphabetical:
-#
-#    ... chunk col col2col colnames concat cor cor_test ...
-#    ... rbinom read_table rnorm rownames runif sample ...
-# =====================================================================
-
 
 # colnames($df) / rownames($df)
 #
@@ -2669,6 +2659,599 @@ sub _tukey_compare {
 	}
 	return \@rows;
 }
+
+# =======================================================================
+# melt / pivot_table / fillna / ffill / bfill
+#   pure-Perl additions to lib/Stats/LikeR.pm
+#
+# Placement: splice the reshape pair (melt, pivot_table) in after concat/
+# rbind, and the impute trio (fillna, ffill, bfill) in after dropna.  Add
+#   melt pivot_table fillna ffill bfill
+# to @EXPORT_OK (== @EXPORT).  All five reshape/impute at the Perl level
+# only; the sole numeric work is in pivot_table, which reuses the XS
+# reducers through _agg_reduce, so there is no XS/ABI surface added here.
+#
+# NA is undef throughout, exactly as dropna() treats it (a missing hash key
+# counts as NA).  Every function returns a NEW top-level frame and never
+# mutates its input.  Shape is classified by _df_shape (the agg()/view()
+# detector); 'output.type' defaults to the input family, like agg().
+# =======================================================================
+
+# _frame_cols($df, $shape, \@need) -> (\%col, $R)
+#
+# Extract the named columns once, aligned to row positions 0 .. R-1, using
+# the same per-shape access agg() uses.  For HoA the column arrays are
+# aliased (read-only callers), not rebuilt; every other shape materialises
+# a fresh per-column slice.  HoH rows are visited in string-sorted key
+# order so a positional axis exists.  Not exported.
+sub _frame_cols {
+	my ($df, $shape, $need) = @_;
+	my (%col, $R);
+	if ($shape eq 'AoA') {
+		my @h = grep { defined } @$df;
+		$R = scalar @h;
+		for my $c (@$need) { $col{$c} = [ map { $_->[$c] } @h ] }
+	} elsif ($shape eq 'AoH') {
+		my @h = grep { defined } @$df;
+		$R = scalar @h;
+		for my $c (@$need) { $col{$c} = [ map { $_->{$c} } @h ] }
+	} elsif ($shape eq 'HoA') {
+		$R = 0;
+		for my $v (values %$df) { $R = @$v if ref $v eq 'ARRAY' && @$v > $R }
+		for my $c (@$need) { $col{$c} = ref $df->{$c} eq 'ARRAY' ? $df->{$c} : [] }
+	} else {                                     # HoH
+		my @h = map { $df->{$_} } sort keys %$df;
+		$R = scalar @h;
+		for my $c (@$need) { $col{$c} = [ map { $_->{$c} } @h ] }
+	}
+	return (\%col, $R);
+}
+
+# _sort_group_keys(\@order, \%repr) -> \@sorted
+#
+# Order group keys by their representative value tuple, numerically when
+# every tuple element (across every group) looks like a number, else as
+# strings (undef sorts as ''); the same rule agg() uses for its groups.
+# Not exported.
+sub _sort_group_keys {
+	my ($order, $repr) = @_;
+	my $all_num = 1;
+	SORTNUM: for my $k (@$order) {
+		for my $v (@{ $repr->{$k} }) {
+			unless (defined $v && looks_like_number($v)) { $all_num = 0; last SORTNUM }
+		}
+	}
+	if ($all_num) {
+		return [ sort {
+			my ($ra, $rb) = ($repr->{$a}, $repr->{$b});
+			my $c = 0;
+			for my $j (0 .. $#$ra) { last if $c = $ra->[$j] <=> $rb->[$j] }
+			$c;
+		} @$order ];
+	}
+	return [ sort {
+		my ($ra, $rb) = ($repr->{$a}, $repr->{$b});
+		my $c = 0;
+		for my $j (0 .. $#$ra) {
+			my $x = defined $ra->[$j] ? $ra->[$j] : '';
+			my $y = defined $rb->[$j] ? $rb->[$j] : '';
+			last if $c = $x cmp $y;
+		}
+		$c;
+	} @$order ];
+}
+
+# melt($df, id_vars => $col|\@cols, value_vars => $col|\@cols,
+#      var_name => 'variable', value_name => 'value', 'output.type' => aoa|aoh|hoa|hoh)
+#
+# Wide -> long, like pandas DataFrame.melt.  Each cell of the value_vars
+# columns becomes its own output row: the id_vars are copied across, the
+# var_name column holds the source column identifier and the value_name
+# column holds the cell.  Column identifiers are names for AoH/HoA/HoH and
+# 0-based integer positions for AoA.
+#
+#   id_vars      scalar or arrayref; default none.
+#   value_vars   scalar or arrayref; default every column not in id_vars
+#                (column universe and order come from colnames()).
+#   var_name     name of the variable column; default 'variable'.
+#   value_name   name of the value column;    default 'value'.
+#   'output.type' aoa|aoh|hoa|hoh; default the input family.  For aoa output
+#                the columns are positional (id_vars.., variable, value) so
+#                var_name/value_name are not used.  For hoh output the row
+#                labels are reset to 0 .. N-1 (like pandas' RangeIndex).
+#
+# Row order is column-major, matching pandas: all rows for value_vars[0],
+# then all rows for value_vars[1], and so on, preserving input row order
+# within each block.  The original frame is never modified.
+sub melt {
+	my $df = shift;
+	die 'melt: undefined data in first position' unless defined $df;
+	my $shape = _df_shape($df, 'melt');
+	die "melt: arguments after the data frame must be name => value pairs\n"
+		if @_ % 2;
+	my %arg = @_;
+	my %known = ( id_vars => 1, value_vars => 1, var_name => 1,
+	              value_name => 1, 'output.type' => 1 );
+	my @bad = sort grep { !$known{$_} } keys %arg;
+	die "melt: unknown argument(s): @bad\n" if @bad;
+
+	my @id = !defined $arg{id_vars}        ? ()
+	       : ref $arg{id_vars} eq 'ARRAY'  ? @{ $arg{id_vars} }
+	       :                                 ( $arg{id_vars} );
+	my $var_name   = defined $arg{var_name}   ? $arg{var_name}   : 'variable';
+	my $value_name = defined $arg{value_name} ? $arg{value_name} : 'value';
+	my $otype = defined $arg{'output.type'} ? lc $arg{'output.type'} : lc $shape;
+	my %ok_otype = ( aoa => 1, aoh => 1, hoa => 1, hoh => 1 );
+	die "melt: output.type '$otype' isn't allowed (aoa, aoh, hoa, hoh)\n"
+		unless $ok_otype{$otype};
+
+	my @universe = colnames($df);
+	my %uni = map { $_ => 1 } @universe;
+	my %is_id = map { $_ => 1 } @id;
+	my @val = !defined $arg{value_vars}        ? ( grep { !$is_id{$_} } @universe )
+	        : ref $arg{value_vars} eq 'ARRAY'  ? @{ $arg{value_vars} }
+	        :                                    ( $arg{value_vars} );
+	for my $c (@id, @val) {
+		die "melt: column '$c' not found\n" unless $uni{$c};
+	}
+	# name hygiene: the emitted variable/value columns must not collide
+	die "melt: var_name and value_name must differ\n"
+		if $var_name eq $value_name;
+	if ($otype ne 'aoa') {
+		for my $c (@id) {
+			die "melt: var_name '$var_name' collides with an id_vars column\n"
+				if $c eq $var_name;
+			die "melt: value_name '$value_name' collides with an id_vars column\n"
+				if $c eq $value_name;
+		}
+	}
+
+	my %need; $need{$_} = 1 for @id, @val;
+	my ($col, $R) = _frame_cols($df, $shape, [ keys %need ]);
+
+	# column-major stack: [ \@id_values, variable, value ]
+	my @rec;
+	for my $v (@val) {
+		for (my $i = 0; $i < $R; $i++) {
+			my @idvals = map { $col->{$_}[$i] } @id;
+			push @rec, [ \@idvals, $v, $col->{$v}[$i] ];
+		}
+	}
+
+	if ($otype eq 'aoa') {
+		return [ map { [ @{ $_->[0] }, $_->[1], $_->[2] ] } @rec ];
+	} elsif ($otype eq 'aoh') {
+		my @out;
+		for my $r (@rec) {
+			my %h;
+			@h{ @id } = @{ $r->[0] };
+			$h{$var_name}   = $r->[1];
+			$h{$value_name} = $r->[2];
+			push @out, \%h;
+		}
+		return \@out;
+	} elsif ($otype eq 'hoa') {
+		my %out = map { $_ => [] } @id, $var_name, $value_name;
+		for my $r (@rec) {
+			push @{ $out{ $id[$_] } }, $r->[0][$_] for 0 .. $#id;
+			push @{ $out{$var_name} },   $r->[1];
+			push @{ $out{$value_name} }, $r->[2];
+		}
+		return \%out;
+	} else {                                     # hoh, RangeIndex 0..N-1
+		my %out;
+		my $n = 0;
+		for my $r (@rec) {
+			my %h;
+			@h{ @id } = @{ $r->[0] };
+			$h{$var_name}   = $r->[1];
+			$h{$value_name} = $r->[2];
+			$out{ $n++ } = \%h;
+		}
+		return \%out;
+	}
+}
+
+# pivot_table($df, index => $col|\@cols, columns => $col|\@cols,
+#             values => $col|\@cols, aggfunc => 'mean', fill_value => undef,
+#             skipna => 1, sort => 1, sep => '.', 'output.type' => ...)
+#
+# Long -> wide with aggregation, like pandas DataFrame.pivot_table.  Rows are
+# the distinct `index` tuples; the distinct `columns` tuples spread into new
+# output columns; each cell is `aggfunc` applied to the `values` that fall in
+# that (index, columns) bucket.  This is the combine half of agg() with the
+# group value spread across columns instead of down rows, and it reuses the
+# same aggregator vocabulary.
+#
+#   index        scalar/arrayref of columns that become output rows; default
+#                none (a single aggregated row).
+#   columns      scalar/arrayref whose distinct value tuples become output
+#                columns.  REQUIRED.  A row whose `columns` tuple has any NA
+#                is skipped (no column can be named from it).
+#   values       scalar/arrayref of columns to aggregate; default every column
+#                not used by index/columns.
+#   aggfunc      one aggregator name, an arrayref of names, or a coderef;
+#                default 'mean'.  Named: mean median sum sd var min max count
+#                n nunique first last mode (the agg() set).  A coderef is
+#                called as $code->(\@cells) with every cell (NA included).
+#   fill_value   substituted for any NA result cell (missing bucket, or an
+#                aggregate that came back undef); default leaves undef.
+#   skipna       0|1, default 1; forwarded to the numeric reducers as in agg.
+#   sort         0|1, default 1; sort output rows and columns by their key
+#                (numeric if every key looks numeric, else string).
+#   sep          separator for generated column names; default '.'.
+#   'output.type' aoa|aoh|hoa|hoh; default input family.  For hoh the row
+#                label is the index tuple joined with '.', uniquified with .N.
+#
+# Generated column names join, with `sep` and in this order, only the pieces
+# that vary: the aggregator name (only when >1 aggregator), the value column
+# (only when >1 value), and always the `columns` tuple.  With a single value
+# and single aggregator the name is exactly the `columns` tuple, matching
+# pandas' flat output.  A duplicate generated name is an error (raise `sep`).
+# The original frame is never modified.
+sub pivot_table {
+	my $df = shift;
+	die 'pivot_table: undefined data in first position' unless defined $df;
+	my $shape = _df_shape($df, 'pivot_table');
+	die "pivot_table: arguments after the data frame must be name => value pairs\n"
+		if @_ % 2;
+	my %arg = @_;
+	my %known = ( index => 1, columns => 1, values => 1, aggfunc => 1,
+	              fill_value => 1, skipna => 1, sort => 1, sep => 1,
+	              'output.type' => 1 );
+	my @bad = sort grep { !$known{$_} } keys %arg;
+	die "pivot_table: unknown argument(s): @bad\n" if @bad;
+	die "pivot_table: 'columns' is required\n" unless defined $arg{columns};
+
+	my @index   = !defined $arg{index}       ? ()
+	            : ref $arg{index} eq 'ARRAY'  ? @{ $arg{index} }
+	            :                               ( $arg{index} );
+	my @columns = ref $arg{columns} eq 'ARRAY' ? @{ $arg{columns} } : ( $arg{columns} );
+	die "pivot_table: 'columns' must name at least one column\n" unless @columns;
+
+	my $sep      = defined $arg{sep} ? $arg{sep} : '.';
+	my $skipna   = exists $arg{skipna} ? ($arg{skipna} ? 1 : 0) : 1;
+	my $dosort   = exists $arg{sort}   ? ($arg{sort}   ? 1 : 0) : 1;
+	my $has_fill = exists $arg{fill_value};
+	my $fill     = $arg{fill_value};
+	my $otype    = defined $arg{'output.type'} ? lc $arg{'output.type'} : lc $shape;
+	my %ok_otype = ( aoa => 1, aoh => 1, hoa => 1, hoh => 1 );
+	die "pivot_table: output.type '$otype' isn't allowed (aoa, aoh, hoa, hoh)\n"
+		unless $ok_otype{$otype};
+
+	my $af = exists $arg{aggfunc} ? $arg{aggfunc} : 'mean';
+	my @funcs = ref $af eq 'ARRAY' ? @$af : ( $af );
+	die "pivot_table: empty aggfunc list\n" unless @funcs;
+	my %known_agg = map { $_ => 1 }
+		qw(mean median sum sd var min max count n nunique first last mode);
+	for my $f (@funcs) {
+		next if ref $f eq 'CODE';
+		die "pivot_table: unknown aggfunc '$f'\n" unless $known_agg{$f};
+	}
+
+	my @universe = colnames($df);
+	my %uni = map { $_ => 1 } @universe;
+	my %reserved = map { $_ => 1 } @index, @columns;
+	my @values = !defined $arg{values}       ? ( grep { !$reserved{$_} } @universe )
+	           : ref $arg{values} eq 'ARRAY'  ? @{ $arg{values} }
+	           :                                ( $arg{values} );
+	die "pivot_table: no value columns to aggregate\n" unless @values;
+	for my $c (@index, @columns, @values) {
+		die "pivot_table: column '$c' not found\n" unless $uni{$c};
+	}
+
+	my %need; $need{$_} = 1 for @index, @columns, @values;
+	my ($col, $R) = _frame_cols($df, $shape, [ keys %need ]);
+
+	# bucket every row under (index tuple, columns tuple), first-seen order
+	my (%rrepr, @rorder, %rseen, %crepr, @corder, %cseen, %bucket);
+	for (my $i = 0; $i < $R; $i++) {
+		my @cv = map { $col->{$_}[$i] } @columns;
+		next if grep { !defined } @cv;           # NA columns tuple -> unnameable
+		my $ck = join "\x1e", map { "v$_" } @cv;
+		unless ($cseen{$ck}) {
+			$cseen{$ck} = 1; push @corder, $ck; $crepr{$ck} = [ @cv ];
+		}
+		my @iv = map { $col->{$_}[$i] } @index;
+		my $rk = @index
+			? join("\x1e", map { defined $_ ? "v$_" : "\0" } @iv)
+			: "\0all";
+		unless ($rseen{$rk}) {
+			$rseen{$rk} = 1; push @rorder, $rk; $rrepr{$rk} = [ @iv ];
+		}
+		push @{ $bucket{$rk}{$ck}{$_} }, $col->{$_}[$i] for @values;
+	}
+	if ($dosort) {
+		@rorder = @{ _sort_group_keys(\@rorder, \%rrepr) } if @index;
+		@corder = @{ _sort_group_keys(\@corder, \%crepr) };
+	}
+
+	# output column plan: aggfunc-major, then value, then columns tuple
+	my $multi_f = @funcs > 1;
+	my $multi_v = @values > 1;
+	my @colplan;                                 # [ ck, value, func, outname ]
+	for my $f (@funcs) {
+		my $fl = ref $f eq 'CODE' ? 'fn' : $f;
+		for my $vv (@values) {
+			for my $ck (@corder) {
+				my $cstr = join $sep, map { defined $_ ? $_ : '' } @{ $crepr{$ck} };
+				my @pieces;
+				push @pieces, $fl if $multi_f;
+				push @pieces, $vv if $multi_v;
+				push @pieces, $cstr;
+				push @colplan, [ $ck, $vv, $f, join($sep, @pieces) ];
+			}
+		}
+	}
+	my @out_names = ( @index, map { $_->[3] } @colplan );
+	{
+		my (%seen, @dup);
+		for my $n (@out_names) { push @dup, $n if $seen{$n}++ == 1 }
+		die "pivot_table: generated duplicate column name(s): @dup; "
+		  . "pass a different 'sep' or rename inputs\n" if @dup;
+	}
+
+	# materialise straight into the requested shape
+	my (@aoa, @aoh, %hoa, %hoh, %lseen);
+	if ($otype eq 'hoa') { $hoa{$_} = [] for @out_names }
+	for my $rk (@rorder) {
+		my @vals = @{ $rrepr{$rk} };              # index values
+		for my $cp (@colplan) {
+			my ($ck, $vv, $f) = @$cp;
+			my $raw = $bucket{$rk}{$ck}{$vv};
+			my $cell;
+			if (defined $raw && @$raw) {
+				my @def = grep { defined } @$raw;
+				$cell = _agg_reduce($f, $raw, \@def, $skipna);
+			}
+			$cell = $fill if !defined $cell && $has_fill;
+			push @vals, $cell;
+		}
+		if ($otype eq 'aoa') {
+			push @aoa, \@vals;
+		} elsif ($otype eq 'aoh') {
+			my %h; @h{ @out_names } = @vals; push @aoh, \%h;
+		} elsif ($otype eq 'hoa') {
+			push @{ $hoa{ $out_names[$_] } }, $vals[$_] for 0 .. $#out_names;
+		} else {                                  # hoh
+			my $label = @index
+				? join('.', map { defined $_ ? $_ : '' } @{ $rrepr{$rk} })
+				: 'all';
+			my $uniq = $label; my $j = 0;
+			while (exists $lseen{$uniq}) { $uniq = $label . '.' . (++$j) }
+			$lseen{$uniq} = 1;
+			my %h; @h{ @out_names } = @vals; $hoh{$uniq} = \%h;
+		}
+	}
+	return \@aoa if $otype eq 'aoa';
+	return \@aoh if $otype eq 'aoh';
+	return \%hoa if $otype eq 'hoa';
+	return \%hoh;
+}
+
+# fillna($df, value => $scalar | { col => val, ... }, cols => \@cols)
+#
+# Replace NA (undef) cells with a constant, like pandas DataFrame.fillna with
+# a scalar or a dict.  `value` is REQUIRED and is either a single scalar (fill
+# every NA in the frame, or only within `cols` when given) or a hashref mapping
+# column => fill value (only those columns are touched; a dict key that names
+# no existing column is ignored, matching pandas, and `cols` is then forbidden).
+# For a scalar `value`, an explicit `cols` that names a missing column dies,
+# like dropna().  Column identifiers are names for AoH/HoA/HoH and 0-based
+# integer positions for AoA.
+#
+# A targeted column's missing hash key counts as NA and is materialised on
+# fill (as in dropna's NA view).  AoA rows are not extended past their own
+# length.  A structurally-undef (non-ref) row is passed through unchanged, not
+# fabricated into a data row, matching ffill()/bfill().  For propagation instead
+# of a constant use ffill()/bfill().  Returns
+# a NEW frame (rows/columns rebuilt as needed); the original is never modified.
+sub fillna {
+	my $df = shift;
+	die 'fillna: undefined data in first position' unless defined $df;
+	my $shape = _df_shape($df, 'fillna');
+	die "fillna: arguments after the data frame must be name => value pairs\n"
+		if @_ % 2;
+	my %arg = @_;
+	my %known = ( value => 1, cols => 1 );
+	my @bad = sort grep { !$known{$_} } keys %arg;
+	die "fillna: unknown argument(s): @bad\n" if @bad;
+	die "fillna: a 'value' is required\n" unless exists $arg{value};
+
+	my $value   = $arg{value};
+	my $per_col = ref $value eq 'HASH';
+	die "fillna: 'cols' cannot be combined with a per-column 'value' hashref\n"
+		if $per_col && exists $arg{cols};
+
+	my @universe = colnames($df);
+	my %uni = map { $_ => 1 } @universe;
+
+	my (%fillmap, $scalar_fill, %tset, @targets);
+	if ($per_col) {
+		%fillmap = %$value;
+		@targets = grep { $uni{$_} } keys %fillmap;   # ignore unknown dict keys
+	} else {
+		$scalar_fill = $value;
+		if (exists $arg{cols}) {
+			die "fillna: 'cols' must be an arrayref\n"
+				unless ref $arg{cols} eq 'ARRAY';
+			for my $c (@{ $arg{cols} }) {
+				die "fillna: column '$c' not found\n" unless $uni{$c};
+			}
+			@targets = @{ $arg{cols} };
+		} else {
+			@targets = @universe;
+		}
+	}
+	%tset = map { $_ => 1 } @targets;
+	my $tv = sub { $per_col ? $fillmap{ $_[0] } : $scalar_fill };
+
+	if ($shape eq 'AoH') {
+		my @out;
+		for my $row (@$df) {
+			unless (ref $row eq 'HASH') { push @out, $row; next }
+			my %h = %$row;
+			for my $c (@targets) { $h{$c} = $tv->($c) unless defined $h{$c} }
+			push @out, \%h;
+		}
+		return \@out;
+	}
+	if ($shape eq 'HoH') {
+		my %out;
+		for my $rk (keys %$df) {
+			my $row = $df->{$rk};
+			unless (ref $row eq 'HASH') { $out{$rk} = $row; next }
+			my %h = %$row;
+			for my $c (@targets) { $h{$c} = $tv->($c) unless defined $h{$c} }
+			$out{$rk} = \%h;
+		}
+		return \%out;
+	}
+	if ($shape eq 'HoA') {
+		my $R = 0;
+		for my $v (values %$df) { $R = @$v if ref $v eq 'ARRAY' && @$v > $R }
+		my %out;
+		for my $c (keys %$df) {
+			my $arr = ref $df->{$c} eq 'ARRAY' ? $df->{$c} : [];
+			if ($tset{$c}) {
+				my $fv = $tv->($c);
+				$out{$c} = [ map { defined $arr->[$_] ? $arr->[$_] : $fv } 0 .. $R - 1 ];
+			} else {
+				$out{$c} = [ @$arr ];
+			}
+		}
+		return \%out;
+	}
+	# AoA
+	my @out;
+	for my $row (@$df) {
+		unless (ref $row eq 'ARRAY') { push @out, $row; next }
+		my @r = @$row;
+		for my $c (@targets) {
+			$r[$c] = $tv->($c) if $c <= $#r && !defined $r[$c];
+		}
+		push @out, \@r;
+	}
+	return \@out;
+}
+
+# _fill_seq(\@vals, $dir, $limit) -> \@vals   (modifies in place)
+#
+# Propagate the last (dir=1, forward) or next (dir=-1, backward) defined value
+# over runs of undef.  With a defined `limit`, at most `limit` consecutive
+# undefs are filled per gap; the rest stay undef.  Not exported.
+sub _fill_seq {
+	my ($vals, $dir, $limit) = @_;
+	my $n = scalar @$vals;
+	my @idx = $dir > 0 ? ( 0 .. $n - 1 ) : reverse( 0 .. $n - 1 );
+	my ($last, $have, $run) = (undef, 0, 0);
+	for my $i (@idx) {
+		if (defined $vals->[$i]) {
+			$last = $vals->[$i]; $have = 1; $run = 0;
+		} elsif ($have) {
+			next if defined $limit && $run >= $limit;
+			$vals->[$i] = $last; $run++;
+		}
+	}
+	return $vals;
+}
+
+# _impute_prop($df, $name, $dir, %opts) -- shared core of ffill/bfill.
+#
+# Propagate defined values along the row axis within each targeted column.
+# Row order is positional for AoA/AoH/HoA and string-sorted key order for HoH
+# (the only deterministic order a HoH has).  Options: cols => \@cols (default
+# every column; an unknown column dies), limit => positive int (max fills per
+# gap).  Fills within each column's existing length only (ragged HoA columns
+# are not extended); AoA rows are not extended past their own length.  Returns
+# a NEW frame; the original is never modified.  Not exported.
+sub _impute_prop {
+	my $df   = shift;
+	my $name = shift;
+	my $dir  = shift;
+	die "$name: undefined data in first position" unless defined $df;
+	my $shape = _df_shape($df, $name);
+	die "$name: arguments after the data frame must be name => value pairs\n"
+		if @_ % 2;
+	my %arg = @_;
+	my %known = ( cols => 1, limit => 1 );
+	my @bad = sort grep { !$known{$_} } keys %arg;
+	die "$name: unknown argument(s): @bad\n" if @bad;
+
+	my $limit = $arg{limit};
+	die "$name: 'limit' must be a positive integer\n"
+		if defined $limit
+		&& ( !looks_like_number($limit) || $limit < 1 || $limit != int $limit );
+
+	my @universe = colnames($df);
+	my %uni = map { $_ => 1 } @universe;
+	my @targets;
+	if (exists $arg{cols}) {
+		die "$name: 'cols' must be an arrayref\n" unless ref $arg{cols} eq 'ARRAY';
+		for my $c (@{ $arg{cols} }) {
+			die "$name: column '$c' not found\n" unless $uni{$c};
+		}
+		@targets = @{ $arg{cols} };
+	} else {
+		@targets = @universe;
+	}
+	my %tset = map { $_ => 1 } @targets;
+
+	if ($shape eq 'AoH') {
+		my @out = map { ref $_ eq 'HASH' ? { %$_ } : $_ } @$df;
+		for my $c (@targets) {
+			my @vals = map { ref $_ eq 'HASH' ? $_->{$c} : undef } @out;
+			_fill_seq(\@vals, $dir, $limit);
+			for my $i (0 .. $#out) {
+				next unless ref $out[$i] eq 'HASH';
+				$out[$i]{$c} = $vals[$i] if defined $vals[$i];
+			}
+		}
+		return \@out;
+	}
+	if ($shape eq 'HoH') {
+		my @keys = sort keys %$df;
+		my %out = map {
+			$_ => ( ref $df->{$_} eq 'HASH' ? { %{ $df->{$_} } } : $df->{$_} )
+		} keys %$df;
+		for my $c (@targets) {
+			my @vals = map { ref $out{$_} eq 'HASH' ? $out{$_}{$c} : undef } @keys;
+			_fill_seq(\@vals, $dir, $limit);
+			for my $j (0 .. $#keys) {
+				my $rk = $keys[$j];
+				next unless ref $out{$rk} eq 'HASH';
+				$out{$rk}{$c} = $vals[$j] if defined $vals[$j];
+			}
+		}
+		return \%out;
+	}
+	if ($shape eq 'HoA') {
+		my %out;
+		for my $c (keys %$df) {
+			my $arr = ref $df->{$c} eq 'ARRAY' ? [ @{ $df->{$c} } ] : [];
+			_fill_seq($arr, $dir, $limit) if $tset{$c};
+			$out{$c} = $arr;
+		}
+		return \%out;
+	}
+	# AoA
+	my @out = map { ref $_ eq 'ARRAY' ? [ @$_ ] : $_ } @$df;
+	for my $c (@targets) {
+		my @vals = map { ref $_ eq 'ARRAY' ? $_->[$c] : undef } @out;
+		_fill_seq(\@vals, $dir, $limit);
+		for my $i (0 .. $#out) {
+			next unless ref $out[$i] eq 'ARRAY';
+			$out[$i][$c] = $vals[$i] if $c <= $#{ $out[$i] } && defined $vals[$i];
+		}
+	}
+	return \@out;
+}
+
+# ffill($df, cols => \@cols, limit => $n)  -- forward-fill NA (last valid obs).
+# bfill($df, cols => \@cols, limit => $n)  -- back-fill NA (next valid obs).
+# See _impute_prop for the row-axis and shape semantics.
+sub ffill { _impute_prop( shift, 'ffill',  1, @_ ) }
+sub bfill { _impute_prop( shift, 'bfill', -1, @_ ) }
 
 # _tukey_col($data, $col) -- pull one column's cells, in row order, from any
 # of the three data-frame shapes (AoH arrayref, HoA/HoH hashref).
