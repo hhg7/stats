@@ -2482,6 +2482,56 @@ Computes the histogram of the given data values, operating in single $O(N)$ pass
 .Ve
 .PP
 If \f(CW\*(C`breaks\*(C'\fR is not explicitly provided, it defaults to calculating the number of bins using Sturges' formula.
+.SS "interpolate"
+.IX Subsection "interpolate"
+Fills missing values (\s-1NA\s0, represented by \f(CW\*(C`undef\*(C'\fR) by linear interpolation
+along the row axis, modeled on pandas' \f(CW\*(C`DataFrame.interpolate(method=\*(Aqlinear\*(Aq)\*(C'\fR.
+It is the numeric sibling of \f(CW\*(C`ffill\*(C'\fR/\f(CW\*(C`bfill\*(C'\fR: instead of propagating a
+neighbouring value it fits a straight line between the nearest numeric values
+below and above each gap, treating the rows as equally spaced.
+.PP
+.Vb 1
+\& use Stats::LikeR;
+\&
+\& # interior gaps interpolated; trailing gap held constant; leading gap kept NA
+\& interpolate({ v => [ undef, 1, undef, undef, 4, undef ] });
+\& # => { v => [ undef, 1, 2, 3, 4, 4 ] }
+.Ve
+.PP
+Works on all four data-frame shapes with the same row order and column
+semantics as \f(CW\*(C`ffill\*(C'\fR/\f(CW\*(C`bfill\*(C'\fR: positional for AoA/AoH/HoA and sorted-key order
+for HoH; column identifiers are names for AoH/HoA/HoH and 0\-based positions for
+AoA. Every call returns a \fBnew\fR frame and never mutates its input.
+.PP
+Options are \f(CW\*(C`name => value\*(C'\fR pairs following the data frame:
+.IP "\(bu" 4
+\&\f(CW\*(C`method\*(C'\fR — only \f(CW\*(Aqlinear\*(Aq\fR is supported (the default).
+.IP "\(bu" 4
+\&\f(CW\*(C`cols\*(C'\fR — an array ref of columns to interpolate; defaults to every column.
+.IP "\(bu" 4
+\&\f(CW\*(C`limit\*(C'\fR — a positive integer capping how many cells are filled per run
+of consecutive NAs (as in \f(CW\*(C`ffill\*(C'\fR/\f(CW\*(C`bfill\*(C'\fR).
+.IP "\(bu" 4
+\&\f(CW\*(C`limit_direction\*(C'\fR — \f(CW\*(Aqforward\*(Aq\fR (the default), \f(CW\*(Aqbackward\*(Aq\fR, or
+\&\f(CW\*(Aqboth\*(Aq\fR. Interior gaps are always linearly interpolated; this option only
+governs which cells a \f(CW\*(C`limit\*(C'\fR reaches, and whether \fBtrailing\fR gaps (under
+\&\f(CW\*(Aqforward\*(Aq\fR) or \fBleading\fR gaps (under \f(CW\*(Aqbackward\*(Aq\fR) are held constant at the
+last/next value.
+.IP "\(bu" 4
+\&\f(CW\*(C`limit_area\*(C'\fR — \f(CW\*(Aqinside\*(Aq\fR fills only interior gaps, \f(CW\*(Aqoutside\*(Aq\fR only
+leading/trailing gaps, and the default (undef) fills both.
+.PP
+Only numeric neighbours anchor a fill: a defined non-numeric cell is left
+untouched and \fBblocks\fR interpolation across it. Interpolated cells are
+floats. Fills stay within each column's existing length (ragged HoA columns are
+not extended, and AoA rows are not extended past their own length), and a
+non-reference row is passed through unchanged — all matching \f(CW\*(C`ffill\*(C'\fR/\f(CW\*(C`bfill\*(C'\fR.
+For constant propagation instead of a linear fit, use \f(CW\*(C`ffill\*(C'\fR/\f(CW\*(C`bfill\*(C'\fR; for a
+fixed replacement value, use \f(CW\*(C`fillna\*(C'\fR.
+.PP
+\&\f(CW\*(C`interpolate\*(C'\fR croaks on undefined data, an unknown option, non-pair trailing
+arguments, an unknown column in \f(CW\*(C`cols\*(C'\fR, a non-positive or non-integer \f(CW\*(C`limit\*(C'\fR,
+or an unsupported \f(CW\*(C`method\*(C'\fR/\f(CW\*(C`limit_direction\*(C'\fR/\f(CW\*(C`limit_area\*(C'\fR.
 .SS "intersection"
 .IX Subsection "intersection"
 Returns the set intersection (∩) of a list of array references: the values

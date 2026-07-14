@@ -11,7 +11,7 @@ use autodie ':default';
 use Exporter 'import';
 use Scalar::Util qw(reftype looks_like_number);
 XSLoader::load('Stats::LikeR', $VERSION);
-our @EXPORT_OK = qw(add_data agg anova aoh2hoa aoh2hoh aov assign bfill binom_test cfilter chisq_test chunk col col2col colnames concat cor cor_test cov csort dnorm drop_cols dropna ffill fillna filter fisher_test get_union get_unique glm group_by hoa2aoh hoa2hoh hoh2hoa hist intersection is_equivalent kruskal_test ks_test Lonly ljoin lm map_cell matrix max mean median melt merge min mode ncol nrow oneway_test p_adjust pivot_table pnorm power_t_test predict prcomp ptukey qcut qtukey quantile rank Ronly rbind rbinom read_table rename_cols rnorm rownames runif sample scale sd select_cols seq shapiro_test sum summary t_test transpose TukeyHSD uniq vals value_counts var var_test view wilcox_test write_table);
+our @EXPORT_OK = qw(add_data agg anova aoh2hoa aoh2hoh aov assign bfill binom_test cfilter chisq_test chunk col col2col colnames concat cor cor_test cov csort dnorm drop_cols dropna ffill fillna filter fisher_test get_union get_unique glm group_by hoa2aoh hoa2hoh hoh2hoa hist interpolate intersection is_equivalent kruskal_test ks_test Lonly ljoin lm map_cell matrix max mean median melt merge min mode ncol nrow oneway_test p_adjust pivot_table pnorm power_t_test predict prcomp ptukey qcut qtukey quantile rank Ronly rbind rbinom read_table rename_cols rnorm rownames runif sample scale sd select_cols seq shapiro_test sum summary t_test transpose TukeyHSD uniq vals value_counts var var_test view wilcox_test write_table);
 our @EXPORT = @EXPORT_OK;
 
 # colnames($df) / rownames($df)
@@ -3253,6 +3253,195 @@ sub _impute_prop {
 sub ffill { _impute_prop( shift, 'ffill',  1, @_ ) }
 sub bfill { _impute_prop( shift, 'bfill', -1, @_ ) }
 
+# _interp_seq(\@vals, $limit, $fwd, $bwd, $area) -> \@vals  (modifies in place)
+#
+# Linear interpolation over the undef gaps of an equally-spaced sequence, like
+# pandas' Series.interpolate(method='linear').  A cell is an *anchor* iff it is
+# defined and numeric; only undef cells are ever filled.  A defined non-numeric
+# cell is left untouched and acts as a barrier: no straight line can be fit
+# across it, so it resets the nearest-anchor search on both sides.
+#
+#   interior gap (numeric anchor on both sides)  -> linear interpolation
+#   trailing gap (anchor on the left only)       -> held constant (last value),
+#                                                    filled only when $fwd
+#   leading  gap (anchor on the right only)      -> held constant (next value),
+#                                                    filled only when $bwd
+#   no anchor on either side                     -> left undef
+#
+# With a defined $limit at most that many cells are filled per undef run,
+# counted from the run's left edge for forward-reachable cells and from its
+# right edge for backward-reachable cells.  $area is 'inside' (interior gaps
+# only), 'outside' (leading/trailing gaps only), or undef (both).  Not exported.
+sub _interp_seq {
+	my ($vals, $limit, $fwd, $bwd, $area) = @_;
+	my $n = scalar @$vals;
+	# prev[i]/next[i]: index of the nearest numeric anchor strictly below/above
+	# i, or undef if a barrier (non-numeric cell) or the edge intervenes.
+	my (@prev, @next);
+	my $p;
+	for my $i (0 .. $n - 1) {
+		$prev[$i] = $p;
+		if (defined $vals->[$i]) {
+			$p = looks_like_number($vals->[$i]) ? $i : undef;
+		}
+	}
+	my $q;
+	for (my $i = $n - 1; $i >= 0; $i--) {
+		$next[$i] = $q;
+		if (defined $vals->[$i]) {
+			$q = looks_like_number($vals->[$i]) ? $i : undef;
+		}
+	}
+	for my $i (0 .. $n - 1) {
+		next if defined $vals->[$i];               # only fill NA
+		my ($l, $r) = ($prev[$i], $next[$i]);
+		my $interior = defined $l && defined $r;
+		next if defined $area && $area eq 'inside'  && !$interior;
+		next if defined $area && $area eq 'outside' &&  $interior;
+		if ($interior) {                           # linear between anchors
+			my $ok = 0;
+			$ok = 1 if $fwd && ( !defined $limit || $i - $l <= $limit );
+			$ok = 1 if $bwd && ( !defined $limit || $r - $i <= $limit );
+			next unless $ok;
+			my ($vl, $vr) = ($vals->[$l], $vals->[$r]);
+			$vals->[$i] = $vl + ($vr - $vl) * ($i - $l) / ($r - $l);
+		} elsif (defined $l) {                     # trailing: hold last value
+			next unless $fwd && ( !defined $limit || $i - $l <= $limit );
+			$vals->[$i] = $vals->[$l];
+		} elsif (defined $r) {                     # leading: hold next value
+			next unless $bwd && ( !defined $limit || $r - $i <= $limit );
+			$vals->[$i] = $vals->[$r];
+		}
+	}
+	return $vals;
+}
+
+# interpolate($df, cols => \@cols, limit => $n,
+#             limit_direction => 'forward'|'backward'|'both',
+#             limit_area => 'inside'|'outside', method => 'linear')
+#
+# Fill NA (undef) cells by linear interpolation along the row axis, like pandas
+# DataFrame.interpolate(method='linear').  It is the numeric sibling of ffill/
+# bfill: rather than propagating a neighbour it fits a straight line between the
+# nearest numeric values below and above each gap, treating rows as equally
+# spaced.  Row order, the four shapes, `cols`, and `limit` behave exactly as in
+# ffill/bfill (positional for AoA/AoH/HoA, sorted-key order for HoH).
+#
+#   method           only 'linear' is supported (the default).
+#   limit_direction  'forward' (default), 'backward', or 'both'.  Interior gaps
+#                    are always linearly interpolated; direction only chooses
+#                    which cells a `limit` reaches, and whether trailing gaps
+#                    (forward) or leading gaps (backward) are held constant.
+#   limit_area       'inside' fills only interior gaps, 'outside' only leading/
+#                    trailing gaps, undef (default) fills both.
+#   limit            max cells filled per undef run (as in ffill/bfill).
+#   cols             columns to interpolate; default every column.
+#
+# Only numeric neighbours anchor a fill; a defined non-numeric cell is left as
+# is and blocks interpolation across it.  Interpolated cells are floats.  Fills
+# within each column's existing length only (ragged HoA columns are not
+# extended; AoA rows are not extended past their own length); a non-ref row is
+# passed through untouched.  Returns a NEW frame; the original is never modified.
+sub interpolate {
+	my $df = shift;
+	die "interpolate: undefined data in first position" unless defined $df;
+	my $shape = _df_shape($df, 'interpolate');
+	die "interpolate: arguments after the data frame must be name => value pairs\n"
+		if @_ % 2;
+	my %arg = @_;
+	my %known = ( cols => 1, limit => 1, limit_direction => 1,
+	              limit_area => 1, method => 1 );
+	my @bad = sort grep { !$known{$_} } keys %arg;
+	die "interpolate: unknown argument(s): @bad\n" if @bad;
+
+	my $method = defined $arg{method} ? lc $arg{method} : 'linear';
+	die "interpolate: only method 'linear' is supported (got '$arg{method}')\n"
+		unless $method eq 'linear';
+
+	my $limit = $arg{limit};
+	die "interpolate: 'limit' must be a positive integer\n"
+		if defined $limit
+		&& ( !looks_like_number($limit) || $limit < 1 || $limit != int $limit );
+
+	my $dir = defined $arg{limit_direction} ? lc $arg{limit_direction} : 'forward';
+	my %okdir = ( forward => 1, backward => 1, both => 1 );
+	die "interpolate: 'limit_direction' must be 'forward', 'backward', or 'both'\n"
+		unless $okdir{$dir};
+	my $fwd = ( $dir eq 'forward'  || $dir eq 'both' ) ? 1 : 0;
+	my $bwd = ( $dir eq 'backward' || $dir eq 'both' ) ? 1 : 0;
+
+	my $area;
+	if (defined $arg{limit_area}) {
+		$area = lc $arg{limit_area};
+		die "interpolate: 'limit_area' must be 'inside' or 'outside'\n"
+			unless $area eq 'inside' || $area eq 'outside';
+	}
+
+	my @universe = colnames($df);
+	my %uni = map { $_ => 1 } @universe;
+	my @targets;
+	if (exists $arg{cols}) {
+		die "interpolate: 'cols' must be an arrayref\n" unless ref $arg{cols} eq 'ARRAY';
+		for my $c (@{ $arg{cols} }) {
+			die "interpolate: column '$c' not found\n" unless $uni{$c};
+		}
+		@targets = @{ $arg{cols} };
+	} else {
+		@targets = @universe;
+	}
+	my %tset = map { $_ => 1 } @targets;
+
+	# shape dispatch mirrors _impute_prop (ffill/bfill)
+	if ($shape eq 'AoH') {
+		my @out = map { ref $_ eq 'HASH' ? { %$_ } : $_ } @$df;
+		for my $c (@targets) {
+			my @vals = map { ref $_ eq 'HASH' ? $_->{$c} : undef } @out;
+			_interp_seq(\@vals, $limit, $fwd, $bwd, $area);
+			for my $i (0 .. $#out) {
+				next unless ref $out[$i] eq 'HASH';
+				$out[$i]{$c} = $vals[$i] if defined $vals[$i];
+			}
+		}
+		return \@out;
+	}
+	if ($shape eq 'HoH') {
+		my @keys = sort keys %$df;
+		my %out = map {
+			$_ => ( ref $df->{$_} eq 'HASH' ? { %{ $df->{$_} } } : $df->{$_} )
+		} keys %$df;
+		for my $c (@targets) {
+			my @vals = map { ref $out{$_} eq 'HASH' ? $out{$_}{$c} : undef } @keys;
+			_interp_seq(\@vals, $limit, $fwd, $bwd, $area);
+			for my $j (0 .. $#keys) {
+				my $rk = $keys[$j];
+				next unless ref $out{$rk} eq 'HASH';
+				$out{$rk}{$c} = $vals[$j] if defined $vals[$j];
+			}
+		}
+		return \%out;
+	}
+	if ($shape eq 'HoA') {
+		my %out;
+		for my $c (keys %$df) {
+			my $arr = ref $df->{$c} eq 'ARRAY' ? [ @{ $df->{$c} } ] : [];
+			_interp_seq($arr, $limit, $fwd, $bwd, $area) if $tset{$c};
+			$out{$c} = $arr;
+		}
+		return \%out;
+	}
+	# AoA
+	my @out = map { ref $_ eq 'ARRAY' ? [ @$_ ] : $_ } @$df;
+	for my $c (@targets) {
+		my @vals = map { ref $_ eq 'ARRAY' ? $_->[$c] : undef } @out;
+		_interp_seq(\@vals, $limit, $fwd, $bwd, $area);
+		for my $i (0 .. $#out) {
+			next unless ref $out[$i] eq 'ARRAY';
+			$out[$i][$c] = $vals[$i] if $c <= $#{ $out[$i] } && defined $vals[$i];
+		}
+	}
+	return \@out;
+}
+
 # _tukey_col($data, $col) -- pull one column's cells, in row order, from any
 # of the three data-frame shapes (AoH arrayref, HoA/HoH hashref).
 sub _tukey_col {
@@ -6143,6 +6332,59 @@ Computes the histogram of the given data values, operating in single $O(N)$ pass
  my $res = hist([1, 2, 2, 3, 3, 3, 4, 4, 5], breaks => 4);
 
 If C<breaks> is not explicitly provided, it defaults to calculating the number of bins using Sturges' formula.
+
+=head2 interpolate
+
+Fills missing values (NA, represented by C<undef>) by linear interpolation
+along the row axis, modeled on pandas' C<< DataFrame.interpolate(method='linear') >>.
+It is the numeric sibling of C<ffill>/C<bfill>: instead of propagating a
+neighbouring value it fits a straight line between the nearest numeric values
+below and above each gap, treating the rows as equally spaced.
+
+ use Stats::LikeR;
+
+ # interior gaps interpolated; trailing gap held constant; leading gap kept NA
+ interpolate({ v => [ undef, 1, undef, undef, 4, undef ] });
+ # => { v => [ undef, 1, 2, 3, 4, 4 ] }
+
+Works on all four data-frame shapes with the same row order and column
+semantics as C<ffill>/C<bfill>: positional for AoA/AoH/HoA and sorted-key order
+for HoH; column identifiers are names for AoH/HoA/HoH and 0-based positions for
+AoA. Every call returns a B<new> frame and never mutates its input.
+
+Options are C<< name =E<gt> value >> pairs following the data frame:
+
+=over
+
+=item * C<method> — only C<'linear'> is supported (the default).
+
+=item * C<cols> — an array ref of columns to interpolate; defaults to every column.
+
+=item * C<limit> — a positive integer capping how many cells are filled per run
+of consecutive NAs (as in C<ffill>/C<bfill>).
+
+=item * C<limit_direction> — C<'forward'> (the default), C<'backward'>, or
+C<'both'>. Interior gaps are always linearly interpolated; this option only
+governs which cells a C<limit> reaches, and whether B<trailing> gaps (under
+C<'forward'>) or B<leading> gaps (under C<'backward'>) are held constant at the
+last/next value.
+
+=item * C<limit_area> — C<'inside'> fills only interior gaps, C<'outside'> only
+leading/trailing gaps, and the default (undef) fills both.
+
+=back
+
+Only numeric neighbours anchor a fill: a defined non-numeric cell is left
+untouched and B<blocks> interpolation across it. Interpolated cells are
+floats. Fills stay within each column's existing length (ragged HoA columns are
+not extended, and AoA rows are not extended past their own length), and a
+non-reference row is passed through unchanged — all matching C<ffill>/C<bfill>.
+For constant propagation instead of a linear fit, use C<ffill>/C<bfill>; for a
+fixed replacement value, use C<fillna>.
+
+C<interpolate> croaks on undefined data, an unknown option, non-pair trailing
+arguments, an unknown column in C<cols>, a non-positive or non-integer C<limit>,
+or an unsupported C<method>/C<limit_direction>/C<limit_area>.
 
 =head2 intersection
 

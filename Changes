@@ -2,6 +2,18 @@ Revision history for Stats-LikeR
 
    # Changes
 
+0.24 2026-07-14 CDT
+
+ - `interpolate` fills NA (undef) cells by linear interpolation along the row axis, like pandas `DataFrame.interpolate(method='linear')`
+
+ [interpolate]
+
+ - `interpolate` is the numeric sibling of `ffill`/`bfill`: instead of propagating a neighbour it fits a straight line between the nearest numeric values below and above each gap, treating rows as equally spaced. Works on all four shapes with the same row order, `cols`, and `limit` semantics as `ffill`/`bfill`.
+
+ - Options: `method` (only `'linear'`), `cols`, `limit`, `limit_direction` (`'forward'` (default) | `'backward'` | `'both'`), and `limit_area` (`'inside'` | `'outside'`). Interior gaps are always linearly interpolated; `limit_direction` governs which cells a `limit` reaches and whether trailing (forward) or leading (backward) gaps are held constant.
+
+ - Only numeric neighbours anchor a fill; a defined non-numeric cell is left untouched and blocks interpolation across it. Returns a new frame; the original is never modified. Implemented in pure Perl (no XS/ABI surface added), matching the rest of the impute family.
+
 0.23 2026-07-08 CDT
 
  - `rename_cols` takes HoH as input
