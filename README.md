@@ -1635,6 +1635,67 @@ so a ragged frame stays ragged:
     drop_cols([ {a=>1,b=>2}, {a=>3,c=>9} ], 'a');
     # [ { b => 2 }, { c => 9 } ]
 
+## drop_duplicates
+
+Remove duplicate rows, loosely modeled on pandas' `DataFrame.drop_duplicates`.
+Works on the three positional/columnar shapes — AoA `[ [..], .. ]`, AoH
+`[ {A=>..}, .. ]`, and HoA `{ A=>[..], .. }` — but **not** HoH: its rows are
+labeled, so row-level de-duplication has no natural meaning (convert with
+`hoh2aoh`/`hoh2hoa` first).
+
+### Usage
+
+    drop_duplicates($df);                          # dedupe on every column
+    drop_duplicates($df, subset => 'id');          # only look at column 'id'
+    drop_duplicates($df, subset => ['a', 'b']);    # a composite key
+    drop_duplicates($df, keep => 'last');          # keep the last occurrence
+    drop_duplicates($df, keep => 0);               # drop EVERY duplicated row
+
+Two rows are duplicates when their cells are equal in every `subset` column.
+Comparison is by **stringified value with a distinct undef (NA)** — the same
+key semantics `merge` uses — so `1` and `"1.0"` are *not* equal, while two
+undef cells *are* equal to each other.
+
+### `subset` — which columns define a row's identity
+
+Defaults to every column. Column identifiers are **0-based integer positions**
+for AoA and **names** for AoH/HoA. Pass a single column as a scalar or several
+as an arrayref. The default column set is the widest row's positions for AoA,
+the sorted union of row keys for AoH, and the sorted keys for HoA.
+
+    my $aoh = [ { id => 1, v => 'a' }, { id => 1, v => 'b' }, { id => 2, v => 'c' } ];
+    drop_duplicates($aoh, subset => 'id');
+    # [ { id => 1, v => 'a' }, { id => 2, v => 'c' } ]
+
+Columns outside `subset` are not compared, but they stay aligned — a surviving
+row keeps all of its columns.
+
+### `keep` — which occurrence survives
+
+- **`'first'`** (default) — keep the earliest occurrence of each row.
+- **`'last'`** — keep the latest occurrence.
+- **`0`** (or `'none'`) — drop *every* row that has a duplicate, keeping only
+  rows that were unique.
+
+    my $df = { id => [1, 1, 2], v => [10, 20, 30] };
+    drop_duplicates($df, subset => 'id');                 # { id => [1, 2], v => [10, 30] }
+    drop_duplicates($df, subset => 'id', keep => 'last'); # { id => [1, 2], v => [20, 30] }
+
+Row order is preserved: the survivors come out in their original first-seen
+positions.
+
+### Good to know
+
+- **Returns a new data frame; the original is never modified.** For HoA the
+  columns are rebuilt (cell values copied); for AoA and AoH the surviving row
+  references are reused, not deep-copied. Clone the result if you need full
+  independence.
+- **It dies** on: undefined or non-ref data; an HoH frame; an unknown argument;
+  an empty or duplicated `subset`; an invalid `keep`; an AoA position that is
+  not a non-negative integer or is out of range; or a `subset` name absent from
+  an AoH or HoA.
+- An empty frame returns empty rather than erroring.
+
 ## dropna
 
 Drop missing data from a data frame, loosely modeled on pandas' `dropna`. Works
@@ -4209,7 +4270,7 @@ raw values (no cell number formats), matching the round-trip behaviour of
 
 `summary` output now looks more like `view`, and accepts HoH
 
-Addition of `bfill`, `ffill`, `melt`, and `pivot_table`
+Addition of `bfill`, `drop_duplicates`, `ffill`, `melt`, and `pivot_table`
 
 ## 0.23 2026-07-10 CDT
 

@@ -1,4 +1,3 @@
-`summary` should have colored and tidier output like new `view` does
 3x3 Fisher test
 `explode` like in Pandas
 words to symbols in latex, like \textless, \textgreater, automatically translated from "<", ">", etc.

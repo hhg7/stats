@@ -11,7 +11,7 @@ use autodie ':default';
 use Exporter 'import';
 use Scalar::Util qw(reftype looks_like_number);
 XSLoader::load('Stats::LikeR', $VERSION);
-our @EXPORT_OK = qw(add_data agg anova aoh2hoa aoh2hoh aov assign bfill binom_test cfilter chisq_test chunk col col2col colnames concat cor cor_test cov csort dnorm drop_cols dropna ffill fillna filter fisher_test get_union get_unique glm group_by hoa2aoh hoa2hoh hoh2hoa hist interpolate intersection is_equivalent kruskal_test ks_test Lonly ljoin lm map_cell matrix max mean median melt merge min mode ncol nrow oneway_test p_adjust pivot_table pnorm power_t_test predict prcomp ptukey qcut qtukey quantile rank Ronly rbind rbinom read_table rename_cols rnorm rownames runif sample scale sd select_cols seq shapiro_test sum summary t_test transpose TukeyHSD uniq vals value_counts var var_test view wilcox_test write_table);
+our @EXPORT_OK = qw(add_data agg anova aoh2hoa aoh2hoh aov assign bfill binom_test cfilter chisq_test chunk col col2col colnames concat cor cor_test cov csort dnorm drop_cols drop_duplicates dropna ffill fillna filter fisher_test get_union get_unique glm group_by hoa2aoh hoa2hoh hoh2hoa hist interpolate intersection is_equivalent kruskal_test ks_test Lonly ljoin lm map_cell matrix max mean median melt merge min mode ncol nrow oneway_test p_adjust pivot_table pnorm power_t_test predict prcomp ptukey qcut qtukey quantile rank Ronly rbind rbinom read_table rename_cols rnorm rownames runif sample scale sd select_cols seq shapiro_test sum summary t_test transpose TukeyHSD uniq vals value_counts var var_test view wilcox_test write_table);
 our @EXPORT = @EXPORT_OK;
 
 # colnames($df) / rownames($df)
@@ -1249,6 +1249,92 @@ sub dropna {
 	}
 
 	die "dropna: data frame must be an arrayref (AoH) or hashref (HoA/HoH)\n";
+}
+
+# drop_duplicates($df, subset => $col | \@cols, keep => 'first' | 'last' | 0)
+#
+# Remove duplicate rows, loosely modeled on pandas' DataFrame.drop_duplicates.
+# Works on the three positional/columnar shapes -- AoA, AoH, HoA -- but NOT
+# HoH (its rows are labeled, so "drop_duplicates" has no natural meaning; call
+# hoh2aoh/hoh2hoa first).  Two rows are duplicates when their cells are equal
+# in every subset column; comparison is by stringified value with a distinct
+# undef (NA), exactly the key semantics merge() uses, so 1 and "1.0" differ.
+#
+#   subset  scalar or arrayref of the columns that define a row's identity;
+#           default every column.  For AoA these are 0-based integer positions
+#           (default 0 .. widest-row-1); for AoH/HoA they are column names
+#           (AoH default: the sorted union of row keys; HoA: the sorted keys).
+#   keep    which occurrence to keep: 'first' (default) keeps the earliest,
+#           'last' the latest, 0 (or 'none') drops every row that has a dup.
+#
+# Row order is preserved (first-seen positions for the survivors).  Returns a
+# NEW top-level frame of the same family; the original is never modified.  For
+# AoA/AoH the surviving row refs are reused (cells shared, not deep-copied);
+# for HoA the columns are rebuilt with the surviving cells copied.
+sub drop_duplicates {
+	my $df = shift;
+	die "drop_duplicates: undefined data in first position\n" unless defined $df;
+	die "drop_duplicates: arguments after the data frame must be name => value pairs\n"
+		if @_ % 2;
+	my %arg = @_;
+	my %known = ( subset => 1, keep => 1 );
+	my @bad = sort grep { !$known{$_} } keys %arg;
+	die "drop_duplicates: unknown argument(s): @bad\n" if @bad;
+
+	my $shape = _df_shape($df, 'drop_duplicates');
+	die "drop_duplicates: an HoH data frame is not supported (convert to AoH/HoA/AoA first)\n"
+		if $shape eq 'HoH';
+
+	# keep -> code: 1 = first, -1 = last, 0 = drop every duplicate
+	my $keep = exists $arg{keep} ? $arg{keep} : 'first';
+	die "drop_duplicates: 'keep' is undefined (use 'first', 'last', or 0)\n"
+		unless defined $keep;
+	my $kc;
+	if    ($keep eq 'first') { $kc =  1 }
+	elsif ($keep eq 'last')  { $kc = -1 }
+	elsif ($keep eq 'none' || $keep eq '' || (looks_like_number($keep) && $keep == 0)) { $kc = 0 }
+	else  { die "drop_duplicates: 'keep' must be 'first', 'last', or 0 (got '$keep')\n" }
+
+	# subset -> ordered column list
+	my @sub;
+	if (exists $arg{subset} && defined $arg{subset}) {
+		my $s = $arg{subset};
+		if    (ref $s eq 'ARRAY') { @sub = @$s }
+		elsif (!ref $s)           { @sub = ($s) }
+		else { die "drop_duplicates: 'subset' must be a column or an arrayref of columns\n" }
+		die "drop_duplicates: 'subset' is empty\n" unless @sub;
+		my %seen;
+		for my $c (@sub) {
+			die "drop_duplicates: undefined column in 'subset'\n" unless defined $c;
+			die "drop_duplicates: duplicate column '$c' in 'subset'\n" if $seen{$c}++;
+		}
+	}
+
+	if ($shape eq 'AoA') {
+		if (@sub) { _aoa_int_cols('drop_duplicates', $df, @sub) }
+		else      { @sub = (0 .. _aoa_width($df) - 1) }
+		return _drop_dups_core($df, 3, [ @sub ], $kc);
+	}
+	if ($shape eq 'AoH') {
+		my $present = _present_keys($df, 'AoH');
+		if (@sub) {
+			for my $c (@sub) {
+				die "drop_duplicates: column '$c' not found\n" unless $present->{$c};
+			}
+		} else {
+			@sub = sort keys %$present;
+		}
+		return _drop_dups_core($df, 1, [ @sub ], $kc);
+	}
+	# HoA
+	if (@sub) {
+		for my $c (@sub) {
+			die "drop_duplicates: column '$c' not found\n" unless exists $df->{$c};
+		}
+	} else {
+		@sub = sort keys %$df;
+	}
+	return _drop_dups_core($df, 4, [ @sub ], $kc);
 }
 # Count rows across Stats::LikeR frame forms: AoH, AoA, HoA, HoH.
 

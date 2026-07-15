@@ -4301,6 +4301,34 @@ mg_emit(pTHX_ AV *restrict result, HV *restrict li, HV *restrict ri,
 	av_push(result, newRV_noinc((SV *)row));
 }
 
+/* ======================================================================
+ * drop_duplicates() helper -- row-level de-duplication for AoA / AoH / HoA.
+ *
+ * A row's identity is a canonical, length-prefixed key over the subset
+ * cells, exactly the hash-join semantics merge() uses (mg_key): two cells
+ * are "the same" iff they stringify equally, an undef cell gets its own
+ * sentinel that never collides with a real value (a real cell always opens
+ * with a decimal length, the undef token opens with '~'). HoH is handled
+ * entirely in the Perl wrapper (it dies) so there is no code path for it.
+ * ====================================================================== */
+static SV *
+dd_key(pTHX_ SV **restrict cells, SSize_t n) {
+	SV *restrict k = sv_2mortal(newSVpvs(""));
+	for (SSize_t j = 0; j < n; j++) {
+		SV *restrict c = cells[j];
+		if (c && SvOK(c)) {
+			STRLEN l;
+			const char *restrict p = SvPV(c, l);
+			sv_catpvf(k, "%lu" MG_KEYSEP, (unsigned long)l);
+			sv_catpvn(k, p, l);
+			sv_catpvn(k, MG_KEYSEP, 1);
+		} else {
+			sv_catpvn(k, "~" MG_KEYSEP, 2);   /* undef sentinel */
+		}
+	}
+	return k;
+}
+
 // --- XS SECTION ---
 MODULE = Stats::LikeR  PACKAGE = Stats::LikeR
 
@@ -4444,6 +4472,152 @@ _cols_rename(df, shape, map)
 		}
 		retval = sv_2mortal(newRV_noinc((SV *)out));
 	}
+	RETVAL = SvREFCNT_inc(retval);
+}
+  OUTPUT:
+	RETVAL
+
+# Row-level de-duplication core for drop_duplicates().  The Perl wrapper
+# validates the frame, rejects HoH, and resolves `subset` into an ordered
+# list of column identifiers (integer positions for AoA, names for AoH/HoA).
+#   shape: 1 = AoH, 3 = AoA, 4 = HoA
+#   subset: arrayref of the columns whose cells define a row's identity
+#   keep:  1 = first occurrence, -1 = last occurrence, 0 = drop every dup
+# AoA/AoH survivors reuse the original row refs (cells shared, like dropna);
+# HoA rebuilds every column sliced to the surviving row positions.
+SV *
+_drop_dups_core(df, shape, subset, keep)
+	SV *df
+	IV shape
+	SV *subset
+	IV keep
+  PREINIT:
+	SV *retval; AV *sub_av; SSize_t ns, i, j, R = 0, nsurv = 0;
+	SV **keys = NULL; SV **cells; IV *surv; HV *seen;
+  CODE:
+{
+	sub_av = (AV *)SvRV(subset);
+	ns = av_len(sub_av) + 1;
+	Newx(cells, ns > 0 ? ns : 1, SV *);
+
+	if (shape == 3) {                                          // ---- AoA ----
+		AV *src = (AV *)SvRV(df);
+		R = av_len(src) + 1;
+		IV *pos; Newx(pos, ns > 0 ? ns : 1, IV);
+		for (j = 0; j < ns; j++) pos[j] = SvIV(*av_fetch(sub_av, j, 0));
+		Newx(keys, R > 0 ? R : 1, SV *);
+		for (i = 0; i < R; i++) {
+			SV **rp = av_fetch(src, i, 0);
+			AV *inner = (rp && *rp && SvROK(*rp) && SvTYPE(SvRV(*rp)) == SVt_PVAV)
+			          ? (AV *)SvRV(*rp) : NULL;
+			for (j = 0; j < ns; j++) {
+				SV **cp = inner ? av_fetch(inner, pos[j], 0) : NULL;
+				cells[j] = (cp && *cp) ? *cp : NULL;
+			}
+			keys[i] = dd_key(aTHX_ cells, ns);
+		}
+		Safefree(pos);
+	} else if (shape == 1) {                                   // ---- AoH ----
+		AV *src = (AV *)SvRV(df);
+		R = av_len(src) + 1;
+		Newx(keys, R > 0 ? R : 1, SV *);
+		for (i = 0; i < R; i++) {
+			SV **rp = av_fetch(src, i, 0);
+			HV *inner = (rp && *rp && SvROK(*rp) && SvTYPE(SvRV(*rp)) == SVt_PVHV)
+			          ? (HV *)SvRV(*rp) : NULL;
+			for (j = 0; j < ns; j++) {
+				SV *kn = *av_fetch(sub_av, j, 0);
+				HE *he = inner ? hv_fetch_ent(inner, kn, 0, 0) : NULL;
+				cells[j] = he ? HeVAL(he) : NULL;
+			}
+			keys[i] = dd_key(aTHX_ cells, ns);
+		}
+	} else {                                                   // ---- HoA ----
+		HV *src = (HV *)SvRV(df);
+		HE *he; hv_iterinit(src);
+		while ((he = hv_iternext(src))) {                  // R = longest column
+			SV *v = HeVAL(he);
+			if (SvROK(v) && SvTYPE(SvRV(v)) == SVt_PVAV) {
+				SSize_t l = av_len((AV *)SvRV(v)) + 1;
+				if (l > R) R = l;
+			}
+		}
+		AV **cols; Newx(cols, ns > 0 ? ns : 1, AV *);
+		for (j = 0; j < ns; j++) {
+			SV *kn = *av_fetch(sub_av, j, 0);
+			HE *ce = hv_fetch_ent(src, kn, 0, 0);
+			cols[j] = (ce && SvROK(HeVAL(ce)) && SvTYPE(SvRV(HeVAL(ce))) == SVt_PVAV)
+			        ? (AV *)SvRV(HeVAL(ce)) : NULL;
+		}
+		Newx(keys, R > 0 ? R : 1, SV *);
+		for (i = 0; i < R; i++) {
+			for (j = 0; j < ns; j++) {
+				SV **cp = cols[j] ? av_fetch(cols[j], i, 0) : NULL;
+				cells[j] = (cp && *cp) ? *cp : NULL;
+			}
+			keys[i] = dd_key(aTHX_ cells, ns);
+		}
+		Safefree(cols);
+	}
+	Safefree(cells);
+
+	/* choose the surviving row positions, preserving input order */
+	Newx(surv, R > 0 ? R : 1, IV);
+	seen = (HV *)sv_2mortal((SV *)newHV());
+	if (keep == 1) {                                   // keep first occurrence
+		for (i = 0; i < R; i++) {
+			if (!hv_exists_ent(seen, keys[i], 0)) {
+				(void)hv_store_ent(seen, keys[i], newSViv(1), 0);
+				surv[nsurv++] = i;
+			}
+		}
+	} else if (keep == -1) {                           // keep last occurrence
+		for (i = 0; i < R; i++)
+			(void)hv_store_ent(seen, keys[i], newSViv(i), 0);
+		for (i = 0; i < R; i++) {
+			HE *e = hv_fetch_ent(seen, keys[i], 0, 0);
+			if (e && SvIV(HeVAL(e)) == i) surv[nsurv++] = i;
+		}
+	} else {                                           // drop every duplicate
+		for (i = 0; i < R; i++) {
+			HE *e = hv_fetch_ent(seen, keys[i], 0, 0);
+			if (e) sv_inc(HeVAL(e));
+			else (void)hv_store_ent(seen, keys[i], newSViv(1), 0);
+		}
+		for (i = 0; i < R; i++) {
+			HE *e = hv_fetch_ent(seen, keys[i], 0, 0);
+			if (e && SvIV(HeVAL(e)) == 1) surv[nsurv++] = i;
+		}
+	}
+	Safefree(keys);
+
+	/* materialise the survivors back into the input's shape */
+	if (shape == 4) {                                          // ---- HoA ----
+		HV *src = (HV *)SvRV(df);
+		HV *out = newHV();
+		HE *he; hv_iterinit(src);
+		while ((he = hv_iternext(src))) {
+			SV *v = HeVAL(he);
+			AV *col = (SvROK(v) && SvTYPE(SvRV(v)) == SVt_PVAV) ? (AV *)SvRV(v) : NULL;
+			AV *nc = newAV(); if (nsurv > 0) av_extend(nc, nsurv - 1);
+			for (SSize_t k = 0; k < nsurv; k++) {
+				SV **cp = col ? av_fetch(col, surv[k], 0) : NULL;
+				av_push(nc, (cp && *cp) ? newSVsv(*cp) : newSV(0));
+			}
+			STRLEN kl; char *kp = HePV(he, kl); I32 sk = HeUTF8(he) ? -(I32)kl : (I32)kl;
+			(void)hv_store(out, kp, sk, newRV_noinc((SV *)nc), HeHASH(he));
+		}
+		retval = sv_2mortal(newRV_noinc((SV *)out));
+	} else {                                                   // AoA / AoH
+		AV *src = (AV *)SvRV(df);
+		AV *out = newAV(); if (nsurv > 0) av_extend(out, nsurv - 1);
+		for (SSize_t k = 0; k < nsurv; k++) {
+			SV **rp = av_fetch(src, surv[k], 0);
+			av_push(out, newSVsv((rp && *rp) ? *rp : &PL_sv_undef));
+		}
+		retval = sv_2mortal(newRV_noinc((SV *)out));
+	}
+	Safefree(surv);
 	RETVAL = SvREFCNT_inc(retval);
 }
   OUTPUT:
