@@ -304,6 +304,108 @@ static void calculate_exact_stats(long a, long b, long c, long d, NV conf,
 	Safefree(sc); ft_free(&S);
 }
 
+/* --- General R x C exact test (used for anything that is not 2x2) ---------
+ *
+ * The 2x2 machinery above cannot describe larger tables, so the R x C case
+ * is handled by direct enumeration of every contingency table that shares
+ * the observed row and column margins.  Under the null the probability of a
+ * table T with fixed margins is the multivariate hypergeometric
+ *
+ *      P(T) = (prod_i R_i!)(prod_j C_j!) / ( N! prod_ij t_ij! )
+ *
+ * The (two-sided) p-value is the sum of P(T) over all such T whose
+ * probability is <= P(observed).  Only two-sided is defined for R x C, so
+ * 'alternative' is ignored for larger tables (matching R's fisher.test). */
+typedef struct {
+	int nrow, ncol;
+	const long *restrict R;   /* fixed row totals                       */
+	long *restrict C_rem;     /* remaining column totals (mutated)      */
+	NV const_term;            /* sum lgamma(R_i+1)+lgamma(C_j+1)-lgamma(N+1) */
+	NV log_p_obs_tol;         /* log P(observed) + log1p(relErr)        */
+	NV p_total;               /* accumulated p-value                    */
+	long long nodes, cap;     /* leaf counter + overflow guard          */
+	int aborted;              /* set once cap is exceeded               */
+} ft_rxc_ctx;
+
+static void ft_rxc_row(ft_rxc_ctx *restrict X, int row, int col, long row_rem, NV cur_lc);
+
+/* Finish the current row; either recurse to the next free row, or (once the
+ * last free row is placed) derive the final row from the column residuals. */
+static void ft_rxc_after_row(ft_rxc_ctx *restrict X, int row, NV cur_lc) {
+	if (row == X->nrow - 2) {
+		NV lc = cur_lc;
+		for (int j = 0; j < X->ncol; j++) lc += lgamma((NV)X->C_rem[j] + 1.0);
+		NV logP = X->const_term - lc;
+		if (logP <= X->log_p_obs_tol) X->p_total += exp(logP);
+		if (++X->nodes > X->cap) X->aborted = 1;
+		return;
+	}
+	ft_rxc_row(X, row + 1, 0, X->R[row + 1], cur_lc);
+}
+
+/* Distribute row `row`'s total across the columns.  The last column of the
+ * row is fixed by the remaining row total; interior columns range over every
+ * value that keeps both the row and the column residuals nonnegative. */
+static void ft_rxc_row(ft_rxc_ctx *restrict X, int row, int col, long row_rem, NV cur_lc) {
+	if (X->aborted) return;
+	if (col == X->ncol - 1) {
+		long v = row_rem;
+		if (v < 0 || v > X->C_rem[col]) return;
+		X->C_rem[col] -= v;
+		ft_rxc_after_row(X, row, cur_lc + lgamma((NV)v + 1.0));
+		X->C_rem[col] += v;
+		return;
+	}
+	long maxv = row_rem < X->C_rem[col] ? row_rem : X->C_rem[col];
+	for (long v = 0; v <= maxv; v++) {
+		X->C_rem[col] -= v;
+		ft_rxc_row(X, row, col + 1, row_rem - v, cur_lc + lgamma((NV)v + 1.0));
+		X->C_rem[col] += v;
+		if (X->aborted) return;
+	}
+}
+
+/* Returns the two-sided exact p-value, or -1.0 if the enumeration exceeded
+ * the safety cap (the caller turns that into a croak). */
+static NV fisher_rxc_pvalue(pTHX_ const long *restrict cells, int nrow, int ncol) {
+	long *restrict R = NULL, *restrict C = NULL;
+	Newxz(R, nrow, long);
+	Newxz(C, ncol, long);
+	long N = 0;
+	for (int i = 0; i < nrow; i++)
+		for (int j = 0; j < ncol; j++) {
+			long v = cells[i * ncol + j];
+			R[i] += v; C[j] += v; N += v;
+		}
+
+	NV const_term = -lgamma((NV)N + 1.0);
+	for (int i = 0; i < nrow; i++) const_term += lgamma((NV)R[i] + 1.0);
+	for (int j = 0; j < ncol; j++) const_term += lgamma((NV)C[j] + 1.0);
+
+	NV obs_lc = 0.0;
+	for (int i = 0; i < nrow * ncol; i++) obs_lc += lgamma((NV)cells[i] + 1.0);
+
+	ft_rxc_ctx X;
+	X.nrow = nrow; X.ncol = ncol; X.R = R; X.C_rem = C;
+	X.const_term = const_term;
+	X.log_p_obs_tol = (const_term - obs_lc) + log1p(1e-7);
+	X.p_total = 0.0;
+	X.nodes = 0; X.cap = 200000000LL; X.aborted = 0;
+
+	ft_rxc_row(&X, 0, 0, R[0], 0.0);
+
+	NV p = X.aborted ? -1.0 : X.p_total;
+	if (p > 1.0) p = 1.0;
+	Safefree(R); Safefree(C);
+	return p;
+}
+
+/* qsort comparator: order (key,value) pairs by their string key. */
+typedef struct { const char *restrict k; SV *restrict v; } ft_kv;
+static int ft_kv_cmp(const void *a, const void *b) {
+	return strcmp(((const ft_kv *)a)->k, ((const ft_kv *)b)->k);
+}
+
 // small helper: fetch a nonnegative integer cell from an SV, with validation
 static long ft_cell(pTHX_ SV *sv, const char *what) {
 	if (!sv || !SvOK(sv)) croak("fisher_test: %s is undef", what);
@@ -12502,74 +12604,131 @@ CODE:
 			croak("fisher_test: unknown argument '%s'", key);
 		}
 	}
-	if (!SvROK(data_ref)) croak("fisher_test requires a reference to a 2x2 Array or Hash");
+	if (!SvROK(data_ref)) croak("fisher_test requires a reference to a 2D Array or Hash");
 	SV *restrict deref = SvRV(data_ref);
-	long a = 0, b = 0, c = 0, d = 0;
+
+	/* Parse the input into a flat nrow x ncol table of nonnegative counts.
+	 * Both a 2D array-of-arrays and a 2D hash-of-hashes are accepted, and any
+	 * dimensions >= 2x2 are supported (2x2 keeps the exact odds-ratio path;
+	 * everything else uses the R x C enumeration below). */
+	int nrow = 0, ncol = 0;
+	long *restrict cells = NULL;
+
 	if (SvTYPE(deref) == SVt_PVAV) {
 	  AV *restrict outer = (AV *)deref;
-	  if (av_len(outer) != 1) croak("Outer array must have exactly 2 rows");
-	  SV **restrict r1p = av_fetch(outer, 0, 0);
-	  SV **restrict r2p = av_fetch(outer, 1, 0);
-	  if (!(r1p && r2p && SvROK(*r1p) && SvROK(*r2p)
-			 && SvTYPE(SvRV(*r1p)) == SVt_PVAV && SvTYPE(SvRV(*r2p)) == SVt_PVAV))
-		   croak("Invalid 2D array structure: need two array-ref rows");
-	  AV *restrict r1 = (AV *)SvRV(*r1p), *r2 = (AV *)SvRV(*r2p);
-	  if (av_len(r1) != 1 || av_len(r2) != 1)
-		   croak("Each row must have exactly 2 columns");
-	  a = ft_cell(aTHX_ *av_fetch(r1, 0, 0), "cell [0][0]");
-	  b = ft_cell(aTHX_ *av_fetch(r1, 1, 0), "cell [0][1]");
-	  c = ft_cell(aTHX_ *av_fetch(r2, 0, 0), "cell [1][0]");
-	  d = ft_cell(aTHX_ *av_fetch(r2, 1, 0), "cell [1][1]");
-	} else if (SvTYPE(deref) == SVt_PVHV) {
-	  /* 2x2 hash; rows and columns are ordered by lexical key sort so the
-		* result is deterministic regardless of Perl's hash randomization. */
-	  HV *restrict outer = (HV *)deref;
-	  if (HvUSEDKEYS(outer) != 2) croak("Outer hash must have exactly 2 keys");
-	  hv_iterinit(outer);
-	  HE *restrict e1 = hv_iternext(outer), *e2 = hv_iternext(outer);
-	  const char *restrict ok1 = SvPV_nolen(hv_iterkeysv(e1));
-	  int swap_rows = strcmp(ok1, SvPV_nolen(hv_iterkeysv(e2))) > 0;
-	  SV *restrict row1_sv = hv_iterval(outer, swap_rows ? e2 : e1);
-	  SV *restrict row2_sv = hv_iterval(outer, swap_rows ? e1 : e2);
-	  if (!SvROK(row1_sv) || SvTYPE(SvRV(row1_sv)) != SVt_PVHV ||
-		   !SvROK(row2_sv) || SvTYPE(SvRV(row2_sv)) != SVt_PVHV)
-		   croak("Inner elements must be hash refs");
-
-	  HV *restrict rows[2]; rows[0] = (HV *)SvRV(row1_sv); rows[1] = (HV *)SvRV(row2_sv);
-	  long cells[2][2];
-	  for (unsigned int rr = 0; rr < 2; rr++) {
-		   HV *restrict in = rows[rr];
-		   if (HvUSEDKEYS(in) != 2) croak("Inner hashes must have exactly 2 keys");
-		   hv_iterinit(in);
-		   HE *c1 = hv_iternext(in), *c2 = hv_iternext(in);
-		   const char *k1 = SvPV_nolen(hv_iterkeysv(c1));
-		   int swap_cols = strcmp(k1, SvPV_nolen(hv_iterkeysv(c2))) > 0;
-		   HE *col0 = swap_cols ? c2 : c1;
-		   HE *col1 = swap_cols ? c1 : c2;
-		   cells[rr][0] = ft_cell(aTHX_ hv_iterval(in, col0), "hash cell");
-		   cells[rr][1] = ft_cell(aTHX_ hv_iterval(in, col1), "hash cell");
+	  nrow = (int)(av_len(outer) + 1);
+	  if (nrow < 2) croak("Outer array must have at least 2 rows");
+	  SV **restrict r0p = av_fetch(outer, 0, 0);
+	  if (!r0p || !SvROK(*r0p) || SvTYPE(SvRV(*r0p)) != SVt_PVAV)
+		   croak("Invalid 2D array structure: each row must be an array ref");
+	  ncol = (int)(av_len((AV *)SvRV(*r0p)) + 1);
+	  if (ncol < 2) croak("Each row must have at least 2 columns");
+	  Newx(cells, (size_t)nrow * ncol, long);
+	  for (int rr = 0; rr < nrow; rr++) {
+		   SV **restrict rp = av_fetch(outer, rr, 0);
+		   if (!rp || !SvROK(*rp) || SvTYPE(SvRV(*rp)) != SVt_PVAV) {
+			   Safefree(cells);
+			   croak("Invalid 2D array structure: each row must be an array ref");
+		   }
+		   AV *restrict row = (AV *)SvRV(*rp);
+		   if ((int)(av_len(row) + 1) != ncol) {
+			   Safefree(cells);
+			   croak("All rows must have the same number of columns (%d)", ncol);
+		   }
+		   for (int cc = 0; cc < ncol; cc++)
+			   cells[rr * ncol + cc] = ft_cell(aTHX_ *av_fetch(row, cc, 0), "array cell");
 	  }
-	  a = cells[0][0]; b = cells[0][1]; c = cells[1][0]; d = cells[1][1];
+	} else if (SvTYPE(deref) == SVt_PVHV) {
+	  /* Rows are ordered by lexical key sort, and columns by the sorted keys
+		* of the first row, so the result is deterministic regardless of
+		* Perl's hash randomization.  Every row must expose that same column
+		* key set. */
+	  HV *restrict outer = (HV *)deref;
+	  nrow = (int)HvUSEDKEYS(outer);
+	  if (nrow < 2) croak("Outer hash must have at least 2 keys");
+	  ft_kv *restrict rows = NULL; Newx(rows, nrow, ft_kv);
+	  hv_iterinit(outer);
+	  for (int i = 0; i < nrow; i++) {
+		   HE *restrict e = hv_iternext(outer);
+		   rows[i].k = SvPV_nolen(hv_iterkeysv(e));
+		   rows[i].v = hv_iterval(outer, e);
+	  }
+	  qsort(rows, nrow, sizeof(ft_kv), ft_kv_cmp);
+
+	  if (!SvROK(rows[0].v) || SvTYPE(SvRV(rows[0].v)) != SVt_PVHV) {
+		   Safefree(rows); croak("Inner elements must be hash refs");
+	  }
+	  HV *restrict first = (HV *)SvRV(rows[0].v);
+	  ncol = (int)HvUSEDKEYS(first);
+	  if (ncol < 2) { Safefree(rows); croak("Inner hashes must have at least 2 keys"); }
+	  ft_kv *restrict cols = NULL; Newx(cols, ncol, ft_kv);
+	  hv_iterinit(first);
+	  for (int j = 0; j < ncol; j++) {
+		   HE *restrict e = hv_iternext(first);
+		   cols[j].k = SvPV_nolen(hv_iterkeysv(e));
+		   cols[j].v = NULL;
+	  }
+	  qsort(cols, ncol, sizeof(ft_kv), ft_kv_cmp);
+
+	  Newx(cells, (size_t)nrow * ncol, long);
+	  for (int rr = 0; rr < nrow; rr++) {
+		   if (!SvROK(rows[rr].v) || SvTYPE(SvRV(rows[rr].v)) != SVt_PVHV) {
+			   Safefree(cells); Safefree(cols); Safefree(rows);
+			   croak("Inner elements must be hash refs");
+		   }
+		   HV *restrict in = (HV *)SvRV(rows[rr].v);
+		   if ((int)HvUSEDKEYS(in) != ncol) {
+			   Safefree(cells); Safefree(cols); Safefree(rows);
+			   croak("All rows must have the same %d column keys", ncol);
+		   }
+		   for (int cc = 0; cc < ncol; cc++) {
+			   SV **restrict vp = hv_fetch(in, cols[cc].k, (I32)strlen(cols[cc].k), 0);
+			   if (!vp) {
+				   Safefree(cells); Safefree(cols); Safefree(rows);
+				   croak("Row '%s' is missing column key '%s'", rows[rr].k, cols[cc].k);
+			   }
+			   cells[rr * ncol + cc] = ft_cell(aTHX_ *vp, "hash cell");
+		   }
+	  }
+	  Safefree(cols); Safefree(rows);
 	} else {
 	  croak("Input must be a 2D Array or 2D Hash");
 	}
-	if (a + b + c + d == 0) croak("fisher_test: table is all zeros");
-	NV p_val = exact_p_value(a, b, c, d, alternative);
-	NV mle_or, ci_low, ci_high;
-	calculate_exact_stats(a, b, c, d, conf_level, alternative, &mle_or, &ci_low, &ci_high);
+
+	long total = 0;
+	for (int i = 0; i < nrow * ncol; i++) total += cells[i];
+	if (total == 0) { Safefree(cells); croak("fisher_test: table is all zeros"); }
 
 	HV *restrict ret = newHV();
 	hv_stores(ret, "method", newSVpv("Fisher's Exact Test for Count Data", 0));
-	hv_stores(ret, "alternative", newSVpv(alternative, 0));
-	AV *restrict ci = newAV();
-	av_push(ci, newSVnv(ci_low));
-	av_push(ci, newSVnv(ci_high));
-	hv_stores(ret, "conf_int", newRV_noinc((SV *)ci));
-	HV *restrict est = newHV();
-	hv_stores(est, "odds ratio", newSVnv(mle_or));
-	hv_stores(ret, "estimate", newRV_noinc((SV *)est));
-	hv_stores(ret, "p_value", newSVnv(p_val));
 	hv_stores(ret, "conf_level", newSVnv(conf_level));
+
+	if (nrow == 2 && ncol == 2) {
+	  /* 2x2: full exact test with the conditional MLE odds ratio and CI. */
+	  long a = cells[0], b = cells[1], c = cells[2], d = cells[3];
+	  NV p_val = exact_p_value(a, b, c, d, alternative);
+	  NV mle_or, ci_low, ci_high;
+	  calculate_exact_stats(a, b, c, d, conf_level, alternative, &mle_or, &ci_low, &ci_high);
+	  hv_stores(ret, "alternative", newSVpv(alternative, 0));
+	  AV *restrict ci = newAV();
+	  av_push(ci, newSVnv(ci_low));
+	  av_push(ci, newSVnv(ci_high));
+	  hv_stores(ret, "conf_int", newRV_noinc((SV *)ci));
+	  HV *restrict est = newHV();
+	  hv_stores(est, "odds ratio", newSVnv(mle_or));
+	  hv_stores(ret, "estimate", newRV_noinc((SV *)est));
+	  hv_stores(ret, "p_value", newSVnv(p_val));
+	} else {
+	  /* R x C: only the two-sided p-value is defined (no odds ratio / CI). */
+	  NV p_val = fisher_rxc_pvalue(aTHX_ cells, nrow, ncol);
+	  if (p_val < 0) {
+		   Safefree(cells);
+		   croak("fisher_test: %dx%d table is too large for exact enumeration", nrow, ncol);
+	  }
+	  hv_stores(ret, "alternative", newSVpv("two.sided", 0));
+	  hv_stores(ret, "p_value", newSVnv(p_val));
+	}
+	Safefree(cells);
 	RETVAL = newRV_noinc((SV *)ret);
 }
 OUTPUT:

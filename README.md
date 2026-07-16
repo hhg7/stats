@@ -1995,6 +1995,36 @@ which returns a hash reference:
         }
     });
 
+### larger (R x C) tables
+
+Any table of at least 2x2 counts is accepted, as either a 2D array reference or a 2D hash reference:
+
+    my $res = fisher_test([
+        [5, 3, 2],
+        [1, 4, 6],
+        [7, 2, 1],
+    ]);
+
+For tables larger than 2x2 the p-value is computed by exact enumeration of
+every contingency table sharing the observed row and column margins (the
+multivariate hypergeometric distribution), and matches R's `fisher.test` to
+full precision. Only the two-sided test is defined in this case, so
+`alternative` is ignored and the returned hash reference omits `conf_int` and
+`estimate` (the conditional-MLE odds ratio and its confidence interval are
+reported for 2x2 tables only):
+
+    {
+    alternative   "two.sided",
+    conf_level    0.95,
+    method        "Fisher's Exact Test for Count Data",
+    p_value       0.0540892411303451
+    }
+
+As with the 2x2 case, a hash-of-hashes input orders rows by their sorted keys
+and columns by the sorted keys of the first row, so the result is deterministic;
+every row must expose the same set of column keys, and every row of an array
+input must have the same number of columns.
+
 ## get_union
 
     my @all   = get_union(\@a, \@b, \@c); # every distinct value, any list
@@ -4269,6 +4299,8 @@ raw values (no cell number formats), matching the round-trip behaviour of
 `cfilter` simplification, use of `qr///` filtering on columns
 
 `summary` output now looks more like `view`, and accepts HoH
+
+`fisher_test` can compute larger tables than just 2x2
 
 Addition of `bfill`, `drop_duplicates`, `ffill`, `melt`, and `pivot_table`
 

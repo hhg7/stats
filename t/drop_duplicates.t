@@ -111,9 +111,9 @@ use Test::LeakTrace 'no_leaks_ok';
 # numeric vs string: stringified comparison (like merge); values survive intact
 #--------
 {
-	my $df = { x => [1, 1.0, 22.8], y => [9, 8, 7] };
+	my $df = { x => [1, 1.0, 22.8], 'y' => [9, 8, 7] };
 	my $out = drop_duplicates($df, subset => 'x');
-	is_deeply($out, { x => [1, 22.8], y => [9, 7] },
+	is_deeply($out, { x => [1, 22.8], 'y' => [9, 7] },
 		'HoA: 1 and 1.0 stringify equal, so second dropped');
 	ok(looks_like_number($out->{x}[1]), 'surviving cell still numeric');
 }
@@ -154,20 +154,21 @@ lives_ok { drop_duplicates([ [1], [1] ]) } 'a well-formed call lives';
 #--------
 # memory
 #--------
+done_testing() if $INC{'Devel/Cover.pm'};
 no_leaks_ok {
 	my $x = drop_duplicates([ [1, 'a'], [1, 'a'], [2, 'b'] ]);
-} 'drop_duplicates: no memory leaks (AoA)' unless $INC{'Devel/Cover.pm'};
+} 'drop_duplicates: no memory leaks (AoA)';
 
 no_leaks_ok {
 	my $x = drop_duplicates([ { A => 1 }, { A => 1 } ], subset => 'A');
-} 'drop_duplicates: no memory leaks (AoH)' unless $INC{'Devel/Cover.pm'};
+} 'drop_duplicates: no memory leaks (AoH)';
 
 no_leaks_ok {
 	my $x = drop_duplicates({ A => [1, 1, 2], B => [3, 3, 4] });
-} 'drop_duplicates: no memory leaks (HoA)' unless $INC{'Devel/Cover.pm'};
+} 'drop_duplicates: no memory leaks (HoA)';
 
 no_leaks_ok {
 	eval { drop_duplicates([ { A => 1 } ], subset => 'Z') };
-} 'drop_duplicates: no memory leaks (die path)' unless $INC{'Devel/Cover.pm'};
+} 'drop_duplicates: no memory leaks (die path)';
 
 done_testing;

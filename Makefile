@@ -27,7 +27,7 @@
 
 # --- MakeMaker const_config section:
 
-# These definitions are from config.sh (via /home/con/perl5/perlbrew/perls/perl-5.42.2/lib/5.42.2/x86_64-linux/Config.pm).
+# These definitions are from config.sh (via /home/con/perl5/perlbrew/perls/perl-5.44.0/lib/5.44.0/x86_64-linux/Config.pm).
 # They may have been overridden via Makefile.PL or on the command line.
 AR = ar
 CC = cc
@@ -45,10 +45,10 @@ LIBC = /lib/x86_64-linux-gnu/libc.so.6
 LIB_EXT = .a
 OBJ_EXT = .o
 OSNAME = linux
-OSVERS = 6.8.0-106-generic
+OSVERS = 6.8.0-134-generic
 RANLIB = :
-SITELIBEXP = /home/con/perl5/perlbrew/perls/perl-5.42.2/lib/site_perl/5.42.2
-SITEARCHEXP = /home/con/perl5/perlbrew/perls/perl-5.42.2/lib/site_perl/5.42.2/x86_64-linux
+SITELIBEXP = /home/con/perl5/perlbrew/perls/perl-5.44.0/lib/site_perl/5.44.0
+SITEARCHEXP = /home/con/perl5/perlbrew/perls/perl-5.44.0/lib/site_perl/5.44.0/x86_64-linux
 SO = so
 VENDORARCHEXP = 
 VENDORLIBEXP = 
@@ -80,55 +80,55 @@ MAN3SECTION = 3
 INSTALLDIRS = site
 DESTDIR = 
 PREFIX = $(SITEPREFIX)
-PERLPREFIX = /home/con/perl5/perlbrew/perls/perl-5.42.2
-SITEPREFIX = /home/con/perl5/perlbrew/perls/perl-5.42.2
+PERLPREFIX = /home/con/perl5/perlbrew/perls/perl-5.44.0
+SITEPREFIX = /home/con/perl5/perlbrew/perls/perl-5.44.0
 VENDORPREFIX = 
-INSTALLPRIVLIB = /home/con/perl5/perlbrew/perls/perl-5.42.2/lib/5.42.2
+INSTALLPRIVLIB = /home/con/perl5/perlbrew/perls/perl-5.44.0/lib/5.44.0
 DESTINSTALLPRIVLIB = $(DESTDIR)$(INSTALLPRIVLIB)
-INSTALLSITELIB = /home/con/perl5/perlbrew/perls/perl-5.42.2/lib/site_perl/5.42.2
+INSTALLSITELIB = /home/con/perl5/perlbrew/perls/perl-5.44.0/lib/site_perl/5.44.0
 DESTINSTALLSITELIB = $(DESTDIR)$(INSTALLSITELIB)
 INSTALLVENDORLIB = 
 DESTINSTALLVENDORLIB = $(DESTDIR)$(INSTALLVENDORLIB)
-INSTALLARCHLIB = /home/con/perl5/perlbrew/perls/perl-5.42.2/lib/5.42.2/x86_64-linux
+INSTALLARCHLIB = /home/con/perl5/perlbrew/perls/perl-5.44.0/lib/5.44.0/x86_64-linux
 DESTINSTALLARCHLIB = $(DESTDIR)$(INSTALLARCHLIB)
-INSTALLSITEARCH = /home/con/perl5/perlbrew/perls/perl-5.42.2/lib/site_perl/5.42.2/x86_64-linux
+INSTALLSITEARCH = /home/con/perl5/perlbrew/perls/perl-5.44.0/lib/site_perl/5.44.0/x86_64-linux
 DESTINSTALLSITEARCH = $(DESTDIR)$(INSTALLSITEARCH)
 INSTALLVENDORARCH = 
 DESTINSTALLVENDORARCH = $(DESTDIR)$(INSTALLVENDORARCH)
-INSTALLBIN = /home/con/perl5/perlbrew/perls/perl-5.42.2/bin
+INSTALLBIN = /home/con/perl5/perlbrew/perls/perl-5.44.0/bin
 DESTINSTALLBIN = $(DESTDIR)$(INSTALLBIN)
-INSTALLSITEBIN = /home/con/perl5/perlbrew/perls/perl-5.42.2/bin
+INSTALLSITEBIN = /home/con/perl5/perlbrew/perls/perl-5.44.0/bin
 DESTINSTALLSITEBIN = $(DESTDIR)$(INSTALLSITEBIN)
 INSTALLVENDORBIN = 
 DESTINSTALLVENDORBIN = $(DESTDIR)$(INSTALLVENDORBIN)
-INSTALLSCRIPT = /home/con/perl5/perlbrew/perls/perl-5.42.2/bin
+INSTALLSCRIPT = /home/con/perl5/perlbrew/perls/perl-5.44.0/bin
 DESTINSTALLSCRIPT = $(DESTDIR)$(INSTALLSCRIPT)
-INSTALLSITESCRIPT = /home/con/perl5/perlbrew/perls/perl-5.42.2/bin
+INSTALLSITESCRIPT = /home/con/perl5/perlbrew/perls/perl-5.44.0/bin
 DESTINSTALLSITESCRIPT = $(DESTDIR)$(INSTALLSITESCRIPT)
 INSTALLVENDORSCRIPT = 
 DESTINSTALLVENDORSCRIPT = $(DESTDIR)$(INSTALLVENDORSCRIPT)
-INSTALLMAN1DIR = /home/con/perl5/perlbrew/perls/perl-5.42.2/man/man1
+INSTALLMAN1DIR = /home/con/perl5/perlbrew/perls/perl-5.44.0/man/man1
 DESTINSTALLMAN1DIR = $(DESTDIR)$(INSTALLMAN1DIR)
-INSTALLSITEMAN1DIR = /home/con/perl5/perlbrew/perls/perl-5.42.2/man/man1
+INSTALLSITEMAN1DIR = /home/con/perl5/perlbrew/perls/perl-5.44.0/man/man1
 DESTINSTALLSITEMAN1DIR = $(DESTDIR)$(INSTALLSITEMAN1DIR)
 INSTALLVENDORMAN1DIR = 
 DESTINSTALLVENDORMAN1DIR = $(DESTDIR)$(INSTALLVENDORMAN1DIR)
-INSTALLMAN3DIR = /home/con/perl5/perlbrew/perls/perl-5.42.2/man/man3
+INSTALLMAN3DIR = /home/con/perl5/perlbrew/perls/perl-5.44.0/man/man3
 DESTINSTALLMAN3DIR = $(DESTDIR)$(INSTALLMAN3DIR)
-INSTALLSITEMAN3DIR = /home/con/perl5/perlbrew/perls/perl-5.42.2/man/man3
+INSTALLSITEMAN3DIR = /home/con/perl5/perlbrew/perls/perl-5.44.0/man/man3
 DESTINSTALLSITEMAN3DIR = $(DESTDIR)$(INSTALLSITEMAN3DIR)
 INSTALLVENDORMAN3DIR = 
 DESTINSTALLVENDORMAN3DIR = $(DESTDIR)$(INSTALLVENDORMAN3DIR)
-PERL_LIB = /home/con/perl5/perlbrew/perls/perl-5.42.2/lib/5.42.2
-PERL_ARCHLIB = /home/con/perl5/perlbrew/perls/perl-5.42.2/lib/5.42.2/x86_64-linux
+PERL_LIB = /home/con/perl5/perlbrew/perls/perl-5.44.0/lib/5.44.0
+PERL_ARCHLIB = /home/con/perl5/perlbrew/perls/perl-5.44.0/lib/5.44.0/x86_64-linux
 LIBPERL_A = libperl.a
 FIRST_MAKEFILE = Makefile
 MAKEFILE_OLD = Makefile.old
 MAKE_APERL_FILE = Makefile.aperl
 PERLMAINCC = $(CC)
-PERL_INC = /home/con/perl5/perlbrew/perls/perl-5.42.2/lib/5.42.2/x86_64-linux/CORE
-PERL = "/home/con/perl5/perlbrew/perls/perl-5.42.2/bin/perl"
-FULLPERL = "/home/con/perl5/perlbrew/perls/perl-5.42.2/bin/perl"
+PERL_INC = /home/con/perl5/perlbrew/perls/perl-5.44.0/lib/5.44.0/x86_64-linux/CORE
+PERL = "/home/con/perl5/perlbrew/perls/perl-5.44.0/bin/perl"
+FULLPERL = "/home/con/perl5/perlbrew/perls/perl-5.44.0/bin/perl"
 ABSPERL = $(PERL)
 PERLRUN = $(PERL)
 FULLPERLRUN = $(FULLPERL)
@@ -141,7 +141,7 @@ PERM_DIR = 755
 PERM_RW = 644
 PERM_RWX = 755
 
-MAKEMAKER   = /home/con/perl5/perlbrew/perls/perl-5.42.2/lib/site_perl/5.42.2/ExtUtils/MakeMaker.pm
+MAKEMAKER   = /home/con/perl5/perlbrew/perls/perl-5.44.0/lib/5.44.0/ExtUtils/MakeMaker.pm
 MM_VERSION  = 7.78
 MM_REVISION = 77800
 
@@ -244,8 +244,8 @@ TO_INST_PM = TukeyHSD.pl \
 	xlsx.write.pl \
 	xs.check.pl \
 	xs.sxn.pl
-PERL_ARCHLIBDEP = /home/con/perl5/perlbrew/perls/perl-5.42.2/lib/5.42.2/x86_64-linux
-PERL_INCDEP = /home/con/perl5/perlbrew/perls/perl-5.42.2/lib/5.42.2/x86_64-linux/CORE
+PERL_ARCHLIBDEP = /home/con/perl5/perlbrew/perls/perl-5.44.0/lib/5.44.0/x86_64-linux
+PERL_INCDEP = /home/con/perl5/perlbrew/perls/perl-5.44.0/lib/5.44.0/x86_64-linux/CORE
 
 
 # Dependencies info
@@ -268,12 +268,12 @@ AUTOSPLITFILE = $(ABSPERLRUN)  -e 'use AutoSplit;  autosplit($$$$ARGV[0], $$$$AR
 
 # --- MakeMaker tool_xsubpp section:
 
-XSUBPPDIR = /home/con/perl5/perlbrew/perls/perl-5.42.2/lib/5.42.2/ExtUtils
+XSUBPPDIR = /home/con/perl5/perlbrew/perls/perl-5.44.0/lib/5.44.0/ExtUtils
 XSUBPP = "$(XSUBPPDIR)$(DFSEP)xsubpp"
 XSUBPPRUN = $(PERLRUN) $(XSUBPP)
 XSPROTOARG = -noprototypes
-XSUBPPDEPS = /home/con/perl5/perlbrew/perls/perl-5.42.2/lib/5.42.2/ExtUtils/typemap /home/con/perl5/perlbrew/perls/perl-5.42.2/lib/5.42.2/ExtUtils$(DFSEP)xsubpp
-XSUBPPARGS = -typemap '/home/con/perl5/perlbrew/perls/perl-5.42.2/lib/5.42.2/ExtUtils/typemap'
+XSUBPPDEPS = /home/con/perl5/perlbrew/perls/perl-5.44.0/lib/5.44.0/ExtUtils/typemap /home/con/perl5/perlbrew/perls/perl-5.44.0/lib/5.44.0/ExtUtils$(DFSEP)xsubpp
+XSUBPPARGS = -typemap '/home/con/perl5/perlbrew/perls/perl-5.44.0/lib/5.44.0/ExtUtils/typemap'
 XSUBPP_EXTRA_ARGS =
 
 
@@ -666,7 +666,7 @@ metafile : create_distdir
 	$(NOECHO) $(ECHO) 'configure_requires:' >> META_new.yml
 	$(NOECHO) $(ECHO) '  ExtUtils::MakeMaker: '\''0'\''' >> META_new.yml
 	$(NOECHO) $(ECHO) 'dynamic_config: 1' >> META_new.yml
-	$(NOECHO) $(ECHO) 'generated_by: '\''ExtUtils::MakeMaker version 7.78, CPAN::Meta::Converter version 2.150010'\''' >> META_new.yml
+	$(NOECHO) $(ECHO) 'generated_by: '\''ExtUtils::MakeMaker version 7.78, CPAN::Meta::Converter version 2.150013'\''' >> META_new.yml
 	$(NOECHO) $(ECHO) 'license: unknown' >> META_new.yml
 	$(NOECHO) $(ECHO) 'meta-spec:' >> META_new.yml
 	$(NOECHO) $(ECHO) '  url: http://module-build.sourceforge.net/META-spec-v1.4.html' >> META_new.yml
@@ -687,7 +687,7 @@ metafile : create_distdir
 	$(NOECHO) $(ECHO) '      "unknown"' >> META_new.json
 	$(NOECHO) $(ECHO) '   ],' >> META_new.json
 	$(NOECHO) $(ECHO) '   "dynamic_config" : 1,' >> META_new.json
-	$(NOECHO) $(ECHO) '   "generated_by" : "ExtUtils::MakeMaker version 7.78, CPAN::Meta::Converter version 2.150010",' >> META_new.json
+	$(NOECHO) $(ECHO) '   "generated_by" : "ExtUtils::MakeMaker version 7.78, CPAN::Meta::Converter version 2.150013",' >> META_new.json
 	$(NOECHO) $(ECHO) '   "license" : [' >> META_new.json
 	$(NOECHO) $(ECHO) '      "unknown"' >> META_new.json
 	$(NOECHO) $(ECHO) '   ],' >> META_new.json
@@ -719,7 +719,7 @@ metafile : create_distdir
 	$(NOECHO) $(ECHO) '   },' >> META_new.json
 	$(NOECHO) $(ECHO) '   "release_status" : "stable",' >> META_new.json
 	$(NOECHO) $(ECHO) '   "version" : 0.24,' >> META_new.json
-	$(NOECHO) $(ECHO) '   "x_serialization_backend" : "JSON::PP version 4.18"' >> META_new.json
+	$(NOECHO) $(ECHO) '   "x_serialization_backend" : "JSON::PP version 4.16"' >> META_new.json
 	$(NOECHO) $(ECHO) '}' >> META_new.json
 	-$(NOECHO) $(MV) META_new.json $(DISTVNAME)/META.json
 
@@ -1068,8 +1068,8 @@ $(FIRST_MAKEFILE) : Makefile.PL $(CONFIGDEP)
 
 # --- MakeMaker makeaperl section ---
 MAP_TARGET    = perl
-FULLPERL      = "/home/con/perl5/perlbrew/perls/perl-5.42.2/bin/perl"
-MAP_PERLINC   = "-Iblib/arch" "-Iblib/lib" "-I/home/con/perl5/perlbrew/perls/perl-5.42.2/lib/5.42.2/x86_64-linux" "-I/home/con/perl5/perlbrew/perls/perl-5.42.2/lib/5.42.2"
+FULLPERL      = "/home/con/perl5/perlbrew/perls/perl-5.44.0/bin/perl"
+MAP_PERLINC   = "-Iblib/arch" "-Iblib/lib" "-I/home/con/perl5/perlbrew/perls/perl-5.44.0/lib/5.44.0/x86_64-linux" "-I/home/con/perl5/perlbrew/perls/perl-5.44.0/lib/5.44.0"
 
 $(MAP_TARGET) :: $(MAKE_APERL_FILE)
 	$(MAKE) $(USEMAKEFILE) $(MAKE_APERL_FILE) $@
@@ -1125,7 +1125,7 @@ ppd :
 	$(NOECHO) $(ECHO) '    <ABSTRACT></ABSTRACT>' >> Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '    <AUTHOR></AUTHOR>' >> Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '    <IMPLEMENTATION>' >> Stats-LikeR.ppd
-	$(NOECHO) $(ECHO) '        <ARCHITECTURE NAME="x86_64-linux-5.42" />' >> Stats-LikeR.ppd
+	$(NOECHO) $(ECHO) '        <ARCHITECTURE NAME="x86_64-linux-5.44" />' >> Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '        <CODEBASE HREF="" />' >> Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '    </IMPLEMENTATION>' >> Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '</SOFTPKG>' >> Stats-LikeR.ppd
