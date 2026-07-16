@@ -154,7 +154,7 @@ lives_ok { drop_duplicates([ [1], [1] ]) } 'a well-formed call lives';
 #--------
 # memory
 #--------
-done_testing() if $INC{'Devel/Cover.pm'};
+if ($INC{'Devel/Cover.pm'}) { done_testing(); exit 0 }
 no_leaks_ok {
 	my $x = drop_duplicates([ [1, 'a'], [1, 'a'], [2, 'b'] ]);
 } 'drop_duplicates: no memory leaks (AoA)';
@@ -171,4 +171,4 @@ no_leaks_ok {
 	eval { drop_duplicates([ { A => 1 } ], subset => 'Z') };
 } 'drop_duplicates: no memory leaks (die path)';
 
-done_testing;
+done_testing();

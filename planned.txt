@@ -1,4 +1,3 @@
-3x3 Fisher test
 `explode` like in Pandas
 words to symbols in latex, like \textless, \textgreater, automatically translated from "<", ">", etc.
 ------
@@ -7,13 +6,7 @@ from Claude:
 in Tier 1 — the primitives that make it a real data-frame library
  Full merge (join types). ljoin is left-join-only. Add inner/right/outer/cross and multi-key join keys (how =>, on => [...]).
 
-Tier 2 — reshaping and missing-data
-
- melt / pivot_table. aoh2hoh is a primitive pivot with no aggfunc, and there's no melt at all. Long↔wide with an aggregation is a defining pandas feature.
- fillna / ffill / bfill. You have dropna but no imputation — the natural companion.
-
 Tier 3 — nice-to-have
 
  Window/cumulative ops: cumsum, diff, shift, pct_change, rolling(n).mean().
- drop_duplicates at the row level (uniq is vector-only).
  crosstab — you already have fisher_test/chisq_test, so a 2-D contingency builder would feed them directly.

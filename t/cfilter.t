@@ -125,6 +125,9 @@ dies_ok { cfilter( \%hoa, 'keep' => sub { 1 }, 'against' => 'nope' ) } 'against 
 dies_ok { cfilter( 42, 'keep' => [ 'x' ] ) } 'non-reference data dies';
 
 # 9. No memory leaks across the by-name, default, omit and against paths.
+# Test::LeakTrace reports Devel::Cover's instrumentation SVs as leaks, so skip
+# the leak checks (which are the last tests here) when running under coverage.
+if ($INC{'Devel/Cover.pm'}) { done_testing(); exit 0 }
 no_leaks_ok { cfilter( \%hoa, 'keep' => [ 'x', 'y' ] ) } 'no leaks: keep by name';
 no_leaks_ok { cfilter( \%hoa, 'remove' => qr/(?:step|z)/ ) } 'no leaks: remove by regex';
 no_leaks_ok { cfilter( \%hoa, 'keep' => sub { 1 } ) } 'no leaks: default predicate (sees undef)';

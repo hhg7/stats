@@ -176,7 +176,7 @@ throws_ok { interpolate([ { a => 1 } ], limit_area => 'edge') }
 #========
 # memory
 #========
-done_testing() if $INC{'Devel/Cover.pm'};
+if ($INC{'Devel/Cover.pm'}) { done_testing(); exit 0 }
 no_leaks_ok {
 	my $x = interpolate({ v => [ undef, 1, undef, undef, 4, undef ] });
 } 'interpolate: no memory leaks (HoA)';

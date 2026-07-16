@@ -154,7 +154,7 @@ throws_ok { melt([ { A => 1, v => 2 } ], id_vars => 'A', var_name => 'A') }
 #--------
 # memory
 #--------
-done_testing() if $INC{'Devel/Cover.pm'};
+if ($INC{'Devel/Cover.pm'}) { done_testing(); exit 0 }
 no_leaks_ok {
 	my $x = melt([ { A => 'a', B => 1, C => 2 } ], id_vars => 'A', value_vars => [ 'B', 'C' ]);
 } 'melt: no memory leaks (AoH)';

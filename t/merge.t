@@ -169,7 +169,7 @@ throws_ok { merge([{a=>1}], [{a=>1}], how => 'cross', on => 'a') } qr/cross join
 throws_ok { merge([[1,2]], [{a=>1}], on => 'a') } qr/array-of-arrays/, 'AoA input dies';
 
 # ---- no memory leaks ----
-done_testing() if $INC{'Devel/Cover.pm'};
+if ($INC{'Devel/Cover.pm'}) { done_testing(); exit 0 }
 SKIP: {
 	skip 'Test::LeakTrace not installed', 1 unless $HAVE_LEAKTRACE;
 	no_leaks_ok {

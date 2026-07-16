@@ -1,7 +1,7 @@
-        -:    0:Source:/home/con/perl5/perlbrew/perls/perl-5.42.2/lib/5.42.2/x86_64-linux/CORE/perlstatic.h
+        -:    0:Source:/home/con/perl5/perlbrew/perls/perl-5.44.0/lib/5.44.0/x86_64-linux/CORE/perlstatic.h
         -:    0:Graph:./LikeR.gcno
         -:    0:Data:./LikeR.gcda
-        -:    0:Runs:70
+        -:    0:Runs:375
         -:    1:/*    perlstatic.h
         -:    2: *
         -:    3: *    'I don't know half of you half as well as I should like; and I like less
@@ -22,17 +22,19 @@
         -:   18:/* saves machine code for a common noreturn idiom typically used in Newx*() */
         -:   19:GCC_DIAG_IGNORE_DECL(-Wunused-function);
         -:   20:
-        -:   21:STATIC void
+        -:   21:static void
 function Perl_croak_memory_wrap called 0 returned 0% blocks executed 0%
     #####:   22:Perl_croak_memory_wrap(void)
         -:   23:{
-    #####:   24:    Perl_croak_nocontext("%s",PL_memory_wrap);
-        -:   25:}
-        -:   26:
-        -:   27:GCC_DIAG_RESTORE_DECL;
+        -:   24:    PERL_ARGS_ASSERT_CROAK_MEMORY_WRAP;
+        -:   25:
+    #####:   26:    Perl_croak_nocontext("%s",PL_memory_wrap);
+        -:   27:}
         -:   28:
-        -:   29:
-        -:   30:/*
-        -:   31: * ex: set ts=8 sts=4 sw=4 et:
-        -:   32: */
-        -:   33:
+        -:   29:GCC_DIAG_RESTORE_DECL;
+        -:   30:
+        -:   31:
+        -:   32:/*
+        -:   33: * ex: set ts=8 sts=4 sw=4 et:
+        -:   34: */
+        -:   35:

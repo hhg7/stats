@@ -12584,7 +12584,10 @@ CODE:
 	if (items < 1) croak("fisher_test requires at least a data reference");
 
 	SV *restrict data_ref = ST(0);
-	NV conf_level = 0.95;
+	/* long-double literal: on a long-double-NV build a bare 0.95 is a double
+	 * that widens to 0.949999999999999956, so the echoed default would not
+	 * stringify back to "0.95". 0.95L is the nearest NV to 0.95 in either build. */
+	NV conf_level = 0.95L;
 	const char *restrict alternative = "two.sided";
 
 	for (unsigned int i = 1; i < items; i += 2) {
@@ -12611,7 +12614,7 @@ CODE:
 	 * Both a 2D array-of-arrays and a 2D hash-of-hashes are accepted, and any
 	 * dimensions >= 2x2 are supported (2x2 keeps the exact odds-ratio path;
 	 * everything else uses the R x C enumeration below). */
-	int nrow = 0, ncol = 0;
+	unsigned nrow = 0, ncol = 0;
 	long *restrict cells = NULL;
 
 	if (SvTYPE(deref) == SVt_PVAV) {
@@ -12624,7 +12627,7 @@ CODE:
 	  ncol = (int)(av_len((AV *)SvRV(*r0p)) + 1);
 	  if (ncol < 2) croak("Each row must have at least 2 columns");
 	  Newx(cells, (size_t)nrow * ncol, long);
-	  for (int rr = 0; rr < nrow; rr++) {
+	  for (unsigned int rr = 0; rr < nrow; rr++) {
 		   SV **restrict rp = av_fetch(outer, rr, 0);
 		   if (!rp || !SvROK(*rp) || SvTYPE(SvRV(*rp)) != SVt_PVAV) {
 			   Safefree(cells);
@@ -12648,7 +12651,7 @@ CODE:
 	  if (nrow < 2) croak("Outer hash must have at least 2 keys");
 	  ft_kv *restrict rows = NULL; Newx(rows, nrow, ft_kv);
 	  hv_iterinit(outer);
-	  for (int i = 0; i < nrow; i++) {
+	  for (unsigned int i = 0; i < nrow; i++) {
 		   HE *restrict e = hv_iternext(outer);
 		   rows[i].k = SvPV_nolen(hv_iterkeysv(e));
 		   rows[i].v = hv_iterval(outer, e);
@@ -12663,7 +12666,7 @@ CODE:
 	  if (ncol < 2) { Safefree(rows); croak("Inner hashes must have at least 2 keys"); }
 	  ft_kv *restrict cols = NULL; Newx(cols, ncol, ft_kv);
 	  hv_iterinit(first);
-	  for (int j = 0; j < ncol; j++) {
+	  for (unsigned int j = 0; j < ncol; j++) {
 		   HE *restrict e = hv_iternext(first);
 		   cols[j].k = SvPV_nolen(hv_iterkeysv(e));
 		   cols[j].v = NULL;
@@ -12671,7 +12674,7 @@ CODE:
 	  qsort(cols, ncol, sizeof(ft_kv), ft_kv_cmp);
 
 	  Newx(cells, (size_t)nrow * ncol, long);
-	  for (int rr = 0; rr < nrow; rr++) {
+	  for (unsigned int rr = 0; rr < nrow; rr++) {
 		   if (!SvROK(rows[rr].v) || SvTYPE(SvRV(rows[rr].v)) != SVt_PVHV) {
 			   Safefree(cells); Safefree(cols); Safefree(rows);
 			   croak("Inner elements must be hash refs");
@@ -12681,7 +12684,7 @@ CODE:
 			   Safefree(cells); Safefree(cols); Safefree(rows);
 			   croak("All rows must have the same %d column keys", ncol);
 		   }
-		   for (int cc = 0; cc < ncol; cc++) {
+		   for (unsigned int cc = 0; cc < ncol; cc++) {
 			   SV **restrict vp = hv_fetch(in, cols[cc].k, (I32)strlen(cols[cc].k), 0);
 			   if (!vp) {
 				   Safefree(cells); Safefree(cols); Safefree(rows);
@@ -12696,7 +12699,7 @@ CODE:
 	}
 
 	long total = 0;
-	for (int i = 0; i < nrow * ncol; i++) total += cells[i];
+	for (unsigned int i = 0; i < nrow * ncol; i++) total += cells[i];
 	if (total == 0) { Safefree(cells); croak("fisher_test: table is all zeros"); }
 
 	HV *restrict ret = newHV();
