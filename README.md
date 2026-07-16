@@ -4302,6 +4302,8 @@ raw values (no cell number formats), matching the round-trip behaviour of
 
 `fisher_test` can compute larger tables than just 2x2
 
+`read_table` now reads xlsx files about 19% faster.
+
 Addition of `bfill`, `drop_duplicates`, `ffill`, `melt`, and `pivot_table`
 
 ## 0.23 2026-07-10 CDT

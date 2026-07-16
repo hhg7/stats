@@ -1759,11 +1759,18 @@ sub _xml_unescape {
 }
 
 # "AB12" (or "AB") -> 0-based column index (A=0, Z=25, AA=26, ...).
+# Hot path (called once per cell): walk the leading letters by ordinal and stop
+# at the first non-letter (the row number), avoiding a regex substitution and a
+# split // on every call.
 sub _xlsx_col_idx {
 	my ($ref) = @_;
-	(my $letters = $ref) =~ s/[^A-Za-z].*\z//s;
 	my $idx = 0;
-	$idx = $idx * 26 + (ord(uc $_) - ord('A') + 1) for split //, $letters;
+	for my $i (0 .. length($ref) - 1) {
+		my $o = ord(substr($ref, $i, 1));
+		if    ($o >= 65 && $o <=  90) { $idx = $idx * 26 + ($o - 64) }	# A-Z
+		elsif ($o >= 97 && $o <= 122) { $idx = $idx * 26 + ($o - 96) }	# a-z
+		else  { last }							# reached the digits
+	}
 	return $idx - 1;
 }
 
@@ -1858,24 +1865,38 @@ sub _parse_xlsx_sheet {
 		my $rowxml = $1;
 		my @cells;
 		my $maxc = -1;
-		while ($rowxml =~ m{<c\b([^>]*?)(?:/>|>(.*?)</c>)}gs) {
-			my ($cattrs, $cbody) = ($1, $2);
-			my ($r) = $cattrs =~ /\br="([^"]*)"/;
-			my ($t) = $cattrs =~ /\bt="([^"]*)"/;
-			my $ci  = defined $r ? _xlsx_col_idx($r) : $maxc + 1;
+		# The r="A1" reference is almost always the first attribute, so the
+		# tokenizer captures its column letters ($1) directly -- computing the
+		# index from a group the match already produced is the single biggest
+		# win in this loop. If the capture misses (r= absent, not first, or a
+		# non-standard lowercase ref), $cattrs still holds the full attributes
+		# and we parse r= from there; only then do we fall back to sequential.
+		while ($rowxml =~ m{<c(?:\s+r="([A-Z]+)\d+")?([^>]*?)(?:/>|>(.*?)</c>)}gs) {
+			my ($ref, $cattrs, $cbody) = ($1, $2, $3);
+			my $ci;
+			if (defined $ref) {
+				$ci = 0;
+				$ci = $ci * 26 + (ord(substr($ref, $_, 1)) - 64)
+					for 0 .. length($ref) - 1;
+				$ci--;
+			} elsif ($cattrs =~ /\br="([A-Za-z]+)/) {
+				$ci = _xlsx_col_idx($1);
+			} else {
+				$ci = $maxc + 1;
+			}
+			# Cell type: only look for t= when the cell has a body to interpret.
 			my $val = '';
-			if (!defined $cbody) {			# <c .../> -- empty cell
-				$val = '';
-			} elsif (defined $t && $t eq 's') {	# shared-string index
-				my ($v) = $cbody =~ m{<v\b[^>]*>(.*?)</v>}s;
-				$val = (defined $v && $v =~ /^\d+\z/) ? ($sst->[$v] // '') : '';
-			} elsif (defined $t && $t eq 'inlineStr') {
-				my $s = '';
-				$s .= _xml_unescape($1) while $cbody =~ m{<t\b[^>]*>(.*?)</t>}gs;
-				$val = $s;
-			} else {				# number / formula str / bool / error
-				my ($v) = $cbody =~ m{<v\b[^>]*>(.*?)</v>}s;
-				$val = defined $v ? _xml_unescape($v) : '';
+			if (defined $cbody) {
+				my ($t) = $cattrs =~ /\bt="([^"]*)"/;
+				if (defined $t && $t eq 's') {		# shared-string index
+					my ($v) = $cbody =~ m{<v\b[^>]*>(.*?)</v>}s;
+					$val = (defined $v && $v =~ /^\d+\z/) ? ($sst->[$v] // '') : '';
+				} elsif (defined $t && $t eq 'inlineStr') {
+					$val .= _xml_unescape($1) while $cbody =~ m{<t\b[^>]*>(.*?)</t>}gs;
+				} else {			# number / formula str / bool / error
+					my ($v) = $cbody =~ m{<v\b[^>]*>(.*?)</v>}s;
+					$val = defined $v ? _xml_unescape($v) : '';
+				}
 			}
 			$cells[$ci] = $val;
 			$maxc = $ci if $ci > $maxc;
@@ -1884,10 +1905,14 @@ sub _parse_xlsx_sheet {
 		$global_max = $maxc if $maxc > $global_max;
 	}
 
+	# Emit each row padded to the widest row seen. Pad and fill holes in place
+	# rather than building a fresh list per row (the callback reads by index and
+	# never retains the ref), so this is a light touch, not a second full copy.
 	for my $cells (@rows) {
-		my @line = map { defined $_ ? $_ : '' } @{$cells}[0 .. $global_max];
-		next unless grep { length } @line;	# skip fully blank rows, as CSV does
-		$callback->(\@line);
+		$#$cells = $global_max;			# extend to the common width
+		$_ //= '' for @$cells;			# fill gaps + padding in place
+		next unless grep { length } @$cells;	# skip fully blank rows, as CSV does
+		$callback->($cells);
 	}
 	return;
 }
@@ -1929,12 +1954,16 @@ sub read_table {
 	# options (recursing one sheet at a time keeps every table's state, and any
 	# hoh row.names default, independent). A single-worksheet workbook, or an
 	# explicit 'sheet', still returns that one table directly.
-	if ($is_xlsx && !defined $args{sheet}) {
-		my $sheets = _xlsx_sheets($file);
-		if (@$sheets > 1) {
+	# Resolve the worksheet list once and reuse it below (it decompresses and
+	# parses workbook.xml + its rels, so recomputing it in the main xlsx branch
+	# would double that work for every single-sheet / explicit-sheet read).
+	my $xlsx_sheets;
+	if ($is_xlsx) {
+		$xlsx_sheets = _xlsx_sheets($file);
+		if (!defined $args{sheet} && @$xlsx_sheets > 1) {
 			my %book;
-			for my $i (0 .. $#$sheets) {
-				my $name = $sheets->[$i]{name};
+			for my $i (0 .. $#$xlsx_sheets) {
+				my $name = $xlsx_sheets->[$i]{name};
 				$name = 'Sheet' . ($i + 1) unless defined $name;
 				$book{$name} = read_table($file, %input_args, sheet => $i + 1);
 			}
@@ -2141,8 +2170,7 @@ sub read_table {
 	};
 	if ($is_xlsx) {
 		my $sst    = _xlsx_shared_strings($file);
-		my $sheets = _xlsx_sheets($file);
-		my $chosen = _xlsx_choose_sheet($file, $sheets, $args{sheet});
+		my $chosen = _xlsx_choose_sheet($file, $xlsx_sheets, $args{sheet});
 		_parse_xlsx_sheet($file, $sst, $chosen->{path}, $on_line);
 	} else {
 		_parse_csv_file($file, $args{sep} // '', $args{comment} // '', $on_line);
