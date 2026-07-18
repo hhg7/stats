@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 
-require 5.010;
-use feature 'say';
+use 5.044;
+no source::encoding;
 use warnings FATAL => 'all';
 use autodie ':default';
 #use DDP {output => 'STDOUT', array_max => 10, show_memsize => 1};
@@ -307,7 +307,7 @@ foreach my $i ($fi .. $#md_later) {
 	  say $out " - $1:";
 	  $needs_bullet = 1;
 	} elsif ($line =~ /^\s*[-*]\s+(.+)/) {	# Handle explicit Markdown bullets
-	  print $out " - $1\n";
+	  say $out " - $1";
 	  $needs_bullet = 0;
 	} elsif ($line =~ /^\s*$/) {# Handle empty lines
 	  say $out '';

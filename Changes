@@ -14,6 +14,8 @@ Revision history for Stats-LikeR
 
  - Addition of `bfill`, `drop_duplicates`, `ffill`, `melt`, and `pivot_table`
 
+ - Original `Lonly` code removed, as it was a special case of `get_unique`, and `get_unique` was re-named to `Lonly`.
+
 0.23 2026-07-10 CDT
 
  - `rename_cols` takes HoH as input

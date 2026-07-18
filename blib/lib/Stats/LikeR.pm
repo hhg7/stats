@@ -9646,6 +9646,8 @@ C<read_table> now reads xlsx files about 19% faster.
 
 Addition of C<bfill>, C<drop_duplicates>, C<ffill>, C<melt>, and C<pivot_table>
 
+Original C<Lonly> code removed, as it was a special case of C<get_unique>, and C<get_unique> was re-named to C<Lonly>.
+
 =head2 0.23 2026-07-10 CDT
 
 C<rename_cols> takes HoH as input
