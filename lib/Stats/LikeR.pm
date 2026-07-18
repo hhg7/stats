@@ -11,7 +11,7 @@ use autodie ':default';
 use Exporter 'import';
 use Scalar::Util qw(reftype looks_like_number);
 XSLoader::load('Stats::LikeR', $VERSION);
-our @EXPORT_OK = qw(add_data agg anova aoh2hoa aoh2hoh aov assign bfill binom_test cfilter chisq_test chunk col col2col colnames concat cor cor_test cov csort dnorm drop_cols drop_duplicates dropna ffill fillna filter fisher_test get_union get_unique glm group_by hoa2aoh hoa2hoh hoh2hoa hist interpolate intersection is_equivalent kruskal_test ks_test Lonly ljoin lm map_cell matrix max mean median melt merge min mode ncol nrow oneway_test p_adjust pivot_table pnorm power_t_test predict prcomp ptukey qcut qtukey quantile rank Ronly rbind rbinom read_table rename_cols rnorm rownames runif sample scale sd select_cols seq shapiro_test sum summary t_test transpose TukeyHSD uniq vals value_counts var var_test view wilcox_test write_table);
+our @EXPORT_OK = qw(add_data agg anova aoh2hoa aoh2hoh aov assign bfill binom_test cfilter chisq_test chunk col col2col colnames concat cor cor_test cov csort dnorm drop_cols drop_duplicates dropna ffill fillna filter fisher_test get_union glm group_by hoa2aoh hoa2hoh hoh2hoa hist interpolate intersection is_equivalent kruskal_test ks_test Lonly ljoin lm map_cell matrix max mean median melt merge min mode ncol nrow oneway_test p_adjust pivot_table pnorm power_t_test predict prcomp ptukey qcut qtukey quantile rank Ronly rbind rbinom read_table rename_cols rnorm rownames runif sample scale sd select_cols seq shapiro_test sum summary t_test transpose TukeyHSD uniq vals value_counts var var_test view wilcox_test write_table);
 our @EXPORT = @EXPORT_OK;
 
 # colnames($df) / rownames($df)
@@ -4581,6 +4581,43 @@ Notes:
 
 =back
 
+=head2 bfill
+
+Back-fill NA (undef) cells with the next valid value seen below them along the
+row axis, like C<pandas.DataFrame.bfill>. See C<ffill> for the forward direction
+and C<fillna> for constant fills.
+
+ bfill($df,
+     cols  => [ 'v' ],   # restrict to these columns (default: every column)
+     limit => 2,         # max consecutive fills per gap (default: unlimited)
+ );
+
+Column identifiers are names for AoH/HoA/HoH and 0-based positions for AoA. The
+row axis is positional for AoA/AoH/HoA and string-sorted key order for HoH (the
+only deterministic order a HoH has). Filling stays within each column's
+existing length: ragged HoA columns are not extended, and AoA rows are not
+extended past their own length.
+
+C<limit> caps the number of consecutive NA cells filled in a single gap; the
+remaining cells in an over-long gap stay NA, and the count resets after the
+next real value. A trailing run of NA (with nothing below it) is left as NA.
+
+Returns a NEW frame; the input is never modified.
+
+=head3 Example
+
+ bfill([ { v => undef }, { v => 2 }, { v => undef } ], cols => [ 'v' ]);
+ # [ { v => 2 }, { v => 2 }, { v => undef } ]   # trailing NA stays
+ 
+ bfill({ b => { x => undef }, a => { x => 5 }, c => { x => undef } }, cols => [ 'x' ]);
+ # sorted-key order a,b,c; nothing after a to pull back, so:
+ # { a => { x => 5 }, b => { x => undef }, c => { x => undef } }
+
+=head3 Errors
+
+Dies on: undefined data; an odd trailing argument list; an unknown argument; a
+C<cols> column that does not exist; or a C<limit> that is not a positive integer.
+
 =head2 binom_test
 
 C<binom_test> answers one question: you ran a yes/no experiment C<n> times and
@@ -4680,6 +4717,21 @@ matching columns; C<remove> returns everything except them. The result is the
 same shape as the input (HoH → HoH, HoA → HoA, AoH → AoH), with cell values
 copied and the original structure left untouched.
 
+The selector — the value of C<keep> or C<remove> — can be given three ways:
+
+=over
+
+=item * an B<array ref> of exact column names,
+
+=item * a B<< C<qr//> regex >> matched against column names,
+
+=item * a B<predicate> (CODE ref or function name) evaluated against a column's
+values.
+
+=back
+
+The first two select by name; the predicate is the one that looks at the data.
+
 =head3 Selecting by name
 
 Pass an array ref of column names. Naming a column that is not present in the
@@ -4688,6 +4740,20 @@ kept column simply comes back without it:
 
  my @aoh = ( { a => 1, b => 2 }, { a => 3 } );
  cfilter(\@aoh, keep => ['b']);   # [ { b => 2 }, {} ]
+
+=head3 Selecting by a name pattern
+
+Pass a C<qr//> regex, and columns are kept (or removed) according to whether
+their B<name> matches. This is the concise way to act on a family of columns:
+
+ # drop every column whose name contains "step" or "bias_"
+ cfilter(\%md, remove => qr/(?:step|bias_)/);
+ # keep only the y0, y1, ... columns
+ cfilter(\%md, keep => qr/^y\d+$/);
+
+The pattern matches anywhere in the name (it is not anchored), exactly like
+Perl's C<=~>. Unlike a named column, a pattern that matches nothing is not an
+error — it simply keeps or removes nothing.
 
 =head3 Selecting by a predicate
 
@@ -4721,8 +4787,11 @@ C<cfilter> dies (via C<croak>) when:
 
 =item * a named column is not present in the data,
 
-=item * the selector is neither an array ref nor a code ref / function name, or the
-function name cannot be resolved,
+=item * the selector is not an array ref, a C<qr//> regex, or a code ref / function
+name, or the function name cannot be resolved,
+
+=item * C<na> or C<against> is given with a by-name or regex selector (they apply only
+to a value predicate),
 
 =item * an unknown option is given, or the options are not C<< name =E<gt> value >> pairs,
 
@@ -5655,6 +5724,79 @@ so a ragged frame stays ragged:
  drop_cols([ {a=>1,b=>2}, {a=>3,c=>9} ], 'a');
  # [ { b => 2 }, { c => 9 } ]
 
+=head2 drop_duplicates
+
+Remove duplicate rows, loosely modeled on pandas' C<DataFrame.drop_duplicates>.
+Works on the three positional/columnar shapes — AoA C<[ [..], .. ]>, AoH
+C<< [ {A=E<gt>..}, .. ] >>, and HoA C<< { A=E<gt>[..], .. } >> — but B<not> HoH: its rows are
+labeled, so row-level de-duplication has no natural meaning (convert with
+C<hoh2aoh>/C<hoh2hoa> first).
+
+=head3 Usage
+
+ drop_duplicates($df);                          # dedupe on every column
+ drop_duplicates($df, subset => 'id');          # only look at column 'id'
+ drop_duplicates($df, subset => ['a', 'b']);    # a composite key
+ drop_duplicates($df, keep => 'last');          # keep the last occurrence
+ drop_duplicates($df, keep => 0);               # drop EVERY duplicated row
+
+Two rows are duplicates when their cells are equal in every C<subset> column.
+Comparison is by B<stringified value with a distinct undef (NA)> — the same
+key semantics C<merge> uses — so C<1> and C<"1.0"> are I<not> equal, while two
+undef cells I<are> equal to each other.
+
+=head3 C<subset> — which columns define a row's identity
+
+Defaults to every column. Column identifiers are B<0-based integer positions>
+for AoA and B<names> for AoH/HoA. Pass a single column as a scalar or several
+as an arrayref. The default column set is the widest row's positions for AoA,
+the sorted union of row keys for AoH, and the sorted keys for HoA.
+
+ my $aoh = [ { id => 1, v => 'a' }, { id => 1, v => 'b' }, { id => 2, v => 'c' } ];
+ drop_duplicates($aoh, subset => 'id');
+ # [ { id => 1, v => 'a' }, { id => 2, v => 'c' } ]
+
+Columns outside C<subset> are not compared, but they stay aligned — a surviving
+row keeps all of its columns.
+
+=head3 C<keep> — which occurrence survives
+
+=over
+
+=item * B<< C<'first'> >> (default) — keep the earliest occurrence of each row.
+
+=item * B<< C<'last'> >> — keep the latest occurrence.
+
+=item * B<< C<0> >> (or C<'none'>) — drop I<every> row that has a duplicate, keeping only
+rows that were unique.
+
+my $df = { id => [1, 1, 2], v => [10, 20, 30] };
+drop_duplicates($df, subset => 'id');                 # { id => [1, 2], v => [10, 30] }
+drop_duplicates($df, subset => 'id', keep => 'last'); # { id => [1, 2], v => [20, 30] }
+
+=back
+
+Row order is preserved: the survivors come out in their original first-seen
+positions.
+
+=head3 Good to know
+
+=over
+
+=item * B<Returns a new data frame; the original is never modified.> For HoA the
+columns are rebuilt (cell values copied); for AoA and AoH the surviving row
+references are reused, not deep-copied. Clone the result if you need full
+independence.
+
+=item * B<It dies> on: undefined or non-ref data; an HoH frame; an unknown argument;
+an empty or duplicated C<subset>; an invalid C<keep>; an AoA position that is
+not a non-negative integer or is out of range; or a C<subset> name absent from
+an AoH or HoA.
+
+=item * An empty frame returns empty rather than erroring.
+
+=back
+
 =head2 dropna
 
 Drop missing data from a data frame, loosely modeled on pandas' C<dropna>. Works
@@ -5725,6 +5867,86 @@ values (ambiguous HoA vs HoH).
 =item * HoH results come back in hash order, since HoH rows are unordered.
 
 =back
+
+=head2 ffill
+
+Forward-fill NA (undef) cells with the last valid value seen above them along
+the row axis, like C<pandas.DataFrame.ffill>. See C<bfill> for the backward
+direction and C<fillna> for constant fills.
+
+ ffill($df,
+     cols  => [ 'v' ],   # restrict to these columns (default: every column)
+     limit => 2,         # max consecutive fills per gap (default: unlimited)
+ );
+
+Column identifiers are names for AoH/HoA/HoH and 0-based positions for AoA. The
+row axis is positional for AoA/AoH/HoA and string-sorted key order for HoH (the
+only deterministic order a HoH has). Filling stays within each column's
+existing length: ragged HoA columns are not extended, and AoA rows are not
+extended past their own length.
+
+C<limit> caps the number of consecutive NA cells filled in a single gap; the
+remaining cells in an over-long gap stay NA, and the count resets after the
+next real value. A leading run of NA (with nothing above it) is left as NA.
+
+Returns a NEW frame; the input is never modified.
+
+=head3 Example
+
+ ffill([ { v => 1 }, { v => undef }, { v => undef }, { v => 4 }, { v => undef } ],
+     cols => [ 'v' ]);
+ # [ { v => 1 }, { v => 1 }, { v => 1 }, { v => 4 }, { v => 4 } ]
+ 
+ ffill([ { v => 1 }, { v => undef }, { v => undef }, { v => 4 } ],
+     cols => [ 'v' ], limit => 1);
+ # [ { v => 1 }, { v => 1 }, { v => undef }, { v => 4 } ]
+
+=head3 Errors
+
+Dies on: undefined data; an odd trailing argument list; an unknown argument; a
+C<cols> column that does not exist; or a C<limit> that is not a positive integer.
+
+=head2 fillna
+
+Replace NA (undef) cells with a constant, like C<pandas.DataFrame.fillna> with
+a scalar or a dict. For propagation from neighbouring rows instead of a
+constant, use C<ffill>/C<bfill>.
+
+ fillna($df,
+     value => 0,                    # scalar: fill every NA (or only within C<cols>)
+     value => { a => 9, b => -1 },  # dict: fill only these columns
+     cols  => [ 'a', 'b' ],         # restrict a scalar fill (forbidden with a dict)
+ );
+
+C<value> is required. Column identifiers are names for AoH/HoA/HoH and 0-based
+positions for AoA. A missing hash key counts as NA and is materialised when
+filled (as in C<dropna>'s NA view). AoA rows are never extended past their own
+length. Ragged HoA columns are extended to the longest column's length before
+filling.
+
+A B<scalar> C<value> fills every NA in the frame, or — with C<cols> — only NA
+cells in the named columns. A B<hashref> C<value> fills only the columns it
+names; a dict key that matches no existing column is ignored (matching
+pandas), and C<cols> may not be combined with a dict.
+
+Returns a NEW frame; the input is never modified.
+
+=head3 Example
+
+ fillna([ { a => 1, b => undef }, { a => undef, b => 4 } ], value => 0);
+ # [ { a => 1, b => 0 }, { a => 0, b => 4 } ]
+ 
+ fillna([ { a => undef, b => undef } ], value => { a => 9, Z => 1 });
+ # [ { a => 9, b => undef } ]   # Z ignored, b left NA
+ 
+ fillna([ { a => undef, b => undef } ], value => 7, cols => [ 'b' ]);
+ # [ { a => undef, b => 7 } ]
+
+=head3 Errors
+
+Dies on: undefined data; an odd trailing argument list; an unknown argument; a
+missing C<value>; combining C<cols> with a dict C<value>; or a scalar-fill C<cols>
+naming a column that does not exist.
 
 =head2 filter
 
@@ -5964,6 +6186,36 @@ which returns a hash reference:
      }
  });
 
+=head3 larger (R x C) tables
+
+Any table of at least 2x2 counts is accepted, as either a 2D array reference or a 2D hash reference:
+
+ my $res = fisher_test([
+     [5, 3, 2],
+     [1, 4, 6],
+     [7, 2, 1],
+ ]);
+
+For tables larger than 2x2 the p-value is computed by exact enumeration of
+every contingency table sharing the observed row and column margins (the
+multivariate hypergeometric distribution), and matches R's C<fisher.test> to
+full precision. Only the two-sided test is defined in this case, so
+C<alternative> is ignored and the returned hash reference omits C<conf_int> and
+C<estimate> (the conditional-MLE odds ratio and its confidence interval are
+reported for 2x2 tables only):
+
+ {
+ alternative   "two.sided",
+ conf_level    0.95,
+ method        "Fisher's Exact Test for Count Data",
+ p_value       0.0540892411303451
+ }
+
+As with the 2x2 case, a hash-of-hashes input orders rows by their sorted keys
+and columns by the sorted keys of the first row, so the result is deterministic;
+every row must expose the same set of column keys, and every row of an array
+input must have the same number of columns.
+
 =head2 get_union
 
  my @all   = get_union(\@a, \@b, \@c); # every distinct value, any list
@@ -5980,24 +6232,6 @@ C<List::Compare>'s C<get_union>.
  my @a = (1, 2, 3, 3);
  my @b = (3, 4);
  my @u = get_union(\@a, \@b);            # (1, 2, 3, 4)
-
-=head2 get_unique
-
- my @only_first = get_unique(\@a, \@b, \@c);
- my $count      = get_unique(\@a, \@b, \@c);
-
-Takes one or more array references and returns the values that appear in the
-B<first> reference and in B<no other> reference; with a single reference it
-returns that list's distinct values. Duplicates collapse, the result keeps
-first-appearance order, and scalar context returns the count. Values are
-compared by string form (see C<get_union>). A non-array-ref argument or an
-C<undef> element is fatal. Mirrors C<List::Compare>'s C<get_unique>, which
-likewise defaults to the first list.
-
- my @a = (1, 2, 3);
- my @b = (3, 4, 5);
- my @c = (5, 6);
- my @u = get_unique(\@a, \@b, \@c);      # (1, 2)  -- 3 is also in @b
 
 =head2 glm
 
@@ -6447,59 +6681,6 @@ Computes the histogram of the given data values, operating in single $O(N)$ pass
 
 If C<breaks> is not explicitly provided, it defaults to calculating the number of bins using Sturges' formula.
 
-=head2 interpolate
-
-Fills missing values (NA, represented by C<undef>) by linear interpolation
-along the row axis, modeled on pandas' C<< DataFrame.interpolate(method='linear') >>.
-It is the numeric sibling of C<ffill>/C<bfill>: instead of propagating a
-neighbouring value it fits a straight line between the nearest numeric values
-below and above each gap, treating the rows as equally spaced.
-
- use Stats::LikeR;
-
- # interior gaps interpolated; trailing gap held constant; leading gap kept NA
- interpolate({ v => [ undef, 1, undef, undef, 4, undef ] });
- # => { v => [ undef, 1, 2, 3, 4, 4 ] }
-
-Works on all four data-frame shapes with the same row order and column
-semantics as C<ffill>/C<bfill>: positional for AoA/AoH/HoA and sorted-key order
-for HoH; column identifiers are names for AoH/HoA/HoH and 0-based positions for
-AoA. Every call returns a B<new> frame and never mutates its input.
-
-Options are C<< name =E<gt> value >> pairs following the data frame:
-
-=over
-
-=item * C<method> — only C<'linear'> is supported (the default).
-
-=item * C<cols> — an array ref of columns to interpolate; defaults to every column.
-
-=item * C<limit> — a positive integer capping how many cells are filled per run
-of consecutive NAs (as in C<ffill>/C<bfill>).
-
-=item * C<limit_direction> — C<'forward'> (the default), C<'backward'>, or
-C<'both'>. Interior gaps are always linearly interpolated; this option only
-governs which cells a C<limit> reaches, and whether B<trailing> gaps (under
-C<'forward'>) or B<leading> gaps (under C<'backward'>) are held constant at the
-last/next value.
-
-=item * C<limit_area> — C<'inside'> fills only interior gaps, C<'outside'> only
-leading/trailing gaps, and the default (undef) fills both.
-
-=back
-
-Only numeric neighbours anchor a fill: a defined non-numeric cell is left
-untouched and B<blocks> interpolation across it. Interpolated cells are
-floats. Fills stay within each column's existing length (ragged HoA columns are
-not extended, and AoA rows are not extended past their own length), and a
-non-reference row is passed through unchanged — all matching C<ffill>/C<bfill>.
-For constant propagation instead of a linear fit, use C<ffill>/C<bfill>; for a
-fixed replacement value, use C<fillna>.
-
-C<interpolate> croaks on undefined data, an unknown option, non-pair trailing
-arguments, an unknown column in C<cols>, a non-positive or non-integer C<limit>,
-or an unsupported C<method>/C<limit_direction>/C<limit_area>.
-
 =head2 intersection
 
 Returns the set intersection (∩) of a list of array references: the values
@@ -6774,19 +6955,22 @@ the dot operator also works:
 
 =head2 Lonly
 
- my @left_only = Lonly(\@left, \@right);
- my $count     = Lonly(\@left, \@right);
+ my @only_first = Lonly(\@a, \@b, \@c);
+ my $count      = Lonly(\@a, \@b, \@c);
 
-Takes B<exactly two> array references and returns the values in the left list
-that are absent from the right list. Duplicates collapse, the result keeps
-left-list order, and scalar context returns the count. Values are compared by
-string form (see C<get_union>). A non-array-ref argument, an C<undef> element,
-or anything other than two references is fatal. Mirrors C<List::Compare>'s
-C<get_Lonly>.
+Takes one or more array references and returns the values that appear in the
+B<first> reference and in B<no other> reference; with a single reference it
+returns that list's distinct values. Duplicates collapse, the result keeps
+first-appearance order, and scalar context returns the count. Values are
+compared by string form (see C<get_union>). A non-array-ref argument or an
+C<undef> element is fatal. With exactly two references this is the left-only
+set difference. Mirrors C<List::Compare>'s C<get_unique>, which likewise
+defaults to the first list.
 
- my @a = (1, 2, 3, 4);
+ my @a = (1, 2, 3);
  my @b = (3, 4, 5);
- my @l = Lonly(\@a, \@b);                # (1, 2)
+ my @c = (5, 6);
+ my @u = Lonly(\@a, \@b, \@c);           # (1, 2)  -- 3 is also in @b
 
 =head2 matrix
 
@@ -6836,6 +7020,111 @@ works like mean, taking array references and arrays:
  median( $test_data[$i][0] )
 
 as of version 0.02, median will die if any undefined values are provided
+
+=head2 melt
+
+Reshape a wide frame to long form, like C<pandas.DataFrame.melt>. One or more
+identifier columns (C<id_vars>) are repeated down the output; every other
+selected column (C<value_vars>) is unpivoted into a C<variable>/C<value> pair.
+
+ melt($df,
+     id_vars      => 'A' | [ 'A', 'B' ],   # kept, repeated (default: none)
+     value_vars   => 'C' | [ 'C', 'D' ],   # unpivoted (default: all non-id cols)
+     var_name     => 'variable',           # name of the column-name column
+     value_name   => 'value',              # name of the value column
+     'output.type' => 'aoh',               # aoa|aoh|hoa|hoh (default: input family)
+ );
+
+Column identifiers are names for AoH/HoA/HoH frames and 0-based integer
+positions for AoA. C<value_vars> defaults to every column not in C<id_vars>, in
+C<colnames()> order.
+
+Output row order is B<column-major>: all rows for C<value_vars[0]>, then all
+rows for C<value_vars[1]>, and so on, preserving input row order within each
+block. HoH output has no natural row axis, so labels are reset to a
+C<0 .. N-1> range index.
+
+Returns a NEW frame; the input is never modified.
+
+=head3 Example
+
+ my $df = [ { A => 'a', B => 1, C => 2 },
+            { A => 'b', B => 3, C => 4 } ];
+ melt($df, id_vars => 'A', value_vars => [ 'B', 'C' ]);
+ # [ { A => 'a', variable => 'B', value => 1 },
+ #   { A => 'b', variable => 'B', value => 3 },
+ #   { A => 'a', variable => 'C', value => 2 },
+ #   { A => 'b', variable => 'C', value => 4 } ]
+
+NA cells (undef, or a missing hash key) melt through to C<< value =E<gt> undef >>.
+
+=head3 Errors
+
+Dies on: undefined data; an odd trailing argument list; an unknown argument; an
+unknown C<output.type>; a C<value_vars>/C<id_vars> column that does not exist;
+C<var_name> equal to C<value_name>; or C<var_name>/C<value_name> colliding with an
+C<id_vars> column name.
+
+=head2 merge
+
+A full relational join of two data frames, in the spirit of R's C<merge> and pandas' C<DataFrame.merge>. Where L<#ljoin> only does an in-place left join of a hash-of-hashes keyed by row name, C<merge> supports every common join type, single- or multi-column keys, keys with different names on each side, column-collision suffixes, and any mix of input/output shapes.
+
+ my $joined = merge($left, $right, how => 'inner', on => 'id');
+
+C<$left> and C<$right> may each be an B<AoH> (array of row hash references), a B<HoA> (hash of column array references), or a B<HoH> (hash of row hash references; the outer key is treated as a row and is B<not> used as a join key). Both frames are read non-destructively.
+
+=head3 Join types (C<how>)
+
+=over
+
+=item * C<inner> (default) — only rows whose keys match in both frames.
+
+=item * C<left> — every C<$left> row, plus matching C<$right> columns (unmatched C<$right> columns become C<undef>).
+
+=item * C<right> — every C<$right> row; the mirror image of C<left>.
+
+=item * C<outer> (alias C<full>) — the union: all rows from both frames.
+
+=item * C<cross> — the Cartesian product of the two frames; takes no keys.
+
+=back
+
+=head3 Choosing the keys
+
+=over
+
+=item * C<< on =E<gt> 'col' >> or C<< on =E<gt> ['c1', 'c2'] >> — join on one or more columns present under the same name in both frames. C<by> is an accepted synonym (R spelling).
+
+=item * C<< 'left.on' =E<gt> .., 'right.on' =E<gt> .. >> — keys with different names on each side (each a name or an array reference of equal length). C<by.x>/C<by.y> and C<left_on>/C<right_on> are accepted synonyms. The result carries a single key column under the B<left> name.
+
+=item * If neither is given, C<merge> performs a B<natural join> on the sorted intersection of the two frames' column names (it dies if that intersection is empty).
+
+=back
+
+Keys are matched on the B<stringified> cell value. A row whose key cell is C<undef> (or absent) never matches — the pandas C<NaN> rule — so such a row is dropped by an inner/right join and appears only as a left- or right-only row in a left/outer/right join.
+
+=head3 Colliding columns (C<suffixes>)
+
+A non-key column that appears in B<both> frames would collide, so each copy is renamed by appending a suffix: C<.x> to the left copy and C<.y> to the right by default (R's convention). Override with C<< suffixes =E<gt> ['_left', '_right'] >>.
+
+=head3 Output shape
+
+By default the result matches the shape of C<$left> (a HoH left frame yields an AoH, since a joined frame has no single row-name key). Force it with C<< 'output.type' =E<gt> 'aoh' >> or C<< 'output.type' =E<gt> 'hoa' >>.
+
+=head3 Example
+
+ my $emp  = [ { id => 1, name => 'Alice', dept => 10 },
+              { id => 2, name => 'Bob',   dept => 20 },
+              { id => 3, name => 'Carol', dept => 30 } ];
+ my $dept = [ { dept => 10, dname => 'Sales' },
+              { dept => 20, dname => 'Engineering' } ];
+ 
+ my $left = merge($emp, $dept, how => 'left', on => 'dept');
+ #  [ { id => 1, name => 'Alice', dept => 10, dname => 'Sales' },
+ #    { id => 2, name => 'Bob',   dept => 20, dname => 'Engineering' },
+ #    { id => 3, name => 'Carol', dept => 30, dname => undef } ]
+
+See also L<#ljoin> (in-place HoH left join), L<#concat> / L<#rbind> (stacking frames row-wise), and L<#group_by>.
 
 =head2 min
 
@@ -7178,6 +7467,74 @@ are reserved top-level keys in the result.
 Returns array of false-discovery-rate-corrected p-values, where methods available are "holm", "hochberg", "hommel", "bonferroni", "BH", "BY", "fdr"
 
  my @q = p_adjust(\@pvalues, $method);
+
+=head2 pivot_table
+
+Aggregate a long frame into a wide one, like C<pandas.pivot_table>. Rows are
+grouped by an C<index> key, spread across columns generated from a C<columns>
+key, and reduced with C<aggfunc>.
+
+ pivot_table($df,
+     index       => 'city' | [ 'city', 'q' ],  # row key (default: none -> one row)
+     columns     => 'year' | [ 'a', 'b' ],      # REQUIRED, generates output columns
+     values      => 'temp' | [ 't', 'h' ],      # aggregated (default: all remaining cols)
+     aggfunc     => 'mean' | [ 'sum', ... ] | sub { ... },
+     skipna      => 1,        # 0 -> any NA in a bucket poisons a numeric reducer
+     fill_value  => 0,        # substitute for NA result cells (default: leave undef)
+     sort        => 1,        # 0 -> keep first-seen row/column order
+     sep         => '.',      # joins pieces of generated column names
+     'output.type' => 'aoh',  # aoa|aoh|hoa|hoh (default: input family)
+ );
+
+C<columns> is required. C<values> defaults to every column that is neither
+C<index> nor C<columns>. Column identifiers are names for AoH/HoA/HoH and
+0-based positions for AoA.
+
+C<aggfunc> accepts the same vocabulary as C<agg()> — C<mean median sum sd var min
+max count n nunique first last mode> — or a coderef (called as
+C<< $code-E<gt>(\@cells) >> with every cell in the bucket, including undef), or an
+arrayref of any of these. With C<< skipna =E<gt> 1 >> (default) undef cells are dropped
+before a numeric reduction; C<< skipna =E<gt> 0 >> makes a numeric reducer return NA if
+its bucket contains any NA.
+
+Rows whose C<columns>-tuple contains NA are skipped (an unnameable column).
+With no C<index>, all rows collapse to a single C<all> row.
+
+=head3 Generated column names
+
+A single value column reduced by a single function names each output column
+after the C<columns>-tuple value alone (flat, pandas-like). Multiple functions
+and/or multiple value columns prefix the function and/or value, joined by
+C<sep>, in B<aggfunc-major> order (function, then value, then columns-tuple).
+A collision between two generated names dies — pass a different C<sep> or
+rename inputs.
+
+=head3 Example
+
+ my $df = [ { city => 'NY', year => 2020, temp => 10 },
+            { city => 'NY', year => 2020, temp => 20 },
+            { city => 'NY', year => 2021, temp => 30 },
+            { city => 'LA', year => 2020, temp => 40 } ];
+ pivot_table($df, index => 'city', columns => 'year', values => 'temp');
+ # [ { city => 'LA', 2020 => 40,  2021 => undef },
+ #   { city => 'NY', 2020 => 15,  2021 => 30    } ]
+ 
+ pivot_table($df, index => 'city', columns => 'year', values => 'temp',
+     aggfunc => [ 'count', 'sum' ]);
+ # names: count.2020 count.2021 sum.2020 sum.2021
+
+Rows and columns are sorted by default (numeric if every key is numeric, else
+string); C<< sort =E<gt> 0 >> keeps first-seen order. HoH output labels come from the
+C<index> values (C<'all'> with no index) and are uniquified with a numeric
+suffix if two joined labels collide. Returns a NEW frame; the input is never
+modified.
+
+=head3 Errors
+
+Dies on: undefined data; an odd trailing argument list; an unknown argument; a
+missing C<columns>; an C<index>/C<columns>/C<values> column that does not exist; an
+unknown C<aggfunc> string; an empty C<aggfunc> list; an unknown C<output.type>; or
+a generated duplicate column name.
 
 =head2 power_t_test
 
@@ -8249,44 +8606,65 @@ as of version 0.02, C<sum> will cause the script to die if any undefined values 
 
 =head2 summary
 
-Analogous to R's C<summary>: a five-number-plus-mean description
-(C<# values>, C<Min.>, C<1st Qu.>, C<Median>, C<Mean>, C<3rd Qu.>, C<Max.>) of
-the data as entered (it does not summarise fitted-model objects). One statistics
-row is produced per numeric I<variable>, and the table is rendered exactly like
-L</view> -- same colourised, wide-character-aware, terminal-fitting layout --
-via the same internal renderer, so all of C<view>'s display options apply.
+Analogous to R's C<summary>: a five-number-plus-mean description (C<# values>, C<Min.>, C<1st Qu.>, C<Median>, C<Mean>, C<3rd Qu.>, C<Max.>) of the data as entered (it does not summarise fitted-model objects). It produces one statistics row per numeric I<variable> and renders the table exactly like L<#view> — the same colourised, wide-character-aware, terminal-fitting output — through the same internal renderer, so all of C<view>'s display options apply.
 
-The variable that becomes a row depends on the shape, and every shape L</view>
-accepts is accepted here:
+Which variable becomes a row depends on the shape (every shape C<view> accepts is accepted here):
 
-=over
 
-=item * a B<flat vector> (C<summary(@x)>, C<summary(\@x)>, or a bare list) is one
-row;
 
-=item * an B<array of arrays> is one row per inner array, labelled by C<Index>;
+=begin html
 
-=item * a B<hash of arrays> is one row per key, labelled by C<Key>;
+<table>
+<thead>
+<tr>
+  <th>input</th>
+  <th>one row per…</th>
+  <th>label column</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>flat vector — <code>summary(@x)</code>, <code>summary(\@x)</code>, or a bare list</td>
+  <td>the whole vector</td>
+  <td><i>(none)</i></td>
+</tr>
+<tr>
+  <td>array of arrays (AoA)</td>
+  <td>inner array</td>
+  <td><code>Index</code></td>
+</tr>
+<tr>
+  <td>hash of arrays (HoA)</td>
+  <td>key</td>
+  <td><code>Key</code></td>
+</tr>
+<tr>
+  <td>array of hashes (AoH) / hash of hashes (HoH)</td>
+  <td>column, gathered across rows</td>
+  <td><code>Column</code></td>
+</tr>
+</tbody>
+</table>
 
-=item * an B<array of hashes> or a B<hash of hashes> is one row per column
-(gathered across the rows), labelled by C<Column> -- the same per-column summary
-R gives for a data frame.
+=end html
 
-=back
 
-Non-numeric and undefined cells are ignored: they never count toward
-C<# values>, and a variable with no numeric values shows C<0> and C<na> (the
-C<na> text is configurable, as in C<view>).
 
- summary(\@aoh);                    # one row per column
- summary(\%hoh, nrows => 20);       # cap the rows shown
- summary(\@x, color => 1);          # force colour on (default: auto for a TTY)
- my $txt = summary(\%hoa, return_only => 1);   # capture, don't print
+The AoH/HoH case is the per-column summary R gives for a data frame — so the array-of-hashes that C<read_table> returns by default summarises column-by-column:
 
-C<summary> prints the table (unless C<return_only> is set) and returns it as a
-string. Options: C<nrows> (synonyms C<nrow>, C<n>, C<rows>) caps the number of
-variable rows shown; and the C<view> display options C<na>, C<color>, C<colors>,
-C<max_width>, C<ellipsis>, C<gap>, C<width>, C<to>, and C<return_only> all apply.
+ summary(read_table('data.csv'));       # one row per column
+ summary(\%hoh, nrows => 20);            # cap the rows shown
+ summary(\@x, color => 1);               # force colour (default: auto on a TTY)
+ my $txt = summary(\%hoa, return_only => 1);   # capture instead of printing
+
+Non-numeric and undefined cells are ignored: they never count toward C<# values>, and a variable with no numeric values shows C<0> and C<na>. For example, C<summary> of an AoH:
+
+ # summary: 2 rows x 7 cols  (showing 2)
+ Column  # values  Min.  1st Qu.  Median  Mean  3rd Qu.  Max.
+ x              3     1      1.5       2     2      2.5     3
+ y              3    10       15      20    20       25    30
+
+C<summary> prints the table (unless C<return_only> is set) and returns it as a string. C<nrows> (synonyms C<nrow>, C<n>, C<rows>) caps the rows shown, and the C<view> display options C<na>, C<color>, C<colors>, C<max_width>, C<ellipsis>, C<gap>, C<width>, C<to>, and C<return_only> all apply.
 
 =head2 t_test
 
@@ -9256,7 +9634,19 @@ C<read_table>.
 
 =head1 Changes
 
-=head2 0.23 2026-07-08 CDT
+=head2 0.24
+
+C<cfilter> simplification, use of C<qr///> filtering on columns
+
+C<summary> output now looks more like C<view>, and accepts HoH
+
+C<fisher_test> can compute larger tables than just 2x2
+
+C<read_table> now reads xlsx files about 19% faster.
+
+Addition of C<bfill>, C<drop_duplicates>, C<ffill>, C<melt>, and C<pivot_table>
+
+=head2 0.23 2026-07-10 CDT
 
 C<rename_cols> takes HoH as input
 

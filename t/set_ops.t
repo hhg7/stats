@@ -42,9 +42,8 @@ my @b = (3, 4, 5, 6, 7);
 my @c = (5, 6, 7, 8);
 
 # Coderef aliases let us bypass the ($$)/(@) prototypes to reach the runtime
-# argument-count and non-ref guards (a straight Lonly(\@a) is a compile error).
+# argument-count and non-ref guards (a straight Ronly(\@a) is a compile error).
 my $UNION = \&Stats::LikeR::get_union;
-my $UNIQ  = \&Stats::LikeR::get_unique;
 my $LONLY = \&Stats::LikeR::Lonly;
 my $RONLY = \&Stats::LikeR::Ronly;
 
@@ -72,48 +71,23 @@ no_leaks_ok {
 } 'union(): no memory leaks' unless $INC{'Devel/Cover.pm'};
 
 #--------
-# get_unique   (values only in the first ref, in no other ref)
+# Lonly   (values only in the first ref, in no other ref)
 #--------
-is_list( [get_unique(\@a, \@b, \@c)], [1, 2],       'get_unique: only-in-first values');
-is_list( [get_unique(\@a)],           [1, 2, 3, 4, 5], 'get_unique: single ref -> its distinct values');
-is_list( [get_unique(\@c, \@a, \@b)], [8],          'get_unique: honours which ref is first');
-is_list( [get_unique([9, 9], \@b)],   [9],          'get_unique: per-list dedup of the unique value');
-is_list( [get_unique(\@b, \@a)],      [6, 7],       'get_unique: two-ref case matches Lonly');
-is( scalar(get_unique(\@a, \@b, \@c)), 2, 'get_unique: scalar context returns count');
+is_list( [Lonly(\@a, \@b, \@c)], [1, 2],       'Lonly: only-in-first values');
+is_list( [Lonly(\@a)],           [1, 2, 3, 4, 5], 'Lonly: single ref -> its distinct values');
+is_list( [Lonly(\@c, \@a, \@b)], [8],          'Lonly: honours which ref is first');
+is_list( [Lonly([9, 9], \@b)],   [9],          'Lonly: per-list dedup of the unique value');
+is_list( [Lonly(\@b, \@a)],      [6, 7],       'Lonly: two-ref case -> left-only values');
+is( scalar(Lonly(\@a, \@b, \@c)), 2, 'Lonly: scalar context returns count');
 
-throws_ok { my @x = get_unique(\@a, {}) }        qr/not an array reference/, 'get_unique: croaks on non-ref arg';
-throws_ok { my @x = get_unique([undef], \@b) }   qr/undefined value/,        'get_unique: croaks on undef element';
-throws_ok { $UNIQ->() }                          qr/needs >= 1 array ref/,   'get_unique: croaks with no args';
+throws_ok { my @x = Lonly(\@a, {}) }        qr/not an array reference/, 'Lonly: croaks on non-ref arg';
+throws_ok { my @x = Lonly([undef], \@b) }   qr/undefined value/,        'Lonly: croaks on undef element';
+throws_ok { $LONLY->() }                    qr/needs >= 1 array ref/,   'Lonly: croaks with no args';
 
-get_unique(\@a, \@b, \@c);                  # hoist
+Lonly(\@a, \@b, \@c);                       # hoist
 no_leaks_ok {
 	eval {
-		my @l = get_unique(\@a, \@b, \@c);
-		my $s = get_unique(\@a, \@b);
-	}
-} 'get_unique(): no memory leaks' unless $INC{'Devel/Cover.pm'};
-
-#--------
-# Lonly   (values in left ref, absent from right ref)
-#--------
-is_list( [Lonly(\@a, \@b)], [1, 2],   'Lonly: left-only values, deduped, in left order');
-is_list( [Lonly(\@b, \@a)], [6, 7],   'Lonly: not symmetric with the reversed call');
-is_list( [Lonly(\@b, \@b)], [],       'Lonly: identical lists -> empty');
-is_list( [Lonly([], \@b)],  [],       'Lonly: empty left -> empty');
-is_list( [Lonly(\@a, [])],  [1, 2, 3, 4, 5], 'Lonly: empty right -> left distinct');
-is( scalar(Lonly(\@a, \@b)), 2, 'Lonly: scalar context returns count');
-
-throws_ok { my @x = Lonly('x', \@b) }        qr/first \(left\) argument/,  'Lonly: croaks on non-ref left';
-throws_ok { my @x = Lonly(\@a, 'x') }        qr/second \(right\) argument/,'Lonly: croaks on non-ref right';
-throws_ok { my @x = Lonly([undef], \@b) }    qr/undefined value in left/,  'Lonly: croaks on undef in left';
-throws_ok { my @x = Lonly(\@a, [undef]) }    qr/undefined value in right/, 'Lonly: croaks on undef in right';
-throws_ok { $LONLY->(\@a) }                  qr/exactly 2 array refs/,     'Lonly: croaks on 1 ref';
-throws_ok { $LONLY->(\@a, \@b, \@c) }        qr/exactly 2 array refs/,     'Lonly: croaks on 3 refs';
-
-Lonly(\@a, \@b);                            # hoist
-no_leaks_ok {
-	eval {
-		my @l = Lonly(\@a, \@b);
+		my @l = Lonly(\@a, \@b, \@c);
 		my $s = Lonly(\@a, \@b);
 	}
 } 'Lonly(): no memory leaks' unless $INC{'Devel/Cover.pm'};

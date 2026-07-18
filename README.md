@@ -2042,24 +2042,6 @@ flag. A non-array-ref argument or an `undef` element is fatal. Mirrors
     my @b = (3, 4);
     my @u = get_union(\@a, \@b);            # (1, 2, 3, 4)
 
-## get_unique
-
-    my @only_first = get_unique(\@a, \@b, \@c);
-    my $count      = get_unique(\@a, \@b, \@c);
-
-Takes one or more array references and returns the values that appear in the
-**first** reference and in **no other** reference; with a single reference it
-returns that list's distinct values. Duplicates collapse, the result keeps
-first-appearance order, and scalar context returns the count. Values are
-compared by string form (see `get_union`). A non-array-ref argument or an
-`undef` element is fatal. Mirrors `List::Compare`'s `get_unique`, which
-likewise defaults to the first list.
-
-    my @a = (1, 2, 3);
-    my @b = (3, 4, 5);
-    my @c = (5, 6);
-    my @u = get_unique(\@a, \@b, \@c);      # (1, 2)  -- 3 is also in @b
-
 ## glm
 
 takes a hash of an array as input
@@ -2577,19 +2559,22 @@ the dot operator also works:
 
 ## Lonly
 
-    my @left_only = Lonly(\@left, \@right);
-    my $count     = Lonly(\@left, \@right);
+    my @only_first = Lonly(\@a, \@b, \@c);
+    my $count      = Lonly(\@a, \@b, \@c);
 
-Takes **exactly two** array references and returns the values in the left list
-that are absent from the right list. Duplicates collapse, the result keeps
-left-list order, and scalar context returns the count. Values are compared by
-string form (see `get_union`). A non-array-ref argument, an `undef` element,
-or anything other than two references is fatal. Mirrors `List::Compare`'s
-`get_Lonly`.
+Takes one or more array references and returns the values that appear in the
+**first** reference and in **no other** reference; with a single reference it
+returns that list's distinct values. Duplicates collapse, the result keeps
+first-appearance order, and scalar context returns the count. Values are
+compared by string form (see `get_union`). A non-array-ref argument or an
+`undef` element is fatal. With exactly two references this is the left-only
+set difference. Mirrors `List::Compare`'s `get_unique`, which likewise
+defaults to the first list.
 
-    my @a = (1, 2, 3, 4);
+    my @a = (1, 2, 3);
     my @b = (3, 4, 5);
-    my @l = Lonly(\@a, \@b);                # (1, 2)
+    my @c = (5, 6);
+    my @u = Lonly(\@a, \@b, \@c);           # (1, 2)  -- 3 is also in @b
 
 ## matrix
 
@@ -4305,6 +4290,8 @@ raw values (no cell number formats), matching the round-trip behaviour of
 `read_table` now reads xlsx files about 19% faster.
 
 Addition of `bfill`, `drop_duplicates`, `ffill`, `melt`, and `pivot_table`
+
+Original `Lonly` code removed, as it was a special case of `get_unique`, and `get_unique` was re-named to `Lonly`.
 
 ## 0.23 2026-07-10 CDT
 

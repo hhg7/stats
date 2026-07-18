@@ -3437,9 +3437,10 @@ static NV st_qtukey(NV p, NV rr, NV cc, NV df)
  * XPUSHs/EXTEND operate on the local `sp`, hence the in/out pointer.
  */
 
-/* Backs Lonly() and Ronly(): the values in `keep` (deduped, first-seen order)
- * that do not occur in `other`. Ronly is just Lonly with the two arrays
- * swapped, so both XSUBs call this. */
+/* Backs Ronly(): the values in `keep` (deduped, first-seen order) that do not
+ * occur in `other`. The caller passes `keep`/`other` in whichever order selects
+ * the side to subtract; Ronly passes the two arrays swapped. (This engine also
+ * backed a former two-arg Lonly(), now retired to old/Lonly.xs.) */
 static SV** set_difference(pTHX_ SV **sp, SV *keep_sv, SV *other_sv,
                            const char *keep_side, const char *other_side,
                            const char *name, int gimme) {
@@ -3528,12 +3529,12 @@ static int set_equivalent(pTHX_ SV **restrict args, size_t nrefs, const char *na
 	}
 	return 1;
 }
-/* Backs intersection() and get_unique(). For every distinct value it counts
+/* Backs intersection() and Lonly(). For every distinct value it counts
  * how many of the input arrays contain it (per-array dedup via `loc`), building
  * the candidate list `order` from the FIRST array only, in first-appearance
  * order, then emits the candidates whose count matches the wanted multiplicity:
  *   want_all != 0 -> count == nrefs (in every array: intersection)
- *   want_all == 0 -> count == 1     (in the first array and no other: get_unique)
+ *   want_all == 0 -> count == 1     (in the first array and no other: Lonly)
  * Both semantics only ever return values present in the first array, so
  * collecting candidates from the first array is correct and matches the
  * historical behaviour of both functions. */
@@ -15190,25 +15191,13 @@ void get_union(...)
 			}
 		}
 
-void get_unique(...)
+void Lonly(...)
 	PROTOTYPE: @
 	PPCODE:
 		if (items == 0)
-			croak("get_unique needs >= 1 array ref");
+			croak("Lonly needs >= 1 array ref");
 		SP = set_multiplicity(aTHX_ SP, &ST(0), (size_t)items, 0,
-		                      "get_unique", GIMME_V);
-
-void Lonly(...)
-	PROTOTYPE: $$
-	PPCODE:
-		if (items != 2)
-			croak("Lonly needs exactly 2 array refs (got %" UVuf ")", (UV)items);
-		if (!(SvROK(ST(0)) && SvTYPE(SvRV(ST(0))) == SVt_PVAV))
-			croak("Lonly: first (left) argument is not an array reference");
-		if (!(SvROK(ST(1)) && SvTYPE(SvRV(ST(1))) == SVt_PVAV))
-			croak("Lonly: second (right) argument is not an array reference");
-		/* keep = left (ST0), other = right (ST1) */
-		SP = set_difference(aTHX_ SP, ST(0), ST(1), "left", "right", "Lonly", GIMME_V);
+		                      "Lonly", GIMME_V);
 
 void Ronly(...)
 	PROTOTYPE: $$

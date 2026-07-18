@@ -2,19 +2,19 @@ Revision history for Stats-LikeR
 
    # Changes
 
-0.24 2026-07-14 CDT
+ - ## 0.24
 
- - `interpolate` fills NA (undef) cells by linear interpolation along the row axis, like pandas `DataFrame.interpolate(method='linear')`
+ - `cfilter` simplification, use of `qr///` filtering on columns
 
- [interpolate]
+ - `summary` output now looks more like `view`, and accepts HoH
 
- - `interpolate` is the numeric sibling of `ffill`/`bfill`: instead of propagating a neighbour it fits a straight line between the nearest numeric values below and above each gap, treating rows as equally spaced. Works on all four shapes with the same row order, `cols`, and `limit` semantics as `ffill`/`bfill`.
+ - `fisher_test` can compute larger tables than just 2x2
 
- - Options: `method` (only `'linear'`), `cols`, `limit`, `limit_direction` (`'forward'` (default) | `'backward'` | `'both'`), and `limit_area` (`'inside'` | `'outside'`). Interior gaps are always linearly interpolated; `limit_direction` governs which cells a `limit` reaches and whether trailing (forward) or leading (backward) gaps are held constant.
+ - `read_table` now reads xlsx files about 19% faster.
 
- - Only numeric neighbours anchor a fill; a defined non-numeric cell is left untouched and blocks interpolation across it. Returns a new frame; the original is never modified. Implemented in pure Perl (no XS/ABI surface added), matching the rest of the impute family.
+ - Addition of `bfill`, `drop_duplicates`, `ffill`, `melt`, and `pivot_table`
 
-0.23 2026-07-08 CDT
+0.23 2026-07-10 CDT
 
  - `rename_cols` takes HoH as input
 
