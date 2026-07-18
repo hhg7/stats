@@ -2727,6 +2727,128 @@ Computes the histogram of the given data values, operating in single $O(N)$ pass
 .Ve
 .PP
 If \f(CW\*(C`breaks\*(C'\fR is not explicitly provided, it defaults to calculating the number of bins using Sturges\*(Aq formula.
+.SS interpolate
+.IX Subsection "interpolate"
+Fill NA (undef) cells along the row axis, like \f(CW\*(C`pandas.DataFrame.interpolate\*(C'\fR.
+It is the numeric sibling of \f(CW\*(C`ffill\*(C'\fR/\f(CW\*(C`bfill\*(C'\fR: rather than only propagating a
+neighbour\*(Aqs value into a gap, it can fit a curve (line, spline, polynomial…)
+through the surrounding numeric values and read the gap off that curve. \fBEvery
+one of pandas\*(Aq interpolation methods is supported\fR and matched to pandas /
+scipy within \f(CW1e\-6\fR (see \fIMethod accuracy\fR below).
+.PP
+.Vb 9
+\& interpolate($df,
+\&     method          => \*(Aqcubic\*(Aq,      # any method below (default: \*(Aqlinear\*(Aq)
+\&     cols            => [ \*(Aqv\*(Aq ],      # restrict to these columns (default: every column)
+\&     order           => 3,            # degree, required by \*(Aqpolynomial\*(Aq / \*(Aqspline\*(Aq
+\&     x               => \*(Aqt\*(Aq,          # abscissae: column name/index or arrayref
+\&     limit           => 2,            # max cells filled per NA run (default: unlimited)
+\&     limit_direction => \*(Aqforward\*(Aq,    # \*(Aqforward\*(Aq (default), \*(Aqbackward\*(Aq, or \*(Aqboth\*(Aq
+\&     limit_area      => \*(Aqinside\*(Aq,     # \*(Aqinside\*(Aq, \*(Aqoutside\*(Aq, or omit for both
+\& );
+.Ve
+.PP
+Column identifiers are names for AoH/HoA/HoH and 0\-based positions for AoA. The
+row axis is positional for AoA/AoH/HoA and string\-sorted key order for HoH — the
+same shape and ordering rules as \f(CW\*(C`ffill\*(C'\fR/\f(CW\*(C`bfill\*(C'\fR. Returns a NEW frame; the input
+is never modified.
+.PP
+\fIMethods\fR
+.IX Subsection "Methods"
+.PP
+\fIHow gaps and edges are filled\fR
+.IX Subsection "How gaps and edges are filled"
+.PP
+Interpolation follows pandas exactly: every gap is filled from the method, then
+cells that \f(CW\*(C`limit\*(C'\fR / \f(CW\*(C`limit_direction\*(C'\fR / \f(CW\*(C`limit_area\*(C'\fR forbid are blanked back to
+NA. Only numeric cells \fBanchor\fR a fill; a defined non\-numeric cell is preserved
+(and, for the piecewise\-local methods, blocks interpolation across it).
+.PP
+\&\fBInterior gaps\fR (anchors on both sides) are always filled. \fBLeading/trailing
+gaps\fR (an edge with anchors on one side only) behave by method family:
+.IP \(bu 4
+\&\f(CW\*(C`linear\*(C'\fR and the hold methods (\f(CW\*(C`pad\*(C'\fR/\f(CW\*(C`bfill\*(C'\fR) fill the edge with the held
+constant, subject to \f(CW\*(C`limit_direction\*(C'\fR.
+.IP \(bu 4
+\&\f(CW\*(C`barycentric\*(C'\fR, \f(CW\*(C`krogh\*(C'\fR, \f(CW\*(C`cubicspline\*(C'\fR, \f(CW\*(C`pchip\*(C'\fR \fBextrapolate\fR the edge from
+the fitted curve, again subject to \f(CW\*(C`limit_direction\*(C'\fR.
+.IP \(bu 4
+the \f(CW\*(C`interp1d\*(C'\fR family (\f(CW\*(C`nearest\*(C'\fR, \f(CW\*(C`zero\*(C'\fR, \f(CW\*(C`slinear\*(C'\fR, \f(CW\*(C`quadratic\*(C'\fR, \f(CW\*(C`cubic\*(C'\fR,
+\&\f(CW\*(C`polynomial\*(C'\fR), \f(CW\*(C`akima\*(C'\fR, and \f(CW\*(C`spline\*(C'\fR are \fBinterior\-only\fR — they leave
+leading/trailing gaps as NA, matching scipy.
+.PP
+\&\f(CW\*(C`limit_direction\*(C'\fR chooses which edge is filled (\f(CW\*(C`forward\*(C'\fR → trailing, \f(CW\*(C`backward\*(C'\fR
+→ leading, \f(CW\*(C`both\*(C'\fR → both) and, with \f(CW\*(C`limit\*(C'\fR, which cells a run\*(Aqs cap reaches.
+\&\f(CW\*(C`limit_area\*(C'\fR restricts filling to \f(CW\*(Aqinside\*(Aq\fR (interior) or \f(CW\*(Aqoutside\*(Aq\fR
+(edges only). Interpolated cells are floats; filling stays within each column\*(Aqs
+existing length (ragged HoA columns and short AoA rows are not extended).
+.PP
+\fIThe \fR\f(CI\*(C`x\*(C'\fR\fI argument\fR
+.IX Subsection "The x argument"
+.PP
+By default rows are equally spaced (\f(CW\*(C`0, 1, 2, …\*(C'\fR). Pass \f(CW\*(C`x\*(C'\fR to interpolate
+against real abscissae — either an arrayref (one coordinate per row) or a column
+name/index whose numeric values are the coordinates. \f(CW\*(C`x\*(C'\fR must be strictly
+increasing and is used by every method except plain \f(CW\*(C`linear\*(C'\fR semantics (use
+\&\f(CW\*(C`index\*(C'\fR/\f(CW\*(C`values\*(C'\fR for a line on unequal spacing).
+.PP
+.Vb 3
+\& # linear fit on unequal spacing
+\& interpolate({ v => [ 0, undef, undef, 10 ] }, method => \*(Aqindex\*(Aq, x => [ 0, 1, 3, 4 ]);
+\& # { v => [ 0, 2.5, 7.5, 10 ] }
+\& 
+\& # interpolate v against a time column t
+\& interpolate($df, cols => [ \*(Aqv\*(Aq ], x => \*(Aqt\*(Aq, method => \*(Aqindex\*(Aq);
+.Ve
+.PP
+\fIExamples\fR
+.IX Subsection "Examples"
+.PP
+.Vb 3
+\& # linear: interior interpolated, trailing held (forward default), leading NA
+\& interpolate({ v => [ undef, 1, undef, undef, 4, undef ] });
+\& # { v => [ undef, 1, 2, 3, 4, 4 ] }
+\& 
+\& # cubic spline through four anchors that lie on x^2, so the fit is exact
+\& interpolate({ v => [ 0, undef, undef, 9, 16, 25 ] }, method => \*(Aqcubic\*(Aq, limit_direction => \*(Aqboth\*(Aq);
+\& # { v => [ 0, 1, 4, 9, 16, 25 ] }
+\& 
+\& # monotone pchip vs. a global polynomial on the same gaps
+\& interpolate({ v => [ 2, undef, 3, undef, undef, 2, 5, undef, 0 ] }, method => \*(Aqpchip\*(Aq, limit_direction => \*(Aqboth\*(Aq);
+.Ve
+.PP
+\fIMethod accuracy\fR
+.IX Subsection "Method accuracy"
+.PP
+\&\f(CW\*(C`linear\*(C'\fR, \f(CW\*(C`index\*(C'\fR/\f(CW\*(C`values\*(C'\fR/\f(CW\*(C`time\*(C'\fR, \f(CW\*(C`slinear\*(C'\fR, \f(CW\*(C`nearest\*(C'\fR, \f(CW\*(C`zero\*(C'\fR, \f(CW\*(C`pad\*(C'\fR/\f(CW\*(C`ffill\*(C'\fR,
+\&\f(CW\*(C`bfill\*(C'\fR/\f(CW\*(C`backfill\*(C'\fR, \f(CW\*(C`quadratic\*(C'\fR, \f(CW\*(C`cubic\*(C'\fR, \f(CW\*(C`cubicspline\*(C'\fR, \f(CW\*(C`pchip\*(C'\fR, \f(CW\*(C`akima\*(C'\fR,
+\&\f(CW\*(C`barycentric\*(C'\fR, \f(CW\*(C`krogh\*(C'\fR, and \f(CW\*(C`polynomial\*(C'\fR reproduce pandas/scipy to machine
+precision (the test suite compares against pandas 2.2.3 / scipy 1.15.2).
+.PP
+Two deliberate departures from pandas:
+.IP \(bu 4
+\&\fR\f(CB\*(C`spline\*(C'\fR\fB\fR is the \fIinterpolating\fR spline of degree \f(CW\*(C`order\*(C'\fR (equivalent to
+pandas\*(Aq \f(CW\*(C`spline\*(C'\fR with \f(CW\*(C`s=0\*(C'\fR), because pandas\*(Aq default \f(CW\*(C`spline\*(C'\fR is a FITPACK
+\&\fIsmoothing\fR spline that is not reproducible without FITPACK. It does not
+extrapolate edges. \f(CW\*(C`polynomial\*(C'\fR/\f(CW\*(C`spline\*(C'\fR support \f(CW\*(C`order\*(C'\fR 1, 2, or 3.
+.IP \(bu 4
+A defined \fBnon\-numeric\fR cell is treated as a barrier by the piecewise\-local
+methods; pandas has no equivalent (its columns are all\-numeric).
+.PP
+.Vb 3
+\& > Note: C<interpolate> is currently pure Perl (the one non\-XS numeric routine in
+\& > the module). The fit\-based methods use a dense linear solve, so they target
+\& > modest per\-column anchor counts; an XS port with a banded solver is planned.
+.Ve
+.PP
+\fIErrors\fR
+.IX Subsection "Errors"
+.PP
+Dies on: undefined data; an odd trailing argument list; an unknown argument or
+method; \f(CW\*(C`polynomial\*(C'\fR/\f(CW\*(C`spline\*(C'\fR without an integer \f(CW\*(C`order\*(C'\fR in 1–3; a \f(CW\*(C`cols\*(C'\fR or \f(CW\*(C`x\*(C'\fR
+column that does not exist; too few anchors for the chosen method; an \f(CW\*(C`x\*(C'\fR that is
+not strictly increasing or whose length does not match; a \f(CW\*(C`limit\*(C'\fR that is not a
+positive integer; or an invalid \f(CW\*(C`limit_direction\*(C'\fR/\f(CW\*(C`limit_area\*(C'\fR.
 .SS intersection
 .IX Subsection "intersection"
 Returns the set intersection (∩) of a list of array references: the values
@@ -4907,6 +5029,10 @@ raw values (no cell number formats), matching the round\-trip behaviour of
 .IX Header "Changes"
 .SS 0.24
 .IX Subsection "0.24"
+\&\f(CW\*(C`interpolate\*(C'\fR gains full \f(CW\*(C`pandas.DataFrame.interpolate\*(C'\fR method parity: \f(CW\*(C`nearest\*(C'\fR, \f(CW\*(C`zero\*(C'\fR, \f(CW\*(C`slinear\*(C'\fR, \f(CW\*(C`pad\*(C'\fR/\f(CW\*(C`ffill\*(C'\fR, \f(CW\*(C`bfill\*(C'\fR/\f(CW\*(C`backfill\*(C'\fR, \f(CW\*(C`quadratic\*(C'\fR, \f(CW\*(C`cubic\*(C'\fR, \f(CW\*(C`cubicspline\*(C'\fR, \f(CW\*(C`pchip\*(C'\fR, \f(CW\*(C`akima\*(C'\fR, \f(CW\*(C`barycentric\*(C'\fR, \f(CW\*(C`krogh\*(C'\fR, \f(CW\*(C`polynomial\*(C'\fR, \f(CW\*(C`spline\*(C'\fR, and \f(CW\*(C`index\*(C'\fR/\f(CW\*(C`values\*(C'\fR/\f(CW\*(C`time\*(C'\fR, plus an \f(CW\*(C`x\*(C'\fR argument for custom abscissae and an \f(CW\*(C`order\*(C'\fR argument. Matched to pandas/scipy within 1e\-6.
+.PP
+\&\f(CW\*(C`t/transpose.t\*(C'\fR no longer loads \f(CW\*(C`Devel::Confess\*(C'\fR in its leak tests: its \f(CW$SIG{_\|_DIE_\|_}\fR stack\-trace objects landed in \f(CW$@\fR and were reported as leaks by \f(CW\*(C`Test::LeakTrace\*(C'\fR on the croak paths under older perls (e.g. 5.12.3). The die\-path leak checks now also clear \f(CW$@\fR so the exception object cannot be miscounted.
+.PP
 \&\f(CW\*(C`cfilter\*(C'\fR simplification, use of \f(CW\*(C`qr///\*(C'\fR filtering on columns
 .PP
 \&\f(CW\*(C`summary\*(C'\fR output now looks more like \f(CW\*(C`view\*(C'\fR, and accepts HoH

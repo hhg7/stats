@@ -4,6 +4,10 @@ Revision history for Stats-LikeR
 
  - ## 0.24
 
+ - `interpolate` gains full `pandas.DataFrame.interpolate` method parity: `nearest`, `zero`, `slinear`, `pad`/`ffill`, `bfill`/`backfill`, `quadratic`, `cubic`, `cubicspline`, `pchip`, `akima`, `barycentric`, `krogh`, `polynomial`, `spline`, and `index`/`values`/`time`, plus an `x` argument for custom abscissae and an `order` argument. Matched to pandas/scipy within 1e-6.
+
+ - `t/transpose.t` no longer loads `Devel::Confess` in its leak tests: its `$SIG{__DIE__}` stack-trace objects landed in `$@` and were reported as leaks by `Test::LeakTrace` on the croak paths under older perls (e.g. 5.12.3). The die-path leak checks now also clear `$@` so the exception object cannot be miscounted.
+
  - `cfilter` simplification, use of `qr///` filtering on columns
 
  - `summary` output now looks more like `view`, and accepts HoH

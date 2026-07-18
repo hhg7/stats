@@ -1,10 +1,9 @@
 `explode` like in Pandas
 words to symbols in latex, like \textless, \textgreater, automatically translated from "<", ">", etc.
+`Ronly` can take >2 args, like `Lonly` can
+
 ------
 from Claude:
-
-in Tier 1 — the primitives that make it a real data-frame library
- Full merge (join types). ljoin is left-join-only. Add inner/right/outer/cross and multi-key join keys (how =>, on => [...]).
 
 Tier 3 — nice-to-have
 

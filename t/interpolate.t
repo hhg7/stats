@@ -166,8 +166,10 @@ throws_ok { interpolate([ { a => 1 } ], limit => 0) }
 	qr/positive integer/, 'limit=0 dies';
 throws_ok { interpolate([ { a => 1 } ], limit => 1.5) }
 	qr/positive integer/, 'non-integer limit dies';
-throws_ok { interpolate([ { a => 1 } ], method => 'cubic') }
-	qr/only method 'linear'/, 'unsupported method dies';
+throws_ok { interpolate([ { a => 1 } ], method => 'bogus') }
+	qr/unknown method/, 'unknown method dies';
+throws_ok { interpolate([ { a => 1 } ], method => 'polynomial') }
+	qr/requires an integer 'order'/, 'polynomial without order dies';
 throws_ok { interpolate([ { a => 1 } ], limit_direction => 'sideways') }
 	qr/limit_direction/, 'bad limit_direction dies';
 throws_ok { interpolate([ { a => 1 } ], limit_area => 'edge') }

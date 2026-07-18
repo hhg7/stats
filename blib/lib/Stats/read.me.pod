@@ -3102,6 +3102,198 @@ Computes the histogram of the given data values, operating in single $O(N)$ pass
 
 If C<breaks> is not explicitly provided, it defaults to calculating the number of bins using Sturges' formula.
 
+=head2 interpolate
+
+Fill NA (undef) cells along the row axis, like C<pandas.DataFrame.interpolate>.
+It is the numeric sibling of C<ffill>/C<bfill>: rather than only propagating a
+neighbour's value into a gap, it can fit a curve (line, spline, polynomial…)
+through the surrounding numeric values and read the gap off that curve. B<Every
+one of pandas' interpolation methods is supported> and matched to pandas /
+scipy within C<1e-6> (see I<Method accuracy> below).
+
+ interpolate($df,
+     method          => 'cubic',      # any method below (default: 'linear')
+     cols            => [ 'v' ],      # restrict to these columns (default: every column)
+     order           => 3,            # degree, required by 'polynomial' / 'spline'
+     x               => 't',          # abscissae: column name/index or arrayref
+     limit           => 2,            # max cells filled per NA run (default: unlimited)
+     limit_direction => 'forward',    # 'forward' (default), 'backward', or 'both'
+     limit_area      => 'inside',     # 'inside', 'outside', or omit for both
+ );
+
+Column identifiers are names for AoH/HoA/HoH and 0-based positions for AoA. The
+row axis is positional for AoA/AoH/HoA and string-sorted key order for HoH — the
+same shape and ordering rules as C<ffill>/C<bfill>. Returns a NEW frame; the input
+is never modified.
+
+=head3 Methods
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>`method`</th>
+  <th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>linear</code> <i>(default)</i></td>
+  <td>straight line between the nearest anchors, rows equally spaced</td>
+</tr>
+<tr>
+  <td><code>index</code>, <code>values</code>, <code>time</code></td>
+  <td>straight line, but spaced by the <code>x</code> coordinates</td>
+</tr>
+<tr>
+  <td><code>slinear</code></td>
+  <td>piecewise linear, interior gaps only</td>
+</tr>
+<tr>
+  <td><code>nearest</code></td>
+  <td>value of the nearer anchor, interior only</td>
+</tr>
+<tr>
+  <td><code>zero</code></td>
+  <td>value of the left anchor (zero-order hold), interior only</td>
+</tr>
+<tr>
+  <td><code>pad</code> / <code>ffill</code></td>
+  <td>hold the last value forward</td>
+</tr>
+<tr>
+  <td><code>bfill</code> / <code>backfill</code></td>
+  <td>hold the next value backward</td>
+</tr>
+<tr>
+  <td><code>quadratic</code>, <code>cubic</code></td>
+  <td>degree-2 / degree-3 interpolating B-spline (scipy <code>interp1d</code>)</td>
+</tr>
+<tr>
+  <td><code>cubicspline</code></td>
+  <td>not-a-knot cubic spline (scipy <code>CubicSpline</code>)</td>
+</tr>
+<tr>
+  <td><code>pchip</code></td>
+  <td>monotone piecewise cubic Hermite (Fritsch–Carlson)</td>
+</tr>
+<tr>
+  <td><code>akima</code></td>
+  <td>Akima piecewise cubic</td>
+</tr>
+<tr>
+  <td><code>barycentric</code>, <code>krogh</code></td>
+  <td>single global polynomial through all anchors</td>
+</tr>
+<tr>
+  <td><code>polynomial</code></td>
+  <td>degree-<code>order</code> interpolating spline (<code>order</code> required)</td>
+</tr>
+<tr>
+  <td><code>spline</code></td>
+  <td>interpolating spline of degree <code>order</code> (<code>order</code> required)</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+=head3 How gaps and edges are filled
+
+Interpolation follows pandas exactly: every gap is filled from the method, then
+cells that C<limit> / C<limit_direction> / C<limit_area> forbid are blanked back to
+NA. Only numeric cells B<anchor> a fill; a defined non-numeric cell is preserved
+(and, for the piecewise-local methods, blocks interpolation across it).
+
+B<Interior gaps> (anchors on both sides) are always filled. B<Leading/trailing
+gaps> (an edge with anchors on one side only) behave by method family:
+
+=over
+
+=item * C<linear> and the hold methods (C<pad>/C<bfill>) fill the edge with the held
+constant, subject to C<limit_direction>.
+
+=item * C<barycentric>, C<krogh>, C<cubicspline>, C<pchip> B<extrapolate> the edge from
+the fitted curve, again subject to C<limit_direction>.
+
+=item * the C<interp1d> family (C<nearest>, C<zero>, C<slinear>, C<quadratic>, C<cubic>,
+C<polynomial>), C<akima>, and C<spline> are B<interior-only> — they leave
+leading/trailing gaps as NA, matching scipy.
+
+=back
+
+C<limit_direction> chooses which edge is filled (C<forward> → trailing, C<backward>
+→ leading, C<both> → both) and, with C<limit>, which cells a run's cap reaches.
+C<limit_area> restricts filling to C<'inside'> (interior) or C<'outside'>
+(edges only). Interpolated cells are floats; filling stays within each column's
+existing length (ragged HoA columns and short AoA rows are not extended).
+
+=head3 The C<x> argument
+
+By default rows are equally spaced (C<0, 1, 2, …>). Pass C<x> to interpolate
+against real abscissae — either an arrayref (one coordinate per row) or a column
+name/index whose numeric values are the coordinates. C<x> must be strictly
+increasing and is used by every method except plain C<linear> semantics (use
+C<index>/C<values> for a line on unequal spacing).
+
+ # linear fit on unequal spacing
+ interpolate({ v => [ 0, undef, undef, 10 ] }, method => 'index', x => [ 0, 1, 3, 4 ]);
+ # { v => [ 0, 2.5, 7.5, 10 ] }
+ 
+ # interpolate v against a time column t
+ interpolate($df, cols => [ 'v' ], x => 't', method => 'index');
+
+=head3 Examples
+
+ # linear: interior interpolated, trailing held (forward default), leading NA
+ interpolate({ v => [ undef, 1, undef, undef, 4, undef ] });
+ # { v => [ undef, 1, 2, 3, 4, 4 ] }
+ 
+ # cubic spline through four anchors that lie on x^2, so the fit is exact
+ interpolate({ v => [ 0, undef, undef, 9, 16, 25 ] }, method => 'cubic', limit_direction => 'both');
+ # { v => [ 0, 1, 4, 9, 16, 25 ] }
+ 
+ # monotone pchip vs. a global polynomial on the same gaps
+ interpolate({ v => [ 2, undef, 3, undef, undef, 2, 5, undef, 0 ] }, method => 'pchip', limit_direction => 'both');
+
+=head3 Method accuracy
+
+C<linear>, C<index>/C<values>/C<time>, C<slinear>, C<nearest>, C<zero>, C<pad>/C<ffill>,
+C<bfill>/C<backfill>, C<quadratic>, C<cubic>, C<cubicspline>, C<pchip>, C<akima>,
+C<barycentric>, C<krogh>, and C<polynomial> reproduce pandas/scipy to machine
+precision (the test suite compares against pandas 2.2.3 / scipy 1.15.2).
+
+Two deliberate departures from pandas:
+
+=over
+
+=item * B<< C<spline> >> is the I<interpolating> spline of degree C<order> (equivalent to
+pandas' C<spline> with C<s=0>), because pandas' default C<spline> is a FITPACK
+I<smoothing> spline that is not reproducible without FITPACK. It does not
+extrapolate edges. C<polynomial>/C<spline> support C<order> 1, 2, or 3.
+
+=item * A defined B<non-numeric> cell is treated as a barrier by the piecewise-local
+methods; pandas has no equivalent (its columns are all-numeric).
+
+=back
+
+ > Note: C<interpolate> is currently pure Perl (the one non-XS numeric routine in
+ > the module). The fit-based methods use a dense linear solve, so they target
+ > modest per-column anchor counts; an XS port with a banded solver is planned.
+
+=head3 Errors
+
+Dies on: undefined data; an odd trailing argument list; an unknown argument or
+method; C<polynomial>/C<spline> without an integer C<order> in 1–3; a C<cols> or C<x>
+column that does not exist; too few anchors for the chosen method; an C<x> that is
+not strictly increasing or whose length does not match; a C<limit> that is not a
+positive integer; or an invalid C<limit_direction>/C<limit_area>.
+
 =head2 intersection
 
 Returns the set intersection (∩) of a list of array references: the values
@@ -6056,6 +6248,10 @@ C<read_table>.
 =head1 Changes
 
 =head2 0.24
+
+C<interpolate> gains full C<pandas.DataFrame.interpolate> method parity: C<nearest>, C<zero>, C<slinear>, C<pad>/C<ffill>, C<bfill>/C<backfill>, C<quadratic>, C<cubic>, C<cubicspline>, C<pchip>, C<akima>, C<barycentric>, C<krogh>, C<polynomial>, C<spline>, and C<index>/C<values>/C<time>, plus an C<x> argument for custom abscissae and an C<order> argument. Matched to pandas/scipy within 1e-6.
+
+C<t/transpose.t> no longer loads C<Devel::Confess> in its leak tests: its C<$SIG{__DIE__}> stack-trace objects landed in C<$@> and were reported as leaks by C<Test::LeakTrace> on the croak paths under older perls (e.g. 5.12.3). The die-path leak checks now also clear C<$@> so the exception object cannot be miscounted.
 
 C<cfilter> simplification, use of C<qr///> filtering on columns
 

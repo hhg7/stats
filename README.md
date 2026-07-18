@@ -2309,6 +2309,129 @@ Computes the histogram of the given data values, operating in single $O(N)$ pass
 
 If `breaks` is not explicitly provided, it defaults to calculating the number of bins using Sturges' formula.
 
+## interpolate
+
+Fill NA (undef) cells along the row axis, like `pandas.DataFrame.interpolate`.
+It is the numeric sibling of `ffill`/`bfill`: rather than only propagating a
+neighbour's value into a gap, it can fit a curve (line, spline, polynomial…)
+through the surrounding numeric values and read the gap off that curve. **Every
+one of pandas' interpolation methods is supported** and matched to pandas /
+scipy within `1e-6` (see *Method accuracy* below).
+
+    interpolate($df,
+        method          => 'cubic',      # any method below (default: 'linear')
+        cols            => [ 'v' ],      # restrict to these columns (default: every column)
+        order           => 3,            # degree, required by 'polynomial' / 'spline'
+        x               => 't',          # abscissae: column name/index or arrayref
+        limit           => 2,            # max cells filled per NA run (default: unlimited)
+        limit_direction => 'forward',    # 'forward' (default), 'backward', or 'both'
+        limit_area      => 'inside',     # 'inside', 'outside', or omit for both
+    );
+
+Column identifiers are names for AoH/HoA/HoH and 0-based positions for AoA. The
+row axis is positional for AoA/AoH/HoA and string-sorted key order for HoH — the
+same shape and ordering rules as `ffill`/`bfill`. Returns a NEW frame; the input
+is never modified.
+
+### Methods
+
+| `method` | What it does |
+|---|---|
+| `linear` *(default)* | straight line between the nearest anchors, rows equally spaced |
+| `index`, `values`, `time` | straight line, but spaced by the `x` coordinates |
+| `slinear` | piecewise linear, interior gaps only |
+| `nearest` | value of the nearer anchor, interior only |
+| `zero` | value of the left anchor (zero-order hold), interior only |
+| `pad` / `ffill` | hold the last value forward |
+| `bfill` / `backfill` | hold the next value backward |
+| `quadratic`, `cubic` | degree-2 / degree-3 interpolating B-spline (scipy `interp1d`) |
+| `cubicspline` | not-a-knot cubic spline (scipy `CubicSpline`) |
+| `pchip` | monotone piecewise cubic Hermite (Fritsch–Carlson) |
+| `akima` | Akima piecewise cubic |
+| `barycentric`, `krogh` | single global polynomial through all anchors |
+| `polynomial` | degree-`order` interpolating spline (`order` required) |
+| `spline` | interpolating spline of degree `order` (`order` required) |
+
+### How gaps and edges are filled
+
+Interpolation follows pandas exactly: every gap is filled from the method, then
+cells that `limit` / `limit_direction` / `limit_area` forbid are blanked back to
+NA. Only numeric cells **anchor** a fill; a defined non-numeric cell is preserved
+(and, for the piecewise-local methods, blocks interpolation across it).
+
+**Interior gaps** (anchors on both sides) are always filled. **Leading/trailing
+gaps** (an edge with anchors on one side only) behave by method family:
+
+- `linear` and the hold methods (`pad`/`bfill`) fill the edge with the held
+  constant, subject to `limit_direction`.
+- `barycentric`, `krogh`, `cubicspline`, `pchip` **extrapolate** the edge from
+  the fitted curve, again subject to `limit_direction`.
+- the `interp1d` family (`nearest`, `zero`, `slinear`, `quadratic`, `cubic`,
+  `polynomial`), `akima`, and `spline` are **interior-only** — they leave
+  leading/trailing gaps as NA, matching scipy.
+
+`limit_direction` chooses which edge is filled (`forward` → trailing, `backward`
+→ leading, `both` → both) and, with `limit`, which cells a run's cap reaches.
+`limit_area` restricts filling to `'inside'` (interior) or `'outside'`
+(edges only). Interpolated cells are floats; filling stays within each column's
+existing length (ragged HoA columns and short AoA rows are not extended).
+
+### The `x` argument
+
+By default rows are equally spaced (`0, 1, 2, …`). Pass `x` to interpolate
+against real abscissae — either an arrayref (one coordinate per row) or a column
+name/index whose numeric values are the coordinates. `x` must be strictly
+increasing and is used by every method except plain `linear` semantics (use
+`index`/`values` for a line on unequal spacing).
+
+    # linear fit on unequal spacing
+    interpolate({ v => [ 0, undef, undef, 10 ] }, method => 'index', x => [ 0, 1, 3, 4 ]);
+    # { v => [ 0, 2.5, 7.5, 10 ] }
+
+    # interpolate v against a time column t
+    interpolate($df, cols => [ 'v' ], x => 't', method => 'index');
+
+### Examples
+
+    # linear: interior interpolated, trailing held (forward default), leading NA
+    interpolate({ v => [ undef, 1, undef, undef, 4, undef ] });
+    # { v => [ undef, 1, 2, 3, 4, 4 ] }
+
+    # cubic spline through four anchors that lie on x^2, so the fit is exact
+    interpolate({ v => [ 0, undef, undef, 9, 16, 25 ] }, method => 'cubic', limit_direction => 'both');
+    # { v => [ 0, 1, 4, 9, 16, 25 ] }
+
+    # monotone pchip vs. a global polynomial on the same gaps
+    interpolate({ v => [ 2, undef, 3, undef, undef, 2, 5, undef, 0 ] }, method => 'pchip', limit_direction => 'both');
+
+### Method accuracy
+
+`linear`, `index`/`values`/`time`, `slinear`, `nearest`, `zero`, `pad`/`ffill`,
+`bfill`/`backfill`, `quadratic`, `cubic`, `cubicspline`, `pchip`, `akima`,
+`barycentric`, `krogh`, and `polynomial` reproduce pandas/scipy to machine
+precision (the test suite compares against pandas 2.2.3 / scipy 1.15.2).
+
+Two deliberate departures from pandas:
+
+- **`spline`** is the *interpolating* spline of degree `order` (equivalent to
+  pandas' `spline` with `s=0`), because pandas' default `spline` is a FITPACK
+  *smoothing* spline that is not reproducible without FITPACK. It does not
+  extrapolate edges. `polynomial`/`spline` support `order` 1, 2, or 3.
+- A defined **non-numeric** cell is treated as a barrier by the piecewise-local
+  methods; pandas has no equivalent (its columns are all-numeric).
+
+> Note: `interpolate` is currently pure Perl (the one non-XS numeric routine in
+> the module). The fit-based methods use a dense linear solve, so they target
+> modest per-column anchor counts; an XS port with a banded solver is planned.
+
+### Errors
+
+Dies on: undefined data; an odd trailing argument list; an unknown argument or
+method; `polynomial`/`spline` without an integer `order` in 1–3; a `cols` or `x`
+column that does not exist; too few anchors for the chosen method; an `x` that is
+not strictly increasing or whose length does not match; a `limit` that is not a
+positive integer; or an invalid `limit_direction`/`limit_area`.
+
 ## intersection
 
 Returns the set intersection (∩) of a list of array references: the values
@@ -4281,6 +4404,10 @@ raw values (no cell number formats), matching the round-trip behaviour of
 
 ## 0.24
 
+`interpolate` gains full `pandas.DataFrame.interpolate` method parity: `nearest`, `zero`, `slinear`, `pad`/`ffill`, `bfill`/`backfill`, `quadratic`, `cubic`, `cubicspline`, `pchip`, `akima`, `barycentric`, `krogh`, `polynomial`, `spline`, and `index`/`values`/`time`, plus an `x` argument for custom abscissae and an `order` argument. Matched to pandas/scipy within 1e-6.
+
+`t/transpose.t` no longer loads `Devel::Confess` in its leak tests: its `$SIG{__DIE__}` stack-trace objects landed in `$@` and were reported as leaks by `Test::LeakTrace` on the croak paths under older perls (e.g. 5.12.3). The die-path leak checks now also clear `$@` so the exception object cannot be miscounted.
+
 `cfilter` simplification, use of `qr///` filtering on columns
 
 `summary` output now looks more like `view`, and accepts HoH
@@ -4292,6 +4419,8 @@ raw values (no cell number formats), matching the round-trip behaviour of
 Addition of `bfill`, `drop_duplicates`, `ffill`, `melt`, and `pivot_table`
 
 Original `Lonly` code removed, as it was a special case of `get_unique`, and `get_unique` was re-named to `Lonly`.
+
+Removal of `Devel::Confess` from testing and dependencies.
 
 ## 0.23 2026-07-10 CDT
 
