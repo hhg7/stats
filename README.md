@@ -4406,7 +4406,7 @@ raw values (no cell number formats), matching the round-trip behaviour of
 
 # Changes
 
-## 0.24
+## 0.24 2026-07-19 CDT
 
 `interpolate`'s numeric core moved from pure Perl to XS (`_interp_column_xs`): ~5× faster for `linear` on large columns, ~11× for `pchip`, and ~50× for the spline methods whose dense solve dominates. Results are unchanged (bit-for-bit versus the former Perl kernels).
 

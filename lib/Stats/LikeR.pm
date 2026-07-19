@@ -9890,7 +9890,7 @@ C<read_table>.
 
 =head1 Changes
 
-=head2 0.24
+=head2 0.24 2026-07-19 CDT
 
 C<interpolate>'s numeric core moved from pure Perl to XS (C<_interp_column_xs>): ~5× faster for C<linear> on large columns, ~11× for C<pchip>, and ~50× for the spline methods whose dense solve dominates. Results are unchanged (bit-for-bit versus the former Perl kernels).
 
