@@ -2420,9 +2420,11 @@ Two deliberate departures from pandas:
 - A defined **non-numeric** cell is treated as a barrier by the piecewise-local
   methods; pandas has no equivalent (its columns are all-numeric).
 
-> Note: `interpolate` is currently pure Perl (the one non-XS numeric routine in
-> the module). The fit-based methods use a dense linear solve, so they target
-> modest per-column anchor counts; an XS port with a banded solver is planned.
+> Performance: the per-column numeric core (every method, the linear solve and
+> the preserve mask) runs in XS. Versus the former pure-Perl kernels this is
+> roughly 5× faster for `linear` on a large column, ~11× for `pchip`, and ~50×
+> for the spline methods whose dense solve dominates. The fit-based methods
+> still use a dense solve, so they target modest per-column anchor counts.
 
 ### Errors
 
@@ -4406,6 +4408,8 @@ raw values (no cell number formats), matching the round-trip behaviour of
 
 ## 0.24
 
+`interpolate`'s numeric core moved from pure Perl to XS (`_interp_column_xs`): ~5× faster for `linear` on large columns, ~11× for `pchip`, and ~50× for the spline methods whose dense solve dominates. Results are unchanged (bit-for-bit versus the former Perl kernels).
+
 `Ronly` now accepts one or more array references (like `Lonly`), returning the values found only in the **last** reference; the two-argument form is unchanged, and `Ronly(@refs)` equals `Lonly(reverse @refs)`.
 
 `interpolate` gains full `pandas.DataFrame.interpolate` method parity: `nearest`, `zero`, `slinear`, `pad`/`ffill`, `bfill`/`backfill`, `quadratic`, `cubic`, `cubicspline`, `pchip`, `akima`, `barycentric`, `krogh`, `polynomial`, `spline`, and `index`/`values`/`time`, plus an `x` argument for custom abscissae and an `order` argument. Matched to pandas/scipy within 1e-6.
@@ -4418,7 +4422,7 @@ raw values (no cell number formats), matching the round-trip behaviour of
 
 `fisher_test` can compute larger tables than just 2x2
 
-`read_table` now reads xlsx files significantly faster.
+`read_table` reads xlsx files significantly faster and with less RAM.
 
 Addition of `bfill`, `drop_duplicates`, `ffill`, `melt`, and `pivot_table`
 

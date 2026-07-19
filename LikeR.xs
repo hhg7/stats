@@ -4392,26 +4392,475 @@ dd_key(pTHX_ SV **restrict cells, SSize_t n) {
 	return k;
 }
 
+/* ===========================================================================
+ * interpolate() numeric core.  Backs Stats::LikeR::_interp_column_xs, which
+ * fills the undef gaps of one already-extracted column (an AV of numbers /
+ * undef gaps / defined non-numeric barriers) in place.  A direct C port of the
+ * former pure-Perl kernels (_interp_* in LikeR.pm); the per-method maths is
+ * validated against pandas/scipy by t/interpolate*.t.  All scratch is Newx +
+ * SAVEFREEPV so it is freed at the XSUB's LEAVE, on normal and croak exits.
+ *
+ * kind[i]: 0 = undef gap (fillable), 1 = numeric anchor, 2 = defined non-numeric
+ * barrier (preserved; blocks the piecewise-local fits, ignored by the fits).
+ * ========================================================================= */
+
+#define IP_LINEAR   1   /* interior fill rules */
+#define IP_NEAREST  2
+#define IP_LEFT     3
+#define IP_RIGHT    4
+#define IP_EDGE_NONE  0 /* leading/trailing hold rules */
+#define IP_EDGE_BOTH  1
+#define IP_EDGE_LEFT  2
+#define IP_EDGE_RIGHT 3
+#define IP_KLINEAR 1    /* fit-kernel types */
+#define IP_KCUBIC  2
+#define IP_KQUAD   3
+#define IP_KPCHIP  4
+#define IP_KAKIMA  5
+#define IP_KBARY   6
+
+/* largest i with xa[i] <= t, clamped to a valid interval [0, n-2] */
+static IV ip_seg(const NV *xa, IV n, NV t) {
+	IV lo = 0, hi = n - 1;
+	while (lo < hi) {
+		IV mid = (lo + hi + 1) / 2;
+		if (xa[mid] <= t) lo = mid; else hi = mid - 1;
+	}
+	if (lo > n - 2) lo = n - 2;
+	if (lo < 0)     lo = 0;
+	return lo;
+}
+
+/* dense Gaussian elimination with partial pivoting: solve A x = b (A row-major
+ * n*n, both overwritten), writing the solution into out.  Croaks if singular. */
+static void ip_solve(pTHX_ NV *A, NV *b, IV n, NV *out) {
+	for (IV col = 0; col < n; col++) {
+		IV piv = col; NV best = fabs(A[col * n + col]);
+		for (IV r = col + 1; r < n; r++) {
+			NV a = fabs(A[r * n + col]);
+			if (a > best) { best = a; piv = r; }
+		}
+		if (piv != col) {
+			for (IV k = 0; k < n; k++) {
+				NV t = A[col * n + k]; A[col * n + k] = A[piv * n + k]; A[piv * n + k] = t;
+			}
+			NV t = b[col]; b[col] = b[piv]; b[piv] = t;
+		}
+		NV d = A[col * n + col];
+		if (d == 0) croak("interpolate: singular system in spline solve");
+		for (IV r = col + 1; r < n; r++) {
+			NV f = A[r * n + col] / d;
+			if (f == 0) continue;
+			for (IV k = col; k < n; k++) A[r * n + k] -= f * A[col * n + k];
+			b[r] -= f * b[col];
+		}
+	}
+	for (IV i = n - 1; i >= 0; i--) {
+		NV s = b[i];
+		for (IV k = i + 1; k < n; k++) s -= A[i * n + k] * out[k];
+		out[i] = s / A[i * n + i];
+	}
+}
+
+/* nearest numeric anchor strictly below / above each index, or -1 across a
+ * barrier or the edge (kind==2 resets the search; kind==0 leaves it running). */
+static void ip_prevnext(const char *kind, IV n, IV *prev, IV *next) {
+	IV p = -1;
+	for (IV i = 0; i < n; i++) {
+		prev[i] = p;
+		if (kind[i] == 1) p = i; else if (kind[i] == 2) p = -1;
+	}
+	IV q = -1;
+	for (IV i = n - 1; i >= 0; i--) {
+		next[i] = q;
+		if (kind[i] == 1) q = i; else if (kind[i] == 2) q = -1;
+	}
+}
+
+// Cox-de Boor B-spline basis B_{j,kk}(tv) over knot vector t (length nt)
+static NV ip_bspline(const NV *t, IV nt, IV j, int kk, NV tv) {
+	if (kk == 0) {
+		if ((t[j] <= tv && tv < t[j + 1])
+		 || (tv == t[nt - 1] && t[j] <= tv && tv <= t[j + 1])) return 1.0;
+		return 0.0;
+	}
+	NV d1 = t[j + kk]     - t[j];
+	NV d2 = t[j + kk + 1] - t[j + 1];
+	NV c1 = d1 > 0 ? (tv - t[j]) / d1 * ip_bspline(t, nt, j, kk - 1, tv) : 0.0;
+	NV c2 = d2 > 0 ? (t[j + kk + 1] - tv) / d2 * ip_bspline(t, nt, j + 1, kk - 1, tv) : 0.0;
+	return c1 + c2;
+}
+
+// scipy PchipInterpolator's one-sided endpoint slope
+static NV ip_pchip_edge(NV h0, NV h1, NV d0, NV d1) {
+	NV d = ((2 * h0 + h1) * d0 - h0 * d1) / (h0 + h1);
+	int sd = (d > 0) - (d < 0), s0 = (d0 > 0) - (d0 < 0), s1 = (d1 > 0) - (d1 < 0);
+	if (sd != s0)                                        d = 0;
+	else if (s0 != s1 && fabs(d) > 3 * fabs(d0))         d = 3 * d0;
+	return d;
+}
+
+typedef struct {
+	int type;          // IP_K*
+	IV  na;            // anchor count
+	const NV *xa, *ya; // anchors (borrowed)
+	NV *h;             // spacings (cubic/pchip/akima)
+	NV *M;             // cubic second derivatives
+	NV *d;             // pchip slopes / akima tangents
+	NV *w;             // barycentric weights
+	NV *knots, *coef;  // quadratic B-spline
+	IV  nknots;
+} ip_fit;
+
+/* not-a-knot interpolating cubic spline (== scipy CubicSpline / interp1d cubic) */
+static void ip_build_cubic(pTHX_ ip_fit *F) {
+	IV n = F->na; const NV *xa = F->xa, *ya = F->ya;
+	Newx(F->h, n > 1 ? n - 1 : 1, NV); SAVEFREEPV(F->h);
+	for (IV i = 0; i < n - 1; i++) F->h[i] = xa[i + 1] - xa[i];
+	if (n <= 3) { F->M = NULL; return; }        /* eval handles 2 / 3 directly */
+	NV *A; Newxz(A, n * n, NV); SAVEFREEPV(A);
+	NV *b; Newxz(b, n, NV);     SAVEFREEPV(b);
+	for (IV i = 1; i <= n - 2; i++) {
+		A[i * n + (i - 1)] = F->h[i - 1];
+		A[i * n + i]       = 2 * (F->h[i - 1] + F->h[i]);
+		A[i * n + (i + 1)] = F->h[i];
+		b[i] = 6 * ((ya[i + 1] - ya[i]) / F->h[i] - (ya[i] - ya[i - 1]) / F->h[i - 1]);
+	}
+	A[0]           = -F->h[1]; A[1] = F->h[0] + F->h[1]; A[2] = -F->h[0];
+	A[(n - 1) * n + (n - 3)] = -F->h[n - 2];
+	A[(n - 1) * n + (n - 2)] =  F->h[n - 3] + F->h[n - 2];
+	A[(n - 1) * n + (n - 1)] = -F->h[n - 3];
+	Newx(F->M, n, NV); SAVEFREEPV(F->M);
+	ip_solve(aTHX_ A, b, n, F->M);
+}
+static NV ip_eval_cubic(const ip_fit *F, NV t) {
+	IV n = F->na; const NV *xa = F->xa, *ya = F->ya, *h = F->h;
+	if (n == 2) return ya[0] + (ya[1] - ya[0]) * (t - xa[0]) / h[0];
+	if (n == 3)
+		return ya[0] * (t - xa[1]) * (t - xa[2]) / ((xa[0] - xa[1]) * (xa[0] - xa[2]))
+		     + ya[1] * (t - xa[0]) * (t - xa[2]) / ((xa[1] - xa[0]) * (xa[1] - xa[2]))
+		     + ya[2] * (t - xa[0]) * (t - xa[1]) / ((xa[2] - xa[0]) * (xa[2] - xa[1]));
+	IV i = ip_seg(xa, n, t);
+	NV hi = h[i], A_ = (xa[i + 1] - t) / hi, B_ = (t - xa[i]) / hi;
+	return A_ * ya[i] + B_ * ya[i + 1]
+	     + ((A_ * A_ * A_ - A_) * F->M[i] + (B_ * B_ * B_ - B_) * F->M[i + 1]) * hi * hi / 6;
+}
+
+// degree-2 interpolating B-spline, scipy's midpoint interior knots
+static void ip_build_quad(pTHX_ ip_fit *F) {
+	IV n = F->na; const NV *restrict xa = F->xa, *ya = F->ya; int k = 2;
+	IV nk = n + 3, idx = 0;
+	Newx(F->knots, nk, NV); SAVEFREEPV(F->knots);
+	for (int r = 0; r < k + 1; r++)  F->knots[idx++] = xa[0];
+	for (IV i = 1; i <= n - 3; i++)  F->knots[idx++] = (xa[i] + xa[i + 1]) / 2;
+	for (int r = 0; r < k + 1; r++)  F->knots[idx++] = xa[n - 1];
+	F->nknots = nk;
+	IV m = nk - k - 1;                            /* == n */
+	NV *restrict A; Newxz(A, n * n, NV); SAVEFREEPV(A);
+	NV *restrict b; Newx(b, n, NV);      SAVEFREEPV(b);
+	for (IV i = 0; i < n; i++) {
+		for (IV j = 0; j < m; j++) A[i * n + j] = ip_bspline(F->knots, nk, j, k, xa[i]);
+		b[i] = ya[i];
+	}
+	Newx(F->coef, m, NV); SAVEFREEPV(F->coef);
+	ip_solve(aTHX_ A, b, n, F->coef);
+}
+static NV ip_eval_quad(const ip_fit *F, NV t) {
+	IV m = F->na; NV s = 0;
+	for (IV j = 0; j < m; j++) s += F->coef[j] * ip_bspline(F->knots, F->nknots, j, 2, t);
+	return s;
+}
+
+// monotone piecewise cubic Hermite (Fritsch-Carlson; == scipy Pchip)
+static void ip_build_pchip(pTHX_ ip_fit *F) {
+	IV n = F->na; const NV *xa = F->xa, *ya = F->ya;
+	Newx(F->h, n - 1, NV); SAVEFREEPV(F->h);
+	NV *dk; Newx(dk, n - 1, NV); SAVEFREEPV(dk);
+	for (IV i = 0; i < n - 1; i++) { F->h[i] = xa[i + 1] - xa[i]; dk[i] = (ya[i + 1] - ya[i]) / F->h[i]; }
+	Newx(F->d, n, NV); SAVEFREEPV(F->d);
+	if (n == 2) { F->d[0] = dk[0]; F->d[1] = dk[0]; return; }
+	F->d[0]     = ip_pchip_edge(F->h[0], F->h[1], dk[0], dk[1]);
+	F->d[n - 1] = ip_pchip_edge(F->h[n - 2], F->h[n - 3], dk[n - 2], dk[n - 3]);
+	for (IV i = 1; i <= n - 2; i++) {
+		if (dk[i - 1] * dk[i] <= 0) F->d[i] = 0;
+		else {
+			NV w1 = 2 * F->h[i] + F->h[i - 1], w2 = F->h[i] + 2 * F->h[i - 1];
+			F->d[i] = (w1 + w2) / (w1 / dk[i - 1] + w2 / dk[i]);
+		}
+	}
+}
+static NV ip_eval_pchip(const ip_fit *F, NV t) {
+	IV n = F->na; const NV *xa = F->xa, *ya = F->ya, *h = F->h, *d = F->d;
+	IV i = ip_seg(xa, n, t); NV hi = h[i], s = (t - xa[i]) / hi, s2 = s * s, s3 = s2 * s;
+	NV h00 = 2 * s3 - 3 * s2 + 1, h10 = s3 - 2 * s2 + s, h01 = -2 * s3 + 3 * s2, h11 = s3 - s2;
+	return h00 * ya[i] + h10 * hi * d[i] + h01 * ya[i + 1] + h11 * hi * d[i + 1];
+}
+
+/* Akima piecewise cubic (== scipy Akima1DInterpolator); needs >= 3 anchors */
+static void ip_build_akima(pTHX_ ip_fit *F) {
+	IV n = F->na; const NV *restrict xa = F->xa, *restrict ya = F->ya;
+	Newx(F->h, n - 1, NV); SAVEFREEPV(F->h);
+	NV *restrict m; Newx(m, n - 1, NV); SAVEFREEPV(m);
+	for (IV i = 0; i < n - 1; i++) { F->h[i] = xa[i + 1] - xa[i]; m[i] = (ya[i + 1] - ya[i]) / F->h[i]; }
+	NV *mm; Newx(mm, n + 3, NV); SAVEFREEPV(mm); // slopes extended two each side
+	for (IV i = 0; i < n - 1; i++) mm[i + 2] = m[i];
+	mm[1] = 2 * mm[2] - mm[3];
+	mm[0] = 2 * mm[1] - mm[2];
+	mm[n + 1] = 2 * mm[n]     - mm[n - 1];
+	mm[n + 2] = 2 * mm[n + 1] - mm[n];
+	Newx(F->d, n, NV); SAVEFREEPV(F->d); // tangents
+	for (IV i = 0; i < n; i++) {
+		NV m1 = mm[i], m2 = mm[i + 1], m3 = mm[i + 2], m4 = mm[i + 3];
+		NV d1 = fabs(m4 - m3), d2 = fabs(m2 - m1);
+		F->d[i] = (d1 + d2 == 0) ? (m2 + m3) / 2 : (d1 * m2 + d2 * m3) / (d1 + d2);
+	}
+}
+static NV ip_eval_akima(const ip_fit *F, NV t) {
+	IV n = F->na; const NV *xa = F->xa, *ya = F->ya, *h = F->h, *tk = F->d;
+	IV i = ip_seg(xa, n, t); NV hi = h[i], s = t - xa[i];
+	NV c2 = (3 * (ya[i + 1] - ya[i]) / hi - 2 * tk[i] - tk[i + 1]) / hi;
+	NV c3 = (tk[i] + tk[i + 1] - 2 * (ya[i + 1] - ya[i]) / hi) / (hi * hi);
+	return ya[i] + tk[i] * s + c2 * s * s + c3 * s * s * s;
+}
+
+// global interpolating polynomial in barycentric form (== scipy barycentric/krogh)
+static void ip_build_bary(pTHX_ ip_fit *F) {
+	IV n = F->na; const NV *restrict xa = F->xa;
+	Newx(F->w, n, NV); SAVEFREEPV(F->w);
+	for (IV j = 0; j < n; j++) {
+		NV wj = 1.0;
+		for (IV k = 0; k < n; k++) if (k != j) wj /= (xa[j] - xa[k]);
+		F->w[j] = wj;
+	}
+}
+static NV ip_eval_bary(const ip_fit *F, NV t) {
+	IV n = F->na; const NV *restrict xa = F->xa, *restrict ya = F->ya, *restrict w = F->w;
+	NV num = 0, den = 0;
+	for (IV j = 0; j < n; j++) {
+		if (t == xa[j]) return ya[j];
+		NV c = w[j] / (t - xa[j]);
+		num += c * ya[j]; den += c;
+	}
+	return num / den;
+}
+
+static NV ip_eval_linear(const ip_fit *F, NV t) {
+	IV n = F->na; const NV *restrict xa = F->xa, *restrict ya = F->ya;
+	IV i = ip_seg(xa, n, t);
+	return ya[i] + (ya[i + 1] - ya[i]) * (t - xa[i]) / (xa[i + 1] - xa[i]);
+}
+
+static NV ip_eval(const ip_fit *F, NV t) {
+	switch (F->type) {
+		case IP_KLINEAR: return ip_eval_linear(F, t);
+		case IP_KCUBIC:  return ip_eval_cubic(F, t);
+		case IP_KQUAD:   return ip_eval_quad(F, t);
+		case IP_KPCHIP:  return ip_eval_pchip(F, t);
+		case IP_KAKIMA:  return ip_eval_akima(F, t);
+		case IP_KBARY:   return ip_eval_bary(F, t);
+	}
+	return 0;
+}
+
+/* map a piecewise-local method name to its (interior rule, edge rule); returns
+ * 0 for the fit-based methods */
+static int ip_local_rule(const char *m, int *rule, int *edge) {
+	if (!strcmp(m, "linear") || !strcmp(m, "index") || !strcmp(m, "values") || !strcmp(m, "time"))
+		{ *rule = IP_LINEAR; *edge = IP_EDGE_BOTH; return 1; }
+	if (!strcmp(m, "slinear")) { *rule = IP_LINEAR;  *edge = IP_EDGE_NONE;  return 1; }
+	if (!strcmp(m, "nearest")) { *rule = IP_NEAREST; *edge = IP_EDGE_NONE;  return 1; }
+	if (!strcmp(m, "zero"))    { *rule = IP_LEFT;    *edge = IP_EDGE_NONE;  return 1; }
+	if (!strcmp(m, "pad") || !strcmp(m, "ffill"))    { *rule = IP_LEFT;  *edge = IP_EDGE_LEFT;  return 1; }
+	if (!strcmp(m, "bfill") || !strcmp(m, "backfill")) { *rule = IP_RIGHT; *edge = IP_EDGE_RIGHT; return 1; }
+	return 0;
+}
+
+/* pandas _interp_limit (readable form): mark every gap whose [i-fw .. i+bw]
+ * window is entirely gaps */
+static void ip_far(const char *kind, IV n, IV fw, IV bw, char *pre) {
+	for (IV i = 0; i < n; i++) {
+		if (kind[i] != 0) continue;
+		IV lo = i - fw; if (lo < 0) lo = 0;
+		IV hi = i + bw; if (hi > n - 1) hi = n - 1;
+		bool all = 1;
+		for (IV k = lo; k <= hi; k++) if (kind[k] != 0) { all = 0; break; }
+		if (all) pre[i] = 1;
+	}
+}
+
+/* fill the undef gaps of one column in place (see block header) */
+static void ip_fill_column(pTHX_ AV *vals, AV *xav, const char *method,
+                           SV *order_sv, const char *dir, SV *limit_sv, SV *area_sv) {
+	IV n = av_len(vals) + 1;
+	if (n <= 0) return;
+
+	NV  *restrict x, *restrict y; char *restrict kind;
+	Newx(x, n, NV);       SAVEFREEPV(x);
+	Newx(y, n, NV);       SAVEFREEPV(y);
+	Newx(kind, n, char);  SAVEFREEPV(kind);
+	IV anchors = 0;
+	for (IV i = 0; i < n; i++) {
+		SV **restrict xp = av_fetch(xav, i, 0);
+		x[i] = (xp && *xp) ? SvNV(*xp) : 0;
+		SV **restrict vp = av_fetch(vals, i, 0);
+		SV  *restrict v  = (vp && *vp) ? *vp : NULL;
+		if (!v || !SvOK(v))            kind[i] = 0; // gap
+		else if (looks_like_number(v)) { kind[i] = 1; y[i] = SvNV(v); anchors++; } // anchor
+		else                           kind[i] = 2; // barrier
+	}
+	if (anchors == 0) return;
+
+	NV   *restrict cand; Newx(cand, n, NV);   SAVEFREEPV(cand);
+	char *restrict has;  Newxz(has, n, char); SAVEFREEPV(has);
+
+	int rule, edge;
+	if (ip_local_rule(method, &rule, &edge)) {
+		IV *restrict prev, *restrict next;
+		Newx(prev, n, IV); SAVEFREEPV(prev);
+		Newx(next, n, IV); SAVEFREEPV(next);
+		ip_prevnext(kind, n, prev, next);
+		for (IV i = 0; i < n; i++) {
+			if (kind[i] != 0) continue;
+			IV l = prev[i], r = next[i];
+			if (l >= 0 && r >= 0) {
+				NV vl = y[l], vr = y[r];
+				if      (rule == IP_LINEAR)  cand[i] = vl + (vr - vl) * (x[i] - x[l]) / (x[r] - x[l]);
+				else if (rule == IP_NEAREST) cand[i] = (x[i] - x[l] <= x[r] - x[i]) ? vl : vr;
+				else if (rule == IP_LEFT)    cand[i] = vl;
+				else                         cand[i] = vr;
+				has[i] = 1;
+			} else if (l >= 0) {
+				if (edge == IP_EDGE_BOTH || edge == IP_EDGE_LEFT)  { cand[i] = y[l]; has[i] = 1; }
+			} else if (r >= 0) {
+				if (edge == IP_EDGE_BOTH || edge == IP_EDGE_RIGHT) { cand[i] = y[r]; has[i] = 1; }
+			}
+		}
+	} else if (anchors >= 2) {
+		NV *restrict xa, *restrict ya;
+		Newx(xa, anchors, NV); SAVEFREEPV(xa);
+		Newx(ya, anchors, NV); SAVEFREEPV(ya);
+		IV na = 0;
+		for (IV i = 0; i < n; i++) if (kind[i] == 1) { xa[na] = x[i]; ya[na] = y[i]; na++; }
+		for (IV i = 1; i < na; i++)
+			if (!(xa[i] > xa[i - 1]))
+				croak("interpolate: method '%s' needs strictly increasing x coordinates", method);
+
+		IV order = SvOK(order_sv) ? SvIV(order_sv) : 0;
+		int deg = -1, extrap = 0, ktype = 0;
+		if      (!strcmp(method, "pchip")) { ktype = IP_KPCHIP; extrap = 1; }
+		else if (!strcmp(method, "akima")) { ktype = IP_KAKIMA; extrap = 0; }
+		else if (!strcmp(method, "barycentric") || !strcmp(method, "krogh")) { ktype = IP_KBARY; extrap = 1; }
+		else {
+			if      (!strcmp(method, "cubicspline")) { extrap = 1; deg = 3; }
+			else if (!strcmp(method, "spline"))      { extrap = 0; deg = order; }
+			else if (!strcmp(method, "polynomial"))  { extrap = 0; deg = order; }
+			else if (!strcmp(method, "quadratic"))   { extrap = 0; deg = 2; }
+			else if (!strcmp(method, "cubic"))       { extrap = 0; deg = 3; }
+			if      (deg == 1) ktype = IP_KLINEAR;
+			else if (deg == 2) {
+				if (na < 3) croak("interpolate: method '%s' (degree 2) needs at least 3 numeric anchors", method);
+				ktype = IP_KQUAD;
+			} else if (deg == 3) {
+				if (na < 4 && strcmp(method, "cubicspline") != 0)
+					croak("interpolate: method '%s' (degree 3) needs at least 4 numeric anchors", method);
+				ktype = IP_KCUBIC;
+			} else
+				croak("interpolate: method '%s' supports order 1, 2, or 3 (got %ld)", method, (long)order);
+		}
+		if (ktype == IP_KAKIMA && na == 2) ktype = IP_KCUBIC;// akima degenerates to the line
+
+		ip_fit F; Zero(&F, 1, ip_fit);
+		F.na = na; F.xa = xa; F.ya = ya; F.type = ktype;
+		switch (ktype) {
+			case IP_KLINEAR: break;
+			case IP_KCUBIC:  ip_build_cubic(aTHX_ &F); break;
+			case IP_KQUAD:   ip_build_quad(aTHX_ &F);  break;
+			case IP_KPCHIP:  ip_build_pchip(aTHX_ &F); break;
+			case IP_KAKIMA:  ip_build_akima(aTHX_ &F); break;
+			case IP_KBARY:   ip_build_bary(aTHX_ &F);  break;
+		}
+		NV xmin = xa[0], xmax = xa[na - 1];
+		for (IV i = 0; i < n; i++) {
+			if (kind[i] != 0) continue;
+			NV xv = x[i];
+			if      (xv >= xmin && xv <= xmax) { cand[i] = ip_eval(&F, xv); has[i] = 1; }
+			else if (extrap)                   { cand[i] = ip_eval(&F, xv); has[i] = 1; }
+		}
+	}
+
+	/* pandas preserve_nans: which gaps must stay NA under limit/direction/area */
+	char *restrict pre; Newxz(pre, n, char); SAVEFREEPV(pre);
+	IV first = n, last = -1;
+	for (IV i = 0; i < n; i++)     if (kind[i] == 1) { first = i; break; }
+	for (IV i = n - 1; i >= 0; i--) if (kind[i] == 1) { last = i; break; }
+	int have_limit = SvOK(limit_sv);
+	IV  limit = have_limit ? SvIV(limit_sv) : 0;
+	if (!strcmp(dir, "forward")) {
+		for (IV i = 0; i < first; i++) pre[i] = 1;
+		if (have_limit) ip_far(kind, n, limit, 0, pre);
+	} else if (!strcmp(dir, "backward")) {
+		for (IV i = last + 1; i < n; i++) pre[i] = 1;
+		if (have_limit) ip_far(kind, n, 0, limit, pre);
+	} else { // both
+		if (have_limit) ip_far(kind, n, limit, limit, pre);
+	}
+	if (SvOK(area_sv)) {
+		const char *area = SvPV_nolen(area_sv);
+		if (!strcmp(area, "inside")) {
+			for (IV i = 0; i < first; i++)    pre[i] = 1;
+			for (IV i = last + 1; i < n; i++) pre[i] = 1;
+		} else if (!strcmp(area, "outside")) {
+			for (IV i = 0; i < n; i++) if (kind[i] == 0 && i >= first && i <= last) pre[i] = 1;
+		}
+	}
+
+	for (IV i = 0; i < n; i++) {
+		if (kind[i] != 0 || !has[i] || pre[i]) continue;
+		SV *nsv = newSVnv(cand[i]);
+		if (av_store(vals, i, nsv) == NULL) SvREFCNT_dec(nsv);
+	}
+}
+
 // --- XS SECTION ---
 MODULE = Stats::LikeR  PACKAGE = Stats::LikeR
+
+void
+_interp_column_xs(vals_ref, x_ref, method, order_sv, dir, limit_sv, area_sv)
+	SV *vals_ref
+	SV *x_ref
+	const char *method
+	SV *order_sv
+	const char *dir
+	SV *limit_sv
+	SV *area_sv
+	PPCODE:
+		if (!(SvROK(vals_ref) && SvTYPE(SvRV(vals_ref)) == SVt_PVAV))
+			croak("_interp_column_xs: values must be an array reference");
+		if (!(SvROK(x_ref) && SvTYPE(SvRV(x_ref)) == SVt_PVAV))
+			croak("_interp_column_xs: x must be an array reference");
+		ENTER; SAVETMPS;
+		ip_fill_column(aTHX_ (AV *)SvRV(vals_ref), (AV *)SvRV(x_ref),
+		               method, order_sv, dir, limit_sv, area_sv);
+		FREETMPS; LEAVE;
+		XSRETURN_EMPTY;
 
 SV *_cols_select(df, shape, spec)
 	SV *df
 	IV shape
 	SV *spec
   PREINIT:
-	SV *retval; AV *spec_av; SSize_t n, i;
+	SV *restrict retval; AV *restrict spec_av; SSize_t n, i;
   CODE:
 {
 	spec_av = (AV *)SvRV(spec);
 	n = av_len(spec_av) + 1;
-	if (shape == 3) {                                          // ---- AoA ----
-		IV *idx; Newx(idx, n > 0 ? n : 1, IV);
+	if (shape == 3) { // ---- AoA ----
+		IV *restrict idx; Newx(idx, n > 0 ? n : 1, IV);
 		for (i = 0; i < n; i++) { SV **e = av_fetch(spec_av, i, 0); idx[i] = SvIV(*e); }
-		AV *src = (AV *)SvRV(df); SSize_t R = av_len(src) + 1;
-		AV *out = newAV(); if (R > 0) av_extend(out, R - 1);
+		AV *restrict src = (AV *)SvRV(df); SSize_t R = av_len(src) + 1;
+		AV *restrict out = newAV(); if (R > 0) av_extend(out, R - 1);
 		for (i = 0; i < R; i++) {
-			SV **rp = av_fetch(src, i, 0); AV *inner;
+			SV **restrict rp = av_fetch(src, i, 0); AV *inner;
 			if (rp && *rp && SvROK(*rp) && SvTYPE(SvRV(*rp)) == SVt_PVAV)
 				inner = rowA_select(aTHX_ (AV *)SvRV(*rp), idx, n);
 			else
@@ -4421,9 +4870,9 @@ SV *_cols_select(df, shape, spec)
 		Safefree(idx);
 		retval = sv_2mortal(newRV_noinc((SV *)out));
 	} else {
-		SV **keys; Newx(keys, n > 0 ? n : 1, SV *);
+		SV **restrict keys; Newx(keys, n > 0 ? n : 1, SV *);
 		for (i = 0; i < n; i++) { SV **e = av_fetch(spec_av, i, 0); keys[i] = *e; }
-		if (shape == 1) {                                      // ---- AoH ----
+		if (shape == 1) { // ---- AoH ----
 			AV *src = (AV *)SvRV(df); SSize_t R = av_len(src) + 1;
 			AV *out = newAV(); if (R > 0) av_extend(out, R - 1);
 			for (i = 0; i < R; i++) {
@@ -4435,12 +4884,12 @@ SV *_cols_select(df, shape, spec)
 				av_store(out, i, newRV_noinc((SV *)inner));
 			}
 			retval = sv_2mortal(newRV_noinc((SV *)out));
-		} else {                                               // ---- HoH ----
-			HV *src = (HV *)SvRV(df); HV *out = newHV();
-			hv_iterinit(src); HE *he;
+		} else { // ---- HoH ----
+			HV *restrict src = (HV *)SvRV(df); HV *out = newHV();
+			hv_iterinit(src); HE *restrict he;
 			while ((he = hv_iternext(src))) {
 				STRLEN kl; char *kp = HePV(he, kl); I32 sk = HeUTF8(he) ? -(I32)kl : (I32)kl;
-				SV *rv = HeVAL(he); HV *inner;
+				SV *restrict rv = HeVAL(he); HV *inner;
 				if (rv && SvROK(rv) && SvTYPE(SvRV(rv)) == SVt_PVHV)
 					inner = row_select(aTHX_ (HV *)SvRV(rv), keys, n);
 				else
@@ -4463,15 +4912,15 @@ _cols_drop(df, shape, dropset)
 	IV shape
 	SV *dropset
   PREINIT:
-	SV *retval; HV *drop_hv; SSize_t i;
+	SV *restrict retval; HV *restrict drop_hv; SSize_t i;
   CODE:
 {
 	drop_hv = (HV *)SvRV(dropset);
-	if (shape == 1) {                                          // ---- AoH ----
-		AV *src = (AV *)SvRV(df); SSize_t R = av_len(src) + 1;
-		AV *out = newAV(); if (R > 0) av_extend(out, R - 1);
+	if (shape == 1) { // AoH
+		AV *restrict src = (AV *)SvRV(df); SSize_t R = av_len(src) + 1;
+		AV *restrict out = newAV(); if (R > 0) av_extend(out, R - 1);
 		for (i = 0; i < R; i++) {
-			SV **rp = av_fetch(src, i, 0); HV *inner;
+			SV **restrict rp = av_fetch(src, i, 0); HV *inner;
 			if (rp && *rp && SvROK(*rp) && SvTYPE(SvRV(*rp)) == SVt_PVHV)
 				inner = row_drop(aTHX_ (HV *)SvRV(*rp), drop_hv);
 			else
@@ -4479,12 +4928,12 @@ _cols_drop(df, shape, dropset)
 			av_store(out, i, newRV_noinc((SV *)inner));
 		}
 		retval = sv_2mortal(newRV_noinc((SV *)out));
-	} else {                                                   // ---- HoH ----
-		HV *src = (HV *)SvRV(df); HV *out = newHV();
+	} else { // HoH
+		HV *restrict src = (HV *)SvRV(df); HV *out = newHV();
 		hv_iterinit(src); HE *he;
 		while ((he = hv_iternext(src))) {
 			STRLEN kl; char *kp = HePV(he, kl); I32 sk = HeUTF8(he) ? -(I32)kl : (I32)kl;
-			SV *rv = HeVAL(he); HV *inner;
+			SV *restrict rv = HeVAL(he); HV *inner;
 			if (rv && SvROK(rv) && SvTYPE(SvRV(rv)) == SVt_PVHV)
 				inner = row_drop(aTHX_ (HV *)SvRV(rv), drop_hv);
 			else
@@ -4505,15 +4954,15 @@ _cols_rename(df, shape, map)
 	IV shape
 	SV *map
   PREINIT:
-	SV *retval; HV *map_hv; SSize_t i;
+	SV *restrict retval; HV *restrict map_hv; SSize_t i;
   CODE:
 {
 	map_hv = (HV *)SvRV(map);
-	if (shape == 1) {                                          // ---- AoH ----
-		AV *src = (AV *)SvRV(df); SSize_t R = av_len(src) + 1;
-		AV *out = newAV(); if (R > 0) av_extend(out, R - 1);
+	if (shape == 1) { // ---- AoH ----
+		AV *restrict src = (AV *)SvRV(df); SSize_t R = av_len(src) + 1;
+		AV *restrict out = newAV(); if (R > 0) av_extend(out, R - 1);
 		for (i = 0; i < R; i++) {
-			SV **rp = av_fetch(src, i, 0); HV *inner;
+			SV **restrict rp = av_fetch(src, i, 0); HV *inner;
 			if (rp && *rp && SvROK(*rp) && SvTYPE(SvRV(*rp)) == SVt_PVHV)
 				inner = row_rename(aTHX_ (HV *)SvRV(*rp), map_hv);
 			else
@@ -4521,12 +4970,12 @@ _cols_rename(df, shape, map)
 			av_store(out, i, newRV_noinc((SV *)inner));
 		}
 		retval = sv_2mortal(newRV_noinc((SV *)out));
-	} else {                                                   // ---- HoH ----
-		HV *src = (HV *)SvRV(df); HV *out = newHV();
+	} else { // ---- HoH ----
+		HV *restrict src = (HV *)SvRV(df); HV *out = newHV();
 		hv_iterinit(src); HE *he;
 		while ((he = hv_iternext(src))) {
 			STRLEN kl; char *kp = HePV(he, kl); I32 sk = HeUTF8(he) ? -(I32)kl : (I32)kl;
-			SV *rv = HeVAL(he); HV *inner;
+			SV *restrict rv = HeVAL(he); HV *inner;
 			if (rv && SvROK(rv) && SvTYPE(SvRV(rv)) == SVt_PVHV)
 				inner = row_rename(aTHX_ (HV *)SvRV(rv), map_hv);
 			else
@@ -4555,67 +5004,67 @@ _drop_dups_core(df, shape, subset, keep)
 	SV *subset
 	IV keep
   PREINIT:
-	SV *retval; AV *sub_av; SSize_t ns, i, j, R = 0, nsurv = 0;
-	SV **keys = NULL; SV **cells; IV *surv; HV *seen;
+	SV *restrict retval; AV *restrict sub_av; SSize_t ns, i, j, R = 0, nsurv = 0;
+	SV **restrict keys = NULL; SV **restrict cells; IV *restrict surv; HV *restrict seen;
   CODE:
 {
 	sub_av = (AV *)SvRV(subset);
 	ns = av_len(sub_av) + 1;
 	Newx(cells, ns > 0 ? ns : 1, SV *);
 
-	if (shape == 3) {                                          // ---- AoA ----
-		AV *src = (AV *)SvRV(df);
+	if (shape == 3) { // ---- AoA ----
+		AV *restrict src = (AV *)SvRV(df);
 		R = av_len(src) + 1;
-		IV *pos; Newx(pos, ns > 0 ? ns : 1, IV);
+		IV *restrict pos; Newx(pos, ns > 0 ? ns : 1, IV);
 		for (j = 0; j < ns; j++) pos[j] = SvIV(*av_fetch(sub_av, j, 0));
 		Newx(keys, R > 0 ? R : 1, SV *);
 		for (i = 0; i < R; i++) {
-			SV **rp = av_fetch(src, i, 0);
-			AV *inner = (rp && *rp && SvROK(*rp) && SvTYPE(SvRV(*rp)) == SVt_PVAV)
+			SV **restrict rp = av_fetch(src, i, 0);
+			AV *restrict inner = (rp && *rp && SvROK(*rp) && SvTYPE(SvRV(*rp)) == SVt_PVAV)
 			          ? (AV *)SvRV(*rp) : NULL;
 			for (j = 0; j < ns; j++) {
-				SV **cp = inner ? av_fetch(inner, pos[j], 0) : NULL;
+				SV **restrict cp = inner ? av_fetch(inner, pos[j], 0) : NULL;
 				cells[j] = (cp && *cp) ? *cp : NULL;
 			}
 			keys[i] = dd_key(aTHX_ cells, ns);
 		}
 		Safefree(pos);
-	} else if (shape == 1) {                                   // ---- AoH ----
-		AV *src = (AV *)SvRV(df);
+	} else if (shape == 1) { // ---- AoH ----
+		AV *restrict src = (AV *)SvRV(df);
 		R = av_len(src) + 1;
 		Newx(keys, R > 0 ? R : 1, SV *);
 		for (i = 0; i < R; i++) {
-			SV **rp = av_fetch(src, i, 0);
-			HV *inner = (rp && *rp && SvROK(*rp) && SvTYPE(SvRV(*rp)) == SVt_PVHV)
+			SV **restrict rp = av_fetch(src, i, 0);
+			HV *restrict inner = (rp && *rp && SvROK(*rp) && SvTYPE(SvRV(*rp)) == SVt_PVHV)
 			          ? (HV *)SvRV(*rp) : NULL;
 			for (j = 0; j < ns; j++) {
-				SV *kn = *av_fetch(sub_av, j, 0);
-				HE *he = inner ? hv_fetch_ent(inner, kn, 0, 0) : NULL;
+				SV *restrict kn = *av_fetch(sub_av, j, 0);
+				HE *restrict he = inner ? hv_fetch_ent(inner, kn, 0, 0) : NULL;
 				cells[j] = he ? HeVAL(he) : NULL;
 			}
 			keys[i] = dd_key(aTHX_ cells, ns);
 		}
-	} else {                                                   // ---- HoA ----
-		HV *src = (HV *)SvRV(df);
-		HE *he; hv_iterinit(src);
-		while ((he = hv_iternext(src))) {                  // R = longest column
+	} else { // ---- HoA ----
+		HV *restrict src = (HV *)SvRV(df);
+		HE *restrict he; hv_iterinit(src);
+		while ((he = hv_iternext(src))) { // R = longest column
 			SV *v = HeVAL(he);
 			if (SvROK(v) && SvTYPE(SvRV(v)) == SVt_PVAV) {
 				SSize_t l = av_len((AV *)SvRV(v)) + 1;
 				if (l > R) R = l;
 			}
 		}
-		AV **cols; Newx(cols, ns > 0 ? ns : 1, AV *);
+		AV **restrict cols; Newx(cols, ns > 0 ? ns : 1, AV *);
 		for (j = 0; j < ns; j++) {
-			SV *kn = *av_fetch(sub_av, j, 0);
-			HE *ce = hv_fetch_ent(src, kn, 0, 0);
+			SV *restrict kn = *av_fetch(sub_av, j, 0);
+			HE *restrict ce = hv_fetch_ent(src, kn, 0, 0);
 			cols[j] = (ce && SvROK(HeVAL(ce)) && SvTYPE(SvRV(HeVAL(ce))) == SVt_PVAV)
 			        ? (AV *)SvRV(HeVAL(ce)) : NULL;
 		}
 		Newx(keys, R > 0 ? R : 1, SV *);
 		for (i = 0; i < R; i++) {
 			for (j = 0; j < ns; j++) {
-				SV **cp = cols[j] ? av_fetch(cols[j], i, 0) : NULL;
+				SV **restrict cp = cols[j] ? av_fetch(cols[j], i, 0) : NULL;
 				cells[j] = (cp && *cp) ? *cp : NULL;
 			}
 			keys[i] = dd_key(aTHX_ cells, ns);
@@ -4623,59 +5072,57 @@ _drop_dups_core(df, shape, subset, keep)
 		Safefree(cols);
 	}
 	Safefree(cells);
-
-	/* choose the surviving row positions, preserving input order */
+	// choose the surviving row positions, preserving input order
 	Newx(surv, R > 0 ? R : 1, IV);
 	seen = (HV *)sv_2mortal((SV *)newHV());
-	if (keep == 1) {                                   // keep first occurrence
+	if (keep == 1) { // keep first occurrence
 		for (i = 0; i < R; i++) {
 			if (!hv_exists_ent(seen, keys[i], 0)) {
 				(void)hv_store_ent(seen, keys[i], newSViv(1), 0);
 				surv[nsurv++] = i;
 			}
 		}
-	} else if (keep == -1) {                           // keep last occurrence
+	} else if (keep == -1) { // keep last occurrence
 		for (i = 0; i < R; i++)
 			(void)hv_store_ent(seen, keys[i], newSViv(i), 0);
 		for (i = 0; i < R; i++) {
-			HE *e = hv_fetch_ent(seen, keys[i], 0, 0);
+			HE *restrict e = hv_fetch_ent(seen, keys[i], 0, 0);
 			if (e && SvIV(HeVAL(e)) == i) surv[nsurv++] = i;
 		}
-	} else {                                           // drop every duplicate
+	} else { // drop every duplicate
 		for (i = 0; i < R; i++) {
-			HE *e = hv_fetch_ent(seen, keys[i], 0, 0);
+			HE *restrict e = hv_fetch_ent(seen, keys[i], 0, 0);
 			if (e) sv_inc(HeVAL(e));
 			else (void)hv_store_ent(seen, keys[i], newSViv(1), 0);
 		}
 		for (i = 0; i < R; i++) {
-			HE *e = hv_fetch_ent(seen, keys[i], 0, 0);
+			HE *restrict e = hv_fetch_ent(seen, keys[i], 0, 0);
 			if (e && SvIV(HeVAL(e)) == 1) surv[nsurv++] = i;
 		}
 	}
 	Safefree(keys);
-
-	/* materialise the survivors back into the input's shape */
-	if (shape == 4) {                                          // ---- HoA ----
-		HV *src = (HV *)SvRV(df);
-		HV *out = newHV();
-		HE *he; hv_iterinit(src);
+	// materialise the survivors back into the input's shape
+	if (shape == 4) { // ---- HoA ----
+		HV *restrict src = (HV *)SvRV(df);
+		HV *restrict out = newHV();
+		HE *restrict he; hv_iterinit(src);
 		while ((he = hv_iternext(src))) {
-			SV *v = HeVAL(he);
-			AV *col = (SvROK(v) && SvTYPE(SvRV(v)) == SVt_PVAV) ? (AV *)SvRV(v) : NULL;
-			AV *nc = newAV(); if (nsurv > 0) av_extend(nc, nsurv - 1);
+			SV *restrict v = HeVAL(he);
+			AV *restrict col = (SvROK(v) && SvTYPE(SvRV(v)) == SVt_PVAV) ? (AV *)SvRV(v) : NULL;
+			AV *restrict nc = newAV(); if (nsurv > 0) av_extend(nc, nsurv - 1);
 			for (SSize_t k = 0; k < nsurv; k++) {
-				SV **cp = col ? av_fetch(col, surv[k], 0) : NULL;
+				SV **restrict cp = col ? av_fetch(col, surv[k], 0) : NULL;
 				av_push(nc, (cp && *cp) ? newSVsv(*cp) : newSV(0));
 			}
 			STRLEN kl; char *kp = HePV(he, kl); I32 sk = HeUTF8(he) ? -(I32)kl : (I32)kl;
 			(void)hv_store(out, kp, sk, newRV_noinc((SV *)nc), HeHASH(he));
 		}
 		retval = sv_2mortal(newRV_noinc((SV *)out));
-	} else {                                                   // AoA / AoH
-		AV *src = (AV *)SvRV(df);
-		AV *out = newAV(); if (nsurv > 0) av_extend(out, nsurv - 1);
+	} else { // AoA / AoH
+		AV *restrict src = (AV *)SvRV(df);
+		AV *restrict out = newAV(); if (nsurv > 0) av_extend(out, nsurv - 1);
 		for (SSize_t k = 0; k < nsurv; k++) {
-			SV **rp = av_fetch(src, surv[k], 0);
+			SV **restrict rp = av_fetch(src, surv[k], 0);
 			av_push(out, newSVsv((rp && *rp) ? *rp : &PL_sv_undef));
 		}
 		retval = sv_2mortal(newRV_noinc((SV *)out));
@@ -10405,8 +10852,8 @@ NV sd(...)
 	INIT:
 	  NV mean = 0.0, M2 = 0.0;
 	  size_t count = 0;
-	CODE: /* Single Pass Standard Deviation via Welford's Algorithm */
-		for (size_t i = 0; i < items; i++) {
+	CODE:
+		for (size_t i = 0; i < items; i++) { // Single Pass Standard Deviation via Welford's Algorithm
 			SV* restrict arg = ST(i);
 			if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
 				AV* restrict av = (AV*)SvRV(arg);

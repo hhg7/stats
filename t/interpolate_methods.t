@@ -140,6 +140,26 @@ throws_ok { interpolate({ v => [ 1, undef, 3 ] }, method => 'index', x => [ 0, 1
 	qr/length/, 'x length mismatch dies';
 
 #========
+# cubicspline with exactly 3 anchors -> the unique parabola (interp1d 'cubic'
+# would need 4; cubicspline handles 3).  Matches pandas.
+#========
+close_enough(
+	interpolate({ v => [ 0, undef, 4, undef, 16 ] },
+		method => 'cubicspline', limit_direction => 'both')->{v},
+	[ 0, 1, 4, 9, 16 ], 'cubicspline: 3 anchors -> exact parabola');
+
+#========
+# direct XS-kernel guards (the Perl wrapper prevents these, so exercise them
+# straight against _interp_column_xs to confirm the C-side checks hold)
+#========
+throws_ok { Stats::LikeR::_interp_column_xs(42, [ 0, 1 ], 'linear', undef, 'forward', undef, undef) }
+	qr/values must be an array reference/, 'XS: non-arrayref values dies';
+throws_ok { Stats::LikeR::_interp_column_xs([ 1, undef ], 42, 'linear', undef, 'forward', undef, undef) }
+	qr/x must be an array reference/, 'XS: non-arrayref x dies';
+throws_ok { Stats::LikeR::_interp_column_xs([ 1, undef, 3, undef, 5 ], [ 0, 1, 2, 1, 0 ], 'cubic', undef, 'both', undef, undef) }
+	qr/strictly increasing/, 'XS: non-increasing x in the fit path dies';
+
+#========
 # memory: the fit-method path builds closures / matrices -- make sure it is clean
 #========
 if ($INC{'Devel/Cover.pm'}) { done_testing(); exit 0 }

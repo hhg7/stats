@@ -1,7 +1,7 @@
         -:    0:Source:/home/con/perl5/perlbrew/perls/perl-5.44.0/lib/5.44.0/x86_64-linux/CORE/inline.h
         -:    0:Graph:./LikeR.gcno
         -:    0:Data:./LikeR.gcda
-        -:    0:Runs:375
+        -:    0:Runs:84
         -:    1:/*>    inline.h
         -:    2: *
         -:    3: *    Copyright (C) 2012 by Larry Wall and others
@@ -65,22 +65,22 @@
         -:   61:}
         -:   62:
         -:   63:PERL_STATIC_INLINE SSize_t
-function Perl_AvFILL_ called 105 returned 100% blocks executed 60%
-      105:   64:Perl_AvFILL_(pTHX_ AV *av)
+function Perl_AvFILL_ called 21 returned 100% blocks executed 60%
+       21:   64:Perl_AvFILL_(pTHX_ AV *av)
         -:   65:{
         -:   66:    PERL_ARGS_ASSERT_AVFILL_;
         -:   67:
-      105:   68:    if (SvRMAGICAL((const SV *) (av))) {
-      105:   68-block  0
+       21:   68:    if (SvRMAGICAL((const SV *) (av))) {
+       21:   68-block  0
 branch  0 taken 0 (fallthrough)
-branch  1 taken 105
+branch  1 taken 21
     #####:   69:        return mg_size((SV *) av);
     %%%%%:   69-block  0
 call    0 never executed
         -:   70:    }
         -:   71:
-      105:   72:    return AvFILLp(av);
-      105:   72-block  0
+       21:   72:    return AvFILLp(av);
+       21:   72-block  0
         -:   73:}
         -:   74:
         -:   75:/* ------------------------------- av.c ------------------------------- */
@@ -307,8 +307,8 @@ call    0 never executed
         -:  296:
         -:  297:/* Common code for hv_delete()/hv_exists()/hv_fetch()/hv_store()  */
         -:  298:PERL_STATIC_INLINE void *
-function Perl_hv_common_key_len called 79876 returned 100% blocks executed 100%
-    79876:  299:Perl_hv_common_key_len(pTHX_ HV *hv, const char *key, I32 klen_i32,
+function Perl_hv_common_key_len called 17322 returned 100% blocks executed 100%
+    17322:  299:Perl_hv_common_key_len(pTHX_ HV *hv, const char *key, I32 klen_i32,
         -:  300:                       const int action, SV *val, const U32 hash)
         -:  301:{
         -:  302:    PERL_ARGS_ASSERT_HV_COMMON_KEY_LEN;
@@ -316,21 +316,21 @@ function Perl_hv_common_key_len called 79876 returned 100% blocks executed 100%
         -:  304:    STRLEN klen;
         -:  305:    int flags;
         -:  306:
-    79876:  307:    if (klen_i32 < 0) {
-    79876:  307-block  0
-branch  0 taken 96 (fallthrough)
-branch  1 taken 79780
-       96:  308:        klen = -klen_i32;
-       96:  309:        flags = HVhek_UTF8;
-       96:  309-block  0
+    17322:  307:    if (klen_i32 < 0) {
+    17322:  307-block  0
+branch  0 taken 20 (fallthrough)
+branch  1 taken 17302
+       20:  308:        klen = -klen_i32;
+       20:  309:        flags = HVhek_UTF8;
+       20:  309-block  0
         -:  310:    } else {
-    79780:  311:        klen = klen_i32;
-    79780:  312:        flags = 0;
-    79780:  312-block  0
+    17302:  311:        klen = klen_i32;
+    17302:  312:        flags = 0;
+    17302:  312-block  0
         -:  313:    }
-    79876:  314:    return hv_common(hv, NULL, key, klen, flags, action, val, hash);
-    79876:  314-block  0
-call    0 returned 79876
+    17322:  314:    return hv_common(hv, NULL, key, klen, flags, action, val, hash);
+    17322:  314-block  0
+call    0 returned 17322
         -:  315:}
         -:  316:
         -:  317:/* ------------------------------- iperlsys.h ------------------------------- */
@@ -424,8 +424,8 @@ call    0 returned 79876
         -:  405:}
         -:  406:
         -:  407:PERL_STATIC_INLINE Stack_off_t
-function Perl_POPMARK called 11586 returned 100% blocks executed 100%
-    11586:  408:Perl_POPMARK(pTHX)
+function Perl_POPMARK called 2642 returned 100% blocks executed 100%
+     2642:  408:Perl_POPMARK(pTHX)
         -:  409:{
         -:  410:    PERL_ARGS_ASSERT_POPMARK;
         -:  411:
@@ -434,8 +434,8 @@ function Perl_POPMARK called 11586 returned 100% blocks executed 100%
         -:  414:                                  (PL_markstack_ptr-1),
         -:  415:                                  (IV)*(PL_markstack_ptr-1))));
         -:  416:    assert((PL_markstack_ptr > PL_markstack) || !"MARK underflow");
-    11586:  417:    return *PL_markstack_ptr--;
-    11586:  417-block  0
+     2642:  417:    return *PL_markstack_ptr--;
+     2642:  417-block  0
         -:  418:}
         -:  419:
         -:  420:/*
@@ -1606,18 +1606,18 @@ function Perl_POPMARK called 11586 returned 100% blocks executed 100%
         -: 1585:                                is_utf8_invariant_string_loc(s, len, NULL)
         -: 1586:
         -: 1587:PERL_STATIC_INLINE bool
-function Perl_is_utf8_invariant_string_loc called 224 returned 100% blocks executed 39%
-      224: 1588:Perl_is_utf8_invariant_string_loc(const U8* const s, STRLEN len, const U8 ** ep)
+function Perl_is_utf8_invariant_string_loc called 56 returned 100% blocks executed 39%
+       56: 1588:Perl_is_utf8_invariant_string_loc(const U8* const s, STRLEN len, const U8 ** ep)
         -: 1589:{
         -: 1590:    PERL_ARGS_ASSERT_IS_UTF8_INVARIANT_STRING_LOC;
         -: 1591:
-      224: 1592:    const U8* send = s + len;
-      224: 1593:    const U8* x = s;
+       56: 1592:    const U8* send = s + len;
+       56: 1593:    const U8* x = s;
         -: 1594:
-      224: 1595:    if (len == 0) {
-      224: 1595-block  0
+       56: 1595:    if (len == 0) {
+       56: 1595-block  0
 branch  0 taken 0 (fallthrough)
-branch  1 taken 224
+branch  1 taken 56
     #####: 1596:        len = strlen((const char *)s);
     %%%%%: 1596-block  0
         -: 1597:    }
@@ -1625,17 +1625,17 @@ branch  1 taken 224
         -: 1599:    /* Do the word-at-a-time iff there is at least one usable full word.  That
         -: 1600:     * means that after advancing to a word boundary, there still is at least a
         -: 1601:     * full word left. */
-     224*: 1602:    const U8 * const per_byte_end = WORTH_PER_WORD_LOOP(x, send, 1);
-      224: 1602-block  0
+      56*: 1602:    const U8 * const per_byte_end = WORTH_PER_WORD_LOOP(x, send, 1);
+       56: 1602-block  0
 branch  0 taken 0 (fallthrough)
-branch  1 taken 224
+branch  1 taken 56
     %%%%%: 1602-block  1
-      224: 1602-block  2
+       56: 1602-block  2
         -: 1603:
-      224: 1604:    if (per_byte_end) {
-      224: 1604-block  0
+       56: 1604:    if (per_byte_end) {
+       56: 1604-block  0
 branch  0 taken 0 (fallthrough)
-branch  1 taken 224
+branch  1 taken 56
     #####: 1605:        while (x < per_byte_end ) {
     %%%%%: 1605-block  0
     %%%%%: 1605-block  1
@@ -1705,25 +1705,25 @@ branch  1 never executed (fallthrough)
         -: 1646:
         -: 1647:    /* Process per-byte.  (Can't use libc functions like strpbrk() because
         -: 1648:     * input isn't necessarily a C string) */
-      224: 1649:    while (x < send) {
-      224: 1649-block  0
-      224: 1649-block  1
-branch  0 taken 224
+       56: 1649:    while (x < send) {
+       56: 1649-block  0
+       56: 1649-block  1
+branch  0 taken 56
 branch  1 taken 0 (fallthrough)
-      224: 1650:        if (! UTF8_IS_INVARIANT(*x)) {
-      224: 1650-block  0
-branch  0 taken 224 (fallthrough)
+       56: 1650:        if (! UTF8_IS_INVARIANT(*x)) {
+       56: 1650-block  0
+branch  0 taken 56 (fallthrough)
 branch  1 taken 0
-      224: 1651:            if (ep) {
-      224: 1651-block  0
-branch  0 taken 224 (fallthrough)
+       56: 1651:            if (ep) {
+       56: 1651-block  0
+branch  0 taken 56 (fallthrough)
 branch  1 taken 0
-      224: 1652:                *ep = x;
-      224: 1652-block  0
+       56: 1652:                *ep = x;
+       56: 1652-block  0
         -: 1653:            }
         -: 1654:
-      224: 1655:            return FALSE;
-      224: 1655-block  0
+       56: 1655:            return FALSE;
+       56: 1655-block  0
         -: 1656:        }
         -: 1657:
     #####: 1658:        x++;
@@ -2455,26 +2455,26 @@ call    0 never executed
         -: 2372:        is_utf8_string_loclen(s, len, ep, 0)
         -: 2373:
         -: 2374:PERL_STATIC_INLINE bool
-function Perl_is_utf8_string_loclen called 224 returned 100% blocks executed 59%
-      224: 2375:Perl_is_utf8_string_loclen(const U8 *s, STRLEN len, const U8 **ep, STRLEN *el)
+function Perl_is_utf8_string_loclen called 56 returned 100% blocks executed 59%
+       56: 2375:Perl_is_utf8_string_loclen(const U8 *s, STRLEN len, const U8 **ep, STRLEN *el)
         -: 2376:{
         -: 2377:    PERL_ARGS_ASSERT_IS_UTF8_STRING_LOCLEN;
         -: 2378:
         -: 2379:    const U8 * first_variant;
         -: 2380:
-      224: 2381:    if (len == 0) {
-      224: 2381-block  0
+       56: 2381:    if (len == 0) {
+       56: 2381-block  0
 branch  0 taken 0 (fallthrough)
-branch  1 taken 224
+branch  1 taken 56
     #####: 2382:        len = strlen((const char *) s);
     %%%%%: 2382-block  0
         -: 2383:    }
         -: 2384:
-      224: 2385:    if (is_utf8_invariant_string_loc(s, len, &first_variant)) {
-      224: 2385-block  0
-call    0 returned 224
+       56: 2385:    if (is_utf8_invariant_string_loc(s, len, &first_variant)) {
+       56: 2385-block  0
+call    0 returned 56
 branch  1 taken 0 (fallthrough)
-branch  2 taken 224
+branch  2 taken 56
     #####: 2386:        if (el)
     %%%%%: 2386-block  0
 branch  0 never executed (fallthrough)
@@ -2495,46 +2495,46 @@ branch  1 never executed
         -: 2394:    }
         -: 2395:
         -: 2396:    {
-      224: 2397:        const U8* const send = s + len;
-      224: 2398:        const U8* x = first_variant;
-      224: 2399:        STRLEN outlen = first_variant - s;
+       56: 2397:        const U8* const send = s + len;
+       56: 2398:        const U8* x = first_variant;
+       56: 2399:        STRLEN outlen = first_variant - s;
         -: 2400:
-      496: 2401:        while (x < send) {
-      224: 2401-block  0
-      496: 2401-block  1
-branch  0 taken 272
-branch  1 taken 224 (fallthrough)
-      272: 2402:            const STRLEN cur_len = isUTF8_CHAR(x, send);
-      272: 2402-block  0
-call    0 returned 272
-      272: 2403:            if (UNLIKELY(! cur_len)) {
+      124: 2401:        while (x < send) {
+       56: 2401-block  0
+      124: 2401-block  1
+branch  0 taken 68
+branch  1 taken 56 (fallthrough)
+       68: 2402:            const STRLEN cur_len = isUTF8_CHAR(x, send);
+       68: 2402-block  0
+call    0 returned 68
+       68: 2403:            if (UNLIKELY(! cur_len)) {
 branch  0 taken 0 (fallthrough)
-branch  1 taken 272
+branch  1 taken 68
     #####: 2404:                break;
     %%%%%: 2404-block  0
         -: 2405:            }
-      272: 2406:            x += cur_len;
-      272: 2407:            outlen++;
-      272: 2407-block  0
+       68: 2406:            x += cur_len;
+       68: 2407:            outlen++;
+       68: 2407-block  0
         -: 2408:        }
         -: 2409:
-      224: 2410:        if (el)
-      224: 2410-block  0
+       56: 2410:        if (el)
+       56: 2410-block  0
 branch  0 taken 0 (fallthrough)
-branch  1 taken 224
+branch  1 taken 56
     #####: 2411:            *el = outlen;
     %%%%%: 2411-block  0
         -: 2412:
-      224: 2413:        if (ep) {
-      224: 2413-block  0
+       56: 2413:        if (ep) {
+       56: 2413-block  0
 branch  0 taken 0 (fallthrough)
-branch  1 taken 224
+branch  1 taken 56
     #####: 2414:            *ep = x;
     %%%%%: 2414-block  0
         -: 2415:        }
         -: 2416:
-      224: 2417:        return (x == send);
-      224: 2417-block  0
+       56: 2417:        return (x == send);
+       56: 2417-block  0
         -: 2418:    }
         -: 2419:}
         -: 2420:
@@ -2734,26 +2734,26 @@ branch  1 taken 224
         -: 2614:}
         -: 2615:
         -: 2616:PERL_STATIC_INLINE Size_t
-function Perl_isUTF8_CHAR called 272 returned 100% blocks executed 46%
-      272: 2617:Perl_isUTF8_CHAR(const U8 * const s0, const U8 * const e)
+function Perl_isUTF8_CHAR called 68 returned 100% blocks executed 46%
+       68: 2617:Perl_isUTF8_CHAR(const U8 * const s0, const U8 * const e)
         -: 2618:{
         -: 2619:    PERL_ARGS_ASSERT_ISUTF8_CHAR;
         -: 2620:
-     508*: 2621:    PERL_IS_UTF8_CHAR_DFA(s0, e, PL_extended_utf8_dfa_tab,
-      272: 2621-block  0
+     127*: 2621:    PERL_IS_UTF8_CHAR_DFA(s0, e, PL_extended_utf8_dfa_tab,
+       68: 2621-block  0
 branch  0 taken 0 (fallthrough)
-branch  1 taken 272
+branch  1 taken 68
     %%%%%: 2621-block  1
-      508: 2621-block  2
-branch  2 taken 284 (fallthrough)
-branch  3 taken 224
-      284: 2621-block  3
-branch  4 taken 236
-branch  5 taken 48 (fallthrough)
-      272: 2621-block  4
-branch  6 taken 272 (fallthrough)
+      127: 2621-block  2
+branch  2 taken 71 (fallthrough)
+branch  3 taken 56
+       71: 2621-block  3
+branch  4 taken 59
+branch  5 taken 12 (fallthrough)
+       68: 2621-block  4
+branch  6 taken 68 (fallthrough)
 branch  7 taken 0
-      272: 2621-block  5
+       68: 2621-block  5
     %%%%%: 2621-block  6
 branch  8 never executed (fallthrough)
 branch  9 never executed
@@ -3447,8 +3447,8 @@ branch  1 never executed
         -: 3302:}
         -: 3303:
         -: 3304:PERL_STATIC_INLINE bool
-function Perl_utf8_to_uv_msgs called 272 returned 100% blocks executed 67%
-      272: 3305:Perl_utf8_to_uv_msgs(const U8 * const s0,
+function Perl_utf8_to_uv_msgs called 68 returned 100% blocks executed 67%
+       68: 3305:Perl_utf8_to_uv_msgs(const U8 * const s0,
         -: 3306:                     const U8 * const e,
         -: 3307:                     UV * cp_p,
         -: 3308:                     Size_t *advance_p,
@@ -3465,17 +3465,17 @@ function Perl_utf8_to_uv_msgs called 272 returned 100% blocks executed 67%
         -: 3319:     * need to be called. */
         -: 3320:
         -: 3321:    /* Assume that isn't malformed; the vast majority of calls won't be */
-      272: 3322:    if (errors) {
-      272: 3322-block  0
+       68: 3322:    if (errors) {
+       68: 3322-block  0
 branch  0 taken 0 (fallthrough)
-branch  1 taken 272
+branch  1 taken 68
     #####: 3323:        *errors = 0;
     %%%%%: 3323-block  0
         -: 3324:    }
-      272: 3325:    if (msgs) {
-      272: 3325-block  0
+       68: 3325:    if (msgs) {
+       68: 3325-block  0
 branch  0 taken 0 (fallthrough)
-branch  1 taken 272
+branch  1 taken 68
     #####: 3326:        *msgs = NULL;
     %%%%%: 3326-block  0
         -: 3327:    }
@@ -3485,9 +3485,9 @@ branch  1 taken 272
         -: 3331:#ifdef PERL_CORE
         -: 3332:    assert(e > s0);
         -: 3333:#else
-      272: 3334:    if (LIKELY(e > s0))
-      272: 3334-block  0
-branch  0 taken 272 (fallthrough)
+       68: 3334:    if (LIKELY(e > s0))
+       68: 3334-block  0
+branch  0 taken 68 (fallthrough)
 branch  1 taken 0
         -: 3335:#endif
         -: 3336:
@@ -3495,24 +3495,24 @@ branch  1 taken 0
         -: 3338:        /* UTF-8 invariants are returned unchanged.  The code below is quite
         -: 3339:         * capable of handling this, but this shortcuts this very common case
         -: 3340:         * */
-      272: 3341:        if (UTF8_IS_INVARIANT(*s0)) {
-      272: 3341-block  0
-branch  0 taken 40 (fallthrough)
-branch  1 taken 232
-       40: 3342:            if (advance_p) {
-       40: 3342-block  0
-branch  0 taken 40 (fallthrough)
+       68: 3341:        if (UTF8_IS_INVARIANT(*s0)) {
+       68: 3341-block  0
+branch  0 taken 10 (fallthrough)
+branch  1 taken 58
+       10: 3342:            if (advance_p) {
+       10: 3342-block  0
+branch  0 taken 10 (fallthrough)
 branch  1 taken 0
-       40: 3343:                *advance_p = 1;
-       40: 3343-block  0
+       10: 3343:                *advance_p = 1;
+       10: 3343-block  0
         -: 3344:            }
         -: 3345:
-       40: 3346:            *cp_p = *s0;
-       40: 3347:            return true;
-       40: 3347-block  0
+       10: 3346:            *cp_p = *s0;
+       10: 3347:            return true;
+       10: 3347-block  0
         -: 3348:        }
         -: 3349:
-      232: 3350:        const U8 * s = s0;
+       58: 3350:        const U8 * s = s0;
         -: 3351:
         -: 3352:        /* This dfa is fast.  If it accepts the input, it was for a
         -: 3353:         * well-formed, non-problematic code point, which can be returned
@@ -3531,45 +3531,45 @@ branch  1 taken 0
         -: 3366:         *
         -: 3367:         * The table can be a U16 on EBCDIC platforms, so 'state' is declared
         -: 3368:         * as U16; 'type' is likely to never occupy more than 5 bits.  */
-      232: 3369:        PERL_UINT_FAST8_T type = PL_strict_utf8_dfa_tab[*s];
-      232: 3370:        PERL_UINT_FAST16_T state = PL_strict_utf8_dfa_tab[256 + type];
-      232: 3371:        UV uv = (0xff >> type) & NATIVE_UTF8_TO_I8(*s);
+       58: 3369:        PERL_UINT_FAST8_T type = PL_strict_utf8_dfa_tab[*s];
+       58: 3370:        PERL_UINT_FAST16_T state = PL_strict_utf8_dfa_tab[256 + type];
+       58: 3371:        UV uv = (0xff >> type) & NATIVE_UTF8_TO_I8(*s);
         -: 3372:
-      468: 3373:        while (state > 1 && ++s < e) {
-      232: 3373-block  0
-      468: 3373-block  1
-branch  0 taken 236 (fallthrough)
-branch  1 taken 232
-      236: 3373-block  2
-branch  2 taken 236
+      117: 3373:        while (state > 1 && ++s < e) {
+       58: 3373-block  0
+      117: 3373-block  1
+branch  0 taken 59 (fallthrough)
+branch  1 taken 58
+       59: 3373-block  2
+branch  2 taken 59
 branch  3 taken 0 (fallthrough)
-      236: 3374:            type  = PL_strict_utf8_dfa_tab[*s];
-      236: 3375:            state = PL_strict_utf8_dfa_tab[256 + state + type];
+       59: 3374:            type  = PL_strict_utf8_dfa_tab[*s];
+       59: 3375:            state = PL_strict_utf8_dfa_tab[256 + state + type];
         -: 3376:
-      236: 3377:            uv = UTF8_ACCUMULATE(uv, *s);
-      236: 3377-block  0
+       59: 3377:            uv = UTF8_ACCUMULATE(uv, *s);
+       59: 3377-block  0
         -: 3378:        }
         -: 3379:
-      232: 3380:        if (LIKELY(state == 0)) {
-      232: 3380-block  0
-branch  0 taken 232 (fallthrough)
+       58: 3380:        if (LIKELY(state == 0)) {
+       58: 3380-block  0
+branch  0 taken 58 (fallthrough)
 branch  1 taken 0
-      232: 3381:            if (advance_p) {
-      232: 3381-block  0
-branch  0 taken 232 (fallthrough)
+       58: 3381:            if (advance_p) {
+       58: 3381-block  0
+branch  0 taken 58 (fallthrough)
 branch  1 taken 0
-      232: 3382:                *advance_p = s - s0 + 1;
-     232*: 3383:                ASSUME(*advance_p <= UTF8_MAXBYTES);
-      232: 3383-block  0
+       58: 3382:                *advance_p = s - s0 + 1;
+      58*: 3383:                ASSUME(*advance_p <= UTF8_MAXBYTES);
+       58: 3383-block  0
 branch  0 taken 0 (fallthrough)
-branch  1 taken 232
+branch  1 taken 58
     %%%%%: 3383-block  1
 call    2 never executed
         -: 3384:            }
         -: 3385:
-      232: 3386:            *cp_p = UNI_TO_NATIVE(uv);
-      232: 3387:            return true;
-      232: 3387-block  0
+       58: 3386:            *cp_p = UNI_TO_NATIVE(uv);
+       58: 3387:            return true;
+       58: 3387-block  0
         -: 3388:        }
         -: 3389:    }
         -: 3390:
@@ -3602,8 +3602,8 @@ call    4 never executed
         -: 3407:}
         -: 3408:
         -: 3409:PERL_STATIC_INLINE UV
-function Perl_utf8n_to_uvchr_msgs called 272 returned 100% blocks executed 56%
-      272: 3410:Perl_utf8n_to_uvchr_msgs(const U8 * const s0,
+function Perl_utf8n_to_uvchr_msgs called 68 returned 100% blocks executed 56%
+       68: 3410:Perl_utf8n_to_uvchr_msgs(const U8 * const s0,
         -: 3411:                         STRLEN curlen,
         -: 3412:                         STRLEN *retlen,
         -: 3413:                         U32 flags,
@@ -3613,15 +3613,15 @@ function Perl_utf8n_to_uvchr_msgs called 272 returned 100% blocks executed 56%
         -: 3417:    PERL_ARGS_ASSERT_UTF8N_TO_UVCHR_MSGS;
         -: 3418:
         -: 3419:    UV cp;
-      272: 3420:    if (LIKELY(utf8_to_uv_msgs(s0, s0 + curlen, &cp, retlen, flags, errors,
-      272: 3420-block  0
-call    0 returned 272
-branch  1 taken 272 (fallthrough)
+       68: 3420:    if (LIKELY(utf8_to_uv_msgs(s0, s0 + curlen, &cp, retlen, flags, errors,
+       68: 3420-block  0
+call    0 returned 68
+branch  1 taken 68 (fallthrough)
 branch  2 taken 0
         -: 3421:                                                                        msgs)))
         -: 3422:    {
-      272: 3423:        return cp;
-      272: 3423-block  0
+       68: 3423:        return cp;
+       68: 3423-block  0
         -: 3424:    }
         -: 3425:
     #####: 3426:    if ((flags & UTF8_CHECK_ONLY) && retlen) {
@@ -4202,25 +4202,25 @@ branch  3 never executed
         -: 3993:/* implement GIMME_V() macro */
         -: 3994:
         -: 3995:PERL_STATIC_INLINE U8
-function Perl_gimme_V called 272 returned 100% blocks executed 56%
-      272: 3996:Perl_gimme_V(pTHX)
+function Perl_gimme_V called 65 returned 100% blocks executed 56%
+       65: 3996:Perl_gimme_V(pTHX)
         -: 3997:{
         -: 3998:    PERL_ARGS_ASSERT_GIMME_V;
         -: 3999:
         -: 4000:    I32 cxix;
-      272: 4001:    U8  gimme = (PL_op->op_flags & OPf_WANT);
+       65: 4001:    U8  gimme = (PL_op->op_flags & OPf_WANT);
         -: 4002:
-      272: 4003:    if (gimme)
-      272: 4003-block  0
-branch  0 taken 268 (fallthrough)
-branch  1 taken 4
-      268: 4004:        return gimme;
-      268: 4004-block  0
-        4: 4005:    cxix = PL_curstackinfo->si_cxsubix;
-        4: 4006:    if (cxix < 0)
-        4: 4006-block  0
+       65: 4003:    if (gimme)
+       65: 4003-block  0
+branch  0 taken 64 (fallthrough)
+branch  1 taken 1
+       64: 4004:        return gimme;
+       64: 4004-block  0
+        1: 4005:    cxix = PL_curstackinfo->si_cxsubix;
+        1: 4006:    if (cxix < 0)
+        1: 4006-block  0
 branch  0 taken 0 (fallthrough)
-branch  1 taken 4
+branch  1 taken 1
     #####: 4007:        return PL_curstackinfo->si_type == PERLSI_SORT ? G_SCALAR: G_VOID;
     %%%%%: 4007-block  0
 branch  0 never executed (fallthrough)
@@ -4229,8 +4229,8 @@ branch  1 never executed
     %%%%%: 4007-block  2
     %%%%%: 4007-block  3
         -: 4008:    assert(cxstack[cxix].blk_gimme & G_WANT);
-        4: 4009:    return (cxstack[cxix].blk_gimme & G_WANT);
-        4: 4009-block  0
+        1: 4009:    return (cxstack[cxix].blk_gimme & G_WANT);
+        1: 4009-block  0
         -: 4010:}
         -: 4011:
         -: 4012:
@@ -5294,50 +5294,50 @@ branch  1 never executed
         -: 5070:*/
         -: 5071:
         -: 5072:PERL_STATIC_INLINE char *
-function Perl_savepv called 51261 returned 100% blocks executed 80%
-    51261: 5073:Perl_savepv(pTHX_ const char *pv)
+function Perl_savepv called 10737 returned 100% blocks executed 80%
+    10737: 5073:Perl_savepv(pTHX_ const char *pv)
         -: 5074:{
         -: 5075:    PERL_ARGS_ASSERT_SAVEPV;
         -: 5076:    PERL_UNUSED_CONTEXT;
         -: 5077:
-    51261: 5078:    if (!pv)
-    51261: 5078-block  0
+    10737: 5078:    if (!pv)
+    10737: 5078-block  0
 branch  0 taken 0 (fallthrough)
-branch  1 taken 51261
+branch  1 taken 10737
     #####: 5079:        return NULL;
     %%%%%: 5079-block  0
         -: 5080:    else {
         -: 5081:        char *newaddr;
-    51261: 5082:        const STRLEN pvlen = strlen(pv)+1;
-    51261: 5083:        Newx(newaddr, pvlen, char);
-    51261: 5083-block  0
-call    0 returned 51261
-    51261: 5084:        return (char*)memcpy(newaddr, pv, pvlen);
+    10737: 5082:        const STRLEN pvlen = strlen(pv)+1;
+    10737: 5083:        Newx(newaddr, pvlen, char);
+    10737: 5083-block  0
+call    0 returned 10737
+    10737: 5084:        return (char*)memcpy(newaddr, pv, pvlen);
         -: 5085:    }
         -: 5086:}
         -: 5087:
         -: 5088:/* same thing but with a known length */
         -: 5089:
         -: 5090:PERL_STATIC_INLINE char *
-function Perl_savepvn called 517 returned 100% blocks executed 80%
-      517: 5091:Perl_savepvn(pTHX_ const char *pv, Size_t len)
+function Perl_savepvn called 103 returned 100% blocks executed 80%
+      103: 5091:Perl_savepvn(pTHX_ const char *pv, Size_t len)
         -: 5092:{
         -: 5093:    PERL_ARGS_ASSERT_SAVEPVN;
         -: 5094:
         -: 5095:    char *newaddr;
         -: 5096:    PERL_UNUSED_CONTEXT;
         -: 5097:
-      517: 5098:    Newx(newaddr,len+1,char);
-      517: 5098-block  0
-call    0 returned 517
+      103: 5098:    Newx(newaddr,len+1,char);
+      103: 5098-block  0
+call    0 returned 103
         -: 5099:    /* Give a meaning to NULL pointer mainly for the use in sv_magic() */
-      517: 5100:    if (pv) {
-branch  0 taken 517 (fallthrough)
+      103: 5100:    if (pv) {
+branch  0 taken 103 (fallthrough)
 branch  1 taken 0
         -: 5101:        /* might not be null terminated */
-      517: 5102:        newaddr[len] = '\0';
-      517: 5103:        return (char *) CopyD(pv,newaddr,len,char);
-      517: 5103-block  0
+      103: 5102:        newaddr[len] = '\0';
+      103: 5103:        return (char *) CopyD(pv,newaddr,len,char);
+      103: 5103-block  0
         -: 5104:    }
         -: 5105:    else {
     #####: 5106:        return (char *) ZeroD(newaddr,len+1,char);

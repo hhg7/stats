@@ -1,7 +1,7 @@
         -:    0:Source:/home/con/perl5/perlbrew/perls/perl-5.44.0/lib/5.44.0/x86_64-linux/CORE/sv_inline.h
         -:    0:Graph:./LikeR.gcno
         -:    0:Data:./LikeR.gcda
-        -:    0:Runs:375
+        -:    0:Runs:84
         -:    1:/*    sv_inline.h
         -:    2: *
         -:    3: *    Copyright (C) 2022 by Larry Wall and others
@@ -69,8 +69,8 @@
         -:   65:
         -:   66:/* new_SV(): return a new, empty SV head */
         -:   67:PERL_STATIC_INLINE SV*
-function Perl_new_sv called 100456 returned 100% blocks executed 100%
-   100456:   68:Perl_new_sv(pTHX_ const char *file, int line, const char *func)
+function Perl_new_sv called 21318 returned 100% blocks executed 100%
+    21318:   68:Perl_new_sv(pTHX_ const char *file, int line, const char *func)
         -:   69:{
         -:   70:    PERL_ARGS_ASSERT_NEW_SV;
         -:   71:
@@ -82,19 +82,19 @@ function Perl_new_sv called 100456 returned 100% blocks executed 100%
         -:   77:    PERL_UNUSED_ARG(func);
         -:   78:#endif
         -:   79:
-   100456:   80:    if (PL_sv_root)
-   100456:   80-block  0
-branch  0 taken 100444 (fallthrough)
-branch  1 taken 12
-   100444:   81:        uproot_SV(sv);
-   100444:   81-block  0
+    21318:   80:    if (PL_sv_root)
+    21318:   80-block  0
+branch  0 taken 21316 (fallthrough)
+branch  1 taken 2
+    21316:   81:        uproot_SV(sv);
+    21316:   81-block  0
         -:   82:    else
-       12:   83:        sv = Perl_more_sv(aTHX);
-       12:   83-block  0
-call    0 returned 12
-   100456:   84:    SvANY(sv) = 0;
-   100456:   85:    SvREFCNT(sv) = 1;
-   100456:   86:    SvFLAGS(sv) = 0;
+        2:   83:        sv = Perl_more_sv(aTHX);
+        2:   83-block  0
+call    0 returned 2
+    21318:   84:    SvANY(sv) = 0;
+    21318:   85:    SvREFCNT(sv) = 1;
+    21318:   86:    SvFLAGS(sv) = 0;
         -:   87:#ifdef DEBUG_LEAKING_SCALARS
         -:   88:    sv->sv_debug_optype = PL_op ? PL_op->op_type : 0;
         -:   89:    sv->sv_debug_line = (U16) (PL_parser && PL_parser->copline != NOLINE
@@ -113,8 +113,8 @@ call    0 returned 12
         -:  102:    DEBUG_m(PerlIO_printf(Perl_debug_log, "0x%" UVxf ": (%05ld) new_SV (from %s:%d [%s])\n",
         -:  103:            PTR2UV(sv), (long)sv->sv_debug_serial, file, line, func));
         -:  104:#endif
-   100456:  105:    return sv;
-   100456:  105-block  0
+    21318:  105:    return sv;
+    21318:  105-block  0
         -:  106:}
         -:  107:#  define new_SV(p) (p)=Perl_new_sv(aTHX_ __FILE__, __LINE__, FUNCTION__)
         -:  108:
@@ -359,19 +359,19 @@ call    0 returned 12
         -:  347:    } STMT_END
         -:  348:
         -:  349:PERL_STATIC_INLINE void *
-function S_new_body called 54352 returned 100% blocks executed 100%
-    54352:  350:S_new_body(pTHX_ const svtype sv_type)
+function S_new_body called 11610 returned 100% blocks executed 100%
+    11610:  350:S_new_body(pTHX_ const svtype sv_type)
         -:  351:{
         -:  352:    void *xpv;
-    54352:  353:    new_body_from_arena(xpv, sv_type);
-    54352:  353-block  0
-branch  0 taken 54323 (fallthrough)
-branch  1 taken 29
-    54323:  353-block  1
-       29:  353-block  2
-call    2 returned 29
-    54352:  354:    return xpv;
-    54352:  354-block  0
+    11610:  353:    new_body_from_arena(xpv, sv_type);
+    11610:  353-block  0
+branch  0 taken 11603 (fallthrough)
+branch  1 taken 7
+    11603:  353-block  1
+        7:  353-block  2
+call    2 returned 7
+    11610:  354:    return xpv;
+    11610:  354-block  0
         -:  355:}
         -:  356:
         -:  357:#endif
@@ -389,8 +389,8 @@ call    2 returned 29
         -:  369:*/
         -:  370:
         -:  371:PERL_STATIC_INLINE SV *
-function Perl_newSV_type called 100456 returned 100% blocks executed 41%
-   100456:  372:Perl_newSV_type(pTHX_ const svtype type)
+function Perl_newSV_type called 21318 returned 100% blocks executed 41%
+    21318:  372:Perl_newSV_type(pTHX_ const svtype type)
         -:  373:{
         -:  374:    PERL_ARGS_ASSERT_NEWSV_TYPE;
         -:  375:
@@ -398,31 +398,31 @@ function Perl_newSV_type called 100456 returned 100% blocks executed 41%
         -:  377:    void*      new_body;
         -:  378:    const struct body_details *type_details;
         -:  379:
-   100456:  380:    new_SV(sv);
-   100456:  380-block  0
-call    0 returned 100456
+    21318:  380:    new_SV(sv);
+    21318:  380-block  0
+call    0 returned 21318
         -:  381:
-   100456:  382:    type_details = bodies_by_type + type;
+    21318:  382:    type_details = bodies_by_type + type;
         -:  383:
-   100456:  384:    SvFLAGS(sv) &= ~SVTYPEMASK;
-   100456:  385:    SvFLAGS(sv) |= type;
+    21318:  384:    SvFLAGS(sv) &= ~SVTYPEMASK;
+    21318:  385:    SvFLAGS(sv) |= type;
         -:  386:
-   100456:  387:    switch (type) {
+    21318:  387:    switch (type) {
 branch  0 taken 0
-branch  1 taken 46104
+branch  1 taken 9708
 branch  2 taken 0
-branch  3 taken 54352
+branch  3 taken 11610
 branch  4 taken 0
 branch  5 taken 0
 branch  6 taken 0
     #####:  388:    case SVt_NULL:
     #####:  389:        break;
     %%%%%:  389-block  0
-    46104:  390:    case SVt_IV:
-    46104:  391:        SET_SVANY_FOR_BODYLESS_IV(sv);
-    46104:  392:        SvIV_set(sv, 0);
-    46104:  393:        break;
-    46104:  393-block  0
+     9708:  390:    case SVt_IV:
+     9708:  391:        SET_SVANY_FOR_BODYLESS_IV(sv);
+     9708:  392:        SvIV_set(sv, 0);
+     9708:  393:        break;
+     9708:  393-block  0
     #####:  394:    case SVt_NV:
         -:  395:#if NVSIZE <= IVSIZE
     #####:  396:        SET_SVANY_FOR_BODYLESS_NV(sv);
@@ -432,7 +432,7 @@ branch  6 taken 0
     #####:  400:        SvNV_set(sv, 0);
     #####:  401:        break;
     %%%%%:  401-block  0
-    54352:  402:    case SVt_PVHV:
+    11610:  402:    case SVt_PVHV:
         -:  403:    case SVt_PVAV:
         -:  404:    case SVt_PVOBJ:
         -:  405:        assert(type_details->body_size);
@@ -441,9 +441,9 @@ branch  6 taken 0
         -:  408:        assert(type_details->arena);
         -:  409:        assert(type_details->arena_size);
         -:  410:        /* This points to the start of the allocated area.  */
-    54352:  411:        new_body = S_new_body(aTHX_ type);
-    54352:  411-block  0
-call    0 returned 54352
+    11610:  411:        new_body = S_new_body(aTHX_ type);
+    11610:  411-block  0
+call    0 returned 11610
         -:  412:        /* xpvav and xpvhv have no offset, so no need to adjust new_body */
         -:  413:        assert(!(type_details->offset));
         -:  414:#else
@@ -451,52 +451,52 @@ call    0 returned 54352
         -:  416:           we fake things so that arena is false for all 16 types..  */
         -:  417:        new_body = new_NOARENAZ(type_details);
         -:  418:#endif
-    54352:  419:        SvANY(sv) = new_body;
+    11610:  419:        SvANY(sv) = new_body;
         -:  420:
-    54352:  421:        SvSTASH_set(sv, NULL);
-    54352:  422:        SvMAGIC_set(sv, NULL);
+    11610:  421:        SvSTASH_set(sv, NULL);
+    11610:  422:        SvMAGIC_set(sv, NULL);
         -:  423:
-    54352:  424:        switch(type) {
-branch  0 taken 44408
-branch  1 taken 9944
+    11610:  424:        switch(type) {
+branch  0 taken 9484
+branch  1 taken 2126
 branch  2 taken 0
 branch  3 taken 0
-    44408:  425:        case SVt_PVAV:
-    44408:  426:            AvFILLp(sv) = -1;
-    44408:  427:            AvMAX(sv) = -1;
-    44408:  428:            AvALLOC(sv) = NULL;
+     9484:  425:        case SVt_PVAV:
+     9484:  426:            AvFILLp(sv) = -1;
+     9484:  427:            AvMAX(sv) = -1;
+     9484:  428:            AvALLOC(sv) = NULL;
         -:  429:
-    44408:  430:            AvREAL_only(sv);
-    44408:  431:            break;
-    44408:  431-block  0
-     9944:  432:        case SVt_PVHV:
-     9944:  433:            HvTOTALKEYS(sv) = 0;
+     9484:  430:            AvREAL_only(sv);
+     9484:  431:            break;
+     9484:  431-block  0
+     2126:  432:        case SVt_PVHV:
+     2126:  433:            HvTOTALKEYS(sv) = 0;
         -:  434:            /* start with PERL_HASH_DEFAULT_HvMAX+1 buckets: */
-     9944:  435:            HvMAX(sv) = PERL_HASH_DEFAULT_HvMAX;
+     2126:  435:            HvMAX(sv) = PERL_HASH_DEFAULT_HvMAX;
         -:  436:
         -:  437:            assert(!SvOK(sv));
-    9944*:  438:            SvOK_off(sv);
-     9944:  438-block  0
-branch  0 taken 9944 (fallthrough)
+    2126*:  438:            SvOK_off(sv);
+     2126:  438-block  0
+branch  0 taken 2126 (fallthrough)
 branch  1 taken 0
-     9944:  438-block  1
+     2126:  438-block  1
 branch  2 taken 0 (fallthrough)
-branch  3 taken 9944
+branch  3 taken 2126
     %%%%%:  438-block  2
 branch  4 never executed (fallthrough)
 branch  5 never executed
-     9944:  438-block  3
+     2126:  438-block  3
 branch  6 taken 0 (fallthrough)
-branch  7 taken 9944
+branch  7 taken 2126
     %%%%%:  438-block  4
 call    8 never executed
         -:  439:#ifndef NODEFAULT_SHAREKEYS
-     9944:  440:            HvSHAREKEYS_on(sv);         /* key-sharing on by default */
+     2126:  440:            HvSHAREKEYS_on(sv);         /* key-sharing on by default */
         -:  441:#endif
         -:  442:            /* start with PERL_HASH_DEFAULT_HvMAX+1 buckets: */
-     9944:  443:            HvMAX(sv) = PERL_HASH_DEFAULT_HvMAX;
-     9944:  444:            break;
-     9944:  444-block  0
+     2126:  443:            HvMAX(sv) = PERL_HASH_DEFAULT_HvMAX;
+     2126:  444:            break;
+     2126:  444-block  0
     #####:  445:        case SVt_PVOBJ:
     #####:  446:            ObjectMAXFIELD(sv) = -1;
     #####:  447:            ObjectFIELDS(sv) = NULL;
@@ -508,9 +508,9 @@ call    8 never executed
 call    0 never executed
         -:  451:        }
         -:  452:
-    54352:  453:        sv->sv_u.svu_array = NULL; /* or svu_hash  */
-    54352:  454:        break;
-    54352:  454-block  0
+    11610:  453:        sv->sv_u.svu_array = NULL; /* or svu_hash  */
+    11610:  454:        break;
+    11610:  454-block  0
         -:  455:
     #####:  456:    case SVt_PVIV:
         -:  457:    case SVt_PVIO:
@@ -597,8 +597,8 @@ call    0 never executed
         -:  516:                   (unsigned long)type);
         -:  517:    }
         -:  518:
-   100456:  519:    return sv;
-   100456:  519-block  0
+    21318:  519:    return sv;
+    21318:  519-block  0
         -:  520:}
         -:  521:
         -:  522:/*
@@ -657,32 +657,32 @@ call    0 never executed
         -:  575:
         -:  576:    PERL_UNUSED_CONTEXT;
         -:  577:
-     1767:  578:    if (! (XPV *) SvANY(sv)) {
-     1767:  578-block  0
+      353:  578:    if (! (XPV *) SvANY(sv)) {
+      353:  578-block  0
 branch  0 taken 0 (fallthrough)
-branch  1 taken 1767
+branch  1 taken 353
     #####:  579:        return false;
     %%%%%:  579-block  0
         -:  580:    }
         -:  581:
-     1767:  582:    if ( ((XPV *) SvANY(sv))->xpv_cur > 1) { /* length > 1 */
-     1767:  582-block  0
-branch  0 taken 119 (fallthrough)
-branch  1 taken 1648
-      119:  583:        return true;
-      119:  583-block  0
+      353:  582:    if ( ((XPV *) SvANY(sv))->xpv_cur > 1) { /* length > 1 */
+      353:  582-block  0
+branch  0 taken 24 (fallthrough)
+branch  1 taken 329
+       24:  583:        return true;
+       24:  583-block  0
         -:  584:    }
         -:  585:
-     1648:  586:    if (( (XPV *) SvANY(sv))->xpv_cur == 0) {
-     1648:  586-block  0
-branch  0 taken 1377 (fallthrough)
-branch  1 taken 271
-     1377:  587:        return false;
-     1377:  587-block  0
+      329:  586:    if (( (XPV *) SvANY(sv))->xpv_cur == 0) {
+      329:  586-block  0
+branch  0 taken 275 (fallthrough)
+branch  1 taken 54
+      275:  587:        return false;
+      275:  587-block  0
         -:  588:    }
         -:  589:
-      271:  590:    return *sv->sv_u.svu_pv != '0';
-      271:  590-block  0
+       54:  590:    return *sv->sv_u.svu_pv != '0';
+       54:  590-block  0
         -:  591:}
         -:  592:
         -:  593:/*
@@ -695,38 +695,38 @@ branch  1 taken 271
         -:  600:*/
         -:  601:
         -:  602:PERL_STATIC_INLINE void
-function Perl_SvGETMAGIC called 3632 returned 100% blocks executed 67%
-     3632:  603:Perl_SvGETMAGIC(pTHX_ SV *sv)
+function Perl_SvGETMAGIC called 816 returned 100% blocks executed 67%
+      816:  603:Perl_SvGETMAGIC(pTHX_ SV *sv)
         -:  604:{
         -:  605:    PERL_ARGS_ASSERT_SVGETMAGIC;
         -:  606:
-     3632:  607:    if (UNLIKELY(SvGMAGICAL(sv))) {
-     3632:  607-block  0
+      816:  607:    if (UNLIKELY(SvGMAGICAL(sv))) {
+      816:  607-block  0
 branch  0 taken 0 (fallthrough)
-branch  1 taken 3632
+branch  1 taken 816
     #####:  608:        mg_get(sv);
     %%%%%:  608-block  0
 call    0 never executed
         -:  609:    }
-     3632:  610:}
+      816:  610:}
         -:  611:
         -:  612:PERL_STATIC_INLINE bool
-function Perl_SvTRUE called 3632 returned 100% blocks executed 80%
-     3632:  613:Perl_SvTRUE(pTHX_ SV *sv)
+function Perl_SvTRUE called 816 returned 100% blocks executed 80%
+      816:  613:Perl_SvTRUE(pTHX_ SV *sv)
         -:  614:{
         -:  615:    PERL_ARGS_ASSERT_SVTRUE;
         -:  616:
-     3632:  617:    if (UNLIKELY(sv == NULL))
-     3632:  617-block  0
+      816:  617:    if (UNLIKELY(sv == NULL))
+      816:  617-block  0
 branch  0 taken 0 (fallthrough)
-branch  1 taken 3632
+branch  1 taken 816
     #####:  618:        return FALSE;
     %%%%%:  618-block  0
-     3632:  619:    SvGETMAGIC(sv);
-     3632:  619-block  0
-call    0 returned 3632
-     3632:  620:    return SvTRUE_nomg_NN(sv);
-call    0 returned 3632
+      816:  619:    SvGETMAGIC(sv);
+      816:  619-block  0
+call    0 returned 816
+      816:  620:    return SvTRUE_nomg_NN(sv);
+call    0 returned 816
         -:  621:}
         -:  622:
         -:  623:PERL_STATIC_INLINE bool
@@ -749,38 +749,38 @@ call    0 returned 3632
         -:  640:}
         -:  641:
         -:  642:PERL_STATIC_INLINE bool
-function Perl_SvTRUE_common called 3632 returned 100% blocks executed 45%
-     3632:  643:Perl_SvTRUE_common(pTHX_ SV * sv, const bool sv_2bool_is_fallback)
+function Perl_SvTRUE_common called 816 returned 100% blocks executed 45%
+      816:  643:Perl_SvTRUE_common(pTHX_ SV * sv, const bool sv_2bool_is_fallback)
         -:  644:{
         -:  645:    PERL_ARGS_ASSERT_SVTRUE_COMMON;
         -:  646:
-     3632:  647:    if (UNLIKELY(SvIMMORTAL_INTERP(sv)))
-     3632:  647-block  0
+      816:  647:    if (UNLIKELY(SvIMMORTAL_INTERP(sv)))
+      816:  647-block  0
 branch  0 taken 0 (fallthrough)
-branch  1 taken 3632
+branch  1 taken 816
     #####:  648:        return SvIMMORTAL_TRUE(sv);
     %%%%%:  648-block  0
         -:  649:
-     3632:  650:    if (! SvOK(sv))
-     3632:  650-block  0
+      816:  650:    if (! SvOK(sv))
+      816:  650-block  0
 branch  0 taken 0 (fallthrough)
-branch  1 taken 3632
+branch  1 taken 816
     #####:  651:        return FALSE;
     %%%%%:  651-block  0
         -:  652:
-     3632:  653:    if (SvPOK(sv))
-     3632:  653-block  0
-branch  0 taken 1767 (fallthrough)
-branch  1 taken 1865
-     1767:  654:        return SvPVXtrue(sv);
-     1767:  654-block  0
+      816:  653:    if (SvPOK(sv))
+      816:  653-block  0
+branch  0 taken 353 (fallthrough)
+branch  1 taken 463
+      353:  654:        return SvPVXtrue(sv);
+      353:  654-block  0
         -:  655:
-     1865:  656:    if (SvIOK(sv))
-     1865:  656-block  0
-branch  0 taken 1865 (fallthrough)
+      463:  656:    if (SvIOK(sv))
+      463:  656-block  0
+branch  0 taken 463 (fallthrough)
 branch  1 taken 0
-     1865:  657:        return SvIVX(sv) != 0; /* casts to bool */
-     1865:  657-block  0
+      463:  657:        return SvIVX(sv) != 0; /* casts to bool */
+      463:  657-block  0
         -:  658:
     #####:  659:    if (SvROK(sv) && !(SvOBJECT(SvRV(sv)) && HvAMAGIC(SvSTASH(SvRV(sv)))))
     %%%%%:  659-block  0
@@ -819,19 +819,19 @@ branch  5 never executed
         -:  666:}
         -:  667:
         -:  668:PERL_STATIC_INLINE SV *
-function Perl_SvREFCNT_inc called 1294 returned 100% blocks executed 100%
-     1294:  669:Perl_SvREFCNT_inc(SV *sv)
+function Perl_SvREFCNT_inc called 289 returned 100% blocks executed 100%
+      289:  669:Perl_SvREFCNT_inc(SV *sv)
         -:  670:{
         -:  671:    PERL_ARGS_ASSERT_SVREFCNT_INC;
         -:  672:
-     1294:  673:    if (LIKELY(sv != NULL))
-     1294:  673-block  0
-branch  0 taken 1294 (fallthrough)
+      289:  673:    if (LIKELY(sv != NULL))
+      289:  673-block  0
+branch  0 taken 289 (fallthrough)
 branch  1 taken 0
-     1294:  674:        SvREFCNT(sv)++;
-     1294:  674-block  0
-     1294:  675:    return sv;
-     1294:  675-block  0
+      289:  674:        SvREFCNT(sv)++;
+      289:  674-block  0
+      289:  675:    return sv;
+      289:  675-block  0
         -:  676:}
         -:  677:
         -:  678:PERL_STATIC_INLINE SV *
@@ -853,28 +853,28 @@ branch  1 taken 0
         -:  694:}
         -:  695:
         -:  696:PERL_STATIC_INLINE void
-function Perl_SvREFCNT_dec called 6165 returned 100% blocks executed 80%
-     6165:  697:Perl_SvREFCNT_dec(pTHX_ SV *sv)
+function Perl_SvREFCNT_dec called 1382 returned 100% blocks executed 80%
+     1382:  697:Perl_SvREFCNT_dec(pTHX_ SV *sv)
         -:  698:{
         -:  699:    PERL_ARGS_ASSERT_SVREFCNT_DEC;
         -:  700:
-     6165:  701:    if (LIKELY(sv != NULL)) {
-     6165:  701-block  0
-branch  0 taken 6165 (fallthrough)
+     1382:  701:    if (LIKELY(sv != NULL)) {
+     1382:  701-block  0
+branch  0 taken 1382 (fallthrough)
 branch  1 taken 0
-     6165:  702:        U32 rc = SvREFCNT(sv);
-     6165:  703:        if (LIKELY(rc > 1))
-     6165:  703-block  0
+     1382:  702:        U32 rc = SvREFCNT(sv);
+     1382:  703:        if (LIKELY(rc > 1))
+     1382:  703-block  0
 branch  0 taken 0 (fallthrough)
-branch  1 taken 6165
+branch  1 taken 1382
     #####:  704:            SvREFCNT(sv) = rc - 1;
     %%%%%:  704-block  0
         -:  705:        else
-     6165:  706:            Perl_sv_free2(aTHX_ sv, rc);
-     6165:  706-block  0
-call    0 returned 6165
+     1382:  706:            Perl_sv_free2(aTHX_ sv, rc);
+     1382:  706-block  0
+call    0 returned 1382
         -:  707:    }
-     6165:  708:}
+     1382:  708:}
         -:  709:
         -:  710:PERL_STATIC_INLINE SV *
         -:  711:Perl_SvREFCNT_dec_ret_NULL(pTHX_ SV *sv)
@@ -994,54 +994,54 @@ call    0 returned 6165
         -:  825:*/
         -:  826:
         -:  827:PERL_STATIC_INLINE IV
-function Perl_SvIV called 2541 returned 100% blocks executed 100%
-     2541:  828:Perl_SvIV(pTHX_ SV *sv)
+function Perl_SvIV called 669 returned 100% blocks executed 100%
+      669:  828:Perl_SvIV(pTHX_ SV *sv)
         -:  829:{
         -:  830:    PERL_ARGS_ASSERT_SVIV;
         -:  831:
-     2541:  832:    if (SvIOK_nog(sv))
-     2541:  832-block  0
-branch  0 taken 2531 (fallthrough)
-branch  1 taken 10
-     2531:  833:        return SvIVX(sv);
-     2531:  833-block  0
-       10:  834:    return sv_2iv(sv);
-       10:  834-block  0
-call    0 returned 10
+      669:  832:    if (SvIOK_nog(sv))
+      669:  832-block  0
+branch  0 taken 667 (fallthrough)
+branch  1 taken 2
+      667:  833:        return SvIVX(sv);
+      667:  833-block  0
+        2:  834:    return sv_2iv(sv);
+        2:  834-block  0
+call    0 returned 2
         -:  835:}
         -:  836:
         -:  837:PERL_STATIC_INLINE UV
-function Perl_SvUV called 402 returned 100% blocks executed 75%
-      402:  838:Perl_SvUV(pTHX_ SV *sv)
+function Perl_SvUV called 85 returned 100% blocks executed 75%
+       85:  838:Perl_SvUV(pTHX_ SV *sv)
         -:  839:{
         -:  840:    PERL_ARGS_ASSERT_SVUV;
         -:  841:
-      402:  842:    if (SvUOK_nog(sv))
-      402:  842-block  0
+       85:  842:    if (SvUOK_nog(sv))
+       85:  842-block  0
 branch  0 taken 0 (fallthrough)
-branch  1 taken 402
+branch  1 taken 85
     #####:  843:        return SvUVX(sv);
     %%%%%:  843-block  0
-      402:  844:    return sv_2uv(sv);
-      402:  844-block  0
-call    0 returned 402
+       85:  844:    return sv_2uv(sv);
+       85:  844-block  0
+call    0 returned 85
         -:  845:}
         -:  846:
         -:  847:PERL_STATIC_INLINE NV
-function Perl_SvNV called 386188 returned 100% blocks executed 100%
-   386188:  848:Perl_SvNV(pTHX_ SV *sv)
+function Perl_SvNV called 78408 returned 100% blocks executed 100%
+    78408:  848:Perl_SvNV(pTHX_ SV *sv)
         -:  849:{
         -:  850:    PERL_ARGS_ASSERT_SVNV;
         -:  851:
-   386188:  852:    if (SvNOK_nog(sv))
-   386188:  852-block  0
-branch  0 taken 302160 (fallthrough)
-branch  1 taken 84028
-   302160:  853:        return SvNVX(sv);
-   302160:  853-block  0
-    84028:  854:    return sv_2nv(sv);
-    84028:  854-block  0
-call    0 returned 84013
+    78408:  852:    if (SvNOK_nog(sv))
+    78408:  852-block  0
+branch  0 taken 60956 (fallthrough)
+branch  1 taken 17452
+    60956:  853:        return SvNVX(sv);
+    60956:  853-block  0
+    17452:  854:    return sv_2nv(sv);
+    17452:  854-block  0
+call    0 returned 17449
         -:  855:}
         -:  856:
         -:  857:PERL_STATIC_INLINE IV
@@ -1129,108 +1129,108 @@ call    0 returned 84013
         -:  939:
         -:  940:    /* 'type' should be known at compile time, so this is reduced to a single
         -:  941:     * conditional at runtime */
-      104:  942:    if (   (type == SvPVbyte_type_      && SvPOK_byte_nog(sv))
-      104:  942-block  0
-branch  0 taken 8 (fallthrough)
-branch  1 taken 96
+       25:  942:    if (   (type == SvPVbyte_type_      && SvPOK_byte_nog(sv))
+       25:  942-block  0
+branch  0 taken 2 (fallthrough)
+branch  1 taken 23
         -:  943:        || (type == SvPVforce_type_     && SvPOK_pure_nogthink(sv))
-      160:  944:        || (type == SvPVutf8_type_      && SvPOK_utf8_nog(sv))
-      128:  944-block  0
+       40:  944:        || (type == SvPVutf8_type_      && SvPOK_utf8_nog(sv))
+       32:  944-block  0
 branch  0 taken 0 (fallthrough)
-branch  1 taken 128
-       32:  944-block  1
+branch  1 taken 32
+        8:  944-block  1
 branch  2 taken 0 (fallthrough)
-branch  3 taken 32
-   35277*:  945:        || (type == SvPVnormal_type_    && SvPOK_nog(sv))
-      132:  945-block  0
-branch  0 taken 132 (fallthrough)
+branch  3 taken 8
+    8408*:  945:        || (type == SvPVnormal_type_    && SvPOK_nog(sv))
+       33:  945-block  0
+branch  0 taken 33 (fallthrough)
 branch  1 taken 0
-      384:  945-block  1
-branch  2 taken 4 (fallthrough)
-branch  3 taken 380
-       88:  945-block  2
-branch  4 taken 88 (fallthrough)
+       96:  945-block  1
+branch  2 taken 1 (fallthrough)
+branch  3 taken 95
+       22:  945-block  2
+branch  4 taken 22 (fallthrough)
 branch  5 taken 0
     %%%%%:  945-block  3
 branch  6 never executed (fallthrough)
 branch  7 never executed
-        5:  945-block  4
-branch  8 taken 5 (fallthrough)
+        1:  945-block  4
+branch  8 taken 1 (fallthrough)
 branch  9 taken 0
-        5:  945-block  5
-branch 10 taken 5 (fallthrough)
+        1:  945-block  5
+branch 10 taken 1 (fallthrough)
 branch 11 taken 0
-       10:  945-block  6
-branch 12 taken 10 (fallthrough)
+        2:  945-block  6
+branch 12 taken 2 (fallthrough)
 branch 13 taken 0
-        5:  945-block  7
-branch 14 taken 5 (fallthrough)
+        1:  945-block  7
+branch 14 taken 1 (fallthrough)
 branch 15 taken 0
-        5:  945-block  8
-branch 16 taken 5 (fallthrough)
+        1:  945-block  8
+branch 16 taken 1 (fallthrough)
 branch 17 taken 0
-       16:  945-block  9
-branch 18 taken 16 (fallthrough)
+        4:  945-block  9
+branch 18 taken 4 (fallthrough)
 branch 19 taken 0
-        8:  945-block 10
-branch 20 taken 8 (fallthrough)
+        2:  945-block 10
+branch 20 taken 2 (fallthrough)
 branch 21 taken 0
-        8:  945-block 11
-branch 22 taken 8 (fallthrough)
+        2:  945-block 11
+branch 22 taken 2 (fallthrough)
 branch 23 taken 0
-        5:  945-block 12
-branch 24 taken 5 (fallthrough)
+        1:  945-block 12
+branch 24 taken 1 (fallthrough)
 branch 25 taken 0
-        5:  945-block 13
-branch 26 taken 5 (fallthrough)
+        1:  945-block 13
+branch 26 taken 1 (fallthrough)
 branch 27 taken 0
-        5:  945-block 14
-branch 28 taken 5 (fallthrough)
+        1:  945-block 14
+branch 28 taken 1 (fallthrough)
 branch 29 taken 0
-        5:  945-block 15
-branch 30 taken 5 (fallthrough)
+        1:  945-block 15
+branch 30 taken 1 (fallthrough)
 branch 31 taken 0
     %%%%%:  945-block 16
 branch 32 never executed (fallthrough)
 branch 33 never executed
-        5:  945-block 17
-branch 34 taken 5 (fallthrough)
+        1:  945-block 17
+branch 34 taken 1 (fallthrough)
 branch 35 taken 0
     %%%%%:  945-block 18
 branch 36 never executed (fallthrough)
 branch 37 never executed
-        5:  945-block 19
-branch 38 taken 5 (fallthrough)
+        1:  945-block 19
+branch 38 taken 1 (fallthrough)
 branch 39 taken 0
-       10:  945-block 20
-branch 40 taken 10 (fallthrough)
+        2:  945-block 20
+branch 40 taken 2 (fallthrough)
 branch 41 taken 0
-       32:  945-block 21
-branch 42 taken 28 (fallthrough)
-branch 43 taken 4
-       24:  945-block 22
-branch 44 taken 20 (fallthrough)
-branch 45 taken 4
-      160:  945-block 23
-branch 46 taken 160 (fallthrough)
+        8:  945-block 21
+branch 42 taken 7 (fallthrough)
+branch 43 taken 1
+        6:  945-block 22
+branch 44 taken 5 (fallthrough)
+branch 45 taken 1
+       32:  945-block 23
+branch 46 taken 32 (fallthrough)
 branch 47 taken 0
-       65:  945-block 24
-branch 48 taken 65 (fallthrough)
+       13:  945-block 24
+branch 48 taken 13 (fallthrough)
 branch 49 taken 0
-        5:  945-block 25
-branch 50 taken 5 (fallthrough)
+        1:  945-block 25
+branch 50 taken 1 (fallthrough)
 branch 51 taken 0
-        5:  945-block 26
-branch 52 taken 5 (fallthrough)
+        1:  945-block 26
+branch 52 taken 1 (fallthrough)
 branch 53 taken 0
-        5:  945-block 27
-branch 54 taken 5 (fallthrough)
+        1:  945-block 27
+branch 54 taken 1 (fallthrough)
 branch 55 taken 0
     %%%%%:  945-block 28
 branch 56 never executed (fallthrough)
 branch 57 never executed
-        5:  945-block 29
-branch 58 taken 5 (fallthrough)
+        1:  945-block 29
+branch 58 taken 1 (fallthrough)
 branch 59 taken 0
     %%%%%:  945-block 30
 branch 60 never executed (fallthrough)
@@ -1241,146 +1241,146 @@ branch 63 never executed
     %%%%%:  945-block 32
 branch 64 never executed (fallthrough)
 branch 65 never executed
-       60:  945-block 33
-branch 66 taken 60 (fallthrough)
+       12:  945-block 33
+branch 66 taken 12 (fallthrough)
 branch 67 taken 0
-       10:  945-block 34
-branch 68 taken 10 (fallthrough)
+        2:  945-block 34
+branch 68 taken 2 (fallthrough)
 branch 69 taken 0
     %%%%%:  945-block 35
 branch 70 never executed (fallthrough)
 branch 71 never executed
-       10:  945-block 36
-branch 72 taken 10 (fallthrough)
+        2:  945-block 36
+branch 72 taken 2 (fallthrough)
 branch 73 taken 0
     %%%%%:  945-block 37
 branch 74 never executed (fallthrough)
 branch 75 never executed
-      140:  945-block 38
-branch 76 taken 140 (fallthrough)
+       28:  945-block 38
+branch 76 taken 28 (fallthrough)
 branch 77 taken 0
-      135:  945-block 39
-branch 78 taken 135 (fallthrough)
+       27:  945-block 39
+branch 78 taken 27 (fallthrough)
 branch 79 taken 0
-       15:  945-block 40
-branch 80 taken 15 (fallthrough)
+        3:  945-block 40
+branch 80 taken 3 (fallthrough)
 branch 81 taken 0
-       10:  945-block 41
-branch 82 taken 10 (fallthrough)
+        2:  945-block 41
+branch 82 taken 2 (fallthrough)
 branch 83 taken 0
-       50:  945-block 42
-branch 84 taken 50 (fallthrough)
+       10:  945-block 42
+branch 84 taken 10 (fallthrough)
 branch 85 taken 0
-       40:  945-block 43
-branch 86 taken 40 (fallthrough)
+        8:  945-block 43
+branch 86 taken 8 (fallthrough)
 branch 87 taken 0
-       80:  945-block 44
-branch 88 taken 80 (fallthrough)
+       16:  945-block 44
+branch 88 taken 16 (fallthrough)
 branch 89 taken 0
-       85:  945-block 45
-branch 90 taken 85 (fallthrough)
+       17:  945-block 45
+branch 90 taken 17 (fallthrough)
 branch 91 taken 0
-      139:  945-block 46
-branch 92 taken 139 (fallthrough)
+       29:  945-block 46
+branch 92 taken 29 (fallthrough)
 branch 93 taken 0
-       30:  945-block 47
-branch 94 taken 30 (fallthrough)
+        6:  945-block 47
+branch 94 taken 6 (fallthrough)
 branch 95 taken 0
-      289:  945-block 48
-branch 96 taken 289 (fallthrough)
+       62:  945-block 48
+branch 96 taken 62 (fallthrough)
 branch 97 taken 0
-       25:  945-block 49
-branch 98 taken 25 (fallthrough)
+        5:  945-block 49
+branch 98 taken 5 (fallthrough)
 branch 99 taken 0
-      356:  945-block 50
-branch 100 taken 356 (fallthrough)
+       76:  945-block 50
+branch 100 taken 76 (fallthrough)
 branch 101 taken 0
-      178:  945-block 51
-branch 102 taken 178 (fallthrough)
+       38:  945-block 51
+branch 102 taken 38 (fallthrough)
 branch 103 taken 0
-       15:  945-block 52
-branch 104 taken 15 (fallthrough)
+        3:  945-block 52
+branch 104 taken 3 (fallthrough)
 branch 105 taken 0
-       55:  945-block 53
-branch 106 taken 55 (fallthrough)
+       11:  945-block 53
+branch 106 taken 11 (fallthrough)
 branch 107 taken 0
-       10:  945-block 54
+        2:  945-block 54
 branch 108 taken 0 (fallthrough)
-branch 109 taken 10
-        5:  945-block 55
+branch 109 taken 2
+        1:  945-block 55
 branch 110 taken 0 (fallthrough)
-branch 111 taken 5
-      130:  945-block 56
-branch 112 taken 130 (fallthrough)
+branch 111 taken 1
+       26:  945-block 56
+branch 112 taken 26 (fallthrough)
 branch 113 taken 0
-       65:  945-block 57
-branch 114 taken 65 (fallthrough)
+       13:  945-block 57
+branch 114 taken 13 (fallthrough)
 branch 115 taken 0
-      380:  945-block 58
-branch 116 taken 380 (fallthrough)
+       76:  945-block 58
+branch 116 taken 76 (fallthrough)
 branch 117 taken 0
-       10:  945-block 59
-branch 118 taken 10 (fallthrough)
+        2:  945-block 59
+branch 118 taken 2 (fallthrough)
 branch 119 taken 0
-       44:  945-block 60
+       11:  945-block 60
 branch 120 taken 0 (fallthrough)
-branch 121 taken 44
-      104:  945-block 61
-branch 122 taken 40 (fallthrough)
-branch 123 taken 64
-      100:  945-block 62
-branch 124 taken 20 (fallthrough)
-branch 125 taken 80
-       50:  945-block 63
-branch 126 taken 25 (fallthrough)
-branch 127 taken 25
+branch 121 taken 11
+       26:  945-block 61
+branch 122 taken 10 (fallthrough)
+branch 123 taken 16
+       20:  945-block 62
+branch 124 taken 4 (fallthrough)
+branch 125 taken 16
+       10:  945-block 63
+branch 126 taken 5 (fallthrough)
+branch 127 taken 5
     %%%%%:  945-block 64
 branch 128 never executed (fallthrough)
 branch 129 never executed
-      211:  945-block 65
-branch 130 taken 211 (fallthrough)
+       47:  945-block 65
+branch 130 taken 47 (fallthrough)
 branch 131 taken 0
-       25:  945-block 66
-branch 132 taken 25 (fallthrough)
+        5:  945-block 66
+branch 132 taken 5 (fallthrough)
 branch 133 taken 0
-      155:  945-block 67
-branch 134 taken 155 (fallthrough)
+       31:  945-block 67
+branch 134 taken 31 (fallthrough)
 branch 135 taken 0
-       30:  945-block 68
-branch 136 taken 30 (fallthrough)
+        6:  945-block 68
+branch 136 taken 6 (fallthrough)
 branch 137 taken 0
-      170:  945-block 69
-branch 138 taken 170 (fallthrough)
+       34:  945-block 69
+branch 138 taken 34 (fallthrough)
 branch 139 taken 0
-       35:  945-block 70
-branch 140 taken 35 (fallthrough)
+        7:  945-block 70
+branch 140 taken 7 (fallthrough)
 branch 141 taken 0
-       60:  945-block 71
-branch 142 taken 60 (fallthrough)
+       12:  945-block 71
+branch 142 taken 12 (fallthrough)
 branch 143 taken 0
-      230:  945-block 72
-branch 144 taken 230 (fallthrough)
+       49:  945-block 72
+branch 144 taken 49 (fallthrough)
 branch 145 taken 0
-       80:  945-block 73
-branch 146 taken 80 (fallthrough)
+       17:  945-block 73
+branch 146 taken 17 (fallthrough)
 branch 147 taken 0
-       70:  945-block 74
-branch 148 taken 70 (fallthrough)
+       15:  945-block 74
+branch 148 taken 15 (fallthrough)
 branch 149 taken 0
-       15:  945-block 75
-branch 150 taken 15 (fallthrough)
+        3:  945-block 75
+branch 150 taken 3 (fallthrough)
 branch 151 taken 0
     %%%%%:  945-block 76
 branch 152 never executed (fallthrough)
 branch 153 never executed
-       32:  945-block 77
-branch 154 taken 32 (fallthrough)
+        8:  945-block 77
+branch 154 taken 8 (fallthrough)
 branch 155 taken 0
-       28:  945-block 78
-branch 156 taken 28 (fallthrough)
+        7:  945-block 78
+branch 156 taken 7 (fallthrough)
 branch 157 taken 0
-      136:  945-block 79
-branch 158 taken 136 (fallthrough)
+       34:  945-block 79
+branch 158 taken 34 (fallthrough)
 branch 159 taken 0
     %%%%%:  945-block 80
 branch 160 never executed (fallthrough)
@@ -1388,116 +1388,116 @@ branch 161 never executed
     %%%%%:  945-block 81
 branch 162 never executed (fallthrough)
 branch 163 never executed
-      152:  945-block 82
-branch 164 taken 152 (fallthrough)
+       38:  945-block 82
+branch 164 taken 38 (fallthrough)
 branch 165 taken 0
-      640:  945-block 83
-branch 166 taken 640 (fallthrough)
+      159:  945-block 83
+branch 166 taken 159 (fallthrough)
 branch 167 taken 0
-       15:  945-block 84
-branch 168 taken 15 (fallthrough)
+        3:  945-block 84
+branch 168 taken 3 (fallthrough)
 branch 169 taken 0
-     2462:  945-block 85
-branch 170 taken 2462 (fallthrough)
+      600:  945-block 85
+branch 170 taken 600 (fallthrough)
 branch 171 taken 0
-     2462:  945-block 86
-branch 172 taken 2462 (fallthrough)
+      600:  945-block 86
+branch 172 taken 600 (fallthrough)
 branch 173 taken 0
-     2462:  945-block 87
-branch 174 taken 2462 (fallthrough)
+      600:  945-block 87
+branch 174 taken 600 (fallthrough)
 branch 175 taken 0
-      615:  945-block 88
-branch 176 taken 615 (fallthrough)
+      151:  945-block 88
+branch 176 taken 151 (fallthrough)
 branch 177 taken 0
-      923:  945-block 89
-branch 178 taken 923 (fallthrough)
+      224:  945-block 89
+branch 178 taken 224 (fallthrough)
 branch 179 taken 0
-       80:  945-block 90
-branch 180 taken 80 (fallthrough)
+       18:  945-block 90
+branch 180 taken 18 (fallthrough)
 branch 181 taken 0
-      118:  945-block 91
-branch 182 taken 118 (fallthrough)
+       28:  945-block 91
+branch 182 taken 28 (fallthrough)
 branch 183 taken 0
-       20:  945-block 92
-branch 184 taken 20 (fallthrough)
+        5:  945-block 92
+branch 184 taken 5 (fallthrough)
 branch 185 taken 0
-        8:  945-block 93
-branch 186 taken 8 (fallthrough)
+        2:  945-block 93
+branch 186 taken 2 (fallthrough)
 branch 187 taken 0
-        4:  945-block 94
-branch 188 taken 4 (fallthrough)
+        1:  945-block 94
+branch 188 taken 1 (fallthrough)
 branch 189 taken 0
-      591:  945-block 95
-branch 190 taken 591 (fallthrough)
+      145:  945-block 95
+branch 190 taken 145 (fallthrough)
 branch 191 taken 0
-        4:  945-block 96
+        1:  945-block 96
 branch 192 taken 0 (fallthrough)
-branch 193 taken 4
-      137:  945-block 97
-branch 194 taken 137 (fallthrough)
+branch 193 taken 1
+       33:  945-block 97
+branch 194 taken 33 (fallthrough)
 branch 195 taken 0
-      115:  945-block 98
-branch 196 taken 115 (fallthrough)
+       28:  945-block 98
+branch 196 taken 28 (fallthrough)
 branch 197 taken 0
-      205:  945-block 99
-branch 198 taken 76 (fallthrough)
-branch 199 taken 129
-      252:  945-block 100
-branch 200 taken 252 (fallthrough)
+       50:  945-block 99
+branch 198 taken 19 (fallthrough)
+branch 199 taken 31
+       63:  945-block 100
+branch 200 taken 63 (fallthrough)
 branch 201 taken 0
-      252:  945-block 101
-branch 202 taken 4 (fallthrough)
-branch 203 taken 248
-        4:  945-block 102
-branch 204 taken 4 (fallthrough)
+       63:  945-block 101
+branch 202 taken 1 (fallthrough)
+branch 203 taken 62
+        1:  945-block 102
+branch 204 taken 1 (fallthrough)
 branch 205 taken 0
-      276:  945-block 103
-branch 206 taken 276 (fallthrough)
+       66:  945-block 103
+branch 206 taken 66 (fallthrough)
 branch 207 taken 0
-        8:  945-block 104
-branch 208 taken 8 (fallthrough)
+        2:  945-block 104
+branch 208 taken 2 (fallthrough)
 branch 209 taken 0
-      605:  945-block 105
-branch 210 taken 137 (fallthrough)
-branch 211 taken 468
-        4:  945-block 106
-branch 212 taken 4 (fallthrough)
+      141:  945-block 105
+branch 210 taken 32 (fallthrough)
+branch 211 taken 109
+        1:  945-block 106
+branch 212 taken 1 (fallthrough)
 branch 213 taken 0
-      205:  945-block 107
-branch 214 taken 205 (fallthrough)
+       48:  945-block 107
+branch 214 taken 48 (fallthrough)
 branch 215 taken 0
-        8:  945-block 108
-branch 216 taken 8 (fallthrough)
+        2:  945-block 108
+branch 216 taken 2 (fallthrough)
 branch 217 taken 0
-      526:  945-block 109
-branch 218 taken 118 (fallthrough)
-branch 219 taken 408
-      240:  945-block 110
-branch 220 taken 240 (fallthrough)
+      127:  945-block 109
+branch 218 taken 27 (fallthrough)
+branch 219 taken 100
+       60:  945-block 110
+branch 220 taken 60 (fallthrough)
 branch 221 taken 0
-      512:  945-block 111
-branch 222 taken 352 (fallthrough)
-branch 223 taken 160
-      168:  945-block 112
-branch 224 taken 168 (fallthrough)
+      128:  945-block 111
+branch 222 taken 88 (fallthrough)
+branch 223 taken 40
+       37:  945-block 112
+branch 224 taken 37 (fallthrough)
 branch 225 taken 0
-       30:  945-block 113
-branch 226 taken 30 (fallthrough)
+        7:  945-block 113
+branch 226 taken 7 (fallthrough)
 branch 227 taken 0
-      105:  945-block 114
-branch 228 taken 105 (fallthrough)
+       21:  945-block 114
+branch 228 taken 21 (fallthrough)
 branch 229 taken 0
-       30:  945-block 115
-branch 230 taken 30 (fallthrough)
+        6:  945-block 115
+branch 230 taken 6 (fallthrough)
 branch 231 taken 0
-       30:  945-block 116
-branch 232 taken 30 (fallthrough)
+        6:  945-block 116
+branch 232 taken 6 (fallthrough)
 branch 233 taken 0
-       20:  945-block 117
-branch 234 taken 20 (fallthrough)
+        4:  945-block 117
+branch 234 taken 4 (fallthrough)
 branch 235 taken 0
-       20:  945-block 118
-branch 236 taken 20 (fallthrough)
+        4:  945-block 118
+branch 236 taken 4 (fallthrough)
 branch 237 taken 0
     %%%%%:  945-block 119
 branch 238 never executed (fallthrough)
@@ -1514,44 +1514,44 @@ branch 245 never executed
     %%%%%:  945-block 123
 branch 246 never executed (fallthrough)
 branch 247 never executed
-        5:  945-block 124
-branch 248 taken 5 (fallthrough)
+        1:  945-block 124
+branch 248 taken 1 (fallthrough)
 branch 249 taken 0
-       95:  945-block 125
-branch 250 taken 95 (fallthrough)
+       19:  945-block 125
+branch 250 taken 19 (fallthrough)
 branch 251 taken 0
-       35:  945-block 126
-branch 252 taken 35 (fallthrough)
+        7:  945-block 126
+branch 252 taken 7 (fallthrough)
 branch 253 taken 0
-       40:  945-block 127
-branch 254 taken 40 (fallthrough)
+        8:  945-block 127
+branch 254 taken 8 (fallthrough)
 branch 255 taken 0
-       40:  945-block 128
-branch 256 taken 40 (fallthrough)
+        8:  945-block 128
+branch 256 taken 8 (fallthrough)
 branch 257 taken 0
-        5:  945-block 129
-branch 258 taken 5 (fallthrough)
+        1:  945-block 129
+branch 258 taken 1 (fallthrough)
 branch 259 taken 0
-       10:  945-block 130
-branch 260 taken 10 (fallthrough)
+        2:  945-block 130
+branch 260 taken 2 (fallthrough)
 branch 261 taken 0
-       60:  945-block 131
-branch 262 taken 60 (fallthrough)
+       12:  945-block 131
+branch 262 taken 12 (fallthrough)
 branch 263 taken 0
-        5:  945-block 132
-branch 264 taken 5 (fallthrough)
+        1:  945-block 132
+branch 264 taken 1 (fallthrough)
 branch 265 taken 0
-       55:  945-block 133
-branch 266 taken 55 (fallthrough)
+       11:  945-block 133
+branch 266 taken 11 (fallthrough)
 branch 267 taken 0
-       55:  945-block 134
-branch 268 taken 55 (fallthrough)
+       11:  945-block 134
+branch 268 taken 11 (fallthrough)
 branch 269 taken 0
     %%%%%:  945-block 135
 branch 270 never executed (fallthrough)
 branch 271 never executed
-      100:  945-block 136
-branch 272 taken 100 (fallthrough)
+       20:  945-block 136
+branch 272 taken 20 (fallthrough)
 branch 273 taken 0
     %%%%%:  945-block 137
 branch 274 never executed (fallthrough)
@@ -1562,89 +1562,89 @@ branch 277 never executed
     %%%%%:  945-block 139
 branch 278 never executed (fallthrough)
 branch 279 never executed
-       20:  945-block 140
-branch 280 taken 20 (fallthrough)
+        4:  945-block 140
+branch 280 taken 4 (fallthrough)
 branch 281 taken 0
     %%%%%:  945-block 141
 branch 282 never executed (fallthrough)
 branch 283 never executed
-       55:  945-block 142
-branch 284 taken 55 (fallthrough)
+       11:  945-block 142
+branch 284 taken 11 (fallthrough)
 branch 285 taken 0
-        5:  945-block 143
-branch 286 taken 5 (fallthrough)
+        1:  945-block 143
+branch 286 taken 1 (fallthrough)
 branch 287 taken 0
-      220:  945-block 144
-branch 288 taken 220 (fallthrough)
+       44:  945-block 144
+branch 288 taken 44 (fallthrough)
 branch 289 taken 0
-        5:  945-block 145
-branch 290 taken 5 (fallthrough)
+        1:  945-block 145
+branch 290 taken 1 (fallthrough)
 branch 291 taken 0
-        5:  945-block 146
-branch 292 taken 5 (fallthrough)
+        1:  945-block 146
+branch 292 taken 1 (fallthrough)
 branch 293 taken 0
-       40:  945-block 147
-branch 294 taken 40 (fallthrough)
+        8:  945-block 147
+branch 294 taken 8 (fallthrough)
 branch 295 taken 0
-        5:  945-block 148
-branch 296 taken 5 (fallthrough)
+        1:  945-block 148
+branch 296 taken 1 (fallthrough)
 branch 297 taken 0
-        5:  945-block 149
-branch 298 taken 5 (fallthrough)
+        1:  945-block 149
+branch 298 taken 1 (fallthrough)
 branch 299 taken 0
-       75:  945-block 150
-branch 300 taken 75 (fallthrough)
+       15:  945-block 150
+branch 300 taken 15 (fallthrough)
 branch 301 taken 0
-       15:  945-block 151
-branch 302 taken 15 (fallthrough)
+        3:  945-block 151
+branch 302 taken 3 (fallthrough)
 branch 303 taken 0
-      295:  945-block 152
-branch 304 taken 230 (fallthrough)
-branch 305 taken 65
-      141:  945-block 153
-branch 306 taken 141 (fallthrough)
+       59:  945-block 152
+branch 304 taken 46 (fallthrough)
+branch 305 taken 13
+       28:  945-block 153
+branch 306 taken 28 (fallthrough)
 branch 307 taken 0
-      206:  945-block 154
-branch 308 taken 206 (fallthrough)
+       41:  945-block 154
+branch 308 taken 41 (fallthrough)
 branch 309 taken 0
-        6:  945-block 155
-branch 310 taken 6 (fallthrough)
+        1:  945-block 155
+branch 310 taken 1 (fallthrough)
 branch 311 taken 0
-      130:  945-block 156
-branch 312 taken 130 (fallthrough)
+       26:  945-block 156
+branch 312 taken 26 (fallthrough)
 branch 313 taken 0
     %%%%%:  945-block 157
 branch 314 never executed (fallthrough)
 branch 315 never executed
-       65:  945-block 158
-branch 316 taken 65 (fallthrough)
+       13:  945-block 158
+branch 316 taken 13 (fallthrough)
 branch 317 taken 0
-       20:  945-block 159
-branch 318 taken 20 (fallthrough)
+        4:  945-block 159
+branch 318 taken 4 (fallthrough)
 branch 319 taken 0
-        4:  945-block 160
-branch 320 taken 4 (fallthrough)
+        1:  945-block 160
+branch 320 taken 1 (fallthrough)
 branch 321 taken 0
-       88:  945-block 161
-branch 322 taken 88 (fallthrough)
+       22:  945-block 161
+branch 322 taken 22 (fallthrough)
 branch 323 taken 0
-       64:  945-block 162
-branch 324 taken 64 (fallthrough)
+       16:  945-block 162
+branch 324 taken 16 (fallthrough)
 branch 325 taken 0
-       64:  945-block 163
-branch 326 taken 64 (fallthrough)
+       16:  945-block 163
+branch 326 taken 16 (fallthrough)
 branch 327 taken 0
-       28:  945-block 164
-branch 328 taken 28 (fallthrough)
+        7:  945-block 164
+branch 328 taken 7 (fallthrough)
 branch 329 taken 0
-       32:  945-block 165
-branch 330 taken 32 (fallthrough)
+        8:  945-block 165
+branch 330 taken 8 (fallthrough)
 branch 331 taken 0
-      110:  945-block 166
-branch 332 taken 110 (fallthrough)
+       22:  945-block 166
+branch 332 taken 22 (fallthrough)
 branch 333 taken 0
-       70:  945-block 167
-branch 334 taken 70 (fallthrough)
+       14:  945-block 167
+branch 334 taken 14 (fallthrough)
 branch 335 taken 0
     %%%%%:  945-block 168
 branch 336 never executed (fallthrough)
@@ -1658,211 +1658,214 @@ branch 341 never executed
     %%%%%:  945-block 171
 branch 342 never executed (fallthrough)
 branch 343 never executed
-      395:  945-block 172
-branch 344 taken 115 (fallthrough)
-branch 345 taken 280
-      455:  945-block 173
-branch 346 taken 150 (fallthrough)
-branch 347 taken 305
-    %%%%%:  945-block 174
-branch 348 never executed (fallthrough)
-branch 349 never executed
-    %%%%%:  945-block 175
-branch 350 never executed (fallthrough)
-branch 351 never executed
-    %%%%%:  945-block 176
-branch 352 never executed (fallthrough)
-branch 353 never executed
+       74:  945-block 172
+branch 344 taken 74 (fallthrough)
+branch 345 taken 0
+       74:  945-block 173
+branch 346 taken 74 (fallthrough)
+branch 347 taken 0
+        4:  945-block 174
+branch 348 taken 4 (fallthrough)
+branch 349 taken 0
+       79:  945-block 175
+branch 350 taken 23 (fallthrough)
+branch 351 taken 56
+       91:  945-block 176
+branch 352 taken 30 (fallthrough)
+branch 353 taken 61
     %%%%%:  945-block 177
 branch 354 never executed (fallthrough)
 branch 355 never executed
-      751:  945-block 178
-branch 356 taken 35 (fallthrough)
-branch 357 taken 716
-      285:  945-block 179
-branch 358 taken 10 (fallthrough)
-branch 359 taken 275
-      250:  945-block 180
-branch 360 taken 20 (fallthrough)
-branch 361 taken 230
-      290:  945-block 181
-branch 362 taken 45 (fallthrough)
-branch 363 taken 245
-      376:  945-block 182
-branch 364 taken 0 (fallthrough)
-branch 365 taken 376
-      328:  945-block 183
-branch 366 taken 0 (fallthrough)
-branch 367 taken 328
-        5:  945-block 184
-branch 368 taken 5 (fallthrough)
-branch 369 taken 0
-        5:  945-block 185
-branch 370 taken 5 (fallthrough)
+    %%%%%:  945-block 178
+branch 356 never executed (fallthrough)
+branch 357 never executed
+    %%%%%:  945-block 179
+branch 358 never executed (fallthrough)
+branch 359 never executed
+    %%%%%:  945-block 180
+branch 360 never executed (fallthrough)
+branch 361 never executed
+      375:  945-block 181
+branch 362 taken 7 (fallthrough)
+branch 363 taken 368
+      129:  945-block 182
+branch 364 taken 2 (fallthrough)
+branch 365 taken 127
+       50:  945-block 183
+branch 366 taken 4 (fallthrough)
+branch 367 taken 46
+       58:  945-block 184
+branch 368 taken 9 (fallthrough)
+branch 369 taken 49
+        1:  945-block 185
+branch 370 taken 1 (fallthrough)
 branch 371 taken 0
-        5:  945-block 186
-branch 372 taken 5 (fallthrough)
+        1:  945-block 186
+branch 372 taken 1 (fallthrough)
 branch 373 taken 0
-        5:  945-block 187
-branch 374 taken 5 (fallthrough)
+        1:  945-block 187
+branch 374 taken 1 (fallthrough)
 branch 375 taken 0
-       55:  945-block 188
-branch 376 taken 55 (fallthrough)
+        1:  945-block 188
+branch 376 taken 1 (fallthrough)
 branch 377 taken 0
-    %%%%%:  945-block 189
-branch 378 never executed (fallthrough)
-branch 379 never executed
-       30:  945-block 190
-branch 380 taken 0 (fallthrough)
-branch 381 taken 30
-       12:  945-block 191
-branch 382 taken 12 (fallthrough)
-branch 383 taken 0
-      304:  945-block 192
-branch 384 taken 304 (fallthrough)
+       11:  945-block 189
+branch 378 taken 11 (fallthrough)
+branch 379 taken 0
+    %%%%%:  945-block 190
+branch 380 never executed (fallthrough)
+branch 381 never executed
+        6:  945-block 191
+branch 382 taken 0 (fallthrough)
+branch 383 taken 6
+        3:  945-block 192
+branch 384 taken 3 (fallthrough)
 branch 385 taken 0
-       32:  945-block 193
-branch 386 taken 32 (fallthrough)
+       76:  945-block 193
+branch 386 taken 76 (fallthrough)
 branch 387 taken 0
-       32:  945-block 194
-branch 388 taken 32 (fallthrough)
+        8:  945-block 194
+branch 388 taken 8 (fallthrough)
 branch 389 taken 0
-      192:  945-block 195
-branch 390 taken 192 (fallthrough)
+        8:  945-block 195
+branch 390 taken 8 (fallthrough)
 branch 391 taken 0
-      308:  945-block 196
-branch 392 taken 308 (fallthrough)
+       48:  945-block 196
+branch 392 taken 48 (fallthrough)
 branch 393 taken 0
-      228:  945-block 197
-branch 394 taken 228 (fallthrough)
+       77:  945-block 197
+branch 394 taken 77 (fallthrough)
 branch 395 taken 0
-       16:  945-block 198
-branch 396 taken 16 (fallthrough)
+       57:  945-block 198
+branch 396 taken 57 (fallthrough)
 branch 397 taken 0
-        8:  945-block 199
-branch 398 taken 8 (fallthrough)
+        4:  945-block 199
+branch 398 taken 4 (fallthrough)
 branch 399 taken 0
-      456:  945-block 200
-branch 400 taken 456 (fallthrough)
+        2:  945-block 200
+branch 400 taken 2 (fallthrough)
 branch 401 taken 0
-      888:  945-block 201
-branch 402 taken 888 (fallthrough)
+      114:  945-block 201
+branch 402 taken 114 (fallthrough)
 branch 403 taken 0
-      260:  945-block 202
-branch 404 taken 260 (fallthrough)
+      222:  945-block 202
+branch 404 taken 222 (fallthrough)
 branch 405 taken 0
-    %%%%%:  945-block 203
-branch 406 never executed (fallthrough)
-branch 407 never executed
-      260:  945-block 204
-branch 408 taken 0 (fallthrough)
-branch 409 taken 260
-     7276:  945-block 205
-branch 410 taken 7276 (fallthrough)
-branch 411 taken 0
-      280:  945-block 206
-branch 412 taken 268 (fallthrough)
-branch 413 taken 12
+       65:  945-block 203
+branch 406 taken 65 (fallthrough)
+branch 407 taken 0
+    %%%%%:  945-block 204
+branch 408 never executed (fallthrough)
+branch 409 never executed
+       65:  945-block 205
+branch 410 taken 0 (fallthrough)
+branch 411 taken 65
+     1637:  945-block 206
+branch 412 taken 1637 (fallthrough)
+branch 413 taken 0
+       70:  945-block 207
+branch 414 taken 67 (fallthrough)
+branch 415 taken 3
         -:  946:        || (type == SvPVutf8_pure_type_ && SvPOK_utf8_pure_nogthink(sv))
         -:  947:        || (type == SvPVbyte_pure_type_ && SvPOK_byte_pure_nogthink(sv))
         -:  948:   ) {
         -:  949:        if (lp) {
-    4340*:  950:            *lp = SvCUR(sv);
+     977*:  950:            *lp = SvCUR(sv);
         -:  951:        }
         -:  952:
         -:  953:        /* Similarly 'return_flags is known at compile time, so this becomes
         -:  954:         * branchless */
-   30130*:  955:        if (return_flags & SV_MUTABLE_RETURN) {
-      132:  955-block  0
+    7125*:  955:        if (return_flags & SV_MUTABLE_RETURN) {
+       33:  955-block  0
 branch  0 taken 0 (fallthrough)
-branch  1 taken 132
-        4:  955-block  1
+branch  1 taken 33
+        1:  955-block  1
 branch  2 taken 0 (fallthrough)
-branch  3 taken 4
-       88:  955-block  2
+branch  3 taken 1
+       22:  955-block  2
 branch  4 taken 0 (fallthrough)
-branch  5 taken 88
+branch  5 taken 22
     %%%%%:  955-block  3
 branch  6 never executed (fallthrough)
 branch  7 never executed
-        5:  955-block  4
+        1:  955-block  4
 branch  8 taken 0 (fallthrough)
-branch  9 taken 5
-        5:  955-block  5
+branch  9 taken 1
+        1:  955-block  5
 branch 10 taken 0 (fallthrough)
-branch 11 taken 5
-       10:  955-block  6
+branch 11 taken 1
+        2:  955-block  6
 branch 12 taken 0 (fallthrough)
-branch 13 taken 10
-        5:  955-block  7
+branch 13 taken 2
+        1:  955-block  7
 branch 14 taken 0 (fallthrough)
-branch 15 taken 5
-        5:  955-block  8
+branch 15 taken 1
+        1:  955-block  8
 branch 16 taken 0 (fallthrough)
-branch 17 taken 5
-       16:  955-block  9
+branch 17 taken 1
+        4:  955-block  9
 branch 18 taken 0 (fallthrough)
-branch 19 taken 16
-        8:  955-block 10
+branch 19 taken 4
+        2:  955-block 10
 branch 20 taken 0 (fallthrough)
-branch 21 taken 8
-        8:  955-block 11
+branch 21 taken 2
+        2:  955-block 11
 branch 22 taken 0 (fallthrough)
-branch 23 taken 8
-        5:  955-block 12
+branch 23 taken 2
+        1:  955-block 12
 branch 24 taken 0 (fallthrough)
-branch 25 taken 5
-        5:  955-block 13
+branch 25 taken 1
+        1:  955-block 13
 branch 26 taken 0 (fallthrough)
-branch 27 taken 5
-        5:  955-block 14
+branch 27 taken 1
+        1:  955-block 14
 branch 28 taken 0 (fallthrough)
-branch 29 taken 5
-        5:  955-block 15
+branch 29 taken 1
+        1:  955-block 15
 branch 30 taken 0 (fallthrough)
-branch 31 taken 5
+branch 31 taken 1
     %%%%%:  955-block 16
 branch 32 never executed (fallthrough)
 branch 33 never executed
-        5:  955-block 17
+        1:  955-block 17
 branch 34 taken 0 (fallthrough)
-branch 35 taken 5
+branch 35 taken 1
     %%%%%:  955-block 18
 branch 36 never executed (fallthrough)
 branch 37 never executed
-        5:  955-block 19
+        1:  955-block 19
 branch 38 taken 0 (fallthrough)
-branch 39 taken 5
-       10:  955-block 20
+branch 39 taken 1
+        2:  955-block 20
 branch 40 taken 0 (fallthrough)
-branch 41 taken 10
-       28:  955-block 21
+branch 41 taken 2
+        7:  955-block 21
 branch 42 taken 0 (fallthrough)
-branch 43 taken 28
-       20:  955-block 22
+branch 43 taken 7
+        5:  955-block 22
 branch 44 taken 0 (fallthrough)
-branch 45 taken 20
-      160:  955-block 23
+branch 45 taken 5
+       32:  955-block 23
 branch 46 taken 0 (fallthrough)
-branch 47 taken 160
-       65:  955-block 24
+branch 47 taken 32
+       13:  955-block 24
 branch 48 taken 0 (fallthrough)
-branch 49 taken 65
-        5:  955-block 25
+branch 49 taken 13
+        1:  955-block 25
 branch 50 taken 0 (fallthrough)
-branch 51 taken 5
-        5:  955-block 26
+branch 51 taken 1
+        1:  955-block 26
 branch 52 taken 0 (fallthrough)
-branch 53 taken 5
-        5:  955-block 27
+branch 53 taken 1
+        1:  955-block 27
 branch 54 taken 0 (fallthrough)
-branch 55 taken 5
+branch 55 taken 1
     %%%%%:  955-block 28
 branch 56 never executed (fallthrough)
 branch 57 never executed
-        5:  955-block 29
+        1:  955-block 29
 branch 58 taken 0 (fallthrough)
-branch 59 taken 5
+branch 59 taken 1
     %%%%%:  955-block 30
 branch 60 never executed (fallthrough)
 branch 61 never executed
@@ -1872,264 +1875,264 @@ branch 63 never executed
     %%%%%:  955-block 32
 branch 64 never executed (fallthrough)
 branch 65 never executed
-       60:  955-block 33
+       12:  955-block 33
 branch 66 taken 0 (fallthrough)
-branch 67 taken 60
-       10:  955-block 34
+branch 67 taken 12
+        2:  955-block 34
 branch 68 taken 0 (fallthrough)
-branch 69 taken 10
+branch 69 taken 2
     %%%%%:  955-block 35
 branch 70 never executed (fallthrough)
 branch 71 never executed
-       10:  955-block 36
+        2:  955-block 36
 branch 72 taken 0 (fallthrough)
-branch 73 taken 10
+branch 73 taken 2
     %%%%%:  955-block 37
 branch 74 never executed (fallthrough)
 branch 75 never executed
-      140:  955-block 38
+       28:  955-block 38
 branch 76 taken 0 (fallthrough)
-branch 77 taken 140
-      135:  955-block 39
+branch 77 taken 28
+       27:  955-block 39
 branch 78 taken 0 (fallthrough)
-branch 79 taken 135
-       15:  955-block 40
+branch 79 taken 27
+        3:  955-block 40
 branch 80 taken 0 (fallthrough)
-branch 81 taken 15
-       10:  955-block 41
+branch 81 taken 3
+        2:  955-block 41
 branch 82 taken 0 (fallthrough)
-branch 83 taken 10
-       50:  955-block 42
+branch 83 taken 2
+       10:  955-block 42
 branch 84 taken 0 (fallthrough)
-branch 85 taken 50
-       40:  955-block 43
+branch 85 taken 10
+        8:  955-block 43
 branch 86 taken 0 (fallthrough)
-branch 87 taken 40
-       80:  955-block 44
+branch 87 taken 8
+       16:  955-block 44
 branch 88 taken 0 (fallthrough)
-branch 89 taken 80
-       85:  955-block 45
+branch 89 taken 16
+       17:  955-block 45
 branch 90 taken 0 (fallthrough)
-branch 91 taken 85
-      139:  955-block 46
+branch 91 taken 17
+       29:  955-block 46
 branch 92 taken 0 (fallthrough)
-branch 93 taken 139
-       30:  955-block 47
+branch 93 taken 29
+        6:  955-block 47
 branch 94 taken 0 (fallthrough)
-branch 95 taken 30
-      289:  955-block 48
+branch 95 taken 6
+       62:  955-block 48
 branch 96 taken 0 (fallthrough)
-branch 97 taken 289
-       25:  955-block 49
+branch 97 taken 62
+        5:  955-block 49
 branch 98 taken 0 (fallthrough)
-branch 99 taken 25
-      356:  955-block 50
+branch 99 taken 5
+       76:  955-block 50
 branch 100 taken 0 (fallthrough)
-branch 101 taken 356
-      178:  955-block 51
+branch 101 taken 76
+       38:  955-block 51
 branch 102 taken 0 (fallthrough)
-branch 103 taken 178
-       15:  955-block 52
+branch 103 taken 38
+        3:  955-block 52
 branch 104 taken 0 (fallthrough)
-branch 105 taken 15
-       55:  955-block 53
+branch 105 taken 3
+       11:  955-block 53
 branch 106 taken 0 (fallthrough)
-branch 107 taken 55
+branch 107 taken 11
     %%%%%:  955-block 54
 branch 108 never executed (fallthrough)
 branch 109 never executed
     %%%%%:  955-block 55
 branch 110 never executed (fallthrough)
 branch 111 never executed
-      130:  955-block 56
+       26:  955-block 56
 branch 112 taken 0 (fallthrough)
-branch 113 taken 130
-       65:  955-block 57
+branch 113 taken 26
+       13:  955-block 57
 branch 114 taken 0 (fallthrough)
-branch 115 taken 65
-      380:  955-block 58
+branch 115 taken 13
+       76:  955-block 58
 branch 116 taken 0 (fallthrough)
-branch 117 taken 380
-       10:  955-block 59
+branch 117 taken 76
+        2:  955-block 59
 branch 118 taken 0 (fallthrough)
-branch 119 taken 10
+branch 119 taken 2
     %%%%%:  955-block 60
 branch 120 never executed (fallthrough)
 branch 121 never executed
-       40:  955-block 61
+       10:  955-block 61
 branch 122 taken 0 (fallthrough)
-branch 123 taken 40
-       20:  955-block 62
+branch 123 taken 10
+        4:  955-block 62
 branch 124 taken 0 (fallthrough)
-branch 125 taken 20
-       25:  955-block 63
+branch 125 taken 4
+        5:  955-block 63
 branch 126 taken 0 (fallthrough)
-branch 127 taken 25
+branch 127 taken 5
     %%%%%:  955-block 64
 branch 128 never executed (fallthrough)
 branch 129 never executed
-      211:  955-block 65
+       47:  955-block 65
 branch 130 taken 0 (fallthrough)
-branch 131 taken 211
-       25:  955-block 66
+branch 131 taken 47
+        5:  955-block 66
 branch 132 taken 0 (fallthrough)
-branch 133 taken 25
-      155:  955-block 67
+branch 133 taken 5
+       31:  955-block 67
 branch 134 taken 0 (fallthrough)
-branch 135 taken 155
-       30:  955-block 68
+branch 135 taken 31
+        6:  955-block 68
 branch 136 taken 0 (fallthrough)
-branch 137 taken 30
-      170:  955-block 69
+branch 137 taken 6
+       34:  955-block 69
 branch 138 taken 0 (fallthrough)
-branch 139 taken 170
-       35:  955-block 70
+branch 139 taken 34
+        7:  955-block 70
 branch 140 taken 0 (fallthrough)
-branch 141 taken 35
-       60:  955-block 71
+branch 141 taken 7
+       12:  955-block 71
 branch 142 taken 0 (fallthrough)
-branch 143 taken 60
-      230:  955-block 72
+branch 143 taken 12
+       49:  955-block 72
 branch 144 taken 0 (fallthrough)
-branch 145 taken 230
-       80:  955-block 73
+branch 145 taken 49
+       17:  955-block 73
 branch 146 taken 0 (fallthrough)
-branch 147 taken 80
-       70:  955-block 74
+branch 147 taken 17
+       15:  955-block 74
 branch 148 taken 0 (fallthrough)
-branch 149 taken 70
-       15:  955-block 75
+branch 149 taken 15
+        3:  955-block 75
 branch 150 taken 0 (fallthrough)
-branch 151 taken 15
+branch 151 taken 3
     %%%%%:  955-block 76
 branch 152 never executed (fallthrough)
 branch 153 never executed
-       32:  955-block 77
+        8:  955-block 77
 branch 154 taken 0 (fallthrough)
-branch 155 taken 32
-       28:  955-block 78
+branch 155 taken 8
+        7:  955-block 78
 branch 156 taken 0 (fallthrough)
-branch 157 taken 28
-      136:  955-block 79
+branch 157 taken 7
+       34:  955-block 79
 branch 158 taken 0 (fallthrough)
-branch 159 taken 136
+branch 159 taken 34
     %%%%%:  955-block 80
 branch 160 never executed (fallthrough)
 branch 161 never executed
     %%%%%:  955-block 81
 branch 162 never executed (fallthrough)
 branch 163 never executed
-      152:  955-block 82
+       38:  955-block 82
 branch 164 taken 0 (fallthrough)
-branch 165 taken 152
-      640:  955-block 83
+branch 165 taken 38
+      159:  955-block 83
 branch 166 taken 0 (fallthrough)
-branch 167 taken 640
-       15:  955-block 84
+branch 167 taken 159
+        3:  955-block 84
 branch 168 taken 0 (fallthrough)
-branch 169 taken 15
-     2462:  955-block 85
+branch 169 taken 3
+      600:  955-block 85
 branch 170 taken 0 (fallthrough)
-branch 171 taken 2462
-     2462:  955-block 86
+branch 171 taken 600
+      600:  955-block 86
 branch 172 taken 0 (fallthrough)
-branch 173 taken 2462
-     2462:  955-block 87
+branch 173 taken 600
+      600:  955-block 87
 branch 174 taken 0 (fallthrough)
-branch 175 taken 2462
-      615:  955-block 88
+branch 175 taken 600
+      151:  955-block 88
 branch 176 taken 0 (fallthrough)
-branch 177 taken 615
-      923:  955-block 89
+branch 177 taken 151
+      224:  955-block 89
 branch 178 taken 0 (fallthrough)
-branch 179 taken 923
-       80:  955-block 90
+branch 179 taken 224
+       18:  955-block 90
 branch 180 taken 0 (fallthrough)
-branch 181 taken 80
-      118:  955-block 91
+branch 181 taken 18
+       28:  955-block 91
 branch 182 taken 0 (fallthrough)
-branch 183 taken 118
-       20:  955-block 92
+branch 183 taken 28
+        5:  955-block 92
 branch 184 taken 0 (fallthrough)
-branch 185 taken 20
-        8:  955-block 93
+branch 185 taken 5
+        2:  955-block 93
 branch 186 taken 0 (fallthrough)
-branch 187 taken 8
-        4:  955-block 94
+branch 187 taken 2
+        1:  955-block 94
 branch 188 taken 0 (fallthrough)
-branch 189 taken 4
-      591:  955-block 95
+branch 189 taken 1
+      145:  955-block 95
 branch 190 taken 0 (fallthrough)
-branch 191 taken 591
+branch 191 taken 145
     %%%%%:  955-block 96
 branch 192 never executed (fallthrough)
 branch 193 never executed
-      137:  955-block 97
+       33:  955-block 97
 branch 194 taken 0 (fallthrough)
-branch 195 taken 137
-      115:  955-block 98
+branch 195 taken 33
+       28:  955-block 98
 branch 196 taken 0 (fallthrough)
-branch 197 taken 115
-       76:  955-block 99
+branch 197 taken 28
+       19:  955-block 99
 branch 198 taken 0 (fallthrough)
-branch 199 taken 76
-      252:  955-block 100
+branch 199 taken 19
+       63:  955-block 100
 branch 200 taken 0 (fallthrough)
-branch 201 taken 252
-        4:  955-block 101
+branch 201 taken 63
+        1:  955-block 101
 branch 202 taken 0 (fallthrough)
-branch 203 taken 4
-        4:  955-block 102
+branch 203 taken 1
+        1:  955-block 102
 branch 204 taken 0 (fallthrough)
-branch 205 taken 4
-      276:  955-block 103
+branch 205 taken 1
+       66:  955-block 103
 branch 206 taken 0 (fallthrough)
-branch 207 taken 276
-        8:  955-block 104
+branch 207 taken 66
+        2:  955-block 104
 branch 208 taken 0 (fallthrough)
-branch 209 taken 8
-      137:  955-block 105
+branch 209 taken 2
+       32:  955-block 105
 branch 210 taken 0 (fallthrough)
-branch 211 taken 137
-        4:  955-block 106
+branch 211 taken 32
+        1:  955-block 106
 branch 212 taken 0 (fallthrough)
-branch 213 taken 4
-      205:  955-block 107
+branch 213 taken 1
+       48:  955-block 107
 branch 214 taken 0 (fallthrough)
-branch 215 taken 205
-        8:  955-block 108
+branch 215 taken 48
+        2:  955-block 108
 branch 216 taken 0 (fallthrough)
-branch 217 taken 8
-      118:  955-block 109
+branch 217 taken 2
+       27:  955-block 109
 branch 218 taken 0 (fallthrough)
-branch 219 taken 118
-      240:  955-block 110
+branch 219 taken 27
+       60:  955-block 110
 branch 220 taken 0 (fallthrough)
-branch 221 taken 240
-      352:  955-block 111
+branch 221 taken 60
+       88:  955-block 111
 branch 222 taken 0 (fallthrough)
-branch 223 taken 352
-      168:  955-block 112
+branch 223 taken 88
+       37:  955-block 112
 branch 224 taken 0 (fallthrough)
-branch 225 taken 168
-       30:  955-block 113
+branch 225 taken 37
+        7:  955-block 113
 branch 226 taken 0 (fallthrough)
-branch 227 taken 30
-      105:  955-block 114
+branch 227 taken 7
+       21:  955-block 114
 branch 228 taken 0 (fallthrough)
-branch 229 taken 105
-       30:  955-block 115
+branch 229 taken 21
+        6:  955-block 115
 branch 230 taken 0 (fallthrough)
-branch 231 taken 30
-       30:  955-block 116
+branch 231 taken 6
+        6:  955-block 116
 branch 232 taken 0 (fallthrough)
-branch 233 taken 30
-       20:  955-block 117
+branch 233 taken 6
+        4:  955-block 117
 branch 234 taken 0 (fallthrough)
-branch 235 taken 20
-       20:  955-block 118
+branch 235 taken 4
+        4:  955-block 118
 branch 236 taken 0 (fallthrough)
-branch 237 taken 20
+branch 237 taken 4
     %%%%%:  955-block 119
 branch 238 never executed (fallthrough)
 branch 239 never executed
@@ -2145,45 +2148,45 @@ branch 245 never executed
     %%%%%:  955-block 123
 branch 246 never executed (fallthrough)
 branch 247 never executed
-        5:  955-block 124
+        1:  955-block 124
 branch 248 taken 0 (fallthrough)
-branch 249 taken 5
-       95:  955-block 125
+branch 249 taken 1
+       19:  955-block 125
 branch 250 taken 0 (fallthrough)
-branch 251 taken 95
-       35:  955-block 126
+branch 251 taken 19
+        7:  955-block 126
 branch 252 taken 0 (fallthrough)
-branch 253 taken 35
-       40:  955-block 127
+branch 253 taken 7
+        8:  955-block 127
 branch 254 taken 0 (fallthrough)
-branch 255 taken 40
-       40:  955-block 128
+branch 255 taken 8
+        8:  955-block 128
 branch 256 taken 0 (fallthrough)
-branch 257 taken 40
-        5:  955-block 129
+branch 257 taken 8
+        1:  955-block 129
 branch 258 taken 0 (fallthrough)
-branch 259 taken 5
-       10:  955-block 130
+branch 259 taken 1
+        2:  955-block 130
 branch 260 taken 0 (fallthrough)
-branch 261 taken 10
-       60:  955-block 131
+branch 261 taken 2
+       12:  955-block 131
 branch 262 taken 0 (fallthrough)
-branch 263 taken 60
-        5:  955-block 132
+branch 263 taken 12
+        1:  955-block 132
 branch 264 taken 0 (fallthrough)
-branch 265 taken 5
-       55:  955-block 133
+branch 265 taken 1
+       11:  955-block 133
 branch 266 taken 0 (fallthrough)
-branch 267 taken 55
-       55:  955-block 134
+branch 267 taken 11
+       11:  955-block 134
 branch 268 taken 0 (fallthrough)
-branch 269 taken 55
+branch 269 taken 11
     %%%%%:  955-block 135
 branch 270 never executed (fallthrough)
 branch 271 never executed
-      100:  955-block 136
+       20:  955-block 136
 branch 272 taken 0 (fallthrough)
-branch 273 taken 100
+branch 273 taken 20
     %%%%%:  955-block 137
 branch 274 never executed (fallthrough)
 branch 275 never executed
@@ -2193,90 +2196,90 @@ branch 277 never executed
     %%%%%:  955-block 139
 branch 278 never executed (fallthrough)
 branch 279 never executed
-       20:  955-block 140
+        4:  955-block 140
 branch 280 taken 0 (fallthrough)
-branch 281 taken 20
+branch 281 taken 4
     %%%%%:  955-block 141
 branch 282 never executed (fallthrough)
 branch 283 never executed
-       55:  955-block 142
+       11:  955-block 142
 branch 284 taken 0 (fallthrough)
-branch 285 taken 55
-        5:  955-block 143
+branch 285 taken 11
+        1:  955-block 143
 branch 286 taken 0 (fallthrough)
-branch 287 taken 5
-      220:  955-block 144
+branch 287 taken 1
+       44:  955-block 144
 branch 288 taken 0 (fallthrough)
-branch 289 taken 220
-        5:  955-block 145
+branch 289 taken 44
+        1:  955-block 145
 branch 290 taken 0 (fallthrough)
-branch 291 taken 5
-        5:  955-block 146
+branch 291 taken 1
+        1:  955-block 146
 branch 292 taken 0 (fallthrough)
-branch 293 taken 5
-       40:  955-block 147
+branch 293 taken 1
+        8:  955-block 147
 branch 294 taken 0 (fallthrough)
-branch 295 taken 40
-        5:  955-block 148
+branch 295 taken 8
+        1:  955-block 148
 branch 296 taken 0 (fallthrough)
-branch 297 taken 5
-        5:  955-block 149
+branch 297 taken 1
+        1:  955-block 149
 branch 298 taken 0 (fallthrough)
-branch 299 taken 5
-       75:  955-block 150
+branch 299 taken 1
+       15:  955-block 150
 branch 300 taken 0 (fallthrough)
-branch 301 taken 75
-       15:  955-block 151
+branch 301 taken 15
+        3:  955-block 151
 branch 302 taken 0 (fallthrough)
-branch 303 taken 15
-      230:  955-block 152
+branch 303 taken 3
+       46:  955-block 152
 branch 304 taken 0 (fallthrough)
-branch 305 taken 230
-      141:  955-block 153
+branch 305 taken 46
+       28:  955-block 153
 branch 306 taken 0 (fallthrough)
-branch 307 taken 141
-      206:  955-block 154
+branch 307 taken 28
+       41:  955-block 154
 branch 308 taken 0 (fallthrough)
-branch 309 taken 206
-        6:  955-block 155
+branch 309 taken 41
+        1:  955-block 155
 branch 310 taken 0 (fallthrough)
-branch 311 taken 6
-      130:  955-block 156
+branch 311 taken 1
+       26:  955-block 156
 branch 312 taken 0 (fallthrough)
-branch 313 taken 130
+branch 313 taken 26
     %%%%%:  955-block 157
 branch 314 never executed (fallthrough)
 branch 315 never executed
-       65:  955-block 158
+       13:  955-block 158
 branch 316 taken 0 (fallthrough)
-branch 317 taken 65
-       20:  955-block 159
+branch 317 taken 13
+        4:  955-block 159
 branch 318 taken 0 (fallthrough)
-branch 319 taken 20
-        4:  955-block 160
+branch 319 taken 4
+        1:  955-block 160
 branch 320 taken 0 (fallthrough)
-branch 321 taken 4
-       88:  955-block 161
+branch 321 taken 1
+       22:  955-block 161
 branch 322 taken 0 (fallthrough)
-branch 323 taken 88
-       64:  955-block 162
+branch 323 taken 22
+       16:  955-block 162
 branch 324 taken 0 (fallthrough)
-branch 325 taken 64
-       64:  955-block 163
+branch 325 taken 16
+       16:  955-block 163
 branch 326 taken 0 (fallthrough)
-branch 327 taken 64
-       28:  955-block 164
+branch 327 taken 16
+        7:  955-block 164
 branch 328 taken 0 (fallthrough)
-branch 329 taken 28
-       32:  955-block 165
+branch 329 taken 7
+        8:  955-block 165
 branch 330 taken 0 (fallthrough)
-branch 331 taken 32
-      110:  955-block 166
+branch 331 taken 8
+       22:  955-block 166
 branch 332 taken 0 (fallthrough)
-branch 333 taken 110
-       70:  955-block 167
+branch 333 taken 22
+       14:  955-block 167
 branch 334 taken 0 (fallthrough)
-branch 335 taken 70
+branch 335 taken 14
     %%%%%:  955-block 168
 branch 336 never executed (fallthrough)
 branch 337 never executed
@@ -2289,120 +2292,123 @@ branch 341 never executed
     %%%%%:  955-block 171
 branch 342 never executed (fallthrough)
 branch 343 never executed
-      115:  955-block 172
+       74:  955-block 172
 branch 344 taken 0 (fallthrough)
-branch 345 taken 115
-      150:  955-block 173
+branch 345 taken 74
+       74:  955-block 173
 branch 346 taken 0 (fallthrough)
-branch 347 taken 150
-    %%%%%:  955-block 174
-branch 348 never executed (fallthrough)
-branch 349 never executed
-    %%%%%:  955-block 175
-branch 350 never executed (fallthrough)
-branch 351 never executed
-    %%%%%:  955-block 176
-branch 352 never executed (fallthrough)
-branch 353 never executed
+branch 347 taken 74
+        4:  955-block 174
+branch 348 taken 0 (fallthrough)
+branch 349 taken 4
+       23:  955-block 175
+branch 350 taken 0 (fallthrough)
+branch 351 taken 23
+       30:  955-block 176
+branch 352 taken 0 (fallthrough)
+branch 353 taken 30
     %%%%%:  955-block 177
 branch 354 never executed (fallthrough)
 branch 355 never executed
-       35:  955-block 178
-branch 356 taken 0 (fallthrough)
-branch 357 taken 35
-       10:  955-block 179
-branch 358 taken 0 (fallthrough)
-branch 359 taken 10
-       20:  955-block 180
-branch 360 taken 0 (fallthrough)
-branch 361 taken 20
-       45:  955-block 181
+    %%%%%:  955-block 178
+branch 356 never executed (fallthrough)
+branch 357 never executed
+    %%%%%:  955-block 179
+branch 358 never executed (fallthrough)
+branch 359 never executed
+    %%%%%:  955-block 180
+branch 360 never executed (fallthrough)
+branch 361 never executed
+        7:  955-block 181
 branch 362 taken 0 (fallthrough)
-branch 363 taken 45
-    %%%%%:  955-block 182
-branch 364 never executed (fallthrough)
-branch 365 never executed
-    %%%%%:  955-block 183
-branch 366 never executed (fallthrough)
-branch 367 never executed
-        5:  955-block 184
+branch 363 taken 7
+        2:  955-block 182
+branch 364 taken 0 (fallthrough)
+branch 365 taken 2
+        4:  955-block 183
+branch 366 taken 0 (fallthrough)
+branch 367 taken 4
+        9:  955-block 184
 branch 368 taken 0 (fallthrough)
-branch 369 taken 5
-        5:  955-block 185
+branch 369 taken 9
+        1:  955-block 185
 branch 370 taken 0 (fallthrough)
-branch 371 taken 5
-        5:  955-block 186
+branch 371 taken 1
+        1:  955-block 186
 branch 372 taken 0 (fallthrough)
-branch 373 taken 5
-        5:  955-block 187
+branch 373 taken 1
+        1:  955-block 187
 branch 374 taken 0 (fallthrough)
-branch 375 taken 5
-       55:  955-block 188
+branch 375 taken 1
+        1:  955-block 188
 branch 376 taken 0 (fallthrough)
-branch 377 taken 55
-    %%%%%:  955-block 189
-branch 378 never executed (fallthrough)
-branch 379 never executed
+branch 377 taken 1
+       11:  955-block 189
+branch 378 taken 0 (fallthrough)
+branch 379 taken 11
     %%%%%:  955-block 190
 branch 380 never executed (fallthrough)
 branch 381 never executed
-       12:  955-block 191
-branch 382 taken 0 (fallthrough)
-branch 383 taken 12
-      304:  955-block 192
+    %%%%%:  955-block 191
+branch 382 never executed (fallthrough)
+branch 383 never executed
+        3:  955-block 192
 branch 384 taken 0 (fallthrough)
-branch 385 taken 304
-    %%%%%:  955-block 193
-branch 386 never executed (fallthrough)
-branch 387 never executed
+branch 385 taken 3
+       76:  955-block 193
+branch 386 taken 0 (fallthrough)
+branch 387 taken 76
     %%%%%:  955-block 194
 branch 388 never executed (fallthrough)
 branch 389 never executed
-       32:  955-block 195
-branch 390 taken 0 (fallthrough)
-branch 391 taken 32
-       32:  955-block 196
+    %%%%%:  955-block 195
+branch 390 never executed (fallthrough)
+branch 391 never executed
+        8:  955-block 196
 branch 392 taken 0 (fallthrough)
-branch 393 taken 32
-      192:  955-block 197
+branch 393 taken 8
+        8:  955-block 197
 branch 394 taken 0 (fallthrough)
-branch 395 taken 192
-      308:  955-block 198
+branch 395 taken 8
+       48:  955-block 198
 branch 396 taken 0 (fallthrough)
-branch 397 taken 308
-      228:  955-block 199
+branch 397 taken 48
+       77:  955-block 199
 branch 398 taken 0 (fallthrough)
-branch 399 taken 228
-       16:  955-block 200
+branch 399 taken 77
+       57:  955-block 200
 branch 400 taken 0 (fallthrough)
-branch 401 taken 16
-        8:  955-block 201
+branch 401 taken 57
+        4:  955-block 201
 branch 402 taken 0 (fallthrough)
-branch 403 taken 8
-      456:  955-block 202
+branch 403 taken 4
+        2:  955-block 202
 branch 404 taken 0 (fallthrough)
-branch 405 taken 456
-      888:  955-block 203
+branch 405 taken 2
+      114:  955-block 203
 branch 406 taken 0 (fallthrough)
-branch 407 taken 888
-      260:  955-block 204
+branch 407 taken 114
+      222:  955-block 204
 branch 408 taken 0 (fallthrough)
-branch 409 taken 260
-    %%%%%:  955-block 205
-branch 410 never executed (fallthrough)
-branch 411 never executed
+branch 409 taken 222
+       65:  955-block 205
+branch 410 taken 0 (fallthrough)
+branch 411 taken 65
     %%%%%:  955-block 206
 branch 412 never executed (fallthrough)
 branch 413 never executed
-        8:  955-block 207
-branch 414 taken 0 (fallthrough)
-branch 415 taken 8
-     7276:  955-block 208
+    %%%%%:  955-block 207
+branch 414 never executed (fallthrough)
+branch 415 never executed
+        2:  955-block 208
 branch 416 taken 0 (fallthrough)
-branch 417 taken 7276
-      268:  955-block 209
+branch 417 taken 2
+     1637:  955-block 209
 branch 418 taken 0 (fallthrough)
-branch 419 taken 268
+branch 419 taken 1637
+       67:  955-block 210
+branch 420 taken 0 (fallthrough)
+branch 421 taken 67
     #####:  956:            return SvPVX_mutable(sv);
     %%%%%:  956-block  0
     %%%%%:  956-block  1
@@ -2614,98 +2620,99 @@ branch 419 taken 268
     %%%%%:  956-block 207
     %%%%%:  956-block 208
     %%%%%:  956-block 209
+    %%%%%:  956-block 210
         -:  957:        }
-   30130*:  958:        else if(return_flags & SV_CONST_RETURN) {
-      132:  958-block  0
+    7125*:  958:        else if(return_flags & SV_CONST_RETURN) {
+       33:  958-block  0
 branch  0 taken 0 (fallthrough)
-branch  1 taken 132
-        4:  958-block  1
+branch  1 taken 33
+        1:  958-block  1
 branch  2 taken 0 (fallthrough)
-branch  3 taken 4
-       88:  958-block  2
+branch  3 taken 1
+       22:  958-block  2
 branch  4 taken 0 (fallthrough)
-branch  5 taken 88
+branch  5 taken 22
     %%%%%:  958-block  3
 branch  6 never executed (fallthrough)
 branch  7 never executed
-        5:  958-block  4
+        1:  958-block  4
 branch  8 taken 0 (fallthrough)
-branch  9 taken 5
-        5:  958-block  5
+branch  9 taken 1
+        1:  958-block  5
 branch 10 taken 0 (fallthrough)
-branch 11 taken 5
-       10:  958-block  6
+branch 11 taken 1
+        2:  958-block  6
 branch 12 taken 0 (fallthrough)
-branch 13 taken 10
-        5:  958-block  7
+branch 13 taken 2
+        1:  958-block  7
 branch 14 taken 0 (fallthrough)
-branch 15 taken 5
-        5:  958-block  8
+branch 15 taken 1
+        1:  958-block  8
 branch 16 taken 0 (fallthrough)
-branch 17 taken 5
-       16:  958-block  9
+branch 17 taken 1
+        4:  958-block  9
 branch 18 taken 0 (fallthrough)
-branch 19 taken 16
-        8:  958-block 10
+branch 19 taken 4
+        2:  958-block 10
 branch 20 taken 0 (fallthrough)
-branch 21 taken 8
-        8:  958-block 11
+branch 21 taken 2
+        2:  958-block 11
 branch 22 taken 0 (fallthrough)
-branch 23 taken 8
-        5:  958-block 12
+branch 23 taken 2
+        1:  958-block 12
 branch 24 taken 0 (fallthrough)
-branch 25 taken 5
-        5:  958-block 13
+branch 25 taken 1
+        1:  958-block 13
 branch 26 taken 0 (fallthrough)
-branch 27 taken 5
-        5:  958-block 14
+branch 27 taken 1
+        1:  958-block 14
 branch 28 taken 0 (fallthrough)
-branch 29 taken 5
-        5:  958-block 15
+branch 29 taken 1
+        1:  958-block 15
 branch 30 taken 0 (fallthrough)
-branch 31 taken 5
+branch 31 taken 1
     %%%%%:  958-block 16
 branch 32 never executed (fallthrough)
 branch 33 never executed
-        5:  958-block 17
+        1:  958-block 17
 branch 34 taken 0 (fallthrough)
-branch 35 taken 5
+branch 35 taken 1
     %%%%%:  958-block 18
 branch 36 never executed (fallthrough)
 branch 37 never executed
-        5:  958-block 19
+        1:  958-block 19
 branch 38 taken 0 (fallthrough)
-branch 39 taken 5
-       10:  958-block 20
+branch 39 taken 1
+        2:  958-block 20
 branch 40 taken 0 (fallthrough)
-branch 41 taken 10
-       28:  958-block 21
+branch 41 taken 2
+        7:  958-block 21
 branch 42 taken 0 (fallthrough)
-branch 43 taken 28
-       20:  958-block 22
+branch 43 taken 7
+        5:  958-block 22
 branch 44 taken 0 (fallthrough)
-branch 45 taken 20
-      160:  958-block 23
+branch 45 taken 5
+       32:  958-block 23
 branch 46 taken 0 (fallthrough)
-branch 47 taken 160
-       65:  958-block 24
+branch 47 taken 32
+       13:  958-block 24
 branch 48 taken 0 (fallthrough)
-branch 49 taken 65
-        5:  958-block 25
+branch 49 taken 13
+        1:  958-block 25
 branch 50 taken 0 (fallthrough)
-branch 51 taken 5
-        5:  958-block 26
-branch 52 taken 5 (fallthrough)
+branch 51 taken 1
+        1:  958-block 26
+branch 52 taken 1 (fallthrough)
 branch 53 taken 0
-        5:  958-block 27
-branch 54 taken 5 (fallthrough)
+        1:  958-block 27
+branch 54 taken 1 (fallthrough)
 branch 55 taken 0
     %%%%%:  958-block 28
 branch 56 never executed (fallthrough)
 branch 57 never executed
-        5:  958-block 29
+        1:  958-block 29
 branch 58 taken 0 (fallthrough)
-branch 59 taken 5
+branch 59 taken 1
     %%%%%:  958-block 30
 branch 60 never executed (fallthrough)
 branch 61 never executed
@@ -2715,264 +2722,264 @@ branch 63 never executed
     %%%%%:  958-block 32
 branch 64 never executed (fallthrough)
 branch 65 never executed
-       60:  958-block 33
+       12:  958-block 33
 branch 66 taken 0 (fallthrough)
-branch 67 taken 60
-       10:  958-block 34
+branch 67 taken 12
+        2:  958-block 34
 branch 68 taken 0 (fallthrough)
-branch 69 taken 10
+branch 69 taken 2
     %%%%%:  958-block 35
 branch 70 never executed (fallthrough)
 branch 71 never executed
-       10:  958-block 36
+        2:  958-block 36
 branch 72 taken 0 (fallthrough)
-branch 73 taken 10
+branch 73 taken 2
     %%%%%:  958-block 37
 branch 74 never executed (fallthrough)
 branch 75 never executed
-      140:  958-block 38
+       28:  958-block 38
 branch 76 taken 0 (fallthrough)
-branch 77 taken 140
-      135:  958-block 39
+branch 77 taken 28
+       27:  958-block 39
 branch 78 taken 0 (fallthrough)
-branch 79 taken 135
-       15:  958-block 40
+branch 79 taken 27
+        3:  958-block 40
 branch 80 taken 0 (fallthrough)
-branch 81 taken 15
-       10:  958-block 41
+branch 81 taken 3
+        2:  958-block 41
 branch 82 taken 0 (fallthrough)
-branch 83 taken 10
-       50:  958-block 42
+branch 83 taken 2
+       10:  958-block 42
 branch 84 taken 0 (fallthrough)
-branch 85 taken 50
-       40:  958-block 43
+branch 85 taken 10
+        8:  958-block 43
 branch 86 taken 0 (fallthrough)
-branch 87 taken 40
-       80:  958-block 44
+branch 87 taken 8
+       16:  958-block 44
 branch 88 taken 0 (fallthrough)
-branch 89 taken 80
-       85:  958-block 45
+branch 89 taken 16
+       17:  958-block 45
 branch 90 taken 0 (fallthrough)
-branch 91 taken 85
-      139:  958-block 46
+branch 91 taken 17
+       29:  958-block 46
 branch 92 taken 0 (fallthrough)
-branch 93 taken 139
-       30:  958-block 47
+branch 93 taken 29
+        6:  958-block 47
 branch 94 taken 0 (fallthrough)
-branch 95 taken 30
-      289:  958-block 48
+branch 95 taken 6
+       62:  958-block 48
 branch 96 taken 0 (fallthrough)
-branch 97 taken 289
-       25:  958-block 49
+branch 97 taken 62
+        5:  958-block 49
 branch 98 taken 0 (fallthrough)
-branch 99 taken 25
-      356:  958-block 50
+branch 99 taken 5
+       76:  958-block 50
 branch 100 taken 0 (fallthrough)
-branch 101 taken 356
-      178:  958-block 51
+branch 101 taken 76
+       38:  958-block 51
 branch 102 taken 0 (fallthrough)
-branch 103 taken 178
-       15:  958-block 52
+branch 103 taken 38
+        3:  958-block 52
 branch 104 taken 0 (fallthrough)
-branch 105 taken 15
-       55:  958-block 53
+branch 105 taken 3
+       11:  958-block 53
 branch 106 taken 0 (fallthrough)
-branch 107 taken 55
+branch 107 taken 11
     %%%%%:  958-block 54
 branch 108 never executed (fallthrough)
 branch 109 never executed
     %%%%%:  958-block 55
 branch 110 never executed (fallthrough)
 branch 111 never executed
-      130:  958-block 56
+       26:  958-block 56
 branch 112 taken 0 (fallthrough)
-branch 113 taken 130
-       65:  958-block 57
+branch 113 taken 26
+       13:  958-block 57
 branch 114 taken 0 (fallthrough)
-branch 115 taken 65
-      380:  958-block 58
+branch 115 taken 13
+       76:  958-block 58
 branch 116 taken 0 (fallthrough)
-branch 117 taken 380
-       10:  958-block 59
+branch 117 taken 76
+        2:  958-block 59
 branch 118 taken 0 (fallthrough)
-branch 119 taken 10
+branch 119 taken 2
     %%%%%:  958-block 60
 branch 120 never executed (fallthrough)
 branch 121 never executed
-       40:  958-block 61
+       10:  958-block 61
 branch 122 taken 0 (fallthrough)
-branch 123 taken 40
-       20:  958-block 62
+branch 123 taken 10
+        4:  958-block 62
 branch 124 taken 0 (fallthrough)
-branch 125 taken 20
-       25:  958-block 63
+branch 125 taken 4
+        5:  958-block 63
 branch 126 taken 0 (fallthrough)
-branch 127 taken 25
+branch 127 taken 5
     %%%%%:  958-block 64
 branch 128 never executed (fallthrough)
 branch 129 never executed
-      211:  958-block 65
+       47:  958-block 65
 branch 130 taken 0 (fallthrough)
-branch 131 taken 211
-       25:  958-block 66
+branch 131 taken 47
+        5:  958-block 66
 branch 132 taken 0 (fallthrough)
-branch 133 taken 25
-      155:  958-block 67
+branch 133 taken 5
+       31:  958-block 67
 branch 134 taken 0 (fallthrough)
-branch 135 taken 155
-       30:  958-block 68
+branch 135 taken 31
+        6:  958-block 68
 branch 136 taken 0 (fallthrough)
-branch 137 taken 30
-      170:  958-block 69
+branch 137 taken 6
+       34:  958-block 69
 branch 138 taken 0 (fallthrough)
-branch 139 taken 170
-       35:  958-block 70
+branch 139 taken 34
+        7:  958-block 70
 branch 140 taken 0 (fallthrough)
-branch 141 taken 35
-       60:  958-block 71
+branch 141 taken 7
+       12:  958-block 71
 branch 142 taken 0 (fallthrough)
-branch 143 taken 60
-      230:  958-block 72
+branch 143 taken 12
+       49:  958-block 72
 branch 144 taken 0 (fallthrough)
-branch 145 taken 230
-       80:  958-block 73
+branch 145 taken 49
+       17:  958-block 73
 branch 146 taken 0 (fallthrough)
-branch 147 taken 80
-       70:  958-block 74
+branch 147 taken 17
+       15:  958-block 74
 branch 148 taken 0 (fallthrough)
-branch 149 taken 70
-       15:  958-block 75
+branch 149 taken 15
+        3:  958-block 75
 branch 150 taken 0 (fallthrough)
-branch 151 taken 15
+branch 151 taken 3
     %%%%%:  958-block 76
 branch 152 never executed (fallthrough)
 branch 153 never executed
-       32:  958-block 77
+        8:  958-block 77
 branch 154 taken 0 (fallthrough)
-branch 155 taken 32
-       28:  958-block 78
+branch 155 taken 8
+        7:  958-block 78
 branch 156 taken 0 (fallthrough)
-branch 157 taken 28
-      136:  958-block 79
+branch 157 taken 7
+       34:  958-block 79
 branch 158 taken 0 (fallthrough)
-branch 159 taken 136
+branch 159 taken 34
     %%%%%:  958-block 80
 branch 160 never executed (fallthrough)
 branch 161 never executed
     %%%%%:  958-block 81
 branch 162 never executed (fallthrough)
 branch 163 never executed
-      152:  958-block 82
+       38:  958-block 82
 branch 164 taken 0 (fallthrough)
-branch 165 taken 152
-      640:  958-block 83
+branch 165 taken 38
+      159:  958-block 83
 branch 166 taken 0 (fallthrough)
-branch 167 taken 640
-       15:  958-block 84
+branch 167 taken 159
+        3:  958-block 84
 branch 168 taken 0 (fallthrough)
-branch 169 taken 15
-     2462:  958-block 85
+branch 169 taken 3
+      600:  958-block 85
 branch 170 taken 0 (fallthrough)
-branch 171 taken 2462
-     2462:  958-block 86
+branch 171 taken 600
+      600:  958-block 86
 branch 172 taken 0 (fallthrough)
-branch 173 taken 2462
-     2462:  958-block 87
+branch 173 taken 600
+      600:  958-block 87
 branch 174 taken 0 (fallthrough)
-branch 175 taken 2462
-      615:  958-block 88
+branch 175 taken 600
+      151:  958-block 88
 branch 176 taken 0 (fallthrough)
-branch 177 taken 615
-      923:  958-block 89
+branch 177 taken 151
+      224:  958-block 89
 branch 178 taken 0 (fallthrough)
-branch 179 taken 923
-       80:  958-block 90
+branch 179 taken 224
+       18:  958-block 90
 branch 180 taken 0 (fallthrough)
-branch 181 taken 80
-      118:  958-block 91
+branch 181 taken 18
+       28:  958-block 91
 branch 182 taken 0 (fallthrough)
-branch 183 taken 118
-       20:  958-block 92
+branch 183 taken 28
+        5:  958-block 92
 branch 184 taken 0 (fallthrough)
-branch 185 taken 20
-        8:  958-block 93
+branch 185 taken 5
+        2:  958-block 93
 branch 186 taken 0 (fallthrough)
-branch 187 taken 8
-        4:  958-block 94
+branch 187 taken 2
+        1:  958-block 94
 branch 188 taken 0 (fallthrough)
-branch 189 taken 4
-      591:  958-block 95
+branch 189 taken 1
+      145:  958-block 95
 branch 190 taken 0 (fallthrough)
-branch 191 taken 591
+branch 191 taken 145
     %%%%%:  958-block 96
 branch 192 never executed (fallthrough)
 branch 193 never executed
-      137:  958-block 97
+       33:  958-block 97
 branch 194 taken 0 (fallthrough)
-branch 195 taken 137
-      115:  958-block 98
+branch 195 taken 33
+       28:  958-block 98
 branch 196 taken 0 (fallthrough)
-branch 197 taken 115
-       76:  958-block 99
+branch 197 taken 28
+       19:  958-block 99
 branch 198 taken 0 (fallthrough)
-branch 199 taken 76
-      252:  958-block 100
+branch 199 taken 19
+       63:  958-block 100
 branch 200 taken 0 (fallthrough)
-branch 201 taken 252
-        4:  958-block 101
+branch 201 taken 63
+        1:  958-block 101
 branch 202 taken 0 (fallthrough)
-branch 203 taken 4
-        4:  958-block 102
+branch 203 taken 1
+        1:  958-block 102
 branch 204 taken 0 (fallthrough)
-branch 205 taken 4
-      276:  958-block 103
+branch 205 taken 1
+       66:  958-block 103
 branch 206 taken 0 (fallthrough)
-branch 207 taken 276
-        8:  958-block 104
+branch 207 taken 66
+        2:  958-block 104
 branch 208 taken 0 (fallthrough)
-branch 209 taken 8
-      137:  958-block 105
+branch 209 taken 2
+       32:  958-block 105
 branch 210 taken 0 (fallthrough)
-branch 211 taken 137
-        4:  958-block 106
+branch 211 taken 32
+        1:  958-block 106
 branch 212 taken 0 (fallthrough)
-branch 213 taken 4
-      205:  958-block 107
+branch 213 taken 1
+       48:  958-block 107
 branch 214 taken 0 (fallthrough)
-branch 215 taken 205
-        8:  958-block 108
+branch 215 taken 48
+        2:  958-block 108
 branch 216 taken 0 (fallthrough)
-branch 217 taken 8
-      118:  958-block 109
+branch 217 taken 2
+       27:  958-block 109
 branch 218 taken 0 (fallthrough)
-branch 219 taken 118
-      240:  958-block 110
+branch 219 taken 27
+       60:  958-block 110
 branch 220 taken 0 (fallthrough)
-branch 221 taken 240
-      352:  958-block 111
+branch 221 taken 60
+       88:  958-block 111
 branch 222 taken 0 (fallthrough)
-branch 223 taken 352
-      168:  958-block 112
+branch 223 taken 88
+       37:  958-block 112
 branch 224 taken 0 (fallthrough)
-branch 225 taken 168
-       30:  958-block 113
+branch 225 taken 37
+        7:  958-block 113
 branch 226 taken 0 (fallthrough)
-branch 227 taken 30
-      105:  958-block 114
+branch 227 taken 7
+       21:  958-block 114
 branch 228 taken 0 (fallthrough)
-branch 229 taken 105
-       30:  958-block 115
+branch 229 taken 21
+        6:  958-block 115
 branch 230 taken 0 (fallthrough)
-branch 231 taken 30
-       30:  958-block 116
+branch 231 taken 6
+        6:  958-block 116
 branch 232 taken 0 (fallthrough)
-branch 233 taken 30
-       20:  958-block 117
+branch 233 taken 6
+        4:  958-block 117
 branch 234 taken 0 (fallthrough)
-branch 235 taken 20
-       20:  958-block 118
+branch 235 taken 4
+        4:  958-block 118
 branch 236 taken 0 (fallthrough)
-branch 237 taken 20
+branch 237 taken 4
     %%%%%:  958-block 119
 branch 238 never executed (fallthrough)
 branch 239 never executed
@@ -2988,45 +2995,45 @@ branch 245 never executed
     %%%%%:  958-block 123
 branch 246 never executed (fallthrough)
 branch 247 never executed
-        5:  958-block 124
+        1:  958-block 124
 branch 248 taken 0 (fallthrough)
-branch 249 taken 5
-       95:  958-block 125
+branch 249 taken 1
+       19:  958-block 125
 branch 250 taken 0 (fallthrough)
-branch 251 taken 95
-       35:  958-block 126
+branch 251 taken 19
+        7:  958-block 126
 branch 252 taken 0 (fallthrough)
-branch 253 taken 35
-       40:  958-block 127
+branch 253 taken 7
+        8:  958-block 127
 branch 254 taken 0 (fallthrough)
-branch 255 taken 40
-       40:  958-block 128
+branch 255 taken 8
+        8:  958-block 128
 branch 256 taken 0 (fallthrough)
-branch 257 taken 40
-        5:  958-block 129
+branch 257 taken 8
+        1:  958-block 129
 branch 258 taken 0 (fallthrough)
-branch 259 taken 5
-       10:  958-block 130
+branch 259 taken 1
+        2:  958-block 130
 branch 260 taken 0 (fallthrough)
-branch 261 taken 10
-       60:  958-block 131
+branch 261 taken 2
+       12:  958-block 131
 branch 262 taken 0 (fallthrough)
-branch 263 taken 60
-        5:  958-block 132
+branch 263 taken 12
+        1:  958-block 132
 branch 264 taken 0 (fallthrough)
-branch 265 taken 5
-       55:  958-block 133
+branch 265 taken 1
+       11:  958-block 133
 branch 266 taken 0 (fallthrough)
-branch 267 taken 55
-       55:  958-block 134
+branch 267 taken 11
+       11:  958-block 134
 branch 268 taken 0 (fallthrough)
-branch 269 taken 55
+branch 269 taken 11
     %%%%%:  958-block 135
 branch 270 never executed (fallthrough)
 branch 271 never executed
-      100:  958-block 136
+       20:  958-block 136
 branch 272 taken 0 (fallthrough)
-branch 273 taken 100
+branch 273 taken 20
     %%%%%:  958-block 137
 branch 274 never executed (fallthrough)
 branch 275 never executed
@@ -3036,90 +3043,90 @@ branch 277 never executed
     %%%%%:  958-block 139
 branch 278 never executed (fallthrough)
 branch 279 never executed
-       20:  958-block 140
+        4:  958-block 140
 branch 280 taken 0 (fallthrough)
-branch 281 taken 20
+branch 281 taken 4
     %%%%%:  958-block 141
 branch 282 never executed (fallthrough)
 branch 283 never executed
-       55:  958-block 142
+       11:  958-block 142
 branch 284 taken 0 (fallthrough)
-branch 285 taken 55
-        5:  958-block 143
+branch 285 taken 11
+        1:  958-block 143
 branch 286 taken 0 (fallthrough)
-branch 287 taken 5
-      220:  958-block 144
+branch 287 taken 1
+       44:  958-block 144
 branch 288 taken 0 (fallthrough)
-branch 289 taken 220
-        5:  958-block 145
+branch 289 taken 44
+        1:  958-block 145
 branch 290 taken 0 (fallthrough)
-branch 291 taken 5
-        5:  958-block 146
+branch 291 taken 1
+        1:  958-block 146
 branch 292 taken 0 (fallthrough)
-branch 293 taken 5
-       40:  958-block 147
+branch 293 taken 1
+        8:  958-block 147
 branch 294 taken 0 (fallthrough)
-branch 295 taken 40
-        5:  958-block 148
+branch 295 taken 8
+        1:  958-block 148
 branch 296 taken 0 (fallthrough)
-branch 297 taken 5
-        5:  958-block 149
+branch 297 taken 1
+        1:  958-block 149
 branch 298 taken 0 (fallthrough)
-branch 299 taken 5
-       75:  958-block 150
+branch 299 taken 1
+       15:  958-block 150
 branch 300 taken 0 (fallthrough)
-branch 301 taken 75
-       15:  958-block 151
+branch 301 taken 15
+        3:  958-block 151
 branch 302 taken 0 (fallthrough)
-branch 303 taken 15
-      230:  958-block 152
+branch 303 taken 3
+       46:  958-block 152
 branch 304 taken 0 (fallthrough)
-branch 305 taken 230
-      141:  958-block 153
-branch 306 taken 141 (fallthrough)
+branch 305 taken 46
+       28:  958-block 153
+branch 306 taken 28 (fallthrough)
 branch 307 taken 0
-      206:  958-block 154
-branch 308 taken 206 (fallthrough)
+       41:  958-block 154
+branch 308 taken 41 (fallthrough)
 branch 309 taken 0
-        6:  958-block 155
+        1:  958-block 155
 branch 310 taken 0 (fallthrough)
-branch 311 taken 6
-      130:  958-block 156
+branch 311 taken 1
+       26:  958-block 156
 branch 312 taken 0 (fallthrough)
-branch 313 taken 130
+branch 313 taken 26
     %%%%%:  958-block 157
 branch 314 never executed (fallthrough)
 branch 315 never executed
-       65:  958-block 158
+       13:  958-block 158
 branch 316 taken 0 (fallthrough)
-branch 317 taken 65
-       20:  958-block 159
+branch 317 taken 13
+        4:  958-block 159
 branch 318 taken 0 (fallthrough)
-branch 319 taken 20
-        4:  958-block 160
+branch 319 taken 4
+        1:  958-block 160
 branch 320 taken 0 (fallthrough)
-branch 321 taken 4
-       88:  958-block 161
+branch 321 taken 1
+       22:  958-block 161
 branch 322 taken 0 (fallthrough)
-branch 323 taken 88
-       64:  958-block 162
-branch 324 taken 64 (fallthrough)
+branch 323 taken 22
+       16:  958-block 162
+branch 324 taken 16 (fallthrough)
 branch 325 taken 0
-       64:  958-block 163
-branch 326 taken 64 (fallthrough)
+       16:  958-block 163
+branch 326 taken 16 (fallthrough)
 branch 327 taken 0
-       28:  958-block 164
-branch 328 taken 28 (fallthrough)
+        7:  958-block 164
+branch 328 taken 7 (fallthrough)
 branch 329 taken 0
-       32:  958-block 165
-branch 330 taken 32 (fallthrough)
+        8:  958-block 165
+branch 330 taken 8 (fallthrough)
 branch 331 taken 0
-      110:  958-block 166
+       22:  958-block 166
 branch 332 taken 0 (fallthrough)
-branch 333 taken 110
-       70:  958-block 167
+branch 333 taken 22
+       14:  958-block 167
 branch 334 taken 0 (fallthrough)
-branch 335 taken 70
+branch 335 taken 14
     %%%%%:  958-block 168
 branch 336 never executed (fallthrough)
 branch 337 never executed
@@ -3132,121 +3139,124 @@ branch 341 never executed
     %%%%%:  958-block 171
 branch 342 never executed (fallthrough)
 branch 343 never executed
-      115:  958-block 172
+       74:  958-block 172
 branch 344 taken 0 (fallthrough)
-branch 345 taken 115
-      150:  958-block 173
+branch 345 taken 74
+       74:  958-block 173
 branch 346 taken 0 (fallthrough)
-branch 347 taken 150
-    %%%%%:  958-block 174
-branch 348 never executed (fallthrough)
-branch 349 never executed
-    %%%%%:  958-block 175
-branch 350 never executed (fallthrough)
-branch 351 never executed
-    %%%%%:  958-block 176
-branch 352 never executed (fallthrough)
-branch 353 never executed
+branch 347 taken 74
+        4:  958-block 174
+branch 348 taken 0 (fallthrough)
+branch 349 taken 4
+       23:  958-block 175
+branch 350 taken 0 (fallthrough)
+branch 351 taken 23
+       30:  958-block 176
+branch 352 taken 0 (fallthrough)
+branch 353 taken 30
     %%%%%:  958-block 177
 branch 354 never executed (fallthrough)
 branch 355 never executed
-       35:  958-block 178
-branch 356 taken 0 (fallthrough)
-branch 357 taken 35
-       10:  958-block 179
-branch 358 taken 0 (fallthrough)
-branch 359 taken 10
-       20:  958-block 180
-branch 360 taken 0 (fallthrough)
-branch 361 taken 20
-       45:  958-block 181
+    %%%%%:  958-block 178
+branch 356 never executed (fallthrough)
+branch 357 never executed
+    %%%%%:  958-block 179
+branch 358 never executed (fallthrough)
+branch 359 never executed
+    %%%%%:  958-block 180
+branch 360 never executed (fallthrough)
+branch 361 never executed
+        7:  958-block 181
 branch 362 taken 0 (fallthrough)
-branch 363 taken 45
-    %%%%%:  958-block 182
-branch 364 never executed (fallthrough)
-branch 365 never executed
-    %%%%%:  958-block 183
-branch 366 never executed (fallthrough)
-branch 367 never executed
-        5:  958-block 184
-branch 368 taken 5 (fallthrough)
-branch 369 taken 0
-        5:  958-block 185
-branch 370 taken 5 (fallthrough)
+branch 363 taken 7
+        2:  958-block 182
+branch 364 taken 0 (fallthrough)
+branch 365 taken 2
+        4:  958-block 183
+branch 366 taken 0 (fallthrough)
+branch 367 taken 4
+        9:  958-block 184
+branch 368 taken 0 (fallthrough)
+branch 369 taken 9
+        1:  958-block 185
+branch 370 taken 1 (fallthrough)
 branch 371 taken 0
-        5:  958-block 186
-branch 372 taken 5 (fallthrough)
+        1:  958-block 186
+branch 372 taken 1 (fallthrough)
 branch 373 taken 0
-        5:  958-block 187
-branch 374 taken 5 (fallthrough)
+        1:  958-block 187
+branch 374 taken 1 (fallthrough)
 branch 375 taken 0
-       55:  958-block 188
-branch 376 taken 0 (fallthrough)
-branch 377 taken 55
-    %%%%%:  958-block 189
-branch 378 never executed (fallthrough)
-branch 379 never executed
+        1:  958-block 188
+branch 376 taken 1 (fallthrough)
+branch 377 taken 0
+       11:  958-block 189
+branch 378 taken 0 (fallthrough)
+branch 379 taken 11
     %%%%%:  958-block 190
 branch 380 never executed (fallthrough)
 branch 381 never executed
-       12:  958-block 191
-branch 382 taken 0 (fallthrough)
-branch 383 taken 12
-      304:  958-block 192
+    %%%%%:  958-block 191
+branch 382 never executed (fallthrough)
+branch 383 never executed
+        3:  958-block 192
 branch 384 taken 0 (fallthrough)
-branch 385 taken 304
-    %%%%%:  958-block 193
-branch 386 never executed (fallthrough)
-branch 387 never executed
+branch 385 taken 3
+       76:  958-block 193
+branch 386 taken 0 (fallthrough)
+branch 387 taken 76
     %%%%%:  958-block 194
 branch 388 never executed (fallthrough)
 branch 389 never executed
-       32:  958-block 195
-branch 390 taken 0 (fallthrough)
-branch 391 taken 32
-       32:  958-block 196
+    %%%%%:  958-block 195
+branch 390 never executed (fallthrough)
+branch 391 never executed
+        8:  958-block 196
 branch 392 taken 0 (fallthrough)
-branch 393 taken 32
-      192:  958-block 197
+branch 393 taken 8
+        8:  958-block 197
 branch 394 taken 0 (fallthrough)
-branch 395 taken 192
-      308:  958-block 198
+branch 395 taken 8
+       48:  958-block 198
 branch 396 taken 0 (fallthrough)
-branch 397 taken 308
-      228:  958-block 199
+branch 397 taken 48
+       77:  958-block 199
 branch 398 taken 0 (fallthrough)
-branch 399 taken 228
-       16:  958-block 200
+branch 399 taken 77
+       57:  958-block 200
 branch 400 taken 0 (fallthrough)
-branch 401 taken 16
-        8:  958-block 201
+branch 401 taken 57
+        4:  958-block 201
 branch 402 taken 0 (fallthrough)
-branch 403 taken 8
-      456:  958-block 202
+branch 403 taken 4
+        2:  958-block 202
 branch 404 taken 0 (fallthrough)
-branch 405 taken 456
-      888:  958-block 203
+branch 405 taken 2
+      114:  958-block 203
 branch 406 taken 0 (fallthrough)
-branch 407 taken 888
-      260:  958-block 204
+branch 407 taken 114
+      222:  958-block 204
 branch 408 taken 0 (fallthrough)
-branch 409 taken 260
-    %%%%%:  958-block 205
-branch 410 never executed (fallthrough)
-branch 411 never executed
+branch 409 taken 222
+       65:  958-block 205
+branch 410 taken 0 (fallthrough)
+branch 411 taken 65
     %%%%%:  958-block 206
 branch 412 never executed (fallthrough)
 branch 413 never executed
-        8:  958-block 207
-branch 414 taken 0 (fallthrough)
-branch 415 taken 8
-     7276:  958-block 208
+    %%%%%:  958-block 207
+branch 414 never executed (fallthrough)
+branch 415 never executed
+        2:  958-block 208
 branch 416 taken 0 (fallthrough)
-branch 417 taken 7276
-      268:  958-block 209
+branch 417 taken 2
+     1637:  958-block 209
 branch 418 taken 0 (fallthrough)
-branch 419 taken 268
-     565*:  959:            return (char *) SvPVX_const(sv);
+branch 419 taken 1637
+       67:  958-block 210
+branch 420 taken 0 (fallthrough)
+branch 421 taken 67
+     122*:  959:            return (char *) SvPVX_const(sv);
     %%%%%:  959-block  0
     %%%%%:  959-block  1
     %%%%%:  959-block  2
@@ -3273,8 +3283,8 @@ branch 419 taken 268
     %%%%%:  959-block 23
     %%%%%:  959-block 24
     %%%%%:  959-block 25
-        5:  959-block 26
-        5:  959-block 27
+        1:  959-block 26
+        1:  959-block 27
     %%%%%:  959-block 28
     %%%%%:  959-block 29
     %%%%%:  959-block 30
@@ -3400,8 +3410,8 @@ branch 419 taken 268
     %%%%%:  959-block 150
     %%%%%:  959-block 151
     %%%%%:  959-block 152
-      141:  959-block 153
-      206:  959-block 154
+       28:  959-block 153
+       41:  959-block 154
     %%%%%:  959-block 155
     %%%%%:  959-block 156
     %%%%%:  959-block 157
@@ -3409,10 +3419,10 @@ branch 419 taken 268
     %%%%%:  959-block 159
     %%%%%:  959-block 160
     %%%%%:  959-block 161
-       64:  959-block 162
-       64:  959-block 163
-       28:  959-block 164
-       32:  959-block 165
+       16:  959-block 162
+       16:  959-block 163
+        7:  959-block 164
+        8:  959-block 165
     %%%%%:  959-block 166
     %%%%%:  959-block 167
     %%%%%:  959-block 168
@@ -3431,11 +3441,11 @@ branch 419 taken 268
     %%%%%:  959-block 181
     %%%%%:  959-block 182
     %%%%%:  959-block 183
-        5:  959-block 184
-        5:  959-block 185
-        5:  959-block 186
-        5:  959-block 187
-    %%%%%:  959-block 188
+    %%%%%:  959-block 184
+        1:  959-block 185
+        1:  959-block 186
+        1:  959-block 187
+        1:  959-block 188
     %%%%%:  959-block 189
     %%%%%:  959-block 190
     %%%%%:  959-block 191
@@ -3457,219 +3467,221 @@ branch 419 taken 268
     %%%%%:  959-block 207
     %%%%%:  959-block 208
     %%%%%:  959-block 209
+    %%%%%:  959-block 210
         -:  960:        }
         -:  961:        else {
-   29565*:  962:            return SvPVX(sv);
-      132:  962-block  0
-        4:  962-block  1
-       88:  962-block  2
+    7003*:  962:            return SvPVX(sv);
+       33:  962-block  0
+        1:  962-block  1
+       22:  962-block  2
     %%%%%:  962-block  3
-        5:  962-block  4
-        5:  962-block  5
-       10:  962-block  6
-        5:  962-block  7
-        5:  962-block  8
-       16:  962-block  9
-        8:  962-block 10
-        8:  962-block 11
-        5:  962-block 12
-        5:  962-block 13
-        5:  962-block 14
-        5:  962-block 15
+        1:  962-block  4
+        1:  962-block  5
+        2:  962-block  6
+        1:  962-block  7
+        1:  962-block  8
+        4:  962-block  9
+        2:  962-block 10
+        2:  962-block 11
+        1:  962-block 12
+        1:  962-block 13
+        1:  962-block 14
+        1:  962-block 15
     %%%%%:  962-block 16
-        5:  962-block 17
+        1:  962-block 17
     %%%%%:  962-block 18
-        5:  962-block 19
-       10:  962-block 20
-       28:  962-block 21
-       20:  962-block 22
-      160:  962-block 23
-       65:  962-block 24
-        5:  962-block 25
+        1:  962-block 19
+        2:  962-block 20
+        7:  962-block 21
+        5:  962-block 22
+       32:  962-block 23
+       13:  962-block 24
+        1:  962-block 25
     %%%%%:  962-block 26
     %%%%%:  962-block 27
     %%%%%:  962-block 28
-        5:  962-block 29
+        1:  962-block 29
     %%%%%:  962-block 30
     %%%%%:  962-block 31
     %%%%%:  962-block 32
-       60:  962-block 33
-       10:  962-block 34
+       12:  962-block 33
+        2:  962-block 34
     %%%%%:  962-block 35
-       10:  962-block 36
+        2:  962-block 36
     %%%%%:  962-block 37
-      140:  962-block 38
-      135:  962-block 39
-       15:  962-block 40
-       10:  962-block 41
-       50:  962-block 42
-       40:  962-block 43
-       80:  962-block 44
-       85:  962-block 45
-      139:  962-block 46
-       30:  962-block 47
-      289:  962-block 48
-       25:  962-block 49
-      356:  962-block 50
-      178:  962-block 51
-       15:  962-block 52
-       55:  962-block 53
+       28:  962-block 38
+       27:  962-block 39
+        3:  962-block 40
+        2:  962-block 41
+       10:  962-block 42
+        8:  962-block 43
+       16:  962-block 44
+       17:  962-block 45
+       29:  962-block 46
+        6:  962-block 47
+       62:  962-block 48
+        5:  962-block 49
+       76:  962-block 50
+       38:  962-block 51
+        3:  962-block 52
+       11:  962-block 53
     %%%%%:  962-block 54
     %%%%%:  962-block 55
-      130:  962-block 56
-       65:  962-block 57
-      380:  962-block 58
-       10:  962-block 59
+       26:  962-block 56
+       13:  962-block 57
+       76:  962-block 58
+        2:  962-block 59
     %%%%%:  962-block 60
-       40:  962-block 61
-       20:  962-block 62
-       25:  962-block 63
+       10:  962-block 61
+        4:  962-block 62
+        5:  962-block 63
     %%%%%:  962-block 64
-      211:  962-block 65
-       25:  962-block 66
-      155:  962-block 67
-       30:  962-block 68
-      170:  962-block 69
-       35:  962-block 70
-       60:  962-block 71
-      230:  962-block 72
-       80:  962-block 73
-       70:  962-block 74
-       15:  962-block 75
+       47:  962-block 65
+        5:  962-block 66
+       31:  962-block 67
+        6:  962-block 68
+       34:  962-block 69
+        7:  962-block 70
+       12:  962-block 71
+       49:  962-block 72
+       17:  962-block 73
+       15:  962-block 74
+        3:  962-block 75
     %%%%%:  962-block 76
-       32:  962-block 77
-       28:  962-block 78
-      136:  962-block 79
+        8:  962-block 77
+        7:  962-block 78
+       34:  962-block 79
     %%%%%:  962-block 80
     %%%%%:  962-block 81
-      152:  962-block 82
-      640:  962-block 83
-       15:  962-block 84
-     2462:  962-block 85
-     2462:  962-block 86
-     2462:  962-block 87
-      615:  962-block 88
-      923:  962-block 89
-       80:  962-block 90
-      118:  962-block 91
-       20:  962-block 92
-        8:  962-block 93
-        4:  962-block 94
-      591:  962-block 95
+       38:  962-block 82
+      159:  962-block 83
+        3:  962-block 84
+      600:  962-block 85
+      600:  962-block 86
+      600:  962-block 87
+      151:  962-block 88
+      224:  962-block 89
+       18:  962-block 90
+       28:  962-block 91
+        5:  962-block 92
+        2:  962-block 93
+        1:  962-block 94
+      145:  962-block 95
     %%%%%:  962-block 96
-      137:  962-block 97
-      115:  962-block 98
-       76:  962-block 99
-      252:  962-block 100
-        4:  962-block 101
-        4:  962-block 102
-      276:  962-block 103
-        8:  962-block 104
-      137:  962-block 105
-        4:  962-block 106
-      205:  962-block 107
-        8:  962-block 108
-      118:  962-block 109
-      240:  962-block 110
-      352:  962-block 111
-      168:  962-block 112
-       30:  962-block 113
-      105:  962-block 114
-       30:  962-block 115
-       30:  962-block 116
-       20:  962-block 117
-       20:  962-block 118
+       33:  962-block 97
+       28:  962-block 98
+       19:  962-block 99
+       63:  962-block 100
+        1:  962-block 101
+        1:  962-block 102
+       66:  962-block 103
+        2:  962-block 104
+       32:  962-block 105
+        1:  962-block 106
+       48:  962-block 107
+        2:  962-block 108
+       27:  962-block 109
+       60:  962-block 110
+       88:  962-block 111
+       37:  962-block 112
+        7:  962-block 113
+       21:  962-block 114
+        6:  962-block 115
+        6:  962-block 116
+        4:  962-block 117
+        4:  962-block 118
     %%%%%:  962-block 119
     %%%%%:  962-block 120
     %%%%%:  962-block 121
     %%%%%:  962-block 122
     %%%%%:  962-block 123
-        5:  962-block 124
-       95:  962-block 125
-       35:  962-block 126
-       40:  962-block 127
-       40:  962-block 128
-        5:  962-block 129
-       10:  962-block 130
-       60:  962-block 131
-        5:  962-block 132
-       55:  962-block 133
-       55:  962-block 134
+        1:  962-block 124
+       19:  962-block 125
+        7:  962-block 126
+        8:  962-block 127
+        8:  962-block 128
+        1:  962-block 129
+        2:  962-block 130
+       12:  962-block 131
+        1:  962-block 132
+       11:  962-block 133
+       11:  962-block 134
     %%%%%:  962-block 135
-      100:  962-block 136
+       20:  962-block 136
     %%%%%:  962-block 137
     %%%%%:  962-block 138
     %%%%%:  962-block 139
-       20:  962-block 140
+        4:  962-block 140
     %%%%%:  962-block 141
-       55:  962-block 142
-        5:  962-block 143
-      220:  962-block 144
-        5:  962-block 145
-        5:  962-block 146
-       40:  962-block 147
-        5:  962-block 148
-        5:  962-block 149
-       75:  962-block 150
-       15:  962-block 151
-      230:  962-block 152
+       11:  962-block 142
+        1:  962-block 143
+       44:  962-block 144
+        1:  962-block 145
+        1:  962-block 146
+        8:  962-block 147
+        1:  962-block 148
+        1:  962-block 149
+       15:  962-block 150
+        3:  962-block 151
+       46:  962-block 152
     %%%%%:  962-block 153
     %%%%%:  962-block 154
-        6:  962-block 155
-      130:  962-block 156
+        1:  962-block 155
+       26:  962-block 156
     %%%%%:  962-block 157
-       65:  962-block 158
-       20:  962-block 159
-        4:  962-block 160
-       88:  962-block 161
+       13:  962-block 158
+        4:  962-block 159
+        1:  962-block 160
+       22:  962-block 161
     %%%%%:  962-block 162
     %%%%%:  962-block 163
     %%%%%:  962-block 164
     %%%%%:  962-block 165
-      110:  962-block 166
-       70:  962-block 167
+       22:  962-block 166
+       14:  962-block 167
     %%%%%:  962-block 168
     %%%%%:  962-block 169
     %%%%%:  962-block 170
     %%%%%:  962-block 171
-      115:  962-block 172
-      150:  962-block 173
-    %%%%%:  962-block 174
-    %%%%%:  962-block 175
-    %%%%%:  962-block 176
+       74:  962-block 172
+       74:  962-block 173
+        4:  962-block 174
+       23:  962-block 175
+       30:  962-block 176
     %%%%%:  962-block 177
-       35:  962-block 178
-       10:  962-block 179
-       20:  962-block 180
-       45:  962-block 181
-    %%%%%:  962-block 182
-    %%%%%:  962-block 183
-    %%%%%:  962-block 184
+    %%%%%:  962-block 178
+    %%%%%:  962-block 179
+    %%%%%:  962-block 180
+        7:  962-block 181
+        2:  962-block 182
+        4:  962-block 183
+        9:  962-block 184
     %%%%%:  962-block 185
     %%%%%:  962-block 186
     %%%%%:  962-block 187
-       55:  962-block 188
-    %%%%%:  962-block 189
+    %%%%%:  962-block 188
+       11:  962-block 189
     %%%%%:  962-block 190
-       12:  962-block 191
-      304:  962-block 192
-    %%%%%:  962-block 193
+    %%%%%:  962-block 191
+        3:  962-block 192
+       76:  962-block 193
     %%%%%:  962-block 194
-       32:  962-block 195
-       32:  962-block 196
-      192:  962-block 197
-      308:  962-block 198
-      228:  962-block 199
-       16:  962-block 200
-        8:  962-block 201
-      456:  962-block 202
-      888:  962-block 203
-      260:  962-block 204
-    %%%%%:  962-block 205
+    %%%%%:  962-block 195
+        8:  962-block 196
+        8:  962-block 197
+       48:  962-block 198
+       77:  962-block 199
+       57:  962-block 200
+        4:  962-block 201
+        2:  962-block 202
+      114:  962-block 203
+      222:  962-block 204
+       65:  962-block 205
     %%%%%:  962-block 206
-        8:  962-block 207
-     7276:  962-block 208
-      268:  962-block 209
+    %%%%%:  962-block 207
+        2:  962-block 208
+     1637:  962-block 209
+       67:  962-block 210
         -:  963:        }
         -:  964:    }
         -:  965:
@@ -3688,11 +3700,11 @@ branch 419 taken 268
         -:  978:    }
         -:  979:
         -:  980:    /* Can't trivially handle this, call the function */
-    5411*:  981:    return non_trivial(aTHX_ sv, lp, (flags|return_flags));
+    1348*:  981:    return non_trivial(aTHX_ sv, lp, (flags|return_flags));
     %%%%%:  981-block  0
 call    0 never executed
-      380:  981-block  1
-call    1 returned 380
+       95:  981-block  1
+call    1 returned 95
     %%%%%:  981-block  2
 call    2 never executed
     %%%%%:  981-block  3
@@ -3731,10 +3743,10 @@ call   18 never executed
 call   19 never executed
     %%%%%:  981-block 20
 call   20 never executed
-        4:  981-block 21
-call   21 returned 4
-        4:  981-block 22
-call   22 returned 4
+        1:  981-block 21
+call   21 returned 1
+        1:  981-block 22
+call   22 returned 1
     %%%%%:  981-block 23
 call   23 never executed
     %%%%%:  981-block 24
@@ -3797,10 +3809,10 @@ call   51 never executed
 call   52 never executed
     %%%%%:  981-block 53
 call   53 never executed
-       10:  981-block 54
-call   54 returned 10
-        5:  981-block 55
-call   55 returned 5
+        2:  981-block 54
+call   54 returned 2
+        1:  981-block 55
+call   55 returned 1
     %%%%%:  981-block 56
 call   56 never executed
     %%%%%:  981-block 57
@@ -3809,14 +3821,14 @@ call   57 never executed
 call   58 never executed
     %%%%%:  981-block 59
 call   59 never executed
-       44:  981-block 60
-call   60 returned 44
-       64:  981-block 61
-call   61 returned 64
-       80:  981-block 62
-call   62 returned 80
-       25:  981-block 63
-call   63 returned 25
+       11:  981-block 60
+call   60 returned 11
+       16:  981-block 61
+call   61 returned 16
+       16:  981-block 62
+call   62 returned 16
+        5:  981-block 63
+call   63 returned 5
     %%%%%:  981-block 64
 call   64 never executed
     %%%%%:  981-block 65
@@ -3881,38 +3893,38 @@ call   93 never executed
 call   94 never executed
     %%%%%:  981-block 95
 call   95 never executed
-        4:  981-block 96
-call   96 returned 4
+        1:  981-block 96
+call   96 returned 1
     %%%%%:  981-block 97
 call   97 never executed
     %%%%%:  981-block 98
 call   98 never executed
-      129:  981-block 99
-call   99 returned 129
+       31:  981-block 99
+call   99 returned 31
     %%%%%:  981-block 100
 call   100 never executed
-      248:  981-block 101
-call   101 returned 248
+       62:  981-block 101
+call   101 returned 62
     %%%%%:  981-block 102
 call   102 never executed
     %%%%%:  981-block 103
 call   103 never executed
     %%%%%:  981-block 104
 call   104 never executed
-      468:  981-block 105
-call   105 returned 468
+      109:  981-block 105
+call   105 returned 109
     %%%%%:  981-block 106
 call   106 never executed
     %%%%%:  981-block 107
 call   107 never executed
     %%%%%:  981-block 108
 call   108 never executed
-      408:  981-block 109
-call   109 returned 408
+      100:  981-block 109
+call   109 returned 100
     %%%%%:  981-block 110
 call   110 never executed
-      160:  981-block 111
-call   111 returned 160
+       40:  981-block 111
+call   111 returned 40
     %%%%%:  981-block 112
 call   112 never executed
     %%%%%:  981-block 113
@@ -3993,8 +4005,8 @@ call   149 never executed
 call   150 never executed
     %%%%%:  981-block 151
 call   151 never executed
-       65:  981-block 152
-call   152 returned 65
+       13:  981-block 152
+call   152 returned 13
     %%%%%:  981-block 153
 call   153 never executed
     %%%%%:  981-block 154
@@ -4033,32 +4045,32 @@ call   169 never executed
 call   170 never executed
     %%%%%:  981-block 171
 call   171 never executed
-      280:  981-block 172
-call   172 returned 280
-      305:  981-block 173
-call   173 returned 305
+    %%%%%:  981-block 172
+call   172 never executed
+    %%%%%:  981-block 173
+call   173 never executed
     %%%%%:  981-block 174
 call   174 never executed
-    %%%%%:  981-block 175
-call   175 never executed
-    %%%%%:  981-block 176
-call   176 never executed
+       56:  981-block 175
+call   175 returned 56
+       61:  981-block 176
+call   176 returned 61
     %%%%%:  981-block 177
 call   177 never executed
-      716:  981-block 178
-call   178 returned 716
-      275:  981-block 179
-call   179 returned 275
-      230:  981-block 180
-call   180 returned 230
-      245:  981-block 181
-call   181 returned 245
-      376:  981-block 182
-call   182 returned 376
-      328:  981-block 183
-call   183 returned 328
-    %%%%%:  981-block 184
-call   184 never executed
+    %%%%%:  981-block 178
+call   178 never executed
+    %%%%%:  981-block 179
+call   179 never executed
+    %%%%%:  981-block 180
+call   180 never executed
+      368:  981-block 181
+call   181 returned 368
+      127:  981-block 182
+call   182 returned 127
+       46:  981-block 183
+call   183 returned 46
+       49:  981-block 184
+call   184 returned 49
     %%%%%:  981-block 185
 call   185 never executed
     %%%%%:  981-block 186
@@ -4069,18 +4081,18 @@ call   187 never executed
 call   188 never executed
     %%%%%:  981-block 189
 call   189 never executed
-       30:  981-block 190
-call   190 returned 30
-    %%%%%:  981-block 191
-call   191 never executed
+    %%%%%:  981-block 190
+call   190 never executed
+        6:  981-block 191
+call   191 returned 6
     %%%%%:  981-block 192
 call   192 never executed
-      128:  981-block 193
-call   193 returned 128
+    %%%%%:  981-block 193
+call   193 never executed
        32:  981-block 194
 call   194 returned 32
-    %%%%%:  981-block 195
-call   195 never executed
+        8:  981-block 195
+call   195 returned 8
     %%%%%:  981-block 196
 call   196 never executed
     %%%%%:  981-block 197
@@ -4101,14 +4113,16 @@ call   203 never executed
 call   204 never executed
     %%%%%:  981-block 205
 call   205 never executed
-      260:  981-block 206
-call   206 returned 260
-       96:  981-block 207
-call   207 returned 96
-    %%%%%:  981-block 208
-call   208 never executed
-       12:  981-block 209
-call   209 returned 12
+    %%%%%:  981-block 206
+call   206 never executed
+       65:  981-block 207
+call   207 returned 65
+       23:  981-block 208
+call   208 returned 23
+    %%%%%:  981-block 209
+call   209 never executed
+        3:  981-block 210
+call   210 returned 3
         -:  982:}
         -:  983:
         -:  984:/*
@@ -4121,22 +4135,22 @@ call   209 returned 12
         -:  991:*/
         -:  992:
         -:  993:PERL_STATIC_INLINE SV *
-function Perl_newRV_noinc called 46104 returned 100% blocks executed 100%
-    46104:  994:Perl_newRV_noinc(pTHX_ SV *const tmpRef)
+function Perl_newRV_noinc called 9708 returned 100% blocks executed 100%
+     9708:  994:Perl_newRV_noinc(pTHX_ SV *const tmpRef)
         -:  995:{
         -:  996:    PERL_ARGS_ASSERT_NEWRV_NOINC;
         -:  997:
-    46104:  998:    SV *sv = newSV_type(SVt_IV);
-    46104:  998-block  0
-call    0 returned 46104
+     9708:  998:    SV *sv = newSV_type(SVt_IV);
+     9708:  998-block  0
+call    0 returned 9708
         -:  999:
-    46104: 1000:    SvTEMP_off(tmpRef);
+     9708: 1000:    SvTEMP_off(tmpRef);
         -: 1001:
         -: 1002:    /* inlined, simplified sv_setrv_noinc(sv, tmpRef); */
-    46104: 1003:    SvRV_set(sv, tmpRef);
-    46104: 1004:    SvROK_on(sv);
+     9708: 1003:    SvRV_set(sv, tmpRef);
+     9708: 1004:    SvROK_on(sv);
         -: 1005:
-    46104: 1006:    return sv;
+     9708: 1006:    return sv;
         -: 1007:}
         -: 1008:
         -: 1009:PERL_STATIC_INLINE char *
@@ -4172,21 +4186,21 @@ call    0 returned 46104
         -: 1039:*/
         -: 1040:
         -: 1041:PERL_STATIC_INLINE SV *
-function Perl_newSVsv_flags called 389786 returned 100% blocks executed 75%
-   389786: 1042:Perl_newSVsv_flags(pTHX_ SV *const old, I32 flags)
+function Perl_newSVsv_flags called 78804 returned 100% blocks executed 75%
+    78804: 1042:Perl_newSVsv_flags(pTHX_ SV *const old, I32 flags)
         -: 1043:{
         -: 1044:    PERL_ARGS_ASSERT_NEWSVSV_FLAGS;
         -: 1045:
-   389786: 1046:    if (!old)
-   389786: 1046-block  0
+    78804: 1046:    if (!old)
+    78804: 1046-block  0
 branch  0 taken 0 (fallthrough)
-branch  1 taken 389786
+branch  1 taken 78804
     #####: 1047:        return NULL;
     %%%%%: 1047-block  0
         -: 1048:
-   389786: 1049:    return newSVsv_flags_NN(old, flags);
-   389786: 1049-block  0
-call    0 returned 389786
+    78804: 1049:    return newSVsv_flags_NN(old, flags);
+    78804: 1049-block  0
+call    0 returned 78804
         -: 1050:}
         -: 1051:
         -: 1052:/*

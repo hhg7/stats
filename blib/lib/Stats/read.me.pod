@@ -3282,9 +3282,11 @@ methods; pandas has no equivalent (its columns are all-numeric).
 
 =back
 
- > Note: C<interpolate> is currently pure Perl (the one non-XS numeric routine in
- > the module). The fit-based methods use a dense linear solve, so they target
- > modest per-column anchor counts; an XS port with a banded solver is planned.
+ > Performance: the per-column numeric core (every method, the linear solve and
+ > the preserve mask) runs in XS. Versus the former pure-Perl kernels this is
+ > roughly 5× faster for C<linear> on a large column, ~11× for C<pchip>, and ~50×
+ > for the spline methods whose dense solve dominates. The fit-based methods
+ > still use a dense solve, so they target modest per-column anchor counts.
 
 =head3 Errors
 
@@ -6251,6 +6253,8 @@ C<read_table>.
 
 =head2 0.24
 
+C<interpolate>'s numeric core moved from pure Perl to XS (C<_interp_column_xs>): ~5× faster for C<linear> on large columns, ~11× for C<pchip>, and ~50× for the spline methods whose dense solve dominates. Results are unchanged (bit-for-bit versus the former Perl kernels).
+
 C<Ronly> now accepts one or more array references (like C<Lonly>), returning the values found only in the B<last> reference; the two-argument form is unchanged, and C<Ronly(@refs)> equals C<Lonly(reverse @refs)>.
 
 C<interpolate> gains full C<pandas.DataFrame.interpolate> method parity: C<nearest>, C<zero>, C<slinear>, C<pad>/C<ffill>, C<bfill>/C<backfill>, C<quadratic>, C<cubic>, C<cubicspline>, C<pchip>, C<akima>, C<barycentric>, C<krogh>, C<polynomial>, C<spline>, and C<index>/C<values>/C<time>, plus an C<x> argument for custom abscissae and an C<order> argument. Matched to pandas/scipy within 1e-6.
@@ -6263,7 +6267,7 @@ C<summary> output now looks more like C<view>, and accepts HoH
 
 C<fisher_test> can compute larger tables than just 2x2
 
-C<read_table> now reads xlsx files about 19% faster.
+C<read_table> reads xlsx files significantly faster and with less RAM.
 
 Addition of C<bfill>, C<drop_duplicates>, C<ffill>, C<melt>, and C<pivot_table>
 
