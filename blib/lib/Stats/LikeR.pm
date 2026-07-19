@@ -1001,6 +1001,30 @@ sub col { Stats::LikeR::col::_new(@_) }
 			unless ref $c eq 'CODE';
 		return bless { code => sub { $c->($_[0]) ? 0 : 1 } }, __PACKAGE__;
 	}
+
+	# regex predicates.  Perl cannot overload =~, so col('x') =~ /re/ can never
+	# be intercepted; these methods give the same deferred, composable predicate
+	# instead.  The pattern is a qr// or a string (compiled with qr//); an undef
+	# cell never matches (mirroring the string comparisons).
+	#   filter($df, col('id')->match(qr/^5iz/));
+	#   filter($df, col('id')->nomatch('^5iz'));            # string pattern ok
+	#   filter($df, col('id')->match(qr/^5iz/) & (col('res') < 2.5));
+	sub _match {
+		my ($self, $re, $want, $how) = @_;
+		die "col(): ->$how must start from a bare column, e.g. col('x')->$how(qr/.../)\n"
+			unless defined $self->{name};
+		die "col(): ->$how needs a pattern (a qr// or a string)\n" unless defined $re;
+		my $qr   = ref $re eq 'Regexp' ? $re : qr/$re/;
+		my $name = $self->{name};
+		my $code = sub {
+			my $c = $_[0]{$name};
+			return 0 unless defined $c;
+			return ( ($c =~ $qr) ? 1 : 0 ) == $want ? 1 : 0;
+		};
+		return bless { code => $code }, __PACKAGE__;
+	}
+	sub match   { _match($_[0], $_[1], 1, 'match') }
+	sub nomatch { _match($_[0], $_[1], 0, 'nomatch') }
 }
 
 # ---------------------------------------------------------------------------
@@ -1884,17 +1908,28 @@ sub _parse_xlsx_sheet {
 			} else {
 				$ci = $maxc + 1;
 			}
-			# Cell type: only look for t= when the cell has a body to interpret.
+			# Cell type: a plain substring test on the (short) attribute run is
+			# markedly cheaper than a capturing /\bt="..."/ match run once per
+			# cell. Only "s" and "inlineStr" denote strings; every other type
+			# value (str/b/e/n) and a missing t= take the raw <v> path, exactly
+			# as the previous /\bt="..."/ dispatch did. Cell-element attribute
+			# names are a fixed set (r,s,t,cm,vm,ph) whose other values are
+			# numeric refs, so 't="s"' / 't="inlineStr"' can only ever appear as
+			# the genuine type attribute -- no false substring match is possible.
 			my $val = '';
 			if (defined $cbody) {
-				my ($t) = $cattrs =~ /\bt="([^"]*)"/;
-				if (defined $t && $t eq 's') {		# shared-string index
-					my ($v) = $cbody =~ m{<v\b[^>]*>(.*?)</v>}s;
+				if (index($cattrs, 't="s"') >= 0) {		# shared-string index
+					# Almost every string cell body is exactly <v>DIGITS</v>; an
+					# anchored match reads it in one step, falling back to the
+					# general <v ...> scan only for the rare attributed <v>.
+					my $v = ($cbody =~ m{\A<v>([^<]*)</v>\z})
+						? $1 : ($cbody =~ m{<v\b[^>]*>(.*?)</v>}s)[0];
 					$val = (defined $v && $v =~ /^\d+\z/) ? ($sst->[$v] // '') : '';
-				} elsif (defined $t && $t eq 'inlineStr') {
+				} elsif (index($cattrs, 't="inlineStr"') >= 0) {
 					$val .= _xml_unescape($1) while $cbody =~ m{<t\b[^>]*>(.*?)</t>}gs;
 				} else {			# number / formula str / bool / error
-					my ($v) = $cbody =~ m{<v\b[^>]*>(.*?)</v>}s;
+					my $v = ($cbody =~ m{\A<v>([^<]*)</v>\z})
+						? $1 : ($cbody =~ m{<v\b[^>]*>(.*?)</v>}s)[0];
 					$val = defined $v ? _xml_unescape($v) : '';
 				}
 			}
@@ -1904,11 +1939,14 @@ sub _parse_xlsx_sheet {
 		push @rows, \@cells;
 		$global_max = $maxc if $maxc > $global_max;
 	}
+	undef $ws;	# free the (potentially large) worksheet XML before emitting
 
-	# Emit each row padded to the widest row seen. Pad and fill holes in place
-	# rather than building a fresh list per row (the callback reads by index and
-	# never retains the ref), so this is a light touch, not a second full copy.
-	for my $cells (@rows) {
+	# Emit each row padded to the widest row seen, consuming @rows as we go
+	# (shift, not foreach) so the parsed AoA and the caller's growing structure
+	# never both sit fully in memory at once. Pad and fill holes in place -- the
+	# callback reads by index and never retains the ref -- so this is a light
+	# touch, not a second full copy.
+	while (my $cells = shift @rows) {
 		$#$cells = $global_max;			# extend to the common width
 		$_ //= '' for @$cells;			# fill gaps + padding in place
 		next unless grep { length } @$cells;	# skip fully blank rows, as CSV does
@@ -1939,6 +1977,10 @@ sub read_table {
 	my %allowed_args = map { $_ => 1 } (
 		'comment', 'output.type', 'filter', 'row.names', 'sep',
 		'auto.row.names', 'sheet',
+		# private, undocumented: the multi-sheet expansion passes an already
+		# parsed worksheet list / shared-string table to each per-sheet recursion
+		# so a big sharedStrings.xml is not re-decompressed once per worksheet.
+		'_xlsx_sheets', '_sst',
 	);
 	my @undef_args = sort grep { !$allowed_args{$_} } keys %args;
 	if (@undef_args) {
@@ -1959,13 +2001,22 @@ sub read_table {
 	# would double that work for every single-sheet / explicit-sheet read).
 	my $xlsx_sheets;
 	if ($is_xlsx) {
-		$xlsx_sheets = _xlsx_sheets($file);
+		# Reuse a caller-supplied worksheet list (from the multi-sheet expansion
+		# below) rather than re-parsing workbook.xml + its rels for every sheet.
+		$xlsx_sheets = $args{_xlsx_sheets} // _xlsx_sheets($file);
 		if (!defined $args{sheet} && @$xlsx_sheets > 1) {
+			# Decompress + parse the shared-string table once for the whole
+			# workbook and hand it to each per-sheet read, instead of every
+			# recursion re-reading (a potentially large) sharedStrings.xml.
+			my $sst = _xlsx_shared_strings($file);
 			my %book;
 			for my $i (0 .. $#$xlsx_sheets) {
 				my $name = $xlsx_sheets->[$i]{name};
 				$name = 'Sheet' . ($i + 1) unless defined $name;
-				$book{$name} = read_table($file, %input_args, sheet => $i + 1);
+				$book{$name} = read_table($file, %input_args,
+					sheet        => $i + 1,
+					_xlsx_sheets => $xlsx_sheets,
+					_sst         => $sst);
 			}
 			return \%book;
 		}
@@ -2169,7 +2220,7 @@ sub read_table {
 		}
 	};
 	if ($is_xlsx) {
-		my $sst    = _xlsx_shared_strings($file);
+		my $sst    = $args{_sst} // _xlsx_shared_strings($file);
 		my $chosen = _xlsx_choose_sheet($file, $xlsx_sheets, $args{sheet});
 		_parse_xlsx_sheet($file, $sst, $chosen->{path}, $on_line);
 	} else {
@@ -8825,20 +8876,22 @@ How C<undef>/NaN elements are placed (default C<true>):
 
 =head2 Ronly
 
- my @right_only = Ronly(\@left, \@right);
- my $count      = Ronly(\@left, \@right);
+ my @only_last = Ronly(\@a, \@b, \@c);
+ my $count     = Ronly(\@a, \@b, \@c);
 
-Takes B<exactly two> array references and returns the values in the right list
-that are absent from the left list. Duplicates collapse, the result keeps
-right-list order, and scalar context returns the count. Values are compared by
-string form (see C<get_union>). A non-array-ref argument, an C<undef> element,
-or anything other than two references is fatal. Mirrors C<List::Compare>'s
-C<get_Ronly>, and is the reverse of C<Lonly>: C<Ronly(\@a, \@b)> equals
-C<Lonly(\@b, \@a)>.
+The mirror of C<Lonly>: takes one or more array references and returns the values
+that appear in the B<last> reference and in B<no other> reference; with a
+single reference it returns that list's distinct values. Duplicates collapse,
+the result keeps the last list's first-appearance order, and scalar context
+returns the count. Values are compared by string form (see C<get_union>). A
+non-array-ref argument or an C<undef> element is fatal. With exactly two
+references this is the right-only set difference, so C<Ronly(\@a, \@b)> equals
+C<Lonly(\@b, \@a)>; more generally C<Ronly(@refs)> equals C<Lonly(reverse @refs)>.
 
- my @a = (1, 2, 3, 4);
- my @b = (3, 4, 5);
- my @r = Ronly(\@a, \@b); # (5)
+ my @a = (1, 2, 3, 4, 5);
+ my @b = (3, 4, 5, 6, 7);
+ my @c = (5, 6, 7, 8);
+ my @r = Ronly(\@a, \@b, \@c);           # (8)  -- 5,6,7 also appear in @a or @b
 
 =head2 rbinom
 
@@ -10268,6 +10321,8 @@ C<read_table>.
 
 =head2 0.24
 
+C<Ronly> now accepts one or more array references (like C<Lonly>), returning the values found only in the B<last> reference; the two-argument form is unchanged, and C<Ronly(@refs)> equals C<Lonly(reverse @refs)>.
+
 C<interpolate> gains full C<pandas.DataFrame.interpolate> method parity: C<nearest>, C<zero>, C<slinear>, C<pad>/C<ffill>, C<bfill>/C<backfill>, C<quadratic>, C<cubic>, C<cubicspline>, C<pchip>, C<akima>, C<barycentric>, C<krogh>, C<polynomial>, C<spline>, and C<index>/C<values>/C<time>, plus an C<x> argument for custom abscissae and an C<order> argument. Matched to pandas/scipy within 1e-6.
 
 C<t/transpose.t> no longer loads C<Devel::Confess> in its leak tests: its C<$SIG{__DIE__}> stack-trace objects landed in C<$@> and were reported as leaks by C<Test::LeakTrace> on the croak paths under older perls (e.g. 5.12.3). The die-path leak checks now also clear C<$@> so the exception object cannot be miscounted.
@@ -10283,6 +10338,8 @@ C<read_table> now reads xlsx files about 19% faster.
 Addition of C<bfill>, C<drop_duplicates>, C<ffill>, C<melt>, and C<pivot_table>
 
 Original C<Lonly> code removed, as it was a special case of C<get_unique>, and C<get_unique> was re-named to C<Lonly>.
+
+Removal of C<Devel::Confess> from testing and dependencies.
 
 =head2 0.23 2026-07-10 CDT
 
@@ -10535,14 +10592,9 @@ with the module's own C<ccflags>.
   <td>single <code>cmp_string_wt</code></td>
 </tr>
 <tr>
-  <td>Set difference</td>
-  <td><code>Lonly</code> + <code>Ronly</code> (duplicated bodies)</td>
-  <td>shared <code>set_difference()</code>; <code>Ronly</code> passes the arrays swapped</td>
-</tr>
-<tr>
-  <td>Multiplicity filter</td>
-  <td><code>intersection</code> + <code>get_unique</code> (~90% shared)</td>
-  <td>shared <code>set_multiplicity()</code> with an "all vs. one" mode flag</td>
+  <td>Multiplicity filter & set difference</td>
+  <td><code>intersection</code> + <code>get_unique</code> (~90% shared); <code>Lonly</code>/<code>Ronly</code> duplicated bodies; a separate <code>set_difference()</code></td>
+  <td>one shared <code>set_multiplicity()</code> with an "all vs. one" mode flag and a <code>from_last</code> flag: <code>intersection</code> (all), <code>Lonly</code> (one, first array), <code>Ronly</code> (one, last array)</td>
 </tr>
 </tbody>
 </table>

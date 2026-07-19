@@ -231,7 +231,6 @@ TO_INST_PM = TukeyHSD.pl \
 	runif.pl \
 	sample.pl \
 	sd.pl \
-	sha512.pl \
 	summary.pl \
 	t.test.pl \
 	titanic.pl \
@@ -1176,7 +1175,6 @@ pm_to_blib : $(FIRST_MAKEFILE) $(TO_INST_PM)
 	  'runif.pl' '$(INST_LIB)/Stats/runif.pl' \
 	  'sample.pl' '$(INST_LIB)/Stats/sample.pl' \
 	  'sd.pl' '$(INST_LIB)/Stats/sd.pl' \
-	  'sha512.pl' '$(INST_LIB)/Stats/sha512.pl' \
 	  'summary.pl' '$(INST_LIB)/Stats/summary.pl' \
 	  't.test.pl' '$(INST_LIB)/Stats/t.test.pl' \
 	  'titanic.pl' '$(INST_LIB)/Stats/titanic.pl' \

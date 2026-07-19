@@ -3501,20 +3501,22 @@ How `undef`/NaN elements are placed (default `true`):
 
 ## Ronly
 
-    my @right_only = Ronly(\@left, \@right);
-    my $count      = Ronly(\@left, \@right);
+    my @only_last = Ronly(\@a, \@b, \@c);
+    my $count     = Ronly(\@a, \@b, \@c);
 
-Takes **exactly two** array references and returns the values in the right list
-that are absent from the left list. Duplicates collapse, the result keeps
-right-list order, and scalar context returns the count. Values are compared by
-string form (see `get_union`). A non-array-ref argument, an `undef` element,
-or anything other than two references is fatal. Mirrors `List::Compare`'s
-`get_Ronly`, and is the reverse of `Lonly`: `Ronly(\@a, \@b)` equals
-`Lonly(\@b, \@a)`.
+The mirror of `Lonly`: takes one or more array references and returns the values
+that appear in the **last** reference and in **no other** reference; with a
+single reference it returns that list's distinct values. Duplicates collapse,
+the result keeps the last list's first-appearance order, and scalar context
+returns the count. Values are compared by string form (see `get_union`). A
+non-array-ref argument or an `undef` element is fatal. With exactly two
+references this is the right-only set difference, so `Ronly(\@a, \@b)` equals
+`Lonly(\@b, \@a)`; more generally `Ronly(@refs)` equals `Lonly(reverse @refs)`.
 
-    my @a = (1, 2, 3, 4);
-    my @b = (3, 4, 5);
-    my @r = Ronly(\@a, \@b); # (5)
+    my @a = (1, 2, 3, 4, 5);
+    my @b = (3, 4, 5, 6, 7);
+    my @c = (5, 6, 7, 8);
+    my @r = Ronly(\@a, \@b, \@c);           # (8)  -- 5,6,7 also appear in @a or @b
 
 ## rbinom
 
@@ -4404,6 +4406,8 @@ raw values (no cell number formats), matching the round-trip behaviour of
 
 ## 0.24
 
+`Ronly` now accepts one or more array references (like `Lonly`), returning the values found only in the **last** reference; the two-argument form is unchanged, and `Ronly(@refs)` equals `Lonly(reverse @refs)`.
+
 `interpolate` gains full `pandas.DataFrame.interpolate` method parity: `nearest`, `zero`, `slinear`, `pad`/`ffill`, `bfill`/`backfill`, `quadratic`, `cubic`, `cubicspline`, `pchip`, `akima`, `barycentric`, `krogh`, `polynomial`, `spline`, and `index`/`values`/`time`, plus an `x` argument for custom abscissae and an `order` argument. Matched to pandas/scipy within 1e-6.
 
 `t/transpose.t` no longer loads `Devel::Confess` in its leak tests: its `$SIG{__DIE__}` stack-trace objects landed in `$@` and were reported as leaks by `Test::LeakTrace` on the croak paths under older perls (e.g. 5.12.3). The die-path leak checks now also clear `$@` so the exception object cannot be miscounted.
@@ -4414,7 +4418,7 @@ raw values (no cell number formats), matching the round-trip behaviour of
 
 `fisher_test` can compute larger tables than just 2x2
 
-`read_table` now reads xlsx files about 19% faster.
+`read_table` now reads xlsx files significantly faster.
 
 Addition of `bfill`, `drop_duplicates`, `ffill`, `melt`, and `pivot_table`
 
@@ -4610,8 +4614,7 @@ with the module's own `ccflags`.
 | Three-way `NV` comparator | `compare_rank`, `cmp_rank_item`, `cmp_rank_info`, `compare_NVs` | single `cmp_nv3` (reads the leading `NV` member, valid for `RankInfo`/`RankItem`/raw `NV`) |
 | Average-rank routine | `compute_ranks` + `compare_index` restoration sort | existing `rank_data` (scatters ranks into `out[idx]`, no second sort) |
 | String comparator | `cmp_string_wt`, `lm_str_qsort` (byte-identical) | single `cmp_string_wt` |
-| Set difference | `Lonly` + `Ronly` (duplicated bodies) | shared `set_difference()`; `Ronly` passes the arrays swapped |
-| Multiplicity filter | `intersection` + `get_unique` (~90% shared) | shared `set_multiplicity()` with an "all vs. one" mode flag |
+| Multiplicity filter & set difference | `intersection` + `get_unique` (~90% shared); `Lonly`/`Ronly` duplicated bodies; a separate `set_difference()` | one shared `set_multiplicity()` with an "all vs. one" mode flag and a `from_last` flag: `intersection` (all), `Lonly` (one, first array), `Ronly` (one, last array) |
 
 All merges were confirmed behavior-preserving: the collapsed comparators are
 equivalent on ordinary values, `NaN`, and infinities, and `compute_ranks` and

@@ -3437,48 +3437,6 @@ static NV st_qtukey(NV p, NV rr, NV cc, NV df)
  * XPUSHs/EXTEND operate on the local `sp`, hence the in/out pointer.
  */
 
-/* Backs Ronly(): the values in `keep` (deduped, first-seen order) that do not
- * occur in `other`. The caller passes `keep`/`other` in whichever order selects
- * the side to subtract; Ronly passes the two arrays swapped. (This engine also
- * backed a former two-arg Lonly(), now retired to old/Lonly.xs.) */
-static SV** set_difference(pTHX_ SV **sp, SV *keep_sv, SV *other_sv,
-                           const char *keep_side, const char *other_side,
-                           const char *name, int gimme) {
-	HV *restrict inOther = (HV*)sv_2mortal((SV*)newHV());
-	HV *restrict seen    = (HV*)sv_2mortal((SV*)newHV());
-	AV *restrict other   = (AV*)SvRV(other_sv);
-	AV *restrict keep    = (AV*)SvRV(keep_sv);
-	size_t olen = (size_t)(av_len(other) + 1);
-	size_t klen_a, n = 0;
-	/* keep_side/other_side name the physical (left/right) position of each
-	 * array so the croak matches how the value was passed, regardless of the
-	 * keep/subtract role (Ronly swaps the roles but not the positions). */
-	for (size_t j = 0; j < olen; j++) {
-		SV **restrict tv = av_fetch(other, j, 0);
-		STRLEN klen; const char *restrict key; I32 hklen;
-		if (!(tv && SvOK(*tv)))
-			croak("%s: undefined value in %s array ref at index %" UVuf, name, other_side, (UV)j);
-		key   = SvPV(*tv, klen);
-		hklen = SvUTF8(*tv) ? -(I32)klen : (I32)klen;
-		(void)hv_store(inOther, key, hklen, &PL_sv_undef, 0);
-	}
-	klen_a = (size_t)(av_len(keep) + 1);
-	for (size_t j = 0; j < klen_a; j++) {
-		SV **restrict tv = av_fetch(keep, j, 0);
-		STRLEN klen; const char *restrict key; I32 hklen;
-		if (!(tv && SvOK(*tv)))
-			croak("%s: undefined value in %s array ref at index %" UVuf, name, keep_side, (UV)j);
-		key   = SvPV(*tv, klen);
-		hklen = SvUTF8(*tv) ? -(I32)klen : (I32)klen;
-		if (hv_exists(inOther, key, hklen)) continue;   /* present in other set   */
-		if (hv_exists(seen,    key, hklen)) continue;   /* dedup within keep set  */
-		(void)hv_store(seen, key, hklen, &PL_sv_undef, 0);
-		n++;
-		if (gimme != G_SCALAR) XPUSHs(sv_2mortal(newSVsv(*tv)));
-	}
-	if (gimme == G_SCALAR) XPUSHs(sv_2mortal(newSVuv(n)));
-	return sp;
-}
 /* Backs is_equivalent(). Returns 1 iff all `nrefs` array refs share one
  * distinct-value set (multiplicity/order ignored), matching List::Compare's
  * is_LequivalentR() generalised to N lists; else 0. Equivalence is transitive,
@@ -3529,17 +3487,19 @@ static int set_equivalent(pTHX_ SV **restrict args, size_t nrefs, const char *na
 	}
 	return 1;
 }
-/* Backs intersection() and Lonly(). For every distinct value it counts
+/* Backs intersection(), Lonly() and Ronly(). For every distinct value it counts
  * how many of the input arrays contain it (per-array dedup via `loc`), building
- * the candidate list `order` from the FIRST array only, in first-appearance
- * order, then emits the candidates whose count matches the wanted multiplicity:
+ * the candidate list `order` from one chosen array in first-appearance order,
+ * then emits the candidates whose count matches the wanted multiplicity:
  *   want_all != 0 -> count == nrefs (in every array: intersection)
- *   want_all == 0 -> count == 1     (in the first array and no other: Lonly)
- * Both semantics only ever return values present in the first array, so
- * collecting candidates from the first array is correct and matches the
- * historical behaviour of both functions. */
+ *   want_all == 0 -> count == 1     (in the chosen array and no other)
+ * `from_last` picks which array supplies the candidates: the FIRST (0) for
+ * intersection/Lonly, or the LAST (1) for Ronly. With want_all == 0 that makes
+ * Lonly "only in the first array" and Ronly "only in the last array", so the
+ * two-array Ronly(a,b) still equals Lonly(b,a). Every emitted value is present
+ * in the chosen array, so drawing candidates from it is correct for all three. */
 static SV** set_multiplicity(pTHX_ SV **sp, SV **restrict args, size_t nrefs,
-                             int want_all, const char *name, int gimme) {
+                             int want_all, int from_last, const char *name, int gimme) {
 	HV *restrict count = (HV*)sv_2mortal((SV*)newHV());
 	AV *restrict order = (AV*)sv_2mortal((SV*)newAV());
 	size_t n = 0, olen;
@@ -3563,7 +3523,7 @@ static SV** set_multiplicity(pTHX_ SV **sp, SV **restrict args, size_t nrefs,
 			(void)hv_store(loc, key, hklen, &PL_sv_undef, 0);
 			cv = hv_fetch(count, key, hklen, 1);
 			if (cv && *cv) sv_setiv(*cv, SvOK(*cv) ? SvIV(*cv) + 1 : 1);
-			if (i == 0)                                 /* candidates: first ref only */
+			if (i == (from_last ? nrefs - 1 : 0))       /* candidates: chosen ref only */
 				av_push(order, newSVsv(*tv));
 		}
 	}
@@ -10929,7 +10889,7 @@ void intersection(...)
 	PPCODE:
 		if (items == 0)
 			croak("intersection needs >= 1 array ref");
-		SP = set_multiplicity(aTHX_ SP, &ST(0), (size_t)items, 1,
+		SP = set_multiplicity(aTHX_ SP, &ST(0), (size_t)items, 1, 0,
 		                      "intersection", GIMME_V);
 
 SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
@@ -15196,20 +15156,18 @@ void Lonly(...)
 	PPCODE:
 		if (items == 0)
 			croak("Lonly needs >= 1 array ref");
-		SP = set_multiplicity(aTHX_ SP, &ST(0), (size_t)items, 0,
+		SP = set_multiplicity(aTHX_ SP, &ST(0), (size_t)items, 0, 0,
 		                      "Lonly", GIMME_V);
 
 void Ronly(...)
-	PROTOTYPE: $$
+	PROTOTYPE: @
 	PPCODE:
-		if (items != 2)
-			croak("Ronly needs exactly 2 array refs (got %" UVuf ")", (UV)items);
-		if (!(SvROK(ST(0)) && SvTYPE(SvRV(ST(0))) == SVt_PVAV))
-			croak("Ronly: first (left) argument is not an array reference");
-		if (!(SvROK(ST(1)) && SvTYPE(SvRV(ST(1))) == SVt_PVAV))
-			croak("Ronly: second (right) argument is not an array reference");
-		/* Ronly(a,b) == Lonly(b,a): keep = right (ST1), other = left (ST0) */
-		SP = set_difference(aTHX_ SP, ST(1), ST(0), "right", "left", "Ronly", GIMME_V);
+		if (items == 0)
+			croak("Ronly needs >= 1 array ref");
+		/* mirror of Lonly: values only in the LAST array (from_last = 1), so
+		 * the two-array Ronly(a,b) still equals Lonly(b,a). */
+		SP = set_multiplicity(aTHX_ SP, &ST(0), (size_t)items, 0, 1,
+		                      "Ronly", GIMME_V);
 
 void is_equivalent(...)
 	PROTOTYPE: @
