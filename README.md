@@ -2518,12 +2518,6 @@ same, but `2` and `"2.0"` are not.
 - **`undef` inside a list croaks** — decide what a missing value means before
   calling, rather than letting it silently match.
 
-### Why it's cheap
-
-One pass over each list. Memory is just the first list's set plus one small
-reusable set for de-duping the list currently being checked. A mismatch bails
-out immediately, so unequal lists are usually rejected quickly
-
 ## kruskal_test
 
 Essentially the test determines if all groups have the same median (same distribution) (an excellent review is at https://library.virginia.edu/data/articles/getting-started-with-the-kruskal-wallis-test)
@@ -4405,6 +4399,12 @@ raw values (no cell number formats), matching the round-trip behaviour of
 | `xlsx.freeze.cols` | `0` (none) | Excel | number of leading columns to freeze in place (freeze panes) |
 
 # Changes
+
+## 0.25 2026-07-19 CDT
+
+https://www.cpantesters.org/cpan/report/3376f80e-83bf-11f1-a5f3-44496e8775ea
+
+Fixed a use-after-free in `fisher_test` on the hash (HoH) input path: the "row is missing column key" error freed its scratch arrays and then read the key strings back out of them to build the croak message. This was harmless on glibc but crashed (`SIGBUS`) under stricter allocators such as FreeBSD's, failing `t/fisher_test.t` on CPAN smokers. The key pointers are now captured before the arrays are freed.
 
 ## 0.24 2026-07-19 CDT
 

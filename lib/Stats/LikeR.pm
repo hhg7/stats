@@ -2,9 +2,8 @@
 # ABSTRACT: Get basic statistical functions, like in R, but with Perl using XS for performance
 require 5.010;
 use strict;
-use feature 'say';
 package Stats::LikeR;
-our $VERSION = 0.24;
+our $VERSION = 0.25;
 require XSLoader;
 use warnings FATAL => 'all';
 use autodie ':default';
@@ -7030,12 +7029,6 @@ calling, rather than letting it silently match.
 
 =back
 
-=head3 Why it's cheap
-
-One pass over each list. Memory is just the first list's set plus one small
-reusable set for de-duping the list currently being checked. A mismatch bails
-out immediately, so unequal lists are usually rejected quickly
-
 =head2 kruskal_test
 
 Essentially the test determines if all groups have the same median (same distribution) (an excellent review is at https://library.virginia.edu/data/articles/getting-started-with-the-kruskal-wallis-test)
@@ -9889,6 +9882,12 @@ C<read_table>.
 
 
 =head1 Changes
+
+=head2 0.25 2026-07-19 CDT
+
+https://www.cpantesters.org/cpan/report/3376f80e-83bf-11f1-a5f3-44496e8775ea
+
+Fixed a use-after-free in C<fisher_test> on the hash (HoH) input path: the "row is missing column key" error freed its scratch arrays and then read the key strings back out of them to build the croak message. This was harmless on glibc but crashed (C<SIGBUS>) under stricter allocators such as FreeBSD's, failing C<t/fisher_test.t> on CPAN smokers. The key pointers are now captured before the arrays are freed.
 
 =head2 0.24 2026-07-19 CDT
 

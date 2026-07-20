@@ -13095,8 +13095,14 @@ CODE:
 		   for (unsigned int cc = 0; cc < ncol; cc++) {
 			   SV **restrict vp = hv_fetch(in, cols[cc].k, (I32)strlen(cols[cc].k), 0);
 			   if (!vp) {
+				   /* Capture the key pointers (they point into still-live mortal SV
+				    * buffers, not into rows/cols) before freeing the arrays --
+				    * otherwise croak() reads freed memory, which SIGBUSes on
+				    * strict allocators such as FreeBSD's. */
+				   const char *restrict rk = rows[rr].k;
+				   const char *restrict ck = cols[cc].k;
 				   Safefree(cells); Safefree(cols); Safefree(rows);
-				   croak("Row '%s' is missing column key '%s'", rows[rr].k, cols[cc].k);
+				   croak("Row '%s' is missing column key '%s'", rk, ck);
 			   }
 			   cells[rr * ncol + cc] = ft_cell(aTHX_ *vp, "hash cell");
 		   }

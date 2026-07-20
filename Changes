@@ -2,6 +2,12 @@ Revision history for Stats-LikeR
 
    # Changes
 
+0.25 2026-07-19 CDT
+
+ - https://www.cpantesters.org/cpan/report/3376f80e-83bf-11f1-a5f3-44496e8775ea
+
+ - Fixed a use-after-free in `fisher_test` on the hash (HoH) input path: the "row is missing column key" error freed its scratch arrays and then read the key strings back out of them to build the croak message. This was harmless on glibc but crashed (`SIGBUS`) under stricter allocators such as FreeBSD's, failing `t/fisher_test.t` on CPAN smokers. The key pointers are now captured before the arrays are freed.
+
 0.24 2026-07-19 CDT
 
  - `interpolate`'s numeric core moved from pure Perl to XS (`_interp_column_xs`): ~5× faster for `linear` on large columns, ~11× for `pchip`, and ~50× for the spline methods whose dense solve dominates. Results are unchanged (bit-for-bit versus the former Perl kernels).

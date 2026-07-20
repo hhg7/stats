@@ -3391,12 +3391,6 @@ calling, rather than letting it silently match.
 
 =back
 
-=head3 Why it's cheap
-
-One pass over each list. Memory is just the first list's set plus one small
-reusable set for de-duping the list currently being checked. A mismatch bails
-out immediately, so unequal lists are usually rejected quickly
-
 =head2 kruskal_test
 
 Essentially the test determines if all groups have the same median (same distribution) (an excellent review is at https://library.virginia.edu/data/articles/getting-started-with-the-kruskal-wallis-test)
@@ -6251,7 +6245,11 @@ C<read_table>.
 
 =head1 Changes
 
-=head2 0.24
+=head2 0.25
+
+Fixed a use-after-free in C<fisher_test> on the hash (HoH) input path: the "row is missing column key" error freed its scratch arrays and then read the key strings back out of them to build the croak message. This was harmless on glibc but crashed (C<SIGBUS>) under stricter allocators such as FreeBSD's, failing C<t/fisher_test.t> on CPAN smokers. The key pointers are now captured before the arrays are freed.
+
+=head2 0.24 2026-07-19 CDT
 
 C<interpolate>'s numeric core moved from pure Perl to XS (C<_interp_column_xs>): ~5× faster for C<linear> on large columns, ~11× for C<pchip>, and ~50× for the spline methods whose dense solve dominates. Results are unchanged (bit-for-bit versus the former Perl kernels).
 

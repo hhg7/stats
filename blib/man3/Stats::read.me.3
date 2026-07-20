@@ -58,7 +58,7 @@
 .\" ========================================================================
 .\"
 .IX Title "read.me 3"
-.TH read.me 3 2026-07-19 "perl v5.44.0" "User Contributed Perl Documentation"
+.TH read.me 3 2026-07-20 "perl v5.44.0" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -2949,13 +2949,6 @@ Every argument must be an \fBarray ref\fR; anything else croaks.
 .IP \(bu 4
 \&\fR\f(CB\*(C`undef\*(C'\fR\fB inside a list croaks\fR — decide what a missing value means before
 calling, rather than letting it silently match.
-.PP
-\fIWhy it\*(Aqs cheap\fR
-.IX Subsection "Why it's cheap"
-.PP
-One pass over each list. Memory is just the first list\*(Aqs set plus one small
-reusable set for de\-duping the list currently being checked. A mismatch bails
-out immediately, so unequal lists are usually rejected quickly
 .SS kruskal_test
 .IX Subsection "kruskal_test"
 Essentially the test determines if all groups have the same median (same distribution) (an excellent review is at https://library.virginia.edu/data/articles/getting\-started\-with\-the\-kruskal\-wallis\-test)
@@ -5031,8 +5024,11 @@ raw values (no cell number formats), matching the round\-trip behaviour of
 .IX Subsection "Options"
 .SH Changes
 .IX Header "Changes"
-.SS 0.24
-.IX Subsection "0.24"
+.SS 0.25
+.IX Subsection "0.25"
+Fixed a use\-after\-free in \f(CW\*(C`fisher_test\*(C'\fR on the hash (HoH) input path: the "row is missing column key" error freed its scratch arrays and then read the key strings back out of them to build the croak message. This was harmless on glibc but crashed (\f(CW\*(C`SIGBUS\*(C'\fR) under stricter allocators such as FreeBSD\*(Aqs, failing \f(CW\*(C`t/fisher_test.t\*(C'\fR on CPAN smokers. The key pointers are now captured before the arrays are freed.
+.SS "0.24 2026\-07\-19 CDT"
+.IX Subsection "0.24 2026-07-19 CDT"
 \&\f(CW\*(C`interpolate\*(C'\fR\*(Aqs numeric core moved from pure Perl to XS (\f(CW\*(C`_interp_column_xs\*(C'\fR): ~5× faster for \f(CW\*(C`linear\*(C'\fR on large columns, ~11× for \f(CW\*(C`pchip\*(C'\fR, and ~50× for the spline methods whose dense solve dominates. Results are unchanged (bit\-for\-bit versus the former Perl kernels).
 .PP
 \&\f(CW\*(C`Ronly\*(C'\fR now accepts one or more array references (like \f(CW\*(C`Lonly\*(C'\fR), returning the values found only in the \fBlast\fR reference; the two\-argument form is unchanged, and \f(CWRonly(@refs)\fR equals \f(CW\*(C`Lonly(reverse @refs)\*(C'\fR.
