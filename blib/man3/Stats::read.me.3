@@ -58,7 +58,7 @@
 .\" ========================================================================
 .\"
 .IX Title "read.me 3"
-.TH read.me 3 2026-07-20 "perl v5.44.0" "User Contributed Perl Documentation"
+.TH read.me 3 2026-07-21 "perl v5.44.0" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -854,6 +854,21 @@ Whole\-column and arrayref values must have exactly one entry per row; a length 
 \&\fBIt modifies your data frame.\fR If you need to keep the original, pass a copy: \f(CW\*(C`assign(clone($df), ...)\*(C'\fR.
 .IP \(bu 4
 Reusing a column name \fBoverwrites\fR that column.
+.SS auc
+.IX Subsection "auc"
+The area under the ROC curve (the c\-statistic) for scores and 0/1 labels: the
+chance a random positive scores higher than a random negative. \f(CW1.0\fR is perfect,
+\&\f(CW0.5\fR is a coin flip.
+.PP
+.Vb 1
+\& use Stats::LikeR \*(Aqauc\*(Aq;
+\& 
+\& my $a = auc(\e@scores, \e@labels);          # e.g. 0.848
+.Ve
+.PP
+Options: \f(CW\*(C`positive\*(C'\fR (which label is the positive class, default \f(CW1\fR) and
+\&\f(CW\*(C`direction\*(C'\fR (\f(CW\*(Aq>\*(Aq\fR = higher score is more positive, the default; \f(CW\*(Aq<\*(Aq\fR flips it).
+For the full curve and a confidence interval, see #roc.
 .SS bfill
 .IX Subsection "bfill"
 Back\-fill NA (undef) cells with the next valid value seen below them along the
@@ -1292,6 +1307,28 @@ More parts than elements gives empty trailing groups, losing nothing:
 \& my @groups = chunk([1, 2, 3], parts => 5);
 \& # 5 groups; flattening them back gives (1, 2, 3)
 .Ve
+.SS cmh_test
+.IX Subsection "cmh_test"
+The Cochran–Mantel–Haenszel test: pool several 2×2 tables (one per \fIstratum\fR)
+into a single test of association while adjusting for the stratifying variable —
+e.g. an exposure/outcome odds ratio adjusted for study site. Same as R\*(Aqs
+\&\f(CW\*(C`mantelhaen.test\*(C'\fR.
+.PP
+.Vb 1
+\& use Stats::LikeR \*(Aqcmh_test\*(Aq;
+\& 
+\& my $r = cmh_test([ [10,3,5,12],     # stratum 1 as [a,b,c,d]
+\&                    [20,6,8,15],     # stratum 2
+\&                    [ 7,4,9,11] ]);  # stratum 3
+\& 
+\& print $r\->{p_value};    # combined test across strata
+\& print $r\->{estimate};   # Mantel–Haenszel common odds ratio
+.Ve
+.PP
+Each 2×2 uses the same layout as #epi_2x2. Options: \f(CW\*(C`correct\*(C'\fR
+(continuity correction, default \f(CW1\fR) and \f(CW\*(C`conf_level\*(C'\fR (default \f(CW0.95\fR). The
+result also has \f(CW\*(C`statistic\*(C'\fR (chi\-squared), \f(CW\*(C`parameter\*(C'\fR (df = 1), \f(CW\*(C`conf_int\*(C'\fR (for
+the common OR), and \f(CW\*(C`k\*(C'\fR (number of strata).
 .SS col2col
 .IX Subsection "col2col"
 Apply a \fBtwo\-column function\fR to every pair of columns in a table and collect
@@ -1779,6 +1816,31 @@ or
 .Vb 1
 \& cov($array1, $array2, \*(Aqkendall\*(Aq)
 .Ve
+.SS coxph
+.IX Subsection "coxph"
+Cox proportional\-hazards regression: how covariates raise or lower the hazard
+(the risk of an event over time). It is the survival\-analysis counterpart of
+#glm and reports hazard ratios, like R\*(Aqs \f(CW\*(C`survival::coxph\*(C'\fR (Efron ties).
+.PP
+Give times, an event flag (1 = event, 0 = censored), and one or more covariates
+(a single \f(CW\*(C`\e@x\*(C'\fR, or \f(CW\*(C`[\e@x1, \e@x2, ...]\*(C'\fR):
+.PP
+.Vb 1
+\& use Stats::LikeR \*(Aqcoxph\*(Aq;
+\& 
+\& my $fit = coxph(\e@time, \e@status, [\e@age, \e@sex],
+\&                 names => [\*(Aqage\*(Aq, \*(Aqsex\*(Aq]);
+\& 
+\& print $fit\->{exp_coef}[0];    # hazard ratio for age
+\& print $fit\->{p_value}[0];     # its p\-value
+.Ve
+.PP
+Options: \f(CW\*(C`names\*(C'\fR, \f(CW\*(C`ties\*(C'\fR (\f(CW\*(Aqefron\*(Aq\fR default, or \f(CW\*(Aqbreslow\*(Aq\fR), \f(CW\*(C`conf_level\*(C'\fR
+(default \f(CW0.95\fR), \f(CW\*(C`maxit\*(C'\fR. The result has parallel per\-covariate arrays \f(CW\*(C`coef\*(C'\fR
+(log\-HR), \f(CW\*(C`exp_coef\*(C'\fR (HR), \f(CW\*(C`se\*(C'\fR, \f(CW\*(C`z\*(C'\fR, \f(CW\*(C`p_value\*(C'\fR, \f(CW\*(C`conf_int\*(C'\fR (HR scale), plus
+model\-level \f(CW\*(C`loglik\*(C'\fR, \f(CW\*(C`lr_stat\*(C'\fR/\f(CW\*(C`lr_p_value\*(C'\fR (likelihood\-ratio test), \f(CW\*(C`n\*(C'\fR,
+\&\f(CW\*(C`nevent\*(C'\fR, and \f(CW\*(C`converged\*(C'\fR. See #survfit and
+#logrank_test.
 .SS csort
 .IX Subsection "csort"
 Sort a data frame by a column or a custom comparator, returning a new
@@ -2105,6 +2167,33 @@ values (ambiguous HoA vs HoH).
 An empty AoH or HoA returns empty rather than erroring.
 .IP \(bu 4
 HoH results come back in hash order, since HoH rows are unordered.
+.SS epi_2x2
+.IX Subsection "epi_2x2"
+The standard 2×2 effect measures — odds ratio, risk ratio, and risk difference,
+each with a confidence interval, plus number needed to treat — for one
+exposure×outcome table. Rows are exposure, columns are outcome:
+.PP
+.Vb 3
+\&            outcome+   outcome\-
+\&     exp+       a          b
+\&     exp\-       c          d
+.Ve
+.PP
+Pass the four counts (or a \f(CW\*(C`[a,b,c,d]\*(C'\fR / \f(CW\*(C`[[a,b],[c,d]]\*(C'\fR array ref):
+.PP
+.Vb 1
+\& use Stats::LikeR \*(Aqepi_2x2\*(Aq;
+\& 
+\& my $r = epi_2x2(30, 70, 20, 80);
+\& print $r\->{odds_ratio};             # 1.714
+\& print "@{ $r\->{odds_ratio_ci} }";   # 0.895 3.285
+.Ve
+.PP
+Options: \f(CW\*(C`conf_level\*(C'\fR (default \f(CW0.95\fR) and \f(CW\*(C`correct\*(C'\fR (add 0.5 to every cell,
+done automatically when a cell is 0). Result keys: \f(CW\*(C`odds_ratio\*(C'\fR, \f(CW\*(C`risk_ratio\*(C'\fR,
+\&\f(CW\*(C`risk_diff\*(C'\fR (each with a matching \f(CW*_ci\fR), \f(CW\*(C`risk_exposed\*(C'\fR, \f(CW\*(C`risk_unexposed\*(C'\fR, and
+\&\f(CW\*(C`nnt\*(C'\fR. For a significance test use #fisher_test or
+#chisq_test; to adjust across strata use #cmh_test.
 .SS ffill
 .IX Subsection "ffill"
 Forward\-fill NA (undef) cells with the last valid value seen above them along
@@ -3133,6 +3222,24 @@ the dot operator also works:
 .Vb 1
 \& $lm = lm(formula => \*(Aqy ~ .\*(Aq, data => $dot_data);
 .Ve
+.SS logrank_test
+.IX Subsection "logrank_test"
+The log\-rank (Mantel–Cox) test: do the survival curves of two or more groups
+differ? It needs no modelling assumptions. Same as R\*(Aqs \f(CW\*(C`survival::survdiff\*(C'\fR.
+.PP
+Give times, an event flag (1 = event, 0 = censored), and a group label per row:
+.PP
+.Vb 1
+\& use Stats::LikeR \*(Aqlogrank_test\*(Aq;
+\& 
+\& my $r = logrank_test(\e@time, \e@status, \e@group);
+\& print $r\->{p_value};
+.Ve
+.PP
+Result keys: \f(CW\*(C`statistic\*(C'\fR (chi\-squared), \f(CW\*(C`parameter\*(C'\fR (df = groups − 1),
+\&\f(CW\*(C`p_value\*(C'\fR, \f(CW\*(C`observed\*(C'\fR and \f(CW\*(C`expected\*(C'\fR events per group, and \f(CW\*(C`groups\*(C'\fR. See
+#survfit for the curves and #coxph to adjust for
+covariates.
 .SS Lonly
 .IX Subsection "Lonly"
 .Vb 2
@@ -4233,6 +4340,27 @@ Make a normal distribution of numbers, with pre\-set mean \f(CW\*(C`mean\*(C'\fR
 \& my ($rmean, $sd, $n) = (10, 2, 9999);
 \& my $normals = rnorm( n => $n, mean => $rmean, sd => $sd);
 .Ve
+.SS roc
+.IX Subsection "roc"
+Build a ROC curve from predicted scores and 0/1 labels: the AUC (c\-statistic)
+with a DeLong confidence interval, the sensitivity/specificity at every
+threshold, and the best cut\-off by Youden\*(Aqs J. The standard way to judge how
+well a score separates cases from non\-cases.
+.PP
+.Vb 1
+\& use Stats::LikeR \*(Aqroc\*(Aq;
+\& 
+\& my $r = roc(\e@scores, \e@labels);
+\& print $r\->{auc};                 # 0.848
+\& print "@{ $r\->{auc_ci} }";       # 0.649 1.000
+\& my $cut = $r\->{youden};          # best operating point
+\& print "$cut\->{threshold}: sens=$cut\->{sensitivity} spec=$cut\->{specificity}";
+.Ve
+.PP
+Options: \f(CW\*(C`positive\*(C'\fR (positive\-class label, default \f(CW1\fR), \f(CW\*(C`direction\*(C'\fR (\f(CW\*(Aq>\*(Aq\fR
+default, or \f(CW\*(Aq<\*(Aq\fR), \f(CW\*(C`conf_level\*(C'\fR (default \f(CW0.95\fR). Result keys: \f(CW\*(C`auc\*(C'\fR, \f(CW\*(C`auc_se\*(C'\fR,
+\&\f(CW\*(C`auc_ci\*(C'\fR, \f(CW\*(C`n_pos\*(C'\fR, \f(CW\*(C`n_neg\*(C'\fR, \f(CW\*(C`youden\*(C'\fR, and \f(CW\*(C`curve\*(C'\fR (one point per threshold). For
+just the number, use #auc.
 .SS rownames
 .IX Subsection "rownames"
 Return the row names of a data frame, as a list (like R\*(Aqs \f(CW\*(C`rownames\*(C'\fR).
@@ -4476,6 +4604,47 @@ Non\-numeric and undefined cells are ignored: they never count toward \f(CW\*(C`
 .Ve
 .PP
 \&\f(CW\*(C`summary\*(C'\fR prints the table (unless \f(CW\*(C`return_only\*(C'\fR is set) and returns it as a string. \f(CW\*(C`nrows\*(C'\fR (synonyms \f(CW\*(C`nrow\*(C'\fR, \f(CW\*(C`n\*(C'\fR, \f(CW\*(C`rows\*(C'\fR) caps the rows shown, and the \f(CW\*(C`view\*(C'\fR display options \f(CW\*(C`na\*(C'\fR, \f(CW\*(C`color\*(C'\fR, \f(CW\*(C`colors\*(C'\fR, \f(CW\*(C`max_width\*(C'\fR, \f(CW\*(C`ellipsis\*(C'\fR, \f(CW\*(C`gap\*(C'\fR, \f(CW\*(C`width\*(C'\fR, \f(CW\*(C`to\*(C'\fR, and \f(CW\*(C`return_only\*(C'\fR all apply.
+.SS survfit
+.IX Subsection "survfit"
+The Kaplan–Meier survival curve: the probability of surviving past each time,
+estimated from right\-censored data. The starting point of most survival
+analysis; matches R\*(Aqs \f(CW\*(C`survival::survfit\*(C'\fR.
+.PP
+Give times and an event flag (1 = event, 0 = censored); add \f(CW\*(C`group\*(C'\fR for one
+curve per group:
+.PP
+.Vb 1
+\& use Stats::LikeR \*(Aqsurvfit\*(Aq;
+\& 
+\& my $f = survfit(\e@time, \e@status, group => \e@arm);
+\& my $s = $f\->{strata}{treatment};    # keyed by group label (\*(Aq\*(Aq if no group)
+\& print $s\->{median};                 # median survival time
+\& print "@{ $s\->{surv} }";            # S(t) at each time
+.Ve
+.PP
+Option \f(CW\*(C`conf_level\*(C'\fR (default \f(CW0.95\fR). Each stratum has arrays \f(CW\*(C`time\*(C'\fR, \f(CW\*(C`n_risk\*(C'\fR,
+\&\f(CW\*(C`n_event\*(C'\fR, \f(CW\*(C`n_censor\*(C'\fR, \f(CW\*(C`surv\*(C'\fR, \f(CW\*(C`std_err\*(C'\fR, \f(CW\*(C`lower\*(C'\fR, \f(CW\*(C`upper\*(C'\fR, plus \f(CW\*(C`median\*(C'\fR, \f(CW\*(C`n\*(C'\fR,
+and \f(CW\*(C`events\*(C'\fR. Compare curves with #logrank_test; model
+covariate effects with #coxph.
+.SS table_one
+.IX Subsection "table_one"
+The stratified descriptive "Table 1" that opens most clinical papers: for each
+variable, a per\-group summary — \f(CW\*(C`mean (sd)\*(C'\fR for numbers, \f(CW\*(C`n (percent)\*(C'\fR for
+categories — plus a group\-comparison p\-value.
+.PP
+.Vb 1
+\& use Stats::LikeR \*(Aqtable_one\*(Aq;
+\& 
+\& my $t1 = table_one(\e@cohort, by => \*(Aqarm\*(Aq);
+\& print view($t1);       # returns a plain AoH you can view() or write_table()
+.Ve
+.PP
+Types are detected automatically (all\-numeric = continuous, else categorical)
+and the test follows: t\-test / ANOVA for continuous (Wilcoxon / Kruskal with
+\&\f(CW\*(C`nonparametric => 1\*(C'\fR), chi\-squared for categorical. Options: \f(CW\*(C`by\*(C'\fR, \f(CW\*(C`vars\*(C'\fR
+(which columns), \f(CW\*(C`types\*(C'\fR (override a column\*(Aqs type), \f(CW\*(C`nonparametric\*(C'\fR, \f(CW\*(C`digits\*(C'\fR,
+\&\f(CW\*(C`pct_digits\*(C'\fR. Each returned row has \f(CW\*(C`variable\*(C'\fR, \f(CW\*(C`level\*(C'\fR, one column per group,
+\&\f(CW\*(C`Overall\*(C'\fR, and — on a variable\*(Aqs row — \f(CW\*(C`p_value\*(C'\fR and \f(CW\*(C`test\*(C'\fR.
 .SS t_test
 .IX Subsection "t_test"
 There are 1\-sample and 2\-sample t\-tests, from one or two arrays:
@@ -5024,6 +5193,9 @@ raw values (no cell number formats), matching the round\-trip behaviour of
 .IX Subsection "Options"
 .SH Changes
 .IX Header "Changes"
+.SS 0.27
+.IX Subsection "0.27"
+speed improvements in calculation of Kendall tau and p\-value.  Improvement of writing xlsx files that won\*(Aqt show in time, but pure waste was removed.
 .SS "0.26 2026\-07\-20 CDT"
 .IX Subsection "0.26 2026-07-20 CDT"
 https://www.cpantesters.org/cpan/report/fc7d01a0\-83f4\-11f1\-b543\-8a9ac547de9a

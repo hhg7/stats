@@ -10,7 +10,7 @@ use autodie ':default';
 use Exporter 'import';
 use Scalar::Util qw(reftype looks_like_number);
 XSLoader::load('Stats::LikeR', $VERSION);
-our @EXPORT_OK = qw(add_data agg anova aoh2hoa aoh2hoh aov assign bfill binom_test cfilter chisq_test chunk col col2col colnames concat cor cor_test cov csort dnorm drop_cols drop_duplicates dropna ffill fillna filter fisher_test get_union glm group_by hoa2aoh hoa2hoh hoh2hoa hist interpolate intersection is_equivalent kruskal_test ks_test Lonly ljoin lm map_cell matrix max mean median melt merge min mode ncol nrow oneway_test p_adjust pivot_table pnorm power_t_test predict prcomp ptukey qcut qtukey quantile rank Ronly rbind rbinom read_table rename_cols rnorm rownames runif sample scale sd select_cols seq shapiro_test sum summary t_test transpose TukeyHSD uniq vals value_counts var var_test view wilcox_test write_table);
+our @EXPORT_OK = qw(add_data agg anova aoh2hoa aoh2hoh aov assign auc bfill binom_test cfilter chisq_test chunk col col2col colnames concat cmh_test cor cor_test cov csort dnorm drop_cols drop_duplicates dropna epi_2x2 ffill fillna filter fisher_test get_union glm group_by hoa2aoh hoa2hoh hoh2hoa hist interpolate intersection is_equivalent kruskal_test ks_test Lonly ljoin lm map_cell matrix max mean median melt merge min mode ncol nrow oneway_test p_adjust pivot_table pnorm power_t_test predict prcomp ptukey qcut qtukey quantile rank roc Ronly rbind rbinom read_table rename_cols rnorm rownames runif sample scale sd select_cols seq shapiro_test sum summary survfit logrank_test coxph table_one t_test transpose TukeyHSD uniq vals value_counts var var_test view wilcox_test write_table);
 our @EXPORT = @EXPORT_OK;
 
 # colnames($df) / rownames($df)
@@ -3634,6 +3634,134 @@ sub _tukey_col {
 	}
 	die 'TukeyHSD: unsupported data shape';
 }
+
+# ---- table_one: a stratified descriptive "Table 1" -----------------------
+# Classify a column's non-missing values: 'continuous' if every one looks
+# numeric, else 'categorical'.
+sub _t1_classify {
+	my ($vals) = @_;
+	my @def = grep { defined } @$vals;
+	return 'categorical' unless @def;
+	for (@def) { return 'categorical' unless looks_like_number($_) }
+	return 'continuous';
+}
+
+# p-value + test label for a continuous variable across >=2 groups.
+# @$byg is one arrayref of (numeric, defined) values per group.
+sub _t1_cont_p {
+	my ($byg, $nonpar) = @_;
+	my @g = grep { @$_ >= 1 } @$byg;
+	return (undef, undef) if @g < 2;
+	if (@g == 2) {
+		my $r = $nonpar ? wilcox_test($g[0], $g[1]) : t_test($g[0], $g[1]);
+		return ($r->{p_value}, $nonpar ? 'wilcoxon' : 't-test');
+	}
+	# >2 groups: Kruskal-Wallis (nonparametric) or one-way ANOVA
+	my (@x, @lab);
+	for my $i (0 .. $#g) { push @x, @{ $g[$i] }; push @lab, ("g$i") x scalar @{ $g[$i] } }
+	if ($nonpar) {
+		return (kruskal_test(\@x, \@lab)->{p_value}, 'kruskal-wallis');
+	}
+	my $aov = aov({ value => \@x, grp => \@lab }, 'value ~ grp');
+	return ($aov->{grp}{'Pr(>F)'}, 'anova');
+}
+
+# p-value + test label for a categorical variable: chi-squared on the
+# level-by-group contingency table.  Returns undef if the test cannot run.
+sub _t1_cat_p {
+	my ($table) = @_;
+	my $r = eval { chisq_test($table) };
+	return (undef, undef) if $@ || !$r;
+	return ($r->{'p.value'} // $r->{p_value}, 'chi-squared');
+}
+
+sub table_one {
+	my ($df, %opt) = @_;
+	my %known = map { $_ => 1 } qw(by vars types nonparametric digits pct_digits);
+	my @bad = sort grep { !$known{$_} } keys %opt;
+	die "table_one: unknown argument(s): @bad\n" if @bad;
+
+	my $by     = $opt{by};
+	my $digits = defined $opt{digits}     ? $opt{digits}     : 2;
+	my $pdig   = defined $opt{pct_digits} ? $opt{pct_digits} : 1;
+	my $nonpar = $opt{nonparametric} ? 1 : 0;
+	my %types  = $opt{types} ? %{ $opt{types} } : ();
+
+	my $shape   = _df_shape($df, 'table_one');
+	my @allcols = colnames($df);
+	my %colset  = map { $_ => 1 } @allcols;
+	die "table_one: 'by' column '$by' not found\n" if defined $by && !$colset{$by};
+	my @vars = $opt{vars} ? @{ $opt{vars} }
+	                      : grep { !defined $by || $_ ne $by } @allcols;
+	for my $v (@vars) { die "table_one: column '$v' not found\n" unless $colset{$v} }
+
+	my @need = (@vars, defined $by ? ($by) : ());
+	my ($col, $R) = _frame_cols($df, $shape, \@need);
+
+	my @grp = defined $by
+	        ? map { defined $_ ? "$_" : 'NA' } @{ $col->{$by} }
+	        : ('Overall') x $R;
+	my %seen; my @groups = grep { !$seen{$_}++ } @grp;
+	@groups = sort @groups if defined $by;
+	my @grp_rows = map { my $g = $_; [ grep { $grp[$_] eq $g } 0 .. $R - 1 ] } @groups;
+
+	my @out;
+	for my $v (@vars) {
+		my @vals = @{ $col->{$v} };
+		my $type = $types{$v} || _t1_classify(\@vals);
+
+		if ($type eq 'continuous') {
+			my %row = (variable => $v, level => '', type => 'continuous');
+			my @byg;
+			for my $gi (0 .. $#groups) {
+				my @gv = grep { looks_like_number($_) }
+				         grep { defined } map { $vals[$_] } @{ $grp_rows[$gi] };
+				push @byg, \@gv;
+				$row{ $groups[$gi] } = @gv
+					? sprintf('%.*f (%.*f)', $digits, mean(\@gv), $digits, @gv > 1 ? sd(\@gv) : 0)
+					: '';
+			}
+			my @allv = grep { looks_like_number($_) } grep { defined } @vals;
+			$row{Overall} = @allv
+				? sprintf('%.*f (%.*f)', $digits, mean(\@allv), $digits, @allv > 1 ? sd(\@allv) : 0)
+				: '';
+			if (defined $by && @groups >= 2) {
+				($row{p_value}, $row{test}) = _t1_cont_p(\@byg, $nonpar);
+			}
+			push @out, \%row;
+		}
+		else {
+			my %lseen;
+			my @levels = sort grep { !$lseen{$_}++ }
+			             map { defined $_ ? "$_" : 'NA' } @vals;
+			my %hdr = (variable => $v, level => '', type => 'categorical');
+			if (defined $by && @groups >= 2) {
+				my @table;
+				for my $lv (@levels) {
+					push @table, [ map {
+						my $rows = $_;
+						scalar grep { (defined $vals[$_] ? "$vals[$_]" : 'NA') eq $lv } @$rows
+					} @grp_rows ];
+				}
+				($hdr{p_value}, $hdr{test}) = _t1_cat_p(\@table);
+			}
+			push @out, \%hdr;
+			for my $lv (@levels) {
+				my %row = (variable => $v, level => $lv, type => 'categorical');
+				for my $gi (0 .. $#groups) {
+					my $rows = $grp_rows[$gi];
+					my $cnt  = scalar grep { (defined $vals[$_] ? "$vals[$_]" : 'NA') eq $lv } @$rows;
+					my $tot  = scalar @$rows;
+					$row{ $groups[$gi] } = $tot ? sprintf('%d (%.*f%%)', $cnt, $pdig, 100 * $cnt / $tot) : '0';
+				}
+				my $cntall = scalar grep { (defined $vals[$_] ? "$vals[$_]" : 'NA') eq $lv } 0 .. $R - 1;
+				$row{Overall} = $R ? sprintf('%d (%.*f%%)', $cntall, $pdig, 100 * $cntall / $R) : '0';
+				push @out, \%row;
+			}
+		}
+	}
+	return \@out;
+}
 1;
 =encoding utf8
 
@@ -4639,6 +4767,20 @@ Notes:
 
 =back
 
+=head2 auc
+
+The area under the ROC curve (the c-statistic) for scores and 0/1 labels: the
+chance a random positive scores higher than a random negative. C<1.0> is perfect,
+C<0.5> is a coin flip.
+
+ use Stats::LikeR 'auc';
+ 
+ my $a = auc(\@scores, \@labels);          # e.g. 0.848
+
+Options: C<positive> (which label is the positive class, default C<1>) and
+C<direction> (C<< 'E<gt>' >> = higher score is more positive, the default; C<< 'E<lt>' >> flips it).
+For the full curve and a confidence interval, see L<#roc>.
+
 =head2 bfill
 
 Back-fill NA (undef) cells with the next valid value seen below them along the
@@ -5129,6 +5271,27 @@ More parts than elements gives empty trailing groups, losing nothing:
  my @groups = chunk([1, 2, 3], parts => 5);
  # 5 groups; flattening them back gives (1, 2, 3)
 
+=head2 cmh_test
+
+The Cochran–Mantel–Haenszel test: pool several 2×2 tables (one per I<stratum>)
+into a single test of association while adjusting for the stratifying variable —
+e.g. an exposure/outcome odds ratio adjusted for study site. Same as R's
+C<mantelhaen.test>.
+
+ use Stats::LikeR 'cmh_test';
+ 
+ my $r = cmh_test([ [10,3,5,12],     # stratum 1 as [a,b,c,d]
+                    [20,6,8,15],     # stratum 2
+                    [ 7,4,9,11] ]);  # stratum 3
+ 
+ print $r->{p_value};    # combined test across strata
+ print $r->{estimate};   # Mantel–Haenszel common odds ratio
+
+Each 2×2 uses the same layout as L<#epi_2x2>. Options: C<correct>
+(continuity correction, default C<1>) and C<conf_level> (default C<0.95>). The
+result also has C<statistic> (chi-squared), C<parameter> (df = 1), C<conf_int> (for
+the common OR), and C<k> (number of strata).
+
 =head2 col2col
 
 Apply a B<two-column function> to every pair of columns in a table and collect
@@ -5618,6 +5781,30 @@ or
 
  cov($array1, $array2, 'kendall')
 
+=head2 coxph
+
+Cox proportional-hazards regression: how covariates raise or lower the hazard
+(the risk of an event over time). It is the survival-analysis counterpart of
+L<#glm> and reports hazard ratios, like R's C<survival::coxph> (Efron ties).
+
+Give times, an event flag (1 = event, 0 = censored), and one or more covariates
+(a single C<\@x>, or C<[\@x1, \@x2, ...]>):
+
+ use Stats::LikeR 'coxph';
+ 
+ my $fit = coxph(\@time, \@status, [\@age, \@sex],
+                 names => ['age', 'sex']);
+ 
+ print $fit->{exp_coef}[0];    # hazard ratio for age
+ print $fit->{p_value}[0];     # its p-value
+
+Options: C<names>, C<ties> (C<'efron'> default, or C<'breslow'>), C<conf_level>
+(default C<0.95>), C<maxit>. The result has parallel per-covariate arrays C<coef>
+(log-HR), C<exp_coef> (HR), C<se>, C<z>, C<p_value>, C<conf_int> (HR scale), plus
+model-level C<loglik>, C<lr_stat>/C<lr_p_value> (likelihood-ratio test), C<n>,
+C<nevent>, and C<converged>. See L<#survfit> and
+L<#logrank_test>.
+
 =head2 csort
 
 Sort a data frame by a column or a custom comparator, returning a new
@@ -5925,6 +6112,30 @@ values (ambiguous HoA vs HoH).
 =item * HoH results come back in hash order, since HoH rows are unordered.
 
 =back
+
+=head2 epi_2x2
+
+The standard 2×2 effect measures — odds ratio, risk ratio, and risk difference,
+each with a confidence interval, plus number needed to treat — for one
+exposure×outcome table. Rows are exposure, columns are outcome:
+
+            outcome+   outcome-
+     exp+       a          b
+     exp-       c          d
+
+Pass the four counts (or a C<[a,b,c,d]> / C<[[a,b],[c,d]]> array ref):
+
+ use Stats::LikeR 'epi_2x2';
+ 
+ my $r = epi_2x2(30, 70, 20, 80);
+ print $r->{odds_ratio};             # 1.714
+ print "@{ $r->{odds_ratio_ci} }";   # 0.895 3.285
+
+Options: C<conf_level> (default C<0.95>) and C<correct> (add 0.5 to every cell,
+done automatically when a cell is 0). Result keys: C<odds_ratio>, C<risk_ratio>,
+C<risk_diff> (each with a matching C<*_ci>), C<risk_exposed>, C<risk_unexposed>, and
+C<nnt>. For a significance test use L<#fisher_test> or
+L<#chisq_test>; to adjust across strata use L<#cmh_test>.
 
 =head2 ffill
 
@@ -7198,6 +7409,23 @@ If your data contains missing numbers (C<NA> or C<undef>), C<lm> handles listwis
 the dot operator also works:
 
  $lm = lm(formula => 'y ~ .', data => $dot_data);
+
+=head2 logrank_test
+
+The log-rank (Mantel–Cox) test: do the survival curves of two or more groups
+differ? It needs no modelling assumptions. Same as R's C<survival::survdiff>.
+
+Give times, an event flag (1 = event, 0 = censored), and a group label per row:
+
+ use Stats::LikeR 'logrank_test';
+ 
+ my $r = logrank_test(\@time, \@status, \@group);
+ print $r->{p_value};
+
+Result keys: C<statistic> (chi-squared), C<parameter> (df = groups − 1),
+C<p_value>, C<observed> and C<expected> events per group, and C<groups>. See
+L<#survfit> for the curves and L<#coxph> to adjust for
+covariates.
 
 =head2 Lonly
 
@@ -8667,6 +8895,26 @@ Make a normal distribution of numbers, with pre-set mean C<mean>, standard devia
  my ($rmean, $sd, $n) = (10, 2, 9999);
  my $normals = rnorm( n => $n, mean => $rmean, sd => $sd);
 
+=head2 roc
+
+Build a ROC curve from predicted scores and 0/1 labels: the AUC (c-statistic)
+with a DeLong confidence interval, the sensitivity/specificity at every
+threshold, and the best cut-off by Youden's J. The standard way to judge how
+well a score separates cases from non-cases.
+
+ use Stats::LikeR 'roc';
+ 
+ my $r = roc(\@scores, \@labels);
+ print $r->{auc};                 # 0.848
+ print "@{ $r->{auc_ci} }";       # 0.649 1.000
+ my $cut = $r->{youden};          # best operating point
+ print "$cut->{threshold}: sens=$cut->{sensitivity} spec=$cut->{specificity}";
+
+Options: C<positive> (positive-class label, default C<1>), C<direction> (C<< 'E<gt>' >>
+default, or C<< 'E<lt>' >>), C<conf_level> (default C<0.95>). Result keys: C<auc>, C<auc_se>,
+C<auc_ci>, C<n_pos>, C<n_neg>, C<youden>, and C<curve> (one point per threshold). For
+just the number, use L<#auc>.
+
 =head2 rownames
 
 Return the row names of a data frame, as a list (like R's C<rownames>).
@@ -8913,6 +9161,45 @@ Non-numeric and undefined cells are ignored: they never count toward C<# values>
  y              3    10       15      20    20       25    30
 
 C<summary> prints the table (unless C<return_only> is set) and returns it as a string. C<nrows> (synonyms C<nrow>, C<n>, C<rows>) caps the rows shown, and the C<view> display options C<na>, C<color>, C<colors>, C<max_width>, C<ellipsis>, C<gap>, C<width>, C<to>, and C<return_only> all apply.
+
+=head2 survfit
+
+The Kaplan–Meier survival curve: the probability of surviving past each time,
+estimated from right-censored data. The starting point of most survival
+analysis; matches R's C<survival::survfit>.
+
+Give times and an event flag (1 = event, 0 = censored); add C<group> for one
+curve per group:
+
+ use Stats::LikeR 'survfit';
+ 
+ my $f = survfit(\@time, \@status, group => \@arm);
+ my $s = $f->{strata}{treatment};    # keyed by group label ('' if no group)
+ print $s->{median};                 # median survival time
+ print "@{ $s->{surv} }";            # S(t) at each time
+
+Option C<conf_level> (default C<0.95>). Each stratum has arrays C<time>, C<n_risk>,
+C<n_event>, C<n_censor>, C<surv>, C<std_err>, C<lower>, C<upper>, plus C<median>, C<n>,
+and C<events>. Compare curves with L<#logrank_test>; model
+covariate effects with L<#coxph>.
+
+=head2 table_one
+
+The stratified descriptive "Table 1" that opens most clinical papers: for each
+variable, a per-group summary — C<mean (sd)> for numbers, C<n (percent)> for
+categories — plus a group-comparison p-value.
+
+ use Stats::LikeR 'table_one';
+ 
+ my $t1 = table_one(\@cohort, by => 'arm');
+ print view($t1);       # returns a plain AoH you can view() or write_table()
+
+Types are detected automatically (all-numeric = continuous, else categorical)
+and the test follows: t-test / ANOVA for continuous (Wilcoxon / Kruskal with
+C<< nonparametric =E<gt> 1 >>), chi-squared for categorical. Options: C<by>, C<vars>
+(which columns), C<types> (override a column's type), C<nonparametric>, C<digits>,
+C<pct_digits>. Each returned row has C<variable>, C<level>, one column per group,
+C<Overall>, and — on a variable's row — C<p_value> and C<test>.
 
 =head2 t_test
 
@@ -9881,6 +10168,10 @@ C<read_table>.
 
 
 =head1 Changes
+
+=head2 0.27
+
+speed improvements in calculation of Kendall tau and p-value.  Improvement of writing xlsx files that won't show in time, but pure waste was removed.
 
 =head2 0.26 2026-07-20 CDT
 

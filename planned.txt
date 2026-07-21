@@ -1,6 +1,5 @@
 `explode` like in Pandas
 words to symbols in latex, like \textless, \textgreater, automatically translated from "<", ">", etc.
-`Ronly` can take >2 args, like `Lonly` can
 
 ------
 from Claude:
@@ -9,3 +8,7 @@ Tier 3 — nice-to-have
 
  Window/cumulative ops: cumsum, diff, shift, pct_change, rolling(n).mean().
  crosstab — you already have fisher_test/chisq_test, so a 2-D contingency builder would feed them directly.
+
+Still on the roadmap (Tier 2/3, not built)
+
+Poisson/neg-binomial glm families (currently gaussian+binomial), exp(β)+CI reporting from glm, prop_test/proportion CIs, mcnemar_test, friedman_test+dunn_test, effect sizes (Cohen's d, Cramér's V, η², SMD), VIF/Hosmer–Lemeshow, age standardization. I saved this roadmap to project memory. WGS-scale GWAS should stay on Hail/PLINK in the Workbench — keep Stats::LikeR for the phenotype side.

@@ -687,6 +687,20 @@ Notes:
 - **It modifies your data frame.** If you need to keep the original, pass a copy: `assign(clone($df), ...)`.
 - Reusing a column name **overwrites** that column.
 
+## auc
+
+The area under the ROC curve (the c-statistic) for scores and 0/1 labels: the
+chance a random positive scores higher than a random negative. `1.0` is perfect,
+`0.5` is a coin flip.
+
+    use Stats::LikeR 'auc';
+
+    my $a = auc(\@scores, \@labels);          # e.g. 0.848
+
+Options: `positive` (which label is the positive class, default `1`) and
+`direction` (`'>'` = higher score is more positive, the default; `'<'` flips it).
+For the full curve and a confidence interval, see [`roc`](#roc).
+
 ## bfill
 
 Back-fill NA (undef) cells with the next valid value seen below them along the
@@ -1071,6 +1085,27 @@ More parts than elements gives empty trailing groups, losing nothing:
 
     my @groups = chunk([1, 2, 3], parts => 5);
     # 5 groups; flattening them back gives (1, 2, 3)
+
+## cmh_test
+
+The Cochran–Mantel–Haenszel test: pool several 2×2 tables (one per *stratum*)
+into a single test of association while adjusting for the stratifying variable —
+e.g. an exposure/outcome odds ratio adjusted for study site. Same as R's
+`mantelhaen.test`.
+
+    use Stats::LikeR 'cmh_test';
+
+    my $r = cmh_test([ [10,3,5,12],     # stratum 1 as [a,b,c,d]
+                       [20,6,8,15],     # stratum 2
+                       [ 7,4,9,11] ]);  # stratum 3
+
+    print $r->{p_value};    # combined test across strata
+    print $r->{estimate};   # Mantel–Haenszel common odds ratio
+
+Each 2×2 uses the same layout as [`epi_2x2`](#epi_2x2). Options: `correct`
+(continuity correction, default `1`) and `conf_level` (default `0.95`). The
+result also has `statistic` (chi-squared), `parameter` (df = 1), `conf_int` (for
+the common OR), and `k` (number of strata).
 
 ## col2col
 
@@ -1478,6 +1513,30 @@ or
 
     cov($array1, $array2, 'kendall')
 
+## coxph
+
+Cox proportional-hazards regression: how covariates raise or lower the hazard
+(the risk of an event over time). It is the survival-analysis counterpart of
+[`glm`](#glm) and reports hazard ratios, like R's `survival::coxph` (Efron ties).
+
+Give times, an event flag (1 = event, 0 = censored), and one or more covariates
+(a single `\@x`, or `[\@x1, \@x2, ...]`):
+
+    use Stats::LikeR 'coxph';
+
+    my $fit = coxph(\@time, \@status, [\@age, \@sex],
+                    names => ['age', 'sex']);
+
+    print $fit->{exp_coef}[0];    # hazard ratio for age
+    print $fit->{p_value}[0];     # its p-value
+
+Options: `names`, `ties` (`'efron'` default, or `'breslow'`), `conf_level`
+(default `0.95`), `maxit`. The result has parallel per-covariate arrays `coef`
+(log-HR), `exp_coef` (HR), `se`, `z`, `p_value`, `conf_int` (HR scale), plus
+model-level `loglik`, `lr_stat`/`lr_p_value` (likelihood-ratio test), `n`,
+`nevent`, and `converged`. See [`survfit`](#survfit) and
+[`logrank_test`](#logrank_test).
+
 ## csort
 
 Sort a data frame by a column or a custom comparator, returning a new
@@ -1751,6 +1810,30 @@ ignored.
   values (ambiguous HoA vs HoH).
 - An empty AoH or HoA returns empty rather than erroring.
 - HoH results come back in hash order, since HoH rows are unordered.
+
+## epi_2x2
+
+The standard 2×2 effect measures — odds ratio, risk ratio, and risk difference,
+each with a confidence interval, plus number needed to treat — for one
+exposure×outcome table. Rows are exposure, columns are outcome:
+
+               outcome+   outcome-
+        exp+       a          b
+        exp-       c          d
+
+Pass the four counts (or a `[a,b,c,d]` / `[[a,b],[c,d]]` array ref):
+
+    use Stats::LikeR 'epi_2x2';
+
+    my $r = epi_2x2(30, 70, 20, 80);
+    print $r->{odds_ratio};             # 1.714
+    print "@{ $r->{odds_ratio_ci} }";   # 0.895 3.285
+
+Options: `conf_level` (default `0.95`) and `correct` (add 0.5 to every cell,
+done automatically when a cell is 0). Result keys: `odds_ratio`, `risk_ratio`,
+`risk_diff` (each with a matching `*_ci`), `risk_exposed`, `risk_unexposed`, and
+`nnt`. For a significance test use [`fisher_test`](#fisher_test) or
+[`chisq_test`](#chisq_test); to adjust across strata use [`cmh_test`](#cmh_test).
 
 ## ffill
 
@@ -2675,6 +2758,23 @@ If your data contains missing numbers (`NA` or `undef`), `lm` handles listwise d
 the dot operator also works:
 
     $lm = lm(formula => 'y ~ .', data => $dot_data);
+
+## logrank_test
+
+The log-rank (Mantel–Cox) test: do the survival curves of two or more groups
+differ? It needs no modelling assumptions. Same as R's `survival::survdiff`.
+
+Give times, an event flag (1 = event, 0 = censored), and a group label per row:
+
+    use Stats::LikeR 'logrank_test';
+
+    my $r = logrank_test(\@time, \@status, \@group);
+    print $r->{p_value};
+
+Result keys: `statistic` (chi-squared), `parameter` (df = groups − 1),
+`p_value`, `observed` and `expected` events per group, and `groups`. See
+[`survfit`](#survfit) for the curves and [`coxph`](#coxph) to adjust for
+covariates.
 
 ## Lonly
 
@@ -3662,6 +3762,26 @@ Make a normal distribution of numbers, with pre-set mean `mean`, standard deviat
     my ($rmean, $sd, $n) = (10, 2, 9999);
     my $normals = rnorm( n => $n, mean => $rmean, sd => $sd);
 
+## roc
+
+Build a ROC curve from predicted scores and 0/1 labels: the AUC (c-statistic)
+with a DeLong confidence interval, the sensitivity/specificity at every
+threshold, and the best cut-off by Youden's J. The standard way to judge how
+well a score separates cases from non-cases.
+
+    use Stats::LikeR 'roc';
+
+    my $r = roc(\@scores, \@labels);
+    print $r->{auc};                 # 0.848
+    print "@{ $r->{auc_ci} }";       # 0.649 1.000
+    my $cut = $r->{youden};          # best operating point
+    print "$cut->{threshold}: sens=$cut->{sensitivity} spec=$cut->{specificity}";
+
+Options: `positive` (positive-class label, default `1`), `direction` (`'>'`
+default, or `'<'`), `conf_level` (default `0.95`). Result keys: `auc`, `auc_se`,
+`auc_ci`, `n_pos`, `n_neg`, `youden`, and `curve` (one point per threshold). For
+just the number, use [`auc`](#auc).
+
 ## rownames
 
 Return the row names of a data frame, as a list (like R's `rownames`).
@@ -3869,6 +3989,45 @@ Non-numeric and undefined cells are ignored: they never count toward `# values`,
     y              3    10       15      20    20       25    30
 
 `summary` prints the table (unless `return_only` is set) and returns it as a string. `nrows` (synonyms `nrow`, `n`, `rows`) caps the rows shown, and the `view` display options `na`, `color`, `colors`, `max_width`, `ellipsis`, `gap`, `width`, `to`, and `return_only` all apply.
+
+## survfit
+
+The Kaplan–Meier survival curve: the probability of surviving past each time,
+estimated from right-censored data. The starting point of most survival
+analysis; matches R's `survival::survfit`.
+
+Give times and an event flag (1 = event, 0 = censored); add `group` for one
+curve per group:
+
+    use Stats::LikeR 'survfit';
+
+    my $f = survfit(\@time, \@status, group => \@arm);
+    my $s = $f->{strata}{treatment};    # keyed by group label ('' if no group)
+    print $s->{median};                 # median survival time
+    print "@{ $s->{surv} }";            # S(t) at each time
+
+Option `conf_level` (default `0.95`). Each stratum has arrays `time`, `n_risk`,
+`n_event`, `n_censor`, `surv`, `std_err`, `lower`, `upper`, plus `median`, `n`,
+and `events`. Compare curves with [`logrank_test`](#logrank_test); model
+covariate effects with [`coxph`](#coxph).
+
+## table_one
+
+The stratified descriptive "Table 1" that opens most clinical papers: for each
+variable, a per-group summary — `mean (sd)` for numbers, `n (percent)` for
+categories — plus a group-comparison p-value.
+
+    use Stats::LikeR 'table_one';
+
+    my $t1 = table_one(\@cohort, by => 'arm');
+    print view($t1);       # returns a plain AoH you can view() or write_table()
+
+Types are detected automatically (all-numeric = continuous, else categorical)
+and the test follows: t-test / ANOVA for continuous (Wilcoxon / Kruskal with
+`nonparametric => 1`), chi-squared for categorical. Options: `by`, `vars`
+(which columns), `types` (override a column's type), `nonparametric`, `digits`,
+`pct_digits`. Each returned row has `variable`, `level`, one column per group,
+`Overall`, and — on a variable's row — `p_value` and `test`.
 
 ## t_test
 

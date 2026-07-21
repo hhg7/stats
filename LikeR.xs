@@ -4909,6 +4909,201 @@ static void ip_fill_column(pTHX_ AV *vals, AV *xav, const char *method,
 	}
 }
 
+/* ---- epidemiology: parse a 2x2 table from an array ref ------------------
+ * Accepts a flat [a,b,c,d] or a nested [[a,b],[c,d]].  Layout convention
+ * (rows = exposure/treatment, columns = outcome):
+ *          outcome+   outcome-
+ *   exp+       a          b
+ *   exp-       c          d
+ * Croaks on a malformed shape or a negative count.                          */
+static void epi_read_2x2(pTHX_ SV *restrict sv, const char *restrict who,
+                         NV *restrict a, NV *restrict b, NV *restrict c, NV *restrict d) {
+	if (!SvROK(sv) || SvTYPE(SvRV(sv)) != SVt_PVAV)
+		croak("%s: expected a 2x2 table as an array ref [a,b,c,d] or [[a,b],[c,d]]", who);
+	AV *restrict av = (AV *)SvRV(sv);
+	SSize_t top = av_len(av);
+	if (top == 3) {                                   /* flat [a,b,c,d] */
+		*a = SvNV(*av_fetch(av, 0, 0)); *b = SvNV(*av_fetch(av, 1, 0));
+		*c = SvNV(*av_fetch(av, 2, 0)); *d = SvNV(*av_fetch(av, 3, 0));
+	} else if (top == 1) {                            /* nested [[a,b],[c,d]] */
+		SV **restrict r0 = av_fetch(av, 0, 0), **restrict r1 = av_fetch(av, 1, 0);
+		if (!r0 || !r1 || !SvROK(*r0) || !SvROK(*r1)
+		    || SvTYPE(SvRV(*r0)) != SVt_PVAV || SvTYPE(SvRV(*r1)) != SVt_PVAV)
+			croak("%s: 2-row form must be [[a,b],[c,d]]", who);
+		AV *restrict ar0 = (AV *)SvRV(*r0), *restrict ar1 = (AV *)SvRV(*r1);
+		if (av_len(ar0) != 1 || av_len(ar1) != 1)
+			croak("%s: each row of a 2x2 table needs exactly 2 cells", who);
+		*a = SvNV(*av_fetch(ar0, 0, 0)); *b = SvNV(*av_fetch(ar0, 1, 0));
+		*c = SvNV(*av_fetch(ar1, 0, 0)); *d = SvNV(*av_fetch(ar1, 1, 0));
+	} else {
+		croak("%s: expected 4 cells (a,b,c,d) or 2 rows of 2 cells", who);
+	}
+	if (*a < 0 || *b < 0 || *c < 0 || *d < 0)
+		croak("%s: cell counts must be non-negative", who);
+}
+
+/* ---- ROC / AUC ---------------------------------------------------------- */
+typedef struct { NV score; int lab; } ROCPt;      /* lab: 1 = positive case */
+static int rocpt_cmp_desc(const void *a, const void *b) {
+	const ROCPt *pa = (const ROCPt *)a, *pb = (const ROCPt *)b;
+	if (pa->score > pb->score) return -1;
+	if (pa->score < pb->score) return 1;
+	return 0;
+}
+
+/* Split parallel score/label arrays into the positive and negative score
+ * vectors.  A label counts as positive when its string form equals `positive`.
+ * With lower_pos set, the score sign is flipped (lower marker => more positive).
+ * Allocates *pos/*neg via Newx; the caller frees them.  Croaks on a bad shape. */
+static void roc_split(pTHX_ AV *restrict sav, AV *restrict lav,
+                      const char *restrict positive, int lower_pos,
+                      NV **restrict pos, size_t *restrict m,
+                      NV **restrict neg, size_t *restrict n, const char *who) {
+	SSize_t N = av_len(sav) + 1;
+	if (N != av_len(lav) + 1)
+		croak("%s: scores and labels must be the same length", who);
+	if (N < 1) croak("%s: need at least one observation", who);
+	NV *restrict P; Newx(P, N, NV);
+	NV *restrict Q; Newx(Q, N, NV);
+	size_t mm = 0, nn = 0;
+	for (SSize_t i = 0; i < N; i++) {
+		SV **sp = av_fetch(sav, i, 0), **lp = av_fetch(lav, i, 0);
+		NV s = (sp && *sp) ? SvNV(*sp) : NAN;
+		if (lower_pos) s = -s;
+		int ispos = (lp && *lp) ? strEQ(SvPV_nolen(*lp), positive) : 0;
+		if (ispos) P[mm++] = s; else Q[nn++] = s;
+	}
+	if (mm == 0 || nn == 0) {
+		Safefree(P); Safefree(Q);
+		croak("%s: need both positive and negative labels (positive='%s')", who, positive);
+	}
+	*pos = P; *m = mm; *neg = Q; *n = nn;
+}
+
+/* DeLong AUC (c-statistic) and its standard error for one ROC curve.  Higher
+ * score = more positive.  Midranks make ties exact; AUC equals the
+ * Mann-Whitney concordance probability.                                     */
+static void roc_delong(pTHX_ const NV *restrict pos, size_t m,
+                       const NV *restrict neg, size_t n,
+                       NV *restrict auc_out, NV *restrict se_out) {
+	size_t N = m + n;
+	NV *restrict comb, *restrict TX, *restrict TY, *restrict TZ, *restrict V10, *restrict V01;
+	Newx(comb, N, NV); Newx(TX, m, NV); Newx(TY, n, NV);
+	Newx(TZ, N, NV);   Newx(V10, m, NV); Newx(V01, n, NV);
+	for (size_t i = 0; i < m; i++) comb[i]     = pos[i];
+	for (size_t j = 0; j < n; j++) comb[m + j] = neg[j];
+	rank_data(pos,  TX, m);           /* midranks within positives          */
+	rank_data(neg,  TY, n);           /* midranks within negatives          */
+	rank_data(comb, TZ, N);           /* midranks in the combined sample    */
+	NV auc = 0.0;
+	for (size_t i = 0; i < m; i++) { V10[i] = (TZ[i] - TX[i]) / (NV)n; auc += V10[i]; }
+	auc /= (NV)m;
+	for (size_t j = 0; j < n; j++)   V01[j] = 1.0 - (TZ[m + j] - TY[j]) / (NV)m;
+	NV s10 = 0.0, s01 = 0.0;
+	for (size_t i = 0; i < m; i++) { NV dz = V10[i] - auc; s10 += dz * dz; }
+	for (size_t j = 0; j < n; j++) { NV dz = V01[j] - auc; s01 += dz * dz; }
+	s10 = (m > 1) ? s10 / (NV)(m - 1) : 0.0;
+	s01 = (n > 1) ? s01 / (NV)(n - 1) : 0.0;
+	*auc_out = auc;
+	*se_out  = sqrt(s10 / (NV)m + s01 / (NV)n);
+	Safefree(comb); Safefree(TX); Safefree(TY); Safefree(TZ); Safefree(V10); Safefree(V01);
+}
+
+/* ---- survival analysis -------------------------------------------------- */
+typedef struct { NV time; int status; int grp; } SurvObs;   /* status: 1=event */
+static int survobs_cmp(const void *a, const void *b) {
+	const SurvObs *pa = (const SurvObs *)a, *pb = (const SurvObs *)b;
+	if (pa->time < pb->time) return -1;
+	if (pa->time > pb->time) return 1;
+	return pb->status - pa->status;      /* events before censors at a tie */
+}
+
+/* Gauss-Jordan solve of A x = b (A is n*n row-major, destroyed in place).
+ * Returns 0 on success, 1 if (near-)singular.  Used for the log-rank quadratic
+ * form on the (g-1)-dimensional reduced observed-minus-expected vector.      */
+static int srv_solve(NV *restrict A, const NV *restrict b, int n, NV *restrict x) {
+	for (int i = 0; i < n; i++) x[i] = b[i];
+	for (int col = 0; col < n; col++) {
+		int piv = col; NV best = fabs(A[col * n + col]);
+		for (int r = col + 1; r < n; r++) { NV v = fabs(A[r * n + col]); if (v > best) { best = v; piv = r; } }
+		if (best < 1e-300) return 1;
+		if (piv != col) {
+			for (int c = 0; c < n; c++) { NV t = A[col*n+c]; A[col*n+c] = A[piv*n+c]; A[piv*n+c] = t; }
+			NV t = x[col]; x[col] = x[piv]; x[piv] = t;
+		}
+		NV d = A[col * n + col];
+		for (int r = 0; r < n; r++) {
+			if (r == col) continue;
+			NV f = A[r * n + col] / d;
+			for (int c = col; c < n; c++) A[r * n + c] -= f * A[col * n + c];
+			x[r] -= f * x[col];
+		}
+	}
+	for (int i = 0; i < n; i++) x[i] /= A[i * n + i];
+	return 0;
+}
+
+/* Invert an n*n matrix A (row-major) into inv via Gauss-Jordan with partial
+ * pivoting; A is destroyed.  Returns 0 on success, 1 if (near-)singular.
+ * Used for the Cox information matrix (coef covariance = its inverse).       */
+static int mat_inv(NV *restrict A, int n, NV *restrict inv) {
+	for (int i = 0; i < n * n; i++) inv[i] = (i % n == i / n) ? 1.0 : 0.0;
+	for (int col = 0; col < n; col++) {
+		int piv = col; NV best = fabs(A[col * n + col]);
+		for (int r = col + 1; r < n; r++) { NV v = fabs(A[r * n + col]); if (v > best) { best = v; piv = r; } }
+		if (best < 1e-300) return 1;
+		if (piv != col)
+			for (int c = 0; c < n; c++) {
+				NV t = A[col*n+c]; A[col*n+c] = A[piv*n+c]; A[piv*n+c] = t;
+				t = inv[col*n+c]; inv[col*n+c] = inv[piv*n+c]; inv[piv*n+c] = t;
+			}
+		NV d = A[col * n + col];
+		for (int c = 0; c < n; c++) { A[col*n+c] /= d; inv[col*n+c] /= d; }
+		for (int r = 0; r < n; r++) {
+			if (r == col) continue;
+			NV f = A[r * n + col];
+			for (int c = 0; c < n; c++) { A[r*n+c] -= f * A[col*n+c]; inv[r*n+c] -= f * inv[col*n+c]; }
+		}
+	}
+	return 0;
+}
+
+typedef struct { NV time; int idx; } TimeIdx;   /* sort observations by time */
+
+/* Read parallel time/status(/group) arrays into a SurvObs array.  Group index
+ * is assigned by first appearance of each label string; the labels are pushed
+ * (as SVs) into *labels_out in that order.  gav == NULL => one group "".
+ * status is 1 (event) when the value is non-zero, else 0 (censored).         */
+static SurvObs* srv_read(pTHX_ AV *restrict tav, AV *restrict sav, AV *restrict gav,
+                         size_t *restrict N_out, AV *restrict labels, const char *who) {
+	SSize_t N = av_len(tav) + 1;
+	if (N != av_len(sav) + 1) croak("%s: time and status must be the same length", who);
+	if (gav && N != av_len(gav) + 1) croak("%s: group must match time/status length", who);
+	if (N < 1) croak("%s: need at least one observation", who);
+	SurvObs *restrict o; Newx(o, N, SurvObs);
+	for (SSize_t i = 0; i < N; i++) {
+		SV **tp = av_fetch(tav, i, 0), **sp = av_fetch(sav, i, 0);
+		NV t = (tp && *tp) ? SvNV(*tp) : NAN;
+		if (t < 0) { Safefree(o); croak("%s: negative survival time", who); }
+		o[i].time   = t;
+		o[i].status = (sp && *sp && SvNV(*sp) != 0.0) ? 1 : 0;
+		int g = 0;
+		if (gav) {
+			SV **gp = av_fetch(gav, i, 0);
+			const char *lab = (gp && *gp) ? SvPV_nolen(*gp) : "";
+			SSize_t G = av_len(labels) + 1, found = -1;
+			for (SSize_t k = 0; k < G; k++)
+				if (strEQ(SvPV_nolen(*av_fetch(labels, k, 0)), lab)) { found = k; break; }
+			if (found < 0) { found = G; av_push(labels, newSVpv(lab, 0)); }
+			g = (int)found;
+		}
+		o[i].grp = g;
+	}
+	if (av_len(labels) < 0) av_push(labels, newSVpv("", 0));   /* single group */
+	*N_out = (size_t)N;
+	return o;
+}
+
 // --- XS SECTION ---
 MODULE = Stats::LikeR  PACKAGE = Stats::LikeR
 
@@ -11218,6 +11413,607 @@ SV* t_test(...)
 	}
 	OUTPUT:
 		RETVAL
+
+void epi_2x2(...)
+PPCODE:
+{
+	NV a, b, c, d, conf_level = 0.95;
+	int correct = 0, opt_start;
+	if (items < 1)
+		croak("Usage: epi_2x2(a, b, c, d, conf_level => 0.95, correct => 0)\n"
+		      "   or  epi_2x2([[a,b],[c,d]], ...)   # rows=exposure, cols=outcome");
+	if (SvROK(ST(0))) {
+		epi_read_2x2(aTHX_ ST(0), "epi_2x2", &a, &b, &c, &d);
+		opt_start = 1;
+	} else {
+		if (items < 4)
+			croak("epi_2x2: need 4 cell counts a,b,c,d (or a single 2x2 array ref)");
+		a = SvNV(ST(0)); b = SvNV(ST(1)); c = SvNV(ST(2)); d = SvNV(ST(3));
+		if (a < 0 || b < 0 || c < 0 || d < 0)
+			croak("epi_2x2: cell counts must be non-negative");
+		opt_start = 4;
+	}
+	for (int i = opt_start; i + 1 < items; i += 2) {
+		const char *k = SvPV_nolen(ST(i)); SV *v = ST(i + 1);
+		if      (strEQ(k, "conf_level") || strEQ(k, "conf.level")) conf_level = SvNV(v);
+		else if (strEQ(k, "correct"))                              correct = SvTRUE(v) ? 1 : 0;
+		else croak("epi_2x2: unknown argument '%s'", k);
+	}
+	if (!(conf_level > 0.0 && conf_level < 1.0))
+		croak("epi_2x2: conf_level must be between 0 and 1");
+
+	/* Haldane-Anscombe +0.5 when asked, or forced by a zero cell (avoids
+	 * division by zero / log of zero).  Point estimates then shift too, so
+	 * the applied flag is reported back.                                    */
+	NV A = a, B = b, C = c, D = d; int corrected = 0;
+	if (correct || a == 0 || b == 0 || c == 0 || d == 0) {
+		A += 0.5; B += 0.5; C += 0.5; D += 0.5; corrected = 1;
+	}
+	NV z  = inverse_normal_cdf(1.0 - (1.0 - conf_level) / 2.0);
+	NV n1 = A + B, n0 = C + D;
+
+	NV or_    = (A * D) / (B * C);
+	NV se_lor = sqrt(1.0 / A + 1.0 / B + 1.0 / C + 1.0 / D);
+	NV or_lo  = or_ * exp(-z * se_lor), or_hi = or_ * exp(z * se_lor);
+
+	NV p1 = A / n1, p0 = C / n0;
+	NV rr     = p1 / p0;                          /* Katz log-RR variance */
+	NV se_lrr = sqrt(B / (A * n1) + D / (C * n0));
+	NV rr_lo  = rr * exp(-z * se_lrr), rr_hi = rr * exp(z * se_lrr);
+
+	NV rd    = p1 - p0;
+	NV se_rd = sqrt(p1 * (1.0 - p1) / n1 + p0 * (1.0 - p0) / n0);
+	NV rd_lo = rd - z * se_rd, rd_hi = rd + z * se_rd;
+
+	HV *ret = newHV();
+	hv_stores(ret, "method",         newSVpv("2x2 epidemiological measures (Wald)", 0));
+	hv_stores(ret, "conf_level",     newSVnv(conf_level));
+	hv_stores(ret, "correction",     newSViv(corrected));
+	hv_stores(ret, "odds_ratio",     newSVnv(or_));
+	hv_stores(ret, "risk_ratio",     newSVnv(rr));
+	hv_stores(ret, "risk_diff",      newSVnv(rd));
+	hv_stores(ret, "risk_exposed",   newSVnv(p1));
+	hv_stores(ret, "risk_unexposed", newSVnv(p0));
+	hv_stores(ret, "nnt",            newSVnv(1.0 / fabs(rd)));
+#define EPI_CI(name, lo, hi) do { AV *ci = newAV(); \
+	av_push(ci, newSVnv(lo)); av_push(ci, newSVnv(hi)); \
+	hv_stores(ret, name, newRV_noinc((SV *)ci)); } while (0)
+	EPI_CI("odds_ratio_ci", or_lo, or_hi);
+	EPI_CI("risk_ratio_ci", rr_lo, rr_hi);
+	EPI_CI("risk_diff_ci",  rd_lo, rd_hi);
+#undef EPI_CI
+	ST(0) = sv_2mortal(newRV_noinc((SV *)ret));
+	XSRETURN(1);
+}
+
+void cmh_test(...)
+PPCODE:
+{
+	if (items < 1 || !SvROK(ST(0)) || SvTYPE(SvRV(ST(0))) != SVt_PVAV)
+		croak("Usage: cmh_test([ [a,b,c,d], [a,b,c,d], ... ], "
+		      "conf_level => 0.95, correct => 1)");
+	AV *restrict strata = (AV *)SvRV(ST(0));
+	SSize_t K = av_len(strata) + 1;
+	if (K < 1) croak("cmh_test: need at least one 2x2 stratum");
+	NV conf_level = 0.95; int correct = 1;
+	for (int i = 1; i + 1 < items; i += 2) {
+		const char *k = SvPV_nolen(ST(i)); SV *v = ST(i + 1);
+		if      (strEQ(k, "conf_level") || strEQ(k, "conf.level")) conf_level = SvNV(v);
+		else if (strEQ(k, "correct"))                              correct = SvTRUE(v) ? 1 : 0;
+		else croak("cmh_test: unknown argument '%s'", k);
+	}
+	if (!(conf_level > 0.0 && conf_level < 1.0))
+		croak("cmh_test: conf_level must be between 0 and 1");
+
+	NV sum_a = 0, E = 0, V = 0;      /* CMH statistic pieces               */
+	NV sumR = 0, sumS = 0;           /* Mantel-Haenszel common-OR num/den  */
+	NV vR = 0, vRS = 0, vS = 0;      /* Robins-Breslow-Greenland variance  */
+	for (SSize_t s = 0; s < K; s++) {
+		SV **restrict ep = av_fetch(strata, s, 0);
+		NV a, b, c, d;
+		epi_read_2x2(aTHX_ (ep ? *ep : &PL_sv_undef), "cmh_test", &a, &b, &c, &d);
+		NV n = a + b + c + d;
+		if (n <= 0) continue;
+		NV r1 = a + b, r2 = c + d, c1 = a + c, c2 = b + d;
+		sum_a += a;
+		E     += r1 * c1 / n;
+		if (n > 1.0) V += (r1 * r2 * c1 * c2) / (n * n * (n - 1.0));
+		NV Rk = a * d / n, Sk = b * c / n;
+		sumR += Rk; sumS += Sk;
+		NV Pk = (a + d) / n, Qk = (b + c) / n;
+		vR  += Pk * Rk;
+		vRS += Pk * Sk + Qk * Rk;
+		vS  += Qk * Sk;
+	}
+	NV diff = fabs(sum_a - E) - (correct ? 0.5 : 0.0);
+	if (diff < 0) diff = 0;
+	NV chi  = (V > 0) ? (diff * diff) / V : 0.0;
+	NV pval = get_p_value(chi, 1);
+
+	NV or_mh    = (sumS > 0) ? sumR / sumS : NAN;
+	NV var_lnor = vR / (2.0 * sumR * sumR)
+	            + vRS / (2.0 * sumR * sumS)
+	            + vS / (2.0 * sumS * sumS);
+	NV z     = inverse_normal_cdf(1.0 - (1.0 - conf_level) / 2.0);
+	NV or_lo = or_mh * exp(-z * sqrt(var_lnor)), or_hi = or_mh * exp(z * sqrt(var_lnor));
+
+	HV *ret = newHV();
+	hv_stores(ret, "method", newSVpv(correct
+		? "Mantel-Haenszel chi-squared test with continuity correction"
+		: "Mantel-Haenszel chi-squared test", 0));
+	hv_stores(ret, "statistic",  newSVnv(chi));
+	hv_stores(ret, "parameter",  newSViv(1));       /* degrees of freedom  */
+	hv_stores(ret, "p_value",    newSVnv(pval));
+	hv_stores(ret, "estimate",   newSVnv(or_mh));   /* common odds ratio   */
+	hv_stores(ret, "conf_level", newSVnv(conf_level));
+	hv_stores(ret, "correction", newSViv(correct));
+	hv_stores(ret, "k",          newSViv((IV)K));
+	AV *ci = newAV(); av_push(ci, newSVnv(or_lo)); av_push(ci, newSVnv(or_hi));
+	hv_stores(ret, "conf_int", newRV_noinc((SV *)ci));
+	ST(0) = sv_2mortal(newRV_noinc((SV *)ret));
+	XSRETURN(1);
+}
+
+NV auc(...)
+CODE:
+{
+	if (items < 2 || !SvROK(ST(0)) || SvTYPE(SvRV(ST(0))) != SVt_PVAV
+	              || !SvROK(ST(1)) || SvTYPE(SvRV(ST(1))) != SVt_PVAV)
+		croak("Usage: auc(\\@scores, \\@labels, positive => 1, direction => '>')");
+	const char *positive = "1"; int lower_pos = 0;
+	for (int i = 2; i + 1 < items; i += 2) {
+		const char *k = SvPV_nolen(ST(i)); SV *v = ST(i + 1);
+		if      (strEQ(k, "positive"))  positive = SvPV_nolen(v);
+		else if (strEQ(k, "direction")) { const char *d = SvPV_nolen(v); lower_pos = (d[0] == '<'); }
+		else croak("auc: unknown argument '%s'", k);
+	}
+	NV *pos, *neg; size_t m, n;
+	roc_split(aTHX_ (AV *)SvRV(ST(0)), (AV *)SvRV(ST(1)), positive, lower_pos,
+	          &pos, &m, &neg, &n, "auc");
+	NV a, se; roc_delong(aTHX_ pos, m, neg, n, &a, &se);
+	Safefree(pos); Safefree(neg);
+	RETVAL = a;
+}
+OUTPUT:
+	RETVAL
+
+void roc(...)
+PPCODE:
+{
+	if (items < 2 || !SvROK(ST(0)) || SvTYPE(SvRV(ST(0))) != SVt_PVAV
+	              || !SvROK(ST(1)) || SvTYPE(SvRV(ST(1))) != SVt_PVAV)
+		croak("Usage: roc(\\@scores, \\@labels, positive => 1, "
+		      "conf_level => 0.95, direction => '>')");
+	const char *positive = "1"; NV conf_level = 0.95; int lower_pos = 0;
+	for (int i = 2; i + 1 < items; i += 2) {
+		const char *k = SvPV_nolen(ST(i)); SV *v = ST(i + 1);
+		if      (strEQ(k, "positive"))  positive = SvPV_nolen(v);
+		else if (strEQ(k, "conf_level") || strEQ(k, "conf.level")) conf_level = SvNV(v);
+		else if (strEQ(k, "direction")) { const char *d = SvPV_nolen(v); lower_pos = (d[0] == '<'); }
+		else croak("roc: unknown argument '%s'", k);
+	}
+	if (!(conf_level > 0.0 && conf_level < 1.0))
+		croak("roc: conf_level must be between 0 and 1");
+
+	NV *pos, *neg; size_t m, n;
+	roc_split(aTHX_ (AV *)SvRV(ST(0)), (AV *)SvRV(ST(1)), positive, lower_pos,
+	          &pos, &m, &neg, &n, "roc");
+	NV auc_val, se; roc_delong(aTHX_ pos, m, neg, n, &auc_val, &se);
+	NV z  = inverse_normal_cdf(1.0 - (1.0 - conf_level) / 2.0);
+	NV lo = auc_val - z * se, hi = auc_val + z * se;
+	if (lo < 0.0) lo = 0.0; if (hi > 1.0) hi = 1.0;
+
+	/* Curve + Youden by sweeping thresholds high -> low over all points. */
+	size_t N = m + n;
+	ROCPt *restrict pts; Newx(pts, N, ROCPt);
+	for (size_t i = 0; i < m; i++) { pts[i].score     = pos[i]; pts[i].lab     = 1; }
+	for (size_t j = 0; j < n; j++) { pts[m + j].score = neg[j]; pts[m + j].lab = 0; }
+	Safefree(pos); Safefree(neg);
+	qsort(pts, N, sizeof(ROCPt), rocpt_cmp_desc);
+
+	AV *restrict curve = newAV();
+	{ /* leading operating point: threshold = +inf, nothing called positive */
+		HV *p0 = newHV();
+		hv_stores(p0, "threshold",   newSVnv(INFINITY));
+		hv_stores(p0, "sensitivity", newSVnv(0.0));
+		hv_stores(p0, "specificity", newSVnv(1.0));
+		av_push(curve, newRV_noinc((SV *)p0));
+	}
+	NV TP = 0.0, FP = 0.0, P = (NV)m, Nn = (NV)n;
+	NV best_j = -2.0, best_thr = 0.0, best_sens = 0.0, best_spec = 0.0;
+	size_t i = 0;
+	while (i < N) {
+		NV thr = pts[i].score;
+		size_t j = i;
+		while (j < N && pts[j].score == thr) { if (pts[j].lab) TP += 1.0; else FP += 1.0; j++; }
+		NV sens = TP / P, spec = (Nn - FP) / Nn;
+		HV *pt = newHV();
+		hv_stores(pt, "threshold",   newSVnv(thr));
+		hv_stores(pt, "sensitivity", newSVnv(sens));
+		hv_stores(pt, "specificity", newSVnv(spec));
+		av_push(curve, newRV_noinc((SV *)pt));
+		NV jstat = sens + spec - 1.0;
+		if (jstat > best_j) { best_j = jstat; best_thr = thr; best_sens = sens; best_spec = spec; }
+		i = j;
+	}
+	Safefree(pts);
+
+	HV *youden = newHV();
+	hv_stores(youden, "threshold",   newSVnv(best_thr));
+	hv_stores(youden, "sensitivity", newSVnv(best_sens));
+	hv_stores(youden, "specificity", newSVnv(best_spec));
+	hv_stores(youden, "j",           newSVnv(best_j));
+
+	HV *ret = newHV();
+	hv_stores(ret, "auc",        newSVnv(auc_val));
+	hv_stores(ret, "auc_se",     newSVnv(se));
+	{ AV *ci = newAV(); av_push(ci, newSVnv(lo)); av_push(ci, newSVnv(hi));
+	  hv_stores(ret, "auc_ci", newRV_noinc((SV *)ci)); }
+	hv_stores(ret, "conf_level", newSVnv(conf_level));
+	hv_stores(ret, "n_pos",      newSViv((IV)m));
+	hv_stores(ret, "n_neg",      newSViv((IV)n));
+	hv_stores(ret, "n",          newSViv((IV)N));
+	hv_stores(ret, "direction",  newSVpv(lower_pos ? "<" : ">", 1));
+	hv_stores(ret, "youden",     newRV_noinc((SV *)youden));
+	hv_stores(ret, "curve",      newRV_noinc((SV *)curve));
+	hv_stores(ret, "method",     newSVpv("ROC curve with DeLong AUC", 0));
+	ST(0) = sv_2mortal(newRV_noinc((SV *)ret));
+	XSRETURN(1);
+}
+
+void survfit(...)
+PPCODE:
+{
+	if (items < 2 || !SvROK(ST(0)) || SvTYPE(SvRV(ST(0))) != SVt_PVAV
+	              || !SvROK(ST(1)) || SvTYPE(SvRV(ST(1))) != SVt_PVAV)
+		croak("Usage: survfit(\\@time, \\@status, group => \\@grp, conf_level => 0.95)");
+	AV *gav = NULL; NV conf_level = 0.95;
+	for (int i = 2; i + 1 < items; i += 2) {
+		const char *k = SvPV_nolen(ST(i)); SV *v = ST(i + 1);
+		if      (strEQ(k, "group")) {
+			if (!SvROK(v) || SvTYPE(SvRV(v)) != SVt_PVAV) croak("survfit: group must be an array ref");
+			gav = (AV *)SvRV(v);
+		}
+		else if (strEQ(k, "conf_level") || strEQ(k, "conf.level")) conf_level = SvNV(v);
+		else croak("survfit: unknown argument '%s'", k);
+	}
+	if (!(conf_level > 0.0 && conf_level < 1.0)) croak("survfit: conf_level must be between 0 and 1");
+
+	AV *labels = (AV *)sv_2mortal((SV *)newAV());
+	size_t N; SurvObs *o = srv_read(aTHX_ (AV *)SvRV(ST(0)), (AV *)SvRV(ST(1)), gav, &N, labels, "survfit");
+	qsort(o, N, sizeof(SurvObs), survobs_cmp);
+	SSize_t G = av_len(labels) + 1;
+	NV z = inverse_normal_cdf(1.0 - (1.0 - conf_level) / 2.0);
+
+	HV *strata = newHV();
+	for (SSize_t g = 0; g < G; g++) {
+		/* group size */
+		size_t ng = 0; for (size_t i = 0; i < N; i++) if (o[i].grp == g) ng++;
+		AV *t_av=newAV(), *nr_av=newAV(), *ne_av=newAV(), *nc_av=newAV(),
+		   *s_av=newAV(), *se_av=newAV(), *lo_av=newAV(), *hi_av=newAV();
+		NV S = 1.0, vterm = 0.0, median = NAN;
+		size_t at_risk = ng, total_events = 0;
+		size_t i = 0;
+		while (i < N) {
+			if (o[i].grp != g) { i++; continue; }
+			NV t = o[i].time;
+			size_t d = 0, c = 0, block = 0;
+			size_t j = i;
+			while (j < N && o[j].time == t) {
+				if (o[j].grp == g) { block++; if (o[j].status) d++; else c++; }
+				j++;
+			}
+			size_t nr = at_risk;                 /* at risk just before t */
+			if (d > 0 && nr > d) {
+				S *= 1.0 - (NV)d / (NV)nr;
+				vterm += (NV)d / ((NV)nr * (NV)(nr - d));
+				total_events += d;
+			} else if (d > 0) {                  /* everyone remaining has an event */
+				S = 0.0; total_events += d;
+			}
+			NV se_S = S * sqrt(vterm);
+			NV lo = (S > 0.0) ? S * exp(-z * sqrt(vterm)) : 0.0;
+			NV hi = (S > 0.0) ? S * exp( z * sqrt(vterm)) : 0.0;
+			if (hi > 1.0) hi = 1.0;
+			av_push(t_av,  newSVnv(t));
+			av_push(nr_av, newSViv((IV)nr));
+			av_push(ne_av, newSViv((IV)d));
+			av_push(nc_av, newSViv((IV)c));
+			av_push(s_av,  newSVnv(S));
+			av_push(se_av, newSVnv(se_S));
+			av_push(lo_av, newSVnv(lo));
+			av_push(hi_av, newSVnv(hi));
+			if (isnan(median) && S <= 0.5) median = t;
+			at_risk -= block;
+			i = j;
+		}
+		HV *st = newHV();
+		hv_stores(st, "time",     newRV_noinc((SV *)t_av));
+		hv_stores(st, "n_risk",   newRV_noinc((SV *)nr_av));
+		hv_stores(st, "n_event",  newRV_noinc((SV *)ne_av));
+		hv_stores(st, "n_censor", newRV_noinc((SV *)nc_av));
+		hv_stores(st, "surv",     newRV_noinc((SV *)s_av));
+		hv_stores(st, "std_err",  newRV_noinc((SV *)se_av));
+		hv_stores(st, "lower",    newRV_noinc((SV *)lo_av));
+		hv_stores(st, "upper",    newRV_noinc((SV *)hi_av));
+		hv_stores(st, "n",        newSViv((IV)ng));
+		hv_stores(st, "events",   newSViv((IV)total_events));
+		hv_stores(st, "median",   isnan(median) ? newSV(0) : newSVnv(median));
+		SV *key = *av_fetch(labels, g, 0);
+		STRLEN klen; const char *kp = SvPV(key, klen);
+		hv_store(strata, kp, klen, newRV_noinc((SV *)st), 0);
+	}
+	Safefree(o);
+
+	HV *ret = newHV();
+	hv_stores(ret, "strata",     newRV_noinc((SV *)strata));
+	hv_stores(ret, "groups",     newRV_inc((SV *)labels));
+	hv_stores(ret, "conf_level", newSVnv(conf_level));
+	hv_stores(ret, "method",     newSVpv("Kaplan-Meier survival estimate", 0));
+	ST(0) = sv_2mortal(newRV_noinc((SV *)ret));
+	XSRETURN(1);
+}
+
+void logrank_test(...)
+PPCODE:
+{
+	if (items < 3 || !SvROK(ST(0)) || SvTYPE(SvRV(ST(0))) != SVt_PVAV
+	              || !SvROK(ST(1)) || SvTYPE(SvRV(ST(1))) != SVt_PVAV
+	              || !SvROK(ST(2)) || SvTYPE(SvRV(ST(2))) != SVt_PVAV)
+		croak("Usage: logrank_test(\\@time, \\@status, \\@group)");
+	AV *labels = (AV *)sv_2mortal((SV *)newAV());
+	size_t N; SurvObs *o = srv_read(aTHX_ (AV *)SvRV(ST(0)), (AV *)SvRV(ST(1)),
+	                                (AV *)SvRV(ST(2)), &N, labels, "logrank_test");
+	SSize_t G = av_len(labels) + 1;
+	if (G < 2) { Safefree(o); croak("logrank_test: need at least two groups"); }
+	qsort(o, N, sizeof(SurvObs), survobs_cmp);
+
+	NV *O, *E, *V; Newx(O, G, NV); Newx(E, G, NV); Newx(V, G * G, NV);
+	for (SSize_t k = 0; k < G; k++) { O[k] = 0.0; E[k] = 0.0; }
+	for (SSize_t k = 0; k < G * G; k++) V[k] = 0.0;
+
+	size_t *nrisk; Newx(nrisk, G, size_t);
+	for (SSize_t k = 0; k < G; k++) { size_t c = 0; for (size_t i = 0; i < N; i++) if (o[i].grp == k) c++; nrisk[k] = c; }
+
+	size_t i = 0;
+	while (i < N) {
+		NV t = o[i].time;
+		size_t d_tot = 0, n_tot = 0;
+		size_t *dj; Newx(dj, G, size_t); for (SSize_t k = 0; k < G; k++) dj[k] = 0;
+		for (SSize_t k = 0; k < G; k++) n_tot += nrisk[k];
+		size_t j = i, block_j0 = 0; (void)block_j0;
+		while (j < N && o[j].time == t) { if (o[j].status) { dj[o[j].grp]++; d_tot++; } j++; }
+		if (d_tot > 0 && n_tot > 1) {
+			for (SSize_t a = 0; a < G; a++) {
+				NV nja = (NV)nrisk[a];
+				O[a] += (NV)dj[a];
+				E[a] += (NV)d_tot * nja / (NV)n_tot;
+				for (SSize_t b = 0; b < G; b++) {
+					NV njb = (NV)nrisk[b];
+					NV term = (NV)d_tot * ((NV)n_tot - (NV)d_tot) / ((NV)n_tot - 1.0)
+					          * (((a == b) ? nja / (NV)n_tot : 0.0) - nja * njb / ((NV)n_tot * (NV)n_tot));
+					V[a * G + b] += term;
+				}
+			}
+		}
+		/* remove this time's observations from the risk sets */
+		for (size_t k2 = i; k2 < j; k2++) nrisk[o[k2].grp]--;
+		Safefree(dj);
+		i = j;
+	}
+
+	int m = (int)G - 1;                 /* reduced dimension */
+	NV *Vr; Newx(Vr, m * m, NV);
+	NV *OE; Newx(OE, m, NV);
+	for (int a = 0; a < m; a++) { OE[a] = O[a] - E[a]; for (int b = 0; b < m; b++) Vr[a*m+b] = V[a*G+b]; }
+	NV *xsol; Newx(xsol, m, NV);
+	NV chi = 0.0;
+	if (srv_solve(Vr, OE, m, xsol) == 0)
+		for (int a = 0; a < m; a++) chi += OE[a] * xsol[a];
+	NV pval = get_p_value(chi, m);
+
+	HV *ret = newHV();
+	hv_stores(ret, "statistic", newSVnv(chi));
+	hv_stores(ret, "parameter", newSViv(m));
+	hv_stores(ret, "p_value",   newSVnv(pval));
+	AV *obs = newAV(), *exp_av = newAV();
+	for (SSize_t k = 0; k < G; k++) { av_push(obs, newSVnv(O[k])); av_push(exp_av, newSVnv(E[k])); }
+	hv_stores(ret, "observed",  newRV_noinc((SV *)obs));
+	hv_stores(ret, "expected",  newRV_noinc((SV *)exp_av));
+	hv_stores(ret, "groups",    newRV_inc((SV *)labels));
+	hv_stores(ret, "method",    newSVpv("Log-rank (Mantel-Cox) test", 0));
+
+	Safefree(o); Safefree(O); Safefree(E); Safefree(V); Safefree(nrisk);
+	Safefree(Vr); Safefree(OE); Safefree(xsol);
+	ST(0) = sv_2mortal(newRV_noinc((SV *)ret));
+	XSRETURN(1);
+}
+
+void coxph(...)
+PPCODE:
+{
+	if (items < 3 || !SvROK(ST(0)) || SvTYPE(SvRV(ST(0))) != SVt_PVAV
+	              || !SvROK(ST(1)) || SvTYPE(SvRV(ST(1))) != SVt_PVAV
+	              || !SvROK(ST(2)) || SvTYPE(SvRV(ST(2))) != SVt_PVAV)
+		croak("Usage: coxph(\\@time, \\@status, \\@covariate | [\\@x1, \\@x2, ...], "
+		      "conf_level => 0.95, ties => 'efron', names => [...])");
+	AV *tav = (AV *)SvRV(ST(0)), *sav = (AV *)SvRV(ST(1)), *Xav = (AV *)SvRV(ST(2));
+	SSize_t n = av_len(tav) + 1;
+	if (n < 2) croak("coxph: need at least two observations");
+	if (av_len(sav) + 1 != n) croak("coxph: time and status must be the same length");
+
+	/* covariates: [\@x1, \@x2, ...] (multiple) or a single flat \@x */
+	int p, multi = 0;
+	SV **first = av_fetch(Xav, 0, 0);
+	if (first && *first && SvROK(*first) && SvTYPE(SvRV(*first)) == SVt_PVAV) { multi = 1; p = (int)(av_len(Xav) + 1); }
+	else { multi = 0; p = 1; }
+	if (p < 1) croak("coxph: need at least one covariate");
+
+	NV conf_level = 0.95; int breslow = 0, maxit = 25; NV eps = 1e-9;
+	AV *names_av = NULL;
+	for (int i = 3; i + 1 < items; i += 2) {
+		const char *k = SvPV_nolen(ST(i)); SV *v = ST(i + 1);
+		if      (strEQ(k, "conf_level") || strEQ(k, "conf.level")) conf_level = SvNV(v);
+		else if (strEQ(k, "ties"))  breslow = strEQ(SvPV_nolen(v), "breslow");
+		else if (strEQ(k, "maxit")) maxit = (int)SvIV(v);
+		else if (strEQ(k, "names")) { if (SvROK(v) && SvTYPE(SvRV(v)) == SVt_PVAV) names_av = (AV *)SvRV(v); }
+		else croak("coxph: unknown argument '%s'", k);
+	}
+	if (!(conf_level > 0.0 && conf_level < 1.0)) croak("coxph: conf_level must be between 0 and 1");
+
+	/* pull data into contiguous C arrays */
+	NV *restrict X; Newx(X, (size_t)n * p, NV);
+	NV *restrict tm; Newx(tm, n, NV);
+	int *restrict st; Newx(st, n, int);
+	for (SSize_t i = 0; i < n; i++) {
+		tm[i] = SvNV(*av_fetch(tav, i, 0));
+		st[i] = (SvNV(*av_fetch(sav, i, 0)) != 0.0) ? 1 : 0;
+	}
+	if (multi) {
+		for (int k = 0; k < p; k++) {
+			AV *col = (AV *)SvRV(*av_fetch(Xav, k, 0));
+			if (av_len(col) + 1 != n) { Safefree(X); Safefree(tm); Safefree(st); croak("coxph: covariate %d length mismatch", k + 1); }
+			for (SSize_t i = 0; i < n; i++) X[i * p + k] = SvNV(*av_fetch(col, i, 0));
+		}
+	} else {
+		if (av_len(Xav) + 1 != n) { Safefree(X); Safefree(tm); Safefree(st); croak("coxph: covariate length mismatch"); }
+		for (SSize_t i = 0; i < n; i++) X[i] = SvNV(*av_fetch(Xav, i, 0));
+	}
+
+	/* observations sorted by time ascending (risk sets built time-descending) */
+	TimeIdx *restrict ord; Newx(ord, n, TimeIdx);
+	for (SSize_t i = 0; i < n; i++) { ord[i].time = tm[i]; ord[i].idx = (int)i; }
+	qsort(ord, n, sizeof(TimeIdx), cmp_nv3);
+
+	NV *beta = NULL, *U = NULL, *Imat = NULL, *Iinv = NULL, *ratio = NULL,
+	   *S1 = NULL, *S2 = NULL, *SD1 = NULL, *SD2 = NULL, *sumX_D = NULL, *eta = NULL, *w = NULL;
+	Newx(beta, p, NV);   Newx(U, p, NV);       Newx(Imat, p * p, NV); Newx(Iinv, p * p, NV);
+	Newx(ratio, p, NV);  Newx(S1, p, NV);      Newx(S2, p * p, NV);
+	Newx(SD1, p, NV);    Newx(SD2, p * p, NV); Newx(sumX_D, p, NV);
+	Newx(eta, n, NV);    Newx(w, n, NV);
+	for (int k = 0; k < p; k++) beta[k] = 0.0;
+
+	NV loglik = 0.0, loglik_null = 0.0, prev = 0.0;
+	int iter = 0, converged = 0, singular = 0;
+	for (iter = 0; iter < maxit; iter++) {
+		for (SSize_t i = 0; i < n; i++) {
+			NV e = 0.0; for (int k = 0; k < p; k++) e += X[i * p + k] * beta[k];
+			eta[i] = e; w[i] = exp(e);
+		}
+		loglik = 0.0;
+		for (int k = 0; k < p; k++) U[k] = 0.0;
+		for (int k = 0; k < p * p; k++) Imat[k] = 0.0;
+		NV S0 = 0.0;
+		for (int k = 0; k < p; k++) S1[k] = 0.0;
+		for (int k = 0; k < p * p; k++) S2[k] = 0.0;
+
+		SSize_t pos = n - 1;
+		while (pos >= 0) {
+			NV t = ord[pos].time;
+			SSize_t lo = pos; while (lo > 0 && ord[lo - 1].time == t) lo--;
+			NV SD0 = 0.0; int m = 0; NV sumEta_D = 0.0;
+			for (int k = 0; k < p; k++) { SD1[k] = 0.0; sumX_D[k] = 0.0; }
+			for (int k = 0; k < p * p; k++) SD2[k] = 0.0;
+			for (SSize_t q = lo; q <= pos; q++) {
+				int oi = ord[q].idx; NV wq = w[oi];
+				S0 += wq;
+				for (int k = 0; k < p; k++) {
+					NV xk = X[oi * p + k];
+					S1[k] += wq * xk;
+					for (int l = 0; l < p; l++) S2[k * p + l] += wq * xk * X[oi * p + l];
+				}
+				if (st[oi]) {
+					m++; SD0 += wq; sumEta_D += eta[oi];
+					for (int k = 0; k < p; k++) {
+						NV xk = X[oi * p + k];
+						SD1[k] += wq * xk; sumX_D[k] += xk;
+						for (int l = 0; l < p; l++) SD2[k * p + l] += wq * xk * X[oi * p + l];
+					}
+				}
+			}
+			if (m > 0) {
+				loglik += sumEta_D;
+				for (int k = 0; k < p; k++) U[k] += sumX_D[k];
+				for (int l = 0; l < m; l++) {
+					NV d = breslow ? 0.0 : (NV)l / (NV)m;
+					NV Z0 = S0 - d * SD0;
+					loglik -= log(Z0);
+					for (int k = 0; k < p; k++) ratio[k] = (S1[k] - d * SD1[k]) / Z0;
+					for (int k = 0; k < p; k++) {
+						U[k] -= ratio[k];
+						for (int l2 = 0; l2 < p; l2++)
+							Imat[k * p + l2] += (S2[k * p + l2] - d * SD2[k * p + l2]) / Z0
+							                    - ratio[k] * ratio[l2];
+					}
+				}
+			}
+			pos = lo - 1;
+		}
+
+		if (iter == 0) loglik_null = loglik;
+		for (int k = 0; k < p * p; k++) Iinv[k] = Imat[k];   /* mat_inv destroys input */
+		{ NV *tmp; Newx(tmp, p * p, NV); for (int k = 0; k < p*p; k++) tmp[k] = Imat[k];
+		  if (mat_inv(tmp, p, Iinv) != 0) singular = 1; Safefree(tmp); }
+		if (singular) break;
+		if (iter > 0 && fabs(loglik - prev) <= eps * (fabs(loglik) + eps)) { converged = 1; break; }
+		prev = loglik;
+		/* Newton update: beta += Iinv * U */
+		for (int k = 0; k < p; k++) { NV s = 0.0; for (int l = 0; l < p; l++) s += Iinv[k * p + l] * U[l]; beta[k] += s; }
+	}
+
+	int nevent = 0; for (SSize_t i = 0; i < n; i++) if (st[i]) nevent++;
+	NV zc = inverse_normal_cdf(1.0 - (1.0 - conf_level) / 2.0);
+
+	AV *coef=newAV(), *hr=newAV(), *se=newAV(), *zv=newAV(), *pv=newAV(),
+	   *ci=newAV(), *nm=newAV();
+	for (int k = 0; k < p; k++) {
+		NV b = beta[k];
+		NV sek = (Iinv[k * p + k] > 0.0) ? sqrt(Iinv[k * p + k]) : NAN;
+		NV zk = b / sek;
+		NV pk = 2.0 * approx_pnorm(-fabs(zk));
+		av_push(coef, newSVnv(b));
+		av_push(hr,   newSVnv(exp(b)));
+		av_push(se,   newSVnv(sek));
+		av_push(zv,   newSVnv(zk));
+		av_push(pv,   newSVnv(pk));
+		AV *cik = newAV();
+		av_push(cik, newSVnv(exp(b - zc * sek)));
+		av_push(cik, newSVnv(exp(b + zc * sek)));
+		av_push(ci, newRV_noinc((SV *)cik));
+		if (names_av && k <= av_len(names_av)) av_push(nm, newSVsv(*av_fetch(names_av, k, 0)));
+		else { SV *dn = newSVpvf("x%d", k + 1); av_push(nm, dn); }
+	}
+	NV lr = 2.0 * (loglik - loglik_null);
+	NV lr_p = get_p_value(lr, p);
+
+	HV *ret = newHV();
+	hv_stores(ret, "coef",        newRV_noinc((SV *)coef));
+	hv_stores(ret, "exp_coef",    newRV_noinc((SV *)hr));      /* hazard ratios */
+	hv_stores(ret, "se",          newRV_noinc((SV *)se));
+	hv_stores(ret, "z",           newRV_noinc((SV *)zv));
+	hv_stores(ret, "p_value",     newRV_noinc((SV *)pv));
+	hv_stores(ret, "conf_int",    newRV_noinc((SV *)ci));      /* on the HR scale */
+	hv_stores(ret, "names",       newRV_noinc((SV *)nm));
+	hv_stores(ret, "loglik",      newSVnv(loglik));
+	hv_stores(ret, "loglik_null", newSVnv(loglik_null));
+	hv_stores(ret, "lr_stat",     newSVnv(lr));
+	hv_stores(ret, "lr_df",       newSViv(p));
+	hv_stores(ret, "lr_p_value",  newSVnv(lr_p));
+	hv_stores(ret, "n",           newSViv((IV)n));
+	hv_stores(ret, "nevent",      newSViv(nevent));
+	hv_stores(ret, "iterations",  newSViv(iter));
+	hv_stores(ret, "converged",   newSViv(converged));
+	hv_stores(ret, "conf_level",  newSVnv(conf_level));
+	hv_stores(ret, "ties",        newSVpv(breslow ? "breslow" : "efron", 0));
+	hv_stores(ret, "method",      newSVpv("Cox proportional hazards model", 0));
+
+	Safefree(X); Safefree(tm); Safefree(st); Safefree(ord);
+	Safefree(beta); Safefree(U); Safefree(Imat); Safefree(Iinv); Safefree(ratio);
+	Safefree(S1); Safefree(S2); Safefree(SD1); Safefree(SD2); Safefree(sumX_D);
+	Safefree(eta); Safefree(w);
+	ST(0) = sv_2mortal(newRV_noinc((SV *)ret));
+	XSRETURN(1);
+}
 
 void p_adjust(SV* p_sv, const char* method = "holm")
 	INIT:
