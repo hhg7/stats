@@ -4400,6 +4400,10 @@ raw values (no cell number formats), matching the round-trip behaviour of
 
 # Changes
 
+## 0.27
+
+speed improvements in calculation of Kendall tau and p-value.  Improvement of writing xlsx files that won't show in time, but pure waste was removed.
+
 ## 0.26 2026-07-20 CDT
 
 https://www.cpantesters.org/cpan/report/fc7d01a0-83f4-11f1-b543-8a9ac547de9a

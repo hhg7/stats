@@ -642,30 +642,105 @@ static NV pearson_corr(const NV *restrict x, const NV *restrict y, size_t n) {
 	return num / den;
 }
 
-/* Kendall's tau-b between two n-element arrays.
+/* (x,y) pair sorted by x ascending, then y ascending — for Kendall's tau. */
+typedef struct { NV xv, yv; } KPair;
+static int kpair_cmp(const void *a, const void *b) {
+	const KPair *pa = (const KPair *)a, *pb = (const KPair *)b;
+	if (pa->xv < pb->xv) return -1;
+	if (pa->xv > pb->xv) return 1;
+	if (pa->yv < pb->yv) return -1;
+	if (pa->yv > pb->yv) return 1;
+	return 0;
+}
 
+/* Count pairs i<j with a[i] > a[j] (strict) while merge-sorting a[] ascending
+ * into itself via scratch tmp[].  Equal elements are not inversions.          */
+static uint64_t nv_merge_count(NV *restrict a, NV *restrict tmp, size_t lo, size_t hi) {
+	if (hi - lo < 2) return 0;
+	size_t mid = lo + (hi - lo) / 2;
+	uint64_t inv = nv_merge_count(a, tmp, lo, mid) + nv_merge_count(a, tmp, mid, hi);
+	size_t i = lo, j = mid, k = lo;
+	while (i < mid && j < hi) {
+		if (a[i] <= a[j]) tmp[k++] = a[i++];
+		else { tmp[k++] = a[j++]; inv += (uint64_t)(mid - i); }
+	}
+	while (i < mid) tmp[k++] = a[i++];
+	while (j < hi)  tmp[k++] = a[j++];
+	for (size_t t = lo; t < hi; t++) a[t] = tmp[t];
+	return inv;
+}
+
+/* Kendall's tau-b between two n-element arrays.
+ *
  *   tau-b = (C − D) / sqrt((C + D + T_x)(C + D + T_y))
  *
  * where C = concordant pairs, D = discordant, T_x = pairs tied only on
  * x, T_y = pairs tied only on y.  Joint ties (both zero) are excluded
  * from numerator and denominator, matching R's cor(method="kendall").
- * Returns NAN when the denominator is zero. */
+ * Returns NAN when the denominator is zero.
+ *
+ * Implemented via Knight's O(n log n) algorithm: sort by (x,y), tally the
+ * tie corrections, and count discordant pairs D as y-inversions with a
+ * merge sort.  With tot = n(n-1)/2, xtie/ytie = pairs tied on x/y (incl.
+ * joint), ntie = pairs tied on both, the identity
+ *   C − D = tot − xtie − ytie + ntie − 2·D
+ * recovers the exact same tau-b as the former O(n²) double loop.           */
 static NV kendall_tau_b(const NV *restrict x, const NV *restrict y, size_t n) {
-	size_t C = 0, D = 0, tie_x = 0, tie_y = 0;
-	for (size_t i = 0; i < n - 1; i++) {
-		for (size_t j = i + 1; j < n; j++) {
-			int sx = (x[i] > x[j]) - (x[i] < x[j]); // sign of x[i]-x[j]
-			int sy = (y[i] > y[j]) - (y[i] < y[j]);
-			if      (sx == 0 && sy == 0) { /* joint tie — not counted */ }
-			else if (sx == 0)            tie_x++;
-			else if (sy == 0)            tie_y++;
-			else if (sx == sy)           C++;
-			else                         D++;
+	if (n < 2) return NAN;
+	KPair *restrict p;
+	Newx(p, n, KPair);
+	for (size_t i = 0; i < n; i++) { p[i].xv = x[i]; p[i].yv = y[i]; }
+	qsort(p, n, sizeof(KPair), kpair_cmp);
+
+	const uint64_t tot = (uint64_t)n * (n - 1) / 2;
+
+	/* xtie: pairs of equal x; ntie: pairs of equal (x,y) — both from p[]. */
+	uint64_t xtie = 0, ntie = 0;
+	size_t i = 0;
+	while (i < n) {
+		size_t j = i;
+		while (j + 1 < n && p[j + 1].xv == p[i].xv) j++;
+		uint64_t t = (uint64_t)(j - i + 1);
+		xtie += t * (t - 1) / 2;
+		size_t a = i;                       /* subgroup by equal y within equal x */
+		while (a <= j) {
+			size_t b = a;
+			while (b + 1 <= j && p[b + 1].yv == p[a].yv) b++;
+			uint64_t u = (uint64_t)(b - a + 1);
+			ntie += u * (u - 1) / 2;
+			a = b + 1;
 		}
+		i = j + 1;
 	}
-	NV denom = sqrt((NV)(C + D + tie_x) * (NV)(C + D + tie_y));
+
+	/* ytie: pairs of equal y over all data — from a separate y sort. */
+	NV *restrict ys;
+	Newx(ys, n, NV);
+	for (size_t k = 0; k < n; k++) ys[k] = y[k];
+	qsort(ys, n, sizeof(NV), cmp_nv3);
+	uint64_t ytie = 0;
+	i = 0;
+	while (i < n) {
+		size_t j = i;
+		while (j + 1 < n && ys[j + 1] == ys[i]) j++;
+		uint64_t t = (uint64_t)(j - i + 1);
+		ytie += t * (t - 1) / 2;
+		i = j + 1;
+	}
+	Safefree(ys);
+
+	/* D: discordant pairs = y-inversions in (x,y)-sorted order. */
+	NV *restrict yv, *restrict tmp;
+	Newx(yv, n, NV);
+	Newx(tmp, n, NV);
+	for (size_t k = 0; k < n; k++) yv[k] = p[k].yv;
+	uint64_t dis = nv_merge_count(yv, tmp, 0, n);
+	Safefree(yv); Safefree(tmp); Safefree(p);
+
+	NV num   = (NV)tot - (NV)xtie - (NV)ytie + (NV)ntie - 2.0 * (NV)dis;
+	NV denom = sqrt(((NV)tot - (NV)xtie) * ((NV)tot - (NV)ytie));
 	if (denom == 0.0) return NAN;
-	return ((NV)C - (NV)D) / denom;
+	return num / denom;
 }
 
 /* Single dispatch: compute correlation according to method string.
@@ -915,24 +990,30 @@ static NV spearman_exact_pvalue(NV s_obs, size_t n, const char *restrict alt) {
  * Matches R's behavior for N < 50 without ties.*/
 static NV kendall_exact_pvalue(size_t n, NV s_obs, const char *restrict alt) {
 	long max_inv = (long)n * (n - 1) / 2;
-	NV *restrict dp = (NV*)safemalloc((max_inv + 1) * sizeof(NV));
-	for (long i = 0; i <= max_inv; i++) dp[i] = 0.0;
-	dp[0] = 1.0;
+	/* Two ping-pong buffers, allocated once, instead of one malloc/free per
+	 * outer step.  The inner recurrence
+	 *   next_dp[k] = (1/i) * sum_{j=0..min(i-1,k)} dp[k-j]
+	 * is a fixed-width (i) sliding window over dp[], so a running sum makes
+	 * each cell O(1) rather than O(i) — dropping the build from O(n^4) to
+	 * O(n^3).  Results match the from-scratch sum to floating-point noise. */
+	NV *restrict buf_a = (NV*)safemalloc((max_inv + 1) * sizeof(NV));
+	NV *restrict buf_b = (NV*)safemalloc((max_inv + 1) * sizeof(NV));
+	for (long i = 0; i <= max_inv; i++) buf_a[i] = 0.0;
+	buf_a[0] = 1.0;
+	NV *restrict dp = buf_a, *restrict next_dp = buf_b;
 	/* Build the distribution of inversions via DP */
 	for (size_t i = 2; i <= n; i++) {
-		NV *restrict next_dp = (NV*)safemalloc((max_inv + 1) * sizeof(NV));
+		long current_max_inv = (long)i * (i - 1) / 2;
 		for (long k = 0; k <= max_inv; k++) next_dp[k] = 0.0;
-		int current_max_inv = i * (i - 1) / 2;
-		for (int k = 0; k <= current_max_inv; k++) {
-			NV sum = 0;
-			for (int j = 0; j <= i - 1 && k - j >= 0; j++) {
-				 sum += dp[k - j];
-			}
+		NV window = 0.0;
+		for (long k = 0; k <= current_max_inv; k++) {
+			window += dp[k];              /* element entering the window        */
+			long out = k - (long)i;       /* element leaving it (width i)        */
+			if (out >= 0) window -= dp[out];
 			// Divide by 'i' directly to keep array as pure probabilities and prevent overflow
-			next_dp[k] = sum / (NV)i;
+			next_dp[k] = window / (NV)i;
 		}
-		Safefree(dp);
-		dp = next_dp;
+		NV *restrict tmp = dp; dp = next_dp; next_dp = tmp;
 	}
 	// Convert S statistic to target number of inversions
 	long i_obs = (long)round((max_inv - s_obs) / 2.0);
@@ -942,7 +1023,7 @@ static NV kendall_exact_pvalue(size_t n, NV s_obs, const char *restrict alt) {
 	for (long k = i_obs; k <= max_inv; k++) p_le += dp[k];
 	NV p_ge = 0.0; /* P(S >= S_obs) */
 	for (long k = 0; k <= i_obs; k++) p_ge += dp[k];
-	Safefree(dp);
+	Safefree(buf_a); Safefree(buf_b);
 	if (strcmp(alt, "greater") == 0) return p_ge;
 	if (strcmp(alt, "less") == 0) return p_le;
 	// two.sided
@@ -1394,14 +1475,21 @@ static void write_tex_tabular(pTHX_ AV *restrict rows, const char *restrict file
  */
 #define SV_CATLIT(sv, lit) sv_catpvn((sv), "" lit, sizeof(lit) - 1)
 
-/* CRC-32/IEEE over a byte buffer (each stored ZIP member needs its checksum). */
+// CRC-32/IEEE over a byte buffer (each stored ZIP member needs its checksum)
 static uint32_t xlsx_crc32(const unsigned char *restrict data, size_t len) {
-	uint32_t table[256];
-	for (uint32_t i = 0; i < 256; i++) {
-		uint32_t c = i;
-		for (int k = 0; k < 8; k++)
-			c = (c & 1u) ? (0xEDB88320u ^ (c >> 1)) : (c >> 1);
-		table[i] = c;
+	/* The 256-entry lookup table is data-independent, so build it once and
+	 * reuse it across the many calls per workbook.  A concurrent first call
+	 * on another thread merely recomputes the identical constants — benign. */
+	static uint32_t table[256];
+	static bool table_ready = 0;
+	if (!table_ready) {
+		for (uint32_t i = 0; i < 256; i++) {
+			uint32_t c = i;
+			for (int k = 0; k < 8; k++)
+				c = (c & 1u) ? (0xEDB88320u ^ (c >> 1)) : (c >> 1);
+			table[i] = c;
+		}
+		table_ready = 1;
 	}
 	uint32_t crc = 0xFFFFFFFFu;
 	for (size_t i = 0; i < len; i++)
@@ -1409,7 +1497,7 @@ static uint32_t xlsx_crc32(const unsigned char *restrict data, size_t len) {
 	return crc ^ 0xFFFFFFFFu;
 }
 
-/* little-endian field writers, appending to a byte-buffer SV */
+// little-endian field writers, appending to a byte-buffer SV
 static void zip_le16(pTHX_ SV *restrict b, unsigned v) {
 	unsigned char x[2] = { (unsigned char)(v & 0xFF), (unsigned char)((v >> 8) & 0xFF) };
 	sv_catpvn(b, (char*)x, 2);
@@ -1420,7 +1508,7 @@ static void zip_le32(pTHX_ SV *restrict b, uint32_t v) {
 	sv_catpvn(b, (char*)x, 4);
 }
 
-/* Append an unsigned integer's decimal text to an SV. */
+// Append an unsigned integer's decimal text to an SV
 static void xlsx_cat_uint(pTHX_ SV *restrict b, unsigned long v) {
 	char tmp[24];
 	int n = snprintf(tmp, sizeof(tmp), "%lu", v);
@@ -1445,11 +1533,11 @@ static void xlsx_xml_cat(pTHX_ SV *restrict out, const char *restrict s, STRLEN 
 	}
 }
 
-/* 0-based column index -> A1-style letters (A, B, ..., Z, AA, ...) appended. */
+// 0-based column index -> A1-style letters (A, B, ..., Z, AA, ...) appended
 static void xlsx_col_letters(pTHX_ SV *restrict b, size_t idx) {
 	char tmp[16];
 	int n = 0;
-	size_t v = idx + 1;			/* bijective base-26 */
+	size_t v = idx + 1; // bijective base-26
 	while (v > 0 && n < (int)sizeof(tmp)) {
 		v -= 1;
 		tmp[n++] = (char)('A' + (int)(v % 26));
