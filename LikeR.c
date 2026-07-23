@@ -5049,7 +5049,7 @@ static int rocpt_cmp_desc(const void *a, const void *b) {
 /* Split parallel score/label arrays into the positive and negative score
  * vectors.  A label counts as positive when its string form equals `positive`.
  * With lower_pos set, the score sign is flipped (lower marker => more positive).
- * Allocates *pos/*neg via Newx; the caller frees them.  Croaks on a bad shape. */
+ * Allocates pos/neg via Newx; the caller frees them.  Croaks on a bad shape. */
 static void roc_split(pTHX_ AV *restrict sav, AV *restrict lav,
                       const char *restrict positive, int lower_pos,
                       NV **restrict pos, size_t *restrict m,
@@ -5062,10 +5062,10 @@ static void roc_split(pTHX_ AV *restrict sav, AV *restrict lav,
 	NV *restrict Q; Newx(Q, N, NV);
 	size_t mm = 0, nn = 0;
 	for (SSize_t i = 0; i < N; i++) {
-		SV **sp = av_fetch(sav, i, 0), **lp = av_fetch(lav, i, 0);
+		SV **restrict sp = av_fetch(sav, i, 0), **lp = av_fetch(lav, i, 0);
 		NV s = (sp && *sp) ? SvNV(*sp) : NAN;
 		if (lower_pos) s = -s;
-		int ispos = (lp && *lp) ? strEQ(SvPV_nolen(*lp), positive) : 0;
+		bool ispos = (lp && *lp) ? strEQ(SvPV_nolen(*lp), positive) : 0;
 		if (ispos) P[mm++] = s; else Q[nn++] = s;
 	}
 	if (mm == 0 || nn == 0) {

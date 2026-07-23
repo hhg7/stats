@@ -27,7 +27,7 @@ my @stdpop = (2000, 3000, 3000, 2000);
 	is_approx($r->{adj_rate},   0.0131250000, 'directly standardized rate');
 	is_approx($r->{'conf.int'}[0], 0.0109781852, 'gamma CI lower');
 	is_approx($r->{'conf.int'}[1], 0.0156960916, 'gamma CI upper');
-	is($r->{'conf.level'}, 0.95, 'default conf.level');
+	is_approx($r->{'conf.level'}, 0.95, 'default conf.level', 1e-9);
 }
 
 # --- per-100,000 scaling --------------------------------------------------

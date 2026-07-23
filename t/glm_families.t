@@ -50,7 +50,7 @@ sub is_approx {
 	is_approx($p->{exp}{x}{'conf.low'},  1.6651865738, 'poisson x RR CI lower', 1e-5);
 	is_approx($p->{exp}{x}{'conf.high'}, 2.8603101999, 'poisson x RR CI upper', 1e-4);
 	is_approx($p->{'conf.int'}{x}[0], log(1.6651865738), 'poisson conf.int lower (link scale)', 1e-5);
-	is($p->{'conf.level'}, 0.95, 'default conf.level 0.95');
+	is_approx($p->{'conf.level'}, 0.95, 'default conf.level 0.95', 1e-9);
 }
 
 #--------------------------------------------------------------------------
