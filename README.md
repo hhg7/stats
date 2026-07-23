@@ -117,6 +117,47 @@ When the target is a Hash of Arrays, incoming arrays are pushed onto the existin
 
 NB: If `add_data` is called on a completely empty target reference (e.g., `$data = {}` or `$data = []`), it will intelligently infer the required inner structure (Hashes vs Arrays) by inspecting the first valid row of the source data.
 
+## age_standardize
+
+Directly standardized rate: reweights stratum-specific rates (e.g. age-specific
+disease rates) to a standard population so rates from populations with different
+age structures can be compared. The confidence interval uses the Fay-Feuer gamma
+method, matching R's `epitools::ageadjust.direct`, and is accurate even for rare
+events. Validated numerically against R.
+
+    my @count  = (5, 20, 55, 60);       # events per age stratum
+    my @pop    = (1000, 3000, 4000, 2000);  # person-time / population per stratum
+    my @stdpop = (2000, 3000, 3000, 2000);  # standard population weights
+
+    my $r = age_standardize(\@count, \@pop, \@stdpop, per => 100_000);
+    printf "age-adjusted rate = %.1f per 100k (95%% CI %.1f-%.1f)\n",
+        $r->{adj_rate}, $r->{'conf.int'}[0], $r->{'conf.int'}[1];
+
+Arguments may be positional (`count`, `pop`, `stdpop`) or named; pass `rate`
+instead of `count` if you already have stratum-specific rates.
+
+### Input Parameters
+
+| Parameter | Type | Default | Description | Example |
+| --- | --- | --- | --- | --- |
+| `count` | `ArrayRef` | *(count or rate required)* | Event count per stratum. | `\@count` |
+| `rate` | `ArrayRef` | *(count or rate required)* | Stratum-specific rate (alternative to `count`). | `\@rate` |
+| `pop` | `ArrayRef` | *None (Required)* | Population / person-time per stratum. | `\@pop` |
+| `stdpop` | `ArrayRef` | *None (Required)* | Standard-population weight per stratum. | `\@stdpop` |
+| `conf.level` | `Number` | `0.95` | Confidence level for the gamma interval. | `0.90` |
+| `per` | `Number` | `1` | Scale factor applied to every reported rate. | `100_000` |
+
+### Output variables
+
+| Variable | Type | Description | Example |
+| --- | --- | --- | --- |
+| `crude_rate` | `Double` | Unadjusted overall rate (× `per`). | `1400.0` |
+| `adj_rate` | `Double` | Directly standardized rate (× `per`). | `1312.5` |
+| `conf.int` | `ArrayRef` | Fay-Feuer gamma `[lower, upper]` (× `per`). | `[1097.8, 1569.6]` |
+| `se` | `Double` | Standard error of the standardized rate (× `per`). | |
+| `conf.level` | `Double` | Confidence level used. | `0.95` |
+| `per` | `Number` | The scale factor applied. | `100000` |
+
 ## agg
 
 Split-apply-combine over a data frame: split the rows into groups, apply one or
@@ -695,7 +736,7 @@ chance a random positive scores higher than a random negative. `1.0` is perfect,
 
     use Stats::LikeR 'auc';
 
-    my $a = auc(\@scores, \@labels);          # e.g. 0.848
+    my $auc = auc(\@scores, \@labels);          # e.g. 0.848
 
 Options: `positive` (which label is the positive class, default `1`) and
 `direction` (`'>'` = higher score is more positive, the default; `'<'` flips it).
@@ -747,7 +788,7 @@ too far off to be chance? It is the exact binomial test, the same as R's
 
 ### A toddler and two cards
 
-Show a toddler two cards each round and ask them to point at the one with the
+Show a toddler two cards each round and ask him/her to point at the one with the
 star. If he/she is only guessing, he/she will be right half the time, so the
 "pure guessing" success rate is `p = 0.5`.
 
@@ -755,9 +796,9 @@ You play 10 rounds and the toddler gets 6 right. Real skill, or just luck?
 
     use Stats::LikeR 'binom_test';
 
-    my $r = binom_test(6, 10, p => 0.5);   # 6 wins, 10 rounds, guessing rate 0.5
+    my $r = binom_test(6, 10, p => 0.5); # 6 wins, 10 rounds, guessing rate 0.5
 
-    print $r->{p_value};                   # 0.7539
+    print $r->{p_value};                 # 0.7539
 
 The full result is a hashref:
 
@@ -1106,6 +1147,32 @@ Each 2×2 uses the same layout as [`epi_2x2`](#epi_2x2). Options: `correct`
 (continuity correction, default `1`) and `conf_level` (default `0.95`). The
 result also has `statistic` (chi-squared), `parameter` (df = 1), `conf_int` (for
 the common OR), and `k` (number of strata).
+
+## cohen_d
+
+Cohen's *d* effect size for the difference between two independent groups, using
+the pooled standard deviation. It also returns the Hedges' *g* small-sample
+correction and a large-sample (normal-approximation) confidence interval.
+Validated numerically against R.
+
+    my $d = cohen_d(\@treatment, \@control);           # or conf_level => 0.90
+    printf "d = %.2f (95%% CI %.2f–%.2f), Hedges g = %.2f\n",
+        $d->{estimate}, $d->{'conf.int'}[0], $d->{'conf.int'}[1], $d->{hedges_g};
+
+Compare with [smd](#smd), which standardizes by the simple (unweighted) average
+of the group variances and is the convention for covariate-balance tables.
+
+### Output variables
+
+| Variable | Type | Description | Example |
+| --- | --- | --- | --- |
+| `estimate` | `Double` | Cohen's *d* (mean₁ − mean₂ over the pooled SD). | `2.3146` |
+| `hedges_g` | `Double` | Hedges' *g* (bias-corrected *d*). | `2.1668` |
+| `pooled_sd` | `Double` | Pooled standard deviation. | `1.2344` |
+| `se` | `Double` | Approximate standard error of *d*. | `0.6907` |
+| `conf.int` | `ArrayRef` | `[lower, upper]` normal-approximation CI for *d*. | `[0.96, 3.67]` |
+| `conf.level` | `Double` | Confidence level used. | `0.95` |
+| `n1`, `n2` | `Integer` | Group sizes. | `7`, `7` |
 
 ## col2col
 
@@ -1537,6 +1604,30 @@ model-level `loglik`, `lr_stat`/`lr_p_value` (likelihood-ratio test), `n`,
 `nevent`, and `converged`. See [`survfit`](#survfit) and
 [`logrank_test`](#logrank_test).
 
+## cramers_v
+
+Cramér's *V*, a measure of association for an *r* × *c* contingency table
+derived from the (uncorrected) Pearson chi-square. Also returns the Bergsma
+(2013) bias-corrected variant, which is preferable for small samples or sparse
+tables. Validated numerically against R.
+
+    # from a count table
+    my $v = cramers_v([[10, 20, 30], [15, 25, 10]]);
+    printf "V = %.3f (bias-corrected %.3f)\n", $v->{estimate}, $v->{bias_corrected};
+
+    # or from two parallel categorical vectors (cross-tabulated automatically)
+    my $v2 = cramers_v(\@exposure, \@outcome);
+
+### Output variables
+
+| Variable | Type | Description | Example |
+| --- | --- | --- | --- |
+| `estimate` | `Double` | Cramér's *V* ∈ [0, 1]. | `0.3124` |
+| `bias_corrected` | `Double` | Bergsma bias-corrected *V*. | `0.2828` |
+| `chisq` | `Double` | Uncorrected Pearson chi-square. | `10.735` |
+| `df` | `Integer` | Degrees of freedom, `(r-1)(c-1)`. | `2` |
+| `n` | `Integer` | Table total. | `110` |
+
 ## csort
 
 Sort a data frame by a column or a custom comparator, returning a new
@@ -1811,6 +1902,48 @@ ignored.
 - An empty AoH or HoA returns empty rather than erroring.
 - HoH results come back in hash order, since HoH rows are unordered.
 
+## dunn_test
+
+Dunn's (1964) post-hoc test, the standard follow-up to a significant
+[kruskal_test](#kruskal_test) (Kruskal-Wallis). It performs all pairwise
+comparisons of group rank-means using the **shared** ranking and tie correction
+from the omnibus test, then adjusts the p-values for multiple comparisons.
+Two-sided p-values are reported (the `FSA::dunnTest` convention). Validated
+numerically against the canonical formula computed in base R.
+
+    my @values = (2.1,3.4,1.9,5.6,4.2, 6.1,7.3,5.9,8.2,6.6, 3.3,4.4,2.2,3.3,5.5);
+    my @group  = ((('A') x 5), (('B') x 5), (('C') x 5));
+
+    my $res = dunn_test(\@values, \@group, method => 'bh');
+    for my $c (@$res) {
+        printf "%-9s  Z=%+.3f  p=%.4f  (adj %.4f)\n",
+            $c->{comparison}, $c->{Z}, $c->{p_value}, $c->{p_adjust};
+    }
+
+Values and groups are given as two parallel arrays; observations with a missing
+value or group are dropped.
+
+### Input Parameters
+
+| Parameter | Type | Default | Description | Example |
+| --- | --- | --- | --- | --- |
+| *values* | `ArrayRef` | *None (Required)* | Numeric observations. | `\@values` |
+| *groups* | `ArrayRef` | *None (Required)* | Group label for each observation (same length as *values*). | `\@group` |
+| `method` | `String` | `'holm'` | Multiple-comparison adjustment: `none`, `bonferroni`, `sidak`, `holm`, `hs` (Holm-Sidak), `bh` (Benjamini-Hochberg / FDR), or `by` (Benjamini-Yekutieli). | `'bh'` |
+
+### Output
+
+Returns an array reference with one hash per pairwise comparison (in sorted
+group order), each containing:
+
+| Key | Type | Description | Example |
+| --- | --- | --- | --- |
+| `comparison` | `String` | `"group1 - group2"`. | `"A - B"` |
+| `group1`, `group2` | `String` | The two groups being compared. | `"A"`, `"B"` |
+| `Z` | `Double` | Dunn's z statistic for the rank-mean difference. | `-2.7602` |
+| `p_value` | `Double` | Unadjusted two-sided p-value. | `0.005777` |
+| `p_adjust` | `Double` | p-value after the chosen adjustment. | `0.017331` |
+
 ## epi_2x2
 
 The standard 2×2 effect measures — odds ratio, risk ratio, and risk difference,
@@ -1834,6 +1967,25 @@ done automatically when a cell is 0). Result keys: `odds_ratio`, `risk_ratio`,
 `risk_diff` (each with a matching `*_ci`), `risk_exposed`, `risk_unexposed`, and
 `nnt`. For a significance test use [`fisher_test`](#fisher_test) or
 [`chisq_test`](#chisq_test); to adjust across strata use [`cmh_test`](#cmh_test).
+
+## eta_squared
+
+Eta-squared (η²) and related effect sizes for a one-way ANOVA, computed from the
+sums of squares. Returns η², partial η² (equal to η² for a one-way design), and
+ω² (omega-squared, a less biased estimator). Accepts either raw values and group
+labels or an existing [`aov`](#aov) result. Validated numerically against R.
+
+    my $e = eta_squared(\@values, \@group);            # or eta_squared($aov_result)
+    printf "eta^2 = %.3f, omega^2 = %.3f\n", $e->{eta_sq}, $e->{omega_sq};
+
+### Output variables
+
+| Variable | Type | Description | Example |
+| --- | --- | --- | --- |
+| `eta_sq` | `Double` | η² = SS_effect / SS_total. | `0.8457` |
+| `partial_eta_sq` | `Double` | Partial η² = SS_effect / (SS_effect + SS_resid). | `0.8457` |
+| `omega_sq` | `Double` | ω², adjusted for bias. | `0.7743` |
+| `term` | `String` | Name of the effect term used. | `"grp"` |
 
 ## ffill
 
@@ -2108,6 +2260,41 @@ and columns by the sorted keys of the first row, so the result is deterministic;
 every row must expose the same set of column keys, and every row of an array
 input must have the same number of columns.
 
+## friedman_test
+
+The Friedman rank-sum test, the non-parametric analog of a repeated-measures
+ANOVA for an unreplicated complete block design (e.g. the same subjects measured
+under several conditions, or several raters scoring the same items). It is a
+faithful port of R's `stats::friedman.test`, including the tie correction, and
+was validated numerically against R.
+
+Input is a matrix (array of array refs) with **one block/subject per row** and
+**one treatment/condition per column**. Blocks (rows) containing any missing or
+non-numeric value are dropped, mirroring R's `complete.cases`.
+
+    #             cond1 cond2 cond3
+    my $r = friedman_test([
+        [7,  9,  8],   # subject 1
+        [6,  6,  7],   # subject 2
+        [9, 10,  9],   # subject 3
+        [8,  8,  6],   # subject 4
+    ]);
+    printf "chi2=%.3f  df=%d  p=%.4g\n", $r->{statistic}, $r->{parameter}, $r->{p_value};
+
+A significant result says the conditions differ overall; follow up with pairwise
+comparisons (for example [dunn_test](#dunn_test) on the paired differences, or
+Wilcoxon signed-rank tests with a multiple-comparison adjustment).
+
+### Output variables
+
+| Variable | Type | Description | Example |
+| --- | --- | --- | --- |
+| `statistic` | `Double` | Friedman chi-squared statistic (tie-corrected). | `4.0952` |
+| `parameter` | `Integer` | Degrees of freedom, `k - 1` (number of treatments minus one). | `2` |
+| `p_value` | `Double` | The p-value from the chi-squared approximation. | `0.129` |
+| `n` | `Integer` | Number of complete blocks actually used. | `7` |
+| `method` | `String` | `"Friedman rank sum test"`. | |
+
 ## get_union
 
     my @all   = get_union(\@a, \@b, \@c); # every distinct value, any list
@@ -2153,13 +2340,27 @@ In addition to the `gaussian` default, it fully supports logistic regression usi
 
     my $glm_bin = glm(formula => 'am ~ wt + hp', data => \%mtcars, family => 'binomial');
 
+Count outcomes are handled by the `poisson` family (log link, for rate ratios) and the `negbin` (negative-binomial) family, which accommodates over-dispersion. As in R's `MASS::glm.nb`, the negative-binomial dispersion `theta` is estimated by maximum likelihood, alternating with the IRLS fit, unless you supply a fixed value:
+
+    my $pois = glm(formula => 'cases ~ age + sex', data => \%d, family => 'poisson');
+    my $nb   = glm(formula => 'cases ~ age + sex', data => \%d, family => 'negbin');
+    my $nb2  = glm(formula => 'cases ~ age + sex', data => \%d, family => 'negbin', theta => 1.7);
+
+For every non-gaussian family, `glm` also returns the exponentiated coefficients with their Wald confidence intervals (`confint.default`): odds ratios for `binomial`, and rate / incidence-rate ratios for `poisson` and `negbin`. The interval width is set by the `conf.level` argument (default `0.95`). Validated numerically against R's `glm`, `MASS::glm.nb`, and `confint.default`.
+
+    my $nb = glm(formula => 'cases ~ age + sex', data => \%d, family => 'negbin');
+    printf "IRR(age) = %.2f (%.2f–%.2f)\n",
+        $nb->{exp}{age}{estimate}, $nb->{exp}{age}{'conf.low'}, $nb->{exp}{age}{'conf.high'};
+
 ### Input Parameters
 
 | Parameter | Type | Default | Description | Example |
 | --- | --- | --- | --- | --- |
 | `formula` | `String` | *None (Required)* | A symbolic description of the model to be fitted. Supports operators like `+`, `:`, `*`, `^`, and `-1` (to remove the intercept). | `'am ~ wt + hp'`, `'y ~ x - 1'` |
 | `data` | `HashRef` or `ArrayRef` | *None (Required)* | The dataset containing the variables used in the formula. Accepts either a Hash of Arrays (HoA) or an Array of Hashes (AoH). | `\%mtcars`, `[{x => 1, y => 2}, ...]` |
-| `family` | `String` | `'gaussian'` | A description of the error distribution and link function to be used in the model. Currently supports `'gaussian'` (identity link) and `'binomial'` (logit link). | `'binomial'` |
+| `family` | `String` | `'gaussian'` | The error distribution / link function: `'gaussian'` (identity link), `'binomial'` (logit link), `'poisson'` (log link) or `'negbin'` (negative binomial, log link). | `'poisson'` |
+| `theta` | `Number` | *estimated by ML* | Negative-binomial dispersion. When omitted (with `family => 'negbin'`) it is estimated by maximum likelihood as in `MASS::glm.nb`; supply a value to hold it fixed. | `1.7` |
+| `conf.level` | `Number` | `0.95` | Confidence level for the Wald coefficient / exponentiated-coefficient intervals. | `0.90` |
 
 ### Output variables
 
@@ -2178,8 +2379,12 @@ In addition to the `gaussian` default, it fully supports logistic regression usi
 | `iter` | `Integer` | The number of IRLS iterations performed before convergence or hitting the iteration limit. | `4` |
 | `null.deviance` | `Double` | The deviance for the null model (a baseline model containing only an intercept, or an offset of 0 if the intercept is removed). | `43.5` |
 | `rank` | `Integer` | The numeric rank of the fitted linear model (the number of estimated, non-aliased parameters). | `2` |
-| `summary` | `HashRef` | A nested hash mapping each term to its detailed summary statistics, including `Estimate`, `Std. Error`, `t value` / `z value`, and `Pr(> t )` / `Pr(> z )`. Aliased parameters return `"NaN"`. | `{'wt' => {'Estimate' => -0.5, 'Std. Error' => 0.1, ...}}` |
+| `summary` | `HashRef` | A nested hash mapping each term to its detailed summary statistics, including `Estimate`, `Std. Error`, `t value` / `z value`, `Pr(> t )` / `Pr(> z )`, and the Wald `CI.lower` / `CI.upper` (link scale). Aliased parameters return `"NaN"`. | `{'wt' => {'Estimate' => -0.5, 'Std. Error' => 0.1, ...}}` |
 | `terms` | `ArrayRef` | An ordered list of the expanded term names included in the model matrix. | `['Intercept', 'wt', 'hp']` |
+| `conf.int` | `HashRef` | Wald confidence interval for each coefficient on the **link** scale, as `[lower, upper]`. | `{'wt' => [-0.9, -0.1]}` |
+| `conf.level` | `Double` | The confidence level used for `conf.int` and `exp`. | `0.95` |
+| `exp` | `HashRef` | Non-gaussian families only: exponentiated coefficient (odds ratio for `binomial`; rate / incidence-rate ratio for `poisson` / `negbin`) with its confidence interval, as `{estimate, 'conf.low', 'conf.high'}`. | `{'wt' => {estimate => 0.6, 'conf.low' => 0.4, 'conf.high' => 0.9}}` |
+| `theta` | `Double` | `negbin` family only: the negative-binomial dispersion parameter (ML estimate, or the fixed value supplied). | `1.73` |
 
 ## group_by
 
@@ -2391,6 +2596,40 @@ Computes the histogram of the given data values, operating in single $O(N)$ pass
     my $res = hist([1, 2, 2, 3, 3, 3, 4, 4, 5], breaks => 4);
 
 If `breaks` is not explicitly provided, it defaults to calculating the number of bins using Sturges' formula.
+
+## hosmer_lemeshow
+
+The Hosmer-Lemeshow goodness-of-fit test for a logistic-regression model. Given
+the observed 0/1 outcomes and the model's predicted probabilities, it bins the
+observations into `g` risk groups (deciles by default) and compares observed and
+expected event counts. A large p-value indicates the model fits adequately. The
+grouping and statistic follow R's `ResourceSelection::hoslem.test`, against which
+it was validated numerically.
+
+    # $fit is a binomial glm(); align observed outcomes with fitted.values
+    my @obs  = map { $data{$_}{outcome} } @ids;
+    my @prob = map { $fit->{'fitted.values'}{$_} } @ids;
+
+    my $hl = hosmer_lemeshow(\@obs, \@prob, g => 10);
+    printf "HL chi2=%.2f df=%d p=%.3f\n", $hl->{statistic}, $hl->{parameter}, $hl->{p_value};
+
+### Input Parameters
+
+| Parameter | Type | Default | Description | Example |
+| --- | --- | --- | --- | --- |
+| *observed* | `ArrayRef` | *None (Required)* | Observed binary outcomes (0/1). | `\@obs` |
+| *predicted* | `ArrayRef` | *None (Required)* | Model-predicted probabilities (same length). | `\@prob` |
+| `g` | `Integer` | `10` | Number of risk groups (quantile bins). | `10` |
+
+### Output variables
+
+| Variable | Type | Description | Example |
+| --- | --- | --- | --- |
+| `statistic` | `Double` | Hosmer-Lemeshow chi-squared statistic. | `4.3456` |
+| `parameter` | `Integer` | Degrees of freedom, `g - 2`. | `8` |
+| `p_value` | `Double` | Goodness-of-fit p-value (large = good fit). | `0.825` |
+| `groups` | `Integer` | Number of non-empty groups used. | `10` |
+| `table` | `ArrayRef` | Per-group `{n, observed, expected}` event summaries. | |
 
 ## interpolate
 
@@ -2820,6 +3059,48 @@ or
     max(@arr, 4, 5)
 
 as of version 0.02, max will die if any undefined values are provided
+
+## mcnemar_test
+
+McNemar's test for paired categorical data (e.g. before/after, matched
+case-control, two raters), a faithful port of R's `stats::mcnemar.test`. It
+assesses whether the off-diagonal disagreement in a square table is symmetric.
+For a 2×2 table a Yates continuity correction is applied by default (toggle with
+`correct`); `exact => 1` instead performs the two-sided exact binomial test.
+Larger `k × k` tables use the generalized chi-square (df = `k(k-1)/2`). Validated
+numerically against R.
+
+    # counts as a square matrix: [[a, b], [c, d]]
+    my $r = mcnemar_test([[794, 86], [150, 570]]);
+    printf "chi2=%.2f df=%d p=%.4g\n", $r->{statistic}, $r->{parameter}, $r->{p_value};
+
+    # small samples: exact binomial test on the discordant pairs
+    my $e = mcnemar_test([[794, 86], [150, 570]], exact => 1);
+
+    # paired observation vectors are cross-tabulated automatically
+    my $v = mcnemar_test(\@before, \@after);
+
+The first argument is either a square matrix (array of array refs) or, in the
+two-argument form, two equal-length vectors of paired observations that are
+cross-tabulated over their sorted union of levels.
+
+### Input Parameters
+
+| Parameter | Type | Default | Description | Example |
+| --- | --- | --- | --- | --- |
+| *table* / *x* | `ArrayRef` | *None (Required)* | A square `k × k` count matrix, or (two-arg form) the first vector of paired observations. | `[[794,86],[150,570]]` |
+| *y* | `ArrayRef` | *None* | Second vector of paired observations (two-arg form only). | `\@after` |
+| `correct` | `Boolean` | `1` | Apply the Yates continuity correction (2×2 only). | `0` |
+| `exact` | `Boolean` | `0` | Use the two-sided exact binomial test (2×2 only). | `1` |
+
+### Output variables
+
+| Variable | Type | Description | Example |
+| --- | --- | --- | --- |
+| `statistic` | `Double` | McNemar's chi-squared (or, for `exact`, the discordant success count *b*). | `16.8178` |
+| `parameter` | `Integer` | Degrees of freedom, `k(k-1)/2` (absent for `exact`). | `1` |
+| `p_value` | `Double` | The p-value. | `4.1e-05` |
+| `method` | `String` | Description of the test performed. | `"McNemar's Chi-squared test with continuity correction"` |
 
 ## mean
 
@@ -3441,6 +3722,56 @@ or `I()` transforms.
 - **It dies** on: a model that isn't a hashref or has no `coefficients`; an
   invalid `type`; or `newdata` that isn't a HoA/HoH hashref or AoH arrayref.
 
+## prop_test
+
+Test of proportions, a faithful port of R's `stats::prop.test`. It compares an
+observed count of successes against a target probability (one sample), tests two
+proportions for equality (with a confidence interval for their difference), or
+tests `k > 2` proportions for equality via a Pearson chi-square. A Yates
+continuity correction is applied for one or two groups (toggle with `correct`).
+Validated numerically against R.
+
+    # one sample vs a target probability (default 0.5)
+    my $r = prop_test(83, 100);              # 83 successes in 100 trials
+    printf "p-hat=%.2f  95%% CI %.3f–%.3f  p=%.4g\n",
+        $r->{estimate}[0], $r->{'conf.int'}[0], $r->{'conf.int'}[1], $r->{p_value};
+
+    # two groups: difference in proportions + CI
+    my $two = prop_test([83, 90], [100, 100]);
+
+    # k > 2 groups: chi-square test of equality (no CI)
+    my $k = prop_test([83, 90, 75], [100, 100, 100]);
+
+    # one-sample against a specified probability, one-sided, no correction
+    my $g = prop_test(83, 100, p => 0.7, alternative => 'greater', correct => 0);
+
+Pass successes and trials either as matching array references (one entry per
+group) or as two scalars for a single sample.
+
+### Input Parameters
+
+| Parameter | Type | Default | Description | Example |
+| --- | --- | --- | --- | --- |
+| *successes* | `ArrayRef` or `Number` | *None (Required)* | Count of successes per group (positional arg 1). | `[83, 90]`, `83` |
+| *trials* | `ArrayRef` or `Number` | *None (Required)* | Count of trials per group (positional arg 2); same length as *successes*. | `[100, 100]`, `100` |
+| `p` | `Number` or `ArrayRef` | `0.5` (one sample) / pooled | Null probability. A single value or one per group; when omitted with ≥2 groups, equality of proportions is tested against the pooled rate. | `0.7`, `[0.5, 0.6]` |
+| `alternative` | `String` | `'two.sided'` | `'two.sided'`, `'less'`, or `'greater'`. Forced two-sided for `k > 2` groups or two groups tested against a given `p`. | `'greater'` |
+| `conf.level` | `Number` | `0.95` | Confidence level for the interval (one or two groups). | `0.99` |
+| `correct` | `Boolean` | `1` | Apply the Yates continuity correction (`k ≤ 2` only). | `0` |
+
+### Output variables
+
+| Variable | Type | Description | Example |
+| --- | --- | --- | --- |
+| `statistic` | `Double` | Pearson chi-square statistic (X-squared). | `1.5414` |
+| `parameter` | `Integer` | Degrees of freedom. | `1` |
+| `p_value` | `Double` | The p-value. | `0.2144` |
+| `estimate` | `ArrayRef` | Sample proportion(s), one per group. | `[0.83, 0.90]` |
+| `conf.int` | `ArrayRef` | For one group, a Wilson score interval for the proportion; for two groups, a Wald interval for the difference `p1 - p2`. Absent for `k > 2`. | `[-0.174, 0.034]` |
+| `alternative` | `String` | The alternative hypothesis used. | `'two.sided'` |
+| `conf_level` | `Double` | The confidence level used. | `0.95` |
+| `method` | `String` | Human-readable description of the test performed. | `'2-sample test for equality of proportions with continuity correction'` |
+
 ## qcut
 
 Equal-frequency binning of a numeric column, which is the analog of pandas `qcut`.
@@ -3946,6 +4277,18 @@ and returns the hash reference:
     W           0.960870680168535
     }
 
+## smd
+
+Standardized mean difference between two continuous groups, standardizing by the
+simple (unweighted) average of the group variances — the convention used for
+covariate-balance diagnostics in "Table 1" (R's `tableone` / `stddiff`). Returns
+the signed value. Validated numerically against R.
+
+    my $balance = smd(\@exposed_age, \@unexposed_age);   # |smd| < 0.1 is well balanced
+
+Unlike [cohen_d](#cohen_d) (which pools by sample size), `smd` weights the two
+group variances equally, so the two diverge when the groups differ in size.
+
 ## sum
 
 returns sum, but using both arrays and array references.
@@ -4400,6 +4743,23 @@ structure types, `n` boundaries, alignment, `NA` rendering, truncation,
 `row.names`/`cols` handling, control-character escaping, the `return_only` and
 `to` output paths, empty structures, and the error cases.
 
+## vif
+
+Variance inflation factors, the standard multicollinearity diagnostic for a
+regression model. For each predictor, `vif` regresses it on all the other
+predictors and reports `1 / (1 - R²)`; values above ~5–10 flag problematic
+collinearity. The second argument is either a formula string (its right-hand-side
+terms are used) or an array reference of predictor column names. Validated
+numerically against R. Numeric predictors only — categorical predictors would
+need a generalized VIF.
+
+    my $v = vif(\%data, [qw(age bmi sbp chol)]);        # or 'y ~ age + bmi + sbp + chol'
+    for my $p (sort { $v->{$b} <=> $v->{$a} } keys %$v) {
+        printf "%-6s VIF = %.2f\n", $p, $v->{$p};
+    }
+
+Returns a hash of `predictor => VIF`.
+
 ## wilcox_test
 
     $test_data = wilcox_test(
@@ -4499,12 +4859,7 @@ which you wrap yourself:
     \end{longtable}
 
 ### Excel output (`xlsx`)
-`write_table` can write a real Excel `.xlsx` workbook with **no extra
-dependencies** — it is built entirely in XS, packing hand-written XML parts into
-an (uncompressed) ZIP, so there is no `Excel::Writer::XLSX` or other CPAN
-requirement. It is selected either by naming the file `*.xlsx` (auto-detected)
-or by passing `xlsx => 1`; an explicit `xlsx => 0` forces a delimited file even
-for a `.xlsx` name. Like LaTeX, it is built from the same rows as the delimited
+`write_table` can write a real Excel `.xlsx` workbook. It is selected either by naming the file `*.xlsx` (auto-detected) or by passing `xlsx => 1`; an explicit `xlsx => 0` forces a delimited file even for a `.xlsx` name. Like LaTeX, it is built from the same rows as the delimited
 writer, so it works for every shape above:
 
     write_table(\@data_aoh, 'table.xlsx');            # .xlsx name selects Excel
@@ -4562,6 +4917,23 @@ raw values (no cell number formats), matching the round-trip behaviour of
 ## 0.27
 
 speed improvements in calculation of Kendall tau and p-value.  Improvement of writing xlsx files that won't show in time, but pure waste was removed.
+
+Addition of `auc`,`cmh_test`, `epi_2x2`, `roc` functions
+
+glm extended (LikeR.xs)
+- family => 'poisson' (log link) and family => 'negbin' — negative-binomial θ estimated by ML via a MASS::glm.nb-style outer loop, or fixed with theta =>. Matched R to ~1e-8 (coefs, deviance, null-dev, AIC, SE, θ); exact Poisson limit when data aren't over-dispersed.
+- Every non-gaussian family now returns exp (odds/rate/incidence-rate ratios + conf.low/conf.high), link-scale conf.int, conf.level, and theta (negbin). Count families report z-statistics. OR/CI matched R's confint.default exactly.
+
+New XS tests (all matched R exactly)
+- prop_test — 1/2/k-sample proportions (Yates, Wilson & Wald-diff CIs)
+- mcnemar_test — matrix or paired vectors; continuity correction; exact => 1 binomial
+- friedman_test — repeated-measures rank test, tie-corrected
+- dunn_test — post-Kruskal pairwise, 7 adjustment methods
+
+New Perl functions (lib/Stats/LikeR.pm, matched base-R references)
+- Effect sizes: cohen_d (+Hedges g, CI), smd, cramers_v (+Bergsma bias-corrected), eta_squared (η²/partial/ω²)
+- vif, hosmer_lemeshow (matches hoslem.test)
+- age_standardize — direct standardization + Fay–Feuer gamma CI (matches epitools::ageadjust.direct)
 
 ## 0.26 2026-07-20 CDT
 

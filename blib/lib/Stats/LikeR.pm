@@ -10,7 +10,7 @@ use autodie ':default';
 use Exporter 'import';
 use Scalar::Util qw(reftype looks_like_number);
 XSLoader::load('Stats::LikeR', $VERSION);
-our @EXPORT_OK = qw(add_data agg anova aoh2hoa aoh2hoh aov assign auc bfill binom_test cfilter chisq_test chunk col col2col colnames concat cmh_test cor cor_test cov csort dnorm drop_cols drop_duplicates dropna epi_2x2 ffill fillna filter fisher_test get_union glm group_by hoa2aoh hoa2hoh hoh2hoa hist interpolate intersection is_equivalent kruskal_test ks_test Lonly ljoin lm map_cell matrix max mean median melt merge min mode ncol nrow oneway_test p_adjust pivot_table pnorm power_t_test predict prcomp ptukey qcut qtukey quantile rank roc Ronly rbind rbinom read_table rename_cols rnorm rownames runif sample scale sd select_cols seq shapiro_test sum summary survfit logrank_test coxph table_one t_test transpose TukeyHSD uniq vals value_counts var var_test view wilcox_test write_table);
+our @EXPORT_OK = qw(add_data age_standardize agg anova aoh2hoa aoh2hoh aov assign auc bfill binom_test cfilter chisq_test chunk col col2col colnames concat cmh_test cor cor_test cov csort dnorm cohen_d cramers_v eta_squared drop_cols drop_duplicates dropna epi_2x2 ffill fillna filter fisher_test get_union glm group_by hoa2aoh hoa2hoh hoh2hoa hist interpolate intersection is_equivalent kruskal_test ks_test Lonly ljoin lm map_cell matrix max mean median melt merge min mode ncol nrow oneway_test p_adjust pivot_table pnorm power_t_test predict prop_test mcnemar_test friedman_test dunn_test prcomp ptukey qcut qtukey quantile rank roc Ronly rbind rbinom read_table rename_cols rnorm rownames runif sample scale sd select_cols seq shapiro_test smd sum summary survfit logrank_test coxph table_one t_test transpose TukeyHSD uniq vals value_counts var var_test vif hosmer_lemeshow view wilcox_test write_table);
 our @EXPORT = @EXPORT_OK;
 
 # colnames($df) / rownames($df)
@@ -3762,6 +3762,465 @@ sub table_one {
 	}
 	return \@out;
 }
+
+# ----------------------------------------------------------------------------
+# Effect sizes (Perl level; compose the XS primitives mean/var/aov).  All
+# validated numerically against R.  Added to @EXPORT_OK (== @EXPORT).
+# ----------------------------------------------------------------------------
+
+# _num_pair(\@x, \@y, $who) -> (\@xn, \@yn): defined, numeric values only.
+sub _num_pair {
+	my ($x, $y, $who) = @_;
+	die "$who: first two arguments must be array references\n"
+		unless ref $x eq 'ARRAY' && ref $y eq 'ARRAY';
+	my @xn = grep { defined && looks_like_number($_) } @$x;
+	my @yn = grep { defined && looks_like_number($_) } @$y;
+	die "$who: each group needs at least two numeric observations\n"
+		if @xn < 2 || @yn < 2;
+	return (\@xn, \@yn);
+}
+
+# cohen_d(\@x, \@y, hedges => 0, conf_level => 0.95)
+#
+# Cohen's d for two independent samples using the pooled standard deviation,
+# with the Hedges' g small-sample bias correction and a large-sample
+# (normal-approximation) confidence interval.
+sub cohen_d {
+	my ($x, $y, %opt) = @_;
+	my $cl = defined $opt{conf_level} ? $opt{conf_level}
+	       : defined $opt{'conf.level'} ? $opt{'conf.level'} : 0.95;
+	die "cohen_d: conf.level must be between 0 and 1\n" unless $cl > 0 && $cl < 1;
+	my ($xn, $yn) = _num_pair($x, $y, 'cohen_d');
+	my ($n1, $n2) = (scalar @$xn, scalar @$yn);
+	my ($m1, $m2) = (mean($xn), mean($yn));
+	my ($v1, $v2) = (var($xn),  var($yn));
+	my $sp = sqrt((($n1 - 1) * $v1 + ($n2 - 1) * $v2) / ($n1 + $n2 - 2));
+	die "cohen_d: pooled standard deviation is zero\n" if $sp == 0;
+	my $d  = ($m1 - $m2) / $sp;
+	my $J  = 1 - 3 / (4 * ($n1 + $n2) - 9);           # Hedges' correction factor
+	my $se = sqrt(($n1 + $n2) / ($n1 * $n2) + $d * $d / (2 * ($n1 + $n2)));
+	my $z  = _qnorm((1 + $cl) / 2);
+	return {
+		estimate     => $d,
+		hedges_g     => $d * $J,
+		pooled_sd    => $sp,
+		se           => $se,
+		'conf.int'   => [ $d - $z * $se, $d + $z * $se ],
+		'conf.level' => $cl,
+		n1           => $n1,
+		n2           => $n2,
+	};
+}
+
+# smd(\@x, \@y)
+#
+# Standardized mean difference for two continuous groups using the simple
+# (unweighted) average of the group variances in the denominator -- the
+# convention used for covariate-balance "Table 1" diagnostics (R's tableone /
+# stddiff).  Returns the signed value.
+sub smd {
+	my ($x, $y) = @_;
+	my ($xn, $yn) = _num_pair($x, $y, 'smd');
+	my $denom = sqrt((var($xn) + var($yn)) / 2);
+	die "smd: pooled standard deviation is zero\n" if $denom == 0;
+	return (mean($xn) - mean($yn)) / $denom;
+}
+
+# _xtab(\@a, \@b) -> (\@table, \@rowlevels, \@collevels): contingency table
+# from two parallel categorical vectors (rows = levels of a, cols = levels of b).
+sub _xtab {
+	my ($a, $b) = @_;
+	die "cramers_v: the two vectors must have the same length\n"
+		unless @$a == @$b;
+	my (%rseen, %cseen, %cell);
+	for my $i (0 .. $#$a) {
+		next unless defined $a->[$i] && defined $b->[$i];
+		my ($r, $c) = ("$a->[$i]", "$b->[$i]");
+		$rseen{$r}++; $cseen{$c}++; $cell{$r}{$c}++;
+	}
+	my @rl = sort keys %rseen;
+	my @cl = sort keys %cseen;
+	my @tab = map { my $r = $_; [ map { $cell{$r}{$_} // 0 } @cl ] } @rl;
+	return (\@tab, \@rl, \@cl);
+}
+
+# cramers_v(\@table)  or  cramers_v(\@x, \@y)
+#
+# Cramer's V for an r x c contingency table (uncorrected Pearson chi-square),
+# with the Bergsma (2013) bias-corrected variant.  Accepts either a table
+# (array of array refs of counts) or two parallel categorical vectors.
+sub cramers_v {
+	my @args = @_;
+	my $tab;
+	if (ref $args[0] eq 'ARRAY' && ref $args[0][0] eq 'ARRAY') {
+		$tab = $args[0];
+	} elsif (ref $args[0] eq 'ARRAY' && ref $args[1] eq 'ARRAY') {
+		($tab) = _xtab($args[0], $args[1]);
+	} else {
+		die "cramers_v: expected a count table or two parallel vectors\n";
+	}
+	my $r = scalar @$tab;
+	die "cramers_v: table needs at least two rows and columns\n" if $r < 2;
+	my $c = scalar @{ $tab->[0] };
+	die "cramers_v: table needs at least two rows and columns\n" if $c < 2;
+	my (@rsum, @csum, $N);
+	for my $i (0 .. $r - 1) {
+		die "cramers_v: ragged table\n" unless @{ $tab->[$i] } == $c;
+		for my $j (0 .. $c - 1) {
+			my $v = $tab->[$i][$j];
+			die "cramers_v: counts must be non-negative numbers\n"
+				unless defined $v && looks_like_number($v) && $v >= 0;
+			$rsum[$i] += $v; $csum[$j] += $v; $N += $v;
+		}
+	}
+	die "cramers_v: table total is zero\n" unless $N;
+	my $chi = 0;
+	for my $i (0 .. $r - 1) {
+		for my $j (0 .. $c - 1) {
+			my $e = $rsum[$i] * $csum[$j] / $N;
+			next unless $e > 0;
+			my $diff = $tab->[$i][$j] - $e;
+			$chi += $diff * $diff / $e;
+		}
+	}
+	my $mindim = ($r < $c ? $r : $c) - 1;
+	my $v = sqrt($chi / ($N * $mindim));
+	# Bergsma bias-corrected V
+	my $phi2  = $chi / $N;
+	my $phi2c = $phi2 - ($c - 1) * ($r - 1) / ($N - 1);
+	$phi2c = 0 if $phi2c < 0;
+	my $rc = $r - ($r - 1) ** 2 / ($N - 1);
+	my $cc = $c - ($c - 1) ** 2 / ($N - 1);
+	my $mc = ($rc < $cc ? $rc : $cc) - 1;
+	my $vc = $mc > 0 ? sqrt($phi2c / $mc) : 0;
+	return {
+		estimate       => $v,
+		bias_corrected => $vc,
+		chisq          => $chi,
+		df             => ($r - 1) * ($c - 1),
+		n              => $N,
+	};
+}
+
+# eta_squared($aov_result)  or  eta_squared(\@values, \@groups)
+#
+# Eta-squared, partial eta-squared and omega-squared for a one-way design,
+# from the ANOVA sums of squares.  Accepts an aov() result hash (single factor)
+# or raw values + group labels.
+sub eta_squared {
+	my @args = @_;
+	my $aov_res;
+	if (ref $args[0] eq 'HASH') {
+		$aov_res = $args[0];
+	} elsif (ref $args[0] eq 'ARRAY' && ref $args[1] eq 'ARRAY') {
+		die "eta_squared: values and groups must have the same length\n"
+			unless @{ $args[0] } == @{ $args[1] };
+		$aov_res = aov({ __value => $args[0], __group => $args[1] }, '__value ~ __group');
+	} else {
+		die "eta_squared: expected an aov() result or (\\\@values, \\\@groups)\n";
+	}
+	my $resid = $aov_res->{Residuals}
+		or die "eta_squared: not an ANOVA result (no Residuals term)\n";
+	my $ss_resid = $resid->{'Sum Sq'};
+	my $ms_resid = $resid->{'Mean Sq'};
+	# the single non-Residuals effect term
+	my ($term) = grep { $_ ne 'Residuals' && ref $aov_res->{$_} eq 'HASH'
+		&& exists $aov_res->{$_}{'Sum Sq'} } sort keys %$aov_res;
+	die "eta_squared: could not find an effect term\n" unless defined $term;
+	my $ss_eff = $aov_res->{$term}{'Sum Sq'};
+	my $df_eff = $aov_res->{$term}{'Df'};
+	my $ss_tot = $ss_eff + $ss_resid;
+	return {
+		term            => $term,
+		eta_sq          => $ss_eff / $ss_tot,
+		partial_eta_sq  => $ss_eff / ($ss_eff + $ss_resid),
+		omega_sq        => ($ss_eff - $df_eff * $ms_resid) / ($ss_tot + $ms_resid),
+	};
+}
+
+# _qnorm($p): standard-normal quantile (Acklam's rational approximation,
+# ~1e-9 accuracy) for the Perl-level effect-size CIs.
+sub _qnorm {
+	my $p = shift;
+	return -9**9**9 if $p <= 0;
+	return  9**9**9 if $p >= 1;
+	my @a = (-3.969683028665376e+01, 2.209460984245205e+02, -2.759285104469687e+02,
+	          1.383577518672690e+02, -3.066479806614716e+01, 2.506628277459239e+00);
+	my @b = (-5.447609879822406e+01, 1.615858368580409e+02, -1.556989798598866e+02,
+	          6.680131188771972e+01, -1.328068155288572e+01);
+	my @c = (-7.784894002430293e-03, -3.223964580411365e-01, -2.400758277161838e+00,
+	         -2.549732539343734e+00, 4.374664141464968e+00, 2.938163982698783e+00);
+	my @d = (7.784695709041462e-03, 3.224671290700398e-01, 2.445134137142996e+00,
+	         3.754408661907416e+00);
+	my $plow  = 0.02425;
+	my $phigh = 1 - 0.02425;
+	my ($q, $r, $x);
+	if ($p < $plow) {
+		$q = sqrt(-2 * log($p));
+		$x = ((((($c[0]*$q+$c[1])*$q+$c[2])*$q+$c[3])*$q+$c[4])*$q+$c[5]) /
+		     (((($d[0]*$q+$d[1])*$q+$d[2])*$q+$d[3])*$q+1);
+	} elsif ($p <= $phigh) {
+		$q = $p - 0.5; $r = $q * $q;
+		$x = ((((($a[0]*$r+$a[1])*$r+$a[2])*$r+$a[3])*$r+$a[4])*$r+$a[5])*$q /
+		     ((((($b[0]*$r+$b[1])*$r+$b[2])*$r+$b[3])*$r+$b[4])*$r+1);
+	} else {
+		$q = sqrt(-2 * log(1 - $p));
+		$x = -((((($c[0]*$q+$c[1])*$q+$c[2])*$q+$c[3])*$q+$c[4])*$q+$c[5]) /
+		      (((($d[0]*$q+$d[1])*$q+$d[2])*$q+$d[3])*$q+1);
+	}
+	return $x;
+}
+
+# ----------------------------------------------------------------------------
+# Regression diagnostics (Perl level).  Validated numerically against R.
+# ----------------------------------------------------------------------------
+
+# _lgamma($x): log gamma for x > 0 (Numerical Recipes gammln, ~1e-10).
+sub _lgamma {
+	my $x = shift;
+	my @cof = (76.18009172947146, -86.50532032941677, 24.01409824083091,
+	           -1.231739572450155, 0.1208650973866179e-2, -0.5395239384953e-5);
+	my $tmp = $x + 5.5;
+	$tmp -= ($x + 0.5) * log($tmp);
+	my $ser = 1.000000000190015;
+	my $y = $x;
+	$ser += $cof[$_] / ++$y for 0 .. 5;
+	return -$tmp + log(2.5066282746310005 * $ser / $x);
+}
+
+# _igamc($a, $x): regularized upper incomplete gamma Q(a,x) (port of the XS
+# igamc), i.e. pchisq(2x, 2a, lower.tail = FALSE) style tail.
+sub _igamc {
+	my ($a, $x) = @_;
+	return 1 if $x <= 0 || $a <= 0;
+	my $gln = _lgamma($a);
+	if ($x < $a + 1) {                       # series expansion
+		my $sum = 1 / $a;
+		my $term = 1 / $a;
+		my $n = 1;
+		while (abs($term) > 1e-15) { $term *= $x / ($a + $n); $sum += $term; $n++; last if $n > 10000; }
+		return 1 - $sum * exp(-$x + $a * log($x) - $gln);
+	}
+	my $b = $x + 1 - $a;                     # continued fraction
+	my $c = 1 / 1e-30;
+	my $d = 1 / $b;
+	my $h = $d;
+	my $i = 1;
+	while ($i < 10000) {
+		my $an = -$i * ($i - $a);
+		$b += 2;
+		$d = $an * $d + $b; $d = 1e-30 if abs($d) < 1e-30;
+		$c = $b + $an / $c; $c = 1e-30 if abs($c) < 1e-30;
+		$d = 1 / $d;
+		my $del = $d * $c;
+		$h *= $del;
+		last if abs($del - 1) < 1e-15;
+		$i++;
+	}
+	return $h * exp(-$x + $a * log($x) - $gln);
+}
+
+# _pchisq_upper($stat, $df): upper-tail chi-square p-value, P(X > stat).
+sub _pchisq_upper {
+	my ($stat, $df) = @_;
+	return 1 if $df <= 0 || $stat <= 0;
+	return _igamc($df / 2, $stat / 2);
+}
+
+# _quantile7(\@sorted_ascending, $p): R's default (type 7) sample quantile.
+sub _quantile7 {
+	my ($s, $p) = @_;
+	my $n = scalar @$s;
+	return $s->[0] if $n == 1;
+	my $h = ($n - 1) * $p;
+	my $lo = int($h);
+	my $hi = $lo + 1 < $n ? $lo + 1 : $lo;
+	return $s->[$lo] + ($h - $lo) * ($s->[$hi] - $s->[$lo]);
+}
+
+# vif($data, $formula_or_predictors)
+#
+# Variance inflation factors for the numeric predictors of a linear model:
+# VIF_j = 1 / (1 - R^2_j), where R^2_j comes from regressing predictor j on all
+# the others.  The second argument is either a formula string (its right-hand
+# side terms are used) or an array reference of predictor column names.  Returns
+# a hash of predictor => VIF.  (Numeric predictors only; categorical predictors
+# would require a generalized VIF.)
+sub vif {
+	my ($data, $spec) = @_;
+	die "vif: first argument must be a data reference\n" unless ref $data;
+	my @preds;
+	if (ref $spec eq 'ARRAY') {
+		@preds = @$spec;
+	} elsif (!ref $spec) {
+		my ($rhs) = $spec =~ /~\s*(.*)$/
+			or die "vif: expected a formula string or an array ref of predictors\n";
+		$rhs =~ s/\s+//g;
+		@preds = grep { length && $_ ne '1' && $_ ne '-1' } split /\+/, $rhs;
+	} else {
+		die "vif: expected a formula string or an array ref of predictors\n";
+	}
+	die "vif: need at least two predictors\n" if @preds < 2;
+	my %out;
+	for my $p (@preds) {
+		my @others = grep { $_ ne $p } @preds;
+		my $m = lm(formula => "$p ~ " . join(' + ', @others), data => $data);
+		my $r2 = $m->{'r.squared'};
+		$out{$p} = ($r2 >= 1) ? 9**9**9 : 1 / (1 - $r2);
+	}
+	return \%out;
+}
+
+# hosmer_lemeshow(\@observed, \@predicted, g => 10)
+#
+# Hosmer-Lemeshow goodness-of-fit test for a logistic model.  Observations are
+# grouped into `g` bins by risk deciles of the predicted probabilities (R's
+# cut() on type-7 quantiles, as in ResourceSelection::hoslem.test); the statistic
+# compares observed and expected event counts per bin.  df = g - 2.
+sub hosmer_lemeshow {
+	my ($obs, $pred, %opt) = @_;
+	die "hosmer_lemeshow: observed and predicted must be array references\n"
+		unless ref $obs eq 'ARRAY' && ref $pred eq 'ARRAY';
+	die "hosmer_lemeshow: observed and predicted must have the same length\n"
+		unless @$obs == @$pred;
+	my $g = defined $opt{g} ? $opt{g} : 10;
+	die "hosmer_lemeshow: g must be at least 3\n" if $g < 3;
+
+	my (@y, @p);
+	for my $i (0 .. $#$obs) {
+		next unless defined $obs->[$i] && defined $pred->[$i]
+			&& looks_like_number($obs->[$i]) && looks_like_number($pred->[$i]);
+		push @y, $obs->[$i] + 0;
+		push @p, $pred->[$i] + 0;
+	}
+	my $n = scalar @y;
+	die "hosmer_lemeshow: not enough complete observations for g=$g groups\n" if $n < $g;
+
+	my @sorted = sort { $a <=> $b } @p;
+	my @breaks = map { _quantile7(\@sorted, $_ / $g) } 0 .. $g;
+
+	my (@O1, @O0, @E1, @E0, @ng);
+	$O1[$_] = $O0[$_] = $E1[$_] = $E0[$_] = $ng[$_] = 0 for 0 .. $g - 1;
+	for my $i (0 .. $n - 1) {
+		# cut(..., include.lowest = TRUE): first interval closed on the left,
+		# every other interval left-open / right-closed.
+		my $gi = $g - 1;
+		for my $j (1 .. $g) { if ($p[$i] <= $breaks[$j]) { $gi = $j - 1; last } }
+		$O1[$gi] += $y[$i];
+		$O0[$gi] += 1 - $y[$i];
+		$E1[$gi] += $p[$i];
+		$E0[$gi] += 1 - $p[$i];
+		$ng[$gi]++;
+	}
+
+	my ($chi, $used) = (0, 0);
+	my @groups;
+	for my $j (0 .. $g - 1) {
+		next unless $ng[$j];
+		$used++;
+		$chi += ($O1[$j] - $E1[$j]) ** 2 / $E1[$j] if $E1[$j] > 0;
+		$chi += ($O0[$j] - $E0[$j]) ** 2 / $E0[$j] if $E0[$j] > 0;
+		push @groups, { n => $ng[$j], observed => $O1[$j], expected => $E1[$j] };
+	}
+	my $df = $g - 2;
+	return {
+		statistic => $chi,
+		parameter => $df,
+		p_value   => _pchisq_upper($chi, $df),
+		groups    => $used,
+		table     => \@groups,
+	};
+}
+
+# _qgamma($p, $shape, $scale): quantile of the gamma distribution, found by
+# inverting the regularized lower incomplete gamma P(shape, x) = p (bisection).
+sub _qgamma {
+	my ($p, $shape, $scale) = @_;
+	$scale = 1 unless defined $scale;
+	return 0 if $p <= 0 || $shape <= 0;
+	return 9**9**9 if $p >= 1;
+	my ($lo, $hi) = (0, 1);
+	$hi *= 2 while (1 - _igamc($shape, $hi)) < $p && $hi < 1e15;
+	for (1 .. 300) {
+		my $mid = ($lo + $hi) / 2;
+		if ((1 - _igamc($shape, $mid)) < $p) { $lo = $mid } else { $hi = $mid }
+		last if ($hi - $lo) <= 1e-12 * ($hi + 1e-300);
+	}
+	return $scale * ($lo + $hi) / 2;
+}
+
+# age_standardize(\@count, \@pop, \@stdpop, conf_level => 0.95, per => 1)
+#   or age_standardize(count => \@c, pop => \@n, stdpop => \@w, ...)
+#   (supply rate => \@r instead of count if you have stratum-specific rates)
+#
+# Directly standardized rate: reweights stratum-specific rates to a standard
+# population.  The confidence interval uses the Fay-Feuer gamma method (as in
+# R's epitools::ageadjust.direct), which is accurate even for rare events.
+# `per` scales every reported rate (e.g. per => 100_000).  Validated against R.
+sub age_standardize {
+	my @a = @_;
+	my (%opt, $count, $pop, $stdpop, $rate);
+	if (ref $a[0] eq 'ARRAY') {
+		($count, $pop, $stdpop) = (shift @a, shift @a, shift @a);
+		%opt = @a;
+	} else {
+		%opt = @a;
+		($count, $pop, $stdpop, $rate) = @opt{qw(count pop stdpop rate)};
+	}
+	$rate ||= $opt{rate};
+	my $cl  = defined $opt{conf_level} ? $opt{conf_level}
+	        : defined $opt{'conf.level'} ? $opt{'conf.level'} : 0.95;
+	my $per = defined $opt{per} ? $opt{per} : 1;
+	die "age_standardize: conf.level must be between 0 and 1\n" unless $cl > 0 && $cl < 1;
+	die "age_standardize: 'pop' and 'stdpop' array refs are required\n"
+		unless ref $pop eq 'ARRAY' && ref $stdpop eq 'ARRAY';
+	die "age_standardize: supply either 'count' or 'rate'\n"
+		unless ref $count eq 'ARRAY' || ref $rate eq 'ARRAY';
+
+	my $k = scalar @$pop;
+	die "age_standardize: pop and stdpop must have the same length\n" unless @$stdpop == $k;
+	if (ref $count eq 'ARRAY') { die "age_standardize: count and pop length mismatch\n" unless @$count == $k; }
+	else                       { die "age_standardize: rate and pop length mismatch\n"  unless @$rate  == $k; }
+
+	my @cnt = ref $count eq 'ARRAY' ? @$count : map { $rate->[$_] * $pop->[$_] } 0 .. $k - 1;
+	my ($sum_c, $sum_n, $sum_w) = (0, 0, 0);
+	$sum_c += $cnt[$_],    $sum_n += $pop->[$_], $sum_w += $stdpop->[$_] for 0 .. $k - 1;
+	die "age_standardize: total population and standard population must be positive\n"
+		unless $sum_n > 0 && $sum_w > 0;
+
+	my ($dsr, $var, $wmax) = (0, 0, 0);
+	for my $i (0 .. $k - 1) {
+		die "age_standardize: stratum $i has non-positive population\n" if $pop->[$i] <= 0;
+		my $r  = $cnt[$i] / $pop->[$i];
+		my $wt = $stdpop->[$i] / $sum_w;               # normalized weight
+		$dsr += $wt * $r;
+		$var += $wt * $wt * $cnt[$i] / ($pop->[$i] ** 2);
+		my $w_over_n = $wt / $pop->[$i];
+		$wmax = $w_over_n if $w_over_n > $wmax;
+	}
+	my $crude = $sum_c / $sum_n;
+
+	my $alpha = 1 - $cl;
+	my ($lci, $uci);
+	if ($dsr > 0 && $var > 0) {
+		$lci = _qgamma($alpha / 2, ($dsr ** 2) / $var, $var / $dsr);
+		$uci = _qgamma(1 - $alpha / 2, (($dsr + $wmax) ** 2) / ($var + $wmax ** 2),
+		               ($var + $wmax ** 2) / ($dsr + $wmax));
+	} else {
+		$lci = 0;
+		$uci = ($dsr == 0) ? _qgamma(1 - $alpha / 2, 1, $wmax > 0 ? $wmax : 0) : $dsr;
+	}
+
+	return {
+		crude_rate   => $crude * $per,
+		adj_rate     => $dsr * $per,
+		'conf.int'   => [ $lci * $per, $uci * $per ],
+		se           => sqrt($var) * $per,
+		'conf.level' => $cl,
+		per          => $per,
+	};
+}
+
 1;
 =encoding utf8
 

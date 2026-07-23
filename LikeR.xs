@@ -1813,6 +1813,92 @@ NV get_p_value(NV stat, int df) {
 	return igamc((NV)df / 2.0, stat / 2.0);
 }
 
+/* Digamma psi(x) and trigamma psi'(x) for x > 0, via recurrence up to x>=6
+ * then an asymptotic (Stirling) series. Accuracy ~1e-12, matching R's
+ * digamma()/trigamma() to the precision the negative-binomial theta ML needs. */
+static NV c_digamma(NV x) {
+	NV result = 0.0;
+	while (x < 6.0) { result -= 1.0 / x; x += 1.0; }
+	NV f = 1.0 / (x * x);
+	result += log(x) - 0.5 / x
+		- f * (1.0/12.0 - f * (1.0/120.0 - f * (1.0/252.0 - f * (1.0/240.0))));
+	return result;
+}
+static NV c_trigamma(NV x) {
+	NV result = 0.0;
+	while (x < 6.0) { result += 1.0 / (x * x); x += 1.0; }
+	NV f = 1.0 / (x * x);
+	result += 1.0 / x + 0.5 * f
+		+ (f / x) * (1.0/6.0 - f * (1.0/30.0 - f * (1.0/42.0)));
+	return result;
+}
+
+/* ML estimate of the negative-binomial dispersion theta given the current
+ * fitted means mu[i] (Newton on the score equation with step control).
+ * Mirrors MASS::theta.ml: unit weights, initial from the moment estimator. */
+static NV nb_theta_ml(const NV *restrict y, const NV *restrict mu, size_t n) {
+	NV denom = 0.0;
+	for (size_t i = 0; i < n; i++) {
+		NV r = y[i] / mu[i] - 1.0;
+		denom += r * r;
+	}
+	NV t0 = (denom > 0.0) ? (NV)n / denom : 1.0;
+	if (!(t0 > 0.0) || !isfinite(t0)) t0 = 1.0;
+	NV eps = 1e-8;
+	for (unsigned int it = 0; it < 100; it++) {
+		t0 = fabs(t0);
+		NV score = 0.0, info = 0.0;
+		for (size_t i = 0; i < n; i++) {
+			NV mt = mu[i] + t0;
+			score += c_digamma(t0 + y[i]) - c_digamma(t0)
+				+ log(t0) + 1.0 - log(mt) - (y[i] + t0) / mt;
+			info += -c_trigamma(t0 + y[i]) + c_trigamma(t0)
+				- 1.0 / t0 + 2.0 / mt - (y[i] + t0) / (mt * mt);
+		}
+		if (info == 0.0 || !isfinite(info)) break;
+		NV del = score / info;
+		t0 += del;
+		if (fabs(del) < eps * (fabs(t0) + eps)) break;
+	}
+	if (!(t0 > 0.0) || !isfinite(t0)) t0 = 1e-8;
+	return t0;
+}
+
+/* Per-observation unit deviance for the log-link count families. */
+static NV dev_poisson(NV y, NV mu) {
+	NV t = (y > 0.0) ? y * log(y / mu) : 0.0;
+	return 2.0 * (t - (y - mu));
+}
+static NV dev_negbin(NV y, NV mu, NV th) {
+	NV t = (y > 0.0) ? y * log(y / mu) : 0.0;
+	/* log1p keeps (y+th)*log((y+th)/(mu+th)) accurate when th >> mu (the log
+	 * of a ratio very near 1), preventing negative deviances near the
+	 * Poisson limit. */
+	return 2.0 * (t - (y + th) * log1p((y - mu) / (mu + th)));
+}
+/* Total log-likelihood of a fitted negative-binomial model (used for the
+ * theta outer-loop convergence check and AIC). */
+static NV nb_loglik(const NV *restrict y, const NV *restrict mu, size_t n, NV th) {
+	NV ll = 0.0;
+	for (size_t i = 0; i < n; i++) {
+		NV yi = y[i], mi = mu[i];
+		/* lgamma(th+yi) - lgamma(th): sum logs directly for integer counts to
+		 * avoid catastrophic cancellation when th is large (near-Poisson). */
+		NV lg, k = floor(yi + 0.5);
+		if (fabs(yi - k) < 1e-9 && k >= 0.0 && k < 1e6) {
+			lg = 0.0;
+			for (NV j = 0.0; j < k; j += 1.0) lg += log(th + j);
+		} else {
+			lg = lgamma(th + yi) - lgamma(th);
+		}
+		/* th*log(th) + yi*log(mu) - (th+yi)*log(th+mu), regrouped for stability */
+		ll += lg - lgamma(yi + 1.0)
+			- th * log1p(mi / th)
+			+ (yi > 0.0 ? yi * log(mi / (th + mi)) : 0.0);
+	}
+	return ll;
+}
+
 #ifndef M_SQRT1_2
 #define M_SQRT1_2 0.70710678118654752440
 #endif
@@ -5102,6 +5188,41 @@ static SurvObs* srv_read(pTHX_ AV *restrict tav, AV *restrict sav, AV *restrict 
 	if (av_len(labels) < 0) av_push(labels, newSVpv("", 0));   /* single group */
 	*N_out = (size_t)N;
 	return o;
+}
+
+/* Adjust m raw p-values (writes adj[]) for a family of methods, matching R's
+ * p.adjust / the dunn.test package.  Used by dunn_test. */
+static void dunn_padjust(const NV *restrict p, size_t m, const char *restrict meth, NV *restrict adj) {
+	size_t *restrict ord = NULL; Newx(ord, m, size_t);   /* indices of p sorted ascending */
+	for (size_t i = 0; i < m; i++) ord[i] = i;
+	for (size_t a = 0; a + 1 < m; a++)                   /* small m; simple insertion sort */
+		for (size_t b = a + 1; b < m; b++)
+			if (p[ord[b]] < p[ord[a]]) { size_t t = ord[a]; ord[a] = ord[b]; ord[b] = t; }
+
+	if (strEQ(meth, "none")) {
+		for (size_t i = 0; i < m; i++) adj[i] = p[i];
+	} else if (strEQ(meth, "bonferroni")) {
+		for (size_t i = 0; i < m; i++) { NV v = p[i] * m; adj[i] = v < 1.0 ? v : 1.0; }
+	} else if (strEQ(meth, "sidak")) {
+		for (size_t i = 0; i < m; i++) { NV v = 1.0 - pow(1.0 - p[i], (NV)m); adj[i] = v < 1.0 ? v : 1.0; }
+	} else if (strEQ(meth, "holm")) {
+		NV cummax = 0.0;
+		for (size_t i = 0; i < m; i++) { NV v = p[ord[i]] * (m - i); if (v > cummax) cummax = v; adj[ord[i]] = cummax < 1.0 ? cummax : 1.0; }
+	} else if (strEQ(meth, "hs")) {   /* Holm-Sidak */
+		NV cummax = 0.0;
+		for (size_t i = 0; i < m; i++) { NV v = 1.0 - pow(1.0 - p[ord[i]], (NV)(m - i)); if (v > cummax) cummax = v; adj[ord[i]] = cummax < 1.0 ? cummax : 1.0; }
+	} else if (strEQ(meth, "bh")) {
+		NV cummin = 1.0;
+		for (ssize_t i = (ssize_t)m - 1; i >= 0; i--) { NV v = p[ord[i]] * m / (i + 1.0); if (v < cummin) cummin = v; adj[ord[i]] = cummin < 1.0 ? cummin : 1.0; }
+	} else if (strEQ(meth, "by")) {
+		NV q = 0.0; for (size_t i = 1; i <= m; i++) q += 1.0 / i;
+		NV cummin = 1.0;
+		for (ssize_t i = (ssize_t)m - 1; i >= 0; i--) { NV v = p[ord[i]] * m / (i + 1.0) * q; if (v < cummin) cummin = v; adj[ord[i]] = cummin < 1.0 ? cummin : 1.0; }
+	} else {
+		Safefree(ord);
+		croak("dunn_test: unknown method '%s' (none, bonferroni, sidak, holm, hs, bh, by)", meth);
+	}
+	Safefree(ord);
 }
 
 // --- XS SECTION ---
@@ -9802,6 +9923,8 @@ SV *glm(...)
 	unsigned int iter = 0, max_iter = 25, final_rank = 0, df_res = 0;
 	NV deviance_old = 0.0, deviance_new = 0.0, null_dev = 0.0, aic = 0.0;
 	NV dispersion = 0.0, epsilon = 1e-8;
+	NV theta = 0.0, conf_level = 0.95;
+	bool theta_given = FALSE;
 
 	char **restrict row_names = NULL;
 	char **restrict valid_row_names = NULL;
@@ -9827,14 +9950,30 @@ SV *glm(...)
 	  if      (strEQ(key, "formula")) formula = SvPV_nolen(val);
 	  else if (strEQ(key, "data"))    data_sv = val;
 	  else if (strEQ(key, "family"))  family_str = SvPV_nolen(val);
+	  else if (strEQ(key, "theta"))   { theta = SvNV(val); theta_given = TRUE; }
+	  else if (strEQ(key, "conf.level") || strEQ(key, "conf_level")) conf_level = SvNV(val);
 	  else croak("glm: unknown argument '%s'", key);
 	}
 	if (!formula) croak("glm: formula is required");
 	if (!data_sv || !SvROK(data_sv)) croak("glm: data is required and must be a reference");
+	if (conf_level <= 0.0 || conf_level >= 1.0) croak("glm: conf.level must be between 0 and 1");
 
 	bool is_binomial = (strcmp(family_str, "binomial") == 0);
 	bool is_gaussian = (strcmp(family_str, "gaussian") == 0);
-	if (!is_binomial && !is_gaussian) croak("glm: unsupported family '%s'", family_str);
+	bool is_poisson  = (strcmp(family_str, "poisson")  == 0);
+	bool is_negbin   = (strcmp(family_str, "negbin") == 0
+		|| strcmp(family_str, "negative.binomial") == 0 || strcmp(family_str, "nb") == 0);
+	if (!is_binomial && !is_gaussian && !is_poisson && !is_negbin)
+		croak("glm: unsupported family '%s' (gaussian, binomial, poisson, negbin)", family_str);
+	bool log_link = is_poisson || is_negbin;
+	if (theta_given && theta <= 0.0) croak("glm: theta must be positive");
+	if (theta_given && !is_negbin)
+		warn("glm: 'theta' is only used by the negbin family; ignoring");
+	/* negbin without a supplied theta: seed with a large theta so the first
+	 * IRLS pass is effectively Poisson (matching MASS::glm.nb, which seeds the
+	 * theta ML from a Poisson fit's fitted means); theta is then re-estimated
+	 * by ML after each pass. */
+	if (is_negbin && !theta_given) theta = 1e6;
 
 	Newx(terms, term_cap, char*); Newx(uniq_terms, term_cap, char*);
 	Newx(exp_terms, exp_cap, char*); Newx(is_dummy, exp_cap, bool);
@@ -10084,10 +10223,18 @@ SV *glm(...)
 	beta = (NV*)safemalloc(p * sizeof(NV)); beta_old = (NV*)safemalloc(p * sizeof(NV));
 	aliased = (bool*)safemalloc(p * sizeof(bool));
 	XtWX = (NV*)safemalloc(p * p * sizeof(NV)); XtWZ = (NV*)safemalloc(p * sizeof(NV));
-	for (i = 0; i < p; i++) { beta[i] = 0.0; beta_old[i] = 0.0; }
 	NV sum_y = 0.0;
 	for (i = 0; i < valid_n; i++) sum_y += Y[i];
 	NV mean_y = sum_y / valid_n;
+	if (log_link && mean_y <= 0.0) croak("glm: poisson/negbin family requires some positive counts");
+
+	/* Outer loop re-estimates the negative-binomial theta by ML between IRLS
+	 * fits (MASS::glm.nb); every other family runs the body exactly once. */
+	unsigned int outer_max = (is_negbin && !theta_given) ? 30 : 1;
+	NV nb_loglik_old = 0.0;
+	for (unsigned int outer = 0; outer < outer_max; outer++) {
+	for (i = 0; i < p; i++) { beta[i] = 0.0; beta_old[i] = 0.0; }
+	deviance_old = 0.0; converged = FALSE;
 	for (i = 0; i < valid_n; i++) {
 		if (is_binomial) {
 			if (Y[i] < 0.0 || Y[i] > 1.0) croak("glm: binomial family requires response between 0 and 1");
@@ -10098,6 +10245,11 @@ SV *glm(...)
 			else if (Y[i] == 1.0) dev = -2.0 * log(mu[i]);
 			else dev = 2.0 * (Y[i] * log(Y[i] / mu[i]) + (1.0 - Y[i]) * log((1.0 - Y[i]) / (1.0 - mu[i])));
 			deviance_old += dev;
+		} else if (log_link) {
+			if (Y[i] < 0.0) croak("glm: poisson/negbin family requires a non-negative response");
+			mu[i] = Y[i] + 0.1;
+			eta[i] = log(mu[i]);
+			deviance_old += is_negbin ? dev_negbin(Y[i], mu[i], theta) : dev_poisson(Y[i], mu[i]);
 		} else {
 			mu[i] = mean_y;
 			eta[i] = mu[i];
@@ -10108,6 +10260,12 @@ SV *glm(...)
 			if (is_binomial) {
 				 NV varmu = mu[i] * (1.0 - mu[i]);
 				 NV mu_eta = varmu;
+				 if (varmu < 1e-10) varmu = 1e-10;
+				 Z[i] = eta[i] + (Y[i] - mu[i]) / mu_eta;
+				 W[i] = (mu_eta * mu_eta) / varmu;
+			} else if (log_link) {
+				 NV mu_eta = mu[i];  /* dmu/deta for the log link */
+				 NV varmu  = is_negbin ? (mu[i] + mu[i] * mu[i] / theta) : mu[i];
 				 if (varmu < 1e-10) varmu = 1e-10;
 				 Z[i] = eta[i] + (Y[i] - mu[i]) / mu_eta;
 				 W[i] = (mu_eta * mu_eta) / varmu;
@@ -10149,13 +10307,17 @@ SV *glm(...)
 					 else if (Y[i] == 1.0) dev = -2.0 * log(mu[i]);
 					 else dev = 2.0 * (Y[i] * log(Y[i] / mu[i]) + (1.0 - Y[i]) * log((1.0 - Y[i]) / (1.0 - mu[i])));
 					 deviance_new += dev;
+				 } else if (log_link) {
+					 mu[i] = exp(eta[i]);
+					 if (mu[i] < 1e-10) mu[i] = 1e-10;
+					 deviance_new += is_negbin ? dev_negbin(Y[i], mu[i], theta) : dev_poisson(Y[i], mu[i]);
 				 } else {
 					 mu[i] = eta[i];
 					 NV res = Y[i] - mu[i];
 					 deviance_new += res * res;
 				 }
 			}
-			if (!is_binomial || deviance_new <= deviance_old + 1e-7 || !isfinite(deviance_new)) {
+			if (is_gaussian || deviance_new <= deviance_old + 1e-7 || !isfinite(deviance_new)) {
 				 continue;
 			}
 			boundary = TRUE;
@@ -10167,9 +10329,31 @@ SV *glm(...)
 		deviance_old = deviance_new;
 		for (size_t j = 0; j < p; j++) beta_old[j] = beta[j];
 	}
+	if (is_negbin && !theta_given) {
+		/* loglik of the CURRENT (theta, beta) fit — both consistent because mu
+		 * was just fit with this theta. We only ever adopt a new theta when
+		 * another IRLS pass will follow, so on convergence OR on hitting the
+		 * iteration limit the reported theta always matches the coefficients. */
+		NV ll = nb_loglik(Y, mu, valid_n, theta);
+		bool th_conv = (outer > 0) && fabs(ll - nb_loglik_old) < 1e-7 * (fabs(ll) + 0.1);
+		nb_loglik_old = ll;
+		if (th_conv) { converged = TRUE; break; }
+		if (outer == outer_max - 1) {
+			warn("glm: theta ML did not converge in %u iterations "
+			     "(data may be under-dispersed / near-Poisson)", outer_max);
+			converged = FALSE;
+			break;
+		}
+		theta = nb_theta_ml(Y, mu, valid_n);   /* adopt for the next pass */
+	}
+	} /* end outer theta loop */
 	for (i = 0; i < p; i++) { for (size_t j = 0; j < p; j++) XtWX[i * p + j] = 0.0; }
 	for (size_t k = 0; k < valid_n; k++) {
-	  NV w = is_binomial ? (mu[k] * (1.0 - mu[k])) : 1.0;
+	  NV w;
+	  if      (is_binomial) w = mu[k] * (1.0 - mu[k]);
+	  else if (is_poisson)  w = mu[k];
+	  else if (is_negbin)   w = mu[k] / (1.0 + mu[k] / theta);
+	  else                  w = 1.0;
 	  if (w < 1e-10) w = 1e-10;
 	  for (i = 0; i < p; i++) {
 		   NV xw = X[k * p + i] * w;
@@ -10177,13 +10361,15 @@ SV *glm(...)
 	  }
 	}
 	final_rank = sweep_matrix_ols(XtWX, p, aliased);
-	NV wtdmu = has_intercept ? mean_y : (is_binomial ? 0.5 : 0.0);
+	NV wtdmu = has_intercept ? mean_y : (is_binomial ? 0.5 : (log_link ? 1.0 : 0.0));
 
 	for (i = 0; i < valid_n; i++) {
 		if (is_binomial) {
 			if (Y[i] == 0.0)      null_dev += -2.0 * log(1.0 - wtdmu);
 			else if (Y[i] == 1.0) null_dev += -2.0 * log(wtdmu);
 			else null_dev += 2.0 * (Y[i] * log(Y[i] / wtdmu) + (1.0 - Y[i]) * log((1.0 - Y[i]) / (1.0 - wtdmu)));
+		} else if (log_link) {
+			null_dev += is_negbin ? dev_negbin(Y[i], wtdmu, theta) : dev_poisson(Y[i], wtdmu);
 		} else {
 			NV diff = Y[i] - wtdmu;
 			null_dev += diff * diff;
@@ -10198,10 +10384,18 @@ SV *glm(...)
 		aic = n_f * (log(2.0 * M_PI) + 1.0 + log(dev_for_aic / n_f)) + 2.0 * (final_rank + 1.0);
 	} else if (is_binomial) {
 		aic = deviance_new + 2.0 * final_rank;
+	} else if (is_poisson) {
+		NV ll = 0.0;
+		for (i = 0; i < valid_n; i++)
+			ll += (Y[i] > 0.0 ? Y[i] * log(mu[i]) : 0.0) - mu[i] - lgamma(Y[i] + 1.0);
+		aic = -2.0 * ll + 2.0 * final_rank;
+	} else if (is_negbin) {
+		NV ll = nb_loglik(Y, mu, valid_n, theta);
+		aic = -2.0 * ll + 2.0 * final_rank + (theta_given ? 0.0 : 2.0);
 	}
 	res_hv = newHV(); coef_hv = newHV(); fitted_hv = newHV(); resid_hv = newHV();
 	df_res = valid_n - final_rank;
-	dispersion = is_binomial ? 1.0 : ((df_res > 0) ? (deviance_new / df_res) : NAN);
+	dispersion = (is_binomial || log_link) ? 1.0 : ((df_res > 0) ? (deviance_new / df_res) : NAN);
 	for (size_t i = 0; i < valid_n; i++) {
 		NV res = Y[i] - mu[i];
 		if (is_binomial) {
@@ -10210,6 +10404,11 @@ SV *glm(...)
 			else if (Y[i] == 1.0) d_res = sqrt(-2.0 * log(mu[i]));
 			else d_res = sqrt(2.0 * (Y[i] * log(Y[i] / mu[i]) + (1.0 - Y[i]) * log((1.0 - Y[i]) / (1.0 - mu[i]))));
 			res = (Y[i] > mu[i]) ? d_res : -d_res;
+		} else if (log_link) {
+			NV d = is_negbin ? dev_negbin(Y[i], mu[i], theta) : dev_poisson(Y[i], mu[i]);
+			if (d < 0.0) d = 0.0;
+			NV d_res = sqrt(d);
+			res = (Y[i] >= mu[i]) ? d_res : -d_res;
 		}
 		hv_store(fitted_hv, valid_row_names[i], strlen(valid_row_names[i]), newSVnv(mu[i]), 0);
 		hv_store(resid_hv,  valid_row_names[i], strlen(valid_row_names[i]), newSVnv(res), 0);
@@ -10217,6 +10416,13 @@ SV *glm(...)
 	}
 	Safefree(valid_row_names);
 	summary_hv = newHV(); terms_av = newAV();
+	/* Wald confidence intervals on the link scale (confint.default), and, for
+	 * the non-gaussian families, exponentiated coefficients: odds ratios
+	 * (binomial), rate/incidence-rate ratios (poisson/negbin). */
+	bool use_z = is_binomial || log_link;
+	NV zcrit = inverse_normal_cdf(1.0 - (1.0 - conf_level) / 2.0);
+	HV *restrict conf_hv = newHV();
+	HV *restrict exp_hv  = is_gaussian ? NULL : newHV();
 	for (size_t j = 0; j < p; j++) {
 		hv_store(coef_hv, exp_terms[j], strlen(exp_terms[j]), newSVnv(beta[j]), 0);
 		av_push(terms_av, newSVpv(exp_terms[j], 0));
@@ -10225,21 +10431,42 @@ SV *glm(...)
 		if (aliased[j]) {
 			hv_store(row_hv, "Estimate",   8, newSVpv("NaN", 0), 0);
 			hv_store(row_hv, "Std. Error", 10, newSVpv("NaN", 0), 0);
-			hv_store(row_hv, is_binomial ? "z value" : "t value", 7, newSVpv("NaN", 0), 0);
-			hv_store(row_hv, is_binomial ? "Pr(>|z|)" : "Pr(>|t|)", 8, newSVpv("NaN", 0), 0);
+			hv_store(row_hv, use_z ? "z value" : "t value", 7, newSVpv("NaN", 0), 0);
+			hv_store(row_hv, use_z ? "Pr(>|z|)" : "Pr(>|t|)", 8, newSVpv("NaN", 0), 0);
+			hv_store(row_hv, "CI.lower", 8, newSVpv("NaN", 0), 0);
+			hv_store(row_hv, "CI.upper", 8, newSVpv("NaN", 0), 0);
 		} else {
 			NV se = sqrt(dispersion * XtWX[j * p + j]);
 			NV val_stat = beta[j] / se;
-			NV p_val = is_binomial ? 2.0 * (1.0 - approx_pnorm(fabs(val_stat))) : get_t_pvalue(val_stat, df_res, "two.sided");
+			NV p_val = use_z ? 2.0 * (1.0 - approx_pnorm(fabs(val_stat))) : get_t_pvalue(val_stat, df_res, "two.sided");
+			NV ci_lo = beta[j] - zcrit * se;
+			NV ci_hi = beta[j] + zcrit * se;
 			hv_store(row_hv, "Estimate",   8, newSVnv(beta[j]), 0);
 			hv_store(row_hv, "Std. Error", 10, newSVnv(se), 0);
-			hv_store(row_hv, is_binomial ? "z value" : "t value", 7, newSVnv(val_stat), 0);
-			hv_store(row_hv, is_binomial ? "Pr(>|z|)" : "Pr(>|t|)", 8, newSVnv(p_val), 0);
+			hv_store(row_hv, use_z ? "z value" : "t value", 7, newSVnv(val_stat), 0);
+			hv_store(row_hv, use_z ? "Pr(>|z|)" : "Pr(>|t|)", 8, newSVnv(p_val), 0);
+			hv_store(row_hv, "CI.lower", 8, newSVnv(ci_lo), 0);
+			hv_store(row_hv, "CI.upper", 8, newSVnv(ci_hi), 0);
+
+			AV *restrict ci_av = newAV();
+			av_push(ci_av, newSVnv(ci_lo)); av_push(ci_av, newSVnv(ci_hi));
+			hv_store(conf_hv, exp_terms[j], strlen(exp_terms[j]), newRV_noinc((SV*)ci_av), 0);
+			if (exp_hv) {
+				HV *restrict e = newHV();
+				hv_store(e, "estimate",  8, newSVnv(exp(beta[j])), 0);
+				hv_store(e, "conf.low",  8, newSVnv(exp(ci_lo)), 0);
+				hv_store(e, "conf.high", 9, newSVnv(exp(ci_hi)), 0);
+				hv_store(exp_hv, exp_terms[j], strlen(exp_terms[j]), newRV_noinc((SV*)e), 0);
+			}
 		}
 		hv_store(summary_hv, exp_terms[j], strlen(exp_terms[j]), newRV_noinc((SV*)row_hv), 0);
 	}
 	hv_store(res_hv, "aic",            3, newSVnv(aic), 0);
 	hv_store(res_hv, "coefficients",  12, newRV_noinc((SV*)coef_hv), 0);
+	hv_store(res_hv, "conf.int",       8, newRV_noinc((SV*)conf_hv), 0);
+	hv_store(res_hv, "conf.level",    10, newSVnv(conf_level), 0);
+	if (exp_hv) hv_store(res_hv, "exp", 3, newRV_noinc((SV*)exp_hv), 0);
+	if (is_negbin) hv_store(res_hv, "theta", 5, newSVnv(theta), 0);
 	hv_store(res_hv, "converged",      9, newSVuv(converged ? 1 : 0), 0);
 	hv_store(res_hv, "boundary",       8, newSVuv(boundary ? 1 : 0), 0);
 	hv_store(res_hv, "deviance",       8, newSVnv(deviance_new), 0);
@@ -11413,6 +11640,511 @@ SV* t_test(...)
 	}
 	OUTPUT:
 		RETVAL
+
+void prop_test(...)
+PPCODE:
+{
+	/* Test of equality of proportions / a single proportion against a target.
+	 * Faithful port of R's stats::prop.test (Pearson chi-square on the 2xk
+	 * table of successes/failures, Yates correction for k<=2, Wilson score CI
+	 * for one proportion and a Wald CI for a difference of two). */
+	if (items < 2)
+		croak("Usage: prop_test(\\@successes, \\@trials, p => ..., "
+		      "alternative => 'two.sided', conf.level => 0.95, correct => 1)\n"
+		      "   or prop_test($x, $n, ...) for a single sample");
+	const char *alt = "two.sided";
+	NV conf_level = 0.95;
+	int correct = 1;
+	SV *p_sv = NULL;
+	for (int i = 2; i + 1 < items; i += 2) {
+		const char *key = SvPV_nolen(ST(i)); SV *v = ST(i + 1);
+		if      (strEQ(key, "p"))            p_sv = v;
+		else if (strEQ(key, "alternative"))  alt = SvPV_nolen(v);
+		else if (strEQ(key, "conf_level") || strEQ(key, "conf.level")) conf_level = SvNV(v);
+		else if (strEQ(key, "correct"))      correct = SvTRUE(v) ? 1 : 0;
+		else croak("prop_test: unknown argument '%s'", key);
+	}
+	if (!(conf_level > 0.0 && conf_level < 1.0))
+		croak("prop_test: conf.level must be between 0 and 1");
+	if (strNE(alt, "two.sided") && strNE(alt, "less") && strNE(alt, "greater"))
+		croak("prop_test: alternative must be 'two.sided', 'less' or 'greater'");
+
+	/* --- read x (successes) and n (trials): each a scalar or an array ref --- */
+	NV *restrict x = NULL, *restrict nn = NULL, *restrict pnull = NULL;
+	size_t k = 0;
+	{
+		SV *xsv = ST(0), *nsv = ST(1);
+		if (SvROK(xsv) && SvTYPE(SvRV(xsv)) == SVt_PVAV) {
+			AV *av = (AV*)SvRV(xsv); k = (size_t)(av_len(av) + 1);
+			if (k == 0) croak("prop_test: 'x' is empty");
+			Newx(x, k, NV);
+			for (size_t i = 0; i < k; i++) { SV **e = av_fetch(av, i, 0); x[i] = (e && *e) ? SvNV(*e) : NAN; }
+		} else { k = 1; Newx(x, 1, NV); x[0] = SvNV(xsv); }
+		size_t kn;
+		if (SvROK(nsv) && SvTYPE(SvRV(nsv)) == SVt_PVAV) {
+			AV *av = (AV*)SvRV(nsv); kn = (size_t)(av_len(av) + 1);
+			Newx(nn, kn, NV);
+			for (size_t i = 0; i < kn; i++) { SV **e = av_fetch(av, i, 0); nn[i] = (e && *e) ? SvNV(*e) : NAN; }
+		} else { kn = 1; Newx(nn, 1, NV); nn[0] = SvNV(nsv); }
+		if (kn != k) { Safefree(x); Safefree(nn); croak("prop_test: 'x' and 'n' must have the same length"); }
+	}
+	for (size_t i = 0; i < k; i++) {
+		if (nn[i] <= 0)          { Safefree(x); Safefree(nn); croak("prop_test: elements of 'n' must be positive"); }
+		if (x[i] < 0)            { Safefree(x); Safefree(nn); croak("prop_test: elements of 'x' must be nonnegative"); }
+		if (x[i] > nn[i])        { Safefree(x); Safefree(nn); croak("prop_test: elements of 'x' must not exceed 'n'"); }
+	}
+
+	/* --- null probabilities and degrees of freedom --- */
+	bool p_is_null;   /* true => testing equality (pooled p, df = k-1) */
+	Newx(pnull, k, NV);
+	if (p_sv && SvOK(p_sv)) {
+		p_is_null = FALSE;
+		if (SvROK(p_sv) && SvTYPE(SvRV(p_sv)) == SVt_PVAV) {
+			AV *av = (AV*)SvRV(p_sv);
+			if ((size_t)(av_len(av) + 1) != k) { Safefree(x); Safefree(nn); Safefree(pnull); croak("prop_test: 'p' must have the same length as 'x'"); }
+			for (size_t i = 0; i < k; i++) { SV **e = av_fetch(av, i, 0); pnull[i] = (e && *e) ? SvNV(*e) : NAN; }
+		} else { NV pv = SvNV(p_sv); for (size_t i = 0; i < k; i++) pnull[i] = pv; }
+		for (size_t i = 0; i < k; i++)
+			if (!(pnull[i] > 0.0 && pnull[i] < 1.0)) { Safefree(x); Safefree(nn); Safefree(pnull); croak("prop_test: elements of 'p' must be in (0,1)"); }
+	} else if (k == 1) {
+		p_is_null = FALSE; pnull[0] = 0.5;   /* one-sample default target */
+	} else {
+		p_is_null = TRUE;
+		NV sx = 0.0, sn = 0.0;
+		for (size_t i = 0; i < k; i++) { sx += x[i]; sn += nn[i]; }
+		NV pooled = sx / sn;
+		for (size_t i = 0; i < k; i++) pnull[i] = pooled;
+	}
+	/* R forces a two-sided test whenever a one-sided one is not meaningful:
+	 * more than two groups, or exactly two groups tested against given p. */
+	bool p_given = (p_sv && SvOK(p_sv));
+	if (k > 2 || (k == 2 && p_given)) alt = "two.sided";
+
+	NV YATES = (correct && k <= 2) ? 0.5 : 0.0;
+
+	/* --- estimates --- */
+	NV *restrict est = NULL; Newx(est, k, NV);
+	for (size_t i = 0; i < k; i++) est[i] = x[i] / nn[i];
+
+	NV ci_lo = NAN, ci_hi = NAN; bool have_ci = FALSE;
+	NV delta = 0.0;
+	if (k == 1) {
+		NV cap = fabs(x[0] - nn[0] * pnull[0]);
+		if (cap < YATES) YATES = cap;
+		NV z  = inverse_normal_cdf(strEQ(alt, "two.sided") ? (1.0 + conf_level) / 2.0 : conf_level);
+		NV z22n = z * z / (2.0 * nn[0]);
+		NV pcu = est[0] + YATES / nn[0];
+		NV p_u = (pcu >= 1.0) ? 1.0 : (pcu + z22n + z * sqrt(pcu * (1.0 - pcu) / nn[0] + z22n / (2.0 * nn[0]))) / (1.0 + 2.0 * z22n);
+		NV pcl = est[0] - YATES / nn[0];
+		NV p_l = (pcl <= 0.0) ? 0.0 : (pcl + z22n - z * sqrt(pcl * (1.0 - pcl) / nn[0] + z22n / (2.0 * nn[0]))) / (1.0 + 2.0 * z22n);
+		if      (strEQ(alt, "two.sided")) { ci_lo = p_l < 0.0 ? 0.0 : p_l; ci_hi = p_u > 1.0 ? 1.0 : p_u; }
+		else if (strEQ(alt, "greater"))   { ci_lo = p_l < 0.0 ? 0.0 : p_l; ci_hi = 1.0; }
+		else                              { ci_lo = 0.0; ci_hi = p_u > 1.0 ? 1.0 : p_u; }
+		have_ci = TRUE;
+	} else if (k == 2 && p_is_null) {
+		delta = est[0] - est[1];
+		NV inv_sum = 1.0 / nn[0] + 1.0 / nn[1];
+		NV cap = fabs(delta) / inv_sum;
+		if (cap < YATES) YATES = cap;
+		NV z = inverse_normal_cdf(strEQ(alt, "two.sided") ? (1.0 + conf_level) / 2.0 : conf_level);
+		NV width = z * sqrt(est[0] * (1.0 - est[0]) / nn[0] + est[1] * (1.0 - est[1]) / nn[1]) + YATES * inv_sum;
+		if      (strEQ(alt, "two.sided")) { ci_lo = (delta - width < -1.0) ? -1.0 : delta - width; ci_hi = (delta + width > 1.0) ? 1.0 : delta + width; }
+		else if (strEQ(alt, "greater"))   { ci_lo = (delta - width < -1.0) ? -1.0 : delta - width; ci_hi = 1.0; }
+		else                              { ci_lo = -1.0; ci_hi = (delta + width > 1.0) ? 1.0 : delta + width; }
+		have_ci = TRUE;
+	}
+
+	int df = p_is_null ? (int)(k - 1) : (int)k;
+
+	/* --- Pearson chi-square with (capped) Yates correction --- */
+	NV stat = 0.0;
+	for (size_t i = 0; i < k; i++) {
+		NV E0 = nn[i] * pnull[i], E1 = nn[i] * (1.0 - pnull[i]);
+		NV o0 = x[i], o1 = nn[i] - x[i];
+		NV d0 = fabs(o0 - E0) - YATES;   /* R does not floor this at 0 */
+		NV d1 = fabs(o1 - E1) - YATES;
+		stat += d0 * d0 / E0 + d1 * d1 / E1;
+	}
+
+	NV p_value;
+	if (strEQ(alt, "two.sided")) {
+		p_value = get_p_value(stat, df);
+	} else {
+		NV z = (k == 1) ? ((est[0] > pnull[0]) - (est[0] < pnull[0])) * sqrt(stat)
+		                : ((delta > 0.0) - (delta < 0.0)) * sqrt(stat);
+		p_value = strEQ(alt, "less") ? approx_pnorm(z) : 1.0 - approx_pnorm(z);
+	}
+
+	/* Chi-square approximation warning, as in R. */
+	for (size_t i = 0; i < k; i++)
+		if (nn[i] * pnull[i] < 5.0 || nn[i] * (1.0 - pnull[i]) < 5.0) {
+			warn("prop_test: Chi-squared approximation may be incorrect");
+			break;
+		}
+
+	HV *ret = newHV();
+	hv_stores(ret, "statistic",   newSVnv(stat));
+	hv_stores(ret, "parameter",   newSViv(df));
+	hv_stores(ret, "p_value",     newSVnv(p_value));
+	hv_stores(ret, "alternative", newSVpv(alt, 0));
+	hv_stores(ret, "conf_level",  newSVnv(conf_level));
+	{
+		char method[96];
+		if (k == 1) snprintf(method, sizeof method, "1-sample proportions test %s continuity correction", YATES > 0.0 ? "with" : "without");
+		else snprintf(method, sizeof method, "%zu-sample test for %s proportions %s continuity correction",
+			k, p_is_null ? "equality of" : "given", YATES > 0.0 ? "with" : "without");
+		hv_stores(ret, "method", newSVpv(method, 0));
+	}
+	{
+		AV *ev = newAV();
+		for (size_t i = 0; i < k; i++) av_push(ev, newSVnv(est[i]));
+		hv_stores(ret, "estimate", newRV_noinc((SV*)ev));
+	}
+	if (have_ci) {
+		AV *ci = newAV(); av_push(ci, newSVnv(ci_lo)); av_push(ci, newSVnv(ci_hi));
+		hv_stores(ret, "conf.int", newRV_noinc((SV*)ci));
+	}
+	Safefree(x); Safefree(nn); Safefree(pnull); Safefree(est);
+	ST(0) = sv_2mortal(newRV_noinc((SV *)ret));
+	XSRETURN(1);
+}
+
+void mcnemar_test(...)
+PPCODE:
+{
+	/* McNemar's test for paired categorical data.  Faithful port of R's
+	 * stats::mcnemar.test (chi-square on the off-diagonal disagreement,
+	 * with Yates continuity correction for a 2x2 table).  An `exact => 1`
+	 * option gives the two-sided exact binomial test for a 2x2 table. */
+	if (items < 1)
+		croak("Usage: mcnemar_test([[a,b],[c,d]], correct => 1, exact => 0)\n"
+		      "   or mcnemar_test(\\@x, \\@y, ...)   # paired observations");
+	int correct = 1, exact = 0, opt_start;
+	size_t r = 0;
+	NV *restrict tab = NULL;
+
+	bool is_matrix = FALSE;
+	if (SvROK(ST(0)) && SvTYPE(SvRV(ST(0))) == SVt_PVAV
+		&& av_len((AV*)SvRV(ST(0))) >= 0) {
+		SV **e0 = av_fetch((AV*)SvRV(ST(0)), 0, 0);
+		is_matrix = e0 && *e0 && SvROK(*e0) && SvTYPE(SvRV(*e0)) == SVt_PVAV;
+	}
+
+	if (is_matrix) {
+		AV *m = (AV*)SvRV(ST(0));
+		r = (size_t)(av_len(m) + 1);
+		if (r < 2) croak("mcnemar_test: matrix must have at least two rows");
+		Newxz(tab, r * r, NV);
+		for (size_t i = 0; i < r; i++) {
+			SV **row = av_fetch(m, i, 0);
+			if (!row || !*row || !SvROK(*row) || SvTYPE(SvRV(*row)) != SVt_PVAV)
+				{ Safefree(tab); croak("mcnemar_test: row %zu is not an array ref", i); }
+			AV *rv = (AV*)SvRV(*row);
+			if ((size_t)(av_len(rv) + 1) != r) { Safefree(tab); croak("mcnemar_test: matrix must be square"); }
+			for (size_t j = 0; j < r; j++) {
+				SV **c = av_fetch(rv, j, 0);
+				NV v = (c && *c) ? SvNV(*c) : 0.0;
+				if (v < 0 || isnan(v)) { Safefree(tab); croak("mcnemar_test: entries must be nonnegative and finite"); }
+				tab[i * r + j] = v;
+			}
+		}
+		opt_start = 1;
+	} else {
+		if (items < 2 || !SvROK(ST(0)) || !SvROK(ST(1))
+			|| SvTYPE(SvRV(ST(0))) != SVt_PVAV || SvTYPE(SvRV(ST(1))) != SVt_PVAV)
+			croak("mcnemar_test: expected a square matrix or two array refs");
+		AV *xa = (AV*)SvRV(ST(0)), *ya = (AV*)SvRV(ST(1));
+		size_t n = (size_t)(av_len(xa) + 1);
+		if ((size_t)(av_len(ya) + 1) != n) croak("mcnemar_test: 'x' and 'y' must have the same length");
+		/* collect sorted unique levels across both vectors */
+		char **lev = NULL; size_t nlev = 0, cap = 8; Newx(lev, cap, char*);
+		for (size_t src = 0; src < 2; src++) {
+			AV *a = src ? ya : xa;
+			for (size_t i = 0; i < n; i++) {
+				SV **e = av_fetch(a, i, 0);
+				if (!e || !*e || !SvOK(*e)) continue;
+				STRLEN l; const char *s = SvPV(*e, l);
+				bool found = FALSE;
+				for (size_t k = 0; k < nlev; k++) if (strEQ(lev[k], s)) { found = TRUE; break; }
+				if (!found) { if (nlev >= cap) { cap *= 2; Renew(lev, cap, char*); } lev[nlev++] = savepvn(s, l); }
+			}
+		}
+		/* sort levels lexically for a deterministic table order */
+		for (size_t a = 0; a + 1 < nlev; a++) for (size_t b = a + 1; b < nlev; b++)
+			if (strcmp(lev[a], lev[b]) > 0) { char *t = lev[a]; lev[a] = lev[b]; lev[b] = t; }
+		r = nlev;
+		if (r < 2) { for (size_t k = 0; k < nlev; k++) Safefree(lev[k]); Safefree(lev); croak("mcnemar_test: need at least two levels"); }
+		Newxz(tab, r * r, NV);
+		for (size_t i = 0; i < n; i++) {
+			SV **ex = av_fetch(xa, i, 0), **ey = av_fetch(ya, i, 0);
+			if (!ex || !*ex || !SvOK(*ex) || !ey || !*ey || !SvOK(*ey)) continue;
+			STRLEN lx, ly; const char *sx = SvPV(*ex, lx), *sy = SvPV(*ey, ly);
+			size_t ix = 0, iy = 0;
+			for (size_t k = 0; k < r; k++) { if (strEQ(lev[k], sx)) ix = k; if (strEQ(lev[k], sy)) iy = k; }
+			tab[ix * r + iy] += 1.0;
+		}
+		for (size_t k = 0; k < nlev; k++) Safefree(lev[k]);
+		Safefree(lev);
+		opt_start = 2;
+	}
+	for (int i = opt_start; i + 1 < items; i += 2) {
+		const char *k = SvPV_nolen(ST(i)); SV *v = ST(i + 1);
+		if      (strEQ(k, "correct")) correct = SvTRUE(v) ? 1 : 0;
+		else if (strEQ(k, "exact"))   exact   = SvTRUE(v) ? 1 : 0;
+		else { Safefree(tab); croak("mcnemar_test: unknown argument '%s'", k); }
+	}
+	if (exact && r != 2) { Safefree(tab); croak("mcnemar_test: exact test requires a 2x2 table"); }
+
+	HV *ret = newHV();
+	if (exact) {
+		/* two-sided exact binomial test of the discordant pairs, b ~ Bin(b+c, 0.5) */
+		NV b = tab[0 * 2 + 1], c = tab[1 * 2 + 0];
+		NV nn = b + c, m = (b < c) ? b : c;
+		NV p_value;
+		if (nn == 0.0) p_value = 1.0;
+		else {
+			NV s = 0.0, lognn2 = nn * log(2.0);
+			for (NV kk = 0.0; kk <= m; kk += 1.0) s += exp(ft_lchoose((long)nn, (long)kk) - lognn2);
+			p_value = 2.0 * s; if (p_value > 1.0) p_value = 1.0;
+		}
+		hv_stores(ret, "statistic",   newSVnv(b));
+		hv_stores(ret, "p_value",     newSVnv(p_value));
+		hv_stores(ret, "method",      newSVpv("McNemar's test (exact binomial)", 0));
+	} else {
+		int use_cc = 0;
+		if (correct && r == 2) {
+			for (size_t i = 0; i < r && !use_cc; i++)
+				for (size_t j = 0; j < r; j++)
+					if (tab[i * r + j] != tab[j * r + i]) { use_cc = 1; break; }
+		}
+		NV stat = 0.0;
+		for (size_t i = 0; i < r; i++)
+			for (size_t j = i + 1; j < r; j++) {
+				NV diff = tab[i * r + j] - tab[j * r + i];
+				NV sum  = tab[i * r + j] + tab[j * r + i];
+				if (sum <= 0.0) continue;
+				NV num = use_cc ? (fabs(diff) - 1.0) : diff;
+				stat += num * num / sum;
+			}
+		int df = (int)(r * (r - 1) / 2);
+		NV p_value = get_p_value(stat, df);
+		hv_stores(ret, "statistic", newSVnv(stat));
+		hv_stores(ret, "parameter", newSViv(df));
+		hv_stores(ret, "p_value",   newSVnv(p_value));
+		hv_stores(ret, "method",    newSVpv(use_cc ?
+			"McNemar's Chi-squared test with continuity correction" :
+			"McNemar's Chi-squared test", 0));
+	}
+	Safefree(tab);
+	ST(0) = sv_2mortal(newRV_noinc((SV *)ret));
+	XSRETURN(1);
+}
+
+void dunn_test(...)
+PPCODE:
+{
+	/* Dunn's (1964) post-hoc test following a Kruskal-Wallis test: pairwise
+	 * rank-mean comparisons using the shared ranking and tie correction, with
+	 * a family-wise / FDR adjustment.  Two-sided p-values (as in FSA::dunnTest).
+	 * Validated against the canonical formula implemented in base R. */
+	if (items < 2 || !SvROK(ST(0)) || !SvROK(ST(1))
+		|| SvTYPE(SvRV(ST(0))) != SVt_PVAV || SvTYPE(SvRV(ST(1))) != SVt_PVAV)
+		croak("Usage: dunn_test(\\@values, \\@groups, method => 'holm')");
+	const char *method = "holm";
+	for (int i = 2; i + 1 < items; i += 2) {
+		const char *key = SvPV_nolen(ST(i)); SV *v = ST(i + 1);
+		if (strEQ(key, "method")) method = SvPV_nolen(v);
+		else croak("dunn_test: unknown argument '%s'", key);
+	}
+	char meth[32]; strncpy(meth, method, 31); meth[31] = '\0';
+	for (unsigned i = 0; meth[i]; i++) meth[i] = tolower(meth[i]);
+	if (strEQ(meth, "fdr")) strcpy(meth, "bh");
+	if (strEQ(meth, "holm-sidak")) strcpy(meth, "hs");
+
+	AV *xa = (AV*)SvRV(ST(0)), *ga = (AV*)SvRV(ST(1));
+	size_t raw = (size_t)(av_len(xa) + 1);
+	if ((size_t)(av_len(ga) + 1) != raw) croak("dunn_test: values and groups must have the same length");
+
+	/* gather complete (value, group) pairs */
+	NV *restrict x = NULL; char **restrict glab = NULL;
+	Newx(x, raw, NV); Newx(glab, raw, char*);
+	size_t N = 0;
+	for (size_t i = 0; i < raw; i++) {
+		SV **xv = av_fetch(xa, i, 0), **gv = av_fetch(ga, i, 0);
+		if (!xv || !*xv || !SvOK(*xv) || !looks_like_number(*xv)) continue;
+		if (!gv || !*gv || !SvOK(*gv)) continue;
+		NV val = SvNV(*xv); if (isnan(val)) continue;
+		STRLEN l; const char *s = SvPV(*gv, l);
+		x[N] = val; glab[N] = savepvn(s, l); N++;
+	}
+	if (N < 3) { for (size_t i = 0; i < N; i++) Safefree(glab[i]); Safefree(x); Safefree(glab); croak("dunn_test: not enough complete observations"); }
+
+	/* sorted unique group levels */
+	char **restrict lev = NULL; size_t k = 0, cap = 8; Newx(lev, cap, char*);
+	for (size_t i = 0; i < N; i++) {
+		bool found = FALSE;
+		for (size_t j = 0; j < k; j++) if (strEQ(lev[j], glab[i])) { found = TRUE; break; }
+		if (!found) { if (k >= cap) { cap *= 2; Renew(lev, cap, char*); } lev[k++] = savepv(glab[i]); }
+	}
+	for (size_t a = 0; a + 1 < k; a++) for (size_t b = a + 1; b < k; b++)
+		if (strcmp(lev[a], lev[b]) > 0) { char *t = lev[a]; lev[a] = lev[b]; lev[b] = t; }
+	if (k < 2) { for (size_t i = 0; i < N; i++) Safefree(glab[i]); for (size_t j = 0; j < k; j++) Safefree(lev[j]); Safefree(x); Safefree(glab); Safefree(lev); croak("dunn_test: need at least two groups"); }
+
+	/* ranks over all observations (tie-averaged) */
+	NV *restrict r = NULL; Newx(r, N, NV);
+	rank_data(x, r, N);
+
+	/* per-group rank sums and sizes */
+	NV *restrict rsum = NULL; size_t *restrict ns = NULL;
+	Newxz(rsum, k, NV); Newxz(ns, k, size_t);
+	for (size_t i = 0; i < N; i++) {
+		size_t gi = 0;
+		for (size_t j = 0; j < k; j++) if (strEQ(lev[j], glab[i])) { gi = j; break; }
+		rsum[gi] += r[i]; ns[gi]++;
+	}
+
+	/* tie correction: sum over distinct values of (t^3 - t) */
+	NV *restrict xs = NULL; Newx(xs, N, NV);
+	memcpy(xs, x, N * sizeof(NV));
+	qsort(xs, N, sizeof(NV), cmp_nv3);
+	NV tsum = 0.0;
+	{
+		size_t a = 0;
+		while (a < N) {
+			size_t b = a;
+			while (b + 1 < N && xs[b + 1] == xs[a]) b++;
+			NV t = (NV)(b - a + 1);
+			tsum += t * t * t - t;
+			a = b + 1;
+		}
+	}
+	Safefree(xs);
+
+	NV Nf = (NV)N;
+	NV sigma_base = (Nf * (Nf + 1.0)) / 12.0 - tsum / (12.0 * (Nf - 1.0));
+
+	size_t m = k * (k - 1) / 2;
+	NV *restrict z = NULL, *restrict praw = NULL, *restrict padj = NULL;
+	Newx(z, m, NV); Newx(praw, m, NV); Newx(padj, m, NV);
+	size_t *restrict gi_ = NULL, *restrict gj_ = NULL;
+	Newx(gi_, m, size_t); Newx(gj_, m, size_t);
+	size_t c = 0;
+	for (size_t i = 0; i < k; i++)
+		for (size_t j = i + 1; j < k; j++) {
+			NV rbar_i = rsum[i] / ns[i], rbar_j = rsum[j] / ns[j];
+			NV se = sqrt(sigma_base * (1.0 / ns[i] + 1.0 / ns[j]));
+			NV zz = (rbar_i - rbar_j) / se;
+			z[c] = zz;
+			praw[c] = 2.0 * (1.0 - approx_pnorm(fabs(zz)));
+			if (praw[c] > 1.0) praw[c] = 1.0;
+			gi_[c] = i; gj_[c] = j;
+			c++;
+		}
+	dunn_padjust(praw, m, meth, padj);
+
+	AV *out = newAV();
+	for (size_t t = 0; t < m; t++) {
+		HV *h = newHV();
+		char comp[256];
+		snprintf(comp, sizeof comp, "%s - %s", lev[gi_[t]], lev[gj_[t]]);
+		hv_stores(h, "comparison", newSVpv(comp, 0));
+		hv_stores(h, "group1",     newSVpv(lev[gi_[t]], 0));
+		hv_stores(h, "group2",     newSVpv(lev[gj_[t]], 0));
+		hv_stores(h, "Z",          newSVnv(z[t]));
+		hv_stores(h, "p_value",    newSVnv(praw[t]));
+		hv_stores(h, "p_adjust",   newSVnv(padj[t]));
+		av_push(out, newRV_noinc((SV*)h));
+	}
+
+	for (size_t i = 0; i < N; i++) Safefree(glab[i]);
+	for (size_t j = 0; j < k; j++) Safefree(lev[j]);
+	Safefree(x); Safefree(glab); Safefree(lev); Safefree(r);
+	Safefree(rsum); Safefree(ns); Safefree(z); Safefree(praw); Safefree(padj);
+	Safefree(gi_); Safefree(gj_);
+	ST(0) = sv_2mortal(newRV_noinc((SV*)out));
+	XSRETURN(1);
+}
+
+void friedman_test(...)
+PPCODE:
+{
+	/* Friedman rank-sum test for an unreplicated complete block design.
+	 * Input is a matrix (array of array refs) with one block/subject per row
+	 * and one treatment/condition per column.  Faithful port of R's
+	 * stats::friedman.test, including the tie correction. */
+	if (items < 1 || !SvROK(ST(0)) || SvTYPE(SvRV(ST(0))) != SVt_PVAV)
+		croak("Usage: friedman_test([[..row1..],[..row2..], ...])  # rows = blocks, cols = treatments");
+	AV *m = (AV*)SvRV(ST(0));
+	size_t nrow_raw = (size_t)(av_len(m) + 1);
+	if (nrow_raw < 2) croak("friedman_test: need at least two blocks (rows)");
+
+	/* determine k from the first row */
+	SV **r0 = av_fetch(m, 0, 0);
+	if (!r0 || !*r0 || !SvROK(*r0) || SvTYPE(SvRV(*r0)) != SVt_PVAV)
+		croak("friedman_test: each row must be an array ref");
+	size_t k = (size_t)(av_len((AV*)SvRV(*r0)) + 1);
+	if (k < 2) croak("friedman_test: need at least two treatments (columns)");
+
+	NV *restrict colsum = NULL; Newxz(colsum, k, NV);
+	NV *restrict rowbuf = NULL; Newx(rowbuf, k, NV);
+	NV *restrict ranks  = NULL; Newx(ranks, k, NV);
+	NV *restrict sorted = NULL; Newx(sorted, k, NV);
+	NV tie_sum = 0.0;
+	size_t n = 0;   /* complete blocks actually used */
+
+	for (size_t i = 0; i < nrow_raw; i++) {
+		SV **rr = av_fetch(m, i, 0);
+		if (!rr || !*rr || !SvROK(*rr) || SvTYPE(SvRV(*rr)) != SVt_PVAV)
+			{ Safefree(colsum); Safefree(rowbuf); Safefree(ranks); Safefree(sorted); croak("friedman_test: row %zu is not an array ref", i); }
+		AV *rv = (AV*)SvRV(*rr);
+		if ((size_t)(av_len(rv) + 1) != k)
+			{ Safefree(colsum); Safefree(rowbuf); Safefree(ranks); Safefree(sorted); croak("friedman_test: all rows must have the same number of columns"); }
+		bool complete = TRUE;
+		for (size_t j = 0; j < k; j++) {
+			SV **c = av_fetch(rv, j, 0);
+			if (!c || !*c || !SvOK(*c) || !looks_like_number(*c)) { complete = FALSE; break; }
+			rowbuf[j] = SvNV(*c);
+			if (isnan(rowbuf[j])) { complete = FALSE; break; }
+		}
+		if (!complete) continue;   /* drop incomplete blocks, like R's complete.cases */
+
+		rank_data(rowbuf, ranks, k);
+		for (size_t j = 0; j < k; j++) colsum[j] += ranks[j];
+
+		/* tie correction: sum over tie groups of (u^3 - u) within this block */
+		memcpy(sorted, rowbuf, k * sizeof(NV));
+		qsort(sorted, k, sizeof(NV), cmp_nv3);
+		size_t a = 0;
+		while (a < k) {
+			size_t b = a;
+			while (b + 1 < k && sorted[b + 1] == sorted[a]) b++;
+			NV u = (NV)(b - a + 1);
+			tie_sum += u * u * u - u;
+			a = b + 1;
+		}
+		n++;
+	}
+	Safefree(rowbuf); Safefree(ranks); Safefree(sorted);
+	if (n < 1) { Safefree(colsum); croak("friedman_test: no complete blocks"); }
+
+	NV nf = (NV)n, kf = (NV)k;
+	NV ssq = 0.0, target = nf * (kf + 1.0) / 2.0;
+	for (size_t j = 0; j < k; j++) { NV d = colsum[j] - target; ssq += d * d; }
+	Safefree(colsum);
+	NV denom = nf * kf * (kf + 1.0) - tie_sum / (kf - 1.0);
+	NV stat = 12.0 * ssq / denom;
+	int df = (int)(k - 1);
+	NV p_value = get_p_value(stat, df);
+
+	HV *ret = newHV();
+	hv_stores(ret, "statistic", newSVnv(stat));
+	hv_stores(ret, "parameter", newSViv(df));
+	hv_stores(ret, "p_value",   newSVnv(p_value));
+	hv_stores(ret, "n",         newSViv((int)n));
+	hv_stores(ret, "method",    newSVpv("Friedman rank sum test", 0));
+	ST(0) = sv_2mortal(newRV_noinc((SV *)ret));
+	XSRETURN(1);
+}
 
 void epi_2x2(...)
 PPCODE:
