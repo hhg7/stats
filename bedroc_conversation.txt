@@ -1,0 +1,205 @@
+================================================================================
+Conversation transcript — adding bedroc() to Stats::LikeR
+Date: 2026-07-23
+Project: /home/con/Scripts/stats  (Stats::LikeR, XS-backed R-like stats for Perl)
+================================================================================
+
+
+--------------------------------------------------------------------------------
+USER:
+--------------------------------------------------------------------------------
+add a function in LikeR.xs and write tests, that can calculate BEDROC, given a
+alpha and a cutoff within data. Write documentation to README.md only
+
+
+--------------------------------------------------------------------------------
+ASSISTANT:
+--------------------------------------------------------------------------------
+Noted that BEDROC (Boltzmann-Enhanced Discrimination of ROC) normally takes just
+scores, labels, and the alpha early-recognition parameter — like the existing
+auc/roc. The phrase "a cutoff within data" was ambiguous and changes the
+signature, so asked for clarification with three interpretations:
+
+  1. Threshold defines actives: second array holds numeric values; entries with
+     value >= cutoff are treated as active. Signature:
+     bedroc(\@scores, \@values, alpha => 20, cutoff => X).
+  2. Explicit labels (like auc): second array is 0/1 class labels; alpha only.
+  3. Early-fraction cutoff: cutoff is a top-fraction of the ranked list (e.g.
+     0.05 = top 5%) reported alongside BEDROC.
+
+(The clarifying question was declined; user asked to clarify further.)
+
+
+--------------------------------------------------------------------------------
+USER:
+--------------------------------------------------------------------------------
+can 1 and 3 be done?
+
+
+--------------------------------------------------------------------------------
+ASSISTANT:
+--------------------------------------------------------------------------------
+Yes. Proposed and built this interface (consistent with auc/roc):
+
+  bedroc(\@scores, \@target,
+         alpha  => 20.0,     # early-recognition weight (Truchon-Bayly default 20)
+         cutoff => 6.5,      # (opt 1) value >= cutoff in @target => active
+         positive => 1,      # OR label-based actives when no cutoff is given
+         direction => '>',   # '>' higher score ranks first (default); '<' flips
+         top    => 0.05);    # (opt 3) also report enrichment in the top 5%
+
+Work performed:
+
+* Validated the formula against an independent R reimplementation of Truchon &
+  Bayly (2007) BEDROC, eq. 36:
+      BEDROC = RIE * factor1 + factor2
+      RIE     = (sum over actives of exp(-alpha*rank_i/N)) / random_expectation
+      rank 1 = top of the descending-score ranking; midranks used for ties.
+  Caught and fixed an early draft-formula bug (a "perfect ranking" gave 0.011
+  instead of ~1 because the sum had been divided by n instead of normalized by
+  the random-expectation sum). After the fix:
+      perfect ranking  -> 1
+      worst ranking    -> 0
+      direction '<'    -> flips correctly
+      cutoff mode      -> works
+
+* Added the bedroc XSUB to LikeR.xs (right after roc). It reuses the ROCPt
+  struct and rocpt_cmp_desc comparator from roc, sorts descending, assigns
+  average (mid)ranks to ties, sums exp(-alpha*midrank/N) over actives, and
+  computes BEDROC, RIE, rie_min, rie_max. cutoff-mode selects actives as
+  @target values >= cutoff; top-mode adds an enrichment sub-hash
+  (fraction, n_top = ceil(top*N), active_count, expected = ra*n_top,
+  enrichment_factor = (active_count/n_top)/ra).
+
+  Result hash keys: bedroc, alpha, rie, rie_min, rie_max, n, n_active,
+  n_inactive, ra, direction, method, and (with top =>) enrichment.
+
+* Added bedroc to @EXPORT_OK in lib/Stats/LikeR.pm.
+
+* Wrote t/bedroc.t (47 tests): reference values, alpha sensitivity, perfect/
+  worst bounds, direction '<', string labels via positive=>, cutoff mode,
+  top-fraction enrichment, help capture, error paths, and no_leaks_ok.
+
+* Full suite: 5022 tests PASS. Zero new -Wall/-Wextra warnings in the new code.
+
+* Documented bedroc in README.md only (alphabetically between auc and bfill).
+  read.me.pod left untouched (it is generated from README.md via md2pod.pl).
+
+
+--------------------------------------------------------------------------------
+USER (mid-turn):
+--------------------------------------------------------------------------------
+add an option to bedroc: if "h", "?", or "H" alone is given to bedroc, have
+bedroc print a help string, like ?function would do in R
+
+
+--------------------------------------------------------------------------------
+ASSISTANT:
+--------------------------------------------------------------------------------
+Added a help path at the top of the XSUB: when bedroc is called with a single
+scalar argument equal to 'h', 'H', or '?', it prints a usage summary and returns
+an empty list.
+
+Important detail: the first attempt used PerlIO_stdout() (the C-level stdout),
+which bypasses a redirected Perl STDOUT glob — that leaked help text into the
+TAP stream and could not be captured in the test. Fixed it to write to the Perl
+STDOUT filehandle instead:
+
+    GV *ogv = gv_fetchpvs("STDOUT", 0, SVt_PVIO);
+    PerlIO *pio = (ogv && GvIO(ogv) && IoOFP(GvIO(ogv)))
+                ? IoOFP(GvIO(ogv)) : PerlIO_stdout();
+    PerlIO_printf(pio, "...help text...");
+
+This makes the help output redirectable/captureable. Tests updated to capture
+STDOUT into a scalar and assert the help mentions bedroc / USAGE / alpha.
+
+Final: t/bedroc.t 47 tests pass; full suite 5022 pass; README updated with a
+note that bedroc('h'|'H'|'?') prints usage.
+
+Files changed:
+  - LikeR.xs                  (new bedroc XSUB + help block)
+  - lib/Stats/LikeR.pm        (bedroc added to @EXPORT_OK)
+  - t/bedroc.t                (new test file)
+  - README.md                 (new ## bedroc section)
+
+
+--------------------------------------------------------------------------------
+USER:
+--------------------------------------------------------------------------------
+my $bedroc = bedroc(
+    vals($m, 'r. rank'),
+    vals($m, 'ΔG rank'),
+    alpha => 32.2,
+    direction => '<',
+    top => 0.1
+); what am I doing wrong?
+
+
+--------------------------------------------------------------------------------
+ASSISTANT:
+--------------------------------------------------------------------------------
+vals() returns an arrayref, so passing the two calls positionally is fine — that
+is NOT the bug. The bug is what the SECOND array means.
+
+bedroc's second argument must be a BINARY active/inactive indicator, not a second
+ranking. Passing 'ΔG rank' (values 1,2,3,...N) with no cutoff means the default
+positive => 1 marks as "active" only the single row whose ΔG rank equals "1" and
+treats everything else as inactive. So it silently computes BEDROC for a
+one-active problem — a meaningless number, not an error.
+
+BEDROC answers: "does my score ranking pull the known actives to the top early?"
+So you must define which compounds are the actives — presumably the best binders,
+i.e. the top fraction by ΔG. Because ΔG rank == 1 is the BEST binder, actives are
+the SMALL ranks:
+
+    my $r_rank  = vals($m, 'r. rank');
+    my $dg_rank = vals($m, 'ΔG rank');
+
+    my $k = 0.10 * @$dg_rank;                     # actives = top 10% by ΔG
+    my @active = map { $_ <= $k ? 1 : 0 } @$dg_rank;
+
+    my $bedroc = bedroc(
+        $r_rank, \@active,
+        alpha     => 32.2,
+        direction => '<',      # r. rank: 1 = best, so lower ranks first (this was right)
+        top       => 0.1,
+    );
+
+Demonstration (30 compounds, r-rank tracking ΔG-rank closely):
+    as-written: n_active=1  bedroc=0.3419  (only the single ΔGrank==1 row is active)
+    corrected : n_active=3  bedroc=0.9473  EF(top10%)=6.67  (n_top=3, hits=2)
+
+Two cautions:
+  * Don't use cutoff => here naively: cutoff selects value >= cutoff, but ΔG rank
+    is "good = small", so cutoff => 3 would pick the WORST compounds. Building the
+    0/1 label with <= (as above) is the clear way. (If you insisted on cutoff,
+    you'd negate: [map {-$_} @$dg_rank] with cutoff => -3.)
+  * If you actually wanted rank-vs-rank AGREEMENT (not early recognition of a
+    defined active set), BEDROC is the wrong tool — use Spearman/Kendall
+    (cor(... method => 'spearman')).
+
+Build note discovered while testing: the dzil-generated Makefile.PL hardcodes
+VERSION => "0.24" while dev.Makefile.PL reads 0.27 from the .pm. Running
+`perl Makefile.PL` builds a .so stamped 0.24 that then refuses to load against
+the 0.27 .pm ("object version 0.24 does not match bootstrap parameter 0.27").
+Rebuilt via dev.Makefile.PL so the tree is back to a loadable 0.27; recommended
+bumping the hardcoded 0.24 in Makefile.PL (or regenerating it from dist.ini) so
+compile.sh doesn't hit this.
+
+
+--------------------------------------------------------------------------------
+USER:
+--------------------------------------------------------------------------------
+save this conversation to a text file
+
+
+--------------------------------------------------------------------------------
+ASSISTANT:
+--------------------------------------------------------------------------------
+Saved this transcript to bedroc_conversation.txt in the project directory.
+
+================================================================================
+Reference: Truchon J-F, Bayly CI. "Evaluating Virtual Screening Methods: Good
+and Bad Metrics for the 'Early Recognition' Problem." J. Chem. Inf. Model. 2007,
+47(2):488-508.  BEDROC closed form = eq. 36.
+================================================================================

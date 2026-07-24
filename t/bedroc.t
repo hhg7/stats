@@ -71,6 +71,44 @@ is_approx($e->{expected},          1.5, 'expected hits = ra * n_top');
 is_approx($e->{enrichment_factor}, 2.0, 'enrichment factor = (hits/n_top)/ra');
 is_approx($e->{fraction},          0.3, 'top fraction echoed');
 
+# active_frac => : binarize the second array by taking a fraction as active.
+# On @sc/@v the 5 highest values are exactly the >= 6.5 set (the 6th-highest is
+# 6), so active_frac => 0.5 high must reproduce the cutoff => 6.5 BEDROC above.
+my $fh = bedroc(\@sc, \@v, alpha => 20, active_frac => 0.5, active_side => 'high');
+is_approx($fh->{bedroc}, 0.997567159019, 'active_frac high == cutoff on this data');
+is($fh->{n_active},   5, 'active_frac 0.5 of 10 => 5 actives (ceil)');
+is($fh->{n_inactive}, 5, 'active_frac 0.5 => 5 inactives');
+
+# active_side defaults to 'high'; 'low' takes the small tail (the complement here)
+my $fl = bedroc(\@sc, \@v, alpha => 20, active_frac => 0.5, active_side => 'low');
+is($fl->{n_active}, 5, "active_side 'low' selects the low tail");
+
+# perfect / worst with fraction-defined actives (self-contained, exact bounds)
+is_approx(bedroc([1,2,3,4,5,6,7,8], [1,2,3,4,10,11,12,13],
+                 alpha => 20, active_frac => 0.5, active_side => 'low',
+                 direction => '<')->{bedroc},
+          1.0, 'active_frac low + direction < : low-value actives on top => 1');
+is_approx(bedroc([1,2,3,4,5,6,7,8], [1,2,3,4,10,11,12,13],
+                 alpha => 20, active_frac => 0.5, active_side => 'high',
+                 direction => '<')->{bedroc},
+          0.0, 'active_frac high + direction < : high-value actives on bottom => 0');
+
+# n_a is clamped to [1, N-1] so both classes always exist
+is(bedroc(\@sc, \@v, active_frac => 0.001)->{n_active}, 1, 'tiny active_frac => 1 active');
+is(bedroc(\@sc, \@v, active_frac => 0.99 )->{n_inactive}, 1, 'huge active_frac => 1 inactive');
+
+# the whole point: a raw numeric column that would otherwise leave one class
+# empty no longer dies -- active_frac guarantees a usable split
+lives_ok { bedroc(\@sc, \@v, active_frac => 0.1) }
+	'active_frac binarizes a raw column instead of dying';
+
+# guard rails
+dies_ok { bedroc(\@sc, \@v, active_frac => 0.5, cutoff => 6.5) }
+	'active_frac + cutoff together dies';
+dies_ok { bedroc(\@sc, \@v, active_frac => 0)   } 'active_frac = 0 dies';
+dies_ok { bedroc(\@sc, \@v, active_frac => 1)   } 'active_frac = 1 dies';
+dies_ok { bedroc(\@sc, \@v, active_frac => 1.5) } 'active_frac > 1 dies';
+
 # help: bedroc('h' | 'H' | '?') prints usage (like ?fn in R) and returns nothing
 for my $flag ('h', 'H', '?') {
 	my $out = '';
@@ -99,6 +137,7 @@ dies_ok { bedroc(\@sc, \@v, cutoff => 999) }    'cutoff selecting no actives die
 unless ($INC{'Devel/Cover.pm'}) {
 	no_leaks_ok { eval { bedroc(\@s, \@l, alpha => 20) } }            'bedroc: no leaks';
 	no_leaks_ok { eval { bedroc(\@sc, \@v, cutoff => 6.5, top => 0.3) } } 'bedroc cutoff/top: no leaks';
+	no_leaks_ok { eval { bedroc(\@sc, \@v, active_frac => 0.3, active_side => 'low', top => 0.2) } } 'bedroc active_frac: no leaks';
 }
 
 done_testing();

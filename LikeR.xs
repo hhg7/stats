@@ -5037,6 +5037,15 @@ static int rocpt_cmp_desc(const void *a, const void *b) {
 	return 0;
 }
 
+/* (value, original-index) pair, sorted ascending by value.  Used by bedroc's
+ * active_frac mode to pick exactly ceil(frac*N) items from the low or high
+ * tail of the second array as the actives (matching an argsort selection). */
+typedef struct { NV v; size_t i; } NVIdx;
+static int nvidx_cmp_asc(const void *a, const void *b) {
+	NV x = ((const NVIdx *)a)->v, y = ((const NVIdx *)b)->v;
+	return (x > y) - (x < y);
+}
+
 /* Split parallel score/label arrays into the positive and negative score
  * vectors.  A label counts as positive when its string form equals `positive`.
  * With lower_pos set, the score sign is flipped (lower marker => more positive).
@@ -5154,7 +5163,7 @@ static int mat_inv(NV *restrict A, int n, NV *restrict inv) {
 	return 0;
 }
 
-typedef struct { NV time; int idx; } TimeIdx;   /* sort observations by time */
+typedef struct { NV time; int idx; } TimeIdx; // sort observations by time
 
 /* Read parallel time/status(/group) arrays into a SurvObs array.  Group index
  * is assigned by first appearance of each label string; the labels are pushed
@@ -5168,7 +5177,7 @@ static SurvObs* srv_read(pTHX_ AV *restrict tav, AV *restrict sav, AV *restrict 
 	if (N < 1) croak("%s: need at least one observation", who);
 	SurvObs *restrict o; Newx(o, N, SurvObs);
 	for (SSize_t i = 0; i < N; i++) {
-		SV **tp = av_fetch(tav, i, 0), **sp = av_fetch(sav, i, 0);
+		SV **restrict tp = av_fetch(tav, i, 0), **sp = av_fetch(sav, i, 0);
 		NV t = (tp && *tp) ? SvNV(*tp) : NAN;
 		if (t < 0) { Safefree(o); croak("%s: negative survival time", who); }
 		o[i].time   = t;
@@ -5277,10 +5286,10 @@ SV *_cols_select(df, shape, spec)
 		SV **restrict keys; Newx(keys, n > 0 ? n : 1, SV *);
 		for (i = 0; i < n; i++) { SV **e = av_fetch(spec_av, i, 0); keys[i] = *e; }
 		if (shape == 1) { // ---- AoH ----
-			AV *src = (AV *)SvRV(df); SSize_t R = av_len(src) + 1;
-			AV *out = newAV(); if (R > 0) av_extend(out, R - 1);
+			AV *restrict src = (AV *)SvRV(df); SSize_t R = av_len(src) + 1;
+			AV *restrict out = newAV(); if (R > 0) av_extend(out, R - 1);
 			for (i = 0; i < R; i++) {
-				SV **rp = av_fetch(src, i, 0); HV *inner;
+				SV **restrict rp = av_fetch(src, i, 0); HV *inner;
 				if (rp && *rp && SvROK(*rp) && SvTYPE(SvRV(*rp)) == SVt_PVHV)
 					inner = row_select(aTHX_ (HV *)SvRV(*rp), keys, n);
 				else
@@ -5292,7 +5301,7 @@ SV *_cols_select(df, shape, spec)
 			HV *restrict src = (HV *)SvRV(df); HV *out = newHV();
 			hv_iterinit(src); HE *restrict he;
 			while ((he = hv_iternext(src))) {
-				STRLEN kl; char *kp = HePV(he, kl); I32 sk = HeUTF8(he) ? -(I32)kl : (I32)kl;
+				STRLEN kl; char *restrict kp = HePV(he, kl); I32 sk = HeUTF8(he) ? -(I32)kl : (I32)kl;
 				SV *restrict rv = HeVAL(he); HV *inner;
 				if (rv && SvROK(rv) && SvTYPE(SvRV(rv)) == SVt_PVHV)
 					inner = row_select(aTHX_ (HV *)SvRV(rv), keys, n);
@@ -5562,7 +5571,7 @@ void anova(...)
 			/*  nested model comparison  *
 			 * anova(\%data, 'y ~ a', 'y ~ a + b', ...) -> ArrayRef table.  */
 			size_t nform = (size_t)items - 1;
-			char **lhss = NULL, **rhss = NULL;
+			char **restrict lhss = NULL, **rhss = NULL;
 			Newxz(lhss, nform, char*);
 			Newxz(rhss, nform, char*);
 
@@ -5578,7 +5587,7 @@ void anova(...)
 					croak("anova: could not parse formula %" UVuf " (need 'response ~ terms')", (UV)(fi + 1));
 				}
 			}
-			// ---- resolve data form + row count (response 1 length)
+// ---- resolve data form + row count (response 1 length)
 			if (!SvROK(data)) {
 				anova_free_formulas(aTHX_ lhss, rhss, nform);
 				croak("anova: first argument must be a hash or array reference");
@@ -5587,12 +5596,12 @@ void anova(...)
 				SV *rv = SvRV(data);
 				if (SvTYPE(rv) == SVt_PVHV) {
 					hoa = (HV*)rv;
-					SV **col = hv_fetch(hoa, lhss[0], (I32)strlen(lhss[0]), 0);
+					SV **restrict col = hv_fetch(hoa, lhss[0], (I32)strlen(lhss[0]), 0);
 					if (col && SvROK(*col) && SvTYPE(SvRV(*col)) == SVt_PVAV)
 						n = (size_t)(av_len((AV*)SvRV(*col)) + 1);
 					else {
 						hv_iterinit(hoa);
-						HE *e;
+						HE *restrict e;
 						while ((e = hv_iternext(hoa))) {
 							SV *v = hv_iterval(hoa, e);
 							if (SvROK(v) && SvTYPE(SvRV(v)) == SVt_PVAV) {
@@ -5619,7 +5628,7 @@ void anova(...)
 					croak("anova: first argument must be a hash or array reference");
 				}
 			}
-			/* union factor registry across all formulas */
+// union factor registry across all formulas
 			{
 				AnFac *ufacs = NULL; size_t unfac = 0, ufcap = 0;
 				for (size_t fi = 0; fi < nform; fi++) {
@@ -5630,8 +5639,7 @@ void anova(...)
 							(void)anova_fac(aTHX_ &ufacs, &unfac, &ufcap, hoa, rows, n, tt[t].factors[j]);
 					anova_free_terms(aTHX_ tt, ntt);
 				}
-
-				/* ---- listwise completeness over the union */
+// ---- listwise completeness over the union */
 				Newx(complete, n ? n : 1, bool);
 				n_used = 0;
 				for (size_t i = 0; i < n; i++) {
@@ -5660,8 +5668,7 @@ void anova(...)
 
 			Newx(ridx, n_used, size_t);
 			{ size_t r = 0; for (size_t i = 0; i < n; i++) if (complete[i]) ridx[r++] = i; }
-
-			/* fit every model on the shared row set */
+// fit every model on the shared row set
 			{
 				NV *restrict mrss = NULL; IV *restrict mresdf = NULL;
 				Newx(mrss,   nform, NV);
@@ -5678,7 +5685,6 @@ void anova(...)
 					mrss[fi]   = rss_i;
 					mresdf[fi] = (IV)n_used - (IV)rank_i;
 				}
-
 				/* common scale = residual MS of the largest model
 				 * (smallest residual df), exactly as R's anova.lmlist. */
 				size_t big = 0;
@@ -5686,7 +5692,6 @@ void anova(...)
 					if (mresdf[fi] < mresdf[big]) big = fi;
 				NV scale  = (mresdf[big] > 0) ? mrss[big] / (NV)mresdf[big] : NAN;
 				IV df_big = mresdf[big];
-
 				// one row per model, in supplied order
 				AV *restrict table = newAV();
 				for (size_t fi = 0; fi < nform; fi++) {
@@ -5716,14 +5721,12 @@ void anova(...)
 
 				XPUSHs(sv_2mortal(newRV_noinc((SV*)table)));
 			}
-		} else {
-			/* single-model Type-I table */
+		} else {// single-model Type-I table */
 			if (!(SvPOK(ST(1)) || SvOK(ST(1))))
 				croak("anova: second argument must be a formula string");
 			if (!parse_formula(SvPV_nolen(ST(1)), &lhs, &rhs))
 				croak("anova: could not parse formula (need 'response ~ terms')");
-
-			/* ---- resolve data form + row count */
+			// ---- resolve data form + row count
 			if (!SvROK(data)) { safefree(lhs); safefree(rhs); croak("anova: first argument must be a hash or array reference"); }
 			{
 				SV *restrict rv = SvRV(data);
@@ -5733,11 +5736,11 @@ void anova(...)
 					if (col && SvROK(*col) && SvTYPE(SvRV(*col)) == SVt_PVAV)
 						n = (size_t)(av_len((AV*)SvRV(*col)) + 1);
 					else {
-						/* response may be an expression; fall back to longest column */
+// response may be an expression; fall back to longest column
 						hv_iterinit(hoa);
-						HE *e;
+						HE *restrict e;
 						while ((e = hv_iternext(hoa))) {
-							SV *v = hv_iterval(hoa, e);
+							SV *restrict v = hv_iterval(hoa, e);
 							if (SvROK(v) && SvTYPE(SvRV(v)) == SVt_PVAV) {
 								size_t l = (size_t)(av_len((AV*)SvRV(v)) + 1);
 								if (l > n) n = l;
@@ -5749,7 +5752,7 @@ void anova(...)
 					n = (size_t)(av_len(top) + 1);
 					Newx(rows, n ? n : 1, HV*);
 					for (size_t i = 0; i < n; i++) {
-						SV **ep = av_fetch(top, i, 0);
+						SV **restrict ep = av_fetch(top, i, 0);
 						if (!(ep && SvROK(*ep) && SvTYPE(SvRV(*ep)) == SVt_PVHV)) {
 							Safefree(rows); safefree(lhs); safefree(rhs);
 							croak("anova: element %" UVuf " is not a hash reference", (UV)i);
@@ -12309,6 +12312,109 @@ CODE:
 OUTPUT:
 	RETVAL
 
+NV auroc(...)
+CODE:
+{
+	/* sklearn-style AUROC: auroc(\@y_true, \@y_score, ...) -- LABELS first,
+	 * SCORES second, higher score = positive class.  This mirrors the call the
+	 * ~/ui/pep-priml scripts make, sklearn.metrics.roc_auc_score(y_true,
+	 * y_score) (e.g. _compute.py's roc_auc_score(y_te, fold_scores) and the
+	 * figs' roc_auc_score(y_true_bin, -pred)).  Ties count 0.5 (Mann-Whitney /
+	 * DeLong midranks), so the number matches sklearn exactly.  Returns the
+	 * scalar AUC; use roc() for the full curve, SE and CI, or auc() for the
+	 * same number with the (scores, labels) argument order.
+	 *
+	 * The pep-priml "roc_auc_score(y_true_bin, -pred)" idiom (lower prediction
+	 * = positive, truth derived from a continuous column by a percentile cut)
+	 * is reproduced in one call: pass direction => '<' instead of negating the
+	 * scores, and cutoff / active_frac to binarize a continuous truth column
+	 * the way y_true_bin = (exp <= threshold) does.                           */
+	if (items < 2 || !SvROK(ST(0)) || SvTYPE(SvRV(ST(0))) != SVt_PVAV
+	              || !SvROK(ST(1)) || SvTYPE(SvRV(ST(1))) != SVt_PVAV)
+		croak("Usage: auroc(\\@y_true, \\@y_score, positive => 1, "
+		      "direction => '>', cutoff => x, active_frac => 0.1, "
+		      "active_side => 'high')");
+	const char *positive = "1"; int lower_pos = 0;
+	bool have_cutoff = 0, have_frac = 0; NV cutoff = 0.0, active_frac = 0.0;
+	int frac_low = 0;
+	for (int i = 2; i + 1 < items; i += 2) {
+		const char *k = SvPV_nolen(ST(i)); SV *v = ST(i + 1);
+		if      (strEQ(k, "positive"))  positive = SvPV_nolen(v);
+		else if (strEQ(k, "direction")) { const char *d = SvPV_nolen(v); lower_pos = (d[0] == '<'); }
+		else if (strEQ(k, "cutoff"))    { have_cutoff = 1; cutoff = SvNV(v); }
+		else if (strEQ(k, "active_frac") || strEQ(k, "active")) { have_frac = 1; active_frac = SvNV(v); }
+		else if (strEQ(k, "active_side")) {
+			const char *sd = SvPV_nolen(v);      /* 'low'/'bottom' vs 'high'/'top' */
+			frac_low = (sd[0] == 'l' || sd[0] == 'L' || sd[0] == 'b' || sd[0] == 'B');
+		}
+		else croak("auroc: unknown argument '%s'", k);
+	}
+	if (have_frac && have_cutoff)
+		croak("auroc: give either cutoff => or active_frac =>, not both");
+	if (have_frac && !(active_frac > 0.0 && active_frac < 1.0))
+		croak("auroc: active_frac must be strictly between 0 and 1");
+
+	AV *restrict lav = (AV *)SvRV(ST(0));   /* y_true  (labels first, like sklearn) */
+	AV *restrict sav = (AV *)SvRV(ST(1));   /* y_score */
+
+	if (have_cutoff || have_frac) {
+		/* Binarize a continuous truth column, then DeLong on the pos/neg
+		 * score vectors -- same shape as bedroc's cutoff/active_frac. */
+		SSize_t Ns = av_len(sav) + 1;
+		if (Ns != av_len(lav) + 1)
+			croak("auroc: y_true and y_score must be the same length");
+		if (Ns < 1) croak("auroc: need at least one observation");
+		size_t N = (size_t)Ns;
+		int *restrict act; Newxz(act, N, int);
+		if (have_frac) {
+			size_t n_a = (size_t)ceil(active_frac * (NV)N);
+			if (n_a < 1) n_a = 1;
+			if (N >= 2 && n_a > N - 1) n_a = N - 1;
+			NVIdx *restrict tmp; Newx(tmp, N, NVIdx);
+			for (size_t i = 0; i < N; i++) {
+				SV **restrict lp = av_fetch(lav, i, 0);
+				tmp[i].v = (lp && *lp) ? SvNV(*lp) : NAN; tmp[i].i = i;
+			}
+			qsort(tmp, N, sizeof(NVIdx), nvidx_cmp_asc);
+			if (frac_low) for (size_t k = 0; k < n_a; k++) act[tmp[k].i] = 1;
+			else          for (size_t k = N - n_a; k < N; k++) act[tmp[k].i] = 1;
+			Safefree(tmp);
+		} else {
+			for (size_t i = 0; i < N; i++) {
+				SV **restrict lp = av_fetch(lav, i, 0);
+				act[i] = (((lp && *lp) ? SvNV(*lp) : NAN) >= cutoff);
+			}
+		}
+		NV *restrict P; Newx(P, N, NV); NV *restrict Q; Newx(Q, N, NV);
+		size_t m = 0, n = 0;
+		for (size_t i = 0; i < N; i++) {
+			SV **restrict sp = av_fetch(sav, i, 0);
+			NV s = (sp && *sp) ? SvNV(*sp) : NAN;
+			if (lower_pos) s = -s;
+			if (act[i]) P[m++] = s; else Q[n++] = s;
+		}
+		Safefree(act);
+		if (m == 0 || n == 0) {
+			Safefree(P); Safefree(Q);
+			croak("auroc: need both positive and negative labels%s",
+			      have_cutoff ? " (check cutoff)" : "");
+		}
+		NV a, se; roc_delong(aTHX_ P, m, Q, n, &a, &se);
+		Safefree(P); Safefree(Q);
+		RETVAL = a;
+	} else {
+		/* Pre-built 0/1 (or string) labels: roc_split does the parallel-array
+		 * walk; note swapped args so labels are ST(0), scores ST(1).      */
+		NV *pos, *neg; size_t m, n;
+		roc_split(aTHX_ sav, lav, positive, lower_pos, &pos, &m, &neg, &n, "auroc");
+		NV a, se; roc_delong(aTHX_ pos, m, neg, n, &a, &se);
+		Safefree(pos); Safefree(neg);
+		RETVAL = a;
+	}
+}
+OUTPUT:
+	RETVAL
+
 void roc(...)
 PPCODE:
 {
@@ -12419,12 +12525,24 @@ PPCODE:
 "\n"
 "ARGUMENTS\n"
 "  \\@scores      ranking scores (higher = better by default)\n"
-"  \\@labels      class labels, OR a numeric column when cutoff => is given\n"
+"  \\@labels      class labels, OR a numeric column when cutoff/active_frac\n"
+"                is given (then bedroc binarizes it for you)\n"
 "  alpha => 20   early-recognition weight, > 0 (Truchon-Bayly default 20)\n"
 "  positive => 1 label value that marks an active (string compare)\n"
 "  cutoff => x   define actives as \\@labels entries with value >= x\n"
+"  active_frac=>f binarize \\@labels: take a fraction f in (0,1) as active,\n"
+"                from one tail (see active_side).  Exactly ceil(f*N) actives,\n"
+"                clamped so both classes exist -- never dies for lack of a\n"
+"                pre-built 0/1 label.  Mutually exclusive with cutoff.\n"
+"  active_side=>  with active_frac: 'high' (default) = largest values are\n"
+"    'high'      active (like cutoff); 'low' = smallest values (e.g. actives\n"
+"                = strongest binders when the column is dG).\n"
 "  direction=>'>' '>' higher score ranks first (default); '<' flips\n"
 "  top => 0.05   also report enrichment in the top fraction (0..1]\n"
+"\n"
+"Unlike the common Python implementations (which need a pre-built 0/1 label\n"
+"array, or reimplement a regression variant per script), active_frac lets one\n"
+"call turn a raw measured column straight into a BEDROC score.\n"
 "\n"
 "RETURNS a hashref: bedroc, alpha, rie, rie_min, rie_max, n, n_active,\n"
 "  n_inactive, ra, direction, method, and (with top=>) enrichment =>\n"
@@ -12437,22 +12555,33 @@ PPCODE:
 	if (items < 2 || !SvROK(ST(0)) || SvTYPE(SvRV(ST(0))) != SVt_PVAV
 	              || !SvROK(ST(1)) || SvTYPE(SvRV(ST(1))) != SVt_PVAV)
 		croak("Usage: bedroc(\\@scores, \\@labels, alpha => 20, "
-		      "positive => 1, cutoff => x, direction => '>', top => 0.05)");
-	NV alpha = 20.0; const char *positive = "1"; int lower_pos = 0;
-	int have_cutoff = 0; NV cutoff = 0.0;
-	int have_top = 0; NV top = 0.0;
+		      "positive => 1, cutoff => x, active_frac => 0.1, "
+		      "active_side => 'high', direction => '>', top => 0.05)");
+	NV alpha = 20.0; const char *restrict positive = "1"; int lower_pos = 0;
+	bool have_cutoff = 0, have_top = 0, have_frac = 0;
+	NV cutoff = 0.0, top = 0.0, active_frac = 0.0;
+	int frac_low = 0;
 	for (int i = 2; i + 1 < items; i += 2) {
-		const char *k = SvPV_nolen(ST(i)); SV *v = ST(i + 1);
+		const char *restrict k = SvPV_nolen(ST(i)); SV *v = ST(i + 1);
 		if      (strEQ(k, "alpha"))     alpha = SvNV(v);
 		else if (strEQ(k, "positive"))  positive = SvPV_nolen(v);
 		else if (strEQ(k, "cutoff"))    { have_cutoff = 1; cutoff = SvNV(v); }
 		else if (strEQ(k, "top") || strEQ(k, "fraction")) { have_top = 1; top = SvNV(v); }
+		else if (strEQ(k, "active_frac") || strEQ(k, "active")) { have_frac = 1; active_frac = SvNV(v); }
+		else if (strEQ(k, "active_side")) {
+			const char *restrict sd = SvPV_nolen(v);           /* 'low'/'bottom' vs 'high'/'top' */
+			frac_low = (sd[0] == 'l' || sd[0] == 'L' || sd[0] == 'b' || sd[0] == 'B');
+		}
 		else if (strEQ(k, "direction")) { const char *d = SvPV_nolen(v); lower_pos = (d[0] == '<'); }
 		else croak("bedroc: unknown argument '%s'", k);
 	}
 	if (!(alpha > 0.0)) croak("bedroc: alpha must be > 0");
 	if (have_top && !(top > 0.0 && top <= 1.0))
 		croak("bedroc: top must be between 0 and 1");
+	if (have_frac && have_cutoff)
+		croak("bedroc: give either cutoff => or active_frac =>, not both");
+	if (have_frac && !(active_frac > 0.0 && active_frac < 1.0))
+		croak("bedroc: active_frac must be strictly between 0 and 1");
 
 	AV *restrict sav = (AV *)SvRV(ST(0)), *restrict lav = (AV *)SvRV(ST(1));
 	SSize_t Ns = av_len(sav) + 1;
@@ -12461,18 +12590,42 @@ PPCODE:
 	if (Ns < 1) croak("bedroc: need at least one observation");
 	size_t N = (size_t)Ns;
 
+	/* active_frac mode: binarize the second array by taking exactly
+	 * ceil(active_frac*N) items from one tail (default the HIGH end, like
+	 * cutoff; active_side => 'low' takes the low end).  n_a is clamped to
+	 * [1, N-1] so both classes always exist — no "need both labels" death. */
+	int *restrict act_by_frac = NULL;
+	if (have_frac) {
+		size_t n_a = (size_t)ceil(active_frac * (NV)N);
+		if (n_a < 1) n_a = 1;
+		if (N >= 2 && n_a > N - 1) n_a = N - 1;
+		NVIdx *restrict tmp; Newx(tmp, N, NVIdx);
+		for (size_t i = 0; i < N; i++) {
+			SV **restrict lp = av_fetch(lav, i, 0);
+			tmp[i].v = (lp && *lp) ? SvNV(*lp) : NAN;
+			tmp[i].i = i;
+		}
+		qsort(tmp, N, sizeof(NVIdx), nvidx_cmp_asc);
+		Newxz(act_by_frac, N, int);
+		if (frac_low) for (size_t k = 0; k < n_a; k++) act_by_frac[tmp[k].i] = 1;
+		else          for (size_t k = N - n_a; k < N; k++) act_by_frac[tmp[k].i] = 1;
+		Safefree(tmp);
+	}
+
 	ROCPt *restrict pts; Newx(pts, N, ROCPt);
 	size_t m = 0;                            /* actives */
 	for (size_t i = 0; i < N; i++) {
 		SV **restrict sp = av_fetch(sav, i, 0), **lp = av_fetch(lav, i, 0);
 		NV s = (sp && *sp) ? SvNV(*sp) : NAN;
 		if (lower_pos) s = -s;
-		int active = have_cutoff
+		int active = act_by_frac ? act_by_frac[i]
+			: have_cutoff
 			? (((lp && *lp) ? SvNV(*lp) : NAN) >= cutoff)
 			: ((lp && *lp) ? strEQ(SvPV_nolen(*lp), positive) : 0);
 		pts[i].score = s; pts[i].lab = active ? 1 : 0;
 		if (active) m++;
 	}
+	Safefree(act_by_frac);
 	size_t n = N - m;                        /* inactives */
 	if (m == 0 || n == 0) {
 		Safefree(pts);
@@ -12481,8 +12634,7 @@ PPCODE:
 	}
 
 	qsort(pts, N, sizeof(ROCPt), rocpt_cmp_desc);
-
-	/* sum over actives of exp(-alpha * midrank / N), 1-based ranks, best = 1 */
+// sum over actives of exp(-alpha * midrank / N), 1-based ranks, best = 1 */
 	NV sum = 0.0;
 	for (size_t i = 0; i < N; ) {
 		size_t j = i;
@@ -12503,7 +12655,7 @@ PPCODE:
 	NV rie_max  = (1.0 - exp(-alpha * ra)) / (ra * (1.0 - exp(-alpha)));
 	NV rie_min  = (1.0 - exp( alpha * ra)) / (ra * (1.0 - exp( alpha)));
 
-	HV *ret = newHV();
+	HV *restrict ret = newHV();
 	hv_stores(ret, "bedroc",     newSVnv(bedroc));
 	hv_stores(ret, "alpha",      newSVnv(alpha));
 	hv_stores(ret, "rie",        newSVnv(rie));
@@ -12516,8 +12668,7 @@ PPCODE:
 	hv_stores(ret, "direction",  newSVpv(lower_pos ? "<" : ">", 1));
 	hv_stores(ret, "method",     newSVpv("BEDROC (Truchon-Bayly early recognition)", 0));
 
-	if (have_top) {
-		/* enrichment in the top fraction: EF = (hits/n_top) / R_a */
+	if (have_top) {/* enrichment in the top fraction: EF = (hits/n_top) / R_a */
 		size_t n_top = (size_t)ceil(top * (NV)N);
 		if (n_top < 1) n_top = 1; if (n_top > N) n_top = N;
 		size_t hits = 0;
@@ -12546,7 +12697,7 @@ PPCODE:
 		croak("Usage: survfit(\\@time, \\@status, group => \\@grp, conf_level => 0.95)");
 	AV *gav = NULL; NV conf_level = 0.95;
 	for (int i = 2; i + 1 < items; i += 2) {
-		const char *k = SvPV_nolen(ST(i)); SV *v = ST(i + 1);
+		const char *restrict k = SvPV_nolen(ST(i)); SV *v = ST(i + 1);
 		if      (strEQ(k, "group")) {
 			if (!SvROK(v) || SvTYPE(SvRV(v)) != SVt_PVAV) croak("survfit: group must be an array ref");
 			gav = (AV *)SvRV(v);
@@ -14860,10 +15011,10 @@ CODE:
 		   for (unsigned int cc = 0; cc < ncol; cc++) {
 			   SV **restrict vp = hv_fetch(in, cols[cc].k, (I32)strlen(cols[cc].k), 0);
 			   if (!vp) {
-				   /* Capture the key pointers (they point into still-live mortal SV
-				    * buffers, not into rows/cols) before freeing the arrays --
-				    * otherwise croak() reads freed memory, which SIGBUSes on
-				    * strict allocators such as FreeBSD's. */
+/* Capture the key pointers (they point into still-live mortal SV
+ * buffers, not into rows/cols) before freeing the arrays --
+ * otherwise croak() reads freed memory, which SIGBUSes on
+ * strict allocators such as FreeBSD's. */
 				   const char *restrict rk = rows[rr].k;
 				   const char *restrict ck = cols[cc].k;
 				   Safefree(cells); Safefree(cols); Safefree(rows);
@@ -16557,8 +16708,8 @@ CODE:
 	if (!x_sv || !SvROK(x_sv))
 	  croak("prcomp: 'x' is a required argument and must be a reference");
 
-	// 3. Detect Data Structure (AoA, HoA, HoH)
-	bool is_aoa = FALSE, is_hoa = FALSE, is_hoh = FALSE;
+	// 3. Detect Data Structure (AoA, AoH, HoA, HoH)
+	bool is_aoa = FALSE, is_aoh = FALSE, is_hoa = FALSE, is_hoh = FALSE;
 	size_t n_raw = 0, p = 0;
 	char **restrict colnames = NULL;
 	SV *restrict ref = SvRV(x_sv);
@@ -16571,7 +16722,9 @@ CODE:
 		   if (first && SvROK(*first) && SvTYPE(SvRV(*first)) == SVt_PVAV) {
 			   is_aoa = TRUE;
 			   p = av_len((AV*)SvRV(*first)) + 1;
-		   } else croak("prcomp: Array reference must contain ArrayRefs (AoA)");
+		   } else if (first && SvROK(*first) && SvTYPE(SvRV(*first)) == SVt_PVHV) {
+			   is_aoh = TRUE;
+		   } else croak("prcomp: Array reference must contain ArrayRefs (AoA) or HashRefs (AoH)");
 	  }
 	} else if (SvTYPE(ref) == SVt_PVHV) {
 	  HV *restrict hv = (HV*)ref;
@@ -16588,10 +16741,23 @@ CODE:
 	  }
 	}
 
-	if (n_raw == 0 || (p == 0 && !is_hoa && !is_hoh)) croak("prcomp: input matrix is empty or has zero columns");
+	if (n_raw == 0 || (p == 0 && !is_aoh && !is_hoa && !is_hoh)) croak("prcomp: input matrix is empty or has zero columns");
 
-	// 4. Extract and Sort Column Names (for Hash inputs)
-	if (is_hoh) {
+	// 4. Extract and Sort Column Names (for named-column inputs)
+	if (is_aoh) {
+		AV *restrict av = (AV*)ref;
+		HV *restrict first = (HV*)SvRV(*av_fetch(av, 0, 0));
+		p = hv_iterinit(first);
+		if (p == 0) croak("prcomp: row hashes cannot be empty");
+
+		colnames = (char**)safemalloc(p * sizeof(char*));
+		size_t c = 0;
+		HE *restrict entry;
+		while ((entry = hv_iternext(first))) {
+			colnames[c++] = savepv(SvPV_nolen(hv_iterkeysv(entry)));
+		}
+		qsort(colnames, p, sizeof(char*), cmp_string_wt);
+	} else if (is_hoh) {
 		HV *restrict hv = (HV*)ref;
 		hv_iterinit(hv);
 		HE *restrict entry = hv_iternext(hv);
@@ -16631,6 +16797,24 @@ CODE:
 				   SV **restrict cell_sv = av_fetch(row_av, j, 0);
 				   if (cell_sv && SvOK(*cell_sv) && looks_like_number(*cell_sv)) {
 					   NV v = SvNV(*cell_sv);
+					   if (!isfinite(v)) row_ok = FALSE;
+					   else X_mat[n * p + j] = v;
+				   } else row_ok = FALSE;
+			   }
+			   if (row_ok) n++;
+		   }
+	  }
+	} else if (is_aoh) {
+	  AV *restrict av = (AV*)ref;
+	  for (size_t i = 0; i < n_raw; i++) {
+		   SV **restrict row_sv = av_fetch(av, i, 0);
+		   if (row_sv && SvROK(*row_sv) && SvTYPE(SvRV(*row_sv)) == SVt_PVHV) {
+			   HV *restrict row_hv = (HV*)SvRV(*row_sv);
+			   bool row_ok = TRUE;
+			   for (size_t j = 0; j < p; j++) {
+				   SV **restrict cell = hv_fetch(row_hv, colnames[j], strlen(colnames[j]), 0);
+				   if (cell && SvOK(*cell) && looks_like_number(*cell)) {
+					   NV v = SvNV(*cell);
 					   if (!isfinite(v)) row_ok = FALSE;
 					   else X_mat[n * p + j] = v;
 				   } else row_ok = FALSE;

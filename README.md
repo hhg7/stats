@@ -742,6 +742,23 @@ Options: `positive` (which label is the positive class, default `1`) and
 `direction` (`'>'` = higher score is more positive, the default; `'<'` flips it).
 For the full curve and a confidence interval, see [`roc`](#roc).
 
+## auroc
+
+The same number as [`auc`](#auc), but with the argument order of Python's
+`sklearn.metrics.roc_auc_score` — **labels first, scores second** — so code
+ported from scikit-learn works unchanged. Higher score means the positive class.
+
+    use Stats::LikeR 'auroc';
+
+    my $a = auroc(\@labels, \@scores);          # like roc_auc_score(y, s)
+
+Options: `positive` (which label is the positive class, default `1`) and
+`direction` (`'<'` treats a lower score as more positive, i.e. the same as
+sklearn's `roc_auc_score(y, -pred)`). It can also turn a numeric column into
+labels for you: `cutoff => x` marks values `>= x` as positive, or
+`active_frac => 0.1` with `active_side => 'low'|'high'` takes that fraction of
+the extreme tail as positive.
+
 ## bedroc
 
 BEDROC — Boltzmann-Enhanced Discrimination of ROC (Truchon & Bayly, *J. Chem.
@@ -765,6 +782,17 @@ the list. The Truchon–Bayly default is `20` (roughly 80% of the score comes
 from the top 8% of the ranking). Ties in the scores are resolved with average
 (mid)ranks.
 
+**Easier to use than the usual Python implementations.** The common Python
+recipes either demand a pre-built 0/1 label array (`sklearn`-style
+`bedroc_score(y_true, scores)`) or hand-roll a bespoke "regression variant" in
+each script that binarizes a continuous target by fraction. This `bedroc` folds
+both jobs into one call: hand it a raw numeric column and let `cutoff` or
+`active_frac` (below) define the actives for you — no separate label-building
+step, and it never dies just because you passed a continuous column where a 0/1
+vector was expected. `active_frac => 0.10, active_side => 'low'` reproduces the
+Pep-PriML regression BEDROC (actives = strongest binders, the lowest-ΔG 10%) to
+machine precision in a single line.
+
 ### Options
 
 * **`alpha`** — early-recognition weight, must be `> 0` (default `20`).
@@ -774,6 +802,15 @@ from the top 8% of the ranking). Ties in the scores are resolved with average
   column and count an item as active when its value is **`>= cutoff`**. Handy
   when "active" is defined by a measured quantity (an affinity, a titre, an
   expression level) rather than a pre-baked 0/1 label.
+* **`active_frac`** (alias `active`) — a fraction in `(0, 1)`. Binarizes the
+  second array by marking the most extreme `ceil(active_frac * n)` items as
+  active (see `active_side`). This is the one-call convenience that removes the
+  "build a 0/1 label first" step; the count is clamped to `[1, n-1]` so both
+  classes always exist and the call never dies for want of a label. Mutually
+  exclusive with `cutoff`.
+* **`active_side`** — which tail `active_frac` takes: `'high'` (default) marks
+  the **largest** values active (matching `cutoff`'s `>=` sense); `'low'` marks
+  the **smallest** (e.g. actives = strongest binders when the column is ΔG).
 * **`direction`** — `'>'` (default) means a higher score ranks first; `'<'`
   flips it so lower scores rank first.
 * **`top`** (alias `fraction`) — a fraction in `(0, 1]`. When given, the result
@@ -802,6 +839,16 @@ from the top 8% of the ranking). Ties in the scores are resolved with average
         top    => 0.05);
     print $r->{bedroc};
     print $r->{enrichment}{enrichment_factor};   # e.g. 2.0 => 2x over random
+
+    # fraction-defined actives straight from a raw ΔG column: the strongest-
+    # binding 10% (lowest ΔG) are the actives, best predictions rank first.
+    # No pre-built 0/1 label, no per-script regression variant.
+    my $b = bedroc(\@predicted, \@delta_G,
+        alpha       => 32.2,
+        active_frac => 0.10,
+        active_side => 'low',    # lowest ΔG = strongest binders = actives
+        direction   => '<');     # lower predicted ΔG ranks first
+    print $b->{bedroc};
 
     # lower score = better ranker
     bedroc(\@scores, \@labels, direction => '<');
@@ -3676,7 +3723,13 @@ The `prcomp` function returns a HashRef containing the following keys representi
 | `x` | ArrayRef[ArrayRef] | A 2D array containing the rotated data (often referred to as PCA scores). This is the original data projected onto the principal components. *Note: Only present if the `retx` option is true.* |
 | `center` | ArrayRef[Number] or `0` | The centering values used (typically the column means). Returns false (`0`) if centering was disabled. |
 | `scale` | ArrayRef[Number] or `0` | The scaling values used (typically the column standard deviations). Returns false (`0`) if scaling was disabled. |
-| `varnames` | ArrayRef[String] | The sorted names of the original variables. *Note: Only present if the input data was a Hash of Arrays (HoA) or a Hash of Hashes (HoH).* |
+| `varnames` | ArrayRef[String] | The sorted names of the original variables. *Note: Only present if the input data carried column names, i.e. an Array of Hashes (AoH), a Hash of Arrays (HoA), or a Hash of Hashes (HoH).* |
+
+`prcomp` accepts an Array of Arrays (AoA), an Array of Hashes (AoH), a Hash of
+Arrays (HoA), or a Hash of Hashes (HoH). For the named-column shapes the columns
+are ordered alphabetically by name, and that order is reported in `varnames`.
+Rows that hold a non-numeric, undefined, non-finite, or absent value in any
+column are dropped listwise.
 
 ### Using array of arrays
 
@@ -3725,6 +3778,23 @@ which returns
                 ]
         ]
     }
+
+### Array of Hashes
+
+Each element of the array is one observation, keyed by column name. The columns
+are taken from the first row hash and sorted alphabetically, so the following is
+the same matrix as the AoA above and returns the same `sdev`, `rotation`, and
+`x` — plus `varnames => ['A', 'B']`:
+
+    my $aoh = [
+        { B => 4, A => 2 },
+        { B => 2, A => 4 },
+        { B => 6, A => 6 }
+    ];
+    my $pca = prcomp($aoh);
+
+Unlike a Hash of Hashes, an AoH preserves row order, so the rows of `x` line up
+with the rows of the input.
 
 ### Hash of Arrays
 
@@ -4989,7 +5059,9 @@ raw values (no cell number formats), matching the round-trip behaviour of
 
 speed improvements in calculation of Kendall tau and p-value.  Improvement of writing xlsx files that won't show in time, but pure waste was removed.
 
-Addition of `auc`,`cmh_test`, `epi_2x2`, `roc` functions
+Addition of `auc`, `auroc`, `cmh_test`, `epi_2x2`, `roc` functions
+
+`prcomp` now accepts AoH input
 
 glm extended (LikeR.xs)
 - family => 'poisson' (log link) and family => 'negbin' — negative-binomial θ estimated by ML via a MASS::glm.nb-style outer loop, or fixed with theta =>. Matched R to ~1e-8 (coefs, deviance, null-dev, AIC, SE, θ); exact Poisson limit when data aren't over-dispersed.

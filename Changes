@@ -6,6 +6,23 @@ Revision history for Stats-LikeR
 
  - speed improvements in calculation of Kendall tau and p-value.  Improvement of writing xlsx files that won't show in time, but pure waste was removed.
 
+ - Addition of `auc`, `auroc`, `cmh_test`, `epi_2x2`, `roc` functions
+
+ - glm extended (LikeR.xs)
+ - family => 'poisson' (log link) and family => 'negbin' — negative-binomial θ estimated by ML via a MASS::glm.nb-style outer loop, or fixed with theta =>. Matched R to ~1e-8 (coefs, deviance, null-dev, AIC, SE, θ); exact Poisson limit when data aren't over-dispersed.
+ - Every non-gaussian family now returns exp (odds/rate/incidence-rate ratios + conf.low/conf.high), link-scale conf.int, conf.level, and theta (negbin). Count families report z-statistics. OR/CI matched R's confint.default exactly.
+
+ - New XS tests (all matched R exactly)
+ - prop_test — 1/2/k-sample proportions (Yates, Wilson & Wald-diff CIs)
+ - mcnemar_test — matrix or paired vectors; continuity correction; exact => 1 binomial
+ - friedman_test — repeated-measures rank test, tie-corrected
+ - dunn_test — post-Kruskal pairwise, 7 adjustment methods
+
+ - New Perl functions (lib/Stats/LikeR.pm, matched base-R references)
+ - Effect sizes: cohen_d (+Hedges g, CI), smd, cramers_v (+Bergsma bias-corrected), eta_squared (η²/partial/ω²)
+ - vif, hosmer_lemeshow (matches hoslem.test)
+ - age_standardize — direct standardization + Fay–Feuer gamma CI (matches epitools::ageadjust.direct)
+
 0.26 2026-07-20 CDT
 
  - https://www.cpantesters.org/cpan/report/fc7d01a0-83f4-11f1-b543-8a9ac547de9a

@@ -33,6 +33,36 @@ is($r->{n_neg}, 7, 'negative count');
 # auc() convenience function agrees with roc()->{auc}
 is_approx(auc(\@s, \@l), $r->{auc}, 'auc() scalar matches roc AUC');
 
+# auroc(): sklearn.metrics.roc_auc_score signature (labels first, scores second).
+# Same c-statistic as auc(), just the arguments swapped.
+is_approx(auroc(\@l, \@s), $r->{auc}, 'auroc(labels, scores) matches auc AUC');
+# Reference from sklearn.metrics.roc_auc_score(y, s):
+is_approx(auroc([0,0,1,1,0,1,1,0,1,0],
+                [0.1,0.4,0.35,0.8,0.2,0.7,0.6,0.5,0.9,0.05]),
+          0.92, 'auroc matches sklearn roc_auc_score');
+# ties count 0.5, matching sklearn exactly
+is_approx(auroc([0,1,0,1,1,0], [0.5,0.5,0.5,0.6,0.4,0.4]),
+          0.6111111111, 'auroc ties = 0.5 like sklearn');
+# direction => '<' is the one-call equivalent of roc_auc_score(y, -pred)
+is_approx(auroc([0,1,0,1,1,0], [0.5,0.5,0.5,0.6,0.4,0.4], direction=>'<'),
+          0.3888888889, "auroc direction '<' == roc_auc_score(y, -pred)");
+# cutoff binarizes a continuous truth column (>= cutoff is positive)
+is_approx(auroc([1.2,3.4,0.5,2.1,5.0,0.9,4.1,1.8,2.9,0.3],
+                [1.5,3.0,0.6,2.5,4.8,1.1,3.9,2.0,2.7,0.4], cutoff=>3.0),
+          1.0, 'auroc cutoff binarizes continuous truth');
+# active_frac + active_side => 'low' reproduces y_true_bin = (exp <= threshold)
+is_approx(auroc([1.2,3.4,0.5,2.1,5.0,0.9,4.1,1.8,2.9,0.3],
+                [1.5,3.0,0.6,2.5,4.8,1.1,3.9,2.0,2.7,0.4],
+                active_frac=>0.10, active_side=>'low', direction=>'<'),
+          1.0, 'auroc active_frac reproduces percentile binarization');
+
+# error paths
+dies_ok { auroc(\@l) }                      'auroc: missing scores dies';
+dies_ok { auroc(\@l, [1,0,1]) }             'auroc: length mismatch dies';
+dies_ok { auroc([1,1,1],[1,2,3]) }          'auroc: single-class dies';
+dies_ok { auroc(\@l, \@s, bogus=>1) }       'auroc: unknown option dies';
+dies_ok { auroc(\@l, \@s, cutoff=>1, active_frac=>0.1) } 'auroc: cutoff+active_frac dies';
+
 # Youden's J optimal operating point
 my $y = $r->{youden};
 is_approx($y->{threshold},   0.70,   'Youden threshold');
@@ -72,6 +102,10 @@ dies_ok { roc(\@s, \@l, bogus=>1) }        'roc: unknown option dies';
 unless ($INC{'Devel/Cover.pm'}) {
 	no_leaks_ok { eval { roc(\@s, \@l) } } 'roc: no leaks';
 	no_leaks_ok { eval { auc(\@s, \@l) } } 'auc: no leaks';
+	no_leaks_ok { eval { auroc(\@l, \@s) } } 'auroc: no leaks';
+	no_leaks_ok { eval { auroc([1,2,3,4,5,6],[1,2,3,4,5,6],
+	                           active_frac=>0.3, active_side=>'low') } }
+	            'auroc active_frac: no leaks';
 }
 
 done_testing();
