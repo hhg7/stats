@@ -742,6 +742,77 @@ Options: `positive` (which label is the positive class, default `1`) and
 `direction` (`'>'` = higher score is more positive, the default; `'<'` flips it).
 For the full curve and a confidence interval, see [`roc`](#roc).
 
+## bedroc
+
+BEDROC — Boltzmann-Enhanced Discrimination of ROC (Truchon & Bayly, *J. Chem.
+Inf. Model.* 2007) — is an *early-recognition* metric. Unlike [`auc`](#auc),
+which weights a correct ranking equally everywhere, BEDROC rewards actives
+(positives) that appear near the **top** of a score-sorted list far more than
+actives buried deep in it. That is what you want when only the first handful of
+ranked candidates will ever be followed up (virtual screening, prioritised
+review, triage). The result lies in `[0, 1]`: `1` is ideal early recognition,
+`0` is the worst possible ranking.
+
+    use Stats::LikeR 'bedroc';
+
+    my $r = bedroc(\@scores, \@labels, alpha => 20);
+    print $r->{bedroc};             # e.g. 0.9989
+
+`@scores` is the ranking score for each item and the second array marks which
+items are active. The single tuning knob is `alpha`, the early-recognition
+weight: larger `alpha` concentrates the emphasis on a smaller top fraction of
+the list. The Truchon–Bayly default is `20` (roughly 80% of the score comes
+from the top 8% of the ranking). Ties in the scores are resolved with average
+(mid)ranks.
+
+### Options
+
+* **`alpha`** — early-recognition weight, must be `> 0` (default `20`).
+* **`positive`** — label value that marks an active, compared as a string
+  (default `1`). Ignored when `cutoff` is given.
+* **`cutoff`** — instead of class labels, treat the second array as a numeric
+  column and count an item as active when its value is **`>= cutoff`**. Handy
+  when "active" is defined by a measured quantity (an affinity, a titre, an
+  expression level) rather than a pre-baked 0/1 label.
+* **`direction`** — `'>'` (default) means a higher score ranks first; `'<'`
+  flips it so lower scores rank first.
+* **`top`** (alias `fraction`) — a fraction in `(0, 1]`. When given, the result
+  also reports classic enrichment in the top slice of the ranking (see below).
+
+### Result keys
+
+* **`bedroc`** — the BEDROC score in `[0, 1]`.
+* **`rie`**, **`rie_min`**, **`rie_max`** — the underlying Robust Initial
+  Enhancement and its bounds for this `alpha` and active fraction; BEDROC is
+  `rie` rescaled onto `[0, 1]`.
+* **`n`**, **`n_active`**, **`n_inactive`** — counts.
+* **`ra`** — the active fraction `n_active / n`.
+* **`alpha`**, **`direction`**, **`method`** — the settings used, echoed back.
+* **`enrichment`** — present only when `top` was given; a hashref with
+  `fraction`, `n_top` (compounds in the top slice, `ceil(top * n)`),
+  `active_count` (actives found there), `expected` (actives expected by chance,
+  `ra * n_top`), and `enrichment_factor` (`(active_count / n_top) / ra`).
+
+### Examples
+
+    # cutoff-defined actives (value >= 6.5) plus top-5% enrichment
+    my $r = bedroc(\@scores, \@affinity,
+        alpha  => 20,
+        cutoff => 6.5,
+        top    => 0.05);
+    print $r->{bedroc};
+    print $r->{enrichment}{enrichment_factor};   # e.g. 2.0 => 2x over random
+
+    # lower score = better ranker
+    bedroc(\@scores, \@labels, direction => '<');
+
+    # string labels
+    bedroc(\@scores, ['case','ctrl',...], positive => 'case');
+
+Calling `bedroc` with a single argument of `'h'`, `'H'`, or `'?'` prints a short
+usage summary to `STDOUT` (in the spirit of R's `?function`) and returns
+nothing.
+
 ## bfill
 
 Back-fill NA (undef) cells with the next valid value seen below them along the

@@ -12393,6 +12393,151 @@ PPCODE:
 	XSRETURN(1);
 }
 
+void bedroc(...)
+PPCODE:
+{
+	/* Boltzmann-Enhanced Discrimination of ROC (Truchon & Bayly 2007, eq. 36).
+	 * Rewards early recognition: actives ranked near the top count far more
+	 * than actives buried deep in the list.  alpha sets how sharply the weight
+	 * decays with rank; ties get the average (mid)rank.                       */
+	if (items == 1 && !SvROK(ST(0))) {          /* bedroc('h'|'H'|'?') => help */
+		const char *h = SvPV_nolen(ST(0));
+		if (strEQ(h, "h") || strEQ(h, "H") || strEQ(h, "?")) {
+			GV *ogv = gv_fetchpvs("STDOUT", 0, SVt_PVIO);
+			PerlIO *pio = (ogv && GvIO(ogv) && IoOFP(GvIO(ogv)))
+			            ? IoOFP(GvIO(ogv)) : PerlIO_stdout();
+			PerlIO_printf(pio,
+"bedroc - Boltzmann-Enhanced Discrimination of ROC (Truchon & Bayly 2007)\n"
+"\n"
+"Early-recognition metric: scores actives ranked near the TOP of the list\n"
+"far more than actives buried deep.  Result is in [0, 1] (1 = ideal early\n"
+"recognition, 0 = worst, ~0.5 = random-ish depending on alpha & R_a).\n"
+"\n"
+"USAGE\n"
+"  my $r = bedroc(\\@scores, \\@labels, alpha => 20);\n"
+"  print $r->{bedroc};\n"
+"\n"
+"ARGUMENTS\n"
+"  \\@scores      ranking scores (higher = better by default)\n"
+"  \\@labels      class labels, OR a numeric column when cutoff => is given\n"
+"  alpha => 20   early-recognition weight, > 0 (Truchon-Bayly default 20)\n"
+"  positive => 1 label value that marks an active (string compare)\n"
+"  cutoff => x   define actives as \\@labels entries with value >= x\n"
+"  direction=>'>' '>' higher score ranks first (default); '<' flips\n"
+"  top => 0.05   also report enrichment in the top fraction (0..1]\n"
+"\n"
+"RETURNS a hashref: bedroc, alpha, rie, rie_min, rie_max, n, n_active,\n"
+"  n_inactive, ra, direction, method, and (with top=>) enrichment =>\n"
+"  { fraction, n_top, active_count, expected, enrichment_factor }.\n"
+"\n"
+"  bedroc('h'), bedroc('H') or bedroc('?') prints this help.\n");
+			XSRETURN(0);
+		}
+	}
+	if (items < 2 || !SvROK(ST(0)) || SvTYPE(SvRV(ST(0))) != SVt_PVAV
+	              || !SvROK(ST(1)) || SvTYPE(SvRV(ST(1))) != SVt_PVAV)
+		croak("Usage: bedroc(\\@scores, \\@labels, alpha => 20, "
+		      "positive => 1, cutoff => x, direction => '>', top => 0.05)");
+	NV alpha = 20.0; const char *positive = "1"; int lower_pos = 0;
+	int have_cutoff = 0; NV cutoff = 0.0;
+	int have_top = 0; NV top = 0.0;
+	for (int i = 2; i + 1 < items; i += 2) {
+		const char *k = SvPV_nolen(ST(i)); SV *v = ST(i + 1);
+		if      (strEQ(k, "alpha"))     alpha = SvNV(v);
+		else if (strEQ(k, "positive"))  positive = SvPV_nolen(v);
+		else if (strEQ(k, "cutoff"))    { have_cutoff = 1; cutoff = SvNV(v); }
+		else if (strEQ(k, "top") || strEQ(k, "fraction")) { have_top = 1; top = SvNV(v); }
+		else if (strEQ(k, "direction")) { const char *d = SvPV_nolen(v); lower_pos = (d[0] == '<'); }
+		else croak("bedroc: unknown argument '%s'", k);
+	}
+	if (!(alpha > 0.0)) croak("bedroc: alpha must be > 0");
+	if (have_top && !(top > 0.0 && top <= 1.0))
+		croak("bedroc: top must be between 0 and 1");
+
+	AV *restrict sav = (AV *)SvRV(ST(0)), *restrict lav = (AV *)SvRV(ST(1));
+	SSize_t Ns = av_len(sav) + 1;
+	if (Ns != av_len(lav) + 1)
+		croak("bedroc: scores and labels must be the same length");
+	if (Ns < 1) croak("bedroc: need at least one observation");
+	size_t N = (size_t)Ns;
+
+	ROCPt *restrict pts; Newx(pts, N, ROCPt);
+	size_t m = 0;                            /* actives */
+	for (size_t i = 0; i < N; i++) {
+		SV **restrict sp = av_fetch(sav, i, 0), **lp = av_fetch(lav, i, 0);
+		NV s = (sp && *sp) ? SvNV(*sp) : NAN;
+		if (lower_pos) s = -s;
+		int active = have_cutoff
+			? (((lp && *lp) ? SvNV(*lp) : NAN) >= cutoff)
+			: ((lp && *lp) ? strEQ(SvPV_nolen(*lp), positive) : 0);
+		pts[i].score = s; pts[i].lab = active ? 1 : 0;
+		if (active) m++;
+	}
+	size_t n = N - m;                        /* inactives */
+	if (m == 0 || n == 0) {
+		Safefree(pts);
+		croak("bedroc: need both active and inactive labels%s",
+		      have_cutoff ? " (check cutoff)" : "");
+	}
+
+	qsort(pts, N, sizeof(ROCPt), rocpt_cmp_desc);
+
+	/* sum over actives of exp(-alpha * midrank / N), 1-based ranks, best = 1 */
+	NV sum = 0.0;
+	for (size_t i = 0; i < N; ) {
+		size_t j = i;
+		while (j < N && pts[j].score == pts[i].score) j++;
+		NV midrank = ((NV)(i + 1) + (NV)j) / 2.0;   /* avg of positions i+1..j */
+		NV w = exp(-alpha * midrank / (NV)N);
+		for (size_t k = i; k < j; k++) if (pts[k].lab) sum += w;
+		i = j;
+	}
+
+	NV ra   = (NV)m / (NV)N;
+	NV rand_ = ra * (1.0 - exp(-alpha)) / (exp(alpha / (NV)N) - 1.0);
+	NV rie   = sum / rand_;
+	NV f1    = ra * sinh(alpha / 2.0)
+	         / (cosh(alpha / 2.0) - cosh(alpha / 2.0 - alpha * ra));
+	NV f2    = 1.0 / (1.0 - exp(alpha * (1.0 - ra)));
+	NV bedroc   = rie * f1 + f2;
+	NV rie_max  = (1.0 - exp(-alpha * ra)) / (ra * (1.0 - exp(-alpha)));
+	NV rie_min  = (1.0 - exp( alpha * ra)) / (ra * (1.0 - exp( alpha)));
+
+	HV *ret = newHV();
+	hv_stores(ret, "bedroc",     newSVnv(bedroc));
+	hv_stores(ret, "alpha",      newSVnv(alpha));
+	hv_stores(ret, "rie",        newSVnv(rie));
+	hv_stores(ret, "rie_min",    newSVnv(rie_min));
+	hv_stores(ret, "rie_max",    newSVnv(rie_max));
+	hv_stores(ret, "n",          newSViv((IV)N));
+	hv_stores(ret, "n_active",   newSViv((IV)m));
+	hv_stores(ret, "n_inactive", newSViv((IV)n));
+	hv_stores(ret, "ra",         newSVnv(ra));
+	hv_stores(ret, "direction",  newSVpv(lower_pos ? "<" : ">", 1));
+	hv_stores(ret, "method",     newSVpv("BEDROC (Truchon-Bayly early recognition)", 0));
+
+	if (have_top) {
+		/* enrichment in the top fraction: EF = (hits/n_top) / R_a */
+		size_t n_top = (size_t)ceil(top * (NV)N);
+		if (n_top < 1) n_top = 1; if (n_top > N) n_top = N;
+		size_t hits = 0;
+		for (size_t i = 0; i < n_top; i++) if (pts[i].lab) hits++;
+		NV expected = ra * (NV)n_top;
+		HV *enr = newHV();
+		hv_stores(enr, "fraction",         newSVnv(top));
+		hv_stores(enr, "n_top",            newSViv((IV)n_top));
+		hv_stores(enr, "active_count",     newSViv((IV)hits));
+		hv_stores(enr, "expected",         newSVnv(expected));
+		hv_stores(enr, "enrichment_factor",
+		          newSVnv((expected > 0.0) ? ((NV)hits / (NV)n_top) / ra : NAN));
+		hv_stores(ret, "enrichment", newRV_noinc((SV *)enr));
+	}
+
+	Safefree(pts);
+	ST(0) = sv_2mortal(newRV_noinc((SV *)ret));
+	XSRETURN(1);
+}
+
 void survfit(...)
 PPCODE:
 {
