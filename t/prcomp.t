@@ -29,9 +29,9 @@ sub is_approx {
 	}
 }
 
-# ==============================================================================
+#
 # Exceptions & Input Validation
-# ==============================================================================
+#
 dies_ok {
 	prcomp();
 } 'prcomp: dies with no data';
@@ -257,9 +257,9 @@ no_leaks_ok {
 	prcomp($hoa);
 } 'prcomp: no leaks when given Hash of Arrays' unless $INC{'Devel/Cover.pm'};
 
-# ==============================================================================
+#
 # Hash of Hashes (HoH)
-# ==============================================================================
+#
 my $hoh = {
 	row1 => { A => 2, B => 4 },
 	row2 => { A => 4, B => 2 },
@@ -274,9 +274,9 @@ no_leaks_ok {
 	prcomp($hoh);
 } 'prcomp: no leaks when given Hash of Hashes' unless $INC{'Devel/Cover.pm'};
 
-# ==============================================================================
+#
 # Parameters: scale => 1
-# ==============================================================================
+#s
 $pca = prcomp($aoa, scale => 1);
 
 # When scaled to unit variance, Cov Matrix is [1, 0.5 ; 0.5, 1].

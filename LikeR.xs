@@ -4677,7 +4677,7 @@ static NV ip_pchip_edge(NV h0, NV h1, NV d0, NV d1) {
 typedef struct {
 	int type;          // IP_K*
 	IV  na;            // anchor count
-	const NV *xa, *ya; // anchors (borrowed)
+	const NV *restrict xa, *ya; // anchors (borrowed)
 	NV *h;             // spacings (cubic/pchip/akima)
 	NV *M;             // cubic second derivatives
 	NV *d;             // pchip slopes / akima tangents
@@ -13014,7 +13014,7 @@ PPCODE:
 	NV lr = 2.0 * (loglik - loglik_null);
 	NV lr_p = get_p_value(lr, p);
 
-	HV *ret = newHV();
+	HV *restrict ret = newHV();
 	hv_stores(ret, "coef",        newRV_noinc((SV *)coef));
 	hv_stores(ret, "exp_coef",    newRV_noinc((SV *)hr));      /* hazard ratios */
 	hv_stores(ret, "se",          newRV_noinc((SV *)se));
@@ -17076,8 +17076,7 @@ CODE:
 							"row 0 has %d cols, row %d has %d",
 							(int)ncols, (int)i, (int)row_ncols);
 			}
-			// Pass 2: output[j][i] = input[i][j]
-			if (ncols > 0) {
+			if (ncols > 0) {// Pass 2: output[j][i] = input[i][j]
 				av_extend(out_av, ncols - 1);
 				for (size_t j = 0; j < ncols; j++) {
 					AV *restrict out_col_av = newAV();
@@ -17132,7 +17131,7 @@ SV *hoa2aoh(hoa)
 		ncols = (U32)HvUSEDKEYS(in);
 		if (ncols < 0)
 			ncols = 0;
-		/* SAVEFREEPV makes these scratch arrays croak-safe */
+		// SAVEFREEPV makes these scratch arrays croak-safe
 		ENTER;
 		SAVETMPS;
 		Newx(kv, ncols ? ncols : 1, SV *);
