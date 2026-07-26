@@ -4,6 +4,38 @@ Revision history for Stats-LikeR
 
  - ## 0.27
 
+ - New `h` function: h('agg'), h(*agg) or h(\&agg) prints that function's
+   section of README.md and returns, in the spirit of R's ?function. h() lists
+   every documented function. It covers the XS functions as well as the Perl
+   ones, because it looks the name up in the module's POD rather than reading
+   an argument list. Note that h(agg) without quotes cannot work: every
+   function is exported, so Perl parses the bareword as a call to agg().
+
+ - The pure Perl functions additionally accept '?' or 'h' in place of their
+   arguments; that prints the same text and then dies. The XS functions
+   deliberately do not, so csort($df, 'h') and vals($df, 'h') still name a
+   column. $Stats::LikeR::HELP = 0 switches the argument form off for code that
+   has to pass a column or file really named 'h'.
+
+ - qcut's hand-written usage message was replaced by its section of the
+   documentation. qcut('h') and qcut('?') still die; qcut('H') no longer means
+   help.
+
+ - md2pod.pl: fixed the table and code-block handling. Table cells are now
+   HTML-escaped, so "`>` `<` `>=`" in filter's operator table no longer loses
+   two operators to an unclosed <code> tag; an escaped pipe inside a cell no
+   longer splits it in two and shifts every later cell; short rows are padded
+   and over-long rows folded into the last column. Indented code blocks are
+   set aside before conversion, so their indentation survives and a leading
+   "#" on a comment line no longer becomes a heading (dropna's example was
+   emitting "=head1 { A => [1, 2], ... }"). Identifiers with a leading
+   underscore keep their name (_rename_inplace was becoming I<rename>inplace).
+   In-document links keep their text and become real POD section links.
+   Changes: a version heading with no date ("## 0.27") is no longer emitted as
+   a bullet, the "# Changes" heading itself is skipped, indentation inside code
+   samples is preserved, and a missing "# Changes" section is now fatal rather
+   than silently reading the last line of the file.
+
  - speed improvements in calculation of Kendall tau and p-value.  Improvement of writing xlsx files that won't show in time, but pure waste was removed.
 
  - Addition of `auc`, `auroc`, `cmh_test`, `epi_2x2`, `roc` functions

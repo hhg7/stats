@@ -12295,11 +12295,11 @@ CODE:
 	if (items < 2 || !SvROK(ST(0)) || SvTYPE(SvRV(ST(0))) != SVt_PVAV
 	              || !SvROK(ST(1)) || SvTYPE(SvRV(ST(1))) != SVt_PVAV)
 		croak("Usage: auc(\\@scores, \\@labels, positive => 1, direction => '>')");
-	const char *positive = "1"; int lower_pos = 0;
+	const char *restrict positive = "1"; int lower_pos = 0;
 	for (int i = 2; i + 1 < items; i += 2) {
-		const char *k = SvPV_nolen(ST(i)); SV *v = ST(i + 1);
+		const char *restrict k = SvPV_nolen(ST(i)); SV *restrict v = ST(i + 1);
 		if      (strEQ(k, "positive"))  positive = SvPV_nolen(v);
-		else if (strEQ(k, "direction")) { const char *d = SvPV_nolen(v); lower_pos = (d[0] == '<'); }
+		else if (strEQ(k, "direction")) { const char *restrict d = SvPV_nolen(v); lower_pos = (d[0] == '<'); }
 		else croak("auc: unknown argument '%s'", k);
 	}
 	NV *pos, *neg; size_t m, n;
@@ -12315,36 +12315,36 @@ OUTPUT:
 NV auroc(...)
 CODE:
 {
-	/* sklearn-style AUROC: auroc(\@y_true, \@y_score, ...) -- LABELS first,
-	 * SCORES second, higher score = positive class.  This mirrors the call the
-	 * ~/ui/pep-priml scripts make, sklearn.metrics.roc_auc_score(y_true,
-	 * y_score) (e.g. _compute.py's roc_auc_score(y_te, fold_scores) and the
-	 * figs' roc_auc_score(y_true_bin, -pred)).  Ties count 0.5 (Mann-Whitney /
-	 * DeLong midranks), so the number matches sklearn exactly.  Returns the
-	 * scalar AUC; use roc() for the full curve, SE and CI, or auc() for the
-	 * same number with the (scores, labels) argument order.
-	 *
-	 * The pep-priml "roc_auc_score(y_true_bin, -pred)" idiom (lower prediction
-	 * = positive, truth derived from a continuous column by a percentile cut)
-	 * is reproduced in one call: pass direction => '<' instead of negating the
-	 * scores, and cutoff / active_frac to binarize a continuous truth column
-	 * the way y_true_bin = (exp <= threshold) does.                           */
+/* sklearn-style AUROC: auroc(\@y_true, \@y_score, ...) -- LABELS first,
+ * SCORES second, higher score = positive class.  This mirrors the call the
+ * ~/ui/pep-priml scripts make, sklearn.metrics.roc_auc_score(y_true,
+ * y_score) (e.g. _compute.py's roc_auc_score(y_te, fold_scores) and the
+ * figs' roc_auc_score(y_true_bin, -pred)).  Ties count 0.5 (Mann-Whitney /
+ * DeLong midranks), so the number matches sklearn exactly.  Returns the
+ * scalar AUC; use roc() for the full curve, SE and CI, or auc() for the
+ * same number with the (scores, labels) argument order.
+ *
+ * The pep-priml "roc_auc_score(y_true_bin, -pred)" idiom (lower prediction
+ * = positive, truth derived from a continuous column by a percentile cut)
+ * is reproduced in one call: pass direction => '<' instead of negating the
+ * scores, and cutoff / active_frac to binarize a continuous truth column
+ * the way y_true_bin = (exp <= threshold) does.*/
 	if (items < 2 || !SvROK(ST(0)) || SvTYPE(SvRV(ST(0))) != SVt_PVAV
 	              || !SvROK(ST(1)) || SvTYPE(SvRV(ST(1))) != SVt_PVAV)
 		croak("Usage: auroc(\\@y_true, \\@y_score, positive => 1, "
 		      "direction => '>', cutoff => x, active_frac => 0.1, "
 		      "active_side => 'high')");
-	const char *positive = "1"; int lower_pos = 0;
+	const char *restrict positive = "1"; int lower_pos = 0;
 	bool have_cutoff = 0, have_frac = 0; NV cutoff = 0.0, active_frac = 0.0;
 	int frac_low = 0;
 	for (int i = 2; i + 1 < items; i += 2) {
-		const char *k = SvPV_nolen(ST(i)); SV *v = ST(i + 1);
+		const char *restrict k = SvPV_nolen(ST(i)); SV *restrict v = ST(i + 1);
 		if      (strEQ(k, "positive"))  positive = SvPV_nolen(v);
-		else if (strEQ(k, "direction")) { const char *d = SvPV_nolen(v); lower_pos = (d[0] == '<'); }
+		else if (strEQ(k, "direction")) { const char *restrict d = SvPV_nolen(v); lower_pos = (d[0] == '<'); }
 		else if (strEQ(k, "cutoff"))    { have_cutoff = 1; cutoff = SvNV(v); }
 		else if (strEQ(k, "active_frac") || strEQ(k, "active")) { have_frac = 1; active_frac = SvNV(v); }
 		else if (strEQ(k, "active_side")) {
-			const char *sd = SvPV_nolen(v);      /* 'low'/'bottom' vs 'high'/'top' */
+			const char *sd = SvPV_nolen(v); // 'low'/'bottom' vs 'high'/'top'
 			frac_low = (sd[0] == 'l' || sd[0] == 'L' || sd[0] == 'b' || sd[0] == 'B');
 		}
 		else croak("auroc: unknown argument '%s'", k);
@@ -12422,12 +12422,12 @@ PPCODE:
 	              || !SvROK(ST(1)) || SvTYPE(SvRV(ST(1))) != SVt_PVAV)
 		croak("Usage: roc(\\@scores, \\@labels, positive => 1, "
 		      "conf_level => 0.95, direction => '>')");
-	const char *positive = "1"; NV conf_level = 0.95; int lower_pos = 0;
+	const char *restrict positive = "1"; NV conf_level = 0.95; int lower_pos = 0;
 	for (int i = 2; i + 1 < items; i += 2) {
-		const char *k = SvPV_nolen(ST(i)); SV *v = ST(i + 1);
+		const char *restrict k = SvPV_nolen(ST(i)); SV *restrict v = ST(i + 1);
 		if      (strEQ(k, "positive"))  positive = SvPV_nolen(v);
 		else if (strEQ(k, "conf_level") || strEQ(k, "conf.level")) conf_level = SvNV(v);
-		else if (strEQ(k, "direction")) { const char *d = SvPV_nolen(v); lower_pos = (d[0] == '<'); }
+		else if (strEQ(k, "direction")) { const char *restrict d = SvPV_nolen(v); lower_pos = (d[0] == '<'); }
 		else croak("roc: unknown argument '%s'", k);
 	}
 	if (!(conf_level > 0.0 && conf_level < 1.0))
@@ -12441,7 +12441,7 @@ PPCODE:
 	NV lo = auc_val - z * se, hi = auc_val + z * se;
 	if (lo < 0.0) lo = 0.0; if (hi > 1.0) hi = 1.0;
 
-	/* Curve + Youden by sweeping thresholds high -> low over all points. */
+	// Curve + Youden by sweeping thresholds high -> low over all points
 	size_t N = m + n;
 	ROCPt *restrict pts; Newx(pts, N, ROCPt);
 	for (size_t i = 0; i < m; i++) { pts[i].score     = pos[i]; pts[i].lab     = 1; }
@@ -12451,7 +12451,7 @@ PPCODE:
 
 	AV *restrict curve = newAV();
 	{ /* leading operating point: threshold = +inf, nothing called positive */
-		HV *p0 = newHV();
+		HV *restrict p0 = newHV();
 		hv_stores(p0, "threshold",   newSVnv(INFINITY));
 		hv_stores(p0, "sensitivity", newSVnv(0.0));
 		hv_stores(p0, "specificity", newSVnv(1.0));
@@ -12465,7 +12465,7 @@ PPCODE:
 		size_t j = i;
 		while (j < N && pts[j].score == thr) { if (pts[j].lab) TP += 1.0; else FP += 1.0; j++; }
 		NV sens = TP / P, spec = (Nn - FP) / Nn;
-		HV *pt = newHV();
+		HV *restrict pt = newHV();
 		hv_stores(pt, "threshold",   newSVnv(thr));
 		hv_stores(pt, "sensitivity", newSVnv(sens));
 		hv_stores(pt, "specificity", newSVnv(spec));
@@ -12476,16 +12476,16 @@ PPCODE:
 	}
 	Safefree(pts);
 
-	HV *youden = newHV();
+	HV *restrict youden = newHV();
 	hv_stores(youden, "threshold",   newSVnv(best_thr));
 	hv_stores(youden, "sensitivity", newSVnv(best_sens));
 	hv_stores(youden, "specificity", newSVnv(best_spec));
 	hv_stores(youden, "j",           newSVnv(best_j));
 
-	HV *ret = newHV();
+	HV *restrict ret = newHV();
 	hv_stores(ret, "auc",        newSVnv(auc_val));
 	hv_stores(ret, "auc_se",     newSVnv(se));
-	{ AV *ci = newAV(); av_push(ci, newSVnv(lo)); av_push(ci, newSVnv(hi));
+	{ AV *restrict ci = newAV(); av_push(ci, newSVnv(lo)); av_push(ci, newSVnv(hi));
 	  hv_stores(ret, "auc_ci", newRV_noinc((SV *)ci)); }
 	hv_stores(ret, "conf_level", newSVnv(conf_level));
 	hv_stores(ret, "n_pos",      newSViv((IV)m));
@@ -12507,7 +12507,7 @@ PPCODE:
 	 * than actives buried deep in the list.  alpha sets how sharply the weight
 	 * decays with rank; ties get the average (mid)rank.                       */
 	if (items == 1 && !SvROK(ST(0))) {          /* bedroc('h'|'H'|'?') => help */
-		const char *h = SvPV_nolen(ST(0));
+		const char *restrict h = SvPV_nolen(ST(0));
 		if (strEQ(h, "h") || strEQ(h, "H") || strEQ(h, "?")) {
 			GV *ogv = gv_fetchpvs("STDOUT", 0, SVt_PVIO);
 			PerlIO *pio = (ogv && GvIO(ogv) && IoOFP(GvIO(ogv)))
@@ -12613,12 +12613,12 @@ PPCODE:
 	}
 
 	ROCPt *restrict pts; Newx(pts, N, ROCPt);
-	size_t m = 0;                            /* actives */
+	size_t m = 0;                            // actives
 	for (size_t i = 0; i < N; i++) {
 		SV **restrict sp = av_fetch(sav, i, 0), **lp = av_fetch(lav, i, 0);
 		NV s = (sp && *sp) ? SvNV(*sp) : NAN;
 		if (lower_pos) s = -s;
-		int active = act_by_frac ? act_by_frac[i]
+		bool active = act_by_frac ? act_by_frac[i]
 			: have_cutoff
 			? (((lp && *lp) ? SvNV(*lp) : NAN) >= cutoff)
 			: ((lp && *lp) ? strEQ(SvPV_nolen(*lp), positive) : 0);
@@ -12626,7 +12626,7 @@ PPCODE:
 		if (active) m++;
 	}
 	Safefree(act_by_frac);
-	size_t n = N - m;                        /* inactives */
+	size_t n = N - m;                        // inactives
 	if (m == 0 || n == 0) {
 		Safefree(pts);
 		croak("bedroc: need both active and inactive labels%s",
@@ -12639,7 +12639,7 @@ PPCODE:
 	for (size_t i = 0; i < N; ) {
 		size_t j = i;
 		while (j < N && pts[j].score == pts[i].score) j++;
-		NV midrank = ((NV)(i + 1) + (NV)j) / 2.0;   /* avg of positions i+1..j */
+		NV midrank = ((NV)(i + 1) + (NV)j) / 2.0; // avg of positions i+1..j
 		NV w = exp(-alpha * midrank / (NV)N);
 		for (size_t k = i; k < j; k++) if (pts[k].lab) sum += w;
 		i = j;
@@ -12695,7 +12695,7 @@ PPCODE:
 	if (items < 2 || !SvROK(ST(0)) || SvTYPE(SvRV(ST(0))) != SVt_PVAV
 	              || !SvROK(ST(1)) || SvTYPE(SvRV(ST(1))) != SVt_PVAV)
 		croak("Usage: survfit(\\@time, \\@status, group => \\@grp, conf_level => 0.95)");
-	AV *gav = NULL; NV conf_level = 0.95;
+	AV *restrict gav = NULL; NV conf_level = 0.95;
 	for (int i = 2; i + 1 < items; i += 2) {
 		const char *restrict k = SvPV_nolen(ST(i)); SV *v = ST(i + 1);
 		if      (strEQ(k, "group")) {
@@ -12714,8 +12714,7 @@ PPCODE:
 	NV z = inverse_normal_cdf(1.0 - (1.0 - conf_level) / 2.0);
 
 	HV *strata = newHV();
-	for (SSize_t g = 0; g < G; g++) {
-		/* group size */
+	for (SSize_t g = 0; g < G; g++) {// group size
 		size_t ng = 0; for (size_t i = 0; i < N; i++) if (o[i].grp == g) ng++;
 		AV *t_av=newAV(), *nr_av=newAV(), *ne_av=newAV(), *nc_av=newAV(),
 		   *s_av=newAV(), *se_av=newAV(), *lo_av=newAV(), *hi_av=newAV();
@@ -12731,12 +12730,12 @@ PPCODE:
 				if (o[j].grp == g) { block++; if (o[j].status) d++; else c++; }
 				j++;
 			}
-			size_t nr = at_risk;                 /* at risk just before t */
+			size_t nr = at_risk;    // at risk just before t
 			if (d > 0 && nr > d) {
 				S *= 1.0 - (NV)d / (NV)nr;
 				vterm += (NV)d / ((NV)nr * (NV)(nr - d));
 				total_events += d;
-			} else if (d > 0) {                  /* everyone remaining has an event */
+			} else if (d > 0) {    // everyone remaining has an event
 				S = 0.0; total_events += d;
 			}
 			NV se_S = S * sqrt(vterm);
@@ -12789,25 +12788,25 @@ PPCODE:
 	              || !SvROK(ST(1)) || SvTYPE(SvRV(ST(1))) != SVt_PVAV
 	              || !SvROK(ST(2)) || SvTYPE(SvRV(ST(2))) != SVt_PVAV)
 		croak("Usage: logrank_test(\\@time, \\@status, \\@group)");
-	AV *labels = (AV *)sv_2mortal((SV *)newAV());
+	AV *restrict labels = (AV *)sv_2mortal((SV *)newAV());
 	size_t N; SurvObs *o = srv_read(aTHX_ (AV *)SvRV(ST(0)), (AV *)SvRV(ST(1)),
 	                                (AV *)SvRV(ST(2)), &N, labels, "logrank_test");
 	SSize_t G = av_len(labels) + 1;
 	if (G < 2) { Safefree(o); croak("logrank_test: need at least two groups"); }
 	qsort(o, N, sizeof(SurvObs), survobs_cmp);
 
-	NV *O, *E, *V; Newx(O, G, NV); Newx(E, G, NV); Newx(V, G * G, NV);
+	NV *restrict O, *restrict E, *restrict V; Newx(O, G, NV); Newx(E, G, NV); Newx(V, G * G, NV);
 	for (SSize_t k = 0; k < G; k++) { O[k] = 0.0; E[k] = 0.0; }
 	for (SSize_t k = 0; k < G * G; k++) V[k] = 0.0;
 
-	size_t *nrisk; Newx(nrisk, G, size_t);
+	size_t *restrict nrisk; Newx(nrisk, G, size_t);
 	for (SSize_t k = 0; k < G; k++) { size_t c = 0; for (size_t i = 0; i < N; i++) if (o[i].grp == k) c++; nrisk[k] = c; }
 
 	size_t i = 0;
 	while (i < N) {
 		NV t = o[i].time;
 		size_t d_tot = 0, n_tot = 0;
-		size_t *dj; Newx(dj, G, size_t); for (SSize_t k = 0; k < G; k++) dj[k] = 0;
+		size_t *restrict dj; Newx(dj, G, size_t); for (SSize_t k = 0; k < G; k++) dj[k] = 0;
 		for (SSize_t k = 0; k < G; k++) n_tot += nrisk[k];
 		size_t j = i, block_j0 = 0; (void)block_j0;
 		while (j < N && o[j].time == t) { if (o[j].status) { dj[o[j].grp]++; d_tot++; } j++; }
@@ -12824,23 +12823,23 @@ PPCODE:
 				}
 			}
 		}
-		/* remove this time's observations from the risk sets */
+		// remove this time's observations from the risk sets
 		for (size_t k2 = i; k2 < j; k2++) nrisk[o[k2].grp]--;
 		Safefree(dj);
 		i = j;
 	}
 
-	int m = (int)G - 1;                 /* reduced dimension */
-	NV *Vr; Newx(Vr, m * m, NV);
-	NV *OE; Newx(OE, m, NV);
+	int m = (int)G - 1; // reduced dimension
+	NV *restrict Vr; Newx(Vr, m * m, NV);
+	NV *restrict OE; Newx(OE, m, NV);
 	for (int a = 0; a < m; a++) { OE[a] = O[a] - E[a]; for (int b = 0; b < m; b++) Vr[a*m+b] = V[a*G+b]; }
-	NV *xsol; Newx(xsol, m, NV);
+	NV *restrict xsol; Newx(xsol, m, NV);
 	NV chi = 0.0;
 	if (srv_solve(Vr, OE, m, xsol) == 0)
 		for (int a = 0; a < m; a++) chi += OE[a] * xsol[a];
 	NV pval = get_p_value(chi, m);
 
-	HV *ret = newHV();
+	HV *restrict ret = newHV();
 	hv_stores(ret, "statistic", newSVnv(chi));
 	hv_stores(ret, "parameter", newSViv(m));
 	hv_stores(ret, "p_value",   newSVnv(pval));
@@ -12865,14 +12864,14 @@ PPCODE:
 	              || !SvROK(ST(2)) || SvTYPE(SvRV(ST(2))) != SVt_PVAV)
 		croak("Usage: coxph(\\@time, \\@status, \\@covariate | [\\@x1, \\@x2, ...], "
 		      "conf_level => 0.95, ties => 'efron', names => [...])");
-	AV *tav = (AV *)SvRV(ST(0)), *sav = (AV *)SvRV(ST(1)), *Xav = (AV *)SvRV(ST(2));
+	AV *restrict tav = (AV *)SvRV(ST(0)), *sav = (AV *)SvRV(ST(1)), *Xav = (AV *)SvRV(ST(2));
 	SSize_t n = av_len(tav) + 1;
 	if (n < 2) croak("coxph: need at least two observations");
 	if (av_len(sav) + 1 != n) croak("coxph: time and status must be the same length");
 
 	/* covariates: [\@x1, \@x2, ...] (multiple) or a single flat \@x */
 	int p, multi = 0;
-	SV **first = av_fetch(Xav, 0, 0);
+	SV **restrict first = av_fetch(Xav, 0, 0);
 	if (first && *first && SvROK(*first) && SvTYPE(SvRV(*first)) == SVt_PVAV) { multi = 1; p = (int)(av_len(Xav) + 1); }
 	else { multi = 0; p = 1; }
 	if (p < 1) croak("coxph: need at least one covariate");
@@ -13702,9 +13701,8 @@ CODE:
 		if (items > 3 && SvOK(ST(3))) {
 			byrow = SvTRUE(ST(3));
 		}
-	} else if (items % 2 == 0) {
-	  /* NAMED: matrix(data => [...], nrow => $n, ncol => $m) */
-		for (size_t i = 0; i < items; i += 2) {
+	} else if (items % 2 == 0) {// NAMED: matrix(data => [...], nrow => $n, ncol => $m)
+		for (unsigned i = 0; i < items; i += 2) {
 			char*restrict key = SvPV_nolen(ST(i));
 			SV*restrict val   = ST(i + 1);
 			if (strEQ(key, "data")) {
@@ -14227,8 +14225,7 @@ void seq(from, to, by = 1.0)
 	NV by
 PPCODE:
 	{
-		//Handle the zero 'by' case
-		if (by == 0.0) {
+		if (by == 0.0) {//Handle the zero 'by' case
 			if (from == to) {
 				 EXTEND(SP, 1);
 				 mPUSHn(from);
@@ -14316,7 +14313,7 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 	CODE:
 	{
 	const char *restrict formula;
-	SV *orig_data_sv = data_sv;   /* CHANGED: dropped `restrict` — this aliases data_sv (UB) */
+	SV *orig_data_sv = data_sv; // dropped `restrict` — this aliases data_sv (UB)
 	bool is_stacked = FALSE;
 	//
 	// PHASE 0: R-style stack() for missing formula
@@ -14325,7 +14322,6 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 		if (!SvROK(data_sv) || SvTYPE(SvRV(data_sv)) != SVt_PVHV) {
 		  croak("aov: Without a formula, data must be a HashRef of ArrayRefs (mimicking R's named list)");
 		}
-
 		is_stacked = TRUE;
 		HV *restrict input_hv = (HV*)SvRV(data_sv);
 		HV *restrict stacked_hv = newHV();
@@ -14338,8 +14334,8 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 		  SV *restrict arr_ref = hv_iterval(input_hv, entry);
 		  if (SvROK(arr_ref) && SvTYPE(SvRV(arr_ref)) == SVt_PVAV) {
 				AV *restrict arr = (AV*)SvRV(arr_ref);
-				SSize_t len = av_len(arr);                 /* CHANGED: signed — av_len is -1 when empty */
-				for (SSize_t k = 0; k <= len; k++) {        /* CHANGED: SSize_t, no SIZE_MAX underflow */
+				SSize_t len = av_len(arr);           // signed — av_len is -1 when empty
+				for (SSize_t k = 0; k <= len; k++) { // SSize_t, no SIZE_MAX underflow
 					SV **restrict v = av_fetch(arr, k, 0);
 					if (v && *v && SvOK(*v)) {
 						av_push(val_av, newSVsv(*v));
@@ -15253,9 +15249,8 @@ CODE:
 			}
 			group_id++;
 		}
-		k = group_id;   /* number of unique groups = number of hash keys */
-	/* 4b. Original x / g array-pair input path */
-	} else {
+		k = group_id; // number of unique groups = number of hash keys
+	} else {// 4b. Original x / g array-pair input path
 		if (!x_sv || !SvROK(x_sv) || SvTYPE(SvRV(x_sv)) != SVt_PVAV)
 			croak("kruskal_test: 'x' is a required argument and must be an ARRAY reference");
 		if (!g_sv || !SvROK(g_sv) || SvTYPE(SvRV(g_sv)) != SVt_PVAV)
@@ -15310,7 +15305,7 @@ CODE:
 	  croak("all observations are in the same group");
 	}
 	// 6. Ranking and Tie Accumulation (Reusing LikeR Helper)
-	bool   has_ties = 0;
+	bool has_ties = 0;
 	NV tie_adj  = rank_and_count_ties(ri, valid_n, &has_ties);
 	// 7. Aggregate Sum of Ranks AND Actual Values by Group
 	NV *restrict group_rank_sums = (NV *)safecalloc(k, sizeof(NV));
@@ -15512,49 +15507,48 @@ CODE:
 	if (n < 0) n = 0;
 	if (SvROK(ref)) {
 		SV *restrict rv = SvRV(ref);
-		/* --- HASH REFERENCE --- */
-		if (SvTYPE(rv) == SVt_PVHV) {
+		
+		if (SvTYPE(rv) == SVt_PVHV) {// HASH REFERENCE
 			HV *restrict hv    = (HV *)rv;
 			unsigned count = hv_iterinit(hv);
 			unsigned limit = (n < (IV)count) ? (I32)n : count;
 			HV *restrict ret_hv = newHV();
 
 			if (count > 0 && limit > 0) {
-				 HE **restrict entries;
-				 HE  *restrict entry;
-				 unsigned i;
-				 Newx(entries, count, HE *);
-				 /* Collect all HE pointers in one pass */
-				 i = 0;
-				 while ((entry = hv_iternext(hv)))
-					 entries[i++] = entry;
+				HE **restrict entries;
+				HE  *restrict entry;
+				unsigned i;
+				Newx(entries, count, HE *);
+				i = 0;
+				while ((entry = hv_iternext(hv))) // Collect all HE pointers in one pass
+				 entries[i++] = entry;
 
-				 /* Partial Fisher-Yates (only 'limit' passes) */
-				 for (i = 0; i < limit; i++) {
-					 I32 j    = i + (I32)(Drand01() * (count - i));
-					 HE *restrict tmp  = entries[i];
-					 entries[i] = entries[j];
-					 entries[j] = tmp;
-				 }
+				/* Partial Fisher-Yates (only 'limit' passes) */
+				for (i = 0; i < limit; i++) {
+				 I32 j    = i + (I32)(Drand01() * (count - i));
+				 HE *restrict tmp  = entries[i];
+				 entries[i] = entries[j];
+				 entries[j] = tmp;
+				}
 
-				 /* Pre-size result hash to avoid rehashing during population */
-				 hv_ksplit(ret_hv, limit);
+				/* Pre-size result hash to avoid rehashing during population */
+				hv_ksplit(ret_hv, limit);
 
-				 for (i = 0; i < limit; i++) {
-					 HEK *restrict hek = HeKEY_hek(entries[i]);
-					 /*
-					  * hv_store() with a precomputed hash skips the hash
-					  * computation entirely.  Negative klen signals UTF-8.
-					  */
-					 (void)hv_store(
-						 ret_hv,
-						 HEK_KEY(hek),
-						 HEK_UTF8(hek) ? -(I32)HEK_LEN(hek) : (I32)HEK_LEN(hek),
-						 SvREFCNT_inc(HeVAL(entries[i])),  /* HeVAL: direct macro, no call */
-						 HeHASH(entries[i])                /* reuse precomputed hash */
-					 );
-				 }
-				 Safefree(entries);
+				for (i = 0; i < limit; i++) {
+				 HEK *restrict hek = HeKEY_hek(entries[i]);
+				 /*
+				  * hv_store() with a precomputed hash skips the hash
+				  * computation entirely.  Negative klen signals UTF-8.
+				  */
+				 (void)hv_store(
+					 ret_hv,
+					 HEK_KEY(hek),
+					 HEK_UTF8(hek) ? -(I32)HEK_LEN(hek) : (I32)HEK_LEN(hek),
+					 SvREFCNT_inc(HeVAL(entries[i])),  /* HeVAL: direct macro, no call */
+					 HeHASH(entries[i])                /* reuse precomputed hash */
+				 );
+				}
+				Safefree(entries);
 			}
 			ret = newRV_noinc((SV *)ret_hv);
 		} else if (SvTYPE(rv) == SVt_PVAV) {/* --- ARRAY REFERENCE --- */
@@ -15889,8 +15883,7 @@ PPCODE:
 		(void)hv_store_ent(uni, outn, newSViv(1), 0);
 		av_push(rc_out, outn);
 	}
-
-	/* ---- perform the join, building an AoH result ---- */
+	// ---- perform the join, building an AoH result ----
 	AV *restrict result = (AV *)sv_2mortal((SV *)newAV());
 
 	if (how == MG_CROSS) {
@@ -15902,8 +15895,7 @@ PPCODE:
 				        lc_src, lc_out, nlc, rc_src, rc_out, nrc);
 			}
 		}
-	} else {
-		/* index the right frame: key -> arrayref of row indices */
+	} else {// index the right frame: key -> arrayref of row indices
 		HV *restrict ridx = (HV *)sv_2mortal((SV *)newHV());
 		for (SSize_t j = 0; j < nR; j++) {
 			HV *restrict ri = (HV *)SvRV(*av_fetch(Rrows, j, 0));
@@ -15995,7 +15987,7 @@ PREINIT:
 	HV *restrict h_hv, *restrict i_hv;
 	HE *restrict h_entry;
 CODE:
-	/* 1. Validate inputs are hash references */
+	// 1. Validate inputs are hash references
 	if (!SvROK(h_ref) || SvTYPE(SvRV(h_ref)) != SVt_PVHV) {
 	  croak("First argument to ljoin must be a hash reference");
 	}
@@ -16004,7 +15996,7 @@ CODE:
 	}
 	h_hv = (HV *)SvRV(h_ref);
 	i_hv = (HV *)SvRV(i_ref);
-	/* 2. Iterate through the primary hash ($h) */
+	// 2. Iterate through the primary hash ($h)
 	hv_iterinit(h_hv);
 	while ((h_entry = hv_iternext(h_hv))) {
 		SV *restrict row_key_sv = hv_iterkeysv(h_entry);
@@ -16330,8 +16322,7 @@ CODE:
 						SV**restrict valp = av_fetch(av, i, 0);
 						if (valp) increment_count(aTHX_ counts_hv, *valp);
 					}
-				} else {
-					// Fallback: Row-Oriented nested structure
+				} else {// Fallback: Row-Oriented nested structure
 					HE*restrict he;
 					hv_iterinit(hv);
 					while ((he = hv_iternext(hv))) {
@@ -16387,8 +16378,7 @@ CODE:
 					 }
 				 }
 			}
-		} else {
-		// Safely decrement the reference count of our hash before dying to prevent a leak
+		} else {// Safely decrement the reference count of our hash before dying to prevent a leak
 			SvREFCNT_dec((SV*)counts_hv);
 			croak("value_counts: Unsupported reference type.");
 		}
@@ -16486,10 +16476,10 @@ CODE:
 	/* Mortalize immediately! If the callback croaks, the tmps stack 
 	* will safely clean this up. */
 	result_ref = sv_2mortal(newRV_noinc((SV *)result_hv)); 
-	if (SvTYPE(SvRV(data_ref)) == SVt_PVAV) { /* Input is an Array of Hashes (AoH) */
+	if (SvTYPE(SvRV(data_ref)) == SVt_PVAV) { // Input is an Array of Hashes (AoH)
 		AV *restrict data_av = (AV *)SvRV(data_ref);
 		SSize_t len = av_len(data_av) + 1;
-		/* A column must exist in at least one row; a missing column name is fatal. */
+		// A column must exist in at least one row; a missing column name is fatal
 		{
 			bool group_found = 0, target_found = 0;
 			for (SSize_t i = 0; i < len && !(group_found && target_found); i++) {
@@ -16545,10 +16535,10 @@ CODE:
 		}
 	} else if (SvTYPE(SvRV(data_ref)) == SVt_PVHV) {
 		HV *restrict data_hv = (HV *)SvRV(data_ref);
-		/* Classify: a Hash of Arrays has arrayref values (columns); a Hash of
-		 * Hashes has hashref values (rows). Deciding by value type (rather than
-		 * by whether the requested keys happen to exist) lets a mistyped column
-		 * in a HoA die loudly instead of being mistaken for an empty HoH. */
+/* Classify: a Hash of Arrays has arrayref values (columns); a Hash of
+ * Hashes has hashref values (rows). Deciding by value type (rather than
+ * by whether the requested keys happen to exist) lets a mistyped column
+ * in a HoA die loudly instead of being mistaken for an empty HoH. */
 		bool is_hoa = 0;
 		{
 			HE *restrict ce;

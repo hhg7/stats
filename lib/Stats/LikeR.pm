@@ -10,8 +10,725 @@ use autodie ':default';
 use Exporter 'import';
 use Scalar::Util qw(reftype looks_like_number);
 XSLoader::load('Stats::LikeR', $VERSION);
-our @EXPORT_OK = qw(add_data age_standardize agg anova aoh2hoa aoh2hoh aov assign auc auroc bedroc bfill binom_test cfilter chisq_test chunk col col2col colnames concat cmh_test cor cor_test cov csort dnorm cohen_d cramers_v eta_squared drop_cols drop_duplicates dropna epi_2x2 ffill fillna filter fisher_test get_union glm group_by hoa2aoh hoa2hoh hoh2hoa hist interpolate intersection is_equivalent kruskal_test ks_test Lonly ljoin lm map_cell matrix max mean median melt merge min mode ncol nrow oneway_test p_adjust pivot_table pnorm power_t_test predict prop_test mcnemar_test friedman_test dunn_test prcomp ptukey qcut qtukey quantile rank roc Ronly rbind rbinom read_table rename_cols rnorm rownames runif sample scale sd select_cols seq shapiro_test smd sum summary survfit logrank_test coxph table_one t_test transpose TukeyHSD uniq vals value_counts var var_test vif hosmer_lemeshow view wilcox_test write_table);
+our @EXPORT_OK = qw(h add_data age_standardize agg anova aoh2hoa aoh2hoh aov assign auc auroc bedroc bfill binom_test cfilter chisq_test chunk col col2col colnames concat cmh_test cor cor_test cov csort dnorm cohen_d cramers_v eta_squared drop_cols drop_duplicates dropna epi_2x2 ffill fillna filter fisher_test get_union glm group_by hoa2aoh hoa2hoh hoh2hoa hist interpolate intersection is_equivalent kruskal_test ks_test Lonly ljoin lm map_cell matrix max mean median melt merge min mode ncol nrow oneway_test p_adjust pivot_table pnorm power_t_test predict prop_test mcnemar_test friedman_test dunn_test prcomp ptukey qcut qtukey quantile rank roc Ronly rbind rbinom read_table rename_cols rnorm rownames runif sample scale sd select_cols seq shapiro_test smd sum summary survfit logrank_test coxph table_one t_test transpose TukeyHSD uniq vals value_counts var var_test vif hosmer_lemeshow view wilcox_test write_table);
 our @EXPORT = @EXPORT_OK;
+
+# ===========================================================================
+# Help
+#
+# h() is the way in, and it works for every function in the distribution, XS
+# and pure Perl alike, because it looks the name up rather than watching an
+# argument list:
+#
+#     h('agg');    h(*agg);    h(\&agg);    h();
+#
+# It prints that function's own section of the documentation -- the same text
+# as the matching heading in README.md -- to STDOUT, and returns.
+#
+# The pure Perl functions below additionally accept '?' or 'h' in place of
+# their arguments, which prints the same text and then dies (a bare 'h' where
+# an argument was expected might have been meant as data, so returning a
+# result would be a guess).  The XS functions deliberately do not do this: it
+# cannot be told apart from a column or file that really is named 'h'.
+#
+# The help text is not duplicated in the source.  It is rendered from this
+# file's own POD at run time (that POD is generated from README.md by
+# md2pod.pl), so the help can never drift out of sync with the shipped
+# documentation.  Functions without a documentation section of their own fall
+# back to listing every topic that does have one.
+# ===========================================================================
+
+# Functions that share another function's section, either because they are the
+# very same subroutine under a second name (rbind/concat) or because they are
+# the internal engine behind a documented front end.
+my %HELP_ALIAS = (
+	rbind             => 'concat',
+	map_cell          => 'assign',
+	col               => 'filter',
+	_rename_inplace   => 'rename_cols',
+	_cols_select      => 'select_cols',
+	_cols_drop        => 'drop_cols',
+	_cols_rename      => 'rename_cols',
+	_drop_dups_core   => 'drop_duplicates',
+	_qcut_core        => 'qcut',
+	_interp_column_xs => 'interpolate',
+	_parse_csv_file   => 'read_table',
+	_impute_prop      => 'fillna',
+	_fill_seq         => 'fillna',
+	_render_grid      => 'view',
+	_df_shape         => 'agg',
+	_xtab             => 'cramers_v',
+);
+
+# Set to 0 to turn the help option off for code that has to pass a bare 'h'
+# or '?' as a column name, a file name or an option value.
+our $HELP = 1;
+
+# _want_help(@args) -- true when any plain-scalar argument is exactly '?' or
+# 'h'.  References (data frames, coderefs, col() objects) and undef never
+# trigger help, so a column literally named 'h' is the only way to get a false
+# positive, and only when it is passed as a bare string.  $HELP = 0 switches
+# the whole thing off for code that has to do that; h() is unaffected either
+# way, since it takes the name rather than reading the arguments.
+sub _want_help {
+	return 0 unless $HELP;
+	for my $arg (@_) {
+		next if !defined($arg) || ref($arg);
+		return 1 if $arg eq 'h' || $arg eq '?';
+	}
+	return 0;
+}
+
+# _help_show($name) -- print $name's documentation to STDOUT.  Returns the
+# name it showed.
+sub _help_show {
+	my ($name) = @_;
+	$name = defined($name) ? $name : '';
+	$name =~ s/\A.*:://;                       # accept Stats::LikeR::agg
+	my $old = select STDOUT; local $| = 1; select $old;
+	print STDOUT _help_text($name);
+	return $name;
+}
+
+# _help($name) -- print $name's documentation and die.  This is the '?' / 'h'
+# argument path, reached from the Perl subs and, through call_pv(), from every
+# XSUB.  It dies because a bare 'h' where an argument was expected might have
+# been meant as data, so returning a result would be a guess.  Never returns.
+sub _help {
+	my ($name) = @_;
+	$name = _help_show($name);
+	die "Stats::LikeR"
+	  . (length($name) ? "::$name" : '')
+	  . ": help requested ('?' or 'h'); no computation was done\n";
+}
+
+# h() -- ask for documentation by name rather than by argument.  This is the
+# unambiguous way in: the '?' / 'h' argument cannot be told apart from a column,
+# file or option value that really is the string 'h', but nothing here is open
+# to that reading.  So, unlike the argument form, h() does not die -- you asked
+# for it on purpose, and there is nothing to protect you from.
+#
+#     h('bedroc');      # by name
+#     h(*bedroc);       # by name, unquoted
+#     h(\&bedroc);      # by reference
+#     h();              # the general help, and the list of topics
+#
+# h(bedroc), with no quotes and no sigil, cannot be made to work: every
+# function here is exported, so Perl parses the bareword as a call to bedroc()
+# before h() is ever reached.  Use one of the four forms above.
+#
+# Returns the name whose documentation was shown.
+sub h {
+	my ($what) = @_;
+	my $name;
+
+	if (!@_ || !defined $what) {                 # h() -- the general help
+		$name = '';
+	}
+	elsif (ref \$what eq 'GLOB') {               # h(*bedroc)
+		($name = "$what") =~ s/\A\*//;
+	}
+	elsif (ref $what eq 'CODE') {                # h(\&bedroc)
+		no strict 'refs';
+		for my $cand (@EXPORT_OK) {
+			my $slot = *{"Stats::LikeR::$cand"}{CODE};
+			next unless $slot && $slot == $what;
+			$name = $cand;
+			last;
+		}
+		die "h: that code reference is not a Stats::LikeR function\n"
+			unless defined $name;
+	}
+	elsif (ref $what) {
+		die 'h: expected a function name, a glob or a code reference, not a '
+		  . ref($what) . " reference\n";
+	}
+	else {                                       # h('bedroc'), h($name)
+		$name = $what;
+		$name =~ s/\A&//;                        # h('&bedroc')
+	}
+
+	$name =~ s/\A.*:://;                         # h('Stats::LikeR::bedroc')
+	$name =~ s/\A\s+//; $name =~ s/\s+\z//;
+	return _help_show($name);
+}
+
+# terminal width to wrap to
+sub _help_width {
+	my $w = $ENV{COLUMNS};
+	$w = 80 unless defined($w) && $w =~ /\A[0-9]+\z/;
+	$w = 40 if $w < 40;
+	$w = 100 if $w > 100;
+	return $w;
+}
+
+# display length of a UTF-8 byte string: count everything that is not a
+# continuation byte.  Keeps wrapping honest without pulling in Encode.
+sub _help_len {
+	my $n = 0;
+	$n++ while $_[0] =~ /[^\x80-\xbf]/g;
+	return $n;
+}
+
+sub _help_text {
+	my ($name) = @_;
+	my $width  = _help_width();
+	my $topic  = exists $HELP_ALIAS{$name} ? $HELP_ALIAS{$name} : $name;
+	my @sect   = length($name) ? _pod_section($topic) : ();
+	my $body   = @sect          ? _pod_render(\@sect, $width)
+	           : length($name)  ? _help_fallback($name, $width)
+	           :                  _help_general($width);
+
+	my $title  = length($name) ? "Stats::LikeR::$name" : 'Stats::LikeR';
+	$title .= "   (documented under \`$topic')" if $topic ne $name && @sect;
+	my $rule   = '=' x $width;
+	my $call   = length($name) ? $name : 'any function';
+
+	return join('',
+		"\n", $rule, "\n", $title, "\n", $rule, "\n\n",
+		$body,
+		($body =~ /\n\n\z/ ? '' : "\n"),
+		'-' x $width, "\n",
+		_pod_wrap(length($name)
+			? "Call h('$name') for this page at any time; h(*$name) and "
+			. "h(\\&$name) are the same call, and h() lists every documented "
+			. 'function.'
+			: "Call h('name') for any one function's documentation -- "
+			. "h('agg'), h(*agg) and h(\\&agg) are the same call.",
+		          $width, 1),
+		_pod_wrap("The full manual is `perldoc Stats::LikeR'.", $width, 1),
+		$rule, "\n\n",
+	);
+}
+
+# Recognise a heading.  Returns (level, text), or the empty list when the line
+# is not one.  Text carrying braces or a fat comma is a code comment that the
+# markdown-to-POD generator mistook for a heading (README.md has a few inside
+# indented examples); treating those as sections would cut a function's
+# documentation short, so they are ignored here.
+sub _pod_heading {
+	my ($line) = @_;
+	return () unless defined $line && $line =~ /^=head([1-6])[ \t]+(\S.*?)\s*\z/;
+	my ($level, $text) = ($1, $2);
+	return () if $text =~ /[{};]|=>/;
+	return ($level, $text);
+}
+
+# every =head2 in the Functions section, for the "nothing documented" path
+sub _pod_topics {
+	my @t;
+	my $fh = _pod_open() or return @t;
+	my $in = 0;
+	while (my $line = <$fh>) {
+		my ($level, $text) = _pod_heading($line);
+		next unless defined $level;
+		if ($level == 1) { $in = ($text =~ /Functions/i) ? 1 : 0; next }
+		next unless $in && $level == 2;
+		my $n = _pod_plain($text);
+		$n =~ s/\s*\(.*\z//s;
+		$n =~ s/\A\s+//; $n =~ s/\s+\z//;
+		# only names a caller can actually use; this also drops the one
+		# heading the POD generator mangled (_rename_inplace, a private
+		# helper, comes out as I<rename>inplace)
+		push @t, $n if length($n) && grep { $_ eq $n } @EXPORT_OK;
+	}
+	close $fh;
+	return @t;
+}
+
+# the documented function names, in aligned columns
+sub _help_topic_block {
+	my ($width) = @_;
+	my @topics = _pod_topics();
+	return '' unless @topics;
+
+	my $col = 0;
+	$col = _help_len($_) > $col ? _help_len($_) : $col for @topics;
+	$col += 2;
+	my $per = int(($width - 2) / $col) || 1;
+	my $out = '';
+	my $i = 0;
+	while ($i < @topics) {
+		my @row = grep { defined } @topics[$i .. $i + $per - 1];
+		my $line = '  ' . join('', map { $_ . ' ' x ($col - _help_len($_)) } @row);
+		$line =~ s/\s+\z//;
+		$out .= $line . "\n";
+		$i += $per;
+	}
+	return $out;
+}
+
+sub _help_fallback {
+	my ($name, $width) = @_;
+	my $list = _help_topic_block($width);
+	my $out = _pod_wrap("There is no documentation section for "
+	                  . (length($name) ? "`$name'" : 'that name')
+	                  . '.'
+	                  . (length($list) ? '  These functions have one, and each'
+	                                   . " takes '?' or 'h' the same way:" : ''),
+	                    $width, 1);
+	return length($list) ? $out . "\n" . $list . "\n" : $out;
+}
+
+# h() with nothing to look up: how to ask, then every topic.
+#
+# README.md's own "Getting help" section is used when the POD has been
+# regenerated from it (md2pod.pl); until then the short version below stands in,
+# so h() is never empty.
+sub _help_general {
+	my ($width) = @_;
+	my @sect = _pod_section('Getting help', 1);
+	my $out;
+	if (@sect) {
+		$out = _pod_render(\@sect, $width);
+	}
+	else {
+		$out = _pod_wrap('Ask for a function by name, and its section of the '
+		               . 'documentation is printed here:', $width, 1)
+		     . "\n"
+		     . "  h('quantile');   # by name\n"
+		     . "  h(*quantile);    # by name, unquoted\n"
+		     . "  h(\\&quantile);   # by reference\n"
+		     . "\n"
+		     . _pod_wrap('The pure Perl functions also take \'?\' or \'h\' in place '
+		               . 'of their arguments, which prints the same text and then '
+		               . 'dies. Set $Stats::LikeR::HELP = 0 to switch that off, for '
+		               . 'code that has to pass a column or file really named '
+		               . "'h'.", $width, 1);
+	}
+	my $list = _help_topic_block($width);
+	if (length $list) {
+		$out .= "\n" . _pod_wrap('Documented functions, each of which h() will '
+		                       . 'show in full:', $width, 1) . "\n" . $list . "\n";
+	}
+	return $out;
+}
+
+# ---------------------------------------------------------------------------
+# POD extraction
+# ---------------------------------------------------------------------------
+
+our $POD_FILE;             # set only by t/help.t, to read a fixture
+
+sub _pod_open {
+	my $file = defined($POD_FILE) ? $POD_FILE : __FILE__;
+	$file = $INC{'Stats/LikeR.pm'} unless defined($file) && -r $file;
+	return undef unless defined($file) && -r $file;
+	my $fh;
+	# autodie is in force for this file, so ask politely
+	eval { open $fh, '<', $file or die "no\n"; 1 } or return undef;
+	return $fh;
+}
+
+# Reduce a heading or a function name to a comparison key.  Dropping every
+# non-alphanumeric makes the match immune to a signature in the heading
+# (`hoa2hoh( \%hoa, $key )'), to C<> wrapping (`C<aoh2hoh>') and to POD
+# generated from markdown that read an underscore as italics
+# (`I<rename>inplace' for `_rename_inplace').
+sub _pod_key {
+	my ($s) = @_;
+	return '' unless defined $s;
+	$s =~ s/\s*\(.*\z//s;
+	$s = _pod_plain($s);
+	$s =~ s/[^A-Za-z0-9]+//g;
+	return lc $s;
+}
+
+# the raw POD lines of the section headed $name, its subsections included.
+# $want is the heading level to match, 2 (a function) unless asked otherwise.
+sub _pod_section {
+	my ($name, $want) = @_;
+	$want = 2 unless defined $want;
+	my $key = _pod_key($name);
+	return () unless length $key;
+	my $fh = _pod_open() or return ();
+	my (@out, $in);
+	while (my $line = <$fh>) {
+		my ($level, $title) = _pod_heading($line);
+		if (defined $level && $level <= $want) {
+			if ($level == $want && _pod_key($title) eq $key) {
+				$in = 1;
+				push @out, $line;
+				next;
+			}
+			last if $in;
+			next;
+		}
+		last if $in && $line =~ /^=cut\s*$/;
+		push @out, $line if $in;
+	}
+	close $fh;
+	return @out;
+}
+
+# ---------------------------------------------------------------------------
+# POD -> plain text
+# ---------------------------------------------------------------------------
+
+my %POD_ENTITY = (
+	lt => '<', gt => '>', 'verbar' => '|', sol => '/', amp => '&',
+	quot => '"', apos => "'", lchevron => '<<', rchevron => '>>',
+	nbsp => ' ', ndash => '-', mdash => '--', 'eacute' => 'e',
+);
+
+sub _pod_seq {
+	my ($code, $text) = @_;
+	if ($code eq 'E') {
+		return $POD_ENTITY{$text} if exists $POD_ENTITY{$text};
+		return chr(hex $1)        if $text =~ /\A0?[xX]([0-9a-fA-F]+)\z/;
+		return chr($text)         if $text =~ /\A[0-9]+\z/ && $text < 128;
+		return $text;
+	}
+	if ($code eq 'L') {                     # L<text|target>, L<target>, L<#anchor>
+		$text =~ s/\|.*\z//s if $text =~ /\|/;
+		$text =~ s{\A/?#}{};
+		$text =~ s{\A/}{};
+		return $text;
+	}
+	return '' if $code eq 'X' || $code eq 'Z';
+	return $text;                           # B, C, I, F, S and anything else
+}
+
+# strip POD formatting codes, innermost first, doubled delimiters included
+sub _pod_plain {
+	my ($s) = @_;
+	return '' unless defined $s;
+	for (1 .. 24) {
+		my $before = $s;
+		$s =~ s/([A-Z])<<+[ \t\n]+(.*?)[ \t\n]+>>+/_pod_seq($1, $2)/ges;
+		$s =~ s/([A-Z])<([^<>]*)>/_pod_seq($1, $2)/ge;
+		last if $s eq $before;
+	}
+	return $s;
+}
+
+sub _pod_wrap {
+	my ($text, $width, $indent, $lead) = @_;
+	$lead = '' unless defined $lead;
+	my $pad   = ' ' x $indent;
+	my $first = $pad . $lead;
+	my $cont  = $pad . (' ' x _help_len($lead));
+	my $limit = $width;
+	my $floor = _help_len($first) + 20;
+	$limit = $floor if $limit < $floor;
+
+	my @words = grep { length } split /\s+/, $text;
+	return "" unless @words;
+	my $out  = '';
+	my $line = $first . shift @words;
+	for my $w (@words) {
+		if (_help_len($line) + 1 + _help_len($w) > $limit) {
+			$out .= $line . "\n";
+			$line = $cont . $w;
+		} else {
+			$line .= ' ' . $w;
+		}
+	}
+	return $out . $line . "\n";
+}
+
+# Split POD lines into typed blocks: command paragraphs, verbatim paragraphs,
+# ordinary paragraphs and =begin/=end data blocks.
+sub _pod_blocks {
+	my ($lines) = @_;
+	my (@blocks, $i);
+	my $n = scalar @$lines;
+	for ($i = 0; $i < $n; ) {
+		my $line = $lines->[$i];
+		if ($line =~ /^\s*$/) { $i++; next }
+		if ($line =~ /^=begin\s+(\S+)/) {
+			my $fmt = lc $1;
+			$i++;
+			my @buf;
+			push @buf, $lines->[$i++] while $i < $n && $lines->[$i] !~ /^=end\b/;
+			$i++ if $i < $n;
+			push @blocks, { type => 'data', fmt => $fmt, lines => \@buf };
+			next;
+		}
+		if ($line =~ /^=/) {
+			my @buf = ($line);
+			$i++;
+			push @buf, $lines->[$i++]
+				while $i < $n && $lines->[$i] !~ /^\s*$/ && $lines->[$i] !~ /^=/;
+			push @blocks, { type => 'cmd', lines => \@buf };
+			next;
+		}
+		if ($line =~ /^[ \t]/) {                     # verbatim
+			my @buf;
+			while ($i < $n) {
+				my $s = $lines->[$i];
+				if ($s =~ /^\s*$/) {                 # keep interior blank lines
+					my $j = $i;
+					$j++ while $j < $n && $lines->[$j] =~ /^\s*$/;
+					last if $j >= $n || $lines->[$j] !~ /^[ \t]/;
+					push @buf, "\n" for $i .. $j - 1;
+					$i = $j;
+					next;
+				}
+				last if $s =~ /^=/ || $s !~ /^[ \t]/;
+				push @buf, $s;
+				$i++;
+			}
+			push @blocks, { type => 'verb', lines => \@buf };
+			next;
+		}
+		my @buf;                                     # ordinary paragraph
+		push @buf, $lines->[$i++]
+			while $i < $n && $lines->[$i] !~ /^\s*$/ && $lines->[$i] !~ /^=/;
+		push @blocks, { type => 'text', lines => \@buf };
+	}
+	return @blocks;
+}
+
+sub _pod_render {
+	my ($lines, $width) = @_;
+	my @out;
+	my @indent = (1);                    # =over stack; 1 = one space of margin
+
+	for my $b (_pod_blocks($lines)) {
+		if ($b->{type} eq 'verb') {
+			# A markdown blockquote arrives here as verbatim text, but it is
+			# prose and reads far better wrapped than left at its source
+			# width, so pull those out and treat them as a paragraph.
+			my @body = grep { /\S/ } @{ $b->{lines} };
+			if (@body && !grep { !/^\s*>/ } @body) {
+				s/^\s*>\s?// for @body;
+				push @out, "\n", _pod_wrap(_pod_plain(join ' ', @body),
+				                           $width, $indent[-1] + 2);
+				next;
+			}
+			push @out, "\n";
+			my $pad = ' ' x $indent[-1];
+			# Formatting codes are not supposed to appear in a verbatim
+			# block, but the generated POD does leave a few behind; expand
+			# them rather than showing C<...> to the reader.
+			for my $v (@{ $b->{lines} }) {
+				my $s = _pod_plain($v);
+				$s =~ s/\s+\z//;
+				push @out, length($s) ? $pad . $s . "\n" : "\n";
+			}
+			next;
+		}
+		if ($b->{type} eq 'text') {
+			push @out, "\n", _pod_wrap(_pod_plain(join ' ', @{ $b->{lines} }),
+			                           $width, $indent[-1]);
+			next;
+		}
+		if ($b->{type} eq 'data') {
+			next unless $b->{fmt} =~ /^(?:html|text)$/;
+			push @out, _pod_data(join('', @{ $b->{lines} }), $b->{fmt},
+			                     $width, $indent[-1]);
+			next;
+		}
+
+		# ---- command paragraph ----
+		my @l = @{ $b->{lines} };
+		my $head = shift @l;
+		$head =~ /^=(\w+)[ \t]*(.*)$/s or next;
+		my ($cmd, $arg) = ($1, $2);
+		$arg =~ s/\s+\z//;
+
+		if ($cmd =~ /^head([1-6])\z/) {
+			my $level = $1;
+			my $t = _pod_plain(join ' ', $arg, @l);
+			$t =~ s/\s+/ /g; $t =~ s/\A\s+//; $t =~ s/\s+\z//;
+			next unless length $t;
+			push @out, "\n";
+			if ($level <= 2) {
+				push @out, uc($t) . "\n";
+			} else {
+				push @out, $t . "\n", ('-' x _help_len($t)) . "\n";
+			}
+			next;
+		}
+		if ($cmd eq 'over') {
+			my $by = ($arg =~ /([0-9]+)/) ? $1 : 4;
+			$by = 2 if $by < 2;
+			$by = 8 if $by > 8;
+			push @indent, $indent[-1] + $by;
+			next;
+		}
+		if ($cmd eq 'back') {
+			pop @indent if @indent > 1;
+			next;
+		}
+		if ($cmd eq 'item') {
+			my $bullet = '*';
+			if    ($arg =~ s/\A\*\s*//)                 { $bullet = '*' }
+			elsif ($arg =~ s/\A([0-9]+\.?)(?:\s+|\z)//) {
+				$bullet = $1;                    # numbered list: "1." or "1"
+				$bullet .= '.' unless $bullet =~ /\.\z/;
+			}
+			my $t = _pod_plain(join ' ', $arg, @l);
+			my $ind = $indent[-1] > 2 ? $indent[-1] - 2 : $indent[-1];
+			push @out, "\n";
+			if ($t =~ /\S/) {
+				push @out, _pod_wrap($t, $width, $ind, "$bullet ");
+			} else {
+				push @out, (' ' x $ind) . $bullet . "\n";
+			}
+			next;
+		}
+		# =pod, =cut, =encoding, =for, =begin without =end: nothing to show
+	}
+
+	my $text = join '', @out;
+	$text =~ s/\A\n+//;
+	$text =~ s/\n{3,}/\n\n/g;
+	$text =~ s/\n*\z/\n/;
+	return $text;
+}
+
+# ---------------------------------------------------------------------------
+# =begin html / =begin text data blocks.  The generated POD uses these for
+# one thing only: parameter and output tables.  Render them as aligned plain
+# text so the help shows the same information the HTML documentation does.
+# ---------------------------------------------------------------------------
+
+my %HTML_ENTITY = (
+	amp => '&', lt => '<', gt => '>', quot => '"', apos => "'", nbsp => ' ',
+	ndash => '-', mdash => '--', hellip => '...',
+);
+
+sub _html_text {
+	my ($s) = @_;
+	$s = '' unless defined $s;
+	$s =~ s{<br\s*/?>}{ }gi;
+	$s =~ s/<[^>]*>//g;
+	$s =~ s/&#x([0-9a-fA-F]+);/chr(hex $1)/ge;
+	$s =~ s/&#([0-9]+);/$1 < 128 ? chr($1) : '?'/ge;
+	$s =~ s/&([a-zA-Z]+);/exists $HTML_ENTITY{$1} ? $HTML_ENTITY{$1} : "&$1;"/ge;
+	$s =~ s/\s+/ /g;
+	$s =~ s/\A\s+//; $s =~ s/\s+\z//;
+	return $s;
+}
+
+sub _pod_data {
+	my ($raw, $fmt, $width, $indent) = @_;
+	if ($fmt eq 'text') {
+		my $pad = ' ' x $indent;
+		my $out = "\n";
+		for my $line (split /\n/, $raw, -1) {
+			$line =~ s/\s+\z//;
+			$out .= length($line) ? $pad . $line . "\n" : "\n";
+		}
+		return $out;
+	}
+
+	my $out = '';
+	my $seen = 0;
+	while ($raw =~ m{<table[^>]*>(.*?)</table>}gis) {
+		$out .= _html_table($1, $width, $indent);
+		$seen = 1;
+	}
+	# HTML that is not a table carries nothing the plain-text help can use
+	return $seen ? $out : '';
+}
+
+sub _html_table {
+	my ($html, $width, $indent) = @_;
+	my (@rows, @isheader);
+	while ($html =~ m{<tr[^>]*>(.*?)</tr>}gis) {
+		my $tr = $1;
+		my (@cells, $hdr);
+		while ($tr =~ m{<t([dh])[^>]*>(.*?)</t\1\s*>}gis) {
+			$hdr = 1 if lc($1) eq 'h';
+			push @cells, _html_text($2);
+		}
+		next unless @cells;
+		push @rows, \@cells;
+		push @isheader, ($hdr ? 1 : 0);
+	}
+	return '' unless @rows;
+
+	# The header decides how many columns there are.  A body row with more
+	# cells than that came from a markdown table whose source had an escaped
+	# pipe inside a cell, so fold the strays back into the last column
+	# instead of stretching the whole table to fit the accident.
+	my $ncol = 0;
+	for my $i (0 .. $#rows) {
+		next unless $isheader[$i];
+		$ncol = scalar @{ $rows[$i] };
+		last;
+	}
+	for my $r (@rows) { $ncol = @$r if !$ncol || (!grep { $_ } @isheader) && @$r > $ncol }
+	for my $r (@rows) {
+		if (@$r > $ncol) {
+			my @tail = splice @$r, $ncol - 1;
+			$r->[$ncol - 1] = join ' ', grep { length } @tail;
+		}
+		$r->[$ncol - 1] = '' unless defined $r->[$ncol - 1];
+	}
+
+	# natural column widths, then shrink the widest until the table fits
+	my @w = (0) x $ncol;
+	for my $r (@rows) {
+		for my $c (0 .. $ncol - 1) {
+			my $l = _help_len(defined $r->[$c] ? $r->[$c] : '');
+			$w[$c] = $l if $l > $w[$c];
+		}
+	}
+	my $gap   = 2;
+	my $avail = $width - $indent - $gap * ($ncol - 1);
+	$avail = 8 * $ncol if $avail < 8 * $ncol;
+	my $total = 0; $total += $_ for @w;
+	while ($total > $avail) {
+		my ($worst, $max) = (0, -1);
+		for my $c (0 .. $ncol - 1) { ($worst, $max) = ($c, $w[$c]) if $w[$c] > $max }
+		last if $w[$worst] <= 8;
+		$w[$worst]--;
+		$total--;
+	}
+
+	my $pad = ' ' x $indent;
+	my $out = "\n";
+	for my $i (0 .. $#rows) {
+		# wrap every cell to its column width, then print line by line
+		my @cell = map { [ _html_fold($rows[$i][$_], $w[$_]) ] } 0 .. $ncol - 1;
+		my $high = 0;
+		for my $c (@cell) { $high = scalar @$c if @$c > $high }
+		for my $line (0 .. $high - 1) {
+			my $s = $pad . join ' ' x $gap,
+				map { my $t = defined $cell[$_][$line] ? $cell[$_][$line] : '';
+				      $t . ' ' x ($w[$_] - _help_len($t)) } 0 .. $ncol - 1;
+			$s =~ s/\s+\z//;
+			$out .= $s . "\n";
+		}
+		if ($isheader[$i]) {
+			$out .= $pad . join(' ' x $gap, map { '-' x $w[$_] } 0 .. $ncol - 1) . "\n";
+		}
+	}
+	return $out . "\n";
+}
+
+# greedy wrap of one table cell to $w display columns
+sub _html_fold {
+	my ($s, $w) = @_;
+	$s = '' unless defined $s;
+	return ('') unless length $s;
+	my @lines;
+	my $cur = '';
+	for my $word (split /\s+/, $s) {
+		next unless length $word;
+		if (!length $cur) {
+			$cur = $word;
+		} elsif (_help_len($cur) + 1 + _help_len($word) <= $w) {
+			$cur .= ' ' . $word;
+		} else {
+			push @lines, $cur;
+			$cur = $word;
+		}
+		while (_help_len($cur) > $w) {            # a single over-long word
+			my $keep = $cur;
+			$keep = substr $keep, 0, $w;
+			$keep =~ s/[\x80-\xbf]+\z// if _help_len($keep) > $w;
+			push @lines, $keep;
+			$cur = substr $cur, length $keep;
+		}
+	}
+	push @lines, $cur if length $cur;
+	return @lines ? @lines : ('');
+}
 
 # colnames($df) / rownames($df)
 #
@@ -35,6 +752,7 @@ our @EXPORT = @EXPORT_OK;
 # that this family does not.
 
 sub colnames {
+	_help('colnames') if _want_help(@_);
 	my ($df) = @_;
 	die "colnames: undefined data in first position\n" unless defined $df;
 	my $shape = _df_shape($df, 'colnames');
@@ -61,6 +779,7 @@ sub colnames {
 }
 
 sub rownames {
+	_help('rownames') if _want_help(@_);
 	my ($df) = @_;
 	die "rownames: undefined data in first position\n" unless defined $df;
 	my $shape = _df_shape($df, 'rownames');
@@ -140,6 +859,7 @@ sub rownames {
 # select_cols (rectangular); drop_cols/rename_cols leave ragged frames ragged.
 
 sub _cols_arg {                         # normalise + validate a column list
+	_help('_cols_arg') if _want_help(@_);
 	my ($fn, @a) = @_;
 	my @cols = (@a == 1 && ref $a[0] eq 'ARRAY') ? @{ $a[0] } : @a;
 	die "$fn: at least one column is required\n" unless @cols;
@@ -152,6 +872,7 @@ sub _cols_arg {                         # normalise + validate a column list
 }
 
 sub _aoa_width { # widest row of an AoA (ragged-safe)
+	_help('_aoa_width') if _want_help(@_);
 	my $df = shift;
 	my $w = 0;
 	for my $r (@$df) { $w = scalar @$r if ref $r eq 'ARRAY' && @$r > $w }
@@ -159,6 +880,7 @@ sub _aoa_width { # widest row of an AoA (ragged-safe)
 }
 
 sub _aoa_int_cols { # validate integer positions in range
+	_help('_aoa_int_cols') if _want_help(@_);
 	my ($fn, $df, @cols) = @_;
 	my $w = _aoa_width($df);
 	for my $c (@cols) {
@@ -171,6 +893,7 @@ sub _aoa_int_cols { # validate integer positions in range
 }
 
 sub _present_keys { # union of keys over AoH/HoH rows
+	_help('_present_keys') if _want_help(@_);
 	my ($df, $shape) = @_;
 	my @rows = $shape eq 'AoH' ? @$df : values %$df;
 	my %seen;
@@ -179,6 +902,7 @@ sub _present_keys { # union of keys over AoH/HoH rows
 }
 
 sub _rename_inplace { # VOID-context rename: mutate the source
+	_help('_rename_inplace') if _want_help(@_);
 	my ($df, $shape, $map) = @_;
 	if ($shape eq 'HoA') { # rename the column keys
 		my %vals;                                   # gather-then-set = swap-safe
@@ -203,6 +927,7 @@ sub _rename_inplace { # VOID-context rename: mutate the source
 }
 
 sub select_cols {# shape code passed to the XS: 1 = AoH, 2 = HoH, 3 = AoA
+	_help('select_cols') if _want_help(@_);
 	my $df = shift;
 	die "select_cols: undefined data in first position\n" unless defined $df;
 	my @cols  = _cols_arg('select_cols', @_);
@@ -228,6 +953,7 @@ sub select_cols {# shape code passed to the XS: 1 = AoH, 2 = HoH, 3 = AoA
 }
 
 sub drop_cols {
+	_help('drop_cols') if _want_help(@_);
 	my $df = shift;
 	die "drop_cols: undefined data in first position\n" unless defined $df;
 	my @cols  = _cols_arg('drop_cols', @_);
@@ -255,6 +981,7 @@ sub drop_cols {
 }
 
 sub rename_cols {
+	_help('rename_cols') if _want_help(@_);
 	my $df = shift;
 	die "rename_cols: undefined data in first position\n" unless defined $df;
 	my %map;
@@ -305,6 +1032,7 @@ sub rename_cols {
 }
 
 sub aoh2hoh {
+	_help('aoh2hoh') if _want_help(@_);
 	my ($aoh, $key) = @_;
 	die 'aoh2hoh: first argument is undefined' unless defined $aoh;
 	die 'aoh2hoh: first argument must be an arrayref of hashrefs'
@@ -330,6 +1058,7 @@ sub aoh2hoh {
 # =======================================================================
 
 sub _df_shape {
+	_help('_df_shape') if _want_help(@_);
 	my ($df, $caller) = @_;
 	$caller = 'data frame' unless defined $caller;
 	die "$caller: data frame must be an ARRAY (AoA/AoH) or HASH (HoA/HoH) ref\n"
@@ -438,6 +1167,7 @@ sub _df_shape {
 	}
 
 	sub agg {
+		_help('agg') if _want_help(@_);
 		my $df = shift;
 		die 'agg: undefined data in first position' unless defined $df;
 		my $shape = _df_shape($df, 'agg');
@@ -641,6 +1371,7 @@ sub _df_shape {
 # cell stays missing rather than becoming ''.
 # ---------------------------------------------------------------------------
 sub map_cell (&) {
+	_help('map_cell') if _want_help(@_);
 	my ($code) = @_;
 	die "map_cell: expects a code block, e.g. map_cell { s/x//g }\n"
 		unless ref $code eq 'CODE';
@@ -648,6 +1379,7 @@ sub map_cell (&) {
 }
 
 sub assign {
+	_help('assign') if _want_help(@_);
 	my $df = shift;
 	my $current_sub = (split(/::/,(caller(0))[3]))[-1];
 	die "$current_sub: first argument is undefined" unless defined $df;
@@ -867,6 +1599,7 @@ sub assign {
 }
 
 sub chunk {
+	_help('chunk') if _want_help(@_);
 	my ($aref, %opt) = @_;
 	die "chunk: first argument must be an ARRAY reference\n"
 		unless ref $aref eq 'ARRAY';
@@ -910,7 +1643,7 @@ sub chunk {
 # Rules: numeric ops > < >= <= == != compare as numbers; string ops gt lt ge le
 # eq ne compare as strings; & | ! combine; operands may be in either order; a
 # missing/undef cell (and, for numeric ops, a non-numeric cell) never matches.
-sub col { Stats::LikeR::col::_new(@_) }
+sub col { _help('col') if _want_help(@_); Stats::LikeR::col::_new(@_) }
 {
 	package Stats::LikeR::col;
 	use warnings;
@@ -1051,6 +1784,7 @@ sub col { Stats::LikeR::col::_new(@_) }
 #        emitted noting that row names collided.
 # ---------------------------------------------------------------------------
 sub concat {
+	_help('concat') if _want_help(@_);
 	my @frames = grep { defined } @_;
 	die "concat: needs at least one data frame\n" unless @frames;
 
@@ -1159,6 +1893,7 @@ sub concat {
 # row references are reused, not deep-copied (dropna never mutates a row).
 #
 sub dropna {
+	_help('dropna') if _want_help(@_);
 	my $df = shift;
 	die 'dropna: first argument is undefined' unless defined $df;
 	die "dropna: first argument must be a data frame (HoA/HoH hashref or AoH arrayref)\n"
@@ -1294,6 +2029,7 @@ sub dropna {
 # AoA/AoH the surviving row refs are reused (cells shared, not deep-copied);
 # for HoA the columns are rebuilt with the surviving cells copied.
 sub drop_duplicates {
+	_help('drop_duplicates') if _want_help(@_);
 	my $df = shift;
 	die "drop_duplicates: undefined data in first position\n" unless defined $df;
 	die "drop_duplicates: arguments after the data frame must be name => value pairs\n"
@@ -1363,6 +2099,7 @@ sub drop_duplicates {
 # Count columns across Stats::LikeR frame forms: AoH, AoA, HoA, HoH
 # (plain vector => 1 column). Uses die, not croak. reftype => blessed frames ok.
 sub ncol {
+	_help('ncol') if _want_help(@_);
 	my ($data) = @_;
 	my $type = reftype $data;
 	die 'ncol: expected an ARRAY or HASH ref (got '
@@ -1447,6 +2184,7 @@ sub ncol {
 }
 
 sub nrow {
+	_help('nrow') if _want_help(@_);
 	my ($data) = @_;
 	my $type = reftype $data;
 	die 'nrow: expected an ARRAY or HASH ref (got '
@@ -1487,47 +2225,8 @@ sub nrow {
 	die 'nrow: HASH values are neither ARRAY refs (HoA) nor HASH refs (HoH)';
 }
 sub qcut {
+	_help('qcut') if _want_help(@_);
 	my ($data, $q, %opt) = @_;
-
-	# help: qcut('h') / qcut('H'), or that string in the q slot
-	if ( (!ref $data && defined $data && $data =~ /\A[hH]\z/)
-	  || (!ref $q    && defined $q    && $q    =~ /\A[hH]\z/) ) {
-		my $h = <<'HELP';
-qcut - equal-frequency binning of a numeric column (analog of pandas qcut)
-
-  USAGE
-    my @edges            = qcut($data, $q);                 # default: edge list
-    my @edges            = qcut($data, $q, edges => 1);     # same, explicit
-    my $codes            = qcut($data, $q, codes => 1);     # bin codes (arrayref)
-    my ($codes, $edges)  = qcut($data, $q, codes => 1, edges => 1);
-    my $labels           = qcut($data, $q, labels => [...]);
-    qcut('h');  # or qcut('H')  -> print this help and die
-
-  ARGUMENTS
-    $data   arrayref of numbers; undef entries are missing (NA) and are
-            skipped for cutpoints, returned as undef in code output
-    $q      positive integer (number of equal-frequency bins) OR an arrayref
-            of probabilities in [0,1], e.g. [0, 0.5, 0.95, 1]
-
-  OPTIONS
-    edges => 1        include the edge vector (default unless codes requested)
-    codes => 1        include 0-based bin codes (one per element)
-    labels => [...]   map codes onto your labels; implies codes => 1
-    labels => 'interval'   label each element with its interval, e.g. "(3.25, 5.5]"
-    duplicates => 'drop'   merge non-unique cutpoints instead of dying ('raise')
-
-  RETURN
-    edges only (default) .... a flat list of edges  (call in list context)
-    codes only .............. an arrayref of codes/labels
-    both .................... ($codes_ref, $edges_ref)
-
-  NOTES
-    Cutpoints use linear interpolation between order statistics (numpy/pandas
-    default), so results match pandas.qcut. Bins are right-closed (a, b] with
-    the lowest bin closed on both ends [a, b].
-HELP
-		die $h;
-	}
 
 	die "qcut: first argument must be an ARRAY reference (try qcut('h'))\n"
 		unless ref $data eq 'ARRAY';
@@ -1620,6 +2319,7 @@ HELP
 # shows 0 values and 'na' statistics. Output, colour, and the display options
 # are rendered exactly like view() via the shared _render_grid().
 sub summary {
+	_help('summary') if _want_help(@_);
 	my $current_sub = (split(/::/,(caller(0))[3]))[-1];
 	# options view() understands, plus the row-cap synonyms
 	my %opt_key = map { $_ => 1 } qw(
@@ -1753,6 +2453,7 @@ sub summary {
 
 # Return the decompressed bytes of a named archive member, or undef if absent.
 sub _unzip_member {
+	_help('_unzip_member') if _want_help(@_);
 	my ($file, $member) = @_;
 	require IO::Uncompress::Unzip;
 	my $z = IO::Uncompress::Unzip->new($file, Name => $member)
@@ -1799,6 +2500,7 @@ sub _xlsx_col_idx {
 # Shared strings (optional part): each <si> may hold several <t> runs, which
 # are concatenated. Returns an arrayref indexed by shared-string id.
 sub _xlsx_shared_strings {
+	_help('_xlsx_shared_strings') if _want_help(@_);
 	my ($file) = @_;
 	my @sst;
 	if (defined(my $ss = _unzip_member($file, 'xl/sharedStrings.xml'))) {
@@ -1817,6 +2519,7 @@ sub _xlsx_shared_strings {
 # is resolved through workbook.xml.rels; a sheet with no resolvable relationship
 # (or a workbook with no metadata at all) falls back to a positional sheetN.xml.
 sub _xlsx_sheets {
+	_help('_xlsx_sheets') if _want_help(@_);
 	my ($file) = @_;
 	my %target;
 	if (defined(my $rels = _unzip_member($file, 'xl/_rels/workbook.xml.rels'))) {
@@ -1854,6 +2557,7 @@ sub _xlsx_sheets {
 # Resolve a 'sheet' argument (undef -> first; a 1-based index; or a name) to one
 # of the hashrefs from _xlsx_sheets, dying with a clear message on a bad request.
 sub _xlsx_choose_sheet {
+	_help('_xlsx_choose_sheet') if _want_help(@_);
 	my ($file, $sheets, $sheet) = @_;
 	return $sheets->[0] unless defined $sheet;
 	if ($sheet =~ /^\d+\z/) {
@@ -1874,6 +2578,7 @@ sub _xlsx_choose_sheet {
 # contract _parse_csv_file offers read_table's callback. $sst is the shared
 # strings arrayref from _xlsx_shared_strings.
 sub _parse_xlsx_sheet {
+	_help('_parse_xlsx_sheet') if _want_help(@_);
 	my ($file, $sst, $path, $callback) = @_;
 	my $ws = _unzip_member($file, $path);
 	die "read_table: could not read worksheet '$path' in $file\n"
@@ -1954,6 +2659,7 @@ sub _parse_xlsx_sheet {
 }
 
 sub read_table {
+	_help('read_table') if _want_help(@_);
 	my $file = shift;
 	die "read_table: \"$file\" is not a file\n"   unless -f $file;
 	die "read_table: \"$file\" is not readable\n" unless -r $file;
@@ -2237,6 +2943,7 @@ sub read_table {
 # view($data, %opts) -- pretty-print an AoH / HoA / HoH / flat-hash table.
 #
 sub view {
+	_help('view') if _want_help(@_);
 	my $data = shift;
 	if (not defined $data) {
 		die 'view received undefined data';
@@ -2424,6 +3131,7 @@ sub view {
 # wide-char-aware column widths, R-style column chunking to fit the terminal,
 # optional Data::Printer-style colour, and a trailing "... N more rows" note.
 sub _render_grid {
+	_help('_render_grid') if _want_help(@_);
 	my %s = @_;
 	my $kind       = $s{kind};
 	my $total      = $s{total};
@@ -2661,6 +3369,7 @@ sub _render_grid {
 # scale otherwise).  Per-level means are observed marginal means, which
 # match R's model.tables means for one-way (and balanced) designs.
 sub TukeyHSD {
+	_help('TukeyHSD') if _want_help(@_);
 	my ($fit, %opt) = @_;
 	die 'TukeyHSD: first argument must be a fitted-model hashref (from aov/lm/glm)'
 		unless ref($fit) eq 'HASH';
@@ -2848,6 +3557,7 @@ sub _tukey_compare {
 # a fresh per-column slice.  HoH rows are visited in string-sorted key
 # order so a positional axis exists.  Not exported.
 sub _frame_cols {
+	_help('_frame_cols') if _want_help(@_);
 	my ($df, $shape, $need) = @_;
 	my (%col, $R);
 	if ($shape eq 'AoA') {
@@ -2877,6 +3587,7 @@ sub _frame_cols {
 # strings (undef sorts as ''); the same rule agg() uses for its groups.
 # Not exported.
 sub _sort_group_keys {
+	_help('_sort_group_keys') if _want_help(@_);
 	my ($order, $repr) = @_;
 	my $all_num = 1;
 	SORTNUM: for my $k (@$order) {
@@ -2927,6 +3638,7 @@ sub _sort_group_keys {
 # then all rows for value_vars[1], and so on, preserving input row order
 # within each block.  The original frame is never modified.
 sub melt {
+	_help('melt') if _want_help(@_);
 	my $df = shift;
 	die 'melt: undefined data in first position' unless defined $df;
 	my $shape = _df_shape($df, 'melt');
@@ -3053,6 +3765,7 @@ sub melt {
 # pandas' flat output.  A duplicate generated name is an error (raise `sep`).
 # The original frame is never modified.
 sub pivot_table {
+	_help('pivot_table') if _want_help(@_);
 	my $df = shift;
 	die 'pivot_table: undefined data in first position' unless defined $df;
 	my $shape = _df_shape($df, 'pivot_table');
@@ -3210,6 +3923,7 @@ sub pivot_table {
 # of a constant use ffill()/bfill().  Returns
 # a NEW frame (rows/columns rebuilt as needed); the original is never modified.
 sub fillna {
+	_help('fillna') if _want_help(@_);
 	my $df = shift;
 	die 'fillna: undefined data in first position' unless defined $df;
 	my $shape = _df_shape($df, 'fillna');
@@ -3304,6 +4018,7 @@ sub fillna {
 # over runs of undef.  With a defined `limit`, at most `limit` consecutive
 # undefs are filled per gap; the rest stay undef.  Not exported.
 sub _fill_seq {
+	_help('_fill_seq') if _want_help(@_);
 	my ($vals, $dir, $limit) = @_;
 	my $n = scalar @$vals;
 	my @idx = $dir > 0 ? ( 0 .. $n - 1 ) : reverse( 0 .. $n - 1 );
@@ -3329,6 +4044,7 @@ sub _fill_seq {
 # are not extended); AoA rows are not extended past their own length.  Returns
 # a NEW frame; the original is never modified.  Not exported.
 sub _impute_prop {
+	_help('_impute_prop') if _want_help(@_);
 	my $df   = shift;
 	my $name = shift;
 	my $dir  = shift;
@@ -3413,8 +4129,8 @@ sub _impute_prop {
 # ffill($df, cols => \@cols, limit => $n)  -- forward-fill NA (last valid obs).
 # bfill($df, cols => \@cols, limit => $n)  -- back-fill NA (next valid obs).
 # See _impute_prop for the row-axis and shape semantics.
-sub ffill { _impute_prop( shift, 'ffill',  1, @_ ) }
-sub bfill { _impute_prop( shift, 'bfill', -1, @_ ) }
+sub ffill { _help('ffill') if _want_help(@_); _impute_prop( shift, 'ffill',  1, @_ ) }
+sub bfill { _help('bfill') if _want_help(@_); _impute_prop( shift, 'bfill', -1, @_ ) }
 
 # The interpolate() numeric kernels now live in XS (see ip_fill_column and the
 # _interp_column_xs XSUB in LikeR.xs); it is called once per target column below.
@@ -3456,6 +4172,7 @@ sub bfill { _impute_prop( shift, 'bfill', -1, @_ ) }
 # blocks interpolation across it).  Interpolated cells are floats.  Fills within
 # each column's existing length only; a non-ref row is passed through untouched.
 sub interpolate {
+	_help('interpolate') if _want_help(@_);
 	my $df = shift;
 	die "interpolate: undefined data in first position" unless defined $df;
 	my $shape = _df_shape($df, 'interpolate');
@@ -3676,6 +4393,7 @@ sub _t1_cat_p {
 }
 
 sub table_one {
+	_help('table_one') if _want_help(@_);
 	my ($df, %opt) = @_;
 	my %known = map { $_ => 1 } qw(by vars types nonparametric digits pct_digits);
 	my @bad = sort grep { !$known{$_} } keys %opt;
@@ -3786,6 +4504,7 @@ sub _num_pair {
 # with the Hedges' g small-sample bias correction and a large-sample
 # (normal-approximation) confidence interval.
 sub cohen_d {
+	_help('cohen_d') if _want_help(@_);
 	my ($x, $y, %opt) = @_;
 	my $cl = defined $opt{conf_level} ? $opt{conf_level}
 	       : defined $opt{'conf.level'} ? $opt{'conf.level'} : 0.95;
@@ -3819,6 +4538,7 @@ sub cohen_d {
 # convention used for covariate-balance "Table 1" diagnostics (R's tableone /
 # stddiff).  Returns the signed value.
 sub smd {
+	_help('smd') if _want_help(@_);
 	my ($x, $y) = @_;
 	my ($xn, $yn) = _num_pair($x, $y, 'smd');
 	my $denom = sqrt((var($xn) + var($yn)) / 2);
@@ -3829,6 +4549,7 @@ sub smd {
 # _xtab(\@a, \@b) -> (\@table, \@rowlevels, \@collevels): contingency table
 # from two parallel categorical vectors (rows = levels of a, cols = levels of b).
 sub _xtab {
+	_help('_xtab') if _want_help(@_);
 	my ($a, $b) = @_;
 	die "cramers_v: the two vectors must have the same length\n"
 		unless @$a == @$b;
@@ -3850,6 +4571,7 @@ sub _xtab {
 # with the Bergsma (2013) bias-corrected variant.  Accepts either a table
 # (array of array refs of counts) or two parallel categorical vectors.
 sub cramers_v {
+	_help('cramers_v') if _want_help(@_);
 	my @args = @_;
 	my $tab;
 	if (ref $args[0] eq 'ARRAY' && ref $args[0][0] eq 'ARRAY') {
@@ -3908,6 +4630,7 @@ sub cramers_v {
 # from the ANOVA sums of squares.  Accepts an aov() result hash (single factor)
 # or raw values + group labels.
 sub eta_squared {
+	_help('eta_squared') if _want_help(@_);
 	my @args = @_;
 	my $aov_res;
 	if (ref $args[0] eq 'HASH') {
@@ -4047,6 +4770,7 @@ sub _quantile7 {
 # a hash of predictor => VIF.  (Numeric predictors only; categorical predictors
 # would require a generalized VIF.)
 sub vif {
+	_help('vif') if _want_help(@_);
 	my ($data, $spec) = @_;
 	die "vif: first argument must be a data reference\n" unless ref $data;
 	my @preds;
@@ -4078,6 +4802,7 @@ sub vif {
 # cut() on type-7 quantiles, as in ResourceSelection::hoslem.test); the statistic
 # compares observed and expected event counts per bin.  df = g - 2.
 sub hosmer_lemeshow {
+	_help('hosmer_lemeshow') if _want_help(@_);
 	my ($obs, $pred, %opt) = @_;
 	die "hosmer_lemeshow: observed and predicted must be array references\n"
 		unless ref $obs eq 'ARRAY' && ref $pred eq 'ARRAY';
@@ -4158,6 +4883,7 @@ sub _qgamma {
 # R's epitools::ageadjust.direct), which is accurate even for rare events.
 # `per` scales every reported rate (e.g. per => 100_000).  Validated against R.
 sub age_standardize {
+	_help('age_standardize') if _want_help(@_);
 	my @a = @_;
 	my (%opt, $count, $pop, $stdpop, $rate);
 	if (ref $a[0] eq 'ARRAY') {

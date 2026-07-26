@@ -7,6 +7,65 @@ This is meant to call subroutines directly through eXternal Subroutines (XS) for
 
 There **are** other modules on CPAN that can do **PARTS** of this, but this works the way that I **want** it to.
 
+# Getting help
+
+`h` prints any function's section of this document to `STDOUT` and returns, in
+the spirit of R's `?function` at the prompt. It takes the name three ways:
+
+    h('quantile');    # by name
+    h(*quantile);     # by name, unquoted
+    h(\&quantile);    # by reference
+    h();              # this section, and the list of documented functions
+
+    perl -MStats::LikeR -e 'h(*agg)'   # straight from the shell
+
+`h` works for every function in the distribution, the XS ones and the pure Perl
+ones alike, because it looks the name up in the module's own POD rather than
+watching an argument list. That POD is generated from this file, so what `h`
+prints is what you are reading.
+
+Note that `h(bedroc)`, with no quotes and no sigil, cannot be made to work:
+every function here is exported, so Perl parses the bareword as a call to
+`bedroc()` before `h` is ever reached. Use one of the three forms above.
+
+## The `'?'` and `'h'` arguments
+
+The **pure Perl** functions additionally accept `'?'` or `'h'` in place of their
+arguments. That prints the same text and then **dies**, because a bare `'h'`
+where an argument was expected might have been meant as data, so returning a
+result would be a guess:
+
+    agg('h');            # prints the agg section, then dies
+    read_table('?');     # likewise
+    view($df, n => 'h'); # recognized anywhere in the argument list
+
+The functions that take it are the ones implemented in `lib/Stats/LikeR.pm`:
+`age_standardize`, `agg`, `aoh2hoh`, `assign`, `bfill`, `chunk`, `cohen_d`,
+`col`, `colnames`, `concat`, `cramers_v`, `drop_cols`, `drop_duplicates`,
+`dropna`, `eta_squared`, `ffill`, `fillna`, `hosmer_lemeshow`, `interpolate`,
+`map_cell`, `melt`, `ncol`, `nrow`, `pivot_table`, `qcut`, `read_table`,
+`rename_cols`, `rownames`, `select_cols`, `smd`, `summary`, `table_one`,
+`TukeyHSD`, `view`, `vif`. The XS functions deliberately do **not** do this —
+see below.
+
+Only a defined, non-reference argument of exactly one character can trigger it.
+Data frames, code references, `col()` objects, `undef` and plain numbers are all
+safe, as are longer strings such as `'help'` or `'hour'`.
+
+What it cannot tell apart is a column, file or option value that really is the
+bare string `'h'` or `'?'`: `col('h')` asks for help, not for a column named
+`h`. Set `$Stats::LikeR::HELP = 0` for code that has to pass such a value —
+`h()` is unaffected either way:
+
+    {
+        local $Stats::LikeR::HELP = 0;
+        my $adults = filter($df, col('h') > 3);   # a predicate on column h
+    }
+
+This is exactly why the XS functions don't read their arguments for help:
+`vals($df, 'h')`, `csort($df, 'h')` and `group_by($df, 'h', ...)` are ordinary
+calls naming a column, and `h('vals')` is already unambiguous.
+
 # Functions/Subroutines
 
 ---
@@ -856,9 +915,9 @@ machine precision in a single line.
     # string labels
     bedroc(\@scores, ['case','ctrl',...], positive => 'case');
 
-Calling `bedroc` with a single argument of `'h'`, `'H'`, or `'?'` prints a short
-usage summary to `STDOUT` (in the spirit of R's `?function`) and returns
-nothing.
+Calling `bedroc` with a single argument of `'h'` or `'?'` prints this section to
+`STDOUT` (in the spirit of R's `?function`) and dies. See
+[Getting help](#getting-help).
 
 ## bfill
 
@@ -2568,6 +2627,52 @@ Data can be further broken down with filter/subs like in `read_table`:
 
 where each filter filters on the columns, e.g. second hash keys.
 
+## h
+
+Print a function's documentation and return. This is the module's `?function`:
+ask for a name, get the section of the manual that describes it.
+
+    h('quantile');    # by name
+    h(*quantile);     # by name, unquoted
+    h(\&quantile);    # by reference
+    h();              # the general help, and every documented function
+
+    perl -MStats::LikeR -e 'h(*write_table)'   # straight from the shell
+
+### Arguments
+
+| Form | Meaning |
+| --- | --- |
+| `h('name')` | A string. A package prefix is ignored, so `h('Stats::LikeR::agg')` works too. |
+| `h(*name)` | A typeglob. The closest thing to an unquoted name that Perl will allow here. |
+| `h(\&name)` | A code reference to one of this module's functions. Dies if the reference is not one. |
+| `h()` | No argument: prints [Getting help](#getting-help) and lists every documented function. |
+
+`h(bedroc)`, with no quotes and no sigil, cannot be made to work: every function
+here is exported, so Perl parses the bareword as a call to `bedroc()` before `h`
+is ever reached.
+
+### Return value
+
+The name whose documentation was printed, so `h` is usable in a pipeline:
+
+    my @shown = map { h($_) } qw(auc auroc roc);
+
+Unlike the [`'?'` and `'h'` arguments](#the--and-h-arguments), `h` does **not**
+die. You asked for it by name, so there is nothing ambiguous to protect you
+from.
+
+### Where the text comes from
+
+`h` renders the module's own POD at run time. That POD is generated from
+`README.md`, so `h` and this document can never disagree. A function with no
+section of its own — an internal helper, or `ptukey` / `qtukey` — prints the
+list of functions that do have one.
+
+Output is wrapped to `$ENV{COLUMNS}` when that is set (clamped to 40-100
+columns), and to 80 otherwise. Parameter tables are rendered as aligned plain
+text.
+
 ## hoa2aoh
 
 Turn a hash-of-arrays into an array-of-hashes.
@@ -3937,8 +4042,9 @@ the minimum value is always included.
     array reference of probabilities in `[0, 1]` giving explicit cut
     boundaries, e.g. `[0, 0.5, 0.95, 1]`.
 
-For a usage reminder at the prompt, call `qcut('h')` (or `qcut('H')`); it dies
-with a short help message.
+For a usage reminder at the prompt, call `qcut('h')` (or `qcut('?')`); it prints
+this section and dies. Every function takes those two arguments the same way —
+see [Getting help](#getting-help).
 
 ### What it returns
 
@@ -4022,9 +4128,10 @@ default raises, `'drop'` merges:
     my @edges = qcut(\@tied, 4, duplicates => 'drop');
     # fewer than 5 edges; the empty quantile bands are collapsed
 
-Get the usage summary and stop:
+Get the documentation and stop:
 
-    qcut('h');   # dies with the help text above
+    qcut('h');   # prints this section to STDOUT, then dies
+    qcut('?');   # the same call
 
 ## quantile
 
@@ -5056,6 +5163,10 @@ raw values (no cell number formats), matching the round-trip behaviour of
 # Changes
 
 ## 0.27
+
+New `h` function: `h('agg')`, `h(*agg)` or `h(\&agg)` prints that function's section of this document and returns, in the spirit of R's `?function`. `h()` lists every documented function. It covers the XS functions as well as the Perl ones, because it looks the name up in the module's POD instead of reading an argument list — see [Getting help](#getting-help).
+- The pure Perl functions also accept `'?'` or `'h'` in place of their arguments, which prints the same text and then dies. `$Stats::LikeR::HELP = 0` switches that off for code that has to pass a column or file really named `'h'`.
+- `qcut`'s hand-written usage message was replaced by its section of this document; `qcut('h')` and `qcut('?')` still die, but `qcut('H')` no longer means help.
 
 speed improvements in calculation of Kendall tau and p-value.  Improvement of writing xlsx files that won't show in time, but pure waste was removed.
 
