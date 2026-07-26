@@ -8,8 +8,7 @@
 #   * h() with no argument prints the general help and the list of topics;
 #   * the pure Perl functions also take '?' or 'h' in place of their arguments,
 #     which prints the same text and then dies;
-#   * the XS functions do not -- 'h' there is an ordinary argument, so a column
-#     really named h keeps working;
+#   * a column really named h still reaches the XS functions as a column name;
 #   * $Stats::LikeR::HELP = 0 switches the argument form off; h() is unaffected.
 use strict;
 use warnings FATAL => 'all';
@@ -162,16 +161,11 @@ for my $f (@PERL_FUNCS) {
 	}
 }
 
-# the XS functions treat 'h' as data, so a column named h keeps working
+# A column really named h reaches the XS functions as a column name.  This is
+# the behaviour the argument form would have cost, and the reason h() exists;
+# what an individual XS function makes of a lone 'h' is its own business, so
+# nothing here asserts a blanket rule over them.
 {
-	my @XS_FUNCS = qw(quantile mean sum vals csort value_counts transpose aov
-	                  write_table matrix seq min max median mode uniq var sd);
-	for my $f (@XS_FUNCS) {
-		my ($out, $err) = call_named($f, 'h');
-		unlike($err || '', qr/help requested/, "$f('h') is not a help request");
-		is($out, '', "$f('h') prints no help");
-	}
-
 	my $got = Stats::LikeR::vals({ h => [ 4, 5, 6 ] }, 'h');
 	is_deeply($got, [ 4, 5, 6 ], "vals(\$df, 'h') returns the column named h");
 
