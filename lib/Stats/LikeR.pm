@@ -4959,6 +4959,65 @@ This is meant to call subroutines directly through eXternal Subroutines (XS) for
 
 There B<are> other modules on CPAN that can do B<PARTS> of this, but this works the way that I B<want> it to.
 
+=head1 Getting help
+
+C<h> prints any function's section of this document to C<STDOUT> and returns, in
+the spirit of R's C<?function> at the prompt. It takes the name three ways:
+
+ h('quantile');    # by name
+ h(*quantile);     # by name, unquoted
+ h(\&quantile);    # by reference
+ h();              # this section, and the list of documented functions
+
+ perl -MStats::LikeR -e 'h(*agg)'   # straight from the shell
+
+C<h> works for every function in the distribution, the XS ones and the pure Perl
+ones alike, because it looks the name up in the module's own POD rather than
+watching an argument list. That POD is generated from this file, so what C<h>
+prints is what you are reading.
+
+Note that C<h(bedroc)>, with no quotes and no sigil, cannot be made to work:
+every function here is exported, so Perl parses the bareword as a call to
+C<bedroc()> before C<h> is ever reached. Use one of the three forms above.
+
+=head2 The C<'?'> and C<'h'> arguments
+
+The B<pure Perl> functions additionally accept C<'?'> or C<'h'> in place of their
+arguments. That prints the same text and then B<dies>, because a bare C<'h'>
+where an argument was expected might have been meant as data, so returning a
+result would be a guess:
+
+ agg('h');            # prints the agg section, then dies
+ read_table('?');     # likewise
+ view($df, n => 'h'); # recognized anywhere in the argument list
+
+The functions that take it are the ones implemented in C<lib/Stats/LikeR.pm>:
+C<age_standardize>, C<agg>, C<aoh2hoh>, C<assign>, C<bfill>, C<chunk>, C<cohen_d>,
+C<col>, C<colnames>, C<concat>, C<cramers_v>, C<drop_cols>, C<drop_duplicates>,
+C<dropna>, C<eta_squared>, C<ffill>, C<fillna>, C<hosmer_lemeshow>, C<interpolate>,
+C<map_cell>, C<melt>, C<ncol>, C<nrow>, C<pivot_table>, C<qcut>, C<read_table>,
+C<rename_cols>, C<rownames>, C<select_cols>, C<smd>, C<summary>, C<table_one>,
+C<TukeyHSD>, C<view>, C<vif>. The XS functions deliberately do B<not> do this —
+see below.
+
+Only a defined, non-reference argument of exactly one character can trigger it.
+Data frames, code references, C<col()> objects, C<undef> and plain numbers are all
+safe, as are longer strings such as C<'help'> or C<'hour'>.
+
+What it cannot tell apart is a column, file or option value that really is the
+bare string C<'h'> or C<'?'>: C<col('h')> asks for help, not for a column named
+C<h>. Set C<$Stats::LikeR::HELP = 0> for code that has to pass such a value —
+C<h()> is unaffected either way:
+
+ {
+     local $Stats::LikeR::HELP = 0;
+     my $adults = filter($df, col('h') > 3);   # a predicate on column h
+ }
+
+This is exactly why the XS functions don't read their arguments for help:
+C<vals($df, 'h')>, C<csort($df, 'h')> and C<group_by($df, 'h', ...)> are ordinary
+calls naming a column, and C<h('vals')> is already unambiguous.
+
 =head1 Functions/Subroutines
 
 ========================================================================
@@ -4972,7 +5031,7 @@ Add data to an existing hash or array reference. This function acts as the equiv
 When the target is a Hash of Hashes, incoming hash keys update existing rows, and new keys create new rows.
 
  $data = { 'Jack Smith' => { age => 30 } };
- 
+
  $n = { 
      'Jack Smith' => {    # Update existing (Hash)
          dept => 'Engineering'
@@ -4980,7 +5039,7 @@ When the target is a Hash of Hashes, incoming hash keys update existing rows, an
      'Jane Doe'   => { age => 25, dept => 'Sales' }, # Add new (Hash)
      'Invalid'    => 'Not a reference'               # Edge case safety
  };
- 
+
  add_data($data, $n); 
 
 B<Resulting Structure:>
@@ -5021,12 +5080,12 @@ C<add_data> now natively supports Array references at the root level. When targe
  $data = [ 
      { id => 1, name => 'Alice' } 
  ];
- 
+
  $n = [ 
      { role => 'Admin' },             # Updates index 0
      { id => 2, name => 'Bob' }       # Creates index 1
  ];
- 
+
  add_data($data, $n);
 
 B<Resulting Structure:>
@@ -5067,7 +5126,7 @@ B<2. Root-Level Coercion (Mixing Outer Containers):>
      '1' => [ 'z', 30 ],                 # Array pair coerced to Hash, creates $data->[1]
      'ignored' => { k => 'v' }           # Ignored: cannot map to an array index
  };
- 
+
  add_data($data, $n);
 
 B<Resulting Structure strictly remains an Array of Hashes:>
@@ -5090,7 +5149,7 @@ events. Validated numerically against R.
  my @count  = (5, 20, 55, 60);       # events per age stratum
  my @pop    = (1000, 3000, 4000, 2000);  # person-time / population per stratum
  my @stdpop = (2000, 3000, 3000, 2000);  # standard population weights
- 
+
  my $r = age_standardize(\@count, \@pop, \@stdpop, per => 100_000);
  printf "age-adjusted rate = %.1f per 100k (95%% CI %.1f-%.1f)\n",
      $r->{adj_rate}, $r->{'conf.int'}[0], $r->{'conf.int'}[1];
@@ -5246,19 +5305,19 @@ is never modified.
 =head3 Usage
 
  use Stats::LikeR;
- 
+
  # grouped, one aggregator per column
  my $out = agg($df, by => 'sex', agg => { wt => 'mean' });
- 
+
  # grouped, several aggregators, several columns
  my $out = agg($df,
      by  => 'sex',
      agg => { wt => [ 'mean', 'sd' ], age => [ 'mean', 'count' ] },
  );
- 
+
  # ungrouped: the whole frame becomes one row
  my $out = agg($df, agg => { wt => 'mean', age => 'count' });
- 
+
  # group on two columns and emit a hash of hashes
  my $out = agg($df,
      by            => [ 'a', 'b' ],
@@ -5274,7 +5333,7 @@ C<agg> takes the data frame first, then C<< name =E<gt> value >> pairs.
 
 =item * B<agg> (required) — a hashref mapping each column to an aggregator
 I<spec>. A spec is one of: a single aggregator name (string), an arrayref of
-names, or a coderef. See L<#aggregators> below.
+names, or a coderef. See L</"Aggregators"> below.
 
 =item * B<by> — a single column or an arrayref of columns to group on. Omit it to
 aggregate the entire frame into one row.
@@ -5401,7 +5460,7 @@ B<two or more> it becomes C<< E<lt>colE<gt>_E<lt>funcE<gt> >>:
      { sex => 'M', wt => 80, age => 40    },
      { sex => 'F', wt => 55, age => undef },
  ];
- 
+
  my $out = agg($df,
      by  => 'sex',
      agg => { wt => [ 'mean', 'sd' ], age => [ 'mean', 'count' ] },
@@ -5431,7 +5490,7 @@ B<Resulting Structure> (AoH in, AoH out):
 Without C<by>, the frame collapses to one row:
 
  my $out = agg($df, agg => { wt => 'mean', age => 'count' });
- 
+
  # [ { wt => 66.25, age => 3 } ]
 
 =head3 Array of Arrays (AoA)
@@ -5440,7 +5499,7 @@ Columns are integer positions. Grouping on column 0 and reducing column 1:
 
  my $aoa = [ [ 'M', 70 ], [ 'F', 60 ], [ 'M', 80 ] ];
  my $out = agg($aoa, by => 0, agg => { 1 => [ 'mean', 'max' ] });
- 
+
  # [ [ 'F', 60, 60 ], [ 'M', 75, 80 ] ]
  #     ^grp  ^mean ^max
 
@@ -5454,7 +5513,7 @@ columns are joined with a dot, an ungrouped result is keyed C<all>, and a
 collision is made unique with a C<.N> suffix.
 
  my $out = agg($df, by => 'sex', agg => { wt => 'mean' }, 'output.type' => 'hoh');
- 
+
  # {
  #     F => { sex => 'F', wt => 57.5 },
  #     M => { sex => 'M', wt => 75   },
@@ -5602,14 +5661,14 @@ with the formula.
 <tr>
   <td><i>(Term Name)</i></td>
   <td><code>HashRef</code></td>
-  <td>ANOVA-table stats for each term (<code>'ctrl'</code>, <code>'N:P'</code>, …). <code>'Mean Sq'</code>, <code>'F value'</code> and <code>'Pr(>F)'</code> are omitted for 0-df (aliased) terms.</td>
-  <td><code>{'Df'=>1,'Sum Sq'=>14.2,'Mean Sq'=>14.2,'F value'=>25.81,'Pr(>F)'=>0.0004}</code></td>
+  <td>ANOVA-table stats for each term (<code>'ctrl'</code>, <code>'N:P'</code>, …). <code>'Mean Sq'</code>, <code>'F value'</code> and <code>'Pr(&gt;F)'</code> are omitted for 0-df (aliased) terms.</td>
+  <td><code>{'Df'=&gt;1,'Sum Sq'=&gt;14.2,'Mean Sq'=&gt;14.2,'F value'=&gt;25.81,'Pr(&gt;F)'=&gt;0.0004}</code></td>
 </tr>
 <tr>
   <td><code>Residuals</code></td>
   <td><code>HashRef</code></td>
   <td>Residual (error) statistics; never carries an F test.</td>
-  <td><code>{'Df'=>10,'Sum Sq'=>5.5,'Mean Sq'=>0.55}</code></td>
+  <td><code>{'Df'=&gt;10,'Sum Sq'=&gt;5.5,'Mean Sq'=&gt;0.55}</code></td>
 </tr>
 </tbody>
 </table>
@@ -5733,13 +5792,13 @@ Returns a hashref. Each top-level key is a row's C<< $row-E<gt>{$key} >> value; 
      { id => 'p1', kd => 12.4, chain => 'A' },
      { id => 'p2', kd =>  3.1, chain => 'B' },
  ];
- 
+
  my $by_id = aoh2hoh($rows, 'id');
  # {
  #   p1 => { id => 'p1', kd => 12.4, chain => 'A' },
  #   p2 => { id => 'p2', kd =>  3.1, chain => 'B' },
  # }
- 
+
  $by_id->{p2}{kd};   # 3.1 -- O(1) lookup instead of a linear scan
 
 =head3 Semantics
@@ -5917,21 +5976,21 @@ The function returns a single C<HashRef> containing the evaluated statistical re
   <td><code>HashRef</code></td>
   <td><code>undef</code></td>
   <td>A nested hash for each independent term in the formula (e.g., <code>'Group'</code>, <code>'N:P'</code>), containing its ANOVA table statistics.</td>
-  <td><code>{'Df' => 1, 'Sum Sq' => 14.2, 'Mean Sq' => 14.2, 'F value' => 25.81, 'Pr(>F)' => 0.0004}</code></td>
+  <td><code>{'Df' =&gt; 1, 'Sum Sq' =&gt; 14.2, 'Mean Sq' =&gt; 14.2, 'F value' =&gt; 25.81, 'Pr(&gt;F)' =&gt; 0.0004}</code></td>
 </tr>
 <tr>
   <td><code>Residuals</code></td>
   <td><code>HashRef</code></td>
   <td><code>undef</code></td>
   <td>A nested hash containing the residual (error) statistics for the fitted model.</td>
-  <td><code>{'Df' => 10, 'Sum Sq' => 5.5, 'Mean Sq' => 0.55}</code></td>
+  <td><code>{'Df' =&gt; 10, 'Sum Sq' =&gt; 5.5, 'Mean Sq' =&gt; 0.55}</code></td>
 </tr>
 <tr>
   <td><code>group_stats</code></td>
   <td><code>HashRef</code></td>
   <td><code>undef</code></td>
   <td>A nested hash containing descriptive statistics (<code>mean</code> and <code>size</code> / count) for every column evaluated in the original unstacked data structure.</td>
-  <td><code>{'mean' => {'A' => 2.1, 'B' => 5.4}, 'size' => {'A' => 10, 'B' => 10}}</code></td>
+  <td><code>{'mean' =&gt; {'A' =&gt; 2.1, 'B' =&gt; 5.4}, 'size' =&gt; {'A' =&gt; 10, 'B' =&gt; 10}}</code></td>
 </tr>
 </tbody>
 </table>
@@ -5955,14 +6014,14 @@ is the equivalent of:
 
  yield <- c(5.5, 5.4, 5.8, 4.5, 4.8, 4.2)
  ctrl <- c(1,     1,   1,   0,   0,   0)
- 
+
  # Combine them into a named list (the R equivalent of your hash)
  my_list <- list(yield = yield, ctrl = ctrl)
- 
+
  # Convert the list into a "long" dataframe
  # This creates two columns: "values" and "ind" (the group name)
  my_data <- stack(my_list)
- 
+
  # Rename columns for clarity (optional but good practice)
  colnames(my_data) <- c("Value", "Group")
  anova_model <- aov(Value ~ Group, data = my_data)
@@ -5976,7 +6035,7 @@ Add new columns to a data frame, computed from the columns already there — or 
 
 =head3 Usage
 
- assign($df, new_name => VALUE, another => VALUE, ...);
+ assign($df, new\_name => VALUE, another => VALUE, ...);
 
 =over
 
@@ -6020,10 +6079,10 @@ A coderef is classified by what it returns in list context:
 
 =item * B<A list of more than one value → whole column.> The list becomes the entire column, distributed positionally. This is the natural fit for column functions like C<rank>:
 
+=back
+
  assign($df, 'ΔG rank' => sub { rank( vals($df, 'dG_kcal_mol') ) });
  # rank() returns a list, so the whole ranking lands in one column.
-
-=back
 
 =head3 Arrayref values
 
@@ -6043,7 +6102,7 @@ A plain coderef stores its B<return value>, so an in-place transform of an exist
 C<map_cell { ... }> removes the ceremony. Inside the block, B<< C<$_> is the named column's current cell >> (not the whole row), the block's return value is B<ignored>, and the modified C<$_> is stored back:
 
  use Stats::LikeR;   # exports map_cell alongside assign
- 
+
  assign($df, 'Res.' => map_cell { s/^[A-Z]:// });   # strip a leading "X:"
  assign($df, 'Res.' => map_cell { $_ = uc });        # upper-case in place
 
@@ -6083,10 +6142,14 @@ Notes:
 
 =item * B<Pairs run in order>, so a later column can use one you just made:
 
+=back
+
  assign($df,
      bmi   => sub { $_->{weight} / $_->{height} ** 2 },
      class => sub { $_->{bmi} > 25 ? 'high' : 'ok' },   # uses bmi
  );
+
+=over
 
 =item * B<Same recipe, all shapes.> The same per-row C<< sub { $_-E<gt>{weight} / ... } >> works for AoH, HoA, and HoH; you always read the row through C<$_>.
 
@@ -6103,21 +6166,21 @@ chance a random positive scores higher than a random negative. C<1.0> is perfect
 C<0.5> is a coin flip.
 
  use Stats::LikeR 'auc';
- 
+
  my $auc = auc(\@scores, \@labels);          # e.g. 0.848
 
 Options: C<positive> (which label is the positive class, default C<1>) and
 C<direction> (C<< 'E<gt>' >> = higher score is more positive, the default; C<< 'E<lt>' >> flips it).
-For the full curve and a confidence interval, see L<#roc>.
+For the full curve and a confidence interval, see L<C<roc>|/"roc">.
 
 =head2 auroc
 
-The same number as L<#auc>, but with the argument order of Python's
+The same number as L<C<auc>|/"auc">, but with the argument order of Python's
 C<sklearn.metrics.roc_auc_score> — B<labels first, scores second> — so code
 ported from scikit-learn works unchanged. Higher score means the positive class.
 
  use Stats::LikeR 'auroc';
- 
+
  my $a = auroc(\@labels, \@scores);          # like roc_auc_score(y, s)
 
 Options: C<positive> (which label is the positive class, default C<1>) and
@@ -6130,7 +6193,7 @@ the extreme tail as positive.
 =head2 bedroc
 
 BEDROC — Boltzmann-Enhanced Discrimination of ROC (Truchon & Bayly, I<J. Chem.
-Inf. Model.> 2007) — is an I<early-recognition> metric. Unlike L<#auc>,
+Inf. Model.> 2007) — is an I<early-recognition> metric. Unlike L<C<auc>|/"auc">,
 which weights a correct ranking equally everywhere, BEDROC rewards actives
 (positives) that appear near the B<top> of a score-sorted list far more than
 actives buried deep in it. That is what you want when only the first handful of
@@ -6139,7 +6202,7 @@ review, triage). The result lies in C<[0, 1]>: C<1> is ideal early recognition,
 C<0> is the worst possible ranking.
 
  use Stats::LikeR 'bedroc';
- 
+
  my $r = bedroc(\@scores, \@labels, alpha => 20);
  print $r->{bedroc};             # e.g. 0.9989
 
@@ -6226,7 +6289,7 @@ C<ra * n_top>), and C<enrichment_factor> (C<(active_count / n_top) / ra>).
      top    => 0.05);
  print $r->{bedroc};
  print $r->{enrichment}{enrichment_factor};   # e.g. 2.0 => 2x over random
- 
+
  # fraction-defined actives straight from a raw ΔG column: the strongest-
  # binding 10% (lowest ΔG) are the actives, best predictions rank first.
  # No pre-built 0/1 label, no per-script regression variant.
@@ -6236,16 +6299,16 @@ C<ra * n_top>), and C<enrichment_factor> (C<(active_count / n_top) / ra>).
      active_side => 'low',    # lowest ΔG = strongest binders = actives
      direction   => '<');     # lower predicted ΔG ranks first
  print $b->{bedroc};
- 
+
  # lower score = better ranker
  bedroc(\@scores, \@labels, direction => '<');
- 
+
  # string labels
  bedroc(\@scores, ['case','ctrl',...], positive => 'case');
 
-Calling C<bedroc> with a single argument of C<'h'>, C<'H'>, or C<'?'> prints a short
-usage summary to C<STDOUT> (in the spirit of R's C<?function>) and returns
-nothing.
+Calling C<bedroc> with a single argument of C<'h'> or C<'?'> prints this section to
+C<STDOUT> (in the spirit of R's C<?function>) and dies. See
+L</"Getting help">.
 
 =head2 bfill
 
@@ -6274,7 +6337,7 @@ Returns a NEW frame; the input is never modified.
 
  bfill([ { v => undef }, { v => 2 }, { v => undef } ], cols => [ 'v' ]);
  # [ { v => 2 }, { v => 2 }, { v => undef } ]   # trailing NA stays
- 
+
  bfill({ b => { x => undef }, a => { x => 5 }, c => { x => undef } }, cols => [ 'x' ]);
  # sorted-key order a,b,c; nothing after a to pull back, so:
  # { a => { x => 5 }, b => { x => undef }, c => { x => undef } }
@@ -6300,9 +6363,9 @@ star. If he/she is only guessing, he/she will be right half the time, so the
 You play 10 rounds and the toddler gets 6 right. Real skill, or just luck?
 
  use Stats::LikeR 'binom_test';
- 
+
  my $r = binom_test(6, 10, p => 0.5); # 6 wins, 10 rounds, guessing rate 0.5
- 
+
  print $r->{p_value};                 # 0.7539
 
 The full result is a hashref:
@@ -6337,7 +6400,7 @@ so we call this B<just chance>.
 Suppose the toddler had gone 9 for 10 instead:
 
  my $r = binom_test(9, 10, p => 0.5);
- 
+
  print $r->{p_value};                   # 0.0215
 
 Now C<p = 0.02>, under C<0.05>. A pure guesser almost never does that well, so
@@ -6499,12 +6562,12 @@ For 2x2 matrices, Yates' Continuity Correction is applied automatically.
 </tr>
 <tr>
   <td><b>1D Hash</b></td>
-  <td><code>{ key1 => $v1, key2 => $v2 }</code></td>
+  <td><code>{ key1 =&gt; $v1, key2 =&gt; $v2 }</code></td>
   <td>Chi-squared test for given probabilities</td>
 </tr>
 <tr>
   <td><b>2D Hash</b></td>
-  <td><code>{ row1 => { c1 => $v1, c2 => $v2 } }</code></td>
+  <td><code>{ row1 =&gt; { c1 =&gt; $v1, c2 =&gt; $v2 } }</code></td>
   <td>Pearson's Chi-squared test (Yates' correction if 2x2)</td>
 </tr>
 </tbody>
@@ -6628,7 +6691,7 @@ Passing a Hash of Hashes (HoH) applies the exact same logic as a 2D Array, but p
      GroupA => { Success => 10, Failure => 15 },
      GroupB => { Success => 20, Failure => 5  }
  };
- 
+
  my $res = chisq_test($data);
 
 B<Output:>
@@ -6658,13 +6721,13 @@ Flat Hash References evaluate Goodness of Fit while preserving your categorical 
      Oranges => 20, 
      Bananas => 30 
  };
- 
+
  my $res = chisq_test($data);
 
 =head2 chunk
 
 Split an array into contiguous, roughly equal groups by I<position>. Unlike
-L<#qcut>, C<chunk> does not inspect values, sort, or compute cutpoints; it
+L<C<qcut>|/"qcut">, C<chunk> does not inspect values, sort, or compute cutpoints; it
 slices the array in the order given. Use it for batching work, paginating, or
 grouping non-numeric data such as strings.
 
@@ -6745,15 +6808,15 @@ e.g. an exposure/outcome odds ratio adjusted for study site. Same as R's
 C<mantelhaen.test>.
 
  use Stats::LikeR 'cmh_test';
- 
+
  my $r = cmh_test([ [10,3,5,12],     # stratum 1 as [a,b,c,d]
                     [20,6,8,15],     # stratum 2
                     [ 7,4,9,11] ]);  # stratum 3
- 
+
  print $r->{p_value};    # combined test across strata
  print $r->{estimate};   # Mantel–Haenszel common odds ratio
 
-Each 2×2 uses the same layout as L<#epi_2x2>. Options: C<correct>
+Each 2×2 uses the same layout as L<C<epi_2x2>|/"epi_2x2">. Options: C<correct>
 (continuity correction, default C<1>) and C<conf_level> (default C<0.95>). The
 result also has C<statistic> (chi-squared), C<parameter> (df = 1), C<conf_int> (for
 the common OR), and C<k> (number of strata).
@@ -6769,7 +6832,7 @@ Validated numerically against R.
  printf "d = %.2f (95%% CI %.2f–%.2f), Hedges g = %.2f\n",
      $d->{estimate}, $d->{'conf.int'}[0], $d->{'conf.int'}[1], $d->{hedges_g};
 
-Compare with L<#smd>, which standardizes by the simple (unweighted) average
+Compare with L</"smd">, which standardizes by the simple (unweighted) average
 of the group variances and is the convention for covariate-balance tables.
 
 =head3 Output variables
@@ -6847,15 +6910,15 @@ the name of a function that takes two columns (C<cor>, C<t_test>, …) and you g
 back every column compared against every other column.
 
  use Stats::LikeR;
- 
+
  my %data = (
      height => [ 170, 165, 180, 175 ],
      weight => [  70,  60,  85,  77 ],
      age    => [  30,  41,  25,  38 ],
  );
- 
+
  my $result = col2col(\%data, 'cor');
- 
+
  # $result->{height}{weight}  == correlation of height vs weight
  # $result->{height}{age}     == correlation of height vs age
  # ...and so on for every pair
@@ -7143,13 +7206,13 @@ C<ncol($df)> for a rectangular frame.
 
  my $aoh = [ { b => 2, a => 1 }, { a => 3, c => 9 } ];
  my @cols = colnames($aoh);        # ('a', 'b', 'c')  -- union, sorted
- 
+
  my $hoa = { z => [1,2], a => [3,4], m => [5,6] };
  my @cols = colnames($hoa);        # ('a', 'm', 'z')
- 
+
  my $aoa = [ [1,2,3], [4,5,6] ];
  my @cols = colnames($aoa);        # (0, 1, 2)
- 
+
  my $n = colnames($hoa);           # 3  (scalar context == ncol)
 
 =head2 concat
@@ -7174,7 +7237,7 @@ original frames are never modified.
 =head3 Usage
 
  use Stats::LikeR;
- 
+
  my $all = concat($df1, $df2, $df3);   # any number of frames
  my $all = rbind($df1, $df2);          # identical: rbind is a synonym
 
@@ -7266,7 +7329,7 @@ C<rbind> is the same subroutine as C<concat>, exported under a second name for
 readers who know it from R:
 
  my $c = rbind($df1, $df2);
- 
+
  # they are literally the same code reference:
  \&Stats::LikeR::rbind == \&Stats::LikeR::concat;   # true
 
@@ -7330,16 +7393,16 @@ or
 
 Cox proportional-hazards regression: how covariates raise or lower the hazard
 (the risk of an event over time). It is the survival-analysis counterpart of
-L<#glm> and reports hazard ratios, like R's C<survival::coxph> (Efron ties).
+L<C<glm>|/"glm"> and reports hazard ratios, like R's C<survival::coxph> (Efron ties).
 
 Give times, an event flag (1 = event, 0 = censored), and one or more covariates
 (a single C<\@x>, or C<[\@x1, \@x2, ...]>):
 
  use Stats::LikeR 'coxph';
- 
+
  my $fit = coxph(\@time, \@status, [\@age, \@sex],
                  names => ['age', 'sex']);
- 
+
  print $fit->{exp_coef}[0];    # hazard ratio for age
  print $fit->{p_value}[0];     # its p-value
 
@@ -7347,8 +7410,8 @@ Options: C<names>, C<ties> (C<'efron'> default, or C<'breslow'>), C<conf_level>
 (default C<0.95>), C<maxit>. The result has parallel per-covariate arrays C<coef>
 (log-HR), C<exp_coef> (HR), C<se>, C<z>, C<p_value>, C<conf_int> (HR scale), plus
 model-level C<loglik>, C<lr_stat>/C<lr_p_value> (likelihood-ratio test), C<n>,
-C<nevent>, and C<converged>. See L<#survfit> and
-L<#logrank_test>.
+C<nevent>, and C<converged>. See L<C<survfit>|/"survfit"> and
+L<C<logrank_test>|/"logrank_test">.
 
 =head2 cramers_v
 
@@ -7360,7 +7423,7 @@ tables. Validated numerically against R.
  # from a count table
  my $v = cramers_v([[10, 20, 30], [15, 25, 10]]);
  printf "V = %.3f (bias-corrected %.3f)\n", $v->{estimate}, $v->{bias_corrected};
- 
+
  # or from two parallel categorical vectors (cross-tabulated automatically)
  my $v2 = cramers_v(\@exposure, \@outcome);
 
@@ -7459,7 +7522,7 @@ Columns in an AoA are addressed by non-negative integer index:
      [ 1, 10, 'alpha' ],
      [ 2, 20, 'beta'  ],
  ];
- 
+
  my $s = csort($rows, 0);       # by column 0 -> id 1, 2, 3
  my $s = csort($rows, 2);       # by column 2 -> alpha, beta, gamma
  my $s = csort($rows, sub { $b->[1] <=> $a->[1] });   # by column 1, descending
@@ -7570,7 +7633,7 @@ C<select_cols>.
  my $hoa = { a => [1,4], b => [2,5], c => [3,6] };
  drop_cols($hoa, 'b');
  # { a => [1,4], c => [3,6] }
- 
+
  my $aoa = [ [1,2,3], [4,5,6] ];
  drop_cols($aoa, 1);          # result is re-indexed 0,1
  # [ [1,3], [4,6] ]
@@ -7627,11 +7690,11 @@ row keeps all of its columns.
 =item * B<< C<0> >> (or C<'none'>) — drop I<every> row that has a duplicate, keeping only
 rows that were unique.
 
-my $df = { id => [1, 1, 2], v => [10, 20, 30] };
-drop_duplicates($df, subset => 'id');                 # { id => [1, 2], v => [10, 30] }
-drop_duplicates($df, subset => 'id', keep => 'last'); # { id => [1, 2], v => [20, 30] }
-
 =back
+
+ my $df = { id => [1, 1, 2], v => [10, 20, 30] };
+ drop_duplicates($df, subset => 'id');                 # { id => [1, 2], v => [10, 30] }
+ drop_duplicates($df, subset => 'id', keep => 'last'); # { id => [1, 2], v => [20, 30] }
 
 Row order is preserved: the survivors come out in their original first-seen
 positions.
@@ -7684,14 +7747,11 @@ C<how> controls the threshold:
 
 =item * B<< C<'all'> >> — drop a row only if I<every> named column is undef there.
 
-my $df = { A => [1, 2, undef], B => [1, 2, 3], C => [undef, 2, 4] };
-dropna($df, cols => ['A', 'B']);
-
-
 =back
 
-=head1 { A => [1, 2], B => [1, 2], C => [undef, 2] }
-
+ my $df = { A => [1, 2, undef], B => [1, 2, 3], C => [undef, 2, 4] };
+ dropna($df, cols => ['A', 'B']);
+ # { A => [1, 2], B => [1, 2], C => [undef, 2] }
 
 Index 2 is dropped because C<A> is undef there. C<C> is not consulted, so its own
 undef at index 0 doesn't trigger a drop — but index 2 is still removed from C<C>
@@ -7728,7 +7788,7 @@ values (ambiguous HoA vs HoH).
 =head2 dunn_test
 
 Dunn's (1964) post-hoc test, the standard follow-up to a significant
-L<#kruskal_test> (Kruskal-Wallis). It performs all pairwise
+L</"kruskal_test"> (Kruskal-Wallis). It performs all pairwise
 comparisons of group rank-means using the B<shared> ranking and tie correction
 from the omnibus test, then adjusts the p-values for multiple comparisons.
 Two-sided p-values are reported (the C<FSA::dunnTest> convention). Validated
@@ -7736,7 +7796,7 @@ numerically against the canonical formula computed in base R.
 
  my @values = (2.1,3.4,1.9,5.6,4.2, 6.1,7.3,5.9,8.2,6.6, 3.3,4.4,2.2,3.3,5.5);
  my @group  = ((('A') x 5), (('B') x 5), (('C') x 5));
- 
+
  my $res = dunn_test(\@values, \@group, method => 'bh');
  for my $c (@$res) {
      printf "%-9s  Z=%+.3f  p=%.4f  (adj %.4f)\n",
@@ -7853,14 +7913,14 @@ The standard 2×2 effect measures — odds ratio, risk ratio, and risk differenc
 each with a confidence interval, plus number needed to treat — for one
 exposure×outcome table. Rows are exposure, columns are outcome:
 
-            outcome+   outcome-
-     exp+       a          b
-     exp-       c          d
+        outcome+   outcome-
+ exp+       a          b
+ exp-       c          d
 
 Pass the four counts (or a C<[a,b,c,d]> / C<[[a,b],[c,d]]> array ref):
 
  use Stats::LikeR 'epi_2x2';
- 
+
  my $r = epi_2x2(30, 70, 20, 80);
  print $r->{odds_ratio};             # 1.714
  print "@{ $r->{odds_ratio_ci} }";   # 0.895 3.285
@@ -7868,15 +7928,15 @@ Pass the four counts (or a C<[a,b,c,d]> / C<[[a,b],[c,d]]> array ref):
 Options: C<conf_level> (default C<0.95>) and C<correct> (add 0.5 to every cell,
 done automatically when a cell is 0). Result keys: C<odds_ratio>, C<risk_ratio>,
 C<risk_diff> (each with a matching C<*_ci>), C<risk_exposed>, C<risk_unexposed>, and
-C<nnt>. For a significance test use L<#fisher_test> or
-L<#chisq_test>; to adjust across strata use L<#cmh_test>.
+C<nnt>. For a significance test use L<C<fisher_test>|/"fisher_test"> or
+L<C<chisq_test>|/"chisq_test">; to adjust across strata use L<C<cmh_test>|/"cmh_test">.
 
 =head2 eta_squared
 
 Eta-squared (η²) and related effect sizes for a one-way ANOVA, computed from the
 sums of squares. Returns η², partial η² (equal to η² for a one-way design), and
 ω² (omega-squared, a less biased estimator). Accepts either raw values and group
-labels or an existing L<#aov> result. Validated numerically against R.
+labels or an existing L<C<aov>|/"aov"> result. Validated numerically against R.
 
  my $e = eta_squared(\@values, \@group);            # or eta_squared($aov_result)
  printf "eta^2 = %.3f, omega^2 = %.3f\n", $e->{eta_sq}, $e->{omega_sq};
@@ -7956,7 +8016,7 @@ Returns a NEW frame; the input is never modified.
  ffill([ { v => 1 }, { v => undef }, { v => undef }, { v => 4 }, { v => undef } ],
      cols => [ 'v' ]);
  # [ { v => 1 }, { v => 1 }, { v => 1 }, { v => 4 }, { v => 4 } ]
- 
+
  ffill([ { v => 1 }, { v => undef }, { v => undef }, { v => 4 } ],
      cols => [ 'v' ], limit => 1);
  # [ { v => 1 }, { v => 1 }, { v => undef }, { v => 4 } ]
@@ -7973,7 +8033,7 @@ a scalar or a dict. For propagation from neighbouring rows instead of a
 constant, use C<ffill>/C<bfill>.
 
  fillna($df,
-     value => 0,                    # scalar: fill every NA (or only within C<cols>)
+     value => 0,                    # scalar: fill every NA (or only within `cols`)
      value => { a => 9, b => -1 },  # dict: fill only these columns
      cols  => [ 'a', 'b' ],         # restrict a scalar fill (forbidden with a dict)
  );
@@ -7995,10 +8055,10 @@ Returns a NEW frame; the input is never modified.
 
  fillna([ { a => 1, b => undef }, { a => undef, b => 4 } ], value => 0);
  # [ { a => 1, b => 0 }, { a => 0, b => 4 } ]
- 
+
  fillna([ { a => undef, b => undef } ], value => { a => 9, Z => 1 });
  # [ { a => 9, b => undef } ]   # Z ignored, b left NA
- 
+
  fillna([ { a => undef, b => undef } ], value => 7, cols => [ 'b' ]);
  # [ { a => undef, b => 7 } ]
 
@@ -8020,7 +8080,7 @@ C<filter> accepts a predicate in one of two forms:
 
 =item 1. a B<< C<col()> expression >> — a small, composable comparison built with overloaded operators, and
 
-=item 2. a B<code reference> — for anything the operators can't express (multiple columns, regexes, matching on the row name, arbitrary logic), in the same spirit as the C<filter> option of L<#>.
+=item 2. a B<code reference> — for anything the operators can't express (multiple columns, regexes, matching on the row name, arbitrary logic), in the same spirit as the C<filter> option of C<read_table>.
 
 =back
 
@@ -8044,7 +8104,7 @@ Both C<filter> and C<col> are exported by default.
 <tr>
   <td>1</td>
   <td><code>$df</code></td>
-  <td>The data frame: an <b>array of hashes</b> (AoH, the default <code>read_table</code> output), a <b>hash of arrays</b> (HoA), or a <b>hash of hashes</b> (HoH, e.g. <code>read_table</code> with <code>'output.type' => 'hoh'</code>).</td>
+  <td>The data frame: an <b>array of hashes</b> (AoH, the default <code>read_table</code> output), a <b>hash of arrays</b> (HoA), or a <b>hash of hashes</b> (HoH, e.g. <code>read_table</code> with <code>'output.type' =&gt; 'hoh'</code>).</td>
 </tr>
 <tr>
   <td>2</td>
@@ -8053,8 +8113,7 @@ Both C<filter> and C<col> are exported by default.
 </tr>
 <tr>
   <td>3 +</td>
-  <td>`'output.type' => 'aoh'\</td>
-  <td>'hoa'`</td>
+  <td><code>'output.type' =&gt; 'aoh'|'hoa'</code></td>
   <td><i>Optional.</i> The shape of the returned frame. Omit it to keep the input's own shape. <code>'out'</code> and <code>'output_type'</code> are accepted aliases, and a bare <code>filter($df, $pred, 'aoh')</code> also works.</td>
 </tr>
 </tbody>
@@ -8087,7 +8146,7 @@ C<col('name')> is a deferred reference to a column. It carries no data — only 
 <tbody>
 <tr>
   <td>Numeric</td>
-  <td><code>></code> <code><</code> <code>>=</code> <code><=</code> <code>==</code> <code>!=</code></td>
+  <td><code>&gt;</code> <code>&lt;</code> <code>&gt;=</code> <code>&lt;=</code> <code>==</code> <code>!=</code></td>
   <td>numeric (cell and value compared as numbers)</td>
 </tr>
 <tr>
@@ -8142,7 +8201,7 @@ In a HoH the row name is the B<outer key>, not a field inside each row hash — 
  # HoH keyed by structure id; keep the rows named in @ids
  my $grps = join '|', @ids;
  my $keep = filter($score, sub { $_[1] =~ m/^(?:$grps)$/ });
- 
+
  # combine the row name with an ordinary column test
  filter($score, sub { $_[1] =~ /^1/ && $_->{anomaly_rank} < 100 });
 
@@ -8165,23 +8224,23 @@ The two selectable output types are C<'aoh'> and C<'hoa'>. C<'hoh'> is B<not> se
 
  use Stats::LikeR;
  my $df = read_table('patients.csv');                 # array of hashes
- 
+
  my $adults = filter($df, col('Age') >= 18);          # numeric threshold
  my $target = filter($df, (col('Age') >= 18) & (col('Sex') eq 'f'));   # combine
  my $flagged = filter($df, sub { $_->{ALT} > 40 || $_->{AST} > 40 });  # coderef
- 
+
  # hash of arrays in -> hash of arrays out (columns filtered in parallel)
  my $hoa = read_table('patients.csv', 'output.type' => 'hoa');
  my $sub = filter($hoa, col('Age') > 32);
- 
+
  # hash of hashes in -> the same row keys, fewer of them
  my $hoh = read_table('patients.csv', 'output.type' => 'hoh');
  my $keep = filter($hoh, col('Age') > 32);
- 
+
  # hash of hashes: filter on the row name (the outer key) via $_[1]
  my $grps    = join '|', qw(1cka 1d4t);
  my $by_name = filter($hoh, sub { $_[1] =~ m/^(?:$grps)$/ });
- 
+
  # convert shape while filtering
  my $as_hoa = filter($df, col('Age') > 32, 'output.type' => 'hoa');
 
@@ -8298,7 +8357,7 @@ non-numeric value are dropped, mirroring R's C<complete.cases>.
  printf "chi2=%.3f  df=%d  p=%.4g\n", $r->{statistic}, $r->{parameter}, $r->{p_value};
 
 A significant result says the conditions differ overall; follow up with pairwise
-comparisons (for example L<#dunn_test> on the paired differences, or
+comparisons (for example L</"dunn_test"> on the paired differences, or
 Wilcoxon signed-rank tests with a multiple-comparison adjustment).
 
 =head3 Output variables
@@ -8388,7 +8447,7 @@ takes a hash of an array as input
  VC VC VC VC VC OJ OJ OJ OJ OJ OJ OJ OJ OJ OJ OJ OJ OJ OJ OJ OJ OJ OJ OJ OJ
  OJ OJ OJ OJ OJ OJ OJ OJ OJ OJ)]
  );
- 
+
  my $glm_teeth = glm(
      data    => \%tooth_growth,
      formula => 'len ~ dose + supp',
@@ -8440,7 +8499,7 @@ For every non-gaussian family, C<glm> also returns the exponentiated coefficient
   <td><code>HashRef</code> or <code>ArrayRef</code></td>
   <td><i>None (Required)</i></td>
   <td>The dataset containing the variables used in the formula. Accepts either a Hash of Arrays (HoA) or an Array of Hashes (AoH).</td>
-  <td><code>\%mtcars</code>, <code>[{x => 1, y => 2}, ...]</code></td>
+  <td><code>\%mtcars</code>, <code>[{x =&gt; 1, y =&gt; 2}, ...]</code></td>
 </tr>
 <tr>
   <td><code>family</code></td>
@@ -8453,7 +8512,7 @@ For every non-gaussian family, C<glm> also returns the exponentiated coefficient
   <td><code>theta</code></td>
   <td><code>Number</code></td>
   <td><i>estimated by ML</i></td>
-  <td>Negative-binomial dispersion. When omitted (with <code>family => 'negbin'</code>) it is estimated by maximum likelihood as in <code>MASS::glm.nb</code>; supply a value to hold it fixed.</td>
+  <td>Negative-binomial dispersion. When omitted (with <code>family =&gt; 'negbin'</code>) it is estimated by maximum likelihood as in <code>MASS::glm.nb</code>; supply a value to hold it fixed.</td>
   <td><code>1.7</code></td>
 </tr>
 <tr>
@@ -8502,7 +8561,7 @@ For every non-gaussian family, C<glm> also returns the exponentiated coefficient
   <td><code>coefficients</code></td>
   <td><code>HashRef</code></td>
   <td>A hash mapping the expanded model term names to their estimated coefficient values.</td>
-  <td><code>{'Intercept' => 1.5, 'wt' => -0.5}</code></td>
+  <td><code>{'Intercept' =&gt; 1.5, 'wt' =&gt; -0.5}</code></td>
 </tr>
 <tr>
   <td><code>converged</code></td>
@@ -8520,7 +8579,7 @@ For every non-gaussian family, C<glm> also returns the exponentiated coefficient
   <td><code>deviance.resid</code></td>
   <td><code>HashRef</code></td>
   <td>A hash mapping data row names to their computed deviance residuals.</td>
-  <td><code>{'Mazda RX4' => 0.12}</code></td>
+  <td><code>{'Mazda RX4' =&gt; 0.12}</code></td>
 </tr>
 <tr>
   <td><code>df.null</code></td>
@@ -8544,7 +8603,7 @@ For every non-gaussian family, C<glm> also returns the exponentiated coefficient
   <td><code>fitted.values</code></td>
   <td><code>HashRef</code></td>
   <td>A hash mapping data row names to the fitted mean values (the model's predictions on the scale of the response).</td>
-  <td><code>{'Mazda RX4' => 0.85}</code></td>
+  <td><code>{'Mazda RX4' =&gt; 0.85}</code></td>
 </tr>
 <tr>
   <td><code>iter</code></td>
@@ -8567,8 +8626,8 @@ For every non-gaussian family, C<glm> also returns the exponentiated coefficient
 <tr>
   <td><code>summary</code></td>
   <td><code>HashRef</code></td>
-  <td>A nested hash mapping each term to its detailed summary statistics, including <code>Estimate</code>, <code>Std. Error</code>, <code>t value</code> / <code>z value</code>, <code>Pr(> t )</code> / <code>Pr(> z )</code>, and the Wald <code>CI.lower</code> / <code>CI.upper</code> (link scale). Aliased parameters return <code>"NaN"</code>.</td>
-  <td><code>{'wt' => {'Estimate' => -0.5, 'Std. Error' => 0.1, ...}}</code></td>
+  <td>A nested hash mapping each term to its detailed summary statistics, including <code>Estimate</code>, <code>Std. Error</code>, <code>t value</code> / <code>z value</code>, <code>Pr(&gt; t )</code> / <code>Pr(&gt; z )</code>, and the Wald <code>CI.lower</code> / <code>CI.upper</code> (link scale). Aliased parameters return <code>"NaN"</code>.</td>
+  <td><code>{'wt' =&gt; {'Estimate' =&gt; -0.5, 'Std. Error' =&gt; 0.1, ...}}</code></td>
 </tr>
 <tr>
   <td><code>terms</code></td>
@@ -8580,7 +8639,7 @@ For every non-gaussian family, C<glm> also returns the exponentiated coefficient
   <td><code>conf.int</code></td>
   <td><code>HashRef</code></td>
   <td>Wald confidence interval for each coefficient on the <b>link</b> scale, as <code>[lower, upper]</code>.</td>
-  <td><code>{'wt' => [-0.9, -0.1]}</code></td>
+  <td><code>{'wt' =&gt; [-0.9, -0.1]}</code></td>
 </tr>
 <tr>
   <td><code>conf.level</code></td>
@@ -8592,7 +8651,7 @@ For every non-gaussian family, C<glm> also returns the exponentiated coefficient
   <td><code>exp</code></td>
   <td><code>HashRef</code></td>
   <td>Non-gaussian families only: exponentiated coefficient (odds ratio for <code>binomial</code>; rate / incidence-rate ratio for <code>poisson</code> / <code>negbin</code>) with its confidence interval, as <code>{estimate, 'conf.low', 'conf.high'}</code>.</td>
-  <td><code>{'wt' => {estimate => 0.6, 'conf.low' => 0.4, 'conf.high' => 0.9}}</code></td>
+  <td><code>{'wt' =&gt; {estimate =&gt; 0.6, 'conf.low' =&gt; 0.4, 'conf.high' =&gt; 0.9}}</code></td>
 </tr>
 <tr>
   <td><code>theta</code></td>
@@ -8671,6 +8730,80 @@ Data can be further broken down with filter/subs like in C<read_table>:
 
 where each filter filters on the columns, e.g. second hash keys.
 
+=head2 h
+
+Print a function's documentation and return. This is the module's C<?function>:
+ask for a name, get the section of the manual that describes it.
+
+ h('quantile');    # by name
+ h(*quantile);     # by name, unquoted
+ h(\&quantile);    # by reference
+ h();              # the general help, and every documented function
+
+ perl -MStats::LikeR -e 'h(*write_table)'   # straight from the shell
+
+=head3 Arguments
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>Form</th>
+  <th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>h('name')</code></td>
+  <td>A string. A package prefix is ignored, so <code>h('Stats::LikeR::agg')</code> works too.</td>
+</tr>
+<tr>
+  <td><code>h(*name)</code></td>
+  <td>A typeglob. The closest thing to an unquoted name that Perl will allow here.</td>
+</tr>
+<tr>
+  <td><code>h(\&amp;name)</code></td>
+  <td>A code reference to one of this module's functions. Dies if the reference is not one.</td>
+</tr>
+<tr>
+  <td><code>h()</code></td>
+  <td>No argument: prints [Getting help](#getting-help) and lists every documented function.</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+C<h(bedroc)>, with no quotes and no sigil, cannot be made to work: every function
+here is exported, so Perl parses the bareword as a call to C<bedroc()> before C<h>
+is ever reached.
+
+=head3 Return value
+
+The name whose documentation was printed, so C<h> is usable in a pipeline:
+
+ my @shown = map { h($_) } qw(auc auroc roc);
+
+Unlike the L<C<'?'> and C<'h'> arguments|/"The C<'?'> and C<'h'> arguments">, C<h> does B<not>
+die. You asked for it by name, so there is nothing ambiguous to protect you
+from.
+
+=head3 Where the text comes from
+
+C<h> renders the module's own POD at run time. That POD is generated from
+C<README.md>, so C<h> and this document can never disagree. A function with no
+section of its own — an internal helper, or C<ptukey> / C<qtukey> — prints the
+list of functions that do have one.
+
+Output is wrapped to C<$ENV{COLUMNS}> when that is set (clamped to 40-100
+columns), and to 80 otherwise. Parameter tables are rendered as aligned plain
+text.
+
 =head2 hoa2aoh
 
 Turn a hash-of-arrays into an array-of-hashes.
@@ -8683,17 +8816,21 @@ Turn a hash-of-arrays into an array-of-hashes.
 
 =item * B<< C<$hoa> >> — a hashref whose values are arrayrefs, one per column:
 
-{ id => [1, 2, 3], name => ['a', 'b', 'c'] }
+=back
+
+ { id => [1, 2, 3], name => ['a', 'b', 'c'] }
+
+=over
 
 =item * B<returns> — an arrayref of row hashrefs:
 
-[
-    { id => 1, name => 'a' },
-    { id => 2, name => 'b' },
-    { id => 3, name => 'c' }
-]
-
 =back
+
+ [
+     { id => 1, name => 'a' },
+     { id => 2, name => 'b' },
+     { id => 3, name => 'c' }
+ ]
 
 It builds a brand-new structure and copies every cell, so the result is
 completely independent of the input — changing one never affects the other.
@@ -8753,12 +8890,12 @@ into a B<hash of arrays> (column-major: key = column, value = that column's
 cells down the rows).
 
  use Stats::LikeR;
- 
+
  my %hoh = (
      'r1' => { 'a' => 1, 'b' => 2 },
      'r2' => { 'a' => 3, 'b' => 4 },
  );
- 
+
  my $hoa = hoh2hoa(\%hoh);
 
 which returns
@@ -8835,7 +8972,7 @@ Options are passed as trailing C<< name =E<gt> value >> pairs.
  #   b => [2,    'NA'],
  #   c => ['NA', 9   ],
  # }
- 
+
  # Keep the row labels as a column:
  my $with_ids = hoh2hoa(\%ragged, 'row.names' => 'id');
  # {
@@ -8881,7 +9018,7 @@ it was validated numerically.
  # $fit is a binomial glm(); align observed outcomes with fitted.values
  my @obs  = map { $data{$_}{outcome} } @ids;
  my @prob = map { $fit->{'fitted.values'}{$_} } @ids;
- 
+
  my $hl = hosmer_lemeshow(\@obs, \@prob, g => 10);
  printf "HL chi2=%.2f df=%d p=%.3f\n", $hl->{statistic}, $hl->{parameter}, $hl->{p_value};
 
@@ -9016,7 +9153,7 @@ is never modified.
 <table>
 <thead>
 <tr>
-  <th>`method`</th>
+  <th><code>method</code></th>
   <th>What it does</th>
 </tr>
 </thead>
@@ -9125,7 +9262,7 @@ C<index>/C<values> for a line on unequal spacing).
  # linear fit on unequal spacing
  interpolate({ v => [ 0, undef, undef, 10 ] }, method => 'index', x => [ 0, 1, 3, 4 ]);
  # { v => [ 0, 2.5, 7.5, 10 ] }
- 
+
  # interpolate v against a time column t
  interpolate($df, cols => [ 'v' ], x => 't', method => 'index');
 
@@ -9134,11 +9271,11 @@ C<index>/C<values> for a line on unequal spacing).
  # linear: interior interpolated, trailing held (forward default), leading NA
  interpolate({ v => [ undef, 1, undef, undef, 4, undef ] });
  # { v => [ undef, 1, 2, 3, 4, 4 ] }
- 
+
  # cubic spline through four anchors that lie on x^2, so the fit is exact
  interpolate({ v => [ 0, undef, undef, 9, 16, 25 ] }, method => 'cubic', limit_direction => 'both');
  # { v => [ 0, 1, 4, 9, 16, 25 ] }
- 
+
  # monotone pchip vs. a global polynomial on the same gaps
  interpolate({ v => [ 2, undef, 3, undef, undef, 2, 5, undef, 0 ] }, method => 'pchip', limit_direction => 'both');
 
@@ -9183,7 +9320,7 @@ Returns the set intersection (∩) of a list of array references: the values
 that appear in B<every> array ref given.
 
  use Stats::LikeR;
- 
+
  my @i = intersection([1, 2, 3], [2, 3, 4]);          # (2, 3)
  my @t = intersection([1, 2, 3, 4], [2, 3, 4], [3, 4]); # (3, 4)
  my $n = intersection([1, 2, 3], [2, 3, 4]);          # 2
@@ -9451,13 +9588,13 @@ differ? It needs no modelling assumptions. Same as R's C<survival::survdiff>.
 Give times, an event flag (1 = event, 0 = censored), and a group label per row:
 
  use Stats::LikeR 'logrank_test';
- 
+
  my $r = logrank_test(\@time, \@status, \@group);
  print $r->{p_value};
 
 Result keys: C<statistic> (chi-squared), C<parameter> (df = groups − 1),
 C<p_value>, C<observed> and C<expected> events per group, and C<groups>. See
-L<#survfit> for the curves and L<#coxph> to adjust for
+L<C<survfit>|/"survfit"> for the curves and L<C<coxph>|/"coxph"> to adjust for
 covariates.
 
 =head2 Lonly
@@ -9518,10 +9655,10 @@ numerically against R.
  # counts as a square matrix: [[a, b], [c, d]]
  my $r = mcnemar_test([[794, 86], [150, 570]]);
  printf "chi2=%.2f df=%d p=%.4g\n", $r->{statistic}, $r->{parameter}, $r->{p_value};
- 
+
  # small samples: exact binomial test on the discordant pairs
  my $e = mcnemar_test([[794, 86], [150, 570]], exact => 1);
- 
+
  # paired observation vectors are cross-tabulated automatically
  my $v = mcnemar_test(\@before, \@after);
 
@@ -9697,7 +9834,7 @@ C<id_vars> column name.
 
 =head2 merge
 
-A full relational join of two data frames, in the spirit of R's C<merge> and pandas' C<DataFrame.merge>. Where L<#ljoin> only does an in-place left join of a hash-of-hashes keyed by row name, C<merge> supports every common join type, single- or multi-column keys, keys with different names on each side, column-collision suffixes, and any mix of input/output shapes.
+A full relational join of two data frames, in the spirit of R's C<merge> and pandas' C<DataFrame.merge>. Where L<C<ljoin>|/"ljoin"> only does an in-place left join of a hash-of-hashes keyed by row name, C<merge> supports every common join type, single- or multi-column keys, keys with different names on each side, column-collision suffixes, and any mix of input/output shapes.
 
  my $joined = merge($left, $right, how => 'inner', on => 'id');
 
@@ -9748,13 +9885,13 @@ By default the result matches the shape of C<$left> (a HoH left frame yields an 
               { id => 3, name => 'Carol', dept => 30 } ];
  my $dept = [ { dept => 10, dname => 'Sales' },
               { dept => 20, dname => 'Engineering' } ];
- 
+
  my $left = merge($emp, $dept, how => 'left', on => 'dept');
  #  [ { id => 1, name => 'Alice', dept => 10, dname => 'Sales' },
  #    { id => 2, name => 'Bob',   dept => 20, dname => 'Engineering' },
  #    { id => 3, name => 'Carol', dept => 30, dname => undef } ]
 
-See also L<#ljoin> (in-place HoH left join), L<#concat> / L<#rbind> (stacking frames row-wise), and L<#group_by>.
+See also L<C<ljoin>|/"ljoin"> (in-place HoH left join), L<C<concat>|/"concat"> / L<C<rbind>|/"rbind"> (stacking frames row-wise), and L<C<group_by>|/"group_by">.
 
 =head2 min
 
@@ -9772,7 +9909,7 @@ as of version 0.02, min will die if any undefined values are provided
 Takes either an array or an array reference, and returns an array of the most common scalars (numbers or strings)
 
  @arr = mode([1,3,3,3]); # returns (3)
- 
+
  @arr = mode('a','a','c','c','z'); # returns ('a', 'c')
 
 =head2 ncol
@@ -9916,7 +10053,7 @@ I<group> is a vector of at least two numeric observations.
 </thead>
 <tbody>
 <tr>
-  <td><b>Hash of arrays</b> <code>{ a => [...], b => [...] }</code></td>
+  <td><b>Hash of arrays</b> <code>{ a =&gt; [...], b =&gt; [...] }</code></td>
   <td>Each key is a group (R's <code>stack()</code> view of a named list)</td>
   <td>the hash keys</td>
 </tr>
@@ -9926,7 +10063,7 @@ I<group> is a vector of at least two numeric observations.
   <td><code>"Index 0"</code>, <code>"Index 1"</code>, …</td>
 </tr>
 <tr>
-  <td><b>Hash + <code>formula</code></b> <code>{ resp => [...], grp => [...] }, formula => 'resp ~ grp'</code></td>
+  <td><b>Hash + <code>formula</code></b> <code>{ resp =&gt; [...], grp =&gt; [...] }, formula =&gt; 'resp ~ grp'</code></td>
   <td>Long-format columns split by a factor column</td>
   <td>the distinct values of the factor</td>
 </tr>
@@ -9996,7 +10133,7 @@ A hash reference with three top-level keys:
 <tbody>
 <tr>
   <td><i>factor name</i> (<code>Group</code>, or the formula's factor, e.g. <code>supp</code>)</td>
-  <td>the between-groups row: <code>Df</code>, <code>Sum Sq</code>, <code>Mean Sq</code>, <code>F value</code>, <code>Pr(>F)</code></td>
+  <td>the between-groups row: <code>Df</code>, <code>Sum Sq</code>, <code>Mean Sq</code>, <code>F value</code>, <code>Pr(&gt;F)</code></td>
 </tr>
 <tr>
   <td><code>Residuals</code></td>
@@ -10004,7 +10141,7 @@ A hash reference with three top-level keys:
 </tr>
 <tr>
   <td><code>group_stats</code></td>
-  <td><code>{ mean => { group => mean, … }, size => { group => n, … } }</code></td>
+  <td><code>{ mean =&gt; { group =&gt; mean, … }, size =&gt; { group =&gt; n, … } }</code></td>
 </tr>
 </tbody>
 </table>
@@ -10021,7 +10158,7 @@ A hash reference with three top-level keys:
      yield => [5.5, 5.4, 5.8, 4.5, 4.8, 4.2],
      ctrl  => [1,   1,   1,   0,   0,   0  ],
  });
- 
+
  {
      Group => {
          Df        => 1,
@@ -10148,7 +10285,7 @@ rename inputs.
  pivot_table($df, index => 'city', columns => 'year', values => 'temp');
  # [ { city => 'LA', 2020 => 40,  2021 => undef },
  #   { city => 'NY', 2020 => 15,  2021 => 30    } ]
- 
+
  pivot_table($df, index => 'city', columns => 'year', values => 'temp',
      aggfunc => [ 'count', 'sum' ]);
  # names: count.2020 count.2021 sum.2020 sum.2021
@@ -10169,8 +10306,8 @@ a generated duplicate column name.
 =head2 power_t_test
 
  $test_data = power_t_test(
-     n   => 30,  delta     => 0.5, 
-     sd  => 1.0, sig_level => 0.05
+     n    => 30,    delta     => 0.5, 
+     sd    => 1.0, sig_level => 0.05
  );
 
 It also allows configuring the test type (C<< type =E<gt> 'one.sample' >>, C<'two.sample'>, C<'paired'>) and alternative hypothesis (C<< alternative =E<gt> 'one.sided' >>). You can also pass C<< strict =E<gt> 1 >> to strictly evaluate both tails of the distribution.
@@ -10299,7 +10436,7 @@ C<x> may be a single number or an array reference; an array reference returns an
   <td></td>
   <td><code>lower</code></td>
   <td><code>1</code> (true)</td>
-  <td><code>1</code> = lower tail <code>P(X <= x)</code>; <code>0</code> = upper tail <code>P(X > x)</code>. <code>'lower.tail'</code> is an accepted alias.</td>
+  <td><code>1</code> = lower tail <code>P(X &lt;= x)</code>; <code>0</code> = upper tail <code>P(X &gt; x)</code>. <code>'lower.tail'</code> is an accepted alias.</td>
 </tr>
 <tr>
   <td></td>
@@ -10466,7 +10603,7 @@ column are dropped listwise.
      [4, 2], 
      [6, 6] 
  ];
- 
+
  my $pca = prcomp($aoa);
 
 which returns
@@ -10616,13 +10753,13 @@ Validated numerically against R.
  my $r = prop_test(83, 100);              # 83 successes in 100 trials
  printf "p-hat=%.2f  95%% CI %.3f–%.3f  p=%.4g\n",
      $r->{estimate}[0], $r->{'conf.int'}[0], $r->{'conf.int'}[1], $r->{p_value};
- 
+
  # two groups: difference in proportions + CI
  my $two = prop_test([83, 90], [100, 100]);
- 
+
  # k > 2 groups: chi-square test of equality (no CI)
  my $k = prop_test([83, 90, 75], [100, 100, 100]);
- 
+
  # one-sample against a specified probability, one-sided, no correction
  my $g = prop_test(83, 100, p => 0.7, alternative => 'greater', correct => 0);
 
@@ -10671,7 +10808,7 @@ group) or as two scalars for a single sample.
   <td><code>alternative</code></td>
   <td><code>String</code></td>
   <td><code>'two.sided'</code></td>
-  <td><code>'two.sided'</code>, <code>'less'</code>, or <code>'greater'</code>. Forced two-sided for <code>k > 2</code> groups or two groups tested against a given <code>p</code>.</td>
+  <td><code>'two.sided'</code>, <code>'less'</code>, or <code>'greater'</code>. Forced two-sided for <code>k &gt; 2</code> groups or two groups tested against a given <code>p</code>.</td>
   <td><code>'greater'</code></td>
 </tr>
 <tr>
@@ -10738,7 +10875,7 @@ group) or as two scalars for a single sample.
 <tr>
   <td><code>conf.int</code></td>
   <td><code>ArrayRef</code></td>
-  <td>For one group, a Wilson score interval for the proportion; for two groups, a Wald interval for the difference <code>p1 - p2</code>. Absent for <code>k > 2</code>.</td>
+  <td>For one group, a Wilson score interval for the proportion; for two groups, a Wald interval for the difference <code>p1 - p2</code>. Absent for <code>k &gt; 2</code>.</td>
   <td><code>[-0.174, 0.034]</code></td>
 </tr>
 <tr>
@@ -10795,8 +10932,9 @@ boundaries, e.g. C<[0, 0.5, 0.95, 1]>.
 
 =back
 
-For a usage reminder at the prompt, call C<qcut('h')> (or C<qcut('H')>); it dies
-with a short help message.
+For a usage reminder at the prompt, call C<qcut('h')> (or C<qcut('?')>); it prints
+this section and dies. Every function takes those two arguments the same way —
+see L</"Getting help">.
 
 =head3 What it returns
 
@@ -10888,9 +11026,10 @@ default raises, C<'drop'> merges:
  my @edges = qcut(\@tied, 4, duplicates => 'drop');
  # fewer than 5 edges; the empty quantile bands are collapsed
 
-Get the usage summary and stop:
+Get the documentation and stop:
 
- qcut('h');   # dies with the help text above
+ qcut('h');   # prints this section to STDOUT, then dies
+ qcut('?');   # the same call
 
 =head2 quantile
 
@@ -10922,7 +11061,7 @@ How tied values share ranks (default C<average>):
 <tr>
   <th>value</th>
   <th>behavior</th>
-  <th>`rank(3, 1, 4, 1, 5)`</th>
+  <th><code>rank(3, 1, 4, 1, 5)</code></th>
 </tr>
 </thead>
 <tbody>
@@ -10976,7 +11115,7 @@ How C<undef>/NaN elements are placed (default C<true>):
 <tr>
   <th>value</th>
   <th>behavior</th>
-  <th>`rank(5, undef, 1, ...)`</th>
+  <th><code>rank(5, undef, 1, ...)</code></th>
 </tr>
 </thead>
 <tbody>
@@ -11056,17 +11195,17 @@ minimal example:
 <tr>
   <td><code>comment</code></td>
   <td>Comment character, by default <code>#</code>; lines beginning with it are skipped</td>
-  <td><code>comment => '%'</code></td>
+  <td><code>comment =&gt; '%'</code></td>
 </tr>
 <tr>
   <td><code>output.type</code></td>
   <td>data type for output: array of hash, hash of array, or hash of hash</td>
-  <td><code>'output.type' => 'aoh'</code></td>
+  <td><code>'output.type' =&gt; 'aoh'</code></td>
 </tr>
 <tr>
   <td><code>filter</code></td>
   <td>Only take in rows matching a filter</td>
-  <td><code>filter => { Sex => sub {$_ eq 'f'} }</code></td>
+  <td><code>filter =&gt; { Sex =&gt; sub {$_ eq 'f'} }</code></td>
 </tr>
 <tr>
   <td><code>row.names</code></td>
@@ -11076,17 +11215,17 @@ minimal example:
 <tr>
   <td><code>sep</code></td>
   <td>field separator character; synonym with <code>delim</code></td>
-  <td><code>sep => "\t"</code></td>
+  <td><code>sep =&gt; "\t"</code></td>
 </tr>
 <tr>
   <td><code>delim</code></td>
   <td>field separator character; synonym with <code>sep</code></td>
-  <td><code>delim => "\t"</code></td>
+  <td><code>delim =&gt; "\t"</code></td>
 </tr>
 <tr>
   <td><code>sheet</code></td>
   <td>which worksheet to read from an <code>.xlsx</code> file: a 1-based index or a sheet name (default: first sheet). Ignored for text files</td>
-  <td><code>sheet => 'Sheet2'</code></td>
+  <td><code>sheet =&gt; 'Sheet2'</code></td>
 </tr>
 </tbody>
 </table>
@@ -11178,10 +11317,10 @@ edit lands in each C<AoH>/C<HoH> row hash, or on the top-level keys of a C<HoA>.
 
  # HoH: rename an inner-row key in every row, in place
  rename_cols(\%d, resolution => 'Resolution (Å)');
- 
+
  # capture a fresh view instead; %d is left untouched by rename_cols itself
  %d = %{ rename_cols(\%d, resolution => 'Resolution (Å)') };
- 
+
  # pairs or a single hashref; both forms are equivalent
  my $view = rename_cols($aoh, a => 'x', c => 'z');
  my $view = rename_cols($hoa, { b => 'B' });
@@ -11218,7 +11357,7 @@ is not an lvalue before 5.22 refaliasing, which is out under the module's 5.10
 back-compatibility. Use the void form or the C<%d = %{ ... }> capture idiom
 above.
 
-=head2 I<rename>inplace
+=head2 _rename_inplace
 
  _rename_inplace($df, $shape, \%map)
 
@@ -11245,7 +11384,7 @@ threshold, and the best cut-off by Youden's J. The standard way to judge how
 well a score separates cases from non-cases.
 
  use Stats::LikeR 'roc';
- 
+
  my $r = roc(\@scores, \@labels);
  print $r->{auc};                 # 0.848
  print "@{ $r->{auc_ci} }";       # 0.649 1.000
@@ -11255,7 +11394,7 @@ well a score separates cases from non-cases.
 Options: C<positive> (positive-class label, default C<1>), C<direction> (C<< 'E<gt>' >>
 default, or C<< 'E<lt>' >>), C<conf_level> (default C<0.95>). Result keys: C<auc>, C<auc_se>,
 C<auc_ci>, C<n_pos>, C<n_neg>, C<youden>, and C<curve> (one point per threshold). For
-just the number, use L<#auc>.
+just the number, use L<C<auc>|/"auc">.
 
 =head2 rownames
 
@@ -11278,13 +11417,13 @@ C<nrow($df)> for a rectangular frame.
 
  my $hoh = { r2 => { x => 1 }, r1 => { x => 2 }, r3 => { x => 3 } };
  my @rows = rownames($hoh);        # ('r1', 'r2', 'r3')  -- sorted labels
- 
+
  my $aoh = [ { a => 1 }, { a => 2 } ];
  my @rows = rownames($aoh);        # (0, 1)
- 
+
  my $hoa = { a => [1,2,3], b => [4,5,6] };
  my @rows = rownames($hoa);        # (0, 1, 2)
- 
+
  my $n = rownames($hoh);           # 3  (scalar context == nrow)
 
 =head3 notes
@@ -11364,11 +11503,11 @@ list or as a single arrayref.
              { a => 4, b => 5, c => 6 } ];
  my $sub = select_cols($aoh, 'a', 'c');
  # [ { a => 1, c => 3 }, { a => 4, c => 6 } ]
- 
+
  my $hoa = { a => [1,4], b => [2,5], c => [3,6] };
  my $sub = select_cols($hoa, ['c', 'a']);   # order preserved
  # { c => [3,6], a => [1,4] }
- 
+
  my $aoa = [ [1,2,3], [4,5,6] ];
  my $sub = select_cols($aoa, 0, 2);
  # [ [1,3], [4,6] ]
@@ -11388,7 +11527,7 @@ Works as closely as I can to R's seq, which is very similar to Perl's C<for> loo
  say 'seq(1, 5):';
  my @seq = seq(1, 5);
  say join(', ', @seq), "\n";
- 
+
  say 'seq(1, 2, 0.25):';
  @seq = seq(1, 2, 0.25);
 
@@ -11436,7 +11575,7 @@ the signed value. Validated numerically against R.
 
  my $balance = smd(\@exposed_age, \@unexposed_age);   # |smd| < 0.1 is well balanced
 
-Unlike L<#cohen_d> (which pools by sample size), C<smd> weights the two
+Unlike L</"cohen_d"> (which pools by sample size), C<smd> weights the two
 group variances equally, so the two diverge when the groups differ in size.
 
 =head2 sum
@@ -11456,7 +11595,7 @@ as of version 0.02, C<sum> will cause the script to die if any undefined values 
 
 =head2 summary
 
-Analogous to R's C<summary>: a five-number-plus-mean description (C<# values>, C<Min.>, C<1st Qu.>, C<Median>, C<Mean>, C<3rd Qu.>, C<Max.>) of the data as entered (it does not summarise fitted-model objects). It produces one statistics row per numeric I<variable> and renders the table exactly like L<#view> — the same colourised, wide-character-aware, terminal-fitting output — through the same internal renderer, so all of C<view>'s display options apply.
+Analogous to R's C<summary>: a five-number-plus-mean description (C<# values>, C<Min.>, C<1st Qu.>, C<Median>, C<Mean>, C<3rd Qu.>, C<Max.>) of the data as entered (it does not summarise fitted-model objects). It produces one statistics row per numeric I<variable> and renders the table exactly like L<C<view>|/"view"> — the same colourised, wide-character-aware, terminal-fitting output — through the same internal renderer, so all of C<view>'s display options apply.
 
 Which variable becomes a row depends on the shape (every shape C<view> accepts is accepted here):
 
@@ -11509,7 +11648,7 @@ The AoH/HoH case is the per-column summary R gives for a data frame — so the a
 
 Non-numeric and undefined cells are ignored: they never count toward C<# values>, and a variable with no numeric values shows C<0> and C<na>. For example, C<summary> of an AoH:
 
- # summary: 2 rows x 7 cols  (showing 2)
+ # summary: 2 rows x 7 cols    (showing 2)
  Column  # values  Min.  1st Qu.  Median  Mean  3rd Qu.  Max.
  x              3     1      1.5       2     2      2.5     3
  y              3    10       15      20    20       25    30
@@ -11526,7 +11665,7 @@ Give times and an event flag (1 = event, 0 = censored); add C<group> for one
 curve per group:
 
  use Stats::LikeR 'survfit';
- 
+
  my $f = survfit(\@time, \@status, group => \@arm);
  my $s = $f->{strata}{treatment};    # keyed by group label ('' if no group)
  print $s->{median};                 # median survival time
@@ -11534,8 +11673,8 @@ curve per group:
 
 Option C<conf_level> (default C<0.95>). Each stratum has arrays C<time>, C<n_risk>,
 C<n_event>, C<n_censor>, C<surv>, C<std_err>, C<lower>, C<upper>, plus C<median>, C<n>,
-and C<events>. Compare curves with L<#logrank_test>; model
-covariate effects with L<#coxph>.
+and C<events>. Compare curves with L<C<logrank_test>|/"logrank_test">; model
+covariate effects with L<C<coxph>|/"coxph">.
 
 =head2 table_one
 
@@ -11544,7 +11683,7 @@ variable, a per-group summary — C<mean (sd)> for numbers, C<n (percent)> for
 categories — plus a group-comparison p-value.
 
  use Stats::LikeR 'table_one';
- 
+
  my $t1 = table_one(\@cohort, by => 'arm');
  print view($t1);       # returns a plain AoH you can view() or write_table()
 
@@ -11735,7 +11874,7 @@ Inner keys do not need to be uniform across rows. If a given column key appears 
  my $sparse = {
  a => { x => 1, y => 2 },
  b => { x => 3, z => 4 } };
- 
+
  my $t = transpose($sparse);
  # { x => { a => 1, b => 3 },
  #   y => { a => 2 },
@@ -11750,7 +11889,7 @@ Dies if any inner element is not a hash reference
 Returns the distinct values of its arguments, in first-seen order.
 
  use Stats::LikeR;
- 
+
  my @u = uniq(1, 2, 2, 3, 1);         # (1, 2, 3)
  my @s = uniq(qw/a b a c/);           # ('a', 'b', 'c')
  my @f = uniq(1, [2, 2, 3], [3, 4]);  # (1, 2, 3, 4)
@@ -11852,13 +11991,13 @@ C<vals> accepts all three data-frame shapes and always returns a new arrayref of
 
  my $aoh = read_table('patients.csv');                 # array of hashes
  my $age = vals($aoh, 'Age');                           # [ 34, 51, ... ]
- 
+
  my $hoa = read_table('patients.csv', 'output.type' => 'hoa');
  my $sex = vals($hoa, 'Sex');                           # copy of the Sex column
- 
+
  my $hoh = read_table('patients.csv', 'output.type' => 'hoh');
  my $age2 = vals($hoh, 'Age');                          # values in sorted row-key order
- 
+
  # feed straight into the numeric routines
  my $m = mean( vals($aoh, 'Age') );
 
@@ -11868,13 +12007,13 @@ Count the values in a given data set, return a hash reference showing how many t
 
 =head3 Scalar
 
- $hash = value_counts('c');
+ $hash = value\_counts('c');
 
 returns C<< { c =E<gt> 1 } >>
 
 =head3 Array reference
 
- value_counts(['a','b','b']);
+ value\_counts(['a','b','b']);
 
 returns C<< { a =E<gt> 1, b =E<gt> 2} >>
 
@@ -11898,13 +12037,13 @@ with a key, the value at that key is counted in each hash, so the above returns 
 =head3 Array of arrays
 
  my @rows = (['a', 1], ['b', 1], ['a', 2]);
- my $vc = value_counts(\@rows, 0);
+ my $vc = value\_counts(\@rows, 0);
 
 when the elements are array references, the key is treated as a numeric column index, so the above returns C<< { a =E<gt> 2, b =E<gt> 1 } >>. A non-numeric index against array-reference elements is a fatal error.
 
 =head3 Hash
 
- my $value_counts = value_counts( { A => 'a', B => 'a', C => 'b' } );
+ my $value\_counts = value\_counts( { A => 'a', B => 'a', C => 'b' } );
 
 returns C<< { a =E<gt> 2, b =E<gt> 1} >>
 
@@ -11954,10 +12093,10 @@ like C<min>, C<max>, etc., C<var> can accept array references, to make code simp
 As described by R: Performs an F test to compare the variances of two samples from normal populations
 
  use Stats::LikeR;
- 
+
  my @x = (2.9, 3.0, 2.5, 2.6, 3.2);
  my @y = (3.8, 2.7, 4.0, 2.4);
- 
+
  my $vt = var_test(\@x, \@y);
 
 also, conf_level can be set:
@@ -11984,7 +12123,7 @@ C<NA>.
 <tr>
   <th>Input type</th>
   <th>Perl structure</th>
-  <th>What `view` shows</th>
+  <th>What <code>view</code> shows</th>
 </tr>
 </thead>
 <tbody>
@@ -12018,13 +12157,13 @@ C<NA>.
 =head3 Synopsis
 
  my $aoh = read_table('all.data.tsv', 'output.type' => 'aoh');
- 
+
  view($aoh);                       # first 6 rows, like head()
  view($aoh, n => 20);              # first 20 rows
  view($aoh, cols => [qw(id age tt)]);   # force a column order
  view($aoh, 'row.names' => 'id');  # use column 'id' as the row label
  view($aoh, na => '.', max_width => 30);
- 
+
  my $txt = view($aoh, return_only => 1);  # capture the string, print nothing
  view($aoh, to => \*STDERR);              # print somewhere other than STDOUT
 
@@ -12194,7 +12333,7 @@ The first one or two array-ref arguments are taken positionally as C<x> and C<y>
 
  # positional
  wilcox_test(\@x, \@y, paired => 1);
- 
+
  # fully named
  wilcox_test(x => \@x, y => \@y, alternative => "greater", exact => 0);
 
@@ -12218,7 +12357,7 @@ The first one or two array-ref arguments are taken positionally as C<x> and C<y>
   <td><code>x</code></td>
   <td>ARRAY ref</td>
   <td><i>(required)</i></td>
-  <td>The first sample. Passed positionally or as <code>x =></code>. Non-numeric and undefined elements are silently dropped; an empty or all-missing <code>x</code> is fatal. In the two-sample test <code>mu</code> is subtracted from each <code>x</code> value.</td>
+  <td>The first sample. Passed positionally or as <code>x =&gt;</code>. Non-numeric and undefined elements are silently dropped; an empty or all-missing <code>x</code> is fatal. In the two-sample test <code>mu</code> is subtracted from each <code>x</code> value.</td>
 </tr>
 <tr>
   <td><code>y</code></td>
@@ -12248,7 +12387,7 @@ The first one or two array-ref arguments are taken positionally as C<x> and C<y>
   <td><code>exact</code></td>
   <td>boolean / undef</td>
   <td><code>undef</code> (auto)</td>
-  <td>Tri-state. <code>undef</code> (or absent) selects exact automatically: when both group sizes are <code>< 50</code> and there are no ties (two-sample), or <code>n < 50</code> with no ties (signed-rank). A true value forces the exact test, a false value forces the approximation. Exact is impossible with ties — or, for the signed-rank test, with zero differences — and falls back to the approximation with a warning.</td>
+  <td>Tri-state. <code>undef</code> (or absent) selects exact automatically: when both group sizes are <code>&lt; 50</code> and there are no ties (two-sample), or <code>n &lt; 50</code> with no ties (signed-rank). A true value forces the exact test, a false value forces the approximation. Exact is impossible with ties — or, for the signed-rank test, with zero differences — and falls back to the approximation with a warning.</td>
 </tr>
 <tr>
   <td><code>alternative</code></td>
@@ -12379,7 +12518,7 @@ writer, so it works for every shape above:
 
 A numeric-looking cell is written as a number; every other non-empty cell as an
 inline string (C<undef>/empty cells are omitted). The result reads straight back
-with L<#read_table>.
+with L<C<read_table>|/"read_table">.
 
 Mirroring C<Excel::Writer::XLSX>'s
 C<< $workbook-E<gt>set_properties(comments =E<gt> comments()) >>, the same
@@ -12419,13 +12558,13 @@ C<read_table>.
 </thead>
 <tbody>
 <tr>
-  <td><code>data</code> (1st positional, or <code>data =></code>)</td>
+  <td><code>data</code> (1st positional, or <code>data =&gt;</code>)</td>
   <td><i>required</i></td>
   <td>both</td>
   <td>the table: flat hash, HoA, HoH, AoH, or AoA</td>
 </tr>
 <tr>
-  <td><code>file</code> (2nd positional, or <code>file =></code>)</td>
+  <td><code>file</code> (2nd positional, or <code>file =&gt;</code>)</td>
   <td><i>required</i></td>
   <td>both</td>
   <td>output path; written as a delimited table, or as LaTeX when <code>tex</code> is on</td>
@@ -12458,7 +12597,7 @@ C<read_table>.
   <td><code>tex</code></td>
   <td>auto: <code>1</code> when <code>file</code> ends in <code>.tex</code>, else <code>0</code></td>
   <td>LaTeX</td>
-  <td>write the output file as a LaTeX <code>tabular</code> instead of a delimited table; <code>tex => 0</code> forces delimited even for a <code>.tex</code> name</td>
+  <td>write the output file as a LaTeX <code>tabular</code> instead of a delimited table; <code>tex =&gt; 0</code> forces delimited even for a <code>.tex</code> name</td>
 </tr>
 <tr>
   <td><code>tex.col.align</code></td>
@@ -12494,13 +12633,13 @@ C<read_table>.
   <td><code>tex.longtable</code></td>
   <td><code>0</code> (off)</td>
   <td>LaTeX</td>
-  <td>write only the table body (header + data rows + <code>\hline</code>, no <code>\begin{tabular}</code>/<code>\end{tabular}</code> or column spec) for <code>\input{}</code> into a caller-supplied <code>longtable</code>; implies <code>tex => 1</code>, and emits a <code>% \begin{longtable}{...}</code> hint with one <code>tex.col.align</code> char per column</td>
+  <td>write only the table body (header + data rows + <code>\hline</code>, no <code>\begin{tabular}</code>/<code>\end{tabular}</code> or column spec) for <code>\input{}</code> into a caller-supplied <code>longtable</code>; implies <code>tex =&gt; 1</code>, and emits a <code>% \begin{longtable}{...}</code> hint with one <code>tex.col.align</code> char per column</td>
 </tr>
 <tr>
   <td><code>xlsx</code></td>
   <td>auto: <code>1</code> when <code>file</code> ends in <code>.xlsx</code>, else <code>0</code></td>
   <td>Excel</td>
-  <td>write a real <code>.xlsx</code> workbook (dependency-free, built in XS) instead of a delimited table; <code>xlsx => 0</code> forces delimited even for a <code>.xlsx</code> name. Mutually exclusive with <code>tex</code></td>
+  <td>write a real <code>.xlsx</code> workbook (dependency-free, built in XS) instead of a delimited table; <code>xlsx =&gt; 0</code> forces delimited even for a <code>.xlsx</code> name. Mutually exclusive with <code>tex</code></td>
 </tr>
 <tr>
   <td><code>xlsx.sheet</code></td>
@@ -12535,11 +12674,17 @@ C<read_table>.
 
 =head1 Changes
 
-=head2 0.27
+=head2 0.27 2026-07-26 CDT
+
+New C<h> function: C<h('agg')>, C<h(*agg)> or C<h(\&agg)> prints that function's section of this document and returns, in the spirit of R's C<?function>. C<h()> lists every documented function. It covers the XS functions as well as the Perl ones, because it looks the name up in the module's POD instead of reading an argument list — see L</"Getting help">.
+- The pure Perl functions also accept C<'?'> or C<'h'> in place of their arguments, which prints the same text and then dies. C<$Stats::LikeR::HELP = 0> switches that off for code that has to pass a column or file really named C<'h'>.
+- C<qcut>'s hand-written usage message was replaced by its section of this document; C<qcut('h')> and C<qcut('?')> still die, but C<qcut('H')> no longer means help.
 
 speed improvements in calculation of Kendall tau and p-value.  Improvement of writing xlsx files that won't show in time, but pure waste was removed.
 
 Addition of C<auc>, C<auroc>, C<cmh_test>, C<epi_2x2>, C<roc> functions
+
+C<prcomp> now accepts AoH input
 
 glm extended (LikeR.xs)
 - family => 'poisson' (log link) and family => 'negbin' — negative-binomial θ estimated by ML via a MASS::glm.nb-style outer loop, or fixed with theta =>. Matched R to ~1e-8 (coefs, deviance, null-dev, AIC, SE, θ); exact Poisson limit when data aren't over-dispersed.
@@ -12694,21 +12839,25 @@ leading comment marker (and surrounding whitespace) stripped, so a
 commented-header column resolves whether it is referenced as C<# PDB> or by
 its clean name C<PDB>:
 
+=back
+
  read_table(
      'regression_rank.tabular.tsv',
      filter => { '# PDB' => sub { $_ == 2 } },
  );
 
+=over
+
 =item * B<Clearer "column not found" error.> The failure now names the file and
 lists the actual header instead of printing it to STDOUT (a library
 shouldn't print):
 
+=back
+
  read_table: Filter column 'nope' not found in the header of FILE;
  header is: 'PDB', 'score'
 
-=back
-
-=head2 0.20
+=head2 0.20 2026-07-05 CDT
 
 addition of C<ncol>, C<nrow>, and C<pnorm> functions
 
@@ -12723,7 +12872,7 @@ Two behavioural changes, both contained to the C<csort> XSUB (the C<cs_*> helper
 B<Row names survive a Hash-of-Hashes sort.> Sorting a HoH previously discarded the outer keys. Now each row is folded into a I<fresh> row hash (a private container over aliased, read-only cells) that carries its outer key under a C<row.name> column, so the name flows into whichever shape you request:
 
  my $hoh = { alpha => { id => 1 }, beta => { id => 2 } };
- 
+
  csort($hoh, 'id');          # AoH: each row gains a row.name field
  csort($hoh, 'id', 'hoa');   # HoA: an aligned row.name column
 
@@ -12842,7 +12991,7 @@ with the module's own C<ccflags>.
   <td>single <code>cmp_string_wt</code></td>
 </tr>
 <tr>
-  <td>Multiplicity filter & set difference</td>
+  <td>Multiplicity filter &amp; set difference</td>
   <td><code>intersection</code> + <code>get_unique</code> (~90% shared); <code>Lonly</code>/<code>Ronly</code> duplicated bodies; a separate <code>set_difference()</code></td>
   <td>one shared <code>set_multiplicity()</code> with an "all vs. one" mode flag and a <code>from_last</code> flag: <code>intersection</code> (all), <code>Lonly</code> (one, first array), <code>Ronly</code> (one, last array)</td>
 </tr>
@@ -12888,7 +13037,7 @@ test detects it (see "Testing", below).
 
 new option to output to LaTeX table
 
-=head2 0.19
+=head2 0.19 2026-07-01 CDT
 
 numerous C<SSize_t var1 = av_len(var) + 1> are changed to C<size_t var1 = av_len(var) + 1> as C<size_t>; as the result cannot be negative, in order to expand numerical range
 
@@ -12898,7 +13047,7 @@ Better warnings when non-array references are given to C<intersection>
 
 C<view> now breaks columns into chunks for very wide data sets, more closely matching R's behavior
 
-=head2 0.18
+=head2 0.18  2026-06-28 CDT
 
 C<restrict> keyword added to numerous places within C<intersection> to decrease CPU time
 
@@ -12906,7 +13055,7 @@ fix to dist.ini for dependencies
 
 fixed POD rendering
 
-=head2 0.17
+=head2 0.17  2026-06-23 CDT (approx)
 
 addition of C<assign>, which adds new columns based on calculations from other columns
 
@@ -13124,7 +13273,7 @@ each row as an (unlabelled) row-names column.>
 
  # default: the leading column is named 'row_name'
  my $df = read_table('mtcars.tsv', 'auto.row.names' => 1);
- 
+
  # or give it a name
  my $df = read_table('mtcars.tsv', 'auto.row.names' => 'model');
 
@@ -13159,7 +13308,7 @@ would not be read correctly using C<read_table>, but now is read correctly
 
 now accepts array of hashes
 
-=head2 0.16
+=head2 0.16  2026-06-17 CDT
 
 changes to dist.ini, the minimum Perl version disappeared when I fixed other problems
 
@@ -13415,7 +13564,7 @@ Corrected four bugs in the C<wilcox_test> XSUB plus a portability fix in its exa
 
 =back
 
-=head2 0.15
+=head2 0.15  2026-06-11 CDT
 
 C<view> function added, similar to R's C<head>
 
@@ -13663,7 +13812,7 @@ assertions cover the exception paths above.
 
 =back
 
-=head2 0.14
+=head2 0.14 2026-06-08 CDT
 
 C<filter> function added for rows
 
@@ -13683,7 +13832,7 @@ dist.ini now links to math library when compiling: https://www.cpantesters.org/c
 
 C<fisher_test> now should be complete, errors with confidence intervals fixed
 
-=head2 0.13
+=head2 0.13 2026-06-07 CDT
 
 C<read_table>: speed improvements; commented headers are now allowed
 
@@ -13698,7 +13847,7 @@ C<write_table> gives better warnings for incorrect types of data given
 
 Numerous changes to dist.ini to improve CPAN testing, especially for Win32
 
-=head2 0.12
+=head2 0.12 2026-06-08 CDT
 
 C<add_data> can also take hash of arrays, and various mixes of data types
 
@@ -13726,7 +13875,7 @@ fixed C<write_table> as it could hang if given empty C<col.names> or C<row.names
 
 Added C<__EXTENSIONS__> to source XS file for better CPAN testing
 
-=head2 0.11
+=head2 0.11 2026-06-03 CDT
 
 better POD formatting for tables
 
@@ -13738,7 +13887,7 @@ C<write_table> now accepts simple hashes as input, in addition to hash of arrays
 
 Better documentation for t-test
 
-=head2 0.10
+=head2 0.10 2026-06-01 CDT (approx)
 
 changes to compilation for CPAN, trying to get this work on Windows
 
@@ -13746,13 +13895,13 @@ Addition of C<prcomp> and C<value_counts>
 
 C<matrix> will work without key names, just like in R.  Testing for C<matrix> has improved.
 
-=head2 0.09
+=head2 0.09 2026-06-01 CDT (approx)
 
 context changes in XS C<dTHX>, C<pTHX_>, and C<aTHX_> to get better CPAN testing results
 
 C<restrict> keywords added to C<lm> to increase speed
 
-=head2 0.08
+=head2 0.08 2026-05-26 CDT
 
 Speed improvement in C<summary> of hashes.
 
@@ -13764,7 +13913,7 @@ Compiler changes for GNU source and inclusion of C<strings.h>, to ensure more CP
 
 C<read_table> now returns hash-of-hash in {row}{column}
 
-=head2 0.07
+=head2 0.07 2026-05-24 CDT
 
 Addition of C<summary> function.
 
@@ -13774,7 +13923,7 @@ Addition of C<oneway_test> for multi-group comparisons that does not assume norm
 
 C<read_table> and C<write_table> now automatically set separators for C<.csv> files as C<,> and C<.tsv> files as C<"\t">, respectively, so these values no longer need to be specified separately from the file name.
 
-=head2 0.06
+=head2 0.06 2026-05-19 CDT
 
 Changed compiler options so that Solaris will work
 
@@ -13782,7 +13931,7 @@ signed integers changed to unsigned in C<glm>
 
 Added restrict keywords to C<power_t_test>, and made C<int> to C<unsigned int>
 
-=head2 0.05
+=head2 0.05 2026-05-08 CDT
 
 Leak testing for C<sample>
 

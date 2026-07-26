@@ -5162,7 +5162,7 @@ raw values (no cell number formats), matching the round-trip behaviour of
 
 # Changes
 
-## 0.27
+## 0.27 2026-07-26 CDT
 
 New `h` function: `h('agg')`, `h(*agg)` or `h(\&agg)` prints that function's section of this document and returns, in the spirit of R's `?function`. `h()` lists every documented function. It covers the XS functions as well as the Perl ones, because it looks the name up in the module's POD instead of reading an argument list — see [Getting help](#getting-help).
 - The pure Perl functions also accept `'?'` or `'h'` in place of their arguments, which prints the same text and then dies. `$Stats::LikeR::HELP = 0` switches that off for code that has to pass a column or file really named `'h'`.
@@ -5323,7 +5323,7 @@ referenceable by the name as it appears in the file.
         read_table: Filter column 'nope' not found in the header of FILE;
         header is: 'PDB', 'score'
 
-## 0.20
+## 0.20 2026-07-05 CDT
 
 addition of `ncol`, `nrow`, and `pnorm` functions
 
@@ -5443,7 +5443,7 @@ test detects it (see "Testing", below).
 
 new option to output to LaTeX table
 
-## 0.19
+## 0.19 2026-07-01 CDT
 
 numerous `SSize_t var1 = av_len(var) + 1` are changed to `size_t var1 = av_len(var) + 1` as `size_t`; as the result cannot be negative, in order to expand numerical range
 
@@ -5453,7 +5453,7 @@ Better warnings when non-array references are given to `intersection`
 
 `view` now breaks columns into chunks for very wide data sets, more closely matching R's behavior
 
-## 0.18
+## 0.18  2026-06-28 CDT
 
 `restrict` keyword added to numerous places within `intersection` to decrease CPU time
 
@@ -5461,7 +5461,7 @@ fix to dist.ini for dependencies
 
 fixed POD rendering
 
-## 0.17
+## 0.17  2026-06-23 CDT (approx)
 
 addition of `assign`, which adds new columns based on calculations from other columns
 
@@ -5649,7 +5649,7 @@ would not be read correctly using `read_table`, but now is read correctly
 
 now accepts array of hashes
 
-## 0.16
+## 0.16  2026-06-17 CDT
 
 changes to dist.ini, the minimum Perl version disappeared when I fixed other problems
 
@@ -5848,7 +5848,7 @@ Corrected four bugs in the `wilcox_test` XSUB plus a portability fix in its exac
 
 - Added `t/wilcox_test.t` (flat, no subtests): R-agreement cases, option handling (`paired`, `correct`, `exact`, `mu`, named/positional `x`/`y`, NA dropping), regressions for all four bug fixes, argument-error and `alternative`-validation checks, output shape, and `no_leaks_ok` coverage of the two-sample, exact, and paired allocation paths.
 
-## 0.15
+## 0.15  2026-06-11 CDT
 
 `view` function added, similar to R's `head`
 
@@ -6048,7 +6048,7 @@ seen in CPAN-tester reports for the exception-path tests.
   empty input writing no file, and UTF-8 column names and row keys. Two leak
   assertions cover the exception paths above.
 
-## 0.14
+## 0.14 2026-06-08 CDT
 
 `filter` function added for rows
 
@@ -6068,7 +6068,7 @@ dist.ini now links to math library when compiling: https://www.cpantesters.org/c
 
 `fisher_test` now should be complete, errors with confidence intervals fixed
 
-## 0.13
+## 0.13 2026-06-07 CDT
 
 `read_table`: speed improvements; commented headers are now allowed
 
@@ -6083,7 +6083,7 @@ dist.ini now links to math library when compiling: https://www.cpantesters.org/c
 
 Numerous changes to dist.ini to improve CPAN testing, especially for Win32
 
-## 0.12
+## 0.12 2026-06-08 CDT
 
 `add_data` can also take hash of arrays, and various mixes of data types
 
@@ -6111,7 +6111,7 @@ fixed `write_table` as it could hang if given empty `col.names` or `row.names`
 
 Added `__EXTENSIONS__` to source XS file for better CPAN testing
 
-## 0.11
+## 0.11 2026-06-03 CDT
 
 better POD formatting for tables
 
@@ -6123,7 +6123,7 @@ addition of MANIFEST.skip to get better testing results on CPAN
 
 Better documentation for t-test
 
-## 0.10
+## 0.10 2026-06-01 CDT (approx)
 
 changes to compilation for CPAN, trying to get this work on Windows
 
@@ -6131,13 +6131,13 @@ Addition of `prcomp` and `value_counts`
 
 `matrix` will work without key names, just like in R.  Testing for `matrix` has improved.
 
-## 0.09
+## 0.09 2026-06-01 CDT (approx)
 
 context changes in XS `dTHX`, `pTHX_`, and `aTHX_` to get better CPAN testing results
 
 `restrict` keywords added to `lm` to increase speed
 
-## 0.08
+## 0.08 2026-05-26 CDT
 
 Speed improvement in `summary` of hashes.
 
@@ -6149,7 +6149,7 @@ Compiler changes for GNU source and inclusion of `strings.h`, to ensure more CPA
 
 `read_table` now returns hash-of-hash in {row}{column}
 
-## 0.07
+## 0.07 2026-05-24 CDT
 
 Addition of `summary` function.
 
@@ -6159,7 +6159,7 @@ Addition of `oneway_test` for multi-group comparisons that does not assume norma
 
 `read_table` and `write_table` now automatically set separators for `.csv` files as `,` and `.tsv` files as `"\t"`, respectively, so these values no longer need to be specified separately from the file name.
 
-## 0.06
+## 0.06 2026-05-19 CDT
 
 Changed compiler options so that Solaris will work
 
@@ -6167,7 +6167,7 @@ signed integers changed to unsigned in `glm`
 
 Added restrict keywords to `power_t_test`, and made `int` to `unsigned int`
 
-## 0.05
+## 0.05 2026-05-08 CDT
 
 Leak testing for `sample`
 
