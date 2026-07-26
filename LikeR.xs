@@ -1689,7 +1689,7 @@ static void write_xlsx_workbook(pTHX_ AV *restrict rows, const char *restrict fi
 	}
 	SV_CATLIT(sheet, "</sheetData></worksheet>");
 
-	/* ---- document properties: provenance goes in the "comments" field ---- */
+	// ---- document properties: provenance goes in the "comments" field ----
 	SV *restrict core = sv_2mortal(newSVpvs(
 		"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
 		"<cp:coreProperties "
@@ -1707,7 +1707,6 @@ static void write_xlsx_workbook(pTHX_ AV *restrict rows, const char *restrict fi
 	}
 	SV_CATLIT(core, "</dc:description></cp:coreProperties>");
 
-	/* ---- fixed package parts ---- */
 	SV *restrict ctypes = sv_2mortal(newSVpvs(
 		"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
 		"<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">"
@@ -1736,7 +1735,7 @@ static void write_xlsx_workbook(pTHX_ AV *restrict rows, const char *restrict fi
 	xlsx_xml_cat(aTHX_ workbook, sheet_name, strlen(sheet_name));
 	SV_CATLIT(workbook, "\" sheetId=\"1\" r:id=\"rId1\"/></sheets></workbook>");
 
-	/* ---- pack the ZIP (stored, no compression) ---- */
+	// ---- pack the ZIP (stored, no compression) ---- */
 	SV *restrict zip  = sv_2mortal(newSVpvs(""));
 	SV *restrict cdir = sv_2mortal(newSVpvs(""));
 	unsigned count = 0;
@@ -1746,7 +1745,7 @@ static void write_xlsx_workbook(pTHX_ AV *restrict rows, const char *restrict fi
 	xlsx_zip_add(aTHX_ zip, cdir, &count, "xl/workbook.xml",            workbook);
 	xlsx_zip_add(aTHX_ zip, cdir, &count, "xl/_rels/workbook.xml.rels", wbrels);
 	xlsx_zip_add(aTHX_ zip, cdir, &count, "xl/worksheets/sheet1.xml",   sheet);
-	/* central directory, then end-of-central-directory record */
+	// central directory, then end-of-central-directory record */
 	uint32_t cd_off = (uint32_t)SvCUR(zip);
 	STRLEN cd_len; const char *restrict cd = SvPV(cdir, cd_len);
 	sv_catpvn(zip, cd, cd_len);
@@ -2117,8 +2116,7 @@ static NV K2x(int n, NV d) {
 	  }
 	}
 	s *= pow(10.0, eQ);
-	Safefree(H);
-	Safefree(Q);
+	Safefree(H);	Safefree(Q);
 	return s;
 }
 /* One comparator, used by every qsort below. Branch form avoids overflow that
@@ -2149,15 +2147,15 @@ static void calc_2sample_stats(NV *x, size_t nx, NV *y, size_t ny,
 	*d = max_d; *d_plus = max_d_plus; *d_minus = max_d_minus;
 }
 
-static int psmirnov_exact_test(NV q, NV r, NV s, int two_sided) {
+static int psmirnov_exact_test(NV q, NV r, NV s, bool two_sided) {
     if (two_sided) return (fabs(r - s) >= q);
     return ((r - s) >= q);
 }
 
 // Evaluate the exact 2-sample probability
-static NV psmirnov_exact_uniq_upper(NV q, size_t m, size_t n, int two_sided) {
+static NV psmirnov_exact_uniq_upper(NV q, size_t m, size_t n, bool two_sided) {
 	NV md = (NV) m, nd = (NV) n;
-	NV *u = (NV *) safemalloc((n + 1) * sizeof(NV)); /* malloc + full init below */
+	NV *restrict u = (NV *) safemalloc((n + 1) * sizeof(NV)); // malloc + full init below
 	u[0] = 0.;
 	for (size_t j = 1; j <= n; j++)
 	  u[j] = psmirnov_exact_test(q, 0., j / nd, two_sided) ? 1. : u[j - 1];
@@ -7909,7 +7907,7 @@ CODE:
 	  croak("ks_test: alternative must be 'two.sided', 'less', or 'greater'");
 	}
 
-	AV *x_av = (AV *)SvRV(x_sv);
+	AV *restrict x_av = (AV *)SvRV(x_sv);
 	size_t nx = (size_t)(av_len(x_av) + 1);
 	if (nx == 0) croak("Not enough 'x' observations");
 
@@ -7929,16 +7927,16 @@ CODE:
 	}
 
 	NV statistic = 0.0, p_value = 0.0;
-	const char *method_desc = "";
+	const char *restrict method_desc = "";
 
-	/* ----------------------------- TWO SAMPLE ----------------------------- */
+	// TWO SAMPLE
 	if (y_sv && SvROK(y_sv) && SvTYPE(SvRV(y_sv)) == SVt_PVAV) {
-	  AV *y_av = (AV *)SvRV(y_sv);
+	  AV *restrict y_av = (AV *)SvRV(y_sv);
 	  size_t ny = (size_t)(av_len(y_av) + 1);
 	  NV *restrict y_data = (NV *)safemalloc((ny ? ny : 1) * sizeof(NV));
 	  size_t valid_ny = 0;
 	  for (size_t i = 0; i < ny; i++) {
-		   SV **el = av_fetch(y_av, i, 0);
+		   SV **restrict el = av_fetch(y_av, i, 0);
 		   if (el && *el && (SvNIOK(*el) || (SvOK(*el) && looks_like_number(*el)))) {
 		       y_data[valid_ny++] = SvNV(*el);
 		   }

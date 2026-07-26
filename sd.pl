@@ -10,3 +10,4 @@ use Stats::LikeR;
 
 say sd(7,7,7);
 say sd([7,7,7]);
+h(*sd);
