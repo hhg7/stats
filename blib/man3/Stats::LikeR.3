@@ -71,6 +71,70 @@ There are other similar tools on CPAN, but I want speed and a form like List::Ut
 This is meant to call subroutines directly through eXternal Subroutines (XS) for performance and portability.
 .PP
 There \fBare\fR other modules on CPAN that can do \fBPARTS\fR of this, but this works the way that I \fBwant\fR it to.
+.SH "Getting help"
+.IX Header "Getting help"
+\&\f(CW\*(C`h\*(C'\fR prints any function\*(Aqs section of this document to \f(CW\*(C`STDOUT\*(C'\fR and returns, in
+the spirit of R\*(Aqs \f(CW\*(C`?function\*(C'\fR at the prompt. It takes the name three ways:
+.PP
+.Vb 4
+\& h(\*(Aqquantile\*(Aq);    # by name
+\& h(*quantile);     # by name, unquoted
+\& h(\e&quantile);    # by reference
+\& h();              # this section, and the list of documented functions
+\&
+\& perl \-MStats::LikeR \-e \*(Aqh(*agg)\*(Aq   # straight from the shell
+.Ve
+.PP
+\&\f(CW\*(C`h\*(C'\fR works for every function in the distribution, the XS ones and the pure Perl
+ones alike, because it looks the name up in the module\*(Aqs own POD rather than
+watching an argument list. That POD is generated from this file, so what \f(CW\*(C`h\*(C'\fR
+prints is what you are reading.
+.PP
+Note that \f(CWh(bedroc)\fR, with no quotes and no sigil, cannot be made to work:
+every function here is exported, so Perl parses the bareword as a call to
+\&\f(CWbedroc()\fR before \f(CW\*(C`h\*(C'\fR is ever reached. Use one of the three forms above.
+.ie n .SS "The \*(Aq?\*(Aq and \*(Aqh\*(Aq arguments"
+.el .SS "The \f(CW\*(Aq?\*(Aq\fP and \f(CW\*(Aqh\*(Aq\fP arguments"
+.IX Subsection "The '?' and 'h' arguments"
+The \fBpure Perl\fR functions additionally accept \f(CW\*(Aq?\*(Aq\fR or \f(CW\*(Aqh\*(Aq\fR in place of their
+arguments. That prints the same text and then \fBdies\fR, because a bare \f(CW\*(Aqh\*(Aq\fR
+where an argument was expected might have been meant as data, so returning a
+result would be a guess:
+.PP
+.Vb 3
+\& agg(\*(Aqh\*(Aq);            # prints the agg section, then dies
+\& read_table(\*(Aq?\*(Aq);     # likewise
+\& view($df, n => \*(Aqh\*(Aq); # recognized anywhere in the argument list
+.Ve
+.PP
+The functions that take it are the ones implemented in \f(CW\*(C`lib/Stats/LikeR.pm\*(C'\fR:
+\&\f(CW\*(C`age_standardize\*(C'\fR, \f(CW\*(C`agg\*(C'\fR, \f(CW\*(C`aoh2hoh\*(C'\fR, \f(CW\*(C`assign\*(C'\fR, \f(CW\*(C`bfill\*(C'\fR, \f(CW\*(C`chunk\*(C'\fR, \f(CW\*(C`cohen_d\*(C'\fR,
+\&\f(CW\*(C`col\*(C'\fR, \f(CW\*(C`colnames\*(C'\fR, \f(CW\*(C`concat\*(C'\fR, \f(CW\*(C`cramers_v\*(C'\fR, \f(CW\*(C`drop_cols\*(C'\fR, \f(CW\*(C`drop_duplicates\*(C'\fR,
+\&\f(CW\*(C`dropna\*(C'\fR, \f(CW\*(C`eta_squared\*(C'\fR, \f(CW\*(C`ffill\*(C'\fR, \f(CW\*(C`fillna\*(C'\fR, \f(CW\*(C`hosmer_lemeshow\*(C'\fR, \f(CW\*(C`interpolate\*(C'\fR,
+\&\f(CW\*(C`map_cell\*(C'\fR, \f(CW\*(C`melt\*(C'\fR, \f(CW\*(C`ncol\*(C'\fR, \f(CW\*(C`nrow\*(C'\fR, \f(CW\*(C`pivot_table\*(C'\fR, \f(CW\*(C`qcut\*(C'\fR, \f(CW\*(C`read_table\*(C'\fR,
+\&\f(CW\*(C`rename_cols\*(C'\fR, \f(CW\*(C`rownames\*(C'\fR, \f(CW\*(C`select_cols\*(C'\fR, \f(CW\*(C`smd\*(C'\fR, \f(CW\*(C`summary\*(C'\fR, \f(CW\*(C`table_one\*(C'\fR,
+\&\f(CW\*(C`TukeyHSD\*(C'\fR, \f(CW\*(C`view\*(C'\fR, \f(CW\*(C`vif\*(C'\fR. The XS functions deliberately do \fBnot\fR do this —
+see below.
+.PP
+Only a defined, non\-reference argument of exactly one character can trigger it.
+Data frames, code references, \f(CWcol()\fR objects, \f(CW\*(C`undef\*(C'\fR and plain numbers are all
+safe, as are longer strings such as \f(CW\*(Aqhelp\*(Aq\fR or \f(CW\*(Aqhour\*(Aq\fR.
+.PP
+What it cannot tell apart is a column, file or option value that really is the
+bare string \f(CW\*(Aqh\*(Aq\fR or \f(CW\*(Aq?\*(Aq\fR: \f(CWcol(\*(Aqh\*(Aq)\fR asks for help, not for a column named
+\&\f(CW\*(C`h\*(C'\fR. Set \f(CW\*(C`$Stats::LikeR::HELP = 0\*(C'\fR for code that has to pass such a value —
+\&\f(CWh()\fR is unaffected either way:
+.PP
+.Vb 4
+\& {
+\&     local $Stats::LikeR::HELP = 0;
+\&     my $adults = filter($df, col(\*(Aqh\*(Aq) > 3);   # a predicate on column h
+\& }
+.Ve
+.PP
+This is exactly why the XS functions don\*(Aqt read their arguments for help:
+\&\f(CW\*(C`vals($df, \*(Aqh\*(Aq)\*(C'\fR, \f(CW\*(C`csort($df, \*(Aqh\*(Aq)\*(C'\fR and \f(CW\*(C`group_by($df, \*(Aqh\*(Aq, ...)\*(C'\fR are ordinary
+calls naming a column, and \f(CWh(\*(Aqvals\*(Aq)\fR is already unambiguous.
 .SH Functions/Subroutines
 .IX Header "Functions/Subroutines"
 ========================================================================
@@ -85,7 +149,7 @@ When the target is a Hash of Hashes, incoming hash keys update existing rows, an
 .PP
 .Vb 1
 \& $data = { \*(AqJack Smith\*(Aq => { age => 30 } };
-\& 
+\&
 \& $n = { 
 \&     \*(AqJack Smith\*(Aq => {    # Update existing (Hash)
 \&         dept => \*(AqEngineering\*(Aq
@@ -93,7 +157,7 @@ When the target is a Hash of Hashes, incoming hash keys update existing rows, an
 \&     \*(AqJane Doe\*(Aq   => { age => 25, dept => \*(AqSales\*(Aq }, # Add new (Hash)
 \&     \*(AqInvalid\*(Aq    => \*(AqNot a reference\*(Aq               # Edge case safety
 \& };
-\& 
+\&
 \& add_data($data, $n);
 .Ve
 .PP
@@ -144,12 +208,12 @@ When the target is a Hash of Arrays, incoming arrays are pushed onto the existin
 \& $data = [ 
 \&     { id => 1, name => \*(AqAlice\*(Aq } 
 \& ];
-\& 
+\&
 \& $n = [ 
 \&     { role => \*(AqAdmin\*(Aq },             # Updates index 0
 \&     { id => 2, name => \*(AqBob\*(Aq }       # Creates index 1
 \& ];
-\& 
+\&
 \& add_data($data, $n);
 .Ve
 .PP
@@ -188,7 +252,7 @@ When the target is a Hash of Arrays, incoming arrays are pushed onto the existin
 \&     \*(Aq1\*(Aq => [ \*(Aqz\*(Aq, 30 ],                 # Array pair coerced to Hash, creates $data\->[1]
 \&     \*(Aqignored\*(Aq => { k => \*(Aqv\*(Aq }           # Ignored: cannot map to an array index
 \& };
-\& 
+\&
 \& add_data($data, $n);
 .Ve
 .PP
@@ -214,7 +278,7 @@ events. Validated numerically against R.
 \& my @count  = (5, 20, 55, 60);       # events per age stratum
 \& my @pop    = (1000, 3000, 4000, 2000);  # person\-time / population per stratum
 \& my @stdpop = (2000, 3000, 3000, 2000);  # standard population weights
-\& 
+\&
 \& my $r = age_standardize(\e@count, \e@pop, \e@stdpop, per => 100_000);
 \& printf "age\-adjusted rate = %.1f per 100k (95%% CI %.1f\-%.1f)\en",
 \&     $r\->{adj_rate}, $r\->{\*(Aqconf.int\*(Aq}[0], $r\->{\*(Aqconf.int\*(Aq}[1];
@@ -255,19 +319,19 @@ is never modified.
 .PP
 .Vb 1
 \& use Stats::LikeR;
-\& 
+\&
 \& # grouped, one aggregator per column
 \& my $out = agg($df, by => \*(Aqsex\*(Aq, agg => { wt => \*(Aqmean\*(Aq });
-\& 
+\&
 \& # grouped, several aggregators, several columns
 \& my $out = agg($df,
 \&     by  => \*(Aqsex\*(Aq,
 \&     agg => { wt => [ \*(Aqmean\*(Aq, \*(Aqsd\*(Aq ], age => [ \*(Aqmean\*(Aq, \*(Aqcount\*(Aq ] },
 \& );
-\& 
+\&
 \& # ungrouped: the whole frame becomes one row
 \& my $out = agg($df, agg => { wt => \*(Aqmean\*(Aq, age => \*(Aqcount\*(Aq });
-\& 
+\&
 \& # group on two columns and emit a hash of hashes
 \& my $out = agg($df,
 \&     by            => [ \*(Aqa\*(Aq, \*(Aqb\*(Aq ],
@@ -283,7 +347,7 @@ is never modified.
 .IP \(bu 4
 \&\fBagg\fR (required) — a hashref mapping each column to an aggregator
 \&\fIspec\fR. A spec is one of: a single aggregator name (string), an arrayref of
-names, or a coderef. See #aggregators below.
+names, or a coderef. See "Aggregators" below.
 .IP \(bu 4
 \&\fBby\fR — a single column or an arrayref of columns to group on. Omit it to
 aggregate the entire frame into one row.
@@ -342,7 +406,7 @@ A column reduced by a \fBsingle\fR aggregator keeps its own name; reduced by
 \&     { sex => \*(AqM\*(Aq, wt => 80, age => 40    },
 \&     { sex => \*(AqF\*(Aq, wt => 55, age => undef },
 \& ];
-\& 
+\&
 \& my $out = agg($df,
 \&     by  => \*(Aqsex\*(Aq,
 \&     agg => { wt => [ \*(Aqmean\*(Aq, \*(Aqsd\*(Aq ], age => [ \*(Aqmean\*(Aq, \*(Aqcount\*(Aq ] },
@@ -377,7 +441,7 @@ Without \f(CW\*(C`by\*(C'\fR, the frame collapses to one row:
 .PP
 .Vb 1
 \& my $out = agg($df, agg => { wt => \*(Aqmean\*(Aq, age => \*(Aqcount\*(Aq });
-\& 
+\&
 \& # [ { wt => 66.25, age => 3 } ]
 .Ve
 .PP
@@ -389,7 +453,7 @@ Columns are integer positions. Grouping on column 0 and reducing column 1:
 .Vb 2
 \& my $aoa = [ [ \*(AqM\*(Aq, 70 ], [ \*(AqF\*(Aq, 60 ], [ \*(AqM\*(Aq, 80 ] ];
 \& my $out = agg($aoa, by => 0, agg => { 1 => [ \*(Aqmean\*(Aq, \*(Aqmax\*(Aq ] });
-\& 
+\&
 \& # [ [ \*(AqF\*(Aq, 60, 60 ], [ \*(AqM\*(Aq, 75, 80 ] ]
 \& #     ^grp  ^mean ^max
 .Ve
@@ -406,7 +470,7 @@ collision is made unique with a \f(CW\*(C`.N\*(C'\fR suffix.
 .PP
 .Vb 1
 \& my $out = agg($df, by => \*(Aqsex\*(Aq, agg => { wt => \*(Aqmean\*(Aq }, \*(Aqoutput.type\*(Aq => \*(Aqhoh\*(Aq);
-\& 
+\&
 \& # {
 \& #     F => { sex => \*(AqF\*(Aq, wt => 57.5 },
 \& #     M => { sex => \*(AqM\*(Aq, wt => 75   },
@@ -601,13 +665,13 @@ Returns a hashref. Each top\-level key is a row\*(Aqs \f(CW\*(C`$row\->{$key}\*(
 \&     { id => \*(Aqp1\*(Aq, kd => 12.4, chain => \*(AqA\*(Aq },
 \&     { id => \*(Aqp2\*(Aq, kd =>  3.1, chain => \*(AqB\*(Aq },
 \& ];
-\& 
+\&
 \& my $by_id = aoh2hoh($rows, \*(Aqid\*(Aq);
 \& # {
 \& #   p1 => { id => \*(Aqp1\*(Aq, kd => 12.4, chain => \*(AqA\*(Aq },
 \& #   p2 => { id => \*(Aqp2\*(Aq, kd =>  3.1, chain => \*(AqB\*(Aq },
 \& # }
-\& 
+\&
 \& $by_id\->{p2}{kd};   # 3.1 \-\- O(1) lookup instead of a linear scan
 .Ve
 .PP
@@ -733,14 +797,14 @@ is the equivalent of:
 .Vb 2
 \& yield <\- c(5.5, 5.4, 5.8, 4.5, 4.8, 4.2)
 \& ctrl <\- c(1,     1,   1,   0,   0,   0)
-\& 
+\&
 \& # Combine them into a named list (the R equivalent of your hash)
 \& my_list <\- list(yield = yield, ctrl = ctrl)
-\& 
+\&
 \& # Convert the list into a "long" dataframe
 \& # This creates two columns: "values" and "ind" (the group name)
 \& my_data <\- stack(my_list)
-\& 
+\&
 \& # Rename columns for clarity (optional but good practice)
 \& colnames(my_data) <\- c("Value", "Group")
 \& anova_model <\- aov(Value ~ Group, data = my_data)
@@ -756,7 +820,7 @@ Add new columns to a data frame, computed from the columns already there — or 
 .IX Subsection "Usage"
 .PP
 .Vb 1
-\& assign($df, new_name => VALUE, another => VALUE, ...);
+\& assign($df, new\e_name => VALUE, another => VALUE, ...);
 .Ve
 .IP \(bu 4
 \&\fR\f(CB$df\fR\fB\fR — your data frame, in any of three shapes:
@@ -795,7 +859,7 @@ A single arrayref return is stored \fIas the cell\fR, so \f(CW\*(C`sub { [split 
 .RE
 .IP \(bu 4
 \&\fBA list of more than one value → whole column.\fR The list becomes the entire column, distributed positionally. This is the natural fit for column functions like \f(CW\*(C`rank\*(C'\fR:
-.Sp
+.PP
 .Vb 2
 \& assign($df, \*(AqΔG rank\*(Aq => sub { rank( vals($df, \*(AqdG_kcal_mol\*(Aq) ) });
 \& # rank() returns a list, so the whole ranking lands in one column.
@@ -826,7 +890,7 @@ A plain coderef stores its \fBreturn value\fR, so an in\-place transform of an e
 .PP
 .Vb 1
 \& use Stats::LikeR;   # exports map_cell alongside assign
-\& 
+\&
 \& assign($df, \*(AqRes.\*(Aq => map_cell { s/^[A\-Z]:// });   # strip a leading "X:"
 \& assign($df, \*(AqRes.\*(Aq => map_cell { $_ = uc });        # upper\-case in place
 .Ve
@@ -867,7 +931,7 @@ Whole\-column and arrayref values must have exactly one entry per row; a length 
 .IX Subsection "Good to know"
 .IP \(bu 4
 \&\fBPairs run in order\fR, so a later column can use one you just made:
-.Sp
+.PP
 .Vb 4
 \& assign($df,
 \&     bmi   => sub { $_\->{weight} / $_\->{height} ** 2 },
@@ -888,22 +952,22 @@ chance a random positive scores higher than a random negative. \f(CW1.0\fR is pe
 .PP
 .Vb 1
 \& use Stats::LikeR \*(Aqauc\*(Aq;
-\& 
+\&
 \& my $auc = auc(\e@scores, \e@labels);          # e.g. 0.848
 .Ve
 .PP
 Options: \f(CW\*(C`positive\*(C'\fR (which label is the positive class, default \f(CW1\fR) and
 \&\f(CW\*(C`direction\*(C'\fR (\f(CW\*(Aq>\*(Aq\fR = higher score is more positive, the default; \f(CW\*(Aq<\*(Aq\fR flips it).
-For the full curve and a confidence interval, see #roc.
+For the full curve and a confidence interval, see \f(CW\*(C`roc\*(C'\fR.
 .SS auroc
 .IX Subsection "auroc"
-The same number as #auc, but with the argument order of Python\*(Aqs
+The same number as \f(CW\*(C`auc\*(C'\fR, but with the argument order of Python\*(Aqs
 \&\f(CW\*(C`sklearn.metrics.roc_auc_score\*(C'\fR — \fBlabels first, scores second\fR — so code
 ported from scikit\-learn works unchanged. Higher score means the positive class.
 .PP
 .Vb 1
 \& use Stats::LikeR \*(Aqauroc\*(Aq;
-\& 
+\&
 \& my $a = auroc(\e@labels, \e@scores);          # like roc_auc_score(y, s)
 .Ve
 .PP
@@ -916,7 +980,7 @@ the extreme tail as positive.
 .SS bedroc
 .IX Subsection "bedroc"
 BEDROC — Boltzmann\-Enhanced Discrimination of ROC (Truchon & Bayly, \fIJ. Chem.
-Inf. Model.\fR 2007) — is an \fIearly\-recognition\fR metric. Unlike #auc,
+Inf. Model.\fR 2007) — is an \fIearly\-recognition\fR metric. Unlike \f(CW\*(C`auc\*(C'\fR,
 which weights a correct ranking equally everywhere, BEDROC rewards actives
 (positives) that appear near the \fBtop\fR of a score\-sorted list far more than
 actives buried deep in it. That is what you want when only the first handful of
@@ -926,7 +990,7 @@ review, triage). The result lies in \f(CW\*(C`[0, 1]\*(C'\fR: \f(CW1\fR is ideal
 .PP
 .Vb 1
 \& use Stats::LikeR \*(Aqbedroc\*(Aq;
-\& 
+\&
 \& my $r = bedroc(\e@scores, \e@labels, alpha => 20);
 \& print $r\->{bedroc};             # e.g. 0.9989
 .Ve
@@ -1010,7 +1074,7 @@ Enhancement and its bounds for this \f(CW\*(C`alpha\*(C'\fR and active fraction;
 \&     top    => 0.05);
 \& print $r\->{bedroc};
 \& print $r\->{enrichment}{enrichment_factor};   # e.g. 2.0 => 2x over random
-\& 
+\&
 \& # fraction\-defined actives straight from a raw ΔG column: the strongest\-
 \& # binding 10% (lowest ΔG) are the actives, best predictions rank first.
 \& # No pre\-built 0/1 label, no per\-script regression variant.
@@ -1020,17 +1084,17 @@ Enhancement and its bounds for this \f(CW\*(C`alpha\*(C'\fR and active fraction;
 \&     active_side => \*(Aqlow\*(Aq,    # lowest ΔG = strongest binders = actives
 \&     direction   => \*(Aq<\*(Aq);     # lower predicted ΔG ranks first
 \& print $b\->{bedroc};
-\& 
+\&
 \& # lower score = better ranker
 \& bedroc(\e@scores, \e@labels, direction => \*(Aq<\*(Aq);
-\& 
+\&
 \& # string labels
 \& bedroc(\e@scores, [\*(Aqcase\*(Aq,\*(Aqctrl\*(Aq,...], positive => \*(Aqcase\*(Aq);
 .Ve
 .PP
-Calling \f(CW\*(C`bedroc\*(C'\fR with a single argument of \f(CW\*(Aqh\*(Aq\fR, \f(CW\*(AqH\*(Aq\fR, or \f(CW\*(Aq?\*(Aq\fR prints a short
-usage summary to \f(CW\*(C`STDOUT\*(C'\fR (in the spirit of R\*(Aqs \f(CW\*(C`?function\*(C'\fR) and returns
-nothing.
+Calling \f(CW\*(C`bedroc\*(C'\fR with a single argument of \f(CW\*(Aqh\*(Aq\fR or \f(CW\*(Aq?\*(Aq\fR prints this section to
+\&\f(CW\*(C`STDOUT\*(C'\fR (in the spirit of R\*(Aqs \f(CW\*(C`?function\*(C'\fR) and dies. See
+"Getting help".
 .SS bfill
 .IX Subsection "bfill"
 Back\-fill NA (undef) cells with the next valid value seen below them along the
@@ -1062,7 +1126,7 @@ Returns a NEW frame; the input is never modified.
 .Vb 2
 \& bfill([ { v => undef }, { v => 2 }, { v => undef } ], cols => [ \*(Aqv\*(Aq ]);
 \& # [ { v => 2 }, { v => 2 }, { v => undef } ]   # trailing NA stays
-\& 
+\&
 \& bfill({ b => { x => undef }, a => { x => 5 }, c => { x => undef } }, cols => [ \*(Aqx\*(Aq ]);
 \& # sorted\-key order a,b,c; nothing after a to pull back, so:
 \& # { a => { x => 5 }, b => { x => undef }, c => { x => undef } }
@@ -1091,9 +1155,9 @@ You play 10 rounds and the toddler gets 6 right. Real skill, or just luck?
 .PP
 .Vb 1
 \& use Stats::LikeR \*(Aqbinom_test\*(Aq;
-\& 
+\&
 \& my $r = binom_test(6, 10, p => 0.5); # 6 wins, 10 rounds, guessing rate 0.5
-\& 
+\&
 \& print $r\->{p_value};                 # 0.7539
 .Ve
 .PP
@@ -1134,7 +1198,7 @@ Suppose the toddler had gone 9 for 10 instead:
 .PP
 .Vb 1
 \& my $r = binom_test(9, 10, p => 0.5);
-\& 
+\&
 \& print $r\->{p_value};                   # 0.0215
 .Ve
 .PP
@@ -1347,7 +1411,7 @@ Passing a Hash of Hashes (HoH) applies the exact same logic as a 2D Array, but p
 \&     GroupA => { Success => 10, Failure => 15 },
 \&     GroupB => { Success => 20, Failure => 5  }
 \& };
-\& 
+\&
 \& my $res = chisq_test($data);
 .Ve
 .PP
@@ -1382,13 +1446,13 @@ Flat Hash References evaluate Goodness of Fit while preserving your categorical 
 \&     Oranges => 20, 
 \&     Bananas => 30 
 \& };
-\& 
+\&
 \& my $res = chisq_test($data);
 .Ve
 .SS chunk
 .IX Subsection "chunk"
 Split an array into contiguous, roughly equal groups by \fIposition\fR. Unlike
-#qcut, \f(CW\*(C`chunk\*(C'\fR does not inspect values, sort, or compute cutpoints; it
+\&\f(CW\*(C`qcut\*(C'\fR, \f(CW\*(C`chunk\*(C'\fR does not inspect values, sort, or compute cutpoints; it
 slices the array in the order given. Use it for batching work, paginating, or
 grouping non\-numeric data such as strings.
 .PP
@@ -1478,16 +1542,16 @@ e.g. an exposure/outcome odds ratio adjusted for study site. Same as R\*(Aqs
 .PP
 .Vb 1
 \& use Stats::LikeR \*(Aqcmh_test\*(Aq;
-\& 
+\&
 \& my $r = cmh_test([ [10,3,5,12],     # stratum 1 as [a,b,c,d]
 \&                    [20,6,8,15],     # stratum 2
 \&                    [ 7,4,9,11] ]);  # stratum 3
-\& 
+\&
 \& print $r\->{p_value};    # combined test across strata
 \& print $r\->{estimate};   # Mantel–Haenszel common odds ratio
 .Ve
 .PP
-Each 2×2 uses the same layout as #epi_2x2. Options: \f(CW\*(C`correct\*(C'\fR
+Each 2×2 uses the same layout as \f(CW\*(C`epi_2x2\*(C'\fR. Options: \f(CW\*(C`correct\*(C'\fR
 (continuity correction, default \f(CW1\fR) and \f(CW\*(C`conf_level\*(C'\fR (default \f(CW0.95\fR). The
 result also has \f(CW\*(C`statistic\*(C'\fR (chi\-squared), \f(CW\*(C`parameter\*(C'\fR (df = 1), \f(CW\*(C`conf_int\*(C'\fR (for
 the common OR), and \f(CW\*(C`k\*(C'\fR (number of strata).
@@ -1504,7 +1568,7 @@ Validated numerically against R.
 \&     $d\->{estimate}, $d\->{\*(Aqconf.int\*(Aq}[0], $d\->{\*(Aqconf.int\*(Aq}[1], $d\->{hedges_g};
 .Ve
 .PP
-Compare with #smd, which standardizes by the simple (unweighted) average
+Compare with "smd", which standardizes by the simple (unweighted) average
 of the group variances and is the convention for covariate\-balance tables.
 .PP
 \fIOutput variables\fR
@@ -1520,15 +1584,15 @@ back every column compared against every other column.
 .PP
 .Vb 1
 \& use Stats::LikeR;
-\& 
+\&
 \& my %data = (
 \&     height => [ 170, 165, 180, 175 ],
 \&     weight => [  70,  60,  85,  77 ],
 \&     age    => [  30,  41,  25,  38 ],
 \& );
-\& 
+\&
 \& my $result = col2col(\e%data, \*(Aqcor\*(Aq);
-\& 
+\&
 \& # $result\->{height}{weight}  == correlation of height vs weight
 \& # $result\->{height}{age}     == correlation of height vs age
 \& # ...and so on for every pair
@@ -1778,13 +1842,13 @@ In scalar context it returns the count, so \f(CW\*(C`scalar colnames($df)\*(C'\f
 .Vb 2
 \& my $aoh = [ { b => 2, a => 1 }, { a => 3, c => 9 } ];
 \& my @cols = colnames($aoh);        # (\*(Aqa\*(Aq, \*(Aqb\*(Aq, \*(Aqc\*(Aq)  \-\- union, sorted
-\& 
+\&
 \& my $hoa = { z => [1,2], a => [3,4], m => [5,6] };
 \& my @cols = colnames($hoa);        # (\*(Aqa\*(Aq, \*(Aqm\*(Aq, \*(Aqz\*(Aq)
-\& 
+\&
 \& my $aoa = [ [1,2,3], [4,5,6] ];
 \& my @cols = colnames($aoa);        # (0, 1, 2)
-\& 
+\&
 \& my $n = colnames($hoa);           # 3  (scalar context == ncol)
 .Ve
 .SS concat
@@ -1813,7 +1877,7 @@ original frames are never modified.
 .PP
 .Vb 1
 \& use Stats::LikeR;
-\& 
+\&
 \& my $all = concat($df1, $df2, $df3);   # any number of frames
 \& my $all = rbind($df1, $df2);          # identical: rbind is a synonym
 .Ve
@@ -1931,7 +1995,7 @@ readers who know it from R:
 .PP
 .Vb 1
 \& my $c = rbind($df1, $df2);
-\& 
+\&
 \& # they are literally the same code reference:
 \& \e&Stats::LikeR::rbind == \e&Stats::LikeR::concat;   # true
 .Ve
@@ -2000,17 +2064,17 @@ or
 .IX Subsection "coxph"
 Cox proportional\-hazards regression: how covariates raise or lower the hazard
 (the risk of an event over time). It is the survival\-analysis counterpart of
-#glm and reports hazard ratios, like R\*(Aqs \f(CW\*(C`survival::coxph\*(C'\fR (Efron ties).
+\&\f(CW\*(C`glm\*(C'\fR and reports hazard ratios, like R\*(Aqs \f(CW\*(C`survival::coxph\*(C'\fR (Efron ties).
 .PP
 Give times, an event flag (1 = event, 0 = censored), and one or more covariates
 (a single \f(CW\*(C`\e@x\*(C'\fR, or \f(CW\*(C`[\e@x1, \e@x2, ...]\*(C'\fR):
 .PP
 .Vb 1
 \& use Stats::LikeR \*(Aqcoxph\*(Aq;
-\& 
+\&
 \& my $fit = coxph(\e@time, \e@status, [\e@age, \e@sex],
 \&                 names => [\*(Aqage\*(Aq, \*(Aqsex\*(Aq]);
-\& 
+\&
 \& print $fit\->{exp_coef}[0];    # hazard ratio for age
 \& print $fit\->{p_value}[0];     # its p\-value
 .Ve
@@ -2019,8 +2083,8 @@ Options: \f(CW\*(C`names\*(C'\fR, \f(CW\*(C`ties\*(C'\fR (\f(CW\*(Aqefron\*(Aq\f
 (default \f(CW0.95\fR), \f(CW\*(C`maxit\*(C'\fR. The result has parallel per\-covariate arrays \f(CW\*(C`coef\*(C'\fR
 (log\-HR), \f(CW\*(C`exp_coef\*(C'\fR (HR), \f(CW\*(C`se\*(C'\fR, \f(CW\*(C`z\*(C'\fR, \f(CW\*(C`p_value\*(C'\fR, \f(CW\*(C`conf_int\*(C'\fR (HR scale), plus
 model\-level \f(CW\*(C`loglik\*(C'\fR, \f(CW\*(C`lr_stat\*(C'\fR/\f(CW\*(C`lr_p_value\*(C'\fR (likelihood\-ratio test), \f(CW\*(C`n\*(C'\fR,
-\&\f(CW\*(C`nevent\*(C'\fR, and \f(CW\*(C`converged\*(C'\fR. See #survfit and
-#logrank_test.
+\&\f(CW\*(C`nevent\*(C'\fR, and \f(CW\*(C`converged\*(C'\fR. See \f(CW\*(C`survfit\*(C'\fR and
+\&\f(CW\*(C`logrank_test\*(C'\fR.
 .SS cramers_v
 .IX Subsection "cramers_v"
 Cramér\*(Aqs \fIV\fR, a measure of association for an \fIr\fR × \fIc\fR contingency table
@@ -2032,7 +2096,7 @@ tables. Validated numerically against R.
 \& # from a count table
 \& my $v = cramers_v([[10, 20, 30], [15, 25, 10]]);
 \& printf "V = %.3f (bias\-corrected %.3f)\en", $v\->{estimate}, $v\->{bias_corrected};
-\& 
+\&
 \& # or from two parallel categorical vectors (cross\-tabulated automatically)
 \& my $v2 = cramers_v(\e@exposure, \e@outcome);
 .Ve
@@ -2089,7 +2153,7 @@ Columns in an AoA are addressed by non\-negative integer index:
 \&     [ 1, 10, \*(Aqalpha\*(Aq ],
 \&     [ 2, 20, \*(Aqbeta\*(Aq  ],
 \& ];
-\& 
+\&
 \& my $s = csort($rows, 0);       # by column 0 \-> id 1, 2, 3
 \& my $s = csort($rows, 2);       # by column 2 \-> alpha, beta, gamma
 \& my $s = csort($rows, sub { $b\->[1] <=> $a\->[1] });   # by column 1, descending
@@ -2213,7 +2277,7 @@ Return a new data frame with the named columns removed and the rest kept —
 \& my $hoa = { a => [1,4], b => [2,5], c => [3,6] };
 \& drop_cols($hoa, \*(Aqb\*(Aq);
 \& # { a => [1,4], c => [3,6] }
-\& 
+\&
 \& my $aoa = [ [1,2,3], [4,5,6] ];
 \& drop_cols($aoa, 1);          # result is re\-indexed 0,1
 \& # [ [1,3], [4,6] ]
@@ -2276,10 +2340,12 @@ row keeps all of its columns.
 .IP \(bu 4
 \&\fR\f(CB0\fR\fB\fR (or \f(CW\*(Aqnone\*(Aq\fR) — drop \fIevery\fR row that has a duplicate, keeping only
 rows that were unique.
-.Sp
-my \f(CW$df\fR = { id => [1, 1, 2], v => [10, 20, 30] };
-drop_duplicates($df, subset => \*(Aqid\*(Aq);                 # { id => [1, 2], v => [10, 30] }
-drop_duplicates($df, subset => \*(Aqid\*(Aq, keep => \*(Aqlast\*(Aq); # { id => [1, 2], v => [20, 30] }
+.PP
+.Vb 3
+\& my $df = { id => [1, 1, 2], v => [10, 20, 30] };
+\& drop_duplicates($df, subset => \*(Aqid\*(Aq);                 # { id => [1, 2], v => [10, 30] }
+\& drop_duplicates($df, subset => \*(Aqid\*(Aq, keep => \*(Aqlast\*(Aq); # { id => [1, 2], v => [20, 30] }
+.Ve
 .PP
 Row order is preserved: the survivors come out in their original first\-seen
 positions.
@@ -2329,11 +2395,13 @@ dropped row goes too). A missing key counts as undef.
 \&\fR\f(CB\*(Aqany\*(Aq\fR\fB\fR (default) — drop a row if \fIany\fR named column is undef there.
 .IP \(bu 4
 \&\fR\f(CB\*(Aqall\*(Aq\fR\fB\fR — drop a row only if \fIevery\fR named column is undef there.
-.Sp
-my \f(CW$df\fR = { A => [1, 2, undef], B => [1, 2, 3], C => [undef, 2, 4] };
-dropna($df, cols => [\*(AqA\*(Aq, \*(AqB\*(Aq]);
-.SH "{ A => [1, 2], B => [1, 2], C => [undef, 2] }"
-.IX Header "{ A => [1, 2], B => [1, 2], C => [undef, 2] }"
+.PP
+.Vb 3
+\& my $df = { A => [1, 2, undef], B => [1, 2, 3], C => [undef, 2, 4] };
+\& dropna($df, cols => [\*(AqA\*(Aq, \*(AqB\*(Aq]);
+\& # { A => [1, 2], B => [1, 2], C => [undef, 2] }
+.Ve
+.PP
 Index 2 is dropped because \f(CW\*(C`A\*(C'\fR is undef there. \f(CW\*(C`C\*(C'\fR is not consulted, so its own
 undef at index 0 doesn\*(Aqt trigger a drop — but index 2 is still removed from \f(CW\*(C`C\*(C'\fR
 so every column stays the same length.
@@ -2368,7 +2436,7 @@ HoH results come back in hash order, since HoH rows are unordered.
 .SS dunn_test
 .IX Subsection "dunn_test"
 Dunn\*(Aqs (1964) post\-hoc test, the standard follow\-up to a significant
-#kruskal_test (Kruskal\-Wallis). It performs all pairwise
+"kruskal_test" (Kruskal\-Wallis). It performs all pairwise
 comparisons of group rank\-means using the \fBshared\fR ranking and tie correction
 from the omnibus test, then adjusts the p\-values for multiple comparisons.
 Two\-sided p\-values are reported (the \f(CW\*(C`FSA::dunnTest\*(C'\fR convention). Validated
@@ -2377,7 +2445,7 @@ numerically against the canonical formula computed in base R.
 .Vb 2
 \& my @values = (2.1,3.4,1.9,5.6,4.2, 6.1,7.3,5.9,8.2,6.6, 3.3,4.4,2.2,3.3,5.5);
 \& my @group  = (((\*(AqA\*(Aq) x 5), ((\*(AqB\*(Aq) x 5), ((\*(AqC\*(Aq) x 5));
-\& 
+\&
 \& my $res = dunn_test(\e@values, \e@group, method => \*(Aqbh\*(Aq);
 \& for my $c (@$res) {
 \&     printf "%\-9s  Z=%+.3f  p=%.4f  (adj %.4f)\en",
@@ -2403,16 +2471,16 @@ each with a confidence interval, plus number needed to treat — for one
 exposure×outcome table. Rows are exposure, columns are outcome:
 .PP
 .Vb 3
-\&            outcome+   outcome\-
-\&     exp+       a          b
-\&     exp\-       c          d
+\&        outcome+   outcome\-
+\& exp+       a          b
+\& exp\-       c          d
 .Ve
 .PP
 Pass the four counts (or a \f(CW\*(C`[a,b,c,d]\*(C'\fR / \f(CW\*(C`[[a,b],[c,d]]\*(C'\fR array ref):
 .PP
 .Vb 1
 \& use Stats::LikeR \*(Aqepi_2x2\*(Aq;
-\& 
+\&
 \& my $r = epi_2x2(30, 70, 20, 80);
 \& print $r\->{odds_ratio};             # 1.714
 \& print "@{ $r\->{odds_ratio_ci} }";   # 0.895 3.285
@@ -2421,14 +2489,14 @@ Pass the four counts (or a \f(CW\*(C`[a,b,c,d]\*(C'\fR / \f(CW\*(C`[[a,b],[c,d]]
 Options: \f(CW\*(C`conf_level\*(C'\fR (default \f(CW0.95\fR) and \f(CW\*(C`correct\*(C'\fR (add 0.5 to every cell,
 done automatically when a cell is 0). Result keys: \f(CW\*(C`odds_ratio\*(C'\fR, \f(CW\*(C`risk_ratio\*(C'\fR,
 \&\f(CW\*(C`risk_diff\*(C'\fR (each with a matching \f(CW*_ci\fR), \f(CW\*(C`risk_exposed\*(C'\fR, \f(CW\*(C`risk_unexposed\*(C'\fR, and
-\&\f(CW\*(C`nnt\*(C'\fR. For a significance test use #fisher_test or
-#chisq_test; to adjust across strata use #cmh_test.
+\&\f(CW\*(C`nnt\*(C'\fR. For a significance test use \f(CW\*(C`fisher_test\*(C'\fR or
+\&\f(CW\*(C`chisq_test\*(C'\fR; to adjust across strata use \f(CW\*(C`cmh_test\*(C'\fR.
 .SS eta_squared
 .IX Subsection "eta_squared"
 Eta\-squared (η²) and related effect sizes for a one\-way ANOVA, computed from the
 sums of squares. Returns η², partial η² (equal to η² for a one\-way design), and
 ω² (omega\-squared, a less biased estimator). Accepts either raw values and group
-labels or an existing #aov result. Validated numerically against R.
+labels or an existing \f(CW\*(C`aov\*(C'\fR result. Validated numerically against R.
 .PP
 .Vb 2
 \& my $e = eta_squared(\e@values, \e@group);            # or eta_squared($aov_result)
@@ -2469,7 +2537,7 @@ Returns a NEW frame; the input is never modified.
 \& ffill([ { v => 1 }, { v => undef }, { v => undef }, { v => 4 }, { v => undef } ],
 \&     cols => [ \*(Aqv\*(Aq ]);
 \& # [ { v => 1 }, { v => 1 }, { v => 1 }, { v => 4 }, { v => 4 } ]
-\& 
+\&
 \& ffill([ { v => 1 }, { v => undef }, { v => undef }, { v => 4 } ],
 \&     cols => [ \*(Aqv\*(Aq ], limit => 1);
 \& # [ { v => 1 }, { v => 1 }, { v => undef }, { v => 4 } ]
@@ -2488,7 +2556,7 @@ constant, use \f(CW\*(C`ffill\*(C'\fR/\f(CW\*(C`bfill\*(C'\fR.
 .PP
 .Vb 5
 \& fillna($df,
-\&     value => 0,                    # scalar: fill every NA (or only within C<cols>)
+\&     value => 0,                    # scalar: fill every NA (or only within \`cols\`)
 \&     value => { a => 9, b => \-1 },  # dict: fill only these columns
 \&     cols  => [ \*(Aqa\*(Aq, \*(Aqb\*(Aq ],         # restrict a scalar fill (forbidden with a dict)
 \& );
@@ -2513,10 +2581,10 @@ Returns a NEW frame; the input is never modified.
 .Vb 2
 \& fillna([ { a => 1, b => undef }, { a => undef, b => 4 } ], value => 0);
 \& # [ { a => 1, b => 0 }, { a => 0, b => 4 } ]
-\& 
+\&
 \& fillna([ { a => undef, b => undef } ], value => { a => 9, Z => 1 });
 \& # [ { a => 9, b => undef } ]   # Z ignored, b left NA
-\& 
+\&
 \& fillna([ { a => undef, b => undef } ], value => 7, cols => [ \*(Aqb\*(Aq ]);
 \& # [ { a => undef, b => 7 } ]
 .Ve
@@ -2540,9 +2608,9 @@ Return a new data frame containing only the rows of \f(CW$df\fR that match a pre
 .el .IP "1. a \fR\f(CBcol()\fR\fB expression\fR — a small, composable comparison built with overloaded operators, and" 4
 .IX Item "1. a col() expression — a small, composable comparison built with overloaded operators, and"
 .PD 0
-.ie n .IP "2. a \fBcode reference\fR — for anything the operators can\*(Aqt express (multiple columns, regexes, matching on the row name, arbitrary logic), in the same spirit as the ""filter"" option of #." 4
-.el .IP "2. a \fBcode reference\fR — for anything the operators can\*(Aqt express (multiple columns, regexes, matching on the row name, arbitrary logic), in the same spirit as the \f(CWfilter\fR option of #." 4
-.IX Item "2. a code reference — for anything the operators can't express (multiple columns, regexes, matching on the row name, arbitrary logic), in the same spirit as the filter option of #."
+.ie n .IP "2. a \fBcode reference\fR — for anything the operators can\*(Aqt express (multiple columns, regexes, matching on the row name, arbitrary logic), in the same spirit as the ""filter"" option of ""read_table""." 4
+.el .IP "2. a \fBcode reference\fR — for anything the operators can\*(Aqt express (multiple columns, regexes, matching on the row name, arbitrary logic), in the same spirit as the \f(CWfilter\fR option of \f(CWread_table\fR." 4
+.IX Item "2. a code reference — for anything the operators can't express (multiple columns, regexes, matching on the row name, arbitrary logic), in the same spirit as the filter option of read_table."
 .PD
 .PP
 Both \f(CW\*(C`filter\*(C'\fR and \f(CW\*(C`col\*(C'\fR are exported by default.
@@ -2606,7 +2674,7 @@ In a HoH the row name is the \fBouter key\fR, not a field inside each row hash �
 \& # HoH keyed by structure id; keep the rows named in @ids
 \& my $grps = join \*(Aq|\*(Aq, @ids;
 \& my $keep = filter($score, sub { $_[1] =~ m/^(?:$grps)$/ });
-\& 
+\&
 \& # combine the row name with an ordinary column test
 \& filter($score, sub { $_[1] =~ /^1/ && $_\->{anomaly_rank} < 100 });
 .Ve
@@ -2637,23 +2705,23 @@ The two selectable output types are \f(CW\*(Aqaoh\*(Aq\fR and \f(CW\*(Aqhoa\*(Aq
 .Vb 2
 \& use Stats::LikeR;
 \& my $df = read_table(\*(Aqpatients.csv\*(Aq);                 # array of hashes
-\& 
+\&
 \& my $adults = filter($df, col(\*(AqAge\*(Aq) >= 18);          # numeric threshold
 \& my $target = filter($df, (col(\*(AqAge\*(Aq) >= 18) & (col(\*(AqSex\*(Aq) eq \*(Aqf\*(Aq));   # combine
 \& my $flagged = filter($df, sub { $_\->{ALT} > 40 || $_\->{AST} > 40 });  # coderef
-\& 
+\&
 \& # hash of arrays in \-> hash of arrays out (columns filtered in parallel)
 \& my $hoa = read_table(\*(Aqpatients.csv\*(Aq, \*(Aqoutput.type\*(Aq => \*(Aqhoa\*(Aq);
 \& my $sub = filter($hoa, col(\*(AqAge\*(Aq) > 32);
-\& 
+\&
 \& # hash of hashes in \-> the same row keys, fewer of them
 \& my $hoh = read_table(\*(Aqpatients.csv\*(Aq, \*(Aqoutput.type\*(Aq => \*(Aqhoh\*(Aq);
 \& my $keep = filter($hoh, col(\*(AqAge\*(Aq) > 32);
-\& 
+\&
 \& # hash of hashes: filter on the row name (the outer key) via $_[1]
 \& my $grps    = join \*(Aq|\*(Aq, qw(1cka 1d4t);
 \& my $by_name = filter($hoh, sub { $_[1] =~ m/^(?:$grps)$/ });
-\& 
+\&
 \& # convert shape while filtering
 \& my $as_hoa = filter($df, col(\*(AqAge\*(Aq) > 32, \*(Aqoutput.type\*(Aq => \*(Aqhoa\*(Aq);
 .Ve
@@ -2782,7 +2850,7 @@ non\-numeric value are dropped, mirroring R\*(Aqs \f(CW\*(C`complete.cases\*(C'\
 .Ve
 .PP
 A significant result says the conditions differ overall; follow up with pairwise
-comparisons (for example #dunn_test on the paired differences, or
+comparisons (for example "dunn_test" on the paired differences, or
 Wilcoxon signed\-rank tests with a multiple\-comparison adjustment).
 .PP
 \fIOutput variables\fR
@@ -2825,7 +2893,7 @@ takes a hash of an array as input
 \& VC VC VC VC VC OJ OJ OJ OJ OJ OJ OJ OJ OJ OJ OJ OJ OJ OJ OJ OJ OJ OJ OJ OJ
 \& OJ OJ OJ OJ OJ OJ OJ OJ OJ OJ)]
 \& );
-\& 
+\&
 \& my $glm_teeth = glm(
 \&     data    => \e%tooth_growth,
 \&     formula => \*(Aqlen ~ dose + supp\*(Aq,
@@ -2936,6 +3004,51 @@ Data can be further broken down with filter/subs like in \f(CW\*(C`read_table\*(
 .Ve
 .PP
 where each filter filters on the columns, e.g. second hash keys.
+.SS h
+.IX Subsection "h"
+Print a function\*(Aqs documentation and return. This is the module\*(Aqs \f(CW\*(C`?function\*(C'\fR:
+ask for a name, get the section of the manual that describes it.
+.PP
+.Vb 4
+\& h(\*(Aqquantile\*(Aq);    # by name
+\& h(*quantile);     # by name, unquoted
+\& h(\e&quantile);    # by reference
+\& h();              # the general help, and every documented function
+\&
+\& perl \-MStats::LikeR \-e \*(Aqh(*write_table)\*(Aq   # straight from the shell
+.Ve
+.PP
+\fIArguments\fR
+.IX Subsection "Arguments"
+.PP
+\&\f(CWh(bedroc)\fR, with no quotes and no sigil, cannot be made to work: every function
+here is exported, so Perl parses the bareword as a call to \f(CWbedroc()\fR before \f(CW\*(C`h\*(C'\fR
+is ever reached.
+.PP
+\fIReturn value\fR
+.IX Subsection "Return value"
+.PP
+The name whose documentation was printed, so \f(CW\*(C`h\*(C'\fR is usable in a pipeline:
+.PP
+.Vb 1
+\& my @shown = map { h($_) } qw(auc auroc roc);
+.Ve
+.PP
+Unlike the \f(CW\*(Aq?\*(Aq\fR and \f(CW\*(Aqh\*(Aq\fR arguments, \f(CW\*(C`h\*(C'\fR does \fBnot\fR
+die. You asked for it by name, so there is nothing ambiguous to protect you
+from.
+.PP
+\fIWhere the text comes from\fR
+.IX Subsection "Where the text comes from"
+.PP
+\&\f(CW\*(C`h\*(C'\fR renders the module\*(Aqs own POD at run time. That POD is generated from
+\&\f(CW\*(C`README.md\*(C'\fR, so \f(CW\*(C`h\*(C'\fR and this document can never disagree. A function with no
+section of its own — an internal helper, or \f(CW\*(C`ptukey\*(C'\fR / \f(CW\*(C`qtukey\*(C'\fR — prints the
+list of functions that do have one.
+.PP
+Output is wrapped to \f(CW$ENV{COLUMNS}\fR when that is set (clamped to 40\-100
+columns), and to 80 otherwise. Parameter tables are rendered as aligned plain
+text.
 .SS hoa2aoh
 .IX Subsection "hoa2aoh"
 Turn a hash\-of\-arrays into an array\-of\-hashes.
@@ -2948,16 +3061,20 @@ Turn a hash\-of\-arrays into an array\-of\-hashes.
 .Ve
 .IP \(bu 4
 \&\fR\f(CB$hoa\fR\fB\fR — a hashref whose values are arrayrefs, one per column:
-.Sp
-{ id => [1, 2, 3], name => [\*(Aqa\*(Aq, \*(Aqb\*(Aq, \*(Aqc\*(Aq] }
+.PP
+.Vb 1
+\& { id => [1, 2, 3], name => [\*(Aqa\*(Aq, \*(Aqb\*(Aq, \*(Aqc\*(Aq] }
+.Ve
 .IP \(bu 4
 \&\fBreturns\fR — an arrayref of row hashrefs:
-.Sp
-[
-    { id => 1, name => \*(Aqa\*(Aq },
-    { id => 2, name => \*(Aqb\*(Aq },
-    { id => 3, name => \*(Aqc\*(Aq }
-]
+.PP
+.Vb 5
+\& [
+\&     { id => 1, name => \*(Aqa\*(Aq },
+\&     { id => 2, name => \*(Aqb\*(Aq },
+\&     { id => 3, name => \*(Aqc\*(Aq }
+\& ]
+.Ve
 .PP
 It builds a brand\-new structure and copies every cell, so the result is
 completely independent of the input — changing one never affects the other.
@@ -3020,12 +3137,12 @@ cells down the rows).
 .PP
 .Vb 1
 \& use Stats::LikeR;
-\& 
+\&
 \& my %hoh = (
 \&     \*(Aqr1\*(Aq => { \*(Aqa\*(Aq => 1, \*(Aqb\*(Aq => 2 },
 \&     \*(Aqr2\*(Aq => { \*(Aqa\*(Aq => 3, \*(Aqb\*(Aq => 4 },
 \& );
-\& 
+\&
 \& my $hoa = hoh2hoa(\e%hoh);
 .Ve
 .PP
@@ -3072,7 +3189,7 @@ Options are passed as trailing \f(CW\*(C`name => value\*(C'\fR pairs.
 \& #   b => [2,    \*(AqNA\*(Aq],
 \& #   c => [\*(AqNA\*(Aq, 9   ],
 \& # }
-\& 
+\&
 \& # Keep the row labels as a column:
 \& my $with_ids = hoh2hoa(\e%ragged, \*(Aqrow.names\*(Aq => \*(Aqid\*(Aq);
 \& # {
@@ -3117,7 +3234,7 @@ it was validated numerically.
 \& # $fit is a binomial glm(); align observed outcomes with fitted.values
 \& my @obs  = map { $data{$_}{outcome} } @ids;
 \& my @prob = map { $fit\->{\*(Aqfitted.values\*(Aq}{$_} } @ids;
-\& 
+\&
 \& my $hl = hosmer_lemeshow(\e@obs, \e@prob, g => 10);
 \& printf "HL chi2=%.2f df=%d p=%.3f\en", $hl\->{statistic}, $hl\->{parameter}, $hl\->{p_value};
 .Ve
@@ -3196,7 +3313,7 @@ increasing and is used by every method except plain \f(CW\*(C`linear\*(C'\fR sem
 \& # linear fit on unequal spacing
 \& interpolate({ v => [ 0, undef, undef, 10 ] }, method => \*(Aqindex\*(Aq, x => [ 0, 1, 3, 4 ]);
 \& # { v => [ 0, 2.5, 7.5, 10 ] }
-\& 
+\&
 \& # interpolate v against a time column t
 \& interpolate($df, cols => [ \*(Aqv\*(Aq ], x => \*(Aqt\*(Aq, method => \*(Aqindex\*(Aq);
 .Ve
@@ -3208,11 +3325,11 @@ increasing and is used by every method except plain \f(CW\*(C`linear\*(C'\fR sem
 \& # linear: interior interpolated, trailing held (forward default), leading NA
 \& interpolate({ v => [ undef, 1, undef, undef, 4, undef ] });
 \& # { v => [ undef, 1, 2, 3, 4, 4 ] }
-\& 
+\&
 \& # cubic spline through four anchors that lie on x^2, so the fit is exact
 \& interpolate({ v => [ 0, undef, undef, 9, 16, 25 ] }, method => \*(Aqcubic\*(Aq, limit_direction => \*(Aqboth\*(Aq);
 \& # { v => [ 0, 1, 4, 9, 16, 25 ] }
-\& 
+\&
 \& # monotone pchip vs. a global polynomial on the same gaps
 \& interpolate({ v => [ 2, undef, 3, undef, undef, 2, 5, undef, 0 ] }, method => \*(Aqpchip\*(Aq, limit_direction => \*(Aqboth\*(Aq);
 .Ve
@@ -3258,7 +3375,7 @@ that appear in \fBevery\fR array ref given.
 .PP
 .Vb 1
 \& use Stats::LikeR;
-\& 
+\&
 \& my @i = intersection([1, 2, 3], [2, 3, 4]);          # (2, 3)
 \& my @t = intersection([1, 2, 3, 4], [2, 3, 4], [3, 4]); # (3, 4)
 \& my $n = intersection([1, 2, 3], [2, 3, 4]);          # 2
@@ -3542,14 +3659,14 @@ Give times, an event flag (1 = event, 0 = censored), and a group label per row:
 .PP
 .Vb 1
 \& use Stats::LikeR \*(Aqlogrank_test\*(Aq;
-\& 
+\&
 \& my $r = logrank_test(\e@time, \e@status, \e@group);
 \& print $r\->{p_value};
 .Ve
 .PP
 Result keys: \f(CW\*(C`statistic\*(C'\fR (chi\-squared), \f(CW\*(C`parameter\*(C'\fR (df = groups − 1),
 \&\f(CW\*(C`p_value\*(C'\fR, \f(CW\*(C`observed\*(C'\fR and \f(CW\*(C`expected\*(C'\fR events per group, and \f(CW\*(C`groups\*(C'\fR. See
-#survfit for the curves and #coxph to adjust for
+\&\f(CW\*(C`survfit\*(C'\fR for the curves and \f(CW\*(C`coxph\*(C'\fR to adjust for
 covariates.
 .SS Lonly
 .IX Subsection "Lonly"
@@ -3619,10 +3736,10 @@ numerically against R.
 \& # counts as a square matrix: [[a, b], [c, d]]
 \& my $r = mcnemar_test([[794, 86], [150, 570]]);
 \& printf "chi2=%.2f df=%d p=%.4g\en", $r\->{statistic}, $r\->{parameter}, $r\->{p_value};
-\& 
+\&
 \& # small samples: exact binomial test on the discordant pairs
 \& my $e = mcnemar_test([[794, 86], [150, 570]], exact => 1);
-\& 
+\&
 \& # paired observation vectors are cross\-tabulated automatically
 \& my $v = mcnemar_test(\e@before, \e@after);
 .Ve
@@ -3716,7 +3833,7 @@ unknown \f(CW\*(C`output.type\*(C'\fR; a \f(CW\*(C`value_vars\*(C'\fR/\f(CW\*(C`
 \&\f(CW\*(C`id_vars\*(C'\fR column name.
 .SS merge
 .IX Subsection "merge"
-A full relational join of two data frames, in the spirit of R\*(Aqs \f(CW\*(C`merge\*(C'\fR and pandas\*(Aq \f(CW\*(C`DataFrame.merge\*(C'\fR. Where #ljoin only does an in\-place left join of a hash\-of\-hashes keyed by row name, \f(CW\*(C`merge\*(C'\fR supports every common join type, single\- or multi\-column keys, keys with different names on each side, column\-collision suffixes, and any mix of input/output shapes.
+A full relational join of two data frames, in the spirit of R\*(Aqs \f(CW\*(C`merge\*(C'\fR and pandas\*(Aq \f(CW\*(C`DataFrame.merge\*(C'\fR. Where \f(CW\*(C`ljoin\*(C'\fR only does an in\-place left join of a hash\-of\-hashes keyed by row name, \f(CW\*(C`merge\*(C'\fR supports every common join type, single\- or multi\-column keys, keys with different names on each side, column\-collision suffixes, and any mix of input/output shapes.
 .PP
 .Vb 1
 \& my $joined = merge($left, $right, how => \*(Aqinner\*(Aq, on => \*(Aqid\*(Aq);
@@ -3767,14 +3884,14 @@ By default the result matches the shape of \f(CW$left\fR (a HoH left frame yield
 \&              { id => 3, name => \*(AqCarol\*(Aq, dept => 30 } ];
 \& my $dept = [ { dept => 10, dname => \*(AqSales\*(Aq },
 \&              { dept => 20, dname => \*(AqEngineering\*(Aq } ];
-\& 
+\&
 \& my $left = merge($emp, $dept, how => \*(Aqleft\*(Aq, on => \*(Aqdept\*(Aq);
 \& #  [ { id => 1, name => \*(AqAlice\*(Aq, dept => 10, dname => \*(AqSales\*(Aq },
 \& #    { id => 2, name => \*(AqBob\*(Aq,   dept => 20, dname => \*(AqEngineering\*(Aq },
 \& #    { id => 3, name => \*(AqCarol\*(Aq, dept => 30, dname => undef } ]
 .Ve
 .PP
-See also #ljoin (in\-place HoH left join), #concat / #rbind (stacking frames row\-wise), and #group_by.
+See also \f(CW\*(C`ljoin\*(C'\fR (in\-place HoH left join), \f(CW\*(C`concat\*(C'\fR / \f(CW\*(C`rbind\*(C'\fR (stacking frames row\-wise), and \f(CW\*(C`group_by\*(C'\fR.
 .SS min
 .IX Subsection "min"
 .Vb 1
@@ -3795,7 +3912,7 @@ Takes either an array or an array reference, and returns an array of the most co
 .PP
 .Vb 1
 \& @arr = mode([1,3,3,3]); # returns (3)
-\& 
+\&
 \& @arr = mode(\*(Aqa\*(Aq,\*(Aqa\*(Aq,\*(Aqc\*(Aq,\*(Aqc\*(Aq,\*(Aqz\*(Aq); # returns (\*(Aqa\*(Aq, \*(Aqc\*(Aq)
 .Ve
 .SS ncol
@@ -3953,7 +4070,7 @@ Hash of arrays (each key is a group)
 \&     yield => [5.5, 5.4, 5.8, 4.5, 4.8, 4.2],
 \&     ctrl  => [1,   1,   1,   0,   0,   0  ],
 \& });
-\& 
+\&
 \& {
 \&     Group => {
 \&         Df        => 1,
@@ -4094,7 +4211,7 @@ rename inputs.
 \& pivot_table($df, index => \*(Aqcity\*(Aq, columns => \*(Aqyear\*(Aq, values => \*(Aqtemp\*(Aq);
 \& # [ { city => \*(AqLA\*(Aq, 2020 => 40,  2021 => undef },
 \& #   { city => \*(AqNY\*(Aq, 2020 => 15,  2021 => 30    } ]
-\& 
+\&
 \& pivot_table($df, index => \*(Aqcity\*(Aq, columns => \*(Aqyear\*(Aq, values => \*(Aqtemp\*(Aq,
 \&     aggfunc => [ \*(Aqcount\*(Aq, \*(Aqsum\*(Aq ]);
 \& # names: count.2020 count.2021 sum.2020 sum.2021
@@ -4117,8 +4234,8 @@ a generated duplicate column name.
 .IX Subsection "power_t_test"
 .Vb 4
 \& $test_data = power_t_test(
-\&     n   => 30,  delta     => 0.5, 
-\&     sd  => 1.0, sig_level => 0.05
+\&     n    => 30,    delta     => 0.5, 
+\&     sd    => 1.0, sig_level => 0.05
 \& );
 .Ve
 .PP
@@ -4198,7 +4315,7 @@ column are dropped listwise.
 \&     [4, 2], 
 \&     [6, 6] 
 \& ];
-\& 
+\&
 \& my $pca = prcomp($aoa);
 .Ve
 .PP
@@ -4358,13 +4475,13 @@ Validated numerically against R.
 \& my $r = prop_test(83, 100);              # 83 successes in 100 trials
 \& printf "p\-hat=%.2f  95%% CI %.3f–%.3f  p=%.4g\en",
 \&     $r\->{estimate}[0], $r\->{\*(Aqconf.int\*(Aq}[0], $r\->{\*(Aqconf.int\*(Aq}[1], $r\->{p_value};
-\& 
+\&
 \& # two groups: difference in proportions + CI
 \& my $two = prop_test([83, 90], [100, 100]);
-\& 
+\&
 \& # k > 2 groups: chi\-square test of equality (no CI)
 \& my $k = prop_test([83, 90, 75], [100, 100, 100]);
-\& 
+\&
 \& # one\-sample against a specified probability, one\-sided, no correction
 \& my $g = prop_test(83, 100, p => 0.7, alternative => \*(Aqgreater\*(Aq, correct => 0);
 .Ve
@@ -4405,8 +4522,9 @@ requested, come back as \f(CW\*(C`undef\*(C'\fR in their original positions.
 array reference of probabilities in \f(CW\*(C`[0, 1]\*(C'\fR giving explicit cut
 boundaries, e.g. \f(CW\*(C`[0, 0.5, 0.95, 1]\*(C'\fR.
 .PP
-For a usage reminder at the prompt, call \f(CWqcut(\*(Aqh\*(Aq)\fR (or \f(CWqcut(\*(AqH\*(Aq)\fR); it dies
-with a short help message.
+For a usage reminder at the prompt, call \f(CWqcut(\*(Aqh\*(Aq)\fR (or \f(CWqcut(\*(Aq?\*(Aq)\fR); it prints
+this section and dies. Every function takes those two arguments the same way —
+see "Getting help".
 .PP
 \fIWhat it returns\fR
 .IX Subsection "What it returns"
@@ -4521,10 +4639,11 @@ default raises, \f(CW\*(Aqdrop\*(Aq\fR merges:
 \& # fewer than 5 edges; the empty quantile bands are collapsed
 .Ve
 .PP
-Get the usage summary and stop:
+Get the documentation and stop:
 .PP
-.Vb 1
-\& qcut(\*(Aqh\*(Aq);   # dies with the help text above
+.Vb 2
+\& qcut(\*(Aqh\*(Aq);   # prints this section to STDOUT, then dies
+\& qcut(\*(Aq?\*(Aq);   # the same call
 .Ve
 .SS quantile
 .IX Subsection "quantile"
@@ -4682,10 +4801,10 @@ edit lands in each \f(CW\*(C`AoH\*(C'\fR/\f(CW\*(C`HoH\*(C'\fR row hash, or on t
 .Vb 2
 \& # HoH: rename an inner\-row key in every row, in place
 \& rename_cols(\e%d, resolution => \*(AqResolution (Å)\*(Aq);
-\& 
+\&
 \& # capture a fresh view instead; %d is left untouched by rename_cols itself
 \& %d = %{ rename_cols(\e%d, resolution => \*(AqResolution (Å)\*(Aq) };
-\& 
+\&
 \& # pairs or a single hashref; both forms are equivalent
 \& my $view = rename_cols($aoh, a => \*(Aqx\*(Aq, c => \*(Aqz\*(Aq);
 \& my $view = rename_cols($hoa, { b => \*(AqB\*(Aq });
@@ -4720,8 +4839,8 @@ Note: \f(CW\*(C`\e%d = rename_cols(...)\*(C'\fR is \fBnot\fR valid Perl — a re
 is not an lvalue before 5.22 refaliasing, which is out under the module\*(Aqs 5.10
 back\-compatibility. Use the void form or the \f(CW\*(C`%d = %{ ... }\*(C'\fR capture idiom
 above.
-.SS \fIrename\fPinplace
-.IX Subsection "renameinplace"
+.SS _rename_inplace
+.IX Subsection "_rename_inplace"
 .Vb 1
 \& _rename_inplace($df, $shape, \e%map)
 .Ve
@@ -4750,7 +4869,7 @@ well a score separates cases from non\-cases.
 .PP
 .Vb 1
 \& use Stats::LikeR \*(Aqroc\*(Aq;
-\& 
+\&
 \& my $r = roc(\e@scores, \e@labels);
 \& print $r\->{auc};                 # 0.848
 \& print "@{ $r\->{auc_ci} }";       # 0.649 1.000
@@ -4761,7 +4880,7 @@ well a score separates cases from non\-cases.
 Options: \f(CW\*(C`positive\*(C'\fR (positive\-class label, default \f(CW1\fR), \f(CW\*(C`direction\*(C'\fR (\f(CW\*(Aq>\*(Aq\fR
 default, or \f(CW\*(Aq<\*(Aq\fR), \f(CW\*(C`conf_level\*(C'\fR (default \f(CW0.95\fR). Result keys: \f(CW\*(C`auc\*(C'\fR, \f(CW\*(C`auc_se\*(C'\fR,
 \&\f(CW\*(C`auc_ci\*(C'\fR, \f(CW\*(C`n_pos\*(C'\fR, \f(CW\*(C`n_neg\*(C'\fR, \f(CW\*(C`youden\*(C'\fR, and \f(CW\*(C`curve\*(C'\fR (one point per threshold). For
-just the number, use #auc.
+just the number, use \f(CW\*(C`auc\*(C'\fR.
 .SS rownames
 .IX Subsection "rownames"
 Return the row names of a data frame, as a list (like R\*(Aqs \f(CW\*(C`rownames\*(C'\fR).
@@ -4780,13 +4899,13 @@ In scalar context it returns the count, so \f(CW\*(C`scalar rownames($df)\*(C'\f
 .Vb 2
 \& my $hoh = { r2 => { x => 1 }, r1 => { x => 2 }, r3 => { x => 3 } };
 \& my @rows = rownames($hoh);        # (\*(Aqr1\*(Aq, \*(Aqr2\*(Aq, \*(Aqr3\*(Aq)  \-\- sorted labels
-\& 
+\&
 \& my $aoh = [ { a => 1 }, { a => 2 } ];
 \& my @rows = rownames($aoh);        # (0, 1)
-\& 
+\&
 \& my $hoa = { a => [1,2,3], b => [4,5,6] };
 \& my @rows = rownames($hoa);        # (0, 1, 2)
-\& 
+\&
 \& my $n = rownames($hoh);           # 3  (scalar context == nrow)
 .Ve
 .PP
@@ -4886,11 +5005,11 @@ list or as a single arrayref.
 \&             { a => 4, b => 5, c => 6 } ];
 \& my $sub = select_cols($aoh, \*(Aqa\*(Aq, \*(Aqc\*(Aq);
 \& # [ { a => 1, c => 3 }, { a => 4, c => 6 } ]
-\& 
+\&
 \& my $hoa = { a => [1,4], b => [2,5], c => [3,6] };
 \& my $sub = select_cols($hoa, [\*(Aqc\*(Aq, \*(Aqa\*(Aq]);   # order preserved
 \& # { c => [3,6], a => [1,4] }
-\& 
+\&
 \& my $aoa = [ [1,2,3], [4,5,6] ];
 \& my $sub = select_cols($aoa, 0, 2);
 \& # [ [1,3], [4,6] ]
@@ -4914,7 +5033,7 @@ Works as closely as I can to R\*(Aqs seq, which is very similar to Perl\*(Aqs \f
 \& say \*(Aqseq(1, 5):\*(Aq;
 \& my @seq = seq(1, 5);
 \& say join(\*(Aq, \*(Aq, @seq), "\en";
-\& 
+\&
 \& say \*(Aqseq(1, 2, 0.25):\*(Aq;
 \& @seq = seq(1, 2, 0.25);
 .Ve
@@ -4973,7 +5092,7 @@ the signed value. Validated numerically against R.
 \& my $balance = smd(\e@exposed_age, \e@unexposed_age);   # |smd| < 0.1 is well balanced
 .Ve
 .PP
-Unlike #cohen_d (which pools by sample size), \f(CW\*(C`smd\*(C'\fR weights the two
+Unlike "cohen_d" (which pools by sample size), \f(CW\*(C`smd\*(C'\fR weights the two
 group variances equally, so the two diverge when the groups differ in size.
 .SS sum
 .IX Subsection "sum"
@@ -4995,7 +5114,7 @@ which passing a reference is shorter and much easier to read.  Stats::LikeR, how
 as of version 0.02, \f(CW\*(C`sum\*(C'\fR will cause the script to die if any undefined values are provided
 .SS summary
 .IX Subsection "summary"
-Analogous to R\*(Aqs \f(CW\*(C`summary\*(C'\fR: a five\-number\-plus\-mean description (\f(CW\*(C`# values\*(C'\fR, \f(CW\*(C`Min.\*(C'\fR, \f(CW\*(C`1st Qu.\*(C'\fR, \f(CW\*(C`Median\*(C'\fR, \f(CW\*(C`Mean\*(C'\fR, \f(CW\*(C`3rd Qu.\*(C'\fR, \f(CW\*(C`Max.\*(C'\fR) of the data as entered (it does not summarise fitted\-model objects). It produces one statistics row per numeric \fIvariable\fR and renders the table exactly like #view — the same colourised, wide\-character\-aware, terminal\-fitting output — through the same internal renderer, so all of \f(CW\*(C`view\*(C'\fR\*(Aqs display options apply.
+Analogous to R\*(Aqs \f(CW\*(C`summary\*(C'\fR: a five\-number\-plus\-mean description (\f(CW\*(C`# values\*(C'\fR, \f(CW\*(C`Min.\*(C'\fR, \f(CW\*(C`1st Qu.\*(C'\fR, \f(CW\*(C`Median\*(C'\fR, \f(CW\*(C`Mean\*(C'\fR, \f(CW\*(C`3rd Qu.\*(C'\fR, \f(CW\*(C`Max.\*(C'\fR) of the data as entered (it does not summarise fitted\-model objects). It produces one statistics row per numeric \fIvariable\fR and renders the table exactly like \f(CW\*(C`view\*(C'\fR — the same colourised, wide\-character\-aware, terminal\-fitting output — through the same internal renderer, so all of \f(CW\*(C`view\*(C'\fR\*(Aqs display options apply.
 .PP
 Which variable becomes a row depends on the shape (every shape \f(CW\*(C`view\*(C'\fR accepts is accepted here):
 .PP
@@ -5011,7 +5130,7 @@ The AoH/HoH case is the per\-column summary R gives for a data frame — so the 
 Non\-numeric and undefined cells are ignored: they never count toward \f(CW\*(C`# values\*(C'\fR, and a variable with no numeric values shows \f(CW0\fR and \f(CW\*(C`na\*(C'\fR. For example, \f(CW\*(C`summary\*(C'\fR of an AoH:
 .PP
 .Vb 4
-\& # summary: 2 rows x 7 cols  (showing 2)
+\& # summary: 2 rows x 7 cols    (showing 2)
 \& Column  # values  Min.  1st Qu.  Median  Mean  3rd Qu.  Max.
 \& x              3     1      1.5       2     2      2.5     3
 \& y              3    10       15      20    20       25    30
@@ -5029,7 +5148,7 @@ curve per group:
 .PP
 .Vb 1
 \& use Stats::LikeR \*(Aqsurvfit\*(Aq;
-\& 
+\&
 \& my $f = survfit(\e@time, \e@status, group => \e@arm);
 \& my $s = $f\->{strata}{treatment};    # keyed by group label (\*(Aq\*(Aq if no group)
 \& print $s\->{median};                 # median survival time
@@ -5038,8 +5157,8 @@ curve per group:
 .PP
 Option \f(CW\*(C`conf_level\*(C'\fR (default \f(CW0.95\fR). Each stratum has arrays \f(CW\*(C`time\*(C'\fR, \f(CW\*(C`n_risk\*(C'\fR,
 \&\f(CW\*(C`n_event\*(C'\fR, \f(CW\*(C`n_censor\*(C'\fR, \f(CW\*(C`surv\*(C'\fR, \f(CW\*(C`std_err\*(C'\fR, \f(CW\*(C`lower\*(C'\fR, \f(CW\*(C`upper\*(C'\fR, plus \f(CW\*(C`median\*(C'\fR, \f(CW\*(C`n\*(C'\fR,
-and \f(CW\*(C`events\*(C'\fR. Compare curves with #logrank_test; model
-covariate effects with #coxph.
+and \f(CW\*(C`events\*(C'\fR. Compare curves with \f(CW\*(C`logrank_test\*(C'\fR; model
+covariate effects with \f(CW\*(C`coxph\*(C'\fR.
 .SS table_one
 .IX Subsection "table_one"
 The stratified descriptive "Table 1" that opens most clinical papers: for each
@@ -5048,7 +5167,7 @@ categories — plus a group\-comparison p\-value.
 .PP
 .Vb 1
 \& use Stats::LikeR \*(Aqtable_one\*(Aq;
-\& 
+\&
 \& my $t1 = table_one(\e@cohort, by => \*(Aqarm\*(Aq);
 \& print view($t1);       # returns a plain AoH you can view() or write_table()
 .Ve
@@ -5145,7 +5264,7 @@ Inner keys do not need to be uniform across rows. If a given column key appears 
 \& my $sparse = {
 \& a => { x => 1, y => 2 },
 \& b => { x => 3, z => 4 } };
-\& 
+\&
 \& my $t = transpose($sparse);
 \& # { x => { a => 1, b => 3 },
 \& #   y => { a => 2 },
@@ -5161,7 +5280,7 @@ Returns the distinct values of its arguments, in first\-seen order.
 .PP
 .Vb 1
 \& use Stats::LikeR;
-\& 
+\&
 \& my @u = uniq(1, 2, 2, 3, 1);         # (1, 2, 3)
 \& my @s = uniq(qw/a b a c/);           # (\*(Aqa\*(Aq, \*(Aqb\*(Aq, \*(Aqc\*(Aq)
 \& my @f = uniq(1, [2, 2, 3], [3, 4]);  # (1, 2, 3, 4)
@@ -5233,13 +5352,13 @@ UTF\-8 column names and HoH keys are handled correctly (lookups use the key SV; 
 .Vb 2
 \& my $aoh = read_table(\*(Aqpatients.csv\*(Aq);                 # array of hashes
 \& my $age = vals($aoh, \*(AqAge\*(Aq);                           # [ 34, 51, ... ]
-\& 
+\&
 \& my $hoa = read_table(\*(Aqpatients.csv\*(Aq, \*(Aqoutput.type\*(Aq => \*(Aqhoa\*(Aq);
 \& my $sex = vals($hoa, \*(AqSex\*(Aq);                           # copy of the Sex column
-\& 
+\&
 \& my $hoh = read_table(\*(Aqpatients.csv\*(Aq, \*(Aqoutput.type\*(Aq => \*(Aqhoh\*(Aq);
 \& my $age2 = vals($hoh, \*(AqAge\*(Aq);                          # values in sorted row\-key order
-\& 
+\&
 \& # feed straight into the numeric routines
 \& my $m = mean( vals($aoh, \*(AqAge\*(Aq) );
 .Ve
@@ -5251,7 +5370,7 @@ Count the values in a given data set, return a hash reference showing how many t
 .IX Subsection "Scalar"
 .PP
 .Vb 1
-\& $hash = value_counts(\*(Aqc\*(Aq);
+\& $hash = value\e_counts(\*(Aqc\*(Aq);
 .Ve
 .PP
 returns \f(CW\*(C`{ c => 1 }\*(C'\fR
@@ -5260,7 +5379,7 @@ returns \f(CW\*(C`{ c => 1 }\*(C'\fR
 .IX Subsection "Array reference"
 .PP
 .Vb 1
-\& value_counts([\*(Aqa\*(Aq,\*(Aqb\*(Aq,\*(Aqb\*(Aq]);
+\& value\e_counts([\*(Aqa\*(Aq,\*(Aqb\*(Aq,\*(Aqb\*(Aq]);
 .Ve
 .PP
 returns \f(CW\*(C`{ a => 1, b => 2}\*(C'\fR
@@ -5293,7 +5412,7 @@ with a key, the value at that key is counted in each hash, so the above returns 
 .PP
 .Vb 2
 \& my @rows = ([\*(Aqa\*(Aq, 1], [\*(Aqb\*(Aq, 1], [\*(Aqa\*(Aq, 2]);
-\& my $vc = value_counts(\e@rows, 0);
+\& my $vc = value\e_counts(\e@rows, 0);
 .Ve
 .PP
 when the elements are array references, the key is treated as a numeric column index, so the above returns \f(CW\*(C`{ a => 2, b => 1 }\*(C'\fR. A non\-numeric index against array\-reference elements is a fatal error.
@@ -5302,7 +5421,7 @@ when the elements are array references, the key is treated as a numeric column i
 .IX Subsection "Hash"
 .PP
 .Vb 1
-\& my $value_counts = value_counts( { A => \*(Aqa\*(Aq, B => \*(Aqa\*(Aq, C => \*(Aqb\*(Aq } );
+\& my $value\e_counts = value\e_counts( { A => \*(Aqa\*(Aq, B => \*(Aqa\*(Aq, C => \*(Aqb\*(Aq } );
 .Ve
 .PP
 returns \f(CW\*(C`{ a => 2, b => 1}\*(C'\fR
@@ -5364,10 +5483,10 @@ As described by R: Performs an F test to compare the variances of two samples fr
 .PP
 .Vb 1
 \& use Stats::LikeR;
-\& 
+\&
 \& my @x = (2.9, 3.0, 2.5, 2.6, 3.2);
 \& my @y = (3.8, 2.7, 4.0, 2.4);
-\& 
+\&
 \& my $vt = var_test(\e@x, \e@y);
 .Ve
 .PP
@@ -5394,13 +5513,13 @@ right\-justified, string columns left\-justified, and undefined cells shown as
 .PP
 .Vb 1
 \& my $aoh = read_table(\*(Aqall.data.tsv\*(Aq, \*(Aqoutput.type\*(Aq => \*(Aqaoh\*(Aq);
-\& 
+\&
 \& view($aoh);                       # first 6 rows, like head()
 \& view($aoh, n => 20);              # first 20 rows
 \& view($aoh, cols => [qw(id age tt)]);   # force a column order
 \& view($aoh, \*(Aqrow.names\*(Aq => \*(Aqid\*(Aq);  # use column \*(Aqid\*(Aq as the row label
 \& view($aoh, na => \*(Aq.\*(Aq, max_width => 30);
-\& 
+\&
 \& my $txt = view($aoh, return_only => 1);  # capture the string, print nothing
 \& view($aoh, to => \e*STDERR);              # print somewhere other than STDOUT
 .Ve
@@ -5504,7 +5623,7 @@ The first one or two array\-ref arguments are taken positionally as \f(CW\*(C`x\
 .Vb 2
 \& # positional
 \& wilcox_test(\e@x, \e@y, paired => 1);
-\& 
+\&
 \& # fully named
 \& wilcox_test(x => \e@x, y => \e@y, alternative => "greater", exact => 0);
 .Ve
@@ -5589,7 +5708,7 @@ writer, so it works for every shape above:
 .PP
 A numeric\-looking cell is written as a number; every other non\-empty cell as an
 inline string (\f(CW\*(C`undef\*(C'\fR/empty cells are omitted). The result reads straight back
-with #read_table.
+with \f(CW\*(C`read_table\*(C'\fR.
 .PP
 Mirroring \f(CW\*(C`Excel::Writer::XLSX\*(C'\fR\*(Aqs
 \&\f(CW\*(C`$workbook\->set_properties(comments => comments())\*(C'\fR, the same
@@ -5620,11 +5739,17 @@ raw values (no cell number formats), matching the round\-trip behaviour of
 .IX Subsection "Options"
 .SH Changes
 .IX Header "Changes"
-.SS 0.27
-.IX Subsection "0.27"
+.SS "0.27 2026\-07\-26 CDT"
+.IX Subsection "0.27 2026-07-26 CDT"
+New \f(CW\*(C`h\*(C'\fR function: \f(CWh(\*(Aqagg\*(Aq)\fR, \f(CWh(*agg)\fR or \f(CWh(\e&agg)\fR prints that function\*(Aqs section of this document and returns, in the spirit of R\*(Aqs \f(CW\*(C`?function\*(C'\fR. \f(CWh()\fR lists every documented function. It covers the XS functions as well as the Perl ones, because it looks the name up in the module\*(Aqs POD instead of reading an argument list — see "Getting help".
+\&\- The pure Perl functions also accept \f(CW\*(Aq?\*(Aq\fR or \f(CW\*(Aqh\*(Aq\fR in place of their arguments, which prints the same text and then dies. \f(CW\*(C`$Stats::LikeR::HELP = 0\*(C'\fR switches that off for code that has to pass a column or file really named \f(CW\*(Aqh\*(Aq\fR.
+\&\- \f(CW\*(C`qcut\*(C'\fR\*(Aqs hand\-written usage message was replaced by its section of this document; \f(CWqcut(\*(Aqh\*(Aq)\fR and \f(CWqcut(\*(Aq?\*(Aq)\fR still die, but \f(CWqcut(\*(AqH\*(Aq)\fR no longer means help.
+.PP
 speed improvements in calculation of Kendall tau and p\-value.  Improvement of writing xlsx files that won\*(Aqt show in time, but pure waste was removed.
 .PP
 Addition of \f(CW\*(C`auc\*(C'\fR, \f(CW\*(C`auroc\*(C'\fR, \f(CW\*(C`cmh_test\*(C'\fR, \f(CW\*(C`epi_2x2\*(C'\fR, \f(CW\*(C`roc\*(C'\fR functions
+.PP
+\&\f(CW\*(C`prcomp\*(C'\fR now accepts AoH input
 .PP
 glm extended (LikeR.xs)
 \&\- family => \*(Aqpoisson\*(Aq (log link) and family => \*(Aqnegbin\*(Aq — negative\-binomial θ estimated by ML via a MASS::glm.nb\-style outer loop, or fixed with theta =>. Matched R to ~1e\-8 (coefs, deviance, null\-dev, AIC, SE, θ); exact Poisson limit when data aren\*(Aqt over\-dispersed.
@@ -5766,7 +5891,7 @@ matched against the header by exact name first, then retried with the
 leading comment marker (and surrounding whitespace) stripped, so a
 commented\-header column resolves whether it is referenced as \f(CW\*(C`# PDB\*(C'\fR or by
 its clean name \f(CW\*(C`PDB\*(C'\fR:
-.Sp
+.PP
 .Vb 4
 \& read_table(
 \&     \*(Aqregression_rank.tabular.tsv\*(Aq,
@@ -5777,13 +5902,13 @@ its clean name \f(CW\*(C`PDB\*(C'\fR:
 \&\fBClearer "column not found" error.\fR The failure now names the file and
 lists the actual header instead of printing it to STDOUT (a library
 shouldn\*(Aqt print):
-.Sp
+.PP
 .Vb 2
 \& read_table: Filter column \*(Aqnope\*(Aq not found in the header of FILE;
 \& header is: \*(AqPDB\*(Aq, \*(Aqscore\*(Aq
 .Ve
-.SS 0.20
-.IX Subsection "0.20"
+.SS "0.20 2026\-07\-05 CDT"
+.IX Subsection "0.20 2026-07-05 CDT"
 addition of \f(CW\*(C`ncol\*(C'\fR, \f(CW\*(C`nrow\*(C'\fR, and \f(CW\*(C`pnorm\*(C'\fR functions
 .PP
 \&\f(CW\*(C`filter\*(C'\fR can filter by row names with \f(CW$_[1]\fR
@@ -5799,7 +5924,7 @@ Two behavioural changes, both contained to the \f(CW\*(C`csort\*(C'\fR XSUB (the
 .PP
 .Vb 1
 \& my $hoh = { alpha => { id => 1 }, beta => { id => 2 } };
-\& 
+\&
 \& csort($hoh, \*(Aqid\*(Aq);          # AoH: each row gains a row.name field
 \& csort($hoh, \*(Aqid\*(Aq, \*(Aqhoa\*(Aq);   # HoA: an aligned row.name column
 .Ve
@@ -5930,8 +6055,8 @@ test detects it (see "Testing", below).
 .IX Subsection "write_table"
 .PP
 new option to output to LaTeX table
-.SS 0.19
-.IX Subsection "0.19"
+.SS "0.19 2026\-07\-01 CDT"
+.IX Subsection "0.19 2026-07-01 CDT"
 numerous \f(CW\*(C`SSize_t var1 = av_len(var) + 1\*(C'\fR are changed to \f(CW\*(C`size_t var1 = av_len(var) + 1\*(C'\fR as \f(CW\*(C`size_t\*(C'\fR; as the result cannot be negative, in order to expand numerical range
 .PP
 Addition of \f(CW\*(C`hoa2hoh\*(C'\fR, \f(CW\*(C`binom_test\*(C'\fR, \f(CW\*(C`chunk\*(C'\fR, \f(CW\*(C`get_union\*(C'\fR, \f(CW\*(C`get_unique\*(C'\fR, \f(CW\*(C`Lonly\*(C'\fR, \f(CW\*(C`Ronly\*(C'\fR, \f(CW\*(C`qcut\*(C'\fR, and 3 tukey functions
@@ -5939,15 +6064,15 @@ Addition of \f(CW\*(C`hoa2hoh\*(C'\fR, \f(CW\*(C`binom_test\*(C'\fR, \f(CW\*(C`c
 Better warnings when non\-array references are given to \f(CW\*(C`intersection\*(C'\fR
 .PP
 \&\f(CW\*(C`view\*(C'\fR now breaks columns into chunks for very wide data sets, more closely matching R\*(Aqs behavior
-.SS 0.18
-.IX Subsection "0.18"
+.SS "0.18  2026\-06\-28 CDT"
+.IX Subsection "0.18 2026-06-28 CDT"
 \&\f(CW\*(C`restrict\*(C'\fR keyword added to numerous places within \f(CW\*(C`intersection\*(C'\fR to decrease CPU time
 .PP
 fix to dist.ini for dependencies
 .PP
 fixed POD rendering
-.SS 0.17
-.IX Subsection "0.17"
+.SS "0.17  2026\-06\-23 CDT (approx)"
+.IX Subsection "0.17 2026-06-23 CDT (approx)"
 addition of \f(CW\*(C`assign\*(C'\fR, which adds new columns based on calculations from other columns
 .PP
 addition of \f(CW\*(C`hoa2aoh\*(C'\fR, transforming hash of arrays to array of hashes
@@ -6144,7 +6269,7 @@ each row as an (unlabelled) row\-names column.\fR
 .Vb 2
 \& # default: the leading column is named \*(Aqrow_name\*(Aq
 \& my $df = read_table(\*(Aqmtcars.tsv\*(Aq, \*(Aqauto.row.names\*(Aq => 1);
-\& 
+\&
 \& # or give it a name
 \& my $df = read_table(\*(Aqmtcars.tsv\*(Aq, \*(Aqauto.row.names\*(Aq => \*(Aqmodel\*(Aq);
 .Ve
@@ -6184,8 +6309,8 @@ would not be read correctly using \f(CW\*(C`read_table\*(C'\fR, but now is read 
 .IX Subsection "value_counts"
 .PP
 now accepts array of hashes
-.SS 0.16
-.IX Subsection "0.16"
+.SS "0.16  2026\-06\-17 CDT"
+.IX Subsection "0.16 2026-06-17 CDT"
 changes to dist.ini, the minimum Perl version disappeared when I fixed other problems
 .PP
 clarifications between run time and test dependencies
@@ -6414,8 +6539,8 @@ Tests
 .IX Subsection "Tests"
 .IP \(bu 4
 Added \f(CW\*(C`t/wilcox_test.t\*(C'\fR (flat, no subtests): R\-agreement cases, option handling (\f(CW\*(C`paired\*(C'\fR, \f(CW\*(C`correct\*(C'\fR, \f(CW\*(C`exact\*(C'\fR, \f(CW\*(C`mu\*(C'\fR, named/positional \f(CW\*(C`x\*(C'\fR/\f(CW\*(C`y\*(C'\fR, NA dropping), regressions for all four bug fixes, argument\-error and \f(CW\*(C`alternative\*(C'\fR\-validation checks, output shape, and \f(CW\*(C`no_leaks_ok\*(C'\fR coverage of the two\-sample, exact, and paired allocation paths.
-.SS 0.15
-.IX Subsection "0.15"
+.SS "0.15  2026\-06\-11 CDT"
+.IX Subsection "0.15 2026-06-11 CDT"
 \&\f(CW\*(C`view\*(C'\fR function added, similar to R\*(Aqs \f(CW\*(C`head\*(C'\fR
 .PP
 \&\f(CW\*(C`read_table\*(C'\fR:
@@ -6630,8 +6755,8 @@ numeric row labels, nested\-reference rejection, CSV quoting corners
 (carriage return, separators inside column names, multi\-character separators),
 empty input writing no file, and UTF\-8 column names and row keys. Two leak
 assertions cover the exception paths above.
-.SS 0.14
-.IX Subsection "0.14"
+.SS "0.14 2026\-06\-08 CDT"
+.IX Subsection "0.14 2026-06-08 CDT"
 \&\f(CW\*(C`filter\*(C'\fR function added for rows
 .PP
 \&\f(CW\*(C`read_table\*(C'\fR reads undefined values to \f(CW\*(C`undef\*(C'\fR instead of \f(CW\*(C`NA\*(C'\fR, which makes calculations easier
@@ -6649,8 +6774,8 @@ numerous changes to \f(CW\*(C`col2col\*(C'\fR for ease of use and working with d
 dist.ini now links to math library when compiling: https://www.cpantesters.org/cpan/report/785e26d8\-6397\-11f1\-89c0\-dc066e8775ea
 .PP
 \&\f(CW\*(C`fisher_test\*(C'\fR now should be complete, errors with confidence intervals fixed
-.SS 0.13
-.IX Subsection "0.13"
+.SS "0.13 2026\-06\-07 CDT"
+.IX Subsection "0.13 2026-06-07 CDT"
 \&\f(CW\*(C`read_table\*(C'\fR: speed improvements; commented headers are now allowed
 .PP
 \&\f(CW\*(C`write_table\*(C'\fR: fix for
@@ -6665,8 +6790,8 @@ dist.ini now links to math library when compiling: https://www.cpantesters.org/c
 \&\f(CW\*(C`write_table\*(C'\fR gives better warnings for incorrect types of data given
 .PP
 Numerous changes to dist.ini to improve CPAN testing, especially for Win32
-.SS 0.12
-.IX Subsection "0.12"
+.SS "0.12 2026\-06\-08 CDT"
+.IX Subsection "0.12 2026-06-08 CDT"
 \&\f(CW\*(C`add_data\*(C'\fR can also take hash of arrays, and various mixes of data types
 .PP
 \&\f(CW\*(C`ljoin\*(C'\fR: Addition of \f(CW\*(C`restrict\*(C'\fR keywords in many places; should improve CPU performance
@@ -6692,8 +6817,8 @@ Added function name to warnings, so I actually know which function is producing 
 fixed \f(CW\*(C`write_table\*(C'\fR as it could hang if given empty \f(CW\*(C`col.names\*(C'\fR or \f(CW\*(C`row.names\*(C'\fR
 .PP
 Added \f(CW\*(C`_\|_EXTENSIONS_\|_\*(C'\fR to source XS file for better CPAN testing
-.SS 0.11
-.IX Subsection "0.11"
+.SS "0.11 2026\-06\-03 CDT"
+.IX Subsection "0.11 2026-06-03 CDT"
 better POD formatting for tables
 .PP
 addition of MANIFEST.skip to get better testing results on CPAN
@@ -6703,20 +6828,20 @@ addition of MANIFEST.skip to get better testing results on CPAN
 \&\f(CW\*(C`write_table\*(C'\fR now accepts simple hashes as input, in addition to hash of arrays, hash of hashes, and arrays of hashes
 .PP
 Better documentation for t\-test
-.SS 0.10
-.IX Subsection "0.10"
+.SS "0.10 2026\-06\-01 CDT (approx)"
+.IX Subsection "0.10 2026-06-01 CDT (approx)"
 changes to compilation for CPAN, trying to get this work on Windows
 .PP
 Addition of \f(CW\*(C`prcomp\*(C'\fR and \f(CW\*(C`value_counts\*(C'\fR
 .PP
 \&\f(CW\*(C`matrix\*(C'\fR will work without key names, just like in R.  Testing for \f(CW\*(C`matrix\*(C'\fR has improved.
-.SS 0.09
-.IX Subsection "0.09"
+.SS "0.09 2026\-06\-01 CDT (approx)"
+.IX Subsection "0.09 2026-06-01 CDT (approx)"
 context changes in XS \f(CW\*(C`dTHX\*(C'\fR, \f(CW\*(C`pTHX_\*(C'\fR, and \f(CW\*(C`aTHX_\*(C'\fR to get better CPAN testing results
 .PP
 \&\f(CW\*(C`restrict\*(C'\fR keywords added to \f(CW\*(C`lm\*(C'\fR to increase speed
-.SS 0.08
-.IX Subsection "0.08"
+.SS "0.08 2026\-05\-26 CDT"
+.IX Subsection "0.08 2026-05-26 CDT"
 Speed improvement in \f(CW\*(C`summary\*(C'\fR of hashes.
 .PP
 Addition of \f(CW\*(C`add_data\*(C'\fR, \f(CW\*(C`dnorm\*(C'\fR, \f(CW\*(C`group_by\*(C'\fR, \f(CW\*(C`ljoin\*(C'\fR, and \f(CW\*(C`mode\*(C'\fR functions
@@ -6726,8 +6851,8 @@ Chi\-squared function no longer has Perl wrapper, and all code is in XS, which s
 Compiler changes for GNU source and inclusion of \f(CW\*(C`strings.h\*(C'\fR, to ensure more CPAN testing works better.
 .PP
 \&\f(CW\*(C`read_table\*(C'\fR now returns hash\-of\-hash in {row}{column}
-.SS 0.07
-.IX Subsection "0.07"
+.SS "0.07 2026\-05\-24 CDT"
+.IX Subsection "0.07 2026-05-24 CDT"
 Addition of \f(CW\*(C`summary\*(C'\fR function.
 .PP
 Formulas can now be omitted from \f(CW\*(C`aov\*(C'\fR, resulting in a stacked calculation as R would think.
@@ -6735,15 +6860,15 @@ Formulas can now be omitted from \f(CW\*(C`aov\*(C'\fR, resulting in a stacked c
 Addition of \f(CW\*(C`oneway_test\*(C'\fR for multi\-group comparisons that does not assume normality like \f(CW\*(C`aov\*(C'\fR does.
 .PP
 \&\f(CW\*(C`read_table\*(C'\fR and \f(CW\*(C`write_table\*(C'\fR now automatically set separators for \f(CW\*(C`.csv\*(C'\fR files as \f(CW\*(C`,\*(C'\fR and \f(CW\*(C`.tsv\*(C'\fR files as \f(CW"\et"\fR, respectively, so these values no longer need to be specified separately from the file name.
-.SS 0.06
-.IX Subsection "0.06"
+.SS "0.06 2026\-05\-19 CDT"
+.IX Subsection "0.06 2026-05-19 CDT"
 Changed compiler options so that Solaris will work
 .PP
 signed integers changed to unsigned in \f(CW\*(C`glm\*(C'\fR
 .PP
 Added restrict keywords to \f(CW\*(C`power_t_test\*(C'\fR, and made \f(CW\*(C`int\*(C'\fR to \f(CW\*(C`unsigned int\*(C'\fR
-.SS 0.05
-.IX Subsection "0.05"
+.SS "0.05 2026\-05\-08 CDT"
+.IX Subsection "0.05 2026-05-08 CDT"
 Leak testing for \f(CW\*(C`sample\*(C'\fR
 .PP
 removal of Data::Printer dependency for easier CPAN testing

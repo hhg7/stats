@@ -244,4 +244,47 @@ for my $f (@PERL_FUNCS) {
 	is(scalar(Stats::LikeR::_pod_section('no_such_fn')), 0, 'an unknown name finds nothing');
 }
 
+# The same table in the other spelling.  This file's POD writes its tables as
+# =begin html / =end html, but Pod::Weaver folds each one into a single =for html
+# paragraph when the distribution is built, so that is the form the shipped copy
+# carries and the renderer has to read both.
+{
+	require File::Temp;
+	my ($fh, $file) = File::Temp::tempfile('likerhelpXXXX', TMPDIR => 1, UNLINK => 1);
+	print {$fh} <<'POD';
+=head2 widget
+
+Prose about the widget.
+
+=head3 Output variables
+
+=for html <table>
+<thead>
+<tr>
+  <th>Variable</th>
+  <th>Type</th>
+  <th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>estimate</code></td>
+  <td><code>Double</code></td>
+  <td>The estimate itself.</td>
+</tr>
+</tbody>
+</table>
+
+=cut
+POD
+	close $fh;
+
+	local $Stats::LikeR::POD_FILE = $file;
+	my ($out) = capture(sub { Stats::LikeR::h('widget') });
+	like($out, qr/\n\s*Variable\s+Type\s+Description/,
+		'a =for html table comes out as aligned plain text');
+	like($out, qr/\bestimate\b.*\bDouble\b/, 'the =for html table body is rendered');
+	unlike($out, qr/<t[dhr]\b|<\/table>/, 'no raw HTML leaks out of a =for block');
+}
+
 done_testing();

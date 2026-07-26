@@ -445,6 +445,20 @@ sub _pod_blocks {
 			push @blocks, { type => 'data', fmt => $fmt, lines => \@buf };
 			next;
 		}
+		# Pod::Weaver rewrites every "=begin FMT ... =end FMT" into a single
+		# "=for FMT ..." paragraph when the distribution is built, so the
+		# shipped copy of this file carries the tables in that spelling.  Both
+		# mean the same thing -- the rest of the paragraph is data for FMT --
+		# and the help has to read the tables either way.
+		if ($line =~ /^=for[ \t]+(\S+)[ \t]*(.*)$/) {
+			my ($fmt, $first) = (lc $1, $2);
+			$i++;
+			my @buf = length($first) ? ($first . "\n") : ();
+			push @buf, $lines->[$i++]
+				while $i < $n && $lines->[$i] !~ /^\s*$/ && $lines->[$i] !~ /^=/;
+			push @blocks, { type => 'data', fmt => $fmt, lines => \@buf };
+			next;
+		}
 		if ($line =~ /^=/) {
 			my @buf = ($line);
 			$i++;
@@ -569,7 +583,7 @@ sub _pod_render {
 			}
 			next;
 		}
-		# =pod, =cut, =encoding, =for, =begin without =end: nothing to show
+		# =pod, =cut, =encoding, =begin without =end: nothing to show
 	}
 
 	my $text = join '', @out;
@@ -580,9 +594,10 @@ sub _pod_render {
 }
 
 # ---------------------------------------------------------------------------
-# =begin html / =begin text data blocks.  The generated POD uses these for
-# one thing only: parameter and output tables.  Render them as aligned plain
-# text so the help shows the same information the HTML documentation does.
+# =begin html / =begin text data blocks (and their =for spelling, which is what
+# Pod::Weaver leaves behind in the built distribution).  The generated POD uses
+# these for one thing only: parameter and output tables.  Render them as aligned
+# plain text so the help shows the same information the HTML documentation does.
 # ---------------------------------------------------------------------------
 
 my %HTML_ENTITY = (
@@ -4516,7 +4531,7 @@ sub cohen_d {
 	my $sp = sqrt((($n1 - 1) * $v1 + ($n2 - 1) * $v2) / ($n1 + $n2 - 2));
 	die "cohen_d: pooled standard deviation is zero\n" if $sp == 0;
 	my $d  = ($m1 - $m2) / $sp;
-	my $J  = 1 - 3 / (4 * ($n1 + $n2) - 9);           # Hedges' correction factor
+	my $J  = 1 - 3 / (4 * ($n1 + $n2) - 9); # Hedges' correction factor
 	my $se = sqrt(($n1 + $n2) / ($n1 * $n2) + $d * $d / (2 * ($n1 + $n2)));
 	my $z  = _qnorm((1 + $cl) / 2);
 	return {
