@@ -5226,11 +5226,21 @@ undefined variables are printed as `NA` by default, but can be set as you wish u
 as of version 0.07, `write_table` determines comma and tab-separated delimiters from the filename, but will override if `sep` or `delim` are explicitly set.
 Args can also be accepted:
     write_table( 'data' => \%flat, 'file' => $f );
+
+### The confirmation line
+
+Every successful write prints one line to standard output naming the file, with the name in black on cyan:
+
+    wrote output.tsv
+
+This is `say 'wrote ' . colored(['black on_cyan'], $file)`, but the SGR codes (`\e[30;46m` … `\e[0m`) are written out inline, so the module takes no dependency on `Term::ANSIColor`. Every format announces itself the same way — delimited, LaTeX and `.xlsx` alike — so you always learn where a table went, in the same shape whatever you asked for. Nothing is printed when nothing is written: an empty data frame returns before a file is opened, and a write that cannot open its file croaks instead.
+
+The colour is unconditional; it is not suppressed when standard output is a pipe or a file. If you are capturing the output and want the bytes plain, strip the escapes (`s/\e\[[\d;]*m//g`) or send them somewhere else. Note also that the line goes to file descriptor 1 directly rather than through Perl's `STDOUT` glob, so `local *STDOUT; open STDOUT, '>', \my $buf` will **not** capture it — redirect the file descriptor, or run the write in a child process, if you need to.
 ### LaTeX output (`tex`)
 `write_table` can write the output file as a LaTeX `tabular` instead of a delimited table. This is selected either by naming the file `*.tex` (auto-detected) or by passing `tex => 1`; an explicit `tex => 0` forces a delimited file even when the name ends in `.tex`. The LaTeX table is built from the same rows as the delimited writer, so it works for every shape above (including arrays of arrays):
     write_table(\@data_aoh, 'table.tex');            # .tex name selects LaTeX
     write_table(\@data_aoh, $tmp_file, 'tex' => 1);  # force LaTeX for any name
-The file begins with a `%written by <cwd>/<script>` provenance comment (the working directory and script name). The header row is bold and the table is ruled with `\hline`. Unlike the delimited writer, LaTeX output includes a row-label column as its first column by default: `row.names` defaults on for LaTeX (matching R's `write.table`), so pass `row.names => 0` to omit it. The labels are the outer keys for a HoH and a 1-based index otherwise. Cell text is LaTeX-escaped: `#`, `_`, `%`, and `&` are backslash-escaped, `>` becomes `\textgreater{}`, and a cell consisting solely of `\includesvg{...svg}` is passed through untouched. The `tex.*` options tune the output:
+The file begins with a `%written by <cwd>/<script>` provenance comment (the working directory and script name). The header row is bold and the table is ruled with `\hline`. As with every other format, `row.names` is **off** unless you ask for it: pass `row.names => 1` to prepend a label column, whose labels are the outer keys for a HoH and a 1-based index otherwise. Cell text is LaTeX-escaped: `#`, `_`, `%`, and `&` are backslash-escaped, `>` becomes `\textgreater{}`, and a cell consisting solely of `\includesvg{...svg}` is passed through untouched. The `tex.*` options tune the output:
     write_table(\@rows, 'table.tex',
         'tex.col.align'    => 'l',                   # 'c' (default), 'l', or 'r'
         'tex.bold.1st.col' => 0,                     # default 1: bold the first column
@@ -5292,7 +5302,7 @@ raw values (no cell number formats), matching the round-trip behaviour of
 | `data` (1st positional, or `data =>`) | *required* | both | the table: flat hash, HoA, HoH, AoH, or AoA |
 | `file` (2nd positional, or `file =>`) | *required* | both | output path; written as a delimited table, or as LaTeX when `tex` is on |
 | `sep` / `delim` | from extension (`,` for `.csv`, tab for `.tsv`), else `,` | delimited | field separator; the two are aliases |
-| `row.names` | LaTeX: `1` (on); delimited: `0` (off) | both | true prepends a label column (numeric 1-based index, or the outer key for a HoH); `0` omits it. LaTeX output defaults on (R-compatible); delimited output defaults off; an explicit value overrides in either case. For a HoA/AoH a non-numeric *column name* uses that column's values as the labels and drops it from the body |
+| `row.names` | `0` (off) | both | true prepends a label column (numeric 1-based index, or the outer key for a HoH); `0` omits it. Off by default in **every** format — delimited, LaTeX and `.xlsx` alike. (R's `write.table` defaults it on and this once followed suit for LaTeX; it no longer does.) For a HoA/AoH a non-numeric *column name* uses that column's values as the labels and drops it from the body |
 | `col.names` | all columns, sorted | both | array ref selecting and ordering columns; for an AoA it also supplies the column names |
 | `undef.val` | `''` (empty field) | both | text written for an undefined/missing cell, e.g. `'NA'` |
 | `tex` | auto: `1` when `file` ends in `.tex`, else `0` | LaTeX | write the output file as a LaTeX `tabular` instead of a delimited table; `tex => 0` forces delimited even for a `.tex` name |
@@ -5311,6 +5321,10 @@ raw values (no cell number formats), matching the round-trip behaviour of
 # Changes
 
 ## 0.28 2026-07-28 CDT
+
+`write_table` (LikeR.xs) — two changes, one of them incompatible.
+- Every format now prints the coloured `wrote <file>` confirmation line, not just LaTeX and `.xlsx`. Delimited output (csv/tsv) was silent before. The line is identical in all cases: the file name in black on cyan, with the SGR codes inline so there is still no `Term::ANSIColor` dependency. Nothing is announced when nothing is written.
+- **Incompatible:** `row.names` now defaults to **off** in every format. It previously defaulted **on** everywhere, following R's `write.table`, which meant a call that said nothing about row names got a label column and a leading empty header cell (`,gene,n`) it had not asked for. Pass `row.names => 1` for the old behaviour; `row.names => 'col'` is unchanged.
 
 New `h2aoh` and `aoh2h` (lib/Stats/LikeR.pm), which add the flat hash to the shapes the conversion family understands. A plain hash is a two-column table folded shut, and until now nothing would unfold it: `value_counts` hands one back, and no frame function would take it.
 - `h2aoh(\%h, var_name => .., value_name => ..)` unfolds a flat hash into a two-column AoH, one row per pair, under column names the caller picks. `sort => 'key' | 'value' | 'none'` fixes the row order, which hash iteration otherwise leaves to chance; `'value'` is biggest-first for numbers, so `value_counts` output comes out the way pandas' `Series.value_counts()` orders it.

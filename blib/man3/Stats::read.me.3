@@ -85,9 +85,7 @@ the spirit of R\*(Aqs \f(CW\*(C`?function\*(C'\fR at the prompt. It takes the na
 \& perl \-MStats::LikeR \-e \*(Aqh(*agg)\*(Aq   # straight from the shell
 .Ve
 .PP
-\&\f(CW\*(C`h\*(C'\fR works for every function in the distribution, the XS ones and the pure Perl
-ones alike, because it looks the name up in the module\*(Aqs own POD rather than
-watching an argument list. That POD is generated from this file, so what \f(CW\*(C`h\*(C'\fR
+\&\f(CW\*(C`h\*(C'\fR works for every function in the distribution looking the name up in the module\*(Aqs own POD rather than watching an argument list. That POD is generated from this file, so what \f(CW\*(C`h\*(C'\fR
 prints is what you are reading.
 .PP
 Note that \f(CWh(bedroc)\fR, with no quotes and no sigil, cannot be made to work:
@@ -604,7 +602,7 @@ formula matters, and both share this module\*(Aqs \f(CW\*(C`pf\*(C'\fR, so p\-va
 .SS aoh2h
 .IX Subsection "aoh2h"
 Fold a two\-column \fBarray\-of\-hashes\fR back down into a plain hash. This is the
-inverse of \f(CW\*(C`h2aoh\*(C'\fR, and the two are exact opposites under their
+reverse of \f(CW\*(C`h2aoh\*(C'\fR, and the two are exact opposites under their
 defaults.
 .PP
 .Vb 2
@@ -5819,13 +5817,26 @@ as of version 0.07, \f(CW\*(C`write_table\*(C'\fR determines comma and tab\-sepa
 Args can also be accepted:
     write_table( \*(Aqdata\*(Aq => \e%flat, \*(Aqfile\*(Aq => \f(CW$f\fR );
 .PP
+\fIThe confirmation line\fR
+.IX Subsection "The confirmation line"
+.PP
+Every successful write prints one line to standard output naming the file, with the name in black on cyan:
+.PP
+.Vb 1
+\& wrote output.tsv
+.Ve
+.PP
+This is \f(CW\*(C`say \*(Aqwrote \*(Aq . colored([\*(Aqblack on_cyan\*(Aq], $file)\*(C'\fR, but the SGR codes (\f(CW\*(C`\ee[30;46m\*(C'\fR … \f(CW\*(C`\ee[0m\*(C'\fR) are written out inline, so the module takes no dependency on \f(CW\*(C`Term::ANSIColor\*(C'\fR. Every format announces itself the same way — delimited, LaTeX and \f(CW\*(C`.xlsx\*(C'\fR alike — so you always learn where a table went, in the same shape whatever you asked for. Nothing is printed when nothing is written: an empty data frame returns before a file is opened, and a write that cannot open its file croaks instead.
+.PP
+The colour is unconditional; it is not suppressed when standard output is a pipe or a file. If you are capturing the output and want the bytes plain, strip the escapes (\f(CW\*(C`s/\ee\e[[\ed;]*m//g\*(C'\fR) or send them somewhere else. Note also that the line goes to file descriptor 1 directly rather than through Perl\*(Aqs \f(CW\*(C`STDOUT\*(C'\fR glob, so \f(CW\*(C`local *STDOUT; open STDOUT, \*(Aq>\*(Aq, \emy $buf\*(C'\fR will \fBnot\fR capture it — redirect the file descriptor, or run the write in a child process, if you need to.
+.PP
 \fILaTeX output (\fR\f(CI\*(C`tex\*(C'\fR\fI)\fR
 .IX Subsection "LaTeX output (tex)"
 .PP
 \&\f(CW\*(C`write_table\*(C'\fR can write the output file as a LaTeX \f(CW\*(C`tabular\*(C'\fR instead of a delimited table. This is selected either by naming the file \f(CW\*(C`*.tex\*(C'\fR (auto\-detected) or by passing \f(CW\*(C`tex => 1\*(C'\fR; an explicit \f(CW\*(C`tex => 0\*(C'\fR forces a delimited file even when the name ends in \f(CW\*(C`.tex\*(C'\fR. The LaTeX table is built from the same rows as the delimited writer, so it works for every shape above (including arrays of arrays):
     write_table(\e@data_aoh, \*(Aqtable.tex\*(Aq);            # .tex name selects LaTeX
     write_table(\e@data_aoh, \f(CW$tmp_file\fR, \*(Aqtex\*(Aq => 1);  # force LaTeX for any name
-The file begins with a \f(CW\*(C`%written by <cwd>/<script>\*(C'\fR provenance comment (the working directory and script name). The header row is bold and the table is ruled with \f(CW\*(C`\ehline\*(C'\fR. Unlike the delimited writer, LaTeX output includes a row\-label column as its first column by default: \f(CW\*(C`row.names\*(C'\fR defaults on for LaTeX (matching R\*(Aqs \f(CW\*(C`write.table\*(C'\fR), so pass \f(CW\*(C`row.names => 0\*(C'\fR to omit it. The labels are the outer keys for a HoH and a 1\-based index otherwise. Cell text is LaTeX\-escaped: \f(CW\*(C`#\*(C'\fR, \f(CW\*(C`_\*(C'\fR, \f(CW\*(C`%\*(C'\fR, and \f(CW\*(C`&\*(C'\fR are backslash\-escaped, \f(CW\*(C`>\*(C'\fR becomes \f(CW\*(C`\etextgreater{}\*(C'\fR, and a cell consisting solely of \f(CW\*(C`\eincludesvg{...svg}\*(C'\fR is passed through untouched. The \f(CW\*(C`tex.*\*(C'\fR options tune the output:
+The file begins with a \f(CW\*(C`%written by <cwd>/<script>\*(C'\fR provenance comment (the working directory and script name). The header row is bold and the table is ruled with \f(CW\*(C`\ehline\*(C'\fR. As with every other format, \f(CW\*(C`row.names\*(C'\fR is \fBoff\fR unless you ask for it: pass \f(CW\*(C`row.names => 1\*(C'\fR to prepend a label column, whose labels are the outer keys for a HoH and a 1\-based index otherwise. Cell text is LaTeX\-escaped: \f(CW\*(C`#\*(C'\fR, \f(CW\*(C`_\*(C'\fR, \f(CW\*(C`%\*(C'\fR, and \f(CW\*(C`&\*(C'\fR are backslash\-escaped, \f(CW\*(C`>\*(C'\fR becomes \f(CW\*(C`\etextgreater{}\*(C'\fR, and a cell consisting solely of \f(CW\*(C`\eincludesvg{...svg}\*(C'\fR is passed through untouched. The \f(CW\*(C`tex.*\*(C'\fR options tune the output:
     write_table(\e@rows, \*(Aqtable.tex\*(Aq,
         \*(Aqtex.col.align\*(Aq    => \*(Aql\*(Aq,                   # \*(Aqc\*(Aq (default), \*(Aql\*(Aq, or \*(Aqr\*(Aq
         \*(Aqtex.bold.1st.col\*(Aq => 0,                     # default 1: bold the first column
@@ -5895,6 +5906,10 @@ raw values (no cell number formats), matching the round\-trip behaviour of
 .IX Header "Changes"
 .SS "0.28 2026\-07\-28 CDT"
 .IX Subsection "0.28 2026-07-28 CDT"
+\&\f(CW\*(C`write_table\*(C'\fR (LikeR.xs) — two changes, one of them incompatible.
+\&\- Every format now prints the coloured \f(CW\*(C`wrote <file>\*(C'\fR confirmation line, not just LaTeX and \f(CW\*(C`.xlsx\*(C'\fR. Delimited output (csv/tsv) was silent before. The line is identical in all cases: the file name in black on cyan, with the SGR codes inline so there is still no \f(CW\*(C`Term::ANSIColor\*(C'\fR dependency. Nothing is announced when nothing is written.
+\&\- \fBIncompatible:\fR \f(CW\*(C`row.names\*(C'\fR now defaults to \fBoff\fR in every format. It previously defaulted \fBon\fR everywhere, following R\*(Aqs \f(CW\*(C`write.table\*(C'\fR, which meant a call that said nothing about row names got a label column and a leading empty header cell (\f(CW\*(C`,gene,n\*(C'\fR) it had not asked for. Pass \f(CW\*(C`row.names => 1\*(C'\fR for the old behaviour; \f(CW\*(C`row.names => \*(Aqcol\*(Aq\*(C'\fR is unchanged.
+.PP
 New \f(CW\*(C`h2aoh\*(C'\fR and \f(CW\*(C`aoh2h\*(C'\fR (lib/Stats/LikeR.pm), which add the flat hash to the shapes the conversion family understands. A plain hash is a two\-column table folded shut, and until now nothing would unfold it: \f(CW\*(C`value_counts\*(C'\fR hands one back, and no frame function would take it.
 \&\- \f(CW\*(C`h2aoh(\e%h, var_name => .., value_name => ..)\*(C'\fR unfolds a flat hash into a two\-column AoH, one row per pair, under column names the caller picks. \f(CW\*(C`sort => \*(Aqkey\*(Aq | \*(Aqvalue\*(Aq | \*(Aqnone\*(Aq\*(C'\fR fixes the row order, which hash iteration otherwise leaves to chance; \f(CW\*(Aqvalue\*(Aq\fR is biggest\-first for numbers, so \f(CW\*(C`value_counts\*(C'\fR output comes out the way pandas\*(Aq \f(CW\*(C`Series.value_counts()\*(C'\fR orders it.
 \&\- \f(CW\*(C`aoh2h\*(C'\fR folds a two\-column AoH back down, with \f(CW\*(C`duplicates => \*(Aqdie\*(Aq | \*(Aqfirst\*(Aq | \*(Aqlast\*(Aq\*(C'\fR deciding what a repeated key means. The two are exact inverses under their defaults.

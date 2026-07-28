@@ -5110,9 +5110,7 @@ the spirit of R's C<?function> at the prompt. It takes the name three ways:
 
  perl -MStats::LikeR -e 'h(*agg)'   # straight from the shell
 
-C<h> works for every function in the distribution, the XS ones and the pure Perl
-ones alike, because it looks the name up in the module's own POD rather than
-watching an argument list. That POD is generated from this file, so what C<h>
+C<h> works for every function in the distribution looking the name up in the module's own POD rather than watching an argument list. That POD is generated from this file, so what C<h>
 prints is what you are reading.
 
 Note that C<h(bedroc)>, with no quotes and no sigil, cannot be made to work:
@@ -5851,7 +5849,7 @@ C<anova> nor C<aov> currently provides. Ask if that would be useful.) >>
 =head2 aoh2h
 
 Fold a two-column B<array-of-hashes> back down into a plain hash. This is the
-inverse of L<C<h2aoh>|/"h2aoh">, and the two are exact opposites under their
+reverse of L<C<h2aoh>|/"h2aoh">, and the two are exact opposites under their
 defaults.
 
  my $h = aoh2h($aoh);
@@ -12851,12 +12849,22 @@ as of version 0.07, C<write_table> determines comma and tab-separated delimiters
 Args can also be accepted:
     write_table( 'data' => \%flat, 'file' => $f );
 
+=head3 The confirmation line
+
+Every successful write prints one line to standard output naming the file, with the name in black on cyan:
+
+ wrote output.tsv
+
+This is C<say 'wrote ' . colored(['black on_cyan'], $file)>, but the SGR codes (C<\e[30;46m> … C<\e[0m>) are written out inline, so the module takes no dependency on C<Term::ANSIColor>. Every format announces itself the same way — delimited, LaTeX and C<.xlsx> alike — so you always learn where a table went, in the same shape whatever you asked for. Nothing is printed when nothing is written: an empty data frame returns before a file is opened, and a write that cannot open its file croaks instead.
+
+The colour is unconditional; it is not suppressed when standard output is a pipe or a file. If you are capturing the output and want the bytes plain, strip the escapes (C<s/\e\[[\d;]*m//g>) or send them somewhere else. Note also that the line goes to file descriptor 1 directly rather than through Perl's C<STDOUT> glob, so C<< local *STDOUT; open STDOUT, 'E<gt>', \my $buf >> will B<not> capture it — redirect the file descriptor, or run the write in a child process, if you need to.
+
 =head3 LaTeX output (C<tex>)
 
 C<write_table> can write the output file as a LaTeX C<tabular> instead of a delimited table. This is selected either by naming the file C<*.tex> (auto-detected) or by passing C<< tex =E<gt> 1 >>; an explicit C<< tex =E<gt> 0 >> forces a delimited file even when the name ends in C<.tex>. The LaTeX table is built from the same rows as the delimited writer, so it works for every shape above (including arrays of arrays):
     write_table(\@data_aoh, 'table.tex');            # .tex name selects LaTeX
     write_table(\@data_aoh, $tmp_file, 'tex' => 1);  # force LaTeX for any name
-The file begins with a C<< %written by E<lt>cwdE<gt>/E<lt>scriptE<gt> >> provenance comment (the working directory and script name). The header row is bold and the table is ruled with C<\hline>. Unlike the delimited writer, LaTeX output includes a row-label column as its first column by default: C<row.names> defaults on for LaTeX (matching R's C<write.table>), so pass C<< row.names =E<gt> 0 >> to omit it. The labels are the outer keys for a HoH and a 1-based index otherwise. Cell text is LaTeX-escaped: C<#>, C<_>, C<%>, and C<&> are backslash-escaped, C<< E<gt> >> becomes C<\textgreater{}>, and a cell consisting solely of C<\includesvg{...svg}> is passed through untouched. The C<tex.*> options tune the output:
+The file begins with a C<< %written by E<lt>cwdE<gt>/E<lt>scriptE<gt> >> provenance comment (the working directory and script name). The header row is bold and the table is ruled with C<\hline>. As with every other format, C<row.names> is B<off> unless you ask for it: pass C<< row.names =E<gt> 1 >> to prepend a label column, whose labels are the outer keys for a HoH and a 1-based index otherwise. Cell text is LaTeX-escaped: C<#>, C<_>, C<%>, and C<&> are backslash-escaped, C<< E<gt> >> becomes C<\textgreater{}>, and a cell consisting solely of C<\includesvg{...svg}> is passed through untouched. The C<tex.*> options tune the output:
     write_table(\@rows, 'table.tex',
         'tex.col.align'    => 'l',                   # 'c' (default), 'l', or 'r'
         'tex.bold.1st.col' => 0,                     # default 1: bold the first column
@@ -12949,9 +12957,9 @@ C<read_table>.
 </tr>
 <tr>
   <td><code>row.names</code></td>
-  <td>LaTeX: <code>1</code> (on); delimited: <code>0</code> (off)</td>
+  <td><code>0</code> (off)</td>
   <td>both</td>
-  <td>true prepends a label column (numeric 1-based index, or the outer key for a HoH); <code>0</code> omits it. LaTeX output defaults on (R-compatible); delimited output defaults off; an explicit value overrides in either case. For a HoA/AoH a non-numeric <i>column name</i> uses that column's values as the labels and drops it from the body</td>
+  <td>true prepends a label column (numeric 1-based index, or the outer key for a HoH); <code>0</code> omits it. Off by default in <b>every</b> format — delimited, LaTeX and <code>.xlsx</code> alike. (R's <code>write.table</code> defaults it on and this once followed suit for LaTeX; it no longer does.) For a HoA/AoH a non-numeric <i>column name</i> uses that column's values as the labels and drops it from the body</td>
 </tr>
 <tr>
   <td><code>col.names</code></td>
@@ -13047,6 +13055,10 @@ C<read_table>.
 =head1 Changes
 
 =head2 0.28 2026-07-28 CDT
+
+C<write_table> (LikeR.xs) — two changes, one of them incompatible.
+- Every format now prints the coloured C<< wrote E<lt>fileE<gt> >> confirmation line, not just LaTeX and C<.xlsx>. Delimited output (csv/tsv) was silent before. The line is identical in all cases: the file name in black on cyan, with the SGR codes inline so there is still no C<Term::ANSIColor> dependency. Nothing is announced when nothing is written.
+- B<Incompatible:> C<row.names> now defaults to B<off> in every format. It previously defaulted B<on> everywhere, following R's C<write.table>, which meant a call that said nothing about row names got a label column and a leading empty header cell (C<,gene,n>) it had not asked for. Pass C<< row.names =E<gt> 1 >> for the old behaviour; C<< row.names =E<gt> 'col' >> is unchanged.
 
 New C<h2aoh> and C<aoh2h> (lib/Stats/LikeR.pm), which add the flat hash to the shapes the conversion family understands. A plain hash is a two-column table folded shut, and until now nothing would unfold it: C<value_counts> hands one back, and no frame function would take it.
 - C<< h2aoh(\%h, var_name =E<gt> .., value_name =E<gt> ..) >> unfolds a flat hash into a two-column AoH, one row per pair, under column names the caller picks. C<< sort =E<gt> 'key' | 'value' | 'none' >> fixes the row order, which hash iteration otherwise leaves to chance; C<'value'> is biggest-first for numbers, so C<value_counts> output comes out the way pandas' C<Series.value_counts()> orders it.

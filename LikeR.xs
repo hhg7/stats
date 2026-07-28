@@ -1092,6 +1092,29 @@ static int cmp_string_wt(const void *a, const void *b) {
 	return strcmp(*(const char**)a, *(const char**)b);
 }
 
+/* write_table: the "wrote <file>" confirmation line.
+ *
+ * This is say 'wrote ' . colored(['black on_cyan'], $file), with the SGR codes
+ * written out inline (black foreground 30, cyan background 46, reset 0) so the
+ * module keeps no dependency on Term::ANSIColor.
+ *
+ * Every format announces itself the same way -- delimited, LaTeX and .xlsx
+ * alike -- so a caller always learns where the table went, and learns it in
+ * the same shape whatever they asked for. The colour is unconditional, exactly
+ * as it was when only LaTeX and .xlsx printed this: a caller who is capturing
+ * STDOUT and does not want the escape sequences should capture and strip, or
+ * redirect, as they would for any other coloured tool.
+ */
+static void write_table_announce(pTHX_ const char *restrict file) {
+	PerlIO *restrict out = PerlIO_stdout();
+	if (!out || !file) return;
+	static const char pre[]  = "wrote \033[30;46m";
+	static const char post[] = "\033[0m\n";
+	PerlIO_write(out, pre, sizeof(pre) - 1);
+	PerlIO_write(out, file, strlen(file));
+	PerlIO_write(out, post, sizeof(post) - 1);
+}
+
 // Emulates Perl's /\D/ check
 static bool contains_nondigit(pTHX_ SV *restrict sv) {
 	if (!sv || !SvOK(sv)) return 0;
@@ -8591,7 +8614,6 @@ PPCODE:
 	}
 	const char *restrict sep = ",";
 	bool explicit_sep = 0; // Track if delimiter was manually specified
-	bool explicit_rownames = 0; // Track if row.names was manually specified
 // default undef cells to a true empty value ("") instead of NULL.
 // With print_string_row emitting zero-length fields bare (no quotes), an
 // undef cell now prints as nothing at all: a,,c -- not a,'',c or a,"",c.
@@ -8624,7 +8646,7 @@ PPCODE:
 		if (strEQ(key, "data")) data_sv = val;
 		else if (strEQ(key, "col.names")) col_names_sv = val;
 		else if (strEQ(key, "file")) file_sv = val;
-		else if (strEQ(key, "row.names")) { row_names_sv = val; explicit_rownames = 1; }
+		else if (strEQ(key, "row.names")) row_names_sv = val;
 		// Check for either "sep" or "delim" and mark as explicitly provided
 		else if (strEQ(key, "sep") || strEQ(key, "delim")) {
 			sep = SvPV_nolen(val);
@@ -8806,13 +8828,14 @@ PPCODE:
 		croak("write_table: Could not open '%s' for writing", file);
 	}
 	AV *restrict headers_av = newAV();
+// row.names is off unless asked for, in every format -- delimited, LaTeX and
+// .xlsx alike. R's write.table() defaults it on, and this used to follow suit,
+// but a label column nobody asked for is the wrong default here: the common
+// case is a frame whose rows are already identified by one of its own columns,
+// and the leading empty header cell it produces (",gene,n") is a well known
+// nuisance to read back. row.names => 1 opts in and gives the old behaviour;
+// row.names => 'col' uses that column's values as the labels.
 	bool inc_rownames = (row_names_sv && SvTRUE(row_names_sv)) ? 1 : 0;
-// R-compatible default: row names (row labels) lead every record as the first
-// column, matching write.table() in R (row.names defaults to TRUE). This now
-// applies to delimited output (csv/tsv) as well as LaTeX: unless the caller
-// passed row.names explicitly, the first item of every row is its row name.
-// row.names => 0 opts back out; row.names => 'col' names the label column.
-	if (!explicit_rownames) inc_rownames = 1;
 	const char *restrict rownames_col = NULL;
 // When 'tex' or 'xlsx' is on, collect every record here (as an AV of AVs of
 // SVs) so the renderer can build the output afterwards. Mortal => reclaimed
@@ -9219,22 +9242,17 @@ PPCODE:
 	if (headers_av) SvREFCNT_dec(headers_av);
 	if (rows_av) SvREFCNT_dec(rows_av);
 	if (fh) PerlIO_close(fh);
+// Delimited output is already on disk by the time the handle closes, so this
+// is where csv/tsv announces itself. Guarded on 'fh' rather than on '!collect'
+// so the line is printed only when a file was actually opened and written.
+	if (fh) write_table_announce(aTHX_ file);
 // LaTeX output: render the collected table to the main file now that the
 // rows are gathered. With 'tex' on nothing was written above, so this is
 // the only writer of 'file'.
 	if (tex && collect_av && av_len(collect_av) >= 0) {
 		write_tex_tabular(aTHX_ collect_av, file, tex_align,
 			tex_bold1, tex_format, tex_size, tex_comment, tex_longtable);
-// say 'wrote ' . colored(['black on_cyan'], $file), with the SGR codes
-// inline (black fg 30, cyan bg 46, reset 0) so no Term::ANSIColor dep.
-		PerlIO *restrict out = PerlIO_stdout();
-		if (out) {
-			static const char pre[]  = "wrote \033[30;46m";
-			static const char post[] = "\033[0m\n";
-			PerlIO_write(out, pre, sizeof(pre) - 1);
-			PerlIO_write(out, file, strlen(file));
-			PerlIO_write(out, post, sizeof(post) - 1);
-		}
+		write_table_announce(aTHX_ file);
 	}
 // .xlsx output: build the workbook from the collected rows. The provenance
 // line goes into the workbook's document "comments" property (dc:description),
@@ -9254,14 +9272,7 @@ PPCODE:
 		}
 		write_xlsx_workbook(aTHX_ collect_av, file, xlsx_sheet, prov,
 			(unsigned)xlsx_freeze_rows, (unsigned)xlsx_freeze_cols);
-		PerlIO *restrict out = PerlIO_stdout();
-		if (out) {
-			static const char pre[]  = "wrote \033[30;46m";
-			static const char post[] = "\033[0m\n";
-			PerlIO_write(out, pre, sizeof(pre) - 1);
-			PerlIO_write(out, file, strlen(file));
-			PerlIO_write(out, post, sizeof(post) - 1);
-		}
+		write_table_announce(aTHX_ file);
 	}
 	XSRETURN_EMPTY;
 }
