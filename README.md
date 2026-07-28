@@ -19,9 +19,7 @@ the spirit of R's `?function` at the prompt. It takes the name three ways:
 
     perl -MStats::LikeR -e 'h(*agg)'   # straight from the shell
 
-`h` works for every function in the distribution, the XS ones and the pure Perl
-ones alike, because it looks the name up in the module's own POD rather than
-watching an argument list. That POD is generated from this file, so what `h`
+`h` works for every function in the distribution looking the name up in the module's own POD rather than watching an argument list. That POD is generated from this file, so what `h`
 prints is what you are reading.
 
 Note that `h(bedroc)`, with no quotes and no sigil, cannot be made to work:
@@ -67,8 +65,6 @@ This is exactly why the XS functions don't read their arguments for help:
 calls naming a column, and `h('vals')` is already unambiguous.
 
 # Functions/Subroutines
-
----
 
 ## add_data
 
@@ -506,6 +502,79 @@ formula matters, and both share this module's `pf`, so p-values agree with
 *(R's `anova` generic can additionally compare several nested models,
 `anova(m1, m2)`, giving an F/LRT between them — a capability neither this
 `anova` nor `aov` currently provides. Ask if that would be useful.)*
+
+## aoh2h
+
+Fold a two-column **array-of-hashes** back down into a plain hash. This is the
+reverse of [`h2aoh`](#h2aoh), and the two are exact opposites under their
+defaults.
+
+    my $h = aoh2h($aoh);
+    my $h = aoh2h($aoh, var_name => 'gene', value_name => 'n');
+
+One column supplies the keys, the other the values; every other column in the
+row is ignored. R spells this `tibble::deframe()`; pandas spells it
+`df.set_index('k')['v'].to_dict()`.
+
+### Arguments
+
+`$aoh` — an array ref of hash refs. Required. Every row has to be a hash ref
+carrying both named columns.
+
+Everything after it is `name => value` pairs:
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `var_name` | `variable` | The column holding the keys. |
+| `value_name` | `value` | The column holding the values. |
+| `duplicates` | `die` | What to do when two rows carry the same key: `die` is fatal, `first` keeps the earliest row, `last` keeps the latest. |
+
+`var_name` and `value_name` must differ.
+
+### Returns
+
+A hash ref mapping each row's `var_name` cell to its `value_name` cell. An
+empty array ref gives back `{}`.
+
+Values are assigned across, so a value that is itself a reference is shared
+with the input rather than cloned — the same shallow copy `aoh2hoa` makes.
+
+### Example
+
+    my $aoh = [
+        { gene => 'TP53',  n => 12 },
+        { gene => 'BRCA1', n =>  7 },
+    ];
+    my $h = aoh2h($aoh, var_name => 'gene', value_name => 'n');
+    # { TP53 => 12, BRCA1 => 7 }
+
+    # keep the last of a repeated key instead of dying
+    my $last = aoh2h([ { variable => 'a', value => 1 },
+                       { variable => 'a', value => 9 } ], duplicates => 'last');
+    # { a => 9 }
+
+### Round trip
+
+    is_deeply( aoh2h( h2aoh(\%h) ), \%h );   # true for any flat hash
+
+The one thing that does not survive the trip is the *type* of a key: Perl hash
+keys are strings, so a numeric key comes back as the string that prints the
+same way.
+
+### Errors
+
+`aoh2h` dies when the first argument is undefined or not an array ref, when the
+options are not `name => value` pairs, when an option is unknown, when
+`var_name` equals `value_name`, when `duplicates` is not one of the three
+allowed words, when a row is not a hash ref, when a row is missing either named
+column, when a row's key cell is `undef`, or — under the default
+`duplicates => 'die'` — when two rows share a key. Every message names the
+offending row by index.
+
+### See also
+
+[`h2aoh`](#h2aoh) is the reverse. [`aoh2hoh`](#aoh2hoh) also indexes rows by a
+column, but keeps the whole row as the value instead of one cell.
 
 ## aoh2hoa
 
@@ -2672,6 +2741,85 @@ list of functions that do have one.
 Output is wrapped to `$ENV{COLUMNS}` when that is set (clamped to 40-100
 columns), and to 80 otherwise. Parameter tables are rendered as aligned plain
 text.
+
+## h2aoh
+
+Unfold a plain hash into a two-column **array-of-hashes**, one row per pair.
+
+    my $aoh = h2aoh(\%h);
+    my $aoh = h2aoh(\%h, var_name => 'gene', value_name => 'n');
+
+A flat hash is a two-column table that has been folded shut: every pair is a
+row, the key in one cell and the value in the other. `h2aoh` unfolds it, which
+turns a result that no frame function will accept — `value_counts` hands one
+back — into a data frame that all of them will:
+
+    my $counts = value_counts($titanic, 'Pclass');   # { 1 => 216, 2 => 184, 3 => 491 }
+    my $tbl    = h2aoh($counts, var_name => 'Pclass', value_name => 'n',
+                       sort => 'value');
+    view($tbl);
+    # AoH: 3 rows x 2 cols   (showing 3)
+    #    Pclass    n
+    # 0       3  491
+    # 1       1  216
+    # 2       2  184
+
+R spells this `tibble::enframe()`; base R gets close with
+`stack()` or `data.frame(name = names(x), value = unname(x))`. In pandas it is
+`pd.Series(d).rename_axis('k').reset_index(name = 'v')`, or the shorter
+`pd.DataFrame(d.items(), columns = ['k', 'v'])`.
+
+### Arguments
+
+`$h` — a hash ref whose values are plain scalars. Required.
+
+Everything after it is `name => value` pairs:
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `var_name` | `variable` | Name of the column that receives the hash keys. |
+| `value_name` | `value` | Name of the column that receives the hash values. |
+| `sort` | `key` | Row order — see below. |
+
+`var_name` and `value_name` must differ. They are the same two option names
+[`melt`](#melt) uses, because they name the same two columns.
+
+### Row order
+
+Hash iteration order is not reproducible between runs, so the rows are sorted
+by default rather than left to chance.
+
+| `sort` | Order |
+| --- | --- |
+| `key` | By key. Numerically when every key looks like a number, alphabetically otherwise — the rule [`agg`](#agg) uses for its group keys. This is the default. |
+| `value` | By value: largest first when every defined value is a number, which is the order `value_counts` output usually wants; alphabetically ascending when they are not. `undef` values sort last, and ties break on the key. |
+| `none` | Whatever order the hash iterates in. Cheapest, and the right choice when you are about to sort the result yourself with [`csort`](#csort). |
+
+### Returns
+
+An array ref of two-key hash refs, one per pair:
+
+    h2aoh({ a => 1, b => 2 });
+    # [ { variable => 'a', value => 1 }, { variable => 'b', value => 2 } ]
+
+An empty hash gives back `[]`. `undef` values are carried through as `undef`.
+
+### Errors
+
+`h2aoh` dies when the argument is undefined or not a hash ref, when the options
+are not `name => value` pairs, when an option is unknown, when `var_name`
+equals `value_name`, or when `sort` is not one of the three allowed words.
+
+It also dies when any value is a **reference**, naming the key and pointing at
+the converter that was probably meant: a hash of array refs is
+[`hoa2aoh`](#hoa2aoh)'s job, and a hash of hash refs is
+[`hoh2hoa`](#hoh2hoa)'s. Stringifying `ARRAY(0x…)` into a cell would be the
+only other option, and it is never what anyone wanted.
+
+### See also
+
+[`aoh2h`](#aoh2h) is the reverse. [`melt`](#melt) does the same folding-out for
+a frame that already has more than two columns.
 
 ## hoa2aoh
 
@@ -5161,6 +5309,13 @@ raw values (no cell number formats), matching the round-trip behaviour of
 | `xlsx.freeze.cols` | `0` (none) | Excel | number of leading columns to freeze in place (freeze panes) |
 
 # Changes
+
+## 0.28 2026-07-28 CDT
+
+New `h2aoh` and `aoh2h` (lib/Stats/LikeR.pm), which add the flat hash to the shapes the conversion family understands. A plain hash is a two-column table folded shut, and until now nothing would unfold it: `value_counts` hands one back, and no frame function would take it.
+- `h2aoh(\%h, var_name => .., value_name => ..)` unfolds a flat hash into a two-column AoH, one row per pair, under column names the caller picks. `sort => 'key' | 'value' | 'none'` fixes the row order, which hash iteration otherwise leaves to chance; `'value'` is biggest-first for numbers, so `value_counts` output comes out the way pandas' `Series.value_counts()` orders it.
+- `aoh2h` folds a two-column AoH back down, with `duplicates => 'die' | 'first' | 'last'` deciding what a repeated key means. The two are exact inverses under their defaults.
+- The column options are named `var_name` / `value_name` after `melt`, which emits the same two columns. R spells this pair `tibble::enframe()` / `deframe()`; pandas spells it `pd.Series(d).reset_index()` and `Series.to_dict()`.
 
 ## 0.27 2026-07-26 CDT
 

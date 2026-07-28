@@ -70,8 +70,6 @@ calls naming a column, and C<h('vals')> is already unambiguous.
 
 =head1 Functions/Subroutines
 
-========================================================================
-
 =head2 add_data
 
 Add data to an existing hash or array reference. This function acts as the equivalent of adding new rows, as well as an C<ljoin> (described below). It dynamically infers your target data structure, handles deeply nested records, and seamlessly coerces mismatched data shapes to preserve the structural integrity of your primary reference.
@@ -760,6 +758,108 @@ C<oneway_test> and the rest of Stats::LikeR.
 I<< (R's C<anova> generic can additionally compare several nested models,
 C<anova(m1, m2)>, giving an F/LRT between them — a capability neither this
 C<anova> nor C<aov> currently provides. Ask if that would be useful.) >>
+
+=head2 aoh2h
+
+Fold a two-column B<array-of-hashes> back down into a plain hash. This is the
+inverse of L<C<h2aoh>|/"h2aoh">, and the two are exact opposites under their
+defaults.
+
+ my $h = aoh2h($aoh);
+ my $h = aoh2h($aoh, var_name => 'gene', value_name => 'n');
+
+One column supplies the keys, the other the values; every other column in the
+row is ignored. R spells this C<tibble::deframe()>; pandas spells it
+C<df.set_index('k')['v'].to_dict()>.
+
+=head3 Arguments
+
+C<$aoh> — an array ref of hash refs. Required. Every row has to be a hash ref
+carrying both named columns.
+
+Everything after it is C<< name =E<gt> value >> pairs:
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>Option</th>
+  <th>Default</th>
+  <th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>var_name</code></td>
+  <td><code>variable</code></td>
+  <td>The column holding the keys.</td>
+</tr>
+<tr>
+  <td><code>value_name</code></td>
+  <td><code>value</code></td>
+  <td>The column holding the values.</td>
+</tr>
+<tr>
+  <td><code>duplicates</code></td>
+  <td><code>die</code></td>
+  <td>What to do when two rows carry the same key: <code>die</code> is fatal, <code>first</code> keeps the earliest row, <code>last</code> keeps the latest.</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+C<var_name> and C<value_name> must differ.
+
+=head3 Returns
+
+A hash ref mapping each row's C<var_name> cell to its C<value_name> cell. An
+empty array ref gives back C<{}>.
+
+Values are assigned across, so a value that is itself a reference is shared
+with the input rather than cloned — the same shallow copy C<aoh2hoa> makes.
+
+=head3 Example
+
+ my $aoh = [
+     { gene => 'TP53',  n => 12 },
+     { gene => 'BRCA1', n =>  7 },
+ ];
+ my $h = aoh2h($aoh, var_name => 'gene', value_name => 'n');
+ # { TP53 => 12, BRCA1 => 7 }
+
+ # keep the last of a repeated key instead of dying
+ my $last = aoh2h([ { variable => 'a', value => 1 },
+                    { variable => 'a', value => 9 } ], duplicates => 'last');
+ # { a => 9 }
+
+=head3 Round trip
+
+ is_deeply( aoh2h( h2aoh(\%h) ), \%h );   # true for any flat hash
+
+The one thing that does not survive the trip is the I<type> of a key: Perl hash
+keys are strings, so a numeric key comes back as the string that prints the
+same way.
+
+=head3 Errors
+
+C<aoh2h> dies when the first argument is undefined or not an array ref, when the
+options are not C<< name =E<gt> value >> pairs, when an option is unknown, when
+C<var_name> equals C<value_name>, when C<duplicates> is not one of the three
+allowed words, when a row is not a hash ref, when a row is missing either named
+column, when a row's key cell is C<undef>, or — under the default
+C<< duplicates =E<gt> 'die' >> — when two rows share a key. Every message names the
+offending row by index.
+
+=head3 See also
+
+L<C<h2aoh>|/"h2aoh"> is the reverse. L</"C<aoh2hoh>"> also indexes rows by a
+column, but keeps the whole row as the value instead of one cell.
 
 =head2 aoh2hoa
 
@@ -3853,6 +3953,139 @@ list of functions that do have one.
 Output is wrapped to C<$ENV{COLUMNS}> when that is set (clamped to 40-100
 columns), and to 80 otherwise. Parameter tables are rendered as aligned plain
 text.
+
+=head2 h2aoh
+
+Unfold a plain hash into a two-column B<array-of-hashes>, one row per pair.
+
+ my $aoh = h2aoh(\%h);
+ my $aoh = h2aoh(\%h, var_name => 'gene', value_name => 'n');
+
+A flat hash is a two-column table that has been folded shut: every pair is a
+row, the key in one cell and the value in the other. C<h2aoh> unfolds it, which
+turns a result that no frame function will accept — C<value_counts> hands one
+back — into a data frame that all of them will:
+
+ my $counts = value_counts($titanic, 'Pclass');   # { 1 => 216, 2 => 184, 3 => 491 }
+ my $tbl    = h2aoh($counts, var_name => 'Pclass', value_name => 'n',
+                    sort => 'value');
+ view($tbl);
+ # AoH: 3 rows x 2 cols   (showing 3)
+ #    Pclass    n
+ # 0       3  491
+ # 1       1  216
+ # 2       2  184
+
+R spells this C<tibble::enframe()>; base R gets close with
+C<stack()> or C<data.frame(name = names(x), value = unname(x))>. In pandas it is
+C<pd.Series(d).rename_axis('k').reset_index(name = 'v')>, or the shorter
+C<pd.DataFrame(d.items(), columns = ['k', 'v'])>.
+
+=head3 Arguments
+
+C<$h> — a hash ref whose values are plain scalars. Required.
+
+Everything after it is C<< name =E<gt> value >> pairs:
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>Option</th>
+  <th>Default</th>
+  <th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>var_name</code></td>
+  <td><code>variable</code></td>
+  <td>Name of the column that receives the hash keys.</td>
+</tr>
+<tr>
+  <td><code>value_name</code></td>
+  <td><code>value</code></td>
+  <td>Name of the column that receives the hash values.</td>
+</tr>
+<tr>
+  <td><code>sort</code></td>
+  <td><code>key</code></td>
+  <td>Row order — see below.</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+C<var_name> and C<value_name> must differ. They are the same two option names
+L<C<melt>|/"melt"> uses, because they name the same two columns.
+
+=head3 Row order
+
+Hash iteration order is not reproducible between runs, so the rows are sorted
+by default rather than left to chance.
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th><code>sort</code></th>
+  <th>Order</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>key</code></td>
+  <td>By key. Numerically when every key looks like a number, alphabetically otherwise — the rule [<code>agg</code>](#agg) uses for its group keys. This is the default.</td>
+</tr>
+<tr>
+  <td><code>value</code></td>
+  <td>By value: largest first when every defined value is a number, which is the order <code>value_counts</code> output usually wants; alphabetically ascending when they are not. <code>undef</code> values sort last, and ties break on the key.</td>
+</tr>
+<tr>
+  <td><code>none</code></td>
+  <td>Whatever order the hash iterates in. Cheapest, and the right choice when you are about to sort the result yourself with [<code>csort</code>](#csort).</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+=head3 Returns
+
+An array ref of two-key hash refs, one per pair:
+
+ h2aoh({ a => 1, b => 2 });
+ # [ { variable => 'a', value => 1 }, { variable => 'b', value => 2 } ]
+
+An empty hash gives back C<[]>. C<undef> values are carried through as C<undef>.
+
+=head3 Errors
+
+C<h2aoh> dies when the argument is undefined or not a hash ref, when the options
+are not C<< name =E<gt> value >> pairs, when an option is unknown, when C<var_name>
+equals C<value_name>, or when C<sort> is not one of the three allowed words.
+
+It also dies when any value is a B<reference>, naming the key and pointing at
+the converter that was probably meant: a hash of array refs is
+L<C<hoa2aoh>|/"hoa2aoh">'s job, and a hash of hash refs is
+L<C<hoh2hoa>|/"hoh2hoa">'s. Stringifying C<ARRAY(0x…)> into a cell would be the
+only other option, and it is never what anyone wanted.
+
+=head3 See also
+
+L<C<aoh2h>|/"aoh2h"> is the reverse. L<C<melt>|/"melt"> does the same folding-out for
+a frame that already has more than two columns.
 
 =head2 hoa2aoh
 
@@ -7723,6 +7956,13 @@ C<read_table>.
 
 
 =head1 Changes
+
+=head2 0.28 2026-07-28 CDT
+
+New C<h2aoh> and C<aoh2h> (lib/Stats/LikeR.pm), which add the flat hash to the shapes the conversion family understands. A plain hash is a two-column table folded shut, and until now nothing would unfold it: C<value_counts> hands one back, and no frame function would take it.
+- C<< h2aoh(\%h, var_name =E<gt> .., value_name =E<gt> ..) >> unfolds a flat hash into a two-column AoH, one row per pair, under column names the caller picks. C<< sort =E<gt> 'key' | 'value' | 'none' >> fixes the row order, which hash iteration otherwise leaves to chance; C<'value'> is biggest-first for numbers, so C<value_counts> output comes out the way pandas' C<Series.value_counts()> orders it.
+- C<aoh2h> folds a two-column AoH back down, with C<< duplicates =E<gt> 'die' | 'first' | 'last' >> deciding what a repeated key means. The two are exact inverses under their defaults.
+- The column options are named C<var_name> / C<value_name> after C<melt>, which emits the same two columns. R spells this pair C<tibble::enframe()> / C<deframe()>; pandas spells it C<pd.Series(d).reset_index()> and C<Series.to_dict()>.
 
 =head2 0.27 2026-07-26 CDT
 

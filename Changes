@@ -1,6 +1,13 @@
 Revision history for Stats-LikeR
 
 
+0.28 2026-07-28 CDT
+
+ - New `h2aoh` and `aoh2h` (lib/Stats/LikeR.pm), which add the flat hash to the shapes the conversion family understands. A plain hash is a two-column table folded shut, and until now nothing would unfold it: `value_counts` hands one back, and no frame function would take it.
+ - `h2aoh(\%h, var_name => .., value_name => ..)` unfolds a flat hash into a two-column AoH, one row per pair, under column names the caller picks. `sort => 'key' | 'value' | 'none'` fixes the row order, which hash iteration otherwise leaves to chance; `'value'` is biggest-first for numbers, so `value_counts` output comes out the way pandas' `Series.value_counts()` orders it.
+ - `aoh2h` folds a two-column AoH back down, with `duplicates => 'die' | 'first' | 'last'` deciding what a repeated key means. The two are exact inverses under their defaults.
+ - The column options are named `var_name` / `value_name` after `melt`, which emits the same two columns. R spells this pair `tibble::enframe()` / `deframe()`; pandas spells it `pd.Series(d).reset_index()` and `Series.to_dict()`.
+
 0.27 2026-07-26 CDT
 
  - New `h` function: `h('agg')`, `h(*agg)` or `h(\&agg)` prints that function's section of this document and returns, in the spirit of R's `?function`. `h()` lists every documented function. It covers the XS functions as well as the Perl ones, because it looks the name up in the module's POD instead of reading an argument list — see [Getting help](#getting-help).

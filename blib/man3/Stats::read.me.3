@@ -58,7 +58,7 @@
 .\" ========================================================================
 .\"
 .IX Title "read.me 3"
-.TH read.me 3 2026-07-26 "perl v5.44.0" "User Contributed Perl Documentation"
+.TH read.me 3 2026-07-28 "perl v5.44.0" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -137,7 +137,6 @@ This is exactly why the XS functions don\*(Aqt read their arguments for help:
 calls naming a column, and \f(CWh(\*(Aqvals\*(Aq)\fR is already unambiguous.
 .SH Functions/Subroutines
 .IX Header "Functions/Subroutines"
-========================================================================
 .SS add_data
 .IX Subsection "add_data"
 Add data to an existing hash or array reference. This function acts as the equivalent of adding new rows, as well as an \f(CW\*(C`ljoin\*(C'\fR (described below). It dynamically infers your target data structure, handles deeply nested records, and seamlessly coerces mismatched data shapes to preserve the structural integrity of your primary reference.
@@ -602,6 +601,84 @@ formula matters, and both share this module\*(Aqs \f(CW\*(C`pf\*(C'\fR, so p\-va
 \&\fI(R\*(Aqs \fR\f(CI\*(C`anova\*(C'\fR\fI generic can additionally compare several nested models,
 \&\fR\f(CI\*(C`anova(m1, m2)\*(C'\fR\fI, giving an F/LRT between them — a capability neither this
 \&\fR\f(CI\*(C`anova\*(C'\fR\fI nor \fR\f(CI\*(C`aov\*(C'\fR\fI currently provides. Ask if that would be useful.)\fR
+.SS aoh2h
+.IX Subsection "aoh2h"
+Fold a two\-column \fBarray\-of\-hashes\fR back down into a plain hash. This is the
+inverse of \f(CW\*(C`h2aoh\*(C'\fR, and the two are exact opposites under their
+defaults.
+.PP
+.Vb 2
+\& my $h = aoh2h($aoh);
+\& my $h = aoh2h($aoh, var_name => \*(Aqgene\*(Aq, value_name => \*(Aqn\*(Aq);
+.Ve
+.PP
+One column supplies the keys, the other the values; every other column in the
+row is ignored. R spells this \f(CWtibble::deframe()\fR; pandas spells it
+\&\f(CW\*(C`df.set_index(\*(Aqk\*(Aq)[\*(Aqv\*(Aq].to_dict()\*(C'\fR.
+.PP
+\fIArguments\fR
+.IX Subsection "Arguments"
+.PP
+\&\f(CW$aoh\fR — an array ref of hash refs. Required. Every row has to be a hash ref
+carrying both named columns.
+.PP
+Everything after it is \f(CW\*(C`name => value\*(C'\fR pairs:
+.PP
+\&\f(CW\*(C`var_name\*(C'\fR and \f(CW\*(C`value_name\*(C'\fR must differ.
+.PP
+\fIReturns\fR
+.IX Subsection "Returns"
+.PP
+A hash ref mapping each row\*(Aqs \f(CW\*(C`var_name\*(C'\fR cell to its \f(CW\*(C`value_name\*(C'\fR cell. An
+empty array ref gives back \f(CW\*(C`{}\*(C'\fR.
+.PP
+Values are assigned across, so a value that is itself a reference is shared
+with the input rather than cloned — the same shallow copy \f(CW\*(C`aoh2hoa\*(C'\fR makes.
+.PP
+\fIExample\fR
+.IX Subsection "Example"
+.PP
+.Vb 6
+\& my $aoh = [
+\&     { gene => \*(AqTP53\*(Aq,  n => 12 },
+\&     { gene => \*(AqBRCA1\*(Aq, n =>  7 },
+\& ];
+\& my $h = aoh2h($aoh, var_name => \*(Aqgene\*(Aq, value_name => \*(Aqn\*(Aq);
+\& # { TP53 => 12, BRCA1 => 7 }
+\&
+\& # keep the last of a repeated key instead of dying
+\& my $last = aoh2h([ { variable => \*(Aqa\*(Aq, value => 1 },
+\&                    { variable => \*(Aqa\*(Aq, value => 9 } ], duplicates => \*(Aqlast\*(Aq);
+\& # { a => 9 }
+.Ve
+.PP
+\fIRound trip\fR
+.IX Subsection "Round trip"
+.PP
+.Vb 1
+\& is_deeply( aoh2h( h2aoh(\e%h) ), \e%h );   # true for any flat hash
+.Ve
+.PP
+The one thing that does not survive the trip is the \fItype\fR of a key: Perl hash
+keys are strings, so a numeric key comes back as the string that prints the
+same way.
+.PP
+\fIErrors\fR
+.IX Subsection "Errors"
+.PP
+\&\f(CW\*(C`aoh2h\*(C'\fR dies when the first argument is undefined or not an array ref, when the
+options are not \f(CW\*(C`name => value\*(C'\fR pairs, when an option is unknown, when
+\&\f(CW\*(C`var_name\*(C'\fR equals \f(CW\*(C`value_name\*(C'\fR, when \f(CW\*(C`duplicates\*(C'\fR is not one of the three
+allowed words, when a row is not a hash ref, when a row is missing either named
+column, when a row\*(Aqs key cell is \f(CW\*(C`undef\*(C'\fR, or — under the default
+\&\f(CW\*(C`duplicates => \*(Aqdie\*(Aq\*(C'\fR — when two rows share a key. Every message names the
+offending row by index.
+.PP
+\fISee also\fR
+.IX Subsection "See also"
+.PP
+\&\f(CW\*(C`h2aoh\*(C'\fR is the reverse. "\f(CW\*(C`aoh2hoh\*(C'\fR" also indexes rows by a
+column, but keeps the whole row as the value instead of one cell.
 .SS aoh2hoa
 .IX Subsection "aoh2hoa"
 \&\f(CWaoh2hoa($aoh)\fR — transpose an \fBarray\-of\-hashes\fR (row\-major) into a \fBhash\-of\-arrays\fR (column\-major).
@@ -3049,6 +3126,83 @@ list of functions that do have one.
 Output is wrapped to \f(CW$ENV{COLUMNS}\fR when that is set (clamped to 40\-100
 columns), and to 80 otherwise. Parameter tables are rendered as aligned plain
 text.
+.SS h2aoh
+.IX Subsection "h2aoh"
+Unfold a plain hash into a two\-column \fBarray\-of\-hashes\fR, one row per pair.
+.PP
+.Vb 2
+\& my $aoh = h2aoh(\e%h);
+\& my $aoh = h2aoh(\e%h, var_name => \*(Aqgene\*(Aq, value_name => \*(Aqn\*(Aq);
+.Ve
+.PP
+A flat hash is a two\-column table that has been folded shut: every pair is a
+row, the key in one cell and the value in the other. \f(CW\*(C`h2aoh\*(C'\fR unfolds it, which
+turns a result that no frame function will accept — \f(CW\*(C`value_counts\*(C'\fR hands one
+back — into a data frame that all of them will:
+.PP
+.Vb 9
+\& my $counts = value_counts($titanic, \*(AqPclass\*(Aq);   # { 1 => 216, 2 => 184, 3 => 491 }
+\& my $tbl    = h2aoh($counts, var_name => \*(AqPclass\*(Aq, value_name => \*(Aqn\*(Aq,
+\&                    sort => \*(Aqvalue\*(Aq);
+\& view($tbl);
+\& # AoH: 3 rows x 2 cols   (showing 3)
+\& #    Pclass    n
+\& # 0       3  491
+\& # 1       1  216
+\& # 2       2  184
+.Ve
+.PP
+R spells this \f(CWtibble::enframe()\fR; base R gets close with
+\&\f(CWstack()\fR or \f(CW\*(C`data.frame(name = names(x), value = unname(x))\*(C'\fR. In pandas it is
+\&\f(CW\*(C`pd.Series(d).rename_axis(\*(Aqk\*(Aq).reset_index(name = \*(Aqv\*(Aq)\*(C'\fR, or the shorter
+\&\f(CW\*(C`pd.DataFrame(d.items(), columns = [\*(Aqk\*(Aq, \*(Aqv\*(Aq])\*(C'\fR.
+.PP
+\fIArguments\fR
+.IX Subsection "Arguments"
+.PP
+\&\f(CW$h\fR — a hash ref whose values are plain scalars. Required.
+.PP
+Everything after it is \f(CW\*(C`name => value\*(C'\fR pairs:
+.PP
+\&\f(CW\*(C`var_name\*(C'\fR and \f(CW\*(C`value_name\*(C'\fR must differ. They are the same two option names
+\&\f(CW\*(C`melt\*(C'\fR uses, because they name the same two columns.
+.PP
+\fIRow order\fR
+.IX Subsection "Row order"
+.PP
+Hash iteration order is not reproducible between runs, so the rows are sorted
+by default rather than left to chance.
+.PP
+\fIReturns\fR
+.IX Subsection "Returns"
+.PP
+An array ref of two\-key hash refs, one per pair:
+.PP
+.Vb 2
+\& h2aoh({ a => 1, b => 2 });
+\& # [ { variable => \*(Aqa\*(Aq, value => 1 }, { variable => \*(Aqb\*(Aq, value => 2 } ]
+.Ve
+.PP
+An empty hash gives back \f(CW\*(C`[]\*(C'\fR. \f(CW\*(C`undef\*(C'\fR values are carried through as \f(CW\*(C`undef\*(C'\fR.
+.PP
+\fIErrors\fR
+.IX Subsection "Errors"
+.PP
+\&\f(CW\*(C`h2aoh\*(C'\fR dies when the argument is undefined or not a hash ref, when the options
+are not \f(CW\*(C`name => value\*(C'\fR pairs, when an option is unknown, when \f(CW\*(C`var_name\*(C'\fR
+equals \f(CW\*(C`value_name\*(C'\fR, or when \f(CW\*(C`sort\*(C'\fR is not one of the three allowed words.
+.PP
+It also dies when any value is a \fBreference\fR, naming the key and pointing at
+the converter that was probably meant: a hash of array refs is
+\&\f(CW\*(C`hoa2aoh\*(C'\fR\*(Aqs job, and a hash of hash refs is
+\&\f(CW\*(C`hoh2hoa\*(C'\fR\*(Aqs. Stringifying \f(CWARRAY(0x…)\fR into a cell would be the
+only other option, and it is never what anyone wanted.
+.PP
+\fISee also\fR
+.IX Subsection "See also"
+.PP
+\&\f(CW\*(C`aoh2h\*(C'\fR is the reverse. \f(CW\*(C`melt\*(C'\fR does the same folding\-out for
+a frame that already has more than two columns.
 .SS hoa2aoh
 .IX Subsection "hoa2aoh"
 Turn a hash\-of\-arrays into an array\-of\-hashes.
@@ -5739,6 +5893,12 @@ raw values (no cell number formats), matching the round\-trip behaviour of
 .IX Subsection "Options"
 .SH Changes
 .IX Header "Changes"
+.SS "0.28 2026\-07\-28 CDT"
+.IX Subsection "0.28 2026-07-28 CDT"
+New \f(CW\*(C`h2aoh\*(C'\fR and \f(CW\*(C`aoh2h\*(C'\fR (lib/Stats/LikeR.pm), which add the flat hash to the shapes the conversion family understands. A plain hash is a two\-column table folded shut, and until now nothing would unfold it: \f(CW\*(C`value_counts\*(C'\fR hands one back, and no frame function would take it.
+\&\- \f(CW\*(C`h2aoh(\e%h, var_name => .., value_name => ..)\*(C'\fR unfolds a flat hash into a two\-column AoH, one row per pair, under column names the caller picks. \f(CW\*(C`sort => \*(Aqkey\*(Aq | \*(Aqvalue\*(Aq | \*(Aqnone\*(Aq\*(C'\fR fixes the row order, which hash iteration otherwise leaves to chance; \f(CW\*(Aqvalue\*(Aq\fR is biggest\-first for numbers, so \f(CW\*(C`value_counts\*(C'\fR output comes out the way pandas\*(Aq \f(CW\*(C`Series.value_counts()\*(C'\fR orders it.
+\&\- \f(CW\*(C`aoh2h\*(C'\fR folds a two\-column AoH back down, with \f(CW\*(C`duplicates => \*(Aqdie\*(Aq | \*(Aqfirst\*(Aq | \*(Aqlast\*(Aq\*(C'\fR deciding what a repeated key means. The two are exact inverses under their defaults.
+\&\- The column options are named \f(CW\*(C`var_name\*(C'\fR / \f(CW\*(C`value_name\*(C'\fR after \f(CW\*(C`melt\*(C'\fR, which emits the same two columns. R spells this pair \f(CWtibble::enframe()\fR / \f(CWdeframe()\fR; pandas spells it \f(CW\*(C`pd.Series(d).reset_index()\*(C'\fR and \f(CW\*(C`Series.to_dict()\*(C'\fR.
 .SS "0.27 2026\-07\-26 CDT"
 .IX Subsection "0.27 2026-07-26 CDT"
 New \f(CW\*(C`h\*(C'\fR function: \f(CWh(\*(Aqagg\*(Aq)\fR, \f(CWh(*agg)\fR or \f(CWh(\e&agg)\fR prints that function\*(Aqs section of this document and returns, in the spirit of R\*(Aqs \f(CW\*(C`?function\*(C'\fR. \f(CWh()\fR lists every documented function. It covers the XS functions as well as the Perl ones, because it looks the name up in the module\*(Aqs POD instead of reading an argument list — see "Getting help".

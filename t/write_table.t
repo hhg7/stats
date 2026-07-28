@@ -109,6 +109,7 @@ no_leaks_ok {
       );
   };
 } 'write_table: No memory leaks when encountering illegal nested references' unless $INC{'Devel/Cover.pm'};
+unlink 'test_output_dummy.csv';
 # test write_table with implicit separator from filename
 my %hoa = (
 	a => [1..3],

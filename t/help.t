@@ -41,11 +41,11 @@ sub call_named {
 # (agg, view, melt, ...) functions, so both halves of the distribution are
 # covered by the same lookup.
 my @FUNCS = qw(
-	add_data age_standardize agg anova aoh2hoa aoh2hoh aov assign auc auroc
-	bedroc bfill binom_test cfilter chisq_test chunk cmh_test cohen_d col
+	add_data age_standardize agg anova aoh2h aoh2hoa aoh2hoh aov assign auc
+	auroc bedroc bfill binom_test cfilter chisq_test chunk cmh_test cohen_d col
 	col2col colnames concat cor cor_test cov coxph cramers_v csort dnorm
 	drop_cols drop_duplicates dropna dunn_test epi_2x2 eta_squared ffill
-	fillna filter fisher_test friedman_test get_union glm group_by h hist
+	fillna filter fisher_test friedman_test get_union glm group_by h h2aoh hist
 	hoa2aoh hoa2hoh hoh2hoa hosmer_lemeshow interpolate intersection
 	is_equivalent kruskal_test ks_test ljoin lm logrank_test Lonly matrix max
 	mcnemar_test mean median melt merge min mode ncol nrow oneway_test
@@ -136,9 +136,9 @@ for my $f (qw(quantile agg write_table col)) {
 # the '?' / 'h' arguments: pure Perl functions only
 # ---------------------------------------------------------------------------
 my @PERL_FUNCS = qw(
-	age_standardize agg aoh2hoh assign bfill chunk cohen_d col colnames concat
-	cramers_v drop_cols drop_duplicates dropna eta_squared ffill fillna
-	hosmer_lemeshow interpolate melt ncol nrow pivot_table qcut read_table
+	age_standardize agg aoh2h aoh2hoh assign bfill chunk cohen_d col colnames
+	concat cramers_v drop_cols drop_duplicates dropna eta_squared ffill fillna
+	h2aoh hosmer_lemeshow interpolate melt ncol nrow pivot_table qcut read_table
 	rename_cols rownames select_cols smd summary table_one TukeyHSD view vif
 );
 
@@ -242,6 +242,35 @@ for my $f (@PERL_FUNCS) {
 	ok(scalar(Stats::LikeR::_pod_section('aoh2hoh')),   'heading wrapped in C<> is found');
 	ok(scalar(Stats::LikeR::_pod_section('hoa2hoh')),   'heading carrying a signature is found');
 	is(scalar(Stats::LikeR::_pod_section('no_such_fn')), 0, 'an unknown name finds nothing');
+}
+
+# h2aoh / aoh2h have documentation of their own, and h() reaches it.  The loop
+# over @FUNCS above only proves the call does not die -- the fallback page is
+# also titled after the function, so it would pass without a section existing.
+# These names are also the reason _pod_key has to compare whole names: 'h' is
+# itself a function, and a prefix match would hand h2aoh's page to h().
+{
+	for my $f (qw(h2aoh aoh2h)) {
+		ok(scalar(Stats::LikeR::_pod_section($f)), "$f has a POD section");
+		my ($out, $err) = capture(sub { Stats::LikeR::h($f) });
+		is($err, undef, "h('$f') does not die");
+		unlike($out, qr/no documentation section/,
+			"h('$f') shows the section, not the fallback");
+		like($out, qr/\Qvar_name\E/, "h('$f') documents var_name");
+		like($out, qr/\Qvalue_name\E/, "h('$f') documents value_name");
+	}
+
+	# the two directions cite each other, so either page leads to the other
+	my ($fwd) = capture(sub { Stats::LikeR::h('h2aoh') });
+	my ($rev) = capture(sub { Stats::LikeR::h('aoh2h') });
+	like($fwd, qr/\baoh2h\b/, "h('h2aoh') mentions the inverse");
+	like($rev, qr/\bh2aoh\b/, "h('aoh2h') mentions the inverse");
+	isnt($fwd, $rev, 'the two pages are different pages');
+
+	# h and h2aoh are distinct topics
+	my ($plain) = capture(sub { Stats::LikeR::h('h') });
+	isnt($plain, $fwd, "h('h') is not h('h2aoh')");
+	like($plain, qr/Stats::LikeR::h\n/, "h('h') is still h's own page");
 }
 
 # The same table in the other spelling.  This file's POD writes its tables as
