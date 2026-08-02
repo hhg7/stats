@@ -12,14 +12,22 @@
 # Where the mapping is not one-to-one, the "Perl sub" column says what was
 # actually called, and a comment on the entry says why:
 #
-#   * cor/cov take two vectors here rather than a two-column frame.  Same
-#     computation, one number out instead of a 2x2 matrix.
+#   * cor/cov take two vectors and return one number.  R and Python are asked
+#     for the same scalar rather than for the 2x2 matrix they would otherwise
+#     build, so all three do the same work.
 #   * chisq_test is handed a contingency table, so building that table is inside
 #     the timed call -- exactly as R times table() inside chisq.test(table(..)).
+#     Be aware of what that row therefore contains: pivot_table is ~99% of it
+#     and the chi-square itself is ~1 microsecond, because Stats::LikeR has no
+#     table()/crosstab() of its own and pivot_table is the nearest thing.  Read
+#     it as "cross-tabulate, then test", and read the pivot_table row for why.
 #   * group_by only splits, so the summarise half (mean per group) is timed with
-#     it, which is what dplyr's group_by %>% summarise does.
-#   * merge joins on an id column; R merges by row.names and pandas by index,
-#     neither of which Stats::LikeR has an equivalent of.
+#     it, which is what dplyr's group_by %>% summarise does.  All three average
+#     one column, not every numeric one.
+#   * merge joins two copies of the frame on an explicit id column.  R and
+#     pandas can join on row.names/index instead, which is about half the work
+#     and a join Stats::LikeR has no equivalent of, so they are given the id
+#     column too.
 use strict;
 use warnings;
 use Stats::LikeR;
@@ -124,9 +132,12 @@ my @benchmarks = (
 		sub { glm(data => $df, formula => 'binary ~ x + y', family => 'binomial') } ],
 	[ 'auc', 'Stats::LikeR::auc', sub { auc($y_scores, $y_true) } ],
 	[ 'prcomp', 'Stats::LikeR::prcomp', sub {
-		# prcomp wants a frame of its own, and building it is part of the call,
-		# the way df[, c("x","y")] is part of R's.
-		prcomp([ map { [ $df->{x}[$_], $df->{y}[$_] ] } 0 .. $n - 1 ]);
+		# the two-column frame is part of the call, the way df[, c("x","y")] is
+		# part of R's and df[['x','y']] is part of pandas'.  select_cols is that
+		# subset; transposing the columns into an AoA first, as this used to,
+		# was 1.1 ms of pure Perl on top of a 0.9 ms decomposition -- half the
+		# reading, for a reshape neither of the other two performs.
+		prcomp(select_cols($df, [ 'x', 'y' ]));
 	} ],
 );
 

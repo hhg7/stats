@@ -2680,6 +2680,8 @@ Predicates compose with bitwise \f(CW\*(C`&\*(C'\fR (and), \f(CW\*(C`|\*(C'\fR (
 .PP
 Comparison operators bind more tightly than \f(CW\*(C`&\*(C'\fR and \f(CW\*(C`|\*(C'\fR, so \f(CW\*(C`(col(\*(Aqa\*(Aq) > 4) & (col(\*(Aqb\*(Aq) < 2)\*(C'\fR is parsed correctly, but the parentheses are recommended for readability.
 .PP
+A \f(CWcol()\fR expression is also the quick way to say it: \f(CW\*(C`filter\*(C'\fR compiles the whole expression once and tests every row in C, without building a row hash or calling into Perl at all, which on a large frame is several times faster than the equivalent \f(CW\*(C`sub\*(C'\fR. What \f(CWcol()\fR cannot express — a \f(CW\*(C`\->match\*(C'\fR regex, an operand that is an object — is evaluated the same way a \f(CW\*(C`sub\*(C'\fR is, one call per row.
+.PP
 .Vb 1
 \& > Note: C<< col(\*(Aqage\*(Aq) E<gt> 32 >> works because C<col(\*(Aqage\*(Aq)> is an object whose C<< E<gt> >> is overloaded. A B<bare string> cannot do this — C<< \*(Aqage\*(Aq E<gt> 32 >> is computed by Perl to a plain boolean (the string numifies to 0) before C<filter> is ever called, so the column name is lost. Always wrap the column in C<col(...)>.
 \&
@@ -2704,7 +2706,7 @@ Return a true value to keep the row.
 \& filter($df, sub { $_[0]{score} > $_[0]{threshold} });
 .Ve
 .PP
-For a HoA, each row is assembled into a temporary \f(CW\*(C`{ column => value, ... }\*(C'\fR hash before the sub (or the \f(CWcol()\fR test) is called, so the same \f(CW\*(C`$_\->{column}\*(C'\fR syntax works regardless of the input shape.
+For a HoA there are no row hashes to hand over, so the sub is given a \f(CW\*(C`{ column => value, ... }\*(C'\fR hash built for it, and the same \f(CW\*(C`$_\->{column}\*(C'\fR syntax works regardless of the input shape. That hash is reused from row to row for as long as the sub only reads it; keeping the row (or a reference to one of its cells), or adding a key to it, makes \f(CW\*(C`filter\*(C'\fR start a fresh one, so a row you hold on to is always yours alone. A \f(CWcol()\fR predicate needs no row hash at all.
 .PP
 Filtering on the row name (\f(CW$_[1]\fR)
 .IX Subsection "Filtering on the row name ($_[1])"

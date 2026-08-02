@@ -213,6 +213,7 @@ TO_INST_PM = TukeyHSD.pl \
 	hist.pl \
 	kruskal.pl \
 	ks.test.pl \
+	lang.compare.pl \
 	lib/Stats/LikeR.pm \
 	ljoin.pl \
 	lm.pl \
@@ -1135,6 +1136,7 @@ pm_to_blib : $(FIRST_MAKEFILE) $(TO_INST_PM)
 	  'hist.pl' '$(INST_LIB)/Stats/hist.pl' \
 	  'kruskal.pl' '$(INST_LIB)/Stats/kruskal.pl' \
 	  'ks.test.pl' '$(INST_LIB)/Stats/ks.test.pl' \
+	  'lang.compare.pl' '$(INST_LIB)/Stats/lang.compare.pl' \
 	  'lib/Stats/LikeR.pm' 'blib/lib/Stats/LikeR.pm' \
 	  'ljoin.pl' '$(INST_LIB)/Stats/ljoin.pl' \
 	  'lm.pl' '$(INST_LIB)/Stats/lm.pl' \

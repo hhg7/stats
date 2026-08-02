@@ -49,6 +49,7 @@ my %HELP_ALIAS = (
 	_cols_drop        => 'drop_cols',
 	_cols_rename      => 'rename_cols',
 	_drop_dups_core   => 'drop_duplicates',
+	_aoh_key_union    => 'drop_duplicates',
 	_qcut_core        => 'qcut',
 	_interp_column_xs => 'interpolate',
 	_parse_csv_file   => 'read_table',
@@ -1769,6 +1770,24 @@ sub col { Stats::LikeR::col::_new(@_) }
 		'eq' => sub { $_[0] eq $_[1] }, 'ne' => sub { $_[0] ne $_[1] },
 	);
 
+	# Besides the closure, a comparison carries a {plan}: the same test written
+	# as plain data, which filter() (XS) compiles and runs in C, so a whole
+	# frame can be tested without building a row hash or entering perl once per
+	# row.  The plan is [ KIND, OP, column, literal, swap ] for a comparison and
+	# [ KIND, left, right ] / [ KIND, operand ] for & | !.  KIND and OP are the
+	# small integers LikeR.xs knows (FLTP_*/FLTC_*); the operator ids below are
+	# positional, so the two tables must keep this order.
+	#
+	# A plan is only built for what C can reproduce exactly: the literal must be
+	# a defined non-reference (and, for a numeric test, numeric), which rules
+	# out overloaded objects and the warnings a non-numeric operand raises.
+	# Everything else -- ->match/->nomatch, an object operand, any expression
+	# with such a part in it -- carries no plan and takes the closure path, so
+	# the two paths never disagree about a row.
+	my $P_NUM = 0; my $P_STR = 1; my $P_AND = 2; my $P_OR = 3; my $P_NOT = 4;
+	my %NUM_ID = ('>' => 0, '<' => 1, '>=' => 2, '<=' => 3, '==' => 4, '!=' => 5);
+	my %STR_ID = ('gt' => 0, 'lt' => 1, 'ge' => 2, 'le' => 3, 'eq' => 4, 'ne' => 5);
+
 	# numeric comparison: undef OR non-numeric cells never match
 	sub _num {
 		my ($self, $op, $other, $swap) = @_;
@@ -1779,7 +1798,9 @@ sub col { Stats::LikeR::col::_new(@_) }
 		my $code = $swap
 			? sub { my $c = $_[0]{$name}; (defined($c) && looks_like_number($c)) ? ($f->($other, $c) ? 1 : 0) : 0 }
 			: sub { my $c = $_[0]{$name}; (defined($c) && looks_like_number($c)) ? ($f->($c, $other) ? 1 : 0) : 0 };
-		return bless { code => $code }, __PACKAGE__;
+		my $plan = (defined($other) && !ref($other) && looks_like_number($other))
+			? [ $P_NUM, $NUM_ID{$op}, $name, $other, ($swap ? 1 : 0) ] : undef;
+		return bless { code => $code, ($plan ? (plan => $plan) : ()) }, __PACKAGE__;
 	}
 
 	# string comparison: undef cells never match
@@ -1792,7 +1813,9 @@ sub col { Stats::LikeR::col::_new(@_) }
 		my $code = $swap
 			? sub { my $c = $_[0]{$name}; defined($c) ? ($f->($other, $c) ? 1 : 0) : 0 }
 			: sub { my $c = $_[0]{$name}; defined($c) ? ($f->($c, $other) ? 1 : 0) : 0 };
-		return bless { code => $code }, __PACKAGE__;
+		my $plan = (defined($other) && !ref($other))
+			? [ $P_STR, $STR_ID{$op}, $name, $other, ($swap ? 1 : 0) ] : undef;
+		return bless { code => $code, ($plan ? (plan => $plan) : ()) }, __PACKAGE__;
 	}
 
 	sub _logic {
@@ -1806,7 +1829,9 @@ sub col { Stats::LikeR::col::_new(@_) }
 		my $code = $op eq '&'
 			? sub { ($lc->($_[0]) && $rc->($_[0])) ? 1 : 0 }
 			: sub { ($lc->($_[0]) || $rc->($_[0])) ? 1 : 0 };
-		return bless { code => $code }, __PACKAGE__;
+		my $plan = ($self->{plan} && $other->{plan})
+			? [ ($op eq '&' ? $P_AND : $P_OR), $self->{plan}, $other->{plan} ] : undef;
+		return bless { code => $code, ($plan ? (plan => $plan) : ()) }, __PACKAGE__;
 	}
 
 	sub _not {
@@ -1814,7 +1839,9 @@ sub col { Stats::LikeR::col::_new(@_) }
 		my $c = $self->{code};
 		die "col(): the operand of '!' is not a comparison (build it like !(col('x') > 0))\n"
 			unless ref $c eq 'CODE';
-		return bless { code => sub { $c->($_[0]) ? 0 : 1 } }, __PACKAGE__;
+		my $plan = $self->{plan} ? [ $P_NOT, $self->{plan} ] : undef;
+		return bless { code => sub { $c->($_[0]) ? 0 : 1 },
+		               ($plan ? (plan => $plan) : ()) }, __PACKAGE__;
 	}
 
 	# regex predicates.  Perl cannot overload =~, so col('x') =~ /re/ can never
@@ -2155,13 +2182,15 @@ sub drop_duplicates {
 		return _drop_dups_core($df, 3, [ @sub ], $kc);
 	}
 	if ($shape eq 'AoH') {
-		my $present = _present_keys($df, 'AoH');
+		# same union _present_keys builds, but scanned in C: on a large AoH the
+		# pure-Perl walk over every key of every row cost more than the dedup
+		my %present = map { $_ => 1 } @{ _aoh_key_union($df) };
 		if (@sub) {
 			for my $c (@sub) {
-				die "drop_duplicates: column '$c' not found\n" unless $present->{$c};
+				die "drop_duplicates: column '$c' not found\n" unless $present{$c};
 			}
 		} else {
-			@sub = sort keys %$present;
+			@sub = sort keys %present;
 		}
 		return _drop_dups_core($df, 1, [ @sub ], $kc);
 	}
@@ -8241,6 +8270,8 @@ Predicates compose with bitwise C<&> (and), C<|> (or), and C<!> (not):
 
 Comparison operators bind more tightly than C<&> and C<|>, so C<< (col('a') E<gt> 4) & (col('b') E<lt> 2) >> is parsed correctly, but the parentheses are recommended for readability.
 
+A C<col()> expression is also the quick way to say it: C<filter> compiles the whole expression once and tests every row in C, without building a row hash or calling into Perl at all, which on a large frame is several times faster than the equivalent C<sub>. What C<col()> cannot express — a C<< -E<gt>match >> regex, an operand that is an object — is evaluated the same way a C<sub> is, one call per row.
+
  > Note: C<< col('age') E<gt> 32 >> works because C<col('age')> is an object whose C<< E<gt> >> is overloaded. A B<bare string> cannot do this — C<< 'age' E<gt> 32 >> is computed by Perl to a plain boolean (the string numifies to 0) before C<filter> is ever called, so the column name is lost. Always wrap the column in C<col(...)>.
 
  > C<col()> addresses B<columns only> — it has no handle on a HoH's row name (the outer key). It also cannot express a regex match: there is no C<=~> operator to overload, so C<col('name') =~ /re/> runs the match immediately on the stringified object and never reaches C<filter>. For either case, use the code-reference form below.
@@ -8264,7 +8295,7 @@ Return a true value to keep the row.
  filter($df, sub { $_->{age} % 2 == 0 });            # things col() has no operator for
  filter($df, sub { $_[0]{score} > $_[0]{threshold} });
 
-For a HoA, each row is assembled into a temporary C<< { column =E<gt> value, ... } >> hash before the sub (or the C<col()> test) is called, so the same C<< $_-E<gt>{column} >> syntax works regardless of the input shape.
+For a HoA there are no row hashes to hand over, so the sub is given a C<< { column =E<gt> value, ... } >> hash built for it, and the same C<< $_-E<gt>{column} >> syntax works regardless of the input shape. That hash is reused from row to row for as long as the sub only reads it; keeping the row (or a reference to one of its cells), or adding a key to it, makes C<filter> start a fresh one, so a row you hold on to is always yours alone. A C<col()> predicate needs no row hash at all.
 
 =head4 Filtering on the row name (C<$_[1]>)
 

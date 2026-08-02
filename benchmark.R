@@ -21,6 +21,12 @@ df <- data.frame(
 df_missing <- df
 df_missing$x[10:20] <- NA
 
+# merge needs a key column: Stats::LikeR has no row.names to join on, so all
+# three scripts join two copies of the frame on an explicit id.  Joining by
+# row.names, as this script used to, is about half the work of a real key join.
+df_id <- df
+df_id$id <- seq_len(n)
+
 y_true <- rbinom(n, 1, 0.5)
 y_scores <- runif(n)
 
@@ -34,8 +40,9 @@ benchmarks <- list(
   list(liker="min", r_sub="base::min", func=function() min(df$x)),
   list(liker="max", r_sub="base::max", func=function() max(df$x)),
   list(liker="quantile", r_sub="stats::quantile", func=function() quantile(df$x, probs=c(0.25, 0.5, 0.75))),
-  list(liker="cor", r_sub="stats::cor", func=function() cor(df[, c("x", "y")])),
-  list(liker="cov", r_sub="stats::cov", func=function() cov(df[, c("x", "y")])),
+  # one coefficient, not a 2x2 matrix: Stats::LikeR's cor/cov take two vectors
+  list(liker="cor", r_sub="stats::cor", func=function() cor(df$x, df$y)),
+  list(liker="cov", r_sub="stats::cov", func=function() cov(df$x, df$y)),
   
   # Distributions & Tests
   list(liker="rnorm", r_sub="stats::rnorm", func=function() rnorm(1000)),
@@ -52,11 +59,12 @@ benchmarks <- list(
   list(liker="drop_cols", r_sub="dplyr::select", func=function() select(df, -y)),
   list(liker="rename_cols", r_sub="dplyr::rename", func=function() rename(df, Category_1 = cat1)),
   list(liker="dropna", r_sub="stats::na.omit", func=function() na.omit(df_missing)),
-  list(liker="fillna", r_sub="tidyr::replace_na", func=function() mutate(df_missing, x = replace_na(x, 0))),
+  # every column, as df.fillna(0) and fillna($df, value => 0) both do
+  list(liker="fillna", r_sub="tidyr::replace_na", func=function() mutate(df_missing, across(everything(), ~ replace_na(.x, 0)))),
   list(liker="drop_duplicates", r_sub="dplyr::distinct", func=function() distinct(df)),
   list(liker="group_by", r_sub="dplyr::group_by", func=function() df %>% group_by(cat1) %>% summarise(mean_x = mean(x))),
   list(liker="concat", r_sub="base::rbind", func=function() rbind(df, df)),
-  list(liker="merge", r_sub="base::merge", func=function() merge(df, df, by="row.names")),
+  list(liker="merge", r_sub="base::merge", func=function() merge(df_id, df_id, by="id")),
   list(liker="value_counts", r_sub="base::table", func=function() table(df$cat1)),
   list(liker="pivot_table", r_sub="tidyr::pivot_wider", func=function() df %>% group_by(cat1, cat2) %>% summarise(val=mean(x), .groups='drop') %>% pivot_wider(names_from=cat2, values_from=val)),
   
