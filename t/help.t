@@ -1,15 +1,16 @@
 #!/usr/bin/env perl
-# h(), and the '?' / 'h' arguments the pure Perl functions take.
+# h(), the only way to ask this module for documentation.
 #
 # The contract under test:
 #   * h('name'), h(*name) and h(\&name) print that function's section of the
 #     documentation to STDOUT and return the name -- for every function in the
 #     distribution, XS and Perl alike, since h() looks the name up;
 #   * h() with no argument prints the general help and the list of topics;
-#   * the pure Perl functions also take '?' or 'h' in place of their arguments,
-#     which prints the same text and then dies;
-#   * a column really named h still reaches the XS functions as a column name;
-#   * $Stats::LikeR::HELP = 0 switches the argument form off; h() is unaffected.
+#   * no function reads its own arguments for a help flag, so a bare 'h' or '?'
+#     is data: it never prints help and never dies over having been mistaken
+#     for a question.  (The 0.27-0.28 argument form is gone; bedroc's own XS
+#     usage summary, which predates it, is bedroc's business and not tested
+#     here.)
 use strict;
 use warnings FATAL => 'all';
 use Test::More;
@@ -133,8 +134,12 @@ for my $f (qw(quantile agg write_table col)) {
 }
 
 # ---------------------------------------------------------------------------
-# the '?' / 'h' arguments: pure Perl functions only
+# 'h' and '?' are data, not a question
 # ---------------------------------------------------------------------------
+# These are the pure Perl functions that used to print their documentation and
+# die when handed a bare 'h' or '?'.  They must not any more: whatever each one
+# makes of the string (most refuse it as a data frame, which is their own
+# business), none of them may print help, and none may die the help death.
 my @PERL_FUNCS = qw(
 	age_standardize agg aoh2h aoh2hoh assign bfill chunk cohen_d col colnames
 	concat cramers_v drop_cols drop_duplicates dropna eta_squared ffill fillna
@@ -145,25 +150,28 @@ my @PERL_FUNCS = qw(
 for my $f (@PERL_FUNCS) {
 	for my $flag ('h', '?') {
 		my ($out, $err) = call_named($f, $flag);
-		like($err || '', qr/help requested/, "$f('$flag') dies with the help notice");
-		like($out, qr/\QStats::LikeR::$f\E/, "$f('$flag') printed its documentation");
+		# summary('h') really does summarize the one-element frame it was
+		# handed, so this asks that no *documentation* was printed rather than
+		# that nothing was.
+		unlike($out, qr/\QStats::LikeR::$f\E/, "$f('$flag') prints no help");
+		unlike($err || '', qr/help requested/, "$f('$flag') is not a help request");
 	}
 }
 
-# recognized anywhere in the argument list, not just first
+# and in a later argument, where the old form also looked
 {
 	for my $call ( [ 'view', [ { a => [1] } ], 'n', 'h' ],
 	               [ 'agg',  [ { a => [1] } ], 'agg', '?' ] ) {
 		my ($name, @args) = @$call;
 		my ($out, $err) = call_named($name, @args);
-		like($err || '', qr/help requested/, "$name: help found in a later argument");
-		like($out, qr/\QStats::LikeR::$name\E/, "$name: right section shown");
+		unlike($err || '', qr/help requested/, "$name: a later 'h' is not help");
+		unlike($out, qr/\QStats::LikeR::$name\E/, "$name: no documentation printed");
 	}
 }
 
-# A column really named h reaches the XS functions as a column name.  This is
-# the behaviour the argument form would have cost, and the reason h() exists;
-# what an individual XS function makes of a lone 'h' is its own business, so
+# A column really named h is a column name, in Perl and in XS alike.  This is
+# the behaviour the argument form cost, and the reason h() is the only way in;
+# what an individual function makes of a lone 'h' is its own business, so
 # nothing here asserts a blanket rule over them.
 {
 	my $got = Stats::LikeR::vals({ h => [ 4, 5, 6 ] }, 'h');
@@ -171,48 +179,35 @@ for my $f (@PERL_FUNCS) {
 
 	my ($sorted) = Stats::LikeR::csort([ { h => 2 }, { h => 1 } ], 'h');
 	is($sorted->[0]{h}, 1, "csort(\$df, 'h') sorts by the column named h");
+
+	# col('h') used to ask for help, and needed $Stats::LikeR::HELP = 0 to get
+	# through; that variable is gone, and the predicate just works.
+	my ($out, $err) = capture(sub { Stats::LikeR::filter([ { h => 1 }, { h => 5 } ],
+	                                                     Stats::LikeR::col('h') > 3) });
+	is($out, '',    "col('h') prints no help");
+	is($err, undef, "col('h') does not die");
+
+	my $kept = Stats::LikeR::filter([ { h => 1 }, { h => 5 } ], Stats::LikeR::col('h') > 3);
+	is(scalar(@$kept), 1, 'the predicate on column h works');
+
+	my $named_h = Stats::LikeR::select_cols([ { h => 1, b => 2 } ], 'h');
+	is_deeply($named_h, [ { h => 1 } ], "select_cols(\$df, 'h') selects column h");
 }
 
 # ---------------------------------------------------------------------------
-# nothing else triggers the argument form
+# ordinary calls are quiet
 # ---------------------------------------------------------------------------
 {
 	my ($out, $err) = capture(sub { my $n = Stats::LikeR::ncol({ a => [1, 2] }); $n });
 	is($err, undef, 'an ordinary call does not die');
 	is($out, '',    'an ordinary call prints nothing');
 
-	for my $arg ('H', 'help', 'hh', 'h ', ' h', '??', 'Q', '', 0, 1, undef) {
+	for my $arg ('h', '?', 'H', 'help', 'hh', 'h ', ' h', '??', 'Q', '', 0, 1, undef) {
 		my $shown = defined $arg ? "'$arg'" : 'undef';
 		my ($o, $e) = call_named('ncol', { a => [1, 2] }, $arg);
 		unlike($e || '', qr/help requested/, "ncol(..., $shown) is not a help request");
 		is($o, '', "ncol(..., $shown) prints no help");
 	}
-}
-
-# ---------------------------------------------------------------------------
-# the off switch
-# ---------------------------------------------------------------------------
-{
-	local $Stats::LikeR::HELP = 0;
-
-	my ($out, $err) = capture(sub { Stats::LikeR::filter([ { h => 1 }, { h => 5 } ],
-	                                                     Stats::LikeR::col('h') > 3) });
-	is($out, '', 'HELP = 0: col(\'h\') prints no help');
-	is($err, undef, 'HELP = 0: col(\'h\') does not die');
-
-	my $kept = Stats::LikeR::filter([ { h => 1 }, { h => 5 } ], Stats::LikeR::col('h') > 3);
-	is(scalar(@$kept), 1, 'HELP = 0: the predicate on column h works');
-
-	# h() ignores the switch: it was asked by name, not by argument
-	my ($hout, $herr) = capture(sub { Stats::LikeR::h('agg') });
-	is($herr, undef, 'HELP = 0: h() still works');
-	like($hout, qr/Stats::LikeR::agg/, 'HELP = 0: h() still prints');
-}
-
-# and the argument form is back on outside the local
-{
-	my (undef, $err) = call_named('agg', 'h');
-	like($err || '', qr/help requested/, 'the argument form is on again');
 }
 
 # ---------------------------------------------------------------------------

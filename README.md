@@ -26,43 +26,12 @@ Note that `h(bedroc)`, with no quotes and no sigil, cannot be made to work:
 every function here is exported, so Perl parses the bareword as a call to
 `bedroc()` before `h` is ever reached. Use one of the three forms above.
 
-## The `'?'` and `'h'` arguments
-
-The **pure Perl** functions additionally accept `'?'` or `'h'` in place of their
-arguments. That prints the same text and then **dies**, because a bare `'h'`
-where an argument was expected might have been meant as data, so returning a
-result would be a guess:
-
-    agg('h');            # prints the agg section, then dies
-    read_table('?');     # likewise
-    view($df, n => 'h'); # recognized anywhere in the argument list
-
-The functions that take it are the ones implemented in `lib/Stats/LikeR.pm`:
-`age_standardize`, `agg`, `aoh2hoh`, `assign`, `bfill`, `chunk`, `cohen_d`,
-`col`, `colnames`, `concat`, `cramers_v`, `drop_cols`, `drop_duplicates`,
-`dropna`, `eta_squared`, `ffill`, `fillna`, `hosmer_lemeshow`, `interpolate`,
-`map_cell`, `melt`, `ncol`, `nrow`, `pivot_table`, `qcut`, `read_table`,
-`rename_cols`, `rownames`, `select_cols`, `smd`, `summary`, `table_one`,
-`TukeyHSD`, `view`, `vif`. The XS functions deliberately do **not** do this —
-see below.
-
-Only a defined, non-reference argument of exactly one character can trigger it.
-Data frames, code references, `col()` objects, `undef` and plain numbers are all
-safe, as are longer strings such as `'help'` or `'hour'`.
-
-What it cannot tell apart is a column, file or option value that really is the
-bare string `'h'` or `'?'`: `col('h')` asks for help, not for a column named
-`h`. Set `$Stats::LikeR::HELP = 0` for code that has to pass such a value —
-`h()` is unaffected either way:
-
-    {
-        local $Stats::LikeR::HELP = 0;
-        my $adults = filter($df, col('h') > 3);   # a predicate on column h
-    }
-
-This is exactly why the XS functions don't read their arguments for help:
-`vals($df, 'h')`, `csort($df, 'h')` and `group_by($df, 'h', ...)` are ordinary
-calls naming a column, and `h('vals')` is already unambiguous.
+`h` is the only way to ask. No function reads its own argument list for a help
+flag, so nothing here has to guess whether you meant data or a question: a
+column, file or option value that really is the bare string `'h'` or `'?'` is
+just a value. `vals($df, 'h')`, `csort($df, 'h')`, `col('h') > 3` and
+`read_table('?')` all mean exactly what they say, and every function — XS or
+pure Perl — is documented the same way, through `h('name')`.
 
 # Functions/Subroutines
 
@@ -984,8 +953,9 @@ machine precision in a single line.
     # string labels
     bedroc(\@scores, ['case','ctrl',...], positive => 'case');
 
-Calling `bedroc` with a single argument of `'h'` or `'?'` prints this section to
-`STDOUT` (in the spirit of R's `?function`) and dies. See
+Call `h('bedroc')` for this section at the prompt. `bedroc` also carries its own
+short usage summary in XS, printed by `bedroc('h')`, `bedroc('H')` or
+`bedroc('?')`; it is the one function that reads its arguments that way. See
 [Getting help](#getting-help).
 
 ## bfill
@@ -2727,9 +2697,10 @@ The name whose documentation was printed, so `h` is usable in a pipeline:
 
     my @shown = map { h($_) } qw(auc auroc roc);
 
-Unlike the [`'?'` and `'h'` arguments](#the--and-h-arguments), `h` does **not**
-die. You asked for it by name, so there is nothing ambiguous to protect you
-from.
+`h` does **not** die, and it is the only route to a function's documentation:
+no function reads its own arguments for a help flag, so a column or file really
+named `'h'` is never mistaken for a question. See
+[Getting help](#getting-help).
 
 ### Where the text comes from
 
@@ -4168,60 +4139,107 @@ group) or as two scalars for a single sample.
 
 ## qcut
 
-Equal-frequency binning of a numeric column, which is the analog of pandas `qcut`.
-Where `cut` would slice a value range into equal-*width* intervals (and dump
-most of a skewed distribution into one bin), `qcut` chooses cutpoints so each
-bin holds roughly the same *number* of observations. This is the binning you
-usually want for ranked-list work: deciles, quartiles, top-5% tranches.
+Equal-frequency binning of a numeric column, which is the analog of pandas
+`qcut`. Equal-*width* binning slices the value range into intervals of the same
+size, which dumps most of a skewed distribution into one bin; `qcut` instead
+chooses cutpoints so each bin holds roughly the same *number* of observations.
+This is the binning you usually want for ranked-list work: deciles, quartiles,
+top-5% tranches.
 
-Cutpoints are computed by linear interpolation between order statistics, the
-same method as numpy/pandas, so results match `pandas.qcut` exactly. Bins are
-right-closed, `(a, b]`, with the lowest bin closed on both ends, `[a, b]`, so
-the minimum value is always included.
+Cutpoints are computed by linear interpolation between order statistics — the
+numpy/pandas default, and the same rule [`quantile`](#quantile) uses (R's
+Type 7) — so the edges match `pandas.qcut` exactly. Bins are right-closed,
+`(a, b]`, with the lowest bin closed on both ends, `[a, b]`, so the minimum
+value is always included.
 
 ### Signature
 
     qcut($data, $q, %options)
 
-  - `$data` — an array reference of numbers. `undef` entries are treated as
-    missing (NA): they are skipped when computing cutpoints and, when codes are
-    requested, come back as `undef` in their original positions.
+  - `$data` — an array reference of numbers, in any order. `qcut` sorts an
+    internal copy, so your array is left untouched and codes come back in the
+    order the values were given. Every defined value must be numeric: a
+    non-numeric string such as `'N/A'` is a fatal `isn't numeric` error rather
+    than a silent zero, so clean or `undef` such cells first (see
+    [`dropna`](#dropna), [`fillna`](#fillna)). At least two *distinct* values
+    are needed to form a bin.
   - `$q` — either a positive integer (the number of equal-frequency bins) or an
     array reference of probabilities in `[0, 1]` giving explicit cut
-    boundaries, e.g. `[0, 0.5, 0.95, 1]`.
+    boundaries, e.g. `[0, 0.5, 0.95, 1]`. An explicit vector is sorted for you,
+    and any probability outside `[0, 1]` is clamped into it rather than being an
+    error.
 
-For a usage reminder at the prompt, call `qcut('h')` (or `qcut('?')`); it prints
-this section and dies. Every function takes those two arguments the same way —
-see [Getting help](#getting-help).
+`undef` entries are treated as missing (NA): they are skipped when computing
+cutpoints and, when codes are requested, come back as `undef` in their original
+positions.
+
+Only the options listed below are read; a misspelled one is ignored rather than
+refused, so `code => 1` (no `s`) quietly hands back edges instead of codes.
+
+For a usage reminder at the prompt, call `h('qcut')`; it prints this section to
+`STDOUT` and returns. Every function is documented that way — see
+[Getting help](#getting-help).
 
 ### What it returns
 
-By default `qcut` returns the **edge vector as a flat list** — the cheap,
-common query — so call it in list context:
+| Options given | Returns |
+| --- | --- |
+| none | The edge vector, as a **flat list** of `$q + 1` numbers |
+| `codes => 1` | One array reference: the bin codes, parallel to `$data` |
+| `codes => 1, edges => 1` | Two references, `($codes, $edges)` |
+
+By default `qcut` returns the edge vector — the cheap, common query — so call it
+in list context:
 
     my @edges = qcut($data, 4);          # ($e0, $e1, $e2, $e3, $e4)
+
+In **scalar** context that flat list collapses to its element count, not to a
+reference: `my $e = qcut($data, 4)` sets `$e` to `5`. Assign to an array.
 
 The per-element bin assignment (the expensive part) is opt-in. Ask for it with
 `codes => 1` and you get an array reference parallel to `$data`:
 
     my $codes = qcut($data, 4, codes => 1);
 
-Ask for both in a single pass and you get two references, `($codes, $edges)`:
+Asking for codes turns the edge vector *off*, so
+`my ($codes, $edges) = qcut($data, 4, codes => 1)` leaves `$edges` undefined.
+Ask for both explicitly and they are computed in a single pass:
 
     my ($codes, $edges) = qcut($data, 4, codes => 1, edges => 1);
 
 ### Options
 
-  - `edges => 1` — include the edge vector. On by default; turned off
-    automatically when you request codes, so set it explicitly to get both.
-  - `codes => 1` — include the 0-based integer bin codes.
-  - `labels => [...]` — map the bin codes onto your own labels (implies
-    `codes => 1`). The list length must equal the number of bins.
-  - `labels => 'interval'` — label each element with its interval string,
-    e.g. `(3.25, 5.5]` (also implies codes).
-  - `duplicates => 'drop'` — if tied data produces non-unique cutpoints, merge
-    them into fewer bins instead of dying. The default, `'raise'`, throws an
-    error (as pandas does).
+| Option | Meaning |
+| --- | --- |
+| `edges => 1` | Include the edge vector. On by default, but turned off automatically when codes are requested, so pass it explicitly to get both. |
+| `edges => 0` | Suppress the edge vector. With no `codes`/`labels` there would be nothing left to return, which is a fatal error. |
+| `codes => 1` | Include the 0-based integer bin codes, one per element of `$data`. |
+| `labels => [...]` | Map the bin codes onto your own labels (implies `codes => 1`). The list length must equal the number of bins actually produced. |
+| `labels => 'interval'` | Label each element with its interval string, e.g. `(3.25, 5.5]` (also implies codes). |
+| `duplicates => 'raise'` | Die when tied data makes adjacent cutpoints equal. The default, and what pandas does. |
+| `duplicates => 'drop'` | Merge equal cutpoints into fewer bins instead of dying. |
+
+### How many bins, and how full
+
+The bin count is always `@$edges - 1`, and codes run from `0` to
+`@$edges - 2`. That equals `$q` (or `@$probs - 1`) *unless*
+`duplicates => 'drop'` merged tied cutpoints, in which case it is fewer — which
+is why a `labels` list has to match the bins you actually got, not the ones you
+asked for.
+
+Bin *sizes* are equal only when the data permits: the count has to divide
+evenly and no repeated value may straddle a cutpoint. Ties are placed by the
+right-closed rule, which is why `[1 .. 10]` into quartiles gives 3, 2, 2, 3
+rather than 2.5 each — the same split pandas makes. Count the codes to see what
+you got:
+
+    my $codes = qcut($data, 10, codes => 1);
+    my $sizes = value_counts($codes);        # { 0 => n0, 1 => n1, ... }
+
+If a probability vector omits `0` or `1`, the end bins still stretch over the
+whole range: a value below the first cutpoint lands in bin `0`, one above the
+last lands in the last bin. pandas returns NA for those, so include `0` and `1`
+unless the stretching is what you want.
 
 ### Examples
 
@@ -4230,11 +4248,13 @@ Quartile edges (the default). The cutpoints match pandas exactly:
     my @edges = qcut([1 .. 10], 4);
     # @edges = (1, 3.25, 5.5, 7.75, 10)
 
-Bin codes. They are 0-based; note the tie distribution matches pandas (inner
-bins take 2 here, outer bins 3):
+Bin codes. They are 0-based, and unsorted input is fine — codes come back in
+input order:
 
     my $codes = qcut([1 .. 10], 4, codes => 1);
     # $codes = [0, 0, 0, 1, 1, 2, 2, 3, 3, 3]
+    my $c2 = qcut([5, 1, 9, 3, 7], 4, codes => 1);
+    # $c2 = [1, 0, 3, 0, 2]
 
 Edges and codes together, computed in one pass:
 
@@ -4269,17 +4289,62 @@ straight through:
     # $codes->[2] is undef; the rest are binned as usual
 
 Tied data and `duplicates`. Heavy ties can make adjacent cutpoints equal; the
-default raises, `'drop'` merges:
+default raises, `'drop'` merges the empty quantile bands:
 
     my @tied = ((0) x 8, 1, 2, 3, 4);
-    qcut(\@tied, 4);                         # dies: bin edges are not unique
+    qcut(\@tied, 4);                          # dies: bin edges are not unique
     my @edges = qcut(\@tied, 4, duplicates => 'drop');
-    # fewer than 5 edges; the empty quantile bands are collapsed
+    # @edges = (0, 1.25, 4) -- 2 bins, not 4, so labels => [qw/a b/] here
 
-Get the documentation and stop:
+Binning a data-frame column, which is the usual reason to want codes.
+[`vals`](#vals) hands `qcut` the column and [`assign`](#assign) puts the result
+back as a new one:
 
-    qcut('h');   # prints this section to STDOUT, then dies
-    qcut('?');   # the same call
+    my $df = { id => [1 .. 10], ldl => [90, 120, 150, 200, 80, 110, 175, 160, 95, 130] };
+    my $q  = qcut(vals($df, 'ldl'), 4, labels => [qw/Q1 Q2 Q3 Q4/]);
+    assign($df, ldl_quartile => $q);
+    # $df->{ldl_quartile} = [qw/Q1 Q2 Q3 Q4 Q1 Q2 Q4 Q4 Q1 Q3/]
+
+Get the documentation:
+
+    h('qcut');   # prints this section to STDOUT and returns
+
+### Errors
+
+`qcut` dies when `$data` is not an array reference, when `$q` is neither a
+positive integer nor an array reference, and when the options ask for nothing
+(`edges => 0` with no codes or labels). It dies with `no non-missing values`
+when every element is `undef`, and `need at least one data value` when `$data`
+is empty.
+
+Cutpoints are the other source of failures. `bin edges are not unique` means
+ties collapsed adjacent cutpoints under the default `duplicates => 'raise'`:
+either pass `duplicates => 'drop'` or ask for fewer bins. Even with `'drop'`,
+data holding a single distinct value cannot be binned at all and dies with
+`too few distinct values to form bins`. Finally, a `labels` arrayref whose
+length differs from the bin count dies naming both numbers
+(`got 2 bins but 4 labels`).
+
+### Differences from pandas
+
+  - **Interval printing.** pandas nudges its lowest edge 0.1% below the minimum
+    so every bin can be half-open, e.g. `(0.999, 3.25]`. `qcut` keeps the exact
+    minimum and closes the lowest bin on both ends, `[1, 3.25]`. Membership is
+    the same; only the printed interval differs.
+  - **Out-of-range values.** A partial probability vector makes the end bins
+    stretch (above), where pandas yields NA.
+  - **Out-of-range probabilities** are clamped into `[0, 1]` instead of raising.
+  - **Return type.** There is no Categorical: you get edges, plain integer
+    codes, your own labels, or interval strings.
+
+### See also
+
+[`quantile`](#quantile) computes the same cutpoints without assigning anything
+to bins. [`chunk`](#chunk) splits by *position* instead of value, which works on
+non-numeric data. [`value_counts`](#value_counts) checks how full the bins came
+out, [`rank`](#rank) is the alternative when you want the whole ordering rather
+than bins, and [`assign`](#assign) / [`vals`](#vals) move a binned column into
+and out of a data frame.
 
 ## quantile
 
@@ -5322,6 +5387,18 @@ raw values (no cell number formats), matching the round-trip behaviour of
 
 ## 0.28 2026-07-28 CDT
 
+**Incompatible:** the `'?'` / `'h'` argument added in 0.27 is gone (lib/Stats/LikeR.pm). `agg('h')`, `read_table('?')` and the fifty-odd other pure-Perl functions that took it no longer print help and die — they treat the string as data, the way the XS functions always have. `h('agg')`, `h(*agg)` and `h(\&agg)` are unchanged and remain the way to ask, for every function in the distribution.
+- It was a help route that only half the module had, so what a lone `'h'` meant depended on whether the callee happened to be written in XS or in Perl, and a column, file or option value really named `'h'` needed `$Stats::LikeR::HELP = 0` to get through. That variable is gone too; nothing reads its arguments for a help flag any more.
+- `bedroc` still prints its own short XS usage summary for `bedroc('h' | 'H' | '?')`, which is hand-written and predates all of this.
+
+`merge` (LikeR.xs) — same joins, a third of the time and a fifth of the memory. Nothing about the result changes: every join type, shape combination and edge case produces exactly what it did before, and `t/merge.t` now checks all six input/output paths against a plain-Perl reference join over a randomized corpus.
+
+The old implementation transposed both frames into arrays of row hashes, joined those, and transposed the result back. A 10,000-row HoA joined to itself therefore built 20,000 throwaway row hashes and copied every cell three times before returning. It now reads each frame where it lies — a HoA column by column, an AoH/HoH row by row — and writes the result straight into the shape being returned, so the only cells copied are the ones the caller keeps.
+
+- The right frame's index is a hash of row numbers chained through a flat array, rather than an array-ref of index scalars per distinct key, and one reused buffer builds every join key instead of one scalar per row.
+- Column names are resolved to their column (HoA) or interned once as shared hash keys (AoH/HoH) before the join starts, so the per-row work is a lookup rather than a lookup and a rehash.
+- Measured on the `benchmark.pl` case (two 10,000-row frames, six columns, inner join on `id`): 0.052 s and 41.4 MB before, 0.017 s and 7.3 MB after. An outer join of the same frames went from 0.113 s to 0.008 s.
+
 `write_table` (LikeR.xs) — two changes, one of them incompatible.
 - Every format now prints the coloured `wrote <file>` confirmation line, not just LaTeX and `.xlsx`. Delimited output (csv/tsv) was silent before. The line is identical in all cases: the file name in black on cyan, with the SGR codes inline so there is still no `Term::ANSIColor` dependency. Nothing is announced when nothing is written.
 - **Incompatible:** `row.names` now defaults to **off** in every format. It previously defaulted **on** everywhere, following R's `write.table`, which meant a call that said nothing about row names got a label column and a leading empty header cell (`,gene,n`) it had not asked for. Pass `row.names => 1` for the old behaviour; `row.names => 'col'` is unchanged.
@@ -6034,7 +6111,7 @@ Numerous changes to prevent quadmath/long double CPAN test failures
 
 Minimum Scalar::Util version in dist.ini is now 1.22, see https://www.cpantesters.org/cpan/report/6b682236-6567-11f1-a3bc-a055f9c4ba34
 
-`Digest::SHA` is no longer needed, and removed as a dependency
+`Digest::SHA` removed as a dependency
 
 ### `read_table`
 

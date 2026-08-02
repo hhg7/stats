@@ -28,43 +28,12 @@ Note that C<h(bedroc)>, with no quotes and no sigil, cannot be made to work:
 every function here is exported, so Perl parses the bareword as a call to
 C<bedroc()> before C<h> is ever reached. Use one of the three forms above.
 
-=head2 The C<'?'> and C<'h'> arguments
-
-The B<pure Perl> functions additionally accept C<'?'> or C<'h'> in place of their
-arguments. That prints the same text and then B<dies>, because a bare C<'h'>
-where an argument was expected might have been meant as data, so returning a
-result would be a guess:
-
- agg('h');            # prints the agg section, then dies
- read_table('?');     # likewise
- view($df, n => 'h'); # recognized anywhere in the argument list
-
-The functions that take it are the ones implemented in C<lib/Stats/LikeR.pm>:
-C<age_standardize>, C<agg>, C<aoh2hoh>, C<assign>, C<bfill>, C<chunk>, C<cohen_d>,
-C<col>, C<colnames>, C<concat>, C<cramers_v>, C<drop_cols>, C<drop_duplicates>,
-C<dropna>, C<eta_squared>, C<ffill>, C<fillna>, C<hosmer_lemeshow>, C<interpolate>,
-C<map_cell>, C<melt>, C<ncol>, C<nrow>, C<pivot_table>, C<qcut>, C<read_table>,
-C<rename_cols>, C<rownames>, C<select_cols>, C<smd>, C<summary>, C<table_one>,
-C<TukeyHSD>, C<view>, C<vif>. The XS functions deliberately do B<not> do this —
-see below.
-
-Only a defined, non-reference argument of exactly one character can trigger it.
-Data frames, code references, C<col()> objects, C<undef> and plain numbers are all
-safe, as are longer strings such as C<'help'> or C<'hour'>.
-
-What it cannot tell apart is a column, file or option value that really is the
-bare string C<'h'> or C<'?'>: C<col('h')> asks for help, not for a column named
-C<h>. Set C<$Stats::LikeR::HELP = 0> for code that has to pass such a value —
-C<h()> is unaffected either way:
-
- {
-     local $Stats::LikeR::HELP = 0;
-     my $adults = filter($df, col('h') > 3);   # a predicate on column h
- }
-
-This is exactly why the XS functions don't read their arguments for help:
-C<vals($df, 'h')>, C<csort($df, 'h')> and C<group_by($df, 'h', ...)> are ordinary
-calls naming a column, and C<h('vals')> is already unambiguous.
+C<h> is the only way to ask. No function reads its own argument list for a help
+flag, so nothing here has to guess whether you meant data or a question: a
+column, file or option value that really is the bare string C<'h'> or C<'?'> is
+just a value. C<vals($df, 'h')>, C<csort($df, 'h')>, C<< col('h') E<gt> 3 >> and
+C<read_table('?')> all mean exactly what they say, and every function — XS or
+pure Perl — is documented the same way, through C<h('name')>.
 
 =head1 Functions/Subroutines
 
@@ -1454,8 +1423,9 @@ C<ra * n_top>), and C<enrichment_factor> (C<(active_count / n_top) / ra>).
  # string labels
  bedroc(\@scores, ['case','ctrl',...], positive => 'case');
 
-Calling C<bedroc> with a single argument of C<'h'> or C<'?'> prints this section to
-C<STDOUT> (in the spirit of R's C<?function>) and dies. See
+Call C<h('bedroc')> for this section at the prompt. C<bedroc> also carries its own
+short usage summary in XS, printed by C<bedroc('h')>, C<bedroc('H')> or
+C<bedroc('?')>; it is the one function that reads its arguments that way. See
 L</"Getting help">.
 
 =head2 bfill
@@ -3937,9 +3907,10 @@ The name whose documentation was printed, so C<h> is usable in a pipeline:
 
  my @shown = map { h($_) } qw(auc auroc roc);
 
-Unlike the L<C<'?'> and C<'h'> arguments|/"The C<'?'> and C<'h'> arguments">, C<h> does B<not>
-die. You asked for it by name, so there is nothing ambiguous to protect you
-from.
+C<h> does B<not> die, and it is the only route to a function's documentation:
+no function reads its own arguments for a help flag, so a column or file really
+named C<'h'> is never mistaken for a question. See
+L</"Getting help">.
 
 =head3 Where the text comes from
 
@@ -6186,16 +6157,18 @@ group) or as two scalars for a single sample.
 
 =head2 qcut
 
-Equal-frequency binning of a numeric column, which is the analog of pandas C<qcut>.
-Where C<cut> would slice a value range into equal-I<width> intervals (and dump
-most of a skewed distribution into one bin), C<qcut> chooses cutpoints so each
-bin holds roughly the same I<number> of observations. This is the binning you
-usually want for ranked-list work: deciles, quartiles, top-5% tranches.
+Equal-frequency binning of a numeric column, which is the analog of pandas
+C<qcut>. Equal-I<width> binning slices the value range into intervals of the same
+size, which dumps most of a skewed distribution into one bin; C<qcut> instead
+chooses cutpoints so each bin holds roughly the same I<number> of observations.
+This is the binning you usually want for ranked-list work: deciles, quartiles,
+top-5% tranches.
 
-Cutpoints are computed by linear interpolation between order statistics, the
-same method as numpy/pandas, so results match C<pandas.qcut> exactly. Bins are
-right-closed, C<(a, b]>, with the lowest bin closed on both ends, C<[a, b]>, so
-the minimum value is always included.
+Cutpoints are computed by linear interpolation between order statistics — the
+numpy/pandas default, and the same rule L<C<quantile>|/"quantile"> uses (R's
+Type 7) — so the edges match C<pandas.qcut> exactly. Bins are right-closed,
+C<(a, b]>, with the lowest bin closed on both ends, C<[a, b]>, so the minimum
+value is always included.
 
 =head3 Signature
 
@@ -6203,56 +6176,155 @@ the minimum value is always included.
 
 =over
 
-=item * C<$data> — an array reference of numbers. C<undef> entries are treated as
-missing (NA): they are skipped when computing cutpoints and, when codes are
-requested, come back as C<undef> in their original positions.
+=item * C<$data> — an array reference of numbers, in any order. C<qcut> sorts an
+internal copy, so your array is left untouched and codes come back in the
+order the values were given. Every defined value must be numeric: a
+non-numeric string such as C<'N/A'> is a fatal C<isn't numeric> error rather
+than a silent zero, so clean or C<undef> such cells first (see
+L<C<dropna>|/"dropna">, L<C<fillna>|/"fillna">). At least two I<distinct> values
+are needed to form a bin.
 
 =item * C<$q> — either a positive integer (the number of equal-frequency bins) or an
 array reference of probabilities in C<[0, 1]> giving explicit cut
-boundaries, e.g. C<[0, 0.5, 0.95, 1]>.
+boundaries, e.g. C<[0, 0.5, 0.95, 1]>. An explicit vector is sorted for you,
+and any probability outside C<[0, 1]> is clamped into it rather than being an
+error.
 
 =back
 
-For a usage reminder at the prompt, call C<qcut('h')> (or C<qcut('?')>); it prints
-this section and dies. Every function takes those two arguments the same way —
-see L</"Getting help">.
+C<undef> entries are treated as missing (NA): they are skipped when computing
+cutpoints and, when codes are requested, come back as C<undef> in their original
+positions.
+
+Only the options listed below are read; a misspelled one is ignored rather than
+refused, so C<< code =E<gt> 1 >> (no C<s>) quietly hands back edges instead of codes.
+
+For a usage reminder at the prompt, call C<h('qcut')>; it prints this section to
+C<STDOUT> and returns. Every function is documented that way — see
+L</"Getting help">.
 
 =head3 What it returns
 
-By default C<qcut> returns the B<edge vector as a flat list> — the cheap,
-common query — so call it in list context:
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>Options given</th>
+  <th>Returns</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>none</td>
+  <td>The edge vector, as a <b>flat list</b> of <code>$q + 1</code> numbers</td>
+</tr>
+<tr>
+  <td><code>codes =&gt; 1</code></td>
+  <td>One array reference: the bin codes, parallel to <code>$data</code></td>
+</tr>
+<tr>
+  <td><code>codes =&gt; 1, edges =&gt; 1</code></td>
+  <td>Two references, <code>($codes, $edges)</code></td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+By default C<qcut> returns the edge vector — the cheap, common query — so call it
+in list context:
 
  my @edges = qcut($data, 4);          # ($e0, $e1, $e2, $e3, $e4)
+
+In B<scalar> context that flat list collapses to its element count, not to a
+reference: C<my $e = qcut($data, 4)> sets C<$e> to C<5>. Assign to an array.
 
 The per-element bin assignment (the expensive part) is opt-in. Ask for it with
 C<< codes =E<gt> 1 >> and you get an array reference parallel to C<$data>:
 
  my $codes = qcut($data, 4, codes => 1);
 
-Ask for both in a single pass and you get two references, C<($codes, $edges)>:
+Asking for codes turns the edge vector I<off>, so
+C<< my ($codes, $edges) = qcut($data, 4, codes =E<gt> 1) >> leaves C<$edges> undefined.
+Ask for both explicitly and they are computed in a single pass:
 
  my ($codes, $edges) = qcut($data, 4, codes => 1, edges => 1);
 
 =head3 Options
 
-=over
 
-=item * C<< edges =E<gt> 1 >> — include the edge vector. On by default; turned off
-automatically when you request codes, so set it explicitly to get both.
 
-=item * C<< codes =E<gt> 1 >> — include the 0-based integer bin codes.
+=begin html
 
-=item * C<< labels =E<gt> [...] >> — map the bin codes onto your own labels (implies
-C<< codes =E<gt> 1 >>). The list length must equal the number of bins.
+<table>
+<thead>
+<tr>
+  <th>Option</th>
+  <th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>edges =&gt; 1</code></td>
+  <td>Include the edge vector. On by default, but turned off automatically when codes are requested, so pass it explicitly to get both.</td>
+</tr>
+<tr>
+  <td><code>edges =&gt; 0</code></td>
+  <td>Suppress the edge vector. With no <code>codes</code>/<code>labels</code> there would be nothing left to return, which is a fatal error.</td>
+</tr>
+<tr>
+  <td><code>codes =&gt; 1</code></td>
+  <td>Include the 0-based integer bin codes, one per element of <code>$data</code>.</td>
+</tr>
+<tr>
+  <td><code>labels =&gt; [...]</code></td>
+  <td>Map the bin codes onto your own labels (implies <code>codes =&gt; 1</code>). The list length must equal the number of bins actually produced.</td>
+</tr>
+<tr>
+  <td><code>labels =&gt; 'interval'</code></td>
+  <td>Label each element with its interval string, e.g. <code>(3.25, 5.5]</code> (also implies codes).</td>
+</tr>
+<tr>
+  <td><code>duplicates =&gt; 'raise'</code></td>
+  <td>Die when tied data makes adjacent cutpoints equal. The default, and what pandas does.</td>
+</tr>
+<tr>
+  <td><code>duplicates =&gt; 'drop'</code></td>
+  <td>Merge equal cutpoints into fewer bins instead of dying.</td>
+</tr>
+</tbody>
+</table>
 
-=item * C<< labels =E<gt> 'interval' >> — label each element with its interval string,
-e.g. C<(3.25, 5.5]> (also implies codes).
+=end html
 
-=item * C<< duplicates =E<gt> 'drop' >> — if tied data produces non-unique cutpoints, merge
-them into fewer bins instead of dying. The default, C<'raise'>, throws an
-error (as pandas does).
 
-=back
+
+=head3 How many bins, and how full
+
+The bin count is always C<@$edges - 1>, and codes run from C<0> to
+C<@$edges - 2>. That equals C<$q> (or C<@$probs - 1>) I<unless>
+C<< duplicates =E<gt> 'drop' >> merged tied cutpoints, in which case it is fewer — which
+is why a C<labels> list has to match the bins you actually got, not the ones you
+asked for.
+
+Bin I<sizes> are equal only when the data permits: the count has to divide
+evenly and no repeated value may straddle a cutpoint. Ties are placed by the
+right-closed rule, which is why C<[1 .. 10]> into quartiles gives 3, 2, 2, 3
+rather than 2.5 each — the same split pandas makes. Count the codes to see what
+you got:
+
+ my $codes = qcut($data, 10, codes => 1);
+ my $sizes = value_counts($codes);        # { 0 => n0, 1 => n1, ... }
+
+If a probability vector omits C<0> or C<1>, the end bins still stretch over the
+whole range: a value below the first cutpoint lands in bin C<0>, one above the
+last lands in the last bin. pandas returns NA for those, so include C<0> and C<1>
+unless the stretching is what you want.
 
 =head3 Examples
 
@@ -6261,11 +6333,13 @@ Quartile edges (the default). The cutpoints match pandas exactly:
  my @edges = qcut([1 .. 10], 4);
  # @edges = (1, 3.25, 5.5, 7.75, 10)
 
-Bin codes. They are 0-based; note the tie distribution matches pandas (inner
-bins take 2 here, outer bins 3):
+Bin codes. They are 0-based, and unsorted input is fine — codes come back in
+input order:
 
  my $codes = qcut([1 .. 10], 4, codes => 1);
  # $codes = [0, 0, 0, 1, 1, 2, 2, 3, 3, 3]
+ my $c2 = qcut([5, 1, 9, 3, 7], 4, codes => 1);
+ # $c2 = [1, 0, 3, 0, 2]
 
 Edges and codes together, computed in one pass:
 
@@ -6300,17 +6374,69 @@ straight through:
  # $codes->[2] is undef; the rest are binned as usual
 
 Tied data and C<duplicates>. Heavy ties can make adjacent cutpoints equal; the
-default raises, C<'drop'> merges:
+default raises, C<'drop'> merges the empty quantile bands:
 
  my @tied = ((0) x 8, 1, 2, 3, 4);
- qcut(\@tied, 4);                         # dies: bin edges are not unique
+ qcut(\@tied, 4);                          # dies: bin edges are not unique
  my @edges = qcut(\@tied, 4, duplicates => 'drop');
- # fewer than 5 edges; the empty quantile bands are collapsed
+ # @edges = (0, 1.25, 4) -- 2 bins, not 4, so labels => [qw/a b/] here
 
-Get the documentation and stop:
+Binning a data-frame column, which is the usual reason to want codes.
+L<C<vals>|/"vals"> hands C<qcut> the column and L<C<assign>|/"assign"> puts the result
+back as a new one:
 
- qcut('h');   # prints this section to STDOUT, then dies
- qcut('?');   # the same call
+ my $df = { id => [1 .. 10], ldl => [90, 120, 150, 200, 80, 110, 175, 160, 95, 130] };
+ my $q  = qcut(vals($df, 'ldl'), 4, labels => [qw/Q1 Q2 Q3 Q4/]);
+ assign($df, ldl_quartile => $q);
+ # $df->{ldl_quartile} = [qw/Q1 Q2 Q3 Q4 Q1 Q2 Q4 Q4 Q1 Q3/]
+
+Get the documentation:
+
+ h('qcut');   # prints this section to STDOUT and returns
+
+=head3 Errors
+
+C<qcut> dies when C<$data> is not an array reference, when C<$q> is neither a
+positive integer nor an array reference, and when the options ask for nothing
+(C<< edges =E<gt> 0 >> with no codes or labels). It dies with C<no non-missing values>
+when every element is C<undef>, and C<need at least one data value> when C<$data>
+is empty.
+
+Cutpoints are the other source of failures. C<bin edges are not unique> means
+ties collapsed adjacent cutpoints under the default C<< duplicates =E<gt> 'raise' >>:
+either pass C<< duplicates =E<gt> 'drop' >> or ask for fewer bins. Even with C<'drop'>,
+data holding a single distinct value cannot be binned at all and dies with
+C<too few distinct values to form bins>. Finally, a C<labels> arrayref whose
+length differs from the bin count dies naming both numbers
+(C<got 2 bins but 4 labels>).
+
+=head3 Differences from pandas
+
+=over
+
+=item * B<Interval printing.> pandas nudges its lowest edge 0.1% below the minimum
+so every bin can be half-open, e.g. C<(0.999, 3.25]>. C<qcut> keeps the exact
+minimum and closes the lowest bin on both ends, C<[1, 3.25]>. Membership is
+the same; only the printed interval differs.
+
+=item * B<Out-of-range values.> A partial probability vector makes the end bins
+stretch (above), where pandas yields NA.
+
+=item * B<Out-of-range probabilities> are clamped into C<[0, 1]> instead of raising.
+
+=item * B<Return type.> There is no Categorical: you get edges, plain integer
+codes, your own labels, or interval strings.
+
+=back
+
+=head3 See also
+
+L<C<quantile>|/"quantile"> computes the same cutpoints without assigning anything
+to bins. L<C<chunk>|/"chunk"> splits by I<position> instead of value, which works on
+non-numeric data. L<C<value_counts>|/"value_counts"> checks how full the bins came
+out, L<C<rank>|/"rank"> is the alternative when you want the whole ordering rather
+than bins, and L<C<assign>|/"assign"> / L<C<vals>|/"vals"> move a binned column into
+and out of a data frame.
 
 =head2 quantile
 
@@ -7967,6 +8093,24 @@ C<read_table>.
 
 =head2 0.28 2026-07-28 CDT
 
+B<Incompatible:> the C<'?'> / C<'h'> argument added in 0.27 is gone (lib/Stats/LikeR.pm). C<agg('h')>, C<read_table('?')> and the fifty-odd other pure-Perl functions that took it no longer print help and die — they treat the string as data, the way the XS functions always have. C<h('agg')>, C<h(*agg)> and C<h(\&agg)> are unchanged and remain the way to ask, for every function in the distribution.
+- It was a help route that only half the module had, so what a lone C<'h'> meant depended on whether the callee happened to be written in XS or in Perl, and a column, file or option value really named C<'h'> needed C<$Stats::LikeR::HELP = 0> to get through. That variable is gone too; nothing reads its arguments for a help flag any more.
+- C<bedroc> still prints its own short XS usage summary for C<bedroc('h' | 'H' | '?')>, which is hand-written and predates all of this.
+
+C<merge> (LikeR.xs) — same joins, a third of the time and a fifth of the memory. Nothing about the result changes: every join type, shape combination and edge case produces exactly what it did before, and C<t/merge.t> now checks all six input/output paths against a plain-Perl reference join over a randomized corpus.
+
+The old implementation transposed both frames into arrays of row hashes, joined those, and transposed the result back. A 10,000-row HoA joined to itself therefore built 20,000 throwaway row hashes and copied every cell three times before returning. It now reads each frame where it lies — a HoA column by column, an AoH/HoH row by row — and writes the result straight into the shape being returned, so the only cells copied are the ones the caller keeps.
+
+=over
+
+=item * The right frame's index is a hash of row numbers chained through a flat array, rather than an array-ref of index scalars per distinct key, and one reused buffer builds every join key instead of one scalar per row.
+
+=item * Column names are resolved to their column (HoA) or interned once as shared hash keys (AoH/HoH) before the join starts, so the per-row work is a lookup rather than a lookup and a rehash.
+
+=item * Measured on the C<benchmark.pl> case (two 10,000-row frames, six columns, inner join on C<id>): 0.052 s and 41.4 MB before, 0.017 s and 7.3 MB after. An outer join of the same frames went from 0.113 s to 0.008 s.
+
+=back
+
 C<write_table> (LikeR.xs) — two changes, one of them incompatible.
 - Every format now prints the coloured C<< wrote E<lt>fileE<gt> >> confirmation line, not just LaTeX and C<.xlsx>. Delimited output (csv/tsv) was silent before. The line is identical in all cases: the file name in black on cyan, with the SGR codes inline so there is still no C<Term::ANSIColor> dependency. Nothing is announced when nothing is written.
 - B<Incompatible:> C<row.names> now defaults to B<off> in every format. It previously defaulted B<on> everywhere, following R's C<write.table>, which meant a call that said nothing about row names got a label column and a leading empty header cell (C<,gene,n>) it had not asked for. Pass C<< row.names =E<gt> 1 >> for the old behaviour; C<< row.names =E<gt> 'col' >> is unchanged.
@@ -8883,7 +9027,7 @@ Numerous changes to prevent quadmath/long double CPAN test failures
 
 Minimum Scalar::Util version in dist.ini is now 1.22, see https://www.cpantesters.org/cpan/report/6b682236-6567-11f1-a3bc-a055f9c4ba34
 
-C<Digest::SHA> is no longer needed, and removed as a dependency
+C<Digest::SHA> removed as a dependency
 
 =head3 C<read_table>
 

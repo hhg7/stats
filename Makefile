@@ -209,11 +209,11 @@ TO_INST_PM = TukeyHSD.pl \
 	dnorm.pl \
 	examples.pl \
 	fisher.test.pl \
-	get.funcs.pl \
 	group_by.pl \
 	hist.pl \
 	kruskal.pl \
 	ks.test.pl \
+	lang.compare.pl \
 	lib/Stats/LikeR.pm \
 	ljoin.pl \
 	lm.pl \
@@ -1157,11 +1157,11 @@ pm_to_blib : $(FIRST_MAKEFILE) $(TO_INST_PM)
 	  'dnorm.pl' '$(INST_LIB)/Stats/dnorm.pl' \
 	  'examples.pl' '$(INST_LIB)/Stats/examples.pl' \
 	  'fisher.test.pl' '$(INST_LIB)/Stats/fisher.test.pl' \
-	  'get.funcs.pl' '$(INST_LIB)/Stats/get.funcs.pl' \
 	  'group_by.pl' '$(INST_LIB)/Stats/group_by.pl' \
 	  'hist.pl' '$(INST_LIB)/Stats/hist.pl' \
 	  'kruskal.pl' '$(INST_LIB)/Stats/kruskal.pl' \
 	  'ks.test.pl' '$(INST_LIB)/Stats/ks.test.pl' \
+	  'lang.compare.pl' '$(INST_LIB)/Stats/lang.compare.pl' \
 	  'lib/Stats/LikeR.pm' 'blib/lib/Stats/LikeR.pm' \
 	  'ljoin.pl' '$(INST_LIB)/Stats/ljoin.pl' \
 	  'lm.pl' '$(INST_LIB)/Stats/lm.pl' \

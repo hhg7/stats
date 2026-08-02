@@ -58,7 +58,7 @@
 .\" ========================================================================
 .\"
 .IX Title "read.me 3"
-.TH read.me 3 2026-07-28 "perl v5.44.0" "User Contributed Perl Documentation"
+.TH read.me 3 2026-08-02 "perl v5.44.0" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -91,48 +91,13 @@ prints is what you are reading.
 Note that \f(CWh(bedroc)\fR, with no quotes and no sigil, cannot be made to work:
 every function here is exported, so Perl parses the bareword as a call to
 \&\f(CWbedroc()\fR before \f(CW\*(C`h\*(C'\fR is ever reached. Use one of the three forms above.
-.ie n .SS "The \*(Aq?\*(Aq and \*(Aqh\*(Aq arguments"
-.el .SS "The \f(CW\*(Aq?\*(Aq\fP and \f(CW\*(Aqh\*(Aq\fP arguments"
-.IX Subsection "The '?' and 'h' arguments"
-The \fBpure Perl\fR functions additionally accept \f(CW\*(Aq?\*(Aq\fR or \f(CW\*(Aqh\*(Aq\fR in place of their
-arguments. That prints the same text and then \fBdies\fR, because a bare \f(CW\*(Aqh\*(Aq\fR
-where an argument was expected might have been meant as data, so returning a
-result would be a guess:
 .PP
-.Vb 3
-\& agg(\*(Aqh\*(Aq);            # prints the agg section, then dies
-\& read_table(\*(Aq?\*(Aq);     # likewise
-\& view($df, n => \*(Aqh\*(Aq); # recognized anywhere in the argument list
-.Ve
-.PP
-The functions that take it are the ones implemented in \f(CW\*(C`lib/Stats/LikeR.pm\*(C'\fR:
-\&\f(CW\*(C`age_standardize\*(C'\fR, \f(CW\*(C`agg\*(C'\fR, \f(CW\*(C`aoh2hoh\*(C'\fR, \f(CW\*(C`assign\*(C'\fR, \f(CW\*(C`bfill\*(C'\fR, \f(CW\*(C`chunk\*(C'\fR, \f(CW\*(C`cohen_d\*(C'\fR,
-\&\f(CW\*(C`col\*(C'\fR, \f(CW\*(C`colnames\*(C'\fR, \f(CW\*(C`concat\*(C'\fR, \f(CW\*(C`cramers_v\*(C'\fR, \f(CW\*(C`drop_cols\*(C'\fR, \f(CW\*(C`drop_duplicates\*(C'\fR,
-\&\f(CW\*(C`dropna\*(C'\fR, \f(CW\*(C`eta_squared\*(C'\fR, \f(CW\*(C`ffill\*(C'\fR, \f(CW\*(C`fillna\*(C'\fR, \f(CW\*(C`hosmer_lemeshow\*(C'\fR, \f(CW\*(C`interpolate\*(C'\fR,
-\&\f(CW\*(C`map_cell\*(C'\fR, \f(CW\*(C`melt\*(C'\fR, \f(CW\*(C`ncol\*(C'\fR, \f(CW\*(C`nrow\*(C'\fR, \f(CW\*(C`pivot_table\*(C'\fR, \f(CW\*(C`qcut\*(C'\fR, \f(CW\*(C`read_table\*(C'\fR,
-\&\f(CW\*(C`rename_cols\*(C'\fR, \f(CW\*(C`rownames\*(C'\fR, \f(CW\*(C`select_cols\*(C'\fR, \f(CW\*(C`smd\*(C'\fR, \f(CW\*(C`summary\*(C'\fR, \f(CW\*(C`table_one\*(C'\fR,
-\&\f(CW\*(C`TukeyHSD\*(C'\fR, \f(CW\*(C`view\*(C'\fR, \f(CW\*(C`vif\*(C'\fR. The XS functions deliberately do \fBnot\fR do this —
-see below.
-.PP
-Only a defined, non\-reference argument of exactly one character can trigger it.
-Data frames, code references, \f(CWcol()\fR objects, \f(CW\*(C`undef\*(C'\fR and plain numbers are all
-safe, as are longer strings such as \f(CW\*(Aqhelp\*(Aq\fR or \f(CW\*(Aqhour\*(Aq\fR.
-.PP
-What it cannot tell apart is a column, file or option value that really is the
-bare string \f(CW\*(Aqh\*(Aq\fR or \f(CW\*(Aq?\*(Aq\fR: \f(CWcol(\*(Aqh\*(Aq)\fR asks for help, not for a column named
-\&\f(CW\*(C`h\*(C'\fR. Set \f(CW\*(C`$Stats::LikeR::HELP = 0\*(C'\fR for code that has to pass such a value —
-\&\f(CWh()\fR is unaffected either way:
-.PP
-.Vb 4
-\& {
-\&     local $Stats::LikeR::HELP = 0;
-\&     my $adults = filter($df, col(\*(Aqh\*(Aq) > 3);   # a predicate on column h
-\& }
-.Ve
-.PP
-This is exactly why the XS functions don\*(Aqt read their arguments for help:
-\&\f(CW\*(C`vals($df, \*(Aqh\*(Aq)\*(C'\fR, \f(CW\*(C`csort($df, \*(Aqh\*(Aq)\*(C'\fR and \f(CW\*(C`group_by($df, \*(Aqh\*(Aq, ...)\*(C'\fR are ordinary
-calls naming a column, and \f(CWh(\*(Aqvals\*(Aq)\fR is already unambiguous.
+\&\f(CW\*(C`h\*(C'\fR is the only way to ask. No function reads its own argument list for a help
+flag, so nothing here has to guess whether you meant data or a question: a
+column, file or option value that really is the bare string \f(CW\*(Aqh\*(Aq\fR or \f(CW\*(Aq?\*(Aq\fR is
+just a value. \f(CW\*(C`vals($df, \*(Aqh\*(Aq)\*(C'\fR, \f(CW\*(C`csort($df, \*(Aqh\*(Aq)\*(C'\fR, \f(CW\*(C`col(\*(Aqh\*(Aq) > 3\*(C'\fR and
+\&\f(CWread_table(\*(Aq?\*(Aq)\fR all mean exactly what they say, and every function — XS or
+pure Perl — is documented the same way, through \f(CWh(\*(Aqname\*(Aq)\fR.
 .SH Functions/Subroutines
 .IX Header "Functions/Subroutines"
 .SS add_data
@@ -1167,8 +1132,9 @@ Enhancement and its bounds for this \f(CW\*(C`alpha\*(C'\fR and active fraction;
 \& bedroc(\e@scores, [\*(Aqcase\*(Aq,\*(Aqctrl\*(Aq,...], positive => \*(Aqcase\*(Aq);
 .Ve
 .PP
-Calling \f(CW\*(C`bedroc\*(C'\fR with a single argument of \f(CW\*(Aqh\*(Aq\fR or \f(CW\*(Aq?\*(Aq\fR prints this section to
-\&\f(CW\*(C`STDOUT\*(C'\fR (in the spirit of R\*(Aqs \f(CW\*(C`?function\*(C'\fR) and dies. See
+Call \f(CWh(\*(Aqbedroc\*(Aq)\fR for this section at the prompt. \f(CW\*(C`bedroc\*(C'\fR also carries its own
+short usage summary in XS, printed by \f(CWbedroc(\*(Aqh\*(Aq)\fR, \f(CWbedroc(\*(AqH\*(Aq)\fR or
+\&\f(CWbedroc(\*(Aq?\*(Aq)\fR; it is the one function that reads its arguments that way. See
 "Getting help".
 .SS bfill
 .IX Subsection "bfill"
@@ -3109,9 +3075,10 @@ The name whose documentation was printed, so \f(CW\*(C`h\*(C'\fR is usable in a 
 \& my @shown = map { h($_) } qw(auc auroc roc);
 .Ve
 .PP
-Unlike the \f(CW\*(Aq?\*(Aq\fR and \f(CW\*(Aqh\*(Aq\fR arguments, \f(CW\*(C`h\*(C'\fR does \fBnot\fR
-die. You asked for it by name, so there is nothing ambiguous to protect you
-from.
+\&\f(CW\*(C`h\*(C'\fR does \fBnot\fR die, and it is the only route to a function\*(Aqs documentation:
+no function reads its own arguments for a help flag, so a column or file really
+named \f(CW\*(Aqh\*(Aq\fR is never mistaken for a question. See
+"Getting help".
 .PP
 \fIWhere the text comes from\fR
 .IX Subsection "Where the text comes from"
@@ -4648,16 +4615,18 @@ group) or as two scalars for a single sample.
 .IX Subsection "Output variables"
 .SS qcut
 .IX Subsection "qcut"
-Equal\-frequency binning of a numeric column, which is the analog of pandas \f(CW\*(C`qcut\*(C'\fR.
-Where \f(CW\*(C`cut\*(C'\fR would slice a value range into equal\-\fIwidth\fR intervals (and dump
-most of a skewed distribution into one bin), \f(CW\*(C`qcut\*(C'\fR chooses cutpoints so each
-bin holds roughly the same \fInumber\fR of observations. This is the binning you
-usually want for ranked\-list work: deciles, quartiles, top\-5% tranches.
+Equal\-frequency binning of a numeric column, which is the analog of pandas
+\&\f(CW\*(C`qcut\*(C'\fR. Equal\-\fIwidth\fR binning slices the value range into intervals of the same
+size, which dumps most of a skewed distribution into one bin; \f(CW\*(C`qcut\*(C'\fR instead
+chooses cutpoints so each bin holds roughly the same \fInumber\fR of observations.
+This is the binning you usually want for ranked\-list work: deciles, quartiles,
+top\-5% tranches.
 .PP
-Cutpoints are computed by linear interpolation between order statistics, the
-same method as numpy/pandas, so results match \f(CW\*(C`pandas.qcut\*(C'\fR exactly. Bins are
-right\-closed, \f(CW\*(C`(a, b]\*(C'\fR, with the lowest bin closed on both ends, \f(CW\*(C`[a, b]\*(C'\fR, so
-the minimum value is always included.
+Cutpoints are computed by linear interpolation between order statistics — the
+numpy/pandas default, and the same rule \f(CW\*(C`quantile\*(C'\fR uses (R\*(Aqs
+Type 7) — so the edges match \f(CW\*(C`pandas.qcut\*(C'\fR exactly. Bins are right\-closed,
+\&\f(CW\*(C`(a, b]\*(C'\fR, with the lowest bin closed on both ends, \f(CW\*(C`[a, b]\*(C'\fR, so the minimum
+value is always included.
 .PP
 \fISignature\fR
 .IX Subsection "Signature"
@@ -4666,27 +4635,43 @@ the minimum value is always included.
 \& qcut($data, $q, %options)
 .Ve
 .IP \(bu 4
-\&\f(CW$data\fR — an array reference of numbers. \f(CW\*(C`undef\*(C'\fR entries are treated as
-missing (NA): they are skipped when computing cutpoints and, when codes are
-requested, come back as \f(CW\*(C`undef\*(C'\fR in their original positions.
+\&\f(CW$data\fR — an array reference of numbers, in any order. \f(CW\*(C`qcut\*(C'\fR sorts an
+internal copy, so your array is left untouched and codes come back in the
+order the values were given. Every defined value must be numeric: a
+non\-numeric string such as \f(CW\*(AqN/A\*(Aq\fR is a fatal \f(CW\*(C`isn\*(Aqt numeric\*(C'\fR error rather
+than a silent zero, so clean or \f(CW\*(C`undef\*(C'\fR such cells first (see
+\&\f(CW\*(C`dropna\*(C'\fR, \f(CW\*(C`fillna\*(C'\fR). At least two \fIdistinct\fR values
+are needed to form a bin.
 .IP \(bu 4
 \&\f(CW$q\fR — either a positive integer (the number of equal\-frequency bins) or an
 array reference of probabilities in \f(CW\*(C`[0, 1]\*(C'\fR giving explicit cut
-boundaries, e.g. \f(CW\*(C`[0, 0.5, 0.95, 1]\*(C'\fR.
+boundaries, e.g. \f(CW\*(C`[0, 0.5, 0.95, 1]\*(C'\fR. An explicit vector is sorted for you,
+and any probability outside \f(CW\*(C`[0, 1]\*(C'\fR is clamped into it rather than being an
+error.
 .PP
-For a usage reminder at the prompt, call \f(CWqcut(\*(Aqh\*(Aq)\fR (or \f(CWqcut(\*(Aq?\*(Aq)\fR); it prints
-this section and dies. Every function takes those two arguments the same way —
-see "Getting help".
+\&\f(CW\*(C`undef\*(C'\fR entries are treated as missing (NA): they are skipped when computing
+cutpoints and, when codes are requested, come back as \f(CW\*(C`undef\*(C'\fR in their original
+positions.
+.PP
+Only the options listed below are read; a misspelled one is ignored rather than
+refused, so \f(CW\*(C`code => 1\*(C'\fR (no \f(CW\*(C`s\*(C'\fR) quietly hands back edges instead of codes.
+.PP
+For a usage reminder at the prompt, call \f(CWh(\*(Aqqcut\*(Aq)\fR; it prints this section to
+\&\f(CW\*(C`STDOUT\*(C'\fR and returns. Every function is documented that way — see
+"Getting help".
 .PP
 \fIWhat it returns\fR
 .IX Subsection "What it returns"
 .PP
-By default \f(CW\*(C`qcut\*(C'\fR returns the \fBedge vector as a flat list\fR — the cheap,
-common query — so call it in list context:
+By default \f(CW\*(C`qcut\*(C'\fR returns the edge vector — the cheap, common query — so call it
+in list context:
 .PP
 .Vb 1
 \& my @edges = qcut($data, 4);          # ($e0, $e1, $e2, $e3, $e4)
 .Ve
+.PP
+In \fBscalar\fR context that flat list collapses to its element count, not to a
+reference: \f(CW\*(C`my $e = qcut($data, 4)\*(C'\fR sets \f(CW$e\fR to \f(CW5\fR. Assign to an array.
 .PP
 The per\-element bin assignment (the expensive part) is opt\-in. Ask for it with
 \&\f(CW\*(C`codes => 1\*(C'\fR and you get an array reference parallel to \f(CW$data\fR:
@@ -4695,7 +4680,9 @@ The per\-element bin assignment (the expensive part) is opt\-in. Ask for it with
 \& my $codes = qcut($data, 4, codes => 1);
 .Ve
 .PP
-Ask for both in a single pass and you get two references, \f(CW\*(C`($codes, $edges)\*(C'\fR:
+Asking for codes turns the edge vector \fIoff\fR, so
+\&\f(CW\*(C`my ($codes, $edges) = qcut($data, 4, codes => 1)\*(C'\fR leaves \f(CW$edges\fR undefined.
+Ask for both explicitly and they are computed in a single pass:
 .PP
 .Vb 1
 \& my ($codes, $edges) = qcut($data, 4, codes => 1, edges => 1);
@@ -4703,21 +4690,31 @@ Ask for both in a single pass and you get two references, \f(CW\*(C`($codes, $ed
 .PP
 \fIOptions\fR
 .IX Subsection "Options"
-.IP \(bu 4
-\&\f(CW\*(C`edges => 1\*(C'\fR — include the edge vector. On by default; turned off
-automatically when you request codes, so set it explicitly to get both.
-.IP \(bu 4
-\&\f(CW\*(C`codes => 1\*(C'\fR — include the 0\-based integer bin codes.
-.IP \(bu 4
-\&\f(CW\*(C`labels => [...]\*(C'\fR — map the bin codes onto your own labels (implies
-\&\f(CW\*(C`codes => 1\*(C'\fR). The list length must equal the number of bins.
-.IP \(bu 4
-\&\f(CW\*(C`labels => \*(Aqinterval\*(Aq\*(C'\fR — label each element with its interval string,
-e.g. \f(CW\*(C`(3.25, 5.5]\*(C'\fR (also implies codes).
-.IP \(bu 4
-\&\f(CW\*(C`duplicates => \*(Aqdrop\*(Aq\*(C'\fR — if tied data produces non\-unique cutpoints, merge
-them into fewer bins instead of dying. The default, \f(CW\*(Aqraise\*(Aq\fR, throws an
-error (as pandas does).
+.PP
+\fIHow many bins, and how full\fR
+.IX Subsection "How many bins, and how full"
+.PP
+The bin count is always \f(CW\*(C`@$edges \- 1\*(C'\fR, and codes run from \f(CW0\fR to
+\&\f(CW\*(C`@$edges \- 2\*(C'\fR. That equals \f(CW$q\fR (or \f(CW\*(C`@$probs \- 1\*(C'\fR) \fIunless\fR
+\&\f(CW\*(C`duplicates => \*(Aqdrop\*(Aq\*(C'\fR merged tied cutpoints, in which case it is fewer — which
+is why a \f(CW\*(C`labels\*(C'\fR list has to match the bins you actually got, not the ones you
+asked for.
+.PP
+Bin \fIsizes\fR are equal only when the data permits: the count has to divide
+evenly and no repeated value may straddle a cutpoint. Ties are placed by the
+right\-closed rule, which is why \f(CW\*(C`[1 .. 10]\*(C'\fR into quartiles gives 3, 2, 2, 3
+rather than 2.5 each — the same split pandas makes. Count the codes to see what
+you got:
+.PP
+.Vb 2
+\& my $codes = qcut($data, 10, codes => 1);
+\& my $sizes = value_counts($codes);        # { 0 => n0, 1 => n1, ... }
+.Ve
+.PP
+If a probability vector omits \f(CW0\fR or \f(CW1\fR, the end bins still stretch over the
+whole range: a value below the first cutpoint lands in bin \f(CW0\fR, one above the
+last lands in the last bin. pandas returns NA for those, so include \f(CW0\fR and \f(CW1\fR
+unless the stretching is what you want.
 .PP
 \fIExamples\fR
 .IX Subsection "Examples"
@@ -4729,12 +4726,14 @@ Quartile edges (the default). The cutpoints match pandas exactly:
 \& # @edges = (1, 3.25, 5.5, 7.75, 10)
 .Ve
 .PP
-Bin codes. They are 0\-based; note the tie distribution matches pandas (inner
-bins take 2 here, outer bins 3):
+Bin codes. They are 0\-based, and unsorted input is fine — codes come back in
+input order:
 .PP
-.Vb 2
+.Vb 4
 \& my $codes = qcut([1 .. 10], 4, codes => 1);
 \& # $codes = [0, 0, 0, 1, 1, 2, 2, 3, 3, 3]
+\& my $c2 = qcut([5, 1, 9, 3, 7], 4, codes => 1);
+\& # $c2 = [1, 0, 3, 0, 2]
 .Ve
 .PP
 Edges and codes together, computed in one pass:
@@ -4782,21 +4781,74 @@ straight through:
 .Ve
 .PP
 Tied data and \f(CW\*(C`duplicates\*(C'\fR. Heavy ties can make adjacent cutpoints equal; the
-default raises, \f(CW\*(Aqdrop\*(Aq\fR merges:
+default raises, \f(CW\*(Aqdrop\*(Aq\fR merges the empty quantile bands:
 .PP
 .Vb 4
 \& my @tied = ((0) x 8, 1, 2, 3, 4);
-\& qcut(\e@tied, 4);                         # dies: bin edges are not unique
+\& qcut(\e@tied, 4);                          # dies: bin edges are not unique
 \& my @edges = qcut(\e@tied, 4, duplicates => \*(Aqdrop\*(Aq);
-\& # fewer than 5 edges; the empty quantile bands are collapsed
+\& # @edges = (0, 1.25, 4) \-\- 2 bins, not 4, so labels => [qw/a b/] here
 .Ve
 .PP
-Get the documentation and stop:
+Binning a data\-frame column, which is the usual reason to want codes.
+\&\f(CW\*(C`vals\*(C'\fR hands \f(CW\*(C`qcut\*(C'\fR the column and \f(CW\*(C`assign\*(C'\fR puts the result
+back as a new one:
 .PP
-.Vb 2
-\& qcut(\*(Aqh\*(Aq);   # prints this section to STDOUT, then dies
-\& qcut(\*(Aq?\*(Aq);   # the same call
+.Vb 4
+\& my $df = { id => [1 .. 10], ldl => [90, 120, 150, 200, 80, 110, 175, 160, 95, 130] };
+\& my $q  = qcut(vals($df, \*(Aqldl\*(Aq), 4, labels => [qw/Q1 Q2 Q3 Q4/]);
+\& assign($df, ldl_quartile => $q);
+\& # $df\->{ldl_quartile} = [qw/Q1 Q2 Q3 Q4 Q1 Q2 Q4 Q4 Q1 Q3/]
 .Ve
+.PP
+Get the documentation:
+.PP
+.Vb 1
+\& h(\*(Aqqcut\*(Aq);   # prints this section to STDOUT and returns
+.Ve
+.PP
+\fIErrors\fR
+.IX Subsection "Errors"
+.PP
+\&\f(CW\*(C`qcut\*(C'\fR dies when \f(CW$data\fR is not an array reference, when \f(CW$q\fR is neither a
+positive integer nor an array reference, and when the options ask for nothing
+(\f(CW\*(C`edges => 0\*(C'\fR with no codes or labels). It dies with \f(CW\*(C`no non\-missing values\*(C'\fR
+when every element is \f(CW\*(C`undef\*(C'\fR, and \f(CW\*(C`need at least one data value\*(C'\fR when \f(CW$data\fR
+is empty.
+.PP
+Cutpoints are the other source of failures. \f(CW\*(C`bin edges are not unique\*(C'\fR means
+ties collapsed adjacent cutpoints under the default \f(CW\*(C`duplicates => \*(Aqraise\*(Aq\*(C'\fR:
+either pass \f(CW\*(C`duplicates => \*(Aqdrop\*(Aq\*(C'\fR or ask for fewer bins. Even with \f(CW\*(Aqdrop\*(Aq\fR,
+data holding a single distinct value cannot be binned at all and dies with
+\&\f(CW\*(C`too few distinct values to form bins\*(C'\fR. Finally, a \f(CW\*(C`labels\*(C'\fR arrayref whose
+length differs from the bin count dies naming both numbers
+(\f(CW\*(C`got 2 bins but 4 labels\*(C'\fR).
+.PP
+\fIDifferences from pandas\fR
+.IX Subsection "Differences from pandas"
+.IP \(bu 4
+\&\fBInterval printing.\fR pandas nudges its lowest edge 0.1% below the minimum
+so every bin can be half\-open, e.g. \f(CW\*(C`(0.999, 3.25]\*(C'\fR. \f(CW\*(C`qcut\*(C'\fR keeps the exact
+minimum and closes the lowest bin on both ends, \f(CW\*(C`[1, 3.25]\*(C'\fR. Membership is
+the same; only the printed interval differs.
+.IP \(bu 4
+\&\fBOut\-of\-range values.\fR A partial probability vector makes the end bins
+stretch (above), where pandas yields NA.
+.IP \(bu 4
+\&\fBOut\-of\-range probabilities\fR are clamped into \f(CW\*(C`[0, 1]\*(C'\fR instead of raising.
+.IP \(bu 4
+\&\fBReturn type.\fR There is no Categorical: you get edges, plain integer
+codes, your own labels, or interval strings.
+.PP
+\fISee also\fR
+.IX Subsection "See also"
+.PP
+\&\f(CW\*(C`quantile\*(C'\fR computes the same cutpoints without assigning anything
+to bins. \f(CW\*(C`chunk\*(C'\fR splits by \fIposition\fR instead of value, which works on
+non\-numeric data. \f(CW\*(C`value_counts\*(C'\fR checks how full the bins came
+out, \f(CW\*(C`rank\*(C'\fR is the alternative when you want the whole ordering rather
+than bins, and \f(CW\*(C`assign\*(C'\fR / \f(CW\*(C`vals\*(C'\fR move a binned column into
+and out of a data frame.
 .SS quantile
 .IX Subsection "quantile"
 Calculates sample quantiles using R\*(Aqs continuous Type 7 interpolation.
@@ -5906,6 +5958,20 @@ raw values (no cell number formats), matching the round\-trip behaviour of
 .IX Header "Changes"
 .SS "0.28 2026\-07\-28 CDT"
 .IX Subsection "0.28 2026-07-28 CDT"
+\&\fBIncompatible:\fR the \f(CW\*(Aq?\*(Aq\fR / \f(CW\*(Aqh\*(Aq\fR argument added in 0.27 is gone (lib/Stats/LikeR.pm). \f(CWagg(\*(Aqh\*(Aq)\fR, \f(CWread_table(\*(Aq?\*(Aq)\fR and the fifty\-odd other pure\-Perl functions that took it no longer print help and die — they treat the string as data, the way the XS functions always have. \f(CWh(\*(Aqagg\*(Aq)\fR, \f(CWh(*agg)\fR and \f(CWh(\e&agg)\fR are unchanged and remain the way to ask, for every function in the distribution.
+\&\- It was a help route that only half the module had, so what a lone \f(CW\*(Aqh\*(Aq\fR meant depended on whether the callee happened to be written in XS or in Perl, and a column, file or option value really named \f(CW\*(Aqh\*(Aq\fR needed \f(CW\*(C`$Stats::LikeR::HELP = 0\*(C'\fR to get through. That variable is gone too; nothing reads its arguments for a help flag any more.
+\&\- \f(CW\*(C`bedroc\*(C'\fR still prints its own short XS usage summary for \f(CW\*(C`bedroc(\*(Aqh\*(Aq | \*(AqH\*(Aq | \*(Aq?\*(Aq)\*(C'\fR, which is hand\-written and predates all of this.
+.PP
+\&\f(CW\*(C`merge\*(C'\fR (LikeR.xs) — same joins, a third of the time and a fifth of the memory. Nothing about the result changes: every join type, shape combination and edge case produces exactly what it did before, and \f(CW\*(C`t/merge.t\*(C'\fR now checks all six input/output paths against a plain\-Perl reference join over a randomized corpus.
+.PP
+The old implementation transposed both frames into arrays of row hashes, joined those, and transposed the result back. A 10,000\-row HoA joined to itself therefore built 20,000 throwaway row hashes and copied every cell three times before returning. It now reads each frame where it lies — a HoA column by column, an AoH/HoH row by row — and writes the result straight into the shape being returned, so the only cells copied are the ones the caller keeps.
+.IP \(bu 4
+The right frame\*(Aqs index is a hash of row numbers chained through a flat array, rather than an array\-ref of index scalars per distinct key, and one reused buffer builds every join key instead of one scalar per row.
+.IP \(bu 4
+Column names are resolved to their column (HoA) or interned once as shared hash keys (AoH/HoH) before the join starts, so the per\-row work is a lookup rather than a lookup and a rehash.
+.IP \(bu 4
+Measured on the \f(CW\*(C`benchmark.pl\*(C'\fR case (two 10,000\-row frames, six columns, inner join on \f(CW\*(C`id\*(C'\fR): 0.052 s and 41.4 MB before, 0.017 s and 7.3 MB after. An outer join of the same frames went from 0.113 s to 0.008 s.
+.PP
 \&\f(CW\*(C`write_table\*(C'\fR (LikeR.xs) — two changes, one of them incompatible.
 \&\- Every format now prints the coloured \f(CW\*(C`wrote <file>\*(C'\fR confirmation line, not just LaTeX and \f(CW\*(C`.xlsx\*(C'\fR. Delimited output (csv/tsv) was silent before. The line is identical in all cases: the file name in black on cyan, with the SGR codes inline so there is still no \f(CW\*(C`Term::ANSIColor\*(C'\fR dependency. Nothing is announced when nothing is written.
 \&\- \fBIncompatible:\fR \f(CW\*(C`row.names\*(C'\fR now defaults to \fBoff\fR in every format. It previously defaulted \fBon\fR everywhere, following R\*(Aqs \f(CW\*(C`write.table\*(C'\fR, which meant a call that said nothing about row names got a label column and a leading empty header cell (\f(CW\*(C`,gene,n\*(C'\fR) it had not asked for. Pass \f(CW\*(C`row.names => 1\*(C'\fR for the old behaviour; \f(CW\*(C`row.names => \*(Aqcol\*(Aq\*(C'\fR is unchanged.
@@ -6731,7 +6797,7 @@ Numerous changes to prevent quadmath/long double CPAN test failures
 .PP
 Minimum Scalar::Util version in dist.ini is now 1.22, see https://www.cpantesters.org/cpan/report/6b682236\-6567\-11f1\-a3bc\-a055f9c4ba34
 .PP
-\&\f(CW\*(C`Digest::SHA\*(C'\fR is no longer needed, and removed as a dependency
+\&\f(CW\*(C`Digest::SHA\*(C'\fR removed as a dependency
 .PP
 \fR\f(CI\*(C`read_table\*(C'\fR\fI\fR
 .IX Subsection "read_table"

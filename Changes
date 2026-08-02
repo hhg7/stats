@@ -3,6 +3,18 @@ Revision history for Stats-LikeR
 
 0.28 2026-07-28 CDT
 
+ - Incompatible: the `'?'` / `'h'` argument added in 0.27 is gone (lib/Stats/LikeR.pm). `agg('h')`, `read_table('?')` and the fifty-odd other pure-Perl functions that took it no longer print help and die — they treat the string as data, the way the XS functions always have. `h('agg')`, `h(*agg)` and `h(\&agg)` are unchanged and remain the way to ask, for every function in the distribution.
+ - It was a help route that only half the module had, so what a lone `'h'` meant depended on whether the callee happened to be written in XS or in Perl, and a column, file or option value really named `'h'` needed `$Stats::LikeR::HELP = 0` to get through. That variable is gone too; nothing reads its arguments for a help flag any more.
+ - `bedroc` still prints its own short XS usage summary for `bedroc('h' | 'H' | '?')`, which is hand-written and predates all of this.
+
+ - `merge` (LikeR.xs) — same joins, a third of the time and a fifth of the memory. Nothing about the result changes: every join type, shape combination and edge case produces exactly what it did before, and `t/merge.t` now checks all six input/output paths against a plain-Perl reference join over a randomized corpus.
+
+ - The old implementation transposed both frames into arrays of row hashes, joined those, and transposed the result back. A 10,000-row HoA joined to itself therefore built 20,000 throwaway row hashes and copied every cell three times before returning. It now reads each frame where it lies — a HoA column by column, an AoH/HoH row by row — and writes the result straight into the shape being returned, so the only cells copied are the ones the caller keeps.
+
+ - The right frame's index is a hash of row numbers chained through a flat array, rather than an array-ref of index scalars per distinct key, and one reused buffer builds every join key instead of one scalar per row.
+ - Column names are resolved to their column (HoA) or interned once as shared hash keys (AoH/HoH) before the join starts, so the per-row work is a lookup rather than a lookup and a rehash.
+ - Measured on the `benchmark.pl` case (two 10,000-row frames, six columns, inner join on `id`): 0.052 s and 41.4 MB before, 0.017 s and 7.3 MB after. An outer join of the same frames went from 0.113 s to 0.008 s.
+
  - `write_table` (LikeR.xs) — two changes, one of them incompatible.
  - Every format now prints the coloured `wrote <file>` confirmation line, not just LaTeX and `.xlsx`. Delimited output (csv/tsv) was silent before. The line is identical in all cases: the file name in black on cyan, with the SGR codes inline so there is still no `Term::ANSIColor` dependency. Nothing is announced when nothing is written.
  - **Incompatible:** `row.names` now defaults to **off** in every format. It previously defaulted **on** everywhere, following R's `write.table`, which meant a call that said nothing about row names got a label column and a leading empty header cell (`,gene,n`) it had not asked for. Pass `row.names => 1` for the old behaviour; `row.names => 'col'` is unchanged.
@@ -715,7 +727,7 @@ Revision history for Stats-LikeR
 
  - Minimum Scalar::Util version in dist.ini is now 1.22, see https://www.cpantesters.org/cpan/report/6b682236-6567-11f1-a3bc-a055f9c4ba34
 
- - `Digest::SHA` is no longer needed, and removed as a dependency
+ - `Digest::SHA` removed as a dependency
 
  [`read_table`]
 
