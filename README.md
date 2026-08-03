@@ -26,13 +26,6 @@ Note that `h(bedroc)`, with no quotes and no sigil, cannot be made to work:
 every function here is exported, so Perl parses the bareword as a call to
 `bedroc()` before `h` is ever reached. Use one of the three forms above.
 
-`h` is the only way to ask. No function reads its own argument list for a help
-flag, so nothing here has to guess whether you meant data or a question: a
-column, file or option value that really is the bare string `'h'` or `'?'` is
-just a value. `vals($df, 'h')`, `csort($df, 'h')`, `col('h') > 3` and
-`read_table('?')` all mean exactly what they say, and every function — XS or
-pure Perl — is documented the same way, through `h('name')`.
-
 # Functions/Subroutines
 
 ## add_data

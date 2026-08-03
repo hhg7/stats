@@ -5011,13 +5011,6 @@ Note that C<h(bedroc)>, with no quotes and no sigil, cannot be made to work:
 every function here is exported, so Perl parses the bareword as a call to
 C<bedroc()> before C<h> is ever reached. Use one of the three forms above.
 
-C<h> is the only way to ask. No function reads its own argument list for a help
-flag, so nothing here has to guess whether you meant data or a question: a
-column, file or option value that really is the bare string C<'h'> or C<'?'> is
-just a value. C<vals($df, 'h')>, C<csort($df, 'h')>, C<< col('h') E<gt> 3 >> and
-C<read_table('?')> all mean exactly what they say, and every function — XS or
-pure Perl — is documented the same way, through C<h('name')>.
-
 =head1 Functions/Subroutines
 
 =head2 add_data
