@@ -5459,6 +5459,66 @@ raw values (no cell number formats), matching the round-trip behaviour of
 
 ## 0.281 2026-08-03 CDT
 
+`median` (LikeR.xs) — the same answers in about an eighth of the time. On the
+`benchmark.pl` case (10,000 normals in one array ref) a call went from 0.83 ms
+to 0.097 ms, which puts it ahead of the two implementations it was behind:
+`numpy.median` at 0.105 ms and R's `median` at 0.196 ms, measured on the same
+machine. Small samples — a per-group median under `agg` or `group_by`, which is
+where most calls to it come from — went from 647 ns to 251 ns.
+
+A median is the middle one or two values, so most of the sort the function used
+to do was wasted work: `qsort` orders all n elements at a cost of n log n
+comparisons, every one an indirect call through a function pointer the compiler
+cannot see into, to answer a question that depends on one or two of them. Those
+values are now selected instead, and the sample is walked once rather than
+twice.
+
+- The selection is introselect, the same shape numpy's `partition` uses:
+  quickselect with a median-of-three pivot, an insertion sort once a range is
+  small, and a heapsort fallback past a depth limit, so an input crafted to
+  defeat the pivot choice degrades to O(n log n) rather than O(n²). The awkward
+  data people actually have comes out faster than random data rather than
+  slower — sorted, reversed, all-equal and organ-pipe samples of 100,000 values
+  each take about 0.25 ms against 0.90 ms for random ones. For an even count the
+  lower of the middle pair is the largest value left below the upper one, which
+  a scan of that side finds without a second selection.
+- The counting pass is gone. It walked every element through `av_fetch` before
+  any arithmetic, only to size the buffer; the array lengths give the same
+  count, exactly, because an undef anywhere still dies.
+- The pass that remains reads cells through `AvARRAY` instead of `av_fetch`,
+  with tied arrays kept on the `av_fetch` path, since only it sees their values.
+- A sample of 256 values or fewer is copied to the C stack rather than the heap,
+  so the common small call no longer pays for a malloc and free at all: 10,000
+  of them now grow RSS by nothing. Larger samples still copy n values, which is
+  what leaves the caller's array in its original order — the selection reorders
+  whatever it works on, and `t/median.t` checks that the input comes back
+  untouched.
+
+Error messages that carry an index or a count were unreadable on older perls,
+in nineteen places across LikeR.xs, and now are not. `croak` runs perl's own
+formatter rather than the C library's, and that formatter does not understand
+C99's `z` length modifier: it printed the conversion literally, so
+`median(1, undef)` on perl 5.10 or 5.12 said `undefined value at argument index
+%zu` instead of naming the argument that was undefined — the one thing the
+message existed to say. `min`, `max`, `mode`, `sum`, `sd`, `var`, `median`,
+`mcnemar_test`, `friedman_test`, `hoa2hoh` and `oneway_test` were all affected.
+They now use `UVuf`, as the rest of the file already did. The `snprintf` calls
+elsewhere in the file are unaffected and unchanged: those do go to the C
+library, where `%zu` means what it says.
+
+New `t/croak.messages.t` covers every one of those messages: each is triggered,
+checked for the number it should name, and then swept for any conversion left
+unexpanded, which is what will catch the next one written with `%zu`. Run
+against the code as it stood before this change, thirty-two of its assertions
+fail on perl 5.10.
+
+New `t/median.t`: every length from 1 to 25 and from 254 to 258 — either side of
+the insertion-sort cutoff and of the point where the buffer moves off the stack
+— across sorted, reversed, all-equal, two-valued, duplicate-heavy, organ-pipe
+and median-of-three-killer samples, each checked against a plain Perl sort,
+together with the error messages and `Test::LeakTrace` over the stack, heap,
+mixed-argument and croak paths.
+
 fix for threaded Perls https://www.cpantesters.org/cpan/report/2dbacf8f-7138-1014-a1ab-f0f91cf3b922
 
 ## 0.28 2026-08-02 CDT

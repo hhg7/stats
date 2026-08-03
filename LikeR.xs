@@ -8669,7 +8669,7 @@ oneway_test(data_ref, ...)
 
 			k = (size_t)(av_len(in_av) + 1);          /* +1 inside the signed math */
 			if (k < 2)
-				croak("oneway_test: need at least 2 groups, got %zu", k);
+				croak("oneway_test: need at least 2 groups, got %" UVuf, (UV)k);
 
 			Newx(sizes,   k, size_t);
 			Newxz(gnames, k, char *);                  /* zeroed: safe to free on error */
@@ -8749,7 +8749,7 @@ oneway_test(data_ref, ...)
 			/* ---- MODE 1: hash of groups { label => \@obs, ... } ---- */
 			k = (size_t)HvUSEDKEYS(in_hv);              /* robust count, not iterinit's */
 			if (k < 2)
-				croak("oneway_test: need at least 2 groups, got %zu", k);
+				croak("oneway_test: need at least 2 groups, got %" UVuf, (UV)k);
 
 			Newx(sizes,   k, size_t);
 			Newxz(gnames, k, char *);
@@ -11882,7 +11882,7 @@ NV min(...)
 						 }
 						 count++;
 					 } else {
-						 croak("min: undefined value at array ref index %zu (argument %d)", j, (int)i);
+						 croak("min: undefined value at array ref index %" UVuf " (argument %d)", (UV)j, (int)i);
 					 }
 				 }
 			} else if (SvOK(arg)) {
@@ -11923,7 +11923,7 @@ NV max(...)
 					   }
 					   count++;
 				   } else {
-					   croak("max: undefined value at array ref index %zu (argument %zu)", j, i);
+					   croak("max: undefined value at array ref index %" UVuf " (argument %" UVuf ")", (UV)j, (UV)i);
 				   }
 			   }
 		   } else if (SvOK(arg)) {
@@ -11934,7 +11934,7 @@ NV max(...)
 			   }
 			   count++;
 		   } else {
-			   croak("max: undefined value at argument index %zu", i);
+			   croak("max: undefined value at argument index %" UVuf, (UV)i);
 		   }
 	  }
 	  if (count == 0) croak("max needs >= 1 numeric element");
@@ -12310,7 +12310,7 @@ void mode(...)
 						 hv_store(originals, key, klen, newSVsv(*tv), 0);
 					arg_count++;
 				} else {
-					croak("mode: undefined value at array ref index %zu (argument %zu)", j, i);
+					croak("mode: undefined value at array ref index %" UVuf " (argument %" UVuf ")", (UV)j, (UV)i);
 				}
 			}
 		} else if (SvOK(arg)) {
@@ -12325,7 +12325,7 @@ void mode(...)
 			  hv_store(originals, key, klen, newSVsv(arg), 0);
 			arg_count++;
 		} else {
-			croak("mode: undefined value at argument index %zu", i);
+			croak("mode: undefined value at argument index %" UVuf, (UV)i);
 		}
 	}
 
@@ -12359,14 +12359,14 @@ NV sum(...)
 						 total += SvNV(*tv);
 						 count++;
 					 } else {
-						 croak("sum: undefined value at array ref index %zu (argument %zu)", j, i);
+						 croak("sum: undefined value at array ref index %" UVuf " (argument %" UVuf ")", (UV)j, (UV)i);
 					 }
 				 }
 			} else if (SvOK(arg)) {
 				 total += SvNV(arg);
 				 count++;
 			} else {
-				 croak("sum: undefined value at argument index %zu", i);
+				 croak("sum: undefined value at argument index %" UVuf, (UV)i);
 			}
 		}
 		if (count == 0) croak("sum needs >= 1 element");
@@ -12394,7 +12394,7 @@ NV sd(...)
 						mean += delta / count;
 						M2 += delta * (val - mean);
 				  } else {
-						croak("sd: undefined value at array ref index %zu (argument %zu)", j, i);
+						croak("sd: undefined value at array ref index %" UVuf " (argument %" UVuf ")", (UV)j, (UV)i);
 				  }
 				}
 			} else if (SvOK(arg)) {
@@ -12404,7 +12404,7 @@ NV sd(...)
 				 mean += delta / count;
 				 M2 += delta * (val - mean);
 			} else {
-				 croak("sd: undefined value at argument index %zu", i);
+				 croak("sd: undefined value at argument index %" UVuf, (UV)i);
 			}
 		}
 		if (count < 2) croak("sd needs >= 2 elements");
@@ -12489,7 +12489,7 @@ NV var(...)
 						   mean += delta / count;
 						   M2 += delta * (val - mean);
 					  } else {
-						   croak("var: undefined value at array ref index %zu (argument %zu)", j, i);
+						   croak("var: undefined value at array ref index %" UVuf " (argument %" UVuf ")", (UV)j, (UV)i);
 					  }
 				 }
 			} else if (SvOK(arg)) {
@@ -12499,7 +12499,7 @@ NV var(...)
 				 mean += delta / count;
 				 M2 += delta * (val - mean);
 			} else {
-				 croak("var: undefined value at argument index %zu", i);
+				 croak("var: undefined value at argument index %" UVuf, (UV)i);
 			}
 		}
 		if (count < 2) croak("var needs >= 2 elements");
@@ -12857,7 +12857,7 @@ PPCODE:
 		for (size_t i = 0; i < r; i++) {
 			SV **restrict row = av_fetch(m, i, 0);
 			if (!row || !*row || !SvROK(*row) || SvTYPE(SvRV(*row)) != SVt_PVAV)
-				{ Safefree(tab); croak("mcnemar_test: row %zu is not an array ref", i); }
+				{ Safefree(tab); croak("mcnemar_test: row %" UVuf " is not an array ref", (UV)i); }
 			AV *rv = (AV*)SvRV(*row);
 			if ((size_t)(av_len(rv) + 1) != r) { Safefree(tab); croak("mcnemar_test: matrix must be square"); }
 			for (size_t j = 0; j < r; j++) {
@@ -13109,7 +13109,7 @@ PPCODE:
 	for (size_t i = 0; i < nrow_raw; i++) {
 		SV **restrict rr = av_fetch(m, i, 0);
 		if (!rr || !*rr || !SvROK(*rr) || SvTYPE(SvRV(*rr)) != SVt_PVAV)
-			{ Safefree(colsum); Safefree(rowbuf); Safefree(ranks); Safefree(sorted); croak("friedman_test: row %zu is not an array ref", i); }
+			{ Safefree(colsum); Safefree(rowbuf); Safefree(ranks); Safefree(sorted); croak("friedman_test: row %" UVuf " is not an array ref", (UV)i); }
 		AV *rv = (AV*)SvRV(*rr);
 		if ((size_t)(av_len(rv) + 1) != k)
 			{ Safefree(colsum); Safefree(rowbuf); Safefree(ranks); Safefree(sorted); croak("friedman_test: all rows must have the same number of columns"); }
@@ -18445,8 +18445,8 @@ SV *hoa2hoh(hoa, key)
 			SV  *restrict rowname;
 			SV **restrict kp = av_fetch(keycol, i, 0);
 			if (!kp || !*kp || !SvOK(*kp))
-				croak("hoa2hoh: key column '%s' has an undefined value at row %zu",
-					SvPV_nolen(key), i);
+				croak("hoa2hoh: key column '%s' has an undefined value at row %" UVuf,
+					SvPV_nolen(key), (UV)i);
 			rowname = *kp;
 			if (hv_exists_ent(out, rowname, 0))
 				croak("hoa2hoh: duplicate row name '%s'", SvPV_nolen(rowname));
