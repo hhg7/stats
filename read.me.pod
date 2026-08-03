@@ -8646,7 +8646,7 @@ C<t/model_pvalue_tails.t> and C<t/oneway_test.R.scipy.t>.
 
 =head1 Changes
 
-=head2 0.282 2026-08-03 CDT
+=head2 0.29 2026-08-03 CDT
 
 =head3 t_test
 

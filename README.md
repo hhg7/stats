@@ -5831,7 +5831,7 @@ Verified against R 4.6.1 (`oneway.test`, `anova(aov())`, `anova(lm())`,
 
 # Changes
 
-## 0.282 2026-08-03 CDT
+## 0.29 2026-08-03 CDT
 
 ### t_test
 
