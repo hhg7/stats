@@ -1057,7 +1057,7 @@ static NV qt_tail(NV df, NV p_tail) {
  * AvARRAY, not av_fetch: the length is already known and a sample here is a
  * plain array of numbers, so the bounds check and the call per element are the
  * only things standing between the loop and the data. */
-static size_t t_test_scan(AV *restrict av, NV *restrict mean_out, NV *restrict var_out) {
+static size_t t_test_scan(pTHX_ AV *restrict av, NV *restrict mean_out, NV *restrict var_out) {
 	const size_t n = (size_t)(av_len(av) + 1);
 	size_t kept = 0;
 	NV mean = 0.0, M2 = 0.0;
@@ -1366,6 +1366,23 @@ static NV pf(NV f, NV df1, NV df2) {
 	if (f <= 0.0) return 0.0;
 	NV x = (df1 * f) / (df1 * f + df2);
 	return incbeta(df1 / 2.0, df2 / 2.0, x);
+}
+
+/* Upper tail P(F > f)  ==  R's pf(f, df1, df2, lower.tail = FALSE).
+ *
+ * Computed in the upper tail directly via the beta symmetry
+ *   1 - I_x(a, b) = I_{1-x}(b, a),  x = df1·f / (df1·f + df2)
+ * so 1-x = df2 / (df1·f + df2) is formed without any subtraction.  Writing
+ * this as `1 - pf(...)` instead throws away the whole answer once the p-value
+ * drops below ~1e-16 (the ulp of 1.0): R reports 1.2e-76 where the naive form
+ * returns a flat 0, and loses relative precision from about 1e-9 downward. */
+static NV pf_upper(NV f, NV df1, NV df2) {
+	if (isnan(f) || isnan(df1) || isnan(df2)) return NAN;   /* NaN in, NaN out */
+	if (f <= 0.0)   return 1.0;
+	if (isinf(f))   return 0.0;   /* zero within-group variance: R gives p = 0 */
+	NV denom = df1 * f + df2;
+	if (isinf(denom)) return 0.0; /* p underflows anyway */
+	return incbeta(df2 / 2.0, df1 / 2.0, df2 / denom);
 }
 
 /* Householder QR Decomposition for Sequential Sums of Squares */
@@ -2709,7 +2726,10 @@ c_oneway_test(const NV *restrict data, const size_t *restrict sizes,
 		}
 		res.statistic = num / (df1 * (1.0 + 2.0 * (NV)(k - 2) * tmp));
 		res.num_df    = df1;
-		res.denom_df  = (tmp > 0.0) ? (1.0 / (3.0 * tmp)) : 1e300;
+		/* Left unguarded on purpose: a zero-variance group makes w_i infinite,
+		 * hence tmp NaN, and R's oneway.test reports NaN df here too. A magic
+		 * 1e300 sentinel instead looked like a real (huge) df. */
+		res.denom_df  = 1.0 / (3.0 * tmp);
 		/* unweighted SS for the output table */
 		NV ssbg = 0.0, sswg = 0.0;
 		for (size_t g = 0; g < k; g++) {
@@ -2719,12 +2739,12 @@ c_oneway_test(const NV *restrict data, const size_t *restrict sizes,
 		}
 		res.ss_between = ssbg;
 		res.ss_within  = sswg;
-		res.ms_between = (df1  > 0.0) ? ssbg / df1          : 0.0;
-		res.ms_within  = (res.denom_df > 0.0) ? sswg / res.denom_df : 0.0;
+		res.ms_between = ssbg / df1;                 /* df1 = k-1 >= 1 */
+		res.ms_within  = sswg / res.denom_df;        /* NaN if denom_df is NaN */
 		Safefree(w_i);
 	}
-	// upper-tail p-value  P(F ≥ statistic)
-	res.p_value = 1 - pf(res.statistic, res.num_df, res.denom_df);
+	// upper-tail p-value  P(F ≥ statistic), evaluated in the tail itself
+	res.p_value = pf_upper(res.statistic, res.num_df, res.denom_df);
 	Safefree(n_i);    Safefree(m_i);    Safefree(v_i);
 	return res;
 }
@@ -2848,7 +2868,7 @@ static int build_groups_from_formula(pTHX_
 	}
 	/* count per-group sizes */
 	memset(out_sizes, 0, ngroups * sizeof(size_t));
-	for (unsigned i = 0; i < n; i++) out_sizes[obs_group[i]]++;
+	for (IV i = 0; i < n; i++) out_sizes[obs_group[i]]++;
 	/* validate: every group needs >= 2 observations */
 	for (size_t g = 0; g < ngroups; g++) {
 		if (out_sizes[g] < 2) {
@@ -2868,9 +2888,18 @@ static int build_groups_from_formula(pTHX_
 	  write_pos[g] = write_pos[g - 1] + out_sizes[g - 1];
 	for (IV i = 0; i < n; i++) {
 	  SV **restrict rsv = av_fetch(response_av, i, 0);
-	  NV val = (rsv && *rsv) ? SvNV(*rsv) : 0.0;
+	  /* Same contract as the hash / array-of-arrays modes: an undef or
+	   * non-numeric response cell dies rather than being silently read as 0.0 */
+	  if (!rsv || !*rsv || !SvOK(*rsv) || !looks_like_number(*rsv)) {
+		   snprintf(errbuf, errbuf_len,
+			   "formula: response observation %" IVdf " (group '%s') is undefined or non-numeric",
+			   i, group_names[obs_group[i]]);
+		   for (size_t g = 0; g < ngroups; g++) Safefree(group_names[g]);
+		   Safefree(group_names);  Safefree(obs_group);  Safefree(write_pos);
+		   return 0;
+	  }
 	  size_t g   = (size_t)obs_group[i];
-	  out_flat[write_pos[g]++] = val;
+	  out_flat[write_pos[g]++] = SvNV(*rsv);
 	}
 	*out_k = ngroups;
 	/* ── clean up or hand off group names */
@@ -6818,7 +6847,7 @@ void anova(...)
 							NV F = (dss / (NV)ddf) / scale;
 							(void)hv_store(row, "F", 1, newSVnv(F), 0);
 							(void)hv_store(row, "Pr(>F)", 6,
-							               newSVnv(1.0 - pf(F, (NV)ddf, (NV)df_big)), 0);
+							               newSVnv(pf_upper(F, (NV)ddf, (NV)df_big)), 0);
 						}
 					}
 					av_push(table, newRV_noinc((SV*)row));
@@ -6994,7 +7023,7 @@ void anova(...)
 					if (dfres > 0 && rss > 0.0) {
 						NV F = (ss / (NV)df) / msres;
 						(void)hv_store(in, "F value", 7, newSVnv(F), 0);
-						(void)hv_store(in, "Pr(>F)", 6, newSVnv(1.0 - pf(F, (NV)df, (NV)dfres)), 0);
+						(void)hv_store(in, "Pr(>F)", 6, newSVnv(pf_upper(F, (NV)df, (NV)dfres)), 0);
 					}
 				}
 				(void)hv_store(result, terms[t].name, (I32)strlen(terms[t].name),
@@ -11649,7 +11678,13 @@ SV *glm(...)
 		} else {
 			NV se = sqrt(dispersion * XtWX[j * p + j]);
 			NV val_stat = beta[j] / se;
-			NV p_val = use_z ? 2.0 * (1.0 - approx_pnorm(fabs(val_stat))) : get_t_pvalue(val_stat, df_res, "two.sided");
+			/* 2*pnorm(-|z|), not 2*(1 - pnorm(|z|)): erfc is accurate deep in
+			 * the lower tail, but subtracting a near-1 value from 1 discards
+			 * the answer entirely once the p-value falls below ~1e-16. R
+			 * writes it the same way. get_t_pvalue() already computes its
+			 * two-tail probability directly, so it needs no such care. */
+			NV p_val = use_z ? 2.0 * approx_pnorm(-fabs(val_stat))
+			                 : get_t_pvalue(val_stat, df_res, "two.sided");
 			NV ci_lo = beta[j] - zcrit * se;
 			NV ci_hi = beta[j] + zcrit * se;
 			hv_store(row_hv, "Estimate",   8, newSVnv(beta[j]), 0);
@@ -11841,12 +11876,16 @@ CODE:
 		  if (continuity) S -= (S > 0.0 ? 1.0 : -1.0);
 		  statistic = S / sqrt(var_S);
 
+		  /* Tails evaluated where they lie: approx_pnorm is erfc-based and so
+		   * is accurate deep into its lower tail, but subtracting a near-1
+		   * value from 1 discards the answer below ~1e-16. pnorm(-x) is the
+		   * upper tail exactly, by symmetry, at no cost. */
 		  if      (strcmp(alternative, "two.sided") == 0)
-			  p_value = 2.0 * (1.0 - approx_pnorm(fabs(statistic)));
+			  p_value = 2.0 * approx_pnorm(-fabs(statistic));
 		  else if (strcmp(alternative, "less") == 0)
 			  p_value = approx_pnorm(statistic);
 		  else
-			  p_value = 1.0 - approx_pnorm(statistic);
+			  p_value = approx_pnorm(-statistic);
 	  }
 
 	} else if (is_spearman) {
@@ -12861,8 +12900,8 @@ SV* t_test(...)
 			constant_scale = fabs(mean_d);
 			estimates      = EST_MEAN_DIFF;
 		} else if (y_av) {
-			const size_t nx = t_test_scan(x_av, &mean_x, &var_x);
-			const size_t ny = t_test_scan(y_av, &mean_y, &var_y);
+			const size_t nx = t_test_scan(aTHX_ x_av, &mean_x, &var_x);
+			const size_t ny = t_test_scan(aTHX_ y_av, &mean_y, &var_y);
 			/* R's thresholds: a pooled variance can carry a group of one, since
 			 * that group contributes no sum of squares, but a Welch test needs a
 			 * variance from each side. Both were missing here, so an n = 1 'y'
@@ -12891,7 +12930,7 @@ SV* t_test(...)
 				     (pow(stderr_x2, 2) / ((NV)nx - 1.0) + pow(stderr_y2, 2) / ((NV)ny - 1.0));
 			}
 		} else {
-			const size_t nx = t_test_scan(x_av, &mean_x, &var_x);
+			const size_t nx = t_test_scan(aTHX_ x_av, &mean_x, &var_x);
 			if (nx < 2) croak("t_test: 'x' needs at least 2 elements");
 			cint_est       = mean_x;
 			std_err        = sqrt(var_x / (NV)nx);
@@ -15668,7 +15707,7 @@ SV *lm(...)
 			adj_r_squared = 1.0 - (1.0 - r_squared) * ((NV)(valid_n - df_int) / (NV)df_res);
 			if (rse_sq > 0.0 && numdf > 0) {
 				f_stat   = (mss / (NV)numdf) / rse_sq;
-				f_pvalue = 1.0 - pf(f_stat, (NV)numdf, (NV)df_res);
+				f_pvalue = pf_upper(f_stat, (NV)numdf, (NV)df_res);
 			} else if (rse_sq == 0.0) {
 				f_stat   = INFINITY;
 				f_pvalue = 0.0;
@@ -16282,7 +16321,7 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 		if (ms_res > 0.0 && df > 0) {
 			NV f_val = ms / ms_res;
 			hv_stores(term_stats, "F value", newSVnv(f_val));
-			hv_stores(term_stats, "Pr(>F)", newSVnv(1.0 - pf(f_val, (NV)df, (NV)res_df)));
+			hv_stores(term_stats, "Pr(>F)", newSVnv(pf_upper(f_val, (NV)df, (NV)res_df)));
 		} else {
 			hv_stores(term_stats, "F value", newSVnv(NAN));
 			hv_stores(term_stats, "Pr(>F)", newSVnv(NAN));

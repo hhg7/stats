@@ -137,6 +137,66 @@ Revision history for Stats-LikeR
    They have no `AvARRAY` fast path to guard, so they croak rather than crash, and
    the same one-line fix would make each of them work.
 
+ [oneway_test]
+
+ - `oneway_test` was cross-checked case by case against R's `stats::oneway.test`
+   (both branches), R's `anova(aov())` for the `Sum Sq` / `Mean Sq` columns,
+   `statsmodels.stats.oneway.anova_oneway(use_var="unequal")` and
+   `scipy.stats.f_oneway`. The 37 data sets are R's own built-ins — `chickwts`,
+   `InsectSprays`, `PlantGrowth`, `iris`, `ToothGrowth`, `mtcars`, `warpbreaks`,
+   `sleep`, `airquality`, `CO2`, `esoph`, `OrchardSprays`, `faithful`, `quakes` —
+   plus hand-built numerical edge cases. The statistic and both degrees of freedom
+   already matched R everywhere; what the comparison turned up was four ways a call
+   could come back wrong rather than loud, all now fixed and covered by
+   `t/oneway_test.R.scipy.t`. Statistic, degrees of freedom and p-value now agree
+   with R to 1.3e-12 relative error across all 37, and on 2000 randomised
+   comparisons against R — both branches, 2 to 8 groups, sizes 2 to 40,
+   deliberately heteroscedastic, data scales 1e-4 to 1e4 — the statistic and the
+   degrees of freedom agree to 1e-12 and the p-value to 8e-11, the worst of those
+   being a p-value of 2.4e-66.
+
+ - **Every p-value below about 1e-16 was returned as a flat 0.** `Pr(>F)` was
+     built as `1 - pf(F, df1, df2)`, and 1 minus something that close to 1 has no
+     bits left to carry the answer: `faithful` split at `waiting > 70` should give
+     `1.2099104551915e-76` under Welch and `5.50783574504386e-103` pooled, and
+     `oneway_test` reported `0` for both. Anything from about 1e-9 downward was
+     losing relative precision the same way, quietly — `ToothGrowth` by dose came
+     back as `9.99200722162641e-16` against R's `9.53272701169993e-16`, off by 4.6%
+     with nothing to indicate it. The p-value is now evaluated in the upper tail
+     directly, via the beta symmetry `1 - I_x(a, b) = I_{1-x}(b, a)`, so no
+     subtraction from 1 happens at any point, and the range down to the smallest
+     representable double is reported at full precision.
+ - **An `F` of `Inf` produced a p-value of `NaN` instead of 0.** When every group
+     is constant but their means differ, the within-group sum of squares is 0 and
+     `F` is legitimately infinite; R reports `p = 0`. `pf` formed
+     `df1*f/(df1*f + df2)`, which is `Inf/Inf` — a `NaN` that propagated straight
+     into `Pr(>F)`. `Inf` and `NaN` are now handled explicitly, matching R's
+     `p = 0` and `p = NaN` respectively.
+ - **A `NaN` Welch denominator df was reported as 1e300.** A group with zero
+     variance gets an infinite Welch weight, which makes R's `tmp` term `NaN` and
+     its denominator df `NaN` with it. `oneway_test` had a `(tmp > 0.0)` guard that
+     a `NaN` fails, so it substituted a magic `1e300` — a number that reads as a
+     real, very large degrees of freedom and would be believed as one. The guard is
+     gone; `Residuals`/`Df` and `Residuals`/`Mean Sq` are `NaN` there, as in R.
+ - **`formula` mode read `undef` and non-numeric response cells as 0.0.** The
+     hash and array-of-arrays shapes were already fixed to die on these (and pinned
+     by `t/oneway_test.bugs.t`), but the formula path has its own fill loop and was
+     missed, so
+
+         oneway_test({ y => [1, 2, 3, undef, 5, 6], lab => [qw(a a a b b b)] },
+             formula => 'y ~ lab');
+
+ -   silently tested group `b` as `(0, 5, 6)` — a mean of 3.67 instead of 5.5 — and
+     returned an `F` of 0.735 with no complaint. All three input shapes now enforce
+     the documented contract identically.
+
+ - Two places where `oneway_test` is the more accurate side and the reference is
+   not, now documented rather than treated as disagreements: the sums of squares
+   are accumulated two-pass, so on two groups near 1e8 `Residuals`/`Sum Sq` is
+   exactly `10` where R's QR-based `anova(aov())` gives `10.0000000521067`; and
+   where the exact between-group sum of squares is 0, `oneway_test` returns 0
+   rather than R's 1e-30-scale residue.
+
 0.281 2026-08-03 CDT
 
  - `median` (LikeR.xs) — the same answers in about an eighth of the time. On the

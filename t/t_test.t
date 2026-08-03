@@ -409,21 +409,64 @@ dies_ok { t_test([1e10, 1e10, 1e10, 1e10 + 1e-5], [2e10, 2e10, 2e10]) }
 # degrades with the data's scale (it used to stop at an absolute 1e-8, which
 # is 1e-8 * std_err on the interval).
 #---------------------------------------------------------------------------
-# Reference values are R's qt(alpha/2, df, lower.tail = FALSE), NOT R's
-# t.test().  t.test() asks for qt(1 - alpha/2, df): representing a 5e-9 tail as
-# the double 1 - 5e-9 costs eight significant figures of it, and for df = 1 the
-# quantile's relative error tracks the tail's exactly, so R's own interval here
-# is off by 0.7 in the eighth digit.  Working in the upper tail throughout
-# avoids that, so these agree with qt(lower.tail = FALSE) to 15 digits.
-#   R: qt(5e-9, 1, lower.tail=FALSE) -> 63661976.916872032
-cmp_t( 'conf_level=0.99999999, df=1', t_test([1, 3], conf_level => 0.99999999), {
-	t => 2, df => 1, p => 0.295167235300866,
-	conf_int => [-63661974.916872032, 63661978.916872032] }, 1e-12, 1e-6 );
+# How tightly these two can be pinned is set by the ARGUMENT, not by the
+# quantile.  conf_level arrives as a float, so the tail has to be recovered as
+# (1 - conf_level) / 2, and that subtraction has already thrown away most of the
+# tail it is trying to represent: the nearest *double* to 0.99999999 puts the
+# tail at 5.0000000251e-9 rather than 5e-9, a relative error of 5.0e-9, and for
+# conf_level = 0.9999999999 the error is 8.3e-8.  Since qt(p, 1) ~ 1/(pi * p),
+# the quantile inherits that relative error exactly -- there is no way to get it
+# back, because the information was gone before t_test() was called.
+#
+# That makes the answer depend on the build's NV, and the perls here bracket it:
+#
+#   perl 5.44.0 ($Config{nvtype} eq 'double')      qt -> 63661976.9168721
+#   perl 5.12.5 ($Config{nvtype} eq 'long double') qt -> 63661977.2367910
+#   the true qt(5e-9, 1, lower.tail = FALSE)             63661977.2367581
+#
+# The long-double build represents 0.99999999 to 19 digits, recovers the tail
+# correctly and lands 5e-13 from the truth; the double build is 5.0e-9 out, which
+# is exactly its tail's error.  Both are right for the precision they were
+# handed, so pinning either one to 15 digits pins an artifact of the local NV.
+# The reference below is therefore R's quantile at the tail actually intended,
+# compared RELATIVELY with room for the representation error.
+#   R: qt(5e-9,  1, lower.tail = FALSE) -> 63661977.236758128
+#   R: qt(5e-11, 1, lower.tail = FALSE) -> 6366197723.6758127
+{
+	# relative comparison; $tol has to exceed the tail's own representation error
+	my $rel_ci_ok = sub {
+		my ($got, $want, $lbl, $tol) = @_;
+		my $err = abs($got - $want) / abs($want);
+		return pass("$lbl (rel err $err <= $tol)") if $err <= $tol;
+		fail($lbl);
+		diag("         got: $got\n    expected: $want\n     rel err: $err");
+	};
 
-#   R: qt(5e-11, 1, lower.tail=FALSE) -> 6366197196.9342957
-cmp_t( 'conf_level=0.9999999999, df=1', t_test([1, 3], conf_level => 0.9999999999), {
-	t => 2, df => 1, p => 0.295167235300866,
-	conf_int => [-6366197194.9342957, 6366197198.9342957] }, 1e-12, 1e-4 );
+	foreach my $c (
+		{ conf_level => 0.99999999,   qt => 63661977.236758128,  tol => 2e-8  },
+		{ conf_level => 0.9999999999, qt => 6366197723.6758127,  tol => 2e-7  },
+	) {
+		my $lbl = "conf_level=$c->{conf_level}, df=1";
+		my $r   = t_test([1, 3], conf_level => $c->{conf_level});
+		is_approx( $r->{statistic}, 2, "$lbl: statistic", 1e-12 );
+		is_approx( $r->{df},        1, "$lbl: df",        1e-12 );
+		is_approx( $r->{p_value},   0.295167235300866, "$lbl: p_value", 1e-12 );
+		# mean is 2 and std_err is 1 for [1, 3], so the bounds are 2 -/+ qt
+		$rel_ci_ok->($r->{conf_int}[0], 2 - $c->{qt}, "$lbl: conf_int[0]", $c->{tol});
+		$rel_ci_ok->($r->{conf_int}[1], 2 + $c->{qt}, "$lbl: conf_int[1]", $c->{tol});
+	}
+
+	# The point of the two cases: the quantile must not saturate. A 100x smaller
+	# tail is a ~100x wider interval, and the old 1e6 ceiling returned the SAME
+	# interval for both, i.e. a ratio of 1. The two intervals carry their own
+	# tails' representation errors (5.0e-9 and 8.3e-8), so the ratio is 100 to
+	# about 8e-6 on a double NV and to 2e-8 on a long double one; 1e-3 covers
+	# both and still rejects saturation by five orders of magnitude.
+	my $narrow = t_test([1, 3], conf_level => 0.99999999);
+	my $wide   = t_test([1, 3], conf_level => 0.9999999999);
+	my $ratio  = ($wide->{conf_int}[1] - 2) / ($narrow->{conf_int}[1] - 2);
+	is_approx( $ratio, 100, 'a 100x smaller tail widens the interval 100x', 1e-3 );
+}
 
 # the interval must be accurate RELATIVE to the data, at every scale.
 # R: t.test((1:10)*s) -> (3.3341494103318308*s, 7.6658505896681692*s)

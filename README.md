@@ -421,6 +421,18 @@ reference); numeric columns and `I(x^2)` enter as single regressors. It is
 robust against rank deficiency: collinear terms gracefully receive 0 degrees
 of freedom and 0 sum of squares, matching R's behavior.
 
+Given two or more formulas, `anova` compares nested models instead and returns
+an **array ref** of rows, one per model in the order supplied — R's
+`anova(m1, m2, ...)`. Each row carries `Res.Df`, `RSS` and `formula`; every row
+after the first adds `Df`, `Sum of Sq`, `F` and `Pr(>F)`:
+
+    my $tab = anova($data, 'y ~ x1', 'y ~ x1 + x2');
+    printf "adding x2: F = %.4g, p = %.4g\n", $tab->[1]{F}, $tab->[1]{'Pr(>F)'};
+
+Both forms evaluate `Pr(>F)` in the upper tail of the F distribution rather
+than as `1 - pf(F, df1, df2)`; see
+[F and z tail p-values](#f-and-z-tail-p-values).
+
 ### Input Parameters
 | Parameter | Type | Default | Description | Example |
 | --- | --- | --- | --- | --- |
@@ -687,6 +699,10 @@ You can also perform Two-Way ANOVA with categorical interactions using the `*` o
     my $res_2way = aov($data_2way, 'len ~ supp * dose');
 
 It is robust against rank deficiency; collinear terms will gracefully receive 0 degrees of freedom and 0 sum of squares, matching R's behavior.
+
+`Pr(>F)` is evaluated in the upper tail of the F distribution rather than as
+`1 - pf(F, df1, df2)`, so a highly significant term reports its actual p-value
+instead of a flat `0`; see [F and z tail p-values](#f-and-z-tail-p-values).
 
 ### Input Parameters
 
@@ -1777,6 +1793,21 @@ If you provide an array of arrays (a matrix), `cor` will compute the correlation
 
 `cor_test` safely handles `undef` (or `NA`) values seamlessly by computing over pairwise complete observations. 
 
+For the `spearman` and `kendall` methods, `cor_test` falls back to a
+large-sample normal approximation when *n* is large or the data contain ties
+(and always when you pass `exact => 0`). That approximation's `p.value` is
+evaluated on the tail it belongs to, so a strong rank correlation reports its
+actual p-value instead of a flat `0`; see
+[F and z tail p-values](#f-and-z-tail-p-values). Checked against R's
+`cor.test(..., exact = FALSE)` over 54 Spearman and Kendall cases spanning
+*n* = 60 to 500 and all three alternatives: `estimate` agrees to `3e-15`,
+Kendall's `statistic` to `2e-15`, and `p.value` to `1.7e-12` — the worst of
+those at a p-value of `2.2e-297`.
+
+Note that `statistic` is the z of the approximation, whereas R reports
+Spearman's *S*; the two are different quantities, so compare `estimate` and
+`p.value` rather than `statistic` when checking against R for that method.
+
 ## cov
 
     cov($array1, $array2, 'pearson')
@@ -2562,6 +2593,16 @@ For every non-gaussian family, `glm` also returns the exponentiated coefficients
     my $nb = glm(formula => 'cases ~ age + sex', data => \%d, family => 'negbin');
     printf "IRR(age) = %.2f (%.2f–%.2f)\n",
         $nb->{exp}{age}{estimate}, $nb->{exp}{age}{'conf.low'}, $nb->{exp}{age}{'conf.high'};
+
+For the families that report a Wald `z` (everything but `gaussian`),
+`Pr(>|z|)` is computed as `2 * pnorm(-|z|)` rather than
+`2 * (1 - pnorm(|z|))`, so a strong effect reports its actual p-value instead
+of a flat `0`; see [F and z tail p-values](#f-and-z-tail-p-values). The
+`gaussian` family reports `Pr(>|t|)` from a direct two-tail probability and was
+never affected. Note that the `z` itself comes from this module's IRLS fit and
+can differ from R's in the 6th to 8th significant digit, which a p-value far
+out in the tail amplifies — at `|z| = 37` a 1.5e-5 difference in `z` moves the
+p-value by about 2%.
 
 ### Input Parameters
 
@@ -3407,6 +3448,14 @@ the dot operator also works:
 
     $lm = lm(formula => 'y ~ .', data => $dot_data);
 
+The overall model F test is returned as `fstatistic` (an array ref of `F`,
+numerator df, denominator df) and `f.pvalue`. `f.pvalue` is evaluated in the
+upper tail of the F distribution rather than as `1 - pf(F, df1, df2)`, so a
+strongly significant model reports its actual p-value instead of a flat `0`;
+see [F and z tail p-values](#f-and-z-tail-p-values). The per-coefficient
+`Pr(>|t|)` values were already computed as a direct two-tail probability and
+are unaffected.
+
 ## logrank_test
 
 The log-rank (Mantel–Cox) test: do the survival curves of two or more groups
@@ -3766,7 +3815,16 @@ usually fractional. Pass `var_equal => 1` for the classic equal-variance form.
 Every observation must be **defined and numeric**; an `undef` or non-numeric
 cell makes the call `die` with the offending group and position. This matches
 the rest of `Stats::LikeR` (`mean`, `sum`, `cor`, … all die on `undef`) and
-prevents missing values from being silently treated as `0`.
+prevents missing values from being silently treated as `0`. All three input
+shapes enforce this, `formula` included:
+
+    # dies: "formula: response observation 3 (group 'b') is undefined or non-numeric"
+    oneway_test({ y => [1, 2, 3, undef, 5, 6], lab => [qw(a a a b b b)] },
+        formula => 'y ~ lab');
+
+Note that this differs from R, which drops incomplete cases via `na.action`
+rather than complaining. If you want R's behaviour, filter the missing values
+out yourself first (see `dropna`).
 
 Each group needs at least two observations, and you need at least two groups.
 
@@ -3795,7 +3853,7 @@ A hash reference with three top-level keys:
             "Sum Sq"  => 61.6533333333333,
             "Mean Sq" => 61.6533333333333,
             "F value" => 177.504798464491,
-            "Pr(>F)"  => 1.31343255160843e-07,
+            "Pr(>F)"  => 1.31343255150313e-07,
         },
         Residuals => {
             Df        => 9.81767348326473,   # fractional: Welch correction
@@ -3840,6 +3898,55 @@ the factor's *name* becomes the top-level key:
 ### Classic equal-variance form
 
     my $res = oneway_test(\%groups, var_equal => 1);   # or 'var.equal' => 1
+
+### Accuracy
+
+`oneway_test` is cross-validated against R's `stats::oneway.test` (both
+branches), R's `anova(aov())` (the `Sum Sq` / `Mean Sq` columns),
+`statsmodels.stats.oneway.anova_oneway(use_var="unequal")` and
+`scipy.stats.f_oneway`. Across 37 data sets — R's `chickwts`, `InsectSprays`,
+`PlantGrowth`, `iris`, `ToothGrowth`, `mtcars`, `warpbreaks`, `sleep`,
+`airquality`, `CO2`, `esoph`, `OrchardSprays`, `faithful` and `quakes`, plus
+numerical edge cases — the statistic, both degrees of freedom and the p-value
+agree with R to within `1.3e-12` relative error. On 2000 randomised comparisons
+against R — both branches, 2 to 8 groups, group sizes 2 to 40, deliberately
+heteroscedastic (per-group standard deviations spanning four orders of
+magnitude) and data scales spanning 1e-4 to 1e4 — the statistic and the degrees
+of freedom agree to `1e-12` and the p-value to `8e-11`, the worst of those being
+a p-value of `2.4e-66`.
+
+Two places where the agreement takes some care:
+
+- **Tail p-values.** `Pr(>F)` is evaluated in the upper tail directly, using
+  the beta symmetry `1 - I_x(a, b) = I_{1-x}(b, a)`, rather than as
+  `1 - pf(F, df1, df2)`. The naive form has no resolution below the ulp of
+  `1.0`, so it collapses every small p-value to a flat `0` and loses relative
+  precision from about `1e-9` downward. `faithful` split at `waiting > 70`
+  gives `1.2099104551915e-76` (Welch) and `5.50783574504386e-103` (pooled),
+  matching R's `pf(F, df1, df2, lower.tail = FALSE)`.
+- **Sums of squares.** These are accumulated with a two-pass mean-then-deviation
+  scheme, which is more accurate than R's QR-based `aov` on badly scaled data:
+  for two groups near `1e8`, `Residuals`/`Sum Sq` comes out at exactly `10`
+  where `anova(aov())` reports `10.0000000521067`.
+
+### Degenerate variances
+
+A group with **zero variance** gives it an infinite Welch weight
+(`w_i = n_i / 0`), and the test degenerates. `oneway_test` reproduces what R
+does rather than papering over it:
+
+| Situation | Welch (default) | `var_equal => 1` |
+|-----------|-----------------|-------------------|
+| One or more groups constant, others not | `F`, `Residuals`/`Df`, `Residuals`/`Mean Sq` and `Pr(>F)` are all `NaN`; the two `Sum Sq` entries stay finite | ordinary result (`Residuals`/`Sum Sq` is unaffected by the constant group) |
+| Every group constant, means differ | `NaN` | `F` is `Inf`, `Pr(>F)` is `0` |
+| Every observation identical | `NaN` | `F` and `Pr(>F)` are `NaN` (a genuine `0/0`) |
+
+    # one constant group: Welch has nothing to work with, exactly as in R
+    my $r = oneway_test({ a => [5, 5, 5, 5], b => [1, 2, 3, 4] });
+    # $r->{Group}{'F value'}, $r->{Residuals}{Df}, $r->{Group}{'Pr(>F)'} are all NaN
+
+Test for these with `$x != $x` (the standard `NaN` idiom) rather than assuming
+a finite number came back.
 
 ### Notes
 
@@ -5085,8 +5192,36 @@ the two groups compared can be specified, though not necessarily, as `x` and `y`
 | `mu` | Float | 0.0 | The true value of the mean (or difference in means) for the null hypothesis. Shifts `statistic` and `p_value`; `conf_int` is centred on the estimate and does not move. |
 | `paired` | Boolean | `FALSE` | If true, performs a paired t-test. `x` and `y` must be the same length. |
 | `var_equal` | Boolean | `FALSE` | If true, assumes equal variances (standard two-sample). If false, performs Welch's t-test with unequal variances. |
-| `conf_level` | Float | 0.95 | Confidence level for the returned confidence interval. Must be strictly between 0 and 1 (R also accepts the degenerate 0 and 1). |
+| `conf_level` | Float | 0.95 | Confidence level for the returned confidence interval. Must be strictly between 0 and 1 (R also accepts the degenerate 0 and 1). See [Extreme `conf_level`](#extreme-conf_level) for the precision limit past about `0.9999`. |
 | `alternative` | String | `"two.sided"` | Direction of the alternative hypothesis: `"two.sided"`, `"less"`, or `"greater"`. `"two-sided"` and `"two_sided"` are accepted as `scipy`'s spelling of the same thing. Anything else is a fatal error — an unrecognised value must not quietly become a two-sided test. |
+
+### Extreme `conf_level`
+
+`conf_int` is exact to the last few digits at ordinary confidence levels, and the
+t quantile behind it neither saturates nor loses accuracy as the data's scale
+grows. Past about `conf_level => 0.9999`, though, the interval's accuracy is
+capped by the *argument*, not by the quantile — and no implementation can do
+better, R's included.
+
+The reason is that `conf_level` arrives as a float, so the tail has to be
+recovered as `(1 - conf_level) / 2`, and that subtraction discards most of the
+tail it is trying to express. The nearest double to `0.99999999` puts the tail at
+`5.0000000251e-9` rather than `5e-9` — a relative error of `5.0e-9` — and for
+`0.9999999999` the error is `8.3e-8`. Since `qt(p, 1) ~ 1/(pi * p)`, the
+quantile, and therefore each interval bound, inherits that relative error
+exactly.
+
+One consequence worth knowing: the answer depends on your perl's `nvtype`. A
+`long double` build (`perl -V:nvtype`) represents `0.99999999` to 19 digits and
+so recovers the tail correctly, while an ordinary `double` build cannot:
+
+    # t_test([1, 3], conf_level => 0.99999999), upper bound minus the mean
+    #   nvtype double        63661976.9168721   (5.0e-9 low)
+    #   nvtype long double   63661977.2367910   (5.2e-13 low)
+    #   qt(5e-9, 1, lower.tail = FALSE) in R  = 63661977.2367581
+
+If you need a tail that small exactly, compute it yourself and work from the
+quantile rather than passing a `conf_level` that cannot hold it.
 
 ### Missing values
 
@@ -5644,6 +5779,56 @@ raw values (no cell number formats), matching the round-trip behaviour of
 | `xlsx.freeze.rows` | `0` (none) | Excel | number of leading rows to freeze in place (freeze panes), e.g. `1` to pin the header row |
 | `xlsx.freeze.cols` | `0` (none) | Excel | number of leading columns to freeze in place (freeze panes) |
 
+# Numerical accuracy
+
+## F and z tail p-values
+
+A p-value is an upper-tail probability, and the obvious way to get one from a
+CDF — subtract it from 1 — throws the answer away exactly when the answer
+matters most. `1 - pf(F, df1, df2)` cannot represent anything below the ulp of
+`1.0`, about `2.2e-16`, so every p-value past that point comes back as a flat
+`0`, and relative precision is already eroding from roughly `1e-9` down. The
+same applies to `2 * (1 - pnorm(|z|))` for a Wald z.
+
+Every F and z p-value in `Stats::LikeR` is therefore evaluated in the tail
+itself:
+
+- **F tests** (`oneway_test`, `aov`, `anova` in both its forms, and `lm`'s
+  `f.pvalue`) use the regularized-incomplete-beta symmetry
+  `1 - I_x(a, b) = I_{1-x}(b, a)`. With `x = df1·F / (df1·F + df2)`, the
+  complement `1 - x` is just `df2 / (df1·F + df2)`, which is formed without any
+  subtraction, so the tail keeps full relative precision.
+- **Normal / z tails** (`glm`'s `Pr(>|z|)`, and `cor_test`'s large-sample
+  approximation for the `spearman` and `kendall` methods) use
+  `2 * pnorm(-|z|)` two-sided and `pnorm(-z)` for the upper one-sided
+  alternative. `pnorm` is `0.5 * erfc(-x/√2)`, and `erfc` is accurate deep into
+  its own tail, so evaluating at `-|z|` rather than subtracting at `+|z|` costs
+  nothing and loses nothing. R writes it the same way.
+- **Two-tailed t** (`t_test`, `cor_test`'s Pearson path, and the `Pr(>|t|)`
+  columns of `lm` and `glm`) was always computed as a direct two-tail
+  incomplete-beta probability, so it never had the problem. So were the exact
+  permutation p-values `cor_test` uses for small *n*.
+
+Three functions outside this set still form a normal-tail p-value
+subtractively, so a p-value from them below about `1e-16` reads as `0`:
+`wilcox_test` (the `greater` alternative of the normal approximation, in both
+the two-sample and the one-sample/paired branch — its `two.sided` and `less`
+alternatives are already computed on the correct side), `prop_test` (the
+`greater` alternative; `two.sided` goes through the chi-squared path instead)
+and `dunn_test` (the two-sided per-comparison p-values that `p_adjust` then
+corrects).
+
+The practical difference: `lm` on a near-noiseless fit reports
+`f.pvalue = 7.0165242049e-220` where the subtractive form returned `0`, and
+`anova`'s sequential table reports `1.1543232446e-171` for the same reason.
+Where the true value underflows a double even when computed correctly — a Wald
+z beyond about 38.5 — the result is `0`, and R and SciPy return `0` there too.
+
+Verified against R 4.6.1 (`oneway.test`, `anova(aov())`, `anova(lm())`,
+`summary(lm())$fstatistic`, `summary(glm())$coefficients`) and against SciPy's
+`f.sf` / `norm.sf` and statsmodels' `anova_oneway`; see
+`t/model_pvalue_tails.t` and `t/oneway_test.R.scipy.t`.
+
 # Changes
 
 ## 0.282 2026-08-03 CDT
@@ -5781,6 +5966,66 @@ above, so it rejected every tied array as undefined instead of computing the
 answer. `mean`, `sd`, `var`, `sum`, `min` and `max` still reject tied arrays.
 They have no `AvARRAY` fast path to guard, so they croak rather than crash, and
 the same one-line fix would make each of them work.
+
+### oneway_test
+
+`oneway_test` was cross-checked case by case against R's `stats::oneway.test`
+(both branches), R's `anova(aov())` for the `Sum Sq` / `Mean Sq` columns,
+`statsmodels.stats.oneway.anova_oneway(use_var="unequal")` and
+`scipy.stats.f_oneway`. The 37 data sets are R's own built-ins — `chickwts`,
+`InsectSprays`, `PlantGrowth`, `iris`, `ToothGrowth`, `mtcars`, `warpbreaks`,
+`sleep`, `airquality`, `CO2`, `esoph`, `OrchardSprays`, `faithful`, `quakes` —
+plus hand-built numerical edge cases. The statistic and both degrees of freedom
+already matched R everywhere; what the comparison turned up was four ways a call
+could come back wrong rather than loud, all now fixed and covered by
+`t/oneway_test.R.scipy.t`. Statistic, degrees of freedom and p-value now agree
+with R to 1.3e-12 relative error across all 37, and on 2000 randomised
+comparisons against R — both branches, 2 to 8 groups, sizes 2 to 40,
+deliberately heteroscedastic, data scales 1e-4 to 1e4 — the statistic and the
+degrees of freedom agree to 1e-12 and the p-value to 8e-11, the worst of those
+being a p-value of 2.4e-66.
+
+- **Every p-value below about 1e-16 was returned as a flat 0.** `Pr(>F)` was
+  built as `1 - pf(F, df1, df2)`, and 1 minus something that close to 1 has no
+  bits left to carry the answer: `faithful` split at `waiting > 70` should give
+  `1.2099104551915e-76` under Welch and `5.50783574504386e-103` pooled, and
+  `oneway_test` reported `0` for both. Anything from about 1e-9 downward was
+  losing relative precision the same way, quietly — `ToothGrowth` by dose came
+  back as `9.99200722162641e-16` against R's `9.53272701169993e-16`, off by 4.6%
+  with nothing to indicate it. The p-value is now evaluated in the upper tail
+  directly, via the beta symmetry `1 - I_x(a, b) = I_{1-x}(b, a)`, so no
+  subtraction from 1 happens at any point, and the range down to the smallest
+  representable double is reported at full precision.
+- **An `F` of `Inf` produced a p-value of `NaN` instead of 0.** When every group
+  is constant but their means differ, the within-group sum of squares is 0 and
+  `F` is legitimately infinite; R reports `p = 0`. `pf` formed
+  `df1*f/(df1*f + df2)`, which is `Inf/Inf` — a `NaN` that propagated straight
+  into `Pr(>F)`. `Inf` and `NaN` are now handled explicitly, matching R's
+  `p = 0` and `p = NaN` respectively.
+- **A `NaN` Welch denominator df was reported as 1e300.** A group with zero
+  variance gets an infinite Welch weight, which makes R's `tmp` term `NaN` and
+  its denominator df `NaN` with it. `oneway_test` had a `(tmp > 0.0)` guard that
+  a `NaN` fails, so it substituted a magic `1e300` — a number that reads as a
+  real, very large degrees of freedom and would be believed as one. The guard is
+  gone; `Residuals`/`Df` and `Residuals`/`Mean Sq` are `NaN` there, as in R.
+- **`formula` mode read `undef` and non-numeric response cells as 0.0.** The
+  hash and array-of-arrays shapes were already fixed to die on these (and pinned
+  by `t/oneway_test.bugs.t`), but the formula path has its own fill loop and was
+  missed, so
+
+        oneway_test({ y => [1, 2, 3, undef, 5, 6], lab => [qw(a a a b b b)] },
+            formula => 'y ~ lab');
+
+  silently tested group `b` as `(0, 5, 6)` — a mean of 3.67 instead of 5.5 — and
+  returned an `F` of 0.735 with no complaint. All three input shapes now enforce
+  the documented contract identically.
+
+Two places where `oneway_test` is the more accurate side and the reference is
+not, now documented rather than treated as disagreements: the sums of squares
+are accumulated two-pass, so on two groups near 1e8 `Residuals`/`Sum Sq` is
+exactly `10` where R's QR-based `anova(aov())` gives `10.0000000521067`; and
+where the exact between-group sum of squares is 0, `oneway_test` returns 0
+rather than R's 1e-30-scale residue.
 
 ## 0.281 2026-08-03 CDT
 
