@@ -1039,92 +1039,6 @@ int compare_doubles(const void *restrict a, const void *restrict b) {
 	NV db = *(const NV*restrict)b;
 	return (da > db) - (da < db);
 }
-
-/* --- order statistics ------------------------------------------------------
- * A median is the middle one or two values, not a sorted array, so median()
- * selects those instead of ordering everything: quickselect touches ~2n
- * elements on average where qsort spends n log n comparisons, every one of
- * them an indirect call through a function pointer the compiler cannot see
- * into, let alone inline.
- *
- * The refinements are the usual ones.  A median-of-three pivot keeps the data
- * people actually have -- already sorted, reverse sorted, mostly duplicates --
- * off the quadratic path; a small range finishes with an insertion sort; and a
- * depth limit hands the rest to heapsort, so an input crafted to defeat the
- * pivot choice degrades to O(n log n) rather than O(n^2).  That combination is
- * introselect, the same shape numpy's partition uses.
- *
- * NaN makes every comparison false, which stops each scan where it stands
- * instead of running it off the end of the array, so a NaN in the data cannot
- * push the partition out of bounds.  Which value comes back is as undefined as
- * it was when this went through qsort.
- */
-#define NV_SEL_ISORT 20		/* ranges this small finish with an insertion sort */
-
-static void nv_swap(NV *x, NV *y) { NV t = *x; *x = *y; *y = t; }
-
-static void nv_isort(NV *restrict a, size_t n) {
-	for (size_t i = 1; i < n; i++) {
-		NV v = a[i];
-		size_t j = i;
-		while (j > 0 && a[j - 1] > v) { a[j] = a[j - 1]; j--; }
-		a[j] = v;
-	}
-}
-
-/* sift a[root] down through the heap held in a[0..n-1] */
-static void nv_sift(NV *restrict a, size_t root, size_t n) {
-	NV v = a[root];
-	size_t child;
-	while ((child = 2 * root + 1) < n) {
-		if (child + 1 < n && a[child] < a[child + 1]) child++;
-		if (!(v < a[child])) break;
-		a[root] = a[child];
-		root = child;
-	}
-	a[root] = v;
-}
-
-static void nv_heapsort(NV *restrict a, size_t n) {
-	if (n < 2) return;
-	for (size_t i = n / 2; i-- > 0; ) nv_sift(a, i, n);
-	for (size_t end = n - 1; end > 0; end--) {
-		nv_swap(&a[0], &a[end]);
-		nv_sift(a, 0, end);
-	}
-}
-
-/* Leave the k-th smallest of a[0..n-1] at a[k], everything ahead of it no
- * larger and everything after it no smaller.  a[] is reordered in place.     */
-static void nv_select(NV *restrict a, size_t n, size_t k) {
-	if (n < 2) return;
-	size_t lo = 0, hi = n - 1;
-	unsigned depth = 0;
-	for (size_t t = n; t > 1; t >>= 1) depth += 2;	/* 2*floor(log2 n) */
-
-	while (hi - lo >= NV_SEL_ISORT) {
-		if (depth-- == 0) { nv_heapsort(a + lo, hi - lo + 1); return; }
-
-		/* median of three, left in place: a[lo] <= pivot <= a[hi], so both
-		 * ends double as sentinels that stop the scans below */
-		size_t mid = lo + (hi - lo) / 2;
-		if (a[mid] < a[lo])  nv_swap(&a[mid], &a[lo]);
-		if (a[hi]  < a[lo])  nv_swap(&a[hi],  &a[lo]);
-		if (a[hi]  < a[mid]) nv_swap(&a[hi],  &a[mid]);
-		const NV pivot = a[mid];
-
-		size_t i = lo, j = hi;
-		for (;;) {
-			do { i++; } while (a[i] < pivot);
-			do { j--; } while (a[j] > pivot);
-			if (i >= j) break;
-			nv_swap(&a[i], &a[j]);
-		}
-		/* a[lo..j] <= pivot <= a[j+1..hi]; keep only the side holding k */
-		if (k <= j) hi = j; else lo = j + 1;
-	}
-	nv_isort(a + lo, hi - lo + 1);
-}
 /* Helper to calculate the number of bins using Sturges' formula: log2(n) + 1 */
 static size_t calculate_sturges_bins(size_t n) {
 	if (n == 0) return 1;
@@ -14381,82 +14295,63 @@ NV median(...)
 	  size_t total_count = 0, k = 0;
 	  NV* restrict nums;
 	  NV median_val = 0.0;
-	  /* Small samples -- a per-group median under agg()/group_by(), say --
-	   * are the common case by call count, and for those the malloc/free pair
-	   * cost more than the arithmetic.  They borrow the C stack instead.     */
-	  NV stackbuf[256];
 	CODE:
-	  /* How many values there are, from the array lengths alone.  Every
-	   * element has to be defined (an undef croaks below, as it always has),
-	   * so this bound is exact and the old counting pass over every SV -- a
-	   * second walk of the whole input before any arithmetic -- is gone.     */
-	  for (size_t i = 0; i < items; i++) {
-		   SV* restrict arg = ST(i);
-		   if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV)
-			   total_count += (size_t)(av_len((AV*)SvRV(arg)) + 1);
-		   else
-			   total_count++;
-	  }
-	  if (total_count == 0) croak("median needs >= 1 element");
-
-	  nums = (total_count <= sizeof(stackbuf) / sizeof(stackbuf[0])) ? stackbuf : NULL;
-	  if (!nums) Newx(nums, total_count, NV);
-
-	  /* Populate the C array — free the buffer before any croak */
+	  // Pass 1: Count valid elements — die immediately on any undef
 	  for (size_t i = 0; i < items; i++) {
 		   SV* restrict arg = ST(i);
 		   if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
 			   AV* restrict av = (AV*)SvRV(arg);
 			   size_t len = av_len(av) + 1;
-			   if (SvRMAGICAL((SV*)av)) {	/* tied: only av_fetch sees the values */
-				   for (size_t j = 0; j < len; j++) {
-					   SV** restrict tv = av_fetch(av, j, 0);
-					   if (tv && SvOK(*tv)) {
-						   nums[k++] = SvNV(*tv);
-					   } else {
-						   if (nums != stackbuf) Safefree(nums);
-						   /* UVuf, not %zu: croak() runs perl's own formatter, which does not
-						    * understand the C99 z modifier and prints it literally on older
-						    * perls (5.10 and 5.12 both do) */
-						   croak("median: undefined value at array ref index %" UVuf " (argument %" UVuf ")", (UV)j, (UV)i);
-					   }
+			   for (size_t j = 0; j < len; j++) {
+				   SV** restrict tv = av_fetch(av, j, 0);
+				   if (tv && SvOK(*tv)) {
+					   total_count++;
+				   } else {
+					   croak("median: undefined value at array ref index %zu (argument %zu)", j, i);
 				   }
-			   } else {
-				   /* AvARRAY, not av_fetch: the length is known and the cells
-				    * are right there, so the bounds check and the call per
-				    * element buy nothing */
-				   SV** restrict src = AvARRAY(av);
-				   for (size_t j = 0; j < len; j++) {
-					   SV* restrict tv = src[j];
-					   if (tv && SvOK(tv)) {
-						   nums[k++] = SvNV(tv);
-					   } else {
-						   if (nums != stackbuf) Safefree(nums);
-						   croak("median: undefined value at array ref index %" UVuf " (argument %" UVuf ")", (UV)j, (UV)i);
-					   }
+			   }
+		   } else if (SvOK(arg)) {
+			   total_count++;
+		   } else {
+			   croak("median: undefined value at argument index %zu", i);
+		   }
+	  }
+	  if (total_count == 0) croak("median needs >= 1 element");
+
+	  /* Allocate C array now that we know the exact size */
+	  Newx(nums, total_count, NV);
+
+	  /* Pass 2: Populate the C array — Safefree before any croak */
+	  for (size_t i = 0; i < items; i++) {
+		   SV* restrict arg = ST(i);
+		   if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
+			   AV* restrict av = (AV*)SvRV(arg);
+			   size_t len = av_len(av) + 1;
+			   for (size_t j = 0; j < len; j++) {
+				   SV** restrict tv = av_fetch(av, j, 0);
+				   if (tv && SvOK(*tv)) {
+					   nums[k++] = SvNV(*tv);
+				   } else {
+					   Safefree(nums);
+					   croak("median: undefined value at array ref index %zu (argument %zu)", j, i);
 				   }
 			   }
 		   } else if (SvOK(arg)) {
 			   nums[k++] = SvNV(arg);
 		   } else {
-			   if (nums != stackbuf) Safefree(nums);
-			   croak("median: undefined value at argument index %" UVuf, (UV)i);
+			   Safefree(nums);
+			   croak("median: undefined value at argument index %zu", i);
 		   }
 	  }
-	  /* Select the middle value(s) rather than sorting all of them.  For an
-	   * even count the lower of the pair is the largest value left below the
-	   * upper one, which a scan of that side finds without a second select. */
-	  if (total_count & 1) {
-		   nv_select(nums, total_count, total_count / 2);
-		   median_val = nums[total_count / 2];
+	  /* Sort and calculate median */
+	  qsort(nums, total_count, sizeof(NV), compare_doubles);
+	  if (total_count % 2 == 0) {
+		   median_val = (nums[total_count / 2 - 1] + nums[total_count / 2]) / 2.0;
 	  } else {
-		   const size_t up = total_count / 2;
-		   nv_select(nums, total_count, up);
-		   NV lower = nums[0];
-		   for (size_t i = 1; i < up; i++) if (nums[i] > lower) lower = nums[i];
-		   median_val = (lower + nums[up]) / 2.0;
+		   median_val = nums[total_count / 2];
 	  }
-	  if (nums != stackbuf) Safefree(nums);
+	  Safefree(nums);
+	  nums = NULL;
 	  RETVAL = median_val;
 	OUTPUT:
 	  RETVAL

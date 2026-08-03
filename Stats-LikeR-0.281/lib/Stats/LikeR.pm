@@ -4981,7 +4981,20 @@ sub age_standardize {
 }
 
 1;
-=encoding utf8
+
+__END__
+
+=pod
+
+=encoding UTF-8
+
+=head1 NAME
+
+Stats::LikeR - Get basic statistical functions, like in R, but with Perl using XS for performance
+
+=head1 VERSION
+
+version 0.281
 
 =head1 Synopsis
 
@@ -5157,11 +5170,7 @@ instead of C<count> if you already have stratum-specific rates.
 
 =head3 Input Parameters
 
-
-
-=begin html
-
-<table>
+=for html <table>
 <thead>
 <tr>
   <th>Parameter</th>
@@ -5217,17 +5226,9 @@ instead of C<count> if you already have stratum-specific rates.
 </tbody>
 </table>
 
-=end html
-
-
-
 =head3 Output variables
 
-
-
-=begin html
-
-<table>
+=for html <table>
 <thead>
 <tr>
   <th>Variable</th>
@@ -5275,10 +5276,6 @@ instead of C<count> if you already have stratum-specific rates.
 </tr>
 </tbody>
 </table>
-
-=end html
-
-
 
 =head2 agg
 
@@ -5354,11 +5351,7 @@ as the input frame.
 
 Named aggregators may be combined in any order per column:
 
-
-
-=begin html
-
-<table>
+=for html <table>
 <thead>
 <tr>
   <th>name</th>
@@ -5420,10 +5413,6 @@ Named aggregators may be combined in any order per column:
 </tr>
 </tbody>
 </table>
-
-=end html
-
-
 
 The numeric aggregators call the module's XS functions of the same name, so they
 inherit their precision. C<agg> filters undef itself before calling them, so they
@@ -5601,11 +5590,7 @@ of freedom and 0 sum of squares, matching R's behavior.
 
 =head3 Input Parameters
 
-
-
-=begin html
-
-<table>
+=for html <table>
 <thead>
 <tr>
   <th>Parameter</th>
@@ -5633,20 +5618,12 @@ of freedom and 0 sum of squares, matching R's behavior.
 </tbody>
 </table>
 
-=end html
-
-
-
 =head3 Output Variables
 
 A single C<HashRef>; keys are the parsed term names, so the structure varies
 with the formula.
 
-
-
-=begin html
-
-<table>
+=for html <table>
 <thead>
 <tr>
   <th>Parameter</th>
@@ -5670,10 +5647,6 @@ with the formula.
 </tr>
 </tbody>
 </table>
-
-=end html
-
-
 
 =head3 C<anova> vs C<aov> — what's the difference?
 
@@ -5729,11 +5702,7 @@ carrying both named columns.
 
 Everything after it is C<< name =E<gt> value >> pairs:
 
-
-
-=begin html
-
-<table>
+=for html <table>
 <thead>
 <tr>
   <th>Option</th>
@@ -5759,10 +5728,6 @@ Everything after it is C<< name =E<gt> value >> pairs:
 </tr>
 </tbody>
 </table>
-
-=end html
-
-
 
 C<var_name> and C<value_name> must differ.
 
@@ -5856,11 +5821,7 @@ Where C<aoh2hoa> I<transposes> rows into columns, C<aoh2hoh> I<indexes> rows by 
 
 =head3 Signature
 
-
-
-=begin html
-
-<table>
+=for html <table>
 <thead>
 <tr>
   <th>Argument</th>
@@ -5881,10 +5842,6 @@ Where C<aoh2hoa> I<transposes> rows into columns, C<aoh2hoh> I<indexes> rows by 
 </tr>
 </tbody>
 </table>
-
-=end html
-
-
 
 Returns a hashref. Each top-level key is a row's C<< $row-E<gt>{$key} >> value; each value is a shallow copy of that row.
 
@@ -5941,11 +5898,7 @@ B<Set membership and difference.> C<< exists $hoh-E<gt>{$k} >> gives a cheap pre
 
 =head3 Relationship to C<aoh2hoa>
 
-
-
-=begin html
-
-<table>
+=for html <table>
 <thead>
 <tr>
   <th>Function</th>
@@ -5969,10 +5922,6 @@ B<Set membership and difference.> C<< exists $hoh-E<gt>{$k} >> gives a cheap pre
 </tr>
 </tbody>
 </table>
-
-=end html
-
-
 
 Reach for C<aoh2hoa> when you want columns (vectors to feed a statistic or a plot); reach for C<aoh2hoh> when you want addressable rows keyed by a unique field.
 
@@ -6016,11 +5965,7 @@ It is robust against rank deficiency; collinear terms will gracefully receive 0 
 
 =head3 Input Parameters
 
-
-
-=begin html
-
-<table>
+=for html <table>
 <thead>
 <tr>
   <th>Parameter</th>
@@ -6048,19 +5993,11 @@ It is robust against rank deficiency; collinear terms will gracefully receive 0 
 </tbody>
 </table>
 
-=end html
-
-
-
 =head3 Output Variables
 
 The function returns a single C<HashRef> containing the evaluated statistical results. Because the keys map dynamically to the terms parsed from your formula, the structure will vary based on your inputs.
 
-
-
-=begin html
-
-<table>
+=for html <table>
 <thead>
 <tr>
   <th>Parameter</th>
@@ -6094,10 +6031,6 @@ The function returns a single C<HashRef> containing the evaluated statistical re
 </tr>
 </tbody>
 </table>
-
-=end html
-
-
 
 =head3 omitting formula
 
@@ -6638,11 +6571,7 @@ For 2x2 matrices, Yates' Continuity Correction is applied automatically.
 
 =head3 Accepted Inputs
 
-
-
-=begin html
-
-<table>
+=for html <table>
 <thead>
 <tr>
   <th>Input Type</th>
@@ -6674,19 +6603,11 @@ For 2x2 matrices, Yates' Continuity Correction is applied automatically.
 </tbody>
 </table>
 
-=end html
-
-
-
 =head3 Output Object Structure
 
 The function returns a single Hash Reference containing the following key-value pairs. The internal structure of C<expected> and C<observed> will always identically match the structure of your input.
 
-
-
-=begin html
-
-<table>
+=for html <table>
 <thead>
 <tr>
   <th>Key</th>
@@ -6732,10 +6653,6 @@ The function returns a single Hash Reference containing the following key-value 
 </tr>
 </tbody>
 </table>
-
-=end html
-
-
 
 =head3 Two-Dimensional Array
 
@@ -6938,11 +6855,7 @@ of the group variances and is the convention for covariate-balance tables.
 
 =head3 Output variables
 
-
-
-=begin html
-
-<table>
+=for html <table>
 <thead>
 <tr>
   <th>Variable</th>
@@ -6997,10 +6910,6 @@ of the group variances and is the convention for covariate-balance tables.
 </tbody>
 </table>
 
-=end html
-
-
-
 =head2 col2col
 
 Apply a B<two-column function> to every pair of columns in a table and collect
@@ -7031,11 +6940,7 @@ back every column compared against every other column.
  col2col( $data, $command, $cols, %options )
  col2col( $data, $command, \%options )      # options in place of $cols
 
-
-
-=begin html
-
-<table>
+=for html <table>
 <thead>
 <tr>
   <th>Position</th>
@@ -7066,10 +6971,6 @@ back every column compared against every other column.
 </tr>
 </tbody>
 </table>
-
-=end html
-
-
 
 ========================================================================
 
@@ -7166,11 +7067,7 @@ it to restrict columns at the same time; use the trailing form for that.)
 
 Real data has gaps. C<na> decides what the function sees.
 
-
-
-=begin html
-
-<table>
+=for html <table>
 <thead>
 <tr>
   <th>Value</th>
@@ -7196,10 +7093,6 @@ Real data has gaps. C<na> decides what the function sees.
 </tr>
 </tbody>
 </table>
-
-=end html
-
-
 
  # correlation: keep only complete pairs (the default)
  col2col(\%data, 'cor');
@@ -7530,11 +7423,7 @@ tables. Validated numerically against R.
 
 =head3 Output variables
 
-
-
-=begin html
-
-<table>
+=for html <table>
 <thead>
 <tr>
   <th>Variable</th>
@@ -7576,10 +7465,6 @@ tables. Validated numerically against R.
 </tr>
 </tbody>
 </table>
-
-=end html
-
-
 
 =head2 csort
 
@@ -7909,11 +7794,7 @@ value or group are dropped.
 
 =head3 Input Parameters
 
-
-
-=begin html
-
-<table>
+=for html <table>
 <thead>
 <tr>
   <th>Parameter</th>
@@ -7948,20 +7829,12 @@ value or group are dropped.
 </tbody>
 </table>
 
-=end html
-
-
-
 =head3 Output
 
 Returns an array reference with one hash per pairwise comparison (in sorted
 group order), each containing:
 
-
-
-=begin html
-
-<table>
+=for html <table>
 <thead>
 <tr>
   <th>Key</th>
@@ -8004,10 +7877,6 @@ group order), each containing:
 </tbody>
 </table>
 
-=end html
-
-
-
 =head2 epi_2x2
 
 The standard 2×2 effect measures — odds ratio, risk ratio, and risk difference,
@@ -8044,11 +7913,7 @@ labels or an existing L<C<aov>|/"aov"> result. Validated numerically against R.
 
 =head3 Output variables
 
-
-
-=begin html
-
-<table>
+=for html <table>
 <thead>
 <tr>
   <th>Variable</th>
@@ -8084,10 +7949,6 @@ labels or an existing L<C<aov>|/"aov"> result. Validated numerically against R.
 </tr>
 </tbody>
 </table>
-
-=end html
-
-
 
 =head2 ffill
 
@@ -8189,11 +8050,7 @@ Both C<filter> and C<col> are exported by default.
 
 =head3 Arguments
 
-
-
-=begin html
-
-<table>
+=for html <table>
 <thead>
 <tr>
   <th>Position</th>
@@ -8220,10 +8077,6 @@ Both C<filter> and C<col> are exported by default.
 </tbody>
 </table>
 
-=end html
-
-
-
 =head3 The C<col()> form
 
 C<col('name')> is a deferred reference to a column. It carries no data — only the column name — so it can be compared with a literal to build a predicate that C<filter> evaluates once per row.
@@ -8232,11 +8085,7 @@ C<col('name')> is a deferred reference to a column. It carries no data — only 
  filter($df, col('sex') eq 'f'); # keep rows where sex is 'f'
  filter($df, 18 <= col('age'));  # operands may be in either order
 
-
-
-=begin html
-
-<table>
+=for html <table>
 <thead>
 <tr>
   <th>Kind</th>
@@ -8257,10 +8106,6 @@ C<col('name')> is a deferred reference to a column. It carries no data — only 
 </tr>
 </tbody>
 </table>
-
-=end html
-
-
 
 Predicates compose with bitwise C<&> (and), C<|> (or), and C<!> (not):
 
@@ -8465,11 +8310,7 @@ Wilcoxon signed-rank tests with a multiple-comparison adjustment).
 
 =head3 Output variables
 
-
-
-=begin html
-
-<table>
+=for html <table>
 <thead>
 <tr>
   <th>Variable</th>
@@ -8511,10 +8352,6 @@ Wilcoxon signed-rank tests with a multiple-comparison adjustment).
 </tr>
 </tbody>
 </table>
-
-=end html
-
-
 
 =head2 get_union
 
@@ -8575,11 +8412,7 @@ For every non-gaussian family, C<glm> also returns the exponentiated coefficient
 
 =head3 Input Parameters
 
-
-
-=begin html
-
-<table>
+=for html <table>
 <thead>
 <tr>
   <th>Parameter</th>
@@ -8628,17 +8461,9 @@ For every non-gaussian family, C<glm> also returns the exponentiated coefficient
 </tbody>
 </table>
 
-=end html
-
-
-
 =head3 Output variables
 
-
-
-=begin html
-
-<table>
+=for html <table>
 <thead>
 <tr>
   <th>Variable</th>
@@ -8765,10 +8590,6 @@ For every non-gaussian family, C<glm> also returns the exponentiated coefficient
 </tbody>
 </table>
 
-=end html
-
-
-
 =head2 group_by
 
 Take a hash of arrays, hash of hashes, or array of hashes, and group a column by another column.
@@ -8847,11 +8668,7 @@ ask for a name, get the section of the manual that describes it.
 
 =head3 Arguments
 
-
-
-=begin html
-
-<table>
+=for html <table>
 <thead>
 <tr>
   <th>Form</th>
@@ -8877,10 +8694,6 @@ ask for a name, get the section of the manual that describes it.
 </tr>
 </tbody>
 </table>
-
-=end html
-
-
 
 C<h(bedroc)>, with no quotes and no sigil, cannot be made to work: every function
 here is exported, so Perl parses the bareword as a call to C<bedroc()> before C<h>
@@ -8941,11 +8754,7 @@ C<$h> — a hash ref whose values are plain scalars. Required.
 
 Everything after it is C<< name =E<gt> value >> pairs:
 
-
-
-=begin html
-
-<table>
+=for html <table>
 <thead>
 <tr>
   <th>Option</th>
@@ -8972,10 +8781,6 @@ Everything after it is C<< name =E<gt> value >> pairs:
 </tbody>
 </table>
 
-=end html
-
-
-
 C<var_name> and C<value_name> must differ. They are the same two option names
 L<C<melt>|/"melt"> uses, because they name the same two columns.
 
@@ -8984,11 +8789,7 @@ L<C<melt>|/"melt"> uses, because they name the same two columns.
 Hash iteration order is not reproducible between runs, so the rows are sorted
 by default rather than left to chance.
 
-
-
-=begin html
-
-<table>
+=for html <table>
 <thead>
 <tr>
   <th><code>sort</code></th>
@@ -9010,10 +8811,6 @@ by default rather than left to chance.
 </tr>
 </tbody>
 </table>
-
-=end html
-
-
 
 =head3 Returns
 
@@ -9168,11 +8965,7 @@ error).
 
 Options are passed as trailing C<< name =E<gt> value >> pairs.
 
-
-
-=begin html
-
-<table>
+=for html <table>
 <thead>
 <tr>
   <th>Option</th>
@@ -9193,10 +8986,6 @@ Options are passed as trailing C<< name =E<gt> value >> pairs.
 </tr>
 </tbody>
 </table>
-
-=end html
-
-
 
  # Ragged input with an explicit fill string:
  my %ragged = (
@@ -9261,11 +9050,7 @@ it was validated numerically.
 
 =head3 Input Parameters
 
-
-
-=begin html
-
-<table>
+=for html <table>
 <thead>
 <tr>
   <th>Parameter</th>
@@ -9300,17 +9085,9 @@ it was validated numerically.
 </tbody>
 </table>
 
-=end html
-
-
-
 =head3 Output variables
 
-
-
-=begin html
-
-<table>
+=for html <table>
 <thead>
 <tr>
   <th>Variable</th>
@@ -9353,10 +9130,6 @@ it was validated numerically.
 </tbody>
 </table>
 
-=end html
-
-
-
 =head2 interpolate
 
 Fill NA (undef) cells along the row axis, like C<pandas.DataFrame.interpolate>.
@@ -9383,11 +9156,7 @@ is never modified.
 
 =head3 Methods
 
-
-
-=begin html
-
-<table>
+=for html <table>
 <thead>
 <tr>
   <th><code>method</code></th>
@@ -9453,10 +9222,6 @@ is never modified.
 </tr>
 </tbody>
 </table>
-
-=end html
-
-
 
 =head3 How gaps and edges are filled
 
@@ -9905,11 +9670,7 @@ cross-tabulated over their sorted union of levels.
 
 =head3 Input Parameters
 
-
-
-=begin html
-
-<table>
+=for html <table>
 <thead>
 <tr>
   <th>Parameter</th>
@@ -9951,17 +9712,9 @@ cross-tabulated over their sorted union of levels.
 </tbody>
 </table>
 
-=end html
-
-
-
 =head3 Output variables
 
-
-
-=begin html
-
-<table>
+=for html <table>
 <thead>
 <tr>
   <th>Variable</th>
@@ -9997,10 +9750,6 @@ cross-tabulated over their sorted union of levels.
 </tr>
 </tbody>
 </table>
-
-=end html
-
-
 
 =head2 mean
 
@@ -10276,11 +10025,7 @@ usually fractional. Pass C<< var_equal =E<gt> 1 >> for the classic equal-varianc
 C<oneway_test> accepts your data in one of three shapes. In every case each
 I<group> is a vector of at least two numeric observations.
 
-
-
-=begin html
-
-<table>
+=for html <table>
 <thead>
 <tr>
   <th>Shape</th>
@@ -10307,17 +10052,9 @@ I<group> is a vector of at least two numeric observations.
 </tbody>
 </table>
 
-=end html
-
-
-
 =head3 Options
 
-
-
-=begin html
-
-<table>
+=for html <table>
 <thead>
 <tr>
   <th>Option</th>
@@ -10339,10 +10076,6 @@ I<group> is a vector of at least two numeric observations.
 </tbody>
 </table>
 
-=end html
-
-
-
 =head3 Data validation
 
 Every observation must be B<defined and numeric>; an C<undef> or non-numeric
@@ -10356,11 +10089,7 @@ Each group needs at least two observations, and you need at least two groups.
 
 A hash reference with three top-level keys:
 
-
-
-=begin html
-
-<table>
+=for html <table>
 <thead>
 <tr>
   <th>Key</th>
@@ -10382,10 +10111,6 @@ A hash reference with three top-level keys:
 </tr>
 </tbody>
 </table>
-
-=end html
-
-
 
 =head3 Examples
 
@@ -10625,11 +10350,7 @@ a generated duplicate column name.
 
 It also allows configuring the test type (C<< type =E<gt> 'one.sample' >>, C<'two.sample'>, C<'paired'>) and alternative hypothesis (C<< alternative =E<gt> 'one.sided' >>). You can also pass C<< strict =E<gt> 1 >> to strictly evaluate both tails of the distribution.
 
-
-
-=begin html
-
-<table>
+=for html <table>
 <thead>
 <tr>
   <th>Parameter</th>
@@ -10696,10 +10417,6 @@ It also allows configuring the test type (C<< type =E<gt> 'one.sample' >>, C<'tw
 </tbody>
 </table>
 
-=end html
-
-
-
 =head2 pnorm
 
 The normal cumulative distribution function: the probability that a normal random variable is C<< E<lt>= x >>. Ports R's C<pnorm>.
@@ -10713,11 +10430,7 @@ C<x> may be a single number or an array reference; an array reference returns an
 
 =head3 Arguments
 
-
-
-=begin html
-
-<table>
+=for html <table>
 <thead>
 <tr>
   <th>Position</th>
@@ -10760,10 +10473,6 @@ C<x> may be a single number or an array reference; an array reference returns an
 </tbody>
 </table>
 
-=end html
-
-
-
 =head3 Examples
 
  pnorm(1.96);                    # lower tail:  0.9750021
@@ -10796,11 +10505,7 @@ Principal Component Analysis
 
 =head3 Options
 
-
-
-=begin html
-
-<table>
+=for html <table>
 <thead>
 <tr>
   <th>Option</th>
@@ -10843,21 +10548,13 @@ Principal Component Analysis
 </tbody>
 </table>
 
-=end html
-
-
-
 =head3 Results
 
 =head4 Returned Data Structure
 
 The C<prcomp> function returns a HashRef containing the following keys representing the results of the Principal Component Analysis:
 
-
-
-=begin html
-
-<table>
+=for html <table>
 <thead>
 <tr>
   <th>Key</th>
@@ -10898,10 +10595,6 @@ The C<prcomp> function returns a HashRef containing the following keys represent
 </tr>
 </tbody>
 </table>
-
-=end html
-
-
 
 C<prcomp> accepts an Array of Arrays (AoA), an Array of Hashes (AoH), a Hash of
 Arrays (HoA), or a Hash of Hashes (HoH). For the named-column shapes the columns
@@ -11081,11 +10774,7 @@ group) or as two scalars for a single sample.
 
 =head3 Input Parameters
 
-
-
-=begin html
-
-<table>
+=for html <table>
 <thead>
 <tr>
   <th>Parameter</th>
@@ -11141,17 +10830,9 @@ group) or as two scalars for a single sample.
 </tbody>
 </table>
 
-=end html
-
-
-
 =head3 Output variables
 
-
-
-=begin html
-
-<table>
+=for html <table>
 <thead>
 <tr>
   <th>Variable</th>
@@ -11212,10 +10893,6 @@ group) or as two scalars for a single sample.
 </tbody>
 </table>
 
-=end html
-
-
-
 =head2 qcut
 
 Equal-frequency binning of a numeric column, which is the analog of pandas
@@ -11266,11 +10943,7 @@ L</"Getting help">.
 
 =head3 What it returns
 
-
-
-=begin html
-
-<table>
+=for html <table>
 <thead>
 <tr>
   <th>Options given</th>
@@ -11293,10 +10966,6 @@ L</"Getting help">.
 </tbody>
 </table>
 
-=end html
-
-
-
 By default C<qcut> returns the edge vector — the cheap, common query — so call it
 in list context:
 
@@ -11318,11 +10987,7 @@ Ask for both explicitly and they are computed in a single pass:
 
 =head3 Options
 
-
-
-=begin html
-
-<table>
+=for html <table>
 <thead>
 <tr>
   <th>Option</th>
@@ -11360,10 +11025,6 @@ Ask for both explicitly and they are computed in a single pass:
 </tr>
 </tbody>
 </table>
-
-=end html
-
-
 
 =head3 How many bins, and how full
 
@@ -11520,11 +11181,7 @@ Ranks are 1-based; C<average> may return half-ranks. C<undef> and NaN are treate
 
 How tied values share ranks (default C<average>):
 
-
-
-=begin html
-
-<table>
+=for html <table>
 <thead>
 <tr>
   <th>value</th>
@@ -11566,19 +11223,11 @@ How tied values share ranks (default C<average>):
 </tbody>
 </table>
 
-=end html
-
-
-
 =head3 na.last
 
 How C<undef>/NaN elements are placed (default C<true>):
 
-
-
-=begin html
-
-<table>
+=for html <table>
 <thead>
 <tr>
   <th>value</th>
@@ -11609,10 +11258,6 @@ How C<undef>/NaN elements are placed (default C<true>):
 </tr>
 </tbody>
 </table>
-
-=end html
-
-
 
 =head2 Ronly
 
@@ -11647,11 +11292,7 @@ minimal example:
 
 =head3 options
 
-
-
-=begin html
-
-<table>
+=for html <table>
 <thead>
 <tr>
   <th>Option</th>
@@ -11697,10 +11338,6 @@ minimal example:
 </tr>
 </tbody>
 </table>
-
-=end html
-
-
 
 output types can be AOH (aoh), HOA (hoa), HOH (hoh)
     read_table($filename, 'output.type' => 'aoh');
@@ -12067,11 +11704,7 @@ Analogous to R's C<summary>: a five-number-plus-mean description (C<# values>, C
 
 Which variable becomes a row depends on the shape (every shape C<view> accepts is accepted here):
 
-
-
-=begin html
-
-<table>
+=for html <table>
 <thead>
 <tr>
   <th>input</th>
@@ -12102,10 +11735,6 @@ Which variable becomes a row depends on the shape (every shape C<view> accepts i
 </tr>
 </tbody>
 </table>
-
-=end html
-
-
 
 The AoH/HoH case is the per-column summary R gives for a data frame — so the array-of-hashes that C<read_table> returns by default summarises column-by-column:
 
@@ -12194,11 +11823,7 @@ the two groups compared can be specified, though not necessarily, as C<x> and C<
 
 =head3 Parameters
 
-
-
-=begin html
-
-<table>
+=for html <table>
 <thead>
 <tr>
   <th>Parameter</th>
@@ -12253,17 +11878,9 @@ the two groups compared can be specified, though not necessarily, as C<x> and C<
 </tbody>
 </table>
 
-=end html
-
-
-
 =head3 Return Hash
 
-
-
-=begin html
-
-<table>
+=for html <table>
 <thead>
 <tr>
   <th>Key</th>
@@ -12301,10 +11918,6 @@ the two groups compared can be specified, though not necessarily, as C<x> and C<
 </tr>
 </tbody>
 </table>
-
-=end html
-
-
 
 =head2 transpose
 
@@ -12409,11 +12022,7 @@ C<vals> accepts all three data-frame shapes and always returns a new arrayref of
 
 =head3 Arguments
 
-
-
-=begin html
-
-<table>
+=for html <table>
 <thead>
 <tr>
   <th>Position</th>
@@ -12434,10 +12043,6 @@ C<vals> accepts all three data-frame shapes and always returns a new arrayref of
 </tr>
 </tbody>
 </table>
-
-=end html
-
-
 
 =head3 Behavior and notes
 
@@ -12582,11 +12187,7 @@ few rows of a dataframe as an aligned text table, with numeric columns
 right-justified, string columns left-justified, and undefined cells shown as
 C<NA>.
 
-
-
-=begin html
-
-<table>
+=for html <table>
 <thead>
 <tr>
   <th>Input type</th>
@@ -12617,10 +12218,6 @@ C<NA>.
 </tr>
 </tbody>
 </table>
-
-=end html
-
-
 
 =head3 Synopsis
 
@@ -12654,11 +12251,7 @@ displayed. A footer appears only when rows are hidden.
 
 All arguments after the data reference are optional name/value pairs.
 
-
-
-=begin html
-
-<table>
+=for html <table>
 <thead>
 <tr>
   <th>Argument</th>
@@ -12719,10 +12312,6 @@ All arguments after the data reference are optional name/value pairs.
 </tr>
 </tbody>
 </table>
-
-=end html
-
-
 
 C<view> always returns the formatted string, whether or not it also prints.
 
@@ -12807,11 +12396,7 @@ The first one or two array-ref arguments are taken positionally as C<x> and C<y>
 
 =head3 Input parameters
 
-
-
-=begin html
-
-<table>
+=for html <table>
 <thead>
 <tr>
   <th>Parameter</th>
@@ -12866,19 +12451,11 @@ The first one or two array-ref arguments are taken positionally as C<x> and C<y>
 </tbody>
 </table>
 
-=end html
-
-
-
 =head3 Output
 
 Returns a hash ref with the following keys:
 
-
-
-=begin html
-
-<table>
+=for html <table>
 <thead>
 <tr>
   <th>Key</th>
@@ -12909,10 +12486,6 @@ Returns a hash ref with the following keys:
 </tr>
 </tbody>
 </table>
-
-=end html
-
-
 
 The C<method> string reports which path executed:
 
@@ -13021,11 +12594,7 @@ C<read_table>.
 
 =head3 Options
 
-
-
-=begin html
-
-<table>
+=for html <table>
 <thead>
 <tr>
   <th>option</th>
@@ -13145,10 +12714,6 @@ C<read_table>.
 </tr>
 </tbody>
 </table>
-
-=end html
-
-
 
 =head1 Changes
 
@@ -13506,11 +13071,7 @@ with the module's own C<ccflags>.
 
 =head4 Function consolidation
 
-
-
-=begin html
-
-<table>
+=for html <table>
 <thead>
 <tr>
   <th>Change</th>
@@ -13541,10 +13102,6 @@ with the module's own C<ccflags>.
 </tr>
 </tbody>
 </table>
-
-=end html
-
-
 
 All merges were confirmed behavior-preserving: the collapsed comparators are
 equivalent on ordinary values, C<NaN>, and infinities, and C<compute_ranks> and
@@ -14514,3 +14071,16 @@ C<write_table> now has C<undef.val> option, which shows how undefined values are
 =head1 COPYRIGHT AND LICENSE
 
 This software is free.  It is licensed under the same terms as Perl itself
+
+=head1 AUTHOR
+
+David E. Condon <dec986@gmail.com>
+
+=head1 COPYRIGHT AND LICENSE
+
+This software is copyright (c) 2026-present by David E. Condon.
+
+This is free software; you can redistribute it and/or modify it under
+the same terms as the Perl 5 programming language system itself.
+
+=cut

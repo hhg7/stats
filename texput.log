@@ -1,0 +1,25 @@
+This is pdfTeX, Version 3.141592653-2.6-1.40.25 (TeX Live 2023/Debian) (preloaded format=latex 2025.2.2)  3 AUG 2026 08:19
+entering extended mode
+ restricted \write18 enabled.
+ %&-line parsing enabled.
+**\makeatletter\def\plmac@tag{ILGDFJONHMWXPLJCTOEM}\def\plmac@tofile{texput.top
+l}\def\plmac@fromfile{texput.frpl}\def\plmac@toflag{texput.tfpl}\def\plmac@from
+flag{texput.ffpl}\def\plmac@doneflag{texput.dfpl}\def\plmac@pipe{texput.pipe}\m
+akeatother
+
+*
+! Emergency stop.
+<*> 
+    
+End of file on the terminal!
+
+ 
+Here is how much of TeX's memory you used:
+ 20 strings out of 474223
+ 443 string characters out of 5748760
+ 1922972 words of memory out of 5000000
+ 22377 multiletter control sequences out of 15000+600000
+ 558069 words of font info for 36 fonts, out of 8000000 for 9000
+ 1141 hyphenation exceptions out of 8191
+ 11i,0n,13p,276b,8s stack positions out of 10000i,1000n,20000p,200000b,200000s
+No pages of output.
