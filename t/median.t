@@ -18,7 +18,7 @@ sub by_sort {
 	return @s % 2 ? $s[ $#s / 2 ] : ($s[ @s / 2 - 1 ] + $s[ @s / 2 ]) / 2;
 }
 
-# --- the basics ----------------------------------------------------------
+# --- the basics
 is(median(5),            5,   'median: single scalar');
 is(median(1, 2, 3),      2,   'median: odd count, varargs');
 is(median(1, 2, -1, 9),  1.5, 'median: even count, varargs');
@@ -53,7 +53,7 @@ for my $name (sort keys %shape) {
 	is($wrong, 0, "median: '$name' agrees with sort at every length");
 }
 
-# --- pseudo-random data, fixed seed so a failure is reproducible ----------
+# --- pseudo-random data, fixed seed so a failure is reproducible
 srand 20260803;
 my $wrong = 0;
 for my $n (1 .. 60, 300, 1024) {
@@ -62,6 +62,33 @@ for my $n (1 .. 60, 300, 1024) {
 	$wrong++, diag("random n=$n: got $got, want $want") if abs($got - $want) > 1e-9;
 }
 is($wrong, 0, 'median: random samples agree with sort at every length');
+
+# --- tied arrays ---------------------------------------------------------
+# A tied array keeps nothing in AvARRAY, so median takes a separate av_fetch
+# path for it.  What that path needs is SvGETMAGIC: av_fetch on a tied array
+# returns a deferred PVLV, not the value, and SvOK on one of those is false
+# until its get-magic has run -- so the bug this covers is every element of a
+# tied array looking undefined.  The lengths straddle the stack-buffer cutoff.
+{
+	package Tie::Plain;
+	require Tie::Array;
+	our @ISA = ('Tie::StdArray');
+}
+for my $n (1, 2, 5, 6, 25, 257, 600) {
+	my @tied;
+	tie @tied, 'Tie::Plain';
+	@tied = map { ($_ * 37) % 101 } 1 .. $n;
+	my @plain = @tied;
+	is(median(\@tied), by_sort(\@plain), "median: tied array of $n elements");
+}
+{
+	my @tied;
+	tie @tied, 'Tie::Plain';
+	@tied = (1, undef, 3);
+	throws_ok { median(\@tied) }
+		qr/\Qmedian: undefined value at array ref index 1 (argument 0)\E/,
+		'median: an undef in a tied array is still reported by position';
+}
 
 # --- the caller's data is left alone -------------------------------------
 # the selection reorders its own copy; an in-place partition of the input
@@ -92,6 +119,10 @@ unless ($INC{'Devel/Cover.pm'}) {
 	no_leaks_ok { eval { my $m = median($large) } }        'median no leaks: heap buffer';
 	no_leaks_ok { eval { my $m = median(1, 2, [3, 4]) } }  'median no leaks: mixed arguments';
 	no_leaks_ok { eval { my $m = median(1, undef) } }      'median no leaks: croak path';
+	my @tied;
+	tie @tied, 'Tie::Plain';
+	@tied = @$small;
+	no_leaks_ok { eval { my $m = median(\@tied) } }        'median no leaks: tied array';
 }
 
 done_testing();

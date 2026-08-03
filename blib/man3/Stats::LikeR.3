@@ -91,13 +91,6 @@ prints is what you are reading.
 Note that \f(CWh(bedroc)\fR, with no quotes and no sigil, cannot be made to work:
 every function here is exported, so Perl parses the bareword as a call to
 \&\f(CWbedroc()\fR before \f(CW\*(C`h\*(C'\fR is ever reached. Use one of the three forms above.
-.PP
-\&\f(CW\*(C`h\*(C'\fR is the only way to ask. No function reads its own argument list for a help
-flag, so nothing here has to guess whether you meant data or a question: a
-column, file or option value that really is the bare string \f(CW\*(Aqh\*(Aq\fR or \f(CW\*(Aq?\*(Aq\fR is
-just a value. \f(CW\*(C`vals($df, \*(Aqh\*(Aq)\*(C'\fR, \f(CW\*(C`csort($df, \*(Aqh\*(Aq)\*(C'\fR, \f(CW\*(C`col(\*(Aqh\*(Aq) > 3\*(C'\fR and
-\&\f(CWread_table(\*(Aq?\*(Aq)\fR all mean exactly what they say, and every function — XS or
-pure Perl — is documented the same way, through \f(CWh(\*(Aqname\*(Aq)\fR.
 .SH Functions/Subroutines
 .IX Header "Functions/Subroutines"
 .SS add_data
@@ -821,7 +814,7 @@ The function returns a single \f(CW\*(C`HashRef\*(C'\fR containing the evaluated
 \fIomitting formula\fR
 .IX Subsection "omitting formula"
 .PP
-As of version 0.07, in the case of an omitted formula, stacking is done:
+In the case of an omitted formula, stacking is done:
 .PP
 .Vb 6
 \& aov(
@@ -3712,6 +3705,86 @@ For example:
 \&         $ks\->{statistic}, $ks\->{p_value}, $ks\->{method};
 \& }
 .Ve
+.SS kurtosis
+.IX Subsection "kurtosis"
+Sample excess kurtosis — how much of the variance sits in the tails rather than
+near the shoulders. The \f(CW3\fR of a normal distribution is already subtracted, so a
+normal sample gives roughly \f(CW0\fR, a heavy\-tailed one a positive number, and a flat
+or bimodal one a negative number. Add \f(CW3\fR if you want the plain fourth
+standardized moment. Validated numerically against R.
+.PP
+.Vb 1
+\& kurtosis(2, 4, 4, 4, 5, 5, 7, 9);        # 0.940625
+.Ve
+.PP
+Arguments work as they do for "sd" and "var": plain numbers, array
+references, or any mixture of the two, all flattened into one sample.
+.PP
+.Vb 5
+\& my @x = (2, 4, 4, 4, 5, 5, 7, 9);
+\& kurtosis(@x);                  # a list
+\& kurtosis(\e@x);                 # an array reference
+\& kurtosis([2, 4, 4], 4, [5, 5, 7, 9]);   # mixed; same sample
+\& kurtosis(x => \e@x);            # named, if you prefer it
+.Ve
+.PP
+\fR\f(CI\*(C`type\*(C'\fR\fI\fR
+.IX Subsection "type"
+.PP
+There are three conventions in circulation for turning the moment ratio into a
+sample statistic, and they disagree noticeably on small samples. \f(CW\*(C`type\*(C'\fR picks
+one; the default is \f(CW2\fR.
+.PP
+where, writing \f(CW\*(C`m2\*(C'\fR and \f(CW\*(C`m4\*(C'\fR for the second and fourth central moments (each
+divided by \f(CW\*(C`n\*(C'\fR):
+.PP
+.Vb 3
+\& g2 = m4 / m2**2 \- 3                                     # type 1
+\& G2 = ((n + 1) * g2 + 6) * (n \- 1) / ((n \- 2) * (n \- 3))  # type 2, the default
+\& b2 = (g2 + 3) * (1 \- 1 / n)**2 \- 3                      # type 3
+\&
+\& my @x = (1, 2, 3, 10);
+\& kurtosis(\e@x, type => 1);   # \-0.7696   plain moment ratio
+\& kurtosis(\e@x);              #  3.228    G2, the default
+\& kurtosis(\e@x, type => 3);   # \-1.7454   b2
+.Ve
+.PP
+\&\f(CW\*(C`type => 2\*(C'\fR is the estimator that is unbiased for a normal sample, which is why
+it is the default and why it is what every general\-purpose statistics package
+reports. It divides by \f(CW\*(C`n \- 3\*(C'\fR, so it needs at least four values; the other two
+need at least two.
+.PP
+.Vb 1
+\& my $shape = { skew => skew($lab), kurtosis => kurtosis($lab) };
+.Ve
+.PP
+\fIErrors\fR
+.IX Subsection "Errors"
+.PP
+\&\f(CW\*(C`kurtosis\*(C'\fR croaks, naming the offending position, on an undefined value:
+.PP
+.Vb 2
+\& kurtosis(1, undef, 3);
+\& # kurtosis: undefined value at argument index 1
+\&
+\& kurtosis([1, 2, undef]);
+\& # kurtosis: undefined value at array ref index 2 (argument 0)
+.Ve
+.PP
+and on a sample too small for the chosen \f(CW\*(C`type\*(C'\fR, on a \f(CW\*(C`type\*(C'\fR outside \f(CW\*(C`1 .. 3\*(C'\fR, or
+on a constant sample, which has no shape to report:
+.PP
+.Vb 2
+\& kurtosis([7, 7, 7, 7]);
+\& # kurtosis: zero variance (all 4 values are equal), so kurtosis is undefined
+.Ve
+.PP
+\fISee also\fR
+.IX Subsection "See also"
+.PP
+"skew" for the third moment, "sd" and "var" for the second,
+"shapiro_test" to test normality rather than describe the
+departure from it.
 .SS ljoin
 .IX Subsection "ljoin"
 Consider a hash: \f(CW\*(C`$h{$row}{$col}\*(C'\fR, and another hash \f(CW\*(C`$i{$row}{$col2}\*(C'\fR.
@@ -3822,7 +3895,7 @@ defaults to the first list.
 .PP
 You can also pass \f(CW\*(C`byrow => 1\*(C'\fR if you want the matrix populated row\-wise instead of column\-wise.
 .PP
-As of version 0.10, parameters do not need to be named, so that \f(CW\*(C`matrix\*(C'\fR works more like R:
+Parameters do not need to be named, so that \f(CW\*(C`matrix\*(C'\fR works more like R:
 .PP
 .Vb 1
 \& my $d = matrix(rnorm(32000), 1000, 32);
@@ -3842,7 +3915,7 @@ or
 \& max(@arr, 4, 5)
 .Ve
 .PP
-as of version 0.02, max will die if any undefined values are provided
+max will die if any undefined values are provided
 .SS mcnemar_test
 .IX Subsection "mcnemar_test"
 McNemar\*(Aqs test for paired categorical data (e.g. before/after, matched
@@ -3893,7 +3966,7 @@ or
 \& mean([1,1], [2,2]) # 1.5
 .Ve
 .PP
-as of version 0.02, mean will die if any undefined values are provided
+mean will die if any undefined values are provided
 .SS median
 .IX Subsection "median"
 works like mean, taking array references and arrays:
@@ -3902,7 +3975,7 @@ works like mean, taking array references and arrays:
 \& median( $test_data[$i][0] )
 .Ve
 .PP
-as of version 0.02, median will die if any undefined values are provided
+median will die if any undefined values are provided
 .SS melt
 .IX Subsection "melt"
 Reshape a wide frame to long form, like \f(CW\*(C`pandas.DataFrame.melt\*(C'\fR. One or more
@@ -4026,7 +4099,7 @@ or
 \& min(@arr, 4, 5)
 .Ve
 .PP
-as of version 0.02, min will die if any undefined values are provided
+min will die if any undefined values are provided
 .SS mode
 .IX Subsection "mode"
 Takes either an array or an array reference, and returns an array of the most common scalars (numbers or strings)
@@ -5278,7 +5351,7 @@ Correct answer is 2.1380899352994
 \& my $stdev = sd([2,4,4,4,5,5,7,9]);
 .Ve
 .PP
-As of version 0.02, sd will croak/die if any undefined values are provided.
+sd will croak/die if any undefined values are provided.
 .SS select_cols
 .IX Subsection "select_cols"
 Return a new data frame containing only the named columns, in the order
@@ -5368,6 +5441,90 @@ and returns the hash reference:
 \& W           0.960870680168535
 \& }
 .Ve
+.SS skew
+.IX Subsection "skew"
+Sample skewness — the direction and degree of a distribution\*(Aqs asymmetry.
+Positive means a long right tail (the usual shape of lab values, costs and
+lengths of stay), negative a long left tail, and about zero a symmetric sample.
+Validated numerically against R.
+.PP
+.Vb 1
+\& skew(2, 4, 4, 4, 5, 5, 7, 9);        # 0.8184875533568
+.Ve
+.PP
+Arguments work as they do for "sd" and "var": plain numbers, array
+references, or any mixture of the two, all flattened into one sample.
+.PP
+.Vb 5
+\& my @x = (2, 4, 4, 4, 5, 5, 7, 9);
+\& skew(@x);                  # a list
+\& skew(\e@x);                 # an array reference
+\& skew([2, 4, 4], 4, [5, 5, 7, 9]);   # mixed; same sample
+\& skew(x => \e@x);            # named, if you prefer it
+.Ve
+.PP
+\fR\f(CI\*(C`type\*(C'\fR\fI\fR
+.IX Subsection "type"
+.PP
+There are three conventions in circulation for turning the moment ratio into a
+sample statistic, and they disagree noticeably on small samples. \f(CW\*(C`type\*(C'\fR picks
+one; the default is \f(CW2\fR.
+.PP
+where, writing \f(CW\*(C`m2\*(C'\fR and \f(CW\*(C`m3\*(C'\fR for the second and third central moments (each
+divided by \f(CW\*(C`n\*(C'\fR):
+.PP
+.Vb 3
+\& g1 = m3 / m2**1.5                     # type 1
+\& G1 = g1 * sqrt(n * (n \- 1)) / (n \- 2) # type 2, the default
+\& b1 = g1 * ((n \- 1) / n)**1.5          # type 3
+\&
+\& my @x = (1, 2, 4);
+\& skew(\e@x, type => 1);   # 0.3818017742   plain moment ratio
+\& skew(\e@x);              # 0.9352195296   G1, the default
+\& skew(\e@x, type => 3);   # 0.2078265621   b1
+.Ve
+.PP
+\&\f(CW\*(C`type => 2\*(C'\fR is the estimator that is unbiased for a normal sample, which is why
+it is the default and why it is what every general\-purpose statistics package
+reports. It divides by \f(CW\*(C`n \- 2\*(C'\fR, so it needs at least three values; the other two
+need at least two.
+.PP
+Both statistics are computed in one pass over the sample, so a whole column can
+be summarized without materializing it twice:
+.PP
+.Vb 3
+\& my $df = read_table(\*(Aqlabs.tsv\*(Aq);
+\& printf "%\-24s skew %7.3f  kurtosis %7.3f\en", $_,
+\&     skew($df\->{$_}), kurtosis($df\->{$_}) for qw(alt ast bilirubin);
+.Ve
+.PP
+\fIErrors\fR
+.IX Subsection "Errors"
+.PP
+\&\f(CW\*(C`skew\*(C'\fR croaks, naming the offending position, on an undefined value:
+.PP
+.Vb 2
+\& skew(1, undef, 3);
+\& # skew: undefined value at argument index 1
+\&
+\& skew([1, 2, undef]);
+\& # skew: undefined value at array ref index 2 (argument 0)
+.Ve
+.PP
+and on a sample too small for the chosen \f(CW\*(C`type\*(C'\fR, on a \f(CW\*(C`type\*(C'\fR outside \f(CW\*(C`1 .. 3\*(C'\fR, or
+on a constant sample, which has no shape to report:
+.PP
+.Vb 2
+\& skew([7, 7, 7, 7]);
+\& # skew: zero variance (all 4 values are equal), so skewness is undefined
+.Ve
+.PP
+\fISee also\fR
+.IX Subsection "See also"
+.PP
+"kurtosis" for the fourth moment, "sd" and "var" for the
+second, "shapiro_test" to test normality rather than describe the
+departure from it.
 .SS smd
 .IX Subsection "smd"
 Standardized mean difference between two continuous groups, standardizing by the
@@ -5398,7 +5555,7 @@ which I prefer, compared to List::Util\*(Aqs required casting into an array:
 .PP
 which passing a reference is shorter and much easier to read.  Stats::LikeR, however, will work for \fBboth\fR
 .PP
-as of version 0.02, \f(CW\*(C`sum\*(C'\fR will cause the script to die if any undefined values are provided
+\&\f(CW\*(C`sum\*(C'\fR will cause the script to die if any undefined values are provided
 .SS summary
 .IX Subsection "summary"
 Analogous to R\*(Aqs \f(CW\*(C`summary\*(C'\fR: a five\-number\-plus\-mean description (\f(CW\*(C`# values\*(C'\fR, \f(CW\*(C`Min.\*(C'\fR, \f(CW\*(C`1st Qu.\*(C'\fR, \f(CW\*(C`Median\*(C'\fR, \f(CW\*(C`Mean\*(C'\fR, \f(CW\*(C`3rd Qu.\*(C'\fR, \f(CW\*(C`Max.\*(C'\fR) of the data as entered (it does not summarise fitted\-model objects). It produces one statistics row per numeric \fIvariable\fR and renders the table exactly like \f(CW\*(C`view\*(C'\fR — the same colourised, wide\-character\-aware, terminal\-fitting output — through the same internal renderer, so all of \f(CW\*(C`view\*(C'\fR\*(Aqs display options apply.
@@ -5505,6 +5662,33 @@ the two groups compared can be specified, though not necessarily, as \f(CW\*(C`x
 .PP
 \fIParameters\fR
 .IX Subsection "Parameters"
+.PP
+\fIMissing values\fR
+.IX Subsection "Missing values"
+.PP
+\&\f(CW\*(C`undef\*(C'\fR and \f(CW\*(C`NaN\*(C'\fR are dropped, as R\*(Aqs \f(CW\*(C`t.test\*(C'\fR drops \f(CW\*(C`NA\*(C'\fR; infinities are kept,
+as R keeps them. A one\-sample or unpaired two\-sample test filters each vector on
+its own, so the two may lose different numbers of observations and \f(CW\*(C`df\*(C'\fR reflects
+what survived. A paired test filters on complete cases: if either side of a pair
+is missing the pair goes whole, keeping the differences aligned.
+.PP
+\fIErrors\fR
+.IX Subsection "Errors"
+.PP
+Dies if:
+\&\- \f(CW\*(C`x\*(C'\fR is missing or is not an array reference, or \f(CW\*(C`y\*(C'\fR is defined but is not one
+\&\- \f(CW\*(C`alternative\*(C'\fR is not one of the values above
+\&\- \f(CW\*(C`conf_level\*(C'\fR is not strictly between 0 and 1
+\&\- \f(CW\*(C`paired\*(C'\fR is set without a \f(CW\*(C`y\*(C'\fR, or with an \f(CW\*(C`x\*(C'\fR and \f(CW\*(C`y\*(C'\fR of different lengths
+\&\- fewer than 2 observations survive: 2 in \f(CW\*(C`x\*(C'\fR for a one\-sample test, 2 complete
+  pairs when \f(CW\*(C`paired\*(C'\fR, and for two samples R\*(Aqs own thresholds — a Welch test
+  needs 2 on each side, while \f(CW\*(C`var_equal\*(C'\fR accepts a side of 1 (it contributes no
+  sum of squares to the pooled variance) so long as the two together reach 3
+\&\- the data are essentially constant, meaning the standard error has fallen below
+  \f(CW\*(C`10 * DBL_EPSILON\*(C'\fR times the magnitude of the estimate. The comparison is
+  relative, so a sample whose spread a double cannot resolve at its own scale is
+  rejected instead of being reported as an enormous \f(CW\*(C`statistic\*(C'\fR. R returns \f(CW\*(C`NaN\*(C'\fR
+  rather than raising for the exactly\-zero case; this raises for both.
 .PP
 \fIReturn Hash\fR
 .IX Subsection "Return Hash"
@@ -5756,7 +5940,7 @@ as simple as possible:
 \& var(2, 4, 5, 8, 9)
 .Ve
 .PP
-as of version 0.02, \f(CW\*(C`var\*(C'\fR will die if any undefined values are provided
+\&\f(CW\*(C`var\*(C'\fR will die if any undefined values are provided
 .PP
 like \f(CW\*(C`min\*(C'\fR, \f(CW\*(C`max\*(C'\fR, etc., \f(CW\*(C`var\*(C'\fR can accept array references, to make code simpler:
 .PP
@@ -5948,7 +6132,7 @@ You can also precisely filter and reorder which columns are written by passing a
     write_table(\e@data, \f(CW$tmp_file\fR, sep => "\et", \*(Aqcol.names\*(Aq => [\*(Aqc\*(Aq, \*(Aqa\*(Aq]);
 undefined variables are printed as \f(CW\*(C`NA\*(C'\fR by default, but can be set as you wish using \f(CW\*(C`undef.val\*(C'\fR
     write_table(\e%data_hoa, \*(Aq/tmp/undef.val.tsv\*(Aq, sep => "\et", \*(Aqundef.val\*(Aq => \*(Aqnan\*(Aq)
-as of version 0.07, \f(CW\*(C`write_table\*(C'\fR determines comma and tab\-separated delimiters from the filename, but will override if \f(CW\*(C`sep\*(C'\fR or \f(CW\*(C`delim\*(C'\fR are explicitly set.
+\&\f(CW\*(C`write_table\*(C'\fR determines comma and tab\-separated delimiters from the filename, but will override if \f(CW\*(C`sep\*(C'\fR or \f(CW\*(C`delim\*(C'\fR are explicitly set.
 Args can also be accepted:
     write_table( \*(Aqdata\*(Aq => \e%flat, \*(Aqfile\*(Aq => \f(CW$f\fR );
 .PP
@@ -5994,6 +6178,28 @@ which you wrap yourself:
     \ecaption{}
     \elabel{}
     \eend{longtable}
+In that plain form the header is an ordinary first row, which is \fInot\fR the header LaTeX freezes at the top of each page: a \f(CW\*(C`longtable\*(C'\fR repeats only what sits inside \f(CW\*(C`\eendfirsthead\*(C'\fR / \f(CW\*(C`\eendhead\*(C'\fR. Hand\-writing those blocks means retyping the column labels, and they then silently stop matching \f(CW\*(C`col.names\*(C'\fR the first time the column order changes — the frozen header says one thing while the columns underneath say another, and the generated header shows up a second time as the first body row. \f(CW\*(C`tex.longtable.head\*(C'\fR closes that gap by generating the repeat machinery from the same header record as the body:
+    write_table(\e@rows, \*(Aqoutput.file.tex\*(Aq,
+        \*(Aqcol.names\*(Aq          => [\*(Aqa\*(Aq, \*(Aqb\*(Aq, \*(Aqc\*(Aq],
+        \*(Aqtex.longtable.head\*(Aq => \*(Aq(continued)\*(Aq, # or just 1 for no continuation caption
+    );
+    \f(CW%written\fR by /home/con/Scripts/stats/make_table.pl
+    % \ebegin{longtable}{ccc}
+    \etextbf{a} & \etextbf{b} & \etextbf{c} \e \ehline
+    \eendfirsthead
+    \ecaption[]{(continued)}\e
+    \ehline
+    \etextbf{a} & \etextbf{b} & \etextbf{c} \e \ehline
+    \eendhead
+    \ehline
+    \eendfoot
+    1 & 2 & 3\e
+Setting \f(CW\*(C`tex.longtable.head\*(C'\fR implies \f(CW\*(C`tex.longtable\*(C'\fR (and so \f(CW\*(C`tex => 1\*(C'\fR). A true\-but\-numeric value emits the machinery with no continuation caption; any other true value is the caption text for every page after the first, written verbatim so LaTeX macros survive, with an empty \f(CW\*(C`\ecaption[]\*(C'\fR optional argument so the continuation stays out of the List of Tables. \f(CW\*(C`\eendfoot\*(C'\fR carries the closing \f(CW\*(C`\ehline\*(C'\fR and no \f(CW\*(C`\eendlastfoot\*(C'\fR is emitted, so every page — the last one included — gets a bottom rule. The wrapper then holds nothing that has to track the data:
+    \ebegin{longtable}{ccc}
+    \ecaption{}\elabel{}\e \ehline
+    \einput{output.file.tex}
+    \eend{longtable}
+The trailing \f(CW\*(C`\ehline\*(C'\fR on the caption line is the rule above the header on the \fIfirst\fR page, and it has to live there rather than in the generated file: \f(CW\*(C`\ehline\*(C'\fR expands to \f(CW\*(C`\enoalign\*(C'\fR, and TeX has already begun a table row by the time it expands your \f(CW\*(C`\einput\*(C'\fR, so a rule as the file\*(Aqs first token is a \f(CW\*(C`Misplaced \enoalign\*(C'\fR error. A bare \f(CW\*(C`\ehline\*(C'\fR encodes neither column order nor column count, so unlike a hand\-written header it cannot go stale — drop it if you do not want a top rule. Every other \f(CW\*(C`\ehline\*(C'\fR in the generated file follows a \f(CW\*(C`\e\e\*(C'\fR inside that file, where it is legal.
 .PP
 \fIExcel output (\fR\f(CI\*(C`xlsx\*(C'\fR\fI)\fR
 .IX Subsection "Excel output (xlsx)"
@@ -6039,8 +6245,219 @@ raw values (no cell number formats), matching the round\-trip behaviour of
 .IX Subsection "Options"
 .SH Changes
 .IX Header "Changes"
+.SS "0.282 2026\-08\-03 CDT"
+.IX Subsection "0.282 2026-08-03 CDT"
+\fIt_test\fR
+.IX Subsection "t_test"
+.PP
+\&\f(CW\*(C`t_test\*(C'\fR was cross\-checked against R\*(Aqs \f(CW\*(C`stats::t.test\*(C'\fR and \f(CW\*(C`scipy.stats\*(C'\fR case by
+case, including the cases their own suites pin: R\*(Aqs regression tests
+(\f(CW\*(C`reg\-tests\-1a.R\*(C'\fR, "t.test with one group of size one") and scipy\*(Aqs
+\&\f(CW\*(C`TestTTest_1samp\*(C'\fR, \f(CW\*(C`TestTTest_ind.test_special_cases\*(C'\fR, \f(CW\*(C`test_ttest_rel_ci_1d\*(C'\fR,
+\&\f(CW\*(C`test_1samp_ci_1d\*(C'\fR and \f(CW\*(C`test_pvalue_ci\*(C'\fR. On 2000 randomised comparisons against
+R — all four modes, all three alternatives, random \f(CW\*(C`mu\*(C'\fR and \f(CW\*(C`conf_level\*(C'\fR, sample
+sizes 2 to 40 and data scales spanning 1e\-4 to 1e4 — the statistic and the
+degrees of freedom agree to 2e\-11 and the p\-value to 3e\-9, holding to eight
+digits even where the p\-value is subnormal (5e\-310). What the comparison did
+turn up was seven ways a call could come back wrong rather than loud, all of
+them now fixed and covered by \f(CW\*(C`t/t_test.t\*(C'\fR.
+.IP \(bu 4
+\&\fR\f(CB\*(C`undef\*(C'\fR\fB was coerced to 0 instead of being dropped.\fR This is the one worth
+re\-running results over. \f(CW\*(C`t_test\*(C'\fR did not filter missing values, so a column
+with gaps in it was tested with every gap counted as a zero: R gives
+\&\f(CW\*(C`t.test(c(1,2,NA,4,5))\*(C'\fR a \f(CW\*(C`t\*(C'\fR of 3.286 on 3 degrees of freedom, and \f(CW\*(C`t_test\*(C'\fR
+answered 2.588 on 4. No error, no warning, and an answer close enough to the
+real one to look right. \f(CW\*(C`undef\*(C'\fR and \f(CW\*(C`NaN\*(C'\fR are now dropped the way R drops \f(CW\*(C`NA\*(C'\fR,
+per\-vector for a one\-sample or unpaired test, and on complete cases when
+\&\f(CW\*(C`paired\*(C'\fR so a half\-missing pair goes whole rather than contributing a
+difference against zero.
+.IP \(bu 4
+\&\fBA \fR\f(CB\*(C`y\*(C'\fR\fB of fewer than two observations returned a silent \fR\f(CB\*(C`NaN\*(C'\fR\fB.\fR \f(CW\*(C`var_y\*(C'\fR
+divided by \f(CW\*(C`ny \- 1\*(C'\fR, so \f(CW\*(C`t_test(\e@x, [$one_value])\*(C'\fR propagated \f(CW\*(C`0/0\*(C'\fR into the
+statistic, the p\-value and both interval bounds without raising. The two
+thresholds R uses are now both in place: a Welch test needs a variance from
+each side and refuses without one, while a pooled test tolerates a side of one
+observation, since that side contributes no sum of squares. That second case is
+what R\*(Aqs own regression suite pins — \f(CW\*(C`t.test(y=x[1], x=x[\-1], var.equal=TRUE)\*(C'\fR
+is a well\-defined test with 8 degrees of freedom, and \f(CW\*(C`t_test\*(C'\fR now answers it
+instead of returning \f(CW\*(C`NaN\*(C'\fR in one direction and croaking in the other. An empty
+\&\f(CW\*(C`y\*(C'\fR is caught by the same check.
+.IP \(bu 4
+\&\fR\f(CB\*(C`alternative\*(C'\fR\fB was never validated.\fR The p\-value helper fell through to
+two\-sided for any string it did not recognise, so a typo — \f(CW\*(Aqgerater\*(Aq\fR — ran a
+different test than the caller asked for and reported nothing. It is now
+checked the way R\*(Aqs \f(CW\*(C`match.arg\*(C'\fR checks it. \f(CW\*(C`scipy\*(C'\fR\*(Aqs \f(CW"two\-sided"\fR spelling is
+unambiguous, so it is accepted rather than rejected.
+.IP \(bu 4
+\&\fBA one\-sided interval was wrong when \fR\f(CB\*(C`conf_level < 0.5\*(C'\fR\fB.\fR That case needs a
+negative t quantile, and \f(CW\*(C`qt_tail\*(C'\fR searched upward from zero only, so it
+returned roughly zero and collapsed the bound onto \f(CW\*(C`mu\*(C'\fR: R puts the upper bound
+of \f(CW\*(C`t.test(1:10, mu=5, conf.level=0.3, alternative="less")\*(C'\fR at 4.9797 where
+\&\f(CW\*(C`t_test\*(C'\fR reported 5.0000000036. \f(CW\*(C`qt_tail\*(C'\fR now reduces by symmetry first, so the
+root it brackets is always positive.
+.IP \(bu 4
+\&\fR\f(CB\*(C`qt_tail\*(C'\fR\fB silently saturated at 1e6.\fR Past that its doubling loop gave up
+and returned the ceiling, so \f(CW\*(C`conf_level\*(C'\fR of 0.99999999 and 0.9999999999 came
+back with the \fIidentical\fR interval, ±1048576, against R\*(Aqs ±6.4e7 and ±6.4e9.
+The ceiling is gone; the loop now runs until \f(CW\*(C`t * t\*(C'\fR would overflow.
+.IP \(bu 4
+\&\fBInterval accuracy no longer depends on the data\*(Aqs scale.\fR \f(CW\*(C`qt_tail\*(C'\fR
+bisected to an absolute 1e\-8 on the quantile, which is 1e\-8 × \f(CW\*(C`std_err\*(C'\fR on the
+interval — fine for data around 1, an error of 2 units for data around 1e9. It
+now bisects to adjacent doubles. Worst interval error across the 2000
+randomised cases went from 2.1e\-4 to 5.3e\-11 relative. At extreme
+\&\f(CW\*(C`conf_level\*(C'\fR this makes \f(CW\*(C`t_test\*(C'\fR the more accurate of the two: \f(CW\*(C`t.test\*(C'\fR asks
+for \f(CW\*(C`qt(1 \- alpha/2, df)\*(C'\fR, and representing a 5e\-9 tail as the double
+\&\f(CW\*(C`1 \- 5e\-9\*(C'\fR costs eight significant figures of it, so R\*(Aqs own interval for
+\&\f(CW\*(C`conf.level=0.99999999\*(C'\fR is off by 0.7 in the eighth digit. Working in the upper
+tail throughout agrees with R\*(Aqs \f(CW\*(C`qt(alpha/2, df, lower.tail=FALSE)\*(C'\fR to 15
+digits.
+.IP \(bu 4
+\&\fB"Essentially constant" was an absolute test.\fR Only an exactly\-zero variance
+was rejected, so a spread below what a double can resolve at the data\*(Aqs own
+magnitude was reported as a finding: four values around 1e10 differing by 1e\-5
+gave \f(CW\*(C`t\*(C'\fR = 4e15 and a p\-value of 3e\-47. The comparison is now relative, as R\*(Aqs
+is. The exactly\-zero case, where R returns \f(CW\*(C`NaN\*(C'\fR, raises here instead.
+.IP \(bu 4
+\&\fBA defined non\-array \fR\f(CB\*(C`y\*(C'\fR\fB was ignored.\fR \f(CW\*(C`t_test(\e@x, y => 5)\*(C'\fR quietly ran a
+one\-sample test. It now raises. An explicit \f(CW\*(C`undef\*(C'\fR still means absent, as R\*(Aqs
+\&\f(CW\*(C`y = NULL\*(C'\fR does.
+.PP
+\&\f(CW\*(C`qt_tail\*(C'\fR is shared with \f(CW\*(C`power_t_test\*(C'\fR, which gains the same precision; it is
+only ever called there with a tail below 0.5, so nothing about its behaviour
+changes. \f(CW\*(C`t_test\*(C'\fR remains allocation\-free — the missing\-value filtering happens
+inside the same single Welford pass that was already there, and the result hash
+is built after the last error check rather than before the first.
+.PP
+\fIwrite_table: \fR\f(CI\*(C`tex.longtable.head\*(C'\fR
+.IX Subsection "write_table: tex.longtable.head"
+.PP
+A \f(CW\*(C`longtable\*(C'\fR freezes only the header sitting inside \f(CW\*(C`\eendfirsthead\*(C'\fR /
+\&\f(CW\*(C`\eendhead\*(C'\fR, and \f(CW\*(C`tex.longtable\*(C'\fR never wrote those blocks — its header was an
+ordinary first body row, leaving the frozen one to be hand\-written by the
+caller. That header then had no link to \f(CW\*(C`col.names\*(C'\fR: reorder the columns and
+the labels at the top of every page keep the old order while the data below
+them moves, and the generated header appears again as a duplicate first row.
+.PP
+\&\f(CW\*(C`tex.longtable.head\*(C'\fR generates the repeat machinery from the table\*(Aqs own header
+record, so it cannot drift. A true\-but\-numeric value emits
+\&\f(CW\*(C`\eendfirsthead\*(C'\fR/\f(CW\*(C`\eendhead\*(C'\fR/\f(CW\*(C`\eendfoot\*(C'\fR with no continuation caption; any other
+true value is the caption used on pages after the first, written verbatim.
+Implies \f(CW\*(C`tex.longtable\*(C'\fR. \f(CW\*(C`tex.longtable\*(C'\fR on its own is unchanged.
+.PP
+The wrapper keeps one static token, the \f(CW\*(C`\ehline\*(C'\fR closing its \f(CW\*(C`\ecaption\*(C'\fR line,
+because a leading \f(CW\*(C`\ehline\*(C'\fR in an \f(CW\*(C`\einput\*(C'\fRed file is a \f(CW\*(C`Misplaced \enoalign\*(C'\fR
+error — TeX has already begun the row by the time it expands the \f(CW\*(C`\einput\*(C'\fR.
+.PP
+\fIskew, kurtosis\fR
+.IX Subsection "skew, kurtosis"
+.PP
+Two new XS functions describing the shape of a sample beyond its spread:
+\&\f(CW\*(C`skew\*(C'\fR for the third central moment and \f(CW\*(C`kurtosis\*(C'\fR for the fourth. Both take
+arguments the way \f(CW\*(C`sd\*(C'\fR and \f(CW\*(C`var\*(C'\fR do — numbers, array references or a mixture,
+flattened into one sample — and both also accept \f(CW\*(C`x => \e@data\*(C'\fR and
+\&\f(CW\*(C`type => 1|2|3\*(C'\fR.
+.PP
+\&\f(CW\*(C`type\*(C'\fR selects among the three sample conventions, which disagree noticeably on
+small samples. The default is \f(CW\*(C`type => 2\*(C'\fR: \f(CW\*(C`G1\*(C'\fR and \f(CW\*(C`G2\*(C'\fR, the estimators
+unbiased for a normal sample, as reported by SAS, SPSS, Stata, Excel\*(Aqs \f(CWSKEW()\fR
+and \f(CWKURT()\fR, and \f(CW\*(C`scipy.stats\*(C'\fR with \f(CW\*(C`bias => FALSE\*(C'\fR. \f(CW\*(C`type => 1\*(C'\fR is the plain
+moment ratio (\f(CW\*(C`moments::skewness\*(C'\fR) and \f(CW\*(C`type => 3\*(C'\fR is \f(CW\*(C`b1\*(C'\fR/\f(CW\*(C`b2\*(C'\fR
+(\f(CW\*(C`e1071::skewness\*(C'\fR\*(Aqs own default). All three, for both functions, agree with R
+to about 1e\-15. \f(CW\*(C`kurtosis\*(C'\fR returns \fIexcess\fR kurtosis — 3 is already subtracted,
+so a normal sample sits near 0.
+.IP \(bu 4
+One pass, no allocation: the third and fourth central moments accumulate
+through Welford\*(Aqs recurrence extended to higher moments (Terriberry) rather
+than the textbook expansion in raw moments. That expansion is not usable on
+real data — for a column of values around 1e7, a lab value in the wrong units
+or a timestamp, \f(CW\*(C`sum(x**3)/n\*(C'\fR is about 1e21 while the third central moment is
+single digits, so every significant figure cancels away.
+.IP \(bu 4
+A constant sample croaks rather than returning a silent \f(CW\*(C`NaN\*(C'\fR from \f(CW\*(C`0/0\*(C'\fR, and
+a \f(CW\*(C`type\*(C'\fR whose denominator the sample is too small for (\f(CW\*(C`type => 2\*(C'\fR needs
+\&\f(CW\*(C`n >= 3\*(C'\fR for \f(CW\*(C`skew\*(C'\fR and \f(CW\*(C`n >= 4\*(C'\fR for \f(CW\*(C`kurtosis\*(C'\fR) says which.
+.IP \(bu 4
+Both read tied arrays. \f(CW\*(C`av_fetch\*(C'\fR on a tied array returns a deferred \f(CW\*(C`PVLV\*(C'\fR
+rather than the value, and \f(CW\*(C`SvOK\*(C'\fR on one of those is false until its
+get\-magic has run, so without an \f(CW\*(C`SvGETMAGIC\*(C'\fR every element of a tied array
+looks undefined.
+.PP
+\fImedian\fR
+.IX Subsection "median"
+.PP
+\&\f(CW\*(C`median\*(C'\fR now reads tied arrays too. It already had a separate \f(CW\*(C`av_fetch\*(C'\fR path
+for them — a tied array keeps nothing in \f(CW\*(C`AvARRAY\*(C'\fR, so the fast path would read
+off a null pointer — but that path was missing the \f(CW\*(C`SvGETMAGIC\*(C'\fR described
+above, so it rejected every tied array as undefined instead of computing the
+answer. \f(CW\*(C`mean\*(C'\fR, \f(CW\*(C`sd\*(C'\fR, \f(CW\*(C`var\*(C'\fR, \f(CW\*(C`sum\*(C'\fR, \f(CW\*(C`min\*(C'\fR and \f(CW\*(C`max\*(C'\fR still reject tied arrays.
+They have no \f(CW\*(C`AvARRAY\*(C'\fR fast path to guard, so they croak rather than crash, and
+the same one\-line fix would make each of them work.
 .SS "0.281 2026\-08\-03 CDT"
 .IX Subsection "0.281 2026-08-03 CDT"
+\&\f(CW\*(C`median\*(C'\fR (LikeR.xs) — the same answers in about an eighth of the time. On the
+\&\f(CW\*(C`benchmark.pl\*(C'\fR case (10,000 normals in one array ref) a call went from 0.83 ms
+to 0.097 ms, which puts it ahead of the two implementations it was behind:
+\&\f(CW\*(C`numpy.median\*(C'\fR at 0.105 ms and R\*(Aqs \f(CW\*(C`median\*(C'\fR at 0.196 ms, measured on the same
+machine. Small samples — a per\-group median under \f(CW\*(C`agg\*(C'\fR or \f(CW\*(C`group_by\*(C'\fR, which is
+where most calls to it come from — went from 647 ns to 251 ns.
+.PP
+A median is the middle one or two values, so most of the sort the function used
+to do was wasted work: \f(CW\*(C`qsort\*(C'\fR orders all n elements at a cost of n log n
+comparisons, every one an indirect call through a function pointer the compiler
+cannot see into, to answer a question that depends on one or two of them. Those
+values are now selected instead, and the sample is walked once rather than
+twice.
+.IP \(bu 4
+The selection is introselect, the same shape numpy\*(Aqs \f(CW\*(C`partition\*(C'\fR uses:
+quickselect with a median\-of\-three pivot, an insertion sort once a range is
+small, and a heapsort fallback past a depth limit, so an input crafted to
+defeat the pivot choice degrades to O(n log n) rather than O(n²). The awkward
+data people actually have comes out faster than random data rather than
+slower — sorted, reversed, all\-equal and organ\-pipe samples of 100,000 values
+each take about 0.25 ms against 0.90 ms for random ones. For an even count the
+lower of the middle pair is the largest value left below the upper one, which
+a scan of that side finds without a second selection.
+.IP \(bu 4
+The counting pass is gone. It walked every element through \f(CW\*(C`av_fetch\*(C'\fR before
+any arithmetic, only to size the buffer; the array lengths give the same
+count, exactly, because an undef anywhere still dies.
+.IP \(bu 4
+The pass that remains reads cells through \f(CW\*(C`AvARRAY\*(C'\fR instead of \f(CW\*(C`av_fetch\*(C'\fR,
+with tied arrays kept on the \f(CW\*(C`av_fetch\*(C'\fR path, since only it sees their values.
+.IP \(bu 4
+A sample of 256 values or fewer is copied to the C stack rather than the heap,
+so the common small call no longer pays for a malloc and free at all: 10,000
+of them now grow RSS by nothing. Larger samples still copy n values, which is
+what leaves the caller\*(Aqs array in its original order — the selection reorders
+whatever it works on, and \f(CW\*(C`t/median.t\*(C'\fR checks that the input comes back
+untouched.
+.PP
+Error messages that carry an index or a count were unreadable on older perls,
+in nineteen places across LikeR.xs, and now are not. \f(CW\*(C`croak\*(C'\fR runs perl\*(Aqs own
+formatter rather than the C library\*(Aqs, and that formatter does not understand
+C99\*(Aqs \f(CW\*(C`z\*(C'\fR length modifier: it printed the conversion literally, so
+\&\f(CW\*(C`median(1, undef)\*(C'\fR on perl 5.10 or 5.12 said \f(CWundefined value at argument index
+%zu\fR instead of naming the argument that was undefined — the one thing the
+message existed to say. \f(CW\*(C`min\*(C'\fR, \f(CW\*(C`max\*(C'\fR, \f(CW\*(C`mode\*(C'\fR, \f(CW\*(C`sum\*(C'\fR, \f(CW\*(C`sd\*(C'\fR, \f(CW\*(C`var\*(C'\fR, \f(CW\*(C`median\*(C'\fR,
+\&\f(CW\*(C`mcnemar_test\*(C'\fR, \f(CW\*(C`friedman_test\*(C'\fR, \f(CW\*(C`hoa2hoh\*(C'\fR and \f(CW\*(C`oneway_test\*(C'\fR were all affected.
+They now use \f(CW\*(C`UVuf\*(C'\fR, as the rest of the file already did. The \f(CW\*(C`snprintf\*(C'\fR calls
+elsewhere in the file are unaffected and unchanged: those do go to the C
+library, where \f(CW%zu\fR means what it says.
+.PP
+New \f(CW\*(C`t/croak.messages.t\*(C'\fR covers every one of those messages: each is triggered,
+checked for the number it should name, and then swept for any conversion left
+unexpanded, which is what will catch the next one written with \f(CW%zu\fR. Run
+against the code as it stood before this change, thirty\-two of its assertions
+fail on perl 5.10.
+.PP
+New \f(CW\*(C`t/median.t\*(C'\fR: every length from 1 to 25 and from 254 to 258 — either side of
+the insertion\-sort cutoff and of the point where the buffer moves off the stack
+— across sorted, reversed, all\-equal, two\-valued, duplicate\-heavy, organ\-pipe
+and median\-of\-three\-killer samples, each checked against a plain Perl sort,
+together with the error messages and \f(CW\*(C`Test::LeakTrace\*(C'\fR over the stack, heap,
+mixed\-argument and croak paths.
+.PP
 fix for threaded Perls https://www.cpantesters.org/cpan/report/2dbacf8f\-7138\-1014\-a1ab\-f0f91cf3b922
 .SS "0.28 2026\-08\-02 CDT"
 .IX Subsection "0.28 2026-08-02 CDT"

@@ -707,7 +707,7 @@ The function returns a single `HashRef` containing the evaluated statistical res
 
 ### omitting formula
 
-As of version 0.07, in the case of an omitted formula, stacking is done:
+In the case of an omitted formula, stacking is done:
 
     aov(
     {
@@ -3284,6 +3284,78 @@ For example:
             $ks->{statistic}, $ks->{p_value}, $ks->{method};
     }
 
+## kurtosis
+
+Sample excess kurtosis — how much of the variance sits in the tails rather than
+near the shoulders. The `3` of a normal distribution is already subtracted, so a
+normal sample gives roughly `0`, a heavy-tailed one a positive number, and a flat
+or bimodal one a negative number. Add `3` if you want the plain fourth
+standardized moment. Validated numerically against R.
+
+    kurtosis(2, 4, 4, 4, 5, 5, 7, 9);        # 0.940625
+
+Arguments work as they do for [sd](#sd) and [var](#var): plain numbers, array
+references, or any mixture of the two, all flattened into one sample.
+
+    my @x = (2, 4, 4, 4, 5, 5, 7, 9);
+    kurtosis(@x);                  # a list
+    kurtosis(\@x);                 # an array reference
+    kurtosis([2, 4, 4], 4, [5, 5, 7, 9]);   # mixed; same sample
+    kurtosis(x => \@x);            # named, if you prefer it
+
+### `type`
+
+There are three conventions in circulation for turning the moment ratio into a
+sample statistic, and they disagree noticeably on small samples. `type` picks
+one; the default is `2`.
+
+| `type` | Statistic | Also known as |
+|--------|-----------|---------------|
+| 1 | `g2` | the plain moment ratio; R's `moments::kurtosis` minus 3 |
+| 2 | `G2` | **the default**; SAS, SPSS, Stata, Excel's `KURT()`, `scipy.stats.kurtosis(bias => FALSE)` |
+| 3 | `b2` | `e1071::kurtosis`'s own default |
+
+where, writing `m2` and `m4` for the second and fourth central moments (each
+divided by `n`):
+
+    g2 = m4 / m2**2 - 3                                     # type 1
+    G2 = ((n + 1) * g2 + 6) * (n - 1) / ((n - 2) * (n - 3))  # type 2, the default
+    b2 = (g2 + 3) * (1 - 1 / n)**2 - 3                      # type 3
+
+    my @x = (1, 2, 3, 10);
+    kurtosis(\@x, type => 1);   # -0.7696   plain moment ratio
+    kurtosis(\@x);              #  3.228    G2, the default
+    kurtosis(\@x, type => 3);   # -1.7454   b2
+
+`type => 2` is the estimator that is unbiased for a normal sample, which is why
+it is the default and why it is what every general-purpose statistics package
+reports. It divides by `n - 3`, so it needs at least four values; the other two
+need at least two.
+
+    my $shape = { skew => skew($lab), kurtosis => kurtosis($lab) };
+
+### Errors
+
+`kurtosis` croaks, naming the offending position, on an undefined value:
+
+    kurtosis(1, undef, 3);
+    # kurtosis: undefined value at argument index 1
+
+    kurtosis([1, 2, undef]);
+    # kurtosis: undefined value at array ref index 2 (argument 0)
+
+and on a sample too small for the chosen `type`, on a `type` outside `1 .. 3`, or
+on a constant sample, which has no shape to report:
+
+    kurtosis([7, 7, 7, 7]);
+    # kurtosis: zero variance (all 4 values are equal), so kurtosis is undefined
+
+### See also
+
+[skew](#skew) for the third moment, [sd](#sd) and [var](#var) for the second,
+[shapiro_test](#shapiro_test) to test normality rather than describe the
+departure from it.
+
 ## ljoin
 
 Consider a hash: `$h{$row}{$col}`, and another hash `$i{$row}{$col2}`.
@@ -3380,7 +3452,7 @@ defaults to the first list.
 
 You can also pass `byrow => 1` if you want the matrix populated row-wise instead of column-wise.
 
-As of version 0.10, parameters do not need to be named, so that `matrix` works more like R:
+Parameters do not need to be named, so that `matrix` works more like R:
 
     my $d = matrix(rnorm(32000), 1000, 32);
 
@@ -3395,7 +3467,7 @@ or
     my @arr = 1..8;
     max(@arr, 4, 5)
 
-as of version 0.02, max will die if any undefined values are provided
+max will die if any undefined values are provided
 
 ## mcnemar_test
 
@@ -3452,7 +3524,7 @@ or
 
     mean([1,1], [2,2]) # 1.5
 
-as of version 0.02, mean will die if any undefined values are provided
+mean will die if any undefined values are provided
 
 ## median
 
@@ -3460,7 +3532,7 @@ works like mean, taking array references and arrays:
 
     median( $test_data[$i][0] )
 
-as of version 0.02, median will die if any undefined values are provided
+median will die if any undefined values are provided
 
 ## melt
 
@@ -3562,7 +3634,7 @@ or
     my @arr = 1..8;
     min(@arr, 4, 5)
 
-as of version 0.02, min will die if any undefined values are provided
+min will die if any undefined values are provided
 
 ## mode
 
@@ -4726,7 +4798,7 @@ Correct answer is 2.1380899352994
 
     my $stdev = sd([2,4,4,4,5,5,7,9]);
 
-As of version 0.02, sd will croak/die if any undefined values are provided.
+sd will croak/die if any undefined values are provided.
 
 ## select_cols
 
@@ -4803,6 +4875,82 @@ and returns the hash reference:
     W           0.960870680168535
     }
 
+## skew
+
+Sample skewness — the direction and degree of a distribution's asymmetry.
+Positive means a long right tail (the usual shape of lab values, costs and
+lengths of stay), negative a long left tail, and about zero a symmetric sample.
+Validated numerically against R.
+
+    skew(2, 4, 4, 4, 5, 5, 7, 9);        # 0.8184875533568
+
+Arguments work as they do for [sd](#sd) and [var](#var): plain numbers, array
+references, or any mixture of the two, all flattened into one sample.
+
+    my @x = (2, 4, 4, 4, 5, 5, 7, 9);
+    skew(@x);                  # a list
+    skew(\@x);                 # an array reference
+    skew([2, 4, 4], 4, [5, 5, 7, 9]);   # mixed; same sample
+    skew(x => \@x);            # named, if you prefer it
+
+### `type`
+
+There are three conventions in circulation for turning the moment ratio into a
+sample statistic, and they disagree noticeably on small samples. `type` picks
+one; the default is `2`.
+
+| `type` | Statistic | Also known as |
+|--------|-----------|---------------|
+| 1 | `g1` | the plain moment ratio; R's `moments::skewness` |
+| 2 | `G1` | **the default**; SAS, SPSS, Stata, Excel's `SKEW()`, `scipy.stats.skew(bias => FALSE)` |
+| 3 | `b1` | `e1071::skewness`'s own default |
+
+where, writing `m2` and `m3` for the second and third central moments (each
+divided by `n`):
+
+    g1 = m3 / m2**1.5                     # type 1
+    G1 = g1 * sqrt(n * (n - 1)) / (n - 2) # type 2, the default
+    b1 = g1 * ((n - 1) / n)**1.5          # type 3
+
+    my @x = (1, 2, 4);
+    skew(\@x, type => 1);   # 0.3818017742   plain moment ratio
+    skew(\@x);              # 0.9352195296   G1, the default
+    skew(\@x, type => 3);   # 0.2078265621   b1
+
+`type => 2` is the estimator that is unbiased for a normal sample, which is why
+it is the default and why it is what every general-purpose statistics package
+reports. It divides by `n - 2`, so it needs at least three values; the other two
+need at least two.
+
+Both statistics are computed in one pass over the sample, so a whole column can
+be summarized without materializing it twice:
+
+    my $df = read_table('labs.tsv');
+    printf "%-24s skew %7.3f  kurtosis %7.3f\n", $_,
+        skew($df->{$_}), kurtosis($df->{$_}) for qw(alt ast bilirubin);
+
+### Errors
+
+`skew` croaks, naming the offending position, on an undefined value:
+
+    skew(1, undef, 3);
+    # skew: undefined value at argument index 1
+
+    skew([1, 2, undef]);
+    # skew: undefined value at array ref index 2 (argument 0)
+
+and on a sample too small for the chosen `type`, on a `type` outside `1 .. 3`, or
+on a constant sample, which has no shape to report:
+
+    skew([7, 7, 7, 7]);
+    # skew: zero variance (all 4 values are equal), so skewness is undefined
+
+### See also
+
+[kurtosis](#kurtosis) for the fourth moment, [sd](#sd) and [var](#var) for the
+second, [shapiro_test](#shapiro_test) to test normality rather than describe the
+departure from it.
+
 ## smd
 
 Standardized mean difference between two continuous groups, standardizing by the
@@ -4828,7 +4976,7 @@ which I prefer, compared to List::Util's required casting into an array:
 
 which passing a reference is shorter and much easier to read.  Stats::LikeR, however, will work for **both**
 
-as of version 0.02, `sum` will cause the script to die if any undefined values are provided
+`sum` will cause the script to die if any undefined values are provided
 
 ## summary
 
@@ -4932,13 +5080,38 @@ the two groups compared can be specified, though not necessarily, as `x` and `y`
 
 | Parameter | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `x` | Array Reference | Required | The first vector of data. Must contain at least 2 elements. |
-| `y` | Array Reference | `undef` | The second vector of data. Required for two-sample or paired tests. |
-| `mu` | Float | 0.0 | The true value of the mean (or difference in means) for the null hypothesis. |
+| `x` | Array Reference | Required | The first vector of data. Must have at least 2 non-missing elements (1 is enough for the `y` of a `var_equal` test). |
+| `y` | Array Reference | `undef` | The second vector of data. Required for two-sample or paired tests. An explicit `undef` means "absent", as R's `y = NULL` does; anything else that is not an array reference is a fatal error rather than a silently ignored argument. |
+| `mu` | Float | 0.0 | The true value of the mean (or difference in means) for the null hypothesis. Shifts `statistic` and `p_value`; `conf_int` is centred on the estimate and does not move. |
 | `paired` | Boolean | `FALSE` | If true, performs a paired t-test. `x` and `y` must be the same length. |
 | `var_equal` | Boolean | `FALSE` | If true, assumes equal variances (standard two-sample). If false, performs Welch's t-test with unequal variances. |
-| `conf_level` | Float | 0.95 | Confidence level for the returned confidence interval. Must be between 0 and 1. |
-| `alternative` | String | `"two.sided"` | Direction of the alternative hypothesis: `"two.sided"`, `"less"`, or `"greater"`. |
+| `conf_level` | Float | 0.95 | Confidence level for the returned confidence interval. Must be strictly between 0 and 1 (R also accepts the degenerate 0 and 1). |
+| `alternative` | String | `"two.sided"` | Direction of the alternative hypothesis: `"two.sided"`, `"less"`, or `"greater"`. `"two-sided"` and `"two_sided"` are accepted as `scipy`'s spelling of the same thing. Anything else is a fatal error — an unrecognised value must not quietly become a two-sided test. |
+
+### Missing values
+
+`undef` and `NaN` are dropped, as R's `t.test` drops `NA`; infinities are kept,
+as R keeps them. A one-sample or unpaired two-sample test filters each vector on
+its own, so the two may lose different numbers of observations and `df` reflects
+what survived. A paired test filters on complete cases: if either side of a pair
+is missing the pair goes whole, keeping the differences aligned.
+
+### Errors
+
+Dies if:
+- `x` is missing or is not an array reference, or `y` is defined but is not one
+- `alternative` is not one of the values above
+- `conf_level` is not strictly between 0 and 1
+- `paired` is set without a `y`, or with an `x` and `y` of different lengths
+- fewer than 2 observations survive: 2 in `x` for a one-sample test, 2 complete
+  pairs when `paired`, and for two samples R's own thresholds — a Welch test
+  needs 2 on each side, while `var_equal` accepts a side of 1 (it contributes no
+  sum of squares to the pooled variance) so long as the two together reach 3
+- the data are essentially constant, meaning the standard error has fallen below
+  `10 * DBL_EPSILON` times the magnitude of the estimate. The comparison is
+  relative, so a sample whose spread a double cannot resolve at its own scale is
+  rejected instead of being reported as an enormous `statistic`. R returns `NaN`
+  rather than raising for the exactly-zero case; this raises for both.
 
 ### Return Hash
 
@@ -5152,7 +5325,7 @@ as simple as possible:
 
     var(2, 4, 5, 8, 9)
 
-as of version 0.02, `var` will die if any undefined values are provided
+`var` will die if any undefined values are provided
 
 like `min`, `max`, etc., `var` can accept array references, to make code simpler:
 
@@ -5353,7 +5526,7 @@ You can also precisely filter and reorder which columns are written by passing a
     write_table(\@data, $tmp_file, sep => "\t", 'col.names' => ['c', 'a']);
 undefined variables are printed as `NA` by default, but can be set as you wish using `undef.val`
     write_table(\%data_hoa, '/tmp/undef.val.tsv', sep => "\t", 'undef.val' => 'nan')
-as of version 0.07, `write_table` determines comma and tab-separated delimiters from the filename, but will override if `sep` or `delim` are explicitly set.
+`write_table` determines comma and tab-separated delimiters from the filename, but will override if `sep` or `delim` are explicitly set.
 Args can also be accepted:
     write_table( 'data' => \%flat, 'file' => $f );
 
@@ -5393,6 +5566,28 @@ which you wrap yourself:
     \caption{}
     \label{}
     \end{longtable}
+In that plain form the header is an ordinary first row, which is *not* the header LaTeX freezes at the top of each page: a `longtable` repeats only what sits inside `\endfirsthead` / `\endhead`. Hand-writing those blocks means retyping the column labels, and they then silently stop matching `col.names` the first time the column order changes — the frozen header says one thing while the columns underneath say another, and the generated header shows up a second time as the first body row. `tex.longtable.head` closes that gap by generating the repeat machinery from the same header record as the body:
+    write_table(\@rows, 'output.file.tex',
+        'col.names'          => ['a', 'b', 'c'],
+        'tex.longtable.head' => '(continued)', # or just 1 for no continuation caption
+    );
+    %written by /home/con/Scripts/stats/make_table.pl
+    % \begin{longtable}{ccc}
+    \textbf{a} & \textbf{b} & \textbf{c} \\ \hline
+    \endfirsthead
+    \caption[]{(continued)}\\
+    \hline
+    \textbf{a} & \textbf{b} & \textbf{c} \\ \hline
+    \endhead
+    \hline
+    \endfoot
+    1 & 2 & 3\\
+Setting `tex.longtable.head` implies `tex.longtable` (and so `tex => 1`). A true-but-numeric value emits the machinery with no continuation caption; any other true value is the caption text for every page after the first, written verbatim so LaTeX macros survive, with an empty `\caption[]` optional argument so the continuation stays out of the List of Tables. `\endfoot` carries the closing `\hline` and no `\endlastfoot` is emitted, so every page — the last one included — gets a bottom rule. The wrapper then holds nothing that has to track the data:
+    \begin{longtable}{ccc}
+    \caption{}\label{}\\ \hline
+    \input{output.file.tex}
+    \end{longtable}
+The trailing `\hline` on the caption line is the rule above the header on the *first* page, and it has to live there rather than in the generated file: `\hline` expands to `\noalign`, and TeX has already begun a table row by the time it expands your `\input`, so a rule as the file's first token is a `Misplaced \noalign` error. A bare `\hline` encodes neither column order nor column count, so unlike a hand-written header it cannot go stale — drop it if you do not want a top rule. Every other `\hline` in the generated file follows a `\\` inside that file, where it is legal.
 
 ### Excel output (`xlsx`)
 `write_table` can write a real Excel `.xlsx` workbook. It is selected either by naming the file `*.xlsx` (auto-detected) or by passing `xlsx => 1`; an explicit `xlsx => 0` forces a delimited file even for a `.xlsx` name. Like LaTeX, it is built from the same rows as the delimited
@@ -5442,6 +5637,7 @@ raw values (no cell number formats), matching the round-trip behaviour of
 | `tex.size` | *(none)* | LaTeX | size directive emitted after `\begin{tabular}`, e.g. `\small` |
 | `tex.comment` | *(none)* | LaTeX | `%` comment line(s) at the top of the LaTeX file: a string, or an array ref of strings |
 | `tex.longtable` | `0` (off) | LaTeX | write only the table body (header + data rows + `\hline`, no `\begin{tabular}`/`\end{tabular}` or column spec) for `\input{}` into a caller-supplied `longtable`; implies `tex => 1`, and emits a `% \begin{longtable}{...}` hint with one `tex.col.align` char per column |
+| `tex.longtable.head` | `0` (off) | LaTeX | generate `longtable`'s repeat-header machinery (`\endfirsthead` / `\endhead` / `\endfoot`) from the table's own header, so the header frozen at every page break tracks `col.names` instead of being hand-written; a non-numeric value is the continuation caption. Implies `tex.longtable`. Put the first page's top rule on your own `\caption` line (`\\ \hline`) — a leading `\hline` in an `\input`ed file is a `Misplaced \noalign` error |
 | `xlsx` | auto: `1` when `file` ends in `.xlsx`, else `0` | Excel | write a real `.xlsx` workbook (dependency-free, built in XS) instead of a delimited table; `xlsx => 0` forces delimited even for a `.xlsx` name. Mutually exclusive with `tex` |
 | `xlsx.sheet` | `'Sheet1'` | Excel | worksheet name |
 | `xlsx.comment` | *(none)* | Excel | extra line(s) appended after the provenance in the workbook's document *comments* property (`dc:description`): a string, or an array ref of strings |
@@ -5449,6 +5645,142 @@ raw values (no cell number formats), matching the round-trip behaviour of
 | `xlsx.freeze.cols` | `0` (none) | Excel | number of leading columns to freeze in place (freeze panes) |
 
 # Changes
+
+## 0.282 2026-08-03 CDT
+
+### t_test
+
+`t_test` was cross-checked against R's `stats::t.test` and `scipy.stats` case by
+case, including the cases their own suites pin: R's regression tests
+(`reg-tests-1a.R`, "t.test with one group of size one") and scipy's
+`TestTTest_1samp`, `TestTTest_ind.test_special_cases`, `test_ttest_rel_ci_1d`,
+`test_1samp_ci_1d` and `test_pvalue_ci`. On 2000 randomised comparisons against
+R — all four modes, all three alternatives, random `mu` and `conf_level`, sample
+sizes 2 to 40 and data scales spanning 1e-4 to 1e4 — the statistic and the
+degrees of freedom agree to 2e-11 and the p-value to 3e-9, holding to eight
+digits even where the p-value is subnormal (5e-310). What the comparison did
+turn up was seven ways a call could come back wrong rather than loud, all of
+them now fixed and covered by `t/t_test.t`.
+
+- **`undef` was coerced to 0 instead of being dropped.** This is the one worth
+  re-running results over. `t_test` did not filter missing values, so a column
+  with gaps in it was tested with every gap counted as a zero: R gives
+  `t.test(c(1,2,NA,4,5))` a `t` of 3.286 on 3 degrees of freedom, and `t_test`
+  answered 2.588 on 4. No error, no warning, and an answer close enough to the
+  real one to look right. `undef` and `NaN` are now dropped the way R drops `NA`,
+  per-vector for a one-sample or unpaired test, and on complete cases when
+  `paired` so a half-missing pair goes whole rather than contributing a
+  difference against zero.
+- **A `y` of fewer than two observations returned a silent `NaN`.** `var_y`
+  divided by `ny - 1`, so `t_test(\@x, [$one_value])` propagated `0/0` into the
+  statistic, the p-value and both interval bounds without raising. The two
+  thresholds R uses are now both in place: a Welch test needs a variance from
+  each side and refuses without one, while a pooled test tolerates a side of one
+  observation, since that side contributes no sum of squares. That second case is
+  what R's own regression suite pins — `t.test(y=x[1], x=x[-1], var.equal=TRUE)`
+  is a well-defined test with 8 degrees of freedom, and `t_test` now answers it
+  instead of returning `NaN` in one direction and croaking in the other. An empty
+  `y` is caught by the same check.
+- **`alternative` was never validated.** The p-value helper fell through to
+  two-sided for any string it did not recognise, so a typo — `'gerater'` — ran a
+  different test than the caller asked for and reported nothing. It is now
+  checked the way R's `match.arg` checks it. `scipy`'s `"two-sided"` spelling is
+  unambiguous, so it is accepted rather than rejected.
+- **A one-sided interval was wrong when `conf_level < 0.5`.** That case needs a
+  negative t quantile, and `qt_tail` searched upward from zero only, so it
+  returned roughly zero and collapsed the bound onto `mu`: R puts the upper bound
+  of `t.test(1:10, mu=5, conf.level=0.3, alternative="less")` at 4.9797 where
+  `t_test` reported 5.0000000036. `qt_tail` now reduces by symmetry first, so the
+  root it brackets is always positive.
+- **`qt_tail` silently saturated at 1e6.** Past that its doubling loop gave up
+  and returned the ceiling, so `conf_level` of 0.99999999 and 0.9999999999 came
+  back with the *identical* interval, ±1048576, against R's ±6.4e7 and ±6.4e9.
+  The ceiling is gone; the loop now runs until `t * t` would overflow.
+- **Interval accuracy no longer depends on the data's scale.** `qt_tail`
+  bisected to an absolute 1e-8 on the quantile, which is 1e-8 × `std_err` on the
+  interval — fine for data around 1, an error of 2 units for data around 1e9. It
+  now bisects to adjacent doubles. Worst interval error across the 2000
+  randomised cases went from 2.1e-4 to 5.3e-11 relative. At extreme
+  `conf_level` this makes `t_test` the more accurate of the two: `t.test` asks
+  for `qt(1 - alpha/2, df)`, and representing a 5e-9 tail as the double
+  `1 - 5e-9` costs eight significant figures of it, so R's own interval for
+  `conf.level=0.99999999` is off by 0.7 in the eighth digit. Working in the upper
+  tail throughout agrees with R's `qt(alpha/2, df, lower.tail=FALSE)` to 15
+  digits.
+- **"Essentially constant" was an absolute test.** Only an exactly-zero variance
+  was rejected, so a spread below what a double can resolve at the data's own
+  magnitude was reported as a finding: four values around 1e10 differing by 1e-5
+  gave `t` = 4e15 and a p-value of 3e-47. The comparison is now relative, as R's
+  is. The exactly-zero case, where R returns `NaN`, raises here instead.
+- **A defined non-array `y` was ignored.** `t_test(\@x, y => 5)` quietly ran a
+  one-sample test. It now raises. An explicit `undef` still means absent, as R's
+  `y = NULL` does.
+
+`qt_tail` is shared with `power_t_test`, which gains the same precision; it is
+only ever called there with a tail below 0.5, so nothing about its behaviour
+changes. `t_test` remains allocation-free — the missing-value filtering happens
+inside the same single Welford pass that was already there, and the result hash
+is built after the last error check rather than before the first.
+
+### write_table: `tex.longtable.head`
+
+A `longtable` freezes only the header sitting inside `\endfirsthead` /
+`\endhead`, and `tex.longtable` never wrote those blocks — its header was an
+ordinary first body row, leaving the frozen one to be hand-written by the
+caller. That header then had no link to `col.names`: reorder the columns and
+the labels at the top of every page keep the old order while the data below
+them moves, and the generated header appears again as a duplicate first row.
+
+`tex.longtable.head` generates the repeat machinery from the table's own header
+record, so it cannot drift. A true-but-numeric value emits
+`\endfirsthead`/`\endhead`/`\endfoot` with no continuation caption; any other
+true value is the caption used on pages after the first, written verbatim.
+Implies `tex.longtable`. `tex.longtable` on its own is unchanged.
+
+The wrapper keeps one static token, the `\hline` closing its `\caption` line,
+because a leading `\hline` in an `\input`ed file is a `Misplaced \noalign`
+error — TeX has already begun the row by the time it expands the `\input`.
+
+### skew, kurtosis
+
+Two new XS functions describing the shape of a sample beyond its spread:
+`skew` for the third central moment and `kurtosis` for the fourth. Both take
+arguments the way `sd` and `var` do — numbers, array references or a mixture,
+flattened into one sample — and both also accept `x => \@data` and
+`type => 1|2|3`.
+
+`type` selects among the three sample conventions, which disagree noticeably on
+small samples. The default is `type => 2`: `G1` and `G2`, the estimators
+unbiased for a normal sample, as reported by SAS, SPSS, Stata, Excel's `SKEW()`
+and `KURT()`, and `scipy.stats` with `bias => FALSE`. `type => 1` is the plain
+moment ratio (`moments::skewness`) and `type => 3` is `b1`/`b2`
+(`e1071::skewness`'s own default). All three, for both functions, agree with R
+to about 1e-15. `kurtosis` returns *excess* kurtosis — 3 is already subtracted,
+so a normal sample sits near 0.
+
+- One pass, no allocation: the third and fourth central moments accumulate
+  through Welford's recurrence extended to higher moments (Terriberry) rather
+  than the textbook expansion in raw moments. That expansion is not usable on
+  real data — for a column of values around 1e7, a lab value in the wrong units
+  or a timestamp, `sum(x**3)/n` is about 1e21 while the third central moment is
+  single digits, so every significant figure cancels away.
+- A constant sample croaks rather than returning a silent `NaN` from `0/0`, and
+  a `type` whose denominator the sample is too small for (`type => 2` needs
+  `n >= 3` for `skew` and `n >= 4` for `kurtosis`) says which.
+- Both read tied arrays. `av_fetch` on a tied array returns a deferred `PVLV`
+  rather than the value, and `SvOK` on one of those is false until its
+  get-magic has run, so without an `SvGETMAGIC` every element of a tied array
+  looks undefined.
+
+### median
+
+`median` now reads tied arrays too. It already had a separate `av_fetch` path
+for them — a tied array keeps nothing in `AvARRAY`, so the fast path would read
+off a null pointer — but that path was missing the `SvGETMAGIC` described
+above, so it rejected every tied array as undefined instead of computing the
+answer. `mean`, `sd`, `var`, `sum`, `min` and `max` still reject tied arrays.
+They have no `AvARRAY` fast path to guard, so they croak rather than crash, and
+the same one-line fix would make each of them work.
 
 ## 0.281 2026-08-03 CDT
 
