@@ -3795,7 +3795,7 @@ methods available are `holm` (the default), `hochberg`, `hommel`,
 are case-insensitive, and the full `Benjamini-Hochberg` /
 `Benjamini-Yekutieli` spellings are accepted.
 
-    my @q = p_adjust(\@pvalues, $method);          # a list in, a list out
+    my @q = p_adjust(\@pvalues, $method);          # array in, array out
     my $q = p_adjust($df, $method, columns => ..); # a frame in, a frame out
 
 Given a flat arrayref of p-values it returns the adjusted values as a list, in
