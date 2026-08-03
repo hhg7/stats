@@ -5485,9 +5485,85 @@ are reserved top-level keys in the result.
 
 =head2 p_adjust
 
-Returns array of false-discovery-rate-corrected p-values, where methods available are "holm", "hochberg", "hommel", "bonferroni", "BH", "BY", "fdr"
+Corrects a family of p-values for multiple testing, like R's C<p.adjust>. The
+methods available are C<holm> (the default), C<hochberg>, C<hommel>,
+C<bonferroni>, C<BH>, C<BY>, C<fdr> (a synonym for C<BH>) and C<none>. Method names
+are case-insensitive, and the full C<Benjamini-Hochberg> /
+C<Benjamini-Yekutieli> spellings are accepted.
 
- my @q = p_adjust(\@pvalues, $method);
+ my @q = p_adjust(\@pvalues, $method);          # a list in, a list out
+ my $q = p_adjust($df, $method, columns => ..); # a frame in, a frame out
+
+Given a flat arrayref of p-values it returns the adjusted values as a list, in
+the order they were given. Given a data frame — AoA, AoH, HoA or HoH — it
+returns a B<new> frame of the same kind, with the same rows, columns and row
+labels, holding the adjusted values in the places the raw ones came from. The
+input frame is never modified.
+
+Every p-value in the frame is corrected as B<one family>, whichever shape it
+arrived in, so the family size is the number of p-value cells and not the
+number of rows or columns.
+
+ my $df = [ { gene => 'BRCA1', p_value => 0.010 },
+            { gene => 'TP53',  p_value => 0.040 },
+            { gene => 'EGFR',  p_value => 0.030 },
+            { gene => 'KRAS',  p_value => 0.200 } ];
+ my $q = p_adjust($df, 'BH', columns => 'p_value');
+ # [ { gene => 'BRCA1', p_value => 0.04      },
+ #   { gene => 'TP53',  p_value => 0.0533333 },
+ #   { gene => 'EGFR',  p_value => 0.0533333 },
+ #   { gene => 'KRAS',  p_value => 0.20      } ]
+
+=head3 columns
+
+C<columns> (also spelled C<column>, C<cols> or C<col>) names the columns that hold
+p-values; everything else is copied through untouched. It takes one name or an
+arrayref of names, which are column names for AoH, HoA and HoH and 0-based
+positions for AoA.
+
+ p_adjust($aoh, 'BH', columns => 'p_value');
+ p_adjust($hoh, 'BH', columns => [ 'p_raw', 'p_trend' ]);
+ p_adjust($aoa, 'BH', columns => 1);              # the second column
+ p_adjust($hoa, columns => 'p_value');            # method defaults to holm
+
+Note the shape each name refers to: in a HoA a column I<is> an outer key, while
+in a HoH the outer keys are row labels and the names are the inner keys.
+
+Without C<columns>, every cell in the frame is taken to be a p-value. That is
+what you want for a frame that is nothing but p-values, and an error for one
+with a label column in it — a cell that is neither a number nor C<undef> dies
+with a message pointing at C<columns>. A name that matches no column in the
+frame also dies, rather than quietly correcting nothing.
+
+C<columns> applies only to frames; passing it with a flat list of p-values is an
+error.
+
+=head3 Method may be positional or named
+
+The method still reads positionally, as it always has, and may also be given as
+a C<< method =E<gt> ... >> pair. These three are the same call:
+
+ p_adjust($df, 'BH', columns => 'p_value');
+ p_adjust($df, method => 'BH', columns => 'p_value');
+ p_adjust($df, 'BH');                    # if every column holds p-values
+
+=head3 Ordering and other details
+
+=over
+
+=item * An C<undef> cell counts toward the family as a p-value of 1, which is how the
+flat form has always treated it, and comes back adjusted rather than as
+C<undef>.
+
+=item * Within a frame the family is enumerated in a fixed order — rows in order and
+then columns by name for an AoA, AoH or HoH; columns by name and then rows
+for a HoA; row labels in sorted order for a HoH — so tied p-values break the
+same way on every run instead of following hash iteration order.
+
+=item * An empty arrayref returns an empty list; an empty frame returns an empty
+frame of the same kind.
+
+=back
 
 =head2 pivot_table
 
@@ -8093,7 +8169,40 @@ C<read_table>.
 
 =head1 Changes
 
-=head2 0.28 2026-07-28 CDT
+=head2 0.28 2026-08-02 CDT
+
+C<p_adjust> (LikeR.xs) now takes a data frame as well as a flat list of
+p-values, and hands the corrected values back in the shape they arrived in. An
+AoA, AoH, HoA or HoH goes in and a new frame of the same kind comes out, with
+the same rows, columns and row labels; the input is left alone. Everything the
+flat form did is unchanged — an arrayref of p-values still returns a list, in
+order, with the same numbers.
+
+=over
+
+=item * C<< columns =E<gt> 'p_value' >> (or an arrayref of names, or 0-based positions for an
+AoA) says which columns hold p-values, and copies the rest of the frame
+through untouched, so a results table with a C<gene> column no longer has to
+be taken apart and put back together around the call. Without C<columns>
+every cell is treated as a p-value, which is right for a frame that is
+nothing but p-values; a label column in one dies with a message naming the
+offending value and pointing at C<columns>, rather than correcting a string
+coerced to zero.
+
+=item * All the p-values in the frame are corrected as one family, whichever shape
+they came in, so the family size is the number of p-value cells.
+
+=item * The method still reads positionally and may now also be given as
+C<< method =E<gt> ... >>. C<none>, which the function has always accepted, is now
+documented along with the rest.
+
+=item * Cells are visited in a fixed order — by row and then column name, or column
+name and then row for a HoA — so tied p-values break the same way on every
+run instead of following hash iteration order.
+
+=back
+
+C<drop_duplicates>, C<filter>, C<t_test>, C<vals>: speed/RAM improvements
 
 B<Incompatible:> the C<'?'> / C<'h'> argument added in 0.27 is gone (lib/Stats/LikeR.pm). C<agg('h')>, C<read_table('?')> and the fifty-odd other pure-Perl functions that took it no longer print help and die — they treat the string as data, the way the XS functions always have. C<h('agg')>, C<h(*agg)> and C<h(\&agg)> are unchanged and remain the way to ask, for every function in the distribution.
 - It was a help route that only half the module had, so what a lone C<'h'> meant depended on whether the callee happened to be written in XS or in Perl, and a column, file or option value really named C<'h'> needed C<$Stats::LikeR::HELP = 0> to get through. That variable is gone too; nothing reads its arguments for a help flag any more.

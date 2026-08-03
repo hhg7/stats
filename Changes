@@ -1,7 +1,33 @@
 Revision history for Stats-LikeR
 
 
-0.28 2026-07-28 CDT
+0.28 2026-08-02 CDT
+
+ - `p_adjust` (LikeR.xs) now takes a data frame as well as a flat list of
+   p-values, and hands the corrected values back in the shape they arrived in. An
+   AoA, AoH, HoA or HoH goes in and a new frame of the same kind comes out, with
+   the same rows, columns and row labels; the input is left alone. Everything the
+   flat form did is unchanged — an arrayref of p-values still returns a list, in
+   order, with the same numbers.
+
+ - `columns => 'p_value'` (or an arrayref of names, or 0-based positions for an
+     AoA) says which columns hold p-values, and copies the rest of the frame
+     through untouched, so a results table with a `gene` column no longer has to
+     be taken apart and put back together around the call. Without `columns`
+     every cell is treated as a p-value, which is right for a frame that is
+     nothing but p-values; a label column in one dies with a message naming the
+     offending value and pointing at `columns`, rather than correcting a string
+     coerced to zero.
+ - All the p-values in the frame are corrected as one family, whichever shape
+     they came in, so the family size is the number of p-value cells.
+ - The method still reads positionally and may now also be given as
+     `method => ...`. `none`, which the function has always accepted, is now
+     documented along with the rest.
+ - Cells are visited in a fixed order — by row and then column name, or column
+     name and then row for a HoA — so tied p-values break the same way on every
+     run instead of following hash iteration order.
+
+ - `drop_duplicates`, `filter`, `t_test`, `vals`: speed/RAM improvements
 
  - Incompatible: the `'?'` / `'h'` argument added in 0.27 is gone (lib/Stats/LikeR.pm). `agg('h')`, `read_table('?')` and the fifty-odd other pure-Perl functions that took it no longer print help and die — they treat the string as data, the way the XS functions always have. `h('agg')`, `h(*agg)` and `h(\&agg)` are unchanged and remain the way to ask, for every function in the distribution.
  - It was a help route that only half the module had, so what a lone `'h'` meant depended on whether the callee happened to be written in XS or in Perl, and a column, file or option value really named `'h'` needed `$Stats::LikeR::HELP = 0` to get through. That variable is gone too; nothing reads its arguments for a help flag any more.
@@ -14,13 +40,6 @@ Revision history for Stats-LikeR
  - The right frame's index is a hash of row numbers chained through a flat array, rather than an array-ref of index scalars per distinct key, and one reused buffer builds every join key instead of one scalar per row.
  - Column names are resolved to their column (HoA) or interned once as shared hash keys (AoH/HoH) before the join starts, so the per-row work is a lookup rather than a lookup and a rehash.
  - Measured on the `benchmark.pl` case (two 10,000-row frames, six columns, inner join on `id`): 0.052 s and 41.4 MB before, 0.017 s and 7.3 MB after. An outer join of the same frames went from 0.113 s to 0.008 s.
-
- - `filter` (LikeR.xs) — the same rows out, in a third of the time and a quarter less memory. Every shape, output type and predicate form returns exactly what it did before; `t/filter.compiled.t` runs each of thirty predicates over every input and output shape twice, once the new way and once the old, and compares the two.
-
- - A `col()` expression now carries a description of itself as well as its closure, and `filter` compiles that description once per call and tests every row in C. Nothing enters perl per row, and over a HoA no row hash is built at all — `col('x') > 0` reads the `x` column where it lies. What `col()` cannot describe (a `->match` regex, an operand that is an object) carries no description and takes the old path, unchanged.
- - The code-reference form over a HoA reuses one row hash down the frame instead of building, filling and freeing one per row. It starts a fresh one whenever the predicate keeps the row, keeps a reference to one of its cells, or adds a key to it, so a predicate that holds on to rows still gets one hash per row.
- - Rows are counted before anything is written, so each output column is allocated at its final length instead of being grown into it, and a cell that is already a number is read where it lies rather than having a numeric conversion cached back into the caller's frame — that write dirtied a page of the input for every few dozen rows.
- - Measured on the `benchmark.pl` case (a 10,000-row HoA of five columns, `filter($df, col('x') > 0)`): 0.0131 s and 1.45 MB before, 0.0038 s and 1.06 MB after, against 0.0027 s for pandas' `df.query` and 0.0015 s for `dplyr::filter`. `filter + vals + t_test` in the same run went from 0.0156 s to 0.0062 s.
 
  - `write_table` (LikeR.xs) — two changes, one of them incompatible.
  - Every format now prints the coloured `wrote <file>` confirmation line, not just LaTeX and `.xlsx`. Delimited output (csv/tsv) was silent before. The line is identical in all cases: the file name in black on cyan, with the SGR codes inline so there is still no `Term::ANSIColor` dependency. Nothing is announced when nothing is written.

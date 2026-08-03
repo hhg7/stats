@@ -16,15 +16,31 @@ foreach my $lang (@lang) {
 #view($d);
 my @func = uniq(vals($d{'r'}, 'Stats::LikeR function'));
 p @func;
+my @stat;
 foreach my $func (@func) {
 	my %val;
 	foreach my $lang (@lang) {
 		my $tbl = filter( $d{$lang}, col('Stats::LikeR function') eq $func );
 		$val{$lang} = vals($tbl, 'time');
 	}
-	$ow{$func} = oneway_test(\%val);
+	my $ow = oneway_test(\%val);
+	my %result;
+	foreach my $lang (@lang) {
+		$result{"$lang time"} = $ow->{group_stats}{mean}{$lang};
+		foreach my $lang2 ( grep {$_ ne $lang} @lang) {
+			$result{"$lang $lang2 diff"} =
+				$ow->{group_stats}{mean}{$lang2}
+				-
+				$ow->{group_stats}{mean}{$lang}
+		}
+	}
+	$result{'Pr(>F)'} = $ow->{Group}{'Pr(>F)'};
+	$result{'Func'} = $func;
+	push @stat, \%result;
 }
-my $i = 0;
+view(\@stat);
+write_table(\@stat, 'lang.compare.xlsx');
+=my $i = 0;
 foreach my $func (sort {
 	$ow{$b}{group_stats}{mean}{perl}
 #	$ow{$a}{'Group'}{'Pr(>F)'}

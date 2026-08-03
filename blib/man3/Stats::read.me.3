@@ -4272,11 +4272,92 @@ Avoid naming a factor \f(CW\*(C`Residuals\*(C'\fR or \f(CW\*(C`group_stats\*(C'\
 are reserved top\-level keys in the result.
 .SS p_adjust
 .IX Subsection "p_adjust"
-Returns array of false\-discovery\-rate\-corrected p\-values, where methods available are "holm", "hochberg", "hommel", "bonferroni", "BH", "BY", "fdr"
+Corrects a family of p\-values for multiple testing, like R\*(Aqs \f(CW\*(C`p.adjust\*(C'\fR. The
+methods available are \f(CW\*(C`holm\*(C'\fR (the default), \f(CW\*(C`hochberg\*(C'\fR, \f(CW\*(C`hommel\*(C'\fR,
+\&\f(CW\*(C`bonferroni\*(C'\fR, \f(CW\*(C`BH\*(C'\fR, \f(CW\*(C`BY\*(C'\fR, \f(CW\*(C`fdr\*(C'\fR (a synonym for \f(CW\*(C`BH\*(C'\fR) and \f(CW\*(C`none\*(C'\fR. Method names
+are case\-insensitive, and the full \f(CW\*(C`Benjamini\-Hochberg\*(C'\fR /
+\&\f(CW\*(C`Benjamini\-Yekutieli\*(C'\fR spellings are accepted.
 .PP
-.Vb 1
-\& my @q = p_adjust(\e@pvalues, $method);
+.Vb 2
+\& my @q = p_adjust(\e@pvalues, $method);          # a list in, a list out
+\& my $q = p_adjust($df, $method, columns => ..); # a frame in, a frame out
 .Ve
+.PP
+Given a flat arrayref of p\-values it returns the adjusted values as a list, in
+the order they were given. Given a data frame — AoA, AoH, HoA or HoH — it
+returns a \fBnew\fR frame of the same kind, with the same rows, columns and row
+labels, holding the adjusted values in the places the raw ones came from. The
+input frame is never modified.
+.PP
+Every p\-value in the frame is corrected as \fBone family\fR, whichever shape it
+arrived in, so the family size is the number of p\-value cells and not the
+number of rows or columns.
+.PP
+.Vb 9
+\& my $df = [ { gene => \*(AqBRCA1\*(Aq, p_value => 0.010 },
+\&            { gene => \*(AqTP53\*(Aq,  p_value => 0.040 },
+\&            { gene => \*(AqEGFR\*(Aq,  p_value => 0.030 },
+\&            { gene => \*(AqKRAS\*(Aq,  p_value => 0.200 } ];
+\& my $q = p_adjust($df, \*(AqBH\*(Aq, columns => \*(Aqp_value\*(Aq);
+\& # [ { gene => \*(AqBRCA1\*(Aq, p_value => 0.04      },
+\& #   { gene => \*(AqTP53\*(Aq,  p_value => 0.0533333 },
+\& #   { gene => \*(AqEGFR\*(Aq,  p_value => 0.0533333 },
+\& #   { gene => \*(AqKRAS\*(Aq,  p_value => 0.20      } ]
+.Ve
+.PP
+\fIcolumns\fR
+.IX Subsection "columns"
+.PP
+\&\f(CW\*(C`columns\*(C'\fR (also spelled \f(CW\*(C`column\*(C'\fR, \f(CW\*(C`cols\*(C'\fR or \f(CW\*(C`col\*(C'\fR) names the columns that hold
+p\-values; everything else is copied through untouched. It takes one name or an
+arrayref of names, which are column names for AoH, HoA and HoH and 0\-based
+positions for AoA.
+.PP
+.Vb 4
+\& p_adjust($aoh, \*(AqBH\*(Aq, columns => \*(Aqp_value\*(Aq);
+\& p_adjust($hoh, \*(AqBH\*(Aq, columns => [ \*(Aqp_raw\*(Aq, \*(Aqp_trend\*(Aq ]);
+\& p_adjust($aoa, \*(AqBH\*(Aq, columns => 1);              # the second column
+\& p_adjust($hoa, columns => \*(Aqp_value\*(Aq);            # method defaults to holm
+.Ve
+.PP
+Note the shape each name refers to: in a HoA a column \fIis\fR an outer key, while
+in a HoH the outer keys are row labels and the names are the inner keys.
+.PP
+Without \f(CW\*(C`columns\*(C'\fR, every cell in the frame is taken to be a p\-value. That is
+what you want for a frame that is nothing but p\-values, and an error for one
+with a label column in it — a cell that is neither a number nor \f(CW\*(C`undef\*(C'\fR dies
+with a message pointing at \f(CW\*(C`columns\*(C'\fR. A name that matches no column in the
+frame also dies, rather than quietly correcting nothing.
+.PP
+\&\f(CW\*(C`columns\*(C'\fR applies only to frames; passing it with a flat list of p\-values is an
+error.
+.PP
+\fIMethod may be positional or named\fR
+.IX Subsection "Method may be positional or named"
+.PP
+The method still reads positionally, as it always has, and may also be given as
+a \f(CW\*(C`method => ...\*(C'\fR pair. These three are the same call:
+.PP
+.Vb 3
+\& p_adjust($df, \*(AqBH\*(Aq, columns => \*(Aqp_value\*(Aq);
+\& p_adjust($df, method => \*(AqBH\*(Aq, columns => \*(Aqp_value\*(Aq);
+\& p_adjust($df, \*(AqBH\*(Aq);                    # if every column holds p\-values
+.Ve
+.PP
+\fIOrdering and other details\fR
+.IX Subsection "Ordering and other details"
+.IP \(bu 4
+An \f(CW\*(C`undef\*(C'\fR cell counts toward the family as a p\-value of 1, which is how the
+flat form has always treated it, and comes back adjusted rather than as
+\&\f(CW\*(C`undef\*(C'\fR.
+.IP \(bu 4
+Within a frame the family is enumerated in a fixed order — rows in order and
+then columns by name for an AoA, AoH or HoH; columns by name and then rows
+for a HoA; row labels in sorted order for a HoH — so tied p\-values break the
+same way on every run instead of following hash iteration order.
+.IP \(bu 4
+An empty arrayref returns an empty list; an empty frame returns an empty
+frame of the same kind.
 .SS pivot_table
 .IX Subsection "pivot_table"
 Aggregate a long frame into a wide one, like \f(CW\*(C`pandas.pivot_table\*(C'\fR. Rows are
@@ -5958,8 +6039,37 @@ raw values (no cell number formats), matching the round\-trip behaviour of
 .IX Subsection "Options"
 .SH Changes
 .IX Header "Changes"
-.SS "0.28 2026\-07\-28 CDT"
-.IX Subsection "0.28 2026-07-28 CDT"
+.SS "0.28 2026\-08\-02 CDT"
+.IX Subsection "0.28 2026-08-02 CDT"
+\&\f(CW\*(C`p_adjust\*(C'\fR (LikeR.xs) now takes a data frame as well as a flat list of
+p\-values, and hands the corrected values back in the shape they arrived in. An
+AoA, AoH, HoA or HoH goes in and a new frame of the same kind comes out, with
+the same rows, columns and row labels; the input is left alone. Everything the
+flat form did is unchanged — an arrayref of p\-values still returns a list, in
+order, with the same numbers.
+.IP \(bu 4
+\&\f(CW\*(C`columns => \*(Aqp_value\*(Aq\*(C'\fR (or an arrayref of names, or 0\-based positions for an
+AoA) says which columns hold p\-values, and copies the rest of the frame
+through untouched, so a results table with a \f(CW\*(C`gene\*(C'\fR column no longer has to
+be taken apart and put back together around the call. Without \f(CW\*(C`columns\*(C'\fR
+every cell is treated as a p\-value, which is right for a frame that is
+nothing but p\-values; a label column in one dies with a message naming the
+offending value and pointing at \f(CW\*(C`columns\*(C'\fR, rather than correcting a string
+coerced to zero.
+.IP \(bu 4
+All the p\-values in the frame are corrected as one family, whichever shape
+they came in, so the family size is the number of p\-value cells.
+.IP \(bu 4
+The method still reads positionally and may now also be given as
+\&\f(CW\*(C`method => ...\*(C'\fR. \f(CW\*(C`none\*(C'\fR, which the function has always accepted, is now
+documented along with the rest.
+.IP \(bu 4
+Cells are visited in a fixed order — by row and then column name, or column
+name and then row for a HoA — so tied p\-values break the same way on every
+run instead of following hash iteration order.
+.PP
+\&\f(CW\*(C`drop_duplicates\*(C'\fR, \f(CW\*(C`filter\*(C'\fR, \f(CW\*(C`t_test\*(C'\fR, \f(CW\*(C`vals\*(C'\fR: speed/RAM improvements
+.PP
 \&\fBIncompatible:\fR the \f(CW\*(Aq?\*(Aq\fR / \f(CW\*(Aqh\*(Aq\fR argument added in 0.27 is gone (lib/Stats/LikeR.pm). \f(CWagg(\*(Aqh\*(Aq)\fR, \f(CWread_table(\*(Aq?\*(Aq)\fR and the fifty\-odd other pure\-Perl functions that took it no longer print help and die — they treat the string as data, the way the XS functions always have. \f(CWh(\*(Aqagg\*(Aq)\fR, \f(CWh(*agg)\fR and \f(CWh(\e&agg)\fR are unchanged and remain the way to ask, for every function in the distribution.
 \&\- It was a help route that only half the module had, so what a lone \f(CW\*(Aqh\*(Aq\fR meant depended on whether the callee happened to be written in XS or in Perl, and a column, file or option value really named \f(CW\*(Aqh\*(Aq\fR needed \f(CW\*(C`$Stats::LikeR::HELP = 0\*(C'\fR to get through. That variable is gone too; nothing reads its arguments for a help flag any more.
 \&\- \f(CW\*(C`bedroc\*(C'\fR still prints its own short XS usage summary for \f(CW\*(C`bedroc(\*(Aqh\*(Aq | \*(AqH\*(Aq | \*(Aq?\*(Aq)\*(C'\fR, which is hand\-written and predates all of this.

@@ -599,6 +599,194 @@ static int cmp_pval(const void *restrict a, const void *restrict b) {
 	size_t ai = ((PVal*)a)->orig_idx, bi = ((PVal*)b)->orig_idx;
 	return (ai > bi) - (ai < bi);
 }
+
+/* ---- p_adjust() helpers -------------------------------------------------
+ * p_adjust() takes either a flat list of p-values or a whole data frame
+ * (AoA, AoH, HoA or HoH). Either way the p-values are gathered into one
+ * family, run through the same kernel, and written back into slots reserved
+ * while walking the input, so the result comes out in the shape and the
+ * order it arrived in.                                                     */
+
+#define PA_METH_LEN 64
+
+/* Lowercase `method` into `out` (PA_METH_LEN bytes) and resolve its aliases. */
+static void pa_method(const char *restrict method, char *restrict out) {
+	strncpy(out, method, PA_METH_LEN - 1); out[PA_METH_LEN - 1] = '\0';
+	for (unsigned short int i = 0; out[i]; i++) out[i] = tolower(out[i]);
+	if (strstr(out, "benjamini") && strstr(out, "hochberg"))  strcpy(out, "bh");
+	if (strstr(out, "benjamini") && strstr(out, "yekutieli")) strcpy(out, "by");
+	if (strcmp(out, "fdr") == 0) strcpy(out, "bh");
+}
+
+static int pa_known(const char *restrict meth) {
+	return strcmp(meth, "bonferroni") == 0 || strcmp(meth, "holm")   == 0
+	    || strcmp(meth, "hochberg")   == 0 || strcmp(meth, "bh")     == 0
+	    || strcmp(meth, "by")         == 0 || strcmp(meth, "hommel") == 0
+	    || strcmp(meth, "none")       == 0;
+}
+
+/* Adjust n p-values. p[] and adj[] are indexed identically and must not
+ * alias; `meth` is already normalized and known to pa_known().             */
+static void pa_kernel(const NV *restrict p, NV *restrict adj, size_t n,
+                      const char *restrict meth) {
+	PVal *restrict arr;
+	Newx(arr, n, PVal);
+	for (size_t i = 0; i < n; i++) { arr[i].p = p[i]; arr[i].orig_idx = i; }
+	// Sort ascending (stable sort using the original index)
+	qsort(arr, n, sizeof(PVal), cmp_pval);
+
+	if (strcmp(meth, "bonferroni") == 0) {
+		for (size_t i = 0; i < n; i++) {
+			NV v = arr[i].p * n;
+			adj[arr[i].orig_idx] = (v < 1.0) ? v : 1.0;
+		}
+	} else if (strcmp(meth, "holm") == 0) {
+		NV cummax = 0.0;
+		for (size_t i = 0; i < n; i++) {
+			 NV v = arr[i].p * (n - i);
+			 if (v > cummax) cummax = v;
+			 adj[arr[i].orig_idx] = (cummax < 1.0) ? cummax : 1.0;
+		}
+	} else if (strcmp(meth, "hochberg") == 0) {
+		NV cummin = 1.0;
+		for (ssize_t i = n - 1; i >= 0; i--) {
+			 NV v = arr[i].p * (n - i);
+			 if (v < cummin) cummin = v;
+			 adj[arr[i].orig_idx] = (cummin < 1.0) ? cummin : 1.0;
+		}
+	} else if (strcmp(meth, "bh") == 0) {
+		NV cummin = 1.0;
+		for (ssize_t i = n - 1; i >= 0; i--) {
+			NV v = arr[i].p * n / (i + 1.0);
+			if (v < cummin) cummin = v;
+			adj[arr[i].orig_idx] = (cummin < 1.0) ? cummin : 1.0;
+		}
+	} else if (strcmp(meth, "by") == 0) {
+		NV q = 0.0;
+		for (size_t i = 1; i <= n; i++) q += 1.0 / i;
+		NV cummin = 1.0;
+		for (ssize_t i = n - 1; i >= 0; i--) {
+			NV v = arr[i].p * n / (i + 1.0) * q;
+			if (v < cummin) cummin = v;
+			adj[arr[i].orig_idx] = (cummin < 1.0) ? cummin : 1.0;
+		}
+	} else if (strcmp(meth, "hommel") == 0) {
+		NV *restrict pa, *restrict q_arr;
+		Newx(pa, n, NV);
+		Newx(q_arr, n, NV);
+		// Initial: min(n * p[i] / (i + 1))
+		NV min_val = n * arr[0].p;
+		for (size_t i = 1; i < n; i++) {
+			NV temp = (n * arr[i].p) / (i + 1.0);
+			if (temp < min_val) {
+			   min_val = temp;
+			}
+		}
+		// pa <- q <- rep(min, n)
+		for (size_t i = 0; i < n; i++) {
+			 pa[i] = min_val;
+			 q_arr[i] = min_val;
+		}
+		for (size_t j = n - 1; j >= 2; j--) {
+			 ssize_t n_mj = n - j;       // Max index for 'ij'. Length is n_mj + 1
+			 ssize_t i2_len = j - 1;     // Length of 'i2
+			 // Calculate q1 = min(j * p[i2] / (2:j))
+			 NV q1 = (j * arr[n_mj + 1].p) / 2.0;
+			 for (size_t k = 1; k < i2_len; k++) {
+				 NV temp_q1 = (j * arr[n_mj + 1 + k].p) / (2.0 + k);
+				 if (temp_q1 < q1) {
+					 q1 = temp_q1;
+				 }
+			 }
+			 // q[ij] <- pmin(j * p[ij], q1)
+			 for (size_t i = 0; i <= n_mj; i++) {
+				 NV v = j * arr[i].p;
+				 q_arr[i] = (v < q1) ? v : q1;
+			 }
+			 // q[i2] <- q[n - j]
+			 for (size_t i = 0; i < i2_len; i++) {
+				 q_arr[n_mj + 1 + i] = q_arr[n_mj];
+			}
+			 // pa <- pmax(pa, q)
+			for (size_t i = 0; i < n; i++) {
+				if (pa[i] < q_arr[i]) {
+				   pa[i] = q_arr[i];
+				}
+			}
+		}
+		// pmin(1, pmax(pa, p))[ro] — map sorted results back to original indices
+		for (size_t i = 0; i < n; i++) {
+			NV v = (pa[i] > arr[i].p) ? pa[i] : arr[i].p;
+			if (v > 1.0) v = 1.0;
+			adj[arr[i].orig_idx] = v;
+		}
+		Safefree(pa);  Safefree(q_arr);
+	} else {   /* "none" — pa_known() already rejected anything else */
+		for (size_t i = 0; i < n; i++) {
+			adj[arr[i].orig_idx] = arr[i].p;
+		}
+	}
+	Safefree(arr);
+}
+
+/* Order hash entries by key, so that tied p-values break the same way on
+ * every run instead of following hash iteration order.                     */
+static int pa_cmp_he(const void *restrict a, const void *restrict b) {
+	STRLEN la, lb;
+	const char *restrict ka = HePV(*(HE * const *)a, la);
+	const char *restrict kb = HePV(*(HE * const *)b, lb);
+	STRLEN m = la < lb ? la : lb;
+	int c = m ? memcmp(ka, kb, m) : 0;
+	if (c) return c;
+	return (la > lb) - (la < lb);
+}
+
+static SSize_t pa_sorted_keys(pTHX_ HV *restrict hv, HE **restrict out) {
+	SSize_t k = 0;
+	HE *restrict e;
+	hv_iterinit(hv);
+	while ((e = hv_iternext(hv))) out[k++] = e;
+	qsort(out, (size_t)k, sizeof(HE*), pa_cmp_he);
+	return k;
+}
+
+/* Is this column one of the ones holding p-values? `want == NULL` means the
+ * caller named none, so every column counts. Returns the marker SV for the
+ * column and flags it as seen, so an unmatched name can be reported.       */
+static SV *pa_mark(pTHX_ HV *restrict want, const char *restrict key,
+                   STRLEN klen, U32 utf8) {
+	if (!want) return &PL_sv_yes;
+	SV **restrict m = hv_fetch(want, key, utf8 ? -(I32)klen : (I32)klen, 0);
+	if (!m) return NULL;
+	sv_setiv(*m, 1);
+	return *m;
+}
+
+/* A cell in a frame must be a number or undef; anything else is far more
+ * likely to be a label column the caller forgot to exclude than a p-value. */
+static void pa_check(pTHX_ SV *restrict cell, const char *restrict col, IV idx) {
+	if (!cell || !SvOK(cell) || looks_like_number(cell)) return;
+	if (col)
+		croak("p_adjust: '%s' in column '%s' is not a p-value; name the columns "
+		      "that hold p-values with columns => [...]", SvPV_nolen(cell), col);
+	croak("p_adjust: '%s' in column %" IVdf " is not a p-value; name the columns "
+	      "that hold p-values with columns => [...]", SvPV_nolen(cell), idx);
+}
+
+/* Reserve this cell's place in the family and return the SV that stands in
+ * for it in the output frame until the adjusted value is written back.     */
+static SV *pa_place(pTHX_ SV *restrict cell, NV *restrict pv,
+                    SV **restrict slots, size_t *restrict k, size_t n) {
+	NV p = (cell && SvOK(cell)) ? SvNV(cell) : 1.0;
+	SV *restrict place = newSVnv(p);
+	if (*k < n) { pv[*k] = p; slots[(*k)++] = place; }
+	return place;
+}
+
+static SV *pa_copy(pTHX_ SV *restrict cell) {
+	return cell ? newSVsv(cell) : newSV(0);
+}
+
 /* Helpers for cor(): ranking (Spearman), Pearson r, Kendall tau-b/
  Item used to sort values while remembering their original index,
  * needed for average-rank tie-breaking in Spearman correlation.        */
@@ -13770,140 +13958,327 @@ PPCODE:
 	XSRETURN(1);
 }
 
-void p_adjust(SV* p_sv, const char* method = "holm")
-	INIT:
-		if (!SvROK(p_sv) || SvTYPE(SvRV(p_sv)) != SVt_PVAV) {
-			croak("p_adjust: first argument must be an ARRAY reference of p-values");
-		}
-		AV *restrict p_av = (AV*)SvRV(p_sv);
-		size_t n = av_len(p_av) + 1;
-		// Handle empty input
-		if (n == 0) {
-			XSRETURN_EMPTY;
-		}
-		// Normalize method string
-		char meth[64];
-		strncpy(meth, method, 63); meth[63] = '\0';
-		for(unsigned short int i = 0; meth[i]; i++) meth[i] = tolower(meth[i]);
-		// Resolve aliases
-		if (strstr(meth, "benjamini") && strstr(meth, "hochberg")) strcpy(meth, "bh");
-		if (strstr(meth, "benjamini") && strstr(meth, "yekutieli")) strcpy(meth, "by");
-		if (strcmp(meth, "fdr") == 0) strcpy(meth, "bh");
-		// Allocate C memory
-		PVal *restrict arr;
-		NV *restrict adj;
-		Newx(arr, n, PVal);
-		Newx(adj, n, NV);
-
-		for (size_t i = 0; i < n; i++) {
-			SV**restrict tv = av_fetch(p_av, i, 0);
-			arr[i].p = (tv && SvOK(*tv)) ? SvNV(*tv) : 1.0;
-			arr[i].orig_idx = i;
-		}
-		// Sort ascending (Stable sort using original index)
-		qsort(arr, n, sizeof(PVal), cmp_pval);
+void p_adjust(...)
+	PROTOTYPE: $;@
 	PPCODE:
-		if (strcmp(meth, "bonferroni") == 0) {
-			for (size_t i = 0; i < n; i++) {
-				NV v = arr[i].p * n;
-				adj[arr[i].orig_idx] = (v < 1.0) ? v : 1.0;
-			}
-		} else if (strcmp(meth, "holm") == 0) {
-			NV cummax = 0.0;
-			for (size_t i = 0; i < n; i++) {
-				 NV v = arr[i].p * (n - i);
-				 if (v > cummax) cummax = v;
-				 adj[arr[i].orig_idx] = (cummax < 1.0) ? cummax : 1.0;
-			}
-		} else if (strcmp(meth, "hochberg") == 0) {
-			NV cummin = 1.0;
-			for (ssize_t i = n - 1; i >= 0; i--) {
-				 NV v = arr[i].p * (n - i);
-				 if (v < cummin) cummin = v;
-				 adj[arr[i].orig_idx] = (cummin < 1.0) ? cummin : 1.0;
-			}
-		} else if (strcmp(meth, "bh") == 0) {
-			NV cummin = 1.0;
-			for (ssize_t i = n - 1; i >= 0; i--) {
-				NV v = arr[i].p * n / (i + 1.0);
-				if (v < cummin) cummin = v;
-				adj[arr[i].orig_idx] = (cummin < 1.0) ? cummin : 1.0;
-			}
-		} else if (strcmp(meth, "by") == 0) {
-			NV q = 0.0;
-			for (size_t i = 1; i <= n; i++) q += 1.0 / i;
-			NV cummin = 1.0;
-			for (ssize_t i = n - 1; i >= 0; i--) {
-				NV v = arr[i].p * n / (i + 1.0) * q;
-				if (v < cummin) cummin = v;
-				adj[arr[i].orig_idx] = (cummin < 1.0) ? cummin : 1.0;
-			}
-		} else if (strcmp(meth, "hommel") == 0) {
-			NV *restrict pa, *restrict q_arr;
-			Newx(pa, n, NV);
-			Newx(q_arr, n, NV);
-			// Initial: min(n * p[i] / (i + 1))
-			NV min_val = n * arr[0].p;
-			for (size_t i = 1; i < n; i++) {
-				NV temp = (n * arr[i].p) / (i + 1.0);
-				if (temp < min_val) {
-				   min_val = temp;
+		if (items < 1)
+			croak("Usage: p_adjust($p_values, $method, columns => ...)");
+		SV *restrict p_sv    = ST(0);
+		const char *restrict method = "holm";
+		SV *restrict cols_sv = NULL;
+		IV first_pair = 1;
+		/* The method may still arrive positionally, the way it always has;
+		 * anything after it (or after the frame) is key => value.          */
+		if (items > 1 && ((items - 1) % 2) == 1) {
+			if (!SvOK(ST(1)) || SvROK(ST(1)))
+				croak("p_adjust: the second argument must be an adjustment method name");
+			method = SvPV_nolen(ST(1));
+			first_pair = 2;
+		}
+		for (IV a = first_pair; a + 1 < (IV)items; a += 2) {
+			const char *restrict key = SvPV_nolen(ST(a));
+			SV *restrict val = ST(a + 1);
+			if      (strEQ(key, "method")) method = SvPV_nolen(val);
+			else if (strEQ(key, "columns") || strEQ(key, "column")
+			      || strEQ(key, "cols")    || strEQ(key, "col")) cols_sv = val;
+			else croak("p_adjust: unknown argument '%s'", key);
+		}
+
+		char meth[PA_METH_LEN];
+		pa_method(method, meth);
+		if (!pa_known(meth)) croak("Unknown p-value adjustment method: %s", method);
+
+		/* Which columns hold p-values? Nothing named means all of them. The
+		 * value is a flag, set once the column turns up in the frame.      */
+		HV *restrict want = NULL;
+		if (cols_sv && SvOK(cols_sv)) {
+			want = (HV*)sv_2mortal((SV*)newHV());
+			if (SvROK(cols_sv) && SvTYPE(SvRV(cols_sv)) == SVt_PVAV) {
+				AV *restrict cav = (AV*)SvRV(cols_sv);
+				for (SSize_t i = 0; i <= av_len(cav); i++) {
+					SV **restrict c = av_fetch(cav, i, 0);
+					if (!c || !SvOK(*c))
+						croak("p_adjust: undefined column name in 'columns'");
+					(void)hv_store_ent(want, *c, newSViv(0), 0);
 				}
+			} else if (SvROK(cols_sv)) {
+				croak("p_adjust: 'columns' must be a column name or an ARRAY "
+				      "reference of column names");
+			} else {
+				(void)hv_store_ent(want, cols_sv, newSViv(0), 0);
 			}
-			// pa <- q <- rep(min, n)
-			for (size_t i = 0; i < n; i++) {
-				 pa[i] = min_val;
-				 q_arr[i] = min_val;
-			}
-			for (size_t j = n - 1; j >= 2; j--) {
-				 ssize_t n_mj = n - j;       // Max index for 'ij'. Length is n_mj + 1
-				 ssize_t i2_len = j - 1;     // Length of 'i2
-				 // Calculate q1 = min(j * p[i2] / (2:j))
-				 NV q1 = (j * arr[n_mj + 1].p) / 2.0;
-				 for (size_t k = 1; k < i2_len; k++) {
-					 NV temp_q1 = (j * arr[n_mj + 1 + k].p) / (2.0 + k);
-					 if (temp_q1 < q1) {
-						 q1 = temp_q1;
-					 }
-				 }
-				 // q[ij] <- pmin(j * p[ij], q1)
-				 for (size_t i = 0; i <= n_mj; i++) {
-					 NV v = j * arr[i].p;
-					 q_arr[i] = (v < q1) ? v : q1;
-				 }
-				 // q[i2] <- q[n - j]
-				 for (size_t i = 0; i < i2_len; i++) {
-					 q_arr[n_mj + 1 + i] = q_arr[n_mj];
-				}
-				 // pa <- pmax(pa, q)
-				for (size_t i = 0; i < n; i++) {
-					if (pa[i] < q_arr[i]) {
-					   pa[i] = q_arr[i];
-					}
-				}
-			}
-			// pmin(1, pmax(pa, p))[ro] — map sorted results back to original indices
-			for (size_t i = 0; i < n; i++) {
-				NV v = (pa[i] > arr[i].p) ? pa[i] : arr[i].p;
-				if (v > 1.0) v = 1.0;
-				adj[arr[i].orig_idx] = v;
-			}
-			Safefree(pa);  Safefree(q_arr);
-		} else if (strcmp(meth, "none") == 0) {
-			for (size_t i = 0; i < n; i++) {
-				adj[arr[i].orig_idx] = arr[i].p;
+			if (HvUSEDKEYS(want) == 0) croak("p_adjust: 'columns' names no columns");
+		}
+
+		/* Which of the five shapes is this? */
+		enum { PA_FLAT, PA_AOA, PA_AOH, PA_HOA, PA_HOH } kind = PA_FLAT;
+		SV *restrict ref = SvROK(p_sv) ? SvRV(p_sv) : NULL;
+		if (!ref || (SvTYPE(ref) != SVt_PVAV && SvTYPE(ref) != SVt_PVHV))
+			croak("p_adjust: first argument must be an ARRAY reference of p-values, "
+			      "or a reference to an AoA, AoH, HoA or HoH data frame");
+		if (SvTYPE(ref) == SVt_PVAV) {
+			AV *restrict av = (AV*)ref;
+			for (SSize_t i = 0; i <= av_len(av); i++) {
+				SV **restrict e = av_fetch(av, i, 0);
+				if (!e || !SvOK(*e)) continue;      /* undef p-value: still flat */
+				if (SvROK(*e) && SvTYPE(SvRV(*e)) == SVt_PVAV)      kind = PA_AOA;
+				else if (SvROK(*e) && SvTYPE(SvRV(*e)) == SVt_PVHV) kind = PA_AOH;
+				else if (SvROK(*e))
+					croak("p_adjust: an ARRAY reference must hold p-values, "
+					      "ARRAY references (AoA) or HASH references (AoH)");
+				break;
 			}
 		} else {
-			Safefree(arr); Safefree(adj);
-			croak("Unknown p-value adjustment method: %s", method);
+			HV *restrict hv = (HV*)ref;
+			HE *restrict e;
+			kind = PA_HOA;                          /* an empty hash is either */
+			hv_iterinit(hv);
+			while ((e = hv_iternext(hv))) {
+				SV *restrict v = HeVAL(e);
+				if (!v || !SvOK(v)) continue;
+				if (SvROK(v) && SvTYPE(SvRV(v)) == SVt_PVAV)      kind = PA_HOA;
+				else if (SvROK(v) && SvTYPE(SvRV(v)) == SVt_PVHV) kind = PA_HOH;
+				else croak("p_adjust: a HASH reference must hold ARRAY references "
+				           "(HoA) or HASH references (HoH)");
+				break;
+			}
 		}
-		// Push values onto the Perl stack as a flat list
-		EXTEND(SP, n);
-		for (size_t i = 0; i < n; i++) {
-			PUSHs(sv_2mortal(newSVnv(adj[i])));
+
+		/* ---- the flat list, unchanged: a list of p-values in, a list out */
+		if (kind == PA_FLAT) {
+			if (want)
+				croak("p_adjust: 'columns' needs a data frame, not a flat list "
+				      "of p-values");
+			AV *restrict p_av = (AV*)ref;
+			size_t n = av_len(p_av) + 1;
+			if (n == 0) XSRETURN_EMPTY;
+			NV *restrict pv;
+			NV *restrict adj;
+			Newx(pv, n, NV);
+			Newx(adj, n, NV);
+			for (size_t i = 0; i < n; i++) {
+				SV **restrict tv = av_fetch(p_av, i, 0);
+				pv[i] = (tv && SvOK(*tv)) ? SvNV(*tv) : 1.0;
+			}
+			pa_kernel(pv, adj, n, meth);
+			EXTEND(SP, (SSize_t)n);
+			for (size_t i = 0; i < n; i++) ST(i) = sv_2mortal(newSVnv(adj[i]));
+			Safefree(pv);  pv  = NULL;
+			Safefree(adj); adj = NULL;
+			XSRETURN((int)n);
 		}
-		Safefree(arr); arr = NULL;
-		Safefree(adj); adj = NULL;
+
+		/* ---- a frame: validate and size the family before building anything,
+		 * so the second pass cannot die part way through and strand memory. */
+		size_t n = 0;
+		SSize_t maxk = 0, nouter = 0;   /* widest row hash; outer hash size */
+		if (kind == PA_AOA) {
+			AV *restrict av = (AV*)ref;
+			for (SSize_t i = 0; i <= av_len(av); i++) {
+				SV **restrict rs = av_fetch(av, i, 0);
+				if (!rs || !SvROK(*rs) || SvTYPE(SvRV(*rs)) != SVt_PVAV)
+					croak("p_adjust: row %" IVdf " of the AoA is not an ARRAY reference",
+					      (IV)i);
+				AV *restrict row = (AV*)SvRV(*rs);
+				for (SSize_t j = 0; j <= av_len(row); j++) {
+					if (want) {
+						char kb[24];
+						I32 kl = (I32)snprintf(kb, sizeof kb, "%" IVdf, (IV)j);
+						if (!pa_mark(aTHX_ want, kb, (STRLEN)kl, 0)) continue;
+					}
+					SV **restrict c = av_fetch(row, j, 0);
+					pa_check(aTHX_ c ? *c : NULL, NULL, (IV)j);
+					n++;
+				}
+			}
+		} else if (kind == PA_AOH) {
+			AV *restrict av = (AV*)ref;
+			for (SSize_t i = 0; i <= av_len(av); i++) {
+				SV **restrict rs = av_fetch(av, i, 0);
+				if (!rs || !SvROK(*rs) || SvTYPE(SvRV(*rs)) != SVt_PVHV)
+					croak("p_adjust: row %" IVdf " of the AoH is not a HASH reference",
+					      (IV)i);
+				HV *restrict row = (HV*)SvRV(*rs);
+				SSize_t hk = (SSize_t)HvUSEDKEYS(row);
+				if (hk > maxk) maxk = hk;
+				HE *restrict e;
+				hv_iterinit(row);
+				while ((e = hv_iternext(row))) {
+					STRLEN kl;
+					const char *restrict kp = HePV(e, kl);
+					if (!pa_mark(aTHX_ want, kp, kl, HeUTF8(e))) continue;
+					pa_check(aTHX_ HeVAL(e), kp, 0);
+					n++;
+				}
+			}
+		} else if (kind == PA_HOA) {
+			HV *restrict hv = (HV*)ref;
+			HE *restrict e;
+			nouter = (SSize_t)HvUSEDKEYS(hv);
+			hv_iterinit(hv);
+			while ((e = hv_iternext(hv))) {
+				STRLEN kl;
+				const char *restrict kp = HePV(e, kl);
+				SV *restrict cv = HeVAL(e);
+				if (!cv || !SvROK(cv) || SvTYPE(SvRV(cv)) != SVt_PVAV)
+					croak("p_adjust: column '%s' of the HoA is not an ARRAY reference", kp);
+				if (!pa_mark(aTHX_ want, kp, kl, HeUTF8(e))) continue;
+				AV *restrict cav = (AV*)SvRV(cv);
+				for (SSize_t i = 0; i <= av_len(cav); i++) {
+					SV **restrict c = av_fetch(cav, i, 0);
+					pa_check(aTHX_ c ? *c : NULL, kp, 0);
+					n++;
+				}
+			}
+		} else {                                                   /* PA_HOH */
+			HV *restrict hv = (HV*)ref;
+			HE *restrict e;
+			nouter = (SSize_t)HvUSEDKEYS(hv);
+			hv_iterinit(hv);
+			while ((e = hv_iternext(hv))) {
+				SV *restrict rv = HeVAL(e);
+				if (!rv || !SvROK(rv) || SvTYPE(SvRV(rv)) != SVt_PVHV)
+					croak("p_adjust: row '%s' of the HoH is not a HASH reference",
+					      HePV(e, PL_na));
+				HV *restrict row = (HV*)SvRV(rv);
+				SSize_t hk = (SSize_t)HvUSEDKEYS(row);
+				if (hk > maxk) maxk = hk;
+				HE *restrict f;
+				hv_iterinit(row);
+				while ((f = hv_iternext(row))) {
+					STRLEN kl;
+					const char *restrict kp = HePV(f, kl);
+					if (!pa_mark(aTHX_ want, kp, kl, HeUTF8(f))) continue;
+					pa_check(aTHX_ HeVAL(f), kp, 0);
+					n++;
+				}
+			}
+		}
+		if (want) {
+			HE *restrict e;
+			hv_iterinit(want);
+			while ((e = hv_iternext(want)))
+				if (!SvTRUE(HeVAL(e)))
+					croak("p_adjust: the frame has no column named '%s'",
+					      HePV(e, PL_na));
+		}
+
+		/* ---- second pass: rebuild the frame, reserving a slot per p-value */
+		NV *restrict pv     = NULL;
+		NV *restrict adj    = NULL;
+		SV **restrict slots = NULL;
+		HE **restrict kbuf  = NULL;
+		HE **restrict obuf  = NULL;
+		if (n) { Newx(pv, n, NV); Newx(adj, n, NV); Newx(slots, n, SV*); }
+		if (maxk)   Newx(kbuf, maxk,   HE*);
+		if (nouter) Newx(obuf, nouter, HE*);
+		size_t k = 0;
+		SV *restrict out_sv;
+
+		if (kind == PA_AOA) {
+			AV *restrict in = (AV*)ref, *restrict out = newAV();
+			out_sv = sv_2mortal(newRV_noinc((SV*)out));
+			SSize_t nr = av_len(in) + 1;
+			if (nr > 0) av_extend(out, nr - 1);
+			for (SSize_t i = 0; i < nr; i++) {
+				AV *restrict row = (AV*)SvRV(*av_fetch(in, i, 0));
+				AV *restrict rout = newAV();
+				av_push(out, newRV_noinc((SV*)rout));
+				SSize_t nc = av_len(row) + 1;
+				if (nc > 0) av_extend(rout, nc - 1);
+				for (SSize_t j = 0; j < nc; j++) {
+					SV **restrict c = av_fetch(row, j, 0);
+					int sel = 1;
+					if (want) {
+						char kb[24];
+						I32 kl = (I32)snprintf(kb, sizeof kb, "%" IVdf, (IV)j);
+						sel = hv_fetch(want, kb, kl, 0) != NULL;
+					}
+					av_push(rout, sel
+						? pa_place(aTHX_ c ? *c : NULL, pv, slots, &k, n)
+						: pa_copy(aTHX_ c ? *c : NULL));
+				}
+			}
+		} else if (kind == PA_AOH) {
+			AV *restrict in = (AV*)ref, *restrict out = newAV();
+			out_sv = sv_2mortal(newRV_noinc((SV*)out));
+			SSize_t nr = av_len(in) + 1;
+			if (nr > 0) av_extend(out, nr - 1);
+			for (SSize_t i = 0; i < nr; i++) {
+				HV *restrict row = (HV*)SvRV(*av_fetch(in, i, 0));
+				HV *restrict rout = newHV();
+				av_push(out, newRV_noinc((SV*)rout));
+				SSize_t nk = pa_sorted_keys(aTHX_ row, kbuf);
+				for (SSize_t j = 0; j < nk; j++) {
+					HE *restrict e = kbuf[j];
+					STRLEN kl;
+					const char *restrict kp = HePV(e, kl);
+					I32 sk = HeUTF8(e) ? -(I32)kl : (I32)kl;
+					int sel = !want || hv_fetch(want, kp, sk, 0) != NULL;
+					(void)hv_store(rout, kp, sk, sel
+						? pa_place(aTHX_ HeVAL(e), pv, slots, &k, n)
+						: pa_copy(aTHX_ HeVAL(e)), 0);
+				}
+			}
+		} else if (kind == PA_HOA) {
+			HV *restrict in = (HV*)ref, *restrict out = newHV();
+			out_sv = sv_2mortal(newRV_noinc((SV*)out));
+			SSize_t nk = pa_sorted_keys(aTHX_ in, obuf);
+			for (SSize_t ci = 0; ci < nk; ci++) {
+				HE *restrict e = obuf[ci];
+				STRLEN kl;
+				const char *restrict kp = HePV(e, kl);
+				I32 sk = HeUTF8(e) ? -(I32)kl : (I32)kl;
+				AV *restrict cin = (AV*)SvRV(HeVAL(e));
+				AV *restrict cout = newAV();
+				(void)hv_store(out, kp, sk, newRV_noinc((SV*)cout), 0);
+				SSize_t nrw = av_len(cin) + 1;
+				if (nrw > 0) av_extend(cout, nrw - 1);
+				int sel = !want || hv_fetch(want, kp, sk, 0) != NULL;
+				for (SSize_t i = 0; i < nrw; i++) {
+					SV **restrict c = av_fetch(cin, i, 0);
+					av_push(cout, sel
+						? pa_place(aTHX_ c ? *c : NULL, pv, slots, &k, n)
+						: pa_copy(aTHX_ c ? *c : NULL));
+				}
+			}
+		} else {                                                   /* PA_HOH */
+			HV *restrict in = (HV*)ref, *restrict out = newHV();
+			out_sv = sv_2mortal(newRV_noinc((SV*)out));
+			SSize_t nr = pa_sorted_keys(aTHX_ in, obuf);
+			for (SSize_t ri = 0; ri < nr; ri++) {
+				HE *restrict re = obuf[ri];
+				STRLEN rl;
+				const char *restrict rp = HePV(re, rl);
+				HV *restrict row = (HV*)SvRV(HeVAL(re));
+				HV *restrict rout = newHV();
+				(void)hv_store(out, rp, HeUTF8(re) ? -(I32)rl : (I32)rl,
+				               newRV_noinc((SV*)rout), 0);
+				SSize_t nk = pa_sorted_keys(aTHX_ row, kbuf);
+				for (SSize_t j = 0; j < nk; j++) {
+					HE *restrict e = kbuf[j];
+					STRLEN kl;
+					const char *restrict kp = HePV(e, kl);
+					I32 sk = HeUTF8(e) ? -(I32)kl : (I32)kl;
+					int sel = !want || hv_fetch(want, kp, sk, 0) != NULL;
+					(void)hv_store(rout, kp, sk, sel
+						? pa_place(aTHX_ HeVAL(e), pv, slots, &k, n)
+						: pa_copy(aTHX_ HeVAL(e)), 0);
+				}
+			}
+		}
+
+		if (n) {
+			pa_kernel(pv, adj, n, meth);
+			for (size_t i = 0; i < n; i++) sv_setnv(slots[i], adj[i]);
+		}
+		Safefree(pv);    pv    = NULL;
+		Safefree(adj);   adj   = NULL;
+		Safefree(slots); slots = NULL;
+		Safefree(kbuf);  kbuf  = NULL;
+		Safefree(obuf);  obuf  = NULL;
+		ST(0) = out_sv;
+		XSRETURN(1);
 
 NV median(...)
 	PROTOTYPE: @

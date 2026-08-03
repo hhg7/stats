@@ -3789,9 +3789,79 @@ the factor's *name* becomes the top-level key:
 
 ## p_adjust
 
-Returns array of false-discovery-rate-corrected p-values, where methods available are "holm", "hochberg", "hommel", "bonferroni", "BH", "BY", "fdr"
+Corrects a family of p-values for multiple testing, like R's `p.adjust`. The
+methods available are `holm` (the default), `hochberg`, `hommel`,
+`bonferroni`, `BH`, `BY`, `fdr` (a synonym for `BH`) and `none`. Method names
+are case-insensitive, and the full `Benjamini-Hochberg` /
+`Benjamini-Yekutieli` spellings are accepted.
 
-    my @q = p_adjust(\@pvalues, $method);
+    my @q = p_adjust(\@pvalues, $method);          # a list in, a list out
+    my $q = p_adjust($df, $method, columns => ..); # a frame in, a frame out
+
+Given a flat arrayref of p-values it returns the adjusted values as a list, in
+the order they were given. Given a data frame — AoA, AoH, HoA or HoH — it
+returns a **new** frame of the same kind, with the same rows, columns and row
+labels, holding the adjusted values in the places the raw ones came from. The
+input frame is never modified.
+
+Every p-value in the frame is corrected as **one family**, whichever shape it
+arrived in, so the family size is the number of p-value cells and not the
+number of rows or columns.
+
+    my $df = [ { gene => 'BRCA1', p_value => 0.010 },
+               { gene => 'TP53',  p_value => 0.040 },
+               { gene => 'EGFR',  p_value => 0.030 },
+               { gene => 'KRAS',  p_value => 0.200 } ];
+    my $q = p_adjust($df, 'BH', columns => 'p_value');
+    # [ { gene => 'BRCA1', p_value => 0.04      },
+    #   { gene => 'TP53',  p_value => 0.0533333 },
+    #   { gene => 'EGFR',  p_value => 0.0533333 },
+    #   { gene => 'KRAS',  p_value => 0.20      } ]
+
+### columns
+
+`columns` (also spelled `column`, `cols` or `col`) names the columns that hold
+p-values; everything else is copied through untouched. It takes one name or an
+arrayref of names, which are column names for AoH, HoA and HoH and 0-based
+positions for AoA.
+
+    p_adjust($aoh, 'BH', columns => 'p_value');
+    p_adjust($hoh, 'BH', columns => [ 'p_raw', 'p_trend' ]);
+    p_adjust($aoa, 'BH', columns => 1);              # the second column
+    p_adjust($hoa, columns => 'p_value');            # method defaults to holm
+
+Note the shape each name refers to: in a HoA a column *is* an outer key, while
+in a HoH the outer keys are row labels and the names are the inner keys.
+
+Without `columns`, every cell in the frame is taken to be a p-value. That is
+what you want for a frame that is nothing but p-values, and an error for one
+with a label column in it — a cell that is neither a number nor `undef` dies
+with a message pointing at `columns`. A name that matches no column in the
+frame also dies, rather than quietly correcting nothing.
+
+`columns` applies only to frames; passing it with a flat list of p-values is an
+error.
+
+### Method may be positional or named
+
+The method still reads positionally, as it always has, and may also be given as
+a `method => ...` pair. These three are the same call:
+
+    p_adjust($df, 'BH', columns => 'p_value');
+    p_adjust($df, method => 'BH', columns => 'p_value');
+    p_adjust($df, 'BH');                    # if every column holds p-values
+
+### Ordering and other details
+
+- An `undef` cell counts toward the family as a p-value of 1, which is how the
+  flat form has always treated it, and comes back adjusted rather than as
+  `undef`.
+- Within a frame the family is enumerated in a fixed order — rows in order and
+  then columns by name for an AoA, AoH or HoH; columns by name and then rows
+  for a HoA; row labels in sorted order for a HoH — so tied p-values break the
+  same way on every run instead of following hash iteration order.
+- An empty arrayref returns an empty list; an empty frame returns an empty
+  frame of the same kind.
 
 ## pivot_table
 
@@ -5388,6 +5458,30 @@ raw values (no cell number formats), matching the round-trip behaviour of
 # Changes
 
 ## 0.28 2026-08-02 CDT
+
+`p_adjust` (LikeR.xs) now takes a data frame as well as a flat list of
+p-values, and hands the corrected values back in the shape they arrived in. An
+AoA, AoH, HoA or HoH goes in and a new frame of the same kind comes out, with
+the same rows, columns and row labels; the input is left alone. Everything the
+flat form did is unchanged — an arrayref of p-values still returns a list, in
+order, with the same numbers.
+
+- `columns => 'p_value'` (or an arrayref of names, or 0-based positions for an
+  AoA) says which columns hold p-values, and copies the rest of the frame
+  through untouched, so a results table with a `gene` column no longer has to
+  be taken apart and put back together around the call. Without `columns`
+  every cell is treated as a p-value, which is right for a frame that is
+  nothing but p-values; a label column in one dies with a message naming the
+  offending value and pointing at `columns`, rather than correcting a string
+  coerced to zero.
+- All the p-values in the frame are corrected as one family, whichever shape
+  they came in, so the family size is the number of p-value cells.
+- The method still reads positionally and may now also be given as
+  `method => ...`. `none`, which the function has always accepted, is now
+  documented along with the rest.
+- Cells are visited in a fixed order — by row and then column name, or column
+  name and then row for a HoA — so tied p-values break the same way on every
+  run instead of following hash iteration order.
 
 `drop_duplicates`, `filter`, `t_test`, `vals`: speed/RAM improvements
 
