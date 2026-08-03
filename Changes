@@ -1,6 +1,10 @@
 Revision history for Stats-LikeR
 
 
+0.281 2026-08-03 CDT
+
+ - fix for threaded Perls https://www.cpantesters.org/cpan/report/2dbacf8f-7138-1014-a1ab-f0f91cf3b922
+
 0.28 2026-08-02 CDT
 
  - `p_adjust` (LikeR.xs) now takes a data frame as well as a flat list of

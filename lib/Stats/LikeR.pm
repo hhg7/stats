@@ -3,7 +3,7 @@
 require 5.010;
 use strict;
 package Stats::LikeR;
-our $VERSION = 0.28;
+our $VERSION = 0.281;
 require XSLoader;
 use autodie ':default';
 use warnings FATAL => 'all';
@@ -13151,6 +13151,10 @@ C<read_table>.
 
 
 =head1 Changes
+
+=head2 0.281 2026-08-03 CDT
+
+fix for threaded Perls https://www.cpantesters.org/cpan/report/2dbacf8f-7138-1014-a1ab-f0f91cf3b922
 
 =head2 0.28 2026-08-02 CDT
 

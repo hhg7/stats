@@ -209,8 +209,12 @@ for my $version (@targets) {
     my $t0 = time;
     my %r = (version => $version, log => $log, steps => [], warnings => 0);
 
-    # sanity: the interpreter really is the version we think it is
-    my ($vc, $vout) = run_cmd([$perl, '-e', 'printf "%vd\n", $^V'], $logfh);
+    # sanity: the interpreter really is the version we think it is, and say so
+    # when it is a threaded build -- an XS bug can be invisible on an
+    # unthreaded perl and a hard compile error under MULTIPLICITY, so the
+    # summary has to make that coverage visible rather than implied by a name.
+    my ($vc, $vout) = run_cmd([$perl, '-MConfig', '-e',
+        'printf "%vd%s\n", $^V, $Config{useithreads} ? "-thr" : ""'], $logfh);
     $r{reported} = $vc == 0 && @$vout ? do { my $s = $vout->[0]; chomp $s; $s } : '?';
 
     my @steps;
@@ -289,11 +293,11 @@ for my $version (@targets) {
 
 my $bad = grep { $_->{failed} } @results;
 print "\n", '=' x 72, "\n";
-printf "%-14s %-9s %-8s %-7s %-6s %s\n",
+printf "%-14s %-11s %-8s %-7s %-6s %s\n",
     qw(PERL REPORTED STATUS TIME WARN TESTS);
 print '-' x 72, "\n";
 for my $r (@results) {
-    printf "%-14s %-9s %-8s %6.1fs %-6s %s\n",
+    printf "%-14s %-11s %-8s %6.1fs %-6s %s\n",
         $r->{version},
         $r->{reported},
         ($r->{failed} ? 'FAIL' : 'PASS'),

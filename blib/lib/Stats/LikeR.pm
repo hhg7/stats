@@ -3,7 +3,7 @@
 require 5.010;
 use strict;
 package Stats::LikeR;
-our $VERSION = 0.28;
+our $VERSION = 0.281;
 require XSLoader;
 use autodie ':default';
 use warnings FATAL => 'all';
@@ -10474,7 +10474,7 @@ C<bonferroni>, C<BH>, C<BY>, C<fdr> (a synonym for C<BH>) and C<none>. Method na
 are case-insensitive, and the full C<Benjamini-Hochberg> /
 C<Benjamini-Yekutieli> spellings are accepted.
 
- my @q = p_adjust(\@pvalues, $method);          # a list in, a list out
+ my @q = p_adjust(\@pvalues, $method);          # array in, array out
  my $q = p_adjust($df, $method, columns => ..); # a frame in, a frame out
 
 Given a flat arrayref of p-values it returns the adjusted values as a list, in

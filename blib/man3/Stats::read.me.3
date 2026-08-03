@@ -58,7 +58,7 @@
 .\" ========================================================================
 .\"
 .IX Title "read.me 3"
-.TH read.me 3 2026-08-02 "perl v5.44.0" "User Contributed Perl Documentation"
+.TH read.me 3 2026-08-03 "perl v5.44.0" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -4279,7 +4279,7 @@ are case\-insensitive, and the full \f(CW\*(C`Benjamini\-Hochberg\*(C'\fR /
 \&\f(CW\*(C`Benjamini\-Yekutieli\*(C'\fR spellings are accepted.
 .PP
 .Vb 2
-\& my @q = p_adjust(\e@pvalues, $method);          # a list in, a list out
+\& my @q = p_adjust(\e@pvalues, $method);          # array in, array out
 \& my $q = p_adjust($df, $method, columns => ..); # a frame in, a frame out
 .Ve
 .PP

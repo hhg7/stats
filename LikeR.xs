@@ -730,11 +730,25 @@ static void pa_kernel(const NV *restrict p, NV *restrict adj, size_t n,
 }
 
 /* Order hash entries by key, so that tied p-values break the same way on
- * every run instead of following hash iteration order.                     */
+ * every run instead of following hash iteration order.*/
 static int pa_cmp_he(const void *restrict a, const void *restrict b) {
+	HE *restrict const ha = *(HE * const *)a;
+	HE *restrict const hb = *(HE * const *)b;
 	STRLEN la, lb;
-	const char *restrict ka = HePV(*(HE * const *)a, la);
-	const char *restrict kb = HePV(*(HE * const *)b, lb);
+	const char *restrict ka, *restrict kb;
+/* Read the key bytes straight out of the entry. HePV would do the same,
+ except for an SV key, where it goes through SvPV -- and SvPV wants the
+ interpreter context, which qsort has no way to hand a comparator. On a
+ threaded or MULTIPLICITY perl that is a compile error, so take the SV
+ key branch ourselves and pay for a dTHX only there.*/
+	if (HeKLEN(ha) == HEf_SVKEY || HeKLEN(hb) == HEf_SVKEY) {
+		dTHX;
+		ka = HePV(ha, la);
+		kb = HePV(hb, lb);
+	} else {
+		ka = HeKEY(ha);  la = (STRLEN)HeKLEN(ha);
+		kb = HeKEY(hb);  lb = (STRLEN)HeKLEN(hb);
+	}
 	STRLEN m = la < lb ? la : lb;
 	int c = m ? memcmp(ka, kb, m) : 0;
 	if (c) return c;
@@ -752,7 +766,7 @@ static SSize_t pa_sorted_keys(pTHX_ HV *restrict hv, HE **restrict out) {
 
 /* Is this column one of the ones holding p-values? `want == NULL` means the
  * caller named none, so every column counts. Returns the marker SV for the
- * column and flags it as seen, so an unmatched name can be reported.       */
+ * column and flags it as seen, so an unmatched name can be reported. */
 static SV *pa_mark(pTHX_ HV *restrict want, const char *restrict key,
                    STRLEN klen, U32 utf8) {
 	if (!want) return &PL_sv_yes;
@@ -12731,10 +12745,10 @@ PPCODE:
 void mcnemar_test(...)
 PPCODE:
 {
-	/* McNemar's test for paired categorical data.  Faithful port of R's
-	 * stats::mcnemar.test (chi-square on the off-diagonal disagreement,
-	 * with Yates continuity correction for a 2x2 table).  An `exact => 1`
-	 * option gives the two-sided exact binomial test for a 2x2 table. */
+/* McNemar's test for paired categorical data.  Faithful port of R's
+  stats::mcnemar.test (chi-square on the off-diagonal disagreement,
+  with Yates continuity correction for a 2x2 table).  An `exact => 1`
+  option gives the two-sided exact binomial test for a 2x2 table. */
 	if (items < 1)
 		croak("Usage: mcnemar_test([[a,b],[c,d]], correct => 1, exact => 0)\n"
 		      "   or mcnemar_test(\\@x, \\@y, ...)   # paired observations");
@@ -12776,7 +12790,7 @@ PPCODE:
 		size_t n = (size_t)(av_len(xa) + 1);
 		if ((size_t)(av_len(ya) + 1) != n) croak("mcnemar_test: 'x' and 'y' must have the same length");
 		/* collect sorted unique levels across both vectors */
-		char **lev = NULL; size_t nlev = 0, cap = 8; Newx(lev, cap, char*);
+		char **restrict lev = NULL; size_t nlev = 0, cap = 8; Newx(lev, cap, char*);
 		for (size_t src = 0; src < 2; src++) {
 			AV *a = src ? ya : xa;
 			for (size_t i = 0; i < n; i++) {
@@ -12807,16 +12821,15 @@ PPCODE:
 		opt_start = 2;
 	}
 	for (int i = opt_start; i + 1 < items; i += 2) {
-		const char *k = SvPV_nolen(ST(i)); SV *v = ST(i + 1);
+		const char *restrict k = SvPV_nolen(ST(i)); SV *v = ST(i + 1);
 		if      (strEQ(k, "correct")) correct = SvTRUE(v) ? 1 : 0;
 		else if (strEQ(k, "exact"))   exact   = SvTRUE(v) ? 1 : 0;
 		else { Safefree(tab); croak("mcnemar_test: unknown argument '%s'", k); }
 	}
 	if (exact && r != 2) { Safefree(tab); croak("mcnemar_test: exact test requires a 2x2 table"); }
 
-	HV *ret = newHV();
-	if (exact) {
-		/* two-sided exact binomial test of the discordant pairs, b ~ Bin(b+c, 0.5) */
+	HV *restrict ret = newHV();
+	if (exact) {// two-sided exact binomial test of the discordant pairs, b ~ Bin(b+c, 0.5)
 		NV b = tab[0 * 2 + 1], c = tab[1 * 2 + 0];
 		NV nn = b + c, m = (b < c) ? b : c;
 		NV p_value;
@@ -12830,7 +12843,7 @@ PPCODE:
 		hv_stores(ret, "p_value",     newSVnv(p_value));
 		hv_stores(ret, "method",      newSVpv("McNemar's test (exact binomial)", 0));
 	} else {
-		int use_cc = 0;
+		bool use_cc = 0;
 		if (correct && r == 2) {
 			for (size_t i = 0; i < r && !use_cc; i++)
 				for (size_t j = 0; j < r; j++)
@@ -12869,7 +12882,7 @@ PPCODE:
 	if (items < 2 || !SvROK(ST(0)) || !SvROK(ST(1))
 		|| SvTYPE(SvRV(ST(0))) != SVt_PVAV || SvTYPE(SvRV(ST(1))) != SVt_PVAV)
 		croak("Usage: dunn_test(\\@values, \\@groups, method => 'holm')");
-	const char *method = "holm";
+	const char *restrict method = "holm";
 	for (int i = 2; i + 1 < items; i += 2) {
 		const char *key = SvPV_nolen(ST(i)); SV *v = ST(i + 1);
 		if (strEQ(key, "method")) method = SvPV_nolen(v);
@@ -12880,7 +12893,7 @@ PPCODE:
 	if (strEQ(meth, "fdr")) strcpy(meth, "bh");
 	if (strEQ(meth, "holm-sidak")) strcpy(meth, "hs");
 
-	AV *xa = (AV*)SvRV(ST(0)), *ga = (AV*)SvRV(ST(1));
+	AV *restrict xa = (AV*)SvRV(ST(0)), *ga = (AV*)SvRV(ST(1));
 	size_t raw = (size_t)(av_len(xa) + 1);
 	if ((size_t)(av_len(ga) + 1) != raw) croak("dunn_test: values and groups must have the same length");
 
@@ -12897,8 +12910,7 @@ PPCODE:
 		x[N] = val; glab[N] = savepvn(s, l); N++;
 	}
 	if (N < 3) { for (size_t i = 0; i < N; i++) Safefree(glab[i]); Safefree(x); Safefree(glab); croak("dunn_test: not enough complete observations"); }
-
-	/* sorted unique group levels */
+	// sorted unique group levels
 	char **restrict lev = NULL; size_t k = 0, cap = 8; Newx(lev, cap, char*);
 	for (size_t i = 0; i < N; i++) {
 		bool found = FALSE;
@@ -12921,7 +12933,6 @@ PPCODE:
 		for (size_t j = 0; j < k; j++) if (strEQ(lev[j], glab[i])) { gi = j; break; }
 		rsum[gi] += r[i]; ns[gi]++;
 	}
-
 	/* tie correction: sum over distinct values of (t^3 - t) */
 	NV *restrict xs = NULL; Newx(xs, N, NV);
 	memcpy(xs, x, N * sizeof(NV));
@@ -12938,10 +12949,8 @@ PPCODE:
 		}
 	}
 	Safefree(xs);
-
 	NV Nf = (NV)N;
 	NV sigma_base = (Nf * (Nf + 1.0)) / 12.0 - tsum / (12.0 * (Nf - 1.0));
-
 	size_t m = k * (k - 1) / 2;
 	NV *restrict z = NULL, *restrict praw = NULL, *restrict padj = NULL;
 	Newx(z, m, NV); Newx(praw, m, NV); Newx(padj, m, NV);
@@ -12961,9 +12970,9 @@ PPCODE:
 		}
 	dunn_padjust(praw, m, meth, padj);
 
-	AV *out = newAV();
+	AV *restrict out = newAV();
 	for (size_t t = 0; t < m; t++) {
-		HV *h = newHV();
+		HV *restrict h = newHV();
 		char comp[256];
 		snprintf(comp, sizeof comp, "%s - %s", lev[gi_[t]], lev[gj_[t]]);
 		hv_stores(h, "comparison", newSVpv(comp, 0));
