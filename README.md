@@ -116,6 +116,7 @@ When the target is a Hash of Arrays, incoming arrays are pushed onto the existin
 * **Target is Hash, Source is Array:** The function converts the Array indices into stringified Hash keys. (e.g., source array index `[1]` merges into target hash key `"1"`).
 
 ### Source is a mixed Hash. Keys dictate the target array index!
+
     $n = {
         '0' => { y => 20 },                 # Merges into $data->[0]
         '1' => [ 'z', 30 ],                 # Array pair coerced to Hash, creates $data->[1]
@@ -755,6 +756,7 @@ in R
 Add new columns to a data frame, computed from the columns already there — or handed in ready-made.
 
 ### Usage
+
     assign($df, new_name => VALUE, another => VALUE, ...);
 
 - **`$df`** — your data frame, in any of three shapes:
@@ -2908,6 +2910,7 @@ cells down the rows).
     my $hoa = hoh2hoa(\%hoh);
 
 which returns
+
     {
       a => [1, 3],
       b => [2, 4],
@@ -3412,6 +3415,7 @@ For example,
     }
 
 and a second hash,
+
     {
         "Jack Smith"   {
             dept   "Engineering"
@@ -4673,9 +4677,11 @@ minimal example:
 | `delim`| field separator character; synonym with `sep`| `delim => "\t"` |
 | `sheet`| which worksheet to read from an `.xlsx` file: a 1-based index or a sheet name (default: first sheet). Ignored for text files | `sheet => 'Sheet2'` |
 output types can be AOH (aoh), HOA (hoa), HOH (hoh)
+
     read_table($filename, 'output.type' => 'aoh');
     read_table($filename, 'output.type' => 'hoa');
 and, like Text::CSV_XS, filters can be applied in order to save RAM on big files:
+
     $test_data = read_table(
         't/HepatitisCdata.csv',
         filter => {
@@ -4687,6 +4693,7 @@ the default delimiter is `,`
 Suffixes `.csv` and `.tsv` are automatically detected from file names, but if specified, are overridden by `delim` and/or `sep`. `sep` is given priority.
 ### commented-out headers
 A header that is itself commented out is detected and used automatically, so
+
     # PDB	score
     1a2b	10
     3c4d	20
@@ -4695,6 +4702,7 @@ following whitespace are stripped from the first column). A commented line is
 only taken as the header when its field count matches the data, so ordinary
 leading comments are never mistaken for one. You may name such a column in a
 `filter` either as it appears in the file or by its clean name:
+
     read_table('ranks.tabular.tsv', filter => { '# PDB' => sub { $_ == 2 } });
 
 ### Excel (.xlsx) files
@@ -5389,11 +5397,13 @@ Extract a single column from a data frame as a flat array reference, similar to 
 Count the values in a given data set, return a hash reference showing how many times each particular value is present.
 
 ### Scalar
+
     $hash = value_counts('c');
 
 returns `{ c => 1 }`
 
 ### Array reference
+
     value_counts(['a','b','b']);
 
 returns `{ a => 1, b => 2}`
@@ -5416,12 +5426,14 @@ like an array reference above, returns `{ a => 1, b => 2}`
 with a key, the value at that key is counted in each hash, so the above returns `{ Sales => 2, Eng => 1 }`. A record that lacks the key is skipped. Passing an array of hashes without a key, or with an element that is not a hash reference, is a fatal error.
 
 ### Array of arrays
+
     my @rows = (['a', 1], ['b', 1], ['a', 2]);
     my $vc = value_counts(\@rows, 0);
 
 when the elements are array references, the key is treated as a numeric column index, so the above returns `{ a => 2, b => 1 }`. A non-numeric index against array-reference elements is a fatal error.
 
 ### Hash
+
     my $value_counts = value_counts( { A => 'a', B => 'a', C => 'b' } );
 
 returns `{ a => 2, b => 1}`
@@ -5653,16 +5665,21 @@ Ties are detected during ranking and trigger the tie-corrected variance in the n
 
 ## write_table
 mimics R's `write.table`, with data as first argument to subroutine, and output file as second
+
     write_table(\@data_aoh, $tmp_file, sep => "\t", 'row.names' => 1);
 `write_table` accepts every data-frame shape: a flat hash (one row), a hash of arrays (HoA), a hash of hashes (HoH), an array of hashes (AoH), and an array of arrays (AoA). For an AoA the first inner array is taken as the header row unless `col.names` is given, in which case every inner array is treated as data:
+
     write_table([[qw(gene score)], ['TP53', 0.9], ['BRCA1', 0.7]], $tmp_file, 'row.names' => 0);
     write_table([['TP53', 0.9], ['BRCA1', 0.7]], $tmp_file, 'col.names' => [qw(gene score)]);
 You can also precisely filter and reorder which columns are written by passing an array reference to `col.names`:
+
     write_table(\@data, $tmp_file, sep => "\t", 'col.names' => ['c', 'a']);
 undefined variables are printed as `NA` by default, but can be set as you wish using `undef.val`
+
     write_table(\%data_hoa, '/tmp/undef.val.tsv', sep => "\t", 'undef.val' => 'nan')
 `write_table` determines comma and tab-separated delimiters from the filename, but will override if `sep` or `delim` are explicitly set.
 Args can also be accepted:
+
     write_table( 'data' => \%flat, 'file' => $f );
 
 ### The confirmation line
@@ -5676,9 +5693,11 @@ This is `say 'wrote ' . colored(['black on_cyan'], $file)`, but the SGR codes (`
 The colour is unconditional; it is not suppressed when standard output is a pipe or a file. If you are capturing the output and want the bytes plain, strip the escapes (`s/\e\[[\d;]*m//g`) or send them somewhere else. Note also that the line goes to file descriptor 1 directly rather than through Perl's `STDOUT` glob, so `local *STDOUT; open STDOUT, '>', \my $buf` will **not** capture it — redirect the file descriptor, or run the write in a child process, if you need to.
 ### LaTeX output (`tex`)
 `write_table` can write the output file as a LaTeX `tabular` instead of a delimited table. This is selected either by naming the file `*.tex` (auto-detected) or by passing `tex => 1`; an explicit `tex => 0` forces a delimited file even when the name ends in `.tex`. The LaTeX table is built from the same rows as the delimited writer, so it works for every shape above (including arrays of arrays):
+
     write_table(\@data_aoh, 'table.tex');            # .tex name selects LaTeX
     write_table(\@data_aoh, $tmp_file, 'tex' => 1);  # force LaTeX for any name
 The file begins with a `%written by <cwd>/<script>` provenance comment (the working directory and script name). The header row is bold and the table is ruled with `\hline`. As with every other format, `row.names` is **off** unless you ask for it: pass `row.names => 1` to prepend a label column, whose labels are the outer keys for a HoH and a 1-based index otherwise. Cell text is LaTeX-escaped: `#`, `_`, `%`, and `&` are backslash-escaped, `>` becomes `\textgreater{}`, and a cell consisting solely of `\includesvg{...svg}` is passed through untouched. The `tex.*` options tune the output:
+
     write_table(\@rows, 'table.tex',
         'tex.col.align'    => 'l',                   # 'c' (default), 'l', or 'r'
         'tex.bold.1st.col' => 0,                     # default 1: bold the first column
@@ -5687,8 +5706,10 @@ The file begins with a `%written by <cwd>/<script>` provenance comment (the work
         'tex.comment'      => ['run 3', 'q < 0.05'], # % comment line(s): string or array ref
     );
 For a table that must span page breaks, `tex.longtable => 1` writes only the table *body* — the bold header row and the data rows, ruled with `\hline` — but no `\begin{tabular}`/`\end{tabular}` and no column spec, so you can `\input{}` it into a `longtable` environment you write yourself. Setting `tex.longtable` implies `tex => 1`, so it applies to any file name (and overrides `tex => 0`). After the provenance comment (and any `tex.comment` lines) the file emits a `% \begin{longtable}{...}` hint with one `tex.col.align` character per column, so you can copy a column spec with the right count. In this mode `tex.col.align` affects only that hint — the real alignment lives on your own `\begin{longtable}`; the other `tex.*` options (`tex.bold.1st.col`, `tex.format`, `tex.size`, `tex.comment`) still apply:
+
     write_table(\@rows, 'output.file.tex', 'tex.longtable' => 1);
 writes a body-only file such as
+
     %written by /home/con/Scripts/stats/make_table.pl
     % \begin{longtable}{ccc}
     \hline
@@ -5696,12 +5717,14 @@ writes a body-only file such as
     1 & 2 & 3\\
     \hline
 which you wrap yourself:
+
     \begin{longtable}{ccc}
     \input{output.file.tex}
     \caption{}
     \label{}
     \end{longtable}
 In that plain form the header is an ordinary first row, which is *not* the header LaTeX freezes at the top of each page: a `longtable` repeats only what sits inside `\endfirsthead` / `\endhead`. Hand-writing those blocks means retyping the column labels, and they then silently stop matching `col.names` the first time the column order changes — the frozen header says one thing while the columns underneath say another, and the generated header shows up a second time as the first body row. `tex.longtable.head` closes that gap by generating the repeat machinery from the same header record as the body:
+
     write_table(\@rows, 'output.file.tex',
         'col.names'          => ['a', 'b', 'c'],
         'tex.longtable.head' => '(continued)', # or just 1 for no continuation caption
@@ -5718,6 +5741,7 @@ In that plain form the header is an ordinary first row, which is *not* the heade
     \endfoot
     1 & 2 & 3\\
 Setting `tex.longtable.head` implies `tex.longtable` (and so `tex => 1`). A true-but-numeric value emits the machinery with no continuation caption; any other true value is the caption text for every page after the first, written verbatim so LaTeX macros survive, with an empty `\caption[]` optional argument so the continuation stays out of the List of Tables. `\endfoot` carries the closing `\hline` and no `\endlastfoot` is emitted, so every page — the last one included — gets a bottom rule. The wrapper then holds nothing that has to track the data:
+
     \begin{longtable}{ccc}
     \caption{}\label{}\\ \hline
     \input{output.file.tex}
@@ -5830,6 +5854,10 @@ Verified against R 4.6.1 (`oneway.test`, `anova(aov())`, `anova(lm())`,
 `t/model_pvalue_tails.t` and `t/oneway_test.R.scipy.t`.
 
 # Changes
+
+## 0.291 2026-08-04 CDT
+
+POD formatting improvements
 
 ## 0.29 2026-08-03 CDT
 
@@ -6831,6 +6859,7 @@ Corrected four bugs in the `wilcox_test` XSUB plus a portability fix in its exac
 `view` function added, similar to R's `head`
 
 `read_table`:
+
     filter => {
         'Testosterone, total (nmol/L)' => sub { defined $_ },
     }

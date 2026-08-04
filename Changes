@@ -1001,6 +1001,7 @@ Revision history for Stats-LikeR
  - `view` function added, similar to R's `head`
 
  - `read_table`:
+
      filter => {
          'Testosterone, total (nmol/L)' => sub { defined $_ },
      }
