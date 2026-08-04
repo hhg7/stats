@@ -60,11 +60,11 @@ DIRFILESEP = /
 DFSEP = $(DIRFILESEP)
 NAME = Stats::LikeR
 NAME_SYM = Stats_LikeR
-VERSION = 0.282
+VERSION = 0.29
 VERSION_MACRO = VERSION
-VERSION_SYM = 0_282
+VERSION_SYM = 0_29
 DEFINE_VERSION = -D$(VERSION_MACRO)=\"$(VERSION)\"
-XS_VERSION = 0.282
+XS_VERSION = 0.29
 XS_VERSION_MACRO = XS_VERSION
 XS_DEFINE_VERSION = -D$(XS_VERSION_MACRO)=\"$(XS_VERSION)\"
 INST_ARCHLIB = blib/arch
@@ -209,6 +209,7 @@ TO_INST_PM = TukeyHSD.pl \
 	dnorm.pl \
 	examples.pl \
 	fisher.test.pl \
+	glm.pl \
 	group_by.pl \
 	hist.pl \
 	kruskal.pl \
@@ -332,7 +333,7 @@ RCS_LABEL = rcs -Nv$(VERSION_SYM): -q
 DIST_CP = best
 DIST_DEFAULT = tardist
 DISTNAME = Stats-LikeR
-DISTVNAME = Stats-LikeR-0.282
+DISTVNAME = Stats-LikeR-0.29
 
 
 # --- MakeMaker macro section:
@@ -681,7 +682,7 @@ metafile : create_distdir
 	$(NOECHO) $(ECHO) '    - t' >> META_new.yml
 	$(NOECHO) $(ECHO) '    - inc' >> META_new.yml
 	$(NOECHO) $(ECHO) 'requires: {}' >> META_new.yml
-	$(NOECHO) $(ECHO) 'version: 0.282' >> META_new.yml
+	$(NOECHO) $(ECHO) 'version: 0.29' >> META_new.yml
 	$(NOECHO) $(ECHO) 'x_serialization_backend: '\''CPAN::Meta::YAML version 0.020'\''' >> META_new.yml
 	-$(NOECHO) $(MV) META_new.yml $(DISTVNAME)/META.yml
 	$(NOECHO) $(ECHO) Generating META.json
@@ -722,7 +723,7 @@ metafile : create_distdir
 	$(NOECHO) $(ECHO) '      }' >> META_new.json
 	$(NOECHO) $(ECHO) '   },' >> META_new.json
 	$(NOECHO) $(ECHO) '   "release_status" : "stable",' >> META_new.json
-	$(NOECHO) $(ECHO) '   "version" : 0.282,' >> META_new.json
+	$(NOECHO) $(ECHO) '   "version" : 0.29,' >> META_new.json
 	$(NOECHO) $(ECHO) '   "x_serialization_backend" : "JSON::PP version 4.16"' >> META_new.json
 	$(NOECHO) $(ECHO) '}' >> META_new.json
 	-$(NOECHO) $(MV) META_new.json $(DISTVNAME)/META.json
@@ -1125,7 +1126,7 @@ testdb_static :: static pure_all $(MAP_TARGET)
 # --- MakeMaker ppd section:
 # Creates a PPD (Perl Package Description) for a binary distribution.
 ppd :
-	$(NOECHO) $(ECHO) '<SOFTPKG NAME="Stats-LikeR" VERSION="0.282">' > Stats-LikeR.ppd
+	$(NOECHO) $(ECHO) '<SOFTPKG NAME="Stats-LikeR" VERSION="0.29">' > Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '    <ABSTRACT></ABSTRACT>' >> Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '    <AUTHOR></AUTHOR>' >> Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '    <IMPLEMENTATION>' >> Stats-LikeR.ppd
@@ -1157,6 +1158,7 @@ pm_to_blib : $(FIRST_MAKEFILE) $(TO_INST_PM)
 	  'dnorm.pl' '$(INST_LIB)/Stats/dnorm.pl' \
 	  'examples.pl' '$(INST_LIB)/Stats/examples.pl' \
 	  'fisher.test.pl' '$(INST_LIB)/Stats/fisher.test.pl' \
+	  'glm.pl' '$(INST_LIB)/Stats/glm.pl' \
 	  'group_by.pl' '$(INST_LIB)/Stats/group_by.pl' \
 	  'hist.pl' '$(INST_LIB)/Stats/hist.pl' \
 	  'kruskal.pl' '$(INST_LIB)/Stats/kruskal.pl' \
@@ -1192,7 +1194,12 @@ pm_to_blib : $(FIRST_MAKEFILE) $(TO_INST_PM)
 	  'wilcox.text.pl' '$(INST_LIB)/Stats/wilcox.text.pl' \
 	  'write.table.pl' '$(INST_LIB)/Stats/write.table.pl' \
 	  'xlsx.write.pl' '$(INST_LIB)/Stats/xlsx.write.pl' \
-	  'xs.check.pl' '$(INST_LIB)/Stats/xs.check.pl' \
+	  'xs.check.pl' '$(INST_LIB)/Stats/xs.check.pl' 
+	$(NOECHO) $(ABSPERLRUN) -MExtUtils::Install -e '$$i=0; $$n=$$#ARGV; $$i++ until $$i > $$n or $$ARGV[$$i] eq q{--};' \
+	  -e 'die q{Failed to find -- in }.join(q{|},@ARGV) if $$i > $$n;' \
+	  -e '@parts=splice @ARGV,0,$$i+1;' \
+	  -e 'pop @parts; $$filter=join q{ }, map qq{"$$_"}, @parts;' \
+	  -e 'pm_to_blib({@ARGV}, '\''$(INST_LIB)/auto'\'', $$filter, '\''$(PERM_DIR)'\'')' -- $(PM_FILTER) -- \
 	  'xs.sxn.pl' '$(INST_LIB)/Stats/xs.sxn.pl' 
 	$(NOECHO) $(TOUCH) pm_to_blib
 

@@ -58,7 +58,7 @@
 .\" ========================================================================
 .\"
 .IX Title "read.me 3"
-.TH read.me 3 2026-08-03 "perl v5.44.0" "User Contributed Perl Documentation"
+.TH read.me 3 2026-08-04 "perl v5.44.0" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -871,7 +871,7 @@ Add new columns to a data frame, computed from the columns already there — or 
 .IX Subsection "Usage"
 .PP
 .Vb 1
-\& assign($df, new\e_name => VALUE, another => VALUE, ...);
+\& assign($df, new_name => VALUE, another => VALUE, ...);
 .Ve
 .IP \(bu 4
 \&\fR\f(CB$df\fR\fB\fR — your data frame, in any of three shapes:
@@ -3304,10 +3304,13 @@ cells down the rows).
 .Ve
 .PP
 which returns
-    {
-      a => [1, 3],
-      b => [2, 4],
-    }
+.PP
+.Vb 4
+\& {
+\&   a => [1, 3],
+\&   b => [2, 4],
+\& }
+.Ve
 .PP
 \fIBehavior\fR
 .IX Subsection "Behavior"
@@ -3845,14 +3848,17 @@ For example,
 .Ve
 .PP
 and a second hash,
-    {
-        "Jack Smith"   {
-            dept   "Engineering"
-        },
-        "Jane Doe"     {
-            age   25
-        }
-    }
+.PP
+.Vb 8
+\& {
+\&     "Jack Smith"   {
+\&         dept   "Engineering"
+\&     },
+\&     "Jane Doe"     {
+\&         age   25
+\&     }
+\& }
+.Ve
 .PP
 in this case, running \f(CW\*(C`ljoin(\e%h, \e%i)\*(C'\fR will modify \e%h to result:
 .PP
@@ -3880,13 +3886,61 @@ where \f(CW$mtcars\fR is a hash of hashes
 \& my $lm = lm(formula => \*(Aqmpg ~ wt * hp^2\*(Aq, data => \e%mtcars);
 .Ve
 .PP
-If your data contains missing numbers (\f(CW\*(C`NA\*(C'\fR or \f(CW\*(C`undef\*(C'\fR), \f(CW\*(C`lm\*(C'\fR handles listwise deletion dynamically to ensure mathematical integrity before fitting.
+Crossing is associative, so \f(CW\*(C`*\*(C'\fR chains to any depth: \f(CW\*(C`y ~ a * b * c\*(C'\fR expands to
+every non\-empty subset of the three (\f(CW\*(C`a\*(C'\fR, \f(CW\*(C`b\*(C'\fR, \f(CW\*(C`c\*(C'\fR, \f(CW\*(C`a:b\*(C'\fR, \f(CW\*(C`a:c\*(C'\fR, \f(CW\*(C`b:c\*(C'\fR,
+\&\f(CW\*(C`a:b:c\*(C'\fR), ordered by degree as R\*(Aqs \f(CWterms()\fR orders them. Writing \f(CW\*(C`a:b\*(C'\fR directly
+gives just that one product.
+.PP
+Either side of an interaction may be a string (categorical) column, in which
+case it expands to indicator columns the same way a main effect does:
+\&\f(CW\*(C`len ~ dose * supp\*(C'\fR yields \f(CW\*(C`dose\*(C'\fR, \f(CW\*(C`suppVC\*(C'\fR and \f(CW\*(C`dose:suppVC\*(C'\fR.
+.PP
+Whether a categorical column keeps all of its levels or drops the first as a
+reference follows R\*(Aqs margin rule: the reference level is dropped when the term
+with that column removed is itself in the model. A main effect\*(Aqs margin is the
+intercept, so \f(CW\*(C`y ~ g\*(C'\fR drops g\*(Aqs first level — but \f(CW\*(C`y ~ g \- 1\*(C'\fR has no intercept
+to measure against and so keeps every level, one column per group. Where two
+categorical main effects both have no intercept, only the first can be coded in
+full (\f(CW\*(C`y ~ a + b \- 1\*(C'\fR gives every level of \f(CW\*(C`a\*(C'\fR and drops \f(CW\*(C`b\*(C'\fR\*(Aqs reference),
+because coding both in full would be rank deficient. A bare \f(CW\*(C`y ~ a:b\*(C'\fR with
+neither main effect present codes both in full and spans the whole
+cross\-classification.
+.PP
+If your data contains missing numbers (\f(CW\*(C`NA\*(C'\fR or \f(CW\*(C`undef\*(C'\fR), \f(CW\*(C`lm\*(C'\fR handles listwise deletion dynamically to ensure mathematical integrity before fitting. A row whose categorical value is missing is dropped the same way.
+.PP
+Three details differ from R deliberately:
+.IP \(bu 4
+Levels are sorted with \f(CW\*(C`strcmp\*(C'\fR, i.e. by byte value, which is what
+\&\f(CW\*(C`patsy\*(C'\fR/\f(CW\*(C`pandas\*(C'\fR does. R sorts with the collation of the running locale, so a
+factor whose levels differ only in case takes a different reference level in
+the two: on \f(CW\*(C`c("b", "A", "a")\*(C'\fR R takes \f(CW\*(C`a\*(C'\fR and \f(CW\*(C`lm\*(C'\fR takes \f(CW\*(C`A\*(C'\fR. Both
+parameterise the same fit — residual sum of squares, rank and fitted values
+agree — but the coefficient names and values differ.
+.IP \(bu 4
+A term crossed with itself keeps the product, so \f(CW\*(C`wt:wt\*(C'\fR is \f(CW\*(C`wt\*(C'\fR squared and
+\&\f(CW\*(C`y ~ wt*wt\*(C'\fR fits \f(CW\*(C`y ~ wt + I(wt^2)\*(C'\fR. R\*(Aqs formula algebra collapses \f(CW\*(C`a:a\*(C'\fR to
+\&\f(CW\*(C`a\*(C'\fR, making the same formula mean \f(CW\*(C`y ~ wt\*(C'\fR there.
+.IP \(bu 4
+A categorical column with only one level contributes no column, so
+\&\f(CW\*(C`y ~ x + g\*(C'\fR fits \f(CW\*(C`y ~ x\*(C'\fR. R refuses the model outright ("contrasts can be
+applied only to factors with 2 or more levels").
 .PP
 the dot operator also works:
 .PP
 .Vb 1
 \& $lm = lm(formula => \*(Aqy ~ .\*(Aq, data => $dot_data);
 .Ve
+.PP
+\&\f(CW\*(C`lm\*(C'\fR and \f(CW\*(C`glm\*(C'\fR read their formula and their data through the same code, so
+everything above holds for both, and a fit\*(Aqs \f(CW\*(C`terms\*(C'\fR are the terms the other
+function would have produced from the same string.
+.PP
+Rows are labelled from a \f(CW\*(C`row.names\*(C'\fR, \f(CW\*(C`_row\*(C'\fR, \f(CW\*(C`rownames\*(C'\fR or \f(CW\*(C`.rownames\*(C'\fR column if
+the data has one (a HoH labels rows with its outer keys, which needs no such
+column), and 1\-based integers otherwise. Those labels are the keys of
+\&\f(CW\*(C`fitted.values\*(C'\fR and \f(CW\*(C`residuals\*(C'\fR, and the row names \f(CW\*(C`predict\*(C'\fR returns. A row\-name
+column is a label rather than a measurement, so \f(CW\*(C`y ~ .\*(C'\fR leaves it out of the
+predictors.
 .PP
 The overall model F test is returned as \f(CW\*(C`fstatistic\*(C'\fR (an array ref of \f(CW\*(C`F\*(C'\fR,
 numerator df, denominator df) and \f(CW\*(C`f.pvalue\*(C'\fR. \f(CW\*(C`f.pvalue\*(C'\fR is evaluated in the
@@ -5185,16 +5239,24 @@ minimal example:
 .IX Subsection "options"
 .PP
 output types can be AOH (aoh), HOA (hoa), HOH (hoh)
-    read_table($filename, \*(Aqoutput.type\*(Aq => \*(Aqaoh\*(Aq);
-    read_table($filename, \*(Aqoutput.type\*(Aq => \*(Aqhoa\*(Aq);
+.PP
+.Vb 2
+\& read_table($filename, \*(Aqoutput.type\*(Aq => \*(Aqaoh\*(Aq);
+\& read_table($filename, \*(Aqoutput.type\*(Aq => \*(Aqhoa\*(Aq);
+.Ve
+.PP
 and, like Text::CSV_XS, filters can be applied in order to save RAM on big files:
-    \f(CW$test_data\fR = read_table(
-        \*(Aqt/HepatitisCdata.csv\*(Aq,
-        filter => {
-            Sex => sub {$_ eq \*(Aqf\*(Aq} # where "Sex" is the column name, and "$_" is the value for that column
-        },
-        \*(Aqoutput.type\*(Aq => \*(Aqaoh\*(Aq
-    );
+.PP
+.Vb 7
+\& $test_data = read_table(
+\&     \*(Aqt/HepatitisCdata.csv\*(Aq,
+\&     filter => {
+\&         Sex => sub {$_ eq \*(Aqf\*(Aq} # where "Sex" is the column name, and "$_" is the value for that column
+\&     },
+\&     \*(Aqoutput.type\*(Aq => \*(Aqaoh\*(Aq
+\& );
+.Ve
+.PP
 the default delimiter is \f(CW\*(C`,\*(C'\fR
 Suffixes \f(CW\*(C`.csv\*(C'\fR and \f(CW\*(C`.tsv\*(C'\fR are automatically detected from file names, but if specified, are overridden by \f(CW\*(C`delim\*(C'\fR and/or \f(CW\*(C`sep\*(C'\fR. \f(CW\*(C`sep\*(C'\fR is given priority.
 .PP
@@ -5202,15 +5264,22 @@ Suffixes \f(CW\*(C`.csv\*(C'\fR and \f(CW\*(C`.tsv\*(C'\fR are automatically det
 .IX Subsection "commented-out headers"
 .PP
 A header that is itself commented out is detected and used automatically, so
-    # PDB   score
-    1a2b    10
-    3c4d    20
+.PP
+.Vb 3
+\& # PDB    score
+\& 1a2b    10
+\& 3c4d    20
+.Ve
+.PP
 reads as though the header were \f(CW\*(C`PDB, score\*(C'\fR (the comment marker and any
 following whitespace are stripped from the first column). A commented line is
 only taken as the header when its field count matches the data, so ordinary
 leading comments are never mistaken for one. You may name such a column in a
 \&\f(CW\*(C`filter\*(C'\fR either as it appears in the file or by its clean name:
-    read_table(\*(Aqranks.tabular.tsv\*(Aq, filter => { \*(Aq# PDB\*(Aq => sub { \f(CW$_\fR == 2 } });
+.PP
+.Vb 1
+\& read_table(\*(Aqranks.tabular.tsv\*(Aq, filter => { \*(Aq# PDB\*(Aq => sub { $_ == 2 } });
+.Ve
 .PP
 \fIExcel (.xlsx) files\fR
 .IX Subsection "Excel (.xlsx) files"
@@ -5982,7 +6051,7 @@ Count the values in a given data set, return a hash reference showing how many t
 .IX Subsection "Scalar"
 .PP
 .Vb 1
-\& $hash = value\e_counts(\*(Aqc\*(Aq);
+\& $hash = value_counts(\*(Aqc\*(Aq);
 .Ve
 .PP
 returns \f(CW\*(C`{ c => 1 }\*(C'\fR
@@ -5991,7 +6060,7 @@ returns \f(CW\*(C`{ c => 1 }\*(C'\fR
 .IX Subsection "Array reference"
 .PP
 .Vb 1
-\& value\e_counts([\*(Aqa\*(Aq,\*(Aqb\*(Aq,\*(Aqb\*(Aq]);
+\& value_counts([\*(Aqa\*(Aq,\*(Aqb\*(Aq,\*(Aqb\*(Aq]);
 .Ve
 .PP
 returns \f(CW\*(C`{ a => 1, b => 2}\*(C'\fR
@@ -6024,7 +6093,7 @@ with a key, the value at that key is counted in each hash, so the above returns 
 .PP
 .Vb 2
 \& my @rows = ([\*(Aqa\*(Aq, 1], [\*(Aqb\*(Aq, 1], [\*(Aqa\*(Aq, 2]);
-\& my $vc = value\e_counts(\e@rows, 0);
+\& my $vc = value_counts(\e@rows, 0);
 .Ve
 .PP
 when the elements are array references, the key is treated as a numeric column index, so the above returns \f(CW\*(C`{ a => 2, b => 1 }\*(C'\fR. A non\-numeric index against array\-reference elements is a fatal error.
@@ -6033,7 +6102,7 @@ when the elements are array references, the key is treated as a numeric column i
 .IX Subsection "Hash"
 .PP
 .Vb 1
-\& my $value\e_counts = value\e_counts( { A => \*(Aqa\*(Aq, B => \*(Aqa\*(Aq, C => \*(Aqb\*(Aq } );
+\& my $value_counts = value_counts( { A => \*(Aqa\*(Aq, B => \*(Aqa\*(Aq, C => \*(Aqb\*(Aq } );
 .Ve
 .PP
 returns \f(CW\*(C`{ a => 2, b => 1}\*(C'\fR
@@ -6265,17 +6334,36 @@ Ties are detected during ranking and trigger the tie\-corrected variance in the 
 .SS write_table
 .IX Subsection "write_table"
 mimics R\*(Aqs \f(CW\*(C`write.table\*(C'\fR, with data as first argument to subroutine, and output file as second
-    write_table(\e@data_aoh, \f(CW$tmp_file\fR, sep => "\et", \*(Aqrow.names\*(Aq => 1);
+.PP
+.Vb 1
+\& write_table(\e@data_aoh, $tmp_file, sep => "\et", \*(Aqrow.names\*(Aq => 1);
+.Ve
+.PP
 \&\f(CW\*(C`write_table\*(C'\fR accepts every data\-frame shape: a flat hash (one row), a hash of arrays (HoA), a hash of hashes (HoH), an array of hashes (AoH), and an array of arrays (AoA). For an AoA the first inner array is taken as the header row unless \f(CW\*(C`col.names\*(C'\fR is given, in which case every inner array is treated as data:
-    write_table([[qw(gene score)], [\*(AqTP53\*(Aq, 0.9], [\*(AqBRCA1\*(Aq, 0.7]], \f(CW$tmp_file\fR, \*(Aqrow.names\*(Aq => 0);
-    write_table([[\*(AqTP53\*(Aq, 0.9], [\*(AqBRCA1\*(Aq, 0.7]], \f(CW$tmp_file\fR, \*(Aqcol.names\*(Aq => [qw(gene score)]);
+.PP
+.Vb 2
+\& write_table([[qw(gene score)], [\*(AqTP53\*(Aq, 0.9], [\*(AqBRCA1\*(Aq, 0.7]], $tmp_file, \*(Aqrow.names\*(Aq => 0);
+\& write_table([[\*(AqTP53\*(Aq, 0.9], [\*(AqBRCA1\*(Aq, 0.7]], $tmp_file, \*(Aqcol.names\*(Aq => [qw(gene score)]);
+.Ve
+.PP
 You can also precisely filter and reorder which columns are written by passing an array reference to \f(CW\*(C`col.names\*(C'\fR:
-    write_table(\e@data, \f(CW$tmp_file\fR, sep => "\et", \*(Aqcol.names\*(Aq => [\*(Aqc\*(Aq, \*(Aqa\*(Aq]);
+.PP
+.Vb 1
+\& write_table(\e@data, $tmp_file, sep => "\et", \*(Aqcol.names\*(Aq => [\*(Aqc\*(Aq, \*(Aqa\*(Aq]);
+.Ve
+.PP
 undefined variables are printed as \f(CW\*(C`NA\*(C'\fR by default, but can be set as you wish using \f(CW\*(C`undef.val\*(C'\fR
-    write_table(\e%data_hoa, \*(Aq/tmp/undef.val.tsv\*(Aq, sep => "\et", \*(Aqundef.val\*(Aq => \*(Aqnan\*(Aq)
+.PP
+.Vb 1
+\& write_table(\e%data_hoa, \*(Aq/tmp/undef.val.tsv\*(Aq, sep => "\et", \*(Aqundef.val\*(Aq => \*(Aqnan\*(Aq)
+.Ve
+.PP
 \&\f(CW\*(C`write_table\*(C'\fR determines comma and tab\-separated delimiters from the filename, but will override if \f(CW\*(C`sep\*(C'\fR or \f(CW\*(C`delim\*(C'\fR are explicitly set.
 Args can also be accepted:
-    write_table( \*(Aqdata\*(Aq => \e%flat, \*(Aqfile\*(Aq => \f(CW$f\fR );
+.PP
+.Vb 1
+\& write_table( \*(Aqdata\*(Aq => \e%flat, \*(Aqfile\*(Aq => $f );
+.Ve
 .PP
 \fIThe confirmation line\fR
 .IX Subsection "The confirmation line"
@@ -6294,52 +6382,80 @@ The colour is unconditional; it is not suppressed when standard output is a pipe
 .IX Subsection "LaTeX output (tex)"
 .PP
 \&\f(CW\*(C`write_table\*(C'\fR can write the output file as a LaTeX \f(CW\*(C`tabular\*(C'\fR instead of a delimited table. This is selected either by naming the file \f(CW\*(C`*.tex\*(C'\fR (auto\-detected) or by passing \f(CW\*(C`tex => 1\*(C'\fR; an explicit \f(CW\*(C`tex => 0\*(C'\fR forces a delimited file even when the name ends in \f(CW\*(C`.tex\*(C'\fR. The LaTeX table is built from the same rows as the delimited writer, so it works for every shape above (including arrays of arrays):
-    write_table(\e@data_aoh, \*(Aqtable.tex\*(Aq);            # .tex name selects LaTeX
-    write_table(\e@data_aoh, \f(CW$tmp_file\fR, \*(Aqtex\*(Aq => 1);  # force LaTeX for any name
+.PP
+.Vb 2
+\& write_table(\e@data_aoh, \*(Aqtable.tex\*(Aq);            # .tex name selects LaTeX
+\& write_table(\e@data_aoh, $tmp_file, \*(Aqtex\*(Aq => 1);  # force LaTeX for any name
+.Ve
+.PP
 The file begins with a \f(CW\*(C`%written by <cwd>/<script>\*(C'\fR provenance comment (the working directory and script name). The header row is bold and the table is ruled with \f(CW\*(C`\ehline\*(C'\fR. As with every other format, \f(CW\*(C`row.names\*(C'\fR is \fBoff\fR unless you ask for it: pass \f(CW\*(C`row.names => 1\*(C'\fR to prepend a label column, whose labels are the outer keys for a HoH and a 1\-based index otherwise. Cell text is LaTeX\-escaped: \f(CW\*(C`#\*(C'\fR, \f(CW\*(C`_\*(C'\fR, \f(CW\*(C`%\*(C'\fR, and \f(CW\*(C`&\*(C'\fR are backslash\-escaped, \f(CW\*(C`>\*(C'\fR becomes \f(CW\*(C`\etextgreater{}\*(C'\fR, and a cell consisting solely of \f(CW\*(C`\eincludesvg{...svg}\*(C'\fR is passed through untouched. The \f(CW\*(C`tex.*\*(C'\fR options tune the output:
-    write_table(\e@rows, \*(Aqtable.tex\*(Aq,
-        \*(Aqtex.col.align\*(Aq    => \*(Aql\*(Aq,                   # \*(Aqc\*(Aq (default), \*(Aql\*(Aq, or \*(Aqr\*(Aq
-        \*(Aqtex.bold.1st.col\*(Aq => 0,                     # default 1: bold the first column
-        \*(Aqtex.format\*(Aq       => 1,                     # %.4g\-format numeric cells
-        \*(Aqtex.size\*(Aq         => \*(Aq\esmall\*(Aq,              # size directive after \ebegin{tabular}
-        \*(Aqtex.comment\*(Aq      => [\*(Aqrun 3\*(Aq, \*(Aqq < 0.05\*(Aq], # % comment line(s): string or array ref
-    );
+.PP
+.Vb 7
+\& write_table(\e@rows, \*(Aqtable.tex\*(Aq,
+\&     \*(Aqtex.col.align\*(Aq    => \*(Aql\*(Aq,                   # \*(Aqc\*(Aq (default), \*(Aql\*(Aq, or \*(Aqr\*(Aq
+\&     \*(Aqtex.bold.1st.col\*(Aq => 0,                     # default 1: bold the first column
+\&     \*(Aqtex.format\*(Aq       => 1,                     # %.4g\-format numeric cells
+\&     \*(Aqtex.size\*(Aq         => \*(Aq\esmall\*(Aq,              # size directive after \ebegin{tabular}
+\&     \*(Aqtex.comment\*(Aq      => [\*(Aqrun 3\*(Aq, \*(Aqq < 0.05\*(Aq], # % comment line(s): string or array ref
+\& );
+.Ve
+.PP
 For a table that must span page breaks, \f(CW\*(C`tex.longtable => 1\*(C'\fR writes only the table \fIbody\fR — the bold header row and the data rows, ruled with \f(CW\*(C`\ehline\*(C'\fR — but no \f(CW\*(C`\ebegin{tabular}\*(C'\fR/\f(CW\*(C`\eend{tabular}\*(C'\fR and no column spec, so you can \f(CW\*(C`\einput{}\*(C'\fR it into a \f(CW\*(C`longtable\*(C'\fR environment you write yourself. Setting \f(CW\*(C`tex.longtable\*(C'\fR implies \f(CW\*(C`tex => 1\*(C'\fR, so it applies to any file name (and overrides \f(CW\*(C`tex => 0\*(C'\fR). After the provenance comment (and any \f(CW\*(C`tex.comment\*(C'\fR lines) the file emits a \f(CW\*(C`% \ebegin{longtable}{...}\*(C'\fR hint with one \f(CW\*(C`tex.col.align\*(C'\fR character per column, so you can copy a column spec with the right count. In this mode \f(CW\*(C`tex.col.align\*(C'\fR affects only that hint — the real alignment lives on your own \f(CW\*(C`\ebegin{longtable}\*(C'\fR; the other \f(CW\*(C`tex.*\*(C'\fR options (\f(CW\*(C`tex.bold.1st.col\*(C'\fR, \f(CW\*(C`tex.format\*(C'\fR, \f(CW\*(C`tex.size\*(C'\fR, \f(CW\*(C`tex.comment\*(C'\fR) still apply:
-    write_table(\e@rows, \*(Aqoutput.file.tex\*(Aq, \*(Aqtex.longtable\*(Aq => 1);
+.PP
+.Vb 1
+\& write_table(\e@rows, \*(Aqoutput.file.tex\*(Aq, \*(Aqtex.longtable\*(Aq => 1);
+.Ve
+.PP
 writes a body\-only file such as
-    \f(CW%written\fR by /home/con/Scripts/stats/make_table.pl
-    % \ebegin{longtable}{ccc}
-    \ehline
-    \etextbf{a} & \etextbf{b} & \etextbf{c} \e \ehline
-    1 & 2 & 3\e
-    \ehline
+.PP
+.Vb 6
+\& %written by /home/con/Scripts/stats/make_table.pl
+\& % \ebegin{longtable}{ccc}
+\& \ehline
+\& \etextbf{a} & \etextbf{b} & \etextbf{c} \e\e \ehline
+\& 1 & 2 & 3\e\e
+\& \ehline
+.Ve
+.PP
 which you wrap yourself:
-    \ebegin{longtable}{ccc}
-    \einput{output.file.tex}
-    \ecaption{}
-    \elabel{}
-    \eend{longtable}
+.PP
+.Vb 5
+\& \ebegin{longtable}{ccc}
+\& \einput{output.file.tex}
+\& \ecaption{}
+\& \elabel{}
+\& \eend{longtable}
+.Ve
+.PP
 In that plain form the header is an ordinary first row, which is \fInot\fR the header LaTeX freezes at the top of each page: a \f(CW\*(C`longtable\*(C'\fR repeats only what sits inside \f(CW\*(C`\eendfirsthead\*(C'\fR / \f(CW\*(C`\eendhead\*(C'\fR. Hand\-writing those blocks means retyping the column labels, and they then silently stop matching \f(CW\*(C`col.names\*(C'\fR the first time the column order changes — the frozen header says one thing while the columns underneath say another, and the generated header shows up a second time as the first body row. \f(CW\*(C`tex.longtable.head\*(C'\fR closes that gap by generating the repeat machinery from the same header record as the body:
-    write_table(\e@rows, \*(Aqoutput.file.tex\*(Aq,
-        \*(Aqcol.names\*(Aq          => [\*(Aqa\*(Aq, \*(Aqb\*(Aq, \*(Aqc\*(Aq],
-        \*(Aqtex.longtable.head\*(Aq => \*(Aq(continued)\*(Aq, # or just 1 for no continuation caption
-    );
-    \f(CW%written\fR by /home/con/Scripts/stats/make_table.pl
-    % \ebegin{longtable}{ccc}
-    \etextbf{a} & \etextbf{b} & \etextbf{c} \e \ehline
-    \eendfirsthead
-    \ecaption[]{(continued)}\e
-    \ehline
-    \etextbf{a} & \etextbf{b} & \etextbf{c} \e \ehline
-    \eendhead
-    \ehline
-    \eendfoot
-    1 & 2 & 3\e
+.PP
+.Vb 10
+\& write_table(\e@rows, \*(Aqoutput.file.tex\*(Aq,
+\&     \*(Aqcol.names\*(Aq          => [\*(Aqa\*(Aq, \*(Aqb\*(Aq, \*(Aqc\*(Aq],
+\&     \*(Aqtex.longtable.head\*(Aq => \*(Aq(continued)\*(Aq, # or just 1 for no continuation caption
+\& );
+\& %written by /home/con/Scripts/stats/make_table.pl
+\& % \ebegin{longtable}{ccc}
+\& \etextbf{a} & \etextbf{b} & \etextbf{c} \e\e \ehline
+\& \eendfirsthead
+\& \ecaption[]{(continued)}\e\e
+\& \ehline
+\& \etextbf{a} & \etextbf{b} & \etextbf{c} \e\e \ehline
+\& \eendhead
+\& \ehline
+\& \eendfoot
+\& 1 & 2 & 3\e\e
+.Ve
+.PP
 Setting \f(CW\*(C`tex.longtable.head\*(C'\fR implies \f(CW\*(C`tex.longtable\*(C'\fR (and so \f(CW\*(C`tex => 1\*(C'\fR). A true\-but\-numeric value emits the machinery with no continuation caption; any other true value is the caption text for every page after the first, written verbatim so LaTeX macros survive, with an empty \f(CW\*(C`\ecaption[]\*(C'\fR optional argument so the continuation stays out of the List of Tables. \f(CW\*(C`\eendfoot\*(C'\fR carries the closing \f(CW\*(C`\ehline\*(C'\fR and no \f(CW\*(C`\eendlastfoot\*(C'\fR is emitted, so every page — the last one included — gets a bottom rule. The wrapper then holds nothing that has to track the data:
-    \ebegin{longtable}{ccc}
-    \ecaption{}\elabel{}\e \ehline
-    \einput{output.file.tex}
-    \eend{longtable}
+.PP
+.Vb 4
+\& \ebegin{longtable}{ccc}
+\& \ecaption{}\elabel{}\e\e \ehline
+\& \einput{output.file.tex}
+\& \eend{longtable}
+.Ve
+.PP
 The trailing \f(CW\*(C`\ehline\*(C'\fR on the caption line is the rule above the header on the \fIfirst\fR page, and it has to live there rather than in the generated file: \f(CW\*(C`\ehline\*(C'\fR expands to \f(CW\*(C`\enoalign\*(C'\fR, and TeX has already begun a table row by the time it expands your \f(CW\*(C`\einput\*(C'\fR, so a rule as the file\*(Aqs first token is a \f(CW\*(C`Misplaced \enoalign\*(C'\fR error. A bare \f(CW\*(C`\ehline\*(C'\fR encodes neither column order nor column count, so unlike a hand\-written header it cannot go stale — drop it if you do not want a top rule. Every other \f(CW\*(C`\ehline\*(C'\fR in the generated file follows a \f(CW\*(C`\e\e\*(C'\fR inside that file, where it is legal.
 .PP
 \fIExcel output (\fR\f(CI\*(C`xlsx\*(C'\fR\fI)\fR
@@ -6437,8 +6553,172 @@ Verified against R 4.6.1 (\f(CW\*(C`oneway.test\*(C'\fR, \f(CW\*(C`anova(aov())\
 \&\f(CW\*(C`t/model_pvalue_tails.t\*(C'\fR and \f(CW\*(C`t/oneway_test.R.scipy.t\*(C'\fR.
 .SH Changes
 .IX Header "Changes"
-.SS "0.282 2026\-08\-03 CDT"
-.IX Subsection "0.282 2026-08-03 CDT"
+.SS "0.291 2026\-08\-04 CDT"
+.IX Subsection "0.291 2026-08-04 CDT"
+POD formatting improvements
+.PP
+\fR\f(CI\*(C`lm\*(C'\fR\fI, \fR\f(CI\*(C`glm\*(C'\fR\fI\fR
+.IX Subsection "lm, glm"
+.PP
+Formula parsing and data reading are now shared between \f(CW\*(C`lm\*(C'\fR and \f(CW\*(C`glm\*(C'\fR too, so the
+two agree on what a formula means and on what a row is called. \f(CW\*(C`lm\*(C'\fR had the better
+parser and \f(CW\*(C`glm\*(C'\fR the better row naming; each now has both.
+.PP
+\&\fR\f(CB\*(C`lm\*(C'\fR\fB now names rows the way \fR\f(CB\*(C`glm\*(C'\fR\fB does\fR — from a \f(CW\*(C`row.names\*(C'\fR, \f(CW\*(C`_row\*(C'\fR,
+\&\f(CW\*(C`rownames\*(C'\fR or \f(CW\*(C`.rownames\*(C'\fR column when the data has one, and 1\-based integers
+otherwise. \f(CW\*(C`lm\*(C'\fR previously always used integers, so \f(CW\*(C`fitted.values\*(C'\fR and
+\&\f(CW\*(C`residuals\*(C'\fR came back keyed \f(CW\*(C`1..n\*(C'\fR for data whose rows had names, and did not
+match what \f(CW\*(C`glm\*(C'\fR or \f(CW\*(C`predict\*(C'\fR returned for the same data; the \f(CW\*(C`predict\*(C'\fR
+documentation already described the shared behaviour. A row\-name column is a label
+rather than a measurement, so \f(CW\*(C`y ~ .\*(C'\fR now excludes it in both.
+.PP
+Design\-matrix construction is now shared between \f(CW\*(C`lm\*(C'\fR and \f(CW\*(C`glm\*(C'\fR, and decides a
+categorical column\*(Aqs coding term by term using R\*(Aqs margin rule: the reference
+level is dropped when the term with that column removed is itself in the model.
+Three bugs fall out of that, all confirmed against R 4.6.1 and statsmodels
+0.14.6.
+.PP
+Bug fixes
+.IX Subsection "Bug fixes"
+.PP
+Four in \f(CW\*(C`glm\*(C'\fR, from the parser it now shares with \f(CW\*(C`lm\*(C'\fR. Three of them ended the
+same way: a term that names no column evaluates to \f(CW\*(C`NaN\*(C'\fR for every row, every row
+is dropped as incomplete, and the fit dies with \f(CW\*(C`0 degrees of freedom (too many
+NAs or parameters > observations)\*(C'\fR — never mentioning the formula.
+.IP \(bu 4
+\&\fR\f(CB\*(C`glm\*(C'\fR\fB truncated a formula at 511 characters.\fR It copied the formula into a
+fixed \f(CW\*(C`char[512]\*(C'\fR, so a model with enough predictors to overrun that lost the
+tail. The buffer now grows with the formula.
+.IP \(bu 4
+\&\fR\f(CB\*(C`glm\*(C'\fR\fB did not understand \fR\f(CB\*(C`.\*(C'\fR\fB.\fR It parsed the formula before reading the data,
+so there were no column names to expand \f(CW\*(C`.\*(C'\fR into and the term stayed a literal
+\&\f(CW\*(C`.\*(C'\fR. Formula splitting now happens first and term expansion after the data is
+read, so \f(CW\*(C`y ~ .\*(C'\fR works in both.
+.IP \(bu 4
+\&\fR\f(CB\*(C`glm\*(C'\fR\fB did not understand \fR\f(CB\*(C`+ 0\*(C'\fR\fB or a leading \fR\f(CB\*(C`0 +\*(C'\fR\fB.\fR Only \f(CW\*(C`\- 1\*(C'\fR suppressed the
+intercept; the other two spellings R accepts left a term named \f(CW0\fR. All three now
+work in both, as do \f(CW\*(C`+ 1\*(C'\fR and a leading \f(CW\*(C`1 +\*(C'\fR.
+.IP \(bu 4
+\&\fR\f(CB\*(C`glm\*(C'\fR\fB read the \fR\f(CB\-1\fR\fB inside \fR\f(CBI(...)\fR\fB as intercept suppression.\fR It searched the
+whole right\-hand side for the substring, so \f(CW\*(C`y ~ I(x\-1)\*(C'\fR silently became
+\&\f(CW\*(C`y ~ I(x) \- 1\*(C'\fR: a different model, fitted without complaint. The scan now steps
+over \f(CWI(...)\fR, leaving the term alone. \f(CWI()\fR still supports only \f(CW\*(C`^power\*(C'\fR, so
+that formula is an error in both rather than a wrong answer in one.
+.PP
+And the three that fall out of the shared design matrix:
+.IP \(bu 4
+\&\fBA categorical column in a model with no intercept lost a level.\fR With no
+intercept there is no baseline for a reference level to be measured against, so
+R codes the factor in full — one column per group, each coefficient that
+group\*(Aqs own mean. Both functions dropped the reference level anyway, so
+\&\f(CW\*(C`len ~ supp \- 1\*(C'\fR fitted \f(CW\*(C`len ~ suppVC \- 1\*(C'\fR: a model forcing every observation
+at the reference level to a fitted value of 0. On R\*(Aqs \f(CW\*(C`ToothGrowth\*(C'\fR that meant
+a residual sum of squares of 16056 against R\*(Aqs 3247, and an R² of 0.35 against
+0.87. Where two categorical main effects appear with no intercept only the
+first is coded in full, as in R, since coding both would be rank deficient.
+.IP \(bu 4
+\&\fBAn interaction involving a categorical column could not be built.\fR The
+interaction was looked up as a single column literally named \f(CW\*(C`dose:supp\*(C'\fR;
+finding none, it evaluated to \f(CW\*(C`NaN\*(C'\fR for every row, every row was dropped as
+incomplete, and the fit died with \f(CW\*(C`0 degrees of freedom (too many NAs or
+parameters > observations)\*(C'\fR. Interactions now expand to the product of their
+components\*(Aq indicator columns, so \f(CW\*(C`len ~ dose * supp\*(C'\fR gives \f(CW\*(C`dose\*(C'\fR, \f(CW\*(C`suppVC\*(C'\fR
+and \f(CW\*(C`dose:suppVC\*(C'\fR. \f(CW\*(C`predict\*(C'\fR already understood such coefficient names; now
+they can be produced.
+.IP \(bu 4
+\&\fR\f(CB\*(C`a*b*c\*(C'\fR\fB expanded only its first \fR\f(CB\*(C`*\*(C'\fR\fB.\fR Crossing is associative, so
+\&\f(CW\*(C`y ~ a * b * c\*(C'\fR now yields every non\-empty subset (\f(CW\*(C`a\*(C'\fR, \f(CW\*(C`b\*(C'\fR, \f(CW\*(C`c\*(C'\fR, \f(CW\*(C`a:b\*(C'\fR, \f(CW\*(C`a:c\*(C'\fR,
+\&\f(CW\*(C`b:c\*(C'\fR, \f(CW\*(C`a:b:c\*(C'\fR), ordered by degree as R\*(Aqs \f(CWterms()\fR orders them. Previously the
+chunk was split once, producing the unusable terms \f(CW\*(C`b*c\*(C'\fR and \f(CW\*(C`a:b*c\*(C'\fR, and the
+fit died the same way as above. Crossing more than 16 columns now croaks rather
+than expanding to 2^n terms.
+.IP \(bu 4
+\&\fR\f(CB\*(C`predict\*(C'\fR\fB scored reference\-level rows as if the term were absent.\fR It
+registered factor dummies from \f(CW\*(C`levels[1..]\*(C'\fR only, on the assumption that a
+reference level never has a coefficient — true for a factor coded by contrasts,
+but not for one coded in full. Every row at the reference level of a
+no\-intercept model therefore came back 0.
+.IP \(bu 4
+\&\fR\f(CB\*(C`glm\*(C'\fR\fB halved its IRLS step whenever the deviance rose, costing iterations and
+accuracy in the standard errors.\fR R truncates a step only when the deviance
+comes out non\-finite; a deviance that merely increases is not divergence. The
+standard IRLS start puts \f(CW\*(C`mu\*(C'\fR at \f(CW\*(C`y + 0.1\*(C'\fR, essentially on the data, so the
+initial deviance is near zero and the first real step almost always raises it —
+on the nine\-point poisson fit in \f(CW\*(C`t/glm.t\*(C'\fR, from 0.016 to 1.54. That was read as
+divergence and the step was halved ten times over, turning R\*(Aqs four iterations
+into seven.
+.Sp
+The extra iterations reached the same coefficients, so the symptom appeared
+only in the standard errors. They are built from the information matrix of the
+\&\fIpenultimate\fR iterate — in R because \f(CW\*(C`summary.glm\*(C'\fR inverts the QR that
+\&\f(CW\*(C`glm.fit\*(C'\fR kept from its last weighted least squares call, and here because the
+IRLS sweep leaves that inverse in place — so stopping on a different iteration
+than R means reporting a different matrix. Poisson standard errors were 5e\-8 to
+2e\-5 away from R\*(Aqs while the coefficients agreed to twelve digits; they now
+agree to about 1e\-14. Binomial standard errors were up to 6e\-7 out and now
+agree to 2e\-14, except on a near\-separable fit, where the \f(CW\*(C`varmu\*(C'\fR floor of
+1e\-10 (a guard against dividing by an underflowed variance) accounts for the
+remaining difference — 1.9e\-9 on \f(CW\*(C`am ~ wt * hp\*(C'\fR, where three of 32 fitted
+probabilities are within 1e\-12 of 0 or 1 and R itself warns. Gaussian fits are
+unaffected: their weights are all 1, so the matrix is \f(CW\*(C`X\*(AqX\*(C'\fR either way.
+.Sp
+The same condition had its \f(CW\*(C`isfinite\*(C'\fR test on the accepting side, so a
+genuinely divergent step producing a non\-finite deviance was kept rather than
+truncated. That is now the one case that does trigger halving.
+.IP \(bu 4
+\&\fBThe negative\-binomial theta alternation stopped early and started from the
+wrong place.\fR \f(CW\*(C`MASS::glm.nb\*(C'\fR does not simply maximise over theta; it alternates
+between an IRLS fit at the current theta and a fresh ML estimate of theta at the
+current fitted means, and which fit it lands on depends on the schedule. Four
+details of that schedule were wrong here, and all four are now reproduced:
+.RS 4
+.IP \(bu 4
+The alternation stopped on a relative test of the log\-likelihood alone,
+\&\f(CW\*(C`|dll| < 1e\-7 * (|ll| + 0.1)\*(C'\fR. \f(CW\*(C`glm.nb\*(C'\fR requires
+\&\f(CW\*(C`(|dLm| / d1 + |dtheta|) < 1e\-8\*(C'\fR with \f(CW\*(C`d1 = sqrt(2 * max(1, df.residual))\*(C'\fR
+taken from its Poisson pass — theta itself has to have settled, not just the
+log\-likelihood. The old test was satisfied roughly 2e\-5 of log\-likelihood
+early, which left theta 8e\-7 out and dragged the coefficients 8e\-6 with it.
+.IP \(bu 4
+The first pass now runs as a genuine \fBPoisson\fR fit, as \f(CW\*(C`glm.nb\*(C'\fR\*(Aqs does,
+rather than a negative\-binomial fit at a large stand\-in theta. That pass
+supplies both the first theta and the \f(CW\*(C`d1\*(C'\fR above.
+.IP \(bu 4
+Later passes are \fBwarm started\fR from the previous pass\*(Aqs means
+(\f(CW\*(C`etastart = log(mu)\*(C'\fR), so they converge to the fit \f(CW\*(C`glm.nb\*(C'\fR reaches rather
+than to the same optimum approached from a cold start.
+.IP \(bu 4
+Theta is re\-estimated at the means each pass \fBstarted\fR from, not the ones it
+produced: \f(CW\*(C`glm.nb\*(C'\fR calls \f(CW\*(C`theta.ml(Y, mu)\*(C'\fR and only then reassigns
+\&\f(CW\*(C`mu <\- fit$fitted.values\*(C'\fR. \f(CW\*(C`theta.ml\*(C'\fR itself now also uses MASS\*(Aqs own stopping
+rule, an absolute Newton\-step tolerance of \f(CW\*(C`.Machine$double.eps^0.25\*(C'\fR.
+.RE
+.RS 4
+.Sp
+Across eighteen fits spanning dispersion from theta 0.41 to theta 69000, theta
+now agrees with \f(CW\*(C`glm.nb\*(C'\fR to 3.4e\-9, coefficients to 5.8e\-9, standard errors to
+8.4e\-10 and deviance to 1.3e\-9 — previously 8e\-7, 8e\-6, 3e\-6 and 6e\-7. The one
+exception is genuinely near\-Poisson data, where theta is not identified at all
+(its own standard error exceeds the estimate, and \f(CW\*(C`glm.nb\*(C'\fR\*(Aqs \f(CW\*(C`theta.ml\*(C'\fR reports
+"iteration limit reached"); theta there agrees only to about 4e\-6 relative,
+while the coefficients still agree to 1.6e\-10.
+.Sp
+A separate consequence: a negative\-binomial fit with theta supplied was
+starting from the Poisson \f(CW\*(C`mustart\*(C'\fR of \f(CW\*(C`y + 0.1\*(C'\fR, where R\*(Aqs
+\&\f(CW\*(C`negative.binomial()$initialize\*(C'\fR sets \f(CW\*(C`y + (y == 0)/6\*(C'\fR. Different starting
+values walk different iterates, and since the standard errors come from the
+penultimate one, that showed as standard errors 6e\-7 from R\*(Aqs while the
+coefficients agreed to 1e\-9. Such fits now match R to 2e\-15.
+.Sp
+Note on that comparison: standard errors for a negative\-binomial fit hold the
+dispersion at 1, which is what \f(CW\*(C`glm.nb\*(C'\fR and \f(CW\*(C`summary.negbin\*(C'\fR do. R\*(Aqs
+\&\f(CW\*(C`summary.glm\*(C'\fR, handed a \f(CW\*(C`negative.binomial\*(C'\fR family directly, instead \fIestimates\fR
+the dispersion and prints standard errors scaled by its square root — 1.0839 on
+one of the test data sets, so about 4% larger. Compare against
+\&\f(CW\*(C`summary(fit, dispersion = 1)\*(C'\fR to see the values this module reports.
+.RE
+.SS "0.29 2026\-08\-03 CDT"
+.IX Subsection "0.29 2026-08-03 CDT"
 \fIt_test\fR
 .IX Subsection "t_test"
 .PP
@@ -7575,9 +7855,12 @@ Added \f(CW\*(C`t/wilcox_test.t\*(C'\fR (flat, no subtests): R\-agreement cases,
 \&\f(CW\*(C`view\*(C'\fR function added, similar to R\*(Aqs \f(CW\*(C`head\*(C'\fR
 .PP
 \&\f(CW\*(C`read_table\*(C'\fR:
-    filter => {
-        \*(AqTestosterone, total (nmol/L)\*(Aq => sub { defined \f(CW$_\fR },
-    }
+.PP
+.Vb 3
+\& filter => {
+\&     \*(AqTestosterone, total (nmol/L)\*(Aq => sub { defined $_ },
+\& }
+.Ve
 .PP
 was broken by the change in undefined variables in 0.14, but is back to being \f(CW\*(C`undef\*(C'\fR
 .PP

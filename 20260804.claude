@@ -1,0 +1,2567 @@
+ ▐▛███▜▌   Claude Code v2.1.221
+▝▜█████▛▘  Opus 5 · Claude Team
+  ▘▘ ▝▝    ~/Scripts/stats
+
+
+❯ look at LikeR.xs and the `lm` function; use tests from R and scipy.stats to   
+  ensure that my `lm` is working correctly, in addition to the tests that I     
+  already have in t                                                             
+
+● I'll start by reading the lm implementation and the existing tests.
+
+  Searched for 5 patterns, read 2 files, listed 1 directory, ran 3 shell commands (ctrl+o to expand)
+
+● Both R 4.x and statsmodels/scipy are available. Let me build a reference-value
+  generator that fits the same battery of models in R, statsmodels, and Perl,
+  so I can diff all three.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Now let me build the datasets and model spec that all three implementations
+  will share.
+
+  Made 1 scratchpad edit +88, ran 3 shell commands (ctrl+o to expand)
+
+● Now the shared model battery plus the R reference generator:
+
+  Made 4 scratchpad edits +136 -9, searched for 1 pattern, ran 3 shell commands (ctrl+o to expand)
+
+● Now the statsmodels/scipy reference, so I have an independent second opinion
+  on every value:
+
+  Made 1 scratchpad edit +110, ran 1 shell command (ctrl+o to expand)
+
+● Now the Perl side — dumping lm()'s output for the same cases in the same JSON
+  shape:
+
+  Made 1 scratchpad edit +115, ran 1 shell command (ctrl+o to expand)
+
+● Now the three-way comparison:
+
+  Made 3 scratchpad edits +170 -3, ran 3 shell commands (ctrl+o to expand)
+
+● Most of those are my harness misaligning row keys. Let me check the R JSON
+  encoding:
+
+  Ran 3 shell commands (ctrl+o to expand)
+
+● 24 of 34 match both references exactly. Let me nail down what the remaining 10
+  actually are:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● The precision differences are exactly the eps·cond(X'X) penalty of solving via
+  normal equations — Perl is well inside that bound. Now let me confirm the two
+  structural findings with minimal reproductions:
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● Let me probe a final set of edge cases — input forms, intercept-only, constant
+  columns, and ^ semantics:
+  Searched for 1 pattern, ran 3 shell commands (ctrl+o to expand)
+
+● All edge cases match R exactly. Now let me generate the test file from the
+  verified reference values:
+
+  Made 1 scratchpad edit +593, ran 1 shell command (ctrl+o to expand)
+
+● I had hardcoded a wrong value; let me make the hand-written blocks pull from
+  the reference JSON too:
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● Now let me correct the hand-written blocks with the real reference values:
+
+  Ran 5 shell commands (ctrl+o to expand)
+
+● The mtcars rows are keyed by index, not car name — and the input-shape check
+  was too strict for hash-order accumulation. Fixing both:
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● The harness canonicalized wt:hp to hp:wt for cross-tool matching; the
+  generated test needs the real term name. Let me carry both:
+
+  Ran 6 shell commands (ctrl+o to expand)
+
+● My hand-written literals were truncated from %.10g output. Let me use full
+  precision:
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● All 1558 pass. Let me verify the tests are actually load-bearing rather than
+  vacuously loose — first confirm the bodyfat cases really run, then check the
+  tolerances catch a deliberately perturbed value:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● The cond-derived ceiling is far slacker than reality for the rank-deficient
+  and badly-scaled cases. Let me measure what lm() actually achieves and
+  tighten:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● That zip misaligned term order for .-expanded models. Measuring by name
+  instead:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● The real accuracy is much better than the theoretical bound — worst case
+  1.4e-8, everything else ≤1e-10. Let me rewrite the generator to derive tight
+  per-case tolerances from measured accuracy:
+
+  Made 2 scratchpad edits +1515, ran 2 shell commands (ctrl+o to expand)
+
+● All green. But several tolerances exceed what eps·kappa predicts, which
+  suggests my measurement — not lm() — is lossy. Let me check:
+  Ran 2 shell commands (ctrl+o to expand)
+
+● Found it — that "deviation" is cancellation in a near-zero residual (abs diff
+  1.3e-13, well inside the absolute floor), but my measurement applied the floor
+  to the wrong quantity. The coefficients actually agree to ~1e-14. Let me fix
+  the measurement to mirror the runner:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Now let me make the header's tolerance summary auto-generated so the prose
+  can't drift from the actual numbers:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● The closing claim is false for several cases — their deviation comes from the
+  p-value tail functions, not conditioning. Let me record what deviates and fix
+  the prose:
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● Now let me verify the tests are actually load-bearing by perturbing lm()'s
+  output, and confirm the rest of the suite still passes:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● The harness patched the wrong symbol — lm is already imported into main before
+  my BEGIN. Let me wrap main::lm:
+
+  Ran 3 shell commands (ctrl+o to expand)
+
+● The failures are on stderr — my regex only scanned stdout:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Every reported quantity is load-bearing at 1e-7. Now the full suite, to be
+  sure nothing else broke:
+
+  Ran 4 shell commands (ctrl+o to expand)
+
+● The POD says predict() already handles factor-bearing interactions — so lm()
+  can't even produce the coefficient names predict() is built to consume. Let me
+  check whether glm() has the same gap:
+
+  Ran 3 shell commands (ctrl+o to expand)
+
+● I added t/lm.R.scipy.t — 1558 tests cross-validating lm() against R 4.6.1
+  stats::lm and statsmodels 0.14.6/scipy 1.17.1. Full suite: 110 files, 10731
+  tests, all pass.
+
+  What it covers
+
+  30 generated cases, each checking rank, df.residual, rows-kept, rss, R²,
+  adj-R², the F triple, f.pvalue, and per-term Estimate / Std. Error / t value /
+  Pr(>|t|), plus sampled fitted values and residuals. Data: mtcars, iris,
+  ToothGrowth, warpbreaks, airquality, the shipped t/bodyfat.csv, and synthetics
+  for an exact fit, a rank-deficient design, hand-placed NAs, p≈n, and
+  predictors spanning 1e-4…1e6. Paths exercised: *, :, I(x^2), -1/+0, .
+  expansion, dotted column names, factors, NA dropping, aliasing. Plus
+  hand-written blocks for ^ collapsing, duplicate terms, intercept-only (no F
+  stat), HoA/HoH/AoH agreement, constant-column aliasing, and xlevels ordering.
+
+  lm() matches both references everywhere it's defined. Worst deviation in the
+  file is 1.4e-8 relative, on the 15-predictor BodyFat ~ . — three orders inside
+  the eps·κ(X'X) bound that forming X'X imposes.
+
+  Three real divergences
+
+  1. Factor with no intercept — genuine bug. len ~ supp - 1: with no intercept
+  there's no baseline, so R and statsmodels keep all levels. lm() drops the
+  reference level anyway, fitting len ~ suppVC - 1 — forcing every OJ row to a
+  fitted value of 0. rss 16056 vs R's 3247, R² 0.35 vs 0.87. Not a precision
+  issue; a wrong model.
+
+  2. Interactions with a factor — unsupported, misleading error. len ~ dose * 
+  supp dies with 0 degrees of freedom (too many NAs or parameters > 
+  observations). LikeR.xs:15563 asks is_column_categorical for a column
+  literally named dose:supp, gets FALSE, so evaluate_term returns NaN for every
+  row and all rows drop. Affects factor×numeric and factor×factor; glm() has the
+  same gap. Notably read.me.pod:9511 documents predict() as handling GroupB:x
+  coefficients — so predict() consumes names lm() can't produce.
+
+  Both are marked TODO with R's expected values inline, so they pass unchanged
+  once implemented.
+
+  3. Mixed-case level ordering — not a bug. lm() sorts levels with strcmp (byte
+  order), matching patsy/pandas; R uses locale collation, so on c("b","A","a") R
+  takes a as reference and lm() takes A. Same fit, different parameterisation —
+  pinned to the statsmodels answer with R's noted.
+
+  Also documented (not TODO, it's obscure): wt:wt is built as wt², where R's
+  formula algebra collapses a:a to a.
+
+  Notes on method
+
+  Tolerances are per-case, derived from measured deviation × 200, floored at
+  1e-11 — the header carries an auto-generated table of all 21 cases above the
+  floor with the quantity that deviates and its eps·κ bound, so the prose can't
+  drift. Two error sources are separated: the linear solve (dominates the
+  bodyfat models) and the p-value tail functions (why some well-conditioned
+  cases sit above eps·κ). Two cases compare against R only, because statsmodels'
+  pinv gives a valid but different rank-deficient parameterisation.
+
+  I mutation-tested the file: perturbing each of 15 reported quantities by 1e-7
+  produces 2–224 failures, so nothing is vacuously asserted.
+
+  Generator scripts (R + statsmodels + Perl dumpers, three-way differ, .t
+  emitter) are in /tmp/claude-1000/-home-con-Scripts-stats/050e400d-a9c8-4e6f-b0
+  de-143aecd7fa84/scratchpad/lmref/. Want me to commit those alongside the other
+  .R reference scripts, or fix the no-intercept factor bug?
+
+✻ Cogitated for 29m 55s
+
+❯ fix genuine bugs                                                              
+
+● Two fixes. Let me first pin down R's exact rules for the cases I'll be
+  implementing.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● R's rules confirmed. The margin rule that reproduces all seven cases: a factor
+  component of a term gets full indicator coding iff the term with that
+  component removed isn't already in the model — with the absent intercept
+  satisfiable only once. Let me look at how predict() already models
+  factor-bearing interactions, to reuse its conventions:
+  Ran 2 shell commands (ctrl+o to expand)
+
+● predict() only registers dummies from levels[1..], so it can't score a
+  full-coded model — that needs fixing too. Let me check how much glm()
+  duplicates:
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● Both bugs live in expansion logic that lm() and glm() duplicate verbatim, so
+  I'll fix it once in a shared helper. Let me write it:
+
+  Read 1 file (ctrl+o to expand)
+
+● Update(LikeR.xs)
+  ⎿  Added 412 lines
+      582    return NULL;
+      583  }
+      584  
+      585 +/* -----------------------------------------------------------
+          +----------------                                              
+      586 + * Design-matrix construction, shared by lm() and glm().      
+      587 + *                                                            
+      588 + * A model term is a set of variables: "wt" is one, "wt:hp" is
+          + two, and a                                                   
+      589 + * variable holding strings is a factor that expands to indica
+          +tor columns. The                                              
+      590 + * question each factor raises is whether to emit a column for
+          + every level or to                                            
+      591 + * drop the first as a reference, and R answers it with the ma
+          +rgin rule:                                                    
+      592 + *                                                            
+      593 + *   The factor f inside term T is coded by contrasts -- refer
+          +ence level dropped                                            
+      594 + *   -- when T with f removed is itself a term of the model, a
+          +nd by full                                                    
+      595 + *   indicators when it is not. The empty margin, which is wha
+          +t a main effect                                               
+      596 + *   reduces to once its own variable is removed, counts as pr
+          +esent whenever the                                            
+      597 + *   model has an intercept. Without an intercept it counts as
+          + present only                                                 
+      598 + *   after the first factor main effect has consumed it.      
+      599 + *                                                            
+      600 + * That one rule reproduces R everywhere:                     
+      601 + *                                                            
+      602 + *   y ~ g          g's margin is empty and the intercept supp
+          +lies it, so g is                                              
+      603 + *                  coded by contrasts: gb, gc.               
+      604 + *   y ~ g - 1      nothing supplies the empty margin, so g is
+          + coded in full:                                               
+      605 + *                  ga, gb, gc. This is the case that used to 
+          +lose a level and                                              
+      606 + *                  fit a model forcing the reference group's 
+          +fitted values to 0.                                           
+      607 + *   y ~ a + b - 1  a consumes the empty margin and is coded i
+          +n full; b then                                                
+      608 + *                  finds it present and is coded by contrasts
+          +. Coding both in                                              
+      609 + *                  full would be rank deficient.             
+      610 + *   y ~ a * b      both main effects are present, so both com
+          +ponents of a:b are                                            
+      611 + *                  coded by contrasts: aB:bY.                
+      612 + *   y ~ a:b        neither main effect is present, so both co
+          +mponents are coded                                            
+      613 + *                  in full and the term spans the whole cross
+          +-classification.                                              
+      614 + *                                                            
+      615 + * Terms are ordered by degree first, as R's terms() does, so 
+          +that a margin is                                              
+      616 + * always decided against terms that precede it.              
+      617 + * -----------------------------------------------------------
+          +-------------- */                                             
+      618 +                                                              
+      619 +/* One component of one design column. */                     
+      620 +typedef struct {                                              
+      621 +  int         fbase;  /* index into LmDesign.factor, or -1 whe
+          +n continuous */                                               
+      622 +  const char *level;  /* borrowed from LmFactor.level, when fb
+          +ase >= 0     */                                               
+      623 +  const char *expr;   /* borrowed from LmDesign.var,   when fb
+          +ase <  0     */                                               
+      624 +} LmComp;                                                     
+      625 +                                                              
+      626 +typedef struct {                                              
+      627 +  char        *name;                                          
+      628 +  char       **level;                                         
+      629 +  unsigned int nlevel;                                        
+      630 +} LmFactor;                                                   
+      631 +                                                              
+      632 +typedef struct {                                              
+      633 +  char        *name;   /* the coefficient name, e.g. "woolB:te
+          +nsionM" */                                                    
+      634 +  LmComp      *comp;                                          
+      635 +  unsigned int ncomp;  /* 0 marks the intercept column */     
+      636 +} LmCol;                                                      
+      637 +                                                              
+      638 +typedef struct {                                              
+      639 +  LmFactor    *factor;                                        
+      640 +  unsigned int nfactor;                                       
+      641 +  LmCol       *col;                                           
+      642 +  unsigned int ncol;                                          
+      643 +  char       **var;    /* every distinct variable named by any
+          + term */                                                      
+      644 +  unsigned int nvar;                                          
+      645 +  char       **raw;    /* scratch: this row's raw level per fa
+          +ctor */                                                       
+      646 +} LmDesign;                                                   
+      647 +                                                              
+      648 +static void lm_design_free(pTHX_ LmDesign *restrict d) {      
+      649 +  unsigned int i, j;                                          
+      650 +  if (!d) return;                                             
+      651 +  if (d->factor) {                                            
+      652 +    for (i = 0; i < d->nfactor; i++) {                        
+      653 +      if (d->factor[i].level) {                               
+      654 +        for (j = 0; j < d->factor[i].nlevel; j++)             
+      655 +          Safefree(d->factor[i].level[j]);                    
+      656 +        Safefree(d->factor[i].level);                         
+      657 +      }                                                       
+      658 +      Safefree(d->factor[i].name);                            
+      659 +    }                                                         
+      660 +    Safefree(d->factor);                                      
+      661 +  }                                                           
+      662 +  if (d->col) {                                               
+      663 +    for (i = 0; i < d->ncol; i++) {                           
+      664 +      Safefree(d->col[i].name);                               
+      665 +      if (d->col[i].comp) Safefree(d->col[i].comp);           
+      666 +    }                                                         
+      667 +    Safefree(d->col);                                         
+      668 +  }                                                           
+      669 +  if (d->var) {                                               
+      670 +    for (i = 0; i < d->nvar; i++) Safefree(d->var[i]);        
+      671 +    Safefree(d->var);                                         
+      672 +  }                                                           
+      673 +  if (d->raw) Safefree(d->raw);                               
+      674 +  Safefree(d);                                                
+      675 +}                                                             
+      676 +                                                              
+      677 +/* Split a term on top-level ':' only, so that a ':' inside I(
+          +...) is left                                                  
+      678 + * alone. Returns the component count and fills starts[]/lens[
+          +]. */                                                         
+      679 +static unsigned int lm_split_term(const char *restrict term,  
+      680 +                                  const char **restrict starts
+          +,                                                             
+      681 +                                  size_t *restrict lens,      
+      682 +                                  unsigned int cap) {         
+      683 +  unsigned int n = 0;                                         
+      684 +  int depth = 0;                                              
+      685 +  const char *restrict p = term, *restrict start = term;      
+      686 +  for (;; p++) {                                              
+      687 +    if (*p == '(') depth++;                                   
+      688 +    else if (*p == ')') { if (depth > 0) depth--; }           
+      689 +    if ((*p == ':' && depth == 0) || *p == '\0') {            
+      690 +      if (n < cap) { starts[n] = start; lens[n] = (size_t)(p -
+          + start); }                                                    
+      691 +      n++;                                                    
+      692 +      if (*p == '\0') break;                                  
+      693 +      start = p + 1;                                          
+      694 +    }                                                         
+      695 +  }                                                           
+      696 +  return n;                                                   
+      697 +}                                                             
+      698 +                                                              
+      699 +/* Build the design description for a set of unique model term
+          +s. Returns NULL                                               
+      700 + * only on an allocation path that cannot happen; croaks nowhe
+          +re, so callers can                                            
+      701 + * free their own state. xlevels_hv, when non-NULL, receives e
+          +very factor's                                                 
+      702 + * sorted level list. */                                      
+      703 +static LmDesign *lm_design_build(pTHX_ HV *restrict data_hoa, 
+      704 +                                 HV **restrict row_hashes, siz
+          +e_t n,                                                        
+      705 +                                 char **restrict uniq_terms,  
+      706 +                                 unsigned int num_uniq,       
+      707 +                                 bool has_intercept,          
+      708 +                                 HV *restrict xlevels_hv) {   
+      709 +  LmDesign *restrict d;                                       
+      710 +  unsigned int i, j, k, t, c;                                 
+      711 +  unsigned int max_comp = 0, tcount = 0;                      
+      712 +  unsigned int *restrict tstart = NULL, *restrict tlen = NULL;
+      713 +  unsigned int *restrict tvar = NULL;      /* flat variable in
+          +dices per term */                                             
+      714 +  int          *restrict vfac = NULL;      /* variable -> fact
+          +or index or -1 */                                             
+      715 +  unsigned int  nwords;                                       
+      716 +  UV           *restrict tmask = NULL, *restrict margin = NULL
+          +;                                                             
+      717 +  bool         *restrict full = NULL;      /* per flat compone
+          +nt: full coding? */                                           
+      718 +  bool          empty_present = has_intercept;                
+      719 +  unsigned int  col_cap, comp_cap;                            
+      720 +                                                              
+      721 +  Newxz(d, 1, LmDesign);                                      
+      722 +                                                              
+      723 +  /* ---- pass 1: intern variables, record each term's compone
+          +nt list ---- */                                               
+      724 +  for (i = 0; i < num_uniq; i++) {                            
+      725 +    if (strEQ(uniq_terms[i], "Intercept")) continue;          
+      726 +    max_comp += lm_split_term(uniq_terms[i], NULL, NULL, 0);  
+      727 +    tcount++;                                                 
+      728 +  }                                                           
+      729 +  if (max_comp == 0) max_comp = 1;                            
+      730 +  Newxz(tstart, tcount ? tcount : 1, unsigned int);           
+      731 +  Newxz(tlen,   tcount ? tcount : 1, unsigned int);           
+      732 +  Newxz(tvar,   max_comp, unsigned int);                      
+      733 +  Newxz(d->var, max_comp, char*);                             
+      734 +                                                              
+      735 +  {                                                           
+      736 +    const char **restrict cs = NULL;                          
+      737 +    size_t      *restrict cl = NULL;                          
+      738 +    unsigned int flat = 0;                                    
+      739 +    Newxz(cs, max_comp, const char*);                         
+      740 +    Newxz(cl, max_comp, size_t);                              
+      741 +    t = 0;                                                    
+      742 +    for (i = 0; i < num_uniq; i++) {                          
+      743 +      unsigned int nc;                                        
+      744 +      if (strEQ(uniq_terms[i], "Intercept")) continue;        
+      745 +      nc = lm_split_term(uniq_terms[i], cs, cl, max_comp);    
+      746 +      tstart[t] = flat;                                       
+      747 +      tlen[t]   = nc;                                         
+      748 +      for (c = 0; c < nc; c++) {                              
+      749 +        char *restrict nm;                                    
+      750 +        bool found = FALSE;                                   
+      751 +        Newx(nm, cl[c] + 1, char);                            
+      752 +        memcpy(nm, cs[c], cl[c]);                             
+      753 +        nm[cl[c]] = '\0';                                     
+      754 +        for (j = 0; j < d->nvar; j++) {                       
+      755 +          if (strEQ(d->var[j], nm)) { tvar[flat] = j; found = 
+          +TRUE; break; }                                                
+      756 +        }                                                     
+      757 +        if (found) Safefree(nm);                              
+      758 +        else { d->var[d->nvar] = nm; tvar[flat] = d->nvar; d->
+          +nvar++; }                                                     
+      759 +        flat++;                                               
+      760 +      }                                                       
+      761 +      t++;                                                    
+      762 +    }                                                         
+      763 +    Safefree(cs); Safefree(cl);                               
+      764 +  }                                                           
+      765 +                                                              
+      766 +  /* ---- pass 2: which variables are factors, and what are th
+          +eir levels ---- */                                            
+      767 +  Newxz(vfac, d->nvar ? d->nvar : 1, int);                    
+      768 +  Newxz(d->factor, d->nvar ? d->nvar : 1, LmFactor);          
+      769 +  for (j = 0; j < d->nvar; j++) {                             
+      770 +    vfac[j] = -1;                                             
+      771 +    if (!is_column_categorical(aTHX_ data_hoa, row_hashes, n, 
+          +d->var[j])) continue;                                         
+      772 +    {                                                         
+      773 +      char       **restrict levels = NULL;                    
+      774 +      unsigned int nlev = 0, cap = 8;                         
+      775 +      Newx(levels, cap, char*);                               
+      776 +      for (i = 0; i < n; i++) {                               
+      777 +        char *restrict s = get_data_string_alloc(aTHX_ data_ho
+          +a, row_hashes,                                                
+      778 +                                                 i, d->var[j])
+          +;                                                             
+      779 +        if (!s) continue;                                     
+      780 +        {                                                     
+      781 +          bool found = FALSE;                                 
+      782 +          for (k = 0; k < nlev; k++)                          
+      783 +            if (strEQ(levels[k], s)) { found = TRUE; break; } 
+      784 +          if (!found) {                                       
+      785 +            if (nlev >= cap) { cap *= 2; Renew(levels, cap, ch
+          +ar*); }                                                       
+      786 +            levels[nlev++] = savepv(s);                       
+      787 +          }                                                   
+      788 +        }                                                     
+      789 +        Safefree(s);                                          
+      790 +      }                                                       
+      791 +      /* A column of strings with nothing readable in it is no
+          + use as a                                                     
+      792 +       * factor; fall back to treating it as continuous, which
+          + is what                                                      
+      793 +       * this code did before factors were expanded per compon
+          +ent. */                                                       
+      794 +      if (nlev == 0) { Safefree(levels); continue; }          
+      795 +      qsort(levels, nlev, sizeof(char*), cmp_string_wt);      
+      796 +      vfac[j] = (int)d->nfactor;                              
+      797 +      d->factor[d->nfactor].name   = savepv(d->var[j]);       
+      798 +      d->factor[d->nfactor].level  = levels;                  
+      799 +      d->factor[d->nfactor].nlevel = nlev;                    
+      800 +      d->nfactor++;                                           
+      801 +      if (xlevels_hv) {                                       
+      802 +        AV *restrict lv = newAV();                            
+      803 +        for (k = 0; k < nlev; k++) av_push(lv, newSVpv(levels[
+          +k], 0));                                                      
+      804 +        hv_store(xlevels_hv, d->var[j], (I32)strlen(d->var[j])
+          +,                                                             
+      805 +                 newRV_noinc((SV*)lv), 0);                    
+      806 +      }                                                       
+      807 +    }                                                         
+      808 +  }                                                           
+      809 +                                                              
+      810 +  /* ---- pass 3: order terms by degree, as R's terms() does -
+          +--- */                                                        
+      811 +  {                                                           
+      812 +    unsigned int *restrict order = NULL;                      
+      813 +    unsigned int w = 0, deg;                                  
+      814 +    Newxz(order, tcount ? tcount : 1, unsigned int);          
+      815 +    for (deg = 1; deg <= max_comp; deg++)                     
+      816 +      for (t = 0; t < tcount; t++)                            
+      817 +        if (tlen[t] == deg) order[w++] = t;                   
+      818 +    /* Any term whose degree somehow exceeded max_comp would b
+          +e dropped, so                                                 
+      819 +     * sweep up the remainder rather than losing it. */       
+      820 +    if (w < tcount)                                           
+      821 +      for (t = 0; t < tcount; t++) {                          
+      822 +        bool seen = FALSE;                                    
+      823 +        for (i = 0; i < w; i++) if (order[i] == t) { seen = TR
+          +UE; break; }                                                  
+      824 +        if (!seen) order[w++] = t;                            
+      825 +      }                                                       
+      826 +    {                                                         
+      827 +      unsigned int *restrict ns = NULL, *restrict nl = NULL;  
+      828 +      Newxz(ns, tcount ? tcount : 1, unsigned int);           
+      829 +      Newxz(nl, tcount ? tcount : 1, unsigned int);           
+      830 +      for (i = 0; i < tcount; i++) { ns[i] = tstart[order[i]];
+          + nl[i] = tlen[order[i]]; }                                    
+      831 +      Safefree(tstart); Safefree(tlen);                       
+      832 +      tstart = ns; tlen = nl;                                 
+      833 +    }                                                         
+      834 +    Safefree(order);                                          
+      835 +  }                                                           
+      836 +                                                              
+      837 +  /* ---- pass 4: the margin rule ---- */                     
+      838 +  nwords = (d->nvar + (unsigned int)(8 * sizeof(UV)) - 1) / (u
+          +nsigned int)(8 * sizeof(UV));                                 
+      839 +  if (nwords == 0) nwords = 1;                                
+      840 +  Newxz(tmask,  (size_t)tcount * nwords + nwords, UV);        
+      841 +  Newxz(margin, nwords, UV);                                  
+      842 +  Newxz(full,   max_comp, bool);                              
+      843 +  for (t = 0; t < tcount; t++)                                
+      844 +    for (c = 0; c < tlen[t]; c++) {                           
+      845 +      unsigned int v = tvar[tstart[t] + c];                   
+      846 +      tmask[(size_t)t * nwords + v / (8 * sizeof(UV))] |=     
+      847 +        ((UV)1 << (v % (8 * sizeof(UV))));                    
+      848 +    }                                                         
+      849 +  for (t = 0; t < tcount; t++) {                              
+      850 +    for (c = 0; c < tlen[t]; c++) {                           
+      851 +      unsigned int v = tvar[tstart[t] + c];                   
+      852 +      bool present = FALSE, empty = TRUE;                     
+      853 +      if (vfac[v] < 0) continue;              /* continuous: n
+          +othing to code */                                             
+      854 +      for (i = 0; i < nwords; i++) margin[i] = tmask[(size_t)t
+          + * nwords + i];                                               
+      855 +      margin[v / (8 * sizeof(UV))] &= ~((UV)1 << (v % (8 * siz
+          +eof(UV))));                                                   
+      856 +      for (i = 0; i < nwords; i++) if (margin[i]) { empty = FA
+          +LSE; break; }                                                 
+      857 +      if (empty) {                                            
+      858 +        present = empty_present;                              
+      859 +        if (!present) empty_present = TRUE;  /* consumed by th
+          +is term */                                                    
+      860 +      } else {                                                
+      861 +        for (k = 0; k < t && !present; k++) {                 
+      862 +          bool same = TRUE;                                   
+      863 +          for (i = 0; i < nwords; i++)                        
+      864 +            if (tmask[(size_t)k * nwords + i] != margin[i]) { 
+          +same = FALSE; break; }                                        
+      865 +          present = same;                                     
+      866 +        }                                                     
+      867 +      }                                                       
+      868 +      full[tstart[t] + c] = !present;                         
+      869 +    }                                                         
+      870 +  }                                                           
+      871 +                                                              
+      872 +  /* ---- pass 5: emit the columns ---- */                    
+      873 +  col_cap = 16; comp_cap = 4;                                 
+      874 +  Newxz(d->col, col_cap, LmCol);                              
+      875 +  if (has_intercept) {                                        
+      876 +    d->col[0].name = savepv("Intercept");                     
+      877 +    d->col[0].comp = NULL;                                    
+      878 +    d->col[0].ncomp = 0;                                      
+      879 +    d->ncol = 1;                                              
+      880 +  }                                                           
+      881 +  for (t = 0; t < tcount; t++) {                              
+      882 +    unsigned int nc = tlen[t];                                
+      883 +    unsigned int *restrict lo = NULL, *restrict hi = NULL, *re
+          +strict at = NULL;                                             
+      884 +    size_t combos = 1;                                        
+      885 +    if (nc > comp_cap) comp_cap = nc;                         
+      886 +    Newxz(lo, nc ? nc : 1, unsigned int);                     
+      887 +    Newxz(hi, nc ? nc : 1, unsigned int);                     
+      888 +    Newxz(at, nc ? nc : 1, unsigned int);                     
+      889 +    for (c = 0; c < nc; c++) {                                
+      890 +      int f = vfac[tvar[tstart[t] + c]];                      
+      891 +      if (f < 0) { lo[c] = 0; hi[c] = 1; }                    
+      892 +      else {                                                  
+      893 +        lo[c] = full[tstart[t] + c] ? 0 : 1;                  
+      894 +        hi[c] = d->factor[f].nlevel;                          
+      895 +      }                                                       
+      896 +      if (hi[c] <= lo[c]) { combos = 0; break; }              
+      897 +      combos *= (size_t)(hi[c] - lo[c]);                      
+      898 +    }                                                         
+      899 +    /* combos == 0 happens for a single-level factor coded by 
+          +contrasts:                                                    
+      900 +     * the term contributes nothing, exactly as before. */    
+      901 +    for (c = 0; c < nc; c++) at[c] = lo[c];                   
+      902 +    while (combos > 0) {                                      
+      903 +      size_t len = 0;                                         
+      904 +      char *restrict nm = NULL;                               
+      905 +      LmComp *restrict cm = NULL;                             
+      906 +      if (d->ncol >= col_cap) {                               
+      907 +        col_cap *= 2;                                         
+      908 +        Renew(d->col, col_cap, LmCol);                        
+      909 +        for (i = d->ncol; i < col_cap; i++) {                 
+      910 +          d->col[i].name = NULL; d->col[i].comp = NULL; d->col
+          +[i].ncomp = 0;                                                
+      911 +        }                                                     
+      912 +      }                                                       
+      913 +      Newxz(cm, nc ? nc : 1, LmComp);                         
+      914 +      for (c = 0; c < nc; c++) {                              
+      915 +        int f = vfac[tvar[tstart[t] + c]];                    
+      916 +        if (f < 0) {                                          
+      917 +          cm[c].fbase = -1;                                   
+      918 +          cm[c].expr  = d->var[tvar[tstart[t] + c]];          
+      919 +          cm[c].level = NULL;                                 
+      920 +          len += strlen(cm[c].expr);                          
+      921 +        } else {                                              
+      922 +          cm[c].fbase = f;                                    
+      923 +          cm[c].level = d->factor[f].level[at[c]];            
+      924 +          cm[c].expr  = NULL;                                 
+      925 +          len += strlen(d->factor[f].name) + strlen(cm[c].leve
+          +l);                                                           
+      926 +        }                                                     
+      927 +      }                                                       
+      928 +      len += nc;                       /* separators and the N
+          +UL */                                                         
+      929 +      Newxz(nm, len + 1, char);                               
+      930 +      for (c = 0; c < nc; c++) {                              
+      931 +        if (c) strcat(nm, ":");                               
+      932 +        if (cm[c].fbase < 0) strcat(nm, cm[c].expr);          
+      933 +        else {                                                
+      934 +          strcat(nm, d->factor[cm[c].fbase].name);            
+      935 +          strcat(nm, cm[c].level);                            
+      936 +        }                                                     
+      937 +      }                                                       
+      938 +      d->col[d->ncol].name  = nm;                             
+      939 +      d->col[d->ncol].comp  = cm;                             
+      940 +      d->col[d->ncol].ncomp = nc;                             
+      941 +      d->ncol++;                                              
+      942 +      /* Odometer, leftmost component fastest, which is R's co
+          +lumn order                                                    
+      943 +       * within a term. */                                    
+      944 +      for (c = 0; c < nc; c++) {                              
+      945 +        at[c]++;                                              
+      946 +        if (at[c] < hi[c]) break;                             
+      947 +        at[c] = lo[c];                                        
+      948 +      }                                                       
+      949 +      if (c == nc) break;                                     
+      950 +    }                                                         
+      951 +    Safefree(lo); Safefree(hi); Safefree(at);                 
+      952 +  }                                                           
+      953 +                                                              
+      954 +  if (d->nfactor) Newxz(d->raw, d->nfactor, char*);           
+      955 +                                                              
+      956 +  Safefree(tstart); Safefree(tlen); Safefree(tvar);           
+      957 +  Safefree(vfac); Safefree(tmask); Safefree(margin); Safefree(
+          +full);                                                        
+      958 +  return d;                                                   
+      959 +}                                                             
+      960 +                                                              
+      961 +/* Fill one row of the design matrix. Returns FALSE when the r
+          +ow is incomplete,                                             
+      962 + * i.e. when any factor it needs has no readable value or any 
+          +continuous term                                               
+      963 + * evaluates to NaN; the caller drops such rows, as R's na.omi
+          +t does. */                                                    
+      964 +static bool lm_design_row(pTHX_ LmDesign *restrict d, HV *rest
+          +rict data_hoa,                                                
+      965 +                          HV **restrict row_hashes, size_t i, 
+      966 +                          NV *restrict out) {                 
+      967 +  unsigned int f, j, c;                                       
+      968 +  bool ok = TRUE;                                             
+      969 +  for (f = 0; f < d->nfactor; f++) {                          
+      970 +    d->raw[f] = get_data_string_alloc(aTHX_ data_hoa, row_hash
+          +es, i,                                                        
+      971 +                                      d->factor[f].name);     
+      972 +    if (!d->raw[f]) ok = FALSE;                               
+      973 +  }                                                           
+      974 +  if (ok) {                                                   
+      975 +    for (j = 0; j < d->ncol && ok; j++) {                     
+      976 +      NV v = 1.0;                                             
+      977 +      for (c = 0; c < d->col[j].ncomp; c++) {                 
+      978 +        const LmComp *restrict cm = &d->col[j].comp[c];       
+      979 +        if (cm->fbase >= 0) {                                 
+      980 +          v *= strEQ(d->raw[cm->fbase], cm->level) ? 1.0 : 0.0
+          +;                                                             
+      981 +        } else {                                              
+      982 +          NV e = evaluate_term(aTHX_ data_hoa, row_hashes,    
+      983 +                               (unsigned int)i, cm->expr);    
+      984 +          if (isnan(e)) { ok = FALSE; break; }                
+      985 +          v *= e;                                             
+      986 +        }                                                     
+      987 +      }                                                       
+      988 +      out[j] = v;                                             
+      989 +    }                                                         
+      990 +  }                                                           
+      991 +  for (f = 0; f < d->nfactor; f++) {                          
+      992 +    if (d->raw[f]) { Safefree(d->raw[f]); d->raw[f] = NULL; } 
+      993 +  }                                                           
+      994 +  return ok;                                                  
+      995 +}                                                             
+      996 +                                                              
+      997  // Struct for sorting p-values while remembering their origina
+           l index
+      998  typedef struct {
+      999    NV p;
+
+● Now wire lm() to the shared builder:
+
+  Searched for 1 pattern, read 1 file (ctrl+o to expand)
+
+● Update(LikeR.xs)
+  ⎿  Added 7 lines, removed 71 lines
+      15963      p = num_uniq;
+      15964  
+      15965      xlevels_hv = newHV(); sv_2mortal((SV*)xlevels_hv);
+      15966 -    for (j = 0; j < p; j++) {                               
+      15967 -      if (p_exp + 32 >= exp_cap) {                          
+      15968 -        exp_cap *= 2;                                       
+      15969 -        Renew(exp_terms, exp_cap, char*); Renew(is_dummy, ex
+            -p_cap, bool);                                               
+      15970 -        Renew(dummy_base, exp_cap, char*); Renew(dummy_level
+            -, exp_cap, char*);                                          
+      15971 -      }                                                     
+      15972 -      if (strcmp(uniq_terms[j], "Intercept") == 0) {        
+      15973 -        exp_terms[p_exp] = savepv("Intercept"); is_dummy[p_e
+            -xp] = FALSE; p_exp++; continue;                             
+      15974 -      }                                                     
+      15975 -      if (is_column_categorical(aTHX_ data_hoa, row_hashes, 
+            -n, uniq_terms[j])) {                                        
+      15976 -        char **restrict levels = NULL;                      
+      15977 -        unsigned int num_levels = 0, levels_cap = 8;        
+      15978 -        Newx(levels, levels_cap, char*);                    
+      15979 -        for (i = 0; i < n; i++) {                           
+      15980 -          char *restrict str_val = get_data_string_alloc(aTH
+            -X_ data_hoa, row_hashes, i, uniq_terms[j]);                 
+      15981 -          if (str_val) {                                    
+      15982 -            bool found = FALSE;                             
+      15983 -            for (l = 0; l < num_levels; l++) { if (strcmp(le
+            -vels[l], str_val) == 0) { found = TRUE; break; } }          
+      15984 -            if (!found) {                                   
+      15985 -              if (num_levels >= levels_cap) { levels_cap *= 
+            -2; Renew(levels, levels_cap, char*); }                      
+      15986 -              levels[num_levels++] = savepv(str_val);       
+      15987 -            }                                               
+      15988 -            Safefree(str_val);                              
+      15989 -          }                                                 
+      15990 -        }                                                   
+      15991 -        if (num_levels > 0) {                               
+      15992 -          qsort(levels, num_levels, sizeof(char*), cmp_strin
+            -g_wt);                                                      
+      15993 -          { AV *lv = newAV(); for (l = 0; l < num_levels; l+
+            -+) av_push(lv, newSVpv(levels[l], 0)); hv_store(xlevels_hv, 
+            -uniq_terms[j], strlen(uniq_terms[j]), newRV_noinc((SV*)lv), 
+            -0); }                                                       
+      15994 -          for (l = 1; l < num_levels; l++) {                
+      15995 -            if (p_exp >= exp_cap) {                         
+      15996 -              exp_cap *= 2;                                 
+      15997 -              Renew(exp_terms, exp_cap, char*); Renew(is_dum
+            -my, exp_cap, bool);                                         
+      15998 -              Renew(dummy_base, exp_cap, char*); Renew(dummy
+            -_level, exp_cap, char*);                                    
+      15999 -            }                                               
+      16000 -            size_t t_len = strlen(uniq_terms[j]) + strlen(le
+            -vels[l]) + 1;                                               
+      16001 -            exp_terms[p_exp] = (char*)safemalloc(t_len);    
+      16002 -            snprintf(exp_terms[p_exp], t_len, "%s%s", uniq_t
+            -erms[j], levels[l]);                                        
+      16003 -            is_dummy[p_exp] = TRUE;                         
+      16004 -            dummy_base[p_exp]  = savepv(uniq_terms[j]);     
+      16005 -            dummy_level[p_exp] = savepv(levels[l]);         
+      16006 -            p_exp++;                                        
+      16007 -          }                                                 
+      16008 -          for (l = 0; l < num_levels; l++) Safefree(levels[l
+            -]);                                                         
+      16009 -          Safefree(levels);                                 
+      16010 -        } else {                                            
+      16011 -          Safefree(levels);                                 
+      16012 -          exp_terms[p_exp] = savepv(uniq_terms[j]); is_dummy
+            -[p_exp] = FALSE; p_exp++;                                   
+      16013 -        }                                                   
+      16014 -      } else {                                              
+      16015 -        exp_terms[p_exp] = savepv(uniq_terms[j]); is_dummy[p
+            -_exp] = FALSE; p_exp++;                                     
+      16016 -      }                                                     
+      16017 -    }                                                       
+      16018 -    p = p_exp;                                              
+      16019 -    Newx(X, n * p, NV); Newx(Y, n, NV);                     
+      15966 +    design = lm_design_build(aTHX_ data_hoa, row_hashes, n, 
+      15967 +                             uniq_terms, num_uniq, has_inter
+            +cept, xlevels_hv);                                          
+      15968 +    p = design->ncol;                                       
+      15969 +    Newx(X, n * (p ? p : 1), NV); Newx(Y, n, NV);           
+      15970      Newx(valid_row_names, n, char*);
+      15971  
+      15972      for (i = 0; i < n; i++) {
+      15973        NV y_val = evaluate_term(aTHX_ data_hoa, row_hashes, i
+             , lhs);
+      15974        if (isnan(y_val)) { Safefree(row_names[i]); continue; 
+             }
+      15975  
+      16026 -      bool row_ok = TRUE;                                   
+      16027 -      size_t base = valid_n * (size_t)p;                    
+      16028 -      for (j = 0; j < p; j++) {                             
+      16029 -        if (strcmp(exp_terms[j], "Intercept") == 0) {       
+      16030 -          X[base + j] = 1.0;                                
+      16031 -        } else if (is_dummy[j]) {                           
+      16032 -          char *restrict str_val = get_data_string_alloc(aTH
+            -X_ data_hoa, row_hashes, i, dummy_base[j]);                 
+      16033 -          if (str_val) {                                    
+      16034 -            X[base + j] = (strcmp(str_val, dummy_level[j]) =
+            -= 0) ? 1.0 : 0.0;                                           
+      16035 -            Safefree(str_val);                              
+      16036 -          } else { row_ok = FALSE; break; }                 
+      16037 -        } else {                                            
+      16038 -          NV v = evaluate_term(aTHX_ data_hoa, row_hashes, i
+            -, exp_terms[j]);                                            
+      16039 -          if (isnan(v)) { row_ok = FALSE; break; }          
+      16040 -          X[base + j] = v;                                  
+      16041 -        }                                                   
+      15976 +      if (!lm_design_row(aTHX_ design, data_hoa, row_hashes,
+            + i,                                                         
+      15977 +                         X + valid_n * (size_t)p)) {        
+      15978 +        Safefree(row_names[i]); continue;                   
+      15979        }
+      16043 -      if (!row_ok) { Safefree(row_names[i]); continue; }    
+      15980        Y[valid_n] = y_val;
+      15981        valid_row_names[valid_n] = row_names[i];
+      15982        valid_n++;
+
+  Searched for 1 pattern (ctrl+o to expand)
+
+● Line 16259 is aov, which has its own interaction-capable expansion — separate.
+  Let me finish rewiring lm:
+
+  Read 1 file (ctrl+o to expand)
+
+● Update(LikeR.xs)
+  ⎿  Added 4 lines, removed 5 lines
+      15742      SV   *restrict data_sv = NULL;
+      15743      char *restrict f_cpy   = NULL;
+      15744      char *restrict src, *restrict dst, *restrict tilde, *res
+             trict lhs, *restrict rhs, *restrict chunk;
+      15745 -    char **restrict terms = NULL, **restrict uniq_terms = NU
+            -LL, **restrict exp_terms = NULL;                            
+      15746 -    bool *restrict is_dummy = NULL;                         
+      15747 -    char **restrict dummy_base = NULL, **restrict dummy_leve
+            -l = NULL;                                                   
+      15748 -    unsigned int term_cap = 64, exp_cap = 64, num_terms = 0,
+            - num_uniq = 0, p = 0, p_exp = 0;                            
+      15749 -    size_t n = 0, valid_n = 0, i, j, k, l;                  
+      15745 +    char **restrict terms = NULL, **restrict uniq_terms = NU
+            +LL;                                                         
+      15746 +    LmDesign *restrict design = NULL;                       
+      15747 +    unsigned int term_cap = 64, num_terms = 0, num_uniq = 0,
+            + p = 0;                                                     
+      15748 +    size_t n = 0, valid_n = 0, i, j, k;                     
+      15749      bool has_intercept = TRUE;
+      15750      char **restrict row_names = NULL, **restrict valid_row_n
+             ames = NULL;
+      15751      HV  **restrict row_hashes = NULL;
+
+  Read 1 file (ctrl+o to expand)
+
+● Update(LikeR.xs)
+  ⎿  Removed 2 lines
+      15918      }
+      15919  
+      15920      Newx(terms, term_cap, char*); Newx(uniq_terms, term_cap,
+              char*);
+      15921 -    Newx(exp_terms, exp_cap, char*); Newx(is_dummy, exp_cap,
+            - bool);                                                     
+      15922 -    Newx(dummy_base, exp_cap, char*); Newx(dummy_level, exp_
+            -cap, char*);                                                
+      15921  
+      15922      if (has_intercept) terms[num_terms++] = savepv("Intercep
+             t");
+      15923  
+
+  Read 1 file (ctrl+o to expand)
+
+● Update(LikeR.xs)
+  ⎿  Added 1 line, removed 5 lines
+      15983      if (valid_n <= p) {
+      15984        for (i = 0; i < num_terms; i++) Safefree(terms[i]); Sa
+             fefree(terms);
+      15985        for (i = 0; i < num_uniq; i++) Safefree(uniq_terms[i])
+             ; Safefree(uniq_terms);
+      15986 -      for (j = 0; j < p_exp; j++) {                         
+      15987 -        Safefree(exp_terms[j]);                             
+      15988 -        if (is_dummy[j]) { Safefree(dummy_base[j]); Safefree
+            -(dummy_level[j]); }                                         
+      15989 -      }                                                     
+      15990 -      Safefree(exp_terms); Safefree(is_dummy); Safefree(dumm
+            -y_base); Safefree(dummy_level);                             
+      15986 +      lm_design_free(aTHX_ design);                         
+      15987        for (i = 0; i < valid_n; i++) Safefree(valid_row_names
+             [i]);
+      15988        Safefree(X); Safefree(Y); Safefree(valid_row_names);
+      15989        if (row_hashes) Safefree(row_hashes);
+
+  Read 1 file, ran 1 shell command (ctrl+o to expand)
+
+● lm is clean. Now the same for glm:
+
+  Ran 4 shell commands (ctrl+o to expand)
+
+● Only aov retains its own (already interaction-capable) expansion. Now
+  predict() must recognise reference-level dummies from full-coded models:
+
+● Update(LikeR.xs)
+  ⎿  Error editing file
+
+  Searched for 1 pattern, read 1 file (ctrl+o to expand)
+
+● Update(LikeR.xs)
+  ⎿  Added 8 lines, removed 1 line
+      11342            {
+      11343              size_t blen2 = strlen(fbase[kk]);
+      11344              SSize_t nl = av_len(flev[kk]) + 1, l1;
+      11345 -            for (l1 = 1; l1 < nl; l1++) {            /* dumm
+            -ies = levels[1..] */                                        
+      11345 +            /* Every level, not just levels[1..]. A factor c
+            +oded in                                                     
+      11346 +             * full -- one in a model with no intercept, or 
+            +one whose                                                   
+      11347 +             * margin is absent -- also has a column for its
+            + first                                                      
+      11348 +             * level, and without it registered here that co
+            +lumn                                                        
+      11349 +             * would be mistaken for a continuous term and l
+            +ooked up                                                    
+      11350 +             * as a data column. A reduced-coded model simpl
+            +y never                                                     
+      11351 +             * names the extra entry. */                    
+      11352 +            for (l1 = 0; l1 < nl; l1++) {                   
+      11353                SV **restrict ls = av_fetch(flev[kk], l1, 0);
+      11354                if (ls && *ls && SvOK(*ls)) {
+      11355                  STRLEN ll; const char *restrict lp = SvPV(*l
+             s, ll);
+
+  Ran 1 shell command (ctrl+o to expand)
+● Update(LikeR.xs)
+  ⎿  Added 3 lines
+      616   * always decided against terms that precede it.
+      617   * -----------------------------------------------------------
+           -------------- */
+      618  
+      619 +/* Defined further down, next to the other qsort comparators. 
+          +*/                                                            
+      620 +static int cmp_string_wt(const void *a, const void *b);       
+      621 +                                                              
+      622  /* One component of one design column. */
+      623  typedef struct {
+      624    int         fbase;  /* index into LmDesign.factor, or -1 whe
+           n continuous */
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● Built and loading. Let me check the two bugs against R:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Exact agreement on all eight, including the bare-interaction full-coding case.
+  Now the full regression check:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● All 110 files pass and the 14 TODO tests now pass. Let me re-run the three-way
+  comparison to confirm no regression, then expand the battery to cover the new
+  code paths:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● tooth_interact and tooth_fac_noint now match R. But mt_dot newly appeared in
+  the list — let me check:
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● A 1.5e-12 shift on mpg ~ . — last-bits. The meaningful question is whether
+  accuracy versus R got worse anywhere, so let me measure all 34 cases and diff
+  against the pre-fix baseline I recorded:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● No regressions — nothing got worse, and the two bugs went from structurally
+  wrong to ~1e-13. Now let me extend the battery to cover the new code paths:
+
+  Made 2 scratchpad edits +33 -5, ran 1 shell command (ctrl+o to expand)
+
+● three_way (y ~ a * b * z) still croaks — the * parser only ever splits one
+  star, so a*b*z never worked. Now that the builder handles arbitrary arity, let
+  me finish that:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Update(LikeR.xs)
+  ⎿  Added 64 lines
+       961    return d;
+       962  }
+       963  
+       964 +/* Expand one `*`-crossed chunk of a formula into model terms
+           +.                                                            
+       965 + *                                                           
+       966 + * `a*b` is a + b + a:b, and crossing is associative, so `a*b
+           +*c` is every                                                 
+       967 + * non-empty subset: a, b, c, a:b, a:c, b:c, a:b:c. Subsets a
+           +re emitted by                                                
+       968 + * increasing degree and, within a degree, in the left-to-rig
+           +ht order of the                                              
+       969 + * formula, which is the order R's terms() produces. A chunk 
+           +with no `*` is one                                           
+       970 + * term and is appended unchanged.                           
+       971 + *                                                           
+       972 + * `^` is crossing rather than exponentiation in a formula, s
+           +o a trailing `^n` on                                         
+       973 + * a component is dropped -- `hp^2` is just hp -- unless the 
+           +component is an                                              
+       974 + * I(...) escape, where the caret is arithmetic and belongs t
+           +o evaluate_term.                                             
+       975 + *                                                           
+       976 + * chunk is written through: the separators become NULs.     
+       977 + */                                                          
+       978 +static void lm_expand_cross(pTHX_ char *restrict chunk,      
+       979 +                            char ***restrict terms,          
+       980 +                            unsigned int *restrict num_terms,
+       981 +                            unsigned int *restrict term_cap) 
+           +{                                                            
+       982 +  char *restrict part[16];                                   
+       983 +  unsigned int k = 0, i;                                     
+       984 +  UV mask, limit;                                            
+       985 +  char *restrict s = chunk;                                  
+       986 +                                                             
+       987 +  for (;;) {                                                 
+       988 +    char *restrict star = strchr(s, '*');                    
+       989 +    if (k >= (unsigned int)(sizeof(part) / sizeof(part[0]))) 
+       990 +      croak("lm: formula crosses more than %u terms with '*'"
+           +,                                                            
+       991 +            (unsigned int)(sizeof(part) / sizeof(part[0]))); 
+       992 +    if (star) *star = '\0';                                  
+       993 +    {                                                        
+       994 +      char *restrict caret = strchr(s, '^');                 
+       995 +      if (caret && strncmp(s, "I(", 2) != 0) *caret = '\0';  
+       996 +    }                                                        
+       997 +    part[k++] = s;                                           
+       998 +    if (!star) break;                                        
+       999 +    s = star + 1;                                            
+      1000 +  }                                                          
+      1001 +                                                             
+      1002 +  limit = (UV)1 << k;                                        
+      1003 +  /* Grow once for the worst case rather than testing inside 
+           +the loop. */                                                 
+      1004 +  if (*num_terms + (limit - 1) + 1 >= (UV)*term_cap) {       
+      1005 +    while ((UV)*term_cap <= *num_terms + limit) *term_cap *= 
+           +2;                                                           
+      1006 +    Renew(*terms, *term_cap, char*);                         
+      1007 +  }                                                          
+      1008 +  for (i = 1; i <= k; i++) {                    /* degree */ 
+      1009 +    for (mask = 1; mask < limit; mask++) {                   
+      1010 +      unsigned int bits = 0, b;                              
+      1011 +      size_t len = 0;                                        
+      1012 +      char *restrict nm;                                     
+      1013 +      for (b = 0; b < k; b++) if (mask & ((UV)1 << b)) bits++
+           +;                                                            
+      1014 +      if (bits != i) continue;                               
+      1015 +      for (b = 0; b < k; b++)                                
+      1016 +        if (mask & ((UV)1 << b)) len += strlen(part[b]) + 1; 
+      1017 +      Newxz(nm, len + 1, char);                              
+      1018 +      for (b = 0; b < k; b++) {                              
+      1019 +        if (!(mask & ((UV)1 << b))) continue;                
+      1020 +        if (*nm) strcat(nm, ":");                            
+      1021 +        strcat(nm, part[b]);                                 
+      1022 +      }                                                      
+      1023 +      (*terms)[(*num_terms)++] = nm;                         
+      1024 +    }                                                        
+      1025 +  }                                                          
+      1026 +}                                                            
+      1027 +                                                             
+      1028  /* Fill one row of the design matrix. Returns FALSE when the 
+            row is incomplete,
+      1029   * i.e. when any factor it needs has no readable value or any
+             continuous term
+      1030   * evaluates to NaN; the caller drops such rows, as R's na.om
+            it does. */
+
+● Now replace both call sites (lm and glm) with the shared expansion:
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● Update(LikeR.xs)
+  ⎿  Added 1 line, removed 1 line
+      976   * chunk is written through: the separators become NULs.
+      977   */
+      978  static void lm_expand_cross(pTHX_ char *restrict chunk,
+      979 -                            char ***restrict terms,           
+      979 +                            char **restrict *restrict terms,  
+      980                              unsigned int *restrict num_terms,
+      981                              unsigned int *restrict term_cap) {
+      982    char *restrict part[16];
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● three_way now matches R+scipy exactly. Let me confirm my explanation for the
+  remaining statsmodels-only disagreements before documenting them:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Confirmed — statsmodels sees an implicit constant because full dummy columns
+  sum to 1, so it uses centered TSS; R's uncentered value matches lm() exactly.
+  Now let me regenerate the test file with the TODO blocks replaced by real
+  cases:
+
+  Ran 1 shell command (ctrl+o to expand)
+● Now replace the two TODO blocks with regression assertions for the fixed
+  behaviour:
+
+  Ran 3 shell commands (ctrl+o to expand)
+
+● threeway names were my error (reference level is hi, so alo). But predict
+  genuinely mis-scores the reference-level column — let me see how it applies
+  main-effect dummies:
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● Found it — predict skips the lookup entirely for found == 0, assuming a
+  reference level never has a coefficient:
+
+● Update(LikeR.xs)
+  ⎿  Added 12 lines, removed 7 lines
+      11577              croak("predict: factor '%s' has unseen level '%s
+             '", base_cpy, lvl_cpy);
+      11578            }
+      11579            raw_lv[kk] = raw;                            /* ke
+             ep; freed at row end */
+      11580 -          if (found > 0) {                             /* no
+            -n-reference -> add its dummy beta */                        
+      11581 -            snprintf(scratch, scratch_cap, "%s%s", fbase[kk]
+            -, raw);                                                     
+      11582 -            svp = hv_fetch(coef_hv, scratch, (I32)strlen(scr
+            -atch), 0);                                                  
+      11583 -            if (svp && *svp) {                              
+      11584 -              NV b = SvNV(*svp);                            
+      11585 -              if (!isnan(b)) eta += b;                      
+      11586 -            }                                               
+      11580 +          /* Look the level's dummy up whatever its position
+            +. A factor                                                  
+      11581 +           * coded by contrasts has no coefficient for its r
+            +eference                                                    
+      11582 +           * level, so the fetch simply misses and contribut
+            +es nothing;                                                 
+      11583 +           * one coded in full does have that column, and sk
+            +ipping it                                                   
+      11584 +           * on the strength of found == 0 would score every
+            + reference                                                  
+      11585 +           * row as if the term were absent. */             
+      11586 +          snprintf(scratch, scratch_cap, "%s%s", fbase[kk], 
+            +raw);                                                       
+      11587 +          svp = hv_fetch(coef_hv, scratch, (I32)strlen(scrat
+            +ch), 0);                                                    
+      11588 +          if (svp && *svp) {                                
+      11589 +            NV b = SvNV(*svp);                              
+      11590 +            if (!isnan(b)) eta += b;                        
+      11591            }
+      11592 +          PERL_UNUSED_VAR(found);                           
+      11593          }
+      11594  
+      11595          /* non-factor terms via the same engine used at fit 
+             time */
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● Both are my hand-written expectations using R's native warpbreaks level order
+  (L,M,H); read from TSV the levels sort to H,L,M. Let me get ground truth:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● lm and R agree exactly, including which column is aliased. Fixing my
+  expectations:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● All 2218 pass. Now the full suite, plus a leak check since I changed
+  allocation paths:
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● The x * g * h case exhausts df with only 12 rows (12 columns) — my test data
+  was too small. Let me use adequate n:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Test::LeakTrace only sees SV leaks, not the raw Newx allocations in the design
+  builder. Let me check for malloc leaks by watching RSS across many fits:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● RSS flat across 144k fits — no malloc leak. Now let me verify glm against R's
+  glm on the fixed paths:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● glm matches R exactly for gaussian and poisson. Let me add glm regression
+  coverage to t/glm.t:
+
+  Searched for 1 pattern, ran 2 shell commands (ctrl+o to expand)
+
+● Missing commas in my list emitter. Let me restore and redo:
+
+  Ran 3 shell commands (ctrl+o to expand)
+
+● pandas uses StringDtype, not object — my dtype check missed it. Fixing:
+
+  Ran 3 shell commands (ctrl+o to expand)
+
+● Only the poisson standard errors differ (~2e-6 relative), while coefficients
+  match at 1e-8. Let me check whether that predates my change:
+  Ran 1 shell command (ctrl+o to expand)
+
+● Pre-existing: even a factor-free poisson model differs at ~5e-8 on SEs while
+  coefficients agree to 12 digits — it's the IRLS convergence tolerance,
+  unrelated to my change. Let me set that tolerance honestly:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Let me add predict regression coverage for the reference-level fix, then run
+  everything:
+
+  Ran 3 shell commands (ctrl+o to expand)
+
+● All 11438 pass. Final verification sweep across formula shapes, plus a check
+  that the docs don't now contradict the code:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Exact agreement on all eight. Let me check the docs for statements the fix
+  makes stale:
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● The POD has a "Known limitations" entry stating three-way * doesn't work — now
+  false. Let me check which file is the doc source:
+
+  Searched for 1 pattern (ctrl+o to expand)
+
+● README.md is the source. Let me update the now-false limitation and the lm
+  interaction docs:
+
+  Searched for 1 pattern, read 1 file (ctrl+o to expand)
+
+● Update(README.md)
+  ⎿  Added 12 lines, removed 4 lines
+      6725  
+      6726  ### Known limitations (left unchanged)
+      6727  
+      6728 -- A multi-way term such as `a*b*c` is split only on the first
+           - `*`, so it yields                                           
+      6729 -  `a`, `b*c`, and `a:b*c` rather than a full three-way expans
+           -ion. Deeper                                                  
+      6730 -  interactions silently fail (the unparsable term evaluates t
+           -o `NaN` and the                                              
+      6731 -  rows are dropped). This matches the documented two-way `*` 
+           -support.                                                     
+      6728  - HoA input takes the row count from the first column; column
+            s shorter than
+      6729    that simply contribute dropped rows rather than raising an 
+            error.
+      6730 +- Factor levels are sorted with `strcmp`, so ordering is by b
+           +yte value. That is                                           
+      6731 +  what `patsy`/`pandas` does, but R sorts with the collation 
+           +of the running                                               
+      6732 +  locale, so a factor whose levels differ only in case picks 
+           +a different                                                  
+      6733 +  reference level in the two: on `c("b", "A", "a")` R takes `
+           +a` and `lm` takes                                            
+      6734 +  `A`. Both parameterise the same fit — the residual sum of s
+           +quares, rank and                                             
+      6735 +  fitted values agree — but the coefficient names and values 
+           +differ.                                                      
+      6736 +- A term crossed with itself keeps the product: `wt:wt` is `w
+           +t` squared, where                                            
+      6737 +  R's formula algebra collapses `a:a` to `a`, so `y ~ wt*wt` 
+           +fits                                                         
+      6738 +  `y ~ wt + I(wt^2)` here and `y ~ wt` in R.                 
+      6739 +- A factor with only one level contributes no column, so `y ~
+           + x + g` fits                                                 
+      6740 +  `y ~ x`. R refuses the model outright ("contrasts can be ap
+           +plied only to                                                
+      6741 +  factors with 2 or more levels").                           
+      6742  
+      6743  ### `oneway_test`
+      6744  
+
+  Read 1 file (ctrl+o to expand)
+
+● Update(README.md)
+  ⎿  Added 21 lines, removed 1 line
+      3446  
+      3447      my $lm = lm(formula => 'mpg ~ wt * hp^2', data => \%mtcar
+            s);
+      3448  
+      3449 -If your data contains missing numbers (`NA` or `undef`), `lm`
+           - handles listwise deletion dynamically to ensure mathematical
+           - integrity before fitting.                                   
+      3449 +Crossing is associative, so `*` chains to any depth: `y ~ a *
+           + b * c` expands to                                           
+      3450 +every non-empty subset of the three (`a`, `b`, `c`, `a:b`, `a
+           +:c`, `b:c`,                                                  
+      3451 +`a:b:c`), ordered by degree as R's `terms()` orders them. Wri
+           +ting `a:b` directly                                          
+      3452 +gives just that one product.                                 
+      3453  
+      3454 +Either side of an interaction may be a string (categorical) c
+           +olumn, in which                                              
+      3455 +case it expands to indicator columns the same way a main effe
+           +ct does:                                                     
+      3456 +`len ~ dose * supp` yields `dose`, `suppVC` and `dose:suppVC`
+           +.                                                            
+      3457 +                                                             
+      3458 +Whether a categorical column keeps all of its levels or drops
+           + the first as a                                              
+      3459 +reference follows R's margin rule: the reference level is dro
+           +pped when the term                                           
+      3460 +with that column removed is itself in the model. A main effec
+           +t's margin is the                                            
+      3461 +intercept, so `y ~ g` drops g's first level — but `y ~ g - 1`
+           + has no intercept                                            
+      3462 +to measure against and so keeps every level, one column per g
+           +roup. Where two                                              
+      3463 +categorical main effects both have no intercept, only the fir
+           +st can be coded in                                           
+      3464 +full (`y ~ a + b - 1` gives every level of `a` and drops `b`'
+           +s reference),                                                
+      3465 +because coding both in full would be rank deficient. A bare `
+           +y ~ a:b` with                                                
+      3466 +neither main effect present codes both in full and spans the 
+           +whole                                                        
+      3467 +cross-classification.                                        
+      3468 +                                                             
+      3469 +If your data contains missing numbers (`NA` or `undef`), `lm`
+           + handles listwise deletion dynamically to ensure mathematical
+           + integrity before fitting. A row whose categorical value is m
+           +issing is dropped the same way.                              
+      3470 +                                                             
+      3471  the dot operator also works:
+      3472  
+      3473      $lm = lm(formula => 'y ~ .', data => $dot_data);
+
+  Ran 3 shell commands (ctrl+o to expand)
+
+● The "Known limitations" block I edited turns out to live inside a historical
+  release-notes section — I shouldn't rewrite past changelog entries. Let me
+  check:
+
+  Searched for 1 pattern (ctrl+o to expand)
+
+● Line 6726 is inside the ## 0.16 release notes — historical. Let me revert that
+  hunk and keep only the ## lm documentation edit:
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● ## 0.291 is the user's in-progress release section. Let me record the fixes
+  there and add the caveats to the lm docs:
+
+  Read 1 file (ctrl+o to expand)
+
+● Update(README.md)
+  ⎿  Added 42 lines
+      5879  
+      5880  POD formatting improvements
+      5881  
+      5882 +### `lm`, `glm`                                              
+      5883 +                                                             
+      5884 +Design-matrix construction is now shared between `lm` and `gl
+           +m`, and decides a                                            
+      5885 +categorical column's coding term by term using R's margin rul
+           +e: the reference                                             
+      5886 +level is dropped when the term with that column removed is it
+           +self in the model.                                           
+      5887 +Three bugs fall out of that, all confirmed against R 4.6.1 an
+           +d statsmodels                                                
+      5888 +0.14.6.                                                      
+      5889 +                                                             
+      5890 +#### Bug fixes                                               
+      5891 +                                                             
+      5892 +- **A categorical column in a model with no intercept lost a 
+           +level.** With no                                             
+      5893 +  intercept there is no baseline for a reference level to be 
+           +measured against, so                                         
+      5894 +  R codes the factor in full — one column per group, each coe
+           +fficient that                                                
+      5895 +  group's own mean. Both functions dropped the reference leve
+           +l anyway, so                                                 
+      5896 +  `len ~ supp - 1` fitted `len ~ suppVC - 1`: a model forcing
+           + every observation                                           
+      5897 +  at the reference level to a fitted value of 0. On R's `Toot
+           +hGrowth` that meant                                          
+      5898 +  a residual sum of squares of 16056 against R's 3247, and an
+           + R² of 0.35 against                                          
+      5899 +  0.87. Where two categorical main effects appear with no int
+           +ercept only the                                              
+      5900 +  first is coded in full, as in R, since coding both would be
+           + rank deficient.                                             
+      5901 +                                                             
+      5902 +- **An interaction involving a categorical column could not b
+           +e built.** The                                               
+      5903 +  interaction was looked up as a single column literally name
+           +d `dose:supp`;                                               
+      5904 +  finding none, it evaluated to `NaN` for every row, every ro
+           +w was dropped as                                             
+      5905 +  incomplete, and the fit died with `0 degrees of freedom (to
+           +o many NAs or                                                
+      5906 +  parameters > observations)`. Interactions now expand to the
+           + product of their                                            
+      5907 +  components' indicator columns, so `len ~ dose * supp` gives
+           + `dose`, `suppVC`                                            
+      5908 +  and `dose:suppVC`. `predict` already understood such coeffi
+           +cient names; now                                             
+      5909 +  they can be produced.                                      
+      5910 +                                                             
+      5911 +- **`a*b*c` expanded only its first `*`.** Crossing is associ
+           +ative, so                                                    
+      5912 +  `y ~ a * b * c` now yields every non-empty subset (`a`, `b`
+           +, `c`, `a:b`, `a:c`,                                         
+      5913 +  `b:c`, `a:b:c`), ordered by degree as R's `terms()` orders 
+           +them. Previously the                                         
+      5914 +  chunk was split once, producing the unusable terms `b*c` an
+           +d `a:b*c`, and the                                           
+      5915 +  fit died the same way as above. Crossing more than 16 colum
+           +ns now croaks rather                                         
+      5916 +  than expanding to 2^n terms.                               
+      5917 +                                                             
+      5918 +- **`predict` scored reference-level rows as if the term were
+           + absent.** It                                                
+      5919 +  registered factor dummies from `levels[1..]` only, on the a
+           +ssumption that a                                             
+      5920 +  reference level never has a coefficient — true for a factor
+           + coded by contrasts,                                         
+      5921 +  but not for one coded in full. Every row at the reference l
+           +evel of a                                                    
+      5922 +  no-intercept model therefore came back 0.                  
+      5923 +                                                             
+      5924  ## 0.29 2026-08-03 CDT
+      5925  
+      5926  ### t_test
+
+● Now add the current-behaviour caveats to the lm documentation section itself:
+
+● Update(README.md)  ⎿  Added 15 lines
+      3468  
+      3469  If your data contains missing numbers (`NA` or `undef`), `lm`
+             handles listwise deletion dynamically to ensure mathematical
+             integrity before fitting. A row whose categorical value is m
+            issing is dropped the same way.
+      3470  
+      3471 +Three details differ from R deliberately:                    
+      3472 +                                                             
+      3473 +- Levels are sorted with `strcmp`, i.e. by byte value, which 
+           +is what                                                      
+      3474 +  `patsy`/`pandas` does. R sorts with the collation of the ru
+           +nning locale, so a                                           
+      3475 +  factor whose levels differ only in case takes a different r
+           +eference level in                                            
+      3476 +  the two: on `c("b", "A", "a")` R takes `a` and `lm` takes `
+           +A`. Both                                                     
+      3477 +  parameterise the same fit — residual sum of squares, rank a
+           +nd fitted values                                             
+      3478 +  agree — but the coefficient names and values differ.       
+      3479 +- A term crossed with itself keeps the product, so `wt:wt` is
+           + `wt` squared and                                            
+      3480 +  `y ~ wt*wt` fits `y ~ wt + I(wt^2)`. R's formula algebra co
+           +llapses `a:a` to                                             
+      3481 +  `a`, making the same formula mean `y ~ wt` there.          
+      3482 +- A categorical column with only one level contributes no col
+           +umn, so                                                      
+      3483 +  `y ~ x + g` fits `y ~ x`. R refuses the model outright ("co
+           +ntrasts can be                                               
+      3484 +  applied only to factors with 2 or more levels").           
+      3485 +                                                             
+      3486  the dot operator also works:
+      3487  
+      3488      $lm = lm(formula => 'y ~ .', data => $dot_data);
+
+  Ran 3 shell commands (ctrl+o to expand)
+
+● Final three-way comparison for the record, and a re-run of the mutation check
+  on the expanded test file:
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● Fixed all three genuine bugs, plus a fourth in predict that the first fix
+  exposed. Full suite: 110 files, 11438 tests, all pass.
+
+  The fixes
+
+  The root cause was that lm and glm each carried a copy of design-matrix
+  construction that expanded one term at a time and always dropped a factor's
+  first level. I replaced both copies with a shared builder (LikeR.xs:585-900)
+  that decides coding per component using R's margin rule: a factor is coded by 
+  contrasts when the term with that factor removed is itself in the model, and 
+  in full when it is not — with the empty margin (the intercept) consumable only
+  once, which is what stops y ~ a + b - 1 from coding both factors in full and
+  going rank-deficient.
+
+  1. Factor in a no-intercept model lost a level. len ~ supp - 1 fitted len ~ 
+  suppVC - 1, forcing every OJ row to a fitted value of 0 — rss 16056 vs R's
+  3247, R² 0.35 vs 0.87. Now one column per group, each coefficient that group's
+  mean.
+  2. Interactions with a factor died. dose:supp was looked up as a single column
+  of that literal name, evaluated to NaN for every row, dropped every row, then
+  died with 0 degrees of freedom. Now expands to products of indicator columns.
+  3. a*b*c expanded only its first * (README.md listed this under "known
+  limitations"). Crossing is associative, so it now yields all 2ⁿ−1 subsets
+  ordered by degree. Crossing >16 columns croaks rather than expanding.
+  4. predict scored reference-level rows as 0 — it registered dummies from
+  levels[1..] only, correct for contrast coding but not for the full coding fix
+  1 introduced. Exposed by my own test, not reported earlier.
+
+  Verification
+
+  lm and glm now match R 4.6.1 exactly — rank, df, rss, term names,
+  coefficients, standard errors, and which column gets aliased — across every
+  case I could construct: factor×numeric, factor×factor, bare interactions (full
+  cross-classification), three-way crossing, I(x^2)*g, no-intercept variants, y
+  ~ . with factors, and NA-in-factor row dropping. glm agrees for gaussian and
+  poisson.
+
+  No case regressed: I measured worst deviation from R for all 44 cases before
+  and after — nothing got worse, the two bugs went from structurally wrong to
+  ~1e-13. No SV leaks (Test::LeakTrace), and RSS is flat across 144k fits, so no
+  malloc leak either.
+
+  Tests: t/lm.R.scipy.t grew to 2218 (the two TODO blocks became real cases,
+  plus 13 new cases and a coding: section pinning column sets); added glm and
+  predict regression blocks. Re-ran the mutation check — all 16 reported
+  quantities still load-bearing.
+
+  Two things to flag
+
+  - The remaining needs attention entries are all understood non-issues: the
+  ill-conditioned bodyfat pair (within the eps·κ(X'X) bound), zero-residual
+  noise, near-zero-residual cancellation, statsmodels' pinv convention on
+  rank-deficient fits, and the two by-design divergences. For no-intercept
+  models statsmodels reports a centered R² (it sees the full dummy columns
+  summing to 1 and sets k_constant=1); lm matches R's uncentered value to the
+  last digit.
+  - Pre-existing, not fixed: glm's poisson standard errors differ from R at
+  ~5e-8 relative while coefficients agree to 12 digits — the information matrix
+  is built from the final IRLS weights and the deviance-based stop (epsilon = 
+  1e-8) leaves them a hair from R's. It shows on a plain y ~ x + z poisson fit
+  too, so it's the convergence criterion, not the design matrix. I bounded it at
+  1e-5 in the test with that rationale rather than silently tightening or
+  chasing it. Worth a look separately if you want R agreement on glm SEs.
+
+  I also updated the ## lm docs and the 0.291 changelog in README.md and
+  regenerated the POD — including the three deliberate R divergences (byte-order
+  level sorting, wt:wt as a square, single-level factors). I initially edited
+  the "known limitations" note inside the ## 0.16 release-notes section and
+  reverted that: it correctly described the state at that release.
+
+✻ Worked for 34m 37s
+
+※ recap: Goal was validating Stats::LikeR's lm against R and scipy; I added the cross-validation tests and fixed the four bugs they found. Everything passes, so the next step is yours: review the diff and commit. (disable recaps in /config)
+
+❯ fix the poisson issue in glm                                                  
+
+● I'll investigate rather than guess. First, let me read glm's IRLS loop and how
+  it derives standard errors:
+
+  Searched for 1 pattern (ctrl+o to expand)
+
+● Line 11994 recomputes XtWX from the final weights, whereas R keeps the QR from
+  the last IRLS step, whose weights predate the final coefficient update. Let
+  me test that hypothesis in R:
+
+  Read 1 file, ran 1 shell command (ctrl+o to expand)
+
+● Confirmed precisely: R's summary.glm uses f$weights — the weights stored from
+  the last IRLS step, computed before the final coefficient update. Reproducing
+  those matches R to 1.9e-14. Let me read glm's loop to see what's in hand at
+  convergence:
+
+  Read 1 file (ctrl+o to expand)
+
+● At the break, XtWX already holds the swept inverse from that iteration's
+  weights — exactly what R keeps. Let me check the initialisation too, since
+  matching R's stale weights requires stopping on the same iteration:
+
+  Read 1 file (ctrl+o to expand)
+
+● Initialisation matches R's mustart exactly (y + 0.1 for poisson), and the
+  convergence formula and epsilon are identical — so both stop on the same
+  iteration. The fix is to use the inverse already in hand rather than
+  rebuilding it:
+
+● Update(LikeR.xs)
+  ⎿  Added 27 lines, removed 14 lines
+      11991      theta = nb_theta_ml(Y, mu, valid_n);   /* adopt for the 
+             next pass */
+      11992    }
+      11993    } /* end outer theta loop */
+      11994 -  for (i = 0; i < p; i++) { for (size_t j = 0; j < p; j++) X
+            -tWX[i * p + j] = 0.0; }                                     
+      11995 -  for (size_t k = 0; k < valid_n; k++) {                    
+      11996 -    NV w;                                                   
+      11997 -    if      (is_binomial) w = mu[k] * (1.0 - mu[k]);        
+      11998 -    else if (is_poisson)  w = mu[k];                        
+      11999 -    else if (is_negbin)   w = mu[k] / (1.0 + mu[k] / theta);
+      12000 -    else                  w = 1.0;                          
+      12001 -    if (w < 1e-10) w = 1e-10;                               
+      12002 -    for (i = 0; i < p; i++) {                               
+      12003 -       NV xw = X[k * p + i] * w;                            
+      12004 -       for (size_t j = 0; j < p; j++) XtWX[i * p + j] += xw 
+            -* X[k * p + j];                                             
+      12005 -    }                                                       
+      12006 -  }                                                         
+      12007 -  final_rank = sweep_matrix_ols(XtWX, p, aliased);          
+      11994 +  /* XtWX already holds what the standard errors need: sweep
+            +_matrix_ols                                                 
+      11995 +   * inverted it in place during the last IRLS iteration, an
+            +d nothing since has                                         
+      11996 +   * written to it. Those weights come from the mu that went
+            + INTO that                                                  
+      11997 +   * iteration, i.e. from the iterate before the final coeff
+            +icient update, and                                          
+      11998 +   * that is deliberate -- it is the matrix R reports from. 
+      11999 +   *                                                        
+      12000 +   * R's glm.fit keeps the QR factorisation of its last weig
+            +hted design matrix                                          
+      12001 +   * and summary.glm forms chol2inv(qr.R) from it, so R's st
+            +andard errors are                                           
+      12002 +   * likewise built from the weights of the penultimate iter
+            +ate; its                                                    
+      12003 +   * $weights component is that same vector, one step behind
+            + $fitted.values.                                            
+      12004 +   * Rebuilding X'WX here from the converged mu instead is t
+            +he more defensible                                          
+      12005 +   * estimator -- it evaluates the Fisher information at the
+            + MLE rather than a                                          
+      12006 +   * step short of it -- but it is not what R prints, and fo
+            +r a poisson fit the                                         
+      12007 +   * two differ by far more than the coefficients do: on `y 
+            +~ x + z` over nine                                          
+      12008 +   * observations the weights are 2.1e-7 apart, moving the s
+            +tandard errors by                                           
+      12009 +   * 5.4e-8 relative while the coefficients agree to twelve 
+            +digits. Reusing the                                         
+      12010 +   * matrix the iteration already produced reproduces R to 2
+            +e-14.                                                       
+      12011 +   *                                                        
+      12012 +   * This is safe to rely on because the two implementations
+            + take the same path                                         
+      12013 +   * to get here: identical starting values (mustart of y + 
+            +0.1 for a log link,                                         
+      12014 +   * (y + 0.5)/2 for binomial), the same convergence test on
+            + the deviance                                               
+      12015 +   * (|dev - devold| / (0.1 + |dev|) < epsilon) and the same
+            + epsilon of 1e-8, so                                        
+      12016 +   * they stop on the same iteration and their penultimate i
+            +terates agree. For                                          
+      12017 +   * gaussian the weights are all 1 and the question does no
+            +t arise: the matrix                                         
+      12018 +   * is X'X either way.                                     
+      12019 +   *                                                        
+      12020 +   * final_rank and aliased[] likewise come from that same i
+            +n-loop sweep. */                                            
+      12021    NV wtdmu = has_intercept ? mean_y : (is_binomial ? 0.5 : (
+             log_link ? 1.0 : 0.0));
+      12022  
+      12023    for (i = 0; i < valid_n; i++) {
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Now let me test it broadly against R — across families, link cases, factors,
+  and interactions:
+
+  Ran 3 shell commands (ctrl+o to expand)
+
+● That's the same value as before — let me verify my edit actually took effect
+  in the build:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● The edit is compiled in, yet the numbers are unchanged — so lm's iteration
+  count must differ from R's. Let me instrument:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● lm takes 7 IRLS iterations where R takes 4 — so its penultimate iterate is
+  much more converged. Let me replicate both loops in R to find why:
+
+  Ran 1 shell command (ctrl+o to expand)
+● Found the real cause. The IRLS start mu = y + 0.1 makes the initial deviance
+  ~0.016, so the first genuine step raises it to 1.54 — and glm's step-halving
+  guard treats any deviance increase as divergence and halves the step, up to 10
+  times. That's why it needs 7 iterations instead of 4. R only halves when the
+  deviance is non-finite:
+
+  Searched for 1 pattern (ctrl+o to expand)
+
+● Update(LikeR.xs)
+  ⎿  Added 25 lines, removed 3 lines
+      11961             deviance_new += res * res;
+      11962           }
+      11963        }
+      11964 -      if (is_gaussian || deviance_new <= deviance_old + 1e-7
+            - || !isfinite(deviance_new)) {                              
+      11965 -         continue;                                          
+      11966 -      }                                                     
+      11964 +      /* Halve the step only when the deviance came out non-
+            +finite, which is                                            
+      11965 +       * R's rule (glm.fit truncates the step "due to diverg
+            +ence" for a                                                 
+      11966 +       * non-finite deviance, or when the link puts eta or m
+            +u outside its                                               
+      11967 +       * range -- the clamps above already prevent that here
+            +).                                                          
+      11968 +       *                                                    
+      11969 +       * A deviance that merely rose is NOT divergence, and 
+            +treating it as                                              
+      11970 +       * such was costing iterations on every non-gaussian f
+            +it. The standard                                            
+      11971 +       * IRLS start puts mu at y + 0.1, i.e. essentially on 
+            +the data, so the                                            
+      11972 +       * initial deviance is near zero -- 0.016 for the nine
+            +-point poisson                                              
+      11973 +       * fit in t/glm.t -- and the first real step necessari
+            +ly raises it, to                                            
+      11974 +       * 1.54 there. The old test read that as divergence an
+            +d halved the                                                
+      11975 +       * step ten times over, crippling the first move and t
+            +urning a                                                    
+      11976 +       * four-iteration fit into a seven-iteration one. The 
+            +extra iterations                                            
+      11977 +       * converged to the same coefficients, but they left t
+            +he weights of                                               
+      11978 +       * the penultimate iterate -- the ones the standard er
+            +rors are built                                              
+      11979 +       * from, here and in R alike -- a different distance f
+            +rom the MLE than                                            
+      11980 +       * R's, which is why poisson and binomial standard err
+            +ors used to sit                                             
+      11981 +       * 5e-8 to 2e-5 away from R's while the coefficients a
+            +greed to twelve                                             
+      11982 +       * digits.                                            
+      11983 +       *                                                    
+      11984 +       * Note also that the old condition had the isfinite t
+            +est on the                                                  
+      11985 +       * accepting side, so a genuinely divergent step produ
+            +cing a NaN                                                  
+      11986 +       * deviance was kept rather than truncated. */        
+      11987 +      if (is_gaussian || isfinite(deviance_new)) break;     
+      11988 +      if (half + 1 >= 10) break;   /* stop halving rather th
+            +an spin */                                                  
+      11989        boundary = TRUE;
+      11990        for (size_t j = 0; j < p; j++) beta[j] = (beta[j] + be
+             ta_old[j]) / 2.0;
+      11991      }
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Poisson SEs improved from 5e-8…2e-5 to ~1e-14. One binomial case remains at
+  1.9e-9 — let me check whether that's conditioning rather than staleness:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Near-separable: weights down to 1.2e-12 and κ(X'WX)=1.15e8, so eps·κ permits
+  2.6e-8 — the 1.9e-9 is conditioning-limited. Let me confirm the exact
+  attribution:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Fully attributed: applying glm's varmu floor of 1e-10 to R's own weights
+  reproduces the 1.94e-9 exactly — it bites on 3 of 32 observations in a fit
+  where R itself warns about probabilities of 0 or 1. That's a deliberate safety
+  guard, so I'll leave it and document it. Now the full suite:
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● Note tests 131/132 pass — z matches R to 5e-16 and p to 1e-14. So the failure
+  is an internal-consistency check. Let me read it:
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● expected_p is a stored 2*norm.sf(|z|) derived from the old build's z — now
+  stale, because z moved (closer to R). Let me confirm and regenerate those from
+  scipy using R's z:
+
+  Ran 3 shell commands (ctrl+o to expand)
+
+● z now matches R's stored r_stat to ~1e-15. Let me regenerate the six stale
+  expected_p values from scipy at the new z:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● repr on a numpy scalar leaked np.float64(...) into the Perl source. Let me
+  fix:
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● All pass. Now let me tighten the glm.t poisson SE tolerance, since the
+  rationale I wrote there no longer holds:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Now a dedicated regression test pinning the iteration count and SE agreement,
+  since that's the actual defect:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● I hand-typed the mtcars columns. Let me generate that block from the actual
+  data and R's output:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● My data was right but the expected values weren't. Substituting R's actual
+  output:
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● Let me verify the negative-binomial path (which has the outer theta loop) and
+  re-check leaks, since I changed the IRLS control flow:
+
+  Ran 1 shell command (ctrl+o to expand)
+● The negbin path agrees with MASS::glm.nb to ~1e-6 (its own theta-ML outer
+  tolerance, unrelated). Let me re-check leaks after the control-flow change:
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● Exact parity with R on the separable case (both iter=25, converged=FALSE), and
+  RSS is flat. Let me document the fix:
+
+● Update(README.md)
+  ⎿  Added 27 lines
+      5936    but not for one coded in full. Every row at the reference l
+            evel of a
+      5937    no-intercept model therefore came back 0.
+      5938  
+      5939 +- **`glm` halved its IRLS step whenever the deviance rose, co
+           +sting iterations and                                         
+      5940 +  accuracy in the standard errors.** R truncates a step only 
+           +when the deviance                                            
+      5941 +  comes out non-finite; a deviance that merely increases is n
+           +ot divergence. The                                           
+      5942 +  standard IRLS start puts `mu` at `y + 0.1`, essentially on 
+           +the data, so the                                             
+      5943 +  initial deviance is near zero and the first real step almos
+           +t always raises it —                                         
+      5944 +  on the nine-point poisson fit in `t/glm.t`, from 0.016 to 1
+           +.54. That was read as                                        
+      5945 +  divergence and the step was halved ten times over, turning 
+           +R's four iterations                                          
+      5946 +  into seven.                                                
+      5947 +                                                             
+      5948 +  The extra iterations reached the same coefficients, so the 
+           +symptom appeared                                             
+      5949 +  only in the standard errors. They are built from the inform
+           +ation matrix of the                                          
+      5950 +  *penultimate* iterate — in R because `summary.glm` inverts 
+           +the QR that                                                  
+      5951 +  `glm.fit` kept from its last weighted least squares call, a
+           +nd here because the                                          
+      5952 +  IRLS sweep leaves that inverse in place — so stopping on a 
+           +different iteration                                          
+      5953 +  than R means reporting a different matrix. Poisson standard
+           + errors were 5e-8 to                                         
+      5954 +  2e-5 away from R's while the coefficients agreed to twelve 
+           +digits; they now                                             
+      5955 +  agree to about 1e-14. Binomial standard errors were up to 6
+           +e-7 out and now                                              
+      5956 +  agree to 2e-14, except on a near-separable fit, where the `
+           +varmu` floor of                                              
+      5957 +  1e-10 (a guard against dividing by an underflowed variance)
+           + accounts for the                                            
+      5958 +  remaining difference — 1.9e-9 on `am ~ wt * hp`, where thre
+           +e of 32 fitted                                               
+      5959 +  probabilities are within 1e-12 of 0 or 1 and R itself warns
+           +. Gaussian fits are                                          
+      5960 +  unaffected: their weights are all 1, so the matrix is `X'X`
+           + either way.                                                 
+      5961 +                                                             
+      5962 +  The same condition had its `isfinite` test on the accepting
+           + side, so a                                                  
+      5963 +  genuinely divergent step producing a non-finite deviance wa
+           +s kept rather than                                           
+      5964 +  truncated. That is now the one case that does trigger halvi
+           +ng.                                                          
+      5965 +                                                             
+      5966  ## 0.29 2026-08-03 CDT
+      5967  
+      5968  ### t_test
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Final confirmation — the full glm battery against R, and the whole suite:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Fixed. The cause wasn't where I'd guessed — it was a step-halving bug, not the
+  information matrix.
+
+  Diagnosis
+
+  glm's standard errors come from the information matrix of the penultimate IRLS
+  iterate, and so do R's: summary.glm inverts the QR that glm.fit kept from its
+  last weighted least-squares call, so f$weights sits one step behind
+  f$fitted.values. I confirmed this in R — rebuilding the SEs from f$weights
+  reproduces summary.glm to 1.9e-14, while rebuilding from the weights at the
+  converged β misses by 5.4e-8.
+
+  Agreeing with R therefore requires stopping on the same iteration. glm was
+  taking 7 where R takes 4, because of this at LikeR.xs:11964:
+
+  if (is_gaussian || deviance_new <= deviance_old + 1e-7 ||
+  !isfinite(deviance_new))
+          continue;                    /* accept */
+  boundary = TRUE;                     /* else halve the step */
+
+  Any rise in deviance was read as divergence. But the standard IRLS start puts
+  mu at y + 0.1 — essentially on the data — so the initial deviance is near zero
+  and the first real step must raise it. On the nine-point poisson fit the
+  sequence is 0.016 → 1.54 → 1.510 → 1.5101827, so step one was halved ten times
+  over, crippling it. R halves only when the deviance is non-finite. The extra
+  iterations still reached the same MLE, which is why the symptom showed up only
+  in the standard errors — coefficients agreeing to 12 digits while SEs were
+  5e-8 to 2e-5 out was the tell.
+
+  That same condition also had isfinite on the accepting side, so a genuinely
+  divergent step producing a NaN deviance was kept rather than truncated. Now
+  inverted to match R.
+
+  Result
+
+  ┌────────────────────┬─────────────────┬───────────────────┐
+  │                    │ SE vs R before  │       after       │
+  ├────────────────────┼─────────────────┼───────────────────┤
+  │ poisson (6 models) │ 5.2e-8 … 2.1e-5 │ 1.8e-15 … 7.3e-14 │
+  ├────────────────────┼─────────────────┼───────────────────┤
+  │ binomial           │ 5.7e-7, 1.9e-6  │ 1.7e-14, 1.8e-11  │
+  ├────────────────────┼─────────────────┼───────────────────┤
+  │ gaussian           │ 6.3e-15         │ unchanged         │
+  └────────────────────┴─────────────────┴───────────────────┘
+
+  Gaussian is untouched by construction — its weights are all 1, so the matrix
+  is X'X either way, and the numbers are bit-identical.
+
+  glm now takes R's exact iteration count (4 for that poisson fit, 8 for am ~ wt
+  + hp binomial), and on a perfectly separable logistic fit matches R's
+  iter=25, converged=FALSE, boundary=FALSE.
+
+  One characterized residual: bin_mt_int (am ~ wt * hp) stays at 1.9e-9. That's
+  entirely the varmu floor of 1e-10 — a guard against dividing by an underflowed
+  variance. I verified the attribution by applying that same floor to R's own
+  weights, which reproduces 1.941572e-9 exactly. It bites on 3 of 32
+  observations whose fitted probabilities are within 1e-12 of 0 or 1, in a fit
+  where R itself warns "fitted probabilities numerically 0 or 1", and
+  κ(X'WX)=1.15e8 permits 2.6e-8 anyway. I left the guard alone and documented it
+  rather than loosening a numerical safeguard unasked.
+
+  Test changes
+
+  - t/glm.t: tightened the poisson SE bound from the 1e-5 I'd set earlier to
+  1e-9, added SEs to the no-intercept poisson case, and added a regression block
+  pinning iter == 4 (poisson) and iter == 8 (binomial) with R's 17-digit
+  coefficients and SEs — plus an assertion that SE accuracy tracks coefficient
+  accuracy, since the divergence between the two was the original signature.
+  - t/model_pvalue_tails.t: six expected_p values were stale. That file
+  documents expected_p as "norm.sf evaluated at THIS module's own statistic",
+  and z moved (toward R), so I regenerated them from scipy at the new z. Its p 
+  vs R checks passed throughout and got tighter — z now matches R to 5.4e-16.
+
+  Full suite: 110 files, 11460 tests, all pass. No SV leaks across
+  poisson/binomial/negbin/separable fits, and RSS is flat over 64k glm fits.
+  Changelog and POD updated.
+
+  Unrelated and not touched: MASS::glm.nb agreement on the negative-binomial
+  path is ~1e-6 on theta and coefficients — that's the theta-ML outer loop's own
+  1e-7 loglik tolerance, a separate convergence question from this one.
+
+✻ Cogitated for 17m 55s
+
+❯ fix the MASS::glm.nb issue                                                    
+
+● Let me read MASS's actual implementation rather than work from recall:
+
+  Ran 3 shell commands (ctrl+o to expand)
+
+● Now I have MASS's exact algorithm, including a subtle quirk: inside the loop
+  theta.ml is called with the previous iteration's mu, before mu is updated. Let
+  me read glm's current negbin path:
+
+  Searched for 1 pattern, read 1 file (ctrl+o to expand)
+
+● glm's nb_theta_ml already mirrors theta.ml's score/info and start value. The
+  differences are in the alternation: MASS's outer criterion is far tighter, its
+  first pass is a genuine Poisson fit, and it lags mu by one pass. Let me look
+  at the current outer loop and rewrite it:
+
+  Read 1 file (ctrl+o to expand)
+
+● Now let me rewrite the alternation to follow MASS step for step:
+
+● Update(LikeR.xs)
+  ⎿  Added 55 lines, removed 5 lines
+      11872    NV mean_y = sum_y / valid_n;
+      11873    if (log_link && mean_y <= 0.0) croak("glm: poisson/negbin 
+             family requires some positive counts");
+      11874  
+      11875 -  /* Outer loop re-estimates the negative-binomial theta by 
+            -ML between IRLS                                             
+      11876 -   * fits (MASS::glm.nb); every other family runs the body e
+            -xactly once. */                                             
+      11877 -  unsigned int outer_max = (is_negbin && !theta_given) ? 30 
+            -: 1;                                                        
+      11878 -  NV nb_loglik_old = 0.0;                                   
+      11875 +  /* Negative binomial: alternate an IRLS fit at the current
+            + theta with a fresh                                         
+      11876 +   * ML estimate of theta at the current fitted means, exact
+            +ly as MASS::glm.nb                                          
+      11877 +   * does. Every other family runs the body once.           
+      11878 +   *                                                        
+      11879 +   * Three details of glm.nb decide whether the answers agre
+            +e, and all three                                            
+      11880 +   * are reproduced below:                                  
+      11881 +   *                                                        
+      11882 +   *  - The FIRST pass is an ordinary Poisson fit, not a neg
+            +ative-binomial one                                          
+      11883 +   *    at some large stand-in theta. Its fitted means are w
+            +hat the first theta                                         
+      11884 +   *    is estimated from, and its residual degrees of freed
+            +om set d1.                                                  
+      11885 +   *  - Each later pass is WARM STARTED from the previous pa
+            +ss's means                                                  
+      11886 +   *    (glm.nb passes etastart = log(mu)), so the fit it la
+            +nds on is the one                                           
+      11887 +   *    MASS lands on rather than merely the same optimum re
+            +ached from                                                  
+      11888 +   *    elsewhere.                                          
+      11889 +   *  - Inside the loop theta is re-estimated from the means
+            + that STARTED the                                           
+      11890 +   *    pass, not the ones the pass just produced: glm.nb ca
+            +lls                                                         
+      11891 +   *    theta.ml(Y, mu) and only then reassigns mu <- fit$fi
+            +tted.values. The                                            
+      11892 +   *    lag is easy to miss and moves theta in the eighth di
+            +git.                                                        
+      11893 +   *                                                        
+      11894 +   * The convergence test is MASS's as well:                
+      11895 +   *                                                        
+      11896 +   *     (|Lm0 - Lm| / d1 + |theta - theta_prev| / d2) < eps
+            +ilon                                                        
+      11897 +   *                                                        
+      11898 +   * with d1 = sqrt(2 * max(1, df.residual)) from the Poisso
+            +n pass, d2 = 1 and                                          
+      11899 +   * epsilon = 1e-8. What used to be here was a relative tes
+            +t on the                                                    
+      11900 +   * log-likelihood alone -- |dll| < 1e-7 * (|ll| + 0.1) -- 
+            +which on an                                                 
+      11901 +   * 80-observation fit is satisfied roughly 2e-5 of log-lik
+            +elihood early and                                           
+      11902 +   * left theta 8e-7 away from MASS's, dragging the coeffici
+            +ents 8e-6 with it.                                          
+      11903 +   * Dividing the log-likelihood move by d1 and requiring th
+            +eta itself to have                                          
+      11904 +   * settled is what makes the alternation stop in the same 
+            +place. */                                                   
+      11905 +  unsigned int outer_max = (is_negbin && !theta_given) ? (ma
+            +x_iter + 1) : 1;                                            
+      11906 +  NV  nb_d1 = 1.0, nb_Lm = 0.0, nb_Lm0 = 0.0, nb_del = 1.0; 
+      11907 +  NV *restrict nb_mu_prev = NULL;                           
+      11908 +  bool nb_alt_converged = FALSE;                            
+      11909 +  if (is_negbin && !theta_given)                            
+      11910 +    nb_mu_prev = (NV*)safemalloc(valid_n * sizeof(NV));     
+      11911    for (unsigned int outer = 0; outer < outer_max; outer++) {
+      11912 +  /* Pass 0 of a theta-estimating fit is Poisson; treat the 
+            +family as Poisson                                           
+      11913 +   * throughout that pass rather than approximating it with 
+            +a huge theta. */                                            
+      11914 +  bool nb_pois_pass = (is_negbin && !theta_given && outer ==
+            + 0);                                                        
+      11915 +  bool use_negbin   = is_negbin && !nb_pois_pass;           
+      11916 +  /* Passes after the first warm start where the previous on
+            +e finished, and the                                         
+      11917 +   * means they start from are also the ones theta is re-est
+            +imated at. */                                               
+      11918 +  bool nb_warm = (is_negbin && !theta_given && outer > 0);  
+      11919 +  if (nb_warm) memcpy(nb_mu_prev, mu, valid_n * sizeof(NV));
+      11920 +  if (nb_warm) {                                            
+      11921 +    /* Keep mu, eta and beta where the last pass left them; 
+            +only the                                                    
+      11922 +     * deviance has to be restated under the new theta so th
+            +at the IRLS                                                 
+      11923 +     * convergence test starts from the right place. */     
+      11924 +    deviance_old = 0.0;                                     
+      11925 +    for (i = 0; i < valid_n; i++)                           
+      11926 +      deviance_old += dev_negbin(Y[i], mu[i], theta);       
+      11927 +    converged = FALSE;                                      
+      11928 +  } else {                                                  
+      11929    for (i = 0; i < p; i++) { beta[i] = 0.0; beta_old[i] = 0.0
+             ; }
+      11930    deviance_old = 0.0; converged = FALSE;
+      11931    for (i = 0; i < valid_n; i++) {
+     ...
+      11942        if (Y[i] < 0.0) croak("glm: poisson/negbin family requ
+             ires a non-negative response");
+      11943        mu[i] = Y[i] + 0.1;
+      11944        eta[i] = log(mu[i]);
+      11896 -      deviance_old += is_negbin ? dev_negbin(Y[i], mu[i], th
+            -eta) : dev_poisson(Y[i], mu[i]);                            
+      11945 +      deviance_old += use_negbin ? dev_negbin(Y[i], mu[i], t
+            +heta) : dev_poisson(Y[i], mu[i]);                           
+      11946      } else {
+      11947        mu[i] = mean_y;
+      11948        eta[i] = mu[i];
+      11949      }
+      11950    }
+      11951 +  }                                                         
+      11952    for (iter = 1; iter <= max_iter; iter++) {
+      11953      for (i = 0; i < valid_n; i++) {
+      11954        if (is_binomial) {
+
+● Now the two in-loop family selections and the theta update block:
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● Now nb_theta_ml itself, to follow theta.ml's exact stopping rule:
+
+● Update(LikeR.xs)
+  ⎿  Added 38 lines, removed 18 lines
+      2725    return result;
+      2726  }
+      2727  
+      2728 -/* ML estimate of the negative-binomial dispersion theta give
+           -n the current                                                
+      2729 - * fitted means mu[i] (Newton on the score equation with step
+           - control).                                                   
+      2730 - * Mirrors MASS::theta.ml: unit weights, initial from the mom
+           -ent estimator. */                                            
+      2731 -static NV nb_theta_ml(const NV *restrict y, const NV *restric
+           -t mu, size_t n) {                                            
+      2728 +/* ML estimate of the negative-binomial dispersion theta at t
+           +he fitted means                                              
+      2729 + * mu[i], following MASS::theta.ml step for step: unit weight
+           +s, the moment                                                
+      2730 + * estimator n / sum((y/mu - 1)^2) as the starting value, and
+           + Newton on the                                               
+      2731 + * score using the observed information.                     
+      2732 + *                                                           
+      2733 + * The stopping rule is MASS's, and it is deliberately slack 
+           +for a Newton                                                 
+      2734 + * iteration: an ABSOLUTE step tolerance of .Machine$double.e
+           +ps^0.25, which is                                            
+      2735 + * exactly 2^-13 (1.22e-4), and at most limit - 1 steps. Beca
+           +use Newton squares                                           
+      2736 + * its error, a step that small means theta itself is already
+           + good to around                                              
+      2737 + * 1e-8, so the looseness costs little -- and reproducing it 
+           +matters more than                                            
+      2738 + * tightening it would gain, since glm.nb's alternation feeds
+           + each theta straight                                         
+      2739 + * back into the next fit. Iterating further here would conve
+           +rge to a slightly                                            
+      2740 + * different fixed point of that alternation than MASS reache
+           +s.                                                           
+      2741 + *                                                           
+      2742 + * MASS also has `t0 <- abs(t0)` at the top of each step and 
+           +truncates a negative                                         
+      2743 + * result at zero; the truncation is floored at a tiny positi
+           +ve value instead,                                            
+      2744 + * because theta divides the variance downstream and an exact
+           + zero would poison                                           
+      2745 + * the fit rather than report it. */                         
+      2746 +static NV nb_theta_ml(const NV *restrict y, const NV *restric
+           +t mu, size_t n,                                              
+      2747 +                      unsigned int limit) {                  
+      2748    NV denom = 0.0;
+      2749    for (size_t i = 0; i < n; i++) {
+      2750      NV r = y[i] / mu[i] - 1.0;
+     ...
+      2752    }
+      2753    NV t0 = (denom > 0.0) ? (NV)n / denom : 1.0;
+      2754    if (!(t0 > 0.0) || !isfinite(t0)) t0 = 1.0;
+      2739 -  NV eps = 1e-8;                                             
+      2740 -  for (unsigned int it = 0; it < 100; it++) {                
+      2741 -    t0 = fabs(t0);                                           
+      2742 -    NV score = 0.0, info = 0.0;                              
+      2743 -    for (size_t i = 0; i < n; i++) {                         
+      2744 -      NV mt = mu[i] + t0;                                    
+      2745 -      score += c_digamma(t0 + y[i]) - c_digamma(t0)          
+      2746 -        + log(t0) + 1.0 - log(mt) - (y[i] + t0) / mt;        
+      2747 -      info += -c_trigamma(t0 + y[i]) + c_trigamma(t0)        
+      2748 -        - 1.0 / t0 + 2.0 / mt - (y[i] + t0) / (mt * mt);     
+      2755 +  {                                                          
+      2756 +    const NV eps = pow((NV)DBL_EPSILON, 0.25);   /* MASS: dou
+           +ble.eps^0.25 */                                              
+      2757 +    NV del = 1.0;                                            
+      2758 +    unsigned int it = 0;                                     
+      2759 +    /* MASS: while ((it <- it + 1) < limit && abs(del) > eps)
+           + */                                                          
+      2760 +    while (++it < limit && fabs(del) > eps) {                
+      2761 +      NV score = 0.0, info = 0.0;                            
+      2762 +      t0 = fabs(t0);                                         
+      2763 +      for (size_t i = 0; i < n; i++) {                       
+      2764 +        NV mt = mu[i] + t0;                                  
+      2765 +        score += c_digamma(t0 + y[i]) - c_digamma(t0)        
+      2766 +          + log(t0) + 1.0 - log(mt) - (y[i] + t0) / mt;      
+      2767 +        info += -c_trigamma(t0 + y[i]) + c_trigamma(t0)      
+      2768 +          - 1.0 / t0 + 2.0 / mt - (y[i] + t0) / (mt * mt);   
+      2769 +      }                                                      
+      2770 +      if (info == 0.0 || !isfinite(info)) break;             
+      2771 +      del = score / info;                                    
+      2772 +      t0 += del;                                             
+      2773      }
+      2750 -    if (info == 0.0 || !isfinite(info)) break;               
+      2751 -    NV del = score / info;                                   
+      2752 -    t0 += del;                                               
+      2753 -    if (fabs(del) < eps * (fabs(t0) + eps)) break;           
+      2774    }
+      2775    if (!(t0 > 0.0) || !isfinite(t0)) t0 = 1e-8;
+      2776    return t0;
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Large improvement — theta from 8e-7 to 1.3e-9, coefficients from 8e-6 to
+  7e-11. Let me test across a range of dispersion regimes, since near-Poisson
+  data is the risky case:
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● Everything ≤6e-9 except nb_nearpois, where theta ≈ 58,000. Let me check
+  whether theta is even identified there:
+
+  Ran 1 shell command (ctrl+o to expand)
+● Decisive: MASS itself warns "iteration limit reached" there, and theta's own
+  standard error is 903,511 against an estimate of 58,547 — the parameter is
+  unidentified, and a 4e-6 shift in it moves the log-likelihood by 1e-10. The
+  coefficients still agree to 1e-10. Now the suite:
+
+  Searched for 1 pattern, ran 1 shell command (ctrl+o to expand)
+
+● The existing negbin tests use 1e-3…1e-5 tolerances. Let me check how tight
+  they can now be, then add a proper MASS regression block:
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● Agreement is now 3e-16 on coefficients and ~1e-11 on theta. Let me tighten the
+  existing negbin tests to full precision and add a MASS regression block:
+
+  Searched for 1 pattern, ran 1 shell command (ctrl+o to expand)
+
+● Now let me tighten the existing negbin tests and add the MASS regression
+  block:
+
+  Ran 3 shell commands (ctrl+o to expand)
+
+● That reflects the theta lag: the reported coefficients come from the fit at
+  the previous theta, in MASS too. Let me verify that's faithful:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Faithful — MASS shows the same 5.5e-9 gap. My assertion's premise was wrong.
+  Let me reframe it as a real cross-check of the fixed-theta path:
+
+  Ran 3 shell commands (ctrl+o to expand)
+
+● Two different things. The 1.4e-9 is just my tolerance being marginally tight,
+  but the 4% SE gap is real — R's summary.glm estimates dispersion for a
+  negative.binomial family, whereas glm.nb fixes it at 1. Let me confirm:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● With dispersion fixed at 1 (glm.nb's convention), R gives SE x =
+  0.072386055935695803. Let me check glm's fixed-theta path against that:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Same iteration count, but SE relative error (5.6e-7) far exceeds coefficient
+  error (1e-9) — the same signature as the earlier bug. Let me find which
+  iterate's weights each is using:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● The replication's iteration-4 weights reproduce glm's SE exactly (4e-16) — so
+  R must be using something else. Let me look at what R actually stored:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Found another real difference: MASS's negative.binomial family has its own
+  initialize, not Poisson's. Let me confirm:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Update(LikeR.xs)
+  ⎿  Added 11 lines, removed 1 line
+      11960        deviance_old += dev;
+      11961      } else if (log_link) {
+      11962        if (Y[i] < 0.0) croak("glm: poisson/negbin family requ
+             ires a non-negative response");
+      11963 -      mu[i] = Y[i] + 0.1;                                   
+      11963 +      /* Each family's own mustart. R's poisson()$initialize
+            + sets y + 0.1,                                              
+      11964 +       * but MASS's negative.binomial()$initialize sets y + 
+            +(y == 0)/6 --                                               
+      11965 +       * the observed count itself wherever it is positive. 
+            +Starting a                                                  
+      11966 +       * negative-binomial fit from the Poisson value instea
+            +d walks a                                                   
+      11967 +       * different sequence of iterates, and since the stand
+            +ard errors come                                             
+      11968 +       * from the penultimate one, that showed up as standar
+            +d errors 6e-7                                               
+      11969 +       * out from R while the coefficients agreed to 1e-9. g
+            +lm.nb's own                                                 
+      11970 +       * first pass IS Poisson, so it keeps y + 0.1; its lat
+            +er passes are                                               
+      11971 +       * warm started and use no mustart at all. */         
+      11972 +      mu[i]  = use_negbin ? (Y[i] + (Y[i] == 0.0 ? 1.0 / 6.0
+            + : 0.0))                                                    
+      11973 +                          : (Y[i] + 0.1);                   
+      11974        eta[i] = log(mu[i]);
+      11975        deviance_old += use_negbin ? dev_negbin(Y[i], mu[i], t
+             heta) : dev_poisson(Y[i], mu[i]);
+      11976      } else {
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Now 2e-15 agreement. Let me re-run the full negbin battery to confirm the
+  alternation didn't regress:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Unchanged and good. Now let me fix the test block I broke and run everything:
+  Ran 1 shell command (ctrl+o to expand)
+
+● Let me verify leaks and that poisson/binomial didn't regress from the negbin
+  work:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● No leaks. One thing to tighten: I allocate nb_mu_prev before the response
+  validation, so a negative-count croak would leak it. Let me allocate it lazily
+  instead:
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● Now let me document the fix:
+
+● Update(README.md)
+  ⎿  Added 45 lines
+      5963    genuinely divergent step producing a non-finite deviance wa
+            s kept rather than
+      5964    truncated. That is now the one case that does trigger halvi
+            ng.
+      5965  
+      5966 +- **The negative-binomial theta alternation stopped early and
+           + started from the                                            
+      5967 +  wrong place.** `MASS::glm.nb` does not simply maximise over
+           + theta; it alternates                                        
+      5968 +  between an IRLS fit at the current theta and a fresh ML est
+           +imate of theta at the                                        
+      5969 +  current fitted means, and which fit it lands on depends on 
+           +the schedule. Four                                           
+      5970 +  details of that schedule were wrong here, and all four are 
+           +now reproduced:                                              
+      5971 +                                                             
+      5972 +  - The alternation stopped on a relative test of the log-lik
+           +elihood alone,                                               
+      5973 +    `|dll| < 1e-7 * (|ll| + 0.1)`. `glm.nb` requires         
+      5974 +    `(|dLm| / d1 + |dtheta|) < 1e-8` with `d1 = sqrt(2 * max(
+           +1, df.residual))`                                            
+      5975 +    taken from its Poisson pass — theta itself has to have se
+           +ttled, not just the                                          
+      5976 +    log-likelihood. The old test was satisfied roughly 2e-5 o
+           +f log-likelihood                                             
+      5977 +    early, which left theta 8e-7 out and dragged the coeffici
+           +ents 8e-6 with it.                                           
+      5978 +  - The first pass now runs as a genuine **Poisson** fit, as 
+           +`glm.nb`'s does,                                             
+      5979 +    rather than a negative-binomial fit at a large stand-in t
+           +heta. That pass                                              
+      5980 +    supplies both the first theta and the `d1` above.        
+      5981 +  - Later passes are **warm started** from the previous pass'
+           +s means                                                      
+      5982 +    (`etastart = log(mu)`), so they converge to the fit `glm.
+           +nb` reaches rather                                           
+      5983 +    than to the same optimum approached from a cold start.   
+      5984 +  - Theta is re-estimated at the means each pass **started** 
+           +from, not the ones it                                        
+      5985 +    produced: `glm.nb` calls `theta.ml(Y, mu)` and only then 
+           +reassigns                                                    
+      5986 +    `mu <- fit$fitted.values`. `theta.ml` itself now also use
+           +s MASS's own stopping                                        
+      5987 +    rule, an absolute Newton-step tolerance of `.Machine$doub
+           +le.eps^0.25`.                                                
+      5988 +                                                             
+      5989 +  Across eighteen fits spanning dispersion from theta 0.41 to
+           + theta 69000, theta                                          
+      5990 +  now agrees with `glm.nb` to 3.4e-9, coefficients to 5.8e-9,
+           + standard errors to                                          
+      5991 +  8.4e-10 and deviance to 1.3e-9 — previously 8e-7, 8e-6, 3e-
+           +6 and 6e-7. The one                                          
+      5992 +  exception is genuinely near-Poisson data, where theta is no
+           +t identified at all                                          
+      5993 +  (its own standard error exceeds the estimate, and `glm.nb`'
+           +s `theta.ml` reports                                         
+      5994 +  "iteration limit reached"); theta there agrees only to abou
+           +t 4e-6 relative,                                             
+      5995 +  while the coefficients still agree to 1.6e-10.             
+      5996 +                                                             
+      5997 +  A separate consequence: a negative-binomial fit with theta 
+           +supplied was                                                 
+      5998 +  starting from the Poisson `mustart` of `y + 0.1`, where R's
+      5999 +  `negative.binomial()$initialize` sets `y + (y == 0)/6`. Dif
+           +ferent starting                                              
+      6000 +  values walk different iterates, and since the standard erro
+           +rs come from the                                             
+      6001 +  penultimate one, that showed as standard errors 6e-7 from R
+           +'s while the                                                 
+      6002 +  coefficients agreed to 1e-9. Such fits now match R to 2e-15
+           +.                                                            
+      6003 +                                                             
+      6004 +  Note on that comparison: standard errors for a negative-bin
+           +omial fit hold the                                           
+      6005 +  dispersion at 1, which is what `glm.nb` and `summary.negbin
+           +` do. R's                                                    
+      6006 +  `summary.glm`, handed a `negative.binomial` family directly
+           +, instead *estimates*                                        
+      6007 +  the dispersion and prints standard errors scaled by its squ
+           +are root — 1.0839 on                                         
+      6008 +  one of the test data sets, so about 4% larger. Compare agai
+           +nst                                                          
+      6009 +  `summary(fit, dispersion = 1)` to see the values this modul
+           +e reports.                                                   
+      6010 +                                                             
+      6011  ## 0.29 2026-08-03 CDT
+      6012  
+      6013  ### t_test
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● Fixed. It turned out to be two distinct defects, and MASS's algorithm is
+  subtler than "maximise the likelihood over theta".
+
+  Diagnosis
+
+  glm.nb alternates — an IRLS fit at the current theta, then a fresh ML estimate
+  of theta at the current means — and which fit it lands on depends entirely on
+  the schedule. Four things about that schedule were wrong:
+
+  1. The stopping rule. glm used a relative test on the log-likelihood alone,
+  |dll| < 1e-7·(|ll|+0.1). MASS requires (|dLm|/d1 + |dtheta|) < 1e-8 with d1 = 
+  sqrt(2·max(1, df.residual)) from its Poisson pass — theta itself must have
+  settled, not just the likelihood. The old test fired ~2e-5 of log-likelihood
+  early. This was the dominant cause.
+  2. The first pass must be a genuine Poisson fit, not a negative-binomial fit
+  at theta = 1e6. It supplies both the first theta and d1.
+  3. Later passes must be warm-started from the previous means (etastart = 
+  log(mu)), not cold-started.
+  4. Theta is re-estimated at the means each pass started from — glm.nb calls
+  theta.ml(Y, mu) and only then reassigns mu <- fit$fitted.values. That lag is
+  easy to miss and moves theta in the eighth digit. theta.ml now also uses
+  MASS's own absolute step tolerance of .Machine$double.eps^0.25.
+
+  Results, over 18 fits spanning theta 0.41 → 69,000
+
+  ┌─────────────────┬────────┬─────────┐
+  │                 │ before │  after  │
+  ├─────────────────┼────────┼─────────┤
+  │ theta           │ 8e-7   │ 3.4e-9  │
+  ├─────────────────┼────────┼─────────┤
+  │ coefficients    │ 8e-6   │ 5.8e-9  │
+  ├─────────────────┼────────┼─────────┤
+  │ standard errors │ 3e-6   │ 8.4e-10 │
+  ├─────────────────┼────────┼─────────┤
+  │ deviance        │ 6e-7   │ 1.3e-9  │
+  └─────────────────┴────────┴─────────┘
+
+  A second defect this surfaced
+
+  While testing I found that a negbin fit with theta supplied started from
+  Poisson's mustart (y + 0.1), where R's negative.binomial()$initialize uses y +
+  (y == 0)/6. Different starting values walk different iterates, and since
+  standard errors come from the penultimate one, SEs were 6e-7 out while
+  coefficients agreed to 1e-9 — the same signature as the poisson bug. Those 
+  fits now match R to 2e-15.
+
+  Two things worth knowing
+
+  The near-Poisson case is not fixable and shouldn't be. For Poisson-drawn
+  counts, theta agrees only to ~4e-6 relative. But theta is unidentified there:
+  its own standard error is 903,511 against an estimate of 58,547, a 10% change
+  in theta moves the log-likelihood by 7e-5, and glm.nb's theta.ml reports
+  "iteration limit reached" — MASS's own value is an unconverged iterate. The
+  coefficients still agree to 1.6e-10. I've documented it rather than chasing
+  it.
+
+  A dispersion convention, verified not assumed. My first cross-check against
+  glm(family = negative.binomial(theta)) showed a 4% SE gap. That's because
+  summary.glm, handed a negative.binomial family, estimates the dispersion
+  (1.0839 on that data) and scales SEs by its square root, whereas
+  glm.nb/summary.negbin fix it at 1. glm follows the glm.nb convention; against
+  summary(fit, dispersion = 1) it agrees to 2e-15. I noted this in the test and
+  the docs since it's a live trap for anyone comparing.
+
+  I also had to correct one of my own test assertions: I'd asserted that
+  refitting at the reported theta reproduces the alternation's coefficients. It
+  doesn't — the returned fit predates the final theta update — and I confirmed
+  MASS shows the same 5.5e-9 gap, so the test now pins that behaviour instead.
+
+  Tests
+
+  t/glm_families.t: existing negbin reference values replaced with 17-digit MASS
+  values and tolerances tightened from 1e-3…1e-5 to 1e-11…1e-8; new blocks for
+  moderate overdispersion, the near-Poisson regime, and the fixed-theta path.
+
+  Full suite: 110 files, 11485 tests, all pass. No SV leaks across
+  ML/fixed-theta/croak paths, RSS flat over 12k negbin fits (I moved the new
+  allocation to first use so a bad-response croak can't leak it). Poisson,
+  binomial and gaussian are unchanged from the previous fix — re-verified at
+  5e-12 / 1.9e-9 / 1.6e-14. Changelog and POD updated.
+
+✻ Brewed for 20m 54s
+
+※ recap: Goal was validating Stats::LikeR's lm against R and scipy; that grew into fixing four bugs in lm, glm, and predict, all now done with 11485 tests passing. Nothing is pending, so the next step is yours: review or commit. (disable recaps in /config)
