@@ -10914,6 +10914,11 @@ a generated duplicate column name.
 
 It also allows configuring the test type (C<< type =E<gt> 'one.sample' >>, C<'two.sample'>, C<'paired'>) and alternative hypothesis (C<< alternative =E<gt> 'one.sided' >>). You can also pass C<< strict =E<gt> 1 >> to strictly evaluate both tails of the distribution.
 
+Exactly one of C<n>, C<delta>, C<sd>, C<power> and C<sig_level> must be C<undef>: that
+is the quantity solved for. C<sd> and C<sig_level> have defaults, so solving for
+either means passing it explicitly as C<undef>; C<power> has no default, so
+omitting it entirely is how you ask for the power.
+
 
 
 =begin html
@@ -10932,13 +10937,13 @@ It also allows configuring the test type (C<< type =E<gt> 'one.sample' >>, C<'tw
   <td><code>n</code></td>
   <td>Float</td>
   <td><code>undef</code></td>
-  <td>Number of observations (per group for two-sample, pairs for paired).</td>
+  <td>Number of observations (per group for two-sample, pairs for paired). Must be at least 2.</td>
 </tr>
 <tr>
   <td><code>delta</code></td>
   <td>Float</td>
   <td><code>undef</code></td>
-  <td>True difference in means.</td>
+  <td>True difference in means. Used as <code>abs(delta)</code> when the test is two-sided.</td>
 </tr>
 <tr>
   <td><code>sd</code></td>
@@ -10950,13 +10955,13 @@ It also allows configuring the test type (C<< type =E<gt> 'one.sample' >>, C<'tw
   <td><code>sig_level</code></td>
   <td>Float</td>
   <td>0.05</td>
-  <td>Significance level (Type I error probability). Also accepts <code>sig.level</code>.</td>
+  <td>Significance level (Type I error probability), in <code>[0, 1]</code>. Also accepts <code>sig.level</code>.</td>
 </tr>
 <tr>
   <td><code>power</code></td>
   <td>Float</td>
   <td><code>undef</code></td>
-  <td>Power of test (1 minus Type II error probability).</td>
+  <td>Power of test (1 minus Type II error probability), in <code>[0, 1]</code>.</td>
 </tr>
 <tr>
   <td><code>type</code></td>
@@ -10979,13 +10984,59 @@ It also allows configuring the test type (C<< type =E<gt> 'one.sample' >>, C<'tw
 <tr>
   <td><code>tol</code></td>
   <td>Float</td>
-  <td>~<code>1.22e-4</code></td>
-  <td>Numerical tolerance used for the internal root-finding algorithm.</td>
+  <td><code>1e-12</code></td>
+  <td>Relative tolerance on the root when solving for <code>n</code>, <code>delta</code>, <code>sd</code> or <code>sig_level</code>.</td>
 </tr>
 </tbody>
 </table>
 
 =end html
+
+The result is a hashref carrying C<n>, C<delta>, C<sd>, C<sig.level>, C<power>,
+C<alternative>, C<method>, and -- for C<two.sample> and C<paired> -- C<note>, the same
+fields R's C<power.t.test> returns.
+
+=head3 Accuracy
+
+The power itself is computed from a noncentral I<t> CDF and agrees with R's
+C<power.t.test> and with C<scipy.stats.nct.sf> to about C<1e-13> relative.
+
+The four inverse problems are solved by regula falsi with the Illinois
+correction, driven to the relative C<tol> above rather than to the width of the
+bracket. R solves them with C<uniroot> at a default tolerance of
+C<.Machine$double.eps^0.25> (C<1.22e-4>) measured on the bracket width, which
+leaves R's own C<n>, C<delta>, C<sd> and C<sig.level> good to four or five
+significant figures; C<power_t_test> matches high-precision
+C<scipy.optimize.brentq> roots to about C<1e-13> instead. Expect agreement with R
+to R's precision, not to this one.
+
+Over 1200 random cases spanning all five solved-for parameters, C<n> from 2 to
+5000, C<delta> from 0.01 to 5, C<sd> from 0.05 to 20 and C<sig_level> from 0.001 to
+0.2, 1059 of the 1080 that all three implementations answer land within C<1e-8>
+relative of the high-precision scipy value; R lands 379 of them there, and is
+past C<1e-3> on 56.
+
+One corner is weaker than R: B<fewer than three observations in a one-sample or
+paired test> (C<< 1 E<lt> df E<lt> 2 >>), where the noncentral I<t> CDF is a Simpson sum over
+a chi density carrying C<w**(df-1)>, whose derivative is infinite at C<w = 0>. No
+uniform grid resolves that, and about five digits go with it -- every one of the
+21 random cases above C<1e-8> is in this range. R uses the AS 243 series there
+instead of quadrature. At C<df == 1> exactly (C<< n =E<gt> 2 >>, one-sample or paired) the
+factor is C<w**0> and full accuracy returns.
+
+=head3 Errors
+
+Dies on: an odd trailing argument list; an unknown argument; anything other than
+exactly one of C<n>, C<delta>, C<sd>, C<power> and C<sig_level> left C<undef>; a
+C<sig_level> or C<power> outside C<[0, 1]>; an C<n> below 2 (there is no variance to
+estimate below two observations); a negative C<sd>; an unrecognised C<type> or
+C<alternative>; solving for C<sd> when C<delta> is 0, or for C<delta> when C<sd> is
+not positive; and a target that the requested parameter cannot reach at all --
+for instance a C<power> below C<sig_level / tside>, which no C<sd> attains, or one
+that would need a C<sig_level> above 1. R answers those last cases with a bracket
+endpoint (a C<sig.level> of 1.07, an C<n> of 1.4) or with C<uniroot>'s own "no sign
+change found"; C<power_t_test> names the range it searched and the target it could
+not reach.
 
 
 

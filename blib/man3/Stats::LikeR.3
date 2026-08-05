@@ -4679,6 +4679,59 @@ a generated duplicate column name.
 .Ve
 .PP
 It also allows configuring the test type (\f(CW\*(C`type => \*(Aqone.sample\*(Aq\*(C'\fR, \f(CW\*(Aqtwo.sample\*(Aq\fR, \f(CW\*(Aqpaired\*(Aq\fR) and alternative hypothesis (\f(CW\*(C`alternative => \*(Aqone.sided\*(Aq\*(C'\fR). You can also pass \f(CW\*(C`strict => 1\*(C'\fR to strictly evaluate both tails of the distribution.
+.PP
+Exactly one of \f(CW\*(C`n\*(C'\fR, \f(CW\*(C`delta\*(C'\fR, \f(CW\*(C`sd\*(C'\fR, \f(CW\*(C`power\*(C'\fR and \f(CW\*(C`sig_level\*(C'\fR must be \f(CW\*(C`undef\*(C'\fR: that
+is the quantity solved for. \f(CW\*(C`sd\*(C'\fR and \f(CW\*(C`sig_level\*(C'\fR have defaults, so solving for
+either means passing it explicitly as \f(CW\*(C`undef\*(C'\fR; \f(CW\*(C`power\*(C'\fR has no default, so
+omitting it entirely is how you ask for the power.
+.PP
+The result is a hashref carrying \f(CW\*(C`n\*(C'\fR, \f(CW\*(C`delta\*(C'\fR, \f(CW\*(C`sd\*(C'\fR, \f(CW\*(C`sig.level\*(C'\fR, \f(CW\*(C`power\*(C'\fR,
+\&\f(CW\*(C`alternative\*(C'\fR, \f(CW\*(C`method\*(C'\fR, and \-\- for \f(CW\*(C`two.sample\*(C'\fR and \f(CW\*(C`paired\*(C'\fR \-\- \f(CW\*(C`note\*(C'\fR, the same
+fields R\*(Aqs \f(CW\*(C`power.t.test\*(C'\fR returns.
+.PP
+\fIAccuracy\fR
+.IX Subsection "Accuracy"
+.PP
+The power itself is computed from a noncentral \fIt\fR CDF and agrees with R\*(Aqs
+\&\f(CW\*(C`power.t.test\*(C'\fR and with \f(CW\*(C`scipy.stats.nct.sf\*(C'\fR to about \f(CW1e\-13\fR relative.
+.PP
+The four inverse problems are solved by regula falsi with the Illinois
+correction, driven to the relative \f(CW\*(C`tol\*(C'\fR above rather than to the width of the
+bracket. R solves them with \f(CW\*(C`uniroot\*(C'\fR at a default tolerance of
+\&\f(CW\*(C`.Machine$double.eps^0.25\*(C'\fR (\f(CW1.22e\-4\fR) measured on the bracket width, which
+leaves R\*(Aqs own \f(CW\*(C`n\*(C'\fR, \f(CW\*(C`delta\*(C'\fR, \f(CW\*(C`sd\*(C'\fR and \f(CW\*(C`sig.level\*(C'\fR good to four or five
+significant figures; \f(CW\*(C`power_t_test\*(C'\fR matches high\-precision
+\&\f(CW\*(C`scipy.optimize.brentq\*(C'\fR roots to about \f(CW1e\-13\fR instead. Expect agreement with R
+to R\*(Aqs precision, not to this one.
+.PP
+Over 1200 random cases spanning all five solved\-for parameters, \f(CW\*(C`n\*(C'\fR from 2 to
+5000, \f(CW\*(C`delta\*(C'\fR from 0.01 to 5, \f(CW\*(C`sd\*(C'\fR from 0.05 to 20 and \f(CW\*(C`sig_level\*(C'\fR from 0.001 to
+0.2, 1059 of the 1080 that all three implementations answer land within \f(CW1e\-8\fR
+relative of the high\-precision scipy value; R lands 379 of them there, and is
+past \f(CW1e\-3\fR on 56.
+.PP
+One corner is weaker than R: \fBfewer than three observations in a one\-sample or
+paired test\fR (\f(CW\*(C`1 < df < 2\*(C'\fR), where the noncentral \fIt\fR CDF is a Simpson sum over
+a chi density carrying \f(CW\*(C`w**(df\-1)\*(C'\fR, whose derivative is infinite at \f(CW\*(C`w = 0\*(C'\fR. No
+uniform grid resolves that, and about five digits go with it \-\- every one of the
+21 random cases above \f(CW1e\-8\fR is in this range. R uses the AS 243 series there
+instead of quadrature. At \f(CW\*(C`df == 1\*(C'\fR exactly (\f(CW\*(C`n => 2\*(C'\fR, one\-sample or paired) the
+factor is \f(CW\*(C`w**0\*(C'\fR and full accuracy returns.
+.PP
+\fIErrors\fR
+.IX Subsection "Errors"
+.PP
+Dies on: an odd trailing argument list; an unknown argument; anything other than
+exactly one of \f(CW\*(C`n\*(C'\fR, \f(CW\*(C`delta\*(C'\fR, \f(CW\*(C`sd\*(C'\fR, \f(CW\*(C`power\*(C'\fR and \f(CW\*(C`sig_level\*(C'\fR left \f(CW\*(C`undef\*(C'\fR; a
+\&\f(CW\*(C`sig_level\*(C'\fR or \f(CW\*(C`power\*(C'\fR outside \f(CW\*(C`[0, 1]\*(C'\fR; an \f(CW\*(C`n\*(C'\fR below 2 (there is no variance to
+estimate below two observations); a negative \f(CW\*(C`sd\*(C'\fR; an unrecognised \f(CW\*(C`type\*(C'\fR or
+\&\f(CW\*(C`alternative\*(C'\fR; solving for \f(CW\*(C`sd\*(C'\fR when \f(CW\*(C`delta\*(C'\fR is 0, or for \f(CW\*(C`delta\*(C'\fR when \f(CW\*(C`sd\*(C'\fR is
+not positive; and a target that the requested parameter cannot reach at all \-\-
+for instance a \f(CW\*(C`power\*(C'\fR below \f(CW\*(C`sig_level / tside\*(C'\fR, which no \f(CW\*(C`sd\*(C'\fR attains, or one
+that would need a \f(CW\*(C`sig_level\*(C'\fR above 1. R answers those last cases with a bracket
+endpoint (a \f(CW\*(C`sig.level\*(C'\fR of 1.07, an \f(CW\*(C`n\*(C'\fR of 1.4) or with \f(CW\*(C`uniroot\*(C'\fR\*(Aqs own "no sign
+change found"; \f(CW\*(C`power_t_test\*(C'\fR names the range it searched and the target it could
+not reach.
 .SS pnorm
 .IX Subsection "pnorm"
 The normal cumulative distribution function: the probability that a normal random variable is \f(CW\*(C`<= x\*(C'\fR. Ports R\*(Aqs \f(CW\*(C`pnorm\*(C'\fR.
