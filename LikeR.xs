@@ -80,6 +80,25 @@ sample__rand(size_t upper) {
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
+/* Where the standard normal's lower tail stops being a number a double can
+ * hold, and so the point past which this file stops asking erfc() for it.
+ *
+ * 0.5 * erfc(-x/sqrt(2)) reaches DBL_MIN at x = -37.5194 and its last
+ * subnormal just past -38.4674; R's pnorm() returns a flat 0 below that, as
+ * does scipy. erfc() takes and returns a double whatever perl's NV is, so
+ * nothing it says out here can be trusted -- and on i386, where a double is
+ * returned in an x87 register, what it says is not even 0: glibc spells
+ * erfc()'s underflow case as a product of two 1e-300 constants, formed in
+ * extended precision and handed back in st(0) still holding 1e-600. A perl
+ * whose NV is a double rounds that away on return; a perl built
+ * -Duselongdouble keeps it. glm's Wald p-value for |z| = 149 duly came back
+ * as 1e-600 from a 32-bit long-double smoker (CPAN Testers, perl
+ * 5.32.1-longdouble, i686-linux-ld) where every other build reported 0.
+ * Stopping short of the call gives every build the same answer, which is
+ * also R's and scipy's. */
+#define PNORM_LOWER_ZERO (-38.4674)   /* R's own cutoff, nmath/pnorm.c */
+NV approx_pnorm(NV x);                /* defined below, after the histogram code */
+
 // C helper for EXACT Non-central T-distribution CDF via Numerical Integration.
 // This perfectly replicates R's pt(..., ncp) exactness without requiring complex Beta functions.
 static NV exact_pnt(NV t, NV df, NV ncp) {
@@ -88,7 +107,6 @@ static NV exact_pnt(NV t, NV df, NV ncp) {
 	NV step = 1.0 / n_steps;
 	NV integral = 0.0, half_df = df / 2.0;
 	NV log_coef = log(2.0) + half_df * log(half_df) - lgamma(half_df);
-	NV root_half = 0.70710678118654752440; // 1 / sqrt(2)
 	for (unsigned short i = 1; i < n_steps; i++) {
 		NV u = i * step;
 		NV w = u / (1.0 - u);
@@ -97,7 +115,7 @@ static NV exact_pnt(NV t, NV df, NV ncp) {
 		NV M = exp(log_M);
 		// Exact Normal CDF using the C standard library's erfc function
 		NV z = t * w - ncp;
-		NV pnorm_val = 0.5 * erfc(-z * root_half);
+		NV pnorm_val = approx_pnorm(z);
 		NV weight = (i % 2 != 0) ? 4.0 : 2.0;
 		integral += weight * (pnorm_val * M / ((1.0 - u) * (1.0 - u)));
 	}
@@ -1705,6 +1723,8 @@ static void compute_hist_logic(NV *restrict x, size_t n, NV *restrict breaks, si
 
 // Standard Normal CDF approximation
 NV approx_pnorm(NV x) {
+	// Nothing erfc() returns this far out is a number: see PNORM_LOWER_ZERO
+	if (x <= PNORM_LOWER_ZERO) return 0.0;
 	return 0.5 * erfc(-x * 0.70710678118654752440); // 0.707... = 1/sqrt(2)
 }
 #ifndef M_SQRT1_2
@@ -12792,8 +12812,9 @@ PPCODE:
 				NV sig_val= 1.3822 + nn * (-0.77857  + nn * ( 0.062767  - nn * 0.0020322));
 				NV sigma  = exp(sig_val);
 				z = (-log(gamma - y) - mu) / sigma;
-				// Upper-tail probability P(Z > z): small W → large z → small p-value
-				p_val = 0.5 * erfc(z * M_SQRT1_2);
+				// Upper-tail probability P(Z > z): small W → large z → small
+				// p-value. pnorm(-z) is that tail exactly, by symmetry.
+				p_val = approx_pnorm(-z);
 			}
 		} else {
 			// Royston's branch for n >= 12 (AS R94, large-sample path)
@@ -12803,7 +12824,7 @@ PPCODE:
 			NV sig_val= -0.4803 + ln_n * (-0.082676 + ln_n * 0.0030302);
 			NV sigma  = exp(sig_val);
 			z = (y - mu) / sigma;
-			p_val = 0.5 * erfc(z * M_SQRT1_2);
+			p_val = approx_pnorm(-z);
 		}
 		// Clamp the p-value
 		if (p_val > 1.0) p_val = 1.0;
