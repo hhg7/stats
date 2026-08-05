@@ -19,14 +19,20 @@
 # the width of the bracket, which leaves R's own n, delta, sd and sig.level good
 # to four or five significant digits and no more. That is why `want` and `r` are
 # checked at different tolerances below -- R is not wrong here, just coarse, and
-# holding power_t_test() to R's coarseness would have hidden the two real bugs
-# these cases were written to pin down:
+# holding power_t_test() to R's coarseness would have hidden the real bugs these
+# cases were written to pin down:
 #
-#   1. exact_pnt() dropped the u = 0 term of its Simpson sum. That term is zero
-#      whenever df > 1, so it went unnoticed until df == 1 exactly -- which is
-#      power_t_test(n => 2, type => 'one.sample'), where the missing term cost
-#      7e-7 of absolute power. Guarded here by the n => 2 one-sample rows.
-#   2. The four inverse solvers were plain bisection over a fixed bracket with
+#   1. The quadrature behind the noncentral t CDF put a fixed grid on
+#      u = w/(1+w). The chi density it integrates carries w**(df-1), whose
+#      derivatives blow up at w = 0 unless df is a whole number, and its width
+#      shrinks as 1/sqrt(2 df) while the grid does not -- so accuracy fell apart
+#      at both ends: two good digits at df = 1.2 with sig_level = 1e-4, and at
+#      df = 8e7 a power of 0.138 where delta = 0 forces sig_level/2 = 0.025.
+#      Guarded by the low-df and large-df blocks below.
+#   2. The power was formed as 1 - P(T <= t), losing most of its digits to
+#      cancellation when the power itself was small. Guarded by the ~1e-3 power
+#      case below.
+#   3. The four inverse solvers were plain bisection over a fixed bracket with
 #      no sign-change test, so an unreachable target came back as the bracket
 #      endpoint wearing the requested power: solving for sd with power => 0.01
 #      returned sd = delta * 1e7, and solving for sd with a negative delta
@@ -60,16 +66,6 @@ sub is_rel {
 # relative -- 1e4 tighter than R manages on the inverse problems, and still
 # three decades looser than the ~1e-13 actually observed.
 my $EPS_SCIPY = 1e-9;
-# ...except below 2 degrees of freedom, i.e. fewer than three observations in a
-# one-sample or paired test. The noncentral t CDF here is a Simpson sum over the
-# scaled chi density, which carries w**(df-1): for 1 < df < 2 that has an
-# infinite derivative at w = 0 and no uniform grid resolves it, costing roughly
-# five digits. (At df == 1 exactly the factor is w**0 and the accuracy comes
-# back, which the n => 2 one-sample cases below check.) R is better in this
-# corner, using the AS 243 series rather than quadrature; it is also two to five
-# decades worse than this everywhere else, and 2 < n < 3 in a one-sample t test
-# is not a study design. Held to 1e-5 rather than quietly widened for everyone.
-my $EPS_SCIPY_LOW_DF = 1e-5;
 # `r` is R's own answer, and on the forward problem it is exact on both sides.
 my $EPS_R_POWER = 1e-9;
 # On the inverse problems all R promises is uniroot()'s bracket tolerance, which
@@ -299,9 +295,7 @@ for my $c (@cases) {
 		($c->{strict} ? 'strict' : ()),
 		map { "$_=$c->{$_}" } grep { defined $c->{$_} } qw(n delta sd sig_level power);
 
-	my $df = ($got->{n} - 1) * ($c->{type} eq 'two.sample' ? 2 : 1);
-	is_rel($got->{$key}, $c->{want},
-		($df > 1 && $df < 2) ? $EPS_SCIPY_LOW_DF : $EPS_SCIPY, "scipy: $label");
+	is_rel($got->{$key}, $c->{want}, $EPS_SCIPY, "scipy: $label");
 	if ($c->{solve} eq 'power') {
 		is_rel($got->{$key}, $c->{r}, $EPS_R_POWER, "R: $label");
 	} else {
@@ -320,8 +314,33 @@ for my $c (@cases) {
 }
 
 #-------------------------------------------------------------
-# The df == 1 case, called out because it is where exact_pnt()
-# used to lose its sixth digit. R: 0.090579718650718455
+# low df: the chi density carries w**(df-1), so for any df that
+# is not a whole number some derivative of it is infinite at
+# w = 0 and Simpson has nothing to work with. Substituting
+# w = z**m moves the measure to z**(m*df - 1) and buys back the
+# bounded derivatives; before that these lost up to fourteen
+# digits, worst where the critical value is largest.
+#-------------------------------------------------------------
+for my $t (
+	# n, type, delta, sd, sig_level, scipy nct.sf, old error
+	[2.182, 'one.sample', 0.4088, 0.9733,  0.001, 0.0010254836902950423, '7.4e-4'],
+	[2.192, 'one.sample', 0.5065, 17.1792, 0.05,  0.026470310425782448,  '1.8e-5'],
+	[2.05,  'one.sample', 0.5,    1.0,     0.05,  0.054244180763855739,  '6.9e-5'],
+	[2.5,   'one.sample', 0.5,    1.0,     0.05,  0.065361004112922894,  '2.5e-7'],
+	[2.9,   'one.sample', 0.5,    1.0,     0.05,  0.076141938646801341,  '5.5e-10'],
+	[2.2,   'one.sample', 0.4,    1.0,     1e-4,  0.00010017015505987954, '6.0e-3'],
+) {
+	my ($n, $type, $delta, $sd, $sig, $want, $was) = @$t;
+	my $p = power_t_test(n => $n, delta => $delta, sd => $sd, sig_level => $sig,
+		type => $type, power => undef)->{power};
+	is_rel($p, $want, 1e-12,
+		sprintf('low df: n = %s, sig_level = %s (was off by %s)', $n, $sig, $was));
+}
+
+#-------------------------------------------------------------
+# df == 1 exactly, where w**(df-1) is w**0 and the old grid was
+# accurate too -- kept because it is the boundary of the case
+# above. R: 0.090579718650718455
 #-------------------------------------------------------------
 for my $type ('one.sample', 'paired') {
 	my $r = power_t_test(n => 2, delta => 1, sd => 1, sig_level => 0.05,
@@ -351,7 +370,12 @@ for my $n (1e2, 999, 1001, 1e4, 1e6, 1e7, 4e7, 1e8) {
 			my $p = power_t_test(n => $n, delta => 0, sd => 1, sig_level => $sig,
 				type => $type, power => undef)->{power};
 			# delta == 0 makes the noncentrality 0, so the power is exactly the
-			# two-sided rejection rate under the null.
+			# two-sided rejection rate under the null. Held at 1e-6 only because
+			# of the critical value, not the CDF: past df ~ 1e7 the limit is
+			# qt_tail(), which inverts incbeta() at x = 1 - 5e-8 with a = 4e7,
+			# right at the edge of where its continued fraction converges. The
+			# observed drift is 1.3e-11 at n = 1e6, 1.0e-8 at 4e7 and 1.5e-7 at
+			# 1e8; exact_pnt() itself is exact here (see the note in LikeR.xs).
 			is_rel($p, $sig / 2, 1e-6,
 				"delta => 0 gives sig_level/2 at n = $n, sig_level = $sig, $type");
 		}

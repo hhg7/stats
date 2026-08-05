@@ -4189,17 +4189,21 @@ to R's precision, not to this one.
 
 Over 1200 random cases spanning all five solved-for parameters, `n` from 2 to
 5000, `delta` from 0.01 to 5, `sd` from 0.05 to 20 and `sig_level` from 0.001 to
-0.2, 1059 of the 1080 that all three implementations answer land within `1e-8`
+0.2, 1078 of the 1080 that all three implementations answer land within `1e-8`
 relative of the high-precision scipy value; R lands 379 of them there, and is
-past `1e-3` on 56.
+past `1e-3` on 56. Neither of the two remaining is a case where R does better:
+one solves a `sig_level` of `5.9e-10` to `1.3e-5` relative (`7.7e-15` absolute)
+where R returns its bracket endpoint and is 83% out, and the other is `3.4e-8`
+where R is out by a factor of 300.
 
-One corner is weaker than R: **fewer than three observations in a one-sample or
-paired test** (`1 < df < 2`), where the noncentral *t* CDF is a Simpson sum over
-a chi density carrying `w**(df-1)`, whose derivative is infinite at `w = 0`. No
-uniform grid resolves that, and about five digits go with it -- every one of the
-21 random cases above `1e-8` is in this range. R uses the AS 243 series there
-instead of quadrature. At `df == 1` exactly (`n => 2`, one-sample or paired) the
-factor is `w**0` and full accuracy returns.
+The one place R is still ahead is **df past about 1e7** -- 500,000 or more
+observations per group -- where it holds `1e-14` against this `1e-8`. What is
+left there is not the noncentral *t* CDF, which is exact to `3e-16` in that range,
+but the critical value: `qt_tail` inverts `incbeta` at `x = 1 - 5e-8` with
+`a = 4e7`, right at the edge of where its continued fraction converges. That
+routine is shared with `t_test`, `cor_test`, `var_test` and the rest, so it is
+left alone here rather than retuned for this one caller. The drift is `1.3e-11`
+at `n = 1e6`, `1.0e-8` at `4e7` and `1.5e-7` at `1e8`.
 
 ### Errors
 
@@ -5951,19 +5955,27 @@ fixed long-double bug https://www.cpantesters.org/cpan/report/506975f6-906a-11f1
 covering all five solved-for parameters, all three types, both alternatives and
 `strict`. Three fixes came out of it:
 
- - The Simpson sum behind the noncentral *t* CDF was missing its `u = 0`
-   endpoint. That term is zero whenever the degrees of freedom exceed 1, so it
-   only showed at `df == 1` exactly -- `power_t_test(n => 2, type =>
-   'one.sample')` -- where it cost 7e-7 of absolute power. `nu` is now also
-   floored the way R floors it, per sample rather than in total.
- - The same sum put a fixed 30000-step grid on `u = w/(1+w)`, while the chi
-   density it integrates has standard deviation `1/sqrt(2*df)` and so narrows
-   without bound. Past `df` of about 1e7 the grid stepped clean over the peak:
-   `power_t_test(n => 4e7, delta => 0)` returned 0.138 where the answer can only
-   be `sig_level/2`, and a large-cohort `n` solved 9% low. Above `df` of 1e3 the
-   steps now go on `w` across +/- 12 standard deviations of the mode, with the
-   chi normalisation taken from Stirling's series to keep the peak height from
-   cancelling away.
+ - The Simpson sum behind the noncentral *t* CDF put a fixed 30000-step grid on
+   `u = w/(1+w)`, and the chi density it integrates defeats that at both ends.
+   The density carries `w**(df-1)`, so unless `df` is a whole number some
+   derivative of it is infinite at `w = 0` and Simpson's error bound does not
+   hold: two good digits at `df = 1.2` with `sig_level = 1e-4`, five at
+   `df = 1.2`, nine at `df = 1.8`. Substituting `w = z**m`, with `m` chosen so
+   that `m*df - 1 >= 3`, restores the bounded derivatives and brings all of
+   those to machine precision. It also puts the origin's contribution at zero,
+   which subsumes a separate bug: the sum had been dropping its `u = 0` endpoint
+   term, worth 7e-7 of absolute power at `df == 1`. `nu` is now also floored the
+   way R floors it, per sample rather than in total.
+ - The same density has standard deviation `1/sqrt(2*df)` and so narrows without
+   bound, while the grid did not. Past `df` of about 1e7 the steps went clean
+   over the peak: `power_t_test(n => 4e7, delta => 0)` returned 0.138 where the
+   answer can only be `sig_level/2`, and a large-cohort `n` solved 9% low. Above
+   `df` of 1e3 the steps now go on `w` across +/- 12 standard deviations of the
+   mode, with the chi normalisation taken from Stirling's series to keep the peak
+   height from cancelling away; and above 4e5, where those log terms cancel too
+   hard for any grid to help, the Abramowitz & Stegun 26.7.10 asymptotic form
+   takes over -- the same formula, at the same cut-off, that R's `pnt.c` uses.
+   That is also 25 times quicker than integrating.
  - The power was formed as `1 - P(T <= t)`, which loses most of its digits to
    cancellation when the power is small. It is now integrated as the upper tail
    directly.

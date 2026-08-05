@@ -11012,17 +11012,21 @@ to R's precision, not to this one.
 
 Over 1200 random cases spanning all five solved-for parameters, C<n> from 2 to
 5000, C<delta> from 0.01 to 5, C<sd> from 0.05 to 20 and C<sig_level> from 0.001 to
-0.2, 1059 of the 1080 that all three implementations answer land within C<1e-8>
+0.2, 1078 of the 1080 that all three implementations answer land within C<1e-8>
 relative of the high-precision scipy value; R lands 379 of them there, and is
-past C<1e-3> on 56.
+past C<1e-3> on 56. Neither of the two remaining is a case where R does better:
+one solves a C<sig_level> of C<5.9e-10> to C<1.3e-5> relative (C<7.7e-15> absolute)
+where R returns its bracket endpoint and is 83% out, and the other is C<3.4e-8>
+where R is out by a factor of 300.
 
-One corner is weaker than R: B<fewer than three observations in a one-sample or
-paired test> (C<< 1 E<lt> df E<lt> 2 >>), where the noncentral I<t> CDF is a Simpson sum over
-a chi density carrying C<w**(df-1)>, whose derivative is infinite at C<w = 0>. No
-uniform grid resolves that, and about five digits go with it -- every one of the
-21 random cases above C<1e-8> is in this range. R uses the AS 243 series there
-instead of quadrature. At C<df == 1> exactly (C<< n =E<gt> 2 >>, one-sample or paired) the
-factor is C<w**0> and full accuracy returns.
+The one place R is still ahead is B<df past about 1e7> -- 500,000 or more
+observations per group -- where it holds C<1e-14> against this C<1e-8>. What is
+left there is not the noncentral I<t> CDF, which is exact to C<3e-16> in that range,
+but the critical value: C<qt_tail> inverts C<incbeta> at C<< x = 1 - 5e-8 >> with
+C<a = 4e7>, right at the edge of where its continued fraction converges. That
+routine is shared with C<t_test>, C<cor_test>, C<var_test> and the rest, so it is
+left alone here rather than retuned for this one caller. The drift is C<1.3e-11>
+at C<< n = 1e6 >>, C<1.0e-8> at C<4e7> and C<1.5e-7> at C<1e8>.
 
 =head3 Errors
 

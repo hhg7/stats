@@ -99,14 +99,31 @@ sample__rand(size_t upper) {
 #define PNORM_LOWER_ZERO (-38.4674)   /* R's own cutoff, nmath/pnorm.c */
 NV approx_pnorm(NV x);                /* defined below, after the histogram code */
 
-// C helper for EXACT Non-central T-distribution CDF via Numerical Integration.
-// This perfectly replicates R's pt(..., ncp) exactness without requiring complex Beta functions.
-/* Threshold between exact_pnt()'s two quadratures. Below it the chi density is
- * broad enough for the u = w/(1+w) grid; above it the density is a narrow spike
- * and the grid has to be laid on w directly. 1e3 is comfortably inside both
- * regimes: the u-grid still holds ~1e-10 there, and the w-grid needs df/2 > 500
- * for its Stirling series to be good to 4e-14. */
+// C helper for the non-central T-distribution CDF: quadrature over the scaled
+// chi density up to PNT_NORMAL_DF, an asymptotic form above it. Matches R's
+// pt(..., ncp) without needing the non-central beta function.
+/* Thresholds between exact_pnt()'s three regimes. Below PNT_LARGE_DF the chi
+ * density is broad enough to integrate over its whole support; above it the
+ * density is a narrow spike and the steps have to be packed around the mode.
+ * 1e3 suits both: the support integral still holds ~2e-13 there, and the spike
+ * integral needs df/2 > 500 for its Stirling series to be good to 4e-14. Past
+ * PNT_NORMAL_DF no quadrature is worth running -- see the asymptotic form in
+ * exact_pnt(). That second cut-off is R's, from nmath/pnt.c; the first has no
+ * counterpart there, R using one series throughout. */
 #define PNT_LARGE_DF 1.0e3
+#define PNT_NORMAL_DF 4.0e5
+
+/* Integer power by squaring, for the w = z^m substitution below: m is a small
+ * integer, and pow() would neither be exact at z^4 nor as quick. */
+static NV pow_uint(NV base, unsigned int e) {
+	NV r = 1.0;
+	while (e) {
+		if (e & 1u) r *= base;
+		base *= base;
+		e >>= 1u;
+	}
+	return r;
+}
 
 /* Scaled chi log-density of W = sqrt(chi2_df / df) at its mode, w = 1:
  *
@@ -133,24 +150,36 @@ static NV chi_log_peak(NV half_df) {
  * subtracting a lower tail of 0.99897 from 1 left only four good digits of it. */
 static NV exact_pnt(NV t, NV df, NV ncp, bool upper) {
 	if (df <= 0.0) return 0.0;
-	unsigned short int n_steps = 30000;
-	NV step = 1.0 / n_steps;
-	NV integral = 0.0, half_df = df / 2.0;
-	NV log_coef = log(2.0) + half_df * log(half_df) - lgamma(half_df);
+	const unsigned int n_steps = 30000;            /* even, for Simpson */
+	NV integral = 0.0;
+	const NV half_df = df / 2.0;
 
 	/* W = sqrt(chi2_df / df) has mean ~1 and standard deviation ~1/sqrt(2 df),
-	 * so its density narrows as df grows while the u-grid below keeps a fixed
-	 * 1/30000 spacing. Past df ~ 1e3 the peak spans only a few steps, and by
-	 * df ~ 1e8 the grid steps clean over it: power_t_test(n => 4e7, delta => 0)
-	 * returned 0.138 where the answer has to be sig_level/2 = 0.025, and the
-	 * n solved for a large-cohort effect size came back 9% low. For large df,
-	 * put the same 30000 steps on w across +/- 12 standard deviations of the
-	 * mode instead -- 12 sd of a density this symmetric leaves under 1e-30 in
-	 * the tails, and the peak then gets ~1250 steps per standard deviation. */
+	 * so its density narrows as df grows while a fixed 30000-step grid does not.
+	 * By df ~ 1e8 the steps go clean over the peak: power_t_test(n => 4e7,
+	 * delta => 0) returned 0.138 where the answer has to be sig_level/2 = 0.025,
+	 * and the n solved for a large-cohort effect size came back 9% low. Above
+	 * PNT_LARGE_DF, spend the steps on w across +/- 12 standard deviations of the
+	 * mode -- 12 sd of a density this symmetric leaves under 1e-30 in the tails,
+	 * and the peak then gets ~1250 steps per standard deviation.
+	 *
+	 * That holds to ~1e-11 up to df ~ 4e5 and then gives way, because log_M's
+	 * two large terms cancel harder as df climbs: 1e-8 by df = 8e7 and 5e-7 by
+	 * df = 1e9. Beyond there, don't integrate at all. T is asymptotically
+	 * normal, and Abramowitz & Stegun 26.7.10 carries the O(1/df) correction, so
+	 * its error falls as 1/df^2 -- 4e-12 at the cut-off and 3e-16 by df = 1e9,
+	 * i.e. it gets better exactly where the quadrature gets worse. R's pnt.c
+	 * switches to the same formula at the same df. */
+	if (df > PNT_NORMAL_DF) {
+		const NV s = 1.0 / (4.0 * df);
+		const NV num = upper ? (ncp - t * (1.0 - s)) : (t * (1.0 - s) - ncp);
+		return approx_pnorm(num / sqrt(1.0 + t * t * 2.0 * s));
+	}
+
 	if (df > PNT_LARGE_DF) {
 		const NV s = 1.0 / sqrt(2.0 * df);
 		const NV lo = 1.0 - 12.0 * s, hi = 1.0 + 12.0 * s;   /* lo > 0.7 here */
-		const NV w_step = (hi - lo) / n_steps;
+		const NV w_step = (hi - lo) / (NV)n_steps;
 		const NV log_peak = chi_log_peak(half_df);
 		for (unsigned int i = 0; i <= n_steps; i++) {
 			const NV w = lo + i * w_step;
@@ -167,29 +196,41 @@ static NV exact_pnt(NV t, NV df, NV ncp, bool upper) {
 		return integral * (w_step / 3.0);
 	}
 
-	/* Composite Simpson wants both endpoints with weight 1, and the loop below
-	 * covers only the interior. At u = 1 the substitution w = u/(1-u) diverges
-	 * and the chi density has long since underflowed, so that term really is
-	 * zero -- evaluating it would be 0/0. At u = 0 it is zero only for df > 1,
-	 * because the density carries w^(df-1), which at df == 1 is 1, not 0.
-	 * Leaving it out cost 7e-7 of absolute accuracy there, which is where
-	 * power_t_test(n => 2, type => 'one.sample') parted ways with R in the
-	 * sixth digit. Below df == 1 the term diverges (integrably) and no uniform
-	 * grid in u can represent it, so it stays out. */
-	if (df == 1.0) integral += exp(log_coef) * approx_pnorm(upper ? ncp : -ncp);
-	for (unsigned short i = 1; i < n_steps; i++) {
-		NV u = i * step;
-		NV w = u / (1.0 - u);
-		// Scaled Chi-distribution log-density
-		NV log_M = log_coef + (df - 1.0) * log(w) - half_df * w * w;
-		NV M = exp(log_M);
-		// Exact Normal CDF using the C standard library's erfc function
-		NV z = upper ? (ncp - t * w) : (t * w - ncp);
-		NV pnorm_val = approx_pnorm(z);
-		NV weight = (i % 2 != 0) ? 4.0 : 2.0;
-		integral += weight * (pnorm_val * M / ((1.0 - u) * (1.0 - u)));
+	/* Ordinary df. The density carries w^(df-1), so unless df is a whole number
+	 * that factor has a derivative of some order that is infinite at w = 0, and
+	 * Simpson -- which assumes four bounded derivatives -- cannot have it. The
+	 * earlier u = w/(1+w) grid took the full brunt: nine good digits at df = 1.8,
+	 * five at df = 1.2, two at df = 1.2 with sig_level = 1e-4, while whole-number
+	 * df stayed at machine precision because there the factor is a polynomial.
+	 *
+	 * Substituting w = z^m turns the measure into z^(m*df - 1) dz, so choosing m
+	 * with m*df - 1 >= 3 leaves the first three derivatives bounded and Simpson
+	 * gets what it needs. m = 4 covers every df >= 1; below that it has to grow,
+	 * and is capped because z^m must stay computable. The substitution also
+	 * clusters the steps towards w = 0 exactly where the old grid was thinnest,
+	 * and puts the origin's contribution at z^(m*df - 1) = 0, which is why no
+	 * separate endpoint term is needed here.
+	 *
+	 * The upper limit only has to reach past the density: sqrt(120/df) puts
+	 * exp(-df w^2 / 2) below e^-60 for a mode near zero, and 1 + 12/sqrt(2 df)
+	 * covers twelve standard deviations once the mode has settled near w = 1.
+	 * Whichever is larger serves both shapes. */
+	const unsigned int m = (df >= 1.0) ? 4u
+		: (unsigned int)(ceil(4.0 / df) > 64.0 ? 64.0 : ceil(4.0 / df));
+	const NV log_coef = log(2.0) + half_df * log(half_df) - lgamma(half_df);
+	const NV w_max = fmax(sqrt(120.0 / df), 1.0 + 12.0 / sqrt(2.0 * df));
+	const NV z_step = pow(w_max, 1.0 / (NV)m) / (NV)n_steps;
+	/* i = 0 is skipped: z = 0 makes log(z) -inf, and the term it belongs to is
+	 * zero anyway since m*df - 1 > 0 by construction. */
+	for (unsigned int i = 1; i <= n_steps; i++) {
+		const NV zq = i * z_step;
+		const NV w = pow_uint(zq, m);
+		const NV log_M = log_coef + ((NV)m * df - 1.0) * log(zq) - half_df * w * w;
+		const NV z = upper ? (ncp - t * w) : (t * w - ncp);
+		const NV weight = (i == n_steps) ? 1.0 : ((i % 2) ? 4.0 : 2.0);
+		integral += weight * approx_pnorm(z) * exp(log_M);
 	}
-	return integral * (step / 3.0);
+	return integral * (NV)m * (z_step / 3.0);
 }
 // --- Math Helpers for P-values and Confidence Intervals --- 
 // Ranking helper with tie adjustment (matches R's tie handling)

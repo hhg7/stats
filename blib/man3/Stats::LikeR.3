@@ -4706,17 +4706,21 @@ to R\*(Aqs precision, not to this one.
 .PP
 Over 1200 random cases spanning all five solved\-for parameters, \f(CW\*(C`n\*(C'\fR from 2 to
 5000, \f(CW\*(C`delta\*(C'\fR from 0.01 to 5, \f(CW\*(C`sd\*(C'\fR from 0.05 to 20 and \f(CW\*(C`sig_level\*(C'\fR from 0.001 to
-0.2, 1059 of the 1080 that all three implementations answer land within \f(CW1e\-8\fR
+0.2, 1078 of the 1080 that all three implementations answer land within \f(CW1e\-8\fR
 relative of the high\-precision scipy value; R lands 379 of them there, and is
-past \f(CW1e\-3\fR on 56.
+past \f(CW1e\-3\fR on 56. Neither of the two remaining is a case where R does better:
+one solves a \f(CW\*(C`sig_level\*(C'\fR of \f(CW5.9e\-10\fR to \f(CW1.3e\-5\fR relative (\f(CW7.7e\-15\fR absolute)
+where R returns its bracket endpoint and is 83% out, and the other is \f(CW3.4e\-8\fR
+where R is out by a factor of 300.
 .PP
-One corner is weaker than R: \fBfewer than three observations in a one\-sample or
-paired test\fR (\f(CW\*(C`1 < df < 2\*(C'\fR), where the noncentral \fIt\fR CDF is a Simpson sum over
-a chi density carrying \f(CW\*(C`w**(df\-1)\*(C'\fR, whose derivative is infinite at \f(CW\*(C`w = 0\*(C'\fR. No
-uniform grid resolves that, and about five digits go with it \-\- every one of the
-21 random cases above \f(CW1e\-8\fR is in this range. R uses the AS 243 series there
-instead of quadrature. At \f(CW\*(C`df == 1\*(C'\fR exactly (\f(CW\*(C`n => 2\*(C'\fR, one\-sample or paired) the
-factor is \f(CW\*(C`w**0\*(C'\fR and full accuracy returns.
+The one place R is still ahead is \fBdf past about 1e7\fR \-\- 500,000 or more
+observations per group \-\- where it holds \f(CW1e\-14\fR against this \f(CW1e\-8\fR. What is
+left there is not the noncentral \fIt\fR CDF, which is exact to \f(CW3e\-16\fR in that range,
+but the critical value: \f(CW\*(C`qt_tail\*(C'\fR inverts \f(CW\*(C`incbeta\*(C'\fR at \f(CW\*(C`x = 1 \- 5e\-8\*(C'\fR with
+\&\f(CW\*(C`a = 4e7\*(C'\fR, right at the edge of where its continued fraction converges. That
+routine is shared with \f(CW\*(C`t_test\*(C'\fR, \f(CW\*(C`cor_test\*(C'\fR, \f(CW\*(C`var_test\*(C'\fR and the rest, so it is
+left alone here rather than retuned for this one caller. The drift is \f(CW1.3e\-11\fR
+at \f(CW\*(C`n = 1e6\*(C'\fR, \f(CW1.0e\-8\fR at \f(CW4e7\fR and \f(CW1.5e\-7\fR at \f(CW1e8\fR.
 .PP
 \fIErrors\fR
 .IX Subsection "Errors"
