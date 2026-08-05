@@ -5418,7 +5418,7 @@ Named aggregators may be combined in any order per column:
 
 
 
-The numeric aggregators call the module's XS functions of the same name, so they
+The numeric aggregators call the module's functions of the same name, so they
 inherit their precision. C<agg> filters undef itself before calling them, so they
 never croak on missing cells. C<mode> is made deterministic: on a tie it returns
 the smallest number, or the lowest string when the values are not numeric.
@@ -5981,10 +5981,6 @@ B<Set membership and difference.> C<< exists $hoh-E<gt>{$k} >> gives a cheap pre
 
 Reach for C<aoh2hoa> when you want columns (vectors to feed a statistic or a plot); reach for C<aoh2hoh> when you want addressable rows keyed by a unique field.
 
-=head3 Implementation note
-
-The operation is a single pass over the rows with one hash insert per row -- the same asymptotics in pure Perl as in XS, and Perl's hash operations are already C underneath. There is no meaningful speed or memory advantage to an XS implementation here, so pure Perl is preferred unless it must live in the same C<.xs> for packaging parity. The duplicate check is a single C<exists> per row and does not change that. (An XS version would C<croak> on the duplicate before allocating the second copy, so there is no extra cleanup to manage.)
-
 =head2 aov
 
 Warning: assumes normal distribution
@@ -6497,13 +6493,7 @@ The full result is a hashref:
 The p-value is the chance of seeing a result B<at least this surprising> if the
 toddler were really just guessing.
 
-Here C<p = 0.75>. That is enormous: a pure guesser scores 6/10 (or something
-even further from 5) about three times out of four. So 6/10 is completely
-ordinary luck — no evidence of skill.
-
-The common cutoff is C<0.05>. Below it, you start to believe something real is
-going on. Above it, chance explains the result fine. C<0.75> is nowhere close,
-so we call this B<just chance>.
+Here C<p = 0.75> means no evidence of skill.
 
 =head3 What "legit" would look like
 
@@ -10992,6 +10982,8 @@ omitting it entirely is how you ask for the power.
 
 =end html
 
+
+
 The result is a hashref carrying C<n>, C<delta>, C<sd>, C<sig.level>, C<power>,
 C<alternative>, C<method>, and -- for C<two.sample> and C<paired> -- C<note>, the same
 fields R's C<power.t.test> returns.
@@ -11022,11 +11014,11 @@ where R is out by a factor of 300.
 The one place R is still ahead is B<df past about 1e7> -- 500,000 or more
 observations per group -- where it holds C<1e-14> against this C<1e-8>. What is
 left there is not the noncentral I<t> CDF, which is exact to C<3e-16> in that range,
-but the critical value: C<qt_tail> inverts C<incbeta> at C<< x = 1 - 5e-8 >> with
+but the critical value: C<qt_tail> inverts C<incbeta> at C<x = 1 - 5e-8> with
 C<a = 4e7>, right at the edge of where its continued fraction converges. That
 routine is shared with C<t_test>, C<cor_test>, C<var_test> and the rest, so it is
 left alone here rather than retuned for this one caller. The drift is C<1.3e-11>
-at C<< n = 1e6 >>, C<1.0e-8> at C<4e7> and C<1.5e-7> at C<1e8>.
+at C<n = 1e6>, C<1.0e-8> at C<4e7> and C<1.5e-7> at C<1e8>.
 
 =head3 Errors
 
@@ -11041,8 +11033,6 @@ that would need a C<sig_level> above 1. R answers those last cases with a bracke
 endpoint (a C<sig.level> of 1.07, an C<n> of 1.4) or with C<uniroot>'s own "no sign
 change found"; C<power_t_test> names the range it searched and the target it could
 not reach.
-
-
 
 =head2 pnorm
 
@@ -13767,6 +13757,63 @@ C<f.sf> / C<norm.sf> and statsmodels' C<anova_oneway>; see
 C<t/model_pvalue_tails.t> and C<t/oneway_test.R.scipy.t>.
 
 =head1 Changes
+
+=head2 0.292 2026-08-05 CDT
+
+fixed long-double bug https://www.cpantesters.org/cpan/report/506975f6-906a-11f1-8f30-a201c4f2440e
+
+C<power_t_test> was cross-validated against R 4.6.1 C<power.t.test> and against
+C<scipy.stats.nct> driven by C<scipy.optimize.brentq>, over a grid of 288 cases
+covering all five solved-for parameters, all three types, both alternatives and
+C<strict>. Three fixes came out of it:
+
+=over
+
+=item * The Simpson sum behind the noncentral I<t> CDF put a fixed 30000-step grid on
+C<u = w/(1+w)>, and the chi density it integrates defeats that at both ends.
+The density carries C<w**(df-1)>, so unless C<df> is a whole number some
+derivative of it is infinite at C<w = 0> and Simpson's error bound does not
+hold: two good digits at C<df = 1.2> with C<sig_level = 1e-4>, five at
+C<df = 1.2>, nine at C<df = 1.8>. Substituting C<w = z**m>, with C<m> chosen so
+that C<< m*df - 1 E<gt>= 3 >>, restores the bounded derivatives and brings all of
+those to machine precision. It also puts the origin's contribution at zero,
+which subsumes a separate bug: the sum had been dropping its C<u = 0> endpoint
+term, worth 7e-7 of absolute power at C<df == 1>. C<nu> is now also floored the
+way R floors it, per sample rather than in total.
+
+=item * The same density has standard deviation C<1/sqrt(2*df)> and so narrows without
+bound, while the grid did not. Past C<df> of about 1e7 the steps went clean
+over the peak: C<< power_t_test(n =E<gt> 4e7, delta =E<gt> 0) >> returned 0.138 where the
+answer can only be C<sig_level/2>, and a large-cohort C<n> solved 9% low. Above
+C<df> of 1e3 the steps now go on C<w> across +/- 12 standard deviations of the
+mode, with the chi normalisation taken from Stirling's series to keep the peak
+height from cancelling away; and above 4e5, where those log terms cancel too
+hard for any grid to help, the Abramowitz & Stegun 26.7.10 asymptotic form
+takes over -- the same formula, at the same cut-off, that R's C<pnt.c> uses.
+That is also 25 times quicker than integrating.
+
+=item * The power was formed as C<< 1 - P(T E<lt>= t) >>, which loses most of its digits to
+cancellation when the power is small. It is now integrated as the upper tail
+directly.
+
+=item * The four inverse solvers were plain bisection stopped at the bracket width,
+which capped C<n>, C<delta>, C<sd> and C<sig_level> at R's own four or five
+significant figures. They now use regula falsi with the Illinois correction
+against a relative tolerance, so they match machine-precision C<brentq> roots
+to ~1e-13 in fewer evaluations than the bisection took. The C<tol> default
+moved from C<1.22e-4> to C<1e-12> to match.
+
+=item * Nothing checked that the bracket held a root, so an unreachable target came
+back as a bracket endpoint wearing the requested power: solving for C<sd> with
+C<< power =E<gt> 0.01 >> returned C<delta * 1e7>, and with a negative C<delta> returned a
+negative standard deviation. Unreachable targets now croak and name the range
+searched. C<sig_level> and C<power> outside C<[0, 1]>, an C<n> below 2, a negative
+C<sd>, and an unrecognised C<type> or C<alternative> are rejected as well --
+C<< type =E<gt> 'twosample' >> used to be read silently as C<'two.sample'>.
+
+=back
+
+New test file C<t/power_t_test.R.scipy.t> carries the cross-validated grid.
 
 =head2 0.291 2026-08-04 CDT
 
