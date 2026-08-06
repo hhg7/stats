@@ -4053,23 +4053,23 @@ static bool filt_call(pTHX_ SV *code, SV *row_rv, SV *id) {
 #define FLTC_NE 5
 
 typedef struct flt_node {
-	U8 kind;			/* FLTP_* */
-	U8 op;				/* FLTC_*, leaves only */
-	U8 swap;			/* literal was on the left: 3 > col('x') */
-	bool is_iv;			/* numeric literal fits an IV, so compare as integers */
-	int slot;			/* which column, leaves only */
-	SV *val;			/* the literal; borrowed from the plan, which the caller holds */
-	NV nv;				/* its numeric value ... */
-	IV iv;				/* ... and its integer value when is_iv */
-	struct flt_node *l, *r;
+	U8 kind;			// FLTP_* 
+	U8 op;			// FLTC_*, leaves only
+	U8 swap;			// literal was on the left: 3 > col('x')
+	bool is_iv;		// numeric literal fits an IV, so compare as integers
+	int slot;		// which column, leaves only
+	SV *restrict val;	// the literal; borrowed from the plan, which the caller holds
+	NV nv;				// its numeric value ...
+	IV iv;				// ... and its integer value when is_iv
+	struct flt_node *restrict l, *restrict r;
 } flt_node;
 
 typedef struct {
-	flt_node *nodes;	/* every node of the tree; the root is nodes[0] */
+	flt_node *restrict nodes; // every node of the tree; the root is nodes[0]
 	int used;
-	SV **names;			/* one shared-hash-key SV per distinct column */
-	AV **cav;			/* HoA only: that column's array, or NULL when absent */
-	SV **cells;			/* scratch: the current row's cell for each column */
+	SV **restrict names;	// one shared-hash-key SV per distinct column
+	AV **restrict cav;	// HoA only: that column's array, or NULL when absent
+	SV **restrict cells;	// scratch: the current row's cell for each column
 	int nslots;
 } flt_prog;
 
@@ -4333,12 +4333,12 @@ PERL_STATIC_INLINE SV *flt_cell_copy(pTHX_ SV *restrict s) {
  * for predicates that need it, and only they pay for it.
  */
 typedef struct {
-	HV *hv;
-	SV *rv;				/* our reference to hv; NULL once handed away */
-	SV **slot;			/* the cell SV of each column, in `names` order */
+	HV *restrict hv;
+	SV *restrict rv;    // our reference to hv; NULL once handed away
+	SV **restrict slot; // the cell SV of each column, in `names` order
 	U32 n;
-	char **names;
-	STRLEN *nlens;
+	char **restrict names;
+	STRLEN *restrict nlens;
 } flt_rowbuf;
 
 static void flt_rb_new(pTHX_ flt_rowbuf *restrict rb) {
@@ -4604,7 +4604,7 @@ static size_t lm_read_rows(pTHX_ SV *restrict data_sv, const char *restrict fnam
 	return n;
 }
 
-/* Stage one of formula handling: copy the formula with whitespace removed, split
+/* Stage 1 of formula handling: copy the formula with whitespace removed, split
  * it at '~', and take the intercept markers out of the right-hand side.
  *
  * R accepts several spellings of "no intercept" -- a trailing `- 1`, `+ 0`, or a
@@ -5200,15 +5200,15 @@ static NV bt_stirlerr(NV n) {
 	static const NV S4 = 0.0008417508417508417508417508; /* 1/1188 */
 	static const NV halves[31] = {
 		0.0,                            /* 0.0 (placeholder; unreachable here) */
-		0.1534264097200273452913848,    /* 0.5  */
-		0.0810614667953272582196702,    /* 1.0  */
-		0.0548141210519176538961390,    /* 1.5  */
-		0.0413406959554092940938221,    /* 2.0  */
-		0.03316287351993628748511048,   /* 2.5  */
-		0.02767792568499833914878929,   /* 3.0  */
-		0.02374616365629749597132920,   /* 3.5  */
-		0.02079067210376509311152277,   /* 4.0  */
-		0.01848845053267318523077934,   /* 4.5  */
+		0.1534264097200273452913848,    // 0.5
+		0.0810614667953272582196702,    // 1.0
+		0.0548141210519176538961390,    // 1.5
+		0.0413406959554092940938221,    // 2.0
+		0.03316287351993628748511048,   // 2.5
+		0.02767792568499833914878929,   // 3.0
+		0.02374616365629749597132920,   // 3.5
+		0.02079067210376509311152277,   // 4.0
+		0.01848845053267318523077934,   // 4.5
 		0.01664469118982119216319487,   /* 5.0  */
 		0.01513497322191737887351255,   /* 5.5  */
 		0.01387612882307074799874573,   /* 6.0  */
@@ -5340,21 +5340,21 @@ static long bt_check_count(pTHX_ SV *sv, const char *what) {
 /*
  * Studentized range distribution (Tukey's) -- ptukey() / qtukey().
  *
- * Faithful C port of R's src/nmath/{ptukey,qtukey}.c (Copenhaver &
- * Holland 1988), the exact algorithm underlying R's TukeyHSD.  The only
- * substitutions are approx_pnorm() for pnorm() (both are 0.5*erfc based,
- * so identical to machine precision) and the libc lgamma() for
- * lgammafn().  Internals are kept in plain double / long double exactly
- * as upstream so results are bit-faithful regardless of Perl's NV width.
- *
- *   st_wprob(w, rr, cc)          integral of Hartley's range over (0,w)
- *   st_ptukey(q, rr, cc, df)     lower-tail P(range < q)
- *   st_qinv(p, c, v)             AS 70 initial estimate for the secant
- *   st_qtukey(p, rr, cc, df)     inverse of st_ptukey via secant method
- *
- * rr = number of groups/ranges (1 for a single ANOVA factor),
- * cc = number of means, df = residual degrees of freedom.
-  */
+ Faithful C port of R's src/nmath/{ptukey,qtukey}.c (Copenhaver &
+ Holland 1988), the exact algorithm underlying R's TukeyHSD.  The only
+ substitutions are approx_pnorm() for pnorm() (both are 0.5*erfc based,
+ so identical to machine precision) and the libc lgamma() for
+ lgammafn().  Internals are kept in plain double / long double exactly
+ as upstream so results are bit-faithful regardless of Perl's NV width.
+
+   st_wprob(w, rr, cc)          integral of Hartley's range over (0,w)
+   st_ptukey(q, rr, cc, df)     lower-tail P(range < q)
+   st_qinv(p, c, v)             AS 70 initial estimate for the secant
+   st_qtukey(p, rr, cc, df)     inverse of st_ptukey via secant method
+
+ rr = number of groups/ranges (1 for a single ANOVA factor),
+ cc = number of means, df = residual degrees of freedom.
+*/
 static NV st_wprob(NV w, NV rr, NV cc)
 {
 #define TK_NLEG  12
@@ -6221,7 +6221,6 @@ static int rank_cmp_rnd_asc(const void *a, const void *b) {
 #define NALAST_KEEP  2  // NAs stay undef, in place
 #define NALAST_DROP  3  // NAs removed (R's na.last = NA)
 
-// ============================================================================
 // Column verbs for Stats::LikeR -- fast, low-RAM paths for select_cols /
 // drop_cols / rename_cols on the row-oriented shapes (AoH, HoH, AoA).
 //
@@ -6241,7 +6240,6 @@ static int rank_cmp_rnd_asc(const void *a, const void *b) {
 // Verified: compiles -O2 clean; correctness vs a pure-Perl reference across
 // AoH/HoH/AoA incl. ragged + utf8 keys; SV sharing confirmed by address; and
 // zero net live-SV growth over 20k build/free iterations on every path.
-// ============================================================================
 
 // ---- shared inner-row builders (all SHARE cell SVs via refcount) ----------
 
@@ -6310,16 +6308,16 @@ static AV *rowA_select(pTHX_ AV *src, IV *idx, SSize_t n) {
 	return out;
 }
 
-/* ======================================================================
- * merge() helpers -- full relational join (R merge / pandas merge).
- *
- * The join reads its inputs where they lie.  A HoA frame is used column by
- * column and a row frame (AoH/HoH) row by row, so neither is transposed into
- * the other on the way in and the only cells copied are the ones the result
- * keeps.  Join keys match on the *stringified* cell value (canonical,
- * length-prefixed), the natural Perl hash-join semantics; an undef/missing
- * key cell never matches (pandas NaN rule).
- * ====================================================================== */
+/*
+ merge() helpers -- full relational join (R merge / pandas merge).
+
+ The join reads its inputs where they lie.  A HoA frame is used column by
+ column and a row frame (AoH/HoH) row by row, so neither is transposed into
+ the other on the way in and the only cells copied are the ones the result
+ keeps.  Join keys match on the *stringified* cell value (canonical,
+ length-prefixed), the natural Perl hash-join semantics; an undef/missing
+ key cell never matches (pandas NaN rule).
+ */
 #define MG_KEYSEP "\x1e"
 #define MG_INNER 0
 #define MG_LEFT  1
@@ -6331,24 +6329,23 @@ static AV *rowA_select(pTHX_ AV *src, IV *idx, SSize_t n) {
  * arrays; an AoH/HoH is an AV of row hashrefs, aliased rather than copied.
  * `names`/`seen` are the frame's column universe in first-seen order. */
 typedef struct {
-	int      hoa;			/* 1 = column-major (HoA) */
-	HV      *cols;			/* hoa: the source hash of column array-refs */
-	AV      *rows;			/* !hoa: mortal AV of row hashrefs */
+	int      hoa;	// 1 = column-major (HoA)
+	HV      *restrict cols;	// hoa: the source hash of column array-refs
+	AV      *restrict rows;	// !hoa: mortal AV of row hashrefs
 	SSize_t  nrows;
-	AV      *names;			/* mortal AV of column-name SVs */
-	HV      *seen;			/* mortal HV, name -> 1 */
+	AV      *restrict names;// mortal AV of column-name SVs
+	HV      *restrict seen;	// mortal HV, name -> 1
 } mg_frame;
 
 /* One column of a frame, resolved once and then read by row index: the
  * column array for a HoA, the column name for a row frame. */
 typedef struct {
-	AV *av;					/* hoa */
-	SV *name;				/* !hoa */
+	AV *restrict av; // hoa
+	SV *restrict name; // !hoa
 } mg_col;
 
 /* Note a column name the first time it is seen. */
-static void
-mg_saw(pTHX_ mg_frame *restrict f, SV *restrict name) {
+static void mg_saw(pTHX_ mg_frame *restrict f, SV *restrict name) {
 	if (hv_exists_ent(f->seen, name, 0)) return;
 	(void)hv_store_ent(f->seen, name, newSViv(1), 0);
 	av_push(f->names, newSVsv(name));
@@ -6436,8 +6433,7 @@ mg_prep(pTHX_ SV *restrict frame, const char *restrict side, mg_frame *restrict 
  * uses it gets the key's hash for free (perl keeps it in the SV) and finds the
  * HEK already interned, which is worth having when the same dozen names are
  * looked up once per output row. */
-static SV *
-mg_shared(pTHX_ SV *restrict name) {
+static SV *mg_shared(pTHX_ SV *restrict name) {
 	STRLEN l;
 	const char *restrict p = SvPV(name, l);
 	return sv_2mortal(newSVpvn_share(p, SvUTF8(name) ? -(I32)l : (I32)l, 0));
@@ -6455,8 +6451,7 @@ mg_resolve(pTHX_ const mg_frame *restrict f, SV *restrict name, mg_col *restrict
 }
 
 /* The cell at (row, column), or NULL when the frame has none there. */
-static SV *
-mg_cell(pTHX_ const mg_frame *restrict f, const mg_col *restrict c, SSize_t i) {
+static SV * mg_cell(pTHX_ const mg_frame *restrict f, const mg_col *restrict c, SSize_t i) {
 	if (f->hoa) {
 		if (!c->av) return NULL;
 		SV **restrict p = av_fetch(c->av, i, 0);
@@ -6471,8 +6466,7 @@ mg_cell(pTHX_ const mg_frame *restrict f, const mg_col *restrict c, SSize_t i) {
 /* Canonical, length-prefixed join key over `nkeys` columns of row `i`,
  * built into the caller's buffer so the whole join needs one SV rather than
  * one per row.  Returns 0 if any key cell is missing or undef. */
-static int
-mg_key(pTHX_ const mg_frame *restrict f, const mg_col *restrict keys, SSize_t nkeys,
+static int mg_key(pTHX_ const mg_frame *restrict f, const mg_col *restrict keys, SSize_t nkeys,
        SSize_t i, SV *restrict buf) {
 	SvCUR_set(buf, 0);
 	SvPOK_only(buf);				/* also clears any UTF8 flag: bytes only */
@@ -6493,16 +6487,16 @@ mg_key(pTHX_ const mg_frame *restrict f, const mg_col *restrict keys, SSize_t nk
 	return 1;
 }
 
-/* Everything the emitter needs, resolved once before the join runs. */
+// Everything the emitter needs, resolved once before the join runs
 typedef struct {
-	const mg_frame *L, *R;
-	mg_col  *lk, *rk;		/* join key columns, nkeys of each */
-	mg_col  *lc, *rc;		/* data columns, nlc / nrc of them */
+	const mg_frame *restrict L, *restrict R;
+	mg_col  *restrict lk, *restrict rk;	// join key columns, nkeys of each
+	mg_col  *restrict lc, *restrict rc;	// data columns, nlc / nrc of them
 	SSize_t  nkeys, nlc, nrc;
-	SV     **oname;			/* nkeys + nlc + nrc output names, in that order */
+	SV     **restrict oname; // nkeys + nlc + nrc output names, in that order
 	int      out_hoa;
-	AV      *result;		/* AoH output: the rows */
-	AV     **ocol;			/* HoA output: nkeys + nlc + nrc columns */
+	AV      *restrict result; // AoH output: the rows
+	AV     **restrict ocol;	// HoA output: nkeys + nlc + nrc columns
 } mg_join;
 
 /* Emit the row made of left row `li` and right row `ri`; either may be -1
@@ -6558,8 +6552,7 @@ mg_shape(pTHX_ SV *restrict frame) {
 }
 
 /* Expand a scalar-or-arrayref option into a mortal AV of name SVs. */
-static AV *
-mg_names(pTHX_ SV *restrict v) {
+static AV *mg_names(pTHX_ SV *restrict v) {
 	AV *restrict a = (AV *)sv_2mortal((SV *)newAV());
 	if (SvROK(v) && SvTYPE(SvRV(v)) == SVt_PVAV) {
 		AV *restrict s = (AV *)SvRV(v);
@@ -6574,42 +6567,41 @@ mg_names(pTHX_ SV *restrict v) {
 	return a;
 }
 
-/* ======================================================================
- * drop_duplicates() helpers -- row-level de-duplication for AoA / AoH / HoA.
- *
- * A row's identity is a canonical, length-prefixed key over the subset
- * cells, exactly the hash-join semantics merge() uses (mg_key): two cells
- * are "the same" iff they stringify equally, an undef cell gets its own
- * sentinel that never collides with a real value (a real cell always opens
- * with a decimal length, the undef token opens with '~'). HoH is handled
- * entirely in the Perl wrapper (it dies) so there is no code path for it.
- *
- * The keys are interned into one growable arena behind a small open-addressed
- * table instead of a Perl hash of per-row key SVs.  A row whose key is already
- * present rewinds the arena, so a pass costs one copy of each *distinct* key
- * plus ~40 bytes per distinct row -- not an SV, an HE, a HEK and a value SV
- * per input row, all of them alive at once.  Everything the pass allocates is
- * hung off a dd_ctx that a save-stack destructor releases, so a croak out of
- * an overloaded stringification cannot leak it.
- * ====================================================================== */
+/*
+ drop_duplicates() helpers -- row-level de-duplication for AoA / AoH / HoA.
+
+ A row's identity is a canonical, length-prefixed key over the subset
+ cells, exactly the hash-join semantics merge() uses (mg_key): two cells
+ are "the same" iff they stringify equally, an undef cell gets its own
+ sentinel that never collides with a real value (a real cell always opens
+ with a decimal length, the undef token opens with '~'). HoH is handled
+ entirely in the Perl wrapper (it dies) so there is no code path for it.
+
+ The keys are interned into one growable arena behind a small open-addressed
+ table instead of a Perl hash of per-row key SVs.  A row whose key is already
+ present rewinds the arena, so a pass costs one copy of each *distinct* key
+ plus ~40 bytes per distinct row -- not an SV, an HE, a HEK and a value SV
+ per input row, all of them alive at once.  Everything the pass allocates is
+ hung off a dd_ctx that a save-stack destructor releases, so a croak out of
+ an overloaded stringification cannot leak it.
+ */
 typedef struct {
-	char     *buf;      /* arena: the distinct keys, back to back */
+	char     *restrict buf; // arena: the distinct keys, back to back
 	size_t    len, cap;
-	SSize_t  *off;      /* group -> key offset; off[ng] == len, so the key
+	SSize_t  *restrict off; /* group -> key offset; off[ng] == len, so the key
 	                     * length of group g is off[g + 1] - off[g] */
-	uint64_t *khash;    /* group -> key hash */
-	SSize_t  *first;    /* group -> row that created it (ascending in g) */
-	SSize_t  *cnt;      /* group -> occurrences (kept only when use_cnt) */
-	int       use_cnt;
+	uint64_t *restrict khash; // group -> key hash
+	SSize_t  *restrict first; // group -> row that created it (ascending in g)
+	SSize_t  *restrict cnt;   // group -> occurrences (kept only when use_cnt)
+	bool      use_cnt;
 	SSize_t   ng, gcap;
-	SSize_t  *slot;     /* open addressing: slot -> group + 1, 0 = free */
-	size_t    nslot;    /* always a power of two */
-	IV       *pos;      /* AoA: subset column positions */
-	AV      **cols;     /* HoA: subset column arrays */
+	SSize_t  *restrict slot; // open addressing: slot -> group + 1, 0 = free
+	size_t    nslot;    // always a power of two
+	IV       *restrict pos;  // AoA: subset column positions
+	AV      **restrict cols; // HoA: subset column arrays
 } dd_ctx;
 
-static void
-dd_ctx_free(pTHX_ void *p) {
+static void dd_ctx_free(pTHX_ void *p) {
 	dd_ctx *restrict T = (dd_ctx *)p;
 	Safefree(T->buf);   Safefree(T->off);  Safefree(T->khash);
 	Safefree(T->first); Safefree(T->cnt);  Safefree(T->slot);
@@ -6672,8 +6664,7 @@ dd_cell(pTHX_ dd_ctx *restrict T, SV *restrict c) {
 }
 
 /* double the slot table and reinsert every group (hashes are already known) */
-static void
-dd_rehash(pTHX_ dd_ctx *restrict T) {
+static void dd_rehash(pTHX_ dd_ctx *restrict T) {
 	size_t n = T->nslot ? T->nslot * 2 : 64, mask = n - 1;
 	Safefree(T->slot);
 	Newxz(T->slot, n, SSize_t);
@@ -6700,12 +6691,12 @@ dd_intern(pTHX_ dd_ctx *restrict T, size_t start, SSize_t row) {
 		const SSize_t g = T->slot[i] - 1;
 		if (T->khash[g] == h && (size_t)(T->off[g + 1] - T->off[g]) == n
 		    && memcmp(T->buf + T->off[g], T->buf + start, n) == 0) {
-			T->len = start;                    /* duplicate: drop the copy */
+			T->len = start; // duplicate: drop the copy
 			return g;
 		}
 		i = (i + 1) & mask;
 	}
-	if (T->ng + 2 > T->gcap) {                 /* +2: off[] holds ng + 1 */
+	if (T->ng + 2 > T->gcap) { // +2: off[] holds ng + 1
 		SSize_t want = T->gcap ? T->gcap * 2 : 64;
 		Renew(T->off,   want + 1, SSize_t);
 		Renew(T->khash, want,     uint64_t);
@@ -6723,17 +6714,17 @@ dd_intern(pTHX_ dd_ctx *restrict T, size_t start, SSize_t row) {
 	return g;
 }
 
-/* ===========================================================================
- * interpolate() numeric core.  Backs Stats::LikeR::_interp_column_xs, which
- * fills the undef gaps of one already-extracted column (an AV of numbers /
- * undef gaps / defined non-numeric barriers) in place.  A direct C port of the
- * former pure-Perl kernels (_interp_* in LikeR.pm); the per-method maths is
- * validated against pandas/scipy by t/interpolate*.t.  All scratch is Newx +
- * SAVEFREEPV so it is freed at the XSUB's LEAVE, on normal and croak exits.
- *
- * kind[i]: 0 = undef gap (fillable), 1 = numeric anchor, 2 = defined non-numeric
- * barrier (preserved; blocks the piecewise-local fits, ignored by the fits).
- * ========================================================================= */
+/* 
+ interpolate() numeric core.  Backs Stats::LikeR::_interp_column_xs, which
+ fills the undef gaps of one already-extracted column (an AV of numbers /
+ undef gaps / defined non-numeric barriers) in place.  A direct C port of the
+ former pure-Perl kernels (_interp_* in LikeR.pm); the per-method maths is
+ validated against pandas/scipy by t/interpolate*.t.  All scratch is Newx +
+ SAVEFREEPV so it is freed at the XSUB's LEAVE, on normal and croak exits.
+ 
+ kind[i]: 0 = undef gap (fillable), 1 = numeric anchor, 2 = defined non-numeric
+ barrier (preserved; blocks the piecewise-local fits, ignored by the fits).
+ */
 
 #define IP_LINEAR   1   /* interior fill rules */
 #define IP_NEAREST  2
@@ -6832,14 +6823,14 @@ static NV ip_pchip_edge(NV h0, NV h1, NV d0, NV d1) {
 }
 
 typedef struct {
-	int type;          // IP_K*
-	IV  na;            // anchor count
-	const NV *restrict xa, *ya; // anchors (borrowed)
-	NV *h;             // spacings (cubic/pchip/akima)
-	NV *M;             // cubic second derivatives
-	NV *d;             // pchip slopes / akima tangents
-	NV *w;             // barycentric weights
-	NV *knots, *coef;  // quadratic B-spline
+	int type; // IP_K*
+	IV  na;   // anchor count
+	const NV *restrict xa, *restrict ya; // anchors (borrowed)
+	NV *restrict h; // spacings (cubic/pchip/akima)
+	NV *restrict M; // cubic second derivatives
+	NV *restrict d; // pchip slopes / akima tangents
+	NV *restrict w; // barycentric weights
+	NV *restrict knots, *restrict coef; // quadratic B-spline
 	IV  nknots;
 } ip_fit;
 
@@ -6849,8 +6840,8 @@ static void ip_build_cubic(pTHX_ ip_fit *F) {
 	Newx(F->h, n > 1 ? n - 1 : 1, NV); SAVEFREEPV(F->h);
 	for (IV i = 0; i < n - 1; i++) F->h[i] = xa[i + 1] - xa[i];
 	if (n <= 3) { F->M = NULL; return; }        /* eval handles 2 / 3 directly */
-	NV *A; Newxz(A, n * n, NV); SAVEFREEPV(A);
-	NV *b; Newxz(b, n, NV);     SAVEFREEPV(b);
+	NV *restrict A; Newxz(A, n * n, NV); SAVEFREEPV(A);
+	NV *restrict b; Newxz(b, n, NV);     SAVEFREEPV(b);
 	for (IV i = 1; i <= n - 2; i++) {
 		A[i * n + (i - 1)] = F->h[i - 1];
 		A[i * n + i]       = 2 * (F->h[i - 1] + F->h[i]);
@@ -7296,8 +7287,8 @@ static int srv_solve(NV *restrict A, const NV *restrict b, int n, NV *restrict x
 }
 
 /* Invert an n*n matrix A (row-major) into inv via Gauss-Jordan with partial
- * pivoting; A is destroyed.  Returns 0 on success, 1 if (near-)singular.
- * Used for the Cox information matrix (coef covariance = its inverse).       */
+ pivoting; A is destroyed.  Returns 0 on success, 1 if (near-)singular.
+ Used for the Cox information matrix (coef covariance = its inverse).*/
 static int mat_inv(NV *restrict A, int n, NV *restrict inv) {
 	for (int i = 0; i < n * n; i++) inv[i] = (i % n == i / n) ? 1.0 : 0.0;
 	for (int col = 0; col < n; col++) {
@@ -9704,7 +9695,7 @@ PPCODE:
 				FLT_AV_FILLED(o, kept);
 			}
 			result = newRV_inc((SV*)out);
-		} else {	/* HoH -> HoH (preserve) or HoH -> AoH */
+		} else {	// HoH -> HoH (preserve) or HoH -> AoH
 			HV *restrict outh = NULL; AV *restrict outa = NULL;
 			if (out_shape == FLT_HOH) outh = (HV*)sv_2mortal((SV*)newHV());
 			else                      outa = (AV*)sv_2mortal((SV*)newAV());
@@ -10018,8 +10009,7 @@ SV *col2col(data, cmd, cols = &PL_sv_undef, ...)
 	OUTPUT:
 		RETVAL
 
-SV *
-oneway_test(data_ref, ...)
+SV *oneway_test(data_ref, ...)
 	SV *data_ref
 	PREINIT:
 		HV          *restrict in_hv = NULL;

@@ -3,7 +3,7 @@
 require 5.010;
 use strict;
 package Stats::LikeR;
-our $VERSION = 0.293;
+our $VERSION = 0.294;
 require XSLoader;
 use autodie ':default';
 use warnings FATAL => 'all';
