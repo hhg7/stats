@@ -16,6 +16,30 @@
 #include <string.h>
 #include <strings.h>
 #include <stdint.h> // uint64_t — harmless if perl.h already pulled it in
+/* croak() with an NV argument: croak() carries a printf format attribute, but
+the compiler's format checker doesn't know the "Q" length modifier that NVgf
+expands to on a quadmath build, so every NV-bearing croak() draws a bogus
+-Wformat / -Wformat-extra-args pair there (harmless, but it buries the real
+warnings). The format is read by Perl's own formatter, not the C library, and
+that handles NVgf on every build, so route those messages through vcroak(),
+which has no format attribute. -Wformat stays useful everywhere else. */
+static void croak_nv(const char *pat, ...) __attribute__noreturn__;
+static void croak_nv(const char *pat, ...)
+{
+	dTHX;
+	va_list args;
+	va_start(args, pat);
+	vcroak(pat, &args); // noreturn; no va_end needed
+}
+/* Format a single NV with my_snprintf(). my_snprintf() carries a format
+attribute of its own, so an NVgf format written at the call site draws the same
+bogus warning pair described above; taking the format as an ordinary argument
+keeps the checker out of it. my_snprintf() is the portable spelling here --
+plain snprintf() cannot print an NV on a quadmath build. */
+static int snprintf_nv(char *buf, Size_t buflen, const char *fmt, NV x)
+{
+	return my_snprintf(buf, buflen, fmt, x);
+}
 /*
 SvROK = scalar value reference is OK
 */
@@ -2367,7 +2391,13 @@ static void tex_escape_sv(pTHX_ SV *restrict out, const char *restrict s,
 	if (do_format && *s) {
 		SV *restrict tmp = sv_2mortal(newSVpv(s, 0));
 		if (looks_like_number(tmp)) {
-			snprintf(numbuf, sizeof(numbuf), "%.4" NVgf, SvNV(tmp)); // NVgf expands to "Lg" on long-double builds
+// snprintf_nv (my_snprintf), not snprintf: NVgf is "g", "Lg" or "Qg"
+// depending on the build, and the C library only knows the first two. A
+// quadmath build gets "%.4Qg" right here only because libquadmath's
+// constructor teaches glibc the Q modifier -- a glibc extension no other
+// platform offers. my_snprintf routes through quadmath_snprintf() itself,
+// so it is correct on every build.
+			snprintf_nv(numbuf, sizeof(numbuf), "%.4" NVgf, SvNV(tmp));
 			s = numbuf;
 			is_utf8 = 0; // the formatted number is plain ASCII
 		}
@@ -17514,11 +17544,13 @@ CODE:
 	/* croak() formats through Perl, not the C library, so an NV needs NVgf
 	 * ("g", "Lg", or "Qg") rather than a bare %g: a quadmath build rejects a
 	 * format without the Q modifier outright ("panic: quadmath invalid
-	 * format"), and casting the argument to double cannot rescue it. */
+	 * format"), and casting the argument to double cannot rescue it.
+	 * croak_nv() (see the top of this file) is croak() minus the format
+	 * attribute, which the compiler's format checker mis-flags on "Qg". */
 	if (!is_null_n && !(n >= 2.0))
-	  croak("power_t_test: 'n' must be at least 2, not %" NVgf, n);
+	  croak_nv("power_t_test: 'n' must be at least 2, not %" NVgf, n);
 	if (!is_null_sd && sd < 0.0)
-	  croak("power_t_test: 'sd' must not be negative, not %" NVgf, sd);
+	  croak_nv("power_t_test: 'sd' must not be negative, not %" NVgf, sd);
 
 	/* R reaches these through match.arg(), so a misspelling is an error there.
 	 * Silently reading an unrecognised type as "two.sample" turned every typo
@@ -17548,7 +17580,7 @@ CODE:
 	  NV low = 2.0, high = 1e7;
 	  while (high < 1e12 && ptt_f(&c, high) < 0.0) high *= 2.0;
 	  n = ptt_root(&c, low, high, tol);
-	  if (n != n) croak("power_t_test: no 'n' in [%" NVgf ", %" NVgf "] gives a power of %" NVgf " "
+	  if (n != n) croak_nv("power_t_test: no 'n' in [%" NVgf ", %" NVgf "] gives a power of %" NVgf " "
 			  "(delta = %" NVgf ", sd = %" NVgf ", sig_level = %" NVgf ")",
 			  low, high, power, delta, sd, sig_level);
 	} else if (is_null_sd) {
@@ -17561,7 +17593,7 @@ CODE:
 	  while (high < ad * 1e12 && ptt_f(&c, high) > 0.0) high *= 2.0;
 	  while (low > ad * 1e-12 && ptt_f(&c, low) < 0.0) low *= 0.5;
 	  sd = ptt_root(&c, low, high, tol);
-	  if (sd != sd) croak("power_t_test: no 'sd' in [%" NVgf ", %" NVgf "] gives a power of %" NVgf " "
+	  if (sd != sd) croak_nv("power_t_test: no 'sd' in [%" NVgf ", %" NVgf "] gives a power of %" NVgf " "
 			  "(n = %" NVgf ", delta = %" NVgf ", sig_level = %" NVgf ")",
 			  low, high, power, n, delta, sig_level);
 	} else if (is_null_delta) {
@@ -17570,7 +17602,7 @@ CODE:
 	  NV low = sd * 1e-7, high = sd * 1e7;
 	  while (high < sd * 1e12 && ptt_f(&c, high) < 0.0) high *= 2.0;
 	  delta = ptt_root(&c, low, high, tol);
-	  if (delta != delta) croak("power_t_test: no 'delta' in [%" NVgf ", %" NVgf "] gives a power of %" NVgf " "
+	  if (delta != delta) croak_nv("power_t_test: no 'delta' in [%" NVgf ", %" NVgf "] gives a power of %" NVgf " "
 			  "(n = %" NVgf ", sd = %" NVgf ", sig_level = %" NVgf ")",
 			  low, high, power, n, sd, sig_level);
 	} else { /* is_null_sig_level */
@@ -17579,7 +17611,7 @@ CODE:
 	   * happily return a sig.level above 1; refusing is the honest answer. */
 	  c.which = PTT_SIG;
 	  sig_level = ptt_root(&c, 1e-10, 1.0 - 1e-10, tol);
-	  if (sig_level != sig_level) croak("power_t_test: no 'sig_level' in (0, 1) gives a power of %" NVgf " "
+	  if (sig_level != sig_level) croak_nv("power_t_test: no 'sig_level' in (0, 1) gives a power of %" NVgf " "
 			  "(n = %" NVgf ", delta = %" NVgf ", sd = %" NVgf ")",
 			  power, n, delta, sd);
 	}
