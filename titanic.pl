@@ -8,7 +8,7 @@ use DDP {output => 'STDOUT', array_max => 10, show_memsize => 1};
 use Devel::Confess 'color';
 use Stats::LikeR;
 
-my $titanic = read_table('titanic.more.complete.csv');
+my $titanic = read_table('titanic.csv');
 $titanic = cfilter($titanic, remove => ['ticketno', 'embarked']);
 $titanic = assign($titanic, survived => sub { $_->{survived} eq 'yes' ? 1 : 0});
 view($titanic);

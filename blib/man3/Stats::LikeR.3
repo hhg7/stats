@@ -58,7 +58,7 @@
 .\" ========================================================================
 .\"
 .IX Title "Stats::LikeR 3"
-.TH Stats::LikeR 3 2026-08-05 "perl v5.44.0" "User Contributed Perl Documentation"
+.TH Stats::LikeR 3 2026-08-06 "perl v5.44.0" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -324,7 +324,7 @@ as the input frame.
 .PP
 Named aggregators may be combined in any order per column:
 .PP
-The numeric aggregators call the module\*(Aqs XS functions of the same name, so they
+The numeric aggregators call the module\*(Aqs functions of the same name, so they
 inherit their precision. \f(CW\*(C`agg\*(C'\fR filters undef itself before calling them, so they
 never croak on missing cells. \f(CW\*(C`mode\*(C'\fR is made deterministic: on a tie it returns
 the smallest number, or the lowest string when the values are not numeric.
@@ -772,11 +772,6 @@ A row that is not a hashref, or that lacks a defined value at \f(CW$key\fR, is f
 .IX Subsection "Relationship to aoh2hoa"
 .PP
 Reach for \f(CW\*(C`aoh2hoa\*(C'\fR when you want columns (vectors to feed a statistic or a plot); reach for \f(CW\*(C`aoh2hoh\*(C'\fR when you want addressable rows keyed by a unique field.
-.PP
-\fIImplementation note\fR
-.IX Subsection "Implementation note"
-.PP
-The operation is a single pass over the rows with one hash insert per row \-\- the same asymptotics in pure Perl as in XS, and Perl\*(Aqs hash operations are already C underneath. There is no meaningful speed or memory advantage to an XS implementation here, so pure Perl is preferred unless it must live in the same \f(CW\*(C`.xs\*(C'\fR for packaging parity. The duplicate check is a single \f(CW\*(C`exists\*(C'\fR per row and does not change that. (An XS version would \f(CW\*(C`croak\*(C'\fR on the duplicate before allocating the second copy, so there is no extra cleanup to manage.)
 .SS aov
 .IX Subsection "aov"
 Warning: assumes normal distribution
@@ -1004,7 +999,7 @@ chance a random positive scores higher than a random negative. \f(CW1.0\fR is pe
 .Vb 1
 \& use Stats::LikeR \*(Aqauc\*(Aq;
 \&
-\& my $auc = auc(\e@scores, \e@labels);          # e.g. 0.848
+\& my $auc = auc(\e@scores, \e@labels); # e.g. 0.848
 .Ve
 .PP
 Options: \f(CW\*(C`positive\*(C'\fR (which label is the positive class, default \f(CW1\fR) and
@@ -1235,13 +1230,7 @@ The full result is a hashref:
 The p\-value is the chance of seeing a result \fBat least this surprising\fR if the
 toddler were really just guessing.
 .PP
-Here \f(CW\*(C`p = 0.75\*(C'\fR. That is enormous: a pure guesser scores 6/10 (or something
-even further from 5) about three times out of four. So 6/10 is completely
-ordinary luck — no evidence of skill.
-.PP
-The common cutoff is \f(CW0.05\fR. Below it, you start to believe something real is
-going on. Above it, chance explains the result fine. \f(CW0.75\fR is nowhere close,
-so we call this \fBjust chance\fR.
+Here \f(CW\*(C`p = 0.75\*(C'\fR means no evidence of skill.
 .PP
 \fIWhat "legit" would look like\fR
 .IX Subsection "What ""legit"" would look like"
@@ -2895,6 +2884,21 @@ As with the 2x2 case, a hash\-of\-hashes input orders rows by their sorted keys
 and columns by the sorted keys of the first row, so the result is deterministic;
 every row must expose the same set of column keys, and every row of an array
 input must have the same number of columns.
+.PP
+Enumeration is exact but finite: a table whose margins put more completions in
+the way than can be walked is refused outright,
+.PP
+.Vb 1
+\& fisher_test: 5x7 table is too large for exact enumeration
+.Ve
+.PP
+rather than answered with an approximation. Subtrees that lie wholly inside or
+wholly outside the tail are summed in closed form or dropped without being
+walked, which puts most tables of practical size well inside the limit \-\-
+\&\f(CW\*(C`fisher_test\*(C'\fR computes the 6x6 table of R\*(Aqs PR#18336, which R\*(Aqs own \f(CW\*(C`fisher.test\*(C'\fR
+declines with \f(CW\*(C`hash key 5e+09 > INT_MAX\*(C'\fR \-\- but R\*(Aqs network algorithm (FEXACT)
+still reaches tables this one cannot, such as the 5x7 6th example of Mehta &
+Patel. For those, use \f(CW\*(C`chisq_test\*(C'\fR, or R.
 .SS friedman_test
 .IX Subsection "friedman_test"
 The Friedman rank\-sum test, the non\-parametric analog of a repeated\-measures
@@ -6610,6 +6614,107 @@ Verified against R 4.6.1 (\f(CW\*(C`oneway.test\*(C'\fR, \f(CW\*(C`anova(aov())\
 \&\f(CW\*(C`t/model_pvalue_tails.t\*(C'\fR and \f(CW\*(C`t/oneway_test.R.scipy.t\*(C'\fR.
 .SH Changes
 .IX Header "Changes"
+.SS "0.293 2026\-08\-06 CDT"
+.IX Subsection "0.293 2026-08-06 CDT"
+Fixed quadmath error https://www.cpantesters.org/cpan/report/83bcd9a2\-9123\-11f1\-aac1\-f3cd035a6881
+.PP
+\&\f(CW\*(C`fisher_test\*(C'\fR was cross\-validated against R 4.6.1 \f(CW\*(C`stats::fisher.test\*(C'\fR and SciPy
+1.17.1 \f(CW\*(C`scipy.stats.fisher_exact\*(C'\fR using their own test suites rather than cases
+invented here: SciPy\*(Aqs 84\-case R\-generated corpus
+(\f(CW\*(C`scipy/stats/tests/data/fisher_exact_results_from_r.py\*(C'\fR, four numbers per case
+over two confidence levels and all three alternatives), its
+\&\f(CW\*(C`TestFisherExact\*(C'\fR, R\*(Aqs regression suite (\f(CW\*(C`tests/reg\-tests\-1{a,b,d,e}.R\*(C'\fR:
+PR#644, PR#1662, PR#4688, PR#10558, PR#18336, PR#17671 and the "exact
+fisher.test" entry) and the \f(CW\*(C`?fisher.test\*(C'\fR examples. They are in
+\&\f(CW\*(C`t/fisher_test.R.scipy.t\*(C'\fR. Three fixes came out of it:
+.IP \(bu 4
+The 2x2 hypergeometric density was built by differencing \f(CW\*(C`lgamma\*(C'\fR, which
+costs the back half of a large table\*(Aqs p\-value: at a margin of 8.4e7,
+\&\f(CW\*(C`lgamma\*(C'\fR is about 1.4e9, where a double\*(Aqs spacing is 2.4e\-7, and exponentiating
+that turns into a relative error of the same size. SciPy\*(Aqs gh\-3014 case came
+out right to only seven digits. The density is now assembled from Loader\*(Aqs
+saddle\-point binomial, which is how R\*(Aqs own \f(CW\*(C`dhyper\*(C'\fR avoids this and which
+\&\f(CW\*(C`binom_test\*(C'\fR already had in the file; its three terms stay O(1) whatever the
+margins are. Worst\-case agreement with R over the 84\-case corpus went from
+2.1e\-12 to 5.2e\-14 relative, and gh\-3014 from 2.2e\-07 to 1.5e\-16.
+.IP \(bu 4
+The R x C enumeration charged only its leaves against its safety cap, so a
+table wide enough to spend the time in the interior of the tree neither
+finished nor stopped: R\*(Aqs PR#4688 table (4x3, N = 16442), whose whole point
+upstream is that \f(CW\*(C`fisher.test\*(C'\fR must fail rather than return \f(CW\*(C`p = Inf\*(C'\fR, ran for
+over five minutes here without doing either. Every node is now counted, and
+that table is declined in about a second.
+.IP \(bu 4
+The R x C enumeration now bounds each subtree before walking it. \f(CWlgamma(x+1)\fR
+is convex and \f(CW\*(C`a!b! <= (a+b)!\*(C'\fR, which together bracket the probability of every
+completion of a partial table; when the whole subtree falls inside the tail its
+mass is added in closed form (\f(CW\*(C`N\*(Aq! / (prod R_i! prod C_j!)\*(C'\fR, from counting the
+remaining observations into rows two ways), and when it falls outside the
+subtree is dropped. The margins are also transposed and sorted first, so the
+fattest row and column are the ones the enumeration gets for free. R\*(Aqs Job
+Satisfaction 4x4 example went from 7.5s to 0.3s and PR#644\*(Aqs 19x2 from 1.0s to
+under 0.05s, and the 6x6 table of PR#18336 \-\- which segfaulted R before 4.2.0
+and which R 4.6.1 still declines with \f(CW\*(C`hash key 5e+09 > INT_MAX\*(C'\fR \-\- is now
+computable at 0.6322160531, agreeing with R\*(Aqs own 2e6\-replicate
+\&\f(CW\*(C`simulate.p.value\*(C'\fR fallback to within its sampling error.
+.PP
+Two behaviours that the two references disagree about are now pinned by tests
+rather than left to chance: a table with an empty row or column returns R\*(Aqs
+\&\f(CW\*(C`p = 1\*(C'\fR with an odds ratio of 0 and a CI of (0, Inf), not SciPy\*(Aqs NaN odds ratio;
+and a table with a single row or column is rejected as R rejects it, rather than
+returning SciPy\*(Aqs \f(CW\*(C`p = 1\*(C'\fR.
+.SS "0.292 2026\-08\-05 CDT"
+.IX Subsection "0.292 2026-08-05 CDT"
+fixed long\-double bug https://www.cpantesters.org/cpan/report/506975f6\-906a\-11f1\-8f30\-a201c4f2440e
+.PP
+\&\f(CW\*(C`power_t_test\*(C'\fR was cross\-validated against R 4.6.1 \f(CW\*(C`power.t.test\*(C'\fR and against
+\&\f(CW\*(C`scipy.stats.nct\*(C'\fR driven by \f(CW\*(C`scipy.optimize.brentq\*(C'\fR, over a grid of 288 cases
+covering all five solved\-for parameters, all three types, both alternatives and
+\&\f(CW\*(C`strict\*(C'\fR. Three fixes came out of it:
+.IP \(bu 4
+The Simpson sum behind the noncentral \fIt\fR CDF put a fixed 30000\-step grid on
+\&\f(CW\*(C`u = w/(1+w)\*(C'\fR, and the chi density it integrates defeats that at both ends.
+The density carries \f(CW\*(C`w**(df\-1)\*(C'\fR, so unless \f(CW\*(C`df\*(C'\fR is a whole number some
+derivative of it is infinite at \f(CW\*(C`w = 0\*(C'\fR and Simpson\*(Aqs error bound does not
+hold: two good digits at \f(CW\*(C`df = 1.2\*(C'\fR with \f(CW\*(C`sig_level = 1e\-4\*(C'\fR, five at
+\&\f(CW\*(C`df = 1.2\*(C'\fR, nine at \f(CW\*(C`df = 1.8\*(C'\fR. Substituting \f(CW\*(C`w = z**m\*(C'\fR, with \f(CW\*(C`m\*(C'\fR chosen so
+that \f(CW\*(C`m*df \- 1 >= 3\*(C'\fR, restores the bounded derivatives and brings all of
+those to machine precision. It also puts the origin\*(Aqs contribution at zero,
+which subsumes a separate bug: the sum had been dropping its \f(CW\*(C`u = 0\*(C'\fR endpoint
+term, worth 7e\-7 of absolute power at \f(CW\*(C`df == 1\*(C'\fR. \f(CW\*(C`nu\*(C'\fR is now also floored the
+way R floors it, per sample rather than in total.
+.IP \(bu 4
+The same density has standard deviation \f(CW\*(C`1/sqrt(2*df)\*(C'\fR and so narrows without
+bound, while the grid did not. Past \f(CW\*(C`df\*(C'\fR of about 1e7 the steps went clean
+over the peak: \f(CW\*(C`power_t_test(n => 4e7, delta => 0)\*(C'\fR returned 0.138 where the
+answer can only be \f(CW\*(C`sig_level/2\*(C'\fR, and a large\-cohort \f(CW\*(C`n\*(C'\fR solved 9% low. Above
+\&\f(CW\*(C`df\*(C'\fR of 1e3 the steps now go on \f(CW\*(C`w\*(C'\fR across +/\- 12 standard deviations of the
+mode, with the chi normalisation taken from Stirling\*(Aqs series to keep the peak
+height from cancelling away; and above 4e5, where those log terms cancel too
+hard for any grid to help, the Abramowitz & Stegun 26.7.10 asymptotic form
+takes over \-\- the same formula, at the same cut\-off, that R\*(Aqs \f(CW\*(C`pnt.c\*(C'\fR uses.
+That is also 25 times quicker than integrating.
+.IP \(bu 4
+The power was formed as \f(CW\*(C`1 \- P(T <= t)\*(C'\fR, which loses most of its digits to
+cancellation when the power is small. It is now integrated as the upper tail
+directly.
+.IP \(bu 4
+The four inverse solvers were plain bisection stopped at the bracket width,
+which capped \f(CW\*(C`n\*(C'\fR, \f(CW\*(C`delta\*(C'\fR, \f(CW\*(C`sd\*(C'\fR and \f(CW\*(C`sig_level\*(C'\fR at R\*(Aqs own four or five
+significant figures. They now use regula falsi with the Illinois correction
+against a relative tolerance, so they match machine\-precision \f(CW\*(C`brentq\*(C'\fR roots
+to ~1e\-13 in fewer evaluations than the bisection took. The \f(CW\*(C`tol\*(C'\fR default
+moved from \f(CW1.22e\-4\fR to \f(CW1e\-12\fR to match.
+.IP \(bu 4
+Nothing checked that the bracket held a root, so an unreachable target came
+back as a bracket endpoint wearing the requested power: solving for \f(CW\*(C`sd\*(C'\fR with
+\&\f(CW\*(C`power => 0.01\*(C'\fR returned \f(CW\*(C`delta * 1e7\*(C'\fR, and with a negative \f(CW\*(C`delta\*(C'\fR returned a
+negative standard deviation. Unreachable targets now croak and name the range
+searched. \f(CW\*(C`sig_level\*(C'\fR and \f(CW\*(C`power\*(C'\fR outside \f(CW\*(C`[0, 1]\*(C'\fR, an \f(CW\*(C`n\*(C'\fR below 2, a negative
+\&\f(CW\*(C`sd\*(C'\fR, and an unrecognised \f(CW\*(C`type\*(C'\fR or \f(CW\*(C`alternative\*(C'\fR are rejected as well \-\-
+\&\f(CW\*(C`type => \*(Aqtwosample\*(Aq\*(C'\fR used to be read silently as \f(CW\*(Aqtwo.sample\*(Aq\fR.
+.PP
+New test file \f(CW\*(C`t/power_t_test.R.scipy.t\*(C'\fR carries the cross\-validated grid.
 .SS "0.291 2026\-08\-04 CDT"
 .IX Subsection "0.291 2026-08-04 CDT"
 POD formatting improvements

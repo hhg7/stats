@@ -1,225 +1,225 @@
 Stats::LikeR function	Perl sub	time	RAM
-mean	Stats::LikeR::mean	0.000104904174804688	172032
-mean	Stats::LikeR::mean	8.98838043212891e-05	172032
-mean	Stats::LikeR::mean	0.000123023986816406	172032
-mean	Stats::LikeR::mean	9.79900360107422e-05	172032
-mean	Stats::LikeR::mean	0.0001220703125	172032
-mean	Stats::LikeR::mean	9.79900360107422e-05	172032
-mean	Stats::LikeR::mean	8.70227813720703e-05	172032
-median	Stats::LikeR::median	0.000329971313476562	376832
-median	Stats::LikeR::median	0.000353097915649414	376832
-median	Stats::LikeR::median	0.000349998474121094	376832
-median	Stats::LikeR::median	0.000367164611816406	376832
-median	Stats::LikeR::median	0.00034785270690918	376832
-median	Stats::LikeR::median	0.000369071960449219	376832
-median	Stats::LikeR::median	0.000380992889404297	376832
-sd	Stats::LikeR::sd	0.000231027603149414	172032
-sd	Stats::LikeR::sd	0.000230073928833008	172032
-sd	Stats::LikeR::sd	0.000245094299316406	172032
-sd	Stats::LikeR::sd	0.000240802764892578	172032
-sd	Stats::LikeR::sd	0.000194072723388672	172032
-sd	Stats::LikeR::sd	0.000194072723388672	172032
-sd	Stats::LikeR::sd	0.000197887420654297	172032
-var	Stats::LikeR::var	0.000199079513549805	172032
-var	Stats::LikeR::var	0.000210046768188477	172032
-var	Stats::LikeR::var	0.000200033187866211	172032
-var	Stats::LikeR::var	0.00019383430480957	172032
-var	Stats::LikeR::var	0.000195980072021484	172032
-var	Stats::LikeR::var	0.000193119049072266	172032
-var	Stats::LikeR::var	0.000198841094970703	172032
-min	Stats::LikeR::min	0.000152111053466797	172032
-min	Stats::LikeR::min	0.000138044357299805	172032
-min	Stats::LikeR::min	0.000151157379150391	172032
-min	Stats::LikeR::min	0.000136852264404297	172032
-min	Stats::LikeR::min	0.000147819519042969	172032
-min	Stats::LikeR::min	0.000137090682983398	172032
-min	Stats::LikeR::min	0.000169038772583008	172032
-max	Stats::LikeR::max	0.000129938125610352	172032
-max	Stats::LikeR::max	0.000123977661132812	172032
-max	Stats::LikeR::max	0.000123023986816406	172032
-max	Stats::LikeR::max	0.000130891799926758	172032
-max	Stats::LikeR::max	0.000136137008666992	172032
-max	Stats::LikeR::max	0.000130891799926758	172032
-max	Stats::LikeR::max	0.000128030776977539	172032
-quantile	Stats::LikeR::quantile	0.00173282623291016	1110016
-quantile	Stats::LikeR::quantile	0.00179719924926758	1110016
-quantile	Stats::LikeR::quantile	0.0019071102142334	1110016
-quantile	Stats::LikeR::quantile	0.00197505950927734	1110016
-quantile	Stats::LikeR::quantile	0.0017399787902832	1110016
-quantile	Stats::LikeR::quantile	0.00178718566894531	1110016
-quantile	Stats::LikeR::quantile	0.00178790092468262	1110016
-cor	Stats::LikeR::cor	0.000463962554931641	442368
-cor	Stats::LikeR::cor	0.000457048416137695	442368
-cor	Stats::LikeR::cor	0.000443935394287109	442368
-cor	Stats::LikeR::cor	0.000478029251098633	442368
-cor	Stats::LikeR::cor	0.000437021255493164	442368
-cor	Stats::LikeR::cor	0.000454187393188477	442368
-cor	Stats::LikeR::cor	0.000445842742919922	442368
-cov	Stats::LikeR::cov	0.000535011291503906	425984
-cov	Stats::LikeR::cov	0.000524997711181641	425984
-cov	Stats::LikeR::cov	0.000532150268554688	425984
-cov	Stats::LikeR::cov	0.00059199333190918	425984
-cov	Stats::LikeR::cov	0.000526189804077148	425984
-cov	Stats::LikeR::cov	0.000514984130859375	425984
-cov	Stats::LikeR::cov	0.00050806999206543	425984
-rnorm	Stats::LikeR::rnorm	0.000171184539794922	536576
-rnorm	Stats::LikeR::rnorm	0.000161886215209961	536576
-rnorm	Stats::LikeR::rnorm	0.000131845474243164	536576
-rnorm	Stats::LikeR::rnorm	0.00014805793762207	536576
-rnorm	Stats::LikeR::rnorm	0.000180959701538086	536576
-rnorm	Stats::LikeR::rnorm	0.000154972076416016	536576
-rnorm	Stats::LikeR::rnorm	0.000149965286254883	536576
-runif	Stats::LikeR::runif	0.000120878219604492	344064
-runif	Stats::LikeR::runif	0.000139951705932617	360448
-runif	Stats::LikeR::runif	0.000159978866577148	344064
-runif	Stats::LikeR::runif	0.000131130218505859	344064
-runif	Stats::LikeR::runif	0.0001220703125	344064
-runif	Stats::LikeR::runif	0.00011897087097168	344064
-runif	Stats::LikeR::runif	0.000123023986816406	344064
-t_test	filter + vals + t_test	0.00929522514343262	2965504
-t_test	filter + vals + t_test	0.00516486167907715	2965504
-t_test	filter + vals + t_test	0.00555515289306641	2969600
-t_test	filter + vals + t_test	0.00486612319946289	2969600
-t_test	filter + vals + t_test	0.00514793395996094	2969600
-t_test	filter + vals + t_test	0.0048980712890625	2969600
-t_test	filter + vals + t_test	0.00517892837524414	2969600
-wilcox_test	filter + vals + wilcox_test	0.00709104537963867	2920448
-wilcox_test	filter + vals + wilcox_test	0.00697994232177734	2924544
-wilcox_test	filter + vals + wilcox_test	0.00775504112243652	2924544
-wilcox_test	filter + vals + wilcox_test	0.00695085525512695	2924544
-wilcox_test	filter + vals + wilcox_test	0.00769209861755371	2924544
-wilcox_test	filter + vals + wilcox_test	0.00685310363769531	2924544
-wilcox_test	filter + vals + wilcox_test	0.00692605972290039	2924544
-chisq_test	pivot_table + chisq_test	0.0181889533996582	1142784
-chisq_test	pivot_table + chisq_test	0.0155439376831055	1138688
-chisq_test	pivot_table + chisq_test	0.0127830505371094	1138688
-chisq_test	pivot_table + chisq_test	0.0144741535186768	1138688
-chisq_test	pivot_table + chisq_test	0.0172350406646729	1138688
-chisq_test	pivot_table + chisq_test	0.0148530006408691	1138688
-chisq_test	pivot_table + chisq_test	0.0169539451599121	1138688
-shapiro_test	Stats::LikeR::shapiro_test	0.00132298469543457	925696
-shapiro_test	Stats::LikeR::shapiro_test	0.00127911567687988	925696
-shapiro_test	Stats::LikeR::shapiro_test	0.00127005577087402	925696
-shapiro_test	Stats::LikeR::shapiro_test	0.00139999389648438	925696
-shapiro_test	Stats::LikeR::shapiro_test	0.0014350414276123	925696
-shapiro_test	Stats::LikeR::shapiro_test	0.00151491165161133	925696
-shapiro_test	Stats::LikeR::shapiro_test	0.00150704383850098	925696
-binom_test	Stats::LikeR::binom_test	0.000256061553955078	937984
-binom_test	Stats::LikeR::binom_test	0.00026702880859375	937984
-binom_test	Stats::LikeR::binom_test	0.000253915786743164	937984
-binom_test	Stats::LikeR::binom_test	0.000283956527709961	937984
-binom_test	Stats::LikeR::binom_test	0.000245809555053711	937984
-binom_test	Stats::LikeR::binom_test	0.000260829925537109	937984
-binom_test	Stats::LikeR::binom_test	0.000273942947387695	937984
-filter	filter + col	0.00302600860595703	1212416
-filter	filter + col	0.00301790237426758	1212416
-filter	filter + col	0.00302982330322266	1212416
-filter	filter + col	0.00320816040039062	1216512
-filter	filter + col	0.00288796424865723	1216512
-filter	filter + col	0.00284814834594727	1216512
-filter	filter + col	0.002655029296875	1216512
-select_cols	Stats::LikeR::select_cols	0.00014495849609375	131072
-select_cols	Stats::LikeR::select_cols	0.000144004821777344	131072
-select_cols	Stats::LikeR::select_cols	0.000138998031616211	131072
-select_cols	Stats::LikeR::select_cols	0.000135898590087891	131072
-select_cols	Stats::LikeR::select_cols	0.000138998031616211	131072
-select_cols	Stats::LikeR::select_cols	0.000126838684082031	131072
-select_cols	Stats::LikeR::select_cols	0.000129938125610352	131072
-drop_cols	Stats::LikeR::drop_cols	0.000145912170410156	131072
-drop_cols	Stats::LikeR::drop_cols	0.000154972076416016	131072
-drop_cols	Stats::LikeR::drop_cols	0.00015711784362793	131072
-drop_cols	Stats::LikeR::drop_cols	0.000164985656738281	131072
-drop_cols	Stats::LikeR::drop_cols	0.000150918960571289	131072
-drop_cols	Stats::LikeR::drop_cols	0.000162124633789062	131072
-drop_cols	Stats::LikeR::drop_cols	0.000150918960571289	131072
-rename_cols	Stats::LikeR::rename_cols	0.000174999237060547	131072
-rename_cols	Stats::LikeR::rename_cols	0.000154972076416016	131072
-rename_cols	Stats::LikeR::rename_cols	0.000174999237060547	131072
-rename_cols	Stats::LikeR::rename_cols	0.000153064727783203	131072
-rename_cols	Stats::LikeR::rename_cols	0.000175952911376953	131072
-rename_cols	Stats::LikeR::rename_cols	0.000155210494995117	131072
-rename_cols	Stats::LikeR::rename_cols	0.000171899795532227	131072
-dropna	Stats::LikeR::dropna	0.00940299034118652	2314240
-dropna	Stats::LikeR::dropna	0.00973105430603027	2314240
-dropna	Stats::LikeR::dropna	0.00864696502685547	2318336
-dropna	Stats::LikeR::dropna	0.0106680393218994	2318336
-dropna	Stats::LikeR::dropna	0.00962090492248535	2314240
-dropna	Stats::LikeR::dropna	0.00965404510498047	2314240
-dropna	Stats::LikeR::dropna	0.00904297828674316	2314240
-fillna	Stats::LikeR::fillna	0.00987911224365234	2953216
-fillna	Stats::LikeR::fillna	0.00966596603393555	2953216
-fillna	Stats::LikeR::fillna	0.00670385360717773	2953216
-fillna	Stats::LikeR::fillna	0.00815606117248535	2953216
-fillna	Stats::LikeR::fillna	0.00961995124816895	2953216
-fillna	Stats::LikeR::fillna	0.00585198402404785	2953216
-fillna	Stats::LikeR::fillna	0.0105099678039551	2953216
-drop_duplicates	Stats::LikeR::drop_duplicates	0.0135798454284668	6279168
-drop_duplicates	Stats::LikeR::drop_duplicates	0.0173020362854004	6279168
-drop_duplicates	Stats::LikeR::drop_duplicates	0.0166370868682861	6279168
-drop_duplicates	Stats::LikeR::drop_duplicates	0.0177338123321533	6279168
-drop_duplicates	Stats::LikeR::drop_duplicates	0.0181059837341309	6279168
-drop_duplicates	Stats::LikeR::drop_duplicates	0.0177009105682373	6279168
-drop_duplicates	Stats::LikeR::drop_duplicates	0.0183229446411133	6279168
-group_by	group_by + mean	0.00167989730834961	548864
-group_by	group_by + mean	0.00165295600891113	548864
-group_by	group_by + mean	0.00142312049865723	548864
-group_by	group_by + mean	0.00164389610290527	548864
-group_by	group_by + mean	0.00157999992370605	548864
-group_by	group_by + mean	0.00159311294555664	548864
-group_by	group_by + mean	0.00169920921325684	548864
-concat	Stats::LikeR::concat	0.00844693183898926	3846144
-concat	Stats::LikeR::concat	0.00730395317077637	3846144
-concat	Stats::LikeR::concat	0.00804615020751953	3846144
-concat	Stats::LikeR::concat	0.00748896598815918	3846144
-concat	Stats::LikeR::concat	0.00817108154296875	3846144
-concat	Stats::LikeR::concat	0.00597500801086426	3846144
-concat	Stats::LikeR::concat	0.00672507286071777	3846144
-merge	Stats::LikeR::merge	0.0186269283294678	7684096
-merge	Stats::LikeR::merge	0.0170950889587402	7684096
-merge	Stats::LikeR::merge	0.0157859325408936	7684096
-merge	Stats::LikeR::merge	0.0171680450439453	7684096
-merge	Stats::LikeR::merge	0.0154910087585449	7684096
-merge	Stats::LikeR::merge	0.0157430171966553	7684096
-merge	Stats::LikeR::merge	0.0135550498962402	7684096
-value_counts	Stats::LikeR::value_counts	0.000527143478393555	274432
-value_counts	Stats::LikeR::value_counts	0.000608921051025391	274432
-value_counts	Stats::LikeR::value_counts	0.000531911849975586	274432
-value_counts	Stats::LikeR::value_counts	0.000503063201904297	274432
-value_counts	Stats::LikeR::value_counts	0.00056004524230957	274432
-value_counts	Stats::LikeR::value_counts	0.000771999359130859	274432
-value_counts	Stats::LikeR::value_counts	0.000699996948242188	274432
-pivot_table	Stats::LikeR::pivot_table	0.0187728404998779	585728
-pivot_table	Stats::LikeR::pivot_table	0.0189130306243896	585728
-pivot_table	Stats::LikeR::pivot_table	0.0170068740844727	585728
-pivot_table	Stats::LikeR::pivot_table	0.01568603515625	585728
-pivot_table	Stats::LikeR::pivot_table	0.016711950302124	585728
-pivot_table	Stats::LikeR::pivot_table	0.0102951526641846	585728
-pivot_table	Stats::LikeR::pivot_table	0.014207124710083	585728
-lm	Stats::LikeR::lm	0.0115082263946533	2752512
-lm	Stats::LikeR::lm	0.00841808319091797	2752512
-lm	Stats::LikeR::lm	0.0100231170654297	2752512
-lm	Stats::LikeR::lm	0.00838708877563477	2752512
-lm	Stats::LikeR::lm	0.0098872184753418	2752512
-lm	Stats::LikeR::lm	0.00972604751586914	2752512
-lm	Stats::LikeR::lm	0.0127830505371094	2752512
-glm	Stats::LikeR::glm	0.0171940326690674	3325952
-glm	Stats::LikeR::glm	0.013092041015625	3325952
-glm	Stats::LikeR::glm	0.0150320529937744	3325952
-glm	Stats::LikeR::glm	0.01674485206604	3325952
-glm	Stats::LikeR::glm	0.0169899463653564	3325952
-glm	Stats::LikeR::glm	0.0159590244293213	3325952
-glm	Stats::LikeR::glm	0.0142660140991211	3325952
-auc	Stats::LikeR::auc	0.00452804565429688	696320
-auc	Stats::LikeR::auc	0.00640511512756348	696320
-auc	Stats::LikeR::auc	0.00642299652099609	696320
-auc	Stats::LikeR::auc	0.00684404373168945	696320
-auc	Stats::LikeR::auc	0.00680112838745117	700416
-auc	Stats::LikeR::auc	0.00675606727600098	700416
-auc	Stats::LikeR::auc	0.00714206695556641	700416
-prcomp	Stats::LikeR::prcomp	0.00383710861206055	2035712
-prcomp	Stats::LikeR::prcomp	0.00350379943847656	2035712
-prcomp	Stats::LikeR::prcomp	0.00387811660766602	2035712
-prcomp	Stats::LikeR::prcomp	0.00404500961303711	2035712
-prcomp	Stats::LikeR::prcomp	0.00398683547973633	2035712
-prcomp	Stats::LikeR::prcomp	0.00354886054992676	2035712
-prcomp	Stats::LikeR::prcomp	0.00384902954101562	2035712
+mean	Stats::LikeR::mean	9.70363616943359e-05	147456
+mean	Stats::LikeR::mean	9.10758972167969e-05	147456
+mean	Stats::LikeR::mean	0.000103950500488281	147456
+mean	Stats::LikeR::mean	0.000111103057861328	147456
+mean	Stats::LikeR::mean	0.000113010406494141	147456
+mean	Stats::LikeR::mean	9.51290130615234e-05	147456
+mean	Stats::LikeR::mean	0.000103950500488281	147456
+median	Stats::LikeR::median	0.000340938568115234	335872
+median	Stats::LikeR::median	0.000375032424926758	335872
+median	Stats::LikeR::median	0.000359058380126953	335872
+median	Stats::LikeR::median	0.00037384033203125	335872
+median	Stats::LikeR::median	0.000349998474121094	335872
+median	Stats::LikeR::median	0.000331878662109375	335872
+median	Stats::LikeR::median	0.000360965728759766	335872
+sd	Stats::LikeR::sd	0.00020909309387207	147456
+sd	Stats::LikeR::sd	0.000199079513549805	147456
+sd	Stats::LikeR::sd	0.000195980072021484	147456
+sd	Stats::LikeR::sd	0.000186920166015625	147456
+sd	Stats::LikeR::sd	0.000189065933227539	147456
+sd	Stats::LikeR::sd	0.000182867050170898	147456
+sd	Stats::LikeR::sd	0.000188112258911133	147456
+var	Stats::LikeR::var	0.00018310546875	147456
+var	Stats::LikeR::var	0.000189065933227539	147456
+var	Stats::LikeR::var	0.000165939331054688	147456
+var	Stats::LikeR::var	0.000190019607543945	147456
+var	Stats::LikeR::var	0.000189065933227539	147456
+var	Stats::LikeR::var	0.000190019607543945	147456
+var	Stats::LikeR::var	0.000186920166015625	147456
+min	Stats::LikeR::min	0.000128030776977539	147456
+min	Stats::LikeR::min	0.000132083892822266	147456
+min	Stats::LikeR::min	0.000128030776977539	147456
+min	Stats::LikeR::min	0.00012516975402832	147456
+min	Stats::LikeR::min	0.000127077102661133	147456
+min	Stats::LikeR::min	0.00011897087097168	147456
+min	Stats::LikeR::min	0.000127077102661133	147456
+max	Stats::LikeR::max	0.000134944915771484	147456
+max	Stats::LikeR::max	0.000133037567138672	147456
+max	Stats::LikeR::max	0.000128030776977539	147456
+max	Stats::LikeR::max	0.000124931335449219	147456
+max	Stats::LikeR::max	0.000131130218505859	147456
+max	Stats::LikeR::max	0.000130891799926758	147456
+max	Stats::LikeR::max	0.000129938125610352	147456
+quantile	Stats::LikeR::quantile	0.00189399719238281	1052672
+quantile	Stats::LikeR::quantile	0.00177502632141113	1052672
+quantile	Stats::LikeR::quantile	0.00178289413452148	1052672
+quantile	Stats::LikeR::quantile	0.00177884101867676	1052672
+quantile	Stats::LikeR::quantile	0.00182485580444336	1052672
+quantile	Stats::LikeR::quantile	0.00180888175964355	1052672
+quantile	Stats::LikeR::quantile	0.00175309181213379	1052672
+cor	Stats::LikeR::cor	0.000458955764770508	479232
+cor	Stats::LikeR::cor	0.000446081161499023	479232
+cor	Stats::LikeR::cor	0.000452041625976562	479232
+cor	Stats::LikeR::cor	0.000470161437988281	479232
+cor	Stats::LikeR::cor	0.000452995300292969	479232
+cor	Stats::LikeR::cor	0.000448942184448242	479232
+cor	Stats::LikeR::cor	0.000451087951660156	479232
+cov	Stats::LikeR::cov	0.000566005706787109	405504
+cov	Stats::LikeR::cov	0.000517129898071289	405504
+cov	Stats::LikeR::cov	0.000526905059814453	405504
+cov	Stats::LikeR::cov	0.000515222549438477	405504
+cov	Stats::LikeR::cov	0.000504970550537109	405504
+cov	Stats::LikeR::cov	0.000479936599731445	405504
+cov	Stats::LikeR::cov	0.000488996505737305	405504
+rnorm	Stats::LikeR::rnorm	0.000169038772583008	659456
+rnorm	Stats::LikeR::rnorm	0.000173091888427734	659456
+rnorm	Stats::LikeR::rnorm	0.000152111053466797	659456
+rnorm	Stats::LikeR::rnorm	0.000174045562744141	659456
+rnorm	Stats::LikeR::rnorm	0.000145912170410156	659456
+rnorm	Stats::LikeR::rnorm	0.000167131423950195	659456
+rnorm	Stats::LikeR::rnorm	0.000155925750732422	659456
+runif	Stats::LikeR::runif	0.000133037567138672	401408
+runif	Stats::LikeR::runif	0.000144004821777344	417792
+runif	Stats::LikeR::runif	0.000116109848022461	401408
+runif	Stats::LikeR::runif	0.000114917755126953	401408
+runif	Stats::LikeR::runif	0.00012516975402832	401408
+runif	Stats::LikeR::runif	0.000118017196655273	401408
+runif	Stats::LikeR::runif	0.000123023986816406	401408
+t_test	filter + vals + t_test	0.00574111938476562	2994176
+t_test	filter + vals + t_test	0.00450396537780762	2994176
+t_test	filter + vals + t_test	0.00537395477294922	2998272
+t_test	filter + vals + t_test	0.00541806221008301	2998272
+t_test	filter + vals + t_test	0.00519800186157227	2998272
+t_test	filter + vals + t_test	0.00563406944274902	2998272
+t_test	filter + vals + t_test	0.00558590888977051	2998272
+wilcox_test	filter + vals + wilcox_test	0.00730705261230469	2850816
+wilcox_test	filter + vals + wilcox_test	0.00785517692565918	2850816
+wilcox_test	filter + vals + wilcox_test	0.0066678524017334	2850816
+wilcox_test	filter + vals + wilcox_test	0.00751209259033203	2850816
+wilcox_test	filter + vals + wilcox_test	0.00766706466674805	2850816
+wilcox_test	filter + vals + wilcox_test	0.00951480865478516	2850816
+wilcox_test	filter + vals + wilcox_test	0.00643801689147949	2850816
+chisq_test	pivot_table + chisq_test	0.0206260681152344	1224704
+chisq_test	pivot_table + chisq_test	0.0164518356323242	1224704
+chisq_test	pivot_table + chisq_test	0.018280029296875	1224704
+chisq_test	pivot_table + chisq_test	0.0170209407806396	1224704
+chisq_test	pivot_table + chisq_test	0.0109610557556152	1224704
+chisq_test	pivot_table + chisq_test	0.013092041015625	1224704
+chisq_test	pivot_table + chisq_test	0.015671968460083	1224704
+shapiro_test	Stats::LikeR::shapiro_test	0.00117897987365723	1089536
+shapiro_test	Stats::LikeR::shapiro_test	0.00123906135559082	1089536
+shapiro_test	Stats::LikeR::shapiro_test	0.00130915641784668	1089536
+shapiro_test	Stats::LikeR::shapiro_test	0.00118017196655273	1089536
+shapiro_test	Stats::LikeR::shapiro_test	0.00122690200805664	1089536
+shapiro_test	Stats::LikeR::shapiro_test	0.00155496597290039	1089536
+shapiro_test	Stats::LikeR::shapiro_test	0.00165796279907227	1089536
+binom_test	Stats::LikeR::binom_test	0.000231027603149414	1019904
+binom_test	Stats::LikeR::binom_test	0.000421047210693359	1019904
+binom_test	Stats::LikeR::binom_test	0.000252962112426758	1019904
+binom_test	Stats::LikeR::binom_test	0.00024104118347168	1019904
+binom_test	Stats::LikeR::binom_test	0.00025486946105957	1019904
+binom_test	Stats::LikeR::binom_test	0.000277996063232422	1019904
+binom_test	Stats::LikeR::binom_test	0.000268936157226562	1019904
+filter	filter + col	0.00349593162536621	1105920
+filter	filter + col	0.0033271312713623	1105920
+filter	filter + col	0.00325798988342285	1105920
+filter	filter + col	0.00347590446472168	1110016
+filter	filter + col	0.0031430721282959	1110016
+filter	filter + col	0.00297117233276367	1110016
+filter	filter + col	0.0032961368560791	1110016
+select_cols	Stats::LikeR::select_cols	0.000159025192260742	81920
+select_cols	Stats::LikeR::select_cols	0.000149965286254883	81920
+select_cols	Stats::LikeR::select_cols	0.000125885009765625	81920
+select_cols	Stats::LikeR::select_cols	0.000128984451293945	81920
+select_cols	Stats::LikeR::select_cols	0.000115871429443359	81920
+select_cols	Stats::LikeR::select_cols	0.000133991241455078	81920
+select_cols	Stats::LikeR::select_cols	0.000123977661132812	81920
+drop_cols	Stats::LikeR::drop_cols	0.000163078308105469	81920
+drop_cols	Stats::LikeR::drop_cols	0.000136137008666992	81920
+drop_cols	Stats::LikeR::drop_cols	0.000158071517944336	81920
+drop_cols	Stats::LikeR::drop_cols	0.000145196914672852	81920
+drop_cols	Stats::LikeR::drop_cols	0.000147104263305664	81920
+drop_cols	Stats::LikeR::drop_cols	0.000165939331054688	81920
+drop_cols	Stats::LikeR::drop_cols	0.000158071517944336	81920
+rename_cols	Stats::LikeR::rename_cols	0.000190019607543945	81920
+rename_cols	Stats::LikeR::rename_cols	0.000174999237060547	81920
+rename_cols	Stats::LikeR::rename_cols	0.000169038772583008	81920
+rename_cols	Stats::LikeR::rename_cols	0.000172138214111328	81920
+rename_cols	Stats::LikeR::rename_cols	0.000174999237060547	81920
+rename_cols	Stats::LikeR::rename_cols	0.000164031982421875	81920
+rename_cols	Stats::LikeR::rename_cols	0.00015711784362793	81920
+dropna	Stats::LikeR::dropna	0.0100109577178955	2269184
+dropna	Stats::LikeR::dropna	0.0110690593719482	2269184
+dropna	Stats::LikeR::dropna	0.0112650394439697	2273280
+dropna	Stats::LikeR::dropna	0.00939202308654785	2273280
+dropna	Stats::LikeR::dropna	0.0102779865264893	2269184
+dropna	Stats::LikeR::dropna	0.00866794586181641	2269184
+dropna	Stats::LikeR::dropna	0.010261058807373	2269184
+fillna	Stats::LikeR::fillna	0.00937199592590332	2887680
+fillna	Stats::LikeR::fillna	0.0101289749145508	2887680
+fillna	Stats::LikeR::fillna	0.00845599174499512	2887680
+fillna	Stats::LikeR::fillna	0.0086359977722168	2887680
+fillna	Stats::LikeR::fillna	0.00736212730407715	2887680
+fillna	Stats::LikeR::fillna	0.00979495048522949	2887680
+fillna	Stats::LikeR::fillna	0.00962495803833008	2887680
+drop_duplicates	Stats::LikeR::drop_duplicates	0.0172410011291504	6213632
+drop_duplicates	Stats::LikeR::drop_duplicates	0.0184381008148193	6213632
+drop_duplicates	Stats::LikeR::drop_duplicates	0.0171680450439453	6213632
+drop_duplicates	Stats::LikeR::drop_duplicates	0.0148677825927734	6213632
+drop_duplicates	Stats::LikeR::drop_duplicates	0.0172660350799561	6213632
+drop_duplicates	Stats::LikeR::drop_duplicates	0.0179760456085205	6213632
+drop_duplicates	Stats::LikeR::drop_duplicates	0.0131649971008301	6213632
+group_by	group_by + mean	0.00144600868225098	466944
+group_by	group_by + mean	0.00108098983764648	466944
+group_by	group_by + mean	0.00124311447143555	466944
+group_by	group_by + mean	0.00120091438293457	466944
+group_by	group_by + mean	0.00140380859375	466944
+group_by	group_by + mean	0.00152420997619629	466944
+group_by	group_by + mean	0.00155401229858398	466944
+concat	Stats::LikeR::concat	0.00801801681518555	3796992
+concat	Stats::LikeR::concat	0.00893378257751465	3801088
+concat	Stats::LikeR::concat	0.00784182548522949	3801088
+concat	Stats::LikeR::concat	0.00850701332092285	3801088
+concat	Stats::LikeR::concat	0.00766205787658691	3801088
+concat	Stats::LikeR::concat	0.00877881050109863	3801088
+concat	Stats::LikeR::concat	0.00766491889953613	3796992
+merge	Stats::LikeR::merge	0.0156369209289551	7602176
+merge	Stats::LikeR::merge	0.0183110237121582	7602176
+merge	Stats::LikeR::merge	0.0169029235839844	7602176
+merge	Stats::LikeR::merge	0.0119559764862061	7602176
+merge	Stats::LikeR::merge	0.0141241550445557	7602176
+merge	Stats::LikeR::merge	0.0154600143432617	7602176
+merge	Stats::LikeR::merge	0.0144259929656982	7602176
+value_counts	Stats::LikeR::value_counts	0.000677824020385742	262144
+value_counts	Stats::LikeR::value_counts	0.00053095817565918	262144
+value_counts	Stats::LikeR::value_counts	0.000519990921020508	262144
+value_counts	Stats::LikeR::value_counts	0.000545978546142578	262144
+value_counts	Stats::LikeR::value_counts	0.000586032867431641	262144
+value_counts	Stats::LikeR::value_counts	0.000562191009521484	262144
+value_counts	Stats::LikeR::value_counts	0.000546932220458984	262144
+pivot_table	Stats::LikeR::pivot_table	0.0161979198455811	516096
+pivot_table	Stats::LikeR::pivot_table	0.018481969833374	516096
+pivot_table	Stats::LikeR::pivot_table	0.0160040855407715	516096
+pivot_table	Stats::LikeR::pivot_table	0.0161459445953369	516096
+pivot_table	Stats::LikeR::pivot_table	0.017247200012207	516096
+pivot_table	Stats::LikeR::pivot_table	0.0129439830780029	516096
+pivot_table	Stats::LikeR::pivot_table	0.0147819519042969	516096
+lm	Stats::LikeR::lm	0.0113399028778076	2945024
+lm	Stats::LikeR::lm	0.0116791725158691	2945024
+lm	Stats::LikeR::lm	0.00645613670349121	2945024
+lm	Stats::LikeR::lm	0.01015305519104	2945024
+lm	Stats::LikeR::lm	0.011336088180542	2945024
+lm	Stats::LikeR::lm	0.0114750862121582	2945024
+lm	Stats::LikeR::lm	0.0120959281921387	2945024
+glm	Stats::LikeR::glm	0.00921511650085449	3616768
+glm	Stats::LikeR::glm	0.0141880512237549	3616768
+glm	Stats::LikeR::glm	0.0141799449920654	3616768
+glm	Stats::LikeR::glm	0.0104420185089111	3616768
+glm	Stats::LikeR::glm	0.0131921768188477	3616768
+glm	Stats::LikeR::glm	0.0142500400543213	3616768
+glm	Stats::LikeR::glm	0.00870919227600098	3616768
+auc	Stats::LikeR::auc	0.006439208984375	688128
+auc	Stats::LikeR::auc	0.00472617149353027	688128
+auc	Stats::LikeR::auc	0.00697898864746094	688128
+auc	Stats::LikeR::auc	0.00685787200927734	688128
+auc	Stats::LikeR::auc	0.00691890716552734	692224
+auc	Stats::LikeR::auc	0.00705504417419434	692224
+auc	Stats::LikeR::auc	0.00661396980285645	692224
+prcomp	Stats::LikeR::prcomp	0.00412797927856445	1994752
+prcomp	Stats::LikeR::prcomp	0.0038142204284668	1994752
+prcomp	Stats::LikeR::prcomp	0.0036919116973877	1994752
+prcomp	Stats::LikeR::prcomp	0.00348401069641113	1994752
+prcomp	Stats::LikeR::prcomp	0.00380396842956543	1994752
+prcomp	Stats::LikeR::prcomp	0.00422096252441406	1994752
+prcomp	Stats::LikeR::prcomp	0.00359702110290527	1994752
