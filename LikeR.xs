@@ -6856,7 +6856,7 @@ static void ip_build_cubic(pTHX_ ip_fit *F) {
 	ip_solve(aTHX_ A, b, n, F->M);
 }
 static NV ip_eval_cubic(const ip_fit *F, NV t) {
-	IV n = F->na; const NV *xa = F->xa, *ya = F->ya, *h = F->h;
+	IV n = F->na; const NV *restrict xa = F->xa, *restrict ya = F->ya, *restrict h = F->h;
 	if (n == 2) return ya[0] + (ya[1] - ya[0]) * (t - xa[0]) / h[0];
 	if (n == 3)
 		return ya[0] * (t - xa[1]) * (t - xa[2]) / ((xa[0] - xa[1]) * (xa[0] - xa[2]))
@@ -6938,7 +6938,7 @@ static void ip_build_akima(pTHX_ ip_fit *F) {
 	}
 }
 static NV ip_eval_akima(const ip_fit *F, NV t) {
-	IV n = F->na; const NV *xa = F->xa, *ya = F->ya, *h = F->h, *tk = F->d;
+	IV n = F->na; const NV *restrict xa = F->xa, *restrict ya = F->ya, *restrict h = F->h, *restrict tk = F->d;
 	IV i = ip_seg(xa, n, t); NV hi = h[i], s = t - xa[i];
 	NV c2 = (3 * (ya[i + 1] - ya[i]) / hi - 2 * tk[i] - tk[i + 1]) / hi;
 	NV c3 = (tk[i] + tk[i + 1] - 2 * (ya[i + 1] - ya[i]) / hi) / (hi * hi);
@@ -7143,7 +7143,7 @@ static void ip_fill_column(pTHX_ AV *vals, AV *xav, const char *method,
 	}
 }
 
-/* ---- epidemiology: parse a 2x2 table from an array ref ------------------
+/* ---- epidemiology: parse a 2x2 table from an array ref -----
  * Accepts a flat [a,b,c,d] or a nested [[a,b],[c,d]].  Layout convention
  * (rows = exposure/treatment, columns = outcome):
  *          outcome+   outcome-
@@ -7176,7 +7176,7 @@ static void epi_read_2x2(pTHX_ SV *restrict sv, const char *restrict who,
 		croak("%s: cell counts must be non-negative", who);
 }
 
-/* ---- ROC / AUC ---------------------------------------------------------- */
+// ROC / AUC
 typedef struct { NV score; int lab; } ROCPt;      /* lab: 1 = positive case */
 static int rocpt_cmp_desc(const void *a, const void *b) {
 	const ROCPt *pa = (const ROCPt *)a, *pb = (const ROCPt *)b;
@@ -7224,8 +7224,8 @@ static void roc_split(pTHX_ AV *restrict sav, AV *restrict lav,
 }
 
 /* DeLong AUC (c-statistic) and its standard error for one ROC curve.  Higher
- * score = more positive.  Midranks make ties exact; AUC equals the
- * Mann-Whitney concordance probability.                                     */
+ score = more positive.  Midranks make ties exact; AUC equals the
+ Mann-Whitney concordance probability. */
 static void roc_delong(pTHX_ const NV *restrict pos, size_t m,
                        const NV *restrict neg, size_t n,
                        NV *restrict auc_out, NV *restrict se_out) {
@@ -7252,7 +7252,7 @@ static void roc_delong(pTHX_ const NV *restrict pos, size_t m,
 	Safefree(comb); Safefree(TX); Safefree(TY); Safefree(TZ); Safefree(V10); Safefree(V01);
 }
 
-/* ---- survival analysis -------------------------------------------------- */
+// survival analysis
 typedef struct { NV time; int status; int grp; } SurvObs;   /* status: 1=event */
 static int survobs_cmp(const void *a, const void *b) {
 	const SurvObs *pa = (const SurvObs *)a, *pb = (const SurvObs *)b;
@@ -7400,13 +7400,13 @@ typedef struct {
 } moment_acc;
 
 static void moment_push(moment_acc *restrict a, NV x) {
-	const NV n1 = (NV)a->n;                /* count before this observation */
+	const NV n1 = (NV)a->n; // count before this observation
 	a->n++;
 	const NV n     = (NV)a->n;
 	const NV delta = x - a->mean;
 	const NV dn    = delta / n;
 	const NV dn2   = dn * dn;
-	const NV term  = delta * dn * n1;      /* == n1/n * delta^2 */
+	const NV term  = delta * dn * n1; // == n1/n * delta^2
 	a->m4   += term * dn2 * (n * n - 3.0 * n + 3.0)
 	         + 6.0 * dn2 * a->m2 - 4.0 * dn * a->m3;
 	a->m3   += term * dn * (n - 2.0) - 3.0 * dn * a->m2;
@@ -7441,11 +7441,11 @@ static void moment_av(pTHX_ AV *restrict av, size_t argi,
 }
 
 /* Walk an argument list of numbers, array refs of numbers and 'type'/'x'
- * named pairs.  Shared so that skew() and kurtosis() cannot drift apart on
- * what they accept.  A named key is recognised only when the SV is a string
- * that is not a number, so it can never swallow a data value -- and anything
- * else that looks like a bareword is a typo worth reporting rather than
- * silently averaging in as zero.                                            */
+ named pairs.  Shared so that skew() and kurtosis() cannot drift apart on
+ what they accept.  A named key is recognised only when the SV is a string
+ that is not a number, so it can never swallow a data value -- and anything
+ else that looks like a bareword is a typo worth reporting rather than
+ silently averaging in as zero.                                            */
 static void moment_args(pTHX_ SV **restrict args, size_t items,
                         const char *restrict fname,
                         moment_acc *restrict acc, IV *restrict type) {
