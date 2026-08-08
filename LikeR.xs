@@ -1739,15 +1739,33 @@ static NV compute_cor(const NV *restrict x, const NV *restrict y,
 #define EPS 3.0e-15
 #define FPMIN 1.0e-30
 
+/* Lentz's continued fraction for the incomplete beta (NR's betacf).
+ *
+ * The iteration count needed grows with the shape parameters -- about
+ * 1.3*sqrt(a+b) terms for a+b ~ 1e3, falling to 0.25*sqrt(a+b) by a+b ~ 1e7 --
+ * so a flat MAX_ITER silently truncates once the parameters are large.  At
+ * a = b = 1e7 (a binomial tail at n = 2e7, which is what an All of Us cohort
+ * looks like) 500 terms leaves a relative error of 9e-5: four correct digits.
+ * The cap therefore scales with sqrt(a+b), with MAX_ITER as its floor.  The
+ * loop still exits on convergence, so the larger cap costs nothing except in
+ * the cases that were previously being cut short.
+ *
+ * MAX_CF_ITER is a ceiling on that scaling, so the cap stays a safety net and
+ * never becomes a way to spend billions of iterations: a+b can legitimately
+ * reach 1e18 here (binom_test accepts any n up to LONG_MAX), and 2*sqrt of that
+ * is 2e9.  The ceiling still covers a+b up to 2.5e9, past any real cohort, and
+ * beyond it the continued fraction is the wrong algorithm anyway. */
+#define MAX_CF_ITER 100000
 static NV _incbeta_cf(NV a, NV b, NV x) {
-	int m;
+	NV scaled = MAX_ITER + 2.0 * sqrt(a + b);
+	long m, maxit = (scaled > (NV)MAX_CF_ITER) ? MAX_CF_ITER : (long)scaled;
 	NV aa, c, d, del, h, qab, qam, qap;
 	qab = a + b; qap = a + 1.0; qam = a - 1.0;
 	c = 1.0; d = 1.0 - qab * x / qap;
 	if (fabs(d) < FPMIN) d = FPMIN;
 	d = 1.0 / d; h = d;
-	for (m = 1; m <= MAX_ITER; m++) {
-	  int m2 = 2 * m;
+	for (m = 1; m <= maxit; m++) {
+	  NV m2 = 2.0 * m;	/* NV: m2 is only ever used in NV arithmetic below */
 	  aa = m * (b - m) * x / ((qam + m2) * (a + m2));
 	  d = 1.0 + aa * d;
 	  if (fabs(d) < FPMIN) d = FPMIN;
@@ -1765,12 +1783,32 @@ static NV _incbeta_cf(NV a, NV b, NV x) {
 	return h;
 }
 
+/* The front factor  x^a (1-x)^b / B(a,b)  of the continued fraction, built out
+ * of Loader's saddle-point binomial rather than differenced lgamma()s (this is
+ * what R's brcomp() does).  Substituting n = a+b and k = a into
+ *
+ *     dbinom_raw(k, n, x, 1-x) = Gamma(n+1)/(Gamma(k+1)Gamma(n-k+1)) x^k (1-x)^(n-k)
+ *
+ * and cancelling Gamma(z+1) = z*Gamma(z) three times gives
+ *
+ *     x^a (1-x)^b / B(a,b) = (a*b/(a+b)) * dbinom_raw(a, a+b, x, 1-x).
+ *
+ * The lgamma() form loses digits to cancellation: at a = b = 1e7 the three
+ * lgamma()s are each ~1.6e8 and sum to ~1.5e7, so their last bits are worth
+ * 4e-8 in the exponent -- and exp() turns an absolute error in the exponent
+ * into a relative error in the result.  stirlerr()/bd0() never form those large
+ * intermediates, so they hold ~1e-15 at any size.  Written a/(a+b)*b so the
+ * product cannot overflow for huge a and b. */
+static NV _incbeta_front(NV a, NV b, NV x) {
+	return (a / (a + b)) * b * exp(bt_dbinom_raw_log(a, a + b, x, 1.0 - x));
+}
+
 static NV incbeta(NV a, NV b, NV x) {
 	if (x <= 0.0) return 0.0;
 	if (x >= 1.0) return 1.0;
-	NV bt = exp(lgamma(a + b) - lgamma(a) - lgamma(b) + a * log(x) + b * log(1.0 - x));
-	if (x < (a + 1.0) / (a + b + 2.0)) return bt * _incbeta_cf(a, b, x) / a;
-	return 1.0 - bt * _incbeta_cf(b, a, 1.0 - x) / b;
+	if (x < (a + 1.0) / (a + b + 2.0))
+		return _incbeta_front(a, b, x) * _incbeta_cf(a, b, x) / a;
+	return 1.0 - _incbeta_front(b, a, 1.0 - x) * _incbeta_cf(b, a, 1.0 - x) / b;
 }
 
 // P(T > t): pt(t, df, lower.tail = FALSE)
@@ -5304,15 +5342,26 @@ static NV bt_pbinom_upper(long k, long n, NV p) {
 }
 
 /* Inverse regularized incomplete beta (R's qbeta): incbeta is monotone in x,
- * so safeguarded bisection converges to full double precision. */
+ * so safeguarded bisection converges to full double precision.
+ *
+ * The stopping rule has to be relative, not absolute.  A Clopper-Pearson bound
+ * is routinely far below 1 -- x = 1 success in n = 1e9 trials puts the lower
+ * bound at 1e-12 -- and halting at an absolute width of 1e-15 leaves such a
+ * bound with only four or five correct digits.  So bisect until the bracket is
+ * narrow *relative* to where it sits, and stop early if the two ends become
+ * adjacent doubles (the guard also terminates the walk down to a denormal
+ * root, which no fixed iteration count would reach).  While lo is still 0 the
+ * bracket halves geometrically, so a root k orders of magnitude below 1 is
+ * reached in ~3.3k steps and then refined in ~53 more. */
 static NV bt_qbeta(NV alpha, NV a, NV b) {
 	if (alpha <= 0.0) return 0.0;
 	if (alpha >= 1.0) return 1.0;
-	NV lo = 0.0, hi = 1.0, mid = 0.5;
-	for (unsigned short int i = 0; i < 200; i++) {
+	NV lo = 0.0, hi = 1.0, mid;
+	for (unsigned short int i = 0; i < 1200; i++) {
 		mid = 0.5 * (lo + hi);
+		if (!(mid > lo && mid < hi)) break;	/* lo and hi are neighbours */
 		if (incbeta(a, b, mid) < alpha) lo = mid; else hi = mid;
-		if (hi - lo < 1e-15) break;
+		if (hi - lo <= 1e-16 * hi) break;
 	}
 	return 0.5 * (lo + hi);
 }
