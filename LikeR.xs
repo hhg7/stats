@@ -637,7 +637,7 @@ static NV exact_p_value(long a, long b, long c, long d, const char *alt) {
 }
 
 static void calculate_exact_stats(long a, long b, long c, long d, NV conf,
-								  const char *alt, NV *orp, NV *lop, NV *hip) {
+								  const char *restrict alt, NV *orp, NV *lop, NV *hip) {
 	ft_support S;
 	if (!ft_init(&S, a, b, c, d)) { *orp = NAN; *lop = NAN; *hip = NAN; return; }
 	NV *sc; Newx(sc, S.ns, NV);
@@ -692,16 +692,16 @@ The (two-sided) p-value is the sum of P(T) over all such T whose
 probability is <= P(observed).  Only two-sided is defined for R x C, so
 'alternative' is ignored for larger tables (matching R's fisher.test).*/
 typedef struct {
-	int nrow, ncol;
-	const long *restrict R;   //fixed row totals
-	long *restrict C_rem;     //remaining column totals (mutated)
-	const NV *restrict lgR;   //lgR[i]  = sum_{k>=i} lgamma(R_k+1)
-	const NV *restrict jenR;  //jenR[i] = sum_{k>=i} cheapest split of R_k
-	NV const_term;            //sum lgamma(R_i+1)+lgamma(C_j+1)-lgamma(N+1)
-	NV log_p_obs_tol;         //log P(observed) + log1p(relErr)
-	NV p_total;               //accumulated p-value
-	long long nodes, cap;     //work counter + runaway guard
-	int aborted;              //set once cap is exceeded
+	unsigned nrow, ncol;
+	const long *restrict R;  //fixed row totals
+	long *restrict C_rem;    //remaining column totals (mutated)
+	const NV *restrict lgR;  //lgR[i]  = sum_{k>=i} lgamma(R_k+1)
+	const NV *restrict jenR; //jenR[i] = sum_{k>=i} cheapest split of R_k
+	NV const_term;           //sum lgamma(R_i+1)+lgamma(C_j+1)-lgamma(N+1)
+	NV log_p_obs_tol;        //log P(observed) + log1p(relErr)
+	NV p_total;              //accumulated p-value
+	long long nodes, cap;    //work counter + runaway guard
+	short int aborted;       //set once cap is exceeded
 } ft_rxc_ctx;
 
 static void ft_rxc_row(ft_rxc_ctx *restrict X, int row, int col, long row_rem, NV cur_lc);

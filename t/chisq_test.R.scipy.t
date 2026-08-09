@@ -58,6 +58,21 @@ my $TOL_STAT = 1e-13;
 my $TOL_P    = 1e-12;
 my $TOL_E    = 1e-13;
 
+# Three cases below are 2x2 tables whose Yates correction is min(0.5, |O - E|)
+# with all four |O - E| equal, so every corrected residual cancels and the
+# statistic is exactly 0 -- and the p-value exactly 1 -- as real numbers.  What
+# R prints for them (1.5e-24, 2.9e-32, 7.2e-32) is not a statistic, it is the
+# leftover of forming E in floating point: the four |O - E| differ in their
+# last bits, the minimum is a hair below the rest, and the residue gets
+# squared and divided by the smallest expectation.  Its size is a property of
+# the NV, not of the test -- a double build lands on R's value, and a
+# __float128 build cancels the whole way to 0 -- so a relative compare against
+# R's number can only ever pass on the width R happened to use.  Those cases
+# are checked against 0 and 1 with the absolute tolerances below instead,
+# which are still many orders tighter than any statistic that means anything.
+my $TOL_ZERO_STAT = 1e-20;
+my $TOL_UNIT_P    = 1e-11;
+
 # Relative compare that also copes with an expected value of exactly 0.
 sub near {
 	my ($got, $want, $tol, $name) = @_;
@@ -69,12 +84,14 @@ sub near {
 	return 0;
 }
 
-# One case: check statistic, df, p-value and method in a single test.
+# One case: check statistic, df, p-value and method in a single test.  A case
+# may override either tolerance with stat_tol/p_tol; the only ones that do are
+# the exact-zero statistics described above.
 sub check {
 	my ($name, $res, $want) = @_;
 	my $ok = 1;
-	$ok &&= near($res->{statistic}{'X-squared'}, $want->{stat}, $TOL_STAT, "$name: statistic");
-	$ok &&= near($res->{'p.value'},              $want->{p},    $TOL_P,    "$name: p-value");
+	$ok &&= near($res->{statistic}{'X-squared'}, $want->{stat}, $want->{stat_tol} || $TOL_STAT, "$name: statistic");
+	$ok &&= near($res->{'p.value'},              $want->{p},    $want->{p_tol}    || $TOL_P,    "$name: p-value");
 	if ($res->{parameter}{df} != $want->{df}) {
 		fail("$name: df");
 		diag("         got: $res->{parameter}{df}\n    expected: $want->{df}");
@@ -285,13 +302,16 @@ my $GOF     = 'Chi-squared test for given probabilities';
 
 # test_contingency.py::test_chi2_contingency_yates_gh13875 -- the regression
 # that pinned Yates' correction to min(0.5, |O - E|) so it can never overshoot
-# and make the statistic negative.  SciPy asserts p is 1 to rtol 1e-12; R gives
-# X-squared = 1.4515367733818938e-24, p = 0.99999999999903866.
+# and make the statistic negative.  SciPy asserts p is 1 to rtol 1e-12.  The
+# correction is |O - E| = 12/1580 in all four cells, so the exact statistic is
+# 0 and the exact p is 1; R's double build prints the rounding leftovers
+# X-squared = 1.4515367733818938e-24, p = 0.99999999999903866, which is why
+# this one is checked absolutely (see $TOL_ZERO_STAT above).
 {
 	my $res = chisq_test([ [1573, 3], [4, 0] ]);
 	check('SciPy gh-13875 Yates cap', $res, {
-		stat => 1.4515367733818938e-24, df => 1, p => 0.99999999999903866,
-		method => $YATES,
+		stat => 0, df => 1, p => 1, method => $YATES,
+		stat_tol => $TOL_ZERO_STAT, p_tol => $TOL_UNIT_P,
 	});
 	cmp_ok(abs($res->{'p.value'} - 1), '<', 1e-12, 'SciPy gh-13875: p is 1 to rtol 1e-12');
 }
@@ -484,14 +504,14 @@ my $GOF     = 'Chi-squared test for given probabilities';
 # calls the test corrected when that minimum is positive.
 {
 	# |O - E| = 0.2 everywhere, so the correction is 0.2, not 0.5, and the
-	# corrected statistic is exactly 0 up to rounding.
+	# corrected statistic is exactly 0.
 	# R: X-squared = 2.9347503914472165e-32, p-value = 0.99999999999999989
 	my $res = chisq_test([ [1, 2], [3, 4] ]);
 	check('Yates clamped to |O - E|', $res, {
-		stat => 2.9347503914472165e-32, df => 1, p => 0.99999999999999989,
-		method => $YATES,
+		stat => 0, df => 1, p => 1, method => $YATES,
+		stat_tol => $TOL_ZERO_STAT, p_tol => $TOL_UNIT_P,
 	});
-	cmp_ok($res->{statistic}{'X-squared'}, '<', 1e-30, '... statistic is 0 to rounding');
+	cmp_ok($res->{statistic}{'X-squared'}, '<', $TOL_ZERO_STAT, '... statistic is 0 to rounding');
 
 	# |O - E| = 1, so the correction is the full 0.5.
 	# R: chisq.test(matrix(c(3,1,1,3), nrow=2)) -> 0.5, p = 0.47950012218695348
@@ -538,8 +558,12 @@ my $GOF     = 'Chi-squared test for given probabilities';
 	check('non-integer GOF', chisq_test([10.5, 20.25, 30.25]), {
 		stat => 9.5922131147540988, df => 2, p => 0.0082618515549269019, method => $GOF,
 	});
+	# |O - E| = 1/6 in all four cells, so this is another exact zero; R's
+	# double build prints X-squared = 7.1842689582627857e-32,
+	# p-value = 0.99999999999999978.
 	check('non-integer 2x2', chisq_test([ [1.5, 2.5], [3.5, 4.5] ]), {
-		stat => 7.1842689582627857e-32, df => 1, p => 0.99999999999999978, method => $YATES,
+		stat => 0, df => 1, p => 1, method => $YATES,
+		stat_tol => $TOL_ZERO_STAT, p_tol => $TOL_UNIT_P,
 	});
 	# a p-value 60 orders down, to exercise the incomplete gamma tail
 	# R: chisq.test(rbind(c(1000,2000,3000),c(4000,5000,6000)))
