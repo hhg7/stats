@@ -27,12 +27,12 @@ foreach my $func (@func) {
 	my %result;
 	foreach my $lang (@lang) {
 		$result{"$lang time"} = $ow->{group_stats}{mean}{$lang};
-		foreach my $lang2 ( grep {$_ ne $lang} @lang) {
-			$result{"$lang $lang2 diff"} =
-				$ow->{group_stats}{mean}{$lang2}
-				-
-				$ow->{group_stats}{mean}{$lang}
-		}
+#		foreach my $lang2 ( grep {$_ ne $lang} @lang) {
+#			$result{"$lang $lang2 diff"} =
+#				$ow->{group_stats}{mean}{$lang2}
+#				-
+#				$ow->{group_stats}{mean}{$lang}
+#		}
 	}
 	$result{'Pr(>F)'} = $ow->{Group}{'Pr(>F)'};
 	$result{'Func'} = $func;

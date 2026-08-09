@@ -1652,6 +1652,14 @@ The C<chisq_test> function performs chi-squared contingency table tests and good
 
 For 2x2 matrices, Yates' Continuity Correction is applied automatically.
 
+=head3 Signature
+
+ my $res = chisq_test($data);
+ my $res = chisq_test($data, correct     => 0);          # 2x2: no Yates' correction
+ my $res = chisq_test($data, p           => $probs);     # goodness of fit against $probs
+ my $res = chisq_test($data, p           => $weights,
+                             'rescale.p' => 1);          # ... rescaled to sum to 1
+
 =head3 Accepted Inputs
 
 
@@ -1693,6 +1701,62 @@ For 2x2 matrices, Yates' Continuity Correction is applied automatically.
 =end html
 
 
+
+Every entry must be a nonnegative, finite number, and at least one of them must be positive; anything else — an C<undef>, a string, a negative count, an infinity — is a fatal error rather than a silent zero, exactly as in R. A 2D array must not be ragged, and every row of a 2D hash must carry the same column keys.
+
+A table with only one row or only one column is not a contingency table: as in R, it collapses to its cells and the goodness-of-fit test is run on them. So C<[[10, 20, 30]]> and C<[10, 20, 30]> give the same test, with C<df = 2> — not the vacuous C<df = 0>.
+
+As in R, a warning is issued when any expected count falls below 5, the usual rule of thumb for the chi-squared approximation being trustworthy. Use L<C<fisher_test>|/"fisher_test"> for a small table.
+
+=head3 Named Options
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>Option</th>
+  <th>Default</th>
+  <th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><b>correct</b></td>
+  <td><code>1</code></td>
+  <td>Apply Yates' continuity correction. Only ever affects a 2x2 table, and is R's <code>correct</code>. Set to <code>0</code> for the uncorrected Pearson statistic.</td>
+</tr>
+<tr>
+  <td><b>p</b></td>
+  <td>uniform</td>
+  <td>Null probabilities for the goodness-of-fit test. An array ref, in the order of the data, when the data is an array ref; a hash ref keyed the same as the data when the data is a hash ref. They must sum to 1 unless <code>rescale.p</code> says otherwise, and it is an error to pass them with a contingency table.</td>
+</tr>
+<tr>
+  <td><b>rescale.p</b></td>
+  <td><code>0</code></td>
+  <td>Divide <code>p</code> by its own sum first, so counts, weights or percentages can be passed instead of probabilities. Also spelled <code>rescale_p</code>.</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+ # goodness of fit against a non-uniform null
+ my $res = chisq_test([89, 37, 30, 28, 2],
+                      p => [0.40, 0.20, 0.20, 0.19, 0.01]);
+ # $res->{statistic}{'X-squared'} == 5.79470854555744, df 4, p == 0.215013095920786
+
+ # the same, from unnormalised weights
+ my $res = chisq_test([89, 37, 30, 28, 2],
+                      p => [40, 20, 20, 19, 1], 'rescale.p' => 1);
+
+ # keyed data takes keyed probabilities
+ my $res = chisq_test({ A => 10, B => 20, C => 30 },
+                      p => { A => 0.2, B => 0.3, C => 0.5 });
 
 =head3 Output Object Structure
 
@@ -8791,7 +8855,13 @@ C<t/model_pvalue_tails.t> and C<t/oneway_test.R.scipy.t>.
 
 =head1 Changes
 
-=head2 0.295 2026-08
+=head2 0.296 2026-08
+
+fixed CPAN bug: https://www.cpantesters.org/cpan/report/fcf32c68-75a5-1014-bc87-8fe0d10910fe
+
+write_table.announce.t ran its child perl through -e, which cannot carry double quotes or shell metacharacters on Windows; the child program now goes in a file
+
+=head2 0.295 2026-08-08 CDT
 
 bug fix https://www.cpantesters.org/cpan/report/0f13fed6-92f5-11f1-b043-dc326e8775ea
 

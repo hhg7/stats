@@ -1,7 +1,13 @@
 Revision history for Stats-LikeR
 
 
-0.295 2026-08
+0.296 2026-08
+
+ - fixed CPAN bug: https://www.cpantesters.org/cpan/report/fcf32c68-75a5-1014-bc87-8fe0d10910fe
+
+ - write_table.announce.t ran its child perl through -e, which cannot carry double quotes or shell metacharacters on Windows; the child program now goes in a file
+
+0.295 2026-08-08 CDT
 
  - bug fix https://www.cpantesters.org/cpan/report/0f13fed6-92f5-11f1-b043-dc326e8775ea
 
