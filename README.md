@@ -6047,12 +6047,42 @@ Also six coefficient tables in `c_pnorm_both` written `const static double`,
 which puts the storage class after the qualifier and draws
 `-Wold-style-declaration`; they are now `static const double`.
 
-Not addressed: `-Wextra` still reports about sixty `-Wsign-compare` warnings,
-nearly all of them a loop declaring `size_t i` and comparing it against XS's
-`items`, which is a signed `Stack_off_t`. They are harmless as written, since
-`items` is never negative, but quieting them means touching sixty comparisons
-or changing loop variable types, which is its own change with its own risk of
-introducing an unsigned underflow.
+### Argument-stack indices are now Stack_off_t
+
+`-Wextra` reported 58 `-Wsign-compare` warnings, and 33 of them were one idiom:
+an index declared `size_t`, `unsigned`, `unsigned int` or `unsigned short int`
+and then compared against `items`. `items` is neither of those — XSUB.h's
+`dITEMS` declares it `Stack_off_t items = (Stack_off_t)(SP - MARK)`, a *signed*
+type, because it is a stack-pointer difference. Every one of those comparisons
+was converting the signed side to unsigned.
+
+The indices are now `Stack_off_t` themselves, which is the type they are
+compared against: 25 declarations across 23 functions — `binom_test`,
+`ks_test`, `wilcox_test`, `write_table`, `max`, `runif`, `quantile`, `mean`,
+`mode`, `sum`, `sd`, `uniq`, `var`, `t_test`, `median`, `matrix`, `fisher_test`,
+`power_t_test`, `var_test`, `dnorm`, `value_counts`, `prcomp` and `pnorm`.
+That is a retype, not a cast: writing
+`(size_t)items` at each comparison would silence the warning just as well, but
+it would be wrong the day `Stack_off_t` widens, which is exactly what it exists
+to allow. `t_test`'s index was `unsigned short int`, which drew no warning at
+all — integer promotion made the comparison signed — and was the same latent
+mistake regardless.
+
+`Stack_off_t` arrived in perl 5.39.2 and this distribution supports 5.010, so
+the preamble now carries a shim typedef guarded on `PERL_STACK_OFFSET_DEFINED`,
+the macro perl.h defines next to the typedef. On 5.10.1 and 5.12.5 neither the
+macro nor the type exists and the shim supplies `I32`, which is what the stack
+offset was on every perl before that.
+
+The 33 warnings are gone, 25 remain, and no warning category increased —
+verified by compiling the before and after trees and diffing the warning sets.
+The remaining 25 are unrelated signedness pairs (`size_t` against `ssize_t`,
+`IV` against `size_t`, `STRLEN` against `ssize_t`) and are left alone. The full
+suite passes on perl 5.10.1 and 5.12.5, the two builds that depend on the shim,
+as well as on 5.42.3, 5.44.0 and 5.44.0-quadmath; and 94 calls covering all 23
+retyped functions — positional and named forms, bare lists against arrayrefs,
+`write_table`'s emitted bytes, and the odd-argument and unknown-argument croaks
+that this index arithmetic drives — produce identical output before and after.
 
 ## 0.297 2026-08-10 CDT
 

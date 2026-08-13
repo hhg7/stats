@@ -16,6 +16,19 @@
 #include <string.h>
 #include <strings.h>
 #include <stdint.h> // uint64_t — harmless if perl.h already pulled it in
+/*Stack_off_t is the type XSUB.h's dITEMS gives `items`, and so the type every
+argument-stack index here is compared against. It arrived in perl 5.39.2, which
+introduced it precisely so the stack offset could widen to SSize_t on a build
+configured for it; before that the offset was always I32. perl.h defines
+PERL_STACK_OFFSET_DEFINED next to the typedef, so that is what to test -- on
+5.10.1 and 5.12.5 neither the macro nor the type exists. Spelling the indices
+Stack_off_t rather than I32 is what keeps them correct if a future perl does
+widen it.*/
+#ifndef PERL_STACK_OFFSET_DEFINED
+typedef I32 Stack_off_t;
+#  define Stack_off_t_MAX I32_MAX
+#  define PERL_STACK_OFFSET_DEFINED
+#endif
 /*croak() with an NV argument: croak() carries a printf format attribute, but
 the compiler's format checker doesn't know the "Q" length modifier that NVgf
 expands to on a quadmath build, so every NV-bearing croak() draws a bogus
@@ -8882,7 +8895,7 @@ CODE:
 
 	long x = 0, n = 0;
 	bool have_n = 0;
-	unsigned int pos = 1; // index where named args begin
+	Stack_off_t pos = 1; // index where named args begin
 
 	SV *x_sv = ST(0);
 	if (SvROK(x_sv) && SvTYPE(SvRV(x_sv)) == SVt_PVAV) {
@@ -8914,7 +8927,7 @@ CODE:
 	NV   conf_level = SvNV(sv_2mortal(newSVpvs("0.95")));
 	const char *alternative = "two.sided";
 
-	for (unsigned int i = pos; i < items; i += 2) {
+	for (Stack_off_t i = pos; i < items; i += 2) {
 		if (i + 1 >= items) croak("binom_test: odd number of named arguments");
 		const char *key = SvPV_nolen(ST(i));
 		SV *val = ST(i + 1);
@@ -10601,7 +10614,7 @@ CODE:
 	SV *x_sv = NULL, *y_sv = NULL;
 	short int exact = -1;
 	const char *alternative = "two.sided";
-	int arg_idx = 0;
+	Stack_off_t arg_idx = 0;
 
 	//Leading positional 'x' (array ref).
 	if (arg_idx < items && SvROK(ST(arg_idx)) && SvTYPE(SvRV(ST(arg_idx))) == SVt_PVAV) {
@@ -10819,7 +10832,7 @@ CODE:
 	NV mu = 0.0;
 	short int exact = -1;
 	const char *alternative = "two.sided";
-	int arg_idx = 0;
+	Stack_off_t arg_idx = 0;
 	// 1. Shift first positional argument as 'x' if it's an array reference
 	if (arg_idx < items && SvROK(ST(arg_idx)) && SvTYPE(SvRV(ST(arg_idx))) == SVt_PVAV) {
 		x_sv = ST(arg_idx);
@@ -11386,7 +11399,7 @@ PPCODE:
 {
 	SV *data_sv = NULL;
 	SV *file_sv = NULL;
-	unsigned int arg_idx = 0;
+	Stack_off_t arg_idx = 0;
 	// Mimic the Perl shift logic
 	if (arg_idx < items && SvROK(ST(arg_idx))) {
 		int type = SvTYPE(SvRV(ST(arg_idx)));
@@ -13660,7 +13673,7 @@ NV max(...)
 		size_t count = 0;
 		bool first = TRUE;
 	CODE:
-		for (size_t i = 0; i < items; i++) {
+		for (Stack_off_t i = 0; i < items; i++) {
 		   SV* arg = ST(i);
 		   if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
 			   AV* av = (AV*)SvRV(arg);
@@ -13701,7 +13714,7 @@ CODE:
 	NV min = 0.0, max = 1.0;
 	// Flags to track what has been assigned
 	bool n_set = 0, min_set = 0, max_set = 0;
-	unsigned int i = 0;
+	Stack_off_t i = 0;
 	if (items == 0) {
 	  croak("Usage: runif(n, [min=0], [max=1]) or runif(n => $n, ...)");
 	}
@@ -13900,7 +13913,7 @@ SV* quantile(...)
 	{
 		SV *x_sv = NULL;
 		SV *probs_sv = NULL;
-		unsigned int arg_idx = 0;
+		Stack_off_t arg_idx = 0;
 		// --- 1. Consume first positional arg as 'x' if it's an array ref
 		if (arg_idx < items && SvROK(ST(arg_idx)) && SvTYPE(SvRV(ST(arg_idx))) == SVt_PVAV) {
 			 x_sv = ST(arg_idx);
@@ -14004,7 +14017,7 @@ NV mean(...)
 		NV total = 0;
 		size_t count = 0;
 	CODE:
-		for (size_t i = 0; i < items; i++) {
+		for (Stack_off_t i = 0; i < items; i++) {
 			SV* arg = ST(i);
 			if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
 				AV* av = (AV*)SvRV(arg);
@@ -14044,7 +14057,7 @@ void mode(...)
 	counts    = (HV *)sv_2mortal((SV *)newHV());
 	originals = (HV *)sv_2mortal((SV *)newHV());
 
-	for (size_t i = 0; i < items; i++) {
+	for (Stack_off_t i = 0; i < items; i++) {
 		SV *arg = ST(i);
 		if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
 			AV *av = (AV *)SvRV(arg);
@@ -14101,7 +14114,7 @@ NV sum(...)
 		NV total = 0;
 		size_t count = 0;
 	CODE:
-		for (size_t i = 0; i < items; i++) {
+		for (Stack_off_t i = 0; i < items; i++) {
 			SV* arg = ST(i);
 			if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
 				 AV* av = (AV*)SvRV(arg);
@@ -14133,7 +14146,7 @@ NV sd(...)
 	  NV mean = 0.0, M2 = 0.0;
 	  size_t count = 0;
 	CODE:
-		for (size_t i = 0; i < items; i++) { // Single Pass Standard Deviation via Welford's Algorithm
+		for (Stack_off_t i = 0; i < items; i++) { // Single Pass Standard Deviation via Welford's Algorithm
 			SV* arg = ST(i);
 			if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
 				AV* av = (AV*)SvRV(arg);
@@ -14177,7 +14190,7 @@ void uniq(...)
 		gimme = GIMME_V;
 		seen = (HV*)sv_2mortal((SV*)newHV());
 		out  = (AV*)sv_2mortal((SV*)newAV());
-		for (size_t i = 0; i < items; i++) {
+		for (Stack_off_t i = 0; i < items; i++) {
 			SV* arg = ST(i);
 			if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
 				AV* av = (AV*)SvRV(arg);
@@ -14228,7 +14241,7 @@ NV var(...)
 	  size_t count = 0;
 	CODE:
 	// Single Pass Variance via Welford's Algorithm
-		for (size_t i = 0; i < items; i++) {
+		for (Stack_off_t i = 0; i < items; i++) {
 			SV* arg = ST(i);
 			if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
 				 AV* av = (AV*)SvRV(arg);
@@ -14324,7 +14337,7 @@ SV* t_test(...)
 		NV mu = 0.0, conf_level = 0.95;
 		bool paired = FALSE, var_equal = FALSE;
 		const char*alternative = "two.sided";
-		unsigned short int arg_idx = 0;
+		Stack_off_t arg_idx = 0;
 		// 1. Shift first positional argument as 'x' if it's an array reference
 		if (arg_idx < items && SvROK(ST(arg_idx)) && SvTYPE(SvRV(ST(arg_idx))) == SVt_PVAV) {
 		  x_sv = ST(arg_idx);
@@ -16234,7 +16247,7 @@ NV median(...)
 	  element has to be defined (an undef croaks below, as it always has),
 	  so this bound is exact and the old counting pass over every SV -- a
 	  second walk of the whole input before any arithmetic -- is gone.*/
-	  for (size_t i = 0; i < items; i++) {
+	  for (Stack_off_t i = 0; i < items; i++) {
 		   SV* arg = ST(i);
 		   if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV)
 			   total_count += (size_t)(av_len((AV*)SvRV(arg)) + 1);
@@ -16247,7 +16260,7 @@ NV median(...)
 	  if (!nums) Newx(nums, total_count, NV);
 
 	  //Populate the C array — free the buffer before any croak
-	  for (size_t i = 0; i < items; i++) {
+	  for (Stack_off_t i = 0; i < items; i++) {
 		   SV* arg = ST(i);
 		   if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
 			   AV* av = (AV*)SvRV(arg);
@@ -16771,7 +16784,7 @@ CODE:
 			byrow = SvTRUE(ST(3));
 		}
 	} else if (items % 2 == 0) {// NAMED: matrix(data => [...], nrow => $n, ncol => $m)
-		for (unsigned i = 0; i < items; i += 2) {
+		for (Stack_off_t i = 0; i < items; i += 2) {
 			char*key = SvPV_nolen(ST(i));
 			SV*val   = ST(i + 1);
 			if (strEQ(key, "data")) {
@@ -17724,7 +17737,7 @@ CODE:
 	NV conf_level = SvNV(sv_2mortal(newSVpvs("0.95")));
 	const char *alternative = "two.sided";
 
-	for (unsigned int i = 1; i < items; i += 2) {
+	for (Stack_off_t i = 1; i < items; i += 2) {
 		if (i + 1 >= items) croak("fisher_test: odd number of named arguments");
 		const char *key = SvPV_nolen(ST(i));
 		SV *val = ST(i + 1);
@@ -18041,7 +18054,7 @@ SV* kruskal_test(...)
 CODE:
 {
 	SV *x_sv = NULL, *g_sv = NULL, *h_sv = NULL;
-	unsigned int arg_idx = 0;
+	Stack_off_t arg_idx = 0;
 	/* 1. Shift positional arguments
 	    Accept either: (arrayref, arrayref) or (hashref)*/
 	if (arg_idx < items && SvROK(ST(arg_idx))) {
@@ -18239,7 +18252,7 @@ CODE:
 	SV* y_sv = NULL;
 	NV ratio = 1.0, conf_level = 0.95;
 	const char* alternative = "two.sided";
-	unsigned int arg_idx = 0;
+	Stack_off_t arg_idx = 0;
 
 	// 1. Shift positional argument 'x' if it's an array reference
 	if (arg_idx < items && SvROK(ST(arg_idx)) && SvTYPE(SvRV(ST(arg_idx))) == SVt_PVAV) {
@@ -18478,7 +18491,7 @@ CODE:
 	if ((items - 1) % 2 != 0) {
 	  croak("dnorm: Expected an even number of key-value named arguments after 'x'");
 	}
-	for (size_t i = 1; i < items; i += 2) {
+	for (Stack_off_t i = 1; i < items; i += 2) {
 	  const char* key = SvPV_nolen(ST(i));
 	  SV* val = ST(i + 1);
 	  if      (strEQ(key, "mean")) mean     = SvNV(val);
@@ -19130,7 +19143,7 @@ CODE:
 	counts_hv = newHV();
 	// CASE 1: Flattened Array (or single scalar)
 	if (!SvROK(arg1)) {
-	  for (unsigned i = 0; i < items; i++) {
+	  for (Stack_off_t i = 0; i < items; i++) {
 		   increment_count(aTHX_ counts_hv, ST(i), fast_nv);
 	  }
 	} else {// CASE 2: Array Reference
@@ -19544,7 +19557,7 @@ CODE:
 	bool retx = TRUE, center = TRUE, do_scale = FALSE;
 	NV tol = -1.0;
 	long rank_opt = -1;
-	unsigned int arg_idx = 0;
+	Stack_off_t arg_idx = 0;
 	// 1. Shift positional 'x' argument if provided
 	if (arg_idx < items && SvROK(ST(arg_idx))) {
 	  int t = SvTYPE(SvRV(ST(arg_idx)));
@@ -20454,7 +20467,7 @@ CODE:
 	bool lower_tail = 1, give_log = 0;
 	if ((items - 1) % 2 != 0)
 		croak("pnorm: Expected an even number of key-value named arguments after 'x'");
-	for (size_t i = 1; i < items; i += 2) {
+	for (Stack_off_t i = 1; i < items; i += 2) {
 		const char *key = SvPV_nolen(ST(i));
 		SV *val = ST(i + 1);
 		if      (strEQ(key, "mean"))                              mean       = SvNV(val);
