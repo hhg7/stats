@@ -10791,7 +10791,7 @@ CODE:
 		       if (is_two_sided) {
 		           p_value = 1.0 - K2x(valid_nx, statistic);
 		       } else {
-		           warn("exact 1-sample 1-sided KS test not implemented; using asymptotic");
+		           warn("ks_test: exact 1-sample 1-sided KS test not implemented; using asymptotic");
 		           NV z = statistic * sqrt((NV)valid_nx);
 		           p_value = exp(-2.0 * z * z);
 		       }
@@ -10994,11 +10994,11 @@ CODE:
 		else if (exact == 0) use_exact = FALSE;
 		else use_exact = (n_nz < 50 && !has_ties);
 		if (use_exact && has_ties) {
-			warn("cannot compute exact p-value with ties; falling back to approximation");
+			warn("wilcox_test: cannot compute exact p-value with ties; falling back to approximation");
 			use_exact = FALSE;
 		}
 		if (use_exact && has_zeroes) {
-			warn("cannot compute exact p-value with zeroes; falling back to approximation");
+			warn("wilcox_test: cannot compute exact p-value with zeroes; falling back to approximation");
 			use_exact = FALSE;
 		}
 		if (use_exact) {
@@ -13714,49 +13714,63 @@ CODE:
 	NV min = 0.0, max = 1.0;
 	// Flags to track what has been assigned
 	bool n_set = 0, min_set = 0, max_set = 0;
+	SV *n_sv = NULL;	// 'n' is range-checked once, after the parse
 	Stack_off_t i = 0;
 	if (items == 0) {
 	  croak("Usage: runif(n, [min=0], [max=1]) or runif(n => $n, ...)");
 	}
 	while (i < items) {
-		// 1. Check if the current argument is a string key for a named parameter
-		if (i + 1 < items && SvPOK(ST(i))) {
-			char *key = SvPV_nolen(ST(i));
-			if (strEQ(key, "n")) {
-				n = (size_t)SvUV(ST(i+1));
-				n_set = 1;
-				i += 2;
-				continue;
-			} else if (strEQ(key, "min")) {
-				min = SvNV(ST(i+1));
-				min_set = 1;
-				i += 2;
-				continue;
-			} else if (strEQ(key, "max")) {
-				max = SvNV(ST(i+1));
-				max_set = 1;
-				i += 2;
-				continue;
-			}
+		/*A string that is not a number can only have been meant as a named
+		argument, because every positional slot here (n, min, max) is numeric.
+		Deciding that on the key alone is what makes a dangling or misspelled
+		key an error: the older parser accepted a key only when a value
+		followed it, so runif(5, 'min') fell through to the positional branch,
+		where SvNV("min") is 0 -- the key silently became min = 0, and the only
+		hint was perl's own "isn't numeric" warning, which does not name the
+		function it came from. A numeric string is still positional, so
+		runif("9") keeps working.*/
+		if (SvPOK(ST(i)) && !looks_like_number(ST(i))) {
+			const char *key = SvPV_nolen(ST(i));
+			bool is_n   = strEQ(key, "n");
+			bool is_min = strEQ(key, "min");
+			bool is_max = strEQ(key, "max");
+			if (!is_n && !is_min && !is_max)
+				croak("runif: unknown argument '%s' (expected n, min or max)", key);
+			if (i + 1 >= items)
+				croak("runif: odd number of named arguments ('%s' has no value)", key);
+			SV *val = ST(i + 1);
+			if (!SvOK(val) || !looks_like_number(val))
+				croak("runif: '%s' must be a number", key);
+			if      (is_n)   { n_sv = val;        n_set   = 1; }
+			else if (is_min) { min = SvNV(val);   min_set = 1; }
+			else             { max = SvNV(val);   max_set = 1; }
+			i += 2;
+			continue;
 		}
-
-		// 2. Fallback to positional parsing if it's not a recognized key
-		if (!n_set) {
-			n = (size_t)SvUV(ST(i));
-			n_set = 1;
-		} else if (!min_set) {
-			min = SvNV(ST(i));
-			min_set = 1;
-		} else if (!max_set) {
-			max = SvNV(ST(i));
-			max_set = 1;
-		} else {
-			croak("Too many arguments or unrecognized parameter passed to runif()");
-		}
+		// positional, in order: n, then min, then max
+		if (!SvOK(ST(i)) || !looks_like_number(ST(i)))
+			croak("runif: argument %d is not a number", (int)i + 1);
+		if      (!n_set)   { n_sv = ST(i);       n_set   = 1; }
+		else if (!min_set) { min = SvNV(ST(i));  min_set = 1; }
+		else if (!max_set) { max = SvNV(ST(i));  max_set = 1; }
+		else croak("runif: too many arguments (expected n, min, max)");
 		i++;
 	}
 	if (!n_set) {
-		croak("runif() requires at least the 'n' parameter");
+		croak("runif: 'n' is a required argument");
+	}
+	/*Range-check n before it reaches av_extend(). It used to be read straight
+	through SvUV(), so runif(-1) wrapped to 2**64-1, av_extend() took that as a
+	negative SSize_t and perl died with "panic: av_extend_guts() negative
+	count" -- a message that names neither runif nor the argument at fault.
+	Non-integers truncate toward zero, as R's runif() does.*/
+	{
+		NV nv = SvNV(n_sv);
+		if (isnan(nv) || nv < 0.0)
+			croak_nv("runif: 'n' must be a non-negative integer, not %" NVgf, nv);
+		if (nv > (NV)IV_MAX)
+			croak_nv("runif: 'n' is too large: %" NVgf, nv);
+		n = (size_t)nv;	// truncates toward zero, as R does
 	}
 	// Ensure PRNG is seeded
 	AUTO_SEED_PRNG();

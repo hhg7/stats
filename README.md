@@ -6047,6 +6047,40 @@ Also six coefficient tables in `c_pnorm_both` written `const static double`,
 which puts the storage class after the qualifier and draws
 `-Wold-style-declaration`; they are now `static const double`.
 
+### runif argument validation, and every warning names its function
+
+`runif` accepts its arguments either positionally or by name, and decided which
+was which by asking whether the current argument was a string *and* whether
+another argument followed it. A key at the end of the list therefore failed the
+second half of that test and fell through to the positional branch, where it was
+read as a number: `runif(5, 'min')` took `SvNV("min")`, which is 0, silently set
+`min = 0`, and returned five values. The only sign anything was wrong was perl's
+own `Argument "min" isn't numeric`, which does not say which function provoked
+it. `runif(5, bogus => 1)` went the same way, taking `bogus` as `min` and `1` as
+`max`. Every sibling that parses named arguments — `rbinom`, `binom_test`,
+`fisher_test`, `dnorm`, `pnorm` — rejects both of those.
+
+`runif` now does too. A string argument is treated as a key when it is not a
+number, which is decidable from the key alone, so a dangling or misspelled key
+is an error instead of a silent coercion; a numeric string is still positional,
+so `runif("9")` is unchanged. Named values are checked for numerichood before
+use, which is what keeps perl's unattributed warning from being the diagnostic.
+
+`n` is also range-checked now. It was read straight through `SvUV()`, so
+`runif(-1)` wrapped to 2**64-1, `av_extend()` read that back as a negative
+`SSize_t`, and perl died with `panic: av_extend_guts() negative count (-2)` --
+which names neither the function nor the argument at fault. A negative or
+over-large `n` now croaks and says so. Non-integer `n` still truncates toward
+zero, as R's `runif()` does, and `runif(0)` still returns an empty list.
+
+Separately, three warnings did not name the function emitting them, unlike every
+other warning in the file: one in `ks_test` (the 1-sided exact 1-sample case
+falling back to asymptotic) and two in `wilcox_test`'s signed-rank branch (exact
+p-value abandoned for ties, and for zeroes). All three now carry the prefix
+their siblings already had. The one warning left deliberately bare is the
+`warn("%s", m)` in the uninitialized-value catcher, which re-emits somebody
+else's warning verbatim and must not add to it.
+
 ### Argument-stack indices are now Stack_off_t
 
 `-Wextra` reported 58 `-Wsign-compare` warnings, and 33 of them were one idiom:
