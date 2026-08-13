@@ -563,7 +563,7 @@ static NV ft_mnhyper(const ft_support *S, NV ncp, NV *scratch) {
 }
 
 // upper != 0 => P(X >= q), upper == 0 => P(X <= q)
-static NV ft_pnhyper(const ft_support *S, long q, NV ncp, int upper, NV *scratch) {
+static NV ft_pnhyper(const ft_support *S, long q, NV ncp, bool upper, NV *scratch) {
 	if (ncp == 1.0) {
 	  NV s = 0;
 	  for (long i = 0; i < S->ns; i++) {
@@ -3513,14 +3513,13 @@ static NV rank_and_count_ties(RankInfo *ri, size_t n, bool *has_ties) {
 // Scalar integer power used by K2x
 static NV r_pow_di(NV x, unsigned int n) {
 	if (n == 0) return 1.0;
-	if (n < 0) return 1.0 / r_pow_di(x, -n);
 	NV val = 1.0;
 	for (unsigned int i = 0; i < n; i++) val *= x;
 	return val;
 }
 
 // Two-sample two-sided asymptotic distribution
-static NV K2l(NV x, int lower, NV tol) {
+static NV K2l(NV x, bool lower, NV tol) {
 	NV s, z, p;
 	int k;
 	if(x <= 0.) {
@@ -3663,7 +3662,7 @@ static void calc_2sample_stats(NV *x, size_t nx, NV *y, size_t ny,
 	*d = max_d; *d_plus = max_d_plus; *d_minus = max_d_minus;
 }
 
-static int psmirnov_exact_test(NV q, NV r, NV s, bool two_sided) {
+static bool psmirnov_exact_test(NV q, NV r, NV s, bool two_sided) {
     if (two_sided) return (fabs(r - s) >= q);
     return ((r - s) >= q);
 }
@@ -4113,7 +4112,7 @@ static int build_groups_from_formula(pTHX_
 
 Mathematically identical to R's dnorm4.
 Includes Morten Welinder's precision improvements for extreme tails.*/
-static NV c_dnorm(NV x, NV mu, NV sigma, int give_log) {
+static NV c_dnorm(NV x, NV mu, NV sigma, bool give_log) {
 	// Propagate NaNs
 	if (isnan(x) || isnan(mu) || isnan(sigma)) return x + mu + sigma; 
 	if (sigma < 0.0) {
@@ -5934,7 +5933,7 @@ Lonly "only in the first array" and Ronly "only in the last array", so the
 two-array Ronly(a,b) still equals Lonly(b,a). Every emitted value is present
 in the chosen array, so drawing candidates from it is correct for all three.*/
 static SV** set_multiplicity(pTHX_ SV **sp, SV **args, size_t nrefs,
-                             int want_all, int from_last, const char *name, int gimme) {
+                             bool want_all, bool from_last, const char *name, int gimme) {
 	HV *count = (HV*)sv_2mortal((SV*)newHV());
 	AV *order = (AV*)sv_2mortal((SV*)newAV());
 	size_t n = 0, olen;
@@ -6008,35 +6007,36 @@ only double precision -- so the core runs in `double` regardless of the NV width
 #define pn_swap_tail                                                       \
 	if (x > 0.) { temp = *cum; if (lower) *cum = *ccum; *ccum = temp; }
 
-static void c_pnorm_both(double x, double *cum, double *ccum, int i_tail, int log_p) {
-	const static double a[5] = {
+static void c_pnorm_both(double x, double *cum, double *ccum, int i_tail, bool log_p) {
+	static const double a[5] = {
 		2.2352520354606839287, 161.02823106855587881, 1067.6894854603709582,
 		18154.981253343561249, 0.065682337918207449113
 	};
-	const static double b[4] = {
+	static const double b[4] = {
 		47.20258190468824187, 976.09855173777669322,
 		10260.932208618978205, 45507.789335026729956
 	};
-	const static double c[9] = {
+	static const double c[9] = {
 		0.39894151208813466764, 8.8831497943883759412, 93.506656132177855979,
 		597.27027639480026226, 2494.5375852903726711, 6848.1904505362823326,
 		11602.651437647350124, 9842.7148383839780218, 1.0765576773720192317e-8
 	};
-	const static double d[8] = {
+	static const double d[8] = {
 		22.266688044328115691, 235.38790178262499861, 1519.377599407554805,
 		6485.558298266760755, 18615.571640885098091, 34900.952721145977266,
 		38912.003286093271411, 19685.429676859990727
 	};
-	const static double p[6] = {
+	static const double p[6] = {
 		0.21589853405795699, 0.1274011611602473639, 0.022235277870649807,
 		0.001421619193227893466, 2.9112874951168792e-5, 0.02307344176494017303
 	};
-	const static double q[5] = {
+	static const double q[5] = {
 		1.28426009614491121, 0.468238212480865118, 0.0659881378689285515,
 		0.00378239633202758244, 7.29751555083966205e-5
 	};
 	double xden, xnum, temp, del, eps, xsq, y;
-	int i, lower, upper;
+	unsigned int i;
+	bool lower, upper;
 
 	if (isnan(x)) { *cum = *ccum = x; return; }
 
@@ -6099,7 +6099,7 @@ static void c_pnorm_both(double x, double *cum, double *ccum, int i_tail, int lo
 #undef pn_d2
 
 //Scalar normal CDF. lower_tail / log_p as in R's pnorm(). sigma < 0 -> NaN.
-static double c_pnorm(double x, double mu, double sigma, int lower_tail, int log_p) {
+static double c_pnorm(double x, double mu, double sigma, bool lower_tail, bool log_p) {
 	double pp, cp;
 #define PN_D__0 (log_p ? -INFINITY : 0.0)
 #define PN_D__1 (log_p ? 0.0 : 1.0)
@@ -6252,7 +6252,7 @@ static char* anova_joinf(pTHX_ char **f, const size_t *idx, size_t m) {
 }
 
 typedef struct { char **factors; size_t *fi; size_t nf; char *name; size_t width, start; } AnTerm;
-typedef struct { char *name; int is_cat; size_t width, nlv; NV *col; char **lv; } AnFac;
+typedef struct { char *name; bool is_cat; size_t width, nlv; NV *col; char **lv; } AnFac;
 
 /*Append a term built from f[idx[0..m-1]] unless a term with the same
 canonical name already exists (R merges duplicate terms).*/
@@ -6771,7 +6771,7 @@ one per row.  Returns 0 if any key cell is missing or undef.  `fast_nv` is
 the join's one nk_fast_nv_ok() answer: id columns are usually integers, and
 rendering them here rather than through SvPV keeps the caller's frame from
 growing a cached PV per cell.*/
-static int mg_key(pTHX_ const mg_frame *f, const mg_col *keys, SSize_t nkeys,
+static bool mg_key(pTHX_ const mg_frame *f, const mg_col *keys, SSize_t nkeys,
        SSize_t i, SV *buf, bool fast_nv) {
 	SvCUR_set(buf, 0);
 	SvPOK_only(buf);				//also clears any UTF8 flag: bytes only
@@ -7535,7 +7535,7 @@ vectors.  A label counts as positive when its string form equals `positive`.
 With lower_pos set, the score sign is flipped (lower marker => more positive).
 Allocates pos/neg via Newx; the caller frees them.  Croaks on a bad shape.*/
 static void roc_split(pTHX_ AV *sav, AV *lav,
-                      const char *positive, int lower_pos,
+                      const char *positive, bool lower_pos,
                       NV **pos, size_t *m,
                       NV **neg, size_t *n, const char *who) {
 	SSize_t N = av_len(sav) + 1;
@@ -15984,7 +15984,7 @@ XS_EUPXS(XS_Stats__LikeR_auc)
 	if (items < 2 || !SvROK(ST(0)) || SvTYPE(SvRV(ST(0))) != SVt_PVAV
 	              || !SvROK(ST(1)) || SvTYPE(SvRV(ST(1))) != SVt_PVAV)
 		croak("Usage: auc(\\@scores, \\@labels, positive => 1, direction => '>')");
-	const char *positive = "1"; int lower_pos = 0;
+	const char *positive = "1"; bool lower_pos = 0;
 	for (int i = 2; i + 1 < items; i += 2) {
 		const char *k = SvPV_nolen(ST(i)); SV *v = ST(i + 1);
 		if      (strEQ(k, "positive"))  positive = SvPV_nolen(v);
@@ -16036,9 +16036,9 @@ XS_EUPXS(XS_Stats__LikeR_auroc)
 		croak("Usage: auroc(\\@y_true, \\@y_score, positive => 1, "
 		      "direction => '>', cutoff => x, active_frac => 0.1, "
 		      "active_side => 'high')");
-	const char *positive = "1"; int lower_pos = 0;
+	const char *positive = "1"; bool lower_pos = 0;
 	bool have_cutoff = 0, have_frac = 0; NV cutoff = 0.0, active_frac = 0.0;
-	int frac_low = 0;
+	bool frac_low = 0;
 	for (int i = 2; i + 1 < items; i += 2) {
 		const char *k = SvPV_nolen(ST(i)); SV *v = ST(i + 1);
 		if      (strEQ(k, "positive"))  positive = SvPV_nolen(v);
@@ -16137,7 +16137,7 @@ XS_EUPXS(XS_Stats__LikeR_roc)
 	              || !SvROK(ST(1)) || SvTYPE(SvRV(ST(1))) != SVt_PVAV)
 		croak("Usage: roc(\\@scores, \\@labels, positive => 1, "
 		      "conf_level => 0.95, direction => '>')");
-	const char *positive = "1"; NV conf_level = 0.95; int lower_pos = 0;
+	const char *positive = "1"; NV conf_level = 0.95; bool lower_pos = 0;
 	for (int i = 2; i + 1 < items; i += 2) {
 		const char *k = SvPV_nolen(ST(i)); SV *v = ST(i + 1);
 		if      (strEQ(k, "positive"))  positive = SvPV_nolen(v);
@@ -16286,10 +16286,10 @@ XS_EUPXS(XS_Stats__LikeR_bedroc)
 		croak("Usage: bedroc(\\@scores, \\@labels, alpha => 20, "
 		      "positive => 1, cutoff => x, active_frac => 0.1, "
 		      "active_side => 'high', direction => '>', top => 0.05)");
-	NV alpha = 20.0; const char *positive = "1"; int lower_pos = 0;
+	NV alpha = 20.0; const char *positive = "1"; bool lower_pos = 0;
 	bool have_cutoff = 0, have_top = 0, have_frac = 0;
 	NV cutoff = 0.0, top = 0.0, active_frac = 0.0;
-	int frac_low = 0;
+	bool frac_low = 0;
 	for (int i = 2; i + 1 < items; i += 2) {
 		const char *k = SvPV_nolen(ST(i)); SV *v = ST(i + 1);
 		if      (strEQ(k, "alpha"))     alpha = SvNV(v);
@@ -19989,7 +19989,7 @@ XS_EUPXS(XS_Stats__LikeR_merge)
 		}
 
 		for (SSize_t i = 0; i < nL; i++) {
-			int ok = mg_key(aTHX_ &Lf, lk, nkeys, i, kbuf, fast_nv);
+			bool ok = mg_key(aTHX_ &Lf, lk, nkeys, i, kbuf, fast_nv);
 			HE *he = ok ? hv_fetch_ent(ridx, kbuf, 0, 0) : NULL;
 			if (he) {
 				for (SSize_t j = (SSize_t)SvIV(HeVAL(he)); j >= 0; j = next[j]) {
@@ -21259,8 +21259,6 @@ XS_EUPXS(XS_Stats__LikeR_hoa2aoh)
 			croak("hoa2aoh: argument must be a hash-of-arrays (hashref)");
 		in = (HV *)SvRV(hoa);
 		ncols = (U32)HvUSEDKEYS(in);
-		if (ncols < 0)
-			ncols = 0;
 		// SAVEFREEPV makes these scratch arrays croak-safe
 		ENTER;
 		SAVETMPS;
@@ -21302,7 +21300,7 @@ XS_EUPXS(XS_Stats__LikeR_hoa2aoh)
 		LEAVE;
 		RETVAL = newRV_noinc((SV *)out);
 	}
-#line 21306 "LikeR.c"
+#line 21304 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -21321,7 +21319,7 @@ XS_EUPXS(XS_Stats__LikeR_hoa2hoh)
 ;
 	SV *	key = ST(1)
 ;
-#line 20044 "LikeR.xs"
+#line 20042 "LikeR.xs"
 		HV *in;
 		HV *out;
 		AV *keycol;
@@ -21330,9 +21328,9 @@ XS_EUPXS(XS_Stats__LikeR_hoa2hoh)
 		AV **cv;	// per-column array bodies (borrowed)
 		size_t n, i;
 		size_t ncols, ci;
-#line 21334 "LikeR.c"
+#line 21332 "LikeR.c"
 	SV *	RETVAL;
-#line 20053 "LikeR.xs"
+#line 20051 "LikeR.xs"
 	{
 		if (!SvROK(hoa) || SvTYPE(SvRV(hoa)) != SVt_PVHV)
 			croak("hoa2hoh: first argument must be a hash-of-arrays (hashref)");
@@ -21398,7 +21396,7 @@ XS_EUPXS(XS_Stats__LikeR_hoa2hoh)
 		FREETMPS;
 		LEAVE;
 	}
-#line 21402 "LikeR.c"
+#line 21400 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -21419,7 +21417,7 @@ XS_EUPXS(XS_Stats__LikeR_vals)
 ;
 	SV *	colname_sv = ST(1)
 ;
-#line 20125 "LikeR.xs"
+#line 20123 "LikeR.xs"
 	bool is_aoh = 0, is_hoh = 0;
 	const char *colname = NULL;
 	STRLEN collen = 0;
@@ -21427,8 +21425,8 @@ XS_EUPXS(XS_Stats__LikeR_vals)
 	HV *src_hv = NULL;
 	SSize_t n = 0;
 	AV *out_av = NULL;
-#line 21431 "LikeR.c"
-#line 20133 "LikeR.xs"
+#line 21429 "LikeR.c"
+#line 20131 "LikeR.xs"
 {
 	if (!SvOK(colname_sv))
 		croak("vals: column name must be defined");
@@ -21543,7 +21541,7 @@ XS_EUPXS(XS_Stats__LikeR_vals)
 	XPUSHs(sv_2mortal(newRV_inc((SV *)out_av)));
 	XSRETURN(1);
 }
-#line 21547 "LikeR.c"
+#line 21545 "LikeR.c"
 	PUTBACK;
 	return;
     }
@@ -21567,7 +21565,7 @@ XS_EUPXS(XS_Stats__LikeR__qcut_core)
 ;
 	IV	want_codes = (IV)SvIV(ST(3))
 ;
-#line 20255 "LikeR.xs"
+#line 20253 "LikeR.xs"
 	AV  *data_av;
 	AV  *probs_av;
 	AV  *edge_av;
@@ -21578,8 +21576,8 @@ XS_EUPXS(XS_Stats__LikeR__qcut_core)
 	NV  *edges = NULL;
 	NV   p, h, frac, v;
 	IV   lo, bin, lo2, hi2, mid, k;
-#line 21582 "LikeR.c"
-#line 20266 "LikeR.xs"
+#line 21580 "LikeR.c"
+#line 20264 "LikeR.xs"
 	if (!SvROK(data_ref) || SvTYPE(SvRV(data_ref)) != SVt_PVAV)
 		croak("_qcut_core: data must be an ARRAY reference");
 	if (!SvROK(probs_ref) || SvTYPE(SvRV(probs_ref)) != SVt_PVAV)
@@ -21685,7 +21683,7 @@ XS_EUPXS(XS_Stats__LikeR__qcut_core)
 	else
 		PUSHs(&PL_sv_undef);
 	PUSHs(sv_2mortal(newRV_noinc((SV *) edge_av)));
-#line 21689 "LikeR.c"
+#line 21687 "LikeR.c"
 	PUTBACK;
 	return;
     }
@@ -21701,13 +21699,13 @@ XS_EUPXS(XS_Stats__LikeR_get_union)
     PERL_UNUSED_VAR(ax); /* -Wall */
     SP -= items;
     {
-#line 20376 "LikeR.xs"
+#line 20374 "LikeR.xs"
 		HV*seen;
 		AV*order;
 		size_t nrefs, n, oi, olen;
 		int gimme;
-#line 21710 "LikeR.c"
-#line 20381 "LikeR.xs"
+#line 21708 "LikeR.c"
+#line 20379 "LikeR.xs"
 		gimme = GIMME_V;
 		nrefs = items;
 		if (nrefs == 0)
@@ -21750,7 +21748,7 @@ XS_EUPXS(XS_Stats__LikeR_get_union)
 					XPUSHs(sv_2mortal(newSVsv(*e)));
 			}
 		}
-#line 21754 "LikeR.c"
+#line 21752 "LikeR.c"
 	PUTBACK;
 	return;
     }
@@ -21766,12 +21764,12 @@ XS_EUPXS(XS_Stats__LikeR_Lonly)
     PERL_UNUSED_VAR(ax); /* -Wall */
     SP -= items;
     {
-#line 20427 "LikeR.xs"
+#line 20425 "LikeR.xs"
 		if (items == 0)
 			croak("Lonly needs >= 1 array ref");
 		SP = set_multiplicity(aTHX_ SP, &ST(0), (size_t)items, 0, 0,
 		                      "Lonly", GIMME_V);
-#line 21775 "LikeR.c"
+#line 21773 "LikeR.c"
 	PUTBACK;
 	return;
     }
@@ -21787,14 +21785,14 @@ XS_EUPXS(XS_Stats__LikeR_Ronly)
     PERL_UNUSED_VAR(ax); /* -Wall */
     SP -= items;
     {
-#line 20435 "LikeR.xs"
+#line 20433 "LikeR.xs"
 		if (items == 0)
 			croak("Ronly needs >= 1 array ref");
 		/*mirror of Lonly: values only in the LAST array (from_last = 1), so
 		the two-array Ronly(a,b) still equals Lonly(b,a).*/
 		SP = set_multiplicity(aTHX_ SP, &ST(0), (size_t)items, 0, 1,
 		                      "Ronly", GIMME_V);
-#line 21798 "LikeR.c"
+#line 21796 "LikeR.c"
 	PUTBACK;
 	return;
     }
@@ -21810,11 +21808,11 @@ XS_EUPXS(XS_Stats__LikeR_is_equivalent)
     PERL_UNUSED_VAR(ax); /* -Wall */
     SP -= items;
     {
-#line 20445 "LikeR.xs"
+#line 20443 "LikeR.xs"
 		if (items < 2)
 			croak("is_equivalent needs >= 2 array refs (got %" UVuf ")", (UV)items);
 		XPUSHs(sv_2mortal(newSViv(set_equivalent(aTHX_ &ST(0), (size_t)items, "is_equivalent"))));
-#line 21818 "LikeR.c"
+#line 21816 "LikeR.c"
 	PUTBACK;
 	return;
     }
@@ -21829,7 +21827,7 @@ XS_EUPXS(XS_Stats__LikeR_pnorm)
     PERL_UNUSED_VAR(items); /* -W */
     {
 	SV *	RETVAL;
-#line 20451 "LikeR.xs"
+#line 20449 "LikeR.xs"
 {
 	if (items < 1)
 		croak("Usage: pnorm(x), pnorm(x, mean => 0, sd => 1, lower => 1, log => 0)");
@@ -21871,7 +21869,7 @@ XS_EUPXS(XS_Stats__LikeR_pnorm)
 		RETVAL = newSVnv(res);
 	}
 }
-#line 21875 "LikeR.c"
+#line 21873 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -21892,9 +21890,9 @@ XS_EUPXS(XS_Stats__LikeR__igamc)
 ;
 	NV	RETVAL;
 	dXSTARG;
-#line 20504 "LikeR.xs"
+#line 20502 "LikeR.xs"
 	RETVAL = igamc(a, x);
-#line 21898 "LikeR.c"
+#line 21896 "LikeR.c"
 	TARGn((NV)RETVAL, 1);
 	ST(0) = TARG;
     }
@@ -21915,9 +21913,9 @@ XS_EUPXS(XS_Stats__LikeR__pchisq_upper)
 ;
 	NV	RETVAL;
 	dXSTARG;
-#line 20515 "LikeR.xs"
+#line 20513 "LikeR.xs"
 	RETVAL = (df <= 0.0 || stat <= 0.0) ? 1.0 : igamc(df / 2.0, stat / 2.0);
-#line 21921 "LikeR.c"
+#line 21919 "LikeR.c"
 	TARGn((NV)RETVAL, 1);
 	ST(0) = TARG;
     }
@@ -22048,7 +22046,7 @@ XS_EXTERNAL(boot_Stats__LikeR)
 #line 9004 "LikeR.xs"
 	newXS("Stats::LikeR::__cs_uninit_catcher", cs_uninit_catcher, __FILE__);
 
-#line 22052 "LikeR.c"
+#line 22050 "LikeR.c"
 
     /* End of Initialisation Section */
 

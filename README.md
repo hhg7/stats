@@ -5997,6 +5997,63 @@ Verified against R 4.6.1 (`oneway.test`, `anova(aov())`, `anova(lm())`,
 
 # Changes
 
+## 0.298 2026-08-12 CDT
+
+A compiler-warning audit of `LikeR.xs` for `-Wint-conversion`, `-Wimplicit-int`,
+`-Wreturn-mismatch` and `-Wdeclaration-missing-parameter-type`, and a pass
+tightening integer types that can only hold a count or a flag. No behaviour
+changed: the full suite (116 files, 18,546 tests) passes, and every function
+touched was diffed call-for-call against a build of the previous release, with
+`dnorm`, `pnorm`, one- and two-sample `ks_test`, `fisher_test`, `auc` and the set
+operations re-checked against R 4.6.1 and found bit-identical.
+
+All four of those warnings were already clean, and stay clean on a `double`, a
+`long double` and a `__float128` build. Two of them cannot be tested with the
+GCC most systems still default to: `-Wreturn-mismatch` and
+`-Wdeclaration-missing-parameter-type` are GCC 14 additions — where they are
+errors rather than warnings — and GCC 13 rejects both as unrecognized options,
+so a check that appears to pass on 13 has really only skipped them.
+
+### Dead code removed
+
+Turning the audit up to `-Wextra` found two branches that could never run, both
+of them a test for negativity on a value whose type is unsigned:
+
+1. `r_pow_di` takes `unsigned int n`, so its `if (n < 0) return 1.0 / r_pow_di(x, -n);`
+   was unreachable — a leftover of R's `R_pow_di`, which takes a signed exponent.
+   All three callers (in `K2x`, for the exact one-sample Kolmogorov-Smirnov
+   distribution) pass a non-negative exponent, so the unsigned parameter is the
+   correct one and the reciprocal branch simply goes.
+2. `hoa2aoh` casts `HvUSEDKEYS` to `U32` and then clamps with `if (ncols < 0) ncols = 0;`.
+
+### Types narrowed to what they can actually hold
+
+Eighteen `int`s that only ever hold 0 or 1 became `bool`, a convention the file
+already followed in some 219 other places; each was confirmed by reading every
+call site rather than by name. The flag parameters of `ft_pnhyper`, `K2l`,
+`c_dnorm`, `c_pnorm`, `c_pnorm_both`, `set_multiplicity` and `roc_split`, the
+`is_cat` field of `AnFac`, the `lower_pos` and `frac_low` locals of `auc`,
+`auroc`, `roc` and `bedroc`, and the return types of `mg_key` and
+`psmirnov_exact_test`. Several of these were already being handed a `bool` by
+their callers — `dnorm`'s and `pnorm`'s `log` and `lower` options, for instance —
+so only the helper signatures were behind. `c_pnorm_both`'s loop counter became
+`unsigned int`.
+
+Two that look like flags and are not: `c_pnorm_both`'s `i_tail` is three-valued,
+and `set_multiplicity`'s `gimme` carries a Perl `G_*` context value. Both stay
+`int`.
+
+Also six coefficient tables in `c_pnorm_both` written `const static double`,
+which puts the storage class after the qualifier and draws
+`-Wold-style-declaration`; they are now `static const double`.
+
+Not addressed: `-Wextra` still reports about sixty `-Wsign-compare` warnings,
+nearly all of them a loop declaring `size_t i` and comparing it against XS's
+`items`, which is a signed `Stack_off_t`. They are harmless as written, since
+`items` is never negative, but quieting them means touching sixty comparisons
+or changing loop variable types, which is its own change with its own risk of
+introducing an unsigned underflow.
+
 ## 0.297 2026-08-10 CDT
 
 https://www.cpantesters.org/cpan/report/260534ea-9474-11f1-8ca2-bfb68deea6df bug fix
