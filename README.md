@@ -2661,7 +2661,7 @@ p-value by about 2%.
 
 | Variable | Type | Description | Example |
 | --- | --- | --- | --- |
-| `aic` | `Double` | Akaike's Information Criterion for the fitted model. | `123.45` |
+| `aic` | `Double` | Akaike's Information Criterion for the fitted model (lower is better). | `123.45` |
 | `boundary` | `Integer (Boolean)` | `1` if the fitted values computationally reached the `0` or `1` boundary (specific to the binomial family), `0` otherwise. | `0` |
 | `coefficients` | `HashRef` | A hash mapping the expanded model term names to their estimated coefficient values. | `{'Intercept' => 1.5, 'wt' => -0.5}` |
 | `converged` | `Integer (Boolean)` | `1` if the Iteratively Reweighted Least Squares (IRLS) algorithm converged within the maximum iterations, `0` otherwise. | `1` |
