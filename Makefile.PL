@@ -8,7 +8,68 @@ use warnings;
 use ExtUtils::MakeMaker;
 
 use Config;
-my $std = ($Config{gccversion} || $Config{cc} =~ /\b(?:g?cc|clang)\b/) ? ' -std=gnu99' : '';
+use File::Temp ();
+use File::Spec ();
+# LikeR.xs needs C99: // comments, declarations inside blocks and for(),
+# <stdint.h>, and `restrict` where the compiler has a spelling for it.
+# The flag that asks for C99 is per-vendor, and it cannot be guessed from
+# $Config{cc}: that is plain "cc" for Oracle Studio on Solaris and for aCC
+# on HP-UX, both of which used to match this file's old /\b(?:g?cc|clang)\b/
+# test, get handed -std=gnu99, and fail the build on an illegal option.
+# So each candidate is trial-compiled and the first one that actually works
+# wins: -std=gnu99/-std=c99 for gcc and clang (all BSDs included),
+# -xc99=all for Studio, -qlanglvl=extc99 for AIX xlc, -AC99 for HP-UX, and
+# finally '' for a compiler whose default mode is already C99. MSVC is
+# skipped outright -- it needs no flag for any of the above and merely warns
+# on switches it does not know, which would make the probe pick a no-op.
+my $std = '';
+unless ($Config{cc} =~ /(?:^|[\/\\])cl(?:\.exe)?$/i) {
+    my $c99 = "#include <stdint.h>\n"
+            . "int main(void) { uint64_t u = 0; // C99 comment\n"
+            . "for (int i = 0; i < 3; i++) { u += (uint64_t)i; }\n"
+            . "return (int)(u - 3); }\n";
+    my $dir = File::Temp::tempdir(CLEANUP => 1);
+    my $src = File::Spec->catfile($dir, 'c99probe.c');
+    my $obj = File::Spec->catfile($dir, 'c99probe.o');
+    if (open my $probe_fh, '>', $src) {
+        print {$probe_fh} $c99;
+        close $probe_fh;
+        my $quiet = File::Spec->devnull;
+        for my $flag ('-std=gnu99', '-std=c99', '-xc99=all', '-qlanglvl=extc99', '-AC99', '') {
+            next if system("$Config{cc} $flag -c $src -o $obj > $quiet 2> $quiet") != 0;
+            $std = $flag eq '' ? '' : " $flag";
+            last;
+        }
+    }
+}
+# On a long-double perl, LikeR.xs wants the `l` suffixed libm functions so that
+# an NV is not silently computed at double precision. They are C99, but some
+# libms (the thinner BSD ones especially) do not ship the whole set, so the set
+# is link-tested as a unit: all of it, or the module falls back to the double
+# functions exactly as it did before. __float128 needs no probe -- quadmath.h
+# and -lquadmath come with the quadmath perl itself.
+my $define = '';
+if ($Config{nvtype} eq 'long double') {
+    my $ld = "#include <math.h>\n"
+           . "int main(void) { int e; long double x = 1.0L;\n"
+           . "  volatile long double r = lgammal(x) + sqrtl(x) + logl(x) + log1pl(x)\n"
+           . "    + log2l(x) + expl(x) + powl(x, x) + floorl(x) + ceill(x) + roundl(x)\n"
+           . "    + truncl(x) + fmaxl(x, x) + erfcl(x) + asinl(x) + sinhl(x) + coshl(x)\n"
+           . "    + tanhl(x) + fabsl(x) + ldexpl(x, 2) + frexpl(x, &e);\n"
+           . "  return (int)r * 0; }\n";
+    my $dir = File::Temp::tempdir(CLEANUP => 1);
+    my $src = File::Spec->catfile($dir, 'ldmath.c');
+    my $bin = File::Spec->catfile($dir, 'ldmath');
+    if (open my $ld_fh, '>', $src) {
+        print {$ld_fh} $ld;
+        close $ld_fh;
+        my $quiet = File::Spec->devnull;
+        $define = '-DLIKER_HAVE_LONG_DOUBLE_MATH'
+            if system("$Config{cc}$std -o $bin $src -lm > $quiet 2> $quiet") == 0;
+    }
+    warn "Stats::LikeR: this libm is missing some long double math functions;\n"
+       . "  falling back to double precision internals.\n" unless $define;
+}
 
 my %WriteMakefileArgs = (
   "ABSTRACT" => "Get basic statistical functions, like in R, but with Perl using XS for performance",
@@ -27,7 +88,15 @@ my %WriteMakefileArgs = (
     "Test::LeakTrace" => 0,
     "Test::More" => 0
   },
-  "VERSION" => "0.28",
+  # Read from the module rather than pinned here. dzil's [VersionFromModule]
+  # fills this in correctly for a release, but the copy checked into the repo
+  # is what a clone builds with, and its literal had gone stale at 0.28 while
+  # lib/Stats/LikeR.pm moved on. XSLoader::load() passes $VERSION to the .so,
+  # which was compiled with -DXS_VERSION from this value, so a stale literal
+  # here makes the freshly built .so refuse to load with "object version 0.28
+  # does not match bootstrap parameter". That is the other half of the
+  # build-it-twice dance PL_FILES => {} below fixes.
+  "VERSION_FROM" => "lib/Stats/LikeR.pm",
   "test" => {
     "TESTS" => "t/*.t"
   }
@@ -36,6 +105,17 @@ my %WriteMakefileArgs = (
 %WriteMakefileArgs = (
     %WriteMakefileArgs,
     CCFLAGS => $Config::Config{ccflags} . $std,
+    DEFINE => $define,
+    LIBS => ['-lm'],
+    # EUMM scans the directory for *.PL files to run during the build, and
+    # dev.Makefile.PL -- the maintainer's local convenience wrapper -- looks
+    # like one. It was being run in the middle of `make` as
+    # `perl dev.Makefile.PL dev.Makefile`, and since it calls WriteMakefile()
+    # it overwrote the real Makefile with its own: no DEFINE, no probed C99
+    # flag, and VERSION taken from a different place, which is what made the
+    # .so come out stamped 0.28 and forced the build to be run twice. Nothing
+    # here is generated by a .PL file, so the scan is turned off entirely.
+    PL_FILES => {},
 );
 
 my %FallbackPrereqs = (

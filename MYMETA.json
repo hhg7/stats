@@ -1,12 +1,12 @@
 {
-   "abstract" : "unknown",
+   "abstract" : "Get basic statistical functions, like in R, but with Perl using XS for performance",
    "author" : [
-      "unknown"
+      "David E. Condon <dec986@gmail.com>"
    ],
    "dynamic_config" : 0,
    "generated_by" : "ExtUtils::MakeMaker version 7.78, CPAN::Meta::Converter version 2.150013",
    "license" : [
-      "unknown"
+      "perl_5"
    ],
    "meta-spec" : {
       "url" : "http://search.cpan.org/perldoc?CPAN::Meta::Spec",
@@ -31,7 +31,14 @@
          }
       },
       "runtime" : {
-         "requires" : {}
+         "requires" : {
+            "Devel::Confess" : "0",
+            "Digest::SHA" : "0",
+            "Scalar::Util" : "0",
+            "Test::Exception" : "0",
+            "Test::LeakTrace" : "0",
+            "Test::More" : "0"
+         }
       }
    },
    "release_status" : "stable",

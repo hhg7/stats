@@ -1,14 +1,14 @@
 ---
-abstract: unknown
+abstract: 'Get basic statistical functions, like in R, but with Perl using XS for performance'
 author:
-  - unknown
+  - 'David E. Condon <dec986@gmail.com>'
 build_requires:
   ExtUtils::MakeMaker: '0'
 configure_requires:
   ExtUtils::MakeMaker: '0'
 dynamic_config: 0
 generated_by: 'ExtUtils::MakeMaker version 7.78, CPAN::Meta::Converter version 2.150013'
-license: unknown
+license: perl
 meta-spec:
   url: http://module-build.sourceforge.net/META-spec-v1.4.html
   version: '1.4'
@@ -17,6 +17,12 @@ no_index:
   directory:
     - t
     - inc
-requires: {}
+requires:
+  Devel::Confess: '0'
+  Digest::SHA: '0'
+  Scalar::Util: '0'
+  Test::Exception: '0'
+  Test::LeakTrace: '0'
+  Test::More: '0'
 version: 0.298
 x_serialization_backend: 'CPAN::Meta::YAML version 0.020'
