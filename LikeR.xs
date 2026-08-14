@@ -10743,13 +10743,20 @@ CODE:
 	size_t nx = (size_t)(av_len(x_av) + 1);
 	if (nx == 0) croak("Not enough 'x' observations");
 
-	// Extract 'x' to a C array (numeric elements only).
+	/*Extract 'x' to a C array (numeric elements only). NaN is dropped along
+	with undef and non-numbers, which is what R's ks.test does (x[!is.na(x)]
+	drops NaN as well as NA). Letting a NaN through is not merely inaccurate:
+	the merge in calc_2sample_stats() advances only on `<=`, which is false
+	for every comparison against NaN, so a single NaN wedges it in an
+	infinite loop.*/
 	NV *x_data = (NV *)safemalloc(nx * sizeof(NV));
 	size_t valid_nx = 0;
 	for (size_t i = 0; i < nx; i++) {
 	  SV **el = av_fetch(x_av, i, 0);
 	  if (el && *el && (SvNIOK(*el) || (SvOK(*el) && looks_like_number(*el)))) {
-		   x_data[valid_nx++] = SvNV(*el);   //SvNIOK shortcut avoids string parse
+		   NV v = SvNV(*el);                 //SvNIOK shortcut avoids string parse
+		   if (Perl_isnan(v)) continue;
+		   x_data[valid_nx++] = v;
 	  }
 	}
 	//Fix #4: guard before any path can divide by valid_nx.
@@ -10770,7 +10777,9 @@ CODE:
 	  for (size_t i = 0; i < ny; i++) {
 		   SV **el = av_fetch(y_av, i, 0);
 		   if (el && *el && (SvNIOK(*el) || (SvOK(*el) && looks_like_number(*el)))) {
-		       y_data[valid_ny++] = SvNV(*el);
+		       NV v = SvNV(*el);
+		       if (Perl_isnan(v)) continue;   //as for 'x': R drops NaN, and a
+		       y_data[valid_ny++] = v;        //NaN would hang the merge below
 		   }
 	  }
 	  if (valid_ny < 1) {
@@ -10857,15 +10866,19 @@ CODE:
 		   else              statistic = max_d;
 
 		   bool use_exact = (exact == -1) ? (valid_nx < 100) : (exact == 1);
+		   /*Only the two-sided exact distribution is implemented, so a
+		   one-sided request drops to the asymptotic formula. Clear use_exact
+		   here rather than inside the branch below, so that method_desc
+		   reports the p-value the caller actually got: the label is the only
+		   machine-readable record of which path ran, and saying "exact" over
+		   an asymptotic p-value would make it useless.*/
+		   if (use_exact && !is_two_sided) {
+		       warn("ks_test: exact 1-sample 1-sided KS test not implemented; using asymptotic");
+		       use_exact = FALSE;
+		   }
 		   if (use_exact) {
 		       method_desc = "One-sample Kolmogorov-Smirnov exact test";
-		       if (is_two_sided) {
-		           p_value = 1.0 - K2x(valid_nx, statistic);
-		       } else {
-		           warn("ks_test: exact 1-sample 1-sided KS test not implemented; using asymptotic");
-		           NV z = statistic * nv_sqrt((NV)valid_nx);
-		           p_value = nv_exp(-2.0 * z * z);
-		       }
+		       p_value = 1.0 - K2x(valid_nx, statistic);
 		   } else {
 		       method_desc = "One-sample Kolmogorov-Smirnov test (asymptotic)";
 		       NV z = statistic * nv_sqrt((NV)valid_nx);

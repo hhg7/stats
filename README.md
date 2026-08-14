@@ -3316,7 +3316,8 @@ Arguments may be given positionally (as above) or by name:
 
     $ks = ks_test(x => \@x, y => \@y, alternative => 'less', exact => 1);
 
-Non-numeric and undefined elements are silently dropped before the test runs.
+Non-numeric, undefined and NaN elements are silently dropped before the test
+runs, matching R's `x[!is.na(x)]`.
 
 `alternative` selects which gap between the ECDFs is measured:
 
@@ -3338,7 +3339,8 @@ approximation otherwise. Pass `exact => 1` to force the exact computation or
 when the data contain ties; if ties are present on the exact path, the test
 warns and falls back to the asymptotic p-value. (The exact one-sample test is
 only available for the two-sided alternative; a one-sided one-sample request
-also falls back to asymptotic.)
+also falls back to asymptotic.) In either fallback the returned `method` is
+the asymptotic one, so it always names the p-value you actually got.
 
 ### Return value
 

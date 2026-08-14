@@ -58,7 +58,7 @@
 .\" ========================================================================
 .\"
 .IX Title "Stats::LikeR 3"
-.TH Stats::LikeR 3 2026-08-13 "perl v5.44.0" "User Contributed Perl Documentation"
+.TH Stats::LikeR 3 2026-08-14 "perl v5.44.0" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -3733,7 +3733,8 @@ Arguments may be given positionally (as above) or by name:
 \& $ks = ks_test(x => \e@x, y => \e@y, alternative => \*(Aqless\*(Aq, exact => 1);
 .Ve
 .PP
-Non\-numeric and undefined elements are silently dropped before the test runs.
+Non\-numeric, undefined and NaN elements are silently dropped before the test
+runs, matching R\*(Aqs \f(CW\*(C`x[!is.na(x)]\*(C'\fR.
 .PP
 \&\f(CW\*(C`alternative\*(C'\fR selects which gap between the ECDFs is measured:
 .IP \(bu 4
@@ -3757,7 +3758,8 @@ approximation otherwise. Pass \f(CW\*(C`exact => 1\*(C'\fR to force the exact co
 when the data contain ties; if ties are present on the exact path, the test
 warns and falls back to the asymptotic p\-value. (The exact one\-sample test is
 only available for the two\-sided alternative; a one\-sided one\-sample request
-also falls back to asymptotic.)
+also falls back to asymptotic.) In either fallback the returned \f(CW\*(C`method\*(C'\fR is
+the asymptotic one, so it always names the p\-value you actually got.
 .PP
 \fIReturn value\fR
 .IX Subsection "Return value"
