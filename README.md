@@ -5530,6 +5530,26 @@ the two groups compared can be specified, though not necessarily, as `x` and `y`
 	    paired => 1
     );
 
+### What the test is asking
+
+Every t-test is the same three numbers. `estimate` is what the data say — a
+mean, or a difference of means. `mu` is what the null hypothesis says. The
+standard error is how far apart those two would ordinarily drift by chance
+alone, and `statistic` is the distance from `mu` to `estimate` measured in
+standard errors:
+
+    statistic = (estimate - mu) / SE
+
+`df` says which t distribution that statistic would follow if the null were
+true, and `p_value` is the area of that distribution further out than the
+statistic — the chance of landing this far from `mu`, or further, when `mu` is
+right. Below, R's `sleep` data as a paired test: ten patients, each measured on
+two drugs, so the ten paired differences are one sample and `mu = 0` is "the two
+drugs are the same". The middle panel is the whole p-value; the right panel is
+one of its two tails, magnified until it can be seen.
+
+![the estimate, mu and the standard error, and the null distribution the p-value is an area under](https://raw.githubusercontent.com/hhg7/stats/main/img/t.test.what.png)
+
 ### Parameters
 
 | Parameter | Type | Default | Description |
@@ -5541,6 +5561,67 @@ the two groups compared can be specified, though not necessarily, as `x` and `y`
 | `var_equal` | Boolean | `FALSE` | If true, assumes equal variances (standard two-sample). If false, performs Welch's t-test with unequal variances. |
 | `conf_level` | Float | 0.95 | Confidence level for the returned confidence interval. Must be strictly between 0 and 1 (R also accepts the degenerate 0 and 1). See [Extreme `conf_level`](#extreme-conf_level) for the precision limit past about `0.9999`. |
 | `alternative` | String | `"two.sided"` | Direction of the alternative hypothesis: `"two.sided"`, `"less"`, or `"greater"`. `"two-sided"` and `"two_sided"` are accepted as `scipy`'s spelling of the same thing. Anything else is a fatal error — an unrecognised value must not quietly become a two-sided test. |
+
+### `conf_int`
+
+`conf_int` is the estimate plus and minus a multiple of the same standard error
+the statistic divides by, and `conf_level` picks the multiple — the t quantile
+at that level and `df`. Nothing else goes into it. On the left below, the whole
+interval taken apart: for the paired `sleep` test, `2.26216 * 0.38896 = 0.87989`
+either side of `-1.58`. On the right, the same interval at six confidence
+levels. A wider `conf_level` needs a bigger quantile and so gives a wider
+interval, and the level at which the interval first reaches `mu` is exactly
+`1 - p_value` — the second panel from the bottom, whose upper bound lands on
+zero.
+
+![conf_int is the estimate plus or minus a t quantile times the standard error, and conf_level sets the quantile](https://raw.githubusercontent.com/hhg7/stats/main/img/t.test.conf.int.png)
+
+### `alternative`
+
+`alternative` decides which part of the null distribution counts against the
+null, and therefore both `p_value` and `conf_int`. `"two.sided"` counts both
+tails beyond `|statistic|`, `"less"` counts only what lies below the statistic,
+and `"greater"` only what lies above; the two one-sided p-values always add to
+1, and each is half the two-sided one when it is the smaller. The interval
+follows: a one-sided alternative gives a one-sided interval, with the other
+bound infinite. The example is `t_test($drug1, $drug2)` on `sleep` — the same
+twenty numbers as above, but unpaired.
+
+![the three alternatives, the region of the null distribution each one counts, and the interval that goes with it](https://raw.githubusercontent.com/hhg7/stats/main/img/t.test.alternative.png)
+
+### `mu`, `p_value` and `conf_int` say one thing
+
+`conf_int` is the set of `mu` the test would not reject. Sweep `mu` across the
+line and re-run the test at each value: the p-value peaks at 1 where `mu` equals
+the estimate, and falls through `1 - conf_level` at precisely the two bounds of
+`conf_int`. That is what "the interval excludes zero" and "p is below 0.05" both
+mean — they are one statement, not two pieces of evidence.
+
+Which is also why `mu` never moves `conf_int`. Changing `mu` changes which
+hypothesis is being tested, so `statistic` and `p_value` move with it; the
+interval is built around the estimate and stays where it is.
+
+![p_value as a function of mu, crossing 1 - conf_level exactly at the two bounds of conf_int](https://raw.githubusercontent.com/hhg7/stats/main/img/t.test.duality.png)
+
+### `paired` and `var_equal`
+
+The same twenty numbers give three different answers depending on what is
+assumed about them. `paired => 1` says the two vectors are two measurements of
+the same ten subjects and tests the ten differences, which removes the
+subject-to-subject variation and here turns `p = 0.079` into `p = 0.0028`.
+Unpaired, `var_equal => 1` pools the two variances into one and spends
+`n(x) + n(y) - 2` degrees of freedom; the default Welch test does not pool, and
+buys that safety with a fractional `df` from the Welch–Satterthwaite equation.
+
+Welch's `df` is at most `n(x) + n(y) - 2`, reaching it only when the two spreads
+match, and falls toward `n - 1` of whichever sample dominates the standard error
+as they separate. The middle and right panels sweep `t.test(1:10, 7:20)` — the
+other example in R's `?t.test` — scaling the spread of `y` about its own mean:
+`var_equal` keeps claiming 22 degrees of freedom throughout, and pays for the
+claim with a p-value that is wrong by three orders of magnitude at the left-hand
+edge.
+
+![paired, var_equal and Welch on the same data, and the Welch degrees of freedom as the two spreads separate](https://raw.githubusercontent.com/hhg7/stats/main/img/t.test.designs.png)
 
 ### Extreme `conf_level`
 
@@ -5606,6 +5687,19 @@ Dies if:
 | `estimate` | The estimated mean of `x` (one-sample) OR the mean of the differences (paired). |
 | `estimate_x` | The estimated mean of the `x` vector (only returned in two-sample tests). |
 | `estimate_y` | The estimated mean of the `y` vector (only returned in two-sample tests). |
+
+Validated against R 4.x's `stats::t.test` and against `scipy.stats` — cases
+lifted from R's own regression suite and from SciPy's `TestTTest_1samp`,
+`TestTTest_ind` and confidence-interval tests — by `t/t_test.t`.
+
+The figures above are drawn by `t.test.plots.pl` in the repository, from the
+two examples in R's `?t.test`: the `sleep` data (`t = -1.8608`, `df = 17.776`,
+`p-value = 0.07939` unpaired, `t = -4.0621`, `df = 9`, `p-value = 0.002833`
+paired) and `t.test(1:10, y = c(7:20))`. Every number annotated on them comes
+back out of `t_test` itself, so a figure cannot drift away from the module. It
+is an author-only script — it is not installed, and it needs
+`Matplotlib::Simple`, `python3` and `matplotlib` — so re-run it only when a
+figure needs to change.
 
 ## transpose
 

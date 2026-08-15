@@ -13010,6 +13010,34 @@ the two groups compared can be specified, though not necessarily, as C<x> and C<
      paired => 1
  );
 
+=head3 What the test is asking
+
+Every t-test is the same three numbers. C<estimate> is what the data say — a
+mean, or a difference of means. C<mu> is what the null hypothesis says. The
+standard error is how far apart those two would ordinarily drift by chance
+alone, and C<statistic> is the distance from C<mu> to C<estimate> measured in
+standard errors:
+
+ statistic = (estimate - mu) / SE
+
+C<df> says which t distribution that statistic would follow if the null were
+true, and C<p_value> is the area of that distribution further out than the
+statistic — the chance of landing this far from C<mu>, or further, when C<mu> is
+right. Below, R's C<sleep> data as a paired test: ten patients, each measured on
+two drugs, so the ten paired differences are one sample and C<mu = 0> is "the two
+drugs are the same". The middle panel is the whole p-value; the right panel is
+one of its two tails, magnified until it can be seen.
+
+
+
+=begin html
+
+<p><img src="https://raw.githubusercontent.com/hhg7/stats/main/img/t.test.what.png" alt="the estimate, mu and the standard error, and the null distribution the p-value is an area under" width="100%" /></p>
+
+=end html
+
+
+
 =head3 Parameters
 
 
@@ -13070,6 +13098,99 @@ the two groups compared can be specified, though not necessarily, as C<x> and C<
 </tr>
 </tbody>
 </table>
+
+=end html
+
+
+
+=head3 C<conf_int>
+
+C<conf_int> is the estimate plus and minus a multiple of the same standard error
+the statistic divides by, and C<conf_level> picks the multiple — the t quantile
+at that level and C<df>. Nothing else goes into it. On the left below, the whole
+interval taken apart: for the paired C<sleep> test, C<2.26216 * 0.38896 = 0.87989>
+either side of C<-1.58>. On the right, the same interval at six confidence
+levels. A wider C<conf_level> needs a bigger quantile and so gives a wider
+interval, and the level at which the interval first reaches C<mu> is exactly
+C<1 - p_value> — the second panel from the bottom, whose upper bound lands on
+zero.
+
+
+
+=begin html
+
+<p><img src="https://raw.githubusercontent.com/hhg7/stats/main/img/t.test.conf.int.png" alt="conf_int is the estimate plus or minus a t quantile times the standard error, and conf_level sets the quantile" width="100%" /></p>
+
+=end html
+
+
+
+=head3 C<alternative>
+
+C<alternative> decides which part of the null distribution counts against the
+null, and therefore both C<p_value> and C<conf_int>. C<"two.sided"> counts both
+tails beyond C<|statistic|>, C<"less"> counts only what lies below the statistic,
+and C<"greater"> only what lies above; the two one-sided p-values always add to
+1, and each is half the two-sided one when it is the smaller. The interval
+follows: a one-sided alternative gives a one-sided interval, with the other
+bound infinite. The example is C<t_test($drug1, $drug2)> on C<sleep> — the same
+twenty numbers as above, but unpaired.
+
+
+
+=begin html
+
+<p><img src="https://raw.githubusercontent.com/hhg7/stats/main/img/t.test.alternative.png" alt="the three alternatives, the region of the null distribution each one counts, and the interval that goes with it" width="100%" /></p>
+
+=end html
+
+
+
+=head3 C<mu>, C<p_value> and C<conf_int> say one thing
+
+C<conf_int> is the set of C<mu> the test would not reject. Sweep C<mu> across the
+line and re-run the test at each value: the p-value peaks at 1 where C<mu> equals
+the estimate, and falls through C<1 - conf_level> at precisely the two bounds of
+C<conf_int>. That is what "the interval excludes zero" and "p is below 0.05" both
+mean — they are one statement, not two pieces of evidence.
+
+Which is also why C<mu> never moves C<conf_int>. Changing C<mu> changes which
+hypothesis is being tested, so C<statistic> and C<p_value> move with it; the
+interval is built around the estimate and stays where it is.
+
+
+
+=begin html
+
+<p><img src="https://raw.githubusercontent.com/hhg7/stats/main/img/t.test.duality.png" alt="p_value as a function of mu, crossing 1 - conf_level exactly at the two bounds of conf_int" width="100%" /></p>
+
+=end html
+
+
+
+=head3 C<paired> and C<var_equal>
+
+The same twenty numbers give three different answers depending on what is
+assumed about them. C<< paired =E<gt> 1 >> says the two vectors are two measurements of
+the same ten subjects and tests the ten differences, which removes the
+subject-to-subject variation and here turns C<p = 0.079> into C<p = 0.0028>.
+Unpaired, C<< var_equal =E<gt> 1 >> pools the two variances into one and spends
+C<n(x) + n(y) - 2> degrees of freedom; the default Welch test does not pool, and
+buys that safety with a fractional C<df> from the Welch–Satterthwaite equation.
+
+Welch's C<df> is at most C<n(x) + n(y) - 2>, reaching it only when the two spreads
+match, and falls toward C<n - 1> of whichever sample dominates the standard error
+as they separate. The middle and right panels sweep C<t.test(1:10, 7:20)> — the
+other example in R's C<?t.test> — scaling the spread of C<y> about its own mean:
+C<var_equal> keeps claiming 22 degrees of freedom throughout, and pays for the
+claim with a p-value that is wrong by three orders of magnitude at the left-hand
+edge.
+
+
+
+=begin html
+
+<p><img src="https://raw.githubusercontent.com/hhg7/stats/main/img/t.test.designs.png" alt="paired, var_equal and Welch on the same data, and the Welch degrees of freedom as the two spreads separate" width="100%" /></p>
 
 =end html
 
@@ -13176,6 +13297,19 @@ Dies if:
 =end html
 
 
+
+Validated against R 4.x's C<stats::t.test> and against C<scipy.stats> — cases
+lifted from R's own regression suite and from SciPy's C<TestTTest_1samp>,
+C<TestTTest_ind> and confidence-interval tests — by C<t/t_test.t>.
+
+The figures above are drawn by C<t.test.plots.pl> in the repository, from the
+two examples in R's C<?t.test>: the C<sleep> data (C<t = -1.8608>, C<df = 17.776>,
+C<p-value = 0.07939> unpaired, C<t = -4.0621>, C<df = 9>, C<p-value = 0.002833>
+paired) and C<t.test(1:10, y = c(7:20))>. Every number annotated on them comes
+back out of C<t_test> itself, so a figure cannot drift away from the module. It
+is an author-only script — it is not installed, and it needs
+C<Matplotlib::Simple>, C<python3> and C<matplotlib> — so re-run it only when a
+figure needs to change.
 
 =head2 transpose
 
