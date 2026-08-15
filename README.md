@@ -2016,6 +2016,150 @@ default, overridable with a fourth argument:
     my $s = csort($hoh, 'score', 'aoh');           # row name in 'row.name'
     my $s = csort($hoh, 'score', 'aoh', 'sample'); # ... named 'sample' instead
 
+## density
+
+Kernel density estimation — a smooth curve through a sample, the continuous
+answer to what `hist` answers in bars. This is a port of R's `density()`, down
+to the algorithm: the mass of the sample is dispersed over a regular grid of at
+least 512 points, that grid is convolved with a discretised kernel using the
+fast Fourier transform, and the result is interpolated back onto the points you
+asked for. It returns the same grid, the same bandwidth and the same estimate R
+would.
+
+    my $d = density(\@x);
+    printf "%g\t%g\n", $d->{x}[$_], $d->{y}[$_] for 0 .. $#{ $d->{x} };
+
+Arguments may be given positionally (the sample first) or by name, and R's
+dotted argument names are accepted alongside the underscored ones
+(`na.rm` as well as `na_rm`, `old.coords` as well as `old_coords`,
+`give.Rkern` as well as `give_rkern`, `warnWbw` as well as `warn_wbw`).
+
+    my $d = density(x => \@x, bw => 'SJ', kernel => 'epanechnikov', n => 1024);
+
+### Arguments
+
+- **`x`** — the sample, an array reference. Required (except with
+  `give_rkern`). A missing value (`undef` or `NaN`) is an error unless
+  `na_rm` is set; anything else non-numeric is always an error. An infinite
+  observation is treated as a point mass at ±∞, so it is counted in `n` and
+  takes its share of the mass with it, leaving a sub-density on (−∞, ∞).
+- **`bw`** — the smoothing bandwidth, which is the standard deviation of the
+  kernel. Either a positive number, or the name of a rule to choose one:
+  `'nrd0'` (the default), `'nrd'`, `'ucv'`, `'bcv'`, `'SJ'` / `'SJ-ste'`, or
+  `'SJ-dpi'`. Rule names are case-insensitive. The five rules are also
+  available on their own as `bw_nrd0`, `bw_nrd`, `bw_ucv`, `bw_bcv` and
+  `bw_sj`, described below.
+- **`adjust`** — the bandwidth actually used is `adjust * bw`, so
+  `adjust => 0.5` asks for half the default smoothing. Defaults to 1.
+- **`kernel`** — one of `'gaussian'` (the default), `'epanechnikov'`,
+  `'rectangular'`, `'triangular'`, `'biweight'`, `'cosine'` or `'optcosine'`.
+  Any unambiguous abbreviation will do, so a single letter is enough for every
+  one of them, and the match is case-insensitive. All seven are scaled so that
+  `bw` is the kernel's standard deviation, which is why changing the kernel
+  barely changes the estimate.
+- **`window`** — an alias for `kernel`, for compatibility with S. An explicit
+  `kernel` wins.
+- **`width`** — also for compatibility with S, where the argument is the
+  *length of the kernel's support* rather than a multiple of its standard
+  deviation (for the gaussian, four standard deviations). Consulted only when
+  `bw` is not given. A string names a rule, exactly as `bw` does.
+- **`weights`** — an array reference of non-negative observation weights, one
+  per element of `x` — including the missing ones, so it is always the same
+  length as `x` was to begin with. The default is `1/nx` each. Weights that do
+  not sum to 1 give a *sub*-density and draw a warning; pass `subdensity => 1`
+  if that is what you meant. If `na_rm` removes observations and the original
+  weights summed to one, the survivors are rescaled so they still do.
+  Bandwidth *rules* ignore the weights, and say so; `warn_wbw => 0` silences
+  that, and it is silent anyway when the weights do not vary.
+- **`n`** — the number of equally spaced points at which to estimate. Defaults
+  to 512. Values above 512 are rounded up to a power of two internally (that
+  is what makes the FFT cheap) and the result is interpolated back to exactly
+  the `n` you asked for, so a power of two is the efficient choice.
+- **`from`, `to`** — the ends of the output grid. The defaults are `cut`
+  bandwidths outside the range of the data.
+- **`cut`** — how many bandwidths past the extremes of the data the default
+  `from` and `to` reach, so that the estimate has room to fall to about zero.
+  Defaults to 3.
+- **`ext`** — how many further bandwidths the internal FFT grid extends beyond
+  `from` and `to`. Defaults to 4. Do not change it unless you know why you are
+  changing it; it does not move the output grid, only the accuracy of the
+  values on it.
+- **`na_rm`** — drop missing values instead of failing on them. Defaults to
+  off, which is R's default too.
+- **`subdensity`** — suppress the "weights do not sum to one" warning, because
+  a sub-density is what was wanted.
+- **`warn_wbw`** — whether to warn that an automatic bandwidth ignored the
+  weights. Defaults on when the weights vary.
+- **`old_coords`** — reproduce the pre-R-4.4.0 grid, whose values are too
+  large by a factor of about `1 + 1/(2n-2)`. For reproducing old results only.
+- **`give_rkern`** — return R(K), the kernel's *canonical bandwidth*, and no
+  density at all. See below.
+- **`nb`** — the number of bins the `'ucv'`, `'bcv'` and `'SJ'` rules use for
+  their pair counts. Defaults to 1000, as in R.
+
+### Return value
+
+A hash reference:
+
+- **`x`** — the `n` grid points at which the density was estimated, an array
+  reference, strictly increasing from `from` to `to`.
+- **`y`** — the estimated density there, an array reference of the same
+  length. Never negative, though it can be zero.
+- **`bw`** — the bandwidth actually used, i.e. `adjust` times whatever `bw`
+  resolved to. Worth reading back when a rule chose it.
+- **`n`** — the sample size after missing values were removed. Infinite
+  observations still count.
+- **`kernel`** — the kernel that was used, spelled out in full, so an
+  abbreviation comes back resolved.
+- **`old_coords`**, **`has_na`** — echoes of the corresponding R fields;
+  `has_na` is always 0.
+
+    my $d = density(\@x, bw => 'SJ');
+    printf "bandwidth %.4f over %d observations\n", $d->{bw}, $d->{n};
+
+With `give_rkern => 1` the return is instead a plain number: R(K) = ∫K²(t)dt
+for the chosen kernel, the scale-invariant quantity that says how efficient
+that kernel is. No data is needed, and any that is given is ignored.
+
+    my $rk = density(kernel => 'epanechnikov', give_rkern => 1);   # 0.2683283
+
+Bandwidths that are "exactly equivalent" across kernels are then
+`(R(K_gaussian)/R(K))**0.2` times each other — the adjustment is within about
+1% either way, which is why the choice of kernel rarely matters.
+
+### The bandwidth rules: `bw_nrd0`, `bw_nrd`, `bw_ucv`, `bw_bcv`, `bw_sj`
+
+The five rules `density`'s `bw =>` string can name are also callable in their
+own right, and are ports of R's `bw.nrd0`, `bw.nrd`, `bw.ucv`, `bw.bcv` and
+`bw.SJ`. Each takes the sample the same two ways `density` does and returns a
+plain number.
+
+    my $h = bw_nrd0(\@x);
+    my $h = bw_sj(x => \@x, method => 'dpi');
+
+- **`bw_nrd0`** — Silverman's rule of thumb, `0.9 * min(sd, IQR/1.34) *
+  n**-0.2`, and `density`'s default. It is the default for historical reasons
+  rather than because it is the best choice.
+- **`bw_nrd`** — Scott's variation on the same rule, with 1.06 in place of 0.9.
+- **`bw_ucv`**, **`bw_bcv`** — unbiased (least-squares) and biased
+  cross-validation. Both minimise a criterion over a range of bandwidths and
+  warn, as R does, if the minimum turned up at one end of that range.
+- **`bw_sj`** — the Sheather & Jones (1991) selector, usually the one to
+  reach for. `method => 'ste'` (the default) solves the equation;
+  `method => 'dpi'` plugs in directly. These are what `bw => 'SJ'` and
+  `bw => 'SJ-dpi'` select.
+
+The three that search also accept `nb` (the number of bins for the pair
+counts, 1000 by default), `lower` and `upper` (the range searched) and `tol`
+(where the search stops, `0.1 * lower` by default). Unlike `density`, these
+five want a clean numeric sample: a missing or infinite value is an error, not
+something to drop.
+
+Validated against R 4.6.1 — its own regression suite, the examples in
+`?density` and `?bw.nrd`, and their pinned output — by `t/density.R.scipy.t`,
+which also cross-checks the whole binning/FFT/interpolation pipeline against
+SciPy's exact `gaussian_kde`.
+
 ## dnorm
 
 gives the density of the normal distribution, with the specified mean and standard deviation.

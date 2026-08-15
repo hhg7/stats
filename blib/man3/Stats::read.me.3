@@ -2339,6 +2339,186 @@ default, overridable with a fourth argument:
 \& my $s = csort($hoh, \*(Aqscore\*(Aq, \*(Aqaoh\*(Aq);           # row name in \*(Aqrow.name\*(Aq
 \& my $s = csort($hoh, \*(Aqscore\*(Aq, \*(Aqaoh\*(Aq, \*(Aqsample\*(Aq); # ... named \*(Aqsample\*(Aq instead
 .Ve
+.SS density
+.IX Subsection "density"
+Kernel density estimation — a smooth curve through a sample, the continuous
+answer to what \f(CW\*(C`hist\*(C'\fR answers in bars. This is a port of R\*(Aqs \f(CWdensity()\fR, down
+to the algorithm: the mass of the sample is dispersed over a regular grid of at
+least 512 points, that grid is convolved with a discretised kernel using the
+fast Fourier transform, and the result is interpolated back onto the points you
+asked for. It returns the same grid, the same bandwidth and the same estimate R
+would.
+.PP
+.Vb 2
+\& my $d = density(\e@x);
+\& printf "%g\et%g\en", $d\->{x}[$_], $d\->{y}[$_] for 0 .. $#{ $d\->{x} };
+.Ve
+.PP
+Arguments may be given positionally (the sample first) or by name, and R\*(Aqs
+dotted argument names are accepted alongside the underscored ones
+(\f(CW\*(C`na.rm\*(C'\fR as well as \f(CW\*(C`na_rm\*(C'\fR, \f(CW\*(C`old.coords\*(C'\fR as well as \f(CW\*(C`old_coords\*(C'\fR,
+\&\f(CW\*(C`give.Rkern\*(C'\fR as well as \f(CW\*(C`give_rkern\*(C'\fR, \f(CW\*(C`warnWbw\*(C'\fR as well as \f(CW\*(C`warn_wbw\*(C'\fR).
+.PP
+.Vb 1
+\& my $d = density(x => \e@x, bw => \*(AqSJ\*(Aq, kernel => \*(Aqepanechnikov\*(Aq, n => 1024);
+.Ve
+.PP
+\fIArguments\fR
+.IX Subsection "Arguments"
+.IP \(bu 4
+\&\fR\f(CB\*(C`x\*(C'\fR\fB\fR — the sample, an array reference. Required (except with
+\&\f(CW\*(C`give_rkern\*(C'\fR). A missing value (\f(CW\*(C`undef\*(C'\fR or \f(CW\*(C`NaN\*(C'\fR) is an error unless
+\&\f(CW\*(C`na_rm\*(C'\fR is set; anything else non\-numeric is always an error. An infinite
+observation is treated as a point mass at ±∞, so it is counted in \f(CW\*(C`n\*(C'\fR and
+takes its share of the mass with it, leaving a sub\-density on (−∞, ∞).
+.IP \(bu 4
+\&\fR\f(CB\*(C`bw\*(C'\fR\fB\fR — the smoothing bandwidth, which is the standard deviation of the
+kernel. Either a positive number, or the name of a rule to choose one:
+\&\f(CW\*(Aqnrd0\*(Aq\fR (the default), \f(CW\*(Aqnrd\*(Aq\fR, \f(CW\*(Aqucv\*(Aq\fR, \f(CW\*(Aqbcv\*(Aq\fR, \f(CW\*(AqSJ\*(Aq\fR / \f(CW\*(AqSJ\-ste\*(Aq\fR, or
+\&\f(CW\*(AqSJ\-dpi\*(Aq\fR. Rule names are case\-insensitive. The five rules are also
+available on their own as \f(CW\*(C`bw_nrd0\*(C'\fR, \f(CW\*(C`bw_nrd\*(C'\fR, \f(CW\*(C`bw_ucv\*(C'\fR, \f(CW\*(C`bw_bcv\*(C'\fR and
+\&\f(CW\*(C`bw_sj\*(C'\fR, described below.
+.IP \(bu 4
+\&\fR\f(CB\*(C`adjust\*(C'\fR\fB\fR — the bandwidth actually used is \f(CW\*(C`adjust * bw\*(C'\fR, so
+\&\f(CW\*(C`adjust => 0.5\*(C'\fR asks for half the default smoothing. Defaults to 1.
+.IP \(bu 4
+\&\fR\f(CB\*(C`kernel\*(C'\fR\fB\fR — one of \f(CW\*(Aqgaussian\*(Aq\fR (the default), \f(CW\*(Aqepanechnikov\*(Aq\fR,
+\&\f(CW\*(Aqrectangular\*(Aq\fR, \f(CW\*(Aqtriangular\*(Aq\fR, \f(CW\*(Aqbiweight\*(Aq\fR, \f(CW\*(Aqcosine\*(Aq\fR or \f(CW\*(Aqoptcosine\*(Aq\fR.
+Any unambiguous abbreviation will do, so a single letter is enough for every
+one of them, and the match is case\-insensitive. All seven are scaled so that
+\&\f(CW\*(C`bw\*(C'\fR is the kernel\*(Aqs standard deviation, which is why changing the kernel
+barely changes the estimate.
+.IP \(bu 4
+\&\fR\f(CB\*(C`window\*(C'\fR\fB\fR — an alias for \f(CW\*(C`kernel\*(C'\fR, for compatibility with S. An explicit
+\&\f(CW\*(C`kernel\*(C'\fR wins.
+.IP \(bu 4
+\&\fR\f(CB\*(C`width\*(C'\fR\fB\fR — also for compatibility with S, where the argument is the
+\&\fIlength of the kernel\*(Aqs support\fR rather than a multiple of its standard
+deviation (for the gaussian, four standard deviations). Consulted only when
+\&\f(CW\*(C`bw\*(C'\fR is not given. A string names a rule, exactly as \f(CW\*(C`bw\*(C'\fR does.
+.IP \(bu 4
+\&\fR\f(CB\*(C`weights\*(C'\fR\fB\fR — an array reference of non\-negative observation weights, one
+per element of \f(CW\*(C`x\*(C'\fR — including the missing ones, so it is always the same
+length as \f(CW\*(C`x\*(C'\fR was to begin with. The default is \f(CW\*(C`1/nx\*(C'\fR each. Weights that do
+not sum to 1 give a \fIsub\fR\-density and draw a warning; pass \f(CW\*(C`subdensity => 1\*(C'\fR
+if that is what you meant. If \f(CW\*(C`na_rm\*(C'\fR removes observations and the original
+weights summed to one, the survivors are rescaled so they still do.
+Bandwidth \fIrules\fR ignore the weights, and say so; \f(CW\*(C`warn_wbw => 0\*(C'\fR silences
+that, and it is silent anyway when the weights do not vary.
+.IP \(bu 4
+\&\fR\f(CB\*(C`n\*(C'\fR\fB\fR — the number of equally spaced points at which to estimate. Defaults
+to 512. Values above 512 are rounded up to a power of two internally (that
+is what makes the FFT cheap) and the result is interpolated back to exactly
+the \f(CW\*(C`n\*(C'\fR you asked for, so a power of two is the efficient choice.
+.IP \(bu 4
+\&\fR\f(CB\*(C`from\*(C'\fR\fB, \fR\f(CB\*(C`to\*(C'\fR\fB\fR — the ends of the output grid. The defaults are \f(CW\*(C`cut\*(C'\fR
+bandwidths outside the range of the data.
+.IP \(bu 4
+\&\fR\f(CB\*(C`cut\*(C'\fR\fB\fR — how many bandwidths past the extremes of the data the default
+\&\f(CW\*(C`from\*(C'\fR and \f(CW\*(C`to\*(C'\fR reach, so that the estimate has room to fall to about zero.
+Defaults to 3.
+.IP \(bu 4
+\&\fR\f(CB\*(C`ext\*(C'\fR\fB\fR — how many further bandwidths the internal FFT grid extends beyond
+\&\f(CW\*(C`from\*(C'\fR and \f(CW\*(C`to\*(C'\fR. Defaults to 4. Do not change it unless you know why you are
+changing it; it does not move the output grid, only the accuracy of the
+values on it.
+.IP \(bu 4
+\&\fR\f(CB\*(C`na_rm\*(C'\fR\fB\fR — drop missing values instead of failing on them. Defaults to
+off, which is R\*(Aqs default too.
+.IP \(bu 4
+\&\fR\f(CB\*(C`subdensity\*(C'\fR\fB\fR — suppress the "weights do not sum to one" warning, because
+a sub\-density is what was wanted.
+.IP \(bu 4
+\&\fR\f(CB\*(C`warn_wbw\*(C'\fR\fB\fR — whether to warn that an automatic bandwidth ignored the
+weights. Defaults on when the weights vary.
+.IP \(bu 4
+\&\fR\f(CB\*(C`old_coords\*(C'\fR\fB\fR — reproduce the pre\-R\-4.4.0 grid, whose values are too
+large by a factor of about \f(CW\*(C`1 + 1/(2n\-2)\*(C'\fR. For reproducing old results only.
+.IP \(bu 4
+\&\fR\f(CB\*(C`give_rkern\*(C'\fR\fB\fR — return R(K), the kernel\*(Aqs \fIcanonical bandwidth\fR, and no
+density at all. See below.
+.IP \(bu 4
+\&\fR\f(CB\*(C`nb\*(C'\fR\fB\fR — the number of bins the \f(CW\*(Aqucv\*(Aq\fR, \f(CW\*(Aqbcv\*(Aq\fR and \f(CW\*(AqSJ\*(Aq\fR rules use for
+their pair counts. Defaults to 1000, as in R.
+.PP
+\fIReturn value\fR
+.IX Subsection "Return value"
+.PP
+A hash reference:
+.IP \(bu 4
+\&\fR\f(CB\*(C`x\*(C'\fR\fB\fR — the \f(CW\*(C`n\*(C'\fR grid points at which the density was estimated, an array
+reference, strictly increasing from \f(CW\*(C`from\*(C'\fR to \f(CW\*(C`to\*(C'\fR.
+.IP \(bu 4
+\&\fR\f(CB\*(C`y\*(C'\fR\fB\fR — the estimated density there, an array reference of the same
+length. Never negative, though it can be zero.
+.IP \(bu 4
+\&\fR\f(CB\*(C`bw\*(C'\fR\fB\fR — the bandwidth actually used, i.e. \f(CW\*(C`adjust\*(C'\fR times whatever \f(CW\*(C`bw\*(C'\fR
+resolved to. Worth reading back when a rule chose it.
+.IP \(bu 4
+\&\fR\f(CB\*(C`n\*(C'\fR\fB\fR — the sample size after missing values were removed. Infinite
+observations still count.
+.IP \(bu 4
+\&\fR\f(CB\*(C`kernel\*(C'\fR\fB\fR — the kernel that was used, spelled out in full, so an
+abbreviation comes back resolved.
+.IP \(bu 4
+\&\fR\f(CB\*(C`old_coords\*(C'\fR\fB\fR, \fB\fR\f(CB\*(C`has_na\*(C'\fR\fB\fR — echoes of the corresponding R fields;
+\&\f(CW\*(C`has_na\*(C'\fR is always 0.
+.PP
+.Vb 2
+\& my $d = density(\e@x, bw => \*(AqSJ\*(Aq);
+\& printf "bandwidth %.4f over %d observations\en", $d\->{bw}, $d\->{n};
+.Ve
+.PP
+With \f(CW\*(C`give_rkern => 1\*(C'\fR the return is instead a plain number: R(K) = ∫K²(t)dt
+for the chosen kernel, the scale\-invariant quantity that says how efficient
+that kernel is. No data is needed, and any that is given is ignored.
+.PP
+.Vb 1
+\& my $rk = density(kernel => \*(Aqepanechnikov\*(Aq, give_rkern => 1);   # 0.2683283
+.Ve
+.PP
+Bandwidths that are "exactly equivalent" across kernels are then
+\&\f(CW\*(C`(R(K_gaussian)/R(K))**0.2\*(C'\fR times each other — the adjustment is within about
+1% either way, which is why the choice of kernel rarely matters.
+.PP
+\fIThe bandwidth rules: \fR\f(CI\*(C`bw_nrd0\*(C'\fR\fI, \fR\f(CI\*(C`bw_nrd\*(C'\fR\fI, \fR\f(CI\*(C`bw_ucv\*(C'\fR\fI, \fR\f(CI\*(C`bw_bcv\*(C'\fR\fI, \fR\f(CI\*(C`bw_sj\*(C'\fR
+.IX Subsection "The bandwidth rules: bw_nrd0, bw_nrd, bw_ucv, bw_bcv, bw_sj"
+.PP
+The five rules \f(CW\*(C`density\*(C'\fR\*(Aqs \f(CW\*(C`bw =>\*(C'\fR string can name are also callable in their
+own right, and are ports of R\*(Aqs \f(CW\*(C`bw.nrd0\*(C'\fR, \f(CW\*(C`bw.nrd\*(C'\fR, \f(CW\*(C`bw.ucv\*(C'\fR, \f(CW\*(C`bw.bcv\*(C'\fR and
+\&\f(CW\*(C`bw.SJ\*(C'\fR. Each takes the sample the same two ways \f(CW\*(C`density\*(C'\fR does and returns a
+plain number.
+.PP
+.Vb 2
+\& my $h = bw_nrd0(\e@x);
+\& my $h = bw_sj(x => \e@x, method => \*(Aqdpi\*(Aq);
+.Ve
+.IP \(bu 4
+\&\fR\f(CB\*(C`bw_nrd0\*(C'\fR\fB\fR — Silverman\*(Aqs rule of thumb, \f(CW\*(C`0.9 * min(sd, IQR/1.34) *
+n**\-0.2\*(C'\fR, and \f(CW\*(C`density\*(C'\fR\*(Aqs default. It is the default for historical reasons
+rather than because it is the best choice.
+.IP \(bu 4
+\&\fR\f(CB\*(C`bw_nrd\*(C'\fR\fB\fR — Scott\*(Aqs variation on the same rule, with 1.06 in place of 0.9.
+.IP \(bu 4
+\&\fR\f(CB\*(C`bw_ucv\*(C'\fR\fB\fR, \fB\fR\f(CB\*(C`bw_bcv\*(C'\fR\fB\fR — unbiased (least\-squares) and biased
+cross\-validation. Both minimise a criterion over a range of bandwidths and
+warn, as R does, if the minimum turned up at one end of that range.
+.IP \(bu 4
+\&\fR\f(CB\*(C`bw_sj\*(C'\fR\fB\fR — the Sheather & Jones (1991) selector, usually the one to
+reach for. \f(CW\*(C`method => \*(Aqste\*(Aq\*(C'\fR (the default) solves the equation;
+\&\f(CW\*(C`method => \*(Aqdpi\*(Aq\*(C'\fR plugs in directly. These are what \f(CW\*(C`bw => \*(AqSJ\*(Aq\*(C'\fR and
+\&\f(CW\*(C`bw => \*(AqSJ\-dpi\*(Aq\*(C'\fR select.
+.PP
+The three that search also accept \f(CW\*(C`nb\*(C'\fR (the number of bins for the pair
+counts, 1000 by default), \f(CW\*(C`lower\*(C'\fR and \f(CW\*(C`upper\*(C'\fR (the range searched) and \f(CW\*(C`tol\*(C'\fR
+(where the search stops, \f(CW\*(C`0.1 * lower\*(C'\fR by default). Unlike \f(CW\*(C`density\*(C'\fR, these
+five want a clean numeric sample: a missing or infinite value is an error, not
+something to drop.
+.PP
+Validated against R 4.6.1 — its own regression suite, the examples in
+\&\f(CW\*(C`?density\*(C'\fR and \f(CW\*(C`?bw.nrd\*(C'\fR, and their pinned output — by \f(CW\*(C`t/density.R.scipy.t\*(C'\fR,
+which also cross\-checks the whole binning/FFT/interpolation pipeline against
+SciPy\*(Aqs exact \f(CW\*(C`gaussian_kde\*(C'\fR.
 .SS dnorm
 .IX Subsection "dnorm"
 gives the density of the normal distribution, with the specified mean and standard deviation.

@@ -2804,6 +2804,186 @@ default, overridable with a fourth argument:
  my $s = csort($hoh, 'score', 'aoh');           # row name in 'row.name'
  my $s = csort($hoh, 'score', 'aoh', 'sample'); # ... named 'sample' instead
 
+=head2 density
+
+Kernel density estimation — a smooth curve through a sample, the continuous
+answer to what C<hist> answers in bars. This is a port of R's C<density()>, down
+to the algorithm: the mass of the sample is dispersed over a regular grid of at
+least 512 points, that grid is convolved with a discretised kernel using the
+fast Fourier transform, and the result is interpolated back onto the points you
+asked for. It returns the same grid, the same bandwidth and the same estimate R
+would.
+
+ my $d = density(\@x);
+ printf "%g\t%g\n", $d->{x}[$_], $d->{y}[$_] for 0 .. $#{ $d->{x} };
+
+Arguments may be given positionally (the sample first) or by name, and R's
+dotted argument names are accepted alongside the underscored ones
+(C<na.rm> as well as C<na_rm>, C<old.coords> as well as C<old_coords>,
+C<give.Rkern> as well as C<give_rkern>, C<warnWbw> as well as C<warn_wbw>).
+
+ my $d = density(x => \@x, bw => 'SJ', kernel => 'epanechnikov', n => 1024);
+
+=head3 Arguments
+
+=over
+
+=item * B<< C<x> >> — the sample, an array reference. Required (except with
+C<give_rkern>). A missing value (C<undef> or C<NaN>) is an error unless
+C<na_rm> is set; anything else non-numeric is always an error. An infinite
+observation is treated as a point mass at ±∞, so it is counted in C<n> and
+takes its share of the mass with it, leaving a sub-density on (−∞, ∞).
+
+=item * B<< C<bw> >> — the smoothing bandwidth, which is the standard deviation of the
+kernel. Either a positive number, or the name of a rule to choose one:
+C<'nrd0'> (the default), C<'nrd'>, C<'ucv'>, C<'bcv'>, C<'SJ'> / C<'SJ-ste'>, or
+C<'SJ-dpi'>. Rule names are case-insensitive. The five rules are also
+available on their own as C<bw_nrd0>, C<bw_nrd>, C<bw_ucv>, C<bw_bcv> and
+C<bw_sj>, described below.
+
+=item * B<< C<adjust> >> — the bandwidth actually used is C<adjust * bw>, so
+C<< adjust =E<gt> 0.5 >> asks for half the default smoothing. Defaults to 1.
+
+=item * B<< C<kernel> >> — one of C<'gaussian'> (the default), C<'epanechnikov'>,
+C<'rectangular'>, C<'triangular'>, C<'biweight'>, C<'cosine'> or C<'optcosine'>.
+Any unambiguous abbreviation will do, so a single letter is enough for every
+one of them, and the match is case-insensitive. All seven are scaled so that
+C<bw> is the kernel's standard deviation, which is why changing the kernel
+barely changes the estimate.
+
+=item * B<< C<window> >> — an alias for C<kernel>, for compatibility with S. An explicit
+C<kernel> wins.
+
+=item * B<< C<width> >> — also for compatibility with S, where the argument is the
+I<length of the kernel's support> rather than a multiple of its standard
+deviation (for the gaussian, four standard deviations). Consulted only when
+C<bw> is not given. A string names a rule, exactly as C<bw> does.
+
+=item * B<< C<weights> >> — an array reference of non-negative observation weights, one
+per element of C<x> — including the missing ones, so it is always the same
+length as C<x> was to begin with. The default is C<1/nx> each. Weights that do
+not sum to 1 give a I<sub>-density and draw a warning; pass C<< subdensity =E<gt> 1 >>
+if that is what you meant. If C<na_rm> removes observations and the original
+weights summed to one, the survivors are rescaled so they still do.
+Bandwidth I<rules> ignore the weights, and say so; C<< warn_wbw =E<gt> 0 >> silences
+that, and it is silent anyway when the weights do not vary.
+
+=item * B<< C<n> >> — the number of equally spaced points at which to estimate. Defaults
+to 512. Values above 512 are rounded up to a power of two internally (that
+is what makes the FFT cheap) and the result is interpolated back to exactly
+the C<n> you asked for, so a power of two is the efficient choice.
+
+=item * B<< C<from>, C<to> >> — the ends of the output grid. The defaults are C<cut>
+bandwidths outside the range of the data.
+
+=item * B<< C<cut> >> — how many bandwidths past the extremes of the data the default
+C<from> and C<to> reach, so that the estimate has room to fall to about zero.
+Defaults to 3.
+
+=item * B<< C<ext> >> — how many further bandwidths the internal FFT grid extends beyond
+C<from> and C<to>. Defaults to 4. Do not change it unless you know why you are
+changing it; it does not move the output grid, only the accuracy of the
+values on it.
+
+=item * B<< C<na_rm> >> — drop missing values instead of failing on them. Defaults to
+off, which is R's default too.
+
+=item * B<< C<subdensity> >> — suppress the "weights do not sum to one" warning, because
+a sub-density is what was wanted.
+
+=item * B<< C<warn_wbw> >> — whether to warn that an automatic bandwidth ignored the
+weights. Defaults on when the weights vary.
+
+=item * B<< C<old_coords> >> — reproduce the pre-R-4.4.0 grid, whose values are too
+large by a factor of about C<1 + 1/(2n-2)>. For reproducing old results only.
+
+=item * B<< C<give_rkern> >> — return R(K), the kernel's I<canonical bandwidth>, and no
+density at all. See below.
+
+=item * B<< C<nb> >> — the number of bins the C<'ucv'>, C<'bcv'> and C<'SJ'> rules use for
+their pair counts. Defaults to 1000, as in R.
+
+=back
+
+=head3 Return value
+
+A hash reference:
+
+=over
+
+=item * B<< C<x> >> — the C<n> grid points at which the density was estimated, an array
+reference, strictly increasing from C<from> to C<to>.
+
+=item * B<< C<y> >> — the estimated density there, an array reference of the same
+length. Never negative, though it can be zero.
+
+=item * B<< C<bw> >> — the bandwidth actually used, i.e. C<adjust> times whatever C<bw>
+resolved to. Worth reading back when a rule chose it.
+
+=item * B<< C<n> >> — the sample size after missing values were removed. Infinite
+observations still count.
+
+=item * B<< C<kernel> >> — the kernel that was used, spelled out in full, so an
+abbreviation comes back resolved.
+
+=item * B<< C<old_coords> >>, B<< C<has_na> >> — echoes of the corresponding R fields;
+C<has_na> is always 0.
+
+=back
+
+ my $d = density(\@x, bw => 'SJ');
+ printf "bandwidth %.4f over %d observations\n", $d->{bw}, $d->{n};
+
+With C<< give_rkern =E<gt> 1 >> the return is instead a plain number: R(K) = ∫K²(t)dt
+for the chosen kernel, the scale-invariant quantity that says how efficient
+that kernel is. No data is needed, and any that is given is ignored.
+
+ my $rk = density(kernel => 'epanechnikov', give_rkern => 1);   # 0.2683283
+
+Bandwidths that are "exactly equivalent" across kernels are then
+C<(R(K_gaussian)/R(K))**0.2> times each other — the adjustment is within about
+1% either way, which is why the choice of kernel rarely matters.
+
+=head3 The bandwidth rules: C<bw_nrd0>, C<bw_nrd>, C<bw_ucv>, C<bw_bcv>, C<bw_sj>
+
+The five rules C<density>'s C<< bw =E<gt> >> string can name are also callable in their
+own right, and are ports of R's C<bw.nrd0>, C<bw.nrd>, C<bw.ucv>, C<bw.bcv> and
+C<bw.SJ>. Each takes the sample the same two ways C<density> does and returns a
+plain number.
+
+ my $h = bw_nrd0(\@x);
+ my $h = bw_sj(x => \@x, method => 'dpi');
+
+=over
+
+=item * B<< C<bw_nrd0> >> — Silverman's rule of thumb, C<0.9 * min(sd, IQR/1.34) *
+n**-0.2>, and C<density>'s default. It is the default for historical reasons
+rather than because it is the best choice.
+
+=item * B<< C<bw_nrd> >> — Scott's variation on the same rule, with 1.06 in place of 0.9.
+
+=item * B<< C<bw_ucv> >>, B<< C<bw_bcv> >> — unbiased (least-squares) and biased
+cross-validation. Both minimise a criterion over a range of bandwidths and
+warn, as R does, if the minimum turned up at one end of that range.
+
+=item * B<< C<bw_sj> >> — the Sheather & Jones (1991) selector, usually the one to
+reach for. C<< method =E<gt> 'ste' >> (the default) solves the equation;
+C<< method =E<gt> 'dpi' >> plugs in directly. These are what C<< bw =E<gt> 'SJ' >> and
+C<< bw =E<gt> 'SJ-dpi' >> select.
+
+=back
+
+The three that search also accept C<nb> (the number of bins for the pair
+counts, 1000 by default), C<lower> and C<upper> (the range searched) and C<tol>
+(where the search stops, C<0.1 * lower> by default). Unlike C<density>, these
+five want a clean numeric sample: a missing or infinite value is an error, not
+something to drop.
+
+Validated against R 4.6.1 — its own regression suite, the examples in
+C<?density> and C<?bw.nrd>, and their pinned output — by C<t/density.R.scipy.t>,
+which also cross-checks the whole binning/FFT/interpolation pipeline against
+SciPy's exact C<gaussian_kde>.
+
 =head2 dnorm
 
 gives the density of the normal distribution, with the specified mean and standard deviation.
