@@ -7819,6 +7819,23 @@ would.
  my $d = density(\@x);
  printf "%g\t%g\n", $d->{x}[$_], $d->{y}[$_] for 0 .. $#{ $d->{x} };
 
+What that computes is one kernel — a little bump of area C<1/n> — centred on
+every observation, added together. On the left below, seven observations and
+their seven gaussian kernels; the blue curve through them is what C<density>
+returns. On the right, the same thing over R's C<faithful$eruptions>, against
+the histogram of the same sample: the two answer the same question, one in
+bars and one as a curve.
+
+
+
+=begin html
+
+<p><img src="https://raw.githubusercontent.com/hhg7/stats/main/img/density.what.png" alt="density() is the sum of one kernel per observation, and the smooth counterpart of a histogram" width="100%" /></p>
+
+=end html
+
+
+
 Arguments may be given positionally (the sample first) or by name, and R's
 dotted argument names are accepted alongside the underscored ones
 (C<na.rm> as well as C<na_rm>, C<old.coords> as well as C<old_coords>,
@@ -7907,6 +7924,60 @@ their pair counts. Defaults to 1000, as in R.
 
 =back
 
+=head3 What the arguments do
+
+C<bw> is the whole ballgame. It is the standard deviation of the kernel, so it
+sets how wide each bump is, and C<adjust> multiplies it: C<< adjust =E<gt> 0.5 >> is half
+the default smoothing. Too little and the estimate follows the individual
+observations (the ticks along the bottom are the sample); too much and the two
+modes of C<eruptions> melt into one. C<bw> is reported back in the return value,
+so the number in each label below is C<< $d-E<gt>{bw} >>.
+
+
+
+=begin html
+
+<p><img src="https://raw.githubusercontent.com/hhg7/stats/main/img/density.bandwidth.png" alt="the same sample at four bandwidths, from far too small to far too large" width="100%" /></p>
+
+=end html
+
+
+
+C<kernel> chooses the shape of the bump. All seven are scaled so that C<bw> is
+the kernel's standard deviation, which is why they are interchangeable in
+practice. Each panel below is one kernel on a common scale, drawn by asking for
+the density of a single observation at zero — C<< density([0], bw =E<gt> 1) >> I<is> the
+kernel — and titled with the R(K) that C<give_rkern> returns. The last panel
+puts all seven over one sample at one bandwidth, where they are hard to tell
+apart.
+
+
+
+=begin html
+
+<p><img src="https://raw.githubusercontent.com/hhg7/stats/main/img/density.kernels.png" alt="the seven kernels on a common scale, and the near-identical estimates they give" width="100%" /></p>
+
+=end html
+
+
+
+C<from>, C<to> and C<cut> decide only where the grid stops: C<cut> bandwidths past
+the extremes of the data, three by default. Changing it moves the ends of
+C<< $d-E<gt>{x} >> (marked below) and nothing else — the estimate itself is the same
+function. C<weights>, on the other hand, changes the estimate: each observation
+takes its own share of the mass rather than C<1/n>, which is how a sample that
+was collected with unequal probabilities gets its population back.
+
+
+
+=begin html
+
+<p><img src="https://raw.githubusercontent.com/hhg7/stats/main/img/density.grid.weights.png" alt="cut moves only the ends of the grid, while weights change the estimate itself" width="100%" /></p>
+
+=end html
+
+
+
 =head3 Return value
 
 A hash reference:
@@ -7956,6 +8027,21 @@ plain number.
  my $h = bw_nrd0(\@x);
  my $h = bw_sj(x => \@x, method => 'dpi');
 
+They disagree, and on a bimodal sample they disagree by a factor of four. Each
+panel below is C<eruptions> at the bandwidth that rule chose, over the same
+histogram: C<nrd0> and C<nrd> assume one mode and oversmooth this sample, C<ucv>
+goes the other way, and the two C<SJ> variants land in between.
+
+
+
+=begin html
+
+<p><img src="https://raw.githubusercontent.com/hhg7/stats/main/img/density.bw.rules.png" alt="the same sample under each of the six bandwidth rules" width="100%" /></p>
+
+=end html
+
+
+
 =over
 
 =item * B<< C<bw_nrd0> >> — Silverman's rule of thumb, C<0.9 * min(sd, IQR/1.34) *
@@ -7985,6 +8071,11 @@ Validated against R 4.6.1 — its own regression suite, the examples in
 C<?density> and C<?bw.nrd>, and their pinned output — by C<t/density.R.scipy.t>,
 which also cross-checks the whole binning/FFT/interpolation pipeline against
 SciPy's exact C<gaussian_kde>.
+
+The figures above are drawn by C<density.plots.pl> in the repository, from the
+same C<eruptions> and C<precip> samples that test file uses. It is an author-only
+script — it is not installed, and it needs C<Matplotlib::Simple>, C<python3> and
+C<matplotlib> — so re-run it only when a figure needs to change.
 
 =head2 dnorm
 

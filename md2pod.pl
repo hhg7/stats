@@ -175,6 +175,45 @@ sub md_inline_to_pod {
 	return $text;
 }
 
+# An image is the one piece of Markdown with no POD equivalent: POD has no
+# formatting code for a picture, and both renderers that can show one -- GitHub
+# for README.md, MetaCPAN for the POD -- take it as raw HTML. So "![alt](src)"
+# alone on a line becomes an "=begin html" block holding an <img>, exactly the
+# way a GFM table becomes one.
+#
+# The source has to be an absolute URL. The POD is read on MetaCPAN, and a
+# repository-relative path such as "img/density.what.png" resolves to nothing
+# there, so README.md points at raw.githubusercontent.com instead and both
+# renderings load the same file. Say so rather than emitting a broken <img>.
+#
+# This has to run before extract_links(), whose "[text](target)" pattern also
+# matches the "[alt](src)" half of an image and would leave a stray "!" in
+# front of the placeholder.
+sub extract_images {
+	my ($text) = @_;
+	my @saved;
+	my @out;
+	for my $ln (split /\n/, $text, -1) {
+		if ($ln =~ /\A[ \t]*!\[([^\]\[]*)\]\(([^()\s]+)\)[ \t]*\z/) {
+			my ($alt, $src) = ($1, $2);
+			warn "md2pod: image src '$src' is not an absolute URL, so MetaCPAN "
+			   . "will not be able to load it; use the raw.githubusercontent.com "
+			   . "URL of the file\n"
+				unless $src =~ m{\A[A-Za-z][A-Za-z0-9+.-]*://};
+			for ($alt, $src) {
+				$_ = html_escape($_);
+				s/"/&quot;/g;                 # both land in an attribute
+			}
+			push @saved, qq{\n\n=begin html\n\n<p><img src="$src" alt="$alt" }
+			           . qq{width="100%" /></p>\n\n=end html\n\n};
+			push @out, '', 'PODIMAGEPLACEHOLDER' . $#saved . 'Z', '';
+			next;
+		}
+		push @out, $ln;
+	}
+	return (join("\n", @out), \@saved);
+}
+
 # Markdown::To::POD mangles links: "[text](#anchor)" becomes "L<#anchor>",
 # which is not POD link syntax, and the link text is thrown away entirely --
 # "[`read_table`](#)" came out as "L<#>", with the words gone. An external
@@ -439,6 +478,10 @@ my $md_later = $md;
 # 1. Pre-process the Markdown to convert GFM tables into POD HTML blocks
 my ($md_processed, $tables_ref) = extract_and_convert_tables($md);
 
+# 1a. Turn image lines into HTML blocks, before the link pass can claim them
+my $images_ref;
+($md_processed, $images_ref) = extract_images($md_processed);
+
 # 1b. Set indented code blocks aside so the converter cannot reformat them
 my ($code_ref);
 ($md_processed, $code_ref) = extract_code_blocks($md_processed);
@@ -462,6 +505,15 @@ for my $idx (0 .. $#$tables_ref) {
 	# leaving a stray leftover digit. \b stops after the last digit, so
 	# HTMLTABLEPLACEHOLDER1 no longer matches inside HTMLTABLEPLACEHOLDER10.
 	$pod =~ s/HTMLTABLEPLACEHOLDER${idx}\b/$table_html/g;
+}
+
+# 3a. Restore the images as HTML blocks
+for my $idx (0 .. $#$images_ref) {
+	my $img = $images_ref->[$idx];
+	$pod =~ s/^[ \t]*PODIMAGEPLACEHOLDER${idx}Z[ \t]*$/$img/mg;
+}
+if ($pod =~ /(PODIMAGEPLACEHOLDER\d+Z)/) {
+	die "md2pod: image placeholder $1 survived conversion\n";
 }
 
 # 3b. Restore the code blocks as verbatim paragraphs. Anchored with \b like
