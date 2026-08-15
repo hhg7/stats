@@ -58,7 +58,7 @@
 .\" ========================================================================
 .\"
 .IX Title "Stats::LikeR 3"
-.TH Stats::LikeR 3 2026-08-14 "perl v5.44.0" "User Contributed Perl Documentation"
+.TH Stats::LikeR 3 2026-08-15 "perl v5.44.0" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -6679,6 +6679,505 @@ Verified against R 4.6.1 (\f(CW\*(C`oneway.test\*(C'\fR, \f(CW\*(C`anova(aov())\
 \&\f(CW\*(C`t/model_pvalue_tails.t\*(C'\fR and \f(CW\*(C`t/oneway_test.R.scipy.t\*(C'\fR.
 .SH Changes
 .IX Header "Changes"
+.SS "0.298 2026\-08\-12 CDT"
+.IX Subsection "0.298 2026-08-12 CDT"
+\fIwilcox_test\fR
+.IX Subsection "wilcox_test"
+.PP
+A rewrite of \f(CW\*(C`wilcox_test\*(C'\fR against R 4.6.1, driven by R\*(Aqs and SciPy\*(Aqs own test
+suites rather than by cases invented here. It brings the function up to the
+exact conditional inference R gained in 4.6.0, fixes six bugs — two of which
+returned confidently wrong p\-values on the \fIdefault\fR code path — and adds the
+Hodges\-Lehmann estimate and confidence interval, \f(CW\*(C`digits.rank\*(C'\fR, and the
+Edgeworth series.
+.PP
+Everything below is checked in the new \f(CW\*(C`t/wilcox_test.R.scipy.t\*(C'\fR (3,242 tests),
+whose expected values are frozen literals with their provenance recorded in the
+file header; it needs no R and no Python to run. The full suite is 120 files and
+23,149 tests, and \f(CW\*(C`./test.all.perls.pl\*(C'\fR passes on all five local perls —
+\&\f(CW5.10.1\fR, \f(CW5.12.5\fR (long double), \f(CW5.42.3\fR, \f(CW5.44.0\fR and \f(CW\*(C`5.44.0\-quadmath\*(C'\fR —
+with no warnings on any of them.
+.PP
+Exact p\-values are now computed when there are ties
+.IX Subsection "Exact p-values are now computed when there are ties"
+.PP
+R 4.6.0 added exact (conditional) inference in the presence of ties, via Torsten
+Hothorn\*(Aqs implementation of the Streitberg\-Röhmel shift algorithm; R\*(Aqs
+\&\f(CW\*(C`doc/NEWS.Rd\*(C'\fR announces it and \f(CW\*(C`tests/reg\-tests\-1d.R\*(C'\fR records the consequence at
+its degenerate one\-sample cases: \fI"For R >= 4.6.0 warnings for exact with ties
+are gone."\fR Before that, ties ruled out an exact p\-value and both R and this
+module fell back to the normal approximation with a warning.
+.PP
+\&\f(CW\*(C`wilcox_test\*(C'\fR now does what R does. When ties are present the null distribution
+is the conditional one given the observed ranks, and the same holds for zero
+differences in the signed\-rank test. The warnings are gone with them.
+.PP
+This changes published answers on tied data, including R\*(Aqs own documented
+examples:
+.PP
+Two further consequences are worth knowing about. \fBV\fR itself changes when zero
+differences are present, because the exact test ranks \f(CW\*(C`|x \- mu|\*(C'\fR over every
+observation and only afterwards drops the ranks belonging to the zeroes, where
+the approximation drops the zeroes first and ranks what is left:
+\&\f(CW\*(C`wilcox_test([\-1, 0, 1])\*(C'\fR gives \f(CW\*(C`V = 2.5\*(C'\fR exactly and \f(CW\*(C`V = 1.5\*(C'\fR with
+\&\f(CW\*(C`exact => 0\*(C'\fR. R\*(Aqs two branches differ in exactly the same way. And degenerate
+inputs that used to be fatal now return a result, as they must for
+\&\f(CW\*(C`tests/reg\-tests\-1d.R\*(C'\fR line 332 to pass: \f(CWwilcox_test([0])\fR gives \f(CW\*(C`V = 0\*(C'\fR,
+\&\f(CW\*(C`p = 1\*(C'\fR, and so does \f(CW\*(C`wilcox_test([0,0,0,0,0])\*(C'\fR, which SciPy pins as
+\&\f(CW\*(C`test_all_zeros_exact\*(C'\fR.
+.PP
+If you need the old numbers, \f(CW\*(C`exact => 0\*(C'\fR still asks for the approximation and
+is unchanged.
+.PP
+The exact upper tail was returning zero, on the default path
+.IX Subsection "The exact upper tail was returning zero, on the default path"
+.PP
+\&\f(CW\*(C`p_greater\*(C'\fR was computed as \f(CW\*(C`1 \- CDF(q \- 1)\*(C'\fR. That subtraction cancels away every
+significant digit once the true p falls below \f(CW\*(C`NV_EPSILON\*(C'\fR, and then returns a
+flat \f(CW0\fR. It did not take a contrived input to reach: two perfectly separated
+samples of 30 apiece are inside the automatic exact branch, no \f(CW\*(C`exact => 1\*(C'\fR
+required.
+.PP
+Both tails are now summed directly. That alone is not enough for the rank\-sum
+table, whose Gaussian\-binomial recurrence is built with subtractions, so far up
+the support a count of \f(CW1\fR is the difference of numbers around \f(CW\*(C`C(m+n, n)\*(C'\fR and
+has already been rounded into noise. The table is folded about its centre before
+summing, so only well\-conditioned entries are ever touched — the same thing R\*(Aqs
+\&\f(CWpwilcox()\fR does when it folds \f(CW\*(C`q\*(C'\fR about \f(CW\*(C`m*n/2\*(C'\fR and flips \f(CW\*(C`lower_tail\*(C'\fR.
+.PP
+The signed\-rank tail was accurate to \f(CW\*(C`n = 49\*(C'\fR by luck (\f(CW\*(C`1 \- 2^\-49\*(C'\fR is exactly
+representable) and reached \f(CW0\fR from about \f(CW\*(C`n = 53\*(C'\fR; forcing
+\&\f(CW\*(C`exact => 1\*(C'\fR on \f(CW\*(C`n = 120\*(C'\fR returned \f(CW0\fR where R gives \f(CW1.5046327690525337e\-36\fR,
+and now returns it too.
+.PP
+\f(CW\*(C`int m * n\*(C'\fR overflowed, and said the samples were identical
+.IX Subsection "int m * n overflowed, and said the samples were identical"
+.PP
+\&\f(CW\*(C`exact_pwilcox\*(C'\fR took \f(CW\*(C`int m, int n\*(C'\fR and computed \f(CW\*(C`int max_u = m * n\*(C'\fR. For two
+separated samples of 50,000 that wraps negative, every statistic looks out of
+range, and the function returns \f(CW1.0\fR:
+.PP
+\&\f(CW\*(C`perl
+wilcox_test([1 .. 50000], [50001 .. 100000], exact => 1);   # p = 1\*(C'\fR
+.PP
+Signed overflow is also undefined behaviour, so a different optimiser was
+entitled to do something else entirely. Sizes and indices in the exact
+distributions are \f(CW\*(C`size_t\*(C'\fR now, the multiplications are checked for wrap before
+they happen, and a table that would need more than 16 million cells is refused
+outright with a message naming \f(CW\*(C`exact => 0\*(C'\fR rather than attempted.
+.PP
+NaN was ranked instead of dropped
+.IX Subsection "NaN was ranked instead of dropped"
+.PP
+\&\f(CW\*(C`NaN\*(C'\fR is \f(CW\*(C`NA\*(C'\fR to R, and R drops it. \f(CW\*(C`looks_like_number\*(C'\fR accepts it, \f(CW\*(C`d == 0.0\*(C'\fR
+is false for it, so it went into the rank buffer — and \f(CW\*(C`cmp_nv3\*(C'\fR returns \f(CW0\fR for
+every comparison involving it, which leaves \f(CW\*(C`qsort\*(C'\fR without the strict weak
+ordering the C standard entitles it to.
+.PP
+The visible symptom is R\*(Aqs own regression case, \f(CW\*(C`tests/reg\-tests\-1d.R\*(C'\fR line
+3546, which asserts that a paired test is unaffected by pairs whose difference
+is \f(CW\*(C`Inf \- Inf\*(C'\fR:
+.PP
+\&\f(CW\*(C`NaN\*(C'\fR — in either sample, and however it arises — is now dropped with the other
+missing values. \f(CW\*(C`±Inf\*(C'\fR is not missing and is kept, since a rank test has no
+trouble with it; SciPy\*(Aqs \f(CW\*(C`test_gh_11355b\*(C'\fR pins five cases of that and they all
+agree.
+.PP
+An empty \f(CW\*(C`y\*(C'\fR ran a different test
+.IX Subsection "An empty y ran a different test"
+.PP
+\&\f(CW\*(C`wilcox_test([1,2,3], [])\*(C'\fR fell through to the one\-sample branch and returned a
+signed\-rank result, silently answering a question nobody asked. It croaks now,
+with R\*(Aqs message.
+.PP
+\&\f(CW\*(C`mu\*(C'\fR was likewise unvalidated: \f(CW\*(C`mu => Inf\*(C'\fR or \f(CW\*(C`mu => NaN\*(C'\fR turned every
+difference into a non\-number and produced a confident answer from the wreckage.
+Both croak now, as they do in R.
+.PP
+A dying \f(CW$SIG{_\|_WARN_\|_}\fR handler leaked the rank buffer
+.IX Subsection "A dying $SIG{__WARN__} handler leaked the rank buffer"
+.PP
+The warnings in \f(CW\*(C`wilcox_test\*(C'\fR were emitted while the \f(CW\*(C`RankInfo\*(C'\fR and difference
+buffers were held as raw pointers. A \f(CW\*(C`_\|_WARN_\|_\*(C'\fR handler that dies — or \f(CW\*(C`warnings
+FATAL\*(C'\fR at the call site — longjmps straight past the \f(CW\*(C`Safefree\*(C'\fR. Under valgrind,
+500 iterations of the ties path with such a handler lost 95,616 bytes in 498
+blocks. Every allocation now goes through \f(CW\*(C`Newx\*(C'\fR plus \f(CW\*(C`SAVEFREEPV\*(C'\fR, the idiom
+\&\f(CW\*(C`chisq_test\*(C'\fR in the same file already used, so it is released by the save stack
+however the call unwinds. The same 500 iterations now report \f(CW\*(C`definitely lost: 0
+bytes\*(C'\fR, as does a sweep over every croak path and every branch of the function.
+.PP
+New: \f(CW\*(C`conf.int\*(C'\fR, and a Hodges\-Lehmann estimate
+.IX Subsection "New: conf.int, and a Hodges-Lehmann estimate"
+.PP
+R has returned a distribution\-free confidence interval and a point estimate
+since PR#1150 in 2001, and \f(CW\*(C`tests/reg\-tests\-1a.R\*(C'\fR has guarded them ever since
+with Hollander & Wolfe\*(Aqs published numbers. \f(CW\*(C`wilcox_test\*(C'\fR now computes both, by
+all four of R\*(Aqs routes — the exact interval from the order statistics of the
+Walsh averages or the pairwise differences, the exact interval conditional on
+the observed ranks when there are ties, and the asymptotic interval from a root
+search:
+.PP
+\&\`\`\`perl
+my \f(CW$r\fR = wilcox_test(\e@y, \e@x, paired => 1, conf_int => 1);
+.ie n .SH "$r\->{estimate}   == \-0.46"
+.el .SH "\f(CW$r\fP\->{estimate}   == \-0.46"
+.IX Header "$r->{estimate} == -0.46"
+.ie n .SH "$r\->{conf_int}   == [\-0.786, \-0.010]"
+.el .SH "\f(CW$r\fP\->{conf_int}   == [\-0.786, \-0.010]"
+.IX Header "$r->{conf_int} == [-0.786, -0.010]"
+.ie n .SH "$r\->{conf_level} == 0.9609375"
+.el .SH "\f(CW$r\fP\->{conf_level} == 0.9609375"
+.IX Header "$r->{conf_level} == 0.9609375"
+\&\`\`\`
+.PP
+Those are Hollander & Wolfe (1999) 2nd ed., pp. 40 and 53, to the digit. So are
+the two\-sample values from pp. 111 and 126: estimate \f(CW\-0.305\fR, interval
+\&\f(CW\*(C`(\-0.76, 0.15)\*(C'\fR.
+.PP
+The level a rank test can actually deliver is a step function of the data, so
+\&\f(CW\*(C`conf_level\*(C'\fR reports what was achieved rather than echoing what was asked for —
+\&\f(CW0.9609375\fR above, not \f(CW0.95\fR. \f(CW\*(C`conf.level\*(C'\fR, \f(CW\*(C`tol.root\*(C'\fR and R\*(Aqs alpha\-doubling
+search for a level the data can support (with its \fIrequested conf.level not
+achievable\fR warning) all behave as R\*(Aqs do.
+.PP
+New: \f(CW\*(C`digits.rank\*(C'\fR, \f(CW\*(C`edgeworth\*(C'\fR, and more of R\*(Aqs result fields
+.IX Subsection "New: digits.rank, edgeworth, and more of R's result fields"
+.PP
+\&\f(CW\*(C`digits.rank\*(C'\fR rounds each value to a given number of significant digits before
+ranking, so that ties are decided on the rounded values. R\*(Aqs man page recommends
+it because tie detection is an exact \f(CW\*(C`==\*(C'\fR on floating point, and its own worked
+example shows \f(CW\*(C`(4:2)/10\*(C'\fR against \f(CW\*(C`(3:1)/10\*(C'\fR — three differences that ought to be
+\&\f(CW0.1\fR and are three different doubles. Ported from R\*(Aqs \f(CWfprec()\fR, half\-to\-even
+rounding included.
+.PP
+\&\f(CW\*(C`edgeworth => 1, 2, 3\*(C'\fR adds up to three Edgeworth correction terms to the normal
+approximation, the refinement R 4.6.0 reaches through its integer \f(CW\*(C`correct\*(C'\fR. It
+is ignored on the exact path, and — as in R — ignored when there are ties, or
+when the signed\-rank test dropped a zero, because the series is derived for
+untied ranks.
+.PP
+The result hash gains \f(CW\*(C`statistic_name\*(C'\fR (\f(CW"W"\fR or \f(CW"V"\fR, as R prints), plus
+\&\f(CW\*(C`null_value\*(C'\fR and \f(CW\*(C`null_value_name\*(C'\fR, and \f(CW\*(C`estimate\*(C'\fR / \f(CW\*(C`conf_int\*(C'\fR / \f(CW\*(C`conf_level\*(C'\fR
+when an interval was asked for.
+.PP
+Three deliberate differences from R
+.IX Subsection "Three deliberate differences from R"
+.PP
+Each is asserted in the test file, so that changing one later is a choice rather
+than a drift.
+.ie n .IP "1. \fR\fB""correct""\fR\fB is a boolean here.\fR R 4.6.0 turned its ""correct"" into an integer ""0:3"", in which numeric 0 still applies the continuity correction and only ""FALSE"" removes it — so in R, ""correct = 0"" and ""correct = FALSE"" are different tests. Keeping that would mean ""correct => 0"" no longer meaning ""off"", which is what it means for every other flag in this module. ""correct"" stays a boolean, and R\*(Aqs ""correct = k"" is ""correct => 1, edgeworth => k""." 4
+.el .IP "1. \fR\f(CBcorrect\fR\fB is a boolean here.\fR R 4.6.0 turned its \f(CWcorrect\fR into an integer \f(CW0:3\fR, in which numeric \f(CW0\fR still applies the continuity correction and only \f(CWFALSE\fR removes it — so in R, \f(CWcorrect = 0\fR and \f(CWcorrect = FALSE\fR are different tests. Keeping that would mean \f(CWcorrect => 0\fR no longer meaning ""off"", which is what it means for every other flag in this module. \f(CWcorrect\fR stays a boolean, and R\*(Aqs \f(CWcorrect = k\fR is \f(CWcorrect => 1, edgeworth => k\fR." 4
+.IX Item "1. correct is a boolean here. R 4.6.0 turned its correct into an integer 0:3, in which numeric 0 still applies the continuity correction and only FALSE removes it — so in R, correct = 0 and correct = FALSE are different tests. Keeping that would mean correct => 0 no longer meaning ""off"", which is what it means for every other flag in this module. correct stays a boolean, and R's correct = k is correct => 1, edgeworth => k."
+.PD 0
+.ie n .IP "2. \fBA zero variance is reported, not propagated.\fR With ""exact => 0"" and every observation tied there is nothing to divide by. R divides anyway and returns ""NaN""; this warns and returns ""p = 1"". The default path no longer reaches it at all, since the exact test handles all\-tied data." 4
+.el .IP "2. \fBA zero variance is reported, not propagated.\fR With \f(CWexact => 0\fR and every observation tied there is nothing to divide by. R divides anyway and returns \f(CWNaN\fR; this warns and returns \f(CWp = 1\fR. The default path no longer reaches it at all, since the exact test handles all\-tied data." 4
+.IX Item "2. A zero variance is reported, not propagated. With exact => 0 and every observation tied there is nothing to divide by. R divides anyway and returns NaN; this warns and returns p = 1. The default path no longer reaches it at all, since the exact test handles all-tied data."
+.ie n .IP "3. \fBAn all\-tied interval does not raise.\fR R\*(Aqs one\-sample code warns and hands back a ""NaN"" interval at level 0; its two\-sample code warns and then dies inside ""uniroot"" with \fImissing value where TRUE/FALSE needed\fR. We give the one\-sample answer in both places." 4
+.el .IP "3. \fBAn all\-tied interval does not raise.\fR R\*(Aqs one\-sample code warns and hands back a \f(CWNaN\fR interval at level \f(CW0\fR; its two\-sample code warns and then dies inside \f(CWuniroot\fR with \fImissing value where TRUE/FALSE needed\fR. We give the one\-sample answer in both places." 4
+.IX Item "3. An all-tied interval does not raise. R's one-sample code warns and hands back a NaN interval at level 0; its two-sample code warns and then dies inside uniroot with missing value where TRUE/FALSE needed. We give the one-sample answer in both places."
+.PD
+.PP
+There is one place where this module is simply more accurate than R. R\*(Aqs exact
+p\-values on tied data come from a density it normalises entry by entry;
+\&\f(CW\*(C`wilcox_test\*(C'\fR sums the integer permutation counts and divides once. For the
+worst case in the corpus — an 11\-against\-12 tied rank sum whose p\-value is
+exactly \f(CW\*(C`4/676039\*(C'\fR — this returns the correctly rounded double and R is
+\&\f(CW1.2e\-11\fR high. Checked against exact rational arithmetic, and recorded in the
+test file rather than papered over.
+.PP
+Testing
+.IX Subsection "Testing"
+.PP
+\&\f(CW\*(C`t/wilcox_test.R.scipy.t\*(C'\fR takes its cases from the references\*(Aq own suites:
+.IP \(bu 4
+R\*(Aqs \f(CW\*(C`tests/reg\-tests\-1a.R\*(C'\fR (the PR#1150 Hollander & Wolfe intervals),
+\&\f(CW\*(C`reg\-tests\-1b.R\*(C'\fR (the Wolfgang Huber \f(CW\*(C`wilcox.test(1, 2:60)\*(C'\fR case, and the
+check that the asymptotic estimate does not move with \f(CW\*(C`alternative\*(C'\fR),
+\&\f(CW\*(C`reg\-tests\-1d.R\*(C'\fR (the six degenerate one\-sample calls and the \f(CW\*(C`±Inf\*(C'\fR
+identities), and the man\-page examples whose printed output is pinned in
+\&\f(CW\*(C`tests/Examples/stats\-Ex.Rout.save\*(C'\fR.
+.IP \(bu 4
+SciPy 1.17.1\*(Aqs \f(CW\*(C`TestMannWhitneyU\*(C'\fR, whose header reads \fI"All magic numbers are
+from R wilcox.test"\fR — \f(CW\*(C`cases_basic\*(C'\fR, \f(CW\*(C`cases_continuity\*(C'\fR, \f(CW\*(C`cases_9184\*(C'\fR,
+\&\f(CW\*(C`cases_2118\*(C'\fR, \f(CW\*(C`test_tie_correct\*(C'\fR, \f(CW\*(C`test_exact_U_equals_mean\*(C'\fR,
+\&\f(CW\*(C`test_gh_11355b\*(C'\fR and the 30\-against\-20 asymptotic cases — and
+\&\f(CW\*(C`TestWilcoxon\*(C'\fR\*(Aqs \f(CW\*(C`test_accuracy_wilcoxon\*(C'\fR, \f(CW\*(C`test_wilcoxon_tie\*(C'\fR,
+\&\f(CW\*(C`test_onesided\*(C'\fR, \f(CW\*(C`test_exact_pval\*(C'\fR, \f(CW\*(C`test_exact_p_1\*(C'\fR, \f(CW\*(C`test_all_zeros_exact\*(C'\fR
+and \f(CW\*(C`test_symmetry_gh19872_gh20752\*(C'\fR.
+.IP \(bu 4
+A 663\-case sweep generated by \f(CW\*(C`t/wilcox_test.R.scipy.R\*(C'\fR, committed next to the
+test, crossing four data shapes against every alternative, \f(CW\*(C`exact\*(C'\fR state,
+\&\f(CW\*(C`correct\*(C'\fR state, \f(CW\*(C`mu\*(C'\fR and \f(CW\*(C`conf.int\*(C'\fR setting.
+.PP
+Beyond the file, 960 further randomised calls were compared against R 4.6.1 and
+agree everywhere except the three divergences above.
+.PP
+One lesson from getting that to pass on every NV width is worth recording: the
+corpus data has to be \fBexactly representable\fR. Whether two values tie decides
+which branch runs, and \f(CW\*(C`1.6 \- 2 \- 0.5\*(C'\fR does not land on the same value in a
+\&\f(CW\*(C`double\*(C'\fR, an x87 \f(CW\*(C`long double\*(C'\fR and a \f(CW\*(C`_\|_float128\*(C'\fR. A corpus of one\-decimal
+values passed on the default perl and failed on \f(CW\*(C`perl\-5.12.5\*(C'\fR and quadmath with
+a \fIdifferent statistic\fR, not merely a different last digit. Every generated
+value is now a whole number of quarters or of 1024ths. For the same reason the
+asymptotic interval, which is only ever pinned down to \f(CW\*(C`tol.root\*(C'\fR, is generated
+at \f(CW\*(C`tol.root = 1e\-12\*(C'\fR rather than freezing wherever Brent\*(Aqs method happened to
+stop on one machine.
+.PP
+A compiler\-warning audit of \f(CW\*(C`LikeR.xs\*(C'\fR for \f(CW\*(C`\-Wint\-conversion\*(C'\fR, \f(CW\*(C`\-Wimplicit\-int\*(C'\fR,
+\&\f(CW\*(C`\-Wreturn\-mismatch\*(C'\fR and \f(CW\*(C`\-Wdeclaration\-missing\-parameter\-type\*(C'\fR, and a pass
+tightening integer types that can only hold a count or a flag. No behaviour
+changed: the full suite (116 files, 18,546 tests) passes, and every function
+touched was diffed call\-for\-call against a build of the previous release, with
+\&\f(CW\*(C`dnorm\*(C'\fR, \f(CW\*(C`pnorm\*(C'\fR, one\- and two\-sample \f(CW\*(C`ks_test\*(C'\fR, \f(CW\*(C`fisher_test\*(C'\fR, \f(CW\*(C`auc\*(C'\fR and the set
+operations re\-checked against R 4.6.1 and found bit\-identical.
+.PP
+All four of those warnings were already clean, and stay clean on a \f(CW\*(C`double\*(C'\fR, a
+\&\f(CW\*(C`long double\*(C'\fR and a \f(CW\*(C`_\|_float128\*(C'\fR build. Two of them cannot be tested with the
+GCC most systems still default to: \f(CW\*(C`\-Wreturn\-mismatch\*(C'\fR and
+\&\f(CW\*(C`\-Wdeclaration\-missing\-parameter\-type\*(C'\fR are GCC 14 additions — where they are
+errors rather than warnings — and GCC 13 rejects both as unrecognized options,
+so a check that appears to pass on 13 has really only skipped them.
+.PP
+\fIDead code removed\fR
+.IX Subsection "Dead code removed"
+.PP
+Turning the audit up to \f(CW\*(C`\-Wextra\*(C'\fR found two branches that could never run, both
+of them a test for negativity on a value whose type is unsigned:
+.ie n .IP "1. ""r_pow_di"" takes ""unsigned int n"", so its ""if (n < 0) return 1.0 / r_pow_di(x, \-n);"" was unreachable — a leftover of R\*(Aqs ""R_pow_di"", which takes a signed exponent. All three callers (in ""K2x"", for the exact one\-sample Kolmogorov\-Smirnov distribution) pass a non\-negative exponent, so the unsigned parameter is the correct one and the reciprocal branch simply goes." 4
+.el .IP "1. \f(CWr_pow_di\fR takes \f(CWunsigned int n\fR, so its \f(CWif (n < 0) return 1.0 / r_pow_di(x, \-n);\fR was unreachable — a leftover of R\*(Aqs \f(CWR_pow_di\fR, which takes a signed exponent. All three callers (in \f(CWK2x\fR, for the exact one\-sample Kolmogorov\-Smirnov distribution) pass a non\-negative exponent, so the unsigned parameter is the correct one and the reciprocal branch simply goes." 4
+.IX Item "1. r_pow_di takes unsigned int n, so its if (n < 0) return 1.0 / r_pow_di(x, -n); was unreachable — a leftover of R's R_pow_di, which takes a signed exponent. All three callers (in K2x, for the exact one-sample Kolmogorov-Smirnov distribution) pass a non-negative exponent, so the unsigned parameter is the correct one and the reciprocal branch simply goes."
+.PD 0
+.ie n .IP "2. ""hoa2aoh"" casts ""HvUSEDKEYS"" to ""U32"" and then clamps with ""if (ncols < 0) ncols = 0;""." 4
+.el .IP "2. \f(CWhoa2aoh\fR casts \f(CWHvUSEDKEYS\fR to \f(CWU32\fR and then clamps with \f(CWif (ncols < 0) ncols = 0;\fR." 4
+.IX Item "2. hoa2aoh casts HvUSEDKEYS to U32 and then clamps with if (ncols < 0) ncols = 0;."
+.PD
+.PP
+\fITypes narrowed to what they can actually hold\fR
+.IX Subsection "Types narrowed to what they can actually hold"
+.PP
+Eighteen \f(CW\*(C`int\*(C'\fRs that only ever hold 0 or 1 became \f(CW\*(C`bool\*(C'\fR, a convention the file
+already followed in some 219 other places; each was confirmed by reading every
+call site rather than by name. The flag parameters of \f(CW\*(C`ft_pnhyper\*(C'\fR, \f(CW\*(C`K2l\*(C'\fR,
+\&\f(CW\*(C`c_dnorm\*(C'\fR, \f(CW\*(C`c_pnorm\*(C'\fR, \f(CW\*(C`c_pnorm_both\*(C'\fR, \f(CW\*(C`set_multiplicity\*(C'\fR and \f(CW\*(C`roc_split\*(C'\fR, the
+\&\f(CW\*(C`is_cat\*(C'\fR field of \f(CW\*(C`AnFac\*(C'\fR, the \f(CW\*(C`lower_pos\*(C'\fR and \f(CW\*(C`frac_low\*(C'\fR locals of \f(CW\*(C`auc\*(C'\fR,
+\&\f(CW\*(C`auroc\*(C'\fR, \f(CW\*(C`roc\*(C'\fR and \f(CW\*(C`bedroc\*(C'\fR, and the return types of \f(CW\*(C`mg_key\*(C'\fR and
+\&\f(CW\*(C`psmirnov_exact_test\*(C'\fR. Several of these were already being handed a \f(CW\*(C`bool\*(C'\fR by
+their callers — \f(CW\*(C`dnorm\*(C'\fR\*(Aqs and \f(CW\*(C`pnorm\*(C'\fR\*(Aqs \f(CW\*(C`log\*(C'\fR and \f(CW\*(C`lower\*(C'\fR options, for instance —
+so only the helper signatures were behind. \f(CW\*(C`c_pnorm_both\*(C'\fR\*(Aqs loop counter became
+\&\f(CW\*(C`unsigned int\*(C'\fR.
+.PP
+Two that look like flags and are not: \f(CW\*(C`c_pnorm_both\*(C'\fR\*(Aqs \f(CW\*(C`i_tail\*(C'\fR is three\-valued,
+and \f(CW\*(C`set_multiplicity\*(C'\fR\*(Aqs \f(CW\*(C`gimme\*(C'\fR carries a Perl \f(CW\*(C`G_*\*(C'\fR context value. Both stay
+\&\f(CW\*(C`int\*(C'\fR.
+.PP
+Also six coefficient tables in \f(CW\*(C`c_pnorm_both\*(C'\fR written \f(CW\*(C`const static double\*(C'\fR,
+which puts the storage class after the qualifier and draws
+\&\f(CW\*(C`\-Wold\-style\-declaration\*(C'\fR; they are now \f(CW\*(C`static const double\*(C'\fR.
+.PP
+\fIrunif argument validation, and every warning names its function\fR
+.IX Subsection "runif argument validation, and every warning names its function"
+.PP
+\&\f(CW\*(C`runif\*(C'\fR accepts its arguments either positionally or by name, and decided which
+was which by asking whether the current argument was a string \fIand\fR whether
+another argument followed it. A key at the end of the list therefore failed the
+second half of that test and fell through to the positional branch, where it was
+read as a number: \f(CW\*(C`runif(5, \*(Aqmin\*(Aq)\*(C'\fR took \f(CWSvNV("min")\fR, which is 0, silently set
+\&\f(CW\*(C`min = 0\*(C'\fR, and returned five values. The only sign anything was wrong was perl\*(Aqs
+own \f(CW\*(C`Argument "min" isn\*(Aqt numeric\*(C'\fR, which does not say which function provoked
+it. \f(CW\*(C`runif(5, bogus => 1)\*(C'\fR went the same way, taking \f(CW\*(C`bogus\*(C'\fR as \f(CW\*(C`min\*(C'\fR and \f(CW1\fR as
+\&\f(CW\*(C`max\*(C'\fR. Every sibling that parses named arguments — \f(CW\*(C`rbinom\*(C'\fR, \f(CW\*(C`binom_test\*(C'\fR,
+\&\f(CW\*(C`fisher_test\*(C'\fR, \f(CW\*(C`dnorm\*(C'\fR, \f(CW\*(C`pnorm\*(C'\fR — rejects both of those.
+.PP
+\&\f(CW\*(C`runif\*(C'\fR now does too. A string argument is treated as a key when it is not a
+number, which is decidable from the key alone, so a dangling or misspelled key
+is an error instead of a silent coercion; a numeric string is still positional,
+so \f(CWrunif("9")\fR is unchanged. Named values are checked for numerichood before
+use, which is what keeps perl\*(Aqs unattributed warning from being the diagnostic.
+.PP
+\&\f(CW\*(C`n\*(C'\fR is also range\-checked now. It was read straight through \f(CWSvUV()\fR, so
+\&\f(CWrunif(\-1)\fR wrapped to 2**64\-1, \f(CWav_extend()\fR read that back as a negative
+\&\f(CW\*(C`SSize_t\*(C'\fR, and perl died with \f(CW\*(C`panic: av_extend_guts() negative count (\-2)\*(C'\fR \-\-
+which names neither the function nor the argument at fault. A negative or
+over\-large \f(CW\*(C`n\*(C'\fR now croaks and says so. Non\-integer \f(CW\*(C`n\*(C'\fR still truncates toward
+zero, as R\*(Aqs \f(CWrunif()\fR does, and \f(CWrunif(0)\fR still returns an empty list.
+.PP
+Separately, three warnings did not name the function emitting them, unlike every
+other warning in the file: one in \f(CW\*(C`ks_test\*(C'\fR (the 1\-sided exact 1\-sample case
+falling back to asymptotic) and two in \f(CW\*(C`wilcox_test\*(C'\fR\*(Aqs signed\-rank branch (exact
+p\-value abandoned for ties, and for zeroes). All three now carry the prefix
+their siblings already had. The one warning left deliberately bare is the
+\&\f(CW\*(C`warn("%s", m)\*(C'\fR in the uninitialized\-value catcher, which re\-emits somebody
+else\*(Aqs warning verbatim and must not add to it.
+.PP
+\fIArgument\-stack indices are now Stack_off_t\fR
+.IX Subsection "Argument-stack indices are now Stack_off_t"
+.PP
+\&\f(CW\*(C`\-Wextra\*(C'\fR reported 58 \f(CW\*(C`\-Wsign\-compare\*(C'\fR warnings, and 33 of them were one idiom:
+an index declared \f(CW\*(C`size_t\*(C'\fR, \f(CW\*(C`unsigned\*(C'\fR, \f(CW\*(C`unsigned int\*(C'\fR or \f(CW\*(C`unsigned short int\*(C'\fR
+and then compared against \f(CW\*(C`items\*(C'\fR. \f(CW\*(C`items\*(C'\fR is neither of those — XSUB.h\*(Aqs
+\&\f(CW\*(C`dITEMS\*(C'\fR declares it \f(CW\*(C`Stack_off_t items = (Stack_off_t)(SP \- MARK)\*(C'\fR, a \fIsigned\fR
+type, because it is a stack\-pointer difference. Every one of those comparisons
+was converting the signed side to unsigned.
+.PP
+The indices are now \f(CW\*(C`Stack_off_t\*(C'\fR themselves, which is the type they are
+compared against: 25 declarations across 23 functions — \f(CW\*(C`binom_test\*(C'\fR,
+\&\f(CW\*(C`ks_test\*(C'\fR, \f(CW\*(C`wilcox_test\*(C'\fR, \f(CW\*(C`write_table\*(C'\fR, \f(CW\*(C`max\*(C'\fR, \f(CW\*(C`runif\*(C'\fR, \f(CW\*(C`quantile\*(C'\fR, \f(CW\*(C`mean\*(C'\fR,
+\&\f(CW\*(C`mode\*(C'\fR, \f(CW\*(C`sum\*(C'\fR, \f(CW\*(C`sd\*(C'\fR, \f(CW\*(C`uniq\*(C'\fR, \f(CW\*(C`var\*(C'\fR, \f(CW\*(C`t_test\*(C'\fR, \f(CW\*(C`median\*(C'\fR, \f(CW\*(C`matrix\*(C'\fR, \f(CW\*(C`fisher_test\*(C'\fR,
+\&\f(CW\*(C`power_t_test\*(C'\fR, \f(CW\*(C`var_test\*(C'\fR, \f(CW\*(C`dnorm\*(C'\fR, \f(CW\*(C`value_counts\*(C'\fR, \f(CW\*(C`prcomp\*(C'\fR and \f(CW\*(C`pnorm\*(C'\fR.
+That is a retype, not a cast: writing
+\&\f(CW\*(C`(size_t)items\*(C'\fR at each comparison would silence the warning just as well, but
+it would be wrong the day \f(CW\*(C`Stack_off_t\*(C'\fR widens, which is exactly what it exists
+to allow. \f(CW\*(C`t_test\*(C'\fR\*(Aqs index was \f(CW\*(C`unsigned short int\*(C'\fR, which drew no warning at
+all — integer promotion made the comparison signed — and was the same latent
+mistake regardless.
+.PP
+\&\f(CW\*(C`Stack_off_t\*(C'\fR arrived in perl 5.39.2 and this distribution supports 5.010, so
+the preamble now carries a shim typedef guarded on \f(CW\*(C`PERL_STACK_OFFSET_DEFINED\*(C'\fR,
+the macro perl.h defines next to the typedef. On 5.10.1 and 5.12.5 neither the
+macro nor the type exists and the shim supplies \f(CW\*(C`I32\*(C'\fR, which is what the stack
+offset was on every perl before that.
+.PP
+The 33 warnings are gone, 25 remain, and no warning category increased —
+verified by compiling the before and after trees and diffing the warning sets.
+The remaining 25 are unrelated signedness pairs (\f(CW\*(C`size_t\*(C'\fR against \f(CW\*(C`ssize_t\*(C'\fR,
+\&\f(CW\*(C`IV\*(C'\fR against \f(CW\*(C`size_t\*(C'\fR, \f(CW\*(C`STRLEN\*(C'\fR against \f(CW\*(C`ssize_t\*(C'\fR) and are left alone. The full
+suite passes on perl 5.10.1 and 5.12.5, the two builds that depend on the shim,
+as well as on 5.42.3, 5.44.0 and 5.44.0\-quadmath; and 94 calls covering all 23
+retyped functions — positional and named forms, bare lists against arrayrefs,
+\&\f(CW\*(C`write_table\*(C'\fR\*(Aqs emitted bytes, and the odd\-argument and unknown\-argument croaks
+that this index arithmetic drives — produce identical output before and after.
+.PP
+\fINV was being computed at double precision on wide builds\fR
+.IX Subsection "NV was being computed at double precision on wide builds"
+.PP
+Every libm call in \f(CW\*(C`LikeR.xs\*(C'\fR was written bare — \f(CWsqrt(x)\fR, \f(CWlog(x)\fR,
+\&\f(CWlgamma(x)\fR — and C has no type\-generic \f(CW\*(C`<math.h>\*(C'\fR. Those functions take a
+\&\f(CW\*(C`double\*(C'\fR, so on a perl built with \f(CW\*(C`\-Duselongdouble\*(C'\fR or \f(CW\*(C`\-Dusequadmath\*(C'\fR every one
+of them converted the \f(CW\*(C`NV\*(C'\fR down to 53 bits of mantissa, computed there, and
+converted the result back. Nothing warned and nothing failed to compile; the
+answers were simply less accurate than the perl running them. On perl\-5.12.5
+(\f(CW\*(C`long double\*(C'\fR), \f(CWsd(1..5)\fR returned exactly the double\-rounded \f(CWsqrt(2.5)\fR,
+9.5e\-17 away from the value perl\*(Aqs own \f(CW\*(C`sqrt\*(C'\fR gives.
+.PP
+All 412 of those calls now go through \f(CW\*(C`nv_*\*(C'\fR macros that paste on the suffix for
+the width \f(CW\*(C`NV\*(C'\fR actually is: none for \f(CW\*(C`double\*(C'\fR, \f(CW\*(C`l\*(C'\fR for \f(CW\*(C`long double\*(C'\fR, \f(CW\*(C`q\*(C'\fR for
+\&\f(CW\*(C`_\|_float128\*(C'\fR. The 80 \f(CW\*(C`isnan\*(C'\fR/\f(CW\*(C`isinf\*(C'\fR/\f(CW\*(C`isfinite\*(C'\fR calls became \f(CW\*(C`nv_isnan\*(C'\fR,
+\&\f(CW\*(C`nv_isinf\*(C'\fR and \f(CW\*(C`nv_isfinite\*(C'\fR, which classify by comparing against \f(CW\*(C`NV_MAX\*(C'\fR — the
+largest finite \f(CW\*(C`NV\*(C'\fR — rather than calling libm at all. The C99 macros could not
+be kept: where a platform does not provide the type\-generic versions,
+\&\f(CWisfinite()\fR is a plain \f(CW\*(C`double\*(C'\fR function, and narrowing a large\-but\-finite long
+double into it reports the value as infinite rather than merely rounding it.
+Perl\*(Aqs own \f(CW\*(C`Perl_isnan\*(C'\fR/\f(CW\*(C`Perl_isinf\*(C'\fR/\f(CW\*(C`Perl_isfinite\*(C'\fR were used up to 0.298 and
+could not be kept either: on every perl before 5.22 those route through a
+\&\f(CWPerl_fp_class()\fR block in \f(CW\*(C`perl.h\*(C'\fR that has never compiled — the macro is
+written with an empty parameter list and compares against \f(CW\*(C`FP_CLASS_*\*(C'\fR names no
+\&\f(CW\*(C`<ieeefp.h>\*(C'\fR defines. That block is dead code wherever Configure finds
+\&\f(CWisinf()\fR, so it is invisible on Linux and glibc, and live on illumos/Solaris,
+where it broke the 0.298 build outright.
+.PP
+The long\-double row is conditional. The \f(CW\*(C`l\*(C'\fR variants are C99 but some libms —
+the thinner BSD ones especially — do not ship the whole set, so \f(CW\*(C`Makefile.PL\*(C'\fR
+link\-tests all twenty as a unit and defines \f(CW\*(C`LIKER_HAVE_LONG_DOUBLE_MATH\*(C'\fR only
+if every one resolves; otherwise the build falls back to the \f(CW\*(C`double\*(C'\fR functions,
+which is exactly what it did before and so cannot regress. \f(CW\*(C`_\|_float128\*(C'\fR needs no
+probe: \f(CW\*(C`<quadmath.h>\*(C'\fR and \f(CW\*(C`\-lquadmath\*(C'\fR come with the quadmath perl itself, and
+the built object was checked with \f(CW\*(C`nm\*(C'\fR — it references \f(CW\*(C`lgammaq\*(C'\fR, \f(CW\*(C`expq\*(C'\fR,
+\&\f(CW\*(C`sqrtq\*(C'\fR and no double\-width libm symbol at all.
+.PP
+Accuracy on the long\-double build, measured against values that are exact in
+binary or known in closed form: \f(CWsd(1..5)\fR is now bit\-identical to perl\*(Aqs
+\&\f(CWsqrt(2.5)\fR, and \f(CW\*(C`fisher_test([[3,1],[1,3]])\*(C'\fR moves from 1.5e\-16 to 6.4e\-18
+relative error against the exact 17/35. The remaining 6.4e\-18 is an accuracy
+floor in that function\*(Aqs own summation, not a width problem — the \f(CW\*(C`_\|_float128\*(C'\fR
+build lands on the same figure.
+.PP
+This costs time where the wide math is software\-emulated: the suite takes 352s
+on the quadmath perl, against 67s when it was quietly running on hardware
+doubles. The other four perls are unaffected.
+.PP
+\fIThe build ran itself twice, and clobbered its own Makefile doing it\fR
+.IX Subsection "The build ran itself twice, and clobbered its own Makefile doing it"
+.PP
+\&\f(CW\*(C`make\*(C'\fR had to be run twice or the \f(CW\*(C`.so\*(C'\fR came out stamped with the wrong version
+and refused to load. The cause: ExtUtils::MakeMaker scans the directory for
+\&\f(CW\*(C`*.PL\*(C'\fR files to run during the build, and \f(CW\*(C`dev.Makefile.PL\*(C'\fR — a local
+convenience wrapper, not part of the distribution — looks like one. It was being
+run mid\-build as \f(CW\*(C`perl dev.Makefile.PL dev.Makefile\*(C'\fR, and since it calls
+\&\f(CWWriteMakefile()\fR it overwrote the real \f(CW\*(C`Makefile\*(C'\fR with its own: no \f(CW\*(C`DEFINE\*(C'\fR, no
+probed C99 flag, and a different \f(CW\*(C`VERSION\*(C'\fR. The second \f(CW\*(C`make\*(C'\fR then rebuilt from
+that. \f(CW\*(C`PL_FILES => {}\*(C'\fR turns the scan off; nothing here is generated by a \f(CW\*(C`.PL\*(C'\fR
+file.
+.PP
+The version half was a stale literal: the checked\-in \f(CW\*(C`Makefile.PL\*(C'\fR pinned
+\&\f(CW\*(C`VERSION => "0.28"\*(C'\fR while \f(CW\*(C`lib/Stats/LikeR.pm\*(C'\fR had moved to 0.298, and
+\&\f(CWXSLoader::load()\fR passes \f(CW$VERSION\fR to a \f(CW\*(C`.so\*(C'\fR compiled with \f(CW\*(C`\-DXS_VERSION\*(C'\fR
+from that literal. It now reads \f(CW\*(C`VERSION_FROM => lib/Stats/LikeR.pm\*(C'\fR. One \f(CW\*(C`make\*(C'\fR
+after \f(CW\*(C`perl Makefile.PL\*(C'\fR is enough again, and the non\-quadmath builds are about
+a third faster for not doing the work twice.
+.PP
+\fIPortability: Solaris, the BSDs, and vendor compilers\fR
+.IX Subsection "Portability: Solaris, the BSDs, and vendor compilers"
+.PP
+The C99 flag is now probed instead of guessed. \f(CW\*(C`Makefile.PL\*(C'\fR was selecting
+\&\f(CW\*(C`\-std=gnu99\*(C'\fR on any compiler whose name matched \f(CW\*(C`/\eb(?:g?cc|clang)\eb/\*(C'\fR, and
+\&\f(CW$Config{cc}\fR is plain \f(CW\*(C`cc\*(C'\fR for Oracle Studio on Solaris and for aCC on HP\-UX —
+both of which reject that flag outright, so the build failed there before it
+compiled a line. Each candidate is now trial\-compiled and the first that works
+wins: \f(CW\*(C`\-std=gnu99\*(C'\fR/\f(CW\*(C`\-std=c99\*(C'\fR for gcc and clang, \f(CW\*(C`\-xc99=all\*(C'\fR for Studio,
+\&\f(CW\*(C`\-qlanglvl=extc99\*(C'\fR for AIX \f(CW\*(C`xlc\*(C'\fR, \f(CW\*(C`\-AC99\*(C'\fR for HP\-UX, and nothing at all for a
+compiler already in C99 mode. MSVC is skipped outright, since it warns rather
+than errors on switches it does not know and would make the probe settle on a
+no\-op.
+.PP
+Two things that would have failed to compile off Linux are gone. \f(CW\*(C`<strings.h>\*(C'\fR
+and its \f(CW\*(C`strcasecmp\*(C'\fR — POSIX\-only, absent on MSVC — are replaced by a small
+\&\f(CWstr_ieq_ascii()\fR, which also drops the locale dependency: \f(CWtolower()\fR under a
+Turkish locale maps \f(CW\*(C`I\*(C'\fR outside ASCII, which should never decide whether
+\&\f(CW"TRUE"\fR matches \f(CW"true"\fR. And bare C99 \f(CW\*(C`restrict\*(C'\fR, used on 151 pointers here,
+now has an \f(CW\*(C`#ifdef\*(C'\fR mapping it to \f(CW\*(C`_\|_restrict\*(C'\fR on MSVC and \f(CW\*(C`_\|_restrict_\|_\*(C'\fR on
+older gcc, and defining it away where no spelling exists, rather than losing the
+annotation.
+.PP
+\&\f(CW\*(C`LikeR.xs\*(C'\fR also compiles clean under strict \f(CW\*(C`\-std=c99\*(C'\fR with no GNU extensions,
+which is the closest available local proxy for a vendor compiler.
+.PP
+\fIDead code: \fR\f(BIsample()\fR\fI\*(Aqs private PRNG\fR
+.IX Subsection "Dead code: sample()'s private PRNG"
+.PP
+A splitmix64 generator sat at the top of the file under a comment promising a
+PRNG stream separate from \f(CWDrand01()\fR, seeded lazily from \f(CW\*(C`/dev/urandom\*(C'\fR with a
+\&\f(CW\*(C`time()^PID\*(C'\fR fallback. None of it was true: no seeding code was ever written, no
+caller ever existed, and its state started at a fixed 0, so had anything called
+it the "random" sample would have been the same sequence in every process.
+\&\f(CWsample()\fR draws from \f(CWDrand01()\fR and always did, which is the behaviour that is
+wanted — \f(CWsrand($seed)\fR governs it the way \f(CW\*(C`set.seed()\*(C'\fR governs R. The generator
+and its comment are removed.
+.PP
+\fITests\fR
+.IX Subsection "Tests"
+.PP
+Two files, 273 assertions, and both were checked against a deliberately broken
+build rather than merely observed to pass.
+.PP
+\&\f(CW\*(C`t/nv_width.t\*(C'\fR fails if the math width ever comes undone. Its sharp assertion
+needs no tolerance at all: \f(CWsd(1..5)\fR must be the identical NV to perl\*(Aqs
+\&\f(CWsqrt(2.5)\fR, which holds on any width and breaks the moment a \f(CW\*(C`double\*(C'\fR gets in
+the way. It is width\-adaptive rather than skipped on a \f(CW\*(C`double\*(C'\fR perl, computing
+the NV epsilon of the running build instead of assuming one.
+.PP
+\&\f(CW\*(C`t/scale.keywords.t\*(C'\fR covers \f(CWscale()\fR\*(Aqs string options — \f(CW"mean"\fR, \f(CW"sd"\fR,
+\&\f(CW"none"\fR, \f(CW"true"\fR, \f(CW"false"\fR, \f(CW""\fR and their case variants — which had no
+coverage at all: \f(CW\*(C`t/01.t\*(C'\fR passes only the numeric forms. Expected values come
+from R 4.6.1 \f(CWbase::scale()\fR at \f(CWoptions(digits=17)\fR and are frozen in the file,
+so it needs no R at run time. Deleting the case fold from \f(CWstr_ieq_ascii()\fR
+fails 11 of its assertions; usefully, all 11 are the "off" spellings, because an
+unmatched string falls through to \f(CW\*(C`SvTRUE\*(C'\fR and still means "compute it", so
+\&\f(CW"MEAN"\fR would keep working while \f(CW"NONE"\fR flipped. That is recorded in the file
+so the section is not trusted for more than it proves.
+.PP
+The suite is 118 files and 18,819 tests, passing on perl 5.10.1, 5.12.5, 5.42.3
+(threaded), 5.44.0 and 5.44.0\-quadmath, with no compiler warnings on any of
+them.
 .SS "0.297 2026\-08\-10 CDT"
 .IX Subsection "0.297 2026-08-10 CDT"
 https://www.cpantesters.org/cpan/report/260534ea\-9474\-11f1\-8ca2\-bfb68deea6df bug fix

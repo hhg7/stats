@@ -95,10 +95,18 @@ recalling them:
   `tests/reg-tests-1{a,b,c,d,e}.R` and `tests/reg-tests-2.R` for regression
   cases, `src/library/stats/man/*.Rd` for documented examples, and
   `tests/Examples/stats-Ex.Rout.save` for those examples' pinned output.
-- SciPy 1.17.1: `/home/con/.pyenv/versions/3.14.2/lib/python3.14/site-packages/scipy/stats/tests/`
-  — most `Test<Name>` classes are in `test_stats.py`, but the hypothesis-test
-  classes live in `test_morestats.py`; grep both. `data/` holds R-generated
-  reference corpora that are directly reusable as Perl test data.
+- SciPy 1.18.0: `/home/con/.pyenv/versions/3.14.2/lib/python3.14/site-packages/scipy/stats/tests/`
+  — most `Test<Name>` classes are in `test_stats.py` and the hypothesis-test
+  classes in `test_morestats.py`, but the split moves between releases, so grep
+  the whole directory rather than those two files: 1.18.0 pulled
+  `TestSpearmanRho`, `TestTheilslopes` and `TestSiegelslopes` out into
+  `test_correlation.py` while leaving `TestPearsonr`, `TestCorrSpearmanr` and
+  `TestKendallTau` behind in `test_stats.py`, and `test_rank.py`,
+  `test_quantile.py` and `test_hypotests.py` are each worth checking too.
+  `data/` holds R-generated reference corpora that are directly reusable as
+  Perl test data.
+- NumPy 2.5.2: same `site-packages`, tests under `numpy/_core/tests/` and
+  `numpy/lib/tests/` (each with its own `data/`).
 
 Check **both** before deciding a function is well covered: coverage is
 lopsided, and the thinner suite is not always the one you would guess (R has
@@ -187,10 +195,19 @@ it is not a substitute for actually running the suite.
   `q` suffix for the build's width. Adding a new libm function means adding it
   to that block *and* to the link probe in `Makefile.PL`, not calling it
   directly.
-- Float classification goes through `Perl_isnan`/`Perl_isinf`/`Perl_isfinite`,
-  never the bare C99 macros: where a platform does not provide the
-  type-generic versions, `isfinite()` is a plain `double` function and a
-  large-but-finite `NV` narrowed into it is reported as infinite.
+- Float classification goes through `nv_isnan`/`nv_isinf`/`nv_isfinite`,
+  defined next to the `nv_*` libm block, and through nothing else. Not the bare
+  C99 macros: where a platform does not provide the type-generic versions,
+  `isfinite()` is a plain `double` function and a large-but-finite `NV`
+  narrowed into it is reported as infinite. And **not** perl's
+  `Perl_isnan`/`Perl_isinf`/`Perl_isfinite`, which is what `LikeR.xs` used up
+  to 0.298: on every perl before 5.22 they can route through a
+  `Perl_fp_class()` block in `perl.h` that has never compiled — the macro is
+  spelled with an empty parameter list and compares against `FP_CLASS_*` names
+  no `<ieeefp.h>` defines. Configure only reaches that block where it does not
+  find `isinf()`, so it is dead code on Linux and glibc and live on
+  illumos/Solaris, which is exactly how it reached CPAN in 0.298. Those perls
+  also define `Perl_isinf(x)` as `((x)==NV_INF)`, missing `-Inf`.
 - Format NVs with perl's `my_snprintf`/`my_sprintf` and `NVgf`/`NVff`, never
   the plain C-library `snprintf` with a hand-written `%g`. `%Qg` happens to
   work with glibc's `snprintf` only because libquadmath registers the `Q`

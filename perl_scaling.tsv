@@ -1,0 +1,1555 @@
+figure	function	call	n	run	seconds
+vector	sum	sum($x)	1000	0	3.95476818084717e-06
+vector	sum	sum($x)	1000	1	4.01020050048828e-06
+vector	sum	sum($x)	1000	2	3.9970874786377e-06
+vector	sum	sum($x)	1000	3	3.99470329284668e-06
+vector	sum	sum($x)	1000	4	3.95238399505615e-06
+vector	sum	sum($x)	1000	5	4.00781631469727e-06
+vector	sum	sum($x)	1000	6	4.01735305786133e-06
+vector	min	min($x)	1000	0	4.28018115815662e-06
+vector	min	min($x)	1000	1	4.30285930633545e-06
+vector	min	min($x)	1000	2	4.24399262382871e-06
+vector	min	min($x)	1000	3	4.2724609375e-06
+vector	min	min($x)	1000	4	4.22909146263486e-06
+vector	min	min($x)	1000	5	4.30524349212647e-06
+vector	min	min($x)	1000	6	4.27234283541747e-06
+vector	max	max($x)	1000	0	4.27722930908203e-06
+vector	max	max($x)	1000	1	4.23967838287353e-06
+vector	max	max($x)	1000	2	4.25457954406738e-06
+vector	max	max($x)	1000	3	4.25250757308233e-06
+vector	max	max($x)	1000	4	4.24399262382871e-06
+vector	max	max($x)	1000	5	4.25979448914897e-06
+vector	max	max($x)	1000	6	4.26457041785831e-06
+vector	mean	mean($x)	1000	0	3.9970874786377e-06
+vector	mean	mean($x)	1000	1	4.00245189666748e-06
+vector	mean	mean($x)	1000	2	4.00245189666748e-06
+vector	mean	mean($x)	1000	3	3.99768352508545e-06
+vector	mean	mean($x)	1000	4	3.96013259887695e-06
+vector	mean	mean($x)	1000	5	3.99231910705566e-06
+vector	mean	mean($x)	1000	6	3.95718074980236e-06
+vector	median	median($x)	1000	0	6.60994957233297e-06
+vector	median	median($x)	1000	1	6.5160552840427e-06
+vector	median	median($x)	1000	2	7.27985779084771e-06
+vector	median	median($x)	1000	3	7.54601317025273e-06
+vector	median	median($x)	1000	4	6.61214192708333e-06
+vector	median	median($x)	1000	5	6.90550825714526e-06
+vector	median	median($x)	1000	6	6.5160552840427e-06
+vector	sd	sd($x)	1000	0	8.20517539978027e-06
+vector	sd	sd($x)	1000	1	8.20994377136231e-06
+vector	sd	sd($x)	1000	2	8.20764049685379e-06
+vector	sd	sd($x)	1000	3	8.21734985075385e-06
+vector	sd	sd($x)	1000	4	8.22598038755391e-06
+vector	sd	sd($x)	1000	5	8.20332522845376e-06
+vector	sd	sd($x)	1000	6	8.23137447305394e-06
+vector	var	var($x)	1000	0	8.22598038755391e-06
+vector	var	var($x)	1000	1	8.23568974145397e-06
+vector	var	var($x)	1000	2	8.24863554665406e-06
+vector	var	var($x)	1000	3	8.24432027825403e-06
+vector	var	var($x)	1000	4	8.24432027825403e-06
+vector	var	var($x)	1000	5	8.22598038755391e-06
+vector	var	var($x)	1000	6	8.23751945327557e-06
+vector	quantile	quantile(x => $x, probs => [.25,.5,.75])	1000	0	5.75780868530273e-05
+vector	quantile	quantile(x => $x, probs => [.25,.5,.75])	1000	1	5.5088716394761e-05
+vector	quantile	quantile(x => $x, probs => [.25,.5,.75])	1000	2	5.61396280924479e-05
+vector	quantile	quantile(x => $x, probs => [.25,.5,.75])	1000	3	5.42845044817243e-05
+vector	quantile	quantile(x => $x, probs => [.25,.5,.75])	1000	4	5.62590937460622e-05
+vector	quantile	quantile(x => $x, probs => [.25,.5,.75])	1000	5	5.62590937460622e-05
+vector	quantile	quantile(x => $x, probs => [.25,.5,.75])	1000	6	5.28366334976689e-05
+vector	cor	cor($x, $y)	1000	0	1.72241314037426e-05
+vector	cor	cor($x, $y)	1000	1	1.70093398910385e-05
+vector	cor	cor($x, $y)	1000	2	1.71029669606788e-05
+vector	cor	cor($x, $y)	1000	3	1.70683249449119e-05
+vector	cor	cor($x, $y)	1000	4	1.69838176054113e-05
+vector	cor	cor($x, $y)	1000	5	1.70809882027762e-05
+vector	cor	cor($x, $y)	1000	6	1.70362847191947e-05
+vector	cov	cov($x, $y)	1000	0	2.56470271519252e-05
+vector	cov	cov($x, $y)	1000	1	2.55045952735009e-05
+vector	cov	cov($x, $y)	1000	2	2.55397848180822e-05
+vector	cov	cov($x, $y)	1000	3	2.40236520767212e-05
+vector	cov	cov($x, $y)	1000	4	2.55727148675299e-05
+vector	cov	cov($x, $y)	1000	5	2.45749950408936e-05
+vector	cov	cov($x, $y)	1000	6	2.56252288818359e-05
+vector	skew	skew($x)	1000	0	1.1497073703342e-05
+vector	skew	skew($x)	1000	1	1.15694143833258e-05
+vector	skew	skew($x)	1000	2	1.14705827501085e-05
+vector	skew	skew($x)	1000	3	1.13761786258582e-05
+vector	skew	skew($x)	1000	4	1.14051345127081e-05
+vector	skew	skew($x)	1000	5	1.14398343222482e-05
+vector	skew	skew($x)	1000	6	1.14228044237409e-05
+vector	kurtosis	kurtosis($x)	1000	0	1.1261020387922e-05
+vector	kurtosis	kurtosis($x)	1000	1	1.13092717670259e-05
+vector	kurtosis	kurtosis($x)	1000	2	1.11963234695734e-05
+vector	kurtosis	kurtosis($x)	1000	3	1.13333974565778e-05
+vector	kurtosis	kurtosis($x)	1000	4	1.14398343222482e-05
+vector	kurtosis	kurtosis($x)	1000	5	1.11720500848232e-05
+vector	kurtosis	kurtosis($x)	1000	6	1.12352807537403e-05
+vector	sum	sum($x)	3000	0	1.20596168867124e-05
+vector	sum	sum($x)	3000	1	1.19224872464448e-05
+vector	sum	sum($x)	3000	2	1.18521543649527e-05
+vector	sum	sum($x)	3000	3	1.19287204119115e-05
+vector	sum	sum($x)	3000	4	1.2050836514204e-05
+vector	sum	sum($x)	3000	5	1.17475336248224e-05
+vector	sum	sum($x)	3000	6	1.18659092829778e-05
+vector	min	min($x)	3000	0	1.27979091831021e-05
+vector	min	min($x)	3000	1	1.27842223722171e-05
+vector	min	min($x)	3000	2	1.28169464909173e-05
+vector	min	min($x)	3000	3	1.28169464909173e-05
+vector	min	min($x)	3000	4	1.27813754937588e-05
+vector	min	min($x)	3000	5	1.27625109544441e-05
+vector	min	min($x)	3000	6	1.28679342203207e-05
+vector	max	max($x)	3000	0	1.26912043644832e-05
+vector	max	max($x)	3000	1	1.26711972109921e-05
+vector	max	max($x)	3000	2	1.26728644737831e-05
+vector	max	max($x)	3000	3	1.26815977550688e-05
+vector	max	max($x)	3000	4	1.26931204724668e-05
+vector	max	max($x)	3000	5	1.26588912237258e-05
+vector	max	max($x)	3000	6	1.26967354426308e-05
+vector	mean	mean($x)	3000	0	1.15571877895257e-05
+vector	mean	mean($x)	3000	1	1.18835299622779e-05
+vector	mean	mean($x)	3000	2	1.17298884269519e-05
+vector	mean	mean($x)	3000	3	1.18570390090444e-05
+vector	mean	mean($x)	3000	4	1.15812214371426e-05
+vector	mean	mean($x)	3000	5	1.1595395895151e-05
+vector	mean	mean($x)	3000	6	1.17588666529437e-05
+vector	median	median($x)	3000	0	1.62083527137493e-05
+vector	median	median($x)	3000	1	1.53303146362305e-05
+vector	median	median($x)	3000	2	1.55053587041349e-05
+vector	median	median($x)	3000	3	1.52788429616768e-05
+vector	median	median($x)	3000	4	1.54360746726012e-05
+vector	median	median($x)	3000	5	1.5112069936899e-05
+vector	median	median($x)	3000	6	1.52267327829569e-05
+vector	sd	sd($x)	3000	0	2.45630741119385e-05
+vector	sd	sd($x)	3000	1	2.45571136474609e-05
+vector	sd	sd($x)	3000	2	2.44704159823331e-05
+vector	sd	sd($x)	3000	3	2.45362520217895e-05
+vector	sd	sd($x)	3000	4	2.45243310928345e-05
+vector	sd	sd($x)	3000	5	2.446731963715e-05
+vector	sd	sd($x)	3000	6	2.45447282667284e-05
+vector	var	var($x)	3000	0	2.46469076577719e-05
+vector	var	var($x)	3000	1	2.46500040029551e-05
+vector	var	var($x)	3000	2	2.45323428859958e-05
+vector	var	var($x)	3000	3	2.45694990281935e-05
+vector	var	var($x)	3000	4	2.46097515155743e-05
+vector	var	var($x)	3000	5	2.45511531829834e-05
+vector	var	var($x)	3000	6	2.46345222770394e-05
+vector	quantile	quantile(x => $x, probs => [.25,.5,.75])	3000	0	0.00026276707649231
+vector	quantile	quantile(x => $x, probs => [.25,.5,.75])	3000	1	0.00025525689125061
+vector	quantile	quantile(x => $x, probs => [.25,.5,.75])	3000	2	0.000259250402450562
+vector	quantile	quantile(x => $x, probs => [.25,.5,.75])	3000	3	0.00025823712348938
+vector	quantile	quantile(x => $x, probs => [.25,.5,.75])	3000	4	0.000258862972259521
+vector	quantile	quantile(x => $x, probs => [.25,.5,.75])	3000	5	0.000258862972259521
+vector	quantile	quantile(x => $x, probs => [.25,.5,.75])	3000	6	0.000261485576629639
+vector	cor	cor($x, $y)	3000	0	5.04255294799805e-05
+vector	cor	cor($x, $y)	3000	1	5.05621840314167e-05
+vector	cor	cor($x, $y)	3000	2	5.04109917617426e-05
+vector	cor	cor($x, $y)	3000	3	5.07464775672326e-05
+vector	cor	cor($x, $y)	3000	4	5.04791736602783e-05
+vector	cor	cor($x, $y)	3000	5	5.08010387420654e-05
+vector	cor	cor($x, $y)	3000	6	5.06043434143066e-05
+vector	cov	cov($x, $y)	3000	0	7.07507133483887e-05
+vector	cov	cov($x, $y)	3000	1	7.14659690856934e-05
+vector	cov	cov($x, $y)	3000	2	7.61197163508489e-05
+vector	cov	cov($x, $y)	3000	3	7.33045431283804e-05
+vector	cov	cov($x, $y)	3000	4	7.18522954870153e-05
+vector	cov	cov($x, $y)	3000	5	7.12959854691117e-05
+vector	cov	cov($x, $y)	3000	6	7.11720565269733e-05
+vector	skew	skew($x)	3000	0	3.46090112413679e-05
+vector	skew	skew($x)	3000	1	3.48218849727086e-05
+vector	skew	skew($x)	3000	2	3.48048550742013e-05
+vector	skew	skew($x)	3000	3	3.49817604854189e-05
+vector	skew	skew($x)	3000	4	3.49324325035358e-05
+vector	skew	skew($x)	3000	5	3.50187564718312e-05
+vector	skew	skew($x)	3000	6	3.5137965761382e-05
+vector	kurtosis	kurtosis($x)	3000	0	3.38801022233634e-05
+vector	kurtosis	kurtosis($x)	3000	1	3.35841343320649e-05
+vector	kurtosis	kurtosis($x)	3000	2	3.36745689655172e-05
+vector	kurtosis	kurtosis($x)	3000	3	3.5084527114342e-05
+vector	kurtosis	kurtosis($x)	3000	4	3.37608929338126e-05
+vector	kurtosis	kurtosis($x)	3000	5	3.36704583003603e-05
+vector	kurtosis	kurtosis($x)	3000	6	3.43918800354004e-05
+vector	sum	sum($x)	10000	0	3.91960144042969e-05
+vector	sum	sum($x)	10000	1	3.99017333984375e-05
+vector	sum	sum($x)	10000	2	3.9520263671875e-05
+vector	sum	sum($x)	10000	3	3.98109356562297e-05
+vector	sum	sum($x)	10000	4	3.98986193598533e-05
+vector	sum	sum($x)	10000	5	3.97769772276586e-05
+vector	sum	sum($x)	10000	6	3.82544947605507e-05
+vector	min	min($x)	10000	0	4.20631246363863e-05
+vector	min	min($x)	10000	1	4.21365102132161e-05
+vector	min	min($x)	10000	2	4.21067942743716e-05
+vector	min	min($x)	10000	3	4.20411427815755e-05
+vector	min	min($x)	10000	4	4.21454509099325e-05
+vector	min	min($x)	10000	5	4.21067942743716e-05
+vector	min	min($x)	10000	6	4.27315632502238e-05
+vector	max	max($x)	10000	0	4.16884819666545e-05
+vector	max	max($x)	10000	1	4.17435422856757e-05
+vector	max	max($x)	10000	2	4.17878230412801e-05
+vector	max	max($x)	10000	3	4.17435422856757e-05
+vector	max	max($x)	10000	4	4.17878230412801e-05
+vector	max	max($x)	10000	5	4.18957243574427e-05
+vector	max	max($x)	10000	6	4.17729218800863e-05
+vector	mean	mean($x)	10000	0	3.99398803710938e-05
+vector	mean	mean($x)	10000	1	3.91817092895508e-05
+vector	mean	mean($x)	10000	2	3.8142204284668e-05
+vector	mean	mean($x)	10000	3	3.98813509473614e-05
+vector	mean	mean($x)	10000	4	3.90195846557617e-05
+vector	mean	mean($x)	10000	5	3.90164992388557e-05
+vector	mean	mean($x)	10000	6	3.86428833007813e-05
+vector	median	median($x)	10000	0	0.000121758534358098
+vector	median	median($x)	10000	1	0.000115439295768738
+vector	median	median($x)	10000	2	0.000118732452392578
+vector	median	median($x)	10000	3	0.00011900266011556
+vector	median	median($x)	10000	4	0.000116729736328125
+vector	median	median($x)	10000	5	0.000116809209187826
+vector	median	median($x)	10000	6	0.000118462244669596
+vector	sd	sd($x)	10000	0	8.17477703094482e-05
+vector	sd	sd($x)	10000	1	8.14437866210938e-05
+vector	sd	sd($x)	10000	2	8.15200805664063e-05
+vector	sd	sd($x)	10000	3	8.15200805664063e-05
+vector	sd	sd($x)	10000	4	8.148193359375e-05
+vector	sd	sd($x)	10000	5	8.11659771463145e-05
+vector	sd	sd($x)	10000	6	8.16822052001953e-05
+vector	var	var($x)	10000	0	8.15582275390625e-05
+vector	var	var($x)	10000	1	8.18729400634766e-05
+vector	var	var($x)	10000	2	8.18371772766113e-05
+vector	var	var($x)	10000	3	8.17680358886719e-05
+vector	var	var($x)	10000	4	8.16822052001953e-05
+vector	var	var($x)	10000	5	8.18347930908203e-05
+vector	var	var($x)	10000	6	8.17584991455078e-05
+vector	quantile	quantile(x => $x, probs => [.25,.5,.75])	10000	0	0.00108003616333008
+vector	quantile	quantile(x => $x, probs => [.25,.5,.75])	10000	1	0.00106704235076904
+vector	quantile	quantile(x => $x, probs => [.25,.5,.75])	10000	2	0.00106644630432129
+vector	quantile	quantile(x => $x, probs => [.25,.5,.75])	10000	3	0.00107443332672119
+vector	quantile	quantile(x => $x, probs => [.25,.5,.75])	10000	4	0.00106155872344971
+vector	quantile	quantile(x => $x, probs => [.25,.5,.75])	10000	5	0.00106346607208252
+vector	quantile	quantile(x => $x, probs => [.25,.5,.75])	10000	6	0.00106394290924072
+vector	cor	cor($x, $y)	10000	0	0.000172992547353109
+vector	cor	cor($x, $y)	10000	1	0.000173091888427734
+vector	cor	cor($x, $y)	10000	2	0.000173171361287435
+vector	cor	cor($x, $y)	10000	3	0.000173668066660563
+vector	cor	cor($x, $y)	10000	4	0.000172913074493408
+vector	cor	cor($x, $y)	10000	5	0.000173588593800863
+vector	cor	cor($x, $y)	10000	6	0.000173568725585938
+vector	cov	cov($x, $y)	10000	0	0.00024512079026964
+vector	cov	cov($x, $y)	10000	1	0.000245749950408936
+vector	cov	cov($x, $y)	10000	2	0.000248253345489502
+vector	cov	cov($x, $y)	10000	3	0.000249385833740234
+vector	cov	cov($x, $y)	10000	4	0.000251233577728271
+vector	cov	cov($x, $y)	10000	5	0.000252246856689453
+vector	cov	cov($x, $y)	10000	6	0.000248730182647705
+vector	skew	skew($x)	10000	0	0.000112997161017524
+vector	skew	skew($x)	10000	1	0.000115447574191623
+vector	skew	skew($x)	10000	2	0.000115553538004557
+vector	skew	skew($x)	10000	3	0.000116229057312012
+vector	skew	skew($x)	10000	4	0.000115341610378689
+vector	skew	skew($x)	10000	5	0.000116056866115994
+vector	skew	skew($x)	10000	6	0.000116560194227431
+vector	kurtosis	kurtosis($x)	10000	0	0.000113116370307075
+vector	kurtosis	kurtosis($x)	10000	1	0.000113063388400608
+vector	kurtosis	kurtosis($x)	10000	2	0.000113672680324978
+vector	kurtosis	kurtosis($x)	10000	3	0.000113178701961742
+vector	kurtosis	kurtosis($x)	10000	4	0.000112175941467285
+vector	kurtosis	kurtosis($x)	10000	5	0.000112838215298123
+vector	kurtosis	kurtosis($x)	10000	6	0.000114707385792452
+vector	sum	sum($x)	30000	0	0.000118185492122875
+vector	sum	sum($x)	30000	1	0.000119167215683881
+vector	sum	sum($x)	30000	2	0.000115058001349954
+vector	sum	sum($x)	30000	3	0.000116530586691464
+vector	sum	sum($x)	30000	4	0.000117063522338867
+vector	sum	sum($x)	30000	5	0.000117638531853171
+vector	sum	sum($x)	30000	6	0.000115815330954159
+vector	min	min($x)	30000	0	0.000135064125061035
+vector	min	min($x)	30000	1	0.000125535329182943
+vector	min	min($x)	30000	2	0.000126004219055176
+vector	min	min($x)	30000	3	0.000126048922538757
+vector	min	min($x)	30000	4	0.00012543797492981
+vector	min	min($x)	30000	5	0.000126235625323127
+vector	min	min($x)	30000	6	0.000125572085380554
+vector	max	max($x)	30000	0	0.000124499201774597
+vector	max	max($x)	30000	1	0.000124945360071519
+vector	max	max($x)	30000	2	0.000124812126159668
+vector	max	max($x)	30000	3	0.000124763039981618
+vector	max	max($x)	30000	4	0.000124763039981618
+vector	max	max($x)	30000	5	0.000124706941492417
+vector	max	max($x)	30000	6	0.000124558806419373
+vector	mean	mean($x)	30000	0	0.00011899892021628
+vector	mean	mean($x)	30000	1	0.000117049497716567
+vector	mean	mean($x)	30000	2	0.000118059270522174
+vector	mean	mean($x)	30000	3	0.00011747023638557
+vector	mean	mean($x)	30000	4	0.000116530586691464
+vector	mean	mean($x)	30000	5	0.000118891398111979
+vector	mean	mean($x)	30000	6	0.000116951325360466
+vector	median	median($x)	30000	0	0.000305294990539551
+vector	median	median($x)	30000	1	0.000293850898742676
+vector	median	median($x)	30000	2	0.000291148821512858
+vector	median	median($x)	30000	3	0.000289996465047201
+vector	median	median($x)	30000	4	0.000298301378885905
+vector	median	median($x)	30000	5	0.000294844309488932
+vector	median	median($x)	30000	6	0.000291347503662109
+vector	sd	sd($x)	30000	0	0.000244988335503472
+vector	sd	sd($x)	30000	1	0.000244882371690538
+vector	sd	sd($x)	30000	2	0.000246339374118381
+vector	sd	sd($x)	30000	3	0.000244766473770142
+vector	sd	sd($x)	30000	4	0.000243981679280599
+vector	sd	sd($x)	30000	5	0.000245392322540283
+vector	sd	sd($x)	30000	6	0.000244458516438802
+vector	var	var($x)	30000	0	0.000243902206420898
+vector	var	var($x)	30000	1	0.000243902206420898
+vector	var	var($x)	30000	2	0.000243902206420898
+vector	var	var($x)	30000	3	0.000244988335503472
+vector	var	var($x)	30000	4	0.000244352552625868
+vector	var	var($x)	30000	5	0.000245226754082574
+vector	var	var($x)	30000	6	0.000244776407877604
+vector	quantile	quantile(x => $x, probs => [.25,.5,.75])	30000	0	0.00365304946899414
+vector	quantile	quantile(x => $x, probs => [.25,.5,.75])	30000	1	0.0035700798034668
+vector	quantile	quantile(x => $x, probs => [.25,.5,.75])	30000	2	0.00358986854553223
+vector	quantile	quantile(x => $x, probs => [.25,.5,.75])	30000	3	0.0035698413848877
+vector	quantile	quantile(x => $x, probs => [.25,.5,.75])	30000	4	0.00358295440673828
+vector	quantile	quantile(x => $x, probs => [.25,.5,.75])	30000	5	0.00356292724609375
+vector	quantile	quantile(x => $x, probs => [.25,.5,.75])	30000	6	0.00356912612915039
+vector	cor	cor($x, $y)	30000	0	0.000572741031646729
+vector	cor	cor($x, $y)	30000	1	0.000572264194488525
+vector	cor	cor($x, $y)	30000	2	0.000571489334106445
+vector	cor	cor($x, $y)	30000	3	0.000572025775909424
+vector	cor	cor($x, $y)	30000	4	0.000571250915527344
+vector	cor	cor($x, $y)	30000	5	0.000571250915527344
+vector	cor	cor($x, $y)	30000	6	0.000569760799407959
+vector	cov	cov($x, $y)	30000	0	0.000792662302652995
+vector	cov	cov($x, $y)	30000	1	0.00079496701558431
+vector	cov	cov($x, $y)	30000	2	0.00079798698425293
+vector	cov	cov($x, $y)	30000	3	0.000793377558390299
+vector	cov	cov($x, $y)	30000	4	0.000797669092814128
+vector	cov	cov($x, $y)	30000	5	0.000791629155476888
+vector	cov	cov($x, $y)	30000	6	0.00080267588297526
+vector	skew	skew($x)	30000	0	0.000346183776855469
+vector	skew	skew($x)	30000	1	0.00034332275390625
+vector	skew	skew($x)	30000	2	0.000349640846252441
+vector	skew	skew($x)	30000	3	0.000342488288879395
+vector	skew	skew($x)	30000	4	0.000346978505452474
+vector	skew	skew($x)	30000	5	0.000346501668294271
+vector	skew	skew($x)	30000	6	0.00035099188486735
+vector	kurtosis	kurtosis($x)	30000	0	0.000345826148986816
+vector	kurtosis	kurtosis($x)	30000	1	0.000346501668294271
+vector	kurtosis	kurtosis($x)	30000	2	0.000338514645894368
+vector	kurtosis	kurtosis($x)	30000	3	0.000345190366109212
+vector	kurtosis	kurtosis($x)	30000	4	0.000347654024759928
+vector	kurtosis	kurtosis($x)	30000	5	0.000343163808186849
+vector	kurtosis	kurtosis($x)	30000	6	0.000347177187601725
+vector	sum	sum($x)	100000	0	0.000397006670633952
+vector	sum	sum($x)	100000	1	0.000392834345499674
+vector	sum	sum($x)	100000	2	0.000399669011433919
+vector	sum	sum($x)	100000	3	0.000398993492126465
+vector	sum	sum($x)	100000	4	0.000392675399780273
+vector	sum	sum($x)	100000	5	0.000397396087646484
+vector	sum	sum($x)	100000	6	0.000395814577738444
+vector	min	min($x)	100000	0	0.000417423248291016
+vector	min	min($x)	100000	1	0.000418376922607422
+vector	min	min($x)	100000	2	0.000419187545776367
+vector	min	min($x)	100000	3	0.000418424606323242
+vector	min	min($x)	100000	4	0.0004241943359375
+vector	min	min($x)	100000	5	0.000418806076049805
+vector	min	min($x)	100000	6	0.00130546092987061
+vector	max	max($x)	100000	0	0.000414419174194336
+vector	max	max($x)	100000	1	0.000415802001953125
+vector	max	max($x)	100000	2	0.000414180755615234
+vector	max	max($x)	100000	3	0.00041661262512207
+vector	max	max($x)	100000	4	0.000418186187744141
+vector	max	max($x)	100000	5	0.000418996810913086
+vector	max	max($x)	100000	6	0.000416231155395508
+vector	mean	mean($x)	100000	0	0.000396807988484701
+vector	mean	mean($x)	100000	1	0.000397841135660807
+vector	mean	mean($x)	100000	2	0.000392675399780273
+vector	mean	mean($x)	100000	3	0.00039215882619222
+vector	mean	mean($x)	100000	4	0.000395337740580241
+vector	mean	mean($x)	100000	5	0.000395655632019043
+vector	mean	mean($x)	100000	6	0.00039517879486084
+vector	median	median($x)	100000	0	0.00128507614135742
+vector	median	median($x)	100000	1	0.00127339363098145
+vector	median	median($x)	100000	2	0.00127458572387695
+vector	median	median($x)	100000	3	0.00127053260803223
+vector	median	median($x)	100000	4	0.00127899646759033
+vector	median	median($x)	100000	5	0.00127339363098145
+vector	median	median($x)	100000	6	0.00128209590911865
+vector	sd	sd($x)	100000	0	0.000820716222127279
+vector	sd	sd($x)	100000	1	0.000821669896443685
+vector	sd	sd($x)	100000	2	0.000814676284790039
+vector	sd	sd($x)	100000	3	0.000814358393351237
+vector	sd	sd($x)	100000	4	0.000825405120849609
+vector	sd	sd($x)	100000	5	0.000825961430867513
+vector	sd	sd($x)	100000	6	0.000817616780598958
+vector	var	var($x)	100000	0	0.000812609990437826
+vector	var	var($x)	100000	1	0.000812292098999023
+vector	var	var($x)	100000	2	0.000812053680419922
+vector	var	var($x)	100000	3	0.000816980997721354
+vector	var	var($x)	100000	4	0.000813007354736328
+vector	var	var($x)	100000	5	0.000819285710652669
+vector	var	var($x)	100000	6	0.000812053680419922
+vector	quantile	quantile(x => $x, probs => [.25,.5,.75])	100000	0	0.0135769844055176
+vector	quantile	quantile(x => $x, probs => [.25,.5,.75])	100000	1	0.0132598876953125
+vector	quantile	quantile(x => $x, probs => [.25,.5,.75])	100000	2	0.0132749080657959
+vector	quantile	quantile(x => $x, probs => [.25,.5,.75])	100000	3	0.0132429599761963
+vector	quantile	quantile(x => $x, probs => [.25,.5,.75])	100000	4	0.0132529735565186
+vector	quantile	quantile(x => $x, probs => [.25,.5,.75])	100000	5	0.013247013092041
+vector	quantile	quantile(x => $x, probs => [.25,.5,.75])	100000	6	0.0132300853729248
+vector	cor	cor($x, $y)	100000	0	0.00195300579071045
+vector	cor	cor($x, $y)	100000	1	0.00195193290710449
+vector	cor	cor($x, $y)	100000	2	0.00195193290710449
+vector	cor	cor($x, $y)	100000	3	0.00195395946502686
+vector	cor	cor($x, $y)	100000	4	0.00195252895355225
+vector	cor	cor($x, $y)	100000	5	0.00195050239562988
+vector	cor	cor($x, $y)	100000	6	0.0019528865814209
+vector	cov	cov($x, $y)	100000	0	0.00267791748046875
+vector	cov	cov($x, $y)	100000	1	0.00269818305969238
+vector	cov	cov($x, $y)	100000	2	0.00269198417663574
+vector	cov	cov($x, $y)	100000	3	0.00268816947937012
+vector	cov	cov($x, $y)	100000	4	0.0026860237121582
+vector	cov	cov($x, $y)	100000	5	0.00269293785095215
+vector	cov	cov($x, $y)	100000	6	0.00269699096679688
+vector	skew	skew($x)	100000	0	0.00115954875946045
+vector	skew	skew($x)	100000	1	0.00115406513214111
+vector	skew	skew($x)	100000	2	0.00115907192230225
+vector	skew	skew($x)	100000	3	0.00115907192230225
+vector	skew	skew($x)	100000	4	0.00115644931793213
+vector	skew	skew($x)	100000	5	0.00115847587585449
+vector	skew	skew($x)	100000	6	0.00117599964141846
+vector	kurtosis	kurtosis($x)	100000	0	0.00115954875946045
+vector	kurtosis	kurtosis($x)	100000	1	0.00115644931793213
+vector	kurtosis	kurtosis($x)	100000	2	0.00115501880645752
+vector	kurtosis	kurtosis($x)	100000	3	0.00115394592285156
+vector	kurtosis	kurtosis($x)	100000	4	0.00115752220153809
+vector	kurtosis	kurtosis($x)	100000	5	0.00116097927093506
+vector	kurtosis	kurtosis($x)	100000	6	0.00115501880645752
+vector	sum	sum($x)	300000	0	0.00120198726654053
+vector	sum	sum($x)	300000	1	0.00119900703430176
+vector	sum	sum($x)	300000	2	0.001198410987854
+vector	sum	sum($x)	300000	3	0.00119698047637939
+vector	sum	sum($x)	300000	4	0.00121450424194336
+vector	sum	sum($x)	300000	5	0.00119554996490479
+vector	sum	sum($x)	300000	6	0.00119554996490479
+vector	min	min($x)	300000	0	0.00134098529815674
+vector	min	min($x)	300000	1	0.00125753879547119
+vector	min	min($x)	300000	2	0.00126159191131592
+vector	min	min($x)	300000	3	0.00125706195831299
+vector	min	min($x)	300000	4	0.00127208232879639
+vector	min	min($x)	300000	5	0.00125801563262939
+vector	min	min($x)	300000	6	0.00125348567962646
+vector	max	max($x)	300000	0	0.0012434720993042
+vector	max	max($x)	300000	1	0.00124704837799072
+vector	max	max($x)	300000	2	0.00124597549438477
+vector	max	max($x)	300000	3	0.00124752521514893
+vector	max	max($x)	300000	4	0.001242995262146
+vector	max	max($x)	300000	5	0.00124549865722656
+vector	max	max($x)	300000	6	0.00124847888946533
+vector	mean	mean($x)	300000	0	0.00118803977966309
+vector	mean	mean($x)	300000	1	0.00118899345397949
+vector	mean	mean($x)	300000	2	0.00119447708129883
+vector	mean	mean($x)	300000	3	0.00119447708129883
+vector	mean	mean($x)	300000	4	0.00119149684906006
+vector	mean	mean($x)	300000	5	0.00118803977966309
+vector	mean	mean($x)	300000	6	0.00118148326873779
+vector	median	median($x)	300000	0	0.00466179847717285
+vector	median	median($x)	300000	1	0.00465106964111328
+vector	median	median($x)	300000	2	0.0046379566192627
+vector	median	median($x)	300000	3	0.0046851634979248
+vector	median	median($x)	300000	4	0.00466108322143555
+vector	median	median($x)	300000	5	0.00462794303894043
+vector	median	median($x)	300000	6	0.00462508201599121
+vector	sd	sd($x)	300000	0	0.00249314308166504
+vector	sd	sd($x)	300000	1	0.00249314308166504
+vector	sd	sd($x)	300000	2	0.00247406959533691
+vector	sd	sd($x)	300000	3	0.00249290466308594
+vector	sd	sd($x)	300000	4	0.00248908996582031
+vector	sd	sd($x)	300000	5	0.00244998931884766
+vector	sd	sd($x)	300000	6	0.00249600410461426
+vector	var	var($x)	300000	0	0.00243687629699707
+vector	var	var($x)	300000	1	0.00242900848388672
+vector	var	var($x)	300000	2	0.00243902206420898
+vector	var	var($x)	300000	3	0.00245881080627441
+vector	var	var($x)	300000	4	0.00244998931884766
+vector	var	var($x)	300000	5	0.00244784355163574
+vector	var	var($x)	300000	6	0.00243210792541504
+vector	quantile	quantile(x => $x, probs => [.25,.5,.75])	300000	0	0.0436990261077881
+vector	quantile	quantile(x => $x, probs => [.25,.5,.75])	300000	1	0.043597936630249
+vector	quantile	quantile(x => $x, probs => [.25,.5,.75])	300000	2	0.0435769557952881
+vector	quantile	quantile(x => $x, probs => [.25,.5,.75])	300000	3	0.0445160865783691
+vector	quantile	quantile(x => $x, probs => [.25,.5,.75])	300000	4	0.0435669422149658
+vector	quantile	quantile(x => $x, probs => [.25,.5,.75])	300000	5	0.0436491966247559
+vector	quantile	quantile(x => $x, probs => [.25,.5,.75])	300000	6	0.0435791015625
+vector	cor	cor($x, $y)	300000	0	0.00613498687744141
+vector	cor	cor($x, $y)	300000	1	0.00599813461303711
+vector	cor	cor($x, $y)	300000	2	0.00602102279663086
+vector	cor	cor($x, $y)	300000	3	0.00602102279663086
+vector	cor	cor($x, $y)	300000	4	0.00601291656494141
+vector	cor	cor($x, $y)	300000	5	0.00601482391357422
+vector	cor	cor($x, $y)	300000	6	0.00603294372558594
+vector	cov	cov($x, $y)	300000	0	0.00820493698120117
+vector	cov	cov($x, $y)	300000	1	0.00826811790466309
+vector	cov	cov($x, $y)	300000	2	0.00822091102600098
+vector	cov	cov($x, $y)	300000	3	0.00823807716369629
+vector	cov	cov($x, $y)	300000	4	0.00821304321289062
+vector	cov	cov($x, $y)	300000	5	0.00825810432434082
+vector	cov	cov($x, $y)	300000	6	0.00823092460632324
+vector	skew	skew($x)	300000	0	0.0034639835357666
+vector	skew	skew($x)	300000	1	0.00348997116088867
+vector	skew	skew($x)	300000	2	0.00347089767456055
+vector	skew	skew($x)	300000	3	0.00347685813903809
+vector	skew	skew($x)	300000	4	0.00346994400024414
+vector	skew	skew($x)	300000	5	0.00347304344177246
+vector	skew	skew($x)	300000	6	0.00348114967346191
+vector	kurtosis	kurtosis($x)	300000	0	0.00348997116088867
+vector	kurtosis	kurtosis($x)	300000	1	0.00347590446472168
+vector	kurtosis	kurtosis($x)	300000	2	0.00347590446472168
+vector	kurtosis	kurtosis($x)	300000	3	0.00346708297729492
+vector	kurtosis	kurtosis($x)	300000	4	0.0034492015838623
+vector	kurtosis	kurtosis($x)	300000	5	0.0034480094909668
+vector	kurtosis	kurtosis($x)	300000	6	0.00345492362976074
+vector	sum	sum($x)	1000000	0	0.00408411026000977
+vector	sum	sum($x)	1000000	1	0.00409984588623047
+vector	sum	sum($x)	1000000	2	0.00409197807312012
+vector	sum	sum($x)	1000000	3	0.00409483909606934
+vector	sum	sum($x)	1000000	4	0.00409603118896484
+vector	sum	sum($x)	1000000	5	0.00409078598022461
+vector	sum	sum($x)	1000000	6	0.00407290458679199
+vector	min	min($x)	1000000	0	0.0042870044708252
+vector	min	min($x)	1000000	1	0.00429511070251465
+vector	min	min($x)	1000000	2	0.00430703163146973
+vector	min	min($x)	1000000	3	0.00438690185546875
+vector	min	min($x)	1000000	4	0.00429701805114746
+vector	min	min($x)	1000000	5	0.00445795059204102
+vector	min	min($x)	1000000	6	0.00429606437683105
+vector	max	max($x)	1000000	0	0.00426793098449707
+vector	max	max($x)	1000000	1	0.00426483154296875
+vector	max	max($x)	1000000	2	0.0042569637298584
+vector	max	max($x)	1000000	3	0.00428199768066406
+vector	max	max($x)	1000000	4	0.00430202484130859
+vector	max	max($x)	1000000	5	0.00427103042602539
+vector	max	max($x)	1000000	6	0.00425195693969727
+vector	mean	mean($x)	1000000	0	0.00408005714416504
+vector	mean	mean($x)	1000000	1	0.0040900707244873
+vector	mean	mean($x)	1000000	2	0.00407218933105469
+vector	mean	mean($x)	1000000	3	0.00408411026000977
+vector	mean	mean($x)	1000000	4	0.00408506393432617
+vector	mean	mean($x)	1000000	5	0.00407505035400391
+vector	mean	mean($x)	1000000	6	0.00407505035400391
+vector	median	median($x)	1000000	0	0.0136749744415283
+vector	median	median($x)	1000000	1	0.0139360427856445
+vector	median	median($x)	1000000	2	0.0138499736785889
+vector	median	median($x)	1000000	3	0.0137438774108887
+vector	median	median($x)	1000000	4	0.0143380165100098
+vector	median	median($x)	1000000	5	0.0136771202087402
+vector	median	median($x)	1000000	6	0.0138111114501953
+vector	sd	sd($x)	1000000	0	0.00824809074401855
+vector	sd	sd($x)	1000000	1	0.00826716423034668
+vector	sd	sd($x)	1000000	2	0.0082709789276123
+vector	sd	sd($x)	1000000	3	0.00831699371337891
+vector	sd	sd($x)	1000000	4	0.00831508636474609
+vector	sd	sd($x)	1000000	5	0.00830292701721191
+vector	sd	sd($x)	1000000	6	0.00837302207946777
+vector	var	var($x)	1000000	0	0.00819206237792969
+vector	var	var($x)	1000000	1	0.00816106796264648
+vector	var	var($x)	1000000	2	0.00818610191345215
+vector	var	var($x)	1000000	3	0.00821685791015625
+vector	var	var($x)	1000000	4	0.0081479549407959
+vector	var	var($x)	1000000	5	0.00817584991455078
+vector	var	var($x)	1000000	6	0.00813198089599609
+vector	quantile	quantile(x => $x, probs => [.25,.5,.75])	1000000	0	0.163991928100586
+vector	quantile	quantile(x => $x, probs => [.25,.5,.75])	1000000	1	0.163349866867065
+vector	quantile	quantile(x => $x, probs => [.25,.5,.75])	1000000	2	0.163568019866943
+vector	quantile	quantile(x => $x, probs => [.25,.5,.75])	1000000	3	0.163418054580688
+vector	quantile	quantile(x => $x, probs => [.25,.5,.75])	1000000	4	0.163931131362915
+vector	quantile	quantile(x => $x, probs => [.25,.5,.75])	1000000	5	0.163516044616699
+vector	quantile	quantile(x => $x, probs => [.25,.5,.75])	1000000	6	0.159857034683228
+vector	cor	cor($x, $y)	1000000	0	0.0204801559448242
+vector	cor	cor($x, $y)	1000000	1	0.0205152034759521
+vector	cor	cor($x, $y)	1000000	2	0.0206320285797119
+vector	cor	cor($x, $y)	1000000	3	0.0204930305480957
+vector	cor	cor($x, $y)	1000000	4	0.0205562114715576
+vector	cor	cor($x, $y)	1000000	5	0.0205779075622559
+vector	cor	cor($x, $y)	1000000	6	0.0205669403076172
+vector	cov	cov($x, $y)	1000000	0	0.0278818607330322
+vector	cov	cov($x, $y)	1000000	1	0.0278980731964111
+vector	cov	cov($x, $y)	1000000	2	0.0277619361877441
+vector	cov	cov($x, $y)	1000000	3	0.0278751850128174
+vector	cov	cov($x, $y)	1000000	4	0.0278048515319824
+vector	cov	cov($x, $y)	1000000	5	0.0279190540313721
+vector	cov	cov($x, $y)	1000000	6	0.0278110504150391
+vector	skew	skew($x)	1000000	0	0.0115730762481689
+vector	skew	skew($x)	1000000	1	0.0115711688995361
+vector	skew	skew($x)	1000000	2	0.0115690231323242
+vector	skew	skew($x)	1000000	3	0.0115299224853516
+vector	skew	skew($x)	1000000	4	0.011570930480957
+vector	skew	skew($x)	1000000	5	0.0116109848022461
+vector	skew	skew($x)	1000000	6	0.011559009552002
+vector	kurtosis	kurtosis($x)	1000000	0	0.0116288661956787
+vector	kurtosis	kurtosis($x)	1000000	1	0.0115501880645752
+vector	kurtosis	kurtosis($x)	1000000	2	0.0115659236907959
+vector	kurtosis	kurtosis($x)	1000000	3	0.0115790367126465
+vector	kurtosis	kurtosis($x)	1000000	4	0.0115859508514404
+vector	kurtosis	kurtosis($x)	1000000	5	0.0115950107574463
+vector	kurtosis	kurtosis($x)	1000000	6	0.0116298198699951
+transform	rank	rank($x)	1000	0	0.000103936475865981
+transform	rank	rank($x)	1000	1	9.98841391669379e-05
+transform	rank	rank($x)	1000	2	9.80025843570107e-05
+transform	rank	rank($x)	1000	3	9.82522964477539e-05
+transform	rank	rank($x)	1000	4	9.82660996286493e-05
+transform	rank	rank($x)	1000	5	9.76085662841797e-05
+transform	rank	rank($x)	1000	6	9.81029711271587e-05
+transform	uniq	uniq($x)	1000	0	0.000300305230276925
+transform	uniq	uniq($x)	1000	1	0.000297273908342634
+transform	uniq	uniq($x)	1000	2	0.000292573656354632
+transform	uniq	uniq($x)	1000	3	0.000298159463065011
+transform	uniq	uniq($x)	1000	4	0.000294719423566546
+transform	uniq	uniq($x)	1000	5	0.000297137669154576
+transform	uniq	uniq($x)	1000	6	0.000294855662754604
+transform	scale	scale($x)	1000	0	1.84853871663411e-05
+transform	scale	scale($x)	1000	1	1.80328885714213e-05
+transform	scale	scale($x)	1000	2	1.81425185430618e-05
+transform	scale	scale($x)	1000	3	1.80841606354045e-05
+transform	scale	scale($x)	1000	4	1.82133968745437e-05
+transform	scale	scale($x)	1000	5	1.79791450500488e-05
+transform	scale	scale($x)	1000	6	1.8037368203992e-05
+transform	sample	sample($x, n/10)	1000	0	2.07038152785528e-06
+transform	sample	sample($x, n/10)	1000	1	2.11681638445173e-06
+transform	sample	sample($x, n/10)	1000	2	2.05276182192398e-06
+transform	sample	sample($x, n/10)	1000	3	2.15167231604042e-06
+transform	sample	sample($x, n/10)	1000	4	2.23698403671203e-06
+transform	sample	sample($x, n/10)	1000	5	2.14190618229298e-06
+transform	sample	sample($x, n/10)	1000	6	2.06902924819514e-06
+transform	seq	seq(1, n)	1000	0	8.53189607945884e-06
+transform	seq	seq(1, n)	1000	1	8.56352634117252e-06
+transform	seq	seq(1, n)	1000	2	8.66964542665961e-06
+transform	seq	seq(1, n)	1000	3	8.5294246673584e-06
+transform	seq	seq(1, n)	1000	4	8.59239247924123e-06
+transform	seq	seq(1, n)	1000	5	8.53896141052246e-06
+transform	seq	seq(1, n)	1000	6	8.62002372741699e-06
+transform	auc	auc($y, $label)	1000	0	0.000201892852783203
+transform	auc	auc($y, $label)	1000	1	0.000201606750488281
+transform	auc	auc($y, $label)	1000	2	0.000200796127319336
+transform	auc	auc($y, $label)	1000	3	0.000200605392456055
+transform	auc	auc($y, $label)	1000	4	0.000200581550598145
+transform	auc	auc($y, $label)	1000	5	0.000201821327209473
+transform	auc	auc($y, $label)	1000	6	0.000201106071472168
+transform	rank	rank($x)	3000	0	0.000362833340962728
+transform	rank	rank($x)	3000	1	0.000363985697428385
+transform	rank	rank($x)	3000	2	0.000360488891601562
+transform	rank	rank($x)	3000	3	0.000357667605082194
+transform	rank	rank($x)	3000	4	0.000359336535135905
+transform	rank	rank($x)	3000	5	0.000358978907267253
+transform	rank	rank($x)	3000	6	0.000357667605082194
+transform	uniq	uniq($x)	3000	0	0.000945647557576497
+transform	uniq	uniq($x)	3000	1	0.000942627588907878
+transform	uniq	uniq($x)	3000	2	0.000938971837361654
+transform	uniq	uniq($x)	3000	3	0.000960350036621094
+transform	uniq	uniq($x)	3000	4	0.000942707061767578
+transform	uniq	uniq($x)	3000	5	0.00094302495320638
+transform	uniq	uniq($x)	3000	6	0.000946998596191406
+transform	scale	scale($x)	3000	0	5.49458168648385e-05
+transform	scale	scale($x)	3000	1	5.44720225863987e-05
+transform	scale	scale($x)	3000	2	5.48362731933594e-05
+transform	scale	scale($x)	3000	3	5.44883109427787e-05
+transform	scale	scale($x)	3000	4	5.48620481748839e-05
+transform	scale	scale($x)	3000	5	5.46749900369083e-05
+transform	scale	scale($x)	3000	6	5.40823549837679e-05
+transform	sample	sample($x, n/10)	3000	0	6.23097786536584e-06
+transform	sample	sample($x, n/10)	3000	1	7.03618639991397e-06
+transform	sample	sample($x, n/10)	3000	2	6.27899942127799e-06
+transform	sample	sample($x, n/10)	3000	3	6.37278837316176e-06
+transform	sample	sample($x, n/10)	3000	4	6.32822754894674e-06
+transform	sample	sample($x, n/10)	3000	5	7.3096331428079e-06
+transform	sample	sample($x, n/10)	3000	6	6.83768042202654e-06
+transform	seq	seq(1, n)	3000	0	2.68950391171583e-05
+transform	seq	seq(1, n)	3000	1	2.62082512698956e-05
+transform	seq	seq(1, n)	3000	2	2.63883007897271e-05
+transform	seq	seq(1, n)	3000	3	2.64549255371094e-05
+transform	seq	seq(1, n)	3000	4	2.68055333031548e-05
+transform	seq	seq(1, n)	3000	5	2.72177267765653e-05
+transform	seq	seq(1, n)	3000	6	2.68353356255425e-05
+transform	auc	auc($y, $label)	3000	0	0.00073401133219401
+transform	auc	auc($y, $label)	3000	1	0.000730673472086589
+transform	auc	auc($y, $label)	3000	2	0.000730991363525391
+transform	auc	auc($y, $label)	3000	3	0.000738302866617839
+transform	auc	auc($y, $label)	3000	4	0.000732660293579102
+transform	auc	auc($y, $label)	3000	5	0.000730673472086589
+transform	auc	auc($y, $label)	3000	6	0.000728686650594076
+transform	rank	rank($x)	10000	0	0.00136840343475342
+transform	rank	rank($x)	10000	1	0.00137197971343994
+transform	rank	rank($x)	10000	2	0.00137054920196533
+transform	rank	rank($x)	10000	3	0.00136697292327881
+transform	rank	rank($x)	10000	4	0.0013655424118042
+transform	rank	rank($x)	10000	5	0.0013660192489624
+transform	rank	rank($x)	10000	6	0.00136196613311768
+transform	uniq	uniq($x)	10000	0	0.00325298309326172
+transform	uniq	uniq($x)	10000	1	0.00324010848999023
+transform	uniq	uniq($x)	10000	2	0.0032660961151123
+transform	uniq	uniq($x)	10000	3	0.00327014923095703
+transform	uniq	uniq($x)	10000	4	0.00326299667358398
+transform	uniq	uniq($x)	10000	5	0.00327897071838379
+transform	uniq	uniq($x)	10000	6	0.00330305099487305
+transform	scale	scale($x)	10000	0	0.000182455236261541
+transform	scale	scale($x)	10000	1	0.000183625654740767
+transform	scale	scale($x)	10000	2	0.000183365561745384
+transform	scale	scale($x)	10000	3	0.00018399411981756
+transform	scale	scale($x)	10000	4	0.000184535980224609
+transform	scale	scale($x)	10000	5	0.000182260166515004
+transform	scale	scale($x)	10000	6	0.000182251135508219
+transform	sample	sample($x, n/10)	10000	0	2.14298050124924e-05
+transform	sample	sample($x, n/10)	10000	1	2.2324648770419e-05
+transform	sample	sample($x, n/10)	10000	2	2.1788477897644e-05
+transform	sample	sample($x, n/10)	10000	3	2.16666563057605e-05
+transform	sample	sample($x, n/10)	10000	4	2.25030458890475e-05
+transform	sample	sample($x, n/10)	10000	5	2.0599365234375e-05
+transform	sample	sample($x, n/10)	10000	6	2.23091670445033e-05
+transform	seq	seq(1, n)	10000	0	8.88466835021973e-05
+transform	seq	seq(1, n)	10000	1	9.06857577237216e-05
+transform	seq	seq(1, n)	10000	2	9.02305949818004e-05
+transform	seq	seq(1, n)	10000	3	8.9313672936481e-05
+transform	seq	seq(1, n)	10000	4	9.15640876406715e-05
+transform	seq	seq(1, n)	10000	5	9.18030738830566e-05
+transform	seq	seq(1, n)	10000	6	9.05513763427734e-05
+transform	auc	auc($y, $label)	10000	0	0.00282692909240723
+transform	auc	auc($y, $label)	10000	1	0.00280904769897461
+transform	auc	auc($y, $label)	10000	2	0.00281310081481934
+transform	auc	auc($y, $label)	10000	3	0.00281620025634766
+transform	auc	auc($y, $label)	10000	4	0.00281286239624023
+transform	auc	auc($y, $label)	10000	5	0.00281691551208496
+transform	auc	auc($y, $label)	10000	6	0.00281286239624023
+transform	rank	rank($x)	30000	0	0.00456500053405762
+transform	rank	rank($x)	30000	1	0.00458383560180664
+transform	rank	rank($x)	30000	2	0.00458598136901855
+transform	rank	rank($x)	30000	3	0.00456714630126953
+transform	rank	rank($x)	30000	4	0.00458383560180664
+transform	rank	rank($x)	30000	5	0.00458478927612305
+transform	rank	rank($x)	30000	6	0.00457215309143066
+transform	uniq	uniq($x)	30000	0	0.0106701850891113
+transform	uniq	uniq($x)	30000	1	0.0107450485229492
+transform	uniq	uniq($x)	30000	2	0.010699987411499
+transform	uniq	uniq($x)	30000	3	0.0107309818267822
+transform	uniq	uniq($x)	30000	4	0.0106551647186279
+transform	uniq	uniq($x)	30000	5	0.0108599662780762
+transform	uniq	uniq($x)	30000	6	0.0107169151306152
+transform	scale	scale($x)	30000	0	0.000571012496948242
+transform	scale	scale($x)	30000	1	0.000553011894226074
+transform	scale	scale($x)	30000	2	0.000555515289306641
+transform	scale	scale($x)	30000	3	0.000555276870727539
+transform	scale	scale($x)	30000	4	0.000550985336303711
+transform	scale	scale($x)	30000	5	0.000550508499145508
+transform	scale	scale($x)	30000	6	0.000551462173461914
+transform	sample	sample($x, n/10)	30000	0	7.08699226379395e-05
+transform	sample	sample($x, n/10)	30000	1	6.63910593305315e-05
+transform	sample	sample($x, n/10)	30000	2	6.83110335777546e-05
+transform	sample	sample($x, n/10)	30000	3	7.01904296875e-05
+transform	sample	sample($x, n/10)	30000	4	7.74531528867524e-05
+transform	sample	sample($x, n/10)	30000	5	7.37263606144832e-05
+transform	sample	sample($x, n/10)	30000	6	7.23259789603097e-05
+transform	seq	seq(1, n)	30000	0	0.000272631645202637
+transform	seq	seq(1, n)	30000	1	0.000275373458862305
+transform	seq	seq(1, n)	30000	2	0.000275254249572754
+transform	seq	seq(1, n)	30000	3	0.000274360179901123
+transform	seq	seq(1, n)	30000	4	0.000278983797345843
+transform	seq	seq(1, n)	30000	5	0.000275254249572754
+transform	seq	seq(1, n)	30000	6	0.000275254249572754
+transform	auc	auc($y, $label)	30000	0	0.00941681861877441
+transform	auc	auc($y, $label)	30000	1	0.00938916206359863
+transform	auc	auc($y, $label)	30000	2	0.00940489768981934
+transform	auc	auc($y, $label)	30000	3	0.00940513610839844
+transform	auc	auc($y, $label)	30000	4	0.00938606262207031
+transform	auc	auc($y, $label)	30000	5	0.0094139575958252
+transform	auc	auc($y, $label)	30000	6	0.00944995880126953
+transform	rank	rank($x)	100000	0	0.0170471668243408
+transform	rank	rank($x)	100000	1	0.0170841217041016
+transform	rank	rank($x)	100000	2	0.0170369148254395
+transform	rank	rank($x)	100000	3	0.0171210765838623
+transform	rank	rank($x)	100000	4	0.017024040222168
+transform	rank	rank($x)	100000	5	0.0169789791107178
+transform	rank	rank($x)	100000	6	0.0169830322265625
+transform	uniq	uniq($x)	100000	0	0.0417659282684326
+transform	uniq	uniq($x)	100000	1	0.0421900749206543
+transform	uniq	uniq($x)	100000	2	0.0418920516967773
+transform	uniq	uniq($x)	100000	3	0.0424630641937256
+transform	uniq	uniq($x)	100000	4	0.0430600643157959
+transform	uniq	uniq($x)	100000	5	0.0418300628662109
+transform	uniq	uniq($x)	100000	6	0.0419511795043945
+transform	scale	scale($x)	100000	0	0.00187742710113525
+transform	scale	scale($x)	100000	1	0.00187301635742188
+transform	scale	scale($x)	100000	2	0.00186002254486084
+transform	scale	scale($x)	100000	3	0.00187444686889648
+transform	scale	scale($x)	100000	4	0.001861572265625
+transform	scale	scale($x)	100000	5	0.00185596942901611
+transform	scale	scale($x)	100000	6	0.00187444686889648
+transform	sample	sample($x, n/10)	100000	0	0.000324686368306478
+transform	sample	sample($x, n/10)	100000	1	0.000301837921142578
+transform	sample	sample($x, n/10)	100000	2	0.000304490327835083
+transform	sample	sample($x, n/10)	100000	3	0.000307520230611165
+transform	sample	sample($x, n/10)	100000	4	0.000265747308731079
+transform	sample	sample($x, n/10)	100000	5	0.000271797180175781
+transform	sample	sample($x, n/10)	100000	6	0.000297009944915771
+transform	seq	seq(1, n)	100000	0	0.000945329666137695
+transform	seq	seq(1, n)	100000	1	0.00094294548034668
+transform	seq	seq(1, n)	100000	2	0.00094000498453776
+transform	seq	seq(1, n)	100000	3	0.000938018163045247
+transform	seq	seq(1, n)	100000	4	0.00102066993713379
+transform	seq	seq(1, n)	100000	5	0.00098570187886556
+transform	seq	seq(1, n)	100000	6	0.000945329666137695
+transform	auc	auc($y, $label)	100000	0	0.0349299907684326
+transform	auc	auc($y, $label)	100000	1	0.0350520610809326
+transform	auc	auc($y, $label)	100000	2	0.0350098609924316
+transform	auc	auc($y, $label)	100000	3	0.035081148147583
+transform	auc	auc($y, $label)	100000	4	0.0349571704864502
+transform	auc	auc($y, $label)	100000	5	0.0350220203399658
+transform	auc	auc($y, $label)	100000	6	0.0349719524383545
+transform	rank	rank($x)	300000	0	0.0561361312866211
+transform	rank	rank($x)	300000	1	0.0561368465423584
+transform	rank	rank($x)	300000	2	0.0562520027160645
+transform	rank	rank($x)	300000	3	0.0562601089477539
+transform	rank	rank($x)	300000	4	0.0561060905456543
+transform	rank	rank($x)	300000	5	0.0563728809356689
+transform	rank	rank($x)	300000	6	0.0561039447784424
+transform	uniq	uniq($x)	300000	0	0.178368091583252
+transform	uniq	uniq($x)	300000	1	0.17879581451416
+transform	uniq	uniq($x)	300000	2	0.185245990753174
+transform	uniq	uniq($x)	300000	3	0.179871082305908
+transform	uniq	uniq($x)	300000	4	0.177145004272461
+transform	uniq	uniq($x)	300000	5	0.179389953613281
+transform	uniq	uniq($x)	300000	6	0.179311037063599
+transform	scale	scale($x)	300000	0	0.00582385063171387
+transform	scale	scale($x)	300000	1	0.00587701797485352
+transform	scale	scale($x)	300000	2	0.00592494010925293
+transform	scale	scale($x)	300000	3	0.00584602355957031
+transform	scale	scale($x)	300000	4	0.00590682029724121
+transform	scale	scale($x)	300000	5	0.00603485107421875
+transform	scale	scale($x)	300000	6	0.00592589378356934
+transform	sample	sample($x, n/10)	300000	0	0.00136089324951172
+transform	sample	sample($x, n/10)	300000	1	0.00127494335174561
+transform	sample	sample($x, n/10)	300000	2	0.00132095813751221
+transform	sample	sample($x, n/10)	300000	3	0.00126552581787109
+transform	sample	sample($x, n/10)	300000	4	0.00118649005889893
+transform	sample	sample($x, n/10)	300000	5	0.00133144855499268
+transform	sample	sample($x, n/10)	300000	6	0.00125455856323242
+transform	seq	seq(1, n)	300000	0	0.00291895866394043
+transform	seq	seq(1, n)	300000	1	0.00289106369018555
+transform	seq	seq(1, n)	300000	2	0.00298500061035156
+transform	seq	seq(1, n)	300000	3	0.00289797782897949
+transform	seq	seq(1, n)	300000	4	0.00291109085083008
+transform	seq	seq(1, n)	300000	5	0.00287699699401855
+transform	seq	seq(1, n)	300000	6	0.00294184684753418
+transform	auc	auc($y, $label)	300000	0	0.120306968688965
+transform	auc	auc($y, $label)	300000	1	0.120378971099854
+transform	auc	auc($y, $label)	300000	2	0.120550870895386
+transform	auc	auc($y, $label)	300000	3	0.120630025863647
+transform	auc	auc($y, $label)	300000	4	0.120112180709839
+transform	auc	auc($y, $label)	300000	5	0.120308876037598
+transform	auc	auc($y, $label)	300000	6	0.120221138000488
+transform	rank	rank($x)	1000000	0	0.220325946807861
+transform	rank	rank($x)	1000000	1	0.220309019088745
+transform	rank	rank($x)	1000000	2	0.220044136047363
+transform	rank	rank($x)	1000000	3	0.220474004745483
+transform	rank	rank($x)	1000000	4	0.220216989517212
+transform	rank	rank($x)	1000000	5	0.220088958740234
+transform	rank	rank($x)	1000000	6	0.219918012619019
+transform	uniq	uniq($x)	1000000	0	0.808939933776855
+transform	uniq	uniq($x)	1000000	1	0.81219220161438
+transform	uniq	uniq($x)	1000000	2	0.809638977050781
+transform	uniq	uniq($x)	1000000	3	0.813572883605957
+transform	uniq	uniq($x)	1000000	4	0.810636043548584
+transform	uniq	uniq($x)	1000000	5	0.810180902481079
+transform	uniq	uniq($x)	1000000	6	0.808860063552856
+transform	scale	scale($x)	1000000	0	0.0223550796508789
+transform	scale	scale($x)	1000000	1	0.0223698616027832
+transform	scale	scale($x)	1000000	2	0.0224418640136719
+transform	scale	scale($x)	1000000	3	0.0223641395568848
+transform	scale	scale($x)	1000000	4	0.0224418640136719
+transform	scale	scale($x)	1000000	5	0.022212028503418
+transform	scale	scale($x)	1000000	6	0.0225260257720947
+transform	sample	sample($x, n/10)	1000000	0	0.00664186477661133
+transform	sample	sample($x, n/10)	1000000	1	0.00667786598205566
+transform	sample	sample($x, n/10)	1000000	2	0.00643610954284668
+transform	sample	sample($x, n/10)	1000000	3	0.00732517242431641
+transform	sample	sample($x, n/10)	1000000	4	0.00660085678100586
+transform	sample	sample($x, n/10)	1000000	5	0.00756001472473145
+transform	sample	sample($x, n/10)	1000000	6	0.00757908821105957
+transform	seq	seq(1, n)	1000000	0	0.0129959583282471
+transform	seq	seq(1, n)	1000000	1	0.0130190849304199
+transform	seq	seq(1, n)	1000000	2	0.0130269527435303
+transform	seq	seq(1, n)	1000000	3	0.0127799510955811
+transform	seq	seq(1, n)	1000000	4	0.0128271579742432
+transform	seq	seq(1, n)	1000000	5	0.0128459930419922
+transform	seq	seq(1, n)	1000000	6	0.0127930641174316
+transform	auc	auc($y, $label)	1000000	0	0.440283060073853
+transform	auc	auc($y, $label)	1000000	1	0.440289974212646
+transform	auc	auc($y, $label)	1000000	2	0.440069198608398
+transform	auc	auc($y, $label)	1000000	3	0.43921685218811
+transform	auc	auc($y, $label)	1000000	4	0.439467906951904
+transform	auc	auc($y, $label)	1000000	5	0.440097093582153
+transform	auc	auc($y, $label)	1000000	6	0.440237998962402
+io	read_table (csv, numeric)	read_table('num.csv')	1000	0	0.00150048732757568
+io	read_table (csv, numeric)	read_table('num.csv')	1000	1	0.00150740146636963
+io	read_table (csv, numeric)	read_table('num.csv')	1000	2	0.00149500370025635
+io	read_table (csv, numeric)	read_table('num.csv')	1000	3	0.00150346755981445
+io	read_table (csv, numeric)	read_table('num.csv')	1000	4	0.00149154663085938
+io	read_table (csv, numeric)	read_table('num.csv')	1000	5	0.00149655342102051
+io	read_table (csv, numeric)	read_table('num.csv')	1000	6	0.00149905681610107
+io	read_table (csv, mixed)	read_table('mix.csv')	1000	0	0.00169408321380615
+io	read_table (csv, mixed)	read_table('mix.csv')	1000	1	0.00169098377227783
+io	read_table (csv, mixed)	read_table('mix.csv')	1000	2	0.00168848037719727
+io	read_table (csv, mixed)	read_table('mix.csv')	1000	3	0.00169551372528076
+io	read_table (csv, mixed)	read_table('mix.csv')	1000	4	0.0016864538192749
+io	read_table (csv, mixed)	read_table('mix.csv')	1000	5	0.00169849395751953
+io	read_table (csv, mixed)	read_table('mix.csv')	1000	6	0.00168800354003906
+io	read_table (tsv, mixed)	read_table('mix.tsv')	1000	0	0.00167644023895264
+io	read_table (tsv, mixed)	read_table('mix.tsv')	1000	1	0.00169205665588379
+io	read_table (tsv, mixed)	read_table('mix.tsv')	1000	2	0.00168895721435547
+io	read_table (tsv, mixed)	read_table('mix.tsv')	1000	3	0.0016930103302002
+io	read_table (tsv, mixed)	read_table('mix.tsv')	1000	4	0.00168848037719727
+io	read_table (tsv, mixed)	read_table('mix.tsv')	1000	5	0.00169253349304199
+io	read_table (tsv, mixed)	read_table('mix.tsv')	1000	6	0.00169801712036133
+io	read_table (csv, hoa)	read_table('mix.csv', 'output.type' => 'hoa')	1000	0	0.0022590160369873
+io	read_table (csv, hoa)	read_table('mix.csv', 'output.type' => 'hoa')	1000	1	0.00225090980529785
+io	read_table (csv, hoa)	read_table('mix.csv', 'output.type' => 'hoa')	1000	2	0.00223207473754883
+io	read_table (csv, hoa)	read_table('mix.csv', 'output.type' => 'hoa')	1000	3	0.00223898887634277
+io	read_table (csv, hoa)	read_table('mix.csv', 'output.type' => 'hoa')	1000	4	0.00227212905883789
+io	read_table (csv, hoa)	read_table('mix.csv', 'output.type' => 'hoa')	1000	5	0.0022590160369873
+io	read_table (csv, hoa)	read_table('mix.csv', 'output.type' => 'hoa')	1000	6	0.00225400924682617
+io	write_table (csv, hoa)	write_table($hoa, file, 'row.names' => 0)	1000	0	0.00182168824332101
+io	write_table (csv, hoa)	write_table($hoa, file, 'row.names' => 0)	1000	1	0.000301565442766462
+io	write_table (csv, hoa)	write_table($hoa, file, 'row.names' => 0)	1000	2	0.000299998692103795
+io	write_table (csv, hoa)	write_table($hoa, file, 'row.names' => 0)	1000	3	0.000302280698503767
+io	write_table (csv, hoa)	write_table($hoa, file, 'row.names' => 0)	1000	4	0.000306844711303711
+io	write_table (csv, hoa)	write_table($hoa, file, 'row.names' => 0)	1000	5	0.000301837921142578
+io	write_table (csv, hoa)	write_table($hoa, file, 'row.names' => 0)	1000	6	0.000298704419817243
+io	write_table (tsv, hoa)	"write_table($hoa, file, sep => ""\t"", 'row.names' => 0)"	1000	0	0.000302587236676897
+io	write_table (tsv, hoa)	"write_table($hoa, file, sep => ""\t"", 'row.names' => 0)"	1000	1	0.000301122665405273
+io	write_table (tsv, hoa)	"write_table($hoa, file, sep => ""\t"", 'row.names' => 0)"	1000	2	0.000294855662754604
+io	write_table (tsv, hoa)	"write_table($hoa, file, sep => ""\t"", 'row.names' => 0)"	1000	3	0.000299147197178432
+io	write_table (tsv, hoa)	"write_table($hoa, file, sep => ""\t"", 'row.names' => 0)"	1000	4	0.000293595450265067
+io	write_table (tsv, hoa)	"write_table($hoa, file, sep => ""\t"", 'row.names' => 0)"	1000	5	0.000300850187029157
+io	write_table (tsv, hoa)	"write_table($hoa, file, sep => ""\t"", 'row.names' => 0)"	1000	6	0.000300850187029157
+io	write_table (csv, aoa)	write_table($aoa, file, 'row.names' => 0)	1000	0	0.000249465306599935
+io	write_table (csv, aoa)	write_table($aoa, file, 'row.names' => 0)	1000	1	0.000245783064100477
+io	write_table (csv, aoa)	write_table($aoa, file, 'row.names' => 0)	1000	2	0.000244776407877604
+io	write_table (csv, aoa)	write_table($aoa, file, 'row.names' => 0)	1000	3	0.000246127446492513
+io	write_table (csv, aoa)	write_table($aoa, file, 'row.names' => 0)	1000	4	0.000246657265557183
+io	write_table (csv, aoa)	write_table($aoa, file, 'row.names' => 0)	1000	5	0.000246233410305447
+io	write_table (csv, aoa)	write_table($aoa, file, 'row.names' => 0)	1000	6	0.00024610095553928
+io	write_table (csv, row.names)	write_table($hoa, file, 'row.names' => 1)	1000	0	0.00037086009979248
+io	write_table (csv, row.names)	write_table($hoa, file, 'row.names' => 1)	1000	1	0.000371654828389486
+io	write_table (csv, row.names)	write_table($hoa, file, 'row.names' => 1)	1000	2	0.000368158022562663
+io	write_table (csv, row.names)	write_table($hoa, file, 'row.names' => 1)	1000	3	0.00037233034769694
+io	write_table (csv, row.names)	write_table($hoa, file, 'row.names' => 1)	1000	4	0.000366806983947754
+io	write_table (csv, row.names)	write_table($hoa, file, 'row.names' => 1)	1000	5	0.000366489092508952
+io	write_table (csv, row.names)	write_table($hoa, file, 'row.names' => 1)	1000	6	0.000365296999613444
+io	read_table (csv, numeric)	read_table('num.csv')	3000	0	0.00441193580627441
+io	read_table (csv, numeric)	read_table('num.csv')	3000	1	0.0043790340423584
+io	read_table (csv, numeric)	read_table('num.csv')	3000	2	0.00441408157348633
+io	read_table (csv, numeric)	read_table('num.csv')	3000	3	0.00440788269042969
+io	read_table (csv, numeric)	read_table('num.csv')	3000	4	0.00439786911010742
+io	read_table (csv, numeric)	read_table('num.csv')	3000	5	0.00440192222595215
+io	read_table (csv, numeric)	read_table('num.csv')	3000	6	0.00437784194946289
+io	read_table (csv, mixed)	read_table('mix.csv')	3000	0	0.00485587120056152
+io	read_table (csv, mixed)	read_table('mix.csv')	3000	1	0.00478410720825195
+io	read_table (csv, mixed)	read_table('mix.csv')	3000	2	0.0048220157623291
+io	read_table (csv, mixed)	read_table('mix.csv')	3000	3	0.00480508804321289
+io	read_table (csv, mixed)	read_table('mix.csv')	3000	4	0.00483489036560059
+io	read_table (csv, mixed)	read_table('mix.csv')	3000	5	0.00484514236450195
+io	read_table (csv, mixed)	read_table('mix.csv')	3000	6	0.00483393669128418
+io	read_table (tsv, mixed)	read_table('mix.tsv')	3000	0	0.00495815277099609
+io	read_table (tsv, mixed)	read_table('mix.tsv')	3000	1	0.00500988960266113
+io	read_table (tsv, mixed)	read_table('mix.tsv')	3000	2	0.00485491752624512
+io	read_table (tsv, mixed)	read_table('mix.tsv')	3000	3	0.00479412078857422
+io	read_table (tsv, mixed)	read_table('mix.tsv')	3000	4	0.00480413436889648
+io	read_table (tsv, mixed)	read_table('mix.tsv')	3000	5	0.00482916831970215
+io	read_table (tsv, mixed)	read_table('mix.tsv')	3000	6	0.00483512878417969
+io	read_table (csv, hoa)	read_table('mix.csv', 'output.type' => 'hoa')	3000	0	0.00657796859741211
+io	read_table (csv, hoa)	read_table('mix.csv', 'output.type' => 'hoa')	3000	1	0.00659489631652832
+io	read_table (csv, hoa)	read_table('mix.csv', 'output.type' => 'hoa')	3000	2	0.00659990310668945
+io	read_table (csv, hoa)	read_table('mix.csv', 'output.type' => 'hoa')	3000	3	0.0065770149230957
+io	read_table (csv, hoa)	read_table('mix.csv', 'output.type' => 'hoa')	3000	4	0.00660586357116699
+io	read_table (csv, hoa)	read_table('mix.csv', 'output.type' => 'hoa')	3000	5	0.00664496421813965
+io	read_table (csv, hoa)	read_table('mix.csv', 'output.type' => 'hoa')	3000	6	0.00664091110229492
+io	write_table (csv, hoa)	write_table($hoa, file, 'row.names' => 0)	3000	0	0.00164103507995605
+io	write_table (csv, hoa)	write_table($hoa, file, 'row.names' => 0)	3000	1	0.000980019569396973
+io	write_table (csv, hoa)	write_table($hoa, file, 'row.names' => 0)	3000	2	0.000948270161946615
+io	write_table (csv, hoa)	write_table($hoa, file, 'row.names' => 0)	3000	3	0.000954627990722656
+io	write_table (csv, hoa)	write_table($hoa, file, 'row.names' => 0)	3000	4	0.000946601231892904
+io	write_table (csv, hoa)	write_table($hoa, file, 'row.names' => 0)	3000	5	0.00110292434692383
+io	write_table (csv, hoa)	write_table($hoa, file, 'row.names' => 0)	3000	6	0.000958998998006185
+io	write_table (tsv, hoa)	"write_table($hoa, file, sep => ""\t"", 'row.names' => 0)"	3000	0	0.000946680704752604
+io	write_table (tsv, hoa)	"write_table($hoa, file, sep => ""\t"", 'row.names' => 0)"	3000	1	0.000950336456298828
+io	write_table (tsv, hoa)	"write_table($hoa, file, sep => ""\t"", 'row.names' => 0)"	3000	2	0.000933965047200521
+io	write_table (tsv, hoa)	"write_table($hoa, file, sep => ""\t"", 'row.names' => 0)"	3000	3	0.000940720240275065
+io	write_table (tsv, hoa)	"write_table($hoa, file, sep => ""\t"", 'row.names' => 0)"	3000	4	0.000948667526245117
+io	write_table (tsv, hoa)	"write_table($hoa, file, sep => ""\t"", 'row.names' => 0)"	3000	5	0.000949303309122721
+io	write_table (tsv, hoa)	"write_table($hoa, file, sep => ""\t"", 'row.names' => 0)"	3000	6	0.000940640767415365
+io	write_table (csv, aoa)	write_table($aoa, file, 'row.names' => 0)	3000	0	0.000769694646199544
+io	write_table (csv, aoa)	write_table($aoa, file, 'row.names' => 0)	3000	1	0.000791708628336589
+io	write_table (csv, aoa)	write_table($aoa, file, 'row.names' => 0)	3000	2	0.000796953837076823
+io	write_table (csv, aoa)	write_table($aoa, file, 'row.names' => 0)	3000	3	0.000775337219238281
+io	write_table (csv, aoa)	write_table($aoa, file, 'row.names' => 0)	3000	4	0.000797669092814128
+io	write_table (csv, aoa)	write_table($aoa, file, 'row.names' => 0)	3000	5	0.000765323638916016
+io	write_table (csv, aoa)	write_table($aoa, file, 'row.names' => 0)	3000	6	0.000796000162760417
+io	write_table (csv, row.names)	write_table($hoa, file, 'row.names' => 1)	3000	0	0.00117099285125732
+io	write_table (csv, row.names)	write_table($hoa, file, 'row.names' => 1)	3000	1	0.00116944313049316
+io	write_table (csv, row.names)	write_table($hoa, file, 'row.names' => 1)	3000	2	0.00118148326873779
+io	write_table (csv, row.names)	write_table($hoa, file, 'row.names' => 1)	3000	3	0.00118207931518555
+io	write_table (csv, row.names)	write_table($hoa, file, 'row.names' => 1)	3000	4	0.00117599964141846
+io	write_table (csv, row.names)	write_table($hoa, file, 'row.names' => 1)	3000	5	0.00117397308349609
+io	write_table (csv, row.names)	write_table($hoa, file, 'row.names' => 1)	3000	6	0.00117897987365723
+io	read_table (csv, numeric)	read_table('num.csv')	10000	0	0.0145478248596191
+io	read_table (csv, numeric)	read_table('num.csv')	10000	1	0.0145008563995361
+io	read_table (csv, numeric)	read_table('num.csv')	10000	2	0.0145871639251709
+io	read_table (csv, numeric)	read_table('num.csv')	10000	3	0.0145418643951416
+io	read_table (csv, numeric)	read_table('num.csv')	10000	4	0.0146019458770752
+io	read_table (csv, numeric)	read_table('num.csv')	10000	5	0.014538049697876
+io	read_table (csv, numeric)	read_table('num.csv')	10000	6	0.0145280361175537
+io	read_table (csv, mixed)	read_table('mix.csv')	10000	0	0.016563892364502
+io	read_table (csv, mixed)	read_table('mix.csv')	10000	1	0.0166330337524414
+io	read_table (csv, mixed)	read_table('mix.csv')	10000	2	0.0165920257568359
+io	read_table (csv, mixed)	read_table('mix.csv')	10000	3	0.0164089202880859
+io	read_table (csv, mixed)	read_table('mix.csv')	10000	4	0.016589879989624
+io	read_table (csv, mixed)	read_table('mix.csv')	10000	5	0.0167520046234131
+io	read_table (csv, mixed)	read_table('mix.csv')	10000	6	0.0166990756988525
+io	read_table (tsv, mixed)	read_table('mix.tsv')	10000	0	0.0166161060333252
+io	read_table (tsv, mixed)	read_table('mix.tsv')	10000	1	0.0165500640869141
+io	read_table (tsv, mixed)	read_table('mix.tsv')	10000	2	0.0165829658508301
+io	read_table (tsv, mixed)	read_table('mix.tsv')	10000	3	0.0165390968322754
+io	read_table (tsv, mixed)	read_table('mix.tsv')	10000	4	0.0165340900421143
+io	read_table (tsv, mixed)	read_table('mix.tsv')	10000	5	0.0165719985961914
+io	read_table (tsv, mixed)	read_table('mix.tsv')	10000	6	0.0166199207305908
+io	read_table (csv, hoa)	read_table('mix.csv', 'output.type' => 'hoa')	10000	0	0.0220010280609131
+io	read_table (csv, hoa)	read_table('mix.csv', 'output.type' => 'hoa')	10000	1	0.0220160484313965
+io	read_table (csv, hoa)	read_table('mix.csv', 'output.type' => 'hoa')	10000	2	0.021967887878418
+io	read_table (csv, hoa)	read_table('mix.csv', 'output.type' => 'hoa')	10000	3	0.0220439434051514
+io	read_table (csv, hoa)	read_table('mix.csv', 'output.type' => 'hoa')	10000	4	0.0219941139221191
+io	read_table (csv, hoa)	read_table('mix.csv', 'output.type' => 'hoa')	10000	5	0.0220518112182617
+io	read_table (csv, hoa)	read_table('mix.csv', 'output.type' => 'hoa')	10000	6	0.0219478607177734
+io	write_table (csv, hoa)	write_table($hoa, file, 'row.names' => 0)	10000	0	0.00286602973937988
+io	write_table (csv, hoa)	write_table($hoa, file, 'row.names' => 0)	10000	1	0.0028538703918457
+io	write_table (csv, hoa)	write_table($hoa, file, 'row.names' => 0)	10000	2	0.0028529167175293
+io	write_table (csv, hoa)	write_table($hoa, file, 'row.names' => 0)	10000	3	0.00287699699401855
+io	write_table (csv, hoa)	write_table($hoa, file, 'row.names' => 0)	10000	4	0.00290584564208984
+io	write_table (csv, hoa)	write_table($hoa, file, 'row.names' => 0)	10000	5	0.00286316871643066
+io	write_table (csv, hoa)	write_table($hoa, file, 'row.names' => 0)	10000	6	0.00276494026184082
+io	write_table (tsv, hoa)	"write_table($hoa, file, sep => ""\t"", 'row.names' => 0)"	10000	0	0.00274801254272461
+io	write_table (tsv, hoa)	"write_table($hoa, file, sep => ""\t"", 'row.names' => 0)"	10000	1	0.00282096862792969
+io	write_table (tsv, hoa)	"write_table($hoa, file, sep => ""\t"", 'row.names' => 0)"	10000	2	0.00282502174377441
+io	write_table (tsv, hoa)	"write_table($hoa, file, sep => ""\t"", 'row.names' => 0)"	10000	3	0.00284004211425781
+io	write_table (tsv, hoa)	"write_table($hoa, file, sep => ""\t"", 'row.names' => 0)"	10000	4	0.00283288955688477
+io	write_table (tsv, hoa)	"write_table($hoa, file, sep => ""\t"", 'row.names' => 0)"	10000	5	0.00283908843994141
+io	write_table (tsv, hoa)	"write_table($hoa, file, sep => ""\t"", 'row.names' => 0)"	10000	6	0.00280117988586426
+io	write_table (csv, aoa)	write_table($aoa, file, 'row.names' => 0)	10000	0	0.00227618217468262
+io	write_table (csv, aoa)	write_table($aoa, file, 'row.names' => 0)	10000	1	0.00226593017578125
+io	write_table (csv, aoa)	write_table($aoa, file, 'row.names' => 0)	10000	2	0.00225019454956055
+io	write_table (csv, aoa)	write_table($aoa, file, 'row.names' => 0)	10000	3	0.00225400924682617
+io	write_table (csv, aoa)	write_table($aoa, file, 'row.names' => 0)	10000	4	0.00227093696594238
+io	write_table (csv, aoa)	write_table($aoa, file, 'row.names' => 0)	10000	5	0.00225496292114258
+io	write_table (csv, aoa)	write_table($aoa, file, 'row.names' => 0)	10000	6	0.00228095054626465
+io	write_table (csv, row.names)	write_table($hoa, file, 'row.names' => 1)	10000	0	0.00348401069641113
+io	write_table (csv, row.names)	write_table($hoa, file, 'row.names' => 1)	10000	1	0.00349187850952148
+io	write_table (csv, row.names)	write_table($hoa, file, 'row.names' => 1)	10000	2	0.00346684455871582
+io	write_table (csv, row.names)	write_table($hoa, file, 'row.names' => 1)	10000	3	0.00347781181335449
+io	write_table (csv, row.names)	write_table($hoa, file, 'row.names' => 1)	10000	4	0.00350594520568848
+io	write_table (csv, row.names)	write_table($hoa, file, 'row.names' => 1)	10000	5	0.00354313850402832
+io	write_table (csv, row.names)	write_table($hoa, file, 'row.names' => 1)	10000	6	0.00351691246032715
+io	read_table (csv, numeric)	read_table('num.csv')	30000	0	0.0438680648803711
+io	read_table (csv, numeric)	read_table('num.csv')	30000	1	0.0441348552703857
+io	read_table (csv, numeric)	read_table('num.csv')	30000	2	0.0437870025634766
+io	read_table (csv, numeric)	read_table('num.csv')	30000	3	0.0440080165863037
+io	read_table (csv, numeric)	read_table('num.csv')	30000	4	0.0440731048583984
+io	read_table (csv, numeric)	read_table('num.csv')	30000	5	0.0439598560333252
+io	read_table (csv, numeric)	read_table('num.csv')	30000	6	0.0437917709350586
+io	read_table (csv, mixed)	read_table('mix.csv')	30000	0	0.0498149394989014
+io	read_table (csv, mixed)	read_table('mix.csv')	30000	1	0.0503449440002441
+io	read_table (csv, mixed)	read_table('mix.csv')	30000	2	0.0501561164855957
+io	read_table (csv, mixed)	read_table('mix.csv')	30000	3	0.0504331588745117
+io	read_table (csv, mixed)	read_table('mix.csv')	30000	4	0.0502338409423828
+io	read_table (csv, mixed)	read_table('mix.csv')	30000	5	0.0502228736877441
+io	read_table (csv, mixed)	read_table('mix.csv')	30000	6	0.0507159233093262
+io	read_table (tsv, mixed)	read_table('mix.tsv')	30000	0	0.0498461723327637
+io	read_table (tsv, mixed)	read_table('mix.tsv')	30000	1	0.0499691963195801
+io	read_table (tsv, mixed)	read_table('mix.tsv')	30000	2	0.0502810478210449
+io	read_table (tsv, mixed)	read_table('mix.tsv')	30000	3	0.0504920482635498
+io	read_table (tsv, mixed)	read_table('mix.tsv')	30000	4	0.0502338409423828
+io	read_table (tsv, mixed)	read_table('mix.tsv')	30000	5	0.0503740310668945
+io	read_table (tsv, mixed)	read_table('mix.tsv')	30000	6	0.0501141548156738
+io	read_table (csv, hoa)	read_table('mix.csv', 'output.type' => 'hoa')	30000	0	0.0671381950378418
+io	read_table (csv, hoa)	read_table('mix.csv', 'output.type' => 'hoa')	30000	1	0.066648006439209
+io	read_table (csv, hoa)	read_table('mix.csv', 'output.type' => 'hoa')	30000	2	0.0662670135498047
+io	read_table (csv, hoa)	read_table('mix.csv', 'output.type' => 'hoa')	30000	3	0.0669519901275635
+io	read_table (csv, hoa)	read_table('mix.csv', 'output.type' => 'hoa')	30000	4	0.0671291351318359
+io	read_table (csv, hoa)	read_table('mix.csv', 'output.type' => 'hoa')	30000	5	0.0670878887176514
+io	read_table (csv, hoa)	read_table('mix.csv', 'output.type' => 'hoa')	30000	6	0.066694974899292
+io	write_table (csv, hoa)	write_table($hoa, file, 'row.names' => 0)	30000	0	0.0082709789276123
+io	write_table (csv, hoa)	write_table($hoa, file, 'row.names' => 0)	30000	1	0.00809097290039062
+io	write_table (csv, hoa)	write_table($hoa, file, 'row.names' => 0)	30000	2	0.00819897651672363
+io	write_table (csv, hoa)	write_table($hoa, file, 'row.names' => 0)	30000	3	0.00812196731567383
+io	write_table (csv, hoa)	write_table($hoa, file, 'row.names' => 0)	30000	4	0.00816512107849121
+io	write_table (csv, hoa)	write_table($hoa, file, 'row.names' => 0)	30000	5	0.00823116302490234
+io	write_table (csv, hoa)	write_table($hoa, file, 'row.names' => 0)	30000	6	0.0081181526184082
+io	write_table (tsv, hoa)	"write_table($hoa, file, sep => ""\t"", 'row.names' => 0)"	30000	0	0.00824594497680664
+io	write_table (tsv, hoa)	"write_table($hoa, file, sep => ""\t"", 'row.names' => 0)"	30000	1	0.00805187225341797
+io	write_table (tsv, hoa)	"write_table($hoa, file, sep => ""\t"", 'row.names' => 0)"	30000	2	0.00807905197143555
+io	write_table (tsv, hoa)	"write_table($hoa, file, sep => ""\t"", 'row.names' => 0)"	30000	3	0.00805306434631348
+io	write_table (tsv, hoa)	"write_table($hoa, file, sep => ""\t"", 'row.names' => 0)"	30000	4	0.00839400291442871
+io	write_table (tsv, hoa)	"write_table($hoa, file, sep => ""\t"", 'row.names' => 0)"	30000	5	0.00841498374938965
+io	write_table (tsv, hoa)	"write_table($hoa, file, sep => ""\t"", 'row.names' => 0)"	30000	6	0.00826907157897949
+io	write_table (csv, aoa)	write_table($aoa, file, 'row.names' => 0)	30000	0	0.00663089752197266
+io	write_table (csv, aoa)	write_table($aoa, file, 'row.names' => 0)	30000	1	0.00666284561157227
+io	write_table (csv, aoa)	write_table($aoa, file, 'row.names' => 0)	30000	2	0.00676989555358887
+io	write_table (csv, aoa)	write_table($aoa, file, 'row.names' => 0)	30000	3	0.00662684440612793
+io	write_table (csv, aoa)	write_table($aoa, file, 'row.names' => 0)	30000	4	0.00663304328918457
+io	write_table (csv, aoa)	write_table($aoa, file, 'row.names' => 0)	30000	5	0.00664806365966797
+io	write_table (csv, aoa)	write_table($aoa, file, 'row.names' => 0)	30000	6	0.00672101974487305
+io	write_table (csv, row.names)	write_table($hoa, file, 'row.names' => 1)	30000	0	0.0104670524597168
+io	write_table (csv, row.names)	write_table($hoa, file, 'row.names' => 1)	30000	1	0.0105240345001221
+io	write_table (csv, row.names)	write_table($hoa, file, 'row.names' => 1)	30000	2	0.0103790760040283
+io	write_table (csv, row.names)	write_table($hoa, file, 'row.names' => 1)	30000	3	0.010322093963623
+io	write_table (csv, row.names)	write_table($hoa, file, 'row.names' => 1)	30000	4	0.0102729797363281
+io	write_table (csv, row.names)	write_table($hoa, file, 'row.names' => 1)	30000	5	0.0104250907897949
+io	write_table (csv, row.names)	write_table($hoa, file, 'row.names' => 1)	30000	6	0.0104308128356934
+io	read_table (csv, numeric)	read_table('num.csv')	100000	0	0.150132894515991
+io	read_table (csv, numeric)	read_table('num.csv')	100000	1	0.150012016296387
+io	read_table (csv, numeric)	read_table('num.csv')	100000	2	0.150321006774902
+io	read_table (csv, numeric)	read_table('num.csv')	100000	3	0.150412082672119
+io	read_table (csv, numeric)	read_table('num.csv')	100000	4	0.15151309967041
+io	read_table (csv, numeric)	read_table('num.csv')	100000	5	0.150252103805542
+io	read_table (csv, numeric)	read_table('num.csv')	100000	6	0.149970054626465
+io	read_table (csv, mixed)	read_table('mix.csv')	100000	0	0.171170949935913
+io	read_table (csv, mixed)	read_table('mix.csv')	100000	1	0.169409990310669
+io	read_table (csv, mixed)	read_table('mix.csv')	100000	2	0.171422004699707
+io	read_table (csv, mixed)	read_table('mix.csv')	100000	3	0.170984029769897
+io	read_table (csv, mixed)	read_table('mix.csv')	100000	4	0.170840978622437
+io	read_table (csv, mixed)	read_table('mix.csv')	100000	5	0.171436071395874
+io	read_table (csv, mixed)	read_table('mix.csv')	100000	6	0.170319080352783
+io	read_table (tsv, mixed)	read_table('mix.tsv')	100000	0	0.172023057937622
+io	read_table (tsv, mixed)	read_table('mix.tsv')	100000	1	0.171039819717407
+io	read_table (tsv, mixed)	read_table('mix.tsv')	100000	2	0.171298027038574
+io	read_table (tsv, mixed)	read_table('mix.tsv')	100000	3	0.171532154083252
+io	read_table (tsv, mixed)	read_table('mix.tsv')	100000	4	0.171905040740967
+io	read_table (tsv, mixed)	read_table('mix.tsv')	100000	5	0.171195983886719
+io	read_table (tsv, mixed)	read_table('mix.tsv')	100000	6	0.171623945236206
+io	read_table (csv, hoa)	read_table('mix.csv', 'output.type' => 'hoa')	100000	0	0.242863178253174
+io	read_table (csv, hoa)	read_table('mix.csv', 'output.type' => 'hoa')	100000	1	0.243310928344727
+io	read_table (csv, hoa)	read_table('mix.csv', 'output.type' => 'hoa')	100000	2	0.243600130081177
+io	read_table (csv, hoa)	read_table('mix.csv', 'output.type' => 'hoa')	100000	3	0.243969202041626
+io	read_table (csv, hoa)	read_table('mix.csv', 'output.type' => 'hoa')	100000	4	0.243453979492188
+io	read_table (csv, hoa)	read_table('mix.csv', 'output.type' => 'hoa')	100000	5	0.242769956588745
+io	read_table (csv, hoa)	read_table('mix.csv', 'output.type' => 'hoa')	100000	6	0.243218898773193
+io	write_table (csv, hoa)	write_table($hoa, file, 'row.names' => 0)	100000	0	0.0271670818328857
+io	write_table (csv, hoa)	write_table($hoa, file, 'row.names' => 0)	100000	1	0.0271670818328857
+io	write_table (csv, hoa)	write_table($hoa, file, 'row.names' => 0)	100000	2	0.027289867401123
+io	write_table (csv, hoa)	write_table($hoa, file, 'row.names' => 0)	100000	3	0.0274829864501953
+io	write_table (csv, hoa)	write_table($hoa, file, 'row.names' => 0)	100000	4	0.0272200107574463
+io	write_table (csv, hoa)	write_table($hoa, file, 'row.names' => 0)	100000	5	0.0312120914459229
+io	write_table (csv, hoa)	write_table($hoa, file, 'row.names' => 0)	100000	6	0.0275299549102783
+io	write_table (tsv, hoa)	"write_table($hoa, file, sep => ""\t"", 'row.names' => 0)"	100000	0	0.027230978012085
+io	write_table (tsv, hoa)	"write_table($hoa, file, sep => ""\t"", 'row.names' => 0)"	100000	1	0.0271561145782471
+io	write_table (tsv, hoa)	"write_table($hoa, file, sep => ""\t"", 'row.names' => 0)"	100000	2	0.0270390510559082
+io	write_table (tsv, hoa)	"write_table($hoa, file, sep => ""\t"", 'row.names' => 0)"	100000	3	0.0272691249847412
+io	write_table (tsv, hoa)	"write_table($hoa, file, sep => ""\t"", 'row.names' => 0)"	100000	4	0.0272810459136963
+io	write_table (tsv, hoa)	"write_table($hoa, file, sep => ""\t"", 'row.names' => 0)"	100000	5	0.0270287990570068
+io	write_table (tsv, hoa)	"write_table($hoa, file, sep => ""\t"", 'row.names' => 0)"	100000	6	0.0272109508514404
+io	write_table (csv, aoa)	write_table($aoa, file, 'row.names' => 0)	100000	0	0.0223641395568848
+io	write_table (csv, aoa)	write_table($aoa, file, 'row.names' => 0)	100000	1	0.022799015045166
+io	write_table (csv, aoa)	write_table($aoa, file, 'row.names' => 0)	100000	2	0.0224578380584717
+io	write_table (csv, aoa)	write_table($aoa, file, 'row.names' => 0)	100000	3	0.0223739147186279
+io	write_table (csv, aoa)	write_table($aoa, file, 'row.names' => 0)	100000	4	0.0225300788879395
+io	write_table (csv, aoa)	write_table($aoa, file, 'row.names' => 0)	100000	5	0.0224370956420898
+io	write_table (csv, aoa)	write_table($aoa, file, 'row.names' => 0)	100000	6	0.022284984588623
+io	write_table (csv, row.names)	write_table($hoa, file, 'row.names' => 1)	100000	0	0.0342159271240234
+io	write_table (csv, row.names)	write_table($hoa, file, 'row.names' => 1)	100000	1	0.0339620113372803
+io	write_table (csv, row.names)	write_table($hoa, file, 'row.names' => 1)	100000	2	0.033897876739502
+io	write_table (csv, row.names)	write_table($hoa, file, 'row.names' => 1)	100000	3	0.0340092182159424
+io	write_table (csv, row.names)	write_table($hoa, file, 'row.names' => 1)	100000	4	0.033919095993042
+io	write_table (csv, row.names)	write_table($hoa, file, 'row.names' => 1)	100000	5	0.0341379642486572
+io	write_table (csv, row.names)	write_table($hoa, file, 'row.names' => 1)	100000	6	0.0341358184814453
+io	read_table (csv, numeric)	read_table('num.csv')	300000	0	0.47095799446106
+io	read_table (csv, numeric)	read_table('num.csv')	300000	1	0.473307132720947
+io	read_table (csv, numeric)	read_table('num.csv')	300000	2	0.473820209503174
+io	read_table (csv, numeric)	read_table('num.csv')	300000	3	0.474229097366333
+io	read_table (csv, numeric)	read_table('num.csv')	300000	4	0.469629049301147
+io	read_table (csv, numeric)	read_table('num.csv')	300000	5	0.4671950340271
+io	read_table (csv, numeric)	read_table('num.csv')	300000	6	0.474323034286499
+io	read_table (csv, mixed)	read_table('mix.csv')	300000	0	0.532283067703247
+io	read_table (csv, mixed)	read_table('mix.csv')	300000	1	0.529767036437988
+io	read_table (csv, mixed)	read_table('mix.csv')	300000	2	0.538793087005615
+io	read_table (csv, mixed)	read_table('mix.csv')	300000	3	0.536840915679932
+io	read_table (csv, mixed)	read_table('mix.csv')	300000	4	0.535599946975708
+io	read_table (csv, mixed)	read_table('mix.csv')	300000	5	0.538490056991577
+io	read_table (csv, mixed)	read_table('mix.csv')	300000	6	0.534948110580444
+io	read_table (tsv, mixed)	read_table('mix.tsv')	300000	0	0.535261869430542
+io	read_table (tsv, mixed)	read_table('mix.tsv')	300000	1	0.537765979766846
+io	read_table (tsv, mixed)	read_table('mix.tsv')	300000	2	0.53214693069458
+io	read_table (tsv, mixed)	read_table('mix.tsv')	300000	3	0.537507057189941
+io	read_table (tsv, mixed)	read_table('mix.tsv')	300000	4	0.536024808883667
+io	read_table (tsv, mixed)	read_table('mix.tsv')	300000	5	0.536798000335693
+io	read_table (tsv, mixed)	read_table('mix.tsv')	300000	6	0.531292915344238
+io	read_table (csv, hoa)	read_table('mix.csv', 'output.type' => 'hoa')	300000	0	0.792322158813477
+io	read_table (csv, hoa)	read_table('mix.csv', 'output.type' => 'hoa')	300000	1	0.790764093399048
+io	read_table (csv, hoa)	read_table('mix.csv', 'output.type' => 'hoa')	300000	2	0.79228401184082
+io	read_table (csv, hoa)	read_table('mix.csv', 'output.type' => 'hoa')	300000	3	0.791654825210571
+io	read_table (csv, hoa)	read_table('mix.csv', 'output.type' => 'hoa')	300000	4	0.787595987319946
+io	read_table (csv, hoa)	read_table('mix.csv', 'output.type' => 'hoa')	300000	5	0.791913986206055
+io	read_table (csv, hoa)	read_table('mix.csv', 'output.type' => 'hoa')	300000	6	0.793253183364868
+io	write_table (csv, hoa)	write_table($hoa, file, 'row.names' => 0)	300000	0	0.0861458778381348
+io	write_table (csv, hoa)	write_table($hoa, file, 'row.names' => 0)	300000	1	0.0851209163665771
+io	write_table (csv, hoa)	write_table($hoa, file, 'row.names' => 0)	300000	2	0.0845820903778076
+io	write_table (csv, hoa)	write_table($hoa, file, 'row.names' => 0)	300000	3	0.0845401287078857
+io	write_table (csv, hoa)	write_table($hoa, file, 'row.names' => 0)	300000	4	0.0855259895324707
+io	write_table (csv, hoa)	write_table($hoa, file, 'row.names' => 0)	300000	5	0.0847480297088623
+io	write_table (csv, hoa)	write_table($hoa, file, 'row.names' => 0)	300000	6	0.0847668647766113
+io	write_table (tsv, hoa)	"write_table($hoa, file, sep => ""\t"", 'row.names' => 0)"	300000	0	0.0848870277404785
+io	write_table (tsv, hoa)	"write_table($hoa, file, sep => ""\t"", 'row.names' => 0)"	300000	1	0.0851061344146729
+io	write_table (tsv, hoa)	"write_table($hoa, file, sep => ""\t"", 'row.names' => 0)"	300000	2	0.0851349830627441
+io	write_table (tsv, hoa)	"write_table($hoa, file, sep => ""\t"", 'row.names' => 0)"	300000	3	0.0846819877624512
+io	write_table (tsv, hoa)	"write_table($hoa, file, sep => ""\t"", 'row.names' => 0)"	300000	4	0.084846019744873
+io	write_table (tsv, hoa)	"write_table($hoa, file, sep => ""\t"", 'row.names' => 0)"	300000	5	0.0969469547271729
+io	write_table (tsv, hoa)	"write_table($hoa, file, sep => ""\t"", 'row.names' => 0)"	300000	6	0.0924990177154541
+io	write_table (csv, aoa)	write_table($aoa, file, 'row.names' => 0)	300000	0	0.0686399936676025
+io	write_table (csv, aoa)	write_table($aoa, file, 'row.names' => 0)	300000	1	0.0742108821868896
+io	write_table (csv, aoa)	write_table($aoa, file, 'row.names' => 0)	300000	2	0.0700011253356934
+io	write_table (csv, aoa)	write_table($aoa, file, 'row.names' => 0)	300000	3	0.069533109664917
+io	write_table (csv, aoa)	write_table($aoa, file, 'row.names' => 0)	300000	4	0.0695512294769287
+io	write_table (csv, aoa)	write_table($aoa, file, 'row.names' => 0)	300000	5	0.085554838180542
+io	write_table (csv, aoa)	write_table($aoa, file, 'row.names' => 0)	300000	6	0.0976989269256592
+io	write_table (csv, row.names)	write_table($hoa, file, 'row.names' => 1)	300000	0	0.156518936157227
+io	write_table (csv, row.names)	write_table($hoa, file, 'row.names' => 1)	300000	1	0.137676954269409
+io	write_table (csv, row.names)	write_table($hoa, file, 'row.names' => 1)	300000	2	0.132523775100708
+io	write_table (csv, row.names)	write_table($hoa, file, 'row.names' => 1)	300000	3	0.141520023345947
+io	write_table (csv, row.names)	write_table($hoa, file, 'row.names' => 1)	300000	4	0.150473117828369
+io	write_table (csv, row.names)	write_table($hoa, file, 'row.names' => 1)	300000	5	0.133472204208374
+io	write_table (csv, row.names)	write_table($hoa, file, 'row.names' => 1)	300000	6	0.133862018585205
+frame	filter	filter($df, col('x') > 0)	1000	0	7.77997468647204e-05
+frame	filter	filter($df, col('x') > 0)	1000	1	7.61896371841431e-05
+frame	filter	filter($df, col('x') > 0)	1000	2	7.3401133219401e-05
+frame	filter	filter($df, col('x') > 0)	1000	3	7.41762273451861e-05
+frame	filter	filter($df, col('x') > 0)	1000	4	7.5688728919396e-05
+frame	filter	filter($df, col('x') > 0)	1000	5	7.48783349990845e-05
+frame	filter	filter($df, col('x') > 0)	1000	6	7.56978988647461e-05
+frame	select_cols	select_cols($df, ['x','cat1'])	1000	0	1.92379129344019e-06
+frame	select_cols	select_cols($df, ['x','cat1'])	1000	1	1.95276169549851e-06
+frame	select_cols	select_cols($df, ['x','cat1'])	1000	2	1.95219403221494e-06
+frame	select_cols	select_cols($df, ['x','cat1'])	1000	3	1.96218490600586e-06
+frame	select_cols	select_cols($df, ['x','cat1'])	1000	4	1.96456909179688e-06
+frame	select_cols	select_cols($df, ['x','cat1'])	1000	5	1.95205211639404e-06
+frame	select_cols	select_cols($df, ['x','cat1'])	1000	6	1.93774700164795e-06
+frame	group_by + mean	group_by + mean	1000	0	5.27132125127883e-05
+frame	group_by + mean	group_by + mean	1000	1	5.03857930501302e-05
+frame	group_by + mean	group_by + mean	1000	2	4.730774806096e-05
+frame	group_by + mean	group_by + mean	1000	3	4.68767606295072e-05
+frame	group_by + mean	group_by + mean	1000	4	4.69970703125e-05
+frame	group_by + mean	group_by + mean	1000	5	4.88758087158203e-05
+frame	group_by + mean	group_by + mean	1000	6	4.90934952445652e-05
+frame	merge	merge($df_id, $df_id, how => 'inner', on => 'id')	1000	0	0.000609000523885091
+frame	merge	merge($df_id, $df_id, how => 'inner', on => 'id')	1000	1	0.000601291656494141
+frame	merge	merge($df_id, $df_id, how => 'inner', on => 'id')	1000	2	0.000603040059407552
+frame	merge	merge($df_id, $df_id, how => 'inner', on => 'id')	1000	3	0.000602006912231445
+frame	merge	merge($df_id, $df_id, how => 'inner', on => 'id')	1000	4	0.000602324803670247
+frame	merge	merge($df_id, $df_id, how => 'inner', on => 'id')	1000	5	0.000599384307861328
+frame	merge	merge($df_id, $df_id, how => 'inner', on => 'id')	1000	6	0.000603993733723958
+frame	value_counts	value_counts($df, 'cat1')	1000	0	2.66262463160924e-05
+frame	value_counts	value_counts($df, 'cat1')	1000	1	2.72705441429501e-05
+frame	value_counts	value_counts($df, 'cat1')	1000	2	2.7050406245862e-05
+frame	value_counts	value_counts($df, 'cat1')	1000	3	2.72310697115385e-05
+frame	value_counts	value_counts($df, 'cat1')	1000	4	2.70623427170974e-05
+frame	value_counts	value_counts($df, 'cat1')	1000	5	2.70302615948577e-05
+frame	value_counts	value_counts($df, 'cat1')	1000	6	2.66467823701746e-05
+frame	drop_duplicates	drop_duplicates($df)	1000	0	0.00029444694519043
+frame	drop_duplicates	drop_duplicates($df)	1000	1	0.000289712633405413
+frame	drop_duplicates	drop_duplicates($df)	1000	2	0.000289269856044224
+frame	drop_duplicates	drop_duplicates($df)	1000	3	0.000292403357369559
+frame	drop_duplicates	drop_duplicates($df)	1000	4	0.000291722161429269
+frame	drop_duplicates	drop_duplicates($df)	1000	5	0.000292130878993443
+frame	drop_duplicates	drop_duplicates($df)	1000	6	0.000291143144880022
+frame	transpose	transpose($aoa)	1000	0	4.41832975907759e-05
+frame	transpose	transpose($aoa)	1000	1	4.3760175290315e-05
+frame	transpose	transpose($aoa)	1000	2	4.40862443712023e-05
+frame	transpose	transpose($aoa)	1000	3	4.391566566799e-05
+frame	transpose	transpose($aoa)	1000	4	4.39571297687033e-05
+frame	transpose	transpose($aoa)	1000	5	4.36676873101128e-05
+frame	transpose	transpose($aoa)	1000	6	4.34546243576776e-05
+frame	aoh2hoa	aoh2hoa($aoh)	1000	0	2.6291695193968e-05
+frame	aoh2hoa	aoh2hoa($aoh)	1000	1	2.69181198543972e-05
+frame	aoh2hoa	aoh2hoa($aoh)	1000	2	2.66366534762912e-05
+frame	aoh2hoa	aoh2hoa($aoh)	1000	3	2.68187787797716e-05
+frame	aoh2hoa	aoh2hoa($aoh)	1000	4	2.68750720553928e-05
+frame	aoh2hoa	aoh2hoa($aoh)	1000	5	2.66797012752957e-05
+frame	aoh2hoa	aoh2hoa($aoh)	1000	6	2.67359945509169e-05
+frame	filter	filter($df, col('x') > 0)	3000	0	0.000235646963119507
+frame	filter	filter($df, col('x') > 0)	3000	1	0.000233650207519531
+frame	filter	filter($df, col('x') > 0)	3000	2	0.000236392021179199
+frame	filter	filter($df, col('x') > 0)	3000	3	0.00023236870765686
+frame	filter	filter($df, col('x') > 0)	3000	4	0.000229544109768338
+frame	filter	filter($df, col('x') > 0)	3000	5	0.000241994857788086
+frame	filter	filter($df, col('x') > 0)	3000	6	0.000231663386027018
+frame	select_cols	select_cols($df, ['x','cat1'])	3000	0	1.94305890457221e-06
+frame	select_cols	select_cols($df, ['x','cat1'])	3000	1	1.94787979125977e-06
+frame	select_cols	select_cols($df, ['x','cat1'])	3000	2	1.96270898399707e-06
+frame	select_cols	select_cols($df, ['x','cat1'])	3000	3	1.93536281585693e-06
+frame	select_cols	select_cols($df, ['x','cat1'])	3000	4	1.944899559021e-06
+frame	select_cols	select_cols($df, ['x','cat1'])	3000	5	1.94251537322998e-06
+frame	select_cols	select_cols($df, ['x','cat1'])	3000	6	1.99149636661305e-06
+frame	group_by + mean	group_by + mean	3000	0	0.000141273845325817
+frame	group_by + mean	group_by + mean	3000	1	0.00013508399327596
+frame	group_by + mean	group_by + mean	3000	2	0.000133335590362549
+frame	group_by + mean	group_by + mean	3000	3	0.000132157252385066
+frame	group_by + mean	group_by + mean	3000	4	0.000131313617412861
+frame	group_by + mean	group_by + mean	3000	5	0.000130836780254657
+frame	group_by + mean	group_by + mean	3000	6	0.000131698755117563
+frame	merge	merge($df_id, $df_id, how => 'inner', on => 'id')	3000	0	0.00195097923278809
+frame	merge	merge($df_id, $df_id, how => 'inner', on => 'id')	3000	1	0.00194287300109863
+frame	merge	merge($df_id, $df_id, how => 'inner', on => 'id')	3000	2	0.0019679069519043
+frame	merge	merge($df_id, $df_id, how => 'inner', on => 'id')	3000	3	0.00193405151367188
+frame	merge	merge($df_id, $df_id, how => 'inner', on => 'id')	3000	4	0.00196218490600586
+frame	merge	merge($df_id, $df_id, how => 'inner', on => 'id')	3000	5	0.00193905830383301
+frame	merge	merge($df_id, $df_id, how => 'inner', on => 'id')	3000	6	0.00196504592895508
+frame	value_counts	value_counts($df, 'cat1')	3000	0	7.83205032348633e-05
+frame	value_counts	value_counts($df, 'cat1')	3000	1	7.86470330279806e-05
+frame	value_counts	value_counts($df, 'cat1')	3000	2	7.81701958697775e-05
+frame	value_counts	value_counts($df, 'cat1')	3000	3	7.76518946108611e-05
+frame	value_counts	value_counts($df, 'cat1')	3000	4	7.83464182978091e-05
+frame	value_counts	value_counts($df, 'cat1')	3000	5	7.8125e-05
+frame	value_counts	value_counts($df, 'cat1')	3000	6	7.74342080821162e-05
+frame	drop_duplicates	drop_duplicates($df)	3000	0	0.000877062479654948
+frame	drop_duplicates	drop_duplicates($df)	3000	1	0.000860691070556641
+frame	drop_duplicates	drop_duplicates($df)	3000	2	0.000852266947428385
+frame	drop_duplicates	drop_duplicates($df)	3000	3	0.000851949055989583
+frame	drop_duplicates	drop_duplicates($df)	3000	4	0.000862280527750651
+frame	drop_duplicates	drop_duplicates($df)	3000	5	0.00084233283996582
+frame	drop_duplicates	drop_duplicates($df)	3000	6	0.000864346822102865
+frame	transpose	transpose($aoa)	3000	0	0.000130319595336914
+frame	transpose	transpose($aoa)	3000	1	0.000130698084831238
+frame	transpose	transpose($aoa)	3000	2	0.000130817294120789
+frame	transpose	transpose($aoa)	3000	3	0.000130732854207357
+frame	transpose	transpose($aoa)	3000	4	0.000133931636810303
+frame	transpose	transpose($aoa)	3000	5	0.000129938125610352
+frame	transpose	transpose($aoa)	3000	6	0.000133633613586426
+frame	aoh2hoa	aoh2hoa($aoh)	3000	0	7.9803466796875e-05
+frame	aoh2hoa	aoh2hoa($aoh)	3000	1	8.35015223576472e-05
+frame	aoh2hoa	aoh2hoa($aoh)	3000	2	7.96413421630859e-05
+frame	aoh2hoa	aoh2hoa($aoh)	3000	3	7.99655914306641e-05
+frame	aoh2hoa	aoh2hoa($aoh)	3000	4	8.00323486328125e-05
+frame	aoh2hoa	aoh2hoa($aoh)	3000	5	7.83634185791016e-05
+frame	aoh2hoa	aoh2hoa($aoh)	3000	6	8.00037384033203e-05
+frame	filter	filter($df, col('x') > 0)	10000	0	0.000804026921590169
+frame	filter	filter($df, col('x') > 0)	10000	1	0.000807046890258789
+frame	filter	filter($df, col('x') > 0)	10000	2	0.000802278518676758
+frame	filter	filter($df, col('x') > 0)	10000	3	0.000811258951822917
+frame	filter	filter($df, col('x') > 0)	10000	4	0.000812053680419922
+frame	filter	filter($df, col('x') > 0)	10000	5	0.000803073247273763
+frame	filter	filter($df, col('x') > 0)	10000	6	0.000797669092814128
+frame	select_cols	select_cols($df, ['x','cat1'])	10000	0	1.95832088075835e-06
+frame	select_cols	select_cols($df, ['x','cat1'])	10000	1	2.13086605072021e-06
+frame	select_cols	select_cols($df, ['x','cat1'])	10000	2	2.06842308952695e-06
+frame	select_cols	select_cols($df, ['x','cat1'])	10000	3	2.06161947811351e-06
+frame	select_cols	select_cols($df, ['x','cat1'])	10000	4	2.13895525251116e-06
+frame	select_cols	select_cols($df, ['x','cat1'])	10000	5	2.13267756443398e-06
+frame	select_cols	select_cols($df, ['x','cat1'])	10000	6	2.09262127477687e-06
+frame	group_by + mean	group_by + mean	10000	0	0.000395011901855469
+frame	group_by + mean	group_by + mean	10000	1	0.000392436981201172
+frame	group_by + mean	group_by + mean	10000	2	0.0003875732421875
+frame	group_by + mean	group_by + mean	10000	3	0.000384998321533203
+frame	group_by + mean	group_by + mean	10000	4	0.000386993090311686
+frame	group_by + mean	group_by + mean	10000	5	0.00038456916809082
+frame	group_by + mean	group_by + mean	10000	6	0.000382026036580404
+frame	merge	merge($df_id, $df_id, how => 'inner', on => 'id')	10000	0	0.00679183006286621
+frame	merge	merge($df_id, $df_id, how => 'inner', on => 'id')	10000	1	0.00683999061584473
+frame	merge	merge($df_id, $df_id, how => 'inner', on => 'id')	10000	2	0.00681209564208984
+frame	merge	merge($df_id, $df_id, how => 'inner', on => 'id')	10000	3	0.00673604011535645
+frame	merge	merge($df_id, $df_id, how => 'inner', on => 'id')	10000	4	0.0068199634552002
+frame	merge	merge($df_id, $df_id, how => 'inner', on => 'id')	10000	5	0.00713300704956055
+frame	merge	merge($df_id, $df_id, how => 'inner', on => 'id')	10000	6	0.00681591033935547
+frame	value_counts	value_counts($df, 'cat1')	10000	0	0.000254243612289429
+frame	value_counts	value_counts($df, 'cat1')	10000	1	0.000261753797531128
+frame	value_counts	value_counts($df, 'cat1')	10000	2	0.000257151467459542
+frame	value_counts	value_counts($df, 'cat1')	10000	3	0.000259369611740112
+frame	value_counts	value_counts($df, 'cat1')	10000	4	0.000253349542617798
+frame	value_counts	value_counts($df, 'cat1')	10000	5	0.000261306762695312
+frame	value_counts	value_counts($df, 'cat1')	10000	6	0.000258117914199829
+frame	drop_duplicates	drop_duplicates($df)	10000	0	0.00289011001586914
+frame	drop_duplicates	drop_duplicates($df)	10000	1	0.00290703773498535
+frame	drop_duplicates	drop_duplicates($df)	10000	2	0.00289607048034668
+frame	drop_duplicates	drop_duplicates($df)	10000	3	0.00288796424865723
+frame	drop_duplicates	drop_duplicates($df)	10000	4	0.00290703773498535
+frame	drop_duplicates	drop_duplicates($df)	10000	5	0.00291204452514648
+frame	drop_duplicates	drop_duplicates($df)	10000	6	0.00290083885192871
+frame	transpose	transpose($aoa)	10000	0	0.000462579727172852
+frame	transpose	transpose($aoa)	10000	1	0.0004608154296875
+frame	transpose	transpose($aoa)	10000	2	0.000464630126953125
+frame	transpose	transpose($aoa)	10000	3	0.000460004806518555
+frame	transpose	transpose($aoa)	10000	4	0.0004608154296875
+frame	transpose	transpose($aoa)	10000	5	0.000461387634277344
+frame	transpose	transpose($aoa)	10000	6	0.000461578369140625
+frame	aoh2hoa	aoh2hoa($aoh)	10000	0	0.000265985727310181
+frame	aoh2hoa	aoh2hoa($aoh)	10000	1	0.000262349843978882
+frame	aoh2hoa	aoh2hoa($aoh)	10000	2	0.000263512134552002
+frame	aoh2hoa	aoh2hoa($aoh)	10000	3	0.000268757343292236
+frame	aoh2hoa	aoh2hoa($aoh)	10000	4	0.000266015529632568
+frame	aoh2hoa	aoh2hoa($aoh)	10000	5	0.000265121459960938
+frame	aoh2hoa	aoh2hoa($aoh)	10000	6	0.000267148017883301
+frame	filter	filter($df, col('x') > 0)	30000	0	0.00243997573852539
+frame	filter	filter($df, col('x') > 0)	30000	1	0.00246191024780273
+frame	filter	filter($df, col('x') > 0)	30000	2	0.00244712829589844
+frame	filter	filter($df, col('x') > 0)	30000	3	0.00248479843139648
+frame	filter	filter($df, col('x') > 0)	30000	4	0.00247001647949219
+frame	filter	filter($df, col('x') > 0)	30000	5	0.00243902206420898
+frame	filter	filter($df, col('x') > 0)	30000	6	0.00246000289916992
+frame	select_cols	select_cols($df, ['x','cat1'])	30000	0	1.99041754951304e-06
+frame	select_cols	select_cols($df, ['x','cat1'])	30000	1	1.93536281585693e-06
+frame	select_cols	select_cols($df, ['x','cat1'])	30000	2	1.9228458404541e-06
+frame	select_cols	select_cols($df, ['x','cat1'])	30000	3	1.9371509552002e-06
+frame	select_cols	select_cols($df, ['x','cat1'])	30000	4	1.94966793060303e-06
+frame	select_cols	select_cols($df, ['x','cat1'])	30000	5	1.96754932403564e-06
+frame	select_cols	select_cols($df, ['x','cat1'])	30000	6	1.944899559021e-06
+frame	group_by + mean	group_by + mean	30000	0	0.00103950500488281
+frame	group_by + mean	group_by + mean	30000	1	0.00104093551635742
+frame	group_by + mean	group_by + mean	30000	2	0.00104594230651855
+frame	group_by + mean	group_by + mean	30000	3	0.0010305643081665
+frame	group_by + mean	group_by + mean	30000	4	0.00103795528411865
+frame	group_by + mean	group_by + mean	30000	5	0.00103950500488281
+frame	group_by + mean	group_by + mean	30000	6	0.00103747844696045
+frame	merge	merge($df_id, $df_id, how => 'inner', on => 'id')	30000	0	0.0298700332641602
+frame	merge	merge($df_id, $df_id, how => 'inner', on => 'id')	30000	1	0.0279169082641602
+frame	merge	merge($df_id, $df_id, how => 'inner', on => 'id')	30000	2	0.0283439159393311
+frame	merge	merge($df_id, $df_id, how => 'inner', on => 'id')	30000	3	0.029231071472168
+frame	merge	merge($df_id, $df_id, how => 'inner', on => 'id')	30000	4	0.02823805809021
+frame	merge	merge($df_id, $df_id, how => 'inner', on => 'id')	30000	5	0.0283458232879639
+frame	merge	merge($df_id, $df_id, how => 'inner', on => 'id')	30000	6	0.0284159183502197
+frame	value_counts	value_counts($df, 'cat1')	30000	0	0.000794331232706706
+frame	value_counts	value_counts($df, 'cat1')	30000	1	0.000754674275716146
+frame	value_counts	value_counts($df, 'cat1')	30000	2	0.000756661097208659
+frame	value_counts	value_counts($df, 'cat1')	30000	3	0.000760396321614583
+frame	value_counts	value_counts($df, 'cat1')	30000	4	0.000752051671346029
+frame	value_counts	value_counts($df, 'cat1')	30000	5	0.000767707824707031
+frame	value_counts	value_counts($df, 'cat1')	30000	6	0.000740607579549154
+frame	drop_duplicates	drop_duplicates($df)	30000	0	0.0088798999786377
+frame	drop_duplicates	drop_duplicates($df)	30000	1	0.00899600982666016
+frame	drop_duplicates	drop_duplicates($df)	30000	2	0.00892400741577148
+frame	drop_duplicates	drop_duplicates($df)	30000	3	0.00889205932617188
+frame	drop_duplicates	drop_duplicates($df)	30000	4	0.00885486602783203
+frame	drop_duplicates	drop_duplicates($df)	30000	5	0.00885486602783203
+frame	drop_duplicates	drop_duplicates($df)	30000	6	0.00900602340698242
+frame	transpose	transpose($aoa)	30000	0	0.00144946575164795
+frame	transpose	transpose($aoa)	30000	1	0.00146806240081787
+frame	transpose	transpose($aoa)	30000	2	0.00147998332977295
+frame	transpose	transpose($aoa)	30000	3	0.00150346755981445
+frame	transpose	transpose($aoa)	30000	4	0.00145554542541504
+frame	transpose	transpose($aoa)	30000	5	0.00151801109313965
+frame	transpose	transpose($aoa)	30000	6	0.00145792961120605
+frame	aoh2hoa	aoh2hoa($aoh)	30000	0	0.000804026921590169
+frame	aoh2hoa	aoh2hoa($aoh)	30000	1	0.000798702239990234
+frame	aoh2hoa	aoh2hoa($aoh)	30000	2	0.000776370366414388
+frame	aoh2hoa	aoh2hoa($aoh)	30000	3	0.000803947448730469
+frame	aoh2hoa	aoh2hoa($aoh)	30000	4	0.000797271728515625
+frame	aoh2hoa	aoh2hoa($aoh)	30000	5	0.000777006149291992
+frame	aoh2hoa	aoh2hoa($aoh)	30000	6	0.000788688659667969
+frame	filter	filter($df, col('x') > 0)	100000	0	0.0098869800567627
+frame	filter	filter($df, col('x') > 0)	100000	1	0.0100100040435791
+frame	filter	filter($df, col('x') > 0)	100000	2	0.00995397567749023
+frame	filter	filter($df, col('x') > 0)	100000	3	0.00990891456604004
+frame	filter	filter($df, col('x') > 0)	100000	4	0.0100560188293457
+frame	filter	filter($df, col('x') > 0)	100000	5	0.0099790096282959
+frame	filter	filter($df, col('x') > 0)	100000	6	0.00998210906982422
+frame	select_cols	select_cols($df, ['x','cat1'])	100000	0	2.00444217181314e-06
+frame	select_cols	select_cols($df, ['x','cat1'])	100000	1	1.98540233430408e-06
+frame	select_cols	select_cols($df, ['x','cat1'])	100000	2	1.92508811042422e-06
+frame	select_cols	select_cols($df, ['x','cat1'])	100000	3	1.96516513824463e-06
+frame	select_cols	select_cols($df, ['x','cat1'])	100000	4	1.944899559021e-06
+frame	select_cols	select_cols($df, ['x','cat1'])	100000	5	1.89721584320068e-06
+frame	select_cols	select_cols($df, ['x','cat1'])	100000	6	1.95741653442383e-06
+frame	group_by + mean	group_by + mean	100000	0	0.00342988967895508
+frame	group_by + mean	group_by + mean	100000	1	0.00347018241882324
+frame	group_by + mean	group_by + mean	100000	2	0.00341582298278809
+frame	group_by + mean	group_by + mean	100000	3	0.00342106819152832
+frame	group_by + mean	group_by + mean	100000	4	0.00344204902648926
+frame	group_by + mean	group_by + mean	100000	5	0.00344204902648926
+frame	group_by + mean	group_by + mean	100000	6	0.00345396995544434
+frame	merge	merge($df_id, $df_id, how => 'inner', on => 'id')	100000	0	0.187968015670776
+frame	merge	merge($df_id, $df_id, how => 'inner', on => 'id')	100000	1	0.183222055435181
+frame	merge	merge($df_id, $df_id, how => 'inner', on => 'id')	100000	2	0.185435056686401
+frame	merge	merge($df_id, $df_id, how => 'inner', on => 'id')	100000	3	0.182464122772217
+frame	merge	merge($df_id, $df_id, how => 'inner', on => 'id')	100000	4	0.184085130691528
+frame	merge	merge($df_id, $df_id, how => 'inner', on => 'id')	100000	5	0.18264102935791
+frame	merge	merge($df_id, $df_id, how => 'inner', on => 'id')	100000	6	0.182732105255127
+frame	value_counts	value_counts($df, 'cat1')	100000	0	0.0024878978729248
+frame	value_counts	value_counts($df, 'cat1')	100000	1	0.00259995460510254
+frame	value_counts	value_counts($df, 'cat1')	100000	2	0.00255608558654785
+frame	value_counts	value_counts($df, 'cat1')	100000	3	0.0025479793548584
+frame	value_counts	value_counts($df, 'cat1')	100000	4	0.00250983238220215
+frame	value_counts	value_counts($df, 'cat1')	100000	5	0.00252890586853027
+frame	value_counts	value_counts($df, 'cat1')	100000	6	0.00255823135375977
+frame	drop_duplicates	drop_duplicates($df)	100000	0	0.0331041812896729
+frame	drop_duplicates	drop_duplicates($df)	100000	1	0.0328819751739502
+frame	drop_duplicates	drop_duplicates($df)	100000	2	0.032728910446167
+frame	drop_duplicates	drop_duplicates($df)	100000	3	0.0324990749359131
+frame	drop_duplicates	drop_duplicates($df)	100000	4	0.0327019691467285
+frame	drop_duplicates	drop_duplicates($df)	100000	5	0.032606840133667
+frame	drop_duplicates	drop_duplicates($df)	100000	6	0.0325930118560791
+frame	transpose	transpose($aoa)	100000	0	0.0178229808807373
+frame	transpose	transpose($aoa)	100000	1	0.017941951751709
+frame	transpose	transpose($aoa)	100000	2	0.0174870491027832
+frame	transpose	transpose($aoa)	100000	3	0.0176219940185547
+frame	transpose	transpose($aoa)	100000	4	0.0174140930175781
+frame	transpose	transpose($aoa)	100000	5	0.0175700187683105
+frame	transpose	transpose($aoa)	100000	6	0.0174160003662109
+frame	aoh2hoa	aoh2hoa($aoh)	100000	0	0.00496101379394531
+frame	aoh2hoa	aoh2hoa($aoh)	100000	1	0.00494098663330078
+frame	aoh2hoa	aoh2hoa($aoh)	100000	2	0.00496912002563477
+frame	aoh2hoa	aoh2hoa($aoh)	100000	3	0.00498104095458984
+frame	aoh2hoa	aoh2hoa($aoh)	100000	4	0.00496387481689453
+frame	aoh2hoa	aoh2hoa($aoh)	100000	5	0.00499296188354492
+frame	aoh2hoa	aoh2hoa($aoh)	100000	6	0.0050351619720459
+frame	filter	filter($df, col('x') > 0)	300000	0	0.0392458438873291
+frame	filter	filter($df, col('x') > 0)	300000	1	0.0402171611785889
+frame	filter	filter($df, col('x') > 0)	300000	2	0.0408079624176025
+frame	filter	filter($df, col('x') > 0)	300000	3	0.0399971008300781
+frame	filter	filter($df, col('x') > 0)	300000	4	0.0405788421630859
+frame	filter	filter($df, col('x') > 0)	300000	5	0.0407381057739258
+frame	filter	filter($df, col('x') > 0)	300000	6	0.0414419174194336
+frame	select_cols	select_cols($df, ['x','cat1'])	300000	0	2.09808349609375e-06
+frame	select_cols	select_cols($df, ['x','cat1'])	300000	1	2.00881844475156e-06
+frame	select_cols	select_cols($df, ['x','cat1'])	300000	2	1.90973281860352e-06
+frame	select_cols	select_cols($df, ['x','cat1'])	300000	3	2.04026699066162e-06
+frame	select_cols	select_cols($df, ['x','cat1'])	300000	4	1.98273431687128e-06
+frame	select_cols	select_cols($df, ['x','cat1'])	300000	5	1.96411496117001e-06
+frame	select_cols	select_cols($df, ['x','cat1'])	300000	6	1.95801258087158e-06
+frame	group_by + mean	group_by + mean	300000	0	0.0250630378723145
+frame	group_by + mean	group_by + mean	300000	1	0.0240800380706787
+frame	group_by + mean	group_by + mean	300000	2	0.0261120796203613
+frame	group_by + mean	group_by + mean	300000	3	0.0263628959655762
+frame	group_by + mean	group_by + mean	300000	4	0.0252819061279297
+frame	group_by + mean	group_by + mean	300000	5	0.0245280265808105
+frame	group_by + mean	group_by + mean	300000	6	0.0245130062103271
+frame	merge	merge($df_id, $df_id, how => 'inner', on => 'id')	300000	0	0.670766830444336
+frame	merge	merge($df_id, $df_id, how => 'inner', on => 'id')	300000	1	0.669495820999146
+frame	merge	merge($df_id, $df_id, how => 'inner', on => 'id')	300000	2	0.6662278175354
+frame	merge	merge($df_id, $df_id, how => 'inner', on => 'id')	300000	3	0.669512987136841
+frame	merge	merge($df_id, $df_id, how => 'inner', on => 'id')	300000	4	0.669349908828735
+frame	merge	merge($df_id, $df_id, how => 'inner', on => 'id')	300000	5	0.670779943466187
+frame	merge	merge($df_id, $df_id, how => 'inner', on => 'id')	300000	6	0.668559074401855
+frame	value_counts	value_counts($df, 'cat1')	300000	0	0.00772809982299805
+frame	value_counts	value_counts($df, 'cat1')	300000	1	0.00764989852905273
+frame	value_counts	value_counts($df, 'cat1')	300000	2	0.0077061653137207
+frame	value_counts	value_counts($df, 'cat1')	300000	3	0.00775599479675293
+frame	value_counts	value_counts($df, 'cat1')	300000	4	0.00784587860107422
+frame	value_counts	value_counts($df, 'cat1')	300000	5	0.00772309303283691
+frame	value_counts	value_counts($df, 'cat1')	300000	6	0.00770282745361328
+frame	drop_duplicates	drop_duplicates($df)	300000	0	0.127626895904541
+frame	drop_duplicates	drop_duplicates($df)	300000	1	0.129558086395264
+frame	drop_duplicates	drop_duplicates($df)	300000	2	0.12805700302124
+frame	drop_duplicates	drop_duplicates($df)	300000	3	0.127779006958008
+frame	drop_duplicates	drop_duplicates($df)	300000	4	0.127592086791992
+frame	drop_duplicates	drop_duplicates($df)	300000	5	0.127617120742798
+frame	drop_duplicates	drop_duplicates($df)	300000	6	0.128438949584961
+frame	transpose	transpose($aoa)	300000	0	0.0228419303894043
+frame	transpose	transpose($aoa)	300000	1	0.0225648880004883
+frame	transpose	transpose($aoa)	300000	2	0.0226550102233887
+frame	transpose	transpose($aoa)	300000	3	0.022709846496582
+frame	transpose	transpose($aoa)	300000	4	0.0226390361785889
+frame	transpose	transpose($aoa)	300000	5	0.022658109664917
+frame	transpose	transpose($aoa)	300000	6	0.0227339267730713
+frame	aoh2hoa	aoh2hoa($aoh)	300000	0	0.00942802429199219
+frame	aoh2hoa	aoh2hoa($aoh)	300000	1	0.00955295562744141
+frame	aoh2hoa	aoh2hoa($aoh)	300000	2	0.00953102111816406
+frame	aoh2hoa	aoh2hoa($aoh)	300000	3	0.00951504707336426
+frame	aoh2hoa	aoh2hoa($aoh)	300000	4	0.00951910018920898
+frame	aoh2hoa	aoh2hoa($aoh)	300000	5	0.00946402549743652
+frame	aoh2hoa	aoh2hoa($aoh)	300000	6	0.00934290885925293

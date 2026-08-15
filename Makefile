@@ -32,12 +32,12 @@
 
 # --- MakeMaker const_config section:
 
-# These definitions are from config.sh (via /home/con/perl5/perlbrew/perls/perl-5.44.0/lib/5.44.0/x86_64-linux/Config.pm).
+# These definitions are from config.sh (via /home/con/perl5/perlbrew/perls/5.44.0-quadmath/lib/5.44.0/x86_64-linux-quadmath/Config.pm).
 # They may have been overridden via Makefile.PL or on the command line.
 AR = ar
 CC = cc
 CCCDLFLAGS = -fPIC
-CCDLFLAGS = -Wl,-E
+CCDLFLAGS = -Wl,-E -Wl,-rpath,/home/con/perl5/perlbrew/perls/5.44.0-quadmath/lib/5.44.0/x86_64-linux-quadmath/CORE
 CPPRUN = cc  -E
 DLEXT = so
 DLSRC = dl_dlopen.xs
@@ -50,10 +50,10 @@ LIBC = /lib/x86_64-linux-gnu/libc.so.6
 LIB_EXT = .a
 OBJ_EXT = .o
 OSNAME = linux
-OSVERS = 6.8.0-134-generic
+OSVERS = 6.8.0-136-generic
 RANLIB = :
-SITELIBEXP = /home/con/perl5/perlbrew/perls/perl-5.44.0/lib/site_perl/5.44.0
-SITEARCHEXP = /home/con/perl5/perlbrew/perls/perl-5.44.0/lib/site_perl/5.44.0/x86_64-linux
+SITELIBEXP = /home/con/perl5/perlbrew/perls/5.44.0-quadmath/lib/site_perl/5.44.0
+SITEARCHEXP = /home/con/perl5/perlbrew/perls/5.44.0-quadmath/lib/site_perl/5.44.0/x86_64-linux-quadmath
 SO = so
 VENDORARCHEXP = 
 VENDORLIBEXP = 
@@ -65,11 +65,11 @@ DIRFILESEP = /
 DFSEP = $(DIRFILESEP)
 NAME = Stats::LikeR
 NAME_SYM = Stats_LikeR
-VERSION = 0.298
+VERSION = 0.299
 VERSION_MACRO = VERSION
-VERSION_SYM = 0_298
+VERSION_SYM = 0_299
 DEFINE_VERSION = -D$(VERSION_MACRO)=\"$(VERSION)\"
-XS_VERSION = 0.298
+XS_VERSION = 0.299
 XS_VERSION_MACRO = XS_VERSION
 XS_DEFINE_VERSION = -D$(XS_VERSION_MACRO)=\"$(XS_VERSION)\"
 INST_ARCHLIB = blib/arch
@@ -85,55 +85,55 @@ MAN3SECTION = 3
 INSTALLDIRS = site
 DESTDIR = 
 PREFIX = $(SITEPREFIX)
-PERLPREFIX = /home/con/perl5/perlbrew/perls/perl-5.44.0
-SITEPREFIX = /home/con/perl5/perlbrew/perls/perl-5.44.0
+PERLPREFIX = /home/con/perl5/perlbrew/perls/5.44.0-quadmath
+SITEPREFIX = /home/con/perl5/perlbrew/perls/5.44.0-quadmath
 VENDORPREFIX = 
-INSTALLPRIVLIB = /home/con/perl5/perlbrew/perls/perl-5.44.0/lib/5.44.0
+INSTALLPRIVLIB = /home/con/perl5/perlbrew/perls/5.44.0-quadmath/lib/5.44.0
 DESTINSTALLPRIVLIB = $(DESTDIR)$(INSTALLPRIVLIB)
-INSTALLSITELIB = /home/con/perl5/perlbrew/perls/perl-5.44.0/lib/site_perl/5.44.0
+INSTALLSITELIB = /home/con/perl5/perlbrew/perls/5.44.0-quadmath/lib/site_perl/5.44.0
 DESTINSTALLSITELIB = $(DESTDIR)$(INSTALLSITELIB)
 INSTALLVENDORLIB = 
 DESTINSTALLVENDORLIB = $(DESTDIR)$(INSTALLVENDORLIB)
-INSTALLARCHLIB = /home/con/perl5/perlbrew/perls/perl-5.44.0/lib/5.44.0/x86_64-linux
+INSTALLARCHLIB = /home/con/perl5/perlbrew/perls/5.44.0-quadmath/lib/5.44.0/x86_64-linux-quadmath
 DESTINSTALLARCHLIB = $(DESTDIR)$(INSTALLARCHLIB)
-INSTALLSITEARCH = /home/con/perl5/perlbrew/perls/perl-5.44.0/lib/site_perl/5.44.0/x86_64-linux
+INSTALLSITEARCH = /home/con/perl5/perlbrew/perls/5.44.0-quadmath/lib/site_perl/5.44.0/x86_64-linux-quadmath
 DESTINSTALLSITEARCH = $(DESTDIR)$(INSTALLSITEARCH)
 INSTALLVENDORARCH = 
 DESTINSTALLVENDORARCH = $(DESTDIR)$(INSTALLVENDORARCH)
-INSTALLBIN = /home/con/perl5/perlbrew/perls/perl-5.44.0/bin
+INSTALLBIN = /home/con/perl5/perlbrew/perls/5.44.0-quadmath/bin
 DESTINSTALLBIN = $(DESTDIR)$(INSTALLBIN)
-INSTALLSITEBIN = /home/con/perl5/perlbrew/perls/perl-5.44.0/bin
+INSTALLSITEBIN = /home/con/perl5/perlbrew/perls/5.44.0-quadmath/bin
 DESTINSTALLSITEBIN = $(DESTDIR)$(INSTALLSITEBIN)
 INSTALLVENDORBIN = 
 DESTINSTALLVENDORBIN = $(DESTDIR)$(INSTALLVENDORBIN)
-INSTALLSCRIPT = /home/con/perl5/perlbrew/perls/perl-5.44.0/bin
+INSTALLSCRIPT = /home/con/perl5/perlbrew/perls/5.44.0-quadmath/bin
 DESTINSTALLSCRIPT = $(DESTDIR)$(INSTALLSCRIPT)
-INSTALLSITESCRIPT = /home/con/perl5/perlbrew/perls/perl-5.44.0/bin
+INSTALLSITESCRIPT = /home/con/perl5/perlbrew/perls/5.44.0-quadmath/bin
 DESTINSTALLSITESCRIPT = $(DESTDIR)$(INSTALLSITESCRIPT)
 INSTALLVENDORSCRIPT = 
 DESTINSTALLVENDORSCRIPT = $(DESTDIR)$(INSTALLVENDORSCRIPT)
-INSTALLMAN1DIR = /home/con/perl5/perlbrew/perls/perl-5.44.0/man/man1
+INSTALLMAN1DIR = /home/con/perl5/perlbrew/perls/5.44.0-quadmath/man/man1
 DESTINSTALLMAN1DIR = $(DESTDIR)$(INSTALLMAN1DIR)
-INSTALLSITEMAN1DIR = /home/con/perl5/perlbrew/perls/perl-5.44.0/man/man1
+INSTALLSITEMAN1DIR = /home/con/perl5/perlbrew/perls/5.44.0-quadmath/man/man1
 DESTINSTALLSITEMAN1DIR = $(DESTDIR)$(INSTALLSITEMAN1DIR)
 INSTALLVENDORMAN1DIR = 
 DESTINSTALLVENDORMAN1DIR = $(DESTDIR)$(INSTALLVENDORMAN1DIR)
-INSTALLMAN3DIR = /home/con/perl5/perlbrew/perls/perl-5.44.0/man/man3
+INSTALLMAN3DIR = /home/con/perl5/perlbrew/perls/5.44.0-quadmath/man/man3
 DESTINSTALLMAN3DIR = $(DESTDIR)$(INSTALLMAN3DIR)
-INSTALLSITEMAN3DIR = /home/con/perl5/perlbrew/perls/perl-5.44.0/man/man3
+INSTALLSITEMAN3DIR = /home/con/perl5/perlbrew/perls/5.44.0-quadmath/man/man3
 DESTINSTALLSITEMAN3DIR = $(DESTDIR)$(INSTALLSITEMAN3DIR)
 INSTALLVENDORMAN3DIR = 
 DESTINSTALLVENDORMAN3DIR = $(DESTDIR)$(INSTALLVENDORMAN3DIR)
-PERL_LIB = /home/con/perl5/perlbrew/perls/perl-5.44.0/lib/5.44.0
-PERL_ARCHLIB = /home/con/perl5/perlbrew/perls/perl-5.44.0/lib/5.44.0/x86_64-linux
+PERL_LIB = /home/con/perl5/perlbrew/perls/5.44.0-quadmath/lib/5.44.0
+PERL_ARCHLIB = /home/con/perl5/perlbrew/perls/5.44.0-quadmath/lib/5.44.0/x86_64-linux-quadmath
 LIBPERL_A = libperl.a
 FIRST_MAKEFILE = Makefile
 MAKEFILE_OLD = Makefile.old
 MAKE_APERL_FILE = Makefile.aperl
 PERLMAINCC = $(CC)
-PERL_INC = /home/con/perl5/perlbrew/perls/perl-5.44.0/lib/5.44.0/x86_64-linux/CORE
-PERL = "/home/con/perl5/perlbrew/perls/perl-5.44.0/bin/perl"
-FULLPERL = "/home/con/perl5/perlbrew/perls/perl-5.44.0/bin/perl"
+PERL_INC = /home/con/perl5/perlbrew/perls/5.44.0-quadmath/lib/5.44.0/x86_64-linux-quadmath/CORE
+PERL = "/home/con/perl5/perlbrew/perls/5.44.0-quadmath/bin/perl"
+FULLPERL = "/home/con/perl5/perlbrew/perls/5.44.0-quadmath/bin/perl"
 ABSPERL = $(PERL)
 PERLRUN = $(PERL)
 FULLPERLRUN = $(FULLPERL)
@@ -146,7 +146,7 @@ PERM_DIR = 755
 PERM_RW = 644
 PERM_RWX = 755
 
-MAKEMAKER   = /home/con/perl5/perlbrew/perls/perl-5.44.0/lib/5.44.0/ExtUtils/MakeMaker.pm
+MAKEMAKER   = /home/con/perl5/perlbrew/perls/5.44.0-quadmath/lib/5.44.0/ExtUtils/MakeMaker.pm
 MM_VERSION  = 7.78
 MM_REVISION = 77800
 
@@ -229,6 +229,7 @@ TO_INST_PM = TukeyHSD.pl \
 	min.pl \
 	mode.pl \
 	oneway_test.pl \
+	plot.scaling.pl \
 	power.t.test.pl \
 	quantile.pl \
 	rank.pl \
@@ -237,6 +238,8 @@ TO_INST_PM = TukeyHSD.pl \
 	rnorm.pl \
 	runif.pl \
 	sample.pl \
+	scale.data.pl \
+	scale.pl \
 	sd.pl \
 	summary.pl \
 	t.test.pl \
@@ -251,8 +254,8 @@ TO_INST_PM = TukeyHSD.pl \
 	xlsx.write.pl \
 	xs.check.pl \
 	xs.sxn.pl
-PERL_ARCHLIBDEP = /home/con/perl5/perlbrew/perls/perl-5.44.0/lib/5.44.0/x86_64-linux
-PERL_INCDEP = /home/con/perl5/perlbrew/perls/perl-5.44.0/lib/5.44.0/x86_64-linux/CORE
+PERL_ARCHLIBDEP = /home/con/perl5/perlbrew/perls/5.44.0-quadmath/lib/5.44.0/x86_64-linux-quadmath
+PERL_INCDEP = /home/con/perl5/perlbrew/perls/5.44.0-quadmath/lib/5.44.0/x86_64-linux-quadmath/CORE
 
 
 # Dependencies info
@@ -275,12 +278,12 @@ AUTOSPLITFILE = $(ABSPERLRUN)  -e 'use AutoSplit;  autosplit($$$$ARGV[0], $$$$AR
 
 # --- MakeMaker tool_xsubpp section:
 
-XSUBPPDIR = /home/con/perl5/perlbrew/perls/perl-5.44.0/lib/5.44.0/ExtUtils
+XSUBPPDIR = /home/con/perl5/perlbrew/perls/5.44.0-quadmath/lib/5.44.0/ExtUtils
 XSUBPP = "$(XSUBPPDIR)$(DFSEP)xsubpp"
 XSUBPPRUN = $(PERLRUN) $(XSUBPP)
 XSPROTOARG = -noprototypes
-XSUBPPDEPS = /home/con/perl5/perlbrew/perls/perl-5.44.0/lib/5.44.0/ExtUtils/typemap /home/con/perl5/perlbrew/perls/perl-5.44.0/lib/5.44.0/ExtUtils$(DFSEP)xsubpp
-XSUBPPARGS = -typemap '/home/con/perl5/perlbrew/perls/perl-5.44.0/lib/5.44.0/ExtUtils/typemap'
+XSUBPPDEPS = /home/con/perl5/perlbrew/perls/5.44.0-quadmath/lib/5.44.0/ExtUtils/typemap /home/con/perl5/perlbrew/perls/5.44.0-quadmath/lib/5.44.0/ExtUtils$(DFSEP)xsubpp
+XSUBPPARGS = -typemap '/home/con/perl5/perlbrew/perls/5.44.0-quadmath/lib/5.44.0/ExtUtils/typemap'
 XSUBPP_EXTRA_ARGS =
 
 
@@ -337,7 +340,7 @@ RCS_LABEL = rcs -Nv$(VERSION_SYM): -q
 DIST_CP = best
 DIST_DEFAULT = tardist
 DISTNAME = Stats-LikeR
-DISTVNAME = Stats-LikeR-0.298
+DISTVNAME = Stats-LikeR-0.299
 
 
 # --- MakeMaker macro section:
@@ -686,7 +689,7 @@ metafile : create_distdir
 	$(NOECHO) $(ECHO) '  Test::Exception: '\''0'\''' >> META_new.yml
 	$(NOECHO) $(ECHO) '  Test::LeakTrace: '\''0'\''' >> META_new.yml
 	$(NOECHO) $(ECHO) '  Test::More: '\''0'\''' >> META_new.yml
-	$(NOECHO) $(ECHO) 'version: 0.298' >> META_new.yml
+	$(NOECHO) $(ECHO) 'version: 0.299' >> META_new.yml
 	$(NOECHO) $(ECHO) 'x_serialization_backend: '\''CPAN::Meta::YAML version 0.020'\''' >> META_new.yml
 	-$(NOECHO) $(MV) META_new.yml $(DISTVNAME)/META.yml
 	$(NOECHO) $(ECHO) Generating META.json
@@ -734,7 +737,7 @@ metafile : create_distdir
 	$(NOECHO) $(ECHO) '      }' >> META_new.json
 	$(NOECHO) $(ECHO) '   },' >> META_new.json
 	$(NOECHO) $(ECHO) '   "release_status" : "stable",' >> META_new.json
-	$(NOECHO) $(ECHO) '   "version" : 0.298,' >> META_new.json
+	$(NOECHO) $(ECHO) '   "version" : 0.299,' >> META_new.json
 	$(NOECHO) $(ECHO) '   "x_serialization_backend" : "JSON::PP version 4.16"' >> META_new.json
 	$(NOECHO) $(ECHO) '}' >> META_new.json
 	-$(NOECHO) $(MV) META_new.json $(DISTVNAME)/META.json
@@ -1084,8 +1087,8 @@ $(FIRST_MAKEFILE) : Makefile.PL $(CONFIGDEP)
 
 # --- MakeMaker makeaperl section ---
 MAP_TARGET    = perl
-FULLPERL      = "/home/con/perl5/perlbrew/perls/perl-5.44.0/bin/perl"
-MAP_PERLINC   = "-Iblib/arch" "-Iblib/lib" "-I/home/con/perl5/perlbrew/perls/perl-5.44.0/lib/5.44.0/x86_64-linux" "-I/home/con/perl5/perlbrew/perls/perl-5.44.0/lib/5.44.0"
+FULLPERL      = "/home/con/perl5/perlbrew/perls/5.44.0-quadmath/bin/perl"
+MAP_PERLINC   = "-Iblib/arch" "-Iblib/lib" "-I/home/con/perl5/perlbrew/perls/5.44.0-quadmath/lib/5.44.0/x86_64-linux-quadmath" "-I/home/con/perl5/perlbrew/perls/5.44.0-quadmath/lib/5.44.0"
 
 $(MAP_TARGET) :: $(MAKE_APERL_FILE)
 	$(MAKE) $(USEMAKEFILE) $(MAKE_APERL_FILE) $@
@@ -1137,7 +1140,7 @@ testdb_static :: static pure_all $(MAP_TARGET)
 # --- MakeMaker ppd section:
 # Creates a PPD (Perl Package Description) for a binary distribution.
 ppd :
-	$(NOECHO) $(ECHO) '<SOFTPKG NAME="Stats-LikeR" VERSION="0.298">' > Stats-LikeR.ppd
+	$(NOECHO) $(ECHO) '<SOFTPKG NAME="Stats-LikeR" VERSION="0.299">' > Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '    <ABSTRACT>Get basic statistical functions, like in R, but with Perl using XS for performance</ABSTRACT>' >> Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '    <AUTHOR>David E. Condon &lt;dec986@gmail.com&gt;</AUTHOR>' >> Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '    <IMPLEMENTATION>' >> Stats-LikeR.ppd
@@ -1147,7 +1150,7 @@ ppd :
 	$(NOECHO) $(ECHO) '        <REQUIRE NAME="Test::Exception" />' >> Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '        <REQUIRE NAME="Test::LeakTrace" />' >> Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '        <REQUIRE NAME="Test::More" />' >> Stats-LikeR.ppd
-	$(NOECHO) $(ECHO) '        <ARCHITECTURE NAME="x86_64-linux-5.44" />' >> Stats-LikeR.ppd
+	$(NOECHO) $(ECHO) '        <ARCHITECTURE NAME="x86_64-linux-quadmath-5.44" />' >> Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '        <CODEBASE HREF="" />' >> Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '    </IMPLEMENTATION>' >> Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '</SOFTPKG>' >> Stats-LikeR.ppd
@@ -1191,6 +1194,7 @@ pm_to_blib : $(FIRST_MAKEFILE) $(TO_INST_PM)
 	  'min.pl' '$(INST_LIB)/Stats/min.pl' \
 	  'mode.pl' '$(INST_LIB)/Stats/mode.pl' \
 	  'oneway_test.pl' '$(INST_LIB)/Stats/oneway_test.pl' \
+	  'plot.scaling.pl' '$(INST_LIB)/Stats/plot.scaling.pl' \
 	  'power.t.test.pl' '$(INST_LIB)/Stats/power.t.test.pl' \
 	  'quantile.pl' '$(INST_LIB)/Stats/quantile.pl' \
 	  'rank.pl' '$(INST_LIB)/Stats/rank.pl' \
@@ -1199,6 +1203,8 @@ pm_to_blib : $(FIRST_MAKEFILE) $(TO_INST_PM)
 	  'rnorm.pl' '$(INST_LIB)/Stats/rnorm.pl' \
 	  'runif.pl' '$(INST_LIB)/Stats/runif.pl' \
 	  'sample.pl' '$(INST_LIB)/Stats/sample.pl' \
+	  'scale.data.pl' '$(INST_LIB)/Stats/scale.data.pl' \
+	  'scale.pl' '$(INST_LIB)/Stats/scale.pl' \
 	  'sd.pl' '$(INST_LIB)/Stats/sd.pl' \
 	  'summary.pl' '$(INST_LIB)/Stats/summary.pl' \
 	  't.test.pl' '$(INST_LIB)/Stats/t.test.pl' \
@@ -1208,15 +1214,15 @@ pm_to_blib : $(FIRST_MAKEFILE) $(TO_INST_PM)
 	  'var.test.pl' '$(INST_LIB)/Stats/var.test.pl' \
 	  'vers.test.pl' '$(INST_LIB)/Stats/vers.test.pl' \
 	  'view.pl' '$(INST_LIB)/Stats/view.pl' \
-	  'wilcox.text.pl' '$(INST_LIB)/Stats/wilcox.text.pl' \
-	  'write.table.pl' '$(INST_LIB)/Stats/write.table.pl' \
-	  'xlsx.write.pl' '$(INST_LIB)/Stats/xlsx.write.pl' \
-	  'xs.check.pl' '$(INST_LIB)/Stats/xs.check.pl' 
+	  'wilcox.text.pl' '$(INST_LIB)/Stats/wilcox.text.pl' 
 	$(NOECHO) $(ABSPERLRUN) -MExtUtils::Install -e '$$i=0; $$n=$$#ARGV; $$i++ until $$i > $$n or $$ARGV[$$i] eq q{--};' \
 	  -e 'die q{Failed to find -- in }.join(q{|},@ARGV) if $$i > $$n;' \
 	  -e '@parts=splice @ARGV,0,$$i+1;' \
 	  -e 'pop @parts; $$filter=join q{ }, map qq{"$$_"}, @parts;' \
 	  -e 'pm_to_blib({@ARGV}, '\''$(INST_LIB)/auto'\'', $$filter, '\''$(PERM_DIR)'\'')' -- $(PM_FILTER) -- \
+	  'write.table.pl' '$(INST_LIB)/Stats/write.table.pl' \
+	  'xlsx.write.pl' '$(INST_LIB)/Stats/xlsx.write.pl' \
+	  'xs.check.pl' '$(INST_LIB)/Stats/xs.check.pl' \
 	  'xs.sxn.pl' '$(INST_LIB)/Stats/xs.sxn.pl' 
 	$(NOECHO) $(TOUCH) pm_to_blib
 

@@ -59,11 +59,10 @@ the whole set and defines LIKER_HAVE_LONG_DOUBLE_MATH only when every one of
 them resolves; without it this falls back to the double functions, which is
 exactly what the code did before and so cannot be a regression.
 
-Float classification goes through perl's Perl_isnan/Perl_isinf/Perl_isfinite
-instead. Those are the same story with a worse failure: where the C99
-type-generic macros are missing, isfinite() is a plain double function, and
-narrowing a large-but-finite long double into it reports the value as infinite
-rather than merely rounding it.*/
+Float classification -- NaN, infinite, finite -- is nv_isnan()/nv_isinf()/
+nv_isfinite() below, and neither the C99 macros nor perl's Perl_isnan /
+Perl_isinf / Perl_isfinite may be used in this file. See the comment on
+those three.*/
 #if defined(USE_QUADMATH)
 #  define LIKER_NVFN(base) base ## q
 #elif defined(USE_LONG_DOUBLE) && defined(LIKER_HAVE_LONG_DOUBLE_MATH)
@@ -93,6 +92,48 @@ rather than merely rounding it.*/
 #define nv_tanh(x)     LIKER_NVFN(tanh)(x)
 #define nv_ldexp(x,e)  LIKER_NVFN(ldexp)((x),(e))
 #define nv_frexp(x,e)  LIKER_NVFN(frexp)((x),(e))
+/*Float classification for an NV: NaN, infinite, finite. Every obvious spelling
+of these is wrong here.
+
+C99's isnan()/isinf()/isfinite() are type-generic macros, but where a platform
+does not provide them they are plain double functions: narrowing a
+large-but-finite long double into one of those reports it as infinite rather
+than merely rounding it. That is the trap described above, with a worse failure
+mode than losing mantissa bits.
+
+perl's Perl_isnan / Perl_isinf / Perl_isfinite were what this file used
+through 0.298, and they are unusable for a different reason -- on any perl
+before 5.22 the fpclass() route through perl.h has never compiled at all.
+Configure defines HAS_FPCLASS on illumos/Solaris, and perl.h there writes
+
+    #define Perl_fp_class()      fpclass(x)                 <- no parameter
+    #define Perl_fp_class_inf(x) (Perl_fp_class(x)==FP_CLASS_NINF||...)
+
+so any use of Perl_isinf is a "macro passed 1 arguments, but takes just 0"
+error, and FP_CLASS_NINF/FP_CLASS_PINF are names no <ieeefp.h> defines: Solaris
+spells those FP_NINF and FP_PINF. That is what broke 0.298 on OmniOS (CPAN
+Testers, perl-5.20.2, gcc 9.3), and nothing here can catch it, because the
+whole block is dead code on Linux and glibc, where Configure finds isinf().
+perl 5.22 rewrote it; 5.10.1 and 5.12.5 still carry it verbatim, and this
+module supports 5.10. Those same perls also define Perl_isinf as ((x)==NV_INF),
+which misses -Inf, and Perl_isfinite as finite((NV)x), where the prototype
+undoes the cast.
+
+So classify by comparison instead. NV_MAX is the largest finite NV -- DBL_MAX,
+LDBL_MAX or FLT128_MAX, straight out of <float.h> -- so a non-NaN NV is
+infinite exactly when it falls outside [-NV_MAX, NV_MAX]. These call no libm
+and need no header perl.h has not already included, they are exact at every NV
+width so there is nothing left to narrow, and taking the value through an NV
+parameter is also what discards any x87 excess precision that a bare macro
+would leave in play.
+
+What they do rely on is IEEE comparison semantics: a NaN compares false against
+everything including itself. That holds by default on every compiler this
+module targets, and is only lost under a -ffast-math-style flag, which no perl
+is built with.*/
+PERL_STATIC_INLINE bool nv_isnan(NV x)    { return (bool)(x != x); }
+PERL_STATIC_INLINE bool nv_isinf(NV x)    { return (bool)(x > NV_MAX || x < -NV_MAX); }
+PERL_STATIC_INLINE bool nv_isfinite(NV x) { return (bool)(x >= -NV_MAX && x <= NV_MAX); }
 /*Stack_off_t is the type XSUB.h's dITEMS gives `items`, and so the type every
 argument-stack index here is compared against. It arrived in perl 5.39.2, which
 introduced it precisely so the stack offset could widen to SSize_t on a build
@@ -331,7 +372,7 @@ nk_num_pv(SV *sv, char *buf, STRLEN *lenp, bool fast_nv) {
 	    & (SVf_NOK|SVf_IOK|SVf_POK|SVf_ROK|SVs_GMG|SVf_THINKFIRST)) == SVf_NOK) {
 		const NV nv = SvNVX(sv);
 		if (nv == 0.0) { buf[0] = '0'; *lenp = 1; return buf; } //-0.0 too
-		if (Perl_isfinite(nv)) {
+		if (nv_isfinite(nv)) {
 			const int n = nk_nv_pv((double)nv, buf);
 			if (n > 0) { *lenp = (STRLEN)n; return buf; }
 		}
@@ -632,7 +673,7 @@ static void ft_dnhyper(const ft_support *S, NV ncp, NV *out) {
 
 static NV ft_mnhyper(const ft_support *S, NV ncp, NV *scratch) {
 	if (ncp == 0)     return (NV)S->lo;
-	if (Perl_isinf(ncp))   return (NV)S->hi;
+	if (nv_isinf(ncp))   return (NV)S->hi;
 	ft_dnhyper(S, ncp, scratch);
 	NV mu = 0;
 	for (long i = 0; i < S->ns; i++) mu += (NV)(S->lo + i) * scratch[i];
@@ -650,7 +691,7 @@ static NV ft_pnhyper(const ft_support *S, long q, NV ncp, bool upper, NV *scratc
 	  return s;
 	}
 	if (ncp == 0.0)   return upper ? (NV)(q <= S->lo) : (NV)(q >= S->lo);
-	if (Perl_isinf(ncp))   return upper ? (NV)(q <= S->hi) : (NV)(q >= S->hi);
+	if (nv_isinf(ncp))   return upper ? (NV)(q <= S->hi) : (NV)(q >= S->hi);
 	ft_dnhyper(S, ncp, scratch);
 	NV s = 0;
 	for (long i = 0; i < S->ns; i++) {
@@ -1020,7 +1061,7 @@ static NV ct_cell(pTHX_ SV *sv, const char *what) {
 	if (!sv || !SvOK(sv)) croak("chisq_test: %s is undef", what);
 	if (!looks_like_number(sv)) croak("chisq_test: %s is not a number", what);
 	NV v = SvNV(sv);
-	if (!Perl_isfinite(v) || v < 0.0)
+	if (!nv_isfinite(v) || v < 0.0)
 		croak("chisq_test: all entries of 'x' must be nonnegative and finite (%s)", what);
 	return v;
 }
@@ -1030,7 +1071,7 @@ static NV ct_prob(pTHX_ SV *sv, const char *what) {
 	if (!sv || !SvOK(sv)) croak("chisq_test: %s is undef", what);
 	if (!looks_like_number(sv)) croak("chisq_test: %s is not a number", what);
 	NV v = SvNV(sv);
-	if (!Perl_isfinite(v) || v < 0.0) croak("chisq_test: probabilities must be non-negative");
+	if (!nv_isfinite(v) || v < 0.0) croak("chisq_test: probabilities must be non-negative");
 	return v;
 }
 
@@ -1130,7 +1171,7 @@ static NV evaluate_term(pTHX_ HV *data_hoa, HV **row_hashes, unsigned int i, con
 		NV left = evaluate_term(aTHX_ data_hoa, row_hashes, i, term_cpy);
 		NV right = evaluate_term(aTHX_ data_hoa, row_hashes, i, colon + 1);
 		Safefree(term_cpy); 
-		if (Perl_isnan(left) || Perl_isnan(right)) return NAN;
+		if (nv_isnan(left) || nv_isnan(right)) return NAN;
 		return left * right;
 	}
 	if (strncmp(term_cpy, "I(", 2) == 0) {
@@ -1146,7 +1187,7 @@ static NV evaluate_term(pTHX_ HV *data_hoa, HV **row_hashes, unsigned int i, con
 		NV v = get_data_value(aTHX_ data_hoa, row_hashes, i, inner);
 		Safefree(term_cpy); 
 
-		if (Perl_isnan(v)) return NAN;
+		if (nv_isnan(v)) return NAN;
 		return power == 1 ? v : nv_pow(v, power);
 	}
 	NV result = get_data_value(aTHX_ data_hoa, row_hashes, i, term_cpy);
@@ -1662,7 +1703,7 @@ static bool lm_design_row(pTHX_ LmDesign *d, HV *data_hoa,
 				} else {
 					NV e = evaluate_term(aTHX_ data_hoa, row_hashes,
 					                     (unsigned int)i, cm->expr);
-					if (Perl_isnan(e)) { ok = FALSE; break; }
+					if (nv_isnan(e)) { ok = FALSE; break; }
 					v *= e;
 				}
 			}
@@ -2320,7 +2361,7 @@ static void compute_hist_logic(NV *x, size_t n, NV *breaks, size_t n_bins,
 		for (size_t j = 0; j < n; j++) {
 			NV val = x[j];
 			// Ignore out-of-bounds or invalid values
-			if (Perl_isnan(val) || Perl_isinf(val) || val < min_val) continue;
+			if (nv_isnan(val) || nv_isinf(val) || val < min_val) continue;
 			// Calculate initial bin index mathematically
 			size_t idx = (size_t)((val - min_val) / step);
 			// Clamp to valid array bounds first to prevent overflow */
@@ -2510,11 +2551,11 @@ this as `1 - pf(...)` instead throws away the whole answer once the p-value
 drops below ~1e-16 (the ulp of 1.0): R reports 1.2e-76 where the naive form
 returns a flat 0, and loses relative precision from about 1e-9 downward.*/
 static NV pf_upper(NV f, NV df1, NV df2) {
-	if (Perl_isnan(f) || Perl_isnan(df1) || Perl_isnan(df2)) return NAN;   //NaN in, NaN out
+	if (nv_isnan(f) || nv_isnan(df1) || nv_isnan(df2)) return NAN;   //NaN in, NaN out
 	if (f <= 0.0)   return 1.0;
-	if (Perl_isinf(f))   return 0.0;   //zero within-group variance: R gives p = 0
+	if (nv_isinf(f))   return 0.0;   //zero within-group variance: R gives p = 0
 	NV denom = df1 * f + df2;
-	if (Perl_isinf(denom)) return 0.0; //p underflows anyway
+	if (nv_isinf(denom)) return 0.0; //p underflows anyway
 	return incbeta(df2 / 2.0, df1 / 2.0, df2 / denom);
 }
 
@@ -3430,7 +3471,7 @@ static NV nb_theta_ml(const NV *y, const NV *mu, size_t n,
 		denom += r * r;
 	}
 	NV t0 = (denom > 0.0) ? (NV)n / denom : 1.0;
-	if (!(t0 > 0.0) || !Perl_isfinite(t0)) t0 = 1.0;
+	if (!(t0 > 0.0) || !nv_isfinite(t0)) t0 = 1.0;
 	{
 		const NV eps = nv_pow((NV)DBL_EPSILON, 0.25);   //MASS: double.eps^0.25
 		NV del = 1.0;
@@ -3446,12 +3487,12 @@ static NV nb_theta_ml(const NV *y, const NV *mu, size_t n,
 				info += -c_trigamma(t0 + y[i]) + c_trigamma(t0)
 					- 1.0 / t0 + 2.0 / mt - (y[i] + t0) / (mt * mt);
 			}
-			if (info == 0.0 || !Perl_isfinite(info)) break;
+			if (info == 0.0 || !nv_isfinite(info)) break;
 			del = score / info;
 			t0 += del;
 		}
 	}
-	if (!(t0 > 0.0) || !Perl_isfinite(t0)) t0 = 1e-8;
+	if (!(t0 > 0.0) || !nv_isfinite(t0)) t0 = 1e-8;
 	return t0;
 }
 
@@ -3571,13 +3612,13 @@ static void wdist_free(WilcoxDist *D) {
 static void wdist_finish(pTHX_ WilcoxDist *D) {
 	NV total = 0.0;
 	for (size_t i = 0; i < D->len; i++) {
-		if (!Perl_isfinite(D->d[i])) {
+		if (!nv_isfinite(D->d[i])) {
 			wdist_free(D);
 			croak("wilcox_test: overflow computing the exact distribution; use exact => 0");
 		}
 		total += D->d[i];
 	}
-	if (!Perl_isfinite(total) || total <= 0.0) {
+	if (!nv_isfinite(total) || total <= 0.0) {
 		wdist_free(D);
 		croak("wilcox_test: overflow computing the exact distribution; use exact => 0");
 	}
@@ -3749,7 +3790,7 @@ static void wdist_ranksum_perm(pTHX_ WilcoxDist *restrict D,
    Ported from R's fprec() so that digits_rank decides ties exactly as R
    does. rint(), not round(), because R rounds halves to even here. */
 static NV nv_signif(NV x, NV digits) {
-	if (!Perl_isfinite(x) || x == 0.0) return x;
+	if (!nv_isfinite(x) || x == 0.0) return x;
 	/* Also catches NaN and +Inf digits: more significant digits than the
 	   build carries cannot change the value. */
 	if (!(digits <= (NV)NV_DIG)) return x;
@@ -3890,7 +3931,7 @@ typedef struct {
 static NV wilcox_ci_W(NV d, void *ctx) {
 	dTHX;
 	WilcoxCiCtx *C = (WilcoxCiCtx *)ctx;
-	bool finite_digits = Perl_isfinite(C->digits_rank);
+	bool finite_digits = nv_isfinite(C->digits_rank);
 	NV zd, sigma;
 	bool has_ties = FALSE;
 	if (C->y) {                                     /* two-sample */
@@ -4630,19 +4671,19 @@ Mathematically identical to R's dnorm4.
 Includes Morten Welinder's precision improvements for extreme tails.*/
 static NV c_dnorm(NV x, NV mu, NV sigma, bool give_log) {
 	// Propagate NaNs
-	if (Perl_isnan(x) || Perl_isnan(mu) || Perl_isnan(sigma)) return x + mu + sigma; 
+	if (nv_isnan(x) || nv_isnan(mu) || nv_isnan(sigma)) return x + mu + sigma; 
 	if (sigma < 0.0) {
 	  warn("dnorm: standard deviation must be non-negative");
 	  return NAN;
 	}
-	if (Perl_isinf(sigma)) return 0.0;
-	if ((Perl_isnan(x) || Perl_isinf(x)) && mu == x) return NAN; // x-mu is NaN
+	if (nv_isinf(sigma)) return 0.0;
+	if ((nv_isnan(x) || nv_isinf(x)) && mu == x) return NAN; // x-mu is NaN
 	// Dirac delta behavior for zero variance
 	if (sigma == 0.0) return (x == mu) ? INFINITY : 0.0;
 
 	// Standardize x
 	x = (x - mu) / sigma;
-	if (Perl_isnan(x) || Perl_isinf(x)) return 0.0;
+	if (nv_isnan(x) || nv_isinf(x)) return 0.0;
 	x = nv_fabs(x);
 	// Catch massive limits early to prevent math overflow
 	if (x >= 2.0 * nv_sqrt(DBL_MAX)) return 0.0;
@@ -6287,7 +6328,7 @@ static NV st_ptukey(NV q, NV rr, NV cc, NV df){
 
 	if (q <= 0.0) return 0.0;
 	if (df < 2.0 || rr < 1.0 || cc < 2.0) return NAN;
-	if (!Perl_isfinite(q)) return 1.0;
+	if (!nv_isfinite(q)) return 1.0;
 	if (df > dlarg) return st_wprob(q, rr, cc);
 
 	f2 = df * 0.5;
@@ -6554,7 +6595,7 @@ static void c_pnorm_both(double x, double *cum, double *ccum, int i_tail, bool l
 	unsigned int i;
 	bool lower, upper;
 
-	if (Perl_isnan(x)) { *cum = *ccum = x; return; }
+	if (nv_isnan(x)) { *cum = *ccum = x; return; }
 
 	eps = DBL_EPSILON * 0.5;
 	lower = i_tail != 1;
@@ -6621,14 +6662,14 @@ static double c_pnorm(double x, double mu, double sigma, bool lower_tail, bool l
 #define PN_D__1 (log_p ? 0.0 : 1.0)
 #define PN_DT_0 (lower_tail ? PN_D__0 : PN_D__1)
 #define PN_DT_1 (lower_tail ? PN_D__1 : PN_D__0)
-	if (Perl_isnan(x) || Perl_isnan(mu) || Perl_isnan(sigma)) return x + mu + sigma;
-	if (!Perl_isfinite(x) && mu == x) return NAN; //x - mu = NaN
+	if (nv_isnan(x) || nv_isnan(mu) || nv_isnan(sigma)) return x + mu + sigma;
+	if (!nv_isfinite(x) && mu == x) return NAN; //x - mu = NaN
 	if (sigma <= 0) {
 		if (sigma < 0) return NAN;
 		return (x < mu) ? PN_DT_0 : PN_DT_1; //sigma == 0
 	}
 	pp = (x - mu) / sigma;
-	if (!Perl_isfinite(pp)) return (x < mu) ? PN_DT_0 : PN_DT_1;
+	if (!nv_isfinite(pp)) return (x < mu) ? PN_DT_0 : PN_DT_1;
 	x = pp;
 	c_pnorm_both(x, &pp, &cp, (lower_tail ? 0 : 1), log_p);
 	return lower_tail ? pp : cp;
@@ -8817,12 +8858,12 @@ void anova(...)
 				for (size_t i = 0; i < n; i++) {
 					bool ok = TRUE;
 					for (size_t fi = 0; ok && fi < nform; fi++)
-						if (!Perl_isfinite(evaluate_term(aTHX_ hoa, rows, (unsigned)i, lhss[fi]))) ok = FALSE;
+						if (!nv_isfinite(evaluate_term(aTHX_ hoa, rows, (unsigned)i, lhss[fi]))) ok = FALSE;
 					for (size_t f = 0; ok && f < unfac; f++) {
 						if (ufacs[f].is_cat) {
 							char *sv = get_data_string_alloc(aTHX_ hoa, rows, i, ufacs[f].name);
 							if (!sv) ok = FALSE; else Safefree(sv);
-						} else if (!Perl_isfinite(evaluate_term(aTHX_ hoa, rows, (unsigned)i, ufacs[f].name))) {
+						} else if (!nv_isfinite(evaluate_term(aTHX_ hoa, rows, (unsigned)i, ufacs[f].name))) {
 							ok = FALSE;
 						}
 					}
@@ -8877,7 +8918,7 @@ void anova(...)
 						NV dss = mrss[fi - 1] - mrss[fi];
 						(void)hv_store(row, "Df", 2, newSViv(ddf), 0);
 						(void)hv_store(row, "Sum of Sq", 9, newSVnv(dss), 0);
-						if (ddf > 0 && Perl_isfinite(scale) && scale > 0.0) {
+						if (ddf > 0 && nv_isfinite(scale) && scale > 0.0) {
 							NV F = (dss / (NV)ddf) / scale;
 							(void)hv_store(row, "F", 1, newSVnv(F), 0);
 							(void)hv_store(row, "Pr(>F)", 6,
@@ -8953,12 +8994,12 @@ void anova(...)
 			Newx(complete, n ? n : 1, bool);
 			n_used = 0;
 			for (size_t i = 0; i < n; i++) {
-				bool ok = Perl_isfinite(evaluate_term(aTHX_ hoa, rows, (unsigned)i, lhs)) ? TRUE : FALSE;
+				bool ok = nv_isfinite(evaluate_term(aTHX_ hoa, rows, (unsigned)i, lhs)) ? TRUE : FALSE;
 				for (size_t f = 0; ok && f < nfac; f++) {
 					if (facs[f].is_cat) {
 						char *sv = get_data_string_alloc(aTHX_ hoa, rows, i, facs[f].name);
 						if (!sv) ok = FALSE; else Safefree(sv);
-					} else if (!Perl_isfinite(evaluate_term(aTHX_ hoa, rows, (unsigned)i, facs[f].name))) {
+					} else if (!nv_isfinite(evaluate_term(aTHX_ hoa, rows, (unsigned)i, facs[f].name))) {
 						ok = FALSE;
 					}
 				}
@@ -11196,7 +11237,7 @@ CODE:
 	  SV **el = av_fetch(x_av, i, 0);
 	  if (el && *el && (SvNIOK(*el) || (SvOK(*el) && looks_like_number(*el)))) {
 		   NV v = SvNV(*el);                 //SvNIOK shortcut avoids string parse
-		   if (Perl_isnan(v)) continue;
+		   if (nv_isnan(v)) continue;
 		   x_data[valid_nx++] = v;
 	  }
 	}
@@ -11219,7 +11260,7 @@ CODE:
 		   SV **el = av_fetch(y_av, i, 0);
 		   if (el && *el && (SvNIOK(*el) || (SvOK(*el) && looks_like_number(*el)))) {
 		       NV v = SvNV(*el);
-		       if (Perl_isnan(v)) continue;   //as for 'x': R drops NaN, and a
+		       if (nv_isnan(v)) continue;   //as for 'x': R drops NaN, and a
 		       y_data[valid_ny++] = v;        //NaN would hang the merge below
 		   }
 	  }
@@ -11429,8 +11470,8 @@ CODE:
 	}
 	/* R: stop("'mu' must be a single number") -- an infinite or NaN mu turns
 	  every difference into NaN or +/-Inf and quietly poisons the ranking. */
-	if (!Perl_isfinite(mu)) croak("wilcox_test: 'mu' must be a finite number");
-	if (want_cint && !(Perl_isfinite(conf_level) && conf_level > 0.0 && conf_level < 1.0))
+	if (!nv_isfinite(mu)) croak("wilcox_test: 'mu' must be a finite number");
+	if (want_cint && !(nv_isfinite(conf_level) && conf_level > 0.0 && conf_level < 1.0))
 		croak("wilcox_test: 'conf.level' must be a single number between 0 and 1");
 	if (!(tol_root > 0.0)) croak("wilcox_test: 'tol.root' must be positive");
 
@@ -11439,7 +11480,7 @@ CODE:
 	size_t nx_raw = (size_t)(av_top_index(x_av) + 1);
 	size_t ny_raw = y_av ? (size_t)(av_top_index(y_av) + 1) : 0;
 
-	const bool round_ranks = Perl_isfinite(digits_rank);
+	const bool round_ranks = nv_isfinite(digits_rank);
 /* R drops NA before anything else and NaN is NA to R, so both go; +/-Inf is
   neither, and a rank test has no trouble with it.  Letting NaN through is
   what used to make wilcox.test's own regression case -- a paired test whose
@@ -11460,9 +11501,9 @@ CODE:
 			if (!xe || !SvOK(*xe) || !looks_like_number(*xe)) continue;
 			if (!ye || !SvOK(*ye) || !looks_like_number(*ye)) continue;
 			NV a = SvNV(*xe), b = SvNV(*ye);
-			if (Perl_isnan(a) || Perl_isnan(b)) continue;
+			if (nv_isnan(a) || nv_isnan(b)) continue;
 			NV d = a - b;
-			if (Perl_isnan(d)) continue;         /* Inf - Inf */
+			if (nv_isnan(d)) continue;         /* Inf - Inf */
 			xv[n_x++] = d;
 		}
 		y_av = NULL;                             /* now a one-sample problem */
@@ -11471,7 +11512,7 @@ CODE:
 			SV **xe = av_fetch(x_av, i, 0);
 			if (!xe || !SvOK(*xe) || !looks_like_number(*xe)) continue;
 			NV a = SvNV(*xe);
-			if (Perl_isnan(a)) continue;
+			if (nv_isnan(a)) continue;
 			xv[n_x++] = a;
 		}
 		if (y_av) {
@@ -11481,7 +11522,7 @@ CODE:
 				SV **ye = av_fetch(y_av, i, 0);
 				if (!ye || !SvOK(*ye) || !looks_like_number(*ye)) continue;
 				NV b = SvNV(*ye);
-				if (Perl_isnan(b)) continue;
+				if (nv_isnan(b)) continue;
 				yv[n_y++] = b;
 			}
 		}
@@ -11642,7 +11683,7 @@ CODE:
 							if (p > a) { lo_mu = diffs[k]; break; }
 							lo_pi = p;
 						}
-						if (!Perl_isfinite(lo_mu)) lo_mu = diffs[nd - 1];
+						if (!nv_isfinite(lo_mu)) lo_mu = diffs[nd - 1];
 					}
 				}
 				if (alt != 2) {                  /* need an upper limit */
@@ -11654,7 +11695,7 @@ CODE:
 							if (p > a) { hi_mu = diffs[k + 1]; break; }
 							hi_pi = p;
 						}
-						if (!Perl_isfinite(hi_mu)) hi_mu = diffs[0];
+						if (!nv_isfinite(hi_mu)) hi_mu = diffs[0];
 					}
 				}
 				ci_lo = (alt == 1) ? -NV_INF : lo_mu;
@@ -11850,7 +11891,7 @@ CODE:
 								if (p > a) { lo_mu = walsh[k]; break; }
 								lo_pi = p;
 							}
-							if (!Perl_isfinite(lo_mu)) lo_mu = walsh[nd - 1];
+							if (!nv_isfinite(lo_mu)) lo_mu = walsh[nd - 1];
 						}
 					}
 					if (alt != 2) {
@@ -11862,7 +11903,7 @@ CODE:
 								if (p > a) { hi_mu = walsh[k + 1]; break; }
 								hi_pi = p;
 							}
-							if (!Perl_isfinite(hi_mu)) hi_mu = walsh[0];
+							if (!nv_isfinite(hi_mu)) hi_mu = walsh[0];
 						}
 					}
 					ci_lo = (alt == 1) ? -NV_INF : lo_mu;
@@ -11889,7 +11930,7 @@ CODE:
 				}
 				NV w_lo = wilcox_ci_W(mumin, &C);
 				NV w_hi = C.tied ? NV_NAN : wilcox_ci_W(mumax, &C);
-				if (C.tied || !Perl_isfinite(w_lo) || !Perl_isfinite(w_hi)) {
+				if (C.tied || !nv_isfinite(w_lo) || !nv_isfinite(w_hi)) {
 					warn("wilcox_test: cannot compute confidence interval when all observations are zero or tied");
 					ci_lo = (alt == 1) ? -NV_INF : NV_NAN;
 					ci_hi = (alt == 2) ?  NV_INF : NV_NAN;
@@ -13203,7 +13244,7 @@ SV* cov(SV* x_sv, SV* y_sv, const char* method = "pearson")
 			NV yv = (y_tv && SvOK(*y_tv) && looks_like_number(*y_tv)) ? SvNV(*y_tv) : NAN;
 
 			// Pairwise complete observations (skips NAs seamlessly like R)
-			if (!Perl_isnan(xv) && !Perl_isnan(yv)) {
+			if (!nv_isnan(xv) && !nv_isnan(yv)) {
 				 x_val[n] = xv;
 				 y_val[n] = yv;
 				 n++;
@@ -13493,7 +13534,7 @@ SV *predict(...)
 					I32 klen;
 					const char *t = hv_iterkey(he, &klen);
 					NV b = SvNV(HeVAL(he));
-					if (Perl_isnan(b)) continue;                         //aliased -> drop
+					if (nv_isnan(b)) continue;                         //aliased -> drop
 					if (dummy_hv && hv_exists(dummy_hv, t, klen)) continue;  //main-effect factor
 
 					/*NEW: an interaction with >=1 factor component needs special handling;
@@ -13630,7 +13671,7 @@ SV *predict(...)
 					svp = hv_fetch(coef_hv, scratch, (I32)strlen(scratch), 0);
 					if (svp && *svp) {
 						NV b = SvNV(*svp);
-						if (!Perl_isnan(b)) eta += b;
+						if (!nv_isnan(b)) eta += b;
 					}
 				}
 
@@ -13639,7 +13680,7 @@ SV *predict(...)
 					NV v;
 					if (strEQ(cterm[j], "Intercept")) v = 1.0;
 					else v = evaluate_term(aTHX_ data_hoa, row_hashes, (unsigned int)i, cterm[j]);
-					if (Perl_isnan(v)) { ok = FALSE; break; }
+					if (nv_isnan(v)) { ok = FALSE; break; }
 					eta += cbeta[j] * v;
 				}
 
@@ -13654,7 +13695,7 @@ SV *predict(...)
 							prod *= (raw_lv[bidx] && strcmp(raw_lv[bidx], cf_lvl[m]) == 0) ? 1.0 : 0.0;
 						} else {
 							NV v = evaluate_term(aTHX_ data_hoa, row_hashes, (unsigned int)i, cf_term[m]);
-							if (Perl_isnan(v)) { ok = FALSE; break; }
+							if (nv_isnan(v)) { ok = FALSE; break; }
 							prod *= v;
 						}
 					}
@@ -13763,7 +13804,7 @@ SV *glm(...)
 
 	for (size_t i = 0; i < n; i++) {
 		NV y_val = evaluate_term(aTHX_ data_hoa, row_hashes, i, lhs);
-		if (Perl_isnan(y_val)) { Safefree(row_names[i]); continue; }
+		if (nv_isnan(y_val)) { Safefree(row_names[i]); continue; }
 
 		if (!lm_design_row(aTHX_ design, data_hoa, row_hashes, i,
 		                   X + valid_n * (size_t)p)) {
@@ -13971,7 +14012,7 @@ SV *glm(...)
 			Note also that the old condition had the isfinite test on the
 			accepting side, so a genuinely divergent step producing a NaN
 			deviance was kept rather than truncated.*/
-			if (is_gaussian || Perl_isfinite(deviance_new)) break;
+			if (is_gaussian || nv_isfinite(deviance_new)) break;
 			if (half + 1 >= 10) break;   //stop halving rather than spin
 			boundary = TRUE;
 			for (size_t j = 0; j < p; j++) beta[j] = (beta[j] + beta_old[j]) / 2.0;
@@ -14242,7 +14283,7 @@ CODE:
 	  NV xv = (x_val && SvOK(*x_val) && looks_like_number(*x_val)) ? SvNV(*x_val) : NAN;
 	  NV yv = (y_val && SvOK(*y_val) && looks_like_number(*y_val)) ? SvNV(*y_val) : NAN;
 	  //Pairwise complete observations (skips NAs seamlessly like R)
-	  if (!Perl_isnan(xv) && !Perl_isnan(yv)) {
+	  if (!nv_isnan(xv) && !nv_isnan(yv)) {
 		  x[n] = xv;
 		  y[n] = yv;
 		  n++;
@@ -14441,7 +14482,7 @@ PPCODE:
 		SV **elem = av_fetch(av, i, 0);
 		if (elem && SvOK(*elem)) {
 			NV val = SvNV(*elem);
-			if (!Perl_isnan(val)) {
+			if (!nv_isnan(val)) {
 				x[n] = val;
 				mean += val;
 				n++;
@@ -14688,7 +14729,7 @@ CODE:
 	Non-integers truncate toward zero, as R's runif() does.*/
 	{
 		NV nv = SvNV(n_sv);
-		if (Perl_isnan(nv) || nv < 0.0)
+		if (nv_isnan(nv) || nv < 0.0)
 			croak_nv("runif: 'n' must be a non-negative integer, not %" NVgf, nv);
 		if (nv > (NV)IV_MAX)
 			croak_nv("runif: 'n' is too large: %" NVgf, nv);
@@ -15411,7 +15452,7 @@ SV* t_test(...)
 		values around 1e10 differing by 1e-5 gave t = 4e15, p = 3e-47. The
 		exactly-zero case is R's NaN, croaked rather than returned.*/
 		if (std_err == 0.0
-		    || (Perl_isfinite(std_err) && std_err < 10.0 * DBL_EPSILON * constant_scale))
+		    || (nv_isfinite(std_err) && std_err < 10.0 * DBL_EPSILON * constant_scale))
 			croak("t_test: data are essentially constant");
 		t_stat = (cint_est - mu) / std_err;
 		p_val  = get_t_pvalue(t_stat, df, alternative);
@@ -15656,7 +15697,7 @@ PPCODE:
 			for (size_t j = 0; j < r; j++) {
 				SV **c = av_fetch(rv, j, 0);
 				NV v = (c && *c) ? SvNV(*c) : 0.0;
-				if (v < 0 || Perl_isnan(v)) { Safefree(tab); croak("mcnemar_test: entries must be nonnegative and finite"); }
+				if (v < 0 || nv_isnan(v)) { Safefree(tab); croak("mcnemar_test: entries must be nonnegative and finite"); }
 				tab[i * r + j] = v;
 			}
 		}
@@ -15784,7 +15825,7 @@ PPCODE:
 		SV **xv = av_fetch(xa, i, 0), **gv = av_fetch(ga, i, 0);
 		if (!xv || !*xv || !SvOK(*xv) || !looks_like_number(*xv)) continue;
 		if (!gv || !*gv || !SvOK(*gv)) continue;
-		NV val = SvNV(*xv); if (Perl_isnan(val)) continue;
+		NV val = SvNV(*xv); if (nv_isnan(val)) continue;
 		STRLEN l; const char *s = SvPV(*gv, l);
 		x[N] = val; glab[N] = savepvn(s, l); N++;
 	}
@@ -15911,7 +15952,7 @@ PPCODE:
 			SV **c = av_fetch(rv, j, 0);
 			if (!c || !*c || !SvOK(*c) || !looks_like_number(*c)) { complete = FALSE; break; }
 			rowbuf[j] = SvNV(*c);
-			if (Perl_isnan(rowbuf[j])) { complete = FALSE; break; }
+			if (nv_isnan(rowbuf[j])) { complete = FALSE; break; }
 		}
 		if (!complete) continue;   //drop incomplete blocks, like R's complete.cases
 
@@ -16554,7 +16595,7 @@ PPCODE:
 			av_push(se_av, newSVnv(se_S));
 			av_push(lo_av, newSVnv(lo));
 			av_push(hi_av, newSVnv(hi));
-			if (Perl_isnan(median) && S <= 0.5) median = t;
+			if (nv_isnan(median) && S <= 0.5) median = t;
 			at_risk -= block;
 			i = j;
 		}
@@ -16569,7 +16610,7 @@ PPCODE:
 		hv_stores(st, "upper",    newRV_noinc((SV *)hi_av));
 		hv_stores(st, "n",        newSViv((IV)ng));
 		hv_stores(st, "events",   newSViv((IV)total_events));
-		hv_stores(st, "median",   Perl_isnan(median) ? newSV(0) : newSVnv(median));
+		hv_stores(st, "median",   nv_isnan(median) ? newSV(0) : newSVnv(median));
 		SV *key = *av_fetch(labels, g, 0);
 		STRLEN klen; const char *kp = SvPV(key, klen);
 		hv_store(strata, kp, klen, newRV_noinc((SV *)st), 0);
@@ -17330,8 +17371,8 @@ SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 				SV**tv = av_fetch(x_av, i, 0);
 				NV val = (tv && SvOK(*tv) && looks_like_number(*tv)) ? SvNV(*tv) : NAN;
 				xd[i] = val;
-				if (!Perl_isnan(val)) {
-				  if (Perl_isnan(x_first)) x_first = val;
+				if (!nv_isnan(val)) {
+				  if (nv_isnan(x_first)) x_first = val;
 				  else if (val != x_first) x_sd0 = 0;
 				}
 			}
@@ -17339,8 +17380,8 @@ SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 				SV**tv = av_fetch(y_av, i, 0);
 				NV val = (tv && SvOK(*tv) && looks_like_number(*tv)) ? SvNV(*tv) : NAN;
 				yd[i] = val;
-				if (!Perl_isnan(val)) {
-				  if (Perl_isnan(y_first)) y_first = val;
+				if (!nv_isnan(val)) {
+				  if (nv_isnan(y_first)) y_first = val;
 				  else if (val != y_first) y_sd0 = 0;
 				}
 			}
@@ -17396,8 +17437,8 @@ SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 				SV**cv  = av_fetch(row, j, 0);
 				NV val = (cv && SvOK(*cv) && looks_like_number(*cv)) ? SvNV(*cv) : NAN;
 				col_x[j][i] = val;
-				if (!Perl_isnan(val)) {
-				  if (Perl_isnan(first)) first = val;
+				if (!nv_isnan(val)) {
+				  if (nv_isnan(first)) first = val;
 				  else if (val != first) sd0 = 0;
 				}
 			}
@@ -17429,8 +17470,8 @@ SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 					 SV**cv  = av_fetch(row, j, 0);
 					 NV val = (cv && SvOK(*cv) && looks_like_number(*cv)) ? SvNV(*cv) : NAN;
 					 col_y[j][i] = val;
-					 if (!Perl_isnan(val)) {
-						 if (Perl_isnan(first)) first = val;
+					 if (!nv_isnan(val)) {
+						 if (nv_isnan(first)) first = val;
 						 else if (val != first) sd0 = 0;
 					 }
 				 }
@@ -17843,7 +17884,7 @@ SV *lm(...)
 
 		for (i = 0; i < n; i++) {
 			NV y_val = evaluate_term(aTHX_ data_hoa, row_hashes, i, lhs);
-			if (Perl_isnan(y_val)) { Safefree(row_names[i]); continue; }
+			if (nv_isnan(y_val)) { Safefree(row_names[i]); continue; }
 
 			if (!lm_design_row(aTHX_ design, data_hoa, row_hashes, i,
 			                   X + valid_n * (size_t)p)) {
@@ -17963,7 +18004,7 @@ SV *lm(...)
 		hv_store(res_hv, "r.squared",      9, newSVnv(r_squared),          0);
 		hv_store(res_hv, "adj.r.squared", 13, newSVnv(adj_r_squared),      0);
 		hv_store(res_hv, "xlevels",       7, newRV_inc((SV*)xlevels_hv), 0);
-		if (!Perl_isnan(f_stat)) {
+		if (!nv_isnan(f_stat)) {
 			AV *fstat_av = newAV();
 			av_push(fstat_av, newSVnv(f_stat));
 			av_push(fstat_av, newSViv(numdf));
@@ -18441,7 +18482,7 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 	// PHASE 4: Matrix Construction & Listwise Deletion
 	for (i = 0; i < n; i++) {
 		NV y_val = evaluate_term(aTHX_ data_hoa, row_hashes, i, lhs);
-		if (Perl_isnan(y_val)) { Safefree(row_names[i]); row_names[i] = NULL; continue; }
+		if (nv_isnan(y_val)) { Safefree(row_names[i]); row_names[i] = NULL; continue; }
 		bool row_ok = TRUE;
 		NV *row_x = X_mat[valid_n];   //CHANGED: build straight into the QR row (no per-row temp)
 		for (j = 0; j < p_exp; j++) {
@@ -18457,7 +18498,7 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 				} else { row_ok = FALSE; break; }
 			} else {
 				row_x[j] = evaluate_term(aTHX_ data_hoa, row_hashes, i, parent_term[j]);
-				if (Perl_isnan(row_x[j])) { row_ok = FALSE; break; }
+				if (nv_isnan(row_x[j])) { row_ok = FALSE; break; }
 			}
 		}
 		if (!row_ok) { Safefree(row_names[i]); row_names[i] = NULL; continue; }  //X_mat[valid_n] reused next iter
@@ -18574,7 +18615,7 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 			IV      col_count = 0;
 			for (i = 0; i < tgt_n; i++) {
 				 NV val = evaluate_term(aTHX_ tgt_hoa, tgt_row_hashes, i, col_name);
-				 if (!Perl_isnan(val)) { col_sum += val; col_count++; }
+				 if (!nv_isnan(val)) { col_sum += val; col_count++; }
 			}
 			NV col_mean = (col_count > 0) ? col_sum / col_count : NAN;
 			hv_store(mean_hv, col_name, strlen(col_name), newSVnv(col_mean), 0);
@@ -19223,9 +19264,9 @@ CODE:
 	if (!y_sv || !SvROK(y_sv) || SvTYPE(SvRV(y_sv)) != SVt_PVAV)
 	  croak("var_test: 'y' is a required argument and must be an ARRAY reference");
 
-	if (ratio <= 0.0 || !Perl_isfinite(ratio)) 
+	if (ratio <= 0.0 || !nv_isfinite(ratio)) 
 	  croak("var_test: 'ratio' must be a single positive number");
-	if (conf_level <= 0.0 || conf_level >= 1.0 || !Perl_isfinite(conf_level))
+	if (conf_level <= 0.0 || conf_level >= 1.0 || !nv_isfinite(conf_level))
 	  croak("var_test: 'conf.level' must be a single number between 0 and 1");
 	AV* x_av = (AV*)SvRV(x_sv);
 	AV* y_av = (AV*)SvRV(y_sv);
@@ -19238,7 +19279,7 @@ CODE:
 		SV** tv = av_fetch(x_av, i, 0);
 		if (tv && SvOK(*tv) && looks_like_number(*tv)) {
 			NV val = SvNV(*tv);
-			if (!Perl_isnan(val) && Perl_isfinite(val)) {
+			if (!nv_isnan(val) && nv_isfinite(val)) {
 				nx++;
 				NV delta = val - mean_x;
 				mean_x += delta / nx;
@@ -19253,7 +19294,7 @@ CODE:
 		SV** tv = av_fetch(y_av, i, 0);
 		if (tv && SvOK(*tv) && looks_like_number(*tv)) {
 			NV val = SvNV(*tv);
-			if (!Perl_isnan(val) && Perl_isfinite(val)) {
+			if (!nv_isnan(val) && nv_isfinite(val)) {
 				ny++;
 				NV delta = val - mean_y;
 				mean_y += delta / ny;
@@ -20608,7 +20649,7 @@ CODE:
 				   SV **cell_sv = av_fetch(row_av, j, 0);
 				   if (cell_sv && SvOK(*cell_sv) && looks_like_number(*cell_sv)) {
 					   NV v = SvNV(*cell_sv);
-					   if (!Perl_isfinite(v)) row_ok = FALSE;
+					   if (!nv_isfinite(v)) row_ok = FALSE;
 					   else X_mat[n * p + j] = v;
 				   } else row_ok = FALSE;
 			   }
@@ -20626,7 +20667,7 @@ CODE:
 				   SV **cell = hv_fetch(row_hv, colnames[j], strlen(colnames[j]), 0);
 				   if (cell && SvOK(*cell) && looks_like_number(*cell)) {
 					   NV v = SvNV(*cell);
-					   if (!Perl_isfinite(v)) row_ok = FALSE;
+					   if (!nv_isfinite(v)) row_ok = FALSE;
 					   else X_mat[n * p + j] = v;
 				   } else row_ok = FALSE;
 			   }
@@ -20646,7 +20687,7 @@ CODE:
 				SV **cell = av_fetch(col_arrays[j], i, 0);
 				if (cell && SvOK(*cell) && looks_like_number(*cell)) {
 				  NV v = SvNV(*cell);
-				  if (!Perl_isfinite(v)) row_ok = FALSE;
+				  if (!nv_isfinite(v)) row_ok = FALSE;
 				  else X_mat[n * p + j] = v;
 				} else row_ok = FALSE;
 			}
@@ -20664,7 +20705,7 @@ CODE:
 				SV **cell = hv_fetch(row_hv, colnames[j], strlen(colnames[j]), 0);
 				if (cell && SvOK(*cell) && looks_like_number(*cell)) {
 				  NV v = SvNV(*cell);
-				  if (!Perl_isfinite(v)) row_ok = FALSE;
+				  if (!nv_isfinite(v)) row_ok = FALSE;
 				  else X_mat[n * p + j] = v;
 				} else row_ok = FALSE;
 			}

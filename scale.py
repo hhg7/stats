@@ -1,0 +1,314 @@
+#!/usr/bin/env python3
+"""The Python side of scale.pl: the same functions, the same size ladder.
+
+Where benchmark.py asks "how long does each function take on one 10,000-row
+frame", this asks "what shape is that curve".  Each call is timed at a ladder
+of sizes half a decade apart, seven times at each size, and written out for
+plot.scaling.pl to draw against the same measurements from scale.pl and
+scale.R.  On a log-log axis the slope of the line is the exponent.
+
+    perl scale.data.pl                          # once, writes the fixtures
+    perl -Iblib/arch -Iblib/lib scale.pl        # -> perl_scaling.tsv
+    python3 scale.py                            # -> python_scaling.tsv
+    Rscript scale.R                             # -> r_scaling.tsv
+    perl plot.scaling.pl                        # -> scaling.*.png
+
+Environment:
+
+    SCALE_DIR    where scale.data.pl put the fixtures (/tmp/likeR.scaling)
+    SCALE_RUNS   runs per (function, size); default 7
+    SCALE_CAP    seconds; once one run of a function takes longer than this,
+                 that function is not tried at any larger size.  Default 4.
+    SCALE_MAX_N  hard ceiling on the row count, for a quick partial run
+    SCALE_TARGET seconds a single measurement should span; a call faster than
+                 this is repeated until it does.  Default 0.002.
+
+On a hybrid CPU -- Intel's P-core/E-core parts, and the big.LITTLE ARM designs
+-- run all three scripts under "taskset -c 0" (or the platform's equivalent).
+Measured here, a process landing on an E-core reads 1.5 to 2 times slower than
+the same loop on a P-core, which is a wider band than most of the differences
+these plots are drawn to show.
+
+The rule from benchmark.py carries over unchanged: each language is asked for
+the *same result* by its own idiomatic route, not for whichever call happens to
+be spelled most like the others.  Two ways that gets broken here, both guarded
+against below:
+
+  * asking pandas for less.  numpy's .T is a view, not a transposition, and
+    df[['x','y']] is a view onto the parent's blocks; Stats::LikeR's transpose
+    and select_cols both build a new structure, so the .copy() is what makes
+    the two calls the same job.
+  * asking pandas for more.  DataFrame.corr() would return a 2x2 matrix where
+    cor() returns one number, and groupby().mean() would average every numeric
+    column where group_by + mean averages one.
+
+The 'function' strings must match scale.pl's exactly -- that is the key the
+plot joins the three files on.  A name here with no counterpart there simply
+draws one fewer line in that panel.
+"""
+import csv
+import os
+import sys
+import time
+
+import numpy as np
+import pandas as pd
+import scipy.stats as stats
+from sklearn import metrics
+
+DIR = os.environ.get('SCALE_DIR', '/tmp/likeR.scaling')
+RUNS = int(os.environ.get('SCALE_RUNS', 7))
+CAP = float(os.environ.get('SCALE_CAP', 4))
+MAX_N = int(os.environ.get('SCALE_MAX_N', 0))
+TARGET = float(os.environ.get('SCALE_TARGET', 0.002))
+MAX_REPS = 10_000
+
+# Size ladders.  Half-decade steps; scale.pl and scale.R carry the same three
+# lists, and scale.data.pl's row counts are IO_N.  Change one, change all four.
+VEC_N = [1_000, 3_000, 10_000, 30_000, 100_000, 300_000, 1_000_000]
+IO_N = [1_000, 3_000, 10_000, 30_000, 100_000, 300_000]
+FRAME_N = [1_000, 3_000, 10_000, 30_000, 100_000, 300_000]
+
+if MAX_N:
+    VEC_N = [n for n in VEC_N if n <= MAX_N]
+    IO_N = [n for n in IO_N if n <= MAX_N]
+    FRAME_N = [n for n in FRAME_N if n <= MAX_N]
+
+
+# ---------------------------------------------------------------------------
+# Input builders -- one per figure, called once per size
+# ---------------------------------------------------------------------------
+def build_vector(n):
+    rng = np.random.default_rng(42)
+    return {
+        'x': rng.standard_normal(n),
+        'y': rng.standard_normal(n) * 2 + 5,
+        'label': rng.binomial(1, 0.5, n),
+        'n': n,
+    }
+
+
+def build_io(n):
+    f = {
+        'num_csv': os.path.join(DIR, 'num.%d.csv' % n),
+        'mix_csv': os.path.join(DIR, 'mix.%d.csv' % n),
+        'mix_tsv': os.path.join(DIR, 'mix.%d.tsv' % n),
+        'out': os.path.join(DIR, 'out.python.%d.tmp' % os.getpid()),
+    }
+    for k in ('num_csv', 'mix_csv', 'mix_tsv'):
+        if not os.path.isfile(f[k]):
+            sys.exit('missing fixture "%s"; run "perl scale.data.pl" first' % f[k])
+    # The frame handed to to_csv is read in, not synthesized, so all three
+    # languages write out the same table.
+    f['df'] = pd.read_csv(f['mix_csv'])
+    return f
+
+
+def build_frame(n):
+    rng = np.random.default_rng(42)
+    df = pd.DataFrame({
+        'x': rng.standard_normal(n),
+        'y': rng.standard_normal(n) * 2 + 5,
+        'cat1': rng.choice(['A', 'B', 'C'], n),
+        'cat2': rng.choice(['X', 'Y'], n),
+        'binary': rng.binomial(1, 0.5, n),
+    })
+    # merge needs a key column: a Stats::LikeR frame has no index to join on,
+    # so all three scripts join on an explicit id, as benchmark.py does.
+    df_id = df.copy()
+    df_id['id'] = np.arange(1, n + 1)
+    return {
+        'df': df,
+        'df_id': df_id,
+        # aoh2hoa's input: one record per row, which is what
+        # pd.DataFrame(records) is handed.
+        'records': df.to_dict('records'),
+        'arr': df[['x', 'y', 'binary']].to_numpy(),
+        'n': n,
+    }
+
+
+BUILD = {'vector': build_vector, 'io': build_io, 'frame': build_frame}
+
+# ---------------------------------------------------------------------------
+# The benchmarks: (figure, function, call, body)
+# ---------------------------------------------------------------------------
+# 'function' is the join key with scale.pl and scale.R; 'call' is only recorded
+# for the reader.
+BENCHMARKS = [
+    # --- reductions over one numeric vector --------------------------------
+    ('vector', 'sum', 'np.sum(x)', lambda d: np.sum(d['x'])),
+    ('vector', 'min', 'np.min(x)', lambda d: np.min(d['x'])),
+    ('vector', 'max', 'np.max(x)', lambda d: np.max(d['x'])),
+    ('vector', 'mean', 'np.mean(x)', lambda d: np.mean(d['x'])),
+    ('vector', 'median', 'np.median(x)', lambda d: np.median(d['x'])),
+    ('vector', 'sd', 'np.std(x, ddof=1)', lambda d: np.std(d['x'], ddof=1)),
+    ('vector', 'var', 'np.var(x, ddof=1)', lambda d: np.var(d['x'], ddof=1)),
+    ('vector', 'quantile', 'np.quantile(x, [.25,.5,.75])',
+     lambda d: np.quantile(d['x'], [0.25, 0.5, 0.75])),
+    # one number, not the 2x2 matrix np.corrcoef/df.corr would build
+    ('vector', 'cor', 'np.corrcoef(x, y)[0, 1]',
+     lambda d: np.corrcoef(d['x'], d['y'])[0, 1]),
+    ('vector', 'cov', 'np.cov(x, y)[0, 1]',
+     lambda d: np.cov(d['x'], d['y'])[0, 1]),
+    ('vector', 'skew', 'scipy.stats.skew(x)', lambda d: stats.skew(d['x'])),
+    ('vector', 'kurtosis', 'scipy.stats.kurtosis(x)',
+     lambda d: stats.kurtosis(d['x'])),
+
+    # --- transforms that return something the size of their input ----------
+    ('transform', 'rank', 'scipy.stats.rankdata(x)',
+     lambda d: stats.rankdata(d['x'])),
+    ('transform', 'uniq', 'pd.unique(x)', lambda d: pd.unique(d['x'])),
+    ('transform', 'scale', 'scipy.stats.zscore(x, ddof=1)',
+     lambda d: stats.zscore(d['x'], ddof=1)),
+    ('transform', 'sample', 'rng.choice(x, n // 10, replace=False)',
+     lambda d: np.random.default_rng(1).choice(d['x'], d['n'] // 10 + 1,
+                                               replace=False)),
+    ('transform', 'seq', 'np.arange(1, n + 1)',
+     lambda d: np.arange(1, d['n'] + 1)),
+    ('transform', 'auc', 'sklearn.metrics.roc_auc_score(label, y)',
+     lambda d: metrics.roc_auc_score(d['label'], d['y'])),
+
+    # --- read_table and write_table, over four inputs each -----------------
+    # pandas is columnar, so read_csv is the honest counterpart of
+    # read_table(output.type => 'hoa') and appears in that panel too; the
+    # row-record panels get csv.DictReader, which is what actually produces the
+    # shape read_table returns by default.
+    ('io', 'read_table (csv, numeric)', 'pd.read_csv(num.csv)',
+     lambda d: pd.read_csv(d['num_csv'])),
+    ('io', 'read_table (csv, mixed)', 'list(csv.DictReader(mix.csv))',
+     lambda d: _dictread(d['mix_csv'], ',')),
+    ('io', 'read_table (tsv, mixed)', 'list(csv.DictReader(mix.tsv, "\\t"))',
+     lambda d: _dictread(d['mix_tsv'], '\t')),
+    ('io', 'read_table (csv, hoa)', 'pd.read_csv(mix.csv)',
+     lambda d: pd.read_csv(d['mix_csv'])),
+    ('io', 'write_table (csv, hoa)', 'df.to_csv(f, index=False)',
+     lambda d: d['df'].to_csv(d['out'], index=False)),
+    ('io', 'write_table (tsv, hoa)', 'df.to_csv(f, sep="\\t", index=False)',
+     lambda d: d['df'].to_csv(d['out'], sep='\t', index=False)),
+    ('io', 'write_table (csv, aoa)', 'df.to_csv(f, index=False)',
+     lambda d: d['df'].to_csv(d['out'], index=False)),
+    ('io', 'write_table (csv, row.names)', 'df.to_csv(f, index=True)',
+     lambda d: d['df'].to_csv(d['out'], index=True)),
+
+    # --- whole-frame operations --------------------------------------------
+    ('frame', 'filter', 'df[df.x > 0]', lambda d: d['df'][d['df']['x'] > 0]),
+    # No .copy() here, unlike transpose below.  select_cols on a HoA returns a
+    # new hash holding the *same* array references -- the columns are aliased,
+    # not copied, which is why its panel is a flat line -- so the pandas view
+    # is the matching job and .copy() would be asking pandas for more.  R's
+    # subset does materialize, and that difference is what the panel shows.
+    ('frame', 'select_cols', "df[['x','cat1']]",
+     lambda d: d['df'][['x', 'cat1']]),
+    # one column averaged per group, not every numeric one
+    ('frame', 'group_by + mean', "df.groupby('cat1')['x'].mean()",
+     lambda d: d['df'].groupby('cat1')['x'].mean()),
+    ('frame', 'merge', "df_id.merge(df_id, on='id', how='inner')",
+     lambda d: d['df_id'].merge(d['df_id'], on='id', how='inner')),
+    ('frame', 'value_counts', "df['cat1'].value_counts()",
+     lambda d: d['df']['cat1'].value_counts()),
+    ('frame', 'drop_duplicates', 'df.drop_duplicates()',
+     lambda d: d['df'].drop_duplicates()),
+    # .copy(): numpy's .T is a view, transpose() builds a new AoA
+    ('frame', 'transpose', 'arr.T.copy()', lambda d: d['arr'].T.copy()),
+    ('frame', 'aoh2hoa', 'pd.DataFrame(records)',
+     lambda d: pd.DataFrame(d['records'])),
+]
+
+
+def _dictread(path, sep):
+    with open(path, newline='') as fh:
+        return list(csv.DictReader(fh, delimiter=sep))
+
+
+LADDER = {'vector': VEC_N, 'transform': VEC_N, 'io': IO_N, 'frame': FRAME_N}
+BUILDER_FOR = {'vector': 'vector', 'transform': 'vector', 'io': 'io',
+               'frame': 'frame'}
+
+
+# ---------------------------------------------------------------------------
+# Execution
+# ---------------------------------------------------------------------------
+# Timed in-process, unlike scale.pl, which forks: CPython's allocator does not
+# hand a later run a materially different starting point, and the numpy and
+# pandas import cost that a fork per run would repeat dwarfs everything being
+# measured.  What does need controlling is the first call -- pandas resolves
+# dtypes and compiles paths lazily -- so every function gets one untimed warm-up
+# at every size before its timed runs, which also warms the page cache for the
+# file panels.
+#
+# A call faster than TARGET is repeated until the pair of clock readings spans
+# TARGET and the total divided by the count.  perf_counter resolves
+# nanoseconds, so this is not about the clock the way it is in scale.R; it is
+# about the interpreter, whose dispatch overhead around a two-microsecond
+# np.sum is a large fraction of what would otherwise be recorded.  The repeat
+# count is chosen from a second untimed call, so that all three scripts average
+# over the same span of work.
+def measure(body, data):
+    """One reading: seconds per call, averaged over however many calls fit."""
+    t0 = time.perf_counter()
+    body(data)
+    one = time.perf_counter() - t0
+    reps = min(MAX_REPS, int(TARGET / one) + 1) if one > 0 else MAX_REPS
+    t0 = time.perf_counter()
+    for _ in range(reps):
+        body(data)
+    return (time.perf_counter() - t0) / reps, reps
+
+
+def main():
+    results = []
+    too_slow = set()
+
+    by_figure = {}
+    for figure, name, call, body in BENCHMARKS:
+        by_figure.setdefault(figure, []).append((name, call, body))
+
+    for figure in ('vector', 'transform', 'io', 'frame'):
+        if figure not in by_figure:
+            continue
+        for n in LADDER[figure]:
+            todo = [b for b in by_figure[figure] if b[0] not in too_slow]
+            if not todo:
+                continue
+            data = BUILD[BUILDER_FOR[figure]](n)
+            for name, call, body in todo:
+                try:
+                    body(data)                    # warm-up, not recorded
+                except Exception as exc:          # noqa: BLE001 - report and move on
+                    print('%s at n=%d: %s' % (name, n, exc), file=sys.stderr)
+                    too_slow.add(name)
+                    continue
+
+                slowest = 0.0
+                reps = 0
+                for run in range(RUNS):
+                    elapsed, reps = measure(body, data)
+                    slowest = max(slowest, elapsed)
+                    results.append((figure, name, call, n, run, elapsed))
+                print('%-9s %-30s n=%-8d %.6f s%s'
+                      % (figure, name, n, slowest,
+                         ' (x%d)' % reps if reps > 1 else ''))
+                if slowest > CAP:
+                    too_slow.add(name)
+            del data
+
+    # A curve that ends early is not a curve that was never measured, and the
+    # plot cannot tell you which one you are looking at.
+    if too_slow:
+        print('Stopped early (a run exceeded %g s, or it failed): %s'
+              % (CAP, ', '.join(sorted(too_slow))))
+
+    out = os.path.join(DIR, 'out.python.%d.tmp' % os.getpid())
+    if os.path.isfile(out):
+        os.unlink(out)
+
+    with open('python_scaling.tsv', 'w') as fh:
+        fh.write('figure\tfunction\tcall\tn\trun\tseconds\n')
+        for row in results:
+            fh.write('%s\t%s\t%s\t%d\t%d\t%.9f\n' % row)
+    print('Done. %d measurements written to python_scaling.tsv' % len(results))
+
+
+if __name__ == '__main__':
+    main()

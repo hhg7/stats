@@ -6414,11 +6414,19 @@ answers were simply less accurate than the perl running them. On perl-5.12.5
 
 All 412 of those calls now go through `nv_*` macros that paste on the suffix for
 the width `NV` actually is: none for `double`, `l` for `long double`, `q` for
-`__float128`. The 80 `isnan`/`isinf`/`isfinite` calls became
-`Perl_isnan`/`Perl_isinf`/`Perl_isfinite`, which matters most where the C99
-type-generic macros are absent: there `isfinite()` is a plain `double` function,
-and narrowing a large-but-finite long double into it reports the value as
-infinite rather than merely rounding it.
+`__float128`. The 80 `isnan`/`isinf`/`isfinite` calls became `nv_isnan`,
+`nv_isinf` and `nv_isfinite`, which classify by comparing against `NV_MAX` — the
+largest finite `NV` — rather than calling libm at all. The C99 macros could not
+be kept: where a platform does not provide the type-generic versions,
+`isfinite()` is a plain `double` function, and narrowing a large-but-finite long
+double into it reports the value as infinite rather than merely rounding it.
+Perl's own `Perl_isnan`/`Perl_isinf`/`Perl_isfinite` were used up to 0.298 and
+could not be kept either: on every perl before 5.22 those route through a
+`Perl_fp_class()` block in `perl.h` that has never compiled — the macro is
+written with an empty parameter list and compares against `FP_CLASS_*` names no
+`<ieeefp.h>` defines. That block is dead code wherever Configure finds
+`isinf()`, so it is invisible on Linux and glibc, and live on illumos/Solaris,
+where it broke the 0.298 build outright.
 
 The long-double row is conditional. The `l` variants are C99 but some libms —
 the thinner BSD ones especially — do not ship the whole set, so `Makefile.PL`

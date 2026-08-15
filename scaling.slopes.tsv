@@ -1,0 +1,100 @@
+figure	function	language	sizes	slope.all	slope.tail
+vector	sum	Stats::LikeR	7	1.003	1.014
+vector	sum	Python	7	0.672	1.007
+vector	sum	R	7	0.922	0.996
+vector	min	Stats::LikeR	7	1.009	0.901
+vector	min	Python	7	0.632	0.986
+vector	min	R	7	0.940	0.999
+vector	max	Stats::LikeR	7	0.999	1.011
+vector	max	Python	7	0.635	0.995
+vector	max	R	7	0.947	1.000
+vector	mean	Stats::LikeR	7	1.003	1.014
+vector	mean	Python	7	0.620	0.985
+vector	mean	R	7	0.858	0.994
+vector	median	Stats::LikeR	7	1.137	1.034
+vector	median	Python	7	1.004	0.987
+vector	median	R	7	0.991	1.024
+vector	sd	Stats::LikeR	7	1.002	1.005
+vector	sd	Python	7	0.703	1.029
+vector	sd	R	7	0.888	0.996
+vector	var	Stats::LikeR	7	0.999	1.002
+vector	var	Python	7	0.716	1.034
+vector	var	R	7	0.871	0.988
+vector	quantile	Stats::LikeR	7	1.139	1.089
+vector	quantile	Python	7	0.894	1.047
+vector	quantile	R	7	0.843	0.957
+vector	cor	Stats::LikeR	7	1.032	1.022
+vector	cor	Python	7	0.774	1.129
+vector	cor	R	7	0.877	0.996
+vector	cov	Stats::LikeR	7	1.020	1.015
+vector	cov	Python	7	0.826	1.140
+vector	cov	R	7	0.847	0.990
+vector	skew	Stats::LikeR	7	1.001	0.999
+vector	skew	Python	7	0.419	0.961
+vector	kurtosis	Stats::LikeR	7	1.004	1.001
+vector	kurtosis	Python	7	0.403	0.939
+transform	rank	Stats::LikeR	7	1.109	1.112
+transform	rank	Python	7	1.054	1.139
+transform	rank	R	7	1.161	1.180
+transform	uniq	Stats::LikeR	7	1.141	1.283
+transform	uniq	Python	7	1.028	1.112
+transform	uniq	R	7	1.114	1.143
+transform	scale	Stats::LikeR	7	1.025	1.079
+transform	scale	Python	7	0.487	0.922
+transform	scale	R	7	0.921	1.270
+transform	sample	Stats::LikeR	7	1.162	1.373
+transform	sample	Python	7	0.582	0.953
+transform	sample	R	7	0.979	1.097
+transform	seq	Stats::LikeR	7	1.045	1.130
+transform	seq	Python	7	0.860	0.998
+transform	seq	R	7	-0.038	0.005
+transform	auc	Stats::LikeR	7	1.110	1.099
+transform	auc	Python	7	0.822	1.076
+transform	auc	R	7	0.930	1.095
+io	read_table (csv, numeric)	Stats::LikeR	6	1.008	1.031
+io	read_table (csv, numeric)	Python	6	0.817	0.976
+io	read_table (csv, numeric)	R	6	1.118	1.285
+io	read_table (csv, mixed)	Stats::LikeR	6	1.011	1.027
+io	read_table (csv, mixed)	Python	6	1.022	1.069
+io	read_table (csv, mixed)	R	6	1.091	1.197
+io	read_table (tsv, mixed)	Stats::LikeR	6	1.011	1.028
+io	read_table (tsv, mixed)	Python	6	1.040	1.046
+io	read_table (tsv, mixed)	R	6	1.065	1.206
+io	read_table (csv, hoa)	Stats::LikeR	6	1.027	1.073
+io	read_table (csv, hoa)	Python	6	0.821	0.979
+io	read_table (csv, hoa)	R	6	1.081	1.244
+io	write_table (csv, hoa)	Stats::LikeR	6	0.905	1.017
+io	write_table (csv, hoa)	Python	6	0.953	1.007
+io	write_table (csv, hoa)	R	6	0.806	1.002
+io	write_table (tsv, hoa)	Stats::LikeR	6	0.985	1.028
+io	write_table (tsv, hoa)	Python	6	0.976	1.006
+io	write_table (tsv, hoa)	R	6	0.979	1.001
+io	write_table (csv, aoa)	Stats::LikeR	6	0.992	1.058
+io	write_table (csv, aoa)	Python	6	0.977	1.004
+io	write_table (csv, aoa)	R	6	0.975	1.003
+io	write_table (csv, row.names)	Stats::LikeR	6	1.019	1.129
+io	write_table (csv, row.names)	Python	6	0.984	1.007
+io	write_table (csv, row.names)	R	6	0.985	1.004
+frame	filter	Stats::LikeR	6	1.091	1.215
+frame	filter	Python	6	0.412	0.738
+frame	filter	R	6	1.086	1.064
+frame	select_cols	Stats::LikeR	6	0.001	0.010
+frame	select_cols	Python	6	0.000	0.011
+frame	select_cols	R	6	-0.014	0.003
+frame	group_by + mean	Stats::LikeR	6	1.044	1.378
+frame	group_by + mean	Python	6	0.535	0.842
+frame	group_by + mean	R	6	0.187	0.383
+frame	merge	Stats::LikeR	6	1.249	1.372
+frame	merge	Python	6	0.027	0.070
+frame	merge	R	6	1.082	1.069
+frame	value_counts	Stats::LikeR	6	0.992	1.007
+frame	value_counts	Python	6	0.533	0.844
+frame	value_counts	R	6	0.877	1.066
+frame	drop_duplicates	Stats::LikeR	6	1.058	1.156
+frame	drop_duplicates	Python	6	0.719	1.007
+frame	drop_duplicates	R	6	1.054	1.043
+frame	transpose	Stats::LikeR	6	1.175	1.201
+frame	transpose	Python	6	1.051	1.171
+frame	transpose	R	6	1.141	1.695
+frame	aoh2hoa	Stats::LikeR	6	1.068	1.085
+frame	aoh2hoa	Python	6	0.951	0.994
