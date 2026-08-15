@@ -6393,9 +6393,9 @@ Returns a hash of \f(CW\*(C`predictor => VIF\*(C'\fR.
 \& );
 .Ve
 .PP
-Computes the Wilcoxon rank\-sum / Mann\-Whitney test (two samples) or the Wilcoxon signed\-rank test (one sample or paired), following R\*(Aqs \f(CW\*(C`wilcox.test\*(C'\fR conventions.
+Computes the Wilcoxon rank\-sum / Mann\-Whitney test (two samples) or the Wilcoxon signed\-rank test (one sample or paired), following R\*(Aqs \f(CW\*(C`wilcox.test\*(C'\fR conventions as of R 4.6.1.
 This is an alternative to the t\-test, that does not assume a normal distribution.
-With two array refs and no \f(CW\*(C`paired\*(C'\fR flag it runs the two\-sample rank\-sum test; with a single sample, or with \f(CW\*(C`paired => 1\*(C'\fR, it runs the signed\-rank test. It calculates exact p\-values by default for \f(CW\*(C`N < 50\*(C'\fR without ties; when ties (or, for the signed\-rank case, zero differences) are present it automatically switches to the normal approximation with continuity correction.
+With two array refs and no \f(CW\*(C`paired\*(C'\fR flag it runs the two\-sample rank\-sum test; with a single sample, or with \f(CW\*(C`paired => 1\*(C'\fR, it runs the signed\-rank test. It calculates exact p\-values by default for \f(CW\*(C`N < 50\*(C'\fR, including when there are ties or zero differences: as in R 4.6.0 and later, tied data is answered from the conditional (permutation) distribution given the observed ranks rather than falling back to the normal approximation. Optionally it also returns a Hodges\-Lehmann point estimate and a distribution\-free confidence interval.
 .PP
 \fICalling conventions\fR
 .IX Subsection "Calling conventions"
@@ -6408,7 +6408,12 @@ The first one or two array\-ref arguments are taken positionally as \f(CW\*(C`x\
 \&
 \& # fully named
 \& wilcox_test(x => \e@x, y => \e@y, alternative => "greater", exact => 0);
+\&
+\& # with a confidence interval and point estimate
+\& wilcox_test(\e@x, \e@y, conf_int => 1, conf_level => 0.99);
 .Ve
+.PP
+Arguments that R spells with a dot are accepted with either spelling: \f(CW\*(C`conf.int\*(C'\fR and \f(CW\*(C`conf_int\*(C'\fR, \f(CW\*(C`conf.level\*(C'\fR and \f(CW\*(C`conf_level\*(C'\fR, \f(CW\*(C`digits.rank\*(C'\fR and \f(CW\*(C`digits_rank\*(C'\fR, \f(CW\*(C`tol.root\*(C'\fR and \f(CW\*(C`tol_root\*(C'\fR.
 .PP
 \fIInput parameters\fR
 .IX Subsection "Input parameters"
@@ -6422,16 +6427,36 @@ The \f(CW\*(C`method\*(C'\fR string reports which path executed:
 .IP \(bu 4
 Two\-sample: \f(CW"Wilcoxon rank sum exact test"\fR, \f(CW"Wilcoxon rank sum test with continuity correction"\fR, or \f(CW"Wilcoxon rank sum test"\fR.
 .IP \(bu 4
-One\-sample / paired: \f(CW"Wilcoxon exact signed rank test"\fR, \f(CW"Wilcoxon signed rank test with continuity correction"\fR, or \f(CW"Wilcoxon signed rank test"\fR.
+One\-sample / paired: \f(CW"Wilcoxon signed rank exact test"\fR, \f(CW"Wilcoxon signed rank test with continuity correction"\fR, or \f(CW"Wilcoxon signed rank test"\fR.
+.PP
+\fIExact inference with ties\fR
+.IX Subsection "Exact inference with ties"
+.PP
+Before R 4.6.0 — and in earlier releases of this module — ties ruled out an exact p\-value and the test silently fell back to the normal approximation. It no longer does. When ties are present the exact null distribution is the conditional one given the observed ranks, computed with the Streitberg\-Röhmel shift algorithm, and the same holds for zero differences in the signed\-rank test. Two consequences are worth knowing about:
+.IP \(bu 4
+p\-values on tied data change from earlier versions. R\*(Aqs own documented example, \f(CW\*(C`wilcox_test(\e@x, \e@y)\*(C'\fR on the \f(CW\*(C`?wilcox.test\*(C'\fR data, moves from \f(CW0.13292\fR (approximation) to \f(CW0.12991\fR (exact).
+.IP \(bu 4
+with zero differences, \fBV\fR itself changes. The exact test ranks \f(CW\*(C`|x \- mu|\*(C'\fR over every observation and only then drops the ranks belonging to the zeroes; the approximation drops the zeroes first and ranks what is left. \f(CW\*(C`wilcox_test([\-1, 0, 1])\*(C'\fR gives \f(CW\*(C`V = 2.5\*(C'\fR on the exact path and \f(CW\*(C`V = 1.5\*(C'\fR with \f(CW\*(C`exact => 0\*(C'\fR. R behaves the same way.
+.PP
+The exact table is refused rather than attempted if it would need more than 16 million cells, with a message suggesting \f(CW\*(C`exact => 0\*(C'\fR. This is only reachable by forcing \f(CW\*(C`exact => 1\*(C'\fR on samples far larger than the automatic threshold.
 .PP
 \fINotes and edge cases\fR
 .IX Subsection "Notes and edge cases"
 .PP
-Missing data is handled by listwise removal of non\-numeric / undefined cells before ranking; in the paired case a pair is dropped if either member is missing. An empty \f(CW\*(C`x\*(C'\fR (or, in the two\-sample case, an empty \f(CW\*(C`y\*(C'\fR) after this filtering is fatal.
+Missing data is handled by listwise removal of non\-numeric, undefined and \f(CW\*(C`NaN\*(C'\fR cells before ranking; in the paired case a pair is dropped if either member is missing or if the difference is not a number. An empty \f(CW\*(C`x\*(C'\fR (or a \f(CW\*(C`y\*(C'\fR that is present but empty) after this filtering is fatal. All\-zero differences are not: \f(CW\*(C`wilcox_test([0, 0, 0, 0, 0])\*(C'\fR returns \f(CW\*(C`V = 0\*(C'\fR, \f(CW\*(C`p = 1\*(C'\fR, which is what the permutation distribution over an empty set of sign flips says.
 .PP
-For the signed\-rank test, exact zero differences are discarded before ranking (matching R), and their presence disables the exact computation. Both empty\-after\-filtering and all\-zero\-difference inputs are fatal.
+Ties are detected during ranking and trigger the tie\-corrected variance in the normal approximation. When \f(CW\*(C`exact\*(C'\fR is left on auto, the size thresholds (\f(CW\*(C`< 50\*(C'\fR per group, or \f(CW\*(C`< 50\*(C'\fR observations) are the only thing gating the exact vs. approximate decision.
 .PP
-Ties are detected during ranking and trigger the tie\-corrected variance in the normal approximation; they also rule out the exact p\-value. When \f(CW\*(C`exact\*(C'\fR is left on auto, the size thresholds (\f(CW\*(C`< 50\*(C'\fR per group, or \f(CW\*(C`< 50\*(C'\fR differences) are what gate the exact vs. approximate decision.
+\fIDifferences from R\fR
+.IX Subsection "Differences from R"
+.PP
+Two, both deliberate:
+.IP \(bu 4
+\&\fR\f(CB\*(C`correct\*(C'\fR\fB is a boolean here.\fR R 4.6.0 turned its \f(CW\*(C`correct\*(C'\fR into an integer \f(CW\*(C`0:3\*(C'\fR, in which numeric \f(CW0\fR still applies the continuity correction and only \f(CW\*(C`FALSE\*(C'\fR removes it. Keeping that would mean \f(CW\*(C`correct => 0\*(C'\fR no longer meaning "off", which is what it means for every other flag in this module. So \f(CW\*(C`correct\*(C'\fR stays a boolean and the Edgeworth terms live under \f(CW\*(C`edgeworth\*(C'\fR: R\*(Aqs \f(CW\*(C`correct = k\*(C'\fR for \f(CW\*(C`k\*(C'\fR in \f(CW\*(C`1, 2, 3\*(C'\fR is \f(CW\*(C`correct => 1, edgeworth => k\*(C'\fR here, and R\*(Aqs \f(CW\*(C`correct = 0\*(C'\fR is \f(CW\*(C`correct => 1\*(C'\fR.
+.IP \(bu 4
+\&\fBA zero variance is reported, not propagated.\fR With \f(CW\*(C`exact => 0\*(C'\fR and every observation tied there is nothing to divide by; R divides anyway and returns \f(CW\*(C`NaN\*(C'\fR for the p\-value, and its two\-sample confidence interval then dies inside \f(CW\*(C`uniroot\*(C'\fR with \fImissing value where TRUE/FALSE needed\fR. This warns instead, and returns \f(CW\*(C`p = 1\*(C'\fR and a \f(CW\*(C`NaN\*(C'\fR interval at level \f(CW0\fR — which is what R\*(Aqs own one\-sample code does. The default path no longer reaches any of this, since the exact test handles all\-tied data.
+.PP
+Everything else is checked against R\*(Aqs and SciPy\*(Aqs own test suites in \f(CW\*(C`t/wilcox_test.R.scipy.t\*(C'\fR.
 .SS write_table
 .IX Subsection "write_table"
 mimics R\*(Aqs \f(CW\*(C`write.table\*(C'\fR, with data as first argument to subroutine, and output file as second

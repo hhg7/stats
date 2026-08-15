@@ -13386,11 +13386,13 @@ Returns a hash of C<< predictor =E<gt> VIF >>.
      [0.878, 0.647, 0.598, 2.05, 1.06, 1.29, 1.06, 3.14, 1.29]
  );
 
-Computes the Wilcoxon rank-sum / Mann-Whitney test (two samples) or the Wilcoxon signed-rank test (one sample or paired), following R's C<wilcox.test> conventions.
+Computes the Wilcoxon rank-sum / Mann-Whitney test (two samples) or the Wilcoxon signed-rank test (one sample or paired), following R's C<wilcox.test> conventions as of R 4.6.1.
 This is an alternative to the t-test, that does not assume a normal distribution.
-With two array refs and no C<paired> flag it runs the two-sample rank-sum test; with a single sample, or with C<< paired =E<gt> 1 >>, it runs the signed-rank test. It calculates exact p-values by default for C<< N E<lt> 50 >> without ties; when ties (or, for the signed-rank case, zero differences) are present it automatically switches to the normal approximation with continuity correction.
+With two array refs and no C<paired> flag it runs the two-sample rank-sum test; with a single sample, or with C<< paired =E<gt> 1 >>, it runs the signed-rank test. It calculates exact p-values by default for C<< N E<lt> 50 >>, including when there are ties or zero differences: as in R 4.6.0 and later, tied data is answered from the conditional (permutation) distribution given the observed ranks rather than falling back to the normal approximation. Optionally it also returns a Hodges-Lehmann point estimate and a distribution-free confidence interval.
+
 
 =head3 Calling conventions
+
 
 The first one or two array-ref arguments are taken positionally as C<x> and C<y>; everything after that is parsed as C<< key =E<gt> value >> pairs. The named forms C<< x =E<gt> >> and C<< y =E<gt> >> are also accepted and override the positional values. The flat argument list following the positional refs must contain an even number of elements, or the call dies with a usage message.
 
@@ -13400,8 +13402,14 @@ The first one or two array-ref arguments are taken positionally as C<x> and C<y>
  # fully named
  wilcox_test(x => \@x, y => \@y, alternative => "greater", exact => 0);
 
-=head3 Input parameters
+ # with a confidence interval and point estimate
+ wilcox_test(\@x, \@y, conf_int => 1, conf_level => 0.99);
 
+
+Arguments that R spells with a dot are accepted with either spelling: C<conf.int> and C<conf_int>, C<conf.level> and C<conf_level>, C<digits.rank> and C<digits_rank>, C<tol.root> and C<tol_root>.
+
+
+=head3 Input parameters
 
 
 =begin html
@@ -13420,19 +13428,19 @@ The first one or two array-ref arguments are taken positionally as C<x> and C<y>
   <td><code>x</code></td>
   <td>ARRAY ref</td>
   <td><i>(required)</i></td>
-  <td>The first sample. Passed positionally or as <code>x =&gt;</code>. Non-numeric and undefined elements are silently dropped; an empty or all-missing <code>x</code> is fatal. In the two-sample test <code>mu</code> is subtracted from each <code>x</code> value.</td>
+  <td>The first sample. Passed positionally or as <code>x =&gt;</code>. Non-numeric, undefined and <code>NaN</code> elements are silently dropped (<code>NaN</code> is R's <code>NA</code>); <code>+Inf</code> and <code>-Inf</code> are kept, since a rank test has no trouble with them. An empty or all-missing <code>x</code> is fatal. In the two-sample test <code>mu</code> is subtracted from each <code>x</code> value.</td>
 </tr>
 <tr>
   <td><code>y</code></td>
   <td>ARRAY ref</td>
   <td><code>undef</code></td>
-  <td>The second sample. If present and <code>paired</code> is false, a two-sample rank-sum test is run. If <code>paired</code> is true, <code>y</code> is required and must be the same length as <code>x</code>. Omit it for the one-sample signed-rank test.</td>
+  <td>The second sample. If present and <code>paired</code> is false, a two-sample rank-sum test is run. If <code>paired</code> is true, <code>y</code> is required and must be the same length as <code>x</code>. Omit it, or pass <code>undef</code>, for the one-sample signed-rank test. A <code>y</code> that is present but empty (or entirely missing) is fatal rather than silently becoming a one-sample test.</td>
 </tr>
 <tr>
   <td><code>paired</code></td>
   <td>boolean</td>
   <td><code>0</code> (false)</td>
-  <td>Run a paired signed-rank test on the per-element differences <code>x[i] - y[i] - mu</code>. Requires <code>y</code> of equal length.</td>
+  <td>Run a paired signed-rank test on the per-element differences <code>x[i] - y[i] - mu</code>. Requires <code>y</code> of equal length. A pair is dropped if either member is missing, or if the difference is <code>NaN</code> (which is what <code>Inf - Inf</code> gives).</td>
 </tr>
 <tr>
   <td><code>correct</code></td>
@@ -13441,16 +13449,22 @@ The first one or two array-ref arguments are taken positionally as C<x> and C<y>
   <td>Apply the continuity correction (±0.5) when using the normal approximation. Ignored when an exact p-value is computed.</td>
 </tr>
 <tr>
+  <td><code>edgeworth</code></td>
+  <td>integer 0-3</td>
+  <td><code>0</code></td>
+  <td>Number of Edgeworth series terms used to refine the normal approximation, for the untied case. This is what R reaches through its integer <code>correct = 1, 2, 3</code>; see the note below on why it is spelled separately here. Ignored on the exact path, and — as in R — ignored when there are ties, or when the signed-rank test dropped a zero difference, because the series is derived for untied ranks.</td>
+</tr>
+<tr>
   <td><code>mu</code></td>
   <td>number</td>
   <td><code>0.0</code></td>
-  <td>Null-hypothesis location shift. Subtracted from <code>x</code> (two-sample) or from each difference (one-sample / paired).</td>
+  <td>Null-hypothesis location shift. Subtracted from <code>x</code> (two-sample) or from each difference (one-sample / paired). Must be finite.</td>
 </tr>
 <tr>
   <td><code>exact</code></td>
   <td>boolean / undef</td>
   <td><code>undef</code> (auto)</td>
-  <td>Tri-state. <code>undef</code> (or absent) selects exact automatically: when both group sizes are <code>&lt; 50</code> and there are no ties (two-sample), or <code>n &lt; 50</code> with no ties (signed-rank). A true value forces the exact test, a false value forces the approximation. Exact is impossible with ties — or, for the signed-rank test, with zero differences — and falls back to the approximation with a warning.</td>
+  <td>Tri-state. <code>undef</code> (or absent) selects exact automatically: when both group sizes are <code>&lt; 50</code> (two-sample), or <code>n &lt; 50</code> (signed-rank). A true value forces the exact test, a false value forces the approximation. Ties and zero differences no longer disable it.</td>
 </tr>
 <tr>
   <td><code>alternative</code></td>
@@ -13458,17 +13472,40 @@ The first one or two array-ref arguments are taken positionally as C<x> and C<y>
   <td><code>"two.sided"</code></td>
   <td>One of <code>"two.sided"</code>, <code>"less"</code>, or <code>"greater"</code>. Selects the tail(s) used for the p-value.</td>
 </tr>
+<tr>
+  <td><code>conf.int</code></td>
+  <td>boolean</td>
+  <td><code>0</code> (false)</td>
+  <td>Also compute a point estimate and confidence interval for the location (one-sample) or location shift (two-sample / paired).</td>
+</tr>
+<tr>
+  <td><code>conf.level</code></td>
+  <td>number in (0,1)</td>
+  <td><code>0.95</code></td>
+  <td>Requested confidence level. The level a rank test can actually deliver is discrete, so the level achieved is reported back in <code>conf_level</code> and is generally not the one asked for.</td>
+</tr>
+<tr>
+  <td><code>digits.rank</code></td>
+  <td>number / undef</td>
+  <td><code>undef</code> (Inf)</td>
+  <td>Round each value to this many significant digits before ranking, so that ties are decided on the rounded values. R's <code>digits.rank</code>, and worth reaching for when the data are the result of arithmetic and two values that ought to tie differ in the last bit. <code>undef</code> means no rounding.</td>
+</tr>
+<tr>
+  <td><code>tol.root</code></td>
+  <td>number &gt; 0</td>
+  <td><code>1e-4</code></td>
+  <td>Convergence tolerance for the root search behind the <i>asymptotic</i> confidence interval. The exact interval is made of order statistics and does not use it.</td>
+</tr>
 </tbody>
 </table>
 
 =end html
 
 
-
 =head3 Output
 
-Returns a hash ref with the following keys:
 
+Returns a hash ref with the following keys:
 
 
 =begin html
@@ -13488,6 +13525,11 @@ Returns a hash ref with the following keys:
   <td>The test statistic. For the two-sample test this is the Mann-Whitney <b>W</b> (the <code>x</code> rank sum minus <code>nx*(nx+1)/2</code>). For the signed-rank test it is <b>V</b>, the sum of the ranks assigned to the positive differences.</td>
 </tr>
 <tr>
+  <td><code>statistic_name</code></td>
+  <td>string</td>
+  <td><code>"W"</code> or <code>"V"</code>, matching what R prints.</td>
+</tr>
+<tr>
   <td><code>p_value</code></td>
   <td>number</td>
   <td>The p-value for the chosen <code>alternative</code>, capped at <code>1.0</code>. Two-sided p-values are <code>2 * min(p_less, p_greater)</code>.</td>
@@ -13502,30 +13544,91 @@ Returns a hash ref with the following keys:
   <td>string</td>
   <td>Echoes the <code>alternative</code> actually used (<code>"two.sided"</code>, <code>"less"</code>, or <code>"greater"</code>).</td>
 </tr>
+<tr>
+  <td><code>null_value</code></td>
+  <td>number</td>
+  <td>Echoes <code>mu</code>.</td>
+</tr>
+<tr>
+  <td><code>null_value_name</code></td>
+  <td>string</td>
+  <td><code>"location shift"</code> for the two-sample and paired tests, <code>"location"</code> for the one-sample test.</td>
+</tr>
+<tr>
+  <td><code>estimate</code></td>
+  <td>number</td>
+  <td><i>(only with <code>conf.int</code>)</i> The Hodges-Lehmann estimator: the median of the Walsh averages <code>(x[i] + x[j]) / 2</code> in the one-sample case, or of the pairwise differences <code>x[i] - y[j]</code> in the two-sample case. On the asymptotic path it is instead the shift at which the standardised statistic is zero, as in R.</td>
+</tr>
+<tr>
+  <td><code>conf_int</code></td>
+  <td>ARRAY ref</td>
+  <td><i>(only with <code>conf.int</code>)</i> Two elements, the lower and upper limits. A one-sided alternative gives an unbounded end (<code>-Inf</code> or <code>Inf</code>).</td>
+</tr>
+<tr>
+  <td><code>conf_level</code></td>
+  <td>number</td>
+  <td><i>(only with <code>conf.int</code>)</i> The confidence level actually achieved, which for the exact interval is a step function of the data and rarely equals <code>conf.level</code>.</td>
+</tr>
 </tbody>
 </table>
 
 =end html
 
 
-
 The C<method> string reports which path executed:
+
 
 =over
 
 =item * Two-sample: C<"Wilcoxon rank sum exact test">, C<"Wilcoxon rank sum test with continuity correction">, or C<"Wilcoxon rank sum test">.
 
-=item * One-sample / paired: C<"Wilcoxon exact signed rank test">, C<"Wilcoxon signed rank test with continuity correction">, or C<"Wilcoxon signed rank test">.
+=item * One-sample / paired: C<"Wilcoxon signed rank exact test">, C<"Wilcoxon signed rank test with continuity correction">, or C<"Wilcoxon signed rank test">.
 
 =back
 
+
+=head3 Exact inference with ties
+
+
+Before R 4.6.0 — and in earlier releases of this module — ties ruled out an exact p-value and the test silently fell back to the normal approximation. It no longer does. When ties are present the exact null distribution is the conditional one given the observed ranks, computed with the Streitberg-Röhmel shift algorithm, and the same holds for zero differences in the signed-rank test. Two consequences are worth knowing about:
+
+
+=over
+
+=item * p-values on tied data change from earlier versions. R's own documented example, C<wilcox_test(\@x, \@y)> on the C<?wilcox.test> data, moves from C<0.13292> (approximation) to C<0.12991> (exact).
+
+=item * with zero differences, B<V> itself changes. The exact test ranks C<|x - mu|> over every observation and only then drops the ranks belonging to the zeroes; the approximation drops the zeroes first and ranks what is left. C<wilcox_test([-1, 0, 1])> gives C<V = 2.5> on the exact path and C<V = 1.5> with C<< exact =E<gt> 0 >>. R behaves the same way.
+
+=back
+
+
+The exact table is refused rather than attempted if it would need more than 16 million cells, with a message suggesting C<< exact =E<gt> 0 >>. This is only reachable by forcing C<< exact =E<gt> 1 >> on samples far larger than the automatic threshold.
+
+
 =head3 Notes and edge cases
 
-Missing data is handled by listwise removal of non-numeric / undefined cells before ranking; in the paired case a pair is dropped if either member is missing. An empty C<x> (or, in the two-sample case, an empty C<y>) after this filtering is fatal.
 
-For the signed-rank test, exact zero differences are discarded before ranking (matching R), and their presence disables the exact computation. Both empty-after-filtering and all-zero-difference inputs are fatal.
+Missing data is handled by listwise removal of non-numeric, undefined and C<NaN> cells before ranking; in the paired case a pair is dropped if either member is missing or if the difference is not a number. An empty C<x> (or a C<y> that is present but empty) after this filtering is fatal. All-zero differences are not: C<wilcox_test([0, 0, 0, 0, 0])> returns C<V = 0>, C<p = 1>, which is what the permutation distribution over an empty set of sign flips says.
 
-Ties are detected during ranking and trigger the tie-corrected variance in the normal approximation; they also rule out the exact p-value. When C<exact> is left on auto, the size thresholds (C<< E<lt> 50 >> per group, or C<< E<lt> 50 >> differences) are what gate the exact vs. approximate decision.
+Ties are detected during ranking and trigger the tie-corrected variance in the normal approximation. When C<exact> is left on auto, the size thresholds (C<< E<lt> 50 >> per group, or C<< E<lt> 50 >> observations) are the only thing gating the exact vs. approximate decision.
+
+
+=head3 Differences from R
+
+
+Two, both deliberate:
+
+
+=over
+
+=item * B<C<correct> is a boolean here.> R 4.6.0 turned its C<correct> into an integer C<0:3>, in which numeric C<0> still applies the continuity correction and only C<FALSE> removes it. Keeping that would mean C<< correct =E<gt> 0 >> no longer meaning "off", which is what it means for every other flag in this module. So C<correct> stays a boolean and the Edgeworth terms live under C<edgeworth>: R's C<correct = k> for C<k> in C<1, 2, 3> is C<< correct =E<gt> 1, edgeworth =E<gt> k >> here, and R's C<correct = 0> is C<< correct =E<gt> 1 >>.
+
+=item * B<A zero variance is reported, not propagated.> With C<< exact =E<gt> 0 >> and every observation tied there is nothing to divide by; R divides anyway and returns C<NaN> for the p-value, and its two-sample confidence interval then dies inside C<uniroot> with I<missing value where TRUE/FALSE needed>. This warns instead, and returns C<p = 1> and a C<NaN> interval at level C<0> — which is what R's own one-sample code does. The default path no longer reaches any of this, since the exact test handles all-tied data.
+
+=back
+
+
+Everything else is checked against R's and SciPy's own test suites in C<t/wilcox_test.R.scipy.t>.
 
 =head2 write_table
 

@@ -76,11 +76,13 @@ rather than merely rounding it.*/
 #define nv_log(x)      LIKER_NVFN(log)(x)
 #define nv_log1p(x)    LIKER_NVFN(log1p)(x)
 #define nv_log2(x)     LIKER_NVFN(log2)(x)
+#define nv_log10(x)    LIKER_NVFN(log10)(x)
 #define nv_exp(x)      LIKER_NVFN(exp)(x)
 #define nv_pow(x,y)    LIKER_NVFN(pow)((x),(y))
 #define nv_floor(x)    LIKER_NVFN(floor)(x)
 #define nv_ceil(x)     LIKER_NVFN(ceil)(x)
 #define nv_round(x)    LIKER_NVFN(round)(x)
+#define nv_rint(x)     LIKER_NVFN(rint)(x)
 #define nv_trunc(x)    LIKER_NVFN(trunc)(x)
 #define nv_fmax(x,y)   LIKER_NVFN(fmax)((x),(y))
 #define nv_lgamma(x)   LIKER_NVFN(lgamma)(x)
@@ -3492,87 +3494,526 @@ static NV nb_loglik(const NV *y, const NV *mu, size_t n, NV th) {
 #define M_SQRT1_2 0.70710678118654752440
 #endif
 
-// Robust Binomial Coefficient using long double
-static long double choose_comb(int n, int k) {
-	if (k < 0 || k > n) return 0.0L;
-	if (k > n / 2) k = n - k;
-	long double res = 1.0L;
-	for (int i = 1; i <= k; i++) {
-	  res = res * (long double)(n - i + 1) / (long double)i;
-	}
-	return res;
+/* ================= WILCOXON EXACT NULL DISTRIBUTIONS =================
+
+   Every exact p-value wilcox_test() reports comes out of one WilcoxDist.
+   There are four ways to build one:
+
+     * no ties, signed rank -- subset sums of {1..n}, R's csignrank();
+     * no ties, rank sum    -- Gaussian binomial coefficients, R's cwilcox();
+     * ties or zeroes, signed rank -- the Streitberg-Roehmel shift algorithm
+       conditioned on the observed ranks, R's dpermdist1();
+     * ties, rank sum -- the two-sample shift algorithm, R's dpermdist2().
+
+   The last two are what R 4.6.0 added (NEWS: "wilcox.test() can now perform
+   exact (conditional) inference in case of ties", contributed by Torsten
+   Hothorn); before that R fell back to the normal approximation and warned,
+   which is what this module used to do.
+
+   The table holds *counts*, not probabilities, and `total` holds their sum.
+   Normalising only when a tail is asked for is what keeps the far tail
+   accurate: computing the upper tail as 1 - CDF(q-1) cancels away every
+   significant digit once the true p drops below NV_EPSILON, and silently
+   returns a flat 0 -- reachable with nothing more exotic than two separated
+   samples of 30 apiece, which is the *default* exact branch.
+
+   d[i] is the number of permutations for which SCALE * STATISTIC == i + base.
+   `scale` is 2 exactly when a tie group of odd size gives half-integral
+   ranks, so that the support can still be indexed by a whole number. */
+typedef struct {
+	NV *restrict d;
+	NV total;                 /* sum of d[0 .. len-1] */
+	size_t len;
+	IV base;                  /* scaled statistic that d[0] counts */
+	unsigned short int scale; /* 1 for integral ranks, 2 for half-integral */
+	bool symmetric;           /* d[i] == d[len-1-i]; see wdist_tail() */
+} WilcoxDist;
+
+/* Ceiling on the cells of any one exact table: 16M NVs is 128MB on a double
+   perl and 256MB on quadmath. Generous for a table the caller asked for with
+   exact => 1, small enough that a mistaken request croaks instead of inviting
+   the OOM killer. R has no such guard and simply tries the allocation. */
+#define WILCOX_MAX_CELLS ((size_t)16777216)
+
+static void wilcox_too_big(pTHX) __attribute__noreturn__;
+static void wilcox_too_big(pTHX) {
+	croak("wilcox_test: the exact null distribution would need more than %" UVuf
+	      " cells; use exact => 0", (UV)WILCOX_MAX_CELLS);
 }
 
-/*Exact CDF for Mann-Whitney U: P(U <= q)
-Mathematically identical to R's cwilcox generating function*/
-static NV exact_pwilcox(NV q, int m, int n) {
-	int k = (int)nv_floor(q + 1e-7); // R uses 1e-7 fuzz
-	int max_u = m * n;
-	if (k < 0) return 0.0;
-	if (k >= max_u) return 1.0;
-
-	long double *w = (long double *)safecalloc(max_u + 1, sizeof(long double));
-	w[0] = 1.0L;
-
-	for (int j = 1; j <= n; j++) {
-	  for (int i = j; i <= max_u; i++) w[i] += w[i - j];
-	  for (int i = max_u; i >= j + m; i--) w[i] -= w[i - j - m];
-	}
-
-	long double cum_p = 0.0L;
-	for (int i = 0; i <= k; i++) cum_p += w[i];
-
-	long double total = choose_comb(m + n, n);
-	NV result = (NV)(cum_p / total);
-
-	Safefree(w);
-	return result;
+/* a * b, refusing to wrap. Both factors are counts derived from the caller's
+   sample sizes, so on a 32-bit size_t the product genuinely can overflow --
+   which is how `int max_u = m * n` used to turn two perfectly separated
+   samples of 50000 into p = 1. */
+static size_t wilcox_cells(pTHX_ size_t a, size_t b) {
+	if (a > WILCOX_MAX_CELLS || b > WILCOX_MAX_CELLS) wilcox_too_big(aTHX);
+	if (a != 0 && b > WILCOX_MAX_CELLS / a)           wilcox_too_big(aTHX);
+	return a * b;
 }
 
-/*Exact CDF for Wilcoxon Signed Rank: P(V <= q)
-Subset-sum DP, same recurrence as R's csignrank.
-Portable: no long-double libm calls (powl/ldexpl/expl), which are
-absent on some platforms (e.g. older FreeBSD). 2^n is built exactly
-by repeated doubling — exact in any radix-2 float format.*/
-static NV exact_psignrank(NV q, size_t n) {
-	long k = (long)nv_floor(q + 1e-7);          //signed: negative q is a valid sentinel
-	if (k < 0) return 0.0;
-	size_t max_v = n * (n + 1) / 2;
-	if ((size_t)k >= max_v) return 1.0;
+/* n * (n + 1) / 2, likewise. The wrap check comes first because on a 32-bit
+   size_t the product overflows well before the cell ceiling is reached. */
+static size_t wilcox_triangle(pTHX_ size_t n) {
+	if (n != 0 && n + 1 > ((size_t)-1) / n) wilcox_too_big(aTHX);
+	size_t t = n * (n + 1) / 2;
+	if (t > WILCOX_MAX_CELLS) wilcox_too_big(aTHX);
+	return t;
+}
 
-	long double *w = (long double *)safecalloc(max_v + 1, sizeof(long double));
-	w[0] = 1.0L;
+static void wdist_free(WilcoxDist *D) {
+	if (D->d) { Safefree(D->d); D->d = NULL; }
+	D->len = 0;
+	D->total = 0.0;
+}
+
+/* R's dpermdist*() error out rather than hand back a distribution whose
+   counts have run past the floating-point range; so do we. */
+static void wdist_finish(pTHX_ WilcoxDist *D) {
+	NV total = 0.0;
+	for (size_t i = 0; i < D->len; i++) {
+		if (!Perl_isfinite(D->d[i])) {
+			wdist_free(D);
+			croak("wilcox_test: overflow computing the exact distribution; use exact => 0");
+		}
+		total += D->d[i];
+	}
+	if (!Perl_isfinite(total) || total <= 0.0) {
+		wdist_free(D);
+		croak("wilcox_test: overflow computing the exact distribution; use exact => 0");
+	}
+	D->total = total;
+}
+
+/* P(STATISTIC <= q) when `lower`, else P(STATISTIC > q).
+   The fuzz matches R: nmath's psignrank()/pwilcox() floor at q + 1e-7 and
+   the R-level .psignrank()/.pwilcox() keep support points below q + 1e-8, so
+   a support point sitting exactly on q counts as inside the lower tail. */
+static NV wdist_tail(const WilcoxDist *restrict D, NV q, bool lower) {
+	NV cut = nv_floor(q * (NV)D->scale + 1e-7) - (NV)D->base;
+	/* Outside the support the answer is a certainty either way, and saying so
+	   here keeps the index arithmetic below inside the array. */
+	if (!(cut >= 0.0))            return lower ? 0.0 : 1.0;
+	if (cut >= (NV)(D->len - 1))  return lower ? 1.0 : 0.0;
+	size_t k = (size_t)cut;       /* last index in the lower tail */
+/* When d[i] == d[len-1-i], always sum from the low end. wdist_ranksum() builds
+  its table with the subtractive Gaussian-binomial recurrence, so far up the
+  support a count of 1 is the difference of numbers around C(m+n, n) and has
+  been rounded into noise -- accurate enough to add into a sum of its
+  neighbours, useless on its own. Summing the mirrored low end instead touches
+  only well-conditioned entries. R does the same thing in pwilcox(), folding q
+  about m*n/2 and flipping lower_tail. */
+	if (D->symmetric && k >= D->len / 2) {
+		size_t k2 = D->len - 2 - k;          /* P(S > q) == P(S <= mirror) */
+		NV s = 0.0;
+		for (size_t i = 0; i <= k2; i++) s += D->d[i];
+		s /= D->total;
+		return lower ? 1.0 - s : s;
+	}
+	NV sum = 0.0;
+	if (lower) for (size_t i = 0; i <= k; i++)         sum += D->d[i];
+	else       for (size_t i = k + 1; i < D->len; i++) sum += D->d[i];
+	return sum / D->total;
+}
+
+/* Smallest support point s with P(STATISTIC <= s) >= p, R's qsignrank() and
+   qwilcox(), including their 10 * eps slack. Only ever called on the no-ties
+   tables the exact confidence interval indexes into, so base is 0 and scale 1. */
+static NV wdist_quantile(const WilcoxDist *restrict D, NV p) {
+	NV target = (p - 10.0 * NV_EPSILON) * D->total;
+	NV cum = 0.0;
+	for (size_t i = 0; i < D->len; i++) {
+		cum += D->d[i];
+		if (cum >= target) return (NV)((IV)i + D->base) / (NV)D->scale;
+	}
+	return (NV)((IV)(D->len - 1) + D->base) / (NV)D->scale;
+}
+
+/* Signed rank, no ties: d[v] = #{S subset of {1..n} : sum(S) == v}. */
+static void wdist_signrank(pTHX_ WilcoxDist *restrict D, size_t n) {
+	size_t max_v = wilcox_triangle(aTHX_ n);
+	D->len   = max_v + 1;
+	D->base  = 0;
+	D->scale = 1;
+	D->symmetric = TRUE;
+	Newxz(D->d, D->len, NV);
+	D->d[0] = 1.0;
 	for (size_t i = 1; i <= n; i++)
 		for (size_t j = max_v; j >= i; j--)
-			w[j] += w[j - i];
-
-	long double cum_p = 0.0L;
-	for (size_t v = 0; v <= (size_t)k; v++) cum_p += w[v];
-
-	long double total = 1.0L;                //2^n, exact, zero libm dependency
-	for (size_t i = 0; i < n; i++) total *= 2.0L;
-
-	NV result = (NV)(cum_p / total);
-	Safefree(w);
-	return result;
+			D->d[j] += D->d[j - i];
+	wdist_finish(aTHX_ D);
 }
 
-static NV rank_and_count_ties(RankInfo *ri, size_t n, bool *has_ties) {
+/* Rank sum, no ties: the Gaussian binomial coefficient
+   prod_{j=1..n} (1 - q^(m+j)) / (1 - q^j), the same generating function R's
+   cwilcox() recursion enumerates. d[u] counts the samples with U == u. */
+static void wdist_ranksum(pTHX_ WilcoxDist *restrict D, size_t m, size_t n) {
+	size_t max_u = wilcox_cells(aTHX_ m, n);
+	D->len   = max_u + 1;
+	D->base  = 0;
+	D->scale = 1;
+	D->symmetric = TRUE;
+	Newxz(D->d, D->len, NV);
+	D->d[0] = 1.0;
+	for (size_t j = 1; j <= n; j++) {
+		for (size_t i = j; i <= max_u; i++) D->d[i] += D->d[i - j];
+		for (size_t i = max_u + 1; i-- > j + m; )  D->d[i] -= D->d[i - j - m];
+	}
+	wdist_finish(aTHX_ D);
+}
+
+/* Signed rank conditional on the observed ranks -- R's dpermdist1(), the
+   one-sample Streitberg-Roehmel shift algorithm. z holds the scaled ranks of
+   the non-zero observations; zeroes contribute nothing to V and are simply
+   left out (see the long comment above .wilcox_test_one_stat_exact in R's
+   wilcox.test.R). d[v] then counts the sign-flip vectors giving V == v/scale. */
+static void wdist_signrank_perm(pTHX_ WilcoxDist *restrict D,
+                                const UV *restrict z, size_t n,
+                                unsigned short int scale) {
+	size_t sum_a = 0;
+	for (size_t i = 0; i < n; i++) {
+		if (z[i] > WILCOX_MAX_CELLS - sum_a) wilcox_too_big(aTHX);
+		sum_a += (size_t)z[i];
+	}
+	D->len   = sum_a + 1;
+	D->base  = 0;
+	D->scale = scale;
+	D->symmetric = FALSE;   /* only when every rank is distinct, so never assume it */
+	Newxz(D->d, D->len, NV);
+	D->d[0] = 1.0;
+	size_t s_a = 0;
+	for (size_t k = 0; k < n; k++) {
+		s_a += (size_t)z[k];
+		for (size_t i = s_a + 1; i-- > (size_t)z[k]; )
+			D->d[i] += D->d[i - (size_t)z[k]];
+	}
+	wdist_finish(aTHX_ D);
+}
+
+/* Rank sum conditional on the observed ranks -- R's dpermdist2(). z holds the
+   scaled ranks of all m + n observations, sorted ascending; the density of
+   sum(z[first m]) is built row by row. Streitberg and Roehmel's optimisation
+   caps the column index at the largest reachable rank sum, sum_b.
+
+   R returns that density indexed by the rank sum; wilcox_test() reports U, so
+   `base` carries the -m(m+1)/2 shift and callers can go on asking about U. */
+static void wdist_ranksum_perm(pTHX_ WilcoxDist *restrict D,
+                               const UV *restrict z, size_t total_n, size_t m,
+                               unsigned short int scale) {
+	size_t sum_b = 0;
+	for (size_t i = total_n - m; i < total_n; i++) {
+		if (z[i] > WILCOX_MAX_CELLS - sum_b) wilcox_too_big(aTHX);
+		sum_b += (size_t)z[i];
+	}
+	size_t sum_bp1 = sum_b + 1;
+	size_t cells = wilcox_cells(aTHX_ m + 1, sum_bp1);
+	/* No restrict on H or on the row pointers below: `row` and `prev` are two
+	   rows of this one allocation, so they are pointers into the same object
+	   even though the rows they address never coincide. */
+	NV *H;
+	Newxz(H, cells, NV);
+	H[0] = 1.0;
+	size_t s_a = 0, s_b = 0;
+	for (size_t k = 0; k < total_n; k++) {
+		size_t zk = (size_t)z[k];
+		s_a += 1;                       /* the first sample's scores are all 1 */
+		s_b += zk;
+		size_t min_b = (s_b < sum_b) ? s_b : sum_b;
+		size_t top_a = (s_a < m) ? s_a : m;
+		if (zk > min_b) continue;
+		for (size_t i = top_a; i >= 1; i--) {
+			NV *row        = H + i * sum_bp1;
+			const NV *prev = H + (i - 1) * sum_bp1;
+			for (size_t j = min_b + 1; j-- > zk; )
+				row[j] += prev[j - zk];
+		}
+	}
+	/* Row m, columns 1..sum_b: the reachable rank sums. Column 0 is
+	   unreachable (every rank is at least 1) and R drops it too. */
+	const NV *row_m = H + m * sum_bp1;
+	size_t lo = 0, hi = sum_b;                 /* half-open over columns 1..sum_b */
+	while (lo < hi && row_m[lo + 1] == 0.0) lo++;
+	while (hi > lo && row_m[hi] == 0.0) hi--;
+	D->len   = hi - lo;
+	D->scale = scale;
+	D->symmetric = FALSE;
+	/* Column j of row m counts the rank sum j; wilcox_test() reports
+	   U = rank sum - m(m+1)/2, so the shift rides in `base`. */
+	D->base  = (IV)(lo + 1) - (IV)(scale * m * (m + 1) / 2);
+	Newx(D->d, D->len ? D->len : 1, NV);
+	for (size_t j = 0; j < D->len; j++) D->d[j] = row_m[lo + 1 + j];
+	Safefree(H);
+	wdist_finish(aTHX_ D);
+}
+
+/* R's signif(x, digits): round to `digits` significant decimal digits.
+   Ported from R's fprec() so that digits_rank decides ties exactly as R
+   does. rint(), not round(), because R rounds halves to even here. */
+static NV nv_signif(NV x, NV digits) {
+	if (!Perl_isfinite(x) || x == 0.0) return x;
+	/* Also catches NaN and +Inf digits: more significant digits than the
+	   build carries cannot change the value. */
+	if (!(digits <= (NV)NV_DIG)) return x;
+	NV sgn = 1.0;
+	if (x < 0.0) { sgn = -1.0; x = -x; }
+	IV dig = (IV)nv_floor(digits + 0.5);
+	if (dig < 1) dig = 1;
+	const IV max10e = (IV)NV_MAX_10_EXP;
+	NV l10 = nv_log10(x);
+	if (nv_fabs(l10) >= (NV)(max10e - 2)) return sgn * x;
+	IV e10 = dig - 1 - (IV)nv_floor(l10);
+	NV p10 = 1.0;
+	if (e10 > max10e) { p10 = nv_pow(10.0, (NV)(e10 - max10e)); e10 = max10e; }
+	if (e10 > 0) {
+		NV pow10 = nv_pow(10.0, (NV)e10);
+		return sgn * (nv_rint((x * pow10) * p10) / pow10) / p10;
+	}
+	NV pow10 = nv_pow(10.0, (NV)(-e10));
+	return sgn * (nv_rint(x / pow10) * pow10);
+}
+
+/* Median of an already-sorted array. */
+static NV nv_sorted_median(const NV *restrict a, size_t n) {
+	if (n == 0) return NV_NAN;
+	if (n % 2) return a[(n - 1) / 2];
+	return (a[n / 2 - 1] + a[n / 2]) / 2.0;
+}
+
+/* ri is ranked in place; kruskal_test() shares this, so the pointer is not
+   restrict-qualified -- both callers hand over an allocation they keep
+   reading through the same pointer afterwards. */
+static NV rank_and_count_ties(RankInfo *ri, size_t n, bool *restrict has_ties) {
 	if (n == 0) return 0.0;
 	qsort(ri, n, sizeof(RankInfo), cmp_nv3);
 	size_t i = 0;
 	NV tie_adj = 0.0;
-	*has_ties = 0;
+	*has_ties = FALSE;
 	while (i < n) {
 		size_t j = i + 1;
 		while (j < n && ri[j].val == ri[i].val) j++;
-		NV r = (NV)(i + 1 + j) / 2.0; 
+		NV r = (NV)(i + 1 + j) / 2.0;
 		for (size_t k = i; k < j; k++) ri[k].rank = r;
 		size_t t = j - i;
-		if (t > 1) { *has_ties = 1; tie_adj += ((NV)t * t * t - t); }
+		if (t > 1) { *has_ties = TRUE; tie_adj += ((NV)t * t * t - t); }
 		i = j;
 	}
 	return tie_adj;
+}
+
+/* ================= WILCOXON ASYMPTOTIC TAIL AND INTERVAL ================= */
+
+/* inverse_normal_cdf() is Moro's approximation, good to about 1e-9; the
+   confidence limits want better than that, and one or two Newton steps
+   against approx_pnorm() get there. */
+static NV wilcox_qnorm(NV p) {
+	if (!(p > 0.0)) return -NV_INF;
+	if (!(p < 1.0)) return  NV_INF;
+	NV z = inverse_normal_cdf(p);
+	for (unsigned short int i = 0; i < 3; i++) {
+		NV dens = 0.39894228040143267794 * nv_exp(-0.5 * z * z);  /* 1/sqrt(2*pi) */
+		if (!(dens > 0.0)) break;
+		z -= (approx_pnorm(z) - p) / dens;
+	}
+	return z;
+}
+
+/* The Edgeworth series R 4.6.0 added under its integer `correct` argument:
+   pnorm(z) refined by up to three correction terms, `k` of them. Signed rank:
+   Fellingham and Stoker (1964), doi:10.1080/01621459.1964.10480738. Rank sum:
+   Fix and Hodges (1955), doi:10.1214/aoms/1177728547, in the form Fellingham
+   and Stoker give. Both series assume untied ranks, which is why the caller
+   drops back to k = 0 the moment any appear.
+
+   Transcribed from the released R 4.6.1, whose coefficients differ from the
+   draft in the R-devel sources: released R scales the whole correction by the
+   normal density and clamps the result into [0, 1]. */
+static NV wilcox_edge_finish(NV y, NV e, NV z, bool lower) {
+	/* 0.3989... = 1/sqrt(2*pi), so the factor is dnorm(z). */
+	NV p = y + (lower ? -e : e) * (0.39894228040143267794 * nv_exp(-0.5 * z * z));
+	if (!(p < 1.0)) p = 1.0;
+	if (!(p > 0.0)) p = 0.0;
+	return p;
+}
+
+static NV wilcox_edge_one(NV z, NV n, unsigned short int k, bool lower) {
+	NV y = lower ? approx_pnorm(z) : approx_pnorm(-z);
+	if (k < 1) return y;
+	NV nn2n = n * (n + 1.0) * (2.0 * n + 1.0);
+	NV la4 = -(3.0 * n * n + 3.0 * n - 1.0) / (10.0 * nn2n);
+	NV z2 = z * z;
+	NV e = la4 * z * (z2 - 3.0);                              /* lambda4/4! H3 */
+	if (k > 1) {
+		NV la6 = 4.0 * (((3.0 * n + 6.0) * n * n - 3.0) * n + 1.0)
+		       / (35.0 * nn2n * nn2n);
+		e += la6 * z * ((z2 - 10.0) * z2 + 15.0);             /* lambda6/6! H5 */
+	}
+	if (k > 2)
+		e += la4 * la4 / 2.0 * z                              /* 35 lambda4^2/8! H7 */
+		     * (((z2 - 21.0) * z2 + 105.0) * z2 - 105.0);
+	return wilcox_edge_finish(y, e, z, lower);
+}
+
+static NV wilcox_edge_two(NV z, NV m, NV n, unsigned short int k, bool lower) {
+	NV y = lower ? approx_pnorm(z) : approx_pnorm(-z);
+	if (k < 1) return y;
+	NV mn = m * n, m2 = m * m, n2 = n * n, mpn = m + n, mpn1 = mpn + 1.0;
+	NV c3 = -(mpn1 * mpn - mn) / (20.0 * mn * mpn1);
+	NV z2 = z * z;
+	NV e = c3 * z * (z2 - 3.0);
+	if (k > 1) {
+		NV n5 = 2.0 * (m2 * m2 + n2 * n2) + 4.0 * mn * (m2 + n2) + 6.0 * m2 * n2
+		      + 4.0 * (m2 * m + n2 * n) + (7.0 * mn + mpn - 1.0) * mpn;
+		NV c5 = n5 / (210.0 * m2 * n2 * mpn1 * mpn1);
+		e += c5 * z * ((z2 - 10.0) * z2 + 15.0);
+	}
+	if (k > 2)
+		e += 0.5 * c3 * c3 * z * (((z2 - 21.0) * z2 + 105.0) * z2 - 105.0);
+	return wilcox_edge_finish(y, e, z, lower);
+}
+
+/* Everything wilcox_ci_W() needs to re-evaluate the standardised statistic at
+   a trial location shift, which is what the asymptotic interval roots on. */
+typedef struct {
+	const NV *restrict x;
+	const NV *restrict y;      /* NULL in the one-sample case */
+	RankInfo *scratch;         /* n_x + n_y entries, reranked on every call */
+	size_t n_x, n_y;
+	NV digits_rank;
+	NV zq;                     /* the quantile the root is sought against */
+	short int alt;             /* 0 = two.sided, 1 = less, 2 = greater */
+	bool correct;
+	bool tied;                 /* set once the variance came out zero */
+} WilcoxCiCtx;
+
+/* R's W(): the standardised (and optionally continuity-corrected) Wilcoxon
+   statistic of the data shifted by d.  Monotone decreasing in d, which is
+   what makes rooting it against a normal quantile give a confidence limit. */
+static NV wilcox_ci_W(NV d, void *ctx) {
+	dTHX;
+	WilcoxCiCtx *C = (WilcoxCiCtx *)ctx;
+	bool finite_digits = Perl_isfinite(C->digits_rank);
+	NV zd, sigma;
+	bool has_ties = FALSE;
+	if (C->y) {                                     /* two-sample */
+		size_t total_n = C->n_x + C->n_y;
+		for (size_t i = 0; i < C->n_x; i++) {
+			NV v = C->x[i] - d;
+			C->scratch[i].val = finite_digits ? nv_signif(v, C->digits_rank) : v;
+			C->scratch[i].idx = 1;
+		}
+		for (size_t i = 0; i < C->n_y; i++) {
+			NV v = C->y[i];
+			C->scratch[C->n_x + i].val = finite_digits ? nv_signif(v, C->digits_rank) : v;
+			C->scratch[C->n_x + i].idx = 2;
+		}
+		NV tie_adj = rank_and_count_ties(C->scratch, total_n, &has_ties);
+		NV rank_sum = 0.0;
+		for (size_t i = 0; i < total_n; i++)
+			if (C->scratch[i].idx == 1) rank_sum += C->scratch[i].rank;
+		zd = rank_sum - (NV)C->n_x * (C->n_x + 1.0) / 2.0
+		     - (NV)C->n_x * (NV)C->n_y / 2.0;
+		sigma = nv_sqrt(((NV)C->n_x * (NV)C->n_y / 12.0)
+		                * ((NV)total_n + 1.0
+		                   - tie_adj / ((NV)total_n * ((NV)total_n - 1.0))));
+	} else {                                        /* one-sample / paired */
+		size_t nz = 0;
+		for (size_t i = 0; i < C->n_x; i++) {
+			NV v = C->x[i] - d;
+			if (v == 0.0) continue;                 /* R drops the zeroes here */
+			C->scratch[nz].val = nv_fabs(finite_digits
+			                             ? nv_signif(v, C->digits_rank) : v);
+			C->scratch[nz].idx = (v > 0.0);
+			nz++;
+		}
+		if (nz == 0) { C->tied = TRUE; return NV_NAN; }
+		NV tie_adj = rank_and_count_ties(C->scratch, nz, &has_ties);
+		NV v_stat = 0.0;
+		for (size_t i = 0; i < nz; i++) if (C->scratch[i].idx) v_stat += C->scratch[i].rank;
+		zd = v_stat - (NV)nz * (nz + 1.0) / 4.0;
+		sigma = nv_sqrt((NV)nz * (nz + 1.0) * (2.0 * (NV)nz + 1.0) / 24.0
+		                - tie_adj / 48.0);
+	}
+	if (!(sigma > 0.0)) { C->tied = TRUE; return NV_NAN; }
+	NV corr = 0.0;
+	if (C->correct)
+		corr = (C->alt == 1) ? -0.5 : (C->alt == 2) ? 0.5
+		     : (zd > 0.0) ? 0.5 : (zd < 0.0) ? -0.5 : 0.0;
+	return (zd - corr) / sigma;
+}
+
+static NV wilcox_ci_root_fn(NV d, void *ctx) {
+	return wilcox_ci_W(d, ctx) - ((WilcoxCiCtx *)ctx)->zq;
+}
+
+/* R's ptail() from the two exact confidence intervals: shift the data by
+  `shift`, re-rank, and report the conditional tail probability of the
+  statistic that results.  The permutation distribution depends on those
+  ranks, so it has to be rebuilt at every candidate shift and is freed again
+  before returning rather than piling up on the save stack.
+
+  `D` must be a scratch distribution of the caller's own, never the one the
+  p-value was taken from -- that one is owned by SAVEFREEPV.
+
+  R applies no digits.rank rounding inside these scans, and neither do we.
+  ri and z are caller-owned scratch, sized n (or n_x + n_y). */
+static NV wilcox_one_ptail(pTHX_ WilcoxDist *D, RankInfo *ri, UV *z,
+                           const NV *restrict x, size_t n, NV shift, bool lower) {
+	for (size_t i = 0; i < n; i++) {
+		NV d = x[i] - shift;
+		ri[i].val = nv_fabs(d);
+		ri[i].idx = (d > 0.0) ? 1 : (d < 0.0) ? 2 : 0;   /* 0 = exact zero */
+	}
+	bool has_ties = FALSE;
+	(void)rank_and_count_ties(ri, n, &has_ties);
+	NV v = 0.0;
+	unsigned short int scale = 1;
+	for (size_t i = 0; i < n; i++) {
+		if (ri[i].idx == 1) v += ri[i].rank;
+		if (ri[i].rank != nv_floor(ri[i].rank)) scale = 2;
+	}
+/* Every rank goes in, including that of an observation the shift has driven to
+  exactly zero: R's ptail() conditions on rank(abs(x - mu)) entire, where the
+  p-value path drops the zeroes' ranks first.  The two agree at any shift that
+  does not land on an observation, so the distinction only shows up on tied
+  data -- which is the only data that reaches this scan. */
+	for (size_t i = 0; i < n; i++) z[i] = (UV)nv_round((NV)scale * ri[i].rank);
+	wdist_signrank_perm(aTHX_ D, z, n, scale);
+	NV p = wdist_tail(D, v, lower);          /* R passes v to both tails here */
+	wdist_free(D);
+	return p;
+}
+
+static NV wilcox_two_ptail(pTHX_ WilcoxDist *D, RankInfo *ri, UV *z,
+                           const NV *restrict x, size_t n_x,
+                           const NV *restrict y, size_t n_y,
+                           NV shift, bool lower) {
+	size_t total_n = n_x + n_y;
+	for (size_t i = 0; i < n_x; i++) { ri[i].val = x[i] - shift; ri[i].idx = 1; }
+	for (size_t i = 0; i < n_y; i++) { ri[n_x + i].val = y[i];   ri[n_x + i].idx = 2; }
+	bool has_ties = FALSE;
+	(void)rank_and_count_ties(ri, total_n, &has_ties);
+	NV rank_sum = 0.0;
+	unsigned short int scale = 1;
+	for (size_t i = 0; i < total_n; i++) {
+		if (ri[i].idx == 1) rank_sum += ri[i].rank;
+		if (ri[i].rank != nv_floor(ri[i].rank)) scale = 2;
+	}
+	NV w = rank_sum - (NV)n_x * (n_x + 1.0) / 2.0;
+	for (size_t i = 0; i < total_n; i++) z[i] = (UV)nv_round((NV)scale * ri[i].rank);
+	wdist_ranksum_perm(aTHX_ D, z, total_n, n_x, scale);
+	NV p = wdist_tail(D, lower ? w : w - 0.25, lower);
+	wdist_free(D);
+	return p;
+}
+
+/* R's root(): uniroot() over [lo, hi], but returning the endpoint outright
+   when the bracket does not actually straddle zero.  R's two-sample interval
+   does this explicitly for cases like wilcox.test(1, 2:60, conf.int = TRUE). */
+static NV wilcox_ci_root(WilcoxCiCtx *C, NV lo, NV hi, NV f_lo, NV f_hi,
+                         NV zq, NV tol) {
+	C->zq = zq;
+	if (!(f_lo - zq > 0.0)) return lo;
+	if (!(f_hi - zq < 0.0)) return hi;
+	return ft_zeroin(lo, hi, wilcox_ci_root_fn, C, tol, 1000);
 }
 // --- KS-TEST C HELPER SECTION ---
 #ifndef M_PI_2
@@ -10911,221 +11352,618 @@ OUTPUT:
 SV* wilcox_test(...)
 CODE:
 {
+/* Follows R's wilcox.test() as of R 4.6.1, including the exact conditional
+  inference in the presence of ties or zeroes that R 4.6.0 added (NEWS: "can
+  now perform exact (conditional) inference in case of ties", contributed by
+  Torsten Hothorn).  Two deliberate divergences:
+
+    * R's `correct` became an integer 0:3, in which numeric 0 still applies
+      the continuity correction and only FALSE turns it off.  Here `correct`
+      stays a plain boolean -- 0 is off, as it is for every other flag in this
+      module and as R itself documented before 4.6.0 -- and the Edgeworth
+      series R reaches through correct = 1, 2, 3 is spelled
+      `edgeworth => 1, 2, 3` instead.
+    * With exact => 0 and every observation tied the variance is zero; R
+      divides by it and reports NaN, while this warns and reports p = 1.*/
 	SV *x_sv = NULL, *y_sv = NULL;
-	bool paired = FALSE, correct = TRUE;
-	NV mu = 0.0;
-	short int exact = -1;
-	const char *alternative = "two.sided";
+	bool paired = FALSE, correct = TRUE, want_cint = FALSE;
+	short int exact = -1;               /* -1 = decide from the sample sizes */
+	unsigned short int edgeworth = 0;   /* Edgeworth terms wanted: 0 .. 3 */
+	NV mu = 0.0, conf_level = 0.95, digits_rank = NV_INF, tol_root = 1e-4;
+	const char *alt_str = "two.sided";
 	Stack_off_t arg_idx = 0;
-	// 1. Shift first positional argument as 'x' if it's an array reference
+	/* 1. Shift the first positional argument as 'x' if it is an array reference */
 	if (arg_idx < items && SvROK(ST(arg_idx)) && SvTYPE(SvRV(ST(arg_idx))) == SVt_PVAV) {
 		x_sv = ST(arg_idx);
 		arg_idx++;
 	}
-	// 2. Shift second positional argument as 'y' if it's an array reference
+	/* 2. Shift the second positional argument as 'y' if it is an array reference */
 	if (arg_idx < items && SvROK(ST(arg_idx)) && SvTYPE(SvRV(ST(arg_idx))) == SVt_PVAV) {
 		y_sv = ST(arg_idx);
 		arg_idx++;
 	}
-	// Ensure the remaining arguments form complete key-value pairs
-	if ((items - arg_idx) % 2 != 0) {
+	if ((items - arg_idx) % 2 != 0)
 		croak("Usage: wilcox_test(\\@x, [\\@y], key => value, ...)");
-	}
-	// --- Parse named arguments from the remaining flat stack ---
 	for (; arg_idx < items; arg_idx += 2) {
 		const char *key = SvPV_nolen(ST(arg_idx));
 		SV *val = ST(arg_idx + 1);
-		if      (strEQ(key, "x"))          x_sv = val;
-		else if (strEQ(key, "y"))          y_sv = val;
-		else if (strEQ(key, "paired"))     paired = SvTRUE(val);
-		else if (strEQ(key, "correct"))    correct = SvTRUE(val);
+		if      (strEQ(key, "x"))           x_sv = val;
+		else if (strEQ(key, "y"))           y_sv = val;
+		else if (strEQ(key, "paired"))      paired = SvTRUE(val) ? TRUE : FALSE;
+		else if (strEQ(key, "correct"))     correct = SvTRUE(val) ? TRUE : FALSE;
 		else if (strEQ(key, "mu"))          mu = SvNV(val);
-		else if (strEQ(key, "exact"))       {
+		else if (strEQ(key, "exact")) {
 			if (!SvOK(val)) exact = -1;
 			else exact = SvTRUE(val) ? 1 : 0;
 		}
-		else if (strEQ(key, "alternative")) alternative = SvPV_nolen(val);
+		else if (strEQ(key, "alternative")) alt_str = SvPV_nolen(val);
+		else if (strEQ(key, "conf.int") || strEQ(key, "conf_int"))
+			want_cint = SvTRUE(val) ? TRUE : FALSE;
+		else if (strEQ(key, "conf.level") || strEQ(key, "conf_level"))
+			conf_level = SvNV(val);
+		else if (strEQ(key, "digits.rank") || strEQ(key, "digits_rank"))
+			digits_rank = SvOK(val) ? SvNV(val) : NV_INF;
+		else if (strEQ(key, "tol.root") || strEQ(key, "tol_root"))
+			tol_root = SvNV(val);
+		else if (strEQ(key, "edgeworth")) {
+			IV e = SvIV(val);
+			if (e < 0 || e > 3) croak("wilcox_test: 'edgeworth' must be 0, 1, 2 or 3");
+			edgeworth = (unsigned short int)e;
+		}
 		else croak("wilcox_test: unknown argument '%s'", key);
 	}
-	// FIX 1: validate 'alternative' rather than silently falling through to two-sided
-	if (strNE(alternative, "two.sided") && strNE(alternative, "less") && strNE(alternative, "greater"))
-		croak("wilcox_test: 'alternative' must be one of 'two.sided', 'less', 'greater'");
-	// --- Validate required / types ---
+	/* alt: 0 = two.sided, 1 = less, 2 = greater. Kept as a code so the tail
+	  selection below is a comparison rather than a string compare per branch. */
+	short int alt;
+	if      (strEQ(alt_str, "two.sided")) alt = 0;
+	else if (strEQ(alt_str, "less"))      alt = 1;
+	else if (strEQ(alt_str, "greater"))   alt = 2;
+	else croak("wilcox_test: 'alternative' must be one of 'two.sided', 'less', 'greater'");
+
 	if (!x_sv || !SvROK(x_sv) || SvTYPE(SvRV(x_sv)) != SVt_PVAV)
 		croak("wilcox_test: 'x' is a required argument and must be an ARRAY reference");
-	AV *x_av = (AV*)SvRV(x_sv);
-	size_t nx = av_len(x_av) + 1;
-	if (nx == 0) croak("Not enough 'x' observations");
-
-	AV *y_av = NULL;
-	size_t ny = 0;
-	if (y_sv && SvROK(y_sv) && SvTYPE(SvRV(y_sv)) == SVt_PVAV) {
-		y_av = (AV*)SvRV(y_sv);
-		ny = av_len(y_av) + 1;
+	if (y_sv && (!SvROK(y_sv) || SvTYPE(SvRV(y_sv)) != SVt_PVAV)) {
+		/* An explicit undef is R's NULL: no second sample at all. */
+		if (SvOK(y_sv)) croak("wilcox_test: 'y' must be an ARRAY reference");
+		y_sv = NULL;
 	}
-	NV p_value = 0.0, statistic = 0.0;
+	/* R: stop("'mu' must be a single number") -- an infinite or NaN mu turns
+	  every difference into NaN or +/-Inf and quietly poisons the ranking. */
+	if (!Perl_isfinite(mu)) croak("wilcox_test: 'mu' must be a finite number");
+	if (want_cint && !(Perl_isfinite(conf_level) && conf_level > 0.0 && conf_level < 1.0))
+		croak("wilcox_test: 'conf.level' must be a single number between 0 and 1");
+	if (!(tol_root > 0.0)) croak("wilcox_test: 'tol.root' must be positive");
+
+	AV *x_av = (AV *)SvRV(x_sv);
+	AV *y_av = y_sv ? (AV *)SvRV(y_sv) : NULL;
+	size_t nx_raw = (size_t)(av_top_index(x_av) + 1);
+	size_t ny_raw = y_av ? (size_t)(av_top_index(y_av) + 1) : 0;
+
+	const bool round_ranks = Perl_isfinite(digits_rank);
+/* R drops NA before anything else and NaN is NA to R, so both go; +/-Inf is
+  neither, and a rank test has no trouble with it.  Letting NaN through is
+  what used to make wilcox.test's own regression case -- a paired test whose
+  Inf - Inf differences R discards -- come back with a different p-value, and
+  it also fed cmp_nv3 a comparison that is never true, leaving qsort without
+  the strict weak ordering it is entitled to.*/
+	NV *restrict xv = NULL, *restrict yv = NULL;
+	size_t n_x = 0, n_y = 0;
+	Newx(xv, nx_raw ? nx_raw : 1, NV);
+	SAVEFREEPV(xv);
+	if (paired) {
+		if (!y_av) croak("wilcox_test: 'y' is missing for paired test");
+		if (nx_raw != ny_raw)
+			croak("'x' and 'y' must have the same length for paired test");
+		for (size_t i = 0; i < nx_raw; i++) {
+			SV **xe = av_fetch(x_av, i, 0);
+			SV **ye = av_fetch(y_av, i, 0);
+			if (!xe || !SvOK(*xe) || !looks_like_number(*xe)) continue;
+			if (!ye || !SvOK(*ye) || !looks_like_number(*ye)) continue;
+			NV a = SvNV(*xe), b = SvNV(*ye);
+			if (Perl_isnan(a) || Perl_isnan(b)) continue;
+			NV d = a - b;
+			if (Perl_isnan(d)) continue;         /* Inf - Inf */
+			xv[n_x++] = d;
+		}
+		y_av = NULL;                             /* now a one-sample problem */
+	} else {
+		for (size_t i = 0; i < nx_raw; i++) {
+			SV **xe = av_fetch(x_av, i, 0);
+			if (!xe || !SvOK(*xe) || !looks_like_number(*xe)) continue;
+			NV a = SvNV(*xe);
+			if (Perl_isnan(a)) continue;
+			xv[n_x++] = a;
+		}
+		if (y_av) {
+			Newx(yv, ny_raw ? ny_raw : 1, NV);
+			SAVEFREEPV(yv);
+			for (size_t i = 0; i < ny_raw; i++) {
+				SV **ye = av_fetch(y_av, i, 0);
+				if (!ye || !SvOK(*ye) || !looks_like_number(*ye)) continue;
+				NV b = SvNV(*ye);
+				if (Perl_isnan(b)) continue;
+				yv[n_y++] = b;
+			}
+		}
+	}
+	if (n_x < 1) croak("not enough (non-missing) 'x' observations");
+/* An empty second sample used to fall through to the one-sample branch and
+  silently answer a different question; R stops instead.*/
+	if (yv && n_y < 1) croak("not enough 'y' observations");
+
+	NV statistic = 0.0, p_value = 0.0;
 	const char *method_desc = "";
-	bool use_exact = FALSE;
-	// --- 2 SAMPLE (Mann-Whitney)
-	if (ny > 0 && !paired) {
-		RankInfo *ri = (RankInfo *)safemalloc((nx + ny) * sizeof(RankInfo));
-		size_t valid_nx = 0, valid_ny = 0;
-		for (size_t i = 0; i < nx; i++) {
-			SV**el = av_fetch(x_av, i, 0);
-			if (el && SvOK(*el) && looks_like_number(*el)) {
-				ri[valid_nx].val = SvNV(*el) - mu; // R subtracts mu from x
-				ri[valid_nx].idx = 1;
-				valid_nx++;
-			}
+	const char *stat_name = yv ? "W" : "V";
+	NV estimate = NV_NAN, ci_lo = NV_NAN, ci_hi = NV_NAN, achieved_level = conf_level;
+	bool have_cint = FALSE;
+	const NV alpha0 = 1.0 - conf_level;
+	const NV toler = 10.0 * NV_EPSILON;
+	WilcoxDist D;
+	D.d = NULL; D.total = 0.0; D.len = 0; D.base = 0; D.scale = 1; D.symmetric = FALSE;
+
+	if (yv) {
+/* ------------------- TWO SAMPLE (Wilcoxon rank sum / Mann-Whitney) ------- */
+		size_t total_n = n_x + n_y;
+		RankInfo *ri;
+		Newx(ri, total_n, RankInfo);
+		SAVEFREEPV(ri);
+		for (size_t i = 0; i < n_x; i++) {
+			NV v = xv[i] - mu;                   /* R subtracts mu from x */
+			ri[i].val = round_ranks ? nv_signif(v, digits_rank) : v;
+			ri[i].idx = 1;
 		}
-		for (size_t i = 0; i < ny; i++) {
-			SV**el = av_fetch(y_av, i, 0);
-			if (el && SvOK(*el) && looks_like_number(*el)) {
-				ri[valid_nx + valid_ny].val = SvNV(*el);
-				ri[valid_nx + valid_ny].idx = 2;
-				valid_ny++;
-			}
+		for (size_t i = 0; i < n_y; i++) {
+			NV v = yv[i];
+			ri[n_x + i].val = round_ranks ? nv_signif(v, digits_rank) : v;
+			ri[n_x + i].idx = 2;
 		}
-		if (valid_nx == 0) { Safefree(ri); croak("not enough (non-missing) 'x' observations"); }
-		if (valid_ny == 0) { Safefree(ri); croak("not enough 'y' observations"); }
-		size_t total_n = valid_nx + valid_ny;
-		bool has_ties = 0;
+		bool has_ties = FALSE;
 		NV tie_adj = rank_and_count_ties(ri, total_n, &has_ties);
-		NV w_rank_sum = 0.0;
-		for (size_t i = 0; i < total_n; i++) if (ri[i].idx == 1) w_rank_sum += ri[i].rank;
-		statistic = w_rank_sum - (NV)valid_nx * (valid_nx + 1.0) / 2.0;
-		if (exact == 1) use_exact = TRUE;
-		else if (exact == 0) use_exact = FALSE;
-		else use_exact = (valid_nx < 50 && valid_ny < 50 && !has_ties);
-		if (use_exact && has_ties) {
-			warn("wilcox_test: cannot compute exact p-value with ties; falling back to approximation");
-			use_exact = FALSE;
-		}
+		NV rank_sum = 0.0;
+		for (size_t i = 0; i < total_n; i++)
+			if (ri[i].idx == 1) rank_sum += ri[i].rank;
+		statistic = rank_sum - (NV)n_x * (n_x + 1.0) / 2.0;
+
+		bool use_exact = (exact < 0) ? (n_x < 50 && n_y < 50) : (exact == 1);
 		if (use_exact) {
 			method_desc = "Wilcoxon rank sum exact test";
-			NV p_less = exact_pwilcox(statistic, valid_nx, valid_ny);
-			NV p_greater = 1.0 - exact_pwilcox(statistic - 1.0, valid_nx, valid_ny);
-
-			if (strcmp(alternative, "less") == 0) p_value = p_less;
-			else if (strcmp(alternative, "greater") == 0) p_value = p_greater;
-			else {
-				NV p = (p_less < p_greater) ? p_less : p_greater;
-				p_value = 2.0 * p;
+			if (has_ties) {
+/* Condition on the observed ranks -- R's dpermdist2 path.  rank_and_count_ties
+  has already left ri sorted ascending, which is the order the shift algorithm
+  wants, and a tie group of odd size is what makes a rank half-integral and
+  the scale 2.*/
+				unsigned short int scale = 1;
+				for (size_t i = 0; i < total_n; i++)
+					if (ri[i].rank != nv_floor(ri[i].rank)) { scale = 2; break; }
+				UV *restrict z;
+				Newx(z, total_n, UV);
+				SAVEFREEPV(z);
+				for (size_t i = 0; i < total_n; i++)
+					z[i] = (UV)nv_round((NV)scale * ri[i].rank);
+				wdist_ranksum_perm(aTHX_ &D, z, total_n, n_x, scale);
+			} else {
+				wdist_ranksum(aTHX_ &D, n_x, n_y);
 			}
+			SAVEFREEPV(D.d);
+			NV p_lo = wdist_tail(&D, statistic, TRUE);
+			NV p_hi = wdist_tail(&D, statistic - 0.25, FALSE);
+			p_value = (alt == 1) ? p_lo : (alt == 2) ? p_hi
+			        : ((p_lo < p_hi ? p_lo : p_hi) * 2.0);
 		} else {
-			method_desc = correct ? "Wilcoxon rank sum test with continuity correction" : "Wilcoxon rank sum test";
-			NV mean_w = (NV)valid_nx * valid_ny / 2.0;	// FIX 4: was 'exp' (shadowed libm exp)
-			NV var = ((NV)valid_nx * valid_ny / 12.0) * ((total_n + 1.0) - tie_adj / ((NV)total_n * (total_n - 1.0)));
+			method_desc = correct ? "Wilcoxon rank sum test with continuity correction"
+			                      : "Wilcoxon rank sum test";
+			NV mean_w = (NV)n_x * (NV)n_y / 2.0;
+			NV var = ((NV)n_x * (NV)n_y / 12.0)
+			       * ((NV)total_n + 1.0 - tie_adj / ((NV)total_n * ((NV)total_n - 1.0)));
 			NV z = statistic - mean_w;
-			NV CORRECTION = 0.0;
-			if (correct) {
-				// FIX 3: sign(z)*0.5, so z == 0 -> 0 (not -0.5)
-				if (strcmp(alternative, "two.sided") == 0) CORRECTION = (z > 0) ? 0.5 : (z < 0) ? -0.5 : 0.0;
-				else if (strcmp(alternative, "greater") == 0) CORRECTION = 0.5;
-				else if (strcmp(alternative, "less") == 0) CORRECTION = -0.5;
-			}
-			// guard against degenerate (all-tied) variance instead of dividing by zero
-			if (var <= 0.0) {
+			/* The Edgeworth series is derived for untied ranks. */
+			unsigned short int k = has_ties ? 0 : edgeworth;
+			NV corr = 0.0;
+			if (correct)
+				corr = (alt == 1) ? -0.5 : (alt == 2) ? 0.5
+				     : (z > 0.0) ? 0.5 : (z < 0.0) ? -0.5 : 0.0;
+			if (!(var > 0.0)) {
 				warn("wilcox_test: zero variance (all values tied); p-value is undefined");
 				p_value = 1.0;
 			} else {
-				z = (z - CORRECTION) / nv_sqrt(var);
-				if (strcmp(alternative, "less") == 0) p_value = approx_pnorm(z);
-				else if (strcmp(alternative, "greater") == 0) p_value = 1.0 - approx_pnorm(z);
-				else p_value = 2.0 * approx_pnorm(-nv_fabs(z));
+				z = (z - corr) / nv_sqrt(var);
+				if      (alt == 1) p_value = wilcox_edge_two(z, (NV)n_x, (NV)n_y, k, TRUE);
+				else if (alt == 2) p_value = wilcox_edge_two(z, (NV)n_x, (NV)n_y, k, FALSE);
+				else if (k == 0)   p_value = 2.0 * approx_pnorm(-nv_fabs(z));
+				else {
+					/* R: 2 * min(p, 1 - p) with p the lower-tail value. */
+					NV p_lo = wilcox_edge_two(z, (NV)n_x, (NV)n_y, k, TRUE);
+					NV p_hi = 1.0 - p_lo;
+					p_value = 2.0 * (p_lo < p_hi ? p_lo : p_hi);
+				}
 			}
 		}
-		Safefree(ri);
-	} else { // --- 1 SAMPLE / PAIRED ---
-		if (paired && (!y_av || nx != ny)) croak("'x' and 'y' must have the same length for paired test");
-		NV *diffs = (NV *)safemalloc(nx * sizeof(NV));
-		size_t n_nz = 0;
-		bool has_zeroes = FALSE;
-		for (size_t i = 0; i < nx; i++) {
-			SV**x_el = av_fetch(x_av, i, 0);
-			if (!x_el || !SvOK(*x_el) || !looks_like_number(*x_el)) continue;
-			NV dx = SvNV(*x_el);
 
-			if (paired) {
-				SV**y_el = av_fetch(y_av, i, 0);
-				if (!y_el || !SvOK(*y_el) || !looks_like_number(*y_el)) continue;
-				NV dy = SvNV(*y_el);
-				NV d = dx - dy - mu;
-				if (d == 0.0) has_zeroes = TRUE; // Drop exact zeroes
-				else diffs[n_nz++] = d;
+		if (want_cint) {
+			have_cint = TRUE;
+/* The m * n pairwise differences carry both exact intervals and the
+  Hodges-Lehmann estimate, but the asymptotic interval is a root search that
+  never looks at them -- so they are built only when they are wanted, and a
+  sample pair too large to hold them can still have an asymptotic interval. */
+			size_t nd = 0;
+			NV *restrict diffs = NULL;
+			if (use_exact) {
+				nd = wilcox_cells(aTHX_ n_x, n_y);
+				Newx(diffs, nd, NV);
+				SAVEFREEPV(diffs);
+				for (size_t i = 0; i < n_x; i++)
+					for (size_t j = 0; j < n_y; j++)
+						diffs[i * n_y + j] = xv[i] - yv[j];
+				nv_heapsort(diffs, nd);
+			}
+			if (use_exact && !has_ties) {
+/* R's .wilcox_test_two_cint_exact, the qwilcox branch: the interval is a pair
+  of order statistics of the m*n pairwise differences.*/
+				estimate = nv_sorted_median(diffs, nd);
+				NV a = (alt == 0) ? alpha0 / 2.0 : alpha0;
+				NV qu = wdist_quantile(&D, a);
+				if (wdist_tail(&D, qu, TRUE) <= a + toler) qu += 1.0;
+				if (qu <= 0.0) {
+					achieved_level = 1.0;
+					ci_lo = -NV_INF; ci_hi = NV_INF;
+				} else {
+					if (qu > (NV)nd) qu = (NV)nd;
+					size_t iu = (size_t)qu;
+					size_t il = nd - iu;
+					NV ach = wdist_tail(&D, nv_trunc(qu) - 1.0, TRUE);
+					achieved_level = 1.0 - (alt == 0 ? 2.0 * ach : ach);
+					ci_lo = (alt == 1) ? -NV_INF : diffs[iu - 1];
+					ci_hi = (alt == 2) ?  NV_INF : diffs[il];
+				}
+			} else if (use_exact) {
+/* Ties: R walks the sorted differences and asks, at the midpoint between each
+  consecutive pair, whether the conditional tail probability has grown past
+  alpha yet.  Every step rebuilds the permutation distribution, so the tables
+  are freed as we go rather than left on the save stack.*/
+				estimate = nv_sorted_median(diffs, nd);
+				RankInfo *cri;
+				Newx(cri, total_n, RankInfo);
+				SAVEFREEPV(cri);
+				UV *restrict cz;
+				Newx(cz, total_n, UV);
+				SAVEFREEPV(cz);
+				WilcoxDist S;
+				S.d = NULL; S.total = 0.0; S.len = 0; S.base = 0; S.scale = 1; S.symmetric = FALSE;
+				NV a_side = (alt == 0) ? alpha0 / 2.0 : alpha0;
+				NV a = a_side + toler;
+				NV lo_pi = 0.0, hi_pi = 0.0;
+				NV lo_mu = -NV_INF, hi_mu = NV_INF;
+				if (alt != 1) {                  /* need a lower limit */
+					if (!(wilcox_two_ptail(aTHX_ &S, cri, cz, xv, n_x, yv, n_y,
+					                       diffs[0] - 1.0, FALSE) > a)) {
+						for (size_t k = 0; k + 1 < nd; k++) {
+							NV p = wilcox_two_ptail(aTHX_ &S, cri, cz, xv, n_x, yv, n_y,
+							                        (diffs[k] + diffs[k + 1]) / 2.0, FALSE);
+							if (p > a) { lo_mu = diffs[k]; break; }
+							lo_pi = p;
+						}
+						if (!Perl_isfinite(lo_mu)) lo_mu = diffs[nd - 1];
+					}
+				}
+				if (alt != 2) {                  /* need an upper limit */
+					if (!(wilcox_two_ptail(aTHX_ &S, cri, cz, xv, n_x, yv, n_y,
+					                       diffs[nd - 1] + 1.0, TRUE) > a)) {
+						for (size_t k = nd - 1; k-- > 0; ) {
+							NV p = wilcox_two_ptail(aTHX_ &S, cri, cz, xv, n_x, yv, n_y,
+							                        (diffs[k] + diffs[k + 1]) / 2.0, TRUE);
+							if (p > a) { hi_mu = diffs[k + 1]; break; }
+							hi_pi = p;
+						}
+						if (!Perl_isfinite(hi_mu)) hi_mu = diffs[0];
+					}
+				}
+				ci_lo = (alt == 1) ? -NV_INF : lo_mu;
+				ci_hi = (alt == 2) ?  NV_INF : hi_mu;
+				achieved_level = 1.0 - ((alt == 0) ? lo_pi + hi_pi
+				                      : (alt == 1) ? hi_pi : lo_pi);
 			} else {
-				NV d = dx - mu;
-				if (d == 0.0) has_zeroes = TRUE;
-				else diffs[n_nz++] = d;
+/* R's .wilcox_test_two_cint_asymp: root the standardised statistic, as a
+  function of the trial shift, against the normal quantiles.*/
+				RankInfo *cri;
+				Newx(cri, total_n, RankInfo);
+				SAVEFREEPV(cri);
+				WilcoxCiCtx C;
+				C.x = xv; C.y = yv; C.scratch = cri;
+				C.n_x = n_x; C.n_y = n_y;
+				C.digits_rank = digits_rank; C.zq = 0.0;
+				C.alt = alt; C.correct = correct; C.tied = FALSE;
+				NV xmin = xv[0], xmax = xv[0], ymin = yv[0], ymax = yv[0];
+				for (size_t i = 1; i < n_x; i++) {
+					if (xv[i] < xmin) xmin = xv[i];
+					if (xv[i] > xmax) xmax = xv[i];
+				}
+				for (size_t i = 1; i < n_y; i++) {
+					if (yv[i] < ymin) ymin = yv[i];
+					if (yv[i] > ymax) ymax = yv[i];
+				}
+				NV mumin = xmin - ymax, mumax = xmax - ymin;
+				NV w_lo = wilcox_ci_W(mumin, &C), w_hi = wilcox_ci_W(mumax, &C);
+				if (C.tied) {
+					warn("wilcox_test: cannot compute confidence interval when all observations are tied");
+					ci_lo = (alt == 1) ? -NV_INF : NV_NAN;
+					ci_hi = (alt == 2) ?  NV_INF : NV_NAN;
+					achieved_level = 0.0;
+					estimate = (mumin + mumax) / 2.0;
+				} else {
+					if (alt != 1)
+						ci_lo = wilcox_ci_root(&C, mumin, mumax, w_lo, w_hi,
+						                       wilcox_qnorm(1.0 - (alt == 0 ? alpha0 / 2.0 : alpha0)),
+						                       tol_root);
+					else ci_lo = -NV_INF;
+					if (alt != 2)
+						ci_hi = wilcox_ci_root(&C, mumin, mumax, w_lo, w_hi,
+						                       wilcox_qnorm(alt == 0 ? alpha0 / 2.0 : alpha0),
+						                       tol_root);
+					else ci_hi = NV_INF;
+					/* R drops the continuity correction for the point estimate. */
+					C.correct = FALSE;
+					NV e_lo = wilcox_ci_W(mumin, &C), e_hi = wilcox_ci_W(mumax, &C);
+					estimate = wilcox_ci_root(&C, mumin, mumax, e_lo, e_hi, 0.0, tol_root);
+				}
 			}
 		}
-		if (n_nz == 0) {
-			Safefree(diffs);
-			croak("not enough (non-missing) observations");
-		}
-		RankInfo *ri = (RankInfo *)safemalloc(n_nz * sizeof(RankInfo));
-		for (size_t i = 0; i < n_nz; i++) {
-			ri[i].val = nv_fabs(diffs[i]);
-			ri[i].idx = (diffs[i] > 0);
-		}
-		bool has_ties = 0;
-		NV tie_adj = rank_and_count_ties(ri, n_nz, &has_ties);
-		statistic = 0.0;
-		for (size_t i = 0; i < n_nz; i++) {
-			if (ri[i].idx) statistic += ri[i].rank;
-		}
-		if (exact == 1) use_exact = TRUE;
-		else if (exact == 0) use_exact = FALSE;
-		else use_exact = (n_nz < 50 && !has_ties);
-		if (use_exact && has_ties) {
-			warn("wilcox_test: cannot compute exact p-value with ties; falling back to approximation");
-			use_exact = FALSE;
-		}
-		if (use_exact && has_zeroes) {
-			warn("wilcox_test: cannot compute exact p-value with zeroes; falling back to approximation");
-			use_exact = FALSE;
-		}
+	} else {
+/* -------------------- ONE SAMPLE / PAIRED (signed rank) ------------------ */
+		size_t n_obs = n_x;              /* R's n: zeroes included */
+		bool use_exact = (exact < 0) ? (n_obs < 50) : (exact == 1);
+		RankInfo *ri;
+		Newx(ri, n_obs, RankInfo);
+		SAVEFREEPV(ri);
+		bool has_zero = FALSE, has_ties = FALSE;
+		NV tie_adj = 0.0;
+		size_t n_eff = 0;                /* non-zero differences */
+		for (size_t i = 0; i < n_obs; i++) if (xv[i] - mu == 0.0) has_zero = TRUE;
+
 		if (use_exact) {
-			method_desc = "Wilcoxon signed rank exact test";	// FIX 5: was an identical-branch ternary
-			NV p_less = exact_psignrank(statistic, n_nz);
-			NV p_greater = 1.0 - exact_psignrank(statistic - 1.0, n_nz);
-
-			if (strcmp(alternative, "less") == 0) p_value = p_less;
-			else if (strcmp(alternative, "greater") == 0) p_value = p_greater;
-			else {
-				NV p = (p_less < p_greater) ? p_less : p_greater;
-				p_value = 2.0 * p;
+/* The exact branch ranks |x - mu| over every observation and only afterwards
+  drops the zeroes' ranks, because the permutation distribution is the one
+  conditional on the ranks actually observed.  The asymptotic branch below
+  drops the zeroes first and ranks what is left, so V genuinely differs
+  between the two whenever a zero is present -- that is R's behaviour too.*/
+			for (size_t i = 0; i < n_obs; i++) {
+				NV d = xv[i] - mu;
+				NV a = round_ranks ? nv_signif(d, digits_rank) : d;
+				ri[i].val = nv_fabs(a);
+				ri[i].idx = (d > 0.0) ? 1 : (d < 0.0) ? 2 : 0;   /* 0 = exact zero */
 			}
+			(void)rank_and_count_ties(ri, n_obs, &has_ties);
+			statistic = 0.0;
+			for (size_t i = 0; i < n_obs; i++) {
+				if (ri[i].idx == 1) statistic += ri[i].rank;
+				if (ri[i].idx != 0) n_eff++;
+			}
+			method_desc = "Wilcoxon signed rank exact test";
+			if (has_ties || has_zero) {
+				unsigned short int scale = 1;
+				for (size_t i = 0; i < n_obs; i++)
+					if (ri[i].rank != nv_floor(ri[i].rank)) { scale = 2; break; }
+				UV *restrict z;
+				Newx(z, n_eff ? n_eff : 1, UV);
+				SAVEFREEPV(z);
+				size_t nz = 0;
+				for (size_t i = 0; i < n_obs; i++)
+					if (ri[i].idx != 0) z[nz++] = (UV)nv_round((NV)scale * ri[i].rank);
+				wdist_signrank_perm(aTHX_ &D, z, nz, scale);
+			} else {
+				wdist_signrank(aTHX_ &D, n_obs);
+			}
+			SAVEFREEPV(D.d);
+			NV p_lo = wdist_tail(&D, statistic, TRUE);
+			NV p_hi = wdist_tail(&D, statistic - 0.25, FALSE);
+			p_value = (alt == 1) ? p_lo : (alt == 2) ? p_hi
+			        : ((p_lo < p_hi ? p_lo : p_hi) * 2.0);
 		} else {
-			method_desc = correct ? "Wilcoxon signed rank test with continuity correction" : "Wilcoxon signed rank test";
-			NV mean_v = (NV)n_nz * (n_nz + 1.0) / 4.0;	// FIX 4: was 'exp'
-			NV var = (n_nz * (n_nz + 1.0) * (2.0 * n_nz + 1.0) / 24.0) - (tie_adj / 48.0);
-			NV z = statistic - mean_v;
-			NV CORRECTION = 0.0;
-			if (correct) {
-				if (strcmp(alternative, "two.sided") == 0) CORRECTION = (z > 0) ? 0.5 : (z < 0) ? -0.5 : 0.0;
-				else if (strcmp(alternative, "greater") == 0) CORRECTION = 0.5;
-				else if (strcmp(alternative, "less") == 0) CORRECTION = -0.5;
+			for (size_t i = 0; i < n_obs; i++) {
+				NV d = xv[i] - mu;
+				if (d == 0.0) continue;          /* Wilcoxon's own rule: drop them */
+				NV a = round_ranks ? nv_signif(d, digits_rank) : d;
+				ri[n_eff].val = nv_fabs(a);
+				ri[n_eff].idx = (d > 0.0);
+				n_eff++;
 			}
-			if (var <= 0.0) {
+			tie_adj = rank_and_count_ties(ri, n_eff, &has_ties);
+			statistic = 0.0;
+			for (size_t i = 0; i < n_eff; i++) if (ri[i].idx) statistic += ri[i].rank;
+			method_desc = correct ? "Wilcoxon signed rank test with continuity correction"
+			                      : "Wilcoxon signed rank test";
+			NV mean_v = (NV)n_eff * (n_eff + 1.0) / 4.0;
+			NV var = (NV)n_eff * (n_eff + 1.0) * (2.0 * (NV)n_eff + 1.0) / 24.0
+			       - tie_adj / 48.0;
+			NV z = statistic - mean_v;
+			/* R also switches the Edgeworth series off when zeroes were dropped. */
+			unsigned short int k = (has_ties || has_zero) ? 0 : edgeworth;
+			NV corr = 0.0;
+			if (correct)
+				corr = (alt == 1) ? -0.5 : (alt == 2) ? 0.5
+				     : (z > 0.0) ? 0.5 : (z < 0.0) ? -0.5 : 0.0;
+			if (!(var > 0.0)) {
 				warn("wilcox_test: zero variance (all values tied); p-value is undefined");
 				p_value = 1.0;
 			} else {
-				z = (z - CORRECTION) / nv_sqrt(var);
-				if (strcmp(alternative, "less") == 0) p_value = approx_pnorm(z);
-				else if (strcmp(alternative, "greater") == 0) p_value = 1.0 - approx_pnorm(z);
-				else p_value = 2.0 * approx_pnorm(-nv_fabs(z));
+				z = (z - corr) / nv_sqrt(var);
+				if      (alt == 1) p_value = wilcox_edge_one(z, (NV)n_eff, k, TRUE);
+				else if (alt == 2) p_value = wilcox_edge_one(z, (NV)n_eff, k, FALSE);
+				else if (k == 0)   p_value = 2.0 * approx_pnorm(-nv_fabs(z));
+				else {
+					NV p_lo = wilcox_edge_one(z, (NV)n_eff, k, TRUE);
+					NV p_hi = 1.0 - p_lo;
+					p_value = 2.0 * (p_lo < p_hi ? p_lo : p_hi);
+				}
 			}
 		}
-		Safefree(ri); Safefree(diffs);
+
+		if (want_cint) {
+			have_cint = TRUE;
+			if (use_exact) {
+/* The Walsh averages (x_i + x_j)/2 over i <= j; their order statistics carry
+  the exact interval and their median is the Hodges-Lehmann pseudomedian.*/
+				size_t nd = wilcox_triangle(aTHX_ n_obs);
+				NV *restrict walsh;
+				Newx(walsh, nd, NV);
+				SAVEFREEPV(walsh);
+				size_t w = 0;
+				for (size_t i = 0; i < n_obs; i++)
+					for (size_t j = i; j < n_obs; j++)
+						walsh[w++] = (xv[i] + xv[j]) / 2.0;
+				nv_heapsort(walsh, nd);
+				estimate = nv_sorted_median(walsh, nd);
+				if (!has_ties && !has_zero) {
+					NV a = (alt == 0) ? alpha0 / 2.0 : alpha0;
+					NV qu = wdist_quantile(&D, a);
+					if (wdist_tail(&D, qu, TRUE) <= a + toler) qu += 1.0;
+					if (qu <= 0.0) {
+						achieved_level = 1.0;
+						ci_lo = -NV_INF; ci_hi = NV_INF;
+					} else {
+						if (qu > (NV)nd) qu = (NV)nd;
+						size_t iu = (size_t)qu;
+						size_t il = nd - iu;
+						NV ach = wdist_tail(&D, nv_trunc(qu) - 1.0, TRUE);
+						achieved_level = 1.0 - (alt == 0 ? 2.0 * ach : ach);
+						ci_lo = (alt == 1) ? -NV_INF : walsh[iu - 1];
+						ci_hi = (alt == 2) ?  NV_INF : walsh[il];
+					}
+				} else {
+					RankInfo *cri;
+					Newx(cri, n_obs, RankInfo);
+					SAVEFREEPV(cri);
+					UV *restrict cz;
+					Newx(cz, n_obs, UV);
+					SAVEFREEPV(cz);
+					WilcoxDist S;
+					S.d = NULL; S.total = 0.0; S.len = 0; S.base = 0; S.scale = 1; S.symmetric = FALSE;
+					NV a_side = (alt == 0) ? alpha0 / 2.0 : alpha0;
+					NV a = a_side + toler;
+					NV lo_pi = 0.0, hi_pi = 0.0;
+					NV lo_mu = -NV_INF, hi_mu = NV_INF;
+					if (alt != 1) {
+						if (!(wilcox_one_ptail(aTHX_ &S, cri, cz, xv, n_obs,
+						                       walsh[0] - 1.0, FALSE) > a)) {
+							for (size_t k = 0; k + 1 < nd; k++) {
+								NV p = wilcox_one_ptail(aTHX_ &S, cri, cz, xv, n_obs,
+								                        (walsh[k] + walsh[k + 1]) / 2.0, FALSE);
+								if (p > a) { lo_mu = walsh[k]; break; }
+								lo_pi = p;
+							}
+							if (!Perl_isfinite(lo_mu)) lo_mu = walsh[nd - 1];
+						}
+					}
+					if (alt != 2) {
+						if (!(wilcox_one_ptail(aTHX_ &S, cri, cz, xv, n_obs,
+						                       walsh[nd - 1] + 1.0, TRUE) > a)) {
+							for (size_t k = nd - 1; k-- > 0; ) {
+								NV p = wilcox_one_ptail(aTHX_ &S, cri, cz, xv, n_obs,
+								                        (walsh[k] + walsh[k + 1]) / 2.0, TRUE);
+								if (p > a) { hi_mu = walsh[k + 1]; break; }
+								hi_pi = p;
+							}
+							if (!Perl_isfinite(hi_mu)) hi_mu = walsh[0];
+						}
+					}
+					ci_lo = (alt == 1) ? -NV_INF : lo_mu;
+					ci_hi = (alt == 2) ?  NV_INF : hi_mu;
+					achieved_level = 1.0 - ((alt == 0) ? lo_pi + hi_pi
+					                      : (alt == 1) ? hi_pi : lo_pi);
+				}
+			} else {
+/* R's .wilcox_test_one_cint_asymp, including its alpha-doubling search for a
+  level the data can actually support and the warning when the requested one
+  is not among them.*/
+				RankInfo *cri;
+				Newx(cri, n_obs, RankInfo);
+				SAVEFREEPV(cri);
+				WilcoxCiCtx C;
+				C.x = xv; C.y = NULL; C.scratch = cri;
+				C.n_x = n_obs; C.n_y = 0;
+				C.digits_rank = digits_rank; C.zq = 0.0;
+				C.alt = alt; C.correct = correct; C.tied = FALSE;
+				NV mumin = xv[0], mumax = xv[0];
+				for (size_t i = 1; i < n_obs; i++) {
+					if (xv[i] < mumin) mumin = xv[i];
+					if (xv[i] > mumax) mumax = xv[i];
+				}
+				NV w_lo = wilcox_ci_W(mumin, &C);
+				NV w_hi = C.tied ? NV_NAN : wilcox_ci_W(mumax, &C);
+				if (C.tied || !Perl_isfinite(w_lo) || !Perl_isfinite(w_hi)) {
+					warn("wilcox_test: cannot compute confidence interval when all observations are zero or tied");
+					ci_lo = (alt == 1) ? -NV_INF : NV_NAN;
+					ci_hi = (alt == 2) ?  NV_INF : NV_NAN;
+					achieved_level = 0.0;
+					estimate = (mumin + mumax) / 2.0;
+				} else {
+/* R doubles alpha until the bracket [W(min x), W(max x)] actually contains the
+  quantiles the limits root against.  The quantile it tests against differs by
+  alternative, and not symmetrically: "greater" tests at alpha while "less"
+  tests at alpha/2 even though it roots at alpha.  Mirrored as-is. */
+					NV alpha = alpha0;
+					for (;;) {
+						bool widen = FALSE;
+						if (alt == 0) {
+							if (w_lo - wilcox_qnorm(1.0 - alpha / 2.0) < 0.0) widen = TRUE;
+							if (w_hi - wilcox_qnorm(alpha / 2.0) > 0.0)       widen = TRUE;
+						} else if (alt == 2) {
+							if (w_lo - wilcox_qnorm(1.0 - alpha) < 0.0)       widen = TRUE;
+						} else {
+							if (w_hi - wilcox_qnorm(alpha / 2.0) > 0.0)       widen = TRUE;
+						}
+						if (!widen) break;
+						alpha *= 2.0;
+						if (alpha >= 1.0) break;
+					}
+					if (alpha >= 1.0 || alpha0 < alpha * 0.75) {
+						achieved_level = 1.0 - (alpha < 1.0 ? alpha : 1.0);
+						warn("wilcox_test: requested conf.level not achievable");
+					}
+					if (alpha < 1.0) {
+						NV a = (alt == 0) ? alpha / 2.0 : alpha;
+						ci_lo = (alt == 1) ? -NV_INF
+						      : wilcox_ci_root(&C, mumin, mumax, w_lo, w_hi,
+						                       wilcox_qnorm(1.0 - a), tol_root);
+						ci_hi = (alt == 2) ?  NV_INF
+						      : wilcox_ci_root(&C, mumin, mumax, w_lo, w_hi,
+						                       wilcox_qnorm((alt == 0) ? alpha / 2.0 : alpha),
+						                       tol_root);
+					} else {
+						NV *restrict med;
+						Newx(med, n_obs, NV);
+						SAVEFREEPV(med);
+						Copy(xv, med, n_obs, NV);
+						nv_heapsort(med, n_obs);
+						NV m = nv_sorted_median(med, n_obs);
+						ci_lo = (alt == 1) ? -NV_INF : m;
+						ci_hi = (alt == 2) ?  NV_INF : m;
+					}
+					C.correct = FALSE;
+					NV e_lo = wilcox_ci_W(mumin, &C), e_hi = wilcox_ci_W(mumax, &C);
+					estimate = wilcox_ci_root(&C, mumin, mumax, e_lo, e_hi, 0.0, tol_root);
+				}
+			}
+		}
 	}
 	if (p_value > 1.0) p_value = 1.0;
 	HV *res = newHV();
-	hv_stores(res, "statistic", newSVnv(statistic));
-	hv_stores(res, "p_value", newSVnv(p_value));
-	hv_stores(res, "method", newSVpv(method_desc, 0));
-	hv_stores(res, "alternative", newSVpv(alternative, 0));
-	RETVAL = newRV_noinc((SV*)res);
+	hv_stores(res, "statistic",      newSVnv(statistic));
+	hv_stores(res, "statistic_name", newSVpv(stat_name, 0));
+	hv_stores(res, "p_value",        newSVnv(p_value));
+	hv_stores(res, "method",         newSVpv(method_desc, 0));
+	hv_stores(res, "alternative",    newSVpv(alt_str, 0));
+	hv_stores(res, "null_value",     newSVnv(mu));
+	hv_stores(res, "null_value_name",
+	          newSVpv((paired || yv) ? "location shift" : "location", 0));
+	if (have_cint) {
+		AV *ci = newAV();
+		av_push(ci, newSVnv(ci_lo));
+		av_push(ci, newSVnv(ci_hi));
+		hv_stores(res, "conf_int",   newRV_noinc((SV *)ci));
+		hv_stores(res, "conf_level", newSVnv(achieved_level));
+		hv_stores(res, "estimate",   newSVnv(estimate));
+	}
+	RETVAL = newRV_noinc((SV *)res);
 }
 OUTPUT:
 	RETVAL

@@ -5757,9 +5757,9 @@ Returns a hash of `predictor => VIF`.
     	[0.878, 0.647, 0.598, 2.05, 1.06, 1.29, 1.06, 3.14, 1.29]
     );
 
-Computes the Wilcoxon rank-sum / Mann-Whitney test (two samples) or the Wilcoxon signed-rank test (one sample or paired), following R's `wilcox.test` conventions.
+Computes the Wilcoxon rank-sum / Mann-Whitney test (two samples) or the Wilcoxon signed-rank test (one sample or paired), following R's `wilcox.test` conventions as of R 4.6.1.
 This is an alternative to the t-test, that does not assume a normal distribution.
-With two array refs and no `paired` flag it runs the two-sample rank-sum test; with a single sample, or with `paired => 1`, it runs the signed-rank test. It calculates exact p-values by default for `N < 50` without ties; when ties (or, for the signed-rank case, zero differences) are present it automatically switches to the normal approximation with continuity correction.
+With two array refs and no `paired` flag it runs the two-sample rank-sum test; with a single sample, or with `paired => 1`, it runs the signed-rank test. It calculates exact p-values by default for `N < 50`, including when there are ties or zero differences: as in R 4.6.0 and later, tied data is answered from the conditional (permutation) distribution given the observed ranks rather than falling back to the normal approximation. Optionally it also returns a Hodges-Lehmann point estimate and a distribution-free confidence interval.
 
 ### Calling conventions
 
@@ -5771,41 +5771,73 @@ The first one or two array-ref arguments are taken positionally as `x` and `y`; 
     # fully named
     wilcox_test(x => \@x, y => \@y, alternative => "greater", exact => 0);
 
+    # with a confidence interval and point estimate
+    wilcox_test(\@x, \@y, conf_int => 1, conf_level => 0.99);
+
+Arguments that R spells with a dot are accepted with either spelling: `conf.int` and `conf_int`, `conf.level` and `conf_level`, `digits.rank` and `digits_rank`, `tol.root` and `tol_root`.
+
 ### Input parameters
 
 | Parameter     | Type            | Default      | Description |
 |---------------|-----------------|--------------|-------------|
-| `x`           | ARRAY ref       | *(required)* | The first sample. Passed positionally or as `x =>`. Non-numeric and undefined elements are silently dropped; an empty or all-missing `x` is fatal. In the two-sample test `mu` is subtracted from each `x` value. |
-| `y`           | ARRAY ref       | `undef`      | The second sample. If present and `paired` is false, a two-sample rank-sum test is run. If `paired` is true, `y` is required and must be the same length as `x`. Omit it for the one-sample signed-rank test. |
-| `paired`      | boolean         | `0` (false)  | Run a paired signed-rank test on the per-element differences `x[i] - y[i] - mu`. Requires `y` of equal length. |
+| `x`           | ARRAY ref       | *(required)* | The first sample. Passed positionally or as `x =>`. Non-numeric, undefined and `NaN` elements are silently dropped (`NaN` is R's `NA`); `+Inf` and `-Inf` are kept, since a rank test has no trouble with them. An empty or all-missing `x` is fatal. In the two-sample test `mu` is subtracted from each `x` value. |
+| `y`           | ARRAY ref       | `undef`      | The second sample. If present and `paired` is false, a two-sample rank-sum test is run. If `paired` is true, `y` is required and must be the same length as `x`. Omit it, or pass `undef`, for the one-sample signed-rank test. A `y` that is present but empty (or entirely missing) is fatal rather than silently becoming a one-sample test. |
+| `paired`      | boolean         | `0` (false)  | Run a paired signed-rank test on the per-element differences `x[i] - y[i] - mu`. Requires `y` of equal length. A pair is dropped if either member is missing, or if the difference is `NaN` (which is what `Inf - Inf` gives). |
 | `correct`     | boolean         | `1` (true)   | Apply the continuity correction (±0.5) when using the normal approximation. Ignored when an exact p-value is computed. |
-| `mu`          | number          | `0.0`        | Null-hypothesis location shift. Subtracted from `x` (two-sample) or from each difference (one-sample / paired). |
-| `exact`       | boolean / undef | `undef` (auto) | Tri-state. `undef` (or absent) selects exact automatically: when both group sizes are `< 50` and there are no ties (two-sample), or `n < 50` with no ties (signed-rank). A true value forces the exact test, a false value forces the approximation. Exact is impossible with ties — or, for the signed-rank test, with zero differences — and falls back to the approximation with a warning. |
+| `edgeworth`   | integer 0-3     | `0`          | Number of Edgeworth series terms used to refine the normal approximation, for the untied case. This is what R reaches through its integer `correct = 1, 2, 3`; see the note below on why it is spelled separately here. Ignored on the exact path, and — as in R — ignored when there are ties, or when the signed-rank test dropped a zero difference, because the series is derived for untied ranks. |
+| `mu`          | number          | `0.0`        | Null-hypothesis location shift. Subtracted from `x` (two-sample) or from each difference (one-sample / paired). Must be finite. |
+| `exact`       | boolean / undef | `undef` (auto) | Tri-state. `undef` (or absent) selects exact automatically: when both group sizes are `< 50` (two-sample), or `n < 50` (signed-rank). A true value forces the exact test, a false value forces the approximation. Ties and zero differences no longer disable it. |
 | `alternative` | string          | `"two.sided"` | One of `"two.sided"`, `"less"`, or `"greater"`. Selects the tail(s) used for the p-value. |
+| `conf.int`    | boolean         | `0` (false)  | Also compute a point estimate and confidence interval for the location (one-sample) or location shift (two-sample / paired). |
+| `conf.level`  | number in (0,1) | `0.95`       | Requested confidence level. The level a rank test can actually deliver is discrete, so the level achieved is reported back in `conf_level` and is generally not the one asked for. |
+| `digits.rank` | number / undef  | `undef` (Inf) | Round each value to this many significant digits before ranking, so that ties are decided on the rounded values. R's `digits.rank`, and worth reaching for when the data are the result of arithmetic and two values that ought to tie differ in the last bit. `undef` means no rounding. |
+| `tol.root`    | number > 0      | `1e-4`       | Convergence tolerance for the root search behind the *asymptotic* confidence interval. The exact interval is made of order statistics and does not use it. |
 
 ### Output
 
 Returns a hash ref with the following keys:
 
-| Key           | Type   | Description |
-|---------------|--------|-------------|
-| `statistic`   | number | The test statistic. For the two-sample test this is the Mann-Whitney **W** (the `x` rank sum minus `nx*(nx+1)/2`). For the signed-rank test it is **V**, the sum of the ranks assigned to the positive differences. |
-| `p_value`     | number | The p-value for the chosen `alternative`, capped at `1.0`. Two-sided p-values are `2 * min(p_less, p_greater)`. |
-| `method`      | string | A human-readable description of the exact test variant that was run (see below). |
-| `alternative` | string | Echoes the `alternative` actually used (`"two.sided"`, `"less"`, or `"greater"`). |
+| Key               | Type   | Description |
+|-------------------|--------|-------------|
+| `statistic`       | number | The test statistic. For the two-sample test this is the Mann-Whitney **W** (the `x` rank sum minus `nx*(nx+1)/2`). For the signed-rank test it is **V**, the sum of the ranks assigned to the positive differences. |
+| `statistic_name`  | string | `"W"` or `"V"`, matching what R prints. |
+| `p_value`         | number | The p-value for the chosen `alternative`, capped at `1.0`. Two-sided p-values are `2 * min(p_less, p_greater)`. |
+| `method`          | string | A human-readable description of the exact test variant that was run (see below). |
+| `alternative`     | string | Echoes the `alternative` actually used (`"two.sided"`, `"less"`, or `"greater"`). |
+| `null_value`      | number | Echoes `mu`. |
+| `null_value_name` | string | `"location shift"` for the two-sample and paired tests, `"location"` for the one-sample test. |
+| `estimate`        | number | *(only with `conf.int`)* The Hodges-Lehmann estimator: the median of the Walsh averages `(x[i] + x[j]) / 2` in the one-sample case, or of the pairwise differences `x[i] - y[j]` in the two-sample case. On the asymptotic path it is instead the shift at which the standardised statistic is zero, as in R. |
+| `conf_int`        | ARRAY ref | *(only with `conf.int`)* Two elements, the lower and upper limits. A one-sided alternative gives an unbounded end (`-Inf` or `Inf`). |
+| `conf_level`      | number | *(only with `conf.int`)* The confidence level actually achieved, which for the exact interval is a step function of the data and rarely equals `conf.level`. |
 
 The `method` string reports which path executed:
 
 - Two-sample: `"Wilcoxon rank sum exact test"`, `"Wilcoxon rank sum test with continuity correction"`, or `"Wilcoxon rank sum test"`.
-- One-sample / paired: `"Wilcoxon exact signed rank test"`, `"Wilcoxon signed rank test with continuity correction"`, or `"Wilcoxon signed rank test"`.
+- One-sample / paired: `"Wilcoxon signed rank exact test"`, `"Wilcoxon signed rank test with continuity correction"`, or `"Wilcoxon signed rank test"`.
+
+### Exact inference with ties
+
+Before R 4.6.0 — and in earlier releases of this module — ties ruled out an exact p-value and the test silently fell back to the normal approximation. It no longer does. When ties are present the exact null distribution is the conditional one given the observed ranks, computed with the Streitberg-Röhmel shift algorithm, and the same holds for zero differences in the signed-rank test. Two consequences are worth knowing about:
+
+- p-values on tied data change from earlier versions. R's own documented example, `wilcox_test(\@x, \@y)` on the `?wilcox.test` data, moves from `0.13292` (approximation) to `0.12991` (exact).
+- with zero differences, **V** itself changes. The exact test ranks `|x - mu|` over every observation and only then drops the ranks belonging to the zeroes; the approximation drops the zeroes first and ranks what is left. `wilcox_test([-1, 0, 1])` gives `V = 2.5` on the exact path and `V = 1.5` with `exact => 0`. R behaves the same way.
+
+The exact table is refused rather than attempted if it would need more than 16 million cells, with a message suggesting `exact => 0`. This is only reachable by forcing `exact => 1` on samples far larger than the automatic threshold.
 
 ### Notes and edge cases
 
-Missing data is handled by listwise removal of non-numeric / undefined cells before ranking; in the paired case a pair is dropped if either member is missing. An empty `x` (or, in the two-sample case, an empty `y`) after this filtering is fatal.
+Missing data is handled by listwise removal of non-numeric, undefined and `NaN` cells before ranking; in the paired case a pair is dropped if either member is missing or if the difference is not a number. An empty `x` (or a `y` that is present but empty) after this filtering is fatal. All-zero differences are not: `wilcox_test([0, 0, 0, 0, 0])` returns `V = 0`, `p = 1`, which is what the permutation distribution over an empty set of sign flips says.
 
-For the signed-rank test, exact zero differences are discarded before ranking (matching R), and their presence disables the exact computation. Both empty-after-filtering and all-zero-difference inputs are fatal.
+Ties are detected during ranking and trigger the tie-corrected variance in the normal approximation. When `exact` is left on auto, the size thresholds (`< 50` per group, or `< 50` observations) are the only thing gating the exact vs. approximate decision.
 
-Ties are detected during ranking and trigger the tie-corrected variance in the normal approximation; they also rule out the exact p-value. When `exact` is left on auto, the size thresholds (`< 50` per group, or `< 50` differences) are what gate the exact vs. approximate decision.
+### Differences from R
+
+Two, both deliberate:
+
+- **`correct` is a boolean here.** R 4.6.0 turned its `correct` into an integer `0:3`, in which numeric `0` still applies the continuity correction and only `FALSE` removes it. Keeping that would mean `correct => 0` no longer meaning "off", which is what it means for every other flag in this module. So `correct` stays a boolean and the Edgeworth terms live under `edgeworth`: R's `correct = k` for `k` in `1, 2, 3` is `correct => 1, edgeworth => k` here, and R's `correct = 0` is `correct => 1`.
+- **A zero variance is reported, not propagated.** With `exact => 0` and every observation tied there is nothing to divide by; R divides anyway and returns `NaN` for the p-value, and its two-sample confidence interval then dies inside `uniroot` with *missing value where TRUE/FALSE needed*. This warns instead, and returns `p = 1` and a `NaN` interval at level `0` — which is what R's own one-sample code does. The default path no longer reaches any of this, since the exact test handles all-tied data.
+
+Everything else is checked against R's and SciPy's own test suites in `t/wilcox_test.R.scipy.t`.
 
 ## write_table
 mimics R's `write.table`, with data as first argument to subroutine, and output file as second
@@ -5999,7 +6031,256 @@ Verified against R 4.6.1 (`oneway.test`, `anova(aov())`, `anova(lm())`,
 
 # Changes
 
+
 ## 0.298 2026-08-12 CDT
+
+### wilcox_test
+A rewrite of `wilcox_test` against R 4.6.1, driven by R's and SciPy's own test
+suites rather than by cases invented here. It brings the function up to the
+exact conditional inference R gained in 4.6.0, fixes six bugs — two of which
+returned confidently wrong p-values on the *default* code path — and adds the
+Hodges-Lehmann estimate and confidence interval, `digits.rank`, and the
+Edgeworth series.
+
+Everything below is checked in the new `t/wilcox_test.R.scipy.t` (3,242 tests),
+whose expected values are frozen literals with their provenance recorded in the
+file header; it needs no R and no Python to run. The full suite is 120 files and
+23,149 tests, and `./test.all.perls.pl` passes on all five local perls —
+`5.10.1`, `5.12.5` (long double), `5.42.3`, `5.44.0` and `5.44.0-quadmath` —
+with no warnings on any of them.
+
+#### Exact p-values are now computed when there are ties
+
+R 4.6.0 added exact (conditional) inference in the presence of ties, via Torsten
+Hothorn's implementation of the Streitberg-Röhmel shift algorithm; R's
+`doc/NEWS.Rd` announces it and `tests/reg-tests-1d.R` records the consequence at
+its degenerate one-sample cases: *"For R >= 4.6.0 warnings for exact with ties
+are gone."* Before that, ties ruled out an exact p-value and both R and this
+module fell back to the normal approximation with a warning.
+
+`wilcox_test` now does what R does. When ties are present the null distribution
+is the conditional one given the observed ranks, and the same holds for zero
+differences in the signed-rank test. The warnings are gone with them.
+
+This changes published answers on tied data, including R's own documented
+examples:
+
+| case | was | is (R 4.6.1) |
+|---|---|---|
+| `?wilcox.test` man-page data, `wilcox_test(\@x, \@y)` | `0.13291945818531886` | `0.12990538872891813` |
+| the `airquality` Ozone example (`W = 127.5`) | `1.2080783e-04` | `6.1087351888e-05` |
+| `wilcox_test([1,2,2,3], [4,5,5,6], exact => 1)` | `0.02842953599879653` + a warning | `0.028571428571428571` |
+| `wilcox_test([1,1])` | `0.34577858615116` | `0.5` |
+| `wilcox_test([4,3,2], [3,2,1], paired => 1)` | `0.14891467317876567` | `0.25` |
+
+Two further consequences are worth knowing about. **V** itself changes when zero
+differences are present, because the exact test ranks `|x - mu|` over every
+observation and only afterwards drops the ranks belonging to the zeroes, where
+the approximation drops the zeroes first and ranks what is left:
+`wilcox_test([-1, 0, 1])` gives `V = 2.5` exactly and `V = 1.5` with
+`exact => 0`. R's two branches differ in exactly the same way. And degenerate
+inputs that used to be fatal now return a result, as they must for
+`tests/reg-tests-1d.R` line 332 to pass: `wilcox_test([0])` gives `V = 0`,
+`p = 1`, and so does `wilcox_test([0,0,0,0,0])`, which SciPy pins as
+`test_all_zeros_exact`.
+
+If you need the old numbers, `exact => 0` still asks for the approximation and
+is unchanged.
+
+#### The exact upper tail was returning zero, on the default path
+
+`p_greater` was computed as `1 - CDF(q - 1)`. That subtraction cancels away every
+significant digit once the true p falls below `NV_EPSILON`, and then returns a
+flat `0`. It did not take a contrived input to reach: two perfectly separated
+samples of 30 apiece are inside the automatic exact branch, no `exact => 1`
+required.
+
+| m = n | was | is | R 4.6.1 |
+|---|---|---|---|
+| 20 | `7.2544192875e-12` | `7.2544445519e-12` | `7.2544445519e-12` |
+| 25 | `7.8825834748e-15` | `7.9107286024e-15` | `7.9107286024e-15` |
+| 30 | **`0`** | `8.4556169461e-18` | `8.4556169461e-18` |
+| 49 | **`0`** | `3.9250145965e-29` | `3.9250145965e-29` |
+
+Both tails are now summed directly. That alone is not enough for the rank-sum
+table, whose Gaussian-binomial recurrence is built with subtractions, so far up
+the support a count of `1` is the difference of numbers around `C(m+n, n)` and
+has already been rounded into noise. The table is folded about its centre before
+summing, so only well-conditioned entries are ever touched — the same thing R's
+`pwilcox()` does when it folds `q` about `m*n/2` and flips `lower_tail`.
+
+The signed-rank tail was accurate to `n = 49` by luck (`1 - 2^-49` is exactly
+representable) and reached `0` from about `n = 53`; forcing
+`exact => 1` on `n = 120` returned `0` where R gives `1.5046327690525337e-36`,
+and now returns it too.
+
+#### `int m * n` overflowed, and said the samples were identical
+
+`exact_pwilcox` took `int m, int n` and computed `int max_u = m * n`. For two
+separated samples of 50,000 that wraps negative, every statistic looks out of
+range, and the function returns `1.0`:
+
+```perl
+wilcox_test([1 .. 50000], [50001 .. 100000], exact => 1);   # p = 1
+```
+
+Signed overflow is also undefined behaviour, so a different optimiser was
+entitled to do something else entirely. Sizes and indices in the exact
+distributions are `size_t` now, the multiplications are checked for wrap before
+they happen, and a table that would need more than 16 million cells is refused
+outright with a message naming `exact => 0` rather than attempted.
+
+#### NaN was ranked instead of dropped
+
+`NaN` is `NA` to R, and R drops it. `looks_like_number` accepts it, `d == 0.0`
+is false for it, so it went into the rank buffer — and `cmp_nv3` returns `0` for
+every comparison involving it, which leaves `qsort` without the strict weak
+ordering the C standard entitles it to.
+
+The visible symptom is R's own regression case, `tests/reg-tests-1d.R` line
+3546, which asserts that a paired test is unaffected by pairs whose difference
+is `Inf - Inf`:
+
+| | was | is (and R) |
+|---|---|---|
+| `1:5` vs `4*(0:4)` | `V = 1`, `p = 0.125` | `V = 1`, `p = 0.125` |
+| the same with `+Inf` appended to both | `V = 1`, `p = 0.0625` | `V = 1`, `p = 0.125` |
+| the same with `-Inf` and `+Inf` on both | `V = 2`, `p = 0.046875` | `V = 1`, `p = 0.125` |
+
+`NaN` — in either sample, and however it arises — is now dropped with the other
+missing values. `±Inf` is not missing and is kept, since a rank test has no
+trouble with it; SciPy's `test_gh_11355b` pins five cases of that and they all
+agree.
+
+#### An empty `y` ran a different test
+
+`wilcox_test([1,2,3], [])` fell through to the one-sample branch and returned a
+signed-rank result, silently answering a question nobody asked. It croaks now,
+with R's message.
+
+`mu` was likewise unvalidated: `mu => Inf` or `mu => NaN` turned every
+difference into a non-number and produced a confident answer from the wreckage.
+Both croak now, as they do in R.
+
+#### A dying `$SIG{__WARN__}` handler leaked the rank buffer
+
+The warnings in `wilcox_test` were emitted while the `RankInfo` and difference
+buffers were held as raw pointers. A `__WARN__` handler that dies — or `warnings
+FATAL` at the call site — longjmps straight past the `Safefree`. Under valgrind,
+500 iterations of the ties path with such a handler lost 95,616 bytes in 498
+blocks. Every allocation now goes through `Newx` plus `SAVEFREEPV`, the idiom
+`chisq_test` in the same file already used, so it is released by the save stack
+however the call unwinds. The same 500 iterations now report `definitely lost: 0
+bytes`, as does a sweep over every croak path and every branch of the function.
+
+#### New: `conf.int`, and a Hodges-Lehmann estimate
+
+R has returned a distribution-free confidence interval and a point estimate
+since PR#1150 in 2001, and `tests/reg-tests-1a.R` has guarded them ever since
+with Hollander & Wolfe's published numbers. `wilcox_test` now computes both, by
+all four of R's routes — the exact interval from the order statistics of the
+Walsh averages or the pairwise differences, the exact interval conditional on
+the observed ranks when there are ties, and the asymptotic interval from a root
+search:
+
+```perl
+my $r = wilcox_test(\@y, \@x, paired => 1, conf_int => 1);
+# $r->{estimate}   == -0.46
+# $r->{conf_int}   == [-0.786, -0.010]
+# $r->{conf_level} == 0.9609375
+```
+
+Those are Hollander & Wolfe (1999) 2nd ed., pp. 40 and 53, to the digit. So are
+the two-sample values from pp. 111 and 126: estimate `-0.305`, interval
+`(-0.76, 0.15)`.
+
+The level a rank test can actually deliver is a step function of the data, so
+`conf_level` reports what was achieved rather than echoing what was asked for —
+`0.9609375` above, not `0.95`. `conf.level`, `tol.root` and R's alpha-doubling
+search for a level the data can support (with its *requested conf.level not
+achievable* warning) all behave as R's do.
+
+#### New: `digits.rank`, `edgeworth`, and more of R's result fields
+
+`digits.rank` rounds each value to a given number of significant digits before
+ranking, so that ties are decided on the rounded values. R's man page recommends
+it because tie detection is an exact `==` on floating point, and its own worked
+example shows `(4:2)/10` against `(3:1)/10` — three differences that ought to be
+`0.1` and are three different doubles. Ported from R's `fprec()`, half-to-even
+rounding included.
+
+`edgeworth => 1, 2, 3` adds up to three Edgeworth correction terms to the normal
+approximation, the refinement R 4.6.0 reaches through its integer `correct`. It
+is ignored on the exact path, and — as in R — ignored when there are ties, or
+when the signed-rank test dropped a zero, because the series is derived for
+untied ranks.
+
+The result hash gains `statistic_name` (`"W"` or `"V"`, as R prints), plus
+`null_value` and `null_value_name`, and `estimate` / `conf_int` / `conf_level`
+when an interval was asked for.
+
+#### Three deliberate differences from R
+
+Each is asserted in the test file, so that changing one later is a choice rather
+than a drift.
+
+1. **`correct` is a boolean here.** R 4.6.0 turned its `correct` into an integer
+   `0:3`, in which numeric `0` still applies the continuity correction and only
+   `FALSE` removes it — so in R, `correct = 0` and `correct = FALSE` are
+   different tests. Keeping that would mean `correct => 0` no longer meaning
+   "off", which is what it means for every other flag in this module. `correct`
+   stays a boolean, and R's `correct = k` is `correct => 1, edgeworth => k`.
+2. **A zero variance is reported, not propagated.** With `exact => 0` and every
+   observation tied there is nothing to divide by. R divides anyway and returns
+   `NaN`; this warns and returns `p = 1`. The default path no longer reaches it
+   at all, since the exact test handles all-tied data.
+3. **An all-tied interval does not raise.** R's one-sample code warns and hands
+   back a `NaN` interval at level `0`; its two-sample code warns and then dies
+   inside `uniroot` with *missing value where TRUE/FALSE needed*. We give the
+   one-sample answer in both places.
+
+There is one place where this module is simply more accurate than R. R's exact
+p-values on tied data come from a density it normalises entry by entry;
+`wilcox_test` sums the integer permutation counts and divides once. For the
+worst case in the corpus — an 11-against-12 tied rank sum whose p-value is
+exactly `4/676039` — this returns the correctly rounded double and R is
+`1.2e-11` high. Checked against exact rational arithmetic, and recorded in the
+test file rather than papered over.
+
+#### Testing
+
+`t/wilcox_test.R.scipy.t` takes its cases from the references' own suites:
+
+- R's `tests/reg-tests-1a.R` (the PR#1150 Hollander & Wolfe intervals),
+  `reg-tests-1b.R` (the Wolfgang Huber `wilcox.test(1, 2:60)` case, and the
+  check that the asymptotic estimate does not move with `alternative`),
+  `reg-tests-1d.R` (the six degenerate one-sample calls and the `±Inf`
+  identities), and the man-page examples whose printed output is pinned in
+  `tests/Examples/stats-Ex.Rout.save`.
+- SciPy 1.17.1's `TestMannWhitneyU`, whose header reads *"All magic numbers are
+  from R wilcox.test"* — `cases_basic`, `cases_continuity`, `cases_9184`,
+  `cases_2118`, `test_tie_correct`, `test_exact_U_equals_mean`,
+  `test_gh_11355b` and the 30-against-20 asymptotic cases — and
+  `TestWilcoxon`'s `test_accuracy_wilcoxon`, `test_wilcoxon_tie`,
+  `test_onesided`, `test_exact_pval`, `test_exact_p_1`, `test_all_zeros_exact`
+  and `test_symmetry_gh19872_gh20752`.
+- A 663-case sweep generated by `t/wilcox_test.R.scipy.R`, committed next to the
+  test, crossing four data shapes against every alternative, `exact` state,
+  `correct` state, `mu` and `conf.int` setting.
+
+Beyond the file, 960 further randomised calls were compared against R 4.6.1 and
+agree everywhere except the three divergences above.
+
+One lesson from getting that to pass on every NV width is worth recording: the
+corpus data has to be **exactly representable**. Whether two values tie decides
+which branch runs, and `1.6 - 2 - 0.5` does not land on the same value in a
+`double`, an x87 `long double` and a `__float128`. A corpus of one-decimal
+values passed on the default perl and failed on `perl-5.12.5` and quadmath with
+a *different statistic*, not merely a different last digit. Every generated
+value is now a whole number of quarters or of 1024ths. For the same reason the
+asymptotic interval, which is only ever pinned down to `tol.root`, is generated
+at `tol.root = 1e-12` rather than freezing wherever Brent's method happened to
+stop on one machine.
 
 A compiler-warning audit of `LikeR.xs` for `-Wint-conversion`, `-Wimplicit-int`,
 `-Wreturn-mismatch` and `-Wdeclaration-missing-parameter-type`, and a pass
