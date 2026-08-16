@@ -5603,6 +5603,31 @@ interval is built around the estimate and stays where it is.
 
 ![p_value as a function of mu, crossing 1 - conf_level exactly at the two bounds of conf_int](https://raw.githubusercontent.com/hhg7/stats/main/img/t.test.duality.png)
 
+### What a falling p-value looks like
+
+The same thing seen from the data's side: two samples drawn from two different
+distributions, pulled steadily apart. Each column below is one `t_test` of the
+`sleep` groups with drug 1 shifted — the top panel is the two distributions, by
+this module's own [`density`](#density), and the bottom panel is the `conf_int`
+that comes back. The columns are four p-values five orders of magnitude apart.
+
+![two distributions separating, and the conf_int retreating from mu as the p-value falls](https://raw.githubusercontent.com/hhg7/stats/main/img/t.test.p.and.ci.png)
+
+Only one thing about the interval changes: where it sits. `df` stays at
+`17.7765` and its width stays at `3.5710` down the whole row, because shifting a
+sample changes neither the spread nor `n`, and those are all the standard error
+is made of. What moves is the distance from `mu` — and the second column is the
+hinge: at `p_value = 0.05` the interval's upper bound is `0.0000`, sitting
+exactly on `mu`, because "p below 0.05" and "the 95% interval clear of `mu`" are
+the same event.
+
+Reading the two together is the point. `p_value` reports the distance from `mu`
+in standard errors and nothing else, so it says how surely the difference is not
+zero, never how big it is; `conf_int` reports the difference itself, in hours of
+sleep. The other route to a small p is a smaller standard error — more
+observations, or less spread — and that one drives `p_value` down by narrowing
+the interval around an estimate that has not moved at all.
+
 ### `paired` and `var_equal`
 
 The same twenty numbers give three different answers depending on what is

@@ -13168,6 +13168,39 @@ interval is built around the estimate and stays where it is.
 
 
 
+=head3 What a falling p-value looks like
+
+The same thing seen from the data's side: two samples drawn from two different
+distributions, pulled steadily apart. Each column below is one C<t_test> of the
+C<sleep> groups with drug 1 shifted — the top panel is the two distributions, by
+this module's own L<C<density>|/"density">, and the bottom panel is the C<conf_int>
+that comes back. The columns are four p-values five orders of magnitude apart.
+
+
+
+=begin html
+
+<p><img src="https://raw.githubusercontent.com/hhg7/stats/main/img/t.test.p.and.ci.png" alt="two distributions separating, and the conf_int retreating from mu as the p-value falls" width="100%" /></p>
+
+=end html
+
+
+
+Only one thing about the interval changes: where it sits. C<df> stays at
+C<17.7765> and its width stays at C<3.5710> down the whole row, because shifting a
+sample changes neither the spread nor C<n>, and those are all the standard error
+is made of. What moves is the distance from C<mu> — and the second column is the
+hinge: at C<p_value = 0.05> the interval's upper bound is C<0.0000>, sitting
+exactly on C<mu>, because "p below 0.05" and "the 95% interval clear of C<mu>" are
+the same event.
+
+Reading the two together is the point. C<p_value> reports the distance from C<mu>
+in standard errors and nothing else, so it says how surely the difference is not
+zero, never how big it is; C<conf_int> reports the difference itself, in hours of
+sleep. The other route to a small p is a smaller standard error — more
+observations, or less spread — and that one drives C<p_value> down by narrowing
+the interval around an estimate that has not moved at all.
+
 =head3 C<paired> and C<var_equal>
 
 The same twenty numbers give three different answers depending on what is

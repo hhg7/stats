@@ -22,7 +22,7 @@ use strict;
 use warnings FATAL => 'all';
 use File::Path 'make_path';
 use POSIX 'lgamma';
-use Stats::LikeR qw(t_test mean sd);
+use Stats::LikeR qw(t_test density mean sd);
 use Matplotlib::Simple 'plt';
 
 my $DIR = 'img';
@@ -618,9 +618,139 @@ sub fig_designs {
 	return;
 }
 
+# --- 6. what a falling p-value looks like ------------------------------------
+# Two samples from two different distributions, pulled apart until t_test()
+# reports each of four p-values five orders of magnitude apart.  Top row: the
+# two distributions, by this module's own density().  Bottom row: the conf_int
+# that goes with each.  Neither df nor the width of the interval changes -- only
+# how far the interval sits from mu.
+sub fig_p_and_ci {
+	my @target = (0.5, 0.05, 0.001, 1e-5);
+
+	# the shift of x that makes t_test() report exactly that p.  Bisection on
+	# t_test's own p_value, so the labels are the module's numbers and not a
+	# quantile recomputed here; p rises with delta up to the null, so the
+	# bracket stops at the shift that would put the estimate on mu.
+	my $null_shift = mean(\@drug2) - mean(\@drug1);
+	my @shift;
+	for my $target (@target) {
+		my ($lo, $hi) = (-8, $null_shift);
+		for (1 .. 200) {
+			my $mid = ($lo + $hi) / 2;
+			my $p   = t_test([ map { $_ + $mid } @drug1 ], \@drug2)->{p_value};
+			if ($p < $target) { $lo = $mid } else { $hi = $mid }
+		}
+		push @shift, ($lo + $hi) / 2;
+	}
+
+	# a common grid, so the four panels are directly comparable
+	my %grid = (from => -9, to => 9, n => 512);
+	my $dy   = density(\@drug2, %grid);
+
+	my (@top, @bottom);
+	for my $i (0 .. $#target) {
+		my @x = map { $_ + $shift[$i] } @drug1;
+		my $r = t_test(\@x, \@drug2);
+		my $d = density(\@x, %grid);
+
+		my %first;
+		if ($i == 0) {
+			%first = (set_figwidth => 16, set_figheight => 5.8, set_dpi => 100);
+		}
+		# only the first panel carries a legend; the rest are the same two colours
+		my $series = $i == 0
+			? {
+				'plot.type' => 'plot',
+				data        => {
+					'x = drug 1, shifted' => [ $d->{x},  $d->{y} ],
+					'y = drug 2'          => [ $dy->{x}, $dy->{y} ],
+				},
+				'key.order'   => [ 'x = drug 1, shifted', 'y = drug 2' ],
+				'set.options' => {
+					'x = drug 1, shifted' => 'color = "' . $BLUE . '", linewidth = 2',
+					'y = drug 2'          => 'color = "' . $ORANGE . '", linewidth = 2',
+				},
+				legend => 'loc = "upper left", frameon = False, fontsize = 8.5',
+			}
+			: {
+				'plot.type'   => 'plot',
+				data          => [ [ $d->{x}, $d->{y} ] ],
+				'show.legend' => 0,
+				'set.options' => 'color = "' . $BLUE . '", linewidth = 2',
+			};
+
+		push @top, [
+			{
+				%$series,
+				title      => sprintf('"p_value = %s", fontsize = 11', p_label($r->{p_value})),
+				xlabel     => '"extra sleep (hours)"',
+				ylabel     => $i == 0 ? 'density' : undef,
+				set_xlim   => '-8, 8.5',
+				set_ylim   => '-0.008, 0.30',
+				%first,
+			},
+			( $i == 0 ? () : {
+				'plot.type'   => 'plot',
+				data          => [ [ $dy->{x}, $dy->{y} ] ],
+				'show.legend' => 0,
+				'set.options' => 'color = "' . $ORANGE . '", linewidth = 2',
+			} ),
+			rug(\@x,      0, 0.012, $BLUE,   1.3),
+			rug(\@drug2,  0, 0.012, $ORANGE, 1.3),
+		];
+		delete $top[-1][0]{ylabel} unless defined $top[-1][0]{ylabel};
+
+		push @bottom, [
+			{
+				'plot.type'   => 'plot',
+				data          => [ [ [ 0, 0 ], [ 0, 1 ] ] ],
+				'show.legend' => 0,
+				'set.options' => sprintf('color = "%s", linewidth = 1.6, linestyle = "--"', $GREY),
+				title         => sprintf('"conf_int = [%.4f, %.4f]", fontsize = 11', @{ $r->{conf_int} }),
+				xlabel        => '"mean(x) - mean(y), hours of extra sleep"',
+				set_xlim      => '-7.6, 2.4',
+				set_ylim      => '0, 1',
+				set_yticks    => '[]',
+				vlines        => sprintf('%.10g, 0.36, 0.64, color = "%s", linewidth = 2', est_of($r), $ORANGE),
+				text          => [
+					sprintf('0.15, 0.88, "mu = 0", fontsize = 8.5, color = "%s"', $INK),
+					sprintf('%.10g, 0.66, "estimate = %.4f", fontsize = 8.5, ha = "center", color = "%s"',
+						est_of($r), est_of($r), $ORANGE),
+					sprintf('%.10g, 0.3, "statistic = %.4f", fontsize = 8.5, ha = "center", va = "top", color = "%s"',
+						est_of($r), $r->{statistic}, $INK),
+					sprintf('-7.4, 0.08, "df = %.4f,  width = %.4f", fontsize = 8.5, color = "%s"',
+						$r->{df}, $r->{conf_int}[1] - $r->{conf_int}[0], $GREY),
+				],
+			},
+			{
+				'plot.type'   => 'plot',
+				data          => [ [ [ $r->{conf_int}[0], $r->{conf_int}[1] ], [ 0.5, 0.5 ] ] ],
+				'show.legend' => 0,
+				'set.options' => sprintf('color = "%s", linewidth = 3.2, marker = "|", markersize = 13', $RAMP[ $i + 1 ]),
+			},
+		];
+	}
+
+	plt(
+		'output.file' => "$DIR/t.test.p.and.ci.png",
+		ncol          => scalar @target,
+		suptitle      => 'the sleep data with drug 1 shifted: as the two distributions separate the p-value falls '
+			. 'by five orders of magnitude while df and the width of conf_int never move',
+		p             => [ @top, @bottom ],
+	);
+	return;
+}
+
+# p-values spanning five orders of magnitude do not all want the same format
+sub p_label {
+	my ($p) = @_;
+	return $p >= 0.001 ? sprintf('%g', $p) : sprintf('%.0e', $p);
+}
+
 fig_what();
 fig_conf_int();
 fig_alternative();
 fig_duality();
 fig_designs();
+fig_p_and_ci();
 print "wrote $DIR/t.test.*.png\n";
