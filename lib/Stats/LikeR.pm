@@ -10173,6 +10173,26 @@ standardized moment. Validated numerically against R.
 
  kurtosis(2, 4, 4, 4, 5, 5, 7, 9);        # 0.940625
 
+Kurtosis is the fourth moment, so what it describes is the tails. Below, three
+samples standardized to mean C<0> and standard deviation C<1> — a uniform sample,
+which has no mass at all left for the extremes; a normal sample; and a scale
+mixture of two normals, one observation in ten drawn with three times the spread
+— each against the same C<N(0, 1)> curve in grey, so that the only thing that
+differs between the panels is shape. On a linear axis (the top row) the
+heavy-tailed sample looks like little more than a sharper peak; the bottom row
+is the same three estimates on a logarithmic density, where the tail that the
+positive number is reporting is visible over three decades.
+
+
+
+=begin html
+
+<p><img src="https://raw.githubusercontent.com/hhg7/stats/main/img/kurtosis.what.png" alt="a flat-shouldered, a normal and a heavy-tailed sample, and the tails behind the kurtosis of each" width="100%" /></p>
+
+=end html
+
+
+
 Arguments work as they do for L</"sd"> and L</"var">: plain numbers, array
 references, or any mixture of the two, all flattened into one sample.
 
@@ -12755,6 +12775,23 @@ lengths of stay), negative a long left tail, and about zero a symmetric sample.
 Validated numerically against R.
 
  skew(2, 4, 4, 4, 5, 5, 7, 9);        # 0.8184875533568
+
+Below, three samples standardized to mean C<0> and standard deviation C<1>, each
+against the same C<N(0, 1)> curve in grey: a log-normal sample mirrored into a
+long left tail, a normal sample, and the log-normal itself. The sign of C<skew>
+is which side of the median the mean has ended up on — the long tail pulls the
+mean towards itself and leaves the median behind, which is why a skewed lab
+value is usually better summarized by its median than by its mean.
+
+
+
+=begin html
+
+<p><img src="https://raw.githubusercontent.com/hhg7/stats/main/img/skew.what.png" alt="a left-tailed, a symmetric and a right-tailed sample, with the mean and median of each" width="100%" /></p>
+
+=end html
+
+
 
 Arguments work as they do for L</"sd"> and L</"var">: plain numbers, array
 references, or any mixture of the two, all flattened into one sample.
