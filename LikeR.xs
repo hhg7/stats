@@ -2311,6 +2311,63 @@ static void nv_heapsort(NV *a, size_t n) {
 	}
 }
 
+/*A full sort of a[0..n-1], the same introsort nv_select() partitions with,
+carried all the way down instead of stopping at the wanted rank: median of
+three, recurse into the smaller half and loop on the larger (so the stack
+stays at log2 n frames), heapsort once the depth limit says the pivots are
+being defeated, and one insertion sort over the nearly-ordered remainder.
+
+It exists because qsort() cannot see its comparator.  Ordering 5000 NVs
+costs about 61000 comparisons, and paying for an indirect call on each is
+most of what a sort of that size costs -- measured here, qsort() takes 355us
+where this takes 210us, which is the difference between shapiro_test()
+spending its time on the sort and spending it on the statistic.
+
+NaN is safe to pass in but cannot be ordered, here or by qsort: every
+comparison against one is false, so no comparison sort can place it.  What
+this does guarantee on such input is what a caller relies on -- the result is
+a permutation of the input, and neither scan leaves [lo, hi].  The scans stop
+*early* on a NaN rather than running past it (a[i] < pivot and a[j] > pivot
+are both false), and a NaN pivot stops both at once, so the partition still
+narrows by at least one from each end every pass.  Fuzzed under ASan and
+UBSan over 200000 NaN/Inf arrays.  A caller that needs the NaNs gone must
+drop them first; shapiro_test() does, quantile() does not.
+
+No restrict on a[]: the recursive call reaches the same allocation, which is
+the whole point of the recursion.*/
+static void nv_introsort(NV *a, size_t lo, size_t hi, unsigned int depth) {
+	while (hi - lo >= NV_SEL_ISORT) {
+		if (depth-- == 0) { nv_heapsort(a + lo, hi - lo + 1); return; }
+
+		/*median of three, left in place: a[lo] <= pivot <= a[hi], so both
+		ends double as sentinels that stop the scans below*/
+		size_t mid = lo + (hi - lo) / 2;
+		if (a[mid] < a[lo])  nv_swap(&a[mid], &a[lo]);
+		if (a[hi]  < a[lo])  nv_swap(&a[hi],  &a[lo]);
+		if (a[hi]  < a[mid]) nv_swap(&a[hi],  &a[mid]);
+		const NV pivot = a[mid];
+
+		size_t i = lo, j = hi;
+		for (;;) {
+			do { i++; } while (a[i] < pivot);
+			do { j--; } while (a[j] > pivot);
+			if (i >= j) break;
+			nv_swap(&a[i], &a[j]);
+		}
+		//a[lo..j] <= pivot <= a[j+1..hi]; recurse into whichever is shorter
+		if (j - lo < hi - j - 1) { nv_introsort(a, lo, j, depth); lo = j + 1; }
+		else                     { nv_introsort(a, j + 1, hi, depth); hi = j; }
+	}
+	nv_isort(a + lo, hi - lo + 1);
+}
+
+static void nv_sort(NV *a, size_t n) {
+	unsigned int depth = 0;
+	if (n < 2) return;
+	for (size_t t = n; t > 1; t >>= 1) depth += 2;	//2*floor(log2 n)
+	nv_introsort(a, 0, n - 1, depth);
+}
+
 /*Leave the k-th smallest of a[0..n-1] at a[k], everything ahead of it no
 larger and everything after it no smaller.  a[] is reordered in place.*/
 static void nv_select(NV *a, size_t n, size_t k) {
@@ -2432,6 +2489,43 @@ static NV inverse_normal_cdf(NV p) {
 	  if (y < 0) x = -x;
 	}
 	return x;
+}
+
+/* Moro's approximation above is good to about 1e-9, which is fine for a
+   confidence limit but not for Royston's AS R94 weights: the expected normal
+   order statistics go straight into W, so nine digits there cap W at nine
+   digits where R reports sixteen.  Newton against approx_pnorm() -- erfc, a
+   few ulp at every NV width -- squares the error each pass, and the loop
+   below stops the moment another pass could not move z, so a double pays
+   for one pass and only the wider NVs pay for a second.
+
+   The 1/sqrt(2*pi) literal is only ever a divisor of the correction, so its
+   own rounding scales an already-converged step and never limits the
+   answer. */
+static NV normal_quantile_hp(NV p) {
+	NV z = inverse_normal_cdf(p);
+	for (unsigned short int i = 0; i < 4; i++) {
+		NV dens = 0.39894228040143267794 * nv_exp(-0.5 * z * z);
+		NV step;
+		if (!(dens > 0.0)) break;
+		step = (approx_pnorm(z) - p) / dens;
+		z -= step;
+		/* Newton squares the error, so the pass after this one would move z
+		   by about |z|/2 * step^2; stop once that is below eps*|z|.  A
+		   double is done after one pass, the wider NVs after two, and the
+		   test costs a multiply rather than an assumption about either. */
+		if (step * step <= 2.0 * NV_EPSILON) break;
+	}
+	return z;
+}
+
+/* AS 181.2's poly(): the algebraic polynomial of order nord-1 whose zero
+   order coefficient is cc[0].  Horner, exactly as R's swilk.c evaluates it,
+   so the AS R94 coefficient blocks below can be transcribed unchanged. */
+static NV as181_poly(const NV *restrict cc, unsigned short int nord, NV x) {
+	NV p = cc[nord - 1];
+	for (unsigned short int j = nord - 1; j > 0; j--) p = p * x + cc[j - 1];
+	return p;
 }
 /*-----------------------------------------------------------------------
 Exact Spearman p-value via exhaustive permutation enumeration.
@@ -15254,23 +15348,33 @@ void shapiro_test(data)
 PREINIT:
 	AV *av;
 	HV *ret_hash;
-	size_t n_raw, n = 0;
-	NV *x, w = 0.0, p_val = 0.0, mean = 0.0, ssq = 0.0;
+	size_t n_raw, n = 0, nn2;
+	NV *x = NULL, *a = NULL;
+	NV w = 0.0, p_val = 0.0, w1, range, centre, sa = 0.0, sx = 0.0;
+	NV ssa = 0.0, ssx = 0.0, sax = 0.0, ssassx;
+	/* AS R94's own coefficient blocks, transcribed from R's swilk.c. */
+	const NV c1[6] = { 0.0, 0.221157, -0.147981, -2.07119, 4.434685, -2.706056 };
+	const NV c2[6] = { 0.0, 0.042981, -0.293762, -1.752461, 5.682633, -3.582633 };
+	const NV c3[4] = { 0.544, -0.39978, 0.025054, -6.714e-4 };
+	const NV c4[4] = { 1.3822, -0.77857, 0.062767, -0.0020322 };
+	const NV c5[4] = { -1.5861, -0.31082, -0.083751, 0.0038915 };
+	const NV c6[3] = { -0.4803, -0.082676, 0.0030302 };
+	const NV g[2]  = { -2.273, 0.459 };
 PPCODE:
 	if (!SvROK(data) || SvTYPE(SvRV(data)) != SVt_PVAV) {
 	  croak("Expected an array reference");
 	}
 	av = (AV *)SvRV(data);
 	n_raw = av_len(av) + 1;
-	Newx(x, n_raw, NV);
-	// Extract variables and calculate mean (skipping undefined/NaN values)
+	Newx(x, n_raw ? n_raw : 1, NV);
+	/* R's shapiro.test() drops the incomplete cases before it counts, and
+	   complete.cases() calls NaN missing, so undef and NaN both go here. */
 	for (size_t i = 0; i < n_raw; i++) {
 		SV **elem = av_fetch(av, i, 0);
 		if (elem && SvOK(*elem)) {
 			NV val = SvNV(*elem);
 			if (!nv_isnan(val)) {
 				x[n] = val;
-				mean += val;
 				n++;
 			}
 		}
@@ -15279,93 +15383,108 @@ PPCODE:
 	  Safefree(x);
 	  croak("Sample size must be between 3 and 5000 (R's limit)");
 	}
-	mean /= n;
-	for (size_t i = 0; i < n; i++) {// Calculate Sum of Squares
-	  ssq += (x[i] - mean) * (x[i] - mean);
-	}
-	if (ssq == 0.0) {
+	nv_sort(x, n);
+	range = x[n-1] - x[0];
+	if (range == 0.0) {
 		Safefree(x);
 		croak("Data is perfectly constant; cannot compute Shapiro-Wilk test");
 	}
-	qsort(x, n, sizeof(NV), compare_doubles);
-	// --- Core AS R94 Algorithm: Weights and Statistic W
+	/* Everything below works on (x - median)/range.  W is invariant under
+	   both, and the pair is what keeps it computable: R divides by the range
+	   only, so a sample whose values dwarf their own spread -- 1e6 + noise --
+	   loses most of its digits in ssx before W is ever formed (SciPy's
+	   gh-14462).  Centring first costs one subtraction per value and the
+	   well-conditioned samples still agree with R to the last few ulp. */
+	centre = x[n/2];
+	for (size_t i = 0; i < n; i++) x[i] = (x[i] - centre) / range;
+	/*--- AS R94 weights.  Only the lower half is generated; mirroring it
+	  makes a[] exactly antisymmetric (which is what R's sign(i-j) indexing
+	  achieves) and halves the number of normal quantiles to evaluate. */
+	nn2 = n / 2;
+	Newx(a, n, NV);
 	if (n == 3) {
-	  NV a_val = 0.7071067811865475; // sqrt(1/2)
-	  NV b_val = a_val * (x[2] - x[0]);
-	  w = (b_val * b_val) / ssq;
-	  if (w < 0.75) w = 0.75; 
-	  // Exact P-value for n=3
-	  p_val = 1.90985931710274 * (nv_asin(nv_sqrt(w)) - 1.04719755119660);
+		a[0] = -0.70710678118654752440;   /* -sqrt(1/2) */
+		a[1] = 0.0;
+		a[2] = -a[0];
 	} else {
-		NV *m, *a;
-		NV sum_m2 = 0.0, b_val = 0.0;
-		Newx(m, n, NV);
-		Newx(a, n, NV);
-		for (size_t i = 0; i < n; i++) {
-			m[i] = inverse_normal_cdf((i + 1.0 - 0.375) / (n + 0.25));
-			sum_m2 += m[i] * m[i];
+		NV an25 = (NV)n + 0.25, summ2 = 0.0, ssumm2, rsn, a1, a2, fac;
+		size_t i1;
+		for (size_t i = 0; i < nn2; i++) {
+			a[i] = normal_quantile_hp(((NV)i + 0.625) / an25);
+			summ2 += a[i] * a[i];
 		}
-		NV u = 1.0 / nv_sqrt((NV)n);
-		NV a_n = -2.706056*nv_pow(u,5) + 4.434685*nv_pow(u,4) - 2.071190*nv_pow(u,3) - 0.147981*nv_pow(u,2) + 0.221157*u + m[n-1]/nv_sqrt(sum_m2);
-		a[n-1] = a_n;
-		a[0]   = -a_n;
-		if (n == 4 || n == 5) {
-			NV eps = (sum_m2 - 2.0 * m[n-1]*m[n-1]) / (1.0 - 2.0 * a_n*a_n);
-			for (unsigned int i = 1; i < n-1; i++) {
-				 a[i] = m[i] / nv_sqrt(eps);
-			}
+		summ2 *= 2.0;
+		ssumm2 = nv_sqrt(summ2);
+		rsn = 1.0 / nv_sqrt((NV)n);
+		a1 = as181_poly(c1, 6, rsn) - a[0] / ssumm2;
+		if (n > 5) {
+			i1 = 2;
+			a2 = as181_poly(c2, 6, rsn) - a[1] / ssumm2;
+			fac = nv_sqrt((summ2 - 2.0 * a[0] * a[0] - 2.0 * a[1] * a[1])
+			            / (1.0   - 2.0 * a1   * a1   - 2.0 * a2   * a2));
+			a[1] = -a2;
 		} else {
-			NV a_n1 = -3.582633*nv_pow(u,5) + 5.682633*nv_pow(u,4) - 1.752461*nv_pow(u,3) - 0.293762*nv_pow(u,2) + 0.042981*u + m[n-2]/nv_sqrt(sum_m2);
-			a[n-2] = a_n1;
-			a[1]   = -a_n1;
-			NV eps = (sum_m2 - 2.0 * m[n-1]*m[n-1] - 2.0 * m[n-2]*m[n-2]) / (1.0 - 2.0 * a_n*a_n - 2.0 * a_n1*a_n1);
-			for (unsigned int i = 2; i < n-2; i++) {
-				 a[i] = m[i] / nv_sqrt(eps);
-			}
+			i1 = 1;
+			fac = nv_sqrt((summ2 - 2.0 * a[0] * a[0]) / (1.0 - 2.0 * a1 * a1));
 		}
-		for (size_t i = 0; i < n; i++) {
-			b_val += a[i] * x[i];
-		}
-		w = (b_val * b_val) / ssq;
-		/* --- AS R94 P-Value Calculation: High Precision Refinement ---
-		NOTE: p_val is declared in PREINIT above;
-		do NOT shadow it with a local 'double p_val' here or the result will never reach the caller.*/
-		NV y = nv_log(1.0 - w);
-		NV z;
-		if (n <= 11) {
-			/* Royston's branch for 4 <= n <= 11 (AS R94, small-sample path).
-			 gamma is the upper bound on y = log(1-W);
-			 if y reaches gamma the p-value is essentially zero*/
-			NV nn = (NV)n;
-			NV gamma = 0.459 * nn - 2.273;
-			if (y >= gamma) {
-				p_val = 1e-19;
-			} else {
-				// Horner-form polynomials in n for mu and log(sigma)
-				NV mu     = 0.544  + nn * (-0.39978  + nn * ( 0.025054  - nn * 0.0006714));
-				NV sig_val= 1.3822 + nn * (-0.77857  + nn * ( 0.062767  - nn * 0.0020322));
-				NV sigma  = nv_exp(sig_val);
-				z = (-nv_log(gamma - y) - mu) / sigma;
-				/* Upper-tail probability P(Z > z): small W → large z → small
-				 p-value. pnorm(-z) is that tail exactly, by symmetry.*/
-				p_val = approx_pnorm(-z);
-			}
-		} else {
-			// Royston's branch for n >= 12 (AS R94, large-sample path)
-			NV ln_n   = nv_log((NV)n);
-			// Horner-form polynomials in log(n) for mu and log(sigma). */
-			NV mu     = -1.5861 + ln_n * (-0.31082 + ln_n * (-0.083751 + ln_n * 0.0038915));
-			NV sig_val= -0.4803 + ln_n * (-0.082676 + ln_n * 0.0030302);
-			NV sigma  = nv_exp(sig_val);
-			z = (y - mu) / sigma;
-			p_val = approx_pnorm(-z);
-		}
-		// Clamp the p-value
-		if (p_val > 1.0) p_val = 1.0;
-		if (p_val < 0.0) p_val = 0.0;
-		Safefree(m); m = NULL;  Safefree(a); a = NULL;
+		a[0] = -a1;
+		for (size_t i = i1; i < nn2; i++) a[i] /= fac;
+		if (n & 1) a[nn2] = 0.0;
+		for (size_t i = 0; i < nn2; i++) a[n-1-i] = -a[i];
 	}
+	/*--- W as the squared correlation between the data and the weights.
+	  1 - W is formed directly, never as a subtraction from 1: the p-value
+	  is a function of log(1-W) and W runs to within 1e-5 of 1 on a large
+	  normal sample, so the naive (b*b)/ssq loses every digit that matters
+	  exactly where the sample is largest.  This is R's own w1. */
+	for (size_t i = 0; i < n; i++) { sa += a[i]; sx += x[i]; }
+	sa /= (NV)n;
+	sx /= (NV)n;
+	for (size_t i = 0; i < n; i++) {
+		NV asa = a[i] - sa, xsx = x[i] - sx;
+		ssa += asa * asa;
+		ssx += xsx * xsx;
+		sax += asa * xsx;
+	}
+	Safefree(a); a = NULL;
 	Safefree(x); x = NULL;
+	ssassx = nv_sqrt(ssa * ssx);
+	w1 = (ssassx - sax) * (ssassx + sax) / (ssa * ssx);
+	if (w1 < 0.0) w1 = 0.0;   /* a perfect correlation, rounded past zero */
+	w  = 1.0 - w1;
+	/*--- significance level for W */
+	if (n == 3) {
+		/* Exact: Royston (1993).  6/pi and asin(sqrt(3/4)) = pi/3 to NV
+		   width -- R carries 15 digits of the latter, which is enough to
+		   drive its own p-value 4e-15 negative at the W = 3/4 floor
+		   (R's reg-tests-1b.R only asks that the result not go below 0). */
+		p_val = 1.909859317102744029 * (nv_asin(nv_sqrt(w)) - 1.047197551196597746);
+	} else if (w1 == 0.0) {
+		p_val = 1.0;
+	} else {
+		NV y = nv_log(w1), mu = 0.0, sigma = 1.0;
+		bool off_scale = FALSE;   /* W past the range the fit was made over */
+		if (n <= 11) {
+			NV gamma = as181_poly(g, 2, (NV)n);
+			if (y >= gamma) {
+				off_scale = TRUE;
+				p_val = 1e-99;   /* R's own "obvious" value */
+			} else {
+				y     = -nv_log(gamma - y);
+				mu    = as181_poly(c3, 4, (NV)n);
+				sigma = nv_exp(as181_poly(c4, 4, (NV)n));
+			}
+		} else {
+			NV ln_n = nv_log((NV)n);
+			mu    = as181_poly(c5, 4, ln_n);
+			sigma = nv_exp(as181_poly(c6, 3, ln_n));
+		}
+		/* Upper tail P(Z > (y-mu)/sigma): a small W is a large y is a small
+		   p-value, and pnorm(-z) is that tail exactly, by symmetry. */
+		if (!off_scale) p_val = approx_pnorm(-(y - mu) / sigma);
+	}
+	if (p_val > 1.0) p_val = 1.0;
+	if (p_val < 0.0) p_val = 0.0;
 	ret_hash = newHV();
 	hv_stores(ret_hash, "statistic", newSVnv(w));
 	hv_stores(ret_hash, "W",         newSVnv(w));
@@ -15715,23 +15834,36 @@ SV* quantile(...)
 			croak("quantile: 'x' contains no valid numbers");
 		}
 		/* --- Sort Data for Quantile Math ---
-		 Note: You must update `compare_doubles` to accept and compare `NV` types!*/
-		qsort(x, n, sizeof(NV), cmp_nv3); 
+		 nv_sort() rather than qsort(): the comparator is a plain NV compare
+		 either way, but qsort() reaches it through a function pointer it
+		 cannot inline, and that indirect call is most of what ordering a
+		 large column costs.*/
+		nv_sort(x, n);
 		// --- Parse Probabilities (Upgraded to NV) ---
 		NV default_probs[] = {0.0, 0.25, 0.50, 0.75, 1.0};
 		unsigned int n_probs = 5;
 		NV *probs;
 		if (probs_sv && SvROK(probs_sv) && SvTYPE(SvRV(probs_sv)) == SVt_PVAV) {
 			AV *p_av = (AV*)SvRV(probs_sv);
+			/* R's own overshoot allowance, eps <- 100*.Machine$double.eps:
+			   a probability arrived at by arithmetic can land a hair outside
+			   [0, 1], and R clamps rather than refuses (its PR#17891,
+			   quantile(0:1, 1+1e-14) == 1).  This is R's constant and not
+			   NV_EPSILON on purpose -- it is part of what quantile() accepts,
+			   not a tolerance on an answer, so a long-double or __float128
+			   build must not reject a probs vector R takes. */
+			const NV probs_eps = 2.220446049250313e-14;
 			n_probs = av_len(p_av) + 1;
 			Newx(probs, n_probs, NV);
 			for (unsigned int i = 0; i < n_probs; i++) {
 				 SV **tv = av_fetch(p_av, i, 0);
 				 probs[i] = (tv && SvOK(*tv)) ? SvNV(*tv) : 0.0;
-				 if (probs[i] < 0.0 || probs[i] > 1.0) {
+				 if (probs[i] < -probs_eps || probs[i] > 1.0 + probs_eps) {
 					 Safefree(x); Safefree(probs);
 					 croak("quantile: probabilities must be between 0 and 1");
 				 }
+				 if (probs[i] < 0.0) probs[i] = 0.0;
+				 if (probs[i] > 1.0) probs[i] = 1.0;
 			}
 		} else {
 			Newx(probs, n_probs, NV);
@@ -15750,10 +15882,19 @@ SV* quantile(...)
 			} else if (p == 0.0) {
 				 q = x[0];
 			} else {
-				 NV h = (n - 1) * p;
-				 unsigned int j = (unsigned int)h; 
-				 NV gamma = h - j;
-				 q = (1.0 - gamma) * x[j] + gamma * x[j + 1];
+				 NV h = (NV)(n - 1) * p;
+				 size_t j = (size_t)h;
+				 NV gamma = h - (NV)j;
+				 q = x[j];
+				 /* Interpolate only where R does: strictly between the two
+				    bracketing order statistics, and only when they actually
+				    differ (R's `index > lo & x[hi] != qs`).  Without the
+				    second half, (1-g)*v + g*v drifts off v whenever the
+				    bracket is a run of equal values -- which is what broke
+				    monotonicity in R's own PR#16672, and what makes a
+				    two-valued sample report 0.99999999999994 for 1. */
+				 if (gamma > 0.0 && x[j + 1] != q)
+					 q = (1.0 - gamma) * q + gamma * x[j + 1];
 			}
 			// --- Format hash key with Epsilon guarding ---
 			char key[32];

@@ -65,11 +65,11 @@ DIRFILESEP = /
 DFSEP = $(DIRFILESEP)
 NAME = Stats::LikeR
 NAME_SYM = Stats_LikeR
-VERSION = 0.299
+VERSION = 0.3
 VERSION_MACRO = VERSION
-VERSION_SYM = 0_299
+VERSION_SYM = 0_3
 DEFINE_VERSION = -D$(VERSION_MACRO)=\"$(VERSION)\"
-XS_VERSION = 0.299
+XS_VERSION = 0.3
 XS_VERSION_MACRO = XS_VERSION
 XS_DEFINE_VERSION = -D$(XS_VERSION_MACRO)=\"$(XS_VERSION)\"
 INST_ARCHLIB = blib/arch
@@ -210,6 +210,7 @@ TO_INST_PM = TukeyHSD.pl \
 	col2col.pl \
 	cor.pl \
 	cor.test.pl \
+	density.plots.pl \
 	dnorm.pl \
 	examples.pl \
 	fisher.test.pl \
@@ -241,8 +242,10 @@ TO_INST_PM = TukeyHSD.pl \
 	scale.data.pl \
 	scale.pl \
 	sd.pl \
+	skew.kurtosis.plots.pl \
 	summary.pl \
 	t.test.pl \
+	t.test.plots.pl \
 	test.all.perls.pl \
 	titanic.pl \
 	var.pl \
@@ -340,7 +343,7 @@ RCS_LABEL = rcs -Nv$(VERSION_SYM): -q
 DIST_CP = best
 DIST_DEFAULT = tardist
 DISTNAME = Stats-LikeR
-DISTVNAME = Stats-LikeR-0.299
+DISTVNAME = Stats-LikeR-0.3
 
 
 # --- MakeMaker macro section:
@@ -689,7 +692,7 @@ metafile : create_distdir
 	$(NOECHO) $(ECHO) '  Test::Exception: '\''0'\''' >> META_new.yml
 	$(NOECHO) $(ECHO) '  Test::LeakTrace: '\''0'\''' >> META_new.yml
 	$(NOECHO) $(ECHO) '  Test::More: '\''0'\''' >> META_new.yml
-	$(NOECHO) $(ECHO) 'version: 0.299' >> META_new.yml
+	$(NOECHO) $(ECHO) 'version: 0.3' >> META_new.yml
 	$(NOECHO) $(ECHO) 'x_serialization_backend: '\''CPAN::Meta::YAML version 0.020'\''' >> META_new.yml
 	-$(NOECHO) $(MV) META_new.yml $(DISTVNAME)/META.yml
 	$(NOECHO) $(ECHO) Generating META.json
@@ -737,7 +740,7 @@ metafile : create_distdir
 	$(NOECHO) $(ECHO) '      }' >> META_new.json
 	$(NOECHO) $(ECHO) '   },' >> META_new.json
 	$(NOECHO) $(ECHO) '   "release_status" : "stable",' >> META_new.json
-	$(NOECHO) $(ECHO) '   "version" : 0.299,' >> META_new.json
+	$(NOECHO) $(ECHO) '   "version" : 0.3,' >> META_new.json
 	$(NOECHO) $(ECHO) '   "x_serialization_backend" : "JSON::PP version 4.16"' >> META_new.json
 	$(NOECHO) $(ECHO) '}' >> META_new.json
 	-$(NOECHO) $(MV) META_new.json $(DISTVNAME)/META.json
@@ -1140,7 +1143,7 @@ testdb_static :: static pure_all $(MAP_TARGET)
 # --- MakeMaker ppd section:
 # Creates a PPD (Perl Package Description) for a binary distribution.
 ppd :
-	$(NOECHO) $(ECHO) '<SOFTPKG NAME="Stats-LikeR" VERSION="0.299">' > Stats-LikeR.ppd
+	$(NOECHO) $(ECHO) '<SOFTPKG NAME="Stats-LikeR" VERSION="0.3">' > Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '    <ABSTRACT>Get basic statistical functions, like in R, but with Perl using XS for performance</ABSTRACT>' >> Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '    <AUTHOR>David E. Condon &lt;dec986@gmail.com&gt;</AUTHOR>' >> Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '    <IMPLEMENTATION>' >> Stats-LikeR.ppd
@@ -1175,6 +1178,7 @@ pm_to_blib : $(FIRST_MAKEFILE) $(TO_INST_PM)
 	  'col2col.pl' '$(INST_LIB)/Stats/col2col.pl' \
 	  'cor.pl' '$(INST_LIB)/Stats/cor.pl' \
 	  'cor.test.pl' '$(INST_LIB)/Stats/cor.test.pl' \
+	  'density.plots.pl' '$(INST_LIB)/Stats/density.plots.pl' \
 	  'dnorm.pl' '$(INST_LIB)/Stats/dnorm.pl' \
 	  'examples.pl' '$(INST_LIB)/Stats/examples.pl' \
 	  'fisher.test.pl' '$(INST_LIB)/Stats/fisher.test.pl' \
@@ -1206,20 +1210,22 @@ pm_to_blib : $(FIRST_MAKEFILE) $(TO_INST_PM)
 	  'scale.data.pl' '$(INST_LIB)/Stats/scale.data.pl' \
 	  'scale.pl' '$(INST_LIB)/Stats/scale.pl' \
 	  'sd.pl' '$(INST_LIB)/Stats/sd.pl' \
+	  'skew.kurtosis.plots.pl' '$(INST_LIB)/Stats/skew.kurtosis.plots.pl' \
 	  'summary.pl' '$(INST_LIB)/Stats/summary.pl' \
 	  't.test.pl' '$(INST_LIB)/Stats/t.test.pl' \
+	  't.test.plots.pl' '$(INST_LIB)/Stats/t.test.plots.pl' \
 	  'test.all.perls.pl' '$(INST_LIB)/Stats/test.all.perls.pl' \
 	  'titanic.pl' '$(INST_LIB)/Stats/titanic.pl' \
 	  'var.pl' '$(INST_LIB)/Stats/var.pl' \
-	  'var.test.pl' '$(INST_LIB)/Stats/var.test.pl' \
-	  'vers.test.pl' '$(INST_LIB)/Stats/vers.test.pl' \
-	  'view.pl' '$(INST_LIB)/Stats/view.pl' \
-	  'wilcox.text.pl' '$(INST_LIB)/Stats/wilcox.text.pl' 
+	  'var.test.pl' '$(INST_LIB)/Stats/var.test.pl' 
 	$(NOECHO) $(ABSPERLRUN) -MExtUtils::Install -e '$$i=0; $$n=$$#ARGV; $$i++ until $$i > $$n or $$ARGV[$$i] eq q{--};' \
 	  -e 'die q{Failed to find -- in }.join(q{|},@ARGV) if $$i > $$n;' \
 	  -e '@parts=splice @ARGV,0,$$i+1;' \
 	  -e 'pop @parts; $$filter=join q{ }, map qq{"$$_"}, @parts;' \
 	  -e 'pm_to_blib({@ARGV}, '\''$(INST_LIB)/auto'\'', $$filter, '\''$(PERM_DIR)'\'')' -- $(PM_FILTER) -- \
+	  'vers.test.pl' '$(INST_LIB)/Stats/vers.test.pl' \
+	  'view.pl' '$(INST_LIB)/Stats/view.pl' \
+	  'wilcox.text.pl' '$(INST_LIB)/Stats/wilcox.text.pl' \
 	  'write.table.pl' '$(INST_LIB)/Stats/write.table.pl' \
 	  'xlsx.write.pl' '$(INST_LIB)/Stats/xlsx.write.pl' \
 	  'xs.check.pl' '$(INST_LIB)/Stats/xs.check.pl' \

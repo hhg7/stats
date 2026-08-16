@@ -3,7 +3,7 @@
 require 5.010;
 use strict;
 package Stats::LikeR;
-our $VERSION = 0.299;
+our $VERSION = 0.3;
 require XSLoader;
 use autodie ':default';
 use warnings FATAL => 'all';
@@ -7819,6 +7819,23 @@ would.
  my $d = density(\@x);
  printf "%g\t%g\n", $d->{x}[$_], $d->{y}[$_] for 0 .. $#{ $d->{x} };
 
+What that computes is one kernel — a little bump of area C<1/n> — centred on
+every observation, added together. On the left below, seven observations and
+their seven gaussian kernels; the blue curve through them is what C<density>
+returns. On the right, the same thing over R's C<faithful$eruptions>, against
+the histogram of the same sample: the two answer the same question, one in
+bars and one as a curve.
+
+
+
+=begin html
+
+<p><img src="https://raw.githubusercontent.com/hhg7/stats/main/img/density.what.png" alt="density() is the sum of one kernel per observation, and the smooth counterpart of a histogram" width="100%" /></p>
+
+=end html
+
+
+
 Arguments may be given positionally (the sample first) or by name, and R's
 dotted argument names are accepted alongside the underscored ones
 (C<na.rm> as well as C<na_rm>, C<old.coords> as well as C<old_coords>,
@@ -7907,6 +7924,60 @@ their pair counts. Defaults to 1000, as in R.
 
 =back
 
+=head3 What the arguments do
+
+C<bw> is the whole ballgame. It is the standard deviation of the kernel, so it
+sets how wide each bump is, and C<adjust> multiplies it: C<< adjust =E<gt> 0.5 >> is half
+the default smoothing. Too little and the estimate follows the individual
+observations (the ticks along the bottom are the sample); too much and the two
+modes of C<eruptions> melt into one. C<bw> is reported back in the return value,
+so the number in each label below is C<< $d-E<gt>{bw} >>.
+
+
+
+=begin html
+
+<p><img src="https://raw.githubusercontent.com/hhg7/stats/main/img/density.bandwidth.png" alt="the same sample at four bandwidths, from far too small to far too large" width="100%" /></p>
+
+=end html
+
+
+
+C<kernel> chooses the shape of the bump. All seven are scaled so that C<bw> is
+the kernel's standard deviation, which is why they are interchangeable in
+practice. Each panel below is one kernel on a common scale, drawn by asking for
+the density of a single observation at zero — C<< density([0], bw =E<gt> 1) >> I<is> the
+kernel — and titled with the R(K) that C<give_rkern> returns. The last panel
+puts all seven over one sample at one bandwidth, where they are hard to tell
+apart.
+
+
+
+=begin html
+
+<p><img src="https://raw.githubusercontent.com/hhg7/stats/main/img/density.kernels.png" alt="the seven kernels on a common scale, and the near-identical estimates they give" width="100%" /></p>
+
+=end html
+
+
+
+C<from>, C<to> and C<cut> decide only where the grid stops: C<cut> bandwidths past
+the extremes of the data, three by default. Changing it moves the ends of
+C<< $d-E<gt>{x} >> (marked below) and nothing else — the estimate itself is the same
+function. C<weights>, on the other hand, changes the estimate: each observation
+takes its own share of the mass rather than C<1/n>, which is how a sample that
+was collected with unequal probabilities gets its population back.
+
+
+
+=begin html
+
+<p><img src="https://raw.githubusercontent.com/hhg7/stats/main/img/density.grid.weights.png" alt="cut moves only the ends of the grid, while weights change the estimate itself" width="100%" /></p>
+
+=end html
+
+
+
 =head3 Return value
 
 A hash reference:
@@ -7956,6 +8027,21 @@ plain number.
  my $h = bw_nrd0(\@x);
  my $h = bw_sj(x => \@x, method => 'dpi');
 
+They disagree, and on a bimodal sample they disagree by a factor of four. Each
+panel below is C<eruptions> at the bandwidth that rule chose, over the same
+histogram: C<nrd0> and C<nrd> assume one mode and oversmooth this sample, C<ucv>
+goes the other way, and the two C<SJ> variants land in between.
+
+
+
+=begin html
+
+<p><img src="https://raw.githubusercontent.com/hhg7/stats/main/img/density.bw.rules.png" alt="the same sample under each of the six bandwidth rules" width="100%" /></p>
+
+=end html
+
+
+
 =over
 
 =item * B<< C<bw_nrd0> >> — Silverman's rule of thumb, C<0.9 * min(sd, IQR/1.34) *
@@ -7985,6 +8071,11 @@ Validated against R 4.6.1 — its own regression suite, the examples in
 C<?density> and C<?bw.nrd>, and their pinned output — by C<t/density.R.scipy.t>,
 which also cross-checks the whole binning/FFT/interpolation pipeline against
 SciPy's exact C<gaussian_kde>.
+
+The figures above are drawn by C<density.plots.pl> in the repository, from the
+same C<eruptions> and C<precip> samples that test file uses. It is an author-only
+script — it is not installed, and it needs C<Matplotlib::Simple>, C<python3> and
+C<matplotlib> — so re-run it only when a figure needs to change.
 
 =head2 dnorm
 
@@ -10082,6 +10173,26 @@ standardized moment. Validated numerically against R.
 
  kurtosis(2, 4, 4, 4, 5, 5, 7, 9);        # 0.940625
 
+Kurtosis is the fourth moment, so what it describes is the tails. Below, three
+samples standardized to mean C<0> and standard deviation C<1> — a uniform sample,
+which has no mass at all left for the extremes; a normal sample; and a scale
+mixture of two normals, one observation in ten drawn with three times the spread
+— each against the same C<N(0, 1)> curve in grey, so that the only thing that
+differs between the panels is shape. On a linear axis (the top row) the
+heavy-tailed sample looks like little more than a sharper peak; the bottom row
+is the same three estimates on a logarithmic density, where the tail that the
+positive number is reporting is visible over three decades.
+
+
+
+=begin html
+
+<p><img src="https://raw.githubusercontent.com/hhg7/stats/main/img/kurtosis.what.png" alt="a flat-shouldered, a normal and a heavy-tailed sample, and the tails behind the kurtosis of each" width="100%" /></p>
+
+=end html
+
+
+
 Arguments work as they do for L</"sd"> and L</"var">: plain numbers, array
 references, or any mixture of the two, all flattened into one sample.
 
@@ -12122,6 +12233,11 @@ Calculates sample quantiles using R's continuous Type 7 interpolation.
 
 If the C<probs> parameter is omitted, it behaves identically to R by defaulting to the 0, 25, 50, 75, and 100 percentiles (C<c(0, .25, .5, .75, 1)>). The returned hash keys match R's standardized naming convention (e.g., C<"25%">, C<"33.3%">).
 
+A probability that lands a hair outside C<[0, 1]> — the usual result of computing
+one rather than writing it down — is clamped to the endpoint rather than
+refused, within the same C<100 * eps> that R allows; anything further out is an
+error. C<undef> values in C<x> are dropped.
+
 =head2 rank
 
 Rank values like R's C<rank()>. Takes flat scalars and/or array refs (like C<min>), with optional trailing C<ties.method> / C<na.last> options. Returns the list of ranks in input order.
@@ -12650,11 +12766,15 @@ tests to see if an array reference is normally distributed, returns a p-value an
 and returns the hash reference:
 
  {
- p.value     0.589650577093106,
- p_value     0.589650577093106,
- statistic   0.960870680168535,
- W           0.960870680168535
+ p.value     0.96717393596804,
+ p_value     0.96717393596804,
+ statistic   0.986762155447719,
+ W           0.986762155447719
  }
+
+matching R's C<shapiro.test(1:5)> to the last digit it prints. Values that are
+C<undef> or C<NaN> are dropped first, exactly as R's C<complete.cases()> drops
+them, and the remaining sample must hold between 3 and 5000 values.
 
 =head2 skew
 
@@ -12664,6 +12784,23 @@ lengths of stay), negative a long left tail, and about zero a symmetric sample.
 Validated numerically against R.
 
  skew(2, 4, 4, 4, 5, 5, 7, 9);        # 0.8184875533568
+
+Below, three samples standardized to mean C<0> and standard deviation C<1>, each
+against the same C<N(0, 1)> curve in grey: a log-normal sample mirrored into a
+long left tail, a normal sample, and the log-normal itself. The sign of C<skew>
+is which side of the median the mean has ended up on — the long tail pulls the
+mean towards itself and leaves the median behind, which is why a skewed lab
+value is usually better summarized by its median than by its mean.
+
+
+
+=begin html
+
+<p><img src="https://raw.githubusercontent.com/hhg7/stats/main/img/skew.what.png" alt="a left-tailed, a symmetric and a right-tailed sample, with the mean and median of each" width="100%" /></p>
+
+=end html
+
+
 
 Arguments work as they do for L</"sd"> and L</"var">: plain numbers, array
 references, or any mixture of the two, all flattened into one sample.
@@ -12919,6 +13056,34 @@ the two groups compared can be specified, though not necessarily, as C<x> and C<
      paired => 1
  );
 
+=head3 What the test is asking
+
+Every t-test is the same three numbers. C<estimate> is what the data say — a
+mean, or a difference of means. C<mu> is what the null hypothesis says. The
+standard error is how far apart those two would ordinarily drift by chance
+alone, and C<statistic> is the distance from C<mu> to C<estimate> measured in
+standard errors:
+
+ statistic = (estimate - mu) / SE
+
+C<df> says which t distribution that statistic would follow if the null were
+true, and C<p_value> is the area of that distribution further out than the
+statistic — the chance of landing this far from C<mu>, or further, when C<mu> is
+right. Below, R's C<sleep> data as a paired test: ten patients, each measured on
+two drugs, so the ten paired differences are one sample and C<mu = 0> is "the two
+drugs are the same". The middle panel is the whole p-value; the right panel is
+one of its two tails, magnified until it can be seen.
+
+
+
+=begin html
+
+<p><img src="https://raw.githubusercontent.com/hhg7/stats/main/img/t.test.what.png" alt="the estimate, mu and the standard error, and the null distribution the p-value is an area under" width="100%" /></p>
+
+=end html
+
+
+
 =head3 Parameters
 
 
@@ -12979,6 +13144,132 @@ the two groups compared can be specified, though not necessarily, as C<x> and C<
 </tr>
 </tbody>
 </table>
+
+=end html
+
+
+
+=head3 C<conf_int>
+
+C<conf_int> is the estimate plus and minus a multiple of the same standard error
+the statistic divides by, and C<conf_level> picks the multiple — the t quantile
+at that level and C<df>. Nothing else goes into it. On the left below, the whole
+interval taken apart: for the paired C<sleep> test, C<2.26216 * 0.38896 = 0.87989>
+either side of C<-1.58>. On the right, the same interval at six confidence
+levels. A wider C<conf_level> needs a bigger quantile and so gives a wider
+interval, and the level at which the interval first reaches C<mu> is exactly
+C<1 - p_value> — the second panel from the bottom, whose upper bound lands on
+zero.
+
+
+
+=begin html
+
+<p><img src="https://raw.githubusercontent.com/hhg7/stats/main/img/t.test.conf.int.png" alt="conf_int is the estimate plus or minus a t quantile times the standard error, and conf_level sets the quantile" width="100%" /></p>
+
+=end html
+
+
+
+=head3 C<alternative>
+
+C<alternative> decides which part of the null distribution counts against the
+null, and therefore both C<p_value> and C<conf_int>. C<"two.sided"> counts both
+tails beyond C<|statistic|>, C<"less"> counts only what lies below the statistic,
+and C<"greater"> only what lies above; the two one-sided p-values always add to
+1, and each is half the two-sided one when it is the smaller. The interval
+follows: a one-sided alternative gives a one-sided interval, with the other
+bound infinite. The example is C<t_test($drug1, $drug2)> on C<sleep> — the same
+twenty numbers as above, but unpaired.
+
+
+
+=begin html
+
+<p><img src="https://raw.githubusercontent.com/hhg7/stats/main/img/t.test.alternative.png" alt="the three alternatives, the region of the null distribution each one counts, and the interval that goes with it" width="100%" /></p>
+
+=end html
+
+
+
+=head3 C<mu>, C<p_value> and C<conf_int> say one thing
+
+C<conf_int> is the set of C<mu> the test would not reject. Sweep C<mu> across the
+line and re-run the test at each value: the p-value peaks at 1 where C<mu> equals
+the estimate, and falls through C<1 - conf_level> at precisely the two bounds of
+C<conf_int>. That is what "the interval excludes zero" and "p is below 0.05" both
+mean — they are one statement, not two pieces of evidence.
+
+Which is also why C<mu> never moves C<conf_int>. Changing C<mu> changes which
+hypothesis is being tested, so C<statistic> and C<p_value> move with it; the
+interval is built around the estimate and stays where it is.
+
+
+
+=begin html
+
+<p><img src="https://raw.githubusercontent.com/hhg7/stats/main/img/t.test.duality.png" alt="p_value as a function of mu, crossing 1 - conf_level exactly at the two bounds of conf_int" width="100%" /></p>
+
+=end html
+
+
+
+=head3 What a falling p-value looks like
+
+The same thing seen from the data's side: two samples drawn from two different
+distributions, pulled steadily apart. Each column below is one C<t_test> of the
+C<sleep> groups with drug 1 shifted — the top panel is the two distributions, by
+this module's own L<C<density>|/"density">, and the bottom panel is the C<conf_int>
+that comes back. The columns are four p-values five orders of magnitude apart.
+
+
+
+=begin html
+
+<p><img src="https://raw.githubusercontent.com/hhg7/stats/main/img/t.test.p.and.ci.png" alt="two distributions separating, and the conf_int retreating from mu as the p-value falls" width="100%" /></p>
+
+=end html
+
+
+
+Only one thing about the interval changes: where it sits. C<df> stays at
+C<17.7765> and its width stays at C<3.5710> down the whole row, because shifting a
+sample changes neither the spread nor C<n>, and those are all the standard error
+is made of. What moves is the distance from C<mu> — and the second column is the
+hinge: at C<p_value = 0.05> the interval's upper bound is C<0.0000>, sitting
+exactly on C<mu>, because "p below 0.05" and "the 95% interval clear of C<mu>" are
+the same event.
+
+Reading the two together is the point. C<p_value> reports the distance from C<mu>
+in standard errors and nothing else, so it says how surely the difference is not
+zero, never how big it is; C<conf_int> reports the difference itself, in hours of
+sleep. The other route to a small p is a smaller standard error — more
+observations, or less spread — and that one drives C<p_value> down by narrowing
+the interval around an estimate that has not moved at all.
+
+=head3 C<paired> and C<var_equal>
+
+The same twenty numbers give three different answers depending on what is
+assumed about them. C<< paired =E<gt> 1 >> says the two vectors are two measurements of
+the same ten subjects and tests the ten differences, which removes the
+subject-to-subject variation and here turns C<p = 0.079> into C<p = 0.0028>.
+Unpaired, C<< var_equal =E<gt> 1 >> pools the two variances into one and spends
+C<n(x) + n(y) - 2> degrees of freedom; the default Welch test does not pool, and
+buys that safety with a fractional C<df> from the Welch–Satterthwaite equation.
+
+Welch's C<df> is at most C<n(x) + n(y) - 2>, reaching it only when the two spreads
+match, and falls toward C<n - 1> of whichever sample dominates the standard error
+as they separate. The middle and right panels sweep C<t.test(1:10, 7:20)> — the
+other example in R's C<?t.test> — scaling the spread of C<y> about its own mean:
+C<var_equal> keeps claiming 22 degrees of freedom throughout, and pays for the
+claim with a p-value that is wrong by three orders of magnitude at the left-hand
+edge.
+
+
+
+=begin html
+
+<p><img src="https://raw.githubusercontent.com/hhg7/stats/main/img/t.test.designs.png" alt="paired, var_equal and Welch on the same data, and the Welch degrees of freedom as the two spreads separate" width="100%" /></p>
 
 =end html
 
@@ -13085,6 +13376,19 @@ Dies if:
 =end html
 
 
+
+Validated against R 4.x's C<stats::t.test> and against C<scipy.stats> — cases
+lifted from R's own regression suite and from SciPy's C<TestTTest_1samp>,
+C<TestTTest_ind> and confidence-interval tests — by C<t/t_test.t>.
+
+The figures above are drawn by C<t.test.plots.pl> in the repository, from the
+two examples in R's C<?t.test>: the C<sleep> data (C<t = -1.8608>, C<df = 17.776>,
+C<p-value = 0.07939> unpaired, C<t = -4.0621>, C<df = 9>, C<p-value = 0.002833>
+paired) and C<t.test(1:10, y = c(7:20))>. Every number annotated on them comes
+back out of C<t_test> itself, so a figure cannot drift away from the module. It
+is an author-only script — it is not installed, and it needs
+C<Matplotlib::Simple>, C<python3> and C<matplotlib> — so re-run it only when a
+figure needs to change.
 
 =head2 transpose
 
@@ -14129,6 +14433,359 @@ C<f.sf> / C<norm.sf> and statsmodels' C<anova_oneway>; see
 C<t/model_pvalue_tails.t> and C<t/oneway_test.R.scipy.t>.
 
 =head1 Changes
+
+=head2 0.3 2026-08-16 CDT
+
+=head3 shapiro_test
+
+C<shapiro_test> rebuilt against R 4.6.1's C<src/library/stats/src/swilk.c> — AS R94,
+Royston (1995) — driven by R's and SciPy's own test suites rather than by cases
+invented here. Four bugs are fixed, one of them a case R's regression suite
+tests for by name, and the statistic is now more accurate than R's own on a
+sample whose values dwarf its spread.
+
+Everything below is checked in the new C<t/shapiro_test.R.scipy.t> (146 tests),
+whose expected values are frozen literals with their provenance recorded in the
+file header; it needs no R and no Python to run. The generators that produced
+them, C<t/shapiro_test.R.scipy.R> and C<t/shapiro_test.R.scipy.py>, are committed
+beside it. The full suite is 124 files and 25,081 tests, and
+C<./test.all.perls.pl> passes on all five local perls — C<5.10.1>, C<5.12.5>
+(long double), C<5.42.3>, C<5.44.0> and C<5.44.0-quadmath> — with no warnings on
+any of them.
+
+=head4 The p-value could come back negative
+
+R's C<tests/reg-tests-1b.R> contains exactly one C<shapiro.test> assertion, and it
+is this:
+
+ stopifnot(shapiro.test(c(0,0,1))$p.value >= 0)
+
+C<shapiro_test([0,0,1])> returned C<-4.6648135328131477e-15>. At C<n = 3> the
+p-value is C<6/pi * (asin(sqrt(W)) - asin(sqrt(3/4)))> and C<W> has an exact floor
+of C<3/4> that C<c(0,0,1)> sits on, so the subtraction lands on zero from
+whichever side the constants round to; R clamps the result at 0 and this module
+did not. It is the same defect SciPy fixed as gh-18322. The clamp is in, and
+C<asin(sqrt(3/4)) = pi/3> is now carried to NV width rather than R's 15 digits,
+so the same case comes out at C<+4.2e-16> before clamping instead of below zero.
+
+=head4 W and the p-value were only good to nine digits
+
+The expected normal order statistics that AS R94 weights the sample with came
+from C<inverse_normal_cdf()>, which is Moro's approximation and good to about
+C<1e-9>. They go straight into C<W>, so nine digits there is nine digits in the
+answer — where R reports sixteen. Against the values SciPy pins in
+C<TestShapiro>, every one of them annotated upstream as I<"reference values
+generated using R shapiro.test">:
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>SciPy case</th>
+  <th>W was</th>
+  <th>W is</th>
+  <th>R 4.6.1</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>test_basic</code> x1</td>
+  <td><code>0.900472879324135</code></td>
+  <td><code>0.900472879317561</code></td>
+  <td><code>0.90047287931756</code></td>
+</tr>
+<tr>
+  <td><code>test_basic</code> x2</td>
+  <td><code>0.959026945965277</code></td>
+  <td><code>0.959026946032345</code></td>
+  <td><code>0.95902694603234</code></td>
+</tr>
+<tr>
+  <td><code>test_basic2</code> x4</td>
+  <td><code>0.834666275331324</code></td>
+  <td><code>0.834666275318169</code></td>
+  <td><code>0.83466627531817</code></td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+and the p-values with them:
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>SciPy case</th>
+  <th>p was</th>
+  <th>p is</th>
+  <th>R 4.6.1</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>test_basic</code> x1</td>
+  <td><code>0.0420895752342124</code></td>
+  <td><code>0.0420895752222577</code></td>
+  <td><code>0.04208957522226</code></td>
+</tr>
+<tr>
+  <td><code>test_basic</code> x2</td>
+  <td><code>0.524597929157127</code></td>
+  <td><code>0.524597930470668</code></td>
+  <td><code>0.5245979304707</code></td>
+</tr>
+<tr>
+  <td><code>test_basic2</code> x4</td>
+  <td><code>0.000913490482316994</code></td>
+  <td><code>0.000913490481812984</code></td>
+  <td><code>0.000913490481813</code></td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+Moro's value is still the starting point, but Newton against the C<erfc>-based
+normal CDF finishes it. The loop stops as soon as another pass could not move
+the answer, so a C<double> build pays for one refinement and only the wider NVs
+pay for a second. Across a 180-sample sweep over normal, uniform, exponential,
+log-normal, Cauchy, tied, tiny-scale and grid data at every n from 3 to 5000,
+the worst remaining disagreement with R is C<2.0e-15> in C<W> and C<2.6e-12> in the
+p-value — the latter is not sloppier arithmetic but the same last bit amplified,
+since the p-value is a function of C<log(1 - W)> over a sigma of about C<0.6>.
+
+=head4 1 - W was formed by subtracting from 1
+
+The p-value depends on C<log(1 - W)>, and C<W> runs to within C<1e-5> of 1 on a
+large normal sample, so computing C<W = b^2/ssq> and then C<1 - W> throws away
+exactly the digits the p-value is made of. R does not do this — its C<swilk.c>
+forms C<w1 = (ssassx - sax) * (ssassx + sax) / (ssa * ssx)> directly and says so
+in a comment — and now neither does this module.
+
+=head4 More accurate than R when the values dwarf their own spread
+
+R's C<swilk.c> divides the sample by its range but never centres it, so C<1e9 +
+noise> loses most of its significant digits before C<W> is ever formed. SciPy
+filed the same complaint from the other end as gh-14462 and works around it by
+subtracting the median; this module now does that too, which costs one
+subtraction per value.
+
+Measured against a 60-digit C<mpmath> evaluation of AS R94 on the identical
+doubles, over C<1e6 + noise> and C<1e9 + noise> at every n from 3 to 5000:
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th></th>
+  <th>worst relative error in W</th>
+  <th>worst in the p-value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>R 4.6.1</td>
+  <td><code>1.9e-8</code></td>
+  <td><code>2.6e-7</code></td>
+</tr>
+<tr>
+  <td><code>shapiro_test</code></td>
+  <td><code>1.0e-15</code></td>
+  <td><code>1.4e-13</code></td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+On well-conditioned samples the two still agree to the last few ulp, so this is
+a divergence only where R has already lost the digits. C<t/shapiro_test.R.scipy.t>
+asserts the invariance rather than R's number there, and records why at that
+section.
+
+=head4 Faster as well
+
+The sort now goes through the module's own introsort rather than C<qsort()>,
+whose comparator the compiler cannot inline; the order statistics are generated
+for half the sample and mirrored, since the weights are antisymmetric; and ten
+C<pow()> calls became Horner evaluations. C<pow()> is a C<__float128> call on a
+quadmath perl.
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>n</th>
+  <th>was</th>
+  <th>is</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>10</td>
+  <td>0.83 µs</td>
+  <td>0.78 µs</td>
+</tr>
+<tr>
+  <td>100</td>
+  <td>4.78 µs</td>
+  <td>5.05 µs</td>
+</tr>
+<tr>
+  <td>1000</td>
+  <td>79.3 µs</td>
+  <td>49.8 µs</td>
+</tr>
+<tr>
+  <td>5000</td>
+  <td>578 µs</td>
+  <td>459 µs</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+C<n = 100> is the one size that got slower: at that length the accurate
+quantiles are most of the work and there is not enough sorting to pay for them.
+That trade was taken deliberately.
+
+=head4 One documented value was wrong
+
+The hash printed under C<shapiro_test> in this README, in C<read.me.pod> and in
+the module's own POD showed C<statistic 0.960870680168535> and C<p.value
+0.589650577093106> — the pre-fix numbers, and for C<[1..19]> while the example
+above them calls C<shapiro_test([1..5])>. It now shows what C<[1..5]> actually
+returns, C<0.986762155447719> and C<0.96717393596804>, which is R's
+C<shapiro.test(1:5)> to the last digit R prints.
+
+=head3 quantile
+
+=head4 Interpolation ran between order statistics that were equal
+
+R's type 7 interpolates only when the index falls strictly between two order
+statistics I<that differ> — C<< index E<gt> lo & x[hi] != qs >> in C<quantile.default>.
+This module always evaluated C<(1 - g) * x[j] + g * x[j+1]>, which does not
+return C<v> when both sides are C<v>. On a two-valued sample at C<n = 999> it
+reported C<0.99999999999994> for C<1>, and on the 602 identical values R's
+PR#16672 was filed about it failed to return that value at every prob — which
+is the monotonicity failure the PR is about. Both now match R exactly.
+
+=head4 Probabilities a hair outside [0, 1] were refused
+
+A probability arrived at by arithmetic rather than written down can land just
+outside the interval. R allows C<100 * .Machine$double.eps> of overshoot and
+clamps to the endpoint — its PR#17891, C<quantile(0:1, 1+1e-14) == 1> — where
+this module raised an error. It now clamps within the same allowance and still
+errors on anything further out. R's constant is used rather than C<NV_EPSILON>
+on purpose: it is part of what the function I<accepts>, so a long-double or
+C<__float128> build must not reject a C<probs> vector R takes.
+
+=head4 Faster
+
+The sort was C<qsort()> with a function-pointer comparator; it is now the same
+introsort C<shapiro_test> uses. Ordering 5000 NVs costs about 61,000
+comparisons, and paying for an indirect call on every one of them is most of
+what a sort of that size costs.
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>n</th>
+  <th>was</th>
+  <th>is</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>100</td>
+  <td>3.2 µs</td>
+  <td>2.7 µs</td>
+</tr>
+<tr>
+  <td>1000</td>
+  <td>52.5 µs</td>
+  <td>22.8 µs</td>
+</tr>
+<tr>
+  <td>10,000</td>
+  <td>1.07 ms</td>
+  <td>0.72 ms</td>
+</tr>
+<tr>
+  <td>100,000</td>
+  <td>13.7 ms</td>
+  <td>8.8 ms</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+Both fixes and the sort are covered by the new C<t/quantile.R.t> (197 tests, or
+205 under C<EXTENDED_TESTING>), built on the two assertions R's own suite makes
+about C<quantile> — that C<quantile(x, ((1:n)-1)/(n-1))> recovers C<sort(x)>, and
+that it equals the type-7 interpolation computed by hand off the sorted sample
+— run over seven input shapes chosen to break a quicksort (sorted, reversed,
+organ pipe, two-valued, tie ladder, sawtooth) at every n either side of the
+insertion-sort threshold and the recursion depth limit, plus PR#16672 and
+PR#17891 verbatim and 79 frozen R value tables. Its generator,
+C<t/quantile.R.R>, is committed beside it.
+
+=head3 Documentation
+
+Illustrations for three more functions, drawn by C<t.test.plots.pl> and
+C<skew.kurtosis.plots.pl>, both committed:
+
+=over
+
+=item * B<< C<t_test> >> gains six: what the estimate, the standard error and the null
+distribution are and which area of it the p-value is; how C<conf_int> is the
+estimate plus or minus a t quantile and how C<conf_level> sets that quantile;
+the three C<alternative>s side by side with the region each counts and the
+interval that goes with it; C<p_value> as a function of C<mu>, crossing
+C<1 - conf_level> exactly at the two bounds of C<conf_int>; paired,
+C<var_equal> and Welch on the same data, with the Welch degrees of freedom as
+the two spreads separate; and two distributions separating with the interval
+retreating from C<mu> as the p-value falls.
+
+=item * B<< C<skew> >> gains a left-tailed, a symmetric and a right-tailed sample against
+the same C<N(0, 1)> curve, with the mean and median of each, which is what the
+sign of the statistic is reporting.
+
+=item * B<< C<kurtosis> >> gains a flat-shouldered, a normal and a heavy-tailed sample
+with the tails behind each drawn out, since it is the tails and not the peak
+that the statistic is measuring.
+
+=back
 
 =head2 0.298 2026-08-12 CDT
 
