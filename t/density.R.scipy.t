@@ -128,7 +128,7 @@ my $TOL_X_SEARCH = 1e-7;    # ... when the bandwidth came out of a search
 my $TOL_Y_SEARCH = 1e-6;    # density values, likewise
 my $TOL_YFLOOR_SEARCH = 1e-6;
 
-# ---------------------------------------------------------------- helpers
+# helpers
 
 # Collect warnings instead of letting them onto the test output; several of the
 # cases below are meant to warn, and one of those warnings is itself pinned by
@@ -156,7 +156,7 @@ sub dataset {
 	return $d;
 }
 
-# ---------------------------------------------------- R: density() itself
+# R: density() itself
 
 for my $c (@R_DENSITY) {
 	my $x   = dataset($c->{data});
@@ -215,7 +215,7 @@ for my $c (@R_DENSITY) {
 sub _sum { my $s = 0; $s += $_ for @{ $_[0] }; return $s }
 sub _max { my $m = $_[0][0]; for (@{ $_[0] }) { $m = $_ if $_ > $m } return $m }
 
-# ------------------------------------------------------------- R: bw.*
+# R: bw.*
 
 my %BW_FN = (
 	bw_nrd0 => \&bw_nrd0, bw_nrd => \&bw_nrd,
@@ -288,7 +288,7 @@ for my $k (sort keys %RK_PINNED) {
 	       "equivalent-kernel adjustment for '$k' matches stats-Ex.Rout.save");
 }
 
-# ------------------------------------ R's regression tests, spelled out
+# R's regression tests, spelled out
 
 # tests/reg-tests-1a.R, PR#8033: "density with 'Inf' in x".  1/0:2 is
 # c(Inf, 1, 0.5); the infinite observation is a point mass outside the grid,

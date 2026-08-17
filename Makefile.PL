@@ -72,6 +72,26 @@ if ($Config{nvtype} eq 'long double') {
        . "  falling back to double precision internals.\n" unless $define;
 }
 
+# The other half of the PL_FILES problem below. EUMM's directory scan classifies
+# .pm, .pl and .pod alike, so all 56 of the maintainer's root scripts -- aov.pl,
+# biplot.pl, cor.pl, test.all.perls.pl, the lot -- were listed in TO_INST_PM
+# beside lib/Stats/LikeR.pm and copied into $(INST_LIB)/Stats/ by `make install`.
+# They are not part of the module, and dzil's [PruneFiles] already keeps them out
+# of a release, so a local install has no business scattering them into site_perl
+# either. libscan is the documented hook for rejecting a file the scan picked up:
+# only root-level *.pl are dropped, and anything with a directory in its path
+# falls through to the default, which keeps its README.pod and version-control
+# filtering. read.me.pod is deliberately left alone -- it is documentation, not a
+# script.
+{
+    package MY;
+    sub libscan {
+        my ($self, $path) = @_;
+        return '' if $path =~ /\.pl\z/ && $path !~ m{/};
+        return $self->SUPER::libscan($path);
+    }
+}
+
 my %WriteMakefileArgs = (
   "ABSTRACT" => "Get basic statistical functions, like in R, but with Perl using XS for performance",
   "AUTHOR" => "David E. Condon <dec986\@gmail.com>",
