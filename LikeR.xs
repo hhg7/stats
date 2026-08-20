@@ -170,7 +170,7 @@ attribute of its own, so an NVgf format written at the call site draws the same
 bogus warning pair described above; taking the format as an ordinary argument
 keeps the checker out of it. my_snprintf() is the portable spelling here --
 plain snprintf() cannot print an NV on a quadmath build.*/
-static int snprintf_nv(char *buf, Size_t buflen, const char *fmt, NV x)
+static int snprintf_nv(char *restrict buf, Size_t buflen, const char *restrict fmt, NV x)
 {
 	return my_snprintf(buf, buflen, fmt, x);
 }
@@ -248,7 +248,7 @@ static const char nk_dd[201] = // the two digits of 00 .. 99
 	"90919293949596979899";
 
 //the 15 decimal digits of n (1e14 <= n < 1e15) into d[0 .. 14]
-PERL_STATIC_INLINE void nk_digits15(uint64_t n, char *d) {
+PERL_STATIC_INLINE void nk_digits15(uint64_t n, char *restrict d) {
 	uint32_t hi = (uint32_t)(n / 10000000u); // leading 8
 	uint32_t lo = (uint32_t)(n % 10000000u); // trailing 7
 	memcpy(d + 13, nk_dd + 2 * (lo % 100), 2); lo /= 100;
@@ -263,8 +263,8 @@ PERL_STATIC_INLINE void nk_digits15(uint64_t n, char *d) {
 
 /*%.15g of a finite, non-zero x into out (NK_NUMBUF bytes are enough),
 returning its length, or -1 when the rounding cannot be settled here.*/
-static int nk_nv_pv(double x, char *out) {
-	char *w = out;
+static int nk_nv_pv(double x, char *restrict out) {
+	char *restrict w = out;
 	if (x < 0) { *w++ = '-'; x = -x; }
 
 	uint64_t bits;
@@ -7428,13 +7428,13 @@ growing a cached PV per cell.*/
 static bool mg_key(pTHX_ const mg_frame *f, const mg_col *keys, SSize_t nkeys,
        SSize_t i, SV *buf, bool fast_nv) {
 	SvCUR_set(buf, 0);
-	SvPOK_only(buf);				//also clears any UTF8 flag: bytes only
+	SvPOK_only(buf); //also clears any UTF8 flag: bytes only
 	for (SSize_t j = 0; j < nkeys; j++) {
 		SV *cell = mg_cell(aTHX_ f, &keys[j], i);
 		if (!cell || !SvOK(cell)) return 0;
 		STRLEN l;
 		char numbuf[NK_NUMBUF];
-		const char *p = nk_num_pv(cell, numbuf, &l, fast_nv);
+		const char *restrict p = nk_num_pv(cell, numbuf, &l, fast_nv);
 		if (!p) p = SvPV(cell, l);
 		char nb[24];
 		char *np = nb + sizeof nb;
@@ -17663,7 +17663,7 @@ PPCODE:
 	//pull data into contiguous C arrays
 	NV *X; Newx(X, (size_t)n * p, NV);
 	NV *tm; Newx(tm, n, NV);
-	int *st; Newx(st, n, int);
+	int *restrict st; Newx(st, n, int);
 	for (SSize_t i = 0; i < n; i++) {
 		tm[i] = SvNV(*av_fetch(tav, i, 0));
 		st[i] = (SvNV(*av_fetch(sav, i, 0)) != 0.0) ? 1 : 0;
@@ -17839,11 +17839,9 @@ void p_adjust(...)
 			      || strEQ(key, "cols")    || strEQ(key, "col")) cols_sv = val;
 			else croak("p_adjust: unknown argument '%s'", key);
 		}
-
 		char meth[PA_METH_LEN];
 		pa_method(method, meth);
 		if (!pa_known(meth)) croak("Unknown p-value adjustment method: %s", method);
-
 		/*Which columns hold p-values? Nothing named means all of them. The
 		value is a flag, set once the column turns up in the frame.*/
 		HV *want = NULL;
@@ -17865,7 +17863,6 @@ void p_adjust(...)
 			}
 			if (HvUSEDKEYS(want) == 0) croak("p_adjust: 'columns' names no columns");
 		}
-
 		//Which of the five shapes is this?
 		enum { PA_FLAT, PA_AOA, PA_AOH, PA_HOA, PA_HOH } kind = PA_FLAT;
 		SV *ref = SvROK(p_sv) ? SvRV(p_sv) : NULL;
@@ -17887,7 +17884,7 @@ void p_adjust(...)
 		} else {
 			HV *hv = (HV*)ref;
 			HE *e;
-			kind = PA_HOA;                          //an empty hash is either
+			kind = PA_HOA; //an empty hash is either
 			hv_iterinit(hv);
 			while ((e = hv_iternext(hv))) {
 				SV *v = HeVAL(e);
@@ -17900,7 +17897,7 @@ void p_adjust(...)
 			}
 		}
 
-		//---- the flat list, unchanged: a list of p-values in, a list out
+		// the flat list, unchanged: a list of p-values in, a list out
 		if (kind == PA_FLAT) {
 			if (want)
 				croak("p_adjust: 'columns' needs a data frame, not a flat list "
@@ -17924,7 +17921,7 @@ void p_adjust(...)
 			XSRETURN((int)n);
 		}
 
-		/*---- a frame: validate and size the family before building anything,
+		/* a frame: validate and size the family before building anything,
 		so the second pass cannot die part way through and strand memory.*/
 		size_t n = 0;
 		SSize_t maxk = 0, nouter = 0;   //widest row hash; outer hash size
@@ -18128,10 +18125,8 @@ void p_adjust(...)
 			pa_kernel(pv, adj, n, meth);
 			for (size_t i = 0; i < n; i++) sv_setnv(slots[i], adj[i]);
 		}
-		Safefree(pv);    pv    = NULL;
-		Safefree(adj);   adj   = NULL;
-		Safefree(slots); slots = NULL;
-		Safefree(kbuf);  kbuf  = NULL;
+		Safefree(pv);    pv    = NULL; Safefree(adj);   adj   = NULL;
+		Safefree(slots); slots = NULL; Safefree(kbuf);  kbuf  = NULL;
 		Safefree(obuf);  obuf  = NULL;
 		ST(0) = out_sv;
 		XSRETURN(1);
@@ -18212,9 +18207,9 @@ NV median(...)
 			   croak("median: undefined value at argument index %" UVuf, (UV)i);
 		   }
 	  }
-	  /*Select the middle value(s) rather than sorting all of them.  For an
-	  even count the lower of the pair is the largest value left below the
-	  upper one, which a scan of that side finds without a second select.*/
+  /*Select the middle value(s) rather than sorting all of them.  For an
+  even count the lower of the pair is the largest value left below the
+  upper one, which a scan of that side finds without a second select.*/
 	  if (total_count & 1) {
 		   nv_select(nums, total_count, total_count / 2);
 		   median_val = nums[total_count / 2];
@@ -18240,14 +18235,14 @@ void intersection(...)
 
 SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 	INIT:
-	// --- validate method
+	// validate method
 	if (strcmp(method, "pearson")  != 0 &&
 		strcmp(method, "spearman") != 0 &&
 		strcmp(method, "kendall")  != 0)
 		  croak("cor: unknown method '%s' (use 'pearson', 'spearman', or 'kendall')",
 				method);
 
-	// --- validate x
+	// validate x
 	if (!SvROK(x_sv) || SvTYPE(SvRV(x_sv)) != SVt_PVAV)
 		  croak("cor: x must be an ARRAY reference");
 
@@ -18255,7 +18250,7 @@ SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 	size_t nx   = av_len(x_av) + 1;
 	if (nx == 0) croak("cor: x is empty");
 
-	// --- detect whether x is a flat vector or a matrix (AoA)
+	// detect whether x is a flat vector or a matrix (AoA)
 	bool x_is_matrix = 0;
 	{
 		SV**fp = av_fetch(x_av, 0, 0);
@@ -18263,7 +18258,7 @@ SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 			x_is_matrix = 1;
 	}
 
-	// --- detect y
+	// detect y
 	bool has_y = (SvOK(y_sv) && SvROK(y_sv) &&
 				   SvTYPE(SvRV(y_sv)) == SVt_PVAV);
 
@@ -18322,7 +18317,7 @@ SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 			RETVAL = newSVnv(r);
 		}
 	} else {//Branch 2: x is a matrix (or y is a matrix)  →  AoA result
-		// -- resolve x matrix dimensions
+		// resolve x matrix dimensions
 		if (!x_is_matrix)
 			croak("cor: x must be a matrix (array ref of array refs) "
 				   "when y is a matrix");
@@ -18375,7 +18370,7 @@ SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 				 croak("cor: standard deviation is 0 in x column %lu", j);
 			}
 		}
-		// -- resolve y: separate matrix or re-use x (symmetric)
+		// resolve y: separate matrix or re-use x (symmetric)
 		size_t ncols_y;
 		NV **col_y = NULL;
 		bool symmetric = 0;
@@ -18433,7 +18428,6 @@ SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 			Newx(r_cache, ncols_x, NV*);
 			for (size_t i = 0; i < ncols_x; i++)
 				 Newx(r_cache[i], ncols_x, NV);
-
 			for (size_t i = 0; i < ncols_x; i++) {
 				 r_cache[i][i] = 1.0; // diagonal
 				 for (size_t j = i + 1; j < ncols_x; j++) {
@@ -18449,8 +18443,7 @@ SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 
 			for (size_t i = 0; i < ncols_x; i++) Safefree(r_cache[i]);
 			Safefree(r_cache); r_cache = NULL;
-		} else {
-			// cross-correlation: every (i,j) pair is independent
+		} else {// cross-correlation: every (i,j) pair is independent
 			for (size_t i = 0; i < ncols_x; i++)
 				for (size_t j = 0; j < ncols_y; j++)
 					av_store(rows_out[i], j, newSVnv(compute_cor(col_x[i], col_y[j], nrows, method)));
@@ -18459,7 +18452,7 @@ SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 		for (size_t i = 0; i < ncols_x; i++)
 			av_store(result_av, i, newRV_noinc((SV*)rows_out[i]));
 		Safefree(rows_out); rows_out = NULL;
-		// -- free column arrays -------------------------------------
+		// free column arrays
 		for (size_t j = 0; j < ncols_x; j++) Safefree(col_x[j]);
 		Safefree(col_x); col_x = NULL;
 		if (!symmetric) {
@@ -18475,34 +18468,33 @@ void scale(...)
 	PROTOTYPE: @
 	PPCODE:
 	{
-		bool do_center_mean = TRUE, do_scale_sd = TRUE;
+		bool do_center_mean = 1, do_scale_sd = 1;
 		NV center_val = 0.0, scale_val = 1.0;
 		size_t data_items = items;
-		// 1. Parse Options Hash (if it exists as the last argument)
-		if (items > 0) {
+		if (items > 0) {// 1. Parse Options Hash (if it exists as the last argument)
 			SV*last_arg = ST(items - 1);
 			if (SvROK(last_arg) && SvTYPE(SvRV(last_arg)) == SVt_PVHV) {
 				data_items = items - 1; // Exclude hash from data processing
 				HV*opt_hv = (HV*)SvRV(last_arg);
-				// --- Parse 'center'
+				// Parse 'center'
 				SV**center_sv = hv_fetch(opt_hv, "center", 6, 0);
 				if (center_sv) {
 				  SV*val_sv = *center_sv;
 				  if (!SvOK(val_sv)) {
-						do_center_mean = FALSE; center_val = 0.0;
+						do_center_mean = 0; center_val = 0.0;
 				  } else {
 						char *str = SvPV_nolen(val_sv);
 						//Trap booleans and empty strings before numeric checks
 						if (str_ieq_ascii(str, "mean") || str_ieq_ascii(str, "true") || strcmp(str, "1") == 0) {
-							 do_center_mean = TRUE;
+							 do_center_mean = 1;
 						} else if (str_ieq_ascii(str, "none") || str_ieq_ascii(str, "false") || strcmp(str, "0") == 0 || strcmp(str, "") == 0) {
-							 do_center_mean = FALSE; center_val = 0.0;
+							 do_center_mean = 0; center_val = 0.0;
 						} else if (looks_like_number(val_sv)) {
-							 do_center_mean = FALSE; center_val = SvNV(val_sv);
+							 do_center_mean = 0; center_val = SvNV(val_sv);
 						} else if (SvTRUE(val_sv)) {
-							 do_center_mean = TRUE;
+							 do_center_mean = 1;
 						} else {
-							 do_center_mean = FALSE; center_val = 0.0;
+							 do_center_mean = 0; center_val = 0.0;
 						}
 				  }
 				}
@@ -18511,27 +18503,27 @@ void scale(...)
 				if (scale_sv) {
 				  SV*val_sv = *scale_sv;
 				  if (!SvOK(val_sv)) {
-						do_scale_sd = FALSE; scale_val = 1.0;
+						do_scale_sd = 0; scale_val = 1.0;
 				  } else {
 						char *str = SvPV_nolen(val_sv);
 						if (str_ieq_ascii(str, "sd") || str_ieq_ascii(str, "true") || strcmp(str, "1") == 0) {
-							 do_scale_sd = TRUE;
+							 do_scale_sd = 1;
 						} else if (str_ieq_ascii(str, "none") || str_ieq_ascii(str, "false") || strcmp(str, "0") == 0 || strcmp(str, "") == 0) {
-							 do_scale_sd = FALSE; scale_val = 1.0;
+							 do_scale_sd = 0; scale_val = 1.0;
 						} else if (looks_like_number(val_sv)) {
-							 do_scale_sd = FALSE; scale_val = SvNV(val_sv);
+							 do_scale_sd = 0; scale_val = SvNV(val_sv);
 							 if (scale_val == 0.0) scale_val = 1.0; //Prevent Division By Zero
 						} else if (SvTRUE(val_sv)) {
-							 do_scale_sd = TRUE;
+							 do_scale_sd = 1;
 						} else {
-							 do_scale_sd = FALSE; scale_val = 1.0;
+							 do_scale_sd = 0; scale_val = 1.0;
 						}
 				  }
 				}
 			}
 		}
 		// 2. Detect if the input is a Matrix (Array of Arrays)
-		bool is_matrix = FALSE;
+		bool is_matrix = 0;
 		if (data_items == 1) {
 			SV*first_arg = ST(0);
 			if (SvROK(first_arg) && SvTYPE(SvRV(first_arg)) == SVt_PVAV) {
@@ -18544,8 +18536,7 @@ void scale(...)
 				 }
 			}
 		}
-		if (is_matrix) {
-			// MATRIX MODE: Scale columns independently (Just like R)
+		if (is_matrix) {// MATRIX MODE: Scale columns independently (Just like R)
 			AV*mat_av = (AV*)SvRV(ST(0));
 			size_t nrow = av_len(mat_av) + 1, ncol = 0;
 			SV**first_row = av_fetch(mat_av, 0, 0);
@@ -18560,8 +18551,7 @@ void scale(...)
 				av_extend(row_ptrs[r], ncol - 1);
 				av_push(result_av, newRV_noinc((SV*)row_ptrs[r]));
 			}
-			// Calculate and apply scale per column
-			for (size_t c = 0; c < ncol; c++) {
+			for (size_t c = 0; c < ncol; c++) {// Calculate and apply scale per column
 				 NV col_sum = 0.0;
 				 NV *col_data;
 				 Newx(col_data, nrow, NV);
@@ -18577,7 +18567,6 @@ void scale(...)
 					 }
 					 col_sum += col_data[r];
 				 }
-
 				 NV col_center = do_center_mean ? (col_sum / nrow) : center_val;
 				 NV col_scale = scale_val;
 				 // Calculate Standard Deviation for this specific column if needed
@@ -18606,8 +18595,7 @@ void scale(...)
 			// Push the resulting matrix as a single Reference onto the Perl stack
 			EXTEND(SP, 1);
 			PUSHs(sv_2mortal(newRV_noinc((SV*)result_av)));
-		} else {
-			// FLAT LIST MODE: Original functionality
+		} else {// FLAT LIST MODE: Original functionality
 			size_t total_count = 0, k = 0;
 			NV *nums;
 			NV sum = 0.0;
@@ -18670,8 +18658,7 @@ SV* matrix(...)
 CODE:
 	SV*data_sv = NULL;
 	size_t nrow = 0, ncol = 0;
-	bool byrow = FALSE, nrow_set = FALSE, ncol_set = FALSE;
-
+	bool byrow = 0, nrow_set = 0, ncol_set = 0;
 	//Hybrid Argument Parser
 	if (items > 0 && SvROK(ST(0)) && SvTYPE(SvRV(ST(0))) == SVt_PVAV) {
 		//POSITIONAL: matrix($data_ref, $nrow, $ncol, $byrow)
@@ -18689,7 +18676,7 @@ CODE:
 		}
 	} else if (items % 2 == 0) {// NAMED: matrix(data => [...], nrow => $n, ncol => $m)
 		for (Stack_off_t i = 0; i < items; i += 2) {
-			char*key = SvPV_nolen(ST(i));
+			char*restrict key = SvPV_nolen(ST(i));
 			SV*val   = ST(i + 1);
 			if (strEQ(key, "data")) {
 				 data_sv = val;
@@ -18740,8 +18727,7 @@ CODE:
 	}
 	// Fill the matrix
 	size_t total_cells = nrow * ncol;
-	for (size_t i = 0; i < total_cells; i++) {
-	// Vector recycling logic
+	for (size_t i = 0; i < total_cells; i++) {// Vector recycling logic
 		SV**fetched = av_fetch(data_av, i % data_len, 0);
 		SV*val = fetched ? newSVsv(*fetched) : newSV(0);
 		if (byrow) {
@@ -18761,43 +18747,39 @@ OUTPUT:
 SV *lm(...)
 	CODE:
 	{
-		const char *formula = NULL;
+		const char *restrict formula = NULL;
 		SV   *data_sv = NULL;
 		char *f_cpy   = NULL;
-		char *lhs = NULL, *rhs = NULL;
-		char **terms = NULL, **uniq_terms = NULL;
+		char *lhs = NULL, *rhs = NULL, **terms = NULL, **uniq_terms = NULL;
 		LmDesign *design = NULL;
 		unsigned int num_terms = 0, num_uniq = 0, p = 0;
 		size_t n = 0, valid_n = 0, i, j, k;
-		bool has_intercept = TRUE;
-		char **row_names = NULL, **valid_row_names = NULL;
+		bool has_intercept = 1;
+		char **row_names = NULL, **restrict valid_row_names = NULL;
 		HV  **row_hashes = NULL;
 		HV   *data_hoa = NULL;
 		NV   *X = NULL, *Y = NULL, *XtX = NULL, *XtY = NULL;
-		bool *aliased = NULL;
+		bool *restrict aliased = NULL;
 		NV   *beta = NULL;
 		int   final_rank = 0, df_res = 0;
 		HV   *res_hv, *coef_hv, *fitted_hv, *resid_hv, *summary_hv;
 		AV   *terms_av;
 		HV   *xlevels_hv = NULL;
 		NV    rss = 0.0, rse_sq = 0.0;
-
 		if (items % 2 != 0)
 			croak("Usage: lm(formula => 'mpg ~ wt * hp', data => \\%%mtcars)");
-
 		for (I32 i_arg = 0; i_arg < items; i_arg += 2) {
-			const char *key = SvPV_nolen(ST(i_arg));
-			SV         *val = ST(i_arg + 1);
+			const char *restrict key = SvPV_nolen(ST(i_arg));
+			SV *val = ST(i_arg + 1);
 			if      (strEQ(key, "formula")) formula = SvPV_nolen(val);
 			else if (strEQ(key, "data"))    data_sv = val;
 			else croak("lm: unknown argument '%s'", key);
 		}
 		if (!formula) croak("lm: formula is required");
 		if (!data_sv || !SvROK(data_sv)) croak("lm: data is required and must be a reference");
-
-		/*Split the formula before touching the data: a malformed one croaks
-		with nothing else allocated. '.' needs the columns, so the term list
-		has to wait until after the rows are read.*/
+	/*Split the formula before touching the data: a malformed one croaks
+	with nothing else allocated. '.' needs the columns, so the term list
+	has to wait until after the rows are read.*/
 		f_cpy = lm_formula_split(aTHX_ formula, "lm", &lhs, &rhs, &has_intercept);
 		n = lm_read_rows(aTHX_ data_sv, "lm", f_cpy, &data_hoa, &row_hashes, &row_names);
 		lm_formula_terms(aTHX_ rhs, lhs, data_hoa, row_hashes, n, has_intercept, "lm",
@@ -18900,7 +18882,7 @@ SV *lm(...)
 			r_squared = 0.0; adj_r_squared = 0.0;
 		}
 		for (j = 0; j < p; j++) {
-			const char *cname = design->col[j].name;
+			const char *restrict cname = design->col[j].name;
 			hv_store(coef_hv, cname, strlen(cname), newSVnv(beta[j]), 0);
 			av_push(terms_av, newSVpv(cname, 0));
 			HV *row_hv = newHV();
@@ -19095,7 +19077,7 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 	unsigned int term_cap = 64, exp_cap = 64, num_terms = 0, num_uniq = 0, p = 0, p_exp = 0;
 	size_t n = 0, valid_n = 0, i, j;
 	bool has_intercept = TRUE;
-	char **row_names = NULL;
+	char **restrict row_names = NULL;
 	HV **row_hashes = NULL;
 	HV *data_hoa = NULL;
 	SV *ref = NULL;
@@ -19555,12 +19537,12 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 		hv_stores(ret_hash, "group_stats", newRV_noinc((SV*)gs_hv));
 	}
 	/*
-	 NEW: predict-compatible output -- coefficients, fitted.values, xlevels, family
+	 predict-compatible output -- coefficients, fitted.values, xlevels, family
 	 X_mat now holds R (rows 0..rank-1, original column index, original units);
 	 Y holds Q'y (effects in y[0..rank-1]). Recover beta by back-substitution.
 	*/
 	{
-		size_t *col_of_rank = (size_t*)safemalloc((rank ? (size_t)rank : 1) * sizeof(size_t));
+		size_t *restrict col_of_rank = (size_t*)safemalloc((rank ? (size_t)rank : 1) * sizeof(size_t));
 		NV     *beta        = (NV*)safemalloc((p_exp ? p_exp : 1) * sizeof(NV));
 		for (j = 0; j < p_exp; j++) {
 			beta[j] = NAN;
@@ -19643,7 +19625,7 @@ CODE:
 
 	for (Stack_off_t i = 1; i < items; i += 2) {
 		if (i + 1 >= items) croak("fisher_test: odd number of named arguments");
-		const char *key = SvPV_nolen(ST(i));
+		const char *restrict key = SvPV_nolen(ST(i));
 		SV *val = ST(i + 1);
 		if (strEQ(key, "conf_level") || strEQ(key, "conf.level")) {
 			conf_level = SvNV(val);
@@ -19666,7 +19648,7 @@ CODE:
 	dimensions >= 2x2 are supported (2x2 keeps the exact odds-ratio path;
 	everything else uses the R x C enumeration below).*/
 	unsigned nrow = 0, ncol = 0;
-	long *cells = NULL;
+	long *restrict cells = NULL;
 
 	if (SvTYPE(deref) == SVt_PVAV) {
 	  AV *outer = (AV *)deref;
@@ -19678,7 +19660,7 @@ CODE:
 	  ncol = (int)(av_len((AV *)SvRV(*r0p)) + 1);
 	  if (ncol < 2) croak("Each row must have at least 2 columns");
 	  Newx(cells, (size_t)nrow * ncol, long);
-	  for (unsigned int rr = 0; rr < nrow; rr++) {
+	  for (unsigned rr = 0; rr < nrow; rr++) {
 		   SV **rp = av_fetch(outer, rr, 0);
 		   if (!rp || !SvROK(*rp) || SvTYPE(SvRV(*rp)) != SVt_PVAV) {
 			   Safefree(cells);
@@ -19756,7 +19738,7 @@ CODE:
 	}
 
 	long total = 0;
-	for (unsigned int i = 0; i < nrow * ncol; i++) total += cells[i];
+	for (unsigned i = 0; i < nrow * ncol; i++) total += cells[i];
 	if (total == 0) { Safefree(cells); croak("fisher_test: table is all zeros"); }
 	HV *ret = newHV();
 	hv_stores(ret, "method", newSVpv("Fisher's Exact Test for Count Data", 0));
@@ -19812,7 +19794,7 @@ CODE:
 
 	if (items % 2 != 0) croak("Usage: power_t_test(n => 30, delta => 0.5, sd => 1.0, ...)");
 	for (unsigned short int i = 0; i < items; i += 2) {
-	  const char* key = SvPV_nolen(ST(i));
+	  const char*restrict key = SvPV_nolen(ST(i));
 	  SV* val = ST(i+1);
 
 	  if      (strEQ(key, "n"))           sv_n = val;
@@ -19833,7 +19815,7 @@ CODE:
 	bool is_null_sd = (sv_sd && !SvOK(sv_sd)); 
 	bool is_null_sig_level = (sv_sig_level && !SvOK(sv_sig_level));
 
-	unsigned int missing_count = 0;
+	unsigned short int missing_count = 0;
 	if (is_null_n) missing_count++;
 	if (is_null_delta) missing_count++;
 	if (is_null_power) missing_count++;
@@ -19959,8 +19941,7 @@ CODE:
 {
 	SV *x_sv = NULL, *g_sv = NULL, *h_sv = NULL;
 	Stack_off_t arg_idx = 0;
-	/* 1. Shift positional arguments
-	    Accept either: (arrayref, arrayref) or (hashref)*/
+	// 1. Shift positional arguments; Accept either: (arrayref, arrayref) or (hashref)
 	if (arg_idx < items && SvROK(ST(arg_idx))) {
 		svtype t = SvTYPE(SvRV(ST(arg_idx)));
 		if (t == SVt_PVAV) {
@@ -20019,15 +20000,15 @@ CODE:
 		hv_iterinit(h_hv);
 		while ((he = hv_iternext(h_hv))) {
 			STRLEN klen;
-			const char *key_str = HePV(he, klen);
+			const char *restrict key_str = HePV(he, klen);
 			group_names[group_id] = savepvn(key_str, klen); // Save string key
 			AV *av  = (AV*)SvRV(HeVAL(he));
-			size_t       n_g = (size_t)(av_len(av) + 1);
+			size_t n_g = (size_t)(av_len(av) + 1);
 			for (size_t i = 0; i < n_g; i++) {
 				 SV **el = av_fetch(av, i, 0);
 				 if (el && SvOK(*el) && looks_like_number(*el)) {
 					 ri[valid_n].val = SvNV(*el);
-					 ri[valid_n].idx = group_id;   //group identity
+					 ri[valid_n].idx = group_id; //group identity
 					 valid_n++;
 				 }
 			}
@@ -20155,15 +20136,13 @@ CODE:
 	SV* x_sv = NULL;
 	SV* y_sv = NULL;
 	NV ratio = 1.0, conf_level = 0.95;
-	const char* alternative = "two.sided";
+	const char*restrict alternative = "two.sided";
 	Stack_off_t arg_idx = 0;
-
 	// 1. Shift positional argument 'x' if it's an array reference
 	if (arg_idx < items && SvROK(ST(arg_idx)) && SvTYPE(SvRV(ST(arg_idx))) == SVt_PVAV) {
 	  x_sv = ST(arg_idx);
 	  arg_idx++;
 	}
-
 	// 2. Shift positional argument 'y' if it's an array reference
 	if (arg_idx < items && SvROK(ST(arg_idx)) && SvTYPE(SvRV(ST(arg_idx))) == SVt_PVAV) {
 	  y_sv = ST(arg_idx);
@@ -20173,9 +20152,9 @@ CODE:
 	if ((items - arg_idx) % 2 != 0) {
 	  croak("Usage: var_test(\\@x, \\@y, key => value, ...)");
 	}
-	// --- Parse named arguments from the remaining flat stack ---
+	// Parse named arguments from the remaining flat stack
 	for (; arg_idx < items; arg_idx += 2) {
-	  const char* key = SvPV_nolen(ST(arg_idx));
+	  const char*restrict key = SvPV_nolen(ST(arg_idx));
 	  SV* val = ST(arg_idx + 1);
 
 	  if      (strEQ(key, "x"))           x_sv        = val;
@@ -20197,9 +20176,8 @@ CODE:
 	  croak("var_test: 'conf.level' must be a single number between 0 and 1");
 	AV* x_av = (AV*)SvRV(x_sv);
 	AV* y_av = (AV*)SvRV(y_sv);
-	size_t nx_raw = av_len(x_av) + 1;
-	size_t ny_raw = av_len(y_av) + 1;
-	// --- Computation via Welford's Algorithm (ignoring NaNs) ---
+	size_t nx_raw = av_len(x_av) + 1, ny_raw = av_len(y_av) + 1;
+	// Computation via Welford's Algorithm (ignoring NaNs)
 	NV mean_x = 0.0, M2_x = 0.0;
 	size_t nx = 0;
 	for (size_t i = 0; i < nx_raw; i++) {
@@ -20291,7 +20269,6 @@ CODE:
 	if (n < 0) n = 0;
 	if (SvROK(ref)) {
 		SV *rv = SvRV(ref);
-		
 		if (SvTYPE(rv) == SVt_PVHV) {// HASH REFERENCE
 			HV *hv    = (HV *)rv;
 			unsigned count = hv_iterinit(hv);
@@ -20301,9 +20278,8 @@ CODE:
 			if (count > 0 && limit > 0) {
 				HE **entries;
 				HE  *entry;
-				unsigned i;
+				unsigned i = 0;
 				Newx(entries, count, HE *);
-				i = 0;
 				while ((entry = hv_iternext(hv))) // Collect all HE pointers in one pass
 				 entries[i++] = entry;
 
@@ -20391,7 +20367,7 @@ CODE:
 	SV*x_sv = ST(0);
 	NV mean = 0.0, sd = 1.0; //defaults
 	bool give_log = 0;
-	// --- Parse remaining named arguments from the flat stack ---
+	// --- Parse remaining named arguments from the flat stack
 	if ((items - 1) % 2 != 0) {
 	  croak("dnorm: Expected an even number of key-value named arguments after 'x'");
 	}
@@ -20678,8 +20654,8 @@ PPCODE:
 	              :                     nL;
 	if (guess > (SSize_t)1 << 16) guess = (SSize_t)1 << 16;
 
-	AV *result = NULL;			//AoH output
-	HV *out    = NULL;			//HoA output
+	AV *result = NULL; //AoH output
+	HV *out    = NULL; //HoA output
 	AV **ocol  = NULL;
 	if (out_hoa) {
 		out = newHV();
@@ -20702,17 +20678,17 @@ PPCODE:
 	J.oname = oname; J.out_hoa = out_hoa;
 	J.result = result; J.ocol = ocol;
 
-	//---- perform the join ----
+	// perform the join
 	if (how == MG_CROSS) {
 		for (SSize_t i = 0; i < nL; i++)
 			for (SSize_t j = 0; j < nR; j++)
 				mg_emit(aTHX_ &J, i, j);
 	} else {
-		/*Index the right frame: join key -> the first row carrying it, with
-		the rest of its rows chained through next[].  One IV in the hash
-		and one slot in a flat array per row, rather than an array-ref of
-		index SVs per distinct key.  Filling it backwards leaves each chain
-		in ascending row order, which is the order the rows come out in.*/
+/*Index the right frame: join key -> the first row carrying it, with
+the rest of its rows chained through next[].  One IV in the hash
+and one slot in a flat array per row, rather than an array-ref of
+index SVs per distinct key.  Filling it backwards leaves each chain
+in ascending row order, which is the order the rows come out in.*/
 		HV *ridx = (HV *)sv_2mortal((SV *)newHV());
 		SSize_t *next;
 		Newx(next, (size_t)(nR > 0 ? nR : 1), SSize_t); SAVEFREEPV(next);
@@ -20752,12 +20728,12 @@ PPCODE:
 		}
 	}
 
-	//---- hand it back ----
+	//---- hand it back
 	SV *retval;
 	if (out_hoa) {
 		retval = newRV_noinc((SV *)out);
 	} else {
-		SvREFCNT_inc((SV *)result);		//survive FREETMPS
+		SvREFCNT_inc((SV *)result); //survive FREETMPS
 		retval = newRV_noinc((SV *)result);
 	}
 
@@ -21059,7 +21035,7 @@ CODE:
 				// CASE 2b: Array of Hashes (string key) or Array of Arrays (numeric index)
 				SV*arg2 = ST(1);
 				STRLEN klen;
-				const char*key = SvPV(arg2, klen);
+				const char*restrict key = SvPV(arg2, klen);
 				for (unsigned i = 0; i < len; i++) {
 					SV**elemp = av_fetch(av, i, 0);
 					if (!elemp) continue;
@@ -21253,20 +21229,20 @@ CODE:
 	if (!SvROK(data_ref)) {
 	croak("First argument to group_by must be a reference (Array of Hashes, Hash of Arrays, or Hash of Hashes)");
 	}
-	/*Optional filters are every argument from ST(3) onward. Each must be a
-	hashref of { column => sub }; all of them are ANDed together. The
-	FOR_EACH_FILTER macro walks the arg stack directly (rather than collecting
-	into a heap array) so a croaking filter sub can't leak anything: for each
-	{ column => sub } pair the body it wraps runs with f_col (column-name SV)
-	and f_sub (sub SV) in scope and sets `keep`; pass_filter is cleared and the
-	loop breaks as soon as any sub returns false. Non-hashref args are skipped.*/
+/*Optional filters are every argument from ST(3) onward. Each must be a
+hashref of { column => sub }; all of them are ANDed together. The
+FOR_EACH_FILTER macro walks the arg stack directly (rather than collecting
+into a heap array) so a croaking filter sub can't leak anything: for each
+{ column => sub } pair the body it wraps runs with f_col (column-name SV)
+and f_sub (sub SV) in scope and sets `keep`; pass_filter is cleared and the
+loop breaks as soon as any sub returns false. Non-hashref args are skipped.*/
 	result_hv = newHV(); //2. Allocate the hash that we will return
-	//Mortalize immediately! If the callback croaks, the tmps stack will safely clean this up
+//Mortalize immediately! If the callback croaks, the tmps stack will safely clean this up
 	result_ref = sv_2mortal(newRV_noinc((SV *)result_hv)); 
 	if (SvTYPE(SvRV(data_ref)) == SVt_PVAV) { // Input is an Array of Hashes (AoH)
 		AV *data_av = (AV *)SvRV(data_ref);
 		SSize_t len = av_len(data_av) + 1;
-		// A column must exist in at least one row; a missing column name is fatal
+// A column must exist in at least one row; a missing column name is fatal
 		{
 			bool group_found = 0, target_found = 0;
 			for (SSize_t i = 0; i < len && !(group_found && target_found); i++) {
@@ -21456,7 +21432,7 @@ SV* prcomp(...)
 CODE:
 {
 	SV *x_sv = NULL;
-	bool retx = TRUE, center = TRUE, do_scale = FALSE;
+	bool retx = 1, center = 1, do_scale = 0;
 	NV tol = -1.0;
 	long rank_opt = -1;
 	Stack_off_t arg_idx = 0;
@@ -21471,7 +21447,7 @@ CODE:
 	// 2. Parse named arguments
 	if ((items - arg_idx) % 2 != 0) croak("Usage: prcomp($data, key => value, ...)");
 	for (; arg_idx < items; arg_idx += 2) {
-	  const char *key = SvPV_nolen(ST(arg_idx));
+	  const char *restrict key = SvPV_nolen(ST(arg_idx));
 	  SV *val = ST(arg_idx + 1);
 	  if      (strEQ(key, "x"))      x_sv      = val;
 	  else if (strEQ(key, "retx"))   retx      = SvTRUE(val);
@@ -21486,9 +21462,9 @@ CODE:
 	  croak("prcomp: 'x' is a required argument and must be a reference");
 
 	// 3. Detect Data Structure (AoA, AoH, HoA, HoH)
-	bool is_aoa = FALSE, is_aoh = FALSE, is_hoa = FALSE, is_hoh = FALSE;
+	bool is_aoa = 0, is_aoh = 0, is_hoa = 0, is_hoh = 0;
 	size_t n_raw = 0, p = 0;
-	char **colnames = NULL;
+	char **restrict colnames = NULL;
 	SV *ref = SvRV(x_sv);
 
 	if (SvTYPE(ref) == SVt_PVAV) {
@@ -21959,8 +21935,7 @@ SV *hoa2hoh(hoa, key)
 		HE *he;
 		SV **kv;	// per-column key SVs (mortal)
 		AV **cv;	// per-column array bodies (borrowed)
-		size_t n, i;
-		size_t ncols, ci;
+		size_t n, i, ncols, ci;
 	CODE:
 	{
 		if (!SvROK(hoa) || SvTYPE(SvRV(hoa)) != SVt_PVHV)
