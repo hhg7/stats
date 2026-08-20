@@ -7858,9 +7858,9 @@ divided by C<n>):
  b1 = g1 * ((n - 1) / n)**1.5          # type 3
 
  my @x = (1, 2, 4);
- skew(\@x, type => 1);   # 0.3818017742   plain moment ratio
- skew(\@x);              # 0.9352195296   G1, the default
- skew(\@x, type => 3);   # 0.2078265621   b1
+ skew(\@x, type => 1); # 0.3818017742   plain moment ratio
+ skew(\@x);            # 0.9352195296   G1, the default
+ skew(\@x, type => 3); # 0.2078265621   b1
 
 C<< type =E<gt> 2 >> is the estimator that is unbiased for a normal sample, which is why
 it is the default and why it is what every general-purpose statistics package

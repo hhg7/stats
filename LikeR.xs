@@ -21261,9 +21261,7 @@ CODE:
 	and f_sub (sub SV) in scope and sets `keep`; pass_filter is cleared and the
 	loop breaks as soon as any sub returns false. Non-hashref args are skipped.*/
 	result_hv = newHV(); //2. Allocate the hash that we will return
-
-	/*Mortalize immediately! If the callback croaks, the tmps stack
-	will safely clean this up.*/
+	//Mortalize immediately! If the callback croaks, the tmps stack will safely clean this up
 	result_ref = sv_2mortal(newRV_noinc((SV *)result_hv)); 
 	if (SvTYPE(SvRV(data_ref)) == SVt_PVAV) { // Input is an Array of Hashes (AoH)
 		AV *data_av = (AV *)SvRV(data_ref);
@@ -21828,8 +21826,7 @@ CODE:
 	} else if (ref_type == SVt_PVAV) { // Array-of-Arrays
 		AV     *in_av  = (AV *)SvRV(input_ref);
 		AV     *out_av = newAV();
-		size_t nrows  = av_len(in_av) + 1;
-		size_t ncols  = 0;
+		size_t nrows  = av_len(in_av) + 1, ncols  = 0;
 		retval_sv = sv_2mortal(newRV_noinc((SV *)out_av));
 		if (nrows > 0) {// Pass 1: validate all rows; fix ncols from row 0
 			{
@@ -21915,7 +21912,7 @@ SV *hoa2aoh(hoa)
 		SAVEFREEPV(kv);
 		Newx(cv, ncols ? ncols : 1, AV *);
 		SAVEFREEPV(cv);
-		// one pass to collect columns and find the longest */
+		// one pass to collect columns and find the longest
 		n  = 0;
 		ci = 0;
 		hv_iterinit(in);
@@ -22038,7 +22035,7 @@ void vals(data, colname_sv)
 	SV *colname_sv
 PREINIT:
 	bool is_aoh = 0, is_hoh = 0;
-	const char *colname = NULL;
+	const char *restrict colname = NULL;
 	STRLEN collen = 0;
 	AV *src_av = NULL;
 	HV *src_hv = NULL;
@@ -22051,7 +22048,7 @@ PPCODE:
 	colname = SvPV(colname_sv, collen);		//kept for the error message
 	if (!SvROK(data))
 		croak("vals: first argument must be an array-ref (AoH) or hash-ref (HoA, HoH)");
-	//---- classify $data: AoH (arrayref) vs HoA/HoH (hashref) --------
+//---- classify $data: AoH (arrayref) vs HoA/HoH (hashref) --------
 	if (SvTYPE(SvRV(data)) == SVt_PVAV) {
 		is_aoh = 1;
 		src_av = (AV *)SvRV(data);
@@ -22079,8 +22076,7 @@ PPCODE:
 		for (SSize_t i = 0; i < n; i++) {
 			SV **rp  = av_fetch(src_av, i, 0);
 			SV *row = (rp && *rp) ? *rp : &PL_sv_undef;
-			/* strict: a row must be a hash-ref, else fail here with the index
-			 rather than returning undef and letting the caller die vaguely*/
+// a row must be a hash-ref, else fail here with the index rather than returning undef and letting the caller die vaguely
 			if (!SvOK(row))
 				croak("vals: AoH row %" IVdf " is undef (expected a hash-ref)", (IV)i);
 			if (!SvROK(row) || SvTYPE(SvRV(row)) != SVt_PVHV)
@@ -22372,7 +22368,7 @@ CODE:
 	if ((items - 1) % 2 != 0)
 		croak("pnorm: Expected an even number of key-value named arguments after 'x'");
 	for (Stack_off_t i = 1; i < items; i += 2) {
-		const char *key = SvPV_nolen(ST(i));
+		const char *restrict key = SvPV_nolen(ST(i));
 		SV *val = ST(i + 1);
 		if      (strEQ(key, "mean"))                              mean       = SvNV(val);
 		else if (strEQ(key, "sd"))                                sd         = SvNV(val);

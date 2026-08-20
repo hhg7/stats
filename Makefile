@@ -178,8 +178,7 @@ O_FILES  = LikeR.o \
 	write_table.section.o
 H_FILES  = ppport.h
 MAN1PODS = 
-MAN3PODS = biplot.pl \
-	lib/Stats/LikeR.pm \
+MAN3PODS = lib/Stats/LikeR.pm \
 	read.me.pod
 
 # Where to build things
@@ -199,64 +198,8 @@ PERL_ARCHIVE       =
 PERL_ARCHIVE_AFTER = 
 
 
-TO_INST_PM = TukeyHSD.pl \
-	add_data.pl \
-	aoh2hoh.pl \
-	aov.pl \
-	benchmark.pl \
-	biplot.pl \
-	cfilter.pl \
-	chisq.test.pl \
-	col2col.pl \
-	cor.pl \
-	cor.test.pl \
-	density.plots.pl \
-	dnorm.pl \
-	examples.pl \
-	fisher.test.pl \
-	glm.pl \
-	group_by.pl \
-	hist.pl \
-	kruskal.pl \
-	ks.test.pl \
-	lang.compare.pl \
-	lib/Stats/LikeR.pm \
-	ljoin.pl \
-	lm.pl \
-	matrix.pl \
-	md2pod.pl \
-	melt.pl \
-	merge.pl \
-	min.pl \
-	mode.pl \
-	oneway_test.pl \
-	plot.scaling.pl \
-	power.t.test.pl \
-	quantile.pl \
-	rank.pl \
-	read.me.pod \
-	read.table.pl \
-	rnorm.pl \
-	runif.pl \
-	sample.pl \
-	scale.data.pl \
-	scale.pl \
-	sd.pl \
-	skew.kurtosis.plots.pl \
-	summary.pl \
-	t.test.pl \
-	t.test.plots.pl \
-	test.all.perls.pl \
-	titanic.pl \
-	var.pl \
-	var.test.pl \
-	vers.test.pl \
-	view.pl \
-	wilcox.text.pl \
-	write.table.pl \
-	xlsx.write.pl \
-	xs.check.pl \
-	xs.sxn.pl
+TO_INST_PM = lib/Stats/LikeR.pm \
+	read.me.pod
 PERL_ARCHLIBDEP = /home/con/perl5/perlbrew/perls/perl-5.44.0/lib/5.44.0/x86_64-linux
 PERL_INCDEP = /home/con/perl5/perlbrew/perls/perl-5.44.0/lib/5.44.0/x86_64-linux/CORE
 
@@ -580,11 +523,9 @@ POD2MAN = $(POD2MAN_EXE)
 
 
 manifypods : pure_all config  \
-	biplot.pl \
 	lib/Stats/LikeR.pm \
 	read.me.pod
 	$(NOECHO) $(POD2MAN) --section=$(MAN3SECTION) --perm_rw=$(PERM_RW) -u \
-	  biplot.pl $(INST_MAN3DIR)/Stats::biplot.$(MAN3EXT) \
 	  lib/Stats/LikeR.pm $(INST_MAN3DIR)/Stats::LikeR.$(MAN3EXT) \
 	  read.me.pod $(INST_MAN3DIR)/Stats::read.me.$(MAN3EXT) 
 
@@ -1167,69 +1108,8 @@ pm_to_blib : $(FIRST_MAKEFILE) $(TO_INST_PM)
 	  -e '@parts=splice @ARGV,0,$$i+1;' \
 	  -e 'pop @parts; $$filter=join q{ }, map qq{"$$_"}, @parts;' \
 	  -e 'pm_to_blib({@ARGV}, '\''$(INST_LIB)/auto'\'', $$filter, '\''$(PERM_DIR)'\'')' -- $(PM_FILTER) -- \
-	  'TukeyHSD.pl' '$(INST_LIB)/Stats/TukeyHSD.pl' \
-	  'add_data.pl' '$(INST_LIB)/Stats/add_data.pl' \
-	  'aoh2hoh.pl' '$(INST_LIB)/Stats/aoh2hoh.pl' \
-	  'aov.pl' '$(INST_LIB)/Stats/aov.pl' \
-	  'benchmark.pl' '$(INST_LIB)/Stats/benchmark.pl' \
-	  'biplot.pl' '$(INST_LIB)/Stats/biplot.pl' \
-	  'cfilter.pl' '$(INST_LIB)/Stats/cfilter.pl' \
-	  'chisq.test.pl' '$(INST_LIB)/Stats/chisq.test.pl' \
-	  'col2col.pl' '$(INST_LIB)/Stats/col2col.pl' \
-	  'cor.pl' '$(INST_LIB)/Stats/cor.pl' \
-	  'cor.test.pl' '$(INST_LIB)/Stats/cor.test.pl' \
-	  'density.plots.pl' '$(INST_LIB)/Stats/density.plots.pl' \
-	  'dnorm.pl' '$(INST_LIB)/Stats/dnorm.pl' \
-	  'examples.pl' '$(INST_LIB)/Stats/examples.pl' \
-	  'fisher.test.pl' '$(INST_LIB)/Stats/fisher.test.pl' \
-	  'glm.pl' '$(INST_LIB)/Stats/glm.pl' \
-	  'group_by.pl' '$(INST_LIB)/Stats/group_by.pl' \
-	  'hist.pl' '$(INST_LIB)/Stats/hist.pl' \
-	  'kruskal.pl' '$(INST_LIB)/Stats/kruskal.pl' \
-	  'ks.test.pl' '$(INST_LIB)/Stats/ks.test.pl' \
-	  'lang.compare.pl' '$(INST_LIB)/Stats/lang.compare.pl' \
 	  'lib/Stats/LikeR.pm' 'blib/lib/Stats/LikeR.pm' \
-	  'ljoin.pl' '$(INST_LIB)/Stats/ljoin.pl' \
-	  'lm.pl' '$(INST_LIB)/Stats/lm.pl' \
-	  'matrix.pl' '$(INST_LIB)/Stats/matrix.pl' \
-	  'md2pod.pl' '$(INST_LIB)/Stats/md2pod.pl' \
-	  'melt.pl' '$(INST_LIB)/Stats/melt.pl' \
-	  'merge.pl' '$(INST_LIB)/Stats/merge.pl' \
-	  'min.pl' '$(INST_LIB)/Stats/min.pl' \
-	  'mode.pl' '$(INST_LIB)/Stats/mode.pl' \
-	  'oneway_test.pl' '$(INST_LIB)/Stats/oneway_test.pl' \
-	  'plot.scaling.pl' '$(INST_LIB)/Stats/plot.scaling.pl' \
-	  'power.t.test.pl' '$(INST_LIB)/Stats/power.t.test.pl' \
-	  'quantile.pl' '$(INST_LIB)/Stats/quantile.pl' \
-	  'rank.pl' '$(INST_LIB)/Stats/rank.pl' \
-	  'read.me.pod' '$(INST_LIB)/Stats/read.me.pod' \
-	  'read.table.pl' '$(INST_LIB)/Stats/read.table.pl' \
-	  'rnorm.pl' '$(INST_LIB)/Stats/rnorm.pl' \
-	  'runif.pl' '$(INST_LIB)/Stats/runif.pl' \
-	  'sample.pl' '$(INST_LIB)/Stats/sample.pl' \
-	  'scale.data.pl' '$(INST_LIB)/Stats/scale.data.pl' \
-	  'scale.pl' '$(INST_LIB)/Stats/scale.pl' \
-	  'sd.pl' '$(INST_LIB)/Stats/sd.pl' \
-	  'skew.kurtosis.plots.pl' '$(INST_LIB)/Stats/skew.kurtosis.plots.pl' \
-	  'summary.pl' '$(INST_LIB)/Stats/summary.pl' \
-	  't.test.pl' '$(INST_LIB)/Stats/t.test.pl' \
-	  't.test.plots.pl' '$(INST_LIB)/Stats/t.test.plots.pl' \
-	  'test.all.perls.pl' '$(INST_LIB)/Stats/test.all.perls.pl' \
-	  'titanic.pl' '$(INST_LIB)/Stats/titanic.pl' \
-	  'var.pl' '$(INST_LIB)/Stats/var.pl' \
-	  'var.test.pl' '$(INST_LIB)/Stats/var.test.pl' 
-	$(NOECHO) $(ABSPERLRUN) -MExtUtils::Install -e '$$i=0; $$n=$$#ARGV; $$i++ until $$i > $$n or $$ARGV[$$i] eq q{--};' \
-	  -e 'die q{Failed to find -- in }.join(q{|},@ARGV) if $$i > $$n;' \
-	  -e '@parts=splice @ARGV,0,$$i+1;' \
-	  -e 'pop @parts; $$filter=join q{ }, map qq{"$$_"}, @parts;' \
-	  -e 'pm_to_blib({@ARGV}, '\''$(INST_LIB)/auto'\'', $$filter, '\''$(PERM_DIR)'\'')' -- $(PM_FILTER) -- \
-	  'vers.test.pl' '$(INST_LIB)/Stats/vers.test.pl' \
-	  'view.pl' '$(INST_LIB)/Stats/view.pl' \
-	  'wilcox.text.pl' '$(INST_LIB)/Stats/wilcox.text.pl' \
-	  'write.table.pl' '$(INST_LIB)/Stats/write.table.pl' \
-	  'xlsx.write.pl' '$(INST_LIB)/Stats/xlsx.write.pl' \
-	  'xs.check.pl' '$(INST_LIB)/Stats/xs.check.pl' \
-	  'xs.sxn.pl' '$(INST_LIB)/Stats/xs.sxn.pl' 
+	  'read.me.pod' '$(INST_LIB)/Stats/read.me.pod' 
 	$(NOECHO) $(TOUCH) pm_to_blib
 
 
