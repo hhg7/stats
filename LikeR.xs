@@ -5405,7 +5405,7 @@ static void S_emit_row(pTHX_ AV **rowp, SV *field, bool use_cb, SV *callback, AV
 static void lm_append(pTHX_ char **bufp, size_t *lenp, size_t *capp, const char *s){
 	size_t slen = strlen(s);
 	size_t sep  = (*lenp > 0) ? 1 : 0;
-	size_t need = *lenp + sep + slen + 1;            //+ NUL
+	size_t need = *lenp + sep + slen + 1; //+ NUL
 	if (need > *capp) {
 		size_t nc = (*capp > 0) ? *capp : 64;
 		while (nc < need) nc *= 2;
@@ -5419,7 +5419,7 @@ static void lm_append(pTHX_ char **bufp, size_t *lenp, size_t *capp, const char 
 	*lenp += sep + slen;
 }
 
-/*---------------------------------------------------------------------------
+/*
 Formula and data-shape handling shared by lm() and glm().
 
 The two functions differ only in what they do with the design matrix once it
@@ -5427,7 +5427,7 @@ exists, so everything up to that point is here: how a data argument is read,
 how its rows are named, and how a formula string becomes a term list. Keeping
 one copy is what makes a fit's fitted.values, residuals and deviance.resid
 key on the same names whichever function produced them.
--------------------------------------------------------------------------*/
+*/
 
 /*Column names that label an observation rather than measure it. A HoA with one
 of these among its keys -- or an AoH whose rows carry one -- names its rows
@@ -5655,13 +5655,10 @@ expanded until the columns are known. rhs is consumed in place (strtok).
 *terms_out and *uniq_out come back as Newx arrays of savepv'd strings; the
 caller frees the strings and then the arrays.*/
 static void lm_formula_terms(pTHX_ char *restrict rhs, const char *restrict lhs,
-                             HV *data_hoa, HV **row_hashes,
-                             size_t n, bool has_intercept,
-                             const char *restrict fname,
-                             char **restrict *restrict terms_out,
-                             unsigned int *restrict num_terms_out,
-                             char **restrict *restrict uniq_out,
-                             unsigned int *restrict num_uniq_out) {
+   HV *data_hoa, HV **row_hashes, size_t n, bool has_intercept,
+   const char *restrict fname, char **restrict *restrict terms_out,
+   unsigned int *restrict num_terms_out, char **restrict *restrict uniq_out,
+   unsigned int *restrict num_uniq_out) {
 	char **restrict terms = NULL, **restrict uniq_terms = NULL;
 	unsigned int term_cap = 64, num_terms = 0, num_uniq = 0, i, j;
 	char *rhs_expanded = NULL;
@@ -5795,8 +5792,7 @@ static void cs_merge(pTHX_ size_t *idx, size_t *tmp,
 }
 
 static void cs_msort(pTHX_ size_t *restrict idx, size_t *restrict tmp,
-					 size_t lo, size_t hi,
-					 cs_cmp_fn cmp, void *restrict ctx) {
+					 size_t lo, size_t hi, cs_cmp_fn cmp, void *restrict ctx) {
 	if (hi - lo < 2) return;
 	size_t mid = lo + (hi - lo) / 2;
 	cs_msort(aTHX_ idx, tmp, lo, mid, cmp, ctx);
@@ -5818,7 +5814,7 @@ static void cs_bind_ab(pTHX_ CV *cv, SV **a_out, SV **b_out) {
 	STRLEN plen = strlen(pkg);
 
 	//build "<pkg>::a" / "<pkg>::b" so the GVs land in the right stash
-	char *buf;
+	char *restrict buf;
 	Newx(buf, plen + 4, char);
 	SAVEFREEPV(buf);
 	memcpy(buf, pkg, plen);
@@ -5870,7 +5866,7 @@ XS(cs_uninit_catcher) {
 	XSRETURN_EMPTY;
 }
 
-static int cs_row_touches_undef(pTHX_ cs_code_ctx *c, size_t i) {
+static bool cs_row_touches_undef(pTHX_ cs_code_ctx *c, size_t i) {
 	sv_setsv(c->a_sv, c->rows[i]);
 	sv_setsv(c->b_sv, c->rows[i]);
 
@@ -5894,15 +5890,14 @@ static int cs_row_touches_undef(pTHX_ cs_code_ctx *c, size_t i) {
 	if (count) (void)POPs;
 	PUTBACK;
 
-	int undef = SvTRUE(flag) ? 1 : 0;
+	bool undef = SvTRUE(flag) ? 1 : 0;
 	if (SvTRUE(ERRSV)) {
 		STRLEN el;
 		const char *em = SvPV(ERRSV, el);
 		if (strstr(em, "uninitialized")) {
 			undef = 1;
 			sv_setsv(ERRSV, &PL_sv_no);	//clear $@
-		} else {
-			/*a genuine error from the comparator: propagate it verbatim.
+		} else {/*a genuine error from the comparator: propagate it verbatim.
 			croak reads the string now; the die unwinds the save stack,
 			which restores PL_warnhook for us.*/
 			croak("%s", em);
@@ -10769,7 +10764,7 @@ PPCODE:
 			cs_msort(aTHX_ idx, tmp, 0, (size_t)n, cs_col_cmp, &ctx);
 		}
 	}// end if (n > 1)
-// ---- materialize the result in the requested shape
+// materialize the result in the requested shape
 	result = cs_materialize(aTHX_ out_shape, in_shape, src_av,
 	                        colkeys, colavs, ncols, idx, (size_t)n);
 	FREETMPS;
@@ -10886,8 +10881,7 @@ SV *cfilter(data, ...)
 					(void)hv_store_ent(cellmap, ck, newRV_noinc((SV*)col), 0);
 				}
 			}
-		} else {
-			// row-major: collect the rows in a stable order, then build per column.
+		} else {// row-major: collect the rows in a stable order, then build per column.
 			AV *rows = newAV();
 			if (kind == 0) {
 				AV *a = (AV*)rv;
@@ -10908,8 +10902,7 @@ SV *cfilter(data, ...)
 				}
 			}
 			nrows = av_len(rows) + 1;
-			// union of columns, in first-seen order.
-			{
+			{// union of columns, in first-seen order.
 				HV *seen = newHV();
 				for (SSize_t r = 0; r < nrows; r++) {
 					HV *row = (HV*)SvRV(*av_fetch(rows, r, 0));
@@ -10990,7 +10983,7 @@ SV *cfilter(data, ...)
 				AV *cells = (AV*)SvRV(HeVAL(hv_fetch_ent(cellmap, ck, 0, 0)));
 				bool pass;
 				if (against_av) {
-					// two columns, pairwise complete: rows defined in BOTH.
+					// two columns, pairwise complete: rows defined in BOTH
 					AV *a1 = newAV(), *a2 = newAV();
 					for (SSize_t r = 0; r < nrows; r++) {
 						SV **p1 = av_fetch(cells, r, 0);
@@ -11003,17 +10996,15 @@ SV *cfilter(data, ...)
 					pass = cf_pred(aTHX_ cv_sv, a1, a2, ck);
 					SvREFCNT_dec((SV*)a1);
 					SvREFCNT_dec((SV*)a2);
-				} else if (na_omit) {
-					// one column, defined cells only.
+				} else if (na_omit) {// one column, defined cells only
 					AV *a1 = newAV();
 					for (SSize_t r = 0; r < nrows; r++) {
 						SV **p = av_fetch(cells, r, 0);
 						if (p && *p && SvOK(*p)) av_push(a1, newSVsv(*p));
 					}
 					pass = cf_pred(aTHX_ cv_sv, a1, NULL, ck);
-					SvREFCNT_dec((SV*)a1);
+					SvREFCNT_dec((SV*)a1);// one column, every cell including undef
 				} else {
-					// one column, every cell including undef.
 					pass = cf_pred(aTHX_ cv_sv, cells, NULL, ck);
 				}
 				if (removing ? !pass : pass) (void)hv_store_ent(keepset, ck, newSViv(1), 0);
@@ -11205,8 +11196,7 @@ PPCODE:
 	its {code} field; either way we end up calling a single CV per row --
 	unless the col() object also carries a {plan}, which is the same test as
 	data and runs in C without touching perl at all.*/
-	SV *code = NULL;
-	SV *plan = NULL;
+	SV *code = NULL, *plan = NULL;
 	if (predarg && SvROK(predarg) && SvTYPE(SvRV(predarg)) == SVt_PVCV) {
 		code = predarg;
 	} else if (predarg && sv_isobject(predarg)
@@ -11222,7 +11212,7 @@ PPCODE:
 	}
 
 	SV *ref = SvRV(df);
-	int in_shape;
+	short int in_shape;
 	HV *inhv = NULL;
 	AV *inav = NULL;
 	if (SvTYPE(ref) == SVt_PVAV) {
@@ -11262,8 +11252,7 @@ PPCODE:
 		/*AoH -> HoA also needs the union of the columns, taken from every row
 		and not just the kept ones, so a column that only dropped rows had
 		still appears (as a column of undefs) in the output.*/
-		HV *out   = NULL;
-		HV *reg   = NULL;
+		HV *out   = NULL, *reg = NULL;
 		AV *order = NULL;
 		if (out_shape == FLT_HOA) {
 			out   = (HV*)sv_2mortal((SV*)newHV());
@@ -11304,7 +11293,7 @@ PPCODE:
 			result = newRV_inc((SV*)outa);
 		} else {	// AoH -> HoA: fill column by column
 			SSize_t ncn = av_len(order) + 1, j;
-			SSize_t *idx = flt_kept_index(aTHX_ keep, n, kept);
+			SSize_t *restrict idx = flt_kept_index(aTHX_ keep, n, kept);
 			for (j = 0; j < ncn; j++) {
 				SV **np = av_fetch(order, j, 0);
 				STRLEN kl; char *k = SvPV(*np, kl);
@@ -11516,26 +11505,26 @@ SV *col2col(data, cmd, cols = &PL_sv_undef, ...)
 		short int na_mode = 0;	// 0 = pairwise, 1 = omit, 2 = keep; see section 0
 		bool skip_errors = TRUE;	// skip.errors (default true): trap a croaking block, store its message
 /* 0. options. They may be given either as trailing name => value pairs
-     (after the positional cols), or - so no placeholder is needed when
-     there is no column restriction - as a single hash ref in cols's
-     place, e.g. col2col($data, 'cor', { 'skip.errors' => 1 }).
-     `na` controls how undef is handled when one column is paired with
-     another:
-       'pairwise' (default) - a row counts for the (a,b) pair only if
-           BOTH columns are defined there, so the block gets two equal
-           length, aligned columns. This is what paired stats (cor) want.
-       'omit'   - each column independently drops its own undef values,
-           so the two columns may differ in length. This is what unpaired
-           tests (t_test, kruskal_test) want: a gap in one column must not
-           throw away a good value in the other.
-       'keep'   - every row passes through and undef reaches the block.
-     rm.undef / rm.na (bool) remain as aliases: true => 'pairwise' (the
-     old default), false => 'keep'.
-     skip.errors (bool, default true): a block that croaks for a pair
-     does not abort col2col; instead the first line of its error message
-     is stored as that cell's value, so the result shows which
-     (outer => inner) pair failed and why. Set it false to make a croak
-     propagate and abort the whole call instead.*/
+  (after the positional cols), or - so no placeholder is needed when
+  there is no column restriction - as a single hash ref in cols's
+  place, e.g. col2col($data, 'cor', { 'skip.errors' => 1 }).
+  `na` controls how undef is handled when one column is paired with
+  another:
+    'pairwise' (default) - a row counts for the (a,b) pair only if
+        BOTH columns are defined there, so the block gets two equal
+        length, aligned columns. This is what paired stats (cor) want.
+    'omit'   - each column independently drops its own undef values,
+        so the two columns may differ in length. This is what unpaired
+        tests (t_test, kruskal_test) want: a gap in one column must not
+        throw away a good value in the other.
+    'keep'   - every row passes through and undef reaches the block.
+  rm.undef / rm.na (bool) remain as aliases: true => 'pairwise' (the
+  old default), false => 'keep'.
+  skip.errors (bool, default true): a block that croaks for a pair
+  does not abort col2col; instead the first line of its error message
+  is stored as that cell's value, so the result shows which
+  (outer => inner) pair failed and why. Set it false to make a croak
+  propagate and abort the whole call instead.*/
 		SV *cols_eff = cols;
 		bool na_set = FALSE, rm_set = FALSE;
 #define C2C_DECODE_OPT(ONAME, OL, OVAL) do { \
@@ -11581,7 +11570,7 @@ SV *col2col(data, cmd, cols = &PL_sv_undef, ...)
 		if (SvROK(cmd) && SvTYPE(SvRV(cmd)) == SVt_PVCV) cv_sv = SvRV(cmd);
 		else if (SvOK(cmd) && !SvROK(cmd)) {
 			STRLEN nl;
-			const char *name = SvPV(cmd, nl);
+			const char *restrict name = SvPV(cmd, nl);
 			SV *fq = strstr(name, "::") ? newSVpvn(name, nl) : newSVpvf("Stats::LikeR::%s", name);
 			CV *cv = get_cv(SvPV_nolen(fq), 0);
 			SvREFCNT_dec(fq);
@@ -11704,8 +11693,7 @@ SV *col2col(data, cmd, cols = &PL_sv_undef, ...)
 		Newxz(is_outer, ncols, char);
 		if (!SvOK(cols_eff)) {
 			for (size_t cc = 0; cc < ncols; cc++) is_outer[cc] = 1;
-		}
-		else if (SvROK(cols_eff) && SvTYPE(SvRV(cols_eff)) == SVt_PVAV) {
+		} else if (SvROK(cols_eff) && SvTYPE(SvRV(cols_eff)) == SVt_PVAV) {
 			AV *want = (AV*)SvRV(cols_eff);
 			SSize_t n = av_len(want) + 1;
 			for (SSize_t i = 0; i < n; i++) {
@@ -11822,7 +11810,7 @@ SV *oneway_test(data_ref, ...)
 				formula_str = SvPV_nolen(val);
 		}
 
-		//---- validate data_ref: must be an ARRAY or HASH reference ----
+		// validate data_ref: must be an ARRAY or HASH reference
 		if (!SvROK(data_ref))
 			croak("oneway_test: first argument must be a hash or array reference");
 		SV *rv = SvRV(data_ref);
@@ -11830,18 +11818,15 @@ SV *oneway_test(data_ref, ...)
 		else if (SvTYPE(rv) == SVt_PVAV) in_av = (AV *)rv;
 		else croak("oneway_test: first argument must be a hash or array reference");
 
-		if (in_av) {
-			//---- MODE 3: array of arrays (AoA) ----
+		if (in_av) {//---- MODE 3: array of arrays (AoA) ----
 			if (formula_str != NULL)
 				croak("oneway_test: formula mode is not supported with an array of arrays");
 
 			k = (size_t)(av_len(in_av) + 1);          //+1 inside the signed math
 			if (k < 2)
 				croak("oneway_test: need at least 2 groups, got %" UVuf, (UV)k);
-
 			Newx(sizes,   k, size_t);
 			Newxz(gnames, k, char *);                  //zeroed: safe to free on error
-
 			//first pass: validate, sizes, total_n, synthesised names
 			for (size_t g = 0; g < k; g++) {
 				SV **val = av_fetch(in_av, (I32)g, 0);
@@ -11884,14 +11869,14 @@ SV *oneway_test(data_ref, ...)
 			if (!parse_formula(formula_str, &lhs, &rhs))
 				croak("oneway_test: cannot parse formula '%s' — expected 'response ~ factor'",
 					formula_str);
-			factor_name = rhs;                          //freed after output
+			factor_name = rhs; //freed after output
 
 			SV **resp_svp = hv_fetch(in_hv, lhs, (I32)strlen(lhs), 0);
 			if (!resp_svp || !*resp_svp || !SvROK(*resp_svp)
 					|| SvTYPE(SvRV(*resp_svp)) != SVt_PVAV) {
 				snprintf(errbuf, sizeof errbuf,
 					"formula LHS '%s' not found as an array ref in the hash", lhs);
-				goto fail;                              //was leaking lhs/rhs
+				goto fail; //was leaking lhs/rhs
 			}
 			SV **fact_svp = hv_fetch(in_hv, rhs, (I32)strlen(rhs), 0);
 			if (!fact_svp || !*fact_svp || !SvROK(*fact_svp)
@@ -11905,17 +11890,17 @@ SV *oneway_test(data_ref, ...)
 			AV *label_av = (AV *)SvRV(*fact_svp);
 			IV  n = av_len(resp_av) + 1;
 			Newx(flat,  (size_t)(n > 0 ? n : 0), NV);
-			Newx(sizes, (size_t)(n > 0 ? n : 0), size_t);   //k <= n upper bound
+			Newx(sizes, (size_t)(n > 0 ? n : 0), size_t); //k <= n upper bound
 
 			if (!build_groups_from_formula(aTHX_ resp_av, label_av,
 					flat, sizes, &k, &gnames, errbuf, sizeof errbuf))
-				goto fail;                              //errbuf already set; fail frees all
+				goto fail; //errbuf already set; fail frees all
 
 			for (size_t g = 0; g < k; g++) total_n += (IV)sizes[g];
 		}
 		else {
 			//---- MODE 1: hash of groups { label => \@obs, ... } ----
-			k = (size_t)HvUSEDKEYS(in_hv);              //robust count, not iterinit's
+			k = (size_t)HvUSEDKEYS(in_hv); //robust count, not iterinit's
 			if (k < 2)
 				croak("oneway_test: need at least 2 groups, got %" UVuf, (UV)k);
 
@@ -11941,9 +11926,8 @@ SV *oneway_test(data_ref, ...)
 				total_n += len;
 				STRLEN klen;
 				const char *kstr = HePV(he, klen);
-				gnames[g] = savepvn(kstr, klen);        //keeps embedded NULs
+				gnames[g] = savepvn(kstr, klen); //keeps embedded NULs
 			}
-
 			//second pass: fill flat in the same iteration order, validating
 			Newx(flat, (size_t)total_n, NV);
 			size_t offset = 0;
@@ -11963,8 +11947,7 @@ SV *oneway_test(data_ref, ...)
 				}
 			}
 		}
-
-		//---- per-group means from flat (computed before the arithmetic) ----
+		// per-group means from flat (computed before the arithmetic)
 		Newx(gmeans, k, NV);
 		{
 			size_t offset = 0;
@@ -11975,11 +11958,9 @@ SV *oneway_test(data_ref, ...)
 				offset += sizes[g];
 			}
 		}
-
 		res = c_oneway_test(flat, sizes, k, var_equal);
 		Safefree(flat); flat = NULL;
-
-		//---- build the return hash ----
+		// build the return hash
 		ret_hv = (HV *)sv_2mortal((SV *)newHV());
 		{
 			HV *g_hv = newHV();
@@ -11999,9 +11980,7 @@ SV *oneway_test(data_ref, ...)
 			hv_stores(ret_hv, "Residuals", newRV_noinc((SV *)r_hv));
 		}
 		{
-			HV *gs_hv   = newHV();
-			HV *mean_hv = newHV();
-			HV *size_hv = newHV();
+			HV *gs_hv   = newHV(), *mean_hv = newHV(), *size_hv = newHV();
 			for (size_t g = 0; g < k; g++) {
 				const char *gn = gnames[g];
 				I32 gnl = (I32)strlen(gn);
@@ -12012,10 +11991,8 @@ SV *oneway_test(data_ref, ...)
 			hv_stores(gs_hv, "size", newRV_noinc((SV *)size_hv));
 			hv_stores(ret_hv, "group_stats", newRV_noinc((SV *)gs_hv));
 		}
-
-		//---- normal cleanup ----
-		Safefree(gmeans);
-		Safefree(sizes);
+		// normal cleanup
+		Safefree(gmeans);	Safefree(sizes);
 		for (size_t g = 0; g < k; g++) Safefree(gnames[g]);
 		Safefree(gnames);
 		if (lhs) Safefree(lhs);
@@ -12023,7 +12000,6 @@ SV *oneway_test(data_ref, ...)
 
 		RETVAL = newRV_inc((SV *)ret_hv);
 	}
-
 	if (0) {
 	fail:
 		//single cleanup point for every error after an allocation
