@@ -58,7 +58,7 @@
 .\" ========================================================================
 .\"
 .IX Title "Stats::LikeR 3"
-.TH Stats::LikeR 3 2026-08-16 "perl v5.44.0" "User Contributed Perl Documentation"
+.TH Stats::LikeR 3 2026-08-22 "perl v5.44.0" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -3926,6 +3926,33 @@ I feel that this is better, and more easily read, than what you get in R:
 \& );
 \& my $kt = kruskal_test(\e@x, \e@g);
 .Ve
+.PP
+\fImissing values, and groups with no data\fR
+.IX Subsection "missing values, and groups with no data"
+.PP
+Non\-numeric, undefined and \f(CW\*(C`NaN\*(C'\fR elements are silently dropped before the test
+runs, matching R\*(Aqs \f(CW\*(C`complete.cases(x, g)\*(C'\fR \-\- \f(CW\*(C`NaN\*(C'\fR is \f(CW\*(C`NA\*(C'\fR to R, so it goes
+too. \f(CW\*(C`+Inf\*(C'\fR and \f(CW\*(C`\-Inf\*(C'\fR are neither, and a rank test has no trouble with them,
+so they are kept and ranked.
+.PP
+A group left with no usable observation is refused rather than guessed at, as
+R\*(Aqs list interface does: \f(CW\*(C`kruskal_test\*(C'\fR croaks \f(CW\*(C`all groups must contain data\*(C'\fR.
+That covers an empty array reference and one whose every element was dropped.
+Counting such a group would inflate the degrees of freedom, and testing only
+the groups that do have data under a \f(CW\*(C`df\*(C'\fR that counts one that does not is not
+a test of anything. (SciPy takes the other side of this and returns \f(CW\*(C`NaN\*(C'\fR.)
+.PP
+A sample with no variation at all gives a tie correction of exactly zero, so
+the statistic is \f(CW\*(C`0/0\*(C'\fR: like R, \f(CW\*(C`statistic\*(C'\fR and \f(CW\*(C`p_value\*(C'\fR come back as
+\&\f(CW\*(C`NaN\*(C'\fR.
+.PP
+\fIreturned fields\fR
+.IX Subsection "returned fields"
+.PP
+\&\f(CW\*(C`statistic\*(C'\fR, \f(CW\*(C`parameter\*(C'\fR (the degrees of freedom) and \f(CW\*(C`method\*(C'\fR are R\*(Aqs
+\&\f(CW\*(C`htest\*(C'\fR fields; the p\-value is available as both \f(CW\*(C`p_value\*(C'\fR and \f(CW\*(C`p.value\*(C'\fR.
+On top of those, \f(CW\*(C`group_stats\*(C'\fR holds \f(CW\*(C`size\*(C'\fR and \f(CW\*(C`mean\*(C'\fR sub\-hashes keyed by
+your own group labels, computed over the same observations the statistic used.
 .SS ks_test
 .IX Subsection "ks_test"
 The Kolmogorov–Smirnov test checks whether two samples are drawn from the

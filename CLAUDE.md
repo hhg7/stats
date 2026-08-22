@@ -86,7 +86,7 @@ If a function has an equivalent in R or in Python (SciPy, NumPy, pandas,
 statsmodels), tests for the `Stats::LikeR` version must be **taken from those
 projects' own test suites and documented examples**, not invented here.
 Invented cases only confirm that the code does what it currently does; the
-references' cases are what pin it to the behaviour it is supposed to copy.
+references' cases are what pin it to the behavior it is supposed to copy.
 
 Where to look — both suites are available locally, so read them rather than
 recalling them:
@@ -284,7 +284,7 @@ Solaris, illumos and the BSDs specifically:
 ### Back-compatible to perl 5.10
 
 `dist.ini` declares `perl = 5.010` and `lib/Stats/LikeR.pm` says
-`require 5.010`; both the Perl and the C sides must honour that.
+`require 5.010`; both the Perl and the C sides must honor that.
 
 - Perl code (module and tests) is limited to 5.10 syntax: no signatures, no
   postfix dereference, no `say` without importing the feature, no `isa`, no
@@ -297,7 +297,7 @@ Solaris, illumos and the BSDs specifically:
   `ppport.h` must be regenerated when a new one is used. If `ppport.h` does
   not cover it, write the fallback rather than raising the minimum.
 - Do not use API that was merely *renamed* later, and do not rely on
-  behaviour that changed after 5.10 (hash iteration order, `SvPV` return
+  behavior that changed after 5.10 (hash iteration order, `SvPV` return
   guarantees, COW string semantics) without checking on `perl-5.10.1`.
 - Raising `MIN_PERL_VERSION` is a maintainer decision, not a way to make a
   build error go away. If a change truly needs a newer perl, say so in the

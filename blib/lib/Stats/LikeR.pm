@@ -3,7 +3,7 @@
 require 5.010;
 use strict;
 package Stats::LikeR;
-our $VERSION = 0.3;
+our $VERSION = 0.301;
 require XSLoader;
 use autodie ':default';
 use warnings FATAL => 'all';
@@ -10071,6 +10071,31 @@ I feel that this is better, and more easily read, than what you get in R:
      map {'Subjects with asbestosis'} 0..4
  );
  my $kt = kruskal_test(\@x, \@g);
+
+=head3 missing values, and groups with no data
+
+Non-numeric, undefined and C<NaN> elements are silently dropped before the test
+runs, matching R's C<complete.cases(x, g)> -- C<NaN> is C<NA> to R, so it goes
+too. C<+Inf> and C<-Inf> are neither, and a rank test has no trouble with them,
+so they are kept and ranked.
+
+A group left with no usable observation is refused rather than guessed at, as
+R's list interface does: C<kruskal_test> croaks C<all groups must contain data>.
+That covers an empty array reference and one whose every element was dropped.
+Counting such a group would inflate the degrees of freedom, and testing only
+the groups that do have data under a C<df> that counts one that does not is not
+a test of anything. (SciPy takes the other side of this and returns C<NaN>.)
+
+A sample with no variation at all gives a tie correction of exactly zero, so
+the statistic is C<0/0>: like R, C<statistic> and C<p_value> come back as
+C<NaN>.
+
+=head3 returned fields
+
+C<statistic>, C<parameter> (the degrees of freedom) and C<method> are R's
+C<htest> fields; the p-value is available as both C<p_value> and C<p.value>.
+On top of those, C<group_stats> holds C<size> and C<mean> sub-hashes keyed by
+your own group labels, computed over the same observations the statistic used.
 
 =head2 ks_test
 
