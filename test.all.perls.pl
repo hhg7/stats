@@ -66,7 +66,9 @@ my ($par, $keep_work);
 my $ncpu  = cpu_count();
 $install  = 1; # make install, as compile.sh does
 $clean    = 1;
-$optimize = '-Wall';
+# OPTIMIZE= replaces perl's own $Config{optimize} rather than adding to it, so
+# a bare '-Wall' here would build and time every perl in the matrix at -O0.
+$optimize = '-O2 -Wall';
 $log_dir  = File::Spec->catdir('.build', 'multiperl');
 # Parallel by default, leaving 4 cores for the rest of the machine: a full
 # matrix run is minutes of `make` and a test harness, not something that should

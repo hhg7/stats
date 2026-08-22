@@ -3931,9 +3931,9 @@ I feel that this is better, and more easily read, than what you get in R:
 .IX Subsection "missing values, and groups with no data"
 .PP
 Non\-numeric, undefined and \f(CW\*(C`NaN\*(C'\fR elements are silently dropped before the test
-runs, matching R\*(Aqs \f(CW\*(C`complete.cases(x, g)\*(C'\fR \-\- \f(CW\*(C`NaN\*(C'\fR is \f(CW\*(C`NA\*(C'\fR to R, so it goes
-too. \f(CW\*(C`+Inf\*(C'\fR and \f(CW\*(C`\-Inf\*(C'\fR are neither, and a rank test has no trouble with them,
-so they are kept and ranked.
+runs, matching R\*(Aqs \f(CW\*(C`complete.cases(x, g)\*(C'\fR — \f(CW\*(C`NaN\*(C'\fR is \f(CW\*(C`NA\*(C'\fR to R, so it goes too.
+\&\f(CW\*(C`+Inf\*(C'\fR and \f(CW\*(C`\-Inf\*(C'\fR are neither, and a rank test has no trouble with them, so
+they are kept and ranked.
 .PP
 A group left with no usable observation is refused rather than guessed at, as
 R\*(Aqs list interface does: \f(CW\*(C`kruskal_test\*(C'\fR croaks \f(CW\*(C`all groups must contain data\*(C'\fR.
@@ -3943,16 +3943,15 @@ the groups that do have data under a \f(CW\*(C`df\*(C'\fR that counts one that d
 a test of anything. (SciPy takes the other side of this and returns \f(CW\*(C`NaN\*(C'\fR.)
 .PP
 A sample with no variation at all gives a tie correction of exactly zero, so
-the statistic is \f(CW\*(C`0/0\*(C'\fR: like R, \f(CW\*(C`statistic\*(C'\fR and \f(CW\*(C`p_value\*(C'\fR come back as
-\&\f(CW\*(C`NaN\*(C'\fR.
+the statistic is \f(CW\*(C`0/0\*(C'\fR: like R, \f(CW\*(C`statistic\*(C'\fR and \f(CW\*(C`p_value\*(C'\fR come back as \f(CW\*(C`NaN\*(C'\fR.
 .PP
 \fIreturned fields\fR
 .IX Subsection "returned fields"
 .PP
-\&\f(CW\*(C`statistic\*(C'\fR, \f(CW\*(C`parameter\*(C'\fR (the degrees of freedom) and \f(CW\*(C`method\*(C'\fR are R\*(Aqs
-\&\f(CW\*(C`htest\*(C'\fR fields; the p\-value is available as both \f(CW\*(C`p_value\*(C'\fR and \f(CW\*(C`p.value\*(C'\fR.
-On top of those, \f(CW\*(C`group_stats\*(C'\fR holds \f(CW\*(C`size\*(C'\fR and \f(CW\*(C`mean\*(C'\fR sub\-hashes keyed by
-your own group labels, computed over the same observations the statistic used.
+\&\f(CW\*(C`statistic\*(C'\fR, \f(CW\*(C`parameter\*(C'\fR (the degrees of freedom) and \f(CW\*(C`method\*(C'\fR are R\*(Aqs \f(CW\*(C`htest\*(C'\fR
+fields; the p\-value is available as both \f(CW\*(C`p_value\*(C'\fR and \f(CW\*(C`p.value\*(C'\fR. On top of
+those, \f(CW\*(C`group_stats\*(C'\fR holds \f(CW\*(C`size\*(C'\fR and \f(CW\*(C`mean\*(C'\fR sub\-hashes keyed by your own group
+labels, computed over the same observations the statistic used.
 .SS ks_test
 .IX Subsection "ks_test"
 The Kolmogorov–Smirnov test checks whether two samples are drawn from the
@@ -7069,6 +7068,176 @@ Verified against R 4.6.1 (\f(CW\*(C`oneway.test\*(C'\fR, \f(CW\*(C`anova(aov())\
 \&\f(CW\*(C`t/model_pvalue_tails.t\*(C'\fR and \f(CW\*(C`t/oneway_test.R.scipy.t\*(C'\fR.
 .SH Changes
 .IX Header "Changes"
+.SS "0.301 2026\-08\-21 CDT"
+.IX Subsection "0.301 2026-08-21 CDT"
+there are numerous additions of \f(CW\*(C`restrict\*(C'\fR keywords, which may or may not improve speed
+.PP
+\fIkruskal_test\fR
+.IX Subsection "kruskal_test"
+.PP
+\&\f(CW\*(C`kruskal_test\*(C'\fR cross\-validated against R 4.6.1\*(Aqs \f(CW\*(C`stats::kruskal.test()\*(C'\fR and
+SciPy 1.18.0\*(Aqs \f(CW\*(C`TestKruskal\*(C'\fR, driven by those suites\*(Aq own cases rather than by
+cases invented here. Six bugs are fixed: five in how the arguments and the data
+are read before any ranking happens, and one in the chi\-squared tail, which
+reaches every function that uses it. The test now needs a third of the memory
+and runs in under half the time, and it returns the same answer twice in a row,
+which it did not before.
+.PP
+Everything below is checked in the new \f(CW\*(C`t/kruskal_test.R.scipy.t\*(C'\fR (870 tests),
+whose expected values are frozen literals with their provenance recorded in the
+file header; it needs no R and no Python to run. The generator that produced
+them, \f(CW\*(C`t/kruskal_test.R.scipy.R\*(C'\fR, is committed beside it. There had been no
+\&\f(CW\*(C`t/kruskal_test.t\*(C'\fR at all — the only coverage was six assertions in \f(CW\*(C`t/01.t\*(C'\fR on
+the single Hollander & Wolfe example, and none of the six bugs would have shown
+up in it. The full suite is 125 files and 25,951 tests, and
+\&\f(CW\*(C`./test.all.perls.pl\*(C'\fR passes on all five local perls — \f(CW5.10.1\fR, \f(CW5.12.5\fR
+(long double), \f(CW5.42.3\fR, \f(CW5.44.0\fR and \f(CW\*(C`5.44.0\-quadmath\*(C'\fR — with no warnings on
+any of them.
+.PP
+NaN was ranked instead of dropped
+.IX Subsection "NaN was ranked instead of dropped"
+.PP
+\&\f(CW\*(C`looks_like_number\*(C'\fR is true for \f(CW\*(C`NaN\*(C'\fR, so a \f(CW\*(C`NaN\*(C'\fR went into the ranking. R
+treats \f(CW\*(C`NaN\*(C'\fR as \f(CW\*(C`NA\*(C'\fR and \f(CW\*(C`complete.cases(x, g)\*(C'\fR removes it before \f(CWrank()\fR ever
+sees it:
+.PP
+It also handed \f(CW\*(C`cmp_nv3\*(C'\fR a comparison that is never true for any pair
+involving the \f(CW\*(C`NaN\*(C'\fR, which leaves \f(CW\*(C`qsort\*(C'\fR without the strict weak ordering it is
+entitled to — the same defect \f(CW\*(C`wilcox_test\*(C'\fR had fixed in 0.298, where the
+comment describing it is still in the file. \f(CW\*(C`+Inf\*(C'\fR and \f(CW\*(C`\-Inf\*(C'\fR are neither \f(CW\*(C`NA\*(C'\fR
+nor \f(CW\*(C`NaN\*(C'\fR to R and a rank test has no trouble with them, so they are still kept
+and ranked; that is now pinned rather than incidental.
+.PP
+The bad value propagated: \f(CW\*(C`table_one\*(C'\fR\*(Aqs \f(CW\*(C`_t1_cont_p\*(C'\fR hands its groups straight
+to \f(CW\*(C`kruskal_test\*(C'\fR, so a single \f(CW\*(C`NaN\*(C'\fR among nine observations was reported at
+\&\f(CW\*(C`p = 0.0273\*(C'\fR where dropping it gives \f(CW0.0439\fR.
+.PP
+A group with no data inflated the degrees of freedom
+.IX Subsection "A group with no data inflated the degrees of freedom"
+.PP
+The hash\-of\-arrays form counted every key in \f(CW\*(C`k\*(C'\fR, including a key whose array
+was empty or whose every element had been dropped. On
+\&\f(CW\*(C`{a => [1,1,1], b => [2,2,2], c => []}\*(C'\fR that gave \f(CW\*(C`df = 2\*(C'\fR and
+\&\f(CW\*(C`p = 0.0820849986238988\*(C'\fR for what is a two\-group problem with
+\&\f(CW\*(C`df = 1, p = 0.025347318677468304\*(C'\fR. Such a group was already skipped when
+forming the statistic and when building \f(CW\*(C`group_stats\*(C'\fR; only \f(CW\*(C`df\*(C'\fR still counted
+it.
+.PP
+R refuses this case outright — \f(CW\*(C`all groups must contain data\*(C'\fR — and so does
+\&\f(CW\*(C`kruskal_test\*(C'\fR now, because the alternative is to test the groups that do have
+data under a \f(CW\*(C`df\*(C'\fR that counts one that does not. R\*(Aqs order of checks came with
+it: it filters each group, refuses an empty one, and only then counts what is
+left, so \f(CW\*(C`{a => [], b => []}\*(C'\fR is \f(CW\*(C`all groups must contain data\*(C'\fR and not
+\&\f(CW\*(C`not enough observations\*(C'\fR. SciPy takes the other side of this and returns \f(CW\*(C`NaN\*(C'\fR
+with a \f(CW\*(C`SmallSampleWarning\*(C'\fR; the divergence is recorded in the test file rather
+than papered over. The \f(CW\*(C`x\*(C'\fR/\f(CW\*(C`g\*(C'\fR form cannot reach any of this — it mints a group
+id the first time an observation survives the filter — so nothing changes there.
+.PP
+Group labels were truncated at a NUL and lost their UTF\-8 flag
+.IX Subsection "Group labels were truncated at a NUL and lost their UTF-8 flag"
+.PP
+The \f(CW\*(C`x\*(C'\fR/\f(CW\*(C`g\*(C'\fR path read the label with \f(CW\*(C`SvPV_nolen\*(C'\fR and then took \f(CW\*(C`strlen\*(C'\fR of it.
+Perl strings are counted, not NUL\-terminated, so \f(CW"a\e0X"\fR and \f(CW"a\e0Y"\fR
+collapsed into one group: \f(CW\*(C`kruskal_test([1..6], ["a\e0X","a\e0X","a\e0Y","a\e0Y","b","b"])\*(C'\fR
+came back as two groups with \f(CW\*(C`df = 1, H = 2.4\*(C'\fR instead of three with
+\&\f(CW\*(C`df = 2, H = 4.571428571428573\*(C'\fR. Both paths also copied the label\*(Aqs bytes while
+dropping perl\*(Aqs UTF\-8 flag when storing it into \f(CW\*(C`group_stats\*(C'\fR, so a label
+outside latin\-1 came back as mojibake and the two input paths disagreed with
+each other about labels inside it. The length now travels with the string and
+carries the flag in its sign, which is \f(CW\*(C`hv_store\*(C'\fR\*(Aqs own convention, so a label
+comes back \f(CW\*(C`eq\*(C'\fR to what went in. Dropping the \f(CW\*(C`strlen\*(C'\fR also drops a pass over
+every label.
+.PP
+A trailing named argument read past the argument stack
+.IX Subsection "A trailing named argument read past the argument stack"
+.PP
+The named\-argument loop took \f(CW\*(C`ST(arg_idx + 1)\*(C'\fR without checking that there was
+one, so an odd argument list read one slot past the top of the stack — and what
+it found there changed which branch ran: \f(CW\*(C`kruskal_test(\e%h, \*(Aqx\*(Aq)\*(C'\fR came back
+complaining that \f(CW\*(Aqh\*(Aq\fR cannot be mixed with \f(CW\*(Aqx\*(Aq\fR/\f(CW\*(Aqg\*(Aq\fR, because \f(CW\*(C`x_sv\*(C'\fR had been
+assigned whatever was past the end. \f(CW\*(C`binom_test\*(C'\fR, \f(CW\*(C`chisq_test\*(C'\fR, \f(CW\*(C`fisher_test\*(C'\fR,
+\&\f(CW\*(C`wilcox_test\*(C'\fR, \f(CW\*(C`var_test\*(C'\fR and \f(CW\*(C`prcomp\*(C'\fR all guard this; \f(CW\*(C`kruskal_test\*(C'\fR was the
+one that did not. It now croaks \f(CW\*(C`odd number of named arguments\*(C'\fR.
+.PP
+An infinite chi\-squared statistic gave no p\-value
+.IX Subsection "An infinite chi-squared statistic gave no p-value"
+.PP
+\&\f(CW\*(C`get_p_value\*(C'\fR short\-circuits a statistic at or below zero and otherwise goes to
+\&\f(CW\*(C`igamc\*(C'\fR. \f(CW\*(C`+Inf\*(C'\fR is neither, so it reached the continued fraction, where the
+first \f(CW\*(C`1/d\*(C'\fR is \f(CW\*(C`1/Inf = 0\*(C'\fR and then \f(CW\*(C`del = 0 * Inf\*(C'\fR is \f(CW\*(C`NaN\*(C'\fR — an overwhelmingly
+significant result reported as no result at all. R\*(Aqs
+\&\f(CW\*(C`pchisq(Inf, df, lower.tail = FALSE)\*(C'\fR is \f(CW0\fR, and so is this now. \f(CW\*(C`NaN\*(C'\fR in gives
+\&\f(CW\*(C`NaN\*(C'\fR out, as R does, rather than running the continued fraction to its full
+10,000\-iteration safety bound first.
+.PP
+This is reachable from \f(CW\*(C`kruskal_test\*(C'\fR. When a sample has no variation at all
+the tie correction is \f(CW\*(C`(n^3 \- n)/(n^3 \- n)\*(C'\fR, and once \f(CW\*(C`n^3\*(C'\fR is past \f(CW\*(C`2^53\*(C'\fR the
+subtraction of \f(CW\*(C`n\*(C'\fR is lost from one side or the other, so an inexact zero is
+divided by an exact zero. R has the same problem and returns \f(CW\*(C`+Inf\*(C'\fR, \f(CW\*(C`\-Inf\*(C'\fR or
+\&\f(CW\*(C`NaN\*(C'\fR depending on which way \f(CW\*(C`n\*(C'\fR rounded: \f(CW\*(C`NaN\*(C'\fR at \f(CW\*(C`n = 250000\*(C'\fR, \f(CW\*(C`\-Inf\*(C'\fR at
+\&\f(CW300000\fR, \f(CW\*(C`NaN\*(C'\fR at \f(CW400000\fR, \f(CW\*(C`+Inf\*(C'\fR at \f(CW500000\fR, \f(CW\*(C`NaN\*(C'\fR at \f(CW750000\fR, \f(CW\*(C`+Inf\*(C'\fR at
+\&\f(CW1000000\fR, \f(CW\*(C`NaN\*(C'\fR at \f(CW1500000\fR and \f(CW\*(C`+Inf\*(C'\fR at \f(CW2000000\fR. \f(CW\*(C`kruskal_test\*(C'\fR now agrees
+with it on all eight. Below that the correction is exact and both give \f(CW\*(C`NaN\*(C'\fR,
+which the corpus pins. \f(CW\*(C`get_p_value\*(C'\fR is shared, so \f(CW\*(C`chisq_test\*(C'\fR, \f(CW\*(C`prop_test\*(C'\fR,
+\&\f(CW\*(C`mcnemar_test\*(C'\fR, \f(CW\*(C`friedman_test\*(C'\fR, \f(CW\*(C`cmh_test\*(C'\fR, \f(CW\*(C`logrank_test\*(C'\fR and \f(CW\*(C`coxph\*(C'\fR get the
+same fix.
+.PP
+Three times less memory, twice the speed
+.IX Subsection "Three times less memory, twice the speed"
+.PP
+The ranking no longer goes through \f(CW\*(C`RankInfo\*(C'\fR and \f(CW\*(C`rank_and_count_ties\*(C'\fR.
+\&\f(CW\*(C`kruskal_test\*(C'\fR wants per\-group rank sums, not the ranks themselves, so it sorts
+a 16\-byte \f(CW\*(C`(value, group)\*(C'\fR pair and adds each tie block\*(Aqs averaged rank straight
+into the group sums, instead of storing an \f(CW\*(C`NV\*(C'\fR rank per observation for a
+second pass to read.
+.PP
+It also no longer calls \f(CW\*(C`qsort\*(C'\fR. glibc\*(Aqs \f(CW\*(C`qsort\*(C'\fR is a mergesort that allocates a
+scratch buffer the size of the whole array — measured on glibc 2.39 as a
+\&\f(CW\*(C`VmHWM\*(C'\fR of 116 MB going to 230 MB across one sort of a 114 MB array — which was
+half of the function\*(Aqs peak memory, and its comparison goes through a function
+pointer that cannot be inlined. In its place is a median\-of\-three introsort that
+recurses on the smaller partition and loops on the larger, so the stack stays
+\&\f(CW\*(C`O(log n)\*(C'\fR, with a heapsort fallback past a depth of \f(CW\*(C`2*floor(log2(n))\*(C'\fR so an
+adversarial input cannot drive it to \f(CWO(n^2)\fR, and insertion sort for short
+runs. Sorting the same five\-million\-element array takes 0.375s against \f(CW\*(C`qsort\*(C'\fR\*(Aqs
+1.01s and allocates nothing. The third change is the group\-label array on the
+\&\f(CW\*(C`x\*(C'\fR/\f(CW\*(C`g\*(C'\fR path, which was sized at one pointer per \fIobservation\fR to hold one per
+\&\fIgroup\fR — 40 MB at \f(CW\*(C`n = 5e6\*(C'\fR to hold three pointers — and now grows on demand.
+.PP
+At \f(CW\*(C`n = 5,000,000\*(C'\fR over three groups, measured as \f(CW\*(C`VmHWM\*(C'\fR either side of the
+call:
+.PP
+Sorted, reversed, all\-equal, organ\-pipe and median\-of\-three\-killer inputs all
+stay under 0.32s at \f(CW\*(C`n = 2e6\*(C'\fR, which is what the depth limit is there for. The
+sort is checked against an independent pure\-Perl implementation of the whole
+test over 748 structured cases — those shapes at every n either side of the
+insertion\-sort threshold — and 49,712 random ones.
+.PP
+The same input now gives the same answer
+.IX Subsection "The same input now gives the same answer"
+.PP
+\&\f(CW\*(C`H\*(C'\fR moved by up to \f(CW1.2e\-14\fR between runs on identical data. Nothing was random:
+the sum of \f(CW\*(C`R_i^2 / n_i\*(C'\fR walked the groups by group id, and on the
+hash\-of\-arrays path an id is minted in \f(CW\*(C`hv_iternext\*(C'\fR order, which is perl\*(Aqs
+per\-process hash order. Equal values were also left in whatever relative order
+the sort happened to leave them, which came from the same place.
+.PP
+The sort now orders by value and then by group, which makes it a total order,
+and the \f(CW\*(C`k\*(C'\fR terms of the sum are ordered before they are added — smallest first,
+which is the better\-conditioned direction as well as a canonical one. \f(CW\*(C`k\*(C'\fR is the
+number of groups, not the number of observations, so it costs nothing next to
+the ranking. \f(CW\*(C`H\*(C'\fR is now bit\-identical to R on all 37 corpus cases in all four
+call forms, and stays so across 60 runs under \f(CW\*(C`PERL_PERTURB_KEYS=1\*(C'\fR.
+.PP
+\fIDocumentation\fR
+.IX Subsection "Documentation"
+.PP
+\&\f(CW\*(C`kruskal_test\*(C'\fR gains two sections: what happens to non\-numeric, undefined,
+\&\f(CW\*(C`NaN\*(C'\fR and infinite elements and to a group left with no data, and what the
+returned fields are — \f(CW\*(C`statistic\*(C'\fR, \f(CW\*(C`parameter\*(C'\fR, \f(CW\*(C`method\*(C'\fR and the p\-value under
+both \f(CW\*(C`p_value\*(C'\fR and \f(CW\*(C`p.value\*(C'\fR from R\*(Aqs \f(CW\*(C`htest\*(C'\fR, plus the \f(CW\*(C`size\*(C'\fR and \f(CW\*(C`mean\*(C'\fR
+sub\-hashes of \f(CW\*(C`group_stats\*(C'\fR, which are computed over the same observations the
+statistic used.
 .SS "0.3 2026\-08\-16 CDT"
 .IX Subsection "0.3 2026-08-16 CDT"
 \fIshapiro_test\fR

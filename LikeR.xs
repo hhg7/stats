@@ -190,6 +190,213 @@ static bool str_ieq_ascii(const char *restrict s, const char *restrict lit)
 	}
 	return *s == *lit; // equal length: both landed on the NUL together
 }
+/*Keep a column scan out of line.
+
+Each av_scan_* helper below is paired at its call site with a slower av_fetch()
+loop that finishes whatever the scan would not take. Inlined, the two loops
+share a stack frame: the accumulators have to stay addressable across the
+av_fetch() call in the second loop, so the first loop spills them to memory
+every iteration instead of keeping them in registers, and the scan loses most
+of its advantage. Summing 1e6 NVs on perl-5.44.0 at -O2: 2.77 ns/element for
+the av_fetch() loop these replace, 2.25 with the scan inlined into it, 1.29
+with the scan compiled on its own. The one call per XSUB invocation that costs
+is not measurable.
+
+There is no portable spelling, so annotate where the compiler has one and
+leave it empty where it does not -- an empty definition gives back the inlined
+speed and never a wrong answer.*/
+#if defined(__GNUC__) || defined(__clang__)
+#  define LIKER_NOINLINE __attribute__((noinline))
+#elif defined(_MSC_VER)
+#  define LIKER_NOINLINE __declspec(noinline)
+#else
+#  define LIKER_NOINLINE
+#endif
+/*Numeric value of one array element, but only when reading it cannot run perl.
+
+The reduction loops in this file used to call av_fetch() once per element. That
+call is out of line and repeats a bounds check, a negative-index fixup and a
+magic dispatch that a straight walk of AvARRAY() already knows the answers to,
+and on a million-element column it was about half of what sum() or cor() cost.
+
+Walking the block directly is only sound while nothing can move it, and SvNV()
+can move it. On an SV carrying get magic SvNV() runs mg_get(); on a reference it
+may run an overloaded 0+; on a string that is not a number it raises "isn't
+numeric", which a $SIG{__WARN__} handler catches. Each of those is perl code,
+and perl code may push to the very array being walked -- which reallocs
+AvARRAY() and leaves the walk holding a freed block.
+
+So the fast path is taken only for an SV that already holds a number and
+carries neither magic nor a reference; SvNV() on one of those is a register
+read that calls nothing. Everything else returns FALSE, and the caller re-reads
+that element through av_fetch(), which is both correct and where the block
+pointer gets re-derived.
+
+The value returned is the one SvNV() would give: NOK wins over IOK, and an IV
+stored as unsigned is read back unsigned. SvOK() is not tested because
+SVf_IOK|SVf_NOK is a subset of SVf_OK -- an SV with either flag is defined.*/
+PERL_STATIC_INLINE bool sv_plain_nv(SV *sv, NV *restrict out)
+{
+	const U32 f = SvFLAGS(sv);
+	if ((f & (SVs_GMG | SVf_ROK)) || !(f & (SVf_IOK | SVf_NOK))) return FALSE;
+	*out = (f & SVf_NOK)    ? SvNVX(sv)
+	     : (f & SVf_IVisUV) ? (NV)SvUVX(sv)
+	                        : (NV)SvIVX(sv);
+	return TRUE;
+}
+/*Running count, total and range of a numeric column, for the scans below.*/
+typedef struct {
+	NV sum;       // total of every value folded in so far
+	NV min;       // both undefined while count == 0
+	NV max;
+	size_t count;
+} NvAcc;
+/*The four scans share a contract. Each folds the run of plain numeric scalars
+starting at av[*jp] into its accumulators, stops at the first element
+sv_plain_nv() will not take (a hole, a reference, anything magical or
+non-numeric) and leaves *jp on that element, so the caller finishes from there
+with av_fetch(). A caller that reaches *jp == len had a wholly plain column and
+never enters its fallback loop.
+
+None of them may be called on an RMAGICAL av: a tied array's elements do not
+exist until FETCH has run, and AvARRAY() on one reads the wrong block
+entirely. Every caller tests SvRMAGICAL() first and skips the scan.*/
+static LIKER_NOINLINE void av_scan_sum(AV *av, SSize_t *restrict jp, SSize_t len,
+	NvAcc *restrict acc)
+{
+	SV **restrict el = AvARRAY(av);
+	NV sum = acc->sum;
+	size_t count = acc->count;
+	SSize_t j = *jp;
+	for (; j < len; j++) {
+		NV v;
+		if (!el[j] || !sv_plain_nv(el[j], &v)) break;
+		sum += v;
+		count++;
+	}
+	acc->sum = sum;
+	acc->count = count;
+	*jp = j;
+}
+/*As av_scan_sum(), tracking one end of the range instead of the total. min()
+and max() are separate XSUBs, so each gets its own scan rather than a shared
+one computing both: the running extreme is a loop-carried dependency (each
+compare-and-move waits on the previous element's result), so tracking the end
+the caller will not return costs a second chain for nothing -- 1.79 ms against
+1.35 ms on 1e6 NVs, where sum() over the same column is 1.35.
+
+The first value seeds the extreme, which is what keeps the "have I seen one
+yet" test out of the loop body.*/
+static LIKER_NOINLINE void av_scan_min(AV *av, SSize_t *restrict jp, SSize_t len,
+	NvAcc *restrict acc)
+{
+	SV **restrict el = AvARRAY(av);
+	NV mn = acc->min;
+	size_t count = acc->count;
+	SSize_t j = *jp;
+	if (count == 0 && j < len) {
+		NV v;
+		if (!el[j] || !sv_plain_nv(el[j], &v)) { *jp = j; return; }
+		mn = v;
+		count = 1;
+		j++;
+	}
+	for (; j < len; j++) {
+		NV v;
+		if (!el[j] || !sv_plain_nv(el[j], &v)) break;
+		if (v < mn) mn = v;
+		count++;
+	}
+	acc->min = mn;
+	acc->count = count;
+	*jp = j;
+}
+
+static LIKER_NOINLINE void av_scan_max(AV *av, SSize_t *restrict jp, SSize_t len,
+	NvAcc *restrict acc)
+{
+	SV **restrict el = AvARRAY(av);
+	NV mx = acc->max;
+	size_t count = acc->count;
+	SSize_t j = *jp;
+	if (count == 0 && j < len) {
+		NV v;
+		if (!el[j] || !sv_plain_nv(el[j], &v)) { *jp = j; return; }
+		mx = v;
+		count = 1;
+		j++;
+	}
+	for (; j < len; j++) {
+		NV v;
+		if (!el[j] || !sv_plain_nv(el[j], &v)) break;
+		if (v > mx) mx = v;
+		count++;
+	}
+	acc->max = mx;
+	acc->count = count;
+	*jp = j;
+}
+/*Second pass of the two-pass variance: fold (x - mean) into *compp and
+(x - mean)^2 into *m2p. See the comment on var() for why the sum of the
+deviations is carried alongside the sum of their squares.*/
+static LIKER_NOINLINE void av_scan_dev(AV *av, SSize_t *restrict jp, SSize_t len,
+	NV mean, NV *restrict m2p, NV *restrict compp)
+{
+	SV **restrict el = AvARRAY(av);
+	NV m2 = *m2p, comp = *compp;
+	SSize_t j = *jp;
+	for (; j < len; j++) {
+		NV v, d;
+		if (!el[j] || !sv_plain_nv(el[j], &v)) break;
+		d = v - mean;
+		m2 += d * d;
+		comp += d;
+	}
+	*m2p = m2;
+	*compp = comp;
+	*jp = j;
+}
+/*Copy the run into out[*np] rather than reducing it, for the callers that need
+the column itself: quantile() sorts it, cor() and cov() make two passes over
+it. out must have room for len - *jp more values.*/
+static LIKER_NOINLINE void av_scan_extract(AV *av, SSize_t *restrict jp, SSize_t len,
+	NV *restrict out, size_t *restrict np)
+{
+	SV **restrict el = AvARRAY(av);
+	size_t n = *np;
+	SSize_t j = *jp;
+	for (; j < len; j++) {
+		NV v;
+		if (!el[j] || !sv_plain_nv(el[j], &v)) break;
+		out[n++] = v;
+	}
+	*np = n;
+	*jp = j;
+}
+/*Read a whole column as NV, mapping anything that is not a number to NaN.
+
+cor() and cov() drop pairs rather than refusing them -- R's pairwise-complete
+rule -- so unlike the reductions above they have no croak to reach and want a
+value for every slot.  The scan is re-entered after each element it would not
+take, instead of giving up on the rest of the column: a single undef in the
+middle of a numeric vector is ordinary in real data, and letting it force the
+remaining million elements through av_fetch() would give most of the column
+away for one NA.*/
+static void av_extract_or_nan(pTHX_ AV *av, SSize_t len, NV *restrict out)
+{
+	const bool plain_av = !SvRMAGICAL((SV *)av);
+	SSize_t j = 0;
+	size_t n = 0;		//stays equal to j: one value written per element read
+	while (j < len) {
+		if (plain_av) av_scan_extract(av, &j, len, out, &n);
+		if (j >= len) break;
+		{
+			SV **tv = av_fetch(av, j, 0);
+			out[n++] = (tv && SvOK(*tv) && looks_like_number(*tv)) ? SvNV(*tv) : NV_NAN;
+		}
+		j++;
+	}
+}
 //SvROK = scalar value reference is OK
 
 /*Rendering a cell the way perl would, without going through SvPV().
@@ -2099,6 +2306,35 @@ static NV pearson_corr(const NV *x, const NV *y, size_t n) {
 	return num / den;
 }
 
+/*Sample covariance of two equal-length NV columns, two-pass.
+
+The single-pass Welford update this replaces carried two divides per element in
+a loop-carried dependency chain, so each element waited on the previous one's
+latency.  The two-pass form is also the one R computes: cov.c takes a mean per
+column, refines it with a second pass (the MEAN macro, tmp = tmp + sum(x-tmp)/n)
+and sums the centred products about the refined means.  Expanding that about
+the unrefined means leaves sum(dx*dy) - sum(dx)*sum(dy)/n, so carrying the two
+sums of deviations alongside the sum of their products gives R's answer without
+the extra pass.
+
+n >= 2 is the caller's to guarantee; cov() returns NaN below that before
+reaching here.*/
+static NV nv_cov2(const NV *restrict x, const NV *restrict y, size_t n) {
+	NV sx = 0.0, sy = 0.0;
+	for (size_t i = 0; i < n; i++) { sx += x[i]; sy += y[i]; }
+	{
+		const NV mx = sx / n, my = sy / n;
+		NV cx = 0.0, cy = 0.0, sxy = 0.0;
+		for (size_t i = 0; i < n; i++) {
+			const NV dx = x[i] - mx, dy = y[i] - my;
+			cx += dx;
+			cy += dy;
+			sxy += dx * dy;
+		}
+		return (sxy - cx * cy / n) / (n - 1);
+	}
+}
+
 //(x,y) pair sorted by x ascending, then y ascending — for Kendall's tau.
 typedef struct { NV xv, yv; } KPair;
 static int kpair_cmp(const void *a, const void *b) {
@@ -2486,13 +2722,14 @@ static void nv_sort(NV *a, size_t n) {
 	nv_introsort(a, 0, n - 1, depth);
 }
 
-/*Leave the k-th smallest of a[0..n-1] at a[k], everything ahead of it no
-larger and everything after it no smaller.  a[] is reordered in place.*/
-static void nv_select(NV *a, size_t n, size_t k) {
-	if (n < 2) return;
-	size_t lo = 0, hi = n - 1;
+/*Leave the k-th smallest of a[lo..hi] at a[k], everything between lo and k no
+larger and everything between k and hi no smaller.  a[] is reordered in place,
+and only within [lo, hi] -- which is what lets nv_select_multi() below place
+one order statistic and then keep working inside the two halves it separates.*/
+static void nv_select_range(NV *a, size_t lo, size_t hi, size_t k) {
+	if (lo >= hi) return;	//0 or 1 elements: already its own order statistic
 	unsigned depth = 0;
-	for (size_t t = n; t > 1; t >>= 1) depth += 2;	//2*floor(log2 n)
+	for (size_t t = hi - lo + 1; t > 1; t >>= 1) depth += 2;	//2*floor(log2 n)
 
 	while (hi - lo >= NV_SEL_ISORT) {
 		if (depth-- == 0) { nv_heapsort(a + lo, hi - lo + 1); return; }
@@ -2516,6 +2753,46 @@ static void nv_select(NV *a, size_t n, size_t k) {
 		if (k <= j) hi = j; else lo = j + 1;
 	}
 	nv_isort(a + lo, hi - lo + 1);
+}
+
+/*Leave the k-th smallest of a[0..n-1] at a[k].*/
+static void nv_select(NV *a, size_t n, size_t k) {
+	if (n < 2) return;
+	nv_select_range(a, 0, n - 1, k);
+}
+
+/*Place every one of ks[klo..khi-1] -- ascending, distinct, all within
+[lo, hi] -- at its own index in a[], leaving the rest of a[] partitioned
+around them but unsorted.
+
+Taking the middle index first and recursing into the two ranges it separates
+costs O(n log k) rather than the O(n k) a left-to-right sweep of selects would,
+because each level of the recursion touches each element at most once and the
+index list halves at every level.
+
+This is what quantile() wants instead of a full sort, and is what R does too:
+quantile.default() passes the order statistics it needs to sort(partial=), and
+numpy reaches np.partition() for the same reason.  On 1e6 random doubles the
+10 order statistics of the 5 default probs cost 19.2 ms this way against 69.1
+ms for the full nv_sort() (perl-5.44.0, -O2, both routines from this file).*/
+static void nv_select_multi(NV *a, size_t lo, size_t hi,
+	const size_t *restrict ks, size_t klo, size_t khi) {
+	if (klo >= khi) return;
+	size_t kmid = klo + (khi - klo) / 2;
+	size_t k = ks[kmid];
+	nv_select_range(a, lo, hi, k);
+	//a[k] is final, so the indices below it can only be in [lo, k-1]
+	if (k > lo) nv_select_multi(a, lo, k - 1, ks, klo, kmid);
+	if (k < hi) nv_select_multi(a, k + 1, hi, ks, kmid + 1, khi);
+}
+
+/*Ascending comparator for qsort() over size_t, for the index list above.
+qsort_r() would let the comparator be a closure, but its argument order differs
+between glibc, the BSDs and Solaris, so a plain file-static comparator it is.
+Subtracting would overflow; comparing twice cannot.*/
+static int size_t_cmp(const void *a, const void *b) {
+	const size_t x = *(const size_t *)a, y = *(const size_t *)b;
+	return (x > y) - (x < y);
 }
 //Helper to calculate the number of bins using Sturges' formula: log2(n) + 1
 static size_t calculate_sturges_bins(size_t n) {
@@ -14186,16 +14463,16 @@ SV* cov(SV* x_sv, SV* y_sv, const char* method = "pearson")
 		NV *y_val = (NV*)safemalloc(nx * sizeof(NV));
 		size_t n = 0;
 
+		/* Extract numeric values, defaulting to NaN for missing/invalid data,
+		then compact to the pairwise complete observations (skips NAs
+		seamlessly like R).  The compaction reads and writes the same buffers,
+		which is safe because it never runs ahead of itself: n <= i always. */
+		av_extract_or_nan(aTHX_ x_av, (SSize_t)nx, x_val);
+		av_extract_or_nan(aTHX_ y_av, (SSize_t)nx, y_val);
 		for (size_t i = 0; i < nx; i++) {
-			SV **x_tv = av_fetch(x_av, i, 0);
-			SV **y_tv = av_fetch(y_av, i, 0);
-			// Extract numeric values, defaulting to NAN for missing/invalid data
-			NV xv = (x_tv && SvOK(*x_tv) && looks_like_number(*x_tv)) ? SvNV(*x_tv) : NAN;
-			NV yv = (y_tv && SvOK(*y_tv) && looks_like_number(*y_tv)) ? SvNV(*y_tv) : NAN;
-			// Pairwise complete observations (skips NAs seamlessly like R)
-			if (!nv_isnan(xv) && !nv_isnan(yv)) {
-				 x_val[n] = xv;
-				 y_val[n] = yv;
+			if (!nv_isnan(x_val[i]) && !nv_isnan(y_val[i])) {
+				 x_val[n] = x_val[i];
+				 y_val[n] = y_val[i];
 				 n++;
 			}
 		}
@@ -14216,7 +14493,7 @@ SV* cov(SV* x_sv, SV* y_sv, const char* method = "pearson")
 				  }
 				}
 			} else {
-				NV mean_x = 0.0, mean_y = 0.0, cov_sum = 0.0;
+				// Unbiased sample covariance (N - 1) for Pearson & Spearman
 				if (strcmp(method, "spearman") == 0) {
 				  // Spearman: Rank the data first, then run standard covariance
 				  NV *rx = (NV*)safemalloc(n * sizeof(NV));
@@ -14224,25 +14501,11 @@ SV* cov(SV* x_sv, SV* y_sv, const char* method = "pearson")
 				  // Uses your existing rank_data() helper from LikeR.xs
 				  rank_data(x_val, rx, n);
 				  rank_data(y_val, ry, n);
-				  for (size_t i = 0; i < n; i++) {
-						NV dx = rx[i] - mean_x;
-						mean_x += dx / (i + 1);
-						NV dy = ry[i] - mean_y;
-						mean_y += dy / (i + 1);
-						cov_sum += dx * (ry[i] - mean_y);
-				  }
+				  ans = nv_cov2(rx, ry, n);
 				  Safefree(rx); Safefree(ry);
-				} else { // Pearson: Welford's Single-Pass Covariance Algorithm
-				  for (size_t i = 0; i < n; i++) {
-						NV dx = x_val[i] - mean_x;
-						mean_x += dx / (i + 1);
-						NV dy = y_val[i] - mean_y;
-						mean_y += dy / (i + 1);
-						cov_sum += dx * (y_val[i] - mean_y);
-				  }
+				} else {
+				  ans = nv_cov2(x_val, y_val, n);
 				}
-				// Unbiased Sample Covariance (N - 1) for Pearson & Spearman
-				ans = cov_sum / (n - 1);
 			}
 			Safefree(x_val); Safefree(y_val);
 			RETVAL = newSVnv(ans);
@@ -15542,82 +15805,71 @@ PPCODE:
 NV min(...)
 	PROTOTYPE: @
 	INIT:
-		NV min_val = 0.0;
-		size_t count = 0;
-		bool first = TRUE;
+		NvAcc acc = { 0.0, 0.0, 0.0, 0 };
 	CODE:
-		for (unsigned short int i = 0; i < items; i++) {
+		/*Stack_off_t, not a short: `items` is the whole flattened argument
+		list, so min(@x) on a 70k-element array puts 70k scalars here. An
+		`unsigned short int` counter wrapped at 65536 and looped forever.*/
+		for (Stack_off_t i = 0; i < items; i++) {
 			SV* arg = ST(i);
 			if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
 				AV* av = (AV*)SvRV(arg);
-				size_t len = av_len(av) + 1;
-				for (size_t j = 0; j < len; j++) {
+				SSize_t len = av_len(av) + 1, j = 0;
+				if (!SvRMAGICAL((SV*)av)) av_scan_min(av, &j, len, &acc);
+				for (; j < len; j++) {
 					 SV** tv = av_fetch(av, j, 0);
 					 if (tv && SvOK(*tv)) {
 						 NV val = SvNV(*tv);
-						 if (first || val < min_val) {
-							 min_val = val;
-							 first = FALSE;
-						 }
-						 count++;
+						 if (acc.count == 0 || val < acc.min) acc.min = val;
+						 acc.count++;
 					 } else {
-						 croak("min: undefined value at array ref index %" UVuf " (argument %d)", (UV)j, (int)i);
+						 croak("min: undefined value at array ref index %" UVuf " (argument %" UVuf ")", (UV)j, (UV)i);
 					 }
 				 }
 			} else if (SvOK(arg)) {
 				 NV val = SvNV(arg);
-				 if (first || val < min_val) {
-					 min_val = val;
-					 first = FALSE;
-				 }
-				 count++;
+				 if (acc.count == 0 || val < acc.min) acc.min = val;
+				 acc.count++;
 			} else {
-				 croak("min: undefined value at argument index %d", (int)i);
+				 croak("min: undefined value at argument index %" UVuf, (UV)i);
 			}
 		}
-		if (count == 0) croak("min needs >= 1 numeric element");
-		RETVAL = min_val;
+		if (acc.count == 0) croak("min needs >= 1 numeric element");
+		RETVAL = acc.min;
 	OUTPUT:
 	  RETVAL
 
 NV max(...)
 	PROTOTYPE: @
 	INIT:
-		NV max_val = 0.0;
-		size_t count = 0;
-		bool first = TRUE;
+		NvAcc acc = { 0.0, 0.0, 0.0, 0 };
 	CODE:
 		for (Stack_off_t i = 0; i < items; i++) {
 		   SV* arg = ST(i);
 		   if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
 			   AV* av = (AV*)SvRV(arg);
-			   size_t len = av_len(av) + 1;
-			   for (size_t j = 0; j < len; j++) {
+			   SSize_t len = av_len(av) + 1, j = 0;
+			   if (!SvRMAGICAL((SV*)av)) av_scan_max(av, &j, len, &acc);
+			   for (; j < len; j++) {
 				   SV** tv = av_fetch(av, j, 0);
 				   if (tv && SvOK(*tv)) {
 					   NV val = SvNV(*tv);
-					   if (first || val > max_val) {
-						   max_val = val;
-						   first = FALSE;
-					   }
-					   count++;
+					   if (acc.count == 0 || val > acc.max) acc.max = val;
+					   acc.count++;
 				   } else {
 					   croak("max: undefined value at array ref index %" UVuf " (argument %" UVuf ")", (UV)j, (UV)i);
 				   }
 			   }
 		   } else if (SvOK(arg)) {
 			   NV val = SvNV(arg);
-			   if (first || val > max_val) {
-				   max_val = val;
-				   first = FALSE;
-			   }
-			   count++;
+			   if (acc.count == 0 || val > acc.max) acc.max = val;
+			   acc.count++;
 		   } else {
 			   croak("max: undefined value at argument index %" UVuf, (UV)i);
 		   }
 	  }
-	  if (count == 0) croak("max needs >= 1 numeric element");
-	  RETVAL = max_val;
+	  if (acc.count == 0) croak("max needs >= 1 numeric element");
+	  RETVAL = acc.max;
 	OUTPUT:
 		RETVAL
 
@@ -15864,27 +16116,11 @@ SV* quantile(...)
 		AV *x_av = (AV*)SvRV(x_sv);
 		size_t n_raw = av_len(x_av) + 1;
 		if (n_raw == 0) croak("quantile: 'x' is empty");
-		// --- Extract valid numeric data & drop NAs (Upgraded to NV)
-		NV *x;
-		Newx(x, n_raw, NV);
-		size_t n = 0;
-		for (size_t i = 0; i < n_raw; i++) {
-			SV **tv = av_fetch(x_av, i, 0);
-			if (tv && SvOK(*tv)) {
-				 x[n++] = SvNV(*tv);
-			}
-		}
-		if (n == 0) {
-			Safefree(x);
-			croak("quantile: 'x' contains no valid numbers");
-		}
-		/* --- Sort Data for Quantile Math ---
-		 nv_sort() rather than qsort(): the comparator is a plain NV compare
-		 either way, but qsort() reaches it through a function pointer it
-		 cannot inline, and that indirect call is most of what ordering a
-		 large column costs.*/
-		nv_sort(x, n);
-		// --- Parse Probabilities (Upgraded to NV) ---
+		/* --- Parse Probabilities (Upgraded to NV) ---
+		 Before the column is read, not after: which order statistics the
+		 partial sort below has to place is decided by the probs, and a probs
+		 vector that turns out to be invalid should not first cost a pass over
+		 a million-element column. */
 		NV default_probs[] = {0.0, 0.25, 0.50, 0.75, 1.0};
 		unsigned int n_probs = 5;
 		NV *probs;
@@ -15904,7 +16140,7 @@ SV* quantile(...)
 				 SV **tv = av_fetch(p_av, i, 0);
 				 probs[i] = (tv && SvOK(*tv)) ? SvNV(*tv) : 0.0;
 				 if (probs[i] < -probs_eps || probs[i] > 1.0 + probs_eps) {
-					 Safefree(x); Safefree(probs);
+					 Safefree(probs);
 					 croak("quantile: probabilities must be between 0 and 1");
 				 }
 				 if (probs[i] < 0.0) probs[i] = 0.0;
@@ -15913,6 +16149,54 @@ SV* quantile(...)
 		} else {
 			Newx(probs, n_probs, NV);
 			for (unsigned int i = 0; i < n_probs; i++) probs[i] = default_probs[i];
+		}
+		// --- Extract valid numeric data & drop NAs (Upgraded to NV)
+		NV *x;
+		Newx(x, n_raw, NV);
+		size_t n = 0;
+		{
+			SSize_t len = (SSize_t)n_raw, j = 0;
+			if (!SvRMAGICAL((SV*)x_av)) av_scan_extract(x_av, &j, len, x, &n);
+			for (; j < len; j++) {
+				SV **tv = av_fetch(x_av, j, 0);
+				if (tv && SvOK(*tv)) x[n++] = SvNV(*tv);
+			}
+		}
+		if (n == 0) {
+			Safefree(x); Safefree(probs);
+			croak("quantile: 'x' contains no valid numbers");
+		}
+		/* --- Order only the statistics that are actually read ---
+		 Type 7 reads at most two order statistics per probability: x[j] at
+		 j = floor((n-1)p), and x[j+1] when the interpolation weight is
+		 non-zero.  Placing just those with nv_select_multi() is O(n log k)
+		 against the O(n log n) of ordering the whole column, and is what R
+		 does -- quantile.default() hands its indices to sort(partial=).
+		 Measured on 1e6 doubles at the 5 default probs: 19.2 ms against 69.1
+		 ms for nv_sort().
+
+		 Past k ~ n/2 distinct indices the partial sort is doing a sort's work
+		 with more bookkeeping, so above that a full sort is simply the
+		 cheaper way to get the same array. */
+		{
+			size_t *ks, nk = 0, uk = 0;
+			Newx(ks, (size_t)n_probs * 2 + 1, size_t);
+			for (unsigned int i = 0; i < n_probs; i++) {
+				NV h = (NV)(n - 1) * probs[i];
+				size_t j = (size_t)h;
+				if (j >= n) j = n - 1;		//guards p == 1 and any rounding at the top
+				ks[nk++] = j;
+				if (j + 1 < n) ks[nk++] = j + 1;
+			}
+			if (nk > 0) {
+				qsort(ks, nk, sizeof(size_t), size_t_cmp);
+				for (size_t i = 0; i < nk; i++)		//drop repeats: ks must be distinct
+					if (i == 0 || ks[i] != ks[i - 1]) ks[uk++] = ks[i];
+			}
+			if (uk == 0)              ;			//no probabilities: nothing to order
+			else if (uk >= n / 2)     nv_sort(x, n);
+			else                      nv_select_multi(x, 0, n - 1, ks, 0, uk);
+			Safefree(ks);
 		}
 		// --- Calculate Quantiles (R Type 7 Algorithm) ---
 		HV *res_hv = newHV();
@@ -15963,32 +16247,32 @@ SV* quantile(...)
 NV mean(...)
 	PROTOTYPE: @
 	INIT:
-		NV total = 0;
-		size_t count = 0;
+		NvAcc acc = { 0.0, 0.0, 0.0, 0 };
 	CODE:
 		for (Stack_off_t i = 0; i < items; i++) {
 			SV* arg = ST(i);
 			if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
 				AV* av = (AV*)SvRV(arg);
-				SSize_t len = av_len(av) + 1;
-				for (SSize_t j = 0; j < len; j++) {
+				SSize_t len = av_len(av) + 1, j = 0;
+				if (!SvRMAGICAL((SV*)av)) av_scan_sum(av, &j, len, &acc);
+				for (; j < len; j++) {
 					SV** tv = av_fetch(av, j, 0);
 					if (tv && SvOK(*tv)) {
-						total += SvNV(*tv);
-						count++;
+						acc.sum += SvNV(*tv);
+						acc.count++;
 					} else {
 						croak("mean: undefined value at array ref index %" UVuf " (argument %" UVuf ")", (UV)j, (UV)i);
 					}
 				}
 			} else if (SvOK(arg)) {
-				total += SvNV(arg);
-				count++;
+				acc.sum += SvNV(arg);
+				acc.count++;
 			} else {
 				croak("mean: undefined value at argument index %" UVuf, (UV)i);
 			}
 		}
-		if (count == 0) croak("mean needs >= 1 element");
-		RETVAL = total / count;
+		if (acc.count == 0) croak("mean needs >= 1 element");
+		RETVAL = acc.sum / acc.count;
 	OUTPUT:
 		RETVAL
 
@@ -16060,70 +16344,108 @@ void mode(...)
 NV sum(...)
 	PROTOTYPE: @
 	INIT:
-		NV total = 0;
-		size_t count = 0;
+		NvAcc acc = { 0.0, 0.0, 0.0, 0 };
 	CODE:
 		for (Stack_off_t i = 0; i < items; i++) {
 			SV* arg = ST(i);
 			if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
 				 AV* av = (AV*)SvRV(arg);
-				 SSize_t len = av_len(av) + 1;
-				 for (size_t j = 0; j < len; j++) {
+				 SSize_t len = av_len(av) + 1, j = 0;
+				 if (!SvRMAGICAL((SV*)av)) av_scan_sum(av, &j, len, &acc);
+				 for (; j < len; j++) {
 					 SV** tv = av_fetch(av, j, 0);
 					 if (tv && SvOK(*tv)) {
-						 total += SvNV(*tv);
-						 count++;
+						 acc.sum += SvNV(*tv);
+						 acc.count++;
 					 } else {
 						 croak("sum: undefined value at array ref index %" UVuf " (argument %" UVuf ")", (UV)j, (UV)i);
 					 }
 				 }
 			} else if (SvOK(arg)) {
-				 total += SvNV(arg);
-				 count++;
+				 acc.sum += SvNV(arg);
+				 acc.count++;
 			} else {
 				 croak("sum: undefined value at argument index %" UVuf, (UV)i);
 			}
 		}
-		if (count == 0) croak("sum needs >= 1 element");
-		RETVAL = total;
+		if (acc.count == 0) croak("sum needs >= 1 element");
+		RETVAL = acc.sum;
 	OUTPUT:
 	  RETVAL
 
 NV sd(...)
 	PROTOTYPE: @
 	INIT:
-	  NV mean = 0.0, M2 = 0.0;
-	  size_t count = 0;
+	  NvAcc acc = { 0.0, 0.0, 0.0, 0 };
+	  NV mean, m2 = 0.0, comp = 0.0;
 	CODE:
-		for (Stack_off_t i = 0; i < items; i++) { // Single Pass Standard Deviation via Welford's Algorithm
+		/*Two passes, not Welford.
+
+		Welford's update carries a divide (mean += delta / count) in a
+		loop-carried dependency chain, so every element waits on the previous
+		one's ~14-cycle latency: 5.34 ns/element against 2.70 for two passes
+		on 1e6 NVs (perl-5.44.0, -O2).
+
+		The two-pass form is also what R computes. R's cov.c takes a first
+		mean, refines it with a second pass (tmp = tmp + sum(x - tmp)/n, the
+		MEAN macro) and only then sums the squared deviations about the
+		refined mean. Expanding that third pass about the unrefined mean
+		leaves sum((x-m)^2) - (sum(x-m))^2/n, so carrying the sum of the
+		deviations alongside the sum of their squares gives R's answer in one
+		pass fewer -- and it is the Chan-Golub-LeVeque correction, so it is
+		no less accurate than Welford on an ill-centred column.
+
+		Reading the arguments twice is visible only to a tied array, whose
+		FETCH now runs once per pass.*/
+		for (Stack_off_t i = 0; i < items; i++) {	//pass 1: the mean
 			SV* arg = ST(i);
 			if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
 				AV* av = (AV*)SvRV(arg);
-				SSize_t len = av_len(av) + 1;
-				for (size_t j = 0; j < len; j++) {
-				  SV** tv = av_fetch(av, j, 0);
-				  if (tv && SvOK(*tv)) {
-						count++;
-						NV val = SvNV(*tv);
-						NV delta = val - mean;
-						mean += delta / count;
-						M2 += delta * (val - mean);
-				  } else {
+				SSize_t len = av_len(av) + 1, j = 0;
+				if (!SvRMAGICAL((SV*)av)) av_scan_sum(av, &j, len, &acc);
+				for (; j < len; j++) {
+					SV** tv = av_fetch(av, j, 0);
+					if (tv && SvOK(*tv)) {
+						acc.sum += SvNV(*tv);
+						acc.count++;
+					} else {
 						croak("sd: undefined value at array ref index %" UVuf " (argument %" UVuf ")", (UV)j, (UV)i);
-				  }
+					}
 				}
 			} else if (SvOK(arg)) {
-				 count++;
-				 NV val = SvNV(arg);
-				 NV delta = val - mean;
-				 mean += delta / count;
-				 M2 += delta * (val - mean);
+				acc.sum += SvNV(arg);
+				acc.count++;
 			} else {
-				 croak("sd: undefined value at argument index %" UVuf, (UV)i);
+				croak("sd: undefined value at argument index %" UVuf, (UV)i);
 			}
 		}
-		if (count < 2) croak("sd needs >= 2 elements");
-		RETVAL = nv_sqrt(M2 / (count - 1));
+		if (acc.count < 2) croak("sd needs >= 2 elements");
+		mean = acc.sum / acc.count;
+		for (Stack_off_t i = 0; i < items; i++) {	//pass 2: the deviations
+			SV* arg = ST(i);
+			if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
+				AV* av = (AV*)SvRV(arg);
+				SSize_t len = av_len(av) + 1, j = 0;
+				if (!SvRMAGICAL((SV*)av)) av_scan_dev(av, &j, len, mean, &m2, &comp);
+				for (; j < len; j++) {
+					SV** tv = av_fetch(av, j, 0);
+					if (tv && SvOK(*tv)) {
+						NV d = SvNV(*tv) - mean;
+						m2 += d * d;
+						comp += d;
+					} else {
+						croak("sd: undefined value at array ref index %" UVuf " (argument %" UVuf ")", (UV)j, (UV)i);
+					}
+				}
+			} else if (SvOK(arg)) {
+				NV d = SvNV(arg) - mean;
+				m2 += d * d;
+				comp += d;
+			} else {
+				croak("sd: undefined value at argument index %" UVuf, (UV)i);
+			}
+		}
+		RETVAL = nv_sqrt((m2 - comp * comp / acc.count) / (acc.count - 1));
 	OUTPUT:
 	  RETVAL
 
@@ -16186,39 +16508,76 @@ void uniq(...)
 NV var(...)
 	PROTOTYPE: @
 	INIT:
-	  NV mean = 0.0, M2 = 0.0;
-	  size_t count = 0;
+	  NvAcc acc = { 0.0, 0.0, 0.0, 0 };
+	  NV mean, m2 = 0.0, comp = 0.0;
 	CODE:
-	// Single Pass Variance via Welford's Algorithm
-		for (Stack_off_t i = 0; i < items; i++) {
+		/*Two passes, not Welford.
+
+		Welford's update carries a divide (mean += delta / count) in a
+		loop-carried dependency chain, so every element waits on the previous
+		one's ~14-cycle latency: 5.34 ns/element against 2.70 for two passes
+		on 1e6 NVs (perl-5.44.0, -O2).
+
+		The two-pass form is also what R computes. R's cov.c takes a first
+		mean, refines it with a second pass (tmp = tmp + sum(x - tmp)/n, the
+		MEAN macro) and only then sums the squared deviations about the
+		refined mean. Expanding that third pass about the unrefined mean
+		leaves sum((x-m)^2) - (sum(x-m))^2/n, so carrying the sum of the
+		deviations alongside the sum of their squares gives R's answer in one
+		pass fewer -- and it is the Chan-Golub-LeVeque correction, so it is
+		no less accurate than Welford on an ill-centred column.
+
+		Reading the arguments twice is visible only to a tied array, whose
+		FETCH now runs once per pass.*/
+		for (Stack_off_t i = 0; i < items; i++) {	//pass 1: the mean
 			SV* arg = ST(i);
 			if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
-				 AV* av = (AV*)SvRV(arg);
-				 size_t len = av_len(av) + 1;
-				 for (size_t j = 0; j < len; j++) {
-					  SV** tv = av_fetch(av, j, 0);
-					  if (tv && SvOK(*tv)) {
-						   count++;
-						   NV val = SvNV(*tv);
-						   NV delta = val - mean;
-						   mean += delta / count;
-						   M2 += delta * (val - mean);
-					  } else {
-						   croak("var: undefined value at array ref index %" UVuf " (argument %" UVuf ")", (UV)j, (UV)i);
-					  }
-				 }
+				AV* av = (AV*)SvRV(arg);
+				SSize_t len = av_len(av) + 1, j = 0;
+				if (!SvRMAGICAL((SV*)av)) av_scan_sum(av, &j, len, &acc);
+				for (; j < len; j++) {
+					SV** tv = av_fetch(av, j, 0);
+					if (tv && SvOK(*tv)) {
+						acc.sum += SvNV(*tv);
+						acc.count++;
+					} else {
+						croak("var: undefined value at array ref index %" UVuf " (argument %" UVuf ")", (UV)j, (UV)i);
+					}
+				}
 			} else if (SvOK(arg)) {
-				 count++;
-				 NV val = SvNV(arg);
-				 NV delta = val - mean;
-				 mean += delta / count;
-				 M2 += delta * (val - mean);
+				acc.sum += SvNV(arg);
+				acc.count++;
 			} else {
-				 croak("var: undefined value at argument index %" UVuf, (UV)i);
+				croak("var: undefined value at argument index %" UVuf, (UV)i);
 			}
 		}
-		if (count < 2) croak("var needs >= 2 elements");
-		RETVAL = M2 / (count - 1);
+		if (acc.count < 2) croak("var needs >= 2 elements");
+		mean = acc.sum / acc.count;
+		for (Stack_off_t i = 0; i < items; i++) {	//pass 2: the deviations
+			SV* arg = ST(i);
+			if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
+				AV* av = (AV*)SvRV(arg);
+				SSize_t len = av_len(av) + 1, j = 0;
+				if (!SvRMAGICAL((SV*)av)) av_scan_dev(av, &j, len, mean, &m2, &comp);
+				for (; j < len; j++) {
+					SV** tv = av_fetch(av, j, 0);
+					if (tv && SvOK(*tv)) {
+						NV d = SvNV(*tv) - mean;
+						m2 += d * d;
+						comp += d;
+					} else {
+						croak("var: undefined value at array ref index %" UVuf " (argument %" UVuf ")", (UV)j, (UV)i);
+					}
+				}
+			} else if (SvOK(arg)) {
+				NV d = SvNV(arg) - mean;
+				m2 += d * d;
+				comp += d;
+			} else {
+				croak("var: undefined value at argument index %" UVuf, (UV)i);
+			}
+		}
+		RETVAL = (m2 - comp * comp / acc.count) / (acc.count - 1);
 	OUTPUT:
 		RETVAL
 
@@ -18333,20 +18692,22 @@ SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 			Newx(xd, nx, NV);
 			Newx(yd, ny, NV);
 			bool x_sd0 = 1, y_sd0 = 1;
-			NV x_first = NAN, y_first = NAN;
+			NV x_first = NV_NAN, y_first = NV_NAN;
+			/* Read both columns first, then look for zero variance in the NV
+			buffers.  Splitting the pass costs one more sweep over memory the
+			extraction has just left in cache, and buys the extraction the
+			direct AvARRAY() walk. */
+			av_extract_or_nan(aTHX_ x_av, (SSize_t)nx, xd);
+			av_extract_or_nan(aTHX_ y_av, (SSize_t)ny, yd);
 			for (size_t i = 0; i < nx; i++) {
-				SV**tv = av_fetch(x_av, i, 0);
-				NV val = (tv && SvOK(*tv) && looks_like_number(*tv)) ? SvNV(*tv) : NAN;
-				xd[i] = val;
+				NV val = xd[i];
 				if (!nv_isnan(val)) {
 				  if (nv_isnan(x_first)) x_first = val;
 				  else if (val != x_first) x_sd0 = 0;
 				}
 			}
 			for (size_t i = 0; i < ny; i++) {
-				SV**tv = av_fetch(y_av, i, 0);
-				NV val = (tv && SvOK(*tv) && looks_like_number(*tv)) ? SvNV(*tv) : NAN;
-				yd[i] = val;
+				NV val = yd[i];
 				if (!nv_isnan(val)) {
 				  if (nv_isnan(y_first)) y_first = val;
 				  else if (val != y_first) y_sd0 = 0;
