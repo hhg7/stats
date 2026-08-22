@@ -10075,9 +10075,9 @@ I feel that this is better, and more easily read, than what you get in R:
 =head3 missing values, and groups with no data
 
 Non-numeric, undefined and C<NaN> elements are silently dropped before the test
-runs, matching R's C<complete.cases(x, g)> -- C<NaN> is C<NA> to R, so it goes
-too. C<+Inf> and C<-Inf> are neither, and a rank test has no trouble with them,
-so they are kept and ranked.
+runs, matching R's C<complete.cases(x, g)> — C<NaN> is C<NA> to R, so it goes too.
+C<+Inf> and C<-Inf> are neither, and a rank test has no trouble with them, so
+they are kept and ranked.
 
 A group left with no usable observation is refused rather than guessed at, as
 R's list interface does: C<kruskal_test> croaks C<all groups must contain data>.
@@ -10087,15 +10087,14 @@ the groups that do have data under a C<df> that counts one that does not is not
 a test of anything. (SciPy takes the other side of this and returns C<NaN>.)
 
 A sample with no variation at all gives a tie correction of exactly zero, so
-the statistic is C<0/0>: like R, C<statistic> and C<p_value> come back as
-C<NaN>.
+the statistic is C<0/0>: like R, C<statistic> and C<p_value> come back as C<NaN>.
 
 =head3 returned fields
 
-C<statistic>, C<parameter> (the degrees of freedom) and C<method> are R's
-C<htest> fields; the p-value is available as both C<p_value> and C<p.value>.
-On top of those, C<group_stats> holds C<size> and C<mean> sub-hashes keyed by
-your own group labels, computed over the same observations the statistic used.
+C<statistic>, C<parameter> (the degrees of freedom) and C<method> are R's C<htest>
+fields; the p-value is available as both C<p_value> and C<p.value>. On top of
+those, C<group_stats> holds C<size> and C<mean> sub-hashes keyed by your own group
+labels, computed over the same observations the statistic used.
 
 =head2 ks_test
 
@@ -14458,6 +14457,233 @@ C<f.sf> / C<norm.sf> and statsmodels' C<anova_oneway>; see
 C<t/model_pvalue_tails.t> and C<t/oneway_test.R.scipy.t>.
 
 =head1 Changes
+
+=head2 0.301 2026-08-21 CDT
+
+there are numerous additions of C<restrict> keywords, which may or may not improve speed
+
+=head3 kruskal_test
+
+C<kruskal_test> cross-validated against R 4.6.1's C<stats::kruskal.test()> and
+SciPy 1.18.0's C<TestKruskal>, driven by those suites' own cases rather than by
+cases invented here. Six bugs are fixed: five in how the arguments and the data
+are read before any ranking happens, and one in the chi-squared tail, which
+reaches every function that uses it. The test now needs a third of the memory
+and runs in under half the time, and it returns the same answer twice in a row,
+which it did not before.
+
+Everything below is checked in the new C<t/kruskal_test.R.scipy.t> (870 tests),
+whose expected values are frozen literals with their provenance recorded in the
+file header; it needs no R and no Python to run. The generator that produced
+them, C<t/kruskal_test.R.scipy.R>, is committed beside it. There had been no
+C<t/kruskal_test.t> at all — the only coverage was six assertions in C<t/01.t> on
+the single Hollander & Wolfe example, and none of the six bugs would have shown
+up in it. The full suite is 125 files and 25,951 tests, and
+C<./test.all.perls.pl> passes on all five local perls — C<5.10.1>, C<5.12.5>
+(long double), C<5.42.3>, C<5.44.0> and C<5.44.0-quadmath> — with no warnings on
+any of them.
+
+=head4 NaN was ranked instead of dropped
+
+C<looks_like_number> is true for C<NaN>, so a C<NaN> went into the ranking. R
+treats C<NaN> as C<NA> and C<complete.cases(x, g)> removes it before C<rank()> ever
+sees it:
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>data</th>
+  <th>was</th>
+  <th>R 4.6.1</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>c(1,2,3,4,5,6)</code> with one <code>NaN</code>, n = 7</td>
+  <td><code>H = 4.5</code></td>
+  <td><code>H = 3.8571428571428577</code></td>
+</tr>
+<tr>
+  <td><code>1:24</code> with one <code>NaN</code></td>
+  <td><code>H = 17.28</code></td>
+  <td><code>H = 16.5</code></td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+It also handed C<cmp_nv3> a comparison that is never true for any pair
+involving the C<NaN>, which leaves C<qsort> without the strict weak ordering it is
+entitled to — the same defect C<wilcox_test> had fixed in 0.298, where the
+comment describing it is still in the file. C<+Inf> and C<-Inf> are neither C<NA>
+nor C<NaN> to R and a rank test has no trouble with them, so they are still kept
+and ranked; that is now pinned rather than incidental.
+
+The bad value propagated: C<table_one>'s C<_t1_cont_p> hands its groups straight
+to C<kruskal_test>, so a single C<NaN> among nine observations was reported at
+C<p = 0.0273> where dropping it gives C<0.0439>.
+
+=head4 A group with no data inflated the degrees of freedom
+
+The hash-of-arrays form counted every key in C<k>, including a key whose array
+was empty or whose every element had been dropped. On
+C<< {a =E<gt> [1,1,1], b =E<gt> [2,2,2], c =E<gt> []} >> that gave C<df = 2> and
+C<p = 0.0820849986238988> for what is a two-group problem with
+C<df = 1, p = 0.025347318677468304>. Such a group was already skipped when
+forming the statistic and when building C<group_stats>; only C<df> still counted
+it.
+
+R refuses this case outright — C<all groups must contain data> — and so does
+C<kruskal_test> now, because the alternative is to test the groups that do have
+data under a C<df> that counts one that does not. R's order of checks came with
+it: it filters each group, refuses an empty one, and only then counts what is
+left, so C<< {a =E<gt> [], b =E<gt> []} >> is C<all groups must contain data> and not
+C<not enough observations>. SciPy takes the other side of this and returns C<NaN>
+with a C<SmallSampleWarning>; the divergence is recorded in the test file rather
+than papered over. The C<x>/C<g> form cannot reach any of this — it mints a group
+id the first time an observation survives the filter — so nothing changes there.
+
+=head4 Group labels were truncated at a NUL and lost their UTF-8 flag
+
+The C<x>/C<g> path read the label with C<SvPV_nolen> and then took C<strlen> of it.
+Perl strings are counted, not NUL-terminated, so C<"a\0X"> and C<"a\0Y">
+collapsed into one group: C<kruskal_test([1..6], ["a\0X","a\0X","a\0Y","a\0Y","b","b"])>
+came back as two groups with C<df = 1, H = 2.4> instead of three with
+C<df = 2, H = 4.571428571428573>. Both paths also copied the label's bytes while
+dropping perl's UTF-8 flag when storing it into C<group_stats>, so a label
+outside latin-1 came back as mojibake and the two input paths disagreed with
+each other about labels inside it. The length now travels with the string and
+carries the flag in its sign, which is C<hv_store>'s own convention, so a label
+comes back C<eq> to what went in. Dropping the C<strlen> also drops a pass over
+every label.
+
+=head4 A trailing named argument read past the argument stack
+
+The named-argument loop took C<ST(arg_idx + 1)> without checking that there was
+one, so an odd argument list read one slot past the top of the stack — and what
+it found there changed which branch ran: C<kruskal_test(\%h, 'x')> came back
+complaining that C<'h'> cannot be mixed with C<'x'>/C<'g'>, because C<x_sv> had been
+assigned whatever was past the end. C<binom_test>, C<chisq_test>, C<fisher_test>,
+C<wilcox_test>, C<var_test> and C<prcomp> all guard this; C<kruskal_test> was the
+one that did not. It now croaks C<odd number of named arguments>.
+
+=head4 An infinite chi-squared statistic gave no p-value
+
+C<get_p_value> short-circuits a statistic at or below zero and otherwise goes to
+C<igamc>. C<+Inf> is neither, so it reached the continued fraction, where the
+first C<1/d> is C<1/Inf = 0> and then C<del = 0 * Inf> is C<NaN> — an overwhelmingly
+significant result reported as no result at all. R's
+C<pchisq(Inf, df, lower.tail = FALSE)> is C<0>, and so is this now. C<NaN> in gives
+C<NaN> out, as R does, rather than running the continued fraction to its full
+10,000-iteration safety bound first.
+
+This is reachable from C<kruskal_test>. When a sample has no variation at all
+the tie correction is C<(n^3 - n)/(n^3 - n)>, and once C<n^3> is past C<2^53> the
+subtraction of C<n> is lost from one side or the other, so an inexact zero is
+divided by an exact zero. R has the same problem and returns C<+Inf>, C<-Inf> or
+C<NaN> depending on which way C<n> rounded: C<NaN> at C<n = 250000>, C<-Inf> at
+C<300000>, C<NaN> at C<400000>, C<+Inf> at C<500000>, C<NaN> at C<750000>, C<+Inf> at
+C<1000000>, C<NaN> at C<1500000> and C<+Inf> at C<2000000>. C<kruskal_test> now agrees
+with it on all eight. Below that the correction is exact and both give C<NaN>,
+which the corpus pins. C<get_p_value> is shared, so C<chisq_test>, C<prop_test>,
+C<mcnemar_test>, C<friedman_test>, C<cmh_test>, C<logrank_test> and C<coxph> get the
+same fix.
+
+=head4 Three times less memory, twice the speed
+
+The ranking no longer goes through C<RankInfo> and C<rank_and_count_ties>.
+C<kruskal_test> wants per-group rank sums, not the ranks themselves, so it sorts
+a 16-byte C<(value, group)> pair and adds each tie block's averaged rank straight
+into the group sums, instead of storing an C<NV> rank per observation for a
+second pass to read.
+
+It also no longer calls C<qsort>. glibc's C<qsort> is a mergesort that allocates a
+scratch buffer the size of the whole array — measured on glibc 2.39 as a
+C<VmHWM> of 116 MB going to 230 MB across one sort of a 114 MB array — which was
+half of the function's peak memory, and its comparison goes through a function
+pointer that cannot be inlined. In its place is a median-of-three introsort that
+recurses on the smaller partition and loops on the larger, so the stack stays
+C<O(log n)>, with a heapsort fallback past a depth of C<2*floor(log2(n))> so an
+adversarial input cannot drive it to C<O(n^2)>, and insertion sort for short
+runs. Sorting the same five-million-element array takes 0.375s against C<qsort>'s
+1.01s and allocates nothing. The third change is the group-label array on the
+C<x>/C<g> path, which was sized at one pointer per I<observation> to hold one per
+I<group> — 40 MB at C<n = 5e6> to hold three pointers — and now grows on demand.
+
+At C<n = 5,000,000> over three groups, measured as C<VmHWM> either side of the
+call:
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th></th>
+  <th>0.3</th>
+  <th>0.301</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>peak memory</td>
+  <td>228 MB (47.8 B/obs)</td>
+  <td>76 MB (15.9 B/obs)</td>
+</tr>
+<tr>
+  <td><code>kruskal_test(\@x, \@g)</code></td>
+  <td>1.20 s</td>
+  <td>0.557 s</td>
+</tr>
+<tr>
+  <td><code>kruskal_test(\%h)</code></td>
+  <td>1.11 s</td>
+  <td>0.467 s</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+Sorted, reversed, all-equal, organ-pipe and median-of-three-killer inputs all
+stay under 0.32s at C<n = 2e6>, which is what the depth limit is there for. The
+sort is checked against an independent pure-Perl implementation of the whole
+test over 748 structured cases — those shapes at every n either side of the
+insertion-sort threshold — and 49,712 random ones.
+
+=head4 The same input now gives the same answer
+
+C<H> moved by up to C<1.2e-14> between runs on identical data. Nothing was random:
+the sum of C<R_i^2 / n_i> walked the groups by group id, and on the
+hash-of-arrays path an id is minted in C<hv_iternext> order, which is perl's
+per-process hash order. Equal values were also left in whatever relative order
+the sort happened to leave them, which came from the same place.
+
+The sort now orders by value and then by group, which makes it a total order,
+and the C<k> terms of the sum are ordered before they are added — smallest first,
+which is the better-conditioned direction as well as a canonical one. C<k> is the
+number of groups, not the number of observations, so it costs nothing next to
+the ranking. C<H> is now bit-identical to R on all 37 corpus cases in all four
+call forms, and stays so across 60 runs under C<PERL_PERTURB_KEYS=1>.
+
+=head3 Documentation
+
+C<kruskal_test> gains two sections: what happens to non-numeric, undefined,
+C<NaN> and infinite elements and to a group left with no data, and what the
+returned fields are — C<statistic>, C<parameter>, C<method> and the p-value under
+both C<p_value> and C<p.value> from R's C<htest>, plus the C<size> and C<mean>
+sub-hashes of C<group_stats>, which are computed over the same observations the
+statistic used.
 
 =head2 0.3 2026-08-16 CDT
 

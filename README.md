@@ -6399,7 +6399,9 @@ Verified against R 4.6.1 (`oneway.test`, `anova(aov())`, `anova(lm())`,
 
 # Changes
 
-## 0.301
+## 0.301 2026-08-21 CDT
+
+there are numerous additions of `restrict` keywords, which may or may not improve speed
 
 ### kruskal_test
 
