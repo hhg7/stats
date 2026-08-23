@@ -58,7 +58,7 @@
 .\" ========================================================================
 .\"
 .IX Title "read.me 3"
-.TH read.me 3 2026-08-22 "perl v5.44.0" "User Contributed Perl Documentation"
+.TH read.me 3 2026-08-23 "perl v5.44.0" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -2673,6 +2673,12 @@ the frame, and an HoA\*(Aqs column arrays, can be reshaped without touching the
 input — but assigning \fIthrough\fR a survivor (\f(CW\*(C`$out\->{col}[0] = ...\*(C'\fR, or
 \&\f(CW\*(C`$out\->[0]{col} = ...\*(C'\fR for AoA/AoH) writes to the input\*(Aqs cell as well.
 Clone the result if you need full independence.
+.IP \(bu 4
+\&\fBA tied HoA column is the one exception\fR: its cells have no independent
+existence to share — the tie hands them out one temporary at a time — so
+they are copied, and the result is independent of the input for that column.
+A tied AoA/AoH row is still shared, because the row itself is a real
+reference whatever the array holding it does.
 .IP \(bu 4
 \&\fBIt dies\fR on: undefined or non\-ref data; an HoH frame; an unknown argument;
 an empty or duplicated \f(CW\*(C`subset\*(C'\fR; an invalid \f(CW\*(C`keep\*(C'\fR; an AoA position that is
@@ -6468,12 +6474,32 @@ Values are compared by stringification, the same \f(CW\*(C`eq\*(C'\fR semantics 
 the first value seen is the one returned (as a fresh copy, never an alias to
 the input). Order of first appearance is preserved.
 .PP
+This is where \f(CW\*(C`uniq\*(C'\fR parts company with R\*(Aqs \f(CWunique()\fR and pandas\*(Aq
+\&\f(CW\*(C`pd.unique()\*(C'\fR, which compare doubles by value. On a build whose \f(CW\*(C`NV\*(C'\fR is a double,
+\&\f(CW\*(C`0.1 + 0.2\*(C'\fR and \f(CW0.3\fR are two different doubles that both print \f(CW0.3\fR, so they
+are one value here and two there; \f(CW1000000000000000\fR and \f(CW1e15\fR are the same
+number, printed \f(CW1000000000000000\fR and \f(CW1e+15\fR, so they are two values here and
+one there. Which pairs fall which way moves with the width of the \f(CW\*(C`NV\*(C'\fR, because
+the printing does — \f(CW\*(C`uniq\*(C'\fR follows \f(CW\*(C`eq\*(C'\fR on every build.
+Compare doubles by value — with a \f(CW\*(C`%.17g\*(C'\fR \f(CW\*(C`sprintf\*(C'\fR, or by rounding — before
+calling \f(CW\*(C`uniq\*(C'\fR if that is what you need.
+.PP
 In list context \f(CW\*(C`uniq\*(C'\fR returns the distinct values. In scalar context it
-returns the \fIcount\fR of distinct values, matching \f(CW\*(C`List::Util::uniq\*(C'\fR.
+returns the \fIcount\fR of distinct values, matching \f(CW\*(C`List::Util::uniq\*(C'\fR. Scalar
+context is the cheaper of the two: it never builds the result list.
 .PP
 The UTF\-8 flag is part of the comparison key, so a UTF\-8 string and a
 byte\-identical non\-UTF\-8 string are kept distinct — they are different strings.
-Strings that are logically equal and consistently encoded collapse as expected.
+Strings that are logically equal and consistently encoded collapse as expected:
+a UTF\-8 string whose every character is below \f(CW\*(C`\ex{100}\*(C'\fR is compared against the
+bytes it downgrades to, so \f(CW"\ex{e9}"\fR and \f(CW"\exe9"\fR are one value, exactly as
+\&\f(CW\*(C`eq\*(C'\fR and a Perl hash key both have it.
+.PP
+The input is left alone. \f(CW\*(C`uniq\*(C'\fR renders a plain number into its own buffer
+rather than asking Perl for the number\*(Aqs string, so it does not leave a cached
+\&\f(CW\*(C`PV\*(C'\fR on the caller\*(Aqs SVs — taking the distinct values of a large numeric column
+no longer grows that column. Tied arrays and tied elements are read through
+their \f(CW\*(C`FETCH\*(C'\fR.
 .PP
 Unlike \f(CW\*(C`List::Util::uniq\*(C'\fR, which passes a single \f(CW\*(C`undef\*(C'\fR through, \f(CW\*(C`uniq\*(C'\fR
 \&\fBcroaks\fR on any undefined value, reporting the offending argument index (and
@@ -7068,6 +7094,573 @@ Verified against R 4.6.1 (\f(CW\*(C`oneway.test\*(C'\fR, \f(CW\*(C`anova(aov())\
 \&\f(CW\*(C`t/model_pvalue_tails.t\*(C'\fR and \f(CW\*(C`t/oneway_test.R.scipy.t\*(C'\fR.
 .SH Changes
 .IX Header "Changes"
+.SS "0.302 2026\-08\-22 CDT"
+.IX Subsection "0.302 2026-08-22 CDT"
+\&\f(CW\*(C`sum\*(C'\fR, \f(CW\*(C`min\*(C'\fR, \f(CW\*(C`max\*(C'\fR, \f(CW\*(C`mean\*(C'\fR, \f(CW\*(C`sd\*(C'\fR, \f(CW\*(C`var\*(C'\fR, \f(CW\*(C`quantile\*(C'\fR, \f(CW\*(C`cor\*(C'\fR and \f(CW\*(C`cov\*(C'\fR are
+between 2.5 and 10.7 times faster, and four of the nine are now faster than R.
+\&\f(CW\*(C`merge\*(C'\fR is between 1.9 and 5.3 times faster and now beats R\*(Aqs \f(CW\*(C`merge\*(C'\fR at every
+size measured, and \f(CW\*(C`uniq\*(C'\fR is about four times faster at every size measured. Nothing any of them returns changes, except where it was wrong:
+five bugs turned up while the measurements were being taken. One had been
+hanging the interpreter, one had been segfaulting, and three had been quietly
+returning the wrong frame for any input built on a tied array.
+.PP
+The distribution had also been building without an optimizer, which is where a
+third of this came from and none of the credit does.
+.PP
+At \f(CW\*(C`n = 1,000,000\*(C'\fR, one column of \f(CW\*(C`rnorm\*(C'\fR values, best of seven, measured by
+\&\f(CW\*(C`scale.pl\*(C'\fR against \f(CW\*(C`scale.R\*(C'\fR and \f(CW\*(C`scale.py\*(C'\fR on the same machine:
+.PP
+The ratios are better below a million, where the column still fits in cache. At
+\&\f(CW\*(C`n = 100,000\*(C'\fR, \f(CW\*(C`sum\*(C'\fR and \f(CW\*(C`mean\*(C'\fR are 5.1 times faster than 0.301, \f(CW\*(C`sd\*(C'\fR and \f(CW\*(C`var\*(C'\fR
+5.2, \f(CW\*(C`quantile\*(C'\fR 8.0, and \f(CW\*(C`sum\*(C'\fR overtakes R.
+.PP
+What is left between this and NumPy is not a constant factor waiting to be
+found. A perl array is an array of \f(CW\*(C`SV*\*(C'\fR; NumPy holds a contiguous \f(CW\*(C`double[]\*(C'\fR
+and runs SIMD over it. 1.2 ns per element is about four cycles — load the
+pointer, load the flags, branch, load the \f(CW\*(C`NVX\*(C'\fR, add — and that is near the
+floor for walking a million SVs. Closing it would need a packed\-buffer type
+holding \f(CW\*(C`NV*\*(C'\fR directly, which is a different module rather than a tuning pass.
+.PP
+\fIThe module was being built without an optimizer\fR
+.IX Subsection "The module was being built without an optimizer"
+.PP
+\&\f(CW\*(C`compile.sh\*(C'\fR ran \f(CW\*(C`perl Makefile.PL OPTIMIZE=\*(Aq\-Wall\*(Aq\*(C'\fR. \f(CW\*(C`OPTIMIZE\*(C'\fR \fIreplaces\fR
+perl\*(Aqs own \f(CW$Config{optimize}\fR rather than adding to it, so that was not "the
+usual flags plus a warning switch" — it was the whole optimize line, and every
+build it made, including the one \f(CW\*(C`make install\*(C'\fR then installed, was compiled at
+\&\f(CW\*(C`\-O0\*(C'\fR. \f(CW\*(C`test.all.perls.pl\*(C'\fR defaulted to the same string, so the entire support
+matrix was built and timed that way too.
+.PP
+Both say \f(CW\*(C`\-O2 \-Wall\*(C'\fR now. On the same \f(CW\*(C`LikeR.c\*(C'\fR, summing \f(CW1e6\fR NVs takes 4.10 ms
+at \f(CW\*(C`\-O0\*(C'\fR against 2.63 ms at \f(CW\*(C`\-O2\*(C'\fR, and \f(CW\*(C`cor\*(C'\fR 25.5 ms against 12.9 ms. Read the
+rest of this section as what was left after the compiler was allowed to do its
+job.
+.PP
+\&\f(CW\*(C`t/build.optimize.t\*(C'\fR reads both scripts and fails if either hands \f(CW\*(C`Makefile.PL\*(C'\fR
+an \f(CW\*(C`OPTIMIZE\*(C'\fR with no \f(CW\*(C`\-O\*(C'\fR in it. There is no way to ask a loaded \f(CW\*(C`.so\*(C'\fR what it
+was compiled at, so the check has to be on the scripts; neither ships, so the
+file skips outside the repository.
+.PP
+\fIReading a column: one \fR\f(CI\*(C`av_fetch\*(C'\fR\fI per element\fR
+.IX Subsection "Reading a column: one av_fetch per element"
+.PP
+All nine functions read their input by calling \f(CW\*(C`av_fetch\*(C'\fR once per element. That
+call is out of line and repeats, for every element, a bounds check, a
+negative\-index fixup and a magic dispatch that a straight walk of \f(CW\*(C`AvARRAY\*(C'\fR
+already knows the answers to. On a million\-element column it was about half of
+what \f(CW\*(C`sum\*(C'\fR cost and more than half of \f(CW\*(C`cor\*(C'\fR.
+.PP
+Walking the block directly is only sound while nothing can move it, and \f(CW\*(C`SvNV\*(C'\fR
+can move it: on an SV carrying get magic it runs \f(CW\*(C`mg_get\*(C'\fR, on a reference it may
+run an overloaded \f(CW\*(C`0+\*(C'\fR, and on a string that is not a number it raises a warning
+that a \f(CW$SIG{_\|_WARN_\|_}\fR handler catches. Each of those is perl code, and perl
+code may push to the very array being walked, which reallocs the block and
+leaves the walk holding freed memory.
+.PP
+So the fast path is decided per element, not per array. \f(CW\*(C`sv_plain_nv\*(C'\fR takes an
+SV only when it already holds a number and carries neither magic nor a
+reference, which makes \f(CW\*(C`SvNV\*(C'\fR a register read that calls nothing; everything
+else — a hole, a string, a reference, a tied element — goes back to \f(CW\*(C`av_fetch\*(C'\fR,
+which is both correct and where the block pointer gets re\-derived. A tied array
+is refused whole, before the scan starts.
+.PP
+The scans live in their own functions and are marked \f(CW\*(C`LIKER_NOINLINE\*(C'\fR, which is
+not decoration. Inlined into the caller, a scan shares a stack frame with the
+\&\f(CW\*(C`av_fetch\*(C'\fR loop that finishes whatever it would not take; the accumulators then
+have to stay addressable across that call, so the scan spills them to memory
+every iteration instead of keeping them in registers. Summing \f(CW1e6\fR NVs: 2.77
+ns/element for the \f(CW\*(C`av_fetch\*(C'\fR loop being replaced, 2.25 with the scan inlined
+into it, 1.29 with the scan compiled on its own. There is no portable spelling
+of \f(CW\*(C`noinline\*(C'\fR, so it is annotated where the compiler has one and left empty
+where it does not, which gives back the inlined speed and never a wrong answer.
+.PP
+\&\f(CW\*(C`min\*(C'\fR and \f(CW\*(C`max\*(C'\fR get a scan each rather than sharing one that tracks both ends.
+The running extreme is a loop\-carried dependency, each compare\-and\-move waiting
+on the previous element\*(Aqs result, so carrying the end the caller will not return
+costs a second chain for nothing: 1.79 ms against 1.35 ms on \f(CW1e6\fR NVs.
+.PP
+\fR\f(CI\*(C`var\*(C'\fR\fI, \fR\f(CI\*(C`sd\*(C'\fR\fI and \fR\f(CI\*(C`cov\*(C'\fR\fI: Welford to two passes\fR
+.IX Subsection "var, sd and cov: Welford to two passes"
+.PP
+Welford\*(Aqs recurrence updates the running mean with \f(CW\*(C`mean += delta / count\*(C'\fR. That
+divide sits in a loop\-carried dependency chain, so each element waits out the
+previous one\*(Aqs latency — 5.34 ns/element against 2.70 for two passes.
+.PP
+Two passes is also what R computes. \f(CW\*(C`src/library/stats/src/cov.c\*(C'\fR takes a first
+mean, refines it with a second pass (\f(CW\*(C`tmp = tmp + sum(x \- tmp)/n\*(C'\fR, the \f(CW\*(C`MEAN\*(C'\fR
+macro) and only then sums the squared deviations about the refined mean.
+Expanding that third pass about the \fIunrefined\fR mean leaves
+\&\f(CW\*(C`sum((x\-m)^2) \- (sum(x\-m))^2/n\*(C'\fR, so carrying the sum of the deviations alongside
+the sum of their squares gives R\*(Aqs answer in one pass fewer. That is the
+Chan\-Golub\-LeVeque correction, so it is no less accurate than Welford on an
+ill\-centred column.
+.PP
+\&\f(CW\*(C`mean\*(C'\fR is deliberately not changed: it remains the single\-pass \f(CW\*(C`sum/n\*(C'\fR, which is
+not what R\*(Aqs \f(CW\*(C`mean\*(C'\fR computes and never was.
+.PP
+Reading the arguments twice is visible only to a tied array, whose \f(CW\*(C`FETCH\*(C'\fR now
+runs once per pass.
+.PP
+\fR\f(CI\*(C`quantile\*(C'\fR\fI orders only the statistics it reads\fR
+.IX Subsection "quantile orders only the statistics it reads"
+.PP
+\&\f(CW\*(C`quantile\*(C'\fR sorted the whole column and then indexed into it. Type 7 reads at
+most two order statistics per probability — \f(CW\*(C`x[j]\*(C'\fR at \f(CW\*(C`j = floor((n\-1)p)\*(C'\fR, and
+\&\f(CW\*(C`x[j+1]\*(C'\fR where the interpolation weight is non\-zero — which for the five default
+probs is ten values out of a million.
+.PP
+\&\f(CW\*(C`nv_select_multi\*(C'\fR places just those. It takes the middle index first and
+recurses into the two ranges that index separates, costing \f(CW\*(C`O(n log k)\*(C'\fR rather
+than the \f(CW\*(C`O(n k)\*(C'\fR a left\-to\-right sweep of selects would: each level of the
+recursion touches each element at most once, and the index list halves at every
+level. Past \f(CW\*(C`k = n/2\*(C'\fR distinct indices a full sort is the cheaper way to get the
+same array, and that is what still happens there.
+.PP
+This is also what R does — \f(CW\*(C`quantile.default\*(C'\fR hands its indices to
+\&\f(CWsort(partial=)\fR, and NumPy reaches \f(CW\*(C`np.partition\*(C'\fR for the same reason. On \f(CW1e6\fR
+random doubles the ten order statistics of the five default probs cost 19.2 ms
+this way against 69.1 ms for the full introsort.
+.PP
+The probabilities are parsed before the column is read now, rather than after it
+is sorted, so an invalid \f(CW\*(C`probs\*(C'\fR vector no longer costs a pass over the data
+first.
+.PP
+\fR\f(CI\*(C`cor\*(C'\fR\fI and \fR\f(CI\*(C`cov\*(C'\fR\fI: sorts that inline their comparison\fR
+.IX Subsection "cor and cov: sorts that inline their comparison"
+.PP
+Spearman ranks its input before correlating it, and \f(CW\*(C`rank_data\*(C'\fR did that through
+\&\f(CW\*(C`qsort\*(C'\fR with an out\-of\-line comparator; Kendall\*(Aqs tau\-b sorted three times the
+same way. That comparator call cannot be inlined, and for a sort of a few
+thousand elements it is most of what the sort costs — the module\*(Aqs own \f(CW\*(C`nv_sort\*(C'\fR
+takes 210us where \f(CW\*(C`qsort\*(C'\fR takes 355us on 5,000 NVs, which is why it exists.
+.PP
+\&\f(CW\*(C`LIKER_DEFINE_SORT(T, PFX, LESS)\*(C'\fR generates that introsort for a given struct
+and ordering: median of three left at the midpoint so both partition scans have
+a sentinel, recursion into the shorter side and a loop on the longer so the
+stack stays \f(CW\*(C`O(log n)\*(C'\fR deep, a heapsort fallback past \f(CW\*(C`2*floor(log2 n)\*(C'\fR levels
+so a median\-of\-three killer cannot reach \f(CWO(n^2)\fR, and one insertion sort over
+the nearly\-ordered remainder. It is \f(CW\*(C`kw_sort\*(C'\fR, the Kruskal\-Wallis sort, made
+generic. \f(CW\*(C`rank_data\*(C'\fR and Kendall\*(Aqs \f(CW\*(C`(x, y)\*(C'\fR sort are generated from it; Kendall\*(Aqs
+third sort, a plain \f(CW\*(C`NV\*(C'\fR column, calls \f(CW\*(C`nv_sort\*(C'\fR directly.
+.PP
+glibc\*(Aqs \f(CW\*(C`qsort\*(C'\fR is also a mergesort that allocates a scratch buffer the size of
+the array it is given. Peak RSS for a Spearman correlation of two \f(CW2e6\fR columns
+falls from 455 MB to 424 MB — exactly the 32 MB it was allocating to sort \f(CW2e6\fR
+sixteen\-byte records.
+.PP
+At \f(CW\*(C`n = 200,000\*(C'\fR: \f(CW\*(C`cor(..., \*(Aqspearman\*(Aq)\*(C'\fR 66.9 ms to 27.2 ms, \f(CW\*(C`cov(...,
+\&\*(Aqspearman\*(Aq)\*(C'\fR 65.9 ms to 26.7 ms, \f(CW\*(C`cor(..., \*(Aqkendall\*(Aq)\*(C'\fR 70.5 ms to 44.7 ms. Small
+repeated calls gain the same factor: ten thousand \f(CW\*(C`cor(..., \*(Aqspearman\*(Aq)\*(C'\fR calls
+over twelve elements, the shape \f(CW\*(C`agg\*(C'\fR and \f(CW\*(C`group_by\*(C'\fR produce, 6.4 ms to 3.1 ms.
+.PP
+\fR\f(CI\*(C`cor\*(C'\fR\fI read an array of arrays once per column\fR
+.IX Subsection "cor read an array of arrays once per column"
+.PP
+\&\f(CWcor(\e@matrix)\fR extracted one column at a time, and for each column it walked
+every row — \f(CW\*(C`av_fetch\*(C'\fR on the outer array, \f(CW\*(C`SvRV\*(C'\fR to reach the row, then
+\&\f(CW\*(C`av_fetch\*(C'\fR for the cell. The outer array was therefore walked \f(CW\*(C`ncols\*(C'\fR times
+over, and every one of the \f(CW\*(C`ncols * nrows\*(C'\fR cells paid a fetch on it that the
+column before had already paid.
+.PP
+The pre\-validation pass that already checks every row is an array reference now
+keeps the row \f(CW\*(C`AV*\*(C'\fRs it resolves instead of discarding them, and the extraction
+transposes in a single pass over the rows through \f(CW\*(C`av_extract_or_nan\*(C'\fR — the same
+reader the vector branch uses, so a short row, a hole, an \f(CW\*(C`undef\*(C'\fR and a
+non\-numeric cell all behave here exactly as they do there. Outer fetches fall
+from \f(CW\*(C`ncols * nrows\*(C'\fR to \f(CW\*(C`nrows\*(C'\fR, and each row\*(Aqs cells are read in the order they
+are stored rather than one per pass.
+.PP
+At 20,000 rows: \f(CW\*(C`cor\*(C'\fR of a 40\-column matrix 40.6 ms to 26.7 ms, and its
+cross\-correlation against an 8\-column matrix 28.7 ms to 12.4 ms. The transpose
+keeps one write stream open per column, which is what a wide matrix pays for
+this, and 2,000 x 300 still comes out ahead — 144.6 ms to 134.8 ms.
+.PP
+A row that was itself a tied array used to read as all\-\f(CW\*(C`NA\*(C'\fR, because \f(CW\*(C`av_fetch\*(C'\fR
+on one hands back a deferred \f(CW\*(C`PVLV\*(C'\fR whose value only arrives when \f(CW\*(C`mg_get\*(C'\fR runs:
+\&\f(CWcor(\e@rows)\fR croaked "standard deviation is 0 in x column 0" on data that was
+perfectly well defined. \f(CW\*(C`av_extract_or_nan\*(C'\fR runs the get magic, so those rows
+now give the same answer as the untied equivalent. A cell that is a tied scalar
+was already read correctly and still is.
+.PP
+The zero\-variance check that used to be folded into the extraction is now
+\&\f(CW\*(C`nv_all_equal\*(C'\fR, one function shared with the vector branch, which returns at the
+first pair of values that differ instead of sweeping the column. On the vector
+path that replaces two full passes over \f(CW\*(C`x\*(C'\fR and \f(CW\*(C`y\*(C'\fR, which is where the \f(CW\*(C`cor\*(C'\fR
+row of the table above moves from 10.5 ms to 8.24 ms — the two passes were a
+fifth of what \f(CW\*(C`cor(\e@x, \e@y)\*(C'\fR cost at \f(CW\*(C`n = 1,000,000\*(C'\fR.
+.PP
+\&\f(CW\*(C`cov\*(C'\fR does not gain from any of this: its Pearson path neither sorts nor scans
+for zero variance, and 8.75 ms is the same figure it read before. What changed
+there is housekeeping — \f(CW\*(C`Newx\*(C'\fR in place of a bare \f(CW\*(C`safemalloc\*(C'\fR, and the method
+string resolved once rather than by three more \f(CW\*(C`strcmp\*(C'\fR calls.
+.PP
+\fR\f(CI\*(C`min\*(C'\fR\fI over more than 65,535 arguments never returned\fR
+.IX Subsection "min over more than 65,535 arguments never returned"
+.PP
+\&\f(CW\*(C`min\*(C'\fR counted its arguments in an \f(CW\*(C`unsigned short int\*(C'\fR. \f(CW\*(C`items\*(C'\fR is the whole
+flattened argument list, so \f(CWmin(@x)\fR on an array of more than 65,535 scalars
+wrapped the counter and the loop never reached its bound:
+.PP
+\&\f(CW\*(C`perl
+my @a = (1 .. 70_000);
+min(@a);                  # 0.301: hangs, forever
+\&\*(C'\fR
+.PP
+It is a \f(CW\*(C`Stack_off_t\*(C'\fR now, which is what \f(CW\*(C`max\*(C'\fR and \f(CW\*(C`sum\*(C'\fR already used.
+\&\f(CW\*(C`power_t_test\*(C'\fR carried the same counter; it takes named pairs, so nothing could
+reach 65,535 of them, and it is widened anyway.
+.PP
+A regression here is a hang rather than a wrong answer, so \f(CW\*(C`t/hot_path.t\*(C'\fR runs
+the 70,000\-argument calls under \f(CW\*(C`alarm\*(C'\fR where the platform has one. Without that
+guard a smoker would sit there instead of failing.
+.PP
+\fIA tied array read as all\-\fR\f(CI\*(C`undef\*(C'\fR
+.IX Subsection "A tied array read as all-undef"
+.PP
+\&\f(CWsum(\e@tied)\fR croaked \f(CW\*(C`undefined value at array ref index 0\*(C'\fR, and so did every
+other function here. \f(CW\*(C`av_fetch\*(C'\fR on a tied array does not return the element: it
+returns a mortal \f(CW\*(C`PVLV\*(C'\fR that only acquires the element\*(Aqs value once \f(CW\*(C`mg_get\*(C'\fR has
+run on it. The \f(CW\*(C`SvOK\*(C'\fR test came first, saw an empty \f(CW\*(C`PVLV\*(C'\fR, and reported every
+element of every tied array as undefined. An ordinary array holding a tied
+scalar failed the same way.
+.PP
+The slow path runs \f(CW\*(C`SvGETMAGIC\*(C'\fR before it looks now. This predates 0.302 and is
+not fallout from the scan — but the scan is what made it worth finding, because
+\&\f(CW\*(C`sv_plain_nv\*(C'\fR refuses every magical SV and so sends all of them down that one
+path.
+.PP
+That slow path then had a bug of its own, and it was worse. \f(CW\*(C`av_slow_at\*(C'\fR held
+the \f(CW\*(C`SV **\*(C'\fR that \f(CW\*(C`av_fetch\*(C'\fR returned — a pointer \fIinto\fR \f(CW\*(C`AvARRAY\*(C'\fR — ran the get
+magic through it, and read it again afterwards. \f(CW\*(C`mg_get\*(C'\fR runs perl, and the
+element in \f(CW\*(C`t/hot_path.t\*(C'\fR pushes 200 values onto the array being walked, which
+reallocates that block: both reads after the magic were reads of freed memory.
+It usually returned the right answer because the freed block usually still held
+the old pointer, so the test that exists for precisely this case passed on four
+of the five perls and, on the fifth, only failed when the suite was run four
+perls at a time and something else had claimed the block —
+\&\f(CW\*(C`sum\*(C'\fR returned 1085 instead of 10, once. Under \f(CW\*(C`valgrind\*(C'\fR it is an "invalid
+read of size 8" on every perl, every time.
+.PP
+It loads the element into a local before running the magic now. The SV itself
+does not move; only the array of pointers to it does, so a copy of the pointer
+stays good where a second read through the slot does not. The same shape — take
+\&\f(CW\*(C`SV **\*(C'\fR from \f(CW\*(C`av_fetch\*(C'\fR, run magic, dereference again — is still present in the
+\&\f(CW\*(C`median\*(C'\fR and \f(CW\*(C`moment\*(C'\fR readers and in three places in \f(CW\*(C`transpose\*(C'\fR, and is the
+same one\-line fix in each; those are untouched here.
+.PP
+\&\f(CW\*(C`uniq\*(C'\fR was missed by this pass and fixed later in the same release; see
+"\f(CW\*(C`uniq\*(C'\fR: the same keys, without a perl hash" below.
+.PP
+\fR\f(CI\*(C`cor\*(C'\fR\fI returned \fR\f(CI\*(C`NaN\*(C'\fR\fI on an off\-centre column\fR
+.IX Subsection "cor returned NaN on an off-centre column"
+.PP
+\&\f(CW\*(C`pearson_corr\*(C'\fR computed the correlation from raw cross\-products,
+\&\f(CW\*(C`(n*sxy \- sx*sy) / sqrt((n*sx2 \- sx^2) * (n*sy2 \- sy^2))\*(C'\fR. Each of those three
+terms subtracts two nearly equal large numbers, so it loses a digit of the
+answer for every digit by which the mean exceeds the spread. On a column with
+mean \f(CW1e9\fR and a spread of \f(CW0.05\fR it does not merely lose precision:
+\&\f(CW\*(C`n*sx2 \- sx*sx\*(C'\fR comes out negative, the square root is \f(CW\*(C`NaN\*(C'\fR, and \f(CW\*(C`cor\*(C'\fR returns
+\&\f(CW\*(C`NaN\*(C'\fR for an ordinary pair of vectors. At mean \f(CW1e6\fR it was wrong in the fifth
+decimal place — \f(CW0.74945606763640826\fR against R\*(Aqs \f(CW0.74943997817595964\fR.
+.PP
+It centres first now, as R\*(Aqs \f(CW\*(C`cov.c\*(C'\fR does, with the same compensated two\-pass
+correction \f(CW\*(C`var\*(C'\fR uses. R reports \f(CW0.063454463733801467\fR for the \f(CW1e9\fR case, and
+so does this.
+.PP
+\&\f(CW\*(C`cov\*(C'\fR\*(Aqs Pearson branch was Welford\*(Aqs covariance recurrence, two divides deep in
+the dependency chain; it is \f(CW\*(C`nv_cov2\*(C'\fR now, the two\-pass form, shared with the
+Spearman branch.
+.PP
+\fIA leak on \fR\f(CI\*(C`cor\*(C'\fR\fI\*(Aqs matrix error path\fR
+.IX Subsection "A leak on cor's matrix error path"
+.PP
+\&\f(CW\*(C`cor(\e@x, \e@y)\*(C'\fR with a \f(CW\*(C`y\*(C'\fR matrix whose rows are empty croaked "y matrix has
+zero columns" without freeing the \f(CW\*(C`x\*(C'\fR columns it had already extracted. On a
+40\-column matrix that is 40 buffers and their table per call: 20,000 such croaks
+grew RSS by 44 MB. The branch\*(Aqs allocations are now released through one macro
+that every croak path calls, and the row tables and the scratch row are freed as
+soon as the last value has been read out of them rather than at the end.
+.PP
+The \f(CW\*(C`nrows < 2\*(C'\fR guard was missing the same frees, but it is unreachable — a
+one\-row matrix has a constant column, so the zero\-variance croak above always
+gets there first. It frees anyway.
+.PP
+Seven \f(CW\*(C`croak\*(C'\fR formats in \f(CW\*(C`cor\*(C'\fR passed a \f(CW\*(C`size_t\*(C'\fR to \f(CW%lu\fR with no cast, which on
+Windows is a 64\-bit argument read through a 32\-bit conversion. They use
+\&\f(CW\*(C`%" UVuf "\*(C'\fR with a \f(CW\*(C`(UV)\*(C'\fR cast now, as the rest of the file does, and \f(CW\*(C`cov\*(C'\fR\*(Aqs
+one — cast to \f(CW\*(C`unsigned long\*(C'\fR, so well defined but still narrowing on Win64 —
+went with them. Every message is unchanged wherever \f(CW\*(C`unsigned long\*(C'\fR is 64 bits,
+which is everywhere the suite runs.
+.PP
+\fIUnchanged: \fR\f(CI\*(C`cor\*(C'\fR\fI and \fR\f(CI\*(C`cov\*(C'\fR\fI still do not see an overloaded object as a number\fR
+.IX Subsection "Unchanged: cor and cov still do not see an overloaded object as a number"
+.PP
+\&\f(CW\*(C`cor\*(C'\fR and \f(CW\*(C`cov\*(C'\fR decide what is numeric with \f(CW\*(C`looks_like_number\*(C'\fR, which is false
+for any reference, an overloaded \f(CW\*(C`0+\*(C'\fR included, so a column of overloaded
+objects reads as all\-\f(CW\*(C`NA\*(C'\fR: \f(CW\*(C`cov\*(C'\fR returns \f(CW\*(C`NaN\*(C'\fR and \f(CW\*(C`cor\*(C'\fR reaches its
+zero\-variance croak. \f(CW\*(C`sum\*(C'\fR, \f(CW\*(C`min\*(C'\fR and \f(CW\*(C`max\*(C'\fR do honour the overload, through
+\&\f(CW\*(C`SvNV\*(C'\fR. The two families genuinely disagree. That predates 0.302 and is a
+different question from how a column is walked, so \f(CW\*(C`t/hot_path.t\*(C'\fR pins the
+current behaviour rather than changing it quietly.
+.PP
+\fR\f(CI\*(C`merge\*(C'\fR\fI: a hash join that stopped building a perl hash\fR
+.IX Subsection "merge: a hash join that stopped building a perl hash"
+.PP
+At \f(CW\*(C`n = 300,000\*(C'\fR a \f(CW\*(C`merge($df, $df, how => \*(Aqinner\*(Aq, on => \*(Aqid\*(Aq)\*(C'\fR over a
+six\-column HoA took 575 ms. It takes 109 ms. Best of ten, one process per
+measurement, pinned to one CPU, against \f(CW\*(C`scale.R\*(C'\fR and \f(CW\*(C`scale.py\*(C'\fR on the same
+machine:
+.PP
+Under callgrind the 30,000\-row join fell from 358M instructions to 170M. Three
+things were paying for that.
+.PP
+\&\fBThe right\-hand index was a perl \fR\f(CB\*(C`HV\*(C'\fR keyed by the join key: an \f(CW\*(C`HE\*(C'\fR, a
+shared \f(CW\*(C`HEK\*(C'\fR and an \f(CW\*(C`IV\*(C'\fR SV per distinct key, so three allocations per right row
+whenever the key is unique, which is exactly what a join on an id column is.
+It is the same open\-addressed table over a key arena that \f(CW\*(C`drop_duplicates\*(C'\fR
+already interns into (\f(CW\*(C`dd_ctx\*(C'\fR) — no SV, no HEK, one \f(CW\*(C`memcpy\*(C'\fR of each distinct
+key — so the two functions now share their definition of "the same key" as well
+as their code for deciding it. \f(CW\*(C`mg_key\*(C'\fR writes straight into that arena instead
+of making four \f(CW\*(C`sv_catpvn\*(C'\fR calls per key column into a scratch SV, and a
+one\-column join writes the cell\*(Aqs bytes bare: with a single field there is
+nothing for a length prefix to disambiguate, and on an integer id the prefix and
+its two separators were about as many bytes again to hash and to compare.
+.PP
+\&\fBIt emitted each output row as it found it\fR, so the row count was not known
+until the join had finished and every output column grew by \f(CW\*(C`av_push\*(C'\fR, being
+reallocated its way up to the answer. The probe now records \f(CW\*(C`(left row, right
+row)\*(C'\fR pairs into a flat list and builds nothing; only when that list is complete
+— so the count is exact — is each column allocated once at its final size and
+filled straight into \f(CW\*(C`AvARRAY\*(C'\fR, the way \f(CW\*(C`filter\*(C'\fR already builds its columns.
+The list costs two \f(CW\*(C`SSize_t\*(C'\fR per output \fIrow\fR against roughly one SV per output
+\&\fIcell\fR, so it is a small fraction of the result on any join wide enough to care,
+a cross join included. \f(CW\*(C`mg_emit\*(C'\fR is gone; \f(CW\*(C`mg_column\*(C'\fR and \f(CW\*(C`mg_build\*(C'\fR replace it,
+and the cross join goes through the same two stages as every other \f(CW\*(C`how\*(C'\fR.
+.PP
+\&\fR\f(CB\*(C`mg_cell\*(C'\fR\fB called \fR\f(CB\*(C`av_fetch\*(C'\fR\fB once per cell\fR, which was 7% of the call: a join
+reads every key cell of both frames and every cell of every column it keeps.
+It reads the block directly now, through the same \f(CW\*(C`av_at\*(C'\fR the other frame
+functions use.
+.PP
+What is left is the result itself. A 300,000\-row join of two six\-column frames
+is 3.3 million output SVs, and at 109 ms that is 33 ns each — allocate, copy a
+cell into it, store it. pandas is not doing the same work: its columns are
+contiguous typed buffers and a join is a \f(CW\*(C`take\*(C'\fR over them.
+.PP
+\fR\f(CI\*(C`uniq\*(C'\fR\fI: the same keys, without a perl hash\fR
+.IX Subsection "uniq: the same keys, without a perl hash"
+.PP
+\&\f(CW\*(C`uniq\*(C'\fR on a million\-element column of \f(CW\*(C`rnorm\*(C'\fR values took 0.80 s, against R\*(Aqs
+\&\f(CWunique()\fR at 0.019 and pandas\*(Aq \f(CW\*(C`pd.unique()\*(C'\fR at 0.029. It takes 0.16 s. Same
+method as the tables above — one process per measurement, pinned to one CPU,
+the fastest of seven, \f(CW\*(C`plot.scaling.pl\*(C'\fR against \f(CW\*(C`scale.R\*(C'\fR and \f(CW\*(C`scale.py\*(C'\fR on the
+same machine — except that the \f(CW0.301\fR column is the 0.301 \fIcode\fR built at
+\&\f(CW\*(C`\-O2\*(C'\fR, not the released build, so this is the rewrite on its own and not the
+optimizer again:
+.PP
+The slope was never the problem. Fitted over the ladder by \f(CW\*(C`scaling.slopes.tsv\*(C'\fR,
+all three are linear — 1.12 for \f(CW\*(C`uniq\*(C'\fR, 1.11 for R, 1.04 for pandas, and 1.14
+for \f(CW\*(C`uniq\*(C'\fR before the rewrite — so this was a constant factor from the start,
+and none of it was the hashing.
+.PP
+\&\fR\f(CB\*(C`SvPV\*(C'\fR\fB on an \fR\f(CB\*(C`NV\*(C'\fR\fB is a \fR\f(CB\*(C`%.15g\*(C'\fR\fB that has to be redone every time.\fR Walking a
+million \f(CW\*(C`NV\*(C'\fR SVs costs 2 ms; walking them and calling \f(CW\*(C`SvPV\*(C'\fR on each costs
+268 ms. That is ten times R\*(Aqs whole runtime for the same call, and it is the
+floor the old code could not get under however few distinct values there were:
+a column of a million elements holding ten distinct values still took 0.226 s.
+Worse, \f(CW\*(C`SvPV\*(C'\fR leaves the rendered buffer on the caller\*(Aqs own SV without ever
+reusing it (\f(CW\*(C`sv_2pv_flags\*(C'\fR re\-renders an \f(CW\*(C`NV\*(C'\fR on the next pass regardless), so
+asking a large numeric column for its distinct values grew that column by tens
+of megabytes, for good. \f(CW\*(C`nk_num_pv\*(C'\fR — already written for \f(CW\*(C`drop_duplicates\*(C'\fR,
+about four times faster and only taken where the answer is provably the same —
+renders into the XSUB\*(Aqs own stack buffer and touches nothing.
+.PP
+\&\fBThe \fR\f(CB\*(C`seen\*(C'\fR\fB hash was a perl \fR\f(CB\*(C`HV\*(C'\fR\fB.\fR An \f(CW\*(C`HE\*(C'\fR and a copied \f(CW\*(C`HEK\*(C'\fR per distinct
+key is ~72 MB of scattered small allocations at a million of them, and the
+table rehashes at every doubling on the way there. Going from ten distinct
+values to a million added 0.47 s of pure insert cost. It is \f(CW\*(C`dd_ctx\*(C'\fR now, the
+same open\-addressed slot array over a key arena that \f(CW\*(C`drop_duplicates\*(C'\fR and
+\&\f(CW\*(C`merge\*(C'\fR intern into, presized from the element count.
+.PP
+\&\fBIt hashed each key twice\fR, once for \f(CW\*(C`hv_exists\*(C'\fR and again for \f(CW\*(C`hv_store\*(C'\fR.
+Collapsing that into one \f(CW\*(C`hv_fetch(..., 1)\*(C'\fR is the obvious repair and is the
+wrong one: the lvalue fetch mints an SV per key, and on the million distinct
+doubles it measured 0.919 s against the pair\*(Aqs 0.756 — while also reading
+\&\f(CW\*(C`AvARRAY\*(C'\fR directly, so the comparison flatters it. That is why the pair had
+survived. One hash of one key into one open\-addressed probe is what the arena
+gives instead.
+.PP
+What the rewrite does \fInot\fR do is compare doubles by value. That is how R and
+pandas get the factor of six to eight they still have, and it is a different
+answer: \f(CW\*(C`0.1 + 0.2\*(C'\fR and \f(CW0.3\fR are two doubles that print the same, so they are
+one value to \f(CW\*(C`uniq\*(C'\fR and two to \f(CWunique()\fR. \f(CW\*(C`uniq\*(C'\fR is documented to compare the
+way \f(CW\*(C`eq\*(C'\fR and \f(CW\*(C`List::Util::uniq\*(C'\fR do, so it renders every element and compares
+the text; that rendering pass is essentially all of the distance that is left.
+Scalar context builds no result list at all and takes about a fifth off again.
+.PP
+\&\f(CWuniq(\e@tied)\fR croaked \f(CW\*(C`undefined value at array ref index 0\*(C'\fR. It was reading
+elements through \f(CW\*(C`av_fetch\*(C'\fR and testing \f(CW\*(C`SvOK\*(C'\fR on the \f(CW\*(C`PVLV\*(C'\fR that comes back,
+which is the bug "A tied array read as all\-\f(CW\*(C`undef\*(C'\fR" describes above. \f(CW\*(C`uniq\*(C'\fR was
+simply not one of the functions that pass reached. It reads through
+\&\f(CW\*(C`av_slow_at\*(C'\fR now, like the rest.
+.PP
+\fR\f(CI\*(C`filter\*(C'\fR\fI: measured, and left alone\fR
+.IX Subsection "filter: measured, and left alone"
+.PP
+\&\f(CW\*(C`filter\*(C'\fR is not faster, and the reason is worth writing down so it is not
+looked for again. At \f(CW\*(C`n = 300,000\*(C'\fR on a five\-column HoA, \f(CW\*(C`col(\*(Aqx\*(Aq) > 0\*(C'\fR keeping
+half the rows costs 22.5 ms, of which \fBthe predicate is 1.3 ms\fR. The other
+21.2 ms is allocating and filling the 750,000 SVs of the result, which the
+documented contract requires: an HoA input, or any \f(CW\*(C`hoa\*(C'\fR output, builds fresh
+arrays and fresh cell values. That is 19 ns per numeric cell and 44 ns per
+string cell, and the difference between the two is one \f(CW\*(C`malloc\*(C'\fR for the string\*(Aqs
+buffer.
+.PP
+Copy\-on\-write is the obvious way out of that \f(CW\*(C`malloc\*(C'\fR and is not available.
+\&\f(CW\*(C`newSVsv\*(C'\fR is \f(CW\*(C`newSVsv_flags(sv, SV_GMAGIC|SV_NOSTEAL)\*(C'\fR, which does not pass
+\&\f(CW\*(C`SV_COW_SHARED_HASH_KEYS\*(C'\fR, so its string copies are never copy\-on\-write; and
+\&\f(CW\*(C`SV_DO_COW_SVSETSV\*(C'\fR, the flag pair a plain \f(CW\*(C`my $b = $a\*(C'\fR gets, is defined as \f(CW0\fR
+unless \f(CW\*(C`PERL_CORE\*(C'\fR is set — perl\*(Aqs own \f(CW\*(C`sv.h\*(C'\fR says "the core is safe for this
+COW optimisation, XS code on CPAN may not be". Reaching past that by hand was
+measured anyway and is slower in both directions: \f(CW\*(C`filter\*(C'\fR 23.0 ms against 28.3
+ms, \f(CW\*(C`merge\*(C'\fR 103 ms against 126 ms. For a string as short as a data frame\*(Aqs
+usually are, the \f(CW\*(C`malloc\*(C'\fR costs less than what COW puts in its place — an
+out\-of\-line \f(CW\*(C`sv_setsv\*(C'\fR, the \f(CW\*(C`CowREFCNT\*(C'\fR increment, and the read\-only flip on the
+source. The finding is recorded at \f(CW\*(C`flt_cell_copy\*(C'\fR rather than only here.
+.PP
+The one lever that does move it is the copy itself. Sharing the surviving cells
+instead — one refcount bump, which is what \f(CW\*(C`drop_duplicates\*(C'\fR does for exactly
+this reason — was prototyped and measured at 13.6 ms against R\*(Aqs 14.4 ms. It is
+not done, because \f(CW\*(C`filter\*(C'\fR documents the opposite and someone may be relying on
+it; changing that is a decision about the interface, not a tuning pass.
+.PP
+Two things did change. \f(CW\*(C`flt_num\*(C'\fR takes a bare \f(CW\*(C`IOK\*(C'\fR/\f(CW\*(C`NOK\*(C'\fR cell without calling
+\&\f(CW\*(C`SvGETMAGIC\*(C'\fR or \f(CW\*(C`looks_like_number\*(C'\fR — neither can say anything about an SV that
+already holds a number, and \f(CW\*(C`looks_like_number\*(C'\fR is out of line — which is most
+of what the predicate pass costs on a numeric column. And the tied\-frame bugs
+below.
+.PP
+\fIA tied frame read as all\-\fR\f(CI\*(C`undef\*(C'\fR\fI, and one that segfaulted\fR
+.IX Subsection "A tied frame read as all-undef, and one that segfaulted"
+.PP
+\&\f(CW\*(C`filter\*(C'\fR, \f(CW\*(C`merge\*(C'\fR and \f(CW\*(C`drop_duplicates\*(C'\fR all walk a column or a row through
+\&\f(CW\*(C`AvARRAY\*(C'\fR, which is why they are fast and which is wrong for a tied array: its
+elements do not exist until \f(CW\*(C`FETCH\*(C'\fR has run, and \f(CW\*(C`AvARRAY\*(C'\fR on one is not the
+block they live in — on an array that has never held a real element it is a null
+pointer. \f(CW\*(C`av_fetch\*(C'\fR is the way in, and what it returns for a tied element is a
+mortal \f(CW\*(C`PVLV\*(C'\fR that only acquires the value once \f(CW\*(C`mg_get\*(C'\fR has run on it, so an
+\&\f(CW\*(C`SvOK\*(C'\fR or \f(CW\*(C`SvROK\*(C'\fR test placed before that says "undef" or "not a reference" for
+every cell and every row of the frame.
+.PP
+This is the same pair of mistakes \f(CWsum(\e@tied)\fR made, above, and it predates
+0.302 in all three functions. Between them they were wrong in four distinct
+ways:
+.PP
+.Vb 2
+\& tie my @x, \*(AqTiedArray\*(Aq; @x = (1, \-2, 3);
+\& tie my @y, \*(AqTiedArray\*(Aq; @y = (10, 20, 30);
+\&
+\& filter({ x => \e@x, y => \e@y }, col(\*(Aqx\*(Aq) > 0);
+\& # 0.301: { x => [], y => [] } \-\- an empty frame, whatever the predicate
+\& # 0.302: { x => [1, 3], y => [10, 30] }
+\&
+\& merge({ id => \e@x }, { id => [1, 3], w => [\*(Aqa\*(Aq,\*(Aqb\*(Aq] }, how => \*(Aqinner\*(Aq, on => \*(Aqid\*(Aq);
+\& # 0.301: { id => [], w => [] } \-\- no key matched, because every key read undef
+\& # 0.302: { id => [1, 3], w => [\*(Aqa\*(Aq, \*(Aqb\*(Aq] }
+\&
+\& drop_duplicates({ k => \e@x, v => \e@y });
+\& # 0.301: { k => [undef], v => [undef] } \-\- every row identical, so one survived
+\& # 0.302: { k => [1, \-2, 3], v => [10, 20, 30] }
+\&
+\& drop_duplicates([ map { { k => $_ } } 1 .. 3 ]);   # with the AoH itself tied
+\& # 0.301: segmentation fault
+.Ve
+.PP
+The crash was \f(CW\*(C`_aoh_key_union\*(C'\fR, which indexed \f(CW\*(C`AvARRAY\*(C'\fR with no bounds check and
+no test for a tied array at all; on a tied AoH that is a null dereference on the
+first row. An outer join was the quietest of the four — with no key matching, it
+returned the two frames as disjoint halves, well\-formed and entirely wrong.
+.PP
+There is one reader now. \f(CW\*(C`av_at\*(C'\fR returns an element as it is — block read where
+that is sound, \f(CW\*(C`av_fetch\*(C'\fR where the array is tied, and the pointer derived per
+element rather than hoisted, because copying a cell can run perl and perl can
+push to the array being walked. \f(CW\*(C`av_ref_at\*(C'\fR adds the \f(CW\*(C`mg_get\*(C'\fR and the
+"is it a reference to the right thing" test for a row; \f(CW\*(C`av_row_keep\*(C'\fR is how a
+row gets into a result, handing back the caller\*(Aqs own reference for a plain
+array and a fresh reference to the same row for a tied one, since the \f(CW\*(C`PVLV\*(C'\fR is
+mortal and stays bound to the tie. \f(CW\*(C`dd_cell\*(C'\fR runs the get magic before it looks
+at the cell. None of it is measurable: \f(CW\*(C`drop_duplicates\*(C'\fR is within 2% of 0.301
+on all three shapes at 30,000 and 300,000 rows, and \f(CW\*(C`merge\*(C'\fR\*(Aqs numbers above are
+with it.
+.PP
+One consequence is visible and is documented under \f(CW\*(C`drop_duplicates\*(C'\fR: a tied HoA
+column\*(Aqs cells cannot be \fIshared\fR into the result, because the tie has no cell
+SV to share, so they are copied. It is the only place the "what survives is
+shared" rule cannot hold, and copying is the only reading of it that can be
+true.
+.PP
+A tied \fIframe\fR hash — the outer hash of a HoA or HoH, rather than a column or a
+row inside it — is still not supported by any of the three. All of them read
+its shape and its columns through \f(CW\*(C`HeVAL(hv_iternext(...))\*(C'\fR, which for a tied
+hash is not the value. That is a larger change than this one and is not made
+here; \f(CW\*(C`t/tied.frames.t\*(C'\fR says so where it stops.
+.PP
+\fITests\fR
+.IX Subsection "Tests"
+.PP
+Three new test files, and the suite is 129 files and 26,331 tests.
+.PP
+\&\f(CW\*(C`t/var_sd_cov.R.t\*(C'\fR (162 tests) cross\-validates \f(CW\*(C`sum\*(C'\fR, \f(CW\*(C`min\*(C'\fR, \f(CW\*(C`max\*(C'\fR, \f(CW\*(C`mean\*(C'\fR,
+\&\f(CW\*(C`var\*(C'\fR, \f(CW\*(C`sd\*(C'\fR, \f(CW\*(C`cov\*(C'\fR and \f(CW\*(C`cor\*(C'\fR against R 4.6.1 over ten columns chosen to separate
+the algorithms rather than to be representative: an arithmetic ladder, a
+constant column, \f(CW\*(C`n = 2\*(C'\fR, mixed signs, and the column with mean \f(CW1e9\fR and spread
+\&\f(CW0.05\fR that breaks a naive variance and did break the old \f(CW\*(C`cor\*(C'\fR. The expected
+values are frozen literals with their provenance in the file header; the
+generator, \f(CW\*(C`t/var_sd_cov.R.R\*(C'\fR, is committed beside it, and the test itself never
+calls R.
+.PP
+Every value in the corpus is a dyadic rational, so the vectors are the same
+numbers at every NV width, and the corpus is rebuilt in perl rather than pasted
+in — the \f(CW\*(C`n\*(C'\fR, \f(CW\*(C`sum\*(C'\fR, \f(CW\*(C`min\*(C'\fR and \f(CW\*(C`max\*(C'\fR columns are what pin the perl construction
+to R\*(Aqs. Those frozen numbers are printed \f(CW\*(C`%.40g\*(C'\fR, the double\*(Aqs exact decimal
+expansion, because 17 significant digits round\-trip a double back to a double
+and no further: a long\-double perl reads \f(CW100000000004.83398\fR as a different
+number from the \f(CW100000000004.833984375\fR R had, which was enough to fail an
+exact comparison on two of the five perls. The tolerance on the exact columns is
+two ulps of whatever NV the running perl was built with, found by bisection at
+run time rather than hardcoded, because perl\*(Aqs string\-to\-NV conversion is not
+correctly rounded on a long\-double build — \f(CW\*(C`perl\-5.12.5\*(C'\fR reads that literal one
+ulp short.
+.PP
+Every case also runs through a tied array, which cannot take the scan and has to
+reach the same answer through \f(CW\*(C`av_fetch\*(C'\fR. That is the assertion that the fast
+path and the slow path are the same function.
+.PP
+\&\f(CW\*(C`t/hot_path.t\*(C'\fR (135 tests) covers how the input is read rather than what comes
+out: the 70,000\-argument counter; every kind of element the scan must refuse —
+IV, UV above \f(CW\*(C`IV_MAX\*(C'\fR, NV, string, \f(CW\*(C`0+\*(C'\fR overload, tied element, and one magical
+element in the middle of an otherwise plain column; holes and \f(CW\*(C`undef\*(C'\fR in all
+three of their documented behaviours; and an element whose get magic pushes 200
+values onto the array it lives in while that array is being walked. \f(CW\*(C`cor\*(C'\fR, \f(CW\*(C`cov\*(C'\fR
+and \f(CW\*(C`var\*(C'\fR are checked for invariance under a location shift of \f(CW1e3\fR, \f(CW1e6\fR and
+\&\f(CW1e9\fR, which is the property the old correlation failed, and \f(CW\*(C`quantile\*(C'\fR\*(Aqs
+partial sort is checked against a full sort at every rank on a column with ties.
+.PP
+\&\f(CW\*(C`t/tied.frames.t\*(C'\fR (81 tests) covers \f(CW\*(C`filter\*(C'\fR, \f(CW\*(C`merge\*(C'\fR and \f(CW\*(C`drop_duplicates\*(C'\fR
+over frames built on tied arrays and tied row hashes: every output shape, every
+\&\f(CW\*(C`how\*(C'\fR, every \f(CW\*(C`keep\*(C'\fR, single and composite keys, an empty tied frame of each
+shape, and the sharing rule on both sides of its one exception. Every case runs
+the same call over tied input and over an identical plain copy and requires the
+two answers to be equal — a fixed expected value would pin the plain answer as
+well, which \f(CW\*(C`t/filter.t\*(C'\fR, \f(CW\*(C`t/merge.t\*(C'\fR and \f(CW\*(C`t/drop_duplicates.t\*(C'\fR already do, and
+what has to be pinned here is that the two routes agree. \f(CW\*(C`t/merge.t\*(C'\fR\*(Aqs existing
+reference join — plain Perl, run over all six input/output shape combinations —
+is what checks that the rewritten join still means what it meant.
+.PP
+\&\f(CW\*(C`./test.all.perls.pl\*(C'\fR passes on all five local perls — \f(CW5.10.1\fR, \f(CW5.12.5\fR
+(long double), \f(CW5.42.3\fR, \f(CW5.44.0\fR and \f(CW\*(C`5.44.0\-quadmath\*(C'\fR — with no warnings on
+any of them, and \f(CW\*(C`LikeR.c\*(C'\fR compiles clean under \f(CW\*(C`\-std=c99 \-O2 \-Wall\*(C'\fR against
+every one of their \f(CW\*(C`CORE\*(C'\fR directories.
 .SS "0.301 2026\-08\-21 CDT"
 .IX Subsection "0.301 2026-08-21 CDT"
 there are numerous additions of \f(CW\*(C`restrict\*(C'\fR keywords, which may or may not improve speed

@@ -1,33 +1,39 @@
 #!/usr/bin/env python3
-"""The Python side of scale.pl: the same functions, the same size ladder.
+"""The Python side of plot.scaling.pl: the same functions, the same size ladder.
 
 Where benchmark.py asks "how long does each function take on one 10,000-row
 frame", this asks "what shape is that curve".  Each call is timed at a ladder
 of sizes half a decade apart, seven times at each size, and written out for
-plot.scaling.pl to draw against the same measurements from scale.pl and
-scale.R.  On a log-log axis the slope of the line is the exponent.
+plot.scaling.pl to draw against the same measurements from Perl and R.  On a
+log-log axis the slope of the line is the exponent.
 
-    perl scale.data.pl                          # once, writes the fixtures
-    perl -Iblib/arch -Iblib/lib scale.pl        # -> perl_scaling.tsv
+    perl plot.scaling.pl --data                 # once, writes the fixtures
+    perl -Iblib/arch -Iblib/lib \
+         plot.scaling.pl --measure              # -> perl_scaling.tsv
     python3 scale.py                            # -> python_scaling.tsv
     Rscript scale.R                             # -> r_scaling.tsv
-    perl plot.scaling.pl                        # -> scaling.*.png
+    perl plot.scaling.pl --plot                 # -> scaling.*.svg
 
 Environment:
 
-    SCALE_DIR    where scale.data.pl put the fixtures (/tmp/likeR.scaling)
+    SCALE_DIR    where --data put the fixtures (/tmp/likeR.scaling)
     SCALE_RUNS   runs per (function, size); default 7
     SCALE_CAP    seconds; once one run of a function takes longer than this,
                  that function is not tried at any larger size.  Default 4.
     SCALE_MAX_N  hard ceiling on the row count, for a quick partial run
     SCALE_TARGET seconds a single measurement should span; a call faster than
                  this is repeated until it does.  Default 0.002.
+    SCALE_CPU    the CPU this run pins itself to; default 0, "none" to let the
+                 scheduler place it.
 
 On a hybrid CPU -- Intel's P-core/E-core parts, and the big.LITTLE ARM designs
--- run all three scripts under "taskset -c 0" (or the platform's equivalent).
-Measured here, a process landing on an E-core reads 1.5 to 2 times slower than
-the same loop on a P-core, which is a wider band than most of the differences
-these plots are drawn to show.
+-- a process landing on an E-core reads 1.5 to 2 times slower than the same
+loop on a P-core, which is a wider band than most of the differences these
+plots are drawn to show.  So this pins itself to one CPU rather than asking to
+be started under "taskset"; see pin_to_one_cpu() below.  plot.scaling.pl
+--measure and scale.R do the same, and all three default to CPU 0, so the three
+languages land on the same core without anyone having to remember.  SCALE_CPU
+moves it, and has to be given the same value in all three.
 
 The rule from benchmark.py carries over unchanged: each language is asked for
 the *same result* by its own idiomatic route, not for whichever call happens to
@@ -42,7 +48,7 @@ against below:
     cor() returns one number, and groupby().mean() would average every numeric
     column where group_by + mean averages one.
 
-The 'function' strings must match scale.pl's exactly -- that is the key the
+The 'function' strings must match plot.scaling.pl's exactly -- that is the key the
 plot joins the three files on.  A name here with no counterpart there simply
 draws one fewer line in that panel.
 """
@@ -63,8 +69,8 @@ MAX_N = int(os.environ.get('SCALE_MAX_N', 0))
 TARGET = float(os.environ.get('SCALE_TARGET', 0.002))
 MAX_REPS = 10_000
 
-# Size ladders.  Half-decade steps; scale.pl and scale.R carry the same three
-# lists, and scale.data.pl's row counts are IO_N.  Change one, change all four.
+# Size ladders.  Half-decade steps; plot.scaling.pl and scale.R carry the same
+# three lists, and the fixture row counts are IO_N.  Change one, change all three.
 VEC_N = [1_000, 3_000, 10_000, 30_000, 100_000, 300_000, 1_000_000]
 IO_N = [1_000, 3_000, 10_000, 30_000, 100_000, 300_000]
 FRAME_N = [1_000, 3_000, 10_000, 30_000, 100_000, 300_000]
@@ -97,7 +103,8 @@ def build_io(n):
     }
     for k in ('num_csv', 'mix_csv', 'mix_tsv'):
         if not os.path.isfile(f[k]):
-            sys.exit('missing fixture "%s"; run "perl scale.data.pl" first' % f[k])
+            sys.exit('missing fixture "%s"; run "perl plot.scaling.pl --data" first'
+                     % f[k])
     # The frame handed to to_csv is read in, not synthesized, so all three
     # languages write out the same table.
     f['df'] = pd.read_csv(f['mix_csv'])
@@ -133,7 +140,7 @@ BUILD = {'vector': build_vector, 'io': build_io, 'frame': build_frame}
 # ---------------------------------------------------------------------------
 # The benchmarks: (figure, function, call, body)
 # ---------------------------------------------------------------------------
-# 'function' is the join key with scale.pl and scale.R; 'call' is only recorded
+# 'function' is the join key with plot.scaling.pl and scale.R; 'call' is only recorded
 # for the reader.
 BENCHMARKS = [
     # --- reductions over one numeric vector --------------------------------
@@ -229,7 +236,7 @@ BUILDER_FOR = {'vector': 'vector', 'transform': 'vector', 'io': 'io',
 # ---------------------------------------------------------------------------
 # Execution
 # ---------------------------------------------------------------------------
-# Timed in-process, unlike scale.pl, which forks: CPython's allocator does not
+# Timed in-process, unlike plot.scaling.pl, which forks: CPython's allocator does not
 # hand a later run a materially different starting point, and the numpy and
 # pandas import cost that a fork per run would repeat dwarfs everything being
 # measured.  What does need controlling is the first call -- pandas resolves
@@ -244,6 +251,66 @@ BUILDER_FOR = {'vector': 'vector', 'transform': 'vector', 'io': 'io',
 # np.sum is a large fraction of what would otherwise be recorded.  The repeat
 # count is chosen from a second untimed call, so that all three scripts average
 # over the same span of work.
+# The CPU this run is pinned to, fixed before the first measurement.
+#
+# Saying "run this under taskset" in a comment is not the same as running it
+# under taskset.  An unpinned rerun of an identical build read Stats::LikeR's
+# min() at 2.75 ms against 1.43 pinned, and mean() at 2.61 against 1.35 -- a
+# factor of 1.9 on a 13th-generation Core i7, landing on whichever functions
+# happened to draw an E-core rather than on all of them evenly.  A reading that
+# moves by 1.9x depending on where the scheduler put the process is not a
+# measurement, and a cross-language plot drawn from three of them unpinned is
+# comparing schedulers.
+#
+# os.sched_setaffinity is the whole mechanism: it is Linux-only, but it is in
+# the standard library, so unlike plot.scaling.pl and scale.R this does not have
+# to shell out to taskset(1).
+#
+# Every failure is survivable and none of them stop the run:
+#
+#   * No sched_getaffinity -- macOS, Windows -- means the affinity cannot be
+#     read, let alone set, so this says so once and carries on.
+#   * A setaffinity that is refused (a cgroup or a taskset that already excluded
+#     the CPU asked for) leaves the run on the CPUs it had.
+#   * A process already pinned to one CPU is left on it, so
+#     "taskset -c 5 python3 scale.py" keeps CPU 5 and this does not overrule
+#     the operator.
+#
+# CPU 0 is the default because the P-cores are enumerated first on the hybrid
+# parts, so it is a fast core where the choice matters at all, and because it is
+# what the other two scripts default to.
+def pin_to_one_cpu():
+    want = os.environ.get('SCALE_CPU', '0')
+    if want in ('none', ''):
+        print('SCALE_CPU=none: leaving the scheduler to place the measurements')
+        return
+    try:
+        cpu = int(want)
+    except ValueError:
+        cpu = -1
+    if cpu < 0:
+        sys.exit("SCALE_CPU must be a CPU number or 'none', not %r" % want)
+
+    try:
+        before = os.sched_getaffinity(0)
+    except AttributeError:
+        print('this platform cannot report a CPU affinity, so the measurements '
+              'are not pinned; on a hybrid CPU, start this under the '
+              "platform's affinity tool")
+        return
+    if len(before) == 1:
+        print('already pinned to CPU %d; keeping it' % next(iter(before)))
+        return
+    try:
+        os.sched_setaffinity(0, {cpu})
+    except OSError as exc:
+        print('could not pin to CPU %d, staying on the %d it had: %s'
+              % (cpu, len(before), exc), file=sys.stderr)
+        return
+    print('pinned to CPU %d (was %d CPUs); plot.scaling.pl --measure and '
+          'scale.R must be on the same one' % (cpu, len(before)))
+
+
 def measure(body, data):
     """One reading: seconds per call, averaged over however many calls fit."""
     t0 = time.perf_counter()
@@ -257,6 +324,7 @@ def measure(body, data):
 
 
 def main():
+    pin_to_one_cpu()
     results = []
     too_slow = set()
 

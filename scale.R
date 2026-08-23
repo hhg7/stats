@@ -1,33 +1,40 @@
 #!/usr/bin/env Rscript
-# The R side of scale.pl: the same functions, the same size ladder.
+# The R side of plot.scaling.pl: the same functions, the same size ladder.
 #
 # Where benchmark.R asks "how long does each function take on one 10,000-row
 # frame", this asks "what shape is that curve".  Each call is timed at a ladder
 # of sizes half a decade apart, seven times at each size, and written out for
-# plot.scaling.pl to draw against the same measurements from scale.pl and
-# scale.py.  On a log-log axis the slope of the line is the exponent.
+# plot.scaling.pl to draw against the same measurements from Perl and Python.
+# On a log-log axis the slope of the line is the exponent.
 #
-#     perl scale.data.pl                          # once, writes the fixtures
-#     perl -Iblib/arch -Iblib/lib scale.pl        # -> perl_scaling.tsv
+#     perl plot.scaling.pl --data                 # once, writes the fixtures
+#     perl -Iblib/arch -Iblib/lib \
+#          plot.scaling.pl --measure              # -> perl_scaling.tsv
 #     python3 scale.py                            # -> python_scaling.tsv
 #     Rscript scale.R                             # -> r_scaling.tsv
-#     perl plot.scaling.pl                        # -> scaling.*.png
+#     perl plot.scaling.pl --plot                 # -> scaling.*.svg
 #
 # Environment:
 #
-#     SCALE_DIR    where scale.data.pl put the fixtures (/tmp/likeR.scaling)
+#     SCALE_DIR    where --data put the fixtures (/tmp/likeR.scaling)
 #     SCALE_RUNS   runs per (function, size); default 7
 #     SCALE_CAP    seconds; once one run of a function takes longer than this,
 #                  that function is not tried at any larger size.  Default 4.
 #     SCALE_MAX_N  hard ceiling on the row count, for a quick partial run
 #     SCALE_TARGET seconds a single measurement should span; a call faster than
 #                  this is repeated until it does.  Default 0.002.
+#     SCALE_CPU    the CPU this run pins itself to; default 0, "none" to let
+#                  the scheduler place it.
 #
 # On a hybrid CPU -- Intel's P-core/E-core parts, and the big.LITTLE ARM
-# designs -- run all three scripts under "taskset -c 0" (or the platform's
-# equivalent).  A process landing on an E-core reads 1.5 to 2 times slower than
+# designs -- a process landing on an E-core reads 1.5 to 2 times slower than
 # the identical loop on a P-core, which is a wider band than most of the
-# differences these plots are drawn to show.
+# differences these plots are drawn to show.  So this pins itself to one CPU
+# rather than asking to be started under "taskset"; see pin_to_one_cpu() below.
+# plot.scaling.pl --measure and scale.py do the same, and all three default to
+# CPU 0, so the three languages land on the same core without anyone having to
+# remember.  SCALE_CPU moves it, and has to be given the same value in all
+# three.
 #
 # Four panels have no R line, and are left empty rather than filled with
 # something else:
@@ -56,8 +63,8 @@ MAX_N <- as.integer(Sys.getenv("SCALE_MAX_N", "0"))
 TARGET <- as.numeric(Sys.getenv("SCALE_TARGET", "0.002"))
 MAX_REPS <- 10000L
 
-# Size ladders.  Half-decade steps; scale.pl and scale.py carry the same three
-# lists, and scale.data.pl's row counts are IO_N.  Change one, change all four.
+# Size ladders.  Half-decade steps; plot.scaling.pl and scale.py carry the same
+# three lists, and the fixture row counts are IO_N.  Change one, change all three.
 VEC_N <- c(1e3, 3e3, 1e4, 3e4, 1e5, 3e5, 1e6)
 IO_N <- c(1e3, 3e3, 1e4, 3e4, 1e5, 3e5)
 FRAME_N <- c(1e3, 3e3, 1e4, 3e4, 1e5, 3e5)
@@ -86,7 +93,7 @@ build_io <- function(n) {
     )
     for (k in c("num_csv", "mix_csv", "mix_tsv")) {
         if (!file.exists(f[[k]])) {
-            stop(sprintf('missing fixture "%s"; run "perl scale.data.pl" first',
+            stop(sprintf('missing fixture "%s"; run "perl plot.scaling.pl --data" first',
                          f[[k]]))
         }
     }
@@ -119,7 +126,7 @@ BUILD <- list(vector = build_vector, io = build_io, frame = build_frame)
 # ---------------------------------------------------------------------------
 # The benchmarks
 # ---------------------------------------------------------------------------
-# name is the join key with scale.pl and scale.py; call is only recorded for
+# name is the join key with plot.scaling.pl and scale.py; call is only recorded for
 # the reader.  invisible() everywhere, so nothing prints and no print method is
 # accidentally inside the timed region.
 b <- function(figure, name, call, body) {
@@ -221,6 +228,77 @@ measure <- function(body, data) {
     for (i in seq_len(reps)) body(data)
     list(seconds = (as.numeric(Sys.time()) - t0) / reps, reps = reps)
 }
+
+# The CPU this run is pinned to, fixed before the first measurement.
+#
+# Saying "run this under taskset" in a comment is not the same as running it
+# under taskset.  An unpinned rerun of an identical build read Stats::LikeR's
+# min() at 2.75 ms against 1.43 pinned, and mean() at 2.61 against 1.35 -- a
+# factor of 1.9 on a 13th-generation Core i7, landing on whichever functions
+# happened to draw an E-core rather than on all of them evenly.  A reading that
+# moves by 1.9x depending on where the scheduler put the process is not a
+# measurement, and a cross-language plot drawn from three of them unpinned is
+# comparing schedulers.
+#
+# R has no affinity API -- sched_setaffinity() is not wrapped anywhere in base
+# or in parallel -- so this goes through taskset(1) against its own pid, which
+# is what plot.scaling.pl does for the same reason.  scale.py needs neither,
+# because os.sched_setaffinity is in Python's standard library.
+#
+# Every failure is survivable and none of them stop the run: no
+# /proc/self/status (macOS, the BSDs, Windows) means the affinity cannot be read
+# and there is no taskset there either; an absent or refusing taskset leaves the
+# run on the CPUs it had; and a process already pinned to one CPU is left on it,
+# so "taskset -c 5 Rscript scale.R" keeps CPU 5 rather than being overruled.
+cpus_allowed <- function() {
+    path <- "/proc/self/status"
+    if (!file.exists(path)) return(NA_character_)
+    hit <- grep("^Cpus_allowed_list:", readLines(path, warn = FALSE), value = TRUE)
+    if (length(hit) == 0) return(NA_character_)   # a kernel too old to report it
+    sub("^Cpus_allowed_list:[[:space:]]*", "", hit[1])
+}
+
+pin_to_one_cpu <- function() {
+    want <- Sys.getenv("SCALE_CPU", "0")
+    if (want == "none" || want == "") {
+        cat("SCALE_CPU=none: leaving the scheduler to place the measurements\n")
+        return(invisible(NULL))
+    }
+    if (!grepl("^[0-9]+$", want))
+        stop(sprintf("SCALE_CPU must be a CPU number or 'none', not '%s'", want),
+             call. = FALSE)
+
+    before <- cpus_allowed()
+    if (is.na(before)) {
+        cat("cannot read this process's CPU affinity, so the measurements are",
+            "not pinned; on a hybrid CPU, start this under the platform's",
+            "affinity tool\n")
+        return(invisible(NULL))
+    }
+    # a list with no comma and no dash is one CPU, so someone has already pinned us
+    if (!grepl("[,-]", before)) {
+        cat(sprintf("already pinned to CPU %s; keeping it\n", before))
+        return(invisible(NULL))
+    }
+
+    said <- tryCatch(
+        suppressWarnings(system2("taskset", c("-pc", want, Sys.getpid()),
+                                 stdout = TRUE, stderr = TRUE)),
+        error = function(e) conditionMessage(e))
+    after <- cpus_allowed()
+    if (!is.na(after) && identical(after, want)) {
+        cat(sprintf(paste0("pinned to CPU %s (was %s); plot.scaling.pl ",
+                           "--measure and scale.py must be on the same one\n"),
+                    after, before))
+    } else {
+        cat(sprintf("could not pin to CPU %s, staying on %s: %s\n",
+                    want, before, paste(said, collapse = " ")),
+            file = stderr())
+    }
+    invisible(NULL)
+}
+
+pin_to_one_cpu()
 
 results <- list()
 too_slow <- character(0)

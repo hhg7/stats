@@ -3,7 +3,7 @@
 require 5.010;
 use strict;
 package Stats::LikeR;
-our $VERSION = 0.301;
+our $VERSION = 0.302;
 require XSLoader;
 use autodie ':default';
 use warnings FATAL => 'all';
@@ -8180,6 +8180,12 @@ input — but assigning I<through> a survivor (C<< $out-E<gt>{col}[0] = ... >>, 
 C<< $out-E<gt>[0]{col} = ... >> for AoA/AoH) writes to the input's cell as well.
 Clone the result if you need full independence.
 
+=item * B<A tied HoA column is the one exception>: its cells have no independent
+existence to share — the tie hands them out one temporary at a time — so
+they are copied, and the result is independent of the input for that column.
+A tied AoA/AoH row is still shared, because the row itself is a real
+reference whatever the array holding it does.
+
 =item * B<It dies> on: undefined or non-ref data; an HoH frame; an unknown argument;
 an empty or duplicated C<subset>; an invalid C<keep>; an AoA position that is
 not a non-negative integer or is out of range; or a C<subset> name absent from
@@ -13481,12 +13487,32 @@ C<List::Util::uniq>: C<1>, C<1.0>, and C<"1"> all collapse to a single result, a
 the first value seen is the one returned (as a fresh copy, never an alias to
 the input). Order of first appearance is preserved.
 
+This is where C<uniq> parts company with R's C<unique()> and pandas'
+C<pd.unique()>, which compare doubles by value. On a build whose C<NV> is a double,
+C<0.1 + 0.2> and C<0.3> are two different doubles that both print C<0.3>, so they
+are one value here and two there; C<1000000000000000> and C<1e15> are the same
+number, printed C<1000000000000000> and C<1e+15>, so they are two values here and
+one there. Which pairs fall which way moves with the width of the C<NV>, because
+the printing does — C<uniq> follows C<eq> on every build.
+Compare doubles by value — with a C<%.17g> C<sprintf>, or by rounding — before
+calling C<uniq> if that is what you need.
+
 In list context C<uniq> returns the distinct values. In scalar context it
-returns the I<count> of distinct values, matching C<List::Util::uniq>.
+returns the I<count> of distinct values, matching C<List::Util::uniq>. Scalar
+context is the cheaper of the two: it never builds the result list.
 
 The UTF-8 flag is part of the comparison key, so a UTF-8 string and a
 byte-identical non-UTF-8 string are kept distinct — they are different strings.
-Strings that are logically equal and consistently encoded collapse as expected.
+Strings that are logically equal and consistently encoded collapse as expected:
+a UTF-8 string whose every character is below C<\x{100}> is compared against the
+bytes it downgrades to, so C<"\x{e9}"> and C<"\xe9"> are one value, exactly as
+C<eq> and a Perl hash key both have it.
+
+The input is left alone. C<uniq> renders a plain number into its own buffer
+rather than asking Perl for the number's string, so it does not leave a cached
+C<PV> on the caller's SVs — taking the distinct values of a large numeric column
+no longer grows that column. Tied arrays and tied elements are read through
+their C<FETCH>.
 
 Unlike C<List::Util::uniq>, which passes a single C<undef> through, C<uniq>
 B<croaks> on any undefined value, reporting the offending argument index (and
@@ -14457,6 +14483,748 @@ C<f.sf> / C<norm.sf> and statsmodels' C<anova_oneway>; see
 C<t/model_pvalue_tails.t> and C<t/oneway_test.R.scipy.t>.
 
 =head1 Changes
+
+=head2 0.302 2026-08-22 CDT
+
+C<sum>, C<min>, C<max>, C<mean>, C<sd>, C<var>, C<quantile>, C<cor> and C<cov> are
+between 2.5 and 10.7 times faster, and four of the nine are now faster than R.
+C<merge> is between 1.9 and 5.3 times faster and now beats R's C<merge> at every
+size measured, and C<uniq> is about four times faster at every size measured. Nothing any of them returns changes, except where it was wrong:
+five bugs turned up while the measurements were being taken. One had been
+hanging the interpreter, one had been segfaulting, and three had been quietly
+returning the wrong frame for any input built on a tied array.
+
+The distribution had also been building without an optimizer, which is where a
+third of this came from and none of the credit does.
+
+At C<n = 1,000,000>, one column of C<rnorm> values, best of seven, measured by
+C<scale.pl> against C<scale.R> and C<scale.py> on the same machine:
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th></th>
+  <th>0.301</th>
+  <th>0.302</th>
+  <th>R 4.6.1</th>
+  <th>NumPy 2.5.2</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>sum</code></td>
+  <td>4.07 ms</td>
+  <td>1.37 ms</td>
+  <td>0.795 ms</td>
+  <td>0.202 ms</td>
+</tr>
+<tr>
+  <td><code>min</code></td>
+  <td>4.29 ms</td>
+  <td>1.51 ms</td>
+  <td>1.06 ms</td>
+  <td>0.160 ms</td>
+</tr>
+<tr>
+  <td><code>max</code></td>
+  <td>4.25 ms</td>
+  <td>1.50 ms</td>
+  <td>1.06 ms</td>
+  <td>0.160 ms</td>
+</tr>
+<tr>
+  <td><code>mean</code></td>
+  <td>4.07 ms</td>
+  <td>1.37 ms</td>
+  <td>1.59 ms</td>
+  <td>0.204 ms</td>
+</tr>
+<tr>
+  <td><code>sd</code></td>
+  <td>8.25 ms</td>
+  <td>2.39 ms</td>
+  <td>2.80 ms</td>
+  <td>0.960 ms</td>
+</tr>
+<tr>
+  <td><code>var</code></td>
+  <td>8.13 ms</td>
+  <td>2.40 ms</td>
+  <td>2.79 ms</td>
+  <td>0.962 ms</td>
+</tr>
+<tr>
+  <td><code>quantile</code></td>
+  <td>160 ms</td>
+  <td>14.9 ms</td>
+  <td>20.6 ms</td>
+  <td>15.0 ms</td>
+</tr>
+<tr>
+  <td><code>cor</code></td>
+  <td>20.5 ms</td>
+  <td>8.24 ms</td>
+  <td>6.43 ms</td>
+  <td>4.67 ms</td>
+</tr>
+<tr>
+  <td><code>cov</code></td>
+  <td>27.8 ms</td>
+  <td>8.75 ms</td>
+  <td>4.82 ms</td>
+  <td>4.79 ms</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+The ratios are better below a million, where the column still fits in cache. At
+C<n = 100,000>, C<sum> and C<mean> are 5.1 times faster than 0.301, C<sd> and C<var>
+5.2, C<quantile> 8.0, and C<sum> overtakes R.
+
+What is left between this and NumPy is not a constant factor waiting to be
+found. A perl array is an array of C<SV*>; NumPy holds a contiguous C<double[]>
+and runs SIMD over it. 1.2 ns per element is about four cycles — load the
+pointer, load the flags, branch, load the C<NVX>, add — and that is near the
+floor for walking a million SVs. Closing it would need a packed-buffer type
+holding C<NV*> directly, which is a different module rather than a tuning pass.
+
+=head3 The module was being built without an optimizer
+
+C<compile.sh> ran C<perl Makefile.PL OPTIMIZE='-Wall'>. C<OPTIMIZE> I<replaces>
+perl's own C<$Config{optimize}> rather than adding to it, so that was not "the
+usual flags plus a warning switch" — it was the whole optimize line, and every
+build it made, including the one C<make install> then installed, was compiled at
+C<-O0>. C<test.all.perls.pl> defaulted to the same string, so the entire support
+matrix was built and timed that way too.
+
+Both say C<-O2 -Wall> now. On the same C<LikeR.c>, summing C<1e6> NVs takes 4.10 ms
+at C<-O0> against 2.63 ms at C<-O2>, and C<cor> 25.5 ms against 12.9 ms. Read the
+rest of this section as what was left after the compiler was allowed to do its
+job.
+
+C<t/build.optimize.t> reads both scripts and fails if either hands C<Makefile.PL>
+an C<OPTIMIZE> with no C<-O> in it. There is no way to ask a loaded C<.so> what it
+was compiled at, so the check has to be on the scripts; neither ships, so the
+file skips outside the repository.
+
+=head3 Reading a column: one C<av_fetch> per element
+
+All nine functions read their input by calling C<av_fetch> once per element. That
+call is out of line and repeats, for every element, a bounds check, a
+negative-index fixup and a magic dispatch that a straight walk of C<AvARRAY>
+already knows the answers to. On a million-element column it was about half of
+what C<sum> cost and more than half of C<cor>.
+
+Walking the block directly is only sound while nothing can move it, and C<SvNV>
+can move it: on an SV carrying get magic it runs C<mg_get>, on a reference it may
+run an overloaded C<0+>, and on a string that is not a number it raises a warning
+that a C<$SIG{__WARN__}> handler catches. Each of those is perl code, and perl
+code may push to the very array being walked, which reallocs the block and
+leaves the walk holding freed memory.
+
+So the fast path is decided per element, not per array. C<sv_plain_nv> takes an
+SV only when it already holds a number and carries neither magic nor a
+reference, which makes C<SvNV> a register read that calls nothing; everything
+else — a hole, a string, a reference, a tied element — goes back to C<av_fetch>,
+which is both correct and where the block pointer gets re-derived. A tied array
+is refused whole, before the scan starts.
+
+The scans live in their own functions and are marked C<LIKER_NOINLINE>, which is
+not decoration. Inlined into the caller, a scan shares a stack frame with the
+C<av_fetch> loop that finishes whatever it would not take; the accumulators then
+have to stay addressable across that call, so the scan spills them to memory
+every iteration instead of keeping them in registers. Summing C<1e6> NVs: 2.77
+ns/element for the C<av_fetch> loop being replaced, 2.25 with the scan inlined
+into it, 1.29 with the scan compiled on its own. There is no portable spelling
+of C<noinline>, so it is annotated where the compiler has one and left empty
+where it does not, which gives back the inlined speed and never a wrong answer.
+
+C<min> and C<max> get a scan each rather than sharing one that tracks both ends.
+The running extreme is a loop-carried dependency, each compare-and-move waiting
+on the previous element's result, so carrying the end the caller will not return
+costs a second chain for nothing: 1.79 ms against 1.35 ms on C<1e6> NVs.
+
+=head3 C<var>, C<sd> and C<cov>: Welford to two passes
+
+Welford's recurrence updates the running mean with C<mean += delta / count>. That
+divide sits in a loop-carried dependency chain, so each element waits out the
+previous one's latency — 5.34 ns/element against 2.70 for two passes.
+
+Two passes is also what R computes. C<src/library/stats/src/cov.c> takes a first
+mean, refines it with a second pass (C<tmp = tmp + sum(x - tmp)/n>, the C<MEAN>
+macro) and only then sums the squared deviations about the refined mean.
+Expanding that third pass about the I<unrefined> mean leaves
+C<sum((x-m)^2) - (sum(x-m))^2/n>, so carrying the sum of the deviations alongside
+the sum of their squares gives R's answer in one pass fewer. That is the
+Chan-Golub-LeVeque correction, so it is no less accurate than Welford on an
+ill-centred column.
+
+C<mean> is deliberately not changed: it remains the single-pass C<sum/n>, which is
+not what R's C<mean> computes and never was.
+
+Reading the arguments twice is visible only to a tied array, whose C<FETCH> now
+runs once per pass.
+
+=head3 C<quantile> orders only the statistics it reads
+
+C<quantile> sorted the whole column and then indexed into it. Type 7 reads at
+most two order statistics per probability — C<x[j]> at C<j = floor((n-1)p)>, and
+C<x[j+1]> where the interpolation weight is non-zero — which for the five default
+probs is ten values out of a million.
+
+C<nv_select_multi> places just those. It takes the middle index first and
+recurses into the two ranges that index separates, costing C<O(n log k)> rather
+than the C<O(n k)> a left-to-right sweep of selects would: each level of the
+recursion touches each element at most once, and the index list halves at every
+level. Past C<k = n/2> distinct indices a full sort is the cheaper way to get the
+same array, and that is what still happens there.
+
+This is also what R does — C<quantile.default> hands its indices to
+C<sort(partial=)>, and NumPy reaches C<np.partition> for the same reason. On C<1e6>
+random doubles the ten order statistics of the five default probs cost 19.2 ms
+this way against 69.1 ms for the full introsort.
+
+The probabilities are parsed before the column is read now, rather than after it
+is sorted, so an invalid C<probs> vector no longer costs a pass over the data
+first.
+
+=head3 C<cor> and C<cov>: sorts that inline their comparison
+
+Spearman ranks its input before correlating it, and C<rank_data> did that through
+C<qsort> with an out-of-line comparator; Kendall's tau-b sorted three times the
+same way. That comparator call cannot be inlined, and for a sort of a few
+thousand elements it is most of what the sort costs — the module's own C<nv_sort>
+takes 210us where C<qsort> takes 355us on 5,000 NVs, which is why it exists.
+
+C<LIKER_DEFINE_SORT(T, PFX, LESS)> generates that introsort for a given struct
+and ordering: median of three left at the midpoint so both partition scans have
+a sentinel, recursion into the shorter side and a loop on the longer so the
+stack stays C<O(log n)> deep, a heapsort fallback past C<2*floor(log2 n)> levels
+so a median-of-three killer cannot reach C<O(n^2)>, and one insertion sort over
+the nearly-ordered remainder. It is C<kw_sort>, the Kruskal-Wallis sort, made
+generic. C<rank_data> and Kendall's C<(x, y)> sort are generated from it; Kendall's
+third sort, a plain C<NV> column, calls C<nv_sort> directly.
+
+glibc's C<qsort> is also a mergesort that allocates a scratch buffer the size of
+the array it is given. Peak RSS for a Spearman correlation of two C<2e6> columns
+falls from 455 MB to 424 MB — exactly the 32 MB it was allocating to sort C<2e6>
+sixteen-byte records.
+
+At C<n = 200,000>: C<cor(..., 'spearman')> 66.9 ms to 27.2 ms, C<cov(...,
+'spearman')> 65.9 ms to 26.7 ms, C<cor(..., 'kendall')> 70.5 ms to 44.7 ms. Small
+repeated calls gain the same factor: ten thousand C<cor(..., 'spearman')> calls
+over twelve elements, the shape C<agg> and C<group_by> produce, 6.4 ms to 3.1 ms.
+
+=head3 C<cor> read an array of arrays once per column
+
+C<cor(\@matrix)> extracted one column at a time, and for each column it walked
+every row — C<av_fetch> on the outer array, C<SvRV> to reach the row, then
+C<av_fetch> for the cell. The outer array was therefore walked C<ncols> times
+over, and every one of the C<ncols * nrows> cells paid a fetch on it that the
+column before had already paid.
+
+The pre-validation pass that already checks every row is an array reference now
+keeps the row C<AV*>s it resolves instead of discarding them, and the extraction
+transposes in a single pass over the rows through C<av_extract_or_nan> — the same
+reader the vector branch uses, so a short row, a hole, an C<undef> and a
+non-numeric cell all behave here exactly as they do there. Outer fetches fall
+from C<ncols * nrows> to C<nrows>, and each row's cells are read in the order they
+are stored rather than one per pass.
+
+At 20,000 rows: C<cor> of a 40-column matrix 40.6 ms to 26.7 ms, and its
+cross-correlation against an 8-column matrix 28.7 ms to 12.4 ms. The transpose
+keeps one write stream open per column, which is what a wide matrix pays for
+this, and 2,000 x 300 still comes out ahead — 144.6 ms to 134.8 ms.
+
+A row that was itself a tied array used to read as all-C<NA>, because C<av_fetch>
+on one hands back a deferred C<PVLV> whose value only arrives when C<mg_get> runs:
+C<cor(\@rows)> croaked "standard deviation is 0 in x column 0" on data that was
+perfectly well defined. C<av_extract_or_nan> runs the get magic, so those rows
+now give the same answer as the untied equivalent. A cell that is a tied scalar
+was already read correctly and still is.
+
+The zero-variance check that used to be folded into the extraction is now
+C<nv_all_equal>, one function shared with the vector branch, which returns at the
+first pair of values that differ instead of sweeping the column. On the vector
+path that replaces two full passes over C<x> and C<y>, which is where the C<cor>
+row of the table above moves from 10.5 ms to 8.24 ms — the two passes were a
+fifth of what C<cor(\@x, \@y)> cost at C<n = 1,000,000>.
+
+C<cov> does not gain from any of this: its Pearson path neither sorts nor scans
+for zero variance, and 8.75 ms is the same figure it read before. What changed
+there is housekeeping — C<Newx> in place of a bare C<safemalloc>, and the method
+string resolved once rather than by three more C<strcmp> calls.
+
+=head3 C<min> over more than 65,535 arguments never returned
+
+C<min> counted its arguments in an C<unsigned short int>. C<items> is the whole
+flattened argument list, so C<min(@x)> on an array of more than 65,535 scalars
+wrapped the counter and the loop never reached its bound:
+
+C<perl
+my @a = (1 .. 70_000);
+min(@a);                  # 0.301: hangs, forever
+>
+
+It is a C<Stack_off_t> now, which is what C<max> and C<sum> already used.
+C<power_t_test> carried the same counter; it takes named pairs, so nothing could
+reach 65,535 of them, and it is widened anyway.
+
+A regression here is a hang rather than a wrong answer, so C<t/hot_path.t> runs
+the 70,000-argument calls under C<alarm> where the platform has one. Without that
+guard a smoker would sit there instead of failing.
+
+=head3 A tied array read as all-C<undef>
+
+C<sum(\@tied)> croaked C<undefined value at array ref index 0>, and so did every
+other function here. C<av_fetch> on a tied array does not return the element: it
+returns a mortal C<PVLV> that only acquires the element's value once C<mg_get> has
+run on it. The C<SvOK> test came first, saw an empty C<PVLV>, and reported every
+element of every tied array as undefined. An ordinary array holding a tied
+scalar failed the same way.
+
+The slow path runs C<SvGETMAGIC> before it looks now. This predates 0.302 and is
+not fallout from the scan — but the scan is what made it worth finding, because
+C<sv_plain_nv> refuses every magical SV and so sends all of them down that one
+path.
+
+That slow path then had a bug of its own, and it was worse. C<av_slow_at> held
+the C<SV **> that C<av_fetch> returned — a pointer I<into> C<AvARRAY> — ran the get
+magic through it, and read it again afterwards. C<mg_get> runs perl, and the
+element in C<t/hot_path.t> pushes 200 values onto the array being walked, which
+reallocates that block: both reads after the magic were reads of freed memory.
+It usually returned the right answer because the freed block usually still held
+the old pointer, so the test that exists for precisely this case passed on four
+of the five perls and, on the fifth, only failed when the suite was run four
+perls at a time and something else had claimed the block —
+C<sum> returned 1085 instead of 10, once. Under C<valgrind> it is an "invalid
+read of size 8" on every perl, every time.
+
+It loads the element into a local before running the magic now. The SV itself
+does not move; only the array of pointers to it does, so a copy of the pointer
+stays good where a second read through the slot does not. The same shape — take
+C<SV **> from C<av_fetch>, run magic, dereference again — is still present in the
+C<median> and C<moment> readers and in three places in C<transpose>, and is the
+same one-line fix in each; those are untouched here.
+
+C<uniq> was missed by this pass and fixed later in the same release; see
+"C<uniq>: the same keys, without a perl hash" below.
+
+=head3 C<cor> returned C<NaN> on an off-centre column
+
+C<pearson_corr> computed the correlation from raw cross-products,
+C<(n*sxy - sx*sy) / sqrt((n*sx2 - sx^2) * (n*sy2 - sy^2))>. Each of those three
+terms subtracts two nearly equal large numbers, so it loses a digit of the
+answer for every digit by which the mean exceeds the spread. On a column with
+mean C<1e9> and a spread of C<0.05> it does not merely lose precision:
+C<n*sx2 - sx*sx> comes out negative, the square root is C<NaN>, and C<cor> returns
+C<NaN> for an ordinary pair of vectors. At mean C<1e6> it was wrong in the fifth
+decimal place — C<0.74945606763640826> against R's C<0.74943997817595964>.
+
+It centres first now, as R's C<cov.c> does, with the same compensated two-pass
+correction C<var> uses. R reports C<0.063454463733801467> for the C<1e9> case, and
+so does this.
+
+C<cov>'s Pearson branch was Welford's covariance recurrence, two divides deep in
+the dependency chain; it is C<nv_cov2> now, the two-pass form, shared with the
+Spearman branch.
+
+=head3 A leak on C<cor>'s matrix error path
+
+C<cor(\@x, \@y)> with a C<y> matrix whose rows are empty croaked "y matrix has
+zero columns" without freeing the C<x> columns it had already extracted. On a
+40-column matrix that is 40 buffers and their table per call: 20,000 such croaks
+grew RSS by 44 MB. The branch's allocations are now released through one macro
+that every croak path calls, and the row tables and the scratch row are freed as
+soon as the last value has been read out of them rather than at the end.
+
+The C<< nrows E<lt> 2 >> guard was missing the same frees, but it is unreachable — a
+one-row matrix has a constant column, so the zero-variance croak above always
+gets there first. It frees anyway.
+
+Seven C<croak> formats in C<cor> passed a C<size_t> to C<%lu> with no cast, which on
+Windows is a 64-bit argument read through a 32-bit conversion. They use
+C<%" UVuf "> with a C<(UV)> cast now, as the rest of the file does, and C<cov>'s
+one — cast to C<unsigned long>, so well defined but still narrowing on Win64 —
+went with them. Every message is unchanged wherever C<unsigned long> is 64 bits,
+which is everywhere the suite runs.
+
+=head3 Unchanged: C<cor> and C<cov> still do not see an overloaded object as a number
+
+C<cor> and C<cov> decide what is numeric with C<looks_like_number>, which is false
+for any reference, an overloaded C<0+> included, so a column of overloaded
+objects reads as all-C<NA>: C<cov> returns C<NaN> and C<cor> reaches its
+zero-variance croak. C<sum>, C<min> and C<max> do honour the overload, through
+C<SvNV>. The two families genuinely disagree. That predates 0.302 and is a
+different question from how a column is walked, so C<t/hot_path.t> pins the
+current behaviour rather than changing it quietly.
+
+=head3 C<merge>: a hash join that stopped building a perl hash
+
+At C<n = 300,000> a C<< merge($df, $df, how =E<gt> 'inner', on =E<gt> 'id') >> over a
+six-column HoA took 575 ms. It takes 109 ms. Best of ten, one process per
+measurement, pinned to one CPU, against C<scale.R> and C<scale.py> on the same
+machine:
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th><code>n</code></th>
+  <th>0.301</th>
+  <th>0.302</th>
+  <th>R 4.6.1</th>
+  <th>pandas 2.x</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>1,000</td>
+  <td>0.471 ms</td>
+  <td>0.245 ms</td>
+  <td>0.46 ms</td>
+  <td>0.68 ms</td>
+</tr>
+<tr>
+  <td>10,000</td>
+  <td>5.45 ms</td>
+  <td>2.60 ms</td>
+  <td>3.35 ms</td>
+  <td>0.88 ms</td>
+</tr>
+<tr>
+  <td>100,000</td>
+  <td>138 ms</td>
+  <td>33.3 ms</td>
+  <td>80.0 ms</td>
+  <td>2.95 ms</td>
+</tr>
+<tr>
+  <td>300,000</td>
+  <td>575 ms</td>
+  <td>109 ms</td>
+  <td>155 ms</td>
+  <td>9.83 ms</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+Under callgrind the 30,000-row join fell from 358M instructions to 170M. Three
+things were paying for that.
+
+B<< The right-hand index was a perl C<HV> >> keyed by the join key: an C<HE>, a
+shared C<HEK> and an C<IV> SV per distinct key, so three allocations per right row
+whenever the key is unique, which is exactly what a join on an id column is.
+It is the same open-addressed table over a key arena that C<drop_duplicates>
+already interns into (C<dd_ctx>) — no SV, no HEK, one C<memcpy> of each distinct
+key — so the two functions now share their definition of "the same key" as well
+as their code for deciding it. C<mg_key> writes straight into that arena instead
+of making four C<sv_catpvn> calls per key column into a scratch SV, and a
+one-column join writes the cell's bytes bare: with a single field there is
+nothing for a length prefix to disambiguate, and on an integer id the prefix and
+its two separators were about as many bytes again to hash and to compare.
+
+B<It emitted each output row as it found it>, so the row count was not known
+until the join had finished and every output column grew by C<av_push>, being
+reallocated its way up to the answer. The probe now records C<(left row, right
+row)> pairs into a flat list and builds nothing; only when that list is complete
+— so the count is exact — is each column allocated once at its final size and
+filled straight into C<AvARRAY>, the way C<filter> already builds its columns.
+The list costs two C<SSize_t> per output I<row> against roughly one SV per output
+I<cell>, so it is a small fraction of the result on any join wide enough to care,
+a cross join included. C<mg_emit> is gone; C<mg_column> and C<mg_build> replace it,
+and the cross join goes through the same two stages as every other C<how>.
+
+B<< C<mg_cell> called C<av_fetch> once per cell >>, which was 7% of the call: a join
+reads every key cell of both frames and every cell of every column it keeps.
+It reads the block directly now, through the same C<av_at> the other frame
+functions use.
+
+What is left is the result itself. A 300,000-row join of two six-column frames
+is 3.3 million output SVs, and at 109 ms that is 33 ns each — allocate, copy a
+cell into it, store it. pandas is not doing the same work: its columns are
+contiguous typed buffers and a join is a C<take> over them.
+
+=head3 C<uniq>: the same keys, without a perl hash
+
+C<uniq> on a million-element column of C<rnorm> values took 0.80 s, against R's
+C<unique()> at 0.019 and pandas' C<pd.unique()> at 0.029. It takes 0.16 s. Same
+method as the tables above — one process per measurement, pinned to one CPU,
+the fastest of seven, C<plot.scaling.pl> against C<scale.R> and C<scale.py> on the
+same machine — except that the C<0.301> column is the 0.301 I<code> built at
+C<-O2>, not the released build, so this is the rewrite on its own and not the
+optimizer again:
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th><code>n</code></th>
+  <th>0.301 code</th>
+  <th>0.302</th>
+  <th>R 4.6.1</th>
+  <th>pandas 2.2.3</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>1,000</td>
+  <td>0.294 ms</td>
+  <td>0.069 ms</td>
+  <td>0.009 ms</td>
+  <td>0.020 ms</td>
+</tr>
+<tr>
+  <td>10,000</td>
+  <td>3.19 ms</td>
+  <td>0.825 ms</td>
+  <td>0.092 ms</td>
+  <td>0.184 ms</td>
+</tr>
+<tr>
+  <td>100,000</td>
+  <td>41.2 ms</td>
+  <td>9.71 ms</td>
+  <td>1.16 ms</td>
+  <td>2.30 ms</td>
+</tr>
+<tr>
+  <td>300,000</td>
+  <td>174 ms</td>
+  <td>39.2 ms</td>
+  <td>3.71 ms</td>
+  <td>5.59 ms</td>
+</tr>
+<tr>
+  <td>1,000,000</td>
+  <td>801 ms</td>
+  <td>160 ms</td>
+  <td>19.4 ms</td>
+  <td>28.6 ms</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+The slope was never the problem. Fitted over the ladder by C<scaling.slopes.tsv>,
+all three are linear — 1.12 for C<uniq>, 1.11 for R, 1.04 for pandas, and 1.14
+for C<uniq> before the rewrite — so this was a constant factor from the start,
+and none of it was the hashing.
+
+B<< C<SvPV> on an C<NV> is a C<%.15g> that has to be redone every time. >> Walking a
+million C<NV> SVs costs 2 ms; walking them and calling C<SvPV> on each costs
+268 ms. That is ten times R's whole runtime for the same call, and it is the
+floor the old code could not get under however few distinct values there were:
+a column of a million elements holding ten distinct values still took 0.226 s.
+Worse, C<SvPV> leaves the rendered buffer on the caller's own SV without ever
+reusing it (C<sv_2pv_flags> re-renders an C<NV> on the next pass regardless), so
+asking a large numeric column for its distinct values grew that column by tens
+of megabytes, for good. C<nk_num_pv> — already written for C<drop_duplicates>,
+about four times faster and only taken where the answer is provably the same —
+renders into the XSUB's own stack buffer and touches nothing.
+
+B<< The C<seen> hash was a perl C<HV>. >> An C<HE> and a copied C<HEK> per distinct
+key is ~72 MB of scattered small allocations at a million of them, and the
+table rehashes at every doubling on the way there. Going from ten distinct
+values to a million added 0.47 s of pure insert cost. It is C<dd_ctx> now, the
+same open-addressed slot array over a key arena that C<drop_duplicates> and
+C<merge> intern into, presized from the element count.
+
+B<It hashed each key twice>, once for C<hv_exists> and again for C<hv_store>.
+Collapsing that into one C<< hv_fetch(..., 1) >> is the obvious repair and is the
+wrong one: the lvalue fetch mints an SV per key, and on the million distinct
+doubles it measured 0.919 s against the pair's 0.756 — while also reading
+C<AvARRAY> directly, so the comparison flatters it. That is why the pair had
+survived. One hash of one key into one open-addressed probe is what the arena
+gives instead.
+
+What the rewrite does I<not> do is compare doubles by value. That is how R and
+pandas get the factor of six to eight they still have, and it is a different
+answer: C<0.1 + 0.2> and C<0.3> are two doubles that print the same, so they are
+one value to C<uniq> and two to C<unique()>. C<uniq> is documented to compare the
+way C<eq> and C<List::Util::uniq> do, so it renders every element and compares
+the text; that rendering pass is essentially all of the distance that is left.
+Scalar context builds no result list at all and takes about a fifth off again.
+
+C<< uniq(\@tied) >> croaked C<undefined value at array ref index 0>. It was reading
+elements through C<av_fetch> and testing C<SvOK> on the C<PVLV> that comes back,
+which is the bug "A tied array read as all-C<undef>" describes above. C<uniq> was
+simply not one of the functions that pass reached. It reads through
+C<av_slow_at> now, like the rest.
+
+=head3 C<filter>: measured, and left alone
+
+C<filter> is not faster, and the reason is worth writing down so it is not
+looked for again. At C<n = 300,000> on a five-column HoA, C<< col('x') E<gt> 0 >> keeping
+half the rows costs 22.5 ms, of which B<the predicate is 1.3 ms>. The other
+21.2 ms is allocating and filling the 750,000 SVs of the result, which the
+documented contract requires: an HoA input, or any C<hoa> output, builds fresh
+arrays and fresh cell values. That is 19 ns per numeric cell and 44 ns per
+string cell, and the difference between the two is one C<malloc> for the string's
+buffer.
+
+Copy-on-write is the obvious way out of that C<malloc> and is not available.
+C<newSVsv> is C<newSVsv_flags(sv, SV_GMAGIC|SV_NOSTEAL)>, which does not pass
+C<SV_COW_SHARED_HASH_KEYS>, so its string copies are never copy-on-write; and
+C<SV_DO_COW_SVSETSV>, the flag pair a plain C<my $b = $a> gets, is defined as C<0>
+unless C<PERL_CORE> is set — perl's own C<sv.h> says "the core is safe for this
+COW optimisation, XS code on CPAN may not be". Reaching past that by hand was
+measured anyway and is slower in both directions: C<filter> 23.0 ms against 28.3
+ms, C<merge> 103 ms against 126 ms. For a string as short as a data frame's
+usually are, the C<malloc> costs less than what COW puts in its place — an
+out-of-line C<sv_setsv>, the C<CowREFCNT> increment, and the read-only flip on the
+source. The finding is recorded at C<flt_cell_copy> rather than only here.
+
+The one lever that does move it is the copy itself. Sharing the surviving cells
+instead — one refcount bump, which is what C<drop_duplicates> does for exactly
+this reason — was prototyped and measured at 13.6 ms against R's 14.4 ms. It is
+not done, because C<filter> documents the opposite and someone may be relying on
+it; changing that is a decision about the interface, not a tuning pass.
+
+Two things did change. C<flt_num> takes a bare C<IOK>/C<NOK> cell without calling
+C<SvGETMAGIC> or C<looks_like_number> — neither can say anything about an SV that
+already holds a number, and C<looks_like_number> is out of line — which is most
+of what the predicate pass costs on a numeric column. And the tied-frame bugs
+below.
+
+=head3 A tied frame read as all-C<undef>, and one that segfaulted
+
+C<filter>, C<merge> and C<drop_duplicates> all walk a column or a row through
+C<AvARRAY>, which is why they are fast and which is wrong for a tied array: its
+elements do not exist until C<FETCH> has run, and C<AvARRAY> on one is not the
+block they live in — on an array that has never held a real element it is a null
+pointer. C<av_fetch> is the way in, and what it returns for a tied element is a
+mortal C<PVLV> that only acquires the value once C<mg_get> has run on it, so an
+C<SvOK> or C<SvROK> test placed before that says "undef" or "not a reference" for
+every cell and every row of the frame.
+
+This is the same pair of mistakes C<sum(\@tied)> made, above, and it predates
+0.302 in all three functions. Between them they were wrong in four distinct
+ways:
+
+ tie my @x, 'TiedArray'; @x = (1, -2, 3);
+ tie my @y, 'TiedArray'; @y = (10, 20, 30);
+
+ filter({ x => \@x, y => \@y }, col('x') > 0);
+ # 0.301: { x => [], y => [] } -- an empty frame, whatever the predicate
+ # 0.302: { x => [1, 3], y => [10, 30] }
+
+ merge({ id => \@x }, { id => [1, 3], w => ['a','b'] }, how => 'inner', on => 'id');
+ # 0.301: { id => [], w => [] } -- no key matched, because every key read undef
+ # 0.302: { id => [1, 3], w => ['a', 'b'] }
+
+ drop_duplicates({ k => \@x, v => \@y });
+ # 0.301: { k => [undef], v => [undef] } -- every row identical, so one survived
+ # 0.302: { k => [1, -2, 3], v => [10, 20, 30] }
+
+ drop_duplicates([ map { { k => $_ } } 1 .. 3 ]);   # with the AoH itself tied
+ # 0.301: segmentation fault
+
+The crash was C<_aoh_key_union>, which indexed C<AvARRAY> with no bounds check and
+no test for a tied array at all; on a tied AoH that is a null dereference on the
+first row. An outer join was the quietest of the four — with no key matching, it
+returned the two frames as disjoint halves, well-formed and entirely wrong.
+
+There is one reader now. C<av_at> returns an element as it is — block read where
+that is sound, C<av_fetch> where the array is tied, and the pointer derived per
+element rather than hoisted, because copying a cell can run perl and perl can
+push to the array being walked. C<av_ref_at> adds the C<mg_get> and the
+"is it a reference to the right thing" test for a row; C<av_row_keep> is how a
+row gets into a result, handing back the caller's own reference for a plain
+array and a fresh reference to the same row for a tied one, since the C<PVLV> is
+mortal and stays bound to the tie. C<dd_cell> runs the get magic before it looks
+at the cell. None of it is measurable: C<drop_duplicates> is within 2% of 0.301
+on all three shapes at 30,000 and 300,000 rows, and C<merge>'s numbers above are
+with it.
+
+One consequence is visible and is documented under C<drop_duplicates>: a tied HoA
+column's cells cannot be I<shared> into the result, because the tie has no cell
+SV to share, so they are copied. It is the only place the "what survives is
+shared" rule cannot hold, and copying is the only reading of it that can be
+true.
+
+A tied I<frame> hash — the outer hash of a HoA or HoH, rather than a column or a
+row inside it — is still not supported by any of the three. All of them read
+its shape and its columns through C<HeVAL(hv_iternext(...))>, which for a tied
+hash is not the value. That is a larger change than this one and is not made
+here; C<t/tied.frames.t> says so where it stops.
+
+=head3 Tests
+
+Three new test files, and the suite is 129 files and 26,331 tests.
+
+C<t/var_sd_cov.R.t> (162 tests) cross-validates C<sum>, C<min>, C<max>, C<mean>,
+C<var>, C<sd>, C<cov> and C<cor> against R 4.6.1 over ten columns chosen to separate
+the algorithms rather than to be representative: an arithmetic ladder, a
+constant column, C<n = 2>, mixed signs, and the column with mean C<1e9> and spread
+C<0.05> that breaks a naive variance and did break the old C<cor>. The expected
+values are frozen literals with their provenance in the file header; the
+generator, C<t/var_sd_cov.R.R>, is committed beside it, and the test itself never
+calls R.
+
+Every value in the corpus is a dyadic rational, so the vectors are the same
+numbers at every NV width, and the corpus is rebuilt in perl rather than pasted
+in — the C<n>, C<sum>, C<min> and C<max> columns are what pin the perl construction
+to R's. Those frozen numbers are printed C<%.40g>, the double's exact decimal
+expansion, because 17 significant digits round-trip a double back to a double
+and no further: a long-double perl reads C<100000000004.83398> as a different
+number from the C<100000000004.833984375> R had, which was enough to fail an
+exact comparison on two of the five perls. The tolerance on the exact columns is
+two ulps of whatever NV the running perl was built with, found by bisection at
+run time rather than hardcoded, because perl's string-to-NV conversion is not
+correctly rounded on a long-double build — C<perl-5.12.5> reads that literal one
+ulp short.
+
+Every case also runs through a tied array, which cannot take the scan and has to
+reach the same answer through C<av_fetch>. That is the assertion that the fast
+path and the slow path are the same function.
+
+C<t/hot_path.t> (135 tests) covers how the input is read rather than what comes
+out: the 70,000-argument counter; every kind of element the scan must refuse —
+IV, UV above C<IV_MAX>, NV, string, C<0+> overload, tied element, and one magical
+element in the middle of an otherwise plain column; holes and C<undef> in all
+three of their documented behaviours; and an element whose get magic pushes 200
+values onto the array it lives in while that array is being walked. C<cor>, C<cov>
+and C<var> are checked for invariance under a location shift of C<1e3>, C<1e6> and
+C<1e9>, which is the property the old correlation failed, and C<quantile>'s
+partial sort is checked against a full sort at every rank on a column with ties.
+
+C<t/tied.frames.t> (81 tests) covers C<filter>, C<merge> and C<drop_duplicates>
+over frames built on tied arrays and tied row hashes: every output shape, every
+C<how>, every C<keep>, single and composite keys, an empty tied frame of each
+shape, and the sharing rule on both sides of its one exception. Every case runs
+the same call over tied input and over an identical plain copy and requires the
+two answers to be equal — a fixed expected value would pin the plain answer as
+well, which C<t/filter.t>, C<t/merge.t> and C<t/drop_duplicates.t> already do, and
+what has to be pinned here is that the two routes agree. C<t/merge.t>'s existing
+reference join — plain Perl, run over all six input/output shape combinations —
+is what checks that the rewritten join still means what it meant.
+
+C<./test.all.perls.pl> passes on all five local perls — C<5.10.1>, C<5.12.5>
+(long double), C<5.42.3>, C<5.44.0> and C<5.44.0-quadmath> — with no warnings on
+any of them, and C<LikeR.c> compiles clean under C<-std=c99 -O2 -Wall> against
+every one of their C<CORE> directories.
 
 =head2 0.301 2026-08-21 CDT
 

@@ -24,8 +24,18 @@
 # on a closer one, and that disagreement would read as a bug in the variance
 # rather than in the test data.
 
+# %.40g, not format(digits = 17).
+#
+# 17 significant digits round-trip a double back to the same double, which is
+# all that is needed to reproduce R's value on a double-NV perl.  It is not
+# enough for a long-double or __float128 perl: it reads the decimal to its own
+# width, and 100000000004.83398 is not the number R had -- the exact sum is
+# 100000000004.833984375, and the 17-digit form is short by 4.4e-17 relative.
+# That was enough to fail the exact columns on both wide builds.  %.40g prints
+# the double's exact decimal expansion, which every NV width then reads back as
+# the identical number.
 options(digits = 17)
-f <- function(v) format(v, digits = 17)
+f <- function(v) sprintf("%.40g", v)
 
 cases <- list(
 	int10       = 1:10,

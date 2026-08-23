@@ -2305,6 +2305,11 @@ positions.
   input — but assigning *through* a survivor (`$out->{col}[0] = ...`, or
   `$out->[0]{col} = ...` for AoA/AoH) writes to the input's cell as well.
   Clone the result if you need full independence.
+- **A tied HoA column is the one exception**: its cells have no independent
+  existence to share — the tie hands them out one temporary at a time — so
+  they are copied, and the result is independent of the input for that column.
+  A tied AoA/AoH row is still shared, because the row itself is a real
+  reference whatever the array holding it does.
 - **It dies** on: undefined or non-ref data; an HoH frame; an unknown argument;
   an empty or duplicated `subset`; an invalid `keep`; an AoA position that is
   not a non-negative integer or is out of range; or a `subset` name absent from
@@ -5847,12 +5852,32 @@ Values are compared by stringification, the same `eq` semantics used by
 the first value seen is the one returned (as a fresh copy, never an alias to
 the input). Order of first appearance is preserved.
 
+This is where `uniq` parts company with R's `unique()` and pandas'
+`pd.unique()`, which compare doubles by value. On a build whose `NV` is a double,
+`0.1 + 0.2` and `0.3` are two different doubles that both print `0.3`, so they
+are one value here and two there; `1000000000000000` and `1e15` are the same
+number, printed `1000000000000000` and `1e+15`, so they are two values here and
+one there. Which pairs fall which way moves with the width of the `NV`, because
+the printing does — `uniq` follows `eq` on every build.
+Compare doubles by value — with a `%.17g` `sprintf`, or by rounding — before
+calling `uniq` if that is what you need.
+
 In list context `uniq` returns the distinct values. In scalar context it
-returns the *count* of distinct values, matching `List::Util::uniq`.
+returns the *count* of distinct values, matching `List::Util::uniq`. Scalar
+context is the cheaper of the two: it never builds the result list.
 
 The UTF-8 flag is part of the comparison key, so a UTF-8 string and a
 byte-identical non-UTF-8 string are kept distinct — they are different strings.
-Strings that are logically equal and consistently encoded collapse as expected.
+Strings that are logically equal and consistently encoded collapse as expected:
+a UTF-8 string whose every character is below `\x{100}` is compared against the
+bytes it downgrades to, so `"\x{e9}"` and `"\xe9"` are one value, exactly as
+`eq` and a Perl hash key both have it.
+
+The input is left alone. `uniq` renders a plain number into its own buffer
+rather than asking Perl for the number's string, so it does not leave a cached
+`PV` on the caller's SVs — taking the distinct values of a large numeric column
+no longer grows that column. Tied arrays and tied elements are read through
+their `FETCH`.
 
 Unlike `List::Util::uniq`, which passes a single `undef` through, `uniq`
 **croaks** on any undefined value, reporting the offending argument index (and
@@ -6398,6 +6423,584 @@ Verified against R 4.6.1 (`oneway.test`, `anova(aov())`, `anova(lm())`,
 `t/model_pvalue_tails.t` and `t/oneway_test.R.scipy.t`.
 
 # Changes
+
+## 0.302 2026-08-22 CDT
+
+`sum`, `min`, `max`, `mean`, `sd`, `var`, `quantile`, `cor` and `cov` are
+between 2.5 and 10.7 times faster, and four of the nine are now faster than R.
+`merge` is between 1.9 and 5.3 times faster and now beats R's `merge` at every
+size measured, and `uniq` is about four times faster at every size measured. Nothing any of them returns changes, except where it was wrong:
+five bugs turned up while the measurements were being taken. One had been
+hanging the interpreter, one had been segfaulting, and three had been quietly
+returning the wrong frame for any input built on a tied array.
+
+The distribution had also been building without an optimizer, which is where a
+third of this came from and none of the credit does.
+
+At `n = 1,000,000`, one column of `rnorm` values, best of seven, measured by
+`scale.pl` against `scale.R` and `scale.py` on the same machine:
+
+| | 0.301 | 0.302 | R 4.6.1 | NumPy 2.5.2 |
+|---|---|---|---|---|
+| `sum` | 4.07 ms | 1.37 ms | 0.795 ms | 0.202 ms |
+| `min` | 4.29 ms | 1.51 ms | 1.06 ms | 0.160 ms |
+| `max` | 4.25 ms | 1.50 ms | 1.06 ms | 0.160 ms |
+| `mean` | 4.07 ms | 1.37 ms | 1.59 ms | 0.204 ms |
+| `sd` | 8.25 ms | 2.39 ms | 2.80 ms | 0.960 ms |
+| `var` | 8.13 ms | 2.40 ms | 2.79 ms | 0.962 ms |
+| `quantile` | 160 ms | 14.9 ms | 20.6 ms | 15.0 ms |
+| `cor` | 20.5 ms | 8.24 ms | 6.43 ms | 4.67 ms |
+| `cov` | 27.8 ms | 8.75 ms | 4.82 ms | 4.79 ms |
+
+The ratios are better below a million, where the column still fits in cache. At
+`n = 100,000`, `sum` and `mean` are 5.1 times faster than 0.301, `sd` and `var`
+5.2, `quantile` 8.0, and `sum` overtakes R.
+
+What is left between this and NumPy is not a constant factor waiting to be
+found. A perl array is an array of `SV*`; NumPy holds a contiguous `double[]`
+and runs SIMD over it. 1.2 ns per element is about four cycles — load the
+pointer, load the flags, branch, load the `NVX`, add — and that is near the
+floor for walking a million SVs. Closing it would need a packed-buffer type
+holding `NV*` directly, which is a different module rather than a tuning pass.
+
+### The module was being built without an optimizer
+
+`compile.sh` ran `perl Makefile.PL OPTIMIZE='-Wall'`. `OPTIMIZE` *replaces*
+perl's own `$Config{optimize}` rather than adding to it, so that was not "the
+usual flags plus a warning switch" — it was the whole optimize line, and every
+build it made, including the one `make install` then installed, was compiled at
+`-O0`. `test.all.perls.pl` defaulted to the same string, so the entire support
+matrix was built and timed that way too.
+
+Both say `-O2 -Wall` now. On the same `LikeR.c`, summing `1e6` NVs takes 4.10 ms
+at `-O0` against 2.63 ms at `-O2`, and `cor` 25.5 ms against 12.9 ms. Read the
+rest of this section as what was left after the compiler was allowed to do its
+job.
+
+`t/build.optimize.t` reads both scripts and fails if either hands `Makefile.PL`
+an `OPTIMIZE` with no `-O` in it. There is no way to ask a loaded `.so` what it
+was compiled at, so the check has to be on the scripts; neither ships, so the
+file skips outside the repository.
+
+### Reading a column: one `av_fetch` per element
+
+All nine functions read their input by calling `av_fetch` once per element. That
+call is out of line and repeats, for every element, a bounds check, a
+negative-index fixup and a magic dispatch that a straight walk of `AvARRAY`
+already knows the answers to. On a million-element column it was about half of
+what `sum` cost and more than half of `cor`.
+
+Walking the block directly is only sound while nothing can move it, and `SvNV`
+can move it: on an SV carrying get magic it runs `mg_get`, on a reference it may
+run an overloaded `0+`, and on a string that is not a number it raises a warning
+that a `$SIG{__WARN__}` handler catches. Each of those is perl code, and perl
+code may push to the very array being walked, which reallocs the block and
+leaves the walk holding freed memory.
+
+So the fast path is decided per element, not per array. `sv_plain_nv` takes an
+SV only when it already holds a number and carries neither magic nor a
+reference, which makes `SvNV` a register read that calls nothing; everything
+else — a hole, a string, a reference, a tied element — goes back to `av_fetch`,
+which is both correct and where the block pointer gets re-derived. A tied array
+is refused whole, before the scan starts.
+
+The scans live in their own functions and are marked `LIKER_NOINLINE`, which is
+not decoration. Inlined into the caller, a scan shares a stack frame with the
+`av_fetch` loop that finishes whatever it would not take; the accumulators then
+have to stay addressable across that call, so the scan spills them to memory
+every iteration instead of keeping them in registers. Summing `1e6` NVs: 2.77
+ns/element for the `av_fetch` loop being replaced, 2.25 with the scan inlined
+into it, 1.29 with the scan compiled on its own. There is no portable spelling
+of `noinline`, so it is annotated where the compiler has one and left empty
+where it does not, which gives back the inlined speed and never a wrong answer.
+
+`min` and `max` get a scan each rather than sharing one that tracks both ends.
+The running extreme is a loop-carried dependency, each compare-and-move waiting
+on the previous element's result, so carrying the end the caller will not return
+costs a second chain for nothing: 1.79 ms against 1.35 ms on `1e6` NVs.
+
+### `var`, `sd` and `cov`: Welford to two passes
+
+Welford's recurrence updates the running mean with `mean += delta / count`. That
+divide sits in a loop-carried dependency chain, so each element waits out the
+previous one's latency — 5.34 ns/element against 2.70 for two passes.
+
+Two passes is also what R computes. `src/library/stats/src/cov.c` takes a first
+mean, refines it with a second pass (`tmp = tmp + sum(x - tmp)/n`, the `MEAN`
+macro) and only then sums the squared deviations about the refined mean.
+Expanding that third pass about the *unrefined* mean leaves
+`sum((x-m)^2) - (sum(x-m))^2/n`, so carrying the sum of the deviations alongside
+the sum of their squares gives R's answer in one pass fewer. That is the
+Chan-Golub-LeVeque correction, so it is no less accurate than Welford on an
+ill-centred column.
+
+`mean` is deliberately not changed: it remains the single-pass `sum/n`, which is
+not what R's `mean` computes and never was.
+
+Reading the arguments twice is visible only to a tied array, whose `FETCH` now
+runs once per pass.
+
+### `quantile` orders only the statistics it reads
+
+`quantile` sorted the whole column and then indexed into it. Type 7 reads at
+most two order statistics per probability — `x[j]` at `j = floor((n-1)p)`, and
+`x[j+1]` where the interpolation weight is non-zero — which for the five default
+probs is ten values out of a million.
+
+`nv_select_multi` places just those. It takes the middle index first and
+recurses into the two ranges that index separates, costing `O(n log k)` rather
+than the `O(n k)` a left-to-right sweep of selects would: each level of the
+recursion touches each element at most once, and the index list halves at every
+level. Past `k = n/2` distinct indices a full sort is the cheaper way to get the
+same array, and that is what still happens there.
+
+This is also what R does — `quantile.default` hands its indices to
+`sort(partial=)`, and NumPy reaches `np.partition` for the same reason. On `1e6`
+random doubles the ten order statistics of the five default probs cost 19.2 ms
+this way against 69.1 ms for the full introsort.
+
+The probabilities are parsed before the column is read now, rather than after it
+is sorted, so an invalid `probs` vector no longer costs a pass over the data
+first.
+
+### `cor` and `cov`: sorts that inline their comparison
+
+Spearman ranks its input before correlating it, and `rank_data` did that through
+`qsort` with an out-of-line comparator; Kendall's tau-b sorted three times the
+same way. That comparator call cannot be inlined, and for a sort of a few
+thousand elements it is most of what the sort costs — the module's own `nv_sort`
+takes 210us where `qsort` takes 355us on 5,000 NVs, which is why it exists.
+
+`LIKER_DEFINE_SORT(T, PFX, LESS)` generates that introsort for a given struct
+and ordering: median of three left at the midpoint so both partition scans have
+a sentinel, recursion into the shorter side and a loop on the longer so the
+stack stays `O(log n)` deep, a heapsort fallback past `2*floor(log2 n)` levels
+so a median-of-three killer cannot reach `O(n^2)`, and one insertion sort over
+the nearly-ordered remainder. It is `kw_sort`, the Kruskal-Wallis sort, made
+generic. `rank_data` and Kendall's `(x, y)` sort are generated from it; Kendall's
+third sort, a plain `NV` column, calls `nv_sort` directly.
+
+glibc's `qsort` is also a mergesort that allocates a scratch buffer the size of
+the array it is given. Peak RSS for a Spearman correlation of two `2e6` columns
+falls from 455 MB to 424 MB — exactly the 32 MB it was allocating to sort `2e6`
+sixteen-byte records.
+
+At `n = 200,000`: `cor(..., 'spearman')` 66.9 ms to 27.2 ms, `cov(...,
+'spearman')` 65.9 ms to 26.7 ms, `cor(..., 'kendall')` 70.5 ms to 44.7 ms. Small
+repeated calls gain the same factor: ten thousand `cor(..., 'spearman')` calls
+over twelve elements, the shape `agg` and `group_by` produce, 6.4 ms to 3.1 ms.
+
+### `cor` read an array of arrays once per column
+
+`cor(\@matrix)` extracted one column at a time, and for each column it walked
+every row — `av_fetch` on the outer array, `SvRV` to reach the row, then
+`av_fetch` for the cell. The outer array was therefore walked `ncols` times
+over, and every one of the `ncols * nrows` cells paid a fetch on it that the
+column before had already paid.
+
+The pre-validation pass that already checks every row is an array reference now
+keeps the row `AV*`s it resolves instead of discarding them, and the extraction
+transposes in a single pass over the rows through `av_extract_or_nan` — the same
+reader the vector branch uses, so a short row, a hole, an `undef` and a
+non-numeric cell all behave here exactly as they do there. Outer fetches fall
+from `ncols * nrows` to `nrows`, and each row's cells are read in the order they
+are stored rather than one per pass.
+
+At 20,000 rows: `cor` of a 40-column matrix 40.6 ms to 26.7 ms, and its
+cross-correlation against an 8-column matrix 28.7 ms to 12.4 ms. The transpose
+keeps one write stream open per column, which is what a wide matrix pays for
+this, and 2,000 x 300 still comes out ahead — 144.6 ms to 134.8 ms.
+
+A row that was itself a tied array used to read as all-`NA`, because `av_fetch`
+on one hands back a deferred `PVLV` whose value only arrives when `mg_get` runs:
+`cor(\@rows)` croaked "standard deviation is 0 in x column 0" on data that was
+perfectly well defined. `av_extract_or_nan` runs the get magic, so those rows
+now give the same answer as the untied equivalent. A cell that is a tied scalar
+was already read correctly and still is.
+
+The zero-variance check that used to be folded into the extraction is now
+`nv_all_equal`, one function shared with the vector branch, which returns at the
+first pair of values that differ instead of sweeping the column. On the vector
+path that replaces two full passes over `x` and `y`, which is where the `cor`
+row of the table above moves from 10.5 ms to 8.24 ms — the two passes were a
+fifth of what `cor(\@x, \@y)` cost at `n = 1,000,000`.
+
+`cov` does not gain from any of this: its Pearson path neither sorts nor scans
+for zero variance, and 8.75 ms is the same figure it read before. What changed
+there is housekeeping — `Newx` in place of a bare `safemalloc`, and the method
+string resolved once rather than by three more `strcmp` calls.
+
+### `min` over more than 65,535 arguments never returned
+
+`min` counted its arguments in an `unsigned short int`. `items` is the whole
+flattened argument list, so `min(@x)` on an array of more than 65,535 scalars
+wrapped the counter and the loop never reached its bound:
+
+```perl
+my @a = (1 .. 70_000);
+min(@a);                  # 0.301: hangs, forever
+```
+
+It is a `Stack_off_t` now, which is what `max` and `sum` already used.
+`power_t_test` carried the same counter; it takes named pairs, so nothing could
+reach 65,535 of them, and it is widened anyway.
+
+A regression here is a hang rather than a wrong answer, so `t/hot_path.t` runs
+the 70,000-argument calls under `alarm` where the platform has one. Without that
+guard a smoker would sit there instead of failing.
+
+### A tied array read as all-`undef`
+
+`sum(\@tied)` croaked `undefined value at array ref index 0`, and so did every
+other function here. `av_fetch` on a tied array does not return the element: it
+returns a mortal `PVLV` that only acquires the element's value once `mg_get` has
+run on it. The `SvOK` test came first, saw an empty `PVLV`, and reported every
+element of every tied array as undefined. An ordinary array holding a tied
+scalar failed the same way.
+
+The slow path runs `SvGETMAGIC` before it looks now. This predates 0.302 and is
+not fallout from the scan — but the scan is what made it worth finding, because
+`sv_plain_nv` refuses every magical SV and so sends all of them down that one
+path.
+
+That slow path then had a bug of its own, and it was worse. `av_slow_at` held
+the `SV **` that `av_fetch` returned — a pointer *into* `AvARRAY` — ran the get
+magic through it, and read it again afterwards. `mg_get` runs perl, and the
+element in `t/hot_path.t` pushes 200 values onto the array being walked, which
+reallocates that block: both reads after the magic were reads of freed memory.
+It usually returned the right answer because the freed block usually still held
+the old pointer, so the test that exists for precisely this case passed on four
+of the five perls and, on the fifth, only failed when the suite was run four
+perls at a time and something else had claimed the block —
+`sum` returned 1085 instead of 10, once. Under `valgrind` it is an "invalid
+read of size 8" on every perl, every time.
+
+It loads the element into a local before running the magic now. The SV itself
+does not move; only the array of pointers to it does, so a copy of the pointer
+stays good where a second read through the slot does not. The same shape — take
+`SV **` from `av_fetch`, run magic, dereference again — is still present in the
+`median` and `moment` readers and in three places in `transpose`, and is the
+same one-line fix in each; those are untouched here.
+
+`uniq` was missed by this pass and fixed later in the same release; see
+"`uniq`: the same keys, without a perl hash" below.
+
+### `cor` returned `NaN` on an off-centre column
+
+`pearson_corr` computed the correlation from raw cross-products,
+`(n*sxy - sx*sy) / sqrt((n*sx2 - sx^2) * (n*sy2 - sy^2))`. Each of those three
+terms subtracts two nearly equal large numbers, so it loses a digit of the
+answer for every digit by which the mean exceeds the spread. On a column with
+mean `1e9` and a spread of `0.05` it does not merely lose precision:
+`n*sx2 - sx*sx` comes out negative, the square root is `NaN`, and `cor` returns
+`NaN` for an ordinary pair of vectors. At mean `1e6` it was wrong in the fifth
+decimal place — `0.74945606763640826` against R's `0.74943997817595964`.
+
+It centres first now, as R's `cov.c` does, with the same compensated two-pass
+correction `var` uses. R reports `0.063454463733801467` for the `1e9` case, and
+so does this.
+
+`cov`'s Pearson branch was Welford's covariance recurrence, two divides deep in
+the dependency chain; it is `nv_cov2` now, the two-pass form, shared with the
+Spearman branch.
+
+### A leak on `cor`'s matrix error path
+
+`cor(\@x, \@y)` with a `y` matrix whose rows are empty croaked "y matrix has
+zero columns" without freeing the `x` columns it had already extracted. On a
+40-column matrix that is 40 buffers and their table per call: 20,000 such croaks
+grew RSS by 44 MB. The branch's allocations are now released through one macro
+that every croak path calls, and the row tables and the scratch row are freed as
+soon as the last value has been read out of them rather than at the end.
+
+The `nrows < 2` guard was missing the same frees, but it is unreachable — a
+one-row matrix has a constant column, so the zero-variance croak above always
+gets there first. It frees anyway.
+
+Seven `croak` formats in `cor` passed a `size_t` to `%lu` with no cast, which on
+Windows is a 64-bit argument read through a 32-bit conversion. They use
+`%" UVuf "` with a `(UV)` cast now, as the rest of the file does, and `cov`'s
+one — cast to `unsigned long`, so well defined but still narrowing on Win64 —
+went with them. Every message is unchanged wherever `unsigned long` is 64 bits,
+which is everywhere the suite runs.
+
+### Unchanged: `cor` and `cov` still do not see an overloaded object as a number
+
+`cor` and `cov` decide what is numeric with `looks_like_number`, which is false
+for any reference, an overloaded `0+` included, so a column of overloaded
+objects reads as all-`NA`: `cov` returns `NaN` and `cor` reaches its
+zero-variance croak. `sum`, `min` and `max` do honour the overload, through
+`SvNV`. The two families genuinely disagree. That predates 0.302 and is a
+different question from how a column is walked, so `t/hot_path.t` pins the
+current behaviour rather than changing it quietly.
+
+### `merge`: a hash join that stopped building a perl hash
+
+At `n = 300,000` a `merge($df, $df, how => 'inner', on => 'id')` over a
+six-column HoA took 575 ms. It takes 109 ms. Best of ten, one process per
+measurement, pinned to one CPU, against `scale.R` and `scale.py` on the same
+machine:
+
+| `n` | 0.301 | 0.302 | R 4.6.1 | pandas 2.x |
+|---|---|---|---|---|
+| 1,000 | 0.471 ms | 0.245 ms | 0.46 ms | 0.68 ms |
+| 10,000 | 5.45 ms | 2.60 ms | 3.35 ms | 0.88 ms |
+| 100,000 | 138 ms | 33.3 ms | 80.0 ms | 2.95 ms |
+| 300,000 | 575 ms | 109 ms | 155 ms | 9.83 ms |
+
+Under callgrind the 30,000-row join fell from 358M instructions to 170M. Three
+things were paying for that.
+
+**The right-hand index was a perl `HV`** keyed by the join key: an `HE`, a
+shared `HEK` and an `IV` SV per distinct key, so three allocations per right row
+whenever the key is unique, which is exactly what a join on an id column is.
+It is the same open-addressed table over a key arena that `drop_duplicates`
+already interns into (`dd_ctx`) — no SV, no HEK, one `memcpy` of each distinct
+key — so the two functions now share their definition of "the same key" as well
+as their code for deciding it. `mg_key` writes straight into that arena instead
+of making four `sv_catpvn` calls per key column into a scratch SV, and a
+one-column join writes the cell's bytes bare: with a single field there is
+nothing for a length prefix to disambiguate, and on an integer id the prefix and
+its two separators were about as many bytes again to hash and to compare.
+
+**It emitted each output row as it found it**, so the row count was not known
+until the join had finished and every output column grew by `av_push`, being
+reallocated its way up to the answer. The probe now records `(left row, right
+row)` pairs into a flat list and builds nothing; only when that list is complete
+— so the count is exact — is each column allocated once at its final size and
+filled straight into `AvARRAY`, the way `filter` already builds its columns.
+The list costs two `SSize_t` per output *row* against roughly one SV per output
+*cell*, so it is a small fraction of the result on any join wide enough to care,
+a cross join included. `mg_emit` is gone; `mg_column` and `mg_build` replace it,
+and the cross join goes through the same two stages as every other `how`.
+
+**`mg_cell` called `av_fetch` once per cell**, which was 7% of the call: a join
+reads every key cell of both frames and every cell of every column it keeps.
+It reads the block directly now, through the same `av_at` the other frame
+functions use.
+
+What is left is the result itself. A 300,000-row join of two six-column frames
+is 3.3 million output SVs, and at 109 ms that is 33 ns each — allocate, copy a
+cell into it, store it. pandas is not doing the same work: its columns are
+contiguous typed buffers and a join is a `take` over them.
+
+### `uniq`: the same keys, without a perl hash
+
+`uniq` on a million-element column of `rnorm` values took 0.80 s, against R's
+`unique()` at 0.019 and pandas' `pd.unique()` at 0.029. It takes 0.16 s. Same
+method as the tables above — one process per measurement, pinned to one CPU,
+the fastest of seven, `plot.scaling.pl` against `scale.R` and `scale.py` on the
+same machine — except that the `0.301` column is the 0.301 *code* built at `-O2`,
+not the released build, so this is the rewrite on its own and not the optimizer
+again:
+
+| `n` | 0.301 code | 0.302 | R 4.6.1 | pandas 2.2.3 |
+|---|---|---|---|---|
+| 1,000 | 0.294 ms | 0.069 ms | 0.009 ms | 0.020 ms |
+| 10,000 | 3.19 ms | 0.825 ms | 0.092 ms | 0.184 ms |
+| 100,000 | 41.2 ms | 9.71 ms | 1.16 ms | 2.30 ms |
+| 300,000 | 174 ms | 39.2 ms | 3.71 ms | 5.59 ms |
+| 1,000,000 | 801 ms | 160 ms | 19.4 ms | 28.6 ms |
+
+The slope was never the problem. Fitted over the ladder by `scaling.slopes.tsv`,
+all three are linear — 1.12 for `uniq`, 1.11 for R, 1.04 for pandas, and 1.14
+for `uniq` before the rewrite — so this was a constant factor from the start,
+and none of it was the hashing.
+
+**`SvPV` on an `NV` is a `%.15g` that has to be redone every time.** Walking a
+million `NV` SVs costs 2 ms; walking them and calling `SvPV` on each costs
+268 ms. That is ten times R's whole runtime for the same call, and it is the
+floor the old code could not get under however few distinct values there were:
+a column of a million elements holding ten distinct values still took 0.226 s.
+Worse, `SvPV` leaves the rendered buffer on the caller's own SV without ever
+reusing it (`sv_2pv_flags` re-renders an `NV` on the next pass regardless), so
+asking a large numeric column for its distinct values grew that column by tens
+of megabytes, for good. `nk_num_pv` — already written for `drop_duplicates`,
+about four times faster and only taken where the answer is provably the same —
+renders into the XSUB's own stack buffer and touches nothing.
+
+**The `seen` hash was a perl `HV`.** An `HE` and a copied `HEK` per distinct
+key is ~72 MB of scattered small allocations at a million of them, and the
+table rehashes at every doubling on the way there. Going from ten distinct
+values to a million added 0.47 s of pure insert cost. It is `dd_ctx` now, the
+same open-addressed slot array over a key arena that `drop_duplicates` and
+`merge` intern into, presized from the element count.
+
+**It hashed each key twice**, once for `hv_exists` and again for `hv_store`.
+Collapsing that into one `hv_fetch(..., 1)` is the obvious repair and is the
+wrong one: the lvalue fetch mints an SV per key, and on the million distinct
+doubles it measured 0.919 s against the pair's 0.756 — while also reading
+`AvARRAY` directly, so the comparison flatters it. That is why the pair had
+survived. One hash of one key into one open-addressed probe is what the arena
+gives instead.
+
+What the rewrite does *not* do is compare doubles by value. That is how R and
+pandas get the factor of six to eight they still have, and it is a different
+answer:
+`0.1 + 0.2` and `0.3` are two doubles that print the same, so they are one
+value to `uniq` and two to `unique()`. `uniq` is documented to compare the way
+`eq` and `List::Util::uniq` do, so it renders every element and compares the
+text; that rendering pass is essentially all of the distance that is left.
+Scalar context builds no result list at all and takes about a fifth off again.
+
+`uniq(\@tied)` croaked `undefined value at array ref index 0`. It was reading
+elements through `av_fetch` and testing `SvOK` on the `PVLV` that comes back,
+which is the bug "A tied array read as all-`undef`" describes above. `uniq` was
+simply not one of the functions that pass reached. It reads through
+`av_slow_at` now, like the rest.
+
+### `filter`: measured, and left alone
+
+`filter` is not faster, and the reason is worth writing down so it is not
+looked for again. At `n = 300,000` on a five-column HoA, `col('x') > 0` keeping
+half the rows costs 22.5 ms, of which **the predicate is 1.3 ms**. The other
+21.2 ms is allocating and filling the 750,000 SVs of the result, which the
+documented contract requires: an HoA input, or any `hoa` output, builds fresh
+arrays and fresh cell values. That is 19 ns per numeric cell and 44 ns per
+string cell, and the difference between the two is one `malloc` for the string's
+buffer.
+
+Copy-on-write is the obvious way out of that `malloc` and is not available.
+`newSVsv` is `newSVsv_flags(sv, SV_GMAGIC|SV_NOSTEAL)`, which does not pass
+`SV_COW_SHARED_HASH_KEYS`, so its string copies are never copy-on-write; and
+`SV_DO_COW_SVSETSV`, the flag pair a plain `my $b = $a` gets, is defined as `0`
+unless `PERL_CORE` is set — perl's own `sv.h` says "the core is safe for this
+COW optimisation, XS code on CPAN may not be". Reaching past that by hand was
+measured anyway and is slower in both directions: `filter` 23.0 ms against 28.3
+ms, `merge` 103 ms against 126 ms. For a string as short as a data frame's
+usually are, the `malloc` costs less than what COW puts in its place — an
+out-of-line `sv_setsv`, the `CowREFCNT` increment, and the read-only flip on the
+source. The finding is recorded at `flt_cell_copy` rather than only here.
+
+The one lever that does move it is the copy itself. Sharing the surviving cells
+instead — one refcount bump, which is what `drop_duplicates` does for exactly
+this reason — was prototyped and measured at 13.6 ms against R's 14.4 ms. It is
+not done, because `filter` documents the opposite and someone may be relying on
+it; changing that is a decision about the interface, not a tuning pass.
+
+Two things did change. `flt_num` takes a bare `IOK`/`NOK` cell without calling
+`SvGETMAGIC` or `looks_like_number` — neither can say anything about an SV that
+already holds a number, and `looks_like_number` is out of line — which is most
+of what the predicate pass costs on a numeric column. And the tied-frame bugs
+below.
+
+### A tied frame read as all-`undef`, and one that segfaulted
+
+`filter`, `merge` and `drop_duplicates` all walk a column or a row through
+`AvARRAY`, which is why they are fast and which is wrong for a tied array: its
+elements do not exist until `FETCH` has run, and `AvARRAY` on one is not the
+block they live in — on an array that has never held a real element it is a null
+pointer. `av_fetch` is the way in, and what it returns for a tied element is a
+mortal `PVLV` that only acquires the value once `mg_get` has run on it, so an
+`SvOK` or `SvROK` test placed before that says "undef" or "not a reference" for
+every cell and every row of the frame.
+
+This is the same pair of mistakes `sum(\@tied)` made, above, and it predates
+0.302 in all three functions. Between them they were wrong in four distinct
+ways:
+
+    tie my @x, 'TiedArray'; @x = (1, -2, 3);
+    tie my @y, 'TiedArray'; @y = (10, 20, 30);
+
+    filter({ x => \@x, y => \@y }, col('x') > 0);
+    # 0.301: { x => [], y => [] } -- an empty frame, whatever the predicate
+    # 0.302: { x => [1, 3], y => [10, 30] }
+
+    merge({ id => \@x }, { id => [1, 3], w => ['a','b'] }, how => 'inner', on => 'id');
+    # 0.301: { id => [], w => [] } -- no key matched, because every key read undef
+    # 0.302: { id => [1, 3], w => ['a', 'b'] }
+
+    drop_duplicates({ k => \@x, v => \@y });
+    # 0.301: { k => [undef], v => [undef] } -- every row identical, so one survived
+    # 0.302: { k => [1, -2, 3], v => [10, 20, 30] }
+
+    drop_duplicates([ map { { k => $_ } } 1 .. 3 ]);   # with the AoH itself tied
+    # 0.301: segmentation fault
+
+The crash was `_aoh_key_union`, which indexed `AvARRAY` with no bounds check and
+no test for a tied array at all; on a tied AoH that is a null dereference on the
+first row. An outer join was the quietest of the four — with no key matching, it
+returned the two frames as disjoint halves, well-formed and entirely wrong.
+
+There is one reader now. `av_at` returns an element as it is — block read where
+that is sound, `av_fetch` where the array is tied, and the pointer derived per
+element rather than hoisted, because copying a cell can run perl and perl can
+push to the array being walked. `av_ref_at` adds the `mg_get` and the
+"is it a reference to the right thing" test for a row; `av_row_keep` is how a
+row gets into a result, handing back the caller's own reference for a plain
+array and a fresh reference to the same row for a tied one, since the `PVLV` is
+mortal and stays bound to the tie. `dd_cell` runs the get magic before it looks
+at the cell. None of it is measurable: `drop_duplicates` is within 2% of 0.301
+on all three shapes at 30,000 and 300,000 rows, and `merge`'s numbers above are
+with it.
+
+One consequence is visible and is documented under `drop_duplicates`: a tied HoA
+column's cells cannot be *shared* into the result, because the tie has no cell
+SV to share, so they are copied. It is the only place the "what survives is
+shared" rule cannot hold, and copying is the only reading of it that can be
+true.
+
+A tied *frame* hash — the outer hash of a HoA or HoH, rather than a column or a
+row inside it — is still not supported by any of the three. All of them read
+its shape and its columns through `HeVAL(hv_iternext(...))`, which for a tied
+hash is not the value. That is a larger change than this one and is not made
+here; `t/tied.frames.t` says so where it stops.
+
+### Tests
+
+Three new test files, and the suite is 129 files and 26,331 tests.
+
+`t/var_sd_cov.R.t` (162 tests) cross-validates `sum`, `min`, `max`, `mean`,
+`var`, `sd`, `cov` and `cor` against R 4.6.1 over ten columns chosen to separate
+the algorithms rather than to be representative: an arithmetic ladder, a
+constant column, `n = 2`, mixed signs, and the column with mean `1e9` and spread
+`0.05` that breaks a naive variance and did break the old `cor`. The expected
+values are frozen literals with their provenance in the file header; the
+generator, `t/var_sd_cov.R.R`, is committed beside it, and the test itself never
+calls R.
+
+Every value in the corpus is a dyadic rational, so the vectors are the same
+numbers at every NV width, and the corpus is rebuilt in perl rather than pasted
+in — the `n`, `sum`, `min` and `max` columns are what pin the perl construction
+to R's. Those frozen numbers are printed `%.40g`, the double's exact decimal
+expansion, because 17 significant digits round-trip a double back to a double
+and no further: a long-double perl reads `100000000004.83398` as a different
+number from the `100000000004.833984375` R had, which was enough to fail an
+exact comparison on two of the five perls. The tolerance on the exact columns is
+two ulps of whatever NV the running perl was built with, found by bisection at
+run time rather than hardcoded, because perl's string-to-NV conversion is not
+correctly rounded on a long-double build — `perl-5.12.5` reads that literal one
+ulp short.
+
+Every case also runs through a tied array, which cannot take the scan and has to
+reach the same answer through `av_fetch`. That is the assertion that the fast
+path and the slow path are the same function.
+
+`t/hot_path.t` (135 tests) covers how the input is read rather than what comes
+out: the 70,000-argument counter; every kind of element the scan must refuse —
+IV, UV above `IV_MAX`, NV, string, `0+` overload, tied element, and one magical
+element in the middle of an otherwise plain column; holes and `undef` in all
+three of their documented behaviours; and an element whose get magic pushes 200
+values onto the array it lives in while that array is being walked. `cor`, `cov`
+and `var` are checked for invariance under a location shift of `1e3`, `1e6` and
+`1e9`, which is the property the old correlation failed, and `quantile`'s
+partial sort is checked against a full sort at every rank on a column with ties.
+
+`t/tied.frames.t` (81 tests) covers `filter`, `merge` and `drop_duplicates`
+over frames built on tied arrays and tied row hashes: every output shape, every
+`how`, every `keep`, single and composite keys, an empty tied frame of each
+shape, and the sharing rule on both sides of its one exception. Every case runs
+the same call over tied input and over an identical plain copy and requires the
+two answers to be equal — a fixed expected value would pin the plain answer as
+well, which `t/filter.t`, `t/merge.t` and `t/drop_duplicates.t` already do, and
+what has to be pinned here is that the two routes agree. `t/merge.t`'s existing
+reference join — plain Perl, run over all six input/output shape combinations —
+is what checks that the rewritten join still means what it meant.
+
+`./test.all.perls.pl` passes on all five local perls — `5.10.1`, `5.12.5`
+(long double), `5.42.3`, `5.44.0` and `5.44.0-quadmath` — with no warnings on
+any of them, and `LikeR.c` compiles clean under `-std=c99 -O2 -Wall` against
+every one of their `CORE` directories.
 
 ## 0.301 2026-08-21 CDT
 

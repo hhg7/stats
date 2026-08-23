@@ -1,1555 +1,1555 @@
 figure	function	call	n	run	seconds
-vector	sum	np.sum(x)	1000	0	0.000002336
-vector	sum	np.sum(x)	1000	1	0.000002215
-vector	sum	np.sum(x)	1000	2	0.000002224
-vector	sum	np.sum(x)	1000	3	0.000002218
-vector	sum	np.sum(x)	1000	4	0.000002219
-vector	sum	np.sum(x)	1000	5	0.000002224
-vector	sum	np.sum(x)	1000	6	0.000002211
-vector	min	np.min(x)	1000	0	0.000002336
-vector	min	np.min(x)	1000	1	0.000002208
-vector	min	np.min(x)	1000	2	0.000002214
-vector	min	np.min(x)	1000	3	0.000002198
-vector	min	np.min(x)	1000	4	0.000002215
-vector	min	np.min(x)	1000	5	0.000002218
-vector	min	np.min(x)	1000	6	0.000002216
-vector	max	np.max(x)	1000	0	0.000002218
-vector	max	np.max(x)	1000	1	0.000002211
-vector	max	np.max(x)	1000	2	0.000002216
-vector	max	np.max(x)	1000	3	0.000002206
-vector	max	np.max(x)	1000	4	0.000002211
-vector	max	np.max(x)	1000	5	0.000002204
-vector	max	np.max(x)	1000	6	0.000002199
-vector	mean	np.mean(x)	1000	0	0.000003137
-vector	mean	np.mean(x)	1000	1	0.000003099
-vector	mean	np.mean(x)	1000	2	0.000003101
-vector	mean	np.mean(x)	1000	3	0.000003120
-vector	mean	np.mean(x)	1000	4	0.000003137
-vector	mean	np.mean(x)	1000	5	0.000003111
-vector	mean	np.mean(x)	1000	6	0.000003116
-vector	median	np.median(x)	1000	0	0.000013599
-vector	median	np.median(x)	1000	1	0.000012713
-vector	median	np.median(x)	1000	2	0.000012671
-vector	median	np.median(x)	1000	3	0.000012670
-vector	median	np.median(x)	1000	4	0.000012666
-vector	median	np.median(x)	1000	5	0.000012630
-vector	median	np.median(x)	1000	6	0.000012614
-vector	sd	np.std(x, ddof=1)	1000	0	0.000009294
-vector	sd	np.std(x, ddof=1)	1000	1	0.000008767
-vector	sd	np.std(x, ddof=1)	1000	2	0.000008710
-vector	sd	np.std(x, ddof=1)	1000	3	0.000008712
-vector	sd	np.std(x, ddof=1)	1000	4	0.000008708
-vector	sd	np.std(x, ddof=1)	1000	5	0.000008731
-vector	sd	np.std(x, ddof=1)	1000	6	0.000008684
-vector	var	np.var(x, ddof=1)	1000	0	0.000008260
-vector	var	np.var(x, ddof=1)	1000	1	0.000008199
-vector	var	np.var(x, ddof=1)	1000	2	0.000008214
-vector	var	np.var(x, ddof=1)	1000	3	0.000008205
-vector	var	np.var(x, ddof=1)	1000	4	0.000008221
-vector	var	np.var(x, ddof=1)	1000	5	0.000008224
-vector	var	np.var(x, ddof=1)	1000	6	0.000008200
-vector	quantile	np.quantile(x, [.25,.5,.75])	1000	0	0.000034758
-vector	quantile	np.quantile(x, [.25,.5,.75])	1000	1	0.000032163
-vector	quantile	np.quantile(x, [.25,.5,.75])	1000	2	0.000031981
-vector	quantile	np.quantile(x, [.25,.5,.75])	1000	3	0.000031794
-vector	quantile	np.quantile(x, [.25,.5,.75])	1000	4	0.000031815
-vector	quantile	np.quantile(x, [.25,.5,.75])	1000	5	0.000032006
-vector	quantile	np.quantile(x, [.25,.5,.75])	1000	6	0.000031715
-vector	cor	np.corrcoef(x, y)[0, 1]	1000	0	0.000025531
-vector	cor	np.corrcoef(x, y)[0, 1]	1000	1	0.000024028
-vector	cor	np.corrcoef(x, y)[0, 1]	1000	2	0.000023992
-vector	cor	np.corrcoef(x, y)[0, 1]	1000	3	0.000023937
-vector	cor	np.corrcoef(x, y)[0, 1]	1000	4	0.000023812
-vector	cor	np.corrcoef(x, y)[0, 1]	1000	5	0.000023814
-vector	cor	np.corrcoef(x, y)[0, 1]	1000	6	0.000023840
-vector	cov	np.cov(x, y)[0, 1]	1000	0	0.000017303
-vector	cov	np.cov(x, y)[0, 1]	1000	1	0.000017247
-vector	cov	np.cov(x, y)[0, 1]	1000	2	0.000017269
-vector	cov	np.cov(x, y)[0, 1]	1000	3	0.000017211
-vector	cov	np.cov(x, y)[0, 1]	1000	4	0.000017248
-vector	cov	np.cov(x, y)[0, 1]	1000	5	0.000017221
-vector	cov	np.cov(x, y)[0, 1]	1000	6	0.000017227
-vector	skew	scipy.stats.skew(x)	1000	0	0.000284469
-vector	skew	scipy.stats.skew(x)	1000	1	0.000264063
-vector	skew	scipy.stats.skew(x)	1000	2	0.000266306
-vector	skew	scipy.stats.skew(x)	1000	3	0.000265571
-vector	skew	scipy.stats.skew(x)	1000	4	0.000262869
-vector	skew	scipy.stats.skew(x)	1000	5	0.000262991
-vector	skew	scipy.stats.skew(x)	1000	6	0.000265317
-vector	kurtosis	scipy.stats.kurtosis(x)	1000	0	0.000268553
-vector	kurtosis	scipy.stats.kurtosis(x)	1000	1	0.000274653
-vector	kurtosis	scipy.stats.kurtosis(x)	1000	2	0.000271822
-vector	kurtosis	scipy.stats.kurtosis(x)	1000	3	0.000270728
-vector	kurtosis	scipy.stats.kurtosis(x)	1000	4	0.000263738
-vector	kurtosis	scipy.stats.kurtosis(x)	1000	5	0.000266170
-vector	kurtosis	scipy.stats.kurtosis(x)	1000	6	0.000263551
-vector	sum	np.sum(x)	3000	0	0.000002600
-vector	sum	np.sum(x)	3000	1	0.000002595
-vector	sum	np.sum(x)	3000	2	0.000002573
-vector	sum	np.sum(x)	3000	3	0.000002592
-vector	sum	np.sum(x)	3000	4	0.000002595
-vector	sum	np.sum(x)	3000	5	0.000002599
-vector	sum	np.sum(x)	3000	6	0.000002580
-vector	min	np.min(x)	3000	0	0.000002610
-vector	min	np.min(x)	3000	1	0.000002522
-vector	min	np.min(x)	3000	2	0.000002510
-vector	min	np.min(x)	3000	3	0.000002511
-vector	min	np.min(x)	3000	4	0.000002520
-vector	min	np.min(x)	3000	5	0.000002510
-vector	min	np.min(x)	3000	6	0.000002517
-vector	max	np.max(x)	3000	0	0.000002501
-vector	max	np.max(x)	3000	1	0.000002510
-vector	max	np.max(x)	3000	2	0.000002498
-vector	max	np.max(x)	3000	3	0.000002513
-vector	max	np.max(x)	3000	4	0.000002509
-vector	max	np.max(x)	3000	5	0.000002518
-vector	max	np.max(x)	3000	6	0.000002493
-vector	mean	np.mean(x)	3000	0	0.000003470
-vector	mean	np.mean(x)	3000	1	0.000003474
-vector	mean	np.mean(x)	3000	2	0.000003470
-vector	mean	np.mean(x)	3000	3	0.000003506
-vector	mean	np.mean(x)	3000	4	0.000003462
-vector	mean	np.mean(x)	3000	5	0.000003507
-vector	mean	np.mean(x)	3000	6	0.000003501
-vector	median	np.median(x)	3000	0	0.000020117
-vector	median	np.median(x)	3000	1	0.000017257
-vector	median	np.median(x)	3000	2	0.000017026
-vector	median	np.median(x)	3000	3	0.000017034
-vector	median	np.median(x)	3000	4	0.000016940
-vector	median	np.median(x)	3000	5	0.000016737
-vector	median	np.median(x)	3000	6	0.000016555
-vector	sd	np.std(x, ddof=1)	3000	0	0.000010358
-vector	sd	np.std(x, ddof=1)	3000	1	0.000010018
-vector	sd	np.std(x, ddof=1)	3000	2	0.000010026
-vector	sd	np.std(x, ddof=1)	3000	3	0.000009967
-vector	sd	np.std(x, ddof=1)	3000	4	0.000010003
-vector	sd	np.std(x, ddof=1)	3000	5	0.000010007
-vector	sd	np.std(x, ddof=1)	3000	6	0.000010005
-vector	var	np.var(x, ddof=1)	3000	0	0.000009467
-vector	var	np.var(x, ddof=1)	3000	1	0.000009479
-vector	var	np.var(x, ddof=1)	3000	2	0.000009464
-vector	var	np.var(x, ddof=1)	3000	3	0.000009489
-vector	var	np.var(x, ddof=1)	3000	4	0.000009446
-vector	var	np.var(x, ddof=1)	3000	5	0.000009499
-vector	var	np.var(x, ddof=1)	3000	6	0.000009511
-vector	quantile	np.quantile(x, [.25,.5,.75])	3000	0	0.000069307
-vector	quantile	np.quantile(x, [.25,.5,.75])	3000	1	0.000064257
-vector	quantile	np.quantile(x, [.25,.5,.75])	3000	2	0.000061399
-vector	quantile	np.quantile(x, [.25,.5,.75])	3000	3	0.000064781
-vector	quantile	np.quantile(x, [.25,.5,.75])	3000	4	0.000063207
-vector	quantile	np.quantile(x, [.25,.5,.75])	3000	5	0.000064125
-vector	quantile	np.quantile(x, [.25,.5,.75])	3000	6	0.000062874
-vector	cor	np.corrcoef(x, y)[0, 1]	3000	0	0.000031718
-vector	cor	np.corrcoef(x, y)[0, 1]	3000	1	0.000030847
-vector	cor	np.corrcoef(x, y)[0, 1]	3000	2	0.000030820
-vector	cor	np.corrcoef(x, y)[0, 1]	3000	3	0.000030780
-vector	cor	np.corrcoef(x, y)[0, 1]	3000	4	0.000030806
-vector	cor	np.corrcoef(x, y)[0, 1]	3000	5	0.000030848
-vector	cor	np.corrcoef(x, y)[0, 1]	3000	6	0.000030823
-vector	cov	np.cov(x, y)[0, 1]	3000	0	0.000024158
-vector	cov	np.cov(x, y)[0, 1]	3000	1	0.000024005
-vector	cov	np.cov(x, y)[0, 1]	3000	2	0.000024078
-vector	cov	np.cov(x, y)[0, 1]	3000	3	0.000024049
-vector	cov	np.cov(x, y)[0, 1]	3000	4	0.000024074
-vector	cov	np.cov(x, y)[0, 1]	3000	5	0.000024082
-vector	cov	np.cov(x, y)[0, 1]	3000	6	0.000024073
-vector	skew	scipy.stats.skew(x)	3000	0	0.000276662
-vector	skew	scipy.stats.skew(x)	3000	1	0.000269438
-vector	skew	scipy.stats.skew(x)	3000	2	0.000268943
-vector	skew	scipy.stats.skew(x)	3000	3	0.000269092
-vector	skew	scipy.stats.skew(x)	3000	4	0.000271713
-vector	skew	scipy.stats.skew(x)	3000	5	0.000271511
-vector	skew	scipy.stats.skew(x)	3000	6	0.000271009
-vector	kurtosis	scipy.stats.kurtosis(x)	3000	0	0.000273105
-vector	kurtosis	scipy.stats.kurtosis(x)	3000	1	0.000272841
-vector	kurtosis	scipy.stats.kurtosis(x)	3000	2	0.000271830
-vector	kurtosis	scipy.stats.kurtosis(x)	3000	3	0.000270818
-vector	kurtosis	scipy.stats.kurtosis(x)	3000	4	0.000271568
-vector	kurtosis	scipy.stats.kurtosis(x)	3000	5	0.000273290
-vector	kurtosis	scipy.stats.kurtosis(x)	3000	6	0.000274352
-vector	sum	np.sum(x)	10000	0	0.000003847
-vector	sum	np.sum(x)	10000	1	0.000003832
-vector	sum	np.sum(x)	10000	2	0.000003829
-vector	sum	np.sum(x)	10000	3	0.000003851
-vector	sum	np.sum(x)	10000	4	0.000003814
-vector	sum	np.sum(x)	10000	5	0.000003824
-vector	sum	np.sum(x)	10000	6	0.000003836
-vector	min	np.min(x)	10000	0	0.000003701
-vector	min	np.min(x)	10000	1	0.000003536
-vector	min	np.min(x)	10000	2	0.000003525
-vector	min	np.min(x)	10000	3	0.000003503
-vector	min	np.min(x)	10000	4	0.000003506
-vector	min	np.min(x)	10000	5	0.000003504
-vector	min	np.min(x)	10000	6	0.000003497
-vector	max	np.max(x)	10000	0	0.000003498
-vector	max	np.max(x)	10000	1	0.000003499
-vector	max	np.max(x)	10000	2	0.000003496
-vector	max	np.max(x)	10000	3	0.000003484
-vector	max	np.max(x)	10000	4	0.000003504
-vector	max	np.max(x)	10000	5	0.000003485
-vector	max	np.max(x)	10000	6	0.000003489
-vector	mean	np.mean(x)	10000	0	0.000004732
-vector	mean	np.mean(x)	10000	1	0.000004791
-vector	mean	np.mean(x)	10000	2	0.000004779
-vector	mean	np.mean(x)	10000	3	0.000004844
-vector	mean	np.mean(x)	10000	4	0.000004859
-vector	mean	np.mean(x)	10000	5	0.000004773
-vector	mean	np.mean(x)	10000	6	0.000004756
-vector	median	np.median(x)	10000	0	0.000091401
-vector	median	np.median(x)	10000	1	0.000089380
-vector	median	np.median(x)	10000	2	0.000088951
-vector	median	np.median(x)	10000	3	0.000088609
-vector	median	np.median(x)	10000	4	0.000088104
-vector	median	np.median(x)	10000	5	0.000088024
-vector	median	np.median(x)	10000	6	0.000087691
-vector	sd	np.std(x, ddof=1)	10000	0	0.000014888
-vector	sd	np.std(x, ddof=1)	10000	1	0.000014883
-vector	sd	np.std(x, ddof=1)	10000	2	0.000014852
-vector	sd	np.std(x, ddof=1)	10000	3	0.000014831
-vector	sd	np.std(x, ddof=1)	10000	4	0.000014886
-vector	sd	np.std(x, ddof=1)	10000	5	0.000014882
-vector	sd	np.std(x, ddof=1)	10000	6	0.000014812
-vector	var	np.var(x, ddof=1)	10000	0	0.000014324
-vector	var	np.var(x, ddof=1)	10000	1	0.000014325
-vector	var	np.var(x, ddof=1)	10000	2	0.000014333
-vector	var	np.var(x, ddof=1)	10000	3	0.000014295
-vector	var	np.var(x, ddof=1)	10000	4	0.000014296
-vector	var	np.var(x, ddof=1)	10000	5	0.000014344
-vector	var	np.var(x, ddof=1)	10000	6	0.000014282
-vector	quantile	np.quantile(x, [.25,.5,.75])	10000	0	0.000187934
-vector	quantile	np.quantile(x, [.25,.5,.75])	10000	1	0.000185114
-vector	quantile	np.quantile(x, [.25,.5,.75])	10000	2	0.000180681
-vector	quantile	np.quantile(x, [.25,.5,.75])	10000	3	0.000180806
-vector	quantile	np.quantile(x, [.25,.5,.75])	10000	4	0.000179830
-vector	quantile	np.quantile(x, [.25,.5,.75])	10000	5	0.000182577
-vector	quantile	np.quantile(x, [.25,.5,.75])	10000	6	0.000181537
-vector	cor	np.corrcoef(x, y)[0, 1]	10000	0	0.000049806
-vector	cor	np.corrcoef(x, y)[0, 1]	10000	1	0.000048847
-vector	cor	np.corrcoef(x, y)[0, 1]	10000	2	0.000048413
-vector	cor	np.corrcoef(x, y)[0, 1]	10000	3	0.000048275
-vector	cor	np.corrcoef(x, y)[0, 1]	10000	4	0.000048181
-vector	cor	np.corrcoef(x, y)[0, 1]	10000	5	0.000048291
-vector	cor	np.corrcoef(x, y)[0, 1]	10000	6	0.000048115
-vector	cov	np.cov(x, y)[0, 1]	10000	0	0.000041241
-vector	cov	np.cov(x, y)[0, 1]	10000	1	0.000041071
-vector	cov	np.cov(x, y)[0, 1]	10000	2	0.000041119
-vector	cov	np.cov(x, y)[0, 1]	10000	3	0.000041051
-vector	cov	np.cov(x, y)[0, 1]	10000	4	0.000041047
-vector	cov	np.cov(x, y)[0, 1]	10000	5	0.000040980
-vector	cov	np.cov(x, y)[0, 1]	10000	6	0.000040979
-vector	skew	scipy.stats.skew(x)	10000	0	0.000305594
-vector	skew	scipy.stats.skew(x)	10000	1	0.000296099
-vector	skew	scipy.stats.skew(x)	10000	2	0.000295711
-vector	skew	scipy.stats.skew(x)	10000	3	0.000293102
-vector	skew	scipy.stats.skew(x)	10000	4	0.000289246
-vector	skew	scipy.stats.skew(x)	10000	5	0.000289876
-vector	skew	scipy.stats.skew(x)	10000	6	0.000290639
-vector	kurtosis	scipy.stats.kurtosis(x)	10000	0	0.000295652
-vector	kurtosis	scipy.stats.kurtosis(x)	10000	1	0.000294402
-vector	kurtosis	scipy.stats.kurtosis(x)	10000	2	0.000294041
-vector	kurtosis	scipy.stats.kurtosis(x)	10000	3	0.000296591
-vector	kurtosis	scipy.stats.kurtosis(x)	10000	4	0.000296677
-vector	kurtosis	scipy.stats.kurtosis(x)	10000	5	0.000290203
-vector	kurtosis	scipy.stats.kurtosis(x)	10000	6	0.000296448
-vector	sum	np.sum(x)	30000	0	0.000007126
-vector	sum	np.sum(x)	30000	1	0.000007222
-vector	sum	np.sum(x)	30000	2	0.000007200
-vector	sum	np.sum(x)	30000	3	0.000007215
-vector	sum	np.sum(x)	30000	4	0.000007204
-vector	sum	np.sum(x)	30000	5	0.000007199
-vector	sum	np.sum(x)	30000	6	0.000007205
-vector	min	np.min(x)	30000	0	0.000006633
-vector	min	np.min(x)	30000	1	0.000006333
-vector	min	np.min(x)	30000	2	0.000006330
-vector	min	np.min(x)	30000	3	0.000006335
-vector	min	np.min(x)	30000	4	0.000006329
-vector	min	np.min(x)	30000	5	0.000006331
-vector	min	np.min(x)	30000	6	0.000006323
-vector	max	np.max(x)	30000	0	0.000006334
-vector	max	np.max(x)	30000	1	0.000006329
-vector	max	np.max(x)	30000	2	0.000006381
-vector	max	np.max(x)	30000	3	0.000006323
-vector	max	np.max(x)	30000	4	0.000006324
-vector	max	np.max(x)	30000	5	0.000006329
-vector	max	np.max(x)	30000	6	0.000006320
-vector	mean	np.mean(x)	30000	0	0.000008105
-vector	mean	np.mean(x)	30000	1	0.000008195
-vector	mean	np.mean(x)	30000	2	0.000008152
-vector	mean	np.mean(x)	30000	3	0.000008188
-vector	mean	np.mean(x)	30000	4	0.000008197
-vector	mean	np.mean(x)	30000	5	0.000008205
-vector	mean	np.mean(x)	30000	6	0.000008200
-vector	median	np.median(x)	30000	0	0.000304378
-vector	median	np.median(x)	30000	1	0.000303157
-vector	median	np.median(x)	30000	2	0.000305211
-vector	median	np.median(x)	30000	3	0.000305862
-vector	median	np.median(x)	30000	4	0.000299730
-vector	median	np.median(x)	30000	5	0.000303189
-vector	median	np.median(x)	30000	6	0.000302109
-vector	sd	np.std(x, ddof=1)	30000	0	0.000029059
-vector	sd	np.std(x, ddof=1)	30000	1	0.000027701
-vector	sd	np.std(x, ddof=1)	30000	2	0.000027629
-vector	sd	np.std(x, ddof=1)	30000	3	0.000027635
-vector	sd	np.std(x, ddof=1)	30000	4	0.000027643
-vector	sd	np.std(x, ddof=1)	30000	5	0.000027655
-vector	sd	np.std(x, ddof=1)	30000	6	0.000027669
-vector	var	np.var(x, ddof=1)	30000	0	0.000027143
-vector	var	np.var(x, ddof=1)	30000	1	0.000027094
-vector	var	np.var(x, ddof=1)	30000	2	0.000027012
-vector	var	np.var(x, ddof=1)	30000	3	0.000027018
-vector	var	np.var(x, ddof=1)	30000	4	0.000027099
-vector	var	np.var(x, ddof=1)	30000	5	0.000027149
-vector	var	np.var(x, ddof=1)	30000	6	0.000027190
-vector	quantile	np.quantile(x, [.25,.5,.75])	30000	0	0.000481487
-vector	quantile	np.quantile(x, [.25,.5,.75])	30000	1	0.000476765
-vector	quantile	np.quantile(x, [.25,.5,.75])	30000	2	0.000476960
-vector	quantile	np.quantile(x, [.25,.5,.75])	30000	3	0.000479773
-vector	quantile	np.quantile(x, [.25,.5,.75])	30000	4	0.000476813
-vector	quantile	np.quantile(x, [.25,.5,.75])	30000	5	0.000473095
-vector	quantile	np.quantile(x, [.25,.5,.75])	30000	6	0.000471460
-vector	cor	np.corrcoef(x, y)[0, 1]	30000	0	0.000111456
-vector	cor	np.corrcoef(x, y)[0, 1]	30000	1	0.000109204
-vector	cor	np.corrcoef(x, y)[0, 1]	30000	2	0.000109200
-vector	cor	np.corrcoef(x, y)[0, 1]	30000	3	0.000109020
-vector	cor	np.corrcoef(x, y)[0, 1]	30000	4	0.000108989
-vector	cor	np.corrcoef(x, y)[0, 1]	30000	5	0.000108901
-vector	cor	np.corrcoef(x, y)[0, 1]	30000	6	0.000109078
-vector	cov	np.cov(x, y)[0, 1]	30000	0	0.000100435
-vector	cov	np.cov(x, y)[0, 1]	30000	1	0.000100592
-vector	cov	np.cov(x, y)[0, 1]	30000	2	0.000100453
-vector	cov	np.cov(x, y)[0, 1]	30000	3	0.000100717
-vector	cov	np.cov(x, y)[0, 1]	30000	4	0.000100619
-vector	cov	np.cov(x, y)[0, 1]	30000	5	0.000100650
-vector	cov	np.cov(x, y)[0, 1]	30000	6	0.000100816
-vector	skew	scipy.stats.skew(x)	30000	0	0.000392878
-vector	skew	scipy.stats.skew(x)	30000	1	0.000371379
-vector	skew	scipy.stats.skew(x)	30000	2	0.000359963
-vector	skew	scipy.stats.skew(x)	30000	3	0.000364557
-vector	skew	scipy.stats.skew(x)	30000	4	0.000366134
-vector	skew	scipy.stats.skew(x)	30000	5	0.000358995
-vector	skew	scipy.stats.skew(x)	30000	6	0.000362554
-vector	kurtosis	scipy.stats.kurtosis(x)	30000	0	0.000356758
-vector	kurtosis	scipy.stats.kurtosis(x)	30000	1	0.000360168
-vector	kurtosis	scipy.stats.kurtosis(x)	30000	2	0.000360608
-vector	kurtosis	scipy.stats.kurtosis(x)	30000	3	0.000353817
-vector	kurtosis	scipy.stats.kurtosis(x)	30000	4	0.000356171
-vector	kurtosis	scipy.stats.kurtosis(x)	30000	5	0.000355227
-vector	kurtosis	scipy.stats.kurtosis(x)	30000	6	0.000351824
-vector	sum	np.sum(x)	100000	0	0.000019998
-vector	sum	np.sum(x)	100000	1	0.000019903
-vector	sum	np.sum(x)	100000	2	0.000019863
-vector	sum	np.sum(x)	100000	3	0.000019919
-vector	sum	np.sum(x)	100000	4	0.000019874
-vector	sum	np.sum(x)	100000	5	0.000019888
-vector	sum	np.sum(x)	100000	6	0.000019834
-vector	min	np.min(x)	100000	0	0.000016870
-vector	min	np.min(x)	100000	1	0.000016419
-vector	min	np.min(x)	100000	2	0.000016457
-vector	min	np.min(x)	100000	3	0.000016397
-vector	min	np.min(x)	100000	4	0.000016433
-vector	min	np.min(x)	100000	5	0.000016419
-vector	min	np.min(x)	100000	6	0.000016429
-vector	max	np.max(x)	100000	0	0.000016397
-vector	max	np.max(x)	100000	1	0.000016407
-vector	max	np.max(x)	100000	2	0.000016388
-vector	max	np.max(x)	100000	3	0.000016405
-vector	max	np.max(x)	100000	4	0.000016383
-vector	max	np.max(x)	100000	5	0.000016408
-vector	max	np.max(x)	100000	6	0.000016405
-vector	mean	np.mean(x)	100000	0	0.000021049
-vector	mean	np.mean(x)	100000	1	0.000021087
-vector	mean	np.mean(x)	100000	2	0.000021140
-vector	mean	np.mean(x)	100000	3	0.000021097
-vector	mean	np.mean(x)	100000	4	0.000021108
-vector	mean	np.mean(x)	100000	5	0.000021057
-vector	mean	np.mean(x)	100000	6	0.000021080
-vector	median	np.median(x)	100000	0	0.000969863
-vector	median	np.median(x)	100000	1	0.000964801
-vector	median	np.median(x)	100000	2	0.000973353
-vector	median	np.median(x)	100000	3	0.000959688
-vector	median	np.median(x)	100000	4	0.000969751
-vector	median	np.median(x)	100000	5	0.000963946
-vector	median	np.median(x)	100000	6	0.000967754
-vector	sd	np.std(x, ddof=1)	100000	0	0.000090767
-vector	sd	np.std(x, ddof=1)	100000	1	0.000090695
-vector	sd	np.std(x, ddof=1)	100000	2	0.000090378
-vector	sd	np.std(x, ddof=1)	100000	3	0.000090069
-vector	sd	np.std(x, ddof=1)	100000	4	0.000090014
-vector	sd	np.std(x, ddof=1)	100000	5	0.000090367
-vector	sd	np.std(x, ddof=1)	100000	6	0.000090292
-vector	var	np.var(x, ddof=1)	100000	0	0.000089707
-vector	var	np.var(x, ddof=1)	100000	1	0.000089142
-vector	var	np.var(x, ddof=1)	100000	2	0.000089631
-vector	var	np.var(x, ddof=1)	100000	3	0.000089447
-vector	var	np.var(x, ddof=1)	100000	4	0.000089791
-vector	var	np.var(x, ddof=1)	100000	5	0.000089426
-vector	var	np.var(x, ddof=1)	100000	6	0.000089572
-vector	quantile	np.quantile(x, [.25,.5,.75])	100000	0	0.001369240
-vector	quantile	np.quantile(x, [.25,.5,.75])	100000	1	0.001355269
-vector	quantile	np.quantile(x, [.25,.5,.75])	100000	2	0.001355391
-vector	quantile	np.quantile(x, [.25,.5,.75])	100000	3	0.001355362
-vector	quantile	np.quantile(x, [.25,.5,.75])	100000	4	0.001357457
-vector	quantile	np.quantile(x, [.25,.5,.75])	100000	5	0.001371424
-vector	quantile	np.quantile(x, [.25,.5,.75])	100000	6	0.001338534
-vector	cor	np.corrcoef(x, y)[0, 1]	100000	0	0.000367859
-vector	cor	np.corrcoef(x, y)[0, 1]	100000	1	0.000359748
-vector	cor	np.corrcoef(x, y)[0, 1]	100000	2	0.000358356
-vector	cor	np.corrcoef(x, y)[0, 1]	100000	3	0.000359338
-vector	cor	np.corrcoef(x, y)[0, 1]	100000	4	0.000357936
-vector	cor	np.corrcoef(x, y)[0, 1]	100000	5	0.000357737
-vector	cor	np.corrcoef(x, y)[0, 1]	100000	6	0.000358921
-vector	cov	np.cov(x, y)[0, 1]	100000	0	0.000349821
-vector	cov	np.cov(x, y)[0, 1]	100000	1	0.000353216
-vector	cov	np.cov(x, y)[0, 1]	100000	2	0.000375265
-vector	cov	np.cov(x, y)[0, 1]	100000	3	0.000349994
-vector	cov	np.cov(x, y)[0, 1]	100000	4	0.000349271
-vector	cov	np.cov(x, y)[0, 1]	100000	5	0.000351500
-vector	cov	np.cov(x, y)[0, 1]	100000	6	0.000350108
-vector	skew	scipy.stats.skew(x)	100000	0	0.000660339
-vector	skew	scipy.stats.skew(x)	100000	1	0.000657685
-vector	skew	scipy.stats.skew(x)	100000	2	0.000650412
-vector	skew	scipy.stats.skew(x)	100000	3	0.000657508
-vector	skew	scipy.stats.skew(x)	100000	4	0.000673583
-vector	skew	scipy.stats.skew(x)	100000	5	0.000648735
-vector	skew	scipy.stats.skew(x)	100000	6	0.000656789
-vector	kurtosis	scipy.stats.kurtosis(x)	100000	0	0.000633474
-vector	kurtosis	scipy.stats.kurtosis(x)	100000	1	0.000625114
-vector	kurtosis	scipy.stats.kurtosis(x)	100000	2	0.000625614
-vector	kurtosis	scipy.stats.kurtosis(x)	100000	3	0.000625745
-vector	kurtosis	scipy.stats.kurtosis(x)	100000	4	0.000623906
-vector	kurtosis	scipy.stats.kurtosis(x)	100000	5	0.000623279
-vector	kurtosis	scipy.stats.kurtosis(x)	100000	6	0.000625633
-vector	sum	np.sum(x)	300000	0	0.000065985
-vector	sum	np.sum(x)	300000	1	0.000066130
-vector	sum	np.sum(x)	300000	2	0.000065837
-vector	sum	np.sum(x)	300000	3	0.000066000
-vector	sum	np.sum(x)	300000	4	0.000065878
-vector	sum	np.sum(x)	300000	5	0.000065996
-vector	sum	np.sum(x)	300000	6	0.000065854
-vector	min	np.min(x)	300000	0	0.000051661
-vector	min	np.min(x)	300000	1	0.000050776
-vector	min	np.min(x)	300000	2	0.000050811
-vector	min	np.min(x)	300000	3	0.000050770
-vector	min	np.min(x)	300000	4	0.000050734
-vector	min	np.min(x)	300000	5	0.000050739
-vector	min	np.min(x)	300000	6	0.000050818
-vector	max	np.max(x)	300000	0	0.000050709
-vector	max	np.max(x)	300000	1	0.000050615
-vector	max	np.max(x)	300000	2	0.000050596
-vector	max	np.max(x)	300000	3	0.000050752
-vector	max	np.max(x)	300000	4	0.000050775
-vector	max	np.max(x)	300000	5	0.000050643
-vector	max	np.max(x)	300000	6	0.000050923
-vector	mean	np.mean(x)	300000	0	0.000067361
-vector	mean	np.mean(x)	300000	1	0.000067398
-vector	mean	np.mean(x)	300000	2	0.000067376
-vector	mean	np.mean(x)	300000	3	0.000067366
-vector	mean	np.mean(x)	300000	4	0.000067671
-vector	mean	np.mean(x)	300000	5	0.000068528
-vector	mean	np.mean(x)	300000	6	0.000070206
-vector	median	np.median(x)	300000	0	0.002836119
-vector	median	np.median(x)	300000	1	0.002833607
-vector	median	np.median(x)	300000	2	0.002810765
-vector	median	np.median(x)	300000	3	0.002819630
-vector	median	np.median(x)	300000	4	0.002839677
-vector	median	np.median(x)	300000	5	0.002831004
-vector	median	np.median(x)	300000	6	0.002815054
-vector	sd	np.std(x, ddof=1)	300000	0	0.000295086
-vector	sd	np.std(x, ddof=1)	300000	1	0.000293113
-vector	sd	np.std(x, ddof=1)	300000	2	0.000293593
-vector	sd	np.std(x, ddof=1)	300000	3	0.000293580
-vector	sd	np.std(x, ddof=1)	300000	4	0.000293417
-vector	sd	np.std(x, ddof=1)	300000	5	0.000293617
-vector	sd	np.std(x, ddof=1)	300000	6	0.000293037
-vector	var	np.var(x, ddof=1)	300000	0	0.000293057
-vector	var	np.var(x, ddof=1)	300000	1	0.000293705
-vector	var	np.var(x, ddof=1)	300000	2	0.000292773
-vector	var	np.var(x, ddof=1)	300000	3	0.000317483
-vector	var	np.var(x, ddof=1)	300000	4	0.000308555
-vector	var	np.var(x, ddof=1)	300000	5	0.000292858
-vector	var	np.var(x, ddof=1)	300000	6	0.000292115
-vector	quantile	np.quantile(x, [.25,.5,.75])	300000	0	0.004171987
-vector	quantile	np.quantile(x, [.25,.5,.75])	300000	1	0.004226344
-vector	quantile	np.quantile(x, [.25,.5,.75])	300000	2	0.004185522
-vector	quantile	np.quantile(x, [.25,.5,.75])	300000	3	0.004166568
-vector	quantile	np.quantile(x, [.25,.5,.75])	300000	4	0.004200060
-vector	quantile	np.quantile(x, [.25,.5,.75])	300000	5	0.004172771
-vector	quantile	np.quantile(x, [.25,.5,.75])	300000	6	0.004178967
-vector	cor	np.corrcoef(x, y)[0, 1]	300000	0	0.001071100
-vector	cor	np.corrcoef(x, y)[0, 1]	300000	1	0.001052979
-vector	cor	np.corrcoef(x, y)[0, 1]	300000	2	0.001042968
-vector	cor	np.corrcoef(x, y)[0, 1]	300000	3	0.001059950
-vector	cor	np.corrcoef(x, y)[0, 1]	300000	4	0.001040326
-vector	cor	np.corrcoef(x, y)[0, 1]	300000	5	0.001042732
-vector	cor	np.corrcoef(x, y)[0, 1]	300000	6	0.001044792
-vector	cov	np.cov(x, y)[0, 1]	300000	0	0.001045327
-vector	cov	np.cov(x, y)[0, 1]	300000	1	0.001039286
-vector	cov	np.cov(x, y)[0, 1]	300000	2	0.001042476
-vector	cov	np.cov(x, y)[0, 1]	300000	3	0.001036391
-vector	cov	np.cov(x, y)[0, 1]	300000	4	0.001029075
-vector	cov	np.cov(x, y)[0, 1]	300000	5	0.001037900
-vector	cov	np.cov(x, y)[0, 1]	300000	6	0.001038197
-vector	skew	scipy.stats.skew(x)	300000	0	0.001456552
-vector	skew	scipy.stats.skew(x)	300000	1	0.001447673
-vector	skew	scipy.stats.skew(x)	300000	2	0.001448709
-vector	skew	scipy.stats.skew(x)	300000	3	0.001457285
-vector	skew	scipy.stats.skew(x)	300000	4	0.001452503
-vector	skew	scipy.stats.skew(x)	300000	5	0.001446041
-vector	skew	scipy.stats.skew(x)	300000	6	0.001439868
-vector	kurtosis	scipy.stats.kurtosis(x)	300000	0	0.001434590
-vector	kurtosis	scipy.stats.kurtosis(x)	300000	1	0.001339544
-vector	kurtosis	scipy.stats.kurtosis(x)	300000	2	0.001328141
-vector	kurtosis	scipy.stats.kurtosis(x)	300000	3	0.001335606
-vector	kurtosis	scipy.stats.kurtosis(x)	300000	4	0.001335713
-vector	kurtosis	scipy.stats.kurtosis(x)	300000	5	0.001334204
-vector	kurtosis	scipy.stats.kurtosis(x)	300000	6	0.001340457
-vector	sum	np.sum(x)	1000000	0	0.000204725
-vector	sum	np.sum(x)	1000000	1	0.000202905
-vector	sum	np.sum(x)	1000000	2	0.000202725
-vector	sum	np.sum(x)	1000000	3	0.000202027
-vector	sum	np.sum(x)	1000000	4	0.000202522
-vector	sum	np.sum(x)	1000000	5	0.000202804
-vector	sum	np.sum(x)	1000000	6	0.000202549
-vector	min	np.min(x)	1000000	0	0.000159823
-vector	min	np.min(x)	1000000	1	0.000159955
-vector	min	np.min(x)	1000000	2	0.000159862
-vector	min	np.min(x)	1000000	3	0.000159789
-vector	min	np.min(x)	1000000	4	0.000159753
-vector	min	np.min(x)	1000000	5	0.000159830
-vector	min	np.min(x)	1000000	6	0.000159927
-vector	max	np.max(x)	1000000	0	0.000164750
-vector	max	np.max(x)	1000000	1	0.000170567
-vector	max	np.max(x)	1000000	2	0.000161575
-vector	max	np.max(x)	1000000	3	0.000159823
-vector	max	np.max(x)	1000000	4	0.000159587
-vector	max	np.max(x)	1000000	5	0.000159949
-vector	max	np.max(x)	1000000	6	0.000159893
-vector	mean	np.mean(x)	1000000	0	0.000204162
-vector	mean	np.mean(x)	1000000	1	0.000204529
-vector	mean	np.mean(x)	1000000	2	0.000204654
-vector	mean	np.mean(x)	1000000	3	0.000204292
-vector	mean	np.mean(x)	1000000	4	0.000204192
-vector	mean	np.mean(x)	1000000	5	0.000204321
-vector	mean	np.mean(x)	1000000	6	0.000204242
-vector	median	np.median(x)	1000000	0	0.009516331
-vector	median	np.median(x)	1000000	1	0.009383197
-vector	median	np.median(x)	1000000	2	0.009376110
-vector	median	np.median(x)	1000000	3	0.009361176
-vector	median	np.median(x)	1000000	4	0.009414558
-vector	median	np.median(x)	1000000	5	0.009355320
-vector	median	np.median(x)	1000000	6	0.009316667
-vector	sd	np.std(x, ddof=1)	1000000	0	0.000967786
-vector	sd	np.std(x, ddof=1)	1000000	1	0.000978043
-vector	sd	np.std(x, ddof=1)	1000000	2	0.000964704
-vector	sd	np.std(x, ddof=1)	1000000	3	0.000969131
-vector	sd	np.std(x, ddof=1)	1000000	4	0.000977467
-vector	sd	np.std(x, ddof=1)	1000000	5	0.000961696
-vector	sd	np.std(x, ddof=1)	1000000	6	0.000959997
-vector	var	np.var(x, ddof=1)	1000000	0	0.000964493
-vector	var	np.var(x, ddof=1)	1000000	1	0.000970061
-vector	var	np.var(x, ddof=1)	1000000	2	0.000964329
-vector	var	np.var(x, ddof=1)	1000000	3	0.000965688
-vector	var	np.var(x, ddof=1)	1000000	4	0.000971856
-vector	var	np.var(x, ddof=1)	1000000	5	0.000998926
-vector	var	np.var(x, ddof=1)	1000000	6	0.000961734
-vector	quantile	np.quantile(x, [.25,.5,.75])	1000000	0	0.015145559
-vector	quantile	np.quantile(x, [.25,.5,.75])	1000000	1	0.015102680
-vector	quantile	np.quantile(x, [.25,.5,.75])	1000000	2	0.015007403
-vector	quantile	np.quantile(x, [.25,.5,.75])	1000000	3	0.015217876
-vector	quantile	np.quantile(x, [.25,.5,.75])	1000000	4	0.015165139
-vector	quantile	np.quantile(x, [.25,.5,.75])	1000000	5	0.015079976
-vector	quantile	np.quantile(x, [.25,.5,.75])	1000000	6	0.015173422
-vector	cor	np.corrcoef(x, y)[0, 1]	1000000	0	0.004674840
-vector	cor	np.corrcoef(x, y)[0, 1]	1000000	1	0.004824511
-vector	cor	np.corrcoef(x, y)[0, 1]	1000000	2	0.004842228
-vector	cor	np.corrcoef(x, y)[0, 1]	1000000	3	0.004797437
-vector	cor	np.corrcoef(x, y)[0, 1]	1000000	4	0.004894138
-vector	cor	np.corrcoef(x, y)[0, 1]	1000000	5	0.004853739
-vector	cor	np.corrcoef(x, y)[0, 1]	1000000	6	0.004858077
-vector	cov	np.cov(x, y)[0, 1]	1000000	0	0.004938380
-vector	cov	np.cov(x, y)[0, 1]	1000000	1	0.004855505
-vector	cov	np.cov(x, y)[0, 1]	1000000	2	0.004852259
-vector	cov	np.cov(x, y)[0, 1]	1000000	3	0.004883925
-vector	cov	np.cov(x, y)[0, 1]	1000000	4	0.004823431
-vector	cov	np.cov(x, y)[0, 1]	1000000	5	0.004786368
-vector	cov	np.cov(x, y)[0, 1]	1000000	6	0.004902665
-vector	skew	scipy.stats.skew(x)	1000000	0	0.006736139
-vector	skew	scipy.stats.skew(x)	1000000	1	0.005784859
-vector	skew	scipy.stats.skew(x)	1000000	2	0.005842229
-vector	skew	scipy.stats.skew(x)	1000000	3	0.005770008
-vector	skew	scipy.stats.skew(x)	1000000	4	0.005731672
-vector	skew	scipy.stats.skew(x)	1000000	5	0.006099446
-vector	skew	scipy.stats.skew(x)	1000000	6	0.005754475
-vector	kurtosis	scipy.stats.kurtosis(x)	1000000	0	0.005374476
-vector	kurtosis	scipy.stats.kurtosis(x)	1000000	1	0.005695581
-vector	kurtosis	scipy.stats.kurtosis(x)	1000000	2	0.005423918
-vector	kurtosis	scipy.stats.kurtosis(x)	1000000	3	0.005343927
-vector	kurtosis	scipy.stats.kurtosis(x)	1000000	4	0.005336555
-vector	kurtosis	scipy.stats.kurtosis(x)	1000000	5	0.005318958
-vector	kurtosis	scipy.stats.kurtosis(x)	1000000	6	0.005251267
-transform	rank	scipy.stats.rankdata(x)	1000	0	0.000095532
-transform	rank	scipy.stats.rankdata(x)	1000	1	0.000085630
-transform	rank	scipy.stats.rankdata(x)	1000	2	0.000083424
-transform	rank	scipy.stats.rankdata(x)	1000	3	0.000081028
-transform	rank	scipy.stats.rankdata(x)	1000	4	0.000084413
-transform	rank	scipy.stats.rankdata(x)	1000	5	0.000083204
-transform	rank	scipy.stats.rankdata(x)	1000	6	0.000080879
-transform	uniq	pd.unique(x)	1000	0	0.000022266
-transform	uniq	pd.unique(x)	1000	1	0.000021367
-transform	uniq	pd.unique(x)	1000	2	0.000021471
-transform	uniq	pd.unique(x)	1000	3	0.000021478
-transform	uniq	pd.unique(x)	1000	4	0.000021441
-transform	uniq	pd.unique(x)	1000	5	0.000021392
-transform	uniq	pd.unique(x)	1000	6	0.000021414
-transform	scale	scipy.stats.zscore(x, ddof=1)	1000	0	0.000152766
-transform	scale	scipy.stats.zscore(x, ddof=1)	1000	1	0.000143370
-transform	scale	scipy.stats.zscore(x, ddof=1)	1000	2	0.000143352
-transform	scale	scipy.stats.zscore(x, ddof=1)	1000	3	0.000141817
-transform	scale	scipy.stats.zscore(x, ddof=1)	1000	4	0.000142194
-transform	scale	scipy.stats.zscore(x, ddof=1)	1000	5	0.000141955
-transform	scale	scipy.stats.zscore(x, ddof=1)	1000	6	0.000142577
-transform	sample	rng.choice(x, n // 10, replace=False)	1000	0	0.000016945
-transform	sample	rng.choice(x, n // 10, replace=False)	1000	1	0.000016744
-transform	sample	rng.choice(x, n // 10, replace=False)	1000	2	0.000016621
-transform	sample	rng.choice(x, n // 10, replace=False)	1000	3	0.000016670
-transform	sample	rng.choice(x, n // 10, replace=False)	1000	4	0.000016856
-transform	sample	rng.choice(x, n // 10, replace=False)	1000	5	0.000016716
-transform	sample	rng.choice(x, n // 10, replace=False)	1000	6	0.000016678
-transform	seq	np.arange(1, n + 1)	1000	0	0.000000824
-transform	seq	np.arange(1, n + 1)	1000	1	0.000000814
-transform	seq	np.arange(1, n + 1)	1000	2	0.000000813
-transform	seq	np.arange(1, n + 1)	1000	3	0.000000821
-transform	seq	np.arange(1, n + 1)	1000	4	0.000000817
-transform	seq	np.arange(1, n + 1)	1000	5	0.000000818
-transform	seq	np.arange(1, n + 1)	1000	6	0.000000815
-transform	auc	sklearn.metrics.roc_auc_score(label, y)	1000	0	0.001011773
-transform	auc	sklearn.metrics.roc_auc_score(label, y)	1000	1	0.001024223
-transform	auc	sklearn.metrics.roc_auc_score(label, y)	1000	2	0.000994250
-transform	auc	sklearn.metrics.roc_auc_score(label, y)	1000	3	0.000999321
-transform	auc	sklearn.metrics.roc_auc_score(label, y)	1000	4	0.001000304
-transform	auc	sklearn.metrics.roc_auc_score(label, y)	1000	5	0.000997277
-transform	auc	sklearn.metrics.roc_auc_score(label, y)	1000	6	0.000989802
-transform	rank	scipy.stats.rankdata(x)	3000	0	0.000219725
-transform	rank	scipy.stats.rankdata(x)	3000	1	0.000216482
-transform	rank	scipy.stats.rankdata(x)	3000	2	0.000216256
-transform	rank	scipy.stats.rankdata(x)	3000	3	0.000216432
-transform	rank	scipy.stats.rankdata(x)	3000	4	0.000216606
-transform	rank	scipy.stats.rankdata(x)	3000	5	0.000217719
-transform	rank	scipy.stats.rankdata(x)	3000	6	0.000215623
-transform	uniq	pd.unique(x)	3000	0	0.000061949
-transform	uniq	pd.unique(x)	3000	1	0.000058929
-transform	uniq	pd.unique(x)	3000	2	0.000059347
-transform	uniq	pd.unique(x)	3000	3	0.000058819
-transform	uniq	pd.unique(x)	3000	4	0.000058778
-transform	uniq	pd.unique(x)	3000	5	0.000059073
-transform	uniq	pd.unique(x)	3000	6	0.000058878
-transform	scale	scipy.stats.zscore(x, ddof=1)	3000	0	0.000155229
-transform	scale	scipy.stats.zscore(x, ddof=1)	3000	1	0.000150349
-transform	scale	scipy.stats.zscore(x, ddof=1)	3000	2	0.000148308
-transform	scale	scipy.stats.zscore(x, ddof=1)	3000	3	0.000150302
-transform	scale	scipy.stats.zscore(x, ddof=1)	3000	4	0.000149960
-transform	scale	scipy.stats.zscore(x, ddof=1)	3000	5	0.000148504
-transform	scale	scipy.stats.zscore(x, ddof=1)	3000	6	0.000149108
-transform	sample	rng.choice(x, n // 10, replace=False)	3000	0	0.000019313
-transform	sample	rng.choice(x, n // 10, replace=False)	3000	1	0.000019168
-transform	sample	rng.choice(x, n // 10, replace=False)	3000	2	0.000019145
-transform	sample	rng.choice(x, n // 10, replace=False)	3000	3	0.000019092
-transform	sample	rng.choice(x, n // 10, replace=False)	3000	4	0.000019124
-transform	sample	rng.choice(x, n // 10, replace=False)	3000	5	0.000019100
-transform	sample	rng.choice(x, n // 10, replace=False)	3000	6	0.000019049
-transform	seq	np.arange(1, n + 1)	3000	0	0.000001361
-transform	seq	np.arange(1, n + 1)	3000	1	0.000001353
-transform	seq	np.arange(1, n + 1)	3000	2	0.000001356
-transform	seq	np.arange(1, n + 1)	3000	3	0.000001360
-transform	seq	np.arange(1, n + 1)	3000	4	0.000001364
-transform	seq	np.arange(1, n + 1)	3000	5	0.000001353
-transform	seq	np.arange(1, n + 1)	3000	6	0.000001353
-transform	auc	sklearn.metrics.roc_auc_score(label, y)	3000	0	0.001424619
-transform	auc	sklearn.metrics.roc_auc_score(label, y)	3000	1	0.001394201
-transform	auc	sklearn.metrics.roc_auc_score(label, y)	3000	2	0.001398319
-transform	auc	sklearn.metrics.roc_auc_score(label, y)	3000	3	0.001417808
-transform	auc	sklearn.metrics.roc_auc_score(label, y)	3000	4	0.001401140
-transform	auc	sklearn.metrics.roc_auc_score(label, y)	3000	5	0.001392568
-transform	auc	sklearn.metrics.roc_auc_score(label, y)	3000	6	0.001402355
-transform	rank	scipy.stats.rankdata(x)	10000	0	0.000728125
-transform	rank	scipy.stats.rankdata(x)	10000	1	0.000712351
-transform	rank	scipy.stats.rankdata(x)	10000	2	0.000726434
-transform	rank	scipy.stats.rankdata(x)	10000	3	0.000714736
-transform	rank	scipy.stats.rankdata(x)	10000	4	0.000720774
-transform	rank	scipy.stats.rankdata(x)	10000	5	0.000702603
-transform	rank	scipy.stats.rankdata(x)	10000	6	0.000707065
-transform	uniq	pd.unique(x)	10000	0	0.000190922
-transform	uniq	pd.unique(x)	10000	1	0.000184283
-transform	uniq	pd.unique(x)	10000	2	0.000183339
-transform	uniq	pd.unique(x)	10000	3	0.000183252
-transform	uniq	pd.unique(x)	10000	4	0.000182644
-transform	uniq	pd.unique(x)	10000	5	0.000182738
-transform	uniq	pd.unique(x)	10000	6	0.000183575
-transform	scale	scipy.stats.zscore(x, ddof=1)	10000	0	0.000180937
-transform	scale	scipy.stats.zscore(x, ddof=1)	10000	1	0.000175269
-transform	scale	scipy.stats.zscore(x, ddof=1)	10000	2	0.000173719
-transform	scale	scipy.stats.zscore(x, ddof=1)	10000	3	0.000173811
-transform	scale	scipy.stats.zscore(x, ddof=1)	10000	4	0.000173593
-transform	scale	scipy.stats.zscore(x, ddof=1)	10000	5	0.000173049
-transform	scale	scipy.stats.zscore(x, ddof=1)	10000	6	0.000171709
-transform	sample	rng.choice(x, n // 10, replace=False)	10000	0	0.000026226
-transform	sample	rng.choice(x, n // 10, replace=False)	10000	1	0.000025992
-transform	sample	rng.choice(x, n // 10, replace=False)	10000	2	0.000026038
-transform	sample	rng.choice(x, n // 10, replace=False)	10000	3	0.000025844
-transform	sample	rng.choice(x, n // 10, replace=False)	10000	4	0.000026055
-transform	sample	rng.choice(x, n // 10, replace=False)	10000	5	0.000025944
-transform	sample	rng.choice(x, n // 10, replace=False)	10000	6	0.000026045
-transform	seq	np.arange(1, n + 1)	10000	0	0.000003221
-transform	seq	np.arange(1, n + 1)	10000	1	0.000003211
-transform	seq	np.arange(1, n + 1)	10000	2	0.000003214
-transform	seq	np.arange(1, n + 1)	10000	3	0.000003215
-transform	seq	np.arange(1, n + 1)	10000	4	0.000003213
-transform	seq	np.arange(1, n + 1)	10000	5	0.000003204
-transform	seq	np.arange(1, n + 1)	10000	6	0.000003207
-transform	auc	sklearn.metrics.roc_auc_score(label, y)	10000	0	0.002792075
-transform	auc	sklearn.metrics.roc_auc_score(label, y)	10000	1	0.002802443
-transform	auc	sklearn.metrics.roc_auc_score(label, y)	10000	2	0.002806977
-transform	auc	sklearn.metrics.roc_auc_score(label, y)	10000	3	0.002805978
-transform	auc	sklearn.metrics.roc_auc_score(label, y)	10000	4	0.002783876
-transform	auc	sklearn.metrics.roc_auc_score(label, y)	10000	5	0.002803702
-transform	auc	sklearn.metrics.roc_auc_score(label, y)	10000	6	0.002786135
-transform	rank	scipy.stats.rankdata(x)	30000	0	0.002246520
-transform	rank	scipy.stats.rankdata(x)	30000	1	0.002251172
-transform	rank	scipy.stats.rankdata(x)	30000	2	0.002256660
-transform	rank	scipy.stats.rankdata(x)	30000	3	0.002279243
-transform	rank	scipy.stats.rankdata(x)	30000	4	0.002244362
-transform	rank	scipy.stats.rankdata(x)	30000	5	0.002233185
-transform	rank	scipy.stats.rankdata(x)	30000	6	0.002205483
-transform	uniq	pd.unique(x)	30000	0	0.000451109
-transform	uniq	pd.unique(x)	30000	1	0.000452359
-transform	uniq	pd.unique(x)	30000	2	0.000450112
-transform	uniq	pd.unique(x)	30000	3	0.000448344
-transform	uniq	pd.unique(x)	30000	4	0.000450236
-transform	uniq	pd.unique(x)	30000	5	0.000449160
-transform	uniq	pd.unique(x)	30000	6	0.000450808
-transform	scale	scipy.stats.zscore(x, ddof=1)	30000	0	0.000254046
-transform	scale	scipy.stats.zscore(x, ddof=1)	30000	1	0.000247695
-transform	scale	scipy.stats.zscore(x, ddof=1)	30000	2	0.000254386
-transform	scale	scipy.stats.zscore(x, ddof=1)	30000	3	0.000245267
-transform	scale	scipy.stats.zscore(x, ddof=1)	30000	4	0.000246106
-transform	scale	scipy.stats.zscore(x, ddof=1)	30000	5	0.000246763
-transform	scale	scipy.stats.zscore(x, ddof=1)	30000	6	0.000246284
-transform	sample	rng.choice(x, n // 10, replace=False)	30000	0	0.000039705
-transform	sample	rng.choice(x, n // 10, replace=False)	30000	1	0.000039392
-transform	sample	rng.choice(x, n // 10, replace=False)	30000	2	0.000039563
-transform	sample	rng.choice(x, n // 10, replace=False)	30000	3	0.000039426
-transform	sample	rng.choice(x, n // 10, replace=False)	30000	4	0.000039357
-transform	sample	rng.choice(x, n // 10, replace=False)	30000	5	0.000039241
-transform	sample	rng.choice(x, n // 10, replace=False)	30000	6	0.000039289
-transform	seq	np.arange(1, n + 1)	30000	0	0.000008485
-transform	seq	np.arange(1, n + 1)	30000	1	0.000008505
-transform	seq	np.arange(1, n + 1)	30000	2	0.000008501
-transform	seq	np.arange(1, n + 1)	30000	3	0.000008503
-transform	seq	np.arange(1, n + 1)	30000	4	0.000008493
-transform	seq	np.arange(1, n + 1)	30000	5	0.000008505
-transform	seq	np.arange(1, n + 1)	30000	6	0.000008496
-transform	auc	sklearn.metrics.roc_auc_score(label, y)	30000	0	0.006801847
-transform	auc	sklearn.metrics.roc_auc_score(label, y)	30000	1	0.006837604
-transform	auc	sklearn.metrics.roc_auc_score(label, y)	30000	2	0.006935218
-transform	auc	sklearn.metrics.roc_auc_score(label, y)	30000	3	0.006807866
-transform	auc	sklearn.metrics.roc_auc_score(label, y)	30000	4	0.006872216
-transform	auc	sklearn.metrics.roc_auc_score(label, y)	30000	5	0.006811355
-transform	auc	sklearn.metrics.roc_auc_score(label, y)	30000	6	0.006831736
-transform	rank	scipy.stats.rankdata(x)	100000	0	0.008495575
-transform	rank	scipy.stats.rankdata(x)	100000	1	0.008454445
-transform	rank	scipy.stats.rankdata(x)	100000	2	0.008563621
-transform	rank	scipy.stats.rankdata(x)	100000	3	0.008525658
-transform	rank	scipy.stats.rankdata(x)	100000	4	0.008544766
-transform	rank	scipy.stats.rankdata(x)	100000	5	0.008436042
-transform	rank	scipy.stats.rankdata(x)	100000	6	0.008571299
-transform	uniq	pd.unique(x)	100000	0	0.002190511
-transform	uniq	pd.unique(x)	100000	1	0.002217483
-transform	uniq	pd.unique(x)	100000	2	0.002219178
-transform	uniq	pd.unique(x)	100000	3	0.002282088
-transform	uniq	pd.unique(x)	100000	4	0.002242369
-transform	uniq	pd.unique(x)	100000	5	0.002221832
-transform	uniq	pd.unique(x)	100000	6	0.002214800
-transform	scale	scipy.stats.zscore(x, ddof=1)	100000	0	0.000538121
-transform	scale	scipy.stats.zscore(x, ddof=1)	100000	1	0.000524880
-transform	scale	scipy.stats.zscore(x, ddof=1)	100000	2	0.000521378
-transform	scale	scipy.stats.zscore(x, ddof=1)	100000	3	0.000524123
-transform	scale	scipy.stats.zscore(x, ddof=1)	100000	4	0.000520415
-transform	scale	scipy.stats.zscore(x, ddof=1)	100000	5	0.000520587
-transform	scale	scipy.stats.zscore(x, ddof=1)	100000	6	0.000522776
-transform	sample	rng.choice(x, n // 10, replace=False)	100000	0	0.000101644
-transform	sample	rng.choice(x, n // 10, replace=False)	100000	1	0.000101109
-transform	sample	rng.choice(x, n // 10, replace=False)	100000	2	0.000102319
-transform	sample	rng.choice(x, n // 10, replace=False)	100000	3	0.000102793
-transform	sample	rng.choice(x, n // 10, replace=False)	100000	4	0.000104840
-transform	sample	rng.choice(x, n // 10, replace=False)	100000	5	0.000102304
-transform	sample	rng.choice(x, n // 10, replace=False)	100000	6	0.000101938
-transform	seq	np.arange(1, n + 1)	100000	0	0.000027041
-transform	seq	np.arange(1, n + 1)	100000	1	0.000027050
-transform	seq	np.arange(1, n + 1)	100000	2	0.000026974
-transform	seq	np.arange(1, n + 1)	100000	3	0.000027048
-transform	seq	np.arange(1, n + 1)	100000	4	0.000027010
-transform	seq	np.arange(1, n + 1)	100000	5	0.000027035
-transform	seq	np.arange(1, n + 1)	100000	6	0.000027007
-transform	auc	sklearn.metrics.roc_auc_score(label, y)	100000	0	0.021792701
-transform	auc	sklearn.metrics.roc_auc_score(label, y)	100000	1	0.021710624
-transform	auc	sklearn.metrics.roc_auc_score(label, y)	100000	2	0.021623217
-transform	auc	sklearn.metrics.roc_auc_score(label, y)	100000	3	0.021640788
-transform	auc	sklearn.metrics.roc_auc_score(label, y)	100000	4	0.021843789
-transform	auc	sklearn.metrics.roc_auc_score(label, y)	100000	5	0.021705668
-transform	auc	sklearn.metrics.roc_auc_score(label, y)	100000	6	0.021691094
-transform	rank	scipy.stats.rankdata(x)	300000	0	0.029230077
-transform	rank	scipy.stats.rankdata(x)	300000	1	0.029018594
-transform	rank	scipy.stats.rankdata(x)	300000	2	0.029432562
-transform	rank	scipy.stats.rankdata(x)	300000	3	0.029112453
-transform	rank	scipy.stats.rankdata(x)	300000	4	0.029525894
-transform	rank	scipy.stats.rankdata(x)	300000	5	0.029177474
-transform	rank	scipy.stats.rankdata(x)	300000	6	0.029432496
-transform	uniq	pd.unique(x)	300000	0	0.005500579
-transform	uniq	pd.unique(x)	300000	1	0.005534798
-transform	uniq	pd.unique(x)	300000	2	0.005515233
-transform	uniq	pd.unique(x)	300000	3	0.005508867
-transform	uniq	pd.unique(x)	300000	4	0.005507887
-transform	uniq	pd.unique(x)	300000	5	0.005505649
-transform	uniq	pd.unique(x)	300000	6	0.005549458
-transform	scale	scipy.stats.zscore(x, ddof=1)	300000	0	0.001326155
-transform	scale	scipy.stats.zscore(x, ddof=1)	300000	1	0.001305962
-transform	scale	scipy.stats.zscore(x, ddof=1)	300000	2	0.001302994
-transform	scale	scipy.stats.zscore(x, ddof=1)	300000	3	0.001308978
-transform	scale	scipy.stats.zscore(x, ddof=1)	300000	4	0.001304775
-transform	scale	scipy.stats.zscore(x, ddof=1)	300000	5	0.001306593
-transform	scale	scipy.stats.zscore(x, ddof=1)	300000	6	0.001314289
-transform	sample	rng.choice(x, n // 10, replace=False)	300000	0	0.000279817
-transform	sample	rng.choice(x, n // 10, replace=False)	300000	1	0.000281763
-transform	sample	rng.choice(x, n // 10, replace=False)	300000	2	0.000279121
-transform	sample	rng.choice(x, n // 10, replace=False)	300000	3	0.000277419
-transform	sample	rng.choice(x, n // 10, replace=False)	300000	4	0.000280206
-transform	sample	rng.choice(x, n // 10, replace=False)	300000	5	0.000281448
-transform	sample	rng.choice(x, n // 10, replace=False)	300000	6	0.000280158
-transform	seq	np.arange(1, n + 1)	300000	0	0.000081846
-transform	seq	np.arange(1, n + 1)	300000	1	0.000081862
-transform	seq	np.arange(1, n + 1)	300000	2	0.000081850
-transform	seq	np.arange(1, n + 1)	300000	3	0.000081745
-transform	seq	np.arange(1, n + 1)	300000	4	0.000081793
-transform	seq	np.arange(1, n + 1)	300000	5	0.000081766
-transform	seq	np.arange(1, n + 1)	300000	6	0.000081609
-transform	auc	sklearn.metrics.roc_auc_score(label, y)	300000	0	0.068150504
-transform	auc	sklearn.metrics.roc_auc_score(label, y)	300000	1	0.068292736
-transform	auc	sklearn.metrics.roc_auc_score(label, y)	300000	2	0.068428784
-transform	auc	sklearn.metrics.roc_auc_score(label, y)	300000	3	0.068823630
-transform	auc	sklearn.metrics.roc_auc_score(label, y)	300000	4	0.067943390
-transform	auc	sklearn.metrics.roc_auc_score(label, y)	300000	5	0.067988008
-transform	auc	sklearn.metrics.roc_auc_score(label, y)	300000	6	0.068183146
-transform	rank	scipy.stats.rankdata(x)	1000000	0	0.116988379
-transform	rank	scipy.stats.rankdata(x)	1000000	1	0.117809991
-transform	rank	scipy.stats.rankdata(x)	1000000	2	0.117282553
-transform	rank	scipy.stats.rankdata(x)	1000000	3	0.116896952
-transform	rank	scipy.stats.rankdata(x)	1000000	4	0.117277251
-transform	rank	scipy.stats.rankdata(x)	1000000	5	0.117182929
-transform	rank	scipy.stats.rankdata(x)	1000000	6	0.116996375
-transform	uniq	pd.unique(x)	1000000	0	0.028262093
-transform	uniq	pd.unique(x)	1000000	1	0.028498024
-transform	uniq	pd.unique(x)	1000000	2	0.028429812
-transform	uniq	pd.unique(x)	1000000	3	0.028427112
-transform	uniq	pd.unique(x)	1000000	4	0.028378166
-transform	uniq	pd.unique(x)	1000000	5	0.029468515
-transform	uniq	pd.unique(x)	1000000	6	0.028228643
-transform	scale	scipy.stats.zscore(x, ddof=1)	1000000	0	0.004359447
-transform	scale	scipy.stats.zscore(x, ddof=1)	1000000	1	0.004299552
-transform	scale	scipy.stats.zscore(x, ddof=1)	1000000	2	0.004287395
-transform	scale	scipy.stats.zscore(x, ddof=1)	1000000	3	0.004616398
-transform	scale	scipy.stats.zscore(x, ddof=1)	1000000	4	0.004290276
-transform	scale	scipy.stats.zscore(x, ddof=1)	1000000	5	0.004293537
-transform	scale	scipy.stats.zscore(x, ddof=1)	1000000	6	0.004471456
-transform	sample	rng.choice(x, n // 10, replace=False)	1000000	0	0.000942297
-transform	sample	rng.choice(x, n // 10, replace=False)	1000000	1	0.000913893
-transform	sample	rng.choice(x, n // 10, replace=False)	1000000	2	0.000907395
-transform	sample	rng.choice(x, n // 10, replace=False)	1000000	3	0.000919765
-transform	sample	rng.choice(x, n // 10, replace=False)	1000000	4	0.000919049
-transform	sample	rng.choice(x, n // 10, replace=False)	1000000	5	0.000913855
-transform	sample	rng.choice(x, n // 10, replace=False)	1000000	6	0.000914280
-transform	seq	np.arange(1, n + 1)	1000000	0	0.000269097
-transform	seq	np.arange(1, n + 1)	1000000	1	0.000268484
-transform	seq	np.arange(1, n + 1)	1000000	2	0.000269170
-transform	seq	np.arange(1, n + 1)	1000000	3	0.000270082
-transform	seq	np.arange(1, n + 1)	1000000	4	0.000269180
-transform	seq	np.arange(1, n + 1)	1000000	5	0.000269144
-transform	seq	np.arange(1, n + 1)	1000000	6	0.000269023
-transform	auc	sklearn.metrics.roc_auc_score(label, y)	1000000	0	0.260384870
-transform	auc	sklearn.metrics.roc_auc_score(label, y)	1000000	1	0.258522059
-transform	auc	sklearn.metrics.roc_auc_score(label, y)	1000000	2	0.257647909
-transform	auc	sklearn.metrics.roc_auc_score(label, y)	1000000	3	0.258778871
-transform	auc	sklearn.metrics.roc_auc_score(label, y)	1000000	4	0.258668811
-transform	auc	sklearn.metrics.roc_auc_score(label, y)	1000000	5	0.258417236
-transform	auc	sklearn.metrics.roc_auc_score(label, y)	1000000	6	0.258406220
-io	read_table (csv, numeric)	pd.read_csv(num.csv)	1000	0	0.000662356
-io	read_table (csv, numeric)	pd.read_csv(num.csv)	1000	1	0.000640280
-io	read_table (csv, numeric)	pd.read_csv(num.csv)	1000	2	0.000629399
-io	read_table (csv, numeric)	pd.read_csv(num.csv)	1000	3	0.000624790
-io	read_table (csv, numeric)	pd.read_csv(num.csv)	1000	4	0.000616057
-io	read_table (csv, numeric)	pd.read_csv(num.csv)	1000	5	0.000631268
-io	read_table (csv, numeric)	pd.read_csv(num.csv)	1000	6	0.000621692
-io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	1000	0	0.001169902
-io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	1000	1	0.001175500
-io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	1000	2	0.001177101
-io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	1000	3	0.001171194
-io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	1000	4	0.001164971
-io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	1000	5	0.001158728
-io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	1000	6	0.001171545
-io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	1000	0	0.001163585
-io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	1000	1	0.001174617
-io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	1000	2	0.001168073
-io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	1000	3	0.001175072
-io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	1000	4	0.001166656
-io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	1000	5	0.001165730
-io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	1000	6	0.001165438
-io	read_table (csv, hoa)	pd.read_csv(mix.csv)	1000	0	0.000774651
-io	read_table (csv, hoa)	pd.read_csv(mix.csv)	1000	1	0.000759486
-io	read_table (csv, hoa)	pd.read_csv(mix.csv)	1000	2	0.000755640
-io	read_table (csv, hoa)	pd.read_csv(mix.csv)	1000	3	0.000774134
-io	read_table (csv, hoa)	pd.read_csv(mix.csv)	1000	4	0.000769365
-io	read_table (csv, hoa)	pd.read_csv(mix.csv)	1000	5	0.000775744
-io	read_table (csv, hoa)	pd.read_csv(mix.csv)	1000	6	0.000768134
-io	write_table (csv, hoa)	df.to_csv(f, index=False)	1000	0	0.004847346
-io	write_table (csv, hoa)	df.to_csv(f, index=False)	1000	1	0.002251240
-io	write_table (csv, hoa)	df.to_csv(f, index=False)	1000	2	0.002245528
-io	write_table (csv, hoa)	df.to_csv(f, index=False)	1000	3	0.002112606
-io	write_table (csv, hoa)	df.to_csv(f, index=False)	1000	4	0.002098277
-io	write_table (csv, hoa)	df.to_csv(f, index=False)	1000	5	0.002115201
-io	write_table (csv, hoa)	df.to_csv(f, index=False)	1000	6	0.002074140
-io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	1000	0	0.002119473
-io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	1000	1	0.002248877
-io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	1000	2	0.002061578
-io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	1000	3	0.002091094
-io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	1000	4	0.002066331
-io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	1000	5	0.002077871
-io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	1000	6	0.002097780
-io	write_table (csv, aoa)	df.to_csv(f, index=False)	1000	0	0.002093399
-io	write_table (csv, aoa)	df.to_csv(f, index=False)	1000	1	0.002080703
-io	write_table (csv, aoa)	df.to_csv(f, index=False)	1000	2	0.002084637
-io	write_table (csv, aoa)	df.to_csv(f, index=False)	1000	3	0.002089786
-io	write_table (csv, aoa)	df.to_csv(f, index=False)	1000	4	0.002097605
-io	write_table (csv, aoa)	df.to_csv(f, index=False)	1000	5	0.002076737
-io	write_table (csv, aoa)	df.to_csv(f, index=False)	1000	6	0.002084906
-io	write_table (csv, row.names)	df.to_csv(f, index=True)	1000	0	0.002286438
-io	write_table (csv, row.names)	df.to_csv(f, index=True)	1000	1	0.002297697
-io	write_table (csv, row.names)	df.to_csv(f, index=True)	1000	2	0.002272130
-io	write_table (csv, row.names)	df.to_csv(f, index=True)	1000	3	0.002279644
-io	write_table (csv, row.names)	df.to_csv(f, index=True)	1000	4	0.002292802
-io	write_table (csv, row.names)	df.to_csv(f, index=True)	1000	5	0.002292689
-io	write_table (csv, row.names)	df.to_csv(f, index=True)	1000	6	0.002282947
-io	read_table (csv, numeric)	pd.read_csv(num.csv)	3000	0	0.001045802
-io	read_table (csv, numeric)	pd.read_csv(num.csv)	3000	1	0.001048406
-io	read_table (csv, numeric)	pd.read_csv(num.csv)	3000	2	0.001091916
-io	read_table (csv, numeric)	pd.read_csv(num.csv)	3000	3	0.001082350
-io	read_table (csv, numeric)	pd.read_csv(num.csv)	3000	4	0.001075240
-io	read_table (csv, numeric)	pd.read_csv(num.csv)	3000	5	0.001070809
-io	read_table (csv, numeric)	pd.read_csv(num.csv)	3000	6	0.001050753
-io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	3000	0	0.006294539
-io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	3000	1	0.003516928
-io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	3000	2	0.003516088
-io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	3000	3	0.003694565
-io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	3000	4	0.003827791
-io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	3000	5	0.003713463
-io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	3000	6	0.003733462
-io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	3000	0	0.003727324
-io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	3000	1	0.003501593
-io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	3000	2	0.003493723
-io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	3000	3	0.003502431
-io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	3000	4	0.003498896
-io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	3000	5	0.003528529
-io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	3000	6	0.003508514
-io	read_table (csv, hoa)	pd.read_csv(mix.csv)	3000	0	0.001284347
-io	read_table (csv, hoa)	pd.read_csv(mix.csv)	3000	1	0.001285795
-io	read_table (csv, hoa)	pd.read_csv(mix.csv)	3000	2	0.001249455
-io	read_table (csv, hoa)	pd.read_csv(mix.csv)	3000	3	0.001261052
-io	read_table (csv, hoa)	pd.read_csv(mix.csv)	3000	4	0.001240694
-io	read_table (csv, hoa)	pd.read_csv(mix.csv)	3000	5	0.001265272
-io	read_table (csv, hoa)	pd.read_csv(mix.csv)	3000	6	0.001251946
-io	write_table (csv, hoa)	df.to_csv(f, index=False)	3000	0	0.005554318
-io	write_table (csv, hoa)	df.to_csv(f, index=False)	3000	1	0.005548079
-io	write_table (csv, hoa)	df.to_csv(f, index=False)	3000	2	0.005514641
-io	write_table (csv, hoa)	df.to_csv(f, index=False)	3000	3	0.005688585
-io	write_table (csv, hoa)	df.to_csv(f, index=False)	3000	4	0.005569021
-io	write_table (csv, hoa)	df.to_csv(f, index=False)	3000	5	0.005548334
-io	write_table (csv, hoa)	df.to_csv(f, index=False)	3000	6	0.005552238
-io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	3000	0	0.005557779
-io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	3000	1	0.005522615
-io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	3000	2	0.005554416
-io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	3000	3	0.005508776
-io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	3000	4	0.005535565
-io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	3000	5	0.005569822
-io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	3000	6	0.005525879
-io	write_table (csv, aoa)	df.to_csv(f, index=False)	3000	0	0.005598235
-io	write_table (csv, aoa)	df.to_csv(f, index=False)	3000	1	0.005533380
-io	write_table (csv, aoa)	df.to_csv(f, index=False)	3000	2	0.005520953
-io	write_table (csv, aoa)	df.to_csv(f, index=False)	3000	3	0.005518356
-io	write_table (csv, aoa)	df.to_csv(f, index=False)	3000	4	0.005516117
-io	write_table (csv, aoa)	df.to_csv(f, index=False)	3000	5	0.005503543
-io	write_table (csv, aoa)	df.to_csv(f, index=False)	3000	6	0.005556670
-io	write_table (csv, row.names)	df.to_csv(f, index=True)	3000	0	0.006130901
-io	write_table (csv, row.names)	df.to_csv(f, index=True)	3000	1	0.006127993
-io	write_table (csv, row.names)	df.to_csv(f, index=True)	3000	2	0.006135014
-io	write_table (csv, row.names)	df.to_csv(f, index=True)	3000	3	0.006131159
-io	write_table (csv, row.names)	df.to_csv(f, index=True)	3000	4	0.006156713
-io	write_table (csv, row.names)	df.to_csv(f, index=True)	3000	5	0.006136292
-io	write_table (csv, row.names)	df.to_csv(f, index=True)	3000	6	0.006219773
-io	read_table (csv, numeric)	pd.read_csv(num.csv)	10000	0	0.002543034
-io	read_table (csv, numeric)	pd.read_csv(num.csv)	10000	1	0.002419640
-io	read_table (csv, numeric)	pd.read_csv(num.csv)	10000	2	0.002448152
-io	read_table (csv, numeric)	pd.read_csv(num.csv)	10000	3	0.002391336
-io	read_table (csv, numeric)	pd.read_csv(num.csv)	10000	4	0.002497225
-io	read_table (csv, numeric)	pd.read_csv(num.csv)	10000	5	0.002405696
-io	read_table (csv, numeric)	pd.read_csv(num.csv)	10000	6	0.002490497
-io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	10000	0	0.011953358
-io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	10000	1	0.011877812
-io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	10000	2	0.011901159
-io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	10000	3	0.011871443
-io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	10000	4	0.011851154
-io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	10000	5	0.013386268
-io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	10000	6	0.021605178
-io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	10000	0	0.011881223
-io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	10000	1	0.011846738
-io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	10000	2	0.011891300
-io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	10000	3	0.011884350
-io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	10000	4	0.011885435
-io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	10000	5	0.011950883
-io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	10000	6	0.013184298
-io	read_table (csv, hoa)	pd.read_csv(mix.csv)	10000	0	0.003189430
-io	read_table (csv, hoa)	pd.read_csv(mix.csv)	10000	1	0.002946033
-io	read_table (csv, hoa)	pd.read_csv(mix.csv)	10000	2	0.002941055
-io	read_table (csv, hoa)	pd.read_csv(mix.csv)	10000	3	0.002944626
-io	read_table (csv, hoa)	pd.read_csv(mix.csv)	10000	4	0.003009014
-io	read_table (csv, hoa)	pd.read_csv(mix.csv)	10000	5	0.002979670
-io	read_table (csv, hoa)	pd.read_csv(mix.csv)	10000	6	0.002921300
-io	write_table (csv, hoa)	df.to_csv(f, index=False)	10000	0	0.017610704
-io	write_table (csv, hoa)	df.to_csv(f, index=False)	10000	1	0.017521053
-io	write_table (csv, hoa)	df.to_csv(f, index=False)	10000	2	0.017540955
-io	write_table (csv, hoa)	df.to_csv(f, index=False)	10000	3	0.017616801
-io	write_table (csv, hoa)	df.to_csv(f, index=False)	10000	4	0.017587003
-io	write_table (csv, hoa)	df.to_csv(f, index=False)	10000	5	0.017549635
-io	write_table (csv, hoa)	df.to_csv(f, index=False)	10000	6	0.017733844
-io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	10000	0	0.017703191
-io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	10000	1	0.017619398
-io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	10000	2	0.017568508
-io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	10000	3	0.017610650
-io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	10000	4	0.017599665
-io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	10000	5	0.017560634
-io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	10000	6	0.017637575
-io	write_table (csv, aoa)	df.to_csv(f, index=False)	10000	0	0.017550624
-io	write_table (csv, aoa)	df.to_csv(f, index=False)	10000	1	0.017600653
-io	write_table (csv, aoa)	df.to_csv(f, index=False)	10000	2	0.017602073
-io	write_table (csv, aoa)	df.to_csv(f, index=False)	10000	3	0.017551471
-io	write_table (csv, aoa)	df.to_csv(f, index=False)	10000	4	0.017692287
-io	write_table (csv, aoa)	df.to_csv(f, index=False)	10000	5	0.017604385
-io	write_table (csv, aoa)	df.to_csv(f, index=False)	10000	6	0.017567295
-io	write_table (csv, row.names)	df.to_csv(f, index=True)	10000	0	0.019663516
-io	write_table (csv, row.names)	df.to_csv(f, index=True)	10000	1	0.019680706
-io	write_table (csv, row.names)	df.to_csv(f, index=True)	10000	2	0.019866857
-io	write_table (csv, row.names)	df.to_csv(f, index=True)	10000	3	0.019631518
-io	write_table (csv, row.names)	df.to_csv(f, index=True)	10000	4	0.019603930
-io	write_table (csv, row.names)	df.to_csv(f, index=True)	10000	5	0.019803146
-io	write_table (csv, row.names)	df.to_csv(f, index=True)	10000	6	0.019610329
-io	read_table (csv, numeric)	pd.read_csv(num.csv)	30000	0	0.006578678
-io	read_table (csv, numeric)	pd.read_csv(num.csv)	30000	1	0.006622206
-io	read_table (csv, numeric)	pd.read_csv(num.csv)	30000	2	0.006626838
-io	read_table (csv, numeric)	pd.read_csv(num.csv)	30000	3	0.006268589
-io	read_table (csv, numeric)	pd.read_csv(num.csv)	30000	4	0.006399177
-io	read_table (csv, numeric)	pd.read_csv(num.csv)	30000	5	0.006421274
-io	read_table (csv, numeric)	pd.read_csv(num.csv)	30000	6	0.006392119
-io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	30000	0	0.036437387
-io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	30000	1	0.036795895
-io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	30000	2	0.036846860
-io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	30000	3	0.036479225
-io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	30000	4	0.037929907
-io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	30000	5	0.036780476
-io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	30000	6	0.036937232
-io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	30000	0	0.048113961
-io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	30000	1	0.037005414
-io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	30000	2	0.036863767
-io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	30000	3	0.037180574
-io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	30000	4	0.036589451
-io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	30000	5	0.037575472
-io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	30000	6	0.036749558
-io	read_table (csv, hoa)	pd.read_csv(mix.csv)	30000	0	0.007962663
-io	read_table (csv, hoa)	pd.read_csv(mix.csv)	30000	1	0.007902312
-io	read_table (csv, hoa)	pd.read_csv(mix.csv)	30000	2	0.007947737
-io	read_table (csv, hoa)	pd.read_csv(mix.csv)	30000	3	0.007960656
-io	read_table (csv, hoa)	pd.read_csv(mix.csv)	30000	4	0.007975988
-io	read_table (csv, hoa)	pd.read_csv(mix.csv)	30000	5	0.007909981
-io	read_table (csv, hoa)	pd.read_csv(mix.csv)	30000	6	0.007903293
-io	write_table (csv, hoa)	df.to_csv(f, index=False)	30000	0	0.052535500
-io	write_table (csv, hoa)	df.to_csv(f, index=False)	30000	1	0.052857437
-io	write_table (csv, hoa)	df.to_csv(f, index=False)	30000	2	0.052896273
-io	write_table (csv, hoa)	df.to_csv(f, index=False)	30000	3	0.052714913
-io	write_table (csv, hoa)	df.to_csv(f, index=False)	30000	4	0.052650962
-io	write_table (csv, hoa)	df.to_csv(f, index=False)	30000	5	0.052762960
-io	write_table (csv, hoa)	df.to_csv(f, index=False)	30000	6	0.052591833
-io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	30000	0	0.052664915
-io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	30000	1	0.052493765
-io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	30000	2	0.052479047
-io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	30000	3	0.052627225
-io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	30000	4	0.052473925
-io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	30000	5	0.052591558
-io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	30000	6	0.052551662
-io	write_table (csv, aoa)	df.to_csv(f, index=False)	30000	0	0.052660978
-io	write_table (csv, aoa)	df.to_csv(f, index=False)	30000	1	0.052458089
-io	write_table (csv, aoa)	df.to_csv(f, index=False)	30000	2	0.053194982
-io	write_table (csv, aoa)	df.to_csv(f, index=False)	30000	3	0.052589267
-io	write_table (csv, aoa)	df.to_csv(f, index=False)	30000	4	0.052674147
-io	write_table (csv, aoa)	df.to_csv(f, index=False)	30000	5	0.052645688
-io	write_table (csv, aoa)	df.to_csv(f, index=False)	30000	6	0.052945212
-io	write_table (csv, row.names)	df.to_csv(f, index=True)	30000	0	0.059682830
-io	write_table (csv, row.names)	df.to_csv(f, index=True)	30000	1	0.059607940
-io	write_table (csv, row.names)	df.to_csv(f, index=True)	30000	2	0.060560818
-io	write_table (csv, row.names)	df.to_csv(f, index=True)	30000	3	0.059700822
-io	write_table (csv, row.names)	df.to_csv(f, index=True)	30000	4	0.059638896
-io	write_table (csv, row.names)	df.to_csv(f, index=True)	30000	5	0.059526095
-io	write_table (csv, row.names)	df.to_csv(f, index=True)	30000	6	0.059756512
-io	read_table (csv, numeric)	pd.read_csv(num.csv)	100000	0	0.020875777
-io	read_table (csv, numeric)	pd.read_csv(num.csv)	100000	1	0.020983846
-io	read_table (csv, numeric)	pd.read_csv(num.csv)	100000	2	0.020903659
-io	read_table (csv, numeric)	pd.read_csv(num.csv)	100000	3	0.020937141
-io	read_table (csv, numeric)	pd.read_csv(num.csv)	100000	4	0.020703512
-io	read_table (csv, numeric)	pd.read_csv(num.csv)	100000	5	0.021659133
-io	read_table (csv, numeric)	pd.read_csv(num.csv)	100000	6	0.020829479
-io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	100000	0	0.127153425
-io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	100000	1	0.137133855
-io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	100000	2	0.137520387
-io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	100000	3	0.127821699
-io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	100000	4	0.134535657
-io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	100000	5	0.128541836
-io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	100000	6	0.132420214
-io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	100000	0	0.139524130
-io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	100000	1	0.140271660
-io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	100000	2	0.140970030
-io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	100000	3	0.140293992
-io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	100000	4	0.140597698
-io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	100000	5	0.140117239
-io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	100000	6	0.139558761
-io	read_table (csv, hoa)	pd.read_csv(mix.csv)	100000	0	0.025837617
-io	read_table (csv, hoa)	pd.read_csv(mix.csv)	100000	1	0.025649416
-io	read_table (csv, hoa)	pd.read_csv(mix.csv)	100000	2	0.025380116
-io	read_table (csv, hoa)	pd.read_csv(mix.csv)	100000	3	0.025263895
-io	read_table (csv, hoa)	pd.read_csv(mix.csv)	100000	4	0.025600669
-io	read_table (csv, hoa)	pd.read_csv(mix.csv)	100000	5	0.025440297
-io	read_table (csv, hoa)	pd.read_csv(mix.csv)	100000	6	0.025432194
-io	write_table (csv, hoa)	df.to_csv(f, index=False)	100000	0	0.174914464
-io	write_table (csv, hoa)	df.to_csv(f, index=False)	100000	1	0.179638961
-io	write_table (csv, hoa)	df.to_csv(f, index=False)	100000	2	0.178208816
-io	write_table (csv, hoa)	df.to_csv(f, index=False)	100000	3	0.178702161
-io	write_table (csv, hoa)	df.to_csv(f, index=False)	100000	4	0.178169975
-io	write_table (csv, hoa)	df.to_csv(f, index=False)	100000	5	0.178127377
-io	write_table (csv, hoa)	df.to_csv(f, index=False)	100000	6	0.178110631
-io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	100000	0	0.177989490
-io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	100000	1	0.178034963
-io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	100000	2	0.177866054
-io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	100000	3	0.178180197
-io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	100000	4	0.178071520
-io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	100000	5	0.178184915
-io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	100000	6	0.177757904
-io	write_table (csv, aoa)	df.to_csv(f, index=False)	100000	0	0.177873902
-io	write_table (csv, aoa)	df.to_csv(f, index=False)	100000	1	0.178241318
-io	write_table (csv, aoa)	df.to_csv(f, index=False)	100000	2	0.178059797
-io	write_table (csv, aoa)	df.to_csv(f, index=False)	100000	3	0.177928806
-io	write_table (csv, aoa)	df.to_csv(f, index=False)	100000	4	0.178303205
-io	write_table (csv, aoa)	df.to_csv(f, index=False)	100000	5	0.178193429
-io	write_table (csv, aoa)	df.to_csv(f, index=False)	100000	6	0.177661001
-io	write_table (csv, row.names)	df.to_csv(f, index=True)	100000	0	0.201345104
-io	write_table (csv, row.names)	df.to_csv(f, index=True)	100000	1	0.201373258
-io	write_table (csv, row.names)	df.to_csv(f, index=True)	100000	2	0.205183136
-io	write_table (csv, row.names)	df.to_csv(f, index=True)	100000	3	0.201347231
-io	write_table (csv, row.names)	df.to_csv(f, index=True)	100000	4	0.198514617
-io	write_table (csv, row.names)	df.to_csv(f, index=True)	100000	5	0.200650488
-io	write_table (csv, row.names)	df.to_csv(f, index=True)	100000	6	0.200855937
-io	read_table (csv, numeric)	pd.read_csv(num.csv)	300000	0	0.061162754
-io	read_table (csv, numeric)	pd.read_csv(num.csv)	300000	1	0.061470165
-io	read_table (csv, numeric)	pd.read_csv(num.csv)	300000	2	0.060879399
-io	read_table (csv, numeric)	pd.read_csv(num.csv)	300000	3	0.060712500
-io	read_table (csv, numeric)	pd.read_csv(num.csv)	300000	4	0.061406129
-io	read_table (csv, numeric)	pd.read_csv(num.csv)	300000	5	0.061500837
-io	read_table (csv, numeric)	pd.read_csv(num.csv)	300000	6	0.061614258
-io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	300000	0	0.418142640
-io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	300000	1	0.433247705
-io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	300000	2	0.433667599
-io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	300000	3	0.429304360
-io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	300000	4	0.440956084
-io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	300000	5	0.437819767
-io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	300000	6	0.435290411
-io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	300000	0	0.436719395
-io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	300000	1	0.437620866
-io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	300000	2	0.435096734
-io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	300000	3	0.432827368
-io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	300000	4	0.420221279
-io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	300000	5	0.418439187
-io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	300000	6	0.418251247
-io	read_table (csv, hoa)	pd.read_csv(mix.csv)	300000	0	0.075941003
-io	read_table (csv, hoa)	pd.read_csv(mix.csv)	300000	1	0.075478450
-io	read_table (csv, hoa)	pd.read_csv(mix.csv)	300000	2	0.075524406
-io	read_table (csv, hoa)	pd.read_csv(mix.csv)	300000	3	0.075881966
-io	read_table (csv, hoa)	pd.read_csv(mix.csv)	300000	4	0.075327161
-io	read_table (csv, hoa)	pd.read_csv(mix.csv)	300000	5	0.075523296
-io	read_table (csv, hoa)	pd.read_csv(mix.csv)	300000	6	0.075867052
-io	write_table (csv, hoa)	df.to_csv(f, index=False)	300000	0	0.533359349
-io	write_table (csv, hoa)	df.to_csv(f, index=False)	300000	1	0.532060446
-io	write_table (csv, hoa)	df.to_csv(f, index=False)	300000	2	0.532175023
-io	write_table (csv, hoa)	df.to_csv(f, index=False)	300000	3	0.532446115
-io	write_table (csv, hoa)	df.to_csv(f, index=False)	300000	4	0.532236173
-io	write_table (csv, hoa)	df.to_csv(f, index=False)	300000	5	0.531612652
-io	write_table (csv, hoa)	df.to_csv(f, index=False)	300000	6	0.558639957
-io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	300000	0	0.534706673
-io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	300000	1	0.533772594
-io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	300000	2	0.532765017
-io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	300000	3	0.532840286
-io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	300000	4	0.532234795
-io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	300000	5	0.530206726
-io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	300000	6	0.531463400
-io	write_table (csv, aoa)	df.to_csv(f, index=False)	300000	0	0.532348560
-io	write_table (csv, aoa)	df.to_csv(f, index=False)	300000	1	0.532683778
-io	write_table (csv, aoa)	df.to_csv(f, index=False)	300000	2	0.531717379
-io	write_table (csv, aoa)	df.to_csv(f, index=False)	300000	3	0.531600208
-io	write_table (csv, aoa)	df.to_csv(f, index=False)	300000	4	0.531504803
-io	write_table (csv, aoa)	df.to_csv(f, index=False)	300000	5	0.531488038
-io	write_table (csv, aoa)	df.to_csv(f, index=False)	300000	6	0.531533848
-io	write_table (csv, row.names)	df.to_csv(f, index=True)	300000	0	0.604076759
-io	write_table (csv, row.names)	df.to_csv(f, index=True)	300000	1	0.603167265
-io	write_table (csv, row.names)	df.to_csv(f, index=True)	300000	2	0.629665157
-io	write_table (csv, row.names)	df.to_csv(f, index=True)	300000	3	0.604812885
-io	write_table (csv, row.names)	df.to_csv(f, index=True)	300000	4	0.607533595
-io	write_table (csv, row.names)	df.to_csv(f, index=True)	300000	5	0.601999036
-io	write_table (csv, row.names)	df.to_csv(f, index=True)	300000	6	0.603600798
-frame	filter	df[df.x > 0]	1000	0	0.000224652
-frame	filter	df[df.x > 0]	1000	1	0.000201489
-frame	filter	df[df.x > 0]	1000	2	0.000199667
-frame	filter	df[df.x > 0]	1000	3	0.000196337
-frame	filter	df[df.x > 0]	1000	4	0.000193860
-frame	filter	df[df.x > 0]	1000	5	0.000194496
-frame	filter	df[df.x > 0]	1000	6	0.000195055
-frame	select_cols	df[['x','cat1']]	1000	0	0.000315240
-frame	select_cols	df[['x','cat1']]	1000	1	0.000292858
-frame	select_cols	df[['x','cat1']]	1000	2	0.000295943
-frame	select_cols	df[['x','cat1']]	1000	3	0.000294179
-frame	select_cols	df[['x','cat1']]	1000	4	0.000292964
-frame	select_cols	df[['x','cat1']]	1000	5	0.000295621
-frame	select_cols	df[['x','cat1']]	1000	6	0.000294868
-frame	group_by + mean	df.groupby('cat1')['x'].mean()	1000	0	0.000312924
-frame	group_by + mean	df.groupby('cat1')['x'].mean()	1000	1	0.000292590
-frame	group_by + mean	df.groupby('cat1')['x'].mean()	1000	2	0.000292528
-frame	group_by + mean	df.groupby('cat1')['x'].mean()	1000	3	0.000287688
-frame	group_by + mean	df.groupby('cat1')['x'].mean()	1000	4	0.000284436
-frame	group_by + mean	df.groupby('cat1')['x'].mean()	1000	5	0.000286157
-frame	group_by + mean	df.groupby('cat1')['x'].mean()	1000	6	0.000280753
-frame	merge	df_id.merge(df_id, on='id', how='inner')	1000	0	0.001695285
-frame	merge	df_id.merge(df_id, on='id', how='inner')	1000	1	0.001644190
-frame	merge	df_id.merge(df_id, on='id', how='inner')	1000	2	0.001628562
-frame	merge	df_id.merge(df_id, on='id', how='inner')	1000	3	0.001636319
-frame	merge	df_id.merge(df_id, on='id', how='inner')	1000	4	0.001628222
-frame	merge	df_id.merge(df_id, on='id', how='inner')	1000	5	0.001625785
-frame	merge	df_id.merge(df_id, on='id', how='inner')	1000	6	0.001632344
-frame	value_counts	df['cat1'].value_counts()	1000	0	0.000226451
-frame	value_counts	df['cat1'].value_counts()	1000	1	0.000215151
-frame	value_counts	df['cat1'].value_counts()	1000	2	0.000211960
-frame	value_counts	df['cat1'].value_counts()	1000	3	0.000211240
-frame	value_counts	df['cat1'].value_counts()	1000	4	0.000210785
-frame	value_counts	df['cat1'].value_counts()	1000	5	0.000211023
-frame	value_counts	df['cat1'].value_counts()	1000	6	0.000207884
-frame	drop_duplicates	df.drop_duplicates()	1000	0	0.000520353
-frame	drop_duplicates	df.drop_duplicates()	1000	1	0.000506591
-frame	drop_duplicates	df.drop_duplicates()	1000	2	0.000502818
-frame	drop_duplicates	df.drop_duplicates()	1000	3	0.000509918
-frame	drop_duplicates	df.drop_duplicates()	1000	4	0.000509438
-frame	drop_duplicates	df.drop_duplicates()	1000	5	0.000510781
-frame	drop_duplicates	df.drop_duplicates()	1000	6	0.000513218
-frame	transpose	arr.T.copy()	1000	0	0.000000933
-frame	transpose	arr.T.copy()	1000	1	0.000000935
-frame	transpose	arr.T.copy()	1000	2	0.000000936
-frame	transpose	arr.T.copy()	1000	3	0.000000943
-frame	transpose	arr.T.copy()	1000	4	0.000000937
-frame	transpose	arr.T.copy()	1000	5	0.000000932
-frame	transpose	arr.T.copy()	1000	6	0.000000939
-frame	aoh2hoa	pd.DataFrame(records)	1000	0	0.000767813
-frame	aoh2hoa	pd.DataFrame(records)	1000	1	0.000764348
-frame	aoh2hoa	pd.DataFrame(records)	1000	2	0.000754170
-frame	aoh2hoa	pd.DataFrame(records)	1000	3	0.000752009
-frame	aoh2hoa	pd.DataFrame(records)	1000	4	0.000759700
-frame	aoh2hoa	pd.DataFrame(records)	1000	5	0.000754993
-frame	aoh2hoa	pd.DataFrame(records)	1000	6	0.000757458
-frame	filter	df[df.x > 0]	3000	0	0.000221869
-frame	filter	df[df.x > 0]	3000	1	0.000215799
-frame	filter	df[df.x > 0]	3000	2	0.000211512
-frame	filter	df[df.x > 0]	3000	3	0.000212489
-frame	filter	df[df.x > 0]	3000	4	0.000211241
-frame	filter	df[df.x > 0]	3000	5	0.000210191
-frame	filter	df[df.x > 0]	3000	6	0.000210362
-frame	select_cols	df[['x','cat1']]	3000	0	0.000304195
-frame	select_cols	df[['x','cat1']]	3000	1	0.000297678
-frame	select_cols	df[['x','cat1']]	3000	2	0.000306142
-frame	select_cols	df[['x','cat1']]	3000	3	0.000291257
-frame	select_cols	df[['x','cat1']]	3000	4	0.000292078
-frame	select_cols	df[['x','cat1']]	3000	5	0.000290720
-frame	select_cols	df[['x','cat1']]	3000	6	0.000294904
-frame	group_by + mean	df.groupby('cat1')['x'].mean()	3000	0	0.000349736
-frame	group_by + mean	df.groupby('cat1')['x'].mean()	3000	1	0.000333501
-frame	group_by + mean	df.groupby('cat1')['x'].mean()	3000	2	0.000337400
-frame	group_by + mean	df.groupby('cat1')['x'].mean()	3000	3	0.000328941
-frame	group_by + mean	df.groupby('cat1')['x'].mean()	3000	4	0.000330411
-frame	group_by + mean	df.groupby('cat1')['x'].mean()	3000	5	0.000332123
-frame	group_by + mean	df.groupby('cat1')['x'].mean()	3000	6	0.000336033
-frame	merge	df_id.merge(df_id, on='id', how='inner')	3000	0	0.001642802
-frame	merge	df_id.merge(df_id, on='id', how='inner')	3000	1	0.001859154
-frame	merge	df_id.merge(df_id, on='id', how='inner')	3000	2	0.001662609
-frame	merge	df_id.merge(df_id, on='id', how='inner')	3000	3	0.001660436
-frame	merge	df_id.merge(df_id, on='id', how='inner')	3000	4	0.001646563
-frame	merge	df_id.merge(df_id, on='id', how='inner')	3000	5	0.001650265
-frame	merge	df_id.merge(df_id, on='id', how='inner')	3000	6	0.001645159
-frame	value_counts	df['cat1'].value_counts()	3000	0	0.000250475
-frame	value_counts	df['cat1'].value_counts()	3000	1	0.000240373
-frame	value_counts	df['cat1'].value_counts()	3000	2	0.000237494
-frame	value_counts	df['cat1'].value_counts()	3000	3	0.000241502
-frame	value_counts	df['cat1'].value_counts()	3000	4	0.000238934
-frame	value_counts	df['cat1'].value_counts()	3000	5	0.000237191
-frame	value_counts	df['cat1'].value_counts()	3000	6	0.000234118
-frame	drop_duplicates	df.drop_duplicates()	3000	0	0.000745054
-frame	drop_duplicates	df.drop_duplicates()	3000	1	0.000729355
-frame	drop_duplicates	df.drop_duplicates()	3000	2	0.000723468
-frame	drop_duplicates	df.drop_duplicates()	3000	3	0.000725664
-frame	drop_duplicates	df.drop_duplicates()	3000	4	0.000732120
-frame	drop_duplicates	df.drop_duplicates()	3000	5	0.000728695
-frame	drop_duplicates	df.drop_duplicates()	3000	6	0.000718709
-frame	transpose	arr.T.copy()	3000	0	0.000001974
-frame	transpose	arr.T.copy()	3000	1	0.000001967
-frame	transpose	arr.T.copy()	3000	2	0.000001972
-frame	transpose	arr.T.copy()	3000	3	0.000001964
-frame	transpose	arr.T.copy()	3000	4	0.000001960
-frame	transpose	arr.T.copy()	3000	5	0.000001965
-frame	transpose	arr.T.copy()	3000	6	0.000001965
-frame	aoh2hoa	pd.DataFrame(records)	3000	0	0.001902118
-frame	aoh2hoa	pd.DataFrame(records)	3000	1	0.001920296
-frame	aoh2hoa	pd.DataFrame(records)	3000	2	0.001934693
-frame	aoh2hoa	pd.DataFrame(records)	3000	3	0.001899385
-frame	aoh2hoa	pd.DataFrame(records)	3000	4	0.001932608
-frame	aoh2hoa	pd.DataFrame(records)	3000	5	0.001902042
-frame	aoh2hoa	pd.DataFrame(records)	3000	6	0.001930233
-frame	filter	df[df.x > 0]	10000	0	0.000275798
-frame	filter	df[df.x > 0]	10000	1	0.000264566
-frame	filter	df[df.x > 0]	10000	2	0.000269214
-frame	filter	df[df.x > 0]	10000	3	0.000267590
-frame	filter	df[df.x > 0]	10000	4	0.000271336
-frame	filter	df[df.x > 0]	10000	5	0.000262945
-frame	filter	df[df.x > 0]	10000	6	0.000278792
-frame	select_cols	df[['x','cat1']]	10000	0	0.000312772
-frame	select_cols	df[['x','cat1']]	10000	1	0.000304090
-frame	select_cols	df[['x','cat1']]	10000	2	0.000303763
-frame	select_cols	df[['x','cat1']]	10000	3	0.000294491
-frame	select_cols	df[['x','cat1']]	10000	4	0.000291971
-frame	select_cols	df[['x','cat1']]	10000	5	0.000300022
-frame	select_cols	df[['x','cat1']]	10000	6	0.000303701
-frame	group_by + mean	df.groupby('cat1')['x'].mean()	10000	0	0.000484869
-frame	group_by + mean	df.groupby('cat1')['x'].mean()	10000	1	0.000476535
-frame	group_by + mean	df.groupby('cat1')['x'].mean()	10000	2	0.000480884
-frame	group_by + mean	df.groupby('cat1')['x'].mean()	10000	3	0.000470859
-frame	group_by + mean	df.groupby('cat1')['x'].mean()	10000	4	0.000476154
-frame	group_by + mean	df.groupby('cat1')['x'].mean()	10000	5	0.000473507
-frame	group_by + mean	df.groupby('cat1')['x'].mean()	10000	6	0.000473025
-frame	merge	df_id.merge(df_id, on='id', how='inner')	10000	0	0.001649798
-frame	merge	df_id.merge(df_id, on='id', how='inner')	10000	1	0.001648974
-frame	merge	df_id.merge(df_id, on='id', how='inner')	10000	2	0.001660052
-frame	merge	df_id.merge(df_id, on='id', how='inner')	10000	3	0.001649765
-frame	merge	df_id.merge(df_id, on='id', how='inner')	10000	4	0.001650593
-frame	merge	df_id.merge(df_id, on='id', how='inner')	10000	5	0.001647918
-frame	merge	df_id.merge(df_id, on='id', how='inner')	10000	6	0.001646577
-frame	value_counts	df['cat1'].value_counts()	10000	0	0.000362382
-frame	value_counts	df['cat1'].value_counts()	10000	1	0.000346896
-frame	value_counts	df['cat1'].value_counts()	10000	2	0.000339663
-frame	value_counts	df['cat1'].value_counts()	10000	3	0.000337124
-frame	value_counts	df['cat1'].value_counts()	10000	4	0.000336430
-frame	value_counts	df['cat1'].value_counts()	10000	5	0.000334903
-frame	value_counts	df['cat1'].value_counts()	10000	6	0.000344326
-frame	drop_duplicates	df.drop_duplicates()	10000	0	0.001353124
-frame	drop_duplicates	df.drop_duplicates()	10000	1	0.001329856
-frame	drop_duplicates	df.drop_duplicates()	10000	2	0.001340204
-frame	drop_duplicates	df.drop_duplicates()	10000	3	0.001339417
-frame	drop_duplicates	df.drop_duplicates()	10000	4	0.001344191
-frame	drop_duplicates	df.drop_duplicates()	10000	5	0.001328349
-frame	drop_duplicates	df.drop_duplicates()	10000	6	0.001347340
-frame	transpose	arr.T.copy()	10000	0	0.000005472
-frame	transpose	arr.T.copy()	10000	1	0.000005477
-frame	transpose	arr.T.copy()	10000	2	0.000005469
-frame	transpose	arr.T.copy()	10000	3	0.000005477
-frame	transpose	arr.T.copy()	10000	4	0.000005477
-frame	transpose	arr.T.copy()	10000	5	0.000005465
-frame	transpose	arr.T.copy()	10000	6	0.000005468
-frame	aoh2hoa	pd.DataFrame(records)	10000	0	0.005845208
-frame	aoh2hoa	pd.DataFrame(records)	10000	1	0.005885683
-frame	aoh2hoa	pd.DataFrame(records)	10000	2	0.005876636
-frame	aoh2hoa	pd.DataFrame(records)	10000	3	0.005870561
-frame	aoh2hoa	pd.DataFrame(records)	10000	4	0.005902789
-frame	aoh2hoa	pd.DataFrame(records)	10000	5	0.005900552
-frame	aoh2hoa	pd.DataFrame(records)	10000	6	0.005859947
-frame	filter	df[df.x > 0]	30000	0	0.000417834
-frame	filter	df[df.x > 0]	30000	1	0.000400280
-frame	filter	df[df.x > 0]	30000	2	0.000400728
-frame	filter	df[df.x > 0]	30000	3	0.000400290
-frame	filter	df[df.x > 0]	30000	4	0.000402495
-frame	filter	df[df.x > 0]	30000	5	0.000397778
-frame	filter	df[df.x > 0]	30000	6	0.000395235
-frame	select_cols	df[['x','cat1']]	30000	0	0.000301938
-frame	select_cols	df[['x','cat1']]	30000	1	0.000293413
-frame	select_cols	df[['x','cat1']]	30000	2	0.000290247
-frame	select_cols	df[['x','cat1']]	30000	3	0.000289122
-frame	select_cols	df[['x','cat1']]	30000	4	0.000290074
-frame	select_cols	df[['x','cat1']]	30000	5	0.000287864
-frame	select_cols	df[['x','cat1']]	30000	6	0.000289215
-frame	group_by + mean	df.groupby('cat1')['x'].mean()	30000	0	0.000862869
-frame	group_by + mean	df.groupby('cat1')['x'].mean()	30000	1	0.000876479
-frame	group_by + mean	df.groupby('cat1')['x'].mean()	30000	2	0.000873051
-frame	group_by + mean	df.groupby('cat1')['x'].mean()	30000	3	0.000875496
-frame	group_by + mean	df.groupby('cat1')['x'].mean()	30000	4	0.000872042
-frame	group_by + mean	df.groupby('cat1')['x'].mean()	30000	5	0.000868977
-frame	group_by + mean	df.groupby('cat1')['x'].mean()	30000	6	0.000871666
-frame	merge	df_id.merge(df_id, on='id', how='inner')	30000	0	0.001682413
-frame	merge	df_id.merge(df_id, on='id', how='inner')	30000	1	0.001667665
-frame	merge	df_id.merge(df_id, on='id', how='inner')	30000	2	0.001655219
-frame	merge	df_id.merge(df_id, on='id', how='inner')	30000	3	0.001673159
-frame	merge	df_id.merge(df_id, on='id', how='inner')	30000	4	0.001684879
-frame	merge	df_id.merge(df_id, on='id', how='inner')	30000	5	0.001685801
-frame	merge	df_id.merge(df_id, on='id', how='inner')	30000	6	0.001675274
-frame	value_counts	df['cat1'].value_counts()	30000	0	0.000636770
-frame	value_counts	df['cat1'].value_counts()	30000	1	0.000649293
-frame	value_counts	df['cat1'].value_counts()	30000	2	0.000631687
-frame	value_counts	df['cat1'].value_counts()	30000	3	0.000625759
-frame	value_counts	df['cat1'].value_counts()	30000	4	0.000617872
-frame	value_counts	df['cat1'].value_counts()	30000	5	0.000626159
-frame	value_counts	df['cat1'].value_counts()	30000	6	0.000631363
-frame	drop_duplicates	df.drop_duplicates()	30000	0	0.002859513
-frame	drop_duplicates	df.drop_duplicates()	30000	1	0.002842657
-frame	drop_duplicates	df.drop_duplicates()	30000	2	0.002801875
-frame	drop_duplicates	df.drop_duplicates()	30000	3	0.002810092
-frame	drop_duplicates	df.drop_duplicates()	30000	4	0.002828366
-frame	drop_duplicates	df.drop_duplicates()	30000	5	0.002827959
-frame	drop_duplicates	df.drop_duplicates()	30000	6	0.002823601
-frame	transpose	arr.T.copy()	30000	0	0.000020586
-frame	transpose	arr.T.copy()	30000	1	0.000020945
-frame	transpose	arr.T.copy()	30000	2	0.000020993
-frame	transpose	arr.T.copy()	30000	3	0.000020982
-frame	transpose	arr.T.copy()	30000	4	0.000020908
-frame	transpose	arr.T.copy()	30000	5	0.000021032
-frame	transpose	arr.T.copy()	30000	6	0.000020869
-frame	aoh2hoa	pd.DataFrame(records)	30000	0	0.017460208
-frame	aoh2hoa	pd.DataFrame(records)	30000	1	0.016982106
-frame	aoh2hoa	pd.DataFrame(records)	30000	2	0.016885833
-frame	aoh2hoa	pd.DataFrame(records)	30000	3	0.016869212
-frame	aoh2hoa	pd.DataFrame(records)	30000	4	0.016931078
-frame	aoh2hoa	pd.DataFrame(records)	30000	5	0.016975101
-frame	aoh2hoa	pd.DataFrame(records)	30000	6	0.016780245
-frame	filter	df[df.x > 0]	100000	0	0.000863156
-frame	filter	df[df.x > 0]	100000	1	0.000852335
-frame	filter	df[df.x > 0]	100000	2	0.000836233
-frame	filter	df[df.x > 0]	100000	3	0.000836014
-frame	filter	df[df.x > 0]	100000	4	0.000839414
-frame	filter	df[df.x > 0]	100000	5	0.000841380
-frame	filter	df[df.x > 0]	100000	6	0.000844813
-frame	select_cols	df[['x','cat1']]	100000	0	0.000311363
-frame	select_cols	df[['x','cat1']]	100000	1	0.000307997
-frame	select_cols	df[['x','cat1']]	100000	2	0.000290616
-frame	select_cols	df[['x','cat1']]	100000	3	0.000295319
-frame	select_cols	df[['x','cat1']]	100000	4	0.000293245
-frame	select_cols	df[['x','cat1']]	100000	5	0.000290847
-frame	select_cols	df[['x','cat1']]	100000	6	0.000292998
-frame	group_by + mean	df.groupby('cat1')['x'].mean()	100000	0	0.002223535
-frame	group_by + mean	df.groupby('cat1')['x'].mean()	100000	1	0.002206709
-frame	group_by + mean	df.groupby('cat1')['x'].mean()	100000	2	0.002210587
-frame	group_by + mean	df.groupby('cat1')['x'].mean()	100000	3	0.002187260
-frame	group_by + mean	df.groupby('cat1')['x'].mean()	100000	4	0.002198596
-frame	group_by + mean	df.groupby('cat1')['x'].mean()	100000	5	0.002227694
-frame	group_by + mean	df.groupby('cat1')['x'].mean()	100000	6	0.002228999
-frame	merge	df_id.merge(df_id, on='id', how='inner')	100000	0	0.001737761
-frame	merge	df_id.merge(df_id, on='id', how='inner')	100000	1	0.001748249
-frame	merge	df_id.merge(df_id, on='id', how='inner')	100000	2	0.001835359
-frame	merge	df_id.merge(df_id, on='id', how='inner')	100000	3	0.001752640
-frame	merge	df_id.merge(df_id, on='id', how='inner')	100000	4	0.001766537
-frame	merge	df_id.merge(df_id, on='id', how='inner')	100000	5	0.001771918
-frame	merge	df_id.merge(df_id, on='id', how='inner')	100000	6	0.001765129
-frame	value_counts	df['cat1'].value_counts()	100000	0	0.001560345
-frame	value_counts	df['cat1'].value_counts()	100000	1	0.001574230
-frame	value_counts	df['cat1'].value_counts()	100000	2	0.001562229
-frame	value_counts	df['cat1'].value_counts()	100000	3	0.001559848
-frame	value_counts	df['cat1'].value_counts()	100000	4	0.001562971
-frame	value_counts	df['cat1'].value_counts()	100000	5	0.001552866
-frame	value_counts	df['cat1'].value_counts()	100000	6	0.001563309
-frame	drop_duplicates	df.drop_duplicates()	100000	0	0.010288464
-frame	drop_duplicates	df.drop_duplicates()	100000	1	0.010326321
-frame	drop_duplicates	df.drop_duplicates()	100000	2	0.010348172
-frame	drop_duplicates	df.drop_duplicates()	100000	3	0.010293598
-frame	drop_duplicates	df.drop_duplicates()	100000	4	0.010288358
-frame	drop_duplicates	df.drop_duplicates()	100000	5	0.010313937
-frame	drop_duplicates	df.drop_duplicates()	100000	6	0.010283701
-frame	transpose	arr.T.copy()	100000	0	0.000100536
-frame	transpose	arr.T.copy()	100000	1	0.000100573
-frame	transpose	arr.T.copy()	100000	2	0.000100575
-frame	transpose	arr.T.copy()	100000	3	0.000100651
-frame	transpose	arr.T.copy()	100000	4	0.000101573
-frame	transpose	arr.T.copy()	100000	5	0.000113035
-frame	transpose	arr.T.copy()	100000	6	0.000100927
-frame	aoh2hoa	pd.DataFrame(records)	100000	0	0.055644155
-frame	aoh2hoa	pd.DataFrame(records)	100000	1	0.055560671
-frame	aoh2hoa	pd.DataFrame(records)	100000	2	0.055542578
-frame	aoh2hoa	pd.DataFrame(records)	100000	3	0.055846204
-frame	aoh2hoa	pd.DataFrame(records)	100000	4	0.056233831
-frame	aoh2hoa	pd.DataFrame(records)	100000	5	0.055405844
-frame	aoh2hoa	pd.DataFrame(records)	100000	6	0.055439234
-frame	filter	df[df.x > 0]	300000	0	0.002269611
-frame	filter	df[df.x > 0]	300000	1	0.002279892
-frame	filter	df[df.x > 0]	300000	2	0.002166459
-frame	filter	df[df.x > 0]	300000	3	0.002217397
-frame	filter	df[df.x > 0]	300000	4	0.002199265
-frame	filter	df[df.x > 0]	300000	5	0.002161091
-frame	filter	df[df.x > 0]	300000	6	0.002187742
-frame	select_cols	df[['x','cat1']]	300000	0	0.000307294
-frame	select_cols	df[['x','cat1']]	300000	1	0.000299399
-frame	select_cols	df[['x','cat1']]	300000	2	0.000298215
-frame	select_cols	df[['x','cat1']]	300000	3	0.000297082
-frame	select_cols	df[['x','cat1']]	300000	4	0.000299970
-frame	select_cols	df[['x','cat1']]	300000	5	0.000299378
-frame	select_cols	df[['x','cat1']]	300000	6	0.000294316
-frame	group_by + mean	df.groupby('cat1')['x'].mean()	300000	0	0.006070727
-frame	group_by + mean	df.groupby('cat1')['x'].mean()	300000	1	0.006014293
-frame	group_by + mean	df.groupby('cat1')['x'].mean()	300000	2	0.006141992
-frame	group_by + mean	df.groupby('cat1')['x'].mean()	300000	3	0.006074279
-frame	group_by + mean	df.groupby('cat1')['x'].mean()	300000	4	0.006135320
-frame	group_by + mean	df.groupby('cat1')['x'].mean()	300000	5	0.006046633
-frame	group_by + mean	df.groupby('cat1')['x'].mean()	300000	6	0.006051392
-frame	merge	df_id.merge(df_id, on='id', how='inner')	300000	0	0.001983750
-frame	merge	df_id.merge(df_id, on='id', how='inner')	300000	1	0.001972492
-frame	merge	df_id.merge(df_id, on='id', how='inner')	300000	2	0.001969045
-frame	merge	df_id.merge(df_id, on='id', how='inner')	300000	3	0.001962956
-frame	merge	df_id.merge(df_id, on='id', how='inner')	300000	4	0.001965500
-frame	merge	df_id.merge(df_id, on='id', how='inner')	300000	5	0.001961588
-frame	merge	df_id.merge(df_id, on='id', how='inner')	300000	6	0.001982512
-frame	value_counts	df['cat1'].value_counts()	300000	0	0.004432829
-frame	value_counts	df['cat1'].value_counts()	300000	1	0.004433888
-frame	value_counts	df['cat1'].value_counts()	300000	2	0.004415116
-frame	value_counts	df['cat1'].value_counts()	300000	3	0.004388107
-frame	value_counts	df['cat1'].value_counts()	300000	4	0.004391418
-frame	value_counts	df['cat1'].value_counts()	300000	5	0.004403107
-frame	value_counts	df['cat1'].value_counts()	300000	6	0.004510646
-frame	drop_duplicates	df.drop_duplicates()	300000	0	0.028649140
-frame	drop_duplicates	df.drop_duplicates()	300000	1	0.028588646
-frame	drop_duplicates	df.drop_duplicates()	300000	2	0.028582073
-frame	drop_duplicates	df.drop_duplicates()	300000	3	0.028934150
-frame	drop_duplicates	df.drop_duplicates()	300000	4	0.028596935
-frame	drop_duplicates	df.drop_duplicates()	300000	5	0.028619370
-frame	drop_duplicates	df.drop_duplicates()	300000	6	0.028522711
-frame	transpose	arr.T.copy()	300000	0	0.000303996
-frame	transpose	arr.T.copy()	300000	1	0.000302132
-frame	transpose	arr.T.copy()	300000	2	0.000304631
-frame	transpose	arr.T.copy()	300000	3	0.000301478
-frame	transpose	arr.T.copy()	300000	4	0.000306914
-frame	transpose	arr.T.copy()	300000	5	0.000337232
-frame	transpose	arr.T.copy()	300000	6	0.000301396
-frame	aoh2hoa	pd.DataFrame(records)	300000	0	0.167973468
-frame	aoh2hoa	pd.DataFrame(records)	300000	1	0.167347183
-frame	aoh2hoa	pd.DataFrame(records)	300000	2	0.167426301
-frame	aoh2hoa	pd.DataFrame(records)	300000	3	0.167050962
-frame	aoh2hoa	pd.DataFrame(records)	300000	4	0.166897934
-frame	aoh2hoa	pd.DataFrame(records)	300000	5	0.166877087
-frame	aoh2hoa	pd.DataFrame(records)	300000	6	0.168058066
+vector	sum	np.sum(x)	1000	0	0.000002101
+vector	sum	np.sum(x)	1000	1	0.000001863
+vector	sum	np.sum(x)	1000	2	0.000001857
+vector	sum	np.sum(x)	1000	3	0.000001955
+vector	sum	np.sum(x)	1000	4	0.000001962
+vector	sum	np.sum(x)	1000	5	0.000001872
+vector	sum	np.sum(x)	1000	6	0.000001805
+vector	min	np.min(x)	1000	0	0.000001954
+vector	min	np.min(x)	1000	1	0.000001836
+vector	min	np.min(x)	1000	2	0.000001812
+vector	min	np.min(x)	1000	3	0.000001839
+vector	min	np.min(x)	1000	4	0.000001804
+vector	min	np.min(x)	1000	5	0.000001818
+vector	min	np.min(x)	1000	6	0.000001803
+vector	max	np.max(x)	1000	0	0.000001856
+vector	max	np.max(x)	1000	1	0.000001812
+vector	max	np.max(x)	1000	2	0.000001819
+vector	max	np.max(x)	1000	3	0.000001810
+vector	max	np.max(x)	1000	4	0.000001831
+vector	max	np.max(x)	1000	5	0.000001820
+vector	max	np.max(x)	1000	6	0.000001829
+vector	mean	np.mean(x)	1000	0	0.000002607
+vector	mean	np.mean(x)	1000	1	0.000002543
+vector	mean	np.mean(x)	1000	2	0.000002605
+vector	mean	np.mean(x)	1000	3	0.000002604
+vector	mean	np.mean(x)	1000	4	0.000002578
+vector	mean	np.mean(x)	1000	5	0.000002602
+vector	mean	np.mean(x)	1000	6	0.000002592
+vector	median	np.median(x)	1000	0	0.000010775
+vector	median	np.median(x)	1000	1	0.000010336
+vector	median	np.median(x)	1000	2	0.000010235
+vector	median	np.median(x)	1000	3	0.000010329
+vector	median	np.median(x)	1000	4	0.000010294
+vector	median	np.median(x)	1000	5	0.000010276
+vector	median	np.median(x)	1000	6	0.000010205
+vector	sd	np.std(x, ddof=1)	1000	0	0.000010059
+vector	sd	np.std(x, ddof=1)	1000	1	0.000009477
+vector	sd	np.std(x, ddof=1)	1000	2	0.000009368
+vector	sd	np.std(x, ddof=1)	1000	3	0.000009335
+vector	sd	np.std(x, ddof=1)	1000	4	0.000009233
+vector	sd	np.std(x, ddof=1)	1000	5	0.000009330
+vector	sd	np.std(x, ddof=1)	1000	6	0.000009397
+vector	var	np.var(x, ddof=1)	1000	0	0.000008656
+vector	var	np.var(x, ddof=1)	1000	1	0.000008624
+vector	var	np.var(x, ddof=1)	1000	2	0.000008678
+vector	var	np.var(x, ddof=1)	1000	3	0.000008632
+vector	var	np.var(x, ddof=1)	1000	4	0.000008697
+vector	var	np.var(x, ddof=1)	1000	5	0.000008594
+vector	var	np.var(x, ddof=1)	1000	6	0.000008574
+vector	quantile	np.quantile(x, [.25,.5,.75])	1000	0	0.000032046
+vector	quantile	np.quantile(x, [.25,.5,.75])	1000	1	0.000029403
+vector	quantile	np.quantile(x, [.25,.5,.75])	1000	2	0.000029264
+vector	quantile	np.quantile(x, [.25,.5,.75])	1000	3	0.000028714
+vector	quantile	np.quantile(x, [.25,.5,.75])	1000	4	0.000029072
+vector	quantile	np.quantile(x, [.25,.5,.75])	1000	5	0.000029247
+vector	quantile	np.quantile(x, [.25,.5,.75])	1000	6	0.000029134
+vector	cor	np.corrcoef(x, y)[0, 1]	1000	0	0.000029842
+vector	cor	np.corrcoef(x, y)[0, 1]	1000	1	0.000023995
+vector	cor	np.corrcoef(x, y)[0, 1]	1000	2	0.000024586
+vector	cor	np.corrcoef(x, y)[0, 1]	1000	3	0.000024531
+vector	cor	np.corrcoef(x, y)[0, 1]	1000	4	0.000023970
+vector	cor	np.corrcoef(x, y)[0, 1]	1000	5	0.000024034
+vector	cor	np.corrcoef(x, y)[0, 1]	1000	6	0.000024359
+vector	cov	np.cov(x, y)[0, 1]	1000	0	0.000017586
+vector	cov	np.cov(x, y)[0, 1]	1000	1	0.000017382
+vector	cov	np.cov(x, y)[0, 1]	1000	2	0.000017394
+vector	cov	np.cov(x, y)[0, 1]	1000	3	0.000017571
+vector	cov	np.cov(x, y)[0, 1]	1000	4	0.000017369
+vector	cov	np.cov(x, y)[0, 1]	1000	5	0.000017346
+vector	cov	np.cov(x, y)[0, 1]	1000	6	0.000017306
+vector	skew	scipy.stats.skew(x)	1000	0	0.000238023
+vector	skew	scipy.stats.skew(x)	1000	1	0.000220900
+vector	skew	scipy.stats.skew(x)	1000	2	0.000210807
+vector	skew	scipy.stats.skew(x)	1000	3	0.000213583
+vector	skew	scipy.stats.skew(x)	1000	4	0.000214870
+vector	skew	scipy.stats.skew(x)	1000	5	0.000218706
+vector	skew	scipy.stats.skew(x)	1000	6	0.000214591
+vector	kurtosis	scipy.stats.kurtosis(x)	1000	0	0.000228139
+vector	kurtosis	scipy.stats.kurtosis(x)	1000	1	0.000217434
+vector	kurtosis	scipy.stats.kurtosis(x)	1000	2	0.000221640
+vector	kurtosis	scipy.stats.kurtosis(x)	1000	3	0.000217837
+vector	kurtosis	scipy.stats.kurtosis(x)	1000	4	0.000227024
+vector	kurtosis	scipy.stats.kurtosis(x)	1000	5	0.000221545
+vector	kurtosis	scipy.stats.kurtosis(x)	1000	6	0.000218149
+vector	sum	np.sum(x)	3000	0	0.000002226
+vector	sum	np.sum(x)	3000	1	0.000002207
+vector	sum	np.sum(x)	3000	2	0.000002201
+vector	sum	np.sum(x)	3000	3	0.000002234
+vector	sum	np.sum(x)	3000	4	0.000002242
+vector	sum	np.sum(x)	3000	5	0.000002231
+vector	sum	np.sum(x)	3000	6	0.000002211
+vector	min	np.min(x)	3000	0	0.000002324
+vector	min	np.min(x)	3000	1	0.000002212
+vector	min	np.min(x)	3000	2	0.000002193
+vector	min	np.min(x)	3000	3	0.000002204
+vector	min	np.min(x)	3000	4	0.000002201
+vector	min	np.min(x)	3000	5	0.000002213
+vector	min	np.min(x)	3000	6	0.000002205
+vector	max	np.max(x)	3000	0	0.000002193
+vector	max	np.max(x)	3000	1	0.000002196
+vector	max	np.max(x)	3000	2	0.000002193
+vector	max	np.max(x)	3000	3	0.000002199
+vector	max	np.max(x)	3000	4	0.000002183
+vector	max	np.max(x)	3000	5	0.000002189
+vector	max	np.max(x)	3000	6	0.000002182
+vector	mean	np.mean(x)	3000	0	0.000002954
+vector	mean	np.mean(x)	3000	1	0.000002960
+vector	mean	np.mean(x)	3000	2	0.000002966
+vector	mean	np.mean(x)	3000	3	0.000002946
+vector	mean	np.mean(x)	3000	4	0.000002965
+vector	mean	np.mean(x)	3000	5	0.000002968
+vector	mean	np.mean(x)	3000	6	0.000002951
+vector	median	np.median(x)	3000	0	0.000017130
+vector	median	np.median(x)	3000	1	0.000013150
+vector	median	np.median(x)	3000	2	0.000013086
+vector	median	np.median(x)	3000	3	0.000013148
+vector	median	np.median(x)	3000	4	0.000013079
+vector	median	np.median(x)	3000	5	0.000013113
+vector	median	np.median(x)	3000	6	0.000013126
+vector	sd	np.std(x, ddof=1)	3000	0	0.000011278
+vector	sd	np.std(x, ddof=1)	3000	1	0.000010809
+vector	sd	np.std(x, ddof=1)	3000	2	0.000010805
+vector	sd	np.std(x, ddof=1)	3000	3	0.000010735
+vector	sd	np.std(x, ddof=1)	3000	4	0.000010778
+vector	sd	np.std(x, ddof=1)	3000	5	0.000010762
+vector	sd	np.std(x, ddof=1)	3000	6	0.000010787
+vector	var	np.var(x, ddof=1)	3000	0	0.000010033
+vector	var	np.var(x, ddof=1)	3000	1	0.000009969
+vector	var	np.var(x, ddof=1)	3000	2	0.000010063
+vector	var	np.var(x, ddof=1)	3000	3	0.000009956
+vector	var	np.var(x, ddof=1)	3000	4	0.000009997
+vector	var	np.var(x, ddof=1)	3000	5	0.000010024
+vector	var	np.var(x, ddof=1)	3000	6	0.000010015
+vector	quantile	np.quantile(x, [.25,.5,.75])	3000	0	0.000055878
+vector	quantile	np.quantile(x, [.25,.5,.75])	3000	1	0.000047808
+vector	quantile	np.quantile(x, [.25,.5,.75])	3000	2	0.000047560
+vector	quantile	np.quantile(x, [.25,.5,.75])	3000	3	0.000046674
+vector	quantile	np.quantile(x, [.25,.5,.75])	3000	4	0.000045842
+vector	quantile	np.quantile(x, [.25,.5,.75])	3000	5	0.000045621
+vector	quantile	np.quantile(x, [.25,.5,.75])	3000	6	0.000046258
+vector	cor	np.corrcoef(x, y)[0, 1]	3000	0	0.000036533
+vector	cor	np.corrcoef(x, y)[0, 1]	3000	1	0.000032861
+vector	cor	np.corrcoef(x, y)[0, 1]	3000	2	0.000032790
+vector	cor	np.corrcoef(x, y)[0, 1]	3000	3	0.000032518
+vector	cor	np.corrcoef(x, y)[0, 1]	3000	4	0.000032127
+vector	cor	np.corrcoef(x, y)[0, 1]	3000	5	0.000032128
+vector	cor	np.corrcoef(x, y)[0, 1]	3000	6	0.000032408
+vector	cov	np.cov(x, y)[0, 1]	3000	0	0.000024713
+vector	cov	np.cov(x, y)[0, 1]	3000	1	0.000024790
+vector	cov	np.cov(x, y)[0, 1]	3000	2	0.000024707
+vector	cov	np.cov(x, y)[0, 1]	3000	3	0.000024841
+vector	cov	np.cov(x, y)[0, 1]	3000	4	0.000024816
+vector	cov	np.cov(x, y)[0, 1]	3000	5	0.000024995
+vector	cov	np.cov(x, y)[0, 1]	3000	6	0.000024845
+vector	skew	scipy.stats.skew(x)	3000	0	0.000234763
+vector	skew	scipy.stats.skew(x)	3000	1	0.000225786
+vector	skew	scipy.stats.skew(x)	3000	2	0.000223584
+vector	skew	scipy.stats.skew(x)	3000	3	0.000217212
+vector	skew	scipy.stats.skew(x)	3000	4	0.000218634
+vector	skew	scipy.stats.skew(x)	3000	5	0.000219549
+vector	skew	scipy.stats.skew(x)	3000	6	0.000217916
+vector	kurtosis	scipy.stats.kurtosis(x)	3000	0	0.000226474
+vector	kurtosis	scipy.stats.kurtosis(x)	3000	1	0.000227055
+vector	kurtosis	scipy.stats.kurtosis(x)	3000	2	0.000234641
+vector	kurtosis	scipy.stats.kurtosis(x)	3000	3	0.000227551
+vector	kurtosis	scipy.stats.kurtosis(x)	3000	4	0.000227387
+vector	kurtosis	scipy.stats.kurtosis(x)	3000	5	0.000226552
+vector	kurtosis	scipy.stats.kurtosis(x)	3000	6	0.000225465
+vector	sum	np.sum(x)	10000	0	0.000003337
+vector	sum	np.sum(x)	10000	1	0.000003432
+vector	sum	np.sum(x)	10000	2	0.000003417
+vector	sum	np.sum(x)	10000	3	0.000003404
+vector	sum	np.sum(x)	10000	4	0.000003415
+vector	sum	np.sum(x)	10000	5	0.000003403
+vector	sum	np.sum(x)	10000	6	0.000003416
+vector	min	np.min(x)	10000	0	0.000003484
+vector	min	np.min(x)	10000	1	0.000003421
+vector	min	np.min(x)	10000	2	0.000003432
+vector	min	np.min(x)	10000	3	0.000003435
+vector	min	np.min(x)	10000	4	0.000003428
+vector	min	np.min(x)	10000	5	0.000003412
+vector	min	np.min(x)	10000	6	0.000003416
+vector	max	np.max(x)	10000	0	0.000003418
+vector	max	np.max(x)	10000	1	0.000003404
+vector	max	np.max(x)	10000	2	0.000003394
+vector	max	np.max(x)	10000	3	0.000003406
+vector	max	np.max(x)	10000	4	0.000003395
+vector	max	np.max(x)	10000	5	0.000003393
+vector	max	np.max(x)	10000	6	0.000003411
+vector	mean	np.mean(x)	10000	0	0.000004006
+vector	mean	np.mean(x)	10000	1	0.000004238
+vector	mean	np.mean(x)	10000	2	0.000004120
+vector	mean	np.mean(x)	10000	3	0.000004147
+vector	mean	np.mean(x)	10000	4	0.000004159
+vector	mean	np.mean(x)	10000	5	0.000004221
+vector	mean	np.mean(x)	10000	6	0.000004395
+vector	median	np.median(x)	10000	0	0.000070122
+vector	median	np.median(x)	10000	1	0.000060647
+vector	median	np.median(x)	10000	2	0.000056335
+vector	median	np.median(x)	10000	3	0.000054501
+vector	median	np.median(x)	10000	4	0.000054511
+vector	median	np.median(x)	10000	5	0.000056600
+vector	median	np.median(x)	10000	6	0.000054320
+vector	sd	np.std(x, ddof=1)	10000	0	0.000015704
+vector	sd	np.std(x, ddof=1)	10000	1	0.000015328
+vector	sd	np.std(x, ddof=1)	10000	2	0.000015489
+vector	sd	np.std(x, ddof=1)	10000	3	0.000015253
+vector	sd	np.std(x, ddof=1)	10000	4	0.000015606
+vector	sd	np.std(x, ddof=1)	10000	5	0.000015325
+vector	sd	np.std(x, ddof=1)	10000	6	0.000015348
+vector	var	np.var(x, ddof=1)	10000	0	0.000014500
+vector	var	np.var(x, ddof=1)	10000	1	0.000014780
+vector	var	np.var(x, ddof=1)	10000	2	0.000014492
+vector	var	np.var(x, ddof=1)	10000	3	0.000014650
+vector	var	np.var(x, ddof=1)	10000	4	0.000014494
+vector	var	np.var(x, ddof=1)	10000	5	0.000014675
+vector	var	np.var(x, ddof=1)	10000	6	0.000014541
+vector	quantile	np.quantile(x, [.25,.5,.75])	10000	0	0.000177067
+vector	quantile	np.quantile(x, [.25,.5,.75])	10000	1	0.000159830
+vector	quantile	np.quantile(x, [.25,.5,.75])	10000	2	0.000156724
+vector	quantile	np.quantile(x, [.25,.5,.75])	10000	3	0.000152504
+vector	quantile	np.quantile(x, [.25,.5,.75])	10000	4	0.000156145
+vector	quantile	np.quantile(x, [.25,.5,.75])	10000	5	0.000154442
+vector	quantile	np.quantile(x, [.25,.5,.75])	10000	6	0.000151523
+vector	cor	np.corrcoef(x, y)[0, 1]	10000	0	0.000055265
+vector	cor	np.corrcoef(x, y)[0, 1]	10000	1	0.000053554
+vector	cor	np.corrcoef(x, y)[0, 1]	10000	2	0.000052572
+vector	cor	np.corrcoef(x, y)[0, 1]	10000	3	0.000052130
+vector	cor	np.corrcoef(x, y)[0, 1]	10000	4	0.000052456
+vector	cor	np.corrcoef(x, y)[0, 1]	10000	5	0.000053570
+vector	cor	np.corrcoef(x, y)[0, 1]	10000	6	0.000053282
+vector	cov	np.cov(x, y)[0, 1]	10000	0	0.000043720
+vector	cov	np.cov(x, y)[0, 1]	10000	1	0.000043887
+vector	cov	np.cov(x, y)[0, 1]	10000	2	0.000044321
+vector	cov	np.cov(x, y)[0, 1]	10000	3	0.000043708
+vector	cov	np.cov(x, y)[0, 1]	10000	4	0.000043562
+vector	cov	np.cov(x, y)[0, 1]	10000	5	0.000043869
+vector	cov	np.cov(x, y)[0, 1]	10000	6	0.000044116
+vector	skew	scipy.stats.skew(x)	10000	0	0.000265408
+vector	skew	scipy.stats.skew(x)	10000	1	0.000254944
+vector	skew	scipy.stats.skew(x)	10000	2	0.000256669
+vector	skew	scipy.stats.skew(x)	10000	3	0.000251594
+vector	skew	scipy.stats.skew(x)	10000	4	0.000250348
+vector	skew	scipy.stats.skew(x)	10000	5	0.000249512
+vector	skew	scipy.stats.skew(x)	10000	6	0.000251574
+vector	kurtosis	scipy.stats.kurtosis(x)	10000	0	0.000253836
+vector	kurtosis	scipy.stats.kurtosis(x)	10000	1	0.000262148
+vector	kurtosis	scipy.stats.kurtosis(x)	10000	2	0.000246870
+vector	kurtosis	scipy.stats.kurtosis(x)	10000	3	0.000249733
+vector	kurtosis	scipy.stats.kurtosis(x)	10000	4	0.000253192
+vector	kurtosis	scipy.stats.kurtosis(x)	10000	5	0.000250750
+vector	kurtosis	scipy.stats.kurtosis(x)	10000	6	0.000249893
+vector	sum	np.sum(x)	30000	0	0.000006808
+vector	sum	np.sum(x)	30000	1	0.000006970
+vector	sum	np.sum(x)	30000	2	0.000006935
+vector	sum	np.sum(x)	30000	3	0.000006916
+vector	sum	np.sum(x)	30000	4	0.000006917
+vector	sum	np.sum(x)	30000	5	0.000006996
+vector	sum	np.sum(x)	30000	6	0.000006928
+vector	min	np.min(x)	30000	0	0.000006999
+vector	min	np.min(x)	30000	1	0.000006683
+vector	min	np.min(x)	30000	2	0.000006746
+vector	min	np.min(x)	30000	3	0.000006680
+vector	min	np.min(x)	30000	4	0.000006653
+vector	min	np.min(x)	30000	5	0.000006668
+vector	min	np.min(x)	30000	6	0.000006726
+vector	max	np.max(x)	30000	0	0.000006644
+vector	max	np.max(x)	30000	1	0.000006614
+vector	max	np.max(x)	30000	2	0.000006631
+vector	max	np.max(x)	30000	3	0.000006698
+vector	max	np.max(x)	30000	4	0.000006635
+vector	max	np.max(x)	30000	5	0.000006610
+vector	max	np.max(x)	30000	6	0.000006635
+vector	mean	np.mean(x)	30000	0	0.000007408
+vector	mean	np.mean(x)	30000	1	0.000007655
+vector	mean	np.mean(x)	30000	2	0.000007616
+vector	mean	np.mean(x)	30000	3	0.000007733
+vector	mean	np.mean(x)	30000	4	0.000007658
+vector	mean	np.mean(x)	30000	5	0.000007649
+vector	mean	np.mean(x)	30000	6	0.000007612
+vector	median	np.median(x)	30000	0	0.000267616
+vector	median	np.median(x)	30000	1	0.000260222
+vector	median	np.median(x)	30000	2	0.000260949
+vector	median	np.median(x)	30000	3	0.000258883
+vector	median	np.median(x)	30000	4	0.000256840
+vector	median	np.median(x)	30000	5	0.000247299
+vector	median	np.median(x)	30000	6	0.000247148
+vector	sd	np.std(x, ddof=1)	30000	0	0.000030160
+vector	sd	np.std(x, ddof=1)	30000	1	0.000029267
+vector	sd	np.std(x, ddof=1)	30000	2	0.000028964
+vector	sd	np.std(x, ddof=1)	30000	3	0.000028876
+vector	sd	np.std(x, ddof=1)	30000	4	0.000029088
+vector	sd	np.std(x, ddof=1)	30000	5	0.000029400
+vector	sd	np.std(x, ddof=1)	30000	6	0.000029300
+vector	var	np.var(x, ddof=1)	30000	0	0.000028188
+vector	var	np.var(x, ddof=1)	30000	1	0.000028266
+vector	var	np.var(x, ddof=1)	30000	2	0.000028409
+vector	var	np.var(x, ddof=1)	30000	3	0.000028163
+vector	var	np.var(x, ddof=1)	30000	4	0.000028171
+vector	var	np.var(x, ddof=1)	30000	5	0.000028125
+vector	var	np.var(x, ddof=1)	30000	6	0.000028384
+vector	quantile	np.quantile(x, [.25,.5,.75])	30000	0	0.000475089
+vector	quantile	np.quantile(x, [.25,.5,.75])	30000	1	0.000461951
+vector	quantile	np.quantile(x, [.25,.5,.75])	30000	2	0.000456235
+vector	quantile	np.quantile(x, [.25,.5,.75])	30000	3	0.000457712
+vector	quantile	np.quantile(x, [.25,.5,.75])	30000	4	0.000469445
+vector	quantile	np.quantile(x, [.25,.5,.75])	30000	5	0.000455430
+vector	quantile	np.quantile(x, [.25,.5,.75])	30000	6	0.000457567
+vector	cor	np.corrcoef(x, y)[0, 1]	30000	0	0.000132942
+vector	cor	np.corrcoef(x, y)[0, 1]	30000	1	0.000121608
+vector	cor	np.corrcoef(x, y)[0, 1]	30000	2	0.000121202
+vector	cor	np.corrcoef(x, y)[0, 1]	30000	3	0.000120408
+vector	cor	np.corrcoef(x, y)[0, 1]	30000	4	0.000122304
+vector	cor	np.corrcoef(x, y)[0, 1]	30000	5	0.000120913
+vector	cor	np.corrcoef(x, y)[0, 1]	30000	6	0.000121093
+vector	cov	np.cov(x, y)[0, 1]	30000	0	0.000114716
+vector	cov	np.cov(x, y)[0, 1]	30000	1	0.000111033
+vector	cov	np.cov(x, y)[0, 1]	30000	2	0.000109907
+vector	cov	np.cov(x, y)[0, 1]	30000	3	0.000109075
+vector	cov	np.cov(x, y)[0, 1]	30000	4	0.000110320
+vector	cov	np.cov(x, y)[0, 1]	30000	5	0.000109551
+vector	cov	np.cov(x, y)[0, 1]	30000	6	0.000109615
+vector	skew	scipy.stats.skew(x)	30000	0	0.000344319
+vector	skew	scipy.stats.skew(x)	30000	1	0.000326909
+vector	skew	scipy.stats.skew(x)	30000	2	0.000318525
+vector	skew	scipy.stats.skew(x)	30000	3	0.000324489
+vector	skew	scipy.stats.skew(x)	30000	4	0.000319461
+vector	skew	scipy.stats.skew(x)	30000	5	0.000326104
+vector	skew	scipy.stats.skew(x)	30000	6	0.000332872
+vector	kurtosis	scipy.stats.kurtosis(x)	30000	0	0.000323135
+vector	kurtosis	scipy.stats.kurtosis(x)	30000	1	0.000332831
+vector	kurtosis	scipy.stats.kurtosis(x)	30000	2	0.000323573
+vector	kurtosis	scipy.stats.kurtosis(x)	30000	3	0.000324418
+vector	kurtosis	scipy.stats.kurtosis(x)	30000	4	0.000315363
+vector	kurtosis	scipy.stats.kurtosis(x)	30000	5	0.000324932
+vector	kurtosis	scipy.stats.kurtosis(x)	30000	6	0.000326228
+vector	sum	np.sum(x)	100000	0	0.000019887
+vector	sum	np.sum(x)	100000	1	0.000020014
+vector	sum	np.sum(x)	100000	2	0.000020115
+vector	sum	np.sum(x)	100000	3	0.000019785
+vector	sum	np.sum(x)	100000	4	0.000019875
+vector	sum	np.sum(x)	100000	5	0.000019761
+vector	sum	np.sum(x)	100000	6	0.000020143
+vector	min	np.min(x)	100000	0	0.000019106
+vector	min	np.min(x)	100000	1	0.000018833
+vector	min	np.min(x)	100000	2	0.000018571
+vector	min	np.min(x)	100000	3	0.000018817
+vector	min	np.min(x)	100000	4	0.000018561
+vector	min	np.min(x)	100000	5	0.000018556
+vector	min	np.min(x)	100000	6	0.000018899
+vector	max	np.max(x)	100000	0	0.000018608
+vector	max	np.max(x)	100000	1	0.000018662
+vector	max	np.max(x)	100000	2	0.000018787
+vector	max	np.max(x)	100000	3	0.000018815
+vector	max	np.max(x)	100000	4	0.000018572
+vector	max	np.max(x)	100000	5	0.000018520
+vector	max	np.max(x)	100000	6	0.000018623
+vector	mean	np.mean(x)	100000	0	0.000020388
+vector	mean	np.mean(x)	100000	1	0.000020696
+vector	mean	np.mean(x)	100000	2	0.000020045
+vector	mean	np.mean(x)	100000	3	0.000020975
+vector	mean	np.mean(x)	100000	4	0.000020954
+vector	mean	np.mean(x)	100000	5	0.000020675
+vector	mean	np.mean(x)	100000	6	0.000020628
+vector	median	np.median(x)	100000	0	0.000927496
+vector	median	np.median(x)	100000	1	0.000898131
+vector	median	np.median(x)	100000	2	0.000896983
+vector	median	np.median(x)	100000	3	0.000886631
+vector	median	np.median(x)	100000	4	0.000895609
+vector	median	np.median(x)	100000	5	0.000885481
+vector	median	np.median(x)	100000	6	0.000889570
+vector	sd	np.std(x, ddof=1)	100000	0	0.000102216
+vector	sd	np.std(x, ddof=1)	100000	1	0.000096831
+vector	sd	np.std(x, ddof=1)	100000	2	0.000097692
+vector	sd	np.std(x, ddof=1)	100000	3	0.000095625
+vector	sd	np.std(x, ddof=1)	100000	4	0.000095474
+vector	sd	np.std(x, ddof=1)	100000	5	0.000095178
+vector	sd	np.std(x, ddof=1)	100000	6	0.000095176
+vector	var	np.var(x, ddof=1)	100000	0	0.000095845
+vector	var	np.var(x, ddof=1)	100000	1	0.000099584
+vector	var	np.var(x, ddof=1)	100000	2	0.000097093
+vector	var	np.var(x, ddof=1)	100000	3	0.000094210
+vector	var	np.var(x, ddof=1)	100000	4	0.000094507
+vector	var	np.var(x, ddof=1)	100000	5	0.000094378
+vector	var	np.var(x, ddof=1)	100000	6	0.000094415
+vector	quantile	np.quantile(x, [.25,.5,.75])	100000	0	0.001373425
+vector	quantile	np.quantile(x, [.25,.5,.75])	100000	1	0.001382071
+vector	quantile	np.quantile(x, [.25,.5,.75])	100000	2	0.001358723
+vector	quantile	np.quantile(x, [.25,.5,.75])	100000	3	0.001366689
+vector	quantile	np.quantile(x, [.25,.5,.75])	100000	4	0.001350509
+vector	quantile	np.quantile(x, [.25,.5,.75])	100000	5	0.001370525
+vector	quantile	np.quantile(x, [.25,.5,.75])	100000	6	0.001358333
+vector	cor	np.corrcoef(x, y)[0, 1]	100000	0	0.000403197
+vector	cor	np.corrcoef(x, y)[0, 1]	100000	1	0.000392575
+vector	cor	np.corrcoef(x, y)[0, 1]	100000	2	0.000389282
+vector	cor	np.corrcoef(x, y)[0, 1]	100000	3	0.000386752
+vector	cor	np.corrcoef(x, y)[0, 1]	100000	4	0.000386242
+vector	cor	np.corrcoef(x, y)[0, 1]	100000	5	0.000385822
+vector	cor	np.corrcoef(x, y)[0, 1]	100000	6	0.000385706
+vector	cov	np.cov(x, y)[0, 1]	100000	0	0.000380556
+vector	cov	np.cov(x, y)[0, 1]	100000	1	0.000402093
+vector	cov	np.cov(x, y)[0, 1]	100000	2	0.000376056
+vector	cov	np.cov(x, y)[0, 1]	100000	3	0.000374176
+vector	cov	np.cov(x, y)[0, 1]	100000	4	0.000377562
+vector	cov	np.cov(x, y)[0, 1]	100000	5	0.000374868
+vector	cov	np.cov(x, y)[0, 1]	100000	6	0.000373011
+vector	skew	scipy.stats.skew(x)	100000	0	0.000695747
+vector	skew	scipy.stats.skew(x)	100000	1	0.000651129
+vector	skew	scipy.stats.skew(x)	100000	2	0.000627417
+vector	skew	scipy.stats.skew(x)	100000	3	0.000612807
+vector	skew	scipy.stats.skew(x)	100000	4	0.000609943
+vector	skew	scipy.stats.skew(x)	100000	5	0.000616816
+vector	skew	scipy.stats.skew(x)	100000	6	0.000616697
+vector	kurtosis	scipy.stats.kurtosis(x)	100000	0	0.000588677
+vector	kurtosis	scipy.stats.kurtosis(x)	100000	1	0.000593097
+vector	kurtosis	scipy.stats.kurtosis(x)	100000	2	0.000591178
+vector	kurtosis	scipy.stats.kurtosis(x)	100000	3	0.000586957
+vector	kurtosis	scipy.stats.kurtosis(x)	100000	4	0.000592628
+vector	kurtosis	scipy.stats.kurtosis(x)	100000	5	0.000588446
+vector	kurtosis	scipy.stats.kurtosis(x)	100000	6	0.000585183
+vector	sum	np.sum(x)	300000	0	0.000063359
+vector	sum	np.sum(x)	300000	1	0.000063210
+vector	sum	np.sum(x)	300000	2	0.000063283
+vector	sum	np.sum(x)	300000	3	0.000063255
+vector	sum	np.sum(x)	300000	4	0.000063326
+vector	sum	np.sum(x)	300000	5	0.000063013
+vector	sum	np.sum(x)	300000	6	0.000063326
+vector	min	np.min(x)	300000	0	0.000055515
+vector	min	np.min(x)	300000	1	0.000055127
+vector	min	np.min(x)	300000	2	0.000055060
+vector	min	np.min(x)	300000	3	0.000055093
+vector	min	np.min(x)	300000	4	0.000054870
+vector	min	np.min(x)	300000	5	0.000055268
+vector	min	np.min(x)	300000	6	0.000055128
+vector	max	np.max(x)	300000	0	0.000055779
+vector	max	np.max(x)	300000	1	0.000055643
+vector	max	np.max(x)	300000	2	0.000056815
+vector	max	np.max(x)	300000	3	0.000055827
+vector	max	np.max(x)	300000	4	0.000055163
+vector	max	np.max(x)	300000	5	0.000055760
+vector	max	np.max(x)	300000	6	0.000055156
+vector	mean	np.mean(x)	300000	0	0.000062811
+vector	mean	np.mean(x)	300000	1	0.000064220
+vector	mean	np.mean(x)	300000	2	0.000065284
+vector	mean	np.mean(x)	300000	3	0.000069382
+vector	mean	np.mean(x)	300000	4	0.000066920
+vector	mean	np.mean(x)	300000	5	0.000064064
+vector	mean	np.mean(x)	300000	6	0.000063866
+vector	median	np.median(x)	300000	0	0.002582978
+vector	median	np.median(x)	300000	1	0.002548587
+vector	median	np.median(x)	300000	2	0.002553497
+vector	median	np.median(x)	300000	3	0.002555447
+vector	median	np.median(x)	300000	4	0.002537127
+vector	median	np.median(x)	300000	5	0.002565935
+vector	median	np.median(x)	300000	6	0.002538184
+vector	sd	np.std(x, ddof=1)	300000	0	0.000325053
+vector	sd	np.std(x, ddof=1)	300000	1	0.000317780
+vector	sd	np.std(x, ddof=1)	300000	2	0.000304162
+vector	sd	np.std(x, ddof=1)	300000	3	0.000301693
+vector	sd	np.std(x, ddof=1)	300000	4	0.000301891
+vector	sd	np.std(x, ddof=1)	300000	5	0.000306611
+vector	sd	np.std(x, ddof=1)	300000	6	0.000302398
+vector	var	np.var(x, ddof=1)	300000	0	0.000301583
+vector	var	np.var(x, ddof=1)	300000	1	0.000304846
+vector	var	np.var(x, ddof=1)	300000	2	0.000301818
+vector	var	np.var(x, ddof=1)	300000	3	0.000302026
+vector	var	np.var(x, ddof=1)	300000	4	0.000304768
+vector	var	np.var(x, ddof=1)	300000	5	0.000301160
+vector	var	np.var(x, ddof=1)	300000	6	0.000301576
+vector	quantile	np.quantile(x, [.25,.5,.75])	300000	0	0.004117649
+vector	quantile	np.quantile(x, [.25,.5,.75])	300000	1	0.004162523
+vector	quantile	np.quantile(x, [.25,.5,.75])	300000	2	0.004096865
+vector	quantile	np.quantile(x, [.25,.5,.75])	300000	3	0.004112136
+vector	quantile	np.quantile(x, [.25,.5,.75])	300000	4	0.004101721
+vector	quantile	np.quantile(x, [.25,.5,.75])	300000	5	0.004104158
+vector	quantile	np.quantile(x, [.25,.5,.75])	300000	6	0.004125901
+vector	cor	np.corrcoef(x, y)[0, 1]	300000	0	0.001144227
+vector	cor	np.corrcoef(x, y)[0, 1]	300000	1	0.001112732
+vector	cor	np.corrcoef(x, y)[0, 1]	300000	2	0.001105079
+vector	cor	np.corrcoef(x, y)[0, 1]	300000	3	0.001102026
+vector	cor	np.corrcoef(x, y)[0, 1]	300000	4	0.001106704
+vector	cor	np.corrcoef(x, y)[0, 1]	300000	5	0.001105189
+vector	cor	np.corrcoef(x, y)[0, 1]	300000	6	0.001103089
+vector	cov	np.cov(x, y)[0, 1]	300000	0	0.001093970
+vector	cov	np.cov(x, y)[0, 1]	300000	1	0.001100125
+vector	cov	np.cov(x, y)[0, 1]	300000	2	0.001138780
+vector	cov	np.cov(x, y)[0, 1]	300000	3	0.001097244
+vector	cov	np.cov(x, y)[0, 1]	300000	4	0.001094630
+vector	cov	np.cov(x, y)[0, 1]	300000	5	0.001104813
+vector	cov	np.cov(x, y)[0, 1]	300000	6	0.001096698
+vector	skew	scipy.stats.skew(x)	300000	0	0.001572722
+vector	skew	scipy.stats.skew(x)	300000	1	0.001409571
+vector	skew	scipy.stats.skew(x)	300000	2	0.001411535
+vector	skew	scipy.stats.skew(x)	300000	3	0.001581767
+vector	skew	scipy.stats.skew(x)	300000	4	0.001399314
+vector	skew	scipy.stats.skew(x)	300000	5	0.001419958
+vector	skew	scipy.stats.skew(x)	300000	6	0.001432679
+vector	kurtosis	scipy.stats.kurtosis(x)	300000	0	0.001314432
+vector	kurtosis	scipy.stats.kurtosis(x)	300000	1	0.001314170
+vector	kurtosis	scipy.stats.kurtosis(x)	300000	2	0.001306263
+vector	kurtosis	scipy.stats.kurtosis(x)	300000	3	0.001297902
+vector	kurtosis	scipy.stats.kurtosis(x)	300000	4	0.001476761
+vector	kurtosis	scipy.stats.kurtosis(x)	300000	5	0.001305953
+vector	kurtosis	scipy.stats.kurtosis(x)	300000	6	0.001304065
+vector	sum	np.sum(x)	1000000	0	0.000205308
+vector	sum	np.sum(x)	1000000	1	0.000203670
+vector	sum	np.sum(x)	1000000	2	0.000204070
+vector	sum	np.sum(x)	1000000	3	0.000203990
+vector	sum	np.sum(x)	1000000	4	0.000201879
+vector	sum	np.sum(x)	1000000	5	0.000204343
+vector	sum	np.sum(x)	1000000	6	0.000205185
+vector	min	np.min(x)	1000000	0	0.000181291
+vector	min	np.min(x)	1000000	1	0.000178078
+vector	min	np.min(x)	1000000	2	0.000174105
+vector	min	np.min(x)	1000000	3	0.000174158
+vector	min	np.min(x)	1000000	4	0.000174477
+vector	min	np.min(x)	1000000	5	0.000174327
+vector	min	np.min(x)	1000000	6	0.000173887
+vector	max	np.max(x)	1000000	0	0.000176008
+vector	max	np.max(x)	1000000	1	0.000192888
+vector	max	np.max(x)	1000000	2	0.000176300
+vector	max	np.max(x)	1000000	3	0.000174306
+vector	max	np.max(x)	1000000	4	0.000174392
+vector	max	np.max(x)	1000000	5	0.000174256
+vector	max	np.max(x)	1000000	6	0.000174088
+vector	mean	np.mean(x)	1000000	0	0.000201337
+vector	mean	np.mean(x)	1000000	1	0.000209083
+vector	mean	np.mean(x)	1000000	2	0.000207094
+vector	mean	np.mean(x)	1000000	3	0.000202341
+vector	mean	np.mean(x)	1000000	4	0.000201822
+vector	mean	np.mean(x)	1000000	5	0.000202023
+vector	mean	np.mean(x)	1000000	6	0.000203144
+vector	median	np.median(x)	1000000	0	0.008613976
+vector	median	np.median(x)	1000000	1	0.008565266
+vector	median	np.median(x)	1000000	2	0.008471021
+vector	median	np.median(x)	1000000	3	0.008541182
+vector	median	np.median(x)	1000000	4	0.008557777
+vector	median	np.median(x)	1000000	5	0.008493050
+vector	median	np.median(x)	1000000	6	0.008495905
+vector	sd	np.std(x, ddof=1)	1000000	0	0.001101957
+vector	sd	np.std(x, ddof=1)	1000000	1	0.001028880
+vector	sd	np.std(x, ddof=1)	1000000	2	0.001001834
+vector	sd	np.std(x, ddof=1)	1000000	3	0.001044117
+vector	sd	np.std(x, ddof=1)	1000000	4	0.001001347
+vector	sd	np.std(x, ddof=1)	1000000	5	0.001054988
+vector	sd	np.std(x, ddof=1)	1000000	6	0.001032344
+vector	var	np.var(x, ddof=1)	1000000	0	0.001006670
+vector	var	np.var(x, ddof=1)	1000000	1	0.001002126
+vector	var	np.var(x, ddof=1)	1000000	2	0.000998446
+vector	var	np.var(x, ddof=1)	1000000	3	0.001179459
+vector	var	np.var(x, ddof=1)	1000000	4	0.001003620
+vector	var	np.var(x, ddof=1)	1000000	5	0.001004105
+vector	var	np.var(x, ddof=1)	1000000	6	0.001003747
+vector	quantile	np.quantile(x, [.25,.5,.75])	1000000	0	0.014738012
+vector	quantile	np.quantile(x, [.25,.5,.75])	1000000	1	0.014716237
+vector	quantile	np.quantile(x, [.25,.5,.75])	1000000	2	0.014667550
+vector	quantile	np.quantile(x, [.25,.5,.75])	1000000	3	0.014686040
+vector	quantile	np.quantile(x, [.25,.5,.75])	1000000	4	0.014678210
+vector	quantile	np.quantile(x, [.25,.5,.75])	1000000	5	0.014817158
+vector	quantile	np.quantile(x, [.25,.5,.75])	1000000	6	0.014646921
+vector	cor	np.corrcoef(x, y)[0, 1]	1000000	0	0.005101131
+vector	cor	np.corrcoef(x, y)[0, 1]	1000000	1	0.005104577
+vector	cor	np.corrcoef(x, y)[0, 1]	1000000	2	0.005174532
+vector	cor	np.corrcoef(x, y)[0, 1]	1000000	3	0.005178906
+vector	cor	np.corrcoef(x, y)[0, 1]	1000000	4	0.008279818
+vector	cor	np.corrcoef(x, y)[0, 1]	1000000	5	0.005380304
+vector	cor	np.corrcoef(x, y)[0, 1]	1000000	6	0.005939572
+vector	cov	np.cov(x, y)[0, 1]	1000000	0	0.005164995
+vector	cov	np.cov(x, y)[0, 1]	1000000	1	0.005770691
+vector	cov	np.cov(x, y)[0, 1]	1000000	2	0.005140635
+vector	cov	np.cov(x, y)[0, 1]	1000000	3	0.005382252
+vector	cov	np.cov(x, y)[0, 1]	1000000	4	0.005131694
+vector	cov	np.cov(x, y)[0, 1]	1000000	5	0.005835952
+vector	cov	np.cov(x, y)[0, 1]	1000000	6	0.005434835
+vector	skew	scipy.stats.skew(x)	1000000	0	0.006463433
+vector	skew	scipy.stats.skew(x)	1000000	1	0.006193678
+vector	skew	scipy.stats.skew(x)	1000000	2	0.006001332
+vector	skew	scipy.stats.skew(x)	1000000	3	0.006385690
+vector	skew	scipy.stats.skew(x)	1000000	4	0.006880213
+vector	skew	scipy.stats.skew(x)	1000000	5	0.006137456
+vector	skew	scipy.stats.skew(x)	1000000	6	0.006024670
+vector	kurtosis	scipy.stats.kurtosis(x)	1000000	0	0.005265201
+vector	kurtosis	scipy.stats.kurtosis(x)	1000000	1	0.005829066
+vector	kurtosis	scipy.stats.kurtosis(x)	1000000	2	0.005592555
+vector	kurtosis	scipy.stats.kurtosis(x)	1000000	3	0.005466596
+vector	kurtosis	scipy.stats.kurtosis(x)	1000000	4	0.005346907
+vector	kurtosis	scipy.stats.kurtosis(x)	1000000	5	0.005546570
+vector	kurtosis	scipy.stats.kurtosis(x)	1000000	6	0.005542660
+transform	rank	scipy.stats.rankdata(x)	1000	0	0.000056568
+transform	rank	scipy.stats.rankdata(x)	1000	1	0.000054959
+transform	rank	scipy.stats.rankdata(x)	1000	2	0.000052695
+transform	rank	scipy.stats.rankdata(x)	1000	3	0.000053498
+transform	rank	scipy.stats.rankdata(x)	1000	4	0.000052764
+transform	rank	scipy.stats.rankdata(x)	1000	5	0.000053849
+transform	rank	scipy.stats.rankdata(x)	1000	6	0.000053455
+transform	uniq	pd.unique(x)	1000	0	0.000021096
+transform	uniq	pd.unique(x)	1000	1	0.000020414
+transform	uniq	pd.unique(x)	1000	2	0.000020444
+transform	uniq	pd.unique(x)	1000	3	0.000020315
+transform	uniq	pd.unique(x)	1000	4	0.000020101
+transform	uniq	pd.unique(x)	1000	5	0.000020279
+transform	uniq	pd.unique(x)	1000	6	0.000020266
+transform	scale	scipy.stats.zscore(x, ddof=1)	1000	0	0.000154258
+transform	scale	scipy.stats.zscore(x, ddof=1)	1000	1	0.000146336
+transform	scale	scipy.stats.zscore(x, ddof=1)	1000	2	0.000144656
+transform	scale	scipy.stats.zscore(x, ddof=1)	1000	3	0.000144641
+transform	scale	scipy.stats.zscore(x, ddof=1)	1000	4	0.000146675
+transform	scale	scipy.stats.zscore(x, ddof=1)	1000	5	0.000143252
+transform	scale	scipy.stats.zscore(x, ddof=1)	1000	6	0.000144181
+transform	sample	rng.choice(x, n // 10, replace=False)	1000	0	0.000014556
+transform	sample	rng.choice(x, n // 10, replace=False)	1000	1	0.000013767
+transform	sample	rng.choice(x, n // 10, replace=False)	1000	2	0.000013805
+transform	sample	rng.choice(x, n // 10, replace=False)	1000	3	0.000013765
+transform	sample	rng.choice(x, n // 10, replace=False)	1000	4	0.000013693
+transform	sample	rng.choice(x, n // 10, replace=False)	1000	5	0.000014236
+transform	sample	rng.choice(x, n // 10, replace=False)	1000	6	0.000015332
+transform	seq	np.arange(1, n + 1)	1000	0	0.000000715
+transform	seq	np.arange(1, n + 1)	1000	1	0.000000715
+transform	seq	np.arange(1, n + 1)	1000	2	0.000000737
+transform	seq	np.arange(1, n + 1)	1000	3	0.000000705
+transform	seq	np.arange(1, n + 1)	1000	4	0.000000755
+transform	seq	np.arange(1, n + 1)	1000	5	0.000000710
+transform	seq	np.arange(1, n + 1)	1000	6	0.000000701
+transform	auc	sklearn.metrics.roc_auc_score(label, y)	1000	0	0.000683152
+transform	auc	sklearn.metrics.roc_auc_score(label, y)	1000	1	0.000660685
+transform	auc	sklearn.metrics.roc_auc_score(label, y)	1000	2	0.000681516
+transform	auc	sklearn.metrics.roc_auc_score(label, y)	1000	3	0.000705083
+transform	auc	sklearn.metrics.roc_auc_score(label, y)	1000	4	0.000661636
+transform	auc	sklearn.metrics.roc_auc_score(label, y)	1000	5	0.000662260
+transform	auc	sklearn.metrics.roc_auc_score(label, y)	1000	6	0.000652674
+transform	rank	scipy.stats.rankdata(x)	3000	0	0.000104447
+transform	rank	scipy.stats.rankdata(x)	3000	1	0.000102338
+transform	rank	scipy.stats.rankdata(x)	3000	2	0.000124665
+transform	rank	scipy.stats.rankdata(x)	3000	3	0.000102365
+transform	rank	scipy.stats.rankdata(x)	3000	4	0.000102764
+transform	rank	scipy.stats.rankdata(x)	3000	5	0.000105086
+transform	rank	scipy.stats.rankdata(x)	3000	6	0.000101904
+transform	uniq	pd.unique(x)	3000	0	0.000060937
+transform	uniq	pd.unique(x)	3000	1	0.000058574
+transform	uniq	pd.unique(x)	3000	2	0.000058834
+transform	uniq	pd.unique(x)	3000	3	0.000058594
+transform	uniq	pd.unique(x)	3000	4	0.000058146
+transform	uniq	pd.unique(x)	3000	5	0.000058266
+transform	uniq	pd.unique(x)	3000	6	0.000057973
+transform	scale	scipy.stats.zscore(x, ddof=1)	3000	0	0.000156716
+transform	scale	scipy.stats.zscore(x, ddof=1)	3000	1	0.000153768
+transform	scale	scipy.stats.zscore(x, ddof=1)	3000	2	0.000152776
+transform	scale	scipy.stats.zscore(x, ddof=1)	3000	3	0.000150584
+transform	scale	scipy.stats.zscore(x, ddof=1)	3000	4	0.000153329
+transform	scale	scipy.stats.zscore(x, ddof=1)	3000	5	0.000151826
+transform	scale	scipy.stats.zscore(x, ddof=1)	3000	6	0.000150874
+transform	sample	rng.choice(x, n // 10, replace=False)	3000	0	0.000016565
+transform	sample	rng.choice(x, n // 10, replace=False)	3000	1	0.000016307
+transform	sample	rng.choice(x, n // 10, replace=False)	3000	2	0.000016245
+transform	sample	rng.choice(x, n // 10, replace=False)	3000	3	0.000016252
+transform	sample	rng.choice(x, n // 10, replace=False)	3000	4	0.000016200
+transform	sample	rng.choice(x, n // 10, replace=False)	3000	5	0.000016174
+transform	sample	rng.choice(x, n // 10, replace=False)	3000	6	0.000016286
+transform	seq	np.arange(1, n + 1)	3000	0	0.000001220
+transform	seq	np.arange(1, n + 1)	3000	1	0.000001220
+transform	seq	np.arange(1, n + 1)	3000	2	0.000001218
+transform	seq	np.arange(1, n + 1)	3000	3	0.000001220
+transform	seq	np.arange(1, n + 1)	3000	4	0.000001215
+transform	seq	np.arange(1, n + 1)	3000	5	0.000001217
+transform	seq	np.arange(1, n + 1)	3000	6	0.000001217
+transform	auc	sklearn.metrics.roc_auc_score(label, y)	3000	0	0.000874463
+transform	auc	sklearn.metrics.roc_auc_score(label, y)	3000	1	0.000855452
+transform	auc	sklearn.metrics.roc_auc_score(label, y)	3000	2	0.000871242
+transform	auc	sklearn.metrics.roc_auc_score(label, y)	3000	3	0.000865092
+transform	auc	sklearn.metrics.roc_auc_score(label, y)	3000	4	0.000877457
+transform	auc	sklearn.metrics.roc_auc_score(label, y)	3000	5	0.000872748
+transform	auc	sklearn.metrics.roc_auc_score(label, y)	3000	6	0.000885284
+transform	rank	scipy.stats.rankdata(x)	10000	0	0.000283080
+transform	rank	scipy.stats.rankdata(x)	10000	1	0.000276141
+transform	rank	scipy.stats.rankdata(x)	10000	2	0.000273670
+transform	rank	scipy.stats.rankdata(x)	10000	3	0.000273261
+transform	rank	scipy.stats.rankdata(x)	10000	4	0.000274245
+transform	rank	scipy.stats.rankdata(x)	10000	5	0.000271768
+transform	rank	scipy.stats.rankdata(x)	10000	6	0.000273002
+transform	uniq	pd.unique(x)	10000	0	0.000191273
+transform	uniq	pd.unique(x)	10000	1	0.000188175
+transform	uniq	pd.unique(x)	10000	2	0.000187108
+transform	uniq	pd.unique(x)	10000	3	0.000186654
+transform	uniq	pd.unique(x)	10000	4	0.000186791
+transform	uniq	pd.unique(x)	10000	5	0.000184260
+transform	uniq	pd.unique(x)	10000	6	0.000193227
+transform	scale	scipy.stats.zscore(x, ddof=1)	10000	0	0.000179158
+transform	scale	scipy.stats.zscore(x, ddof=1)	10000	1	0.000174672
+transform	scale	scipy.stats.zscore(x, ddof=1)	10000	2	0.000175831
+transform	scale	scipy.stats.zscore(x, ddof=1)	10000	3	0.000173899
+transform	scale	scipy.stats.zscore(x, ddof=1)	10000	4	0.000172953
+transform	scale	scipy.stats.zscore(x, ddof=1)	10000	5	0.000171899
+transform	scale	scipy.stats.zscore(x, ddof=1)	10000	6	0.000176137
+transform	sample	rng.choice(x, n // 10, replace=False)	10000	0	0.000024718
+transform	sample	rng.choice(x, n // 10, replace=False)	10000	1	0.000024051
+transform	sample	rng.choice(x, n // 10, replace=False)	10000	2	0.000024166
+transform	sample	rng.choice(x, n // 10, replace=False)	10000	3	0.000024095
+transform	sample	rng.choice(x, n // 10, replace=False)	10000	4	0.000023947
+transform	sample	rng.choice(x, n // 10, replace=False)	10000	5	0.000024011
+transform	sample	rng.choice(x, n // 10, replace=False)	10000	6	0.000024113
+transform	seq	np.arange(1, n + 1)	10000	0	0.000003091
+transform	seq	np.arange(1, n + 1)	10000	1	0.000003098
+transform	seq	np.arange(1, n + 1)	10000	2	0.000003093
+transform	seq	np.arange(1, n + 1)	10000	3	0.000003101
+transform	seq	np.arange(1, n + 1)	10000	4	0.000003098
+transform	seq	np.arange(1, n + 1)	10000	5	0.000003096
+transform	seq	np.arange(1, n + 1)	10000	6	0.000003108
+transform	auc	sklearn.metrics.roc_auc_score(label, y)	10000	0	0.001707844
+transform	auc	sklearn.metrics.roc_auc_score(label, y)	10000	1	0.001677758
+transform	auc	sklearn.metrics.roc_auc_score(label, y)	10000	2	0.001649175
+transform	auc	sklearn.metrics.roc_auc_score(label, y)	10000	3	0.001647929
+transform	auc	sklearn.metrics.roc_auc_score(label, y)	10000	4	0.001662772
+transform	auc	sklearn.metrics.roc_auc_score(label, y)	10000	5	0.001642697
+transform	auc	sklearn.metrics.roc_auc_score(label, y)	10000	6	0.001776573
+transform	rank	scipy.stats.rankdata(x)	30000	0	0.000891004
+transform	rank	scipy.stats.rankdata(x)	30000	1	0.000860018
+transform	rank	scipy.stats.rankdata(x)	30000	2	0.000850506
+transform	rank	scipy.stats.rankdata(x)	30000	3	0.000841007
+transform	rank	scipy.stats.rankdata(x)	30000	4	0.000853397
+transform	rank	scipy.stats.rankdata(x)	30000	5	0.000839625
+transform	rank	scipy.stats.rankdata(x)	30000	6	0.000836909
+transform	uniq	pd.unique(x)	30000	0	0.000454110
+transform	uniq	pd.unique(x)	30000	1	0.000450721
+transform	uniq	pd.unique(x)	30000	2	0.000451366
+transform	uniq	pd.unique(x)	30000	3	0.000452378
+transform	uniq	pd.unique(x)	30000	4	0.000451820
+transform	uniq	pd.unique(x)	30000	5	0.000452685
+transform	uniq	pd.unique(x)	30000	6	0.000455814
+transform	scale	scipy.stats.zscore(x, ddof=1)	30000	0	0.000264102
+transform	scale	scipy.stats.zscore(x, ddof=1)	30000	1	0.000255951
+transform	scale	scipy.stats.zscore(x, ddof=1)	30000	2	0.000255766
+transform	scale	scipy.stats.zscore(x, ddof=1)	30000	3	0.000257432
+transform	scale	scipy.stats.zscore(x, ddof=1)	30000	4	0.000254257
+transform	scale	scipy.stats.zscore(x, ddof=1)	30000	5	0.000257225
+transform	scale	scipy.stats.zscore(x, ddof=1)	30000	6	0.000260734
+transform	sample	rng.choice(x, n // 10, replace=False)	30000	0	0.000036330
+transform	sample	rng.choice(x, n // 10, replace=False)	30000	1	0.000035727
+transform	sample	rng.choice(x, n // 10, replace=False)	30000	2	0.000035504
+transform	sample	rng.choice(x, n // 10, replace=False)	30000	3	0.000035707
+transform	sample	rng.choice(x, n // 10, replace=False)	30000	4	0.000035483
+transform	sample	rng.choice(x, n // 10, replace=False)	30000	5	0.000035513
+transform	sample	rng.choice(x, n // 10, replace=False)	30000	6	0.000036371
+transform	seq	np.arange(1, n + 1)	30000	0	0.000008407
+transform	seq	np.arange(1, n + 1)	30000	1	0.000008416
+transform	seq	np.arange(1, n + 1)	30000	2	0.000008397
+transform	seq	np.arange(1, n + 1)	30000	3	0.000008394
+transform	seq	np.arange(1, n + 1)	30000	4	0.000008386
+transform	seq	np.arange(1, n + 1)	30000	5	0.000008387
+transform	seq	np.arange(1, n + 1)	30000	6	0.000008389
+transform	auc	sklearn.metrics.roc_auc_score(label, y)	30000	0	0.004080866
+transform	auc	sklearn.metrics.roc_auc_score(label, y)	30000	1	0.004041150
+transform	auc	sklearn.metrics.roc_auc_score(label, y)	30000	2	0.004074690
+transform	auc	sklearn.metrics.roc_auc_score(label, y)	30000	3	0.004062738
+transform	auc	sklearn.metrics.roc_auc_score(label, y)	30000	4	0.004068786
+transform	auc	sklearn.metrics.roc_auc_score(label, y)	30000	5	0.004016667
+transform	auc	sklearn.metrics.roc_auc_score(label, y)	30000	6	0.004068598
+transform	rank	scipy.stats.rankdata(x)	100000	0	0.003188861
+transform	rank	scipy.stats.rankdata(x)	100000	1	0.003155297
+transform	rank	scipy.stats.rankdata(x)	100000	2	0.003140908
+transform	rank	scipy.stats.rankdata(x)	100000	3	0.003168263
+transform	rank	scipy.stats.rankdata(x)	100000	4	0.003153572
+transform	rank	scipy.stats.rankdata(x)	100000	5	0.003151785
+transform	rank	scipy.stats.rankdata(x)	100000	6	0.003134197
+transform	uniq	pd.unique(x)	100000	0	0.002337221
+transform	uniq	pd.unique(x)	100000	1	0.002300371
+transform	uniq	pd.unique(x)	100000	2	0.002306738
+transform	uniq	pd.unique(x)	100000	3	0.002298379
+transform	uniq	pd.unique(x)	100000	4	0.002301391
+transform	uniq	pd.unique(x)	100000	5	0.002307643
+transform	uniq	pd.unique(x)	100000	6	0.002304808
+transform	scale	scipy.stats.zscore(x, ddof=1)	100000	0	0.000591989
+transform	scale	scipy.stats.zscore(x, ddof=1)	100000	1	0.000571059
+transform	scale	scipy.stats.zscore(x, ddof=1)	100000	2	0.000569797
+transform	scale	scipy.stats.zscore(x, ddof=1)	100000	3	0.000566240
+transform	scale	scipy.stats.zscore(x, ddof=1)	100000	4	0.000567117
+transform	scale	scipy.stats.zscore(x, ddof=1)	100000	5	0.000566561
+transform	scale	scipy.stats.zscore(x, ddof=1)	100000	6	0.000568442
+transform	sample	rng.choice(x, n // 10, replace=False)	100000	0	0.000097207
+transform	sample	rng.choice(x, n // 10, replace=False)	100000	1	0.000096424
+transform	sample	rng.choice(x, n // 10, replace=False)	100000	2	0.000096350
+transform	sample	rng.choice(x, n // 10, replace=False)	100000	3	0.000096646
+transform	sample	rng.choice(x, n // 10, replace=False)	100000	4	0.000096038
+transform	sample	rng.choice(x, n // 10, replace=False)	100000	5	0.000095548
+transform	sample	rng.choice(x, n // 10, replace=False)	100000	6	0.000095645
+transform	seq	np.arange(1, n + 1)	100000	0	0.000027216
+transform	seq	np.arange(1, n + 1)	100000	1	0.000026989
+transform	seq	np.arange(1, n + 1)	100000	2	0.000026986
+transform	seq	np.arange(1, n + 1)	100000	3	0.000027030
+transform	seq	np.arange(1, n + 1)	100000	4	0.000026993
+transform	seq	np.arange(1, n + 1)	100000	5	0.000027019
+transform	seq	np.arange(1, n + 1)	100000	6	0.000026982
+transform	auc	sklearn.metrics.roc_auc_score(label, y)	100000	0	0.013104217
+transform	auc	sklearn.metrics.roc_auc_score(label, y)	100000	1	0.013124997
+transform	auc	sklearn.metrics.roc_auc_score(label, y)	100000	2	0.013129193
+transform	auc	sklearn.metrics.roc_auc_score(label, y)	100000	3	0.013055411
+transform	auc	sklearn.metrics.roc_auc_score(label, y)	100000	4	0.013423640
+transform	auc	sklearn.metrics.roc_auc_score(label, y)	100000	5	0.013156751
+transform	auc	sklearn.metrics.roc_auc_score(label, y)	100000	6	0.013155071
+transform	rank	scipy.stats.rankdata(x)	300000	0	0.011417668
+transform	rank	scipy.stats.rankdata(x)	300000	1	0.011489216
+transform	rank	scipy.stats.rankdata(x)	300000	2	0.011409039
+transform	rank	scipy.stats.rankdata(x)	300000	3	0.011441062
+transform	rank	scipy.stats.rankdata(x)	300000	4	0.011446542
+transform	rank	scipy.stats.rankdata(x)	300000	5	0.011345174
+transform	rank	scipy.stats.rankdata(x)	300000	6	0.011348011
+transform	uniq	pd.unique(x)	300000	0	0.005610128
+transform	uniq	pd.unique(x)	300000	1	0.005594146
+transform	uniq	pd.unique(x)	300000	2	0.005666319
+transform	uniq	pd.unique(x)	300000	3	0.005609804
+transform	uniq	pd.unique(x)	300000	4	0.005591864
+transform	uniq	pd.unique(x)	300000	5	0.005592316
+transform	uniq	pd.unique(x)	300000	6	0.005593838
+transform	scale	scipy.stats.zscore(x, ddof=1)	300000	0	0.001463910
+transform	scale	scipy.stats.zscore(x, ddof=1)	300000	1	0.001433366
+transform	scale	scipy.stats.zscore(x, ddof=1)	300000	2	0.001426987
+transform	scale	scipy.stats.zscore(x, ddof=1)	300000	3	0.001432912
+transform	scale	scipy.stats.zscore(x, ddof=1)	300000	4	0.001426666
+transform	scale	scipy.stats.zscore(x, ddof=1)	300000	5	0.001433948
+transform	scale	scipy.stats.zscore(x, ddof=1)	300000	6	0.001429644
+transform	sample	rng.choice(x, n // 10, replace=False)	300000	0	0.000282085
+transform	sample	rng.choice(x, n // 10, replace=False)	300000	1	0.000279563
+transform	sample	rng.choice(x, n // 10, replace=False)	300000	2	0.000274238
+transform	sample	rng.choice(x, n // 10, replace=False)	300000	3	0.000275315
+transform	sample	rng.choice(x, n // 10, replace=False)	300000	4	0.000274015
+transform	sample	rng.choice(x, n // 10, replace=False)	300000	5	0.000273102
+transform	sample	rng.choice(x, n // 10, replace=False)	300000	6	0.000273632
+transform	seq	np.arange(1, n + 1)	300000	0	0.000081609
+transform	seq	np.arange(1, n + 1)	300000	1	0.000083663
+transform	seq	np.arange(1, n + 1)	300000	2	0.000081553
+transform	seq	np.arange(1, n + 1)	300000	3	0.000081505
+transform	seq	np.arange(1, n + 1)	300000	4	0.000081546
+transform	seq	np.arange(1, n + 1)	300000	5	0.000081240
+transform	seq	np.arange(1, n + 1)	300000	6	0.000081519
+transform	auc	sklearn.metrics.roc_auc_score(label, y)	300000	0	0.042666317
+transform	auc	sklearn.metrics.roc_auc_score(label, y)	300000	1	0.042793549
+transform	auc	sklearn.metrics.roc_auc_score(label, y)	300000	2	0.042425887
+transform	auc	sklearn.metrics.roc_auc_score(label, y)	300000	3	0.042632851
+transform	auc	sklearn.metrics.roc_auc_score(label, y)	300000	4	0.043457320
+transform	auc	sklearn.metrics.roc_auc_score(label, y)	300000	5	0.042435377
+transform	auc	sklearn.metrics.roc_auc_score(label, y)	300000	6	0.042471439
+transform	rank	scipy.stats.rankdata(x)	1000000	0	0.056158084
+transform	rank	scipy.stats.rankdata(x)	1000000	1	0.056449908
+transform	rank	scipy.stats.rankdata(x)	1000000	2	0.056408919
+transform	rank	scipy.stats.rankdata(x)	1000000	3	0.056992899
+transform	rank	scipy.stats.rankdata(x)	1000000	4	0.057122175
+transform	rank	scipy.stats.rankdata(x)	1000000	5	0.057178915
+transform	rank	scipy.stats.rankdata(x)	1000000	6	0.057374672
+transform	uniq	pd.unique(x)	1000000	0	0.028687028
+transform	uniq	pd.unique(x)	1000000	1	0.030316846
+transform	uniq	pd.unique(x)	1000000	2	0.030811867
+transform	uniq	pd.unique(x)	1000000	3	0.029552414
+transform	uniq	pd.unique(x)	1000000	4	0.028777766
+transform	uniq	pd.unique(x)	1000000	5	0.028563529
+transform	uniq	pd.unique(x)	1000000	6	0.028708450
+transform	scale	scipy.stats.zscore(x, ddof=1)	1000000	0	0.005513394
+transform	scale	scipy.stats.zscore(x, ddof=1)	1000000	1	0.004936918
+transform	scale	scipy.stats.zscore(x, ddof=1)	1000000	2	0.004887877
+transform	scale	scipy.stats.zscore(x, ddof=1)	1000000	3	0.004941961
+transform	scale	scipy.stats.zscore(x, ddof=1)	1000000	4	0.005592763
+transform	scale	scipy.stats.zscore(x, ddof=1)	1000000	5	0.004943513
+transform	scale	scipy.stats.zscore(x, ddof=1)	1000000	6	0.004806600
+transform	sample	rng.choice(x, n // 10, replace=False)	1000000	0	0.000987261
+transform	sample	rng.choice(x, n // 10, replace=False)	1000000	1	0.000909679
+transform	sample	rng.choice(x, n // 10, replace=False)	1000000	2	0.000919774
+transform	sample	rng.choice(x, n // 10, replace=False)	1000000	3	0.000905399
+transform	sample	rng.choice(x, n // 10, replace=False)	1000000	4	0.000899859
+transform	sample	rng.choice(x, n // 10, replace=False)	1000000	5	0.000902955
+transform	sample	rng.choice(x, n // 10, replace=False)	1000000	6	0.000897785
+transform	seq	np.arange(1, n + 1)	1000000	0	0.000269387
+transform	seq	np.arange(1, n + 1)	1000000	1	0.000269035
+transform	seq	np.arange(1, n + 1)	1000000	2	0.000269133
+transform	seq	np.arange(1, n + 1)	1000000	3	0.000269599
+transform	seq	np.arange(1, n + 1)	1000000	4	0.000269349
+transform	seq	np.arange(1, n + 1)	1000000	5	0.000268877
+transform	seq	np.arange(1, n + 1)	1000000	6	0.000268806
+transform	auc	sklearn.metrics.roc_auc_score(label, y)	1000000	0	0.173085551
+transform	auc	sklearn.metrics.roc_auc_score(label, y)	1000000	1	0.173533607
+transform	auc	sklearn.metrics.roc_auc_score(label, y)	1000000	2	0.174584438
+transform	auc	sklearn.metrics.roc_auc_score(label, y)	1000000	3	0.174167658
+transform	auc	sklearn.metrics.roc_auc_score(label, y)	1000000	4	0.174124304
+transform	auc	sklearn.metrics.roc_auc_score(label, y)	1000000	5	0.173610766
+transform	auc	sklearn.metrics.roc_auc_score(label, y)	1000000	6	0.173036464
+io	read_table (csv, numeric)	pd.read_csv(num.csv)	1000	0	0.000622275
+io	read_table (csv, numeric)	pd.read_csv(num.csv)	1000	1	0.000614933
+io	read_table (csv, numeric)	pd.read_csv(num.csv)	1000	2	0.000591396
+io	read_table (csv, numeric)	pd.read_csv(num.csv)	1000	3	0.000594828
+io	read_table (csv, numeric)	pd.read_csv(num.csv)	1000	4	0.000589328
+io	read_table (csv, numeric)	pd.read_csv(num.csv)	1000	5	0.000586492
+io	read_table (csv, numeric)	pd.read_csv(num.csv)	1000	6	0.000587541
+io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	1000	0	0.000951575
+io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	1000	1	0.000842248
+io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	1000	2	0.000833414
+io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	1000	3	0.000836218
+io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	1000	4	0.000839313
+io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	1000	5	0.000837369
+io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	1000	6	0.000834905
+io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	1000	0	0.000841027
+io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	1000	1	0.000845882
+io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	1000	2	0.000842514
+io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	1000	3	0.000843098
+io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	1000	4	0.000842090
+io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	1000	5	0.000837623
+io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	1000	6	0.000843241
+io	read_table (csv, hoa)	pd.read_csv(mix.csv)	1000	0	0.000614627
+io	read_table (csv, hoa)	pd.read_csv(mix.csv)	1000	1	0.000612560
+io	read_table (csv, hoa)	pd.read_csv(mix.csv)	1000	2	0.000601308
+io	read_table (csv, hoa)	pd.read_csv(mix.csv)	1000	3	0.000608339
+io	read_table (csv, hoa)	pd.read_csv(mix.csv)	1000	4	0.000610889
+io	read_table (csv, hoa)	pd.read_csv(mix.csv)	1000	5	0.000605514
+io	read_table (csv, hoa)	pd.read_csv(mix.csv)	1000	6	0.000605502
+io	write_table (csv, hoa)	df.to_csv(f, index=False)	1000	0	0.007151381
+io	write_table (csv, hoa)	df.to_csv(f, index=False)	1000	1	0.001846952
+io	write_table (csv, hoa)	df.to_csv(f, index=False)	1000	2	0.001866083
+io	write_table (csv, hoa)	df.to_csv(f, index=False)	1000	3	0.001796976
+io	write_table (csv, hoa)	df.to_csv(f, index=False)	1000	4	0.001804422
+io	write_table (csv, hoa)	df.to_csv(f, index=False)	1000	5	0.001758523
+io	write_table (csv, hoa)	df.to_csv(f, index=False)	1000	6	0.001805356
+io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	1000	0	0.001818455
+io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	1000	1	0.001787300
+io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	1000	2	0.001773537
+io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	1000	3	0.001802272
+io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	1000	4	0.001782934
+io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	1000	5	0.001799547
+io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	1000	6	0.001778253
+io	write_table (csv, aoa)	df.to_csv(f, index=False)	1000	0	0.001812302
+io	write_table (csv, aoa)	df.to_csv(f, index=False)	1000	1	0.001741506
+io	write_table (csv, aoa)	df.to_csv(f, index=False)	1000	2	0.001778837
+io	write_table (csv, aoa)	df.to_csv(f, index=False)	1000	3	0.001753473
+io	write_table (csv, aoa)	df.to_csv(f, index=False)	1000	4	0.001750327
+io	write_table (csv, aoa)	df.to_csv(f, index=False)	1000	5	0.001730009
+io	write_table (csv, aoa)	df.to_csv(f, index=False)	1000	6	0.001745964
+io	write_table (csv, row.names)	df.to_csv(f, index=True)	1000	0	0.001875480
+io	write_table (csv, row.names)	df.to_csv(f, index=True)	1000	1	0.001877847
+io	write_table (csv, row.names)	df.to_csv(f, index=True)	1000	2	0.001867500
+io	write_table (csv, row.names)	df.to_csv(f, index=True)	1000	3	0.001865193
+io	write_table (csv, row.names)	df.to_csv(f, index=True)	1000	4	0.001869500
+io	write_table (csv, row.names)	df.to_csv(f, index=True)	1000	5	0.001852362
+io	write_table (csv, row.names)	df.to_csv(f, index=True)	1000	6	0.001872100
+io	read_table (csv, numeric)	pd.read_csv(num.csv)	3000	0	0.000969685
+io	read_table (csv, numeric)	pd.read_csv(num.csv)	3000	1	0.000928607
+io	read_table (csv, numeric)	pd.read_csv(num.csv)	3000	2	0.000906243
+io	read_table (csv, numeric)	pd.read_csv(num.csv)	3000	3	0.000939433
+io	read_table (csv, numeric)	pd.read_csv(num.csv)	3000	4	0.000940994
+io	read_table (csv, numeric)	pd.read_csv(num.csv)	3000	5	0.000921188
+io	read_table (csv, numeric)	pd.read_csv(num.csv)	3000	6	0.000921125
+io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	3000	0	0.002551740
+io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	3000	1	0.002534523
+io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	3000	2	0.002503582
+io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	3000	3	0.002519438
+io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	3000	4	0.002507842
+io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	3000	5	0.002524107
+io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	3000	6	0.002496496
+io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	3000	0	0.002533623
+io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	3000	1	0.002526535
+io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	3000	2	0.002528732
+io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	3000	3	0.002541600
+io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	3000	4	0.002540487
+io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	3000	5	0.002516893
+io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	3000	6	0.002511724
+io	read_table (csv, hoa)	pd.read_csv(mix.csv)	3000	0	0.000933291
+io	read_table (csv, hoa)	pd.read_csv(mix.csv)	3000	1	0.000941429
+io	read_table (csv, hoa)	pd.read_csv(mix.csv)	3000	2	0.000937128
+io	read_table (csv, hoa)	pd.read_csv(mix.csv)	3000	3	0.000928679
+io	read_table (csv, hoa)	pd.read_csv(mix.csv)	3000	4	0.000908620
+io	read_table (csv, hoa)	pd.read_csv(mix.csv)	3000	5	0.000924804
+io	read_table (csv, hoa)	pd.read_csv(mix.csv)	3000	6	0.000908760
+io	write_table (csv, hoa)	df.to_csv(f, index=False)	3000	0	0.004854930
+io	write_table (csv, hoa)	df.to_csv(f, index=False)	3000	1	0.004807780
+io	write_table (csv, hoa)	df.to_csv(f, index=False)	3000	2	0.004833204
+io	write_table (csv, hoa)	df.to_csv(f, index=False)	3000	3	0.004859483
+io	write_table (csv, hoa)	df.to_csv(f, index=False)	3000	4	0.004859874
+io	write_table (csv, hoa)	df.to_csv(f, index=False)	3000	5	0.004761555
+io	write_table (csv, hoa)	df.to_csv(f, index=False)	3000	6	0.004785428
+io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	3000	0	0.004959371
+io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	3000	1	0.004814838
+io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	3000	2	0.004778822
+io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	3000	3	0.004814977
+io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	3000	4	0.004782240
+io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	3000	5	0.004743528
+io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	3000	6	0.004785739
+io	write_table (csv, aoa)	df.to_csv(f, index=False)	3000	0	0.004769229
+io	write_table (csv, aoa)	df.to_csv(f, index=False)	3000	1	0.004749996
+io	write_table (csv, aoa)	df.to_csv(f, index=False)	3000	2	0.004727610
+io	write_table (csv, aoa)	df.to_csv(f, index=False)	3000	3	0.004739937
+io	write_table (csv, aoa)	df.to_csv(f, index=False)	3000	4	0.004767043
+io	write_table (csv, aoa)	df.to_csv(f, index=False)	3000	5	0.004741854
+io	write_table (csv, aoa)	df.to_csv(f, index=False)	3000	6	0.004754419
+io	write_table (csv, row.names)	df.to_csv(f, index=True)	3000	0	0.005142052
+io	write_table (csv, row.names)	df.to_csv(f, index=True)	3000	1	0.005097276
+io	write_table (csv, row.names)	df.to_csv(f, index=True)	3000	2	0.005113949
+io	write_table (csv, row.names)	df.to_csv(f, index=True)	3000	3	0.005087633
+io	write_table (csv, row.names)	df.to_csv(f, index=True)	3000	4	0.005064341
+io	write_table (csv, row.names)	df.to_csv(f, index=True)	3000	5	0.005084382
+io	write_table (csv, row.names)	df.to_csv(f, index=True)	3000	6	0.005094479
+io	read_table (csv, numeric)	pd.read_csv(num.csv)	10000	0	0.002165832
+io	read_table (csv, numeric)	pd.read_csv(num.csv)	10000	1	0.002194093
+io	read_table (csv, numeric)	pd.read_csv(num.csv)	10000	2	0.002098975
+io	read_table (csv, numeric)	pd.read_csv(num.csv)	10000	3	0.002105958
+io	read_table (csv, numeric)	pd.read_csv(num.csv)	10000	4	0.002141229
+io	read_table (csv, numeric)	pd.read_csv(num.csv)	10000	5	0.002171527
+io	read_table (csv, numeric)	pd.read_csv(num.csv)	10000	6	0.002141674
+io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	10000	0	0.008357099
+io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	10000	1	0.008430429
+io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	10000	2	0.008562297
+io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	10000	3	0.008433125
+io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	10000	4	0.008431535
+io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	10000	5	0.008399789
+io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	10000	6	0.008408324
+io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	10000	0	0.008706964
+io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	10000	1	0.008732616
+io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	10000	2	0.008730658
+io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	10000	3	0.008715100
+io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	10000	4	0.008845508
+io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	10000	5	0.008743026
+io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	10000	6	0.008728428
+io	read_table (csv, hoa)	pd.read_csv(mix.csv)	10000	0	0.002035130
+io	read_table (csv, hoa)	pd.read_csv(mix.csv)	10000	1	0.001946064
+io	read_table (csv, hoa)	pd.read_csv(mix.csv)	10000	2	0.001976793
+io	read_table (csv, hoa)	pd.read_csv(mix.csv)	10000	3	0.001976246
+io	read_table (csv, hoa)	pd.read_csv(mix.csv)	10000	4	0.001961799
+io	read_table (csv, hoa)	pd.read_csv(mix.csv)	10000	5	0.002001591
+io	read_table (csv, hoa)	pd.read_csv(mix.csv)	10000	6	0.001966889
+io	write_table (csv, hoa)	df.to_csv(f, index=False)	10000	0	0.015493795
+io	write_table (csv, hoa)	df.to_csv(f, index=False)	10000	1	0.015402703
+io	write_table (csv, hoa)	df.to_csv(f, index=False)	10000	2	0.015393264
+io	write_table (csv, hoa)	df.to_csv(f, index=False)	10000	3	0.015372150
+io	write_table (csv, hoa)	df.to_csv(f, index=False)	10000	4	0.015550444
+io	write_table (csv, hoa)	df.to_csv(f, index=False)	10000	5	0.015507078
+io	write_table (csv, hoa)	df.to_csv(f, index=False)	10000	6	0.015399447
+io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	10000	0	0.015278520
+io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	10000	1	0.015214545
+io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	10000	2	0.015245147
+io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	10000	3	0.015232092
+io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	10000	4	0.015243438
+io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	10000	5	0.015205159
+io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	10000	6	0.015418019
+io	write_table (csv, aoa)	df.to_csv(f, index=False)	10000	0	0.015916679
+io	write_table (csv, aoa)	df.to_csv(f, index=False)	10000	1	0.015472645
+io	write_table (csv, aoa)	df.to_csv(f, index=False)	10000	2	0.015262936
+io	write_table (csv, aoa)	df.to_csv(f, index=False)	10000	3	0.015290693
+io	write_table (csv, aoa)	df.to_csv(f, index=False)	10000	4	0.015279920
+io	write_table (csv, aoa)	df.to_csv(f, index=False)	10000	5	0.015301489
+io	write_table (csv, aoa)	df.to_csv(f, index=False)	10000	6	0.015283742
+io	write_table (csv, row.names)	df.to_csv(f, index=True)	10000	0	0.016542203
+io	write_table (csv, row.names)	df.to_csv(f, index=True)	10000	1	0.016448765
+io	write_table (csv, row.names)	df.to_csv(f, index=True)	10000	2	0.016551379
+io	write_table (csv, row.names)	df.to_csv(f, index=True)	10000	3	0.016552693
+io	write_table (csv, row.names)	df.to_csv(f, index=True)	10000	4	0.016595854
+io	write_table (csv, row.names)	df.to_csv(f, index=True)	10000	5	0.016463777
+io	write_table (csv, row.names)	df.to_csv(f, index=True)	10000	6	0.016449042
+io	read_table (csv, numeric)	pd.read_csv(num.csv)	30000	0	0.005760001
+io	read_table (csv, numeric)	pd.read_csv(num.csv)	30000	1	0.005673871
+io	read_table (csv, numeric)	pd.read_csv(num.csv)	30000	2	0.005745237
+io	read_table (csv, numeric)	pd.read_csv(num.csv)	30000	3	0.005608700
+io	read_table (csv, numeric)	pd.read_csv(num.csv)	30000	4	0.005687070
+io	read_table (csv, numeric)	pd.read_csv(num.csv)	30000	5	0.005676093
+io	read_table (csv, numeric)	pd.read_csv(num.csv)	30000	6	0.005789596
+io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	30000	0	0.026362269
+io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	30000	1	0.026523276
+io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	30000	2	0.026198469
+io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	30000	3	0.026560587
+io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	30000	4	0.026298437
+io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	30000	5	0.026270017
+io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	30000	6	0.026333220
+io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	30000	0	0.026903283
+io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	30000	1	0.026949641
+io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	30000	2	0.027429171
+io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	30000	3	0.027430795
+io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	30000	4	0.026713070
+io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	30000	5	0.026602185
+io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	30000	6	0.026589380
+io	read_table (csv, hoa)	pd.read_csv(mix.csv)	30000	0	0.005202131
+io	read_table (csv, hoa)	pd.read_csv(mix.csv)	30000	1	0.005111893
+io	read_table (csv, hoa)	pd.read_csv(mix.csv)	30000	2	0.005140561
+io	read_table (csv, hoa)	pd.read_csv(mix.csv)	30000	3	0.005083250
+io	read_table (csv, hoa)	pd.read_csv(mix.csv)	30000	4	0.005124133
+io	read_table (csv, hoa)	pd.read_csv(mix.csv)	30000	5	0.005138116
+io	read_table (csv, hoa)	pd.read_csv(mix.csv)	30000	6	0.005115449
+io	write_table (csv, hoa)	df.to_csv(f, index=False)	30000	0	0.046232884
+io	write_table (csv, hoa)	df.to_csv(f, index=False)	30000	1	0.046076495
+io	write_table (csv, hoa)	df.to_csv(f, index=False)	30000	2	0.046229365
+io	write_table (csv, hoa)	df.to_csv(f, index=False)	30000	3	0.046650754
+io	write_table (csv, hoa)	df.to_csv(f, index=False)	30000	4	0.046522365
+io	write_table (csv, hoa)	df.to_csv(f, index=False)	30000	5	0.046427884
+io	write_table (csv, hoa)	df.to_csv(f, index=False)	30000	6	0.046158159
+io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	30000	0	0.046249221
+io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	30000	1	0.045905060
+io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	30000	2	0.045911509
+io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	30000	3	0.046484211
+io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	30000	4	0.045808671
+io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	30000	5	0.046392584
+io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	30000	6	0.046223193
+io	write_table (csv, aoa)	df.to_csv(f, index=False)	30000	0	0.046524285
+io	write_table (csv, aoa)	df.to_csv(f, index=False)	30000	1	0.046412185
+io	write_table (csv, aoa)	df.to_csv(f, index=False)	30000	2	0.046104230
+io	write_table (csv, aoa)	df.to_csv(f, index=False)	30000	3	0.045980815
+io	write_table (csv, aoa)	df.to_csv(f, index=False)	30000	4	0.045931941
+io	write_table (csv, aoa)	df.to_csv(f, index=False)	30000	5	0.046054823
+io	write_table (csv, aoa)	df.to_csv(f, index=False)	30000	6	0.046086209
+io	write_table (csv, row.names)	df.to_csv(f, index=True)	30000	0	0.049656262
+io	write_table (csv, row.names)	df.to_csv(f, index=True)	30000	1	0.049538547
+io	write_table (csv, row.names)	df.to_csv(f, index=True)	30000	2	0.049559377
+io	write_table (csv, row.names)	df.to_csv(f, index=True)	30000	3	0.050320677
+io	write_table (csv, row.names)	df.to_csv(f, index=True)	30000	4	0.049953283
+io	write_table (csv, row.names)	df.to_csv(f, index=True)	30000	5	0.050348181
+io	write_table (csv, row.names)	df.to_csv(f, index=True)	30000	6	0.049321702
+io	read_table (csv, numeric)	pd.read_csv(num.csv)	100000	0	0.018959813
+io	read_table (csv, numeric)	pd.read_csv(num.csv)	100000	1	0.018928218
+io	read_table (csv, numeric)	pd.read_csv(num.csv)	100000	2	0.019210230
+io	read_table (csv, numeric)	pd.read_csv(num.csv)	100000	3	0.019517687
+io	read_table (csv, numeric)	pd.read_csv(num.csv)	100000	4	0.019641972
+io	read_table (csv, numeric)	pd.read_csv(num.csv)	100000	5	0.019335098
+io	read_table (csv, numeric)	pd.read_csv(num.csv)	100000	6	0.018907594
+io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	100000	0	0.094662221
+io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	100000	1	0.095335945
+io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	100000	2	0.094816416
+io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	100000	3	0.095966325
+io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	100000	4	0.096917328
+io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	100000	5	0.094461828
+io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	100000	6	0.094661289
+io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	100000	0	0.095097607
+io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	100000	1	0.095217921
+io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	100000	2	0.095273048
+io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	100000	3	0.095010172
+io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	100000	4	0.095450323
+io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	100000	5	0.095222568
+io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	100000	6	0.095253604
+io	read_table (csv, hoa)	pd.read_csv(mix.csv)	100000	0	0.016396556
+io	read_table (csv, hoa)	pd.read_csv(mix.csv)	100000	1	0.016627304
+io	read_table (csv, hoa)	pd.read_csv(mix.csv)	100000	2	0.016372480
+io	read_table (csv, hoa)	pd.read_csv(mix.csv)	100000	3	0.016321724
+io	read_table (csv, hoa)	pd.read_csv(mix.csv)	100000	4	0.016236029
+io	read_table (csv, hoa)	pd.read_csv(mix.csv)	100000	5	0.016584113
+io	read_table (csv, hoa)	pd.read_csv(mix.csv)	100000	6	0.016389269
+io	write_table (csv, hoa)	df.to_csv(f, index=False)	100000	0	0.153021431
+io	write_table (csv, hoa)	df.to_csv(f, index=False)	100000	1	0.155510985
+io	write_table (csv, hoa)	df.to_csv(f, index=False)	100000	2	0.155877551
+io	write_table (csv, hoa)	df.to_csv(f, index=False)	100000	3	0.156519148
+io	write_table (csv, hoa)	df.to_csv(f, index=False)	100000	4	0.155818270
+io	write_table (csv, hoa)	df.to_csv(f, index=False)	100000	5	0.156330598
+io	write_table (csv, hoa)	df.to_csv(f, index=False)	100000	6	0.156686399
+io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	100000	0	0.155953660
+io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	100000	1	0.156286441
+io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	100000	2	0.156084063
+io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	100000	3	0.157076976
+io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	100000	4	0.156129012
+io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	100000	5	0.157029816
+io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	100000	6	0.155660891
+io	write_table (csv, aoa)	df.to_csv(f, index=False)	100000	0	0.155541192
+io	write_table (csv, aoa)	df.to_csv(f, index=False)	100000	1	0.155645390
+io	write_table (csv, aoa)	df.to_csv(f, index=False)	100000	2	0.155905777
+io	write_table (csv, aoa)	df.to_csv(f, index=False)	100000	3	0.155035050
+io	write_table (csv, aoa)	df.to_csv(f, index=False)	100000	4	0.155910244
+io	write_table (csv, aoa)	df.to_csv(f, index=False)	100000	5	0.155846156
+io	write_table (csv, aoa)	df.to_csv(f, index=False)	100000	6	0.155261727
+io	write_table (csv, row.names)	df.to_csv(f, index=True)	100000	0	0.167809349
+io	write_table (csv, row.names)	df.to_csv(f, index=True)	100000	1	0.167863787
+io	write_table (csv, row.names)	df.to_csv(f, index=True)	100000	2	0.167216124
+io	write_table (csv, row.names)	df.to_csv(f, index=True)	100000	3	0.167237934
+io	write_table (csv, row.names)	df.to_csv(f, index=True)	100000	4	0.167771689
+io	write_table (csv, row.names)	df.to_csv(f, index=True)	100000	5	0.167381431
+io	write_table (csv, row.names)	df.to_csv(f, index=True)	100000	6	0.167224029
+io	read_table (csv, numeric)	pd.read_csv(num.csv)	300000	0	0.058406394
+io	read_table (csv, numeric)	pd.read_csv(num.csv)	300000	1	0.057559873
+io	read_table (csv, numeric)	pd.read_csv(num.csv)	300000	2	0.057800775
+io	read_table (csv, numeric)	pd.read_csv(num.csv)	300000	3	0.058523359
+io	read_table (csv, numeric)	pd.read_csv(num.csv)	300000	4	0.058640646
+io	read_table (csv, numeric)	pd.read_csv(num.csv)	300000	5	0.058371377
+io	read_table (csv, numeric)	pd.read_csv(num.csv)	300000	6	0.058383494
+io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	300000	0	0.288055865
+io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	300000	1	0.287943119
+io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	300000	2	0.288150084
+io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	300000	3	0.288007026
+io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	300000	4	0.288153728
+io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	300000	5	0.287738552
+io	read_table (csv, mixed)	list(csv.DictReader(mix.csv))	300000	6	0.288142660
+io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	300000	0	0.290039659
+io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	300000	1	0.290155927
+io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	300000	2	0.290636796
+io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	300000	3	0.292686166
+io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	300000	4	0.290135189
+io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	300000	5	0.291508304
+io	read_table (tsv, mixed)	list(csv.DictReader(mix.tsv, "\t"))	300000	6	0.290595906
+io	read_table (csv, hoa)	pd.read_csv(mix.csv)	300000	0	0.060760445
+io	read_table (csv, hoa)	pd.read_csv(mix.csv)	300000	1	0.061025819
+io	read_table (csv, hoa)	pd.read_csv(mix.csv)	300000	2	0.060697101
+io	read_table (csv, hoa)	pd.read_csv(mix.csv)	300000	3	0.061562718
+io	read_table (csv, hoa)	pd.read_csv(mix.csv)	300000	4	0.060687573
+io	read_table (csv, hoa)	pd.read_csv(mix.csv)	300000	5	0.060553875
+io	read_table (csv, hoa)	pd.read_csv(mix.csv)	300000	6	0.060534393
+io	write_table (csv, hoa)	df.to_csv(f, index=False)	300000	0	0.468574235
+io	write_table (csv, hoa)	df.to_csv(f, index=False)	300000	1	0.464143790
+io	write_table (csv, hoa)	df.to_csv(f, index=False)	300000	2	0.462556184
+io	write_table (csv, hoa)	df.to_csv(f, index=False)	300000	3	0.462593354
+io	write_table (csv, hoa)	df.to_csv(f, index=False)	300000	4	0.465276707
+io	write_table (csv, hoa)	df.to_csv(f, index=False)	300000	5	0.467815919
+io	write_table (csv, hoa)	df.to_csv(f, index=False)	300000	6	0.463662043
+io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	300000	0	0.463353965
+io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	300000	1	0.463507402
+io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	300000	2	0.464154768
+io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	300000	3	0.464348892
+io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	300000	4	0.488397793
+io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	300000	5	0.464569105
+io	write_table (tsv, hoa)	df.to_csv(f, sep="\t", index=False)	300000	6	0.466863543
+io	write_table (csv, aoa)	df.to_csv(f, index=False)	300000	0	0.469816625
+io	write_table (csv, aoa)	df.to_csv(f, index=False)	300000	1	0.467995046
+io	write_table (csv, aoa)	df.to_csv(f, index=False)	300000	2	0.464326644
+io	write_table (csv, aoa)	df.to_csv(f, index=False)	300000	3	0.463436464
+io	write_table (csv, aoa)	df.to_csv(f, index=False)	300000	4	0.463730302
+io	write_table (csv, aoa)	df.to_csv(f, index=False)	300000	5	0.464228519
+io	write_table (csv, aoa)	df.to_csv(f, index=False)	300000	6	0.461310021
+io	write_table (csv, row.names)	df.to_csv(f, index=True)	300000	0	0.524959278
+io	write_table (csv, row.names)	df.to_csv(f, index=True)	300000	1	0.500673796
+io	write_table (csv, row.names)	df.to_csv(f, index=True)	300000	2	0.501285774
+io	write_table (csv, row.names)	df.to_csv(f, index=True)	300000	3	0.501683333
+io	write_table (csv, row.names)	df.to_csv(f, index=True)	300000	4	0.501117891
+io	write_table (csv, row.names)	df.to_csv(f, index=True)	300000	5	0.503776609
+io	write_table (csv, row.names)	df.to_csv(f, index=True)	300000	6	0.500697375
+frame	filter	df[df.x > 0]	1000	0	0.000120983
+frame	filter	df[df.x > 0]	1000	1	0.000108235
+frame	filter	df[df.x > 0]	1000	2	0.000106515
+frame	filter	df[df.x > 0]	1000	3	0.000107792
+frame	filter	df[df.x > 0]	1000	4	0.000106852
+frame	filter	df[df.x > 0]	1000	5	0.000107576
+frame	filter	df[df.x > 0]	1000	6	0.000110641
+frame	select_cols	df[['x','cat1']]	1000	0	0.000136511
+frame	select_cols	df[['x','cat1']]	1000	1	0.000135263
+frame	select_cols	df[['x','cat1']]	1000	2	0.000133615
+frame	select_cols	df[['x','cat1']]	1000	3	0.000134163
+frame	select_cols	df[['x','cat1']]	1000	4	0.000133909
+frame	select_cols	df[['x','cat1']]	1000	5	0.000132517
+frame	select_cols	df[['x','cat1']]	1000	6	0.000132519
+frame	group_by + mean	df.groupby('cat1')['x'].mean()	1000	0	0.000173716
+frame	group_by + mean	df.groupby('cat1')['x'].mean()	1000	1	0.000152099
+frame	group_by + mean	df.groupby('cat1')['x'].mean()	1000	2	0.000153636
+frame	group_by + mean	df.groupby('cat1')['x'].mean()	1000	3	0.000152911
+frame	group_by + mean	df.groupby('cat1')['x'].mean()	1000	4	0.000154501
+frame	group_by + mean	df.groupby('cat1')['x'].mean()	1000	5	0.000153072
+frame	group_by + mean	df.groupby('cat1')['x'].mean()	1000	6	0.000154883
+frame	merge	df_id.merge(df_id, on='id', how='inner')	1000	0	0.000689119
+frame	merge	df_id.merge(df_id, on='id', how='inner')	1000	1	0.000715066
+frame	merge	df_id.merge(df_id, on='id', how='inner')	1000	2	0.000668226
+frame	merge	df_id.merge(df_id, on='id', how='inner')	1000	3	0.000666358
+frame	merge	df_id.merge(df_id, on='id', how='inner')	1000	4	0.000662148
+frame	merge	df_id.merge(df_id, on='id', how='inner')	1000	5	0.000675434
+frame	merge	df_id.merge(df_id, on='id', how='inner')	1000	6	0.000686559
+frame	value_counts	df['cat1'].value_counts()	1000	0	0.000115282
+frame	value_counts	df['cat1'].value_counts()	1000	1	0.000111764
+frame	value_counts	df['cat1'].value_counts()	1000	2	0.000110270
+frame	value_counts	df['cat1'].value_counts()	1000	3	0.000110991
+frame	value_counts	df['cat1'].value_counts()	1000	4	0.000108576
+frame	value_counts	df['cat1'].value_counts()	1000	5	0.000110323
+frame	value_counts	df['cat1'].value_counts()	1000	6	0.000110708
+frame	drop_duplicates	df.drop_duplicates()	1000	0	0.000385892
+frame	drop_duplicates	df.drop_duplicates()	1000	1	0.000380964
+frame	drop_duplicates	df.drop_duplicates()	1000	2	0.000385048
+frame	drop_duplicates	df.drop_duplicates()	1000	3	0.000369160
+frame	drop_duplicates	df.drop_duplicates()	1000	4	0.000367996
+frame	drop_duplicates	df.drop_duplicates()	1000	5	0.000363299
+frame	drop_duplicates	df.drop_duplicates()	1000	6	0.000368191
+frame	transpose	arr.T.copy()	1000	0	0.000000800
+frame	transpose	arr.T.copy()	1000	1	0.000000807
+frame	transpose	arr.T.copy()	1000	2	0.000000792
+frame	transpose	arr.T.copy()	1000	3	0.000000801
+frame	transpose	arr.T.copy()	1000	4	0.000000794
+frame	transpose	arr.T.copy()	1000	5	0.000000799
+frame	transpose	arr.T.copy()	1000	6	0.000000804
+frame	aoh2hoa	pd.DataFrame(records)	1000	0	0.000489921
+frame	aoh2hoa	pd.DataFrame(records)	1000	1	0.000478572
+frame	aoh2hoa	pd.DataFrame(records)	1000	2	0.000487426
+frame	aoh2hoa	pd.DataFrame(records)	1000	3	0.000483031
+frame	aoh2hoa	pd.DataFrame(records)	1000	4	0.000479749
+frame	aoh2hoa	pd.DataFrame(records)	1000	5	0.000482164
+frame	aoh2hoa	pd.DataFrame(records)	1000	6	0.000473401
+frame	filter	df[df.x > 0]	3000	0	0.000132579
+frame	filter	df[df.x > 0]	3000	1	0.000121152
+frame	filter	df[df.x > 0]	3000	2	0.000123006
+frame	filter	df[df.x > 0]	3000	3	0.000121128
+frame	filter	df[df.x > 0]	3000	4	0.000122306
+frame	filter	df[df.x > 0]	3000	5	0.000121993
+frame	filter	df[df.x > 0]	3000	6	0.000120815
+frame	select_cols	df[['x','cat1']]	3000	0	0.000144667
+frame	select_cols	df[['x','cat1']]	3000	1	0.000139709
+frame	select_cols	df[['x','cat1']]	3000	2	0.000139110
+frame	select_cols	df[['x','cat1']]	3000	3	0.000138982
+frame	select_cols	df[['x','cat1']]	3000	4	0.000138640
+frame	select_cols	df[['x','cat1']]	3000	5	0.000139126
+frame	select_cols	df[['x','cat1']]	3000	6	0.000140926
+frame	group_by + mean	df.groupby('cat1')['x'].mean()	3000	0	0.000197672
+frame	group_by + mean	df.groupby('cat1')['x'].mean()	3000	1	0.000194354
+frame	group_by + mean	df.groupby('cat1')['x'].mean()	3000	2	0.000192694
+frame	group_by + mean	df.groupby('cat1')['x'].mean()	3000	3	0.000189485
+frame	group_by + mean	df.groupby('cat1')['x'].mean()	3000	4	0.000187330
+frame	group_by + mean	df.groupby('cat1')['x'].mean()	3000	5	0.000188662
+frame	group_by + mean	df.groupby('cat1')['x'].mean()	3000	6	0.000192123
+frame	merge	df_id.merge(df_id, on='id', how='inner')	3000	0	0.000726101
+frame	merge	df_id.merge(df_id, on='id', how='inner')	3000	1	0.000716599
+frame	merge	df_id.merge(df_id, on='id', how='inner')	3000	2	0.000721648
+frame	merge	df_id.merge(df_id, on='id', how='inner')	3000	3	0.000706174
+frame	merge	df_id.merge(df_id, on='id', how='inner')	3000	4	0.000701297
+frame	merge	df_id.merge(df_id, on='id', how='inner')	3000	5	0.000725352
+frame	merge	df_id.merge(df_id, on='id', how='inner')	3000	6	0.000723562
+frame	value_counts	df['cat1'].value_counts()	3000	0	0.000177540
+frame	value_counts	df['cat1'].value_counts()	3000	1	0.000175505
+frame	value_counts	df['cat1'].value_counts()	3000	2	0.000175348
+frame	value_counts	df['cat1'].value_counts()	3000	3	0.000175722
+frame	value_counts	df['cat1'].value_counts()	3000	4	0.000173183
+frame	value_counts	df['cat1'].value_counts()	3000	5	0.000174200
+frame	value_counts	df['cat1'].value_counts()	3000	6	0.000174454
+frame	drop_duplicates	df.drop_duplicates()	3000	0	0.000600639
+frame	drop_duplicates	df.drop_duplicates()	3000	1	0.000615570
+frame	drop_duplicates	df.drop_duplicates()	3000	2	0.000596343
+frame	drop_duplicates	df.drop_duplicates()	3000	3	0.000645781
+frame	drop_duplicates	df.drop_duplicates()	3000	4	0.000594109
+frame	drop_duplicates	df.drop_duplicates()	3000	5	0.000608983
+frame	drop_duplicates	df.drop_duplicates()	3000	6	0.000608740
+frame	transpose	arr.T.copy()	3000	0	0.000001795
+frame	transpose	arr.T.copy()	3000	1	0.000001825
+frame	transpose	arr.T.copy()	3000	2	0.000001826
+frame	transpose	arr.T.copy()	3000	3	0.000001831
+frame	transpose	arr.T.copy()	3000	4	0.000001841
+frame	transpose	arr.T.copy()	3000	5	0.000001814
+frame	transpose	arr.T.copy()	3000	6	0.000001824
+frame	aoh2hoa	pd.DataFrame(records)	3000	0	0.001231830
+frame	aoh2hoa	pd.DataFrame(records)	3000	1	0.001242427
+frame	aoh2hoa	pd.DataFrame(records)	3000	2	0.001233920
+frame	aoh2hoa	pd.DataFrame(records)	3000	3	0.001226511
+frame	aoh2hoa	pd.DataFrame(records)	3000	4	0.001230915
+frame	aoh2hoa	pd.DataFrame(records)	3000	5	0.001232978
+frame	aoh2hoa	pd.DataFrame(records)	3000	6	0.001230898
+frame	filter	df[df.x > 0]	10000	0	0.000203892
+frame	filter	df[df.x > 0]	10000	1	0.000182646
+frame	filter	df[df.x > 0]	10000	2	0.000184457
+frame	filter	df[df.x > 0]	10000	3	0.000180635
+frame	filter	df[df.x > 0]	10000	4	0.000182032
+frame	filter	df[df.x > 0]	10000	5	0.000177846
+frame	filter	df[df.x > 0]	10000	6	0.000176884
+frame	select_cols	df[['x','cat1']]	10000	0	0.000163597
+frame	select_cols	df[['x','cat1']]	10000	1	0.000164168
+frame	select_cols	df[['x','cat1']]	10000	2	0.000161385
+frame	select_cols	df[['x','cat1']]	10000	3	0.000161955
+frame	select_cols	df[['x','cat1']]	10000	4	0.000167223
+frame	select_cols	df[['x','cat1']]	10000	5	0.000163038
+frame	select_cols	df[['x','cat1']]	10000	6	0.000167613
+frame	group_by + mean	df.groupby('cat1')['x'].mean()	10000	0	0.000348101
+frame	group_by + mean	df.groupby('cat1')['x'].mean()	10000	1	0.000342004
+frame	group_by + mean	df.groupby('cat1')['x'].mean()	10000	2	0.000346604
+frame	group_by + mean	df.groupby('cat1')['x'].mean()	10000	3	0.000333165
+frame	group_by + mean	df.groupby('cat1')['x'].mean()	10000	4	0.000343594
+frame	group_by + mean	df.groupby('cat1')['x'].mean()	10000	5	0.000329798
+frame	group_by + mean	df.groupby('cat1')['x'].mean()	10000	6	0.000341473
+frame	merge	df_id.merge(df_id, on='id', how='inner')	10000	0	0.000902154
+frame	merge	df_id.merge(df_id, on='id', how='inner')	10000	1	0.000917724
+frame	merge	df_id.merge(df_id, on='id', how='inner')	10000	2	0.000883609
+frame	merge	df_id.merge(df_id, on='id', how='inner')	10000	3	0.000878952
+frame	merge	df_id.merge(df_id, on='id', how='inner')	10000	4	0.000860028
+frame	merge	df_id.merge(df_id, on='id', how='inner')	10000	5	0.000858003
+frame	merge	df_id.merge(df_id, on='id', how='inner')	10000	6	0.000864620
+frame	value_counts	df['cat1'].value_counts()	10000	0	0.000398492
+frame	value_counts	df['cat1'].value_counts()	10000	1	0.000403547
+frame	value_counts	df['cat1'].value_counts()	10000	2	0.000399255
+frame	value_counts	df['cat1'].value_counts()	10000	3	0.000400286
+frame	value_counts	df['cat1'].value_counts()	10000	4	0.000402529
+frame	value_counts	df['cat1'].value_counts()	10000	5	0.000404998
+frame	value_counts	df['cat1'].value_counts()	10000	6	0.000402591
+frame	drop_duplicates	df.drop_duplicates()	10000	0	0.001276738
+frame	drop_duplicates	df.drop_duplicates()	10000	1	0.001255183
+frame	drop_duplicates	df.drop_duplicates()	10000	2	0.001253198
+frame	drop_duplicates	df.drop_duplicates()	10000	3	0.001269997
+frame	drop_duplicates	df.drop_duplicates()	10000	4	0.001247283
+frame	drop_duplicates	df.drop_duplicates()	10000	5	0.001249104
+frame	drop_duplicates	df.drop_duplicates()	10000	6	0.001245589
+frame	transpose	arr.T.copy()	10000	0	0.000005051
+frame	transpose	arr.T.copy()	10000	1	0.000005126
+frame	transpose	arr.T.copy()	10000	2	0.000005101
+frame	transpose	arr.T.copy()	10000	3	0.000005107
+frame	transpose	arr.T.copy()	10000	4	0.000005103
+frame	transpose	arr.T.copy()	10000	5	0.000005102
+frame	transpose	arr.T.copy()	10000	6	0.000005095
+frame	aoh2hoa	pd.DataFrame(records)	10000	0	0.003751994
+frame	aoh2hoa	pd.DataFrame(records)	10000	1	0.003667455
+frame	aoh2hoa	pd.DataFrame(records)	10000	2	0.003682828
+frame	aoh2hoa	pd.DataFrame(records)	10000	3	0.003636567
+frame	aoh2hoa	pd.DataFrame(records)	10000	4	0.003602213
+frame	aoh2hoa	pd.DataFrame(records)	10000	5	0.003709412
+frame	aoh2hoa	pd.DataFrame(records)	10000	6	0.003793716
+frame	filter	df[df.x > 0]	30000	0	0.000381466
+frame	filter	df[df.x > 0]	30000	1	0.000368685
+frame	filter	df[df.x > 0]	30000	2	0.000361679
+frame	filter	df[df.x > 0]	30000	3	0.000349102
+frame	filter	df[df.x > 0]	30000	4	0.000360179
+frame	filter	df[df.x > 0]	30000	5	0.000358003
+frame	filter	df[df.x > 0]	30000	6	0.000369258
+frame	select_cols	df[['x','cat1']]	30000	0	0.000230622
+frame	select_cols	df[['x','cat1']]	30000	1	0.000231520
+frame	select_cols	df[['x','cat1']]	30000	2	0.000227009
+frame	select_cols	df[['x','cat1']]	30000	3	0.000224033
+frame	select_cols	df[['x','cat1']]	30000	4	0.000222707
+frame	select_cols	df[['x','cat1']]	30000	5	0.000225167
+frame	select_cols	df[['x','cat1']]	30000	6	0.000223928
+frame	group_by + mean	df.groupby('cat1')['x'].mean()	30000	0	0.000747990
+frame	group_by + mean	df.groupby('cat1')['x'].mean()	30000	1	0.000734302
+frame	group_by + mean	df.groupby('cat1')['x'].mean()	30000	2	0.000749020
+frame	group_by + mean	df.groupby('cat1')['x'].mean()	30000	3	0.000726745
+frame	group_by + mean	df.groupby('cat1')['x'].mean()	30000	4	0.000729897
+frame	group_by + mean	df.groupby('cat1')['x'].mean()	30000	5	0.000738079
+frame	group_by + mean	df.groupby('cat1')['x'].mean()	30000	6	0.000729817
+frame	merge	df_id.merge(df_id, on='id', how='inner')	30000	0	0.001306094
+frame	merge	df_id.merge(df_id, on='id', how='inner')	30000	1	0.001289387
+frame	merge	df_id.merge(df_id, on='id', how='inner')	30000	2	0.001321832
+frame	merge	df_id.merge(df_id, on='id', how='inner')	30000	3	0.001308193
+frame	merge	df_id.merge(df_id, on='id', how='inner')	30000	4	0.001303722
+frame	merge	df_id.merge(df_id, on='id', how='inner')	30000	5	0.001279820
+frame	merge	df_id.merge(df_id, on='id', how='inner')	30000	6	0.001309920
+frame	value_counts	df['cat1'].value_counts()	30000	0	0.001030602
+frame	value_counts	df['cat1'].value_counts()	30000	1	0.001004821
+frame	value_counts	df['cat1'].value_counts()	30000	2	0.001017608
+frame	value_counts	df['cat1'].value_counts()	30000	3	0.001008074
+frame	value_counts	df['cat1'].value_counts()	30000	4	0.001044480
+frame	value_counts	df['cat1'].value_counts()	30000	5	0.000996612
+frame	value_counts	df['cat1'].value_counts()	30000	6	0.000992753
+frame	drop_duplicates	df.drop_duplicates()	30000	0	0.002846625
+frame	drop_duplicates	df.drop_duplicates()	30000	1	0.002895543
+frame	drop_duplicates	df.drop_duplicates()	30000	2	0.002870126
+frame	drop_duplicates	df.drop_duplicates()	30000	3	0.002846208
+frame	drop_duplicates	df.drop_duplicates()	30000	4	0.002880735
+frame	drop_duplicates	df.drop_duplicates()	30000	5	0.002871286
+frame	drop_duplicates	df.drop_duplicates()	30000	6	0.002854967
+frame	transpose	arr.T.copy()	30000	0	0.000020965
+frame	transpose	arr.T.copy()	30000	1	0.000021292
+frame	transpose	arr.T.copy()	30000	2	0.000021150
+frame	transpose	arr.T.copy()	30000	3	0.000020877
+frame	transpose	arr.T.copy()	30000	4	0.000020487
+frame	transpose	arr.T.copy()	30000	5	0.000020527
+frame	transpose	arr.T.copy()	30000	6	0.000020770
+frame	aoh2hoa	pd.DataFrame(records)	30000	0	0.010894013
+frame	aoh2hoa	pd.DataFrame(records)	30000	1	0.011040522
+frame	aoh2hoa	pd.DataFrame(records)	30000	2	0.010961592
+frame	aoh2hoa	pd.DataFrame(records)	30000	3	0.011122184
+frame	aoh2hoa	pd.DataFrame(records)	30000	4	0.011079492
+frame	aoh2hoa	pd.DataFrame(records)	30000	5	0.011283539
+frame	aoh2hoa	pd.DataFrame(records)	30000	6	0.010938288
+frame	filter	df[df.x > 0]	100000	0	0.000980379
+frame	filter	df[df.x > 0]	100000	1	0.000951373
+frame	filter	df[df.x > 0]	100000	2	0.000948560
+frame	filter	df[df.x > 0]	100000	3	0.000933329
+frame	filter	df[df.x > 0]	100000	4	0.000943650
+frame	filter	df[df.x > 0]	100000	5	0.000959903
+frame	filter	df[df.x > 0]	100000	6	0.000935511
+frame	select_cols	df[['x','cat1']]	100000	0	0.000430633
+frame	select_cols	df[['x','cat1']]	100000	1	0.000422789
+frame	select_cols	df[['x','cat1']]	100000	2	0.000429168
+frame	select_cols	df[['x','cat1']]	100000	3	0.000427036
+frame	select_cols	df[['x','cat1']]	100000	4	0.000422951
+frame	select_cols	df[['x','cat1']]	100000	5	0.000438248
+frame	select_cols	df[['x','cat1']]	100000	6	0.000419539
+frame	group_by + mean	df.groupby('cat1')['x'].mean()	100000	0	0.002105703
+frame	group_by + mean	df.groupby('cat1')['x'].mean()	100000	1	0.002074006
+frame	group_by + mean	df.groupby('cat1')['x'].mean()	100000	2	0.002071715
+frame	group_by + mean	df.groupby('cat1')['x'].mean()	100000	3	0.002060155
+frame	group_by + mean	df.groupby('cat1')['x'].mean()	100000	4	0.002059951
+frame	group_by + mean	df.groupby('cat1')['x'].mean()	100000	5	0.002070474
+frame	group_by + mean	df.groupby('cat1')['x'].mean()	100000	6	0.002128632
+frame	merge	df_id.merge(df_id, on='id', how='inner')	100000	0	0.003115823
+frame	merge	df_id.merge(df_id, on='id', how='inner')	100000	1	0.003044273
+frame	merge	df_id.merge(df_id, on='id', how='inner')	100000	2	0.002800182
+frame	merge	df_id.merge(df_id, on='id', how='inner')	100000	3	0.002927431
+frame	merge	df_id.merge(df_id, on='id', how='inner')	100000	4	0.002948872
+frame	merge	df_id.merge(df_id, on='id', how='inner')	100000	5	0.002972383
+frame	merge	df_id.merge(df_id, on='id', how='inner')	100000	6	0.002824448
+frame	value_counts	df['cat1'].value_counts()	100000	0	0.003043850
+frame	value_counts	df['cat1'].value_counts()	100000	1	0.003175480
+frame	value_counts	df['cat1'].value_counts()	100000	2	0.003038528
+frame	value_counts	df['cat1'].value_counts()	100000	3	0.003017752
+frame	value_counts	df['cat1'].value_counts()	100000	4	0.003029199
+frame	value_counts	df['cat1'].value_counts()	100000	5	0.002993421
+frame	value_counts	df['cat1'].value_counts()	100000	6	0.003043342
+frame	drop_duplicates	df.drop_duplicates()	100000	0	0.010930244
+frame	drop_duplicates	df.drop_duplicates()	100000	1	0.011024270
+frame	drop_duplicates	df.drop_duplicates()	100000	2	0.010837024
+frame	drop_duplicates	df.drop_duplicates()	100000	3	0.010987957
+frame	drop_duplicates	df.drop_duplicates()	100000	4	0.010892284
+frame	drop_duplicates	df.drop_duplicates()	100000	5	0.010968545
+frame	drop_duplicates	df.drop_duplicates()	100000	6	0.010946784
+frame	transpose	arr.T.copy()	100000	0	0.000115626
+frame	transpose	arr.T.copy()	100000	1	0.000109308
+frame	transpose	arr.T.copy()	100000	2	0.000100309
+frame	transpose	arr.T.copy()	100000	3	0.000100743
+frame	transpose	arr.T.copy()	100000	4	0.000100365
+frame	transpose	arr.T.copy()	100000	5	0.000100316
+frame	transpose	arr.T.copy()	100000	6	0.000100949
+frame	aoh2hoa	pd.DataFrame(records)	100000	0	0.036566698
+frame	aoh2hoa	pd.DataFrame(records)	100000	1	0.036602131
+frame	aoh2hoa	pd.DataFrame(records)	100000	2	0.036775271
+frame	aoh2hoa	pd.DataFrame(records)	100000	3	0.036363976
+frame	aoh2hoa	pd.DataFrame(records)	100000	4	0.036383387
+frame	aoh2hoa	pd.DataFrame(records)	100000	5	0.036240651
+frame	aoh2hoa	pd.DataFrame(records)	100000	6	0.037070169
+frame	filter	df[df.x > 0]	300000	0	0.002868110
+frame	filter	df[df.x > 0]	300000	1	0.002715022
+frame	filter	df[df.x > 0]	300000	2	0.002945341
+frame	filter	df[df.x > 0]	300000	3	0.002816040
+frame	filter	df[df.x > 0]	300000	4	0.002790954
+frame	filter	df[df.x > 0]	300000	5	0.003053025
+frame	filter	df[df.x > 0]	300000	6	0.002913558
+frame	select_cols	df[['x','cat1']]	300000	0	0.000993472
+frame	select_cols	df[['x','cat1']]	300000	1	0.000983063
+frame	select_cols	df[['x','cat1']]	300000	2	0.000984539
+frame	select_cols	df[['x','cat1']]	300000	3	0.000960905
+frame	select_cols	df[['x','cat1']]	300000	4	0.000984369
+frame	select_cols	df[['x','cat1']]	300000	5	0.000973265
+frame	select_cols	df[['x','cat1']]	300000	6	0.001058407
+frame	group_by + mean	df.groupby('cat1')['x'].mean()	300000	0	0.005967256
+frame	group_by + mean	df.groupby('cat1')['x'].mean()	300000	1	0.005788425
+frame	group_by + mean	df.groupby('cat1')['x'].mean()	300000	2	0.005795474
+frame	group_by + mean	df.groupby('cat1')['x'].mean()	300000	3	0.005841450
+frame	group_by + mean	df.groupby('cat1')['x'].mean()	300000	4	0.005749502
+frame	group_by + mean	df.groupby('cat1')['x'].mean()	300000	5	0.005769732
+frame	group_by + mean	df.groupby('cat1')['x'].mean()	300000	6	0.005772853
+frame	merge	df_id.merge(df_id, on='id', how='inner')	300000	0	0.009971863
+frame	merge	df_id.merge(df_id, on='id', how='inner')	300000	1	0.009508714
+frame	merge	df_id.merge(df_id, on='id', how='inner')	300000	2	0.009668090
+frame	merge	df_id.merge(df_id, on='id', how='inner')	300000	3	0.009929050
+frame	merge	df_id.merge(df_id, on='id', how='inner')	300000	4	0.009829826
+frame	merge	df_id.merge(df_id, on='id', how='inner')	300000	5	0.009776767
+frame	merge	df_id.merge(df_id, on='id', how='inner')	300000	6	0.009918742
+frame	value_counts	df['cat1'].value_counts()	300000	0	0.008898043
+frame	value_counts	df['cat1'].value_counts()	300000	1	0.008821356
+frame	value_counts	df['cat1'].value_counts()	300000	2	0.008768636
+frame	value_counts	df['cat1'].value_counts()	300000	3	0.008771084
+frame	value_counts	df['cat1'].value_counts()	300000	4	0.008856923
+frame	value_counts	df['cat1'].value_counts()	300000	5	0.008736320
+frame	value_counts	df['cat1'].value_counts()	300000	6	0.008874498
+frame	drop_duplicates	df.drop_duplicates()	300000	0	0.030796824
+frame	drop_duplicates	df.drop_duplicates()	300000	1	0.030636357
+frame	drop_duplicates	df.drop_duplicates()	300000	2	0.031521385
+frame	drop_duplicates	df.drop_duplicates()	300000	3	0.031138354
+frame	drop_duplicates	df.drop_duplicates()	300000	4	0.031187256
+frame	drop_duplicates	df.drop_duplicates()	300000	5	0.030961027
+frame	drop_duplicates	df.drop_duplicates()	300000	6	0.031173501
+frame	transpose	arr.T.copy()	300000	0	0.000311021
+frame	transpose	arr.T.copy()	300000	1	0.000302033
+frame	transpose	arr.T.copy()	300000	2	0.000314737
+frame	transpose	arr.T.copy()	300000	3	0.000333605
+frame	transpose	arr.T.copy()	300000	4	0.000303655
+frame	transpose	arr.T.copy()	300000	5	0.000301065
+frame	transpose	arr.T.copy()	300000	6	0.000300832
+frame	aoh2hoa	pd.DataFrame(records)	300000	0	0.110053196
+frame	aoh2hoa	pd.DataFrame(records)	300000	1	0.110407867
+frame	aoh2hoa	pd.DataFrame(records)	300000	2	0.111088831
+frame	aoh2hoa	pd.DataFrame(records)	300000	3	0.110562778
+frame	aoh2hoa	pd.DataFrame(records)	300000	4	0.111119818
+frame	aoh2hoa	pd.DataFrame(records)	300000	5	0.110601217
+frame	aoh2hoa	pd.DataFrame(records)	300000	6	0.110406628

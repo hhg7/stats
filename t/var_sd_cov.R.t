@@ -45,10 +45,10 @@ use warnings FATAL => 'all';
 use Test::More;
 use Stats::LikeR qw(sum min max mean var sd cov cor);
 
-# ---------------------------------------------------------------------------
+# 
 # The corpus, rebuilt in perl.  Each sub returns the same vector its namesake
 # in t/var_sd_cov.R.R builds in R.
-# ---------------------------------------------------------------------------
+# 
 my %CASE = (
 	int10       => sub { [ 1 .. 10 ] },
 	int2        => sub { [ 1 .. 2 ] },
@@ -68,7 +68,7 @@ sub partner {
 	return [ map { $x->[$_] * 0.5 + ( $_ % 13 ) / 4 - 1.5 } 0 .. $#$x ];
 }
 
-# ---------------------------------------------------------------------------
+# 
 # Tolerances.
 #
 # Both are relative, and both are the worst disagreement actually observed on
@@ -77,16 +77,55 @@ sub partner {
 # differently.  Neither was widened to make anything pass; if one has to be,
 # the algorithm changed and that is the thing to look at.
 #
-# $TOL_EXACT covers the quantities that are a plain accumulation of exactly
-# representable values -- n, sum, min, max.  Observed: 0.
+# $TOL_EXACT covers the quantities that come out exactly: n, sum, min and max.
+# Every value in the corpus is dyadic and every one of these sums stays inside
+# 53 bits, so the answer is the same number at every NV width, and the frozen
+# column is that number's exact decimal expansion (see the %.40g note in
+# t/var_sd_cov.R.R).  The arithmetic is therefore exact and the limit would be
+# zero -- except that reading the literal back is not.
+#
+# perl's string-to-NV conversion is not correctly rounded on a long-double
+# build: perl-5.12.5 reads "100000000004.833984375" as the long double one ulp
+# below it (relative 7.45e-20, and 2^-27 / 1e11 is exactly one ulp there).  The
+# number in the file is right and the sum is right; the reading is a bit short.
+# So the limit is two ulps of whatever NV this perl was built with, measured at
+# run time rather than hardcoded -- a double-sized epsilon here would be no
+# limit at all on quadmath.
+#
+# Observed: 0 on perl-5.10.1, perl-5.42.3, perl-5.44.0 and 5.44.0-quadmath,
+# 7.45e-20 on perl-5.12.5 -- against a limit of 2.17e-19 there.
+#
+# $TOL_ROUND covers mean().  sum/n is a real division, so unlike the columns
+# above it rounds -- and it rounds to a different number at each NV width,
+# while the frozen value is the double R computed.  The gap is bounded by half
+# a double ulp; observed worst case 4.42e-17, on perl-5.12.5 (long double) and
+# 5.44.0-quadmath.
 #
 # $TOL_STAT covers var, sd, cov and cor.  R accumulates these in LDOUBLE
 # (long double) where a double-NV perl accumulates in double, so the two
 # cannot be expected to agree to the last bit on an ill-centred column.
-# Observed worst case: offset_1e9, where the mean is 1e9 and the spread 0.05.
-# ---------------------------------------------------------------------------
-my $TOL_EXACT = 0;
-my $TOL_STAT  = 1e-11;
+# Observed worst case 8.74e-15, on offset_1e9 -- mean 1e9, spread 0.05 -- so
+# the limit is that rounded up by two orders of magnitude.  A long-double or
+# __float128 perl computes the same quantities more precisely than the frozen
+# doubles R rounded to, so it moves towards this limit, not away from it.
+#
+# The headroom is deliberately far short of what a wrong algorithm costs: the
+# one-pass correlation this release replaced missed offset_1e6 by 2.15e-05 and
+# returned NaN for offset_1e9, and the naive sum-of-squares variance fails
+# these columns by more still.  A regression has to fail, not squeak through.
+# 
+# NV_EPSILON for the perl actually running this, found by bisection: perl
+# exposes no constant for it, and $Config{nvsize} does not distinguish an
+# x87 long double from a __float128.
+my $NV_EPS = do {
+	my $e = 1.0;
+	$e /= 2 while ( 1.0 + $e / 2 ) != 1.0;
+	$e;
+};
+
+my $TOL_EXACT = 2 * $NV_EPS;
+my $TOL_ROUND = 1e-15;
+my $TOL_STAT  = 1e-12;
 
 sub rel {
 	my ( $got, $want ) = @_;
@@ -104,9 +143,9 @@ sub close_to {
 	return $r;
 }
 
-# ---------------------------------------------------------------------------
+# 
 # Parse the frozen table.
-# ---------------------------------------------------------------------------
+# 
 my ( %STAT, %PAIR );
 while ( my $line = <DATA> ) {
 	next if $line =~ /^\s*(?:#|$)/;
@@ -130,9 +169,9 @@ sub note_worst { my ( $r, $which ) = @_;
 	else          { $worst_exact = $r if $r > $worst_exact }
 }
 
-# ---------------------------------------------------------------------------
+# 
 # A. every case, as a plain array ref -- the AvARRAY() fast path.
-# ---------------------------------------------------------------------------
+# 
 for my $name ( sort keys %CASE ) {
 	my $x = $CASE{$name}->();
 	my $e = $STAT{$name} or die "no frozen row for $name";
@@ -147,7 +186,7 @@ for my $name ( sort keys %CASE ) {
 	# frozen for it is R's sum(x)/length(x), not R's mean(x).  The two differ
 	# only in the last bits, but comparing against mean() would be comparing
 	# against an algorithm this module does not implement.
-	note_worst( close_to( mean($x), $e->{mean}, $TOL_EXACT, "$name: mean" ), 0 );
+	close_to( mean($x), $e->{mean}, $TOL_ROUND, "$name: mean" );
 
 	next if @$x < 2;
 	note_worst( close_to( var($x), $e->{var}, $TOL_STAT, "$name: var" ), 1 );
@@ -168,21 +207,21 @@ for my $name ( sort keys %CASE ) {
 	}
 }
 
-# ---------------------------------------------------------------------------
+# 
 # B. the two examples R pins in tests/Examples/stats-Ex.Rout.save, asserted at
 #    the precision R prints them.
-# ---------------------------------------------------------------------------
+# 
 close_to( var( [ 1 .. 10 ] ), 9.166667, 1e-7, 'var(1:10) == 9.166667 (R man/cor.Rd)' );
 close_to( sd( [ 1, 2 ] )**2, 0.5,       1e-15, 'sd(1:2)^2 == 0.5 (R man/sd.Rd)' );
 
-# ---------------------------------------------------------------------------
+# 
 # C. the same corpus through a tied array, which cannot use the AvARRAY() scan
 #    and must reach the same answers through av_fetch().
 #
 #    This is the assertion that the fast path and the slow path are the same
 #    function.  Without it a scan that read, say, one element short would pass
 #    every value check above only if it were wrong in both paths at once.
-# ---------------------------------------------------------------------------
+# 
 {
 	package t::TiedArray;
 	require Tie::Array;
@@ -210,31 +249,31 @@ for my $name ( sort keys %CASE ) {
 	is( cov( \@t, \@ty ), cov( $x, $y ), "$name: cov agrees between tied and plain" );
 }
 
-diag( sprintf 'worst relative error: exact %.3g (limit %.3g), statistical %.3g (limit %.3g)',
-	$worst_exact, $TOL_EXACT, $worst_stat, $TOL_STAT );
+diag( sprintf 'NV_EPSILON %.3g; worst relative error: exact %.3g (limit %.3g), statistical %.3g (limit %.3g)',
+	$NV_EPS, $worst_exact, $TOL_EXACT, $worst_stat, $TOL_STAT );
 
 done_testing();
 
 __DATA__
 # name	n	sum	min	max	mean_naive	var	sd
-STAT	int10	10	55	1	10	5.5	9.1666666666666661	3.0276503540974917
-STAT	int2	2	3	1	2	1.5	0.5	0.70710678118654757
-STAT	eighths	64	252	0	7.875	3.9375	5.416666666666667	2.3273733406281569
-STAT	sixteenths	100	-0.9375	-0.5	0.5	-0.0093749999999999997	0.092043481691919185	0.30338668674139146
-STAT	offset_1e9	100	100000000004.83398	1e+09	1000000000.0966797	1000000000.0483398	0.00080267588297526038	0.028331535132697282
-STAT	offset_1e6	500	500001730.75	1e+06	1000007	1000003.4615	4.4305037575150301	2.1048761857921785
+STAT	int10	10	55	1	10	5.5	9.166666666666666074547720199916511774063	3.027650354097491725013924224185757339001
+STAT	int2	2	3	1	2	1.5	0.5	0.7071067811865475727373109293694142252207
+STAT	eighths	64	252	0	7.875	3.9375	5.416666666666666962726139900041744112968	2.327373340628156928033831718494184315205
+STAT	sixteenths	100	-0.9375	-0.5	0.5	-0.009374999999999999653055304804638581117615	0.09204348169191918505038785269789514131844	0.3033866867413914647499950660858303308487
+STAT	offset_1e9	100	100000000004.833984375	1000000000	1000000000.0966796875	1000000000.04833984375	0.0008026758829752603805265942504831855330849	0.0283315351326972816869975702047668164596
+STAT	offset_1e6	500	500001730.75	1000000	1000007	1000003.46149999997578561305999755859375	4.430503757515030116564958007074892520905	2.104876185792178500122417972306720912457
 STAT	identical	50	12.5	0.25	0.25	0.25	0	0
-STAT	two	2	-0.75	-2.25	1.5	-0.375	7.03125	2.6516504294495533
-STAT	negpos	6	-22.625	-32.75	16	-3.7708333333333335	267.66510416666665	16.360473836862631
-STAT	long_dyadic	5000	-15590.8203125	-8	1.763671875	-3.1181640625	7.9488754272460938	2.8193750064945413
+STAT	two	2	-0.75	-2.25	1.5	-0.375	7.03125	2.651650429449553314498189138248562812805
+STAT	negpos	6	-22.625	-32.75	16	-3.770833333333333481363069950020872056484	267.665104166666651508421637117862701416	16.36047383686263145818884368054568767548
+STAT	long_dyadic	5000	-15590.8203125	-8	1.763671875	-3.1181640625	7.94887542724609375	2.819375006494541313628587886341847479343
 # name	n	cov	cor
 PAIR	int10	10	6.875	1
 PAIR	int2	2	0.375	1
-PAIR	eighths	64	3.0629960317460316	0.82009380046914515
-PAIR	sixteenths	100	0.035810250946969699	0.12613768212189286
-PAIR	offset_1e9	100	0.0016713624048714686	0.063454463733801467
-PAIR	offset_1e6	500	2.2318808867735469	0.74943997817595964
+PAIR	eighths	64	3.062996031746031633247184799984097480774	0.8200938004691451510552724357694387435913
+PAIR	sixteenths	100	0.03581025094696969890417648230140912346542	0.1261376821218928578893780922953737899661
+PAIR	offset_1e9	100	0.001671362404871468620645713620831429579994	0.06345446373380146665166279262848547659814
+PAIR	offset_1e6	500	2.231880886773546901480358428671024739742	0.7494399781759596423924563168839085847139
 PAIR	identical	50	0	NA
 PAIR	two	2	3.046875	1
-PAIR	negpos	6	132.63567708333332	0.99838051977323394
-PAIR	long_dyadic	5000	3.9763922060840389	0.833378864310794
+PAIR	negpos	6	132.635677083333320069868932478129863739	0.9983805197732339431482273539586458355188
+PAIR	long_dyadic	5000	3.976392206084038871694019690039567649364	0.8333788643107939986265364495920948684216
