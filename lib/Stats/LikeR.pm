@@ -14966,9 +14966,9 @@ C<uniq> on a million-element column of C<rnorm> values took 0.80 s, against R's
 C<unique()> at 0.019 and pandas' C<pd.unique()> at 0.029. It takes 0.16 s. Same
 method as the tables above — one process per measurement, pinned to one CPU,
 the fastest of seven, C<plot.scaling.pl> against C<scale.R> and C<scale.py> on the
-same machine — except that the C<0.301> column is the 0.301 I<code> built at
-C<-O2>, not the released build, so this is the rewrite on its own and not the
-optimizer again:
+same machine — except that the C<0.301> column is the 0.301 I<code> built at C<-O2>,
+not the released build, so this is the rewrite on its own and not the optimizer
+again:
 
 
 
@@ -15052,7 +15052,7 @@ same open-addressed slot array over a key arena that C<drop_duplicates> and
 C<merge> intern into, presized from the element count.
 
 B<It hashed each key twice>, once for C<hv_exists> and again for C<hv_store>.
-Collapsing that into one C<< hv_fetch(..., 1) >> is the obvious repair and is the
+Collapsing that into one C<hv_fetch(..., 1)> is the obvious repair and is the
 wrong one: the lvalue fetch mints an SV per key, and on the million distinct
 doubles it measured 0.919 s against the pair's 0.756 — while also reading
 C<AvARRAY> directly, so the comparison flatters it. That is why the pair had
@@ -15061,13 +15061,14 @@ gives instead.
 
 What the rewrite does I<not> do is compare doubles by value. That is how R and
 pandas get the factor of six to eight they still have, and it is a different
-answer: C<0.1 + 0.2> and C<0.3> are two doubles that print the same, so they are
-one value to C<uniq> and two to C<unique()>. C<uniq> is documented to compare the
-way C<eq> and C<List::Util::uniq> do, so it renders every element and compares
-the text; that rendering pass is essentially all of the distance that is left.
+answer:
+C<0.1 + 0.2> and C<0.3> are two doubles that print the same, so they are one
+value to C<uniq> and two to C<unique()>. C<uniq> is documented to compare the way
+C<eq> and C<List::Util::uniq> do, so it renders every element and compares the
+text; that rendering pass is essentially all of the distance that is left.
 Scalar context builds no result list at all and takes about a fifth off again.
 
-C<< uniq(\@tied) >> croaked C<undefined value at array ref index 0>. It was reading
+C<uniq(\@tied)> croaked C<undefined value at array ref index 0>. It was reading
 elements through C<av_fetch> and testing C<SvOK> on the C<PVLV> that comes back,
 which is the bug "A tied array read as all-C<undef>" describes above. C<uniq> was
 simply not one of the functions that pass reached. It reads through
