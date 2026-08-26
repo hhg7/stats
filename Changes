@@ -1,6 +1,282 @@
 Revision history for Stats-LikeR
 
 
+0.303 2026-08
+
+ [read_table]
+
+ - `na.strings` / `na_values`:
+
+ - `read_table` can now be told which field texts mean "missing". It is one option
+   under three names — R's `na.strings`, pandas' `na_values`, and `write_table`'s
+   own `undef.val` — so it can be spelled whichever way the surrounding code
+   already does. Each takes a string or an array reference, each means the same
+   thing, and passing more than one is an error the way `sep` and `delim` together
+   are:
+
+     read_table('cohort.csv', 'na.strings' => 'NA');
+     read_table('cohort.csv', na_values    => ['NA', 'N/A', 'NULL', '-']);
+     read_table('cohort.csv', 'undef.val'  => 'NA');
+
+ - An empty field has always read as `undef`. Nothing else did, and there was no
+   way to ask for it, so a file could not be read back the way it had been
+   written: `write_table` renders an `undef` cell with `undef.val`, which 0.302
+   listed as a known limitation whose closing sentence proposed exactly this
+   option. The round trip now closes, and `undef.val` is accepted as the third
+   name so that both halves of it can use one spelling:
+
+     write_table($rows, 'out.csv', 'undef.val' => 'NA');
+     my $back = read_table('out.csv', 'undef.val' => 'NA');   # undef again
+
+ - `write_table`'s `undef.val` is a single token, being what it writes;
+   `read_table`'s takes a list, being every token it should recognise.
+
+ - The consequence had been quiet rather than loud. An unmapped `NA` is an
+   ordinary string, and Perl numifies a string to `0`, so it did not stop `mean`
+   or `sd` — it pulled them toward zero, warning once per cell on `STDERR` and
+   dying only under `warnings FATAL => 'all'`. On the `titanic.csv` in the
+   repository root, whose 2207 rows carry 3690 literal `NA` cells across six
+   columns:
+
+ - | column | `NA` cells | mean, unmapped | mean, mapped |
+   |---|---|---|---|
+   | `age` | 2 | 30.416855 | 30.444444 |
+   | `fare` | 916 | 19.540347 | 33.404760 |
+   | `sibsp` | 900 | 0.295877 | 0.499617 |
+   | `parch` | 900 | 0.228364 | 0.385616 |
+
+ - The mapped column is `mean(d[[col]], na.rm=TRUE)` in R 4.6.1 to every digit
+   shown, for all four.
+
+ - Three choices are worth stating, because each follows R where pandas differs,
+   and each is asserted in the test rather than left to be discovered:
+
+ - **It is off by default.** R's `read.table` defaults to `na.strings = "NA"`
+     and pandas recognises a 19-token set, but `read_table` recognises nothing
+     beyond the empty field unless asked. A literal `NA` is real data in every
+     script written against an earlier release, and `t/read_table.t` pins that;
+     changing the default is a separate decision from adding the option.
+ - **The list replaces the set rather than extending one.**
+     `'na.strings' => 'baz'` maps `baz` and leaves `NA` and `NaN` alone. pandas
+     adds `baz` to its defaults and maps all three.
+ - **The match is on the exact field text**, case-sensitively and with no
+     whitespace stripped. `' NA'` is not `'NA'`, and `'-999.000'` is not
+     `'-999.0'` — pandas numifies both sides and matches them; R compares the
+     string and does not, and neither does this.
+
+ - The mapping happens where the empty-field rule already did, so it reaches every
+   `output.type`, the `.xlsx` reader, and a value a `filter` writes back. The
+   header is never mapped, so a column may still be named `NA`. A `filter` runs
+   after the mapping and so sees `undef` rather than the token, which makes
+   `sub { defined $_ }` the way to keep the rows that have a value. For `hoh`, a
+   mapped row-name cell is a missing row name and is refused exactly as an empty
+   one is.
+
+ - Everything above is checked in the new `t/read_table.na_strings.t` (95 tests),
+   whose cases are taken from the reference suites rather than invented here: R's
+   `tests/reg-tests-1a.R` — the `read.table(na.strings="foo")` case at 1911-1918
+   and PR#6781 at 2899-2901 — and `src/library/utils/man/read.table.Rd`, plus
+   pandas 2.2.3's `pandas/tests/io/parser/test_na_values.py` (`test_string_nas`,
+   `test_detect_string_na`, `test_non_string_na_values` for gh-3611,
+   `test_default_na_values`, `test_custom_na_values`, `test_na_trailing_columns`,
+   `test_na_values_scalar` for gh-12224, and `test_na_values_dict_aliasing`). The
+   expected values are frozen literals with their provenance in the file header,
+   so the test needs no R and no Python to run. Three divergences from pandas are
+   asserted deliberately, the three above; a fourth is that a row short of the
+   header is still an alignment error naming the row rather than the NA padding
+   pandas does.
+
+ - The full suite is 130 files and 26,444 tests, and `./test.all.perls.pl` passes
+   on all five local perls — `5.10.1`, `5.12.5` (long double), `5.42.3`, `5.44.0`
+   and `5.44.0-quadmath` — with no warnings on any of them.
+
+ [Distribution functions]
+
+ - Eight new functions — `qnorm`, `pt`, `qt`, `pchisq`, `qchisq`, `pf`, `qf` and
+   `pbinom` — with R's names, R's positional-or-named parameters and R's
+   `lower.tail` / `log.p` flags. Before this, `pnorm` and `dnorm` were the whole
+   family, so a Wald bound or a likelihood-ratio test could not be finished from
+   outside the module: the critical value simply was not expressible. See
+   [Distribution functions](#distribution-functions) for the details; two are
+   worth pulling out here.
+
+ - No tail is formed as `1 -` the other one. That subtraction discards
+   everything below machine epsilon, which is the range a p-value is interesting
+   in, so each function is routed to the parameterisation that computes the
+   requested side directly — `pt(q)` is `pt_upper(-q)` by symmetry, and `pchisq`
+   lower goes through a new `igam()` (the lower incomplete gamma that `igamc()`
+   had always formed internally and thrown away):
+
+     pchisq(1e-30, 1);     # 7.978845608028654e-16, where 1 - igamc gives 0
+
+ - `qf` disagrees with R in the far tail of *F*, and is right. Arbitrated by
+   `t/distributions.mpmath.py` at `mp.dps = 60`, bisecting the defining equation
+   rather than calling a library inverse:
+
+ - | | R 4.6.1 | this module |
+   |---|---|---|
+   | `qf(2^-20, 1, 10)` | 9.9e-4 out | 1.0e-15 out |
+   | `qf(2^-20, 1, 1)` | 5.2e-5 out | 4.1e-15 out |
+   | `qf(2^-16, 1, 10)` | 2.7e-6 out | 6.9e-16 out |
+
+ - R's own `pf` settles it: `pf` of this module's answer returns the target
+   probability to 1.6e-15, and `pf` of R's own `qf` answer returns it to 4.9e-4.
+   It is R's inverse in that tail, not its CDF. Thirteen such rows are asserted
+   twice in `t/distributions.R.scipy.t` — right against the 60-digit value, and
+   still disagreeing with R — so if a future R fixes `qf`, or this module
+   regresses onto R's answer, the row fails rather than quietly agreeing. Three
+   rows go the other way and are recorded the same way rather than tolerated.
+
+ - `log => 1` on a `p*` function is `log()` of the probability already computed,
+   not a log carried through the series, so a tail that rounded to `1` logs to `0`
+   where R reports a tiny negative number. Four of SciPy's six `chi2` log
+   references land in that case and are pinned as exactly `0` with the true value
+   named. `ncp` and `qbinom` are not implemented.
+
+ - `t/distributions.R.scipy.t` is 2041 tests: a frozen table of R 4.6.1 values at
+   dyadic inputs (generated by the committed `t/distributions.R.scipy.R`), SciPy
+   1.18.0's own mpmath cases from `TestChi2` and `TestStudentT`, and R's own
+   round-trip identities from `tests/d-p-q-r-tests.R`. Every tolerance is the
+   worst error actually measured, printed by the test's own diagnostic.
+
+ - Ten figures now sit with the documentation — one per function, `dnorm` and
+   `pnorm` in their own sections and the eight new ones under
+   [What each one does, in one picture](#what-each-one-does-in-one-picture). Each
+   shades the region its function integrates and writes the integral it evaluates,
+   so the `p*`/`q*` pair reads as one identity answered from opposite ends: given
+   the boundary, return the area; given the area, return the boundary. `pbinom` is
+   drawn as bars with a summation sign rather than an integral, because a binomial
+   is discrete and drawing an integral over a histogram would misstate what it
+   computes. `distribution.plots.pl` regenerates all ten; like the other plot
+   scripts it is author-only and `[PruneFiles]` keeps it out of a release.
+
+ - Two portability problems surfaced while pinning this and are worth recording,
+   because neither is about the C code. Perl 5.10.1's string-to-number conversion
+   does not parse a 17-digit literal exactly — it reads `0.9999847412109375` one
+   ulp out, and reflecting a probability onto `1 - p` turns that ulp into 7.3e-12
+   relative — and it reads `9.332636185032188789901e-302` as
+   `8.999999999999996e-302`, a 3.7% error. So every argument and every
+   exactly-representable expected value in `t/distributions.R.scipy.t` is written
+   as a dyadic ratio, `M/2^K`, which rebuilds by integer division on any perl. And
+   where R's frozen value is `0` because a double underflowed, a long-double or
+   `__float128` build computes the real number instead — `pbinom(0, 1000, 0.75)`
+   really is `0.25^1000` = 8.7e-603 — so the test accepts that as agreement with a
+   reference that could not go lower, rather than failing the wider build for being
+   right. The same applies to `log => 1` near a probability of 1, where the
+   resolvable accuracy is `NV_EPSILON / |log p|` and the tolerance is scaled off
+   measured machine epsilon accordingly.
+
+ [Every confidence limit now comes from the same critical value]
+
+ - Adding `qnorm` made a discrepancy visible that had always been there. Nine
+   places in `LikeR.xs` built their own `z` by calling `inverse_normal_cdf()` —
+   Moro's rational approximation, of which the file's own comment said:
+   *"good to about 1e-9, which is fine for a confidence limit"* — while `qnorm`
+   went through the Newton-polished `normal_quantile_hp()`. Which function you asked
+   therefore decided how many digits you got, and a Wald bound written by hand
+   from `qnorm` differed from the one `glm` reported in the tenth digit.
+
+ - It is one function now. `std_qnorm()` seeds with Moro, polishes with Newton
+   against the `erfc`-based normal CDF, and reflects a probability above `0.5` onto
+   `1 - p` before inverting; `glm`, `cor_test`, `prop_test`, `epi_2x2`,
+   `cmh_test`, `roc`, `survfit`, `coxph` and `wilcox_test` all call it, `qnorm`
+   *is* it, and two near-duplicates are gone: `wilcox_qnorm()` in the XS, which was
+   the same Newton loop without the reflection, and the pure-Perl `_qnorm()`
+   (Acklam's approximation, also `~1e-9`) that `cohen_d` used for its interval.
+
+ - Measured against `mpmath` at `mp.dps = 60`, bisecting `erfc(-z/sqrt(2))/2 = p`
+   rather than calling a library inverse, worst relative error over conf.level
+   0.8 to 0.9999:
+
+ - | | worst relative error | |
+   |---|---|---|
+   | 0.302 and earlier, at these nine sites | 1.8e-9 | 8.0e6 ulp |
+   | R 4.6.1 `qnorm` | 4.8e-16 | 2.1 ulp |
+   | SciPy 1.18.0 `norm.ppf` | 1.5e-16 | 0.7 ulp |
+   | 0.303 | 8.2e-17 | 0.4 ulp |
+
+ - Seven orders of magnitude, and the result is closer to the truth than either
+   reference. Nothing in the existing suite failed: every one of these functions is
+   cross-validated against R at tolerances that had room for `1e-9` in them,
+   because they had to. What changed is that they no longer need it —
+   `t/distributions.R.scipy.t`'s `glm` agreement check went from `5e-9`, with its
+   comment explaining that the gap was the design, to bit-identical.
+
+ - The bug this exposed: `0.95` is a `double`:
+
+ - With the critical value down to 0.4 ulp, the next-largest error in a confidence
+   limit turned out to be the confidence level. Eleven functions declared their
+   default as
+
+     NV conf_level = 0.95;
+
+ - and `0.95` in C is a literal of type `double`, so on a long-double or
+   `__float128` perl what lands in the `NV` is `0.95` rounded to 53 bits — 2.2e-17
+   from the `NV` nearest `0.95`. `p = 1 - (1 - conf_level)/2` inherits all of it,
+   the normal density at the 95% point is `0.0584`, and the critical value comes
+   out 3.8e-16 wrong: about 1700 ulp of a long double, and the single largest error
+   in a 95% interval on those builds. `fisher_test` and `binom_test` had dodged
+   this for releases by parsing the literal through perl's own number parser; that
+   idiom is now the `NV_CONF_95` macro and all thirteen sites use it.
+
+ - This was invisible while the critical value itself was only good to `1e-9`.
+   It is the reason `t/qnorm.crit.R.scipy.t` freezes `p` as well as `conf.level`:
+   `1 - (1 - 0.999)/2` has to round, and it rounds differently at each NV width, so
+   a shared expected value is only meaningful if every build is asked the same
+   question.
+
+ - `t/qnorm.crit.R.scipy.t` is 166 tests — the value itself against R 4.6.1,
+   SciPy 1.18.0 and the 60-digit arbiter, and then the same value recovered out of
+   seven functions' reported intervals at six confidence levels each. It also pins
+   what `inverse_normal_cdf()` alone returns and asserts it is nowhere near the
+   tolerance, so the file cannot pass by accident if the routing is ever undone.
+
+ [Result keys are dotted everywhere]
+
+ - Every key of every returned hash now uses R's dotted spelling. Previously the
+   module answered to both conventions and it was impossible to guess which:
+   `p_value` from nine functions but `p.value` from two, `conf_int` from four but
+   `conf.int` from three, `prop_test` returning `conf.int` and `p_value` in the
+   same hash, and `shapiro_test` returning both spellings of its own p-value.
+
+ - | was | is |
+   |---|---|
+   | `p_value` | `p.value` |
+   | `conf_int`, `conf_level` | `conf.int`, `conf.level` |
+   | `null_value`, `null_value_name`, `statistic_name` | `null.value`, `null.value.name`, `statistic.name` |
+   | `estimate_x`, `estimate_y` | `estimate.x`, `estimate.y` |
+   | `group_stats`, `std_err` | `group.stats`, `std.err` |
+   | `odds_ratio`, `risk_ratio`, `risk_diff` (+ `_ci`) | `odds.ratio`, `risk.ratio`, `risk.diff` (+ `.ci`) |
+   | `risk_exposed`, `risk_unexposed` | `risk.exposed`, `risk.unexposed` |
+   | `n_pos`, `n_neg`, `auc_se`, `auc_ci` | `n.pos`, `n.neg`, `auc.se`, `auc.ci` |
+   | `n_active`, `n_inactive`, `n_top`, `active_count`, `enrichment_factor`, `rie_min`, `rie_max` | the same with dots |
+   | `n_risk`, `n_event`, `n_censor` | `n.risk`, `n.event`, `n.censor` |
+   | `exp_coef`, `lr_stat`, `lr_p_value`, `lr_df`, `loglik_null` | `exp.coef`, `lr.stat`, `lr.p.value`, `lr.df`, `loglik.null` |
+   | `has_na`, `old_coords` | `has.na`, `old.coords` |
+   | `p_adjust` (`dunn_test`'s column) | `p.adjust` |
+
+ - **This breaks code that reads the old names, and it is the only change here
+   that does.** `$r->{p_value}` is now `$r->{'p.value'}` — note the quotes, which a
+   dotted key requires. `table_one`'s output column is renamed with everything
+   else.
+
+ - Argument names are untouched. They are a different surface, where the
+   underscore spelling exists on purpose as a synonym for the dotted one, so
+   `conf_level => 0.99` and `'conf.level' => 0.99` both still work everywhere they
+   did, and `wilcox_test(..., conf_int => 1)` still asks for an interval. The
+   duplicate stores are gone: `shapiro_test` and `kruskal_test` each wrote their
+   p-value twice under the two spellings and now write it once.
+
+ [Decorative comment rules removed]
+
+ - 1,495 lines that were nothing but a comment marker and a run of dashes, and 380
+   comments whose text trailed off into one, are gone from `LikeR.xs`,
+   `lib/Stats/LikeR.pm` and `t/`. `/* ===== WILCOXON EXACT NULL DISTRIBUTIONS =====`
+   is now `/* WILCOXON EXACT NULL DISTRIBUTIONS`, which is what the house style in
+   `CLAUDE.md` asks for anyway. Nothing after `__DATA__` was touched, no POD
+   region, and no line holding a `/*` or `*/` was deleted, so no comment can have
+   been left unterminated. The suite is unchanged at 28,485 tests either side of it.
+
 0.302 2026-08-22 CDT
 
  - `sum`, `min`, `max`, `mean`, `sd`, `var`, `quantile`, `cor` and `cov` are
@@ -631,7 +907,7 @@ Revision history for Stats-LikeR
    `{a => [1,1,1], b => [2,2,2], c => []}` that gave `df = 2` and
    `p = 0.0820849986238988` for what is a two-group problem with
    `df = 1, p = 0.025347318677468304`. Such a group was already skipped when
-   forming the statistic and when building `group_stats`; only `df` still counted
+   forming the statistic and when building `group.stats`; only `df` still counted
    it.
 
  - R refuses this case outright — `all groups must contain data` — and so does
@@ -651,7 +927,7 @@ Revision history for Stats-LikeR
    collapsed into one group: `kruskal_test([1..6], ["a\0X","a\0X","a\0Y","a\0Y","b","b"])`
    came back as two groups with `df = 1, H = 2.4` instead of three with
    `df = 2, H = 4.571428571428573`. Both paths also copied the label's bytes while
-   dropping perl's UTF-8 flag when storing it into `group_stats`, so a label
+   dropping perl's UTF-8 flag when storing it into `group.stats`, so a label
    outside latin-1 came back as mojibake and the two input paths disagreed with
    each other about labels inside it. The length now travels with the string and
    carries the flag in its sign, which is `hv_store`'s own convention, so a label
@@ -746,8 +1022,8 @@ Revision history for Stats-LikeR
  - `kruskal_test` gains two sections: what happens to non-numeric, undefined,
    `NaN` and infinite elements and to a group left with no data, and what the
    returned fields are — `statistic`, `parameter`, `method` and the p-value under
-   both `p_value` and `p.value` from R's `htest`, plus the `size` and `mean`
-   sub-hashes of `group_stats`, which are computed over the same observations the
+   both `p.value` and `p.value` from R's `htest`, plus the `size` and `mean`
+   sub-hashes of `group.stats`, which are computed over the same observations the
    statistic used.
 
 0.3 2026-08-16 CDT
@@ -925,11 +1201,11 @@ Revision history for Stats-LikeR
    `skew.kurtosis.plots.pl`, both committed:
 
  - **`t_test`** gains six: what the estimate, the standard error and the null
-     distribution are and which area of it the p-value is; how `conf_int` is the
-     estimate plus or minus a t quantile and how `conf_level` sets that quantile;
+     distribution are and which area of it the p-value is; how `conf.int` is the
+     estimate plus or minus a t quantile and how `conf.level` sets that quantile;
      the three `alternative`s side by side with the region each counts and the
-     interval that goes with it; `p_value` as a function of `mu`, crossing
-     `1 - conf_level` exactly at the two bounds of `conf_int`; paired,
+     interval that goes with it; `p.value` as a function of `mu`, crossing
+     `1 - conf.level` exactly at the two bounds of `conf.int`; paired,
      `var_equal` and Welch on the same data, with the Welch degrees of freedom as
      the two spreads separate; and two distributions separating with the interval
      retreating from `mu` as the p-value falls.
@@ -1092,15 +1368,15 @@ Revision history for Stats-LikeR
 
      my $r = wilcox_test(\@y, \@x, paired => 1, conf_int => 1);
      # $r->{estimate}   == -0.46
-     # $r->{conf_int}   == [-0.786, -0.010]
-     # $r->{conf_level} == 0.9609375
+     # $r->{conf.int}   == [-0.786, -0.010]
+     # $r->{conf.level} == 0.9609375
 
  - Those are Hollander & Wolfe (1999) 2nd ed., pp. 40 and 53, to the digit. So are
    the two-sample values from pp. 111 and 126: estimate `-0.305`, interval
    `(-0.76, 0.15)`.
 
  - The level a rank test can actually deliver is a step function of the data, so
-   `conf_level` reports what was achieved rather than echoing what was asked for —
+   `conf.level` reports what was achieved rather than echoing what was asked for —
    `0.9609375` above, not `0.95`. `conf.level`, `tol.root` and R's alpha-doubling
    search for a level the data can support (with its *requested conf.level not
    achievable* warning) all behave as R's do.
@@ -1120,8 +1396,8 @@ Revision history for Stats-LikeR
    when the signed-rank test dropped a zero, because the series is derived for
    untied ranks.
 
- - The result hash gains `statistic_name` (`"W"` or `"V"`, as R prints), plus
-   `null_value` and `null_value_name`, and `estimate` / `conf_int` / `conf_level`
+ - The result hash gains `statistic.name` (`"W"` or `"V"`, as R prints), plus
+   `null.value` and `null.value.name`, and `estimate` / `conf.int` / `conf.level`
    when an interval was asked for.
 
  - Three deliberate differences from R:
@@ -1547,7 +1823,7 @@ Revision history for Stats-LikeR
  - The Clopper-Pearson bounds are found by bisection, which stopped at an
      absolute width of 1e-15, so a bound far below 1 came back with only four
      correct digits: `binom_test(1, 1000000000, alternative => 'greater',
-     conf_level => 0.999)` gave 1.00053299e-12 against R's 1.00050033e-12. The
+     conf.level => 0.999)` gave 1.00053299e-12 against R's 1.00050033e-12. The
      stopping rule is now relative to where the bracket sits, and such bounds now
      hold about 1e-15.
 
@@ -1819,7 +2095,7 @@ Revision history for Stats-LikeR
    (`reg-tests-1a.R`, "t.test with one group of size one") and scipy's
    `TestTTest_1samp`, `TestTTest_ind.test_special_cases`, `test_ttest_rel_ci_1d`,
    `test_1samp_ci_1d` and `test_pvalue_ci`. On 2000 randomised comparisons against
-   R — all four modes, all three alternatives, random `mu` and `conf_level`, sample
+   R — all four modes, all three alternatives, random `mu` and `conf.level`, sample
    sizes 2 to 40 and data scales spanning 1e-4 to 1e4 — the statistic and the
    degrees of freedom agree to 2e-11 and the p-value to 3e-9, holding to eight
    digits even where the p-value is subnormal (5e-310). What the comparison did
@@ -1850,22 +2126,22 @@ Revision history for Stats-LikeR
      different test than the caller asked for and reported nothing. It is now
      checked the way R's `match.arg` checks it. `scipy`'s `"two-sided"` spelling is
      unambiguous, so it is accepted rather than rejected.
- - **A one-sided interval was wrong when `conf_level < 0.5`.** That case needs a
+ - **A one-sided interval was wrong when `conf.level < 0.5`.** That case needs a
      negative t quantile, and `qt_tail` searched upward from zero only, so it
      returned roughly zero and collapsed the bound onto `mu`: R puts the upper bound
      of `t.test(1:10, mu=5, conf.level=0.3, alternative="less")` at 4.9797 where
      `t_test` reported 5.0000000036. `qt_tail` now reduces by symmetry first, so the
      root it brackets is always positive.
  - **`qt_tail` silently saturated at 1e6.** Past that its doubling loop gave up
-     and returned the ceiling, so `conf_level` of 0.99999999 and 0.9999999999 came
+     and returned the ceiling, so `conf.level` of 0.99999999 and 0.9999999999 came
      back with the *identical* interval, ±1048576, against R's ±6.4e7 and ±6.4e9.
      The ceiling is gone; the loop now runs until `t * t` would overflow.
  - **Interval accuracy no longer depends on the data's scale.** `qt_tail`
-     bisected to an absolute 1e-8 on the quantile, which is 1e-8 × `std_err` on the
+     bisected to an absolute 1e-8 on the quantile, which is 1e-8 × `std.err` on the
      interval — fine for data around 1, an error of 2 units for data around 1e9. It
      now bisects to adjacent doubles. Worst interval error across the 2000
      randomised cases went from 2.1e-4 to 5.3e-11 relative. At extreme
-     `conf_level` this makes `t_test` the more accurate of the two: `t.test` asks
+     `conf.level` this makes `t_test` the more accurate of the two: `t.test` asks
      for `qt(1 - alpha/2, df)`, and representing a 5e-9 tail as the double
      `1 - 5e-9` costs eight significant figures of it, so R's own interval for
      `conf.level=0.99999999` is off by 0.7 in the eighth digit. Working in the upper
@@ -2434,7 +2710,7 @@ Revision history for Stats-LikeR
  - **`size_t` underflow on empty arrays.** Three loops were bounded by `av_len(...)`
      compared against an unsigned counter; `av_len` returns `-1` for an empty array,
      which turned `k <= len` into a `SIZE_MAX` loop. The `stack()` value loop, the `.`
-     column-expansion loop, and the `group_stats` column loop now use a signed
+     column-expansion loop, and the `group.stats` column loop now use a signed
      `SSize_t` bound.
  - **HoH row count.** Row count for hash-of-hashes input was taken from the return
      value of `hv_iterinit`; it now uses `HvUSEDKEYS(hv)` with a separate
@@ -2476,7 +2752,7 @@ Revision history for Stats-LikeR
      whole RHS and can still mangle `I(x-1)`-style transforms; treat `I()` with
      arithmetic constants carefully.
  - Top-level keys `coefficients` / `fitted.values` / `xlevels` / `family` /
-     `group_stats` share the return hash with the ANOVA rows; a predictor literally
+     `group.stats` share the return hash with the ANOVA rows; a predictor literally
      named one of those would collide.
 
  [`predict`]
@@ -2728,7 +3004,7 @@ Revision history for Stats-LikeR
 
  - Known limitations (not changed):
 
- - A factor column named `Residuals` or `group_stats` in a formula call will
+ - A factor column named `Residuals` or `group.stats` in a formula call will
      collide with reserved top-level keys in the result hash.
  - Group names containing an embedded NUL are stored correctly but are still
      truncated at `strlen` when written into the output hash keys.
@@ -3155,7 +3431,7 @@ Revision history for Stats-LikeR
 
  - mean, min, sum, median, var, and max die with undefined values, and print the offending indices
 
- - "group_stats" added to aov, for TukeyHSD in the future
+ - "group.stats" added to aov, for TukeyHSD in the future
 
  - "cor" dies when given data with standard deviation of 0
 
