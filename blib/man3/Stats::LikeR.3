@@ -2651,9 +2651,52 @@ computes the requested side directly:
 .PP
 \&\f(CW\*(C`qnorm\*(C'\fR, \f(CW\*(C`qchisq\*(C'\fR and \f(CW\*(C`qf\*(C'\fR reflect a probability above \f(CW0.5\fR onto \f(CW\*(C`1 \- p\*(C'\fR
 before inverting, for the same reason in the other direction — that keeps the
-bisection comparing small numbers instead of numbers that agree to fifteen
-places. The reflection costs the one ulp that \f(CW\*(C`1 \- p\*(C'\fR rounds away, which is the
-resolution the caller\*(Aqs own \f(CW\*(C`p\*(C'\fR had to begin with.
+root\-finder comparing small numbers instead of numbers that agree to fifteen
+places. The reflection is free rather than a trade: for \f(CW\*(C`p >= 0.5\*(C'\fR the two
+operands of \f(CW\*(C`1 \- p\*(C'\fR lie within a factor of two of each other, so Sterbenz\*(Aqs
+lemma makes that subtraction exact, and nothing is given up in exchange for
+what it removes. Measured against \f(CW\*(C`mpmath\*(C'\fR at 60 digits, at the \f(CW\*(C`p\*(C'\fR that
+\&\f(CW\*(C`1 \- (1 \- conf.level) / 2\*(C'\fR actually forms:
+.PP
+The error grows with the confidence level because that is where \f(CW\*(C`p\*(C'\fR and
+\&\f(CWpnorm(z)\fR agree to the most places, so it is the intervals a cautious caller
+asks for that were losing the most digits.
+.PP
+\fIThe same critical value every interval in the module is built from\fR
+.IX Subsection "The same critical value every interval in the module is built from"
+.PP
+\&\f(CW\*(C`qnorm\*(C'\fR is not a second opinion about the normal quantile. Since 0.303 it is
+the \fIsame\fR call — \f(CWstd_qnorm()\fR in \f(CW\*(C`LikeR.xs\*(C'\fR — that \f(CW\*(C`glm\*(C'\fR, \f(CW\*(C`cor_test\*(C'\fR,
+\&\f(CW\*(C`prop_test\*(C'\fR, \f(CW\*(C`epi_2x2\*(C'\fR, \f(CW\*(C`cmh_test\*(C'\fR, \f(CW\*(C`roc\*(C'\fR, \f(CW\*(C`survfit\*(C'\fR, \f(CW\*(C`coxph\*(C'\fR, \f(CW\*(C`wilcox_test\*(C'\fR,
+\&\f(CW\*(C`cohen_d\*(C'\fR and \f(CW\*(C`shapiro_test\*(C'\fR build their own numbers from. So a bound written
+by hand lands on the bound the function reports:
+.PP
+.Vb 4
+\& my $m  = glm(data => \e%d, formula => \*(Aqy ~ x\*(Aq, family => \*(Aqbinomial\*(Aq);
+\& my $se = $m\->{summary}{x}{\*(AqStd. Error\*(Aq};
+\& my $z  = qnorm(1 \- (1 \- 0.95) / 2);
+\& $m\->{summary}{x}{\*(AqEstimate\*(Aq} \- $z * $se;   # is $m\->{\*(Aqconf.int\*(Aq}{x}[0]
+.Ve
+.PP
+bit for bit on a \f(CW\*(C`double\*(C'\fR build. On the wider NVs the only thing that can
+separate them is the compiler\*(Aqs freedom to contract \f(CW\*(C`est \- z * se\*(C'\fR into a
+single FMA where perl rounds twice, which is one ulp.
+.PP
+\&\f(CW\*(C`t/qnorm.crit.R.scipy.t\*(C'\fR asserts that, and goes the other way as well: it
+recovers the critical value back out of each function\*(Aqs \fIreported\fR interval —
+undoing the \f(CW\*(C`exp\*(C'\fR for \f(CW\*(C`coxph\*(C'\fR and \f(CW\*(C`epi_2x2\*(C'\fR\*(Aqs odds ratio, the \f(CW\*(C`tanh\*(C'\fR for
+\&\f(CW\*(C`cor_test\*(C'\fR — and requires it to be the one \f(CW\*(C`qnorm\*(C'\fR returns, at conf.level 0.8
+through 0.9999. \f(CW\*(C`cmh_test\*(C'\fR is the one site not covered, because recovering its
+\&\f(CW\*(C`z\*(C'\fR would mean reimplementing the Robins\-Breslow\-Greenland variance it does not
+report, which would test the reimplementation.
+.PP
+Against \f(CW\*(C`mpmath\*(C'\fR at \f(CW\*(C`mp.dps = 60\*(C'\fR, bisecting the defining equation
+\&\f(CW\*(C`erfc(\-z/sqrt(2)) / 2 = p\*(C'\fR rather than calling a library inverse, worst relative
+error over those six confidence levels:
+.PP
+\&\f(CW\*(C`t/std_qnorm.mpmath.py\*(C'\fR is the arbiter and prints that table, along with the
+frozen rows of the test it generates. Like the other generators it is committed
+next to its test and nothing in the suite calls it.
 .PP
 \fIAccuracy, and the one place \fR\f(CI\*(C`log\*(C'\fR\fI is not R\*(Aqs\fR
 .IX Subsection "Accuracy, and the one place log is not R's"
@@ -7442,6 +7485,68 @@ reference that could not go lower, rather than failing the wider build for being
 right. The same applies to \f(CW\*(C`log => 1\*(C'\fR near a probability of 1, where the
 resolvable accuracy is \f(CW\*(C`NV_EPSILON / |log p|\*(C'\fR and the tolerance is scaled off
 measured machine epsilon accordingly.
+.PP
+\fIEvery confidence limit now comes from the same critical value\fR
+.IX Subsection "Every confidence limit now comes from the same critical value"
+.PP
+Adding \f(CW\*(C`qnorm\*(C'\fR made a discrepancy visible that had always been there. Nine
+places in \f(CW\*(C`LikeR.xs\*(C'\fR built their own \f(CW\*(C`z\*(C'\fR by calling \f(CWinverse_normal_cdf()\fR —
+Moro\*(Aqs rational approximation, of which the file\*(Aqs own comment said:
+\&\fI"good to about 1e\-9, which is fine for a confidence limit"\fR — while \f(CW\*(C`qnorm\*(C'\fR
+went through the Newton\-polished \f(CWnormal_quantile_hp()\fR. Which function you asked
+therefore decided how many digits you got, and a Wald bound written by hand
+from \f(CW\*(C`qnorm\*(C'\fR differed from the one \f(CW\*(C`glm\*(C'\fR reported in the tenth digit.
+.PP
+It is one function now. \f(CWstd_qnorm()\fR seeds with Moro, polishes with Newton
+against the \f(CW\*(C`erfc\*(C'\fR\-based normal CDF, and reflects a probability above \f(CW0.5\fR onto
+\&\f(CW\*(C`1 \- p\*(C'\fR before inverting; \f(CW\*(C`glm\*(C'\fR, \f(CW\*(C`cor_test\*(C'\fR, \f(CW\*(C`prop_test\*(C'\fR, \f(CW\*(C`epi_2x2\*(C'\fR,
+\&\f(CW\*(C`cmh_test\*(C'\fR, \f(CW\*(C`roc\*(C'\fR, \f(CW\*(C`survfit\*(C'\fR, \f(CW\*(C`coxph\*(C'\fR and \f(CW\*(C`wilcox_test\*(C'\fR all call it, \f(CW\*(C`qnorm\*(C'\fR
+\&\fIis\fR it, and two near\-duplicates are gone: \f(CWwilcox_qnorm()\fR in the XS, which was
+the same Newton loop without the reflection, and the pure\-Perl \f(CW_qnorm()\fR
+(Acklam\*(Aqs approximation, also \f(CW\*(C`~1e\-9\*(C'\fR) that \f(CW\*(C`cohen_d\*(C'\fR used for its interval.
+.PP
+Measured against \f(CW\*(C`mpmath\*(C'\fR at \f(CW\*(C`mp.dps = 60\*(C'\fR, bisecting \f(CW\*(C`erfc(\-z/sqrt(2))/2 = p\*(C'\fR
+rather than calling a library inverse, worst relative error over conf.level
+0.8 to 0.9999:
+.PP
+Seven orders of magnitude, and the result is closer to the truth than either
+reference. Nothing in the existing suite failed: every one of these functions is
+cross\-validated against R at tolerances that had room for \f(CW1e\-9\fR in them,
+because they had to. What changed is that they no longer need it —
+\&\f(CW\*(C`t/distributions.R.scipy.t\*(C'\fR\*(Aqs \f(CW\*(C`glm\*(C'\fR agreement check went from \f(CW5e\-9\fR, with its
+comment explaining that the gap was the design, to bit\-identical.
+.PP
+The bug this exposed: \f(CW0.95\fR is a \f(CW\*(C`double\*(C'\fR
+.IX Subsection "The bug this exposed: 0.95 is a double"
+.PP
+With the critical value down to 0.4 ulp, the next\-largest error in a confidence
+limit turned out to be the confidence level. Eleven functions declared their
+default as
+.PP
+.Vb 1
+\& NV conf_level = 0.95;
+.Ve
+.PP
+and \f(CW0.95\fR in C is a literal of type \f(CW\*(C`double\*(C'\fR, so on a long\-double or
+\&\f(CW\*(C`_\|_float128\*(C'\fR perl what lands in the \f(CW\*(C`NV\*(C'\fR is \f(CW0.95\fR rounded to 53 bits — 2.2e\-17
+from the \f(CW\*(C`NV\*(C'\fR nearest \f(CW0.95\fR. \f(CW\*(C`p = 1 \- (1 \- conf_level)/2\*(C'\fR inherits all of it,
+the normal density at the 95% point is \f(CW0.0584\fR, and the critical value comes
+out 3.8e\-16 wrong: about 1700 ulp of a long double, and the single largest error
+in a 95% interval on those builds. \f(CW\*(C`fisher_test\*(C'\fR and \f(CW\*(C`binom_test\*(C'\fR had dodged
+this for releases by parsing the literal through perl\*(Aqs own number parser; that
+idiom is now the \f(CW\*(C`NV_CONF_95\*(C'\fR macro and all thirteen sites use it.
+.PP
+This was invisible while the critical value itself was only good to \f(CW1e\-9\fR.
+It is the reason \f(CW\*(C`t/qnorm.crit.R.scipy.t\*(C'\fR freezes \f(CW\*(C`p\*(C'\fR as well as \f(CW\*(C`conf.level\*(C'\fR:
+\&\f(CW\*(C`1 \- (1 \- 0.999)/2\*(C'\fR has to round, and it rounds differently at each NV width, so
+a shared expected value is only meaningful if every build is asked the same
+question.
+.PP
+\&\f(CW\*(C`t/qnorm.crit.R.scipy.t\*(C'\fR is 166 tests — the value itself against R 4.6.1,
+SciPy 1.18.0 and the 60\-digit arbiter, and then the same value recovered out of
+seven functions\*(Aq reported intervals at six confidence levels each. It also pins
+what \f(CWinverse_normal_cdf()\fR alone returns and asserts it is nowhere near the
+tolerance, so the file cannot pass by accident if the routing is ever undone.
 .PP
 \fIResult keys are dotted everywhere\fR
 .IX Subsection "Result keys are dotted everywhere"

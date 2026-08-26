@@ -662,18 +662,23 @@ is( scalar keys %COUNT, 8, 'the frozen table covered all eight functions' );
 	my $est = $m->{summary}{x}{'Estimate'};
 	my $se  = $m->{summary}{x}{'Std. Error'};
 	my $z   = qnorm( 0.975 );
-	# 5e-9, not 1e-15, and the reason is worth knowing: glm builds its critical
-	# value with inverse_normal_cdf(), Moro's rational approximation, which
-	# LikeR.xs's own comment calls "good to about 1e-9, which is fine for a
-	# confidence limit".  qnorm() goes through normal_quantile_hp(), the
-	# Newton-polished version.  So an interval built by hand from qnorm agrees
-	# with the one glm reports only to Moro's accuracy -- 1.3e-10 measured
-	# here -- and that is the documented design of nine call sites, not a
-	# defect in either.  A tighter limit here would be testing Moro's
-	# coefficients, not this code.
-	rel_ok( $est - $z * $se, $m->{'conf.int'}{x}[0], 5e-9, 'glm agreement',
+	# Bit-identical, both bounds, measured on the default double build: since
+	# 0.303 glm's critical value and qnorm() are the same call to std_qnorm()
+	# on the same double, so there is nothing left to disagree about.  Through
+	# 0.302 glm used inverse_normal_cdf() directly -- Moro's rational
+	# approximation, ~1e-9 -- and this pair had to be tested at 5e-9, with the
+	# 1.3e-10 it actually showed recorded here as designed rather than broken.
+	#
+	# The tolerance is not 0 even so.  `est - z * se` is evaluated by the perl
+	# interpreter on the left and by the C compiler on the right, and a
+	# compiler that contracts that multiply-subtract into an FMA gets a result
+	# one ulp from the one perl computes in two roundings.  8 * NV_EPSILON
+	# leaves room for that on every NV width without admitting anything Moro
+	# would have.
+	my $wald_tol = 8 * NV_EPS();
+	rel_ok( $est - $z * $se, $m->{'conf.int'}{x}[0], $wald_tol, 'glm agreement',
 		'a Wald lower bound from qnorm matches glm conf.int' );
-	rel_ok( $est + $z * $se, $m->{'conf.int'}{x}[1], 5e-9, 'glm agreement',
+	rel_ok( $est + $z * $se, $m->{'conf.int'}{x}[1], $wald_tol, 'glm agreement',
 		'and so does the upper bound' );
 	# The same for the p-value glm reports: 2 * pnorm(-|z|), which is now
 	# expressible from outside the module.

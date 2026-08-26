@@ -95,6 +95,25 @@ those three.*/
 #define nv_tanh(x)     LIKER_NVFN(tanh)(x)
 #define nv_ldexp(x,e)  LIKER_NVFN(ldexp)((x),(e))
 #define nv_frexp(x,e)  LIKER_NVFN(frexp)((x),(e))
+/*0.95 -- the default conf.level everywhere in this file -- at the build's own
+NV width.
+
+`NV conf_level = 0.95;` does not do that. 0.95 is a C literal of type double,
+so what lands in the NV is 0.95 rounded to 53 bits, and on a long-double build
+that is 2.2e-17 away from the NV nearest 0.95. Small until it reaches a
+quantile: p = 1 - (1 - conf_level)/2 inherits the whole 2.2e-17, the normal
+density at the 95% point is 0.0584, so the critical value moves 3.8e-16 --
+about 1700 ulp of a long double, and the measured gap between glm's interval
+and one built by hand from qnorm(0.975) before this macro existed. `0.95L` has
+the mirror problem on a quadmath build, and either way the default no longer
+stringifies back to "0.95" when a result echoes it.
+
+Perl's own number parser gets the same NV the perl expression 0.95 would, at
+every width, which is also what makes the echoed default round-trip.
+fisher_test and binom_test have done this since 0.29x; the macro is so the
+other eleven call sites can say it in one token rather than eleven copies of
+the rationale. Costs one mortal SV per call, not per row.*/
+#define NV_CONF_95     SvNV(sv_2mortal(newSVpvs("0.95")))
 /*Float classification for an NV: NaN, infinite, finite. Every obvious spelling
 of these is wrong here.
 
@@ -3176,17 +3195,20 @@ static NV inverse_normal_cdf(NV p) {
 	return x;
 }
 
-/* Moro's approximation above is good to about 1e-9, which is fine for a
-   confidence limit but not for Royston's AS R94 weights: the expected normal
-   order statistics go straight into W, so nine digits there cap W at nine
-   digits where R reports sixteen.  Newton against approx_pnorm() -- erfc, a
-   few ulp at every NV width -- squares the error each pass, and the loop
-   below stops the moment another pass could not move z, so a double pays
-   for one pass and only the wider NVs pay for a second.
+/*Moro's approximation above is good to about 1e-9, which is not enough for
+anything in this file. Royston's AS R94 weights feed the expected normal order
+statistics straight into W, so nine digits there cap W at nine digits where R
+reports sixteen; and a Wald confidence limit inherits every digit its critical
+value is missing, which is visible as soon as one is compared against R's.
+Newton against approx_pnorm() -- erfc, a few ulp at every NV width -- squares
+the error each pass, and the loop below stops the moment another pass could not
+move z, so a double pays for one pass and only the wider NVs pay for a second.
 
-   The 1/sqrt(2*pi) literal is only ever a divisor of the correction, so its
-   own rounding scales an already-converged step and never limits the
-   answer. */
+Takes p in (0, 1). The domain guards, and the reflection that keeps the result
+accurate above the median, live in std_qnorm() below: call that, not this.
+
+The 1/sqrt(2*pi) literal is only ever a divisor of the correction, so its own
+rounding scales an already-converged step and never limits the answer.*/
 static NV normal_quantile_hp(NV p) {
 	NV z = inverse_normal_cdf(p);
 	for (unsigned short int i = 0; i < 4; i++) {
@@ -3202,6 +3224,33 @@ static NV normal_quantile_hp(NV p) {
 		if (step * step <= 2.0 * NV_EPSILON) break;
 	}
 	return z;
+}
+
+/*The standard normal quantile over the whole of [0, 1]. This is the one entry
+point for every caller in this file that needs a z, so which function asked for
+a critical value can no longer change which digits it gets.
+
+Reflected at the median, because normal_quantile_hp()'s Newton correction is
+(approx_pnorm(z) - p) / dens: for p near 1 both terms of that numerator are
+near 1, so the correction is formed by subtracting numbers that agree to as
+many places as p has. Below the median both terms are small and the step is
+formed cleanly, so inverting min(p, 1-p) and negating removes the effect
+entirely -- which is how R's qnorm is written, for this reason.
+
+Measured against mpmath at 60 digits, at the p the C expression
+1 - (1 - conf.level)/2 actually forms: unreflected, the error grows with the
+confidence level, 0.4 ulp at conf.level = 0.95 but 3 ulp at 0.99, 37 ulp at
+0.999 and 254 ulp at 0.9999. Reflected it is under half an ulp at every one of
+them, and 9.3e-18 at p = 1 - 2^-16 where unreflected costs 5.8e-14.
+
+The reflection is free rather than a trade: for p >= 0.5 the two operands of
+1 - p lie within a factor of two of each other, so Sterbenz's lemma makes that
+subtraction exact, and no new error is introduced in place of the one removed.*/
+static NV std_qnorm(NV p) {
+	if (nv_isnan(p) || p < 0.0 || p > 1.0) return NV_NAN;
+	if (p == 0.0) return -NV_INF;
+	if (p == 1.0) return  NV_INF;
+	return (p > 0.5) ? -normal_quantile_hp(1.0 - p) : normal_quantile_hp(p);
 }
 
 /* AS 181.2's poly(): the algebraic polynomial of order nord-1 whose zero
@@ -4668,21 +4717,6 @@ static NV rank_and_count_ties(RankInfo *ri, size_t n, bool *restrict has_ties) {
 }
 
 /* WILCOXON ASYMPTOTIC TAIL AND INTERVAL */
-
-/* inverse_normal_cdf() is Moro's approximation, good to about 1e-9; the
-   confidence limits want better than that, and one or two Newton steps
-   against approx_pnorm() get there. */
-static NV wilcox_qnorm(NV p) {
-	if (!(p > 0.0)) return -NV_INF;
-	if (!(p < 1.0)) return  NV_INF;
-	NV z = inverse_normal_cdf(p);
-	for (unsigned short int i = 0; i < 3; i++) {
-		NV dens = 0.39894228040143267794 * nv_exp(-0.5 * z * z);  /* 1/sqrt(2*pi) */
-		if (!(dens > 0.0)) break;
-		z -= (approx_pnorm(z) - p) / dens;
-	}
-	return z;
-}
 
 /* The Edgeworth series R 4.6.0 added under its integer `correct` argument:
    pnorm(z) refined by up to three correction terms, `k` of them. Signed rank:
@@ -10295,21 +10329,11 @@ static NV d_qnorm(NV p, const NV *restrict par, bool lower, bool give_log) {
 	if (p == 0.0) return lower ? -NV_INF :  NV_INF;
 	if (p == 1.0) return lower ?  NV_INF : -NV_INF;
 	if (sd == 0.0) return mean;              //a step at the mean, as pnorm has
-	/*normal_quantile_hp() inverts the lower tail, and the standard normal is
-	symmetric, so the upper-tail quantile is its negation.
-
-	Above p = 0.5 the flip is not a convenience, it is the accuracy: that
-	helper's Newton step is (approx_pnorm(z) - p)/dens, and for p near 1 both
-	terms are near 1, so the correction is formed by subtracting numbers that
-	agree to as many places as p has. At p = 1 - 2^-16 that cost 5.9e-14
-	relative against R. Reflecting to 1 - p makes both terms small, and the
-	only error left is the one ulp that 1 - p itself rounds away -- which is
-	the resolution the caller's own p had to begin with. R's qnorm is written
-	in terms of min(p, 1-p) for the same reason.*/
-	const bool flip = (p > 0.5);
-	const NV z = normal_quantile_hp(flip ? 1.0 - p : p);
-	const NV zz = flip ? -z : z;
-	return mean + sd * (lower ? zz : -zz);
+	/*std_qnorm() inverts the lower tail, and carries the reflection that keeps
+	that accurate above p = 0.5; the standard normal is symmetric, so the
+	upper-tail quantile is its negation.*/
+	const NV z = std_qnorm(p);
+	return mean + sd * (lower ? z : -z);
 }
 
 static NV d_pt(NV q, const NV *restrict par, bool lower, bool give_log) {
@@ -11667,9 +11691,7 @@ CODE:
 		croak("binom_test: number of trials n is required when x is a scalar");
 
 	NV   p          = 0.5;
-	/*parse through Perl so the echoed default is the exact nearest NV to
-	0.95 on every build (see fisher_test for the full rationale).*/
-	NV   conf_level = SvNV(sv_2mortal(newSVpvs("0.95")));
+	NV   conf_level = NV_CONF_95;
 	const char *alternative = "two.sided";
 
 	for (Stack_off_t i = pos; i < items; i += 2) {
@@ -13593,7 +13615,7 @@ CODE:
 	bool paired = FALSE, correct = TRUE, want_cint = FALSE;
 	short int exact = -1;               /* -1 = decide from the sample sizes */
 	unsigned short int edgeworth = 0;   /* Edgeworth terms wanted: 0 .. 3 */
-	NV mu = 0.0, conf_level = 0.95, digits_rank = NV_INF, tol_root = 1e-4;
+	NV mu = 0.0, conf_level = NV_CONF_95, digits_rank = NV_INF, tol_root = 1e-4;
 	const char *restrict alt_str = "two.sided";
 	Stack_off_t arg_idx = 0;
 	/* 1. Shift the first positional argument as 'x' if it is an array reference */
@@ -13914,12 +13936,12 @@ CODE:
 				} else {
 					if (alt != 1)
 						ci_lo = wilcox_ci_root(&C, mumin, mumax, w_lo, w_hi,
-						                       wilcox_qnorm(1.0 - (alt == 0 ? alpha0 / 2.0 : alpha0)),
+						                       std_qnorm(1.0 - (alt == 0 ? alpha0 / 2.0 : alpha0)),
 						                       tol_root);
 					else ci_lo = -NV_INF;
 					if (alt != 2)
 						ci_hi = wilcox_ci_root(&C, mumin, mumax, w_lo, w_hi,
-						                       wilcox_qnorm(alt == 0 ? alpha0 / 2.0 : alpha0),
+						                       std_qnorm(alt == 0 ? alpha0 / 2.0 : alpha0),
 						                       tol_root);
 					else ci_hi = NV_INF;
 					/* R drops the continuity correction for the point estimate. */
@@ -14125,12 +14147,12 @@ CODE:
 					for (;;) {
 						bool widen = FALSE;
 						if (alt == 0) {
-							if (w_lo - wilcox_qnorm(1.0 - alpha / 2.0) < 0.0) widen = TRUE;
-							if (w_hi - wilcox_qnorm(alpha / 2.0) > 0.0)       widen = TRUE;
+							if (w_lo - std_qnorm(1.0 - alpha / 2.0) < 0.0) widen = TRUE;
+							if (w_hi - std_qnorm(alpha / 2.0) > 0.0)       widen = TRUE;
 						} else if (alt == 2) {
-							if (w_lo - wilcox_qnorm(1.0 - alpha) < 0.0)       widen = TRUE;
+							if (w_lo - std_qnorm(1.0 - alpha) < 0.0)       widen = TRUE;
 						} else {
-							if (w_hi - wilcox_qnorm(alpha / 2.0) > 0.0)       widen = TRUE;
+							if (w_hi - std_qnorm(alpha / 2.0) > 0.0)       widen = TRUE;
 						}
 						if (!widen) break;
 						alpha *= 2.0;
@@ -14144,10 +14166,10 @@ CODE:
 						NV a = (alt == 0) ? alpha / 2.0 : alpha;
 						ci_lo = (alt == 1) ? -NV_INF
 						      : wilcox_ci_root(&C, mumin, mumax, w_lo, w_hi,
-						                       wilcox_qnorm(1.0 - a), tol_root);
+						                       std_qnorm(1.0 - a), tol_root);
 						ci_hi = (alt == 2) ?  NV_INF
 						      : wilcox_ci_root(&C, mumin, mumax, w_lo, w_hi,
-						                       wilcox_qnorm((alt == 0) ? alpha / 2.0 : alpha),
+						                       std_qnorm((alt == 0) ? alpha / 2.0 : alpha),
 						                       tol_root);
 					} else {
 						NV *restrict med;
@@ -15871,7 +15893,7 @@ SV *glm(...)
 	unsigned int iter = 0, max_iter = 25, final_rank = 0, df_res = 0;
 	NV deviance_old = 0.0, deviance_new = 0.0, null_dev = 0.0, aic = 0.0;
 	NV dispersion = 0.0, epsilon = 1e-8;
-	NV theta = 0.0, conf_level = 0.95;
+	NV theta = 0.0, conf_level = NV_CONF_95;
 	bool theta_given = FALSE;
 
 	char **row_names = NULL;
@@ -16289,7 +16311,7 @@ SV *glm(...)
 	the non-gaussian families, exponentiated coefficients: odds ratios
 	(binomial), rate/incidence-rate ratios (poisson/negbin).*/
 	bool use_z = is_binomial || log_link;
-	NV zcrit = inverse_normal_cdf(1.0 - (1.0 - conf_level) / 2.0);
+	NV zcrit = std_qnorm(1.0 - (1.0 - conf_level) / 2.0);
 	HV *conf_hv = newHV();
 	HV *exp_hv  = is_gaussian ? NULL : newHV();
 	for (size_t j = 0; j < p; j++) {
@@ -16379,7 +16401,7 @@ CODE:
 	const char *restrict alternative = "two.sided";
 	const char *restrict method = "pearson";
 	SV *exact_sv = NULL;
-	NV conf_level = 0.95;
+	NV conf_level = NV_CONF_95;
 	bool continuity = 0;
 	//Parse named arguments from the flat stack starting at index 2
 	for (Stack_off_t i = 2; i < items; i += 2) {
@@ -16458,7 +16480,7 @@ CODE:
 	  NV z     = 0.5 * nv_log((1.0 + est_clamped) / (1.0 - est_clamped));
 	  NV se    = 1.0 / nv_sqrt((NV)(n - 3));
 	  NV alpha = 1.0 - conf_level;
-	  NV q     = inverse_normal_cdf(1.0 - alpha / 2.0);
+	  NV q     = std_qnorm(1.0 - alpha / 2.0);
 	  ci_lower = nv_tanh(z - q * se);
 	  ci_upper = nv_tanh(z + q * se);
 	  // High-precision p-value using incomplete beta
@@ -17583,7 +17605,7 @@ SV* t_test(...)
 	{
 		SV*x_sv = NULL;
 		SV*y_sv = NULL;
-		NV mu = 0.0, conf_level = 0.95;
+		NV mu = 0.0, conf_level = NV_CONF_95;
 		bool paired = FALSE, var_equal = FALSE;
 		const char*alternative = "two.sided";
 		Stack_off_t arg_idx = 0;
@@ -17778,7 +17800,7 @@ PPCODE:
 		      "alternative => 'two.sided', conf.level => 0.95, correct => 1)\n"
 		      "   or prop_test($x, $n, ...) for a single sample");
 	const char *alt = "two.sided";
-	NV conf_level = 0.95;
+	NV conf_level = NV_CONF_95;
 	bool correct = 1;
 	SV *p_sv = NULL;
 	for (int i = 2; i + 1 < items; i += 2) {
@@ -17856,7 +17878,7 @@ PPCODE:
 	if (k == 1) {
 		NV cap = nv_fabs(x[0] - nn[0] * pnull[0]);
 		if (cap < YATES) YATES = cap;
-		NV z  = inverse_normal_cdf(strEQ(alt, "two.sided") ? (1.0 + conf_level) / 2.0 : conf_level);
+		NV z  = std_qnorm(strEQ(alt, "two.sided") ? (1.0 + conf_level) / 2.0 : conf_level);
 		NV z22n = z * z / (2.0 * nn[0]);
 		NV pcu = est[0] + YATES / nn[0];
 		NV p_u = (pcu >= 1.0) ? 1.0 : (pcu + z22n + z * nv_sqrt(pcu * (1.0 - pcu) / nn[0] + z22n / (2.0 * nn[0]))) / (1.0 + 2.0 * z22n);
@@ -17871,7 +17893,7 @@ PPCODE:
 		NV inv_sum = 1.0 / nn[0] + 1.0 / nn[1];
 		NV cap = nv_fabs(delta) / inv_sum;
 		if (cap < YATES) YATES = cap;
-		NV z = inverse_normal_cdf(strEQ(alt, "two.sided") ? (1.0 + conf_level) / 2.0 : conf_level);
+		NV z = std_qnorm(strEQ(alt, "two.sided") ? (1.0 + conf_level) / 2.0 : conf_level);
 		NV width = z * nv_sqrt(est[0] * (1.0 - est[0]) / nn[0] + est[1] * (1.0 - est[1]) / nn[1]) + YATES * inv_sum;
 		if      (strEQ(alt, "two.sided")) { ci_lo = (delta - width < -1.0) ? -1.0 : delta - width; ci_hi = (delta + width > 1.0) ? 1.0 : delta + width; }
 		else if (strEQ(alt, "greater"))   { ci_lo = (delta - width < -1.0) ? -1.0 : delta - width; ci_hi = 1.0; }
@@ -18269,7 +18291,7 @@ PPCODE:
 void epi_2x2(...)
 PPCODE:
 {
-	NV a, b, c, d, conf_level = 0.95;
+	NV a, b, c, d, conf_level = NV_CONF_95;
 	int correct = 0, opt_start;
 	if (items < 1)
 		croak("Usage: epi_2x2(a, b, c, d, conf_level => 0.95, correct => 0)\n"
@@ -18301,7 +18323,7 @@ PPCODE:
 	if (correct || a == 0 || b == 0 || c == 0 || d == 0) {
 		A += 0.5; B += 0.5; C += 0.5; D += 0.5; corrected = 1;
 	}
-	NV z  = inverse_normal_cdf(1.0 - (1.0 - conf_level) / 2.0);
+	NV z  = std_qnorm(1.0 - (1.0 - conf_level) / 2.0);
 	NV n1 = A + B, n0 = C + D;
 
 	NV or_    = (A * D) / (B * C);
@@ -18347,7 +18369,7 @@ PPCODE:
 	AV *strata = (AV *)SvRV(ST(0));
 	SSize_t K = av_len(strata) + 1;
 	if (K < 1) croak("cmh_test: need at least one 2x2 stratum");
-	NV conf_level = 0.95; int correct = 1;
+	NV conf_level = NV_CONF_95; int correct = 1;
 	for (int i = 1; i + 1 < items; i += 2) {
 		const char *k = SvPV_nolen(ST(i)); SV *v = ST(i + 1);
 		if      (strEQ(k, "conf_level") || strEQ(k, "conf.level")) conf_level = SvNV(v);
@@ -18386,7 +18408,7 @@ PPCODE:
 	NV var_lnor = vR / (2.0 * sumR * sumR)
 	            + vRS / (2.0 * sumR * sumS)
 	            + vS / (2.0 * sumS * sumS);
-	NV z     = inverse_normal_cdf(1.0 - (1.0 - conf_level) / 2.0);
+	NV z     = std_qnorm(1.0 - (1.0 - conf_level) / 2.0);
 	NV or_lo = or_mh * nv_exp(-z * nv_sqrt(var_lnor)), or_hi = or_mh * nv_exp(z * nv_sqrt(var_lnor));
 
 	HV *ret = newHV();
@@ -18539,7 +18561,7 @@ PPCODE:
 	              || !SvROK(ST(1)) || SvTYPE(SvRV(ST(1))) != SVt_PVAV)
 		croak("Usage: roc(\\@scores, \\@labels, positive => 1, "
 		      "conf_level => 0.95, direction => '>')");
-	const char *positive = "1"; NV conf_level = 0.95; bool lower_pos = 0;
+	const char *positive = "1"; NV conf_level = NV_CONF_95; bool lower_pos = 0;
 	for (int i = 2; i + 1 < items; i += 2) {
 		const char *k = SvPV_nolen(ST(i)); SV *v = ST(i + 1);
 		if      (strEQ(k, "positive"))  positive = SvPV_nolen(v);
@@ -18554,7 +18576,7 @@ PPCODE:
 	roc_split(aTHX_ (AV *)SvRV(ST(0)), (AV *)SvRV(ST(1)), positive, lower_pos,
 	          &pos, &m, &neg, &n, "roc");
 	NV auc_val, se; roc_delong(aTHX_ pos, m, neg, n, &auc_val, &se);
-	NV z  = inverse_normal_cdf(1.0 - (1.0 - conf_level) / 2.0);
+	NV z  = std_qnorm(1.0 - (1.0 - conf_level) / 2.0);
 	NV lo = auc_val - z * se, hi = auc_val + z * se;
 	if (lo < 0.0) lo = 0.0; if (hi > 1.0) hi = 1.0;
 
@@ -18812,7 +18834,7 @@ PPCODE:
 	if (items < 2 || !SvROK(ST(0)) || SvTYPE(SvRV(ST(0))) != SVt_PVAV
 	              || !SvROK(ST(1)) || SvTYPE(SvRV(ST(1))) != SVt_PVAV)
 		croak("Usage: survfit(\\@time, \\@status, group => \\@grp, conf_level => 0.95)");
-	AV *gav = NULL; NV conf_level = 0.95;
+	AV *gav = NULL; NV conf_level = NV_CONF_95;
 	for (int i = 2; i + 1 < items; i += 2) {
 		const char *k = SvPV_nolen(ST(i)); SV *v = ST(i + 1);
 		if      (strEQ(k, "group")) {
@@ -18828,7 +18850,7 @@ PPCODE:
 	size_t N; SurvObs *o = srv_read(aTHX_ (AV *)SvRV(ST(0)), (AV *)SvRV(ST(1)), gav, &N, labels, "survfit");
 	qsort(o, N, sizeof(SurvObs), survobs_cmp);
 	SSize_t G = av_len(labels) + 1;
-	NV z = inverse_normal_cdf(1.0 - (1.0 - conf_level) / 2.0);
+	NV z = std_qnorm(1.0 - (1.0 - conf_level) / 2.0);
 
 	HV *strata = newHV();
 	for (SSize_t g = 0; g < G; g++) {// group size
@@ -18993,7 +19015,7 @@ PPCODE:
 	else { multi = 0; p = 1; }
 	if (p < 1) croak("coxph: need at least one covariate");
 
-	NV conf_level = 0.95; int breslow = 0, maxit = 25; NV eps = 1e-9;
+	NV conf_level = NV_CONF_95; int breslow = 0, maxit = 25; NV eps = 1e-9;
 	AV *names_av = NULL;
 	for (int i = 3; i + 1 < items; i += 2) {
 		const char *k = SvPV_nolen(ST(i)); SV *v = ST(i + 1);
@@ -19106,7 +19128,7 @@ PPCODE:
 	}
 
 	int nevent = 0; for (SSize_t i = 0; i < n; i++) if (st[i]) nevent++;
-	NV zc = inverse_normal_cdf(1.0 - (1.0 - conf_level) / 2.0);
+	NV zc = std_qnorm(1.0 - (1.0 - conf_level) / 2.0);
 
 	AV *coef=newAV(), *hr=newAV(), *se=newAV(), *zv=newAV(), *pv=newAV(),
 	   *ci=newAV(), *nm=newAV();
@@ -20943,12 +20965,7 @@ CODE:
 	if (items < 1) croak("fisher_test requires at least a data reference");
 
 	SV *data_ref = ST(0);
-	/*Derive the default through Perl's own number parser so it is the exact
-	nearest NV to 0.95 in every build (double, long double, or __float128).
-	A bare 0.95 mismatches on long-double builds and 0.95L mismatches on
-	quadmath builds; either way the echoed default would fail to stringify
-	back to "0.95". SvNV("0.95") is identical to the Perl-side literal 0.95.*/
-	NV conf_level = SvNV(sv_2mortal(newSVpvs("0.95")));
+	NV conf_level = NV_CONF_95;
 	const char *alternative = "two.sided";
 
 	for (Stack_off_t i = 1; i < items; i += 2) {
@@ -21556,7 +21573,7 @@ CODE:
 {
 	SV* x_sv = NULL;
 	SV* y_sv = NULL;
-	NV ratio = 1.0, conf_level = 0.95;
+	NV ratio = 1.0, conf_level = NV_CONF_95;
 	const char*restrict alternative = "two.sided";
 	Stack_off_t arg_idx = 0;
 	// 1. Shift positional argument 'x' if it's an array reference

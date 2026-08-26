@@ -4660,7 +4660,7 @@ sub cohen_d {
 	my $d  = ($m1 - $m2) / $sp;
 	my $J  = 1 - 3 / (4 * ($n1 + $n2) - 9); # Hedges' correction factor
 	my $se = sqrt(($n1 + $n2) / ($n1 * $n2) + $d * $d / (2 * ($n1 + $n2)));
-	my $z  = _qnorm((1 + $cl) / 2);
+	my $z  = qnorm((1 + $cl) / 2);
 	return {
 		estimate     => $d,
 		hedges_g     => $d * $J,
@@ -4799,45 +4799,15 @@ sub eta_squared {
 	};
 }
 
-# _qnorm($p): standard-normal quantile (Acklam's rational approximation,
-# ~1e-9 accuracy) for the Perl-level effect-size CIs.
-sub _qnorm {
-	my $p = shift;
-	return -9**9**9 if $p <= 0;
-	return  9**9**9 if $p >= 1;
-	my @a = (-3.969683028665376e+01, 2.209460984245205e+02, -2.759285104469687e+02,
-	          1.383577518672690e+02, -3.066479806614716e+01, 2.506628277459239e+00);
-	my @b = (-5.447609879822406e+01, 1.615858368580409e+02, -1.556989798598866e+02,
-	          6.680131188771972e+01, -1.328068155288572e+01);
-	my @c = (-7.784894002430293e-03, -3.223964580411365e-01, -2.400758277161838e+00,
-	         -2.549732539343734e+00, 4.374664141464968e+00, 2.938163982698783e+00);
-	my @d = (7.784695709041462e-03, 3.224671290700398e-01, 2.445134137142996e+00,
-	         3.754408661907416e+00);
-	my $plow  = 0.02425;
-	my $phigh = 1 - 0.02425;
-	my ($q, $r, $x);
-	if ($p < $plow) {
-		$q = sqrt(-2 * log($p));
-		$x = ((((($c[0]*$q+$c[1])*$q+$c[2])*$q+$c[3])*$q+$c[4])*$q+$c[5]) /
-		     (((($d[0]*$q+$d[1])*$q+$d[2])*$q+$d[3])*$q+1);
-	} elsif ($p <= $phigh) {
-		$q = $p - 0.5; $r = $q * $q;
-		$x = ((((($a[0]*$r+$a[1])*$r+$a[2])*$r+$a[3])*$r+$a[4])*$r+$a[5])*$q /
-		     ((((($b[0]*$r+$b[1])*$r+$b[2])*$r+$b[3])*$r+$b[4])*$r+1);
-	} else {
-		$q = sqrt(-2 * log(1 - $p));
-		$x = -((((($c[0]*$q+$c[1])*$q+$c[2])*$q+$c[3])*$q+$c[4])*$q+$c[5]) /
-		      (((($d[0]*$q+$d[1])*$q+$d[2])*$q+$d[3])*$q+1);
-	}
-	return $x;
-}
-
 # Regression diagnostics (Perl level).  Validated numerically against R.
 #
 # _lgamma/_igamc/_pchisq_upper used to be pure-Perl ports of the XS igamc()
 # living here.  They are now XS (see LikeR.xs), so there is one implementation
 # instead of two that could disagree; _lgamma went away entirely because only
-# _igamc ever called it.
+# _igamc ever called it.  _qnorm went the same way in 0.303: it was Acklam's
+# rational approximation, good to about 1e-9, and cohen_d's interval is now
+# built from the XS qnorm() that every other confidence limit in the
+# distribution uses.
 
 # _quantile7(\@sorted_ascending, $p): R's default (type 7) sample quantile.
 sub _quantile7 {
@@ -8339,9 +8309,119 @@ computes the requested side directly:
 
 C<qnorm>, C<qchisq> and C<qf> reflect a probability above C<0.5> onto C<1 - p>
 before inverting, for the same reason in the other direction — that keeps the
-bisection comparing small numbers instead of numbers that agree to fifteen
-places. The reflection costs the one ulp that C<1 - p> rounds away, which is the
-resolution the caller's own C<p> had to begin with.
+root-finder comparing small numbers instead of numbers that agree to fifteen
+places. The reflection is free rather than a trade: for C<< p >= 0.5 >> the two
+operands of C<1 - p> lie within a factor of two of each other, so Sterbenz's
+lemma makes that subtraction exact, and nothing is given up in exchange for
+what it removes. Measured against C<mpmath> at 60 digits, at the C<p> that
+C<1 - (1 - conf.level) / 2> actually forms:
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>conf.level</th>
+  <th>z, unreflected</th>
+  <th>z, reflected</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>0.95</td>
+  <td>0.4 ulp</td>
+  <td>0.1 ulp</td>
+</tr>
+<tr>
+  <td>0.99</td>
+  <td>3.0 ulp</td>
+  <td>0.1 ulp</td>
+</tr>
+<tr>
+  <td>0.999</td>
+  <td>37 ulp</td>
+  <td>0.3 ulp</td>
+</tr>
+<tr>
+  <td>0.9999</td>
+  <td>254 ulp</td>
+  <td>0.4 ulp</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+The error grows with the confidence level because that is where C<p> and
+C<pnorm(z)> agree to the most places, so it is the intervals a cautious caller
+asks for that were losing the most digits.
+
+
+
+=head3 The same critical value every interval in the module is built from
+
+C<qnorm> is not a second opinion about the normal quantile. Since 0.303 it is
+the I<same> call — C<std_qnorm()> in C<LikeR.xs> — that C<glm>, C<cor_test>,
+C<prop_test>, C<epi_2x2>, C<cmh_test>, C<roc>, C<survfit>, C<coxph>, C<wilcox_test>,
+C<cohen_d> and C<shapiro_test> build their own numbers from. So a bound written
+by hand lands on the bound the function reports:
+
+ my $m  = glm(data => \%d, formula => 'y ~ x', family => 'binomial');
+ my $se = $m->{summary}{x}{'Std. Error'};
+ my $z  = qnorm(1 - (1 - 0.95) / 2);
+ $m->{summary}{x}{'Estimate'} - $z * $se;   # is $m->{'conf.int'}{x}[0]
+
+bit for bit on a C<double> build. On the wider NVs the only thing that can
+separate them is the compiler's freedom to contract C<est - z * se> into a
+single FMA where perl rounds twice, which is one ulp.
+
+C<t/qnorm.crit.R.scipy.t> asserts that, and goes the other way as well: it
+recovers the critical value back out of each function's I<reported> interval —
+undoing the C<exp> for C<coxph> and C<epi_2x2>'s odds ratio, the C<tanh> for
+C<cor_test> — and requires it to be the one C<qnorm> returns, at conf.level 0.8
+through 0.9999. C<cmh_test> is the one site not covered, because recovering its
+C<z> would mean reimplementing the Robins-Breslow-Greenland variance it does not
+report, which would test the reimplementation.
+
+Against C<mpmath> at C<mp.dps = 60>, bisecting the defining equation
+C<erfc(-z/sqrt(2)) / 2 = p> rather than calling a library inverse, worst relative
+error over those six confidence levels:
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th></th>
+  <th>worst relative error</th>
+  <th></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>R 4.6.1 <code>qnorm</code> (Wichura's AS 241)</td>
+  <td>4.8e-16</td>
+  <td>2.1 ulp</td>
+</tr>
+<tr>
+  <td>SciPy 1.18.0 <code>norm.ppf</code> (Cephes <code>ndtri</code>)</td>
+  <td>1.5e-16</td>
+  <td>0.7 ulp</td>
+</tr>
+<tr>
+  <td>this module</td>
+  <td>8.2e-17</td>
+  <td>0.4 ulp</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+C<t/std_qnorm.mpmath.py> is the arbiter and prints that table, along with the
+frozen rows of the test it generates. Like the other generators it is committed
+next to its test and nothing in the suite calls it.
+
 
 =head3 Accuracy, and the one place C<log> is not R's
 
@@ -15146,6 +15226,102 @@ reference that could not go lower, rather than failing the wider build for being
 right. The same applies to C<< log => 1 >> near a probability of 1, where the
 resolvable accuracy is C<NV_EPSILON / |log p|> and the tolerance is scaled off
 measured machine epsilon accordingly.
+
+=head3 Every confidence limit now comes from the same critical value
+
+Adding C<qnorm> made a discrepancy visible that had always been there. Nine
+places in C<LikeR.xs> built their own C<z> by calling C<inverse_normal_cdf()> —
+Moro's rational approximation, of which the file's own comment said:
+I<"good to about 1e-9, which is fine for a confidence limit"> — while C<qnorm>
+went through the Newton-polished C<normal_quantile_hp()>. Which function you asked
+therefore decided how many digits you got, and a Wald bound written by hand
+from C<qnorm> differed from the one C<glm> reported in the tenth digit.
+
+It is one function now. C<std_qnorm()> seeds with Moro, polishes with Newton
+against the C<erfc>-based normal CDF, and reflects a probability above C<0.5> onto
+C<1 - p> before inverting; C<glm>, C<cor_test>, C<prop_test>, C<epi_2x2>,
+C<cmh_test>, C<roc>, C<survfit>, C<coxph> and C<wilcox_test> all call it, C<qnorm>
+I<is> it, and two near-duplicates are gone: C<wilcox_qnorm()> in the XS, which was
+the same Newton loop without the reflection, and the pure-Perl C<_qnorm()>
+(Acklam's approximation, also C<~1e-9>) that C<cohen_d> used for its interval.
+
+Measured against C<mpmath> at C<mp.dps = 60>, bisecting C<erfc(-z/sqrt(2))/2 = p>
+rather than calling a library inverse, worst relative error over conf.level
+0.8 to 0.9999:
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th></th>
+  <th>worst relative error</th>
+  <th></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>0.302 and earlier, at these nine sites</td>
+  <td>1.8e-9</td>
+  <td>8.0e6 ulp</td>
+</tr>
+<tr>
+  <td>R 4.6.1 <code>qnorm</code></td>
+  <td>4.8e-16</td>
+  <td>2.1 ulp</td>
+</tr>
+<tr>
+  <td>SciPy 1.18.0 <code>norm.ppf</code></td>
+  <td>1.5e-16</td>
+  <td>0.7 ulp</td>
+</tr>
+<tr>
+  <td>0.303</td>
+  <td>8.2e-17</td>
+  <td>0.4 ulp</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+Seven orders of magnitude, and the result is closer to the truth than either
+reference. Nothing in the existing suite failed: every one of these functions is
+cross-validated against R at tolerances that had room for C<1e-9> in them,
+because they had to. What changed is that they no longer need it —
+C<t/distributions.R.scipy.t>'s C<glm> agreement check went from C<5e-9>, with its
+comment explaining that the gap was the design, to bit-identical.
+
+=head4 The bug this exposed: C<0.95> is a C<double>
+
+With the critical value down to 0.4 ulp, the next-largest error in a confidence
+limit turned out to be the confidence level. Eleven functions declared their
+default as
+
+ NV conf_level = 0.95;
+
+and C<0.95> in C is a literal of type C<double>, so on a long-double or
+C<__float128> perl what lands in the C<NV> is C<0.95> rounded to 53 bits — 2.2e-17
+from the C<NV> nearest C<0.95>. C<p = 1 - (1 - conf_level)/2> inherits all of it,
+the normal density at the 95% point is C<0.0584>, and the critical value comes
+out 3.8e-16 wrong: about 1700 ulp of a long double, and the single largest error
+in a 95% interval on those builds. C<fisher_test> and C<binom_test> had dodged
+this for releases by parsing the literal through perl's own number parser; that
+idiom is now the C<NV_CONF_95> macro and all thirteen sites use it.
+
+This was invisible while the critical value itself was only good to C<1e-9>.
+It is the reason C<t/qnorm.crit.R.scipy.t> freezes C<p> as well as C<conf.level>:
+C<1 - (1 - 0.999)/2> has to round, and it rounds differently at each NV width, so
+a shared expected value is only meaningful if every build is asked the same
+question.
+
+C<t/qnorm.crit.R.scipy.t> is 166 tests — the value itself against R 4.6.1,
+SciPy 1.18.0 and the 60-digit arbiter, and then the same value recovered out of
+seven functions' reported intervals at six confidence levels each. It also pins
+what C<inverse_normal_cdf()> alone returns and asserts it is nowhere near the
+tolerance, so the file cannot pass by accident if the routing is ever undone.
+
+
 
 =head3 Result keys are dotted everywhere
 

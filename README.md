@@ -2322,9 +2322,62 @@ computes the requested side directly:
 
 `qnorm`, `qchisq` and `qf` reflect a probability above `0.5` onto `1 - p`
 before inverting, for the same reason in the other direction — that keeps the
-bisection comparing small numbers instead of numbers that agree to fifteen
-places. The reflection costs the one ulp that `1 - p` rounds away, which is the
-resolution the caller's own `p` had to begin with.
+root-finder comparing small numbers instead of numbers that agree to fifteen
+places. The reflection is free rather than a trade: for `p >= 0.5` the two
+operands of `1 - p` lie within a factor of two of each other, so Sterbenz's
+lemma makes that subtraction exact, and nothing is given up in exchange for
+what it removes. Measured against `mpmath` at 60 digits, at the `p` that
+`1 - (1 - conf.level) / 2` actually forms:
+
+| conf.level | z, unreflected | z, reflected |
+|---|---|---|
+| 0.95 | 0.4 ulp | 0.1 ulp |
+| 0.99 | 3.0 ulp | 0.1 ulp |
+| 0.999 | 37 ulp | 0.3 ulp |
+| 0.9999 | 254 ulp | 0.4 ulp |
+
+The error grows with the confidence level because that is where `p` and
+`pnorm(z)` agree to the most places, so it is the intervals a cautious caller
+asks for that were losing the most digits.
+
+### The same critical value every interval in the module is built from
+
+`qnorm` is not a second opinion about the normal quantile. Since 0.303 it is
+the *same* call — `std_qnorm()` in `LikeR.xs` — that `glm`, `cor_test`,
+`prop_test`, `epi_2x2`, `cmh_test`, `roc`, `survfit`, `coxph`, `wilcox_test`,
+`cohen_d` and `shapiro_test` build their own numbers from. So a bound written
+by hand lands on the bound the function reports:
+
+    my $m  = glm(data => \%d, formula => 'y ~ x', family => 'binomial');
+    my $se = $m->{summary}{x}{'Std. Error'};
+    my $z  = qnorm(1 - (1 - 0.95) / 2);
+    $m->{summary}{x}{'Estimate'} - $z * $se;   # is $m->{'conf.int'}{x}[0]
+
+bit for bit on a `double` build. On the wider NVs the only thing that can
+separate them is the compiler's freedom to contract `est - z * se` into a
+single FMA where perl rounds twice, which is one ulp.
+
+`t/qnorm.crit.R.scipy.t` asserts that, and goes the other way as well: it
+recovers the critical value back out of each function's *reported* interval —
+undoing the `exp` for `coxph` and `epi_2x2`'s odds ratio, the `tanh` for
+`cor_test` — and requires it to be the one `qnorm` returns, at conf.level 0.8
+through 0.9999. `cmh_test` is the one site not covered, because recovering its
+`z` would mean reimplementing the Robins-Breslow-Greenland variance it does not
+report, which would test the reimplementation.
+
+Against `mpmath` at `mp.dps = 60`, bisecting the defining equation
+`erfc(-z/sqrt(2)) / 2 = p` rather than calling a library inverse, worst relative
+error over those six confidence levels:
+
+| | worst relative error | |
+|---|---|---|
+| R 4.6.1 `qnorm` (Wichura's AS 241) | 4.8e-16 | 2.1 ulp |
+| SciPy 1.18.0 `norm.ppf` (Cephes `ndtri`) | 1.5e-16 | 0.7 ulp |
+| this module | 8.2e-17 | 0.4 ulp |
+
+`t/std_qnorm.mpmath.py` is the arbiter and prints that table, along with the
+frozen rows of the test it generates. Like the other generators it is committed
+next to its test and nothing in the suite calls it.
 
 ### Accuracy, and the one place `log` is not R's
 
@@ -6797,6 +6850,71 @@ reference that could not go lower, rather than failing the wider build for being
 right. The same applies to `log => 1` near a probability of 1, where the
 resolvable accuracy is `NV_EPSILON / |log p|` and the tolerance is scaled off
 measured machine epsilon accordingly.
+
+### Every confidence limit now comes from the same critical value
+
+Adding `qnorm` made a discrepancy visible that had always been there. Nine
+places in `LikeR.xs` built their own `z` by calling `inverse_normal_cdf()` —
+Moro's rational approximation, of which the file's own comment said:
+*"good to about 1e-9, which is fine for a confidence limit"* — while `qnorm`
+went through the Newton-polished `normal_quantile_hp()`. Which function you asked
+therefore decided how many digits you got, and a Wald bound written by hand
+from `qnorm` differed from the one `glm` reported in the tenth digit.
+
+It is one function now. `std_qnorm()` seeds with Moro, polishes with Newton
+against the `erfc`-based normal CDF, and reflects a probability above `0.5` onto
+`1 - p` before inverting; `glm`, `cor_test`, `prop_test`, `epi_2x2`,
+`cmh_test`, `roc`, `survfit`, `coxph` and `wilcox_test` all call it, `qnorm`
+*is* it, and two near-duplicates are gone: `wilcox_qnorm()` in the XS, which was
+the same Newton loop without the reflection, and the pure-Perl `_qnorm()`
+(Acklam's approximation, also `~1e-9`) that `cohen_d` used for its interval.
+
+Measured against `mpmath` at `mp.dps = 60`, bisecting `erfc(-z/sqrt(2))/2 = p`
+rather than calling a library inverse, worst relative error over conf.level
+0.8 to 0.9999:
+
+| | worst relative error | |
+|---|---|---|
+| 0.302 and earlier, at these nine sites | 1.8e-9 | 8.0e6 ulp |
+| R 4.6.1 `qnorm` | 4.8e-16 | 2.1 ulp |
+| SciPy 1.18.0 `norm.ppf` | 1.5e-16 | 0.7 ulp |
+| 0.303 | 8.2e-17 | 0.4 ulp |
+
+Seven orders of magnitude, and the result is closer to the truth than either
+reference. Nothing in the existing suite failed: every one of these functions is
+cross-validated against R at tolerances that had room for `1e-9` in them,
+because they had to. What changed is that they no longer need it —
+`t/distributions.R.scipy.t`'s `glm` agreement check went from `5e-9`, with its
+comment explaining that the gap was the design, to bit-identical.
+
+#### The bug this exposed: `0.95` is a `double`
+
+With the critical value down to 0.4 ulp, the next-largest error in a confidence
+limit turned out to be the confidence level. Eleven functions declared their
+default as
+
+    NV conf_level = 0.95;
+
+and `0.95` in C is a literal of type `double`, so on a long-double or
+`__float128` perl what lands in the `NV` is `0.95` rounded to 53 bits — 2.2e-17
+from the `NV` nearest `0.95`. `p = 1 - (1 - conf_level)/2` inherits all of it,
+the normal density at the 95% point is `0.0584`, and the critical value comes
+out 3.8e-16 wrong: about 1700 ulp of a long double, and the single largest error
+in a 95% interval on those builds. `fisher_test` and `binom_test` had dodged
+this for releases by parsing the literal through perl's own number parser; that
+idiom is now the `NV_CONF_95` macro and all thirteen sites use it.
+
+This was invisible while the critical value itself was only good to `1e-9`.
+It is the reason `t/qnorm.crit.R.scipy.t` freezes `p` as well as `conf.level`:
+`1 - (1 - 0.999)/2` has to round, and it rounds differently at each NV width, so
+a shared expected value is only meaningful if every build is asked the same
+question.
+
+`t/qnorm.crit.R.scipy.t` is 166 tests — the value itself against R 4.6.1,
+SciPy 1.18.0 and the 60-digit arbiter, and then the same value recovered out of
+seven functions' reported intervals at six confidence levels each. It also pins
+what `inverse_normal_cdf()` alone returns and asserts it is nowhere near the
+tolerance, so the file cannot pass by accident if the routing is ever undone.
 
 ### Result keys are dotted everywhere
 
