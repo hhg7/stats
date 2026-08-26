@@ -52,9 +52,7 @@ sub aoh_col  { my ($r, $c) = @_; [ sort { $a <=> $b } map { $_->{$c} } @$r ] }
 
 my $LIKE = 'x';   # avoid "used only once" style noise from the pragma
 
-#--------------------------------------------------------------------------
 # HoH: filter on the row name via $_[1]  (the headline feature)
-#--------------------------------------------------------------------------
 my $score = {
 	'1cka' => { anomaly_rank => 162, regression_score => -7.2986 },
 	'1ckb' => { anomaly_rank =>  66, regression_score => -7.2501 },
@@ -103,9 +101,7 @@ my $grps = '1cka|1d4t';
 		'HoH: predicate receives each outer key as $_[1]' );
 }
 
-#--------------------------------------------------------------------------
 # AoH: $_[1] is the 0-based row index
-#--------------------------------------------------------------------------
 my $aoh_in = [ { id => 'a', v => 1 }, { id => 'b', v => 5 }, { id => 'c', v => 9 } ];
 
 {
@@ -120,9 +116,7 @@ my $aoh_in = [ { id => 'a', v => 1 }, { id => 'b', v => 5 }, { id => 'c', v => 9
 		'AoH: predicate receives each row index as $_[1]' );
 }
 
-#--------------------------------------------------------------------------
 # HoA: $_[1] is the 0-based row index; shape is preserved
-#--------------------------------------------------------------------------
 my $hoa_in = { id => ['a', 'b', 'c'], v => [1, 5, 9] };
 
 {
@@ -132,10 +126,8 @@ my $hoa_in = { id => ['a', 'b', 'c'], v => [1, 5, 9] };
 		'HoA by index: $_[1] drops row 1, preserves HoA shape' );
 }
 
-#--------------------------------------------------------------------------
 # Backward compatibility: predicates that ignore $_[1] still behave.
 # (Passes on both old and new code; guards against regressing $_ / $_->{col}.)
-#--------------------------------------------------------------------------
 {
 	my $r = filter( $aoh_in, sub { $_->{v} >= 5 } );
 	is_deeply( [ map { $_->{id} } @$r ], ['b', 'c'],
@@ -147,16 +139,12 @@ my $hoa_in = { id => ['a', 'b', 'c'], v => [1, 5, 9] };
 		'compat: HoH $_->{col} predicate unaffected' );
 }
 
-#--------------------------------------------------------------------------
 # Usage guards still fire.
-#--------------------------------------------------------------------------
 throws_ok { filter($score) } qr/Usage: filter/, 'filter: missing predicate croaks';
 throws_ok { filter('not a ref', sub { 1 }) } qr/data frame/,
 	'filter: non-ref data frame croaks';
 
-#--------------------------------------------------------------------------
 # Leak check (real calls hoisted out of the closure first, per convention).
-#--------------------------------------------------------------------------
 filter( $score, sub { defined($_[1]) && $_[1] =~ m/^(?:$grps)$/ } );
 filter( $aoh_in, sub { defined($_[1]) && $_[1] == 0 } );
 filter( $hoa_in, sub { defined($_[1]) && $_[1] != 1 } );

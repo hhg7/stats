@@ -31,9 +31,7 @@ sub is_approx {
 	}
 }
 
-# ----------------------------------------------------------------------
 # Tests
-# ----------------------------------------------------------------------
 
 # Collect chisq_test's warnings rather than letting them reach the harness;
 # several sections below are about the warning itself.
@@ -55,7 +53,6 @@ dies_ok { chisq_test({}) } 'Croaks with empty hash reference';
 dies_ok { chisq_test([undef, undef]) } 'Croaks with undefined values in array ref';
 dies_ok { chisq_test({ A => undef }) } 'Croaks with undefined keys in hash ref';
 dies_ok { chisq_test(undef) } 'Croaks with undefined arg';
-# ======================================================================
 # 1D Array Test
 # R Code: 
 #   chisq.test(c(10, 20, 30))
@@ -63,7 +60,6 @@ dies_ok { chisq_test(undef) } 'Croaks with undefined arg';
 #   Chi-squared test for given probabilities
 #   data:  c(10, 20, 30)
 #   X-squared = 10, df = 2, p-value = 0.006738
-# ======================================================================
 my $data = [10, 20, 30];
 my $res = chisq_test($data);
 is(ref($res), 'HASH', 'Returns a hashref');
@@ -79,7 +75,6 @@ ok(looks_like_number($res->{'p.value'}), 'p.value is a number');
 is(ref($res->{expected}), 'ARRAY', 'Expected frequencies is an array ref');
 is_approx($res->{expected}[0], 20.0, 'Expected frequency [0] is correct');
 
-# ======================================================================
 # 2D Array Test (2x2 Matrix)
 # R Code: 
 #   chisq.test(rbind(c(10, 15), c(20, 5)))
@@ -87,7 +82,6 @@ is_approx($res->{expected}[0], 20.0, 'Expected frequency [0] is correct');
 #   Pearson's Chi-squared test with Yates' continuity correction
 #   data:  rbind(c(10, 15), c(20, 5))
 #   X-squared = 6.75, df = 1, p-value = 0.009375
-# ======================================================================
 $data = [[10, 15], [20, 5]];
 $res = chisq_test($data);
 is($res->{method}, "Pearson's Chi-squared test with Yates' continuity correction", 'Yates correction triggered for 2x2');
@@ -96,7 +90,6 @@ is($res->{method}, "Pearson's Chi-squared test with Yates' continuity correction
 is_approx($res->{statistic}{'X-squared'}, 6.75, 'Calculates correct X-squared statistic with Yates', 1e-13);
 is_approx($res->{parameter}{df}, 1, 'Calculates correct degrees of freedom', 1e-13);
 is_approx($res->{'p.value'}, 0.00937476845943488, 'chisq_test: 2x2 p-value', 1e-13);
-# ======================================================================
 # 2D Array Test (> 3x2 Matrix)
 # R Code: 
 #   chisq.test(rbind(c(10, 10, 20), c(20, 20, 20)))
@@ -104,14 +97,12 @@ is_approx($res->{'p.value'}, 0.00937476845943488, 'chisq_test: 2x2 p-value', 1e-
 #   Pearson's Chi-squared test
 #   data:  rbind(c(10, 10, 20), c(20, 20, 20))
 #   X-squared = 2.5, df = 2, p-value = 0.2865
-# ======================================================================
 $data = [[10, 10, 20], [20, 20, 20]];
 $res = chisq_test($data);
     
 is($res->{method}, "Pearson's Chi-squared test", 'Standard Pearson applied (no Yates)');
 is_approx($res->{parameter}{df}, 2, 'Calculates correct degrees of freedom', 1e-13);
 is_approx($res->{'p.value'}, 0.249352208777296, 'chisq_test: 3x2 matrix, p-value correct', 1e-13);
-# ======================================================================
 # 1D Hash Test
 # R Code: 
 #   chisq.test(c(A=10, B=20, C=30))
@@ -119,7 +110,6 @@ is_approx($res->{'p.value'}, 0.249352208777296, 'chisq_test: 3x2 matrix, p-value
 #   Chi-squared test for given probabilities
 #   data:  c(A = 10, B = 20, C = 30)
 #   X-squared = 10, df = 2, p-value = 0.006738
-# ======================================================================
 $data = { A => 10, B => 20, C => 30 };
 $res = chisq_test($data);
 
@@ -180,10 +170,8 @@ no_leaks_ok {
 	chisq_test($data);
 } 'No leaks with successful 2D Hash processing' unless $INC{'Devel/Cover.pm'};
 
-# ======================================================================
 # Input validation.  R's chisq.test() refuses to coerce: every entry must be
 # a nonnegative finite number and at least one of them must be positive.
-# ======================================================================
 throws_ok { chisq_test([10, -5, 30]) } qr/nonnegative and finite/,
 	'Croaks on a negative count';
 throws_ok { chisq_test([[10, -5], [30, 1]]) } qr/nonnegative and finite/,
@@ -251,9 +239,7 @@ throws_ok { chisq_test([10, 20, 30], 'correct') } qr/odd number of named argumen
 throws_ok { chisq_test([10, 20, 30], banana => 1) } qr/unknown argument 'banana'/,
 	'Croaks on an unknown named argument';
 
-# ======================================================================
 # correct => 0 turns off Yates' continuity correction, as in R.
-# ======================================================================
 {
 	my $res = chisq_test([[10, 15], [20, 5]], correct => 0);
 	is($res->{method}, "Pearson's Chi-squared test", 'correct => 0 drops Yates');
@@ -267,10 +253,8 @@ throws_ok { chisq_test([10, 20, 30], banana => 1) } qr/unknown argument 'banana'
 		'A zero correction is not called a correction');
 }
 
-# ======================================================================
 # p => ... runs the goodness-of-fit test against given probabilities, which
 # is what the method string has always claimed.
-# ======================================================================
 {
 	my $res = chisq_test([10, 20, 30], p => [0.2, 0.3, 0.5]);
 	is($res->{method}, 'Chi-squared test for given probabilities', 'p => gives a GOF test');
@@ -311,10 +295,8 @@ throws_ok { chisq_test([10, 20, 30], banana => 1) } qr/unknown argument 'banana'
 		qr/'p' has no entry for/, 'Croaks when keyed p is missing a key';
 }
 
-# ======================================================================
 # A 1 x k or k x 1 table is a goodness-of-fit test, as in R, not a
 # contingency table with df 0.
-# ======================================================================
 {
 	for my $case ([[10, 20, 30]], [[10], [20], [30]]) {
 		my $res = chisq_test($case);
@@ -327,9 +309,7 @@ throws_ok { chisq_test([10, 20, 30], banana => 1) } qr/unknown argument 'banana'
 		'... while expected keeps the shape it was given');
 }
 
-# ======================================================================
 # R warns when any expected count falls below 5.
-# ======================================================================
 {
 	my @w = warnings_from { chisq_test([[3, 1], [1, 3]]) };
 	is(scalar @w, 1, 'One warning for a table with small expected counts');
@@ -341,9 +321,7 @@ throws_ok { chisq_test([10, 20, 30], banana => 1) } qr/unknown argument 'banana'
 		'No warning for a comfortable goodness-of-fit test');
 }
 
-# ======================================================================
 # Leak checks for the paths added above
-# ======================================================================
 no_leaks_ok {
 	eval { chisq_test([[1, 2, 3], [4, 5]]) };  # croak from mid-parse
 } 'No leaks when a ragged array croaks' unless $INC{'Devel/Cover.pm'};

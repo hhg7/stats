@@ -39,11 +39,9 @@ sub aoh_has {
 	return 0;
 }
 
-#============================================================
 # assign
-#============================================================
 
-#---- AoH ----
+#AoH
 {
 	my $df = [ { w => 70, h => 2 }, { w => 80, h => 4 } ];
 	my $out = assign($df, bmi => sub { $_->{w} / $_->{h} });
@@ -62,7 +60,7 @@ sub aoh_has {
 	is($df->[1]{x2}, 21, 'assign: AoH later pair sees earlier new column');
 }
 
-#---- HoA ----
+#HoA
 {
 	my $df = { w => [70, 80], h => [2, 4] };
 	my $out = assign($df, bmi => sub { $_->{w} / $_->{h} });
@@ -79,7 +77,7 @@ sub aoh_has {
 	is_deeply($df->{xi}, [1, 3, 5], 'assign: HoA chained column sees new col');
 }
 
-#---- HoH ----
+#HoH
 {
 	my $df = {
 		r1 => { w => 70, h => 2 },
@@ -97,7 +95,7 @@ sub aoh_has {
 	is($df->{b}{key}, 'b', 'assign: HoH row key matches');
 }
 
-#---- assign errors ----
+#assign errors
 dies_ok { assign('not a ref', x => sub { 1 }) } 'assign: dies on non-ref df';
 dies_ok { assign([{}], 'odd') } 'assign: dies on odd-length pair list';
 dies_ok { assign([{}], x => 'notcode') } 'assign: AoH dies when value not CODE';
@@ -106,9 +104,7 @@ dies_ok { assign({ a => { v => 1 } }, x => 'notcode') } 'assign: HoH dies when v
 dies_ok { assign([ 'notahash' ], x => sub { 1 }) } 'assign: AoH dies when row not hashref';
 dies_ok { assign({ a => \1 }, x => sub { 1 }) } 'assign: HASH dies on value neither HASH nor ARRAY';
 
-#============================================================
 # col() filter DSL (overloading) -- exercise the closures directly
-#============================================================
 {
 	my $p = col('age') >= 18;
 	ok(ref $p, 'col: comparison returns object');
@@ -154,7 +150,7 @@ dies_ok { assign({ a => \1 }, x => sub { 1 }) } 'assign: HASH dies on value neit
 	like("$p", qr/predicate/, 'col: stringifies to a predicate label');
 	ok($p ? 1 : 0, 'col: bool overload is true');
 }
-#---- col errors ----
+#col errors
 dies_ok { col() } 'col: dies with no name';
 dies_ok { col(undef) } 'col: dies on undef name';
 dies_ok { col([1]) } 'col: dies on ref name';
@@ -162,11 +158,9 @@ dies_ok { (col('x') > 0) & col('y') } 'col: & dies when right operand is bare co
 dies_ok { col('x') & (col('y') > 0) } 'col: & dies when left operand is bare column';
 dies_ok { !col('x') } 'col: ! dies on bare column';
 
-#============================================================
 # dropna
-#============================================================
 
-#---- AoH cols mode ----
+#AoH cols mode
 {
 	my $df = [ { a => 1, b => 2 }, { a => undef, b => 3 }, { a => 4, b => undef } ];
 	my $out = dropna($df, cols => ['a']);
@@ -190,7 +184,7 @@ dies_ok { !col('x') } 'col: ! dies on bare column';
 	is_deeply([ map { $_->{a} } @$out ], [1, 3], 'dropna: AoH rows deletes by index');
 }
 
-#---- HoA ----
+#HoA
 {
 	my $df = { a => [1, undef, 3], b => [9, 8, undef] };
 	my $out = dropna($df, cols => ['a']);
@@ -203,7 +197,7 @@ dies_ok { !col('x') } 'col: ! dies on bare column';
 	is_deeply(dropna($df, cols => [])->{a}, [1, 2, 3], 'dropna: HoA empty cols copies');
 }
 
-#---- HoH ----
+#HoH
 {
 	my $df = {
 		r1 => { a => 1, b => 2 },
@@ -219,7 +213,7 @@ dies_ok { !col('x') } 'col: ! dies on bare column';
 	is(scalar keys %{ dropna($df, cols => []) }, 2, 'dropna: HoH empty cols copies');
 }
 
-#---- dropna errors ----
+#dropna errors
 dies_ok { dropna('x', cols => ['a']) } 'dropna: dies on non-ref df';
 dies_ok { dropna([], 'odd') } 'dropna: dies on odd args';
 dies_ok { dropna([], foo => 1) } 'dropna: dies on unknown arg';
@@ -231,9 +225,7 @@ dies_ok { dropna([{a=>1}], cols => ['nope']) } 'dropna: AoH dies on missing colu
 dies_ok { dropna({a=>[1]}, cols => ['nope']) } 'dropna: HoA dies on missing column';
 dies_ok { dropna({ a => [1], r => { x => 1 } }) } 'dropna: dies on mixed HoA/HoH';
 
-#============================================================
 # summary
-#============================================================
 # summary() now renders a view()-style string; capture it with return_only.
 {	# single flat array (ref form)
 	my $out = summary([1, 2, 3, 4, 5], nrows => 5, return_only => 1, color => 0);
@@ -261,9 +253,7 @@ dies_ok { summary(\1, return_only => 1) } 'summary: dies when data is neither ar
 # undef / non-numeric values are now ignored rather than fatal
 lives_ok { summary([1, undef, 3], return_only => 1) } 'summary: tolerates undef in a vector';
 
-#============================================================
 # read_table  (write small temp files)
-#============================================================
 sub write_tmp {
 	my ($content, $suffix) = @_;
 	my $fh = File::Temp->new(SUFFIX => ($suffix // '.csv'), UNLINK => 1);
@@ -339,7 +329,7 @@ sub write_tmp {
 	is($aoh->[0]{a}, 1, 'read_table: auto.row.names aligns remaining columns');
 }
 
-#---- read_table errors ----
+#read_table errors
 dies_ok { read_table('/no/such/file/xyz') } 'read_table: dies on missing file';
 {
 	my $fh = write_tmp("a,b\n1,2\n");
@@ -363,9 +353,7 @@ dies_ok { read_table('/no/such/file/xyz') } 'read_table: dies on missing file';
 		'read_table: dies on filter column not in header';
 }
 
-#============================================================
 # view  (use return_only so nothing prints to the terminal)
-#============================================================
 {	# AoH
 	my $s = view([ { a => 1, b => 2 }, { a => 3, b => 4 } ], return_only => 1);
 	like($s, qr/AoH/, 'view: AoH labelled');
@@ -406,15 +394,13 @@ dies_ok { read_table('/no/such/file/xyz') } 'read_table: dies on missing file';
 	unlike($s, qr/\e\[/, 'view: color=>0 emits no ANSI escapes');
 }
 
-#---- view errors ----
+#view errors
 dies_ok { view('scalar') } 'view: dies on non-ref data';
 dies_ok { view([], n => 1, rows => 1) } 'view: dies when both n and rows given';
 dies_ok { view([], n => -1) } 'view: dies on non-integer n';
 dies_ok { view([], bogus => 1) } 'view: dies on unknown argument';
 
-#============================================================
 # memory leak checks (skipped under Devel::Cover)
-#============================================================
 unless ($INC{'Devel/Cover.pm'}) {
 	no_leaks_ok {
 		my $df = [ { w => 70, h => 2 } ];

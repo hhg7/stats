@@ -121,10 +121,8 @@ sub agree {
 	is sig($tied), sig($plain), $name;
 }
 
-# ---------------------------------------------------------------------------
 # The data.  cat carries an undef, so the undef-key and undef-cell paths are
 # exercised as well; id is deliberately not sorted and not gap-free.
-# ---------------------------------------------------------------------------
 my @id  = ( 3, 1, 4, 1, 5 );
 my @x   = ( -2.5, 0.5, 7, -1, 0 );
 my @cat = ( 'a', 'b', undef, 'b', 'a' );
@@ -132,9 +130,7 @@ my @cat = ( 'a', 'b', undef, 'b', 'a' );
 my $plain = { id => [@id], x => [@x], cat => [@cat] };
 my $tied  = { id => ta(\@id), x => ta(\@x), cat => ta(\@cat) };
 
-# ---------------------------------------------------------------------------
 # filter()
-# ---------------------------------------------------------------------------
 for my $out (undef, 'hoa', 'aoh') {
 	my $label = defined $out ? $out : 'default';
 	my @opt = defined $out ? ('output.type' => $out) : ();
@@ -184,9 +180,7 @@ for my $out (undef, 'hoa', 'aoh') {
 	       'filter over a HoH of tied row hashes' );
 }
 
-# ---------------------------------------------------------------------------
 # merge()
-# ---------------------------------------------------------------------------
 my @rid = ( 1, 4, 4, 9 );
 my @w   = ( 'p', 'q', 'r', 's' );
 my $rplain = { id => [@rid], w => [@w] };
@@ -267,9 +261,7 @@ for my $how (qw(inner left right outer)) {
 	       'merge with a HoH of tied rows on the left' );
 }
 
-# ---------------------------------------------------------------------------
 # drop_duplicates()
-# ---------------------------------------------------------------------------
 # Rows 0 and 3 are duplicates of each other; row 4 duplicates nothing.  That
 # separates keep => 'first' from 'last' from 0, which is the whole of what the
 # survivor bookkeeping does.
@@ -354,10 +346,8 @@ for my $how (qw(inner left right outer)) {
 	is_deeply [ @{ $rtied->{id} } ], [@rid], 'tied right id column unchanged';
 }
 
-# ---------------------------------------------------------------------------
 # No leaks.  av_row_keep() hands back a fresh reference for a tied row and the
 # caller's own for a plain one, which is two ownership rules in one place.
-# ---------------------------------------------------------------------------
 SKIP: {
 	skip 'Test::LeakTrace not installed', 1 unless $HAVE_LEAKTRACE;
 	no_leaks_ok {

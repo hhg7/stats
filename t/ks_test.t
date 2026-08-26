@@ -41,7 +41,7 @@ BEGIN {
 	}
 }
 
-# ---- helpers ---------------------------------------------------------------
+# helpers
 
 # Run a coderef, returning ($return_value_or_undef, $error, \@warnings).
 sub run {
@@ -57,10 +57,10 @@ sub is_result_hash {
     my ($r, $label) = @_;
     ok(ref($r) eq 'HASH', "$label: returns hashref")
         or return 0;
-    ok(exists $r->{statistic} && exists $r->{p_value}
+    ok(exists $r->{statistic} && exists $r->{'p.value'}
         && exists $r->{method} && exists $r->{alternative},
         "$label: has statistic/p_value/method/alternative");
-    ok($r->{p_value} >= 0 && $r->{p_value} <= 1, "$label: p_value in [0,1]");
+    ok($r->{'p.value'} >= 0 && $r->{'p.value'} <= 1, "$label: p_value in [0,1]");
     return 1;
 }
 
@@ -75,7 +75,7 @@ my ($r, $err) = run(sub { ks_test(\@SEP_X, \@SEP_Y) });
 is($err, undef, "separated 2-sample: no exception");
 is_result_hash($r, "separated 2-sample");
 cmp_ok(abs($r->{statistic} - 1.0), '<', 1e-9, "separated 2-sample: D == 1");
-cmp_ok($r->{p_value}, '<', 0.05, "separated 2-sample: small p-value");
+cmp_ok($r->{'p.value'}, '<', 0.05, "separated 2-sample: small p-value");
 like($r->{method}, qr/Two-sample/, "separated 2-sample: method labelled");
 
 # Bug #3: input is sorted internally; unsorted input must give the same D.
@@ -104,13 +104,11 @@ is($l->{alternative}, 'less',    "alternative echoed back: less");
     like($err, qr/alternative must be/, "invalid alternative croaks");
 }
 
-# ===========================================================================
 # Bug #1 — named-argument parsing
 #   Original: a named key string (the first positional string) was swallowed as
 #   a 1-sample CDF name, so fully-named calls croaked with
 #   "unknown argument 'ARRAY(0x..)'", and ks_test(\@x, exact=>1) croaked with
 #   "Unsupported 1-sample distribution 'exact'".
-# ===========================================================================
 
 ($r, $err) = run(sub { ks_test(x => \@SEP_X, 'y' => \@SEP_Y) });
 is($err, undef, "#1 fully-named x=>/y=> does not croak");
@@ -132,22 +130,18 @@ unlike($err, qr/Unsupported 1-sample distribution/,
 is($err, undef, "#1 positional CDF + named arg parses");
 like($r->{method}, qr/One-sample/, "#1 1-sample method selected");
 
-# ===========================================================================
 # Bug #2 — out-of-bounds stack read on a dangling named argument
 #   Original: the key/value loop read ST(arg_idx+1) before checking bounds, so
 #   an odd trailing arg read past the Perl stack (UB / possible crash).
 #   Fixed code must croak cleanly about the missing value.
-# ===========================================================================
 
 (undef, $err) = run(sub { ks_test(\@SEP_X, \@SEP_Y, 'exact') });
 like($err, qr/missing a value/,
   "#2 dangling named arg croaks cleanly (no OOB stack read)");
 
-# ===========================================================================
 # Bug #4 — all-missing 'x' in the 1-sample path
 #   Original: the pnorm branch had no valid_nx guard, so all-non-numeric x fed
 #   0 into divisions / K2x (NaN or div-by-zero). Must croak instead.
-# ===========================================================================
 
 {
     my (undef, $err) = run(sub { ks_test(['a','b','c'], 'pnorm') });
@@ -170,24 +164,20 @@ like($err, qr/missing a value/,
      "#4c surviving 4 values still fully separated (D==1)");
 }
 
-# ===========================================================================
 # Bug #5 — aliased x and y (same arrayref)
 #   The C locals were marked `restrict` while the same SV could be passed as
 #   both x and y, a restrict violation. Behaviour must be well-defined:
 #   identical samples => D == 0, p ~ 1.
-# ===========================================================================
 
 {
  my @a = (1, 2, 3, 4, 5);
  my ($r, $err) = run(sub { ks_test(\@a, \@a) });
  is($err, undef, "#5 aliased x/y: no exception");
  cmp_ok(abs($r->{statistic} - 0.0), '<', 1e-9, "#5 aliased x/y: D == 0");
- cmp_ok($r->{p_value}, '>', 0.99, "#5 aliased x/y: p ~ 1");
+ cmp_ok($r->{'p.value'}, '>', 0.99, "#5 aliased x/y: p ~ 1");
 }
 
-# ===========================================================================
 # Ties handling — exact path must warn and fall back to asymptotic.
-# ===========================================================================
 
 {
  # Small samples => exact is auto-selected; shared values create ties.
@@ -198,13 +188,11 @@ like($err, qr/missing a value/,
  like($r->{method}, qr/asymptotic/, "ties: fell back to asymptotic method");
 }
 
-# ===========================================================================
 # Bug #6 — forced exact beyond the auto-gate
 #   Original: psmirnov_exact_uniq_upper took (int m, int n) while valid_nx/ny
 #   are size_t; a forced exact run on large samples could truncate dimensions.
 #   With size_t params a moderately-large forced exact must still run exactly
 #   and return a valid p-value.
-# ===========================================================================
 
 {
 	# 150 x 150 = 22500 > the 10000 auto-gate, so exact only happens if forced.
@@ -240,12 +228,10 @@ like($err, qr/'x' is a required argument/, "missing x croaks");
         "1-sample pnorm: D ~ 0.1746 (allows approx_pnorm error)");
 }
 
-# ===========================================================================
 # Death tests via Test::Exception (dies_ok / throws_ok / lives_ok)
 #   Same failure conditions as the run()/like() checks above, but asserted in
 #   the Test::Exception idiom. throws_ok also pins the croak message, so a
 #   regression that dies for the *wrong* reason is still caught.
-# ===========================================================================
 
 dies_ok { ks_test() }              'no arguments dies';
 dies_ok { ks_test(y => \@SEP_Y) }  'missing x dies';
@@ -290,20 +276,18 @@ lives_ok { ks_test(\@SEP_X, \@SEP_Y) }            'valid 2-sample lives';
 lives_ok { ks_test([-1, 0, 1], 'pnorm') }          'valid 1-sample lives';
 lives_ok { ks_test(x => \@SEP_X, y => \@SEP_Y) }   '#1 fully-named call lives';
 
-# ===========================================================================
 # Memory-leak checks via Test::LeakTrace.
 #   Every call is wrapped in eval {} so the error-path cases (which croak
 #   *after* allocating the C buffers) still let no_leaks_ok finish its run —
 #   those croak-after-malloc paths are exactly where a missing Safefree would
 #   leak. Skipped under Devel::Cover, whose instrumentation allocates and would
 #   otherwise be reported as leaks.
-# ===========================================================================
 
 # If Test::LeakTrace is missing, no_leaks_ok is the stub above (one skip per
 # call). If Devel::Cover is active, the per-statement `unless` suppresses the
 # check entirely (cover allocations would look like leaks).
 
-# ---- happy paths ----
+# happy paths
 no_leaks_ok {
 	eval { ks_test(\@SEP_X, \@SEP_Y) }
 } 'Kolmogorov-Smirnov test ok without memory leaks' unless $INC{'Devel/Cover.pm'};
@@ -316,7 +300,7 @@ no_leaks_ok {
 	eval { ks_test(\@SEP_X, \@SEP_Y, alternative => 'greater') }
 } 'one-sided (greater): no memory leak' unless $INC{'Devel/Cover.pm'};
 
-# ---- exact DP buffer: alloc + free of u[] in psmirnov ----
+# exact DP buffer: alloc + free of u[] in psmirnov
 {
 	my @x = map { $_ * 1.0 } 1 .. 30;
 	my @y = map { $_ + 0.5 } 1 .. 30;   # distinct, no ties => exact runs
@@ -325,14 +309,14 @@ no_leaks_ok {
 	} 'forced-exact DP buffer: no memory leak' unless $INC{'Devel/Cover.pm'};
 }
 
-# ---- ties fallback (warns, then takes the asymptotic branch) ----
+# ties fallback (warns, then takes the asymptotic branch)
 #no_leaks_ok {
 #	eval { ks_test([1,2,2,3], [2,3,3,4], exact => 1) }
 #} 'ties fallback path: no memory leak' unless $INC{'Devel/Cover.pm'};
 
 # ---- error paths: croak AFTER allocating x_data (and y_data). The eval {}
 #      swallows the exception so the tracer can complete. These are the
-#      leak-prone spots if a Safefree is ever dropped. ----
+#      leak-prone spots if a Safefree is ever dropped.
 no_leaks_ok {
 	eval { ks_test([1,2,3], ['x','y','z']) }
 } 'croak after x_data+y_data alloc (all-missing y): no leak' unless $INC{'Devel/Cover.pm'};
@@ -349,7 +333,7 @@ no_leaks_ok {
 	eval { ks_test([1,2,3,4], \@SEP_Y, alternative => 'up') }
 } 'croak after x_data+y_data alloc (bad alternative): no leak' unless $INC{'Devel/Cover.pm'};
 
-# ---- error path that croaks BEFORE any C buffer is allocated ----
+# error path that croaks BEFORE any C buffer is allocated
 no_leaks_ok {
 	eval { ks_test(\@SEP_X, \@SEP_Y, 'exact') }
 } 'croak during arg parse (no alloc): no leak' unless $INC{'Devel/Cover.pm'};

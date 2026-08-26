@@ -29,9 +29,7 @@ sub is_approx {
 	}
 }
 
-#--------
 # AoA: outer arrays joined in order; ragged rows kept; refs reused
-#--------
 {
 	my $a = [ [ 1, 2 ], [ 3, 4 ]  ];
 	my $b = [ [ 5, 6 ], [ 7 ]     ];      # ragged last row
@@ -43,9 +41,7 @@ sub is_approx {
 	is(scalar @$a, 2, 'AoA: source frame untouched');
 }
 
-#--------
 # AoH: rows joined in order; union of columns; refs reused; sources intact
-#--------
 {
 	my $a = [ { id => 1, x => 10 } ];
 	my $b = [ { id => 2, x => 20, y => 99 } ];      # extra column y
@@ -56,9 +52,7 @@ sub is_approx {
 	is($c->[0], $a->[0], 'AoH: row references reused');
 }
 
-#--------
 # HoA: column union (sorted); absent columns and ragged columns padded
-#--------
 {
 	my $a = { g => [ 'a', 'a' ], v => [ 1, 2 ] };
 	my $b = { g => [ 'b' ], w => [ 9 ] };            # v absent here, w new
@@ -70,9 +64,7 @@ sub is_approx {
 	is(scalar @{ $c->{w} }, 3, 'HoA: every column same length');
 }
 
-#--------
 # HoA: ragged columns within a single frame are padded to that frame's row count
-#--------
 {
 	my $ragged = { a => [ 1, 2, 3 ], b => [ 9 ] };
 	my $c = concat($ragged);
@@ -80,9 +72,7 @@ sub is_approx {
 	ok(!defined $c->{b}[2], 'HoA: padding value is undef');
 }
 
-#--------
 # HoH: outer hashes merged; duplicate row names made unique + warning; refs reused
-#--------
 {
 	my $a = { p1 => { v => 1 }, p2 => { v => 2 } };
 	my $b = { p3 => { v => 3 } };
@@ -99,17 +89,13 @@ sub is_approx {
 	ok(scalar(@warn) >= 1, 'HoH: a warning is emitted on collision');
 }
 
-#--------
 # three or more frames
-#--------
 {
 	my $c = concat([ { n => 1 } ], [ { n => 2 } ], [ { n => 3 } ]);
 	is(scalar @$c, 3, 'three AoH frames concatenated');
 }
 
-#--------
 # undef and empty frames are skipped; shape taken from first non-empty
-#--------
 {
 	my $c = concat(undef, [], [ { n => 1 } ], undef, [ { n => 2 } ]);
 	is(scalar @$c, 2, 'undef/empty frames skipped');
@@ -120,26 +106,20 @@ sub is_approx {
 	is_deeply($empty_hash, {}, 'all-empty hashes -> empty hashref');
 }
 
-#--------
 # a single frame round-trips
-#--------
 {
 	my $one = concat({ a => [ 1, 2 ], b => [ 3, 4 ] });
 	is_deeply($one, { a => [ 1, 2 ], b => [ 3, 4 ] }, 'single HoA frame preserved');
 }
 
-#--------
 # rbind is a true synonym of concat
-#--------
 {
 	is(\&Stats::LikeR::rbind, \&Stats::LikeR::concat, 'rbind and concat are the same sub');
 	my $c = rbind([ [ 1 ] ], [ [ 2 ] ]);
 	is_deeply($c, [ [ 1 ], [ 2 ] ], 'rbind works like concat');
 }
 
-#--------
 # error handling
-#--------
 throws_ok { concat() }
 	qr/needs at least one data frame/, 'no frames dies';
 throws_ok { concat([ { a => 1 } ], { a => [ 1 ] }) }
@@ -149,9 +129,7 @@ throws_ok { concat('scalar') }
 throws_ok { concat([ { a => 1 } ], [ [ 1 ] ]) }
 	qr/cannot mix/, 'mixing AoH and AoA dies';
 
-#--------
 # no memory leaks across shapes
-#--------
 no_leaks_ok {
 	concat([ [ 1, 2 ] ], [ [ 3, 4 ], [ 5 ] ]);
 } 'concat(): AoA no leaks' unless $INC{'Devel/Cover.pm'};

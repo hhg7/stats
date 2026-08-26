@@ -46,18 +46,14 @@ is_deeply(
 	'CASE 1: single scalar'
 );
 
-# ---------------------------------------------------------------------------
 # CASE 2a: flat array ref, no key
-# ---------------------------------------------------------------------------
 is_deeply(
 	value_counts([qw/a b a c b a/]),
 	{ a => 3, b => 2, c => 1 },
 	'CASE 2a: flat array ref'
 );
 
-# ---------------------------------------------------------------------------
 # CASE 2b: Array of Hashes (NEW) -- count a column by its key
-# ---------------------------------------------------------------------------
 my @aoh = (
 	{ name => 'Alice', dept => 'Sales' },
 	{ name => 'Bob',   dept => 'Eng'   },
@@ -100,9 +96,7 @@ is_deeply(
 	'CASE 2b: Array of Arrays by numeric index'
 );
 
-# ---------------------------------------------------------------------------
 # CASE 2b: croak paths for keyed-array mode (NEW)
-# ---------------------------------------------------------------------------
 dies_ok {
 	value_counts([1, 2, 3], 'k');
 } 'CASE 2b: keyed flat (scalar element) array dies';
@@ -115,9 +109,7 @@ dies_ok {
 	value_counts([sub { 1 }], 'k');
 } 'CASE 2b: array of CODE refs with key dies';
 
-# ---------------------------------------------------------------------------
 # CASE 3: hash ref, no key
-# ---------------------------------------------------------------------------
 is_deeply(
 	value_counts({ x => 'a', y => 'b', z => 'a' }),
 	{ a => 2, b => 1 },
@@ -137,9 +129,7 @@ dies_ok {
 	value_counts({ bad => \1 });
 } 'CASE 3: unsupported nested reference type dies';
 
-# ---------------------------------------------------------------------------
 # CASES 4 & 5: nested hash with a key argument
-# ---------------------------------------------------------------------------
 # Column-oriented (DataFrame style): key maps directly to an array ref
 is_deeply(
 	value_counts({ dept => [qw/Sales Eng Sales/], name => [qw/A B C/] }, 'dept'),
@@ -165,14 +155,10 @@ is_deeply(
 	'CASE 4: Hash of Arrays by numeric index'
 );
 
-# ---------------------------------------------------------------------------
 # Return shape
-# ---------------------------------------------------------------------------
 is(ref value_counts([qw/a b/]), 'HASH', 'returns a HASH ref');
 
-# ---------------------------------------------------------------------------
 # Leak checks: representative success AND croak paths
-# ---------------------------------------------------------------------------
 # Test::LeakTrace flags Devel::Cover's instrumentation SVs as leaks, so skip
 # the leak checks (the last tests here) when running under coverage.
 if ($INC{'Devel/Cover.pm'}) { done_testing(); exit 0 }

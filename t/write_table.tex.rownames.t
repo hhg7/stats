@@ -33,11 +33,9 @@ my %hoh = (
 	'1d4t' => { b_factor => 915, binding => 'Kd' },
 );
 
-#--------
 # HoH: LaTeX has no row-name column unless one is asked for. R's write.table()
 # defaults row.names on and this once followed suit, for tex only; it no longer
 # does, so the default is now the same in every format.
-#--------
 {
 	my $tmp = File::Temp->new(SUFFIX => '.tex');
 	write_table(\%hoh, "$tmp");
@@ -57,9 +55,7 @@ my %hoh = (
 		'HoH tex: the outer keys are not emitted as labels');
 }
 
-#--------
 # row.names => 1 opts in: the leading label column is the outer key
-#--------
 {
 	my $tmp = File::Temp->new(SUFFIX => '.tex');
 	write_table(\%hoh, "$tmp", 'row.names' => 1);
@@ -87,9 +83,7 @@ my %hoh = (
 	}
 }
 
-#--------
 # row.names => 0 is the default said out loud
-#--------
 {
 	my $tmp = File::Temp->new(SUFFIX => '.tex');
 	write_table(\%hoh, "$tmp", 'row.names' => 0);
@@ -109,9 +103,7 @@ my %hoh = (
 		'HoH tex + row.names=>0: row names are not emitted');
 }
 
-#--------
 # HoA: numeric row labels (1..N) only when row.names is asked for
-#--------
 {
 	my %hoa = (x => [10, 20], 'y' => [30, 40]);
 
@@ -138,9 +130,7 @@ my %hoh = (
 		'HoA tex + row.names=>1: second data row leads with numeric label 2');
 }
 
-#--------
 # Delimited output agrees with LaTeX: off by default, on when asked
-#--------
 {
 	my $tmp = File::Temp->new(SUFFIX => '.csv');
 	write_table(\%hoh, "$tmp");
@@ -157,9 +147,7 @@ my %hoh = (
 	is($o[1], '1cka,674,Kd', 'CSV + row.names=>1: outer key leads the row');
 }
 
-#--------
 # Nested reference in a cell still croaks (unchanged error path)
-#--------
 {
 	my %bad = ('1cka' => { b_factor => [1, 2] });
 	my $tmp = File::Temp->new(SUFFIX => '.tex');
@@ -167,9 +155,7 @@ my %hoh = (
 		'tex: nested reference cell dies';
 }
 
-#--------
 # No memory leaks on the tex write path
-#--------
 no_leaks_ok {
 	my $tmp = File::Temp->new(SUFFIX => '.tex');
 	eval { write_table(\%hoh, "$tmp") };

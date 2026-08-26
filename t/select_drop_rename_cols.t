@@ -121,16 +121,12 @@ my $h   = { a=>[1,2], b=>[3,4] };
 my $hs  = select_cols($h, 'a');
 ok( $hs->{a} == $h->{a}, 'select HoA aliases the column arrayref (view)' );
 
-#--------
 # ncol/nrow round-trip on results
-#--------
 is( ncol( select_cols($aoh, 'a','c') ), 2, 'select AoH: ncol drops to 2' );
 is( ncol( drop_cols($hoa, 'b') ),       2, 'drop HoA: ncol drops to 2' );
 is( nrow( select_cols($hoh, 'b') ),     2, 'select HoH: nrow preserved' );
 
-#--------
 # error paths -- validated in Perl before any XS runs (or any in-place edit)
-#--------
 throws_ok { select_cols($aoh, 'nope') }    qr/column 'nope' not found/,          'select missing AoH col dies';
 throws_ok { select_cols($hoa, 'zzz') }     qr/column 'zzz' not found/,           'select missing HoA col dies';
 throws_ok { select_cols($aoa, 5) }         qr/out of range \(max index 2\)/,     'select AoA out-of-range dies';

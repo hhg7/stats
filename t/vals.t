@@ -32,9 +32,7 @@ sub is_approx {
 	}
 }
 
-# --------
 # Setup Test Data Shapes
-# --------
 my $aoh = [
  { id => 1, val => 10, tag => 'A' },
  { id => 2, val => 20, tag => 'B' },
@@ -55,9 +53,7 @@ my $hoh = {
  row_d => { id => 4 } # intentional missing 'val'
 };
 
-# --------
 # Array of Hashes (AoH) Tests
-# --------
 my $res_aoh = vals($aoh, 'val');
 no_leaks_ok {
 	vals($aoh, 'val');
@@ -69,9 +65,7 @@ is($res_aoh->[0], 10, 'vals(AoH) element 0 extracted correctly');
 is($res_aoh->[1], 20, 'vals(AoH) element 1 extracted correctly');
 is($res_aoh->[2], undef, 'vals(AoH) missing cell safely yields undef');
 
-# --------
 # Hash of Arrays (HoA) Tests
-# --------
 my $res_hoa = vals($hoa, 'val');
 no_leaks_ok {
     vals($hoa, 'val');
@@ -85,9 +79,7 @@ is($res_hoa->[2], undef, 'vals(HoA) explicit undef element extracted safely');
 
 dies_ok { vals($hoa, 'missing_col') } 'vals(HoA) gracefully dies when asked for a non-existent column';
 
-# --------
 # Hash of Hashes (HoH) Tests
-# --------
 my $res_hoh = vals($hoh, 'val');
 no_leaks_ok {
 	vals($hoh, 'val');
@@ -101,9 +93,7 @@ is($res_hoh->[1], 20, 'vals(HoH) row_b extracted in proper alphabetical order');
 is($res_hoh->[2], 30, 'vals(HoH) row_c extracted in proper alphabetical order');
 is($res_hoh->[3], undef, 'vals(HoH) row_d (missing) safely yields undef');
 
-# --------
 # General Exceptions and Edge Cases
-# --------
 dies_ok { vals('not_a_ref', 'val') } 'vals properly croaks on string instead of reference';
 dies_ok { vals($aoh) } 'vals properly croaks when missing column argument';
 

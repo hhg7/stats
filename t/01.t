@@ -31,9 +31,7 @@ sub is_approx {
 		return 0;
 	}
 }
-#--------
 # min
-#--------
 is_approx( min(1,2,2.33,3), 1, 'min of scalars');
 no_leaks_ok {
 	eval {
@@ -159,9 +157,7 @@ dies_ok {
 dies_ok {
 	sd(1, [2,undef]);
 } 'sd: dies with undefined values inside array references';
-#------------------
 # t.test
-#------------------
 @test_data = (
 [
 	[27.5,21.0,19.0,23.6,17.0,17.9,16.9,20.1,21.9,22.6,23.1,19.6,19.0,21.7,21.4],
@@ -203,7 +199,7 @@ foreach my $i (0..$#test_data) { # single sample t-tests
 				 t_test( 'x' => $test_data[$i][$j], mu => mean( $test_data[$i][$j] ));
 			}
 		} 't_test(): no memory leaks' unless $INC{'Devel/Cover.pm'};
-		is_approx( $t_test->{p_value}, 1,            "t_test: Testing set $i/$j p-value");
+		is_approx( $t_test->{'p.value'}, 1,            "t_test: Testing set $i/$j p-value");
 		is_approx( $t_test->{df}, scalar @{ $test_data[$i][$j] } - 1, "t_test: df $i/$j");
 		is_approx( $t_test->{statistic}, 0, "t_test: t $i/$j");
 		# without key "x"
@@ -213,39 +209,39 @@ foreach my $i (0..$#test_data) { # single sample t-tests
 				 t_test( $test_data[$i][$j], mu => mean( $test_data[$i][$j] ));
 			}
 		} 't_test(): no memory leaks' unless $INC{'Devel/Cover.pm'};
-		is_approx( $t_test->{p_value}, 1,            "t_test: Testing set $i/$j p-value");
+		is_approx( $t_test->{'p.value'}, 1,            "t_test: Testing set $i/$j p-value");
 		is_approx( $t_test->{df}, scalar @{ $test_data[$i][$j] } - 1, "t_test: df $i/$j");
 		is_approx( $t_test->{statistic}, 0, "t_test: t $i/$j");
 	}
 }
 my @correct_t = (
 	{ # default
-		conf_int     => [
+		'conf.int'     => [
 			-3.98409625405368, -0.349237079279662
 		],
 		df           => 24.9885292902309,
-		'estimate_x' => 20.82,
-		'estimate_y' => 22.9866666666666,
-		p_value      => 0.021378001462867,
+		'estimate.x' => 20.82,
+		'estimate.y' => 22.9866666666666,
+		'p.value'      => 0.021378001462867,
 		statistic    => -2.45535639828601
 	},
 	{ # var.equal = True (Student's t-test)
-		conf_int     => [
+		'conf.int'     => [
 			-3.0124986, -0.0375014
 		],
 		df           => 28,
-		'estimate_x' => 20.610,
-		'estimate_y' => 22.135,
-		p_value      => 0.04485852,
+		'estimate.x' => 20.610,
+		'estimate.y' => 22.135,
+		'p.value'      => 0.04485852,
 		statistic    => -2.10004963761047
 	},
 	{ # paired = true
-		conf_int     => [
+		'conf.int'     => [
 			-0.06672889, 0.25672889
 		],
 		df        => 5,
 		estimate  => 0.095,
-		p_value   => 0.19143688433660,
+		'p.value'   => 0.19143688433660,
 		statistic => 1.50996688705414
 	}
 );
@@ -259,7 +255,7 @@ foreach my $key (grep {ref $correct_t[0]{$_} eq ''} keys %{ $correct_t[0] }) {
 	is_approx( $t_test->{$key}, $correct_t[0]{$key}, "t_test var_equal = true; $key");
 }
 foreach my $j (0,1) {
-	is_approx( $t_test->{'conf_int'}[$j], $correct_t[0]{'conf_int'}[$j], "Conf. interval index $j");
+	is_approx( $t_test->{'conf.int'}[$j], $correct_t[0]{'conf.int'}[$j], "Conf. interval index $j");
 }
 $t_test = t_test(
 	'x'       => $test_data[1][0],
@@ -273,7 +269,7 @@ foreach my $key (grep {ref $correct_t[1]{$_} eq ''} keys %{ $correct_t[1] }) {
 	is_approx( $t_test->{$key}, $correct_t[1]{$key}, "t_test var_equal = true; $key");
 }
 foreach my $j (0,1) {
-	is_approx( $t_test->{'conf_int'}[$j], $correct_t[1]{'conf_int'}[$j], "Conf. interval index $j");
+	is_approx( $t_test->{'conf.int'}[$j], $correct_t[1]{'conf.int'}[$j], "Conf. interval index $j");
 }
 # start new test
 $t_test = t_test(
@@ -286,7 +282,7 @@ foreach my $key (grep {ref $correct_t[2]{$_} eq ''} keys %{ $correct_t[2] }) {
 	is_approx( $t_test->{$key}, $correct_t[2]{$key}, "t_test var_equal = true; $key");
 }
 foreach my $j (0,1) {
-	is_approx( $t_test->{'conf_int'}[$j], $correct_t[2]{'conf_int'}[$j], "Conf. interval index $j");
+	is_approx( $t_test->{'conf.int'}[$j], $correct_t[2]{'conf.int'}[$j], "Conf. interval index $j");
 }
 $t_test = t_test(
 	$test_data[0][0], #[qw(27.5 21.0 19.0 23.6 17.0 17.9 16.9 20.1 21.9 22.6 23.1 19.6 19.0 21.7 21.4)],
@@ -296,10 +292,10 @@ $t_test = t_test(
 );
 my $idx = 0;
 foreach my $val (-4.6264605, 0.2931271) {
-	is_approx($t_test->{conf_int}[$idx], $val, "t_test: var_equal = false, conf.int = 0.99 conf_int $idx", 1e-6);
+	is_approx($t_test->{'conf.int'}[$idx], $val, "t_test: var_equal = false, conf.int = 0.99 conf_int $idx", 1e-6);
 	$idx++;
 }
-is_approx( $t_test->{p_value}, 0.02137800146287, 't_test: var_equal = false, conf.int = 0.99', 1e-14);
+is_approx( $t_test->{'p.value'}, 0.02137800146287, 't_test: var_equal = false, conf.int = 0.99', 1e-14);
 is_approx( $t_test->{df}, 24.98853, 't_test: var_equal = false, conf.int = 0.99', 1e-5);
 # t_test exceptions & alternative hypotheses tests
 eval { t_test(y => [1..5]) };
@@ -315,10 +311,10 @@ eval { t_test([1..5], conf_level => 1.5) };
 like( $@, qr/'conf_level' must be between 0 and 1/, 't_test: dies on invalid conf_level' );
 
 $t_test = t_test('x' => [5, 6, 7, 8, 9], mu => 2, alternative => 'greater');
-ok( $t_test->{p_value} < 0.05, 't_test alternative greater works (small p_value)' );
+ok( $t_test->{'p.value'} < 0.05, 't_test alternative greater works (small p_value)' );
 
 $t_test = t_test('x' => [5, 6, 7, 8, 9], mu => 20, alternative => 'less');
-ok( $t_test->{p_value} < 0.05, 't_test alternative less works (small p_value)' );
+ok( $t_test->{'p.value'} < 0.05, 't_test alternative less works (small p_value)' );
 
 dies_ok {
 	t_test( 'x' => [3,3,3,3] )
@@ -328,7 +324,7 @@ $t_test = t_test(
 	'x' => $test_data[0][0],
 	mu  => mean( $test_data[0][0] )
 );
-is_approx( $t_test->{'p_value'}, 1, 't_test: single distribution p-value', 1e-13);
+is_approx( $t_test->{'p.value'}, 1, 't_test: single distribution p-value', 1e-13);
 is_approx( $t_test->{statistic}, 0, 't_test: single distribution statistic', 1e-13);
 #-repeat without "x"
 
@@ -340,7 +336,7 @@ foreach my $key (grep {ref $correct_t[0]{$_} eq ''} keys %{ $correct_t[0] }) {
 	is_approx( $t_test->{$key}, $correct_t[0]{$key}, "t_test var_equal = true; $key");
 }
 foreach my $j (0,1) {
-	is_approx( $t_test->{'conf_int'}[$j], $correct_t[0]{'conf_int'}[$j], "Conf. interval index $j");
+	is_approx( $t_test->{'conf.int'}[$j], $correct_t[0]{'conf.int'}[$j], "Conf. interval index $j");
 }
 $t_test = t_test(
 	$test_data[1][0], $test_data[1][1],
@@ -353,7 +349,7 @@ foreach my $key (grep {ref $correct_t[1]{$_} eq ''} keys %{ $correct_t[1] }) {
 	is_approx( $t_test->{$key}, $correct_t[1]{$key}, "t_test var_equal = true; $key");
 }
 foreach my $j (0,1) {
-	is_approx( $t_test->{'conf_int'}[$j], $correct_t[1]{'conf_int'}[$j], "Conf. interval index $j");
+	is_approx( $t_test->{'conf.int'}[$j], $correct_t[1]{'conf.int'}[$j], "Conf. interval index $j");
 }
 # start new test
 $t_test = t_test(	$test_data[3][0], $test_data[3][1],	paired => 1);
@@ -364,12 +360,10 @@ foreach my $key (grep {ref $correct_t[2]{$_} eq ''} keys %{ $correct_t[2] }) {
 	is_approx( $t_test->{$key}, $correct_t[2]{$key}, "t_test var_equal = true; $key");
 }
 foreach my $j (0,1) {
-	is_approx( $t_test->{'conf_int'}[$j], $correct_t[2]{'conf_int'}[$j], "Conf. interval index $j");
+	is_approx( $t_test->{'conf.int'}[$j], $correct_t[2]{'conf.int'}[$j], "Conf. interval index $j");
 }
 
-#----------------------
 #		p ajdust
-#----------------------
 my @pvalues = (4.533744e-01, 7.296024e-01, 9.936026e-02, 9.079658e-02, 1.801962e-01,
 8.752257e-01, 2.922222e-01, 9.115421e-01, 4.355806e-01, 5.324867e-01,
 4.926798e-01, 5.802978e-01, 3.485442e-01, 7.883130e-01, 2.729308e-01,
@@ -485,9 +479,7 @@ no_leaks_ok {
 		 p_adjust([]);
 	}
 } 'p_adjust(): no memory leaks' unless $INC{'Devel/Cover.pm'};
-#----------------------
 #		var
-#----------------------
 my @ans = (2.5, 8.3);
 $idx = 0;
 foreach my $arr ([1..5], [2, 4, 5, 8, 9]) {
@@ -508,9 +500,7 @@ dies_ok {
 dies_ok {
 	var(1, [2,undef]);
 } 'var: dies with undefined values inside array references';
-#----------------------
 #		median
-#----------------------
 @ans = (21, 21.55, 19.2);
 $idx = 0;
 foreach my $ans (@ans) {
@@ -532,9 +522,7 @@ dies_ok {
 dies_ok {
 	median(1, [2,undef]);
 } 'median: dies with undefined values inside array references';
-#----------------------
 #		cor
-#----------------------
 $test_data[0] = [1, 2, 3, 4, 5,  5, 6,  7,   8];
 $test_data[1] = [2, 4, 6, 8, 10, 9, 12, 14, 16];
 %correct = (
@@ -588,9 +576,7 @@ my $cor_matrix = cor($mat_x, $mat_y);
 is( ref($cor_matrix), 'ARRAY', 'cor with matrices returns an array reference' );
 
 # It flattens the input and returns a standard array
-#----------------------
 #  SCALE
-#----------------------
 my @scaled_results = scale(1..5);
 no_leaks_ok {
 	eval {
@@ -626,9 +612,7 @@ like( $@, qr/scale needs >= 2 elements to calculate SD/, 'scale: dies with 1 ele
 my $scaled_mat = scale([[1, 2], [3, 4], [5, 6]]);
 is( ref($scaled_mat), 'ARRAY', 'scale on matrix returns an array reference' );
 
-#-----------------------
 #			MATRIX
-#-----------------------
 my $mat1 = matrix(
 	data => [1..6], nrow => 2
 );
@@ -702,9 +686,7 @@ like( $@, qr/Data array cannot be empty/, 'matrix: dies on empty data array' );
 #);
 #p @scaled_results;
 # Output: -1.46385, -0.87831, -0.29277, 0.29277, 0.87831, 1.46385
-#---------------------------
 #       lm
-#----------------------------
 my $mtcars = {
 'Duster 360' => {
 	'qsec' => [15.84],'gear' => [3], 'wt' => [3.57],  'disp' => [360],
@@ -1056,7 +1038,6 @@ no_leaks_ok {
 		lm(data => $mtcars);
 	};
 } 'lm: dies without a formula and no memory leaks' unless $INC{'Devel/Cover.pm'};
-#--------
 dies_ok {
 	lm(formula => 'mpg wt');
 } 'lm: dies on bad formula lacking ~';
@@ -1079,7 +1060,6 @@ lives_ok {                         # was dies_ok — the block is expected to su
     ok( !defined($lm_no_int->{coefficients}{Intercept}),
         'lm: formula -1 correctly suppresses Intercept' );
 } 'lm: formula -1 correctly suppresses Intercept';
-#-------------------------------------------------------------------
 #  lm: Categorical (String) Predictors
 #
 #  All expected values are derived analytically from first principles
@@ -1091,7 +1071,6 @@ lives_ok {                         # was dies_ok — the block is expected to su
 #         "aov: One-Way ANOVA with Categorical Factor" subtest
 #    3. Non-alphabetical input order — reference level must still be
 #         the alphabetically first label
-#-------------------------------------------------------------------
 
 # 'lm: Binary categorical predictor (two groups)'
 # R: lm(c(1,2,3,7,8,9) ~ c('ctrl','ctrl','ctrl','trt','trt','trt'))
@@ -1103,7 +1082,7 @@ $data = {
 };
 my $lm_bin = lm(formula => 'y ~ grp', data => $data);
 
-# 1. Dummy variable naming ------------------------------------------------
+# 1. Dummy variable naming
 #    Only the non-reference level becomes a coefficient key.
 ok(  defined $lm_bin->{coefficients}{Intercept},
   'lm cat 2-level: Intercept is defined' );
@@ -1112,7 +1091,7 @@ ok(  defined $lm_bin->{coefficients}{grptrt},
 ok( !defined $lm_bin->{coefficients}{grpctrl},
   'lm cat 2-level: reference "grpctrl" is absent from coefficients' );
 
-# 2. Coefficient values (exact by algebra) --------------------------------
+# 2. Coefficient values (exact by algebra)
 #    Design matrix X = [[1,0],[1,0],[1,0],[1,1],[1,1],[1,1]]
 #    OLS estimate = (X'X)^{-1} X'y:
 #      Intercept = mean('ctrl') = (1+2+3)/3 = 2
@@ -1122,7 +1101,7 @@ is_approx( $lm_bin->{coefficients}{Intercept}, 2,
 is_approx( $lm_bin->{coefficients}{grptrt}, 6,
   'lm cat 2-level: grptrt = mean(trt) - mean(ctrl) = 6', 1e-14 );
 
-# 3. Model fit (exact fractions) ------------------------------------------
+# 3. Model fit (exact fractions)
 #    grand_mean = 5
 #    SS_between = 3*(2-5)^2 + 3*(8-5)^2 = 27 + 27 = 54
 #    SS_res     = (1-2)^2+0+(3-2)^2 + (7-8)^2+0+(9-8)^2 = 4
@@ -1139,7 +1118,7 @@ is_approx( $lm_bin->{'df.residual'}, 4,
 is_approx( $lm_bin->{'rank'}, 2,
   'lm cat 2-level: rank = 2 (Intercept + 1 dummy)', 1e-14 );
 
-# 4. F-statistic ----------------------------------------------------------
+# 4. F-statistic
 #    F = (SS_reg/df_reg) / (SS_res/df_res) = (54/1) / (4/4) = 54 on (1, 4) df
 #    f.pvalue = I(df2/(df2+df1*F); df2/2, df1/2)
 #             = I(4/58; 2, 0.5)
@@ -1159,7 +1138,7 @@ is_approx( $lm_bin->{fstatistic}[2],  4,
 is_approx( $lm_bin->{'f.pvalue'}, 0.0018262607,
   'lm cat 2-level: f.pvalue = I(4/58;2,0.5)', 1e-7 );
 
-# 5. Summary table --------------------------------------------------------
+# 5. Summary table
 #    MS_res = SS_res / df_res = 4/4 = 1
 #    (X'X)^{-1} = [[1/3,-1/3],[-1/3,2/3]]  (det(X'X)=9)
 #
@@ -1203,7 +1182,7 @@ my $data = {
 };
 my $lm_3 = lm(formula => 'yield_val ~ group', data => $data);
 
-# 1. Dummy variable naming ------------------------------------------------
+# 1. Dummy variable naming
 ok(  defined $lm_3->{coefficients}{Intercept},
   'lm cat 3-level: Intercept is defined' );
 ok(  defined $lm_3->{coefficients}{groupB},
@@ -1213,7 +1192,7 @@ ok(  defined $lm_3->{coefficients}{groupC},
 ok( !defined $lm_3->{coefficients}{groupA},
   'lm cat 3-level: reference "groupA" is absent from coefficients' );
 
-# 2. Coefficient values (exact by algebra) --------------------------------
+# 2. Coefficient values (exact by algebra)
 #    Intercept = mean(A) = (5.5+5.4+5.8)/3 = 16.7/3 = 5.5666̄
 #    groupB    = mean(B) - mean(A) = 4.5 - 16.7/3  = -1.0666̄
 #    groupC    = mean(C) - mean(A) = 18.8/3 - 16.7/3 = 2.1/3 = 0.7
@@ -1224,7 +1203,7 @@ is_approx( $lm_3->{coefficients}{groupB}, 4.5 - 16.7/3,
 is_approx( $lm_3->{coefficients}{groupC}, 2.1/3,
   'lm cat 3-level: groupC = mean(C) - mean(A) = 2.1/3 = 0.7', 1e-10 );
 
-# 3. Model fit (exact fractions) ------------------------------------------
+# 3. Model fit (exact fractions)
 #    mean(A)=16.7/3, mean(B)=4.5, mean(C)=18.8/3; grand_mean=49/9
 #    SS_group  = 3*(11/90)^2 + 3*(17/18)^2 + 3*(37/45)^2
 #              = (363+21675+16428)/8100 = 38466/8100 = 2137/450
@@ -1241,7 +1220,7 @@ is_approx( $lm_3->{'df.residual'}, 6,
 is_approx( $lm_3->{'rank'}, 3,
   'lm cat 3-level: rank = 3 (Intercept + 2 dummies)', 1e-14 );
 
-# 4. F-statistic (cross-validated against aov One-Way result) --------------
+# 4. F-statistic (cross-validated against aov One-Way result)
 #    MS_group = SS_group/2 = 2137/900; MS_res = SS_res/6 = 53/900
 #    F = MS_group/MS_res = 2137/53 / 2 = 40.3207547169811...
 #    f.pvalue = (df2/(df2+df1*F))^(df2/2) = (6/86.641...)^3 = 0.0003319084
@@ -1260,7 +1239,7 @@ is_approx( $lm_3->{fstatistic}[2], 6,
 is_approx( $lm_3->{'f.pvalue'}, 0.0003319084,
   'lm cat 3-level: f.pvalue matches aov Pr(>F)', 5e-6 );
 
-# 5. Summary table --------------------------------------------------------
+# 5. Summary table
 #    MS_res = 53/900.
 #    (X'X)^{-1} for balanced 3-group design (det=27):
 #      diag = [1/3, 2/3, 2/3]   (off-diag elements not needed for SE)
@@ -1317,7 +1296,7 @@ $data = {
 };
 my $lm_ref = lm(formula => 'y ~ grp', data => $data);
 
-# 1. Dummy variable naming ------------------------------------------------
+# 1. Dummy variable naming
 #    'A' < 'B' < 'C' alphabetically → 'A' is the reference.
 ok(  defined $lm_ref->{coefficients}{Intercept},
   'lm cat ref-level: Intercept is defined' );
@@ -1328,7 +1307,7 @@ ok(  defined $lm_ref->{coefficients}{grpC},
 ok( !defined $lm_ref->{coefficients}{grpA},
   'lm cat ref-level: "grpA" is absent — it is the reference level' );
 
-# 2. Coefficient values (exact by algebra) --------------------------------
+# 2. Coefficient values (exact by algebra)
 #    Intercept = mean(A) = (1+2+3)/3 = 2
 #    grpB      = mean(B) - mean(A) = (5+6+7)/3 - 2 = 6 - 2 = 4
 #    grpC      = mean(C) - mean(A) = (8+9+10)/3 - 2 = 9 - 2 = 7
@@ -1339,7 +1318,7 @@ is_approx( $lm_ref->{coefficients}{grpB}, 4,
 is_approx( $lm_ref->{coefficients}{grpC}, 7,
   'lm cat ref-level: grpC = mean(C) - mean(A) = 7', 1e-14 );
 
-# 3. Model fit (exact fractions) ------------------------------------------
+# 3. Model fit (exact fractions)
 #    grand_mean = 51/9 = 17/3
 #    SS_between: 3*(2-17/3)^2 + 3*(6-17/3)^2 + 3*(9-17/3)^2
 #              = 3*(11/3)^2 + 3*(1/3)^2 + 3*(10/3)^2
@@ -1358,7 +1337,7 @@ is_approx( $lm_ref->{'df.residual'}, 6,
 is_approx( $lm_ref->{'rank'}, 3,
   'lm cat ref-level: rank = 3 (Intercept + 2 dummies)', 1e-14 );
 
-# 4. F-statistic ----------------------------------------------------------
+# 4. F-statistic
 #    F = (SS_between/df_between) / (SS_res/df_res)
 #      = (74/2) / (6/6) = 37  on (2, 6) df
 #
@@ -1380,7 +1359,7 @@ is_approx( $lm_ref->{fstatistic}[2], 6,
 is_approx( $lm_ref->{'f.pvalue'}, 27/64000,
   'lm cat ref-level: f.pvalue = (3/40)^3 = 27/64000 (exact)', 1e-9 );
 
-# 5. Summary table --------------------------------------------------------
+# 5. Summary table
 #    MS_res = SS_res / df_res = 6/6 = 1
 #    (X'X)^{-1} for balanced 3-group design (same structure as subtest 2):
 #      diag = [1/3, 2/3, 2/3]
@@ -1421,9 +1400,7 @@ ok( $lm_ref->{summary}{grpC}{'Pr(>|t|)'} < 0.001,
 no_leaks_ok {
   eval { lm(formula => 'y ~ grp', data => $data) };
 } 'lm cat ref-level: no memory leaks';
-#---------------------------
 #   rnorm
-#----------------------------
 # rnorm, runif and rbinom all draw from Drand01, which is Perl_drand48 and so
 # gives the same stream on every platform for a given seed. Seed it: the checks
 # below compare a sample statistic against its population value, and an
@@ -1447,9 +1424,7 @@ like( $@, qr/standard deviation must be non-negative/, 'rnorm: dies on negative 
 
 #eval { rnorm(n => 10, mean => 0, 'missing_value_key') };
 #like( $@, qr/must be even key\/value pairs/, 'rnorm: dies on odd argument count' );
-#----------------------
 #    quantile
-#----------------------
 my $quantile = quantile('x' => [1..99], probs => [0.05, 0.1, 0.25]);
 no_leaks_ok {
 	quantile('x' => [1..99], probs => [0.05, 0.1, 0.25]);
@@ -1482,13 +1457,11 @@ if ($quantile->{'33%'} == 3) {
 	fail('single element to quantile fails to return that element');
 }
 # quantile also works without "x => " to simplify
-#----------------------
 #    Fisher's Test
-#----------------------
 my $ft = fisher_test([[10, 2],[3, 15]]);
 # R equivalent: fisher.test( matrix(c(10,2,3,15), nrow = 2)))
-is_approx( 0.00053672411914344, $ft->{p_value}, 'Fisher\'s test p-value', 10**-15);
-my $conf_int_range = abs $ft->{conf_int}[0] - $ft->{conf_int}[1];
+is_approx( 0.00053672411914344, $ft->{'p.value'}, 'Fisher\'s test p-value', 10**-15);
+my $conf_int_range = abs $ft->{'conf.int'}[0] - $ft->{'conf.int'}[1];
 my $correct_conf_int_range = 301.462337971516 - 2.75338278824932;
 if ((0.99*$correct_conf_int_range < $conf_int_range) && ($conf_int_range < 1.01* $correct_conf_int_range)) {
 	pass('Fisher\'s test is within 1% of correct: ');
@@ -1501,7 +1474,6 @@ no_leaks_ok {
 		fisher_test([[10, 2],[3, 15]]);
 	}
 } 'Fisher\'s test with array: no leaks' unless $INC{'Devel/Cover.pm'};
-#---------
 $ft = fisher_test( {
 	Guess => {
 		Milk => 3, Tea => 1
@@ -1510,8 +1482,8 @@ $ft = fisher_test( {
 		Milk => 1, Tea => 3
 	}
 });
-is_approx($ft->{'p_value'}, 0.48571428571429, 'Fisher Test: hash input p-value', 1e-14);
-$conf_int_range = abs $ft->{conf_int}[0] - $ft->{conf_int}[1];
+is_approx($ft->{'p.value'}, 0.48571428571429, 'Fisher Test: hash input p-value', 1e-14);
+$conf_int_range = abs $ft->{'conf.int'}[0] - $ft->{'conf.int'}[1];
 $correct_conf_int_range = 621.9337505 - 0.2117329;
 if ((0.99*$correct_conf_int_range < $conf_int_range) && ($conf_int_range < 1.01* $correct_conf_int_range)) {
 	pass('Fisher\'s test is within 1% of correct: ');
@@ -1531,7 +1503,6 @@ no_leaks_ok {
 		});
 	}
 } 'Fisher\'s test with hash: no leaks' unless $INC{'Devel/Cover.pm'};
-#-------
 $ft = fisher_test( {
 	Guess => {
 		Milk => 3, Tea => 1
@@ -1540,9 +1511,9 @@ $ft = fisher_test( {
 		Milk => 1, Tea => 3
 	}
 }, alternative => 'greater');
-is_approx($ft->{'p_value'}, 0.24285714285714, 'Fisher Test: hash input p-value with alternative = "greater"', 1e-14);
-is_approx($ft->{conf_int}[0], 0.3135693, 'Fisher test hash input with greater alternative', 10**-4 );
-if ($ft->{conf_int}[1] == 'inf') {
+is_approx($ft->{'p.value'}, 0.24285714285714, 'Fisher Test: hash input p-value with alternative = "greater"', 1e-14);
+is_approx($ft->{'conf.int'}[0], 0.3135693, 'Fisher test hash input with greater alternative', 10**-4 );
+if ($ft->{'conf.int'}[1] == 'inf') {
 	pass('Fisher test: Upper confidence interval is infinite');
 } else {
 	fail('Fisher test: Upper confidence interval is NOT infinite');
@@ -1567,9 +1538,9 @@ $ft = fisher_test( { # taste.ft.less in my Rdata file
 		Milk => 1, Tea => 3
 	}
 }, alternative => 'less');
-is_approx($ft->{p_value}, 0.98571428571429, 'fisher_test: alternative="less" p.value', 1e-10);
+is_approx($ft->{'p.value'}, 0.98571428571429, 'fisher_test: alternative="less" p.value', 1e-10);
 is_approx($ft->{estimate}{'odds ratio'}, 6.40830886700579, 'fisher_test: alternative="less" odds ratio', 1e-4);
-$conf_int_range = abs $ft->{conf_int}[0] - $ft->{conf_int}[1];
+$conf_int_range = abs $ft->{'conf.int'}[0] - $ft->{'conf.int'}[1];
 $correct_conf_int_range = 306.2469 - 0.0000;
 if ((0.99*$correct_conf_int_range < $conf_int_range) && ($conf_int_range < 1.01* $correct_conf_int_range)) {
 	pass('Fisher\'s test with alternative less confidence interval is within 1% of correct');
@@ -1581,15 +1552,13 @@ dies_ok {
 	fisher_test();
 } 'fisher_test: requires a data reference';
 $ft = fisher_test([[5, 0], [1, 4]]); # in the R data file, "ft.zero"
-is_approx($ft->{p_value}, 0.04761904761905, 'fisher_test: zero inside: p-value', 1e-13);
+is_approx($ft->{'p.value'}, 0.04761904761905, 'fisher_test: zero inside: p-value', 1e-13);
 if ($ft->{estimate}{'odds ratio'} == 'inf') {
 	pass('fisher_test: odds ratio with 0 in input is infinite');
 } else {
 	fail('fisher_test: odds ratio with 0 input is NOT infinite');
 }
-#----------------------
 #    hist
-#----------------------
 # 1. Basic properties with a simple dataset
 # Data: 1, 2, 2, 3, 3, 3, 4, 4, 5 (9 elements)
 my $h_data = [1, 2, 2, 3, 3, 3, 4, 4, 5];
@@ -1626,9 +1595,7 @@ my $single = hist([10], breaks => 1);
 is($single->{counts}->[0], 1, 'hist: handles single-element array');
 is($single->{breaks}->[0], 10, 'hist: single-element break starts at value');
 
-#-------------------------------------------------------------------
 #  Performance & Edge Cases for hist()
-#-------------------------------------------------------------------
 #subtest 'hist: O(N) Performance and Edge Cases' => sub {
 # 1. Test standard binning boundaries
 # Data spans 0 to 10 exactly.
@@ -1657,9 +1624,7 @@ my $total_counted = 0;
 $total_counted += $_ for @{ $large_res->{counts} };
 
 is($total_counted, scalar @large_uniform, 'hist: sum of counts perfectly matches input size on larger datasets');
-#----------------------
 #    hist exceptions
-#----------------------
 	# Should die if not an array ref
 dies_ok { hist("not an array") } 'hist: dies on string input';
 dies_ok { hist({ a => 1 }) }     'hist: dies on hash ref input';
@@ -1667,18 +1632,14 @@ dies_ok { hist({ a => 1 }) }     'hist: dies on hash ref input';
 dies_ok { hist([]) }             'hist: dies on empty array ref';
 # Should die on non-numeric data (depending on your SVNV strictness)
 dies_ok { hist([qw(a b c)]) }    'hist: dies on non-numeric array content';
-#----------------------
 #   runif
-#----------------------
 my $unif = runif( n => $n, min => 0, max => 1);
 if (scalar @{ $unif } == $n) {
 	pass('runif: random uniform distribution has the correct # of elements');
 } else {
 	fail('runif: random uniform distribution does NOT have the correct # of elements');
 }
-#---------------
 # runif
-#---------------
 is_approx( min(@{ $unif }), 0, 'Approximately correct minimum', 10**-3);
 is_approx( max(@{ $unif }), 1, 'Approximately correct maximum', 10**-3);
 {
@@ -1719,9 +1680,7 @@ no_leaks_ok {
 		runif( 9, 0, 99 );
 	};
 } 'runif: no memory leaks with positional args' unless $INC{'Devel/Cover.pm'};
-#----------------------
 #      rbinom
-#----------------------
 my $binom = rbinom( n => $n, prob => 0.5, size => 9);
 if (scalar @{ $binom } == $n) {
 	pass('binom has the correct # of elements');
@@ -1793,9 +1752,7 @@ if (scalar @identical_idx < $n_rand) {
 } else {
 	fail('rbinom: consecutive calls generated identical arrays (PRNG state not updating)');
 }
-#----------------------
 #       seq
-#----------------------
 # Example 1: Standard integer sequence
 say 'seq(1, 5):';
 my @seq = seq(1, 5);
@@ -1855,9 +1812,7 @@ no_leaks_ok {
 #my $wt_result = wilcox_test( 'x' => [1..4], 'y' => [5..8], {});
 #p $wt_result;
 
-#----------------------
 #       Shapiro Test
-#----------------------
 my $shapiro = shapiro_test(
 	[1..5]
 );
@@ -1866,9 +1821,8 @@ no_leaks_ok {
 		[1..5]
 	);
 } 'Shapiro test: no leaks' unless $INC{'Devel/Cover.pm'};
-is_approx( $shapiro->{p_value}, 0.9671739, 'Shapiro p-value');
+is_approx( $shapiro->{'p.value'}, 0.9671739, 'Shapiro p-value');
 is_approx( $shapiro->{W}, 0.9867622, 'Shapiro W');
-#--------
 $shapiro = shapiro_test(
 	[1..19]
 );
@@ -1877,11 +1831,9 @@ no_leaks_ok {
 		[1..19]
 	);
 } 'Shapiro test: no leaks' unless $INC{'Devel/Cover.pm'};
-is_approx( $shapiro->{p_value}, 0.5896506, 'Shapiro p-value: 19 values');
+is_approx( $shapiro->{'p.value'}, 0.5896506, 'Shapiro p-value: 19 values');
 is_approx( $shapiro->{W}, 0.9608707, 'Shapiro W: 19 values');
-#--------------------
 #     cor_test
-#--------------------
 my $x = [1, 2, 3, 4, 5];
 my $y = [2, 1, 4, 3, 5];
 
@@ -2067,9 +2019,7 @@ is_approx( $idx->{estimate}, -1.0, 'cor_test: kendall = -1 for anti-monotone', 1
 #} else {
 #	fail('cor_test kendall: estimate is NOT NaN when all pairs are joint ties');
 #}
-#--------------------
 #  cov
-#--------------------
 is_approx(2, cov($x, $y), 'default covariance/cov', 1e-14);
 @correct = (2,2,12);
 $idx = 0;
@@ -2077,9 +2027,7 @@ foreach my $method ('pearson', 'spearman', 'kendall') {
 	is_approx(cov($x, $y, $method), $correct[$idx], "cov with $method", 1e-14 );
 	$idx++;
 }
-#--------------------
 #  aov
-#--------------------
 #> yield <- c(5.5, 5.4, 5.8, 4.5, 4.8, 4.2) 
 #> ctrl <- c(1, 1, 1, 0, 0, 0)
 #> aov(yield ~ ctrl)
@@ -2097,7 +2045,6 @@ foreach my $method ('pearson', 'spearman', 'kendall') {
 #            Df Sum Sq Mean Sq F value  Pr(>F)   
 #ctrl         1 1.7067  1.7067    25.6 0.00718 **
 #Residuals    4 0.2667  0.0667                   
-#---
 #Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
 my $aov_res = 
 aov(
@@ -2129,7 +2076,7 @@ foreach my $k1 ('ctrl', 'Residuals') {
 		is_approx( $aov_res->{$k1}{$k2}, $correct{$k1}{$k2}, "AOV: $k1/$k2");
 	}
 }
-if (defined $aov_res->{group_stats}) {
+if (defined $aov_res->{'group.stats'}) {
 	pass('aov: group_stats are defined');
 } else {
 	fail('aov: group_stats are NOT defined');
@@ -2141,7 +2088,7 @@ $aov_res = aov(
 		ctrl  => [1,     1,   1,   0,   0,   0]
 	}
 );
-foreach my $key ('Group', 'group_stats', 'Residuals') {
+foreach my $key ('Group', 'group.stats', 'Residuals') {
 	if (defined $aov_res->{$key}) {
 		pass("aov: \"$key\" hash reference is defined");
 	} else {
@@ -2156,7 +2103,7 @@ foreach my $i (0..$#ans) {
 	is_approx( $aov_res->{Group}{$correct[$i]}, $ans[$i], "aov: Group $correct[$i]", 1e-9);
 }
 foreach my $key ('mean', 'size') {
-	if (defined $aov_res->{group_stats}{$key}) {
+	if (defined $aov_res->{'group.stats'}{$key}) {
 		pass("aov: group_stats \"$key\" hash reference is defined");
 	} else {
 		fail("aov: group_stats \"$key\" hash reference is NOT defined");
@@ -2165,11 +2112,11 @@ foreach my $key ('mean', 'size') {
 @correct = ('ctrl', 'yield');
 @ans = (0.5, 5.03333333333333);
 foreach my $i (0..$#ans) {
-	is_approx( $aov_res->{group_stats}{mean}{$correct[$i]}, $ans[$i], "aov: group_stats mean $correct[$i]", 1e-13);
+	is_approx( $aov_res->{'group.stats'}{mean}{$correct[$i]}, $ans[$i], "aov: group_stats mean $correct[$i]", 1e-13);
 }
 @ans = (6, 6);
 foreach my $i (0..$#ans) {
-	is_approx( $aov_res->{group_stats}{size}{$correct[$i]}, $ans[$i], "aov: group_stats size $correct[$i]", 1e-13);
+	is_approx( $aov_res->{'group.stats'}{size}{$correct[$i]}, $ans[$i], "aov: group_stats size $correct[$i]", 1e-13);
 }
 # go through Residuals
 @correct = ('Df', 'Mean Sq', 'Sum Sq');
@@ -2188,9 +2135,7 @@ no_leaks_ok {
 		);
 	};
 } 'aov: no memory leaks with formula omission and stacking' unless $INC{'Devel/Cover.pm'};
-#-------------------------------------------------------------------
 #  glm: Generalized Linear Models
-#-------------------------------------------------------------------
 #'glm: Gaussian matches lm' => sub {
 # Check that gaussian glm is mathematically identical to OLS lm
 my $lm_res = lm(formula => 'mpg ~ wt + hp', data => $mtcars);
@@ -2210,9 +2155,7 @@ is_approx($glm_res->{coefficients}{wt}, $lm_res->{coefficients}{wt}, 'glm gaussi
 is_approx($glm_res->{deviance}, $lm_res->{rss}, 'glm gaussian deviance matches lm RSS');
 is($glm_res->{family}, 'gaussian', 'glm stored family correctly');
 
-#-------------------------------------------------------------------
 #  glm: Generalized Linear Models
-#-------------------------------------------------------------------
 #'glm: Gaussian matches lm' => sub {
 	# Check that gaussian glm is mathematically identical to OLS lm
 $lm_res = lm(formula => 'mpg ~ wt + hp', data => $mtcars);
@@ -2523,9 +2466,7 @@ foreach my $k1 ('fitted.values', 'deviance.resid') {
 		is_approx( $glm_teeth->{$k1}{$key}, $correct{$k1}{$key}, "$k1 $key within $e", $e);
 	}
 }
-#-------------------
 #     read_table
-#-------------------
 $test_data = read_table('t/HepatitisCdata.csv');
 if (ref $test_data eq 'ARRAY') {
 	pass('"aoh" is an array');
@@ -2648,7 +2589,6 @@ if (
 	fail('"read_table" fails to read into hash of hash correctly');
 	die;
 }
-#----------
 $test_data = read_table('t/bodyfat.csv', 'output.type' => 'hoa');
 no_leaks_ok {
 	eval {
@@ -2690,9 +2630,7 @@ sub file2string {
 	open my $fh, '<', $file;
 	return do { local $/; <$fh> };
 }
-#---------
 # read_table with filter: aoh
-#---------
 $test_data = read_table(
 	't/HepatitisCdata.csv',
 	filter => {
@@ -2723,9 +2661,7 @@ foreach my $col (@col) {
 	is_approx( $test_data->[0]{$col}, $correct[$idx], "read_table: Column $col after filter", 1e-14);
 	$idx++;
 }
-#---------
 # read_table with filter: hoa
-#---------
 $test_data = read_table(
 	't/HepatitisCdata.csv',
 	filter => {
@@ -2772,9 +2708,7 @@ foreach my $col (@col) {
 	is_approx( $test_data->{$col}[0], $correct[$idx], "read_table: Column $col after filter", 1e-14);
 	$idx++;
 }
-#---------
 # read_table with filter: hoh
-#---------
 $test_data = read_table(
 	't/HepatitisCdata.csv',
 	filter => {
@@ -2802,7 +2736,7 @@ if ($n == 238) {
 #	is_approx( $test_data->{$col}{319}, $correct[$idx], "read_table: Column $col after filter", 1e-14);
 #	$idx++;
 #}
-# === TEST 3: ARRAY OF HASHES (positional) ===
+# TEST 3: ARRAY OF HASHES (positional)
 # Demonstrates: AoH, preserves original array order (no sorting of rows),
 #               row names become 1, 2, 3..., quoting when separator ("\t") or " appears inside data
 $tmp_file = '/tmp/test_aoh.tsv';
@@ -2821,9 +2755,7 @@ if (is($str, $expected, 'write_table successfully wrote a tab-delimited file (Ar
 	diag("see $tmp_file");
 	die;
 }
-#-------------------------------------------------------------------
 #  read_table & write_table specific bug checks
-#-------------------------------------------------------------------
 
 #'read_table / write_table: Escaped quote handling' => sub {
 my $tmp_csv = File::Temp->new(DIR => '/tmp', SUFFIX => '.csv', UNLINK => 1);
@@ -3081,9 +3013,7 @@ my $data_interact = {
 # Without explicit A and B added, Cartesian cross-product dummy building fails.
 eval { aov($data_interact, 'y ~ A:B') };
 like($@, qr/requires its main effects to be explicitly included/, 'aov: cleanly croaks when main effects are missing for interaction evaluation');
-#-----------------------
 # chi-squared test
-#-----------------------
 # https://www.rdocumentation.org/packages/stats/versions/3.6.2/topics/chisq.test
 @test_data = ([762, 327, 468], [484, 239, 477]);
 $test_data = chisq_test(\@test_data);
@@ -3099,9 +3029,7 @@ no_leaks_ok {
 dies_ok {
 	chisq_test('not an array');
 } 'chisq_test: dies without array reference ';
-#------------------------
 # Wilcoxon test
-#------------------------
 $test_data = wilcox_test(
 	'x' => [1.83,  0.50,  1.62,  2.48, 1.68, 1.88, 1.55, 3.06, 1.30],
 	'y' => [0.878, 0.647, 0.598, 2.05, 1.06, 1.29, 1.06, 3.14, 1.29]
@@ -3110,7 +3038,7 @@ is_approx($test_data->{statistic}, 58, 'Wilcox test statistic', 1e-14);
 # The y values contain ties. R >= 4.6.0 answers these exactly, conditioning on
 # the observed ranks (Streitberg-Roehmel), rather than falling back to the
 # normal approximation: wilcox.test(x, y)$p.value == 0.1299053887289181.
-is_approx($test_data->{'p_value'}, 0.1299053887289181, 'Wilcox test p-value', 1e-15);
+is_approx($test_data->{'p.value'}, 0.1299053887289181, 'Wilcox test p-value', 1e-15);
 no_leaks_ok {
 	eval {
 		$test_data = wilcox_test(
@@ -3119,14 +3047,13 @@ no_leaks_ok {
 		);
 	};
 } 'wilcox test: no leaks' unless $INC{'Devel/Cover.pm'};
-#-----
 $test_data = wilcox_test( # test paired version
 	'x' => [1.83,  0.50,  1.62,  2.48, 1.68, 1.88, 1.55, 3.06, 1.30],
 	'y' => [0.878, 0.647, 0.598, 2.05, 1.06, 1.29, 1.06, 3.14, 1.29],
 	paired => 1
 );
 is_approx($test_data->{statistic}, 40, 'Wilcox test (paired) statistic',1e-4);
-is_approx($test_data->{'p_value'}, 0.0390625, 'Wilcox test (paired) statistic', 1e-7);
+is_approx($test_data->{'p.value'}, 0.0390625, 'Wilcox test (paired) statistic', 1e-7);
 # test without "x" and "y"
 $test_data = wilcox_test(
 	[1.83,  0.50,  1.62,  2.48, 1.68, 1.88, 1.55, 3.06, 1.30],
@@ -3136,7 +3063,7 @@ is_approx($test_data->{statistic}, 58, 'Wilcox test statistic', 1e-14);
 # The y values contain ties. R >= 4.6.0 answers these exactly, conditioning on
 # the observed ranks (Streitberg-Roehmel), rather than falling back to the
 # normal approximation: wilcox.test(x, y)$p.value == 0.1299053887289181.
-is_approx($test_data->{'p_value'}, 0.1299053887289181, 'Wilcox test p-value', 1e-15);
+is_approx($test_data->{'p.value'}, 0.1299053887289181, 'Wilcox test p-value', 1e-15);
 no_leaks_ok {
 	eval {
 		$test_data = wilcox_test(
@@ -3146,31 +3073,29 @@ no_leaks_ok {
 		);
 	};
 } 'wilcox test: no leaks' unless $INC{'Devel/Cover.pm'};
-#-----
 $test_data = wilcox_test(
 	[1.83,  0.50,  1.62,  2.48, 1.68, 1.88, 1.55, 3.06, 1.30],
 	[0.878, 0.647, 0.598, 2.05, 1.06, 1.29, 1.06, 3.14, 1.29],
 	paired => 1
 );
 is_approx($test_data->{statistic}, 40, 'Wilcox test (paired) statistic', 1e-14);
-is_approx($test_data->{'p_value'}, 0.0390625, 'Wilcox test (paired) statistic', 1e-7);
+is_approx($test_data->{'p.value'}, 0.0390625, 'Wilcox test (paired) statistic', 1e-7);
 #$test_data = ks_test('x' => $x, 'y' => $y);
 #p $test_data;
-#-------------------------------------------------------------------
 # 'wilcox_test: Extended and Edge Cases'
 # 1. One-sample exact test
 # R equivalent: wilcox.test(c(1, 2, 3, 4, 5), mu = 0)
 # V = 15, p-value = 0.0625
 my $wt_onesample = wilcox_test('x' => [1, 2, 3, 4, 5], mu => 0);
 is_approx($wt_onesample->{statistic}, 15, 'wilcox_test: one-sample statistic (exact)');
-is_approx($wt_onesample->{p_value}, 0.0625, 'wilcox_test: one-sample p-value (exact)');
+is_approx($wt_onesample->{'p.value'}, 0.0625, 'wilcox_test: one-sample p-value (exact)');
 like($wt_onesample->{method}, qr/exact/, 'wilcox_test: one-sample uses exact method by default');
 
 # 2. Ties are handled by exact conditional inference, as in R >= 4.6.0
 # R: wilcox.test(c(1,2,2,3), c(2,3,3,4)) -> W = 3, p = 0.2857142857142857
 my $wt_ties = wilcox_test('x' => [1, 2, 2, 3], 'y' => [2, 3, 3, 4]);
 is_approx($wt_ties->{statistic}, 3, 'wilcox_test: W with ties', 1e-14);
-is_approx($wt_ties->{p_value}, 0.2857142857142857, 'wilcox_test: exact p with ties', 1e-14);
+is_approx($wt_ties->{'p.value'}, 0.2857142857142857, 'wilcox_test: exact p with ties', 1e-14);
 like($wt_ties->{method}, qr/exact/, 'wilcox_test: ties still take the exact test');
 # ... and the approximation is still reachable on request
 my $wt_ties_approx = wilcox_test('x' => [1, 2, 2, 3], 'y' => [2, 3, 3, 4], exact => 0);
@@ -3179,10 +3104,10 @@ like($wt_ties_approx->{method}, qr/continuity correction/,
 
 # 3. Alternative hypotheses
 my $wt_less = wilcox_test('x' => [1, 2, 3], 'y' => [10, 11, 12], alternative => 'less');
-is_approx($wt_less->{p_value}, 0.05, 'wilcox_test: alternative less works properly', 1e-14);
+is_approx($wt_less->{'p.value'}, 0.05, 'wilcox_test: alternative less works properly', 1e-14);
 
 my $wt_greater = wilcox_test('x' => [1, 2, 3], 'y' => [10, 11, 12], alternative => 'greater');
-ok($wt_greater->{p_value} > 0.95, 'wilcox_test: alternative greater works properly');
+ok($wt_greater->{'p.value'} > 0.95, 'wilcox_test: alternative greater works properly');
 
 # 4. Exceptions and Error Handling
 eval { wilcox_test('y' => [1..5]) };
@@ -3192,7 +3117,6 @@ eval { wilcox_test('x' => [1..5], 'y' => [1..4], paired => 1) };
 like($@, qr/same length for paired test/, 'wilcox_test: dies on length mismatch for paired');
 
 #  chisq_test: Goodness of Fit and Yates Continuity
-#-------------------------------------------------------------------
 # 'chisq_test: Goodness of Fit and Yates Continuity'
 # 1. 1D Array (Goodness of Fit)
 # R equivalent: chisq.test(c(10, 20, 30))
@@ -3211,9 +3135,7 @@ is_approx($chisq_2x2->{statistic}{'X-squared'}, 3.831933, 'chisq_test: 2x2 Yates
 is_approx($chisq_2x2->{parameter}{df}, 1, 'chisq_test: 2x2 df', 1e-14);
 is_approx($chisq_2x2->{'p.value'}, 0.05028492, 'chisq_test: 2x2 p-value', 1e-7);
 like($chisq_2x2->{method}, qr/Yates' continuity correction/, 'chisq_test: method includes Yates correction');
-#-------------
 # power t-test
-#-------------
 $test_data = power_t_test(#ptt <- power.t.test(n = 30, delta=0.5, sd = 1, sig.level=0.05)
 	n  => 30,	delta     => 0.5, 
 	sd => 1.0,	sig_level => 0.05
@@ -3258,9 +3180,7 @@ foreach my $alt ('two.sided', 'one.sided') {
 	} "power_t_test: n with alternative = \"$alt\" with no leaks" unless $INC{'Devel/Cover.pm'};
 	$idx++;
 }
-#---------------------------------------
 #  lm & aov: Dot (.) Operator Expansion
-#---------------------------------------
 #subtest 'lm & aov: Dot (.) operator formula expansion' => sub {
 my $dot_data = {
 	'y'  => [10, 15, 20, 25, 30],
@@ -3359,9 +3279,7 @@ dies_ok {
 dies_ok { 
 	aov($short_data, 'y = x1 + x2') 
 } 'aov: dies safely on invalid formula (missing tilde)';
-#-------------------
 # Kolmogorov-Smirnov
-#-------------------
 my $ksx = [qw(2.29258933  0.18126998 -0.35344691 -1.11263431 -1.27008776 -0.25430767
 -0.42543048  0.93866464 -0.20838470  1.23049681  2.00720734 -1.90505316
 -0.01565043  0.75832509 -0.16071642 -0.12233682  1.96816567  1.12870747
@@ -3378,7 +3296,7 @@ my $ksy = [qw(0.12691328 0.90138032 0.24332833 0.43789166 0.84998830 0.81363851
 0.28763359 0.10201167 0.16455688 0.68249714 0.20168356 0.01536685)];
 # R: kst.g <- ks.test(x, y, alternative='greater')
 my $ks = ks_test($ksx, $ksy);
-is_approx($ks->{p_value}, 0.001825518, 'Kolmogorov-Smirnov test: p-value', 1e-9); # two-sided
+is_approx($ks->{'p.value'}, 0.001825518, 'Kolmogorov-Smirnov test: p-value', 1e-9); # two-sided
 is_approx($ks->{statistic}, 0.42, 'Kolmogorov-Smirnov test: statistic', 1e-14);
 no_leaks_ok {
 	eval {
@@ -3391,24 +3309,21 @@ no_leaks_ok {
 		ks_test($ksx, $ksy);
 	}
 } 'Kolmogorov-Smirnov test ok without memory leaks; with less alternative' unless $INC{'Devel/Cover.pm'};
-is_approx($ks->{p_value}, 0.06784844, 'Kolmogorov-Smirnov test: p-value (alternative = less)', 1e-8);
+is_approx($ks->{'p.value'}, 0.06784844, 'Kolmogorov-Smirnov test: p-value (alternative = less)', 1e-8);
 is_approx($ks->{statistic}, 0.26, 'Kolmogorov-Smirnov test: statistic (alternative = less)', 1e-14);
 # alternative = 'greater'
 $ks = ks_test($ksx, $ksy, alternative => 'greater');
 is_approx($ks->{statistic}, 0.42, 'Kolmogorov-Smirnov test alternative = "greater", statistic', 1e-14);
-is_approx($ks->{'p_value'}, 0.0009127589, 'Kolmogorov-Smirnov test alternative = "greater", statistic', 1e-8);
-#------------
+is_approx($ks->{'p.value'}, 0.0009127589, 'Kolmogorov-Smirnov test alternative = "greater", statistic', 1e-8);
 $ks = ks_test($ksx, 'pnorm');
-is_approx($ks->{p_value}, 0.05937757067668, 'Kolmogorov-Smirnov test: 1d array vs pnorm p-value', 1e-8);
+is_approx($ks->{'p.value'}, 0.05937757067668, 'Kolmogorov-Smirnov test: 1d array vs pnorm p-value', 1e-8);
 is_approx($ks->{statistic}, 0.1839226, 'Kolmogorov-Smirnov test: 1d array vs pnorm statistic', 1e-6);
 no_leaks_ok {
 	eval {
 		$ks = ks_test($ksx, 'pnorm');
 	};
 } 'Kolmogorov-Smirnov test with 1 array and a named distribution: no memory leaks' unless $INC{'Devel/Cover.pm'};
-#---------------
 #  Kruskal test (kruskal.R)
-#---------------
 my @xk = (2.9, 3.0, 2.5, 2.6, 3.2); # normal subjects
 my @yk = (3.8, 2.7, 4.0, 2.4);      # with obstructive airway disease
 my @zk = (2.8, 3.4, 3.7, 2.2, 2.0); # with asbestosis
@@ -3419,11 +3334,11 @@ my @g = (
 	map {'Subjects with asbestosis'} 0..4
 );
 my $kt = kruskal_test(\@x, \@g);
-is_approx($kt->{'p_value'}, 0.67996477357889, 'kruskal: p-value', 1e-13);
+is_approx($kt->{'p.value'}, 0.67996477357889, 'kruskal: p-value', 1e-13);
 is_approx($kt->{statistic}, 0.77142857142857, 'kruskal: statistic', 1e-13);
 is_approx($kt->{parameter}, 2, 'kruskal: parameter', 1e-14);
 
-if (defined $kt->{group_stats}) {
+if (defined $kt->{'group.stats'}) {
 	pass('kruskal: group_stats are defined');
 } else {
 	fail('kruskal: group_stats are NOT defined');
@@ -3435,7 +3350,7 @@ no_leaks_ok {
 } 'kruskal test: no memory leaks' unless $INC{'Devel/Cover.pm'};
 # same but with named args
 kruskal_test('x' => \@x, 'g' => \@g);
-is_approx($kt->{'p_value'}, 0.67996477357889, 'kruskal: p-value', 1e-13);
+is_approx($kt->{'p.value'}, 0.67996477357889, 'kruskal: p-value', 1e-13);
 is_approx($kt->{statistic}, 0.77142857142857, 'kruskal: statistic', 1e-13);
 is_approx($kt->{parameter}, 2, 'kruskal: parameter', 1e-14);
 no_leaks_ok {
@@ -3443,14 +3358,13 @@ no_leaks_ok {
 		$kt = kruskal_test('x' => \@x, 'y' => \@g);
 	}
 } 'kruskal test: no memory leaks' unless $INC{'Devel/Cover.pm'};
-#---------
 my %x = (
 	'normal.subjects' => [2.9, 3.0, 2.5, 2.6, 3.2],
 	'obs. airway disease' => [3.8, 2.7, 4.0, 2.4],
 	'asbestosis' => [2.8, 3.4, 3.7, 2.2, 2.0]
 );
 $kt = kruskal_test(\%x);
-is_approx($kt->{'p_value'}, 0.67996477357889, 'kruskal HOA: p-value', 1e-13);
+is_approx($kt->{'p.value'}, 0.67996477357889, 'kruskal HOA: p-value', 1e-13);
 is_approx($kt->{statistic}, 0.77142857142857, 'kruskal HOA: statistic', 1e-13);
 is_approx($kt->{parameter}, 2, 'kruskal HOA: parameter', 1e-14);
 no_leaks_ok {
@@ -3458,9 +3372,7 @@ no_leaks_ok {
 		$kt = kruskal_test(\@x, \@g);
 	}
 } 'kruskal test: no memory leaks with HOA input' unless $INC{'Devel/Cover.pm'};
-#-------------
 #    sum
-#-------------
 foreach my $n (3,8) {
 	is_approx(sum(1..$n), ($n*($n+1))/2, "sum of 1..$n", 1e-14);
 }
@@ -3475,16 +3387,14 @@ dies_ok {
 dies_ok {
 	sum(1, [2,undef]);
 } 'sum: dies with undefined values inside array references';
-#----------------------
 # var_test (var.test.R)
-#----------------------
 # simplest case
 $test_data = var_test(\@xk, \@yk);
-is_approx( $test_data->{conf_int}[0], 0.008735893, 'var_test: lower bound of confidence interval', 1e-8);
-is_approx( $test_data->{conf_int}[1], 1.316461157, 'var_test: lower bound of confidence interval', 1e-8);
+is_approx( $test_data->{'conf.int'}[0], 0.008735893, 'var_test: lower bound of confidence interval', 1e-8);
+is_approx( $test_data->{'conf.int'}[1], 1.316461157, 'var_test: lower bound of confidence interval', 1e-8);
 @ans = (0.131920529801325, 0.0795981508839616, 0.131920529801325);
 $idx = 0;
-foreach my $key ('estimate', 'p_value', 'statistic') {
+foreach my $key ('estimate', 'p.value', 'statistic') {
 	is_approx( $test_data->{$key}, $ans[$idx], "var_test: $key", 1e-14);
 	$idx++;
 }
@@ -3496,7 +3406,7 @@ no_leaks_ok {
 $test_data = var_test(\@xk, \@yk, ratio => 2);
 @ans = (0.13192052980132, 0.02383452765940, 0.06596026490066);
 $idx = 0;
-foreach my $key ('estimate', 'p_value', 'statistic') {
+foreach my $key ('estimate', 'p.value', 'statistic') {
 	is_approx( $test_data->{$key}, $ans[$idx], "var_test with set ratio: $key", 1e-14);
 	$idx++;
 }
@@ -3507,7 +3417,7 @@ no_leaks_ok {
 $test_data = var_test(\@xk, \@yk, conf_level => 0.99);
 @ans = (0.13192052980132, 0.07959815088396, 0.13192052980132);
 $idx = 0;
-foreach my $key ('estimate', 'p_value', 'statistic') {
+foreach my $key ('estimate', 'p.value', 'statistic') {
 	is_approx( $test_data->{$key}, $ans[$idx], "var_test with set ratio: $key", 1e-14);
 	$idx++;
 }
@@ -3523,9 +3433,7 @@ dies_ok {
 dies_ok {
 	var_test(\@xk, [1]);
 } 'var_test: dies with insufficient # of observations in y';
-#----------
 # sample
-#----------
 %h = (a => 1, b => 2, c => 3, d => 4);
 
 @arr = qw(apple banana cherry date elderberry);
@@ -3580,7 +3488,7 @@ $test_data = oneway_test({
 	yield => [5.5, 5.4, 5.8, 4.5, 4.8, 4.2],
 	ctrl  => [1,     1,   1,   0,   0,   0]
 });
-foreach my $key ('Group', 'Residuals', 'group_stats') {
+foreach my $key ('Group', 'Residuals', 'group.stats') {
 	if (defined $test_data->{$key}) {
 		pass("oneway_test: no formula; \"$key\" exists");
 	} else {
@@ -3594,7 +3502,7 @@ is_approx( $test_data->{Group}{'Pr(>F)'}, 0.000000131343255, 'oneway_test: no fo
 is_approx( $test_data->{Residuals}{Df}, 9.817673483264731, 'oneway_test: no formula parameter', 1e-13);
 
 foreach my $key ('mean', 'size') {
-	if (defined $test_data->{group_stats}{$key}) {
+	if (defined $test_data->{'group.stats'}{$key}) {
 		pass("oneway_test: group_stats \"$key\" hash reference is defined");
 	} else {
 		fail("oneway_test: group_stats \"$key\" hash reference is NOT defined");
@@ -3603,11 +3511,11 @@ foreach my $key ('mean', 'size') {
 @correct = ('ctrl', 'yield');
 @ans = (0.5, 5.03333333333333);
 foreach my $i (0..$#ans) {
-	is_approx( $test_data->{group_stats}{mean}{$correct[$i]}, $ans[$i], "oneway_test: group_stats mean $correct[$i]", 1e-13);
+	is_approx( $test_data->{'group.stats'}{mean}{$correct[$i]}, $ans[$i], "oneway_test: group_stats mean $correct[$i]", 1e-13);
 }
 @ans = (6, 6);
 foreach my $i (0..$#ans) {
-	is_approx( $test_data->{group_stats}{size}{$correct[$i]}, $ans[$i], "oneway_test: group_stats size $correct[$i]", 1e-13);
+	is_approx( $test_data->{'group.stats'}{size}{$correct[$i]}, $ans[$i], "oneway_test: group_stats size $correct[$i]", 1e-13);
 }
 no_leaks_ok {
 	eval {
@@ -3622,7 +3530,7 @@ $test_data = oneway_test([
 	[5.5, 5.4, 5.8, 4.5, 4.8, 4.2],
 	[1,     1,   1,   0,   0,   0]
 ]);
-foreach my $key ('Group', 'Residuals', 'group_stats') {
+foreach my $key ('Group', 'Residuals', 'group.stats') {
 	if (defined $test_data->{$key}) {
 		pass("oneway_test: no formula; \"$key\" exists");
 	} else {
@@ -3636,7 +3544,7 @@ is_approx( $test_data->{Group}{'Pr(>F)'}, 0.000000131343255, 'oneway_test: no fo
 is_approx( $test_data->{Residuals}{Df}, 9.817673483264731, 'oneway_test: no formula parameter', 1e-13);
 
 foreach my $key ('mean', 'size') {
-	if (defined $test_data->{group_stats}{$key}) {
+	if (defined $test_data->{'group.stats'}{$key}) {
 		pass("oneway_test: group_stats \"$key\" hash reference is defined");
 	} else {
 		fail("oneway_test: group_stats \"$key\" hash reference is NOT defined");
@@ -3645,11 +3553,11 @@ foreach my $key ('mean', 'size') {
 @correct = ('Index 0','Index 1');
 @ans = (5.03333333333333, 0.5);
 foreach my $i (0..$#ans) {
-	is_approx( $test_data->{group_stats}{mean}{$correct[$i]}, $ans[$i], "oneway_test: group_stats mean $correct[$i]", 1e-13);
+	is_approx( $test_data->{'group.stats'}{mean}{$correct[$i]}, $ans[$i], "oneway_test: group_stats mean $correct[$i]", 1e-13);
 }
 @ans = (6, 6);
 foreach my $i (0..$#ans) {
-	is_approx( $test_data->{group_stats}{size}{$correct[$i]}, $ans[$i], "oneway_test: group_stats size $correct[$i]", 1e-13);
+	is_approx( $test_data->{'group.stats'}{size}{$correct[$i]}, $ans[$i], "oneway_test: group_stats size $correct[$i]", 1e-13);
 }
 no_leaks_ok {
 	eval {
@@ -3664,7 +3572,7 @@ $test_data = oneway_test({
 	yield => [5.5, 5.4, 5.8, 4.5, 4.8, 4.2],
 	ctrl  => [1,     1,   1,   0,   0,   0]
 }, formula => 'yield ~ ctrl');
-foreach my $key ('ctrl', 'Residuals', 'group_stats') {
+foreach my $key ('ctrl', 'Residuals', 'group.stats') {
 	if (defined $test_data->{$key}) {
 		pass("oneway_test: no formula; \"$key\" exists");
 	} else {
@@ -3696,9 +3604,7 @@ dies_ok {
 		ctrl  => [1,     1,   1,   0,   0,   0]
 	}, formula => 'weight ~ ctrl');
 } 'oneway_test: dies with non-existent key in formula';
-#---------------
 # summary
-#---------------
 $unif = [0.216281301648454, 0.109465371442155, 0.152664169241813, 0.000945096692653635, 0.297535893169954, 0.139163636355065, 0.433281186173499, 0.408562817186144, 0.407467355710114, 0.544592780352787, 0.487398883576855, 0.643468442596237, 0.68575522492846, 0.151846994960366, 0.0108012662535621, 0.765504103474193, 0.170995624940421, 0.100078161688572, 0.167327253677694, 0.178543828268637, 0.767033648977208, 0.0661950819672228, 0.581462013571265, 0.584800690627297, 0.762539213217881, 0.233645411264945, 0.693534299360277, 0.513290613560038, 0.41433325215603, 0.73243812858739, 0.478323977378576, 0.798072957187451, 0.237619591881074, 0.0780442614619403, 0.0360511965325365, 0.660791977980871, 0.912043981453014, 0.415870135589202, 0.831491877016528, 0.737746524987607, 0.663143394629547, 0.777232190070094, 0.816913688077346, 0.352381995029283, 0.744148647065789, 0.729401956002121, 0.465347760265214, 0.0785176667616199, 0.181269420249411, 0.679185700779414, 0.953224347579702, 0.567208135290578, 0.292655755357845, 0.105132055128408, 0.659550831920821, 0.260928737252719, 0.0114517904292804, 0.351924227264533, 0.539668158788782, 0.923435653386754, 0.679118775225493, 0.541537731065048, 0.235382321740357, 0.443470864148644, 0.49701302243216, 0.124681475319193, 0.403251186205477, 0.587374376354269, 0.0806932538910878, 0.613866141439061, 0.285459073394659, 0.882170197671563, 0.729358588888918, 0.872760579993155, 0.0726024246860497, 0.599972473528148, 0.857066010638153, 0.767531044559306, 0.877534848570345, 0.520403080150906, 0.115952349478963, 0.0624610171846882, 0.869999228452524, 0.294535850510563, 0.735723449504025, 0.727797725687921, 0.232053652861307, 0.486724559407229, 0.497430051763761, 0.65156677164174, 0.456347032400441, 0.785195872302019, 0.120408844445638, 0.45376514163452, 0.198314702590377, 0.144783732275236, 0.064735910938797, 0.30123682582493, 0.437664391094597];
 # summary() now returns a view()-style string (captured with return_only).
 $test_data = summary( $unif, return_only => 1, color => 0 );
@@ -3758,9 +3664,7 @@ if (
 } else {
 	fail('summary: failed to take array reference');
 }
-#------
 #   mode
-#------
 @arr = mode(1,3,3,3);
 $size = scalar @arr;
 if ($size == 1) {
@@ -3770,7 +3674,6 @@ if ($size == 1) {
 }
 is_approx($arr[0], 3, 'mode: mode is correct number', 1e-14);
 
-#------
 @arr = mode([1,3,3,3]);
 $size = scalar @arr;
 if ($size == 1) {
@@ -3805,9 +3708,7 @@ dies_ok {
 	mode()
 } 'mode: dies with 0 values entered';
 
-#-----------
 # dnorm
-#-----------
 @ans = (0.000001486719515, 0.000133830225765, 0.004431848411938, 0.053990966513188,
 0.241970724519143, 0.398942280401433, 0.241970724519143, 0.053990966513188, 0.004431848411938,
 0.000133830225765, 0.000001486719515);
@@ -3842,9 +3743,7 @@ $data = dnorm(0, sd => 2, mean => 0, 'log' => 0);
 is_approx($data, 0.199471140200716, 'dnorm: with sd = 2 and mean and log passed as key', 1e-13);
 $data = dnorm(0, sd => 2, mean => 0, 'log' => 1);
 is_approx($data, -1.612085713764618, 'dnorm: with log passed', 1e-13);
-#-------
 # ljoin
-#-------
 $data = { 'Jack Smith' => { age => 30 } };
 $n = { 'Jack Smith' => { dept => 'Engineering' }, 'Jane Doe' => { age => 25 } };
 
@@ -3876,7 +3775,7 @@ if (
 } else {
 	fail('ljoin: values are NOT correct');
 }
-# --- Test: Hash of Arrays support in secondary hash ---
+# Test: Hash of Arrays support in secondary hash
 $data = { 'Sarah Connor' => { role => 'Leader' } };
 $n    = { 'Sarah Connor' => [ 'status', 'Active', 'target', 'Skynet' ] };
 
@@ -3893,7 +3792,7 @@ if (defined $data->{'Sarah Connor'}{target} && $data->{'Sarah Connor'}{target} e
 } else {
 	fail('ljoin (HoA): "target" key from array is NOT correct');
 }
-# --- Test: Overwriting existing columns ---
+# Test: Overwriting existing columns
 $data = { 'Bob Brown' => { score => 50, active => 1 } };
 $n    = { 'Bob Brown' => { score => 99 } };
 
@@ -3910,7 +3809,7 @@ if (defined $data->{'Bob Brown'}{active} && (abs($data->{'Bob Brown'}{active} - 
 } else {
 	fail('ljoin: untouched existing column was lost or modified');
 }
-# --- Test: Invalid inner structures (Segfault protection) ---
+# Test: Invalid inner structures (Segfault protection)
 $data = { 'Eve' => 'Just a string, not a hash' };
 $n    = { 'Eve' => { status => 'Online' } };
 
@@ -3922,9 +3821,7 @@ if (!ref($data->{'Eve'}) && $data->{'Eve'} eq 'Just a string, not a hash') {
 } else {
 	fail('ljoin: improperly modified a non-reference row value');
 }
-#---------
 # add_data
-#---------
 $data = { 'Jack Smith' => { age => 30 } };
 $n = { 
     'Jack Smith' => { dept => 'Engineering' },             # Update existing (Hash)
@@ -3935,7 +3832,7 @@ $n = {
 
 add_data($data, $n);
 
-# --- Test 1: Total key count ---
+# Test 1: Total key count
 $size = scalar keys %{ $data };
 if ($size == 3) {
 	pass('add_data: correct number of keys (3) in $data');
@@ -3943,7 +3840,7 @@ if ($size == 3) {
 	fail("add_data: should have 3 keys, but has $size keys");
 }
 
-# --- Test 2: Existing row updated correctly ---
+# Test 2: Existing row updated correctly
 if (defined $data->{'Jack Smith'} && 
 	(abs($data->{'Jack Smith'}{age} - 30) < 1e-13) && 
 	$data->{'Jack Smith'}{dept} eq 'Engineering') {
@@ -3952,7 +3849,7 @@ if (defined $data->{'Jack Smith'} &&
 	fail('add_data: existing row was NOT updated correctly');
 }
 
-# --- Test 3: New row added from Hash ---
+# Test 3: New row added from Hash
 if (defined $data->{'Jane Doe'}) {
 	pass('add_data: new row from hash is defined');
 	if ((abs($data->{'Jane Doe'}{age} - 25) < 1e-13) && $data->{'Jane Doe'}{dept} eq 'Sales') {
@@ -3964,7 +3861,7 @@ if (defined $data->{'Jane Doe'}) {
 	fail('add_data: new row from hash is NOT defined');
 }
 
-# --- Test 4: New row added from Array ---
+# Test 4: New row added from Array
 if (defined $data->{'Bob Brown'}) {
 	pass('add_data: new row from array is defined');
 	if ((abs($data->{'Bob Brown'}{age} - 40) < 1e-13) && $data->{'Bob Brown'}{dept} eq 'IT') {
@@ -3976,16 +3873,14 @@ if (defined $data->{'Bob Brown'}) {
 	fail('add_data: new row from array is NOT defined');
 }
 
-# --- Test 5: Safety check for invalid inner data ---
+# Test 5: Safety check for invalid inner data
 if (!defined $data->{'Invalid'}) {
 	pass('add_data: gracefully skipped non-reference data without crashing');
 } else {
 	fail('add_data: improperly added a row for non-reference data');
 }
 
-#--------
 # group_by
-#--------
 dies_ok {
 	group_by( undef, 'a', 'b');
 } 'group_by: dies when given an undefined data reference';
@@ -4095,9 +3990,7 @@ if (!defined $res2->{'Female'}[1]) {
 } else {
 	fail('group_by (HoA): failed to handle undefined target array element');
 }
-# ==========================================
 # TEST SET 3: Hash of Hashes (HoH)
-# ==========================================
 $test_data = {
  'Patient_A' => { 'Gender' => 'Male',   'Testosterone, total (nmol/L)' => 20.5 },
  'Patient_B' => { 'Gender' => 'Female', 'Testosterone, total (nmol/L)' => 1.8 },

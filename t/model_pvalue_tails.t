@@ -97,7 +97,7 @@ sub rel_ok {
 }
 
 my @CASES = (
-	# ---- anova_cmp_noise0.001 (anova_cmp) ----
+	# anova_cmp_noise0.001 (anova_cmp)
 	{
 		name => 'anova_cmp_noise0.001',  kind => 'anova_cmp',
 		cond => 24175.6,   # ||y|| / ||residual||: digits lost to cancellation
@@ -127,7 +127,7 @@ my @CASES = (
 		expected_p => 8.51179253549489e-164,
 		r_stat => 21624805774.1318, r_p => 8.51179253359029e-164,
 	},
-	# ---- anova_cmp_noise0.05 (anova_cmp) ----
+	# anova_cmp_noise0.05 (anova_cmp)
 	{
 		name => 'anova_cmp_noise0.05',  kind => 'anova_cmp',
 		cond => 426.542,   # ||y|| / ||residual||: digits lost to cancellation
@@ -157,7 +157,7 @@ my @CASES = (
 		expected_p => 6.402840727544359e-99,
 		r_stat => 6731627.41407664, r_p => 6.40284072758061e-99,
 	},
-	# ---- anova_cmp_noise1 (anova_cmp) ----
+	# anova_cmp_noise1 (anova_cmp)
 	{
 		name => 'anova_cmp_noise1',  kind => 'anova_cmp',
 		cond => 22.4198,   # ||y|| / ||residual||: digits lost to cancellation
@@ -187,7 +187,7 @@ my @CASES = (
 		expected_p => 1.387087081015654e-51,
 		r_stat => 18560.5788303816, r_p => 1.38708708101544e-51,
 	},
-	# ---- anova_seq_noise0.001 (anova2) ----
+	# anova_seq_noise0.001 (anova2)
 	{
 		name => 'anova_seq_noise0.001',  kind => 'anova2',
 		cond => 35043,   # ||y|| / ||residual||: digits lost to cancellation
@@ -205,7 +205,7 @@ my @CASES = (
 		exp_x1 => { df1 => 1, df2 => 27, expected_p => 4.311845505911138e-117, r_stat => 9782353833.53225, r_p => 4.31184550856382e-117 },
 		exp_x2 => { df1 => 1, df2 => 27, expected_p => 3.371127483770242e-122, r_stat => 23373910096.2692, r_p => 3.37112748584422e-122 },
 	},
-	# ---- anova_seq_noise0.01 (anova2) ----
+	# anova_seq_noise0.01 (anova2)
 	{
 		name => 'anova_seq_noise0.01',  kind => 'anova2',
 		cond => 3481.67,   # ||y|| / ||residual||: digits lost to cancellation
@@ -223,7 +223,7 @@ my @CASES = (
 		exp_x1 => { df1 => 1, df2 => 27, expected_p => 5.1474196527165945e-90, r_stat => 96548382.1272713, r_p => 5.14741965265145e-90 },
 		exp_x2 => { df1 => 1, df2 => 27, expected_p => 4.011806275434285e-95, r_stat => 230745866.415492, r_p => 4.01180627538364e-95 },
 	},
-	# ---- anova_seq_noise0.1 (anova2) ----
+	# anova_seq_noise0.1 (anova2)
 	{
 		name => 'anova_seq_noise0.1',  kind => 'anova2',
 		cond => 423.323,   # ||y|| / ||residual||: digits lost to cancellation
@@ -241,7 +241,7 @@ my @CASES = (
 		exp_x1 => { df1 => 1, df2 => 27, expected_p => 2.60738208142998e-65, r_stat => 1428123.28911591, r_p => 2.60738208142283e-65 },
 		exp_x2 => { df1 => 1, df2 => 27, expected_p => 2.0553874425027404e-70, r_stat => 3410305.96437096, r_p => 2.05538744249731e-70 },
 	},
-	# ---- anova_seq_noise1 (anova2) ----
+	# anova_seq_noise1 (anova2)
 	{
 		name => 'anova_seq_noise1',  kind => 'anova2',
 		cond => 42.074,   # ||y|| / ||residual||: digits lost to cancellation
@@ -259,7 +259,7 @@ my @CASES = (
 		exp_x1 => { df1 => 1, df2 => 27, expected_p => 3.6849338818673573e-38, r_stat => 13894.1438519774, r_p => 3.68493388186506e-38 },
 		exp_x2 => { df1 => 1, df2 => 27, expected_p => 2.2273979521059277e-43, r_stat => 33874.8271732086, r_p => 2.22739795210463e-43 },
 	},
-	# ---- anova_seq_noise1e-05 (anova2) ----
+	# anova_seq_noise1e-05 (anova2)
 	{
 		name => 'anova_seq_noise1e-05',  kind => 'anova2',
 		cond => 3.67955e+06,   # ||y|| / ||residual||: digits lost to cancellation
@@ -277,7 +277,7 @@ my @CASES = (
 		exp_x1 => { df1 => 1, df2 => 27, expected_p => 1.1543232446065433e-171, r_stat => 107854585178620.0, r_p => 1.15432312239036e-171 },
 		exp_x2 => { df1 => 1, df2 => 27, expected_p => 9.027984788489868e-177, r_stat => 257700582172423.0, r_p => 9.02798383263571e-177 },
 	},
-	# ---- aov_sep0.3 (aov1) ----
+	# aov_sep0.3 (aov1)
 	{
 		name => 'aov_sep0.3',  kind => 'aov1',
 		cond => 1.01314,   # ||y|| / ||residual||: digits lost to cancellation
@@ -294,7 +294,7 @@ my @CASES = (
 		expected_p => 0.7028805904629825,
 		r_stat => 0.357212465998837, r_p => 0.702880590462982,
 	},
-	# ---- aov_sep3 (aov1) ----
+	# aov_sep3 (aov1)
 	{
 		name => 'aov_sep3',  kind => 'aov1',
 		cond => 2.28134,   # ||y|| / ||residual||: digits lost to cancellation
@@ -310,7 +310,7 @@ my @CASES = (
 		expected_p => 2.1323995485175226e-10,
 		r_stat => 56.7609266933008, r_p => 2.13239954851752e-10,
 	},
-	# ---- aov_sep30 (aov1) ----
+	# aov_sep30 (aov1)
 	{
 		name => 'aov_sep30',  kind => 'aov1',
 		cond => 26.4816,   # ||y|| / ||residual||: digits lost to cancellation
@@ -326,7 +326,7 @@ my @CASES = (
 		expected_p => 3.806281569300773e-39,
 		r_stat => 9453.72262509459, r_p => 3.80628156930062e-39,
 	},
-	# ---- aov_sep300 (aov1) ----
+	# aov_sep300 (aov1)
 	{
 		name => 'aov_sep300',  kind => 'aov1',
 		cond => 283.747,   # ||y|| / ||residual||: digits lost to cancellation
@@ -342,7 +342,7 @@ my @CASES = (
 		expected_p => 5.9003090882631694e-67,
 		r_stat => 1086899.78536265, r_p => 5.90030908826926e-67,
 	},
-	# ---- aov_sep3000 (aov1) ----
+	# aov_sep3000 (aov1)
 	{
 		name => 'aov_sep3000',  kind => 'aov1',
 		cond => 2248.12,   # ||y|| / ||residual||: digits lost to cancellation
@@ -358,7 +358,7 @@ my @CASES = (
 		expected_p => 3.1687458949688247e-91,
 		r_stat => 68229415.6669434, r_p => 3.16874589493898e-91,
 	},
-	# ---- glm_bin_b0.3 (glm_bin) ----
+	# glm_bin_b0.3 (glm_bin)
 	{
 		name => 'glm_bin_b0.3',  kind => 'glm_bin',
 		cond => 1.02752,   # ||y|| / ||residual||: digits lost to cancellation
@@ -401,7 +401,7 @@ my @CASES = (
 		r_stat => 2.45407914075174, r_p => 0.0141245892068744,
 		r_p_tol => 8.213303235803591e-06,   # |z| = 2.454, dz = 8.37e-07
 	},
-	# ---- glm_bin_b1 (glm_bin) ----
+	# glm_bin_b1 (glm_bin)
 	{
 		name => 'glm_bin_b1',  kind => 'glm_bin',
 		cond => 1.17295,   # ||y|| / ||residual||: digits lost to cancellation
@@ -444,7 +444,7 @@ my @CASES = (
 		r_stat => 5.02811804195048, r_p => 4.95316949939751e-07,
 		r_p_tol => 0.001610230940891409,   # |z| = 5.028, dz = 8.01e-05
 	},
-	# ---- glm_bin_b2 (glm_bin) ----
+	# glm_bin_b2 (glm_bin)
 	{
 		name => 'glm_bin_b2',  kind => 'glm_bin',
 		cond => 1.23314,   # ||y|| / ||residual||: digits lost to cancellation
@@ -487,7 +487,7 @@ my @CASES = (
 		r_stat => 5.27347248909964, r_p => 1.33866328930186e-07,
 		r_p_tol => 0.0005191202120587677,   # |z| = 5.273, dz = 2.46e-05
 	},
-	# ---- glm_bin_b4 (glm_bin) ----
+	# glm_bin_b4 (glm_bin)
 	{
 		name => 'glm_bin_b4',  kind => 'glm_bin',
 		cond => 1.49873,   # ||y|| / ||residual||: digits lost to cancellation
@@ -530,7 +530,7 @@ my @CASES = (
 		r_stat => 5.44402477898965, r_p => 5.20899691794473e-08,
 		r_p_tol => 0.008143871500181133,   # |z| = 5.444, dz = 0.000374
 	},
-	# ---- glm_bin_huge_z (glm_bin) ----
+	# glm_bin_huge_z (glm_bin)
 	{
 		name => 'glm_bin_huge_z',  kind => 'glm_bin',
 		cond => 1.61958,   # ||y|| / ||residual||: digits lost to cancellation
@@ -611,7 +611,7 @@ my @CASES = (
 		r_stat => 4.94582020178643, r_p => 7.58239208840976e-07,
 		r_p_tol => 0.004276650182064381,   # |z| = 4.946, dz = 0.000216
 	},
-	# ---- glm_pois (glm_bin) ----
+	# glm_pois (glm_bin)
 	{
 		name => 'glm_pois',  kind => 'glm_bin',
 		cond => 1.91309,   # ||y|| / ||residual||: digits lost to cancellation
@@ -662,7 +662,7 @@ my @CASES = (
 		r_stat => 23.126003863538, r_p => 2.53553186803628e-118,
 		r_p_tol => 0.03646995786297018,   # |z| = 23.13, dz = 0.000394
 	},
-	# ---- glm_pois_huge_z (glm_bin) ----
+	# glm_pois_huge_z (glm_bin)
 	{
 		name => 'glm_pois_huge_z',  kind => 'glm_bin',
 		cond => 1.66137,   # ||y|| / ||residual||: digits lost to cancellation
@@ -713,7 +713,7 @@ my @CASES = (
 		r_stat => 149.228986251722, r_p => 0.0,
 		r_p_tol => 0.00016687740024202307,   # |z| = 149.2, dz = 2.8e-07
 	},
-	# ---- lm_noise0.005 (lm) ----
+	# lm_noise0.005 (lm)
 	{
 		name => 'lm_noise0.005',  kind => 'lm',
 		cond => 920.913,   # ||y|| / ||residual||: digits lost to cancellation
@@ -756,7 +756,7 @@ my @CASES = (
 		expected_p => 4.805432441690181e-140,
 		r_stat => 19929860.8326138, r_p => 4.80543244186922e-140,
 	},
-	# ---- lm_noise0.05 (lm) ----
+	# lm_noise0.05 (lm)
 	{
 		name => 'lm_noise0.05',  kind => 'lm',
 		cond => 83.8922,   # ||y|| / ||residual||: digits lost to cancellation
@@ -800,7 +800,7 @@ my @CASES = (
 		expected_p => 3.846759831160504e-91,
 		r_stat => 165367.024758031, r_p => 3.84675983116349e-91,
 	},
-	# ---- lm_noise0.5 (lm) ----
+	# lm_noise0.5 (lm)
 	{
 		name => 'lm_noise0.5',  kind => 'lm',
 		cond => 11.4384,   # ||y|| / ||residual||: digits lost to cancellation
@@ -843,7 +843,7 @@ my @CASES = (
 		expected_p => 1.806325640898419e-50,
 		r_stat => 3051.18015929074, r_p => 1.80632564089877e-50,
 	},
-	# ---- lm_noise1e-04 (lm) ----
+	# lm_noise1e-04 (lm)
 	{
 		name => 'lm_noise1e-04',  kind => 'lm',
 		cond => 46009.6,   # ||y|| / ||residual||: digits lost to cancellation
@@ -886,7 +886,7 @@ my @CASES = (
 		expected_p => 7.0165242049430605e-220,
 		r_stat => 49746759608.596, r_p => 7.01652421015411e-220,
 	},
-	# ---- lm_noise2 (lm) ----
+	# lm_noise2 (lm)
 	{
 		name => 'lm_noise2',  kind => 'lm',
 		cond => 2.77482,   # ||y|| / ||residual||: digits lost to cancellation
@@ -1001,10 +1001,8 @@ for my $c (@CASES) {
 	}
 }
 
-# ---------------------------------------------------------------------------
 # The regression itself, stated plainly: a p-value this far out is a real
 # number, not a 0.  Every one of these was 0 before pf_upper()/2*pnorm(-|z|).
-# ---------------------------------------------------------------------------
 {
 	my @underflowed = grep { $_ > 0 && $_ < 1e-16 } map {
 		my $c = $_;

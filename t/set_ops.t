@@ -47,9 +47,7 @@ my $UNION = \&Stats::LikeR::get_union;
 my $LONLY = \&Stats::LikeR::Lonly;
 my $RONLY = \&Stats::LikeR::Ronly;
 
-#--------
 # union
-#--------
 is_list( [get_union(\@a, \@b, \@c)], [1, 2, 3, 4, 5, 6, 7, 8], 'union: all distinct, first-appearance order');
 is_list( [get_union(\@a)],           [1, 2, 3, 4, 5],          'union: single ref deduped');
 is_list( [get_union([])],            [],                       'union: empty ref -> empty list');
@@ -70,9 +68,7 @@ no_leaks_ok {
 	}
 } 'union(): no memory leaks' unless $INC{'Devel/Cover.pm'};
 
-#--------
 # Lonly   (values only in the first ref, in no other ref)
-#--------
 is_list( [Lonly(\@a, \@b, \@c)], [1, 2],       'Lonly: only-in-first values');
 is_list( [Lonly(\@a)],           [1, 2, 3, 4, 5], 'Lonly: single ref -> its distinct values');
 is_list( [Lonly(\@c, \@a, \@b)], [8],          'Lonly: honours which ref is first');
@@ -92,9 +88,7 @@ no_leaks_ok {
 	}
 } 'Lonly(): no memory leaks' unless $INC{'Devel/Cover.pm'};
 
-#--------
 # Ronly   (values only in the last ref, in no other ref -- the mirror of Lonly)
-#--------
 is_list( [Ronly(\@a, \@b)], [6, 7],   'Ronly: two-ref -> values only in the last (right) ref, in right order');
 is_list( [Ronly(\@b, \@a)], [1, 2],   'Ronly: mirror image of Lonly with args reversed');
 is_list( [Ronly(\@b, \@b)], [],       'Ronly: identical lists -> empty');
@@ -126,9 +120,7 @@ no_leaks_ok {
 	}
 } 'Ronly(): no memory leaks' unless $INC{'Devel/Cover.pm'};
 
-#--------
 # cross-checks: relationships that must hold together
-#--------
 is( scalar(get_union(\@a, \@b)),
     scalar(intersection(\@a, \@b)) + scalar(Lonly(\@a, \@b)) + scalar(Ronly(\@a, \@b)),
     'identity: |union| == |intersection| + |Lonly| + |Ronly|');

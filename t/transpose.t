@@ -11,9 +11,7 @@ use Test::LeakTrace 'no_leaks_ok';
 
 ok( ref(transpose({ a => { 'x' => 1 } })) eq 'HASH', 'transpose HoH: returns a hash ref' );
 
-# -------------------------------------------------------------------
 # Hash-of-Hashes — shapes & data
-# -------------------------------------------------------------------
 
 my $hoh = { a => { 'x' => 1, 'y' => 2 }, b => { 'x' => 3, 'y' => 4 } };
 is_deeply(
@@ -71,24 +69,18 @@ is_deeply( transpose({ a => {}, b => {} }), {}, 'transpose HoH: empty inner hash
     is_deeply( $input, $snap, 'transpose HoH: input not mutated' );
 }
 
-# -------------------------------------------------------------------
 # Hash-of-Hashes — errors
-# -------------------------------------------------------------------
 
 dies_ok { transpose(42)              } 'transpose: scalar input dies';
 dies_ok { transpose(\"foo")          } 'transpose: scalar ref input dies';
 dies_ok { transpose({ a => 1 })      } 'transpose HoH: inner scalar dies';
 dies_ok { transpose({ a => [1, 2] }) } 'transpose HoH: inner array ref dies';
 
-# -------------------------------------------------------------------
 # Array-of-Arrays — return type
-# -------------------------------------------------------------------
 
 ok( ref(transpose([[1,2],[3,4]])) eq 'ARRAY', 'transpose AoA: returns an array ref' );
 
-# -------------------------------------------------------------------
 # Array-of-Arrays — shapes & data
-# -------------------------------------------------------------------
 
 is_deeply( transpose([[1,2,3],[4,5,6]]),           [[1,4],[2,5],[3,6]],         'transpose AoA: 2x3' );
 is_deeply( transpose([[1,2],[3,4],[5,6]]),         [[1,3,5],[2,4,6]],           'transpose AoA: 3x2' );
@@ -139,9 +131,7 @@ is_deeply( transpose([[],[]]),                     [],                          
     is_deeply( $input, $snap, 'transpose AoA: input not mutated' );
 }
 
-# -------------------------------------------------------------------
 # Shallow Copy / Aliasing validation
-# -------------------------------------------------------------------
 
 {
     my $deep_ref = { val => 1 };
@@ -155,9 +145,7 @@ is_deeply( transpose([[],[]]),                     [],                          
     is( $input->[0][0]{val}, 42, 'transpose: performs a shallow copy of nested reference values' );
 }
 
-# -------------------------------------------------------------------
 # Perl Magic & Objects
-# -------------------------------------------------------------------
 
 {
     # Triggering Perl 'magic' on scalar extraction
@@ -177,9 +165,7 @@ is_deeply( transpose([[],[]]),                     [],                          
     );
 }
 
-# -------------------------------------------------------------------
 # Array-of-Arrays — errors
-# -------------------------------------------------------------------
 
 dies_ok { transpose([1, 2, 3])            } 'transpose AoA: inner scalars die';
 dies_ok { transpose([{a => 1},{b => 2}])  } 'transpose AoA: inner hash refs die';
@@ -192,9 +178,7 @@ dies_ok { transpose([[1],[2,3]])          } 'transpose AoA: ragged array (long r
     dies_ok { transpose(\@bad_arr) } 'transpose AoA: missing outer row (physical hole) dies';
 }
 
-# -------------------------------------------------------------------
 # Memory leaks
-# -------------------------------------------------------------------
 
 no_leaks_ok {
 	eval { transpose({ a => { 'x' => 1, 'y' => 2 }, b => { 'x' => 3, 'y' => 4 } }) }

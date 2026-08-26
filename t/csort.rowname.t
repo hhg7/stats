@@ -38,9 +38,7 @@ sub fresh_hoh {
 	};
 }
 
-#--------
 # HoH -> AoH (default output) preserves the row name under 'row.name'
-#--------
 {
 	my $hoh = fresh_hoh();
 	my $aoh = csort($hoh, 'id');	# ascending by id -> alpha, beta, gamma
@@ -54,9 +52,7 @@ sub fresh_hoh {
 	is( $aoh->[2]{tag}, 'A','row 2 tag intact' );
 }
 
-#--------
 # HoH -> HoA gives an aligned 'row.name' column
-#--------
 {
 	my $hoh = fresh_hoh();
 	no warnings 'once';
@@ -69,9 +65,7 @@ sub fresh_hoh {
 	is_deeply( $hoa->{tag}, [qw/A B C/],     'tag column stays row-aligned' );
 }
 
-#--------
 # 4th arg overrides the row-name column name
-#--------
 {
 	my $hoh = fresh_hoh();
 	my $aoh = csort($hoh, 'id', 'aoh', 'sample');
@@ -83,9 +77,7 @@ sub fresh_hoh {
 		'custom row-name column present in HoA output' );
 }
 
-#--------
 # sorting BY the row-name column works once it exists
-#--------
 {
 	my $hoh = fresh_hoh();
 	my $aoh = csort($hoh, 'row.name');
@@ -93,9 +85,7 @@ sub fresh_hoh {
 		'can sort by the injected row-name column' );
 }
 
-#--------
 # the caller's HoH is never mutated by the row-name injection
-#--------
 {
 	my $hoh = fresh_hoh();
 	csort($hoh, 'id');
@@ -105,9 +95,7 @@ sub fresh_hoh {
 	is( scalar keys %{ $hoh->{alpha} }, 3, 'source row still has exactly its 3 columns' );
 }
 
-#--------
 # usage / argument-validation croaks
-#--------
 throws_ok { csort( fresh_hoh() ) } qr/Usage: csort/,
 	'too few args croaks with the new usage message';
 throws_ok { csort( fresh_hoh(), 'id', 'aoh', 'x', 'y' ) } qr/Usage: csort/,
@@ -122,10 +110,8 @@ throws_ok { csort( { a => { x => 1 }, b => 42 }, 'x' ) }
 	qr/is not (?:a hash-ref|an array-ref)/,
 	'mixed HoH row croaks';
 
-#--------
 # leak checks -- assignments live OUTSIDE the measured block on purpose,
 # so coverage runs (which skip the guarded statement) don't null them out
-#--------
 no_leaks_ok {
 	csort( fresh_hoh(), 'id' )
 } 'csort(HoH) -> AoH: no memory leaks' unless $INC{'Devel/Cover.pm'};

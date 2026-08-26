@@ -90,21 +90,21 @@ add <- function(data, ..., wt = NULL) {
     CASES[[length(CASES) + 1L]] <<- list(data = data, args = a, wt = wt)
 }
 
-## -- R's own regression tests -------------------------------------------
+## -- R's own regression tests
 add("pr8033", kernel = "rectangular", bw = 1, from = 0, to = 1, n = 2)
 add("pr8876", n = 20, from = -1, to = 1)
-## -- man/density.Rd examples --------------------------------------------
+## -- man/density.Rd examples
 add("iqr0")
 add("eruptions", bw = "sj")
 add("eruptions", bw = 0.15)
 add("precip", n = 1000)
 for (k in KERNELS) add("precip", bw = "SJ", kernel = k)
 for (b in c("nrd0", "nrd", "ucv", "bcv", "SJ-ste", "SJ-dpi")) add("precip", bw = b)
-## -- kernels in R's own parametrisation, and in S's ---------------------
+## -- kernels in R's own parametrisation, and in S's
 for (k in KERNELS) add("const", bw = 1, kernel = k)      # density(0, bw=1, ...)
 for (k in KERNELS) add("const", width = 2, kernel = k)   # S parametrisation
 add("const", from = -1.2, to = 1.2, width = 2, kernel = "gaussian")
-## -- the argument space -------------------------------------------------
+## -- the argument space
 for (k in KERNELS) add("z60", kernel = k)
 for (k in KERNELS) add("z200", kernel = k, adjust = 0.5)
 for (a in c(0.25, 1, 4))    add("z60", adjust = a)
@@ -136,7 +136,7 @@ add("z60", kernel = "o")
 add("z60", window = "epanechnikov")
 add("z60", width = 1.5)
 add("z60", width = "SJ")
-## -- weights ------------------------------------------------------------
+## -- weights
 add("z9", wt = rep(1/9, 9))
 add("z9", wt = (1:9)/45)
 add("z9", wt = rep(1/18, 9), subdensity = TRUE)

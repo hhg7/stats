@@ -60,9 +60,7 @@ dies_ok {
 	prcomp([ {}, {} ]);
 } 'prcomp (AoH): dies when the row hashes are empty';
 
-# ==============================================================================
 # Matrix (Array of Arrays) Base Calculations
-# ==============================================================================
 my $aoa = [ 
 	[2, 4], 
 	[4, 2], 
@@ -97,9 +95,7 @@ no_leaks_ok {
 	prcomp($aoa);
 } 'prcomp: no leaks when given Array of Arrays' unless $INC{'Devel/Cover.pm'};
 
-# ==============================================================================
 # Array of Hashes (AoH)
-# ==============================================================================
 # Columns are taken from the first row hash and sorted alphabetically: A, B.
 # A -> [2, 4, 6]
 # B -> [4, 2, 6]
@@ -182,9 +178,7 @@ if (not exists $pca_aoh_noretx->{x}) {
 	fail('prcomp (AoH): retx => 0 still returned an x key');
 }
 
-#---------------------------------------
 # AoH: listwise deletion of unusable rows
-#---------------------------------------
 # Row 2 carries a non-numeric value, so it is dropped. The surviving matrix is
 # C1 = [2, 6] (mean 4), C2 = [4, 6] (mean 5) => [8 4 ; 4 2], eigenvalues 10 & 0.
 my $aoh_na = [
@@ -233,9 +227,7 @@ no_leaks_ok {
 	prcomp($aoh_ragged, scale => 1, rank => 1);
 } 'prcomp: no leaks for Array of Hashes with listwise deletion and options' unless $INC{'Devel/Cover.pm'};
 
-#---------------------
 # Hash of Arrays (HoA)
-#---------------------
 # Keys will be sorted alphabetically internally: A, B. 
 # A -> [2, 4, 6]
 # B -> [4, 2, 6]
@@ -291,9 +283,7 @@ if (ref $pca->{scale} eq 'ARRAY') {
 	fail('prcomp (Scale): scale key did not return an ARRAY reference');
 }
 
-# ==============================================================================
 # Parameters: tol & rank restrictions
-# ==============================================================================
 # The original Sdevs are ~2.449 and ~1.414
 # Setting tol to 0.6 creates a threshold of 2.449 * 0.6 = 1.469
 # 1.414 is less than 1.469, so PC2 should be omitted.
@@ -321,9 +311,7 @@ if ($rot_cols == 1) {
 	fail("prcomp (Rank): rotation matrix expected 1 column, got $rot_cols");
 }
 
-# ==============================================================================
 # Missing Data / Listwise Deletion
-# ==============================================================================
 my $aoa_na = [ 
 	[2, 4], 
 	[4, 'NA'], 

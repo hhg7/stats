@@ -58,9 +58,7 @@ sub write_code {
 	return "write_table([{ gene => 'TP53', n => 12 }], '$file'$opts);";
 }
 
-# ---------------------------------------------------------------------------
 # every format announces itself, in the same shape
-# ---------------------------------------------------------------------------
 my %by_format = (
 	'csv'  => "$dir/a.csv",
 	'tsv'  => "$dir/a.tsv",
@@ -87,9 +85,7 @@ for my $fmt (sort keys %by_format) {
 	like($out, qr/\Q$file\E/, 'delimited output names the file');
 }
 
-# ---------------------------------------------------------------------------
 # the LaTeX and .xlsx lines are byte-identical in form to the delimited one
-# ---------------------------------------------------------------------------
 {
 	my ($csv, $tex) = ("$dir/same.csv", "$dir/same.tex");
 	my $c = child_stdout(write_code($csv));
@@ -99,9 +95,7 @@ for my $fmt (sort keys %by_format) {
 	is($c_norm, $t_norm, 'delimited and LaTeX announce in exactly the same form');
 }
 
-# ---------------------------------------------------------------------------
 # tex => 1 / xlsx => 1 on a name that does not carry the extension
-# ---------------------------------------------------------------------------
 {
 	my $file = "$dir/forced_tex.out";
 	my $out  = child_stdout(write_code($file, 'tex', 1));
@@ -113,9 +107,7 @@ for my $fmt (sort keys %by_format) {
 	is($out, announcement($file), 'xlsx => 1 announces the name it was given');
 }
 
-# ---------------------------------------------------------------------------
 # nothing written, nothing announced
-# ---------------------------------------------------------------------------
 {
 	# An empty frame returns before a file is ever opened.
 	my $file = "$dir/never.csv";
@@ -137,7 +129,6 @@ for my $fmt (sort keys %by_format) {
 	is($out, '', 'a write that croaks announces nothing');
 }
 
-# ---------------------------------------------------------------------------
 # The announcement is flushed as it is made.
 #
 # PerlIO_stdout() has its own buffer. When fd 1 is a pipe that buffer is block
@@ -152,7 +143,6 @@ for my $fmt (sort keys %by_format) {
 # markers through a dup with autoflush on, mirroring Test::More. The dup is
 # unbuffered through select and $|, not $fh->autoflush: IO::Handle is not
 # autoloaded for handle method calls before 5.14.
-# ---------------------------------------------------------------------------
 {
 	my $file = "$dir/flushed.csv";
 	my $out  = child_stdout(

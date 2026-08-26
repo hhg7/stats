@@ -30,9 +30,7 @@ sub is_approx {
 	}
 }
 
-#--------
 # one-way: matches the documented aov() output exactly
-#--------
 {
 	my $r = anova(
 		{
@@ -58,10 +56,8 @@ sub is_approx {
 	ok( !exists $r->{Residuals}{'Pr(>F)'},  'Residuals: no Pr(>F) key' );
 }
 
-#--------
 # two-way factorial with categorical interaction: y ~ A * B
 # balanced 2x2; hand-computed SS_A=288, SS_B=18, SS_AB=2, RSS=52 (df 1,1,1,4)
-#--------
 {
 	my %d = (
 		y => [10, 12, 14, 16, 20, 24, 26, 30],
@@ -91,9 +87,7 @@ sub is_approx {
 	           $sst, 'SS_A + SS_B + SS_AB + RSS == corrected SST' );
 }
 
-#--------
 # AoH input form matches HoA input form
-#--------
 {
 	my %hoa = ( y => [2, 3, 5, 4], x => [1, 2, 3, 4] );
 	my @aoh = map { { y => $hoa{y}[$_], x => $hoa{x}[$_] } } 0 .. 3;
@@ -104,9 +98,7 @@ sub is_approx {
 	           'AoH RSS matches HoA RSS' );
 }
 
-#--------
 # rank deficiency: a collinear predictor gets Df 0 and Sum Sq 0
-#--------
 {
 	my %d = (
 		yield => [5.5, 5.4, 5.8, 4.5, 4.8, 4.2],
@@ -120,9 +112,7 @@ sub is_approx {
 	ok( !exists $r->{dup}{'F value'}, 'collinear dup: no F value' );
 }
 
-#--------
 # listwise NA handling
-#--------
 {
 	my %full = ( y => [2, 3, 5, 4],            x => [1, 2, 3, 4] );
 	my %na   = ( y => [2, 3, 5, 4, undef, 9],  x => [1, 2, 3, 4, 5, undef] );
@@ -132,9 +122,7 @@ sub is_approx {
 	           'rows with undef in y or x are dropped listwise' );
 }
 
-#--------
 # error paths
-#--------
 dies_ok { anova({ a => [1,2], b => [3,4] }) }
 	'dies with < 2 arguments';
 dies_ok { anova('not a ref', 'y ~ x') }
@@ -156,9 +144,7 @@ dies_ok { anova(\%{{ y => [undef, undef], x => [1, 2] }}, 'y ~ x') }
 # Df<->Df, "Sum of Sq"<->"Sum Sq", F<->"F value", Pr(>F)<->Pr(>F). The
 # residual Df / RSS of each row must telescope through those same term SS.
 
-#--------
 # two numeric models, y ~ a  vs  y ~ a + b : shape + full cross-check
-#--------
 {
 	my %d = (
 		y => [5, 7, 6, 9, 8, 11, 10, 13],
@@ -219,10 +205,8 @@ dies_ok { anova(\%{{ y => [undef, undef], x => [1, 2] }}, 'y ~ x') }
 		'row 1: formula string present' );
 }
 
-#--------
 # three-model numeric chain: y ~ a, y ~ a + b, y ~ a + b + c
 # every added block reproduces the corresponding term of the full model
-#--------
 {
 	my %d = (
 		y => [5, 7, 6, 9, 8, 11, 10, 13],
@@ -257,9 +241,7 @@ dies_ok { anova(\%{{ y => [undef, undef], x => [1, 2] }}, 'y ~ x') }
 	is_approx( $cmp->[2]{'RSS'}, $full->{Residuals}{'Sum Sq'}, 'last row RSS == full residual SS' );
 }
 
-#--------
 # categorical chain with an interaction: y ~ A, y ~ A + B, y ~ A + B + A:B
-#--------
 {
 	my %d = (
 		y => [10, 12, 14, 16, 20, 24, 26, 30],
@@ -286,9 +268,7 @@ dies_ok { anova(\%{{ y => [undef, undef], x => [1, 2] }}, 'y ~ x') }
 	is_approx( $cmp->[2]{'RSS'}, 52, 'sanity: full residual SS is 52' );
 }
 
-#--------
 # comparison form accepts AoH just like the single-model form
-#--------
 {
 	my %hoa = (
 		y => [5, 7, 6, 9, 8, 11, 10, 13],
@@ -306,10 +286,8 @@ dies_ok { anova(\%{{ y => [undef, undef], x => [1, 2] }}, 'y ~ x') }
 		'AoH comparison Res.Df matches HoA' );
 }
 
-#--------
 # union NA handling: all models are fit on ONE shared complete-case set,
 # so a NA in a predictor used by only one model drops that row from every fit.
-#--------
 {
 	# row 4 has b => undef; that row must be dropped from BOTH models, so the
 	# comparison equals what you'd get from the fully-complete rows only.
@@ -334,9 +312,7 @@ dies_ok { anova(\%{{ y => [undef, undef], x => [1, 2] }}, 'y ~ x') }
 		'union listwise: F matches the pre-cleaned data' );
 }
 
-#--------
 # comparison-form error paths
-#--------
 dies_ok { anova('not a ref', 'y ~ a', 'y ~ a + b') }
 	'comparison: dies when data is not a reference';
 dies_ok { anova({ y => [1,2,3,4], a => [1,2,3,4] }, 'y ~ a', 'no tilde here') }
@@ -344,9 +320,7 @@ dies_ok { anova({ y => [1,2,3,4], a => [1,2,3,4] }, 'y ~ a', 'no tilde here') }
 dies_ok { anova({ y => [1, undef], a => [undef, 2], b => [1, 2] }, 'y ~ a', 'y ~ a + b') }
 	'comparison: dies with fewer than 2 shared complete observations';
 
-#--------
 # memory safety
-#--------
 no_leaks_ok {
 	eval { anova({ yield => [5.5,5.4,5.8,4.5,4.8,4.2], ctrl => [1,1,1,0,0,0] },
 	             'yield ~ ctrl') }

@@ -7,9 +7,7 @@ use Test::Exception; # dies_ok
 use Test::More;
 use Test::LeakTrace 'no_leaks_ok';
 
-#--------
 # basic conversion
-#--------
 my %hoa = (
 	id => [ qw(a b c) ],
 	'x'  => [ 1, 2, 3 ],
@@ -23,22 +21,16 @@ is($hoh->{b}{x},      2,      'b.x');
 is($hoh->{c}{y},      6,      'c.y');
 is($hoh->{c}{id},     'c',    'key column retained in row');
 
-#--------
 # inner values are independent copies (newSVsv), not aliases
-#--------
 $hoa{x}[0] = 999;
 is($hoh->{a}{x}, 1, 'inner cell is a copy, not aliased to input');
 
-#--------
 # empty (but present) key column -> empty hoh
-#--------
 my %empty = ( id => [], x => [] );
 my $eh = hoa2hoh(\%empty, 'id');
 is(scalar keys %$eh, 0, 'empty columns yield empty hoh');
 
-#--------
 # die conditions
-#--------
 my %dup = ( id => [ qw(a a b) ], x => [ 1, 2, 3 ] );
 dies_ok { hoa2hoh(\%dup, 'id') } 'dies on duplicate row name';
 
@@ -55,9 +47,7 @@ dies_ok { hoa2hoh(\%undef_key, 'id') } 'dies on explicit undef key value';
 my %ragged = ( id => [ 'a', 'b' ], x => [ 1, 2, 3 ] );
 dies_ok { hoa2hoh(\%ragged, 'id') } 'dies when key column is shorter than widest';
 
-#--------
 # no memory leaks (success path + both croak paths)
-#--------
 no_leaks_ok {
 	eval {
 		hoa2hoh(\%hoa, 'id')

@@ -42,18 +42,14 @@ my $wide = [
 	{ city => 'LA', year => 2021, temp => 50 },
 ];
 
-#--------
 # default aggfunc = mean, AoH -> AoH (rows & columns sorted)
-#--------
 is_deeply(
 	pivot_table($wide, index => 'city', columns => 'year', values => 'temp'),
 	[ { city => 'LA', 2020 => 40, 2021 => 50 },
 	  { city => 'NY', 2020 => 15, 2021 => 30 } ],
 	'mean pivot, single value/func flat column names, sorted rows/cols');
 
-#--------
 # original frame untouched
-#--------
 is_deeply($wide, [
 	{ city => 'NY', year => 2020, temp => 10 },
 	{ city => 'NY', year => 2020, temp => 20 },
@@ -62,27 +58,21 @@ is_deeply($wide, [
 	{ city => 'LA', year => 2021, temp => 50 },
 ], 'input frame not mutated');
 
-#--------
 # aggfunc = sum
-#--------
 is_deeply(
 	pivot_table($wide, index => 'city', columns => 'year', values => 'temp', aggfunc => 'sum'),
 	[ { city => 'LA', 2020 => 40, 2021 => 50 },
 	  { city => 'NY', 2020 => 30, 2021 => 30 } ],
 	'sum aggfunc');
 
-#--------
 # aggfunc = count
-#--------
 is_deeply(
 	pivot_table($wide, index => 'city', columns => 'year', values => 'temp', aggfunc => 'count'),
 	[ { city => 'LA', 2020 => 1, 2021 => 1 },
 	  { city => 'NY', 2020 => 2, 2021 => 1 } ],
 	'count aggfunc');
 
-#--------
 # coderef aggfunc (receives every cell, incl undef)
-#--------
 is_deeply(
 	pivot_table($wide, index => 'city', columns => 'year', values => 'temp',
 		aggfunc => sub { my $c = shift; scalar grep { defined } @$c }),
@@ -90,9 +80,7 @@ is_deeply(
 	  { city => 'NY', 2020 => 2, 2021 => 1 } ],
 	'coderef aggfunc');
 
-#--------
 # fractional mean value (float compare)
-#--------
 {
 	my $d = [ { g => 'x', k => 'A', v => 10 },
 	          { g => 'x', k => 'A', v => 20 },
@@ -101,9 +89,7 @@ is_deeply(
 	is_approx($got->[0]{A}, 18.3333333333333, 'fractional mean cell');
 }
 
-#--------
 # multiple aggfuncs -> aggfunc-major, func-prefixed names
-#--------
 is_deeply(
 	pivot_table($wide, index => 'city', columns => 'year', values => 'temp',
 		aggfunc => [ 'count', 'sum' ]),
@@ -111,9 +97,7 @@ is_deeply(
 	  { city => 'NY', 'count.2020' => 2, 'count.2021' => 1, 'sum.2020' => 30, 'sum.2021' => 30 } ],
 	'multi aggfunc: func-prefixed names');
 
-#--------
 # multiple value columns -> value-prefixed names
-#--------
 {
 	my $d = [ { g => 'x', k => 'A', a => 1, b => 100 },
 	          { g => 'x', k => 'B', a => 2, b => 200 } ];
@@ -123,9 +107,7 @@ is_deeply(
 		'multi value: value-prefixed names');
 }
 
-#--------
 # multi-column 'columns' tuple, missing combo cell stays NA
-#--------
 {
 	my $d = [ { g => 'x', a => 1, b => 2, v => 10 },
 	          { g => 'x', a => 1, b => 3, v => 20 },
@@ -137,18 +119,14 @@ is_deeply(
 		'multi-column tuple, missing combo -> undef');
 }
 
-#--------
 # default values = non-index, non-columns
-#--------
 is_deeply(
 	pivot_table($wide, index => 'city', columns => 'year', aggfunc => 'sum'),
 	[ { city => 'LA', 2020 => 40, 2021 => 50 },
 	  { city => 'NY', 2020 => 30, 2021 => 30 } ],
 	'default values = remaining columns');
 
-#--------
 # fill_value substitutes NA result cells
-#--------
 {
 	my $d = [ { g => 'x', a => 1, b => 2, v => 10 },
 	          { g => 'x', a => 1, b => 3, v => 20 },
@@ -161,9 +139,7 @@ is_deeply(
 		'fill_value fills empty buckets');
 }
 
-#--------
 # skipna: default 1 drops NA; 0 poisons the bucket
-#--------
 {
 	my $d = [ { g => 'x', k => 'A', v => 10 },
 	          { g => 'x', k => 'A', v => undef },
@@ -178,9 +154,7 @@ is_deeply(
 		'skipna=0: NA in bucket -> NA result -> fill_value');
 }
 
-#--------
 # sort => 0 keeps first-seen column order
-#--------
 {
 	my $d = [ { k => 'B', v => 1 }, { k => 'A', v => 2 } ];
 	is_deeply(
@@ -191,17 +165,13 @@ is_deeply(
 		[ [ 2, 1 ] ], 'sort=1 (default): sorted column order A,B');
 }
 
-#--------
 # no index -> single 'all' row
-#--------
 is_deeply(
 	pivot_table($wide, columns => 'year', values => 'temp', aggfunc => 'sum', 'output.type' => 'hoh'),
 	{ all => { 2020 => 70, 2021 => 80 } },
 	'no index -> single all row');
 
-#--------
 # rows whose columns-tuple contains NA are skipped
-#--------
 {
 	my $d = [ { g => 'x', k => 'A', v => 5 },
 	          { g => 'x', k => undef, v => 99 } ];
@@ -211,9 +181,7 @@ is_deeply(
 		'NA in columns-tuple -> row skipped');
 }
 
-#--------
 # custom sep
-#--------
 {
 	my $d = [ { g => 'x', k => 'A', v => 10 },
 	          { g => 'x', k => 'A', v => undef },
@@ -224,9 +192,7 @@ is_deeply(
 		'custom sep applied to generated names');
 }
 
-#--------
 # output.type overrides
-#--------
 {
 	# hoh: label from index join
 	is_deeply(
@@ -249,9 +215,7 @@ is_deeply(
 		'output.type aoa: [index, cols...]');
 }
 
-#--------
 # hoh label uniquification when index join collides
-#--------
 {
 	# two index columns whose '.' join collides: ('1','2.3') vs ('1.2','3')
 	my $d = [ { a => '1',   b => '2.3', k => 'X', v => 1 },
@@ -263,9 +227,7 @@ is_deeply(
 		'hoh: second colliding label suffixed');
 }
 
-#--------
 # error paths
-#--------
 dies_ok { pivot_table(undef) } 'undef data dies';
 throws_ok { pivot_table([ { a => 1 } ], 'oddarg') }
 	qr/name => value pairs/, 'odd trailing args die';
@@ -286,9 +248,7 @@ throws_ok {
 		index => undef, columns => [ 'a', 'b' ], values => 'v', aggfunc => 'sum', sep => '')
 } qr/duplicate column name/, 'generated duplicate names die';
 
-#--------
 # memory
-#--------
 no_leaks_ok {
 	my $x = pivot_table($wide, index => 'city', columns => 'year', values => 'temp', aggfunc => 'sum');
 } 'pivot_table: no memory leaks (numeric reducer)' unless $INC{'Devel/Cover.pm'};

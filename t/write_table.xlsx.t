@@ -31,7 +31,7 @@ sub member {
 	return $out;
 }
 
-# --- round-trip an Array of Hashes -----------------------------------------
+# round-trip an Array of Hashes
 {
 	my @aoh = (
 		{ name => 'Mazda RX4',  mpg => 21.0, cyl => 6,     note => 'A & B <ok>' },
@@ -54,7 +54,7 @@ sub member {
 	is( $back->[2]{note}, 'q"x',       'embedded double quote round-trips' );
 }
 
-# --- numeric detection: leading-zero / non-plain strings stay text ----------
+# numeric detection: leading-zero / non-plain strings stay text
 {
 	my @aoh = (
 		{ id => '007', sci => '1e3', bad => 'Inf', plain => 42 },
@@ -68,7 +68,7 @@ sub member {
 	is( $r->{plain}, '42',  'a plain number round-trips' );
 }
 
-# --- HoA shape, forced on via xlsx => 1 for a non-.xlsx name ----------------
+# HoA shape, forced on via xlsx => 1 for a non-.xlsx name
 {
 	my %hoa = ( x => [1, 2, 3], y => [4, 5, 6] );
 	my $f = "$dir/forced.dat";
@@ -84,7 +84,7 @@ sub member {
 	}
 }
 
-# --- provenance lands in the document "comments" property -------------------
+# provenance lands in the document "comments" property
 SKIP: {
 	skip 'IO::Uncompress::Unzip (core) not available', 4 unless $have_unzip;
 
@@ -103,7 +103,7 @@ SKIP: {
 	like( $wb, qr{name="Results"}, 'xlsx.sheet sets the worksheet name' );
 }
 
-# --- freeze panes -----------------------------------------------------------
+# freeze panes
 SKIP: {
 	skip 'IO::Uncompress::Unzip (core) not available', 8 unless $have_unzip;
 
@@ -146,7 +146,7 @@ SKIP: {
 		'a negative freeze column count dies too';
 }
 
-# --- tex and xlsx are mutually exclusive ------------------------------------
+# tex and xlsx are mutually exclusive
 throws_ok { write_table([{ a => 1 }], "$dir/x.out", xlsx => 1, tex => 1) }
 	qr/mutually exclusive/,
 	"requesting both 'tex' and 'xlsx' dies with a clear message";

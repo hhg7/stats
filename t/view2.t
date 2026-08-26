@@ -34,9 +34,7 @@ sub is_approx {
 	}
 }
 
-#--------
 # helpers
-#--------
 sub _strip { my $s = shift; $s =~ s/\e\[[0-9;]*m//g; return $s; }
 sub _lines { return split /\n/, _strip($_[0]); }
 sub _dwidth { my $s = _strip(shift); utf8::decode($s); return length $s; }
@@ -48,9 +46,7 @@ my $wide = [
 	{ row_name => 'r2', c1=>21, c2=>22, c3=>23, c4=>24, c5=>25, c6=>26, c7=>27, c8=>28 },
 ];
 
-#--------
 # undefined values render as "undef" (Data::Printer style)
-#--------
 {
 	my $d = [ { a => 1, b => undef }, { a => undef, b => 2 } ];
 	my $out = view($d, return_only => 1, color => 0);
@@ -64,9 +60,7 @@ my $wide = [
 	like(view($sparse, return_only=>1, color=>0), qr/\bundef\b/, 'missing key shows as undef');
 }
 
-#--------
 # AoH structure
-#--------
 {
 	my $aoh = [
 		{ id => 1,	name => 'Alice', score => 9.5	},
@@ -82,9 +76,7 @@ my $wide = [
 	like($L[4], qr/^2\b/,	 'row 2 labelled 2');
 }
 
-#--------
 # HoA structure
-#--------
 {
 	my $hoa = { id => [1, 2, 30], name => ['Alice', 'Bob', 'Cara'] };
 	my @L = _lines(view($hoa, return_only => 1, color => 0));
@@ -92,9 +84,7 @@ my $wide = [
 	like($L[2], qr/^0\b.*Alice/, 'HoA row 0');
 }
 
-#--------
 # HoH structure (row labels are the outer keys, sorted)
-#--------
 {
 	my $hoh = { beta => { x => 2, y => 'q' }, alpha => { x => 1, y => 'p' } };
 	my @L = _lines(view($hoh, return_only => 1, color => 0));
@@ -104,9 +94,7 @@ my $wide = [
 	like($L[3], qr/^beta\b/,   'HoH second row beta');
 }
 
-#--------
 # flat hash (single row)
-#--------
 {
 	my @L = _lines(view({ alpha => 1, beta => 'two', gamma => 3.5 }, return_only => 1, color => 0));
 	like($L[0], qr/^# Hash: 1 row x 3 cols/, 'flat hash single-row summary');
@@ -114,17 +102,13 @@ my $wide = [
 	like($L[2], qr/^0\b/, 'flat hash row labelled 0');
 }
 
-#--------
 # empty inputs
-#--------
 {
 	like( (_lines(view({}, return_only=>1, color=>0)))[0], qr/^# Hash: 0 rows x 0 cols/, 'empty hash');
 	like( (_lines(view([], return_only=>1, color=>0)))[0], qr/^# AoH: 0 rows x 0 cols/,	 'empty AoH');
 }
 
-#--------
 # every header and row shares one display width (single-block alignment invariant)
-#--------
 {
 	my $aoh = [ { a => 1, b => 'xx', c => 3 }, { a => 22, b => 'y', c => 444 } ];
 	my @L = _lines(view($aoh, return_only => 1, color => 0));
@@ -132,9 +116,7 @@ my $wide = [
 	is(scalar keys %w, 1, 'header and all rows share one display width');
 }
 
-#--------
 # multibyte UTF-8 does not break alignment (the bug this version fixes)
-#--------
 {
 	my $oe = "J\xC3\xB8rgensen";   # o-slash as 2 UTF-8 bytes
 	my $d  = [ { n => 1, who => $oe, z => 'x' }, { n => 22, who => 'Bo', z => 'y' } ];
@@ -145,9 +127,7 @@ my $wide = [
 	isnt(length $oe_line, _dwidth($oe_line), 'the UTF-8 row is wider in bytes than in display columns');
 }
 
-#--------
 # numeric columns right-align, string columns left-align
-#--------
 {
 	my @N = _lines(view({ x => [1, 100] },	   return_only => 1, color => 0));
 	ok($N[2] =~ /\s\s+1$/, 'numeric column right-aligned (short value padded on the left)');
@@ -155,9 +135,7 @@ my $wide = [
 	ok($S[2] =~ /a\s\s+$/, 'string column left-aligned (short value padded on the right)');
 }
 
-#--------
 # n / rows, footer, and their validation
-#--------
 {
 	my $aoh = [ map { { i => $_ } } 1 .. 5 ];
 	my @L = _lines(view($aoh, n => 2, return_only => 1, color => 0));
@@ -180,9 +158,7 @@ my $wide = [
 	like($Z[1],	 qr/\bi\b/,		   'header still lists columns when showing 0 rows');
 }
 
-#--------
 # column selection (cols / columns) preserves order and drops the rest
-#--------
 {
 	my $aoh = [ { a => 1, b => 2, c => 3 } ];
 	my @L = _lines(view($aoh, cols => ['c', 'a'], return_only => 1, color => 0));
@@ -193,9 +169,7 @@ my $wide = [
 	is_deeply(\@L2, \@L, "'columns' is an alias for 'cols'");
 }
 
-#--------
 # row labels: auto row_name, explicit row.names, and precedence
-#--------
 {
 	my $aoh = [ { row_name => 'r1', v => 10 }, { row_name => 'r2', v => 20 } ];
 	my @L = _lines(view($aoh, return_only => 1, color => 0));
@@ -212,9 +186,7 @@ my $wide = [
 	is_deeply(\@L3, \@L2, 'row.names takes precedence over row_names');
 }
 
-#--------
 # max_width truncation is char-aware, with a configurable ellipsis
-#--------
 {
 	my @L = _lines(view({ s => ['abcdefghij'] }, max_width => 5, return_only => 1, color => 0));
 	like($L[2], qr/ab\.\.\.$/, 'cell truncated to max_width with the default ellipsis');
@@ -222,9 +194,7 @@ my $wide = [
 	like($E[2], qr/abcd~$/, 'a custom ellipsis is honoured');
 }
 
-#--------
 # gap widens the inter-column spacing
-#--------
 {
 	my $aoh = [ { a => 1, b => 2 } ];
 	my $g0 = view($aoh, gap => 0, return_only => 1, color => 0);
@@ -232,9 +202,7 @@ my $wide = [
 	ok(length($g3) > length($g0), 'a larger gap produces wider output');
 }
 
-#--------
 # argument and type errors
-#--------
 {
 	my $aoh = [ { a => 1 } ];
 	throws_ok { view($aoh, bogus => 1, return_only => 1) } qr/unknown argument/,			'an unknown argument dies';
@@ -242,9 +210,7 @@ my $wide = [
 	throws_ok { view(\my $x) }							   qr/expected an ARRAY.*or HASH/,	'a scalar reference dies';
 }
 
-#--------
 # 'width' argument: accepted, and validated as a positive integer
-#--------
 {
 	lives_ok  { view($wide, width => 80,  return_only => 1, color => 0) } "a valid 'width' is accepted (not an unknown arg)";
 	throws_ok { view($wide, width => 0,	  return_only => 1) } qr/width.*positive integer/, 'width => 0 dies';
@@ -253,10 +219,8 @@ my $wide = [
 	throws_ok { view($wide, width => 2.5, return_only => 1) } qr/width.*positive integer/, 'a non-integer width dies';
 }
 
-#--------
 # R-style column chunking: a table wider than the terminal is split into
 # successive column blocks, each led by a repeated copy of the label column.
-#--------
 {
 	# wide enough -> a single block
 	my @one = _lines(view($wide, width => 1000, return_only => 1, color => 0));
@@ -306,9 +270,7 @@ my $wide = [
 	like($big[2], qr/X{30}/,	'the over-wide value is rendered in full');
 }
 
-#--------
 # terminal-width source precedence: explicit 'width' > $ENV{COLUMNS} > 80
-#--------
 {
 	{
 		local $ENV{COLUMNS} = 18;
@@ -326,9 +288,7 @@ my $wide = [
 	}
 }
 
-#--------
 # colour: opt-in ANSI that never disturbs alignment
-#--------
 {
 	my $aoh	  = [ { a => 1, b => undef } ];
 	my $plain = view($aoh, return_only => 1, color => 0);
@@ -343,9 +303,7 @@ my $wide = [
 	like($col, qr/\e\[96m# AoH/,	   'the caller-info line is painted');
 }
 
-#--------
 # colour survives chunking: each block's header is still painted
-#--------
 {
 	my $col = view($wide, width => 20, return_only => 1, color => 1);
 	my @painted_hdr = grep { /\e\[35m/ && /row_name/ } split /\n/, $col;
@@ -355,17 +313,13 @@ my $wide = [
 		'stripping ANSI from a chunked render reproduces the plain chunked layout');
 }
 
-#--------
 # custom Data::Printer-style colours (hex truecolor)
-#--------
 {
 	my $col = view([ { n => 5 } ], return_only => 1, color => 1, colors => { number => '#87afff' });
 	like($col, qr/\e\[38;2;135;175;255m/, 'a #rrggbb colour becomes a truecolor escape');
 }
 
-#--------
 # 'to' filehandle and return_only
-#--------
 {
 	my $aoh = [ { a => 1 } ];
 	open my $fh, '>', \my $buf or die "open: $!";
@@ -375,9 +329,7 @@ my $wide = [
 	ok(length(view($aoh, return_only => 1, color => 0)), 'return_only returns the rendered string');
 }
 
-#--------
 # memory
-#--------
 no_leaks_ok {
 	my $s = view([ { a => 1, b => 'x', c => undef } ], return_only => 1, color => 0);
 } 'view: no memory leaks on a plain render' unless $INC{'Devel/Cover.pm'};
@@ -392,9 +344,7 @@ no_leaks_ok {
 	my $s = view($wide, width => 20, return_only => 1, color => 0);
 } 'view: no memory leaks on a chunked (multi-block) render' unless $INC{'Devel/Cover.pm'};
 
-#--------
 # auto row labels are 0-based indexes (Perl style), not 1-based counts (R style)
-#--------
 {
 	my @A = _lines(view([ { v => 'a' }, { v => 'b' }, { v => 'c' } ], return_only => 1, color => 0));
 	like($A[2], qr/^0\b/, 'AoH auto label: first row is 0');
@@ -422,13 +372,11 @@ no_leaks_ok {
 	} 'view: no memory leaks rendering 0-based auto labels' unless $INC{'Devel/Cover.pm'};
 }
 
-#--------
 # regression: an already-decoded (utf8-flagged) wide char -- e.g. a "ΔG range"
 # header written under `use utf8` -- must be encoded to bytes on output, so
 # print() never warns "Wide character in print". Warnings are lexically scoped
 # to the module, so we trap them here with a __WARN__ handler rather than
 # relying on this file's FATAL => 'all'.
-#--------
 {
 	my $hdr = "\xCE\x94G range";   # the UTF-8 bytes for "ΔG range" ...
 	utf8::decode($hdr);            # ... promoted to an already-decoded char string

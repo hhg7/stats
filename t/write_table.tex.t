@@ -45,10 +45,8 @@ sub body_after_provenance {
 	return $t;
 }
 
-#--------
 # byte-exact output (locks the whole format); .tex name auto-selects LaTeX and
 # is the single output file (no delimited file is written alongside)
-#--------
 {
 	my ($csv, $tex) = paths();
 	write_table([[qw(k v)], ['x', 1], ['y', 2]], $tex, 'row.names' => 0);
@@ -65,10 +63,8 @@ END_TEX
 	ok(!-e $csv, '.tex name: no separate delimited file is written');
 }
 
-#--------
 # byte-exact output for the default (row.names OFF): omitting row.names is the
 # same as saying row.names => 0, so this matches the block above exactly
-#--------
 {
 	my ($csv, $tex) = paths();
 	write_table([[qw(k v)], ['x', 1], ['y', 2]], $tex);
@@ -83,10 +79,8 @@ END_TEX
 		'default row.names off: AoA output is byte-exact with no label column');
 }
 
-#--------
 # byte-exact output with row.names => 1: the same AoA gains a numeric row-label
 # column, and tex.bold.1st.col bolds that label
-#--------
 {
 	my ($csv, $tex) = paths();
 	write_table([[qw(k v)], ['x', 1], ['y', 2]], $tex, 'row.names' => 1);
@@ -101,9 +95,7 @@ END_TEX
 		'row.names => 1: AoA output is byte-exact with a numeric label column');
 }
 
-#--------
 # provenance comment + structural scaffolding
-#--------
 {
 	my ($csv, $tex) = paths();
 	write_table([[qw(k v)], ['x', 1]], $tex, 'row.names' => 0);
@@ -114,9 +106,7 @@ END_TEX
 	has($t, '\textbf{k}', 'header cells are bold');
 }
 
-#--------
 # tex selection logic: extension auto-detect and the explicit tex => 0/1 override
-#--------
 {	# a plain non-.tex name with no tex option => delimited, not LaTeX
 	my ($csv, $tex) = paths();
 	write_table([[qw(k v)], [1, 2]], $csv, 'row.names' => 0);
@@ -144,9 +134,7 @@ END_TEX
 	lacks(slurp($tex), '\begin{tabular}', 'tex => 0: LaTeX suppressed for .tex name');
 }
 
-#--------
 # tex.col.align
-#--------
 {
 	my ($csv, $tex) = paths();
 	write_table([[qw(k v)], ['x', 1]], $tex, 'tex.col.align' => 'l', 'row.names' => 0);
@@ -158,9 +146,7 @@ END_TEX
 	has(slurp($tex), '\begin{tabular}{|r|r|} \hline', "tex.col.align => 'r'");
 }
 
-#--------
 # tex.bold.1st.col
-#--------
 {
 	my ($csv, $tex) = paths();
 	# default (on): first data cell is wrapped in \textbf{}
@@ -175,9 +161,7 @@ END_TEX
 	has($t, '\textbf{k}', 'tex.bold.1st.col => 0: header still bold');
 }
 
-#--------
 # tex.format (%.4g on numeric cells only)
-#--------
 {
 	my ($csv, $tex) = paths();
 	write_table([[qw(num txt)], [10.12345, 'a_b']], $tex,
@@ -193,9 +177,7 @@ END_TEX
 	has(slurp($tex), '10.12345', 'tex.format off (default): numeric cell left as-is');
 }
 
-#--------
 # tex.size (directive emitted after \begin{tabular})
-#--------
 {
 	my ($csv, $tex) = paths();
 	write_table([[qw(k v)], ['x', 1]], $tex, 'tex.size' => '\small', 'row.names' => 0);
@@ -210,9 +192,7 @@ END_TEX
 	lacks(slurp($tex), '\small', 'tex.size absent: no stray size directive');
 }
 
-#--------
 # tex.comment (string and array ref), placed before \begin{tabular}
-#--------
 {
 	my ($csv, $tex) = paths();
 	write_table([[qw(k v)], ['x', 1]], $tex,
@@ -238,9 +218,7 @@ END_TEX
 	is(scalar(@comments), 1, 'tex.comment absent: only the provenance comment');
 }
 
-#--------
 # cell escaping: # _ % &  and  > -> \textgreater{}
-#--------
 {
 	my ($csv, $tex) = paths();
 	write_table([[qw(v)], ['a_b'], ['x>y'], ['50%'], ['p#q'], ['r&s']], $tex,
@@ -253,9 +231,7 @@ END_TEX
 	has($t, 'r\&s',              'escape: ampersand');
 }
 
-#--------
 # \includesvg{...svg} cells pass through unescaped
-#--------
 {
 	my ($csv, $tex) = paths();
 	write_table([[qw(fig)], ['\includesvg{a_b.svg}']], $tex, 'row.names' => 0);
@@ -264,9 +240,7 @@ END_TEX
 	lacks($t, 'a\_b.svg', 'includesvg: underscore inside is NOT escaped');
 }
 
-#--------
 # LaTeX output works for every data-frame shape (column counts + files)
-#--------
 {
 	my ($csv, $tex) = paths();
 	write_table({ a => 1, b => 2, c => 3 }, $tex, 'row.names' => 1);
@@ -325,9 +299,7 @@ END_TEX
 	lacks($body, '\textbf{} &', 'explicit row.names => 0: no empty leading header');
 }
 
-#--------
 # AoA input: first inner array is the header unless col.names is given
-#--------
 {
 	my ($csv, $tex) = paths();
 	write_table([[qw(gene score)], ['TP53', 0.9], ['BRCA1', 0.7]], $tex,
@@ -345,9 +317,7 @@ END_TEX
 	has($t, 'TP53', 'AoA + col.names: first inner array is data, not header');
 }
 
-#--------
 # error paths
-#--------
 {
 	my ($csv, $tex) = paths();
 	throws_ok {
@@ -375,11 +345,9 @@ END_TEX
 	} qr/Unknown argument/, 'removed tex.tab.file option now croaks as unknown';
 }
 
-#--------
 # leak safety: success and croak paths (mortal collector must be reclaimed).
 # By now an earlier tex write has already loaded Cwd (used for the provenance
 # line), so no module-load allocations are mistaken for leaks here.
-#--------
 if ($INC{'Devel/Cover.pm'}) { done_testing(); exit 0 }
 no_leaks_ok {
 	my ($csv, $tex) = paths();

@@ -125,9 +125,7 @@ like($@, qr/\bdata\b/, "croaks when 'data' missing");
 eval { TukeyHSD($fit, data => \%pg) };
 like($@, qr/response/, 'croaks when response/formula missing');
 
-# ---------------------------------------------------------------------------
 # Leak safety
-# ---------------------------------------------------------------------------
 no_leaks_ok {
 	qtukey(0.95, 4, 25);
 	ptukey(3.9, 4, 25);

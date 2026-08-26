@@ -38,9 +38,7 @@ my $titanic = {
 	survived => [	0,	  1,	 1,		1,	  0,   0,	0,	  1,	 1,		1,	  0,   0,	 1,	   0,	 1,	  0,   0,	1,	  0,   1 ],
 };
 
-#--------
 # round-trip: predicting on the training data reproduces fitted.values (lm)
-#--------
 {
 	my $data = { x => [1, 2, 3, 4], 'y' => [3, 5, 7, 9] };   # y = 1 + 2x exactly
 	my $fit	 = lm(formula => 'y ~ x', data => $data);
@@ -50,9 +48,7 @@ my $titanic = {
 	is_approx($pred->{$_}, $fv->{$_}, "lm round-trip row $_") for sort keys %$fv;
 }
 
-#--------
 # prediction on new data (exact line: intercept 1, slope 2)
-#--------
 {
 	my $fit = lm(formula => 'y ~ x', data => { x => [1, 2, 3, 4], 'y' => [3, 5, 7, 9] });
 	my $p	= predict($fit, { x => [10, 0] });
@@ -60,18 +56,14 @@ my $titanic = {
 	is_approx($p->{2}, 1,  'new data: 1 + 2*0 = intercept');
 }
 
-#--------
 # a flat single-row hash (scalar values) is one observation
-#--------
 {
 	my $fit = lm(formula => 'y ~ x', data => { x => [1, 2, 3, 4], 'y' => [3, 5, 7, 9] });
 	my $p	= predict($fit, { 'x' => 10 });
 	is_approx($p->{1}, 21, 'flat hash: scalar values mean a single row');
 }
 
-#--------
 # interactions and I() round-trip exactly through evaluate_term
-#--------
 {
 	my $data = { x => [1, 2, 3, 4, 5], z => [2, 1, 4, 3, 5], 'y' => [5, 9, 8, 7, 3] };
 	my $fit	 = lm(formula => 'y ~ x * z', data => $data);	  # x, z, x:z
@@ -85,9 +77,7 @@ my $titanic = {
 	is_approx($pred2->{$_}, $fv2->{$_}, "I(x^2) round-trip row $_") for sort keys %$fv2;
 }
 
-#--------
 # an aliased (collinear) term is dropped, and the round-trip still holds
-#--------
 {
 	my $data = { x => [1, 2, 3, 4], x2 => [1, 2, 3, 4], 'y' => [2, 4, 6, 8] };
 	my $fit	 = lm(formula => 'y ~ x + x2', data => $data);	  # x2 == x -> one aliased (NaN)
@@ -98,9 +88,7 @@ my $titanic = {
 	is_approx($pred->{$_}, $fv->{$_}, "aliased-skip round-trip row $_") for sort keys %$fv;
 }
 
-#--------
 # glm binomial: response reproduces fitted.values; response = logistic(link)
-#--------
 {
 	my $data = { success => [0, 0, 1, 1], predictor => [0.1, 0.2, 0.9, 0.8] };
 	my $fit	 = glm(formula => 'success ~ predictor', data => $data, family => 'binomial');
@@ -114,9 +102,7 @@ my $titanic = {
 	}
 }
 
-#--------
 # factors: raw categorical columns are expanded from xlevels
-#--------
 {
 	my $fit = glm(formula => 'survived ~ age + class + gender', data => $titanic, family => 'binomial');
 
@@ -141,9 +127,7 @@ my $titanic = {
 	ok($ok, 'glm factor round-trip reproduces fitted.values');
 }
 
-#--------
 # clean deaths: unseen factor level, missing factor column, missing column
-#--------
 {
 	my $fit = glm(formula => 'survived ~ age + class + gender', data => $titanic, family => 'binomial');
 	throws_ok { predict($fit, { age => 30, class => '4th', gender => 'male' }) }
@@ -154,26 +138,20 @@ my $titanic = {
 		qr/missing column 'age'/, 'a missing continuous column dies';
 }
 
-#--------
 # a missing value (column present, undef) still yields a NaN prediction
-#--------
 {
 	my $model = { coefficients => { Intercept => 0, w => 1 } };
 	my $p = predict($model, { w => [undef] });	 # column 'w' present, value missing
 	ok($p->{1} != $p->{1}, 'a missing value -> NaN prediction');
 }
 
-#--------
 # no newdata returns the model's fitted values
-#--------
 {
 	my $fit = lm(formula => 'y ~ x', data => { x => [1, 2, 3], y => [2, 4, 6] });
 	is_deeply(predict($fit), $fit->{'fitted.values'}, 'no newdata -> fitted.values');
 }
 
-#--------
 # AoH and HoH input round-trip
-#--------
 {
 	my $aoh = [ { x => 1, y => 3 }, { x => 2, y => 5 }, { x => 3, y => 7 } ];
 	my $fit = lm(formula => 'y ~ x', data => $aoh);
@@ -188,9 +166,7 @@ my $titanic = {
 	is_approx($pH->{$_}, $fvH->{$_}, "HoH round-trip row $_") for sort keys %$fvH;
 }
 
-#--------
 # errors
-#--------
 throws_ok { predict('scalar', { x => [1] }) } qr/must be a fitted/,
 	'a non-hashref model dies';
 throws_ok { predict({ coefficients => {} }, { x => [1] }, type => 'bogus') } qr/type must be/,
@@ -202,9 +178,7 @@ throws_ok { predict({ coefficients => { x => 1 } }, 'scalar') } qr/HoA|AoH|flat/
 lives_ok { predict(lm(formula => 'y ~ x', data => { x => [1,2,3], y => [1,2,3] })) }
 	'a well-formed call lives';
 
-#--------
 # memory
-#--------
 my $LEAK_FIT = lm(formula => 'y ~ x', data => { x => [1,2,3,4], y => [3,5,7,9] });
 my $LEAK_GLM = glm(formula => 'survived ~ age + class + gender', data => $titanic, family => 'binomial');
 no_leaks_ok {
@@ -223,7 +197,6 @@ no_leaks_ok {
 	eval { predict({}, { x => [1] }) };
 } 'predict: no memory leaks on a die path' unless $INC{'Devel/Cover.pm'};
 
-# ---------------------------------------------------------------------------
 # Scoring a factor coded in full.
 #
 # predict() recovers each factor dummy by name from the model's xlevels. It used

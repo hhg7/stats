@@ -78,11 +78,9 @@ sub rel_ok {
 	return 0;
 }
 
-# ---------------------------------------------------------------------------
 # name => [ [group => \@obs, ...], welch, classic, aov ]
-# ---------------------------------------------------------------------------
 my @CASES = (
-	# ---- pod_example (synthetic) ----
+	# pod_example (synthetic)
 	{
 		name   => 'pod_example',
 		cond   => 4.33018,   # ||y|| / ||residual||: digits lost to cancellation
@@ -94,7 +92,7 @@ my @CASES = (
 		classic => { F => 177.504798464491, df1 => 1, df2 => 10, p => 1.08622654741839e-07 },
 		aov => { ssb => 61.6533333333333, ssw => 3.47333333333334, msb => 61.6533333333333, msw => 0.347333333333334 },
 	},
-	# ---- three_unequal_n (synthetic) ----
+	# three_unequal_n (synthetic)
 	{
 		name   => 'three_unequal_n',
 		cond   => 2.60553,   # ||y|| / ||residual||: digits lost to cancellation
@@ -107,7 +105,7 @@ my @CASES = (
 		classic => { F => 37.6271551724138, df1 => 2, df2 => 13, p => 3.92056152848904e-06 },
 		aov => { ssb => 335.75, ssw => 58, msb => 167.875, msw => 4.46153846153846 },
 	},
-	# ---- equal_means (synthetic) ----
+	# equal_means (synthetic)
 	{
 		name   => 'equal_means',
 		cond   => 1,   # ||y|| / ||residual||: digits lost to cancellation
@@ -121,7 +119,7 @@ my @CASES = (
 		classic => { F => 0, df1 => 2, df2 => 12, p => 1 },
 		# aov omitted: R's QR-based anova(aov()) is the less accurate side here
 	},
-	# ---- huge_separation (synthetic) ----
+	# huge_separation (synthetic)
 	{
 		name   => 'huge_separation',
 		cond   => 753778,   # ||y|| / ||residual||: digits lost to cancellation
@@ -133,7 +131,7 @@ my @CASES = (
 		classic => { F => 4545454545562.03, df1 => 1, df2 => 8, p => 2.6236671997352e-48 },
 		# aov omitted: R's QR-based anova(aov()) is the less accurate side here
 	},
-	# ---- n2_groups (synthetic) ----
+	# n2_groups (synthetic)
 	{
 		name   => 'n2_groups',
 		cond   => 3.40168,   # ||y|| / ||residual||: digits lost to cancellation
@@ -146,7 +144,7 @@ my @CASES = (
 		classic => { F => 15.8571428571429, df1 => 2, df2 => 3, p => 0.0254050194478081 },
 		aov => { ssb => 111, ssw => 10.5, msb => 55.5, msw => 3.5 },
 	},
-	# ---- negative_values (synthetic) ----
+	# negative_values (synthetic)
 	{
 		name   => 'negative_values',
 		cond   => 11.9307,   # ||y|| / ||residual||: digits lost to cancellation
@@ -159,7 +157,7 @@ my @CASES = (
 		classic => { F => 636.033333333333, df1 => 2, df2 => 9, p => 2.04182493404555e-10 },
 		aov => { ssb => 795.041666666667, ssw => 5.625, msb => 397.520833333333, msw => 0.625 },
 	},
-	# ---- large_magnitude (synthetic) ----
+	# large_magnitude (synthetic)
 	{
 		name   => 'large_magnitude',
 		cond   => 4.58258,   # ||y|| / ||residual||: digits lost to cancellation
@@ -171,7 +169,7 @@ my @CASES = (
 		classic => { F => 120, df1 => 1, df2 => 6, p => 3.43640280761215e-05 },
 		# aov omitted: R's QR-based anova(aov()) is the less accurate side here
 	},
-	# ---- small_magnitude (synthetic) ----
+	# small_magnitude (synthetic)
 	{
 		name   => 'small_magnitude',
 		cond   => 2.04939,   # ||y|| / ||residual||: digits lost to cancellation
@@ -183,7 +181,7 @@ my @CASES = (
 		classic => { F => 19.2, df1 => 1, df2 => 6, p => 0.00465921494399394 },
 		aov => { ssb => 3.2e-15, ssw => 1e-15, msb => 3.2e-15, msw => 1.66666666666667e-16 },
 	},
-	# ---- two_group_ttest_equiv (synthetic) ----
+	# two_group_ttest_equiv (synthetic)
 	{
 		name   => 'two_group_ttest_equiv',
 		cond   => 2.10125,   # ||y|| / ||residual||: digits lost to cancellation
@@ -195,7 +193,7 @@ my @CASES = (
 		classic => { F => 30.7372297177871, df1 => 1, df2 => 9, p => 0.000359139378788852 },
 		aov => { ssb => 12.2960303030303, ssw => 3.60033333333333, msb => 12.2960303030303, msw => 0.400037037037037 },
 	},
-	# ---- outlier (synthetic) ----
+	# outlier (synthetic)
 	{
 		name   => 'outlier',
 		cond   => 1.05978,   # ||y|| / ||residual||: digits lost to cancellation
@@ -207,7 +205,7 @@ my @CASES = (
 		classic => { F => 0.985000376874953, df1 => 1, df2 => 8, p => 0.350033340501709 },
 		aov => { ssb => 98010, ssw => 796020, msb => 98010, msw => 99502.5 },
 	},
-	# ---- tiny_var_ratio (synthetic) ----
+	# tiny_var_ratio (synthetic)
 	{
 		name   => 'tiny_var_ratio',
 		cond   => 1.37577,   # ||y|| / ||residual||: digits lost to cancellation
@@ -219,7 +217,7 @@ my @CASES = (
 		classic => { F => 5.35649654739186, df1 => 1, df2 => 6, p => 0.0599057801913023 },
 		aov => { ssb => 11026.12495545, ssw => 12350.75, msb => 11026.12495545, msw => 2058.45833333333 },
 	},
-	# ---- integer_data (synthetic) ----
+	# integer_data (synthetic)
 	{
 		name   => 'integer_data',
 		cond   => 2.19249,   # ||y|| / ||residual||: digits lost to cancellation
@@ -232,7 +230,7 @@ my @CASES = (
 		classic => { F => 22.8421052631579, df1 => 2, df2 => 12, p => 8.1048644730633e-05 },
 		aov => { ssb => 86.8, ssw => 22.8, msb => 43.4, msw => 1.9 },
 	},
-	# ---- f_below_one (synthetic) ----
+	# f_below_one (synthetic)
 	{
 		name   => 'f_below_one',
 		cond   => 1.00771,   # ||y|| / ||residual||: digits lost to cancellation
@@ -245,7 +243,7 @@ my @CASES = (
 		classic => { F => 0.0928571428571428, df1 => 2, df2 => 12, p => 0.911972052171714 },
 		aov => { ssb => 1.73333333333333, ssw => 112, msb => 0.866666666666665, msw => 9.33333333333334 },
 	},
-	# ---- heteroscedastic (synthetic) ----
+	# heteroscedastic (synthetic)
 	{
 		name   => 'heteroscedastic',
 		cond   => 1.00845,   # ||y|| / ||residual||: digits lost to cancellation
@@ -267,7 +265,7 @@ my @CASES = (
 		classic => { F => 0.398759357421688, df1 => 2, df2 => 47, p => 0.673401208485444 },
 		aov => { ssb => 8596.12214213067, ssw => 506593.429295869, msb => 4298.06107106534, msw => 10778.5836020398 },
 	},
-	# ---- many_groups (synthetic) ----
+	# many_groups (synthetic)
 	{
 		name   => 'many_groups',
 		cond   => 2.09565,   # ||y|| / ||residual||: digits lost to cancellation
@@ -302,7 +300,7 @@ my @CASES = (
 		classic => { F => 35.8016219635607, df1 => 9, df2 => 95, p => 9.20805992914193e-27 },
 		aov => { ssb => 872.177835109018, ssw => 257.148170610474, msb => 96.9086483454464, msw => 2.70682284853131 },
 	},
-	# ---- many_small_groups (synthetic) ----
+	# many_small_groups (synthetic)
 	{
 		name   => 'many_small_groups',
 		cond   => 1.29494,   # ||y|| / ||residual||: digits lost to cancellation
@@ -337,7 +335,7 @@ my @CASES = (
 		classic => { F => 1.41014240625048, df1 => 24, df2 => 50, p => 0.151357855200017 },
 		aov => { ssb => 25.0541642875131, ssw => 37.0148258556195, msb => 1.04392351197971, msw => 0.74029651711239 },
 	},
-	# ---- zero_var_one_group (synthetic) ----
+	# zero_var_one_group (synthetic)
 	{
 		name   => 'zero_var_one_group',
 		cond   => 1.87083,   # ||y|| / ||residual||: digits lost to cancellation
@@ -349,7 +347,7 @@ my @CASES = (
 		classic => { F => 15, df1 => 1, df2 => 6, p => 0.00823735414510809 },
 		aov => { ssb => 12.5, ssw => 5, msb => 12.5, msw => 0.833333333333333 },
 	},
-	# ---- all_zero_var (synthetic) ----
+	# all_zero_var (synthetic)
 	{
 		name   => 'all_zero_var',
 		cond   => 1,   # ||y|| / ||residual||: digits lost to cancellation
@@ -362,7 +360,7 @@ my @CASES = (
 		classic => { F => $INF, df1 => 2, df2 => 9, p => 0 },
 		# aov omitted: R's QR-based anova(aov()) is the less accurate side here
 	},
-	# ---- all_identical (synthetic) ----
+	# all_identical (synthetic)
 	{
 		name   => 'all_identical',
 		cond   => 1,   # ||y|| / ||residual||: digits lost to cancellation
@@ -375,7 +373,7 @@ my @CASES = (
 		classic => { F => $NAN, df1 => 1, df2 => 6, p => $NAN },
 		# aov omitted: R's QR-based anova(aov()) is the less accurate side here
 	},
-	# ---- PlantGrowth (R built-in data set) ----
+	# PlantGrowth (R built-in data set)
 	{
 		name   => 'PlantGrowth',
 		cond   => 1.16575,   # ||y|| / ||residual||: digits lost to cancellation
@@ -388,7 +386,7 @@ my @CASES = (
 		classic => { F => 4.84608786238014, df1 => 2, df2 => 27, p => 0.0159099583256229 },
 		aov => { ssb => 3.76634, ssw => 10.49209, msb => 1.88317, msw => 0.388595925925926 },
 	},
-	# ---- InsectSprays (R built-in data set) ----
+	# InsectSprays (R built-in data set)
 	{
 		name   => 'InsectSprays',
 		cond   => 1.90498,   # ||y|| / ||residual||: digits lost to cancellation
@@ -404,7 +402,7 @@ my @CASES = (
 		classic => { F => 34.7022820554917, df1 => 5, df2 => 66, p => 3.18258372614514e-17 },
 		aov => { ssb => 2668.83333333334, ssw => 1015.16666666667, msb => 533.766666666667, msw => 15.3813131313132 },
 	},
-	# ---- chickwts (R built-in data set) ----
+	# chickwts (R built-in data set)
 	{
 		name   => 'chickwts',
 		cond   => 1.47713,   # ||y|| / ||residual||: digits lost to cancellation
@@ -420,7 +418,7 @@ my @CASES = (
 		classic => { F => 15.3647997747125, df1 => 5, df2 => 65, p => 5.93641985347125e-10 },
 		aov => { ssb => 231129.16210292, ssw => 195556.020995671, msb => 46225.8324205839, msw => 3008.55416916416 },
 	},
-	# ---- iris_sepal (R built-in data set) ----
+	# iris_sepal (R built-in data set)
 	{
 		name   => 'iris_sepal',
 		cond   => 1.61946,   # ||y|| / ||residual||: digits lost to cancellation
@@ -439,7 +437,7 @@ my @CASES = (
 		classic => { F => 119.264502184505, df1 => 2, df2 => 147, p => 1.66966919076942e-31 },
 		aov => { ssb => 63.2121333333333, ssw => 38.9562, msb => 31.6060666666667, msw => 0.265008163265306 },
 	},
-	# ---- iris_petal (R built-in data set) ----
+	# iris_petal (R built-in data set)
 	{
 		name   => 'iris_petal',
 		cond   => 3.74984,   # ||y|| / ||residual||: digits lost to cancellation
@@ -458,7 +456,7 @@ my @CASES = (
 		classic => { F => 960.007146801806, df1 => 2, df2 => 147, p => 4.16944583944412e-85 },
 		aov => { ssb => 80.4133333333333, ssw => 6.1566, msb => 40.2066666666667, msw => 0.0418816326530612 },
 	},
-	# ---- ToothGrowth (R built-in data set) ----
+	# ToothGrowth (R built-in data set)
 	{
 		name   => 'ToothGrowth',
 		cond   => 1.03114,   # ||y|| / ||residual||: digits lost to cancellation
@@ -472,7 +470,7 @@ my @CASES = (
 		classic => { F => 3.66825254107097, df1 => 1, df2 => 58, p => 0.0603933712241287 },
 		aov => { ssb => 205.35, ssw => 3246.85933333333, msb => 205.35, msw => 55.9803333333333 },
 	},
-	# ---- ToothGrowth_dose (R built-in data set) ----
+	# ToothGrowth_dose (R built-in data set)
 	{
 		name   => 'ToothGrowth_dose',
 		cond   => 1.83452,   # ||y|| / ||residual||: digits lost to cancellation
@@ -488,7 +486,7 @@ my @CASES = (
 		classic => { F => 67.4157378567425, df1 => 2, df2 => 57, p => 9.53272701169993e-16 },
 		aov => { ssb => 2426.43433333334, ssw => 1025.775, msb => 1213.21716666667, msw => 17.996052631579 },
 	},
-	# ---- mtcars_cyl (R built-in data set) ----
+	# mtcars_cyl (R built-in data set)
 	{
 		name   => 'mtcars_cyl',
 		cond   => 1.93333,   # ||y|| / ||residual||: digits lost to cancellation
@@ -501,7 +499,7 @@ my @CASES = (
 		classic => { F => 39.697515255869, df1 => 2, df2 => 29, p => 4.97891917440021e-09 },
 		aov => { ssb => 824.784590097402, ssw => 301.262597402598, msb => 412.392295048701, msw => 10.3883654276758 },
 	},
-	# ---- mtcars_gear (R built-in data set) ----
+	# mtcars_gear (R built-in data set)
 	{
 		name   => 'mtcars_gear',
 		cond   => 1.32355,   # ||y|| / ||residual||: digits lost to cancellation
@@ -514,7 +512,7 @@ my @CASES = (
 		classic => { F => 10.9007196886609, df1 => 2, df2 => 29, p => 0.000294827992857195 },
 		aov => { ssb => 483.2431875, ssw => 642.804, msb => 241.62159375, msw => 22.1656551724138 },
 	},
-	# ---- warpbreaks (R built-in data set) ----
+	# warpbreaks (R built-in data set)
 	{
 		name   => 'warpbreaks',
 		cond   => 1.13252,   # ||y|| / ||residual||: digits lost to cancellation
@@ -527,7 +525,7 @@ my @CASES = (
 		classic => { F => 7.20611388087116, df1 => 2, df2 => 51, p => 0.00175281674585271 },
 		aov => { ssb => 2034.25925925926, ssw => 7198.55555555556, msb => 1017.12962962963, msw => 141.148148148148 },
 	},
-	# ---- sleep (R built-in data set) ----
+	# sleep (R built-in data set)
 	{
 		name   => 'sleep',
 		cond   => 1.09196,   # ||y|| / ||residual||: digits lost to cancellation
@@ -539,7 +537,7 @@ my @CASES = (
 		classic => { F => 3.46262676078045, df1 => 1, df2 => 18, p => 0.0791867142159381 },
 		aov => { ssb => 12.482, ssw => 64.886, msb => 12.482, msw => 3.60477777777778 },
 	},
-	# ---- airquality (R built-in data set) ----
+	# airquality (R built-in data set)
 	{
 		name   => 'airquality',
 		cond   => 1.1435,   # ||y|| / ||residual||: digits lost to cancellation
@@ -558,7 +556,7 @@ my @CASES = (
 		classic => { F => 8.53560658861385, df1 => 4, df2 => 111, p => 4.82706453411474e-06 },
 		aov => { ssb => 29437.8964780431, ssw => 95705.1638667846, msb => 7359.47411951076, msw => 862.208683484546 },
 	},
-	# ---- CO2_uptake (R built-in data set) ----
+	# CO2_uptake (R built-in data set)
 	{
 		name   => 'CO2_uptake',
 		cond   => 1.05514,   # ||y|| / ||residual||: digits lost to cancellation
@@ -574,7 +572,7 @@ my @CASES = (
 		classic => { F => 9.29311516955702, df1 => 1, df2 => 82, p => 0.00309573325254161 },
 		aov => { ssb => 988.114404761905, ssw => 8718.86119047619, msb => 988.114404761905, msw => 106.327575493612 },
 	},
-	# ---- esoph (R built-in data set) ----
+	# esoph (R built-in data set)
 	{
 		name   => 'esoph',
 		cond   => 1.28681,   # ||y|| / ||residual||: digits lost to cancellation
@@ -590,7 +588,7 @@ my @CASES = (
 		classic => { F => 10.7562391809684, df1 => 5, df2 => 82, p => 5.69026549922765e-08 },
 		aov => { ssb => 261.201515151516, ssw => 398.25303030303, msb => 52.2403030303031, msw => 4.85674427198817 },
 	},
-	# ---- OrchardSprays (R built-in data set) ----
+	# OrchardSprays (R built-in data set)
 	{
 		name   => 'OrchardSprays',
 		cond   => 1.83922,   # ||y|| / ||residual||: digits lost to cancellation
@@ -608,7 +606,7 @@ my @CASES = (
 		classic => { F => 19.0618168511379, df1 => 7, df2 => 56, p => 9.49886166348619e-13 },
 		aov => { ssb => 56159.984375, ssw => 23569.625, msb => 8022.85491071428, msw => 420.886160714286 },
 	},
-	# ---- faithful (R built-in data set) ----
+	# faithful (R built-in data set)
 	{
 		name   => 'faithful',
 		cond   => 2.36607,   # ||y|| / ||residual||: digits lost to cancellation
@@ -640,9 +638,7 @@ my @CASES = (
 	},
 );
 
-# ---------------------------------------------------------------------------
 # Every case, through all three documented input shapes, in both branches.
-# ---------------------------------------------------------------------------
 for my $c (@CASES) {
 	my @names = map { $c->{groups}[2 * $_] } 0 .. (@{ $c->{groups} } / 2 - 1);
 	my %hash  = @{ $c->{groups} };
@@ -692,9 +688,9 @@ for my $c (@CASES) {
 		for my $n (@names) {
 			my @obs  = @{ $hash{$n} };
 			my $mean = 0; $mean += $_ for @obs; $mean /= @obs;
-			rel_ok($got{hash}{group_stats}{mean}{$n}, $mean,
+			rel_ok($got{hash}{'group.stats'}{mean}{$n}, $mean,
 				"$c->{name}/$branch: mean($n)", 1e-13);
-			is($got{hash}{group_stats}{size}{$n}, scalar @obs,
+			is($got{hash}{'group.stats'}{size}{$n}, scalar @obs,
 				"$c->{name}/$branch: size($n)");
 		}
 
@@ -710,11 +706,9 @@ for my $c (@CASES) {
 	}
 }
 
-# ---------------------------------------------------------------------------
 # Tail p-values.  These used to come back as a flat 0 because the p-value was
 # built as 1 - pf(F, df1, df2), which has no resolution below the ulp of 1.0.
 # References: R pf(F, df1, df2, lower.tail = FALSE) == scipy.stats.f.sf.
-# ---------------------------------------------------------------------------
 {
 	my %hash = @{ (grep { $_->{name} eq 'faithful' } @CASES)[0]{groups} };
 	my $w = oneway_test(\%hash);
@@ -723,11 +717,9 @@ for my $c (@CASES) {
 	ok($c->{Group}{'Pr(>F)'} > 0, 'pooled p-value of 5.5e-103 does not underflow to 0');
 }
 
-# ---------------------------------------------------------------------------
 # Degenerate variances.  R's oneway.test gives NaN throughout the Welch branch
 # once a group has zero variance (w_i = n_i/0 = Inf makes its tmp term NaN),
 # and F = Inf with p = 0 in the pooled branch when every group is constant.
-# ---------------------------------------------------------------------------
 {
 	my $z = oneway_test({ a => [5, 5, 5, 5], b => [1, 2, 3, 4] });
 	ok(is_nan($z->{Group}{'F value'}), 'Welch, one constant group: F is NaN like R');
@@ -745,10 +737,8 @@ for my $c (@CASES) {
 	ok(is_nan($s->{Group}{'Pr(>F)'}),  'pooled, single constant value: p is NaN');
 }
 
-# ---------------------------------------------------------------------------
 # k = 2 must reproduce the corresponding two-sample t test, F == t^2.
 # (R: oneway.test(y ~ g) and t.test(a, b) agree by construction.)
-# ---------------------------------------------------------------------------
 {
 	my @a = (2.1, 3.4, 1.9, 2.8, 3.3, 2.2);
 	my @b = (4.4, 5.1, 3.9, 4.8, 5.5);
@@ -757,16 +747,14 @@ for my $c (@CASES) {
 		my $o = oneway_test({ a => \@a, b => \@b }, var_equal => $ve);
 		my $t = t_test(\@a, \@b, var_equal => $ve);
 		rel_ok($o->{Group}{'F value'}, $t->{statistic} ** 2, "k=2 $lbl: F == t^2", 1e-13);
-		rel_ok($o->{Group}{'Pr(>F)'},  $t->{p_value},        "k=2 $lbl: p == t-test p", 1e-13);
+		rel_ok($o->{Group}{'Pr(>F)'},  $t->{'p.value'},        "k=2 $lbl: p == t-test p", 1e-13);
 		rel_ok($o->{Residuals}{Df},    $t->{df},             "k=2 $lbl: denom Df == t df", 1e-13);
 	}
 }
 
-# ---------------------------------------------------------------------------
 # Formula mode honours the same data-validation contract as the other two
 # shapes: an undef or non-numeric response cell dies instead of being read
 # as 0.0.  (It used to be read as 0.0, silently corrupting the statistic.)
-# ---------------------------------------------------------------------------
 {
 	my @lab = qw(a a a b b b);
 	throws_ok {
@@ -798,17 +786,15 @@ for my $c (@CASES) {
 	} qr/need >= 2/, 'formula mode: a factor level with one observation dies';
 }
 
-# ---------------------------------------------------------------------------
 # Factor identity is the string form of the label, so 0 and '0' are one group
 # (this is what makes the R idiom as.factor(ctrl) on a 0/1 column work).
-# ---------------------------------------------------------------------------
 {
 	my $mixed = oneway_test(
 		{ y => [1, 2, 3, 9, 8, 7], g => [0, '0', 0, 1, '1', 1] },
 		formula => 'y ~ g');
-	is(scalar keys %{ $mixed->{group_stats}{size} }, 2,
+	is(scalar keys %{ $mixed->{'group.stats'}{size} }, 2,
 		'numeric and string labels with the same string form are one group');
-	is($mixed->{group_stats}{size}{0}, 3, 'group "0" has 3 observations');
+	is($mixed->{'group.stats'}{size}{0}, 3, 'group "0" has 3 observations');
 }
 
 done_testing;

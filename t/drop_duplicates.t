@@ -7,9 +7,7 @@ use Test::More;
 use Stats::LikeR;
 use Test::LeakTrace 'no_leaks_ok';
 
-#--------
 # AoA -- all columns (default), keep => first
-#--------
 {
 	my $df = [ [1, 'a'], [1, 'a'], [2, 'b'], [1, 'a'] ];
 	is_deeply(drop_duplicates($df),
@@ -18,9 +16,7 @@ use Test::LeakTrace 'no_leaks_ok';
 		'AoA original untouched');
 }
 
-#--------
 # AoA -- keep => last and keep => 0 (drop all dups)
-#--------
 {
 	my $df = [ [1, 'a'], [2, 'b'], [1, 'a'], [3, 'c'] ];
 	is_deeply(drop_duplicates($df, keep => 'last'),
@@ -31,9 +27,7 @@ use Test::LeakTrace 'no_leaks_ok';
 		[ [2, 'b'], [3, 'c'] ], "AoA keep 'none' same as 0");
 }
 
-#--------
 # AoA -- subset of positions
-#--------
 {
 	my $df = [ [1, 'x'], [1, 'y'], [2, 'z'] ];
 	is_deeply(drop_duplicates($df, subset => 0),
@@ -42,9 +36,7 @@ use Test::LeakTrace 'no_leaks_ok';
 		[ [1, 'x'], [1, 'y'], [2, 'z'] ], 'AoA subset [0,1] keeps distinct pairs');
 }
 
-#--------
 # AoH -- default (union of keys), missing key == undef so rows collapse
-#--------
 {
 	my $df = [ { A => 1, B => 2 }, { A => 1, B => 2 }, { A => 1 } ];
 	is_deeply(drop_duplicates($df),
@@ -52,9 +44,7 @@ use Test::LeakTrace 'no_leaks_ok';
 		'AoH default: exact dup dropped; {A=>1} differs (B missing != B=2)');
 }
 
-#--------
 # AoH -- subset
-#--------
 {
 	my $df = [ { id => 1, v => 'a' }, { id => 1, v => 'b' }, { id => 2, v => 'c' } ];
 	is_deeply(drop_duplicates($df, subset => 'id'),
@@ -65,9 +55,7 @@ use Test::LeakTrace 'no_leaks_ok';
 		'AoH subset id, keep last');
 }
 
-#--------
 # AoH -- surviving rows are the SAME refs (shared, not copied)
-#--------
 {
 	my $r0 = { A => 1 };
 	my $df = [ $r0, { A => 1 }, { A => 2 } ];
@@ -75,9 +63,7 @@ use Test::LeakTrace 'no_leaks_ok';
 	is($out->[0], $r0, 'AoH survivor reuses the original row ref');
 }
 
-#--------
 # HoA -- default (all cols), unchecked-vs-checked realignment
-#--------
 {
 	my $df = { A => [1, 1, 2, 1], B => ['a', 'a', 'b', 'a'] };
 	is_deeply(drop_duplicates($df),
@@ -86,9 +72,7 @@ use Test::LeakTrace 'no_leaks_ok';
 		'HoA original untouched');
 }
 
-#--------
 # HoA -- subset keeps every column aligned to the survivors
-#--------
 {
 	my $df = { id => [1, 1, 2], v => [10, 20, 30] };
 	is_deeply(drop_duplicates($df, subset => 'id'),
@@ -98,18 +82,14 @@ use Test::LeakTrace 'no_leaks_ok';
 		{ id => [1, 2], v => [20, 30] }, 'HoA subset id, keep last');
 }
 
-#--------
 # undef (NA) is a comparable value: two all-undef rows are duplicates
-#--------
 {
 	my $df = [ [undef, 1], [undef, 1], [1, undef] ];
 	is_deeply(drop_duplicates($df),
 		[ [undef, 1], [1, undef] ], 'AoA: undef cells compare equal to each other');
 }
 
-#--------
 # numeric vs string: stringified comparison (like merge); values survive intact
-#--------
 {
 	my $df = { x => [1, 1.0, 22.8], 'y' => [9, 8, 7] };
 	my $out = drop_duplicates($df, subset => 'x');
@@ -118,16 +98,12 @@ use Test::LeakTrace 'no_leaks_ok';
 	ok(looks_like_number($out->{x}[1]), 'surviving cell still numeric');
 }
 
-#--------
 # empty / edge
-#--------
 is_deeply(drop_duplicates([]), [], 'empty AoA/AoH -> empty');
 is_deeply(drop_duplicates({}), {}, 'empty HoA -> empty');
 is_deeply(drop_duplicates([ [1], [1] ]), [ [1] ], 'AoA collapses to one');
 
-#--------
 # errors
-#--------
 dies_ok { drop_duplicates(undef) } 'undefined data dies';
 throws_ok { drop_duplicates('scalar') } qr/data frame/,
 	'scalar data frame dies';
@@ -151,9 +127,7 @@ throws_ok { drop_duplicates({ A => [1] }, subset => 'Z') } qr/column 'Z' not fou
 	'HoA missing column dies';
 lives_ok { drop_duplicates([ [1], [1] ]) } 'a well-formed call lives';
 
-#--------
 # memory
-#--------
 if ($INC{'Devel/Cover.pm'}) { done_testing(); exit 0 }
 no_leaks_ok {
 	my $x = drop_duplicates([ [1, 'a'], [1, 'a'], [2, 'b'] ]);
@@ -171,11 +145,9 @@ no_leaks_ok {
 	eval { drop_duplicates([ { A => 1 } ], subset => 'Z') };
 } 'drop_duplicates: no memory leaks (die path)';
 
-#--------
 # What survives is shared, not deep-copied, in all three shapes: the frame and
 # (for HoA) the column arrays are new, but the cells behind them are the
 # input's own.
-#--------
 {
 	my $hoa = { a => [1, 1, 2], b => ['x', 'x', 'y'] };
 	my $out = drop_duplicates($hoa);
@@ -198,13 +170,11 @@ no_leaks_ok {
 	is($aoa->[0][0], 7, 'AoA result rows are the input rows');
 }
 
-#--------
 # Numeric cells: a cell's identity is its Perl stringification, and the XS
 # renders plain IV and NV cells itself rather than going through SvPV (see
 # dd_nv_pv in LikeR.xs).  So the grouping has to come out exactly as it would
 # from "$_" -- on the awkward values and on a large pile of random doubles,
 # which is where a shortcut in the float formatting would show up.
-#--------
 {
 	# a column deduped by drop_duplicates vs by a plain Perl string hash
 	my $mismatch = sub {

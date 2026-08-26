@@ -66,7 +66,7 @@ DATA = {nm: np.array([float(v) for v in ln.split()])
 
 print("## BEGIN GENERATED (Python) -- python3 t/density.R.scipy.py")
 
-# --- bw.nrd0 / bw.nrd rebuilt from NumPy and SciPy primitives -------------
+# bw.nrd0 / bw.nrd rebuilt from NumPy and SciPy primitives
 print("our @PY_NRD = (")
 for nm, x in DATA.items():
     n = len(x)
@@ -77,7 +77,7 @@ for nm, x in DATA.items():
     print("\t{ data => '%s', nrd0 => '%s', nrd => '%s' }," % (nm, repr(nrd0), repr(nrd)))
 print(");\n")
 
-# --- the exact Gaussian KDE at R's own grid ------------------------------
+# the exact Gaussian KDE at R's own grid
 # For each (data set, n) the grid is R's: from = min(x) - 3*bw, to = max(x) +
 # 3*bw, n equally spaced points.  bw is R's bw.nrd0, recomputed here.
 print("our @PY_EXACT = (")
@@ -100,7 +100,7 @@ for nm in ("z60", "z200", "precip", "eruptions"):
         print("\t  y  => [%s] }," % nvq(e[at]))
 print(");\n")
 
-# --- how far the exact estimate is from R's discretised one --------------
+# how far the exact estimate is from R's discretised one
 # Measured against R itself, so the tolerance the Perl test uses is a number
 # that was observed here rather than one picked to make a failure go away.
 RS2 = r"""

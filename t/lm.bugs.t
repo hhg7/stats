@@ -81,10 +81,8 @@ my %line = (x => [1, 2, 3, 4], 'y' => [3, 5, 7, 9]);
 	is_approx $res->{'r.squared'}, 1.0, 'perfect fit on the long-named predictor', 1e-9;
 }
 
-# ---------------------------------------------------------------------------
 # BUG: the `.`-expansion buffer (2048) silently dropped expanded terms. With
 # many predictors, every one must still appear in the model.
-# ---------------------------------------------------------------------------
 {
 	my $ncol = 50;                     # 50 long names overflow the old 2048 buffer
 	my $nrow = 60;                     # rows > params, so no 0-df croak
@@ -104,9 +102,7 @@ my %line = (x => [1, 2, 3, 4], 'y' => [3, 5, 7, 9]);
 		"all $ncol predictors plus the intercept are present (no truncation)";
 }
 
-# ---------------------------------------------------------------------------
 # A clean fit still produces the documented results.
-# ---------------------------------------------------------------------------
 {
 	my $res = lm(formula => 'y ~ x', data => \%line);
 	is ref($res), 'HASH', 'lm returns a hash ref';
@@ -115,9 +111,7 @@ my %line = (x => [1, 2, 3, 4], 'y' => [3, 5, 7, 9]);
 	is_approx $res->{'r.squared'},             1.0, 'R^2 = 1 for an exact line', 1e-9;
 }
 
-# ---------------------------------------------------------------------------
 # Leak guards (SV-level; see the oneway_test note about C-buffer leaks).
-# ---------------------------------------------------------------------------
 {
 	no_leaks_ok { lm(formula => 'y ~ x', data => \%line) } 'no SV leak on a successful fit' unless $INC{'Devel/Cover.pm'};
 	no_leaks_ok { eval { lm(formula => 'y ~ x + z', data => {x=>[1,2],z=>[3,4],'y'=>[5,6]}) } }

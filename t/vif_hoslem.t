@@ -14,7 +14,7 @@ sub is_approx {
 	return 0;
 }
 
-# --- vif ------------------------------------------------------------------
+# vif
 # Reference: 1/(1 - R^2) from regressing each predictor on the others in R.
 {
 	my %d = (
@@ -32,7 +32,7 @@ sub is_approx {
 	is_approx($v2->{x1}, $v->{x1}, 'VIF formula form matches list form', 1e-9);
 }
 
-# --- hosmer_lemeshow ------------------------------------------------------
+# hosmer_lemeshow
 # Reference: ResourceSelection::hoslem.test algorithm replicated in base R.
 {
 	my @y  = (0,0,1,0,1,0,1,1,0,1, 0,1,1,0,1,1,0,1,1,1);
@@ -41,12 +41,12 @@ sub is_approx {
 	my $h = hosmer_lemeshow(\@y, \@pr, g => 5);
 	is_approx($h->{statistic}, 3.25860820, 'HL statistic (g=5)', 1e-6);
 	is($h->{parameter}, 3, 'HL df = g-2');
-	is_approx($h->{p_value}, 0.35344529, 'HL p-value', 1e-6);
+	is_approx($h->{'p.value'}, 0.35344529, 'HL p-value', 1e-6);
 	is($h->{groups}, 5, 'HL used 5 groups');
 	is(scalar(@{$h->{table}}), 5, 'HL returns per-group table');
 }
 
-# --- error handling -------------------------------------------------------
+# error handling
 throws_ok { vif(\%{{x1=>[1,2]}}, ['x1']) } qr/at least two predictors/, 'vif needs >=2 predictors';
 throws_ok { hosmer_lemeshow([1,0,1],[0.5,0.5,0.5], g => 2) } qr/at least 3/, 'HL needs g>=3';
 throws_ok { hosmer_lemeshow([1,0],[0.5,0.5,0.5]) } qr/same length/, 'HL length mismatch';

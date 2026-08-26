@@ -36,7 +36,6 @@ dies_ok {
 dies_ok {
 	value_counts(undef);
 } 'value_counts: dies with undefined data';
-#----
 my $hash = value_counts('c');
 my $n = scalar keys %{ $hash };
 if ($n == 1) {
@@ -53,7 +52,6 @@ is_approx( 1, $hash->{'c'}, 'value_counts: c = 1', 1e-13);
 no_leaks_ok {
 	value_counts('c');
 } 'value_counts: no leaks when given scalar' unless $INC{'Devel/Cover.pm'};
-#--------
 $hash = value_counts(['a','b','b']);
 $n = scalar keys %{ $hash };
 if ($n == 2) {
@@ -66,7 +64,6 @@ is_approx(2, $hash->{'b'}, 'value_counts: key "a"', 1e-13);
 no_leaks_ok {
 	value_counts(['a','b','b']);
 } 'value_counts: no leaks when given array reference' unless $INC{'Devel/Cover.pm'};
-#--------------
 $hash = value_counts('a','b','b');
 $n = scalar keys %{ $hash };
 if ($n == 2) {
@@ -91,7 +88,6 @@ is_approx($hash->{'b'}, 1, 'value_counts: simple hash "b" has correct #', 1e-13)
 no_leaks_ok {
 	value_counts( { A => 'a', B => 'a', C => 'b' } );
 } 'value_counts: no leaks when given simple hash' unless $INC{'Devel/Cover.pm'};
-#--------
 $hash = value_counts( {
 	A => {
 		a => 'x',
@@ -214,11 +210,9 @@ if ($n == 0) {
 } else {
 	fail("value_counts: hash of array has $n incorrect hash keys");
 }
-#--------
 # Numeric values.  increment_count() renders plain integers and doubles itself
 # rather than through SvPV (nk_num_pv in LikeR.xs), so the counts have to come
 # out keyed exactly as a plain Perl string hash would key them.
-#--------
 {
 	srand(4321);
 	# Arbitrary bit patterns come from two 32-bit halves below: 'Q' and a 32-bit

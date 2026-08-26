@@ -12,37 +12,37 @@ use Stats::LikeR;
 # look like leaks), and if the assigned-to variable lived inside that block it
 # would be undef under coverage and the assertions below would fail.
 
-# --- basic dedup, first-seen order ---------------------------------------
+# basic dedup, first-seen order
 my @basic = uniq(1, 2, 2, 3, 1);
 is_deeply \@basic, [1, 2, 3], 'uniq dedups and preserves first-seen order';
 no_leaks_ok { eval { my @x = uniq(1, 2, 2, 3, 1) } } 'uniq no leaks: basic' unless $INC{'Devel/Cover.pm'};
 
-# --- string dedup --------------------------------------------------------
+# string dedup
 my @str = uniq(qw/a b a c b a/);
 is_deeply \@str, [qw/a b c/], 'uniq dedups strings preserving first-seen order';
 no_leaks_ok { eval { my @x = uniq(qw/a b a c b a/) } } 'uniq no leaks: string dedup' unless $INC{'Devel/Cover.pm'};
 
-# --- numeric / string collapse (eq semantics) ----------------------------
+# numeric / string collapse (eq semantics)
 my @num = uniq(1, 1.0, "1", 2);
 is_deeply \@num, [1, 2], 'uniq collapses 1, 1.0, "1" to the first occurrence';
 no_leaks_ok { eval { my @x = uniq(1, 1.0, "1", 2) } } 'uniq no leaks: numeric/string collapse' unless $INC{'Devel/Cover.pm'};
 
-# --- array-ref flattening (one level) ------------------------------------
+# array-ref flattening (one level)
 my @flat = uniq([1, 2, 2], [2, 3]);
 is_deeply \@flat, [1, 2, 3], 'uniq expands array refs and dedups across them';
 no_leaks_ok { eval { my @x = uniq([1, 2, 2], [2, 3]) } } 'uniq no leaks: array refs' unless $INC{'Devel/Cover.pm'};
 
-# --- mixed scalars and array refs ----------------------------------------
+# mixed scalars and array refs
 my @mix = uniq(1, [2, 2, 3], 1, [3, 4]);
 is_deeply \@mix, [1, 2, 3, 4], 'uniq dedups across scalars and array refs together';
 no_leaks_ok { eval { my @x = uniq(1, [2, 2, 3], 1, [3, 4]) } } 'uniq no leaks: mixed args' unless $INC{'Devel/Cover.pm'};
 
-# --- scalar context returns the distinct count ---------------------------
+# scalar context returns the distinct count
 my $n = uniq(1, 2, 2, 3, 1);
 is $n, 3, 'uniq returns the distinct count in scalar context';
 no_leaks_ok { eval { my $x = uniq(1, 2, 2, 3, 1) } } 'uniq no leaks: scalar count' unless $INC{'Devel/Cover.pm'};
 
-# --- empty input ---------------------------------------------------------
+# empty input
 my @empty = uniq();
 is_deeply \@empty, [], 'uniq of empty list is empty in list context';
 no_leaks_ok { eval { my @x = uniq() } } 'uniq no leaks: empty list' unless $INC{'Devel/Cover.pm'};
@@ -51,24 +51,23 @@ my $zero = uniq();
 is $zero, 0, 'uniq of empty list is 0 in scalar context';
 no_leaks_ok { eval { my $x = uniq() } } 'uniq no leaks: empty scalar' unless $INC{'Devel/Cover.pm'};
 
-# --- UTF-8: identical wide chars collapse --------------------------------
+# UTF-8: identical wide chars collapse
 my @wide = uniq("\x{263a}", "\x{263a}", "x");
 is_deeply \@wide, ["\x{263a}", "x"], 'uniq collapses identical wide-character strings';
 no_leaks_ok { eval { my @x = uniq("\x{263a}", "\x{263a}", "x") } } 'uniq no leaks: wide chars' unless $INC{'Devel/Cover.pm'};
 
-# --- croak on undef scalar argument --------------------------------------
+# croak on undef scalar argument
 my $e_scalar = '';
 eval { uniq(1, undef, 3); 1 } or $e_scalar = $@;
 like $e_scalar, qr/uniq: undefined value at argument index 1/, 'uniq croaks on an undef scalar arg';
 no_leaks_ok { eval { uniq(1, undef, 3) } } 'uniq no leaks: undef scalar croak' unless $INC{'Devel/Cover.pm'};
 
-# --- croak on undef inside an array ref ----------------------------------
+# croak on undef inside an array ref
 my $e_aref = '';
 eval { uniq([1, undef, 3]); 1 } or $e_aref = $@;
 like $e_aref, qr/uniq: undefined value at array ref index 1 \(argument 0\)/, 'uniq croaks on an undef array element';
 no_leaks_ok { eval { uniq([1, undef, 3]) } } 'uniq no leaks: undef in aref croak' unless $INC{'Devel/Cover.pm'};
 
-# =========================================================================
 # 0.302 rewrote uniq's key table (perl HV -> the open-addressed arena
 # drop_duplicates() and merge() intern into) and its key rendering (SvPV ->
 # nk_num_pv).  Neither may change an answer, so the expected values below are
@@ -78,9 +77,8 @@ no_leaks_ok { eval { uniq([1, undef, 3]) } } 'uniq no leaks: undef in aref croak
 # these from: they pin perl-side surface (stringification, the UTF-8 flag,
 # tied arrays, croak text), which unique() and pd.unique() have no counterpart
 # for.
-# =========================================================================
 
-# --- UTF-8 keys are canonicalised the way a perl hash canonicalises them ---
+# UTF-8 keys are canonicalised the way a perl hash canonicalises them
 # hv_common() downgrades a UTF-8 key whose every code point is below 256
 # before it hashes, so these are the same key -- as `eq` also says.
 is scalar(uniq("\x{e9}", "\xe9")), 1,
@@ -100,7 +98,7 @@ is scalar(uniq($upgraded, "abc")), 1,
 	'uniq collapses an upgraded ASCII string with its plain twin';
 no_leaks_ok { eval { my @x = uniq($upgraded, "abc") } } 'uniq no leaks: upgraded ASCII' unless $INC{'Devel/Cover.pm'};
 
-# --- stringification, not value ------------------------------------------
+# stringification, not value
 # Both pairs are chosen to be interesting to a value comparison: the first two
 # are the same number written two ways, the second two are different doubles.
 # Which way each falls is a property of the build's NV -- 1e15 reaches %.15g's
@@ -116,23 +114,23 @@ no_leaks_ok { eval { my @x = uniq($upgraded, "abc") } } 'uniq no leaks: upgraded
 		'uniq splits 0.1+0.2 from 0.3 exactly when perl prints them apart';
 }
 
-# --- non-finite values ----------------------------------------------------
+# non-finite values
 my $inf = 9**9**9;
 my $nan = $inf - $inf;
 is scalar(uniq($inf, -$inf, $nan, $nan, $inf)), 3,
 	'uniq keeps Inf, -Inf and NaN apart and collapses repeats of each';
 no_leaks_ok { eval { my @x = uniq($inf, -$inf, $nan) } } 'uniq no leaks: non-finite' unless $INC{'Devel/Cover.pm'};
 
-# --- the empty string is a value, and is not 0 ----------------------------
+# the empty string is a value, and is not 0
 is_deeply [uniq("", 0, "0", "")], ["", 0],
 	'uniq treats the empty string as its own value';
 
-# --- nested refs are compared as opaque values ----------------------------
+# nested refs are compared as opaque values
 my $inner = [1, 2];
 is scalar(uniq([$inner, $inner, [1, 2]])), 2,
 	'uniq compares nested array refs by identity, not contents';
 
-# --- a tied array ---------------------------------------------------------
+# a tied array
 # Up to 0.301 this croaked "undefined value at array ref index 0": av_fetch()
 # on a tied array hands back a PVLV that reads undef until mg_get() has run on
 # it, which is the bug sum() and the rest were fixed for in 0.301.
@@ -147,7 +145,7 @@ is_deeply [uniq(\@tied)], [1, 2, 3, 'a'], 'uniq reads a tied array';
 is scalar(uniq(\@tied)), 4, 'uniq counts a tied array in scalar context';
 no_leaks_ok { eval { my @x = uniq(\@tied) } } 'uniq no leaks: tied array' unless $INC{'Devel/Cover.pm'};
 
-# --- uniq must not stringify the caller's numeric SVs ---------------------
+# uniq must not stringify the caller's numeric SVs
 # SvPV() on an NV leaves the rendered buffer behind, which is what made asking
 # a large numeric column for its distinct values grow that column for good.
 SKIP: {
@@ -158,7 +156,7 @@ SKIP: {
 		'uniq leaves no cached PV on a numeric input SV';
 }
 
-# --- enough distinct keys to grow the arena and rehash the slot table -----
+# enough distinct keys to grow the arena and rehash the slot table
 # dd_presize() sizes from the element count but caps the hint, so a run this
 # long exercises both the doubling and the arena's Renew().
 {

@@ -20,7 +20,7 @@ case <- function(label, x, y, ...) {
     emit(label, r)
 }
 
-## ---- datasets ------------------------------------------------------------
+## ---- datasets
 
 # Hollander & Wolfe (1999) Example 5.4, from R's tests/reg-tests-1a.R
 hw.x <- c(-0.15, 8.6, 5, 3.71, 4.29, 7.74, 2.48, 3.25, -1.15, 8.38)
@@ -73,7 +73,7 @@ sp1.a <- seq(-1, 1, length.out = 9)
 sp1.b <- seq(-15, 15, length.out = 9)
 sp1.c <- c(-1.23, 0.06, -0.60, 0.17, 0.66, -0.17, -0.08, 0.27, -0.98, -0.99)
 
-## ---- data dumps ----------------------------------------------------------
+## ---- data dumps
 
 dump.vec <- function(label, v) {
     cat(sprintf("#DATA\t%s\t%s\n", label,
@@ -91,7 +91,7 @@ qq.y <- rnorm(50, mean = .5, sd = .95)
 dump.vec("qq.x", qq.x)
 dump.vec("qq.y", qq.y)
 
-## ---- two-sample ----------------------------------------------------------
+## ---- two-sample
 
 for (alt in c("two.sided", "greater", "less")) {
     for (ex in c(TRUE, FALSE)) {
@@ -122,7 +122,7 @@ for (alt in c("two.sided", "greater", "less")) {
     case(paste0("large.", alt, ".asymp"), lg.x, lg.y, alternative = alt, exact = FALSE)
 }
 
-## ---- one-sample vs pnorm -------------------------------------------------
+## ---- one-sample vs pnorm
 
 for (alt in c("two.sided", "greater", "less")) {
     for (ex in c(TRUE, FALSE)) {
@@ -134,7 +134,7 @@ for (alt in c("two.sided", "greater", "less")) {
     }
 }
 
-## ---- pathological one-sample --------------------------------------------
+## ---- pathological one-sample
 
 # Single observation, and a sample containing both -Inf and +Inf
 # (SciPy's test_pm_inf_gh20386, re-run against pnorm).
@@ -155,7 +155,7 @@ case("two.same.two.sided.exact", rep(0, 5), rep(0, 5),
 case("two.same.two.sided.asymp", rep(0, 5), rep(0, 5),
      alternative = "two.sided", exact = FALSE)
 
-## ---- the inline (non-corpus) cases in the .t file ------------------------
+## ---- the inline (non-corpus) cases in the .t file
 ##
 ## These are the numbers written out by hand in the .t rather than living in a
 ## table, so they belong here too or the file is only half-regenerable.

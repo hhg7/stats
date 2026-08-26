@@ -27,9 +27,7 @@ sub is_approx {
 	}
 }
 
-#--------
 # AoH input: default preserves shape, rows are shared, input untouched
-#--------
 {
 	my $aoh = [ { id => 1, grp => 'a' }, { id => 2, grp => 'b' }, { id => 3, grp => 'a' } ];
 	my $r = filter($aoh, sub { $_->{grp} eq 'a' });
@@ -40,9 +38,7 @@ sub is_approx {
 	is(scalar @$aoh, 3, 'AoH: the input frame is not modified');
 }
 
-#--------
 # HoA input: columns filtered in parallel and stay aligned
-#--------
 {
 	my $hoa = { id => [1, 2, 3], grp => [qw(a b a)] };
 	my $r = filter($hoa, sub { $_->{id} >= 2 });
@@ -53,9 +49,7 @@ sub is_approx {
 	is_deeply($hoa->{id}, [1, 2, 3], 'HoA: the input frame is not modified');
 }
 
-#--------
 # HoH input (new): default preserves keys, inner rows shared
-#--------
 {
 	my $hoh = { r1 => { id => 1 }, r2 => { id => 2 }, r3 => { id => 3 } };
 	my $r = filter($hoh, sub { $_->{id} != 2 });
@@ -66,9 +60,7 @@ sub is_approx {
 	is(scalar keys %$hoh, 3, 'HoH: the input frame is not modified');
 }
 
-#--------
 # output.type converts between shapes (rows/keys order may differ for HoH)
-#--------
 {
 	my $aoh = [ { id => 1, grp => 'a' }, { id => 2, grp => 'b' } ];
 	my $hoa = { id => [1, 2], grp => ['a', 'b'] };
@@ -93,18 +85,14 @@ sub is_approx {
 	is_deeply([ sort { $a <=> $b } @{ $hh2h->{id} } ], [1, 2], 'HoH -> hoa: id column');
 }
 
-#--------
 # output type may be given bare or via the 'out' alias
-#--------
 {
 	my $aoh = [ { x => 1 }, { x => 2 } ];
 	is(ref filter($aoh, sub { 1 }, 'hoa'),		  'HASH', 'bare positional output type');
 	is(ref filter($aoh, sub { 1 }, out => 'hoa'), 'HASH', "'out' alias for output.type");
 }
 
-#--------
 # the predicate sees the row as both $_ and $_[0]
-#--------
 {
 	my $aoh = [ { x => 1, y => undef }, { x => 2, y => 5 } ];
 	is_deeply([ map { $_->{x} } @{ filter($aoh, sub { defined $_->{y} }) } ], [2],
@@ -113,9 +101,7 @@ sub is_approx {
 		'predicate via $_[0]');
 }
 
-#--------
 # keep-all / keep-none for every shape
-#--------
 {
 	my $aoh = [ { x => 1 }, { x => 2 } ];
 	my $hoa = { x => [1, 2] };
@@ -126,18 +112,14 @@ sub is_approx {
 	is_deeply(filter($hoh, sub { 0 }), {}, 'keep-none HoH -> {}');
 }
 
-#--------
 # empty inputs
-#--------
 {
 	is_deeply(filter([], sub { 1 }), [], 'empty AoH stays []');
 	is_deeply(filter({}, sub { 1 }), {}, 'empty hash stays {}');
 	is_deeply(filter({}, sub { 1 }, 'output.type' => 'aoh'), [], 'empty hash -> aoh gives []');
 }
 
-#--------
 # col() predicate: operators, operand order, combinators, undef rule
-#--------
 {
 	my $df = [
 		{ id => 1, age => 20, grp => "a" },
@@ -159,9 +141,7 @@ sub is_approx {
 	is_deeply([ map { $_->{x} } @{ filter($u, col("x") ne "5") } ], [1], "col: undef cell never matches (string ne)");
 }
 
-#--------
 # errors
-#--------
 throws_ok { filter('x', sub { 1 }) }					   qr/data frame/,			  'non-ref data frame dies';
 throws_ok { filter([], "x") } qr/CODE reference or a col/, "non-predicate (neither CODE nor col) dies";
 throws_ok { filter([ { x => 1 } ], col("x")) } qr/incomplete col/, "a bare col() predicate dies";
@@ -177,9 +157,7 @@ throws_ok { filter({ a => { x => 1 }, b => 'x' }, sub { 1 }) }
 	qr/not a HASH|hash of arrays.*hash of hashes/, 'HoH non-hash row dies';
 throws_ok { filter([ { x => 1 } ], sub { die "boom\n" }) } qr/boom/,				  'a dying predicate propagates';
 
-#--------
 # memory
-#--------
 my $LA	= [ { x => 1 }, { x => 2 } ];
 my $LHA = { x => [1, 2], y => ['p', 'q'] };
 my $LH	= { a => { x => 1 }, b => { x => 2 } };

@@ -128,7 +128,7 @@ is(kurtosis(x => \@w, type => 2),   $want_ku, 'kurtosis: x => arrayref with type
 	close_to(kurtosis(\@tied), $want_ku, 1e-15, 'kurtosis: reads a tied array');
 }
 
-# --- shape properties -----------------------------------------------------
+# shape properties
 # skewness is zero for a symmetric sample, and flips sign when the sample is
 # reflected; kurtosis is blind to reflection
 my @sym = (-4, -2, -1, 0, 1, 2, 4);
@@ -160,7 +160,7 @@ for my $type (1, 2, 3) {
 	         "kurtosis: unchanged by a positive scaling (type $type)");
 }
 
-# --- long samples, against a plain two-pass reference ---------------------
+# long samples, against a plain two-pass reference
 # the recurrence is the only thing under test here, so the reference is the
 # textbook centered form written out in Perl
 sub two_pass {
@@ -220,7 +220,7 @@ my @snap = @orig;
 skew(\@orig); kurtosis(\@orig);
 is_deeply(\@orig, \@snap, 'skew/kurtosis: do not touch the array they were given');
 
-# --- minimum sample sizes -------------------------------------------------
+# minimum sample sizes
 lives_ok { skew([1, 2], type => 1) }     'skew: type 1 accepts n = 2';
 lives_ok { skew([1, 2], type => 3) }     'skew: type 3 accepts n = 2';
 lives_ok { skew([1, 2, 4], type => 2) }  'skew: type 2 accepts n = 3';
@@ -241,7 +241,7 @@ throws_ok { skew([7, 7, 7, 7]) } qr/\Qskew: zero variance (all 4 values are equa
 throws_ok { kurtosis([7, 7, 7, 7]) } qr/\Qkurtosis: zero variance (all 4 values are equal)\E/,
 	'kurtosis: names the sample size when the variance is zero';
 
-# --- bad arguments --------------------------------------------------------
+# bad arguments
 throws_ok { skew(1, undef, 3) } qr/\Qskew: undefined value at argument index 1\E/,
 	'skew: names the argument index of an undef scalar';
 throws_ok { kurtosis([1, 2, undef]) }

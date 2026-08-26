@@ -34,7 +34,7 @@ emit <- function(label, groups) {
 	            if (is.nan(r$p.value)) "'NaN'" else sprintf("%.17g", r$p.value)))
 }
 
-# ---- reference examples -------------------------------------------------
+# reference examples
 # Hollander & Wolfe (1973) p.116, src/library/stats/man/kruskal.test.Rd,
 # printed output pinned in tests/Examples/stats-Ex.Rout.save.
 emit("HW1973 mucociliary", list(c(2.9,3.0,2.5,2.6,3.2), c(3.8,2.7,4.0,2.4),
@@ -48,7 +48,7 @@ emit("airquality Ozone by Month", split(aq$o, aq$m))
 mt <- mtcars; mt$type <- rep(letters[1:2], c(16, 16))
 emit("mtcars mpg by type PR#16719", split(mt$mpg, mt$type))
 
-# ---- SciPy 1.18.0 TestKruskal ------------------------------------------
+# SciPy 1.18.0 TestKruskal
 # scipy/stats/tests/test_stats.py::TestKruskal.  SciPy states these
 # analytically (h_uncorr / corr worked out by hand in the test body), so they
 # pin the tie correction independently of R.
@@ -58,7 +58,7 @@ emit("scipy test_simple_tie",  list(1, c(1,2)))
 emit("scipy test_another_tie", list(c(1,1,1,2), c(2,2,2,2)))
 emit("scipy test_three_groups", list(c(1,1,1), c(2,2,2), c(2,2)))
 
-# ---- systematic sweep --------------------------------------------------
+# systematic sweep
 # k = 2..5 crossed with unbalanced group sizes and four tie structures, over a
 # dyadic value set.  Covers: no ties at all, ties inside one group only, ties
 # spanning groups, a single tie block covering most of the sample, and the
@@ -80,7 +80,7 @@ for (k in 2:5) {
 	}
 }
 
-# ---- edge cases --------------------------------------------------------
+# edge cases
 emit("k=2 n=2 minimum",        list(0, 1))
 emit("k=2 n=2 tied",           list(1, 1))        # 0/0 -> H = NaN, p = NaN
 emit("all identical k=3",      list(c(2,2), c(2,2), c(2,2)))

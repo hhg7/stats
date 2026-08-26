@@ -97,13 +97,12 @@ sub check {
 	ok(rel($r->{W}, $w_want) <= $TOL_W,
 		sprintf('%s: W = %.17g (R: %.17g, rel %.2g)', $label, $r->{W}, $w_want,
 			rel($r->{W}, $w_want)));
-	ok(rel($r->{p_value}, $p_want) <= $tol_p,
-		sprintf('%s: p = %.17g (R: %.17g, rel %.2g)', $label, $r->{p_value},
-			$p_want, rel($r->{p_value}, $p_want)));
+	ok(rel($r->{'p.value'}, $p_want) <= $tol_p,
+		sprintf('%s: p = %.17g (R: %.17g, rel %.2g)', $label, $r->{'p.value'},
+			$p_want, rel($r->{'p.value'}, $p_want)));
 	return $r;
 }
 
-#---------------------------------------------------------------------------
 # The exact sample generators.  These mirror sw_lcg()/sw_normalish()/
 # sw_skew()/sw_ties() in t/shapiro_test.R.scipy.R value for value.
 #
@@ -113,7 +112,6 @@ sub check {
 # a passable normal sample and is still exact; squaring one draw needs 32
 # bits of numerator and so is exact too; and flooring one onto a 20-value
 # ladder is how the tied samples are made.
-#---------------------------------------------------------------------------
 sub sw_lcg {
 	my ($n) = @_;
 	my ($s, @u) = (12345);
@@ -139,7 +137,6 @@ sub sw_ties { my ($n) = @_; return [ map { int($_ * 20) / 16 } @{ sw_lcg($n) } ]
 
 my %GEN = (normalish => \&sw_normalish, skew => \&sw_skew, ties => \&sw_ties);
 
-#---------------------------------------------------------------------------
 # A. R's values for the generated samples.
 #
 # The n values are chosen to cross every branch of AS R94 and both sides of
@@ -147,7 +144,6 @@ my %GEN = (normalish => \&sw_normalish, skew => \&sw_skew, ties => \&sw_ties);
 # weights), n = 6 and up (the four-coefficient weights), n = 11 against
 # n = 12 (the small-sample fit against the large-sample one), and on to
 # n = 5000, R's documented upper limit.
-#---------------------------------------------------------------------------
 my @CORPUS = (
 	[ 'normalish_3', 0.88874089596745598, 0.35050975662066497 ],
 	[ 'normalish_4', 0.94767166567078165, 0.70160365125123614 ],
@@ -187,11 +183,9 @@ for my $c (@CORPUS) {
 	check("A $label", $GEN{$kind}->($n), $w, $p, $tol_p);
 }
 
-#---------------------------------------------------------------------------
 # B. The literal samples: SciPy's TestShapiro data, R's documented example,
 # and the small hand-written cases (ties, a spike, the sequences t/01.t
 # uses).  Same R provenance; see the header.
-#---------------------------------------------------------------------------
 my %LITERAL_DATA = (
 	scipy_x1 => [ 0.11, 7.87, 4.61, 10.14, 7.95, 3.14, 0.46, 4.43, 0.21, 4.75,
 		0.71, 1.52, 3.24, 0.93, 0.42, 4.97, 9.53, 4.55, 0.47, 6.66 ],
@@ -313,10 +307,9 @@ for my $c (@SCIPY) {
 	my ($label, $data, $w, $p) = @$c;
 	my $r = shapiro_test($data);
 	ok(rel($r->{W}, $w) <= $TOL_SCIPY, "SciPy TestShapiro $label: W");
-	ok(rel($r->{p_value}, $p) <= $TOL_SCIPY * 1e3, "SciPy TestShapiro $label: p");
+	ok(rel($r->{'p.value'}, $p) <= $TOL_SCIPY * 1e3, "SciPy TestShapiro $label: p");
 }
 
-#---------------------------------------------------------------------------
 # C1. R's tests/reg-tests-1b.R, in full:
 #
 #     stopifnot(shapiro.test(c(0,0,1))$p.value >= 0)
@@ -328,15 +321,13 @@ for my $c (@SCIPY) {
 # build carries pi/3 to NV width instead and lands at +4e-16, then clamps the
 # same way, so it satisfies R's assertion without needing to.  The divergence
 # is 4e-16 in absolute terms and only visible where the true p-value is 0.
-#---------------------------------------------------------------------------
 {
 	my $r = shapiro_test([ 0, 0, 1 ]);
-	ok($r->{p_value} >= 0, 'C1 reg-tests-1b.R: p.value >= 0 at the n = 3 floor');
-	ok($r->{p_value} < 1e-12, 'C1 and it is 0 to within a rounding of pi/3');
+	ok($r->{'p.value'} >= 0, 'C1 reg-tests-1b.R: p.value >= 0 at the n = 3 floor');
+	ok($r->{'p.value'} < 1e-12, 'C1 and it is 0 to within a rounding of pi/3');
 	ok(abs($r->{W} - 0.75) < 1e-15, 'C1 W sits on its exact n = 3 floor of 3/4');
 }
 
-#---------------------------------------------------------------------------
 # C2. W is invariant under shifting and scaling the sample, and R is not.
 #
 # R's swilk.c divides the sample by its range but never centres it, so a
@@ -350,7 +341,6 @@ for my $c (@SCIPY) {
 # by up to 1.9e-8 relative and its p-value by up to 2.6e-7, while this
 # build's are within 1.0e-15 and 1.4e-13.  So the R value for 'offset_1e9'
 # is deliberately not asserted; what is asserted is the invariance R breaks.
-#---------------------------------------------------------------------------
 {
 	my $base = sw_normalish(30);
 	my $plain = shapiro_test($base);
@@ -373,9 +363,7 @@ for my $c (@SCIPY) {
 		'C2 1e9 + noise still agrees with R to the digits R has left');
 }
 
-#---------------------------------------------------------------------------
 # D. Branch and boundary coverage of the algorithm itself.
-#---------------------------------------------------------------------------
 
 # n = 3 is the one exact p-value, and it is a monotone function of W alone.
 # Perfectly evenly spaced points give W = 1 and p = 1 (R prints
@@ -384,7 +372,7 @@ for my $c (@SCIPY) {
 {
 	my $r = shapiro_test([ 1, 2, 3 ]);
 	ok(abs($r->{W} - 1) < 1e-15, 'D n=3 evenly spaced: W = 1');
-	ok($r->{p_value} > 1 - 1e-12 && $r->{p_value} <= 1,
+	ok($r->{'p.value'} > 1 - 1e-12 && $r->{'p.value'} <= 1,
 		'D n=3 evenly spaced: p = 1 (R: 0.99999999999999334)');
 }
 
@@ -393,7 +381,7 @@ for my $c (@SCIPY) {
 {
 	my @w;
 	for my $n (11, 12) {
-		push @w, shapiro_test(sw_normalish($n))->{p_value};
+		push @w, shapiro_test(sw_normalish($n))->{'p.value'};
 	}
 	ok($w[0] > 0 && $w[0] < 1 && $w[1] > 0 && $w[1] < 1,
 		'D both p-value branches return an interior probability');
@@ -409,7 +397,7 @@ for my $case (
 ) {
 	my ($label, $data) = @$case;
 	my $r = shapiro_test($data);
-	ok($r->{p_value} >= 0 && $r->{p_value} <= 1, "D $label: p in [0, 1]");
+	ok($r->{'p.value'} >= 0 && $r->{'p.value'} <= 1, "D $label: p in [0, 1]");
 	ok($r->{W} > 0 && $r->{W} <= 1,              "D $label: W in (0, 1]");
 }
 
@@ -430,14 +418,12 @@ for my $case (
 {
 	my $r = shapiro_test(sw_normalish(5000));
 	ok(rel($r->{W}, 0.99981218462658794) <= $TOL_W, 'D n = 5000 W (R)');
-	ok(rel($r->{p_value}, 0.96184260472691174) <= $TOL_P, 'D n = 5000 p (R)');
+	ok(rel($r->{'p.value'}, 0.96184260472691174) <= $TOL_P, 'D n = 5000 p (R)');
 }
 
-#---------------------------------------------------------------------------
 # E. The Perl-side surface: missing values, both key spellings, and every
 # croak.  R's shapiro.test() drops the incomplete cases before it counts, and
 # complete.cases() calls NaN missing, so undef and NaN behave the same way.
-#---------------------------------------------------------------------------
 {
 	my $clean = sw_normalish(20);
 	my $nan   = 9**9**9 - 9**9**9;
@@ -450,15 +436,15 @@ for my $case (
 		my $r = shapiro_test($data);
 		my $c = shapiro_test($clean);
 		is($r->{W}, $c->{W}, "E $label dropped, exactly as complete.cases() would");
-		is($r->{p_value}, $c->{p_value}, "E $label: p unchanged too");
+		is($r->{'p.value'}, $c->{'p.value'}, "E $label: p unchanged too");
 	}
 }
 
 {	# both documented spellings of both fields are the same number
 	my $r = shapiro_test(sw_normalish(30));
 	is($r->{W}, $r->{statistic}, 'E W and statistic are the same value');
-	is($r->{p_value}, $r->{'p.value'}, 'E p_value and p.value are the same value');
-	is(scalar(grep { defined $r->{$_} } qw(W statistic p_value p.value)), 4,
+	is($r->{'p.value'}, $r->{'p.value'}, 'E p_value and p.value are the same value');
+	is(scalar(grep { defined $r->{$_} } qw(W statistic p.value p.value)), 4,
 		'E all four documented keys are present');
 }
 

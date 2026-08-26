@@ -34,7 +34,7 @@ sub is_approx {
 dies_ok {
 	agg(undef, 'x');
 } 'agg: dies when given undefined data';
-# shared fixture, expressed in every shape --------------------------------
+# shared fixture, expressed in every shape
 #   sex  wt   age
 #   M    70   30
 #   F    60   25
@@ -65,9 +65,7 @@ my $AoA = [
 	[ 'F', 55, undef ],
 ];
 
-#--------
 # grouped AoH, single aggregator keeps the column name
-#--------
 {
 	my $g = agg($AoH, by => 'sex', agg => { wt => 'mean' });
 	is(scalar @$g, 2, 'AoH/mean: two groups');
@@ -78,9 +76,7 @@ my $AoA = [
 	ok(!exists $by{F}{wt_mean}, 'AoH/mean: single func keeps bare column name');
 }
 
-#--------
 # grouped AoH, multiple aggregators -> <col>_<func>, plus a count on a label col
-#--------
 {
 	my $g  = agg($AoH, by => 'sex', agg => { wt => [ 'mean', 'sd' ], age => [ 'mean', 'count' ] });
 	my %by = map { $_->{sex} => $_ } @$g;
@@ -91,9 +87,7 @@ my $AoA = [
 	is($by{F}{age_count}, 1, 'AoH/multi: F age count excludes the undef');
 }
 
-#--------
 # ungrouped: whole frame collapses to one row (pandas df.agg)
-#--------
 {
 	my $u = agg($AoH, agg => { wt => 'mean', age => 'count' });
 	is(scalar @$u, 1, 'ungrouped: single row');
@@ -101,9 +95,7 @@ my $AoA = [
 	is($u->[0]{age}, 3, 'ungrouped: count ignores the undef age');
 }
 
-#--------
 # every shape yields the same grouped means (normalised to aoh output)
-#--------
 {
 	for my $case ([ 'HoA', $HoA, 'sex', 'wt' ], [ 'HoH', $HoH, 'sex', 'wt' ], [ 'AoA', $AoA, 0, 1 ]) {
 		my ($name, $df, $bycol, $wtcol) = @$case;
@@ -119,9 +111,7 @@ my $AoA = [
 		'default output: AoA in -> arrayref out');
 }
 
-#--------
 # output.type overrides
-#--------
 {
 	my $hoh = agg($HoA, by => 'sex', agg => { wt => 'mean' }, 'output.type' => 'hoh');
 	is_approx($hoh->{F}{wt}, 57.5, 'output hoh: keyed by group value');
@@ -139,9 +129,7 @@ my $AoA = [
 		qr/output\.type 'bogus' isn't allowed/, 'output.type validated';
 }
 
-#--------
 # named aggregators, exercised on one column
-#--------
 {
 	my $df = [ map { { g => 'x', v => $_ } } (2, 4, 4, 4, 5, 5, 7, 9) ];
 	push @$df, { g => 'x', v => undef };            # one NA
@@ -166,9 +154,7 @@ my $AoA = [
 	}
 }
 
-#--------
 # mode tie-breaking is deterministic
-#--------
 {
 	my $num = agg([ map { { v => $_ } } (3, 1, 3, 1) ], agg => { v => 'mode' });
 	is($num->[0]{v}, 1, 'mode: numeric tie -> smallest');
@@ -176,9 +162,7 @@ my $AoA = [
 	is($str->[0]{v}, 'a', 'mode: string tie -> lowest');
 }
 
-#--------
 # skipna
-#--------
 {
 	my $keep = agg($AoH, by => 'sex', agg => { age => 'mean' }, skipna => 1);
 	my %k = map { $_->{sex} => $_->{age} } @$keep;
@@ -190,9 +174,7 @@ my $AoA = [
 	is_approx($s{M}{age}, 35, 'skipna=0: clean group still aggregates');
 }
 
-#--------
 # too few defined values -> undef (sd/var need >= 2, mean etc. need >= 1)
-#--------
 {
 	my $one = agg([ { g => 'a', v => 5 } ], by => 'g', agg => { v => [ 'mean', 'sd', 'var' ] });
 	is_approx($one->[0]{v_mean}, 5, 'single value: mean defined');
@@ -204,9 +186,7 @@ my $AoA = [
 	is($none->[0]{v_count}, 0, 'all-NA group: count 0');
 }
 
-#--------
 # coderef aggregator receives every cell (undef included)
-#--------
 {
 	my $r = agg($AoH, by => 'sex', agg => { age => sub {
 		my $cells = shift;
@@ -218,17 +198,13 @@ my $AoA = [
 	is($by{M}, '0 NA of 2', 'coderef: clean group');
 }
 
-#--------
 # sort => 0 preserves first-seen group order
-#--------
 {
 	my $seen = agg($AoH, by => 'sex', agg => { wt => 'mean' }, sort => 0);
 	is($seen->[0]{sex}, 'M', 'sort=0: first-seen order (M appears first)');
 }
 
-#--------
 # multiple grouping columns; hoh labels join with '.'
-#--------
 {
 	my $df = [
 		{ a => 1, b => 'x', v => 10 },
@@ -245,9 +221,7 @@ my $AoA = [
 	ok(exists $hoh->{'2.y'}, 'multi-key hoh: all labels present');
 }
 
-#--------
 # error handling
-#--------
 throws_ok { agg('scalar', agg => { v => 'mean' }) }
 	qr/data frame must be an ARRAY/, 'non-ref df dies';
 throws_ok { agg($AoH) }
@@ -261,9 +235,7 @@ throws_ok { agg($AoH, agg => { wt => [] }) }
 throws_ok { agg($AoH, agg => { wt => 'mean' }, 'extra') }
 	qr/name => value pairs/, 'odd trailing args die';
 
-#--------
 # no memory leaks across shapes
-#--------
 no_leaks_ok {
 	agg($AoH, by => 'sex', agg => { wt => [ 'mean', 'sd' ], age => 'count' });
 } 'agg(): AoH grouped no leaks' unless $INC{'Devel/Cover.pm'};

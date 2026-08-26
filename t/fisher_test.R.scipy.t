@@ -94,7 +94,6 @@ sub close_to {
 
 sub tbl { my $t = shift; join ',', map { @$_ } @$t }
 
-# ---------------------------------------------------------------------------
 # Case 1: SciPy's R-generated corpus, in full.
 #
 # Fourteen 2x2 tables x conf.level in (0.95, 0.99) x alternative in
@@ -103,7 +102,6 @@ sub tbl { my $t = shift; join ',', map { @$_ } @$t }
 # at both boundaries (odds ratio 0 and Inf), the one-sided CI bounds that are
 # fixed at 0 / Inf, tables large enough that a naive 1-p tail loses all its
 # digits ([[200,7],[8,300]] has p = 2e-122), and the conf.level plumbing.
-# ---------------------------------------------------------------------------
 my @R_CORPUS = (
 	# [ table, conf.level, alternative, p, conditional OR, CI lower, CI upper ]
 	[ [[100,2],[1000,5]], 0.95, 'two.sided', 0.1300759363430016, 0.25055839934223, 0.04035202926536294, 2.662846672960251 ],
@@ -196,20 +194,18 @@ for my $c (@R_CORPUS) {
 	my ($t, $conf, $alt, $p, $or, $lo, $hi) = @$c;
 	my $lbl = sprintf '[%s] conf=%s %s', tbl($t), $conf, $alt;
 	my $r = fisher_test($t, conf_level => $conf, alternative => $alt);
-	close_to($r->{p_value},                $p,  "C1 $lbl p-value",   $TOL_P);
+	close_to($r->{'p.value'},                $p,  "C1 $lbl p-value",   $TOL_P);
 	close_to($r->{estimate}{"odds ratio"}, $or, "C1 $lbl odds ratio", $TOL_OR);
-	close_to($r->{conf_int}[0],            $lo, "C1 $lbl CI lower",  $TOL_CI);
-	close_to($r->{conf_int}[1],            $hi, "C1 $lbl CI upper",  $TOL_CI);
-	is($r->{conf_level}, $conf, "C1 $lbl conf_level echoed");
+	close_to($r->{'conf.int'}[0],            $lo, "C1 $lbl CI lower",  $TOL_CI);
+	close_to($r->{'conf.int'}[1],            $hi, "C1 $lbl CI upper",  $TOL_CI);
+	is($r->{'conf.level'}, $conf, "C1 $lbl conf_level echoed");
 	is($r->{alternative}, $alt, "C1 $lbl alternative echoed");
 }
 
-# ---------------------------------------------------------------------------
 # Case 2: SciPy TestFisherExact::test_basic and ::test_precise.
 #
 # The tables not already in the corpus above.  test_precise asks for 11
 # decimal places against R; that is comfortably inside $TOL_P here.
-# ---------------------------------------------------------------------------
 {
 	# [table, p, note]  -- p from R 4.6.1, printed at 17 significant digits.
 	my @cases = (
@@ -226,7 +222,7 @@ for my $c (@R_CORPUS) {
 	);
 	for my $c (@cases) {
 		my ($t, $p, $note) = @$c;
-		close_to(fisher_test($t)->{p_value}, $p, "C2 [".tbl($t)."] two-sided p ($note)");
+		close_to(fisher_test($t)->{'p.value'}, $p, "C2 [".tbl($t)."] two-sided p ($note)");
 	}
 	# test_basic also pins the sample odds ratio of [[2,7],[8,2]] at 4/56.
 	# fisher_test() reports R's conditional MLE instead, which is a different
@@ -239,7 +235,6 @@ for my $c (@R_CORPUS) {
 	   "C2 [[2,7],[8,2]] conditional MLE is not SciPy's sample odds ratio (4/56)");
 }
 
-# ---------------------------------------------------------------------------
 # Case 3: SciPy TestFisherExact::test_gh4130.
 #
 # gh-4130 was a fudge factor of 1e-4 used to decide whether two tables were
@@ -247,37 +242,32 @@ for my $c (@R_CORPUS) {
 # it should not have.  The XS uses a relative 1e-7 instead, so these three
 # hold.  [[22,0],[0,102]] and [[94,48],[3577,16988]] additionally check that
 # a p-value far below the smallest normal double still comes out right.
-# ---------------------------------------------------------------------------
-close_to(fisher_test([[6,37],[108,200]])->{p_value},   0.0050926977481257915,  'C3 gh4130 [[6,37],[108,200]]');
-close_to(fisher_test([[22,0],[0,102]])->{p_value},     7.1750667862445468e-25, 'C3 gh4130 [[22,0],[0,102]]');
-close_to(fisher_test([[94,48],[3577,16988]])->{p_value}, 2.0693563409938471e-37, 'C3 gh4130 [[94,48],[3577,16988]]');
+close_to(fisher_test([[6,37],[108,200]])->{'p.value'},   0.0050926977481257915,  'C3 gh4130 [[6,37],[108,200]]');
+close_to(fisher_test([[22,0],[0,102]])->{'p.value'},     7.1750667862445468e-25, 'C3 gh4130 [[22,0],[0,102]]');
+close_to(fisher_test([[94,48],[3577,16988]])->{'p.value'}, 2.0693563409938471e-37, 'C3 gh4130 [[94,48],[3577,16988]]');
 
-# ---------------------------------------------------------------------------
 # Case 4: SciPy TestFisherExact::test_large_numbers and ::test_gh9231.
 #
 # test_large_numbers is SciPy's regression test for gh-1401 (the hypergeometric
 # losing accuracy on large tables).  test_gh9231's table has a margin of 11.5
 # million and used to take SciPy minutes; its p-value is far below anything a
 # tail approximation could reach, and R puts it at 6.13e-178.
-# ---------------------------------------------------------------------------
-close_to(fisher_test([[17704,496],[1065,75]])->{p_value}, 5.5597665725900454e-11, 'C4 large numbers, n = 75');
-close_to(fisher_test([[17704,496],[1065,76]])->{p_value}, 2.6656847911317412e-11, 'C4 large numbers, n = 76');
-close_to(fisher_test([[17704,496],[1065,77]])->{p_value}, 1.3632030244794552e-11, 'C4 large numbers, n = 77');
-close_to(fisher_test([[18000,80000],[20000,90000]])->{p_value}, 0.27514817040628897, 'C4 large numbers, N = 208000');
+close_to(fisher_test([[17704,496],[1065,75]])->{'p.value'}, 5.5597665725900454e-11, 'C4 large numbers, n = 75');
+close_to(fisher_test([[17704,496],[1065,76]])->{'p.value'}, 2.6656847911317412e-11, 'C4 large numbers, n = 76');
+close_to(fisher_test([[17704,496],[1065,77]])->{'p.value'}, 1.3632030244794552e-11, 'C4 large numbers, n = 77');
+close_to(fisher_test([[18000,80000],[20000,90000]])->{'p.value'}, 0.27514817040628897, 'C4 large numbers, N = 208000');
 SKIP: {                                  # ~5s here: the support runs to 5.7e6 tables
 	skip "C4 gh9231 (N = 23 million) $SLOW_WHY", 2 unless $EXTENDED;
 	my $r = fisher_test([[5829225,5692693],[5760959,5760959]]);
-	close_to($r->{p_value}, 6.1262127126238397e-178, 'C4 gh9231 p-value (N = 23 million)');
+	close_to($r->{'p.value'}, 6.1262127126238397e-178, 'C4 gh9231 p-value (N = 23 million)');
 	close_to($r->{estimate}{"odds ratio"}, 1.0239924983807678, 'C4 gh9231 odds ratio', $TOL_OR);
 }
 
-# ---------------------------------------------------------------------------
 # Case 5: SciPy TestFisherExact::test_less_greater.
 #
 # Four tables checked against R plus five whose one-sided p-values are exact
 # rationals, which is where SciPy's ticket #1568 (a one-sided tail summed from
 # the wrong end) showed up.
-# ---------------------------------------------------------------------------
 {
 	my @cases = (
 		[ [[2,7],[8,2]],       0.018521725952066501, 0.9990149169715733    ],
@@ -292,46 +282,42 @@ SKIP: {                                  # ~5s here: the support runs to 5.7e6 t
 	);
 	for my $c (@cases) {
 		my ($t, $less, $greater) = @$c;
-		close_to(fisher_test($t, alternative => 'less')->{p_value},
+		close_to(fisher_test($t, alternative => 'less')->{'p.value'},
 			 $less,    "C5 [".tbl($t)."] alternative=less");
-		close_to(fisher_test($t, alternative => 'greater')->{p_value},
+		close_to(fisher_test($t, alternative => 'greater')->{'p.value'},
 			 $greater, "C5 [".tbl($t)."] alternative=greater");
 	}
 }
 
-# ---------------------------------------------------------------------------
 # Case 6: R man-page examples that t/fisher_test.t does not already cover.
 #
 # ?fisher.test runs Convictions at two conf.levels; the 0.95 pair is in
 # t/fisher_test.t, so only 0.99 is new here.  Job Satisfaction is R's own r x c
 # example, and its documented answer (0.7827) is the check.
-# ---------------------------------------------------------------------------
 {
 	my $r = fisher_test([[2,15],[10,3]], conf_level => 0.99);
-	close_to($r->{p_value},                0.0005367241191434356, 'C6 Convictions p-value');
+	close_to($r->{'p.value'},                0.0005367241191434356, 'C6 Convictions p-value');
 	close_to($r->{estimate}{"odds ratio"}, 0.046936608827698879,  'C6 Convictions odds ratio', $TOL_OR);
-	close_to($r->{conf_int}[0],            0.001386332871545104,  'C6 Convictions 99% CI lower', $TOL_CI);
-	close_to($r->{conf_int}[1],            0.57885164459479332,   'C6 Convictions 99% CI upper', $TOL_CI);
-	is($r->{conf_level}, 0.99, 'C6 Convictions conf_level 0.99 echoed');
+	close_to($r->{'conf.int'}[0],            0.001386332871545104,  'C6 Convictions 99% CI lower', $TOL_CI);
+	close_to($r->{'conf.int'}[1],            0.57885164459479332,   'C6 Convictions 99% CI upper', $TOL_CI);
+	is($r->{'conf.level'}, 0.99, 'C6 Convictions conf_level 0.99 echoed');
 }
 {
 	# Agresti (2002, p. 57) Job Satisfaction, a 4x4 documented as "0.7827".
 	my $job = [[1,3,10,6],[2,3,10,7],[1,6,14,12],[0,1,9,11]];
 	my $r = fisher_test($job);
-	close_to($r->{p_value}, 0.78268493896563884, 'C6 Job Satisfaction 4x4 p-value', $TOL_RXC);
-	is(sprintf('%.4f', $r->{p_value}), '0.7827', 'C6 Job Satisfaction matches the documented 0.7827');
+	close_to($r->{'p.value'}, 0.78268493896563884, 'C6 Job Satisfaction 4x4 p-value', $TOL_RXC);
+	is(sprintf('%.4f', $r->{'p.value'}), '0.7827', 'C6 Job Satisfaction matches the documented 0.7827');
 	ok(!exists $r->{estimate}, 'C6 no odds ratio for a 4x4');
 }
 
-# ---------------------------------------------------------------------------
 # Case 7: R's own regression suite, tests/reg-tests-1{a,b,d}.R.
-# ---------------------------------------------------------------------------
 
 # PR#644: 19x2, "crash using fisher.test on Windows" (it was not just Windows).
 {
 	my $pr644 = [[2,1],[2,1],[4,0],[8,0],[6,0],[0,0],[1,0],[1,1],[7,1],[8,2],
 		     [1,0],[3,1],[1,1],[3,0],[7,2],[4,1],[2,0],[2,0],[2,0]];
-	close_to(fisher_test($pr644)->{p_value}, 0.71781378237770943,
+	close_to(fisher_test($pr644)->{'p.value'}, 0.71781378237770943,
 		 'C7 PR#644 19x2 p-value', $TOL_RXC);
 }
 
@@ -339,12 +325,12 @@ SKIP: {                                  # ~5s here: the support runs to 5.7e6 t
 # margin but one is zero, so the observed table is the only one there is.
 {
 	my $r = fisher_test([[0,0],[0,0],[0,0],[0,1]]);
-	is($r->{p_value}, 1, 'C7 PR#1662 4x2 table with total 1 gives p = 1');
+	is($r->{'p.value'}, 1, 'C7 PR#1662 4x2 table with total 1 gives p = 1');
 }
 
 # PR#10558: "fisher.test with extreme degeneracy".  R's comment records the
 # true value as 1/60; 2.6.1-patched simulated about 0.0005 for it.
-close_to(fisher_test([[1,0,0],[0,2,0],[0,0,3]])->{p_value}, 1/60,
+close_to(fisher_test([[1,0,0],[0,2,0],[0,0,3]])->{'p.value'}, 1/60,
 	 'C7 PR#10558 diag(1:3) p-value is exactly 1/60', $TOL_RXC);
 
 # reg-tests-1b.R, '"exact" fisher.test': R < 2.11.0 returned 1 + 1.17e-13 for
@@ -352,16 +338,15 @@ close_to(fisher_test([[1,0,0],[0,2,0],[0,0,3]])->{p_value}, 1/60,
 # the two rows are identical, which makes the observed table the modal one and
 # the p-value exactly 1.
 {
-	my $p = fisher_test([[14,29,16],[14,29,16]])->{p_value};
+	my $p = fisher_test([[14,29,16],[14,29,16]])->{'p.value'};
 	ok($p >= 0 && $p <= 1, 'C7 identical-rows 2x3 p-value stays in [0,1]');
 	close_to($p, 1, 'C7 identical-rows 2x3 p-value is 1', $TOL_RXC);
 }
 
 # reg-tests-1d.R (PR#17671): fisher.test on set.seed(7)'s 4x4 sample table.
-close_to(fisher_test([[1,2,1,0],[4,3,1,6],[2,6,3,5],[4,3,3,6]])->{p_value},
+close_to(fisher_test([[1,2,1,0],[4,3,1,6],[2,6,3,5],[4,3,3,6]])->{'p.value'},
 	 0.73010293537427828, 'C7 PR#17671 t44 4x4 p-value', $TOL_RXC);
 
-# ---------------------------------------------------------------------------
 # Case 8: tables that are too big to enumerate.
 #
 # R refuses two of these outright, and the point of the R entries is that it
@@ -390,7 +375,6 @@ close_to(fisher_test([[1,2,1,0],[4,3,1,6],[2,6,3,5],[4,3,3,6]])->{p_value},
 # five minutes without either finishing or stopping); the clock is reported for
 # the record, enforced tightly only where the hardware is known, and loosely
 # otherwise so that a genuine blow-up still fails the dist.
-# ---------------------------------------------------------------------------
 my $C8_BUDGET = ($ENV{AUTHOR_TESTING} || $ENV{RELEASE_TESTING}) ? 60 : 900;
 for my $c ([ 'PR#4688 4x3', [[2121,4700,6234],[100,216,2461],[27,67,502],[0,0,14]], qr/4x3/ ],
 	   [ 'Mehta & Patel 5x7', [[1,2,2,1,1,0,1],[2,0,0,2,3,0,0],[0,1,1,1,2,7,3],
@@ -418,37 +402,33 @@ SKIP: {                                  # ~2s here: nearly the whole node budge
 	skip "C8 PR#18336 6x6 $SLOW_WHY", 2 unless $EXTENDED;
 	my $d = [[1,0,5,2,1,90],[2,1,0,2,3,89],[0,0,0,1,0,14],
 		 [0,0,0,0,0,5],[0,0,0,0,0,2],[0,0,0,0,0,2]];
-	my $p = fisher_test($d)->{p_value};
+	my $p = fisher_test($d)->{'p.value'};
 	ok($p > 0 && $p <= 1, 'C8 PR#18336 6x6 returns a probability where R errors');
 	ok(abs($p - 0.6322381839) < 2e-3,
 	   'C8 PR#18336 6x6 p-value agrees with R simulate.p.value (B = 2e6)')
 		or diag("got=$p, R's 2e6-replicate estimate = 0.6322381839");
 }
 
-# ---------------------------------------------------------------------------
 # Case 9: a zero row or a zero column.  SciPy's test_row_or_col_zero expects
 # p = 1 with a NaN odds ratio; R returns p = 1 with an odds ratio of 0 and a
 # CI of (0, Inf).  fisher_test() follows R.
-# ---------------------------------------------------------------------------
 for my $t ([[0,0],[5,10]], [[5,10],[0,0]], [[0,5],[0,10]], [[5,0],[10,0]]) {
 	my $r = fisher_test($t);
-	is($r->{p_value}, 1, "C9 [".tbl($t)."] empty margin gives p = 1");
+	is($r->{'p.value'}, 1, "C9 [".tbl($t)."] empty margin gives p = 1");
 	is($r->{estimate}{"odds ratio"}, 0,    "C9 [".tbl($t)."] odds ratio 0, as in R (SciPy says NaN)");
-	is($r->{conf_int}[0], 0,               "C9 [".tbl($t)."] CI lower 0");
-	is($r->{conf_int}[1], $INF,            "C9 [".tbl($t)."] CI upper Inf");
+	is($r->{'conf.int'}[0], 0,               "C9 [".tbl($t)."] CI lower 0");
+	is($r->{'conf.int'}[1], $INF,            "C9 [".tbl($t)."] CI upper Inf");
 }
 
-# ---------------------------------------------------------------------------
 # Case 10: SciPy edge cases where fisher_test() deliberately behaves otherwise.
-# ---------------------------------------------------------------------------
 
 # test_gh3014: a table with one huge cell used to raise; it must simply work.
 {
 	my $r = fisher_test([[1,2],[9,84419233]]);
-	close_to($r->{p_value}, 3.553691673228909e-07, 'C10 gh3014 lopsided table has a p-value');
+	close_to($r->{'p.value'}, 3.553691673228909e-07, 'C10 gh3014 lopsided table has a p-value');
 	close_to($r->{estimate}{"odds ratio"}, 12287.998558770239, 'C10 gh3014 odds ratio', $TOL_OR);
 	# R stops the upper bound at 2^52 here rather than reporting Inf.
-	close_to($r->{conf_int}[1], 4503599627370496, 'C10 gh3014 CI upper matches R', $TOL_CI);
+	close_to($r->{'conf.int'}[1], 4503599627370496, 'C10 gh3014 CI upper matches R', $TOL_CI);
 }
 
 # test_input_validation_edge_cases_rxc: SciPy returns (1, 1) for a table with a

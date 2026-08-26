@@ -67,9 +67,7 @@ my @greek = (
 	[0x03C9, '\textomega'],
 );
 
-#--------
 # every mapped code point -> its exact macro, in one table (one row each)
-#--------
 {
 	my $tex = texfile();
 	my @rows = (['g']);                       # first inner array = header
@@ -85,9 +83,7 @@ my @greek = (
 	is(scalar(@data), scalar(@greek), 'one mapped data row per Greek code point');
 }
 
-#--------
 # ASCII actives inside a UTF-8 cell still escape (code-point path, ASCII branch)
-#--------
 {
 	my $tex = texfile();
 	my $cell = chr(0x0394) . '_' . chr(0x03B1) . '>' . '&';
@@ -97,9 +93,7 @@ my @greek = (
 		'ASCII # _ % & > are escaped alongside Greek in a UTF-8 cell');
 }
 
-#--------
 # the {} boundary: Greek followed by a letter must not glue into one macro
-#--------
 {
 	my $tex = texfile();
 	write_table([['h'], [chr(0x0394) . 'G']], $tex,
@@ -109,9 +103,7 @@ my @greek = (
 	lacks($body, '\textDeltaG',  'Greek + letter: not glued into \textDeltaG');
 }
 
-#--------
 # the header call site maps Greek too (not just data cells)
-#--------
 {
 	my $tex = texfile();
 	write_table([[chr(0x03A9) . '-total'], ['x']], $tex, 'row.names' => 0);
@@ -119,9 +111,7 @@ my @greek = (
 		'Greek in a header cell is mapped and bold');
 }
 
-#--------
 # both sigma forms are distinct (final vs medial)
-#--------
 {
 	my $tex = texfile();
 	write_table([['h'], [chr(0x03C2)], [chr(0x03C3)]], $tex,
@@ -131,9 +121,7 @@ my @greek = (
 	has($body, '\textsigma{}',    'U+03C3 -> \textsigma (medial sigma)');
 }
 
-#--------
 # non-Greek multibyte characters pass through unchanged
-#--------
 {
 	my $tex = texfile();
 	# U+2206 INCREMENT looks like a triangle but is NOT Greek Delta;
@@ -146,9 +134,7 @@ my @greek = (
 	lacks($body, '\textDelta', 'U+2206 is not mistaken for Greek Delta');
 }
 
-#--------
 # a pure-ASCII cell takes the byte path and still escapes every active char
-#--------
 {
 	my $tex = texfile();
 	write_table([['v'], ['a_b>c#d%e&f']], $tex,
@@ -158,9 +144,7 @@ my @greek = (
 		'pure-ASCII cell: byte path escapes # _ % & >');
 }
 
-#--------
 # \includesvg{...svg} still passes through verbatim (escaper early-out)
-#--------
 {
 	my $tex = texfile();
 	write_table([['fig'], ['\includesvg{a_b.svg}']], $tex,
@@ -170,10 +154,8 @@ my @greek = (
 	lacks($body, 'a\_b.svg', 'includesvg: underscore inside is NOT escaped');
 }
 
-#--------
 # leak safety (an earlier tex write has already loaded Cwd for the provenance
 # line, so its one-time allocation is not mistaken for a leak here)
-#--------
 no_leaks_ok {
 	my $tex = texfile();
 	my @rows = (['g']);

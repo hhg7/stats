@@ -38,14 +38,12 @@ my $WIDE = $EPS < 1e-17;   # NV is wider than a double on this perl
 
 diag(sprintf 'NV epsilon = %.4g%s', $EPS, $WIDE ? ' (NV is wider than double)' : '');
 
-# ---------------------------------------------------------------------------
 # 1. sqrt.  sd(1..5) is sqrt(sum((x-3)^2)/4) = sqrt(10/4); 10 and 4 and 2.5 are
 #    all exact in binary at every width, so the module's answer must be the
 #    identical NV to perl's own sqrt(2.5) -- perl's sqrt goes through
 #    Perl_sqrt, which is width-correct.  Narrowing shows up here immediately:
 #    the module returns the double-rounded root instead, which differs in the
 #    17th significant digit.
-# ---------------------------------------------------------------------------
 is(sd(1 .. 5), sqrt(2.5), 'sd(1..5) is exactly perl sqrt(2.5) at NV width');
 is(sd([1 .. 5]), sqrt(2.5), 'sd([1..5]) via an array ref is exactly sqrt(2.5) too');
 
@@ -54,13 +52,11 @@ is(sd([1 .. 5]), sqrt(2.5), 'sd([1..5]) via an array ref is exactly sqrt(2.5) to
 is(var(1 .. 5), 2.5, 'var(1..5) is exactly 2.5');
 is(mean(1 .. 5), 3, 'mean(1..5) is exactly 3');
 
-# ---------------------------------------------------------------------------
 # 2. lgamma and exp.  Fisher's exact test on [[3,1],[1,3]] has the closed-form
 #    two-sided p-value 17/35 (R: fisher.test(matrix(c(3,1,1,3),2))$p.value =
 #    0.4857142857142857).  The XS reaches it through lgamma()/exp(), so its
 #    accuracy tracks the width those are computed at, while 17/35 evaluated in
 #    perl is correct to one NV ulp.
-# ---------------------------------------------------------------------------
 #    The limit here is an absolute relative error rather than a multiple of
 #    NV epsilon, because fisher_test()'s summation has an accuracy floor of its
 #    own at about 6.4e-18 -- measured identically on the long double and the
@@ -71,7 +67,7 @@ is(mean(1 .. 5), 3, 'mean(1..5) is exactly 3');
 #    separates the two cleanly on any wide build.
 {
 	my $res = fisher_test([[3, 1], [1, 3]]);
-	my $p = ref $res ? ($res->{p_value} // $res->{p}) : $res;
+	my $p = ref $res ? ($res->{'p.value'} // $res->{p}) : $res;
 	my $exact = 17 / 35;
 	my $rel = abs($p - $exact) / $exact;
 	# On a double perl the module is *expected* to land near 1.5e-16; there is
@@ -83,7 +79,6 @@ is(mean(1 .. 5), 3, 'mean(1..5) is exactly 3');
 		                $p, $exact, $rel, $rel / $EPS);
 }
 
-# ---------------------------------------------------------------------------
 # 3. Float classification.  nv_isnan/nv_isinf/nv_isfinite compare against
 #    NV_MAX and so know how wide an NV is; the bare C99 macros are type-generic
 #    on glibc but are plain double functions where a platform does not provide
@@ -93,7 +88,6 @@ is(mean(1 .. 5), 3, 'mean(1..5) is exactly 3');
 #    Only a wide build can express such a value, so this section is skipped on
 #    a double perl -- and on glibc it passes either way, which is why the
 #    section is a guard for other platforms rather than a local detector.
-# ---------------------------------------------------------------------------
 SKIP: {
 	skip 'NV is a double here: no value is finite for NV but infinite for double', 3
 		unless $WIDE;
@@ -104,9 +98,7 @@ SKIP: {
 	is(var($big, $big), 0, 'var() of two equal huge NVs is 0, not NaN');
 }
 
-# ---------------------------------------------------------------------------
 # 4. NaN and Inf still classify correctly, on every width.
-# ---------------------------------------------------------------------------
 {
 	my $nan = "NaN" + 0;
 	my $inf = "Inf" + 0;

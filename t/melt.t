@@ -13,9 +13,7 @@ use Test::LeakTrace 'no_leaks_ok';
 #   * column ids are names (AoH/HoA/HoH) or 0-based positions (AoA)
 #   * 'output.type' defaults to the input family; hoh resets labels to 0..N-1
 
-#--------
 # AoH, the classic pandas example (default output family = AoH)
-#--------
 {
 	my $df = [ { A => 'a', B => 1, C => 2 },
 	           { A => 'b', B => 3, C => 4 },
@@ -35,9 +33,7 @@ use Test::LeakTrace 'no_leaks_ok';
 		'AoH melt: original frame untouched');
 }
 
-#--------
 # value_vars defaults to every column not in id_vars (colnames order)
-#--------
 {
 	my $df = [ { A => 'a', B => 1, C => 2 } ];
 	is_deeply(melt($df, id_vars => 'A'), [
@@ -46,9 +42,7 @@ use Test::LeakTrace 'no_leaks_ok';
 	], 'default value_vars = non-id columns, sorted');
 }
 
-#--------
 # multiple id_vars, id_vars scalar accepted
-#--------
 {
 	my $df = [ { k1 => 'x', k2 => 'p', m => 10 },
 	           { k1 => 'y', k2 => 'q', m => 20 } ];
@@ -58,9 +52,7 @@ use Test::LeakTrace 'no_leaks_ok';
 	], 'multiple id_vars kept');
 }
 
-#--------
 # custom var_name / value_name
-#--------
 {
 	my $df = [ { id => 1, s1 => 9, s2 => 8 } ];
 	is_deeply(melt($df, id_vars => 'id', var_name => 'sensor', value_name => 'reading'), [
@@ -69,9 +61,7 @@ use Test::LeakTrace 'no_leaks_ok';
 	], 'custom var_name/value_name');
 }
 
-#--------
 # HoA input, default output family = HoA
-#--------
 {
 	my $df = { A => [ 'a', 'b' ], B => [ 1, 2 ], C => [ 3, 4 ] };
 	is_deeply(melt($df, id_vars => 'A', value_vars => [ 'B', 'C' ]), {
@@ -81,9 +71,7 @@ use Test::LeakTrace 'no_leaks_ok';
 	}, 'HoA melt: column-major, HoA out');
 }
 
-#--------
 # HoH input, default output family = HoH, labels reset to 0..N-1
-#--------
 {
 	my $df = { r1 => { A => 'a', B => 1 }, r2 => { A => 'b', B => 2 } };
 	my $got = melt($df, id_vars => 'A', value_vars => 'B');
@@ -94,9 +82,7 @@ use Test::LeakTrace 'no_leaks_ok';
 	}, 'HoH melt: RangeIndex 0..N-1 labels');
 }
 
-#--------
 # AoA input, positional ids; default output AoA (var/value positional)
-#--------
 {
 	my $df = [ [ 'a', 1, 2 ], [ 'b', 3, 4 ] ];
 	is_deeply(melt($df, id_vars => 0, value_vars => [ 1, 2 ]), [
@@ -107,9 +93,7 @@ use Test::LeakTrace 'no_leaks_ok';
 	], 'AoA melt: positional variable holds source index');
 }
 
-#--------
 # output.type overrides: AoH in -> HoA / AoA / HoH out
-#--------
 {
 	my $df = [ { A => 'a', B => 1 }, { A => 'b', B => 2 } ];
 	is_deeply(melt($df, id_vars => 'A', 'output.type' => 'hoa'), {
@@ -124,9 +108,7 @@ use Test::LeakTrace 'no_leaks_ok';
 	}, 'output.type hoh');
 }
 
-#--------
 # NA cells pass through as undef
-#--------
 {
 	my $df = [ { A => 'a', B => undef } ];
 	is_deeply(melt($df, id_vars => 'A', value_vars => 'B'),
@@ -134,9 +116,7 @@ use Test::LeakTrace 'no_leaks_ok';
 		'NA value melts to undef');
 }
 
-#--------
 # error paths
-#--------
 dies_ok { melt(undef) } 'undef data dies';
 throws_ok { melt([ { A => 1 } ], 'oddarg') }
 	qr/name => value pairs/, 'odd trailing args die';
@@ -151,9 +131,7 @@ throws_ok { melt([ { A => 1, v => 2 } ], id_vars => 'A', var_name => 'x', value_
 throws_ok { melt([ { A => 1, v => 2 } ], id_vars => 'A', var_name => 'A') }
 	qr/collides/, 'var_name colliding with id_vars dies';
 
-#--------
 # memory
-#--------
 if ($INC{'Devel/Cover.pm'}) { done_testing(); exit 0 }
 no_leaks_ok {
 	my $x = melt([ { A => 'a', B => 1, C => 2 } ], id_vars => 'A', value_vars => [ 'B', 'C' ]);

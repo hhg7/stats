@@ -27,9 +27,7 @@ sub is_approx {
 	}
 }
 
-#--------
 # test data shapes
-#--------
 my $aoh = [
 	{ id => 1, val => 10, tag => 'A' },
 	{ id => 2, val => 20, tag => 'B' },
@@ -47,18 +45,14 @@ my $hoh = {
 	row_d => { id => 4 },					# intentionally missing 'val'
 };
 
-#--------
 # AoH
-#--------
 my $res_aoh = vals($aoh, 'val');
 no_leaks_ok { vals($aoh, 'val') } 'vals(AoH): no memory leaks' unless $INC{'Devel/Cover.pm'};
 is(ref $res_aoh, 'ARRAY', 'vals(AoH) returns an array reference');
 is(scalar @$res_aoh, 3, 'vals(AoH) returns the column length');
 is_deeply($res_aoh, [10, 20, undef], 'vals(AoH) extracts the column, missing cell -> undef');
 
-#--------
 # HoA
-#--------
 my $res_hoa = vals($hoa, 'val');
 no_leaks_ok { vals($hoa, 'val') } 'vals(HoA): no memory leaks' unless $INC{'Devel/Cover.pm'};
 is(ref $res_hoa, 'ARRAY', 'vals(HoA) returns an array reference');
@@ -66,9 +60,7 @@ is_deeply($res_hoa, [10, 20, undef], 'vals(HoA) extracts the column, explicit un
 dies_ok { vals($hoa, 'missing_col') } 'vals(HoA) dies on a non-existent column';
 no_leaks_ok { eval { vals($hoa, 'missing_col') } } 'vals(HoA) croak path: no leak' unless $INC{'Devel/Cover.pm'};
 
-#--------
 # HoH (values returned in sorted-key order)
-#--------
 my $res_hoh = vals($hoh, 'val');
 no_leaks_ok { vals($hoh, 'val') } 'vals(HoH): no memory leaks' unless $INC{'Devel/Cover.pm'};
 is(ref $res_hoh, 'ARRAY', 'vals(HoH) returns an array reference');
@@ -78,9 +70,7 @@ is_deeply($res_hoh, [10, 20, 30, undef], 'vals(HoH) in alphabetical key order (r
 my $sorted = vals({ a => { v => 1 }, ab => { v => 2 }, b => { v => 3 } }, 'v');
 is_deeply($sorted, [1, 2, 3], 'vals(HoH) sorts keys as strings (a < ab < b)');
 
-#--------
 # the result is an independent copy: mutating it must NOT touch the source
-#--------
 {
 	my $src_aoh = [ { val => 10 }, { val => 20 } ];
 	my $v = vals($src_aoh, 'val'); $v->[0] = 999;
@@ -95,17 +85,13 @@ is_deeply($sorted, [1, 2, 3], 'vals(HoH) sorts keys as strings (a < ab < b)');
 	is($src_hoh->{a}{val}, 10, 'vals(HoH) result is independent of the source');
 }
 
-#--------
 # undef cells are writable (not the shared read-only PL_sv_undef)
-#--------
 {
 	my $r = vals([ { val => 1 }, { id => 2 } ], 'val');	  # slot 1 is a missing cell
 	lives_ok { $r->[1] = 5 } 'vals: a missing/undef slot is a writable scalar';
 }
 
-#--------
 # leniency vs strictness for an entirely-absent column
-#--------
 is_deeply(vals([ { id => 1 }, { id => 2 } ], 'val'), [undef, undef],
 	'vals(AoH) absent column -> all undef (per-row, lenient)');
 is_deeply(vals({ a => { id => 1 }, b => { id => 2 } }, 'val'), [undef, undef],
@@ -113,22 +99,16 @@ is_deeply(vals({ a => { id => 1 }, b => { id => 2 } }, 'val'), [undef, undef],
 dies_ok { vals({ id => [1, 2], tag => ['A', 'B'] }, 'val') }
 	'vals(HoA) absent column -> dies (column is structural)';
 
-#--------
 # malformed AoH element (not a hashref) yields undef, not a crash
-#--------
 #is_deeply(vals([ { val => 1 }, 5, { val => 3 } ], 'val'), [1, undef, 3],
 #	'vals(AoH) non-hash element -> undef');
 
-#--------
 # argument validation
-#--------
 dies_ok { vals('not_a_ref', 'val') } 'vals dies on a non-reference data frame';
 dies_ok { vals($aoh) }				 'vals dies when the column argument is missing';
 dies_ok { vals($aoh, undef) }		 'vals dies when the column name is undef';
 
-#--------
 # empty frames
-#--------
 is_deeply(vals([], 'col'), [], 'vals on an empty AoH yields []');
 is_deeply(vals({}, 'col'), [], 'vals on an empty hash yields []');
 

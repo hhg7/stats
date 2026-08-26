@@ -32,9 +32,7 @@ sub is_approx {
     }
 }
 
-# ============================================================================
 # 1. min / max (Baseline Sanity Checks)
-# ============================================================================
 is_approx( min(1, 2, 2.33, 3), 1, 'min of scalars');
 is_approx( max(1, 2, 2.33, 3), 3, 'max of scalars');
 
@@ -197,7 +195,7 @@ is_deeply($chi_1d->{'expected'}, [20, 20, 20], 'chisq_test 1D: Expected values c
 my $fish_matrix = [ [10, 2], [3, 15] ];
 my $fish_res = fisher_test($fish_matrix);
 is($fish_res->{'method'}, "Fisher's Exact Test for Count Data", 'fisher_test: Method name');
-ok(exists $fish_res->{'p_value'}, 'fisher_test: Returned a p-value');
+ok(exists $fish_res->{'p.value'}, 'fisher_test: Returned a p-value');
 
 # dnorm
 my $dnorm_val = dnorm(0, mean => 0, sd => 1, log => 0);

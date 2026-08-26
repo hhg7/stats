@@ -31,9 +31,7 @@ sub is_approx {
 dies_ok {
 	dropna(undef);
 } 'dropna: dies when given undefined data';
-#--------
 # HoA cols (the motivating example, how => 'any' default)
-#--------
 {
 	my $df = { A => [1, 2, undef], B => [1, 2, 3], C => [undef, 2, 4] };
 	my $out = dropna($df, cols => ['A', 'B']);
@@ -43,9 +41,7 @@ dies_ok {
 		'HoA cols: original data frame untouched');
 }
 
-#--------
 # HoA how => 'any' vs 'all'
-#--------
 {
 	my $df = { A => [1, undef, undef], B => [9, 2, undef] };
 	is_deeply(dropna($df, cols => ['A', 'B'], how => 'any'),
@@ -54,9 +50,7 @@ dies_ok {
 		{ A => [1, undef], B => [9, 2] }, 'HoA how=all drops only the all-undef row');
 }
 
-#--------
 # HoA rows (literal index deletion, no NA logic)
-#--------
 {
 	my $df = { A => [10, 20, 30, 40], B => ['a', 'b', 'c', 'd'] };
 	is_deeply(dropna($df, rows => [1, 3]),
@@ -66,9 +60,7 @@ dies_ok {
 		'HoA rows: an out-of-range index is ignored');
 }
 
-#--------
 # AoH cols and rows
-#--------
 {
 	my $df = [ { A => 1, B => 1 }, { A => undef, B => 2 }, { A => 3, B => undef } ];
 	is_deeply(dropna($df, cols => ['A']),
@@ -80,9 +72,7 @@ dies_ok {
 		[ { A => undef, B => 2 } ], 'AoH rows: delete indices 0 and 2');
 }
 
-#--------
 # HoH cols and rows
-#--------
 {
 	my $df = { r1 => { A => 1, B => 2 }, r2 => { A => undef, B => 5 }, r3 => { A => 7, B => 8 } };
 	is_deeply(dropna($df, cols => ['A']),
@@ -92,9 +82,7 @@ dies_ok {
 		{ r2 => { A => undef, B => 5 } }, 'HoH rows: delete keys r1 and r3');
 }
 
-#--------
 # values survive intact (numeric cells)
-#--------
 {
 	my $df = { mpg => [21, 22.8, undef], gear => [4, 3, 5] };
 	my $out = dropna($df, cols => ['mpg']);
@@ -103,16 +91,12 @@ dies_ok {
 	is_deeply($out->{gear}, [4, 3], 'unchecked column realigned to survivors');
 }
 
-#--------
 # empty / edge
-#--------
 is_deeply(dropna([], cols => ['A']), [], 'empty AoH -> empty');
 is_deeply(dropna({}, rows => [0]), {}, 'empty HoA -> empty');
 is_deeply(dropna({ A => [1, 2] }, cols => []), { A => [1, 2] }, 'empty cols subset keeps all');
 
-#--------
 # errors
-#--------
 throws_ok { dropna('scalar', cols => ['A']) } qr/data frame/,
 	'scalar data frame dies';
 throws_ok { dropna({ A => [1] }, cols => ['A'], rows => [0]) } qr/exactly one/,
@@ -132,9 +116,7 @@ throws_ok { dropna({ A => [1], r => { x => 1 } }, cols => ['A']) } qr/ambiguous/
 lives_ok { dropna({ A => [1, undef] }, cols => ['A']) }
 	'a well-formed call lives';
 
-#--------
 # memory
-#--------
 no_leaks_ok {
 	my $x = dropna({ A => [1, 2, undef], B => [1, 2, 3] }, cols => ['A']);
 } 'dropna: no memory leaks (HoA cols)' unless $INC{'Devel/Cover.pm'};

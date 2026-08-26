@@ -45,9 +45,7 @@ sub _body  { grep { $_ !~ /^#/ } _lines($_[0]) }
 # The value / alignment / option tests below do not depend on these.
 #
 
-#--------
 # basic AoA: banner reports rows x cols, all cells rendered in order
-#--------
 {
 	my $aoa = [ [1, 2, 3], [4, 5, 6] ];
 	my $s = view($aoa, return_only => 1, color => 0);
@@ -62,10 +60,8 @@ sub _body  { grep { $_ !~ /^#/ } _lines($_[0]) }
 	like $b[2], qr/\b4\b.*\b5\b.*\b6\b/, 'second data row: values in order';
 }
 
-#--------
 # alignment: numeric right-justified, string left-justified => every body
 # line ends up the same display width (color off so length == display width)
-#--------
 {
 	my $aoa = [ [5, 'x'], [1000, 'yyy'] ];
 	my $s = view($aoa, return_only => 1, color => 0);
@@ -76,9 +72,7 @@ sub _body  { grep { $_ !~ /^#/ } _lines($_[0]) }
 	like $s, qr/\bx\s/,  'short string value is left-padded (trailing space)';
 }
 
-#--------
 # undef cell -> default "undef" placeholder; na overrides it
-#--------
 {
 	my $aoa = [ [1, undef] ];
 	my $s = view($aoa, return_only => 1, color => 0);
@@ -89,9 +83,7 @@ sub _body  { grep { $_ !~ /^#/ } _lines($_[0]) }
 		qr/\bNA\b/, "na => 'NA' overrides the placeholder";
 }
 
-#--------
 # ragged rows: short rows padded to the widest row with the na placeholder
-#--------
 {
 	my $aoa = [ [1, 2, 3], [4] ];
 	my $s = view($aoa, na => 'NA', return_only => 1, color => 0);
@@ -100,9 +92,7 @@ sub _body  { grep { $_ !~ /^#/ } _lines($_[0]) }
 	like $b[2], qr/\b4\b.*\bNA\b.*\bNA\b/, 'missing cells rendered as na';
 }
 
-#--------
 # control chars inside a cell are escaped so a record stays one display line
-#--------
 {
 	my $aoa = [ [ "a\tb\nc\rd" ] ];
 	my $s = view($aoa, return_only => 1, color => 0);
@@ -110,9 +100,7 @@ sub _body  { grep { $_ !~ /^#/ } _lines($_[0]) }
 	is scalar(_body($s)), 2, 'escaped record stays a single line (header + 1 row)';
 }
 
-#--------
 # max_width truncation + custom ellipsis
-#--------
 {
 	my $aoa = [ [ 'abcdefghij' ] ];                    # 10 chars
 	like view($aoa, max_width => 5, return_only => 1, color => 0),
@@ -121,9 +109,7 @@ sub _body  { grep { $_ !~ /^#/ } _lines($_[0]) }
 		qr/abcde~/, 'custom ellipsis honoured';
 }
 
-#--------
 # n => limits the visible rows and prints the truncation footer once
-#--------
 {
 	my $aoa = [ [1], [2], [3] ];
 	my $s = view($aoa, n => 1, return_only => 1, color => 0);
@@ -132,9 +118,7 @@ sub _body  { grep { $_ !~ /^#/ } _lines($_[0]) }
 	is scalar(_body($s)), 2, 'header + a single data row';
 }
 
-#--------
 # return_only suppresses printing; default path prints; to => FH redirects
-#--------
 {
 	my $aoa = [ [1, 2] ];
 
@@ -157,9 +141,7 @@ sub _body  { grep { $_ !~ /^#/ } _lines($_[0]) }
 	is $ret, $buf, 'returned string equals what was printed';
 }
 
-#--------
 # R-style column chunking still applies to AoA under a narrow width
-#--------
 {
 	my $wide = [ [ 1 .. 8 ], [ 11 .. 18 ] ];
 	my $one  = view($wide, width => 1000, return_only => 1, color => 0);
@@ -174,24 +156,18 @@ sub _body  { grep { $_ !~ /^#/ } _lines($_[0]) }
 	is scalar(grep { $_ eq '' } _lines($many)), 0, 'no blank line between blocks';
 }
 
-#--------
 # AoH detection is unaffected: first element a hashref still reads as AoH
-#--------
 {
 	my $aoh = [ { a => 1, b => 2 } ];
 	like view($aoh, return_only => 1, color => 0), qr/^# AoH:/,
 		'arrayref of hashrefs still detected as AoH, not AoA';
 }
 
-#--------
 # errors
-#--------
 throws_ok { view("not a ref", return_only => 1) }
 	qr/ARRAY .* or HASH/, 'scalar input dies with a clear message';
 
-#--------
 # memory safety
-#--------
 no_leaks_ok {
 	eval { view([ [1, 2, 3], [4, 5, 6] ], return_only => 1, color => 0) }
 } 'view() AoA: no memory leaks' unless $INC{'Devel/Cover.pm'};

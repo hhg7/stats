@@ -222,11 +222,9 @@ for my $pat (sort keys %PATTERN) {
 	}
 }
 
-#---------------------------------------------------------------------------
 # D. R's own numbers for the five default quantiles, over every pattern and
 # every n.  A is the ordering; this is the interpolation and the key naming
 # on top of it.
-#---------------------------------------------------------------------------
 my @KEYS = ('0%', '25%', '50%', '75%', '100%');
 my @DEFAULTS = (
 	[ 'plain_1', [ 0.1286468505859375, 0.1286468505859375, 0.1286468505859375, 0.1286468505859375, 0.1286468505859375 ] ],
@@ -314,12 +312,10 @@ for my $c (@DEFAULTS) {
 		$label, $worst));
 }
 
-#---------------------------------------------------------------------------
 # E. R's numbers for a spread of non-default probs, including both endpoints
 # and the ones that land between order statistics.  Each prob is requested on
 # its own so the value is read back without depending on how the percentage
 # is spelled in the key (R writes 1/3 as "33.33333%", this build as "33.3%").
-#---------------------------------------------------------------------------
 my @PR = (0, 0.001, 0.05, 1/3, 0.5, 0.666, 0.95, 0.999, 1);
 my @PROBS = (
 	[ 'probs_plain_7', [ 0.1286468505859375, 0.13050070190429688, 0.22133941650390626, 0.4991607666015625, 0.649505615234375, 0.67231744384765624, 0.78960266113281241, 0.82164227294921877, 0.822296142578125 ] ],
@@ -347,10 +343,8 @@ for my $c (@PROBS) {
 		$label, $worst));
 }
 
-#---------------------------------------------------------------------------
 # F. The Perl-side surface: undef handling, the croaks, and the shapes that
 # have to survive the sort without being ordered at all.
-#---------------------------------------------------------------------------
 {
 	my $x = sw_lcg(50);
 	my $clean = quantile(x => $x);

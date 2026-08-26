@@ -7,7 +7,7 @@ use Test::More;
 use Test::LeakTrace;
 use Stats::LikeR;
 
-# --- size => N : last group holds the remainder -----------------------------
+# size => N : last group holds the remainder
 {
 	my @g = chunk(['a' .. 'z'], size => 5);
 	is(scalar @g, 6, 'size=>5 over 26 -> 6 groups');
@@ -16,7 +16,7 @@ use Stats::LikeR;
 	is_deeply($g[-1], ['z'],           'last group is the remainder');
 }
 
-# --- parts => K : remainder spread across the leading groups ----------------
+# parts => K : remainder spread across the leading groups
 {
 	my @g = chunk(['a' .. 'z'], parts => 5);
 	is(scalar @g, 5, 'parts=>5 -> 5 groups');
@@ -24,7 +24,7 @@ use Stats::LikeR;
 	is_deeply($g[-1], [qw/u v w x y z/], 'last group holds the extra');
 }
 
-# --- size and parts agree when the split is even ----------------------------
+# size and parts agree when the split is even
 {
 	my @s = chunk([1 .. 10], size  => 2);
 	my @p = chunk([1 .. 10], parts => 5);
@@ -32,26 +32,26 @@ use Stats::LikeR;
 	is_deeply(\@s, \@p, 'size=>2 and parts=>5 match when even');
 }
 
-# --- input order is preserved (chunk never sorts) ---------------------------
+# input order is preserved (chunk never sorts)
 {
 	my @g = chunk([3, 1, 2], size => 2);
 	is_deeply(\@g, [[3, 1], [2]], 'input order preserved');
 }
 
-# --- more parts than elements: numpy.array_split parity ---------------------
+# more parts than elements: numpy.array_split parity
 {
 	my @g = chunk([1, 2, 3], parts => 5);
 	is(scalar @g, 5, 'parts > n still returns K groups');
 	is_deeply([ map { @$_ } @g ], [1, 2, 3], 'no elements lost across empty groups');
 }
 
-# --- empty input -> empty list ----------------------------------------------
+# empty input -> empty list
 {
 	my @g = chunk([], parts => 3);
 	is(scalar @g, 0, 'empty input -> empty list');
 }
 
-# --- argument errors --------------------------------------------------------
+# argument errors
 {
 	ok(!eval { chunk('x', size => 2); 1 },                'non-arrayref dies');
 	ok(!eval { chunk([1, 2], size => 2, parts => 2); 1 }, 'size and parts together dies');
@@ -60,7 +60,7 @@ use Stats::LikeR;
 	ok(!eval { chunk([1, 2], parts => -1); 1 },           'negative parts dies');
 }
 
-# --- leak checks (assignments hoisted out for Devel::Cover) ------------------
+# leak checks (assignments hoisted out for Devel::Cover)
 unless ($INC{'Devel/Cover.pm'}) {
 	my @data = 1 .. 500;
 	no_leaks_ok { eval { my @g = chunk(\@data, size  => 7) } }  'chunk: no leaks (size)';

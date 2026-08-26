@@ -145,7 +145,6 @@ sub tmpcsv {
 	is( $rows->[0]{b}, 'keep', 'a value left alone by the filter is preserved' );
 	ok( !defined $rows->[1]{b}, 'a value blanked inside a filter is written back as undef' );
 }
-# ==============================================================================
 # Non-ASCII / UTF-8 read coverage.
 #
 # _parse_csv_file opens the file as a byte stream (PerlIO_open ... "r") and
@@ -156,7 +155,6 @@ sub tmpcsv {
 # are spelled out explicitly (\xC3\xA9 = LATIN SMALL LETTER E WITH ACUTE,
 # \xE2\x98\x83 = SNOWMAN) so the assertions never depend on this .t file's own
 # on-disk encoding.
-# ==============================================================================
 my $cafe = "caf\xC3\xA9";	# 'cafe' + e-acute
 my $ole  = "ol\xC3\xA9";	# 'ol'  + e-acute
 my $snow = "\xE2\x98\x83";	# U+2603 SNOWMAN

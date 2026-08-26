@@ -7,7 +7,7 @@ use Stats::LikeR;
 use File::Temp qw(tempfile);
 use Test::More;
 
-# --- optional test modules: import if present, else install skipping stubs ---
+# optional test modules: import if present, else install skipping stubs
 BEGIN {
 	if (eval { require Test::Exception; 1 }) {
 		Test::Exception->import;

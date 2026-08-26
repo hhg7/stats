@@ -8,7 +8,7 @@ use Test::Exception;
 use Stats::LikeR;
 use Test::LeakTrace;
 
-# --- Test Case 1: Intercept-Free Modeling (R Compatibility) ---
+# Test Case 1: Intercept-Free Modeling (R Compatibility)
 my $data = {
  'y' => [2.0, 4.0, 6.0],
  'x' => [1.0, 2.0, 3.0]
@@ -22,7 +22,7 @@ is($res->{'null.deviance'}, 56, 'Null deviance tracks R convention for intercept
 no_leaks_ok {
 	eval { glm(formula => 'y ~ x -1 ', data => $data, family => 'gaussian') }
 } 'glm: no leaks with false intercept' unless $INC{'Devel/Cover.pm'};
-# --- Test Case 2: Binomial Logistic Progression ---
+# Test Case 2: Binomial Logistic Progression
 $data = {
   success => [0.0, 0.0, 1.0, 1.0],
   predictor => [0.1, 0.2, 0.9, 0.8]
@@ -32,7 +32,7 @@ $res = glm(formula => 'success ~ predictor', data => $data, family => 'binomial'
 ok($res->{converged}, 'Logistic model converged successfully via IRLS');
 is($res->{family}, 'binomial', 'Family parameter tracked properly');
 
-# --- Test Case 3: Car Names Mapping (Row Names) ---
+# Test Case 3: Car Names Mapping (Row Names)
 my $mtcars = {
   'row.names' => ['Mazda RX4', 'Mazda RX4 Wag', 'Datsun 710'],
   'am'        => [1, 1, 1],
@@ -45,7 +45,7 @@ $res = glm(formula => 'am ~ wt + hp', data => $mtcars, family => 'gaussian');
 ok(exists $res->{'deviance.resid'}{'Mazda RX4'}, 'Residual keys map to car names, not integers');
 ok(exists $res->{'fitted.values'}{'Datsun 710'}, 'Fitted value keys map to car names, not integers');
 #=c
-# --- Test Case 4: Exception Handling & Leak Avoidance ---
+# Test Case 4: Exception Handling & Leak Avoidance
 my $invalid_binomial_data = {
   success => [-0.5, 2.0, 1.0, 0.0], # Breaks [0,1] domain rule
   predictor => [1, 2, 3, 4]
@@ -59,7 +59,6 @@ no_leaks_ok {
   eval { glm(formula => 'success ~ predictor', data => $invalid_binomial_data, family => 'binomial') };
 } 'glm: No memory leaked when throwing an exception deep w/i XS execution' unless $INC{'Devel/Cover.pm'};
 
-# ---------------------------------------------------------------------------
 # Factor-bearing terms in the design matrix.
 #
 # glm() shares its design-matrix construction with lm(), and until that code
@@ -119,7 +118,7 @@ no_leaks_ok {
 		],
 	};
 
-	# --- gaussian, numeric x factor interaction -------------------------------
+	# gaussian, numeric x factor interaction
 	# R: glm(len ~ dose * supp, ToothGrowth, family = gaussian)
 	my $gi = glm(formula => 'len ~ dose * supp', data => $tooth, family => 'gaussian');
 	is_deeply([ sort @{ $gi->{terms} } ],
@@ -142,7 +141,7 @@ no_leaks_ok {
 	cmp_ok(abs($gi->{deviance} - 933.63492857142842), '<', 1e-9 * 933.63492857142842,
 		'glm: interaction deviance matches R');
 
-	# --- gaussian, factor with no intercept -----------------------------------
+	# gaussian, factor with no intercept
 	# R: glm(len ~ supp - 1, ...) keeps both levels, each coefficient being that
 	# group's own mean.
 	my $gn = glm(formula => 'len ~ supp - 1', data => $tooth, family => 'gaussian');
@@ -156,7 +155,7 @@ no_leaks_ok {
 	cmp_ok(abs($gn->{deviance} - 3246.8593333333333), '<', 1e-9 * 3246.8593333333333,
 		'glm: no-intercept factor deviance matches R');
 
-	# --- poisson, factor x factor interaction ---------------------------------
+	# poisson, factor x factor interaction
 	# R: glm(breaks ~ wool * tension, warpbreaks, family = poisson)
 	my $pi = glm(formula => 'breaks ~ wool * tension', data => $warp, family => 'poisson');
 	is_deeply([ sort @{ $pi->{terms} } ],
@@ -187,7 +186,7 @@ no_leaks_ok {
 	cmp_ok(abs($pi->{deviance} - 182.30513128584673), '<', 1e-8 * 182.30513128584673,
 		'glm: poisson interaction deviance matches R');
 
-	# --- poisson, two factors and no intercept --------------------------------
+	# poisson, two factors and no intercept
 	# Only the first factor can take the empty margin, so wool is coded in full
 	# and tension falls back to contrasts. Coding both in full would be rank
 	# deficient.
@@ -224,7 +223,6 @@ no_leaks_ok {
 	} 'glm: no leak fitting a full-coded factor' unless $INC{'Devel/Cover.pm'};
 }
 
-# ---------------------------------------------------------------------------
 # Step halving, the IRLS iteration count, and the standard errors that follow
 # from it.
 #

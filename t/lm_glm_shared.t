@@ -22,7 +22,7 @@ my %d = (
 sub linear   { lm(formula => $_[0], data => $_[1]) }
 sub gaussian { glm(formula => $_[0], data => $_[1], family => 'gaussian') }
 
-# --- the formula spellings both must now understand -----------------------
+# the formula spellings both must now understand
 # Each was already right in lm() and wrong in glm(): glm() had no '.', no '+0',
 # a fixed 512-byte formula buffer, and a substring search for '-1' that reached
 # inside I(...).
@@ -78,7 +78,7 @@ throws_ok { lm(formula => 'y ~ I(x-1)', data => \%d) }
 throws_ok { gaussian('y ~ I(x-1)', \%d) }
 	qr/0 degrees of freedom/, 'glm: I(x-1) is not silently rewritten';
 
-# --- row names -----------------------------------------------------------
+# row names
 # lm() used to label every row 1..n.  It now takes glm()'s labels, which is what
 # predict() already documented and returned.
 
@@ -140,7 +140,7 @@ for my $key (qw(_row rownames .rownames)) {
 		'lm: no row-name column still means 1-based integer labels');
 }
 
-# --- shared code, separate messages --------------------------------------
+# shared code, separate messages
 # The helpers take the caller's name so an error still says which function the
 # user called.
 

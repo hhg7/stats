@@ -459,7 +459,7 @@ above exactly). The difference is one of role, not arithmetic:
   toward factors and balanced designs, and in this module it adds two
   conveniences `anova` deliberately leaves out: it can **auto-stack** a named
   list when you omit the formula (R's `stack()` + `Value ~ Group`), and it
-  returns a `group_stats` block of per-group means and counts alongside the
+  returns a `group.stats` block of per-group means and counts alongside the
   table. Reach for `aov` when your question is "do these treatment groups
   differ, and what do the groups look like?"
 
@@ -716,7 +716,7 @@ The function returns a single `HashRef` containing the evaluated statistical res
 | --- | --- | --- | --- | --- |
 | *(Term Name)* | `HashRef` | `undef` | A nested hash for each independent term in the formula (e.g., `'Group'`, `'N:P'`), containing its ANOVA table statistics. | `{'Df' => 1, 'Sum Sq' => 14.2, 'Mean Sq' => 14.2, 'F value' => 25.81, 'Pr(>F)' => 0.0004}` |
 | `Residuals` | `HashRef` | `undef` | A nested hash containing the residual (error) statistics for the fitted model. | `{'Df' => 10, 'Sum Sq' => 5.5, 'Mean Sq' => 0.55}` |
-| `group_stats` | `HashRef` | `undef` | A nested hash containing descriptive statistics (`mean` and `size` / count) for every column evaluated in the original unstacked data structure. | `{'mean' => {'A' => 2.1, 'B' => 5.4}, 'size' => {'A' => 10, 'B' => 10}}` |
+| `group.stats` | `HashRef` | `undef` | A nested hash containing descriptive statistics (`mean` and `size` / count) for every column evaluated in the original unstacked data structure. | `{'mean' => {'A' => 2.1, 'B' => 5.4}, 'size' => {'A' => 10, 'B' => 10}}` |
 
 ### omitting formula
 
@@ -923,16 +923,16 @@ machine precision in a single line.
 ### Result keys
 
 * **`bedroc`** — the BEDROC score in `[0, 1]`.
-* **`rie`**, **`rie_min`**, **`rie_max`** — the underlying Robust Initial
+* **`rie`**, **`rie.min`**, **`rie.max`** — the underlying Robust Initial
   Enhancement and its bounds for this `alpha` and active fraction; BEDROC is
   `rie` rescaled onto `[0, 1]`.
-* **`n`**, **`n_active`**, **`n_inactive`** — counts.
-* **`ra`** — the active fraction `n_active / n`.
+* **`n`**, **`n.active`**, **`n.inactive`** — counts.
+* **`ra`** — the active fraction `n.active / n`.
 * **`alpha`**, **`direction`**, **`method`** — the settings used, echoed back.
 * **`enrichment`** — present only when `top` was given; a hashref with
-  `fraction`, `n_top` (compounds in the top slice, `ceil(top * n)`),
-  `active_count` (actives found there), `expected` (actives expected by chance,
-  `ra * n_top`), and `enrichment_factor` (`(active_count / n_top) / ra`).
+  `fraction`, `n.top` (compounds in the top slice, `ceil(top * n)`),
+  `active.count` (actives found there), `expected` (actives expected by chance,
+  `ra * n.top`), and `enrichment.factor` (`(active.count / n.top) / ra`).
 
 ### Examples
 
@@ -942,7 +942,7 @@ machine precision in a single line.
         cutoff => 6.5,
         top    => 0.05);
     print $r->{bedroc};
-    print $r->{enrichment}{enrichment_factor};   # e.g. 2.0 => 2x over random
+    print $r->{enrichment}{enrichment.factor};   # e.g. 2.0 => 2x over random
 
     # fraction-defined actives straight from a raw ΔG column: the strongest-
     # binding 10% (lowest ΔG) are the actives, best predictions rank first.
@@ -1021,7 +1021,7 @@ You play 10 rounds and the toddler gets 6 right. Real skill, or just luck?
 
     my $r = binom_test(6, 10, p => 0.5); # 6 wins, 10 rounds, guessing rate 0.5
 
-    print $r->{p_value};                 # 0.7539
+    print $r->{p.value};                 # 0.7539
 
 The full result is a hashref:
 
@@ -1029,10 +1029,10 @@ The full result is a hashref:
         statistic   => 6,            # times the toddler was right
         parameter   => 10,           # rounds played
         estimate    => 0.6,          # observed rate, 6/10
-        null_value  => 0.5,          # the "pure guessing" rate we test against
-        p_value     => 0.7539,
-        conf_int    => [0.262, 0.878],
-        conf_level  => 0.95,
+        null.value  => 0.5,          # the "pure guessing" rate we test against
+        p.value     => 0.7539,
+        conf.int    => [0.262, 0.878],
+        conf.level  => 0.95,
         alternative => 'two.sided',
         method      => 'Exact binomial test',
     }
@@ -1050,14 +1050,14 @@ Suppose the toddler had gone 9 for 10 instead:
 
     my $r = binom_test(9, 10, p => 0.5);
 
-    print $r->{p_value};                   # 0.0215
+    print $r->{p.value};                   # 0.0215
 
 Now `p = 0.02`, under `0.05`. A pure guesser almost never does that well, so
 this **is** good evidence the toddler can actually tell the cards apart.
 
 ### The confidence interval
 
-`conf_int` is the plausible range for the toddler's true success rate. For
+`conf.int` is the plausible range for the toddler's true success rate. For
 6/10 it runs from about `0.26` to `0.88` — wide, and it comfortably includes
 `0.5`. That overlap with the guessing rate is another way of seeing that luck
 cannot be ruled out. For 9/10 the interval would sit well above `0.5`.
@@ -1068,7 +1068,7 @@ cannot be ruled out. For 9/10 the interval would sit well above `0.5`.
   - `alternative` is `'two.sided'` (default), `'less'`, or `'greater'`. Use
     `'greater'` when you only care whether the toddler beats guessing, not
     whether they do worse.
-  - `conf_level` sets the interval width (default `0.95`).
+  - `conf.level` sets the interval width (default `0.95`).
 
 You can also pass the counts as `binom_test([6, 4])` — 6 right, 4 wrong — when
 you have wins and losses instead of wins and a total.
@@ -1392,12 +1392,12 @@ e.g. an exposure/outcome odds ratio adjusted for study site. Same as R's
                        [20,6,8,15],     # stratum 2
                        [ 7,4,9,11] ]);  # stratum 3
 
-    print $r->{p_value};    # combined test across strata
+    print $r->{p.value};    # combined test across strata
     print $r->{estimate};   # Mantel–Haenszel common odds ratio
 
 Each 2×2 uses the same layout as [`epi_2x2`](#epi_2x2). Options: `correct`
-(continuity correction, default `1`) and `conf_level` (default `0.95`). The
-result also has `statistic` (chi-squared), `parameter` (df = 1), `conf_int` (for
+(continuity correction, default `1`) and `conf.level` (default `0.95`). The
+result also has `statistic` (chi-squared), `parameter` (df = 1), `conf.int` (for
 the common OR), and `k` (number of strata).
 
 ## cohen_d
@@ -1407,7 +1407,7 @@ the pooled standard deviation. It also returns the Hedges' *g* small-sample
 correction and a large-sample (normal-approximation) confidence interval.
 Validated numerically against R.
 
-    my $d = cohen_d(\@treatment, \@control);           # or conf_level => 0.90
+    my $d = cohen_d(\@treatment, \@control);           # or conf.level => 0.90
     printf "d = %.2f (95%% CI %.2f–%.2f), Hedges g = %.2f\n",
         $d->{estimate}, $d->{'conf.int'}[0], $d->{'conf.int'}[1], $d->{hedges_g};
 
@@ -1861,13 +1861,13 @@ Give times, an event flag (1 = event, 0 = censored), and one or more covariates
     my $fit = coxph(\@time, \@status, [\@age, \@sex],
                     names => ['age', 'sex']);
 
-    print $fit->{exp_coef}[0];    # hazard ratio for age
-    print $fit->{p_value}[0];     # its p-value
+    print $fit->{exp.coef}[0];    # hazard ratio for age
+    print $fit->{p.value}[0];     # its p-value
 
-Options: `names`, `ties` (`'efron'` default, or `'breslow'`), `conf_level`
+Options: `names`, `ties` (`'efron'` default, or `'breslow'`), `conf.level`
 (default `0.95`), `maxit`. The result has parallel per-covariate arrays `coef`
-(log-HR), `exp_coef` (HR), `se`, `z`, `p_value`, `conf_int` (HR scale), plus
-model-level `loglik`, `lr_stat`/`lr_p_value` (likelihood-ratio test), `n`,
+(log-HR), `exp.coef` (HR), `se`, `z`, `p.value`, `conf.int` (HR scale), plus
+model-level `loglik`, `lr.stat`/`lr.p.value` (likelihood-ratio test), `n`,
 `nevent`, and `converged`. See [`survfit`](#survfit) and
 [`logrank_test`](#logrank_test).
 
@@ -2150,8 +2150,8 @@ A hash reference:
   observations still count.
 - **`kernel`** — the kernel that was used, spelled out in full, so an
   abbreviation comes back resolved.
-- **`old_coords`**, **`has_na`** — echoes of the corresponding R fields;
-  `has_na` is always 0.
+- **`old.coords`**, **`has.na`** — echoes of the corresponding R fields;
+  `has.na` is always 0.
 
     my $d = density(\@x, bw => 'SJ');
     printf "bandwidth %.4f over %d observations\n", $d->{bw}, $d->{n};
@@ -2211,9 +2211,158 @@ same `eruptions` and `precip` samples that test file uses. It is an author-only
 script — it is not installed, and it needs `Matplotlib::Simple`, `python3` and
 `matplotlib` — so re-run it only when a figure needs to change.
 
+## Distribution functions
+
+`pnorm` and `dnorm` have never had company: there was no way to ask for a
+quantile, or for any distribution but the normal, so a confidence bound or a
+custom test statistic could not be finished outside the module. These eight
+close that, with R's names, R's argument order and R's semantics:
+
+| function | R's | what it gives |
+| --- | --- | --- |
+| `qnorm($p, mean => 0, sd => 1)` | `qnorm` | the normal quantile — the inverse of [`pnorm`](#pnorm) |
+| `pt($q, $df)` | `pt` | Student *t* CDF |
+| `qt($p, $df)` | `qt` | Student *t* quantile |
+| `pchisq($q, $df)` | `pchisq` | chi-square CDF |
+| `qchisq($p, $df)` | `qchisq` | chi-square quantile |
+| `pf($q, $df1, $df2)` | `pf` | *F* CDF |
+| `qf($p, $df1, $df2)` | `qf` | *F* quantile |
+| `pbinom($q, $size, $prob)` | `pbinom` | binomial CDF |
+
+Every one takes its distribution parameters **either positionally or by name**,
+because R is called both ways:
+
+    pt(2.5, 10);              pt(2.5, df => 10);
+    pf(3, 2, 10);             pf(3, df2 => 10, df1 => 2);
+    pbinom(3, 10, 0.25);      pbinom(3, size => 10, prob => 0.25);
+
+and every one takes the same two flags [`pnorm`](#pnorm) does, under both
+spellings:
+
+| option | meaning |
+| --- | --- |
+| `lower` / `lower.tail` | `1` (default) for the lower tail, `0` for the upper |
+| `log` / `log.p` | on a `p*` function, return the log of the probability; on a `q*` function, the probability *argument* is a log |
+
+The first argument may be a single number or an array reference, and an array
+reference comes back the same length and in the same order — again as `pnorm`
+does. An `undef` element becomes `NaN`.
+
+    my $z  = qnorm(0.975);                 # 1.959963984540054
+    my $zs = qnorm([0.025, 0.5, 0.975]);   # [-1.9599639845, 0, 1.9599639845]
+
+### What each one does, in one picture
+
+The same identity read from two ends: a `p*` function is given the boundary and
+returns the shaded area; the matching `q*` function is given the area and
+returns the boundary. Each figure shades the region it integrates and writes the
+integral it evaluates. Regenerate them all with
+`perl -Iblib/lib -Iblib/arch distribution.plots.pl`.
+
+`qnorm` — given an area under the normal density, return the cut-point:
+
+![qnorm: the standard normal density with the left 0.90 of its area shaded, the integral from minus infinity to q equals 0.90 written above it, and the boundary q = 1.281552 marked in orange as the answer](https://raw.githubusercontent.com/hhg7/stats/main/img/qnorm.what.png)
+
+`pt` — the area of the *t* density to the left of a *t* statistic:
+
+![pt: the t density on 10 degrees of freedom with the area left of t = 2.5 shaded, annotated with the integral from minus infinity to 2.5 of f(t) dt = 0.98428, and a note that the unshaded upper tail is 0.01572](https://raw.githubusercontent.com/hhg7/stats/main/img/pt.what.png)
+
+`qt` — the *t* that leaves a given area to its left, which is where the 1.96 of
+a confidence interval comes from:
+
+![qt: the t density on 10 degrees of freedom with 0.975 of its area shaded, the integral set equal to 0.975 with the upper limit unknown, and the boundary t = 2.228139 marked in orange as the answer](https://raw.githubusercontent.com/hhg7/stats/main/img/qt.what.png)
+
+`pchisq` — the chi-square tail beyond an observed statistic, which is what every
+chi-square test reports as its p-value:
+
+![pchisq: the chi-square density on 3 degrees of freedom with the tail beyond 7.81 shaded, annotated with the integral from 7.81 to infinity of f(x) dx = 0.05011](https://raw.githubusercontent.com/hhg7/stats/main/img/pchisq.what.png)
+
+`qchisq` — the critical value that cuts off a tail of a given size:
+
+![qchisq: the chi-square density on 3 degrees of freedom with an upper tail of area 0.05 shaded, the integral from q to infinity set equal to 0.05, and the boundary q = 7.814728 marked in orange as the answer](https://raw.githubusercontent.com/hhg7/stats/main/img/qchisq.what.png)
+
+`pf` — the *F* tail beyond an observed *F*, the `Pr(>F)` column of an ANOVA
+table:
+
+![pf: the F density on 2 and 10 degrees of freedom with the tail beyond F = 4.1 shaded, annotated with the integral from 4.1 to infinity of f(F) dF = 0.04983](https://raw.githubusercontent.com/hhg7/stats/main/img/pf.what.png)
+
+`qf` — the *F* that cuts off a given upper tail, the number an *F* table used to
+be printed for:
+
+![qf: the F density on 2 and 10 degrees of freedom with an upper tail of area 0.05 shaded, the integral from q to infinity set equal to 0.05, and the boundary q = 4.102821 marked in orange as the answer](https://raw.githubusercontent.com/hhg7/stats/main/img/qf.what.png)
+
+`pbinom` — the one that is **not** an integral. A binomial is discrete, so its
+lower tail is a finite sum of bar heights, and the figure says so rather than
+drawing an integral sign over a histogram:
+
+![pbinom: the binomial probability mass function for size 10 and prob 0.5 drawn as bars, with the bars from 0 to 3 shaded and the rest grey, annotated with the sum from i = 0 to 3 of the binomial terms equalling 0.171875](https://raw.githubusercontent.com/hhg7/stats/main/img/pbinom.what.png)
+
+### Why you want them
+
+A Wald interval, or any p-value the module does not already package, becomes a
+one-liner instead of a table lookup:
+
+    my $z  = qnorm(1 - (1 - 0.95) / 2);          # 1.959963984540054
+    my ($lo, $hi) = ($est - $z * $se, $est + $z * $se);
+
+    # a likelihood-ratio test between two nested glm fits
+    my $lr = $small->{deviance} - $big->{deviance};
+    my $p  = pchisq($lr, $small->{'df.residual'} - $big->{'df.residual'},
+                    lower => 0);
+
+### The tail you ask for is the tail that gets computed
+
+No tail is ever formed as `1 -` the other one. That subtraction costs every
+digit below machine epsilon, which is exactly the range a p-value is
+interesting in, so each function is routed to the parameterisation that
+computes the requested side directly:
+
+    pchisq(1e-30, 1);            # 7.978845608028654e-16, not 0
+    pt(-75, 15);                 # 5.4e-21, from the lower tail itself
+
+`qnorm`, `qchisq` and `qf` reflect a probability above `0.5` onto `1 - p`
+before inverting, for the same reason in the other direction — that keeps the
+bisection comparing small numbers instead of numbers that agree to fifteen
+places. The reflection costs the one ulp that `1 - p` rounds away, which is the
+resolution the caller's own `p` had to begin with.
+
+### Accuracy, and the one place `log` is not R's
+
+These are glue over routines the module already had — `normal_quantile_hp`,
+`pt_upper`/`qt_tail`, the incomplete gamma and beta — whose series and
+continued fractions stop at a relative `1e-15` on every build. So they are
+double-accurate on a long-double or `__float128` perl too, rather than more
+accurate there, and they agree with R to about `1e-14` relative.
+
+Two things are deliberately not R:
+
+  - **`log => 1` on a `p*` function returns `log()` of the probability already
+    computed**, not a log carried through the series. A tail that underflowed
+    to `0` therefore logs to `-Inf`, and a tail that rounded to `1` logs to `0`
+    rather than to the tiny negative number R reports. R's `pt`/`pchisq`/`pf`
+    carry `log_p` through and can do better; `pnorm` here does too, because R's
+    Cody algorithm was ported whole. The `q*` functions take `log.p` properly:
+    the argument is exponentiated, which is exact, and lets you name quantiles
+    the linear scale cannot — `qnorm(-800, log.p => 1)` is reachable where
+    `exp(-800)` is just `0`.
+  - **`qf` disagrees with R in the far tail of *F*, and is right.** At
+    `qf(2^-20, 1, 10)` R is 9.9e-4 away from the 60-digit value and this module
+    is 1.0e-15 away; R's own `pf` confirms it, inverting this module's answer to
+    1.6e-15 and its own to 4.9e-4. Thirteen such rows are pinned in
+    `t/distributions.R.scipy.t` against mpmath at `mp.dps = 60`, each asserted
+    both to be right *and* to still disagree with R, so the divergence cannot
+    quietly change.
+
+Non-centrality (`ncp`) is not implemented; nor is `qbinom`. Everything is
+cross-validated in `t/distributions.R.scipy.t` (2041 tests) against a frozen
+table of R 4.6.1 values, SciPy 1.18.0's own mpmath reference cases, and R's own
+round-trip identities from `tests/d-p-q-r-tests.R`.
+
 ## dnorm
 
 gives the density of the normal distribution, with the specified mean and standard deviation.
+
+![dnorm: the standard normal density curve with a vertical orange line at x = 1 reaching the curve, a dotted line across to the y axis, and the label dnorm(1) = 0.241971 -- a height, with nothing shaded, because dnorm integrates nothing](https://raw.githubusercontent.com/hhg7/stats/main/img/dnorm.what.png)
 
 In other words, the predicted height of the value `x`, given a mean, standard deviation, and whether or not to use a log value.
 
@@ -2387,7 +2536,7 @@ numerically against the canonical formula computed in base R.
     my $res = dunn_test(\@values, \@group, method => 'bh');
     for my $c (@$res) {
         printf "%-9s  Z=%+.3f  p=%.4f  (adj %.4f)\n",
-            $c->{comparison}, $c->{Z}, $c->{p_value}, $c->{p_adjust};
+            $c->{comparison}, $c->{Z}, $c->{p.value}, $c->{p_adjust};
     }
 
 Values and groups are given as two parallel arrays; observations with a missing
@@ -2411,7 +2560,7 @@ group order), each containing:
 | `comparison` | `String` | `"group1 - group2"`. | `"A - B"` |
 | `group1`, `group2` | `String` | The two groups being compared. | `"A"`, `"B"` |
 | `Z` | `Double` | Dunn's z statistic for the rank-mean difference. | `-2.7602` |
-| `p_value` | `Double` | Unadjusted two-sided p-value. | `0.005777` |
+| `p.value` | `Double` | Unadjusted two-sided p-value. | `0.005777` |
 | `p_adjust` | `Double` | p-value after the chosen adjustment. | `0.017331` |
 
 ## epi_2x2
@@ -2429,12 +2578,12 @@ Pass the four counts (or a `[a,b,c,d]` / `[[a,b],[c,d]]` array ref):
     use Stats::LikeR 'epi_2x2';
 
     my $r = epi_2x2(30, 70, 20, 80);
-    print $r->{odds_ratio};             # 1.714
-    print "@{ $r->{odds_ratio_ci} }";   # 0.895 3.285
+    print $r->{odds.ratio};             # 1.714
+    print "@{ $r->{odds.ratio.ci} }";   # 0.895 3.285
 
-Options: `conf_level` (default `0.95`) and `correct` (add 0.5 to every cell,
-done automatically when a cell is 0). Result keys: `odds_ratio`, `risk_ratio`,
-`risk_diff` (each with a matching `*_ci`), `risk_exposed`, `risk_unexposed`, and
+Options: `conf.level` (default `0.95`) and `correct` (add 0.5 to every cell,
+done automatically when a cell is 0). Result keys: `odds.ratio`, `risk.ratio`,
+`risk.diff` (each with a matching `*_ci`), `risk.exposed`, `risk.unexposed`, and
 `nnt`. For a significance test use [`fisher_test`](#fisher_test) or
 [`chisq_test`](#chisq_test); to adjust across strata use [`cmh_test`](#cmh_test).
 
@@ -2679,16 +2828,16 @@ which returns a hash reference:
 
     {
     alternative   "two.sided",
-    conf_int      [
+    conf.int      [
         [0] 2.75343836564204,
         [1] 300.682787419401
     ],
-    conf_level    0.95,
+    conf.level    0.95,
     estimate      {
         "odds ratio"   21.3053312750168
     },
     method        "Fisher's Exact Test for Count Data",
-    p_value       0.000536724119143435
+    p.value       0.000536724119143435
     }
 
 ### hash reference entry
@@ -2716,15 +2865,15 @@ For tables larger than 2x2 the p-value is computed by exact enumeration of
 every contingency table sharing the observed row and column margins (the
 multivariate hypergeometric distribution), and matches R's `fisher.test` to
 full precision. Only the two-sided test is defined in this case, so
-`alternative` is ignored and the returned hash reference omits `conf_int` and
+`alternative` is ignored and the returned hash reference omits `conf.int` and
 `estimate` (the conditional-MLE odds ratio and its confidence interval are
 reported for 2x2 tables only):
 
     {
     alternative   "two.sided",
-    conf_level    0.95,
+    conf.level    0.95,
     method        "Fisher's Exact Test for Count Data",
-    p_value       0.0540892411303451
+    p.value       0.0540892411303451
     }
 
 As with the 2x2 case, a hash-of-hashes input orders rows by their sorted keys
@@ -2764,7 +2913,7 @@ non-numeric value are dropped, mirroring R's `complete.cases`.
         [9, 10,  9],   # subject 3
         [8,  8,  6],   # subject 4
     ]);
-    printf "chi2=%.3f  df=%d  p=%.4g\n", $r->{statistic}, $r->{parameter}, $r->{p_value};
+    printf "chi2=%.3f  df=%d  p=%.4g\n", $r->{statistic}, $r->{parameter}, $r->{p.value};
 
 A significant result says the conditions differ overall; follow up with pairwise
 comparisons (for example [dunn_test](#dunn_test) on the paired differences, or
@@ -2776,7 +2925,7 @@ Wilcoxon signed-rank tests with a multiple-comparison adjustment).
 | --- | --- | --- | --- |
 | `statistic` | `Double` | Friedman chi-squared statistic (tie-corrected). | `4.0952` |
 | `parameter` | `Integer` | Degrees of freedom, `k - 1` (number of treatments minus one). | `2` |
-| `p_value` | `Double` | The p-value from the chi-squared approximation. | `0.129` |
+| `p.value` | `Double` | The p-value from the chi-squared approximation. | `0.129` |
 | `n` | `Integer` | Number of complete blocks actually used. | `7` |
 | `method` | `String` | `"Friedman rank sum test"`. | |
 
@@ -3233,7 +3382,7 @@ it was validated numerically.
     my @prob = map { $fit->{'fitted.values'}{$_} } @ids;
 
     my $hl = hosmer_lemeshow(\@obs, \@prob, g => 10);
-    printf "HL chi2=%.2f df=%d p=%.3f\n", $hl->{statistic}, $hl->{parameter}, $hl->{p_value};
+    printf "HL chi2=%.2f df=%d p=%.3f\n", $hl->{statistic}, $hl->{parameter}, $hl->{p.value};
 
 ### Input Parameters
 
@@ -3249,7 +3398,7 @@ it was validated numerically.
 | --- | --- | --- | --- |
 | `statistic` | `Double` | Hosmer-Lemeshow chi-squared statistic. | `4.3456` |
 | `parameter` | `Integer` | Degrees of freedom, `g - 2`. | `8` |
-| `p_value` | `Double` | Goodness-of-fit p-value (large = good fit). | `0.825` |
+| `p.value` | `Double` | Goodness-of-fit p-value (large = good fit). | `0.825` |
 | `groups` | `Integer` | Number of non-empty groups used. | `10` |
 | `table` | `ArrayRef` | Per-group `{n, observed, expected}` event summaries. | |
 
@@ -3508,13 +3657,13 @@ the groups that do have data under a `df` that counts one that does not is not
 a test of anything. (SciPy takes the other side of this and returns `NaN`.)
 
 A sample with no variation at all gives a tie correction of exactly zero, so
-the statistic is `0/0`: like R, `statistic` and `p_value` come back as `NaN`.
+the statistic is `0/0`: like R, `statistic` and `p.value` come back as `NaN`.
 
 ### returned fields
 
 `statistic`, `parameter` (the degrees of freedom) and `method` are R's `htest`
-fields; the p-value is available as both `p_value` and `p.value`. On top of
-those, `group_stats` holds `size` and `mean` sub-hashes keyed by your own group
+fields; the p-value is available as both `p.value` and `p.value`. On top of
+those, `group.stats` holds `size` and `mean` sub-hashes keyed by your own group
 labels, computed over the same observations the statistic used.
 
 ## ks_test
@@ -3574,7 +3723,7 @@ the asymptotic one, so it always names the p-value you actually got.
   D⁻. It is the maximum distance between the two ECDFs (or, for the one-sample
   test, between the ECDF and the reference CDF), always in the range [0, 1].
   Larger values mean the distributions are further apart.
-- **`p_value`** — the probability, under the null hypothesis that the samples
+- **`p.value`** — the probability, under the null hypothesis that the samples
   share a distribution, of observing a statistic at least this large. It is
   clamped to [0, 1]; a small value (e.g. < 0.05) is evidence against the null.
 - **`method`** — a human-readable description of exactly what was run, handy
@@ -3590,9 +3739,9 @@ the asymptotic one, so it always names the p-value you actually got.
 For example:
 
     my $ks = ks_test(\@x, \@y);
-    if ($ks->{p_value} < 0.05) {
+    if ($ks->{p.value} < 0.05) {
         printf "reject H0: D=%.4f, p=%.4g (%s)\n",
-            $ks->{statistic}, $ks->{p_value}, $ks->{method};
+            $ks->{statistic}, $ks->{p.value}, $ks->{method};
     }
 
 ## kurtosis
@@ -3795,10 +3944,10 @@ Give times, an event flag (1 = event, 0 = censored), and a group label per row:
     use Stats::LikeR 'logrank_test';
 
     my $r = logrank_test(\@time, \@status, \@group);
-    print $r->{p_value};
+    print $r->{p.value};
 
 Result keys: `statistic` (chi-squared), `parameter` (df = groups − 1),
-`p_value`, `observed` and `expected` events per group, and `groups`. See
+`p.value`, `observed` and `expected` events per group, and `groups`. See
 [`survfit`](#survfit) for the curves and [`coxph`](#coxph) to adjust for
 covariates.
 
@@ -3859,7 +4008,7 @@ numerically against R.
 
     # counts as a square matrix: [[a, b], [c, d]]
     my $r = mcnemar_test([[794, 86], [150, 570]]);
-    printf "chi2=%.2f df=%d p=%.4g\n", $r->{statistic}, $r->{parameter}, $r->{p_value};
+    printf "chi2=%.2f df=%d p=%.4g\n", $r->{statistic}, $r->{parameter}, $r->{p.value};
 
     # small samples: exact binomial test on the discordant pairs
     my $e = mcnemar_test([[794, 86], [150, 570]], exact => 1);
@@ -3886,7 +4035,7 @@ cross-tabulated over their sorted union of levels.
 | --- | --- | --- | --- |
 | `statistic` | `Double` | McNemar's chi-squared (or, for `exact`, the discordant success count *b*). | `16.8178` |
 | `parameter` | `Integer` | Degrees of freedom, `k(k-1)/2` (absent for `exact`). | `1` |
-| `p_value` | `Double` | The p-value. | `4.1e-05` |
+| `p.value` | `Double` | The p-value. | `4.1e-05` |
 | `method` | `String` | Description of the test performed. | `"McNemar's Chi-squared test with continuity correction"` |
 
 ## mean
@@ -4165,7 +4314,7 @@ A hash reference with three top-level keys:
 |-----|-------|
 | *factor name* (`Group`, or the formula's factor, e.g. `supp`) | the between-groups row: `Df`, `Sum Sq`, `Mean Sq`, `F value`, `Pr(>F)` |
 | `Residuals` | the within-groups row: `Df`, `Sum Sq`, `Mean Sq` (`Df` is fractional under Welch) |
-| `group_stats` | `{ mean => { group => mean, … }, size => { group => n, … } }` |
+| `group.stats` | `{ mean => { group => mean, … }, size => { group => n, … } }` |
 
 ### Examples
 
@@ -4189,7 +4338,7 @@ A hash reference with three top-level keys:
             "Sum Sq"  => 3.47333333333333,
             "Mean Sq" => 0.353783749200256,
         },
-        group_stats => {
+        group.stats => {
             mean => { ctrl => 0.5, yield => 5.03333333333333 },
             size => { ctrl => 6,   yield => 6 },
         },
@@ -4202,9 +4351,9 @@ A hash reference with three top-level keys:
         [1,   1,   1,   0,   0,   0  ],
     ]);
 
-Identical to the hash form, except `group_stats` is keyed by position:
+Identical to the hash form, except `group.stats` is keyed by position:
 
-    group_stats => {
+    group.stats => {
         mean => { "Index 0" => 5.03333333333333, "Index 1" => 0.5 },
         size => { "Index 0" => 6,                "Index 1" => 6   },
     }
@@ -4222,7 +4371,7 @@ the factor's *name* becomes the top-level key:
         },
         formula => 'len ~ supp',
     );
-    # $res->{supp}, $res->{Residuals}, $res->{group_stats} ...
+    # $res->{supp}, $res->{Residuals}, $res->{group.stats} ...
 
 ### Classic equal-variance form
 
@@ -4285,7 +4434,7 @@ a finite number came back.
   arrays is an error.
 - Group order in the output is not guaranteed for hash inputs (it follows hash
   iteration order); read results by name, not position.
-- Avoid naming a factor `Residuals` or `group_stats` in a formula, since those
+- Avoid naming a factor `Residuals` or `group.stats` in a formula, since those
   are reserved top-level keys in the result.
 
 ## p_adjust
@@ -4513,6 +4662,8 @@ not reach.
 The normal cumulative distribution function: the probability that a normal random variable is `<= x`. Ports R's `pnorm`.
 That is, take the integral from negative infinity to the point that you want.
 
+![pnorm: the standard normal density with the area left of q = 1.28 shaded orange, annotated with the integral from minus infinity to 1.28 of f(x) dx = 0.89973, and a note that lower => 0 shades the other side and computes it as its own integral rather than by subtracting](https://raw.githubusercontent.com/hhg7/stats/main/img/pnorm.what.png)
+
     my $p = pnorm(1.96);            # 0.9750021  (standard normal, P(X <= 1.96))
 
 `x` may be a single number or an array reference; an array reference returns an array reference of the same length.
@@ -4727,7 +4878,7 @@ Validated numerically against R.
     # one sample vs a target probability (default 0.5)
     my $r = prop_test(83, 100);              # 83 successes in 100 trials
     printf "p-hat=%.2f  95%% CI %.3f–%.3f  p=%.4g\n",
-        $r->{estimate}[0], $r->{'conf.int'}[0], $r->{'conf.int'}[1], $r->{p_value};
+        $r->{estimate}[0], $r->{'conf.int'}[0], $r->{'conf.int'}[1], $r->{p.value};
 
     # two groups: difference in proportions + CI
     my $two = prop_test([83, 90], [100, 100]);
@@ -4758,11 +4909,11 @@ group) or as two scalars for a single sample.
 | --- | --- | --- | --- |
 | `statistic` | `Double` | Pearson chi-square statistic (X-squared). | `1.5414` |
 | `parameter` | `Integer` | Degrees of freedom. | `1` |
-| `p_value` | `Double` | The p-value. | `0.2144` |
+| `p.value` | `Double` | The p-value. | `0.2144` |
 | `estimate` | `ArrayRef` | Sample proportion(s), one per group. | `[0.83, 0.90]` |
 | `conf.int` | `ArrayRef` | For one group, a Wilson score interval for the proportion; for two groups, a Wald interval for the difference `p1 - p2`. Absent for `k > 2`. | `[-0.174, 0.034]` |
 | `alternative` | `String` | The alternative hypothesis used. | `'two.sided'` |
-| `conf_level` | `Double` | The confidence level used. | `0.95` |
+| `conf.level` | `Double` | The confidence level used. | `0.95` |
 | `method` | `String` | Human-readable description of the test performed. | `'2-sample test for equality of proportions with continuity correction'` |
 
 ## qcut
@@ -5061,6 +5212,9 @@ minimal example:
 |`sep` | field separator character; synonym with `delim`| `sep => "\t"` |
 | `delim`| field separator character; synonym with `sep`| `delim => "\t"` |
 | `sheet`| which worksheet to read from an `.xlsx` file: a 1-based index or a sheet name (default: first sheet). Ignored for text files | `sheet => 'Sheet2'` |
+| `na.strings` | field texts that mean "missing"; a string or an array reference of strings, mapped to `undef`. Off by default | `'na.strings' => 'NA'` |
+| `na_values` | pandas' spelling of `na.strings` | `na_values => ['NA', 'N/A']` |
+| `undef.val` | `write_table`'s spelling of `na.strings`, so a round trip can use one name on both halves | `'undef.val' => 'NA'` |
 output types can be AOH (aoh), HOA (hoa), HOH (hoh)
 
     read_table($filename, 'output.type' => 'aoh');
@@ -5076,6 +5230,61 @@ and, like Text::CSV_XS, filters can be applied in order to save RAM on big files
     );
 the default delimiter is `,`
 Suffixes `.csv` and `.tsv` are automatically detected from file names, but if specified, are overridden by `delim` and/or `sep`. `sep` is given priority.
+### missing values (`na.strings` / `na_values` / `undef.val`)
+An empty field is always read as `undef`. Any *other* text that a file uses to
+mean "missing" — `NA`, `N/A`, `NULL`, `-`, `-999` — has to be named. It is one
+option under three names, so you can spell it whichever way the rest of your
+code already does:
+
+| spelling | whose | use it when |
+| --- | --- | --- |
+| `na.strings` | R's `read.table` | porting R, or with no reason to prefer another |
+| `na_values` | pandas' `read_csv` | porting Python |
+| `undef.val` | this module's `write_table` | reading back a file this module wrote |
+
+All three take a string or an array reference of strings, all three mean
+exactly the same thing, and passing more than one is an error, exactly as `sep`
+and `delim` together are:
+
+    my $d = read_table('cohort.csv', 'na.strings' => 'NA');
+    my $d = read_table('cohort.csv', na_values    => ['NA', 'N/A', 'NULL', '-']);
+    my $d = read_table('cohort.csv', 'undef.val'  => 'NA');
+
+This matters because the tokens are otherwise ordinary strings, and Perl
+numifies a string to `0`: an unnamed `NA` in a numeric column does not stop
+`mean` or `sd`, it silently drags the answer toward zero (with a warning, which
+is fatal under `warnings FATAL => 'all'` and easy to miss otherwise). It also
+gives [`write_table`](#write_table)'s `undef.val` an inverse, so a file this
+module wrote can be read back with its missing cells intact — which is what the
+third spelling is for, letting both halves of the round trip name the token the
+same way:
+
+    write_table($rows, 'out.csv', 'undef.val' => 'NA');
+    my $back = read_table('out.csv', 'undef.val' => 'NA');   # undef again
+
+Note that `write_table`'s `undef.val` is one token, being what it writes, while
+`read_table`'s accepts a list, being every token it should recognise.
+
+Details worth knowing:
+
+  - **Off by default.** R's `read.table` defaults to `na.strings = "NA"` and
+    pandas recognises a whole list, but `read_table` recognises nothing beyond
+    the empty field unless you ask, so a literal `NA` stays a string in code
+    that predates this option.
+  - **Your list replaces the set, it does not extend one** — R's behaviour.
+    `'na.strings' => 'baz'` maps `baz` and leaves `NA` and `NaN` alone.
+    pandas would map all three.
+  - **The match is on the exact field text**, case-sensitively and with no
+    whitespace stripped, which is also R's rule: `' NA'` is not `'NA'`, and
+    `'-999.000'` is not `'-999.0'` (pandas numifies and would match both).
+    List every spelling a file actually uses.
+  - The header is never mapped, so a column may legitimately be named `NA`.
+  - A `filter` runs *after* the mapping, so it sees `undef` rather than the
+    token; select the present rows with `sub { defined $_ }`.
+  - It applies to `.xlsx` reads too, and to all three `output.type` shapes. For
+    `hoh`, a mapped row-name cell is a missing row name and is refused the same
+    way an empty one is.
+
 ### commented-out headers
 A header that is itself commented out is detected and used automatically, so
 
@@ -5202,13 +5411,13 @@ well a score separates cases from non-cases.
 
     my $r = roc(\@scores, \@labels);
     print $r->{auc};                 # 0.848
-    print "@{ $r->{auc_ci} }";       # 0.649 1.000
+    print "@{ $r->{auc.ci} }";       # 0.649 1.000
     my $cut = $r->{youden};          # best operating point
     print "$cut->{threshold}: sens=$cut->{sensitivity} spec=$cut->{specificity}";
 
 Options: `positive` (positive-class label, default `1`), `direction` (`'>'`
-default, or `'<'`), `conf_level` (default `0.95`). Result keys: `auc`, `auc_se`,
-`auc_ci`, `n_pos`, `n_neg`, `youden`, and `curve` (one point per threshold). For
+default, or `'<'`), `conf.level` (default `0.95`). Result keys: `auc`, `auc.se`,
+`auc.ci`, `n.pos`, `n.neg`, `youden`, and `curve` (one point per threshold). For
 just the number, use [`auc`](#auc).
 
 ## rownames
@@ -5370,7 +5579,7 @@ and returns the hash reference:
 
     {
     p.value     0.96717393596804,
-    p_value     0.96717393596804,
+    p.value     0.96717393596804,
     statistic   0.986762155447719,
     W           0.986762155447719
     }
@@ -5536,8 +5745,8 @@ curve per group:
     print $s->{median};                 # median survival time
     print "@{ $s->{surv} }";            # S(t) at each time
 
-Option `conf_level` (default `0.95`). Each stratum has arrays `time`, `n_risk`,
-`n_event`, `n_censor`, `surv`, `std_err`, `lower`, `upper`, plus `median`, `n`,
+Option `conf.level` (default `0.95`). Each stratum has arrays `time`, `n.risk`,
+`n.event`, `n.censor`, `surv`, `std.err`, `lower`, `upper`, plus `median`, `n`,
 and `events`. Compare curves with [`logrank_test`](#logrank_test); model
 covariate effects with [`coxph`](#coxph).
 
@@ -5557,7 +5766,7 @@ and the test follows: t-test / ANOVA for continuous (Wilcoxon / Kruskal with
 `nonparametric => 1`), chi-squared for categorical. Options: `by`, `vars`
 (which columns), `types` (override a column's type), `nonparametric`, `digits`,
 `pct_digits`. Each returned row has `variable`, `level`, one column per group,
-`Overall`, and — on a variable's row — `p_value` and `test`.
+`Overall`, and — on a variable's row — `p.value` and `test`.
 
 ## t_test
 
@@ -5574,12 +5783,12 @@ or 2-sample:
 
 returns a hash reference, which looks like:
 
-    conf_int     => [
+    conf.int     => [
         -0.06672889, 0.25672889
     ],
     df        => 5,
     estimate  => 0.095,
-    p_value   => 0.19143688433660,
+    p.value   => 0.19143688433660,
     statistic => 1.50996688705414
 
 the two groups compared can be specified, though not necessarily, as `x` and `y`, just like in R:
@@ -5600,7 +5809,7 @@ standard errors:
     statistic = (estimate - mu) / SE
 
 `df` says which t distribution that statistic would follow if the null were
-true, and `p_value` is the area of that distribution further out than the
+true, and `p.value` is the area of that distribution further out than the
 statistic — the chance of landing this far from `mu`, or further, when `mu` is
 right. Below, R's `sleep` data as a paired test: ten patients, each measured on
 two drugs, so the ten paired differences are one sample and `mu = 0` is "the two
@@ -5615,30 +5824,30 @@ one of its two tails, magnified until it can be seen.
 | :--- | :--- | :--- | :--- |
 | `x` | Array Reference | Required | The first vector of data. Must have at least 2 non-missing elements (1 is enough for the `y` of a `var_equal` test). |
 | `y` | Array Reference | `undef` | The second vector of data. Required for two-sample or paired tests. An explicit `undef` means "absent", as R's `y = NULL` does; anything else that is not an array reference is a fatal error rather than a silently ignored argument. |
-| `mu` | Float | 0.0 | The true value of the mean (or difference in means) for the null hypothesis. Shifts `statistic` and `p_value`; `conf_int` is centred on the estimate and does not move. |
+| `mu` | Float | 0.0 | The true value of the mean (or difference in means) for the null hypothesis. Shifts `statistic` and `p.value`; `conf.int` is centred on the estimate and does not move. |
 | `paired` | Boolean | `FALSE` | If true, performs a paired t-test. `x` and `y` must be the same length. |
 | `var_equal` | Boolean | `FALSE` | If true, assumes equal variances (standard two-sample). If false, performs Welch's t-test with unequal variances. |
-| `conf_level` | Float | 0.95 | Confidence level for the returned confidence interval. Must be strictly between 0 and 1 (R also accepts the degenerate 0 and 1). See [Extreme `conf_level`](#extreme-conf_level) for the precision limit past about `0.9999`. |
+| `conf.level` | Float | 0.95 | Confidence level for the returned confidence interval. Must be strictly between 0 and 1 (R also accepts the degenerate 0 and 1). See [Extreme `conf.level`](#extreme-conf.level) for the precision limit past about `0.9999`. |
 | `alternative` | String | `"two.sided"` | Direction of the alternative hypothesis: `"two.sided"`, `"less"`, or `"greater"`. `"two-sided"` and `"two_sided"` are accepted as `scipy`'s spelling of the same thing. Anything else is a fatal error — an unrecognised value must not quietly become a two-sided test. |
 
-### `conf_int`
+### `conf.int`
 
-`conf_int` is the estimate plus and minus a multiple of the same standard error
-the statistic divides by, and `conf_level` picks the multiple — the t quantile
+`conf.int` is the estimate plus and minus a multiple of the same standard error
+the statistic divides by, and `conf.level` picks the multiple — the t quantile
 at that level and `df`. Nothing else goes into it. On the left below, the whole
 interval taken apart: for the paired `sleep` test, `2.26216 * 0.38896 = 0.87989`
 either side of `-1.58`. On the right, the same interval at six confidence
-levels. A wider `conf_level` needs a bigger quantile and so gives a wider
+levels. A wider `conf.level` needs a bigger quantile and so gives a wider
 interval, and the level at which the interval first reaches `mu` is exactly
-`1 - p_value` — the second panel from the bottom, whose upper bound lands on
+`1 - p.value` — the second panel from the bottom, whose upper bound lands on
 zero.
 
-![conf_int is the estimate plus or minus a t quantile times the standard error, and conf_level sets the quantile](https://raw.githubusercontent.com/hhg7/stats/main/img/t.test.conf.int.png)
+![conf.int is the estimate plus or minus a t quantile times the standard error, and conf.level sets the quantile](https://raw.githubusercontent.com/hhg7/stats/main/img/t.test.conf.int.png)
 
 ### `alternative`
 
 `alternative` decides which part of the null distribution counts against the
-null, and therefore both `p_value` and `conf_int`. `"two.sided"` counts both
+null, and therefore both `p.value` and `conf.int`. `"two.sided"` counts both
 tails beyond `|statistic|`, `"less"` counts only what lies below the statistic,
 and `"greater"` only what lies above; the two one-sided p-values always add to
 1, and each is half the two-sided one when it is the smaller. The interval
@@ -5648,43 +5857,43 @@ twenty numbers as above, but unpaired.
 
 ![the three alternatives, the region of the null distribution each one counts, and the interval that goes with it](https://raw.githubusercontent.com/hhg7/stats/main/img/t.test.alternative.png)
 
-### `mu`, `p_value` and `conf_int` say one thing
+### `mu`, `p.value` and `conf.int` say one thing
 
-`conf_int` is the set of `mu` the test would not reject. Sweep `mu` across the
+`conf.int` is the set of `mu` the test would not reject. Sweep `mu` across the
 line and re-run the test at each value: the p-value peaks at 1 where `mu` equals
-the estimate, and falls through `1 - conf_level` at precisely the two bounds of
-`conf_int`. That is what "the interval excludes zero" and "p is below 0.05" both
+the estimate, and falls through `1 - conf.level` at precisely the two bounds of
+`conf.int`. That is what "the interval excludes zero" and "p is below 0.05" both
 mean — they are one statement, not two pieces of evidence.
 
-Which is also why `mu` never moves `conf_int`. Changing `mu` changes which
-hypothesis is being tested, so `statistic` and `p_value` move with it; the
+Which is also why `mu` never moves `conf.int`. Changing `mu` changes which
+hypothesis is being tested, so `statistic` and `p.value` move with it; the
 interval is built around the estimate and stays where it is.
 
-![p_value as a function of mu, crossing 1 - conf_level exactly at the two bounds of conf_int](https://raw.githubusercontent.com/hhg7/stats/main/img/t.test.duality.png)
+![p.value as a function of mu, crossing 1 - conf.level exactly at the two bounds of conf.int](https://raw.githubusercontent.com/hhg7/stats/main/img/t.test.duality.png)
 
 ### What a falling p-value looks like
 
 The same thing seen from the data's side: two samples drawn from two different
 distributions, pulled steadily apart. Each column below is one `t_test` of the
 `sleep` groups with drug 1 shifted — the top panel is the two distributions, by
-this module's own [`density`](#density), and the bottom panel is the `conf_int`
+this module's own [`density`](#density), and the bottom panel is the `conf.int`
 that comes back. The columns are four p-values five orders of magnitude apart.
 
-![two distributions separating, and the conf_int retreating from mu as the p-value falls](https://raw.githubusercontent.com/hhg7/stats/main/img/t.test.p.and.ci.png)
+![two distributions separating, and the conf.int retreating from mu as the p-value falls](https://raw.githubusercontent.com/hhg7/stats/main/img/t.test.p.and.ci.png)
 
 Only one thing about the interval changes: where it sits. `df` stays at
 `17.7765` and its width stays at `3.5710` down the whole row, because shifting a
 sample changes neither the spread nor `n`, and those are all the standard error
 is made of. What moves is the distance from `mu` — and the second column is the
-hinge: at `p_value = 0.05` the interval's upper bound is `0.0000`, sitting
+hinge: at `p.value = 0.05` the interval's upper bound is `0.0000`, sitting
 exactly on `mu`, because "p below 0.05" and "the 95% interval clear of `mu`" are
 the same event.
 
-Reading the two together is the point. `p_value` reports the distance from `mu`
+Reading the two together is the point. `p.value` reports the distance from `mu`
 in standard errors and nothing else, so it says how surely the difference is not
-zero, never how big it is; `conf_int` reports the difference itself, in hours of
+zero, never how big it is; `conf.int` reports the difference itself, in hours of
 sleep. The other route to a small p is a smaller standard error — more
-observations, or less spread — and that one drives `p_value` down by narrowing
+observations, or less spread — and that one drives `p.value` down by narrowing
 the interval around an estimate that has not moved at all.
 
 ### `paired` and `var_equal`
@@ -5707,16 +5916,16 @@ edge.
 
 ![paired, var_equal and Welch on the same data, and the Welch degrees of freedom as the two spreads separate](https://raw.githubusercontent.com/hhg7/stats/main/img/t.test.designs.png)
 
-### Extreme `conf_level`
+### Extreme `conf.level`
 
-`conf_int` is exact to the last few digits at ordinary confidence levels, and the
+`conf.int` is exact to the last few digits at ordinary confidence levels, and the
 t quantile behind it neither saturates nor loses accuracy as the data's scale
-grows. Past about `conf_level => 0.9999`, though, the interval's accuracy is
+grows. Past about `conf.level => 0.9999`, though, the interval's accuracy is
 capped by the *argument*, not by the quantile — and no implementation can do
 better, R's included.
 
-The reason is that `conf_level` arrives as a float, so the tail has to be
-recovered as `(1 - conf_level) / 2`, and that subtraction discards most of the
+The reason is that `conf.level` arrives as a float, so the tail has to be
+recovered as `(1 - conf.level) / 2`, and that subtraction discards most of the
 tail it is trying to express. The nearest double to `0.99999999` puts the tail at
 `5.0000000251e-9` rather than `5e-9` — a relative error of `5.0e-9` — and for
 `0.9999999999` the error is `8.3e-8`. Since `qt(p, 1) ~ 1/(pi * p)`, the
@@ -5733,7 +5942,7 @@ so recovers the tail correctly, while an ordinary `double` build cannot:
     #   qt(5e-9, 1, lower.tail = FALSE) in R  = 63661977.2367581
 
 If you need a tail that small exactly, compute it yourself and work from the
-quantile rather than passing a `conf_level` that cannot hold it.
+quantile rather than passing a `conf.level` that cannot hold it.
 
 ### Missing values
 
@@ -5748,7 +5957,7 @@ is missing the pair goes whole, keeping the differences aligned.
 Dies if:
 - `x` is missing or is not an array reference, or `y` is defined but is not one
 - `alternative` is not one of the values above
-- `conf_level` is not strictly between 0 and 1
+- `conf.level` is not strictly between 0 and 1
 - `paired` is set without a `y`, or with an `x` and `y` of different lengths
 - fewer than 2 observations survive: 2 in `x` for a one-sample test, 2 complete
   pairs when `paired`, and for two samples R's own thresholds — a Welch test
@@ -5766,11 +5975,11 @@ Dies if:
 | :--- | :--- |
 | `statistic` | The computed t-statistic. |
 | `df` | Degrees of freedom for the test. |
-| `p_value` | The calculated p-value based on the test directionality. |
-| `conf_int` | An Array Reference containing two elements: `[lower_bound, upper_bound]`. |
+| `p.value` | The calculated p-value based on the test directionality. |
+| `conf.int` | An Array Reference containing two elements: `[lower_bound, upper_bound]`. |
 | `estimate` | The estimated mean of `x` (one-sample) OR the mean of the differences (paired). |
-| `estimate_x` | The estimated mean of the `x` vector (only returned in two-sample tests). |
-| `estimate_y` | The estimated mean of the `y` vector (only returned in two-sample tests). |
+| `estimate.x` | The estimated mean of the `x` vector (only returned in two-sample tests). |
+| `estimate.y` | The estimated mean of the `y` vector (only returned in two-sample tests). |
 
 Validated against R 4.x's `stats::t.test` and against `scipy.stats` — cases
 lifted from R's own regression suite and from SciPy's `TestTTest_1samp`,
@@ -6001,7 +6210,7 @@ With a key, like `a` for above, only values within that hash key are counted:
 
 the column, or second hash key, that you wish to count, is specified at the command line
 
-The two new subsections (Array of hashes, Array of arrays) are the only additions; everything else is unchanged. They're placed after the array-container forms to keep array inputs grouped, mirroring how Hash of array / Hash of hash sit together. If you'd rather I drop this into a `.md` file or fold it into POD (`=head3` headers, `C<>` for the inline code) for the actual module docs, say the word.
+The two new subsections (Array of hashes, Array of arrays) are the only additions; everything else is unchanged. They're placed after the array-container forms to keep array inputs grouped, mirroring how Hash of array / Hash of hash sit together.
 
 ## var
 
@@ -6027,7 +6236,7 @@ As described by R: Performs an F test to compare the variances of two samples fr
 
     my $vt = var_test(\@x, \@y);
 
-also, conf_level can be set:
+also, conf.level can be set:
 
     $vt = var_test(\@x, \@y, conf_level => 0.99);
 
@@ -6167,7 +6376,7 @@ The first one or two array-ref arguments are taken positionally as `x` and `y`; 
     # with a confidence interval and point estimate
     wilcox_test(\@x, \@y, conf_int => 1, conf_level => 0.99);
 
-Arguments that R spells with a dot are accepted with either spelling: `conf.int` and `conf_int`, `conf.level` and `conf_level`, `digits.rank` and `digits_rank`, `tol.root` and `tol_root`.
+Arguments that R spells with a dot are accepted with either spelling: `conf.int` and `conf.int`, `conf.level` and `conf.level`, `digits.rank` and `digits_rank`, `tol.root` and `tol_root`.
 
 ### Input parameters
 
@@ -6182,7 +6391,7 @@ Arguments that R spells with a dot are accepted with either spelling: `conf.int`
 | `exact`       | boolean / undef | `undef` (auto) | Tri-state. `undef` (or absent) selects exact automatically: when both group sizes are `< 50` (two-sample), or `n < 50` (signed-rank). A true value forces the exact test, a false value forces the approximation. Ties and zero differences no longer disable it. |
 | `alternative` | string          | `"two.sided"` | One of `"two.sided"`, `"less"`, or `"greater"`. Selects the tail(s) used for the p-value. |
 | `conf.int`    | boolean         | `0` (false)  | Also compute a point estimate and confidence interval for the location (one-sample) or location shift (two-sample / paired). |
-| `conf.level`  | number in (0,1) | `0.95`       | Requested confidence level. The level a rank test can actually deliver is discrete, so the level achieved is reported back in `conf_level` and is generally not the one asked for. |
+| `conf.level`  | number in (0,1) | `0.95`       | Requested confidence level. The level a rank test can actually deliver is discrete, so the level achieved is reported back in `conf.level` and is generally not the one asked for. |
 | `digits.rank` | number / undef  | `undef` (Inf) | Round each value to this many significant digits before ranking, so that ties are decided on the rounded values. R's `digits.rank`, and worth reaching for when the data are the result of arithmetic and two values that ought to tie differ in the last bit. `undef` means no rounding. |
 | `tol.root`    | number > 0      | `1e-4`       | Convergence tolerance for the root search behind the *asymptotic* confidence interval. The exact interval is made of order statistics and does not use it. |
 
@@ -6193,15 +6402,15 @@ Returns a hash ref with the following keys:
 | Key               | Type   | Description |
 |-------------------|--------|-------------|
 | `statistic`       | number | The test statistic. For the two-sample test this is the Mann-Whitney **W** (the `x` rank sum minus `nx*(nx+1)/2`). For the signed-rank test it is **V**, the sum of the ranks assigned to the positive differences. |
-| `statistic_name`  | string | `"W"` or `"V"`, matching what R prints. |
-| `p_value`         | number | The p-value for the chosen `alternative`, capped at `1.0`. Two-sided p-values are `2 * min(p_less, p_greater)`. |
+| `statistic.name`  | string | `"W"` or `"V"`, matching what R prints. |
+| `p.value`         | number | The p-value for the chosen `alternative`, capped at `1.0`. Two-sided p-values are `2 * min(p_less, p_greater)`. |
 | `method`          | string | A human-readable description of the exact test variant that was run (see below). |
 | `alternative`     | string | Echoes the `alternative` actually used (`"two.sided"`, `"less"`, or `"greater"`). |
-| `null_value`      | number | Echoes `mu`. |
-| `null_value_name` | string | `"location shift"` for the two-sample and paired tests, `"location"` for the one-sample test. |
+| `null.value`      | number | Echoes `mu`. |
+| `null.value.name` | string | `"location shift"` for the two-sample and paired tests, `"location"` for the one-sample test. |
 | `estimate`        | number | *(only with `conf.int`)* The Hodges-Lehmann estimator: the median of the Walsh averages `(x[i] + x[j]) / 2` in the one-sample case, or of the pairwise differences `x[i] - y[j]` in the two-sample case. On the asymptotic path it is instead the shift at which the standardised statistic is zero, as in R. |
-| `conf_int`        | ARRAY ref | *(only with `conf.int`)* Two elements, the lower and upper limits. A one-sided alternative gives an unbounded end (`-Inf` or `Inf`). |
-| `conf_level`      | number | *(only with `conf.int`)* The confidence level actually achieved, which for the exact interval is a step function of the data and rarely equals `conf.level`. |
+| `conf.int`        | ARRAY ref | *(only with `conf.int`)* Two elements, the lower and upper limits. A one-sided alternative gives an unbounded end (`-Inf` or `Inf`). |
+| `conf.level`      | number | *(only with `conf.int`)* The confidence level actually achieved, which for the exact interval is a step function of the data and rarely equals `conf.level`. |
 
 The `method` string reports which path executed:
 
@@ -6423,6 +6632,217 @@ Verified against R 4.6.1 (`oneway.test`, `anova(aov())`, `anova(lm())`,
 `t/model_pvalue_tails.t` and `t/oneway_test.R.scipy.t`.
 
 # Changes
+
+## 0.303 2026-08
+
+### read_table
+
+#### `na.strings` / `na_values`
+
+`read_table` can now be told which field texts mean "missing". It is one option
+under three names — R's `na.strings`, pandas' `na_values`, and `write_table`'s
+own `undef.val` — so it can be spelled whichever way the surrounding code
+already does. Each takes a string or an array reference, each means the same
+thing, and passing more than one is an error the way `sep` and `delim` together
+are:
+
+    read_table('cohort.csv', 'na.strings' => 'NA');
+    read_table('cohort.csv', na_values    => ['NA', 'N/A', 'NULL', '-']);
+    read_table('cohort.csv', 'undef.val'  => 'NA');
+
+An empty field has always read as `undef`. Nothing else did, and there was no
+way to ask for it, so a file could not be read back the way it had been
+written: `write_table` renders an `undef` cell with `undef.val`, which 0.302
+listed as a known limitation whose closing sentence proposed exactly this
+option. The round trip now closes, and `undef.val` is accepted as the third
+name so that both halves of it can use one spelling:
+
+    write_table($rows, 'out.csv', 'undef.val' => 'NA');
+    my $back = read_table('out.csv', 'undef.val' => 'NA');   # undef again
+
+`write_table`'s `undef.val` is a single token, being what it writes;
+`read_table`'s takes a list, being every token it should recognise.
+
+The consequence had been quiet rather than loud. An unmapped `NA` is an
+ordinary string, and Perl numifies a string to `0`, so it did not stop `mean`
+or `sd` — it pulled them toward zero, warning once per cell on `STDERR` and
+dying only under `warnings FATAL => 'all'`. On the `titanic.csv` in the
+repository root, whose 2207 rows carry 3690 literal `NA` cells across six
+columns:
+
+| column | `NA` cells | mean, unmapped | mean, mapped |
+|---|---|---|---|
+| `age` | 2 | 30.416855 | 30.444444 |
+| `fare` | 916 | 19.540347 | 33.404760 |
+| `sibsp` | 900 | 0.295877 | 0.499617 |
+| `parch` | 900 | 0.228364 | 0.385616 |
+
+The mapped column is `mean(d[[col]], na.rm=TRUE)` in R 4.6.1 to every digit
+shown, for all four.
+
+Three choices are worth stating, because each follows R where pandas differs,
+and each is asserted in the test rather than left to be discovered:
+
+- **It is off by default.** R's `read.table` defaults to `na.strings = "NA"`
+  and pandas recognises a 19-token set, but `read_table` recognises nothing
+  beyond the empty field unless asked. A literal `NA` is real data in every
+  script written against an earlier release, and `t/read_table.t` pins that;
+  changing the default is a separate decision from adding the option.
+- **The list replaces the set rather than extending one.**
+  `'na.strings' => 'baz'` maps `baz` and leaves `NA` and `NaN` alone. pandas
+  adds `baz` to its defaults and maps all three.
+- **The match is on the exact field text**, case-sensitively and with no
+  whitespace stripped. `' NA'` is not `'NA'`, and `'-999.000'` is not
+  `'-999.0'` — pandas numifies both sides and matches them; R compares the
+  string and does not, and neither does this.
+
+The mapping happens where the empty-field rule already did, so it reaches every
+`output.type`, the `.xlsx` reader, and a value a `filter` writes back. The
+header is never mapped, so a column may still be named `NA`. A `filter` runs
+after the mapping and so sees `undef` rather than the token, which makes
+`sub { defined $_ }` the way to keep the rows that have a value. For `hoh`, a
+mapped row-name cell is a missing row name and is refused exactly as an empty
+one is.
+
+Everything above is checked in the new `t/read_table.na_strings.t` (95 tests),
+whose cases are taken from the reference suites rather than invented here: R's
+`tests/reg-tests-1a.R` — the `read.table(na.strings="foo")` case at 1911-1918
+and PR#6781 at 2899-2901 — and `src/library/utils/man/read.table.Rd`, plus
+pandas 2.2.3's `pandas/tests/io/parser/test_na_values.py` (`test_string_nas`,
+`test_detect_string_na`, `test_non_string_na_values` for gh-3611,
+`test_default_na_values`, `test_custom_na_values`, `test_na_trailing_columns`,
+`test_na_values_scalar` for gh-12224, and `test_na_values_dict_aliasing`). The
+expected values are frozen literals with their provenance in the file header,
+so the test needs no R and no Python to run. Three divergences from pandas are
+asserted deliberately, the three above; a fourth is that a row short of the
+header is still an alignment error naming the row rather than the NA padding
+pandas does.
+
+The full suite is 130 files and 26,444 tests, and `./test.all.perls.pl` passes
+on all five local perls — `5.10.1`, `5.12.5` (long double), `5.42.3`, `5.44.0`
+and `5.44.0-quadmath` — with no warnings on any of them.
+
+### Distribution functions
+
+Eight new functions — `qnorm`, `pt`, `qt`, `pchisq`, `qchisq`, `pf`, `qf` and
+`pbinom` — with R's names, R's positional-or-named parameters and R's
+`lower.tail` / `log.p` flags. Before this, `pnorm` and `dnorm` were the whole
+family, so a Wald bound or a likelihood-ratio test could not be finished from
+outside the module: the critical value simply was not expressible. See
+[Distribution functions](#distribution-functions) for the details; two are
+worth pulling out here.
+
+**No tail is formed as `1 -` the other one.** That subtraction discards
+everything below machine epsilon, which is the range a p-value is interesting
+in, so each function is routed to the parameterisation that computes the
+requested side directly — `pt(q)` is `pt_upper(-q)` by symmetry, and `pchisq`
+lower goes through a new `igam()` (the lower incomplete gamma that `igamc()`
+had always formed internally and thrown away):
+
+    pchisq(1e-30, 1);     # 7.978845608028654e-16, where 1 - igamc gives 0
+
+**`qf` disagrees with R in the far tail of *F*, and is right.** Arbitrated by
+`t/distributions.mpmath.py` at `mp.dps = 60`, bisecting the defining equation
+rather than calling a library inverse:
+
+| | R 4.6.1 | this module |
+|---|---|---|
+| `qf(2^-20, 1, 10)` | 9.9e-4 out | 1.0e-15 out |
+| `qf(2^-20, 1, 1)` | 5.2e-5 out | 4.1e-15 out |
+| `qf(2^-16, 1, 10)` | 2.7e-6 out | 6.9e-16 out |
+
+R's own `pf` settles it: `pf` of this module's answer returns the target
+probability to 1.6e-15, and `pf` of R's own `qf` answer returns it to 4.9e-4.
+It is R's inverse in that tail, not its CDF. Thirteen such rows are asserted
+twice in `t/distributions.R.scipy.t` — right against the 60-digit value, and
+still disagreeing with R — so if a future R fixes `qf`, or this module
+regresses onto R's answer, the row fails rather than quietly agreeing. Three
+rows go the other way and are recorded the same way rather than tolerated.
+
+`log => 1` on a `p*` function is `log()` of the probability already computed,
+not a log carried through the series, so a tail that rounded to `1` logs to `0`
+where R reports a tiny negative number. Four of SciPy's six `chi2` log
+references land in that case and are pinned as exactly `0` with the true value
+named. `ncp` and `qbinom` are not implemented.
+
+`t/distributions.R.scipy.t` is 2041 tests: a frozen table of R 4.6.1 values at
+dyadic inputs (generated by the committed `t/distributions.R.scipy.R`), SciPy
+1.18.0's own mpmath cases from `TestChi2` and `TestStudentT`, and R's own
+round-trip identities from `tests/d-p-q-r-tests.R`. Every tolerance is the
+worst error actually measured, printed by the test's own diagnostic.
+
+Ten figures now sit with the documentation — one per function, `dnorm` and
+`pnorm` in their own sections and the eight new ones under
+[What each one does, in one picture](#what-each-one-does-in-one-picture). Each
+shades the region its function integrates and writes the integral it evaluates,
+so the `p*`/`q*` pair reads as one identity answered from opposite ends: given
+the boundary, return the area; given the area, return the boundary. `pbinom` is
+drawn as bars with a summation sign rather than an integral, because a binomial
+is discrete and drawing an integral over a histogram would misstate what it
+computes. `distribution.plots.pl` regenerates all ten; like the other plot
+scripts it is author-only and `[PruneFiles]` keeps it out of a release.
+
+Two portability problems surfaced while pinning this and are worth recording,
+because neither is about the C code. Perl 5.10.1's string-to-number conversion
+does not parse a 17-digit literal exactly — it reads `0.9999847412109375` one
+ulp out, and reflecting a probability onto `1 - p` turns that ulp into 7.3e-12
+relative — and it reads `9.332636185032188789901e-302` as
+`8.999999999999996e-302`, a 3.7% error. So every argument and every
+exactly-representable expected value in `t/distributions.R.scipy.t` is written
+as a dyadic ratio, `M/2^K`, which rebuilds by integer division on any perl. And
+where R's frozen value is `0` because a double underflowed, a long-double or
+`__float128` build computes the real number instead — `pbinom(0, 1000, 0.75)`
+really is `0.25^1000` = 8.7e-603 — so the test accepts that as agreement with a
+reference that could not go lower, rather than failing the wider build for being
+right. The same applies to `log => 1` near a probability of 1, where the
+resolvable accuracy is `NV_EPSILON / |log p|` and the tolerance is scaled off
+measured machine epsilon accordingly.
+
+### Result keys are dotted everywhere
+
+Every key of every returned hash now uses R's dotted spelling. Previously the
+module answered to both conventions and it was impossible to guess which:
+`p_value` from nine functions but `p.value` from two, `conf_int` from four but
+`conf.int` from three, `prop_test` returning `conf.int` and `p_value` in the
+same hash, and `shapiro_test` returning both spellings of its own p-value.
+
+| was | is |
+|---|---|
+| `p_value` | `p.value` |
+| `conf_int`, `conf_level` | `conf.int`, `conf.level` |
+| `null_value`, `null_value_name`, `statistic_name` | `null.value`, `null.value.name`, `statistic.name` |
+| `estimate_x`, `estimate_y` | `estimate.x`, `estimate.y` |
+| `group_stats`, `std_err` | `group.stats`, `std.err` |
+| `odds_ratio`, `risk_ratio`, `risk_diff` (+ `_ci`) | `odds.ratio`, `risk.ratio`, `risk.diff` (+ `.ci`) |
+| `risk_exposed`, `risk_unexposed` | `risk.exposed`, `risk.unexposed` |
+| `n_pos`, `n_neg`, `auc_se`, `auc_ci` | `n.pos`, `n.neg`, `auc.se`, `auc.ci` |
+| `n_active`, `n_inactive`, `n_top`, `active_count`, `enrichment_factor`, `rie_min`, `rie_max` | the same with dots |
+| `n_risk`, `n_event`, `n_censor` | `n.risk`, `n.event`, `n.censor` |
+| `exp_coef`, `lr_stat`, `lr_p_value`, `lr_df`, `loglik_null` | `exp.coef`, `lr.stat`, `lr.p.value`, `lr.df`, `loglik.null` |
+| `has_na`, `old_coords` | `has.na`, `old.coords` |
+| `p_adjust` (`dunn_test`'s column) | `p.adjust` |
+
+**This breaks code that reads the old names, and it is the only change here
+that does.** `$r->{p_value}` is now `$r->{'p.value'}` — note the quotes, which a
+dotted key requires. `table_one`'s output column is renamed with everything
+else.
+
+**Argument names are untouched.** They are a different surface, where the
+underscore spelling exists on purpose as a synonym for the dotted one, so
+`conf_level => 0.99` and `'conf.level' => 0.99` both still work everywhere they
+did, and `wilcox_test(..., conf_int => 1)` still asks for an interval. The
+duplicate stores are gone: `shapiro_test` and `kruskal_test` each wrote their
+p-value twice under the two spellings and now write it once.
+
+### Decorative comment rules removed
+
+1,495 lines that were nothing but a comment marker and a run of dashes, and 380
+comments whose text trailed off into one, are gone from `LikeR.xs`,
+`lib/Stats/LikeR.pm` and `t/`. `/* ===== WILCOXON EXACT NULL DISTRIBUTIONS =====`
+is now `/* WILCOXON EXACT NULL DISTRIBUTIONS`, which is what the house style in
+`CLAUDE.md` asks for anyway. Nothing after `__DATA__` was touched, no POD
+region, and no line holding a `/*` or `*/` was deleted, so no comment can have
+been left unterminated. The suite is unchanged at 28,485 tests either side of it.
 
 ## 0.302 2026-08-22 CDT
 
@@ -7056,7 +7476,7 @@ was empty or whose every element had been dropped. On
 `{a => [1,1,1], b => [2,2,2], c => []}` that gave `df = 2` and
 `p = 0.0820849986238988` for what is a two-group problem with
 `df = 1, p = 0.025347318677468304`. Such a group was already skipped when
-forming the statistic and when building `group_stats`; only `df` still counted
+forming the statistic and when building `group.stats`; only `df` still counted
 it.
 
 R refuses this case outright — `all groups must contain data` — and so does
@@ -7076,7 +7496,7 @@ Perl strings are counted, not NUL-terminated, so `"a\0X"` and `"a\0Y"`
 collapsed into one group: `kruskal_test([1..6], ["a\0X","a\0X","a\0Y","a\0Y","b","b"])`
 came back as two groups with `df = 1, H = 2.4` instead of three with
 `df = 2, H = 4.571428571428573`. Both paths also copied the label's bytes while
-dropping perl's UTF-8 flag when storing it into `group_stats`, so a label
+dropping perl's UTF-8 flag when storing it into `group.stats`, so a label
 outside latin-1 came back as mojibake and the two input paths disagreed with
 each other about labels inside it. The length now travels with the string and
 carries the flag in its sign, which is `hv_store`'s own convention, so a label
@@ -7171,8 +7591,8 @@ call forms, and stays so across 60 runs under `PERL_PERTURB_KEYS=1`.
 `kruskal_test` gains two sections: what happens to non-numeric, undefined,
 `NaN` and infinite elements and to a group left with no data, and what the
 returned fields are — `statistic`, `parameter`, `method` and the p-value under
-both `p_value` and `p.value` from R's `htest`, plus the `size` and `mean`
-sub-hashes of `group_stats`, which are computed over the same observations the
+both `p.value` and `p.value` from R's `htest`, plus the `size` and `mean`
+sub-hashes of `group.stats`, which are computed over the same observations the
 statistic used.
 
 ## 0.3 2026-08-16 CDT
@@ -7350,11 +7770,11 @@ Illustrations for three more functions, drawn by `t.test.plots.pl` and
 `skew.kurtosis.plots.pl`, both committed:
 
 - **`t_test`** gains six: what the estimate, the standard error and the null
-  distribution are and which area of it the p-value is; how `conf_int` is the
-  estimate plus or minus a t quantile and how `conf_level` sets that quantile;
+  distribution are and which area of it the p-value is; how `conf.int` is the
+  estimate plus or minus a t quantile and how `conf.level` sets that quantile;
   the three `alternative`s side by side with the region each counts and the
-  interval that goes with it; `p_value` as a function of `mu`, crossing
-  `1 - conf_level` exactly at the two bounds of `conf_int`; paired,
+  interval that goes with it; `p.value` as a function of `mu`, crossing
+  `1 - conf.level` exactly at the two bounds of `conf.int`; paired,
   `var_equal` and Welch on the same data, with the Welch degrees of freedom as
   the two spreads separate; and two distributions separating with the interval
   retreating from `mu` as the p-value falls.
@@ -7520,8 +7940,8 @@ search:
 ```perl
 my $r = wilcox_test(\@y, \@x, paired => 1, conf_int => 1);
 # $r->{estimate}   == -0.46
-# $r->{conf_int}   == [-0.786, -0.010]
-# $r->{conf_level} == 0.9609375
+# $r->{conf.int}   == [-0.786, -0.010]
+# $r->{conf.level} == 0.9609375
 ```
 
 Those are Hollander & Wolfe (1999) 2nd ed., pp. 40 and 53, to the digit. So are
@@ -7529,7 +7949,7 @@ the two-sample values from pp. 111 and 126: estimate `-0.305`, interval
 `(-0.76, 0.15)`.
 
 The level a rank test can actually deliver is a step function of the data, so
-`conf_level` reports what was achieved rather than echoing what was asked for —
+`conf.level` reports what was achieved rather than echoing what was asked for —
 `0.9609375` above, not `0.95`. `conf.level`, `tol.root` and R's alpha-doubling
 search for a level the data can support (with its *requested conf.level not
 achievable* warning) all behave as R's do.
@@ -7549,8 +7969,8 @@ is ignored on the exact path, and — as in R — ignored when there are ties, o
 when the signed-rank test dropped a zero, because the series is derived for
 untied ranks.
 
-The result hash gains `statistic_name` (`"W"` or `"V"`, as R prints), plus
-`null_value` and `null_value_name`, and `estimate` / `conf_int` / `conf_level`
+The result hash gains `statistic.name` (`"W"` or `"V"`, as R prints), plus
+`null.value` and `null.value.name`, and `estimate` / `conf.int` / `conf.level`
 when an interval was asked for.
 
 #### Three deliberate differences from R
@@ -7976,7 +8396,7 @@ that every tail and confidence bound goes through:
 - The Clopper-Pearson bounds are found by bisection, which stopped at an
   absolute width of 1e-15, so a bound far below 1 came back with only four
   correct digits: `binom_test(1, 1000000000, alternative => 'greater',
-  conf_level => 0.999)` gave 1.00053299e-12 against R's 1.00050033e-12. The
+  conf.level => 0.999)` gave 1.00053299e-12 against R's 1.00050033e-12. The
   stopping rule is now relative to where the bracket sits, and such bounds now
   hold about 1e-15.
 
@@ -8248,7 +8668,7 @@ case, including the cases their own suites pin: R's regression tests
 (`reg-tests-1a.R`, "t.test with one group of size one") and scipy's
 `TestTTest_1samp`, `TestTTest_ind.test_special_cases`, `test_ttest_rel_ci_1d`,
 `test_1samp_ci_1d` and `test_pvalue_ci`. On 2000 randomised comparisons against
-R — all four modes, all three alternatives, random `mu` and `conf_level`, sample
+R — all four modes, all three alternatives, random `mu` and `conf.level`, sample
 sizes 2 to 40 and data scales spanning 1e-4 to 1e4 — the statistic and the
 degrees of freedom agree to 2e-11 and the p-value to 3e-9, holding to eight
 digits even where the p-value is subnormal (5e-310). What the comparison did
@@ -8279,22 +8699,22 @@ them now fixed and covered by `t/t_test.t`.
   different test than the caller asked for and reported nothing. It is now
   checked the way R's `match.arg` checks it. `scipy`'s `"two-sided"` spelling is
   unambiguous, so it is accepted rather than rejected.
-- **A one-sided interval was wrong when `conf_level < 0.5`.** That case needs a
+- **A one-sided interval was wrong when `conf.level < 0.5`.** That case needs a
   negative t quantile, and `qt_tail` searched upward from zero only, so it
   returned roughly zero and collapsed the bound onto `mu`: R puts the upper bound
   of `t.test(1:10, mu=5, conf.level=0.3, alternative="less")` at 4.9797 where
   `t_test` reported 5.0000000036. `qt_tail` now reduces by symmetry first, so the
   root it brackets is always positive.
 - **`qt_tail` silently saturated at 1e6.** Past that its doubling loop gave up
-  and returned the ceiling, so `conf_level` of 0.99999999 and 0.9999999999 came
+  and returned the ceiling, so `conf.level` of 0.99999999 and 0.9999999999 came
   back with the *identical* interval, ±1048576, against R's ±6.4e7 and ±6.4e9.
   The ceiling is gone; the loop now runs until `t * t` would overflow.
 - **Interval accuracy no longer depends on the data's scale.** `qt_tail`
-  bisected to an absolute 1e-8 on the quantile, which is 1e-8 × `std_err` on the
+  bisected to an absolute 1e-8 on the quantile, which is 1e-8 × `std.err` on the
   interval — fine for data around 1, an error of 2 units for data around 1e9. It
   now bisects to adjacent doubles. Worst interval error across the 2000
   randomised cases went from 2.1e-4 to 5.3e-11 relative. At extreme
-  `conf_level` this makes `t_test` the more accurate of the two: `t.test` asks
+  `conf.level` this makes `t_test` the more accurate of the two: `t.test` asks
   for `qt(1 - alpha/2, df)`, and representing a 5e-9 tail as the double
   `1 - 5e-9` costs eight significant figures of it, so R's own interval for
   `conf.level=0.99999999` is off by 0.7 in the eighth digit. Working in the upper
@@ -8863,7 +9283,7 @@ addition of `aoh2hoh` transforming array of hash into hash of hashes, `intersect
 - **`size_t` underflow on empty arrays.** Three loops were bounded by `av_len(...)`
   compared against an unsigned counter; `av_len` returns `-1` for an empty array,
   which turned `k <= len` into a `SIZE_MAX` loop. The `stack()` value loop, the `.`
-  column-expansion loop, and the `group_stats` column loop now use a signed
+  column-expansion loop, and the `group.stats` column loop now use a signed
   `SSize_t` bound.
 - **HoH row count.** Row count for hash-of-hashes input was taken from the return
   value of `hv_iterinit`; it now uses `HvUSEDKEYS(hv)` with a separate
@@ -8905,7 +9325,7 @@ addition of `aoh2hoh` transforming array of hash into hash of hashes, `intersect
   whole RHS and can still mangle `I(x-1)`-style transforms; treat `I()` with
   arithmetic constants carefully.
 - Top-level keys `coefficients` / `fitted.values` / `xlevels` / `family` /
-  `group_stats` share the return hash with the ANOVA rows; a predictor literally
+  `group.stats` share the return hash with the ANOVA rows; a predictor literally
   named one of those would collide.
 
 ### `predict`
@@ -9157,7 +9577,7 @@ preserves embedded NUL bytes in group key strings, which the previous
 
 #### Known limitations (not changed)
 
-- A factor column named `Residuals` or `group_stats` in a formula call will
+- A factor column named `Residuals` or `group.stats` in a formula call will
   collide with reserved top-level keys in the result hash.
 - Group names containing an embedded NUL are stored correctly but are still
   truncated at `strlen` when written into the output hash keys.
@@ -9584,7 +10004,7 @@ added var_test
 
 mean, min, sum, median, var, and max die with undefined values, and print the offending indices
 
-"group_stats" added to aov, for TukeyHSD in the future
+"group.stats" added to aov, for TukeyHSD in the future
 
 "cor" dies when given data with standard deviation of 0
 

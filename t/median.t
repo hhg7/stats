@@ -28,7 +28,7 @@ is(median(1, [2, 3], 4), 2.5, 'median: scalars and array refs mixed');
 is(median(-5, -1, -3),  -3,   'median: negatives');
 is(median('3', '1', '2'),2,   'median: numeric strings');
 
-# --- shapes that stress the selection ------------------------------------
+# shapes that stress the selection
 # lengths chosen to straddle the insertion-sort cutoff (20) and the point
 # where the buffer moves from the C stack to the heap (256)
 my @N = (1 .. 25, 254 .. 258, 1000, 5000);
@@ -63,7 +63,7 @@ for my $n (1 .. 60, 300, 1024) {
 }
 is($wrong, 0, 'median: random samples agree with sort at every length');
 
-# --- tied arrays ---------------------------------------------------------
+# tied arrays
 # A tied array keeps nothing in AvARRAY, so median takes a separate av_fetch
 # path for it.  What that path needs is SvGETMAGIC: av_fetch on a tied array
 # returns a deferred PVLV, not the value, and SvOK on one of those is false
@@ -90,7 +90,7 @@ for my $n (1, 2, 5, 6, 25, 257, 600) {
 		'median: an undef in a tied array is still reported by position';
 }
 
-# --- the caller's data is left alone -------------------------------------
+# the caller's data is left alone
 # the selection reorders its own copy; an in-place partition of the input
 # would be a silent corruption of the caller's array
 my @orig  = (5, 3, 9, 1, 7, 2);
@@ -98,11 +98,11 @@ my @snap  = @orig;
 median(\@orig);
 is_deeply(\@orig, \@snap, 'median: does not reorder the array it was given');
 
-# --- extremes ------------------------------------------------------------
+# extremes
 is(median([1e308, -1e308, 0]), 0, 'median: very large magnitudes');
 is(median([0.1, 0.2, 0.3]), 0.2, 'median: fractions');
 
-# --- errors --------------------------------------------------------------
+# errors
 dies_ok { median() } 'median: dies with no arguments';
 dies_ok { median([]) } 'median: dies on an empty array ref';
 throws_ok { median(1, undef) } qr/\Qmedian: undefined value at argument index 1\E/,
@@ -111,7 +111,7 @@ throws_ok { median(1, [2, undef]) }
 	qr/\Qmedian: undefined value at array ref index 1 (argument 1)\E/,
 	'median: names the element and argument of an undef inside an array ref';
 
-# --- leaks, on both the stack-buffer and heap paths ----------------------
+# leaks, on both the stack-buffer and heap paths
 unless ($INC{'Devel/Cover.pm'}) {
 	my $small = [ map { $_ * 1.5 } 1 .. 20 ];
 	my $large = [ map { $_ * 1.5 } 1 .. 1000 ];

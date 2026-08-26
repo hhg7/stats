@@ -42,7 +42,6 @@ use Test::More;
 use Config;
 use Stats::LikeR qw(sum min max mean sd var quantile cor cov);
 
-# ---------------------------------------------------------------------------
 # A. the argument counter.
 #
 # 70_000 is past 65_535 and nothing else; the values are 1..n so every answer
@@ -51,7 +50,6 @@ use Stats::LikeR qw(sum min max mean sd var quantile cor cov);
 # A regression here is an infinite loop, not a wrong answer, so the calls run
 # under alarm() where the platform has one.  Without that guard a smoker would
 # hang instead of failing.
-# ---------------------------------------------------------------------------
 my $CAN_ALARM = $Config{d_alarm} && $^O ne 'MSWin32';
 
 sub with_timeout {
@@ -98,14 +96,12 @@ sub with_timeout {
 	ok( ref $pt, 'power_t_test still returns after its counter was widened' );
 }
 
-# ---------------------------------------------------------------------------
 # B. the kinds of element the AvARRAY() scan must refuse.
 #
 # Each entry builds an array holding the values 1, 2, 3, 4 in some
 # representation, so every function has the same right answer whichever route
 # it took.  `plain` is the fast path; everything else has to reach the same
 # numbers through av_fetch().
-# ---------------------------------------------------------------------------
 {
 	package t::Tied::Array;
 	require Tie::Array;
@@ -230,11 +226,9 @@ for my $name ( sort keys %SHAPE ) {
 	is( sum($o), 10, 'sum: does honour a 0+ overload' );
 }
 
-# ---------------------------------------------------------------------------
 # C. a wholly tied array.  Its elements do not exist until FETCH has run, so
 #    the scan must not touch it at all and the fallback must apply get magic.
 #    Every one of these croaked before 0.302.
-# ---------------------------------------------------------------------------
 {
 	my $x = [ 1, 2, 3, 4, 5, 6, 7, 8 ];
 	my $t = tied_copy($x);
@@ -252,13 +246,11 @@ for my $name ( sort keys %SHAPE ) {
 	is( cov( $t, tied_copy($y) ), cov( $x, $y ), 'tied array: cov with both sides tied' );
 }
 
-# ---------------------------------------------------------------------------
 # D. holes and undef.
 #
 # sum() and friends croak on an undef element; quantile() drops it, and
 # cor()/cov() treat it as NA and drop the pair.  Those are three different
 # documented behaviours and the fast path must not change any of them.
-# ---------------------------------------------------------------------------
 {
 	my @a = ( 1, 2, 3 );
 	$a[5] = 6;    # leaves $a[3] and $a[4] as holes
@@ -285,7 +277,6 @@ for my $name ( sort keys %SHAPE ) {
 		'cov: drops the incomplete pair' );
 }
 
-# ---------------------------------------------------------------------------
 # E. an element whose get magic mutates the array it lives in.
 #
 # This is the hazard that makes the AvARRAY() walk conditional in the first
@@ -296,7 +287,6 @@ for my $name ( sort keys %SHAPE ) {
 # The assertion is that the call completes with the answer for the array as it
 # was on entry -- not that the mutation is visible, which it deliberately is
 # not.
-# ---------------------------------------------------------------------------
 {
 	package t::Grower;
 	require Tie::Scalar;
@@ -321,14 +311,12 @@ for my $name ( sort keys %SHAPE ) {
 	ok( scalar @a > 4, 'the growing element really did push onto the array' );
 }
 
-# ---------------------------------------------------------------------------
 # F. the correlation cancellation, as a property rather than a frozen value.
 #
 # cor() is invariant under an affine change of location: adding a constant to
 # every element of a column must not change it.  The raw cross-product form
 # this replaced failed that badly enough to return NaN.  The frozen R values
 # for the same column are in t/var_sd_cov.R.t.
-# ---------------------------------------------------------------------------
 {
 	my @base = map { $_ / 1024 } 0 .. 99;
 	my @y    = map { ( $_ % 13 ) / 8 } 0 .. 99;
@@ -359,14 +347,12 @@ for my $name ( sort keys %SHAPE ) {
 	}
 }
 
-# ---------------------------------------------------------------------------
 # G. quantile's partial sort.
 #
 # quantile() no longer orders the whole column; it places only the order
 # statistics its probs actually read.  A partial sort that places the wrong
 # element returns a number from the right column and the wrong rank, so the
 # check is against a fully sorted copy, at every rank, on a column with ties.
-# ---------------------------------------------------------------------------
 {
 	# Dyadic values with deliberate ties: ties are what decide where an order
 	# statistic lands, and a mispartitioning select loses them first.

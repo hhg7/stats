@@ -41,9 +41,7 @@ my $hoh_data = {
  row_b => { id => 2, val => 20, tag => 'B' }
 };
 
-# --------
 # 1. Default output for HoH (AoH) sorted by column name
-# --------
 my $res_aoh = csort($hoh_data, 'val');
 no_leaks_ok {
 	csort($hoh_data, 'val');
@@ -53,9 +51,7 @@ is(scalar @$res_aoh, 3, 'All rows returned');
 is($res_aoh->[0]{id}, 1, 'First returned row has ID 1');
 is($res_aoh->[1]{id}, 2, 'Second returned row has ID 2');
 is($res_aoh->[2]{id}, 3, 'Third returned row has ID 3');
-# --------
 # 2. Output as HoA sorted using coderef comparator
-# --------
 no warnings 'once';
 my $res_hoa = csort($hoh_data, sub { $b->{id} <=> $a->{id} }, 'hoa');
 no_leaks_ok {
@@ -65,16 +61,12 @@ is(ref $res_hoa, 'HASH', 'csort(HoH, hoa) returns Hash-of-Arrays (HoA) output su
 is_deeply($res_hoa->{id},  [3, 2, 1],       'Column ID correctly mapped and sorted descending');
 is_deeply($res_hoa->{val}, [30, 20, 10],    'Values vector aligns cleanly with sorted ID row index');
 is_deeply($res_hoa->{tag}, ['C', 'B', 'A'], 'String tags follow identical positional sort logic');
-# --------
 # 3. Handling Edge Cases
-# --------
 my $empty_hoh = csort({}, 'missing_col');
 is(ref $empty_hoh, 'HASH', 'Sorting an empty hash gracefully returns an empty AoH');
 is(scalar keys %{ $empty_hoh }, 0, 'Empty AoH length confirmed');
 
-# --------
 # 4. Input Exceptions
-# --------
 dies_ok { csort({ a => 'string' }, 'val') } 
     'csort properly croaks on invalid top-level Hash containing scalars instead of Hash/Arrays';
 

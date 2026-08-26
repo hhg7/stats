@@ -36,9 +36,7 @@ my $nan;
 	$nan = $nan - $nan;
 }
 
-#--------
 # one-way ANOVA, HoA input (groups A/B/C, exact group means 2/5/8)
-#--------
 my %oneway = (
 	y => [1, 2, 3, 4, 5, 6, 7, 8, 9],
 	g => [qw(A A A B B B C C C)],
@@ -80,14 +78,12 @@ my %oneway = (
 	is(ref $r->{xlevels}, 'HASH', 'xlevels is a hashref');
 	is_deeply($r->{xlevels}{g}, [qw(A B C)], 'xlevels{g} sorted, reference first');
 
-	is(ref $r->{group_stats}, 'HASH', 'group_stats present');
-	is_approx($r->{group_stats}{mean}{y}, 5, 'group_stats mean of y');
-	is($r->{group_stats}{size}{y}, 9, 'group_stats size of y');
+	is(ref $r->{'group.stats'}, 'HASH', 'group_stats present');
+	is_approx($r->{'group.stats'}{mean}{y}, 5, 'group_stats mean of y');
+	is($r->{'group.stats'}{size}{y}, 9, 'group_stats size of y');
 }
 
-#--------
 # same data via HoH and AoH -> identical table & coefficients
-#--------
 {
 	my %hoh = map { ("r$_" => { y => $oneway{y}[$_ - 1], g => $oneway{g}[$_ - 1] }) } 1 .. 9;
 	my $r = aov(\%hoh, 'y~g');
@@ -104,9 +100,7 @@ my %oneway = (
 	is_approx($r->{coefficients}{Intercept}, 2, 'AoH: Intercept');
 }
 
-#--------
 # stacked input (no formula) -> auto Value~Group
-#--------
 {
 	my %grp = (A => [1, 2, 3], B => [4, 5, 6], C => [7, 8, 9]);
 	my $r = aov(\%grp);
@@ -116,9 +110,7 @@ my %oneway = (
 	is_deeply($r->{xlevels}{Group}, [qw(A B C)], 'stacked: xlevels Group');
 }
 
-#--------
 # simple regression  y = 1 + 2x
-#--------
 {
 	my %d = (y => [1, 3, 5], x => [0, 1, 2]);
 	my $r = aov(\%d, 'y~x');
@@ -129,9 +121,7 @@ my %oneway = (
 	is($r->{x}{Df}, 1, 'reg x Df = 1');
 }
 
-#--------
 # dot expansion  y ~ .  ==  y ~ x + z
-#--------
 {
 	my %d = (y => [1, 3, 4, 6], x => [0, 1, 0, 1], z => [0, 0, 1, 1]);
 	my $r = aov(\%d, 'y~.');
@@ -141,9 +131,7 @@ my %oneway = (
 	ok(exists $r->{x} && exists $r->{z}, 'dot: both x and z are table rows');
 }
 
-#--------
 # intercept removal  y ~ x - 1
-#--------
 {
 	my %d = (y => [2, 4, 6], x => [1, 2, 3]); # y = 2x through the origin
 	my $r = aov(\%d, 'y~x-1');
@@ -152,9 +140,7 @@ my %oneway = (
 	is_approx($r->{'fitted.values'}{2}, 4, 'no-intercept: fitted[2]');
 }
 
-#--------
 # two-way with interaction  y ~ A*B (balanced, zero residual)
-#--------
 my %twoway = (
 	A => [qw(a1 a1 a1 a1 a2 a2 a2 a2)],
 	B => [qw(b1 b1 b2 b2 b1 b1 b2 b2)],
@@ -182,9 +168,7 @@ my %twoway = (
 	is_deeply($r->{xlevels}{B}, [qw(b1 b2)], 'xlevels B');
 }
 
-#--------
 # listwise deletion of a NaN response row
-#--------
 {
 	my %d = (y => [1, 2, $nan, 4], g => [qw(A A B B)]);
 	my $r = aov(\%d, 'y~g');
@@ -194,9 +178,7 @@ my %twoway = (
 	is_approx($r->{coefficients}{gB},        2.5, 'NaN: gB = 4 - 1.5');
 }
 
-#--------
 # error handling
-#--------
 throws_ok { aov(5, 'y~x') } qr/must be a reference/, 'non-ref data croaks';
 throws_ok { aov({}, 'y~x') } qr/empty/i, 'empty data hash croaks';
 throws_ok { aov({ y => [1, 2], x => [3, 4] }, 'y x') } qr/missing '~'/, 'formula without ~ croaks';
@@ -207,9 +189,7 @@ throws_ok {
 } qr/main effects/, 'interaction without main effects croaks';
 throws_ok { aov({ y => [1, 2], g => [qw(A B)] }, 'y~g') } qr/degrees of freedom/, '0 df croaks';
 
-#--------
 # leak checks
-#--------
 no_leaks_ok {
 	eval { aov(\%oneway, 'y~g') }
 } 'aov one-way: no leaks' unless $INC{'Devel/Cover.pm'};

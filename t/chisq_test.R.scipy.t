@@ -131,9 +131,7 @@ my $PEARSON = "Pearson's Chi-squared test";
 my $YATES   = "Pearson's Chi-squared test with Yates' continuity correction";
 my $GOF     = 'Chi-squared test for given probabilities';
 
-# ======================================================================
 # 1.  The examples on R's ?chisq.test man page
-# ======================================================================
 #
 # Agresti (2007) p.39, the party-affiliation-by-gender table.  R:
 #   M <- rbind(c(762, 327, 468), c(484, 239, 477))
@@ -246,9 +244,7 @@ my $GOF     = 'Chi-squared test for given probabilities';
 		'explicit uniform p reproduces the default') and pass('explicit uniform p');
 }
 
-# ======================================================================
 # 2.  R's own regression suite
-# ======================================================================
 #
 # tests/reg-tests-1b.R, the over-long-deparse case: x and y are both
 # rep(c(1000,1001,1002), each = 5), so table(x, y) is 5 on the diagonal of a
@@ -274,9 +270,7 @@ my $GOF     = 'Chi-squared test for given probabilities';
 	});
 }
 
-# ======================================================================
 # 3.  SciPy's chi2_contingency test cases
-# ======================================================================
 #
 # test_contingency.py::test_expected_freq and the chi2_contingency() docstring
 # share this table.  SciPy: statistic 2.7777777777777777,
@@ -392,9 +386,7 @@ my $GOF     = 'Chi-squared test for given probabilities';
 	});
 }
 
-# ======================================================================
 # 4.  SciPy's chisquare / power_divergence goodness-of-fit cases
-# ======================================================================
 #
 # test_stats.py::TestPowerDivergence power_div_1d_cases: f_obs = [4,8,12,8]
 # against a uniform expectation gives 4, and against f_exp = [2,16,12,2]
@@ -465,9 +457,7 @@ my $GOF     = 'Chi-squared test for given probabilities';
 	});
 }
 
-# ======================================================================
 # 5.  A 1 x k or k x 1 table is a goodness-of-fit test, as in R
-# ======================================================================
 #
 # R's chisq.test() opens with
 #     if (is.matrix(x)) { if (min(dim(x)) == 1L) x <- as.vector(x) }
@@ -496,9 +486,7 @@ my $GOF     = 'Chi-squared test for given probabilities';
 		chisq_test({ A => { n => 10 }, B => { n => 20 }, C => { n => 30 } }), $want);
 }
 
-# ======================================================================
 # 6.  Yates' correction, in detail
-# ======================================================================
 #
 # R computes YATES <- min(0.5, abs(x - E)) once for the whole table and only
 # calls the test corrected when that minimum is positive.
@@ -548,9 +536,7 @@ my $GOF     = 'Chi-squared test for given probabilities';
 	   'correct has no effect outside a 2x2');
 }
 
-# ======================================================================
 # 7.  Non-integer counts, and the far tail of the distribution
-# ======================================================================
 #
 # R never requires integers -- only nonnegative finite numbers -- so weighted
 # tables go through unchanged.
@@ -581,9 +567,7 @@ my $GOF     = 'Chi-squared test for given probabilities';
 	});
 }
 
-# ======================================================================
 # 8.  Where R and SciPy disagree -- chisq_test() follows R
-# ======================================================================
 #
 # (a) A 1 x k table.  R collapses it to a vector and tests goodness of fit
 #     (df = k - 1); SciPy's chi2_contingency keeps it as a table, which makes

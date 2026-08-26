@@ -35,9 +35,7 @@ sub call_named {
 	return capture(sub { no strict 'refs'; &{"Stats::LikeR::$name"}(@args) });
 }
 
-# ---------------------------------------------------------------------------
 # h() reaches every documented function, however the name is spelled
-# ---------------------------------------------------------------------------
 # A mix of XS-implemented (quantile, aov, write_table, vals, ...) and pure Perl
 # (agg, view, melt, ...) functions, so both halves of the distribution are
 # covered by the same lookup.
@@ -105,9 +103,7 @@ for my $f (qw(quantile agg write_table col)) {
 	like($err2 || '', qr/expected a function name/, 'h(\@ref) dies');
 }
 
-# ---------------------------------------------------------------------------
 # the help text is the documentation, not a stub
-# ---------------------------------------------------------------------------
 {
 	my ($out) = capture(sub { Stats::LikeR::h('cohen_d') });
 	like($out, qr/COHEN_D/,  'the section heading is rendered');
@@ -134,9 +130,7 @@ for my $f (qw(quantile agg write_table col)) {
 	like($out, qr/\bwilcox_test\b/,          'the fallback lists documented functions');
 }
 
-# ---------------------------------------------------------------------------
 # 'h' and '?' are data, not a question
-# ---------------------------------------------------------------------------
 # These are the pure Perl functions that used to print their documentation and
 # die when handed a bare 'h' or '?'.  They must not any more: whatever each one
 # makes of the string (most refuse it as a data frame, which is their own
@@ -195,9 +189,7 @@ for my $f (@PERL_FUNCS) {
 	is_deeply($named_h, [ { h => 1 } ], "select_cols(\$df, 'h') selects column h");
 }
 
-# ---------------------------------------------------------------------------
 # ordinary calls are quiet
-# ---------------------------------------------------------------------------
 {
 	my ($out, $err) = capture(sub { my $n = Stats::LikeR::ncol({ a => [1, 2] }); $n });
 	is($err, undef, 'an ordinary call does not die');
@@ -211,9 +203,7 @@ for my $f (@PERL_FUNCS) {
 	}
 }
 
-# ---------------------------------------------------------------------------
 # renderer details worth pinning down
-# ---------------------------------------------------------------------------
 {
 	my $longest = sub {
 		my $n = 0;

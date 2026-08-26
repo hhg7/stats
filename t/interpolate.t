@@ -19,9 +19,7 @@ use Test::LeakTrace 'no_leaks_ok';
 #   * all shapes: positional AoA/AoH/HoA, sorted-key HoH
 #   * returns a NEW frame; the original is never modified
 
-#========
 # core linear interpolation, all four shapes
-#========
 
 is_deeply(
 	interpolate({ v => [ undef, 1, undef, undef, 4, undef ] }),
@@ -43,26 +41,20 @@ is_deeply(
 	{ r1 => { x => 0 }, r2 => { x => 5 }, r3 => { x => 10 } },
 	'HoH: sorted-key order r1,r2,r3');
 
-#--------
 # non-integer / fractional result
-#--------
 is_deeply(
 	interpolate({ v => [ 1, undef, 2 ] }),
 	{ v => [ 1, 1.5, 2 ] },
 	'HoA: fractional interpolated value');
 
-#--------
 # original not mutated
-#--------
 {
 	my $df = { v => [ 1, undef, 3 ] };
 	interpolate($df);
 	is_deeply($df, { v => [ 1, undef, 3 ] }, 'input frame not mutated');
 }
 
-#========
 # limit_direction
-#========
 
 is_deeply(
 	interpolate({ v => [ undef, 1, undef, 3, undef ] }, limit_direction => 'backward'),
@@ -74,9 +66,7 @@ is_deeply(
 	{ v => [ 1, 1, 2, 3, 3 ] },
 	'both: leading and trailing held constant');
 
-#========
 # limit_area
-#========
 
 is_deeply(
 	interpolate({ v => [ undef, 1, undef, 4, undef ] },
@@ -90,9 +80,7 @@ is_deeply(
 	{ v => [ 1, 1, undef, 4, 4 ] },
 	'limit_area outside: only leading/trailing filled');
 
-#========
 # limit
-#========
 
 is_deeply(
 	interpolate({ v => [ 1, undef, undef, undef, 5 ] }, limit => 1),
@@ -105,54 +93,40 @@ is_deeply(
 	{ v => [ 1, undef, undef, 4, 5 ] },
 	'limit=1 backward: only last cell of the interior run filled');
 
-#========
 # anchoring / barriers
-#========
 
-#--------
 # a defined non-numeric cell blocks interpolation across it and is preserved
-#--------
 is_deeply(
 	interpolate({ v => [ 1, 'x', undef, 4 ] }, limit_direction => 'both'),
 	{ v => [ 1, 'x', 4, 4 ] },
 	'non-numeric barrier: no interior fit across it; right anchor holds constant');
 
-#--------
 # no numeric anchor at all -> unchanged
-#--------
 is_deeply(
 	interpolate({ v => [ undef, undef, undef ] }),
 	{ v => [ undef, undef, undef ] },
 	'no anchor: sequence unchanged');
 
-#--------
 # cols restriction: untouched column keeps its NA
-#--------
 is_deeply(
 	interpolate([ { a => 1, b => 1 }, { a => undef, b => undef }, { a => 3, b => 3 } ],
 		cols => [ 'a' ]),
 	[ { a => 1, b => 1 }, { a => 2, b => undef }, { a => 3, b => 3 } ],
 	'cols=[a]: only a interpolated');
 
-#--------
 # AoA short row not extended past its length
-#--------
 is_deeply(
 	interpolate([ [ 1, 1 ], [ undef ], [ 3, 3 ] ], cols => [ 0, 1 ]),
 	[ [ 1, 1 ], [ 2 ], [ 3, 3 ] ],
 	'AoA: short row filled at col 0 only, not extended to col 1');
 
-#--------
 # non-ref row preserved, not fabricated
-#--------
 is_deeply(
 	interpolate([ { v => 1 }, undef, { v => 3 } ]),
 	[ { v => 1 }, undef, { v => 3 } ],
 	'AoH: undef row preserved (no anchor bridge across it)');
 
-#========
 # error paths
-#========
 dies_ok { interpolate(undef) } 'undef data dies';
 throws_ok { interpolate([ { a => 1 } ], 'oddarg') }
 	qr/name => value pairs/, 'odd trailing args die';
@@ -175,9 +149,7 @@ throws_ok { interpolate([ { a => 1 } ], limit_direction => 'sideways') }
 throws_ok { interpolate([ { a => 1 } ], limit_area => 'edge') }
 	qr/limit_area/, 'bad limit_area dies';
 
-#========
 # memory
-#========
 if ($INC{'Devel/Cover.pm'}) { done_testing(); exit 0 }
 no_leaks_ok {
 	my $x = interpolate({ v => [ undef, 1, undef, undef, 4, undef ] });

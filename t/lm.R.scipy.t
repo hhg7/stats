@@ -21,7 +21,6 @@
 # design, hand-placed NAs, p close to n, predictors spanning nine orders of
 # magnitude, and factors whose levels are first seen out of alphabetical order.
 #
-# ---------------------------------------------------------------------------
 # On tolerances
 #
 # lm() solves the normal equations: it forms X'X and sweeps it.  R and
@@ -153,7 +152,6 @@ sub is_close {
 	return;
 }
 
-# ---------------------------------------------------------------------------
 # Data sets, as whitespace-separated tables with a header row.  A field of "NA"
 # becomes undef, which is what lm() must treat as missing.
 sub parse_table {
@@ -2402,7 +2400,6 @@ my @CASES = (
   },
 );
 
-# ---------------------------------------------------------------------------
 for my $c (@CASES) {
 	my $data = $DATA{ $c->{data} };
 	unless ($data) {
@@ -2430,7 +2427,7 @@ for my $c (@CASES) {
 	is_close($fit->{'adj.r.squared'}, $c->{adj_r_squared}, $tol,
 		"$label: adj.r.squared");
 
-	# --- the overall F test -------------------------------------------------
+	# the overall F test
 	unless ($skip{fstatistic}) {
 		if (defined $c->{fstatistic}) {
 			if (ref($fit->{fstatistic}) eq 'ARRAY') {
@@ -2451,7 +2448,7 @@ for my $c (@CASES) {
 		}
 	}
 
-	# --- the coefficient table ---------------------------------------------
+	# the coefficient table
 	my %want = %{ $c->{coef} };
 	is_deeply([ sort @{ $fit->{terms} } ], [ sort keys %want ],
 		"$label: term names");
@@ -2470,7 +2467,7 @@ for my $c (@CASES) {
 		is_close($row->{'Pr(>|t|)'},   $p,   $tol, "$label: summary $t Pr(>|t|)");
 	}
 
-	# --- fitted values and residuals ---------------------------------------
+	# fitted values and residuals
 	# For an HoA, lm() keys these by 1-based row position, which is R's row name
 	# for every data set used here.
 	for my $row (sort keys %{ $c->{fitted} }) {
@@ -2484,7 +2481,6 @@ for my $c (@CASES) {
 }
 
 
-# ---------------------------------------------------------------------------
 # Formula-parsing equivalences that R defines and lm() has to match.  In a
 # formula `^` means crossing, not exponentiation, so wt^2 is just wt -- squaring
 # needs I(wt^2).  A repeated term collapses to a single column.  Both of these
@@ -2532,7 +2528,6 @@ for my $c (@CASES) {
 	}
 }
 
-# ---------------------------------------------------------------------------
 # The three accepted input shapes must produce the same fit: they differ only in
 # how lm() walks the data, not in the design matrix it builds.
 {
@@ -2563,7 +2558,6 @@ for my $c (@CASES) {
 	}
 }
 
-# ---------------------------------------------------------------------------
 # Factor handling.  R sorts a factor's levels and drops the first as the
 # reference; lm() does the same, and reports the sorted set in xlevels.
 #
@@ -2613,7 +2607,6 @@ for my $c (@CASES) {
 		'constant predictor: the estimable slope is still exact');
 }
 
-# ---------------------------------------------------------------------------
 # A factor with a single level contributes no columns, so `y ~ x + g` fits the
 # same model as `y ~ x`.  R refuses this outright:
 #   Error in `contrasts<-`(...): contrasts can be applied only to factors with
@@ -2633,7 +2626,6 @@ for my $c (@CASES) {
 		'single-level factor: slope matches y ~ x');
 }
 
-# ---------------------------------------------------------------------------
 # Level ordering.  lm() sorts levels with strcmp(), i.e. in byte order, which is
 # what patsy/pandas does too (Python's sorted() over str).  R sorts with the
 # collation of the running locale, so under en_US.UTF-8 it orders c("b","A","a")
@@ -2670,7 +2662,6 @@ for my $c (@CASES) {
 		. 'reference level');
 }
 
-# ---------------------------------------------------------------------------
 # Contrast coding, term by term. The numeric agreement for each of these models
 # is checked by the generated cases above; what is pinned here is the structure
 # -- which columns a term produces and what they are called -- because that is
@@ -2800,7 +2791,6 @@ for my $c (@CASES) {
 	}
 }
 
-# ---------------------------------------------------------------------------
 # predict() has to be able to score the models above: it recovers each dummy
 # from xlevels by name, so a column for a reference level has to resolve too.
 {

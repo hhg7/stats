@@ -67,7 +67,7 @@ def k2x_sf(n, d):
     return 1 - s
 
 
-# ---- 1. asymptotic two-sided two-sample: label, D, n1, n2 -----------------
+# 1. asymptotic two-sided two-sample: label, D, n1, n2
 # One row per @MP_TWO row.  z = D * sqrt(n1*n2/(n1+n2)).
 ASYMP = [
     ('100.100m1',   '0.02',                  100,   100),
@@ -102,7 +102,7 @@ for (label, d, n1, n2) in ASYMP:
     p = kolm_sf(mpf(d) * sqrt(en))
     print("%-30s %.17g" % (label + '.two.sided.asymp', float(p)))
 
-# ---- 2. exact two-sided one-sample: label, n, D, what R and ks_test say ---
+# 2. exact two-sided one-sample: label, n, D, what R and ks_test say
 EXACT1 = [
     ('norm.a',      9,  '0.15865525393145705',  '0.95164069201518386'),
     ('norm.b',      9,  '0.44435602715924361',  '0.038850140086788665'),

@@ -64,10 +64,8 @@ sub list_is {
 	}
 }
 
-# ---------------------------------------------------------------------------
 # 1. The numeric/logical forms, against R.  These are what the keyword forms
 #    are then required to match.
-# ---------------------------------------------------------------------------
 list_is([scale(1..5)],                                \@R_DEFAULT,   'scale(1..5) vs R scale(1:5)');
 list_is([scale(1..5, {center => 1, scale => 1})],      \@R_DEFAULT,   'center => 1, scale => 1');
 list_is([scale(1..5, {center => 0})],                  \@R_NO_CENTER, 'center => 0 vs R center=FALSE');
@@ -77,10 +75,8 @@ list_is([scale(1..5, {center => 2})],                  \@R_CENTER_2,  'center =>
 list_is([scale(1..5, {center => 2, scale => 4})],       \@R_CENTER_2_SCALE_4, 'center => 2, scale => 4');
 list_is([scale(1..5, {center => 0, scale => 4})],       \@R_NO_CENTER_SCALE_4, 'center => 0, scale => 4');
 
-# ---------------------------------------------------------------------------
 # 2. Keyword spellings.  "mean"/"sd"/"true"/"1" mean "compute it",
 #    "none"/"false"/"0"/"" mean "do not".
-# ---------------------------------------------------------------------------
 for my $on ('mean', 'true', '1') {
 	list_is([scale(1..5, {center => $on, scale => 'sd'})], \@R_DEFAULT,
 	        "center => '$on', scale => 'sd'");
@@ -94,7 +90,6 @@ for my $off ('none', 'false', '0', '') {
 list_is([scale(1..5, {scale => 'true'})], \@R_DEFAULT, "scale => 'true'");
 list_is([scale(1..5, {scale => 'sd'})],   \@R_DEFAULT, "scale => 'sd'");
 
-# ---------------------------------------------------------------------------
 # 3. The keywords are ASCII case-insensitive, and the folding is exact rather
 #    than approximate: each spelling must land on the identical NV, not merely
 #    a close one.  This is the behaviour str_ieq_ascii() in LikeR.xs provides
@@ -108,7 +103,6 @@ list_is([scale(1..5, {scale => 'sd'})],   \@R_DEFAULT, "scale => 'sd'");
 #    from off to on and fail loudly.  Verified by deleting the fold from
 #    str_ieq_ascii(): 11 assertions here fail, all of them "off" cases.  The
 #    "on" spellings are kept as documentation of the accepted vocabulary.
-# ---------------------------------------------------------------------------
 my @baseline = scale(1..5);
 for my $spelling (qw(mean MEAN Mean mEaN meaN)) {
 	my @got = scale(1..5, {center => $spelling, scale => 'sd'});
@@ -133,9 +127,7 @@ for my $spelling (qw(NONE False FALSE nOnE)) {
 	is_deeply(\@got, \@neither, "center/scale => '$spelling' both off");
 }
 
-# ---------------------------------------------------------------------------
 # 4. Edge cases in the same parser.
-# ---------------------------------------------------------------------------
 list_is([scale(1..5, {center => undef})], \@R_NO_CENTER, 'center => undef is off');
 list_is([scale(1..5, {scale  => undef})], \@R_NO_SCALE,  'scale => undef is off');
 list_is([scale(1..5, {})],                \@R_DEFAULT,   'empty options hash is the default');
@@ -158,9 +150,7 @@ list_is([scale(1..5, {center => 'means', scale => 'sdd'})], \@R_DEFAULT,
 	ok(!grep({ $_ != $_ || abs($_) == 9**9**9 } @got), 'scale => 0.0 yields no NaN/Inf');
 }
 
-# ---------------------------------------------------------------------------
 # 5. Matrix mode reads the same options, per column.
-# ---------------------------------------------------------------------------
 my $mat = [[1, 2], [3, 4], [5, 6]];
 for my $opts ({}, {center => 'mean', scale => 'sd'}, {center => 'MEAN', scale => 'SD'},
               {center => 'true', scale => 'TRUE'}) {

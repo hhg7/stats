@@ -17,10 +17,8 @@ sub is_approx {
 	return 0;
 }
 
-#--------------------------------------------------------------------------
 # Poisson log-linear model.  Reference values from R:
 #   glm(y ~ x + g, family = poisson)
-#--------------------------------------------------------------------------
 {
 	my @y = (1,3,0,2,5,4,7,2,1,6,3,8,0,4,2,5,9,1,3,6);
 	my @x = (0.5,1.2,0.3,0.9,2.1,1.7,2.8,1.0,0.6,2.4,
@@ -53,10 +51,8 @@ sub is_approx {
 	is_approx($p->{'conf.level'}, 0.95, 'default conf.level 0.95', 1e-9);
 }
 
-#--------------------------------------------------------------------------
 # Negative-binomial with ML-estimated theta.  Reference values from R:
 #   MASS::glm.nb(y ~ x)   (x a 3-level factor, genuinely overdispersed)
-#--------------------------------------------------------------------------
 {
 	my @y = (0,8,1,0,15,2,20,0,1,9,0,30,3,0,12,1,25,0,2,18,0,1,40,0,5);
 	my @x = (qw(a a a a a a a a b b b b b b b b c c c c c c c c c));
@@ -91,17 +87,13 @@ sub is_approx {
 	is_approx($fixed->{coefficients}{Intercept}, 1.74919985, 'fixed-theta intercept', 1e-4);
 }
 
-#--------------------------------------------------------------------------
 # Error handling
-#--------------------------------------------------------------------------
 throws_ok { glm(formula => 'y ~ x', data => { y => [1,2], x => [1,2] },
                 family => 'weibull') } qr/unsupported family/, 'rejects unknown family';
 throws_ok { glm(formula => 'y ~ x', data => { y => [-1,2,3], x => [1,2,3] },
                 family => 'poisson') } qr/non-negative/, 'poisson rejects negative counts';
 
-#--------------------------------------------------------------------------
 # Leak check (clean, converging data only)
-#--------------------------------------------------------------------------
 no_leaks_ok {
 	my @y = (0,8,1,0,15,2,20,0,1,9,0,30,3,0,12,1,25,0,2,18,0,1,40,0,5);
 	my @x = (qw(a a a a a a a a b b b b b b b b c c c c c c c c c));
@@ -109,7 +101,6 @@ no_leaks_ok {
 	glm(formula => 'y ~ x', data => { y => \@y, x => \@x }, family => 'poisson');
 } 'glm poisson/negbin does not leak';
 
-#--------------------------------------------------------------------------
 # Negative binomial across dispersion regimes, against MASS 7.3 glm.nb.
 #
 # glm.nb does not simply maximise over theta; it alternates, and which fit it
@@ -125,7 +116,6 @@ no_leaks_ok {
 #
 # Before those were in place the alternation stopped early -- a relative test on
 # the log-likelihood alone -- leaving theta 8e-7 out and the coefficients 8e-6.
-#--------------------------------------------------------------------------
 {
 	my @x = (0.341, 1.867, 1.828, 1.87, 2.583, 1.921, 0.028, 0.698, 1.998, 1.543,
 	         2.081, 1.635, 0.848, 2.77, 0.877, 2.512, 0.859, 0.8, 0.56, 0.697,
@@ -160,7 +150,6 @@ no_leaks_ok {
 	is_approx($nb->{aic}, 300.379062123121, 'negbin (mild): AIC matches glm.nb', 1e-7);
 }
 
-#--------------------------------------------------------------------------
 # Near-Poisson data, where theta is barely identified.
 #
 # These counts are drawn from a Poisson, so the likelihood is almost flat in
@@ -169,7 +158,6 @@ no_leaks_ok {
 # "iteration limit reached". Theta is therefore held only loosely here -- what has
 # to agree tightly is the regression coefficients, which is what the model is for
 # and which barely move with theta at this scale.
-#--------------------------------------------------------------------------
 {
 	my @x = (2.756, 2.353, 2.213, 0.842, 1.37, 0.863, 2.089, 2.462, 1.965, 1.241,
 	         2.855, 0.729, 1.826, 2.274, 2.081, 0.346, 1.908, 0.927, 1.059, 2.943,

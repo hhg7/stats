@@ -59,7 +59,7 @@ sub no_warning { my ($name) = @_; my @w = took(); is(scalar @w, 0, $name) or dia
 	my $d = density(\@X);
 	is(ref $d, 'HASH', 'returns a hash reference');
 	is_deeply([sort keys %$d],
-	          [sort qw(x y bw n kernel old_coords has_na)],
+	          [sort qw(x y bw n kernel old.coords has.na)],
 	          'returns exactly the documented fields');
 	is(ref $d->{x}, 'ARRAY', 'x is an array reference');
 	is(ref $d->{y}, 'ARRAY', 'y is an array reference');
@@ -67,8 +67,8 @@ sub no_warning { my ($name) = @_; my @w = took(); is(scalar @w, 0, $name) or dia
 	is(scalar @{ $d->{y} }, 512, 'y has n = 512 points by default');
 	is($d->{n}, scalar @X, 'n is the sample size');
 	is($d->{kernel}, 'gaussian', 'kernel defaults to gaussian');
-	is($d->{old_coords}, 0, 'old_coords is off by default');
-	is($d->{has_na}, 0, 'has_na is always 0');
+	is($d->{'old.coords'}, 0, 'old_coords is off by default');
+	is($d->{'has.na'}, 0, 'has_na is always 0');
 	cmp_ok($d->{bw}, '>', 0, 'bw is positive');
 
 	# The grid is seq(from, to, length.out = n), from = min(x) - 3*bw.
@@ -267,14 +267,14 @@ for my $k (@KERNELS) {
 {
 	my $new = density(\@X);
 	my $old = density(\@X, old_coords => 1);
-	is($old->{old_coords}, 1, 'old_coords is echoed back');
+	is($old->{'old.coords'}, 1, 'old_coords is echoed back');
 	is_deeply($new->{x}, $old->{x}, 'old_coords does not move the grid');
 	# pre-4.4.0 values are larger by about 1 + 1/(2n-2)
 	my $r = $old->{y}[256] / $new->{y}[256];
 	cmp_ok($r, '>', 1, 'old_coords gives larger values');
 	cmp_ok(abs($r - (1 + 1 / (2 * 512 - 2))), '<', 5e-3,
 	       'old_coords is larger by about 1 + 1/(2n-2)');
-	is(density(\@X, 'old.coords' => 1)->{old_coords}, 1, 'old.coords is accepted too');
+	is(density(\@X, 'old.coords' => 1)->{'old.coords'}, 1, 'old.coords is accepted too');
 	no_warning('old_coords warns about nothing');
 }
 

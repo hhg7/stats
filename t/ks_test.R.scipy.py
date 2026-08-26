@@ -35,7 +35,7 @@ def one(label, x, alternative, mode):
 def dump(label, v):
     print("#DATA\t%s\t%s" % (label, ",".join(repr(float(e)) for e in v)))
 
-# ---- datasets ------------------------------------------------------------
+# datasets
 # Hollander & Wolfe (1999) Example 5.4, from R's tests/reg-tests-1a.R
 hw_x = [-0.15, 8.6, 5, 3.71, 4.29, 7.74, 2.48, 3.25, -1.15, 8.38]
 hw_y = [2.55, 12.07, 0.46, 0.35, 2.69, -0.94, 1.73, 0.73, -0.35, -0.37]

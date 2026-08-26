@@ -34,13 +34,13 @@ my $hoh = {
 	chr1 => { start =>   10, end =>  9999, strand => '+' },
 };
 
-# ---- rows is a synonym for n ----
+# rows is a synonym for n
 is( view($aoh, n => 3, return_only => 1),
     view($aoh, rows => 3, return_only => 1),
     'rows is a synonym for n' );
 like( view($aoh, rows => 2, return_only => 1), qr/\(showing 2\)/, 'rows controls the count' );
 
-# ---- reject unknown args ----
+# reject unknown args
 eval { view($aoh, bogus => 1, return_only => 1) };
 like( $@, qr/unknown argument\(s\): bogus/, 'unknown arg rejected' );
 eval { view($aoh, n => 2, rows => 2, return_only => 1) };
@@ -56,7 +56,7 @@ eval { view($aoh, na => '.', max_width => 10, ellipsis => '~', gap => 1,
              cols => ['age'], width => 200, return_only => 1) };
 is( $@, '', 'all documented args accepted' );
 
-# ---- n => 0 still lists column headers (AoH) ----
+# n => 0 still lists column headers (AoH)
 {
 	my @lines = split /\n/, view($aoh, n => 0, return_only => 1);
 	is( scalar @lines, 3, 'n=0: banner + header + footer' );
@@ -64,21 +64,21 @@ is( $@, '', 'all documented args accepted' );
 	like( $lines[-1], qr/7 more rows/, 'n=0 footer reports all rows hidden' );
 }
 
-# ---- empty hash does not die ----
+# empty hash does not die
 {
 	my $s = eval { view({}, return_only => 1) };
 	is( $@, '', 'empty hash does not die' );
 	like( $s, qr/^# \w+: 0 rows x 0 cols/, 'empty hash -> 0x0 banner' );
 }
 
-# ---- row_names alias drives the HoH label header ----
+# row_names alias drives the HoH label header
 {
 	my $hoh2 = { a => { v => 1 }, b => { v => 2 } };
 	my @lines = split /\n/, view($hoh2, row_names => 'id', return_only => 1);
 	like( $lines[1], qr/^id\b/, 'HoH: row_names alias sets the label header' );
 }
 
-# ---- core behavior preserved (banner uses a TAB before "(showing ...)") ----
+# core behavior preserved (banner uses a TAB before "(showing ...)")
 {
 	my $s = view($aoh, return_only => 1);
 	my @lines = split /\n/, $s;
@@ -121,7 +121,7 @@ is( $@, '', 'all documented args accepted' );
 	like( $@, qr/expected an ARRAY .* or HASH/, 'non-ref input dies' );
 }
 
-# ---- flat (scalar-valued) hash renders as a single row ----
+# flat (scalar-valued) hash renders as a single row
 {
 	my @lines = split /\n/, view({ a => 1, b => 2, c => 3 }, return_only => 1);
 	like( $lines[0], qr/^# Hash: 1 row x 3 cols\t\(showing 1\)$/, 'flat hash banner' );
@@ -150,7 +150,7 @@ is( $@, '', 'all documented args accepted' );
 	like( $lines[2], qr/^x\s+9$/, 'flat hash: row.names value becomes the label' );
 }
 
-# ---- NEW: 'width' argument + R-style column chunking ----
+# NEW: 'width' argument + R-style column chunking
 # A table wider than the terminal is split into successive column blocks, each
 # led by a repeated copy of the row-label column (as R does when a data frame
 # exceeds getOption("width")).
@@ -219,7 +219,7 @@ is( $@, '', 'all documented args accepted' );
 	}
 }
 
-# ---- auto row labels are 0-based indexes (Perl-style), not 1-based (R-style) ----
+# auto row labels are 0-based indexes (Perl-style), not 1-based (R-style)
 # String values keep the label digit unambiguous vs the data.
 {
 	my @lines = split /\n/,

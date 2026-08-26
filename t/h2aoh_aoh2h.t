@@ -18,9 +18,7 @@ use Stats::LikeR;
 use Test::Exception;    # dies_ok, throws_ok, lives_ok
 use Test::More;
 
-# ---------------------------------------------------------------------------
 # h2aoh: the basic unfold
-# ---------------------------------------------------------------------------
 {
 	my $aoh = h2aoh({ a => 1, b => 2 });
 	is(reftype($aoh), 'ARRAY', 'h2aoh: returns an arrayref');
@@ -48,9 +46,7 @@ use Test::More;
 	is_deeply(vals($aoh, 'v'), [ 1, 2 ], 'h2aoh: vals() reads the value column');
 }
 
-# ---------------------------------------------------------------------------
 # h2aoh: row order
-# ---------------------------------------------------------------------------
 {
 	# numeric keys sort numerically, not as strings ('10' lt '2')
 	my $aoh = h2aoh({ 10 => 'x', 2 => 'y', 1 => 'z' });
@@ -93,9 +89,7 @@ use Test::More;
 		"h2aoh: sort => 'none' loses no keys");
 }
 
-# ---------------------------------------------------------------------------
 # h2aoh: values and edges
-# ---------------------------------------------------------------------------
 {
 	is_deeply(h2aoh({}), [], 'h2aoh: empty hash gives an empty frame');
 	is_deeply(h2aoh({}, sort => 'value'), [],
@@ -121,9 +115,7 @@ use Test::More;
 	is($h{a}, 1, 'h2aoh: editing the frame does not touch the hash');
 }
 
-# ---------------------------------------------------------------------------
 # h2aoh: errors
-# ---------------------------------------------------------------------------
 {
 	throws_ok { h2aoh(undef) } qr/first argument is undefined/,
 		'h2aoh: undef argument dies';
@@ -154,9 +146,7 @@ use Test::More;
 	lives_ok { h2aoh({ a => 1, b => 2 }) } 'h2aoh: a well-formed flat hash lives';
 }
 
-# ---------------------------------------------------------------------------
 # aoh2h: the basic fold
-# ---------------------------------------------------------------------------
 {
 	my $h = aoh2h([ { variable => 'a', value => 1 },
 	                { variable => 'b', value => 2 } ]);
@@ -195,9 +185,7 @@ use Test::More;
 		'aoh2h: an unknown duplicates mode dies, listing the allowed ones';
 }
 
-# ---------------------------------------------------------------------------
 # aoh2h: errors
-# ---------------------------------------------------------------------------
 {
 	throws_ok { aoh2h(undef) } qr/first argument is undefined/,
 		'aoh2h: undef argument dies';
@@ -233,9 +221,7 @@ use Test::More;
 		'aoh2h: a well-formed two-column frame lives';
 }
 
-# ---------------------------------------------------------------------------
 # the two are inverses
-# ---------------------------------------------------------------------------
 {
 	my %h = ( a => 1, b => 2, c => undef, '' => 0 );
 	is_deeply(aoh2h(h2aoh(\%h)), \%h, 'aoh2h(h2aoh(%h)) is %h');
@@ -272,9 +258,7 @@ use Test::More;
 		{ a => 3, b => 2, c => 1 }, 'and aoh2h folds it back');
 }
 
-# ---------------------------------------------------------------------------
 # both are exported
-# ---------------------------------------------------------------------------
 {
 	ok(defined &main::h2aoh, 'h2aoh is exported into the caller');
 	ok(defined &main::aoh2h, 'aoh2h is exported into the caller');

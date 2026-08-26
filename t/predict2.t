@@ -43,9 +43,7 @@ sub predict_matches_fit {
 	ok($ok, $test_name);
 }
 
-#--------
 # models fitted via aov
-#--------
 my %oneway = (y => [1, 2, 3, 4, 5, 6, 7, 8, 9], g => [qw(A A A B B B C C C)]);
 my %reg    = (y => [1, 3, 5],                    x => [0, 1, 2]);
 my %twoway = (
@@ -72,18 +70,14 @@ my $m_two    = aov(\%twoway, 'y~A*B');
 my $m_fxc    = aov(\%fxc,    'y~g*x');
 my $m_cxc    = aov(\%cxc,    'y~x*z');
 
-#--------
 # round-trips: predict(training) == fitted.values
-#--------
 predict_matches_fit($m_oneway, \%oneway, 'round-trip: one-way factor');
 predict_matches_fit($m_reg,    \%reg,    'round-trip: simple regression');
 predict_matches_fit($m_two,    \%twoway, 'round-trip: factor x factor interaction', 1e-6);
 predict_matches_fit($m_fxc,    \%fxc,    'round-trip: factor x continuous interaction', 1e-6);
 predict_matches_fit($m_cxc,    \%cxc,    'round-trip: continuous x continuous interaction', 1e-6);
 
-#--------
 # explicit predicted values
-#--------
 {
 	my $p = predict($m_oneway, { g => [qw(A B C)] });
 	is_approx($p->{1}, 2, 'one-way predict A');
@@ -114,9 +108,7 @@ predict_matches_fit($m_cxc,    \%cxc,    'round-trip: continuous x continuous in
 	is_approx($p->{1}, 16, 'cxc predict x=2,z=1', 1e-6); # 1+4+3+8
 }
 
-#--------
 # newdata shapes all agree (HoA / AoH / HoH / flat single row)
-#--------
 {
 	my $hoa  = predict($m_reg, { x => [0, 2] });
 	my $aoh  = predict($m_reg, [ { x => 0 }, { x => 2 } ]);
@@ -132,18 +124,14 @@ predict_matches_fit($m_cxc,    \%cxc,    'round-trip: continuous x continuous in
 	is_approx($flat->{1}, 1, 'flat single row');
 }
 
-#--------
 # no newdata -> stored fitted.values returned
-#--------
 {
 	my $p = predict($m_reg);
 	my $f = $m_reg->{'fitted.values'};
 	is_approx($p->{$_}, $f->{$_}, "no-newdata returns fitted.values [$_]") for sort keys %$f;
 }
 
-#--------
 # binomial family: link vs response (hand-built model)
-#--------
 {
 	my $glm = { family => 'binomial', coefficients => { Intercept => 0, x => 1 } };
 
@@ -164,9 +152,7 @@ predict_matches_fit($m_cxc,    \%cxc,    'round-trip: continuous x continuous in
 	is_approx($r->{1}, 3, 'gaussian response = eta (identity link)');
 }
 
-#--------
 # error handling
-#--------
 throws_ok { predict(5, { x => [1] }) } qr/model must be/, 'non-hashref model croaks';
 throws_ok { predict({}, { x => [1] }) } qr/coefficients/, 'model without coefficients croaks';
 throws_ok { predict($m_reg, 5) } qr/newdata must be/, 'scalar newdata croaks';
@@ -178,9 +164,7 @@ throws_ok { predict($m_reg, { x => [1] }, 'type') } qr/name => value pairs/, 'od
 throws_ok { predict($m_reg, { x => [1] }, type => 'bogus') } qr/type must be/, 'bad type value croaks';
 throws_ok { predict($m_fxc, { g => ['g1'] }) } qr/missing column 'x'/, 'interaction missing continuous column croaks';
 
-#--------
 # leak checks
-#--------
 no_leaks_ok {
 	eval { predict($m_oneway, { g => [qw(A B C)] }) }
 } 'predict factor: no leaks' unless $INC{'Devel/Cover.pm'};

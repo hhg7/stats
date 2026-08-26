@@ -12,9 +12,7 @@ my $tmp = File::Temp->new(SUFFIX => '.tsv', UNLINK => 1);
 print {$tmp} "# PDB\tscore\n1\t10\n2\t20\n3\t30\n";
 close $tmp;
 
-#--------
 # filter by commented header name, as written in the file
-#--------
 my $rows = read_table("$tmp", filter => { '# PDB' => sub { $_ == 2 } });
 is(scalar(@$rows), 1, 'filter on "# PDB" keeps one row');
 is($rows->[0]{score}, 20, 'correct row survived the filter');

@@ -21,7 +21,7 @@ use Stats::LikeR;
 my $have_zip = eval { require IO::Compress::Zip; 1 };
 plan skip_all => 'IO::Compress::Zip (core) not available' unless $have_zip;
 
-# --- build the workbook ----------------------------------------------------
+# build the workbook
 # $nsheets (default 2) controls whether the second worksheet is emitted, so the
 # same builder produces both the multi-sheet and single-sheet fixtures.
 sub build_xlsx {
@@ -131,7 +131,7 @@ sub build_xlsx {
 
 my $xlsx = build_xlsx();
 
-# --- multi-worksheet workbook returns a hash keyed by sheet name -----------
+# multi-worksheet workbook returns a hash keyed by sheet name
 {
 	my $book;
 	lives_ok { $book = read_table($xlsx) } 'read_table reads a multi-sheet .xlsx file';
@@ -143,7 +143,7 @@ my $xlsx = build_xlsx();
 		'the second worksheet is parsed independently' );
 }
 
-# --- a single named sheet is returned directly (not wrapped) ---------------
+# a single named sheet is returned directly (not wrapped)
 {
 	my $rows;
 	lives_ok { $rows = read_table($xlsx, sheet => 'Data') }
@@ -171,7 +171,7 @@ my $xlsx = build_xlsx();
 		'all four columns present' );
 }
 
-# --- output.type => hoh ----------------------------------------------------
+# output.type => hoh
 {
 	my $h = read_table($xlsx, sheet => 'Data', 'output.type' => 'hoh', 'row.names' => 'name');
 	is( $h->{'Mazda RX4'}{mpg}, '21', 'hoh keyed by the row.names column' );
@@ -179,14 +179,14 @@ my $xlsx = build_xlsx();
 	is( $h->{'Hornet'}{cyl}, undef, 'hoh preserves undef for a sparse cell' );
 }
 
-# --- filter ----------------------------------------------------------------
+# filter
 {
 	my $rows = read_table($xlsx, sheet => 'Data', filter => { name => sub { $_ eq 'Hornet' } });
 	is( scalar @$rows, 1,        'filter keeps only matching rows' );
 	is( $rows->[0]{name}, 'Hornet', 'filtered row is the expected one' );
 }
 
-# --- sheet selection -------------------------------------------------------
+# sheet selection
 {
 	my $by_name = read_table($xlsx, sheet => 'Second');
 	is_deeply( $by_name, [ { x => '1', y => '2' } ], 'sheet by name' );
@@ -200,7 +200,7 @@ my $xlsx = build_xlsx();
 		qr/sheet index 9 is out of range/, 'out-of-range sheet index dies';
 }
 
-# --- a single-worksheet workbook returns its table directly ----------------
+# a single-worksheet workbook returns its table directly
 {
 	my $solo = build_xlsx(1);
 	my $rows;

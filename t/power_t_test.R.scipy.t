@@ -313,14 +313,12 @@ for my $c (@cases) {
 	}
 }
 
-#-------------------------------------------------------------
 # low df: the chi density carries w**(df-1), so for any df that
 # is not a whole number some derivative of it is infinite at
 # w = 0 and Simpson has nothing to work with. Substituting
 # w = z**m moves the measure to z**(m*df - 1) and buys back the
 # bounded derivatives; before that these lost up to fourteen
 # digits, worst where the critical value is largest.
-#-------------------------------------------------------------
 for my $t (
 	# n, type, delta, sd, sig_level, scipy nct.sf, old error
 	[2.182, 'one.sample', 0.4088, 0.9733,  0.001, 0.0010254836902950423, '7.4e-4'],
@@ -337,11 +335,9 @@ for my $t (
 		sprintf('low df: n = %s, sig_level = %s (was off by %s)', $n, $sig, $was));
 }
 
-#-------------------------------------------------------------
 # df == 1 exactly, where w**(df-1) is w**0 and the old grid was
 # accurate too -- kept because it is the boundary of the case
 # above. R: 0.090579718650718455
-#-------------------------------------------------------------
 for my $type ('one.sample', 'paired') {
 	my $r = power_t_test(n => 2, delta => 1, sd => 1, sig_level => 0.05,
 		type => $type, power => undef);
@@ -356,14 +352,12 @@ for my $type ('one.sample', 'paired') {
 		"df == 1 strict (n => 2, type => '$type') power");
 }
 
-#-------------------------------------------------------------
 # large df: W = sqrt(chi2_df / df) has standard deviation
 # 1 / sqrt(2 * df), so its density narrows without bound while a
 # fixed grid does not. The u = w/(1+w) grid used below df 1e3
 # stepped clean over the peak once df passed ~1e7, and these
 # came back badly wrong -- 0.138 for the first one, where delta
 # is 0 and the answer can only be sig_level / 2.
-#-------------------------------------------------------------
 for my $n (1e2, 999, 1001, 1e4, 1e6, 1e7, 4e7, 1e8) {
 	for my $sig (0.05, 0.001) {
 		for my $type ('two.sample', 'one.sample') {
@@ -401,11 +395,9 @@ for my $t (
 	is_rel($r->{n}, 46396124.05711444, 1e-7, 'solving for an n of 4.6e7');
 }
 
-#-------------------------------------------------------------
 # small power: taken as the upper tail directly rather than as
 # 1 - lower, which used to lose most of its digits to
 # cancellation when the answer was near 1e-3
-#-------------------------------------------------------------
 {
 	# scipy nct.sf, R agrees to 2e-10: two-sample so df = 2(n-1) stays above 2
 	my $p = power_t_test(n => 2.5, delta => 0.4088, sd => 0.9733,
@@ -413,10 +405,8 @@ for my $t (
 	is_rel($p, 0.0011362537815083292, 1e-8, 'a power of ~1e-3 keeps its digits');
 }
 
-#-------------------------------------------------------------
 # 'paired' matches 'one.sample' numerically and differs only in
 # the method and note strings
-#-------------------------------------------------------------
 {
 	my %base = (delta => 0.5, sd => 1, sig_level => 0.05, power => 0.8, n => undef);
 	my $one  = power_t_test(%base, type => 'one.sample');
@@ -426,9 +416,7 @@ for my $t (
 	matches_R($one->{n}, 33.367204088022, "one.sample n (R)");
 }
 
-#-------------------------------------------------------------
 # method / note / alternative strings, matching R's htest fields
-#-------------------------------------------------------------
 {
 	my %base = (n => 30, delta => 0.5, sd => 1, sig_level => 0.05, power => undef);
 
@@ -455,10 +443,8 @@ for my $t (
 		$two->{power}, 1e-15, 'type/alternative/sd/sig_level defaults');
 }
 
-#-------------------------------------------------------------
 # 'greater' and 'less' are LikeR extensions; R's power.t.test
 # rejects them, but both mean a one-sided test
-#-------------------------------------------------------------
 {
 	my %base = (n => 30, delta => 0.5, sd => 1, sig_level => 0.05, power => undef);
 	my $one_sided = power_t_test(%base, alternative => 'one.sided')->{power};
@@ -468,9 +454,7 @@ for my $t (
 	}
 }
 
-#-------------------------------------------------------------
 # a two-sided delta is used as |delta|; a one-sided delta is not
-#-------------------------------------------------------------
 {
 	my %base = (n => 30, sd => 1, sig_level => 0.05, power => undef);
 	is_rel(power_t_test(%base, delta => -0.5)->{power},
@@ -487,9 +471,7 @@ for my $t (
 	is($wrong->{delta}, -0.5, 'one.sided: delta keeps its sign');
 }
 
-#-------------------------------------------------------------
 # tol: a looser tolerance is honoured, a tight one is the default
-#-------------------------------------------------------------
 {
 	my %base = (delta => 0.5, sd => 1, sig_level => 0.05, power => 0.8, n => undef);
 	my $exact = 63.76576372485063;   # scipy brentq at xtol 1e-13
@@ -499,9 +481,7 @@ for my $t (
 	# R at its own default tolerance, for the record: 63.765763714273874
 }
 
-#-------------------------------------------------------------
 # argument validation
-#-------------------------------------------------------------
 throws_ok { power_t_test(n => 30, delta => 0.5, sd => 1, sig_level => 0.05, power => 0.8) }
 	qr/exactly one of/, 'nothing left undef croaks';
 throws_ok { power_t_test(delta => 0.5, n => undef, power => undef) }
@@ -544,10 +524,8 @@ throws_ok { power_t_test(n => 30, delta => 0.5, power => undef, type => 'bogus')
 throws_ok { power_t_test(n => 30, delta => 0.5, power => undef, alternative => 'two-sided') }
 	qr/'alternative' must be/, 'a misspelt alternative croaks';
 
-#-------------------------------------------------------------
 # unreachable targets croak instead of returning a bracket
 # endpoint dressed up as an answer
-#-------------------------------------------------------------
 # power falls to sig_level/tside as sd grows, so 0.01 is below the floor.
 # R: "no sign change found in 1000 iterations". Used to return sd = delta * 1e7.
 throws_ok { power_t_test(n => 30, delta => 0.5, sig_level => 0.05, power => 0.01, sd => undef) }
@@ -577,10 +555,8 @@ throws_ok { power_t_test(power => 0.99, n => 40, delta => 0.5, sd => 1, sig_leve
 	qr/no 'sig_level' in \(0, 1\) gives a power of 0\.99/,
 	'a sig_level above 1 croaks rather than being reported';
 
-#-------------------------------------------------------------
 # sig.level and sig_level are the same argument, and the result
 # key is R's spelling
-#-------------------------------------------------------------
 {
 	my $a = power_t_test(n => 30, delta => 0.5, 'sig.level' => 0.01, power => undef);
 	my $b = power_t_test(n => 30, delta => 0.5, sig_level    => 0.01, power => undef);
@@ -588,9 +564,7 @@ throws_ok { power_t_test(power => 0.99, n => 40, delta => 0.5, sd => 1, sig_leve
 	is($a->{'sig.level'}, 0.01, "result key is 'sig.level', as in R");
 }
 
-#-------------------------------------------------------------
 # round trip: every solved parameter reproduces its power
-#-------------------------------------------------------------
 for my $solve (qw(n delta sd sig_level)) {
 	for my $type ('two.sample', 'one.sample') {
 		for my $alt ('two.sided', 'one.sided') {
@@ -607,10 +581,8 @@ for my $solve (qw(n delta sd sig_level)) {
 	}
 }
 
-#-------------------------------------------------------------
 # leaks: one solver path per free parameter, plus the croak
 # paths, which unwind out of the middle of the XS body
-#-------------------------------------------------------------
 unless ($INC{'Devel/Cover.pm'}) {
 	my %base = (n => 30, delta => 0.5, sd => 1, sig_level => 0.05, power => 0.7);
 	for my $solve (qw(power n delta sd sig_level)) {

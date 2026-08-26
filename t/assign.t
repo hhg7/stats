@@ -5,7 +5,7 @@ use warnings FATAL => 'all';
 use Test::More;
 use Stats::LikeR;
 
-# --- optional test modules: import if present, else install skipping stubs ---
+# optional test modules: import if present, else install skipping stubs
 BEGIN {
 	if (eval { require Test::Exception; 1 }) {
 		Test::Exception->import;
@@ -47,9 +47,7 @@ dies_ok {
 	assign(undef, 'x');
 } 'assign: dies when given undefined data';
 
-# ----------------------------------------------------------------------
 # AoH: basic derivation, in-place return, chaining, originals preserved
-# ----------------------------------------------------------------------
 {
 	my $aoh = [
 		{ weight => 70, height => 1.75 },
@@ -162,9 +160,7 @@ SKIP: {
 		'AoH map_cell: non-hash row croaks (with index)';
 }
 
-# ----------------------------------------------------------------------
 # HoA: basic derivation, chaining, branching, originals shared/untouched
-# ----------------------------------------------------------------------
 {
 	my $hoa = { weight => [70, 90, 50], height => [1.75, 1.80, 1.60] };
 	my $ret = assign($hoa,
@@ -238,9 +234,7 @@ SKIP: {
 		'HoA map_cell: missing target column croaks';
 }
 
-# ----------------------------------------------------------------------
 # Edge cases: empty frames (coderef and arrayref value)
-# ----------------------------------------------------------------------
 {
 	my $empty_aoh = [];
 	assign($empty_aoh, c => sub { 1 });
@@ -255,9 +249,7 @@ SKIP: {
 	is_deeply($empty_hoa->{d}, [], 'empty HoA column -> empty new column (arrayref value)');
 }
 
-# ----------------------------------------------------------------------
 # Error paths
-# ----------------------------------------------------------------------
 {
 	throws_ok { assign([{}], 'lonely') } qr/even list/,
 		'odd-length pair list croaks';
@@ -271,10 +263,8 @@ SKIP: {
 		'a well-formed call lives';
 }
 
-# ----------------------------------------------------------------------
 # Leak guards (SV-level). Each block builds a throwaway frame so everything
 # is freed at block exit; skipped under Devel::Cover.
-# ----------------------------------------------------------------------
 SKIP: {
 	skip 'leak checks skipped under Devel::Cover', 5 if $INC{'Devel/Cover.pm'};
 

@@ -14,7 +14,7 @@ sub is_approx {
 		or diag("got $got, expected $exp (tolerance $tol)");
 }
 
-# --- default return is the edge list (numpy/pandas linear interpolation) ----
+# default return is the edge list (numpy/pandas linear interpolation)
 {
 	my @edges = qcut([1 .. 10], 4);
 	my @want  = (1, 3.25, 5.5, 7.75, 10);
@@ -24,14 +24,14 @@ sub is_approx {
 	}
 }
 
-# --- codes are opt-in -------------------------------------------------------
+# codes are opt-in
 {
 	my $codes = qcut([1 .. 10], 4, codes => 1);
 	is(ref $codes, 'ARRAY', 'codes => 1 returns an arrayref');
 	is_deeply($codes, [0, 0, 0, 1, 1, 2, 2, 3, 3, 3], 'quartile codes match pandas');
 }
 
-# --- both edges and codes in one pass ---------------------------------------
+# both edges and codes in one pass
 {
 	my ($codes, $edges) = qcut([1 .. 10], 4, codes => 1, edges => 1);
 	is(ref $codes, 'ARRAY', 'both: first return is codes ref');
@@ -39,7 +39,7 @@ sub is_approx {
 	is_approx($edges->[-1], 10, 'both: edges intact');
 }
 
-# --- equal-frequency counts -------------------------------------------------
+# equal-frequency counts
 {
 	my $codes = qcut([1 .. 100], 4, codes => 1);
 	my %n;
@@ -47,7 +47,7 @@ sub is_approx {
 	is($n{$_}, 25, "bin $_ holds 25 of 100") for 0 .. 3;
 }
 
-# --- explicit probability vector (top-5% tranche) ---------------------------
+# explicit probability vector (top-5% tranche)
 {
 	my @edges = qcut([1 .. 100], [0, 0.5, 0.95, 1]);
 	is(scalar @edges, 4, 'three bands -> four edges');
@@ -60,7 +60,7 @@ sub is_approx {
 	is($n{2},  5, 'top-5% tranche');
 }
 
-# --- named and interval labels (imply codes) --------------------------------
+# named and interval labels (imply codes)
 {
 	my $lab = qcut([1 .. 10], 4, labels => [qw/Q1 Q2 Q3 Q4/]);
 	is_deeply($lab, [qw/Q1 Q1 Q1 Q2 Q2 Q3 Q3 Q4 Q4 Q4/], 'named labels applied');
@@ -70,7 +70,7 @@ sub is_approx {
 	is($iv->[-1], '(7.75, 10]', 'last interval is open-closed');
 }
 
-# --- NA (undef) passes through codes ----------------------------------------
+# NA (undef) passes through codes
 {
 	my $codes = qcut([1, 2, undef, 4, 5, 6, 7, 8, 9, 10], 4, codes => 1);
 	ok(!defined $codes->[2], 'undef stays undef');
@@ -78,7 +78,7 @@ sub is_approx {
 	is($codes->[9], 3, 'value after NA binned correctly');
 }
 
-# --- duplicate edges: raise by default, drop on request ---------------------
+# duplicate edges: raise by default, drop on request
 {
 	my @tied = ((0) x 8, 1, 2, 3, 4);
 	my $err = !eval { my @e = qcut(\@tied, 4); 1 };
@@ -88,7 +88,7 @@ sub is_approx {
 	ok(scalar @edges < 5, 'dropping merges duplicate edges');
 }
 
-# --- 'h' and '?' are ordinary bad arguments, not a help request -------------
+# 'h' and '?' are ordinary bad arguments, not a help request
 # qcut used to print its documentation and die for either string.  It does not
 # any more (h('qcut') is the way to ask -- see t/help.t): both slots refuse the
 # string with the type error the slot always gives, and nothing is printed.
@@ -113,7 +113,7 @@ sub is_approx {
 	}
 }
 
-# --- leak checks (assignments hoisted out for Devel::Cover) ------------------
+# leak checks (assignments hoisted out for Devel::Cover)
 # Test::LeakTrace flags Devel::Cover's instrumentation SVs as leaks, so skip
 # the leak checks (the last tests here) when running under coverage.
 if ($INC{'Devel/Cover.pm'}) { done_testing(); exit 0 }

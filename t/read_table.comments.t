@@ -76,9 +76,7 @@ CSV
 	is($r->[1]{name}, 'Bob', 'data after a mid-file comment still parses');
 }
 
-#--------
 # a file with no comment line still uses line 1 as the header
-#--------
 {
 	my ($f, $keep) = tmp_csv("id,name\n1,Alice\n");
 	my $r = read_table($f);

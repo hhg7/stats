@@ -80,9 +80,7 @@ for my $c (@cases) {
 	close_enough($got->{v}, $c->{exp}, $c->{label});
 }
 
-#========
 # the `x` argument: custom abscissae change the spacing of a linear fit
-#========
 close_enough(
 	interpolate({ v => [ 0, undef, undef, 10 ] }, method => 'index', x => [ 0, 1, 3, 4 ])->{v},
 	[ 0, 2.5, 7.5, 10 ], 'x arrayref: linear on unequal spacing');
@@ -95,9 +93,7 @@ close_enough(
 	is_deeply($df->{v}, [ 0, undef, undef, 10 ], 'x-as-column: input not mutated');
 }
 
-#========
 # method aliases route to ffill / bfill semantics
-#========
 is_deeply(
 	interpolate({ v => [ 1, undef, undef, 4, undef ] }, method => 'ffill')->{v},
 	[ 1, 1, 1, 4, 4 ], "method 'ffill' holds the last value forward");
@@ -105,9 +101,7 @@ is_deeply(
 	interpolate({ v => [ undef, 1, undef, 4 ] }, method => 'bfill')->{v},
 	[ 1, 1, 4, 4 ], "method 'bfill' holds the next value backward");
 
-#========
 # every shape reaches the same result for one method
-#========
 close_enough(
 	[ map { $_->{v} } @{ interpolate([ { v => 1 }, { v => undef }, { v => 3 } ], method => 'cubicspline') } ],
 	[ 1, 2, 3 ], 'AoH cubicspline');
@@ -115,18 +109,14 @@ close_enough(
 	interpolate([ [ 1 ], [ undef ], [ 3 ] ], cols => [ 0 ], method => 'pchip')->[1],
 	[ 2 ], 'AoA pchip col 0');
 
-#========
 # original frame never mutated (fit method)
-#========
 {
 	my $df = { v => [ 1, undef, undef, 4, 9, 16 ] };
 	interpolate($df, method => 'cubic');
 	is_deeply($df, { v => [ 1, undef, undef, 4, 9, 16 ] }, 'cubic: input not mutated');
 }
 
-#========
 # error paths for the new arguments
-#========
 use Test::Exception;
 throws_ok { interpolate({ v => [ 1, 2 ] }, method => 'spline') }
 	qr/requires an integer 'order'/, 'spline without order dies';
@@ -139,19 +129,15 @@ throws_ok { interpolate({ v => [ 1, undef ] }, method => 'index', x => [ 3, 1 ])
 throws_ok { interpolate({ v => [ 1, undef, 3 ] }, method => 'index', x => [ 0, 1 ]) }
 	qr/length/, 'x length mismatch dies';
 
-#========
 # cubicspline with exactly 3 anchors -> the unique parabola (interp1d 'cubic'
 # would need 4; cubicspline handles 3).  Matches pandas.
-#========
 close_enough(
 	interpolate({ v => [ 0, undef, 4, undef, 16 ] },
 		method => 'cubicspline', limit_direction => 'both')->{v},
 	[ 0, 1, 4, 9, 16 ], 'cubicspline: 3 anchors -> exact parabola');
 
-#========
 # direct XS-kernel guards (the Perl wrapper prevents these, so exercise them
 # straight against _interp_column_xs to confirm the C-side checks hold)
-#========
 throws_ok { Stats::LikeR::_interp_column_xs(42, [ 0, 1 ], 'linear', undef, 'forward', undef, undef) }
 	qr/values must be an array reference/, 'XS: non-arrayref values dies';
 throws_ok { Stats::LikeR::_interp_column_xs([ 1, undef ], 42, 'linear', undef, 'forward', undef, undef) }
@@ -159,9 +145,7 @@ throws_ok { Stats::LikeR::_interp_column_xs([ 1, undef ], 42, 'linear', undef, '
 throws_ok { Stats::LikeR::_interp_column_xs([ 1, undef, 3, undef, 5 ], [ 0, 1, 2, 1, 0 ], 'cubic', undef, 'both', undef, undef) }
 	qr/strictly increasing/, 'XS: non-increasing x in the fit path dies';
 
-#========
 # memory: the fit-method path builds closures / matrices -- make sure it is clean
-#========
 if ($INC{'Devel/Cover.pm'}) { done_testing(); exit 0 }
 no_leaks_ok {
 	my $x = interpolate({ v => [ 1, undef, undef, 4, 9, 16, undef ] },

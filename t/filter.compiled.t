@@ -26,10 +26,8 @@ sub both_ways {
 	return $compiled;
 }
 
-#--------
 # a frame with every awkward cell type in it: floats, integers, numbers held as
 # strings, words, the empty string, undef, and (in the AoH) a missing key
-#--------
 my %col = (
 	x	=> [ 3, -1.5, '7', 0, '2.50', 'abc', undef, '', 1e9, -0, '0 but true' ],
 	tag => [ 'b', 'a', 'B', '',  'ab', 'abc', undef, 'z', 'A', 'aa', 'b' ],
@@ -84,19 +82,15 @@ for my $p (@preds) {
 	both_ways($hoh, $pred, "HoH->HoA $name", 'output.type' => 'hoa');
 }
 
-#--------
 # a couple of answers spelled out, so the two paths agreeing on a wrong one
 # would still be caught
-#--------
 is_deeply(filter($hoa, col('x') > 0)->{n}, [ 1, 3, 5, 9 ],
 	"numeric: undef, the empty string, words and '0 but true' never match");
 is_deeply(filter($hoa, col('tag') eq 'b')->{n}, [ 1, 11 ], 'string eq is case sensitive');
 is_deeply(filter($hoa, 2.5 >= col('x'))->{n}, [ 2, 4, 5, 10, 11 ], 'swapped operand');
 is_deeply(filter($hoa, col('nope') > 0)->{n}, [], 'a column the frame does not have keeps nothing');
 
-#--------
 # a plan is only built for what C reproduces exactly; the rest still works
-#--------
 {
 	my $obj = col('x') > \1;					# a reference operand: no plan
 	ok(!exists $obj->{plan}, 'reference operand carries no plan');
@@ -107,9 +101,7 @@ is_deeply(filter($hoa, col('nope') > 0)->{n}, [], 'a column the frame does not h
 	is_deeply(filter($hoa, col('tag')->match(qr/^a/))->{n}, [ 2, 5, 6, 10 ], '->match still filters');
 }
 
-#--------
 # undef and non-numeric operands keep the closure's warning behaviour
-#--------
 {
 	my $u = col('x') > undef;
 	ok(!exists $u->{plan}, 'an undef operand carries no plan');
@@ -117,9 +109,7 @@ is_deeply(filter($hoa, col('nope') > 0)->{n}, [], 'a column the frame does not h
 	ok(!exists $w->{plan}, 'a non-numeric operand carries no plan');
 }
 
-#--------
 # ragged HoA: the short column reads as undef past its end, both ways
-#--------
 {
 	my $r = { a => [ 1, 2, 3, 4 ], b => [ 'x', 'y' ] };
 	both_ways($r, col('a') > 1, 'ragged HoA numeric');
@@ -128,18 +118,14 @@ is_deeply(filter($hoa, col('nope') > 0)->{n}, [], 'a column the frame does not h
 		'ragged HoA: missing cells come out undef');
 }
 
-#--------
 # unicode column names and values
-#--------
 {
 	my $u = { "\x{e9}t\x{e9}" => [ 'caf\x{e9}', "\x{e9}", 'e' ], n => [ 1, 2, 3 ] };
 	both_ways($u, col("\x{e9}t\x{e9}") eq "\x{e9}", 'utf8 column name and value');
 	is_deeply(filter($u, col("\x{e9}t\x{e9}") eq "\x{e9}")->{n}, [ 2 ], 'utf8 eq matches');
 }
 
-#--------
 # the output is a copy: writing to it must not reach the input frame
-#--------
 {
 	my $in  = { a => [ 1, 2, 3 ], b => [ 'p', 'q', 'r' ] };
 	my $out = filter($in, col('a') >= 2);
@@ -152,10 +138,8 @@ is_deeply(filter($hoa, col('nope') > 0)->{n}, [], 'a column the frame does not h
 	is_deeply($in->{a}, [ 1, 2, 3 ], 'HoA -> AoH output is a copy too');
 }
 
-#--------
 # the row a closure predicate sees over a HoA frame: one per input row, and it
 # stays the caller's if the caller keeps it
-#--------
 {
 	my $f = { id => [ 1, 2, 3, 4 ], w => [ qw(a b c d) ] };
 
@@ -192,17 +176,13 @@ is_deeply(filter($hoa, col('nope') > 0)->{n}, [], 'a column the frame does not h
 	is_deeply($f->{id}, [ 1, 2, 3, 4 ], 'the input frame is untouched');
 }
 
-#--------
 # $_[1] is the row id on both paths (a col() predicate ignores it, a sub may not)
-#--------
 {
 	my $f = [ { x => 1 }, { x => 2 }, { x => 3 } ];
 	is_deeply(filter($f, sub { $_[1] == 1 }), [ { x => 2 } ], 'AoH: $_[1] is the row index');
 }
 
-#--------
 # memory
-#--------
 unless ($INC{'Devel/Cover.pm'}) {
 	my $LHA = { x => [ 1, 2, 3 ], y => [ qw(p q r) ] };
 	my $LA	= [ { x => 1, y => 'p' }, { x => 2, y => 'q' } ];

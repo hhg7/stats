@@ -35,9 +35,7 @@ sub shown { join ',', map { defined $_ ? $_ : 'undef' } @_ }
 
 no warnings 'once';   # $a / $b package globals used by comparators below
 
-#--------
 # the reported case: HoH, comparator, undef column -> undef last, no die
-#--------
 {
 	my $hoh = {
 		Ehd1  => { 'tau p' => 0.33 },
@@ -53,9 +51,7 @@ no warnings 'once';   # $a / $b package globals used by comparators below
 		'HoH comparator ascending: defined asc, undef last' );
 }
 
-#--------
 # descending comparator: defined descending, undef still last
-#--------
 {
 	my $hoh = {
 		Ehd1  => { 'tau p' => 0.33 },
@@ -68,9 +64,7 @@ no warnings 'once';   # $a / $b package globals used by comparators below
 		'HoH comparator descending: defined desc, undef last' );
 }
 
-#--------
 # AoH numeric comparator with undef / missing cells
-#--------
 {
 	my $aoh = [
 		{ id => 1, v => 5 },
@@ -84,9 +78,7 @@ no warnings 'once';   # $a / $b package globals used by comparators below
 		'AoH comparator: defined asc first, undef/missing last (stable)' );
 }
 
-#--------
 # AoA comparator: undef / short rows sort last
-#--------
 {
 	my $aoa = [ [ 1, 5 ], [ 2, undef ], [ 3, 1 ], [ 4 ], [ 5, 9 ] ];
 	my $s = csort($aoa, sub { $a->[1] <=> $b->[1] });
@@ -94,9 +86,7 @@ no warnings 'once';   # $a / $b package globals used by comparators below
 		'AoA comparator: undef/missing index sorts last' );
 }
 
-#--------
 # string comparator (cmp) with undef -> undef last
-#--------
 {
 	my $aoh = [ { k => 'b' }, { k => undef }, { k => 'a' }, {} ];
 	my $s = csort($aoh, sub { $a->{k} cmp $b->{k} });
@@ -104,9 +94,7 @@ no warnings 'once';   # $a / $b package globals used by comparators below
 		'string comparator: defined lexically first, undef last' );
 }
 
-#--------
 # a comparator that handles undef itself is left completely alone
-#--------
 {
 	my $aoh = [ { v => 3 }, { v => undef }, { v => 1 } ];
 	my $s = csort($aoh, sub { ($a->{v} // 0) <=> ($b->{v} // 0) });
@@ -114,9 +102,7 @@ no warnings 'once';   # $a / $b package globals used by comparators below
 		'self-guarded comparator: csort does not interfere (undef stays as 0)' );
 }
 
-#--------
 # multi-key: undef reached only at the tie-break still sends the row last
-#--------
 {
 	my $aoh = [
 		{ a => 1, b => 2 },
@@ -129,9 +115,7 @@ no warnings 'once';   # $a / $b package globals used by comparators below
 		'multi-key comparator: row with undef in an evaluated key sorts last' );
 }
 
-#--------
 # all-defined data is sorted exactly as before (no reordering artifacts)
-#--------
 {
 	my $aoh = [ map { { v => $_ } } (3, 1, 4, 1, 5, 9, 2, 6) ];
 	my $s = csort($aoh, sub { $a->{v} <=> $b->{v} });
@@ -139,16 +123,12 @@ no warnings 'once';   # $a / $b package globals used by comparators below
 		'all-defined comparator sort is unaffected' );
 }
 
-#--------
 # a genuine comparator error must propagate, not be silently reclassified
-#--------
 throws_ok { csort([ { v => 1 }, { v => 2 } ], sub { die "boom\n" }) }
 	qr/boom/, 'genuine comparator die propagates verbatim';
 
-#--------
 # leak checks (calls repeated outside any captured assignment; skipped under
 # Devel::Cover whose instrumentation registers false leaks)
-#--------
 no_leaks_ok {
 	csort([ { v => 5 }, { v => undef }, { v => 1 }, {} ],
 	      sub { $a->{v} <=> $b->{v} })

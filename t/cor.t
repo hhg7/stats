@@ -36,9 +36,7 @@ sub is_approx {
 my @dG   = (-7.765, -9.328, -10.326, -9.038, -9.608, -9.779, -9.975, -6.906);
 my @rank = (154, 155, 161, 188, 76, 172, 173, 69);
 
-#--------
 # kendall tau-b — the regression case (discordant-dominant, negative tau)
-#--------
 my $tau = cor(\@dG, \@rank, 'kendall');
 is_approx( $tau, -0.3571428571, 'kendall tau-b: discordant-dominant pair' );
 
@@ -54,9 +52,7 @@ no_leaks_ok {
 	}
 } 'cor(kendall): no memory leaks' unless $INC{'Devel/Cover.pm'};
 
-#--------
 # pearson / spearman on the same arrays (compute_cor branch coverage)
-#--------
 is_approx( cor(\@dG, \@rank, 'pearson'),  -0.4889102301, 'pearson on same arrays' );
 is_approx( cor(\@dG, \@rank, 'spearman'), -0.4761904762, 'spearman on same arrays' );
 is_approx( cor(\@dG, \@rank),             -0.4889102301, 'default method is pearson' );
@@ -72,10 +68,8 @@ no_leaks_ok {
 	}
 } 'cor(spearman): no memory leaks' unless $INC{'Devel/Cover.pm'};
 
-#--------
 # kendall boundary cases: pure concordant (+1), pure discordant (-1),
 # and self-correlation (+1) — exercises the C, D, and diagonal paths.
-#--------
 is_approx( cor([1,2,3,4], [10,20,30,40], 'kendall'),  1, 'kendall: perfectly concordant = +1' );
 is_approx( cor([1,2,3,4], [40,30,20,10], 'kendall'), -1, 'kendall: perfectly discordant = -1' );
 is_approx( cor(\@dG, \@dG, 'kendall'),                1, 'kendall: self-correlation = +1' );
@@ -90,9 +84,7 @@ no_leaks_ok {
 	}
 } 'cor(kendall, ties): no memory leaks' unless $INC{'Devel/Cover.pm'};
 
-#--------
 # error paths
-#--------
 dies_ok { cor(\@dG, [1,2,3], 'kendall') } 'cor: length mismatch dies';
 dies_ok { cor(\@dG, \@rank, 'bogus') }    'cor: unknown method dies';
 dies_ok { cor([(5) x 8], \@rank, 'kendall') } 'cor: zero-variance x dies';

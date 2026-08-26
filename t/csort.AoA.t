@@ -39,9 +39,7 @@ sub fresh_aoa {
 	];
 }
 
-#--------
 # AoA, sort by integer column index (numeric column -> numeric order)
-#--------
 {
 	my $aoa = fresh_aoa();
 	my $s = csort($aoa, 0);
@@ -58,9 +56,7 @@ sub fresh_aoa {
 	is( $s->[0], $aoa->[1], 'AoA result shares the original row arrayrefs' );
 }
 
-#--------
 # AoA, string column -> lexical order
-#--------
 {
 	my $aoa = fresh_aoa();
 	my $s = csort($aoa, 2);
@@ -68,9 +64,7 @@ sub fresh_aoa {
 		'AoA string column sorts lexically' );
 }
 
-#--------
 # AoA, custom comparator: $a / $b are the row arrayrefs
-#--------
 {
 	no warnings 'once';
 	my $aoa = fresh_aoa();
@@ -79,9 +73,7 @@ sub fresh_aoa {
 		'AoA comparator: $a/$b are row arrayrefs, descending works' );
 }
 
-#--------
 # undef / short rows sort last, defined values first (asc) then undef/missing
-#--------
 {
 	my $aoa = [
 		[ 1, 5 ],
@@ -94,9 +86,7 @@ sub fresh_aoa {
 		'defined first (asc), undef/missing last (stable among themselves)' );
 }
 
-#--------
 # stability: equal keys keep their original relative order
-#--------
 {
 	my $aoa = [
 		[ 1, 'a' ],
@@ -109,9 +99,7 @@ sub fresh_aoa {
 		'stable sort preserves input order among equal keys' );
 }
 
-#--------
 # output shape control: AoA -> HoA / AoA -> AoH (columns keyed by index)
-#--------
 {
 	my $aoa = fresh_aoa();
 	my $hoa = csort($aoa, 0, 'hoa');
@@ -133,9 +121,7 @@ sub fresh_aoa {
 		'explicit aoa->aoa (mixed case accepted)' );
 }
 
-#--------
 # ragged AoA transposed to HoA: short rows pad with undef, width = widest row
-#--------
 {
 	my $aoa = [
 		[ 2, 'x' ],
@@ -148,9 +134,7 @@ sub fresh_aoa {
 	is_deeply( $hoa->{2}, [ undef, undef, 9 ],     'ragged AoA->HoA: sparse col 2 filled' );
 }
 
-#--------
 # cross-shape transpose lands cleanly into AoA from keyed inputs
-#--------
 {
 	# HoA -> AoA uses sorted column-key order for positions (first, second)
 	my $hoa = { first => [ 1, 2, 3 ], second => [ 30, 10, 20 ] };
@@ -168,9 +152,7 @@ sub fresh_aoa {
 	is_deeply( $out->[1], [ 2, 'x' ], 'AoH->AoA: second row positional' );
 }
 
-#--------
 # edge cases: empty and single-element AoA
-#--------
 {
 	my $one = csort([ [ 7, 8 ] ], 0);
 	is_deeply( $one, [ [ 7, 8 ] ], 'single-row AoA returns unchanged' );
@@ -178,9 +160,7 @@ sub fresh_aoa {
 	is_deeply( csort([], 0), [], 'empty arrayref returns empty arrayref' );
 }
 
-#--------
 # argument validation: AoA column index must be a non-negative integer
-#--------
 throws_ok { csort( fresh_aoa(), -1 ) } qr/non-negative integer/,
 	'negative AoA index croaks';
 throws_ok { csort( fresh_aoa(), 'x' ) } qr/non-negative integer/,
@@ -194,10 +174,8 @@ throws_ok { csort( fresh_aoa(), 0, 'frame' ) } qr/output type must be/,
 throws_ok { csort( fresh_aoa(), [] ) } qr/second argument/,
 	'non-scalar, non-code $by croaks';
 
-#--------
 # leak checks -- calls repeated OUTSIDE any captured assignment (house rule),
 # skipped under Devel::Cover whose instrumentation registers false leaks
-#--------
 no_leaks_ok {
 	csort( fresh_aoa(), 0 )
 } 'csort(AoA) column sort: no memory leaks' unless $INC{'Devel/Cover.pm'};

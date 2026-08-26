@@ -31,9 +31,7 @@ BEGIN {
 		for sort keys %$hoa;
 }
 
-# ---------------------------------------------------------------------------
 # a key that first appears in a later row is back-filled with undef
-# ---------------------------------------------------------------------------
 {
 	my $hoa = aoh2hoa([ {}, {}, { z => 9 } ]);
 	is_deeply $hoa, { z => [undef, undef, 9] }, 'late key back-filled';

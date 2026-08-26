@@ -34,7 +34,7 @@ no_leaks_ok {
 		write_table(\%data, $tmp_file, sep => "\t", 'row.names' => 1);
 	};
 } 'write_table: no memory leaks with row.names = true' unless $INC{'Devel/Cover.pm'};
-# === TEST 1: HASH OF HASHES (positional) ===
+# TEST 1: HASH OF HASHES (positional)
 # Demonstrates: HoH, sorted rows/columns, "NA" for missing values,
 #               quoting when separator ("\t") or " appears inside data
 my $fh = File::Temp->new(DIR => '/tmp', SUFFIX => '.tsv', UNLINK => 1);
@@ -59,7 +59,7 @@ no_leaks_ok {
 		write_table(\%data_hoh, $tmp_file, sep => "\t", 'row.names' => 1, 'undef.val' => 'NA');
 	};
 } 'write_table: no memory leaks with hash-of-hash input' unless $INC{'Devel/Cover.pm'};
-# === TEST 2: HASH OF ARRAYS (positional) ===
+# TEST 2: HASH OF ARRAYS (positional)
 # Demonstrates: HoA, auto-generated V1/V2... headers, padding shorter arrays with "NA",
 #               quoting when separator ("\t") or " appears inside data
 $tmp_file = '/tmp/test_hoa.tsv';
@@ -82,7 +82,6 @@ no_leaks_ok {
 		write_table(\%data_hoa, $tmp_file, sep => "\t", 'row.names' => 1);
 	};
 } 'write_table: no memory leaks with hash-of-hash input' unless $INC{'Devel/Cover.pm'};
-#---------
 # No row.names passed: the default is OFF, so there is no label column and no
 # leading empty header cell. undef.val still fills the gaps.
 write_table(\%data_hoa, '/tmp/undef.val.tsv', sep => "\t", 'undef.val' => 'nan');
@@ -90,9 +89,7 @@ $str = file2string('/tmp/undef.val.tsv');
 $expected = "r1\tr2\tr3\n42\t99\tnan\nhello,world\tnan\t\"tab\tin\"\nnan\t\"quote\"\"here\"\tnan\nnan\tnan\tnan\n";
 is($str, $expected, 'undefined values are switched to nan (no row labels by default)');
 
-# ==============================================================================
 # 4. write_table: Nested Reference Memory Leaks
-# ==============================================================================
 # We supply a valid Array-of-Hashes, but one of the cells contains an Array reference.
 # write_table cannot write deeply nested structures to a flat CSV and will croak.
 # The fix ensures that the previously allocated header/row strings are freed before croaking.
@@ -141,10 +138,8 @@ my $flat_hash = {
  A => 1, B => 2
 };
 
-# ---------------------------------------------------------
 # Test 1: Flat hash with row.names = 0
 # The output should exactly match: A,B \n 1,2
-# ---------------------------------------------------------
 my ($fh1, $file1) = tempfile(SUFFIX => '.csv', UNLINK => 1);
 write_table($flat_hash, $file1, sep => ',', 'row.names' => 0);
 
@@ -156,12 +151,10 @@ chomp @lines1;
 like($lines1[0], qr/^(?:""|'')?A(?:""|'')?,(?:""|'')?B(?:""|'')?$/, "Flat hash (rownames=0) Headers are keys");
 like($lines1[1], qr/^(?:""|'')?1(?:""|'')?,(?:""|'')?2(?:""|'')?$/, "Flat hash (rownames=0) Values are on row 1");
 
-# ---------------------------------------------------------
 # Test 2: Flat hash with row.names => 1 (explicit; also the default now)
 # Output gracefully prepends the implicit "1" row identifier:
 # "",A,B
 # "1",1,2
-# ---------------------------------------------------------
 my ($fh2, $file2) = tempfile(SUFFIX => '.csv', UNLINK => 1);
 write_table($flat_hash, $file2, sep => ',', 'row.names' => 1);
 
@@ -190,12 +183,10 @@ my %hoh  = ( 'r1' => { 'a' => 1, 'b' => 2 }, 'r2' => { 'a' => 3, 'b' => 4 } );
 my @aoh  = ( { 'x' => 1, 'y' => 2 }, { 'x' => 3, 'y' => 4 } );
 my %flat = ( 'a' => 1, 'b' => 2, 'c' => 3 );
 
-# ==============================================================================
 # 0. Default row.names is OFF, for every shape and every format. Omitting it
 #    writes the data columns and nothing else -- no label column, and no empty
 #    leading header cell. row.names => 1 opts in; the labels are the outer key
 #    for a HoH and 1..n for every other shape. An explicit 0 is the default.
-# ==============================================================================
 wrote_ok( "age,name\n30,Alice\n25,Bob\n",
 	'default row.names off (HoA): no label column', \%hoa, 'undef.val' => 'NA' );
 wrote_ok( "a,b\n1,2\n3,4\n",
@@ -281,12 +272,10 @@ dies_ok { write_table( \%hoa, path(), 'bogus' => 1 ) } 'unknown option dies';
 dies_ok { write_table( \%hoa, path(), 'col.names' => 'x' ) } 'col.names must be an array ref';
 # 17. Empty col.names must NOT hang (regression: size_t vs av_len == -1).
 lives_ok { write_table( \%flat, path(), 'col.names' => [], 'row.names' => 0 ) } 'empty col.names does not loop forever';
-# ==============================================================================
 # 18+. Expanded coverage targeting bugs found in the write_table XS.
 # These tests assume the updated XS: undef cells render as EMPTY fields by
 # default (a,,c), 'undef.val' still overrides, and print_string_row emits
 # zero-length fields bare (never '' or "").
-# ==============================================================================
 
 # 18. Default undef rendering is an empty field (no 'undef.val' supplied).
 my %u_jag = ( 'a' => [ 1, 2 ], 'b' => [ 10 ] );
@@ -433,7 +422,6 @@ SKIP: {
 		'wide-character HoH row key sorts and fetches correctly (UTF-8 bytes on disk)' );
 }
 
-# ==============================================================================
 # 31+. Non-ASCII / UTF-8 write coverage and full write->read round trips.
 #
 # write_table opens the output as a byte stream (PerlIO_open ... "w") and writes
@@ -444,7 +432,6 @@ SKIP: {
 # byte-for-byte. Byte values are spelled out explicitly (\xC3\xA9 = LATIN SMALL
 # LETTER E WITH ACUTE, \xE2\x98\x83 = SNOWMAN) so the expectations never depend
 # on this file's own on-disk encoding.
-# ==============================================================================
 my $utf8_cafe = "caf\xC3\xA9";	# 'cafe' + e-acute  (byte string, no UTF-8 flag)
 my $utf8_ole  = "ol\xC3\xA9";	# 'ol'  + e-acute
 my $utf8_snow = "\xE2\x98\x83";	# U+2603 SNOWMAN
