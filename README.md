@@ -6686,7 +6686,7 @@ Verified against R 4.6.1 (`oneway.test`, `anova(aov())`, `anova(lm())`,
 
 # Changes
 
-## 0.303 2026-08
+## 0.31 2026-08
 
 ### read_table
 

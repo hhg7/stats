@@ -15019,7 +15019,7 @@ C<t/model_pvalue_tails.t> and C<t/oneway_test.R.scipy.t>.
 
 =head1 Changes
 
-=head2 0.303 2026-08
+=head2 0.31 2026-08
 
 =head3 read_table
 
