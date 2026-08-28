@@ -10950,28 +10950,28 @@ _drop_dups_core(df, shape, subset, keep)
 	}
 
 	// materialise the survivors back into the input's shape
-	if (shape == 4) { // ---- HoA ----
+	if (shape == 4) { // HoA
 		HV *src = (HV *)SvRV(df);
 		HV *out = newHV();
 		HE *he; hv_iterinit(src);
 		while ((he = hv_iternext(src))) {
 			SV *v = HeVAL(he);
 			AV *col = (SvROK(v) && SvTYPE(SvRV(v)) == SVt_PVAV) ? (AV *)SvRV(v) : NULL;
-			/*A tied column has no cell SVs to share: what av_at() hands back
-			is the mortal PVLV the tie fetches through, so those columns are
-			copied instead.  It is the one place the sharing rule below cannot
-			hold, and copying is the only reading of it that can be true.*/
+	/*A tied column has no cell SVs to share: what av_at() hands back
+	is the mortal PVLV the tie fetches through, so those columns are
+	copied instead.  It is the one place the sharing rule below cannot
+	hold, and copying is the only reading of it that can be true.*/
 			const bool tied = col && cBOOL(SvRMAGICAL(col));
 			AV *nc = newAV();
 			if (nsurv > 0) {
 				av_extend(nc, nsurv - 1);
 				SV **na = AvARRAY(nc);
-				/*share the surviving cells rather than copying them, which
-				is what AoA/AoH already do by reusing the whole row ref: one
-				refcount bump instead of an SV (and, for a numeric cell, a
-				PV buffer) per surviving cell.  Mutating a cell of the result
-				therefore reaches the input, exactly as mutating a kept
-				AoA/AoH row does; the frame itself is still new.*/
+	/*share the surviving cells rather than copying them, which
+	is what AoA/AoH already do by reusing the whole row ref: one
+	refcount bump instead of an SV (and, for a numeric cell, a
+	PV buffer) per surviving cell.  Mutating a cell of the result
+	therefore reaches the input, exactly as mutating a kept
+	AoA/AoH row does; the frame itself is still new.*/
 				for (SSize_t k = 0; k < nsurv; k++) {
 					SV *c = av_at(aTHX_ col, surv[k]);
 					na[k] = !c    ? newSV(0)
@@ -10991,9 +10991,9 @@ _drop_dups_core(df, shape, subset, keep)
 			av_extend(out, nsurv - 1);
 			SV **oa = AvARRAY(out);
 			for (SSize_t k = 0; k < nsurv; k++) {
-				/*newSVsv of the reference, not of the row: a new RV to the
-				row the input holds, which is the sharing the docs promise and
-				is also what un-mortalises a tied array's PVLV.*/
+	/*newSVsv of the reference, not of the row: a new RV to the
+	row the input holds, which is the sharing the docs promise and
+	is also what un-mortalises a tied array's PVLV*/
 				SV *rv = av_at(aTHX_ src, surv[k]);
 				oa[k] = newSVsv(rv ? rv : &PL_sv_undef);
 				AvFILLp(out) = k;
@@ -11002,7 +11002,7 @@ _drop_dups_core(df, shape, subset, keep)
 		retval = sv_2mortal(newRV_noinc((SV *)out));
 	}
 	RETVAL = SvREFCNT_inc(retval);
-	LEAVE;                                  //dd_ctx_free releases the rest
+	LEAVE; //dd_ctx_free releases the rest
 }
   OUTPUT:
 	RETVAL
@@ -11027,17 +11027,14 @@ void anova(...)
 		if (items < 2)
 			croak("anova: usage anova(\\%%data, 'response ~ terms' [, 'model2', ...])");
 		data = ST(0);
-
 		if (items > 2) {
-			/*nested model comparison  *
-			anova(\%data, 'y ~ a', 'y ~ a + b', ...) -> ArrayRef table.*/
+	/*nested model comparison  *
+	anova(\%data, 'y ~ a', 'y ~ a + b', ...) -> ArrayRef table*/
 			size_t nform = (size_t)items - 1;
 			char **lhss = NULL, **rhss = NULL;
 			Newxz(lhss, nform, char*);
 			Newxz(rhss, nform, char*);
-
-			//---- parse every formula
-			for (size_t fi = 0; fi < nform; fi++) {
+			for (size_t fi = 0; fi < nform; fi++) {// parse every formula
 				SV *fsv = ST(1 + fi);
 				if (!(SvPOK(fsv) || SvOK(fsv))) {
 					anova_free_formulas(aTHX_ lhss, rhss, nform);
@@ -11048,7 +11045,7 @@ void anova(...)
 					croak("anova: could not parse formula %" UVuf " (need 'response ~ terms')", (UV)(fi + 1));
 				}
 			}
-// ---- resolve data form + row count (response 1 length)
+// resolve data form + row count (response 1 length)
 			if (!SvROK(data)) {
 				anova_free_formulas(aTHX_ lhss, rhss, nform);
 				croak("anova: first argument must be a hash or array reference");
@@ -11100,7 +11097,7 @@ void anova(...)
 							(void)anova_fac(aTHX_ &ufacs, &unfac, &ufcap, hoa, rows, n, tt[t].factors[j]);
 					anova_free_terms(aTHX_ tt, ntt);
 				}
-// ---- listwise completeness over the union */
+// listwise completeness over the union
 				Newx(complete, n ? n : 1, bool);
 				n_used = 0;
 				for (size_t i = 0; i < n; i++) {
@@ -11146,14 +11143,14 @@ void anova(...)
 					mrss[fi]   = rss_i;
 					mresdf[fi] = (IV)n_used - (IV)rank_i;
 				}
-				/*common scale = residual MS of the largest model
-				(smallest residual df), exactly as R's anova.lmlist.*/
+	/*common scale = residual MS of the largest model
+	(smallest residual df), exactly as R's anova.lmlist.*/
 				size_t big = 0;
 				for (size_t fi = 1; fi < nform; fi++)
 					if (mresdf[fi] < mresdf[big]) big = fi;
 				NV scale  = (mresdf[big] > 0) ? mrss[big] / (NV)mresdf[big] : NAN;
 				IV df_big = mresdf[big];
-				// one row per model, in supplied order
+	// one row per model, in supplied order
 				AV *table = newAV();
 				for (size_t fi = 0; fi < nform; fi++) {
 					HV *row = newHV();
@@ -11262,9 +11259,7 @@ void anova(...)
 			}
 			Newx(ridx, n_used, size_t);
 			{ size_t r = 0; for (size_t i = 0; i < n; i++) if (complete[i]) ridx[r++] = i; }
-
-			//factor widths + coded columns
-			for (size_t f = 0; f < nfac; f++) {
+			for (size_t f = 0; f < nfac; f++) {//factor widths + coded columns
 				if (facs[f].is_cat) {
 					facs[f].nlv = anova_levels(aTHX_ hoa, rows, n, complete, facs[f].name, &facs[f].lv);
 					facs[f].width = facs[f].nlv > 1 ? facs[f].nlv - 1 : 0;
@@ -11295,7 +11290,7 @@ void anova(...)
 				terms[t].start = p;
 				p += w;
 			}
-			//---- build design matrix (intercept + term blocks)
+			//build design matrix (intercept + term blocks)
 			Newx(y, n_used, NV);
 			Newx(X, n_used, NV*);
 			for (size_t r = 0; r < n_used; r++) {
@@ -24084,9 +24079,8 @@ SV* density(...)
 	{
 		SV *x_sv = NULL, *w_sv = NULL, *bw_sv = NULL, *width_sv = NULL;
 		NV adjust = 1.0, cut = 3.0, ext = 4.0, from = 0.0, to = 0.0;
-		bool have_from = FALSE, have_to = FALSE;
-		bool give_rkern = FALSE, subdensity = FALSE;
-		bool na_rm = FALSE, old_coords = FALSE;
+		bool have_from = 0, have_to = 0;
+		bool give_rkern = 0, subdensity = 0, na_rm = 0, old_coords = 0;
 		//-1 = R's default, which is var(weights) > 0; 0/1 = the caller said so
 		short int warnw = -1, kernel = -1, window = -1; //-1 = not given
 		IV n_arg = 512;
@@ -24155,7 +24149,6 @@ SV* density(...)
 		//R: if(!missing(window) && missing(kernel)) kernel <- window
 		if (window >= 0 && kernel < 0) kernel = window;
 		if (kernel < 0) kernel = DENS_K_GAUSSIAN;
-
 		if (give_rkern) {
 			//give.Rkern = TRUE returns R(K) and no density at all, as in R
 			RETVAL = newSVnv(dens_rkern(kernel));
@@ -24220,7 +24213,7 @@ SV* density(...)
 			err = "'x' contains missing values";
 			goto dens_cleanup;
 		}
-		//Drop the NAs, keeping weights summing to one still summing to one.
+	//Drop the NAs, keeping weights summing to one still summing to one.
 		N = N0 - nna;
 		Newx(xv, N ? N : 1, NV);
 		if (has_wts) Newx(wv, N ? N : 1, NV);
@@ -24244,8 +24237,8 @@ SV* density(...)
 				for (size_t i = 0; i < N; i++) wv[i] /= s;
 			}
 		}
-		//Infinite observations are point masses outside the grid: they leave
-		//the estimate a sub-density on (-Inf, Inf) rather than being dropped.
+	//Infinite observations are point masses outside the grid: they leave
+	//the estimate a sub-density on (-Inf, Inf) rather than being dropped.
 		for (size_t i = 0; i < N; i++) if (nv_isfinite(xv[i])) nx++;
 		Newx(xf, nx ? nx : 1, NV);
 		Newx(wf, nx ? nx : 1, NV);
@@ -24278,8 +24271,8 @@ SV* density(...)
 		n_user = (size_t)n_arg;
 		n = n_user < 512 ? 512 : n_user;
 		if (n > 512) { size_t p = 512; while (p < n) p <<= 1; n = p; }
-		//S's `width` is the length of the kernel's support; R's bw is a
-		//multiple of the sd, so width only speaks when bw is silent.
+	//S's `width` is the length of the kernel's support; R's bw is a
+	//multiple of the sd, so width only speaks when bw is silent.
 		if (!bw_sv && width_sv) {
 			if (looks_like_number(width_sv)) {
 				bw = SvNV(width_sv) / dens_width_factor(kernel);
