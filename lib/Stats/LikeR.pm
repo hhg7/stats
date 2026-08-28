@@ -10,7 +10,7 @@ use warnings FATAL => 'all';
 use Exporter 'import';
 use Scalar::Util qw(reftype looks_like_number);
 XSLoader::load('Stats::LikeR', $VERSION);
-our @EXPORT_OK = qw(h add_data age_standardize agg anova aoh2h aoh2hoa aoh2hoh aov assign auc auroc bedroc bfill binom_test cfilter chisq_test chunk col col2col colnames concat cmh_test cor cor_test cov csort density bw_nrd0 bw_nrd bw_ucv bw_bcv bw_sj dnorm cohen_d cramers_v eta_squared drop_cols drop_duplicates dropna epi_2x2 ffill fillna filter fisher_test get_union glm group_by h2aoh hoa2aoh hoa2hoh hoh2hoa hist interpolate intersection is_equivalent kruskal_test ks_test kurtosis Lonly ljoin lm map_cell matrix max mean median melt merge min mode ncol nrow oneway_test p_adjust pivot_table pnorm pt qt pchisq qchisq pf qf pbinom qnorm power_t_test predict prop_test mcnemar_test friedman_test dunn_test prcomp ptukey qcut qtukey quantile rank roc Ronly rbind rbinom read_table rename_cols rnorm rownames runif sample scale sd select_cols seq shapiro_test skew smd sum summary survfit logrank_test coxph table_one t_test transpose TukeyHSD uniq vals value_counts var var_test vif hosmer_lemeshow view wilcox_test write_table);
+our @EXPORT_OK = qw(h add_data age_standardize agg anova aoh2h aoh2hoa aoh2hoh aov assign auc auroc avals bedroc bfill binom_test cfilter chisq_test chunk col col2col colnames concat cmh_test cor cor_test cov csort density bw_nrd0 bw_nrd bw_ucv bw_bcv bw_sj dnorm cohen_d cramers_v eta_squared drop_cols drop_duplicates dropna epi_2x2 ffill fillna filter fisher_test get_union glm group_by h2aoh hoa2aoh hoa2hoh hoh2hoa hist interpolate intersection is_equivalent kruskal_test ks_test kurtosis Lonly ljoin lm map_cell matrix max mean median melt merge min mode ncol nrow oneway_test p_adjust pivot_table pnorm pt qt pchisq qchisq pf qf pbinom qnorm power_t_test predict prop_test mcnemar_test friedman_test dunn_test prcomp ptukey qcut qtukey quantile rank roc Ronly rbind rbinom read_table rename_cols rnorm rownames runif sample scale sd select_cols seq shapiro_test skew smd sum summary survfit logrank_test coxph table_one t_test transpose TukeyHSD uniq vals value_counts var var_test vif hosmer_lemeshow view wilcox_test write_table);
 our @EXPORT = @EXPORT_OK;
 
 # Help
@@ -6317,6 +6317,38 @@ sklearn's C<roc_auc_score(y, -pred)>). It can also turn a numeric column into
 labels for you: C<< cutoff =E<gt> x >> marks values C<< E<gt>= x >> as positive, or
 C<< active_frac =E<gt> 0.1 >> with C<< active_side =E<gt> 'low'|'high' >> takes that fraction of
 the extreme tail as positive.
+
+=head2 avals
+
+L<C<vals>|/"vals"> as a list. C<avals> takes the same two arguments, accepts the
+same three data-frame shapes, uses the same shape detection, copies every cell
+the same way and dies with the same messages — it only differs in the return,
+pushing the column's values onto the stack instead of wrapping them in an array
+reference:
+
+ use Stats::LikeR qw(avals vals);
+
+ my @ages =    avals($df, 'age');
+ my @same = @{  vals($df, 'age') };   # identical, one arrayref later
+
+Reach for it wherever the column is going straight into a list — another
+function's arguments, a C<sort>/C<map>/C<grep> chain, a C<push>, an array or hash
+slice:
+
+ my @sorted = sort { $a <=> $b } avals($df, 'ldl');
+ push @pooled, avals($df, 'ldl');
+
+The functions that take a column I<by reference> still want L<C<vals>|/"vals">:
+C<mean(vals($df, 'age'))> is right, and C<mean(avals($df, 'age'))> hands C<mean> a
+bare list instead of the arrayref it expects.
+
+An empty frame — an empty AoH, or an empty hash — yields the empty list. In
+scalar context a list return collapses to its last element, which for a column
+is almost never what was meant; assign to an array, or use L<C<vals>|/"vals">.
+
+See L<C<vals>|/"vals"> for the argument table, the AoH / HoA / HoH detection rules,
+the sorted key order of a HoH, and the missing-column behavior: apart from the
+return, they are the same function.
 
 =head2 bedroc
 

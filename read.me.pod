@@ -1312,6 +1312,38 @@ labels for you: C<< cutoff =E<gt> x >> marks values C<< E<gt>= x >> as positive,
 C<< active_frac =E<gt> 0.1 >> with C<< active_side =E<gt> 'low'|'high' >> takes that fraction of
 the extreme tail as positive.
 
+=head2 avals
+
+L<C<vals>|/"vals"> as a list. C<avals> takes the same two arguments, accepts the
+same three data-frame shapes, uses the same shape detection, copies every cell
+the same way and dies with the same messages — it only differs in the return,
+pushing the column's values onto the stack instead of wrapping them in an array
+reference:
+
+ use Stats::LikeR qw(avals vals);
+
+ my @ages =    avals($df, 'age');
+ my @same = @{  vals($df, 'age') };   # identical, one arrayref later
+
+Reach for it wherever the column is going straight into a list — another
+function's arguments, a C<sort>/C<map>/C<grep> chain, a C<push>, an array or hash
+slice:
+
+ my @sorted = sort { $a <=> $b } avals($df, 'ldl');
+ push @pooled, avals($df, 'ldl');
+
+The functions that take a column I<by reference> still want L<C<vals>|/"vals">:
+C<mean(vals($df, 'age'))> is right, and C<mean(avals($df, 'age'))> hands C<mean> a
+bare list instead of the arrayref it expects.
+
+An empty frame — an empty AoH, or an empty hash — yields the empty list. In
+scalar context a list return collapses to its last element, which for a column
+is almost never what was meant; assign to an array, or use L<C<vals>|/"vals">.
+
+See L<C<vals>|/"vals"> for the argument table, the AoH / HoA / HoH detection rules,
+the sorted key order of a HoH, and the missing-column behavior: apart from the
+return, they are the same function.
+
 =head2 bedroc
 
 BEDROC — Boltzmann-Enhanced Discrimination of ROC (Truchon & Bayly, I<J. Chem.

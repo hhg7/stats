@@ -58,7 +58,7 @@
 .\" ========================================================================
 .\"
 .IX Title "read.me 3"
-.TH read.me 3 2026-08-26 "perl v5.44.0" "User Contributed Perl Documentation"
+.TH read.me 3 2026-08-28 "perl v5.44.0" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -1023,6 +1023,41 @@ sklearn\*(Aqs \f(CW\*(C`roc_auc_score(y, \-pred)\*(C'\fR). It can also turn a nu
 labels for you: \f(CW\*(C`cutoff => x\*(C'\fR marks values \f(CW\*(C`>= x\*(C'\fR as positive, or
 \&\f(CW\*(C`active_frac => 0.1\*(C'\fR with \f(CW\*(C`active_side => \*(Aqlow\*(Aq|\*(Aqhigh\*(Aq\*(C'\fR takes that fraction of
 the extreme tail as positive.
+.SS avals
+.IX Subsection "avals"
+\&\f(CW\*(C`vals\*(C'\fR as a list. \f(CW\*(C`avals\*(C'\fR takes the same two arguments, accepts the
+same three data\-frame shapes, uses the same shape detection, copies every cell
+the same way and dies with the same messages — it only differs in the return,
+pushing the column\*(Aqs values onto the stack instead of wrapping them in an array
+reference:
+.PP
+.Vb 1
+\& use Stats::LikeR qw(avals vals);
+\&
+\& my @ages =    avals($df, \*(Aqage\*(Aq);
+\& my @same = @{  vals($df, \*(Aqage\*(Aq) };   # identical, one arrayref later
+.Ve
+.PP
+Reach for it wherever the column is going straight into a list — another
+function\*(Aqs arguments, a \f(CW\*(C`sort\*(C'\fR/\f(CW\*(C`map\*(C'\fR/\f(CW\*(C`grep\*(C'\fR chain, a \f(CW\*(C`push\*(C'\fR, an array or hash
+slice:
+.PP
+.Vb 2
+\& my @sorted = sort { $a <=> $b } avals($df, \*(Aqldl\*(Aq);
+\& push @pooled, avals($df, \*(Aqldl\*(Aq);
+.Ve
+.PP
+The functions that take a column \fIby reference\fR still want \f(CW\*(C`vals\*(C'\fR:
+\&\f(CW\*(C`mean(vals($df, \*(Aqage\*(Aq))\*(C'\fR is right, and \f(CW\*(C`mean(avals($df, \*(Aqage\*(Aq))\*(C'\fR hands \f(CW\*(C`mean\*(C'\fR a
+bare list instead of the arrayref it expects.
+.PP
+An empty frame — an empty AoH, or an empty hash — yields the empty list. In
+scalar context a list return collapses to its last element, which for a column
+is almost never what was meant; assign to an array, or use \f(CW\*(C`vals\*(C'\fR.
+.PP
+See \f(CW\*(C`vals\*(C'\fR for the argument table, the AoH / HoA / HoH detection rules,
+the sorted key order of a HoH, and the missing\-column behavior: apart from the
+return, they are the same function.
 .SS bedroc
 .IX Subsection "bedroc"
 BEDROC — Boltzmann\-Enhanced Discrimination of ROC (Truchon & Bayly, \fIJ. Chem.
@@ -6887,7 +6922,7 @@ With a key, like \f(CW\*(C`a\*(C'\fR for above, only values within that hash key
 .PP
 the column, or second hash key, that you wish to count, is specified at the command line
 .PP
-The two new subsections (Array of hashes, Array of arrays) are the only additions; everything else is unchanged. They\*(Aqre placed after the array\-container forms to keep array inputs grouped, mirroring how Hash of array / Hash of hash sit together. If you\*(Aqd rather I drop this into a \f(CW\*(C`.md\*(C'\fR file or fold it into POD (\f(CW\*(C`=head3\*(C'\fR headers, \f(CW\*(C`C<>\*(C'\fR for the inline code) for the actual module docs, say the word.
+The two new subsections (Array of hashes, Array of arrays) are the only additions; everything else is unchanged. They\*(Aqre placed after the array\-container forms to keep array inputs grouped, mirroring how Hash of array / Hash of hash sit together.
 .SS var
 .IX Subsection "var"
 as simple as possible:
@@ -7324,8 +7359,8 @@ Verified against R 4.6.1 (\f(CW\*(C`oneway.test\*(C'\fR, \f(CW\*(C`anova(aov())\
 \&\f(CW\*(C`t/model_pvalue_tails.t\*(C'\fR and \f(CW\*(C`t/oneway_test.R.scipy.t\*(C'\fR.
 .SH Changes
 .IX Header "Changes"
-.SS "0.303 2026\-08"
-.IX Subsection "0.303 2026-08"
+.SS "0.31 2026\-08"
+.IX Subsection "0.31 2026-08"
 \fIread_table\fR
 .IX Subsection "read_table"
 .PP
@@ -7422,7 +7457,8 @@ Eight new functions — \f(CW\*(C`qnorm\*(C'\fR, \f(CW\*(C`pt\*(C'\fR, \f(CW\*(C
 \&\f(CW\*(C`lower.tail\*(C'\fR / \f(CW\*(C`log.p\*(C'\fR flags. Before this, \f(CW\*(C`pnorm\*(C'\fR and \f(CW\*(C`dnorm\*(C'\fR were the whole
 family, so a Wald bound or a likelihood\-ratio test could not be finished from
 outside the module: the critical value simply was not expressible. See
-"Distribution functions" for the details; two are worth pulling out here.
+"Distribution functions" for the details; two are
+worth pulling out here.
 .PP
 \&\fBNo tail is formed as \fR\f(CB\*(C`1 \-\*(C'\fR\fB the other one.\fR That subtraction discards
 everything below machine epsilon, which is the range a p\-value is interesting
@@ -7479,8 +7515,8 @@ relative — and it reads \f(CW9.332636185032188789901e\-302\fR as
 exactly\-representable expected value in \f(CW\*(C`t/distributions.R.scipy.t\*(C'\fR is written
 as a dyadic ratio, \f(CW\*(C`M/2^K\*(C'\fR, which rebuilds by integer division on any perl. And
 where R\*(Aqs frozen value is \f(CW0\fR because a double underflowed, a long\-double or
-\&\f(CW\*(C`_\|_float128\*(C'\fR build computes the real number instead \-\- \f(CW\*(C`pbinom(0, 1000, 0.75)\*(C'\fR
-really is \f(CW\*(C`0.25^1000\*(C'\fR = 8.7e\-603 \-\- so the test accepts that as agreement with a
+\&\f(CW\*(C`_\|_float128\*(C'\fR build computes the real number instead — \f(CW\*(C`pbinom(0, 1000, 0.75)\*(C'\fR
+really is \f(CW\*(C`0.25^1000\*(C'\fR = 8.7e\-603 — so the test accepts that as agreement with a
 reference that could not go lower, rather than failing the wider build for being
 right. The same applies to \f(CW\*(C`log => 1\*(C'\fR near a probability of 1, where the
 resolvable accuracy is \f(CW\*(C`NV_EPSILON / |log p|\*(C'\fR and the tolerance is scaled off
@@ -9104,7 +9140,7 @@ form \f(CW\*(C`dbinom\*(C'\fR already used here. Agreement with R over these cas
 The Clopper\-Pearson bounds are found by bisection, which stopped at an
 absolute width of 1e\-15, so a bound far below 1 came back with only four
 correct digits: \f(CW\*(C`binom\e_test(1, 1000000000, alternative => \*(Aqgreater\*(Aq,
-conf\e_level => 0.999)\*(C'\fR gave 1.00053299e\-12 against R\*(Aqs 1.00050033e\-12. The
+conf.level => 0.999)\*(C'\fR gave 1.00053299e\-12 against R\*(Aqs 1.00050033e\-12. The
 stopping rule is now relative to where the bracket sits, and such bounds now
 hold about 1e\-15.
 .PP
@@ -9667,7 +9703,7 @@ the same rows, columns and row labels; the input is left alone. Everything the
 flat form did is unchanged — an arrayref of p\-values still returns a list, in
 order, with the same numbers.
 .IP \(bu 4
-\&\f(CW\*(C`columns => \*(Aqp.value\*(Aq\*(C'\fR (or an arrayref of names, or 0\-based positions for an
+\&\f(CW\*(C`columns => \*(Aqp_value\*(Aq\*(C'\fR (or an arrayref of names, or 0\-based positions for an
 AoA) says which columns hold p\-values, and copies the rest of the frame
 through untouched, so a results table with a \f(CW\*(C`gene\*(C'\fR column no longer has to
 be taken apart and put back together around the call. Without \f(CW\*(C`columns\*(C'\fR

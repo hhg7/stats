@@ -58,7 +58,7 @@
 .\" ========================================================================
 .\"
 .IX Title "Stats::LikeR 3"
-.TH Stats::LikeR 3 2026-08-26 "perl v5.44.0" "User Contributed Perl Documentation"
+.TH Stats::LikeR 3 2026-08-28 "perl v5.44.0" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -1023,6 +1023,41 @@ sklearn\*(Aqs \f(CW\*(C`roc_auc_score(y, \-pred)\*(C'\fR). It can also turn a nu
 labels for you: \f(CW\*(C`cutoff => x\*(C'\fR marks values \f(CW\*(C`>= x\*(C'\fR as positive, or
 \&\f(CW\*(C`active_frac => 0.1\*(C'\fR with \f(CW\*(C`active_side => \*(Aqlow\*(Aq|\*(Aqhigh\*(Aq\*(C'\fR takes that fraction of
 the extreme tail as positive.
+.SS avals
+.IX Subsection "avals"
+\&\f(CW\*(C`vals\*(C'\fR as a list. \f(CW\*(C`avals\*(C'\fR takes the same two arguments, accepts the
+same three data\-frame shapes, uses the same shape detection, copies every cell
+the same way and dies with the same messages — it only differs in the return,
+pushing the column\*(Aqs values onto the stack instead of wrapping them in an array
+reference:
+.PP
+.Vb 1
+\& use Stats::LikeR qw(avals vals);
+\&
+\& my @ages =    avals($df, \*(Aqage\*(Aq);
+\& my @same = @{  vals($df, \*(Aqage\*(Aq) };   # identical, one arrayref later
+.Ve
+.PP
+Reach for it wherever the column is going straight into a list — another
+function\*(Aqs arguments, a \f(CW\*(C`sort\*(C'\fR/\f(CW\*(C`map\*(C'\fR/\f(CW\*(C`grep\*(C'\fR chain, a \f(CW\*(C`push\*(C'\fR, an array or hash
+slice:
+.PP
+.Vb 2
+\& my @sorted = sort { $a <=> $b } avals($df, \*(Aqldl\*(Aq);
+\& push @pooled, avals($df, \*(Aqldl\*(Aq);
+.Ve
+.PP
+The functions that take a column \fIby reference\fR still want \f(CW\*(C`vals\*(C'\fR:
+\&\f(CW\*(C`mean(vals($df, \*(Aqage\*(Aq))\*(C'\fR is right, and \f(CW\*(C`mean(avals($df, \*(Aqage\*(Aq))\*(C'\fR hands \f(CW\*(C`mean\*(C'\fR a
+bare list instead of the arrayref it expects.
+.PP
+An empty frame — an empty AoH, or an empty hash — yields the empty list. In
+scalar context a list return collapses to its last element, which for a column
+is almost never what was meant; assign to an array, or use \f(CW\*(C`vals\*(C'\fR.
+.PP
+See \f(CW\*(C`vals\*(C'\fR for the argument table, the AoH / HoA / HoH detection rules,
+the sorted key order of a HoH, and the missing\-column behavior: apart from the
+return, they are the same function.
 .SS bedroc
 .IX Subsection "bedroc"
 BEDROC — Boltzmann\-Enhanced Discrimination of ROC (Truchon & Bayly, \fIJ. Chem.
@@ -1119,7 +1154,7 @@ Enhancement and its bounds for this \f(CW\*(C`alpha\*(C'\fR and active fraction;
 \&     cutoff => 6.5,
 \&     top    => 0.05);
 \& print $r\->{bedroc};
-\& print $r\->{enrichment}{\*(Aqenrichment.factor\*(Aq};   # e.g. 2.0 => 2x over random
+\& print $r\->{enrichment}{enrichment.factor};   # e.g. 2.0 => 2x over random
 \&
 \& # fraction\-defined actives straight from a raw ΔG column: the strongest\-
 \& # binding 10% (lowest ΔG) are the actives, best predictions rank first.
@@ -1205,7 +1240,7 @@ You play 10 rounds and the toddler gets 6 right. Real skill, or just luck?
 \&
 \& my $r = binom_test(6, 10, p => 0.5); # 6 wins, 10 rounds, guessing rate 0.5
 \&
-\& print $r\->{\*(Aqp.value\*(Aq};                 # 0.7539
+\& print $r\->{p.value};                 # 0.7539
 .Ve
 .PP
 The full result is a hashref:
@@ -1240,7 +1275,7 @@ Suppose the toddler had gone 9 for 10 instead:
 .Vb 1
 \& my $r = binom_test(9, 10, p => 0.5);
 \&
-\& print $r\->{\*(Aqp.value\*(Aq};                   # 0.0215
+\& print $r\->{p.value};                   # 0.0215
 .Ve
 .PP
 Now \f(CW\*(C`p = 0.02\*(C'\fR, under \f(CW0.05\fR. A pure guesser almost never does that well, so
@@ -1623,7 +1658,7 @@ e.g. an exposure/outcome odds ratio adjusted for study site. Same as R\*(Aqs
 \&                    [20,6,8,15],     # stratum 2
 \&                    [ 7,4,9,11] ]);  # stratum 3
 \&
-\& print $r\->{\*(Aqp.value\*(Aq};    # combined test across strata
+\& print $r\->{p.value};    # combined test across strata
 \& print $r\->{estimate};   # Mantel–Haenszel common odds ratio
 .Ve
 .PP
@@ -2166,8 +2201,8 @@ Give times, an event flag (1 = event, 0 = censored), and one or more covariates
 \& my $fit = coxph(\e@time, \e@status, [\e@age, \e@sex],
 \&                 names => [\*(Aqage\*(Aq, \*(Aqsex\*(Aq]);
 \&
-\& print $fit\->{\*(Aqexp.coef\*(Aq}[0];    # hazard ratio for age
-\& print $fit\->{\*(Aqp.value\*(Aq}[0];     # its p\-value
+\& print $fit\->{exp.coef}[0];    # hazard ratio for age
+\& print $fit\->{p.value}[0];     # its p\-value
 .Ve
 .PP
 Options: \f(CW\*(C`names\*(C'\fR, \f(CW\*(C`ties\*(C'\fR (\f(CW\*(Aqefron\*(Aq\fR default, or \f(CW\*(Aqbreslow\*(Aq\fR), \f(CW\*(C`conf.level\*(C'\fR
@@ -2941,7 +2976,7 @@ numerically against the canonical formula computed in base R.
 \& my $res = dunn_test(\e@values, \e@group, method => \*(Aqbh\*(Aq);
 \& for my $c (@$res) {
 \&     printf "%\-9s  Z=%+.3f  p=%.4f  (adj %.4f)\en",
-\&         $c\->{comparison}, $c\->{Z}, $c\->{\*(Aqp.value\*(Aq}, $c\->{\*(Aqp.adjust\*(Aq};
+\&         $c\->{comparison}, $c\->{Z}, $c\->{p.value}, $c\->{p_adjust};
 \& }
 .Ve
 .PP
@@ -2974,8 +3009,8 @@ Pass the four counts (or a \f(CW\*(C`[a,b,c,d]\*(C'\fR / \f(CW\*(C`[[a,b],[c,d]]
 \& use Stats::LikeR \*(Aqepi_2x2\*(Aq;
 \&
 \& my $r = epi_2x2(30, 70, 20, 80);
-\& print $r\->{\*(Aqodds.ratio\*(Aq};             # 1.714
-\& print "@{ $r\->{\*(Aqodds.ratio.ci\*(Aq} }";   # 0.895 3.285
+\& print $r\->{odds.ratio};             # 1.714
+\& print "@{ $r\->{odds.ratio.ci} }";   # 0.895 3.285
 .Ve
 .PP
 Options: \f(CW\*(C`conf.level\*(C'\fR (default \f(CW0.95\fR) and \f(CW\*(C`correct\*(C'\fR (add 0.5 to every cell,
@@ -3355,7 +3390,7 @@ non\-numeric value are dropped, mirroring R\*(Aqs \f(CW\*(C`complete.cases\*(C'\
 \&     [9, 10,  9],   # subject 3
 \&     [8,  8,  6],   # subject 4
 \& ]);
-\& printf "chi2=%.3f  df=%d  p=%.4g\en", $r\->{statistic}, $r\->{parameter}, $r\->{\*(Aqp.value\*(Aq};
+\& printf "chi2=%.3f  df=%d  p=%.4g\en", $r\->{statistic}, $r\->{parameter}, $r\->{p.value};
 .Ve
 .PP
 A significant result says the conditions differ overall; follow up with pairwise
@@ -3836,7 +3871,7 @@ it was validated numerically.
 \& my @prob = map { $fit\->{\*(Aqfitted.values\*(Aq}{$_} } @ids;
 \&
 \& my $hl = hosmer_lemeshow(\e@obs, \e@prob, g => 10);
-\& printf "HL chi2=%.2f df=%d p=%.3f\en", $hl\->{statistic}, $hl\->{parameter}, $hl\->{\*(Aqp.value\*(Aq};
+\& printf "HL chi2=%.2f df=%d p=%.3f\en", $hl\->{statistic}, $hl\->{parameter}, $hl\->{p.value};
 .Ve
 .PP
 \fIInput Parameters\fR
@@ -4214,9 +4249,9 @@ For example:
 .PP
 .Vb 5
 \& my $ks = ks_test(\e@x, \e@y);
-\& if ($ks\->{\*(Aqp.value\*(Aq} < 0.05) {
+\& if ($ks\->{p.value} < 0.05) {
 \&     printf "reject H0: D=%.4f, p=%.4g (%s)\en",
-\&         $ks\->{statistic}, $ks\->{\*(Aqp.value\*(Aq}, $ks\->{method};
+\&         $ks\->{statistic}, $ks\->{p.value}, $ks\->{method};
 \& }
 .Ve
 .SS kurtosis
@@ -4438,7 +4473,7 @@ Give times, an event flag (1 = event, 0 = censored), and a group label per row:
 \& use Stats::LikeR \*(Aqlogrank_test\*(Aq;
 \&
 \& my $r = logrank_test(\e@time, \e@status, \e@group);
-\& print $r\->{\*(Aqp.value\*(Aq};
+\& print $r\->{p.value};
 .Ve
 .PP
 Result keys: \f(CW\*(C`statistic\*(C'\fR (chi\-squared), \f(CW\*(C`parameter\*(C'\fR (df = groups − 1),
@@ -4512,7 +4547,7 @@ numerically against R.
 .Vb 3
 \& # counts as a square matrix: [[a, b], [c, d]]
 \& my $r = mcnemar_test([[794, 86], [150, 570]]);
-\& printf "chi2=%.2f df=%d p=%.4g\en", $r\->{statistic}, $r\->{parameter}, $r\->{\*(Aqp.value\*(Aq};
+\& printf "chi2=%.2f df=%d p=%.4g\en", $r\->{statistic}, $r\->{parameter}, $r\->{p.value};
 \&
 \& # small samples: exact binomial test on the discordant pairs
 \& my $e = mcnemar_test([[794, 86], [150, 570]], exact => 1);
@@ -4913,7 +4948,7 @@ the factor\*(Aqs \fIname\fR becomes the top\-level key:
 \&     },
 \&     formula => \*(Aqlen ~ supp\*(Aq,
 \& );
-\& # $res\->{supp}, $res\->{Residuals}, $res\->{\*(Aqgroup.stats\*(Aq} ...
+\& # $res\->{supp}, $res\->{Residuals}, $res\->{group.stats} ...
 .Ve
 .PP
 \fIClassic equal\-variance form\fR
@@ -5448,7 +5483,7 @@ Validated numerically against R.
 \& # one sample vs a target probability (default 0.5)
 \& my $r = prop_test(83, 100);              # 83 successes in 100 trials
 \& printf "p\-hat=%.2f  95%% CI %.3f–%.3f  p=%.4g\en",
-\&     $r\->{estimate}[0], $r\->{\*(Aqconf.int\*(Aq}[0], $r\->{\*(Aqconf.int\*(Aq}[1], $r\->{\*(Aqp.value\*(Aq};
+\&     $r\->{estimate}[0], $r\->{\*(Aqconf.int\*(Aq}[0], $r\->{\*(Aqconf.int\*(Aq}[1], $r\->{p.value};
 \&
 \& # two groups: difference in proportions + CI
 \& my $two = prop_test([83, 90], [100, 100]);
@@ -6011,7 +6046,7 @@ well a score separates cases from non\-cases.
 \&
 \& my $r = roc(\e@scores, \e@labels);
 \& print $r\->{auc};                 # 0.848
-\& print "@{ $r\->{\*(Aqauc.ci\*(Aq} }";       # 0.649 1.000
+\& print "@{ $r\->{auc.ci} }";       # 0.649 1.000
 \& my $cut = $r\->{youden};          # best operating point
 \& print "$cut\->{threshold}: sens=$cut\->{sensitivity} spec=$cut\->{specificity}";
 .Ve
@@ -6887,7 +6922,7 @@ With a key, like \f(CW\*(C`a\*(C'\fR for above, only values within that hash key
 .PP
 the column, or second hash key, that you wish to count, is specified at the command line
 .PP
-The two new subsections (Array of hashes, Array of arrays) are the only additions; everything else is unchanged. They\*(Aqre placed after the array\-container forms to keep array inputs grouped, mirroring how Hash of array / Hash of hash sit together. If you\*(Aqd rather I drop this into a \f(CW\*(C`.md\*(C'\fR file or fold it into POD (\f(CW\*(C`=head3\*(C'\fR headers, \f(CW\*(C`C<>\*(C'\fR for the inline code) for the actual module docs, say the word.
+The two new subsections (Array of hashes, Array of arrays) are the only additions; everything else is unchanged. They\*(Aqre placed after the array\-container forms to keep array inputs grouped, mirroring how Hash of array / Hash of hash sit together.
 .SS var
 .IX Subsection "var"
 as simple as possible:
@@ -7324,8 +7359,8 @@ Verified against R 4.6.1 (\f(CW\*(C`oneway.test\*(C'\fR, \f(CW\*(C`anova(aov())\
 \&\f(CW\*(C`t/model_pvalue_tails.t\*(C'\fR and \f(CW\*(C`t/oneway_test.R.scipy.t\*(C'\fR.
 .SH Changes
 .IX Header "Changes"
-.SS "0.303 2026\-08"
-.IX Subsection "0.303 2026-08"
+.SS "0.31 2026\-08"
+.IX Subsection "0.31 2026-08"
 \fIread_table\fR
 .IX Subsection "read_table"
 .PP
@@ -7422,7 +7457,8 @@ Eight new functions — \f(CW\*(C`qnorm\*(C'\fR, \f(CW\*(C`pt\*(C'\fR, \f(CW\*(C
 \&\f(CW\*(C`lower.tail\*(C'\fR / \f(CW\*(C`log.p\*(C'\fR flags. Before this, \f(CW\*(C`pnorm\*(C'\fR and \f(CW\*(C`dnorm\*(C'\fR were the whole
 family, so a Wald bound or a likelihood\-ratio test could not be finished from
 outside the module: the critical value simply was not expressible. See
-"Distribution functions" for the details; two are worth pulling out here.
+"Distribution functions" for the details; two are
+worth pulling out here.
 .PP
 \&\fBNo tail is formed as \fR\f(CB\*(C`1 \-\*(C'\fR\fB the other one.\fR That subtraction discards
 everything below machine epsilon, which is the range a p\-value is interesting
@@ -7479,8 +7515,8 @@ relative — and it reads \f(CW9.332636185032188789901e\-302\fR as
 exactly\-representable expected value in \f(CW\*(C`t/distributions.R.scipy.t\*(C'\fR is written
 as a dyadic ratio, \f(CW\*(C`M/2^K\*(C'\fR, which rebuilds by integer division on any perl. And
 where R\*(Aqs frozen value is \f(CW0\fR because a double underflowed, a long\-double or
-\&\f(CW\*(C`_\|_float128\*(C'\fR build computes the real number instead \-\- \f(CW\*(C`pbinom(0, 1000, 0.75)\*(C'\fR
-really is \f(CW\*(C`0.25^1000\*(C'\fR = 8.7e\-603 \-\- so the test accepts that as agreement with a
+\&\f(CW\*(C`_\|_float128\*(C'\fR build computes the real number instead — \f(CW\*(C`pbinom(0, 1000, 0.75)\*(C'\fR
+really is \f(CW\*(C`0.25^1000\*(C'\fR = 8.7e\-603 — so the test accepts that as agreement with a
 reference that could not go lower, rather than failing the wider build for being
 right. The same applies to \f(CW\*(C`log => 1\*(C'\fR near a probability of 1, where the
 resolvable accuracy is \f(CW\*(C`NV_EPSILON / |log p|\*(C'\fR and the tolerance is scaled off
@@ -8634,12 +8670,12 @@ my \f(CW$r\fR = wilcox_test(\e@y, \e@x, paired => 1, conf_int => 1);
 .ie n .SH "$r\->{estimate}   == \-0.46"
 .el .SH "\f(CW$r\fP\->{estimate}   == \-0.46"
 .IX Header "$r->{estimate} == -0.46"
-.ie n .SH "$r\->{\*(Aqconf.int\*(Aq}   == [\-0.786, \-0.010]"
-.el .SH "\f(CW$r\fP\->{\*(Aqconf.int\*(Aq}   == [\-0.786, \-0.010]"
-.IX Header "$r->{'conf.int'} == [-0.786, -0.010]"
-.ie n .SH "$r\->{\*(Aqconf.level\*(Aq} == 0.9609375"
-.el .SH "\f(CW$r\fP\->{\*(Aqconf.level\*(Aq} == 0.9609375"
-.IX Header "$r->{'conf.level'} == 0.9609375"
+.ie n .SH "$r\->{conf.int}   == [\-0.786, \-0.010]"
+.el .SH "\f(CW$r\fP\->{conf.int}   == [\-0.786, \-0.010]"
+.IX Header "$r->{conf.int} == [-0.786, -0.010]"
+.ie n .SH "$r\->{conf.level} == 0.9609375"
+.el .SH "\f(CW$r\fP\->{conf.level} == 0.9609375"
+.IX Header "$r->{conf.level} == 0.9609375"
 \&\`\`\`
 .PP
 Those are Hollander & Wolfe (1999) 2nd ed., pp. 40 and 53, to the digit. So are
@@ -9104,7 +9140,7 @@ form \f(CW\*(C`dbinom\*(C'\fR already used here. Agreement with R over these cas
 The Clopper\-Pearson bounds are found by bisection, which stopped at an
 absolute width of 1e\-15, so a bound far below 1 came back with only four
 correct digits: \f(CW\*(C`binom\e_test(1, 1000000000, alternative => \*(Aqgreater\*(Aq,
-conf\e_level => 0.999)\*(C'\fR gave 1.00053299e\-12 against R\*(Aqs 1.00050033e\-12. The
+conf.level => 0.999)\*(C'\fR gave 1.00053299e\-12 against R\*(Aqs 1.00050033e\-12. The
 stopping rule is now relative to where the bracket sits, and such bounds now
 hold about 1e\-15.
 .PP
@@ -9667,7 +9703,7 @@ the same rows, columns and row labels; the input is left alone. Everything the
 flat form did is unchanged — an arrayref of p\-values still returns a list, in
 order, with the same numbers.
 .IP \(bu 4
-\&\f(CW\*(C`columns => \*(Aqp.value\*(Aq\*(C'\fR (or an arrayref of names, or 0\-based positions for an
+\&\f(CW\*(C`columns => \*(Aqp_value\*(Aq\*(C'\fR (or an arrayref of names, or 0\-based positions for an
 AoA) says which columns hold p\-values, and copies the rest of the frame
 through untouched, so a results table with a \f(CW\*(C`gene\*(C'\fR column no longer has to
 be taken apart and put back together around the call. Without \f(CW\*(C`columns\*(C'\fR

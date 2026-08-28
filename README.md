@@ -863,6 +863,38 @@ labels for you: `cutoff => x` marks values `>= x` as positive, or
 `active_frac => 0.1` with `active_side => 'low'|'high'` takes that fraction of
 the extreme tail as positive.
 
+## avals
+
+[`vals`](#vals) as a list. `avals` takes the same two arguments, accepts the
+same three data-frame shapes, uses the same shape detection, copies every cell
+the same way and dies with the same messages — it only differs in the return,
+pushing the column's values onto the stack instead of wrapping them in an array
+reference:
+
+    use Stats::LikeR qw(avals vals);
+
+    my @ages =    avals($df, 'age');
+    my @same = @{  vals($df, 'age') };   # identical, one arrayref later
+
+Reach for it wherever the column is going straight into a list — another
+function's arguments, a `sort`/`map`/`grep` chain, a `push`, an array or hash
+slice:
+
+    my @sorted = sort { $a <=> $b } avals($df, 'ldl');
+    push @pooled, avals($df, 'ldl');
+
+The functions that take a column *by reference* still want [`vals`](#vals):
+`mean(vals($df, 'age'))` is right, and `mean(avals($df, 'age'))` hands `mean` a
+bare list instead of the arrayref it expects.
+
+An empty frame — an empty AoH, or an empty hash — yields the empty list. In
+scalar context a list return collapses to its last element, which for a column
+is almost never what was meant; assign to an array, or use [`vals`](#vals).
+
+See [`vals`](#vals) for the argument table, the AoH / HoA / HoH detection rules,
+the sorted key order of a HoH, and the missing-column behavior: apart from the
+return, they are the same function.
+
 ## bedroc
 
 BEDROC — Boltzmann-Enhanced Discrimination of ROC (Truchon & Bayly, *J. Chem.
@@ -6685,6 +6717,12 @@ Verified against R 4.6.1 (`oneway.test`, `anova(aov())`, `anova(lm())`,
 `t/model_pvalue_tails.t` and `t/oneway_test.R.scipy.t`.
 
 # Changes
+
+## 0.311 2026-08
+
+### avals
+
+new function to make code cleaner.  `avals` is the same as `vals` but returns an array instead of an array reference, so instead of `@{ vals($df, 'colname') }` it will just be `avals($df, 'colname')` to prevent the bracketing
 
 ## 0.31 2026-08
 

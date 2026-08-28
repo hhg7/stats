@@ -7593,7 +7593,7 @@ static double c_pnorm(double x, double mu, double sigma, bool lower_tail, bool l
   my $tab = anova(\%data, 'len ~ supp * dose');       # one model  -> HashRef
   my $cmp = anova(\%data, 'y ~ a', 'y ~ a + b');      # 2+ models  -> ArrayRef
 
----- single-model form (one formula) --------------------------------------
+---- single-model form (one formula) --
 Input mirrors aov(): a Hash-of-Arrays (\%h, columns) or Array-of-Hashes
 (\@a, rows), plus a formula string 'response ~ rhs'. The RHS understands
 '+', ':' (interaction) and '*' (factorial expansion: a*b -> a + b + a:b,
@@ -17156,18 +17156,18 @@ SV* quantile(...)
 			Safefree(x); Safefree(probs);
 			croak("quantile: 'x' contains no valid numbers");
 		}
-		/* Order only the statistics that are actually read
-		 Type 7 reads at most two order statistics per probability: x[j] at
-		 j = floor((n-1)p), and x[j+1] when the interpolation weight is
-		 non-zero.  Placing just those with nv_select_multi() is O(n log k)
-		 against the O(n log n) of ordering the whole column, and is what R
-		 does -- quantile.default() hands its indices to sort(partial=).
-		 Measured on 1e6 doubles at the 5 default probs: 19.2 ms against 69.1
-		 ms for nv_sort().
+	/* Order only the statistics that are actually read
+	 Type 7 reads at most two order statistics per probability: x[j] at
+	 j = floor((n-1)p), and x[j+1] when the interpolation weight is
+	 non-zero.  Placing just those with nv_select_multi() is O(n log k)
+	 against the O(n log n) of ordering the whole column, and is what R
+	 does -- quantile.default() hands its indices to sort(partial=).
+	 Measured on 1e6 doubles at the 5 default probs: 19.2 ms against 69.1
+	 ms for nv_sort().
 
-		 Past k ~ n/2 distinct indices the partial sort is doing a sort's work
-		 with more bookkeeping, so above that a full sort is simply the
-		 cheaper way to get the same array. */
+	 Past k ~ n/2 distinct indices the partial sort is doing a sort's work
+	 with more bookkeeping, so above that a full sort is simply the
+	 cheaper way to get the same array */
 		{
 			size_t *ks, nk = 0, uk = 0;
 			Newx(ks, (size_t)n_probs * 2 + 1, size_t);
@@ -17188,7 +17188,7 @@ SV* quantile(...)
 			else                      nv_select_multi(x, 0, n - 1, ks, 0, uk);
 			Safefree(ks);
 		}
-		// Calculate Quantiles (R Type 7 Algorithm)
+	// Calculate Quantiles (R Type 7 Algorithm)
 		HV *res_hv = newHV();
 		for (size_t i = 0; i < n_probs; i++) {
 			NV p = probs[i];
@@ -17205,13 +17205,13 @@ SV* quantile(...)
 				 size_t j = (size_t)h;
 				 NV gamma = h - (NV)j;
 				 q = x[j];
-				 /* Interpolate only where R does: strictly between the two
-				    bracketing order statistics, and only when they actually
-				    differ (R's `index > lo & x[hi] != qs`).  Without the
-				    second half, (1-g)*v + g*v drifts off v whenever the
-				    bracket is a run of equal values -- which is what broke
-				    monotonicity in R's own PR#16672, and what makes a
-				    two-valued sample report 0.99999999999994 for 1. */
+ /* Interpolate only where R does: strictly between the two
+    bracketing order statistics, and only when they actually
+    differ (R's `index > lo & x[hi] != qs`).  Without the
+    second half, (1-g)*v + g*v drifts off v whenever the
+    bracket is a run of equal values -- which is what broke
+    monotonicity in R's own PR#16672, and what makes a
+    two-valued sample report 0.99999999999994 for 1. */
 				 if (gamma > 0.0 && x[j + 1] != q)
 					 q = (1.0 - gamma) * q + gamma * x[j + 1];
 			}
@@ -23564,6 +23564,147 @@ PPCODE:
 	double-free with the mortal.*/
 	XPUSHs(sv_2mortal(newRV_inc((SV *)out_av)));
 	XSRETURN(1);
+}
+
+void avals(data, colname_sv)
+	SV *data
+	SV *colname_sv
+PREINIT:
+	bool is_aoh = FALSE, is_hoh = FALSE;
+	const char *colname = NULL;
+	STRLEN collen = 0;
+	AV *src_av = NULL;
+	HV *src_hv = NULL;
+	SSize_t n = 0;
+	AV *out_av = NULL;
+	SSize_t nret = 0;
+PPCODE:
+{
+/*avals(): vals() returning a list rather than an array-ref.
+	
+	Identical to vals() above -- same shape detection, same copy-per-cell
+	semantics, same croaks -- except that the column is pushed onto the stack
+	instead of being wrapped in an RV. The values are still gathered into a mortal
+	AV first: filling that array, rather than the stack, keeps every newSVsv() away
+	from the local stack pointer, which get-magic on a tied or overloaded cell
+	could otherwise grow underneath us.*/
+	if (!SvOK(colname_sv))
+		croak("avals: column name must be defined");
+	colname = SvPV(colname_sv, collen);		//kept for the error message
+	if (!SvROK(data))
+		croak("avals: first argument must be an array-ref (AoH) or hash-ref (HoA, HoH)");
+// classify $data: AoH (arrayref) vs HoA/HoH (hashref)
+	if (SvTYPE(SvRV(data)) == SVt_PVAV) {
+		is_aoh = TRUE;
+		src_av = (AV *)SvRV(data);
+		n      = av_len(src_av) + 1;
+	} else if (SvTYPE(SvRV(data)) == SVt_PVHV) {
+		src_hv = (HV *)SvRV(data);
+		hv_iterinit(src_hv);
+		HE *he = hv_iternext(src_hv);
+		if (he) {
+			SV *val = HeVAL(he);
+			if (val && SvROK(val) && SvTYPE(SvRV(val)) == SVt_PVHV)
+				is_hoh = TRUE;			//a hash whose values are hashes => HoH
+
+			//else leave is_aoh/is_hoh FALSE => HoA path below
+		}
+		// empty hash: is_aoh = is_hoh = FALSE => HoA path yields an empty list
+	} else {
+		croak("avals: first argument must be an array-ref (AoH) or hash-ref (HoA, HoH)");
+	}
+	//out_av is mortalised up front so any later croak frees it cleanly
+	out_av = newAV();
+	sv_2mortal((SV *)out_av);
+	if (is_aoh) { // AoH
+		if (n > 0) av_extend(out_av, n - 1);
+		for (SSize_t i = 0; i < n; i++) {
+			SV **rp  = av_fetch(src_av, i, 0);
+			SV *row = (rp && *rp) ? *rp : &PL_sv_undef;
+// a row must be a hash-ref, else fail here with the index rather than returning undef and letting the caller die vaguely
+			if (!SvOK(row))
+				croak("avals: AoH row %" IVdf " is undef (expected a hash-ref)", (IV)i);
+			if (!SvROK(row) || SvTYPE(SvRV(row)) != SVt_PVHV)
+				croak("avals: AoH row %" IVdf " is not a hash-ref", (IV)i);
+			HE *ent = hv_fetch_ent((HV *)SvRV(row), colname_sv, 0, 0);
+			// a valid row that simply lacks the column still yields undef (R-like NA)
+			SV *cell = (ent && HeVAL(ent)) ? HeVAL(ent) : &PL_sv_undef;
+			/*copy, so the result is independent of the source and undef
+			slots are writable (not the shared read-only PL_sv_undef)*/
+			av_push(out_av, newSVsv(cell));
+		}
+	} else if (is_hoh) { // HoH
+		n = hv_iterinit(src_hv);
+		if (n > 0) {
+			av_extend(out_av, n - 1);
+			ENTER;
+			SV **restrict keys; SV **restrict rows;
+			Newx(keys, n, SV *);  SAVEFREEPV(keys);
+			Newx(rows, n, SV *);  SAVEFREEPV(rows);
+			SSize_t cnt = 0;
+			HE *he;
+			while ((he = hv_iternext(src_hv)) && cnt < n) {
+				keys[cnt] = hv_iterkeysv(he);	//mortal copy of the key
+				rows[cnt] = HeVAL(he);
+				cnt++;
+			}
+	/*stable insertion sort by key (sv_cmp = Perl string order, UTF-8 aware),
+	carrying the matching row value alongside each key*/
+			for (SSize_t i = 1; i < cnt; i++) {
+				SV *k = keys[i], *r = rows[i];
+				SSize_t j = i - 1;
+				while (j >= 0 && sv_cmp(keys[j], k) > 0) {
+					keys[j + 1] = keys[j];
+					rows[j + 1] = rows[j];
+					j--;
+				}
+				keys[j + 1] = k;
+				rows[j + 1] = r;
+			}
+			for (SSize_t i = 0; i < cnt; i++) {
+				SV *row_sv = rows[i];
+	// strict: name the offending key instead of silently emitting undef
+				if (!row_sv || !SvROK(row_sv) || SvTYPE(SvRV(row_sv)) != SVt_PVHV)
+					croak("avals: HoH value for key '%s' is not a hash-ref",
+						SvPV_nolen(keys[i]));
+				HE *ent = hv_fetch_ent((HV *)SvRV(row_sv), colname_sv, 0, 0);
+				SV *cell = (ent && HeVAL(ent)) ? HeVAL(ent) : &PL_sv_undef;
+				av_push(out_av, newSVsv(cell));
+			}
+			LEAVE;
+		}
+	} else { // HoA
+		if (hv_iterinit(src_hv) > 0) {		//non-empty hash
+			HE *colent = hv_fetch_ent(src_hv, colname_sv, 0, 0);
+			SV *cv = colent ? HeVAL(colent) : NULL;
+			if (!cv || !SvROK(cv) || SvTYPE(SvRV(cv)) != SVt_PVAV)
+				croak("avals: column '%s' not found or is not an array-ref", colname);
+			AV *col_av = (AV *)SvRV(cv);
+			n = av_len(col_av) + 1;
+			if (n > 0) {
+	/*the length is known, so the result is sized once and filled
+	straight through AvARRAY rather than pushed a cell at a time*/
+				av_extend(out_av, n - 1);
+				SV **restrict d = AvARRAY(out_av);
+				SV *const *restrict src = AvARRAY(col_av);
+				const SSize_t srcn = AvFILLp(col_av) + 1;
+				for (SSize_t i = 0; i < n; i++)
+					d[i] = newSVsv((i < srcn && src[i]) ? src[i] : &PL_sv_undef);
+				AvFILLp(out_av) = n - 1;
+			}
+		}
+	}
+	/*out_av stays mortal, so a croak above still frees it; each value goes onto
+	the stack with a mortal reference of its own, which keeps it alive for the
+	caller no matter when the array behind it is reclaimed.*/
+	nret = AvFILLp(out_av) + 1;
+	if (nret > 0) {
+		SV *const *restrict el = AvARRAY(out_av);
+		EXTEND(SP, nret);
+		for (SSize_t i = 0; i < nret; i++)
+			PUSHs(sv_2mortal(SvREFCNT_inc(el[i] ? el[i] : &PL_sv_undef)));
+	}
+	XSRETURN((I32)nret);
 }
 
 void
