@@ -1863,9 +1863,22 @@ actual p-value instead of a flat `0`; see
 Kendall's `statistic` to `2e-15`, and `p.value` to `1.7e-12` — the worst of
 those at a p-value of `2.2e-297`.
 
-Note that `statistic` is the z of the approximation, whereas R reports
-Spearman's *S*; the two are different quantities, so compare `estimate` and
-`p.value` rather than `statistic` when checking against R for that method.
+### Spearman: which method, and what `statistic` holds
+
+`spearman` follows R's `cor.test` exactly: `exact` defaults to true, and an
+exact request is served by permutation enumeration for *n* ≤ 9, by the AS 89
+Edgeworth series for 10 ≤ *n* ≤ 1290, and by the asymptotic *t* above that or
+whenever the ranks contain ties. Passing `exact => 1` never enumerates past
+*n* = 9, because *n*! is 6.2 × 10²³ by *n* = 24.
+
+`statistic` is Spearman's *S*, the sum of squared rank differences, on every
+one of those paths — the same quantity R reports, so it can be compared
+directly. Two differences from R are worth knowing, neither of them about the
+mathematics: at a perfect correlation R derives *S* from ρ and lands a rounding
+step away (`3.66e-14` for an exact 0 at *n* = 10), and under ties R keeps using
+that same identity, which only holds without them, so R reports
+`2.5192319072807861` where the squared rank differences sum to exactly `2.5`.
+Both are pinned in `t/cor_test.spearman.R.t`.
 
 ## cov
 
@@ -6680,8 +6693,8 @@ same applies to `2 * (1 - pnorm(|z|))` for a Wald z.
 Every F and z p-value in `Stats::LikeR` is therefore evaluated in the tail
 itself:
 
-- **F tests** (`oneway_test`, `aov`, `anova` in both its forms, and `lm`'s
-  `f.pvalue`) use the regularized-incomplete-beta symmetry
+- **F tests** (`oneway_test`, `aov`, `anova` in both its forms, `lm`'s
+  `f.pvalue`, and `var_test`) use the regularized-incomplete-beta symmetry
   `1 - I_x(a, b) = I_{1-x}(b, a)`. With `x = df1·F / (df1·F + df2)`, the
   complement `1 - x` is just `df2 / (df1·F + df2)`, which is formed without any
   subtraction, so the tail keeps full relative precision.
@@ -6718,13 +6731,173 @@ Verified against R 4.6.1 (`oneway.test`, `anova(aov())`, `anova(lm())`,
 
 # Changes
 
-## 0.311 2026-08
+## 0.31 2026-08
 
 ### avals
 
-new function to make code cleaner.  `avals` is the same as `vals` but returns an array instead of an array reference, so instead of `@{ vals($df, 'colname') }` it will just be `avals($df, 'colname')` to prevent the bracketing
+new function to make code cleaner.  `avals` is the same as `vals` but returns an array instead of an array reference, so instead of `@{ vals($df, 'colname') }` it will just be `avals($df, 'colname')` to prevent the need for bracketing
 
-## 0.31 2026-08
+### Correctness and portability fixes
+
+Nine defects found by cross-validating against R 4.6.1 and mpmath, by running
+the suite under UBSan and AddressSanitizer, and by reading for the conventions
+in `CLAUDE.md`. Each is pinned by a test that fails without the fix:
+`t/cor_test.spearman.R.t`, `t/pt_qt.tails.R.t`, `t/minmax.nan.R.t`,
+`t/var_test.ci.R.t` and `t/portability.bugs.t`.
+
+#### `cor_test(method => 'spearman')` could not return
+
+`exact => 1` ran an unbounded permutation walk. R has never enumerated past
+*n* = 9 — `n_small` in `src/library/stats/src/prho.c` — whatever `exact` says,
+but here the caller's flag was taken literally, and *n*! is 6.2 × 10²³ by
+*n* = 24:
+
+| *n* | before | now |
+|---|---|---|
+| 12 | 5 s | 0.0 s |
+| 13 | > 1 min | 0.0 s |
+| 24 | never returned | 0.0 s |
+
+The enumeration is now capped at *n* ≤ 9 and 10 ≤ *n* ≤ 1290 goes to the AS 89
+Edgeworth series, which is what R's `prho()` does. Past 1290 — R's own bound,
+where `n^3 - n` overflows an `int` — it falls back to the asymptotic *t*, as
+before.
+
+#### Spearman p-values were R's `exact = FALSE` for every *n* ≥ 10
+
+`exact` defaulted to `(n < 10)`. R's default is `TRUE`, and R serves it from
+`prho()` for every *n* up to 1290, so the old default silently took R's
+approximation branch:
+
+| *n* | before | R 4.6.1 |
+|---|---|---|
+| 32 | `1.7639963277557958e-07` | `1.1513643381176551e-06` |
+| 16 | `5.0655870675677e-17` | `5.7949654941386787e-06` |
+
+Across 45 randomly generated pairs the p-value now agrees with R to `3.5e-14`.
+
+#### Spearman's `statistic` changed meaning at *n* = 10
+
+It was *S* from the exact branch and the *t* statistic from the other. It is
+now *S* on every path, as R reports it. This is a change to a documented
+field — the note saying to compare `estimate` and `p.value` rather than
+`statistic` described the old behaviour and is gone.
+
+#### `qt` saturated, and `pt` collapsed to zero, in the far tail
+
+`pt_upper()` computed the tail as `I_z(df/2, 1/2)` with `z = df/(df + t²)` and
+nothing else. `z` underflows well before `t²` overflows, so the tail became a
+flat `0`; and because `qt_tail()` bisects against it, and its bracket stopped
+at `sqrt(DBL_MAX)`, the quantile converged onto the ceiling and returned it —
+a plausible number, not an error:
+
+| call | before | R 4.6.1 |
+|---|---|---|
+| `pt(-1e160, 1)` | `0` | `3.1830988618378451e-161` |
+| `pt(-1e300, 1)` | `0` | `3.1830988618377598e-301` |
+| `qt(1e-160, 1)` | `-1.3407807929942597e154` | `-3.1830988618379068e159` |
+| `qt(1e-300, 1)` | `-1.3407807929942597e154` | `-3.183098861837907e299` |
+| `qt(1e-16, 0.1)` | `-1.3407807929942597e154` | `-1.6044257056664863e156` |
+
+`pt_upper()` now carries the Abramowitz & Stegun 26.5.4 branch from R's
+`nmath/pt.c`, which evaluates the tail in logs once `1 + (t/df)·t` passes
+`1e100` and so has nothing left to underflow, and the bracket runs to
+`NV_MAX/2` and reports `Inf` when the quantile genuinely exceeds what an `NV`
+can name. `pt` now matches R exactly from `-1e150` to `-1e300`.
+
+#### `min` and `max` skipped a `NaN` unless it came first
+
+Every comparison against a `NaN` is false, so `if (v < mn)` passed over one and
+kept a real number — but a `NaN` in the first position stayed. The answer
+depended on where in the array it sat:
+
+    min([NaN, 1, 2])   was NaN      min([1, 2, NaN])   was 1
+    min([1, NaN, 2])   was 1        max([1, 2, NaN])   was 2
+
+R gives `NaN` for all of them, and `sum`, `mean`, `var`, `sd` and `median` here
+already did. Both now propagate `NaN` from any position, in the flat argument
+list and the array-reference forms alike.
+
+#### `var_test`'s confidence interval lost up to `2.5e-11`
+
+It divided by a private `qf_bisection()` that stopped on an **absolute**
+`high - low < 1e-12`. The F quantile it divides by is not of order 1 — at
+`conf.level = 1 - 2^-20` on nine and nine degrees of freedom it is about
+`0.016` — so an absolute stop is a relative error that grows as the quantile
+shrinks:
+
+| `conf.level` | before | R 4.6.1 |
+|---|---|---|
+| `1 - 2^-20` | `[16085387951.278957, 62168223924585.172]` | `[16085387950.871651, 62168223923448.094]` |
+
+It now uses the same `d_qf()` that the exported `qf` does, which has a relative
+stop and agrees with mpmath at `mp.dps = 60` to about `1e-16`. Over 864
+generated cases the interval agrees with R to `2.1e-14`. `qf_bisection` had no
+other caller and is gone; carrying two F quantiles of different accuracy in one
+file was the underlying defect.
+
+#### `var_test`'s p-value was formed by subtraction
+
+It computed the upper tail as `1 - pf(F)`, which is what
+[F and z tail p-values](#f-and-z-tail-p-values) says every F test here stopped
+doing — `var_test` was listed neither among those converted nor among the three
+known to remain subtractive. It now uses `pf_upper()`, which builds its own
+complement as `df2 / (df1·F + df2)` without subtracting. R writes the
+subtraction too, so in the far tail this is now **more accurate than R**;
+measured against mpmath over the same 864 cases:
+
+| | worst relative error |
+|---|---|
+| `Stats::LikeR` | `1.854e-14` |
+| R 4.6.1 | `1.0` |
+
+R's worst is `1.0` because `1 - pf(F)` reaches a flat `0` once the lower tail is
+within an ulp of `1`. On `c(3,1,4,1,5,9,2,6,5,3,5)` against
+`c(1,2,4,8,16,32,64)/1024`, two-sided: mpmath `1.08732387158297135e-11`,
+`Stats::LikeR` `1.0873238715829779e-11`, R `1.0873080213968933e-11`.
+
+#### `%zu` would have failed on MSVC, in two places silently
+
+Nine plain `snprintf` calls used the C99 `%zu` length modifier, which MSVC's
+older CRT does not implement — it prints the literal text. Two of the nine
+build **hash keys**, not messages: `csort`'s AoA → AoH and AoA → HoA
+conversions name their columns `"0" .. "ncols-1"`, so on such a build every
+column would have been stored under the key `"zu"` and all but one lost. A
+third is the `Index N` group label that `oneway_test` returns to the caller;
+the rest are counts inside `croak` text. All 9 now use `my_snprintf` with
+`UVuf`, the modifier Configure picks for the build's own `UV`.
+
+#### `ssize_t` does not exist outside POSIX
+
+Seven declarations used the lowercase POSIX spelling. Perl never defines it —
+there is no `typedef` or `#define` for it anywhere in the perl source, and
+`win32/win32.h` and `config_H.vc` do not supply one either — so the file
+compiled only because glibc's `<sys/types.h>` happens to. An MSVC build failed
+at the first one. They are `SSize_t` now, or `size_t` where the value is a
+length that cannot be negative, matching the 430 declarations that already
+spelled it that way.
+
+#### Two zero-length calls on null pointers
+
+`qsort` and `memcmp` are both declared to take non-null pointers whatever the
+element count, so passing `NULL` is undefined even for zero elements: UBSan
+reports it, and a compiler may infer non-nullness and delete a later check.
+`p_adjust` reached `qsort(NULL, 0, …)` whenever no row hash had any keys, and
+`drop_duplicates` reached `memcmp(NULL, NULL, 0)` when every key seen so far had
+been zero-length. Both were reachable from one line of Perl —
+`p_adjust([{}, {}])` and `drop_duplicates([{}, {}])`. The suite is now clean
+under both UBSan and AddressSanitizer.
+
+#### `malloc`/`free` in the `write_table` announcement
+
+The confirmation line allocated with libc's `malloc` when the path pushed it
+past a 512-byte stack buffer — the only two such calls in the file, where
+everything else uses `Newx`/`Safefree` so that the module uses whatever
+allocator its perl was built with, which on a `-Dusemymalloc` perl is not
+libc's. `Newx` is not the substitute here, since it croaks on failure and dying
+inside the confirmation line after the table has been written is worse than
+splitting the line; the long-path case now takes the same three-write path that
+the old out-of-memory branch did.
 
 ### read_table
 

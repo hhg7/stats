@@ -1995,21 +1995,23 @@ if ($idx->{statistic} == '-inf') {
 #} else {
 #	fail('cor_test w/ pearson: 1 or 2 CI endpoints is/are NaN');
 #}
+# cor_test(method => 'spearman') reports S -- the sum of squared rank
+# differences -- as its statistic on every path, which is what R's cor.test()
+# does (STATISTIC <- c(S = q), set once before the p-value switch, in
+# src/library/stats/R/cor.test.R).  These two used to assert the t statistic
+# here, so they read +/-Inf at a perfect correlation; that was the old
+# behaviour, where the field silently changed meaning at n = 10.
+# R 4.6.1 on this data: S = 3.6637359812630166e-14 and 329.99999999999994,
+# both its own rounding of an exact 0 and 330 out of (n^3-n)(1-r)/6, so the
+# comparison is absolute against the exact integers.
 $idx = cor_test([10, 20, 30, 40, 50, 60, 70, 80, 90, 100], [10, 20, 30, 40, 50, 60, 70, 80, 90, 100], method => 'spearman');
 is_approx( $idx->{estimate}, 1.0, 'cor_test: spearman estimate', 1e-13);
-if ($idx->{statistic} == 'inf') {
-	pass('cor_test: spearman has perfect positive correlation: stat is Inf');
-} else {
-	fail('cor_test: spearman perfect positive correlation: stat is NOT Inf');
-}
+cmp_ok( abs($idx->{statistic} - 0), '<', 1e-9,
+	'cor_test: spearman perfect positive correlation: S == 0');
 $idx = cor_test([1..10], [reverse 1..10], method => 'spearman');
 is_approx( $idx->{estimate}, -1.0, 'cor_test with spearman: estimate == -1', 1e-13);
-
-if ($idx->{statistic} == '-inf') {
-	pass('cor_test w/ spearman: perfect positive correlation: stat = -Inf');
-} else {
-	fail('cor_test w/ spearman: perfect positive correlation: stat is NOT -Inf');
-}
+cmp_ok( abs($idx->{statistic} - 330), '<', 1e-9,
+	'cor_test w/ spearman: perfect negative correlation: S == 330');
 $idx = cor_test([1..200], [reverse 1..200], method => 'kendall', exact => 0);
 is_approx( $idx->{estimate}, -1.0, 'cor_test: kendall = -1 for anti-monotone', 1e-13);
 

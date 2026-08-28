@@ -291,7 +291,18 @@ never enters its fallback loop.
 
 None of them may be called on an RMAGICAL av: a tied array's elements do not
 exist until FETCH has run, and AvARRAY() on one reads the wrong block
-entirely. Every caller tests SvRMAGICAL() first and skips the scan.*/
+entirely. Every caller tests SvRMAGICAL() first and skips the scan.
+
+A NaN anywhere in the column makes the answer NaN, in all four, as it does in
+R and as sum(), mean(), var(), sd() and median() already do here. The min and
+max scans have to say so explicitly, because the obvious `if (v < mn) mn = v;`
+does not: every comparison against a NaN is false, so a NaN that is not the
+first element is silently skipped and one that is stays put. That made the
+answer depend on where in the column the NaN sat -- min([NaN,1,2]) was NaN
+while min([1,2,NaN]) was 1, off both from R, which gives NaN for both, and
+from every other reduction in this file. Testing nv_isnan(v) first fixes it in
+one direction and needs no second pass: once mn is NaN every later v < mn is
+false, so the NaN is what survives to the end.*/
 static LIKER_NOINLINE void av_scan_sum(AV *av, SSize_t *jp, SSize_t len,
 	NvAcc *acc)
 {
@@ -335,7 +346,7 @@ static LIKER_NOINLINE void av_scan_min(AV *av, SSize_t *jp, SSize_t len,
 	for (; j < len; j++) {
 		NV v;
 		if (!el[j] || !sv_plain_nv(el[j], &v)) break;
-		if (v < mn) mn = v;
+		if (nv_isnan(v) || v < mn) mn = v;   //NaN wins and stays; see the contract
 		count++;
 	}
 	acc->min = mn;
@@ -360,7 +371,7 @@ static LIKER_NOINLINE void av_scan_max(AV *av, SSize_t *jp, SSize_t len,
 	for (; j < len; j++) {
 		NV v;
 		if (!el[j] || !sv_plain_nv(el[j], &v)) break;
-		if (v > mx) mx = v;
+		if (nv_isnan(v) || v > mx) mx = v;   //NaN wins and stays; see the contract
 		count++;
 	}
 	acc->max = mx;
@@ -2344,14 +2355,14 @@ static void pa_kernel(const NV *p, NV *adj, size_t n,
 		}
 	} else if (strcmp(meth, "hochberg") == 0) {
 		NV cummin = 1.0;
-		for (ssize_t i = n - 1; i >= 0; i--) {
+		for (SSize_t i = n - 1; i >= 0; i--) {
 			 NV v = arr[i].p * (n - i);
 			 if (v < cummin) cummin = v;
 			 adj[arr[i].orig_idx] = (cummin < 1.0) ? cummin : 1.0;
 		}
 	} else if (strcmp(meth, "bh") == 0) {
 		NV cummin = 1.0;
-		for (ssize_t i = n - 1; i >= 0; i--) {
+		for (SSize_t i = n - 1; i >= 0; i--) {
 			NV v = arr[i].p * n / (i + 1.0);
 			if (v < cummin) cummin = v;
 			adj[arr[i].orig_idx] = (cummin < 1.0) ? cummin : 1.0;
@@ -2360,7 +2371,7 @@ static void pa_kernel(const NV *p, NV *adj, size_t n,
 		NV q = 0.0;
 		for (size_t i = 1; i <= n; i++) q += 1.0 / i;
 		NV cummin = 1.0;
-		for (ssize_t i = n - 1; i >= 0; i--) {
+		for (SSize_t i = n - 1; i >= 0; i--) {
 			NV v = arr[i].p * n / (i + 1.0) * q;
 			if (v < cummin) cummin = v;
 			adj[arr[i].orig_idx] = (cummin < 1.0) ? cummin : 1.0;
@@ -2383,8 +2394,8 @@ static void pa_kernel(const NV *p, NV *adj, size_t n,
 			 q_arr[i] = min_val;
 		}
 		for (size_t j = n - 1; j >= 2; j--) {
-			 ssize_t n_mj = n - j;       // Max index for 'ij'. Length is n_mj + 1
-			 ssize_t i2_len = j - 1;     // Length of 'i2
+			 size_t n_mj = n - j;       // Max index for 'ij'. Length is n_mj + 1
+			 size_t i2_len = j - 1;     // Length of 'i2
 			 // Calculate q1 = min(j * p[i2] / (2:j))
 			 NV q1 = (j * arr[n_mj + 1].p) / 2.0;
 			 for (size_t k = 1; k < i2_len; k++) {
@@ -2455,7 +2466,15 @@ static SSize_t pa_sorted_keys(pTHX_ HV *hv, HE **out) {
 	HE *e;
 	hv_iterinit(hv);
 	while ((e = hv_iternext(hv))) out[k++] = e;
-	qsort(out, (size_t)k, sizeof(HE*), pa_cmp_he);
+	/*`out` is NULL when the caller found no keys to size it with -- p_adjust
+	only allocates its buffers when the widest row hash is non-empty, so
+	p_adjust([{}, {}]) arrives here with a null pointer and k == 0.  qsort()
+	is declared to take a non-null first argument whatever the count, so
+	passing NULL is undefined even for zero elements; UBSan reports it, and a
+	compiler is entitled to infer non-nullness and drop a later check.  The
+	guard is k > 1 rather than k > 0 because a single element is already
+	sorted.*/
+	if (k > 1) qsort(out, (size_t)k, sizeof(HE*), pa_cmp_he);
 	return k;
 }
 
@@ -2865,9 +2884,49 @@ static NV incbeta(NV a, NV b, NV x) {
 	return 1.0 - _incbeta_front(b, a, 1.0 - x) * _incbeta_cf(b, a, 1.0 - x) / b;
 }
 
-// P(T > t): pt(t, df, lower.tail = FALSE)
+/*P(T > t): pt(t, df, lower.tail = FALSE).
+
+prob_2tail is P(|T| > |t|) = I_z(df/2, 1/2) with z = df/(df + t^2), which is the
+`pbeta(1/nx, n/2, 0.5, lower_tail=1)` branch of R's nmath/pt.c.
+
+That form dies in the far tail, and not only past the overflow of t*t: z
+underflows long before, and incbeta() returns a flat 0 from z = 0 with no way
+back. On a double build pt(-1e160, 1) came back 0 where the true tail is
+3.18e-161, and every |t| above sqrt(DBL_MAX) = 1.34e154 gave 0 outright,
+because t*t is then Inf and z is exactly 0. qt_tail() bisects against this
+function, so the collapse also capped every t quantile at 1.34e154 (see the
+ceiling there).
+
+R's own guard is the second branch below: once nx = 1 + (t/df)*t exceeds 1e100
+it stops calling pbeta and evaluates the tail in logs by Abramowitz & Stegun
+26.5.4, I_z(a, b) ~ z^a / (a B(a, b)) as z -> 0, at a = df/2, b = 1/2,
+z = 1/nx. Written out, log I = -(df/2)(2 log|t| - log df) - lbeta(df/2, 1/2)
+- log(df/2), which needs neither z nor t*t and so has nothing left to
+underflow. The 1e100 threshold is R's, not a fresh guess: nmath/pt.c has used
+it since R 1.x, and it sits far enough below the 1e308 overflow that nx is
+still exact there while z = 1/nx is still far above the subnormal range.
+
+Measured at the seam against mpmath at mp.dps = 60, stepping one part in 1e12
+and 1e15 either side of nx = 1e100 for df in {0.5, 1, 2, 5}: the asymptotic
+branch is within 1.2e-14 relative and the incbeta branch within 1.11e-13, the
+worst of the two being incbeta at df = 5. So the series is if anything the more
+accurate side of the join, and the step across it is below the 1e-12 the
+t-distribution tests in t/ allow. Nothing above df ~ 30 could be compared: the
+tail has already underflowed to 0 on both sides by the time nx reaches 1e100,
+which is the regime the old code was stuck in for every df.*/
 static NV pt_upper(NV t, NV df) {
-	NV prob_2tail = incbeta(df / 2.0, 0.5, df / (df + t * t));
+	const NV nx = 1.0 + (t / df) * t;
+	NV prob_2tail;
+	if (nx > 1e100) {
+		/*lbeta(df/2, 1/2) written out; there is no lbeta() in this file and
+		one call site does not earn one.*/
+		const NV lbeta = nv_lgamma(0.5 * df) + nv_lgamma(0.5)
+		               - nv_lgamma(0.5 * df + 0.5);
+		prob_2tail = nv_exp(-0.5 * df * (2.0 * nv_log(nv_fabs(t)) - nv_log(df))
+		                    - lbeta - nv_log(0.5 * df));
+	} else {
+		prob_2tail = incbeta(df / 2.0, 0.5, df / (df + t * t));
+	}
 	return (t > 0) ? 0.5 * prob_2tail : 1.0 - 0.5 * prob_2tail;
 }
 
@@ -2896,11 +2955,32 @@ static NV qt_tail(NV df, NV p_tail) {
 	if (p_tail == 0.5)   return 0.0;
 	if (p_tail  > 0.5)   return -qt_tail(df, 1.0 - p_tail);
 	NV low = 0.0, high = 1.0;
-	/*t * t overflows past sqrt(DBL_MAX); pt_upper() there is already 0, so the
-	loop ends on its own well before that, and the guard is only a backstop.*/
-	while (high < nv_sqrt(DBL_MAX) && pt_upper(high, df) > p_tail) {
+	/*Double until pt_upper() has dropped to p_tail, then bisect in [low, high].
+
+	This used to stop at sqrt(DBL_MAX), on the reasoning that t * t overflows
+	past it and pt_upper() is 0 there anyway. Both halves were wrong. The
+	ceiling was reached with pt_upper(high) still above p_tail, and the
+	bisection then converged onto `high` itself and returned it as the answer:
+	qt(1e-160, 1) came back -1.3407807929942597e+154, the constant, where the
+	quantile is -3.18e+159, and qt(1e-300, 1) returned the same constant for a
+	quantile of -3.18e+299 -- silently, since a saturated bracket looks exactly
+	like a converged one. It is the same failure as the 1e6 ceiling this
+	function carried before, moved to a larger number. pt_upper() no longer
+	collapses out there either, so there is nothing left to stop early for.
+
+	NV_MAX / 2 is what the doubling itself needs: `high *= 2.0` must not become
+	Inf, since pt_upper(Inf) is 0 and would end the loop on a bracket whose top
+	is not a number the answer can be. Reaching it means the tail never fell to
+	p_tail below NV_MAX, and the quantile really is past what an NV can name --
+	so say Inf rather than the ceiling, which is the answer R gives there too
+	(qt(1e-300, 0.5) is -Inf on a double build). Bisection needs no iteration
+	bump: the bracket is a factor of two wide however far out it sits, so it
+	still closes on adjacent NVs in mantissa-many steps -- 53 on a double, 113
+	on quadmath, against the 200 the loop allows.*/
+	while (pt_upper(high, df) > p_tail) {
 		low   = high;
 		high *= 2.0;
+		if (high > NV_MAX / 2.0) return NV_INF;
 	}
 	for (unsigned short int i = 0; i < 200; i++) {
 		NV mid = 0.5 * (low + high);
@@ -3286,40 +3366,44 @@ static NV as181_poly(const NV *cc, unsigned short int nord, NV x) {
 	for (unsigned short int j = nord - 1; j > 0; j--) p = p * x + cc[j - 1];
 	return p;
 }
-/*--
-Exact Spearman p-value via exhaustive permutation enumeration.
+/*Exact Spearman tail by exhaustive permutation enumeration, for n <= 9 only.
 
-Under H0, all n! orderings of ranks are equally probable.  We visit
-every permutation of {1..n} with Heap's algorithm (O(n!), no allocs
-inside the loop) and count how many yield S ≤ s_obs ("lower tail",
-i.e. rho ≥ rho_obs) and how many yield S ≥ s_obs ("upper tail").
+Under H0 all n! orderings of the ranks are equally probable, so visiting every
+one of them with Heap's algorithm and counting those with S >= is gives the
+upper tail exactly. `ifr` is R's name for that count in prho() below, and the
+comparison is the integer one R makes: with no ties S is an even integer, and
+the caller has already rounded.
 
-Mirrors R's default: exact = (n < 10) with no ties.
-Valid up to n = 9 (362 880 iterations — negligible cost).
------------------------------------------------------------------------*/
-static NV spearman_exact_pvalue(NV s_obs, size_t n, const char *alt) {
-	int *perm = (int*)safemalloc(n * sizeof(int));
-	int *c    = (int*)safemalloc(n * sizeof(int));
-	for (size_t i = 0; i < n; i++) { perm[i] = i + 1; c[i] = 0; }
+The n <= 9 bound is not advice, it is the reason this is callable at all. n!
+is 362 880 here and 6.2e23 at n = 24, so a single unbounded call never
+returns; the bound lives in spearman_prho(), which is the only caller, and
+this function must not be given anything larger. It is also where R stops --
+prho()'s n_small is 9, with the upstream note that past 12 the factorial
+overflows the counters. `total` is NV rather than an integer for the same
+reason: 21! already exceeds 2^63.*/
+static NV spearman_exact_upper(NV is, size_t n) {
+	int *perm, *c;
+	Newx(perm, n, int);
+	Newx(c,    n, int);
+	for (size_t i = 0; i < n; i++) { perm[i] = (int)i + 1; c[i] = 0; }
 
-	long count_le = 0, count_ge = 0, total = 0;
+	NV ifr = 0.0, total = 0.0;
 
-	#define TALLY_PERM() do {                                    \
-	  NV s_ = 0.0;                                     \
-	  for (int ii = 0; ii < n; ii++) {                    \
-		   NV d_ = (NV)(ii + 1) - (NV)perm[ii];\
-		   s_ += d_ * d_;                                   \
-	  }                                                    \
-	  if (s_ <= s_obs + 1e-9) count_le++;                 \
-	  if (s_ >= s_obs - 1e-9) count_ge++;                 \
-	  total++;                                             \
+	#define TALLY_PERM() do {                                \
+	  NV s_ = 0.0;                                           \
+	  for (size_t ii_ = 0; ii_ < n; ii_++) {                 \
+		   NV d_ = (NV)(ii_ + 1) - (NV)perm[ii_];            \
+		   s_ += d_ * d_;                                    \
+	  }                                                      \
+	  if (s_ >= is) ifr += 1.0;                              \
+	  total += 1.0;                                          \
 	} while (0)
 
 	TALLY_PERM();   //initial permutation [1, 2, ..., n]
 
-	unsigned int k = 1;
+	size_t k = 1;
 	while (k < n) {
-		if (c[k] < k) {
+		if ((size_t)c[k] < k) {
 			int tmp;
 			if (k % 2 == 0) {
 				 tmp = perm[0]; perm[0] = perm[k]; perm[k] = tmp;
@@ -3336,16 +3420,63 @@ static NV spearman_exact_pvalue(NV s_obs, size_t n, const char *alt) {
 	}
 	#undef TALLY_PERM
 	Safefree(perm); Safefree(c);
-	/*p_le = P(S ≤ s_obs) ≡ P(rho ≥ rho_obs)  — upper rho tail
-	p_ge = P(S ≥ s_obs) ≡ P(rho ≤ rho_obs)  — lower rho tail*/
-	NV p_le = (NV)count_le / (NV)total;
-	NV p_ge = (NV)count_ge / (NV)total;
+	return ifr / total;
+}
 
-	if (strcmp(alt, "greater") == 0) return p_le;
-	if (strcmp(alt, "less")    == 0) return p_ge;
-	//two.sided: 2 × the smaller tail, clamped to 1
-	NV p = 2.0 * (p_le < p_ge ? p_le : p_ge);
-	return (p > 1.0) ? 1.0 : p;
+/*AS 89, the Edgeworth series R uses for the Spearman tail above n = 9.
+
+Transcribed from R 4.6.1 src/library/stats/src/prho.c, itself Algorithm AS 89,
+Appl. Statist. (1975) Vol. 24 No. 3 p. 377, with R's substitution of pnorm()
+for the paper's alnorm(). The twelve c* are the Edgeworth coefficients as
+printed there. x is rho / sqrt(var rho), asymptotically standard normal; u is
+the correction term, and dividing it by exp(x^2 / 2) is the series' own
+Gaussian weight.
+
+Sign of the correction follows the tail, which is why lower_tail is passed
+down rather than being handled by the caller as 1 - p: forming the far tail by
+subtraction is what this whole series exists to avoid.*/
+static NV spearman_as89(NV is, size_t n, bool lower_tail) {
+	const NV c1 = .2274, c2 = .2531, c3  = .1745, c4  = .0758,
+	         c5 = .1033, c6 = .3932, c7  = .0879, c8  = .0151,
+	         c9 = .0072, c10= .0831, c11 = .0131, c12 = 4.6e-4;
+	NV y = (NV)n;
+	const NV b = 1.0 / y;
+	const NV x = (6.0 * (is - 1.0) * b / (y * y - 1.0) - 1.0) * nv_sqrt(y - 1.0);
+	NV u, pv;
+	y = x * x;
+	u = x * b * (c1 + b * (c2 + c3 * b) +
+	             y * (-c4 + b * (c5 + c6 * b) -
+	                  y * b * (c7 + c8 * b -
+	                           y * (c9 - c10 * b + y * b * (c11 - c12 * y)))));
+	y = u / nv_exp(y / 2.0);
+	pv = (lower_tail ? -y : y) + approx_pnorm(lower_tail ? x : -x);
+	if (pv < 0.0) pv = 0.0;
+	if (pv > 1.0) pv = 1.0;
+	return pv;
+}
+
+/*R's prho(): Pr[S >= is], or Pr[S < is] when lower_tail.
+
+Exact below n = 10, AS 89 above it -- the split R makes, and the only thing
+standing between cor_test(..., exact => 1) and an n! walk. Before this, the
+exact branch was entered on the caller's `exact` alone with no bound on n, so
+a 24-point sample asked for 6.2e23 permutations and the process had to be
+killed. R has never enumerated past n = 9 whatever `exact` says, and neither
+does this now.
+
+The two guards ahead of the split are prho()'s own: S is a sum of squared rank
+differences, so S <= 0 means every rank matched and the upper tail is the
+whole distribution, while S past its maximum (n^3 - n)/3, at rho = -1, leaves
+nothing above it.*/
+static NV spearman_prho(NV is, size_t n, bool lower_tail) {
+	if (is <= 0.0) return lower_tail ? 0.0 : 1.0;
+	const NV n3 = (NV)n * ((NV)n * (NV)n - 1.0) / 3.0;   //the largest S can be
+	if (is > n3)  return lower_tail ? 1.0 : 0.0;
+	if (n <= 9) {
+		const NV upper = spearman_exact_upper(is, n);
+		return lower_tail ? 1.0 - upper : upper;
+	}
+	return spearman_as89(is, n, lower_tail);
 }
 /*Exact Kendall p-value via Mahonian Numbers (Inversions distribution)
 Matches R's behavior for N < 50 without ties.*/
@@ -3496,16 +3627,25 @@ static void write_table_announce(pTHX_ const char *file) {
 	static const char post[] = "\033[0m\n";
 	const size_t flen = strlen(file);
 	const size_t need = (sizeof(pre) - 1) + flen + (sizeof(post) - 1);
+	/*A path longer than the stack buffer takes the three-write path instead of
+	allocating.  It used to reach malloc()/free(), the only two in this file:
+	every other allocation goes through Newx()/Safefree() so that the module
+	uses whatever allocator its perl was built with, and a perl configured
+	-Dusemymalloc has one that is not libc's.  Newx() is not the fix here
+	either, because it croaks on failure -- dying inside the confirmation
+	line, after the table has already been written, is worse than splitting
+	the line -- and the split path is what the old out-of-memory branch did
+	anyway.  512 bytes holds any path plus the eleven bytes of SGR, so the
+	one-write case is what essentially every caller gets; the seam only costs
+	atomicity against a concurrent writer on fd 1, which is what the
+	out-of-memory branch already conceded.*/
 	char stackbuf[512];
-	char *line = need <= sizeof(stackbuf)
-		? stackbuf : (char*)malloc(need);
-	if (line) {
-		memcpy(line, pre, sizeof(pre) - 1);
-		memcpy(line + sizeof(pre) - 1, file, flen);
-		memcpy(line + sizeof(pre) - 1 + flen, post, sizeof(post) - 1);
-		PerlIO_write(out, line, need);
-		if (line != stackbuf) free(line);
-	} else {/*out of memory: fall back to three writes*/
+	if (need <= sizeof(stackbuf)) {
+		memcpy(stackbuf, pre, sizeof(pre) - 1);
+		memcpy(stackbuf + sizeof(pre) - 1, file, flen);
+		memcpy(stackbuf + sizeof(pre) - 1 + flen, post, sizeof(post) - 1);
+		PerlIO_write(out, stackbuf, need);
+	} else {
 		PerlIO_write(out, pre, sizeof(pre) - 1);
 		PerlIO_write(out, file, flen);
 		PerlIO_write(out, post, sizeof(post) - 1);
@@ -5243,33 +5383,6 @@ static NV ptt_root(const ptt_ctx *c, NV lo, NV hi, NV tol) {
 	return x;
 }
 
-/* Bisection algorithm to find the inverse F-distribution (Quantile function)
- Equivalent to R's qf(p, df1, df2)*/
-static NV qf_bisection(NV p, NV df1, NV df2) {
-	if (p <= 0.0) return 0.0;
-	if (p >= 1.0) return INFINITY;
-	NV low = 0.0, high = 1.0;
-	// Find upper bound
-	while (pf(high, df1, df2) < p) {
-	  low = high;
-	  high *= 2.0;
-	  if (high > 1e100) break; //Fallback limit
-	}
-
-	// Bisect to find the root
-	for (unsigned short int i = 0; i < 150; i++) {
-		NV mid = low + (high - low) / 2.0;
-		NV p_mid = pf(mid, df1, df2);
-
-		if (p_mid < p) {
-			low = mid;
-		} else {
-			high = mid;
-		}
-		if (high - low < 1e-12) break;
-	}
-	return (low + high) / 2.0;
-}
 
 typedef struct {
 	NV  statistic;
@@ -5493,8 +5606,15 @@ static int build_groups_from_formula(pTHX_
 	}
 
 	if (ngroups < 2) {
-	  snprintf(errbuf, errbuf_len,
-		   "formula: need at least 2 distinct groups, found %zu", ngroups);
+	  /*my_snprintf and UVuf, not snprintf and %zu.  %zu is C99, and MSVC's
+	  older CRT does not implement it -- it prints the literal text, so the
+	  count never reaches the message.  UVuf is the length modifier Configure
+	  picked for this build's UV, so it is a plain C format every CRT knows,
+	  and my_snprintf is the spelling that has been ported everywhere.  The
+	  same substitution is made at every other plain-snprintf site in this
+	  file; croak() needs UVuf for a different reason, noted at its own site.*/
+	  my_snprintf(errbuf, errbuf_len,
+		   "formula: need at least 2 distinct groups, found %" UVuf, (UV)ngroups);
 	  for (size_t g = 0; g < ngroups; g++) Safefree(group_names[g]);
 	  Safefree(group_names);  Safefree(obs_group);
 	  return 0;
@@ -5505,9 +5625,9 @@ static int build_groups_from_formula(pTHX_
 	//validate: every group needs >= 2 observations
 	for (size_t g = 0; g < ngroups; g++) {
 		if (out_sizes[g] < 2) {
-			snprintf(errbuf, errbuf_len,
-				 "formula: group '%s' has only %zu observation(s); need >= 2",
-				 group_names[g], out_sizes[g]);
+			my_snprintf(errbuf, errbuf_len,
+				 "formula: group '%s' has only %" UVuf " observation(s); need >= 2",
+				 group_names[g], (UV)out_sizes[g]);
 			for (size_t gg = 0; gg < ngroups; gg++) Safefree(group_names[gg]);
 			Safefree(group_names);  Safefree(obs_group);
 			return 0;
@@ -6878,7 +6998,9 @@ static SV *cs_materialize(pTHX_ cs_shape out_shape, cs_shape in_shape,
 			for (size_t c = 0; c < ncols; c++) {
 				SV **cp = row ? av_fetch(row, (SSize_t)c, 0) : NULL;
 				char kb[24];
-				int kl = snprintf(kb, sizeof kb, "%zu", c);
+				/*A hash KEY, not a message: on a CRT without %zu every
+				column would be stored under the same literal "zu".*/
+				int kl = my_snprintf(kb, sizeof kb, "%" UVuf, (UV)c);
 				(void)hv_store(rh, kb, (I32)kl,
 				               (cp && *cp) ? newSVsv(*cp) : newSV(0), 0);
 			}
@@ -6915,7 +7037,8 @@ static SV *cs_materialize(pTHX_ cs_shape out_shape, cs_shape in_shape,
 				av_push(ncol, cell ? newSVsv(cell) : newSV(0));
 			}
 			char kb[24];
-			int kl = snprintf(kb, sizeof kb, "%zu", c);
+			//likewise a hash key, one per column
+			int kl = my_snprintf(kb, sizeof kb, "%" UVuf, (UV)c);
 			(void)hv_store(out, kb, (I32)kl, newRV_noinc((SV *)ncol), 0);
 		}
 		return newRV_noinc((SV *)out);
@@ -8430,8 +8553,14 @@ dd_intern(pTHX_ dd_ctx *T, size_t start, SSize_t row) {
 	size_t i = (size_t)h & mask;
 	while (T->slot[i]) {
 		const SSize_t g = T->slot[i] - 1;
+		/*n == 0 short-circuits the memcmp rather than relying on it: two
+		zero-length keys are equal, and when every key so far has been
+		zero-length T->buf is still NULL (nothing ever reserved it), where
+		memcmp() is undefined even for a count of 0 -- both arguments are
+		declared non-null.  drop_duplicates([{}, {}]) is the reachable case,
+		and UBSan reports it.  dd_find() below carries the same guard.*/
 		if (T->khash[g] == h && (size_t)(T->off[g + 1] - T->off[g]) == n
-		    && memcmp(T->buf + T->off[g], T->buf + start, n) == 0) {
+		    && (n == 0 || memcmp(T->buf + T->off[g], T->buf + start, n) == 0)) {
 			T->len = start; // duplicate: drop the copy
 			return g;
 		}
@@ -8490,8 +8619,9 @@ static SSize_t dd_find(dd_ctx *T, size_t start) {
 		size_t i = (size_t)h & mask;
 		while (T->slot[i]) {
 			const SSize_t g = T->slot[i] - 1;
+			//n == 0 guard as in dd_intern(): T->buf may still be NULL
 			if (T->khash[g] == h && (size_t)(T->off[g + 1] - T->off[g]) == n
-			    && memcmp(T->buf + T->off[g], T->buf + start, n) == 0) {
+			    && (n == 0 || memcmp(T->buf + T->off[g], T->buf + start, n) == 0)) {
 				found = g;
 				break;
 			}
@@ -9325,11 +9455,11 @@ static void dunn_padjust(const NV *p, size_t m, const char *meth, NV *adj) {
 		for (size_t i = 0; i < m; i++) { NV v = 1.0 - nv_pow(1.0 - p[ord[i]], (NV)(m - i)); if (v > cummax) cummax = v; adj[ord[i]] = cummax < 1.0 ? cummax : 1.0; }
 	} else if (strEQ(meth, "bh")) {
 		NV cummin = 1.0;
-		for (ssize_t i = (ssize_t)m - 1; i >= 0; i--) { NV v = p[ord[i]] * m / (i + 1.0); if (v < cummin) cummin = v; adj[ord[i]] = cummin < 1.0 ? cummin : 1.0; }
+		for (SSize_t i = (SSize_t)m - 1; i >= 0; i--) { NV v = p[ord[i]] * m / (i + 1.0); if (v < cummin) cummin = v; adj[ord[i]] = cummin < 1.0 ? cummin : 1.0; }
 	} else if (strEQ(meth, "by")) {
 		NV q = 0.0; for (size_t i = 1; i <= m; i++) q += 1.0 / i;
 		NV cummin = 1.0;
-		for (ssize_t i = (ssize_t)m - 1; i >= 0; i--) { NV v = p[ord[i]] * m / (i + 1.0) * q; if (v < cummin) cummin = v; adj[ord[i]] = cummin < 1.0 ? cummin : 1.0; }
+		for (SSize_t i = (SSize_t)m - 1; i >= 0; i--) { NV v = p[ord[i]] * m / (i + 1.0) * q; if (v < cummin) cummin = v; adj[ord[i]] = cummin < 1.0 ? cummin : 1.0; }
 	} else {
 		Safefree(ord);
 		croak("dunn_test: unknown method '%s' (none, bonferroni, sidak, holm, hs, bh, by)", meth);
@@ -10513,6 +10643,25 @@ static NV d_qf(NV p, const NV *par, bool lower, bool give_log) {
 	qbeta_both(p, df2 / 2.0, df1 / 2.0, &t, &comp);
 	if (!(t > 0.0)) return NV_INF;
 	return (df2 / df1) * comp / t;
+}
+
+/*qf(p, df1, df2) as a plain three-argument call, for var_test's interval.
+
+var_test used to reach a private qf_bisection() instead, which bracketed by
+doubling from 1 and stopped on an ABSOLUTE `high - low < 1e-12`.  An absolute
+stop is an absolute error in a quantity that is not: at conf.level = 0.999999
+on nine and nine degrees of freedom the divisor qf(5e-07, 9, 9) is about 0.016,
+so 1e-12 there is 6e-11 relative, and the interval came out
+[16085387951.278957, 62168223924585.172] against R's
+[16085387950.871651, 62168223923448.094].  At the default 0.95 the same
+mechanism cost 4.9e-13.  d_qf() solves the same equation through bt_qbeta()
+with a relative stop and agrees with mpmath at mp.dps = 60 to about 1e-16, so
+the interval now inherits that instead.  qf_bisection() had no other caller
+and is gone; keeping two F quantiles of different accuracy in one file was the
+underlying defect.*/
+static NV qf_lower(NV p, NV df1, NV df2) {
+	const NV par[2] = { df1, df2 };
+	return d_qf(p, par, TRUE, FALSE);
 }
 
 static NV d_pbinom(NV q, const NV *par, bool lower, bool give_log) {
@@ -13208,18 +13357,19 @@ SV *oneway_test(data_ref, ...)
 			for (size_t g = 0; g < k; g++) {
 				SV **val = av_fetch(in_av, (I32)g, 0);
 				if (!val || !*val || !SvROK(*val) || SvTYPE(SvRV(*val)) != SVt_PVAV) {
-					snprintf(errbuf, sizeof errbuf, "index %zu is not an array reference", g);
+					my_snprintf(errbuf, sizeof errbuf, "index %" UVuf " is not an array reference", (UV)g);
 					goto fail;
 				}
 				IV len = av_len((AV *)SvRV(*val)) + 1;
 				if (len < 2) {
-					snprintf(errbuf, sizeof errbuf, "index %zu has fewer than 2 observations", g);
+					my_snprintf(errbuf, sizeof errbuf, "index %" UVuf " has fewer than 2 observations", (UV)g);
 					goto fail;
 				}
 				sizes[g] = (size_t)len;
 				total_n += len;
 				char buf[64];
-				snprintf(buf, sizeof buf, "Index %zu", g);
+				//a group LABEL that is returned to the caller, not a message
+				my_snprintf(buf, sizeof buf, "Index %" UVuf, (UV)g);
 				gnames[g] = savepv(buf);               //perl-managed copy
 			}
 
@@ -13232,9 +13382,9 @@ SV *oneway_test(data_ref, ...)
 				for (IV i = 0; i < len; i++) {
 					SV **svp = av_fetch(av, i, 0);
 					if (!svp || !*svp || !SvOK(*svp) || !looks_like_number(*svp)) {
-						snprintf(errbuf, sizeof errbuf,
-							"index %zu, observation %ld is undefined or non-numeric",
-							g, (long)i);
+						my_snprintf(errbuf, sizeof errbuf,
+							"index %" UVuf ", observation %" IVdf " is undefined or non-numeric",
+							(UV)g, (IV)i);
 						goto fail;
 					}
 					flat[offset++] = SvNV(*svp);
@@ -16594,14 +16744,46 @@ CODE:
 			  break;
 		  }
 	  }
+	  /*Which tail, and by which method -- R's cor.test() spearman branch.
+
+	  `exact` defaults to TRUE, not to (n < 10): R hands every n up to 1290 to
+	  prho(), which is exact below 10 and AS 89 above it, and only past 1290
+	  falls back to the asymptotic t. Defaulting to (n < 10) here meant every
+	  sample of 10 or more silently took the t branch instead, which is R's
+	  exact = FALSE, and the p-values were out by tens of percent all the way
+	  down the range -- 1.76e-07 against R's 1.15e-06 on a 32-point sample, and
+	  5.07e-17 against 5.79e-06 on a 16-point one. Ties still force the
+	  approximation, as they do in R.*/
 	  bool do_exact;
 	  if (!exact_sv || !SvOK(exact_sv))
-		  do_exact = (n < 10) && !has_ties;
+		  do_exact = TRUE;
 	  else
-		  do_exact = SvTRUE(exact_sv) ? 1 : 0;
+		  do_exact = SvTRUE(exact_sv) ? TRUE : FALSE;
+	  if (do_exact && has_ties) do_exact = FALSE;
+	  /*1290 is R's bound, and it is about overflow rather than cost: n^3 - n
+	  is formed as an integer there and 1291^3 passes 2^31.*/
+	  if (do_exact && n > 1290) do_exact = FALSE;
+	  /*S is the statistic R reports for Spearman on every path, exact or not.
+	  This used to report S from the exact branch and the t statistic from the
+	  other, so the field changed meaning at n = 10 and, once the p-value came
+	  from AS 89, no longer named the quantity the p-value was computed from.*/
+	  statistic = S_stat;
 	  if (do_exact) {
-		  statistic = S_stat;
-		  p_value   = spearman_exact_pvalue(S_stat, n, alternative);
+		  /*R rounds S and adds 2 for the lower tail, so that Pr[S < S+2] is
+		  Pr[S <= S]: with no ties S only takes even values.*/
+		  const NV s_r = nv_round(S_stat);
+		  const NV half = (NV)n * ((NV)n * (NV)n - 1.0) / 6.0;   //S at rho = 0
+		  if (strcmp(alternative, "greater") == 0)
+			  p_value = spearman_prho(s_r + 2.0, n, TRUE);
+		  else if (strcmp(alternative, "less") == 0)
+			  p_value = spearman_prho(s_r, n, FALSE);
+		  else {
+			  /*two.sided: R picks the tail S actually lies in and doubles it,
+			  rather than doubling the smaller of the two.*/
+			  const NV p = (s_r > half) ? spearman_prho(s_r, n, FALSE)
+			                            : spearman_prho(s_r + 2.0, n, TRUE);
+			  p_value = (2.0 * p > 1.0) ? 1.0 : 2.0 * p;
+		  }
 	  } else {
 		  NV r = estimate;
 		  /*NOTE: R silently ignores continuity correction for Spearman.
@@ -16611,11 +16793,12 @@ CODE:
 			  warn("cor_test: continuity correction is not defined for Spearman in R and is ignored here");
 		  }
 		  NV denom_t = 1.0 - r * r;
+		  NV t_stat;
 		  if (denom_t <= 0.0)
-			  statistic = (r > 0.0) ? INFINITY : -INFINITY;
+			  t_stat = (r > 0.0) ? NV_INF : -NV_INF;
 		  else
-			  statistic = r * nv_sqrt((NV)(n - 2) / denom_t);
-		  p_value = get_t_pvalue(statistic, (NV)(n - 2), alternative);
+			  t_stat = r * nv_sqrt((NV)(n - 2) / denom_t);
+		  p_value = get_t_pvalue(t_stat, (NV)(n - 2), alternative);
 	  }
 	  Safefree(rank_x);	  Safefree(rank_y);
 	} else {
@@ -16807,7 +16990,7 @@ NV min(...)
 					 SV* tv = av_slow_at(aTHX_ av, j);
 					 if (tv) {
 						 NV val = SvNV(tv);
-						 if (acc.count == 0 || val < acc.min) acc.min = val;
+						 if (acc.count == 0 || nv_isnan(val) || val < acc.min) acc.min = val;   //NaN wins; see the av_scan contract
 						 acc.count++;
 					 } else {
 						 croak("min: undefined value at array ref index %" UVuf " (argument %" UVuf ")", (UV)j, (UV)i);
@@ -16815,7 +16998,7 @@ NV min(...)
 				 }
 			} else if (SvOK(arg)) {
 				 NV val = SvNV(arg);
-				 if (acc.count == 0 || val < acc.min) acc.min = val;
+				 if (acc.count == 0 || nv_isnan(val) || val < acc.min) acc.min = val;   //NaN wins; see the av_scan contract
 				 acc.count++;
 			} else {
 				 croak("min: undefined value at argument index %" UVuf, (UV)i);
@@ -16841,7 +17024,7 @@ NV max(...)
 				   SV* tv = av_slow_at(aTHX_ av, j);
 				   if (tv) {
 					   NV val = SvNV(tv);
-					   if (acc.count == 0 || val > acc.max) acc.max = val;
+					   if (acc.count == 0 || nv_isnan(val) || val > acc.max) acc.max = val;   //NaN wins; see the av_scan contract
 					   acc.count++;
 				   } else {
 					   croak("max: undefined value at array ref index %" UVuf " (argument %" UVuf ")", (UV)j, (UV)i);
@@ -16849,7 +17032,7 @@ NV max(...)
 			   }
 		   } else if (SvOK(arg)) {
 			   NV val = SvNV(arg);
-			   if (acc.count == 0 || val > acc.max) acc.max = val;
+			   if (acc.count == 0 || nv_isnan(val) || val > acc.max) acc.max = val;   //NaN wins; see the av_scan contract
 			   acc.count++;
 		   } else {
 			   croak("max: undefined value at argument index %" UVuf, (UV)i);
@@ -17963,8 +18146,8 @@ PPCODE:
 	{
 		char method[96];
 		if (k == 1) snprintf(method, sizeof method, "1-sample proportions test %s continuity correction", YATES > 0.0 ? "with" : "without");
-		else snprintf(method, sizeof method, "%zu-sample test for %s proportions %s continuity correction",
-			k, p_is_null ? "equality of" : "given", YATES > 0.0 ? "with" : "without");
+		else my_snprintf(method, sizeof method, "%" UVuf "-sample test for %s proportions %s continuity correction",
+			(UV)k, p_is_null ? "equality of" : "given", YATES > 0.0 ? "with" : "without");
 		hv_stores(ret, "method", newSVpv(method, 0));
 	}
 	{
@@ -21679,20 +21862,38 @@ CODE:
 	// Statistics Math
 	NV estimate = var_x / var_y;
 	NV statistic = estimate / ratio;
-	NV p_val = pf(statistic, df_x, df_y);
+	/*Each tail from the routine that computes it directly, never as 1 minus
+	the other -- the rule the rest of this file's F tests already follow, and
+	which README's "F and z tail p-values" states; var_test was simply missed
+	when the others were converted.  pf() is the lower tail and pf_upper() the
+	upper, and pf_upper() forms its own complement as df2 / (df1*F + df2)
+	rather than by subtracting, so no digits are lost.
+
+	`1.0 - pf(...)` is fine while the result is O(1) and useless once it is
+	not: on x = c(3,1,4,1,5,9,2,6,5,3,5) against c(1,2,4,8,16,32,64)/1024 the
+	lower tail is 1 - 5.4e-12, so the subtraction kept about five significant
+	digits and the two-sided p came out 1.0873302258573858e-11 against a true
+	1.08732387158297135e-11 (mpmath, mp.dps = 60), a relative 5.8e-06.  R
+	writes the subtraction too and lands at 1.0873080213968933e-11, 1.5e-05
+	out; below about 1e-16 both forms reach a flat 0 while this one keeps
+	going.  So var_test's p-value is now more accurate than R's in the tail,
+	deliberately and for the documented reason.*/
+	NV p_val;
 	NV ci_lower = 0.0, ci_upper = INFINITY;
 	if (strcmp(alternative, "less") == 0) {
-	  ci_upper = estimate / qf_bisection(1.0 - conf_level, df_x, df_y);
+	  p_val = pf(statistic, df_x, df_y);
+	  ci_upper = estimate / qf_lower(1.0 - conf_level, df_x, df_y);
 	} else if (strcmp(alternative, "greater") == 0) {
-	  p_val = 1.0 - p_val;
-	  ci_lower = estimate / qf_bisection(conf_level, df_x, df_y);
+	  p_val = pf_upper(statistic, df_x, df_y);
+	  ci_lower = estimate / qf_lower(conf_level, df_x, df_y);
 	} else {// two.sided
-	  NV p1 = p_val;
-	  NV p2 = 1.0 - p_val;
+	  NV p1 = pf(statistic, df_x, df_y);
+	  NV p2 = pf_upper(statistic, df_x, df_y);
 	  p_val = 2.0 * (p1 < p2 ? p1 : p2);
+	  if (p_val > 1.0) p_val = 1.0;   //2 * a tail just above 0.5
 	  NV beta = (1.0 - conf_level) / 2.0;
-	  ci_lower = estimate / qf_bisection(1.0 - beta, df_x, df_y);
-	  ci_upper = estimate / qf_bisection(beta, df_x, df_y);
+	  ci_lower = estimate / qf_lower(1.0 - beta, df_x, df_y);
+	  ci_upper = estimate / qf_lower(beta, df_x, df_y);
 	}
 	// Pack Results
 	HV* results = newHV();

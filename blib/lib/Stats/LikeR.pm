@@ -7607,9 +7607,22 @@ I<n> = 60 to 500 and all three alternatives: C<estimate> agrees to C<3e-15>,
 Kendall's C<statistic> to C<2e-15>, and C<p.value> to C<1.7e-12> — the worst of
 those at a p-value of C<2.2e-297>.
 
-Note that C<statistic> is the z of the approximation, whereas R reports
-Spearman's I<S>; the two are different quantities, so compare C<estimate> and
-C<p.value> rather than C<statistic> when checking against R for that method.
+=head3 Spearman: which method, and what C<statistic> holds
+
+C<spearman> follows R's C<cor.test> exactly: C<exact> defaults to true, and an
+exact request is served by permutation enumeration for I<n> E<lt>= 9, by the
+AS 89 Edgeworth series for 10 E<lt>= I<n> E<lt>= 1290, and by the asymptotic
+I<t> above that or whenever the ranks contain ties. Passing C<< exact =E<gt> 1 >>
+never enumerates past I<n> = 9, because I<n>! is 6.2 x 10^23 by I<n> = 24.
+
+C<statistic> is Spearman's I<S>, the sum of squared rank differences, on every
+one of those paths -- the same quantity R reports, so it can be compared
+directly. Two differences from R are worth knowing, neither of them about the
+mathematics: at a perfect correlation R derives I<S> from rho and lands a
+rounding step away (C<3.66e-14> for an exact 0 at I<n> = 10), and under ties R
+keeps using that same identity, which only holds without them, so R reports
+C<2.5192319072807861> where the squared rank differences sum to exactly C<2.5>.
+Both are pinned in F<t/cor_test.spearman.R.t>.
 
 =head2 cov
 

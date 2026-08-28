@@ -2166,9 +2166,23 @@ actual p\-value instead of a flat \f(CW0\fR; see
 Kendall\*(Aqs \f(CW\*(C`statistic\*(C'\fR to \f(CW2e\-15\fR, and \f(CW\*(C`p.value\*(C'\fR to \f(CW1.7e\-12\fR — the worst of
 those at a p\-value of \f(CW2.2e\-297\fR.
 .PP
-Note that \f(CW\*(C`statistic\*(C'\fR is the z of the approximation, whereas R reports
-Spearman\*(Aqs \fIS\fR; the two are different quantities, so compare \f(CW\*(C`estimate\*(C'\fR and
-\&\f(CW\*(C`p.value\*(C'\fR rather than \f(CW\*(C`statistic\*(C'\fR when checking against R for that method.
+\fISpearman: which method, and what \fR\f(CI\*(C`statistic\*(C'\fR\fI holds\fR
+.IX Subsection "Spearman: which method, and what statistic holds"
+.PP
+\&\f(CW\*(C`spearman\*(C'\fR follows R\*(Aqs \f(CW\*(C`cor.test\*(C'\fR exactly: \f(CW\*(C`exact\*(C'\fR defaults to true, and an
+exact request is served by permutation enumeration for \fIn\fR <= 9, by the
+AS 89 Edgeworth series for 10 <= \fIn\fR <= 1290, and by the asymptotic
+\&\fIt\fR above that or whenever the ranks contain ties. Passing \f(CW\*(C`exact => 1\*(C'\fR
+never enumerates past \fIn\fR = 9, because \fIn\fR! is 6.2 x 10^23 by \fIn\fR = 24.
+.PP
+\&\f(CW\*(C`statistic\*(C'\fR is Spearman\*(Aqs \fIS\fR, the sum of squared rank differences, on every
+one of those paths \-\- the same quantity R reports, so it can be compared
+directly. Two differences from R are worth knowing, neither of them about the
+mathematics: at a perfect correlation R derives \fIS\fR from rho and lands a
+rounding step away (\f(CW3.66e\-14\fR for an exact 0 at \fIn\fR = 10), and under ties R
+keeps using that same identity, which only holds without them, so R reports
+\&\f(CW2.5192319072807861\fR where the squared rank differences sum to exactly \f(CW2.5\fR.
+Both are pinned in \fIt/cor_test.spearman.R.t\fR.
 .SS cov
 .IX Subsection "cov"
 .Vb 1
