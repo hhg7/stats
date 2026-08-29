@@ -7173,6 +7173,90 @@ is now `/* WILCOXON EXACT NULL DISTRIBUTIONS`, which is what the house style in
 region, and no line holding a `/*` or `*/` was deleted, so no comment can have
 been left unterminated. The suite is unchanged at 28,485 tests either side of it.
 
+### 80-bit x87 arithmetic broke four test files on 32-bit x86
+
+A CPAN smoker on `i686-linux-64int` (perl 5.32.1) failed 73 subtests across
+`t/bedroc.python.t`, `t/quantile.R.t`, `t/var_sd_cov.R.t` and
+`t/wilcox_test.R.scipy.t`. None of it reproduced here: the local matrix varies
+how wide an NV is *stored* — double, long double, `__float128` — but every perl
+in it is x86-64, so all five agree on doing the arithmetic in SSE at exactly
+that width.
+
+32-bit x86 does not. It computes doubles in the x87 register file at 80 bits and
+rounds only when a value is spilled to memory, so `FLT_EVAL_METHOD` is 2 where
+an SSE build reports 0. C99 says a cast or an assignment rounds to the declared
+type, but gcc implements that only under `-fexcess-precision=standard`, and
+`-std=gnu99` — which the C99 probe in `Makefile.PL` tries first — selects
+`-fexcess-precision=fast`, which keeps the extra bits. A product therefore
+carried more precision than a double has, and every place that split one into an
+integer part and a remainder picked a different integer:
+
+| expression | SSE | x87 |
+|---|---|---|
+| `ceil(0.1 * 100)` | `10` | `11` |
+| `ceil(0.05 * 60)` | `3` | `4` |
+| `1000 * 0.007` | exactly `7` | `7.000000000000000146` |
+
+One cause, four faces. `bedroc` and `auroc` size a bucket with
+`ceil(frac * N)`, so every count came back one too high — each wrong enrichment
+factor in the smoker's report has an eleven under it where a ten belongs, and
+`n.active` was 4 where 3 was wanted, 21 where 20 was. `quantile` forms
+`h = (n - 1) * p` and interpolates whenever `h` is not an integer, so at
+*n* = 1001 and *p* = 7/1000 it interpolated between two order statistics where R
+returns one of them exactly. `var` and `sd` disagreed with themselves in the
+last digit between the tied-array and plain-array paths. And `wilcox_test` found
+its pseudomedian by a root search over a step function, where a perturbed
+iterate does not move the answer by an ulp but lands on a different flat step:
+
+| case | before | R 4.6.1 |
+|---|---|---|
+| `b12`/`c12` paired, `mu = -1` | `-0.64836734615018388` | `-0.70304928468751926` |
+| `a4`/`a9`, `mu = 0.5` | `0.43960806666603025` | `0.4690926266724697` |
+
+The fix is in two layers. `Makefile.PL` and `dist.ini` now trial-compile
+`-fexcess-precision=standard` and add it when the compiler takes it, alongside
+the existing per-vendor C99 probe; gcc and clang both exit non-zero on an `-f`
+switch they do not implement, and MSVC is skipped as before, needing nothing —
+it has defaulted to SSE2 on x86 since VS2012, and `/fp:precise` rounds to the
+declared type. That flag on its own fixes all 73. It is still not the whole
+answer, because it is not everywhere: an older clang, a vendor cc, or any
+compiler whose only C99 mode is a wide-register one will not take it, and this
+module is expected to build on all of them.
+
+So `LikeR.xs` also gains `nv_narrow()`, which forces the store through a
+`volatile NV` by hand at the seven places where a product is split into an
+integer part and a remainder: both passes of `quantile` — which must agree, or
+the partial sort places the wrong order statistics — plus `dens_quantile7`,
+`_qcut_core`, and the bucket counts in `bedroc` twice and `auroc` once. Those
+are the sites where the extra bits change *an answer* rather than its last
+digit, and by itself it fixes 63 of the 73. The other 10 are last-digit work —
+`var` agreeing with itself between the tied-array and plain-array paths, and the
+root search landing on the same step — which is what the flag is for and what no
+reasonable amount of hand-placed rounding would buy.
+
+Rounding to the NV's own width is the right answer at every width, not a
+concession to double: 7/1000 times 1000 rounds to exactly 7 in a double and in a
+long double alike. So both layers are inert on the long-double and quadmath
+builds, which is what the matrix confirms.
+
+No new tests were written, because the four cross-validation files that caught
+this are already the regression test — they are pinned to R and SciPy and they
+fail without the fix. What was missing was a build that could run them the way
+the smoker did, so `./test.all.perls.pl` gains a first-class `<perl>+x87` row
+that rebuilds the newest plain perl with `-mfpmath=387`. It reproduced 63 of the
+73 subtests by test number. One row is enough and it is skipped where there is
+nothing to catch — an x87 register is exactly as wide as a long-double NV, and
+`__float128` never touches the x87 stack — and `--no-x87` turns it off.
+
+That row cannot see the other half of 32-bit x86, and it is worth naming so the
+gap is not mistaken for coverage: i386 returns a double in `st(0)`, so a callee
+hands its caller all 80 bits, where the x86-64 ABI returns in `xmm0` and narrows
+for free. That is the half that moved `wilcox_test`, which is why it was the one
+failure that could not be reproduced here at all; the assembly shows plain
+`-std=gnu99` emitting `fdivl` and `ret` with no rounding between them, and the
+flag inserting the `fstpl`/`fldl` round-trip that narrows the result. Only a
+real 32-bit perl will exercise it.
+
 ## 0.302 2026-08-22 CDT
 
 `sum`, `min`, `max`, `mean`, `sd`, `var`, `quantile`, `cor` and `cov` are

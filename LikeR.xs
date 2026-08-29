@@ -107,6 +107,29 @@ those three.*/
 #define nv_tanh(x)     LIKER_NVFN(tanh)(x)
 #define nv_ldexp(x,e)  LIKER_NVFN(ldexp)((x),(e))
 #define nv_frexp(x,e)  LIKER_NVFN(frexp)((x),(e))
+/*Round an NV-valued intermediate back to the build's NV width.
+
+FLT_EVAL_METHOD is 2 on x87 -- 32-bit x86, and any build using -mfpmath=387 --
+so an NV expression is evaluated in the 80-bit registers and rounded only when
+it is spilled to memory. C99 says a cast or an assignment rounds, but gcc
+honours that only under -fexcess-precision=standard, which -std=gnu99 does not
+select; Makefile.PL now asks for it where the compiler takes the option, and
+this is what the code relies on where it does not (an older clang, a vendor cc,
+any compiler whose only C99 mode is a wide-register one). Assigning through a
+volatile is the one portable way to force the store.
+
+Use it wherever a product is split into an integer part and a remainder, which
+is where the extra bits change an answer rather than its last digit: 1000*0.007
+is 7.000000000000000146 in an x87 register and exactly 7 once rounded to
+double, so quantile() interpolated between two order statistics where R returns
+one exactly, and ceil(0.1*100) came out 11 rather than 10 -- an off-by-one in
+every bedroc()/auroc() bucket count. Reported by a CPAN smoker on
+i686-linux-64int, perl 5.32.1, Stats-LikeR 0.31.
+
+Not a general-purpose rounding barrier: it costs a store and a load, so it does
+not belong in an accumulation loop. The last-ulp drift that excess precision
+causes there is what the build flag is for.*/
+static NV nv_narrow(NV x) { volatile NV t = x; return t; }
 /*0.95 -- the default conf.level everywhere in this file -- at the build's own
 NV width.
 
@@ -9657,7 +9680,7 @@ same way.*/
 static NV dens_quantile7(const NV *xs, size_t n, NV p)
 {
 	if (n == 1) return xs[0];
-	NV index = (NV)(n - 1) * p;
+	NV index = nv_narrow((NV)(n - 1) * p);
 	NV loi   = nv_floor(index);
 	size_t lo = (size_t)loi;
 	size_t hi = (size_t)nv_ceil(index);
@@ -14790,9 +14813,9 @@ PPCODE:
 	 -1 = auto-detect from a ".xlsx" file name, 0 = off, 1 = on.*/
 	short int xlsx_opt = -1;
 	const char *xlsx_sheet = "Sheet1"; // worksheet name
-	SV *xlsx_comment = NULL;            // extra comment line(s) appended after the provenance
-	IV xlsx_freeze_rows = 0;                     // leading rows to freeze (0 = none)
-	IV xlsx_freeze_cols = 0;                     // leading columns to freeze (0 = none)
+	SV *xlsx_comment = NULL; // extra comment line(s) appended after the provenance
+	IV xlsx_freeze_rows = 0; // leading rows to freeze (0 = none)
+	IV xlsx_freeze_cols = 0; // leading columns to freeze (0 = none)
 	// Read the remaining Hash-style arguments
 	for (; arg_idx < items; arg_idx += 2) {
 		if (arg_idx + 1 >= items) croak("write_table: Odd number of arguments passed");
@@ -17350,7 +17373,7 @@ SV* quantile(...)
 			size_t *ks, nk = 0, uk = 0;
 			Newx(ks, (size_t)n_probs * 2 + 1, size_t);
 			for (unsigned int i = 0; i < n_probs; i++) {
-				NV h = (NV)(n - 1) * probs[i];
+				NV h = nv_narrow((NV)(n - 1) * probs[i]);
 				size_t j = (size_t)h;
 				if (j >= n) j = n - 1;		//guards p == 1 and any rounding at the top
 				ks[nk++] = j;
@@ -17379,7 +17402,7 @@ SV* quantile(...)
 			} else if (p == 0.0) {
 				 q = x[0];
 			} else {
-				 NV h = (NV)(n - 1) * p;
+				 NV h = nv_narrow((NV)(n - 1) * p);
 				 size_t j = (size_t)h;
 				 NV gamma = h - (NV)j;
 				 q = x[j];
@@ -18714,7 +18737,7 @@ CODE:
 		size_t N = (size_t)Ns;
 		int *act; Newxz(act, N, int);
 		if (have_frac) {
-			size_t n_a = (size_t)nv_ceil(active_frac * (NV)N);
+			size_t n_a = (size_t)nv_ceil(nv_narrow(active_frac * (NV)N));
 			if (n_a < 1) n_a = 1;
 			if (N >= 2 && n_a > N - 1) n_a = N - 1;
 			NVIdx *tmp; Newx(tmp, N, NVIdx);
@@ -18943,7 +18966,7 @@ PPCODE:
 	[1, N-1] so both classes always exist — no "need both labels" death.*/
 	int *act_by_frac = NULL;
 	if (have_frac) {
-		size_t n_a = (size_t)nv_ceil(active_frac * (NV)N);
+		size_t n_a = (size_t)nv_ceil(nv_narrow(active_frac * (NV)N));
 		if (n_a < 1) n_a = 1;
 		if (N >= 2 && n_a > N - 1) n_a = N - 1;
 		NVIdx *tmp; Newx(tmp, N, NVIdx);
@@ -19016,7 +19039,7 @@ PPCODE:
 	hv_stores(ret, "method",     newSVpv("BEDROC (Truchon-Bayly early recognition)", 0));
 
 	if (have_top) {//enrichment in the top fraction: EF = (hits/n_top) / R_a
-		size_t n_top = (size_t)nv_ceil(top * (NV)N);
+		size_t n_top = (size_t)nv_ceil(nv_narrow(top * (NV)N));
 		if (n_top < 1) n_top = 1; if (n_top > N) n_top = N;
 		size_t hits = 0;
 		for (size_t i = 0; i < n_top; i++) if (pts[i].lab) hits++;
@@ -23948,7 +23971,7 @@ PPCODE:
 		p = el ? SvNV(*el) : 0.0;
 		if (p < 0.0) p = 0.0;
 		if (p > 1.0) p = 1.0;
-		h    = (NV)(n - 1) * p;
+		h    = nv_narrow((NV)(n - 1) * p);
 		lo   = (IV) nv_floor((double) h);
 		frac = h - (NV) lo;
 		if (lo + 1 < n)

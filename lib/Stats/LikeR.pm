@@ -7610,19 +7610,19 @@ those at a p-value of C<2.2e-297>.
 =head3 Spearman: which method, and what C<statistic> holds
 
 C<spearman> follows R's C<cor.test> exactly: C<exact> defaults to true, and an
-exact request is served by permutation enumeration for I<n> E<lt>= 9, by the
-AS 89 Edgeworth series for 10 E<lt>= I<n> E<lt>= 1290, and by the asymptotic
-I<t> above that or whenever the ranks contain ties. Passing C<< exact =E<gt> 1 >>
-never enumerates past I<n> = 9, because I<n>! is 6.2 x 10^23 by I<n> = 24.
+exact request is served by permutation enumeration for I<n> ≤ 9, by the AS 89
+Edgeworth series for 10 ≤ I<n> ≤ 1290, and by the asymptotic I<t> above that or
+whenever the ranks contain ties. Passing C<< exact =E<gt> 1 >> never enumerates past
+I<n> = 9, because I<n>! is 6.2 × 10²³ by I<n> = 24.
 
 C<statistic> is Spearman's I<S>, the sum of squared rank differences, on every
-one of those paths -- the same quantity R reports, so it can be compared
+one of those paths — the same quantity R reports, so it can be compared
 directly. Two differences from R are worth knowing, neither of them about the
-mathematics: at a perfect correlation R derives I<S> from rho and lands a
-rounding step away (C<3.66e-14> for an exact 0 at I<n> = 10), and under ties R
-keeps using that same identity, which only holds without them, so R reports
+mathematics: at a perfect correlation R derives I<S> from ρ and lands a rounding
+step away (C<3.66e-14> for an exact 0 at I<n> = 10), and under ties R keeps using
+that same identity, which only holds without them, so R reports
 C<2.5192319072807861> where the squared rank differences sum to exactly C<2.5>.
-Both are pinned in F<t/cor_test.spearman.R.t>.
+Both are pinned in C<t/cor_test.spearman.R.t>.
 
 =head2 cov
 
@@ -15066,144 +15066,299 @@ C<t/model_pvalue_tails.t> and C<t/oneway_test.R.scipy.t>.
 
 =head2 0.31 2026-08
 
-=head2 Correctness and portability fixes
+=head3 avals
+
+new function to make code cleaner.  C<avals> is the same as C<vals> but returns an array instead of an array reference, so instead of C<@{ vals($df, 'colname') }> it will just be C<avals($df, 'colname')> to prevent the need for bracketing
+
+=head3 Correctness and portability fixes
 
 Nine defects found by cross-validating against R 4.6.1 and mpmath, by running
 the suite under UBSan and AddressSanitizer, and by reading for the conventions
-in F<CLAUDE.md>. Each is pinned by a test that fails without the fix:
-F<t/cor_test.spearman.R.t>, F<t/pt_qt.tails.R.t>, F<t/minmax.nan.R.t>,
-F<t/var_test.ci.R.t> and F<t/portability.bugs.t>.
+in C<CLAUDE.md>. Each is pinned by a test that fails without the fix:
+C<t/cor_test.spearman.R.t>, C<t/pt_qt.tails.R.t>, C<t/minmax.nan.R.t>,
+C<t/var_test.ci.R.t> and C<t/portability.bugs.t>.
 
-=head3 cor_test(method =E<gt> 'spearman') could not return
+=head4 C<< cor_test(method =E<gt> 'spearman') >> could not return
 
-C<< exact =E<gt> 1 >> ran an unbounded permutation walk. R has never enumerated
-past I<n> = 9 -- C<n_small> in F<src/library/stats/src/prho.c> -- whatever
-C<exact> says, but here the caller's flag was taken literally, and I<n>! is
-6.2e23 by I<n> = 24.  At I<n> = 12 it took 5 seconds, at I<n> = 13 over a
-minute, and at I<n> = 24 it never returned; all three are now immediate.
+C<< exact =E<gt> 1 >> ran an unbounded permutation walk. R has never enumerated past
+I<n> = 9 — C<n_small> in C<src/library/stats/src/prho.c> — whatever C<exact> says,
+but here the caller's flag was taken literally, and I<n>! is 6.2 × 10²³ by
+I<n> = 24:
 
-The enumeration is now capped at I<n> E<lt>= 9, and 10 E<lt>= I<n> E<lt>= 1290
-goes to the AS 89 Edgeworth series, which is what R's C<prho()> does. Past 1290
--- R's own bound, where C<n^3 - n> overflows an C<int> -- it falls back to the
-asymptotic I<t>, as before.
 
-=head3 Spearman p-values were R's exact = FALSE for every n E<gt>= 10
 
-C<exact> defaulted to C<(n E<lt> 10)>. R's default is true, and R serves it from
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th><i>n</i></th>
+  <th>before</th>
+  <th>now</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>12</td>
+  <td>5 s</td>
+  <td>0.0 s</td>
+</tr>
+<tr>
+  <td>13</td>
+  <td>&gt; 1 min</td>
+  <td>0.0 s</td>
+</tr>
+<tr>
+  <td>24</td>
+  <td>never returned</td>
+  <td>0.0 s</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+The enumeration is now capped at I<n> ≤ 9 and 10 ≤ I<n> ≤ 1290 goes to the AS 89
+Edgeworth series, which is what R's C<prho()> does. Past 1290 — R's own bound,
+where C<n^3 - n> overflows an C<int> — it falls back to the asymptotic I<t>, as
+before.
+
+=head4 Spearman p-values were R's C<exact = FALSE> for every I<n> ≥ 10
+
+C<exact> defaulted to C<< (n E<lt> 10) >>. R's default is C<TRUE>, and R serves it from
 C<prho()> for every I<n> up to 1290, so the old default silently took R's
-approximation branch. At I<n> = 32 it gave C<1.7639963277557958e-07> where R
-gives C<1.1513643381176551e-06>; at I<n> = 16, C<5.0655870675677e-17> against
-R's C<5.7949654941386787e-06>. Across 45 randomly generated pairs the p-value
-now agrees with R to C<3.5e-14>.
+approximation branch:
 
-=head3 Spearman's statistic changed meaning at n = 10
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th><i>n</i></th>
+  <th>before</th>
+  <th>R 4.6.1</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>32</td>
+  <td><code>1.7639963277557958e-07</code></td>
+  <td><code>1.1513643381176551e-06</code></td>
+</tr>
+<tr>
+  <td>16</td>
+  <td><code>5.0655870675677e-17</code></td>
+  <td><code>5.7949654941386787e-06</code></td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+Across 45 randomly generated pairs the p-value now agrees with R to C<3.5e-14>.
+
+=head4 Spearman's C<statistic> changed meaning at I<n> = 10
 
 It was I<S> from the exact branch and the I<t> statistic from the other. It is
 now I<S> on every path, as R reports it. This is a change to a documented
-field -- the note saying to compare C<estimate> and C<p.value> rather than
+field — the note saying to compare C<estimate> and C<p.value> rather than
 C<statistic> described the old behaviour and is gone.
 
-=head3 qt saturated, and pt collapsed to zero, in the far tail
+=head4 C<qt> saturated, and C<pt> collapsed to zero, in the far tail
 
-C<pt_upper()> computed the tail as C<I_z(df/2, 1/2)> with
-C<z = df/(df + t^2)> and nothing else. C<z> underflows well before C<t^2>
-overflows, so the tail became a flat C<0>; and because C<qt_tail()> bisects
-against it, and its bracket stopped at C<sqrt(DBL_MAX)>, the quantile converged
-onto the ceiling and returned it -- a plausible number, not an error:
+C<pt_upper()> computed the tail as C<I_z(df/2, 1/2)> with C<z = df/(df + t²)> and
+nothing else. C<z> underflows well before C<t²> overflows, so the tail became a
+flat C<0>; and because C<qt_tail()> bisects against it, and its bracket stopped
+at C<sqrt(DBL_MAX)>, the quantile converged onto the ceiling and returned it —
+a plausible number, not an error:
 
- call              before                       R 4.6.1
- pt(-1e160, 1)     0                            3.1830988618378451e-161
- pt(-1e300, 1)     0                            3.1830988618377598e-301
- qt(1e-160, 1)     -1.3407807929942597e154      -3.1830988618379068e159
- qt(1e-300, 1)     -1.3407807929942597e154      -3.183098861837907e299
- qt(1e-16, 0.1)    -1.3407807929942597e154      -1.6044257056664863e156
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>call</th>
+  <th>before</th>
+  <th>R 4.6.1</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>pt(-1e160, 1)</code></td>
+  <td><code>0</code></td>
+  <td><code>3.1830988618378451e-161</code></td>
+</tr>
+<tr>
+  <td><code>pt(-1e300, 1)</code></td>
+  <td><code>0</code></td>
+  <td><code>3.1830988618377598e-301</code></td>
+</tr>
+<tr>
+  <td><code>qt(1e-160, 1)</code></td>
+  <td><code>-1.3407807929942597e154</code></td>
+  <td><code>-3.1830988618379068e159</code></td>
+</tr>
+<tr>
+  <td><code>qt(1e-300, 1)</code></td>
+  <td><code>-1.3407807929942597e154</code></td>
+  <td><code>-3.183098861837907e299</code></td>
+</tr>
+<tr>
+  <td><code>qt(1e-16, 0.1)</code></td>
+  <td><code>-1.3407807929942597e154</code></td>
+  <td><code>-1.6044257056664863e156</code></td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
 
 C<pt_upper()> now carries the Abramowitz & Stegun 26.5.4 branch from R's
-F<nmath/pt.c>, which evaluates the tail in logs once C<< 1 + (t/df)*t >> passes
+C<nmath/pt.c>, which evaluates the tail in logs once C<1 + (t/df)·t> passes
 C<1e100> and so has nothing left to underflow, and the bracket runs to
 C<NV_MAX/2> and reports C<Inf> when the quantile genuinely exceeds what an C<NV>
 can name. C<pt> now matches R exactly from C<-1e150> to C<-1e300>.
 
-=head3 min and max skipped a NaN unless it came first
+=head4 C<min> and C<max> skipped a C<NaN> unless it came first
 
-Every comparison against a C<NaN> is false, so C<< if (v E<lt> mn) >> passed
-over one and kept a real number -- but a C<NaN> in the first position stayed.
-The answer depended on where in the array it sat:
+Every comparison against a C<NaN> is false, so C<< if (v E<lt> mn) >> passed over one and
+kept a real number — but a C<NaN> in the first position stayed. The answer
+depended on where in the array it sat:
 
-    min([NaN, 1, 2])   was NaN      min([1, 2, NaN])   was 1
-    min([1, NaN, 2])   was 1        max([1, 2, NaN])   was 2
+ min([NaN, 1, 2])   was NaN      min([1, 2, NaN])   was 1
+ min([1, NaN, 2])   was 1        max([1, 2, NaN])   was 2
 
-R gives C<NaN> for all of them, and C<sum>, C<mean>, C<var>, C<sd> and
-C<median> here already did. Both now propagate C<NaN> from any position, in the
-flat argument list and the array-reference forms alike.
+R gives C<NaN> for all of them, and C<sum>, C<mean>, C<var>, C<sd> and C<median> here
+already did. Both now propagate C<NaN> from any position, in the flat argument
+list and the array-reference forms alike.
 
-=head3 var_test's confidence interval lost up to 2.5e-11
+=head4 C<var_test>'s confidence interval lost up to C<2.5e-11>
 
 It divided by a private C<qf_bisection()> that stopped on an B<absolute>
-C<< high - low E<lt> 1e-12 >>. The F quantile it divides by is not of order 1 --
-at C<< conf.level = 1 - 2^-20 >> on nine and nine degrees of freedom it is about
-C<0.016> -- so an absolute stop is a relative error that grows as the quantile
-shrinks. At that conf.level the interval came out
-C<[16085387951.278957, 62168223924585.172]> against R's
-C<[16085387950.871651, 62168223923448.094]>.
+C<< high - low E<lt> 1e-12 >>. The F quantile it divides by is not of order 1 — at
+C<conf.level = 1 - 2^-20> on nine and nine degrees of freedom it is about
+C<0.016> — so an absolute stop is a relative error that grows as the quantile
+shrinks:
 
-It now uses the same C<d_qf()> that the exported C<qf> does, which has a
-relative stop and agrees with mpmath at C<mp.dps = 60> to about C<1e-16>. Over
-864 generated cases the interval agrees with R to C<2.1e-14>. C<qf_bisection>
-had no other caller and is gone; carrying two F quantiles of different accuracy
-in one file was the underlying defect.
 
-=head3 var_test's p-value was formed by subtraction
 
-It computed the upper tail as C<< 1 - pf(F) >>, which is what
-L</"F and z tail p-values"> says every F test here stopped doing -- C<var_test>
-was listed neither among those converted nor among the three known to remain
-subtractive. It now uses C<pf_upper()>, which builds its own complement as
-C<< df2 / (df1*F + df2) >> without subtracting. R writes the subtraction too, so
-in the far tail this is now B<more accurate than R>; measured against mpmath
-over the same 864 cases, the worst relative error is C<1.854e-14> for
-Stats::LikeR and C<1.0> for R 4.6.1. R's worst is C<1.0> because
-C<< 1 - pf(F) >> reaches a flat C<0> once the lower tail is within an ulp of
-C<1>. On C<c(3,1,4,1,5,9,2,6,5,3,5)> against C<c(1,2,4,8,16,32,64)/1024>,
-two-sided: mpmath C<1.08732387158297135e-11>, Stats::LikeR
-C<1.0873238715829779e-11>, R C<1.0873080213968933e-11>.
+=begin html
 
-=head3 %zu would have failed on MSVC, in two places silently
+<table>
+<thead>
+<tr>
+  <th><code>conf.level</code></th>
+  <th>before</th>
+  <th>R 4.6.1</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>1 - 2^-20</code></td>
+  <td><code>[16085387951.278957, 62168223924585.172]</code></td>
+  <td><code>[16085387950.871651, 62168223923448.094]</code></td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+It now uses the same C<d_qf()> that the exported C<qf> does, which has a relative
+stop and agrees with mpmath at C<mp.dps = 60> to about C<1e-16>. Over 864
+generated cases the interval agrees with R to C<2.1e-14>. C<qf_bisection> had no
+other caller and is gone; carrying two F quantiles of different accuracy in one
+file was the underlying defect.
+
+=head4 C<var_test>'s p-value was formed by subtraction
+
+It computed the upper tail as C<1 - pf(F)>, which is what
+L</"F and z tail p-values"> says every F test here stopped
+doing — C<var_test> was listed neither among those converted nor among the three
+known to remain subtractive. It now uses C<pf_upper()>, which builds its own
+complement as C<df2 / (df1·F + df2)> without subtracting. R writes the
+subtraction too, so in the far tail this is now B<more accurate than R>;
+measured against mpmath over the same 864 cases:
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th></th>
+  <th>worst relative error</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>Stats::LikeR</code></td>
+  <td><code>1.854e-14</code></td>
+</tr>
+<tr>
+  <td>R 4.6.1</td>
+  <td><code>1.0</code></td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+R's worst is C<1.0> because C<1 - pf(F)> reaches a flat C<0> once the lower tail is
+within an ulp of C<1>. On C<c(3,1,4,1,5,9,2,6,5,3,5)> against
+C<c(1,2,4,8,16,32,64)/1024>, two-sided: mpmath C<1.08732387158297135e-11>,
+C<Stats::LikeR> C<1.0873238715829779e-11>, R C<1.0873080213968933e-11>.
+
+=head4 C<%zu> would have failed on MSVC, in two places silently
 
 Nine plain C<snprintf> calls used the C99 C<%zu> length modifier, which MSVC's
-older CRT does not implement -- it prints the literal text. Two of the nine
-build B<hash keys>, not messages: C<csort>'s AoA to AoH and AoA to HoA
-conversions name their columns C<"0"> .. C<"ncols-1">, so on such a build every
+older CRT does not implement — it prints the literal text. Two of the nine
+build B<hash keys>, not messages: C<csort>'s AoA → AoH and AoA → HoA
+conversions name their columns C<"0" .. "ncols-1">, so on such a build every
 column would have been stored under the key C<"zu"> and all but one lost. A
 third is the C<Index N> group label that C<oneway_test> returns to the caller;
-the rest are counts inside C<croak> text. All nine now use C<my_snprintf> with
+the rest are counts inside C<croak> text. All 9 now use C<my_snprintf> with
 C<UVuf>, the modifier Configure picks for the build's own C<UV>.
 
-=head3 ssize_t does not exist outside POSIX
+=head4 C<ssize_t> does not exist outside POSIX
 
-Seven declarations used the lowercase POSIX spelling. Perl never defines it --
+Seven declarations used the lowercase POSIX spelling. Perl never defines it —
 there is no C<typedef> or C<#define> for it anywhere in the perl source, and
-F<win32/win32.h> and F<config_H.vc> do not supply one either -- so the file
-compiled only because glibc's F<sys/types.h> happens to. An MSVC build failed at
-the first one. They are C<SSize_t> now, or C<size_t> where the value is a length
-that cannot be negative, matching the 430 declarations that already spelled it
-that way.
+C<win32/win32.h> and C<config_H.vc> do not supply one either — so the file
+compiled only because glibc's C<< E<lt>sys/types.hE<gt> >> happens to. An MSVC build failed
+at the first one. They are C<SSize_t> now, or C<size_t> where the value is a
+length that cannot be negative, matching the 430 declarations that already
+spelled it that way.
 
-=head3 Two zero-length calls on null pointers
+=head4 Two zero-length calls on null pointers
 
 C<qsort> and C<memcmp> are both declared to take non-null pointers whatever the
 element count, so passing C<NULL> is undefined even for zero elements: UBSan
 reports it, and a compiler may infer non-nullness and delete a later check.
-C<p_adjust> reached C<qsort(NULL, 0, ...)> whenever no row hash had any keys,
-and C<drop_duplicates> reached C<memcmp(NULL, NULL, 0)> when every key seen so
-far had been zero-length. Both were reachable from one line of Perl --
+C<p_adjust> reached C<qsort(NULL, 0, …)> whenever no row hash had any keys, and
+C<drop_duplicates> reached C<memcmp(NULL, NULL, 0)> when every key seen so far had
+been zero-length. Both were reachable from one line of Perl —
 C<p_adjust([{}, {}])> and C<drop_duplicates([{}, {}])>. The suite is now clean
 under both UBSan and AddressSanitizer.
 
-=head3 malloc/free in the write_table announcement
+=head4 C<malloc>/C<free> in the C<write_table> announcement
 
 The confirmation line allocated with libc's C<malloc> when the path pushed it
-past a 512-byte stack buffer -- the only two such calls in the file, where
+past a 512-byte stack buffer — the only two such calls in the file, where
 everything else uses C<Newx>/C<Safefree> so that the module uses whatever
 allocator its perl was built with, which on a C<-Dusemymalloc> perl is not
 libc's. C<Newx> is not the substitute here, since it croaks on failure and dying
@@ -15645,6 +15800,144 @@ is now C</* WILCOXON EXACT NULL DISTRIBUTIONS>, which is what the house style in
 C<CLAUDE.md> asks for anyway. Nothing after C<__DATA__> was touched, no POD
 region, and no line holding a C</*> or C<*/> was deleted, so no comment can have
 been left unterminated. The suite is unchanged at 28,485 tests either side of it.
+
+=head3 80-bit x87 arithmetic broke four test files on 32-bit x86
+
+A CPAN smoker on C<i686-linux-64int> (perl 5.32.1) failed 73 subtests across
+C<t/bedroc.python.t>, C<t/quantile.R.t>, C<t/var_sd_cov.R.t> and
+C<t/wilcox_test.R.scipy.t>. None of it reproduced here: the local matrix varies
+how wide an NV is I<stored> — double, long double, C<__float128> — but every perl
+in it is x86-64, so all five agree on doing the arithmetic in SSE at exactly
+that width.
+
+32-bit x86 does not. It computes doubles in the x87 register file at 80 bits and
+rounds only when a value is spilled to memory, so C<FLT_EVAL_METHOD> is 2 where
+an SSE build reports 0. C99 says a cast or an assignment rounds to the declared
+type, but gcc implements that only under C<-fexcess-precision=standard>, and
+C<-std=gnu99> — which the C99 probe in C<Makefile.PL> tries first — selects
+C<-fexcess-precision=fast>, which keeps the extra bits. A product therefore
+carried more precision than a double has, and every place that split one into an
+integer part and a remainder picked a different integer:
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>expression</th>
+  <th>SSE</th>
+  <th>x87</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>ceil(0.1 * 100)</code></td>
+  <td><code>10</code></td>
+  <td><code>11</code></td>
+</tr>
+<tr>
+  <td><code>ceil(0.05 * 60)</code></td>
+  <td><code>3</code></td>
+  <td><code>4</code></td>
+</tr>
+<tr>
+  <td><code>1000 * 0.007</code></td>
+  <td>exactly <code>7</code></td>
+  <td><code>7.000000000000000146</code></td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+One cause, four faces. C<bedroc> and C<auroc> size a bucket with
+C<ceil(frac * N)>, so every count came back one too high — each wrong enrichment
+factor in the smoker's report has an eleven under it where a ten belongs, and
+C<n.active> was 4 where 3 was wanted, 21 where 20 was. C<quantile> forms
+C<h = (n - 1) * p> and interpolates whenever C<h> is not an integer, so at
+I<n> = 1001 and I<p> = 7/1000 it interpolated between two order statistics where R
+returns one of them exactly. C<var> and C<sd> disagreed with themselves in the
+last digit between the tied-array and plain-array paths. And C<wilcox_test> found
+its pseudomedian by a root search over a step function, where a perturbed
+iterate does not move the answer by an ulp but lands on a different flat step:
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>case</th>
+  <th>before</th>
+  <th>R 4.6.1</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>b12</code>/<code>c12</code> paired, <code>mu = -1</code></td>
+  <td><code>-0.64836734615018388</code></td>
+  <td><code>-0.70304928468751926</code></td>
+</tr>
+<tr>
+  <td><code>a4</code>/<code>a9</code>, <code>mu = 0.5</code></td>
+  <td><code>0.43960806666603025</code></td>
+  <td><code>0.4690926266724697</code></td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+The fix is in two layers. C<Makefile.PL> and C<dist.ini> now trial-compile
+C<-fexcess-precision=standard> and add it when the compiler takes it, alongside
+the existing per-vendor C99 probe; gcc and clang both exit non-zero on an C<-f>
+switch they do not implement, and MSVC is skipped as before, needing nothing —
+it has defaulted to SSE2 on x86 since VS2012, and C</fp:precise> rounds to the
+declared type. That flag on its own fixes all 73. It is still not the whole
+answer, because it is not everywhere: an older clang, a vendor cc, or any
+compiler whose only C99 mode is a wide-register one will not take it, and this
+module is expected to build on all of them.
+
+So C<LikeR.xs> also gains C<nv_narrow()>, which forces the store through a
+C<volatile NV> by hand at the seven places where a product is split into an
+integer part and a remainder: both passes of C<quantile> — which must agree, or
+the partial sort places the wrong order statistics — plus C<dens_quantile7>,
+C<_qcut_core>, and the bucket counts in C<bedroc> twice and C<auroc> once. Those
+are the sites where the extra bits change I<an answer> rather than its last
+digit, and by itself it fixes 63 of the 73. The other 10 are last-digit work —
+C<var> agreeing with itself between the tied-array and plain-array paths, and the
+root search landing on the same step — which is what the flag is for and what no
+reasonable amount of hand-placed rounding would buy.
+
+Rounding to the NV's own width is the right answer at every width, not a
+concession to double: 7/1000 times 1000 rounds to exactly 7 in a double and in a
+long double alike. So both layers are inert on the long-double and quadmath
+builds, which is what the matrix confirms.
+
+No new tests were written, because the four cross-validation files that caught
+this are already the regression test — they are pinned to R and SciPy and they
+fail without the fix. What was missing was a build that could run them the way
+the smoker did, so C<./test.all.perls.pl> gains a first-class C<< E<lt>perlE<gt>+x87 >> row
+that rebuilds the newest plain perl with C<-mfpmath=387>. It reproduced 63 of the
+73 subtests by test number. One row is enough and it is skipped where there is
+nothing to catch — an x87 register is exactly as wide as a long-double NV, and
+C<__float128> never touches the x87 stack — and C<--no-x87> turns it off.
+
+That row cannot see the other half of 32-bit x86, and it is worth naming so the
+gap is not mistaken for coverage: i386 returns a double in C<st(0)>, so a callee
+hands its caller all 80 bits, where the x86-64 ABI returns in C<xmm0> and narrows
+for free. That is the half that moved C<wilcox_test>, which is why it was the one
+failure that could not be reproduced here at all; the assembly shows plain
+C<-std=gnu99> emitting C<fdivl> and C<ret> with no rounding between them, and the
+flag inserting the C<fstpl>/C<fldl> round-trip that narrows the result. Only a
+real 32-bit perl will exercise it.
 
 =head2 0.302 2026-08-22 CDT
 

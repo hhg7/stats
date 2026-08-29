@@ -14,7 +14,7 @@
 #     ABSTRACT => q[Get basic statistical functions, like in R, but with Perl using XS for performance]
 #     AUTHOR => [q[David E. Condon <dec986@gmail.com>]]
 #     BUILD_REQUIRES => {  }
-#     CCFLAGS => q[-fwrapv -fno-strict-aliasing -pipe -fstack-protector-strong -I/usr/local/include -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64 -std=gnu99]
+#     CCFLAGS => q[-fwrapv -fno-strict-aliasing -pipe -fstack-protector-strong -I/usr/local/include -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64 -std=gnu99 -fexcess-precision=standard]
 #     CONFIGURE_REQUIRES => { ExtUtils::MakeMaker=>q[0] }
 #     DEFINE => q[]
 #     DISTNAME => q[Stats-LikeR]
@@ -297,7 +297,7 @@ DISTVNAME = Stats-LikeR-0.31
 
 # --- MakeMaker cflags section:
 
-CCFLAGS = -fwrapv -fno-strict-aliasing -pipe -fstack-protector-strong -I/usr/local/include -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64 -std=gnu99
+CCFLAGS = -fwrapv -fno-strict-aliasing -pipe -fstack-protector-strong -I/usr/local/include -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64 -std=gnu99 -fexcess-precision=standard
 OPTIMIZE = -O2 -Wall
 PERLTYPE = 
 MPOLLUTE = 

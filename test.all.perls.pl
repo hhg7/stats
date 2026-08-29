@@ -34,6 +34,7 @@ use Getopt::Long 'GetOptions';
 # default case-folding of single-letter aliases has to go.
 Getopt::Long::Configure('no_ignore_case');
 use File::Spec;
+use File::Temp ();
 use File::Copy 'copy';
 use File::Path 'remove_tree';
 use IO::Handle;
@@ -63,6 +64,9 @@ sub cpu_count {
 
 my ($help, $list, $install, $deps, $clean, $stop, $quiet, $jobs, $log_dir, $optimize, @only);
 my ($par, $keep_work);
+# On by default: this is the axis that let 0.31 reach CPAN broken, and an
+# opt-in check is one nobody remembers to opt in to.  --no-x87 skips it.
+my $x87 = 1;
 my $ncpu  = cpu_count();
 $install  = 1; # make install, as compile.sh does
 $clean    = 1;
@@ -97,6 +101,7 @@ GetOptions(
 	'parallel|P:i'  => \$par,
 	'keep-work!'    => \$keep_work,
 	'optimize=s'    => \$optimize,
+	'x87!'          => \$x87,
 	'log-dir=s'     => \$log_dir,
 	'quiet|q'       => \$quiet,
 	'list|l'        => \$list,
@@ -118,6 +123,14 @@ others are seconds and it must not sit in the queue behind them; then the rest
 oldest first; then the newest plain perl (double NV, no ithreads) last, so a
 serial run leaves the tree built and installed against the reference build
 rather than an outlier.
+
+One extra row, "<perl>+x87", rebuilds the newest plain perl with -mfpmath=387.
+The perls above differ in how wide an NV is stored; they are all x86-64, so they
+agree on doing the arithmetic in SSE at exactly that width.  32-bit x86 does not:
+it computes in 80-bit x87 registers and rounds on a spill, which is how 0.31
+reached CPAN with 73 subtests failing on an i686 smoker that nothing here could
+reproduce.  The row is skipped where there is nothing to catch (a long-double or
+quadmath perl, or a cc with no -mfpmath) and by --no-x87.
 
 options:
   -p, --perl VERSION   only this perl (repeatable); accepts "5.10.1",
@@ -143,6 +156,7 @@ options:
                        default is the CPU budget ($cpus) divided by -P
                        (default: $jobs_default at -P $par_default, $budget at -P 1)
       --optimize STR   OPTIMIZE= passed to Makefile.PL (default: $optimize)
+      --no-x87         skip the extra x87 row (see below)
       --log-dir DIR    where per-version logs go (default: $log_dir)
   -q, --quiet          only write logs; do not echo build output.  implied by
                        -P > 1, where interleaved output would be unreadable
@@ -166,10 +180,13 @@ closedir $dh;
 # numeric sort, oldest first, which is where the run order below starts from.
 sub vkey {
 	my $v = shift;
-	$v =~ s/^perl-//;
+	my $variant = tgt_variant($v);
+	($v = tgt_perl($v)) =~ s/^perl-//;
 	my @p = ($v =~ /(\d+)/g);
 	push @p, 0 while @p < 3;
-	return sprintf '%05d%05d%05d', @p[0 .. 2];
+	# the variant's key trails its base perl's, so it sorts next to the perl it
+	# varies instead of landing between two versions
+	return sprintf('%05d%05d%05d', @p[0 .. 2]) . ($variant ? "1$variant" : '0');
 }
 @installed = sort { vkey($a) cmp vkey($b) } @installed;
 
@@ -201,7 +218,7 @@ die "$0: no perls found in $perls_dir\n" unless @targets;
 # interpreter cannot become the reference build the tree is left standing on.
 my %facts;
 sub facts {
-	my $version = shift;
+	my $version = tgt_perl(shift);   # a variant is the same interpreter
 	return $facts{$version} if $facts{$version};
 	my $perl = File::Spec->catfile($perls_dir, $version, 'bin', 'perl');
 	my %f = (nv => '?', threads => 0, known => 0);
@@ -227,6 +244,20 @@ sub nv_label {
 	return ($short{ $f->{nv} } || $f->{nv}) . ($f->{threads} ? '-thr' : '');
 }
 
+# A target is a perl, optionally with a build variant after a '+'.  Everything
+# that names a target -- its log, its private tree, its result file, its row in
+# the summary -- uses the whole label, so a variant is a row of its own rather
+# than a footnote on somebody else's; only the paths into perlbrew and the
+# OPTIMIZE= string have to look past the suffix.
+sub tgt_perl    { my $t = shift; $t =~ s/\+.*//; return $t }
+sub tgt_variant { my $t = shift; return $t =~ /\+(.*)/ ? $1 : '' }
+sub tgt_optimize {
+	my $t = shift;
+	# appended, not replacing: a --optimize the caller asked for still applies,
+	# and -mfpmath=387 only decides which register file the arithmetic uses.
+	return tgt_variant($t) eq 'x87' ? "$optimize -mfpmath=387" : $optimize;
+}
+
 # Run order, given @targets oldest first:
 #
 #   1. the quadmath builds, because their test suite is far and away the
@@ -242,15 +273,75 @@ sub order_targets {
 	my @t = @_;
 	my (@quad, @rest);
 	push @{ facts($_)->{quadmath} ? \@quad : \@rest }, $_ for @t;
-	my ($plain) = grep { facts($_)->{plain} } reverse @rest;   # newest first
+	# !tgt_variant: a serial run leaves the root built against whatever went
+	# last, and that must be an ordinary build, not one forced onto the x87
+	# stack by the row below.
+	my ($plain) = grep { facts($_)->{plain} && !tgt_variant($_) } reverse @rest;
 	@rest = grep { $_ ne $plain } @rest if defined $plain;
 	return (@quad, @rest, defined $plain ? $plain : ());
 }
+# ----------------------------------------------------------- x87 variant --
+
+# The matrix above varies the width an NV is stored in.  It does not vary the
+# width the arithmetic is *done* in, and every perl in it is x86-64, where a
+# double is computed in an SSE register and FLT_EVAL_METHOD is 0.  On 32-bit
+# x86 it is 2: doubles are computed in the x87 register file at 80 bits and
+# rounded only when they are spilled, so ceil(0.1 * 100) is 11 rather than 10
+# and any product split into an integer part and a remainder can land in a
+# different bucket.  That is what took Stats-LikeR 0.31 to 73 failing subtests
+# on a CPAN smoker (i686-linux-64int, perl 5.32.1) across bedroc(), quantile(),
+# var() and wilcox_test(), with nothing here able to see it.  So -mfpmath=387
+# gets a row: it reproduced 63 of those 73, by test number, before the fix.
+#
+# One row is enough, and it goes on the newest plain perl.  The axis is the
+# compiler's evaluation mode, not anything perl chooses, so a second x87 row on
+# another double perl would hand the same source to the same cc with the same
+# flags.  It is skipped on the long-double and quadmath perls because there is
+# nothing there to catch -- an x87 register is exactly as wide as a long-double
+# NV, and __float128 is not computed on the x87 stack at all -- and skipping
+# quadmath in particular keeps a 290s no-op out of every run.
+#
+# What this row cannot see is the other half of 32-bit x86: i386 returns a
+# double in st(0), so a callee hands its caller 80 bits, where x86-64 returns
+# in xmm0 and narrows for free.  That is what moved wilcox_test()'s pseudomedian
+# on the smoker, and only a real 32-bit perl will show it.
+
+# Does this perl's cc take -mfpmath=387?  It is an x86-only gcc/clang option, so
+# on any other machine or toolchain the row is simply absent -- there is no x87
+# register file to force the arithmetic onto.  Both compilers exit non-zero on
+# an -m switch they do not implement.
+sub cc_takes_x87 {
+	my $version = shift;
+	my $perl = File::Spec->catfile($perls_dir, tgt_perl($version), 'bin', 'perl');
+	my $cc;
+	if (open my $fh, '-|', $perl, '-MConfig', '-e', 'print $Config{cc}') {
+		$cc = <$fh>;
+		close $fh;
+	}
+	return 0 unless defined $cc && length $cc;
+	my $dir = File::Temp::tempdir(CLEANUP => 1);
+	my $src = File::Spec->catfile($dir, 'x87probe.c');
+	my $obj = File::Spec->catfile($dir, 'x87probe.o');
+	open my $out, '>', $src or return 0;
+	print {$out} "int main(void) { return 0; }\n";
+	close $out;
+	my $devnull = File::Spec->devnull;
+	return system("$cc -mfpmath=387 -c $src -o $obj > $devnull 2> $devnull") == 0;
+}
+
+if ($x87) {
+	my ($base) = grep { facts($_)->{plain} } reverse @targets;   # newest first
+	if    (!defined $base)        { print "-- no plain (double NV) perl selected; no x87 row\n" }
+	elsif (!cc_takes_x87($base))  { print "-- cc does not take -mfpmath=387 (not x86?); no x87 row\n" }
+	else                          { push @targets, "$base+x87" }
+}
+
 @targets = order_targets(@targets);
 
 if ($list) {
-	printf "%-16s %-16s %s\n", $_, nv_label(facts($_)),
-		File::Spec->catfile($perls_dir, $_, 'bin', 'perl') for @targets;
+	printf "%-20s %-16s %s\n", $_,
+		nv_label(facts($_)) . (tgt_variant($_) ? ' +' . tgt_variant($_) : ''),
+		File::Spec->catfile($perls_dir, tgt_perl($_), 'bin', 'perl') for @targets;
 	exit 0;
 }
 
@@ -349,7 +440,7 @@ my @prereqs = prereqs();
 # $silent: a parallel child is silent and the parent reports for it.
 sub build_one {
 	my ($version, $silent) = @_;
-	my $root = File::Spec->catdir($perls_dir, $version);
+	my $root = File::Spec->catdir($perls_dir, tgt_perl($version));
 	my $bin  = File::Spec->catdir($root, 'bin');
 	my $perl = File::Spec->catfile($bin, 'perl');
 
@@ -375,7 +466,7 @@ sub build_one {
 		split /:/, ($ENV{PATH} || '/usr/bin:/bin');
 	$ENV{PATH}          = join ':', $bin, @path;
 	$ENV{PERLBREW_ROOT} = $PERLBREW_ROOT;
-	$ENV{PERLBREW_PERL} = $version;
+	$ENV{PERLBREW_PERL} = tgt_perl($version);
 	$ENV{PERLBREW_PATH} = $bin;
 	delete @ENV{qw(PERL5LIB PERL_LOCAL_LIB_ROOT PERL_MM_OPT PERL_MB_OPT
 		PERLBREW_LIB PERL_MM_USE_DEFAULT)};
@@ -411,7 +502,8 @@ sub build_one {
 		push @steps, ['clean', ['make', 'clean'], 1];   # 1 = failure tolerated
 	}
 
-	push @steps, ['Makefile.PL', [$perl, 'Makefile.PL', "OPTIMIZE=$optimize"]];
+	push @steps, ['Makefile.PL',
+		[$perl, 'Makefile.PL', 'OPTIMIZE=' . tgt_optimize($version)]];
 	push @steps, ['make',        ['make', $jobs ? ("-j$jobs") : ()]];
 	push @steps, ['make test',   ['make', 'test']];
 	push @steps, ['make install',['make', 'install']] if $install;

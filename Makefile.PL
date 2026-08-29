@@ -42,6 +42,40 @@ unless ($Config{cc} =~ /(?:^|[\/\\])cl(?:\.exe)?$/i) {
         }
     }
 }
+# x87 -- 32-bit x86, and any -mfpmath=387 build -- evaluates every double-valued
+# expression in the 80-bit registers (FLT_EVAL_METHOD is 2) and rounds only on a
+# spill to memory. C99 says a cast or an assignment rounds to the declared type,
+# but gcc implements that only under -fexcess-precision=standard: -std=gnu99
+# above selects -fexcess-precision=fast, which keeps the extra bits. That is not
+# a last-digit matter here. It made ceil(0.1 * 100) come out 11 rather than 10,
+# so every bedroc()/auroc() bucket count was one too many, and it made
+# quantile() interpolate between two order statistics where R returns one of
+# them exactly. Reported by a CPAN smoker on i686-linux-64int (Stats-LikeR 0.31,
+# perl 5.32.1) and reproduced here on x86-64 with -mfpmath=387.
+#
+# The option is a no-op wherever the registers are already the NV's width --
+# anything computing in SSE, and a long-double or __float128 perl -- so it is
+# asked for unconditionally and dropped where the compiler will not take it;
+# gcc and clang both exit non-zero on an -f switch they do not implement.
+# MSVC is skipped for the reason above and does not need it: it has defaulted
+# to SSE2 on x86 since VS2012, and /fp:precise rounds to the declared type.
+# LikeR.xs does not depend on the probe finding it -- nv_narrow() forces the
+# store by hand at the few places where the extra bits change an answer, not
+# just its last digit -- but it is what keeps results bit-identical between
+# code paths, such as var() over a tied array and var() over a plain one.
+unless ($Config{cc} =~ /(?:^|[\/\\])cl(?:\.exe)?$/i) {
+    my $dir = File::Temp::tempdir(CLEANUP => 1);
+    my $src = File::Spec->catfile($dir, 'fpprobe.c');
+    my $obj = File::Spec->catfile($dir, 'fpprobe.o');
+    if (open my $fp_fh, '>', $src) {
+        print {$fp_fh} "int main(void) { return 0; }\n";
+        close $fp_fh;
+        my $quiet = File::Spec->devnull;
+        my $flag  = '-fexcess-precision=standard';
+        $std .= " $flag"
+            if system("$Config{cc}$std $flag -c $src -o $obj > $quiet 2> $quiet") == 0;
+    }
+}
 # On a long-double perl, LikeR.xs wants the `l` suffixed libm functions so that
 # an NV is not silently computed at double precision. They are C99, but some
 # libms (the thinner BSD ones especially) do not ship the whole set, so the set
