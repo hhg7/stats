@@ -2170,19 +2170,19 @@ those at a p\-value of \f(CW2.2e\-297\fR.
 .IX Subsection "Spearman: which method, and what statistic holds"
 .PP
 \&\f(CW\*(C`spearman\*(C'\fR follows R\*(Aqs \f(CW\*(C`cor.test\*(C'\fR exactly: \f(CW\*(C`exact\*(C'\fR defaults to true, and an
-exact request is served by permutation enumeration for \fIn\fR <= 9, by the
-AS 89 Edgeworth series for 10 <= \fIn\fR <= 1290, and by the asymptotic
-\&\fIt\fR above that or whenever the ranks contain ties. Passing \f(CW\*(C`exact => 1\*(C'\fR
-never enumerates past \fIn\fR = 9, because \fIn\fR! is 6.2 x 10^23 by \fIn\fR = 24.
+exact request is served by permutation enumeration for \fIn\fR ≤ 9, by the AS 89
+Edgeworth series for 10 ≤ \fIn\fR ≤ 1290, and by the asymptotic \fIt\fR above that or
+whenever the ranks contain ties. Passing \f(CW\*(C`exact => 1\*(C'\fR never enumerates past
+\&\fIn\fR = 9, because \fIn\fR! is 6.2 × 10²³ by \fIn\fR = 24.
 .PP
 \&\f(CW\*(C`statistic\*(C'\fR is Spearman\*(Aqs \fIS\fR, the sum of squared rank differences, on every
-one of those paths \-\- the same quantity R reports, so it can be compared
+one of those paths — the same quantity R reports, so it can be compared
 directly. Two differences from R are worth knowing, neither of them about the
-mathematics: at a perfect correlation R derives \fIS\fR from rho and lands a
-rounding step away (\f(CW3.66e\-14\fR for an exact 0 at \fIn\fR = 10), and under ties R
-keeps using that same identity, which only holds without them, so R reports
+mathematics: at a perfect correlation R derives \fIS\fR from ρ and lands a rounding
+step away (\f(CW3.66e\-14\fR for an exact 0 at \fIn\fR = 10), and under ties R keeps using
+that same identity, which only holds without them, so R reports
 \&\f(CW2.5192319072807861\fR where the squared rank differences sum to exactly \f(CW2.5\fR.
-Both are pinned in \fIt/cor_test.spearman.R.t\fR.
+Both are pinned in \f(CW\*(C`t/cor_test.spearman.R.t\*(C'\fR.
 .SS cov
 .IX Subsection "cov"
 .Vb 1
@@ -7373,161 +7373,229 @@ Verified against R 4.6.1 (\f(CW\*(C`oneway.test\*(C'\fR, \f(CW\*(C`anova(aov())\
 \&\f(CW\*(C`t/model_pvalue_tails.t\*(C'\fR and \f(CW\*(C`t/oneway_test.R.scipy.t\*(C'\fR.
 .SH Changes
 .IX Header "Changes"
+.SS "0.311 2026\-08\-28 CDT"
+.IX Subsection "0.311 2026-08-28 CDT"
+\fI80\-bit x87 arithmetic broke four test files on 32\-bit x86\fR
+.IX Subsection "80-bit x87 arithmetic broke four test files on 32-bit x86"
+.PP
+A CPAN smoker on \f(CW\*(C`i686\-linux\-64int\*(C'\fR (perl 5.32.1) failed 73 subtests across
+\&\f(CW\*(C`t/bedroc.python.t\*(C'\fR, \f(CW\*(C`t/quantile.R.t\*(C'\fR, \f(CW\*(C`t/var_sd_cov.R.t\*(C'\fR and
+\&\f(CW\*(C`t/wilcox_test.R.scipy.t\*(C'\fR. None of it reproduced here: the local matrix varies
+how wide an NV is \fIstored\fR — double, long double, \f(CW\*(C`_\|_float128\*(C'\fR — but every perl
+in it is x86\-64, so all five agree on doing the arithmetic in SSE at exactly
+that width.
+.PP
+32\-bit x86 does not. It computes doubles in the x87 register file at 80 bits and
+rounds only when a value is spilled to memory, so \f(CW\*(C`FLT_EVAL_METHOD\*(C'\fR is 2 where
+an SSE build reports 0. C99 says a cast or an assignment rounds to the declared
+type, but gcc implements that only under \f(CW\*(C`\-fexcess\-precision=standard\*(C'\fR, and
+\&\f(CW\*(C`\-std=gnu99\*(C'\fR — which the C99 probe in \f(CW\*(C`Makefile.PL\*(C'\fR tries first — selects
+\&\f(CW\*(C`\-fexcess\-precision=fast\*(C'\fR, which keeps the extra bits. A product therefore
+carried more precision than a double has, and every place that split one into an
+integer part and a remainder picked a different integer:
+.PP
+One cause, four faces. \f(CW\*(C`bedroc\*(C'\fR and \f(CW\*(C`auroc\*(C'\fR size a bucket with
+\&\f(CW\*(C`ceil(frac * N)\*(C'\fR, so every count came back one too high — each wrong enrichment
+factor in the smoker\*(Aqs report has an eleven under it where a ten belongs, and
+\&\f(CW\*(C`n.active\*(C'\fR was 4 where 3 was wanted, 21 where 20 was. \f(CW\*(C`quantile\*(C'\fR forms
+\&\f(CW\*(C`h = (n \- 1) * p\*(C'\fR and interpolates whenever \f(CW\*(C`h\*(C'\fR is not an integer, so at
+\&\fIn\fR = 1001 and \fIp\fR = 7/1000 it interpolated between two order statistics where R
+returns one of them exactly. \f(CW\*(C`var\*(C'\fR and \f(CW\*(C`sd\*(C'\fR disagreed with themselves in the
+last digit between the tied\-array and plain\-array paths. And \f(CW\*(C`wilcox_test\*(C'\fR found
+its pseudomedian by a root search over a step function, where a perturbed
+iterate does not move the answer by an ulp but lands on a different flat step:
+.PP
+The fix is in two layers. \f(CW\*(C`Makefile.PL\*(C'\fR and \f(CW\*(C`dist.ini\*(C'\fR now trial\-compile
+\&\f(CW\*(C`\-fexcess\-precision=standard\*(C'\fR and add it when the compiler takes it, alongside
+the existing per\-vendor C99 probe; gcc and clang both exit non\-zero on an \f(CW\*(C`\-f\*(C'\fR
+switch they do not implement, and MSVC is skipped as before, needing nothing —
+it has defaulted to SSE2 on x86 since VS2012, and \f(CW\*(C`/fp:precise\*(C'\fR rounds to the
+declared type. That flag on its own fixes all 73. It is still not the whole
+answer, because it is not everywhere: an older clang, a vendor cc, or any
+compiler whose only C99 mode is a wide\-register one will not take it, and this
+module is expected to build on all of them.
+.PP
+So \f(CW\*(C`LikeR.xs\*(C'\fR also gains \f(CWnv_narrow()\fR, which forces the store through a
+\&\f(CW\*(C`volatile NV\*(C'\fR by hand at the seven places where a product is split into an
+integer part and a remainder: both passes of \f(CW\*(C`quantile\*(C'\fR — which must agree, or
+the partial sort places the wrong order statistics — plus \f(CW\*(C`dens_quantile7\*(C'\fR,
+\&\f(CW\*(C`_qcut_core\*(C'\fR, and the bucket counts in \f(CW\*(C`bedroc\*(C'\fR twice and \f(CW\*(C`auroc\*(C'\fR once. Those
+are the sites where the extra bits change \fIan answer\fR rather than its last
+digit, and by itself it fixes 63 of the 73. The other 10 are last\-digit work —
+\&\f(CW\*(C`var\*(C'\fR agreeing with itself between the tied\-array and plain\-array paths, and the
+root search landing on the same step — which is what the flag is for and what no
+reasonable amount of hand\-placed rounding would buy.
+.PP
+Rounding to the NV\*(Aqs own width is the right answer at every width, not a
+concession to double: 7/1000 times 1000 rounds to exactly 7 in a double and in a
+long double alike. So both layers are inert on the long\-double and quadmath
+builds, which is what the matrix confirms.
+.PP
+No new tests were written, because the four cross\-validation files that caught
+this are already the regression test — they are pinned to R and SciPy and they
+fail without the fix. What was missing was a build that could run them the way
+the smoker did, so \f(CW\*(C`./test.all.perls.pl\*(C'\fR gains a first\-class \f(CW\*(C`<perl>+x87\*(C'\fR row
+that rebuilds the newest plain perl with \f(CW\*(C`\-mfpmath=387\*(C'\fR. It reproduced 63 of the
+73 subtests by test number. One row is enough and it is skipped where there is
+nothing to catch — an x87 register is exactly as wide as a long\-double NV, and
+\&\f(CW\*(C`_\|_float128\*(C'\fR never touches the x87 stack — and \f(CW\*(C`\-\-no\-x87\*(C'\fR turns it off.
+.PP
+That row cannot see the other half of 32\-bit x86, and it is worth naming so the
+gap is not mistaken for coverage: i386 returns a double in \f(CWst(0)\fR, so a callee
+hands its caller all 80 bits, where the x86\-64 ABI returns in \f(CW\*(C`xmm0\*(C'\fR and narrows
+for free. That is the half that moved \f(CW\*(C`wilcox_test\*(C'\fR, which is why it was the one
+failure that could not be reproduced here at all; the assembly shows plain
+\&\f(CW\*(C`\-std=gnu99\*(C'\fR emitting \f(CW\*(C`fdivl\*(C'\fR and \f(CW\*(C`ret\*(C'\fR with no rounding between them, and the
+flag inserting the \f(CW\*(C`fstpl\*(C'\fR/\f(CW\*(C`fldl\*(C'\fR round\-trip that narrows the result. Only a
+real 32\-bit perl will exercise it.
 .SS "0.31 2026\-08"
 .IX Subsection "0.31 2026-08"
-.SS "Correctness and portability fixes"
+\fIavals\fR
+.IX Subsection "avals"
+.PP
+new function to make code cleaner.  \f(CW\*(C`avals\*(C'\fR is the same as \f(CW\*(C`vals\*(C'\fR but returns an array instead of an array reference, so instead of \f(CW\*(C`@{ vals($df, \*(Aqcolname\*(Aq) }\*(C'\fR it will just be \f(CW\*(C`avals($df, \*(Aqcolname\*(Aq)\*(C'\fR to prevent the need for bracketing
+.PP
+\fICorrectness and portability fixes\fR
 .IX Subsection "Correctness and portability fixes"
+.PP
 Nine defects found by cross\-validating against R 4.6.1 and mpmath, by running
 the suite under UBSan and AddressSanitizer, and by reading for the conventions
-in \fICLAUDE.md\fR. Each is pinned by a test that fails without the fix:
-\&\fIt/cor_test.spearman.R.t\fR, \fIt/pt_qt.tails.R.t\fR, \fIt/minmax.nan.R.t\fR,
-\&\fIt/var_test.ci.R.t\fR and \fIt/portability.bugs.t\fR.
+in \f(CW\*(C`CLAUDE.md\*(C'\fR. Each is pinned by a test that fails without the fix:
+\&\f(CW\*(C`t/cor_test.spearman.R.t\*(C'\fR, \f(CW\*(C`t/pt_qt.tails.R.t\*(C'\fR, \f(CW\*(C`t/minmax.nan.R.t\*(C'\fR,
+\&\f(CW\*(C`t/var_test.ci.R.t\*(C'\fR and \f(CW\*(C`t/portability.bugs.t\*(C'\fR.
 .PP
-\fIcor_test(method => \*(Aqspearman\*(Aq) could not return\fR
+\f(CW\*(C`cor_test(method => \*(Aqspearman\*(Aq)\*(C'\fR could not return
 .IX Subsection "cor_test(method => 'spearman') could not return"
 .PP
-\&\f(CW\*(C`exact => 1\*(C'\fR ran an unbounded permutation walk. R has never enumerated
-past \fIn\fR = 9 \-\- \f(CW\*(C`n_small\*(C'\fR in \fIsrc/library/stats/src/prho.c\fR \-\- whatever
-\&\f(CW\*(C`exact\*(C'\fR says, but here the caller\*(Aqs flag was taken literally, and \fIn\fR! is
-6.2e23 by \fIn\fR = 24.  At \fIn\fR = 12 it took 5 seconds, at \fIn\fR = 13 over a
-minute, and at \fIn\fR = 24 it never returned; all three are now immediate.
+\&\f(CW\*(C`exact => 1\*(C'\fR ran an unbounded permutation walk. R has never enumerated past
+\&\fIn\fR = 9 — \f(CW\*(C`n_small\*(C'\fR in \f(CW\*(C`src/library/stats/src/prho.c\*(C'\fR — whatever \f(CW\*(C`exact\*(C'\fR says,
+but here the caller\*(Aqs flag was taken literally, and \fIn\fR! is 6.2 × 10²³ by
+\&\fIn\fR = 24:
 .PP
-The enumeration is now capped at \fIn\fR <= 9, and 10 <= \fIn\fR <= 1290
-goes to the AS 89 Edgeworth series, which is what R\*(Aqs \f(CWprho()\fR does. Past 1290
-\&\-\- R\*(Aqs own bound, where \f(CW\*(C`n^3 \- n\*(C'\fR overflows an \f(CW\*(C`int\*(C'\fR \-\- it falls back to the
-asymptotic \fIt\fR, as before.
+The enumeration is now capped at \fIn\fR ≤ 9 and 10 ≤ \fIn\fR ≤ 1290 goes to the AS 89
+Edgeworth series, which is what R\*(Aqs \f(CWprho()\fR does. Past 1290 — R\*(Aqs own bound,
+where \f(CW\*(C`n^3 \- n\*(C'\fR overflows an \f(CW\*(C`int\*(C'\fR — it falls back to the asymptotic \fIt\fR, as
+before.
 .PP
-\fISpearman p\-values were R\*(Aqs exact = FALSE for every n >= 10\fR
-.IX Subsection "Spearman p-values were R's exact = FALSE for every n >= 10"
+Spearman p\-values were R\*(Aqs \f(CW\*(C`exact = FALSE\*(C'\fR for every \fIn\fR ≥ 10
+.IX Subsection "Spearman p-values were R's exact = FALSE for every n ≥ 10"
 .PP
-\&\f(CW\*(C`exact\*(C'\fR defaulted to \f(CW\*(C`(n < 10)\*(C'\fR. R\*(Aqs default is true, and R serves it from
+\&\f(CW\*(C`exact\*(C'\fR defaulted to \f(CW\*(C`(n < 10)\*(C'\fR. R\*(Aqs default is \f(CW\*(C`TRUE\*(C'\fR, and R serves it from
 \&\f(CWprho()\fR for every \fIn\fR up to 1290, so the old default silently took R\*(Aqs
-approximation branch. At \fIn\fR = 32 it gave \f(CW1.7639963277557958e\-07\fR where R
-gives \f(CW1.1513643381176551e\-06\fR; at \fIn\fR = 16, \f(CW5.0655870675677e\-17\fR against
-R\*(Aqs \f(CW5.7949654941386787e\-06\fR. Across 45 randomly generated pairs the p\-value
-now agrees with R to \f(CW3.5e\-14\fR.
+approximation branch:
 .PP
-\fISpearman\*(Aqs statistic changed meaning at n = 10\fR
+Across 45 randomly generated pairs the p\-value now agrees with R to \f(CW3.5e\-14\fR.
+.PP
+Spearman\*(Aqs \f(CW\*(C`statistic\*(C'\fR changed meaning at \fIn\fR = 10
 .IX Subsection "Spearman's statistic changed meaning at n = 10"
 .PP
 It was \fIS\fR from the exact branch and the \fIt\fR statistic from the other. It is
 now \fIS\fR on every path, as R reports it. This is a change to a documented
-field \-\- the note saying to compare \f(CW\*(C`estimate\*(C'\fR and \f(CW\*(C`p.value\*(C'\fR rather than
+field — the note saying to compare \f(CW\*(C`estimate\*(C'\fR and \f(CW\*(C`p.value\*(C'\fR rather than
 \&\f(CW\*(C`statistic\*(C'\fR described the old behaviour and is gone.
 .PP
-\fIqt saturated, and pt collapsed to zero, in the far tail\fR
+\f(CW\*(C`qt\*(C'\fR saturated, and \f(CW\*(C`pt\*(C'\fR collapsed to zero, in the far tail
 .IX Subsection "qt saturated, and pt collapsed to zero, in the far tail"
 .PP
-\&\f(CWpt_upper()\fR computed the tail as \f(CW\*(C`I_z(df/2, 1/2)\*(C'\fR with
-\&\f(CW\*(C`z = df/(df + t^2)\*(C'\fR and nothing else. \f(CW\*(C`z\*(C'\fR underflows well before \f(CW\*(C`t^2\*(C'\fR
-overflows, so the tail became a flat \f(CW0\fR; and because \f(CWqt_tail()\fR bisects
-against it, and its bracket stopped at \f(CWsqrt(DBL_MAX)\fR, the quantile converged
-onto the ceiling and returned it \-\- a plausible number, not an error:
-.PP
-.Vb 6
-\& call              before                       R 4.6.1
-\& pt(\-1e160, 1)     0                            3.1830988618378451e\-161
-\& pt(\-1e300, 1)     0                            3.1830988618377598e\-301
-\& qt(1e\-160, 1)     \-1.3407807929942597e154      \-3.1830988618379068e159
-\& qt(1e\-300, 1)     \-1.3407807929942597e154      \-3.183098861837907e299
-\& qt(1e\-16, 0.1)    \-1.3407807929942597e154      \-1.6044257056664863e156
-.Ve
+\&\f(CWpt_upper()\fR computed the tail as \f(CW\*(C`I_z(df/2, 1/2)\*(C'\fR with \f(CW\*(C`z = df/(df + t²)\*(C'\fR and
+nothing else. \f(CW\*(C`z\*(C'\fR underflows well before \f(CW\*(C`t²\*(C'\fR overflows, so the tail became a
+flat \f(CW0\fR; and because \f(CWqt_tail()\fR bisects against it, and its bracket stopped
+at \f(CWsqrt(DBL_MAX)\fR, the quantile converged onto the ceiling and returned it —
+a plausible number, not an error:
 .PP
 \&\f(CWpt_upper()\fR now carries the Abramowitz & Stegun 26.5.4 branch from R\*(Aqs
-\&\fInmath/pt.c\fR, which evaluates the tail in logs once \f(CW\*(C`1 + (t/df)*t\*(C'\fR passes
+\&\f(CW\*(C`nmath/pt.c\*(C'\fR, which evaluates the tail in logs once \f(CW\*(C`1 + (t/df)·t\*(C'\fR passes
 \&\f(CW1e100\fR and so has nothing left to underflow, and the bracket runs to
 \&\f(CW\*(C`NV_MAX/2\*(C'\fR and reports \f(CW\*(C`Inf\*(C'\fR when the quantile genuinely exceeds what an \f(CW\*(C`NV\*(C'\fR
 can name. \f(CW\*(C`pt\*(C'\fR now matches R exactly from \f(CW\-1e150\fR to \f(CW\-1e300\fR.
 .PP
-\fImin and max skipped a NaN unless it came first\fR
+\f(CW\*(C`min\*(C'\fR and \f(CW\*(C`max\*(C'\fR skipped a \f(CW\*(C`NaN\*(C'\fR unless it came first
 .IX Subsection "min and max skipped a NaN unless it came first"
 .PP
-Every comparison against a \f(CW\*(C`NaN\*(C'\fR is false, so \f(CW\*(C`if (v < mn)\*(C'\fR passed
-over one and kept a real number \-\- but a \f(CW\*(C`NaN\*(C'\fR in the first position stayed.
-The answer depended on where in the array it sat:
+Every comparison against a \f(CW\*(C`NaN\*(C'\fR is false, so \f(CW\*(C`if (v < mn)\*(C'\fR passed over one and
+kept a real number — but a \f(CW\*(C`NaN\*(C'\fR in the first position stayed. The answer
+depended on where in the array it sat:
 .PP
 .Vb 2
-\&    min([NaN, 1, 2])   was NaN      min([1, 2, NaN])   was 1
-\&    min([1, NaN, 2])   was 1        max([1, 2, NaN])   was 2
+\& min([NaN, 1, 2])   was NaN      min([1, 2, NaN])   was 1
+\& min([1, NaN, 2])   was 1        max([1, 2, NaN])   was 2
 .Ve
 .PP
-R gives \f(CW\*(C`NaN\*(C'\fR for all of them, and \f(CW\*(C`sum\*(C'\fR, \f(CW\*(C`mean\*(C'\fR, \f(CW\*(C`var\*(C'\fR, \f(CW\*(C`sd\*(C'\fR and
-\&\f(CW\*(C`median\*(C'\fR here already did. Both now propagate \f(CW\*(C`NaN\*(C'\fR from any position, in the
-flat argument list and the array\-reference forms alike.
+R gives \f(CW\*(C`NaN\*(C'\fR for all of them, and \f(CW\*(C`sum\*(C'\fR, \f(CW\*(C`mean\*(C'\fR, \f(CW\*(C`var\*(C'\fR, \f(CW\*(C`sd\*(C'\fR and \f(CW\*(C`median\*(C'\fR here
+already did. Both now propagate \f(CW\*(C`NaN\*(C'\fR from any position, in the flat argument
+list and the array\-reference forms alike.
 .PP
-\fIvar_test\*(Aqs confidence interval lost up to 2.5e\-11\fR
+\f(CW\*(C`var_test\*(C'\fR\*(Aqs confidence interval lost up to \f(CW2.5e\-11\fR
 .IX Subsection "var_test's confidence interval lost up to 2.5e-11"
 .PP
 It divided by a private \f(CWqf_bisection()\fR that stopped on an \fBabsolute\fR
-\&\f(CW\*(C`high \- low < 1e\-12\*(C'\fR. The F quantile it divides by is not of order 1 \-\-
-at \f(CW\*(C`conf.level = 1 \- 2^\-20\*(C'\fR on nine and nine degrees of freedom it is about
-\&\f(CW0.016\fR \-\- so an absolute stop is a relative error that grows as the quantile
-shrinks. At that conf.level the interval came out
-\&\f(CW\*(C`[16085387951.278957, 62168223924585.172]\*(C'\fR against R\*(Aqs
-\&\f(CW\*(C`[16085387950.871651, 62168223923448.094]\*(C'\fR.
+\&\f(CW\*(C`high \- low < 1e\-12\*(C'\fR. The F quantile it divides by is not of order 1 — at
+\&\f(CW\*(C`conf.level = 1 \- 2^\-20\*(C'\fR on nine and nine degrees of freedom it is about
+\&\f(CW0.016\fR — so an absolute stop is a relative error that grows as the quantile
+shrinks:
 .PP
-It now uses the same \f(CWd_qf()\fR that the exported \f(CW\*(C`qf\*(C'\fR does, which has a
-relative stop and agrees with mpmath at \f(CW\*(C`mp.dps = 60\*(C'\fR to about \f(CW1e\-16\fR. Over
-864 generated cases the interval agrees with R to \f(CW2.1e\-14\fR. \f(CW\*(C`qf_bisection\*(C'\fR
-had no other caller and is gone; carrying two F quantiles of different accuracy
-in one file was the underlying defect.
+It now uses the same \f(CWd_qf()\fR that the exported \f(CW\*(C`qf\*(C'\fR does, which has a relative
+stop and agrees with mpmath at \f(CW\*(C`mp.dps = 60\*(C'\fR to about \f(CW1e\-16\fR. Over 864
+generated cases the interval agrees with R to \f(CW2.1e\-14\fR. \f(CW\*(C`qf_bisection\*(C'\fR had no
+other caller and is gone; carrying two F quantiles of different accuracy in one
+file was the underlying defect.
 .PP
-\fIvar_test\*(Aqs p\-value was formed by subtraction\fR
+\f(CW\*(C`var_test\*(C'\fR\*(Aqs p\-value was formed by subtraction
 .IX Subsection "var_test's p-value was formed by subtraction"
 .PP
 It computed the upper tail as \f(CW\*(C`1 \- pf(F)\*(C'\fR, which is what
-"F and z tail p\-values" says every F test here stopped doing \-\- \f(CW\*(C`var_test\*(C'\fR
-was listed neither among those converted nor among the three known to remain
-subtractive. It now uses \f(CWpf_upper()\fR, which builds its own complement as
-\&\f(CW\*(C`df2 / (df1*F + df2)\*(C'\fR without subtracting. R writes the subtraction too, so
-in the far tail this is now \fBmore accurate than R\fR; measured against mpmath
-over the same 864 cases, the worst relative error is \f(CW1.854e\-14\fR for
-Stats::LikeR and \f(CW1.0\fR for R 4.6.1. R\*(Aqs worst is \f(CW1.0\fR because
-\&\f(CW\*(C`1 \- pf(F)\*(C'\fR reaches a flat \f(CW0\fR once the lower tail is within an ulp of
-\&\f(CW1\fR. On \f(CW\*(C`c(3,1,4,1,5,9,2,6,5,3,5)\*(C'\fR against \f(CW\*(C`c(1,2,4,8,16,32,64)/1024\*(C'\fR,
-two\-sided: mpmath \f(CW1.08732387158297135e\-11\fR, Stats::LikeR
-\&\f(CW1.0873238715829779e\-11\fR, R \f(CW1.0873080213968933e\-11\fR.
+"F and z tail p\-values" says every F test here stopped
+doing — \f(CW\*(C`var_test\*(C'\fR was listed neither among those converted nor among the three
+known to remain subtractive. It now uses \f(CWpf_upper()\fR, which builds its own
+complement as \f(CW\*(C`df2 / (df1·F + df2)\*(C'\fR without subtracting. R writes the
+subtraction too, so in the far tail this is now \fBmore accurate than R\fR;
+measured against mpmath over the same 864 cases:
 .PP
-\fR\f(CI%zu\fR\fI would have failed on MSVC, in two places silently\fR
+R\*(Aqs worst is \f(CW1.0\fR because \f(CW\*(C`1 \- pf(F)\*(C'\fR reaches a flat \f(CW0\fR once the lower tail is
+within an ulp of \f(CW1\fR. On \f(CW\*(C`c(3,1,4,1,5,9,2,6,5,3,5)\*(C'\fR against
+\&\f(CW\*(C`c(1,2,4,8,16,32,64)/1024\*(C'\fR, two\-sided: mpmath \f(CW1.08732387158297135e\-11\fR,
+\&\f(CW\*(C`Stats::LikeR\*(C'\fR \f(CW1.0873238715829779e\-11\fR, R \f(CW1.0873080213968933e\-11\fR.
+.PP
+\f(CW%zu\fR would have failed on MSVC, in two places silently
 .IX Subsection "%zu would have failed on MSVC, in two places silently"
 .PP
 Nine plain \f(CW\*(C`snprintf\*(C'\fR calls used the C99 \f(CW%zu\fR length modifier, which MSVC\*(Aqs
-older CRT does not implement \-\- it prints the literal text. Two of the nine
-build \fBhash keys\fR, not messages: \f(CW\*(C`csort\*(C'\fR\*(Aqs AoA to AoH and AoA to HoA
-conversions name their columns \f(CW"0"\fR .. \f(CW"ncols\-1"\fR, so on such a build every
+older CRT does not implement — it prints the literal text. Two of the nine
+build \fBhash keys\fR, not messages: \f(CW\*(C`csort\*(C'\fR\*(Aqs AoA → AoH and AoA → HoA
+conversions name their columns \f(CW"0" .. "ncols\-1"\fR, so on such a build every
 column would have been stored under the key \f(CW"zu"\fR and all but one lost. A
 third is the \f(CW\*(C`Index N\*(C'\fR group label that \f(CW\*(C`oneway_test\*(C'\fR returns to the caller;
-the rest are counts inside \f(CW\*(C`croak\*(C'\fR text. All nine now use \f(CW\*(C`my_snprintf\*(C'\fR with
+the rest are counts inside \f(CW\*(C`croak\*(C'\fR text. All 9 now use \f(CW\*(C`my_snprintf\*(C'\fR with
 \&\f(CW\*(C`UVuf\*(C'\fR, the modifier Configure picks for the build\*(Aqs own \f(CW\*(C`UV\*(C'\fR.
 .PP
-\fIssize_t does not exist outside POSIX\fR
+\f(CW\*(C`ssize_t\*(C'\fR does not exist outside POSIX
 .IX Subsection "ssize_t does not exist outside POSIX"
 .PP
-Seven declarations used the lowercase POSIX spelling. Perl never defines it \-\-
+Seven declarations used the lowercase POSIX spelling. Perl never defines it —
 there is no \f(CW\*(C`typedef\*(C'\fR or \f(CW\*(C`#define\*(C'\fR for it anywhere in the perl source, and
-\&\fIwin32/win32.h\fR and \fIconfig_H.vc\fR do not supply one either \-\- so the file
-compiled only because glibc\*(Aqs \fIsys/types.h\fR happens to. An MSVC build failed at
-the first one. They are \f(CW\*(C`SSize_t\*(C'\fR now, or \f(CW\*(C`size_t\*(C'\fR where the value is a length
-that cannot be negative, matching the 430 declarations that already spelled it
-that way.
+\&\f(CW\*(C`win32/win32.h\*(C'\fR and \f(CW\*(C`config_H.vc\*(C'\fR do not supply one either — so the file
+compiled only because glibc\*(Aqs \f(CW\*(C`<sys/types.h>\*(C'\fR happens to. An MSVC build failed
+at the first one. They are \f(CW\*(C`SSize_t\*(C'\fR now, or \f(CW\*(C`size_t\*(C'\fR where the value is a
+length that cannot be negative, matching the 430 declarations that already
+spelled it that way.
 .PP
-\fITwo zero\-length calls on null pointers\fR
+Two zero\-length calls on null pointers
 .IX Subsection "Two zero-length calls on null pointers"
 .PP
 \&\f(CW\*(C`qsort\*(C'\fR and \f(CW\*(C`memcmp\*(C'\fR are both declared to take non\-null pointers whatever the
 element count, so passing \f(CW\*(C`NULL\*(C'\fR is undefined even for zero elements: UBSan
 reports it, and a compiler may infer non\-nullness and delete a later check.
-\&\f(CW\*(C`p_adjust\*(C'\fR reached \f(CW\*(C`qsort(NULL, 0, ...)\*(C'\fR whenever no row hash had any keys,
-and \f(CW\*(C`drop_duplicates\*(C'\fR reached \f(CW\*(C`memcmp(NULL, NULL, 0)\*(C'\fR when every key seen so
-far had been zero\-length. Both were reachable from one line of Perl \-\-
+\&\f(CW\*(C`p_adjust\*(C'\fR reached \f(CW\*(C`qsort(NULL, 0, …)\*(C'\fR whenever no row hash had any keys, and
+\&\f(CW\*(C`drop_duplicates\*(C'\fR reached \f(CW\*(C`memcmp(NULL, NULL, 0)\*(C'\fR when every key seen so far had
+been zero\-length. Both were reachable from one line of Perl —
 \&\f(CW\*(C`p_adjust([{}, {}])\*(C'\fR and \f(CW\*(C`drop_duplicates([{}, {}])\*(C'\fR. The suite is now clean
 under both UBSan and AddressSanitizer.
 .PP
-\fImalloc/free in the write_table announcement\fR
+\f(CW\*(C`malloc\*(C'\fR/\f(CW\*(C`free\*(C'\fR in the \f(CW\*(C`write_table\*(C'\fR announcement
 .IX Subsection "malloc/free in the write_table announcement"
 .PP
 The confirmation line allocated with libc\*(Aqs \f(CW\*(C`malloc\*(C'\fR when the path pushed it
-past a 512\-byte stack buffer \-\- the only two such calls in the file, where
+past a 512\-byte stack buffer — the only two such calls in the file, where
 everything else uses \f(CW\*(C`Newx\*(C'\fR/\f(CW\*(C`Safefree\*(C'\fR so that the module uses whatever
 allocator its perl was built with, which on a \f(CW\*(C`\-Dusemymalloc\*(C'\fR perl is not
 libc\*(Aqs. \f(CW\*(C`Newx\*(C'\fR is not the substitute here, since it croaks on failure and dying
@@ -7789,80 +7857,6 @@ is now \f(CW\*(C`/* WILCOXON EXACT NULL DISTRIBUTIONS\*(C'\fR, which is what the
 \&\f(CW\*(C`CLAUDE.md\*(C'\fR asks for anyway. Nothing after \f(CW\*(C`_\|_DATA_\|_\*(C'\fR was touched, no POD
 region, and no line holding a \f(CW\*(C`/*\*(C'\fR or \f(CW\*(C`*/\*(C'\fR was deleted, so no comment can have
 been left unterminated. The suite is unchanged at 28,485 tests either side of it.
-.PP
-\fI80\-bit x87 arithmetic broke four test files on 32\-bit x86\fR
-.IX Subsection "80-bit x87 arithmetic broke four test files on 32-bit x86"
-.PP
-A CPAN smoker on \f(CW\*(C`i686\-linux\-64int\*(C'\fR (perl 5.32.1) failed 73 subtests across
-\&\f(CW\*(C`t/bedroc.python.t\*(C'\fR, \f(CW\*(C`t/quantile.R.t\*(C'\fR, \f(CW\*(C`t/var_sd_cov.R.t\*(C'\fR and
-\&\f(CW\*(C`t/wilcox_test.R.scipy.t\*(C'\fR. None of it reproduced here: the local matrix varies
-how wide an NV is \fIstored\fR — double, long double, \f(CW\*(C`_\|_float128\*(C'\fR — but every perl
-in it is x86\-64, so all five agree on doing the arithmetic in SSE at exactly
-that width.
-.PP
-32\-bit x86 does not. It computes doubles in the x87 register file at 80 bits and
-rounds only when a value is spilled to memory, so \f(CW\*(C`FLT_EVAL_METHOD\*(C'\fR is 2 where
-an SSE build reports 0. C99 says a cast or an assignment rounds to the declared
-type, but gcc implements that only under \f(CW\*(C`\-fexcess\-precision=standard\*(C'\fR, and
-\&\f(CW\*(C`\-std=gnu99\*(C'\fR — which the C99 probe in \f(CW\*(C`Makefile.PL\*(C'\fR tries first — selects
-\&\f(CW\*(C`\-fexcess\-precision=fast\*(C'\fR, which keeps the extra bits. A product therefore
-carried more precision than a double has, and every place that split one into an
-integer part and a remainder picked a different integer:
-.PP
-One cause, four faces. \f(CW\*(C`bedroc\*(C'\fR and \f(CW\*(C`auroc\*(C'\fR size a bucket with
-\&\f(CW\*(C`ceil(frac * N)\*(C'\fR, so every count came back one too high — each wrong enrichment
-factor in the smoker\*(Aqs report has an eleven under it where a ten belongs, and
-\&\f(CW\*(C`n.active\*(C'\fR was 4 where 3 was wanted, 21 where 20 was. \f(CW\*(C`quantile\*(C'\fR forms
-\&\f(CW\*(C`h = (n \- 1) * p\*(C'\fR and interpolates whenever \f(CW\*(C`h\*(C'\fR is not an integer, so at
-\&\fIn\fR = 1001 and \fIp\fR = 7/1000 it interpolated between two order statistics where R
-returns one of them exactly. \f(CW\*(C`var\*(C'\fR and \f(CW\*(C`sd\*(C'\fR disagreed with themselves in the
-last digit between the tied\-array and plain\-array paths. And \f(CW\*(C`wilcox_test\*(C'\fR found
-its pseudomedian by a root search over a step function, where a perturbed
-iterate does not move the answer by an ulp but lands on a different flat step:
-.PP
-The fix is in two layers. \f(CW\*(C`Makefile.PL\*(C'\fR and \f(CW\*(C`dist.ini\*(C'\fR now trial\-compile
-\&\f(CW\*(C`\-fexcess\-precision=standard\*(C'\fR and add it when the compiler takes it, alongside
-the existing per\-vendor C99 probe; gcc and clang both exit non\-zero on an \f(CW\*(C`\-f\*(C'\fR
-switch they do not implement, and MSVC is skipped as before, needing nothing —
-it has defaulted to SSE2 on x86 since VS2012, and \f(CW\*(C`/fp:precise\*(C'\fR rounds to the
-declared type. That flag on its own fixes all 73. It is still not the whole
-answer, because it is not everywhere: an older clang, a vendor cc, or any
-compiler whose only C99 mode is a wide\-register one will not take it, and this
-module is expected to build on all of them.
-.PP
-So \f(CW\*(C`LikeR.xs\*(C'\fR also gains \f(CWnv_narrow()\fR, which forces the store through a
-\&\f(CW\*(C`volatile NV\*(C'\fR by hand at the seven places where a product is split into an
-integer part and a remainder: both passes of \f(CW\*(C`quantile\*(C'\fR — which must agree, or
-the partial sort places the wrong order statistics — plus \f(CW\*(C`dens_quantile7\*(C'\fR,
-\&\f(CW\*(C`_qcut_core\*(C'\fR, and the bucket counts in \f(CW\*(C`bedroc\*(C'\fR twice and \f(CW\*(C`auroc\*(C'\fR once. Those
-are the sites where the extra bits change \fIan answer\fR rather than its last
-digit, and by itself it fixes 63 of the 73. The other 10 are last\-digit work —
-\&\f(CW\*(C`var\*(C'\fR agreeing with itself between the tied\-array and plain\-array paths, and the
-root search landing on the same step — which is what the flag is for and what no
-reasonable amount of hand\-placed rounding would buy.
-.PP
-Rounding to the NV\*(Aqs own width is the right answer at every width, not a
-concession to double: 7/1000 times 1000 rounds to exactly 7 in a double and in a
-long double alike. So both layers are inert on the long\-double and quadmath
-builds, which is what the matrix confirms.
-.PP
-No new tests were written, because the four cross\-validation files that caught
-this are already the regression test — they are pinned to R and SciPy and they
-fail without the fix. What was missing was a build that could run them the way
-the smoker did, so \f(CW\*(C`./test.all.perls.pl\*(C'\fR gains a first\-class \f(CW\*(C`<perl>+x87\*(C'\fR row
-that rebuilds the newest plain perl with \f(CW\*(C`\-mfpmath=387\*(C'\fR. It reproduced 63 of the
-73 subtests by test number. One row is enough and it is skipped where there is
-nothing to catch — an x87 register is exactly as wide as a long\-double NV, and
-\&\f(CW\*(C`_\|_float128\*(C'\fR never touches the x87 stack — and \f(CW\*(C`\-\-no\-x87\*(C'\fR turns it off.
-.PP
-That row cannot see the other half of 32\-bit x86, and it is worth naming so the
-gap is not mistaken for coverage: i386 returns a double in \f(CWst(0)\fR, so a callee
-hands its caller all 80 bits, where the x86\-64 ABI returns in \f(CW\*(C`xmm0\*(C'\fR and narrows
-for free. That is the half that moved \f(CW\*(C`wilcox_test\*(C'\fR, which is why it was the one
-failure that could not be reproduced here at all; the assembly shows plain
-\&\f(CW\*(C`\-std=gnu99\*(C'\fR emitting \f(CW\*(C`fdivl\*(C'\fR and \f(CW\*(C`ret\*(C'\fR with no rounding between them, and the
-flag inserting the \f(CW\*(C`fstpl\*(C'\fR/\f(CW\*(C`fldl\*(C'\fR round\-trip that narrows the result. Only a
-real 32\-bit perl will exercise it.
 .SS "0.302 2026\-08\-22 CDT"
 .IX Subsection "0.302 2026-08-22 CDT"
 \&\f(CW\*(C`sum\*(C'\fR, \f(CW\*(C`min\*(C'\fR, \f(CW\*(C`max\*(C'\fR, \f(CW\*(C`mean\*(C'\fR, \f(CW\*(C`sd\*(C'\fR, \f(CW\*(C`var\*(C'\fR, \f(CW\*(C`quantile\*(C'\fR, \f(CW\*(C`cor\*(C'\fR and \f(CW\*(C`cov\*(C'\fR are

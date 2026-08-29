@@ -3,7 +3,7 @@
 require 5.010;
 use strict;
 package Stats::LikeR;
-our $VERSION = 0.31;
+our $VERSION = 0.311;
 require XSLoader;
 use autodie ':default';
 use warnings FATAL => 'all';
@@ -15064,6 +15064,146 @@ C<t/model_pvalue_tails.t> and C<t/oneway_test.R.scipy.t>.
 
 =head1 Changes
 
+=head2 0.311 2026-08-28 CDT
+
+=head3 80-bit x87 arithmetic broke four test files on 32-bit x86
+
+A CPAN smoker on C<i686-linux-64int> (perl 5.32.1) failed 73 subtests across
+C<t/bedroc.python.t>, C<t/quantile.R.t>, C<t/var_sd_cov.R.t> and
+C<t/wilcox_test.R.scipy.t>. None of it reproduced here: the local matrix varies
+how wide an NV is I<stored> — double, long double, C<__float128> — but every perl
+in it is x86-64, so all five agree on doing the arithmetic in SSE at exactly
+that width.
+
+32-bit x86 does not. It computes doubles in the x87 register file at 80 bits and
+rounds only when a value is spilled to memory, so C<FLT_EVAL_METHOD> is 2 where
+an SSE build reports 0. C99 says a cast or an assignment rounds to the declared
+type, but gcc implements that only under C<-fexcess-precision=standard>, and
+C<-std=gnu99> — which the C99 probe in C<Makefile.PL> tries first — selects
+C<-fexcess-precision=fast>, which keeps the extra bits. A product therefore
+carried more precision than a double has, and every place that split one into an
+integer part and a remainder picked a different integer:
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>expression</th>
+  <th>SSE</th>
+  <th>x87</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>ceil(0.1 * 100)</code></td>
+  <td><code>10</code></td>
+  <td><code>11</code></td>
+</tr>
+<tr>
+  <td><code>ceil(0.05 * 60)</code></td>
+  <td><code>3</code></td>
+  <td><code>4</code></td>
+</tr>
+<tr>
+  <td><code>1000 * 0.007</code></td>
+  <td>exactly <code>7</code></td>
+  <td><code>7.000000000000000146</code></td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+One cause, four faces. C<bedroc> and C<auroc> size a bucket with
+C<ceil(frac * N)>, so every count came back one too high — each wrong enrichment
+factor in the smoker's report has an eleven under it where a ten belongs, and
+C<n.active> was 4 where 3 was wanted, 21 where 20 was. C<quantile> forms
+C<h = (n - 1) * p> and interpolates whenever C<h> is not an integer, so at
+I<n> = 1001 and I<p> = 7/1000 it interpolated between two order statistics where R
+returns one of them exactly. C<var> and C<sd> disagreed with themselves in the
+last digit between the tied-array and plain-array paths. And C<wilcox_test> found
+its pseudomedian by a root search over a step function, where a perturbed
+iterate does not move the answer by an ulp but lands on a different flat step:
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>case</th>
+  <th>before</th>
+  <th>R 4.6.1</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>b12</code>/<code>c12</code> paired, <code>mu = -1</code></td>
+  <td><code>-0.64836734615018388</code></td>
+  <td><code>-0.70304928468751926</code></td>
+</tr>
+<tr>
+  <td><code>a4</code>/<code>a9</code>, <code>mu = 0.5</code></td>
+  <td><code>0.43960806666603025</code></td>
+  <td><code>0.4690926266724697</code></td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+The fix is in two layers. C<Makefile.PL> and C<dist.ini> now trial-compile
+C<-fexcess-precision=standard> and add it when the compiler takes it, alongside
+the existing per-vendor C99 probe; gcc and clang both exit non-zero on an C<-f>
+switch they do not implement, and MSVC is skipped as before, needing nothing —
+it has defaulted to SSE2 on x86 since VS2012, and C</fp:precise> rounds to the
+declared type. That flag on its own fixes all 73. It is still not the whole
+answer, because it is not everywhere: an older clang, a vendor cc, or any
+compiler whose only C99 mode is a wide-register one will not take it, and this
+module is expected to build on all of them.
+
+So C<LikeR.xs> also gains C<nv_narrow()>, which forces the store through a
+C<volatile NV> by hand at the seven places where a product is split into an
+integer part and a remainder: both passes of C<quantile> — which must agree, or
+the partial sort places the wrong order statistics — plus C<dens_quantile7>,
+C<_qcut_core>, and the bucket counts in C<bedroc> twice and C<auroc> once. Those
+are the sites where the extra bits change I<an answer> rather than its last
+digit, and by itself it fixes 63 of the 73. The other 10 are last-digit work —
+C<var> agreeing with itself between the tied-array and plain-array paths, and the
+root search landing on the same step — which is what the flag is for and what no
+reasonable amount of hand-placed rounding would buy.
+
+Rounding to the NV's own width is the right answer at every width, not a
+concession to double: 7/1000 times 1000 rounds to exactly 7 in a double and in a
+long double alike. So both layers are inert on the long-double and quadmath
+builds, which is what the matrix confirms.
+
+No new tests were written, because the four cross-validation files that caught
+this are already the regression test — they are pinned to R and SciPy and they
+fail without the fix. What was missing was a build that could run them the way
+the smoker did, so C<./test.all.perls.pl> gains a first-class C<< E<lt>perlE<gt>+x87 >> row
+that rebuilds the newest plain perl with C<-mfpmath=387>. It reproduced 63 of the
+73 subtests by test number. One row is enough and it is skipped where there is
+nothing to catch — an x87 register is exactly as wide as a long-double NV, and
+C<__float128> never touches the x87 stack — and C<--no-x87> turns it off.
+
+That row cannot see the other half of 32-bit x86, and it is worth naming so the
+gap is not mistaken for coverage: i386 returns a double in C<st(0)>, so a callee
+hands its caller all 80 bits, where the x86-64 ABI returns in C<xmm0> and narrows
+for free. That is the half that moved C<wilcox_test>, which is why it was the one
+failure that could not be reproduced here at all; the assembly shows plain
+C<-std=gnu99> emitting C<fdivl> and C<ret> with no rounding between them, and the
+flag inserting the C<fstpl>/C<fldl> round-trip that narrows the result. Only a
+real 32-bit perl will exercise it.
+
 =head2 0.31 2026-08
 
 =head3 avals
@@ -15800,144 +15940,6 @@ is now C</* WILCOXON EXACT NULL DISTRIBUTIONS>, which is what the house style in
 C<CLAUDE.md> asks for anyway. Nothing after C<__DATA__> was touched, no POD
 region, and no line holding a C</*> or C<*/> was deleted, so no comment can have
 been left unterminated. The suite is unchanged at 28,485 tests either side of it.
-
-=head3 80-bit x87 arithmetic broke four test files on 32-bit x86
-
-A CPAN smoker on C<i686-linux-64int> (perl 5.32.1) failed 73 subtests across
-C<t/bedroc.python.t>, C<t/quantile.R.t>, C<t/var_sd_cov.R.t> and
-C<t/wilcox_test.R.scipy.t>. None of it reproduced here: the local matrix varies
-how wide an NV is I<stored> — double, long double, C<__float128> — but every perl
-in it is x86-64, so all five agree on doing the arithmetic in SSE at exactly
-that width.
-
-32-bit x86 does not. It computes doubles in the x87 register file at 80 bits and
-rounds only when a value is spilled to memory, so C<FLT_EVAL_METHOD> is 2 where
-an SSE build reports 0. C99 says a cast or an assignment rounds to the declared
-type, but gcc implements that only under C<-fexcess-precision=standard>, and
-C<-std=gnu99> — which the C99 probe in C<Makefile.PL> tries first — selects
-C<-fexcess-precision=fast>, which keeps the extra bits. A product therefore
-carried more precision than a double has, and every place that split one into an
-integer part and a remainder picked a different integer:
-
-
-
-=begin html
-
-<table>
-<thead>
-<tr>
-  <th>expression</th>
-  <th>SSE</th>
-  <th>x87</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-  <td><code>ceil(0.1 * 100)</code></td>
-  <td><code>10</code></td>
-  <td><code>11</code></td>
-</tr>
-<tr>
-  <td><code>ceil(0.05 * 60)</code></td>
-  <td><code>3</code></td>
-  <td><code>4</code></td>
-</tr>
-<tr>
-  <td><code>1000 * 0.007</code></td>
-  <td>exactly <code>7</code></td>
-  <td><code>7.000000000000000146</code></td>
-</tr>
-</tbody>
-</table>
-
-=end html
-
-
-
-One cause, four faces. C<bedroc> and C<auroc> size a bucket with
-C<ceil(frac * N)>, so every count came back one too high — each wrong enrichment
-factor in the smoker's report has an eleven under it where a ten belongs, and
-C<n.active> was 4 where 3 was wanted, 21 where 20 was. C<quantile> forms
-C<h = (n - 1) * p> and interpolates whenever C<h> is not an integer, so at
-I<n> = 1001 and I<p> = 7/1000 it interpolated between two order statistics where R
-returns one of them exactly. C<var> and C<sd> disagreed with themselves in the
-last digit between the tied-array and plain-array paths. And C<wilcox_test> found
-its pseudomedian by a root search over a step function, where a perturbed
-iterate does not move the answer by an ulp but lands on a different flat step:
-
-
-
-=begin html
-
-<table>
-<thead>
-<tr>
-  <th>case</th>
-  <th>before</th>
-  <th>R 4.6.1</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-  <td><code>b12</code>/<code>c12</code> paired, <code>mu = -1</code></td>
-  <td><code>-0.64836734615018388</code></td>
-  <td><code>-0.70304928468751926</code></td>
-</tr>
-<tr>
-  <td><code>a4</code>/<code>a9</code>, <code>mu = 0.5</code></td>
-  <td><code>0.43960806666603025</code></td>
-  <td><code>0.4690926266724697</code></td>
-</tr>
-</tbody>
-</table>
-
-=end html
-
-
-
-The fix is in two layers. C<Makefile.PL> and C<dist.ini> now trial-compile
-C<-fexcess-precision=standard> and add it when the compiler takes it, alongside
-the existing per-vendor C99 probe; gcc and clang both exit non-zero on an C<-f>
-switch they do not implement, and MSVC is skipped as before, needing nothing —
-it has defaulted to SSE2 on x86 since VS2012, and C</fp:precise> rounds to the
-declared type. That flag on its own fixes all 73. It is still not the whole
-answer, because it is not everywhere: an older clang, a vendor cc, or any
-compiler whose only C99 mode is a wide-register one will not take it, and this
-module is expected to build on all of them.
-
-So C<LikeR.xs> also gains C<nv_narrow()>, which forces the store through a
-C<volatile NV> by hand at the seven places where a product is split into an
-integer part and a remainder: both passes of C<quantile> — which must agree, or
-the partial sort places the wrong order statistics — plus C<dens_quantile7>,
-C<_qcut_core>, and the bucket counts in C<bedroc> twice and C<auroc> once. Those
-are the sites where the extra bits change I<an answer> rather than its last
-digit, and by itself it fixes 63 of the 73. The other 10 are last-digit work —
-C<var> agreeing with itself between the tied-array and plain-array paths, and the
-root search landing on the same step — which is what the flag is for and what no
-reasonable amount of hand-placed rounding would buy.
-
-Rounding to the NV's own width is the right answer at every width, not a
-concession to double: 7/1000 times 1000 rounds to exactly 7 in a double and in a
-long double alike. So both layers are inert on the long-double and quadmath
-builds, which is what the matrix confirms.
-
-No new tests were written, because the four cross-validation files that caught
-this are already the regression test — they are pinned to R and SciPy and they
-fail without the fix. What was missing was a build that could run them the way
-the smoker did, so C<./test.all.perls.pl> gains a first-class C<< E<lt>perlE<gt>+x87 >> row
-that rebuilds the newest plain perl with C<-mfpmath=387>. It reproduced 63 of the
-73 subtests by test number. One row is enough and it is skipped where there is
-nothing to catch — an x87 register is exactly as wide as a long-double NV, and
-C<__float128> never touches the x87 stack — and C<--no-x87> turns it off.
-
-That row cannot see the other half of 32-bit x86, and it is worth naming so the
-gap is not mistaken for coverage: i386 returns a double in C<st(0)>, so a callee
-hands its caller all 80 bits, where the x86-64 ABI returns in C<xmm0> and narrows
-for free. That is the half that moved C<wilcox_test>, which is why it was the one
-failure that could not be reproduced here at all; the assembly shows plain
-C<-std=gnu99> emitting C<fdivl> and C<ret> with no rounding between them, and the
-flag inserting the C<fstpl>/C<fldl> round-trip that narrows the result. Only a
-real 32-bit perl will exercise it.
 
 =head2 0.302 2026-08-22 CDT
 
