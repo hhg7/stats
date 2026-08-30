@@ -159,18 +159,61 @@ is_deeply([ avals($hoh, 'no_such_col') ], [undef, undef, undef, undef],
 
 # a magical (tied) cell must be fetched, not returned as the tied SV itself
 {
-	package t::AlwaysSeven;
-	sub TIESCALAR { my $c = 7; return bless \$c, shift }
-	sub FETCH { my $s = shift; return $$s++ }	# a different value each FETCH
+	package t::TiedCell;
+	my $fetches = 0;	# FETCHes since the last reset_fetches()
+	sub TIESCALAR { my ($class, $v) = @_; return bless \$v, $class }
+	sub FETCH { my $self = shift; $fetches++; return $$self }
 	sub STORE { }
+	sub fetches { return $fetches }
+	sub reset_fetches { $fetches = 0; return }
+}
+# The cell itself is tied, rather than a tied scalar being copied into a freshly
+# built frame: copying one in fetches it before avals() ever sees it, and how
+# many times that fetch happens is a property of the perl, not of this module.
+# The earlier form of this block used a FETCH that counted up (7, 8, 9, ...) and
+# asserted the caller saw 7; a CPAN tester on perl 5.18.4
+# (x86_64-linux-thread-multi) reported 8 for Stats::LikeR 0.31, i.e. that perl
+# ran get-magic twice on the one copy, where 5.10.1, 5.12.5 and 5.44.0 each run
+# it once. So FETCH returns a constant here: what is asserted is that avals()
+# fetches the cell at extraction time and hands back a plain copy -- not how
+# many mg_get() calls that copy took.
+{
+	my %row;
+	tie $row{v}, 't::TiedCell', 7;
+	t::TiedCell::reset_fetches();
+	my $aoh_tied = [ \%row ];
+	is(t::TiedCell::fetches(), 0, 'building the frame does not fetch a tied cell');
+	my @got = avals($aoh_tied, 'v');
+	is(scalar @got, 1, 'a tied cell yields one value');
+	cmp_ok(t::TiedCell::fetches(), '>=', 1, 'a tied AoH cell is fetched at extraction time');
+	is($got[0], 7, '... and the fetched value, not the tied SV, comes back');
+	ok(!defined tied $got[0], '... as a plain copy carrying no tie magic');
+	my $n = t::TiedCell::fetches();
+	my $again = $got[0];
+	is(t::TiedCell::fetches(), $n, '... so re-reading it does not fetch again');
+	is($again, 7, '... and reads back the same value');
+	is_deeply(vals($aoh_tied, 'v'), \@got, '... exactly what vals() returns for the same frame');
 }
 {
-	my $tied;
-	tie $tied, 't::AlwaysSeven';
-	my @got = avals([ { v => $tied } ], 'v');
-	is(scalar @got, 1, 'a tied cell yields one value');
-	is($got[0], 7, 'a tied cell is fetched once, at extraction time');
-	is($got[0], 7, 'and the fetched value is a plain copy, not the tied SV');
+	# the HoH branch copies its cells the same way
+	my %row;
+	tie $row{v}, 't::TiedCell', 7;
+	t::TiedCell::reset_fetches();
+	my @got = avals({ r => \%row }, 'v');
+	cmp_ok(t::TiedCell::fetches(), '>=', 1, 'a tied HoH cell is fetched at extraction time');
+	is_deeply(\@got, [7], '... and comes back as its fetched value');
+	ok(!defined tied $got[0], '... with no tie magic on the copy');
+}
+{
+	# the HoA branch fills AvARRAY directly, so it gets its own check
+	my @col;
+	tie $col[0], 't::TiedCell', 7;
+	$col[1] = 9;
+	t::TiedCell::reset_fetches();
+	my @got = avals({ v => \@col }, 'v');
+	cmp_ok(t::TiedCell::fetches(), '>=', 1, 'a tied HoA cell is fetched at extraction time');
+	is_deeply(\@got, [7, 9], '... and comes back as its fetched value');
+	ok(!defined tied $got[0], '... with no tie magic on the copy');
 }
 
 done_testing();

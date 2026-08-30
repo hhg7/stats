@@ -10,7 +10,22 @@ use Test::Exception; # die_ok
 use Test::More;
 use Test::LeakTrace 'no_leaks_ok';
 
-# Custom helper for floating-point comparisons
+# Custom helper for floating-point comparisons.
+#
+# $epsilon is relative to the size of the expected value, floored at $epsilon
+# itself so that a comparison against 0 (or against anything smaller than 1)
+# keeps the absolute bound it has always had: the allowance is
+# $epsilon * max(1, |expected|).
+#
+# A bare absolute bound cannot mean the same thing at every magnitude. 1e-14 is
+# roughly 10**5 ulps at 1e-9 and less than two ulps at 54, so a call site that
+# wrote 1e-14 meaning "a few ulps of a number of order 1" was demanding
+# bit-exactness of a number of order 50. A CPAN tester on Stats::LikeR 0.31 hit
+# exactly that: the lm() F statistic below, exact 54 by algebra, came back
+# 1.4210854715202e-14 high -- two ulps of 54, since ulp(54) = 2**-47 =
+# 7.105e-15 -- and failed a 1e-14 bound that this machine's build happens to
+# meet exactly. Scaling gives that call site 76 ulps of headroom instead of
+# one, and leaves every comparison against a value below 1 untouched.
 sub is_approx {
 	my ($got, $expected, $test_name, $epsilon) = @_;
 	$epsilon = 1e-7 if not defined $epsilon;
@@ -22,12 +37,14 @@ sub is_approx {
 		$i++;
 	}
 	my $diff = abs($got - $expected);
-	if ($diff <= $epsilon) {
-		pass("$test_name: within $epsilon");
+	my $scale = abs($expected) > 1 ? abs($expected) : 1;
+	my $tol   = $epsilon * $scale;
+	if ($diff <= $tol) {
+		pass("$test_name: within $tol");
 		return 1;
 	} else {
 		fail($test_name);
-		diag("         got: $got\n    expected: $expected; diff = $diff");
+		diag("         got: $got\n    expected: $expected; diff = $diff, tolerance = $tol");
 		return 0;
 	}
 }
@@ -1559,15 +1576,24 @@ if ($ft->{estimate}{'odds ratio'} == 'inf') {
 	fail('fisher_test: odds ratio with 0 input is NOT infinite');
 }
 #    hist
-# 1. Basic properties with a simple dataset
+#
+# Since 0.312 the breakpoints are pretty()'s, as R's hist() has always used:
+# `breaks` is a suggested number of intervals, not a count to be obeyed, so
+# `scalar @{$res->{counts}}` is whatever pretty() settled on -- 4 here, and 8
+# for the same data with breaks => 5.  What must hold for any input is that the
+# three vectors line up with each other.  The R-pinned values are in
+# t/hist.R.t; these are the structural invariants.
 # Data: 1, 2, 2, 3, 3, 3, 4, 4, 5 (9 elements)
 my $h_data = [1, 2, 2, 3, 3, 3, 4, 4, 5];
 my $breaks = 4;
 my $res = hist($h_data, breaks => $breaks);
 is(ref $res, 'HASH', 'hist: returns a hash reference');
-is(scalar @{$res->{counts}}, $breaks, 'hist: correct number of bins (counts)');
-is(scalar @{$res->{breaks}}, $breaks+1, 'hist: correct number of breaks (n+1)');
-is(scalar @{$res->{mids}},   $breaks, 'hist: correct number of midpoints');
+is(scalar @{$res->{breaks}}, scalar @{$res->{counts}} + 1,
+   'hist: one more break than there are bins');
+is(scalar @{$res->{mids}}, scalar @{$res->{counts}},
+   'hist: one midpoint per bin');
+is_deeply($res->{breaks}, [1, 2, 3, 4, 5],
+   'hist: breaks are pretty()\'s, as in R');
 
 # 2. Verify counts sum to total elements
 my $total_counts = 0;
@@ -1590,10 +1616,13 @@ for my $i (0 .. $#{$res->{counts}}) {
 }
 ok(abs($area - 1.0) < 1e-12, 'hist: total area under density curve is 1.0');
 
-# 5. Test with a single value (Edge case)
+# 5. Test with a single value (Edge case).  R's hist(10, breaks = 1) puts the
+# lone point in (0, 10]: pretty() rounds a zero-width range outwards rather
+# than starting the axis at the value, which is what this asserted before 0.312.
 my $single = hist([10], breaks => 1);
 is($single->{counts}->[0], 1, 'hist: handles single-element array');
-is($single->{breaks}->[0], 10, 'hist: single-element break starts at value');
+is($single->{breaks}->[0], 0, 'hist: a single value gets pretty()\'s rounded bin, as in R');
+is($single->{breaks}->[1], 10, '... whose upper end is the value itself');
 
 #  Performance & Edge Cases for hist()
 #subtest 'hist: O(N) Performance and Edge Cases' => sub {
@@ -1613,7 +1642,11 @@ my $flat_data = [7, 7, 7, 7, 7];
 my $flat_res = hist($flat_data, breaks => 1);
 
 is($flat_res->{counts}->[0], 5, 'hist: properly handles flatline data (step = 0)');
-is($flat_res->{density}->[0], 1, 'hist: density is 1.0 for a single zero-width bin');
+# No zero-width bin any more: pretty() gives constant data a real interval, so
+# the density is count/(n*width) like any other.  R: hist(rep(7,5), breaks=1)
+# has breaks 5 10, counts 5, density 0.2.
+is_deeply($flat_res->{breaks}, [5, 10], 'hist: flatline data gets a rounded bin, as in R');
+is($flat_res->{density}->[0], 0.2, 'hist: and its density is count/(n*width)');
 
 # 3. Scale test: Generate a slightly larger array to ensure no memory segfaults
 # and quick processing.

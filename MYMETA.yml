@@ -24,5 +24,5 @@ requires:
   Test::Exception: '0'
   Test::LeakTrace: '0'
   Test::More: '0'
-version: 0.311
+version: 0.312
 x_serialization_backend: 'CPAN::Meta::YAML version 0.020'

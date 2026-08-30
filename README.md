@@ -1868,17 +1868,34 @@ those at a p-value of `2.2e-297`.
 `spearman` follows R's `cor.test` exactly: `exact` defaults to true, and an
 exact request is served by permutation enumeration for *n* ≤ 9, by the AS 89
 Edgeworth series for 10 ≤ *n* ≤ 1290, and by the asymptotic *t* above that or
-whenever the ranks contain ties. Passing `exact => 1` never enumerates past
+whenever the data contain ties. Passing `exact => 1` never enumerates past
 *n* = 9, because *n*! is 6.2 × 10²³ by *n* = 24.
 
-`statistic` is Spearman's *S*, the sum of squared rank differences, on every
-one of those paths — the same quantity R reports, so it can be compared
-directly. Two differences from R are worth knowing, neither of them about the
-mathematics: at a perfect correlation R derives *S* from ρ and lands a rounding
-step away (`3.66e-14` for an exact 0 at *n* = 10), and under ties R keeps using
-that same identity, which only holds without them, so R reports
-`2.5192319072807861` where the squared rank differences sum to exactly `2.5`.
-Both are pinned in `t/cor_test.spearman.R.t`.
+`statistic` is Spearman's *S* on every one of those paths, formed the way R
+forms it — `(n³ − n)(1 − ρ)/6`, which is the sum of squared rank differences
+only when there are no ties. One difference from R remains, and it is not about
+the mathematics: at a perfect correlation R's `cor()` returns a ρ that is
+2.2e-16 short of 1, so R reports `3.6637359812630166e-14` for an exact 0 at
+*n* = 10 where the Welford accumulation here returns exactly 1 and so gives
+exactly 0. Pinned in `t/cor_test.spearman.R.t`.
+
+### Kendall: ties, and the confidence interval
+
+`kendall`'s normal approximation carries R's full tie correction —
+
+    var_S = (v0 − vt − vu)/18 + v1/(2n(n−1)) + v2/(9n(n−1)(n−2))
+
+built from the tie-group sizes of each vector. That branch is reached exactly
+when there are ties (without them, and below *n* = 50, the exact distribution
+is used instead), so the correction is never idle. The counts behind it come
+from Knight's O(*n* log *n*) algorithm, the same one [`cor`](#cor) uses, which
+is why a Kendall `cor_test` on 64 000 points takes 0.014 s rather than 15.
+
+`pearson` reports a `conf.int`, and it follows `alternative`: a one-sided test
+gets a one-sided interval, with the open end at exactly −1 or 1, as R's does.
+There is no interval below *n* = 4, again as in R — Fisher's *z* has
+1/√(n−3) for its standard error, so there is nothing to report. `spearman` and
+`kendall` return no interval at all, which is also R's behaviour.
 
 ## cov
 
@@ -3460,11 +3477,23 @@ Options are passed as trailing `name => value` pairs.
 
 ## hist
 
-Computes the histogram of the given data values, operating in single $O(N)$ pass performance. It returns the bin counts, computed breaks, midpoints, and density. 
+Computes the histogram of the given data values. It returns the bin counts,
+computed breaks, midpoints, and density.
 
     my $res = hist([1, 2, 2, 3, 3, 3, 4, 4, 5], breaks => 4);
 
-If `breaks` is not explicitly provided, it defaults to calculating the number of bins using Sturges' formula.
+`breaks` is a *suggested* number of intervals, not a count to be obeyed — the
+breakpoints are R's `pretty()` over the range of the data, so they fall on
+round numbers and the axis is rounded outwards past the extremes. Ask for 5
+bins over `c(1,2,2,3,4,7,9,10,11,15)` and you get eight, at 0, 2, 4 … 16, which
+is what R's `hist()` gives for the same request. When `breaks` is omitted the
+suggestion is R's `nclass.Sturges`, ⌈log₂ *n* + 1⌉.
+
+Counts are of right-closed intervals with the lowest included — `(a, b]`,
+except the first, which is `[a₀, b₁]` — carrying R's 1e-7 fuzz, so a value that
+lands a rounding error above a breakpoint still counts in the bin below it.
+`density` is `counts / (n × width)` over the unfuzzed breaks. Pinned against R
+across thirteen datasets and eight `breaks` settings in `t/hist.R.t`.
 
 ## hosmer_lemeshow
 
@@ -5587,9 +5616,17 @@ or, alternatively, with arrays:
 
     my @scaled_results = scale(1..5);
 
-You can also pass an options hash to disable centering or scaling:
+You can also pass options, either as a trailing hash reference or as trailing
+name/value pairs — the two are equivalent:
 
-    my @scaled_results = scale(1..5, { center => false, scale => 1 });
+    my @scaled_results = scale(1..5, { center => 0, scale => 1 });
+    my @scaled_results = scale(1..5, center => 0, scale => 1);
+
+`center` and `scale` each take a number to use instead of the mean or the
+standard deviation, or one of `mean`/`sd`, `true`/`false`, `none`, `1`/`0` and
+the empty string, matched case-insensitively. With `center => 0` the divisor
+is R's: the root mean square about zero, `sqrt(sum(x^2)/(n-1))`, not the
+standard deviation.
 
 It fully supports matrix operations. By passing an array of arrays, `scale` processes the data column by column independently:
 
@@ -6817,7 +6854,270 @@ failure that could not be reproduced here at all; the assembly shows plain
 flag inserting the `fstpl`/`fldl` round-trip that narrows the result. Only a
 real 32-bit perl will exercise it.
 
-## 0.31 2026-08
+## 0.312 2026-08-30
+
+### `cor_test()`: five disagreements with R, one of which moves p-values
+
+The tie-corrected variance is the one that matters. `cor_test(method =>
+'kendall')` divided the Kendall score by `n(n-1)(2n+5)/18`, which is R's
+`var_S` only when there are no ties — and with no ties and *n* < 50 the branch
+is not reached at all, so the correction was missing in exactly the case that
+needs it. R builds it from the tie-group sizes of each vector:
+
+    var_S = (v0 - vt - vu)/18 + v1/(2n(n-1)) + v2/(9n(n-1)(n-2))
+
+On fifteen points of tied integer data:
+
+| | 0.311 | R 4.6.1 |
+|---|---|---|
+| z | `-1.8805123053604953` | `-2.0721033457107345` |
+| p (two-sided) | `0.060038290909579115` | `0.038255804392841472` |
+
+A factor of 1.57 on the p-value, across 0.05. Integer scores, counts and Likert
+data are all ties, which is most of what a Kendall correlation is asked for.
+
+Four more, in the same function:
+
+* **Ties of odd group size were not ties.** The Spearman branch decided
+  `TIES` by looking for a fractional average rank, and a group of three
+  averages to a whole number: `y = (1,1,1,2,2,2,3,3,3,4,4,4)` ranks as
+  2, 2, 2, 5, 5, 5, 8, 8, 8, 11, 11, 11 and was called tie-free, which sent it
+  to the exact branch R reserves for data that has none. It is now R's test —
+  a repeated *value* — taken from the tie walk `rank_data()` was already doing.
+* **Spearman's `statistic` under ties.** R always forms *S* as
+  `(n³ − n)(1 − ρ)/6`; the sum of squared rank differences is the same number
+  only without ties. 0.311 reported the sum: `793.5` where R gives
+  `865.39724699477085`. It is now the identity, on every path.
+* **The Pearson confidence interval ignored `alternative`.** R switches on it —
+  `less` is `(-1, tanh(z + σ·qnorm(cl))]`, `greater` is
+  `[tanh(z - σ·qnorm(cl)), 1)`. The two-sided interval came back whatever was
+  asked for: `[0.5217431448512, 0.9680507713838]` for `alternative =>
+  'greater'` where R gives `[0.6029901323843, 1]`. The p-value was never
+  wrong, only the interval, which is the kind of error that reads as an answer.
+  There is also no interval below *n* = 4 now, as in R.
+* **The continuity correction at a score of zero.** R applies
+  `S <- sign(S) * (abs(S) - 1)`, and `sign(0)` is 0, so a score of exactly 0
+  stays 0. Subtracting a signum that treats 0 as negative moved it to +1:
+  thirty points whose score is 0 reported `z = 0.019410388389502`,
+  `p = 0.98451372323408` where the answer is `z = 0`, `p = 1`.
+
+One divergence went the other way and is now gone. The exact Kendall
+distribution summed its lower tail from `dp[max_inv]` downwards, the end of the
+array that has accumulated every rounding the recurrence made; the distribution
+of inversions is symmetric, so both tails are now summed from `dp[0]`. Perfect
+discordance at *n* = 10 returned `2.7557319223626736e-07` and is now exactly
+1/10!, `2.7557319223985891e-07`, which is R's value. In the mirror case R is
+the one that is 9.3e-11 out and `cor_test` gives the exact double;
+`t/cor_test.kendall.R.t` records that and asserts the combinatorics.
+
+`t/cor_test.kendall.R.t` (1236 assertions) and `t/cor_test.pearson.ci.R.t`
+(274) are new and generated from R; `t/cor_test.spearman.R.t` gained the tied
+rows it had been quoting as a recorded divergence.
+
+### Kendall's counts, in O(*n* log *n*)
+
+`cor_test(method => 'kendall')` walked every (*i*, *j*) pair to count
+concordances — the O(*n*²) loop `cor()` had already replaced with Knight's
+algorithm in 0.31. Both now come from one routine, which returns the tie
+moments R's `var_S` needs along with the pair counts, so the correctness fix
+above and this are the same edit:
+
+| *n* | `cor_test` before | `cor_test` now |
+|---|---|---|
+| 4 000 | 0.059 s | 0.0007 s |
+| 16 000 | 0.93 s | 0.0031 s |
+| 64 000 | 14.73 s | 0.0139 s |
+
+`cov(..., 'kendall')` is the same sum over the full *n* × *n* space, so it is
+2(C − D) and comes from the same counts: 1.85 s to 0.0061 s at *n* = 32 000.
+R's own `cov(method = "kendall")` is O(*n*²), so this is now faster than the
+reference rather than merely equal to it.
+
+### `hist()`: R's `pretty()` breakpoints
+
+R does not cut the range into `breaks` equal pieces. It treats that number as a
+suggestion and asks `pretty()` for round numbers, so the axis ends outside the
+data and the interval count need not be the one requested:
+
+    hist([1,2,2,3,4,7,9,10,11,15])
+      breaks  0  2  4  6  8  10  12  14  16       was  1  5.75  10.5  15.25  20
+      mids    1  3  5  7  9  11  13  15           was  3.375  8.125  12.875  17.625
+
+`R_pretty()` is ported from `src/appl/pretty.c` with `pretty.default()`'s
+parameters and `hist.default()`'s `min.n = 1`; the counts come from a binary
+search over the breakpoints carrying R's 1e-7 fuzz, which is what puts a value
+sitting a rounding error above a break into the bin below it. The default bin
+count is R's `nclass.Sturges`, ⌈log₂ *n* + 1⌉ — the ceiling is part of it, and
+a truncating cast had been turning `log₂(13) + 1 = 4.70` into 4.
+
+`t/hist.R.t` pins all four returned vectors across thirteen datasets — a single
+point, a constant column, data spanning zero, data of order 1e-3 and 1e6 —
+crossed with eight `breaks` settings. Every value matches R exactly, to the
+last bit.
+
+### Arguments that are not numbers
+
+`SvNV()` turns a string that is not a number into 0 without a word, because the
+`numeric` warning it would raise belongs to the caller's scope and an XSUB does
+not run in one. So `min(1, 2, 'abc')` returned **0** — a value that is not
+among its arguments and is not the smallest of them — and `mean(1, 2, 'abc')`
+returned 1. `undef` had always been refused; this was the hole beside it.
+
+`mean`, `sum`, `min`, `max`, `median`, `var`, `sd`, `skew`, `kurtosis`,
+`quantile`, `scale` and `hist` now croak, naming the argument or the cell. An
+object that overloads its numeric conversion still counts as a number; a
+reference that overloads nothing is now refused too, where `SvNV()` used to
+fold in its address. The cross-validation file that had been asserting the old
+behaviour — `t/read_table.na_strings.t`, on an unmapped literal `NA` — asserts
+the croak instead, which is a better signal than the warning it could not see.
+
+### `NaN` in `median()` and `quantile()`
+
+No comparison sort can place a `NaN`: every comparison against one is false. So
+which value ended up in the middle depended on where in the array it sat.
+`median()` of 1..50 with one `NaN` in it returned 25.5, `median([5, 1, NaN])`
+returned 5, and `median([1, 2, NaN, 4])` returned `NaN`. `quantile()` of that
+same 50 answered `13.25` for the 25% and `NaN` for the 75%.
+
+Both now propagate — one `NaN` in, `NaN` out — which is what `sum`, `mean`,
+`var`, `sd`, `min` and `max` already did here, and what keeps the 50% quantile
+equal to `median()`. `undef` is still dropped by `quantile()`, as documented.
+
+The five bandwidth selectors disagreed with each other about the same input:
+`bw_ucv`, `bw_bcv` and `bw_sj` rejected a non-finite value a layer down, while
+`bw_nrd0` and `bw_nrd` returned a number — 7.5250570111922 for 1..50 with two
+`NaN`s, computed from a variance and an interquartile range that are both
+`NaN` via a `min()` that a `NaN` silently loses. All five now refuse it in the
+shared reader, which is also what keeps a `NaN` out of the `qsort()` there:
+`cmp_nv3()` cannot order one, and an inconsistent comparator makes `qsort()`
+undefined behaviour rather than merely inaccurate.
+
+### Ragged frames
+
+A HoA frame whose columns have different lengths was fitted on whichever column
+`hv_iternext()` reached first, so how many rows `lm()`, `glm()` and `prcomp()`
+used moved with hash order from run to run: `{ y => [1..6], x => [1,2,3] }`
+returned a perfect fit on three rows with `df.residual = 1` and said nothing.
+All three now croak, naming the column and both lengths, as `csort()` already
+did; `prcomp()` checks a ragged AoA too.
+
+This is stricter than R on purpose. `data.frame()` recycles a short column when
+its length divides the longest — `data.frame(y = 1:6, x = 1:3)` quietly fits on
+`x` repeated twice, and only `1:4` is an error there. Inventing observations is
+not something to do quietly in a model fit.
+
+### `scale()`: named arguments
+
+Every other function in this module takes its options as trailing name/value
+pairs. `scale()` read only a trailing hash reference, so a flat pair fell
+through into the data, where the option name numified to 0 and was scaled along
+with everything else: `scale([1,2,3], center => 0)` returned **five** numbers
+for a three-element input. Both forms are now accepted and agree; an
+unrecognised name is an error rather than a data point.
+
+### `survfit()`: where the curve reaches zero
+
+Greenwood's next variance term is `d / (n.risk × (n.risk − d))`, and the last
+event takes every remaining subject, so `n.risk == d` and the variance of
+*S*(*t*) is not defined from there on. R reports `std.err` as `Inf` and both
+confidence limits as `NA`. All three came back 0, which is a number where there
+is no answer, and a plausible-looking one. They are `undef` now.
+
+### Two smoker failures, both in the tests rather than the module
+
+`LikeR.xs` is unchanged here. Two failures came back from CPAN smokers on 0.31,
+and in each case the assertion had been pinned to something that is a property of
+the perl running it rather than of `Stats::LikeR` — and this machine's build
+happens to satisfy it, which is why neither showed up before the reports arrived.
+
+#### `t/avals.t` was counting `FETCH`es on a tied cell
+
+The tied-cell block built its frame by copying a tied scalar into an anonymous
+hash, and used a `FETCH` that counted up so that a second fetch would be
+visible:
+
+```perl
+sub FETCH { my $s = shift; return $$s++ }	# a different value each FETCH
+my $tied; tie $tied, 't::AlwaysSeven';
+my @got = avals([ { v => $tied } ], 'v');
+is($got[0], 7, 'a tied cell is fetched once, at extraction time');
+```
+
+`{ v => $tied }` fetches the cell while the frame is being built, so what
+`avals()` copied was already a plain number: the test never exercised the thing
+its own name described, and what it actually measured was how many times that
+perl runs get-magic on one `sv_setsv()`. That count is not fixed. Measured
+directly, `perl-5.10.1`, `perl-5.12.5` and `perl-5.44.0` each run it once and
+the caller sees 7; a smoker on 5.18.4 (`x86_64-linux-thread-multi`) reported 8,
+i.e. two runs on the one copy, and a second report of the same two subtests
+followed.
+
+The cell is now tied in place, so nothing touches it before `avals()` does, and
+`FETCH` returns a constant, so nothing depends on how many times it is called:
+
+```perl
+my %row;
+tie $row{v}, 't::TiedCell', 7;
+```
+
+What the block asserts is now what it always claimed: building the frame fetches
+nothing, extraction fetches at least once, the fetched value rather than the
+tied SV comes back, the copy carries no tie magic, re-reading it does not fetch
+again, and it is exactly what `vals()` returns for the same frame. The HoH
+branch and the HoA branch — which fills `AvARRAY` directly and so has its own
+`newSVsv()` — get the same treatment, 44 subtests to 55.
+
+#### `t/01.t` compared a number of order 50 against an absolute `1e-14`
+
+The other report was the `lm()` F statistic, exactly 54 by algebra:
+
+```
+#          got: 54
+#     expected: 54; diff = 1.4210854715202e-14
+```
+
+`is_approx()` treated its `$epsilon` as an absolute bound, and 54 sits where the
+spacing of a double is `ulp(54) = 2**-47 = 7.105e-15`. A bound of `1e-14` is
+therefore 1.41 ulps — the call site was demanding bit-exactness of a number of
+order 50, and the smoker's build simply reassociated the sum and landed two ulps
+out (`1.4210854715202e-14` is exactly `2**-46`). The same `1e-14` written
+against a p-value of order `1e-9` is some 10⁵ ulps, which is what the number was
+chosen to mean.
+
+The allowance is now scaled by the size of the expected value, floored at the
+absolute bound so that comparisons against 0 — and against anything below 1 —
+keep exactly the tolerance they had:
+
+```perl
+my $scale = abs($expected) > 1 ? abs($expected) : 1;
+my $tol   = $epsilon * $scale;
+```
+
+The F statistic gets 76 ulps of headroom in place of one. The failure `diag()`
+also prints the tolerance now, so the next report of this shape can be read
+without opening the file.
+
+Every `is_approx`-style call in all 138 test files was then parsed and its
+tolerance compared against `ulp(expected)`. Nine sites sat under eight ulps, all
+of them in `t/01.t` and all now covered by the scaling:
+
+| `t/01.t` line | expected | tolerance | was |
+|---|---|---|---|
+| 1149, 1370, 3056, 3081, 3100, 3399 | 54, 37, 58, 58, 40, 36 | `1e-14` | 1.41 ulp |
+| 2216 | 31 | `1e-14` | 2.81 ulp |
+| 3519, 3561 | 177.504798464491358 | `1e-13` | 3.52 ulp |
+
+Call sites with a tolerance of `1e-13` or tighter against a computed value exist
+in `t/prcomp.t`, `t/t_test.t`, `t/value_counts.t` and `t/wilcox_test.t`; each was
+checked by hand and compares a p-value, a count, an integer rank sum, or an
+`sdev` of about 2.8, so those bounds are thousands of ulps wide and are left
+alone.
+
+Both files pass on `perl-5.44.0`, `perl-5.10.1` and `perl-5.12.5` — `t/01.t`
+1399 of 1399, `t/avals.t` 55 of 55 — the two older perls built in private trees
+so that the distribution root's `Makefile` and `blib` stay as they were.
+
+## 0.311 2026-08-28
 
 ### avals
 

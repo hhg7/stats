@@ -169,4 +169,45 @@ for my $opts ({}, {center => 'mean', scale => 'sd'}, {center => 'MEAN', scale =>
 	is_deeply($got, [[1, 2], [3, 4], [5, 6]], 'matrix with both off is unchanged');
 }
 
+# ---------------------------------------------------------------------------
+# The same options written as trailing name => value pairs.
+#
+# Through 0.311 only the hashref form was read.  A flat pair fell through into
+# the data, where the option name numified to 0 and was scaled along with
+# everything else: scale(1..5, center => 0) returned seven numbers for a
+# five-element input, and nothing warned.  Every case below asserts that the
+# flat form gives exactly what the documented hashref form gives -- the same
+# values, and the same count of them.
+{
+	my @cases = (
+		['center => 0',              [center => 0],              {center => 0}],
+		['scale => 0',               [scale => 0],               {scale => 0}],
+		['center => 0, scale => 0',  [center => 0, scale => 0],  {center => 0, scale => 0}],
+		['center => 2',              [center => 2],              {center => 2}],
+		['center => 2, scale => 4',  [center => 2, scale => 4],  {center => 2, scale => 4}],
+		["center => 'none'",         [center => 'none'],         {center => 'none'}],
+		["scale => 'false'",         [scale  => 'false'],        {scale  => 'false'}],
+		["center => 'mean'",         [center => 'mean'],         {center => 'mean'}],
+	);
+	for my $c (@cases) {
+		my ($name, $flat, $href) = @$c;
+		my @flat_got  = scale([1 .. 5], @$flat);
+		my @href_got  = scale([1 .. 5], $href);
+		is(scalar @flat_got, 5, "flat $name: five values in, five out");
+		list_is(\@flat_got, \@href_got, "flat $name matches the hashref form");
+	}
+}
+
+# A value that is not a number is refused rather than folded in as 0, which is
+# what SvNV() made of it before.  R: scale("a") is an error too, though it
+# says "'x' must be numeric".
+{
+	my $err = do { local $@; eval { scale([1, 2, 'abc']) }; $@ };
+	like($err, qr/^scale: non-numeric value at array ref index 2/,
+		'a non-numeric cell is refused, naming the cell');
+	$err = do { local $@; eval { scale([1, 2, 3], bogus => 1) }; $@ };
+	like($err, qr/^scale: non-numeric value/,
+		'an unrecognised option name does not silently become data');
+}
+
 done_testing();

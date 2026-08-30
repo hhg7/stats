@@ -263,24 +263,25 @@ sub tmpfile {
 	}
 }
 
-# The numeric consequence, which is why the round trip mattered: an unmapped
-# "NA" numifies to 0 and silently drags a mean down.
+# The numeric consequence, which is why the round trip mattered.
 #
-# Every value and both means are exactly representable in binary (8, 4, 2, 1
-# and 15/4 = 3.75, 15/5 = 3), so this compares exactly on a double, long-double
-# or __float128 perl -- no tolerance is needed or wanted here.
+# Through 0.311 an unmapped "NA" numified to 0 and silently dragged the mean
+# down -- this block asserted mean() == 3 rather than 3.75, with `no warnings
+# 'numeric'` around it because the warning was the only signal there was.
+# Since 0.312 mean() refuses a value that is not a number instead, so the
+# signal is the exception, and it does not depend on the caller's warning
+# settings reaching an XSUB (they never did).
+#
+# Every value and the mean are exactly representable in binary (8, 4, 2, 1 and
+# 15/4 = 3.75), so this compares exactly on a double, long-double or __float128
+# perl -- no tolerance is needed or wanted here.
 {
 	my $f = tmpfile("v\n8\n4\n2\n1\nNA\n");
 
 	my $unmapped = read_table($f, 'output.type' => 'hoa');
-	my $contaminated = do {
-		# The point of the test: with the literal "NA" left in place, mean()
-		# treats it as 0 rather than refusing it, so the warning is the only
-		# signal and this file's FATAL warnings would turn it into a die.
-		no warnings 'numeric';
-		mean( $unmapped->{v} );
-	};
-	is( $contaminated, 3, 'a literal "NA" numifies to 0: mean is 3, not 3.75' );
+	my $err = do { local $@; eval { mean( $unmapped->{v} ) }; $@ };
+	like( $err, qr/^mean: non-numeric value at array ref index 4/,
+		'an unmapped literal "NA" makes mean() croak, naming the cell' );
 
 	my $mapped = read_table($f, 'na.strings' => 'NA', 'output.type' => 'hoa');
 	my @defined = grep { defined } @{ $mapped->{v} };

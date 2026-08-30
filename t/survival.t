@@ -95,4 +95,44 @@ unless ($INC{'Devel/Cover.pm'}) {
 	no_leaks_ok { eval { coxph(\@time, \@status, \@x) } }              'coxph: no leaks';
 }
 
+# ---------------------------------------------------------------------------
+# The curve reaching zero.
+#
+# Greenwood's next variance term is d / (n.risk * (n.risk - d)), and the last
+# event takes every remaining subject, so n.risk == d and the variance of S(t)
+# is not defined from that point on.  R's survfit() reports std.err as Inf
+# there -- s$std.err * s$surv, the standard error of S itself, is NaN -- and
+# both confidence limits as NA.  Through 0.311 all three came back 0, which is
+# a number where there is no answer, and a plausible-looking one.
+#
+# Provenance: R 4.6.1 (2026-06-24) with survival 3.8-3, at options(digits=17):
+#   t <- c(4,3,1,1,2,2,3,7,8,10,12,5,6,9,11,13,2,4,6,8)
+#   d <- c(1,1,1,0,1,1,0,1,0,1, 1, 0,1,1, 0, 1,1,0,1,1)
+#   s <- survfit(Surv(t,d)~1); s$time; s$surv; s$std.err*s$surv; s$lower; s$upper
+# The frozen values are the row before the curve hits zero and the row at it.
+{
+	my @t = (4,3,1,1,2,2,3,7,8,10,12,5,6,9,11,13,2,4,6,8);
+	my @d = (1,1,1,0,1,1,0,1,0,1, 1, 0,1,1, 0, 1,1,0,1,1);
+	my $s = survfit(\@t, \@d)->{strata}{''};
+
+	is(scalar @{ $s->{time} }, 13, 'thirteen distinct event/censor times');
+	is($s->{surv}[12], 0, 'the curve reaches exactly zero at the last time');
+
+	# the row before: still defined, and equal to R's
+	is_approx($s->{'std.err'}[11], 0.10452809445658001, 'std.err at t = 12');
+	is_approx($s->{lower}[11],     0.023139826547207372, 'lower at t = 12');
+	is_approx($s->{upper}[11],     0.65135682814734119,  'upper at t = 12');
+
+	# the row at zero: undef, where R gives NaN for the error and NA for both
+	# limits.  Perl has one spelling for "no value", so all three are undef.
+	ok(!defined $s->{'std.err'}[12], 'std.err is undef once S(t) is 0, as R gives NaN');
+	ok(!defined $s->{lower}[12],     'lower is undef there, as R gives NA');
+	ok(!defined $s->{upper}[12],     'upper is undef there, as R gives NA');
+
+	# the estimate itself is still reported, and so is everything counting
+	is($s->{'n.risk'}[12],  1, 'n.risk is still reported at that time');
+	is($s->{'n.event'}[12], 1, 'and n.event');
+	is($s->{events}, 14, 'total events unaffected: sum(status)');
+}
+
 done_testing();

@@ -35,29 +35,31 @@
 #    switch).  README.md's note that "statistic is the z of the approximation"
 #    described the old behaviour and has been updated.
 #
-# RECORDED DIVERGENCES.  Two families where R carries floating-point noise
-# that Stats::LikeR does not, so R's literal is quoted here as provenance
-# while the assertion is against the exact value.  Neither is a disagreement
-# about the mathematics.
+# 4. That S was sum((rank(x) - rank(y))^2), which is R's S only when there are
+#    no ties -- R computes q <- (n^3 - n) * (1 - r) / 6 and says so in the
+#    comment above the line.  On tied data the two are simply different
+#    numbers: 2.5 against R's 2.5192319072807861 for @TIES's n = 10 case.
+#    0.312 forms S from the identity, so @TIES now asserts R's values.
 #
-# (a) Perfect correlation (@PERFECT).  R forms S as (n^3-n)(1-rho)/6 from a
-#     rho that is 2.2e-16 short of 1, so at n = 10 it reports
-#     S = 3.6637359812630166e-14 for an exact 0, and 329.99999999999994 for
-#     an exact 330 (n = 24: 2.55351295663786e-13 for 0).  Summing the squared
-#     rank differences directly, as here, gives the integers.  The same
-#     shortfall makes R's exact = 0 branch report a finite t and
-#     p = 1.0635035875251001e-62 at n = 10 where rho is exactly 1 and the
-#     p-value is 0.
+# RECORDED DIVERGENCE.  One family, where R carries floating-point noise that
+# Stats::LikeR does not, so R's literal is quoted here as provenance while the
+# assertion is against the exact value.  It is not a disagreement about the
+# mathematics.
 #
-# (b) Ties (@TIES).  R's S is again (n^3-n)(1-rho)/6, an identity that only
-#     holds without ties -- R's own source says so.  For x = 1..10 against
-#     y = (1,1,2,2,3,3,4,4,5,5) the average ranks differ by exactly +/-0.5 in
-#     every position, so the sum of squared differences is exactly 2.5; R
-#     reports 2.5192319072807861.  The p-values agree to 2e-13, so only the
-#     statistic diverges, and only under ties.  Recorded rather than matched:
-#     reproducing R's identity would mean reporting a number that is not the
-#     sum of squared rank differences, which is what both projects document
-#     the field to be.
+# (a) Perfect correlation (@PERFECT).  Both projects form S as
+#     (n^3-n)(1-rho)/6.  R's cor() returns a rho 2.2e-16 short of 1, so at
+#     n = 10 R reports S = 3.6637359812630166e-14 for an exact 0, and
+#     329.99999999999994 for an exact 330 (n = 24: 2.55351295663786e-13 for 0).
+#     cor_test()'s Welford accumulation returns exactly +/-1, so the identity
+#     gives the integers.  The same shortfall makes R's exact = 0 branch report
+#     a finite t and p = 1.0635035875251001e-62 at n = 10 where rho is exactly
+#     1 and the p-value is 0.
+#
+#     Fixed in 0.312: S is now formed the way R forms it, so what remains is
+#     only the shortfall in R's rho.  The Welford accumulation in cor_test()
+#     returns exactly 1 for a perfect correlation, so the same identity gives
+#     exactly 0 and 330 where R's noisy rho gives 3.66e-14 and
+#     329.99999999999994.  @PERFECT asserts the exact values and quotes R's.
 #
 # Tolerance.  1e-10 relative on both fields, against a worst observed
 # disagreement over the 333 clean rows of 1.123e-12 for p.value (n = 9,
@@ -484,15 +486,30 @@ my @PERFECT = (
 	[24, "desc", "less", "0", 4600, 0],
 );
 
-# [n, y, alternative, exact, S, p.value] -- see (b).  S is the exact sum of
-# squared rank differences; R's identity-derived value is in the header.
+# [n, y, alternative, exact, S, p.value].  Tied data, where S = (n^3-n)(1-rho)/6
+# and sum((rank(x)-rank(y))^2) are different numbers -- 0.312 reports the first,
+# as R does.  Both tied datasets the generator emits are here, across all three
+# alternatives and all three `exact` settings; ties force the approximation on
+# every one of them, in R and here alike.
 my @TIES = (
-	[10, "1,1,2,2,3,3,4,4,5,5", "two.sided", "d", 2.5, 2.3341863207874304e-07],
-	[10, "1,1,2,2,3,3,4,4,5,5", "two.sided", "1", 2.5, 2.3341863207874304e-07],
-	[10, "1,1,2,2,3,3,4,4,5,5", "two.sided", "0", 2.5, 2.3341863207874304e-07],
-	[10, "1,1,2,2,3,3,4,4,5,5", "greater",   "d", 2.5, 1.1670931603937152e-07],
-	[10, "1,1,2,2,3,3,4,4,5,5", "greater",   "1", 2.5, 1.1670931603937152e-07],
-	[10, "1,1,2,2,3,3,4,4,5,5", "greater",   "0", 2.5, 1.1670931603937152e-07],
+	[10, "1,1,2,2,3,3,4,4,5,5", "two.sided", "d", 2.5192319072807861, 2.3341863207873915e-07],
+	[10, "1,1,2,2,3,3,4,4,5,5", "two.sided", "1", 2.5192319072807861, 2.3341863207873915e-07],
+	[10, "1,1,2,2,3,3,4,4,5,5", "two.sided", "0", 2.5192319072807861, 2.3341863207873915e-07],
+	[10, "1,1,2,2,3,3,4,4,5,5", "greater",  "d", 2.5192319072807861, 1.1670931603936957e-07],
+	[10, "1,1,2,2,3,3,4,4,5,5", "greater",  "1", 2.5192319072807861, 1.1670931603936957e-07],
+	[10, "1,1,2,2,3,3,4,4,5,5", "greater",  "0", 2.5192319072807861, 1.1670931603936957e-07],
+	[10, "1,1,2,2,3,3,4,4,5,5", "less",     "d", 2.5192319072807861, 0.99999988329068401],
+	[10, "1,1,2,2,3,3,4,4,5,5", "less",     "1", 2.5192319072807861, 0.99999988329068401],
+	[10, "1,1,2,2,3,3,4,4,5,5", "less",     "0", 2.5192319072807861, 0.99999988329068401],
+	[12, "1,1,1,2,2,2,3,3,3,4,4,4", "two.sided", "d", 8.1151317541741186, 1.3811738967574555e-07],
+	[12, "1,1,1,2,2,2,3,3,3,4,4,4", "two.sided", "1", 8.1151317541741186, 1.3811738967574555e-07],
+	[12, "1,1,1,2,2,2,3,3,3,4,4,4", "two.sided", "0", 8.1151317541741186, 1.3811738967574555e-07],
+	[12, "1,1,1,2,2,2,3,3,3,4,4,4", "greater",  "d", 8.1151317541741186, 6.9058694837872774e-08],
+	[12, "1,1,1,2,2,2,3,3,3,4,4,4", "greater",  "1", 8.1151317541741186, 6.9058694837872774e-08],
+	[12, "1,1,1,2,2,2,3,3,3,4,4,4", "greater",  "0", 8.1151317541741186, 6.9058694837872774e-08],
+	[12, "1,1,1,2,2,2,3,3,3,4,4,4", "less",     "d", 8.1151317541741186, 0.99999993094130524],
+	[12, "1,1,1,2,2,2,3,3,3,4,4,4", "less",     "1", 8.1151317541741186, 0.99999993094130524],
+	[12, "1,1,1,2,2,2,3,3,3,4,4,4", "less",     "0", 8.1151317541741186, 0.99999993094130524],
 );
 
 # exact => 1 at an n that used to hang.  R's values, from the generator.
