@@ -8768,13 +8768,13 @@ one of its two tails, magnified until it can be seen.
   <td>If true, performs a paired t-test. <code>x</code> and <code>y</code> must be the same length.</td>
 </tr>
 <tr>
-  <td><code>var_equal</code></td>
+  <td><code>var_equal</code> (alias <code>var.equal</code>)</td>
   <td>Boolean</td>
   <td><code>FALSE</code></td>
   <td>If true, assumes equal variances (standard two-sample). If false, performs Welch's t-test with unequal variances.</td>
 </tr>
 <tr>
-  <td><code>conf.level</code></td>
+  <td><code>conf.level</code> (alias <code>conf_level</code>)</td>
   <td>Float</td>
   <td>0.95</td>
   <td>Confidence level for the returned confidence interval. Must be strictly between 0 and 1 (R also accepts the degenerate 0 and 1). See [Extreme <code>conf.level</code>](#extreme-conf.level) for the precision limit past about <code>0.9999</code>.</td>

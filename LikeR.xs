@@ -2993,16 +2993,47 @@ lgamma()s are each ~1.6e8 and sum to ~1.5e7, so their last bits are worth
 into a relative error in the result.  stirlerr()/bd0() never form those large
 intermediates, so they hold ~1e-15 at any size.  Written a/(a+b)*b so the
 product cannot overflow for huge a and b.*/
-static NV _incbeta_front(NV a, NV b, NV x) {
-	return (a / (a + b)) * b * nv_exp(bt_dbinom_raw_log(a, a + b, x, 1.0 - x));
+/*y is the caller's 1-x, passed in rather than formed here, for the reason
+given at incbeta_xy() below.*/
+static NV _incbeta_front(NV a, NV b, NV x, NV y) {
+	return (a / (a + b)) * b * nv_exp(bt_dbinom_raw_log(a, a + b, x, y));
 }
 
-static NV incbeta(NV a, NV b, NV x) {
+/*I_x(a, b) where the caller supplies BOTH x and y = 1 - x.
+
+Every caller here builds x as a ratio whose complement is another exact
+ratio over the same denominator -- pf() has x = df1*f/D and 1-x = df2/D,
+pt_upper() has x = df/(df + t^2) and 1-x = t^2/(df + t^2) -- so the
+complement is available to full relative precision and only ever loses that
+precision by being thrown away and re-formed as 1.0 - x.
+
+Which matters because the reflected branch below needs the complement, and
+takes that branch exactly when x is the side near 1: there 1.0 - x is
+catastrophic cancellation, and at |1 - x| < 2^-53 it collapses to 0 and the
+whole tail with it.  Measured against mpmath at mp.dps = 60, the single-
+argument form gave pf(1e-12, 1, 1e6, lower.tail = FALSE) = 1 exactly where
+the tail is 0.99999920211563864 (7.98e-7 absolute), and pt(1e-6, 1e6) = 0.5
+exactly where R and mpmath agree on 0.50000039894218068 (3.99e-7).  With the
+complement passed in, both are within 1 ulp.  This is R's own split -- its
+bratio() takes x and y as separate arguments for the same reason.
+
+x >= 1.0 is deliberately NOT short-circuited to 1.0: a y that is still
+positive when x has already rounded to 1.0 is precisely the case this
+function exists to get right, and the front factor's x^(n-k) is then wrong
+by a relative (n-k)*y, which is smaller than y itself at every call site
+here.  Only y <= 0 means the upper tail has really vanished.*/
+static NV incbeta_xy(NV a, NV b, NV x, NV y) {
 	if (x <= 0.0) return 0.0;
-	if (x >= 1.0) return 1.0;
+	if (y <= 0.0) return 1.0;
 	if (x < (a + 1.0) / (a + b + 2.0))
-		return _incbeta_front(a, b, x) * _incbeta_cf(a, b, x) / a;
-	return 1.0 - _incbeta_front(b, a, 1.0 - x) * _incbeta_cf(b, a, 1.0 - x) / b;
+		return _incbeta_front(a, b, x, y) * _incbeta_cf(a, b, x) / a;
+	return 1.0 - _incbeta_front(b, a, y, x) * _incbeta_cf(b, a, y) / b;
+}
+
+/*For callers that genuinely have only x -- a bisection midpoint, or a
+probability whose complement is not separately known.*/
+static NV incbeta(NV a, NV b, NV x) {
+	return incbeta_xy(a, b, x, 1.0 - x);
 }
 
 /*P(T > t): pt(t, df, lower.tail = FALSE).
@@ -3046,14 +3077,18 @@ static NV pt_upper(NV t, NV df) {
 		prob_2tail = nv_exp(-0.5 * df * (2.0 * nv_log(nv_fabs(t)) - nv_log(df))
 		                    - lbeta - nv_log(0.5 * df));
 	} else {
-		prob_2tail = incbeta(df / 2.0, 0.5, df / (df + t * t));
+		/*t*t/(df + t*t) is the exact complement of df/(df + t*t); handing
+		both to incbeta_xy() is what keeps pt() accurate for small |t|,
+		where the complement is the tiny one.*/
+		const NV tt = t * t, dtt = df + tt;
+		prob_2tail = incbeta_xy(df / 2.0, 0.5, df / dtt, tt / dtt);
 	}
 	return (t > 0) ? 0.5 * prob_2tail : 1.0 - 0.5 * prob_2tail;
 }
 
 static NV get_t_pvalue(NV t, NV df, const char*alt) {
-	NV x = df / (df + t * t);
-	NV prob_2tail = incbeta(df / 2.0, 0.5, x);
+	NV tt = t * t, dtt = df + tt;		//see pt_upper() on the exact complement
+	NV prob_2tail = incbeta_xy(df / 2.0, 0.5, df / dtt, tt / dtt);
 	if (strcmp(alt, "less") == 0) return (t < 0) ? 0.5 * prob_2tail : 1.0 - 0.5 * prob_2tail;
 	if (strcmp(alt, "greater") == 0) return (t > 0) ? 0.5 * prob_2tail : 1.0 - 0.5 * prob_2tail;
 	return prob_2tail;
@@ -3811,8 +3846,11 @@ static NV kendall_exact_pvalue(size_t n, NV s_obs, const char *alt) {
 // F-distribution Cumulative Distribution Function P(F <= f)
 static NV pf(NV f, NV df1, NV df2) {
 	if (f <= 0.0) return 0.0;
-	NV x = (df1 * f) / (df1 * f + df2);
-	return incbeta(df1 / 2.0, df2 / 2.0, x);
+	/*df2/denom is the exact 1 - x; see incbeta_xy().  Without it the lower
+	tail loses digits from the other end, where it is the one near 1:
+	pf(1e12, 1, 1) was 7e-12 relative off mpmath, now 1 ulp.*/
+	NV denom = df1 * f + df2;
+	return incbeta_xy(df1 / 2.0, df2 / 2.0, (df1 * f) / denom, df2 / denom);
 }
 
 /*Upper tail P(F > f)  ==  R's pf(f, df1, df2, lower.tail = FALSE).
@@ -3822,14 +3860,19 @@ Computed in the upper tail directly via the beta symmetry
 so 1-x = df2 / (df1·f + df2) is formed without any subtraction.  Writing
 this as `1 - pf(...)` instead throws away the whole answer once the p-value
 drops below ~1e-16 (the ulp of 1.0): R reports 1.2e-76 where the naive form
-returns a flat 0, and loses relative precision from about 1e-9 downward.*/
+returns a flat 0, and loses relative precision from about 1e-9 downward.
+
+x = df1·f / (df1·f + df2) is handed over as well, because for small f this
+tail is the side near 1 and incbeta_xy() then needs the small complement --
+re-forming it as 1.0 - (df2/denom) is the cancellation that made
+pf(1e-12, 1, 1e6, lower.tail = FALSE) return exactly 1.*/
 static NV pf_upper(NV f, NV df1, NV df2) {
 	if (nv_isnan(f) || nv_isnan(df1) || nv_isnan(df2)) return NAN;   //NaN in, NaN out
 	if (f <= 0.0)   return 1.0;
 	if (nv_isinf(f))   return 0.0;   //zero within-group variance: R gives p = 0
 	NV denom = df1 * f + df2;
 	if (nv_isinf(denom)) return 0.0; //p underflows anyway
-	return incbeta(df2 / 2.0, df1 / 2.0, df2 / denom);
+	return incbeta_xy(df2 / 2.0, df1 / 2.0, df2 / denom, (df1 * f) / denom);
 }
 
 //Householder QR Decomposition for Sequential Sums of Squares
@@ -5149,9 +5192,21 @@ static NV nv_sorted_median(const NV *a, size_t n) {
    kruskal_test() used to be one of those callers and is not any more: it wants
    per-group rank sums rather than the ranks themselves, so it fuses the tie
    scan with the aggregation over KWObs and never stores a rank.  See KWObs. */
+/*Ascending by value only, like RANKITEM_LESS: every member of a tie group gets
+the same averaged rank below, so their relative order cannot reach the answer.
+
+This replaces a qsort() through cmp_nv3, which worked only because `val` is
+RankInfo's first member and a pointer to a struct is a pointer to its first
+member -- true but fragile, and it paid an un-inlinable indirect call on each
+of the O(n log n) comparisons.  wilcox_test() on two 20000-element samples went
+from 6.11ms to 2.80ms with this change alone -- a factor of 2.2, since the sort
+was more than half the call.*/
+#define RANKINFO_LESS(a, b) ((a).val < (b).val)
+LIKER_DEFINE_SORT(RankInfo, rankinfo, RANKINFO_LESS)
+
 static NV rank_and_count_ties(RankInfo *ri, size_t n, bool *restrict has_ties) {
 	if (n == 0) return 0.0;
-	qsort(ri, n, sizeof(RankInfo), cmp_nv3);
+	rankinfo_sort(ri, n);
 	size_t i = 0;
 	NV tie_adj = 0.0;
 	*has_ties = FALSE;
@@ -5516,8 +5571,11 @@ Time is O(m*n); memory is O(min(m,n)). Beyond this we warn and go asymptotic.*/
 #define KS_EXACT_MAX_PRODUCT 10000000.0
 static void calc_2sample_stats(NV *x, size_t nx, NV *y, size_t ny,
                                NV *d, NV *d_plus, NV *d_minus) {
-	qsort(x, nx, sizeof(NV), cmp_nv3);
-	qsort(y, ny, sizeof(NV), cmp_nv3);
+	/*nv_sort() rather than qsort(): the inlined comparison is worth about
+	40% of a sort this size (see LIKER_DEFINE_SORT).  Both samples reach here
+	with NaN already dropped by the gather loop in ks_test().*/
+	nv_sort(x, nx);
+	nv_sort(y, ny);
 	NV max_d = 0.0, max_d_plus = 0.0, max_d_minus = 0.0;
 	size_t i = 0, j = 0;
 	while (i < nx || j < ny) {
@@ -7513,7 +7571,10 @@ static NV bt_dbinom(long x, long n, NV p) {
 static NV bt_pbinom_lower(long k, long n, NV p) {
 	if (k < 0)  return 0.0;
 	if (k >= n) return 1.0;
-	return incbeta((NV)(n - k), (NV)(k + 1), 1.0 - p);
+	/*p is the exact complement of the 1-p this branch evaluates at, so pass
+	it rather than let incbeta_xy() re-form it; that is what holds the lower
+	tail together for a tiny p, where 1-p rounds to 1.0.*/
+	return incbeta_xy((NV)(n - k), (NV)(k + 1), 1.0 - p, p);
 }
 static NV bt_pbinom_upper(long k, long n, NV p) {
 	if (k < 0)  return 1.0;
@@ -8374,40 +8435,38 @@ typedef struct {
 	NV rnd; // random tie-break key (ties.method => 'random')
 } rank_pair;
 
-// value ascending, ties broken by original index ascending
-static int rank_cmp_idx_asc(const void *a, const void *b) {
-	const rank_pair *pa = (const rank_pair *)a;
-	const rank_pair *pb = (const rank_pair *)b;
-	if (pa->val < pb->val) return -1;
-	if (pa->val > pb->val) return  1;
-	if (pa->idx < pb->idx) return -1;
-	if (pa->idx > pb->idx) return  1;
-	return 0;
-}
+/*Three orderings of rank_pair, each generated as an inlined sort rather than
+reached through a qsort() comparator, for the reason LIKER_DEFINE_SORT's own
+comment gives: ordering n records costs O(n log n) comparisons and an indirect
+call on each is most of what the sort costs.  Measured on 20000 doubles,
+rank() went from 2.87ms to 1.43ms -- a factor of 2.0.  The internal rankers
+already sorted this way (rankitem_sort, kpair_sort); rank() was the one that
+did not.
 
-// value ascending, ties broken by original index descending ('last')
-static int rank_cmp_idx_desc(const void *a, const void *b) {
-	const rank_pair *pa = (const rank_pair *)a;
-	const rank_pair *pb = (const rank_pair *)b;
-	if (pa->val < pb->val) return -1;
-	if (pa->val > pb->val) return  1;
-	if (pa->idx > pb->idx) return -1;
-	if (pa->idx < pb->idx) return  1;
-	return 0;
-}
+What is left is not the sort.  Reading the same 20000 values back out of an AV
+in plain perl costs 0.37ms, so the gather loop and the newSVnv() per result are
+now most of the call, and there is little more to win here without changing
+what rank() returns.
 
-// value ascending, ties broken randomly ('random'); idx as final fallback
-static int rank_cmp_rnd_asc(const void *a, const void *b) {
-	const rank_pair *pa = (const rank_pair *)a;
-	const rank_pair *pb = (const rank_pair *)b;
-	if (pa->val < pb->val) return -1;
-	if (pa->val > pb->val) return  1;
-	if (pa->rnd < pb->rnd) return -1;
-	if (pa->rnd > pb->rnd) return  1;
-	if (pa->idx < pb->idx) return -1;
-	if (pa->idx > pb->idx) return  1;
-	return 0;
-}
+Every value reaching these has already been screened for NaN by the gather
+loop below, which is what they need: a comparison against NaN is false either
+way, so no comparison sort can order one.
+
+Each LESS is a strict weak ordering.  Ties on val fall through to the
+tie-break key, so no two distinct records ever compare equal in both
+directions -- idx is unique by construction, and is the final fallback even in
+the random ordering so that two equal random keys cannot make the ordering
+inconsistent.*/
+#define RANK_PAIR_LESS_IDX_ASC(a, b)                                          \
+	((a).val < (b).val || ((a).val == (b).val && (a).idx < (b).idx))
+#define RANK_PAIR_LESS_IDX_DESC(a, b)                                         \
+	((a).val < (b).val || ((a).val == (b).val && (a).idx > (b).idx))
+#define RANK_PAIR_LESS_RND(a, b)                                              \
+	((a).val < (b).val || ((a).val == (b).val &&                              \
+	 ((a).rnd < (b).rnd || ((a).rnd == (b).rnd && (a).idx < (b).idx))))
+LIKER_DEFINE_SORT(rank_pair, rank_pair_asc,  RANK_PAIR_LESS_IDX_ASC)
+LIKER_DEFINE_SORT(rank_pair, rank_pair_desc, RANK_PAIR_LESS_IDX_DESC)
+LIKER_DEFINE_SORT(rank_pair, rank_pair_rnd,  RANK_PAIR_LESS_RND)
 
 // ties.method codes
 #define RANK_AVERAGE 0
@@ -10639,7 +10698,7 @@ static void dens_read_x(pTHX_ SV *sv, const char *fname,
 	}
 	Newx(xs, n, NV);
 	Copy(x, xs, n, NV);
-	qsort(xs, n, sizeof(NV), cmp_nv3);
+	nv_sort(xs, n);		//inlined comparison; see LIKER_DEFINE_SORT
 	*x_out = x; *xs_out = xs; *n_out = n;
 }
 
@@ -10910,9 +10969,10 @@ static NV d_pf(NV q, const NV *par, bool lower, bool give_log) {
 	if (!lower) return dist_log(pf_upper(q, df1, df2), give_log);
 	if (q <= 0.0)    return dist_log(0.0, give_log);
 	if (nv_isinf(q)) return dist_log(1.0, give_log);
-	const NV denom = df1 * q + df2;
-	if (nv_isinf(denom)) return dist_log(1.0, give_log);  //the tail is 1 anyway
-	return dist_log(incbeta(df1 / 2.0, df2 / 2.0, df1 * q / denom), give_log);
+	if (nv_isinf(df1 * q + df2)) return dist_log(1.0, give_log); //tail is 1 anyway
+	/*pf() itself, rather than a second copy of the same expression, so the
+	two can never drift apart on the complement argument.*/
+	return dist_log(pf(q, df1, df2), give_log);
 }
 
 /*Solve I_t(a, b) = p for t, returning t AND 1 - t, each to full relative
@@ -12010,9 +12070,9 @@ void rank(...)
 			for (size_t k = 0; k < n; k++) pairs[k].rnd = Drand01();
 
 		if (n > 1) {
-			if      (ties == RANK_RANDOM) qsort(pairs, n, sizeof(rank_pair), rank_cmp_rnd_asc);
-			else if (ties == RANK_LAST)   qsort(pairs, n, sizeof(rank_pair), rank_cmp_idx_desc);
-			else                          qsort(pairs, n, sizeof(rank_pair), rank_cmp_idx_asc);
+			if      (ties == RANK_RANDOM) rank_pair_rnd_sort(pairs, n);
+			else if (ties == RANK_LAST)   rank_pair_desc_sort(pairs, n);
+			else                          rank_pair_asc_sort(pairs, n);
 		}
 
 		// assign ranks (1-based) by non-NA index
@@ -14078,7 +14138,7 @@ CODE:
 	} else if (y_sv && SvPOK(y_sv)) {// 1 SAMPLE
 	  const char *dist = SvPV_nolen(y_sv);
 	  if (strEQ(dist, "pnorm")) {
-		   qsort(x_data, valid_nx, sizeof(NV), cmp_nv3);
+		   nv_sort(x_data, valid_nx);	//NaN already dropped above
 		   NV max_d = 0.0, max_d_plus = 0.0, max_d_minus = 0.0;
 		   for (size_t i = 0; i < valid_nx; i++) {
 		       NV cdf_obs_low  = (NV)i / valid_nx;
@@ -18298,8 +18358,15 @@ SV* t_test(...)
 			else if (strEQ(key, "y"))           y_sv        = val;
 			else if (strEQ(key, "mu"))          mu          = SvNV(val);
 			else if (strEQ(key, "paired"))      paired      = SvTRUE(val);
-			else if (strEQ(key, "var_equal"))   var_equal   = SvTRUE(val);
-			else if (strEQ(key, "conf_level"))  conf_level  = SvNV(val);
+			/*Both spellings of the two dotted R names, as every sibling here
+			already accepts (var_test, wilcox_test, prop_test, glm, ...).
+			t_test took only the underscored form, so the 'conf.level' its own
+			documentation lists -- and the 'var.equal' R spells it with -- were
+			a croak rather than an argument.*/
+			else if (strEQ(key, "var_equal") || strEQ(key, "var.equal"))
+				var_equal = SvTRUE(val);
+			else if (strEQ(key, "conf_level") || strEQ(key, "conf.level"))
+				conf_level = SvNV(val);
 			else if (strEQ(key, "alternative")) alternative = SvPV_nolen(val);
 			else croak("t_test: unknown argument '%s'", key);
 		}
@@ -18816,7 +18883,7 @@ PPCODE:
 	//tie correction: sum over distinct values of (t^3 - t)
 	NV *xs = NULL; Newx(xs, N, NV);
 	memcpy(xs, x, N * sizeof(NV));
-	qsort(xs, N, sizeof(NV), cmp_nv3);
+	nv_sort(xs, N);		//inlined comparison; see LIKER_DEFINE_SORT
 	NV tsum = 0.0;
 	{
 		size_t a = 0;
@@ -18921,7 +18988,7 @@ PPCODE:
 
 		//tie correction: sum over tie groups of (u^3 - u) within this block
 		memcpy(sorted, rowbuf, k * sizeof(NV));
-		qsort(sorted, k, sizeof(NV), cmp_nv3);
+		nv_sort(sorted, k);	//inlined comparison; see LIKER_DEFINE_SORT
 		size_t a = 0;
 		while (a < k) {
 			size_t b = a;
@@ -24428,7 +24495,7 @@ PPCODE:
 		el = av_fetch(data_av, i, 0);
 		srt[i] = (el && SvOK(*el)) ? SvNV(*el) : 0.0;
 	}
-	qsort(srt, (size_t) n, sizeof(NV), cmp_nv3);
+	nv_sort(srt, (size_t) n);	//inlined comparison; see LIKER_DEFINE_SORT
 
 	//quantile cutpoints via linear interpolation (numpy/pandas default)
 	Newx(edges, m, NV);
@@ -24987,7 +25054,7 @@ SV* density(...)
 			}
 			Newx(xs, nx, NV);
 			Copy(xf, xs, nx, NV);
-			qsort(xs, nx, sizeof(NV), cmp_nv3);
+			nv_sort(xs, nx);	//inlined comparison; see LIKER_DEFINE_SORT
 			err = dens_bw_rule(aTHX_ bw_rule, xf, xs, nx, nb,
 			                   FALSE, 0.0, FALSE, 0.0, FALSE, 0.0, &bw);
 			if (err) goto dens_cleanup;
