@@ -79,13 +79,13 @@ S&lt;C&lt;av_top_index(av) + 1&gt;&gt;.
 <tr><td class="h">59</td><td colspan="6"></td></tr><tr><td class="h">60</td><td></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;return AvFILL(av) + 1;</td></tr>
 <tr><td class="h">61</td><td></td><td></td><td></td><td></td><td></td><td class="s">}</td></tr>
 <tr><td class="h">62</td><td colspan="6"></td></tr><tr><td class="h">63</td><td></td><td></td><td></td><td></td><td></td><td class="s">PERL_STATIC_INLINE SSize_t</td></tr>
-<tr><td class="h">64</td><td><div class="c3">21</div></td><td></td><td></td><td></td><td></td><td class="s">Perl_AvFILL_(pTHX_ AV *av)</td></tr>
+<tr><td class="h">64</td><td><div class="c3">1819</div></td><td></td><td></td><td></td><td></td><td class="s">Perl_AvFILL_(pTHX_ AV *av)</td></tr>
 <tr><td class="h">65</td><td></td><td></td><td></td><td></td><td></td><td class="s">{</td></tr>
 <tr><td class="h">66</td><td></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;PERL_ARGS_ASSERT_AVFILL_;</td></tr>
-<tr><td class="h">67</td><td colspan="6"></td></tr><tr><td class="h">68</td><td><div class="c3">21</div></td><td><div class="c0" title="-/F"><a href="-home-con-perl5-perlbrew-perls-perl-5-44-0-lib-5-44-0-x86_64-linux-CORE-inline-h--branch.html#L68">50</a></div></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;if (SvRMAGICAL((const SV *) (av))) {</td></tr>
+<tr><td class="h">67</td><td colspan="6"></td></tr><tr><td class="h">68</td><td><div class="c3">1819</div></td><td><div class="c0" title="-/F"><a href="-home-con-perl5-perlbrew-perls-perl-5-44-0-lib-5-44-0-x86_64-linux-CORE-inline-h--branch.html#L68">50</a></div></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;if (SvRMAGICAL((const SV *) (av))) {</td></tr>
 <tr><td class="h">69</td><td><div class="c0">0</div></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;return mg_size((SV *) av);</td></tr>
 <tr><td class="h">70</td><td></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;}</td></tr>
-<tr><td class="h">71</td><td colspan="6"></td></tr><tr><td class="h">72</td><td><div class="c3">21</div></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;return AvFILLp(av);</td></tr>
+<tr><td class="h">71</td><td colspan="6"></td></tr><tr><td class="h">72</td><td><div class="c3">1819</div></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;return AvFILLp(av);</td></tr>
 <tr><td class="h">73</td><td></td><td></td><td></td><td></td><td></td><td class="s">}</td></tr>
 <tr><td class="h">74</td><td colspan="6"></td></tr><tr><td class="h">75</td><td></td><td></td><td></td><td></td><td></td><td class="s">/* ------------------------------- av.c ------------------------------- */</td></tr>
 <tr><td class="h">76</td><td colspan="6"></td></tr><tr><td class="h">77</td><td></td><td></td><td></td><td></td><td></td><td class="s">/*</td></tr>
@@ -280,20 +280,20 @@ recursive call.
 <tr><td class="h">294</td><td colspan="6"></td></tr><tr><td class="h">295</td><td></td><td></td><td></td><td></td><td></td><td class="s">/* ------------------------------- hv.c ------------------------------- */</td></tr>
 <tr><td class="h">296</td><td colspan="6"></td></tr><tr><td class="h">297</td><td></td><td></td><td></td><td></td><td></td><td class="s">/* Common code for hv_delete()/hv_exists()/hv_fetch()/hv_store()&nbsp;&nbsp;*/</td></tr>
 <tr><td class="h">298</td><td></td><td></td><td></td><td></td><td></td><td class="s">PERL_STATIC_INLINE void *</td></tr>
-<tr><td class="h">299</td><td><div class="c3">17322</div></td><td></td><td></td><td></td><td></td><td class="s">Perl_hv_common_key_len(pTHX_ HV *hv, const char *key, I32 klen_i32,</td></tr>
+<tr><td class="h">299</td><td><div class="c3">1283727</div></td><td></td><td></td><td></td><td></td><td class="s">Perl_hv_common_key_len(pTHX_ HV *hv, const char *key, I32 klen_i32,</td></tr>
 <tr><td class="h">300</td><td></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;const int action, SV *val, const U32 hash)</td></tr>
 <tr><td class="h">301</td><td></td><td></td><td></td><td></td><td></td><td class="s">{</td></tr>
 <tr><td class="h">302</td><td></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;PERL_ARGS_ASSERT_HV_COMMON_KEY_LEN;</td></tr>
 <tr><td class="h">303</td><td colspan="6"></td></tr><tr><td class="h">304</td><td></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;STRLEN klen;</td></tr>
 <tr><td class="h">305</td><td></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;int flags;</td></tr>
-<tr><td class="h">306</td><td colspan="6"></td></tr><tr><td class="h">307</td><td><div class="c3">17322</div></td><td><div class="c3" title="T/F"><a href="-home-con-perl5-perlbrew-perls-perl-5-44-0-lib-5-44-0-x86_64-linux-CORE-inline-h--branch.html#L307">100</a></div></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;if (klen_i32 &lt; 0) {</td></tr>
-<tr><td class="h">308</td><td><div class="c3">20</div></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;klen = -klen_i32;</td></tr>
-<tr><td class="h">309</td><td><div class="c3">20</div></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;flags = HVhek_UTF8;</td></tr>
+<tr><td class="h">306</td><td colspan="6"></td></tr><tr><td class="h">307</td><td><div class="c3">1283727</div></td><td><div class="c3" title="T/F"><a href="-home-con-perl5-perlbrew-perls-perl-5-44-0-lib-5-44-0-x86_64-linux-CORE-inline-h--branch.html#L307">100</a></div></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;if (klen_i32 &lt; 0) {</td></tr>
+<tr><td class="h">308</td><td><div class="c3">25</div></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;klen = -klen_i32;</td></tr>
+<tr><td class="h">309</td><td><div class="c3">25</div></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;flags = HVhek_UTF8;</td></tr>
 <tr><td class="h">310</td><td></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;} else {</td></tr>
-<tr><td class="h">311</td><td><div class="c3">17302</div></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;klen = klen_i32;</td></tr>
-<tr><td class="h">312</td><td><div class="c3">17302</div></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;flags = 0;</td></tr>
+<tr><td class="h">311</td><td><div class="c3">1283702</div></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;klen = klen_i32;</td></tr>
+<tr><td class="h">312</td><td><div class="c3">1283702</div></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;flags = 0;</td></tr>
 <tr><td class="h">313</td><td></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;}</td></tr>
-<tr><td class="h">314</td><td><div class="c3">17322</div></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;return hv_common(hv, NULL, key, klen, flags, action, val, hash);</td></tr>
+<tr><td class="h">314</td><td><div class="c3">1283727</div></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;return hv_common(hv, NULL, key, klen, flags, action, val, hash);</td></tr>
 <tr><td class="h">315</td><td></td><td></td><td></td><td></td><td></td><td class="s">}</td></tr>
 <tr><td class="h">316</td><td colspan="6"></td></tr><tr><td class="h">317</td><td></td><td></td><td></td><td></td><td></td><td class="s">/* ------------------------------- iperlsys.h ------------------------------- */</td></tr>
 <tr><td class="h">318</td><td></td><td></td><td></td><td></td><td></td><td class="s">#if ! defined(PERL_IMPLICIT_SYS) &amp;&amp; defined(USE_ITHREADS)</td></tr>
@@ -370,7 +370,7 @@ recursive call.
 <tr><td class="h">404</td><td></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;return *PL_markstack_ptr;</td></tr>
 <tr><td class="h">405</td><td></td><td></td><td></td><td></td><td></td><td class="s">}</td></tr>
 <tr><td class="h">406</td><td colspan="6"></td></tr><tr><td class="h">407</td><td></td><td></td><td></td><td></td><td></td><td class="s">PERL_STATIC_INLINE Stack_off_t</td></tr>
-<tr><td class="h">408</td><td><div class="c3">2642</div></td><td></td><td></td><td></td><td></td><td class="s">Perl_POPMARK(pTHX)</td></tr>
+<tr><td class="h">408</td><td><div class="c3">50281</div></td><td></td><td></td><td></td><td></td><td class="s">Perl_POPMARK(pTHX)</td></tr>
 <tr><td class="h">409</td><td></td><td></td><td></td><td></td><td></td><td class="s">{</td></tr>
 <tr><td class="h">410</td><td></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;PERL_ARGS_ASSERT_POPMARK;</td></tr>
 <tr><td class="h">411</td><td colspan="6"></td></tr><tr><td class="h">412</td><td></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;DEBUG_s(DEBUG_v(PerlIO_printf(Perl_debug_log,</td></tr>
@@ -378,7 +378,7 @@ recursive call.
 <tr><td class="h">414</td><td></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;(PL_markstack_ptr-1),</td></tr>
 <tr><td class="h">415</td><td></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;(IV)*(PL_markstack_ptr-1))));</td></tr>
 <tr><td class="h">416</td><td></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;assert((PL_markstack_ptr &gt; PL_markstack) || !&quot;MARK underflow&quot;);</td></tr>
-<tr><td class="h">417</td><td><div class="c3">2642</div></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;return *PL_markstack_ptr--;</td></tr>
+<tr><td class="h">417</td><td><div class="c3">50281</div></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;return *PL_markstack_ptr--;</td></tr>
 <tr><td class="h">418</td><td></td><td></td><td></td><td></td><td></td><td class="s">}</td></tr>
 <tr><td class="h">419</td><td colspan="6"></td></tr><tr><td class="h">420</td><td></td><td></td><td></td><td></td><td></td><td class="s">/*</td></tr>
 <tr><td class="h">421 - 427</td><td colspan="5"></td><td class="s"><pre>=for apidoc_section $rpp
@@ -3397,13 +3397,13 @@ single leading underscore is accepted.
 <tr><td class="h">3990</td><td colspan="6"></td></tr><tr><td class="h">3991</td><td></td><td></td><td></td><td></td><td></td><td class="s">/* ------------------ cop.h ------------------------------------------- */</td></tr>
 <tr><td class="h">3992</td><td colspan="6"></td></tr><tr><td class="h">3993</td><td></td><td></td><td></td><td></td><td></td><td class="s">/* implement GIMME_V() macro */</td></tr>
 <tr><td class="h">3994</td><td colspan="6"></td></tr><tr><td class="h">3995</td><td></td><td></td><td></td><td></td><td></td><td class="s">PERL_STATIC_INLINE U8</td></tr>
-<tr><td class="h">3996</td><td><div class="c3">65</div></td><td></td><td></td><td></td><td></td><td class="s">Perl_gimme_V(pTHX)</td></tr>
+<tr><td class="h">3996</td><td><div class="c3">79</div></td><td></td><td></td><td></td><td></td><td class="s">Perl_gimme_V(pTHX)</td></tr>
 <tr><td class="h">3997</td><td></td><td></td><td></td><td></td><td></td><td class="s">{</td></tr>
 <tr><td class="h">3998</td><td></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;PERL_ARGS_ASSERT_GIMME_V;</td></tr>
 <tr><td class="h">3999</td><td colspan="6"></td></tr><tr><td class="h">4000</td><td></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;I32 cxix;</td></tr>
-<tr><td class="h">4001</td><td><div class="c3">65</div></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;U8&nbsp;&nbsp;gimme = (PL_op-&gt;op_flags &amp; OPf_WANT);</td></tr>
-<tr><td class="h">4002</td><td colspan="6"></td></tr><tr><td class="h">4003</td><td><div class="c3">65</div></td><td><div class="c3" title="T/F"><a href="-home-con-perl5-perlbrew-perls-perl-5-44-0-lib-5-44-0-x86_64-linux-CORE-inline-h--branch.html#L4003">100</a></div></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;if (gimme)</td></tr>
-<tr><td class="h">4004</td><td><div class="c3">64</div></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;return gimme;</td></tr>
+<tr><td class="h">4001</td><td><div class="c3">79</div></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;U8&nbsp;&nbsp;gimme = (PL_op-&gt;op_flags &amp; OPf_WANT);</td></tr>
+<tr><td class="h">4002</td><td colspan="6"></td></tr><tr><td class="h">4003</td><td><div class="c3">79</div></td><td><div class="c3" title="T/F"><a href="-home-con-perl5-perlbrew-perls-perl-5-44-0-lib-5-44-0-x86_64-linux-CORE-inline-h--branch.html#L4003">100</a></div></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;if (gimme)</td></tr>
+<tr><td class="h">4004</td><td><div class="c3">78</div></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;return gimme;</td></tr>
 <tr><td class="h">4005</td><td><div class="c3">1</div></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;cxix = PL_curstackinfo-&gt;si_cxsubix;</td></tr>
 <tr><td class="h">4006</td><td><div class="c3">1</div></td><td><div class="c0" title="-/F"><a href="-home-con-perl5-perlbrew-perls-perl-5-44-0-lib-5-44-0-x86_64-linux-CORE-inline-h--branch.html#L4006">50</a></div></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;if (cxix &lt; 0)</td></tr>
 <tr><td class="h">4007</td><td><div class="c0">0</div></td><td><div class="c0" title="-/-"><a href="-home-con-perl5-perlbrew-perls-perl-5-44-0-lib-5-44-0-x86_64-linux-CORE-inline-h--branch.html#L4007">0</a></div></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;return PL_curstackinfo-&gt;si_type == PERLSI_SORT ? G_SCALAR: G_VOID;</td></tr>
@@ -4291,32 +4291,32 @@ Use the C&lt;PerlMemShared_free&gt; function.
 =cut</pre></td></tr>
 <tr><td class="h">5070</td><td></td><td></td><td></td><td></td><td></td><td class="s">*/</td></tr>
 <tr><td class="h">5071</td><td colspan="6"></td></tr><tr><td class="h">5072</td><td></td><td></td><td></td><td></td><td></td><td class="s">PERL_STATIC_INLINE char *</td></tr>
-<tr><td class="h">5073</td><td><div class="c3">10737</div></td><td></td><td></td><td></td><td></td><td class="s">Perl_savepv(pTHX_ const char *pv)</td></tr>
+<tr><td class="h">5073</td><td><div class="c3">62559</div></td><td></td><td></td><td></td><td></td><td class="s">Perl_savepv(pTHX_ const char *pv)</td></tr>
 <tr><td class="h">5074</td><td></td><td></td><td></td><td></td><td></td><td class="s">{</td></tr>
 <tr><td class="h">5075</td><td></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;PERL_ARGS_ASSERT_SAVEPV;</td></tr>
 <tr><td class="h">5076</td><td></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;PERL_UNUSED_CONTEXT;</td></tr>
-<tr><td class="h">5077</td><td colspan="6"></td></tr><tr><td class="h">5078</td><td><div class="c3">10737</div></td><td><div class="c0" title="-/F"><a href="-home-con-perl5-perlbrew-perls-perl-5-44-0-lib-5-44-0-x86_64-linux-CORE-inline-h--branch.html#L5078">50</a></div></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;if (!pv)</td></tr>
+<tr><td class="h">5077</td><td colspan="6"></td></tr><tr><td class="h">5078</td><td><div class="c3">62559</div></td><td><div class="c0" title="-/F"><a href="-home-con-perl5-perlbrew-perls-perl-5-44-0-lib-5-44-0-x86_64-linux-CORE-inline-h--branch.html#L5078">50</a></div></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;if (!pv)</td></tr>
 <tr><td class="h">5079</td><td><div class="c0">0</div></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;return NULL;</td></tr>
 <tr><td class="h">5080</td><td></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;else {</td></tr>
 <tr><td class="h">5081</td><td></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;char *newaddr;</td></tr>
-<tr><td class="h">5082</td><td><div class="c3">10737</div></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;const STRLEN pvlen = strlen(pv)+1;</td></tr>
-<tr><td class="h">5083</td><td><div class="c3">10737</div></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Newx(newaddr, pvlen, char);</td></tr>
-<tr><td class="h">5084</td><td><div class="c3">10737</div></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;return (char*)memcpy(newaddr, pv, pvlen);</td></tr>
+<tr><td class="h">5082</td><td><div class="c3">62559</div></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;const STRLEN pvlen = strlen(pv)+1;</td></tr>
+<tr><td class="h">5083</td><td><div class="c3">62559</div></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Newx(newaddr, pvlen, char);</td></tr>
+<tr><td class="h">5084</td><td><div class="c3">62559</div></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;return (char*)memcpy(newaddr, pv, pvlen);</td></tr>
 <tr><td class="h">5085</td><td></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;}</td></tr>
 <tr><td class="h">5086</td><td></td><td></td><td></td><td></td><td></td><td class="s">}</td></tr>
 <tr><td class="h">5087</td><td colspan="6"></td></tr><tr><td class="h">5088</td><td></td><td></td><td></td><td></td><td></td><td class="s">/* same thing but with a known length */</td></tr>
 <tr><td class="h">5089</td><td colspan="6"></td></tr><tr><td class="h">5090</td><td></td><td></td><td></td><td></td><td></td><td class="s">PERL_STATIC_INLINE char *</td></tr>
-<tr><td class="h">5091</td><td><div class="c3">103</div></td><td></td><td></td><td></td><td></td><td class="s">Perl_savepvn(pTHX_ const char *pv, Size_t len)</td></tr>
+<tr><td class="h">5091</td><td><div class="c3">1352</div></td><td></td><td></td><td></td><td></td><td class="s">Perl_savepvn(pTHX_ const char *pv, Size_t len)</td></tr>
 <tr><td class="h">5092</td><td></td><td></td><td></td><td></td><td></td><td class="s">{</td></tr>
 <tr><td class="h">5093</td><td></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;PERL_ARGS_ASSERT_SAVEPVN;</td></tr>
 <tr><td class="h">5094</td><td colspan="6"></td></tr><tr><td class="h">5095</td><td></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;char *newaddr;</td></tr>
 <tr><td class="h">5096</td><td></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;PERL_UNUSED_CONTEXT;</td></tr>
-<tr><td class="h">5097</td><td colspan="6"></td></tr><tr><td class="h">5098</td><td><div class="c3">103</div></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;Newx(newaddr,len+1,char);</td></tr>
+<tr><td class="h">5097</td><td colspan="6"></td></tr><tr><td class="h">5098</td><td><div class="c3">1352</div></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;Newx(newaddr,len+1,char);</td></tr>
 <tr><td class="h">5099</td><td></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;/* Give a meaning to NULL pointer mainly for the use in sv_magic() */</td></tr>
-<tr><td class="h">5100</td><td><div class="c3">103</div></td><td><div class="c0" title="T/-"><a href="-home-con-perl5-perlbrew-perls-perl-5-44-0-lib-5-44-0-x86_64-linux-CORE-inline-h--branch.html#L5100">50</a></div></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;if (pv) {</td></tr>
+<tr><td class="h">5100</td><td><div class="c3">1352</div></td><td><div class="c0" title="T/-"><a href="-home-con-perl5-perlbrew-perls-perl-5-44-0-lib-5-44-0-x86_64-linux-CORE-inline-h--branch.html#L5100">50</a></div></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;if (pv) {</td></tr>
 <tr><td class="h">5101</td><td></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;/* might not be null terminated */</td></tr>
-<tr><td class="h">5102</td><td><div class="c3">103</div></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;newaddr[len] = &#39;\0&#39;;</td></tr>
-<tr><td class="h">5103</td><td><div class="c3">103</div></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;return (char *) CopyD(pv,newaddr,len,char);</td></tr>
+<tr><td class="h">5102</td><td><div class="c3">1352</div></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;newaddr[len] = &#39;\0&#39;;</td></tr>
+<tr><td class="h">5103</td><td><div class="c3">1352</div></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;return (char *) CopyD(pv,newaddr,len,char);</td></tr>
 <tr><td class="h">5104</td><td></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;}</td></tr>
 <tr><td class="h">5105</td><td></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;else {</td></tr>
 <tr><td class="h">5106</td><td><div class="c0">0</div></td><td></td><td></td><td></td><td></td><td class="s">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;return (char *) ZeroD(newaddr,len+1,char);</td></tr>

@@ -79,10 +79,12 @@ throws_ok { prop_test(120, 100) } qr/must not exceed/, 'x > n rejected';
 throws_ok { prop_test([1,2], [10]) } qr/same length/,  'length mismatch rejected';
 throws_ok { prop_test(5, 100, alternative => 'sideways') } qr/alternative/, 'bad alternative rejected';
 
+# Devel::Cover's own per-line counters are allocated inside whatever block is
+# running and are reported as leaks, so the check is skipped under it.
 no_leaks_ok {
 	prop_test(83, 100);
 	prop_test([83, 90], [100, 100]);
 	prop_test([83, 90, 75], [100, 100, 100], correct => 0);
-} 'prop_test does not leak';
+} 'prop_test does not leak' unless $INC{'Devel/Cover.pm'};
 
 done_testing();

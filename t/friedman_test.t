@@ -53,9 +53,11 @@ throws_ok { friedman_test([[1],[2]]) }        qr/at least two treatments/, 'need
 throws_ok { friedman_test([[1,2,3],[1,2]]) }  qr/same number of columns/, 'ragged rows rejected';
 throws_ok { friedman_test(42) }               qr/Usage/, 'non-matrix rejected';
 
+# Devel::Cover's own per-line counters are allocated inside whatever block is
+# running and are reported as leaks, so the check is skipped under it.
 no_leaks_ok {
 	friedman_test([[1,2,3],[2,3,1],[1,3,2],[3,2,1]]);
 	friedman_test([[7,9,8],[6,6,7],[9,10,9],[8,8,6],[8,8,8]]);
-} 'friedman_test does not leak';
+} 'friedman_test does not leak' unless $INC{'Devel/Cover.pm'};
 
 done_testing();

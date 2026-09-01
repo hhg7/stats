@@ -94,12 +94,14 @@ throws_ok { glm(formula => 'y ~ x', data => { y => [-1,2,3], x => [1,2,3] },
                 family => 'poisson') } qr/non-negative/, 'poisson rejects negative counts';
 
 # Leak check (clean, converging data only)
+# Devel::Cover's own per-line counters are allocated inside whatever block is
+# running and are reported as leaks, so the check is skipped under it.
 no_leaks_ok {
 	my @y = (0,8,1,0,15,2,20,0,1,9,0,30,3,0,12,1,25,0,2,18,0,1,40,0,5);
 	my @x = (qw(a a a a a a a a b b b b b b b b c c c c c c c c c));
 	glm(formula => 'y ~ x', data => { y => \@y, x => \@x }, family => 'negbin');
 	glm(formula => 'y ~ x', data => { y => \@y, x => \@x }, family => 'poisson');
-} 'glm poisson/negbin does not leak';
+} 'glm poisson/negbin does not leak' unless $INC{'Devel/Cover.pm'};
 
 # Negative binomial across dispersion regimes, against MASS 7.3 glm.nb.
 #

@@ -51,11 +51,13 @@ throws_ok { vif(\%{{x1=>[1,2]}}, ['x1']) } qr/at least two predictors/, 'vif nee
 throws_ok { hosmer_lemeshow([1,0,1],[0.5,0.5,0.5], g => 2) } qr/at least 3/, 'HL needs g>=3';
 throws_ok { hosmer_lemeshow([1,0],[0.5,0.5,0.5]) } qr/same length/, 'HL length mismatch';
 
+# Devel::Cover's own per-line counters are allocated inside whatever block is
+# running and are reported as leaks, so the check is skipped under it.
 no_leaks_ok {
 	my %d = (x1 => [1,2,3,4,5,6], x2 => [1.1,2.2,2.9,4.1,5.0,6.2], x3 => [2,5,1,4,3,6]);
 	vif(\%d, [qw(x1 x2 x3)]);
 	hosmer_lemeshow([0,0,1,0,1,0,1,1,0,1,1,1],
 	                [0.1,0.2,0.3,0.4,0.5,0.55,0.6,0.7,0.75,0.8,0.9,0.95], g => 4);
-} 'vif / hosmer_lemeshow do not leak';
+} 'vif / hosmer_lemeshow do not leak' unless $INC{'Devel/Cover.pm'};
 
 done_testing();

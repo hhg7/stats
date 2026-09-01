@@ -7612,17 +7612,34 @@ those at a p-value of C<2.2e-297>.
 C<spearman> follows R's C<cor.test> exactly: C<exact> defaults to true, and an
 exact request is served by permutation enumeration for I<n> ≤ 9, by the AS 89
 Edgeworth series for 10 ≤ I<n> ≤ 1290, and by the asymptotic I<t> above that or
-whenever the ranks contain ties. Passing C<< exact =E<gt> 1 >> never enumerates past
+whenever the data contain ties. Passing C<< exact =E<gt> 1 >> never enumerates past
 I<n> = 9, because I<n>! is 6.2 × 10²³ by I<n> = 24.
 
-C<statistic> is Spearman's I<S>, the sum of squared rank differences, on every
-one of those paths — the same quantity R reports, so it can be compared
-directly. Two differences from R are worth knowing, neither of them about the
-mathematics: at a perfect correlation R derives I<S> from ρ and lands a rounding
-step away (C<3.66e-14> for an exact 0 at I<n> = 10), and under ties R keeps using
-that same identity, which only holds without them, so R reports
-C<2.5192319072807861> where the squared rank differences sum to exactly C<2.5>.
-Both are pinned in C<t/cor_test.spearman.R.t>.
+C<statistic> is Spearman's I<S> on every one of those paths, formed the way R
+forms it — C<(n³ − n)(1 − ρ)/6>, which is the sum of squared rank differences
+only when there are no ties. One difference from R remains, and it is not about
+the mathematics: at a perfect correlation R's C<cor()> returns a ρ that is
+2.2e-16 short of 1, so R reports C<3.6637359812630166e-14> for an exact 0 at
+I<n> = 10 where the Welford accumulation here returns exactly 1 and so gives
+exactly 0. Pinned in C<t/cor_test.spearman.R.t>.
+
+=head3 Kendall: ties, and the confidence interval
+
+C<kendall>'s normal approximation carries R's full tie correction —
+
+ var_S = (v0 − vt − vu)/18 + v1/(2n(n−1)) + v2/(9n(n−1)(n−2))
+
+built from the tie-group sizes of each vector. That branch is reached exactly
+when there are ties (without them, and below I<n> = 50, the exact distribution
+is used instead), so the correction is never idle. The counts behind it come
+from Knight's O(I<n> log I<n>) algorithm, the same one L<C<cor>|/"cor"> uses, which
+is why a Kendall C<cor_test> on 64 000 points takes 0.014 s rather than 15.
+
+C<pearson> reports a C<conf.int>, and it follows C<alternative>: a one-sided test
+gets a one-sided interval, with the open end at exactly −1 or 1, as R's does.
+There is no interval below I<n> = 4, again as in R — Fisher's I<z> has
+1/√(n−3) for its standard error, so there is nothing to report. C<spearman> and
+C<kendall> return no interval at all, which is also R's behaviour.
 
 =head2 cov
 
@@ -10099,11 +10116,23 @@ C<hoh2hoa> dies (via C<croak>) when:
 
 =head2 hist
 
-Computes the histogram of the given data values, operating in single $O(N)$ pass performance. It returns the bin counts, computed breaks, midpoints, and density. 
+Computes the histogram of the given data values. It returns the bin counts,
+computed breaks, midpoints, and density.
 
  my $res = hist([1, 2, 2, 3, 3, 3, 4, 4, 5], breaks => 4);
 
-If C<breaks> is not explicitly provided, it defaults to calculating the number of bins using Sturges' formula.
+C<breaks> is a I<suggested> number of intervals, not a count to be obeyed — the
+breakpoints are R's C<pretty()> over the range of the data, so they fall on
+round numbers and the axis is rounded outwards past the extremes. Ask for 5
+bins over C<c(1,2,2,3,4,7,9,10,11,15)> and you get eight, at 0, 2, 4 … 16, which
+is what R's C<hist()> gives for the same request. When C<breaks> is omitted the
+suggestion is R's C<nclass.Sturges>, ⌈log₂ I<n> + 1⌉.
+
+Counts are of right-closed intervals with the lowest included — C<(a, b]>,
+except the first, which is C<[a₀, b₁]> — carrying R's 1e-7 fuzz, so a value that
+lands a rounding error above a breakpoint still counts in the bin below it.
+C<density> is C<counts / (n × width)> over the unfuzzed breaks. Pinned against R
+across thirteen datasets and eight C<breaks> settings in C<t/hist.R.t>.
 
 =head2 hosmer_lemeshow
 
@@ -11175,11 +11204,13 @@ C<$left> and C<$right> may each be an B<AoH> (array of row hash references), a B
 
 =back
 
-Keys are matched on the B<stringified> cell value. A row whose key cell is C<undef> (or absent) never matches — the pandas C<NaN> rule — so such a row is dropped by an inner/right join and appears only as a left- or right-only row in a left/outer/right join.
+Keys are matched on the B<stringified> cell value. A row whose key cell is C<undef> (or absent) never matches, so such a row is dropped by an inner/right join and appears only as a left- or right-only row in a left/outer/right join. This is SQL's rule for C<NULL> keys, and R's C<< merge(..., incomparables = NA) >>; note that it is I<not> what either reference does by default — R's default (C<< incomparables = NULL >>) and pandas both match a missing key to a missing key.
 
 =head3 Colliding columns (C<suffixes>)
 
 A non-key column that appears in B<both> frames would collide, so each copy is renamed by appending a suffix: C<.x> to the left copy and C<.y> to the right by default (R's convention). Override with C<< suffixes =E<gt> ['_left', '_right'] >>.
+
+Under C<left.on>/C<right.on> the same applies to a right-hand non-key column named after the B<left key>, since the single output key column carries the left name: it is suffixed too, as R does with C<< no.dups = TRUE >>.  If the suffixes still leave two output columns sharing a name, C<merge> dies rather than return a frame with a column missing.
 
 =head3 Output shape
 
@@ -13287,9 +13318,17 @@ or, alternatively, with arrays:
 
  my @scaled_results = scale(1..5);
 
-You can also pass an options hash to disable centering or scaling:
+You can also pass options, either as a trailing hash reference or as trailing
+name/value pairs — the two are equivalent:
 
- my @scaled_results = scale(1..5, { center => false, scale => 1 });
+ my @scaled_results = scale(1..5, { center => 0, scale => 1 });
+ my @scaled_results = scale(1..5, center => 0, scale => 1);
+
+C<center> and C<scale> each take a number to use instead of the mean or the
+standard deviation, or one of C<mean>/C<sd>, C<true>/C<false>, C<none>, C<1>/C<0> and
+the empty string, matched case-insensitively. With C<< center =E<gt> 0 >> the divisor
+is R's: the root mean square about zero, C<sqrt(sum(x^2)/(n-1))>, not the
+standard deviation.
 
 It fully supports matrix operations. By passing an array of arrays, C<scale> processes the data column by column independently:
 
@@ -15064,6 +15103,182 @@ C<t/model_pvalue_tails.t> and C<t/oneway_test.R.scipy.t>.
 
 =head1 Changes
 
+=head2 0.313 2026-09-01 CDT
+
+=head3 C<merge>: a C<left.on>/C<right.on> join died when the right frame reused the key's name
+
+The result of a join carries B<one> key column, under the left name — R's
+convention, and not pandas', which keeps both. That left one collision
+unaccounted for: with C<left.on>/C<right.on>, a I<non-key> column on the right
+can be named after the I<left key>, and it then collides with the output key
+column rather than with a left data column. The suffix rule only looked at the
+left frame's data columns, so nothing was renamed and the collision guard fired:
+
+ merge($parents, $children, 'left.on' => 'name', 'right.on' => 'parent');
+ # merge: output column 'name' collides; adjust 'suffixes'
+
+That is C<tests/reg-tests-1d.R>'s parents/children join, and both references
+perform it: R suffixes the right-hand copy under C<< no.dups = TRUE >> (the
+default since R 3.5.0 — "if a C<by.x> column name matches one of C<y>, the y
+version gets suffixed as well"), and pandas keeps both key columns so the
+question never arises. C<merge> now suffixes it too, giving R's names exactly:
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th></th>
+  <th>columns</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>R 4.6.1</td>
+  <td><code>name</code>, <code>sex.x</code>, <code>age.x</code>, <code>name.y</code>, <code>sex.y</code>, <code>age.y</code></td>
+</tr>
+<tr>
+  <td><code>merge</code> before</td>
+  <td><em>croaks</em></td>
+</tr>
+<tr>
+  <td><code>merge</code> now</td>
+  <td><code>name</code>, <code>sex.x</code>, <code>age.x</code>, <code>name.y</code>, <code>sex.y</code>, <code>age.y</code></td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+Every input this changes used to croak, so no join that worked before returns
+anything different. If the suffixes still leave two output columns sharing a
+name, C<merge> still dies rather than hand back a frame with a column missing —
+which is R's behaviour too (C<< suffixes = c(".z", ".z") >> is an error there).
+
+=head3 C<merge> is now cross-validated against R's and pandas' own merge suites
+
+C<t/merge.R.pandas.t> (329 tests) takes its cases from the references' test
+suites rather than inventing them, in the manner of the other
+C<t/*.R.scipy.t> files:
+
+=over
+
+=item *
+
+B<R 4.6.1> — 28 frames and 83 cases: the examples in
+C<src/library/base/man/merge.Rd> (authors/books, and the C<incomparables>
+example), plus R's own regression cases for C<merge> from C<reg-tests-1a.R>
+(PR#1510 C<by.x>/C<by.y> with multiple matches; the Cartesian product that did
+not make column names unique in 2.3.0; "merging when NA is a level"; the two
+character matrices that failed pre-2.0.0; merge on zero-row frames, not allowed
+≤ 2.4.0), C<reg-tests-1b.R> (the 2.15.0 and 2.15.1 suffixes regressions; the
+C<women> zero-row merges that failed in 2.7.0), C<reg-tests-1d.R> (the C<by.y>
+naming case above) and C<reg-tests-2.R> (the authors/books joins moved out of
+C<merge.Rd>, and the 2002 case where every column is a join key).
+
+=item *
+
+B<pandas 2.2.3> — 31 frames and 60 cases from
+C<pandas/tests/reshape/merge/test_merge.py>
+(C<test_intelligently_handle_join_key> GH#733, C<test_merge_overlap>,
+C<test_merge_different_column_key_names>, C<test_merge_same_order_left_right>
+GH#35382, C<test_left_merge_empty_dataframe>, all ten parametrisations of
+C<test_merge_empty> GH#52777, C<test_merge_on_ints_floats>,
+C<test_merge_non_unique_index_many_to_many>, C<test_merge_suffix>),
+C<test_merge_cross.py> (all four cross-join tests) and C<test_multi.py>
+(C<test_merge_na_keys>, C<test_merge_multiple_cols_with_mixed_cols_index>
+GH#29522).
+
+=back
+
+Each frozen case runs through B<every input/output shape> — AoH, HoA and HoH on
+the left crossed with the same on the right and with both output shapes, 18
+joins per case — and its output column names are checked separately, because a
+join whose answer has no rows is exactly what several of the reference cases are
+about and a row-by-row comparison cannot see the names. Beyond the tables the
+file pins row order against pandas' C<< sort = False >>, R's
+C<by>/C<by.x>/C<by.y> and pandas' C<left_on>/C<right_on> spellings, every error
+path the references document, and double-valued keys with dyadic literals.
+
+The two tables are generated by C<t/merge.R.pandas.R> and
+C<t/merge.R.pandas.py>, committed beside the test; the test itself never runs R
+or python, and needs neither installed. Both blocks reproduce byte-identically
+from the generators, and the pandas block is byte-identical under pandas 2.2.3
+and 3.0.4, so nothing frozen there is specific to a release.
+
+C<t/merge.t> also gained the cases a data frame cannot express, and so no
+reference case can reach: an AoH row missing the key column entirely, a missing
+non-key cell, the C<0> / C<'0'> / C<'0.0'> key identity, a NUL byte inside a
+key, a wide character, C<Inf>/C<-Inf>/C<NaN> keys, and blessed frames.
+
+=head3 An C<undef> join key matches nothing — which is I<not> "the pandas C<NaN> rule"
+
+The documentation for C<merge> credited its treatment of a missing join key to
+pandas, and C<LikeR.xs> credited it to R's default. Both attributions were
+wrong, in the same direction: B<both references match a missing key to a missing
+key.> On C<merge.Rd>'s own C<incomparables> example the two agree with each
+other exactly and disagree with C<merge>:
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>join</th>
+  <th>R 4.6.1</th>
+  <th>pandas 2.2.3</th>
+  <th><code>merge</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>by = c("k1","k2")</code></td>
+  <td>3 rows</td>
+  <td>3 rows</td>
+  <td>2 rows</td>
+</tr>
+<tr>
+  <td><code>by = "k1"</code></td>
+  <td>6 rows</td>
+  <td>6 rows</td>
+  <td>2 rows</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+The behaviour is right and unchanged — it is SQL's rule for a C<NULL> key, which
+is C<< merge(..., incomparables = NA) >> in R, the line C<merge.Rd> itself runs,
+and what C<merge>'s documentation describes everywhere else. Only the credit was
+wrong; R's default is C<< incomparables = NULL >>. The corrected wording says
+which rule it is and that it is not either reference's default, and
+C<t/merge.R.pandas.t> now asserts the divergence — with R's own
+C<< incomparables = NA >> answers frozen beside the generalised ones — so
+changing it later has to be deliberate.
+
+=head3 Eleven leak checks reported Devel::Cover's own counters as leaks
+
+C<t/vif_hoslem.t> failed under C<cover> with 37 leaks attributed to a line of
+C<hosmer_lemeshow> that allocates nothing (C<< next unless defined ... &&
+looks_like_number ... >>), and the leaked SVs were bare C<IV>s holding values
+like C<98113961175368> — pointers. They are Devel::Cover's per-line counters,
+which are allocated inside whichever block happens to be running and which
+C<Test::LeakTrace> then counts; the same test reports 0 leaks on a plain perl.
+
+Around ninety test files already guard their leak checks with
+C<$INC{'Devel/Cover.pm'}> for this reason. Eleven did not:
+C<t/age_standardize.t>, C<t/dunn_test.t>, C<t/effect_sizes.t>,
+C<t/friedman_test.t>, C<t/glm_families.t>, C<t/ks_test.R.scipy.t>,
+C<t/mcnemar_test.t>, C<t/prop_test.t>, C<t/tied.frames.t>, C<t/vif_hoslem.t>
+and — for an import it never used — C<t/_parse_csv.t>. Four of them failed; the
+rest passed only by luck, since whether the counters land inside the measured
+block depends on which lines get their first coverage there, which moves with
+file order. All of them are guarded now, in the two forms the suite already
+uses, and the whole suite passes under C<Devel::Cover> (143 files, 35008 tests)
+as well as without it (143 files, 35577 tests — the difference is the leak
+checks, which still run and still report 0 leaks outside coverage mode).
+
 =head2 0.311 2026-08-28 CDT
 
 =head3 80-bit x87 arithmetic broke four test files on 32-bit x86
@@ -15204,7 +15419,367 @@ C<-std=gnu99> emitting C<fdivl> and C<ret> with no rounding between them, and th
 flag inserting the C<fstpl>/C<fldl> round-trip that narrows the result. Only a
 real 32-bit perl will exercise it.
 
-=head2 0.31 2026-08
+=head2 0.312 2026-08-30
+
+=head3 C<cor_test()>: five disagreements with R, one of which moves p-values
+
+The tie-corrected variance is the one that matters. C<< cor\_test(method =E<gt>
+'kendall') >> divided the Kendall score by C<n(n-1)(2n+5)/18>, which is R's
+C<var_S> only when there are no ties — and with no ties and I<n> < 50 the branch
+is not reached at all, so the correction was missing in exactly the case that
+needs it. R builds it from the tie-group sizes of each vector:
+
+ var_S = (v0 - vt - vu)/18 + v1/(2n(n-1)) + v2/(9n(n-1)(n-2))
+
+On fifteen points of tied integer data:
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th></th>
+  <th>0.311</th>
+  <th>R 4.6.1</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>z</td>
+  <td><code>-1.8805123053604953</code></td>
+  <td><code>-2.0721033457107345</code></td>
+</tr>
+<tr>
+  <td>p (two-sided)</td>
+  <td><code>0.060038290909579115</code></td>
+  <td><code>0.038255804392841472</code></td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+A factor of 1.57 on the p-value, across 0.05. Integer scores, counts and Likert
+data are all ties, which is most of what a Kendall correlation is asked for.
+
+Four more, in the same function:
+
+=over
+
+=item * B<Ties of odd group size were not ties.> The Spearman branch decided
+C<TIES> by looking for a fractional average rank, and a group of three
+averages to a whole number: C<y = (1,1,1,2,2,2,3,3,3,4,4,4)> ranks as
+2, 2, 2, 5, 5, 5, 8, 8, 8, 11, 11, 11 and was called tie-free, which sent it
+to the exact branch R reserves for data that has none. It is now R's test —
+a repeated I<value> — taken from the tie walk C<rank_data()> was already doing.
+
+=item * B<< Spearman's C<statistic> under ties. >> R always forms I<S> as
+C<(n³ − n)(1 − ρ)/6>; the sum of squared rank differences is the same number
+only without ties. 0.311 reported the sum: C<793.5> where R gives
+C<865.39724699477085>. It is now the identity, on every path.
+
+=item * B<< The Pearson confidence interval ignored C<alternative>. >> R switches on it —
+C<less> is C<(-1, tanh(z + σ·qnorm(cl))]>, C<greater> is
+C<[tanh(z - σ·qnorm(cl)), 1)>. The two-sided interval came back whatever was
+asked for: C<[0.5217431448512, 0.9680507713838]> for C<< alternative =E<gt>
+'greater' >> where R gives C<[0.6029901323843, 1]>. The p-value was never
+wrong, only the interval, which is the kind of error that reads as an answer.
+There is also no interval below I<n> = 4 now, as in R.
+
+=item * B<The continuity correction at a score of zero.> R applies
+C<< S E<lt>- sign(S) * (abs(S) - 1) >>, and C<sign(0)> is 0, so a score of exactly 0
+stays 0. Subtracting a signum that treats 0 as negative moved it to +1:
+thirty points whose score is 0 reported C<z = 0.019410388389502>,
+C<p = 0.98451372323408> where the answer is C<z = 0>, C<p = 1>.
+
+=back
+
+One divergence went the other way and is now gone. The exact Kendall
+distribution summed its lower tail from C<dp[max_inv]> downwards, the end of the
+array that has accumulated every rounding the recurrence made; the distribution
+of inversions is symmetric, so both tails are now summed from C<dp[0]>. Perfect
+discordance at I<n> = 10 returned C<2.7557319223626736e-07> and is now exactly
+1/10!, C<2.7557319223985891e-07>, which is R's value. In the mirror case R is
+the one that is 9.3e-11 out and C<cor_test> gives the exact double;
+C<t/cor_test.kendall.R.t> records that and asserts the combinatorics.
+
+C<t/cor_test.kendall.R.t> (1236 assertions) and C<t/cor_test.pearson.ci.R.t>
+(274) are new and generated from R; C<t/cor_test.spearman.R.t> gained the tied
+rows it had been quoting as a recorded divergence.
+
+=head3 Kendall's counts, in O(I<n> log I<n>)
+
+C<< cor_test(method =E<gt> 'kendall') >> walked every (I<i>, I<j>) pair to count
+concordances — the O(I<n>²) loop C<cor()> had already replaced with Knight's
+algorithm in 0.31. Both now come from one routine, which returns the tie
+moments R's C<var_S> needs along with the pair counts, so the correctness fix
+above and this are the same edit:
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th><i>n</i></th>
+  <th><code>cor_test</code> before</th>
+  <th><code>cor_test</code> now</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>4 000</td>
+  <td>0.059 s</td>
+  <td>0.0007 s</td>
+</tr>
+<tr>
+  <td>16 000</td>
+  <td>0.93 s</td>
+  <td>0.0031 s</td>
+</tr>
+<tr>
+  <td>64 000</td>
+  <td>14.73 s</td>
+  <td>0.0139 s</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+C<cov(..., 'kendall')> is the same sum over the full I<n> × I<n> space, so it is
+2(C − D) and comes from the same counts: 1.85 s to 0.0061 s at I<n> = 32 000.
+R's own C<cov(method = "kendall")> is O(I<n>²), so this is now faster than the
+reference rather than merely equal to it.
+
+=head3 C<hist()>: R's C<pretty()> breakpoints
+
+R does not cut the range into C<breaks> equal pieces. It treats that number as a
+suggestion and asks C<pretty()> for round numbers, so the axis ends outside the
+data and the interval count need not be the one requested:
+
+ hist([1,2,2,3,4,7,9,10,11,15])
+   breaks  0  2  4  6  8  10  12  14  16       was  1  5.75  10.5  15.25  20
+   mids    1  3  5  7  9  11  13  15           was  3.375  8.125  12.875  17.625
+
+C<R_pretty()> is ported from C<src/appl/pretty.c> with C<pretty.default()>'s
+parameters and C<hist.default()>'s C<min.n = 1>; the counts come from a binary
+search over the breakpoints carrying R's 1e-7 fuzz, which is what puts a value
+sitting a rounding error above a break into the bin below it. The default bin
+count is R's C<nclass.Sturges>, ⌈log₂ I<n> + 1⌉ — the ceiling is part of it, and
+a truncating cast had been turning C<log₂(13) + 1 = 4.70> into 4.
+
+C<t/hist.R.t> pins all four returned vectors across thirteen datasets — a single
+point, a constant column, data spanning zero, data of order 1e-3 and 1e6 —
+crossed with eight C<breaks> settings. Every value matches R exactly, to the
+last bit.
+
+=head3 Arguments that are not numbers
+
+C<SvNV()> turns a string that is not a number into 0 without a word, because the
+C<numeric> warning it would raise belongs to the caller's scope and an XSUB does
+not run in one. So C<min(1, 2, 'abc')> returned B<0> — a value that is not
+among its arguments and is not the smallest of them — and C<mean(1, 2, 'abc')>
+returned 1. C<undef> had always been refused; this was the hole beside it.
+
+C<mean>, C<sum>, C<min>, C<max>, C<median>, C<var>, C<sd>, C<skew>, C<kurtosis>,
+C<quantile>, C<scale> and C<hist> now croak, naming the argument or the cell. An
+object that overloads its numeric conversion still counts as a number; a
+reference that overloads nothing is now refused too, where C<SvNV()> used to
+fold in its address. The cross-validation file that had been asserting the old
+behaviour — C<t/read_table.na_strings.t>, on an unmapped literal C<NA> — asserts
+the croak instead, which is a better signal than the warning it could not see.
+
+=head3 C<NaN> in C<median()> and C<quantile()>
+
+No comparison sort can place a C<NaN>: every comparison against one is false. So
+which value ended up in the middle depended on where in the array it sat.
+C<median()> of 1..50 with one C<NaN> in it returned 25.5, C<median([5, 1, NaN])>
+returned 5, and C<median([1, 2, NaN, 4])> returned C<NaN>. C<quantile()> of that
+same 50 answered C<13.25> for the 25% and C<NaN> for the 75%.
+
+Both now propagate — one C<NaN> in, C<NaN> out — which is what C<sum>, C<mean>,
+C<var>, C<sd>, C<min> and C<max> already did here, and what keeps the 50% quantile
+equal to C<median()>. C<undef> is still dropped by C<quantile()>, as documented.
+
+The five bandwidth selectors disagreed with each other about the same input:
+C<bw_ucv>, C<bw_bcv> and C<bw_sj> rejected a non-finite value a layer down, while
+C<bw_nrd0> and C<bw_nrd> returned a number — 7.5250570111922 for 1..50 with two
+C<NaN>s, computed from a variance and an interquartile range that are both
+C<NaN> via a C<min()> that a C<NaN> silently loses. All five now refuse it in the
+shared reader, which is also what keeps a C<NaN> out of the C<qsort()> there:
+C<cmp_nv3()> cannot order one, and an inconsistent comparator makes C<qsort()>
+undefined behaviour rather than merely inaccurate.
+
+=head3 Ragged frames
+
+A HoA frame whose columns have different lengths was fitted on whichever column
+C<hv_iternext()> reached first, so how many rows C<lm()>, C<glm()> and C<prcomp()>
+used moved with hash order from run to run: C<< { y =E<gt> [1..6], x =E<gt> [1,2,3] } >>
+returned a perfect fit on three rows with C<df.residual = 1> and said nothing.
+All three now croak, naming the column and both lengths, as C<csort()> already
+did; C<prcomp()> checks a ragged AoA too.
+
+This is stricter than R on purpose. C<data.frame()> recycles a short column when
+its length divides the longest — C<data.frame(y = 1:6, x = 1:3)> quietly fits on
+C<x> repeated twice, and only C<1:4> is an error there. Inventing observations is
+not something to do quietly in a model fit.
+
+=head3 C<scale()>: named arguments
+
+Every other function in this module takes its options as trailing name/value
+pairs. C<scale()> read only a trailing hash reference, so a flat pair fell
+through into the data, where the option name numified to 0 and was scaled along
+with everything else: C<< scale([1,2,3], center =E<gt> 0) >> returned B<five> numbers
+for a three-element input. Both forms are now accepted and agree; an
+unrecognised name is an error rather than a data point.
+
+=head3 C<survfit()>: where the curve reaches zero
+
+Greenwood's next variance term is C<d / (n.risk × (n.risk − d))>, and the last
+event takes every remaining subject, so C<n.risk == d> and the variance of
+I<S>(I<t>) is not defined from there on. R reports C<std.err> as C<Inf> and both
+confidence limits as C<NA>. All three came back 0, which is a number where there
+is no answer, and a plausible-looking one. They are C<undef> now.
+
+=head3 Two smoker failures, both in the tests rather than the module
+
+C<LikeR.xs> is unchanged here. Two failures came back from CPAN smokers on 0.31,
+and in each case the assertion had been pinned to something that is a property of
+the perl running it rather than of C<Stats::LikeR> — and this machine's build
+happens to satisfy it, which is why neither showed up before the reports arrived.
+
+=head4 C<t/avals.t> was counting C<FETCH>es on a tied cell
+
+The tied-cell block built its frame by copying a tied scalar into an anonymous
+hash, and used a C<FETCH> that counted up so that a second fetch would be
+visible:
+
+C<< perl
+sub FETCH { my $s = shift; return $$s++ }   # a different value each FETCH
+my $tied; tie $tied, 't::AlwaysSeven';
+my @got = avals([ { v =E<gt> $tied } ], 'v');
+is($got[0], 7, 'a tied cell is fetched once, at extraction time');
+ >>
+
+C<< { v =E<gt> $tied } >> fetches the cell while the frame is being built, so what
+C<avals()> copied was already a plain number: the test never exercised the thing
+its own name described, and what it actually measured was how many times that
+perl runs get-magic on one C<sv_setsv()>. That count is not fixed. Measured
+directly, C<perl-5.10.1>, C<perl-5.12.5> and C<perl-5.44.0> each run it once and
+the caller sees 7; a smoker on 5.18.4 (C<x86_64-linux-thread-multi>) reported 8,
+i.e. two runs on the one copy, and a second report of the same two subtests
+followed.
+
+The cell is now tied in place, so nothing touches it before C<avals()> does, and
+C<FETCH> returns a constant, so nothing depends on how many times it is called:
+
+C<perl
+my %row;
+tie $row{v}, 't::TiedCell', 7;
+>
+
+What the block asserts is now what it always claimed: building the frame fetches
+nothing, extraction fetches at least once, the fetched value rather than the
+tied SV comes back, the copy carries no tie magic, re-reading it does not fetch
+again, and it is exactly what C<vals()> returns for the same frame. The HoH
+branch and the HoA branch — which fills C<AvARRAY> directly and so has its own
+C<newSVsv()> — get the same treatment, 44 subtests to 55.
+
+=head4 C<t/01.t> compared a number of order 50 against an absolute C<1e-14>
+
+The other report was the C<lm()> F statistic, exactly 54 by algebra:
+
+```
+
+=head1 got: 54
+
+=head1 expected: 54; diff = 1.4210854715202e-14
+
+```
+
+C<is_approx()> treated its C<$epsilon> as an absolute bound, and 54 sits where the
+spacing of a double is C<ulp(54) = 2**-47 = 7.105e-15>. A bound of C<1e-14> is
+therefore 1.41 ulps — the call site was demanding bit-exactness of a number of
+order 50, and the smoker's build simply reassociated the sum and landed two ulps
+out (C<1.4210854715202e-14> is exactly C<2**-46>). The same C<1e-14> written
+against a p-value of order C<1e-9> is some 10⁵ ulps, which is what the number was
+chosen to mean.
+
+The allowance is now scaled by the size of the expected value, floored at the
+absolute bound so that comparisons against 0 — and against anything below 1 —
+keep exactly the tolerance they had:
+
+C<< perl
+my $scale = abs($expected) E<gt> 1 ? abs($expected) : 1;
+my $tol   = $epsilon * $scale;
+ >>
+
+The F statistic gets 76 ulps of headroom in place of one. The failure C<diag()>
+also prints the tolerance now, so the next report of this shape can be read
+without opening the file.
+
+Every C<is_approx>-style call in all 138 test files was then parsed and its
+tolerance compared against C<ulp(expected)>. Nine sites sat under eight ulps, all
+of them in C<t/01.t> and all now covered by the scaling:
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th><code>t/01.t</code> line</th>
+  <th>expected</th>
+  <th>tolerance</th>
+  <th>was</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>1149, 1370, 3056, 3081, 3100, 3399</td>
+  <td>54, 37, 58, 58, 40, 36</td>
+  <td><code>1e-14</code></td>
+  <td>1.41 ulp</td>
+</tr>
+<tr>
+  <td>2216</td>
+  <td>31</td>
+  <td><code>1e-14</code></td>
+  <td>2.81 ulp</td>
+</tr>
+<tr>
+  <td>3519, 3561</td>
+  <td>177.504798464491358</td>
+  <td><code>1e-13</code></td>
+  <td>3.52 ulp</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+Call sites with a tolerance of C<1e-13> or tighter against a computed value exist
+in C<t/prcomp.t>, C<t/t_test.t>, C<t/value_counts.t> and C<t/wilcox_test.t>; each was
+checked by hand and compares a p-value, a count, an integer rank sum, or an
+C<sdev> of about 2.8, so those bounds are thousands of ulps wide and are left
+alone.
+
+Both files pass on C<perl-5.44.0>, C<perl-5.10.1> and C<perl-5.12.5> — C<t/01.t>
+1399 of 1399, C<t/avals.t> 55 of 55 — the two older perls built in private trees
+so that the distribution root's C<Makefile> and C<blib> stay as they were.
+
+=head2 0.311 2026-08-28
 
 =head3 avals
 

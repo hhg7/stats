@@ -64,9 +64,11 @@ my @g = ((('A') x 5), (('B') x 5), (('C') x 5));
 throws_ok { dunn_test(\@x, [ ('A') x 14 ]) } qr/same length/, 'length mismatch rejected';
 throws_ok { dunn_test(\@x, \@g, method => 'bogus') } qr/unknown method/, 'bad method rejected';
 
+# Devel::Cover's own per-line counters are allocated inside whatever block is
+# running and are reported as leaks, so the check is skipped under it.
 no_leaks_ok {
 	dunn_test(\@x, \@g, method => 'holm');
 	dunn_test(\@x, \@g, method => 'bh');
-} 'dunn_test does not leak';
+} 'dunn_test does not leak' unless $INC{'Devel/Cover.pm'};
 
 done_testing();

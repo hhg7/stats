@@ -286,6 +286,70 @@ same( merge($emp, $dept, on => 'dept', how => 'inner', suffixes => ['_emp','_dep
 	is $mismatch, '', "every shape combination matches the reference ($cases joins)";
 }
 
+# the perl-side surface: cells and frames a data frame cannot express
+#
+# Everything above has an R or a pandas equivalent, and
+# t/merge.R.pandas.t cross-validates against both.  What follows does not: a
+# column of a data.frame or a Series has a value in every row and one type,
+# while an AoH row can simply be missing a key, a cell can hold a reference,
+# and a frame can be blessed.  Each of these is a path through mg_key() and
+# mg_resolve() that no reference case reaches.
+{
+	# an absent key cell is an undef key cell, so it matches nothing
+	same( merge([ {k=>1,v=>'a'}, {v=>'b'} ], [ {k=>1,w=>'X'} ],
+	            on => 'k', how => 'left'),
+		[ { k => 1,     v => 'a', w => 'X'   },
+		  { k => undef, v => 'b', w => undef } ],
+		'a row with no key column at all never matches' );
+
+	# an absent non-key cell reads as undef, like a short HoA column
+	same( merge([ {k=>1,v=>'a'}, {k=>2} ], [ {k=>1,w=>'X'}, {k=>2,w=>'Y'} ],
+	            on => 'k'),
+		[ { k => 1, v => 'a',   w => 'X' },
+		  { k => 2, v => undef, w => 'Y' } ],
+		'an absent non-key cell reads as undef' );
+
+	# keys are the stringified cell, so 0 and '0' are one key and '0.0' is
+	# another, and the empty string is a key like any other.  This is the
+	# documented rule, and the same one drop_duplicates() and value_counts()
+	# use; the counts below are the per-key Cartesian products of
+	# {'' , 0, '0', '0.0'} x {'', 0, '0', '0.0'}: 1 + 2*2 + 1.
+	my $got = merge({ k => ['', 0, '0', '0.0', undef] },
+	                { k => ['', 0, '0', '0.0'], w => [1 .. 4] },
+	                on => 'k', 'output.type' => 'hoa');
+	is scalar @{ $got->{k} }, 6,
+		"0 and '0' are one key, '0.0' is another, '' is a key, undef is not";
+
+	# a NUL byte inside a key: mg_key() length-prefixes each cell rather than
+	# joining with a separator, so a key cannot be forged out of two others
+	same( merge([ { k => "a\0b", v => 1 } ], [ { k => "a\0b", w => 2 } ], on => 'k'),
+		[ { k => "a\0b", v => 1, w => 2 } ], 'a NUL byte inside a key matches' );
+	is scalar @{ merge([ { k => "a\0b" } ], [ { k => "a\0bc" } ], on => 'k') }, 0,
+		'...and does not run into the next byte';
+
+	# a wide character: the key is the string, whatever its internal encoding
+	same( merge([ { k => "\x{263A}", v => 1 } ], [ { k => "\x{263A}", w => 2 } ],
+	            on => 'k'),
+		[ { k => "\x{263A}", v => 1, w => 2 } ], 'a wide character key matches' );
+
+	# Inf, -Inf and NaN are keys like any other: both sides go through the same
+	# renderer, so whatever spelling this build gives them, the two sides agree
+	# and each value matches only itself.  (An NV NaN key is not an undef key,
+	# and is not skipped as one -- pandas matches NaN to NaN too, by a
+	# different route.)  The point of the check is that none of the three goes
+	# missing and none of them collides with another.
+	my $inf = 9**9**9;
+	is scalar @{ merge({ k => [ $inf, -$inf, $inf - $inf ] },
+	                   { k => [ $inf, -$inf, $inf - $inf ], w => [ 1 .. 3 ] },
+	                   on => 'k', 'output.type' => 'hoa')->{k} }, 3,
+		'Inf, -Inf and NaN are three distinct keys, each matching itself';
+
+	# blessed frames: merge() looks at the underlying array or hash
+	same( merge(bless([ { k => 1, v => 2 } ], 'Stats::LikeR::Test::L'),
+	            bless({ k => [1], w => [3] }, 'Stats::LikeR::Test::R'), on => 'k'),
+		[ { k => 1, v => 2, w => 3 } ], 'blessed frames join like plain ones' );
+}
+
 # error handling
 throws_ok { merge([{a=>1}], [{a=>1}], how => 'bogus') } qr/merge: how must be/, 'bad how dies';
 throws_ok { merge([{a=>1}], [{b=>1}], on => 'a') } qr/right frame has no join column/, 'missing key dies';

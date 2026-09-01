@@ -53,9 +53,11 @@ throws_ok { age_standardize(\@count, [1,2,3], \@stdpop) } qr/length/, 'pop lengt
 throws_ok { age_standardize(pop => \@pop, stdpop => \@stdpop) } qr/count.*or.*rate/, 'needs count or rate';
 throws_ok { age_standardize(\@count, \@pop, \@stdpop, conf_level => 1.5) } qr/conf.level/, 'bad conf.level rejected';
 
+# Devel::Cover's own per-line counters are allocated inside whatever block is
+# running and are reported as leaks, so the check is skipped under it.
 no_leaks_ok {
 	age_standardize(\@count, \@pop, \@stdpop);
 	age_standardize(\@count, \@pop, \@stdpop, per => 100_000, conf_level => 0.9);
-} 'age_standardize does not leak';
+} 'age_standardize does not leak' unless $INC{'Devel/Cover.pm'};
 
 done_testing();

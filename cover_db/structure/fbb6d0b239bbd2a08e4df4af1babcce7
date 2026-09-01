@@ -1,0 +1,1 @@
+{"digest":"fbb6d0b239bbd2a08e4df4af1babcce7","start":{"1":{"BEGIN":[{"statement":1,"subroutine":null,"branch":null,"condition":null,"time":null}]},"-1":{"__COVER__":[{"condition":null,"time":null,"statement":4,"subroutine":1,"branch":null}]}},"statement":[2,1,1,1],"subroutine":[[1,"BEGIN"]],"file":"/tmp/lYTVzBIt77/child_11.pl"}

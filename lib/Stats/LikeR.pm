@@ -11204,11 +11204,13 @@ C<$left> and C<$right> may each be an B<AoH> (array of row hash references), a B
 
 =back
 
-Keys are matched on the B<stringified> cell value. A row whose key cell is C<undef> (or absent) never matches — the pandas C<NaN> rule — so such a row is dropped by an inner/right join and appears only as a left- or right-only row in a left/outer/right join.
+Keys are matched on the B<stringified> cell value. A row whose key cell is C<undef> (or absent) never matches, so such a row is dropped by an inner/right join and appears only as a left- or right-only row in a left/outer/right join. This is SQL's rule for C<NULL> keys, and R's C<< merge(..., incomparables = NA) >>; note that it is I<not> what either reference does by default — R's default (C<< incomparables = NULL >>) and pandas both match a missing key to a missing key.
 
 =head3 Colliding columns (C<suffixes>)
 
 A non-key column that appears in B<both> frames would collide, so each copy is renamed by appending a suffix: C<.x> to the left copy and C<.y> to the right by default (R's convention). Override with C<< suffixes =E<gt> ['_left', '_right'] >>.
+
+Under C<left.on>/C<right.on> the same applies to a right-hand non-key column named after the B<left key>, since the single output key column carries the left name: it is suffixed too, as R does with C<< no.dups = TRUE >>.  If the suffixes still leave two output columns sharing a name, C<merge> dies rather than return a frame with a column missing.
 
 =head3 Output shape
 
@@ -15100,6 +15102,182 @@ C<f.sf> / C<norm.sf> and statsmodels' C<anova_oneway>; see
 C<t/model_pvalue_tails.t> and C<t/oneway_test.R.scipy.t>.
 
 =head1 Changes
+
+=head2 0.313 2026-09-01 CDT
+
+=head3 C<merge>: a C<left.on>/C<right.on> join died when the right frame reused the key's name
+
+The result of a join carries B<one> key column, under the left name — R's
+convention, and not pandas', which keeps both. That left one collision
+unaccounted for: with C<left.on>/C<right.on>, a I<non-key> column on the right
+can be named after the I<left key>, and it then collides with the output key
+column rather than with a left data column. The suffix rule only looked at the
+left frame's data columns, so nothing was renamed and the collision guard fired:
+
+ merge($parents, $children, 'left.on' => 'name', 'right.on' => 'parent');
+ # merge: output column 'name' collides; adjust 'suffixes'
+
+That is C<tests/reg-tests-1d.R>'s parents/children join, and both references
+perform it: R suffixes the right-hand copy under C<< no.dups = TRUE >> (the
+default since R 3.5.0 — "if a C<by.x> column name matches one of C<y>, the y
+version gets suffixed as well"), and pandas keeps both key columns so the
+question never arises. C<merge> now suffixes it too, giving R's names exactly:
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th></th>
+  <th>columns</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>R 4.6.1</td>
+  <td><code>name</code>, <code>sex.x</code>, <code>age.x</code>, <code>name.y</code>, <code>sex.y</code>, <code>age.y</code></td>
+</tr>
+<tr>
+  <td><code>merge</code> before</td>
+  <td><em>croaks</em></td>
+</tr>
+<tr>
+  <td><code>merge</code> now</td>
+  <td><code>name</code>, <code>sex.x</code>, <code>age.x</code>, <code>name.y</code>, <code>sex.y</code>, <code>age.y</code></td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+Every input this changes used to croak, so no join that worked before returns
+anything different. If the suffixes still leave two output columns sharing a
+name, C<merge> still dies rather than hand back a frame with a column missing —
+which is R's behaviour too (C<< suffixes = c(".z", ".z") >> is an error there).
+
+=head3 C<merge> is now cross-validated against R's and pandas' own merge suites
+
+C<t/merge.R.pandas.t> (329 tests) takes its cases from the references' test
+suites rather than inventing them, in the manner of the other
+C<t/*.R.scipy.t> files:
+
+=over
+
+=item *
+
+B<R 4.6.1> — 28 frames and 83 cases: the examples in
+C<src/library/base/man/merge.Rd> (authors/books, and the C<incomparables>
+example), plus R's own regression cases for C<merge> from C<reg-tests-1a.R>
+(PR#1510 C<by.x>/C<by.y> with multiple matches; the Cartesian product that did
+not make column names unique in 2.3.0; "merging when NA is a level"; the two
+character matrices that failed pre-2.0.0; merge on zero-row frames, not allowed
+≤ 2.4.0), C<reg-tests-1b.R> (the 2.15.0 and 2.15.1 suffixes regressions; the
+C<women> zero-row merges that failed in 2.7.0), C<reg-tests-1d.R> (the C<by.y>
+naming case above) and C<reg-tests-2.R> (the authors/books joins moved out of
+C<merge.Rd>, and the 2002 case where every column is a join key).
+
+=item *
+
+B<pandas 2.2.3> — 31 frames and 60 cases from
+C<pandas/tests/reshape/merge/test_merge.py>
+(C<test_intelligently_handle_join_key> GH#733, C<test_merge_overlap>,
+C<test_merge_different_column_key_names>, C<test_merge_same_order_left_right>
+GH#35382, C<test_left_merge_empty_dataframe>, all ten parametrisations of
+C<test_merge_empty> GH#52777, C<test_merge_on_ints_floats>,
+C<test_merge_non_unique_index_many_to_many>, C<test_merge_suffix>),
+C<test_merge_cross.py> (all four cross-join tests) and C<test_multi.py>
+(C<test_merge_na_keys>, C<test_merge_multiple_cols_with_mixed_cols_index>
+GH#29522).
+
+=back
+
+Each frozen case runs through B<every input/output shape> — AoH, HoA and HoH on
+the left crossed with the same on the right and with both output shapes, 18
+joins per case — and its output column names are checked separately, because a
+join whose answer has no rows is exactly what several of the reference cases are
+about and a row-by-row comparison cannot see the names. Beyond the tables the
+file pins row order against pandas' C<< sort = False >>, R's
+C<by>/C<by.x>/C<by.y> and pandas' C<left_on>/C<right_on> spellings, every error
+path the references document, and double-valued keys with dyadic literals.
+
+The two tables are generated by C<t/merge.R.pandas.R> and
+C<t/merge.R.pandas.py>, committed beside the test; the test itself never runs R
+or python, and needs neither installed. Both blocks reproduce byte-identically
+from the generators, and the pandas block is byte-identical under pandas 2.2.3
+and 3.0.4, so nothing frozen there is specific to a release.
+
+C<t/merge.t> also gained the cases a data frame cannot express, and so no
+reference case can reach: an AoH row missing the key column entirely, a missing
+non-key cell, the C<0> / C<'0'> / C<'0.0'> key identity, a NUL byte inside a
+key, a wide character, C<Inf>/C<-Inf>/C<NaN> keys, and blessed frames.
+
+=head3 An C<undef> join key matches nothing — which is I<not> "the pandas C<NaN> rule"
+
+The documentation for C<merge> credited its treatment of a missing join key to
+pandas, and C<LikeR.xs> credited it to R's default. Both attributions were
+wrong, in the same direction: B<both references match a missing key to a missing
+key.> On C<merge.Rd>'s own C<incomparables> example the two agree with each
+other exactly and disagree with C<merge>:
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>join</th>
+  <th>R 4.6.1</th>
+  <th>pandas 2.2.3</th>
+  <th><code>merge</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>by = c("k1","k2")</code></td>
+  <td>3 rows</td>
+  <td>3 rows</td>
+  <td>2 rows</td>
+</tr>
+<tr>
+  <td><code>by = "k1"</code></td>
+  <td>6 rows</td>
+  <td>6 rows</td>
+  <td>2 rows</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+The behaviour is right and unchanged — it is SQL's rule for a C<NULL> key, which
+is C<< merge(..., incomparables = NA) >> in R, the line C<merge.Rd> itself runs,
+and what C<merge>'s documentation describes everywhere else. Only the credit was
+wrong; R's default is C<< incomparables = NULL >>. The corrected wording says
+which rule it is and that it is not either reference's default, and
+C<t/merge.R.pandas.t> now asserts the divergence — with R's own
+C<< incomparables = NA >> answers frozen beside the generalised ones — so
+changing it later has to be deliberate.
+
+=head3 Eleven leak checks reported Devel::Cover's own counters as leaks
+
+C<t/vif_hoslem.t> failed under C<cover> with 37 leaks attributed to a line of
+C<hosmer_lemeshow> that allocates nothing (C<< next unless defined ... &&
+looks_like_number ... >>), and the leaked SVs were bare C<IV>s holding values
+like C<98113961175368> — pointers. They are Devel::Cover's per-line counters,
+which are allocated inside whichever block happens to be running and which
+C<Test::LeakTrace> then counts; the same test reports 0 leaks on a plain perl.
+
+Around ninety test files already guard their leak checks with
+C<$INC{'Devel/Cover.pm'}> for this reason. Eleven did not:
+C<t/age_standardize.t>, C<t/dunn_test.t>, C<t/effect_sizes.t>,
+C<t/friedman_test.t>, C<t/glm_families.t>, C<t/ks_test.R.scipy.t>,
+C<t/mcnemar_test.t>, C<t/prop_test.t>, C<t/tied.frames.t>, C<t/vif_hoslem.t>
+and — for an import it never used — C<t/_parse_csv.t>. Four of them failed; the
+rest passed only by luck, since whether the counters land inside the measured
+block depends on which lines get their first coverage there, which moves with
+file order. All of them are guarded now, in the two forms the suite already
+uses, and the whole suite passes under C<Devel::Cover> (143 files, 35008 tests)
+as well as without it (143 files, 35577 tests — the difference is the leak
+checks, which still run and still report 0 leaks outside coverage mode).
 
 =head2 0.311 2026-08-28 CDT
 

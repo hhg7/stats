@@ -58,7 +58,7 @@
 .\" ========================================================================
 .\"
 .IX Title "read.me 3"
-.TH read.me 3 2026-08-29 "perl v5.44.0" "User Contributed Perl Documentation"
+.TH read.me 3 2026-09-01 "perl v5.44.0" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -2172,17 +2172,37 @@ those at a p\-value of \f(CW2.2e\-297\fR.
 \&\f(CW\*(C`spearman\*(C'\fR follows R\*(Aqs \f(CW\*(C`cor.test\*(C'\fR exactly: \f(CW\*(C`exact\*(C'\fR defaults to true, and an
 exact request is served by permutation enumeration for \fIn\fR ≤ 9, by the AS 89
 Edgeworth series for 10 ≤ \fIn\fR ≤ 1290, and by the asymptotic \fIt\fR above that or
-whenever the ranks contain ties. Passing \f(CW\*(C`exact => 1\*(C'\fR never enumerates past
+whenever the data contain ties. Passing \f(CW\*(C`exact => 1\*(C'\fR never enumerates past
 \&\fIn\fR = 9, because \fIn\fR! is 6.2 × 10²³ by \fIn\fR = 24.
 .PP
-\&\f(CW\*(C`statistic\*(C'\fR is Spearman\*(Aqs \fIS\fR, the sum of squared rank differences, on every
-one of those paths — the same quantity R reports, so it can be compared
-directly. Two differences from R are worth knowing, neither of them about the
-mathematics: at a perfect correlation R derives \fIS\fR from ρ and lands a rounding
-step away (\f(CW3.66e\-14\fR for an exact 0 at \fIn\fR = 10), and under ties R keeps using
-that same identity, which only holds without them, so R reports
-\&\f(CW2.5192319072807861\fR where the squared rank differences sum to exactly \f(CW2.5\fR.
-Both are pinned in \f(CW\*(C`t/cor_test.spearman.R.t\*(C'\fR.
+\&\f(CW\*(C`statistic\*(C'\fR is Spearman\*(Aqs \fIS\fR on every one of those paths, formed the way R
+forms it — \f(CW\*(C`(n³ − n)(1 − ρ)/6\*(C'\fR, which is the sum of squared rank differences
+only when there are no ties. One difference from R remains, and it is not about
+the mathematics: at a perfect correlation R\*(Aqs \f(CWcor()\fR returns a ρ that is
+2.2e\-16 short of 1, so R reports \f(CW3.6637359812630166e\-14\fR for an exact 0 at
+\&\fIn\fR = 10 where the Welford accumulation here returns exactly 1 and so gives
+exactly 0. Pinned in \f(CW\*(C`t/cor_test.spearman.R.t\*(C'\fR.
+.PP
+\fIKendall: ties, and the confidence interval\fR
+.IX Subsection "Kendall: ties, and the confidence interval"
+.PP
+\&\f(CW\*(C`kendall\*(C'\fR\*(Aqs normal approximation carries R\*(Aqs full tie correction —
+.PP
+.Vb 1
+\& var_S = (v0 − vt − vu)/18 + v1/(2n(n−1)) + v2/(9n(n−1)(n−2))
+.Ve
+.PP
+built from the tie\-group sizes of each vector. That branch is reached exactly
+when there are ties (without them, and below \fIn\fR = 50, the exact distribution
+is used instead), so the correction is never idle. The counts behind it come
+from Knight\*(Aqs O(\fIn\fR log \fIn\fR) algorithm, the same one \f(CW\*(C`cor\*(C'\fR uses, which
+is why a Kendall \f(CW\*(C`cor_test\*(C'\fR on 64 000 points takes 0.014 s rather than 15.
+.PP
+\&\f(CW\*(C`pearson\*(C'\fR reports a \f(CW\*(C`conf.int\*(C'\fR, and it follows \f(CW\*(C`alternative\*(C'\fR: a one\-sided test
+gets a one\-sided interval, with the open end at exactly −1 or 1, as R\*(Aqs does.
+There is no interval below \fIn\fR = 4, again as in R — Fisher\*(Aqs \fIz\fR has
+1/√(n−3) for its standard error, so there is nothing to report. \f(CW\*(C`spearman\*(C'\fR and
+\&\f(CW\*(C`kendall\*(C'\fR return no interval at all, which is also R\*(Aqs behaviour.
 .SS cov
 .IX Subsection "cov"
 .Vb 1
@@ -3863,13 +3883,25 @@ an unknown option is given, or the options are not \f(CW\*(C`name => value\*(C'\
 \&\f(CW\*(C`row.names\*(C'\fR is not a plain string, or it names an already\-present column.
 .SS hist
 .IX Subsection "hist"
-Computes the histogram of the given data values, operating in single $O(N)$ pass performance. It returns the bin counts, computed breaks, midpoints, and density.
+Computes the histogram of the given data values. It returns the bin counts,
+computed breaks, midpoints, and density.
 .PP
 .Vb 1
 \& my $res = hist([1, 2, 2, 3, 3, 3, 4, 4, 5], breaks => 4);
 .Ve
 .PP
-If \f(CW\*(C`breaks\*(C'\fR is not explicitly provided, it defaults to calculating the number of bins using Sturges\*(Aq formula.
+\&\f(CW\*(C`breaks\*(C'\fR is a \fIsuggested\fR number of intervals, not a count to be obeyed — the
+breakpoints are R\*(Aqs \f(CWpretty()\fR over the range of the data, so they fall on
+round numbers and the axis is rounded outwards past the extremes. Ask for 5
+bins over \f(CW\*(C`c(1,2,2,3,4,7,9,10,11,15)\*(C'\fR and you get eight, at 0, 2, 4 … 16, which
+is what R\*(Aqs \f(CWhist()\fR gives for the same request. When \f(CW\*(C`breaks\*(C'\fR is omitted the
+suggestion is R\*(Aqs \f(CW\*(C`nclass.Sturges\*(C'\fR, ⌈log₂ \fIn\fR + 1⌉.
+.PP
+Counts are of right\-closed intervals with the lowest included — \f(CW\*(C`(a, b]\*(C'\fR,
+except the first, which is \f(CW\*(C`[a₀, b₁]\*(C'\fR — carrying R\*(Aqs 1e\-7 fuzz, so a value that
+lands a rounding error above a breakpoint still counts in the bin below it.
+\&\f(CW\*(C`density\*(C'\fR is \f(CW\*(C`counts / (n × width)\*(C'\fR over the unfuzzed breaks. Pinned against R
+across thirteen datasets and eight \f(CW\*(C`breaks\*(C'\fR settings in \f(CW\*(C`t/hist.R.t\*(C'\fR.
 .SS hosmer_lemeshow
 .IX Subsection "hosmer_lemeshow"
 The Hosmer\-Lemeshow goodness\-of\-fit test for a logistic\-regression model. Given
@@ -4689,12 +4721,14 @@ A full relational join of two data frames, in the spirit of R\*(Aqs \f(CW\*(C`me
 .IP \(bu 4
 If neither is given, \f(CW\*(C`merge\*(C'\fR performs a \fBnatural join\fR on the sorted intersection of the two frames\*(Aq column names (it dies if that intersection is empty).
 .PP
-Keys are matched on the \fBstringified\fR cell value. A row whose key cell is \f(CW\*(C`undef\*(C'\fR (or absent) never matches — the pandas \f(CW\*(C`NaN\*(C'\fR rule — so such a row is dropped by an inner/right join and appears only as a left\- or right\-only row in a left/outer/right join.
+Keys are matched on the \fBstringified\fR cell value. A row whose key cell is \f(CW\*(C`undef\*(C'\fR (or absent) never matches, so such a row is dropped by an inner/right join and appears only as a left\- or right\-only row in a left/outer/right join. This is SQL\*(Aqs rule for \f(CW\*(C`NULL\*(C'\fR keys, and R\*(Aqs \f(CW\*(C`merge(..., incomparables = NA)\*(C'\fR; note that it is \fInot\fR what either reference does by default — R\*(Aqs default (\f(CW\*(C`incomparables = NULL\*(C'\fR) and pandas both match a missing key to a missing key.
 .PP
 \fIColliding columns (\fR\f(CI\*(C`suffixes\*(C'\fR\fI)\fR
 .IX Subsection "Colliding columns (suffixes)"
 .PP
 A non\-key column that appears in \fBboth\fR frames would collide, so each copy is renamed by appending a suffix: \f(CW\*(C`.x\*(C'\fR to the left copy and \f(CW\*(C`.y\*(C'\fR to the right by default (R\*(Aqs convention). Override with \f(CW\*(C`suffixes => [\*(Aq_left\*(Aq, \*(Aq_right\*(Aq]\*(C'\fR.
+.PP
+Under \f(CW\*(C`left.on\*(C'\fR/\f(CW\*(C`right.on\*(C'\fR the same applies to a right\-hand non\-key column named after the \fBleft key\fR, since the single output key column carries the left name: it is suffixed too, as R does with \f(CW\*(C`no.dups = TRUE\*(C'\fR.  If the suffixes still leave two output columns sharing a name, \f(CW\*(C`merge\*(C'\fR dies rather than return a frame with a column missing.
 .PP
 \fIOutput shape\fR
 .IX Subsection "Output shape"
@@ -6154,11 +6188,19 @@ or, alternatively, with arrays:
 \& my @scaled_results = scale(1..5);
 .Ve
 .PP
-You can also pass an options hash to disable centering or scaling:
+You can also pass options, either as a trailing hash reference or as trailing
+name/value pairs — the two are equivalent:
 .PP
-.Vb 1
-\& my @scaled_results = scale(1..5, { center => false, scale => 1 });
+.Vb 2
+\& my @scaled_results = scale(1..5, { center => 0, scale => 1 });
+\& my @scaled_results = scale(1..5, center => 0, scale => 1);
 .Ve
+.PP
+\&\f(CW\*(C`center\*(C'\fR and \f(CW\*(C`scale\*(C'\fR each take a number to use instead of the mean or the
+standard deviation, or one of \f(CW\*(C`mean\*(C'\fR/\f(CW\*(C`sd\*(C'\fR, \f(CW\*(C`true\*(C'\fR/\f(CW\*(C`false\*(C'\fR, \f(CW\*(C`none\*(C'\fR, \f(CW1\fR/\f(CW0\fR and
+the empty string, matched case\-insensitively. With \f(CW\*(C`center => 0\*(C'\fR the divisor
+is R\*(Aqs: the root mean square about zero, \f(CW\*(C`sqrt(sum(x^2)/(n\-1))\*(C'\fR, not the
+standard deviation.
 .PP
 It fully supports matrix operations. By passing an array of arrays, \f(CW\*(C`scale\*(C'\fR processes the data column by column independently:
 .PP
@@ -7373,6 +7415,123 @@ Verified against R 4.6.1 (\f(CW\*(C`oneway.test\*(C'\fR, \f(CW\*(C`anova(aov())\
 \&\f(CW\*(C`t/model_pvalue_tails.t\*(C'\fR and \f(CW\*(C`t/oneway_test.R.scipy.t\*(C'\fR.
 .SH Changes
 .IX Header "Changes"
+.SS "0.313 2026\-09\-01 CDT"
+.IX Subsection "0.313 2026-09-01 CDT"
+\fR\f(CI\*(C`merge\*(C'\fR\fI: a \fR\f(CI\*(C`left.on\*(C'\fR\fI/\fR\f(CI\*(C`right.on\*(C'\fR\fI join died when the right frame reused the key\*(Aqs name\fR
+.IX Subsection "merge: a left.on/right.on join died when the right frame reused the key's name"
+.PP
+The result of a join carries \fBone\fR key column, under the left name — R\*(Aqs
+convention, and not pandas\*(Aq, which keeps both. That left one collision
+unaccounted for: with \f(CW\*(C`left.on\*(C'\fR/\f(CW\*(C`right.on\*(C'\fR, a \fInon\-key\fR column on the right
+can be named after the \fIleft key\fR, and it then collides with the output key
+column rather than with a left data column. The suffix rule only looked at the
+left frame\*(Aqs data columns, so nothing was renamed and the collision guard fired:
+.PP
+.Vb 2
+\& merge($parents, $children, \*(Aqleft.on\*(Aq => \*(Aqname\*(Aq, \*(Aqright.on\*(Aq => \*(Aqparent\*(Aq);
+\& # merge: output column \*(Aqname\*(Aq collides; adjust \*(Aqsuffixes\*(Aq
+.Ve
+.PP
+That is \f(CW\*(C`tests/reg\-tests\-1d.R\*(C'\fR\*(Aqs parents/children join, and both references
+perform it: R suffixes the right\-hand copy under \f(CW\*(C`no.dups = TRUE\*(C'\fR (the
+default since R 3.5.0 — "if a \f(CW\*(C`by.x\*(C'\fR column name matches one of \f(CW\*(C`y\*(C'\fR, the y
+version gets suffixed as well"), and pandas keeps both key columns so the
+question never arises. \f(CW\*(C`merge\*(C'\fR now suffixes it too, giving R\*(Aqs names exactly:
+.PP
+Every input this changes used to croak, so no join that worked before returns
+anything different. If the suffixes still leave two output columns sharing a
+name, \f(CW\*(C`merge\*(C'\fR still dies rather than hand back a frame with a column missing —
+which is R\*(Aqs behaviour too (\f(CW\*(C`suffixes = c(".z", ".z")\*(C'\fR is an error there).
+.PP
+\fR\f(CI\*(C`merge\*(C'\fR\fI is now cross\-validated against R\*(Aqs and pandas\*(Aq own merge suites\fR
+.IX Subsection "merge is now cross-validated against R's and pandas' own merge suites"
+.PP
+\&\f(CW\*(C`t/merge.R.pandas.t\*(C'\fR (329 tests) takes its cases from the references\*(Aq test
+suites rather than inventing them, in the manner of the other
+\&\f(CW\*(C`t/*.R.scipy.t\*(C'\fR files:
+.IP \(bu 4
+\&\fBR 4.6.1\fR — 28 frames and 83 cases: the examples in
+\&\f(CW\*(C`src/library/base/man/merge.Rd\*(C'\fR (authors/books, and the \f(CW\*(C`incomparables\*(C'\fR
+example), plus R\*(Aqs own regression cases for \f(CW\*(C`merge\*(C'\fR from \f(CW\*(C`reg\-tests\-1a.R\*(C'\fR
+(PR#1510 \f(CW\*(C`by.x\*(C'\fR/\f(CW\*(C`by.y\*(C'\fR with multiple matches; the Cartesian product that did
+not make column names unique in 2.3.0; "merging when NA is a level"; the two
+character matrices that failed pre\-2.0.0; merge on zero\-row frames, not allowed
+≤ 2.4.0), \f(CW\*(C`reg\-tests\-1b.R\*(C'\fR (the 2.15.0 and 2.15.1 suffixes regressions; the
+\&\f(CW\*(C`women\*(C'\fR zero\-row merges that failed in 2.7.0), \f(CW\*(C`reg\-tests\-1d.R\*(C'\fR (the \f(CW\*(C`by.y\*(C'\fR
+naming case above) and \f(CW\*(C`reg\-tests\-2.R\*(C'\fR (the authors/books joins moved out of
+\&\f(CW\*(C`merge.Rd\*(C'\fR, and the 2002 case where every column is a join key).
+.IP \(bu 4
+\&\fBpandas 2.2.3\fR — 31 frames and 60 cases from
+\&\f(CW\*(C`pandas/tests/reshape/merge/test_merge.py\*(C'\fR
+(\f(CW\*(C`test_intelligently_handle_join_key\*(C'\fR GH#733, \f(CW\*(C`test_merge_overlap\*(C'\fR,
+\&\f(CW\*(C`test_merge_different_column_key_names\*(C'\fR, \f(CW\*(C`test_merge_same_order_left_right\*(C'\fR
+GH#35382, \f(CW\*(C`test_left_merge_empty_dataframe\*(C'\fR, all ten parametrisations of
+\&\f(CW\*(C`test_merge_empty\*(C'\fR GH#52777, \f(CW\*(C`test_merge_on_ints_floats\*(C'\fR,
+\&\f(CW\*(C`test_merge_non_unique_index_many_to_many\*(C'\fR, \f(CW\*(C`test_merge_suffix\*(C'\fR),
+\&\f(CW\*(C`test_merge_cross.py\*(C'\fR (all four cross\-join tests) and \f(CW\*(C`test_multi.py\*(C'\fR
+(\f(CW\*(C`test_merge_na_keys\*(C'\fR, \f(CW\*(C`test_merge_multiple_cols_with_mixed_cols_index\*(C'\fR
+GH#29522).
+.PP
+Each frozen case runs through \fBevery input/output shape\fR — AoH, HoA and HoH on
+the left crossed with the same on the right and with both output shapes, 18
+joins per case — and its output column names are checked separately, because a
+join whose answer has no rows is exactly what several of the reference cases are
+about and a row\-by\-row comparison cannot see the names. Beyond the tables the
+file pins row order against pandas\*(Aq \f(CW\*(C`sort = False\*(C'\fR, R\*(Aqs
+\&\f(CW\*(C`by\*(C'\fR/\f(CW\*(C`by.x\*(C'\fR/\f(CW\*(C`by.y\*(C'\fR and pandas\*(Aq \f(CW\*(C`left_on\*(C'\fR/\f(CW\*(C`right_on\*(C'\fR spellings, every error
+path the references document, and double\-valued keys with dyadic literals.
+.PP
+The two tables are generated by \f(CW\*(C`t/merge.R.pandas.R\*(C'\fR and
+\&\f(CW\*(C`t/merge.R.pandas.py\*(C'\fR, committed beside the test; the test itself never runs R
+or python, and needs neither installed. Both blocks reproduce byte\-identically
+from the generators, and the pandas block is byte\-identical under pandas 2.2.3
+and 3.0.4, so nothing frozen there is specific to a release.
+.PP
+\&\f(CW\*(C`t/merge.t\*(C'\fR also gained the cases a data frame cannot express, and so no
+reference case can reach: an AoH row missing the key column entirely, a missing
+non\-key cell, the \f(CW0\fR / \f(CW\*(Aq0\*(Aq\fR / \f(CW\*(Aq0.0\*(Aq\fR key identity, a NUL byte inside a
+key, a wide character, \f(CW\*(C`Inf\*(C'\fR/\f(CW\*(C`\-Inf\*(C'\fR/\f(CW\*(C`NaN\*(C'\fR keys, and blessed frames.
+.PP
+\fIAn \fR\f(CI\*(C`undef\*(C'\fR\fI join key matches nothing — which is not "the pandas \fR\f(CI\*(C`NaN\*(C'\fR\fI rule"\fR
+.IX Subsection "An undef join key matches nothing — which is not ""the pandas NaN rule"""
+.PP
+The documentation for \f(CW\*(C`merge\*(C'\fR credited its treatment of a missing join key to
+pandas, and \f(CW\*(C`LikeR.xs\*(C'\fR credited it to R\*(Aqs default. Both attributions were
+wrong, in the same direction: \fBboth references match a missing key to a missing
+key.\fR On \f(CW\*(C`merge.Rd\*(C'\fR\*(Aqs own \f(CW\*(C`incomparables\*(C'\fR example the two agree with each
+other exactly and disagree with \f(CW\*(C`merge\*(C'\fR:
+.PP
+The behaviour is right and unchanged — it is SQL\*(Aqs rule for a \f(CW\*(C`NULL\*(C'\fR key, which
+is \f(CW\*(C`merge(..., incomparables = NA)\*(C'\fR in R, the line \f(CW\*(C`merge.Rd\*(C'\fR itself runs,
+and what \f(CW\*(C`merge\*(C'\fR\*(Aqs documentation describes everywhere else. Only the credit was
+wrong; R\*(Aqs default is \f(CW\*(C`incomparables = NULL\*(C'\fR. The corrected wording says
+which rule it is and that it is not either reference\*(Aqs default, and
+\&\f(CW\*(C`t/merge.R.pandas.t\*(C'\fR now asserts the divergence — with R\*(Aqs own
+\&\f(CW\*(C`incomparables = NA\*(C'\fR answers frozen beside the generalised ones — so
+changing it later has to be deliberate.
+.PP
+\fIEleven leak checks reported Devel::Cover\*(Aqs own counters as leaks\fR
+.IX Subsection "Eleven leak checks reported Devel::Cover's own counters as leaks"
+.PP
+\&\f(CW\*(C`t/vif_hoslem.t\*(C'\fR failed under \f(CW\*(C`cover\*(C'\fR with 37 leaks attributed to a line of
+\&\f(CW\*(C`hosmer_lemeshow\*(C'\fR that allocates nothing (\f(CW\*(C`next unless defined ... &&
+looks_like_number ...\*(C'\fR), and the leaked SVs were bare \f(CW\*(C`IV\*(C'\fRs holding values
+like \f(CW98113961175368\fR — pointers. They are Devel::Cover\*(Aqs per\-line counters,
+which are allocated inside whichever block happens to be running and which
+\&\f(CW\*(C`Test::LeakTrace\*(C'\fR then counts; the same test reports 0 leaks on a plain perl.
+.PP
+Around ninety test files already guard their leak checks with
+\&\f(CW$INC{\*(AqDevel/Cover.pm\*(Aq}\fR for this reason. Eleven did not:
+\&\f(CW\*(C`t/age_standardize.t\*(C'\fR, \f(CW\*(C`t/dunn_test.t\*(C'\fR, \f(CW\*(C`t/effect_sizes.t\*(C'\fR,
+\&\f(CW\*(C`t/friedman_test.t\*(C'\fR, \f(CW\*(C`t/glm_families.t\*(C'\fR, \f(CW\*(C`t/ks_test.R.scipy.t\*(C'\fR,
+\&\f(CW\*(C`t/mcnemar_test.t\*(C'\fR, \f(CW\*(C`t/prop_test.t\*(C'\fR, \f(CW\*(C`t/tied.frames.t\*(C'\fR, \f(CW\*(C`t/vif_hoslem.t\*(C'\fR
+and — for an import it never used — \f(CW\*(C`t/_parse_csv.t\*(C'\fR. Four of them failed; the
+rest passed only by luck, since whether the counters land inside the measured
+block depends on which lines get their first coverage there, which moves with
+file order. All of them are guarded now, in the two forms the suite already
+uses, and the whole suite passes under \f(CW\*(C`Devel::Cover\*(C'\fR (143 files, 35008 tests)
+as well as without it (143 files, 35577 tests — the difference is the leak
+checks, which still run and still report 0 leaks outside coverage mode).
 .SS "0.311 2026\-08\-28 CDT"
 .IX Subsection "0.311 2026-08-28 CDT"
 \fI80\-bit x87 arithmetic broke four test files on 32\-bit x86\fR
@@ -7448,8 +7607,271 @@ failure that could not be reproduced here at all; the assembly shows plain
 \&\f(CW\*(C`\-std=gnu99\*(C'\fR emitting \f(CW\*(C`fdivl\*(C'\fR and \f(CW\*(C`ret\*(C'\fR with no rounding between them, and the
 flag inserting the \f(CW\*(C`fstpl\*(C'\fR/\f(CW\*(C`fldl\*(C'\fR round\-trip that narrows the result. Only a
 real 32\-bit perl will exercise it.
-.SS "0.31 2026\-08"
-.IX Subsection "0.31 2026-08"
+.SS "0.312 2026\-08\-30"
+.IX Subsection "0.312 2026-08-30"
+\fR\f(CIcor_test()\fR\fI: five disagreements with R, one of which moves p\-values\fR
+.IX Subsection "cor_test(): five disagreements with R, one of which moves p-values"
+.PP
+The tie\-corrected variance is the one that matters. \f(CW\*(C`cor\e_test(method =>
+\&\*(Aqkendall\*(Aq)\*(C'\fR divided the Kendall score by \f(CW\*(C`n(n\-1)(2n+5)/18\*(C'\fR, which is R\*(Aqs
+\&\f(CW\*(C`var_S\*(C'\fR only when there are no ties — and with no ties and \fIn\fR < 50 the branch
+is not reached at all, so the correction was missing in exactly the case that
+needs it. R builds it from the tie\-group sizes of each vector:
+.PP
+.Vb 1
+\& var_S = (v0 \- vt \- vu)/18 + v1/(2n(n\-1)) + v2/(9n(n\-1)(n\-2))
+.Ve
+.PP
+On fifteen points of tied integer data:
+.PP
+A factor of 1.57 on the p\-value, across 0.05. Integer scores, counts and Likert
+data are all ties, which is most of what a Kendall correlation is asked for.
+.PP
+Four more, in the same function:
+.IP \(bu 4
+\&\fBTies of odd group size were not ties.\fR The Spearman branch decided
+\&\f(CW\*(C`TIES\*(C'\fR by looking for a fractional average rank, and a group of three
+averages to a whole number: \f(CW\*(C`y = (1,1,1,2,2,2,3,3,3,4,4,4)\*(C'\fR ranks as
+2, 2, 2, 5, 5, 5, 8, 8, 8, 11, 11, 11 and was called tie\-free, which sent it
+to the exact branch R reserves for data that has none. It is now R\*(Aqs test —
+a repeated \fIvalue\fR — taken from the tie walk \f(CWrank_data()\fR was already doing.
+.IP \(bu 4
+\&\fBSpearman\*(Aqs \fR\f(CB\*(C`statistic\*(C'\fR\fB under ties.\fR R always forms \fIS\fR as
+\&\f(CW\*(C`(n³ − n)(1 − ρ)/6\*(C'\fR; the sum of squared rank differences is the same number
+only without ties. 0.311 reported the sum: \f(CW793.5\fR where R gives
+\&\f(CW865.39724699477085\fR. It is now the identity, on every path.
+.IP \(bu 4
+\&\fBThe Pearson confidence interval ignored \fR\f(CB\*(C`alternative\*(C'\fR\fB.\fR R switches on it —
+\&\f(CW\*(C`less\*(C'\fR is \f(CW\*(C`(\-1, tanh(z + σ·qnorm(cl))]\*(C'\fR, \f(CW\*(C`greater\*(C'\fR is
+\&\f(CW\*(C`[tanh(z \- σ·qnorm(cl)), 1)\*(C'\fR. The two\-sided interval came back whatever was
+asked for: \f(CW\*(C`[0.5217431448512, 0.9680507713838]\*(C'\fR for \f(CWalternative =>
+\&\*(Aqgreater\*(Aq\fR where R gives \f(CW\*(C`[0.6029901323843, 1]\*(C'\fR. The p\-value was never
+wrong, only the interval, which is the kind of error that reads as an answer.
+There is also no interval below \fIn\fR = 4 now, as in R.
+.IP \(bu 4
+\&\fBThe continuity correction at a score of zero.\fR R applies
+\&\f(CW\*(C`S <\- sign(S) * (abs(S) \- 1)\*(C'\fR, and \f(CWsign(0)\fR is 0, so a score of exactly 0
+stays 0. Subtracting a signum that treats 0 as negative moved it to +1:
+thirty points whose score is 0 reported \f(CW\*(C`z = 0.019410388389502\*(C'\fR,
+\&\f(CW\*(C`p = 0.98451372323408\*(C'\fR where the answer is \f(CW\*(C`z = 0\*(C'\fR, \f(CW\*(C`p = 1\*(C'\fR.
+.PP
+One divergence went the other way and is now gone. The exact Kendall
+distribution summed its lower tail from \f(CW\*(C`dp[max_inv]\*(C'\fR downwards, the end of the
+array that has accumulated every rounding the recurrence made; the distribution
+of inversions is symmetric, so both tails are now summed from \f(CW\*(C`dp[0]\*(C'\fR. Perfect
+discordance at \fIn\fR = 10 returned \f(CW2.7557319223626736e\-07\fR and is now exactly
+1/10!, \f(CW2.7557319223985891e\-07\fR, which is R\*(Aqs value. In the mirror case R is
+the one that is 9.3e\-11 out and \f(CW\*(C`cor_test\*(C'\fR gives the exact double;
+\&\f(CW\*(C`t/cor_test.kendall.R.t\*(C'\fR records that and asserts the combinatorics.
+.PP
+\&\f(CW\*(C`t/cor_test.kendall.R.t\*(C'\fR (1236 assertions) and \f(CW\*(C`t/cor_test.pearson.ci.R.t\*(C'\fR
+(274) are new and generated from R; \f(CW\*(C`t/cor_test.spearman.R.t\*(C'\fR gained the tied
+rows it had been quoting as a recorded divergence.
+.PP
+\fIKendall\*(Aqs counts, in O(n log n)\fR
+.IX Subsection "Kendall's counts, in O(n log n)"
+.PP
+\&\f(CW\*(C`cor_test(method => \*(Aqkendall\*(Aq)\*(C'\fR walked every (\fIi\fR, \fIj\fR) pair to count
+concordances — the O(\fIn\fR²) loop \f(CWcor()\fR had already replaced with Knight\*(Aqs
+algorithm in 0.31. Both now come from one routine, which returns the tie
+moments R\*(Aqs \f(CW\*(C`var_S\*(C'\fR needs along with the pair counts, so the correctness fix
+above and this are the same edit:
+.PP
+\&\f(CW\*(C`cov(..., \*(Aqkendall\*(Aq)\*(C'\fR is the same sum over the full \fIn\fR × \fIn\fR space, so it is
+2(C − D) and comes from the same counts: 1.85 s to 0.0061 s at \fIn\fR = 32 000.
+R\*(Aqs own \f(CW\*(C`cov(method = "kendall")\*(C'\fR is O(\fIn\fR²), so this is now faster than the
+reference rather than merely equal to it.
+.PP
+\fR\f(CIhist()\fR\fI: R\*(Aqs \fR\f(CIpretty()\fR\fI breakpoints\fR
+.IX Subsection "hist(): R's pretty() breakpoints"
+.PP
+R does not cut the range into \f(CW\*(C`breaks\*(C'\fR equal pieces. It treats that number as a
+suggestion and asks \f(CWpretty()\fR for round numbers, so the axis ends outside the
+data and the interval count need not be the one requested:
+.PP
+.Vb 3
+\& hist([1,2,2,3,4,7,9,10,11,15])
+\&   breaks  0  2  4  6  8  10  12  14  16       was  1  5.75  10.5  15.25  20
+\&   mids    1  3  5  7  9  11  13  15           was  3.375  8.125  12.875  17.625
+.Ve
+.PP
+\&\f(CWR_pretty()\fR is ported from \f(CW\*(C`src/appl/pretty.c\*(C'\fR with \f(CW\*(C`pretty.default()\*(C'\fR\*(Aqs
+parameters and \f(CW\*(C`hist.default()\*(C'\fR\*(Aqs \f(CW\*(C`min.n = 1\*(C'\fR; the counts come from a binary
+search over the breakpoints carrying R\*(Aqs 1e\-7 fuzz, which is what puts a value
+sitting a rounding error above a break into the bin below it. The default bin
+count is R\*(Aqs \f(CW\*(C`nclass.Sturges\*(C'\fR, ⌈log₂ \fIn\fR + 1⌉ — the ceiling is part of it, and
+a truncating cast had been turning \f(CW\*(C`log₂(13) + 1 = 4.70\*(C'\fR into 4.
+.PP
+\&\f(CW\*(C`t/hist.R.t\*(C'\fR pins all four returned vectors across thirteen datasets — a single
+point, a constant column, data spanning zero, data of order 1e\-3 and 1e6 —
+crossed with eight \f(CW\*(C`breaks\*(C'\fR settings. Every value matches R exactly, to the
+last bit.
+.PP
+\fIArguments that are not numbers\fR
+.IX Subsection "Arguments that are not numbers"
+.PP
+\&\f(CWSvNV()\fR turns a string that is not a number into 0 without a word, because the
+\&\f(CW\*(C`numeric\*(C'\fR warning it would raise belongs to the caller\*(Aqs scope and an XSUB does
+not run in one. So \f(CW\*(C`min(1, 2, \*(Aqabc\*(Aq)\*(C'\fR returned \fB0\fR — a value that is not
+among its arguments and is not the smallest of them — and \f(CW\*(C`mean(1, 2, \*(Aqabc\*(Aq)\*(C'\fR
+returned 1. \f(CW\*(C`undef\*(C'\fR had always been refused; this was the hole beside it.
+.PP
+\&\f(CW\*(C`mean\*(C'\fR, \f(CW\*(C`sum\*(C'\fR, \f(CW\*(C`min\*(C'\fR, \f(CW\*(C`max\*(C'\fR, \f(CW\*(C`median\*(C'\fR, \f(CW\*(C`var\*(C'\fR, \f(CW\*(C`sd\*(C'\fR, \f(CW\*(C`skew\*(C'\fR, \f(CW\*(C`kurtosis\*(C'\fR,
+\&\f(CW\*(C`quantile\*(C'\fR, \f(CW\*(C`scale\*(C'\fR and \f(CW\*(C`hist\*(C'\fR now croak, naming the argument or the cell. An
+object that overloads its numeric conversion still counts as a number; a
+reference that overloads nothing is now refused too, where \f(CWSvNV()\fR used to
+fold in its address. The cross\-validation file that had been asserting the old
+behaviour — \f(CW\*(C`t/read_table.na_strings.t\*(C'\fR, on an unmapped literal \f(CW\*(C`NA\*(C'\fR — asserts
+the croak instead, which is a better signal than the warning it could not see.
+.PP
+\fR\f(CI\*(C`NaN\*(C'\fR\fI in \fR\f(CImedian()\fR\fI and \fR\f(CIquantile()\fR\fI\fR
+.IX Subsection "NaN in median() and quantile()"
+.PP
+No comparison sort can place a \f(CW\*(C`NaN\*(C'\fR: every comparison against one is false. So
+which value ended up in the middle depended on where in the array it sat.
+\&\f(CWmedian()\fR of 1..50 with one \f(CW\*(C`NaN\*(C'\fR in it returned 25.5, \f(CW\*(C`median([5, 1, NaN])\*(C'\fR
+returned 5, and \f(CW\*(C`median([1, 2, NaN, 4])\*(C'\fR returned \f(CW\*(C`NaN\*(C'\fR. \f(CWquantile()\fR of that
+same 50 answered \f(CW13.25\fR for the 25% and \f(CW\*(C`NaN\*(C'\fR for the 75%.
+.PP
+Both now propagate — one \f(CW\*(C`NaN\*(C'\fR in, \f(CW\*(C`NaN\*(C'\fR out — which is what \f(CW\*(C`sum\*(C'\fR, \f(CW\*(C`mean\*(C'\fR,
+\&\f(CW\*(C`var\*(C'\fR, \f(CW\*(C`sd\*(C'\fR, \f(CW\*(C`min\*(C'\fR and \f(CW\*(C`max\*(C'\fR already did here, and what keeps the 50% quantile
+equal to \f(CWmedian()\fR. \f(CW\*(C`undef\*(C'\fR is still dropped by \f(CWquantile()\fR, as documented.
+.PP
+The five bandwidth selectors disagreed with each other about the same input:
+\&\f(CW\*(C`bw_ucv\*(C'\fR, \f(CW\*(C`bw_bcv\*(C'\fR and \f(CW\*(C`bw_sj\*(C'\fR rejected a non\-finite value a layer down, while
+\&\f(CW\*(C`bw_nrd0\*(C'\fR and \f(CW\*(C`bw_nrd\*(C'\fR returned a number — 7.5250570111922 for 1..50 with two
+\&\f(CW\*(C`NaN\*(C'\fRs, computed from a variance and an interquartile range that are both
+\&\f(CW\*(C`NaN\*(C'\fR via a \f(CWmin()\fR that a \f(CW\*(C`NaN\*(C'\fR silently loses. All five now refuse it in the
+shared reader, which is also what keeps a \f(CW\*(C`NaN\*(C'\fR out of the \f(CWqsort()\fR there:
+\&\f(CWcmp_nv3()\fR cannot order one, and an inconsistent comparator makes \f(CWqsort()\fR
+undefined behaviour rather than merely inaccurate.
+.PP
+\fIRagged frames\fR
+.IX Subsection "Ragged frames"
+.PP
+A HoA frame whose columns have different lengths was fitted on whichever column
+\&\f(CWhv_iternext()\fR reached first, so how many rows \f(CWlm()\fR, \f(CWglm()\fR and \f(CWprcomp()\fR
+used moved with hash order from run to run: \f(CW\*(C`{ y => [1..6], x => [1,2,3] }\*(C'\fR
+returned a perfect fit on three rows with \f(CW\*(C`df.residual = 1\*(C'\fR and said nothing.
+All three now croak, naming the column and both lengths, as \f(CWcsort()\fR already
+did; \f(CWprcomp()\fR checks a ragged AoA too.
+.PP
+This is stricter than R on purpose. \f(CW\*(C`data.frame()\*(C'\fR recycles a short column when
+its length divides the longest — \f(CW\*(C`data.frame(y = 1:6, x = 1:3)\*(C'\fR quietly fits on
+\&\f(CW\*(C`x\*(C'\fR repeated twice, and only \f(CW\*(C`1:4\*(C'\fR is an error there. Inventing observations is
+not something to do quietly in a model fit.
+.PP
+\fR\f(CIscale()\fR\fI: named arguments\fR
+.IX Subsection "scale(): named arguments"
+.PP
+Every other function in this module takes its options as trailing name/value
+pairs. \f(CWscale()\fR read only a trailing hash reference, so a flat pair fell
+through into the data, where the option name numified to 0 and was scaled along
+with everything else: \f(CW\*(C`scale([1,2,3], center => 0)\*(C'\fR returned \fBfive\fR numbers
+for a three\-element input. Both forms are now accepted and agree; an
+unrecognised name is an error rather than a data point.
+.PP
+\fR\f(CIsurvfit()\fR\fI: where the curve reaches zero\fR
+.IX Subsection "survfit(): where the curve reaches zero"
+.PP
+Greenwood\*(Aqs next variance term is \f(CW\*(C`d / (n.risk × (n.risk − d))\*(C'\fR, and the last
+event takes every remaining subject, so \f(CW\*(C`n.risk == d\*(C'\fR and the variance of
+\&\fIS\fR(\fIt\fR) is not defined from there on. R reports \f(CW\*(C`std.err\*(C'\fR as \f(CW\*(C`Inf\*(C'\fR and both
+confidence limits as \f(CW\*(C`NA\*(C'\fR. All three came back 0, which is a number where there
+is no answer, and a plausible\-looking one. They are \f(CW\*(C`undef\*(C'\fR now.
+.PP
+\fITwo smoker failures, both in the tests rather than the module\fR
+.IX Subsection "Two smoker failures, both in the tests rather than the module"
+.PP
+\&\f(CW\*(C`LikeR.xs\*(C'\fR is unchanged here. Two failures came back from CPAN smokers on 0.31,
+and in each case the assertion had been pinned to something that is a property of
+the perl running it rather than of \f(CW\*(C`Stats::LikeR\*(C'\fR — and this machine\*(Aqs build
+happens to satisfy it, which is why neither showed up before the reports arrived.
+.PP
+\f(CW\*(C`t/avals.t\*(C'\fR was counting \f(CW\*(C`FETCH\*(C'\fRes on a tied cell
+.IX Subsection "t/avals.t was counting FETCHes on a tied cell"
+.PP
+The tied\-cell block built its frame by copying a tied scalar into an anonymous
+hash, and used a \f(CW\*(C`FETCH\*(C'\fR that counted up so that a second fetch would be
+visible:
+.PP
+\&\f(CW\*(C`perl
+sub FETCH { my $s = shift; return $$s++ }   # a different value each FETCH
+my $tied; tie $tied, \*(Aqt::AlwaysSeven\*(Aq;
+my @got = avals([ { v => $tied } ], \*(Aqv\*(Aq);
+is($got[0], 7, \*(Aqa tied cell is fetched once, at extraction time\*(Aq);\*(C'\fR
+.PP
+\&\f(CW\*(C`{ v => $tied }\*(C'\fR fetches the cell while the frame is being built, so what
+\&\f(CWavals()\fR copied was already a plain number: the test never exercised the thing
+its own name described, and what it actually measured was how many times that
+perl runs get\-magic on one \f(CWsv_setsv()\fR. That count is not fixed. Measured
+directly, \f(CW\*(C`perl\-5.10.1\*(C'\fR, \f(CW\*(C`perl\-5.12.5\*(C'\fR and \f(CW\*(C`perl\-5.44.0\*(C'\fR each run it once and
+the caller sees 7; a smoker on 5.18.4 (\f(CW\*(C`x86_64\-linux\-thread\-multi\*(C'\fR) reported 8,
+i.e. two runs on the one copy, and a second report of the same two subtests
+followed.
+.PP
+The cell is now tied in place, so nothing touches it before \f(CWavals()\fR does, and
+\&\f(CW\*(C`FETCH\*(C'\fR returns a constant, so nothing depends on how many times it is called:
+.PP
+\&\f(CW\*(C`perl
+my %row;
+tie $row{v}, \*(Aqt::TiedCell\*(Aq, 7;
+\&\*(C'\fR
+.PP
+What the block asserts is now what it always claimed: building the frame fetches
+nothing, extraction fetches at least once, the fetched value rather than the
+tied SV comes back, the copy carries no tie magic, re\-reading it does not fetch
+again, and it is exactly what \f(CWvals()\fR returns for the same frame. The HoH
+branch and the HoA branch — which fills \f(CW\*(C`AvARRAY\*(C'\fR directly and so has its own
+\&\f(CWnewSVsv()\fR — get the same treatment, 44 subtests to 55.
+.PP
+\f(CW\*(C`t/01.t\*(C'\fR compared a number of order 50 against an absolute \f(CW1e\-14\fR
+.IX Subsection "t/01.t compared a number of order 50 against an absolute 1e-14"
+.PP
+The other report was the \f(CWlm()\fR F statistic, exactly 54 by algebra:
+.PP
+\&\`\`\`
+.SH "got: 54"
+.IX Header "got: 54"
+.SH "expected: 54; diff = 1.4210854715202e\-14"
+.IX Header "expected: 54; diff = 1.4210854715202e-14"
+\&\`\`\`
+.PP
+\&\f(CWis_approx()\fR treated its \f(CW$epsilon\fR as an absolute bound, and 54 sits where the
+spacing of a double is \f(CW\*(C`ulp(54) = 2**\-47 = 7.105e\-15\*(C'\fR. A bound of \f(CW1e\-14\fR is
+therefore 1.41 ulps — the call site was demanding bit\-exactness of a number of
+order 50, and the smoker\*(Aqs build simply reassociated the sum and landed two ulps
+out (\f(CW1.4210854715202e\-14\fR is exactly \f(CW\*(C`2**\-46\*(C'\fR). The same \f(CW1e\-14\fR written
+against a p\-value of order \f(CW1e\-9\fR is some 10⁵ ulps, which is what the number was
+chosen to mean.
+.PP
+The allowance is now scaled by the size of the expected value, floored at the
+absolute bound so that comparisons against 0 — and against anything below 1 —
+keep exactly the tolerance they had:
+.PP
+\&\f(CW\*(C`perl
+my $scale = abs($expected) > 1 ? abs($expected) : 1;
+my $tol   = $epsilon * $scale;\*(C'\fR
+.PP
+The F statistic gets 76 ulps of headroom in place of one. The failure \f(CWdiag()\fR
+also prints the tolerance now, so the next report of this shape can be read
+without opening the file.
+.PP
+Every \f(CW\*(C`is_approx\*(C'\fR\-style call in all 138 test files was then parsed and its
+tolerance compared against \f(CWulp(expected)\fR. Nine sites sat under eight ulps, all
+of them in \f(CW\*(C`t/01.t\*(C'\fR and all now covered by the scaling:
+.PP
+Call sites with a tolerance of \f(CW1e\-13\fR or tighter against a computed value exist
+in \f(CW\*(C`t/prcomp.t\*(C'\fR, \f(CW\*(C`t/t_test.t\*(C'\fR, \f(CW\*(C`t/value_counts.t\*(C'\fR and \f(CW\*(C`t/wilcox_test.t\*(C'\fR; each was
+checked by hand and compares a p\-value, a count, an integer rank sum, or an
+\&\f(CW\*(C`sdev\*(C'\fR of about 2.8, so those bounds are thousands of ulps wide and are left
+alone.
+.PP
+Both files pass on \f(CW\*(C`perl\-5.44.0\*(C'\fR, \f(CW\*(C`perl\-5.10.1\*(C'\fR and \f(CW\*(C`perl\-5.12.5\*(C'\fR — \f(CW\*(C`t/01.t\*(C'\fR
+1399 of 1399, \f(CW\*(C`t/avals.t\*(C'\fR 55 of 55 — the two older perls built in private trees
+so that the distribution root\*(Aqs \f(CW\*(C`Makefile\*(C'\fR and \f(CW\*(C`blib\*(C'\fR stay as they were.
+.SS "0.311 2026\-08\-28"
+.IX Subsection "0.311 2026-08-28"
 \fIavals\fR
 .IX Subsection "avals"
 .PP

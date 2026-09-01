@@ -1,0 +1,1 @@
+{"statement":[2,1,1,1],"start":{"1":{"BEGIN":[{"time":null,"condition":null,"statement":1,"subroutine":null,"branch":null}]},"-1":{"__COVER__":[{"condition":null,"time":null,"subroutine":1,"branch":null,"statement":4}]}},"file":"/tmp/lYTVzBIt77/child_1.pl","subroutine":[[1,"BEGIN"]],"digest":"a06de9722c3eb57858e612331370b311"}

@@ -36,7 +36,7 @@ compilers the keyword may not be recognised at all: MSVC accepts it only under
 spells it __restrict__, and a strict C89 compiler has no equivalent. Map it
 where a spelling exists and define it away where none does. This has to sit
 below every #include above, so that it cannot rewrite a parameter named
-`restrict` inside a system header.*/
+`restrict` inside a system header*/
 #if !defined(__cplusplus) && !defined(restrict)
 #  if defined(_MSC_VER)
 #    define restrict __restrict
@@ -1271,7 +1271,7 @@ static NV ft_dhyper_log(long x, long m, long n, long k) {
 
 typedef struct {
 	long lo, hi, ns, m, n, k, x;
-	NV *logdc;   // central log hypergeometric density over the support
+	NV *logdc; // central log hypergeometric density over the support
 } ft_support;
 
 static int ft_init(ft_support *S, long a, long b, long c, long d) {
@@ -1313,20 +1313,20 @@ static NV ft_mnhyper(const ft_support *restrict S, NV ncp, NV *restrict scratch)
 static NV ft_pnhyper(const ft_support *restrict S, long q, NV ncp, bool upper,
                      NV *restrict scratch) {
 	if (ncp == 1.0) {
-	  NV s = 0;
-	  for (long i = 0; i < S->ns; i++) {
-		   long j = S->lo + i;
-		   if (upper ? (j >= q) : (j <= q)) s += nv_exp(S->logdc[i]);
-	  }
-	  return s;
+		NV s = 0;
+		for (long i = 0; i < S->ns; i++) {
+			long j = S->lo + i;
+			if (upper ? (j >= q) : (j <= q)) s += nv_exp(S->logdc[i]);
+		}
+		return s;
 	}
 	if (ncp == 0.0)   return upper ? (NV)(q <= S->lo) : (NV)(q >= S->lo);
 	if (nv_isinf(ncp))   return upper ? (NV)(q <= S->hi) : (NV)(q >= S->hi);
 	ft_dnhyper(S, ncp, scratch);
 	NV s = 0;
 	for (long i = 0; i < S->ns; i++) {
-	  long j = S->lo + i;
-	  if (upper ? (j >= q) : (j <= q)) s += scratch[i];
+		long j = S->lo + i;
+		if (upper ? (j >= q) : (j <= q)) s += scratch[i];
 	}
 	return s;
 }
@@ -2058,7 +2058,6 @@ static LmDesign *lm_design_build(pTHX_ HV *data_hoa,
 		}
 		Safefree(cs); Safefree(cl);
 	}
-
 	// pass 2: which variables are factors, and what are their levels
 	Newxz(vfac, d->nvar ? d->nvar : 1, int);
 	Newxz(d->factor, d->nvar ? d->nvar : 1, LmFactor);
@@ -2084,9 +2083,9 @@ static LmDesign *lm_design_build(pTHX_ HV *data_hoa,
 				}
 				Safefree(s);
 			}
-			/*A column of strings with nothing readable in it is no use as a
-			factor; fall back to treating it as continuous, which is what
-			this code did before factors were expanded per component.*/
+	/*A column of strings with nothing readable in it is no use as a
+	factor; fall back to treating it as continuous, which is what
+	this code did before factors were expanded per component.*/
 			if (nlev == 0) { Safefree(levels); continue; }
 			qsort(levels, nlev, sizeof(char*), cmp_string_wt);
 			vfac[j] = (int)d->nfactor;
@@ -2102,7 +2101,6 @@ static LmDesign *lm_design_build(pTHX_ HV *data_hoa,
 			}
 		}
 	}
-
 	//pass 3: order terms by degree, as R's terms() does
 	{
 		unsigned int *restrict order = NULL;
@@ -2163,7 +2161,6 @@ static LmDesign *lm_design_build(pTHX_ HV *data_hoa,
 			full[tstart[t] + c] = !present;
 		}
 	}
-
 	//pass 5: emit the columns
 	col_cap = 16; comp_cap = 4;
 	Newxz(d->col, col_cap, LmCol);
@@ -2414,16 +2411,16 @@ static void pa_kernel(const NV *p, NV *adj, size_t n,
 	} else if (strcmp(meth, "holm") == 0) {
 		NV cummax = 0.0;
 		for (size_t i = 0; i < n; i++) {
-			 NV v = arr[i].p * (n - i);
-			 if (v > cummax) cummax = v;
-			 adj[arr[i].orig_idx] = (cummax < 1.0) ? cummax : 1.0;
+			NV v = arr[i].p * (n - i);
+			if (v > cummax) cummax = v;
+			adj[arr[i].orig_idx] = (cummax < 1.0) ? cummax : 1.0;
 		}
 	} else if (strcmp(meth, "hochberg") == 0) {
 		NV cummin = 1.0;
 		for (SSize_t i = n - 1; i >= 0; i--) {
-			 NV v = arr[i].p * (n - i);
-			 if (v < cummin) cummin = v;
-			 adj[arr[i].orig_idx] = (cummin < 1.0) ? cummin : 1.0;
+			NV v = arr[i].p * (n - i);
+			if (v < cummin) cummin = v;
+			adj[arr[i].orig_idx] = (cummin < 1.0) ? cummin : 1.0;
 		}
 	} else if (strcmp(meth, "bh") == 0) {
 		NV cummin = 1.0;
@@ -2453,8 +2450,7 @@ static void pa_kernel(const NV *p, NV *adj, size_t n,
 			   min_val = temp;
 			}
 		}
-		// pa <- q <- rep(min, n)
-		for (size_t i = 0; i < n; i++) {
+		for (size_t i = 0; i < n; i++) {// pa <- q <- rep(min, n)
 			 pa[i] = min_val;
 			 q_arr[i] = min_val;
 		}
@@ -2478,10 +2474,10 @@ static void pa_kernel(const NV *p, NV *adj, size_t n,
 			 for (size_t i = 0; i < i2_len; i++) {
 				 q_arr[n_mj + 1 + i] = q_arr[n_mj];
 			}
-			 // pa <- pmax(pa, q)
+			// pa <- pmax(pa, q)
 			for (size_t i = 0; i < n; i++) {
 				if (pa[i] < q_arr[i]) {
-				   pa[i] = q_arr[i];
+					pa[i] = q_arr[i];
 				}
 			}
 		}
@@ -2671,9 +2667,9 @@ static NV pearson_corr(const NV *x, const NV *y, size_t n) {
 			const NV vxx = sxx - cx * cx / n;
 			const NV vyy = syy - cy * cy / n;
 			const NV vxy = sxy - cx * cy / n;
-			/*Rounding can leave a centred sum of squares a hair below zero on
-			a constant column; sqrt() of that would be NaN where the honest
-			answer is "no variance to correlate".*/
+	/*Rounding can leave a centred sum of squares a hair below zero on
+	a constant column; sqrt() of that would be NaN where the honest
+	answer is "no variance to correlate".*/
 			const NV den = (vxx > 0.0 && vyy > 0.0) ? nv_sqrt(vxx * vyy) : 0.0;
 			if (den == 0.0) return NV_NAN;
 			return vxy / den;
@@ -2806,7 +2802,6 @@ static void kendall_count_pairs(const NV *x, const NV *y, size_t n,
 		}
 		i = j + 1;
 	}
-
 	//ytie: pairs of equal y over all data — from a separate y sort.
 	NV *restrict ys;
 	Newx(ys, n, NV);
@@ -2820,7 +2815,6 @@ static void kendall_count_pairs(const NV *x, const NV *y, size_t n,
 		i = j + 1;
 	}
 	Safefree(ys);
-
 	//D: discordant pairs = y-inversions in (x,y)-sorted order.
 	NV *restrict yv, *restrict tmp;
 	Newx(yv, n, NV);
@@ -3232,7 +3226,6 @@ the whole point of the recursion.*/
 static void nv_introsort(NV *a, size_t lo, size_t hi, unsigned int depth) {
 	while (hi - lo >= NV_SEL_ISORT) {
 		if (depth-- == 0) { nv_heapsort(a + lo, hi - lo + 1); return; }
-
 		/*median of three, left in place: a[lo] <= pivot <= a[hi], so both
 		ends double as sentinels that stop the scans below*/
 		size_t mid = lo + (hi - lo) / 2;
@@ -3240,7 +3233,6 @@ static void nv_introsort(NV *a, size_t lo, size_t hi, unsigned int depth) {
 		if (a[hi]  < a[lo])  nv_swap(&a[hi],  &a[lo]);
 		if (a[hi]  < a[mid]) nv_swap(&a[hi],  &a[mid]);
 		const NV pivot = a[mid];
-
 		size_t i = lo, j = hi;
 		for (;;) {
 			do { i++; } while (a[i] < pivot);
@@ -8525,7 +8517,7 @@ column and a row frame (AoH/HoH) row by row, so neither is transposed into
 the other on the way in and the only cells copied are the ones the result
 keeps.  Join keys match on the *stringified* cell value (canonical,
 length-prefixed), the natural Perl hash-join semantics; an undef/missing
-key cell never matches (pandas NaN rule).*/
+key cell never matches (SQL's NULL rule; R's incomparables = NA).*/
 #define MG_KEYSEP "\x1e"
 #define MG_INNER 0
 #define MG_LEFT  1
@@ -8966,8 +8958,11 @@ is the common case and the prefix and its two separators are, on an integer
 id, about as many bytes again to hash and to compare.
 
 Returns FALSE with the arena rewound if any key cell is missing or undef: an
-undef key matches nothing, which is pandas' NaN rule and what R's merge() does
-under its default incomparables = NA.*/
+undef key matches nothing.  That is SQL's rule for a NULL key and R's
+merge(..., incomparables = NA), and it is deliberately *not* what either
+reference does by default: R's default is incomparables = NULL and pandas
+matches NaN to NaN, both of which join a missing key to a missing key.  The
+divergence is recorded and asserted in t/merge.R.pandas.t.*/
 static bool
 mg_key(pTHX_ dd_ctx *T, const mg_frame *f, const mg_col *keys,
        SSize_t nkeys, SSize_t i, size_t start) {
@@ -22714,7 +22709,16 @@ PPCODE:
 	for (SSize_t c = 0; c < nrc; c++) {
 		SV *kn = *av_fetch(rc_src, c, 0);
 		SV *outn;
-		if (hv_exists_ent(lc_set, kn, 0)) {
+		/*lkset as well as lc_set: the output key column carries the left
+		key's name, so under left.on/right.on a right-hand data column can
+		be named after it and would otherwise collide with it rather than
+		with a left data column.  R suffixes that column too -- merge.Rd's
+		no.dups, TRUE since R 3.5.0, "if a by.x column name matches one of
+		y, the y version gets suffixed as well" -- and the case is
+		tests/reg-tests-1d.R's parents/children join, which produced a
+		duplicated `name` column in R <= 3.4.x.  With `on` this cannot
+		fire: a right column named after a key is a key.*/
+		if (hv_exists_ent(lc_set, kn, 0) || hv_exists_ent(lkset, kn, 0)) {
 			outn = newSVsv(kn); sv_catsv(outn, suf1);
 		} else outn = newSVsv(kn);
 		if (hv_exists_ent(uni, outn, 0))
@@ -24463,12 +24467,10 @@ PPCODE:
 		Safefree(edges);
 		croak("_qcut_core: data has too few distinct values to form bins");
 	}
-
 	edge_av = newAV();
 	av_extend(edge_av, ne - 1);
 	for (j = 0; j < ne; j++)
 		av_push(edge_av, newSVnv(edges[j]));
-
 	/*assign each original value to a 0-based bin only if codes are wanted;
 	lowest bin is inclusive on both ends*/
 	if (want_codes) {
@@ -24499,9 +24501,7 @@ PPCODE:
 			av_push(code_av, newSViv(bin));
 		}
 	}
-
 	Safefree(edges);
-
 	EXTEND(SP, 2);
 	if (want_codes)
 		PUSHs(sv_2mortal(newRV_noinc((SV *) code_av)));
@@ -24772,7 +24772,6 @@ SV* density(...)
 		IV n_arg = 512;
 		size_t nb = 1000;
 		Stack_off_t ai = 0;
-
 		if (ai < items && SvROK(ST(ai)) && SvTYPE(SvRV(ST(ai))) == SVt_PVAV) {
 			x_sv = ST(ai);
 			ai++;
@@ -24852,12 +24851,10 @@ SV* density(...)
 		bool bw_is_rule = FALSE;
 		short int bw_rule = DENS_BW_NRD0;
 		HV *res = NULL;
-
 		if (!x_sv || !SvROK(x_sv) || SvTYPE(SvRV(x_sv)) != SVt_PVAV)
 			croak("density: 'x' is required and must be an array reference");
 		if (n_arg < 1) croak("density: 'n' must be at least 1");
 		if (n_arg > (IV)1 << 26) croak("density: 'n' is too large");
-
 		{
 			AV *xav = (AV *)SvRV(x_sv);
 			N0 = (size_t)(av_len(xav) + 1);
@@ -24977,7 +24974,6 @@ SV* density(...)
 			bw_is_rule = TRUE; //the default, bw = "nrd0"
 			bw_rule = DENS_BW_NRD0;
 		}
-
 		if (bw_is_rule) {
 			if (nx < 2) {
 				err = "need at least 2 points to select a bandwidth automatically";
@@ -24999,7 +24995,6 @@ SV* density(...)
 		if (!nv_isfinite(bw)) { err = "non-finite 'bw'"; goto dens_cleanup; }
 		bw *= adjust;
 		if (!(bw > 0.0)) { err = "'bw' is not positive."; goto dens_cleanup; }
-
 		if (!have_from || !have_to) {
 			NV mn = NV_INF, mx = -NV_INF;
 			for (size_t i = 0; i < nx; i++) {
@@ -25011,7 +25006,6 @@ SV* density(...)
 		}
 		if (!nv_isfinite(from)) { err = "non-finite 'from'"; goto dens_cleanup; }
 		if (!nv_isfinite(to))   { err = "non-finite 'to'";   goto dens_cleanup; }
-
 		m = 2 * n;
 		Newx(yre, m, NV);  Newxz(yim, m, NV);
 		Newx(kre, m, NV);  Newxz(kim, m, NV);
@@ -25022,7 +25016,6 @@ SV* density(...)
 			NV lo = from - ext * bw, up = to + ext * bw;
 			NV mult = old_coords ? 2.0 : (NV)(2 * n - 1) / (NV)(n - 1);
 			const NV pi = DENS_PI;
-
 			dens_bindist(xf, wf, nx, lo, up, n, yre);
 			for (size_t i = 0; i < m; i++) yre[i] *= totMass;
 			dens_kernel_grid(kernel, bw, mult * (up - lo), n, kre);

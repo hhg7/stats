@@ -957,6 +957,7 @@ for my $row (@SCIPY_ONE) {
 # plus a warning path and a croak path.
 SKIP: {
 	skip 'Test::LeakTrace not installed', 1 unless $HAVE_LEAKTRACE;
+	skip 'Devel::Cover perturbs refcounts', 1 if $INC{'Devel/Cover.pm'};
 	no_leaks_ok {
 		my @warns;
 		local $SIG{__WARN__} = sub { push @warns, $_[0] };

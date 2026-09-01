@@ -350,6 +350,7 @@ for my $how (qw(inner left right outer)) {
 # caller's own for a plain one, which is two ownership rules in one place.
 SKIP: {
 	skip 'Test::LeakTrace not installed', 1 unless $HAVE_LEAKTRACE;
+	skip 'Devel::Cover perturbs refcounts', 1 if $INC{'Devel/Cover.pm'};
 	no_leaks_ok {
 		drop_duplicates({ k => ta([qw(a b a)]), v => ta([1,2,1]) });
 		drop_duplicates(ta([ { k => 'a' }, { k => 'a' } ]));

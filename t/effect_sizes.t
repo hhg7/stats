@@ -80,11 +80,13 @@ throws_ok { cohen_d([1], [2,3]) } qr/at least two/, 'cohen_d needs >=2 per group
 throws_ok { cramers_v([[1,2]]) }  qr/two rows/,     'cramers_v needs >=2 rows';
 throws_ok { eta_squared(42) }     qr/expected/,     'eta_squared rejects bad input';
 
+# Devel::Cover's own per-line counters are allocated inside whatever block is
+# running and are reported as leaks, so the check is skipped under it.
 no_leaks_ok {
 	cohen_d([5,6,7,8], [3,4,5,6]);
 	smd([5,6,7,8], [3,4,5,6]);
 	cramers_v([[10,20],[30,15]]);
 	eta_squared([1,2,3,4,5,6], [qw(A A B B C C)]);
-} 'effect-size functions do not leak';
+} 'effect-size functions do not leak' unless $INC{'Devel/Cover.pm'};
 
 done_testing();

@@ -62,10 +62,12 @@ throws_ok { mcnemar_test([[1,2,3],[4,5,6]]) } qr/square/, 'non-square rejected';
 throws_ok { mcnemar_test([[1,2],[3,4],[5,6]]) } qr/square/, 'non-square rejected (rows)';
 throws_ok { mcnemar_test([[1,2,0],[3,4,0],[0,0,1]], exact => 1) } qr/2x2/, 'exact requires 2x2';
 
+# Devel::Cover's own per-line counters are allocated inside whatever block is
+# running and are reported as leaks, so the check is skipped under it.
 no_leaks_ok {
 	mcnemar_test([[794, 86], [150, 570]]);
 	mcnemar_test([[794, 86], [150, 570]], exact => 1);
 	mcnemar_test([qw(a a b b a)], [qw(a b b a a)]);
-} 'mcnemar_test does not leak';
+} 'mcnemar_test does not leak' unless $INC{'Devel/Cover.pm'};
 
 done_testing();
