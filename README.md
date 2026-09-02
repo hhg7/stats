@@ -6870,7 +6870,7 @@ rule it is and that it is not either reference's default, and
 `incomparables = NA` answers frozen beside the generalised ones — so changing it
 later has to be deliberate.
 
-### Eleven leak checks reported Devel::Cover's own counters as leaks
+### 11 leak checks reported Devel::Cover's own counters as leaks
 
 `t/vif_hoslem.t` failed under `cover` with 37 leaks attributed to a line of
 `hosmer_lemeshow` that allocates nothing (`next unless defined ... &&
