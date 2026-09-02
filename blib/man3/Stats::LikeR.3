@@ -7532,6 +7532,142 @@ file order. All of them are guarded now, in the two forms the suite already
 uses, and the whole suite passes under \f(CW\*(C`Devel::Cover\*(C'\fR (143 files, 35008 tests)
 as well as without it (143 files, 35577 tests — the difference is the leak
 checks, which still run and still report 0 leaks outside coverage mode).
+.PP
+\fR\f(CI\*(C`pt\*(C'\fR\fI near zero and \fR\f(CI\*(C`pf\*(C'\fR\fI\*(Aqs upper tail lost up to eight digits to a cancellation\fR
+.IX Subsection "pt near zero and pf's upper tail lost up to eight digits to a cancellation"
+.PP
+\&\f(CWincbeta()\fR, the regularized incomplete beta every t, F and binomial tail is
+built on, took only \f(CW\*(C`x\*(C'\fR and re\-formed \f(CW\*(C`1 \- x\*(C'\fR by subtraction. Its reflected
+branch — \f(CW\*(C`I_x(a,b) = 1 \- I_{1\-x}(b,a)\*(C'\fR, taken exactly when \f(CW\*(C`x\*(C'\fR is the side
+near \f(CW1\fR — then needs that complement, and forming it as \f(CW\*(C`1.0 \- x\*(C'\fR is
+catastrophic cancellation there. Once \f(CW\*(C`|1 \- x|\*(C'\fR fell below \f(CW\*(C`2^\-53\*(C'\fR it
+collapsed to \f(CW0\fR and took the whole tail with it:
+.PP
+Every caller had the complement exactly, and was throwing it away: \f(CW\*(C`pf\*(C'\fR
+builds \f(CW\*(C`x = df1·f/D\*(C'\fR and \f(CW\*(C`1\-x = df2/D\*(C'\fR over one denominator, \f(CW\*(C`pt\*(C'\fR has \f(CW\*(C`x =
+df/(df + t²)\*(C'\fR against \f(CW\*(C`t²/(df + t²)\*(C'\fR, and \f(CW\*(C`pbinom\*(C'\fR\*(Aqs lower tail is
+\&\f(CW\*(C`I_{1\-p}(n\-k, k+1)\*(C'\fR with \f(CW\*(C`p\*(C'\fR itself to hand. So the fix is to pass both —
+\&\f(CW\*(C`incbeta_xy(a, b, x, y)\*(C'\fR, which is R\*(Aqs own split (\f(CWbratio()\fR takes \f(CW\*(C`x\*(C'\fR and
+\&\f(CW\*(C`y\*(C'\fR as separate arguments for this reason), with \f(CWincbeta()\fR kept as the
+one\-argument wrapper for the callers that genuinely have only \f(CW\*(C`x\*(C'\fR, such as a
+bisection midpoint.
+.PP
+Worst error against \f(CW\*(C`mpmath\*(C'\fR at \f(CW\*(C`mp.dps = 80\*(C'\fR, over a 372\-point grid:
+.PP
+The two tails also add up again: \f(CW\*(C`pf(1e\-12, 1, 1e6)\*(C'\fR\*(Aqs lower and upper summed
+to \f(CW\*(C`1 + 7.98e\-07\*(C'\fR before, which is what first showed the bug.
+.PP
+This reached \f(CW\*(C`t_test\*(C'\fR, whose p\-value is \f(CW\*(C`1 \-\*(C'\fR that tail: a statistic small
+enough on enough degrees of freedom had its p\-value pinned at exactly \f(CW1\fR
+instead of \f(CW\*(C`1 \- 4e\-7\*(C'\fR. \f(CW\*(C`d_pf\*(C'\fR now calls \f(CWpf()\fR rather than repeating its
+expression, so the two can no longer drift apart on the complement argument.
+.PP
+The one place \f(CW\*(C`incbeta_xy\*(C'\fR does \fBnot\fR help is the Clopper\-Pearson upper
+bound for a handful of successes in ~1e9 trials, which still carries ~2e\-9 of
+relative error. The cancellation there is in the continued fraction\*(Aqs own
+argument during bisection, not in a complement a caller could have supplied,
+so \f(CW\*(C`t/binom_test.R.scipy.t\*(C'\fR\*(Aqs existing note — that fixing it properly means
+porting \f(CWbratio()\fR — still stands.
+.PP
+\fR\f(CI\*(C`t_test\*(C'\fR\fI rejected \fR\f(CI\*(C`conf.level\*(C'\fR\fI, the spelling its own documentation lists\fR
+.IX Subsection "t_test rejected conf.level, the spelling its own documentation lists"
+.PP
+.Vb 2
+\&    t_test(\e@x, \e@y, \*(Aqconf.level\*(Aq => 0.99);
+\&    # t_test: unknown argument \*(Aqconf.level\*(Aq
+.Ve
+.PP
+\&\f(CW\*(C`t_test\*(C'\fR accepted only the underscored \f(CW\*(C`conf_level\*(C'\fR and \f(CW\*(C`var_equal\*(C'\fR, while
+its parameter table in this file has always documented the argument as
+\&\f(CW\*(C`conf.level\*(C'\fR, and while every sibling in the module — \f(CW\*(C`var_test\*(C'\fR,
+\&\f(CW\*(C`wilcox_test\*(C'\fR, \f(CW\*(C`prop_test\*(C'\fR, \f(CW\*(C`cmh_test\*(C'\fR, \f(CW\*(C`glm\*(C'\fR and the rest — already took
+both spellings. \f(CW\*(C`var.equal\*(C'\fR, which is what R calls it, was refused too. Both
+dotted forms now work, and the parameter table records the aliases.
+.PP
+\fR\f(CI\*(C`rank\*(C'\fR\fI, \fR\f(CI\*(C`wilcox_test\*(C'\fR\fI and \fR\f(CI\*(C`ks_test\*(C'\fR\fI are 1.6× to 2.3× faster\fR
+.IX Subsection "rank, wilcox_test and ks_test are 1.6× to 2.3× faster"
+.PP
+These were still sorting through \f(CWqsort()\fR, whose comparator the compiler
+cannot inline; the module\*(Aqs own \f(CWLIKER_DEFINE_SORT()\fR introsort and
+\&\f(CWnv_sort()\fR were already used by the three internal rankers but not by these.
+Ordering \fIn\fR records costs O(\fIn\fR log \fIn\fR) comparisons and an indirect call
+on each is most of what such a sort costs — the figure \f(CW\*(C`LIKER_DEFINE_SORT\*(C'\fR\*(Aqs
+own comment records is 210µs against \f(CWqsort()\fR\*(Aqs 355µs on 5000 NVs.
+.PP
+Measured on 20,000 doubles:
+.PP
+\&\f(CWrank_and_count_ties()\fR, which \f(CW\*(C`wilcox_test\*(C'\fR, \f(CW\*(C`ks_test\*(C'\fR and five other
+functions share, had been sorting \f(CW\*(C`RankInfo\*(C'\fR records through \f(CW\*(C`cmp_nv3\*(C'\fR — a
+comparator that reads a bare \f(CW\*(C`NV\*(C'\fR. That worked only because \f(CW\*(C`val\*(C'\fR is the
+struct\*(Aqs first member and a pointer to a struct is a pointer to its first
+member: true, but fragile as well as slow. It has a generated ordering of its
+own now.
+.PP
+What is left in \f(CW\*(C`rank\*(C'\fR is no longer the sort. Reading the same 20,000 values
+back out of an \f(CW\*(C`AV\*(C'\fR in plain perl costs 0.37 ms, so the gather loop and the
+\&\f(CW\*(C`newSVnv\*(C'\fR per result are now most of the call.
+.PP
+\fIFive new cross\-validation files, from R\*(Aqs and SciPy\*(Aqs own test suites\fR
+.IX Subsection "Five new cross-validation files, from R's and SciPy's own test suites"
+.PP
+4,444 tests, taking their cases from the references\*(Aq suites and documented
+examples rather than inventing them, in the manner of the existing
+\&\f(CW\*(C`t/*.R.scipy.t\*(C'\fR files. Expected values are frozen literals; the generators
+are committed beside each test and are never run by it, so nothing here needs
+R, python or \f(CW\*(C`mpmath\*(C'\fR at install time.
+.PP
+\&\f(CW\*(C`t_test\*(C'\fR had no cross\-validation at all before this, which is how the
+\&\f(CW\*(C`conf.level\*(C'\fR croak above survived. Each documented case is crossed over the
+whole argument space its function exposes — alternative × \f(CW\*(C`var_equal\*(C'\fR × \f(CW\*(C`mu\*(C'\fR
+× \f(CW\*(C`conf.level\*(C'\fR × \f(CW\*(C`paired\*(C'\fR, \f(CW\*(C`correct\*(C'\fR, \f(CW\*(C`exact\*(C'\fR, \f(CW\*(C`p\*(C'\fR — because a reference
+case exercised only at its defaults pins one code path out of dozens.
+.PP
+Two things fell out of writing them.
+.PP
+**\f(CW\*(C`t/tukey.t\*(C'\fR\*(Aqs tolerances understate the \f(CW\*(C`ptukey\*(C'\fR port by ten orders of
+magnitude.** It checks \f(CW\*(C`qtukey\*(C'\fR to an absolute \f(CW1e\-3\fR and the \f(CW\*(C`TukeyHSD\*(C'\fR
+columns to \f(CW1e\-4\fR, where the Copenhaver & Holland port actually agrees with R
+to \f(CW3.0e\-14\fR and \f(CW2.5e\-12\fR over the new grid. A \f(CW1e\-3\fR limit would not
+notice the port being replaced by a normal approximation, which is the
+regression it exists to catch. The new file checks it properly; the old one is
+left alone.
+.PP
+\&\fBA tail probability needs an absolute tolerance, not a relative one, across
+NV widths.\fR \f(CW\*(C`ptukey\*(C'\fR\*(Aqs internals are deliberately plain \f(CW\*(C`double\*(C'\fR, exactly as
+R\*(Aqs \f(CW\*(C`src/nmath/ptukey.c\*(C'\fR has them, so the quadrature does not move with
+perl\*(Aqs \f(CW\*(C`NV\*(C'\fR — but its \fIargument\fR \f(CW\*(C`q = |diff| / se\*(C'\fR comes from the \f(CW\*(C`aov\*(C'\fR
+mean square, which is computed in \f(CW\*(C`NV\*(C'\fR. On the chickwts \f(CW\*(C`horsebean\-casein\*(C'\fR
+comparison, where \f(CW\*(C`p adj\*(C'\fR is \f(CW3.07e\-08\fR:
+.PP
+Every width agrees to about \f(CW1e\-14\fR absolute, which is all a probability in
+the \f(CW1e\-8\fR tail can be asked for. Conversely \f(CW\*(C`pf\*(C'\fR and \f(CW\*(C`pt\*(C'\fR come out three
+to four orders \fImore\fR accurate on the wider widths (\f(CW2.74e\-11\fR → \f(CW1.1e\-15\fR
+for \f(CW\*(C`pf\*(C'\fR\*(Aqs upper tail), which is the evidence that what is left there is the
+continued fraction\*(Aqs convergence and not another cancellation — a cancellation
+does not improve with the working precision.
+.PP
+\fR\f(CI\*(C`qf\*(C'\fR\fI is more accurate than R\*(Aqs own \fR\f(CI\*(C`qf\*(C'\fR\fI in the far lower tail\fR
+.IX Subsection "qf is more accurate than R's own qf in the far lower tail"
+.PP
+Writing the file above turned up a disagreement in the other direction, so it
+is recorded rather than quietly reconciled. Asked for the F quantile deep in
+the lower tail, R bottoms out at a fixed resolution:
+.PP
+R is out by 122% there. Over the 108\-point grid in
+\&\f(CW\*(C`t/pf_pt_tails.R.mpmath.t\*(C'\fR, \f(CW\*(C`qf\*(C'\fR is within \f(CW7.6e\-15\fR relative of 80\-digit
+truth at every point and R is out by as much as \f(CW1.22\fR, on 17 of them. The
+test asserts \f(CW\*(C`qf\*(C'\fR against \f(CW\*(C`mpmath\*(C'\fR and separately asserts that R really is
+the worse of the two, so that "fixing" \f(CW\*(C`qf\*(C'\fR towards R would fail loudly
+instead of passing quietly.
+.PP
+Also recorded there: \f(CW\*(C`qtukey\*(C'\fR is \fInot\fR an exact inverse of \f(CW\*(C`ptukey\*(C'\fR, in R
+or here. R\*(Aqs \f(CW\*(C`qtukey.c\*(C'\fR is a secant iteration that stops once successive
+iterates differ by less than a hardcoded \f(CW\*(C`const static double eps = 0.0001\*(C'\fR —
+an absolute \f(CW1e\-4\fR in \f(CW\*(C`q\*(C'\fR, not a relative tolerance on \f(CW\*(C`p\*(C'\fR — so
+\&\f(CW\*(C`ptukey(qtukey(p))\*(C'\fR recovers \f(CW\*(C`p\*(C'\fR only to about \f(CW1e\-7\fR. R\*(Aqs own worst round
+trip over that grid is \f(CW1.2744607e\-07\fR, and this port\*(Aqs is the same to the
+digits printed, which is the strongest evidence in the file that the port
+really is faithful rather than merely close.
 .SS "0.311 2026\-08\-28 CDT"
 .IX Subsection "0.311 2026-08-28 CDT"
 \fI80\-bit x87 arithmetic broke four test files on 32\-bit x86\fR

@@ -6892,6 +6892,170 @@ now, in the two forms the suite already uses, and the whole suite passes under
 tests — the difference is the leak checks, which still run and still report 0
 leaks outside coverage mode).
 
+### `pt` near zero and `pf`'s upper tail lost up to eight digits to a cancellation
+
+`incbeta()`, the regularized incomplete beta every t, F and binomial tail is
+built on, took only `x` and re-formed `1 - x` by subtraction. Its reflected
+branch — `I_x(a,b) = 1 - I_{1-x}(b,a)`, taken exactly when `x` is the side near
+`1` — then needs that complement, and forming it as `1.0 - x` is catastrophic
+cancellation there. Once `|1 - x|` fell below `2^-53` it collapsed to `0` and
+took the whole tail with it:
+
+| call | returned | correct to 21 digits |
+|---|---|---|
+| `pf(1e-12, 1, 1e6, 'lower.tail' => 0)` | `1` exactly | `0.999999202115638638` |
+| `pt(1e-6, 1e6)` | `0.5` exactly | `0.500000398942180682` |
+| `pt(-1e-8, 1)` | `0.5` exactly | `0.499999996816901138` |
+
+Every caller had the complement exactly, and was throwing it away: `pf` builds
+`x = df1·f/D` and `1-x = df2/D` over one denominator, `pt` has
+`x = df/(df + t²)` against `t²/(df + t²)`, and `pbinom`'s lower tail is
+`I_{1-p}(n-k, k+1)` with `p` itself to hand. So the fix is to pass both —
+`incbeta_xy(a, b, x, y)`, which is R's own split (`bratio()` takes `x` and `y`
+as separate arguments for this reason), with `incbeta()` kept as the
+one-argument wrapper for the callers that genuinely have only `x`, such as a
+bisection midpoint.
+
+Worst error against `mpmath` at `mp.dps = 80`, over a 372-point grid:
+
+| | before | after |
+|---|---|---|
+| `pt`, either tail | `3.99e-07` absolute | `1.11e-16` (1 ulp) |
+| `pf` upper tail | `3.19e-08` relative | `2.74e-11` |
+| `pf` lower tail | `2.01e-12` relative | `2.46e-13` |
+
+The two tails also add up again: `pf(1e-12, 1, 1e6)`'s lower and upper summed
+to `1 + 7.98e-07` before, which is what first showed the bug.
+
+This reached `t_test`, whose p-value is `1 -` that tail: a statistic small
+enough on enough degrees of freedom had its p-value pinned at exactly `1`
+instead of `1 - 4e-7`. `d_pf` now calls `pf()` rather than repeating its
+expression, so the two can no longer drift apart on the complement argument.
+
+The one place `incbeta_xy` does **not** help is the Clopper-Pearson upper bound
+for a handful of successes in ~1e9 trials, which still carries ~2e-9 of relative
+error. The cancellation there is in the continued fraction's own argument during
+bisection, not in a complement a caller could have supplied, so `t/binom_test.R.scipy.t`'s
+existing note — that fixing it properly means porting `bratio()` — still stands.
+
+### `t_test` rejected `conf.level`, the spelling its own documentation lists
+
+    t_test(\@x, \@y, 'conf.level' => 0.99);
+    # t_test: unknown argument 'conf.level'
+
+`t_test` accepted only the underscored `conf_level` and `var_equal`, while its
+parameter table in this file has always documented the argument as
+`conf.level`, and while every sibling in the module — `var_test`,
+`wilcox_test`, `prop_test`, `cmh_test`, `glm` and the rest — already took both
+spellings. `var.equal`, which is what R calls it, was refused too. Both dotted
+forms now work, and the parameter table records the aliases.
+
+### `rank`, `wilcox_test` and `ks_test` are 1.6× to 2.3× faster
+
+These were still sorting through `qsort()`, whose comparator the compiler cannot
+inline; the module's own `LIKER_DEFINE_SORT()` introsort and `nv_sort()` were
+already used by the three internal rankers but not by these. Ordering *n*
+records costs O(*n* log *n*) comparisons and an indirect call on each is most of
+what such a sort costs — the figure `LIKER_DEFINE_SORT`'s own comment records is
+210µs against `qsort()`'s 355µs on 5000 NVs.
+
+Measured on 20,000 doubles:
+
+| | before | after | speedup |
+|---|---|---|---|
+| `wilcox_test` (two samples) | 6.11 ms | 2.64 ms | 2.3× |
+| `rank` | 2.87 ms | 1.43 ms | 2.0× |
+| `ks_test` (two samples) | 3.70 ms | 2.37 ms | 1.6× |
+
+`rank_and_count_ties()`, which `wilcox_test`, `ks_test` and five other functions
+share, had been sorting `RankInfo` records through `cmp_nv3` — a comparator that
+reads a bare `NV`. That worked only because `val` is the struct's first member
+and a pointer to a struct is a pointer to its first member: true, but fragile as
+well as slow. It has a generated ordering of its own now.
+
+What is left in `rank` is no longer the sort. Reading the same 20,000 values back
+out of an `AV` in plain perl costs 0.37 ms, so the gather loop and the `newSVnv`
+per result are now most of the call.
+
+### Five new cross-validation files, from R's and SciPy's own test suites
+
+4,444 tests, taking their cases from the references' suites and documented
+examples rather than inventing them, in the manner of the existing
+`t/*.R.scipy.t` files. Expected values are frozen literals; the generators are
+committed beside each test and are never run by it, so nothing here needs R,
+python or `mpmath` at install time.
+
+| file | tests | sources |
+|---|---|---|
+| `t/t_test.R.scipy.t` | 2437 | `t.test.Rd`; `reg-tests-1a.R:4529` (one group of size one), `reg-tests-2.R:3199`, `reg-tests-1e.R:1985`; SciPy's `TestTTest_1samp`, `TestTTestIndMore`, `TestTTestRel`, `TestTTestCI` |
+| `t/tukey_aov_prcomp.R.t` | 940 | a 637-point `ptukey`/`qtukey` grid; PlantGrowth and chickwts `TukeyHSD`; mtcars `anova`/`vif`; USArrests `prcomp`; `scale` |
+| `t/p_adjust.R.t` | 767 | every method in R's own `p.adjust.methods`, on `p.adjust.Rd`'s own p-vector |
+| `t/friedman_mcnemar_prop_cmh.R.t` | 274 | Hollander & Wolfe (1973) p.140ff; Agresti (1990) p.350; Fleiss (1981) p.139; Agresti's Rabbits and `UCBAdmissions` |
+| `t/pf_pt_tails.R.mpmath.t` | 26 | `mpmath` at `mp.dps = 80`, plus R on the same grid |
+
+`t_test` had no cross-validation at all before this, which is how the
+`conf.level` croak above survived. Each documented case is crossed over the
+whole argument space its function exposes — alternative × `var_equal` × `mu` ×
+`conf.level` × `paired`, `correct`, `exact`, `p` — because a reference case
+exercised only at its defaults pins one code path out of dozens.
+
+Two things fell out of writing them.
+
+**`t/tukey.t`'s tolerances understate the `ptukey` port by ten orders of
+magnitude.** It checks `qtukey` to an absolute `1e-3` and the `TukeyHSD` columns
+to `1e-4`, where the Copenhaver & Holland port actually agrees with R to
+`3.0e-14` and `2.5e-12` over the new grid. A `1e-3` limit would not notice the
+port being replaced by a normal approximation, which is the regression it exists
+to catch. The new file checks it properly; the old one is left alone.
+
+**A tail probability needs an absolute tolerance, not a relative one, across NV
+widths.** `ptukey`'s internals are deliberately plain `double`, exactly as R's
+`src/nmath/ptukey.c` has them, so the quadrature does not move with perl's `NV`
+— but its *argument* `q = |diff| / se` comes from the `aov` mean square, which
+is computed in `NV`. On the chickwts `horsebean-casein` comparison, where
+`p adj` is `3.07e-08`:
+
+| NV width | `p adj` | relative | absolute |
+|---|---|---|---|
+| `double` | `3.0701967967949884e-08` | — | — |
+| x87 `long double` | `3.0701966635682254e-08` | `4.34e-08` | `1.3e-16` |
+| `long double` | `3.0701956643675032e-08` | `3.69e-07` | `1.1e-14` |
+| `__float128` | `3.0701956643675032e-08` | `3.69e-07` | `1.1e-14` |
+
+Every width agrees to about `1e-14` absolute, which is all a probability in the
+`1e-8` tail can be asked for. Conversely `pf` and `pt` come out three to four
+orders *more* accurate on the wider widths (`2.74e-11` → `1.1e-15` for `pf`'s
+upper tail), which is the evidence that what is left there is the continued
+fraction's convergence and not another cancellation — a cancellation does not
+improve with the working precision.
+
+### `qf` is more accurate than R's own `qf` in the far lower tail
+
+Writing the file above turned up a disagreement in the other direction, so it is
+recorded rather than quietly reconciled. Asked for the F quantile deep in the
+lower tail, R bottoms out at a fixed resolution:
+
+| | `qf(1e-8, 1, 2)` |
+|---|---|
+| `mpmath`, `mp.dps = 80` | `2.0000000000000003e-16` |
+| `qf` | `2.0000000000000000e-16` |
+| R 4.6.1 `qf` | `4.4408920985006262e-16` — which is `2^-51` |
+
+R is out by 122% there. Over the 108-point grid in `t/pf_pt_tails.R.mpmath.t`,
+`qf` is within `7.6e-15` relative of 80-digit truth at every point and R is out
+by as much as `1.22`, on 17 of them. The test asserts `qf` against `mpmath` and
+separately asserts that R really is the worse of the two, so that "fixing" `qf`
+towards R would fail loudly instead of passing quietly.
+
+Also recorded there: `qtukey` is *not* an exact inverse of `ptukey`, in R or
+here. R's `qtukey.c` is a secant iteration that stops once successive iterates
+differ by less than a hardcoded `const static double eps = 0.0001` — an absolute
+`1e-4` in `q`, not a relative tolerance on `p` — so `ptukey(qtukey(p))` recovers
+`p` only to about `1e-7`. R's own worst round trip over that grid is
+`1.2744607e-07`, and this port's is the same to the digits printed, which is the
+strongest evidence in the file that the port really is faithful rather than
+merely close.
+
 ## 0.312 2026-08-28 CDT
 
 ### 80-bit x87 arithmetic broke four test files on 32-bit x86

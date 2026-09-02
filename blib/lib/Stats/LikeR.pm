@@ -3,7 +3,7 @@
 require 5.010;
 use strict;
 package Stats::LikeR;
-our $VERSION = 0.312;
+our $VERSION = 0.313;
 require XSLoader;
 use autodie ':default';
 use warnings FATAL => 'all';
@@ -15278,6 +15278,341 @@ file order. All of them are guarded now, in the two forms the suite already
 uses, and the whole suite passes under C<Devel::Cover> (143 files, 35008 tests)
 as well as without it (143 files, 35577 tests — the difference is the leak
 checks, which still run and still report 0 leaks outside coverage mode).
+
+=head3 C<pt> near zero and C<pf>'s upper tail lost up to eight digits to a cancellation
+
+C<incbeta()>, the regularized incomplete beta every t, F and binomial tail is
+built on, took only C<x> and re-formed C<1 - x> by subtraction. Its reflected
+branch — C<I_x(a,b) = 1 - I_{1-x}(b,a)>, taken exactly when C<x> is the side
+near C<1> — then needs that complement, and forming it as C<1.0 - x> is
+catastrophic cancellation there. Once C<|1 - x|> fell below C<2^-53> it
+collapsed to C<0> and took the whole tail with it:
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>call</th>
+  <th>returned</th>
+  <th>correct to 21 digits</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>pf(1e-12, 1, 1e6, 'lower.tail' =&gt; 0)</code></td>
+  <td><code>1</code> exactly</td>
+  <td><code>0.999999202115638638</code></td>
+</tr>
+<tr>
+  <td><code>pt(1e-6, 1e6)</code></td>
+  <td><code>0.5</code> exactly</td>
+  <td><code>0.500000398942180682</code></td>
+</tr>
+<tr>
+  <td><code>pt(-1e-8, 1)</code></td>
+  <td><code>0.5</code> exactly</td>
+  <td><code>0.499999996816901138</code></td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+Every caller had the complement exactly, and was throwing it away: C<pf>
+builds C<x = df1·f/D> and C<1-x = df2/D> over one denominator, C<pt> has C<x =
+df/(df + t²)> against C<t²/(df + t²)>, and C<pbinom>'s lower tail is
+C<I_{1-p}(n-k, k+1)> with C<p> itself to hand. So the fix is to pass both —
+C<incbeta_xy(a, b, x, y)>, which is R's own split (C<bratio()> takes C<x> and
+C<y> as separate arguments for this reason), with C<incbeta()> kept as the
+one-argument wrapper for the callers that genuinely have only C<x>, such as a
+bisection midpoint.
+
+Worst error against C<mpmath> at C<mp.dps = 80>, over a 372-point grid:
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th></th>
+  <th>before</th>
+  <th>after</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>pt</code>, either tail</td>
+  <td><code>3.99e-07</code> absolute</td>
+  <td><code>1.11e-16</code> (1 ulp)</td>
+</tr>
+<tr>
+  <td><code>pf</code> upper tail</td>
+  <td><code>3.19e-08</code> relative</td>
+  <td><code>2.74e-11</code></td>
+</tr>
+<tr>
+  <td><code>pf</code> lower tail</td>
+  <td><code>2.01e-12</code> relative</td>
+  <td><code>2.46e-13</code></td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+The two tails also add up again: C<pf(1e-12, 1, 1e6)>'s lower and upper summed
+to C<1 + 7.98e-07> before, which is what first showed the bug.
+
+This reached C<t_test>, whose p-value is C<1 -> that tail: a statistic small
+enough on enough degrees of freedom had its p-value pinned at exactly C<1>
+instead of C<1 - 4e-7>. C<d_pf> now calls C<pf()> rather than repeating its
+expression, so the two can no longer drift apart on the complement argument.
+
+The one place C<incbeta_xy> does B<not> help is the Clopper-Pearson upper
+bound for a handful of successes in ~1e9 trials, which still carries ~2e-9 of
+relative error. The cancellation there is in the continued fraction's own
+argument during bisection, not in a complement a caller could have supplied,
+so C<t/binom_test.R.scipy.t>'s existing note — that fixing it properly means
+porting C<bratio()> — still stands.
+
+=head3 C<t_test> rejected C<conf.level>, the spelling its own documentation lists
+
+    t_test(\@x, \@y, 'conf.level' => 0.99);
+    # t_test: unknown argument 'conf.level'
+
+C<t_test> accepted only the underscored C<conf_level> and C<var_equal>, while
+its parameter table in this file has always documented the argument as
+C<conf.level>, and while every sibling in the module — C<var_test>,
+C<wilcox_test>, C<prop_test>, C<cmh_test>, C<glm> and the rest — already took
+both spellings. C<var.equal>, which is what R calls it, was refused too. Both
+dotted forms now work, and the parameter table records the aliases.
+
+=head3 C<rank>, C<wilcox_test> and C<ks_test> are 1.6× to 2.3× faster
+
+These were still sorting through C<qsort()>, whose comparator the compiler
+cannot inline; the module's own C<LIKER_DEFINE_SORT()> introsort and
+C<nv_sort()> were already used by the three internal rankers but not by these.
+Ordering I<n> records costs O(I<n> log I<n>) comparisons and an indirect call
+on each is most of what such a sort costs — the figure C<LIKER_DEFINE_SORT>'s
+own comment records is 210µs against C<qsort()>'s 355µs on 5000 NVs.
+
+Measured on 20,000 doubles:
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th></th>
+  <th>before</th>
+  <th>after</th>
+  <th>speedup</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>wilcox_test</code> (two samples)</td>
+  <td>6.11 ms</td>
+  <td>2.64 ms</td>
+  <td>2.3×</td>
+</tr>
+<tr>
+  <td><code>rank</code></td>
+  <td>2.87 ms</td>
+  <td>1.43 ms</td>
+  <td>2.0×</td>
+</tr>
+<tr>
+  <td><code>ks_test</code> (two samples)</td>
+  <td>3.70 ms</td>
+  <td>2.37 ms</td>
+  <td>1.6×</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+C<rank_and_count_ties()>, which C<wilcox_test>, C<ks_test> and five other
+functions share, had been sorting C<RankInfo> records through C<cmp_nv3> — a
+comparator that reads a bare C<NV>. That worked only because C<val> is the
+struct's first member and a pointer to a struct is a pointer to its first
+member: true, but fragile as well as slow. It has a generated ordering of its
+own now.
+
+What is left in C<rank> is no longer the sort. Reading the same 20,000 values
+back out of an C<AV> in plain perl costs 0.37 ms, so the gather loop and the
+C<newSVnv> per result are now most of the call.
+
+=head3 Five new cross-validation files, from R's and SciPy's own test suites
+
+4,444 tests, taking their cases from the references' suites and documented
+examples rather than inventing them, in the manner of the existing
+C<t/*.R.scipy.t> files. Expected values are frozen literals; the generators
+are committed beside each test and are never run by it, so nothing here needs
+R, python or C<mpmath> at install time.
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>file</th>
+  <th>tests</th>
+  <th>sources</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>t/t_test.R.scipy.t</code></td>
+  <td>2437</td>
+  <td><code>t.test.Rd</code>; <code>reg-tests-1a.R:4529</code> (one group of size one), <code>reg-tests-2.R:3199</code>, <code>reg-tests-1e.R:1985</code>; SciPy's <code>TestTTest_1samp</code>, <code>TestTTestIndMore</code>, <code>TestTTestRel</code>, <code>TestTTestCI</code></td>
+</tr>
+<tr>
+  <td><code>t/tukey_aov_prcomp.R.t</code></td>
+  <td>940</td>
+  <td>a 637-point <code>ptukey</code>/<code>qtukey</code> grid; PlantGrowth and chickwts <code>TukeyHSD</code>; mtcars <code>anova</code>/<code>vif</code>; USArrests <code>prcomp</code>; <code>scale</code></td>
+</tr>
+<tr>
+  <td><code>t/p_adjust.R.t</code></td>
+  <td>767</td>
+  <td>every method in R's own <code>p.adjust.methods</code>, on <code>p.adjust.Rd</code>'s own p-vector</td>
+</tr>
+<tr>
+  <td><code>t/friedman_mcnemar_prop_cmh.R.t</code></td>
+  <td>274</td>
+  <td>Hollander & Wolfe (1973) p.140ff; Agresti (1990) p.350; Fleiss (1981) p.139; Agresti's Rabbits and <code>UCBAdmissions</code></td>
+</tr>
+<tr>
+  <td><code>t/pf_pt_tails.R.mpmath.t</code></td>
+  <td>26</td>
+  <td><code>mpmath</code> at <code>mp.dps = 80</code>, plus R on the same grid</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+C<t_test> had no cross-validation at all before this, which is how the
+C<conf.level> croak above survived. Each documented case is crossed over the
+whole argument space its function exposes — alternative × C<var_equal> × C<mu>
+× C<conf.level> × C<paired>, C<correct>, C<exact>, C<p> — because a reference
+case exercised only at its defaults pins one code path out of dozens.
+
+Two things fell out of writing them.
+
+**C<t/tukey.t>'s tolerances understate the C<ptukey> port by ten orders of
+magnitude.** It checks C<qtukey> to an absolute C<1e-3> and the C<TukeyHSD>
+columns to C<1e-4>, where the Copenhaver & Holland port actually agrees with R
+to C<3.0e-14> and C<2.5e-12> over the new grid. A C<1e-3> limit would not
+notice the port being replaced by a normal approximation, which is the
+regression it exists to catch. The new file checks it properly; the old one is
+left alone.
+
+B<A tail probability needs an absolute tolerance, not a relative one, across
+NV widths.> C<ptukey>'s internals are deliberately plain C<double>, exactly as
+R's C<src/nmath/ptukey.c> has them, so the quadrature does not move with
+perl's C<NV> — but its I<argument> C<q = |diff| / se> comes from the C<aov>
+mean square, which is computed in C<NV>. On the chickwts C<horsebean-casein>
+comparison, where C<p adj> is C<3.07e-08>:
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>NV width</th>
+  <th><code>p adj</code></th>
+  <th>relative</th>
+  <th>absolute</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>double</code></td>
+  <td><code>3.0701967967949884e-08</code></td>
+  <td>—</td>
+  <td>—</td>
+</tr>
+<tr>
+  <td>x87 <code>long double</code></td>
+  <td><code>3.0701966635682254e-08</code></td>
+  <td><code>4.34e-08</code></td>
+  <td><code>1.3e-16</code></td>
+</tr>
+<tr>
+  <td><code>long double</code></td>
+  <td><code>3.0701956643675032e-08</code></td>
+  <td><code>3.69e-07</code></td>
+  <td><code>1.1e-14</code></td>
+</tr>
+<tr>
+  <td><code>__float128</code></td>
+  <td><code>3.0701956643675032e-08</code></td>
+  <td><code>3.69e-07</code></td>
+  <td><code>1.1e-14</code></td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+Every width agrees to about C<1e-14> absolute, which is all a probability in
+the C<1e-8> tail can be asked for. Conversely C<pf> and C<pt> come out three
+to four orders I<more> accurate on the wider widths (C<2.74e-11> → C<1.1e-15>
+for C<pf>'s upper tail), which is the evidence that what is left there is the
+continued fraction's convergence and not another cancellation — a cancellation
+does not improve with the working precision.
+
+=head3 C<qf> is more accurate than R's own C<qf> in the far lower tail
+
+Writing the file above turned up a disagreement in the other direction, so it
+is recorded rather than quietly reconciled. Asked for the F quantile deep in
+the lower tail, R bottoms out at a fixed resolution:
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th></th>
+  <th><code>qf(1e-8, 1, 2)</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>mpmath</code>, <code>mp.dps = 80</code></td>
+  <td><code>2.0000000000000003e-16</code></td>
+</tr>
+<tr>
+  <td><code>qf</code></td>
+  <td><code>2.0000000000000000e-16</code></td>
+</tr>
+<tr>
+  <td>R 4.6.1 <code>qf</code></td>
+  <td><code>4.4408920985006262e-16</code> — which is <code>2^-51</code></td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+R is out by 122% there. Over the 108-point grid in
+C<t/pf_pt_tails.R.mpmath.t>, C<qf> is within C<7.6e-15> relative of 80-digit
+truth at every point and R is out by as much as C<1.22>, on 17 of them. The
+test asserts C<qf> against C<mpmath> and separately asserts that R really is
+the worse of the two, so that "fixing" C<qf> towards R would fail loudly
+instead of passing quietly.
+
+Also recorded there: C<qtukey> is I<not> an exact inverse of C<ptukey>, in R
+or here. R's C<qtukey.c> is a secant iteration that stops once successive
+iterates differ by less than a hardcoded C<const static double eps = 0.0001> —
+an absolute C<1e-4> in C<q>, not a relative tolerance on C<p> — so
+C<ptukey(qtukey(p))> recovers C<p> only to about C<1e-7>. R's own worst round
+trip over that grid is C<1.2744607e-07>, and this port's is the same to the
+digits printed, which is the strongest evidence in the file that the port
+really is faithful rather than merely close.
 
 =head2 0.311 2026-08-28 CDT
 
