@@ -51,10 +51,23 @@
 # at each: R is columnar, so read.csv is the honest counterpart of both
 # read_table's default row-record output and its output.type => 'hoa', and the
 # difference between those two panels is the cost of the Perl shape alone.
+#
+# The .xlsx panels are the one place R does not answer both halves.  Reading is
+# readxl::read_excel, which is what an R user reaches for; it is loaded below
+# only if it is installed, since no other panel needs it and a machine without
+# it should lose one curve rather than the whole run.  Writing is absent
+# altogether: base R cannot write an .xlsx, and readxl is a reader by design.
+# writexl and openxlsx both do it and neither is installed here, so there is no
+# idiomatic call to time -- scale.R contributes no "write_table (xlsx, hoa)"
+# row, and plot.scaling.pl draws that panel with two lines rather than three.
 suppressPackageStartupMessages({
     library(dplyr)
     library(pROC)
 })
+HAVE_READXL <- requireNamespace("readxl", quietly = TRUE)
+if (!HAVE_READXL) {
+    message("readxl is not installed; skipping the read_table (xlsx) panel")
+}
 
 DIR <- Sys.getenv("SCALE_DIR", "/tmp/likeR.scaling")
 RUNS <- as.integer(Sys.getenv("SCALE_RUNS", "7"))
@@ -89,9 +102,10 @@ build_io <- function(n) {
         num_csv = file.path(DIR, sprintf("num.%d.csv", n)),
         mix_csv = file.path(DIR, sprintf("mix.%d.csv", n)),
         mix_tsv = file.path(DIR, sprintf("mix.%d.tsv", n)),
+        mix_xlsx = file.path(DIR, sprintf("mix.%d.xlsx", n)),
         out = file.path(DIR, sprintf("out.r.%d.tmp", Sys.getpid()))
     )
-    for (k in c("num_csv", "mix_csv", "mix_tsv")) {
+    for (k in c("num_csv", "mix_csv", "mix_tsv", "mix_xlsx")) {
         if (!file.exists(f[[k]])) {
             stop(sprintf('missing fixture "%s"; run "perl plot.scaling.pl --data" first',
                          f[[k]]))
@@ -206,6 +220,20 @@ BENCHMARKS <- list(
       function(d) invisible(unique(d$df))),
     b("frame", "transpose", "t(m)", function(d) invisible(t(d$m)))
 )
+
+# Appended rather than written inline so the panel can be dropped whole on a
+# machine without readxl.  It goes at the end of the list, not next to the
+# other io panels: BENCHMARKS order only decides the order rows are measured
+# in, and plot.scaling.pl takes the panel order from its own file.
+if (HAVE_READXL) {
+    BENCHMARKS <- c(BENCHMARKS, list(
+        # The same table as the read.csv panels, out of a spreadsheet, so what
+        # this shows against them is what the container costs.  read_excel is
+        # a C++ parser and is the fastest of the three readers compared here.
+        b("io", "read_table (xlsx)", "readxl::read_excel(mix.xlsx)",
+          function(d) invisible(readxl::read_excel(d$mix_xlsx)))
+    ))
+}
 
 LADDER <- list(vector = VEC_N, transform = VEC_N, io = IO_N, frame = FRAME_N)
 BUILDER_FOR <- list(vector = "vector", transform = "vector", io = "io",

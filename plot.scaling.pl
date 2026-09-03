@@ -78,6 +78,7 @@ use warnings FATAL => 'all';
 use File::Path ();
 use File::Spec ();
 use Getopt::Long ();
+use IO::Compress::Zip ();
 use POSIX ();
 use Time::HiRes ();
 use Stats::LikeR;
@@ -150,11 +151,12 @@ if ($max_n) {
 # read_table panels compare three different parsing jobs, so exactly one
 # program writes them and the other two only read.
 #
-# Three shapes are written at every row count in @fixture_n:
+# Four shapes are written at every row count in @fixture_n:
 #
 #   num.<n>.csv   a,b,c,d              four numeric columns, nothing to quote
 #   mix.<n>.csv   id,x,y,cat1,cat2     an integer, two numerics, two strings
 #   mix.<n>.tsv   the same table, tab separated
+#   mix.<n>.xlsx  the same table again, as a spreadsheet
 #
 # Numbers are printed with a fixed "%.6f", and no field ever contains the
 # separator or a quote, so every reader sees the same characters and none of
@@ -162,7 +164,14 @@ if ($max_n) {
 #
 # Nothing in this stage calls Stats::LikeR: the fixtures describe the job, not
 # the module under test, and writing them through the code being timed would
-# make the corpus move whenever that code did.
+# make the corpus move whenever that code did.  That rule is what decides how
+# the .xlsx is written.  write_table() can write one, but write_table's .xlsx
+# output is itself one of the panels below, so a fixture written that way would
+# move the read_table (xlsx) curve every time the writer changed -- and the two
+# would stop being independent measurements.  So the .xlsx is assembled here
+# instead, from core IO::Compress::Zip, as the five-member package
+# xlsx_writer() describes.  Verified read by all three: Stats::LikeR's
+# read_table, pandas' read_excel (openpyxl) and R's readxl::read_excel.
 #
 # The pseudo-random numbers come from an xorshift64 written out longhand rather
 # than from perl's rand(), so the fixtures are reproducible on any perl and any
@@ -211,14 +220,126 @@ sub norm {
 	return $r * cos(2 * 3.14159265358979323846 * $v);
 }
 
-# The three files one row count needs, in the order the panels use them.
+# The four files one row count needs, in the order the panels use them.
 sub fixture_files {
 	my ($n) = @_;
 	return (
 		File::Spec->catfile($dir, "num.$n.csv"),
 		File::Spec->catfile($dir, "mix.$n.csv"),
 		File::Spec->catfile($dir, "mix.$n.tsv"),
+		File::Spec->catfile($dir, "mix.$n.xlsx"),
 	);
+}
+
+# --- the .xlsx fixture ---------------------------------------------------
+# An .xlsx is a zip of XML parts, and the five below are the whole of a
+# single-sheet workbook: the content-type map, the package relationships, the
+# workbook and its relationships, and the sheet.  It is the same set
+# Stats::LikeR's own writer emits, minus its docProps/core.xml -- that part
+# carries a timestamp and the writing program's name, neither of which belongs
+# in a fixture.
+#
+# Everything here is written by hand rather than through a spreadsheet module
+# for the reason given at the top of this section: the fixture may not come out
+# of the code being timed.  Nothing about it is clever; the point is that all
+# three readers see one file.
+#
+# Strings are inline (t="inlineStr"), not shared-string indices.  Both are
+# ordinary xlsx and every reader takes either, and inline strings keep this a
+# single streaming pass: a sharedStrings.xml has to know every distinct string
+# before the first row can be written, which for 300,000 rows means holding the
+# table in memory to write a file that is only being written so it can be read.
+my $XLSX_EPOCH = 946_684_800;	# 2000-01-01 UTC
+
+# The zip's own per-member timestamp is the one byte-level difference between
+# two machines: DOS times are local, so a fixed epoch still records the
+# writer's timezone.  Nothing reads it, and the three languages always read the
+# copy written on the machine they are running on, so it costs nothing -- but
+# it does mean the .xlsx is only reproducible byte for byte within a timezone,
+# where the .csv and .tsv are reproducible everywhere.
+my @xlsx_parts = (
+	'[Content_Types].xml' =>
+		'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+	  . '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+	  . '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+	  . '<Default Extension="xml" ContentType="application/xml"/>'
+	  . '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+	  . '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+	  . '</Types>',
+	'_rels/.rels' =>
+		'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+	  . '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+	  . '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>'
+	  . '</Relationships>',
+	'xl/workbook.xml' =>
+		'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+	  . '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
+	  . ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+	  . '<sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets></workbook>',
+	'xl/_rels/workbook.xml.rels' =>
+		'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+	  . '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+	  . '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>'
+	  . '</Relationships>',
+);
+
+# A1, B1, ... -- the fixture is five columns wide, so a handful is plenty.
+my @xlsx_col = ('A' .. 'Z');
+
+# Open $path, write the four fixed parts and the sheet's preamble, and hand
+# back the zip stream.  The caller writes rows into it with xlsx_row() and ends
+# with xlsx_close(); the sheet is streamed rather than assembled, so writing
+# 300,000 rows costs no more memory than writing one.
+sub xlsx_writer {
+	my ($path) = @_;
+	my $zip;
+	for (my $i = 0; $i < @xlsx_parts; $i += 2) {
+		my ($name, $body) = @xlsx_parts[ $i, $i + 1 ];
+		if ($zip) {
+			$zip->newStream(Name => $name, Time => $XLSX_EPOCH, ExtAttr => 0)
+				or die "cannot write \"$name\" in \"$path\": "
+				     . "$IO::Compress::Zip::ZipError\n";
+		} else {
+			$zip = IO::Compress::Zip->new($path, Name => $name,
+				Time => $XLSX_EPOCH, ExtAttr => 0)
+				or die "cannot write \"$path\": "
+				     . "$IO::Compress::Zip::ZipError\n";
+		}
+		print {$zip} $body or die "cannot write \"$name\": $!\n";
+	}
+	$zip->newStream(Name => 'xl/worksheets/sheet1.xml',
+		Time => $XLSX_EPOCH, ExtAttr => 0)
+		or die "cannot write the worksheet in \"$path\": "
+		     . "$IO::Compress::Zip::ZipError\n";
+	print {$zip} '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+	  . '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+	  . '<sheetData>';
+	return $zip;
+}
+
+# One row, 1-based like the spreadsheet.  $str says, per column, whether the
+# cell is text: a number goes in bare and a string goes in as an inline string,
+# which is the difference every reader keys the column's type off.  Nothing in
+# this fixture needs XML escaping -- the values are digits, "." and the
+# single letters A/B/C and X/Y -- and the generator below is the only caller.
+sub xlsx_row {
+	my ($zip, $r, $str, $vals) = @_;
+	my $out = qq{<row r="$r">};
+	for my $c (0 .. $#$vals) {
+		my $ref = $xlsx_col[$c] . $r;
+		$out .= $str->[$c]
+			? qq{<c r="$ref" t="inlineStr"><is><t>$vals->[$c]</t></is></c>}
+			: qq{<c r="$ref"><v>$vals->[$c]</v></c>};
+	}
+	print {$zip} $out, '</row>' or die "cannot write row $r: $!\n";
+	return;
+}
+
+sub xlsx_close {
+	my ($zip, $path) = @_;
+	print {$zip} '</sheetData></worksheet>' or die "cannot write \"$path\": $!\n";
+	$zip->close or die "cannot close \"$path\": $!\n";
+	return;
 }
 
 sub write_fixtures {
@@ -228,7 +349,7 @@ sub write_fixtures {
 	my @cat2 = qw(X Y);
 
 	foreach my $n (@fixture_n) {
-		my ($num, $csv, $tsv) = fixture_files($n);
+		my ($num, $csv, $tsv, $xlsx) = fixture_files($n);
 
 		# --- num.<n>.csv: four numeric columns -----------------------------
 		open my $fh, '>', $num or die "cannot write \"$num\": $!\n";
@@ -239,25 +360,35 @@ sub write_fixtures {
 		}
 		close $fh or die "cannot close \"$num\": $!\n";
 
-		# --- mix.<n>.csv and mix.<n>.tsv: one table, two separators --------
-		# Both files are written from one pass so the two are the same table
-		# and not two independent draws.
+		# --- mix.<n>.{csv,tsv,xlsx}: one table, three containers ----------
+		# All three are written from one pass so they are the same table and
+		# not three independent draws.  The .xlsx carries the values as the
+		# same text the .csv does -- "%.6f" for the two numerics, the integer
+		# bare -- so a reader that parses both is parsing identical numbers and
+		# only the container differs.
 		open my $c, '>', $csv or die "cannot write \"$csv\": $!\n";
 		open my $t, '>', $tsv or die "cannot write \"$tsv\": $!\n";
+		my $z = xlsx_writer($xlsx);
+		# id, x, y are numbers; cat1, cat2 are text.  The header is all text.
+		my @is_str = (0, 0, 0, 1, 1);
 		print {$c} "id,x,y,cat1,cat2\n";
 		print {$t} "id\tx\ty\tcat1\tcat2\n";
+		xlsx_row($z, 1, [ (1) x 5 ], [qw(id x y cat1 cat2)]);
 		for my $i (1 .. $n) {
 			my $x  = norm();
 			my $y  = norm() * 2 + 5;
 			my $c1 = $cat1[ int(unif() * 3) ];
 			my $c2 = $cat2[ int(unif() * 2) ];
-			printf {$c} "%d,%.6f,%.6f,%s,%s\n",   $i, $x, $y, $c1, $c2;
-			printf {$t} "%d\t%.6f\t%.6f\t%s\t%s\n", $i, $x, $y, $c1, $c2;
+			my ($xs, $ys) = (sprintf('%.6f', $x), sprintf('%.6f', $y));
+			printf {$c} "%d,%s,%s,%s,%s\n",   $i, $xs, $ys, $c1, $c2;
+			printf {$t} "%d\t%s\t%s\t%s\t%s\n", $i, $xs, $ys, $c1, $c2;
+			xlsx_row($z, $i + 1, \@is_str, [ $i, $xs, $ys, $c1, $c2 ]);
 		}
 		close $c or die "cannot close \"$csv\": $!\n";
 		close $t or die "cannot close \"$tsv\": $!\n";
+		xlsx_close($z, $xlsx);
 
-		printf "%8d rows: %s, %s, %s\n", $n, $num, $csv, $tsv;
+		printf "%8d rows: %s, %s, %s, %s\n", $n, $num, $csv, $tsv, $xlsx;
 	}
 
 	printf "Fixtures written to %s\n", $dir;
@@ -283,12 +414,16 @@ my %build = (
 	},
 	io => sub {
 		my ($n) = @_;
-		my ($num_csv, $mix_csv, $mix_tsv) = fixture_files($n);
+		my ($num_csv, $mix_csv, $mix_tsv, $mix_xlsx) = fixture_files($n);
 		my %f = (
-			num_csv => $num_csv,
-			mix_csv => $mix_csv,
-			mix_tsv => $mix_tsv,
-			out     => File::Spec->catfile($dir, "out.perl.$$.tmp"),
+			num_csv  => $num_csv,
+			mix_csv  => $mix_csv,
+			mix_tsv  => $mix_tsv,
+			mix_xlsx => $mix_xlsx,
+			out      => File::Spec->catfile($dir, "out.perl.$$.tmp"),
+			# a separate target: write_table picks the writer off the
+			# extension, so the .xlsx panel needs a name ending in .xlsx
+			out_xlsx => File::Spec->catfile($dir, "out.perl.$$.xlsx"),
 		);
 		# The frames handed to write_table are read in, not synthesized, so the
 		# three languages all write out the same table.  hoa is the columnar
@@ -400,6 +535,16 @@ my @benchmarks = (
 	{ figure => 'io', name => 'read_table (csv, hoa)',
 	  call => "read_table('mix.csv', 'output.type' => 'hoa')",
 	  code => sub { read_table($_[0]{mix_csv}, 'output.type' => 'hoa') } },
+	# The same table as the three panels above, out of a spreadsheet instead of
+	# a text file, so what this panel shows against them is what the container
+	# costs.  All three languages reach for a different implementation here --
+	# read_table unzips and scans the sheet XML itself, pandas goes through
+	# openpyxl, R through readxl's C++ parser -- which is the point: there is
+	# no "the xlsx reader", and a module that ships one is competing with
+	# whichever the other two ecosystems settled on.
+	{ figure => 'io', name => 'read_table (xlsx)',
+	  call => "read_table('mix.xlsx')",
+	  code => sub { read_table($_[0]{mix_xlsx}) } },
 	{ figure => 'io', name => 'write_table (csv, hoa)',
 	  call => "write_table(\$hoa, file, 'row.names' => 0)",
 	  code => sub { write_table($_[0]{hoa}, $_[0]{out}, 'row.names' => 0) } },
@@ -413,6 +558,14 @@ my @benchmarks = (
 	{ figure => 'io', name => 'write_table (csv, row.names)',
 	  call => "write_table(\$hoa, file, 'row.names' => 1)",
 	  code => sub { write_table($_[0]{hoa}, $_[0]{out}, 'row.names' => 1) } },
+	# write_table picks the writer off the extension, so this is the same call
+	# as the first write panel with a different file name.  R is absent from
+	# this one: base R cannot write an .xlsx and neither can readxl, which is a
+	# reader by design, so scale.R has nothing idiomatic to offer -- see the
+	# note beside the read panel in that file.
+	{ figure => 'io', name => 'write_table (xlsx, hoa)',
+	  call => "write_table(\$hoa, file.xlsx, 'row.names' => 0)",
+	  code => sub { write_table($_[0]{hoa}, $_[0]{out_xlsx}, 'row.names' => 0) } },
 
 	# --- whole-frame operations --------------------------------------------
 	{ figure => 'frame', name => 'filter', call => 'filter($df, col(\'x\') > 0)',
@@ -677,9 +830,11 @@ sub measure_all {
 			$cap, join(', ', sort keys %too_slow);
 	}
 
-	# clean up the write_table target
-	my $out = File::Spec->catfile($dir, "out.perl.$$.tmp");
-	unlink $out if -f $out;
+	# clean up the write_table targets
+	for my $out (File::Spec->catfile($dir, "out.perl.$$.tmp"),
+	             File::Spec->catfile($dir, "out.perl.$$.xlsx")) {
+		unlink $out if -f $out;
+	}
 
 	write_table(
 		[ [ 'figure', 'function', 'call', 'n', 'run', 'seconds' ], @results ],

@@ -99,9 +99,12 @@ def build_io(n):
         'num_csv': os.path.join(DIR, 'num.%d.csv' % n),
         'mix_csv': os.path.join(DIR, 'mix.%d.csv' % n),
         'mix_tsv': os.path.join(DIR, 'mix.%d.tsv' % n),
+        'mix_xlsx': os.path.join(DIR, 'mix.%d.xlsx' % n),
         'out': os.path.join(DIR, 'out.python.%d.tmp' % os.getpid()),
+        # to_excel picks its engine off the extension, as write_table does
+        'out_xlsx': os.path.join(DIR, 'out.python.%d.xlsx' % os.getpid()),
     }
-    for k in ('num_csv', 'mix_csv', 'mix_tsv'):
+    for k in ('num_csv', 'mix_csv', 'mix_tsv', 'mix_xlsx'):
         if not os.path.isfile(f[k]):
             sys.exit('missing fixture "%s"; run "perl plot.scaling.pl --data" first'
                      % f[k])
@@ -189,6 +192,13 @@ BENCHMARKS = [
      lambda d: _dictread(d['mix_tsv'], '\t')),
     ('io', 'read_table (csv, hoa)', 'pd.read_csv(mix.csv)',
      lambda d: pd.read_csv(d['mix_csv'])),
+    # The same table as the three panels above, out of a spreadsheet.
+    # read_excel defaults to openpyxl for .xlsx, which is what a pandas user
+    # gets without asking for anything; it is a pure-python parser and reads an
+    # order of magnitude slower than the csv path, so SCALE_CAP will usually
+    # stop this panel a size or two before the others.
+    ('io', 'read_table (xlsx)', 'pd.read_excel(mix.xlsx)',
+     lambda d: pd.read_excel(d['mix_xlsx'])),
     ('io', 'write_table (csv, hoa)', 'df.to_csv(f, index=False)',
      lambda d: d['df'].to_csv(d['out'], index=False)),
     ('io', 'write_table (tsv, hoa)', 'df.to_csv(f, sep="\\t", index=False)',
@@ -197,6 +207,10 @@ BENCHMARKS = [
      lambda d: d['df'].to_csv(d['out'], index=False)),
     ('io', 'write_table (csv, row.names)', 'df.to_csv(f, index=True)',
      lambda d: d['df'].to_csv(d['out'], index=True)),
+    # openpyxl again, on the way out.  R is absent from this panel: it has no
+    # xlsx writer installed here and base R has none at all.
+    ('io', 'write_table (xlsx, hoa)', 'df.to_excel(f, index=False)',
+     lambda d: d['df'].to_excel(d['out_xlsx'], index=False)),
 
     # --- whole-frame operations --------------------------------------------
     ('frame', 'filter', 'df[df.x > 0]', lambda d: d['df'][d['df']['x'] > 0]),
@@ -367,9 +381,10 @@ def main():
         print('Stopped early (a run exceeded %g s, or it failed): %s'
               % (CAP, ', '.join(sorted(too_slow))))
 
-    out = os.path.join(DIR, 'out.python.%d.tmp' % os.getpid())
-    if os.path.isfile(out):
-        os.unlink(out)
+    for out in (os.path.join(DIR, 'out.python.%d.tmp' % os.getpid()),
+                os.path.join(DIR, 'out.python.%d.xlsx' % os.getpid())):
+        if os.path.isfile(out):
+            os.unlink(out)
 
     with open('python_scaling.tsv', 'w') as fh:
         fh.write('figure\tfunction\tcall\tn\trun\tseconds\n')
