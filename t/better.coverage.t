@@ -144,7 +144,7 @@ id,name,val
 3,Charlie,15.2
 EOF
 
-my $fh = File::Temp->new(SUFFIX => '.csv', DIR => '/tmp', UNLINK => 1);
+my $fh = File::Temp->new(SUFFIX => '.csv', UNLINK => 1);
 print $fh $csv_content;
 close $fh;
 say 'writing ' . $fh->filename;

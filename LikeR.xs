@@ -22377,8 +22377,7 @@ CODE:
 		per observation (40 MB at n = 5e6) to hold three pointers.*/
 		size_t names_cap = 8;
 		Newxz(group_names, names_cap, GroupLabel);
-		// Map string group names → contiguous integer IDs
-		HV *group_map    = newHV();
+		HV *group_map    = newHV();// Map string group names → contiguous integer IDs
 		size_t          next_group_id = 0;
 		for (size_t i = 0; i < nx; i++) {
 			SV **x_el = av_fetch(x_av, i, 0);
@@ -22387,10 +22386,10 @@ CODE:
 					  && g_el && SvOK(*g_el)) {
 				NV v = SvNV(*x_el);
 				if (nv_isnan(v)) continue; //NA to R; see the 'h' path
-				/*SvPV() with the length, not SvPV_nolen() plus strlen(): a
-				label with an embedded NUL was truncated at it, so "a\0X" and
-				"a\0Y" collapsed into one group and deflated the degrees of
-				freedom.  It also drops a strlen() pass per observation.*/
+	/*SvPV() with the length, not SvPV_nolen() plus strlen(): a
+	label with an embedded NUL was truncated at it, so "a\0X" and
+	"a\0Y" collapsed into one group and deflated the degrees of
+	freedom.  It also drops a strlen() pass per observation.*/
 				STRLEN glen;
 				const char *g_str = SvPV(*g_el, glen);
 				const I32 klen = SvUTF8(*g_el) ? -(I32)glen : (I32)glen;
@@ -22783,7 +22782,7 @@ CODE:
 	SV*x_sv = ST(0);
 	NV mean = 0.0, sd = 1.0; //defaults
 	bool give_log = 0;
-	// --- Parse remaining named arguments from the flat stack
+	// Parse remaining named arguments from the flat stack
 	if ((items - 1) % 2 != 0) {
 	  croak("dnorm: Expected an even number of key-value named arguments after 'x'");
 	}
@@ -22810,8 +22809,7 @@ CODE:
 			}
 		}
 		RETVAL = newRV_noinc((SV*)result_av);
-	} else {
-	  // x is a single numeric scalar
+	} else {// x is a single numeric scalar
 	  NV x_val = SvNV(x_sv);
 	  NV res = c_dnorm(x_val, mean, sd, give_log);
 	  RETVAL = newSVnv(res);
@@ -23287,8 +23285,7 @@ CODE:
 			SV *h_row_sv   = NULL;
 			HV *h_row_hv   = NULL;
 			AV *h_row_av   = NULL;
-			// 3. Fetch from $h
-			if (target_root_mode == 1) {
+			if (target_root_mode == 1) {// 3. Fetch from $h
 				HE *h_fetch_he = hv_fetch_ent((HV *)SvRV(h_ref), row_key_sv, 0, 0);
 				if (h_fetch_he) h_row_sv = HeVAL(h_fetch_he);
 			} else {
@@ -23409,7 +23406,7 @@ CODE:
 			AV*av = (AV*)rv;
 			size_t len = av_len(av) + 1;
 			if (items > 1) {
-				// CASE 2b: Array of Hashes (string key) or Array of Arrays (numeric index)
+	// CASE 2b: Array of Hashes (string key) or Array of Arrays (numeric index)
 				SV*arg2 = ST(1);
 				STRLEN klen;
 				const char*key = SvPV(arg2, klen);
@@ -23485,38 +23482,37 @@ CODE:
 					}
 				}
 			} else { // CASE 3: Hash Reference (No 2nd argument)
-				 HE*he;
-				 hv_iterinit(hv);
-				 while ((he = hv_iternext(hv))) {
-					 SV*val = HeVAL(he);
-					 if (SvROK(val)) {// SAFETY CHECK
-						 SV*inner_rv = SvRV(val);
-						 // If it's a Hash of Arrays, count ALL elements in the inner arrays
-						 if (SvTYPE(inner_rv) == SVt_PVAV) {
-							 AV*inner_av = (AV*)inner_rv;
-							 size_t len = av_len(inner_av) + 1;
-							 for (size_t i = 0; i < len; i++) {
-								 SV**valp = av_fetch(inner_av, i, 0);
-								 if (valp) increment_count(aTHX_ counts_hv, *valp, fast_nv);
-							 }
-						 } else if (SvTYPE(inner_rv) == SVt_PVHV) {
-						 // If it's a Hash of Hashes, count ALL elements across all inner keys
-							 HV*inner_hv = (HV*)inner_rv;
-							 HE*inner_he;
-							 hv_iterinit(inner_hv);
-							 while ((inner_he = hv_iternext(inner_hv))) {
-								 SV*inner_val = HeVAL(inner_he);
-								 increment_count(aTHX_ counts_hv, inner_val, fast_nv);
-							 }
-						 } else { //Unrecognized nested reference type
-							 SvREFCNT_dec((SV*)counts_hv);
-							 croak("value_counts: Unsupported nested reference type.");
-						 }
-					 } else {
-						 //Simple scalar value
-						 increment_count(aTHX_ counts_hv, val, fast_nv);
-					 }
-				 }
+				HE*he;
+				hv_iterinit(hv);
+				while ((he = hv_iternext(hv))) {
+					SV*val = HeVAL(he);
+					if (SvROK(val)) {// SAFETY CHECK
+						SV*inner_rv = SvRV(val);
+						// If it's a Hash of Arrays, count ALL elements in the inner arrays
+						if (SvTYPE(inner_rv) == SVt_PVAV) {
+							AV*inner_av = (AV*)inner_rv;
+							size_t len = av_len(inner_av) + 1;
+							for (size_t i = 0; i < len; i++) {
+								SV**valp = av_fetch(inner_av, i, 0);
+								if (valp) increment_count(aTHX_ counts_hv, *valp, fast_nv);
+							}
+						} else if (SvTYPE(inner_rv) == SVt_PVHV) {
+						// If it's a Hash of Hashes, count ALL elements across all inner keys
+							HV*inner_hv = (HV*)inner_rv;
+							HE*inner_he;
+							hv_iterinit(inner_hv);
+							while ((inner_he = hv_iternext(inner_hv))) {
+								SV*inner_val = HeVAL(inner_he);
+								increment_count(aTHX_ counts_hv, inner_val, fast_nv);
+							}
+						} else { //Unrecognized nested reference type
+							SvREFCNT_dec((SV*)counts_hv);
+							croak("value_counts: Unsupported nested reference type.");
+						}
+					} else {//Simple scalar value
+						increment_count(aTHX_ counts_hv, val, fast_nv);
+					}
+				}
 			}
 		} else {// Safely decrement the reference count of our hash before dying to prevent a leak
 			SvREFCNT_dec((SV*)counts_hv);
@@ -23832,16 +23828,13 @@ CODE:
 	  else if (strEQ(key, "rank"))   rank_opt  = SvOK(val) ? (long)SvIV(val) : -1;
 	  else croak("prcomp: unknown argument '%s'", key);
 	}
-
 	if (!x_sv || !SvROK(x_sv))
 	  croak("prcomp: 'x' is a required argument and must be a reference");
-
 	// 3. Detect Data Structure (AoA, AoH, HoA, HoH)
 	bool is_aoa = 0, is_aoh = 0, is_hoa = 0, is_hoh = 0;
 	size_t n_raw = 0, p = 0;
 	char **colnames = NULL;
 	SV *ref = SvRV(x_sv);
-
 	if (SvTYPE(ref) == SVt_PVAV) {
 	  AV *av = (AV*)ref;
 	  n_raw = av_len(av) + 1;
@@ -23855,18 +23848,18 @@ CODE:
 		   } else croak("prcomp: Array reference must contain ArrayRefs (AoA) or HashRefs (AoH)");
 	  }
 	} else if (SvTYPE(ref) == SVt_PVHV) {
-	  HV *hv = (HV*)ref;
-	  if (hv_iterinit(hv) > 0) {
-		   HE *entry = hv_iternext(hv);
-		   SV *val = hv_iterval(hv, entry);
-		   if (SvROK(val) && SvTYPE(SvRV(val)) == SVt_PVAV) {
-			   is_hoa = TRUE;
-			   n_raw = av_len((AV*)SvRV(val)) + 1;
-		   } else if (SvROK(val) && SvTYPE(SvRV(val)) == SVt_PVHV) {
-			   is_hoh = TRUE;
-			   n_raw = hv_iterinit(hv);
-		   } else croak("prcomp: Hash reference must contain ArrayRefs (HoA) or HashRefs (HoH)");
-	  }
+		HV *hv = (HV*)ref;
+		if (hv_iterinit(hv) > 0) {
+			HE *entry = hv_iternext(hv);
+			SV *val = hv_iterval(hv, entry);
+			if (SvROK(val) && SvTYPE(SvRV(val)) == SVt_PVAV) {
+				is_hoa = 1;
+				n_raw = av_len((AV*)SvRV(val)) + 1;
+			} else if (SvROK(val) && SvTYPE(SvRV(val)) == SVt_PVHV) {
+				is_hoh = 1;
+				n_raw = hv_iterinit(hv);
+			} else croak("prcomp: Hash reference must contain ArrayRefs (HoA) or HashRefs (HoH)");
+		}
 	}
 
 	if (n_raw == 0 || (p == 0 && !is_aoh && !is_hoa && !is_hoh)) croak("prcomp: input matrix is empty or has zero columns");
@@ -23905,14 +23898,11 @@ CODE:
 				      (UV)r, (UV)len, (UV)p);
 		}
 	}
-
-	// 4. Extract and Sort Column Names (for named-column inputs)
-	if (is_aoh) {
+	if (is_aoh) {// 4. Extract and Sort Column Names (for named-column inputs)
 		AV *av = (AV*)ref;
 		HV *first = (HV*)SvRV(*av_fetch(av, 0, 0));
 		p = hv_iterinit(first);
 		if (p == 0) croak("prcomp: row hashes cannot be empty");
-
 		colnames = (char**)safemalloc(p * sizeof(char*));
 		size_t c = 0;
 		HE *entry;
@@ -23950,23 +23940,23 @@ CODE:
 	NV *restrict X_mat = (NV*)safemalloc(n_raw * p * sizeof(NV));
 	size_t n = 0;
 	if (is_aoa) {
-	  AV *av = (AV*)ref;
-	  for (size_t i = 0; i < n_raw; i++) {
-		   SV **row_sv = av_fetch(av, i, 0);
-		   if (row_sv && SvROK(*row_sv) && SvTYPE(SvRV(*row_sv)) == SVt_PVAV) {
-			   AV *row_av = (AV*)SvRV(*row_sv);
-			   bool row_ok = TRUE;
-			   for (size_t j = 0; j < p; j++) {
-				   SV **cell_sv = av_fetch(row_av, j, 0);
-				   if (cell_sv && SvOK(*cell_sv) && looks_like_number(*cell_sv)) {
-					   NV v = SvNV(*cell_sv);
-					   if (!nv_isfinite(v)) row_ok = FALSE;
-					   else X_mat[n * p + j] = v;
-				   } else row_ok = FALSE;
-			   }
-			   if (row_ok) n++;
-		   }
-	  }
+		AV *av = (AV*)ref;
+		for (size_t i = 0; i < n_raw; i++) {
+			SV **row_sv = av_fetch(av, i, 0);
+			if (row_sv && SvROK(*row_sv) && SvTYPE(SvRV(*row_sv)) == SVt_PVAV) {
+				AV *row_av = (AV*)SvRV(*row_sv);
+				bool row_ok = TRUE;
+				for (size_t j = 0; j < p; j++) {
+					SV **cell_sv = av_fetch(row_av, j, 0);
+					if (cell_sv && SvOK(*cell_sv) && looks_like_number(*cell_sv)) {
+						NV v = SvNV(*cell_sv);
+						if (!nv_isfinite(v)) row_ok = FALSE;
+						else X_mat[n * p + j] = v;
+					} else row_ok = FALSE;
+				}
+				if (row_ok) n++;
+			}
+		}
 	} else if (is_aoh) {
 	  AV *av = (AV*)ref;
 	  for (size_t i = 0; i < n_raw; i++) {
@@ -24024,12 +24014,12 @@ CODE:
 		}
 	}
 	if (n == 0) {
-	  if (colnames) {
-		   for (size_t i = 0; i < p; i++) Safefree(colnames[i]);
-		   Safefree(colnames);
-	  }
-	  Safefree(X_mat);
-	  croak("prcomp: 0 valid observations after listwise NA deletion");
+		if (colnames) {
+			for (size_t i = 0; i < p; i++) Safefree(colnames[i]);
+			Safefree(colnames);
+		}
+		Safefree(X_mat);
+		croak("prcomp: 0 valid observations after listwise NA deletion");
 	}
 	// 6. Center and Scale
 	NV *restrict cen_vec = (NV*)safecalloc(p, sizeof(NV));
@@ -25121,7 +25111,7 @@ SV* density(...)
 				na_rm = SvTRUE(val) ? TRUE : FALSE;
 			else croak("density: unknown argument '%s'", key);
 		}
-		//R: if(!missing(window) && missing(kernel)) kernel <- window
+	//R: if(!missing(window) && missing(kernel)) kernel <- window
 		if (window >= 0 && kernel < 0) kernel = window;
 		if (kernel < 0) kernel = DENS_K_GAUSSIAN;
 		if (give_rkern) {

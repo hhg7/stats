@@ -11,16 +11,24 @@ use Test::LeakTrace 'no_leaks_ok';
 # empty header cell plus a per-row label column (HoH -> outer key, otherwise
 # 1..n); row.names => 'col' promotes an existing column to the labels.
 
+# Every temporary file this test writes goes inside this one directory, which
+# File::Temp removes at exit: a fixed name in the shared temporary directory is
+# shared with every other process on the machine, and a smoker testing several
+# perls at once runs two copies of this file side by side.
+my $dir = tempdir( CLEANUP => 1 );
+
+# An unchecked open() reports a missing file as "readline() on closed
+# filehandle" without ever naming it; name the path and errno instead.
 sub file2string {
 	my $file = shift;
-	open my $fh, '<', $file;
+	open my $fh, '<', $file or die "cannot read \"$file\": $!";
 	return do { local $/; <$fh> };
 }
 my %data = (
 	'Row_A' => { 'Col1' => 10, 'Col2' => 20 },
 	'Row_B' => { 'Col1' => 30, 'Col3' => 40 },
 );
-my $tmp_file = '/tmp/test.tsv';
+my $tmp_file = "$dir/test.tsv";
 write_table(\%data, $tmp_file, sep => "\t", 'row.names' => 1, 'undef.val' => 'NA');
 my $str = file2string($tmp_file);
 my $expected = "\tCol1\tCol2\tCol3\nRow_A\t10\t20\tNA\nRow_B\t30\tNA\t40\n";
@@ -37,7 +45,7 @@ no_leaks_ok {
 # TEST 1: HASH OF HASHES (positional)
 # Demonstrates: HoH, sorted rows/columns, "NA" for missing values,
 #               quoting when separator ("\t") or " appears inside data
-my $fh = File::Temp->new(DIR => '/tmp', SUFFIX => '.tsv', UNLINK => 1);
+my $fh = File::Temp->new(DIR => $dir, SUFFIX => '.tsv', UNLINK => 1);
 close $fh;
 $tmp_file = $fh->filename;
 my %data_hoh = (
@@ -62,7 +70,7 @@ no_leaks_ok {
 # TEST 2: HASH OF ARRAYS (positional)
 # Demonstrates: HoA, auto-generated V1/V2... headers, padding shorter arrays with "NA",
 #               quoting when separator ("\t") or " appears inside data
-$tmp_file = '/tmp/test_hoa.tsv';
+$tmp_file = "$dir/test_hoa.tsv";
 my %data_hoa = (
 	'r1' => [42, 'hello,world', undef, undef],
 	'r2' => [99, undef, 'quote"here', undef],
@@ -84,8 +92,8 @@ no_leaks_ok {
 } 'write_table: no memory leaks with hash-of-hash input' unless $INC{'Devel/Cover.pm'};
 # No row.names passed: the default is OFF, so there is no label column and no
 # leading empty header cell. undef.val still fills the gaps.
-write_table(\%data_hoa, '/tmp/undef.val.tsv', sep => "\t", 'undef.val' => 'nan');
-$str = file2string('/tmp/undef.val.tsv');
+write_table(\%data_hoa, "$dir/undef.val.tsv", sep => "\t", 'undef.val' => 'nan');
+$str = file2string("$dir/undef.val.tsv");
 $expected = "r1\tr2\tr3\n42\t99\tnan\nhello,world\tnan\t\"tab\tin\"\nnan\t\"quote\"\"here\"\tnan\nnan\tnan\tnan\n";
 is($str, $expected, 'undefined values are switched to nan (no row labels by default)');
 
@@ -113,7 +121,7 @@ my %hoa = (
 	b => [4..9],
 	c => [0..5]
 );
-$fh = File::Temp->new(DIR => '/tmp', SUFFIX => '.tsv', UNLINK => 1);
+$fh = File::Temp->new(DIR => $dir, SUFFIX => '.tsv', UNLINK => 1);
 close $fh;
 write_table(
 	\%hoa, $fh->filename,
@@ -140,7 +148,7 @@ my $flat_hash = {
 
 # Test 1: Flat hash with row.names = 0
 # The output should exactly match: A,B \n 1,2
-my ($fh1, $file1) = tempfile(SUFFIX => '.csv', UNLINK => 1);
+my ($fh1, $file1) = tempfile(DIR => $dir, SUFFIX => '.csv', UNLINK => 1);
 write_table($flat_hash, $file1, sep => ',', 'row.names' => 0);
 
 open my $in1, '<', $file1 or die "Could not open $file1: $!";
@@ -155,7 +163,7 @@ like($lines1[1], qr/^(?:""|'')?1(?:""|'')?,(?:""|'')?2(?:""|'')?$/, "Flat hash (
 # Output gracefully prepends the implicit "1" row identifier:
 # "",A,B
 # "1",1,2
-my ($fh2, $file2) = tempfile(SUFFIX => '.csv', UNLINK => 1);
+my ($fh2, $file2) = tempfile(DIR => $dir, SUFFIX => '.csv', UNLINK => 1);
 write_table($flat_hash, $file2, sep => ',', 'row.names' => 1);
 
 open my $in2, '<', $file2 or die "Could not open temp file: $!";
@@ -166,7 +174,6 @@ chomp @lines2;
 like($lines2[0], qr/^(?:""|'')?,(?:""|'')?A(?:""|'')?,(?:""|'')?B(?:""|'')?$/, "Flat hash (rownames=1) Header prepends blank");
 like($lines2[1], qr/^(?:""|'')?1(?:""|'')?,(?:""|'')?1(?:""|'')?,(?:""|'')?2(?:""|'')?$/, "Flat hash (rownames=1) Row prepends '1'");
 
-my $dir = tempdir( CLEANUP => 1 );
 my $n = 0;
 sub path { my $name = shift // ('t' . ++$n . '.csv'); return "$dir/$name"; }
 sub slurp { my $f = shift; open my $fh, '<', $f or die "open $f: $!"; local $/; return scalar <$fh>; }

@@ -10,7 +10,7 @@ use Test::LeakTrace 'no_leaks_ok';
 
 # 1. Multi-character separators (the memcmp branch)
 my $content = "col1||col2||col3\nval1||val2||val3";
-my $fh = File::Temp->new(DIR => '/tmp', UNLINK => 1);
+my $fh = File::Temp->new(UNLINK => 1);
 print $fh $content;
 close $fh;
 my $res = read_table($fh->filename, sep => '||');
@@ -27,7 +27,7 @@ a,b
 # This comment occurs mid-file
 3,4
 EOF
-$fh = File::Temp->new(DIR => '/tmp', UNLINK => 1);
+$fh = File::Temp->new(UNLINK => 1);
 print $fh $content;
 close $fh;
 $res = read_table($fh->filename, sep => ',');
@@ -41,7 +41,7 @@ is($res->[1]{a}, 3, 'Mid-file comment: skipped comment line and read next row');
 #    whole value lands in row 0; there is no row 1 and nothing is dropped.
 #
 $content = "colA,colB\nval1,\"val2\nval3,\"unterminated_val";
-$fh = File::Temp->new(DIR => '/tmp', UNLINK => 1);
+$fh = File::Temp->new(UNLINK => 1);
 print $fh $content;
 close $fh;
 $res = read_table($fh->filename, sep => ',');
@@ -57,7 +57,7 @@ is($res->[0]{colB}, "val2\nval3,unterminated_val",
 #    is a property of the malformed input, not a lost field.)
 #
 $content = "colA,colB\nval1,\"val2\nstill inside";   # one quote, never closed
-$fh = File::Temp->new(DIR => '/tmp', UNLINK => 1);
+$fh = File::Temp->new(UNLINK => 1);
 print $fh $content;
 close $fh;
 $res = read_table($fh->filename, sep => ',');
@@ -87,7 +87,7 @@ is($res1->[0]{colA}, 'val1_stray', 'Stray \r outside quotes is dropped (lenient)
 #    handling would flip test 5: a lone \r can't be both noise and terminator.)
 #
 my $mac = "colA,colB\rval1,val2\rval3,val4";
-my $fh2 = File::Temp->new(DIR => '/tmp', UNLINK => 1);
+my $fh2 = File::Temp->new(UNLINK => 1);
 binmode $fh2;
 print $fh2 $mac;
 close $fh2;

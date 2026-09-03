@@ -10,6 +10,26 @@ use Test::Exception; # die_ok
 use Test::More;
 use Test::LeakTrace 'no_leaks_ok';
 
+# Every temporary file this test writes goes inside this one directory, which
+# File::Temp removes at exit.  Nothing here may name a file in the shared
+# temporary directory directly, for two reasons.
+#
+# The first is that a fixed name ("/tmp/test_aoh.tsv") is shared with every
+# other process on the machine: a CPAN smoker testing several perls at once
+# runs two copies of this file side by side, and each one unlinks the other's
+# table between the write and the read.
+#
+# The second is subtler and is what actually reached CPAN in 0.313.
+# File::Temp builds its "random" names with rand(), so the srand() below --
+# which fixes the seed so that the sample()/rnorm() cases repeat -- also makes
+# every File::Temp name from that point on identical in every run and every
+# concurrent process.  Two copies of this file then agree on the name, and one
+# object's destructor unlinks the file the other is still using: the failure
+# looked like "readline() on closed filehandle" from a slurp of a file that had
+# been written successfully a microsecond earlier.  Putting them under a
+# directory whose own name was drawn before srand() keeps them apart.
+my $TMPDIR = File::Temp::tempdir('LikeR01_XXXXXXXX', TMPDIR => 1, CLEANUP => 1);
+
 # Custom helper for floating-point comparisons.
 #
 # $epsilon is relative to the size of the expected value, floored at $epsilon
@@ -2660,9 +2680,13 @@ foreach my $col (@col) {
 }
 
 # The corrected call:
+# An unchecked open() here reports a missing file as "readline() on closed
+# filehandle", which under 'warnings FATAL => all' kills the run without ever
+# naming the file -- how the 0.313 temp-file collision reached CPAN as an
+# undiagnosable report.  Name the path and errno instead.
 sub file2string {
 	my $file = shift;
-	open my $fh, '<', $file;
+	open my $fh, '<', $file or die "cannot read \"$file\": $!";
 	return do { local $/; <$fh> };
 }
 # read_table with filter: aoh
@@ -2774,7 +2798,7 @@ if ($n == 238) {
 # TEST 3: ARRAY OF HASHES (positional)
 # Demonstrates: AoH, preserves original array order (no sorting of rows),
 #               row names become 1, 2, 3..., quoting when separator ("\t") or " appears inside data
-$tmp_file = '/tmp/test_aoh.tsv';
+$tmp_file = "$TMPDIR/test_aoh.tsv";
 my @data_aoh = (
 	{ 'c1' => 42,          'c2' => 'hello,world' },
 	{ 'c1' => 99,          'c3' => 'quote"here' },
@@ -2793,7 +2817,7 @@ if (is($str, $expected, 'write_table successfully wrote a tab-delimited file (Ar
 #  read_table & write_table specific bug checks
 
 #'read_table / write_table: Escaped quote handling' => sub {
-my $tmp_csv = File::Temp->new(DIR => '/tmp', SUFFIX => '.csv', UNLINK => 1);
+my $tmp_csv = File::Temp->new(DIR => $TMPDIR, SUFFIX => '.csv', UNLINK => 1);
 close $tmp_csv;
 my @data_out = (
 	{ 'c1' => 42, 'c2' => 'Normal String' },
@@ -2806,7 +2830,7 @@ my $data_in = read_table($tmp_csv->filename, 'output.type' => 'aoh');
 is($data_in->[1]{c2}, 'String with "quotes" inside', 'read_table correctly unescapes internal quotes');
 
 #'write_table: Nested reference stringification protection' => sub {
-$fh = File::Temp->new( DIR => '/tmp', SUFFIX => '.csv', UNLINK => 1);
+$fh = File::Temp->new( DIR => $TMPDIR, SUFFIX => '.csv', UNLINK => 1);
 close $fh;
 my %bad_data = (
 	'r1' => { 'c1' => 42, 'c2' => [1, 2, 3] } # Arrayref inside the hash
@@ -2815,7 +2839,7 @@ dies_ok {
 	write_table(\%bad_data, $fh->filename);
 } 'write_table dies to prevent silent stringification of nested references';
 #'write_table: col.names feature validation' => sub {
-$fh = File::Temp->new(DIR => '/tmp', SUFFIX => '.tsv', UNLINK => 1);
+$fh = File::Temp->new(DIR => $TMPDIR, SUFFIX => '.tsv', UNLINK => 1);
 close $fh;
 $tmp_file = $fh->filename;
 # Test 1: AoH filtering and reordering
@@ -2854,13 +2878,13 @@ no_leaks_ok {
 	eval {
 		write_table(
 			\%hoa,
-			'/tmp/hoa.test.tsv',
+			"$TMPDIR/hoa.test.tsv",
 			sep => "\t"
 		);
 	};
 } 'write_table: no leaks with hash-of-array input'  unless $INC{'Devel/Cover.pm'};
-unlink '/tmp/hoa.test.tsv';
-my $f = '/tmp/hoa.test2.tsv';
+unlink "$TMPDIR/hoa.test.tsv";
+my $f = "$TMPDIR/hoa.test2.tsv";
 write_table(
 	\%hoa, $f,	sep => "\t", 'col.names' => ['B', 'C', 'A'], 'row.names' => 1, 'undef.val' => 'NA'
 );
@@ -2886,7 +2910,7 @@ is($str, $expected, 'write_table: hoa input with col.names and nondigit input');
 	'r2' => [99, undef, 'quote"here', undef],
 	'r3' => [undef, "tab\tin", undef, undef],
 );
-$fh = File::Temp->new(DIR => '/tmp', SUFFIX => '.tsv', UNLINK => 1);
+$fh = File::Temp->new(DIR => $TMPDIR, SUFFIX => '.tsv', UNLINK => 1);
 close $fh;
 write_table(
 	\%correct,	$fh->filename,	sep => "\t", 'undef.val' => 'NA'

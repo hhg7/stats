@@ -546,14 +546,25 @@ for my $r (@TIES) {
 	rel_ok($got->{'p.value'}, $p, "ties n=$n alt=$alt exact=$ex: p.value");
 }
 
-# The hang.  A wall-clock bound is the only thing that distinguishes "capped
-# at n = 9 and handed to AS 89" from "walked n! permutations": both return the
-# same number, one of them after longer than anyone will wait.  n = 13 took
-# over a minute before the cap and n = 24 never finished, so five seconds for
-# all of them together is a bound no correct implementation can miss and no
-# n! walk can meet.
+# The hang.  A clock is the only thing that distinguishes "capped at n = 9 and
+# handed to AS 89" from "walked n! permutations": both return the same number,
+# one of them after longer than anyone will wait.
+#
+# The clock has to be CPU time and not wall clock.  What an n! walk spends is
+# CPU; wall clock also measures how loaded the machine is, and this test read
+# it through 0.314, where it cost a CPAN smoker a FAIL: perl 5.12.5 on a box
+# whose run of this suite took 1275 s of wall clock against 582 s of CPU
+# charged 6 wall seconds to this block against a 5-second bound, for work
+# measured below at 1 ms.  times() is core, needs no module, and reports self
+# user and system on every target including Windows.
+#
+# All five cases together cost 1.0 ms of CPU on the 5.44.0-quadmath build --
+# the widest NV width here, and so the slowest -- measured over 20 repetitions
+# because one is under the 10 ms tick.  Two seconds is 2000x that, and no n!
+# walk comes near it: before the cap, n = 13 took over a minute and n = 24
+# asked for 6.2e23 permutations and never returned.
 {
-	my $t0 = time;
+	my @t0 = times;
 	for my $c (@HANG) {
 		my $n = $c->[0];
 		my @y = (1 .. $n);
@@ -561,8 +572,11 @@ for my $r (@TIES) {
 		my $r = call($n, \@y, 'two.sided', 1);
 		ok(defined $r->{'p.value'}, "exact => 1 at n=$n returns");
 	}
-	cmp_ok(time - $t0, '<', 5,
-	       'exact => 1 is capped at n = 9 rather than walking n! permutations');
+	my @t1 = times;
+	my $cpu = ($t1[0] - $t0[0]) + ($t1[1] - $t0[1]);   # self user + system
+	cmp_ok($cpu, '<', 2,
+	       'exact => 1 is capped at n = 9 rather than walking n! permutations')
+		or diag(sprintf 'the @HANG block burned %.3f s of CPU', $cpu);
 }
 
 # exact defaults to TRUE, so n >= 10 takes AS 89 and not the asymptotic t.

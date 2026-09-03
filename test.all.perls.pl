@@ -445,6 +445,10 @@ sub build_one {
 	my $perl = File::Spec->catfile($bin, 'perl');
 
 	my $log = File::Spec->catfile($log_dir, "$version.$stamp.log");
+	# Re-create the log directory rather than trusting that it survived.  A
+	# matrix run is minutes long, and anything that removes .build meanwhile
+	# turns a perl that was building fine into a failure with no log to read.
+	mkdirp($log_dir);
 	open my $logfh, '>', $log or die "$0: cannot write $log: $!\n";
 	$logfh->autoflush(1);
 	STDOUT->autoflush(1);
@@ -599,6 +603,10 @@ sub copy_tree {
 # something needs explaining afterwards.
 sub write_result {
 	my ($file, $r) = @_;
+	# Every caller writes into $log_dir, and this one runs *after* the whole
+	# build: a log directory that went away mid-run must cost the report, not
+	# the five minutes of work the report is about.
+	mkdirp($log_dir);
 	open my $fh, '>', $file or die "$0: cannot write $file: $!\n";
 	local $Data::Dumper::Indent   = 0;
 	local $Data::Dumper::Sortkeys = 1;
@@ -648,8 +656,13 @@ sub run_parallel {
 		my $kid = delete $kid{$pid} or return;
 		my $r   = read_result($kid->{result});
 		if (!$r) {
-			# the child died without reporting: exec failure, signal, OOM
-			$r = { version => $kid->{version}, log => $kid->{log},
+			# The child died without reporting: exec failure, signal, OOM, or
+			# a log directory that disappeared under it.  Naming a log file
+			# that was never created sends the reader looking for evidence
+			# that is not there, so distinguish the two.
+			my $log = -e $kid->{log} ? $kid->{log}
+				: "$kid->{log} (never written)";
+			$r = { version => $kid->{version}, log => $log,
 				reported => '?', steps => [], warnings => 0, seconds => 0,
 				failed => sprintf('child exited %d%s', $status >> 8,
 					($status & 127) ? ' on signal ' . ($status & 127) : '') };
@@ -694,9 +707,26 @@ sub run_parallel {
 				$SIG{$_} = 'DEFAULT' for qw(INT TERM);
 				setpgrp 0, 0;   # so ^C reaches this whole build, once, via
 						# the parent's handler and not the terminal
-				chdir $work or die "$0: chdir $work: $!\n";
-				my $r = build_one($version, 1);
-				write_result($result, $r);
+				# A die in here used to reach the parent as nothing but an
+				# exit status, reported as a bare 'child exited N' with no
+				# steps and no elapsed time -- indistinguishable from a build
+				# that never started.  Catch it and put the reason where the
+				# parent actually looks, which is the result file.
+				my $r = eval {
+					chdir $work or die "chdir $work: $!\n";
+					build_one($version, 1);
+				};
+				unless ($r) {
+					my $why = $@ || 'build_one returned nothing';
+					chomp $why;   # $r->{failed} is printed inside quotes
+					$r = { version => $version, log => $log,
+						reported => '?', steps => [], warnings => 0,
+						seconds => 0, failed => $why };
+				}
+				# last resort: the result file is unwritable, so the only
+				# place left to say why is the terminal.
+				eval { write_result($result, $r); 1 }
+					or print STDERR "$0: $version: $@";
 				exit 0;
 			}
 			$kid{$pid} = { version => $version, work => $work,
@@ -747,7 +777,13 @@ for my $r (@results) {
 		($r->{failed} ? 'FAIL' : 'PASS'),
 		$r->{seconds},
 		($r->{warnings} || 0),
-		($r->{failed} ? "failed at '$r->{failed}' - see $r->{log}"
+		# Send the reader to the log only when there is one to read: if
+		# whatever removed the log directory mid-run took the log with it,
+		# "see <path>" is an invitation to hunt for a file that is not there.
+		($r->{failed}
+			? "failed at '$r->{failed}' - "
+				. (-e $r->{log} ? "see $r->{log}"
+					: "log gone: $r->{log}")
 			: ($r->{result} ? "Result: $r->{result}" : 'no test summary')),
 		;
 }
