@@ -6704,6 +6704,210 @@ static void S_emit_row(pTHX_ AV **rowp, SV *field, bool use_cb, SV *callback, AV
 	*rowp = newAV();
 }
 
+/*read_table's fast path: assembling the output shape here instead of in perl.
+
+read_table used to hand every single row to a perl closure that rebuilt it as
+a hash, one field at a time.  Measured on a 300,000 x 5 CSV, that closure was
+79% of read_table's wall clock and this parser only 21%, so the shape the
+caller asked for is now built here, from the fields the parser already has.
+
+The closure is still what reads the header -- it has to be, since the header
+is where every message read_table can produce comes from -- and it is still
+the only path for the shapes that need per-row perl: 'hoh' names each row from
+one of its own columns, and a 'filter' is perl by definition.  read_table
+passes a plan hash only when neither applies; the parser looks at it after
+each callback returns, and once the callback has filled it in, takes over.
+
+The plan's keys, all set by read_table's install_plan():
+
+  keys  the output column names, header order, duplicates already collapsed
+  idx   for each of those, the field index to take it from.  This is where a
+        duplicate column name is resolved: idx holds the LAST field carrying
+        the name, which is what "later values win" means when the perl path
+        builds one hash per row.
+  ncol  the field count every data row must have -- the full header width,
+        which is >= the number of output columns when names repeat
+  out    mode 0: the array read_table returns.  mode 1: the column arrays, in
+         the same order as keys.
+  mode   0 = aoh, one hash per row; 1 = hoa, one array per column
+  na     the na.strings set, or undef when there is none
+  file   for the alignment message
+  row    a REFERENCE to read_table's $data_row, read once when the plan is
+         picked up: the callback has already emitted the rows before this
+         point, and the alignment message counts rows from 1 across both.*/
+typedef struct {
+	AV     *out;
+	SV    **keys;	//mode 0 only; owned by the plan hash, not by us
+	AV    **cols;	//mode 1 only; ditto
+	size_t *idx;	//validated against ncol in S_plan_init()
+	HV     *na;	//NULL when no na.strings were given
+	const char *file;
+	size_t  nout;
+	size_t  ncol;
+	size_t  row;	//data rows emitted so far, by both paths together
+	short int mode;	// 0 = aoh, 1 = hoa
+	bool    active;	//has the callback filled the plan in yet
+} csv_plan;
+
+/*One required plan key, or a croak.  install_plan() is the only thing that
+writes a plan, so none of these can fire from read_table -- but every idx below
+indexes a C array with a number that came from perl, and a croak is a better
+answer than a crash if _parse_csv_file ever gets a plan from somewhere else.*/
+static SV *S_plan_key(pTHX_ HV *restrict h, const char *restrict k)
+{
+	SV **e = hv_fetch(h, k, (I32)strlen(k), 0);
+	if (!e || !*e || !SvOK(*e))
+		croak("_parse_csv_file: plan is missing '%s'", k);
+	return *e;
+}
+
+/*As above, for a key that has to hold a reference to type t.*/
+static SV *S_plan_ref(pTHX_ HV *restrict h, const char *restrict k, svtype t)
+{
+	SV *sv = S_plan_key(aTHX_ h, k);
+	if (!SvROK(sv) || SvTYPE(SvRV(sv)) != t)
+		croak("_parse_csv_file: plan key '%s' is the wrong kind of reference", k);
+	return SvRV(sv);
+}
+
+/*Read the plan hash into the struct above, once, the first time read_table has
+filled it in.  Every SV, AV and HV pointer taken here is borrowed: the plan
+hash is a lexical in read_table and outlives this parse, so the only things
+this frees are the three C arrays, from S_plan_free().*/
+static void S_plan_init(pTHX_ csv_plan *restrict p, HV *restrict h)
+{
+	AV *keys, *idx;
+	size_t j;
+
+	keys    = (AV*)S_plan_ref(aTHX_ h, "keys", SVt_PVAV);
+	idx     = (AV*)S_plan_ref(aTHX_ h, "idx",  SVt_PVAV);
+	p->out  = (AV*)S_plan_ref(aTHX_ h, "out",  SVt_PVAV);
+	p->ncol = (size_t)SvUV(S_plan_key(aTHX_ h, "ncol"));
+	p->mode = (short int)SvIV(S_plan_key(aTHX_ h, "mode"));
+	p->file = SvPV_nolen_const(S_plan_key(aTHX_ h, "file"));
+	{	/*a reference to read_table's $data_row, not a copy: it is read
+		here, which is after the callback has emitted any rows of its own*/
+		SV *rsv = S_plan_key(aTHX_ h, "row");
+		if (!SvROK(rsv))
+			croak("_parse_csv_file: plan key 'row' is not a reference");
+		p->row = (size_t)SvUV(SvRV(rsv));
+	}
+	{
+		SV **e = hv_fetchs(h, "na", 0);
+		p->na = (e && *e && SvROK(*e) && SvTYPE(SvRV(*e)) == SVt_PVHV)
+		        ? (HV*)SvRV(*e) : NULL;
+	}
+	if (p->mode != 0 && p->mode != 1)
+		croak("_parse_csv_file: plan 'mode' %d is not 0 (aoh) or 1 (hoa)",
+		      (int)p->mode);
+	if (av_len(idx) != av_len(keys))
+		croak("_parse_csv_file: plan 'idx' and 'keys' are different lengths");
+
+	p->nout = (size_t)(av_len(keys) + 1);
+	Newx(p->idx,  p->nout ? p->nout : 1, size_t);
+	Newx(p->keys, p->nout ? p->nout : 1, SV*);
+	for (j = 0; j < p->nout; j++) {
+		SV **ie = av_fetch(idx,  (SSize_t)j, 0);
+		SV **ke = av_fetch(keys, (SSize_t)j, 0);
+		IV   i  = (ie && *ie) ? SvIV(*ie) : -1;
+		if (i < 0 || (UV)i >= (UV)p->ncol || !ke || !*ke)
+			croak("_parse_csv_file: plan 'idx' entry %" UVuf " is not a field "
+			      "of a %" UVuf "-column row", (UV)j, (UV)p->ncol);
+		p->idx[j]  = (size_t)i;
+		p->keys[j] = *ke;
+	}
+	if (p->mode == 1) {
+		if ((size_t)(av_len(p->out) + 1) != p->nout)
+			croak("_parse_csv_file: plan 'out' has one array per column in "
+			      "hoa mode");
+		Newx(p->cols, p->nout ? p->nout : 1, AV*);
+		for (j = 0; j < p->nout; j++) {
+			SV **ce = av_fetch(p->out, (SSize_t)j, 0);
+			if (!ce || !*ce || !SvROK(*ce) || SvTYPE(SvRV(*ce)) != SVt_PVAV)
+				croak("_parse_csv_file: plan 'out' entry %" UVuf " is not an "
+				      "ARRAY reference", (UV)j);
+			p->cols[j] = (AV*)SvRV(*ce);
+		}
+	}
+	p->active = TRUE;
+}
+
+/*Save-stack destructor for the plan.  The struct is on the heap rather than
+the XS body's stack because a croak inside S_fast_row() unwinds that frame
+before the save stack is run, and this would then be freeing through a
+dangling pointer.*/
+static void S_plan_free(pTHX_ void *v)
+{
+	csv_plan *p = (csv_plan*)v;
+	Safefree(p->idx);
+	Safefree(p->keys);
+	Safefree(p->cols);
+	Safefree(p);
+}
+
+/*One data row, straight from the parser's field list into the output shape.
+
+The field SVs are MOVED, not copied: the row AV holds the only reference to
+each, so handing it to the hash or the column array costs a pointer rather
+than a newSVsv() of every cell.  The AV is then reset to empty and reused for
+the next row.  Any field no output column asked for -- which happens only when
+the header repeats a name -- is released here instead.
+
+An empty field, and a field listed in na.strings, become undef, which is the
+same rule the perl path applies and the same one that has always made an empty
+cell undef rather than "".  Every cell is SvPOK -- the parser builds each one
+with newSVsv() from the field accumulator, which is a PV from newSVpvs("") on
+-- so SvCUR() is the whole of the "is it empty" test.
+
+restrict holds on both: row is the parser's own buffer, never one of the arrays
+the plan points at, and the plan is not reachable from it.*/
+static void S_fast_row(pTHX_ csv_plan *restrict p, AV *restrict row)
+{
+	SV **ary;
+	HV  *h = NULL;
+	size_t j, w = (size_t)(AvFILLp(row) + 1);
+
+	if (w != p->ncol) {
+		/*The row is this function's to free: read_table's die() would have
+		been thrown with the row already mortal, and croak() here unwinds
+		past the caller's local before it can drop it.*/
+		size_t at = p->row + 1;
+		SvREFCNT_dec((SV*)row);
+		croak("Alignment error on %s data row %" UVuf " (%" UVuf " fields vs %" UVuf " headers).\n",
+		      p->file, (UV)at, (UV)w, (UV)p->ncol);
+	}
+	p->row++;
+	ary = AvARRAY(row);
+	if (p->mode == 0) {
+		h = newHV();
+		hv_ksplit(h, (IV)p->nout);	//no rehash while the row is filled
+	}
+	for (j = 0; j < p->nout; j++) {
+		SV *v = ary[p->idx[j]];
+		ary[p->idx[j]] = NULL;	//ownership leaves the row here
+		if (v && (SvCUR(v) == 0
+		          || (p->na && hv_exists_ent(p->na, v, 0)))) {
+			SvREFCNT_dec(v);
+			v = NULL;
+		}
+		if (!v)
+			v = newSV(0);	//undef: an empty or na.strings cell
+		if (p->mode == 0) {
+			if (!hv_store_ent(h, p->keys[j], v, 0))
+				SvREFCNT_dec(v);
+		} else {
+			av_push(p->cols[j], v);
+		}
+	}
+	for (j = 0; j < p->ncol; j++) {	//only a repeated header name leaves any
+		SvREFCNT_dec(ary[j]);
+		ary[j] = NULL;
+	}
+	AvFILLp(row) = -1;
+	if (p->mode == 0)
+		av_push(p->out, newRV_noinc((SV*)h));
+}
+
 static void lm_append(pTHX_ char **bufp, size_t *lenp, size_t *capp, const char *s){
 	size_t slen = strlen(s);
 	size_t sep  = (*lenp > 0) ? 1 : 0;
@@ -11213,7 +11417,7 @@ static void scale_opt(pTHX_ SV *val_sv, bool *restrict do_auto,
 	}
 }
 
-#line 11217 "LikeR.c"
+#line 11421 "LikeR.c"
 #ifndef PERL_UNUSED_VAR
 #  define PERL_UNUSED_VAR(var) if (0) var = var
 #endif
@@ -11364,7 +11568,7 @@ S_croak_xs_usage(const CV *const cv, const char *const params)
 #  define TARGn(nv, do_taint) sv_setnv_mg(TARG, nv)
 #endif
 
-#line 11368 "LikeR.c"
+#line 11572 "LikeR.c"
 
 XS_EUPXS(XS_Stats__LikeR__interp_column_xs); /* prototype to pass -Wmissing-prototypes */
 XS_EUPXS(XS_Stats__LikeR__interp_column_xs)
@@ -11389,7 +11593,7 @@ XS_EUPXS(XS_Stats__LikeR__interp_column_xs)
 ;
 	SV *	area_sv = ST(6)
 ;
-#line 11219 "LikeR.xs"
+#line 11423 "LikeR.xs"
 		if (!(SvROK(vals_ref) && SvTYPE(SvRV(vals_ref)) == SVt_PVAV))
 			croak("_interp_column_xs: values must be an array reference");
 		if (!(SvROK(x_ref) && SvTYPE(SvRV(x_ref)) == SVt_PVAV))
@@ -11399,7 +11603,7 @@ XS_EUPXS(XS_Stats__LikeR__interp_column_xs)
 		               method, order_sv, dir, limit_sv, area_sv);
 		FREETMPS; LEAVE;
 		XSRETURN_EMPTY;
-#line 11403 "LikeR.c"
+#line 11607 "LikeR.c"
 	PUTBACK;
 	return;
     }
@@ -11419,11 +11623,11 @@ XS_EUPXS(XS_Stats__LikeR__cols_select)
 ;
 	SV *	spec = ST(2)
 ;
-#line 11234 "LikeR.xs"
+#line 11438 "LikeR.xs"
 	SV *retval; AV *spec_av; SSize_t n, i;
-#line 11425 "LikeR.c"
+#line 11629 "LikeR.c"
 	SV *	RETVAL;
-#line 11236 "LikeR.xs"
+#line 11440 "LikeR.xs"
 {
 	spec_av = (AV *)SvRV(spec);
 	n = av_len(spec_av) + 1;
@@ -11475,7 +11679,7 @@ XS_EUPXS(XS_Stats__LikeR__cols_select)
 	}
 	RETVAL = SvREFCNT_inc(retval);
 }
-#line 11479 "LikeR.c"
+#line 11683 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -11496,11 +11700,11 @@ XS_EUPXS(XS_Stats__LikeR__cols_drop)
 ;
 	SV *	dropset = ST(2)
 ;
-#line 11297 "LikeR.xs"
+#line 11501 "LikeR.xs"
 	SV *retval; HV *drop_hv; SSize_t i;
-#line 11502 "LikeR.c"
+#line 11706 "LikeR.c"
 	SV *	RETVAL;
-#line 11299 "LikeR.xs"
+#line 11503 "LikeR.xs"
 {
 	drop_hv = (HV *)SvRV(dropset);
 	if (shape == 1) { // AoH
@@ -11531,7 +11735,7 @@ XS_EUPXS(XS_Stats__LikeR__cols_drop)
 	}
 	RETVAL = SvREFCNT_inc(retval);
 }
-#line 11535 "LikeR.c"
+#line 11739 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -11552,11 +11756,11 @@ XS_EUPXS(XS_Stats__LikeR__cols_rename)
 ;
 	SV *	map = ST(2)
 ;
-#line 11339 "LikeR.xs"
+#line 11543 "LikeR.xs"
 	SV *retval; HV *map_hv; SSize_t i;
-#line 11558 "LikeR.c"
+#line 11762 "LikeR.c"
 	SV *	RETVAL;
-#line 11341 "LikeR.xs"
+#line 11545 "LikeR.xs"
 {
 	map_hv = (HV *)SvRV(map);
 	if (shape == 1) { // ---- AoH ----
@@ -11587,7 +11791,7 @@ XS_EUPXS(XS_Stats__LikeR__cols_rename)
 	}
 	RETVAL = SvREFCNT_inc(retval);
 }
-#line 11591 "LikeR.c"
+#line 11795 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -11604,11 +11808,11 @@ XS_EUPXS(XS_Stats__LikeR__aoh_key_union)
     {
 	SV *	df = ST(0)
 ;
-#line 11385 "LikeR.xs"
+#line 11589 "LikeR.xs"
 	AV *src; AV *out; HV *seen; SSize_t i, R;
-#line 11610 "LikeR.c"
+#line 11814 "LikeR.c"
 	SV *	RETVAL;
-#line 11387 "LikeR.xs"
+#line 11591 "LikeR.xs"
 {
 	src   = (AV *)SvRV(df);
 	R     = av_len(src) + 1;
@@ -11632,7 +11836,7 @@ XS_EUPXS(XS_Stats__LikeR__aoh_key_union)
 	}
 	RETVAL = newRV_noinc((SV *)out);
 }
-#line 11636 "LikeR.c"
+#line 11840 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -11655,12 +11859,12 @@ XS_EUPXS(XS_Stats__LikeR__drop_dups_core)
 ;
 	IV	keep = (IV)SvIV(ST(3))
 ;
-#line 11439 "LikeR.xs"
+#line 11643 "LikeR.xs"
 	SV *retval; AV *sub_av; SSize_t ns, i, j, R = 0, nsurv = 0;
 	SSize_t *surv; dd_ctx *T;
-#line 11662 "LikeR.c"
+#line 11866 "LikeR.c"
 	SV *	RETVAL;
-#line 11442 "LikeR.xs"
+#line 11646 "LikeR.xs"
 {
 	sub_av = (AV *)SvRV(subset);
 	ns = av_len(sub_av) + 1;
@@ -11803,7 +12007,7 @@ XS_EUPXS(XS_Stats__LikeR__drop_dups_core)
 	RETVAL = SvREFCNT_inc(retval);
 	LEAVE; //dd_ctx_free releases the rest
 }
-#line 11807 "LikeR.c"
+#line 12011 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -11820,7 +12024,7 @@ XS_EUPXS(XS_Stats__LikeR_anova)
     PERL_UNUSED_VAR(ax); /* -Wall */
     SP -= items;
     {
-#line 11590 "LikeR.xs"
+#line 11794 "LikeR.xs"
 		SV *data;
 		char *lhs = NULL, *rhs = NULL;
 		HV *hoa = NULL, *result = NULL;
@@ -11833,8 +12037,8 @@ XS_EUPXS(XS_Stats__LikeR_anova)
 		size_t n = 0, n_used = 0, p, rank;
 		NV **X = NULL, *y = NULL, rss, msres;
 		IV dfres;
-#line 11837 "LikeR.c"
-#line 11603 "LikeR.xs"
+#line 12041 "LikeR.c"
+#line 11807 "LikeR.xs"
 	{
 		if (items < 2)
 			croak("anova: usage anova(\\%%data, 'response ~ terms' [, 'model2', ...])");
@@ -12178,7 +12382,7 @@ XS_EUPXS(XS_Stats__LikeR_anova)
 			XPUSHs(sv_2mortal(newRV_noinc((SV*)result)));
 		}
 	}
-#line 12182 "LikeR.c"
+#line 12386 "LikeR.c"
 	PUTBACK;
 	return;
     }
@@ -12194,7 +12398,7 @@ XS_EUPXS(XS_Stats__LikeR_rank)
     PERL_UNUSED_VAR(ax); /* -Wall */
     SP -= items;
     {
-#line 11950 "LikeR.xs"
+#line 12154 "LikeR.xs"
 		int ties   = RANK_AVERAGE;
 		int nalast = NALAST_TRUE;
 
@@ -12381,7 +12585,7 @@ XS_EUPXS(XS_Stats__LikeR_rank)
 		Safefree(rank_of);
 		Safefree(nidx);
 		Safefree(na);
-#line 12385 "LikeR.c"
+#line 12589 "LikeR.c"
 	PUTBACK;
 	return;
     }
@@ -12403,7 +12607,7 @@ XS_EUPXS(XS_Stats__LikeR_ptukey)
 ;
 	NV	RETVAL;
 	dXSTARG;
-#line 12142 "LikeR.xs"
+#line 12346 "LikeR.xs"
 {
 	/*ptukey(q, nmeans, df, nranges => 1, lower_tail => 1, log_p => 0)
 	Studentized range CDF, as in R's ptukey().  q may also be an
@@ -12427,7 +12631,7 @@ XS_EUPXS(XS_Stats__LikeR_ptukey)
 	if (!lower_tail) pr = 1.0 - pr;
 	RETVAL = log_p ? nv_log(pr) : pr;
 }
-#line 12431 "LikeR.c"
+#line 12635 "LikeR.c"
 	TARGn((NV)RETVAL, 1);
 	ST(0) = TARG;
     }
@@ -12450,7 +12654,7 @@ XS_EUPXS(XS_Stats__LikeR_qtukey)
 ;
 	NV	RETVAL;
 	dXSTARG;
-#line 12173 "LikeR.xs"
+#line 12377 "LikeR.xs"
 {
 	/*qtukey(p, nmeans, df, nranges => 1, lower_tail => 1, log_p => 0)
 	Inverse studentized range CDF, as in R's qtukey().*/
@@ -12472,7 +12676,7 @@ XS_EUPXS(XS_Stats__LikeR_qtukey)
 	if (!lower_tail) p = 1.0 - p;
 	RETVAL = st_qtukey(p, nranges, nmeans, df);
 }
-#line 12476 "LikeR.c"
+#line 12680 "LikeR.c"
 	TARGn((NV)RETVAL, 1);
 	ST(0) = TARG;
     }
@@ -12490,7 +12694,7 @@ XS_EUPXS(XS_Stats__LikeR_aoh2hoa)
 	SV *	data = ST(0)
 ;
 	SV *	RETVAL;
-#line 12200 "LikeR.xs"
+#line 12404 "LikeR.xs"
 	{
 /*aoh2hoa($aoh) -- transpose an Array-of-Hashes into a Hash-of-Arrays.
 
@@ -12552,7 +12756,7 @@ XS_EUPXS(XS_Stats__LikeR_aoh2hoa)
 		}
 		RETVAL = newRV_noinc((SV *)out);
 	}
-#line 12556 "LikeR.c"
+#line 12760 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -12568,7 +12772,7 @@ XS_EUPXS(XS_Stats__LikeR_binom_test)
     PERL_UNUSED_VAR(items); /* -W */
     {
 	SV *	RETVAL;
-#line 12266 "LikeR.xs"
+#line 12470 "LikeR.xs"
 {
 	if (items < 1) croak("binom_test requires at least the number of successes");
 
@@ -12687,7 +12891,7 @@ XS_EUPXS(XS_Stats__LikeR_binom_test)
 	hv_stores(ret, "conf.int",    newRV_noinc((SV *)ci));
 	RETVAL = newRV_noinc((SV *)ret);
 }
-#line 12691 "LikeR.c"
+#line 12895 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -12704,7 +12908,7 @@ XS_EUPXS(XS_Stats__LikeR_csort)
     PERL_UNUSED_VAR(ax); /* -Wall */
     SP -= items;
     {
-#line 12392 "LikeR.xs"
+#line 12596 "LikeR.xs"
 	SV *data = NULL, *by = NULL, *output = NULL;
 	cs_shape in_shape = CS_AOH, out_shape = CS_AOH;
 	bool is_hoh = 0, is_code = 0;
@@ -12723,8 +12927,8 @@ XS_EUPXS(XS_Stats__LikeR_csort)
 	AV **colavs  = NULL;	// HoA: column AVs
 	size_t ncols = 0;
 	SV *result = NULL;
-#line 12727 "LikeR.c"
-#line 12411 "LikeR.xs"
+#line 12931 "LikeR.c"
+#line 12615 "LikeR.xs"
 {
 // ---- own the usage message (variadic: xsubpp won't invent one)
 	if (items < 2 || items > 4)
@@ -13033,7 +13237,7 @@ XS_EUPXS(XS_Stats__LikeR_csort)
 	XPUSHs(sv_2mortal(result));
 	XSRETURN(1);
 }
-#line 13037 "LikeR.c"
+#line 13241 "LikeR.c"
 	PUTBACK;
 	return;
     }
@@ -13050,7 +13254,7 @@ XS_EUPXS(XS_Stats__LikeR_cfilter)
 	SV *	data = ST(0)
 ;
 	SV *	RETVAL;
-#line 12723 "LikeR.xs"
+#line 12927 "LikeR.xs"
 	{
 /*0. options. Exactly one of keep/remove is required; it is either an
  array ref of column names or a value predicate (CODE ref / function
@@ -13343,7 +13547,7 @@ XS_EUPXS(XS_Stats__LikeR_cfilter)
 		if (cellmap) SvREFCNT_dec((SV*)cellmap);
 		RETVAL = newRV_noinc(out);
 	}
-#line 13347 "LikeR.c"
+#line 13551 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -13361,7 +13565,7 @@ XS_EUPXS(XS_Stats__LikeR_hoh2hoa)
 	SV *	data = ST(0)
 ;
 	SV *	RETVAL;
-#line 13021 "LikeR.xs"
+#line 13225 "LikeR.xs"
 	{
 		/* 0. parse trailing name => value options (done before any allocation so
 		    option/usage errors can't leak). undef.val sets the fill for a
@@ -13449,7 +13653,7 @@ XS_EUPXS(XS_Stats__LikeR_hoh2hoa)
 		SvREFCNT_dec((SV*)seen);
 		RETVAL = newRV_noinc((SV*)out_hv);
 	}
-#line 13453 "LikeR.c"
+#line 13657 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -13466,7 +13670,7 @@ XS_EUPXS(XS_Stats__LikeR_filter)
     PERL_UNUSED_VAR(ax); /* -Wall */
     SP -= items;
     {
-#line 13114 "LikeR.xs"
+#line 13318 "LikeR.xs"
 {
 	if (items < 2)
 		croak("Usage: filter($df, $code [, 'output.type' => 'aoh'|'hoa'])");
@@ -13798,7 +14002,7 @@ XS_EUPXS(XS_Stats__LikeR_filter)
 	ST(0) = sv_2mortal(result);
 	XSRETURN(1);
 }
-#line 13802 "LikeR.c"
+#line 14006 "LikeR.c"
 	PUTBACK;
 	return;
     }
@@ -13825,7 +14029,7 @@ XS_EUPXS(XS_Stats__LikeR_col2col)
 	    cols = ST(2)
 ;
 	}
-#line 13451 "LikeR.xs"
+#line 13655 "LikeR.xs"
 	{
 /* Only these cross the section boundaries (build -> loop -> cleanup);
   everything else is declared at its point of use just below.*/
@@ -14108,7 +14312,7 @@ XS_EUPXS(XS_Stats__LikeR_col2col)
 		Safefree(is_outer);	SvREFCNT_dec((SV*)names_av);
 		RETVAL = newRV_noinc((SV*)out_hv);
 	}
-#line 14112 "LikeR.c"
+#line 14316 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -14125,7 +14329,7 @@ XS_EUPXS(XS_Stats__LikeR_oneway_test)
     {
 	SV *	data_ref = ST(0)
 ;
-#line 13739 "LikeR.xs"
+#line 13943 "LikeR.xs"
 		HV          *in_hv = NULL;
 		AV          *in_av = NULL;
 		HE          *he;
@@ -14142,9 +14346,9 @@ XS_EUPXS(XS_Stats__LikeR_oneway_test)
 		OneWayResult res;
 		HV          *ret_hv;
 		char         errbuf[512];
-#line 14146 "LikeR.c"
+#line 14350 "LikeR.c"
 	SV *	RETVAL;
-#line 13756 "LikeR.xs"
+#line 13960 "LikeR.xs"
 	{
 		//parse named arguments
 		for (I32 ai = 1; ai + 1 < items; ai += 2) {
@@ -14361,7 +14565,7 @@ XS_EUPXS(XS_Stats__LikeR_oneway_test)
 		if (rhs) Safefree(rhs);
 		croak("oneway_test: %s", errbuf);
 	}
-#line 14365 "LikeR.c"
+#line 14569 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -14377,7 +14581,7 @@ XS_EUPXS(XS_Stats__LikeR_ks_test)
     PERL_UNUSED_VAR(items); /* -W */
     {
 	SV *	RETVAL;
-#line 13977 "LikeR.xs"
+#line 14181 "LikeR.xs"
 {
 	SV *x_sv = NULL, *y_sv = NULL;
 	short int exact = -1;
@@ -14601,7 +14805,7 @@ XS_EUPXS(XS_Stats__LikeR_ks_test)
 	hv_stores(res, "alternative", newSVpv(alternative, 0));
 	RETVAL = newRV_noinc((SV *)res);
 }
-#line 14605 "LikeR.c"
+#line 14809 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -14617,7 +14821,7 @@ XS_EUPXS(XS_Stats__LikeR_wilcox_test)
     PERL_UNUSED_VAR(items); /* -W */
     {
 	SV *	RETVAL;
-#line 14205 "LikeR.xs"
+#line 14409 "LikeR.xs"
 {
 /* Follows R's wilcox.test() as of R 4.6.1, including the exact conditional
   inference in the presence of ties or zeroes that R 4.6.0 added (NEWS: "can
@@ -15229,7 +15433,7 @@ XS_EUPXS(XS_Stats__LikeR_wilcox_test)
 	}
 	RETVAL = newRV_noinc((SV *)res);
 }
-#line 15233 "LikeR.c"
+#line 15437 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -15245,7 +15449,7 @@ XS_EUPXS(XS_Stats__LikeR_chisq_test)
     PERL_UNUSED_VAR(items); /* -W */
     {
 	SV *	RETVAL;
-#line 14821 "LikeR.xs"
+#line 15025 "LikeR.xs"
 {
 	if (items < 1) croak("chisq_test requires at least a data reference");
 	SV *data_ref = ST(0);
@@ -15578,7 +15782,7 @@ XS_EUPXS(XS_Stats__LikeR_chisq_test)
 	}
 	RETVAL = newRV_noinc((SV*)results);
 }
-#line 15582 "LikeR.c"
+#line 15786 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -15595,7 +15799,7 @@ XS_EUPXS(XS_Stats__LikeR_write_table)
     PERL_UNUSED_VAR(ax); /* -Wall */
     SP -= items;
     {
-#line 15160 "LikeR.xs"
+#line 15364 "LikeR.xs"
 {
 	SV *data_sv = NULL;
 	SV *file_sv = NULL;
@@ -16303,7 +16507,7 @@ XS_EUPXS(XS_Stats__LikeR_write_table)
 	}
 	XSRETURN_EMPTY;
 }
-#line 16307 "LikeR.c"
+#line 16511 "LikeR.c"
 	PUTBACK;
 	return;
     }
@@ -16314,19 +16518,21 @@ XS_EUPXS(XS_Stats__LikeR__parse_csv_file); /* prototype to pass -Wmissing-protot
 XS_EUPXS(XS_Stats__LikeR__parse_csv_file)
 {
     dVAR; dXSARGS;
-    if (items < 3 || items > 4)
-       croak_xs_usage(cv,  "file, sep_str, comment_str, callback= &PL_sv_undef");
+    if (items < 3 || items > 5)
+       croak_xs_usage(cv,  "file, sep_str, comment_str, callback= &PL_sv_undef, plan_sv= &PL_sv_undef");
     {
-#line 15870 "LikeR.xs"
+#line 16074 "LikeR.xs"
 	PerlIO *fp;
 	AV *data = NULL;
 	AV *current_row = NULL;
 	SV *field = NULL;
 	SV *line_sv = NULL;
+	HV *plan_hv = NULL;
+	csv_plan *plan = NULL;
 	bool in_quotes = 0, post_quote = 0, use_cb = 0;
 	size_t sep_len, comment_len;
 	char sep0 = 0;
-#line 16330 "LikeR.c"
+#line 16536 "LikeR.c"
 	SV *	RETVAL;
 	char *	file = (char *)SvPV_nolen(ST(0))
 ;
@@ -16335,6 +16541,7 @@ XS_EUPXS(XS_Stats__LikeR__parse_csv_file)
 	const char *	comment_str = (const char *)SvPV_nolen(ST(2))
 ;
 	SV *	callback;
+	SV *	plan_sv;
 
 	if (items < 4)
 	    callback = &PL_sv_undef;
@@ -16342,12 +16549,30 @@ XS_EUPXS(XS_Stats__LikeR__parse_csv_file)
 	    callback = ST(3)
 ;
 	}
-#line 15879 "LikeR.xs"
+
+	if (items < 5)
+	    plan_sv = &PL_sv_undef;
+	else {
+	    plan_sv = ST(4)
+;
+	}
+#line 16085 "LikeR.xs"
 	if (SvOK(callback)) {
 		if (SvROK(callback) && SvTYPE(SvRV(callback)) == SVt_PVCV)
 			use_cb = 1;
 		else
 			croak("_parse_csv_file: callback must be a CODE reference");
+	}
+/*The fast path (see csv_plan above) is offered only alongside a callback:
+the callback reads the header, then fills this hash in and hands the rest of
+the file to S_fast_row().  read_table passes it only for the shapes that need
+no per-row perl.*/
+	if (SvOK(plan_sv)) {
+		if (!use_cb)
+			croak("_parse_csv_file: a plan needs a callback to fill it in");
+		if (!SvROK(plan_sv) || SvTYPE(SvRV(plan_sv)) != SVt_PVHV)
+			croak("_parse_csv_file: plan must be a HASH reference");
+		plan_hv = (HV*)SvRV(plan_sv);
 	}
 	sep_len = sep_str ? strlen(sep_str) : 0;
 	comment_len = comment_str ? strlen(comment_str) : 0;
@@ -16357,6 +16582,8 @@ XS_EUPXS(XS_Stats__LikeR__parse_csv_file)
 		croak("Could not open file '%s'", file);
 	ENTER;
 	SAVEDESTRUCTOR_X(S_pclose, fp);
+	Newxz(plan, 1, csv_plan);
+	SAVEDESTRUCTOR_X(S_plan_free, plan);
 	line_sv = newSV(128);
 	SAVEFREESV(line_sv);
 	field = newSVpvs("");
@@ -16450,11 +16677,28 @@ XS_EUPXS(XS_Stats__LikeR__parse_csv_file)
 			sv_catpvn(field, "\n", 1);
 		} else {
 			post_quote = 0;
-			S_emit_row(aTHX_ &current_row, field, use_cb, callback, data);
+			if (plan->active) {
+				av_push(current_row, newSVsv(field));
+				sv_setpvs(field, "");
+				S_fast_row(aTHX_ plan, current_row);
+			} else {
+				S_emit_row(aTHX_ &current_row, field, use_cb, callback, data);
+				/*The callback fills the plan in on the row that fixes
+the header, so this is looked at once per row until it does -- twice in
+practice, and never again afterwards.*/
+				if (plan_hv && hv_exists(plan_hv, "out", 3))
+					S_plan_init(aTHX_ plan, plan_hv);
+			}
 		}
 	}
 	if (in_quotes) {
-		S_emit_row(aTHX_ &current_row, field, use_cb, callback, data);
+		if (plan->active) {
+			av_push(current_row, newSVsv(field));
+			sv_setpvs(field, "");
+			S_fast_row(aTHX_ plan, current_row);
+		} else {
+			S_emit_row(aTHX_ &current_row, field, use_cb, callback, data);
+		}
 	}
 	SvREFCNT_dec((SV*)current_row);
 	LEAVE;
@@ -16463,7 +16707,7 @@ XS_EUPXS(XS_Stats__LikeR__parse_csv_file)
 	} else {
 		RETVAL = newRV_noinc((SV*)data);
 	}
-#line 16467 "LikeR.c"
+#line 16711 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -16491,7 +16735,7 @@ XS_EUPXS(XS_Stats__LikeR_cov)
 	    method = (const char *)SvPV_nolen(ST(2))
 ;
 	}
-#line 16004 "LikeR.xs"
+#line 16240 "LikeR.xs"
 	{
 	// 1. Validate inputs are Array References
 		if (!SvROK(x_sv) || SvTYPE(SvRV(x_sv)) != SVt_PVAV) {
@@ -16569,7 +16813,7 @@ XS_EUPXS(XS_Stats__LikeR_cov)
 			RETVAL = newSVnv(ans);
 		}
 	}
-#line 16573 "LikeR.c"
+#line 16817 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -16585,7 +16829,7 @@ XS_EUPXS(XS_Stats__LikeR_predict)
     PERL_UNUSED_VAR(items); /* -W */
     {
 	SV *	RETVAL;
-#line 16086 "LikeR.xs"
+#line 16322 "LikeR.xs"
 	{
 		SV   *model_sv   = NULL;
 		SV   *newdata_sv  = NULL;
@@ -16982,7 +17226,7 @@ XS_EUPXS(XS_Stats__LikeR_predict)
 			FREETMPS; LEAVE;
 		}
 	}
-#line 16986 "LikeR.c"
+#line 17230 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -16998,7 +17242,7 @@ XS_EUPXS(XS_Stats__LikeR_glm)
     PERL_UNUSED_VAR(items); /* -W */
     {
 	SV *	RETVAL;
-#line 16487 "LikeR.xs"
+#line 16723 "LikeR.xs"
 	{
 	const char *formula  = NULL;
 	SV *data_sv = NULL;
@@ -17510,7 +17754,7 @@ XS_EUPXS(XS_Stats__LikeR_glm)
 	if (row_hashes) Safefree(row_hashes);
 	RETVAL = newRV_noinc((SV*)res_hv);
 	}
-#line 17514 "LikeR.c"
+#line 17758 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -17526,7 +17770,7 @@ XS_EUPXS(XS_Stats__LikeR_cor_test)
     PERL_UNUSED_VAR(items); /* -W */
     {
 	SV *	RETVAL;
-#line 17003 "LikeR.xs"
+#line 17239 "LikeR.xs"
 {
 	if (items < 2 || items % 2 != 0)
 		croak("Usage: cor_test(\\@x, \\@y, method => 'pearson', ...)");
@@ -17832,7 +18076,7 @@ XS_EUPXS(XS_Stats__LikeR_cor_test)
 	}
 	RETVAL = newRV_noinc((SV*)rhv);
 }
-#line 17836 "LikeR.c"
+#line 18080 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -17851,7 +18095,7 @@ XS_EUPXS(XS_Stats__LikeR_shapiro_test)
     {
 	SV *	data = ST(0)
 ;
-#line 17314 "LikeR.xs"
+#line 17550 "LikeR.xs"
 	AV *av;
 	HV *ret_hash;
 	size_t n_raw, n = 0, nn2;
@@ -17865,8 +18109,8 @@ XS_EUPXS(XS_Stats__LikeR_shapiro_test)
 	const NV c5[4] = { -1.5861, -0.31082, -0.083751, 0.0038915 };
 	const NV c6[3] = { -0.4803, -0.082676, 0.0030302 };
 	const NV g[2]  = { -2.273, 0.459 };
-#line 17869 "LikeR.c"
-#line 17328 "LikeR.xs"
+#line 18113 "LikeR.c"
+#line 17564 "LikeR.xs"
 	if (!SvROK(data) || SvTYPE(SvRV(data)) != SVt_PVAV) {
 	  croak("Expected an array reference");
 	}
@@ -17997,7 +18241,7 @@ XS_EUPXS(XS_Stats__LikeR_shapiro_test)
 	hv_stores(ret_hash, "p.value",   newSVnv(p_val));
 	EXTEND(SP, 1);
 	PUSHs(sv_2mortal(newRV_noinc((SV *)ret_hash)));
-#line 18001 "LikeR.c"
+#line 18245 "LikeR.c"
 	PUTBACK;
 	return;
     }
@@ -18013,10 +18257,10 @@ XS_EUPXS(XS_Stats__LikeR_min)
     {
 	NV	RETVAL;
 	dXSTARG;
-#line 17462 "LikeR.xs"
+#line 17698 "LikeR.xs"
 		NvAcc acc = { 0.0, 0.0, 0.0, 0 };
-#line 18019 "LikeR.c"
-#line 17464 "LikeR.xs"
+#line 18263 "LikeR.c"
+#line 17700 "LikeR.xs"
 		/*Stack_off_t, not a short: `items` is the whole flattened argument
 		list, so min(@x) on a 70k-element array puts 70k scalars here. An
 		`unsigned short int` counter wrapped at 65536 and looped forever.*/
@@ -18046,7 +18290,7 @@ XS_EUPXS(XS_Stats__LikeR_min)
 		}
 		if (acc.count == 0) croak("min needs >= 1 numeric element");
 		RETVAL = acc.min;
-#line 18050 "LikeR.c"
+#line 18294 "LikeR.c"
 	TARGn((NV)RETVAL, 1);
 	ST(0) = TARG;
     }
@@ -18063,10 +18307,10 @@ XS_EUPXS(XS_Stats__LikeR_max)
     {
 	NV	RETVAL;
 	dXSTARG;
-#line 17499 "LikeR.xs"
+#line 17735 "LikeR.xs"
 		NvAcc acc = { 0.0, 0.0, 0.0, 0 };
-#line 18069 "LikeR.c"
-#line 17501 "LikeR.xs"
+#line 18313 "LikeR.c"
+#line 17737 "LikeR.xs"
 		for (Stack_off_t i = 0; i < items; i++) {
 		   SV* arg = ST(i);
 		   if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
@@ -18093,7 +18337,7 @@ XS_EUPXS(XS_Stats__LikeR_max)
 	  }
 	  if (acc.count == 0) croak("max needs >= 1 numeric element");
 	  RETVAL = acc.max;
-#line 18097 "LikeR.c"
+#line 18341 "LikeR.c"
 	TARGn((NV)RETVAL, 1);
 	ST(0) = TARG;
     }
@@ -18109,7 +18353,7 @@ XS_EUPXS(XS_Stats__LikeR_runif)
     PERL_UNUSED_VAR(items); /* -W */
     {
 	SV *	RETVAL;
-#line 17532 "LikeR.xs"
+#line 17768 "LikeR.xs"
 {
 	size_t n = 0;
 	NV min = 0.0, max = 1.0;
@@ -18188,7 +18432,7 @@ XS_EUPXS(XS_Stats__LikeR_runif)
 	}
 	RETVAL = newRV_noinc((SV*)results);
 }
-#line 18192 "LikeR.c"
+#line 18436 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -18204,7 +18448,7 @@ XS_EUPXS(XS_Stats__LikeR_rbinom)
     PERL_UNUSED_VAR(items); /* -W */
     {
 	SV *	RETVAL;
-#line 17615 "LikeR.xs"
+#line 17851 "LikeR.xs"
 	{
 	// Auto-seed the PRNG if the Perl script hasn't done so yet
 	AUTO_SEED_PRNG();
@@ -18239,7 +18483,7 @@ XS_EUPXS(XS_Stats__LikeR_rbinom)
 
 	RETVAL = newRV_noinc((SV*)result_av);
 	}
-#line 18243 "LikeR.c"
+#line 18487 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -18257,7 +18501,7 @@ XS_EUPXS(XS_Stats__LikeR_hist)
 	SV *	RETVAL;
 	SV *	x_sv = ST(0)
 ;
-#line 17654 "LikeR.xs"
+#line 17890 "LikeR.xs"
 	{
 		// 1. Validate Input
 		if (!SvROK(x_sv) || SvTYPE(SvRV(x_sv)) != SVt_PVAV)
@@ -18361,7 +18605,7 @@ XS_EUPXS(XS_Stats__LikeR_hist)
 		Safefree(density); Safefree(counts);
 		RETVAL = newRV_noinc((SV*)res_hv);
 	}
-#line 18365 "LikeR.c"
+#line 18609 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -18377,7 +18621,7 @@ XS_EUPXS(XS_Stats__LikeR_quantile)
     PERL_UNUSED_VAR(items); /* -W */
     {
 	SV *	RETVAL;
-#line 17762 "LikeR.xs"
+#line 17998 "LikeR.xs"
 	{
 		SV *x_sv = NULL;
 		SV *probs_sv = NULL;
@@ -18546,7 +18790,7 @@ XS_EUPXS(XS_Stats__LikeR_quantile)
 		Safefree(x); Safefree(probs);
 		RETVAL = newRV_noinc((SV*)res_hv);
 	}
-#line 18550 "LikeR.c"
+#line 18794 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -18563,10 +18807,10 @@ XS_EUPXS(XS_Stats__LikeR_mean)
     {
 	NV	RETVAL;
 	dXSTARG;
-#line 17936 "LikeR.xs"
+#line 18172 "LikeR.xs"
 		NvAcc acc = { 0.0, 0.0, 0.0, 0 };
-#line 18569 "LikeR.c"
-#line 17938 "LikeR.xs"
+#line 18813 "LikeR.c"
+#line 18174 "LikeR.xs"
 		for (Stack_off_t i = 0; i < items; i++) {
 			SV* arg = ST(i);
 			if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
@@ -18591,7 +18835,7 @@ XS_EUPXS(XS_Stats__LikeR_mean)
 		}
 		if (acc.count == 0) croak("mean needs >= 1 element");
 		RETVAL = acc.sum / acc.count;
-#line 18595 "LikeR.c"
+#line 18839 "LikeR.c"
 	TARGn((NV)RETVAL, 1);
 	ST(0) = TARG;
     }
@@ -18608,13 +18852,13 @@ XS_EUPXS(XS_Stats__LikeR_mode)
     PERL_UNUSED_VAR(ax); /* -Wall */
     SP -= items;
     {
-#line 17968 "LikeR.xs"
+#line 18204 "LikeR.xs"
 	HV *counts;
 	HV *originals;
 	size_t max_count = 0, arg_count = 0;
 	HE *he;
-#line 18617 "LikeR.c"
-#line 17973 "LikeR.xs"
+#line 18861 "LikeR.c"
+#line 18209 "LikeR.xs"
 	//counts:    string(value) -> occurrence count
 
 	//originals: string(value) -> SV* first-seen original
@@ -18671,7 +18915,7 @@ XS_EUPXS(XS_Stats__LikeR_mode)
 			mXPUSHs(orig ? newSVsv(*orig) : newSVpvn(key, klen));
 		}
 	}
-#line 18675 "LikeR.c"
+#line 18919 "LikeR.c"
 	PUTBACK;
 	return;
     }
@@ -18687,10 +18931,10 @@ XS_EUPXS(XS_Stats__LikeR_sum)
     {
 	NV	RETVAL;
 	dXSTARG;
-#line 18033 "LikeR.xs"
+#line 18269 "LikeR.xs"
 		NvAcc acc = { 0.0, 0.0, 0.0, 0 };
-#line 18693 "LikeR.c"
-#line 18035 "LikeR.xs"
+#line 18937 "LikeR.c"
+#line 18271 "LikeR.xs"
 		for (Stack_off_t i = 0; i < items; i++) {
 			SV* arg = ST(i);
 			if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
@@ -18715,7 +18959,7 @@ XS_EUPXS(XS_Stats__LikeR_sum)
 		}
 		if (acc.count == 0) croak("sum needs >= 1 element");
 		RETVAL = acc.sum;
-#line 18719 "LikeR.c"
+#line 18963 "LikeR.c"
 	TARGn((NV)RETVAL, 1);
 	ST(0) = TARG;
     }
@@ -18732,11 +18976,11 @@ XS_EUPXS(XS_Stats__LikeR_sd)
     {
 	NV	RETVAL;
 	dXSTARG;
-#line 18065 "LikeR.xs"
+#line 18301 "LikeR.xs"
 	  NvAcc acc = { 0.0, 0.0, 0.0, 0 };
 	  NV mean, m2 = 0.0, comp = 0.0;
-#line 18739 "LikeR.c"
-#line 18068 "LikeR.xs"
+#line 18983 "LikeR.c"
+#line 18304 "LikeR.xs"
 	/*Two passes, not Welford.
 
 	Welford's update carries a divide (mean += delta / count) in a
@@ -18804,7 +19048,7 @@ XS_EUPXS(XS_Stats__LikeR_sd)
 			}
 		}
 		RETVAL = nv_sqrt((m2 - comp * comp / acc.count) / (acc.count - 1));
-#line 18808 "LikeR.c"
+#line 19052 "LikeR.c"
 	TARGn((NV)RETVAL, 1);
 	ST(0) = TARG;
     }
@@ -18821,15 +19065,15 @@ XS_EUPXS(XS_Stats__LikeR_uniq)
     PERL_UNUSED_VAR(ax); /* -Wall */
     SP -= items;
     {
-#line 18141 "LikeR.xs"
+#line 18377 "LikeR.xs"
 		dd_ctx *T;
 		AV *out;
 		SV *scratch;
 		SSize_t total, k, outlen;
 		int gimme;
 		char numbuf[NK_NUMBUF];
-#line 18832 "LikeR.c"
-#line 18148 "LikeR.xs"
+#line 19076 "LikeR.c"
+#line 18384 "LikeR.xs"
 		gimme = GIMME_V;
 		ENTER;                          //the tables are freed on croak too
 		Newxz(T, 1, dd_ctx);
@@ -18878,7 +19122,7 @@ XS_EUPXS(XS_Stats__LikeR_uniq)
 			for (k = 0; k < outlen; k++)
 				PUSHs(sv_2mortal(av_shift(out)));
 		}
-#line 18882 "LikeR.c"
+#line 19126 "LikeR.c"
 	PUTBACK;
 	return;
     }
@@ -18894,11 +19138,11 @@ XS_EUPXS(XS_Stats__LikeR_var)
     {
 	NV	RETVAL;
 	dXSTARG;
-#line 18200 "LikeR.xs"
+#line 18436 "LikeR.xs"
 	  NvAcc acc = { 0.0, 0.0, 0.0, 0 };
 	  NV mean, m2 = 0.0, comp = 0.0;
-#line 18901 "LikeR.c"
-#line 18203 "LikeR.xs"
+#line 19145 "LikeR.c"
+#line 18439 "LikeR.xs"
 	/*Two passes, not Welford.
 
 	Welford's update carries a divide (mean += delta / count) in a
@@ -18966,7 +19210,7 @@ XS_EUPXS(XS_Stats__LikeR_var)
 			}
 		}
 		RETVAL = (m2 - comp * comp / acc.count) / (acc.count - 1);
-#line 18970 "LikeR.c"
+#line 19214 "LikeR.c"
 	TARGn((NV)RETVAL, 1);
 	ST(0) = TARG;
     }
@@ -18983,11 +19227,11 @@ XS_EUPXS(XS_Stats__LikeR_skew)
     {
 	NV	RETVAL;
 	dXSTARG;
-#line 18276 "LikeR.xs"
+#line 18512 "LikeR.xs"
 	  moment_acc acc = { 0.0, 0.0, 0.0, 0.0, 0 };
 	  IV type = 2;
-#line 18990 "LikeR.c"
-#line 18279 "LikeR.xs"
+#line 19234 "LikeR.c"
+#line 18515 "LikeR.xs"
 		/*Sample skewness.  type 2 (the default) is G1, the estimator SAS,
 		SPSS, Stata, Excel's SKEW() and scipy's bias=FALSE all report;
 		type 1 is the plain moment ratio g1 (moments::skewness) and type 3
@@ -19006,7 +19250,7 @@ XS_EUPXS(XS_Stats__LikeR_skew)
 			       : type == 2 ? g1 * nv_sqrt(n * (n - 1.0)) / (n - 2.0)
 			       :             g1 * nv_pow((n - 1.0) / n, 1.5);
 		}
-#line 19010 "LikeR.c"
+#line 19254 "LikeR.c"
 	TARGn((NV)RETVAL, 1);
 	ST(0) = TARG;
     }
@@ -19023,11 +19267,11 @@ XS_EUPXS(XS_Stats__LikeR_kurtosis)
     {
 	NV	RETVAL;
 	dXSTARG;
-#line 18303 "LikeR.xs"
+#line 18539 "LikeR.xs"
 	  moment_acc acc = { 0.0, 0.0, 0.0, 0.0, 0 };
 	  IV type = 2;
-#line 19030 "LikeR.c"
-#line 18306 "LikeR.xs"
+#line 19274 "LikeR.c"
+#line 18542 "LikeR.xs"
 /*Excess kurtosis: 3 is already subtracted, so a normal sample sits
  near 0 rather than near 3.  type 2 (the default) is G2, as in SAS,
  SPSS, Stata, Excel's KURT() and scipy's bias=FALSE; type 1 is g2
@@ -19048,7 +19292,7 @@ XS_EUPXS(XS_Stats__LikeR_kurtosis)
 			                     / ((n - 2.0) * (n - 3.0))
 			       :             r * nv_pow(1.0 - 1.0 / n, 2.0) - 3.0;
 		}
-#line 19052 "LikeR.c"
+#line 19296 "LikeR.c"
 	TARGn((NV)RETVAL, 1);
 	ST(0) = TARG;
     }
@@ -19064,7 +19308,7 @@ XS_EUPXS(XS_Stats__LikeR_t_test)
     PERL_UNUSED_VAR(items); /* -W */
     {
 	SV *	RETVAL;
-#line 18331 "LikeR.xs"
+#line 18567 "LikeR.xs"
 	{
 		SV*x_sv = NULL;
 		SV*y_sv = NULL;
@@ -19255,7 +19499,7 @@ XS_EUPXS(XS_Stats__LikeR_t_test)
 		hv_store(results, "conf.int",  8, newRV_noinc((SV*)conf_int), 0);
 		RETVAL = newRV_noinc((SV*)results);
 	}
-#line 19259 "LikeR.c"
+#line 19503 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -19272,7 +19516,7 @@ XS_EUPXS(XS_Stats__LikeR_prop_test)
     PERL_UNUSED_VAR(ax); /* -Wall */
     SP -= items;
     {
-#line 18526 "LikeR.xs"
+#line 18762 "LikeR.xs"
 {
 	/*Test of equality of proportions / a single proportion against a target.
 	Faithful port of R's stats::prop.test (Pearson chi-square on the 2xk
@@ -19438,7 +19682,7 @@ XS_EUPXS(XS_Stats__LikeR_prop_test)
 	ST(0) = sv_2mortal(newRV_noinc((SV *)ret));
 	XSRETURN(1);
 }
-#line 19442 "LikeR.c"
+#line 19686 "LikeR.c"
 	PUTBACK;
 	return;
     }
@@ -19454,7 +19698,7 @@ XS_EUPXS(XS_Stats__LikeR_mcnemar_test)
     PERL_UNUSED_VAR(ax); /* -Wall */
     SP -= items;
     {
-#line 18694 "LikeR.xs"
+#line 18930 "LikeR.xs"
 {
 /*McNemar's test for paired categorical data.  Faithful port of R's
  stats::mcnemar.test (chi-square on the off-diagonal disagreement,
@@ -19582,7 +19826,7 @@ XS_EUPXS(XS_Stats__LikeR_mcnemar_test)
 	ST(0) = sv_2mortal(newRV_noinc((SV *)ret));
 	XSRETURN(1);
 }
-#line 19586 "LikeR.c"
+#line 19830 "LikeR.c"
 	PUTBACK;
 	return;
     }
@@ -19598,7 +19842,7 @@ XS_EUPXS(XS_Stats__LikeR_dunn_test)
     PERL_UNUSED_VAR(ax); /* -Wall */
     SP -= items;
     {
-#line 18824 "LikeR.xs"
+#line 19060 "LikeR.xs"
 {
 	/*Dunn's (1964) post-hoc test following a Kruskal-Wallis test: pairwise
 	rank-mean comparisons using the shared ranking and tie correction, with
@@ -19717,7 +19961,7 @@ XS_EUPXS(XS_Stats__LikeR_dunn_test)
 	ST(0) = sv_2mortal(newRV_noinc((SV*)out));
 	XSRETURN(1);
 }
-#line 19721 "LikeR.c"
+#line 19965 "LikeR.c"
 	PUTBACK;
 	return;
     }
@@ -19733,7 +19977,7 @@ XS_EUPXS(XS_Stats__LikeR_friedman_test)
     PERL_UNUSED_VAR(ax); /* -Wall */
     SP -= items;
     {
-#line 18945 "LikeR.xs"
+#line 19181 "LikeR.xs"
 {
 	/*Friedman rank-sum test for an unreplicated complete block design.
 	Input is a matrix (array of array refs) with one block/subject per row
@@ -19812,7 +20056,7 @@ XS_EUPXS(XS_Stats__LikeR_friedman_test)
 	ST(0) = sv_2mortal(newRV_noinc((SV *)ret));
 	XSRETURN(1);
 }
-#line 19816 "LikeR.c"
+#line 20060 "LikeR.c"
 	PUTBACK;
 	return;
     }
@@ -19828,7 +20072,7 @@ XS_EUPXS(XS_Stats__LikeR_epi_2x2)
     PERL_UNUSED_VAR(ax); /* -Wall */
     SP -= items;
     {
-#line 19026 "LikeR.xs"
+#line 19262 "LikeR.xs"
 {
 	NV a, b, c, d, conf_level = NV_CONF_95;
 	int correct = 0, opt_start;
@@ -19898,7 +20142,7 @@ XS_EUPXS(XS_Stats__LikeR_epi_2x2)
 	ST(0) = sv_2mortal(newRV_noinc((SV *)ret));
 	XSRETURN(1);
 }
-#line 19902 "LikeR.c"
+#line 20146 "LikeR.c"
 	PUTBACK;
 	return;
     }
@@ -19914,7 +20158,7 @@ XS_EUPXS(XS_Stats__LikeR_cmh_test)
     PERL_UNUSED_VAR(ax); /* -Wall */
     SP -= items;
     {
-#line 19098 "LikeR.xs"
+#line 19334 "LikeR.xs"
 {
 	if (items < 1 || !SvROK(ST(0)) || SvTYPE(SvRV(ST(0))) != SVt_PVAV)
 		croak("Usage: cmh_test([ [a,b,c,d], [a,b,c,d], ... ], "
@@ -19980,7 +20224,7 @@ XS_EUPXS(XS_Stats__LikeR_cmh_test)
 	ST(0) = sv_2mortal(newRV_noinc((SV *)ret));
 	XSRETURN(1);
 }
-#line 19984 "LikeR.c"
+#line 20228 "LikeR.c"
 	PUTBACK;
 	return;
     }
@@ -19996,7 +20240,7 @@ XS_EUPXS(XS_Stats__LikeR_auc)
     {
 	NV	RETVAL;
 	dXSTARG;
-#line 19166 "LikeR.xs"
+#line 19402 "LikeR.xs"
 {
 	if (items < 2 || !SvROK(ST(0)) || SvTYPE(SvRV(ST(0))) != SVt_PVAV
 	              || !SvROK(ST(1)) || SvTYPE(SvRV(ST(1))) != SVt_PVAV)
@@ -20015,7 +20259,7 @@ XS_EUPXS(XS_Stats__LikeR_auc)
 	Safefree(pos); Safefree(neg);
 	RETVAL = a;
 }
-#line 20019 "LikeR.c"
+#line 20263 "LikeR.c"
 	TARGn((NV)RETVAL, 1);
 	ST(0) = TARG;
     }
@@ -20032,7 +20276,7 @@ XS_EUPXS(XS_Stats__LikeR_auroc)
     {
 	NV	RETVAL;
 	dXSTARG;
-#line 19189 "LikeR.xs"
+#line 19425 "LikeR.xs"
 {
 /*sklearn-style AUROC: auroc(\@y_true, \@y_score, ...) -- LABELS first,
  SCORES second, higher score = positive class.  This mirrors the call the
@@ -20131,7 +20375,7 @@ XS_EUPXS(XS_Stats__LikeR_auroc)
 		RETVAL = a;
 	}
 }
-#line 20135 "LikeR.c"
+#line 20379 "LikeR.c"
 	TARGn((NV)RETVAL, 1);
 	ST(0) = TARG;
     }
@@ -20148,7 +20392,7 @@ XS_EUPXS(XS_Stats__LikeR_roc)
     PERL_UNUSED_VAR(ax); /* -Wall */
     SP -= items;
     {
-#line 19292 "LikeR.xs"
+#line 19528 "LikeR.xs"
 {
 	if (items < 2 || !SvROK(ST(0)) || SvTYPE(SvRV(ST(0))) != SVt_PVAV
 	              || !SvROK(ST(1)) || SvTYPE(SvRV(ST(1))) != SVt_PVAV)
@@ -20230,7 +20474,7 @@ XS_EUPXS(XS_Stats__LikeR_roc)
 	ST(0) = sv_2mortal(newRV_noinc((SV *)ret));
 	XSRETURN(1);
 }
-#line 20234 "LikeR.c"
+#line 20478 "LikeR.c"
 	PUTBACK;
 	return;
     }
@@ -20246,7 +20490,7 @@ XS_EUPXS(XS_Stats__LikeR_bedroc)
     PERL_UNUSED_VAR(ax); /* -Wall */
     SP -= items;
     {
-#line 19376 "LikeR.xs"
+#line 19612 "LikeR.xs"
 {
 	/*Boltzmann-Enhanced Discrimination of ROC (Truchon & Bayly 2007, eq. 36).
 	Rewards early recognition: actives ranked near the top count far more
@@ -20434,7 +20678,7 @@ XS_EUPXS(XS_Stats__LikeR_bedroc)
 	ST(0) = sv_2mortal(newRV_noinc((SV *)ret));
 	XSRETURN(1);
 }
-#line 20438 "LikeR.c"
+#line 20682 "LikeR.c"
 	PUTBACK;
 	return;
     }
@@ -20450,7 +20694,7 @@ XS_EUPXS(XS_Stats__LikeR_survfit)
     PERL_UNUSED_VAR(ax); /* -Wall */
     SP -= items;
     {
-#line 19566 "LikeR.xs"
+#line 19802 "LikeR.xs"
 {
 	if (items < 2 || !SvROK(ST(0)) || SvTYPE(SvRV(ST(0))) != SVt_PVAV
 	              || !SvROK(ST(1)) || SvTYPE(SvRV(ST(1))) != SVt_PVAV)
@@ -20555,7 +20799,7 @@ XS_EUPXS(XS_Stats__LikeR_survfit)
 	ST(0) = sv_2mortal(newRV_noinc((SV *)ret));
 	XSRETURN(1);
 }
-#line 20559 "LikeR.c"
+#line 20803 "LikeR.c"
 	PUTBACK;
 	return;
     }
@@ -20571,7 +20815,7 @@ XS_EUPXS(XS_Stats__LikeR_logrank_test)
     PERL_UNUSED_VAR(ax); /* -Wall */
     SP -= items;
     {
-#line 19673 "LikeR.xs"
+#line 19909 "LikeR.xs"
 {
 	if (items < 3 || !SvROK(ST(0)) || SvTYPE(SvRV(ST(0))) != SVt_PVAV
 	              || !SvROK(ST(1)) || SvTYPE(SvRV(ST(1))) != SVt_PVAV
@@ -20644,7 +20888,7 @@ XS_EUPXS(XS_Stats__LikeR_logrank_test)
 	ST(0) = sv_2mortal(newRV_noinc((SV *)ret));
 	XSRETURN(1);
 }
-#line 20648 "LikeR.c"
+#line 20892 "LikeR.c"
 	PUTBACK;
 	return;
     }
@@ -20660,7 +20904,7 @@ XS_EUPXS(XS_Stats__LikeR_coxph)
     PERL_UNUSED_VAR(ax); /* -Wall */
     SP -= items;
     {
-#line 19748 "LikeR.xs"
+#line 19984 "LikeR.xs"
 {
 	if (items < 3 || !SvROK(ST(0)) || SvTYPE(SvRV(ST(0))) != SVt_PVAV
 	              || !SvROK(ST(1)) || SvTYPE(SvRV(ST(1))) != SVt_PVAV
@@ -20844,7 +21088,7 @@ XS_EUPXS(XS_Stats__LikeR_coxph)
 	ST(0) = sv_2mortal(newRV_noinc((SV *)ret));
 	XSRETURN(1);
 }
-#line 20848 "LikeR.c"
+#line 21092 "LikeR.c"
 	PUTBACK;
 	return;
     }
@@ -20860,7 +21104,7 @@ XS_EUPXS(XS_Stats__LikeR_p_adjust)
     PERL_UNUSED_VAR(ax); /* -Wall */
     SP -= items;
     {
-#line 19935 "LikeR.xs"
+#line 20171 "LikeR.xs"
 		if (items < 1)
 			croak("Usage: p_adjust($p_values, $method, columns => ...)");
 		SV *p_sv    = ST(0);
@@ -21174,7 +21418,7 @@ XS_EUPXS(XS_Stats__LikeR_p_adjust)
 		Safefree(obuf);  obuf  = NULL;
 		ST(0) = out_sv;
 		XSRETURN(1);
-#line 21178 "LikeR.c"
+#line 21422 "LikeR.c"
 	PUTBACK;
 	return;
     }
@@ -21190,7 +21434,7 @@ XS_EUPXS(XS_Stats__LikeR_median)
     {
 	NV	RETVAL;
 	dXSTARG;
-#line 20252 "LikeR.xs"
+#line 20488 "LikeR.xs"
 	  size_t total_count = 0, k = 0;
 	  NV* nums;
 	  NV median_val = 0.0;
@@ -21198,8 +21442,8 @@ XS_EUPXS(XS_Stats__LikeR_median)
 	  are the common case by call count, and for those the malloc/free pair
 	  cost more than the arithmetic.  They borrow the C stack instead.*/
 	  NV stackbuf[256];
-#line 21202 "LikeR.c"
-#line 20260 "LikeR.xs"
+#line 21446 "LikeR.c"
+#line 20496 "LikeR.xs"
 	  /*How many values there are, from the array lengths alone.  Every
 	  element has to be defined (an undef croaks below, as it always has),
 	  so this bound is exact and the old counting pass over every SV -- a
@@ -21289,7 +21533,7 @@ XS_EUPXS(XS_Stats__LikeR_median)
   median_done:
 	  if (nums != stackbuf) Safefree(nums);
 	  RETVAL = median_val;
-#line 21293 "LikeR.c"
+#line 21537 "LikeR.c"
 	TARGn((NV)RETVAL, 1);
 	ST(0) = TARG;
     }
@@ -21306,12 +21550,12 @@ XS_EUPXS(XS_Stats__LikeR_intersection)
     PERL_UNUSED_VAR(ax); /* -Wall */
     SP -= items;
     {
-#line 20355 "LikeR.xs"
+#line 20591 "LikeR.xs"
 		if (items == 0)
 			croak("intersection needs >= 1 array ref");
 		SP = set_multiplicity(aTHX_ SP, &ST(0), (size_t)items, 1, 0,
 		                      "intersection", GIMME_V);
-#line 21315 "LikeR.c"
+#line 21559 "LikeR.c"
 	PUTBACK;
 	return;
     }
@@ -21344,7 +21588,7 @@ XS_EUPXS(XS_Stats__LikeR_cor)
 	    method = (const char *)SvPV_nolen(ST(2))
 ;
 	}
-#line 20362 "LikeR.xs"
+#line 20598 "LikeR.xs"
 	// validate method
 	if (strcmp(method, "pearson")  != 0 &&
 		strcmp(method, "spearman") != 0 &&
@@ -21382,8 +21626,8 @@ XS_EUPXS(XS_Stats__LikeR_cor)
 			y_is_matrix = 1;
 	}
 
-#line 21386 "LikeR.c"
-#line 20400 "LikeR.xs"
+#line 21630 "LikeR.c"
+#line 20636 "LikeR.xs"
 	// Branch 1: both inputs are flat vectors  →  scalar result
 	if (!x_is_matrix && !y_is_matrix) {
 		if (!has_y) {
@@ -21571,7 +21815,7 @@ XS_EUPXS(XS_Stats__LikeR_cor)
 #undef COR_MAT_FREE
 		RETVAL = newRV_noinc((SV*)result_av);
 	}
-#line 21575 "LikeR.c"
+#line 21819 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -21588,7 +21832,7 @@ XS_EUPXS(XS_Stats__LikeR_scale)
     PERL_UNUSED_VAR(ax); /* -Wall */
     SP -= items;
     {
-#line 20593 "LikeR.xs"
+#line 20829 "LikeR.xs"
 	{
 		bool do_center_mean = 1, do_scale_sd = 1;
 		NV center_val = 0.0, scale_val = 1.0;
@@ -21755,7 +21999,7 @@ XS_EUPXS(XS_Stats__LikeR_scale)
 			Safefree(nums); nums = NULL;
 		}
 	}
-#line 21759 "LikeR.c"
+#line 22003 "LikeR.c"
 	PUTBACK;
 	return;
     }
@@ -21770,7 +22014,7 @@ XS_EUPXS(XS_Stats__LikeR_matrix)
     PERL_UNUSED_VAR(items); /* -W */
     {
 	SV *	RETVAL;
-#line 20762 "LikeR.xs"
+#line 20998 "LikeR.xs"
 	SV*data_sv = NULL;
 	size_t nrow = 0, ncol = 0;
 	bool byrow = 0, nrow_set = 0, ncol_set = 0;
@@ -21856,7 +22100,7 @@ XS_EUPXS(XS_Stats__LikeR_matrix)
 	}
 	safefree(row_ptrs);
 	RETVAL = newRV_noinc((SV*)result_av);
-#line 21860 "LikeR.c"
+#line 22104 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -21872,7 +22116,7 @@ XS_EUPXS(XS_Stats__LikeR_lm)
     PERL_UNUSED_VAR(items); /* -W */
     {
 	SV *	RETVAL;
-#line 20852 "LikeR.xs"
+#line 21088 "LikeR.xs"
 	{
 		const char *formula = NULL;
 		SV   *data_sv = NULL;
@@ -22056,7 +22300,7 @@ XS_EUPXS(XS_Stats__LikeR_lm)
 
 		RETVAL = newRV_noinc((SV*)res_hv);
 	}
-#line 22060 "LikeR.c"
+#line 22304 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -22085,7 +22329,7 @@ XS_EUPXS(XS_Stats__LikeR_seq)
 	    by = (NV)SvNV(ST(2))
 ;
 	}
-#line 21043 "LikeR.xs"
+#line 21279 "LikeR.xs"
 	{
 		if (by == 0.0) {//Handle the zero 'by' case
 			if (from == to) {
@@ -22112,7 +22356,7 @@ XS_EUPXS(XS_Stats__LikeR_seq)
 		}
 		XSRETURN(n_elements);
 	}
-#line 22116 "LikeR.c"
+#line 22360 "LikeR.c"
 	PUTBACK;
 	return;
     }
@@ -22127,7 +22371,7 @@ XS_EUPXS(XS_Stats__LikeR_rnorm)
     PERL_UNUSED_VAR(items); /* -W */
     {
 	SV *	RETVAL;
-#line 21072 "LikeR.xs"
+#line 21308 "LikeR.xs"
 	{
 	  // Auto-seed the PRNG if the Perl script hasn't done so yet
 	  AUTO_SEED_PRNG();
@@ -22176,7 +22420,7 @@ XS_EUPXS(XS_Stats__LikeR_rnorm)
 	  }
 	  RETVAL = newRV_noinc((SV*)result_av);
 	}
-#line 22180 "LikeR.c"
+#line 22424 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -22202,7 +22446,7 @@ XS_EUPXS(XS_Stats__LikeR_aov)
 	    formula_sv = ST(1)
 ;
 	}
-#line 21127 "LikeR.xs"
+#line 21363 "LikeR.xs"
 	{
 	const char *formula;
 	SV *orig_data_sv = data_sv; // dropped `restrict` — this aliases data_sv (UB)
@@ -22771,7 +23015,7 @@ XS_EUPXS(XS_Stats__LikeR_aov)
 	//xlevels_hv ownership transferred to ret_hash; do not dec here
 	RETVAL = newRV_noinc((SV*)ret_hash);
 	}
-#line 22775 "LikeR.c"
+#line 23019 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -22787,7 +23031,7 @@ XS_EUPXS(XS_Stats__LikeR_fisher_test)
     PERL_UNUSED_VAR(items); /* -W */
     {
 	SV *	RETVAL;
-#line 21702 "LikeR.xs"
+#line 21938 "LikeR.xs"
 {
 	if (items < 1) croak("fisher_test requires at least a data reference");
 
@@ -22939,7 +23183,7 @@ XS_EUPXS(XS_Stats__LikeR_fisher_test)
 	Safefree(cells);
 	RETVAL = newRV_noinc((SV *)ret);
 }
-#line 22943 "LikeR.c"
+#line 23187 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -22955,7 +23199,7 @@ XS_EUPXS(XS_Stats__LikeR_power_t_test)
     PERL_UNUSED_VAR(items); /* -W */
     {
 	SV *	RETVAL;
-#line 21858 "LikeR.xs"
+#line 22094 "LikeR.xs"
 {
 	SV*sv_n = NULL;
 	SV*sv_delta = NULL;
@@ -23113,7 +23357,7 @@ XS_EUPXS(XS_Stats__LikeR_power_t_test)
 	if (n_str[0] != '\0') hv_stores(ret, "note", newSVpv(n_str, 0));
 	RETVAL = newRV_noinc((SV*)ret);
 }
-#line 23117 "LikeR.c"
+#line 23361 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -23129,7 +23373,7 @@ XS_EUPXS(XS_Stats__LikeR_kruskal_test)
     PERL_UNUSED_VAR(items); /* -W */
     {
 	SV *	RETVAL;
-#line 22020 "LikeR.xs"
+#line 22256 "LikeR.xs"
 {
 	SV *x_sv = NULL, *g_sv = NULL, *h_sv = NULL;
 	Stack_off_t arg_idx = 0;
@@ -23416,7 +23660,7 @@ XS_EUPXS(XS_Stats__LikeR_kruskal_test)
 
 	RETVAL = newRV_noinc((SV*)res);
 }
-#line 23420 "LikeR.c"
+#line 23664 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -23432,7 +23676,7 @@ XS_EUPXS(XS_Stats__LikeR_var_test)
     PERL_UNUSED_VAR(items); /* -W */
     {
 	SV *	RETVAL;
-#line 22311 "LikeR.xs"
+#line 22547 "LikeR.xs"
 {
 	SV* x_sv = NULL, * y_sv = NULL;
 	NV ratio = 1.0, conf_level = NV_CONF_95;
@@ -23566,7 +23810,7 @@ XS_EUPXS(XS_Stats__LikeR_var_test)
 	hv_store(results, "method", 6, newSVpv("F test to compare two variances", 0), 0);
 	RETVAL = newRV_noinc((SV*)results);
 }
-#line 23570 "LikeR.c"
+#line 23814 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -23584,9 +23828,9 @@ XS_EUPXS(XS_Stats__LikeR_sample)
 	SV *	ref = ST(0)
 ;
 	IV	n;
-#line 22451 "LikeR.xs"
+#line 22687 "LikeR.xs"
 	SV *ret = &PL_sv_undef;
-#line 23590 "LikeR.c"
+#line 23834 "LikeR.c"
 	SV *	RETVAL;
 
 	if (items < 2)
@@ -23595,7 +23839,7 @@ XS_EUPXS(XS_Stats__LikeR_sample)
 	    n = (IV)SvIV(ST(1))
 ;
 	}
-#line 22453 "LikeR.xs"
+#line 22689 "LikeR.xs"
 	if (!PL_srand_called) {
 	  (void)seedDrand01((Rand_seed_t)Perl_seed(aTHX));
 	  PL_srand_called = TRUE;
@@ -23681,7 +23925,7 @@ XS_EUPXS(XS_Stats__LikeR_sample)
 		}
 	}
 	RETVAL = ret;
-#line 23685 "LikeR.c"
+#line 23929 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -23697,7 +23941,7 @@ XS_EUPXS(XS_Stats__LikeR_dnorm)
     PERL_UNUSED_VAR(items); /* -W */
     {
 	SV *	RETVAL;
-#line 22543 "LikeR.xs"
+#line 22779 "LikeR.xs"
 {
 	if (items < 1) {
 	  croak("Usage: dnorm(x), dnorm(x, mean => 0, sd => 1, log => 0)");
@@ -23739,7 +23983,7 @@ XS_EUPXS(XS_Stats__LikeR_dnorm)
 	  RETVAL = newSVnv(res);
 	}
 	}
-#line 23743 "LikeR.c"
+#line 23987 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -23756,7 +24000,7 @@ XS_EUPXS(XS_Stats__LikeR_merge)
     PERL_UNUSED_VAR(ax); /* -Wall */
     SP -= items;
     {
-#line 22589 "LikeR.xs"
+#line 22825 "LikeR.xs"
 {
 	if (items < 2)
 		croak("Usage: merge($left, $right, how => 'inner'|'left'|'right'|"
@@ -24057,7 +24301,7 @@ XS_EUPXS(XS_Stats__LikeR_merge)
 	XPUSHs(sv_2mortal(retval));
 	XSRETURN(1);
 }
-#line 24061 "LikeR.c"
+#line 24305 "LikeR.c"
 	PUTBACK;
 	return;
     }
@@ -24075,11 +24319,11 @@ XS_EUPXS(XS_Stats__LikeR_ljoin)
 ;
 	SV *	i_ref = ST(1)
 ;
-#line 22894 "LikeR.xs"
+#line 23130 "LikeR.xs"
 	HV *h_hv, *i_hv;
 	HE *h_entry;
-#line 24082 "LikeR.c"
-#line 22897 "LikeR.xs"
+#line 24326 "LikeR.c"
+#line 23133 "LikeR.xs"
 	// 1. Validate inputs are hash references
 	if (!SvROK(h_ref) || SvTYPE(SvRV(h_ref)) != SVt_PVHV) {
 	  croak("First argument to ljoin must be a hash reference");
@@ -24127,7 +24371,7 @@ XS_EUPXS(XS_Stats__LikeR_ljoin)
 			}
 		}
 	}
-#line 24131 "LikeR.c"
+#line 24375 "LikeR.c"
     }
     XSRETURN_EMPTY;
 }
@@ -24144,12 +24388,12 @@ XS_EUPXS(XS_Stats__LikeR_add_data)
 ;
 	SV *	i_ref = ST(1)
 ;
-#line 22949 "LikeR.xs"
+#line 23185 "LikeR.xs"
 	short int target_root_mode = 0; // 1 = Hash, 2 = Array
 	short int i_root_mode = 0; // 1 = Hash, 2 = Array
 	short int target_inner_mode = 0; // 0 = Unknown, 1 = Hash, 2 = Array
-#line 24152 "LikeR.c"
-#line 22953 "LikeR.xs"
+#line 24396 "LikeR.c"
+#line 23189 "LikeR.xs"
 	// 1. Validate inputs (Allow both Hash and Array references at the root)
 	if (!SvROK(h_ref) || (SvTYPE(SvRV(h_ref)) != SVt_PVHV && SvTYPE(SvRV(h_ref)) != SVt_PVAV)) {
 		croak("1st argument to add_data must be a hash or array reference");
@@ -24344,7 +24588,7 @@ XS_EUPXS(XS_Stats__LikeR_add_data)
 			}
 		}
 	}
-#line 24348 "LikeR.c"
+#line 24592 "LikeR.c"
     }
     XSRETURN_EMPTY;
 }
@@ -24357,13 +24601,13 @@ XS_EUPXS(XS_Stats__LikeR_value_counts)
     PERL_UNUSED_VAR(cv); /* -W */
     PERL_UNUSED_VAR(items); /* -W */
     {
-#line 23150 "LikeR.xs"
+#line 23386 "LikeR.xs"
 	HV*counts_hv;
 	SV*arg1;
 	bool fast_nv;
-#line 24365 "LikeR.c"
+#line 24609 "LikeR.c"
 	SV *	RETVAL;
-#line 23154 "LikeR.xs"
+#line 23390 "LikeR.xs"
 // 1. CHECK FOR DATA FIRST to prevent memory leaks if we die
 	if (items == 0) {
 	  croak("value_counts: no data provided. At least one argument is required.");
@@ -24501,7 +24745,7 @@ XS_EUPXS(XS_Stats__LikeR_value_counts)
 		}
 	}
 	RETVAL = newRV_noinc((SV*)counts_hv);
-#line 24505 "LikeR.c"
+#line 24749 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -24578,12 +24822,12 @@ XS_EUPXS(XS_Stats__LikeR_group_by)
 ;
 	SV *	group_key_sv = ST(2)
 ;
-#line 23356 "LikeR.xs"
+#line 23592 "LikeR.xs"
 	HV *result_hv;
 	SV *result_ref;
-#line 24585 "LikeR.c"
+#line 24829 "LikeR.c"
 	SV *	RETVAL;
-#line 23359 "LikeR.xs"
+#line 23595 "LikeR.xs"
 	if (!SvOK(data_ref)) {
 		croak("First argument to group_by is NOT defined");
 	}
@@ -24792,7 +25036,7 @@ loop breaks as soon as any sub returns false. Non-hashref args are skipped.*/
 	}
 	// Balance xsubpp's automatic sv_2mortal to prevent refcount dropping to -1
 	RETVAL = SvREFCNT_inc(result_ref);
-#line 24796 "LikeR.c"
+#line 25040 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -24808,7 +25052,7 @@ XS_EUPXS(XS_Stats__LikeR_prcomp)
     PERL_UNUSED_VAR(items); /* -W */
     {
 	SV *	RETVAL;
-#line 23572 "LikeR.xs"
+#line 23808 "LikeR.xs"
 {
 	SV *x_sv = NULL;
 	bool retx = 1, center = 1, do_scale = 0;
@@ -25161,7 +25405,7 @@ XS_EUPXS(XS_Stats__LikeR_prcomp)
 	Safefree(XtX); Safefree(eigen_val); Safefree(eigen_vec); Safefree(sdev);
 	RETVAL = newRV_noinc((SV*)res_hv);
 }
-#line 25165 "LikeR.c"
+#line 25409 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -25178,12 +25422,12 @@ XS_EUPXS(XS_Stats__LikeR_transpose)
     {
 	SV *	input_ref = ST(0)
 ;
-#line 23930 "LikeR.xs"
+#line 24166 "LikeR.xs"
 	svtype  ref_type;
 	SV     *retval_sv;
-#line 25185 "LikeR.c"
+#line 25429 "LikeR.c"
 	SV *	RETVAL;
-#line 23933 "LikeR.xs"
+#line 24169 "LikeR.xs"
 	SvGETMAGIC(input_ref);
 	if (!SvROK(input_ref))
 	  croak("Stats::LikeR::transpose: Input must be a hash ref or array ref");
@@ -25293,7 +25537,7 @@ XS_EUPXS(XS_Stats__LikeR_transpose)
 		croak("Stats::LikeR::transpose: Input must be a hash ref or array ref");
 	}
 	RETVAL = SvREFCNT_inc(retval_sv);
-#line 25297 "LikeR.c"
+#line 25541 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -25310,7 +25554,7 @@ XS_EUPXS(XS_Stats__LikeR_hoa2aoh)
     {
 	SV *	hoa = ST(0)
 ;
-#line 24048 "LikeR.xs"
+#line 24284 "LikeR.xs"
 		HV *in;
 		AV *out;
 		HE *he;
@@ -25318,9 +25562,9 @@ XS_EUPXS(XS_Stats__LikeR_hoa2aoh)
 		AV **cv;	// per-column array bodies (borrowed)
 		SSize_t n, i;
 		U32 ncols, ci;
-#line 25322 "LikeR.c"
+#line 25566 "LikeR.c"
 	SV *	RETVAL;
-#line 24056 "LikeR.xs"
+#line 24292 "LikeR.xs"
 	{
 		if (!SvROK(hoa) || SvTYPE(SvRV(hoa)) != SVt_PVHV)
 			croak("hoa2aoh: argument must be a hash-of-arrays (hashref)");
@@ -25367,7 +25611,7 @@ XS_EUPXS(XS_Stats__LikeR_hoa2aoh)
 		LEAVE;
 		RETVAL = newRV_noinc((SV *)out);
 	}
-#line 25371 "LikeR.c"
+#line 25615 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -25386,16 +25630,16 @@ XS_EUPXS(XS_Stats__LikeR_hoa2hoh)
 ;
 	SV *	key = ST(1)
 ;
-#line 24109 "LikeR.xs"
+#line 24345 "LikeR.xs"
 		HV *in, *out;
 		AV *keycol;
 		HE *he;
 		SV **kv;	// per-column key SVs (mortal)
 		AV **cv;	// per-column array bodies (borrowed)
 		size_t n, i, ncols, ci;
-#line 25397 "LikeR.c"
+#line 25641 "LikeR.c"
 	SV *	RETVAL;
-#line 24116 "LikeR.xs"
+#line 24352 "LikeR.xs"
 	{
 		if (!SvROK(hoa) || SvTYPE(SvRV(hoa)) != SVt_PVHV)
 			croak("hoa2hoh: first argument must be a hash-of-arrays (hashref)");
@@ -25460,7 +25704,7 @@ XS_EUPXS(XS_Stats__LikeR_hoa2hoh)
 		FREETMPS;
 		LEAVE;
 	}
-#line 25464 "LikeR.c"
+#line 25708 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -25481,7 +25725,7 @@ XS_EUPXS(XS_Stats__LikeR_vals)
 ;
 	SV *	colname_sv = ST(1)
 ;
-#line 24187 "LikeR.xs"
+#line 24423 "LikeR.xs"
 	bool is_aoh = 0, is_hoh = 0;
 	const char *colname = NULL;
 	STRLEN collen = 0;
@@ -25489,8 +25733,8 @@ XS_EUPXS(XS_Stats__LikeR_vals)
 	HV *src_hv = NULL;
 	SSize_t n = 0;
 	AV *out_av = NULL;
-#line 25493 "LikeR.c"
-#line 24195 "LikeR.xs"
+#line 25737 "LikeR.c"
+#line 24431 "LikeR.xs"
 {
 	if (!SvOK(colname_sv))
 		croak("vals: column name must be defined");
@@ -25603,7 +25847,7 @@ XS_EUPXS(XS_Stats__LikeR_vals)
 	XPUSHs(sv_2mortal(newRV_inc((SV *)out_av)));
 	XSRETURN(1);
 }
-#line 25607 "LikeR.c"
+#line 25851 "LikeR.c"
 	PUTBACK;
 	return;
     }
@@ -25623,7 +25867,7 @@ XS_EUPXS(XS_Stats__LikeR_avals)
 ;
 	SV *	colname_sv = ST(1)
 ;
-#line 24312 "LikeR.xs"
+#line 24548 "LikeR.xs"
 	bool is_aoh = FALSE, is_hoh = FALSE;
 	const char *colname = NULL;
 	STRLEN collen = 0;
@@ -25632,8 +25876,8 @@ XS_EUPXS(XS_Stats__LikeR_avals)
 	SSize_t n = 0;
 	AV *out_av = NULL;
 	SSize_t nret = 0;
-#line 25636 "LikeR.c"
-#line 24321 "LikeR.xs"
+#line 25880 "LikeR.c"
+#line 24557 "LikeR.xs"
 {
 /*avals(): vals() returning a list rather than an array-ref.
 
@@ -25761,7 +26005,7 @@ XS_EUPXS(XS_Stats__LikeR_avals)
 	}
 	XSRETURN((I32)nret);
 }
-#line 25765 "LikeR.c"
+#line 26009 "LikeR.c"
 	PUTBACK;
 	return;
     }
@@ -25785,7 +26029,7 @@ XS_EUPXS(XS_Stats__LikeR__qcut_core)
 ;
 	IV	want_codes = (IV)SvIV(ST(3))
 ;
-#line 24456 "LikeR.xs"
+#line 24692 "LikeR.xs"
 	AV  *data_av;
 	AV  *probs_av;
 	AV  *edge_av;
@@ -25795,8 +26039,8 @@ XS_EUPXS(XS_Stats__LikeR__qcut_core)
 	NV  *srt  = NULL, *edges = NULL;
 	NV   p, h, frac, v;
 	IV   lo, bin, lo2, hi2, mid, k;
-#line 25799 "LikeR.c"
-#line 24466 "LikeR.xs"
+#line 26043 "LikeR.c"
+#line 24702 "LikeR.xs"
 	if (!SvROK(data_ref) || SvTYPE(SvRV(data_ref)) != SVt_PVAV)
 		croak("_qcut_core: data must be an ARRAY reference");
 	if (!SvROK(probs_ref) || SvTYPE(SvRV(probs_ref)) != SVt_PVAV)
@@ -25896,7 +26140,7 @@ XS_EUPXS(XS_Stats__LikeR__qcut_core)
 	else
 		PUSHs(&PL_sv_undef);
 	PUSHs(sv_2mortal(newRV_noinc((SV *) edge_av)));
-#line 25900 "LikeR.c"
+#line 26144 "LikeR.c"
 	PUTBACK;
 	return;
     }
@@ -25912,13 +26156,13 @@ XS_EUPXS(XS_Stats__LikeR_get_union)
     PERL_UNUSED_VAR(ax); /* -Wall */
     SP -= items;
     {
-#line 24570 "LikeR.xs"
+#line 24806 "LikeR.xs"
 		HV*seen;
 		AV*order;
 		size_t nrefs, n, oi, olen;
 		int gimme;
-#line 25921 "LikeR.c"
-#line 24575 "LikeR.xs"
+#line 26165 "LikeR.c"
+#line 24811 "LikeR.xs"
 		gimme = GIMME_V;
 		nrefs = items;
 		if (nrefs == 0)
@@ -25961,7 +26205,7 @@ XS_EUPXS(XS_Stats__LikeR_get_union)
 					XPUSHs(sv_2mortal(newSVsv(*e)));
 			}
 		}
-#line 25965 "LikeR.c"
+#line 26209 "LikeR.c"
 	PUTBACK;
 	return;
     }
@@ -25977,12 +26221,12 @@ XS_EUPXS(XS_Stats__LikeR_Lonly)
     PERL_UNUSED_VAR(ax); /* -Wall */
     SP -= items;
     {
-#line 24621 "LikeR.xs"
+#line 24857 "LikeR.xs"
 		if (items == 0)
 			croak("Lonly needs >= 1 array ref");
 		SP = set_multiplicity(aTHX_ SP, &ST(0), (size_t)items, 0, 0,
 		                      "Lonly", GIMME_V);
-#line 25986 "LikeR.c"
+#line 26230 "LikeR.c"
 	PUTBACK;
 	return;
     }
@@ -25998,14 +26242,14 @@ XS_EUPXS(XS_Stats__LikeR_Ronly)
     PERL_UNUSED_VAR(ax); /* -Wall */
     SP -= items;
     {
-#line 24629 "LikeR.xs"
+#line 24865 "LikeR.xs"
 		if (items == 0)
 			croak("Ronly needs >= 1 array ref");
 		/*mirror of Lonly: values only in the LAST array (from_last = 1), so
 		the two-array Ronly(a,b) still equals Lonly(b,a).*/
 		SP = set_multiplicity(aTHX_ SP, &ST(0), (size_t)items, 0, 1,
 		                      "Ronly", GIMME_V);
-#line 26009 "LikeR.c"
+#line 26253 "LikeR.c"
 	PUTBACK;
 	return;
     }
@@ -26021,11 +26265,11 @@ XS_EUPXS(XS_Stats__LikeR_is_equivalent)
     PERL_UNUSED_VAR(ax); /* -Wall */
     SP -= items;
     {
-#line 24639 "LikeR.xs"
+#line 24875 "LikeR.xs"
 		if (items < 2)
 			croak("is_equivalent needs >= 2 array refs (got %" UVuf ")", (UV)items);
 		XPUSHs(sv_2mortal(newSViv(set_equivalent(aTHX_ &ST(0), (size_t)items, "is_equivalent"))));
-#line 26029 "LikeR.c"
+#line 26273 "LikeR.c"
 	PUTBACK;
 	return;
     }
@@ -26040,7 +26284,7 @@ XS_EUPXS(XS_Stats__LikeR_pnorm)
     PERL_UNUSED_VAR(items); /* -W */
     {
 	SV *	RETVAL;
-#line 24645 "LikeR.xs"
+#line 24881 "LikeR.xs"
 {
 	if (items < 1)
 		croak("Usage: pnorm(x), pnorm(x, mean => 0, sd => 1, lower => 1, log => 0)");
@@ -26082,7 +26326,7 @@ XS_EUPXS(XS_Stats__LikeR_pnorm)
 		RETVAL = newSVnv(res);
 	}
 }
-#line 26086 "LikeR.c"
+#line 26330 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -26098,7 +26342,7 @@ XS_EUPXS(XS_Stats__LikeR_qnorm)
     PERL_UNUSED_VAR(items); /* -W */
     {
 	SV *	RETVAL;
-#line 24695 "LikeR.xs"
+#line 24931 "LikeR.xs"
 {
 	static const dist_spec spec =
 		{ "qnorm", { "mean", "sd" }, { 0.0, 1.0 }, 2, 0, d_qnorm };
@@ -26106,7 +26350,7 @@ XS_EUPXS(XS_Stats__LikeR_qnorm)
 	dist_parse(aTHX_ &spec, &ST(0), items, &x, par, &lower, &give_log);
 	RETVAL = dist_apply(aTHX_ &spec, x, par, lower, give_log);
 }
-#line 26110 "LikeR.c"
+#line 26354 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -26122,7 +26366,7 @@ XS_EUPXS(XS_Stats__LikeR_pt)
     PERL_UNUSED_VAR(items); /* -W */
     {
 	SV *	RETVAL;
-#line 24707 "LikeR.xs"
+#line 24943 "LikeR.xs"
 {
 	static const dist_spec spec =
 		{ "pt", { "df", NULL }, { 0.0, 0.0 }, 1, 1, d_pt };
@@ -26130,7 +26374,7 @@ XS_EUPXS(XS_Stats__LikeR_pt)
 	dist_parse(aTHX_ &spec, &ST(0), items, &x, par, &lower, &give_log);
 	RETVAL = dist_apply(aTHX_ &spec, x, par, lower, give_log);
 }
-#line 26134 "LikeR.c"
+#line 26378 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -26146,7 +26390,7 @@ XS_EUPXS(XS_Stats__LikeR_qt)
     PERL_UNUSED_VAR(items); /* -W */
     {
 	SV *	RETVAL;
-#line 24719 "LikeR.xs"
+#line 24955 "LikeR.xs"
 {
 	static const dist_spec spec =
 		{ "qt", { "df", NULL }, { 0.0, 0.0 }, 1, 1, d_qt };
@@ -26154,7 +26398,7 @@ XS_EUPXS(XS_Stats__LikeR_qt)
 	dist_parse(aTHX_ &spec, &ST(0), items, &x, par, &lower, &give_log);
 	RETVAL = dist_apply(aTHX_ &spec, x, par, lower, give_log);
 }
-#line 26158 "LikeR.c"
+#line 26402 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -26170,7 +26414,7 @@ XS_EUPXS(XS_Stats__LikeR_pchisq)
     PERL_UNUSED_VAR(items); /* -W */
     {
 	SV *	RETVAL;
-#line 24731 "LikeR.xs"
+#line 24967 "LikeR.xs"
 {
 	static const dist_spec spec =
 		{ "pchisq", { "df", NULL }, { 0.0, 0.0 }, 1, 1, d_pchisq };
@@ -26178,7 +26422,7 @@ XS_EUPXS(XS_Stats__LikeR_pchisq)
 	dist_parse(aTHX_ &spec, &ST(0), items, &x, par, &lower, &give_log);
 	RETVAL = dist_apply(aTHX_ &spec, x, par, lower, give_log);
 }
-#line 26182 "LikeR.c"
+#line 26426 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -26194,7 +26438,7 @@ XS_EUPXS(XS_Stats__LikeR_qchisq)
     PERL_UNUSED_VAR(items); /* -W */
     {
 	SV *	RETVAL;
-#line 24743 "LikeR.xs"
+#line 24979 "LikeR.xs"
 {
 	static const dist_spec spec =
 		{ "qchisq", { "df", NULL }, { 0.0, 0.0 }, 1, 1, d_qchisq };
@@ -26202,7 +26446,7 @@ XS_EUPXS(XS_Stats__LikeR_qchisq)
 	dist_parse(aTHX_ &spec, &ST(0), items, &x, par, &lower, &give_log);
 	RETVAL = dist_apply(aTHX_ &spec, x, par, lower, give_log);
 }
-#line 26206 "LikeR.c"
+#line 26450 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -26218,7 +26462,7 @@ XS_EUPXS(XS_Stats__LikeR_pf)
     PERL_UNUSED_VAR(items); /* -W */
     {
 	SV *	RETVAL;
-#line 24755 "LikeR.xs"
+#line 24991 "LikeR.xs"
 {
 	static const dist_spec spec =
 		{ "pf", { "df1", "df2" }, { 0.0, 0.0 }, 2, 2, d_pf };
@@ -26226,7 +26470,7 @@ XS_EUPXS(XS_Stats__LikeR_pf)
 	dist_parse(aTHX_ &spec, &ST(0), items, &x, par, &lower, &give_log);
 	RETVAL = dist_apply(aTHX_ &spec, x, par, lower, give_log);
 }
-#line 26230 "LikeR.c"
+#line 26474 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -26242,7 +26486,7 @@ XS_EUPXS(XS_Stats__LikeR_qf)
     PERL_UNUSED_VAR(items); /* -W */
     {
 	SV *	RETVAL;
-#line 24767 "LikeR.xs"
+#line 25003 "LikeR.xs"
 {
 	static const dist_spec spec =
 		{ "qf", { "df1", "df2" }, { 0.0, 0.0 }, 2, 2, d_qf };
@@ -26250,7 +26494,7 @@ XS_EUPXS(XS_Stats__LikeR_qf)
 	dist_parse(aTHX_ &spec, &ST(0), items, &x, par, &lower, &give_log);
 	RETVAL = dist_apply(aTHX_ &spec, x, par, lower, give_log);
 }
-#line 26254 "LikeR.c"
+#line 26498 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -26266,7 +26510,7 @@ XS_EUPXS(XS_Stats__LikeR_pbinom)
     PERL_UNUSED_VAR(items); /* -W */
     {
 	SV *	RETVAL;
-#line 24779 "LikeR.xs"
+#line 25015 "LikeR.xs"
 {
 	static const dist_spec spec =
 		{ "pbinom", { "size", "prob" }, { 0.0, 0.0 }, 2, 2, d_pbinom };
@@ -26274,7 +26518,7 @@ XS_EUPXS(XS_Stats__LikeR_pbinom)
 	dist_parse(aTHX_ &spec, &ST(0), items, &x, par, &lower, &give_log);
 	RETVAL = dist_apply(aTHX_ &spec, x, par, lower, give_log);
 }
-#line 26278 "LikeR.c"
+#line 26522 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -26295,9 +26539,9 @@ XS_EUPXS(XS_Stats__LikeR__igamc)
 ;
 	NV	RETVAL;
 	dXSTARG;
-#line 24798 "LikeR.xs"
+#line 25034 "LikeR.xs"
 	RETVAL = igamc(a, x);
-#line 26301 "LikeR.c"
+#line 26545 "LikeR.c"
 	TARGn((NV)RETVAL, 1);
 	ST(0) = TARG;
     }
@@ -26318,9 +26562,9 @@ XS_EUPXS(XS_Stats__LikeR__pchisq_upper)
 ;
 	NV	RETVAL;
 	dXSTARG;
-#line 24809 "LikeR.xs"
+#line 25045 "LikeR.xs"
 	RETVAL = (df <= 0.0 || stat <= 0.0) ? 1.0 : igamc(df / 2.0, stat / 2.0);
-#line 26324 "LikeR.c"
+#line 26568 "LikeR.c"
 	TARGn((NV)RETVAL, 1);
 	ST(0) = TARG;
     }
@@ -26336,7 +26580,7 @@ XS_EUPXS(XS_Stats__LikeR_density)
     PERL_UNUSED_VAR(items); /* -W */
     {
 	SV *	RETVAL;
-#line 24819 "LikeR.xs"
+#line 25055 "LikeR.xs"
 	{
 		SV *x_sv = NULL, *w_sv = NULL, *bw_sv = NULL, *width_sv = NULL;
 		NV adjust = 1.0, cut = 3.0, ext = 4.0, from = 0.0, to = 0.0;
@@ -26652,7 +26896,7 @@ XS_EUPXS(XS_Stats__LikeR_density)
 		RETVAL = newRV_noinc((SV *)res);
 		}
 	}
-#line 26656 "LikeR.c"
+#line 26900 "LikeR.c"
 	RETVAL = sv_2mortal(RETVAL);
 	ST(0) = RETVAL;
     }
@@ -26669,7 +26913,7 @@ XS_EUPXS(XS_Stats__LikeR_bw_nrd0)
     {
 	NV	RETVAL;
 	dXSTARG;
-#line 25141 "LikeR.xs"
+#line 25377 "LikeR.xs"
 	{
 		NV *x = NULL, *xs = NULL;
 		size_t n = 0;
@@ -26684,7 +26928,7 @@ XS_EUPXS(XS_Stats__LikeR_bw_nrd0)
 		Safefree(x); Safefree(xs);
 		if (err) croak("bw_nrd0: %s", err);
 	}
-#line 26688 "LikeR.c"
+#line 26932 "LikeR.c"
 	TARGn((NV)RETVAL, 1);
 	ST(0) = TARG;
     }
@@ -26701,7 +26945,7 @@ XS_EUPXS(XS_Stats__LikeR_bw_nrd)
     {
 	NV	RETVAL;
 	dXSTARG;
-#line 25162 "LikeR.xs"
+#line 25398 "LikeR.xs"
 	{
 		NV *x = NULL, *xs = NULL;
 		size_t n = 0;
@@ -26716,7 +26960,7 @@ XS_EUPXS(XS_Stats__LikeR_bw_nrd)
 		Safefree(x); Safefree(xs);
 		if (err) croak("bw_nrd: %s", err);
 	}
-#line 26720 "LikeR.c"
+#line 26964 "LikeR.c"
 	TARGn((NV)RETVAL, 1);
 	ST(0) = TARG;
     }
@@ -26733,7 +26977,7 @@ XS_EUPXS(XS_Stats__LikeR_bw_ucv)
     {
 	NV	RETVAL;
 	dXSTARG;
-#line 25183 "LikeR.xs"
+#line 25419 "LikeR.xs"
 	{
 		NV *x = NULL, *xs = NULL;
 		size_t n = 0;
@@ -26752,7 +26996,7 @@ XS_EUPXS(XS_Stats__LikeR_bw_ucv)
 		Safefree(x); Safefree(xs);
 		if (err) croak("bw_ucv: %s", err);
 	}
-#line 26756 "LikeR.c"
+#line 27000 "LikeR.c"
 	TARGn((NV)RETVAL, 1);
 	ST(0) = TARG;
     }
@@ -26769,7 +27013,7 @@ XS_EUPXS(XS_Stats__LikeR_bw_bcv)
     {
 	NV	RETVAL;
 	dXSTARG;
-#line 25208 "LikeR.xs"
+#line 25444 "LikeR.xs"
 	{
 		NV *x = NULL, *xs = NULL;
 		size_t n = 0;
@@ -26788,7 +27032,7 @@ XS_EUPXS(XS_Stats__LikeR_bw_bcv)
 		Safefree(x); Safefree(xs);
 		if (err) croak("bw_bcv: %s", err);
 	}
-#line 26792 "LikeR.c"
+#line 27036 "LikeR.c"
 	TARGn((NV)RETVAL, 1);
 	ST(0) = TARG;
     }
@@ -26805,7 +27049,7 @@ XS_EUPXS(XS_Stats__LikeR_bw_sj)
     {
 	NV	RETVAL;
 	dXSTARG;
-#line 25235 "LikeR.xs"
+#line 25471 "LikeR.xs"
 	{
 		NV *x = NULL, *xs = NULL;
 		size_t n = 0;
@@ -26824,7 +27068,7 @@ XS_EUPXS(XS_Stats__LikeR_bw_sj)
 		Safefree(x); Safefree(xs);
 		if (err) croak("bw_sj: %s", err);
 	}
-#line 26828 "LikeR.c"
+#line 27072 "LikeR.c"
 	TARGn((NV)RETVAL, 1);
 	ST(0) = TARG;
     }
@@ -26881,7 +27125,7 @@ XS_EXTERNAL(boot_Stats__LikeR)
         newXS_deffile("Stats::LikeR::wilcox_test", XS_Stats__LikeR_wilcox_test);
         newXS_deffile("Stats::LikeR::chisq_test", XS_Stats__LikeR_chisq_test);
         (void)newXSproto_portable("Stats::LikeR::write_table", XS_Stats__LikeR_write_table, file, ";@");
-        (void)newXSproto_portable("Stats::LikeR::_parse_csv_file", XS_Stats__LikeR__parse_csv_file, file, "$$$;$");
+        (void)newXSproto_portable("Stats::LikeR::_parse_csv_file", XS_Stats__LikeR__parse_csv_file, file, "$$$;$$");
         (void)newXSproto_portable("Stats::LikeR::cov", XS_Stats__LikeR_cov, file, "$$;$");
         (void)newXSproto_portable("Stats::LikeR::predict", XS_Stats__LikeR_predict, file, ";@");
         (void)newXSproto_portable("Stats::LikeR::glm", XS_Stats__LikeR_glm, file, ";@");
@@ -26967,10 +27211,10 @@ XS_EXTERNAL(boot_Stats__LikeR)
 
     /* Initialisation Section */
 
-#line 12388 "LikeR.xs"
+#line 12592 "LikeR.xs"
 	newXS("Stats::LikeR::__cs_uninit_catcher", cs_uninit_catcher, __FILE__);
 
-#line 26974 "LikeR.c"
+#line 27218 "LikeR.c"
 
     /* End of Initialisation Section */
 

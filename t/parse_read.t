@@ -185,6 +185,45 @@ sub spit {
 	throws_ok { Stats::LikeR::_parse_csv_file($good, ',', '#', 'not a code ref') }
 		qr/must be a CODE reference/,
 		'XS: defined non-CODE callback croaks instead of silently slurping';
+
+	# The fifth argument is read_table's fast-path plan (csv_plan in LikeR.xs).
+	# read_table is its only caller and always builds a well-formed one, so
+	# these croaks are unreachable from the public API -- but each of them
+	# guards a C array that would otherwise be indexed with a number that came
+	# from perl, so each is checked here rather than left to a segfault.
+	throws_ok { Stats::LikeR::_parse_csv_file($good, ',', '#', undef, {}) }
+		qr/plan needs a callback/,
+		'XS: a plan without a callback croaks';
+	throws_ok { Stats::LikeR::_parse_csv_file($good, ',', '#', sub { }, 'nope') }
+		qr/plan must be a HASH reference/,
+		'XS: a non-hashref plan croaks';
+
+	# A plan is only looked at once the callback has filled it in, so each of
+	# these is handed over already broken.
+	my $rownum = 0;	# read_table's $data_row: rows the callback already emitted
+	my %base = (
+		keys => [ 'a', 'b' ], idx => [ 0, 1 ], out => [],
+		ncol => 2, mode => 0, file => $good, row => \$rownum,
+	);
+	my @broken = (
+		[ 'missing key',      sub { delete $_[0]{ncol} },      qr/missing 'ncol'/ ],
+		[ 'wrong ref kind',   sub { $_[0]{keys} = {} },        qr/'keys' is the wrong kind/ ],
+		[ 'row not a ref',    sub { $_[0]{row} = 0 },          qr/'row' is not a reference/ ],
+		[ 'unknown mode',     sub { $_[0]{mode} = 7 },         qr/'mode' 7 is not 0/ ],
+		[ 'idx/keys lengths', sub { $_[0]{idx} = [0] },        qr/different lengths/ ],
+		[ 'idx out of range', sub { $_[0]{idx} = [ 0, 9 ] },   qr/'idx' entry 1 is not a field/ ],
+		[ 'idx negative',     sub { $_[0]{idx} = [ 0, -1 ] },  qr/'idx' entry 1 is not a field/ ],
+		[ 'hoa out width',    sub { $_[0]{mode} = 1 },         qr/one array per column/ ],
+		[ 'hoa out kind',     sub { @{ $_[0] }{qw(mode out)} = (1, [ [], 'x' ]) },
+		                                                       qr/'out' entry 1 is not an ARRAY/ ],
+	);
+	for my $case (@broken) {
+		my ($label, $break, $like) = @$case;
+		my %plan = %base;
+		$break->(\%plan);
+		throws_ok { Stats::LikeR::_parse_csv_file($good, ',', '#', sub { }, \%plan) }
+			$like, "XS: malformed plan ($label) croaks";
+	}
 }
 
 # direct XS slurp mode

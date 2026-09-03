@@ -6770,6 +6770,72 @@ Verified against R 4.6.1 (`oneway.test`, `anova(aov())`, `anova(lm())`,
 
 # Changes
 
+## 0.314 2026-09-02 CDT
+
+### `read_table` is 2.5× to 3.6× faster
+
+`read_table` parsed in C and then assembled in perl: `_parse_csv_file` cut each
+line into fields and handed the row to a closure, once per row, which rebuilt it
+as a hash one field at a time. On a 300,000 × 5 CSV that closure was **79%** of
+the call — 0.42 s of 0.53 s — against 0.11 s for the parser feeding it. Not the
+calls themselves: 300,000 calls into an empty sub cost 0.010 s. It was the work
+inside them, done 1.5 million times.
+
+Once the header is fixed there is nothing in that closure left to decide, so
+`_parse_csv_file` now takes a plan — which columns, which field each one comes
+from, and where to put it — and assembles every remaining row itself. The
+closure still reads the header, because that is where every message `read_table`
+can produce comes from; it then hands the rest of the file over and is not
+called again. The field SVs are *moved* into the row hash or the column array
+rather than copied, and the row buffer is reused, so a cell costs a pointer
+instead of a `newSVsv()`.
+
+Measured on the `plot.scaling.pl` fixtures at `n = 300,000`, median of 7, pinned
+to one CPU, with Python and R timed in the same session on the same files:
+
+| | before | after | speedup | Python | R |
+|---|---|---|---|---|---|
+| `read_table` (csv, numeric) | 0.499 s | 0.195 s | 2.6× | 0.064 s | 0.603 s |
+| `read_table` (csv, mixed) | 0.573 s | 0.228 s | 2.5× | 0.288 s | 0.432 s |
+| `read_table` (tsv, mixed) | 0.572 s | 0.223 s | 2.6× | 0.289 s | 0.401 s |
+| `read_table` (csv, hoa) | 0.877 s | 0.330 s | 2.7× | 0.061 s | 0.381 s |
+
+At `n = 100,000` the same four are 3.0×, 3.0×, 3.0× and 3.6× faster.
+
+`read_table` now beats R's `read.csv` and `read.delim` on all four panels,
+having previously lost three of them. Against Python, the mixed panels are the
+like-for-like pair — both build 300,000 five-key row records, `csv.DictReader`
+against `output.type => 'aoh'` — and `read_table` went from 2.0× slower to 1.3×
+faster. The numeric and `hoa` panels are `pandas.read_csv`, which returns four
+typed NumPy blocks rather than 1.5 million scalars; that gap is the shape of the
+answer, not the parsing, and no amount of parser work closes it.
+
+Two shapes keep the old path, because both need perl on every row:
+`output.type => 'hoh'`, which names each row from one of its own columns, and
+any read given a `filter`. `.xlsx` has a parser of its own and is untouched.
+Nothing any of them returns changes.
+
+What did get faster on that path is `hoa`, which used to build a row hash it did
+not need and then read every key back out of it, and which looked each column
+array up in the result hash — autovivifying it — once per column per row. The
+column arrays are made once when the header is finalized now, and pushed to
+directly.
+
+### `t/read_table.fast_path.t`, 44 tests pinning the two paths to each other
+
+Fifteen fixtures — duplicate column names, empty cells, `na.strings`, quoted
+fields with embedded commas and newlines, header-only, one data row,
+`auto.row.names`, commented-out headers, TSV, CRLF, single column — each read
+twice in both `aoh` and `hoa`, once down each path, and required to come back
+`is_deeply` identical. A no-op `filter` is what forces the closure, and it
+cannot change the answer: a filter key of 0 is handed the whole row, and
+`read_table` writes a mutated `$_` back only for keys above 0. The alignment
+error is checked to be worded identically by both paths, data row number
+included. `t/parse_read.t` gained 11 more tests, for the plan's own argument
+validation — each of those croaks guards a C array that would otherwise be
+indexed with a number that came from perl.
+
+
 ## 0.313 2026-09-01 CDT
 
 ### `merge`: a `left.on`/`right.on` join died when the right frame reused the key's name

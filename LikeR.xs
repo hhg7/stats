@@ -6695,6 +6695,210 @@ static void S_emit_row(pTHX_ AV **rowp, SV *field, bool use_cb, SV *callback, AV
 	*rowp = newAV();
 }
 
+/*read_table's fast path: assembling the output shape here instead of in perl.
+
+read_table used to hand every single row to a perl closure that rebuilt it as
+a hash, one field at a time.  Measured on a 300,000 x 5 CSV, that closure was
+79% of read_table's wall clock and this parser only 21%, so the shape the
+caller asked for is now built here, from the fields the parser already has.
+
+The closure is still what reads the header -- it has to be, since the header
+is where every message read_table can produce comes from -- and it is still
+the only path for the shapes that need per-row perl: 'hoh' names each row from
+one of its own columns, and a 'filter' is perl by definition.  read_table
+passes a plan hash only when neither applies; the parser looks at it after
+each callback returns, and once the callback has filled it in, takes over.
+
+The plan's keys, all set by read_table's install_plan():
+
+  keys  the output column names, header order, duplicates already collapsed
+  idx   for each of those, the field index to take it from.  This is where a
+        duplicate column name is resolved: idx holds the LAST field carrying
+        the name, which is what "later values win" means when the perl path
+        builds one hash per row.
+  ncol  the field count every data row must have -- the full header width,
+        which is >= the number of output columns when names repeat
+  out    mode 0: the array read_table returns.  mode 1: the column arrays, in
+         the same order as keys.
+  mode   0 = aoh, one hash per row; 1 = hoa, one array per column
+  na     the na.strings set, or undef when there is none
+  file   for the alignment message
+  row    a REFERENCE to read_table's $data_row, read once when the plan is
+         picked up: the callback has already emitted the rows before this
+         point, and the alignment message counts rows from 1 across both.*/
+typedef struct {
+	AV     *out;
+	SV    **keys;	//mode 0 only; owned by the plan hash, not by us
+	AV    **cols;	//mode 1 only; ditto
+	size_t *idx;	//validated against ncol in S_plan_init()
+	HV     *na;	//NULL when no na.strings were given
+	const char *file;
+	size_t  nout;
+	size_t  ncol;
+	size_t  row;	//data rows emitted so far, by both paths together
+	short int mode;	// 0 = aoh, 1 = hoa
+	bool    active;	//has the callback filled the plan in yet
+} csv_plan;
+
+/*One required plan key, or a croak.  install_plan() is the only thing that
+writes a plan, so none of these can fire from read_table -- but every idx below
+indexes a C array with a number that came from perl, and a croak is a better
+answer than a crash if _parse_csv_file ever gets a plan from somewhere else.*/
+static SV *S_plan_key(pTHX_ HV *restrict h, const char *restrict k)
+{
+	SV **e = hv_fetch(h, k, (I32)strlen(k), 0);
+	if (!e || !*e || !SvOK(*e))
+		croak("_parse_csv_file: plan is missing '%s'", k);
+	return *e;
+}
+
+/*As above, for a key that has to hold a reference to type t.*/
+static SV *S_plan_ref(pTHX_ HV *restrict h, const char *restrict k, svtype t)
+{
+	SV *sv = S_plan_key(aTHX_ h, k);
+	if (!SvROK(sv) || SvTYPE(SvRV(sv)) != t)
+		croak("_parse_csv_file: plan key '%s' is the wrong kind of reference", k);
+	return SvRV(sv);
+}
+
+/*Read the plan hash into the struct above, once, the first time read_table has
+filled it in.  Every SV, AV and HV pointer taken here is borrowed: the plan
+hash is a lexical in read_table and outlives this parse, so the only things
+this frees are the three C arrays, from S_plan_free().*/
+static void S_plan_init(pTHX_ csv_plan *restrict p, HV *restrict h)
+{
+	AV *keys, *idx;
+	size_t j;
+
+	keys    = (AV*)S_plan_ref(aTHX_ h, "keys", SVt_PVAV);
+	idx     = (AV*)S_plan_ref(aTHX_ h, "idx",  SVt_PVAV);
+	p->out  = (AV*)S_plan_ref(aTHX_ h, "out",  SVt_PVAV);
+	p->ncol = (size_t)SvUV(S_plan_key(aTHX_ h, "ncol"));
+	p->mode = (short int)SvIV(S_plan_key(aTHX_ h, "mode"));
+	p->file = SvPV_nolen_const(S_plan_key(aTHX_ h, "file"));
+	{	/*a reference to read_table's $data_row, not a copy: it is read
+		here, which is after the callback has emitted any rows of its own*/
+		SV *rsv = S_plan_key(aTHX_ h, "row");
+		if (!SvROK(rsv))
+			croak("_parse_csv_file: plan key 'row' is not a reference");
+		p->row = (size_t)SvUV(SvRV(rsv));
+	}
+	{
+		SV **e = hv_fetchs(h, "na", 0);
+		p->na = (e && *e && SvROK(*e) && SvTYPE(SvRV(*e)) == SVt_PVHV)
+		        ? (HV*)SvRV(*e) : NULL;
+	}
+	if (p->mode != 0 && p->mode != 1)
+		croak("_parse_csv_file: plan 'mode' %d is not 0 (aoh) or 1 (hoa)",
+		      (int)p->mode);
+	if (av_len(idx) != av_len(keys))
+		croak("_parse_csv_file: plan 'idx' and 'keys' are different lengths");
+
+	p->nout = (size_t)(av_len(keys) + 1);
+	Newx(p->idx,  p->nout ? p->nout : 1, size_t);
+	Newx(p->keys, p->nout ? p->nout : 1, SV*);
+	for (j = 0; j < p->nout; j++) {
+		SV **ie = av_fetch(idx,  (SSize_t)j, 0);
+		SV **ke = av_fetch(keys, (SSize_t)j, 0);
+		IV   i  = (ie && *ie) ? SvIV(*ie) : -1;
+		if (i < 0 || (UV)i >= (UV)p->ncol || !ke || !*ke)
+			croak("_parse_csv_file: plan 'idx' entry %" UVuf " is not a field "
+			      "of a %" UVuf "-column row", (UV)j, (UV)p->ncol);
+		p->idx[j]  = (size_t)i;
+		p->keys[j] = *ke;
+	}
+	if (p->mode == 1) {
+		if ((size_t)(av_len(p->out) + 1) != p->nout)
+			croak("_parse_csv_file: plan 'out' has one array per column in "
+			      "hoa mode");
+		Newx(p->cols, p->nout ? p->nout : 1, AV*);
+		for (j = 0; j < p->nout; j++) {
+			SV **ce = av_fetch(p->out, (SSize_t)j, 0);
+			if (!ce || !*ce || !SvROK(*ce) || SvTYPE(SvRV(*ce)) != SVt_PVAV)
+				croak("_parse_csv_file: plan 'out' entry %" UVuf " is not an "
+				      "ARRAY reference", (UV)j);
+			p->cols[j] = (AV*)SvRV(*ce);
+		}
+	}
+	p->active = TRUE;
+}
+
+/*Save-stack destructor for the plan.  The struct is on the heap rather than
+the XS body's stack because a croak inside S_fast_row() unwinds that frame
+before the save stack is run, and this would then be freeing through a
+dangling pointer.*/
+static void S_plan_free(pTHX_ void *v)
+{
+	csv_plan *p = (csv_plan*)v;
+	Safefree(p->idx);
+	Safefree(p->keys);
+	Safefree(p->cols);
+	Safefree(p);
+}
+
+/*One data row, straight from the parser's field list into the output shape.
+
+The field SVs are MOVED, not copied: the row AV holds the only reference to
+each, so handing it to the hash or the column array costs a pointer rather
+than a newSVsv() of every cell.  The AV is then reset to empty and reused for
+the next row.  Any field no output column asked for -- which happens only when
+the header repeats a name -- is released here instead.
+
+An empty field, and a field listed in na.strings, become undef, which is the
+same rule the perl path applies and the same one that has always made an empty
+cell undef rather than "".  Every cell is SvPOK -- the parser builds each one
+with newSVsv() from the field accumulator, which is a PV from newSVpvs("") on
+-- so SvCUR() is the whole of the "is it empty" test.
+
+restrict holds on both: row is the parser's own buffer, never one of the arrays
+the plan points at, and the plan is not reachable from it.*/
+static void S_fast_row(pTHX_ csv_plan *restrict p, AV *restrict row)
+{
+	SV **ary;
+	HV  *h = NULL;
+	size_t j, w = (size_t)(AvFILLp(row) + 1);
+
+	if (w != p->ncol) {
+		/*The row is this function's to free: read_table's die() would have
+		been thrown with the row already mortal, and croak() here unwinds
+		past the caller's local before it can drop it.*/
+		size_t at = p->row + 1;
+		SvREFCNT_dec((SV*)row);
+		croak("Alignment error on %s data row %" UVuf " (%" UVuf " fields vs %" UVuf " headers).\n",
+		      p->file, (UV)at, (UV)w, (UV)p->ncol);
+	}
+	p->row++;
+	ary = AvARRAY(row);
+	if (p->mode == 0) {
+		h = newHV();
+		hv_ksplit(h, (IV)p->nout);	//no rehash while the row is filled
+	}
+	for (j = 0; j < p->nout; j++) {
+		SV *v = ary[p->idx[j]];
+		ary[p->idx[j]] = NULL;	//ownership leaves the row here
+		if (v && (SvCUR(v) == 0
+		          || (p->na && hv_exists_ent(p->na, v, 0)))) {
+			SvREFCNT_dec(v);
+			v = NULL;
+		}
+		if (!v)
+			v = newSV(0);	//undef: an empty or na.strings cell
+		if (p->mode == 0) {
+			if (!hv_store_ent(h, p->keys[j], v, 0))
+				SvREFCNT_dec(v);
+		} else {
+			av_push(p->cols[j], v);
+		}
+	}
+	for (j = 0; j < p->ncol; j++) {	//only a repeated header name leaves any
+		SvREFCNT_dec(ary[j]);
+		ary[j] = NULL;
+	}
+	AvFILLp(row) = -1;
+	if (p->mode == 0)
+		av_push(p->out, newRV_noinc((SV*)h));
+}
+
 static void lm_append(pTHX_ char **bufp, size_t *lenp, size_t *capp, const char *s){
 	size_t slen = strlen(s);
 	size_t sep  = (*lenp > 0) ? 1 : 0;
@@ -15865,13 +16069,15 @@ PPCODE:
 	XSRETURN_EMPTY;
 }
 
-SV* _parse_csv_file(char* file, const char* sep_str, const char* comment_str, SV* callback = &PL_sv_undef)
+SV* _parse_csv_file(char* file, const char* sep_str, const char* comment_str, SV* callback = &PL_sv_undef, SV* plan_sv = &PL_sv_undef)
 PREINIT:
 	PerlIO *fp;
 	AV *data = NULL;
 	AV *current_row = NULL;
 	SV *field = NULL;
 	SV *line_sv = NULL;
+	HV *plan_hv = NULL;
+	csv_plan *plan = NULL;
 	bool in_quotes = 0, post_quote = 0, use_cb = 0;
 	size_t sep_len, comment_len;
 	char sep0 = 0;
@@ -15882,6 +16088,17 @@ CODE:
 		else
 			croak("_parse_csv_file: callback must be a CODE reference");
 	}
+/*The fast path (see csv_plan above) is offered only alongside a callback:
+the callback reads the header, then fills this hash in and hands the rest of
+the file to S_fast_row().  read_table passes it only for the shapes that need
+no per-row perl.*/
+	if (SvOK(plan_sv)) {
+		if (!use_cb)
+			croak("_parse_csv_file: a plan needs a callback to fill it in");
+		if (!SvROK(plan_sv) || SvTYPE(SvRV(plan_sv)) != SVt_PVHV)
+			croak("_parse_csv_file: plan must be a HASH reference");
+		plan_hv = (HV*)SvRV(plan_sv);
+	}
 	sep_len = sep_str ? strlen(sep_str) : 0;
 	comment_len = comment_str ? strlen(comment_str) : 0;
 	sep0 = sep_len ? sep_str[0] : 0;
@@ -15890,6 +16107,8 @@ CODE:
 		croak("Could not open file '%s'", file);
 	ENTER;
 	SAVEDESTRUCTOR_X(S_pclose, fp);
+	Newxz(plan, 1, csv_plan);
+	SAVEDESTRUCTOR_X(S_plan_free, plan);
 	line_sv = newSV(128);
 	SAVEFREESV(line_sv);
 	field = newSVpvs("");
@@ -15983,11 +16202,28 @@ CODE:
 			sv_catpvn(field, "\n", 1);
 		} else {
 			post_quote = 0;
-			S_emit_row(aTHX_ &current_row, field, use_cb, callback, data);
+			if (plan->active) {
+				av_push(current_row, newSVsv(field));
+				sv_setpvs(field, "");
+				S_fast_row(aTHX_ plan, current_row);
+			} else {
+				S_emit_row(aTHX_ &current_row, field, use_cb, callback, data);
+				/*The callback fills the plan in on the row that fixes
+the header, so this is looked at once per row until it does -- twice in
+practice, and never again afterwards.*/
+				if (plan_hv && hv_exists(plan_hv, "out", 3))
+					S_plan_init(aTHX_ plan, plan_hv);
+			}
 		}
 	}
 	if (in_quotes) {
-		S_emit_row(aTHX_ &current_row, field, use_cb, callback, data);
+		if (plan->active) {
+			av_push(current_row, newSVsv(field));
+			sv_setpvs(field, "");
+			S_fast_row(aTHX_ plan, current_row);
+		} else {
+			S_emit_row(aTHX_ &current_row, field, use_cb, callback, data);
+		}
 	}
 	SvREFCNT_dec((SV*)current_row);
 	LEAVE;

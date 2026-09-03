@@ -2885,9 +2885,48 @@ sub read_table {
 	}
 	my $has_na = %na_string ? 1 : 0;   # skip the hash lookup in the common case
 
-	my (@data, %data, @header, @uniq_header,
+	my (@data, %data, @header, @uniq_header, @hoa_cols,
 	    %mapped_filters, @sorted_filter_flds, %seen_rownames);
 	my ($data_row, $header_seen, $header_done, $provisional_hdr) = (0, 0, 0, 0);
+
+# Once the header is fixed there is nothing left for the row closure below to
+# decide, so the parser is given a plan and builds the rest of the table
+# itself. That closure, called once per row, used to be about four fifths of
+# read_table's wall clock -- on a 300,000 x 5 CSV, 0.42 s of 0.53 s -- doing in
+# perl what C can do from the fields it has already cut.
+#
+# Only the shapes that need no per-row perl can go this way: 'hoh' names each
+# row from one of its own columns, and a 'filter' is perl by definition, so
+# both keep streaming through $on_line. An .xlsx is read by a different parser,
+# which has no fast path. $plan stays undef in all of those, and that is how
+# _parse_csv_file knows not to look for one.
+#
+# See csv_plan in LikeR.xs for what each key means. install_plan() runs exactly
+# once, from wherever $header_done is first set, and writes 'out' last because
+# that is the key the parser tests for.
+	my $plan = (!$is_xlsx && !$filter && $otype ne 'hoh') ? {} : undef;
+	my $install_plan = sub {
+		return if !$plan || %$plan;
+		# A repeated column name resolves to its LAST field, which is what
+		# "later values win" means when %line_hash is built below.
+		my %last;
+		$last{ $header[$_] } = $_ for 0 .. $#header;
+		$plan->{keys} = \@uniq_header;
+		$plan->{idx}  = [ map { $last{$_} } @uniq_header ];
+		$plan->{ncol} = scalar @header;
+		$plan->{file} = $file;
+		$plan->{na}   = $has_na ? \%na_string : undef;
+		# a reference, not a copy: the parser reads it when it picks the plan
+		# up, by which time $on_line may have emitted a data row of its own.
+		$plan->{row}  = \$data_row;
+		if ($otype eq 'aoh') {
+			$plan->{mode} = 0;
+			$plan->{out}  = \@data;
+		} else {
+			$plan->{mode} = 1;
+			$plan->{out}  = [ @hoa_cols ];
+		}
+	};
 
 	# Everything that depends on the (possibly augmented) @header lives here so
 	# it can run either right after the header line (strict mode) or deferred
@@ -2937,6 +2976,10 @@ sub read_table {
 			}
 			@sorted_filter_flds = sort { $a <=> $b } keys %mapped_filters;
 		}
+		# The column arrays are made once and held, so neither the fast path
+		# nor the row loop below has to fetch them out of %data (and
+		# autovivify them) once per column per row.
+		@hoa_cols = map { $data{$_} ||= [] } @uniq_header if $otype eq 'hoa';
 	};
 
 	# _parse_csv_file() treats a line whose comment marker is followed by
@@ -2979,6 +3022,7 @@ sub read_table {
 			unless ($want_auto_rn) {	# strict: finalize immediately
 				$finalize_header->();
 				$header_done = 1;
+				$install_plan->();
 			}
 			return;
 		}
@@ -2998,6 +3042,7 @@ sub read_table {
 					unless ($want_auto_rn) {
 						$finalize_header->();
 						$header_done = 1;
+						$install_plan->();
 					}
 					return;	# this line WAS the header, not data
 				}
@@ -3013,6 +3058,7 @@ sub read_table {
 			}
 			$finalize_header->();
 			$header_done = 1;
+			$install_plan->();
 			# fall through and process THIS line as data
 		}
 
@@ -3055,7 +3101,8 @@ sub read_table {
 		if ($otype eq 'aoh') {
 			push @data, \%line_hash;
 		} elsif ($otype eq 'hoa') {
-			push @{ $data{$_} }, $line_hash{$_} for @uniq_header;
+			my $c = 0;
+			push @{ $hoa_cols[ $c++ ] }, $line_hash{$_} for @uniq_header;
 		} elsif ($otype eq 'hoh') {
 			my $row_name = $line_hash{ $args{'row.names'} };
 			die sprintf "read_table: undefined row name (column '%s') in %s data row %d\n",
@@ -3074,12 +3121,18 @@ sub read_table {
 		my $chosen = _xlsx_choose_sheet($file, $xlsx_sheets, $args{sheet});
 		_parse_xlsx_sheet($file, $sst, $chosen->{path}, $on_line);
 	} else {
-		_parse_csv_file($file, $args{sep} // '', $args{comment} // '', $on_line);
+		_parse_csv_file($file, $args{sep} // '', $args{comment} // '',
+			$on_line, $plan);
 	}
 	# header-only files never hit a data row. A provisional (commented-out)
 	# header was never confirmed against a data row, but with no data to
 	# contradict it we accept it; either way still validate.
 	$finalize_header->() if $header_seen && !$header_done;
+	# A hoa's column arrays are now made when the header is finalized rather
+	# than by the first push into them, so a file with a header and no data
+	# rows would come back as one empty array per column. It has always come
+	# back as {}, the way an aoh comes back as [], so keep it that way.
+	%data = () if $otype eq 'hoa' && @hoa_cols && !@{ $hoa_cols[0] };
 	if ($otype eq 'aoh') {
 		return \@data;
 	} else { # hoa or hoh
