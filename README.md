@@ -1,9 +1,7 @@
 # Synopsis
 
 Get basic statistical functions working in Perl as if they were part of List::Util, like `min`, `max`, `sum`, etc.
-I've used Artificial Intelligence tools such as Claude, Gemini, and Grok to write this as well as using my own gray matter.
-There are other similar tools on CPAN, but I want speed and a form like List::Util, which I've gotten here with the help of AI, which often required many attempts to do correctly.
-This is meant to call subroutines directly through eXternal Subroutines (XS) for performance and portability.
+There are other similar tools on CPAN, but I want speed and a form like List::Util.
 
 There **are** other modules on CPAN that can do **PARTS** of this, but this works the way that I **want** it to.
 
@@ -5675,7 +5673,13 @@ the rows that lack it, so the selection comes back rectangular:
 
 ## seq
 
-Works as closely as I can to R's seq, which is very similar to Perl's `for` loops.  Returns an array, not an array reference.
+Works as closely as I can to R's `seq`, which is very similar to Perl's `for`
+loops.  Returns an array, not an array reference.
+
+Specifically it mirrors `base::seq.default`, which is what R's `seq()`
+dispatches to, and *not* the `seq.int()` primitive: the two do not agree, and
+the disagreements are visible from Perl.  Takes `from`, `to`, and an optional
+`by`.
 
 ### Standard integer sequence
 
@@ -5703,6 +5707,99 @@ Works as closely as I can to R's seq, which is very similar to Perl's `for` loop
     for (my $idx = 5; $idx <= 10; $idx++) { # count down to pop
         is_approx(pop @seq, $idx, "seq item $idx with negative step");
     }
+
+### Leaving `by` out
+
+Without a `by`, `seq` is R's `from:to`: unit steps in whichever direction `to`
+lies.  So `seq(5, 1)` is `5 4 3 2 1`, the same as R.  Only an explicit `by`
+whose sign disagrees with the direction of travel is an error.
+
+`from:to` is also a different function from `by = 1`, with a looser fuzz
+factor, which is worth knowing before you supply a `by` you think is
+redundant:
+
+    scalar @{[ seq(1, 4.9999999)    ]};   # 5  -- 1 2 3 4 5
+    scalar @{[ seq(1, 4.9999999, 1) ]};   # 4  -- 1 2 3 4
+
+R does the same thing, for the same reason: `1:4.9999999` adds
+`1 + FLT_EPSILON` before truncating, and `seq(1, 4.9999999, by = 1)` adds
+`1e-10`.
+
+### How many values you get
+
+Nothing accumulates: element *i* is `from + i * by`, and the count is
+`int((to - from)/by + 1e-10) + 1`.  Both formulae are R's.  The `1e-10` is
+why `seq(0, 1, 0.1)` has eleven values and not ten — `(1 - 0)/0.1` is not
+quite 10 in binary floating point.  The last value is then pinned to `to`
+if the fuzz carried it past, which R added in 2.9.0, so
+
+    (seq(0, 1, 0.00025 + 5e-16))[-1];     # exactly 1, not 1 + 2e-12
+
+### When one value comes back instead of many
+
+Three cases collapse to a single value rather than raising an error, all
+following R:
+
+* `by` is `0` and `from == to`, which returns `from`;
+* `to - from` is `0` and `to` is `0`, which returns `to` whatever `by` is;
+* `from` and `to` are indistinguishable at the working precision — that is,
+  `abs(to - from) / max(abs(to), abs(from))` is below `100 * DBL_EPSILON`.
+  This is why `seq(1e15, 1e15 + 20, 2)` is the single value `1e15` and not
+  eleven values: at that magnitude a `double` cannot tell `1e15` from
+  `1e15 + 20` well enough for the step to mean anything.  Widen the gap and
+  the sequence comes back — `seq(1e15, 1e15 + 200, 2)` is 101 values.
+
+### Errors
+
+All five messages are R's own wording:
+
+* `from` or `to` is `NaN` or infinite — `seq: 'from' must be a finite number`,
+  or the same for `'to'`.
+* `by` has the wrong sign for the direction of travel —
+  `seq: wrong sign in 'by' argument`.
+* `by` is `0` with `from != to`, or `by` is `NaN` —
+  `seq: invalid '(to - from)/by'`.
+* the sequence would have more than `INT_MAX` values —
+  `seq: 'by' argument is much too small`.
+* `from:to` would span more than `INT_MAX` —
+  `seq: result would be too long a vector`.
+
+The fourth of these used to be silent: up to 0.314 a count that overflowed
+`size_t` returned the empty list, so `seq(0, 1e30, 1)` and `seq(0, 1, 1e-11)`
+both handed back nothing at all, and `seq(NaN, 5)` died inside perl with
+`panic: stack_grow() negative count`.  `seq(5, 1)` croaked
+`wrong sign in 'by' argument` in that release too.
+
+### Integers come back as integers
+
+When every value in the sequence is an exact integer no larger than `2**53`,
+`seq` returns Perl integers (IVs) rather than floats — which is also what R
+returns for the same call, an integer vector.  The numbers are identical
+either way, but the representation is much cheaper to use: stringifying the
+result never goes through `Gconvert`, so on this machine
+
+    join ',', seq(1, 1_000_000);
+
+dropped from 409 ns per element to 83, and building the list itself from 16.3
+to 12.7, putting `seq` level with perl's own `1 .. 1_000_000`.  A sequence
+with a fractional step stays floating point, as it must.
+
+One consequence is cosmetic: a large integral value now prints in full rather
+than in exponent form, so `seq(1e15, 1e15 + 200, 2)` starts
+`1000000000000000` where it used to start `1e+15`.
+
+### Context
+
+`seq` is a list function and the array is the point of it, but the other two
+contexts are cheap rather than wasteful: in void context it builds nothing,
+and in scalar context it builds only the value the caller can see, which is
+the last one — what perl gives for any list-returning sub.  So
+
+    seq(1, 10_000_000);          # costs nothing
+    my $last = seq(1, 10);       # 10, without ten million SVs behind it
+
+There is no `length.out` and no one-argument form; `seq(17)` is an error
+rather than R's `1:17`.
 
 ## shapiro_test
 
@@ -6834,6 +6931,137 @@ error is checked to be worded identically by both paths, data row number
 included. `t/parse_read.t` gained 11 more tests, for the plan's own argument
 validation — each of those croaks guards a C array that would otherwise be
 indexed with a number that came from perl.
+
+### `seq` rewritten against R's `seq.default`
+
+`seq` was a `(to - from)/by` loop with one fuzz factor and two guards. R's
+`seq` is not that. `base::seq.default` is a chain of eight special cases — two
+different fuzz factors, three separate routes to a single value, a rewrite for
+endpoints whose difference overflows, and a clamp on the last element — and
+every one of them decides either how many values come back or where the
+sequence stops. All of them are transcribed now, from R 4.6.1
+`src/library/base/R/seq.R` and `seq_colon()` in `src/main/seq.c`.
+
+It matters which R function is being copied, because `seq.default` and the
+`seq.int()` primitive do not agree. `seq.int` tolerates a slightly negative
+`(to - from)/by`, allows `100 * INT_MAX` values, and short-circuits `by = ±1`
+to `from:to`; `seq.default` rejects any negative count, caps at `INT_MAX`, and
+reaches `from:to` only when `by` is genuinely absent. This follows
+`seq.default`, because that is what R's `seq()` dispatches to.
+
+Six calls were wrong, three of them silently:
+
+| call | before | now, and in R |
+|---|---|---|
+| `seq(0, 1e30, 1)` | `()` | croaks `'by' argument is much too small` |
+| `seq(NaN, 5)` | `panic: stack_grow() negative count` | croaks `'from' must be a finite number` |
+| `seq(0, 1, 1e-11)` | `Out of memory during stack extend` | croaks `'by' argument is much too small` |
+| `seq(-1e308, 1e308, 1e307)` | `()` | 21 values, `-1e308` to `1e308` |
+| `seq(5, 1)` | croaks `wrong sign in 'by' argument` | `5 4 3 2 1` |
+| `seq(1e15, 1e15 + 20, 2)` | 11 values | the single value `1e15` |
+
+The empty lists and the panic were one bug: the element count was computed as
+an NV and cast to `size_t`, and neither `1e30` nor `NaN` nor `Inf` fits in one,
+so the conversion was undefined. On x86-64 `1e30` became `0` and the call
+returned nothing at all; `NaN` became `-2**63`, which then reached `EXTEND()`.
+A count that *did* fit but could not be allocated — `(1 - 0)/1e-11` is
+100,000,000,001 values, 800 GB of stack — got as far as trying. R rejects all
+three the same way, and now so does this: `'by' argument is much too small`
+above `INT_MAX` values, `'from'`/`'to' must be a finite number` for a
+non-finite endpoint.
+
+The other three were missing features rather than broken arithmetic:
+
+- **An absent `by` is `from:to`, in either direction.** `seq(5, 1)` is
+  `5 4 3 2 1`, the same as R; only an explicit `by` whose sign disagrees with
+  the direction of travel is an error. `from:to` also carries R's *looser*
+  fuzz, so `seq(1, 4.9999999)` is five values where `seq(1, 4.9999999, 1)` is
+  four — R does the same, and for the same reason: `1:4.9999999` adds
+  `1 + FLT_EPSILON` before truncating and the `by` branch adds `1e-10`.
+- **The last element is pinned to `to`** when the fuzz carried it past, which
+  R has done since 2.9.0. `seq(0, 1, 0.00025 + 5e-16)` used to overshoot 1 —
+  the exact case R's `tests/reg-tests-1b.R` asserts against, under the heading
+  "(Deliberate) overshot in `seq(from, to, by)` because of fuzz".
+- **Endpoints too close to tell apart collapse to `from`.** When
+  `abs(to - from) / max(abs(to), abs(from))` is below `100 * DBL_EPSILON` the
+  count `(to - from)/by` is noise, and R returns `from` alone. This is why
+  `seq(1e15, 1e15 + 20, 2)` is one value: at that magnitude a `double` cannot
+  distinguish the endpoints well enough for a step of 2 to mean anything.
+  Widen the gap and the sequence returns — `seq(1e15, 1e15 + 200, 2)` is 101
+  values.
+
+That last threshold is deliberately *not* scaled to the build's `NV_EPSILON`,
+which is this file's rule for anything epsilon-shaped. R's
+`100 * .Machine$double.eps` is a third fuzz factor belonging to `seq`'s
+definition, like the `1e-10` and the `FLT_EPSILON`, rather than a tolerance on
+this build's arithmetic. Scaling it was tried and reverted: with `NV_EPSILON`
+the call above returns eleven values on a long-double or `__float128` perl and
+one on a `double` perl, which is a worse answer than R's on every build.
+
+### `seq`: integer sequences come back as integers, and are up to 5× cheaper
+
+A sequence whose every value is an exact integer no larger than `2**53` is now
+returned as perl integers (IVs) rather than floats — which is also what R
+returns for the same call, an integer vector. The numbers are identical either
+way; this is a choice of SV body, not of arithmetic. But it is much the cheaper
+body, because stringifying an IV never reaches `Gconvert()`.
+
+Measured on perl-5.44.0 at `n = 1e6`, per element:
+
+| | before | after | perl's own `1 .. n` |
+|---|---|---|---|
+| `my @a = seq(1, n)` | 16.3 ns | **12.7 ns** | 12.3 ns |
+| `join ',', seq(1, n)` | 409 ns | **81 ns** | 81 ns |
+
+The second row is the one that shows up in real code: anything that prints,
+joins, writes or hash-keys the result was paying five times over. `seq` is now
+level with the range operator on both. A fractional step stays floating point,
+as it must, and is unchanged at 13.4 ns per element — that path was already at
+parity.
+
+Void and scalar context no longer build the values the caller cannot reach.
+`seq(1, 1e7);` as a statement of its own took 190 ms and left 384 MB of
+resident memory behind for the life of the process — the grown argument stack,
+the grown mortal stack, and the SV arenas the ten million heads came out of. It
+now takes 5 µs and no memory. In scalar context only the last value is built,
+which is the one the caller's assignment reads off the top of the stack: the
+same answer perl gives for any list-returning sub, and the same answer `seq`
+gave before.
+
+One consequence is cosmetic: a large integral value prints in full rather than
+in exponent form, so `seq(1e15, 1e15 + 200, 2)` starts `1000000000000000` where
+it used to start `1e+15`.
+
+### `t/seq.R.t`, 378 tests taken from R's own suite
+
+Every case is R's, cited individually in the file's header: the `## seq` and
+`## Round` blocks and the Don MacQueen length case from `reg-tests-1a.R`, the
+deliberate-overshoot assertion from `reg-tests-1b.R`, the NaN error messages
+from `reg-tests-2.R`, and the four `\examples` from `seq.Rd`. The rest of the
+table walks the branches of `seq.default` those do not reach: `from:to` in both
+directions, all four routes to a single value, a subnormal step, and the
+overflow rewrite. Expected values are frozen `%.17g` literals generated by
+`t/seq.R.R`, committed next to the test; the test never calls R.
+
+Python has no equivalent to cross-check against, and that is recorded in the
+file rather than left as a gap: `numpy.arange` is half-open and carries no
+fuzz, so `arange(0, 1, 0.1)` is ten values ending at 0.9 where
+`seq(0, 1, 0.1)` is eleven ending at 1, and `numpy.linspace` is parameterised
+by length, which is R's `seq(length.out=)` and a different function.
+
+Agreement with R is exact on a `double` perl — the worst relative disagreement
+over all 378 assertions is **0** on perl-5.44.0 and perl-5.42.3. The other
+builds cannot be exact, and not because their arithmetic is worse: a
+long-double or `__float128` perl parses `"0.05"` to its own NV, half an ulp of a
+double away from the number R read, and one multiply and one add carry that
+through. The tolerance is measured rather than chosen — 1.11e-16 on
+perl-5.10.1, 1.50e-16 on perl-5.12.5 and 5.44.0-quadmath, 1.60e-16 on an x87
+build — and set at 8e-16, five times the worst of them.
+
+Two cases are asserted as exact integer multiples of a power of two rather than
+as decimals, because a decimal there would be testing perl's string-to-double
+instead of `seq`: perl-5.10.1 reads `7.9050503334599447e-323` as `0` and `1e307`
+five ulp high, while `2**k` is exact on every one of these perls.
 
 
 ## 0.313 2026-09-01 CDT

@@ -8369,7 +8369,13 @@ the rows that lack it, so the selection comes back rectangular:
 
 =head2 seq
 
-Works as closely as I can to R's seq, which is very similar to Perl's C<for> loops.  Returns an array, not an array reference.
+Works as closely as I can to R's C<seq>, which is very similar to Perl's C<for>
+loops.  Returns an array, not an array reference.
+
+Specifically it mirrors C<base::seq.default>, which is what R's C<seq()>
+dispatches to, and I<not> the C<seq.int()> primitive: the two do not agree, and
+the disagreements are visible from Perl.  Takes C<from>, C<to>, and an optional
+C<by>.
 
 =head3 Standard integer sequence
 
@@ -8386,7 +8392,7 @@ Works as closely as I can to R's seq, which is very similar to Perl's C<for> loo
  @seq = seq(1, 2, 0.25);
  say join(", ", @seq), "\n";
  for (my $idx = 2; $idx >= 1; $idx -= 0.25) { # count down to pop
-     is_approx(pop @seq, $idx, "seq item $idx with fractional step");
+ 	is_approx(pop @seq, $idx, "seq item $idx with fractional step");
  }
 
 =head3 Negative steps
@@ -8397,6 +8403,129 @@ Works as closely as I can to R's seq, which is very similar to Perl's C<for> loo
  for (my $idx = 5; $idx <= 10; $idx++) { # count down to pop
      is_approx(pop @seq, $idx, "seq item $idx with negative step");
  }
+
+=head3 Leaving C<by> out
+
+Without a C<by>, C<seq> is R's C<from:to>: unit steps in whichever direction C<to>
+lies.  So C<seq(5, 1)> is C<5 4 3 2 1>, the same as R.  Only an explicit C<by>
+whose sign disagrees with the direction of travel is an error.
+
+C<from:to> is also a different function from C<by = 1>, with a looser fuzz
+factor, which is worth knowing before you supply a C<by> you think is
+redundant:
+
+ scalar @{[ seq(1, 4.9999999)    ]};   # 5  -- 1 2 3 4 5
+ scalar @{[ seq(1, 4.9999999, 1) ]};   # 4  -- 1 2 3 4
+
+R does the same thing, for the same reason: C<1:4.9999999> adds
+C<1 + FLT_EPSILON> before truncating, and C<seq(1, 4.9999999, by = 1)> adds
+C<1e-10>.
+
+=head3 How many values you get
+
+Nothing accumulates: element I<i> is C<from + i * by>, and the count is
+C<int((to - from)/by + 1e-10) + 1>.  Both formulae are R's.  The C<1e-10> is
+why C<seq(0, 1, 0.1)> has eleven values and not ten — C<(1 - 0)/0.1> is not
+quite 10 in binary floating point.  The last value is then pinned to C<to>
+if the fuzz carried it past, which R added in 2.9.0, so
+
+ (seq(0, 1, 0.00025 + 5e-16))[-1];     # exactly 1, not 1 + 2e-12
+
+=head3 When one value comes back instead of many
+
+Three cases collapse to a single value rather than raising an error, all
+following R:
+
+=over 4
+
+=item *
+
+C<by> is C<0> and C<from == to>, which returns C<from>;
+
+=item *
+
+C<to - from> is C<0> and C<to> is C<0>, which returns C<to> whatever C<by> is;
+
+=item *
+
+C<from> and C<to> are indistinguishable at the working precision — that is,
+C<abs(to - from) / max(abs(to), abs(from))> is below C<100 * DBL_EPSILON>.
+This is why C<seq(1e15, 1e15 + 20, 2)> is the single value C<1e15> and not
+eleven values: at that magnitude a C<double> cannot tell C<1e15> from
+C<1e15 + 20> well enough for the step to mean anything.  Widen the gap and
+the sequence comes back — C<seq(1e15, 1e15 + 200, 2)> is 101 values.
+
+=back
+
+=head3 Errors
+
+All five messages are R's own wording:
+
+=over 4
+
+=item *
+
+C<from> or C<to> is C<NaN> or infinite — C<seq: 'from' must be a finite number>,
+or the same for C<'to'>.
+
+=item *
+
+C<by> has the wrong sign for the direction of travel —
+C<seq: wrong sign in 'by' argument>.
+
+=item *
+
+C<by> is C<0> with C<from != to>, or C<by> is C<NaN> —
+C<seq: invalid '(to - from)/by'>.
+
+=item *
+
+the sequence would have more than C<INT_MAX> values —
+C<seq: 'by' argument is much too small>.
+
+=item *
+
+C<from:to> would span more than C<INT_MAX> —
+C<seq: result would be too long a vector>.
+
+=back
+
+The fourth of these used to be silent: up to 0.314 a count that overflowed
+C<size_t> returned the empty list, so C<seq(0, 1e30, 1)> and C<seq(0, 1, 1e-11)>
+both handed back nothing at all, and C<seq(NaN, 5)> died inside perl with
+C<panic: stack_grow() negative count>.  C<seq(5, 1)> croaked
+C<wrong sign in 'by' argument> in that release too.
+
+=head3 Integers come back as integers
+
+When every value in the sequence is an exact integer no larger than C<2**53>,
+C<seq> returns Perl integers (IVs) rather than floats — which is also what R
+returns for the same call, an integer vector.  The numbers are identical
+either way, but the representation is much cheaper to use: stringifying the
+result never goes through C<Gconvert>, so on this machine
+
+ join ',', seq(1, 1_000_000);
+
+dropped from 409 ns per element to 83, and building the list itself from 16.3
+to 12.7, putting C<seq> level with perl's own C<1 .. 1_000_000>.  A sequence
+with a fractional step stays floating point, as it must.
+
+One consequence is cosmetic: a large integral value now prints in full rather
+than in exponent form, so C<seq(1e15, 1e15 + 200, 2)> starts
+C<1000000000000000> where it used to start C<1e+15>.
+
+=head3 Context
+
+C<seq> is a list function and the array is the point of it, but the other two
+contexts are cheap rather than wasteful: in void context it builds nothing,
+and in scalar context it builds only the value the caller can see, which is
+the last one — what perl gives for any list-returning sub.  So
+
+ seq(1, 10_000_000);          # costs nothing
+ my $last = seq(1, 10);       # 10, without ten million SVs behind it
+
+There is no C<length.out> and no one-argument form; C<seq(17)> is an error
+rather than R's C<1:17>.
 
 =head2 shapiro_test
 
