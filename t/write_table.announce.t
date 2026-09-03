@@ -172,4 +172,22 @@ for my $fmt (sort keys %by_format) {
 		'40 announcements stay whole and in step with a second handle on fd 1');
 }
 
+{
+	# quiet => 1 suppresses the line entirely.  The colour is deliberately
+	# unconditional (it goes out whatever fd 1 is), so a script writing to a
+	# pipe or a data file needs a way to turn the announcement off rather than
+	# a way to decolour it; before 0.315 the documentation's only advice was
+	# to capture the output and strip the escapes.
+	for my $suffix (qw(csv tsv tex xlsx)) {
+		my $file = "$dir/quiet.$suffix";
+		my $out  = child_stdout(write_code($file, 'quiet', 1));
+		is($out, '', "quiet => 1 silences the .$suffix announcement");
+		ok(-s $file, "quiet => 1 still wrote the .$suffix file");
+	}
+	# A false quiet is the same as not passing it at all.
+	my $loud = "$dir/quiet_off.csv";
+	is(child_stdout(write_code($loud, 'quiet', 0)), announcement($loud),
+		'quiet => 0 leaves the announcement exactly as it was');
+}
+
 done_testing();

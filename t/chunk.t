@@ -58,6 +58,16 @@ use Stats::LikeR;
 	ok(!eval { chunk([1, 2]); 1 },                        'neither size nor parts dies');
 	ok(!eval { chunk([1, 2], size => 0); 1 },             'size 0 dies');
 	ok(!eval { chunk([1, 2], parts => -1); 1 },           'negative parts dies');
+	# An odd argument list used to fall straight into a hash assignment, so
+	# under `warnings FATAL => 'all'` chunk([1,2], 2) died as perl's "Odd
+	# number of elements in hash assignment at LikeR.pm line NNN" -- naming
+	# neither chunk nor the option it wanted.
+	like(do { local $@; eval { chunk([1, 2], 2) }; $@ },
+	     qr/\Achunk: arguments after the array reference must be name => value/,
+	     'a positional size is a chunk usage error, not a hash-assignment warning');
+	like(do { local $@; eval { chunk([1, 2], 'size') }; $@ },
+	     qr/\Achunk: arguments after the array reference must be name => value/,
+	     'a dangling option name is caught the same way');
 }
 
 # leak checks (assignments hoisted out for Devel::Cover)

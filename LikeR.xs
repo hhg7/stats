@@ -511,6 +511,48 @@ PERL_STATIC_INLINE NV nv_arg(pTHX_ SV *sv, const char *fname, UV argi)
 	return SvNV(sv);
 }
 
+/*A size argument -- a row count, a bin count, a number of draws -- validated
+before anything divides by it or allocates it.
+
+Reading one of these with a bare SvUV()/SvIV() is what let matrix(), hist(),
+sample(), rnorm() and rbinom() act on a value the caller never wrote: SvUV() on
+a non-numeric PV is 0, on -1 it is 2^64-1, and on a reference it is the
+address.  Each of those then reached a divisor or an allocation.
+matrix([1..6], 0) divided by zero and took the interpreter down with SIGFPE,
+which eval cannot catch; rnorm(-1) and hist(\@x, sub {}) handed the wrapped
+value to the allocator and died with perl's unrecoverable "Out of memory".
+Both are now ordinary croaks.
+
+A fractional value truncates toward zero rather than being refused, which is
+what R does to the same arguments (as.integer(2.7) is 2, so matrix(1:6, 2.7)
+is a two-row matrix) and what runif()'s own hand-written check below already
+did.
+
+`min` is the smallest value the caller may pass -- 0 where the argument is
+optional and 0 means "not given", 1 where it is not.  SV_COUNT_MAX is a sanity
+bound rather than a capacity one: 2^48 elements is 4 PB even at one byte each,
+so nothing below it is a real limit, and refusing what is above it is what
+turns an OOM abort back into a croak.  It is compared in NV, so it stays well
+inside the 53-bit integer range every NV represents exactly.*/
+#define SV_COUNT_MAX ((NV)281474976710656.0)   // 2^48
+PERL_STATIC_INLINE size_t sv_count_arg(pTHX_ SV *sv, const char *fname,
+                                       const char *what, UV min)
+{
+	if (!sv || !SvOK(sv))
+		croak("%s: %s is undef", fname, what);
+	if (!sv_is_numeric_arg(aTHX_ sv))
+		croak("%s: %s must be a number (got '%s')", fname, what, SvPV_nolen(sv));
+	NV v = SvNV(sv);
+	if (nv_isnan(v))
+		croak("%s: %s must be a number, not NaN", fname, what);
+	if (v < (NV)min)
+		croak_nv("%s: %s must be an integer >= %" UVuf ", not %" NVgf,
+		         fname, what, min, v);
+	if (v > SV_COUNT_MAX)
+		croak_nv("%s: %s is too large: %" NVgf, fname, what, v);
+	return (size_t)v;   // truncates toward zero, as R's as.integer() does
+}
+
 /*One element of an array, handed back as it is: no get magic, no SvOK test,
 nothing decided about it.  The frame functions -- filter(), merge(),
 drop_duplicates() -- read whole columns and whole rows this way, and each of
@@ -8944,11 +8986,19 @@ typedef struct {
 	int      out_hoa;
 } mg_join;
 
-//0 = AoH, 1 = HoA, 2 = HoH (used only to pick the default output shape).
+/*0 = AoH, 1 = HoA, 2 = HoH (used only to pick the default output shape).
+
+Anything that is neither an array nor a hash answers 0 and is left to
+mg_prep(), which is where a frame is really validated and where the croak the
+caller should see comes from.  Saying so explicitly matters because merge()
+calls this first, on nothing more than an SvROK() test: until it did, the
+`else` fell through to hv_iterinit() on whatever the reference pointed at, and
+merge(\1, $right) segfaulted before reaching the check that would have
+rejected it.*/
 static int
 mg_shape(pTHX_ SV *frame) {
 	SV *rv = SvRV(frame);
-	if (SvTYPE(rv) == SVt_PVAV) return 0;
+	if (SvTYPE(rv) != SVt_PVHV) return 0;
 	HV *hv = (HV *)rv;
 	hv_iterinit(hv);
 	HE *e = hv_iternext(hv);
@@ -10626,7 +10676,15 @@ static NV dens_brent_fmin(NV ax, NV bx, ft_fn f, void *info, NV tol)
 	fx = f(x, info); fv = fx; fw = fx;
 	tol3 = tol / 3.0;
 
-	for (;;) {
+	/*R's Brent_fmin loops until the bracket closes and nothing else; so did
+	this, and a non-finite bound made "closed" unreachable.  dens_bw_cv() and
+	dens_bw_sj() now refuse those bounds before calling, so this cap is a
+	backstop against a future caller, not a working limit: golden-section
+	alone shrinks the bracket by 0.382 per step, so even tol = NV_EPSILON on
+	__float128 (113-bit, the widest build) needs about 113*ln2/-ln(0.618) =
+	163 steps.  1000 leaves six times that, and returning the running best x
+	is what the loop would have returned anyway one step later.*/
+	for (unsigned short int iter = 0; iter < 1000; iter++) {
 		xm = (a + b) * 0.5;
 		tol1 = eps * nv_fabs(x) + tol3;
 		t2 = tol1 * 2.0;
@@ -10717,6 +10775,22 @@ static const char *dens_bw_cv(pTHX_ const NV *x, const NV *xs,
 	if (!have_lower) lower = 0.1 * hmax;
 	if (!have_upper) upper = hmax;
 	if (!have_tol)   tol   = 0.1 * lower;
+	/*dens_brent_fmin() is R's Brent_fmin, and like R's it iterates until the
+	bracket closes.  A NaN or infinite bound never closes it: every comparison
+	against NaN is false, so the loop runs forever.  R does not reach that
+	either, because optimize() rejects the bounds first ("invalid 'xmin'
+	value"); this is the same check, moved to where the bounds are built.
+
+	The bound that actually overflows is hmax, whose sqrt(var) squares the
+	data: on a double build var(c(1, 1e300, -1)) is already +Inf, so
+	bw_ucv(c(1, 1e300, -1)) hung with no way out but a signal.  The threshold
+	is a build property (about 1e155 for a double NV, far higher for
+	long double and __float128), not a fixed number, so test the value
+	rather than the data.*/
+	if (!nv_isfinite(lower) || !nv_isfinite(upper) || !nv_isfinite(tol))
+		return "search interval is not finite (the data's variance overflowed?)";
+	if (!(lower > 0.0) || !(lower < upper) || !(tol > 0.0))
+		return "search interval must satisfy 0 < lower < upper with a positive tol";
 
 	dens_pairs P;
 	const char *err = dens_pair_cnts(aTHX_ x, n, nb, &P);
@@ -15389,7 +15463,7 @@ PPCODE:
 				  strEQ(k, "tex.longtable.head") ||
 				  strEQ(k, "xlsx") || strEQ(k, "xlsx.sheet") ||
 				  strEQ(k, "xlsx.comment") || strEQ(k, "xlsx.freeze.rows") ||
-				  strEQ(k, "xlsx.freeze.cols"))) {
+				  strEQ(k, "xlsx.freeze.cols") || strEQ(k, "quiet"))) {
 				file_sv = cand;
 				arg_idx++;
 			}
@@ -15425,6 +15499,17 @@ PPCODE:
 	SV *xlsx_comment = NULL; // extra comment line(s) appended after the provenance
 	IV xlsx_freeze_rows = 0; // leading rows to freeze (0 = none)
 	IV xlsx_freeze_cols = 0; // leading columns to freeze (0 = none)
+/* Suppress the "wrote <file>" confirmation line entirely.
+	The line is deliberately unconditional and deliberately coloured (see
+	write_table_announce()), which is right for a person at a terminal and
+	wrong for a script whose stdout is a pipe, a data file, or a test's
+	captured output: the SGR bytes go out whatever fd 1 is, and the
+	documentation's only advice was to capture and strip them.  This is the
+	opt-out that advice was missing.  It is not a colour switch -- a caller
+	who wants the line but not the escapes still has to strip -- because the
+	coloured form is what t/write_table.announce.t pins as the contract
+	shared by every format.*/
+	bool quiet = 0;
 	// Read the remaining Hash-style arguments
 	for (; arg_idx < items; arg_idx += 2) {
 		if (arg_idx + 1 >= items) croak("write_table: Odd number of arguments passed");
@@ -15465,6 +15550,7 @@ PPCODE:
 					croak("write_table: 'xlsx.freeze.cols' must be a non-negative integer\n");
 			}
 		}
+		else if (strEQ(key, "quiet"))            quiet = SvTRUE(val) ? 1 : 0;
 		else croak("write_table: Unknown arguments passed: %s", key);
 	}
 	if (!data_sv || !SvROK(data_sv)) {
@@ -16036,7 +16122,7 @@ PPCODE:
 /* Delimited output is already on disk by the time the handle closes, so this
   is where csv/tsv announces itself. Guarded on 'fh' rather than on '!collect'
   so the line is printed only when a file was actually opened and written.*/
-	if (fh) write_table_announce(aTHX_ file);
+	if (fh && !quiet) write_table_announce(aTHX_ file);
 /* LaTeX output: render the collected table to the main file now that the
   rows are gathered. With 'tex' on nothing was written above, so this is
   the only writer of 'file'.*/
@@ -16044,7 +16130,7 @@ PPCODE:
 		write_tex_tabular(aTHX_ collect_av, file, tex_align,
 			tex_bold1, tex_format, tex_size, tex_comment, tex_longtable,
 			tex_longtable_head);
-		write_table_announce(aTHX_ file);
+		if (!quiet) write_table_announce(aTHX_ file);
 	}
 /* .xlsx output: build the workbook from the collected rows. The provenance
   line goes into the workbook's document "comments" property (dc:description),
@@ -16064,7 +16150,7 @@ PPCODE:
 		}
 		write_xlsx_workbook(aTHX_ collect_av, file, xlsx_sheet, prov,
 			(unsigned)xlsx_freeze_rows, (unsigned)xlsx_freeze_cols);
-		write_table_announce(aTHX_ file);
+		if (!quiet) write_table_announce(aTHX_ file);
 	}
 	XSRETURN_EMPTY;
 }
@@ -17301,46 +17387,64 @@ CODE:
 			M2_y += dy * (y[i] - mean_y);
 			cov  += dx * (y[i] - mean_y);
 	  }
-	  estimate = (M2_x > 0.0 && M2_y > 0.0) ? cov / nv_sqrt(M2_x * M2_y) : 0.0;
-	  //Clamp to [-1, 1] to guard against floating-point overshoot
-	  if      (estimate >  1.0) estimate =  1.0;
-	  else if (estimate < -1.0) estimate = -1.0;
+	  /*A column with no variance has no correlation to report, and saying so
+	  is the whole point: R's cor() returns NA there with the warning "the
+	  standard deviation is zero", and cor.test() prints t = NA, df = 2,
+	  p-value = NA, cor = NA.  This returned 0 instead -- estimate 0,
+	  statistic 0, p-value 1 -- which reads as a real, well-supported null
+	  result and no caller can tell the two apart.  Nothing else in this file
+	  agreed with it either: cor() croaks ("standard deviation of x is 0"),
+	  the shared pearson_cor() helper returns NV_NAN, and the kendall branch
+	  below already answers NaN on its own degenerate denominator.
+
+	  The guard is a flag rather than a test of `estimate` because none of
+	  incbeta_xy(), nv_tanh() or std_qnorm() is audited for NaN input; the
+	  degenerate case skips them instead of relying on NaN to propagate.*/
+	  const bool no_variance = !(M2_x > 0.0) || !(M2_y > 0.0);
 	  df = (NV)(n - 2);
-	  /*guard divide-by-zero when |estimate| == 1 exactly.
-	  A perfect correlation gives t = ±Inf, matching R's behaviour.*/
-	  NV denom_t = 1.0 - estimate * estimate;
-	  if (denom_t <= 0.0)
-		  statistic = (estimate > 0.0) ? INFINITY : -INFINITY;
-	  else
-		  statistic = estimate * nv_sqrt(df / denom_t);
-	  /*Confidence interval via Fisher's Z transform.
-	  when |estimate| == 1 the log blows up; clamp first.
-	  We use a half-ULP margin so tanh can recover ±1 cleanly.*/
-	  NV est_clamped = estimate;
-	  if      (est_clamped >=  1.0) est_clamped =  1.0 - DBL_EPSILON;
-	  else if (est_clamped <= -1.0) est_clamped = -1.0 + DBL_EPSILON;
-	  NV z     = 0.5 * nv_log((1.0 + est_clamped) / (1.0 - est_clamped));
-	  NV se    = 1.0 / nv_sqrt((NV)(n - 3));
-	  NV alpha = 1.0 - conf_level;
-	  /*The interval follows the alternative, as R's does (cor.test.R: the
-	  switch on `alternative` around cint).  A one-sided test gets a one-sided
-	  interval -- R writes the open end as tanh(-Inf) and tanh(Inf), which are
-	  exactly -1 and 1.  Through 0.311 the two-sided interval came back whatever
-	  the alternative, so cor_test(..., alternative => 'greater') reported
-	  [0.5217431448512, 0.9680507713838] where R gives [0.6029901323843, 1].*/
-	  if (strEQ(alternative, "less")) {
-		  ci_lower = -1.0;
-		  ci_upper = nv_tanh(z + se * std_qnorm(conf_level));
-	  } else if (strEQ(alternative, "greater")) {
-		  ci_lower = nv_tanh(z - se * std_qnorm(conf_level));
-		  ci_upper =  1.0;
+	  if (no_variance) {
+		  estimate = statistic = p_value = ci_lower = ci_upper = NV_NAN;
 	  } else {
-		  NV q = std_qnorm(1.0 - alpha / 2.0);
-		  ci_lower = nv_tanh(z - q * se);
-		  ci_upper = nv_tanh(z + q * se);
+		  estimate = cov / nv_sqrt(M2_x * M2_y);
+		  //Clamp to [-1, 1] to guard against floating-point overshoot
+		  if      (estimate >  1.0) estimate =  1.0;
+		  else if (estimate < -1.0) estimate = -1.0;
+		  /*guard divide-by-zero when |estimate| == 1 exactly.
+		  A perfect correlation gives t = ±Inf, matching R's behaviour.*/
+		  NV denom_t = 1.0 - estimate * estimate;
+		  if (denom_t <= 0.0)
+			  statistic = (estimate > 0.0) ? INFINITY : -INFINITY;
+		  else
+			  statistic = estimate * nv_sqrt(df / denom_t);
+		  /*Confidence interval via Fisher's Z transform.
+		  when |estimate| == 1 the log blows up; clamp first.
+		  We use a half-ULP margin so tanh can recover ±1 cleanly.*/
+		  NV est_clamped = estimate;
+		  if      (est_clamped >=  1.0) est_clamped =  1.0 - DBL_EPSILON;
+		  else if (est_clamped <= -1.0) est_clamped = -1.0 + DBL_EPSILON;
+		  NV z     = 0.5 * nv_log((1.0 + est_clamped) / (1.0 - est_clamped));
+		  NV se    = 1.0 / nv_sqrt((NV)(n - 3));
+		  NV alpha = 1.0 - conf_level;
+		  /*The interval follows the alternative, as R's does (cor.test.R: the
+		  switch on `alternative` around cint).  A one-sided test gets a one-sided
+		  interval -- R writes the open end as tanh(-Inf) and tanh(Inf), which are
+		  exactly -1 and 1.  Through 0.311 the two-sided interval came back whatever
+		  the alternative, so cor_test(..., alternative => 'greater') reported
+		  [0.5217431448512, 0.9680507713838] where R gives [0.6029901323843, 1].*/
+		  if (strEQ(alternative, "less")) {
+			  ci_lower = -1.0;
+			  ci_upper = nv_tanh(z + se * std_qnorm(conf_level));
+		  } else if (strEQ(alternative, "greater")) {
+			  ci_lower = nv_tanh(z - se * std_qnorm(conf_level));
+			  ci_upper =  1.0;
+		  } else {
+			  NV q = std_qnorm(1.0 - alpha / 2.0);
+			  ci_lower = nv_tanh(z - q * se);
+			  ci_upper = nv_tanh(z + q * se);
+		  }
+		  // High-precision p-value using incomplete beta
+		  p_value = get_t_pvalue(statistic, df, alternative);
 	  }
-	  // High-precision p-value using incomplete beta
-	  p_value = get_t_pvalue(statistic, df, alternative);
 	} else if (is_kendall) {
 	  /*One O(n log n) pass for the pair counts and the tie moments both.  This
 	  was an O(n^2) double loop over every (i, j) until 0.312 -- the same counts
@@ -17431,7 +17535,18 @@ CODE:
 		  M2_y += dy * (rank_y[i] - mean_y);
 		  cov  += dx * (rank_y[i] - mean_y);
 	  }
-	  estimate = (M2_x > 0.0 && M2_y > 0.0) ? cov / nv_sqrt(M2_x * M2_y) : 0.0;
+	  /*Constant ranks -- every value in a column tied -- leave rho undefined,
+	  and R says so: S = NA, p-value = NA, rho = NA.  Returning 0 reported
+	  "rho = 0, p = 1", a null result the caller cannot distinguish from a
+	  supported one; see the same guard on the pearson branch above.  The
+	  early exit also keeps NaN out of spearman_prho() and get_t_pvalue(),
+	  neither of which is audited for it.*/
+	  if (!(M2_x > 0.0) || !(M2_y > 0.0)) {
+		  estimate = statistic = p_value = NV_NAN;
+		  Safefree(rank_x);	  Safefree(rank_y);
+		  goto spearman_done;
+	  }
+	  estimate = cov / nv_sqrt(M2_x * M2_y);
 
 	  //Clamp to [-1, 1] to guard against floating-point overshoot
 	  if      (estimate >  1.0) estimate =  1.0;
@@ -17519,6 +17634,7 @@ CODE:
 	  Safefree(x);	  Safefree(y);
 	  croak("Unknown method '%s': must be 'pearson', 'kendall', or 'spearman'", method);
 	}
+spearman_done:	//the degenerate spearman case jumps here with its ranks freed
 	Safefree(x);	Safefree(y);
 	rhv = newHV();
 	hv_stores(rhv, "estimate",    newSVnv(estimate));
@@ -17862,8 +17978,8 @@ SV* rbinom(...)
 		const char* key = SvPV_nolen(ST(i));
 		SV* val = ST(i + 1);
 
-		if      (strEQ(key, "n"))      n    = (unsigned int)SvUV(val);
-		else if (strEQ(key, "size")) { size = (unsigned int)SvUV(val); size_set = TRUE; }
+		if      (strEQ(key, "n"))      n    = sv_count_arg(aTHX_ val, "rbinom", "n", 0);
+		else if (strEQ(key, "size")) { size = sv_count_arg(aTHX_ val, "rbinom", "size", 0); size_set = TRUE; }
 		else if (strEQ(key, "prob")) { prob = SvNV(val); prob_set = TRUE; }
 		else croak("rbinom: unknown argument '%s'", key);
 	}
@@ -17895,12 +18011,65 @@ SV* hist(SV* x_sv, ...)
 		AV*x_av = (AV*)SvRV(x_sv);
 		size_t n_raw = av_len(x_av) + 1;
 		if (n_raw == 0) croak("hist: input array is empty");
+/* 2. Determine Bin Count (Sturges default or user-provided)
 
-		// 2. Extract Data & Find Range
+	Before the column is read, not after: the parse below can croak, and a
+	breaks argument that turns out to be invalid should not first cost a pass
+	over a million-element column -- the same ordering quantile() uses for its
+	probs.  Only the Sturges fallback needs n, so that one stays below.
+
+	`breaks` went through a bare SvIV(), so hist(\@x, -5) wrapped to a huge
+	size_t and silently behaved like breaks = 1, and hist(\@x, sub {...})
+	handed the code ref's address to the allocator and died with perl's
+	unrecoverable "Out of memory".  HIST_BREAKS_MAX and the rule below are
+	R's own, from graphics/R/hist.R: reject anything not finite or below 1
+	("invalid number of 'breaks'"), and clamp above 1e6 with a warning,
+	because pretty() needs an n that fits in an int.  A fractional value
+	truncates, which is what sv_count_arg() does and what R's breaks = 2.7
+	does (it gives the same four breaks as 2).
+
+	0 is this function's "not given" sentinel, so it is also the value the
+	caller may not pass -- hence the min of 1.*/
+#define HIST_BREAKS_MAX 1000000
+		size_t n_bins = 0;
+		{
+			SV *breaks_sv = NULL;
+			if (items == 2) {
+// Support pure positional argument: hist($data, 22)
+				breaks_sv = ST(1);
+			} else if (items > 2) {
+// Support named parameters even if mixed with positional arguments
+				for (unsigned short i = 1; i < items - 1; i++) {
+					 // Make sure the SV holds a string before doing string comparison
+					 if (SvPOK(ST(i)) && strEQ(SvPV_nolen(ST(i)), "breaks")) {
+						 breaks_sv = ST(i+1);
+						 break;
+					 }
+				}
+//Fallback: if 'breaks' wasn't found but a positional number was given first
+				if (!breaks_sv && looks_like_number(ST(1))) {
+					 breaks_sv = ST(1);
+				}
+			}
+			if (breaks_sv) {
+				n_bins = sv_count_arg(aTHX_ breaks_sv, "hist", "breaks", 1);
+				if (n_bins > HIST_BREAKS_MAX) {
+					warn("hist: 'breaks = %" UVuf "' is too large and set to %d",
+					     (UV)n_bins, HIST_BREAKS_MAX);
+					n_bins = HIST_BREAKS_MAX;
+				}
+			}
+		}
+
+		// 3. Extract Data & Find Range
 		NV *x;
 		Newx(x, n_raw, NV);
 		size_t n = 0;
-		NV min_val = DBL_MAX, max_val = -DBL_MAX;
+	/*NV_MAX, not DBL_MAX: on a long-double or __float128 build every value
+	above DBL_MAX fails `val < min_val` and leaves min_val at 1.8e308, so
+	hist([1e400, 1.05e400, 1.1e400]) put its first break at 0 and its first
+	bin empty while min() on the same data returned 1e400.*/
+		NV min_val = NV_MAX, max_val = -NV_MAX;
 
 		for (size_t i = 0; i < n_raw; i++) {
 			SV**tv = av_fetch(x_av, i, 0);
@@ -17920,27 +18089,9 @@ SV* hist(SV* x_sv, ...)
 			Safefree(x);
 			croak("hist: input contains no valid numeric data");
 		}
-		// 3. Determine Bin Count (Sturges default or user-provided)
-		size_t n_bins = 0;
-		if (items == 2) {
-// Support pure positional argument: hist($data, 22)
-			n_bins = (size_t)SvIV(ST(1));
-		} else if (items > 2) {
-// Support named parameters even if mixed with positional arguments
-			for (unsigned short i = 1; i < items - 1; i++) {
-				 // Make sure the SV holds a string before doing string comparison
-				 if (SvPOK(ST(i)) && strEQ(SvPV_nolen(ST(i)), "breaks")) {
-					 n_bins = (size_t)SvIV(ST(i+1));
-					 break;
-				 }
-			}
-//Fallback: if 'breaks' wasn't found but a positional number was given first
-			if (n_bins == 0 && looks_like_number(ST(1))) {
-				 n_bins = (size_t)SvIV(ST(1));
-			}
-		}
+		// 4. Bin count, where the caller left it to Sturges
 		if (n_bins == 0) n_bins = calculate_sturges_bins(n);
-/* 4. Breakpoints, R's way.
+/* 5. Breakpoints, R's way.
 
 	hist.default() does not cut the range into `breaks` equal pieces; it treats
 	that number as a suggestion and asks pretty() for round numbers:
@@ -17956,7 +18107,7 @@ SV* hist(SV* x_sv, ...)
 		NV pretty_lo, pretty_up;
 		nv_pretty_plan(min_val, max_val, &pretty_n, 1, &pretty_lo, &pretty_up);
 		n_bins = (size_t)pretty_n;
-// 5. Allocate Result Arrays
+// 6. Allocate Result Arrays
 		NV *breaks, *mids, *density;
 		size_t *counts;
 		Newx(breaks,  n_bins + 1, NV);
@@ -17964,10 +18115,10 @@ SV* hist(SV* x_sv, ...)
 		Newx(density, n_bins,     NV);
 		Newx(counts,  n_bins,     size_t);
 		nv_pretty_fill(pretty_lo, pretty_up, pretty_n, breaks);
-		// 6. Compute Statistics
+		// 7. Compute Statistics
 		compute_hist_logic(x, n, breaks, n_bins, counts, mids, density,
 		                   max_val - min_val);
-		// 6. Build Return HashRef
+		// 8. Build Return HashRef
 		HV*res_hv = newHV();
 		AV*av_breaks  = newAV();
 		AV*av_counts  = newAV();
@@ -20897,7 +21048,12 @@ void scale(...)
 				 Newx(col_data, nrow, NV);
 				 for (size_t r = 0; r < nrow; r++) {// Extract the column data
 					 SV**row_sv = av_fetch(mat_av, r, 0);
-					 if (row_sv && SvROK(*row_sv)) {
+	/*SvROK() alone was the test here, so a reference to anything that is
+	not an array -- a code ref, a scalar ref, a blessed hash -- was handed
+	to av_fetch() as an AV and segfaulted.  Only row 0 is checked when the
+	matrix shape is detected; every other row arrives unvalidated.*/
+					 if (row_sv && SvROK(*row_sv)
+					     && SvTYPE(SvRV(*row_sv)) == SVt_PVAV) {
 						 AV*row_av = (AV*)SvRV(*row_sv);
 						 SV**cell_sv = av_fetch(row_av, c, 0);
 						 col_data[r] = (cell_sv && SvOK(*cell_sv)) ? SvNV(*cell_sv) : 0.0;
@@ -21003,11 +21159,11 @@ CODE:
 		//POSITIONAL: matrix($data_ref, $nrow, $ncol, $byrow)
 		data_sv = ST(0);
 		if (items > 1 && SvOK(ST(1))) {
-			nrow = (size_t)SvUV(ST(1));
+			nrow = sv_count_arg(aTHX_ ST(1), "matrix", "nrow", 0);
 			nrow_set = TRUE;
 		}
 		if (items > 2 && SvOK(ST(2))) {
-			ncol = (size_t)SvUV(ST(2));
+			ncol = sv_count_arg(aTHX_ ST(2), "matrix", "ncol", 0);
 			ncol_set = TRUE;
 		}
 		if (items > 3 && SvOK(ST(3))) {
@@ -21020,9 +21176,9 @@ CODE:
 			if (strEQ(key, "data")) {
 				 data_sv = val;
 			} else if (strEQ(key, "nrow")) {
-				 if (SvOK(val)) { nrow = (size_t)SvUV(val); nrow_set = TRUE; }
+				 if (SvOK(val)) { nrow = sv_count_arg(aTHX_ val, "matrix", "nrow", 0); nrow_set = TRUE; }
 			} else if (strEQ(key, "ncol")) {
-				 if (SvOK(val)) { ncol = (size_t)SvUV(val); ncol_set = TRUE; }
+				 if (SvOK(val)) { ncol = sv_count_arg(aTHX_ val, "matrix", "ncol", 0); ncol_set = TRUE; }
 			} else if (strEQ(key, "byrow")) {
 				 byrow = SvTRUE(val);
 			} else {
@@ -21041,6 +21197,13 @@ CODE:
 	if (data_len == 0) {
 		croak("Data array cannot be empty");
 	}
+	/*A dimension the caller gave as 0 has to be refused before the inference
+	below divides by it.  matrix([1..6], 0) reached
+	`ncol = (data_len + nrow - 1) / nrow` with nrow == 0 and raised SIGFPE,
+	killing the interpreter -- eval cannot catch that -- because the guard
+	against a zero dimension sat one branch too late.*/
+	if ((nrow_set && nrow == 0) || (ncol_set && ncol == 0))
+		croak("Dimensions must be greater than 0");
 	// R-style dimension inference
 	if (!nrow_set && !ncol_set) {
 		nrow = data_len;
@@ -21471,7 +21634,7 @@ SV* rnorm(...)
 	  int arg_start = 0;
 	  // Check if the first argument is a simple integer (rnorm(33))
 	  if (items > 0 && SvIOK(ST(0)) && (items == 1 || items % 2 != 0)) {
-		   n = (unsigned int)SvUV(ST(0));
+		   n = sv_count_arg(aTHX_ ST(0), "rnorm", "n", 0);
 		   arg_start = 1; // Start parsing named arguments from the second element
 	  }
 	  // Parse remaining named arguments from the flat stack
@@ -21483,7 +21646,7 @@ SV* rnorm(...)
 		   const char* key = SvPV_nolen(ST(i));
 		   SV* val = ST(i + 1);
 
-		   if      (strEQ(key, "n"))    n    = (unsigned int)SvUV(val);
+		   if      (strEQ(key, "n"))    n    = sv_count_arg(aTHX_ val, "rnorm", "n", 0);
 		   else if (strEQ(key, "mean")) mean = SvNV(val);
 		   else if (strEQ(key, "sd"))   sd   = SvNV(val);
 		   else croak("rnorm: unknown argument '%s'", key);
@@ -22837,23 +23000,43 @@ CODE:
 OUTPUT:
 	RETVAL
 
-SV *sample(ref, n = 1)
+SV *sample(ref, n_sv = &PL_sv_undef)
 	SV *ref
-	IV n
+	SV *n_sv
 PREINIT:
 	SV *ret = &PL_sv_undef;
+	size_t n = 1;
 CODE:
 	if (!PL_srand_called) {
 	  (void)seedDrand01((Rand_seed_t)Perl_seed(aTHX));
 	  PL_srand_called = TRUE;
 	}
-	if (n < 0) n = 0;
-	if (SvROK(ref)) {
+	/*n used to arrive as a bare IV, so a reference in that slot became its
+	address and the array branch below asked av_extend() for it -- perl's
+	unrecoverable "Out of memory", not a croak.*/
+	if (items >= 2) n = sv_count_arg(aTHX_ n_sv, "sample", "n", 0);
+	if (!SvROK(ref) || (SvTYPE(SvRV(ref)) != SVt_PVHV
+	                    && SvTYPE(SvRV(ref)) != SVt_PVAV))
+		croak("Usage: sample(\\@array, $n) or sample(\\%%hash, $n)");
+	{
 		SV *rv = SvRV(ref);
+	/*Drawing more than there is to draw is an error, as it is in R
+	("cannot take a sample larger than the population when 'replace =
+	FALSE'").  The two branches used to disagree about it and neither said
+	so: the hash branch quietly returned fewer keys than asked for, and the
+	array branch padded the result with undef, so sample([1,2,3], 10) came
+	back as three values and seven undefs that no caller could tell from
+	real data.*/
+		size_t have = (SvTYPE(rv) == SVt_PVHV)
+		            ? (size_t)hv_iterinit((HV *)rv)
+		            : (size_t)(av_top_index((AV *)rv) + 1);
+		if (n > have)
+			croak("sample: cannot take a sample of %" UVuf " from a population "
+			      "of %" UVuf, (UV)n, (UV)have);
 		if (SvTYPE(rv) == SVt_PVHV) {// HASH REFERENCE
 			HV *hv    = (HV *)rv;
 			unsigned count = hv_iterinit(hv);
-			unsigned limit = (n < (IV)count) ? (I32)n : count;
+			unsigned limit = (unsigned)n;
 			HV *ret_hv = newHV();
 			if (count > 0 && limit > 0) {
 				HE **entries;
@@ -22886,43 +23069,35 @@ CODE:
 				Safefree(entries);
 			}
 			ret = newRV_noinc((SV *)ret_hv);
-		} else if (SvTYPE(rv) == SVt_PVAV) {// ARRAY REFERENCE
+		} else {// ARRAY REFERENCE
 			AV    *av    = (AV *)rv;
 			size_t count = av_top_index(av) + 1;  //signed; 0 for empty AV
-			size_t limit = (n < count) ? (size_t)n : count;
 			AV    *ret_av = newAV();
 			if (n > 0)//Pre-allocate the result array to avoid incremental reallocs
-				 av_extend(ret_av, (size_t)n - 1);
-			if (count > 0) {
+				 av_extend(ret_av, n - 1);
+			if (n > 0) {
 				 SV    **src = AvARRAY(av); //direct pointer into AV's C array
 				 size_t *restrict idx;
 				 //Shuffle indices rather than SV** to keep the original AV intact
 				 Newx(idx, count, size_t);
 				 for (size_t i = 0; i < count; i++)
 					 idx[i] = i;
-				 for (size_t i = 0; i < limit; i++) { // Partial Fisher-Yates on the index array
+				 for (size_t i = 0; i < n; i++) { // Partial Fisher-Yates on the index array
 					 size_t j   = i + (size_t)(Drand01() * (count - i));
 					 size_t tmp = idx[i];
 					 idx[i]  = idx[j];
 					 idx[j]  = tmp;
 				 }
-				 for (size_t i = 0; i < (size_t)n; i++) {
-					 if (i < limit) {
-						 SV *sv = src[idx[i]];   //AvARRAY direct access — no av_fetch call
-						 SV *push_sv;
-							if (sv && sv != &PL_sv_undef)
-								 push_sv = SvREFCNT_inc(sv);
-							else
-								 push_sv = newSV(0);
-							av_push(ret_av, push_sv);
-					 } else {
-						 av_push(ret_av, newSV(0));
-					 }
+				 for (size_t i = 0; i < n; i++) {
+					 SV *sv = src[idx[i]];   //AvARRAY direct access — no av_fetch call
+					 SV *push_sv;
+					 if (sv && sv != &PL_sv_undef)
+						 push_sv = SvREFCNT_inc(sv);
+					 else
+						 push_sv = newSV(0);
+					 av_push(ret_av, push_sv);
 				 }
 				 Safefree(idx);
-			} else {
-				for (size_t i = 0; i < (size_t)n; i++)
-					av_push(ret_av, newSV(0));
 			}
 			ret = newRV_noinc((SV *)ret_av);
 		}
@@ -24043,6 +24218,22 @@ CODE:
 				      "(column '%s' has %" UVuf ", expected %" UVuf ")",
 				      HePV(ce, PL_na), (UV)len, (UV)n_raw);
 		}
+	} else if (is_hoh) {
+	/*The HoH shape is decided from whichever row hv_iternext() reached
+	first, and until this loop existed nothing checked the rest: both the
+	column-name pass and the extraction pass below did SvRV() on every value
+	and dereferenced the result as an HV.  prcomp({c => {d=>1}, e => undef})
+	segfaulted, and because the deciding row moves with hash order the crash
+	came and went between runs on the same input.*/
+		HV *hv = (HV*)ref;
+		HE *re;
+		hv_iterinit(hv);
+		while ((re = hv_iternext(hv))) {
+			SV *rv = HeVAL(re);
+			if (!rv || !SvROK(rv) || SvTYPE(SvRV(rv)) != SVt_PVHV)
+				croak("prcomp: HoH value for row '%s' is not a hash-ref",
+				      HePV(re, PL_na));
+		}
 	} else if (is_aoa) {
 		AV *av = (AV*)ref;
 		for (size_t r = 0; r < n_raw; r++) {
@@ -24138,6 +24329,21 @@ CODE:
 		AV **col_arrays = (AV**)safemalloc(p * sizeof(AV*));
 		for (size_t j = 0; j < p; j++) {
 			SV **val = hv_fetch(hv, colnames[j], strlen(colnames[j]), 0);
+	/*The loop above has already refused every value that is not an
+	array-ref, so this can only miss if the name did not survive the round
+	trip through savepv()/strlen() -- a key with an embedded NUL, which
+	truncates here and then fails to match.  Dereferencing the NULL would
+	segfault, so say what happened instead.*/
+			if (!val || !*val || !SvROK(*val)
+			    || SvTYPE(SvRV(*val)) != SVt_PVAV) {
+				SV *bad = sv_2mortal(newSVpv(colnames[j], 0));
+				Safefree(col_arrays);
+				for (size_t i = 0; i < p; i++) Safefree(colnames[i]);
+				Safefree(colnames);
+				Safefree(X_mat);
+				croak("prcomp: HoA column '%s' cannot be looked up by name "
+				      "(an embedded NUL in a column name?)", SvPV_nolen(bad));
+			}
 			col_arrays[j] = (AV*)SvRV(*val);
 		}
 		for (size_t i = 0; i < n_raw; i++) {

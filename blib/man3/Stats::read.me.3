@@ -66,9 +66,7 @@
 .SH Synopsis
 .IX Header "Synopsis"
 Get basic statistical functions working in Perl as if they were part of List::Util, like \f(CW\*(C`min\*(C'\fR, \f(CW\*(C`max\*(C'\fR, \f(CW\*(C`sum\*(C'\fR, etc.
-I\*(Aqve used Artificial Intelligence tools such as Claude, Gemini, and Grok to write this as well as using my own gray matter.
-There are other similar tools on CPAN, but I want speed and a form like List::Util, which I\*(Aqve gotten here with the help of AI, which often required many attempts to do correctly.
-This is meant to call subroutines directly through eXternal Subroutines (XS) for performance and portability.
+There are other similar tools on CPAN, but I want speed and a form like List::Util.
 .PP
 There \fBare\fR other modules on CPAN that can do \fBPARTS\fR of this, but this works the way that I \fBwant\fR it to.
 .SH "Getting help"
@@ -6182,6 +6180,19 @@ or, alternatively, with arrays:
 .Vb 1
 \& my $arr = sample(\e@arr, 3); # take 3 indices of an array
 .Ve
+.PP
+The sample is drawn without replacement, so \f(CW\*(C`n\*(C'\fR may not exceed the number of
+elements or keys there are to draw from; asking for more is an error, as it is
+in R (\fIcannot take a sample larger than the population when \*(Aqreplace = FALSE\*(Aq\fR):
+.PP
+.Vb 1
+\& sample([1, 2, 3], 10);   # dies: cannot take a sample of 10 from a population of 3
+.Ve
+.PP
+Through 0.314 the two shapes disagreed about this and neither said so \-\- a hash
+quietly returned fewer keys than were asked for, and an array padded the result
+out to \f(CW\*(C`n\*(C'\fR with \f(CW\*(C`undef\*(C'\fR, so \f(CW\*(C`sample([1,2,3], 10)\*(C'\fR came back as three values
+and seven undefs that no caller could tell apart from real data.
 .SS scale
 .IX Subsection "scale"
 .Vb 1
@@ -6282,7 +6293,7 @@ the disagreements are visible from Perl.  Takes \f(CW\*(C`from\*(C'\fR, \f(CW\*(
 \& @seq = seq(1, 2, 0.25);
 \& say join(", ", @seq), "\en";
 \& for (my $idx = 2; $idx >= 1; $idx \-= 0.25) { # count down to pop
-\&        is_approx(pop @seq, $idx, "seq item $idx with fractional step");
+\&     is_approx(pop @seq, $idx, "seq item $idx with fractional step");
 \& }
 .Ve
 .PP
@@ -7357,7 +7368,13 @@ Every successful write prints one line to standard output naming the file, with 
 .PP
 This is \f(CW\*(C`say \*(Aqwrote \*(Aq . colored([\*(Aqblack on_cyan\*(Aq], $file)\*(C'\fR, but the SGR codes (\f(CW\*(C`\ee[30;46m\*(C'\fR … \f(CW\*(C`\ee[0m\*(C'\fR) are written out inline, so the module takes no dependency on \f(CW\*(C`Term::ANSIColor\*(C'\fR. Every format announces itself the same way — delimited, LaTeX and \f(CW\*(C`.xlsx\*(C'\fR alike — so you always learn where a table went, in the same shape whatever you asked for. Nothing is printed when nothing is written: an empty data frame returns before a file is opened, and a write that cannot open its file croaks instead.
 .PP
-The colour is unconditional; it is not suppressed when standard output is a pipe or a file. If you are capturing the output and want the bytes plain, strip the escapes (\f(CW\*(C`s/\ee\e[[\ed;]*m//g\*(C'\fR) or send them somewhere else. Note also that the line goes to file descriptor 1 directly rather than through Perl\*(Aqs \f(CW\*(C`STDOUT\*(C'\fR glob, so \f(CW\*(C`local *STDOUT; open STDOUT, \*(Aq>\*(Aq, \emy $buf\*(C'\fR will \fBnot\fR capture it — redirect the file descriptor, or run the write in a child process, if you need to.
+The colour is unconditional; it is not suppressed when standard output is a pipe or a file. Pass \f(CW\*(C`quiet => 1\*(C'\fR to suppress the line altogether, which is what a script writing to a pipe or a data file usually wants:
+.PP
+.Vb 1
+\& write_table(\e@rows, \*(Aqout.tsv\*(Aq, quiet => 1);   # writes the file, says nothing
+.Ve
+.PP
+\&\f(CW\*(C`quiet\*(C'\fR silences the line rather than decolouring it, because the coloured form is the one contract every format shares. If you want the line but not the escapes, strip them (\f(CW\*(C`s/\ee\e[[\ed;]*m//g\*(C'\fR) or send them somewhere else. Note also that the line goes to file descriptor 1 directly rather than through Perl\*(Aqs \f(CW\*(C`STDOUT\*(C'\fR glob, so \f(CW\*(C`local *STDOUT; open STDOUT, \*(Aq>\*(Aq, \emy $buf\*(C'\fR will \fBnot\fR capture it — redirect the file descriptor, or run the write in a child process, if you need to.
 .PP
 \fILaTeX output (\fR\f(CI\*(C`tex\*(C'\fR\fI)\fR
 .IX Subsection "LaTeX output (tex)"
@@ -7534,6 +7551,371 @@ Verified against R 4.6.1 (\f(CW\*(C`oneway.test\*(C'\fR, \f(CW\*(C`anova(aov())\
 \&\f(CW\*(C`t/model_pvalue_tails.t\*(C'\fR and \f(CW\*(C`t/oneway_test.R.scipy.t\*(C'\fR.
 .SH Changes
 .IX Header "Changes"
+.SS "0.315 2026\-09\-03 CDT"
+.IX Subsection "0.315 2026-09-03 CDT"
+Everything in this release is a defect fix. Nothing here is a new algorithm and
+no numeric answer moves, except where the old answer was wrong.
+.PP
+The defects were found by fuzzing rather than by reading: every exported
+function called with a reference where it expected a number, with a code ref or
+a scalar ref buried inside an otherwise ordinary frame, and with randomly
+assembled argument lists, all run against an AddressSanitizer/UBSan build. The
+whole existing suite is clean under those sanitizers and always was; what the
+fuzzers reached is the argument space the suite does not cover, because it is
+the space no correct program visits. A user\*(Aqs typo visits it.
+.PP
+\fIFour segmentation faults and a \fR\f(CI\*(C`SIGFPE\*(C'\fR
+.IX Subsection "Four segmentation faults and a SIGFPE"
+.PP
+Each of these ended the interpreter. None of them could be caught: \f(CW\*(C`eval\*(C'\fR does
+not see a signal, so a caller could not even fail gracefully.
+.PP
+\&\fR\f(CB\*(C`matrix\*(C'\fR\fB.\fR The guard against a zero dimension sat one branch \fIafter\fR the
+inference that divides by it, so \f(CW\*(C`ncol = (data_len + nrow \- 1) / nrow\*(C'\fR ran first
+with \f(CW\*(C`nrow == 0\*(C'\fR. A non\-numeric string reached the same division because
+\&\f(CWSvUV(\*(Aqgreater\*(Aq)\fR is \f(CW0\fR. The guard now runs before the inference, and both
+dimensions go through the validating reader below.
+.PP
+\&\fR\f(CB\*(C`prcomp\*(C'\fR\fB.\fR A HoH frame\*(Aqs shape is decided from whichever row \f(CW\*(C`hv_iternext\*(C'\fR
+reaches first, and nothing checked the rest — both the column\-name pass and the
+extraction pass called \f(CW\*(C`SvRV\*(C'\fR on every value and dereferenced the result as an
+\&\f(CW\*(C`HV\*(C'\fR. HoA and AoA already had a rectangularity pre\-pass; HoH now has the same
+one. Because the deciding row moves with hash order, the crash came and went
+between runs on identical input, which is the worst way for a bug to present.
+The HoA branch reached the same null pointer by a second route: column names
+are copied with \f(CW\*(C`savepv\*(C'\fR and looked up again with \f(CW\*(C`strlen\*(C'\fR, so a name holding a
+NUL byte truncates, \f(CW\*(C`hv_fetch\*(C'\fR misses, and the \f(CW\*(C`NULL\*(C'\fR was dereferenced. That is
+now a croak naming the column.
+.PP
+\&\fR\f(CB\*(C`scale\*(C'\fR\fB.\fR The per\-row test in matrix mode was \f(CWSvROK()\fR alone, without the
+\&\f(CW\*(C`SvTYPE(...) == SVt_PVAV\*(C'\fR half, so a reference to anything that is not an array
+was handed to \f(CW\*(C`av_fetch\*(C'\fR as an \f(CW\*(C`AV\*(C'\fR. Only row 0 is checked when the matrix
+shape is detected; every other row arrived unvalidated. A bad row now takes the
+same path a plain string or an \f(CW\*(C`undef\*(C'\fR row has always taken — it reads as
+absent — rather than becoming a new croak, which would have changed two cases
+that were never broken.
+.PP
+\&\fR\f(CB\*(C`merge\*(C'\fR\fB.\fR \f(CW\*(C`mg_shape\*(C'\fR ran on nothing but an \f(CW\*(C`SvROK\*(C'\fR test and treated
+everything that was not an array as a hash, so it reached \f(CW\*(C`hv_iterinit\*(C'\fR on a
+scalar ref \fIbefore\fR \f(CW\*(C`mg_prep\*(C'\fR — which is where a frame is really validated —
+could reject it. It now answers \f(CW0\fR for anything that is neither, and leaves the
+croak to \f(CW\*(C`mg_prep\*(C'\fR, which is where the message the caller should see comes from.
+.PP
+\fR\f(CI\*(C`bw_ucv\*(C'\fR\fI and \fR\f(CI\*(C`bw_bcv\*(C'\fR\fI could loop forever\fR
+.IX Subsection "bw_ucv and bw_bcv could loop forever"
+.PP
+Both build their search interval from \f(CW\*(C`sqrt(var(x))\*(C'\fR, which squares the data.
+On a \f(CW\*(C`double\*(C'\fR NV the variance of \f(CW\*(C`c(1, 1e300, \-1)\*(C'\fR is already \f(CW\*(C`+Inf\*(C'\fR, and
+\&\f(CW\*(C`dens_brent_fmin\*(C'\fR — R\*(Aqs \f(CW\*(C`Brent_fmin\*(C'\fR, transcribed — iterates until the bracket
+closes, which a non\-finite bound never does, because every comparison against a
+NaN is false. \f(CW\*(C`bw_ucv([1, 2, 3, 1e300])\*(C'\fR and \f(CW\*(C`density(\e@x, bw => \*(Aqucv\*(Aq)\*(C'\fR on the
+same data spun with no way out but a signal.
+.PP
+R does not reach that loop either: \f(CWoptimize()\fR rejects the bounds first, with
+\&\fIinvalid \*(Aqxmin\*(Aq value\fR. This is the same check, moved to where the bounds are
+built. The threshold is a property of the build — about \f(CW1e155\fR for a \f(CW\*(C`double\*(C'\fR
+NV, far higher for long double and \f(CW\*(C`_\|_float128\*(C'\fR — so the check tests the value,
+not the data.
+.PP
+\&\f(CW\*(C`dens_brent_fmin\*(C'\fR also gained an iteration cap as a backstop against a future
+caller. It is not a working limit: golden\-section alone shrinks the bracket by
+0.382 a step, so even \f(CW\*(C`tol = NV_EPSILON\*(C'\fR on a 113\-bit \f(CW\*(C`_\|_float128\*(C'\fR needs about
+163 steps, and the cap is 1000.
+.PP
+\fISize arguments are validated in one place\fR
+.IX Subsection "Size arguments are validated in one place"
+.PP
+\&\f(CW\*(C`matrix\*(C'\fR, \f(CW\*(C`hist\*(C'\fR, \f(CW\*(C`sample\*(C'\fR, \f(CW\*(C`rnorm\*(C'\fR and \f(CW\*(C`rbinom\*(C'\fR each read a count with a bare
+\&\f(CW\*(C`SvUV\*(C'\fR/\f(CW\*(C`SvIV\*(C'\fR. \f(CW\*(C`SvUV\*(C'\fR of a non\-numeric string is \f(CW0\fR, of \f(CW\-1\fR it is \f(CW\*(C`2**64\-1\*(C'\fR,
+and of a reference it is the address — and each of those went straight to a
+divisor or an allocation:
+.PP
+.Vb 4
+\& rnorm(\-1)                          # Out of memory in perl:util:safesysmalloc
+\& rbinom(n => \-1, size => 2, ...)    # Out of memory in perl:util:safesysmalloc
+\& sample([1,2,3], $some_ref)         # Out of memory in perl:util:safesysmalloc
+\& hist(\e@x, sub { ... })             # Out of memory in perl:util:safesysmalloc
+.Ve
+.PP
+Perl\*(Aqs out\-of\-memory death is unrecoverable — it is not a croak and \f(CW\*(C`eval\*(C'\fR never
+sees it either. All five now share one reader, \f(CW\*(C`sv_count_arg\*(C'\fR, which refuses
+\&\f(CW\*(C`undef\*(C'\fR, a non\-number, a NaN, a negative and anything above \f(CW\*(C`2**48\*(C'\fR, and
+truncates a fraction toward zero the way R\*(Aqs \f(CW\*(C`as.integer\*(C'\fR does — so
+\&\f(CW\*(C`matrix(1:6, 2.7)\*(C'\fR is a two\-row matrix, in R and here. \f(CW\*(C`runif\*(C'\fR already had a
+hand\-written check for exactly this; its message is unchanged.
+.PP
+\fR\f(CI\*(C`cor_test\*(C'\fR\fI reports \fR\f(CI\*(C`NaN\*(C'\fR\fI where the correlation is undefined\fR
+.IX Subsection "cor_test reports NaN where the correlation is undefined"
+.PP
+A column with no variance has no correlation, and R says so:
+\&\f(CW\*(C`cor.test(c(1,1,1,1), c(1,2,3,4))\*(C'\fR gives \f(CW\*(C`cor = NA\*(C'\fR, \f(CW\*(C`t = NA\*(C'\fR, \f(CW\*(C`p\-value = NA\*(C'\fR,
+\&\f(CW\*(C`df = 2\*(C'\fR. This returned estimate \f(CW0\fR, statistic \f(CW0\fR, \fBp\-value \fR\f(CB1\fR — which
+reads as a real, well\-supported null result that no caller can tell apart from
+one. Three code paths in this module already disagreed with it: \f(CWcor()\fR croaks
+(\fIstandard deviation of x is 0\fR), the shared \f(CW\*(C`pearson_cor\*(C'\fR helper returns
+\&\f(CW\*(C`NV_NAN\*(C'\fR, and \f(CW\*(C`cor_test\*(C'\fR\*(Aqs own Kendall branch already answered \f(CW\*(C`NaN\*(C'\fR on its
+degenerate denominator. Only the Pearson and Spearman branches returned \f(CW0\fR.
+.PP
+All three methods now report \f(CW\*(C`NaN\*(C'\fR for estimate, statistic and p\-value, and
+Pearson reports a \f(CW\*(C`NaN\*(C'\fR interval and keeps \f(CW\*(C`df = 2\*(C'\fR, as R does. Ordinary
+correlations are bit\-identical.
+.PP
+\fR\f(CI\*(C`sample\*(C'\fR\fI draws without replacement, and now says so\fR
+.IX Subsection "sample draws without replacement, and now says so"
+.PP
+Asked for more than the population holds, the two shapes disagreed and neither
+said anything:
+.PP
+.Vb 2
+\& sample([1, 2, 3], 10);        # [3, 2, 1, undef, undef, undef, undef, undef, undef, undef]
+\& sample({a=>1, b=>2}, 5);      # two keys, silently
+.Ve
+.PP
+Seven undefs that no caller could distinguish from real data is the worse of
+the two. Both branches now croak, as R does — *cannot take a sample larger than
+the population when \*(Aqreplace = FALSE\*(Aq*. Draw sequences under a fixed \f(CW\*(C`srand\*(C'\fR are
+unchanged: the shuffle makes exactly the same number of \f(CWDrand01()\fR calls for
+every call that was previously valid. A first argument that is neither an array
+nor a hash reference is now a usage croak rather than a silent \f(CW\*(C`undef\*(C'\fR.
+.PP
+\fR\f(CI\*(C`hist\*(C'\fR\fI follows R\*(Aqs own \fR\f(CI\*(C`breaks\*(C'\fR\fI rule, and its extrema are \fR\f(CI\*(C`NV\*(C'\fR\fI\-wide\fR
+.IX Subsection "hist follows R's own breaks rule, and its extrema are NV-wide"
+.PP
+\&\f(CW\*(C`breaks\*(C'\fR went through a bare \f(CW\*(C`SvIV\*(C'\fR, so \f(CW\*(C`hist(\e@x, \-5)\*(C'\fR wrapped to a huge
+\&\f(CW\*(C`size_t\*(C'\fR and silently behaved like \f(CW\*(C`breaks => 1\*(C'\fR. The rule is now R\*(Aqs, from
+\&\f(CW\*(C`src/library/graphics/R/hist.R\*(C'\fR: anything not finite or below 1 is
+\&\fIinvalid number of \*(Aqbreaks\*(Aq\fR, and a value above \f(CW1e6\fR warns and clamps, because
+\&\f(CWpretty()\fR needs an \f(CW\*(C`n\*(C'\fR that fits in an \f(CW\*(C`int\*(C'\fR. A fractional value truncates —
+R\*(Aqs \f(CW\*(C`breaks = 2.7\*(C'\fR gives the same four breaks as \f(CW\*(C`breaks = 2\*(C'\fR, and so does this.
+.PP
+Separately, \f(CW\*(C`hist\*(C'\fR seeded its running extrema from \f(CW\*(C`DBL_MAX\*(C'\fR rather than
+\&\f(CW\*(C`NV_MAX\*(C'\fR. On a long\-double or \f(CW\*(C`_\|_float128\*(C'\fR build every value above \f(CW\*(C`DBL_MAX\*(C'\fR
+fails \f(CW\*(C`val < min_val\*(C'\fR, so the minimum stayed at \f(CW1.8e308\fR. Measured on
+\&\f(CW\*(C`5.44.0\-quadmath\*(C'\fR:
+.PP
+\&\f(CWmin()\fR and \f(CWmax()\fR on the same data were always right, which is what made the
+empty leading bin visible.
+.PP
+\fISmaller things\fR
+.IX Subsection "Smaller things"
+.IP \(bu 4
+\&\fR\f(CB\*(C`write_table\*(C'\fR\fB gained \fR\f(CB\*(C`quiet => 1\*(C'\fR\fB.\fR The confirmation line is deliberately
+unconditional and deliberately coloured, which is right at a terminal and
+wrong for a script whose stdout is a pipe or a data file — the SGR bytes go
+out whatever file descriptor 1 is, and the only advice on offer was to capture
+and strip them. \f(CW\*(C`quiet\*(C'\fR silences the line rather than decolouring it, because
+the coloured form is the contract every format shares.
+.IP \(bu 4
+\&\fR\f(CB\*(C`chunk\*(C'\fR\fB owns its argument\-list message.\fR \f(CW\*(C`chunk($aref, 2)\*(C'\fR fell into a hash
+assignment and died as perl\*(Aqs *Odd number of elements in hash assignment at
+LikeR.pm line 1686*, naming neither \f(CW\*(C`chunk\*(C'\fR nor the option it wanted.
+.IP \(bu 4
+\&\fR\f(CB\*(C`auto.row.names\*(C'\fR\fB is documented where it can be found.\fR The option has
+existed and been tested since 0.313, but appeared only in the release notes,
+not in \f(CW\*(C`read_table\*(C'\fR\*(Aqs own options table — so \f(CWh(\*(Aqread_table\*(Aq)\fR did not list
+it, and the R\-written \f(CW\*(C`mtcars.tsv\*(C'\fR in this repository looked unreadable.
+.PP
+\fITesting\fR
+.IX Subsection "Testing"
+.PP
+\&\f(CW\*(C`t/arg.crash.regressions.t\*(C'\fR, 98 assertions. Every crash case runs in a child
+perl and is judged by how the child exited, because a signal death cannot be
+caught in the process that provokes it; the \f(CW\*(C`prcomp\*(C'\fR cases run 40 fresh
+interpreters each, since the crash depended on hash order and reproduced within
+the first two. R provenance for every quoted behaviour (R 4.6.1) is in the file
+header, and nothing in it needs R, \f(CW\*(C`python3\*(C'\fR, NumPy or SciPy at run time. The
+two \f(CW\*(C`hist\*(C'\fR extremum assertions skip on a \f(CW\*(C`double\*(C'\fR NV and run for real on
+quadmath. \f(CW\*(C`t/chunk.t\*(C'\fR and \f(CW\*(C`t/write_table.announce.t\*(C'\fR gained the cases for the
+two smaller fixes.
+.PP
+40,563 tests pass on all six local perls — 5.10.1, 5.12.5 (long double), 5.42.3
+threaded, 5.44.0, 5.44.0+x87 and 5.44.0\-quadmath — with no warnings, and the
+translation unit compiles clean under strict \f(CW\*(C`\-std=c99\*(C'\fR against every one of
+their headers. The full suite and every fuzzer that found these are clean under
+AddressSanitizer and UBSan, the R cross\-checks re\-run with no mismatches, and
+the changed functions leak nothing over 40,000 calls on either the success or
+the new croak paths.
+.SS "0.314 2026\-09\-02 CDT"
+.IX Subsection "0.314 2026-09-02 CDT"
+\fR\f(CI\*(C`read_table\*(C'\fR\fI is 2.5× to 3.6× faster\fR
+.IX Subsection "read_table is 2.5× to 3.6× faster"
+.PP
+\&\f(CW\*(C`read_table\*(C'\fR parsed in C and then assembled in perl: \f(CW\*(C`_parse_csv_file\*(C'\fR cut each
+line into fields and handed the row to a closure, once per row, which rebuilt it
+as a hash one field at a time. On a 300,000 × 5 CSV that closure was \fB79%\fR of
+the call — 0.42 s of 0.53 s — against 0.11 s for the parser feeding it. Not the
+calls themselves: 300,000 calls into an empty sub cost 0.010 s. It was the work
+inside them, done 1.5 million times.
+.PP
+Once the header is fixed there is nothing in that closure left to decide, so
+\&\f(CW\*(C`_parse_csv_file\*(C'\fR now takes a plan — which columns, which field each one comes
+from, and where to put it — and assembles every remaining row itself. The
+closure still reads the header, because that is where every message \f(CW\*(C`read_table\*(C'\fR
+can produce comes from; it then hands the rest of the file over and is not
+called again. The field SVs are \fImoved\fR into the row hash or the column array
+rather than copied, and the row buffer is reused, so a cell costs a pointer
+instead of a \f(CWnewSVsv()\fR.
+.PP
+Measured on the \f(CW\*(C`plot.scaling.pl\*(C'\fR fixtures at \f(CW\*(C`n = 300,000\*(C'\fR, median of 7, pinned
+to one CPU, with Python and R timed in the same session on the same files:
+.PP
+At \f(CW\*(C`n = 100,000\*(C'\fR the same four are 3.0×, 3.0×, 3.0× and 3.6× faster.
+.PP
+\&\f(CW\*(C`read_table\*(C'\fR now beats R\*(Aqs \f(CW\*(C`read.csv\*(C'\fR and \f(CW\*(C`read.delim\*(C'\fR on all four panels,
+having previously lost three of them. Against Python, the mixed panels are the
+like\-for\-like pair — both build 300,000 five\-key row records, \f(CW\*(C`csv.DictReader\*(C'\fR
+against \f(CW\*(C`output.type => \*(Aqaoh\*(Aq\*(C'\fR — and \f(CW\*(C`read_table\*(C'\fR went from 2.0× slower to 1.3×
+faster. The numeric and \f(CW\*(C`hoa\*(C'\fR panels are \f(CW\*(C`pandas.read_csv\*(C'\fR, which returns four
+typed NumPy blocks rather than 1.5 million scalars; that gap is the shape of the
+answer, not the parsing, and no amount of parser work closes it.
+.PP
+Two shapes keep the old path, because both need perl on every row:
+\&\f(CW\*(C`output.type => \*(Aqhoh\*(Aq\*(C'\fR, which names each row from one of its own columns, and
+any read given a \f(CW\*(C`filter\*(C'\fR. \f(CW\*(C`.xlsx\*(C'\fR has a parser of its own and is untouched.
+Nothing any of them returns changes.
+.PP
+What did get faster on that path is \f(CW\*(C`hoa\*(C'\fR, which used to build a row hash it did
+not need and then read every key back out of it, and which looked each column
+array up in the result hash — autovivifying it — once per column per row. The
+column arrays are made once when the header is finalized now, and pushed to
+directly.
+.PP
+\fR\f(CI\*(C`t/read_table.fast_path.t\*(C'\fR\fI, 44 tests pinning the two paths to each other\fR
+.IX Subsection "t/read_table.fast_path.t, 44 tests pinning the two paths to each other"
+.PP
+Fifteen fixtures — duplicate column names, empty cells, \f(CW\*(C`na.strings\*(C'\fR, quoted
+fields with embedded commas and newlines, header\-only, one data row,
+\&\f(CW\*(C`auto.row.names\*(C'\fR, commented\-out headers, TSV, CRLF, single column — each read
+twice in both \f(CW\*(C`aoh\*(C'\fR and \f(CW\*(C`hoa\*(C'\fR, once down each path, and required to come back
+\&\f(CW\*(C`is_deeply\*(C'\fR identical. A no\-op \f(CW\*(C`filter\*(C'\fR is what forces the closure, and it
+cannot change the answer: a filter key of 0 is handed the whole row, and
+\&\f(CW\*(C`read_table\*(C'\fR writes a mutated \f(CW$_\fR back only for keys above 0. The alignment
+error is checked to be worded identically by both paths, data row number
+included. \f(CW\*(C`t/parse_read.t\*(C'\fR gained 11 more tests, for the plan\*(Aqs own argument
+validation — each of those croaks guards a C array that would otherwise be
+indexed with a number that came from perl.
+.PP
+\fR\f(CI\*(C`seq\*(C'\fR\fI rewritten against R\*(Aqs \fR\f(CI\*(C`seq.default\*(C'\fR\fI\fR
+.IX Subsection "seq rewritten against R's seq.default"
+.PP
+\&\f(CW\*(C`seq\*(C'\fR was a \f(CW\*(C`(to \- from)/by\*(C'\fR loop with one fuzz factor and two guards. R\*(Aqs
+\&\f(CW\*(C`seq\*(C'\fR is not that. \f(CW\*(C`base::seq.default\*(C'\fR is a chain of eight special cases — two
+different fuzz factors, three separate routes to a single value, a rewrite for
+endpoints whose difference overflows, and a clamp on the last element — and
+every one of them decides either how many values come back or where the
+sequence stops. All of them are transcribed now, from R 4.6.1
+\&\f(CW\*(C`src/library/base/R/seq.R\*(C'\fR and \f(CWseq_colon()\fR in \f(CW\*(C`src/main/seq.c\*(C'\fR.
+.PP
+It matters which R function is being copied, because \f(CW\*(C`seq.default\*(C'\fR and the
+\&\f(CW\*(C`seq.int()\*(C'\fR primitive do not agree. \f(CW\*(C`seq.int\*(C'\fR tolerates a slightly negative
+\&\f(CW\*(C`(to \- from)/by\*(C'\fR, allows \f(CW\*(C`100 * INT_MAX\*(C'\fR values, and short\-circuits \f(CW\*(C`by = ±1\*(C'\fR
+to \f(CW\*(C`from:to\*(C'\fR; \f(CW\*(C`seq.default\*(C'\fR rejects any negative count, caps at \f(CW\*(C`INT_MAX\*(C'\fR, and
+reaches \f(CW\*(C`from:to\*(C'\fR only when \f(CW\*(C`by\*(C'\fR is genuinely absent. This follows
+\&\f(CW\*(C`seq.default\*(C'\fR, because that is what R\*(Aqs \f(CWseq()\fR dispatches to.
+.PP
+Six calls were wrong, three of them silently:
+.PP
+The empty lists and the panic were one bug: the element count was computed as
+an NV and cast to \f(CW\*(C`size_t\*(C'\fR, and neither \f(CW1e30\fR nor \f(CW\*(C`NaN\*(C'\fR nor \f(CW\*(C`Inf\*(C'\fR fits in one,
+so the conversion was undefined. On x86\-64 \f(CW1e30\fR became \f(CW0\fR and the call
+returned nothing at all; \f(CW\*(C`NaN\*(C'\fR became \f(CW\*(C`\-2**63\*(C'\fR, which then reached \f(CWEXTEND()\fR.
+A count that \fIdid\fR fit but could not be allocated — \f(CW\*(C`(1 \- 0)/1e\-11\*(C'\fR is
+100,000,000,001 values, 800 GB of stack — got as far as trying. R rejects all
+three the same way, and now so does this: \f(CW\*(C`\*(Aqby\*(Aq argument is much too small\*(C'\fR
+above \f(CW\*(C`INT_MAX\*(C'\fR values, \f(CW\*(Aqfrom\*(Aq\fR/\f(CW\*(C`\*(Aqto\*(Aq must be a finite number\*(C'\fR for a
+non\-finite endpoint.
+.PP
+The other three were missing features rather than broken arithmetic:
+.IP \(bu 4
+\&\fBAn absent \fR\f(CB\*(C`by\*(C'\fR\fB is \fR\f(CB\*(C`from:to\*(C'\fR\fB, in either direction.\fR \f(CW\*(C`seq(5, 1)\*(C'\fR is
+\&\f(CW\*(C`5 4 3 2 1\*(C'\fR, the same as R; only an explicit \f(CW\*(C`by\*(C'\fR whose sign disagrees with
+the direction of travel is an error. \f(CW\*(C`from:to\*(C'\fR also carries R\*(Aqs \fIlooser\fR
+fuzz, so \f(CW\*(C`seq(1, 4.9999999)\*(C'\fR is five values where \f(CW\*(C`seq(1, 4.9999999, 1)\*(C'\fR is
+four — R does the same, and for the same reason: \f(CW\*(C`1:4.9999999\*(C'\fR adds
+\&\f(CW\*(C`1 + FLT_EPSILON\*(C'\fR before truncating and the \f(CW\*(C`by\*(C'\fR branch adds \f(CW1e\-10\fR.
+.IP \(bu 4
+\&\fBThe last element is pinned to \fR\f(CB\*(C`to\*(C'\fR when the fuzz carried it past, which
+R has done since 2.9.0. \f(CW\*(C`seq(0, 1, 0.00025 + 5e\-16)\*(C'\fR used to overshoot 1 —
+the exact case R\*(Aqs \f(CW\*(C`tests/reg\-tests\-1b.R\*(C'\fR asserts against, under the heading
+"(Deliberate) overshot in \f(CW\*(C`seq(from, to, by)\*(C'\fR because of fuzz".
+.IP \(bu 4
+\&\fBEndpoints too close to tell apart collapse to \fR\f(CB\*(C`from\*(C'\fR\fB.\fR When
+\&\f(CW\*(C`abs(to \- from) / max(abs(to), abs(from))\*(C'\fR is below \f(CW\*(C`100 * DBL_EPSILON\*(C'\fR the
+count \f(CW\*(C`(to \- from)/by\*(C'\fR is noise, and R returns \f(CW\*(C`from\*(C'\fR alone. This is why
+\&\f(CW\*(C`seq(1e15, 1e15 + 20, 2)\*(C'\fR is one value: at that magnitude a \f(CW\*(C`double\*(C'\fR cannot
+distinguish the endpoints well enough for a step of 2 to mean anything.
+Widen the gap and the sequence returns — \f(CW\*(C`seq(1e15, 1e15 + 200, 2)\*(C'\fR is 101
+values.
+.PP
+That last threshold is deliberately \fInot\fR scaled to the build\*(Aqs \f(CW\*(C`NV_EPSILON\*(C'\fR,
+which is this file\*(Aqs rule for anything epsilon\-shaped. R\*(Aqs
+\&\f(CW\*(C`100 * .Machine$double.eps\*(C'\fR is a third fuzz factor belonging to \f(CW\*(C`seq\*(C'\fR\*(Aqs
+definition, like the \f(CW1e\-10\fR and the \f(CW\*(C`FLT_EPSILON\*(C'\fR, rather than a tolerance on
+this build\*(Aqs arithmetic. Scaling it was tried and reverted: with \f(CW\*(C`NV_EPSILON\*(C'\fR
+the call above returns eleven values on a long\-double or \f(CW\*(C`_\|_float128\*(C'\fR perl and
+one on a \f(CW\*(C`double\*(C'\fR perl, which is a worse answer than R\*(Aqs on every build.
+.PP
+\fR\f(CI\*(C`seq\*(C'\fR\fI: integer sequences come back as integers, and are up to 5× cheaper\fR
+.IX Subsection "seq: integer sequences come back as integers, and are up to 5× cheaper"
+.PP
+A sequence whose every value is an exact integer no larger than \f(CW\*(C`2**53\*(C'\fR is now
+returned as perl integers (IVs) rather than floats — which is also what R
+returns for the same call, an integer vector. The numbers are identical either
+way; this is a choice of SV body, not of arithmetic. But it is much the cheaper
+body, because stringifying an IV never reaches \f(CWGconvert()\fR.
+.PP
+Measured on perl\-5.44.0 at \f(CW\*(C`n = 1e6\*(C'\fR, per element:
+.PP
+The second row is the one that shows up in real code: anything that prints,
+joins, writes or hash\-keys the result was paying five times over. \f(CW\*(C`seq\*(C'\fR is now
+level with the range operator on both. A fractional step stays floating point,
+as it must, and is unchanged at 13.4 ns per element — that path was already at
+parity.
+.PP
+Void and scalar context no longer build the values the caller cannot reach.
+\&\f(CW\*(C`seq(1, 1e7);\*(C'\fR as a statement of its own took 190 ms and left 384 MB of
+resident memory behind for the life of the process — the grown argument stack,
+the grown mortal stack, and the SV arenas the ten million heads came out of. It
+now takes 5 µs and no memory. In scalar context only the last value is built,
+which is the one the caller\*(Aqs assignment reads off the top of the stack: the
+same answer perl gives for any list\-returning sub, and the same answer \f(CW\*(C`seq\*(C'\fR
+gave before.
+.PP
+One consequence is cosmetic: a large integral value prints in full rather than
+in exponent form, so \f(CW\*(C`seq(1e15, 1e15 + 200, 2)\*(C'\fR starts \f(CW1000000000000000\fR where
+it used to start \f(CW1e+15\fR.
+.PP
+\fR\f(CI\*(C`t/seq.R.t\*(C'\fR\fI, 378 tests taken from R\*(Aqs own suite\fR
+.IX Subsection "t/seq.R.t, 378 tests taken from R's own suite"
+.PP
+Every case is R\*(Aqs, cited individually in the file\*(Aqs header: the \f(CW\*(C`## seq\*(C'\fR and
+\&\f(CW\*(C`## Round\*(C'\fR blocks and the Don MacQueen length case from \f(CW\*(C`reg\-tests\-1a.R\*(C'\fR, the
+deliberate\-overshoot assertion from \f(CW\*(C`reg\-tests\-1b.R\*(C'\fR, the NaN error messages
+from \f(CW\*(C`reg\-tests\-2.R\*(C'\fR, and the four \f(CW\*(C`\eexamples\*(C'\fR from \f(CW\*(C`seq.Rd\*(C'\fR. The rest of the
+table walks the branches of \f(CW\*(C`seq.default\*(C'\fR those do not reach: \f(CW\*(C`from:to\*(C'\fR in both
+directions, all four routes to a single value, a subnormal step, and the
+overflow rewrite. Expected values are frozen \f(CW\*(C`%.17g\*(C'\fR literals generated by
+\&\f(CW\*(C`t/seq.R.R\*(C'\fR, committed next to the test; the test never calls R.
+.PP
+Python has no equivalent to cross\-check against, and that is recorded in the
+file rather than left as a gap: \f(CW\*(C`numpy.arange\*(C'\fR is half\-open and carries no
+fuzz, so \f(CW\*(C`arange(0, 1, 0.1)\*(C'\fR is ten values ending at 0.9 where
+\&\f(CW\*(C`seq(0, 1, 0.1)\*(C'\fR is eleven ending at 1, and \f(CW\*(C`numpy.linspace\*(C'\fR is parameterised
+by length, which is R\*(Aqs \f(CWseq(length.out=)\fR and a different function.
+.PP
+Agreement with R is exact on a \f(CW\*(C`double\*(C'\fR perl — the worst relative disagreement
+over all 378 assertions is \fB0\fR on perl\-5.44.0 and perl\-5.42.3. The other
+builds cannot be exact, and not because their arithmetic is worse: a
+long\-double or \f(CW\*(C`_\|_float128\*(C'\fR perl parses \f(CW"0.05"\fR to its own NV, half an ulp of a
+double away from the number R read, and one multiply and one add carry that
+through. The tolerance is measured rather than chosen — 1.11e\-16 on
+perl\-5.10.1, 1.50e\-16 on perl\-5.12.5 and 5.44.0\-quadmath, 1.60e\-16 on an x87
+build — and set at 8e\-16, five times the worst of them.
+.PP
+Two cases are asserted as exact integer multiples of a power of two rather than
+as decimals, because a decimal there would be testing perl\*(Aqs string\-to\-double
+instead of \f(CW\*(C`seq\*(C'\fR: perl\-5.10.1 reads \f(CW7.9050503334599447e\-323\fR as \f(CW0\fR and \f(CW1e307\fR
+five ulp high, while \f(CW\*(C`2**k\*(C'\fR is exact on every one of these perls.
 .SS "0.313 2026\-09\-01 CDT"
 .IX Subsection "0.313 2026-09-01 CDT"
 \fR\f(CI\*(C`merge\*(C'\fR\fI: a \fR\f(CI\*(C`left.on\*(C'\fR\fI/\fR\f(CI\*(C`right.on\*(C'\fR\fI join died when the right frame reused the key\*(Aqs name\fR

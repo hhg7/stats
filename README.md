@@ -5336,6 +5336,7 @@ minimal example:
 |`output.type`| data type for output: array of hash, hash of array, or hash of hash | `'output.type' => 'aoh'`|
 |`filter`| Only take in rows matching a filter | `filter => { Sex => sub {$_ eq 'f'} }`|
 |`row.names` | include row names in retrieved data; off by default | |
+|`auto.row.names` | read R's default `write.table` output, where the header is one field short of every data row because R writes no label for the row-names column: the leading field of each row becomes a row-names column. `1` names it `row_name`, a string names it whatever you pass. Off by default, so a genuinely ragged file is still an error | `'auto.row.names' => 1` |
 |`sep` | field separator character; synonym with `delim`| `sep => "\t"` |
 | `delim`| field separator character; synonym with `sep`| `delim => "\t"` |
 | `sheet`| which worksheet to read from an `.xlsx` file: a 1-based index or a sheet name (default: first sheet). Ignored for text files | `sheet => 'Sheet2'` |
@@ -5611,6 +5612,17 @@ take a sample of hash or array slices.
 or, alternatively, with arrays:
 
     my $arr = sample(\@arr, 3); # take 3 indices of an array
+
+The sample is drawn without replacement, so `n` may not exceed the number of
+elements or keys there are to draw from; asking for more is an error, as it is
+in R (*cannot take a sample larger than the population when 'replace = FALSE'*):
+
+    sample([1, 2, 3], 10);   # dies: cannot take a sample of 10 from a population of 3
+
+Through 0.314 the two shapes disagreed about this and neither said so — a hash
+quietly returned fewer keys than were asked for, and an array padded the result
+out to `n` with `undef`, so `sample([1,2,3], 10)` came back as three values and
+seven undefs that no caller could tell apart from real data.
 
 ## scale
 
@@ -6702,7 +6714,11 @@ Every successful write prints one line to standard output naming the file, with 
 
 This is `say 'wrote ' . colored(['black on_cyan'], $file)`, but the SGR codes (`\e[30;46m` … `\e[0m`) are written out inline, so the module takes no dependency on `Term::ANSIColor`. Every format announces itself the same way — delimited, LaTeX and `.xlsx` alike — so you always learn where a table went, in the same shape whatever you asked for. Nothing is printed when nothing is written: an empty data frame returns before a file is opened, and a write that cannot open its file croaks instead.
 
-The colour is unconditional; it is not suppressed when standard output is a pipe or a file. If you are capturing the output and want the bytes plain, strip the escapes (`s/\e\[[\d;]*m//g`) or send them somewhere else. Note also that the line goes to file descriptor 1 directly rather than through Perl's `STDOUT` glob, so `local *STDOUT; open STDOUT, '>', \my $buf` will **not** capture it — redirect the file descriptor, or run the write in a child process, if you need to.
+The colour is unconditional; it is not suppressed when standard output is a pipe or a file. Pass `quiet => 1` to suppress the line altogether, which is what a script writing to a pipe or a data file usually wants:
+
+    write_table(\@rows, 'out.tsv', quiet => 1);   # writes the file, says nothing
+
+`quiet` silences the line rather than decolouring it, because the coloured form is the one contract every format shares. If you want the line but not the escapes, strip them (`s/\e\[[\d;]*m//g`) or send them somewhere else. Note also that the line goes to file descriptor 1 directly rather than through Perl's `STDOUT` glob, so `local *STDOUT; open STDOUT, '>', \my $buf` will **not** capture it — redirect the file descriptor, or run the write in a child process, if you need to.
 ### LaTeX output (`tex`)
 `write_table` can write the output file as a LaTeX `tabular` instead of a delimited table. This is selected either by naming the file `*.tex` (auto-detected) or by passing `tex => 1`; an explicit `tex => 0` forces a delimited file even when the name ends in `.tex`. The LaTeX table is built from the same rows as the delimited writer, so it works for every shape above (including arrays of arrays):
 
@@ -6866,6 +6882,189 @@ Verified against R 4.6.1 (`oneway.test`, `anova(aov())`, `anova(lm())`,
 `t/model_pvalue_tails.t` and `t/oneway_test.R.scipy.t`.
 
 # Changes
+
+## 0.315 2026-09-03 CDT
+
+Everything in this release is a defect fix. Nothing here is a new algorithm and
+no numeric answer moves, except where the old answer was wrong.
+
+The defects were found by fuzzing rather than by reading: every exported
+function called with a reference where it expected a number, with a code ref or
+a scalar ref buried inside an otherwise ordinary frame, and with randomly
+assembled argument lists, all run against an AddressSanitizer/UBSan build. The
+whole existing suite is clean under those sanitizers and always was; what the
+fuzzers reached is the argument space the suite does not cover, because it is
+the space no correct program visits. A user's typo visits it.
+
+### Four segmentation faults and a `SIGFPE`
+
+Each of these ended the interpreter. None of them could be caught: `eval` does
+not see a signal, so a caller could not even fail gracefully.
+
+| call | before | now |
+|---|---|---|
+| `matrix([1..6], 0)` | `SIGFPE` | croaks `Dimensions must be greater than 0` |
+| `matrix([1..6], 'greater')` | `SIGFPE` | croaks `matrix: nrow must be a number` |
+| `prcomp({ c => {d=>1}, e => undef })` | `SIGSEGV` | croaks `prcomp: HoH value for row 'e' is not a hash-ref` |
+| `scale([[1,2], sub {1}])` | `SIGSEGV` | the row reads as absent, as a string or `undef` row always did |
+| `merge(\1, [{a=>1}])` | `SIGSEGV` | croaks `merge: left frame must be AoH/HoA/HoH` |
+
+**`matrix`.** The guard against a zero dimension sat one branch *after* the
+inference that divides by it, so `ncol = (data_len + nrow - 1) / nrow` ran first
+with `nrow == 0`. A non-numeric string reached the same division because
+`SvUV('greater')` is `0`. The guard now runs before the inference, and both
+dimensions go through the validating reader below.
+
+**`prcomp`.** A HoH frame's shape is decided from whichever row `hv_iternext`
+reaches first, and nothing checked the rest — both the column-name pass and the
+extraction pass called `SvRV` on every value and dereferenced the result as an
+`HV`. HoA and AoA already had a rectangularity pre-pass; HoH now has the same
+one. Because the deciding row moves with hash order, the crash came and went
+between runs on identical input, which is the worst way for a bug to present.
+The HoA branch reached the same null pointer by a second route: column names
+are copied with `savepv` and looked up again with `strlen`, so a name holding a
+NUL byte truncates, `hv_fetch` misses, and the `NULL` was dereferenced. That is
+now a croak naming the column.
+
+**`scale`.** The per-row test in matrix mode was `SvROK()` alone, without the
+`SvTYPE(...) == SVt_PVAV` half, so a reference to anything that is not an array
+was handed to `av_fetch` as an `AV`. Only row 0 is checked when the matrix
+shape is detected; every other row arrived unvalidated. A bad row now takes the
+same path a plain string or an `undef` row has always taken — it reads as
+absent — rather than becoming a new croak, which would have changed two cases
+that were never broken.
+
+**`merge`.** `mg_shape` ran on nothing but an `SvROK` test and treated
+everything that was not an array as a hash, so it reached `hv_iterinit` on a
+scalar ref *before* `mg_prep` — which is where a frame is really validated —
+could reject it. It now answers `0` for anything that is neither, and leaves the
+croak to `mg_prep`, which is where the message the caller should see comes from.
+
+### `bw_ucv` and `bw_bcv` could loop forever
+
+Both build their search interval from `sqrt(var(x))`, which squares the data.
+On a `double` NV the variance of `c(1, 1e300, -1)` is already `+Inf`, and
+`dens_brent_fmin` — R's `Brent_fmin`, transcribed — iterates until the bracket
+closes, which a non-finite bound never does, because every comparison against a
+NaN is false. `bw_ucv([1, 2, 3, 1e300])` and `density(\@x, bw => 'ucv')` on the
+same data spun with no way out but a signal.
+
+R does not reach that loop either: `optimize()` rejects the bounds first, with
+*invalid 'xmin' value*. This is the same check, moved to where the bounds are
+built. The threshold is a property of the build — about `1e155` for a `double`
+NV, far higher for long double and `__float128` — so the check tests the value,
+not the data.
+
+`dens_brent_fmin` also gained an iteration cap as a backstop against a future
+caller. It is not a working limit: golden-section alone shrinks the bracket by
+0.382 a step, so even `tol = NV_EPSILON` on a 113-bit `__float128` needs about
+163 steps, and the cap is 1000.
+
+### Size arguments are validated in one place
+
+`matrix`, `hist`, `sample`, `rnorm` and `rbinom` each read a count with a bare
+`SvUV`/`SvIV`. `SvUV` of a non-numeric string is `0`, of `-1` it is `2**64-1`,
+and of a reference it is the address — and each of those went straight to a
+divisor or an allocation:
+
+    rnorm(-1)                          # Out of memory in perl:util:safesysmalloc
+    rbinom(n => -1, size => 2, ...)    # Out of memory in perl:util:safesysmalloc
+    sample([1,2,3], $some_ref)         # Out of memory in perl:util:safesysmalloc
+    hist(\@x, sub { ... })             # Out of memory in perl:util:safesysmalloc
+
+Perl's out-of-memory death is unrecoverable — it is not a croak and `eval` never
+sees it either. All five now share one reader, `sv_count_arg`, which refuses
+`undef`, a non-number, a NaN, a negative and anything above `2**48`, and
+truncates a fraction toward zero the way R's `as.integer` does — so
+`matrix(1:6, 2.7)` is a two-row matrix, in R and here. `runif` already had a
+hand-written check for exactly this; its message is unchanged.
+
+### `cor_test` reports `NaN` where the correlation is undefined
+
+A column with no variance has no correlation, and R says so:
+`cor.test(c(1,1,1,1), c(1,2,3,4))` gives `cor = NA`, `t = NA`, `p-value = NA`,
+`df = 2`. This returned estimate `0`, statistic `0`, **p-value `1`** — which
+reads as a real, well-supported null result that no caller can tell apart from
+one. Three code paths in this module already disagreed with it: `cor()` croaks
+(*standard deviation of x is 0*), the shared `pearson_cor` helper returns
+`NV_NAN`, and `cor_test`'s own Kendall branch already answered `NaN` on its
+degenerate denominator. Only the Pearson and Spearman branches returned `0`.
+
+All three methods now report `NaN` for estimate, statistic and p-value, and
+Pearson reports a `NaN` interval and keeps `df = 2`, as R does. Ordinary
+correlations are bit-identical.
+
+### `sample` draws without replacement, and now says so
+
+Asked for more than the population holds, the two shapes disagreed and neither
+said anything:
+
+    sample([1, 2, 3], 10);        # [3, 2, 1, undef, undef, undef, undef, undef, undef, undef]
+    sample({a=>1, b=>2}, 5);      # two keys, silently
+
+Seven undefs that no caller could distinguish from real data is the worse of
+the two. Both branches now croak, as R does — *cannot take a sample larger than
+the population when 'replace = FALSE'*. Draw sequences under a fixed `srand` are
+unchanged: the shuffle makes exactly the same number of `Drand01()` calls for
+every call that was previously valid. A first argument that is neither an array
+nor a hash reference is now a usage croak rather than a silent `undef`.
+
+### `hist` follows R's own `breaks` rule, and its extrema are `NV`-wide
+
+`breaks` went through a bare `SvIV`, so `hist(\@x, -5)` wrapped to a huge
+`size_t` and silently behaved like `breaks => 1`. The rule is now R's, from
+`src/library/graphics/R/hist.R`: anything not finite or below 1 is
+*invalid number of 'breaks'*, and a value above `1e6` warns and clamps, because
+`pretty()` needs an `n` that fits in an `int`. A fractional value truncates —
+R's `breaks = 2.7` gives the same four breaks as `breaks = 2`, and so does this.
+
+Separately, `hist` seeded its running extrema from `DBL_MAX` rather than
+`NV_MAX`. On a long-double or `__float128` build every value above `DBL_MAX`
+fails `val < min_val`, so the minimum stayed at `1.8e308`. Measured on
+`5.44.0-quadmath`:
+
+| | before | now |
+|---|---|---|
+| `hist([1e400, 1.05e400, 1.1e400])` | breaks `0 5e399 1e400 1.5e400`, counts `0 1 2` | breaks `1e400 1.05e400 1.1e400`, counts `2 1` |
+
+`min()` and `max()` on the same data were always right, which is what made the
+empty leading bin visible.
+
+### Smaller things
+
+- **`write_table` gained `quiet => 1`.** The confirmation line is deliberately
+  unconditional and deliberately coloured, which is right at a terminal and
+  wrong for a script whose stdout is a pipe or a data file — the SGR bytes go
+  out whatever file descriptor 1 is, and the only advice on offer was to capture
+  and strip them. `quiet` silences the line rather than decolouring it, because
+  the coloured form is the contract every format shares.
+- **`chunk` owns its argument-list message.** `chunk($aref, 2)` fell into a hash
+  assignment and died as perl's *Odd number of elements in hash assignment at
+  LikeR.pm line 1686*, naming neither `chunk` nor the option it wanted.
+- **`auto.row.names` is documented where it can be found.** The option has
+  existed and been tested since 0.313, but appeared only in the release notes,
+  not in `read_table`'s own options table — so `h('read_table')` did not list
+  it, and the R-written `mtcars.tsv` in this repository looked unreadable.
+
+### Testing
+
+`t/arg.crash.regressions.t`, 98 assertions. Every crash case runs in a child
+perl and is judged by how the child exited, because a signal death cannot be
+caught in the process that provokes it; the `prcomp` cases run 40 fresh
+interpreters each, since the crash depended on hash order and reproduced within
+the first two. R provenance for every quoted behaviour (R 4.6.1) is in the file
+header, and nothing in it needs R, `python3`, NumPy or SciPy at run time. The
+two `hist` extremum assertions skip on a `double` NV and run for real on
+quadmath. `t/chunk.t` and `t/write_table.announce.t` gained the cases for the
+two smaller fixes.
+
+40,563 tests pass on all six local perls — 5.10.1, 5.12.5 (long double), 5.42.3
+threaded, 5.44.0, 5.44.0+x87 and 5.44.0-quadmath — with no warnings, and the
+translation unit compiles clean under strict `-std=c99` against every one of
+their headers. The full suite and every fuzzer that found these are clean under
+AddressSanitizer and UBSan, the R cross-checks re-run with no mismatches, and
+the changed functions leak nothing over 40,000 calls on either the success or
+the new croak paths.
 
 ## 0.314 2026-09-02 CDT
 
