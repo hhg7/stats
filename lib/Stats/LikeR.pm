@@ -5062,9 +5062,7 @@ sub age_standardize {
 =head1 Synopsis
 
 Get basic statistical functions working in Perl as if they were part of List::Util, like C<min>, C<max>, C<sum>, etc.
-I've used Artificial Intelligence tools such as Claude, Gemini, and Grok to write this as well as using my own gray matter.
-There are other similar tools on CPAN, but I want speed and a form like List::Util, which I've gotten here with the help of AI, which often required many attempts to do correctly.
-This is meant to call subroutines directly through eXternal Subroutines (XS) for performance and portability.
+There are other similar tools on CPAN, but I want speed and a form like List::Util.
 
 There B<are> other modules on CPAN that can do B<PARTS> of this, but this works the way that I B<want> it to.
 
@@ -13451,7 +13449,7 @@ C<by>.
  @seq = seq(1, 2, 0.25);
  say join(", ", @seq), "\n";
  for (my $idx = 2; $idx >= 1; $idx -= 0.25) { # count down to pop
- 	is_approx(pop @seq, $idx, "seq item $idx with fractional step");
+     is_approx(pop @seq, $idx, "seq item $idx with fractional step");
  }
 
 =head3 Negative steps
@@ -13495,19 +13493,13 @@ if the fuzz carried it past, which R added in 2.9.0, so
 Three cases collapse to a single value rather than raising an error, all
 following R:
 
-=over 4
+=over
 
-=item *
+=item * C<by> is C<0> and C<from == to>, which returns C<from>;
 
-C<by> is C<0> and C<from == to>, which returns C<from>;
+=item * C<to - from> is C<0> and C<to> is C<0>, which returns C<to> whatever C<by> is;
 
-=item *
-
-C<to - from> is C<0> and C<to> is C<0>, which returns C<to> whatever C<by> is;
-
-=item *
-
-C<from> and C<to> are indistinguishable at the working precision — that is,
+=item * C<from> and C<to> are indistinguishable at the working precision — that is,
 C<abs(to - from) / max(abs(to), abs(from))> is below C<100 * DBL_EPSILON>.
 This is why C<seq(1e15, 1e15 + 20, 2)> is the single value C<1e15> and not
 eleven values: at that magnitude a C<double> cannot tell C<1e15> from
@@ -13520,31 +13512,21 @@ the sequence comes back — C<seq(1e15, 1e15 + 200, 2)> is 101 values.
 
 All five messages are R's own wording:
 
-=over 4
+=over
 
-=item *
-
-C<from> or C<to> is C<NaN> or infinite — C<seq: 'from' must be a finite number>,
+=item * C<from> or C<to> is C<NaN> or infinite — C<seq: 'from' must be a finite number>,
 or the same for C<'to'>.
 
-=item *
-
-C<by> has the wrong sign for the direction of travel —
+=item * C<by> has the wrong sign for the direction of travel —
 C<seq: wrong sign in 'by' argument>.
 
-=item *
-
-C<by> is C<0> with C<from != to>, or C<by> is C<NaN> —
+=item * C<by> is C<0> with C<from != to>, or C<by> is C<NaN> —
 C<seq: invalid '(to - from)/by'>.
 
-=item *
-
-the sequence would have more than C<INT_MAX> values —
+=item * the sequence would have more than C<INT_MAX> values —
 C<seq: 'by' argument is much too small>.
 
-=item *
-
-C<from:to> would span more than C<INT_MAX> —
+=item * C<from:to> would span more than C<INT_MAX> —
 C<seq: result would be too long a vector>.
 
 =back
@@ -15284,6 +15266,325 @@ C<f.sf> / C<norm.sf> and statsmodels' C<anova_oneway>; see
 C<t/model_pvalue_tails.t> and C<t/oneway_test.R.scipy.t>.
 
 =head1 Changes
+
+=head2 0.314 2026-09-02 CDT
+
+=head3 C<read_table> is 2.5× to 3.6× faster
+
+C<read_table> parsed in C and then assembled in perl: C<_parse_csv_file> cut each
+line into fields and handed the row to a closure, once per row, which rebuilt it
+as a hash one field at a time. On a 300,000 × 5 CSV that closure was B<79%> of
+the call — 0.42 s of 0.53 s — against 0.11 s for the parser feeding it. Not the
+calls themselves: 300,000 calls into an empty sub cost 0.010 s. It was the work
+inside them, done 1.5 million times.
+
+Once the header is fixed there is nothing in that closure left to decide, so
+C<_parse_csv_file> now takes a plan — which columns, which field each one comes
+from, and where to put it — and assembles every remaining row itself. The
+closure still reads the header, because that is where every message C<read_table>
+can produce comes from; it then hands the rest of the file over and is not
+called again. The field SVs are I<moved> into the row hash or the column array
+rather than copied, and the row buffer is reused, so a cell costs a pointer
+instead of a C<newSVsv()>.
+
+Measured on the C<plot.scaling.pl> fixtures at C<n = 300,000>, median of 7, pinned
+to one CPU, with Python and R timed in the same session on the same files:
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th></th>
+  <th>before</th>
+  <th>after</th>
+  <th>speedup</th>
+  <th>Python</th>
+  <th>R</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>read_table</code> (csv, numeric)</td>
+  <td>0.499 s</td>
+  <td>0.195 s</td>
+  <td>2.6×</td>
+  <td>0.064 s</td>
+  <td>0.603 s</td>
+</tr>
+<tr>
+  <td><code>read_table</code> (csv, mixed)</td>
+  <td>0.573 s</td>
+  <td>0.228 s</td>
+  <td>2.5×</td>
+  <td>0.288 s</td>
+  <td>0.432 s</td>
+</tr>
+<tr>
+  <td><code>read_table</code> (tsv, mixed)</td>
+  <td>0.572 s</td>
+  <td>0.223 s</td>
+  <td>2.6×</td>
+  <td>0.289 s</td>
+  <td>0.401 s</td>
+</tr>
+<tr>
+  <td><code>read_table</code> (csv, hoa)</td>
+  <td>0.877 s</td>
+  <td>0.330 s</td>
+  <td>2.7×</td>
+  <td>0.061 s</td>
+  <td>0.381 s</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+At C<n = 100,000> the same four are 3.0×, 3.0×, 3.0× and 3.6× faster.
+
+C<read_table> now beats R's C<read.csv> and C<read.delim> on all four panels,
+having previously lost three of them. Against Python, the mixed panels are the
+like-for-like pair — both build 300,000 five-key row records, C<csv.DictReader>
+against C<< output.type =E<gt> 'aoh' >> — and C<read_table> went from 2.0× slower to 1.3×
+faster. The numeric and C<hoa> panels are C<pandas.read_csv>, which returns four
+typed NumPy blocks rather than 1.5 million scalars; that gap is the shape of the
+answer, not the parsing, and no amount of parser work closes it.
+
+Two shapes keep the old path, because both need perl on every row:
+C<< output.type =E<gt> 'hoh' >>, which names each row from one of its own columns, and
+any read given a C<filter>. C<.xlsx> has a parser of its own and is untouched.
+Nothing any of them returns changes.
+
+What did get faster on that path is C<hoa>, which used to build a row hash it did
+not need and then read every key back out of it, and which looked each column
+array up in the result hash — autovivifying it — once per column per row. The
+column arrays are made once when the header is finalized now, and pushed to
+directly.
+
+=head3 C<t/read_table.fast_path.t>, 44 tests pinning the two paths to each other
+
+Fifteen fixtures — duplicate column names, empty cells, C<na.strings>, quoted
+fields with embedded commas and newlines, header-only, one data row,
+C<auto.row.names>, commented-out headers, TSV, CRLF, single column — each read
+twice in both C<aoh> and C<hoa>, once down each path, and required to come back
+C<is_deeply> identical. A no-op C<filter> is what forces the closure, and it
+cannot change the answer: a filter key of 0 is handed the whole row, and
+C<read_table> writes a mutated C<$_> back only for keys above 0. The alignment
+error is checked to be worded identically by both paths, data row number
+included. C<t/parse_read.t> gained 11 more tests, for the plan's own argument
+validation — each of those croaks guards a C array that would otherwise be
+indexed with a number that came from perl.
+
+=head3 C<seq> rewritten against R's C<seq.default>
+
+C<seq> was a C<(to - from)/by> loop with one fuzz factor and two guards. R's
+C<seq> is not that. C<base::seq.default> is a chain of eight special cases — two
+different fuzz factors, three separate routes to a single value, a rewrite for
+endpoints whose difference overflows, and a clamp on the last element — and
+every one of them decides either how many values come back or where the
+sequence stops. All of them are transcribed now, from R 4.6.1
+C<src/library/base/R/seq.R> and C<seq_colon()> in C<src/main/seq.c>.
+
+It matters which R function is being copied, because C<seq.default> and the
+C<seq.int()> primitive do not agree. C<seq.int> tolerates a slightly negative
+C<(to - from)/by>, allows C<100 * INT_MAX> values, and short-circuits C<by = ±1>
+to C<from:to>; C<seq.default> rejects any negative count, caps at C<INT_MAX>, and
+reaches C<from:to> only when C<by> is genuinely absent. This follows
+C<seq.default>, because that is what R's C<seq()> dispatches to.
+
+Six calls were wrong, three of them silently:
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>call</th>
+  <th>before</th>
+  <th>now, and in R</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>seq(0, 1e30, 1)</code></td>
+  <td><code>()</code></td>
+  <td>croaks <code>'by' argument is much too small</code></td>
+</tr>
+<tr>
+  <td><code>seq(NaN, 5)</code></td>
+  <td><code>panic: stack_grow() negative count</code></td>
+  <td>croaks <code>'from' must be a finite number</code></td>
+</tr>
+<tr>
+  <td><code>seq(0, 1, 1e-11)</code></td>
+  <td><code>Out of memory during stack extend</code></td>
+  <td>croaks <code>'by' argument is much too small</code></td>
+</tr>
+<tr>
+  <td><code>seq(-1e308, 1e308, 1e307)</code></td>
+  <td><code>()</code></td>
+  <td>21 values, <code>-1e308</code> to <code>1e308</code></td>
+</tr>
+<tr>
+  <td><code>seq(5, 1)</code></td>
+  <td>croaks <code>wrong sign in 'by' argument</code></td>
+  <td><code>5 4 3 2 1</code></td>
+</tr>
+<tr>
+  <td><code>seq(1e15, 1e15 + 20, 2)</code></td>
+  <td>11 values</td>
+  <td>the single value <code>1e15</code></td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+The empty lists and the panic were one bug: the element count was computed as
+an NV and cast to C<size_t>, and neither C<1e30> nor C<NaN> nor C<Inf> fits in one,
+so the conversion was undefined. On x86-64 C<1e30> became C<0> and the call
+returned nothing at all; C<NaN> became C<-2**63>, which then reached C<EXTEND()>.
+A count that I<did> fit but could not be allocated — C<(1 - 0)/1e-11> is
+100,000,000,001 values, 800 GB of stack — got as far as trying. R rejects all
+three the same way, and now so does this: C<'by' argument is much too small>
+above C<INT_MAX> values, C<'from'>/C<'to' must be a finite number> for a
+non-finite endpoint.
+
+The other three were missing features rather than broken arithmetic:
+
+=over
+
+=item * B<< An absent C<by> is C<from:to>, in either direction. >> C<seq(5, 1)> is
+C<5 4 3 2 1>, the same as R; only an explicit C<by> whose sign disagrees with
+the direction of travel is an error. C<from:to> also carries R's I<looser>
+fuzz, so C<seq(1, 4.9999999)> is five values where C<seq(1, 4.9999999, 1)> is
+four — R does the same, and for the same reason: C<1:4.9999999> adds
+C<1 + FLT_EPSILON> before truncating and the C<by> branch adds C<1e-10>.
+
+=item * B<< The last element is pinned to C<to> >> when the fuzz carried it past, which
+R has done since 2.9.0. C<seq(0, 1, 0.00025 + 5e-16)> used to overshoot 1 —
+the exact case R's C<tests/reg-tests-1b.R> asserts against, under the heading
+"(Deliberate) overshot in C<seq(from, to, by)> because of fuzz".
+
+=item * B<< Endpoints too close to tell apart collapse to C<from>. >> When
+C<abs(to - from) / max(abs(to), abs(from))> is below C<100 * DBL_EPSILON> the
+count C<(to - from)/by> is noise, and R returns C<from> alone. This is why
+C<seq(1e15, 1e15 + 20, 2)> is one value: at that magnitude a C<double> cannot
+distinguish the endpoints well enough for a step of 2 to mean anything.
+Widen the gap and the sequence returns — C<seq(1e15, 1e15 + 200, 2)> is 101
+values.
+
+=back
+
+That last threshold is deliberately I<not> scaled to the build's C<NV_EPSILON>,
+which is this file's rule for anything epsilon-shaped. R's
+C<100 * .Machine$double.eps> is a third fuzz factor belonging to C<seq>'s
+definition, like the C<1e-10> and the C<FLT_EPSILON>, rather than a tolerance on
+this build's arithmetic. Scaling it was tried and reverted: with C<NV_EPSILON>
+the call above returns eleven values on a long-double or C<__float128> perl and
+one on a C<double> perl, which is a worse answer than R's on every build.
+
+=head3 C<seq>: integer sequences come back as integers, and are up to 5× cheaper
+
+A sequence whose every value is an exact integer no larger than C<2**53> is now
+returned as perl integers (IVs) rather than floats — which is also what R
+returns for the same call, an integer vector. The numbers are identical either
+way; this is a choice of SV body, not of arithmetic. But it is much the cheaper
+body, because stringifying an IV never reaches C<Gconvert()>.
+
+Measured on perl-5.44.0 at C<n = 1e6>, per element:
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th></th>
+  <th>before</th>
+  <th>after</th>
+  <th>perl's own <code>1 .. n</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>my @a = seq(1, n)</code></td>
+  <td>16.3 ns</td>
+  <td><b>12.7 ns</b></td>
+  <td>12.3 ns</td>
+</tr>
+<tr>
+  <td><code>join ',', seq(1, n)</code></td>
+  <td>409 ns</td>
+  <td><b>81 ns</b></td>
+  <td>81 ns</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+The second row is the one that shows up in real code: anything that prints,
+joins, writes or hash-keys the result was paying five times over. C<seq> is now
+level with the range operator on both. A fractional step stays floating point,
+as it must, and is unchanged at 13.4 ns per element — that path was already at
+parity.
+
+Void and scalar context no longer build the values the caller cannot reach.
+C<seq(1, 1e7);> as a statement of its own took 190 ms and left 384 MB of
+resident memory behind for the life of the process — the grown argument stack,
+the grown mortal stack, and the SV arenas the ten million heads came out of. It
+now takes 5 µs and no memory. In scalar context only the last value is built,
+which is the one the caller's assignment reads off the top of the stack: the
+same answer perl gives for any list-returning sub, and the same answer C<seq>
+gave before.
+
+One consequence is cosmetic: a large integral value prints in full rather than
+in exponent form, so C<seq(1e15, 1e15 + 200, 2)> starts C<1000000000000000> where
+it used to start C<1e+15>.
+
+=head3 C<t/seq.R.t>, 378 tests taken from R's own suite
+
+Every case is R's, cited individually in the file's header: the C<## seq> and
+C<## Round> blocks and the Don MacQueen length case from C<reg-tests-1a.R>, the
+deliberate-overshoot assertion from C<reg-tests-1b.R>, the NaN error messages
+from C<reg-tests-2.R>, and the four C<\examples> from C<seq.Rd>. The rest of the
+table walks the branches of C<seq.default> those do not reach: C<from:to> in both
+directions, all four routes to a single value, a subnormal step, and the
+overflow rewrite. Expected values are frozen C<%.17g> literals generated by
+C<t/seq.R.R>, committed next to the test; the test never calls R.
+
+Python has no equivalent to cross-check against, and that is recorded in the
+file rather than left as a gap: C<numpy.arange> is half-open and carries no
+fuzz, so C<arange(0, 1, 0.1)> is ten values ending at 0.9 where
+C<seq(0, 1, 0.1)> is eleven ending at 1, and C<numpy.linspace> is parameterised
+by length, which is R's C<seq(length.out=)> and a different function.
+
+Agreement with R is exact on a C<double> perl — the worst relative disagreement
+over all 378 assertions is B<0> on perl-5.44.0 and perl-5.42.3. The other
+builds cannot be exact, and not because their arithmetic is worse: a
+long-double or C<__float128> perl parses C<"0.05"> to its own NV, half an ulp of a
+double away from the number R read, and one multiply and one add carry that
+through. The tolerance is measured rather than chosen — 1.11e-16 on
+perl-5.10.1, 1.50e-16 on perl-5.12.5 and 5.44.0-quadmath, 1.60e-16 on an x87
+build — and set at 8e-16, five times the worst of them.
+
+Two cases are asserted as exact integer multiples of a power of two rather than
+as decimals, because a decimal there would be testing perl's string-to-double
+instead of C<seq>: perl-5.10.1 reads C<7.9050503334599447e-323> as C<0> and C<1e307>
+five ulp high, while C<2**k> is exact on every one of these perls.
 
 =head2 0.313 2026-09-01 CDT
 

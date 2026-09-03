@@ -1,6 +1,203 @@
 Revision history for Stats-LikeR
 
 
+0.314 2026-09-02 CDT
+
+ [`read_table` is 2.5× to 3.6× faster]
+
+ - `read_table` parsed in C and then assembled in perl: `_parse_csv_file` cut each
+   line into fields and handed the row to a closure, once per row, which rebuilt it
+   as a hash one field at a time. On a 300,000 × 5 CSV that closure was 79% of
+   the call — 0.42 s of 0.53 s — against 0.11 s for the parser feeding it. Not the
+   calls themselves: 300,000 calls into an empty sub cost 0.010 s. It was the work
+   inside them, done 1.5 million times.
+
+ - Once the header is fixed there is nothing in that closure left to decide, so
+   `_parse_csv_file` now takes a plan — which columns, which field each one comes
+   from, and where to put it — and assembles every remaining row itself. The
+   closure still reads the header, because that is where every message `read_table`
+   can produce comes from; it then hands the rest of the file over and is not
+   called again. The field SVs are *moved* into the row hash or the column array
+   rather than copied, and the row buffer is reused, so a cell costs a pointer
+   instead of a `newSVsv()`.
+
+ - Measured on the `plot.scaling.pl` fixtures at `n = 300,000`, median of 7, pinned
+   to one CPU, with Python and R timed in the same session on the same files:
+
+ - | | before | after | speedup | Python | R |
+   |---|---|---|---|---|---|
+   | `read_table` (csv, numeric) | 0.499 s | 0.195 s | 2.6× | 0.064 s | 0.603 s |
+   | `read_table` (csv, mixed) | 0.573 s | 0.228 s | 2.5× | 0.288 s | 0.432 s |
+   | `read_table` (tsv, mixed) | 0.572 s | 0.223 s | 2.6× | 0.289 s | 0.401 s |
+   | `read_table` (csv, hoa) | 0.877 s | 0.330 s | 2.7× | 0.061 s | 0.381 s |
+
+ - At `n = 100,000` the same four are 3.0×, 3.0×, 3.0× and 3.6× faster.
+
+ - `read_table` now beats R's `read.csv` and `read.delim` on all four panels,
+   having previously lost three of them. Against Python, the mixed panels are the
+   like-for-like pair — both build 300,000 five-key row records, `csv.DictReader`
+   against `output.type => 'aoh'` — and `read_table` went from 2.0× slower to 1.3×
+   faster. The numeric and `hoa` panels are `pandas.read_csv`, which returns four
+   typed NumPy blocks rather than 1.5 million scalars; that gap is the shape of the
+   answer, not the parsing, and no amount of parser work closes it.
+
+ - Two shapes keep the old path, because both need perl on every row:
+   `output.type => 'hoh'`, which names each row from one of its own columns, and
+   any read given a `filter`. `.xlsx` has a parser of its own and is untouched.
+   Nothing any of them returns changes.
+
+ - What did get faster on that path is `hoa`, which used to build a row hash it did
+   not need and then read every key back out of it, and which looked each column
+   array up in the result hash — autovivifying it — once per column per row. The
+   column arrays are made once when the header is finalized now, and pushed to
+   directly.
+
+ [`t/read_table.fast_path.t`, 44 tests pinning the two paths to each other]
+
+ - Fifteen fixtures — duplicate column names, empty cells, `na.strings`, quoted
+   fields with embedded commas and newlines, header-only, one data row,
+   `auto.row.names`, commented-out headers, TSV, CRLF, single column — each read
+   twice in both `aoh` and `hoa`, once down each path, and required to come back
+   `is_deeply` identical. A no-op `filter` is what forces the closure, and it
+   cannot change the answer: a filter key of 0 is handed the whole row, and
+   `read_table` writes a mutated `$_` back only for keys above 0. The alignment
+   error is checked to be worded identically by both paths, data row number
+   included. `t/parse_read.t` gained 11 more tests, for the plan's own argument
+   validation — each of those croaks guards a C array that would otherwise be
+   indexed with a number that came from perl.
+
+ [`seq` rewritten against R's `seq.default`]
+
+ - `seq` was a `(to - from)/by` loop with one fuzz factor and two guards. R's
+   `seq` is not that. `base::seq.default` is a chain of eight special cases — two
+   different fuzz factors, three separate routes to a single value, a rewrite for
+   endpoints whose difference overflows, and a clamp on the last element — and
+   every one of them decides either how many values come back or where the
+   sequence stops. All of them are transcribed now, from R 4.6.1
+   `src/library/base/R/seq.R` and `seq_colon()` in `src/main/seq.c`.
+
+ - It matters which R function is being copied, because `seq.default` and the
+   `seq.int()` primitive do not agree. `seq.int` tolerates a slightly negative
+   `(to - from)/by`, allows `100 * INT_MAX` values, and short-circuits `by = ±1`
+   to `from:to`; `seq.default` rejects any negative count, caps at `INT_MAX`, and
+   reaches `from:to` only when `by` is genuinely absent. This follows
+   `seq.default`, because that is what R's `seq()` dispatches to.
+
+ - Six calls were wrong, three of them silently:
+
+ - | call | before | now, and in R |
+   |---|---|---|
+   | `seq(0, 1e30, 1)` | `()` | croaks `'by' argument is much too small` |
+   | `seq(NaN, 5)` | `panic: stack_grow() negative count` | croaks `'from' must be a finite number` |
+   | `seq(0, 1, 1e-11)` | `Out of memory during stack extend` | croaks `'by' argument is much too small` |
+   | `seq(-1e308, 1e308, 1e307)` | `()` | 21 values, `-1e308` to `1e308` |
+   | `seq(5, 1)` | croaks `wrong sign in 'by' argument` | `5 4 3 2 1` |
+   | `seq(1e15, 1e15 + 20, 2)` | 11 values | the single value `1e15` |
+
+ - The empty lists and the panic were one bug: the element count was computed as
+   an NV and cast to `size_t`, and neither `1e30` nor `NaN` nor `Inf` fits in one,
+   so the conversion was undefined. On x86-64 `1e30` became `0` and the call
+   returned nothing at all; `NaN` became `-2**63`, which then reached `EXTEND()`.
+   A count that *did* fit but could not be allocated — `(1 - 0)/1e-11` is
+   100,000,000,001 values, 800 GB of stack — got as far as trying. R rejects all
+   three the same way, and now so does this: `'by' argument is much too small`
+   above `INT_MAX` values, `'from'`/`'to' must be a finite number` for a
+   non-finite endpoint.
+
+ - The other three were missing features rather than broken arithmetic:
+
+ - **An absent `by` is `from:to`, in either direction.** `seq(5, 1)` is
+     `5 4 3 2 1`, the same as R; only an explicit `by` whose sign disagrees with
+     the direction of travel is an error. `from:to` also carries R's *looser*
+     fuzz, so `seq(1, 4.9999999)` is five values where `seq(1, 4.9999999, 1)` is
+     four — R does the same, and for the same reason: `1:4.9999999` adds
+     `1 + FLT_EPSILON` before truncating and the `by` branch adds `1e-10`.
+ - **The last element is pinned to `to`** when the fuzz carried it past, which
+     R has done since 2.9.0. `seq(0, 1, 0.00025 + 5e-16)` used to overshoot 1 —
+     the exact case R's `tests/reg-tests-1b.R` asserts against, under the heading
+     "(Deliberate) overshot in `seq(from, to, by)` because of fuzz".
+ - **Endpoints too close to tell apart collapse to `from`.** When
+     `abs(to - from) / max(abs(to), abs(from))` is below `100 * DBL_EPSILON` the
+     count `(to - from)/by` is noise, and R returns `from` alone. This is why
+     `seq(1e15, 1e15 + 20, 2)` is one value: at that magnitude a `double` cannot
+     distinguish the endpoints well enough for a step of 2 to mean anything.
+     Widen the gap and the sequence returns — `seq(1e15, 1e15 + 200, 2)` is 101
+     values.
+
+ - That last threshold is deliberately *not* scaled to the build's `NV_EPSILON`,
+   which is this file's rule for anything epsilon-shaped. R's
+   `100 * .Machine$double.eps` is a third fuzz factor belonging to `seq`'s
+   definition, like the `1e-10` and the `FLT_EPSILON`, rather than a tolerance on
+   this build's arithmetic. Scaling it was tried and reverted: with `NV_EPSILON`
+   the call above returns eleven values on a long-double or `__float128` perl and
+   one on a `double` perl, which is a worse answer than R's on every build.
+
+ [`seq`: integer sequences come back as integers, and are up to 5× cheaper]
+
+ - A sequence whose every value is an exact integer no larger than `2**53` is now
+   returned as perl integers (IVs) rather than floats — which is also what R
+   returns for the same call, an integer vector. The numbers are identical either
+   way; this is a choice of SV body, not of arithmetic. But it is much the cheaper
+   body, because stringifying an IV never reaches `Gconvert()`.
+
+ - Measured on perl-5.44.0 at `n = 1e6`, per element:
+
+ - | | before | after | perl's own `1 .. n` |
+   |---|---|---|---|
+   | `my @a = seq(1, n)` | 16.3 ns | 12.7 ns | 12.3 ns |
+   | `join ',', seq(1, n)` | 409 ns | 81 ns | 81 ns |
+
+ - The second row is the one that shows up in real code: anything that prints,
+   joins, writes or hash-keys the result was paying five times over. `seq` is now
+   level with the range operator on both. A fractional step stays floating point,
+   as it must, and is unchanged at 13.4 ns per element — that path was already at
+   parity.
+
+ - Void and scalar context no longer build the values the caller cannot reach.
+   `seq(1, 1e7);` as a statement of its own took 190 ms and left 384 MB of
+   resident memory behind for the life of the process — the grown argument stack,
+   the grown mortal stack, and the SV arenas the ten million heads came out of. It
+   now takes 5 µs and no memory. In scalar context only the last value is built,
+   which is the one the caller's assignment reads off the top of the stack: the
+   same answer perl gives for any list-returning sub, and the same answer `seq`
+   gave before.
+
+ - One consequence is cosmetic: a large integral value prints in full rather than
+   in exponent form, so `seq(1e15, 1e15 + 200, 2)` starts `1000000000000000` where
+   it used to start `1e+15`.
+
+ [`t/seq.R.t`, 378 tests taken from R's own suite]
+
+ - Every case is R's, cited individually in the file's header: the `## seq` and
+   `## Round` blocks and the Don MacQueen length case from `reg-tests-1a.R`, the
+   deliberate-overshoot assertion from `reg-tests-1b.R`, the NaN error messages
+   from `reg-tests-2.R`, and the four `\examples` from `seq.Rd`. The rest of the
+   table walks the branches of `seq.default` those do not reach: `from:to` in both
+   directions, all four routes to a single value, a subnormal step, and the
+   overflow rewrite. Expected values are frozen `%.17g` literals generated by
+   `t/seq.R.R`, committed next to the test; the test never calls R.
+
+ - Python has no equivalent to cross-check against, and that is recorded in the
+   file rather than left as a gap: `numpy.arange` is half-open and carries no
+   fuzz, so `arange(0, 1, 0.1)` is ten values ending at 0.9 where
+   `seq(0, 1, 0.1)` is eleven ending at 1, and `numpy.linspace` is parameterised
+   by length, which is R's `seq(length.out=)` and a different function.
+
+ - Agreement with R is exact on a `double` perl — the worst relative disagreement
+   over all 378 assertions is 0 on perl-5.44.0 and perl-5.42.3. The other
+   builds cannot be exact, and not because their arithmetic is worse: a
+   long-double or `__float128` perl parses `"0.05"` to its own NV, half an ulp of a
+   double away from the number R read, and one multiply and one add carry that
+   through. The tolerance is measured rather than chosen — 1.11e-16 on
+   perl-5.10.1, 1.50e-16 on perl-5.12.5 and 5.44.0-quadmath, 1.60e-16 on an x87
+   build — and set at 8e-16, five times the worst of them.
+
+ - Two cases are asserted as exact integer multiples of a power of two rather than
+   as decimals, because a decimal there would be testing perl's string-to-double
+   instead of `seq`: perl-5.10.1 reads `7.9050503334599447e-323` as `0` and `1e307`
+   five ulp high, while `2**k` is exact on every one of these perls.
+
+
 0.313 2026-09-01 CDT
 
  [`merge`: a `left.on`/`right.on` join died when the right frame reused the key's name]
