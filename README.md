@@ -7058,14 +7058,6 @@ two `hist` extremum assertions skip on a `double` NV and run for real on
 quadmath. `t/chunk.t` and `t/write_table.announce.t` gained the cases for the
 two smaller fixes.
 
-40,563 tests pass on all six local perls — 5.10.1, 5.12.5 (long double), 5.42.3
-threaded, 5.44.0, 5.44.0+x87 and 5.44.0-quadmath — with no warnings, and the
-translation unit compiles clean under strict `-std=c99` against every one of
-their headers. The full suite and every fuzzer that found these are clean under
-AddressSanitizer and UBSan, the R cross-checks re-run with no mismatches, and
-the changed functions leak nothing over 40,000 calls on either the success or
-the new croak paths.
-
 ## 0.314 2026-09-02 CDT
 
 ### `read_table` is 2.5× to 3.6× faster
