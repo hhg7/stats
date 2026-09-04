@@ -272,9 +272,23 @@ for my $name ( sort keys %SHAPE ) {
 	my $r = quantile( [ 1, 2, 3, 4 ] );
 	is_deeply( $q, $r, 'quantile: drops undef and matches the compacted column' );
 
-	# cor/cov drop the pair
-	is( cov( [ 1, 2, undef, 4 ], [ 2, 4, 99, 8 ] ), cov( [ 1, 2, 4 ], [ 2, 4, 8 ] ),
-		'cov: drops the incomplete pair' );
+	# cor and cov propagate an incomplete pair, as R's do at their default
+	# use = "everything". Verified against R 4.6.1:
+	#     cov(c(1,2,NA,4), c(2,4,99,8))  ->  NA
+	#     cor(c(1,2,NA,4), c(2,4,99,8))  ->  NA
+	# cov() used to compact to the pairwise-complete observations here and
+	# return 4.6666..., which is what this test asserted; it was the only one
+	# of the three correlation entry points that did not match its R
+	# counterpart. cor_test() still drops them, because R's cor.test() runs
+	# complete.cases() -- that asymmetry is R's, not this module's.
+	like( cov( [ 1, 2, undef, 4 ], [ 2, 4, 99, 8 ] ), qr/^-?nan$/i,
+		'cov: an incomplete pair makes the answer NaN, as in R' );
+	like( cor( [ 1, 2, undef, 4 ], [ 2, 4, 99, 8 ] ), qr/^-?nan$/i,
+		'cor: an incomplete pair makes the answer NaN, as in R' );
+	# and a complete column still gives the value it always did. R 4.6.1:
+	#     cov(c(1,2,4), c(2,4,8))  ->  4.666666666666667
+	ok( abs( cov( [ 1, 2, 4 ], [ 2, 4, 8 ] ) - 4.666666666666667 ) < 1e-12,
+		'cov: a complete column is unaffected, and matches R' );
 }
 
 # E. an element whose get magic mutates the array it lives in.

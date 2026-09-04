@@ -90,6 +90,20 @@ cases <- list(
 	c("seq(2,2.00000000000001,by=1e-16)","2, 2.00000000000001, 1e-16","full"),
 	# --- distinguishable by a hair: 200/1e15 clears 100 * DBL_EPSILON
 	c("seq(1e15,1e15+200,by=2)",        "1e15, 1e15+200, 2",       "ends"),
+	# --- integral, well inside 2**53, and past 2**31.  A perl built with a
+	# 32-bit IV (use64bitint=undef, which is what the armv6l CPAN smokers
+	# run) cannot hold these in the IV fast path even though a double names
+	# them exactly, and 0.314 pushed the saturated cast instead.  Both
+	# branches that reach the fast path are covered: from:to, and from/to/by.
+	c("seq(3000000000,3000000010)",     "3000000000, 3000000010, undef", "full"),
+	c("seq(-3000000000,-2999999990,by=2)",
+	                              "-3000000000, -2999999990, 2",   "full"),
+	# --- straddles zero, with a step of the same magnitude as the ends.
+	# Both endpoints fit a 32-bit IV where from + 3*by does not, which is why
+	# the fast path walks the sequence by accumulation rather than by
+	# multiplication (see the comment there).
+	c("seq(-2147483646,2147483646,by=1073741823)",
+	                        "-2147483646, 2147483646, 1073741823", "full"),
 	# --- at and past 2**53, where the IV fast path in seq() has to give up:
 	# the first of these collapses (8/2**53 is under 100 * DBL_EPSILON), the
 	# second does not and steps in the double's own spacing of 2

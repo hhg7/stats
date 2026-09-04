@@ -35,7 +35,10 @@
 #     script to regenerate them.  The remaining cases there are chosen to
 #     reach the branches of seq.default() the citations above do not: the
 #     absent-'by' route (from:to) in both directions, the four ways to a
-#     single value, a subnormal step, and the (to - from) overflow rewrite.
+#     single value, a subnormal step, the (to - from) overflow rewrite, and
+#     the integral sequences that run past 2**31 -- exactly representable in
+#     a double, but outside the IV of a perl built with use64bitint=undef,
+#     which is what made 0.314 FAIL on the armv6l CPAN smokers.
 #
 # Python has no equivalent to cross-check against, which is why there is no
 # t/seq.R.numpy.t.  numpy.arange() is half-open and carries no fuzz, so
@@ -52,6 +55,7 @@ require 5.010;
 use strict;
 use warnings FATAL => 'all';
 use Test::More;
+use Config;
 use Stats::LikeR 'seq';
 
 # Import no_leaks_ok at compile time so its (&;$) prototype is in scope for
@@ -216,6 +220,14 @@ my @FULL = (
 	  [ 1e+17 ] ],
 	[ 'seq(2,2.00000000000001,by=1e-16)', [ 2, 2.00000000000001, 1e-16 ],
 	  [ 2 ] ],
+	[ 'seq(3000000000,3000000010)', [ 3000000000, 3000000010, undef ],
+	  [ 3000000000, 3000000001, 3000000002, 3000000003, 3000000004,
+	    3000000005, 3000000006, 3000000007, 3000000008, 3000000009, 3000000010 ] ],
+	[ 'seq(-3000000000,-2999999990,by=2)', [ -3000000000, -2999999990, 2 ],
+	  [ -3000000000, -2999999998, -2999999996, -2999999994, -2999999992,
+	    -2999999990 ] ],
+	[ 'seq(-2147483646,2147483646,by=1073741823)', [ -2147483646, 2147483646, 1073741823 ],
+	  [ -2147483646, -1073741823, 0, 1073741823, 2147483646 ] ],
 	[ 'seq(9007199254740992,9007199254741000,by=2)', [ 9007199254740992, 9007199254741000, 2 ],
 	  [ 9007199254740992 ] ],
 );
@@ -480,6 +492,31 @@ for my $row (@DYADIC) {
 		is(scalar(grep { B::svref_2object(\$_)->FLAGS & $iok } @big), 0,
 		   'a sequence starting at 2**53 is NVs, not IVs');
 	}
+	# 2**53 is only half of that bound: the other half is the perl's own
+	# IV_MAX, which is 2147483647 where use64bitint is undef (a 32-bit-IV
+	# perl -- the armv6l CPAN smokers are built that way).  Casting 1e15 to
+	# such an IV is out of range, and 0.314 pushed the saturated result, so
+	# seq(1e15, 1e15+200, 2) came back as 2147483647 and -2147483645 there.
+	# The values are checked against R in section C; what is asserted here
+	# is the body, on whichever perl happens to be running.
+	SKIP: {
+		skip 'B not available', 1 unless $has_b;
+		my $iok = B::SVf_IOK();
+		my @past = seq(3000000000, 3000000010);
+		is(scalar(grep { B::svref_2object(\$_)->FLAGS & $iok } @past),
+		   ($Config{ivsize} >= 8 ? 11 : 0),
+		   'past 2**31: IVs where an IV is 64-bit, NVs where it is 32-bit');
+	}
+	is(join(',', seq(3000000000, 3000000010)),
+	   '3000000000,3000000001,3000000002,3000000003,3000000004,3000000005,'
+	   . '3000000006,3000000007,3000000008,3000000009,3000000010',
+	   'a sequence past 2**31 keeps its values at either IV width');
+	# Straddles zero with a step of the endpoints' own magnitude: every
+	# element of this one fits a 32-bit IV, but from + 3*by does not, which
+	# is why the fast path accumulates rather than multiplying.
+	is(join(',', seq(-2147483646, 2147483646, 1073741823)),
+	   '-2147483646,-1073741823,0,1073741823,2147483646',
+	   'a sequence straddling zero does not overflow a 32-bit IV');
 }
 
 #=========================================================================
@@ -526,8 +563,10 @@ SKIP: {
 	# deliberate act.
 	my @collapsed = seq(1e15, 1e15 + 20, 2);
 	is(scalar @collapsed, 1, 'indistinguishable endpoints collapse to one value');
-	# cmp_ok, not is: an exactly integral value comes back as an IV, which
-	# stringifies as 1000000000000000 where the NV literal is "1e+15".
+	# cmp_ok, not is: on a 64-bit-IV perl an exactly integral value comes
+	# back as an IV, which stringifies as 1000000000000000 where the NV
+	# literal is "1e+15"; on a 32-bit-IV one it stays an NV and stringifies
+	# as "1e+15".  Comparing numerically is right at both widths.
 	cmp_ok($collapsed[0], '==', 1e15, '... and that value is "from"');
 	my @kept = seq(1e15, 1e15 + 200, 2);
 	is(scalar @kept, 101, 'distinguishable endpoints do not collapse');

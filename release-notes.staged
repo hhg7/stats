@@ -1,6 +1,7 @@
 Revision history for Stats-LikeR
 
-0.315 2026-09-04 CDT
+
+0.316 2026-09-04 CDT
 
  - Two halves: crashes and leaks on argument-validation paths, and speed. No
    numeric answer moves except `cov`'s on an incomplete pair, which was wrong
@@ -163,7 +164,11 @@ Revision history for Stats-LikeR
    `--errors-for-leak-kinds=definite`, which it did not before: six functions
    leaked.
 
-======
+
+0.315 2026-09-04 CDT
+
+ - Everything in this release is a defect fix. Nothing here is a new algorithm and
+   no numeric answer moves, except where the old answer was wrong.
 
  - The defects were found by fuzzing rather than by reading: every exported
    function called with a reference where it expected a number, with a code ref or

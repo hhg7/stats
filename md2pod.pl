@@ -7,7 +7,6 @@ use autodie ':default';
 #use DDP {output => 'STDOUT', array_max => 10, show_memsize => 1};
 use Devel::Confess 'color';
 use Markdown::To::POD 'markdown_to_pod';
-use List::MoreUtils 'first_index';
 use Test::More;
 use Test::Pod;
 use Test::CPAN::Changes;
@@ -473,7 +472,6 @@ my $md = file2string('README.md');
 # 0. Ensure headings are separated from preceding blocks so the converter's
 #    list detection terminates correctly before them
 $md = ensure_blank_before_headings($md);
-my $md_later = $md;
 
 # 1. Pre-process the Markdown to convert GFM tables into POD HTML blocks
 my ($md_processed, $tables_ref) = extract_and_convert_tables($md);
@@ -571,92 +569,14 @@ close $out_fh;
 
 pod_file_ok( 'lib/Stats/LikeR.pm' );
 
-my $outfile = 'Changes';
-my $dist    = 'Stats-LikeR'; # Inferred from your documentation
-
-open my $out, '>', $outfile or die "Cannot write $outfile: $!\n";
-
-# Write the mandatory CPAN::Changes::Spec header
-say $out "Revision history for $dist\n";
-
-my ($needs_bullet, $in_code_block) = (0, 0);
-my @md_later = split /\n/, $md_later;
-my $fi = first_index {$_ eq '# Changes'} @md_later;
-if ($fi == -1) {
-	# first_index returns -1, and "-1 .. $#md_later" would quietly walk the
-	# whole array from its last element, emitting a Changes file made of one
-	# stray line. Say so instead.
-	die "md2pod: README.md has no '# Changes' section\n";
-}
-# start past the heading itself, which is not a release
-foreach my $i ($fi + 1 .. $#md_later) {
-	my $line = $md_later[$i];
-	# Stop at the copyright footer
-	last if $line =~ /^#\s+COPYRIGHT AND LICENSE\s*$/i;
-	# Toggle markdown code blocks (```)
-	if ($line =~ /^```/) {
-	  $in_code_block = !$in_code_block;
-	  next;
-	}
-	# Handle Versions ("## 0.21 2026-07-07 CDT", or "## 0.27" with no date yet).
-	# The date part has to be optional: without that, an undated version heading
-	# fell through to the plain-text branch and was written out as " - ## 0.27",
-	# so the release had no version line at all.
-	if ($line =~ /^##\h+([\d._]+)(?:\h+(\S.*?))?\h*$/) {
-	  my ($version, $date) = ($1, $2);
-	  # CPAN::Changes wants a date on every release, and changes_file_ok() at
-	  # the end of this script enforces it. Say which heading to fix rather
-	  # than leaving the reader to work it out from the line number.
-	  warn "md2pod: README.md's '## $version' heading has no release date, so "
-	     . "Changes will not satisfy the CPAN::Changes spec. Write it as "
-	     . "'## $version YYYY-MM-DD TZ', the way the older entries are.\n"
-		unless defined $date;
-	  say $out defined($date) ? "$version $date" : $version;
-	  $needs_bullet = 1;
-	} elsif ($line =~ /^###\s+(.+)/) {# Handle Groups (e.g., "### read_table")
-	  print $out " [$1]\n";
-	  $needs_bullet = 1;
-	} elsif ($line =~ /^####\s+(.+)/) {
-	# Handle Sub-Groups (e.g., "#### Bug fixes")
-	  # CPAN Spec doesn't formally have sub-groups, so we format it as a distinct bulleted header
-	  say $out " - $1:";
-	  $needs_bullet = 1;
-	} elsif ($line =~ /^\s*[-*]\s+(.+)/) {	# Handle explicit Markdown bullets
-	  say $out " - $1";
-	  $needs_bullet = 0;
-	} elsif ($line =~ /^\s*$/) {# Handle empty lines
-	  say $out '';
-	  $needs_bullet = 1; # Reset so the next text block gets a bullet
-	} else {# Handle normal text or indented code
-		# 4-space indented code from Markdown, or a fenced block: keep it
-		# indented for CPAN. Only the four columns Markdown uses to mark the
-		# block are removed, so indentation *inside* the sample survives --
-		# stripping all leading whitespace flattened nested code to one column.
-		# ($1 was also read here when the fence branch matched, which left it
-		# holding a capture from some earlier line entirely.)
-		if ($in_code_block || $line =~ /^\h{4,}\S/) {
-			my $code_line = $line;
-			$code_line =~ s/\A\h{1,4}// unless $in_code_block;
-			$code_line =~ s/\h+\z//;
-			say $out "     $code_line";
-		} else {
-			# Strip leading/trailing formatting like **bold** just in case it breaks flow, 
-			# though CPAN::Changes technically allows it as raw text.
-			$line =~ s/\*\*(.+?)\*\*/$1/g; 
-			if ($needs_bullet) {
-				 print $out " - $line\n";
-				 $needs_bullet = 0;
-			} else {
-				 # Continuation of the previous bullet
-				 print $out "   $line\n";
-			}
-		}
-	}
-}
-
-close $out;
-
-say "Successfully generated '$outfile' from 'README.md'";
+# The release notes are no longer generated here.  Up to 0.315 this script
+# rewrote `Changes` from README.md's '# Changes' section on every run, which
+# made README.md the source and `Changes` a build artefact; the notes are now
+# written directly in `Changes`, and README.md no longer carries a copy.  What
+# is left is the check: changes_file_ok() parses the file the way CPAN and
+# PAUSE do, so a hand-edit that breaks the CPAN::Changes spec -- a release with
+# no date, a version line that does not parse -- still fails here rather than
+# at upload time.
 changes_file_ok('Changes');
 done_testing();
 

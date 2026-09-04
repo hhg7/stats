@@ -615,15 +615,58 @@ PERL_STATIC_INLINE SV *av_row_keep(pTHX_ SV *row)
 	PERL_UNUSED_CONTEXT;
 	return SvMAGICAL(row) ? newRV_inc(SvRV(row)) : SvREFCNT_inc_simple_NN(row);
 }
+/*The element at index i as a number, for a reader that requires one there.
+
+av_fetch() returns NULL for a hole in a sparse array -- what `my @a = (1,2,3,4);
+delete $a[2]` leaves behind, and what `$a[0] = 1; $a[3] = 4` makes of indices 1
+and 2 -- so the SV** it hands back cannot be dereferenced blind.  Up to 0.315
+four readers did exactly that and took the interpreter down with them, none of
+it catchable, because eval does not see a signal:
+
+  epi_2x2([10, 20, undef_hole, 40])       SIGSEGV   (epi_read_2x2, flat form)
+  epi_2x2([[1, 2], [hole, 4]])            SIGSEGV   (epi_read_2x2, nested)
+  cmh_test([[10, 20, hole, 40]])          SIGSEGV   (the same reader)
+  binom_test([hole, 5])                   SIGSEGV   (the [successes, failures] form)
+  fisher_test([[1, 2], [3, hole]])        SIGSEGV   (the AoA branch)
+  coxph(\@t, \@s, \@x) with a hole in any SIGSEGV
+
+srv_read() did test the pointer, but mapped the hole to NaN, and a NaN
+survival time does not fail the `t < 0` check it then runs -- every comparison
+against a NaN is false -- so it reached the risk-set construction, where
+survfit() and logrank_test() ran away rather than crashing.
+
+A hole and an explicit undef are indistinguishable to the caller, so both
+croak here, and so does a value that is not a number.  That last part is what
+this file's own ct_cell(), ft_cell() and bt_check_count() already did, and what
+R does: chisq.test(), fisher.test() and binom.test() all refuse to coerce
+rather than silently reading a string as zero.
+
+The index is named in the message because a hole is invisible at the call
+site: nothing about `[10, 20, 40]` printed from a sparse array says which slot
+is missing.*/
+static NV av_num_at(pTHX_ AV *av, SSize_t i, const char *who, const char *what)
+{
+	SV *sv = av_at(aTHX_ av, i);
+	if (!sv || !SvOK(sv))
+		croak("%s: %s at index %" IVdf " is undef", who, what, (IV)i);
+	if (!looks_like_number(sv))
+		croak("%s: %s at index %" IVdf " is not a number", who, what, (IV)i);
+	return SvNV(sv);
+}
 /*Read a whole column as NV, mapping anything that is not a number to NaN.
 
-cor() and cov() drop pairs rather than refusing them -- R's pairwise-complete
-rule -- so unlike the reductions above they have no croak to reach and want a
-value for every slot.  The scan is re-entered after each element it would not
-take, instead of giving up on the rest of the column: a single undef in the
-middle of a numeric vector is ordinary in real data, and letting it force the
-remaining million elements through av_fetch() would give most of the column
-away for one NA.*/
+cor(), cov() and cor_test() answer a non-numeric cell rather than croaking on
+it, so unlike the reductions above they have no croak to reach and want a
+value for every slot.  What they then do with the NaN differs, and each
+matches its R counterpart's default: cor() and cov() propagate it, so one
+incomplete pair makes the whole answer NaN (R's use = "everything"), while
+cor_test() compacts to the pairwise-complete observations first (R's
+cor.test() runs complete.cases()).
+
+The scan is re-entered after each element it would not take, instead of giving
+up on the rest of the column: a single undef in the middle of a numeric vector
+is ordinary in real data, and letting it force the remaining million elements
+through av_fetch() would give most of the column away for one NA.*/
 static void av_extract_or_nan(pTHX_ AV *av, SSize_t len, NV *out)
 {
 	const bool plain_av = !SvRMAGICAL((SV *)av);
@@ -2895,11 +2938,24 @@ static NV kendall_tau_b(const NV *x, const NV *y, size_t n) {
 	return kendall_score(&K) / denom;
 }
 
-/*Single dispatch: compute correlation according to method string.
-Allocates and frees temporary rank arrays internally for Spearman.*/
-static NV compute_cor(const NV *x, const NV *y,
-						   size_t n, const char *method) {
-	if (strcmp(method, "spearman") == 0) {
+/*Correlation method, resolved from the caller's string once rather than
+re-compared at every column pair.  Same encoding as cov()'s own `meth`.*/
+#define COR_PEARSON  0
+#define COR_SPEARMAN 1
+#define COR_KENDALL  2
+
+/*Single dispatch: correlation of two columns under an already-resolved method.
+
+Spearman is Pearson on the ranks, and for a matrix the ranks are the caller's
+to supply: cor()'s matrix branch ranks each column once through
+rank_cols_inplace() below and then asks for COR_PEARSON.  Ranking here instead
+ranks every column once per pair it takes part in -- p(p-1) rankings over a
+p-column matrix, where p of them answer the whole question.  Measured on 500
+rows: cor(X, 'spearman') took 296 ms at p = 160 against 14 ms for the same
+answer with the ranking hoisted.  The vector branch has exactly one pair, so
+it still passes COR_SPEARMAN and lets this rank into scratch of its own.*/
+static NV compute_cor_code(const NV *x, const NV *y, size_t n, short int meth) {
+	if (meth == COR_SPEARMAN) {
 	  NV *rx, *ry;
 	  Newx(rx, n, NV); Newx(ry, n, NV);
 	  rank_data(x, rx, n);
@@ -2908,10 +2964,40 @@ static NV compute_cor(const NV *x, const NV *y,
 	  Safefree(rx); Safefree(ry);
 	  return r;
 	}
-	if (strcmp(method, "kendall") == 0)
+	if (meth == COR_KENDALL)
 	  return kendall_tau_b(x, y, n);
 	//default: pearson
 	return pearson_corr(x, y, n);
+}
+
+/*Replace each of the ncols columns with its own averaged ranks, in place.
+
+The answer this gives cor() is the one it had before, not an approximation of
+it: a column's ranks do not depend on the column it is being correlated
+against.  cor() does no pairwise deletion -- pearson_corr() propagates NaN and
+cor() hands the NaN back -- so nothing about the partner column ever reached
+rank_data(), and rank_data() is deterministic, so ranking column j once
+produces the bytes it produced on each of the p-1 pairs that used to rank it
+again.  That holds for a column carrying NaN too: rank_data() sorts through
+RANKITEM_LESS, which is false in both directions against a NaN, so the NaN
+lands somewhere the sort decides and every element still comes back with a
+rank -- arbitrary, but the same arbitrary value every time, and the same one
+the per-pair ranking produced.
+
+rank_data() requires a destination separate from its source, so one scratch
+column is reused for all of them rather than allocating a second full matrix.
+
+No restrict on cols[]: cor()'s symmetric branch aliases col_y to col_x, and
+although that case calls this once for the pair of them, the contract is not
+worth pinning on the caller getting that right.*/
+static void rank_cols_inplace(NV *const *cols, size_t ncols, size_t nrows) {
+	NV *restrict scratch;
+	Newx(scratch, nrows, NV);
+	for (size_t j = 0; j < ncols; j++) {
+		rank_data(cols[j], scratch, nrows);
+		Copy(scratch, cols[j], nrows, NV);
+	}
+	Safefree(scratch);
 }
 /*TRUE when every non-NaN value in a[0..n-1] is the same value -- the zero
 variance cor() refuses, because r is 0/0 there.  A column that is entirely
@@ -2945,8 +3031,11 @@ because the alternative walks the perl structure again per column.
 
 av_extract_or_nan() does the reading, so a row shorter than ncols, a hole, an
 undef, a non-numeric cell and a tied array all behave here exactly as they do
-in cor()'s vector branch -- the short row's missing cells become NaN below,
-and pairwise-complete deletion in compute_cor()'s caller drops them.
+in cor()'s vector branch -- the short row's missing cells become NaN below.
+Note that cor() does *not* drop those pairs: pearson_corr() sums straight
+through a NaN, so an incomplete pair makes the whole entry NaN, which is what
+R's cor() does at its default use = "everything".  cov() and cor_test() are
+the ones that compact to the pairwise-complete observations first.
 
 rows[] holds borrowed AV pointers, not counted references, so perl code run
 from inside a cell (a tied FETCH, an overloaded 0+, a __WARN__ handler on a
@@ -9875,8 +9964,8 @@ static void epi_read_2x2(pTHX_ SV *sv, const char *who,
 	AV *av = (AV *)SvRV(sv);
 	SSize_t top = av_len(av);
 	if (top == 3) {                                   //flat [a,b,c,d]
-		*a = SvNV(*av_fetch(av, 0, 0)); *b = SvNV(*av_fetch(av, 1, 0));
-		*c = SvNV(*av_fetch(av, 2, 0)); *d = SvNV(*av_fetch(av, 3, 0));
+		*a = av_num_at(aTHX_ av, 0, who, "cell"); *b = av_num_at(aTHX_ av, 1, who, "cell");
+		*c = av_num_at(aTHX_ av, 2, who, "cell"); *d = av_num_at(aTHX_ av, 3, who, "cell");
 	} else if (top == 1) {                            //nested [[a,b],[c,d]]
 		SV **r0 = av_fetch(av, 0, 0), **r1 = av_fetch(av, 1, 0);
 		if (!r0 || !r1 || !SvROK(*r0) || !SvROK(*r1)
@@ -9885,8 +9974,8 @@ static void epi_read_2x2(pTHX_ SV *sv, const char *who,
 		AV *ar0 = (AV *)SvRV(*r0), *ar1 = (AV *)SvRV(*r1);
 		if (av_len(ar0) != 1 || av_len(ar1) != 1)
 			croak("%s: each row of a 2x2 table needs exactly 2 cells", who);
-		*a = SvNV(*av_fetch(ar0, 0, 0)); *b = SvNV(*av_fetch(ar0, 1, 0));
-		*c = SvNV(*av_fetch(ar1, 0, 0)); *d = SvNV(*av_fetch(ar1, 1, 0));
+		*a = av_num_at(aTHX_ ar0, 0, who, "row 0 cell"); *b = av_num_at(aTHX_ ar0, 1, who, "row 0 cell");
+		*c = av_num_at(aTHX_ ar1, 0, who, "row 1 cell"); *d = av_num_at(aTHX_ ar1, 1, who, "row 1 cell");
 	} else {
 		croak("%s: expected 4 cells (a,b,c,d) or 2 rows of 2 cells", who);
 	}
@@ -10041,13 +10130,19 @@ static SurvObs* srv_read(pTHX_ AV *tav, AV *sav, AV *gav,
 	if (N != av_len(sav) + 1) croak("%s: time and status must be the same length", who);
 	if (gav && N != av_len(gav) + 1) croak("%s: group must match time/status length", who);
 	if (N < 1) croak("%s: need at least one observation", who);
-	SurvObs *o; Newx(o, N, SurvObs);
+	/*On the save stack, not freed by hand: av_num_at() croaks on a hole, an
+	undef or a non-number, and the explicit Safefree() below could only cover
+	the one check that was already there.*/
+	SurvObs *o; Newx(o, N, SurvObs); SAVEFREEPV(o);
 	for (SSize_t i = 0; i < N; i++) {
-		SV **tp = av_fetch(tav, i, 0), **sp = av_fetch(sav, i, 0);
-		NV t = (tp && *tp) ? SvNV(*tp) : NAN;
-		if (t < 0) { Safefree(o); croak("%s: negative survival time", who); }
+	/*A missing time used to become NaN here, and NaN does not fail the `t < 0`
+	test below -- every comparison against one is false -- so it reached the
+	risk-set construction, where survfit() and logrank_test() ran away instead
+	of returning.  A time that is not a number is refused outright now.*/
+		NV t = av_num_at(aTHX_ tav, i, who, "time");
+		if (t < 0) croak("%s: negative survival time", who);
 		o[i].time   = t;
-		o[i].status = (sp && *sp && SvNV(*sp) != 0.0) ? 1 : 0;
+		o[i].status = (av_num_at(aTHX_ sav, i, who, "status") != 0.0) ? 1 : 0;
 		int g = 0;
 		if (gav) {
 			SV **gp = av_fetch(gav, i, 0);
@@ -10063,6 +10158,28 @@ static SurvObs* srv_read(pTHX_ AV *tav, AV *sav, AV *gav,
 	if (av_len(labels) < 0) av_push(labels, newSVpv("", 0));   //single group
 	*N_out = (size_t)N;
 	return o;
+}
+
+/*Whether dunn_padjust() below implements `m`, asked before anything is
+allocated.
+
+It exists because dunn_padjust() rejects an unknown method from the bottom of
+its dispatch chain, and by the time dunn_test() calls it the whole working set
+is outstanding -- the values, the group labels (one savepv per observation),
+the ranks, the per-group sums, and five p-value arrays. croak() does not
+unwind any of that, so `dunn_test(\@x, \@g, method => 'nope')` leaked all of
+it: 113 KB on a 2000-observation call, growing with n. dunn_test() now asks
+here first, which is where cov() puts the same question ("resolve it to a
+number here rather than re-running strcmp() at each branch") and where
+p_adjust() puts it too.
+
+Keep this list and dunn_padjust()'s dispatch in step; the croak at the end of
+that chain is now unreachable from dunn_test() and is left as a guard for any
+future caller that does not ask first.*/
+static bool dunn_meth_known(const char *m) {
+	return strEQ(m, "none") || strEQ(m, "bonferroni") || strEQ(m, "sidak")
+	    || strEQ(m, "holm") || strEQ(m, "hs")         || strEQ(m, "bh")
+	    || strEQ(m, "by");
 }
 
 /*Adjust m raw p-values (writes adj[]) for a family of methods, matching R's
@@ -12555,8 +12672,11 @@ CODE:
 		if (av_len(xa) != 1)
 			croak("binom_test: x as an array ref must hold exactly 2 elements "
 			      "(successes, failures)");
-		long s = bt_check_count(aTHX_ *av_fetch(xa, 0, 0), "successes");
-		long f = bt_check_count(aTHX_ *av_fetch(xa, 1, 0), "failures");
+	/*av_at(), not *av_fetch(): the latter is NULL on a hole in a sparse array
+	and this dereferenced it.  bt_check_count() already croaks on a NULL sv,
+	so nothing else here has to change.*/
+		long s = bt_check_count(aTHX_ av_at(aTHX_ xa, 0), "successes");
+		long f = bt_check_count(aTHX_ av_at(aTHX_ xa, 1), "failures");
 		x = s;
 		n = s + f;
 		have_n = 1;
@@ -13731,9 +13851,27 @@ SV *col2col(data, cmd, cols = &PL_sv_undef, ...)
   everything else is declared at its point of use just below.*/
 		SV *cv_sv = NULL;
 		size_t ncols = 0, nrows = 0;
-		AV *names_av = newAV();
+	/*Mortal, so that every croak below releases it -- there are sixteen in
+	this function, and the shape-detection ones fire before any of the C
+	tables exist.
+	The column-name SVs it holds are borrowed by col_names[] and handed to
+	hv_store_ent(), which copies the key rather than taking the SV, so
+	nothing outlives this call through them.  A callback's own FREETMPS does
+	not reach it either: c2c_call() runs the caller's block inside its own
+	SAVETMPS floor.*/
+		AV *names_av = newAV(); sv_2mortal((SV*)names_av);
 		NV **col_val = NULL;
 		char **col_def = NULL;
+		SV **col_names = NULL;
+		char *is_outer = NULL;
+/*The column tables all go on the save stack as they are allocated, rather
+than being freed by hand at each croak.  There are sixteen croaks in this
+function, and one unwind path that no hand-written free list can cover: with
+skip.errors turned off, a caller's block that dies propagates out of
+c2c_call() from the middle of section 4, past every Safefree() written below
+it.  That path leaked the whole column set -- ncols * nrows NVs plus as many
+flags, 3.7 KB on a 6-column, 50-row frame and tens of megabytes on a real
+one.*/
 		short int na_mode = 0;	// 0 = pairwise, 1 = omit, 2 = keep; see section 0
 		bool skip_errors = TRUE;	// skip.errors (default true): trap a croaking block, store its message
 /* 0. options. They may be given either as trailing name => value pairs
@@ -13842,11 +13980,11 @@ SV *col2col(data, cmd, cols = &PL_sv_undef, ...)
 					src[av_len(names_av)] = a;
 				}
 				ncols = (size_t)(av_len(names_av) + 1);
-				Newxz(col_val, ncols ? ncols : 1, NV*);
-				Newxz(col_def, ncols ? ncols : 1, char*);
+				Newxz(col_val, ncols ? ncols : 1, NV*); SAVEFREEPV(col_val);
+				Newxz(col_def, ncols ? ncols : 1, char*); SAVEFREEPV(col_def);
 				for (size_t cc = 0; cc < ncols; cc++) {
-					Newxz(col_val[cc], nrows ? nrows : 1, NV);
-					Newxz(col_def[cc], nrows ? nrows : 1, char);
+					Newxz(col_val[cc], nrows ? nrows : 1, NV);  SAVEFREEPV(col_val[cc]);
+					Newxz(col_def[cc], nrows ? nrows : 1, char); SAVEFREEPV(col_def[cc]);
 					AV *a = src[cc];
 					for (size_t r = 0; r < nrows; r++) {
 						NV v;
@@ -13892,12 +14030,12 @@ SV *col2col(data, cmd, cols = &PL_sv_undef, ...)
 					SvREFCNT_dec((SV*)seen);
 				}
 				ncols = (size_t)(av_len(names_av) + 1);
-				Newxz(col_val, ncols ? ncols : 1, NV*);
-				Newxz(col_def, ncols ? ncols : 1, char*);
+				Newxz(col_val, ncols ? ncols : 1, NV*); SAVEFREEPV(col_val);
+				Newxz(col_def, ncols ? ncols : 1, char*); SAVEFREEPV(col_def);
 				for (size_t cc = 0; cc < ncols; cc++) {
 					SV *knm = *av_fetch(names_av, (SSize_t)cc, 0);	// keep the SV so UTF-8 keys match
-					Newxz(col_val[cc], nrows ? nrows : 1, NV);
-					Newxz(col_def[cc], nrows ? nrows : 1, char);
+					Newxz(col_val[cc], nrows ? nrows : 1, NV);  SAVEFREEPV(col_val[cc]);
+					Newxz(col_def[cc], nrows ? nrows : 1, char); SAVEFREEPV(col_def[cc]);
 					for (size_t r = 0; r < nrows; r++) {
 						NV v;
 						HE *he;
@@ -13914,15 +14052,13 @@ SV *col2col(data, cmd, cols = &PL_sv_undef, ...)
 		if (ncols == 0) croak("col2col: no usable columns found");
 /* 3. gather the column-name SVs; keys are stored via hv_store_ent below
      so the UTF-8 flag rides along and non-ASCII names round-trip.*/
-		SV **col_names;
-		Newx(col_names, ncols, SV*);
+		Newx(col_names, ncols, SV*); SAVEFREEPV(col_names);
 		for (size_t cc = 0; cc < ncols; cc++) {
 			col_names[cc] = *av_fetch(names_av, (SSize_t)cc, 0);
 		}
 /* 3b. decide which columns may be col_a (the outer/"from" side). With no
       restriction every column qualifies; a name or list narrows it.*/
-		char *is_outer;
-		Newxz(is_outer, ncols, char);
+		Newxz(is_outer, ncols, char); SAVEFREEPV(is_outer);
 		if (!SvOK(cols_eff)) {
 			for (size_t cc = 0; cc < ncols; cc++) is_outer[cc] = 1;
 		} else if (SvROK(cols_eff) && SvTYPE(SvRV(cols_eff)) == SVt_PVAV) {
@@ -13931,10 +14067,12 @@ SV *col2col(data, cmd, cols = &PL_sv_undef, ...)
 			for (SSize_t i = 0; i < n; i++) {
 				SV **ep = av_fetch(want, i, 0);
 				if (!ep || !*ep || !SvOK(*ep)) croak("col2col: column list contains an undefined entry");
-				if (!c2c_mark(aTHX_ col_names, ncols, *ep, is_outer)) croak("col2col: column '%s' not found in data", SvPV_nolen(*ep));
+				if (!c2c_mark(aTHX_ col_names, ncols, *ep, is_outer))
+					croak("col2col: column '%s' not found in data", SvPV_nolen(*ep));
 			}
 		} else if (!SvROK(cols_eff)) {
-			if (!c2c_mark(aTHX_ col_names, ncols, cols_eff, is_outer)) croak("col2col: column '%s' not found in data", SvPV_nolen(cols_eff));
+			if (!c2c_mark(aTHX_ col_names, ncols, cols_eff, is_outer))
+				croak("col2col: column '%s' not found in data", SvPV_nolen(cols_eff));
 		} else croak("col2col: cols must be a column name or an array ref of names");
 /*4. each selected column vs every other column. The two columns reach
  the block as @_ = ($col_a, $col_b); how undef is handled depends on
@@ -14002,10 +14140,7 @@ SV *col2col(data, cmd, cols = &PL_sv_undef, ...)
 			}
 			(void)hv_store_ent(out_hv, col_names[a], newRV_noinc((SV*)inner), 0);
 		}
-		// 5. tidy up.
-		for (size_t cc = 0; cc < ncols; cc++) { Safefree(col_val[cc]); Safefree(col_def[cc]); }
-		Safefree(col_val);	Safefree(col_def); Safefree(col_names);
-		Safefree(is_outer);	SvREFCNT_dec((SV*)names_av);
+		//the column tables are on the save stack; names_av is mortal
 		RETVAL = newRV_noinc((SV*)out_hv);
 	}
 	OUTPUT:
@@ -14723,7 +14858,11 @@ CODE:
 				for (size_t i = 0; i < n_x; i++)
 					for (size_t j = 0; j < n_y; j++)
 						diffs[i * n_y + j] = xv[i] - yv[j];
-				nv_heapsort(diffs, nd);
+	/*nv_sort(), not nv_heapsort(): both leave the array fully ordered, which
+	the tie branch below needs (it walks every consecutive pair), and the
+	introsort is the faster of the two at these sizes -- measured 1.6x to 1.9x
+	over 20100 to 640000 doubles, both routines from this file.*/
+				nv_sort(diffs, nd);
 			}
 			if (use_exact && !has_ties) {// R's .wilcox_test_two_cint_exact, the qwilcox branch: the interval is a pair of order statistics of the m*n pairwise differences
 				estimate = nv_sorted_median(diffs, nd);
@@ -14936,7 +15075,7 @@ CODE:
 				for (size_t i = 0; i < n_obs; i++)
 					for (size_t j = i; j < n_obs; j++)
 						walsh[w++] = (xv[i] + xv[j]) / 2.0;
-				nv_heapsort(walsh, nd);
+				nv_sort(walsh, nd);		//introsort; see the nv_sort() note above
 				estimate = nv_sorted_median(walsh, nd);
 				if (!has_ties && !has_zero) {
 					NV a = (alt == 0) ? alpha0 / 2.0 : alpha0;
@@ -15059,7 +15198,7 @@ CODE:
 						Newx(med, n_obs, NV);
 						SAVEFREEPV(med);
 						Copy(xv, med, n_obs, NV);
-						nv_heapsort(med, n_obs);
+						nv_sort(med, n_obs);		//introsort; see the nv_sort() note above
 						NV m = nv_sorted_median(med, n_obs);
 						ci_lo = (alt == 1) ? -NV_INF : m;
 						ci_hi = (alt == 2) ?  NV_INF : m;
@@ -16351,21 +16490,30 @@ SV* cov(SV* x_sv, SV* y_sv, const char* method = "pearson")
 		Newx(y_val, nx, NV);
 		size_t n = 0;
 
-		/* Extract numeric values, defaulting to NaN for missing/invalid data,
-		then compact to the pairwise complete observations (skips NAs
-		seamlessly like R).  The compaction reads and writes the same buffers,
-		which is safe because it never runs ahead of itself: n <= i always. */
+	/*Extract numeric values, mapping anything that is not a number to NaN,
+	and refuse the whole thing if any pair is incomplete.
+
+	This used to compact to the pairwise-complete observations instead, with a
+	comment claiming that "skips NAs seamlessly like R".  R does not: cov()'s
+	default is use = "everything", which propagates, so
+	cov(c(1,2,NA,4,5), c(1,2,3,4,6)) is NA in R 4.6.1 and was 4 here.  cor()
+	in this same file already returns NaN for that input, and cor.test() --
+	whose R counterpart really does drop incomplete cases, via
+	complete.cases() -- keeps dropping them.  So the three now agree with
+	their R counterparts, where before cov() was the one that did not.
+
+	This is a behaviour change: a caller who was relying on the old pairwise
+	deletion gets NaN. There is no `use` argument to ask for the old
+	behaviour with; dropping the pairs before the call is the way to get it.*/
 		av_extract_or_nan(aTHX_ x_av, (SSize_t)nx, x_val);
 		av_extract_or_nan(aTHX_ y_av, (SSize_t)nx, y_val);
+		bool any_na = FALSE;
 		for (size_t i = 0; i < nx; i++) {
-			if (!nv_isnan(x_val[i]) && !nv_isnan(y_val[i])) {
-				 x_val[n] = x_val[i];
-				 y_val[n] = y_val[i];
-				 n++;
-			}
+			if (nv_isnan(x_val[i]) || nv_isnan(y_val[i])) { any_na = TRUE; break; }
 		}
-		// 4. Handle edge cases where data is too sparse
-		if (n < 2) {
+		n = nx;
+		// 4. An incomplete pair, or too few observations to have a covariance
+		if (any_na || n < 2) {
 			Safefree(x_val);	Safefree(y_val);
 			RETVAL = newSVnv(NV_NAN);
 		} else {
@@ -16899,15 +17047,54 @@ SV *glm(...)
 		valid_n++;
 	}
 	Safefree(row_names);
+	/*Everything that exists at this point, for the croaks between here and
+	the IRLS allocations below.  The one croak that already had a free list
+	spelled it out inline; the response checks that follow it had none at
+	all.*/
+#define GLM_EARLY_FREE STMT_START {						\
+	for (i = 0; i < num_terms; i++) Safefree(terms[i]); Safefree(terms);	\
+	for (i = 0; i < num_uniq; i++) Safefree(uniq_terms[i]); Safefree(uniq_terms); \
+	lm_design_free(aTHX_ design);						\
+	for (i = 0; i < valid_n; i++) Safefree(valid_row_names[i]);		\
+	Safefree(X); Safefree(Y); Safefree(valid_row_names);			\
+	if (row_hashes) Safefree(row_hashes);					\
+	Safefree(f_cpy);							\
+} STMT_END
 	if (valid_n < p) {
-	  for (i = 0; i < num_terms; i++) Safefree(terms[i]); Safefree(terms);
-	  for (i = 0; i < num_uniq; i++) Safefree(uniq_terms[i]); Safefree(uniq_terms);
-	  lm_design_free(aTHX_ design);
-	  for (i = 0; i < valid_n; i++) Safefree(valid_row_names[i]);
-	  Safefree(X); Safefree(Y); Safefree(valid_row_names); if (row_hashes) Safefree(row_hashes);
-	  Safefree(f_cpy);
+	  GLM_EARLY_FREE;
 	  croak("glm: 0 degrees of freedom (too many NAs or parameters > observations)");
 	}
+	/*The response is validated here, before the IRLS working set is
+	allocated, rather than from inside the iteration.
+
+	All three checks read nothing but Y and the family flags, and Y does not
+	change once the design is built, so asking once here is exactly what
+	asking per observation per outer pass did.  Asking there instead meant
+	croak() fired with mu, eta, W, Z, beta, beta_old, aliased, XtWX and XtWZ
+	outstanding on top of everything GLM_EARLY_FREE covers, and none of it
+	came back: 2.9 KB a call for a binomial family on a response outside
+	0 to 1, or a poisson fit on a response that is negative or all zero.*/
+	{
+		NV y_min = 0.0, y_max = 0.0, y_sum = 0.0;
+		for (i = 0; i < valid_n; i++) {
+			if (i == 0) { y_min = y_max = Y[0]; }
+			else { if (Y[i] < y_min) y_min = Y[i]; if (Y[i] > y_max) y_max = Y[i]; }
+			y_sum += Y[i];
+		}
+		if (is_binomial && (y_min < 0.0 || y_max > 1.0)) {
+			GLM_EARLY_FREE;
+			croak("glm: binomial family requires response between 0 and 1");
+		}
+		if (log_link && y_min < 0.0) {
+			GLM_EARLY_FREE;
+			croak("glm: poisson/negbin family requires a non-negative response");
+		}
+		if (log_link && y_sum / valid_n <= 0.0) {
+			GLM_EARLY_FREE;
+			croak("glm: poisson/negbin family requires some positive counts");
+		}
+	}
+#undef GLM_EARLY_FREE
 	//lhs was the last thing pointing into the formula copy.
 	Safefree(f_cpy); f_cpy = NULL;
 	mu = (NV*)safemalloc(valid_n * sizeof(NV)); eta = (NV*)safemalloc(valid_n * sizeof(NV));
@@ -16915,10 +17102,10 @@ SV *glm(...)
 	beta = (NV*)safemalloc(p * sizeof(NV)); beta_old = (NV*)safemalloc(p * sizeof(NV));
 	aliased = (bool*)safemalloc(p * sizeof(bool));
 	XtWX = (NV*)safemalloc(p * p * sizeof(NV)); XtWZ = (NV*)safemalloc(p * sizeof(NV));
+	//the response was validated above, before any of this was allocated
 	NV sum_y = 0.0;
 	for (i = 0; i < valid_n; i++) sum_y += Y[i];
-	NV mean_y = sum_y / valid_n;
-	if (log_link && mean_y <= 0.0) croak("glm: poisson/negbin family requires some positive counts");
+	NV mean_y = sum_y / valid_n;		//mustart for the gaussian/identity case
 
 	/*Negative binomial: alternate an IRLS fit at the current theta with a fresh
 	ML estimate of theta at the current fitted means, exactly as MASS::glm.nb
@@ -16982,7 +17169,8 @@ SV *glm(...)
 	deviance_old = 0.0; converged = FALSE;
 	for (i = 0; i < valid_n; i++) {
 		if (is_binomial) {
-			if (Y[i] < 0.0 || Y[i] > 1.0) croak("glm: binomial family requires response between 0 and 1");
+	/*The range check that stood here moved above, to before the IRLS
+	allocations; Y has not changed since.*/
 			mu[i] = (Y[i] + 0.5) / 2.0;
 			eta[i] = nv_log(mu[i] / (1.0 - mu[i]));
 			NV dev = 0.0;
@@ -16991,7 +17179,7 @@ SV *glm(...)
 			else dev = 2.0 * (Y[i] * nv_log(Y[i] / mu[i]) + (1.0 - Y[i]) * nv_log((1.0 - Y[i]) / (1.0 - mu[i])));
 			deviance_old += dev;
 		} else if (log_link) {
-			if (Y[i] < 0.0) croak("glm: poisson/negbin family requires a non-negative response");
+			//likewise checked above, before anything was allocated
 	/*Each family's own mustart. R's poisson()$initialize sets y + 0.1,
 	but MASS's negative.binomial()$initialize sets y + (y == 0)/6 --
 	the observed count itself wherever it is positive. Starting a
@@ -19226,6 +19414,11 @@ PPCODE:
 	for (unsigned i = 0; meth[i]; i++) meth[i] = tolower(meth[i]);
 	if (strEQ(meth, "fdr")) strcpy(meth, "bh");
 	if (strEQ(meth, "holm-sidak")) strcpy(meth, "hs");
+	/*Rejected here, before the first allocation: dunn_padjust() used to be
+	the one to notice, by which point this function's whole working set was
+	outstanding and croak() dropped all of it on the floor.*/
+	if (!dunn_meth_known(meth))
+		croak("dunn_test: unknown method '%s' (none, bonferroni, sidak, holm, hs, bh, by)", meth);
 
 	AV *xa = (AV*)SvRV(ST(0)), *ga = (AV*)SvRV(ST(1));
 	size_t raw = (size_t)(av_len(xa) + 1);
@@ -20044,7 +20237,7 @@ PPCODE:
 		STRLEN klen; const char *kp = SvPV(key, klen);
 		hv_store(strata, kp, klen, newRV_noinc((SV *)st), 0);
 	}
-	Safefree(o);
+	//o is on the save stack, put there by srv_read()
 
 	HV *ret = newHV();
 	hv_stores(ret, "strata",     newRV_noinc((SV *)strata));
@@ -20066,7 +20259,7 @@ PPCODE:
 	size_t N; SurvObs *o = srv_read(aTHX_ (AV *)SvRV(ST(0)), (AV *)SvRV(ST(1)),
 	                                (AV *)SvRV(ST(2)), &N, labels, "logrank_test");
 	SSize_t G = av_len(labels) + 1;
-	if (G < 2) { Safefree(o); croak("logrank_test: need at least two groups"); }
+	if (G < 2) croak("logrank_test: need at least two groups");	//o is on the save stack
 	qsort(o, N, sizeof(SurvObs), survobs_cmp);
 
 	NV *O, *E, *V; Newx(O, G, NV); Newx(E, G, NV); Newx(V, G * G, NV);
@@ -20124,7 +20317,7 @@ PPCODE:
 	hv_stores(ret, "groups",    newRV_inc((SV *)labels));
 	hv_stores(ret, "method",    newSVpv("Log-rank (Mantel-Cox) test", 0));
 
-	Safefree(o); Safefree(O); Safefree(E); Safefree(V); Safefree(nrisk);
+	Safefree(O); Safefree(E); Safefree(V); Safefree(nrisk);	//o: save stack
 	Safefree(Vr); Safefree(OE); Safefree(xsol);
 	ST(0) = sv_2mortal(newRV_noinc((SV *)ret));
 	XSRETURN(1);
@@ -20163,22 +20356,37 @@ PPCODE:
 	if (!(conf_level > 0.0 && conf_level < 1.0)) croak("coxph: conf_level must be between 0 and 1");
 
 	//pull data into contiguous C arrays
-	NV *X; Newx(X, (size_t)n * p, NV);
-	NV *tm; Newx(tm, n, NV);
-	int *restrict st; Newx(st, n, int);
+	/*These three go on the save stack instead of being freed by hand, because
+	the reads below can now croak -- av_num_at() rejects a hole, an undef and
+	a non-number, where *av_fetch() used to be dereferenced blind and take the
+	process out on a sparse vector.  A Safefree() written after a croak is not
+	reached, and enumerating every future croak site in the read loop is the
+	kind of bookkeeping that goes stale; SAVEFREEPV is what wilcox_test()
+	already uses here for the same reason.  The two length checks below
+	therefore no longer free them, and neither does the exit path.*/
+	NV *X;  Newx(X, (size_t)n * p, NV); SAVEFREEPV(X);
+	NV *tm; Newx(tm, n, NV);            SAVEFREEPV(tm);
+	int *restrict st; Newx(st, n, int); SAVEFREEPV(st);
 	for (SSize_t i = 0; i < n; i++) {
-		tm[i] = SvNV(*av_fetch(tav, i, 0));
-		st[i] = (SvNV(*av_fetch(sav, i, 0)) != 0.0) ? 1 : 0;
+		tm[i] = av_num_at(aTHX_ tav, i, "coxph", "time");
+		st[i] = (av_num_at(aTHX_ sav, i, "coxph", "status") != 0.0) ? 1 : 0;
 	}
 	if (multi) {
 		for (int k = 0; k < p; k++) {
-			AV *col = (AV *)SvRV(*av_fetch(Xav, k, 0));
-			if (av_len(col) + 1 != n) { Safefree(X); Safefree(tm); Safefree(st); croak("coxph: covariate %d length mismatch", k + 1); }
-			for (SSize_t i = 0; i < n; i++) X[i * p + k] = SvNV(*av_fetch(col, i, 0));
+	/*av_ref_at() rather than SvRV(*av_fetch(...)): the covariate list can
+	itself be sparse, and a hole there was a NULL dereference, while a
+	non-reference in that slot was an SvRV() on something that is not one.*/
+			SV *cref = av_ref_at(aTHX_ Xav, k, SVt_PVAV);
+			if (!cref) croak("coxph: covariate %d is not an array ref", k + 1);
+			AV *col = (AV *)SvRV(cref);
+			if (av_len(col) + 1 != n) croak("coxph: covariate %d length mismatch", k + 1);
+			for (SSize_t i = 0; i < n; i++)
+				X[i * p + k] = av_num_at(aTHX_ col, i, "coxph", "covariate value");
 		}
 	} else {
-		if (av_len(Xav) + 1 != n) { Safefree(X); Safefree(tm); Safefree(st); croak("coxph: covariate length mismatch"); }
-		for (SSize_t i = 0; i < n; i++) X[i] = SvNV(*av_fetch(Xav, i, 0));
+		if (av_len(Xav) + 1 != n) croak("coxph: covariate length mismatch");
+		for (SSize_t i = 0; i < n; i++)
+			X[i] = av_num_at(aTHX_ Xav, i, "coxph", "covariate value");
 	}
 
 	//observations sorted by time ascending (risk sets built time-descending)
@@ -20308,7 +20516,7 @@ PPCODE:
 	hv_stores(ret, "ties",        newSVpv(breslow ? "breslow" : "efron", 0));
 	hv_stores(ret, "method",      newSVpv("Cox proportional hazards model", 0));
 
-	Safefree(X); Safefree(tm); Safefree(st); Safefree(ord);
+	Safefree(ord);		//X, tm and st are on the save stack; see their Newx above
 	Safefree(beta); Safefree(U); Safefree(Imat); Safefree(Iinv); Safefree(ratio);
 	Safefree(S1); Safefree(S2); Safefree(SD1); Safefree(SD2); Safefree(sumX_D);
 	Safefree(eta); Safefree(w);
@@ -20746,11 +20954,14 @@ void intersection(...)
 
 SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 	INIT:
-	// validate method
-	if (strcmp(method, "pearson")  != 0 &&
-		strcmp(method, "spearman") != 0 &&
-		strcmp(method, "kendall")  != 0)
-		  croak("cor: unknown method '%s' (use 'pearson', 'spearman', or 'kendall')",
+	/*The method is resolved to a code once here rather than re-compared at
+	every column pair: a p-column matrix asks for a correlation p(p-1)/2
+	times, and each ask used to run up to two strcmp()s first.*/
+	short int meth;		// 0 = pearson, 1 = spearman, 2 = kendall
+	if      (strEQ(method, "pearson"))  meth = COR_PEARSON;
+	else if (strEQ(method, "spearman")) meth = COR_SPEARMAN;
+	else if (strEQ(method, "kendall"))  meth = COR_KENDALL;
+	else croak("cor: unknown method '%s' (use 'pearson', 'spearman', or 'kendall')",
 				method);
 
 	// validate x
@@ -20813,7 +21024,7 @@ SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 				if (x_sd0) croak("cor: standard deviation of x is 0");
 				croak("cor: standard deviation of y is 0");
 			}
-			NV r = compute_cor(xd, yd, nx, method);
+			NV r = compute_cor_code(xd, yd, nx, meth);
 			Safefree(xd); Safefree(yd);
 			RETVAL = newSVnv(r);
 		}
@@ -20927,6 +21138,16 @@ SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 		Safefree(rowbuf); rowbuf = NULL;
 		Safefree(xrows);  xrows  = NULL;
 		Safefree(yrows);  yrows  = NULL;
+		/*Spearman becomes Pearson on ranks, ranked once per column instead of
+		once per column pair -- see rank_cols_inplace().  In the symmetric
+		case col_y *is* col_x, so the one call covers both and a second would
+		rank the ranks.*/
+		short int pair_meth = meth;
+		if (meth == COR_SPEARMAN) {
+			rank_cols_inplace(col_x, ncols_x, nrows);
+			if (!symmetric) rank_cols_inplace(col_y, ncols_y, nrows);
+			pair_meth = COR_PEARSON;
+		}
 		// -- build cache for symmetric case: compute upper triangle, store results, mirror to lower triangle
 		AV*result_av = newAV();
 		av_extend(result_av, ncols_x - 1);
@@ -20938,30 +21159,24 @@ SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 			av_extend(rows_out[i], ncols_y - 1);
 		}
 		if (symmetric) {
-		// Upper triangle + diagonal, then mirror. r_cache[i][j] (j >= i) holds the computed value
-			NV **r_cache;
-			Newx(r_cache, ncols_x, NV*);
-			for (size_t i = 0; i < ncols_x; i++)
-				 Newx(r_cache[i], ncols_x, NV);
+	/*Upper triangle computed, both triangles stored as we go.  There used to
+	be an ncols_x * ncols_x NV scratch matrix here, filled and then copied
+	cell by cell into the SVs and freed; since each r is wanted at exactly
+	(i,j) and (j,i), storing it at both on the spot needs no matrix at all.
+	It was 2.8 MB of a 15 MB peak on a 600-column frame, plus ncols_x
+	allocations.*/
 			for (size_t i = 0; i < ncols_x; i++) {
-				 r_cache[i][i] = 1.0; // diagonal
+				 av_store(rows_out[i], i, newSVnv(1.0));	// diagonal
 				 for (size_t j = i + 1; j < ncols_x; j++) {
-					 NV r = compute_cor(col_x[i], col_x[j], nrows, method);
-					 r_cache[i][j] = r;
-					 r_cache[j][i] = r; // symmetry
+					 NV r = compute_cor_code(col_x[i], col_x[j], nrows, pair_meth);
+					 av_store(rows_out[i], j, newSVnv(r));
+					 av_store(rows_out[j], i, newSVnv(r));	// symmetry
 				 }
 			}
-			// fill output AoA from cache
-			for (size_t i = 0; i < ncols_x; i++)
-				 for (size_t j = 0; j < ncols_x; j++)
-					 av_store(rows_out[i], j, newSVnv(r_cache[i][j]));
-
-			for (size_t i = 0; i < ncols_x; i++) Safefree(r_cache[i]);
-			Safefree(r_cache); r_cache = NULL;
 		} else {// cross-correlation: every (i,j) pair is independent
 			for (size_t i = 0; i < ncols_x; i++)
 				for (size_t j = 0; j < ncols_y; j++)
-					av_store(rows_out[i], j, newSVnv(compute_cor(col_x[i], col_y[j], nrows, method)));
+					av_store(rows_out[i], j, newSVnv(compute_cor_code(col_x[i], col_y[j], nrows, pair_meth)));
 		}
 		// push row AVs into result
 		for (size_t i = 0; i < ncols_x; i++)
@@ -21108,7 +21323,11 @@ void scale(...)
 				}
 			}
 			if (total_count == 0) croak("scale requires at least 1 numeric element");
-			Newx(nums, total_count, NV);
+	/*On the save stack: nv_arg()/nv_arg_at() croak on a non-numeric element,
+	and croak() does not reach a Safefree() written after it, so this buffer
+	was leaked whole -- 8 bytes per element of the input, 160 KB on a
+	20000-element call.  The explicit frees below are gone with it.*/
+			Newx(nums, total_count, NV); SAVEFREEPV(nums);
 			for (size_t i = 0; i < data_items; i++) {
 				 SV*arg = ST(i);
 				 if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
@@ -21128,10 +21347,8 @@ void scale(...)
 			}
 			if (do_center_mean) center_val = sum / total_count;
 			if (do_scale_sd) {
-				 if (total_count <= 1) {
-					 Safefree(nums);
+				 if (total_count <= 1)
 					 croak("scale needs >= 2 elements to calculate SD");
-				 }
 				 NV sum_sq = 0.0;
 				 for (size_t i = 0; i < total_count; i++) {
 					 NV diff = nums[i] - center_val;
@@ -21145,7 +21362,6 @@ void scale(...)
 				NV final_val = (scale_val == 0.0) ? (0.0 / 0.0) : (centered / scale_val);
 				PUSHs(sv_2mortal(newSVnv(final_val)));
 			}
-			Safefree(nums); nums = NULL;
 		}
 	}
 
@@ -21489,6 +21705,15 @@ PPCODE:
 	and could go further, but the bound stays at the narrowest width so that
 	one call returns the same values on every build.*/
 	const NV iv_exact = 9007199254740992.0;
+	/*Largest magnitude the IV fast path may carry.  2**53 is the right bound
+	for the NV side of the cast, but not for the IV side: perl's IV is only as
+	wide as the perl was configured for, and on a 32-bit-IV build
+	(use64bitint=undef, ivsize=4 -- the armv6l CPAN smokers) IV_MAX is
+	2147483647, so (IV)1e15 is out of range and saturates.  That is how
+	0.314 returned 2147483647 and -2147483645 in place of seq(1e15, 1e15+200, 2)
+	on such a perl.  Take whichever of the two bounds binds first; on a
+	64-bit-IV perl (NV)IV_MAX is 2**63 and 2**53 still wins.*/
+	const NV iv_bound = ((NV)IV_MAX < iv_exact) ? (NV)IV_MAX : iv_exact;
 	const bool by_given = (items >= 3); //an omitted 'by' is R's from:to, either way
 	const I32 gimme = GIMME_V;  //I32 is what block_gimme() returns
 	size_t n_elem   = 1;    // how many values the sequence has
@@ -21583,16 +21808,16 @@ PPCODE:
 	vector).  Measured on perl-5.44.0 at n = 1e6: building the returned list
 	drops from 16.3 to 13.4 ns/element, and join(',', seq(1, n)), which
 	stringifies every element, from 409 to 83 ns/element -- an IV never
-	reaches Gconvert().  raw_last is bounded as well as last_val so that
-	i * istep below cannot leave IV range: the unclamped endpoint bounds
-	every intermediate.*/
+	reaches Gconvert().  raw_last is bounded as well as last_val because it is
+	the unclamped endpoint that bounds every intermediate the loop below
+	walks through, and the clamp can only pull the last one inwards.*/
 	const bool use_iv = !quarter
 		&& first    == nv_trunc(first)
 		&& step     == nv_trunc(step)
 		&& last_val == nv_trunc(last_val)
-		&& nv_fabs(first)    <= iv_exact
-		&& nv_fabs(raw_last) <= iv_exact
-		&& nv_fabs(last_val) <= iv_exact;
+		&& nv_fabs(first)    <= iv_bound
+		&& nv_fabs(raw_last) <= iv_bound
+		&& nv_fabs(last_val) <= iv_bound;
 	/*Nothing the caller can reach needs the other n_elem-1 values: in void
 	context none of them, and in scalar context only the last, which is what
 	the caller's assignment reads off the top of the stack -- the same answer
@@ -21610,8 +21835,20 @@ PPCODE:
 	}
 	EXTEND(SP, (SSize_t)n_elem);
 	if (use_iv) {
-		const IV i0 = (IV)first, istep = (IV)step;
-		for (size_t i = 0; i + 1 < n_elem; i++) mPUSHi(i0 + (IV)i * istep);
+	/*Accumulate rather than evaluate i0 + i*istep.  The gate bounds the two
+	endpoints, not the product, and a sequence that straddles zero can leave
+	IV range in between while both ends stay inside it: on a 32-bit-IV perl
+	seq(-2147483646, 2147483646, 1073741823) is five values and forms
+	3 * 1073741823, half again over IV_MAX.  Signed overflow is what that is,
+	and while perl builds this file with its own ccflags -- which carry
+	-fwrapv on gcc and clang, and under wrapping the modular arithmetic
+	happens to land on the right answer anyway -- a vendor compiler owes no
+	such guarantee.  The running sum cannot overflow at all: every partial
+	value is an element of the sequence, so it lies between 'first' and
+	'raw_last', and the additions are exact.*/
+		const IV istep = (IV)step;
+		IV v = (IV)first;
+		for (size_t i = 0; i + 1 < n_elem; i++) { mPUSHi(v); v += istep; }
 	} else if (quarter) {
 		const NV f4 = first / 4.0, s4 = step / 4.0;
 		for (size_t i = 0; i + 1 < n_elem; i++) mPUSHn(4.0 * (f4 + (NV)i * s4));
@@ -21930,9 +22167,41 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 			}
 
 			if (l_count == 0 || r_count == 0) {
+	/*Everything PHASE 1 and PHASE 2 built has to go back before this croak.
+	Only l_indices, r_indices and xlevels_hv used to, so the formula
+	`y ~ a:b` -- an interaction whose main effects are not in the formula,
+	which is an easy thing to type -- leaked the row names, the term and
+	unique-term tables with a savepv per entry, the nine expansion arrays and
+	the base-level table: 7.7 KB a call, and 375 MB over 50000 of them.
+
+	The order below mirrors the "Full Clean Up" block further down so the two
+	can be read side by side; what is deliberately absent is everything PHASE
+	4 allocates (X_blk, D_blk, X_mat, Dsav, Y, surv_names), because none of it
+	exists yet here.  The message is built before the frees, since it reads
+	uniq_terms[j].*/
+				SV *msg = sv_2mortal(newSVpvf(
+					"aov: Interaction term '%s' requires its main effects to be explicitly included in the formula",
+					uniq_terms[j]));
 				Safefree(l_indices); Safefree(r_indices);
-				SvREFCNT_dec((SV*)xlevels_hv);   //NEW
-				croak("aov: Interaction term '%s' requires its main effects to be explicitly included in the formula", uniq_terms[j]);
+				for (i = 0; i < n; i++) Safefree(row_names[i]);
+				Safefree(row_names);
+				if (row_hashes) Safefree(row_hashes);
+				for (i = 0; i < num_terms; i++) Safefree(terms[i]);
+				Safefree(terms);
+				for (i = 0; i < num_uniq; i++) Safefree(uniq_terms[i]);
+				Safefree(uniq_terms);
+				for (size_t e = 0; e < p_exp; e++) {
+					Safefree(exp_terms[e]); Safefree(parent_term[e]);
+					if (is_dummy[e]) { Safefree(dummy_base[e]); Safefree(dummy_level[e]); }
+				}
+				Safefree(exp_terms); Safefree(parent_term);
+				Safefree(is_dummy);  Safefree(is_interact);
+				Safefree(dummy_base); Safefree(dummy_level);
+				Safefree(term_map); Safefree(left_idx); Safefree(right_idx);
+				for (i = 0; i < num_uniq; i++) Safefree(term_base_level[i]);
+				Safefree(term_base_level);
+				SvREFCNT_dec((SV*)xlevels_hv);
+				croak("%s", SvPV_nolen(msg));
 			} else {
 				for (unsigned int li = 0; li < l_count; li++) {
 					for (unsigned int ri = 0; ri < r_count; ri++) {
@@ -22030,8 +22299,26 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 			}
 		}
 	}
+	/*The design and its snapshot are one block each, with the row-pointer
+	array pointing into them, rather than n separate row allocations apiece.
+	lm() has always done it this way, as one Newx of n * p; aov() paid 2n
+	allocator calls and 2n malloc headers for the same matrix, which on a
+	four-column fit is 16 bytes of header per 32 bytes of data.
+	apply_householder_aov() reduces X in place and never permutes X_mat[], so
+	the block stays the rows' backing store; freeing it is one call, and stays
+	correct even if a future pivot does permute the pointers.
+
+	The multiply is guarded because size_t is 32 bits on a 32-bit perl --
+	5.44.0-i686 in the local matrix -- where n * p_exp * sizeof(NV) wraps at a
+	512 MB design.  Allocating per row could not overflow that way, so the
+	guard arrives together with the block.*/
+	if (p_exp && n > ((size_t)-1 / sizeof(NV)) / p_exp)
+		croak("aov: design matrix too large (%" UVuf " rows x %u columns)",
+		      (UV)n, p_exp);
+	NV *X_blk = (NV*)safemalloc(n * p_exp * sizeof(NV));
+	NV *D_blk = (NV*)safemalloc(n * p_exp * sizeof(NV));
 	X_mat = (NV**)safemalloc(n * sizeof(NV*));
-	for(i = 0; i < n; i++) X_mat[i] = (NV*)safemalloc(p_exp * sizeof(NV));
+	for(i = 0; i < n; i++) X_mat[i] = X_blk + i * p_exp;
 	NV **Dsav = (NV**)safemalloc(n * sizeof(NV*)); //preserved design rows for fitted.values
 	char **surv_names = NULL; //row names of surviving rows
 	Newx(surv_names, n ? n : 1, char*);
@@ -22060,7 +22347,7 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 		}
 		if (!row_ok) { Safefree(row_names[i]); row_names[i] = NULL; continue; }  //X_mat[valid_n] reused next iter
 		Y[valid_n] = y_val;
-		Dsav[valid_n] = (NV*)safemalloc(p_exp * sizeof(NV)); //snapshot before QR destroys X_mat
+		Dsav[valid_n] = D_blk + valid_n * p_exp;	//snapshot before QR destroys X_mat
 		memcpy(Dsav[valid_n], row_x, p_exp * sizeof(NV));
 		surv_names[valid_n] = row_names[i]; //transfer ownership
 		row_names[i] = NULL;
@@ -22078,10 +22365,8 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 		Safefree(is_dummy); Safefree(is_interact);
 		Safefree(dummy_base); Safefree(dummy_level);
 		Safefree(term_map); Safefree(left_idx); Safefree(right_idx);
-		for(i = 0; i < n; i++) Safefree(X_mat[i]);
-		Safefree(X_mat); Safefree(Y);
-		for (i = 0; i < valid_n; i++) Safefree(Dsav[i]);
-		Safefree(Dsav);
+		Safefree(X_blk); Safefree(X_mat); Safefree(Y);
+		Safefree(D_blk); Safefree(Dsav);
 		for (i = 0; i < valid_n; i++) Safefree(surv_names[i]);
 		Safefree(surv_names);
 		SvREFCNT_dec((SV*)xlevels_hv);
@@ -22236,10 +22521,8 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 	Safefree(dummy_base); Safefree(dummy_level);
 	Safefree(term_map); Safefree(left_idx); Safefree(right_idx);
 	Safefree(term_ss); Safefree(term_df);
-	for (i = 0; i < n; i++) Safefree(X_mat[i]);
-	Safefree(X_mat); Safefree(Y);
-	for (i = 0; i < valid_n; i++) Safefree(Dsav[i]);        //NEW
-	Safefree(Dsav);                                          //NEW
+	Safefree(X_blk); Safefree(X_mat); Safefree(Y);
+	Safefree(D_blk); Safefree(Dsav);
 	for (i = 0; i < valid_n; i++) Safefree(surv_names[i]);   //NEW
 	Safefree(surv_names);                                    //NEW
 	Safefree(aliased_qr); Safefree(rank_map);
@@ -22297,20 +22580,24 @@ CODE:
 			croak("Invalid 2D array structure: each row must be an array ref");
 		ncol = (int)(av_len((AV *)SvRV(*r0p)) + 1);
 		if (ncol < 2) croak("Each row must have at least 2 columns");
-		Newx(cells, (size_t)nrow * ncol, long);
+	/*On the save stack: ft_cell() below croaks on an undef, non-numeric or
+	negative cell, and croak() does not reach the Safefree() at the end of the
+	function.  A bad cell in an r x c table leaked the whole cell buffer --
+	3.2 KB on a 20 x 20 table, growing with the table.*/
+		Newx(cells, (size_t)nrow * ncol, long); SAVEFREEPV(cells);
 		for (unsigned rr = 0; rr < nrow; rr++) {
 			SV **rp = av_fetch(outer, rr, 0);
 			if (!rp || !SvROK(*rp) || SvTYPE(SvRV(*rp)) != SVt_PVAV) {
-				Safefree(cells);
 				croak("Invalid 2D array structure: each row must be an array ref");
 			}
 			AV *row = (AV *)SvRV(*rp);
 			if ((int)(av_len(row) + 1) != ncol) {
-				Safefree(cells);
 				croak("All rows must have the same number of columns (%d)", ncol);
 			}
 			for (int cc = 0; cc < ncol; cc++)
-				cells[rr * ncol + cc] = ft_cell(aTHX_ *av_fetch(row, cc, 0), "array cell");
+	/*av_at() for the same reason as binom_test above: *av_fetch() on a hole
+	is a NULL dereference, and ft_cell() already rejects a NULL sv.*/
+				cells[rr * ncol + cc] = ft_cell(aTHX_ av_at(aTHX_ row, cc), "array cell");
 		}
 		} else if (SvTYPE(deref) == SVt_PVHV) {
 		/*Rows are ordered by lexical key sort, and columns by the sorted keys
@@ -22320,7 +22607,10 @@ CODE:
 		HV *outer = (HV *)deref;
 		nrow = (int)HvUSEDKEYS(outer);
 		if (nrow < 2) croak("Outer hash must have at least 2 keys");
-		ft_kv *rows = NULL; Newx(rows, nrow, ft_kv);
+	/*rows and cols join cells on the save stack: ft_cell() croaks from inside
+	the fill loop below, where both are live, and the explicit frees could
+	only cover the checks written before it.*/
+		ft_kv *rows = NULL; Newx(rows, nrow, ft_kv); SAVEFREEPV(rows);
 		hv_iterinit(outer);
 		for (unsigned int i = 0; i < nrow; i++) {
 			HE *e = hv_iternext(outer);
@@ -22330,12 +22620,12 @@ CODE:
 		qsort(rows, nrow, sizeof(ft_kv), ft_kv_cmp);
 
 		if (!SvROK(rows[0].v) || SvTYPE(SvRV(rows[0].v)) != SVt_PVHV) {
-			Safefree(rows); croak("Inner elements must be hash refs");
+			croak("Inner elements must be hash refs");
 		}
 		HV *first = (HV *)SvRV(rows[0].v);
 		ncol = (int)HvUSEDKEYS(first);
-		if (ncol < 2) { Safefree(rows); croak("Inner hashes must have at least 2 keys"); }
-		ft_kv *cols = NULL; Newx(cols, ncol, ft_kv);
+		if (ncol < 2) croak("Inner hashes must have at least 2 keys");
+		ft_kv *cols = NULL; Newx(cols, ncol, ft_kv); SAVEFREEPV(cols);
 		hv_iterinit(first);
 		for (unsigned int j = 0; j < ncol; j++) {
 			HE *e = hv_iternext(first);
@@ -22344,15 +22634,12 @@ CODE:
 		}
 		qsort(cols, ncol, sizeof(ft_kv), ft_kv_cmp);
 
-		Newx(cells, (size_t)nrow * ncol, long);
+		Newx(cells, (size_t)nrow * ncol, long); SAVEFREEPV(cells);	//see the AoA branch
 		for (unsigned int rr = 0; rr < nrow; rr++) {
-			if (!SvROK(rows[rr].v) || SvTYPE(SvRV(rows[rr].v)) != SVt_PVHV) {
-				Safefree(cells); Safefree(cols); Safefree(rows);
+			if (!SvROK(rows[rr].v) || SvTYPE(SvRV(rows[rr].v)) != SVt_PVHV)
 				croak("Inner elements must be hash refs");
-			}
 			HV *in = (HV *)SvRV(rows[rr].v);
 			if ((int)HvUSEDKEYS(in) != ncol) {
-				Safefree(cells); Safefree(cols); Safefree(rows);
 				croak("All rows must have the same %d column keys", ncol);
 			}
 			for (unsigned int cc = 0; cc < ncol; cc++) {
@@ -22364,20 +22651,18 @@ CODE:
 	strict allocators such as FreeBSD's.*/
 					const char *rk = rows[rr].k;
 					const char *ck = cols[cc].k;
-					Safefree(cells); Safefree(cols); Safefree(rows);
 					croak("Row '%s' is missing column key '%s'", rk, ck);
 				}
 				cells[rr * ncol + cc] = ft_cell(aTHX_ *vp, "hash cell");
 			}
 		}
-		Safefree(cols); Safefree(rows);
 	} else {
 	  croak("Input must be a 2D Array or 2D Hash");
 	}
 
 	long total = 0;
 	for (unsigned i = 0; i < nrow * ncol; i++) total += cells[i];
-	if (total == 0) { Safefree(cells); croak("fisher_test: table is all zeros"); }
+	if (total == 0) croak("fisher_test: table is all zeros");
 	HV *ret = newHV();
 	hv_stores(ret, "method", newSVpv("Fisher's Exact Test for Count Data", 0));
 	hv_stores(ret, "conf.level", newSVnv(conf_level));
@@ -22398,13 +22683,11 @@ CODE:
 	} else { //R x C: only the two-sided p-value is defined (no odds ratio / CI)
 	  NV p_val = fisher_rxc_pvalue(aTHX_ cells, nrow, ncol);
 	  if (p_val < 0) {
-		   Safefree(cells);
 		   croak("fisher_test: %dx%d table is too large for exact enumeration", nrow, ncol);
 	  }
 	  hv_stores(ret, "alternative", newSVpv("two.sided", 0));
 	  hv_stores(ret, "p.value", newSVnv(p_val));
 	}
-	Safefree(cells);
 	RETVAL = newRV_noinc((SV *)ret);
 }
 OUTPUT:

@@ -1,17 +1,55 @@
 # Stats::LikeR — instructions for Claude
 
-## Never edit `Changes`
+## Editing `Changes`
 
-Do not create, edit, append to, or revert `Changes` under any circumstances.
-The release notes there are written by hand, by the maintainer, and are not
-Claude's to touch — not even to add an entry for work Claude just did, and not
-even when asked to "update the changelog" as part of a larger task.
+Claude may edit `Changes`. The blanket prohibition that stood here was lifted
+by the maintainer on 2026-09-04. What replaces it is a shape requirement,
+because that file is now the only copy of the notes and is parsed by CPAN and
+PAUSE:
 
-This holds regardless of the tool: no `Edit`, no `Write`, no `sed -i`/`perl -pi`,
-no `git checkout`/`git revert` that touches it, no patch that includes it.
+- Add a release by prepending a section to `Changes` itself, never to
+  README.md, and never re-word a release that has already shipped.
+- A version line is `<version> <date> <tz>`, as in `0.316 2026-09-04 CDT`. A
+  release with no date, or a version that does not parse, fails
+  `changes_file_ok()` in `md2pod.pl` rather than at upload time. Verify a
+  hand-edit by loading the file through `CPAN::Changes` before trusting it.
+- Entries group under `[Bracketed headings]`, wrap at the width the surrounding
+  releases use, and say what changed and why. The 0.315 and 0.314 sections are
+  the model to follow.
 
-When a change would normally warrant a release note, say so in the reply and
-leave the wording to the maintainer. Do not draft it into the file.
+### Restoring the prohibition
+
+`.claude/hooks/no-edit-changes.sh` is still in the tree but is no longer
+registered: the maintainer emptied `.claude/settings.json` on 2026-09-04.
+Putting a `PreToolUse` entry for that script back is what restores the old
+rule, and it does so independently of this file — while it is registered,
+nothing Claude can write to `Changes` gets through, whatever this section says.
+
+Two things about that hook are worth knowing if it comes back. It blocks
+`Edit`/`Write` whose target basename is `Changes`, and any `Bash` command that
+both names `Changes` and looks like it could mutate it. Its write heuristic is
+deliberately conservative, so it also fires on read-only commands that happen
+to contain a `>` before the name: `perl -MCPAN::Changes -e
+'CPAN::Changes->load("Changes")'` is blocked as a false positive.
+
+### It is edited directly, and it is the only copy
+
+Up to 0.315 the notes were a build artefact. `md2pod.pl` rewrote them on every
+run from a `# Changes` section in README.md, so README.md was the source and the
+two held the same prose in different markup — which is also why the old rule's
+claim that the notes were "written by hand" was not true of the file itself.
+
+That half of the generator is gone. README.md no longer carries the notes, and
+`md2pod.pl` only *checks* the file now: `changes_file_ok()` parses it the way
+CPAN and PAUSE do. Three consequences worth keeping in mind:
+
+- There is no longer a second copy to fall back on, and nothing regenerates it.
+  A bad edit is a lost release note, so verify the parse.
+- Adding a release means editing the notes file, not README.md.
+- `release-notes.staged` is an untracked working copy of the whole file, used to
+  stage a release's notes before they land. When it exists and is ahead of the
+  tracked file, it is probably the newer text — 0.315's notes reached CPAN that
+  way and were missing from the tracked file until restored from it.
 
 ## C types must match the value's real domain
 
@@ -176,11 +214,54 @@ The local matrix under `/home/con/perl5/perlbrew/perls/`, by `$Config{nvtype}`:
 - `perl-5.44.0` (default), `perl-5.42.3`, `perl-5.10.1` — `double`, NVgf `"g"`
 - `perl-5.12.5` — `long double`, NVgf `"Lg"` (archname `x86_64-linux-ld`)
 - `5.44.0-quadmath` — `__float128`, NVgf `"Qg"`
+- `5.44.0-i686` — `double`, but a 32-bit build: `ivsize=4`, so `IV_MAX` is
+  2147483647. See "The IV is not always 64 bits" below.
 
 All three NV widths can be compile-checked without reconfiguring the tree
 (which would clobber the current `Makefile`) by generating the `.c` and
 compiling it against each perl's `CORE` directly. Do that as the fast check;
 it is not a substitute for actually running the suite.
+
+### The IV is not always 64 bits
+
+`IV` is the width the *perl* was configured for, not the width of an `NV`. A
+build with `use64bitint=undef` — every 32-bit smoker, the armv6l ones
+included — has `IV_MAX` at 2147483647. The two are independent: a value can
+be exactly representable as an `NV` and still be far outside `IV` range.
+Every perl in that list but `5.44.0-i686` has `ivsize=8`, and until 0.315
+there was no such row at all, so the matrix varied the NV width and nothing
+else.
+
+Any cast from `NV` to `IV`/`UV` must therefore be gated on `IV_MAX`/`UV_MAX`
+as well as on 2\*\*53, and any `IV` arithmetic on values the caller supplies
+must be shown not to overflow at 32 bits. 0.314 gated `seq()`'s integer fast
+path on 2\*\*53 alone; `(IV)1e15` saturated and `seq(1e15, 1e15+200, 2)` came
+back as 2147483647 on the armv6l CPAN smokers, which nothing here could
+reproduce. `t/seq.R.t` now covers both branches that reach that path, keying
+the expected SV body off `$Config{ivsize}`.
+
+`5.44.0-i686` is that perl, and it is in the matrix: a 32-bit build
+(`ivsize=4`, `ptrsize=4`, `IV_MAX` 2147483647, `double` NV), listed by
+`./test.all.perls.pl` as `double/iv4`. It is not decoration — restoring
+0.314's gate and building against it fails 30 subtests of `t/seq.R.t`.
+
+One cannot be had by configuring one: Configure takes `ivsize` from
+`longsize` unless `-Duse64bitint`, and then refuses outright if
+`ivsize < ptrsize`, so on x86-64 it has to be a genuinely 32-bit build. The
+exact recipe is in the note `./test.all.perls.pl` prints whenever the matrix
+has no such perl. Two traps are worth knowing before rebuilding it:
+
+- `hints/linux.sh` hardcodes `/usr/bin/gcc` for its `-print-search-dirs`
+  probe, and `-m32` lives in `$cc` rather than `$ccflags`, so the probe
+  returns the *x86-64* library directories. `-Dlibpth` cannot correct this —
+  Configure's `ccname=gcc` branch re-appends `$plibpth` and `$glibpth` onto
+  whatever it is given — so `-Dplibpth` is the override, which that hints
+  file documents as its escape hatch.
+- `gcc-multilib` supplies 32-bit glibc (as `/usr/lib32`) and nothing more. Of
+  everything in `libswanted`, only `crypt` is then missing; perl treats it as
+  optional, so `-Dlibswanted='pthread dl m util c'` avoids needing
+  `libcrypt-dev:i386`. The only casualty is the `crypt()` builtin, which this
+  module never calls.
 
 ### Long double and quadmath
 

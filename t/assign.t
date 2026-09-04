@@ -234,6 +234,58 @@ SKIP: {
 		'HoA map_cell: missing target column croaks';
 }
 
+# HoA: the row view is not built for a cell the block will not see.
+#
+# The view used to be assembled before the "is this cell undef" test, so a
+# column of undefs still paid for one view per row and threw every one of them
+# away unread -- 0.161s of the 0.165s a 20000-row, 64-column pass cost. What
+# the test can actually observe is that the sibling columns are never read, so
+# a tied sibling that counts its FETCHes must see none.
+{
+	package Stats::LikeR::t::CountingFetch;
+	require Tie::Array;
+	our @ISA = ('Tie::StdArray');
+	our $fetches = 0;
+	sub FETCH { my ($self, $i) = @_; $fetches++; return $self->[$i] }
+}
+{
+	my @sib;
+	tie @sib, 'Stats::LikeR::t::CountingFetch';
+	@sib = (10, 20, 30);
+	my $hoa = { tgt => [undef, undef, undef], sib => \@sib };
+	$Stats::LikeR::t::CountingFetch::fetches = 0;
+	my $ran = 0;
+	assign($hoa, tgt => map_cell { $ran++; $_ = $_[0]{sib} });
+	is($ran, 0, 'HoA map_cell: block never runs for an all-undef column');
+	is($Stats::LikeR::t::CountingFetch::fetches, 0,
+		'HoA map_cell: no row view is built for cells the block will not see');
+	is_deeply($hoa->{tgt}, [undef, undef, undef],
+		'HoA map_cell: all-undef column comes back untouched');
+}
+
+# HoA: the row view the block receives is one hash, refilled per row, rather
+# than a fresh one each time -- the shape the AoH and HoH branches already
+# have, since those hand the block the row hash itself. A block that keeps the
+# reference therefore sees the current row through it, not the row it was
+# handed. Asserted so that going back to a per-row hash is a deliberate act.
+{
+	my $hoa = { tgt => [1, 2, 3], other => ['a', 'b', 'c'] };
+	my @seen_live;      # what each kept ref reports *after* the pass
+	my @kept;
+	my @seen_now;       # what the view said during the row itself
+	assign($hoa, tgt => map_cell {
+		push @kept, $_[0];
+		push @seen_now, $_[0]{other};
+		$_ *= 10;
+	});
+	is_deeply($hoa->{tgt}, [10, 20, 30], 'HoA map_cell: every row still edited');
+	is_deeply(\@seen_now, ['a', 'b', 'c'],
+		'HoA map_cell: the view is correct for the row being visited');
+	@seen_live = map { $_->{other} } @kept;
+	is_deeply(\@seen_live, ['c', 'c', 'c'],
+		'HoA map_cell: the view is one reused hash, left holding the last row');
+}
+
 # Edge cases: empty frames (coderef and arrayref value)
 {
 	my $empty_aoh = [];

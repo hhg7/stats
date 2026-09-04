@@ -216,18 +216,26 @@ die "$0: no perls found in $perls_dir\n" unless @targets;
 # only identifiable as "perl-5.12.5" plus an archname nobody parses.  A perl that
 # will not answer is described as unknown, never as plain, so a broken
 # interpreter cannot become the reference build the tree is left standing on.
+#
+# ivsize is probed for the same reason and reported for a different one: it
+# decides nothing about the run order, but it is the one width in $Config the
+# local matrix does not currently vary, and 0.314 shipped a bug that only a
+# perl with a 32-bit IV could see (seq() cast an NV past IV_MAX; see the
+# coverage note printed below the summary).  Reporting it puts the gap on the
+# screen every run instead of leaving it to a smoker.
 my %facts;
 sub facts {
 	my $version = tgt_perl(shift);   # a variant is the same interpreter
 	return $facts{$version} if $facts{$version};
 	my $perl = File::Spec->catfile($perls_dir, $version, 'bin', 'perl');
-	my %f = (nv => '?', threads => 0, known => 0);
+	my %f = (nv => '?', iv => 0, threads => 0, known => 0);
 	if (open my $fh, '-|', $perl, '-MConfig', '-e',
-			'print "$Config{nvtype}\t", ($Config{useithreads} ? 1 : 0)') {
+			'print "$Config{nvtype}\t", ($Config{useithreads} ? 1 : 0),'
+			. '"\t$Config{ivsize}"') {
 		my $line = <$fh>;
 		close $fh;
-		if (defined $line && $line =~ /^(\S[^\t]*)\t([01])/) {
-			%f = (nv => $1, threads => $2, known => 1);
+		if (defined $line && $line =~ /^(\S[^\t]*)\t([01])\t(\d+)/) {
+			%f = (nv => $1, threads => $2, iv => $3, known => 1);
 		}
 	}
 	$f{quadmath} = $f{nv} eq '__float128';
@@ -241,7 +249,11 @@ sub nv_label {
 	my $f = shift;
 	my %short = ('double' => 'double', 'long double' => 'long-double',
 		'__float128' => 'quadmath');
-	return ($short{ $f->{nv} } || $f->{nv}) . ($f->{threads} ? '-thr' : '');
+	# The IV width is named only when it is not the 8 every perl here has, so
+	# a 32-bit-IV build is the row that looks different rather than one more
+	# column of 8s.
+	return ($short{ $f->{nv} } || $f->{nv}) . ($f->{threads} ? '-thr' : '')
+		. ($f->{known} && $f->{iv} != 8 ? "/iv$f->{iv}" : '');
 }
 
 # A target is a perl, optionally with a build variant after a '+'.  Everything
@@ -799,5 +811,43 @@ printf "%d/%d perl(s) passed%s in %.1fs.  Logs in %s\n",
 # NV-width checks assume they know what state the tree is in.
 print "-- built in private trees; this directory is untouched (-P 1 to build here)\n"
 	if $in_parallel;
+
+# The width this matrix went without until 0.315.  A perl with a 64-bit IV
+# cannot see a cast that is in range for an NV and out of range for an IV,
+# which is what took 0.314 to FAIL on the armv6l CPAN smokers
+# (use64bitint=undef, IV_MAX 2147483647): seq() gated its integer fast path on
+# 2**53 alone and pushed a saturated (IV)1e15.  Restoring that gate and
+# building against 5.44.0-i686 fails 30 subtests of t/seq.R.t, so the row
+# really does cover the axis rather than merely existing.
+#
+# Such a perl has to be built 32-bit; it cannot be configured into existence.
+# Configure takes ivsize from longsize unless -Duse64bitint (so -Uuse64bitint
+# on x86-64 still gives 8), and then refuses outright if ivsize < ptrsize.
+# Two things bite when building one, both recorded in the recipe below:
+#
+#   * hints/linux.sh hardcodes /usr/bin/gcc for its -print-search-dirs probe
+#     and -m32 lives in $cc rather than $ccflags, so the probe returns the
+#     x86-64 library dirs.  -Dlibpth alone cannot fix it -- Configure's
+#     ccname=gcc branch re-appends $plibpth and $glibpth onto whatever it is
+#     given -- so plibpth is the override, which that hints file documents as
+#     its escape hatch.
+#   * gcc-multilib brings 32-bit glibc (as /usr/lib32) and nothing else, and
+#     of everything in libswanted only crypt is then missing.  perl treats it
+#     as optional, so trimming libswanted avoids needing libcrypt-dev:i386.
+{
+	my @iv4 = grep { facts($_)->{known} && facts($_)->{iv} == 4 } @targets;
+	print <<'END' unless @iv4;
+-- no 32-bit-IV perl in the matrix: an NV cast past IV_MAX cannot fail here.
+   To add one (needs root once, for a 32-bit libc):
+     sudo apt install gcc-multilib
+     perlbrew install perl-5.44.0 --as 5.44.0-i686 -j 8 -n \
+       -Dcc='gcc -m32' -Dld='gcc -m32' -Uuse64bitint -Uuse64bitall \
+       -Dlibswanted='pthread dl m util c' \
+       -Dlibpth='/usr/lib/i386-linux-gnu /usr/lib32 /lib/i386-linux-gnu' \
+       -Dplibpth='/usr/lib/i386-linux-gnu /usr/lib32 /lib/i386-linux-gnu'
+   Then --deps once, for Test::Exception and Test::LeakTrace.  It is picked up
+   automatically after that, and shows as "double/iv4".
+END
+}
 
 exit($bad || $skipped ? 1 : 0);
