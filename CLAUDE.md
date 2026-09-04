@@ -9,13 +9,19 @@ PAUSE:
 
 - Add a release by prepending a section to `Changes` itself, never to
   README.md, and never re-word a release that has already shipped.
-- A version line is `<version> <date> <tz>`, as in `0.316 2026-09-04 CDT`. A
+- A version line is `<version> <date> <tz>`, as in `0.315 2026-09-04 CDT`. A
   release with no date, or a version that does not parse, fails
   `changes_file_ok()` in `md2pod.pl` rather than at upload time. Verify a
   hand-edit by loading the file through `CPAN::Changes` before trusting it.
 - Entries group under `[Bracketed headings]`, wrap at the width the surrounding
   releases use, and say what changed and why. The 0.315 and 0.314 sections are
   the model to follow.
+- Check what has actually shipped before opening a new section. `$VERSION` in
+  `lib/Stats/LikeR.pm` is the version *in progress*, not a released one: on
+  2026-09-04 it read 0.315 while the newest built distribution was
+  `Stats-LikeR-0.314.tar.gz` and there were no git tags at all. Work done while
+  it reads 0.315 belongs under 0.315, because that is the version a dist built
+  now would carry — do not start a 0.316 section for it.
 
 ### Restoring the prohibition
 
@@ -46,10 +52,11 @@ CPAN and PAUSE do. Three consequences worth keeping in mind:
 - There is no longer a second copy to fall back on, and nothing regenerates it.
   A bad edit is a lost release note, so verify the parse.
 - Adding a release means editing the notes file, not README.md.
-- `release-notes.staged` is an untracked working copy of the whole file, used to
-  stage a release's notes before they land. When it exists and is ahead of the
-  tracked file, it is probably the newer text — 0.315's notes reached CPAN that
-  way and were missing from the tracked file until restored from it.
+- `release-notes.staged` is an untracked working copy of the whole file, used
+  to stage a release's notes before they land. It can be ahead of `Changes`, and
+  on 2026-09-04 it was: it held 0.315's notes while `Changes` still ended at
+  0.314. Compare the two before assuming either is current, and re-sync or
+  delete the staging copy once its notes have landed.
 
 ## C types must match the value's real domain
 

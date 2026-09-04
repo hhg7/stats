@@ -2,9 +2,27 @@ Revision history for Stats-LikeR
 
 0.315 2026-09-04 CDT
 
- - Two halves: crashes and leaks on argument-validation paths, and speed. No
-   numeric answer moves except `cov`'s on an incomplete pair, which was wrong
-   against R and is called out below.
+ - Defect fixes, plus a set of speed and memory changes. No numeric answer
+   moves anywhere in the release except `cov`'s on an incomplete pair, which
+   disagreed with R and is called out below; every reorganised routine was
+   checked against the code it replaced and returns the same bits.
+
+ - The defects came from two sweeps, which is why there are two groups of
+   segmentation faults below.
+
+ - The first sweep was fuzzing rather than reading: every exported
+   function called with a reference where it expected a number, with a code ref or
+   a scalar ref buried inside an otherwise ordinary frame, and with randomly
+   assembled argument lists, all run against an AddressSanitizer/UBSan build. The
+   whole existing suite is clean under those sanitizers and always was; what the
+   fuzzers reached is the argument space the suite does not cover, because it is
+   the space no correct program visits. A user's typo visits it.
+
+ - The second was the argument-validation surface again, under valgrind with
+   `--errors-for-leak-kinds=definite` and with RSS watched over tens of
+   thousands of failing calls. Fuzzing finds the call that dies; a leak on a
+   croak path does not die, so nothing but the allocator notices it. Six
+   functions were leaking, and seven could be made to crash or hang.
 
  [Six segmentation faults and two runaways]
 
@@ -114,64 +132,6 @@ Revision history for Stats-LikeR
    the Overall column. One pass per group now feeds a lookup. On 20000 rows,
    0.021s to 0.010s at 5 levels and 0.124s to 0.010s at 40, and flat in the
    level count rather than unbounded in it.
-
- [Smaller things]
-
- - `aov` allocated its design matrix and the snapshot it keeps for fitted
-   values a row at a time: 2n allocator calls and 2n malloc headers for a
-   matrix `lm` has always taken in one block. They are one block each now. At
-   n = 20000 that is 39,965 fewer allocations, and `aov`'s time relative to
-   `lm` on the same fit went from 1.118x to 1.002x. The block multiply is
-   guarded against wrapping where `size_t` is 32 bits.
-
- - `wilcox_test`'s exact confidence interval sorted the pairwise differences
-   and the Walsh averages with `nv_heapsort` where the introsort in the same
-   file is 1.6x to 1.9x faster at those sizes. The exact interval at n = 800
-   went from 0.1309s to 0.1162s.
-
- - `assign(..., map_cell { ... })` on a hash-of-arrays frame assembled the row
-   view before testing whether the cell was `undef`, so a column of `undef`
-   built one view per row and threw every one away unread -- 0.161s of the
-   0.165s a 20000-row, 64-column pass cost. The test comes first now, and the
-   view is one hash refilled per row rather than a fresh hash each time. That
-   last part is visible to a block that keeps `$_[0]`: it now sees the current
-   row through the kept reference rather than the row it was handed, which is
-   what the AoH and HoH forms have always done, since those hand the block the
-   row hash itself.
-
- [Testing]
-
- - `coxph` had no test at all. `t/coxph.R.t` cross-validates it against R's
-   `survival` 3.8.9 on two corpora: `ovarian`, which that package ships and
-   `?coxph` uses, and a 16-observation set built for the purpose with ties at
-   two event times, because `ovarian` has none and Efron and Breslow are
-   therefore indistinguishable on it. Its values are all small integers, so
-   the tie structure does not move with the NV width. Worst disagreement with
-   `survival` across all 22 quantities and both tie methods is 8.88e-16 on the
-   double builds, 3.64e-16 on long double and `__float128`, and 1.11e-15 on
-   the 32-bit one -- 2 to 5 ulp. `t/coxph.R.R` regenerates the frozen table.
-
- - `t/croak.leaks.t` covers every crash and leak above: that each croaks with
-   a message naming what went wrong, that none leaks an SV, and that the
-   ordinary call still returns what it did.
-
- - `t/assign.t` gained two checks for the `map_cell` change, one of them a
-   tied sibling column that counts its `FETCH`es, so that a row view built for
-   a cell the block will never see is a failure rather than a slowdown.
-
- - The whole suite runs clean under valgrind with
-   `--errors-for-leak-kinds=definite`, which it did not before: six functions
-   leaked.
-
-======
-
- - The defects were found by fuzzing rather than by reading: every exported
-   function called with a reference where it expected a number, with a code ref or
-   a scalar ref buried inside an otherwise ordinary frame, and with randomly
-   assembled argument lists, all run against an AddressSanitizer/UBSan build. The
-   whole existing suite is clean under those sanitizers and always was; what the
-   fuzzers reached is the argument space the suite does not cover, because it is
-   the space no correct program visits. A user's typo visits it.
 
  [Four segmentation faults and a `SIGFPE`]
 
@@ -323,6 +283,28 @@ Revision history for Stats-LikeR
      not in `read_table`'s own options table — so `h('read_table')` did not list
      it, and the R-written `mtcars.tsv` in this repository looked unreadable.
 
+ - `aov` allocated its design matrix and the snapshot it keeps for fitted
+   values a row at a time: 2n allocator calls and 2n malloc headers for a
+   matrix `lm` has always taken in one block. They are one block each now. At
+   n = 20000 that is 39,965 fewer allocations, and `aov`'s time relative to
+   `lm` on the same fit went from 1.118x to 1.002x. The block multiply is
+   guarded against wrapping where `size_t` is 32 bits.
+
+ - `wilcox_test`'s exact confidence interval sorted the pairwise differences
+   and the Walsh averages with `nv_heapsort` where the introsort in the same
+   file is 1.6x to 1.9x faster at those sizes. The exact interval at n = 800
+   went from 0.1309s to 0.1162s.
+
+ - `assign(..., map_cell { ... })` on a hash-of-arrays frame assembled the row
+   view before testing whether the cell was `undef`, so a column of `undef`
+   built one view per row and threw every one away unread -- 0.161s of the
+   0.165s a 20000-row, 64-column pass cost. The test comes first now, and the
+   view is one hash refilled per row rather than a fresh hash each time. That
+   last part is visible to a block that keeps `$_[0]`: it now sees the current
+   row through the kept reference rather than the row it was handed, which is
+   what the AoH and HoH forms have always done, since those hand the block the
+   row hash itself.
+
  [Testing]
 
  - `t/arg.crash.regressions.t`, 98 assertions. Every crash case runs in a child
@@ -334,6 +316,28 @@ Revision history for Stats-LikeR
    two `hist` extremum assertions skip on a `double` NV and run for real on
    quadmath. `t/chunk.t` and `t/write_table.announce.t` gained the cases for the
    two smaller fixes.
+
+ - `coxph` had no test at all. `t/coxph.R.t` cross-validates it against R's
+   `survival` 3.8.9 on two corpora: `ovarian`, which that package ships and
+   `?coxph` uses, and a 16-observation set built for the purpose with ties at
+   two event times, because `ovarian` has none and Efron and Breslow are
+   therefore indistinguishable on it. Its values are all small integers, so
+   the tie structure does not move with the NV width. Worst disagreement with
+   `survival` across all 22 quantities and both tie methods is 8.88e-16 on the
+   double builds, 3.64e-16 on long double and `__float128`, and 1.11e-15 on
+   the 32-bit one -- 2 to 5 ulp. `t/coxph.R.R` regenerates the frozen table.
+
+ - `t/croak.leaks.t` covers every crash and leak above: that each croaks with
+   a message naming what went wrong, that none leaks an SV, and that the
+   ordinary call still returns what it did.
+
+ - `t/assign.t` gained two checks for the `map_cell` change, one of them a
+   tied sibling column that counts its `FETCH`es, so that a row view built for
+   a cell the block will never see is a failure rather than a slowdown.
+
+ - The whole suite runs clean under valgrind with
+   `--errors-for-leak-kinds=definite`, which it did not before: six functions
+   leaked.
 
 0.314 2026-09-02 CDT
 

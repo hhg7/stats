@@ -628,7 +628,7 @@ PERL_STATIC_INLINE SV *av_row_keep(pTHX_ SV *row)
 
 av_fetch() returns NULL for a hole in a sparse array -- what `my @a = (1,2,3,4);
 delete $a[2]` leaves behind, and what `$a[0] = 1; $a[3] = 4` makes of indices 1
-and 2 -- so the SV** it hands back cannot be dereferenced blind.  Up to 0.315
+and 2 -- so the SV** it hands back cannot be dereferenced blind.  Up to 0.314
 four readers did exactly that and took the interpreter down with them, none of
 it catchable, because eval does not see a signal:
 

@@ -1,9 +1,9 @@
 #!/usr/bin/env perl
 # Argument-validation paths must not leak, and must not die by signal.
 #
-# Every case here is a defect found in 0.315 by running the suite under
-# valgrind (--leak-check=full --errors-for-leak-kinds=definite) and by growing
-# RSS over tens of thousands of failing calls. Two distinct faults:
+# Every case here is a defect that shipped in 0.314, found by running the
+# suite under valgrind (--leak-check=full --errors-for-leak-kinds=definite) and
+# by watching RSS over tens of thousands of failing calls. Two distinct faults:
 #
 #  * SIGSEGV / runaway. A hole in a sparse array -- what `delete $a[2]` leaves,
 #    or `$a[0]=1; $a[3]=4` makes of indices 1 and 2 -- reached
@@ -48,7 +48,7 @@ BEGIN {
     }
 }
 
-# ---------------------------------------------------------------- fixtures
+# fixtures
 sub hole_at {                     # a 4-element array with index $i missing
     my $i = shift;
     my @a = ( 10, 20, 30, 40 );
@@ -73,7 +73,7 @@ my %aov_d = ( y => [ 1 .. 8 ], a => [qw(x x y y x x y y)], b => [qw(p q p q p q 
 
 # Each: [ label, code, qr/expected message/ ]
 my @cases = (
-    # -- the SIGSEGV set -------------------------------------------------
+    # -- the SIGSEGV set
     [ 'epi_2x2 flat hole',   sub { Stats::LikeR::epi_2x2( hole_at(2) ) },
         qr/epi_2x2: cell at index 2 is undef/ ],
     [ 'epi_2x2 flat undef',  sub { Stats::LikeR::epi_2x2( [ 1, 2, undef, 4 ] ) },
@@ -106,7 +106,7 @@ my @cases = (
             Stats::LikeR::logrank_test( \@t, \@st, [ map { $_ % 2 ? 'a' : 'b' } 1 .. 16 ] ) },
         qr/logrank_test: time at index 2/ ],
 
-    # -- the leaking-croak set -------------------------------------------
+    # -- the leaking-croak set
     [ 'dunn_test unknown method',
         sub { Stats::LikeR::dunn_test( \@dunn_x, \@dunn_g, method => 'nope' ) },
         qr/dunn_test: unknown method 'nope'/ ],
