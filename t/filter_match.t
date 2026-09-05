@@ -75,8 +75,16 @@ throws_ok { col('x')->nomatch(undef) }
 }
 
 if ($INC{'Devel/Cover.pm'}) { done_testing(); exit 0 }
+# The qr// is compiled outside the block on purpose: perl 5.10.0 leaks one SV
+# per qr// evaluation. pp_qr() takes the package name from reg_qr_package(),
+# which is a newSVpvs("Regexp"), and never releases it; the SvREFCNT_dec(pkg)
+# that fixes it is in 5.10.1's pp_hot.c. A CPAN smoker on perl-5.10.0
+# (x86_64-linux) failed 0.315 here with a leaked PV "Regexp", which is that SV
+# and not anything filter() or ->match did.  ->match takes a precompiled qr//
+# as-is, so the path under test is unchanged.
+my $re_5iz = qr/^5iz/;
 no_leaks_ok {
-	my $r = filter($aoh, col('id')->match(qr/^5iz/) & (col('res') < 2.5));
+	my $r = filter($aoh, col('id')->match($re_5iz) & (col('res') < 2.5));
 } 'col()->match: no memory leaks';
 no_leaks_ok {
 	eval { col('x')->match() };

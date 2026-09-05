@@ -1,5 +1,35 @@
 Revision history for Stats-LikeR
 
+0.3151 2026-09-05 CDT
+
+ [Two leak checks failed on perl 5.10.0, which leaks every `qr//` itself]
+
+ - A CPAN smoker running perl 5.10.0 (x86_64-linux, `double` NV, 64-bit `IV`)
+   failed 0.315 in `t/cfilter.t` and `t/filter_match.t`, one leaked SV each.
+   `Test::LeakTrace` reported a `PV` holding the string `"Regexp"` -- `CUR = 6`,
+   `REFCNT = 1` -- and attributed it to the line of the `no_leaks_ok` call.
+   Nothing in `LikeR.xs`, and nothing on the Perl side, allocates that SV.
+
+ - It is perl's own. `pp_qr()` blesses the object it builds into the package
+   named by `reg_qr_package()`, which is a `newSVpvs("Regexp")`; on 5.10.0
+   nothing ever releases it, so *every* evaluation of a `qr//` leaks one SV.
+   The `SvREFCNT_dec(pkg)` that fixes it is in 5.10.1's `pp_hot.c` (and
+   `reg_qr_package()` is `regcomp.c:5287` there). `perl-5.10.1` is the oldest
+   perl in the local matrix, so no run here could reproduce this, and none of
+   the newer perls the smokers use can either.
+
+ - Those two blocks were the only two leak checks in the whole suite that
+   evaluated a `qr//` inside the measured block, which is why exactly two
+   subtests failed and why the count was exactly one SV apiece. Both now
+   compile the pattern into a lexical ahead of the block and pass that in.
+   `cfilter`'s regex selector and `col()->match` each take a precompiled
+   `qr//` as it comes -- `col()->match` compiles a pattern with `qr//` only
+   when handed a string -- so the code under measurement is unchanged, and the
+   checks still cover the same paths.
+
+ - Nothing in the module changed: 0.315 does not leak on perl 5.10.0, and
+   `t/cfilter.t` and `t/filter_match.t` are the only files that differ.
+
 0.315 2026-09-04 CDT
 
  - Defect fixes, plus a set of speed and memory changes. No numeric answer

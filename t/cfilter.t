@@ -129,7 +129,14 @@ dies_ok { cfilter( 42, 'keep' => [ 'x' ] ) } 'non-reference data dies';
 # the leak checks (which are the last tests here) when running under coverage.
 if ($INC{'Devel/Cover.pm'}) { done_testing(); exit 0 }
 no_leaks_ok { cfilter( \%hoa, 'keep' => [ 'x', 'y' ] ) } 'no leaks: keep by name';
-no_leaks_ok { cfilter( \%hoa, 'remove' => qr/(?:step|z)/ ) } 'no leaks: remove by regex';
+# The qr// is compiled outside the block on purpose: perl 5.10.0 leaks one SV
+# per qr// evaluation. pp_qr() takes the package name from reg_qr_package(),
+# which is a newSVpvs("Regexp"), and never releases it; the SvREFCNT_dec(pkg)
+# that fixes it is in 5.10.1's pp_hot.c. A CPAN smoker on perl-5.10.0
+# (x86_64-linux) failed 0.315 here with a leaked PV "Regexp", which is that SV
+# and not anything cfilter() did.
+my $re_step_z = qr/(?:step|z)/;
+no_leaks_ok { cfilter( \%hoa, 'remove' => $re_step_z ) } 'no leaks: remove by regex';
 no_leaks_ok { cfilter( \%hoa, 'keep' => sub { 1 } ) } 'no leaks: default predicate (sees undef)';
 no_leaks_ok { cfilter( \%hoa, 'keep' => sub { sd( $_[0] ) == 0 }, 'na' => 'omit' ) } 'no leaks: na=omit';
 no_leaks_ok { cfilter( \%corr, 'keep' => sub { cor( $_[0], $_[1] ) > 0 }, 'against' => 'a' ) } 'no leaks: against';

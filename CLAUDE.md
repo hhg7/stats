@@ -390,3 +390,18 @@ Solaris, illumos and the BSDs specifically:
 - Raising `MIN_PERL_VERSION` is a maintainer decision, not a way to make a
   build error go away. If a change truly needs a newer perl, say so in the
   reply and stop.
+
+#### Never evaluate a `qr//` inside a leak-test block
+
+`perl-5.10.1` is the oldest perl installed here, but CPAN smokers still run
+**5.10.0**, and 5.10.0's `pp_qr()` leaks one SV every time a `qr//` is
+evaluated: it takes the package name from `reg_qr_package()`, which is a
+`newSVpvs("Regexp")`, and never releases it. The `SvREFCNT_dec(pkg)` that fixes
+it is present in 5.10.1's `pp_hot.c`, so nothing in the local matrix can
+reproduce it. 0.315 got a FAIL from a 5.10.0 smoker for exactly this, in
+`t/cfilter.t` and `t/filter_match.t`: `Test::LeakTrace` reported a leaked
+`PV "Regexp"` and blamed the line of the `no_leaks_ok` call.
+
+Compile the pattern into a lexical *before* the block and pass that in, with a
+comment saying why. The XS path under test is unchanged -- `cfilter`'s regex
+selector and `col()->match` both take a precompiled `qr//` as it comes.
