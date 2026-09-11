@@ -14,6 +14,12 @@ log-log axis the slope of the line is the exponent.
     Rscript scale.R                             # -> r_scaling.tsv
     perl plot.scaling.pl --plot                 # -> scaling.*.svg
 
+Every measurement is two numbers, not one: the seconds the call took and the
+bytes it allocated at its high-water mark.  plot.scaling.pl draws them as two
+images per figure, scaling.vector.svg against seconds and
+scaling.vector.ram.svg against bytes, so a curve in one has its counterpart in
+the same panel of the other.
+
 Environment:
 
     SCALE_DIR    where --data put the fixtures (/tmp/likeR.scaling)
@@ -56,6 +62,7 @@ import csv
 import os
 import sys
 import time
+import tracemalloc
 
 import numpy as np
 import pandas as pd
@@ -325,6 +332,14 @@ def pin_to_one_cpu():
           'scale.R must be on the same one' % (cpu, len(before)))
 
 
+def human_bytes(b):
+    """Decimal prefixes for the progress report, as plot.scaling.pl prints."""
+    for limit, unit in ((1e9, 'GB'), (1e6, 'MB'), (1e3, 'kB')):
+        if b >= limit:
+            return '%.2f %s' % (b / limit, unit)
+    return '%d B' % b
+
+
 def measure(body, data):
     """One reading: seconds per call, averaged over however many calls fit."""
     t0 = time.perf_counter()
@@ -335,6 +350,33 @@ def measure(body, data):
     for _ in range(reps):
         body(data)
     return (time.perf_counter() - t0) / reps, reps
+
+
+def weigh(body, data):
+    """One reading: bytes allocated by a single call, at its high-water mark.
+
+    Time and memory are measured in separate calls, for the reason benchmark.py
+    gives: tracemalloc hooks every allocation, so a call made while it is
+    running takes 1.4x to 3x as long as the same call made without it, and a
+    clock running over a traced call measures tracemalloc rather than pandas.
+    Here it costs one extra call per run rather than a doubling of the stage,
+    because the repeat loop above is what the seconds cost, and the peak of one
+    call is the whole of the memory answer.
+
+    What the number contains: every allocation Python's allocator sees during
+    the call, including NumPy and pandas buffers, which route through PyDataMem.
+    It does not see plain malloc from BLAS or SciPy's Fortran kernels.  Like the
+    peak resident set plot.scaling.pl reads and the gc() figure scale.R takes,
+    it is the right order of magnitude rather than an exact ledger, and the
+    three are not the same quantity -- read the shape of each curve, and
+    compare the three across functions rather than to each other at one size.
+    """
+    tracemalloc.start()
+    try:
+        body(data)
+        return tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
 
 
 def main():
@@ -363,13 +405,16 @@ def main():
                     continue
 
                 slowest = 0.0
+                heaviest = 0
                 reps = 0
                 for run in range(RUNS):
                     elapsed, reps = measure(body, data)
+                    peak = weigh(body, data)
                     slowest = max(slowest, elapsed)
-                    results.append((figure, name, call, n, run, elapsed))
-                print('%-9s %-30s n=%-8d %.6f s%s'
-                      % (figure, name, n, slowest,
+                    heaviest = max(heaviest, peak)
+                    results.append((figure, name, call, n, run, elapsed, peak))
+                print('%-9s %-30s n=%-8d %.6f s %9s%s'
+                      % (figure, name, n, slowest, human_bytes(heaviest),
                          ' (x%d)' % reps if reps > 1 else ''))
                 if slowest > CAP:
                     too_slow.add(name)
@@ -387,9 +432,9 @@ def main():
             os.unlink(out)
 
     with open('python_scaling.tsv', 'w') as fh:
-        fh.write('figure\tfunction\tcall\tn\trun\tseconds\n')
+        fh.write('figure\tfunction\tcall\tn\trun\tseconds\tbytes\n')
         for row in results:
-            fh.write('%s\t%s\t%s\t%d\t%d\t%.9f\n' % row)
+            fh.write('%s\t%s\t%s\t%d\t%d\t%.9f\t%d\n' % row)
     print('Done. %d measurements written to python_scaling.tsv' % len(results))
 
 

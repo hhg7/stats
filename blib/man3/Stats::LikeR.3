@@ -58,7 +58,7 @@
 .\" ========================================================================
 .\"
 .IX Title "Stats::LikeR 3"
-.TH Stats::LikeR 3 2026-09-05 "perl v5.44.0" "User Contributed Perl Documentation"
+.TH Stats::LikeR 3 2026-09-11 "perl v5.44.0" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -5966,10 +5966,11 @@ leading comments are never mistaken for one. You may name such a column in a
 .IX Subsection "Excel (.xlsx) files"
 .PP
 A file whose name ends in \f(CW\*(C`.xlsx\*(C'\fR is read directly, with \fBno extra
-dependencies\fR — the parser uses the core \f(CW\*(C`IO::Uncompress::Unzip\*(C'\fR module to pull
-the parts out of the (zipped) workbook and reads the XML itself. All
-\&\f(CW\*(C`output.type\*(C'\fR, \f(CW\*(C`filter\*(C'\fR, and \f(CW\*(C`row.names\*(C'\fR options work exactly as they do for
-text files:
+dependencies\fR — the core \f(CW\*(C`IO::Uncompress::Unzip\*(C'\fR module pulls the parts out of
+the (zipped) workbook and the worksheet XML is parsed in XS, through the same
+fast path a delimited file takes: \f(CW\*(C`read_table\*(C'\fR reads the header in Perl and the
+rows are assembled in C. All \f(CW\*(C`output.type\*(C'\fR, \f(CW\*(C`filter\*(C'\fR, and \f(CW\*(C`row.names\*(C'\fR options
+work exactly as they do for text files:
 .PP
 .Vb 3
 \& my $data = read_table(\*(Aqsamples.xlsx\*(Aq);
@@ -5991,9 +5992,14 @@ A workbook with a single worksheet, or a call that names a \f(CW\*(C`sheet\*(C'\
 returns that one table directly (not wrapped in a hash).
 .PP
 Limitations: dates and times are returned as their raw Excel serial numbers
-(cell number formats are not applied); and shared\-string rich\-text runs are
-concatenated into a single value. The \f(CW\*(C`sep\*(C'\fR, \f(CW\*(C`delim\*(C'\fR, and \f(CW\*(C`comment\*(C'\fR options do
-not apply to \f(CW\*(C`.xlsx\*(C'\fR files. Tested in \f(CW\*(C`t/read_table.xlsx.t\*(C'\fR.
+(cell number formats are not applied); shared\-string rich\-text runs are
+concatenated into a single value; and two things the format does not allow are
+read as if they were not there — a cell reference past \f(CW\*(C`XFD\*(C'\fR, the last of the
+16,384 columns a worksheet has, places the cell in the next column instead, and
+a numeric character reference above \f(CW\*(C`&#x7FFFFFFF;\*(C'\fR is left in the text rather
+than decoded. The \f(CW\*(C`sep\*(C'\fR, \f(CW\*(C`delim\*(C'\fR, and \f(CW\*(C`comment\*(C'\fR options do not
+apply to \f(CW\*(C`.xlsx\*(C'\fR files. Tested in \f(CW\*(C`t/read_table.xlsx.t\*(C'\fR and
+\&\f(CW\*(C`t/read_table.xlsx.parser.t\*(C'\fR.
 .SS rename_cols
 .IX Subsection "rename_cols"
 .Vb 2

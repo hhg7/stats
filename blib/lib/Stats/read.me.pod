@@ -8108,10 +8108,11 @@ C<filter> either as it appears in the file or by its clean name:
 =head3 Excel (.xlsx) files
 
 A file whose name ends in C<.xlsx> is read directly, with B<no extra
-dependencies> — the parser uses the core C<IO::Uncompress::Unzip> module to pull
-the parts out of the (zipped) workbook and reads the XML itself. All
-C<output.type>, C<filter>, and C<row.names> options work exactly as they do for
-text files:
+dependencies> — the core C<IO::Uncompress::Unzip> module pulls the parts out of
+the (zipped) workbook and the worksheet XML is parsed in XS, through the same
+fast path a delimited file takes: C<read_table> reads the header in Perl and the
+rows are assembled in C. All C<output.type>, C<filter>, and C<row.names> options
+work exactly as they do for text files:
 
  my $data = read_table('samples.xlsx');
  my $data = read_table('samples.xlsx', sheet => 'Results');   # by name
@@ -8129,9 +8130,14 @@ A workbook with a single worksheet, or a call that names a C<sheet> explicitly,
 returns that one table directly (not wrapped in a hash).
 
 Limitations: dates and times are returned as their raw Excel serial numbers
-(cell number formats are not applied); and shared-string rich-text runs are
-concatenated into a single value. The C<sep>, C<delim>, and C<comment> options do
-not apply to C<.xlsx> files. Tested in C<t/read_table.xlsx.t>.
+(cell number formats are not applied); shared-string rich-text runs are
+concatenated into a single value; and two things the format does not allow are
+read as if they were not there — a cell reference past C<XFD>, the last of the
+16,384 columns a worksheet has, places the cell in the next column instead, and
+a numeric character reference above C<&#x7FFFFFFF;> is left in the text rather
+than decoded. The C<sep>, C<delim>, and C<comment> options do not
+apply to C<.xlsx> files. Tested in C<t/read_table.xlsx.t> and
+C<t/read_table.xlsx.parser.t>.
 
 =head2 rename_cols
 

@@ -3,7 +3,7 @@
 require 5.010;
 use strict;
 package Stats::LikeR;
-our $VERSION = 0.3151;
+our $VERSION = 0.316;
 require XSLoader;
 use autodie ':default';
 use warnings FATAL => 'all';
@@ -2582,14 +2582,24 @@ sub summary {
 # concatenated.
 
 # Return the decompressed bytes of a named archive member, or undef if absent.
+#
+# The read appends onto the end of $content rather than going through a second
+# scalar: IO::Uncompress::Base::read() turns its truncating substr() into a
+# no-op when the offset is already the buffer's length, so the string is
+# extended in place instead of being copied by a concatenation. On the 36 MB
+# worksheet part of a 21,845 x 50 workbook that is 0.171 s against 0.243 s for
+# `$content .= $buf`, over three runs each in a fresh process, and it leaves
+# behind none of the ~25 MB of realloc slack the concatenation did.
+# Do NOT reach for BlockSize => 1<<20 instead: measured at 2.08 s on the same
+# part, 8x worse than the default.
 sub _unzip_member {
 	my ($file, $member) = @_;
 	require IO::Uncompress::Unzip;
 	my $z = IO::Uncompress::Unzip->new($file, Name => $member)
 		or return undef;
 	my $content = '';
-	my $buf;
-	while ((my $n = $z->read($buf)) > 0) { $content .= $buf }
+	my ($off, $n) = (0, 0);
+	while (($n = $z->read($content, 1 << 20, $off)) > 0) { $off += $n }
 	$z->close;
 	return $content;
 }
@@ -2610,36 +2620,14 @@ sub _xml_unescape {
 	return $s;
 }
 
-# "AB12" (or "AB") -> 0-based column index (A=0, Z=25, AA=26, ...).
-# Hot path (called once per cell): walk the leading letters by ordinal and stop
-# at the first non-letter (the row number), avoiding a regex substitution and a
-# split // on every call.
-sub _xlsx_col_idx {
-	my ($ref) = @_;
-	my $idx = 0;
-	for my $i (0 .. length($ref) - 1) {
-		my $o = ord(substr($ref, $i, 1));
-		if    ($o >= 65 && $o <=  90) { $idx = $idx * 26 + ($o - 64) }	# A-Z
-		elsif ($o >= 97 && $o <= 122) { $idx = $idx * 26 + ($o - 96) }	# a-z
-		else  { last }							# reached the digits
-	}
-	return $idx - 1;
-}
-
 # Shared strings (optional part): each <si> may hold several <t> runs, which
-# are concatenated. Returns an arrayref indexed by shared-string id.
+# are concatenated. Returns an arrayref indexed by shared-string id. The parse
+# is xlsx_sst_parse() in LikeR.xs; the two nested regexes it replaces cost
+# 0.205 s on an 8 MB table of 117,870 strings.
 sub _xlsx_shared_strings {
 	my ($file) = @_;
-	my @sst;
-	if (defined(my $ss = _unzip_member($file, 'xl/sharedStrings.xml'))) {
-		while ($ss =~ m{<si\b[^>]*>(.*?)</si>}gs) {
-			my $si  = $1;
-			my $str = '';
-			$str .= _xml_unescape($1) while $si =~ m{<t\b[^>]*>(.*?)</t>}gs;
-			push @sst, $str;
-		}
-	}
-	return \@sst;
+	my $ss = _unzip_member($file, 'xl/sharedStrings.xml');
+	return defined $ss ? _xlsx_sst_xs($ss) : [];
 }
 
 # The workbook's worksheets, in document order, as a list of
@@ -2701,85 +2689,19 @@ sub _xlsx_choose_sheet {
 
 # Parse one worksheet, invoking $callback->(\@fields) once per non-empty row
 # (header row included) with all rows padded to the same width -- the same
-# contract _parse_csv_file offers read_table's callback. $sst is the shared
-# strings arrayref from _xlsx_shared_strings.
+# contract _parse_csv_file offers read_table's callback, and the same $plan
+# fast path: once read_table has filled the plan in, the rows are assembled in
+# XS and the callback is not called again. $sst is the shared strings arrayref
+# from _xlsx_shared_strings.
+#
+# The part is decompressed here and parsed by xlsx_ws_scan() in LikeR.xs, which
+# is also where the reason it is not done in perl any more is written down.
 sub _parse_xlsx_sheet {
-	my ($file, $sst, $path, $callback) = @_;
+	my ($file, $sst, $path, $callback, $plan) = @_;
 	my $ws = _unzip_member($file, $path);
 	die "read_table: could not read worksheet '$path' in $file\n"
 		unless defined $ws;
-
-	# collect cells, positioning each by its column reference so gaps stay
-	# aligned, then pad every row to the widest row seen.
-	my @rows;
-	my $global_max = -1;
-	while ($ws =~ m{<row\b[^>]*>(.*?)</row>}gs) {
-		my $rowxml = $1;
-		my @cells;
-		my $maxc = -1;
-		# The r="A1" reference is almost always the first attribute, so the
-		# tokenizer captures its column letters ($1) directly -- computing the
-		# index from a group the match already produced is the single biggest
-		# win in this loop. If the capture misses (r= absent, not first, or a
-		# non-standard lowercase ref), $cattrs still holds the full attributes
-		# and we parse r= from there; only then do we fall back to sequential.
-		while ($rowxml =~ m{<c(?:\s+r="([A-Z]+)\d+")?([^>]*?)(?:/>|>(.*?)</c>)}gs) {
-			my ($ref, $cattrs, $cbody) = ($1, $2, $3);
-			my $ci;
-			if (defined $ref) {
-				$ci = 0;
-				$ci = $ci * 26 + (ord(substr($ref, $_, 1)) - 64)
-					for 0 .. length($ref) - 1;
-				$ci--;
-			} elsif ($cattrs =~ /\br="([A-Za-z]+)/) {
-				$ci = _xlsx_col_idx($1);
-			} else {
-				$ci = $maxc + 1;
-			}
-			# Cell type: a plain substring test on the (short) attribute run is
-			# markedly cheaper than a capturing /\bt="..."/ match run once per
-			# cell. Only "s" and "inlineStr" denote strings; every other type
-			# value (str/b/e/n) and a missing t= take the raw <v> path, exactly
-			# as the previous /\bt="..."/ dispatch did. Cell-element attribute
-			# names are a fixed set (r,s,t,cm,vm,ph) whose other values are
-			# numeric refs, so 't="s"' / 't="inlineStr"' can only ever appear as
-			# the genuine type attribute -- no false substring match is possible.
-			my $val = '';
-			if (defined $cbody) {
-				if (index($cattrs, 't="s"') >= 0) {		# shared-string index
-					# Almost every string cell body is exactly <v>DIGITS</v>; an
-					# anchored match reads it in one step, falling back to the
-					# general <v ...> scan only for the rare attributed <v>.
-					my $v = ($cbody =~ m{\A<v>([^<]*)</v>\z})
-						? $1 : ($cbody =~ m{<v\b[^>]*>(.*?)</v>}s)[0];
-					$val = (defined $v && $v =~ /^\d+\z/) ? ($sst->[$v] // '') : '';
-				} elsif (index($cattrs, 't="inlineStr"') >= 0) {
-					$val .= _xml_unescape($1) while $cbody =~ m{<t\b[^>]*>(.*?)</t>}gs;
-				} else {			# number / formula str / bool / error
-					my $v = ($cbody =~ m{\A<v>([^<]*)</v>\z})
-						? $1 : ($cbody =~ m{<v\b[^>]*>(.*?)</v>}s)[0];
-					$val = defined $v ? _xml_unescape($v) : '';
-				}
-			}
-			$cells[$ci] = $val;
-			$maxc = $ci if $ci > $maxc;
-		}
-		push @rows, \@cells;
-		$global_max = $maxc if $maxc > $global_max;
-	}
-	undef $ws;	# free the (potentially large) worksheet XML before emitting
-
-	# Emit each row padded to the widest row seen, consuming @rows as we go
-	# (shift, not foreach) so the parsed AoA and the caller's growing structure
-	# never both sit fully in memory at once. Pad and fill holes in place -- the
-	# callback reads by index and never retains the ref -- so this is a light
-	# touch, not a second full copy.
-	while (my $cells = shift @rows) {
-		$#$cells = $global_max;			# extend to the common width
-		$_ //= '' for @$cells;			# fill gaps + padding in place
-		next unless grep { length } @$cells;	# skip fully blank rows, as CSV does
-		$callback->($cells);
-	}
+	_parse_xlsx_sheet_xs($ws, $sst, $callback, $plan);
 	return;
 }
 
@@ -2924,14 +2846,15 @@ sub read_table {
 #
 # Only the shapes that need no per-row perl can go this way: 'hoh' names each
 # row from one of its own columns, and a 'filter' is perl by definition, so
-# both keep streaming through $on_line. An .xlsx is read by a different parser,
-# which has no fast path. $plan stays undef in all of those, and that is how
-# _parse_csv_file knows not to look for one.
+# both keep streaming through $on_line. $plan stays undef in both, and that is
+# how the parser knows not to look for one. An .xlsx goes through a different
+# parser (_parse_xlsx_sheet_xs) but the same plan: both hand a finished row to
+# the same S_fast_row().
 #
 # See csv_plan in LikeR.xs for what each key means. install_plan() runs exactly
 # once, from wherever $header_done is first set, and writes 'out' last because
 # that is the key the parser tests for.
-	my $plan = (!$is_xlsx && !$filter && $otype ne 'hoh') ? {} : undef;
+	my $plan = (!$filter && $otype ne 'hoh') ? {} : undef;
 	my $install_plan = sub {
 		return if !$plan || %$plan;
 		# A repeated column name resolves to its LAST field, which is what
@@ -3146,7 +3069,7 @@ sub read_table {
 	if ($is_xlsx) {
 		my $sst    = $args{_sst} // _xlsx_shared_strings($file);
 		my $chosen = _xlsx_choose_sheet($file, $xlsx_sheets, $args{sheet});
-		_parse_xlsx_sheet($file, $sst, $chosen->{path}, $on_line);
+		_parse_xlsx_sheet($file, $sst, $chosen->{path}, $on_line, $plan);
 	} else {
 		_parse_csv_file($file, $args{sep} // '', $args{comment} // '',
 			$on_line, $plan);
@@ -13215,10 +13138,11 @@ C<filter> either as it appears in the file or by its clean name:
 =head3 Excel (.xlsx) files
 
 A file whose name ends in C<.xlsx> is read directly, with B<no extra
-dependencies> — the parser uses the core C<IO::Uncompress::Unzip> module to pull
-the parts out of the (zipped) workbook and reads the XML itself. All
-C<output.type>, C<filter>, and C<row.names> options work exactly as they do for
-text files:
+dependencies> — the core C<IO::Uncompress::Unzip> module pulls the parts out of
+the (zipped) workbook and the worksheet XML is parsed in XS, through the same
+fast path a delimited file takes: C<read_table> reads the header in Perl and the
+rows are assembled in C. All C<output.type>, C<filter>, and C<row.names> options
+work exactly as they do for text files:
 
  my $data = read_table('samples.xlsx');
  my $data = read_table('samples.xlsx', sheet => 'Results');   # by name
@@ -13236,9 +13160,14 @@ A workbook with a single worksheet, or a call that names a C<sheet> explicitly,
 returns that one table directly (not wrapped in a hash).
 
 Limitations: dates and times are returned as their raw Excel serial numbers
-(cell number formats are not applied); and shared-string rich-text runs are
-concatenated into a single value. The C<sep>, C<delim>, and C<comment> options do
-not apply to C<.xlsx> files. Tested in C<t/read_table.xlsx.t>.
+(cell number formats are not applied); shared-string rich-text runs are
+concatenated into a single value; and two things the format does not allow are
+read as if they were not there — a cell reference past C<XFD>, the last of the
+16,384 columns a worksheet has, places the cell in the next column instead, and
+a numeric character reference above C<&#x7FFFFFFF;> is left in the text rather
+than decoded. The C<sep>, C<delim>, and C<comment> options do not
+apply to C<.xlsx> files. Tested in C<t/read_table.xlsx.t> and
+C<t/read_table.xlsx.parser.t>.
 
 =head2 rename_cols
 

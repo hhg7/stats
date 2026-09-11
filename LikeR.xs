@@ -300,8 +300,8 @@ PERL_STATIC_INLINE bool sv_plain_nv(SV *sv, NV *out)
 }
 /*Running count, total and range of a numeric column, for the scans below.*/
 typedef struct {
-	NV sum;       // total of every value folded in so far
-	NV min;       // both undefined while count == 0
+	NV sum; // total of every value folded in so far
+	NV min; // both undefined while count == 0
 	NV max;
 	size_t count;
 } NvAcc;
@@ -394,7 +394,7 @@ static LIKER_NOINLINE void av_scan_max(AV *av, SSize_t *jp, SSize_t len,
 	for (; j < len; j++) {
 		NV v;
 		if (!el[j] || !sv_plain_nv(el[j], &v)) break;
-		if (nv_isnan(v) || v > mx) mx = v;   //NaN wins and stays; see the contract
+		if (nv_isnan(v) || v > mx) mx = v; //NaN wins and stays; see the contract
 		count++;
 	}
 	acc->max = mx;
@@ -7030,6 +7030,603 @@ static void S_fast_row(pTHX_ csv_plan *restrict p, AV *restrict row)
 		av_push(p->out, newRV_noinc((SV*)h));
 }
 
+/*read_table: parsing an .xlsx worksheet.
+
+A worksheet part is XML, but a very regular XML: <sheetData> holds <row>
+elements, each holding <c> cells, and a cell's value is a shared-string index,
+an inline <is><t> run, or a literal in <v>.  This used to be a nest of perl
+regexes in Stats::LikeR::_parse_xlsx_sheet(); measured on a 21,845 x 50
+workbook (36 MB of worksheet XML, 1,013,220 cells) it cost 1.68 s of the 2.47 s
+the read took, or 1.66 us per cell, against 0.099 s for a bare `$ws =~ m{<c\b}g`
+count of the same string -- so nearly all of it was perl's per-op overhead and
+not the scan.  The same table read from a CSV through _parse_csv_file() took
+0.139 s.  With this the whole read is 0.48 s and 221 MB, against 2.47 s and
+263 MB.
+
+Doing it here also drops an intermediate.  The perl parser had to buffer the
+whole sheet as an array of arrays (+76 MB on that file) before it could emit
+anything, because rows are padded to the widest row in the sheet and that is
+not known until the last row has been read.  Here a first pass finds the cells
+without building any, so the width is known before the first row is built, rows
+are emitted as they are parsed, and the csv_plan fast path above can assemble
+the caller's hashes directly.
+
+The two passes have to agree on every column index or a row comes out the wrong
+width, so there is only one scanner, xlsx_ws_scan(), and 'measure' selects the
+pass.  'measure' skips only the work of building a cell, never any of the work
+of finding one.
+
+Not handled, exactly as the perl parser did not handle it: dates and times come
+back as the serial numbers they are stored as, because that needs styles.xml,
+and a shared string's rich-text runs are concatenated.*/
+
+static bool xlsx_is_ws(char c) {
+	return c == ' ' || c == '\t' || c == '\n' || c == '\r';
+}
+
+/*strstr() over a length-delimited buffer.  memmem() is glibc-only and this has
+to build on Solaris and the BSDs, so it is memchr() on the first byte plus a
+memcmp() on the rest.*/
+static const char *xlsx_find(const char *restrict p, const char *restrict end,
+	const char *restrict needle, size_t nlen)
+{
+	if (nlen == 0 || (size_t)(end - p) < nlen) return NULL;
+	while (p <= end - nlen) {
+		const char *h = (const char*)memchr(p, needle[0], (size_t)(end - nlen - p) + 1);
+		if (!h) return NULL;
+		if (memcmp(h, needle, nlen) == 0) return h;
+		p = h + 1;
+	}
+	return NULL;
+}
+
+/*Advance past the rest of a start tag, from the first character after the
+element name to just past its '>'.  An attribute value may legally contain '>'
+-- XML requires only '<' and '&' to be escaped there -- so the scan tracks the
+quote it is inside rather than stopping at the first '>'.  *attrs / *attrs_len
+delimit the attribute run for xlsx_attr(), and *self_close says whether the tag
+closed itself with "/>".  An unterminated tag returns end, which ends the
+parse.*/
+static const char *xlsx_tag_end(const char *restrict p, const char *restrict end,
+	const char **restrict attrs, STRLEN *restrict attrs_len,
+	bool *restrict self_close)
+{
+	const char *a = p;
+	char q = 0;	// 0 = not inside an attribute value, else the opening quote
+	*self_close = FALSE;
+	while (p < end) {
+		const char c = *p;
+		if (q) {
+			if (c == q) q = 0;
+		} else if (c == '"' || c == '\'') {
+			q = c;
+		} else if (c == '>') {
+			*attrs     = a;
+			*attrs_len = (STRLEN)(p - a);
+			if (p > a && p[-1] == '/') { *self_close = TRUE; (*attrs_len)--; }
+			return p + 1;
+		}
+		p++;
+	}
+	*attrs     = a;
+	*attrs_len = (STRLEN)(end - a);
+	return end;
+}
+
+/*The value of attribute 'name' in a start tag's attribute run, or NULL when it
+is absent; *vlen gets its length.  The run is walked attribute by attribute
+rather than searched for 'name="', so a name that is the tail of a longer one
+(r= inside r:id=, t= inside a namespaced t2=) can never match, and neither can
+text that happens to sit inside another attribute's value.*/
+static const char *xlsx_attr(const char *restrict a, STRLEN alen,
+	const char *restrict name, STRLEN nlen, STRLEN *restrict vlen)
+{
+	const char *p = a;
+	const char *const e = a + alen;
+	while (p < e) {
+		const char *ns;
+		const char *ve;
+		STRLEN thislen;
+		char q;
+		while (p < e && xlsx_is_ws(*p)) p++;
+		if (p >= e) break;
+		ns = p;
+		while (p < e && *p != '=' && !xlsx_is_ws(*p)) p++;
+		thislen = (STRLEN)(p - ns);
+		while (p < e && xlsx_is_ws(*p)) p++;
+		if (p >= e || *p != '=') continue;	//a valueless attribute: on to the next
+		p++;
+		while (p < e && xlsx_is_ws(*p)) p++;
+		if (p >= e || (*p != '"' && *p != '\'')) continue;
+		q  = *p++;
+		ve = (const char*)memchr(p, q, (size_t)(e - p));
+		if (!ve) break;
+		if (thislen == nlen && memcmp(ns, name, nlen) == 0) {
+			*vlen = (STRLEN)(ve - p);
+			return p;
+		}
+		p = ve + 1;
+	}
+	return NULL;
+}
+
+/*The 0-based column index of an A1-style cell reference ("AB12" -> 27), or
+(size_t)-1 when the reference does not begin with letters.  Only the leading
+letters are read; the row number after them is the caller's business.
+
+Three letters is the cap, and it is not arbitrary: ECMA-376 fixes a worksheet
+at 16,384 columns, so XFD is the last reference there is and a fourth letter
+means the file is not one.  It matters because every row is padded to the
+widest column the sheet mentions, so the reference is what decides how much
+memory a row costs -- and a bad one should cost the 16,384 the format allows
+rather than the 12 million "ZZZZZ" would ask for, or the 300 million of
+"ZZZZZZ", or whatever the perl parser this replaces would have tried when
+handed something longer still.  Answering "not a reference" puts the cell in
+the next column, which is also what a cell with no r= at all gets.*/
+#define XLSX_MAX_COL 16384	//ECMA-376: the last column is XFD
+
+static size_t xlsx_ref_col(const char *restrict r, STRLEN len)
+{
+	size_t idx = 0;
+	STRLEN i;
+	for (i = 0; i < len; i++) {
+		const unsigned char c = (unsigned char)r[i];
+		size_t d;
+		if      (c >= 'A' && c <= 'Z') d = (size_t)(c - 'A') + 1;
+		else if (c >= 'a' && c <= 'z') d = (size_t)(c - 'a') + 1;
+		else break;			//the row number, which ends the reference
+		if (i >= 3) return (size_t)-1;	//a fourth LETTER, not a fourth character
+		idx = idx * 26 + d;
+	}
+	if (!i || idx > XLSX_MAX_COL) return (size_t)-1;	//"ZZZ" is past XFD
+	return idx - 1;
+}
+
+/*Append s (raw XML text) to out with the five predefined entities and numeric
+character references decoded.  A numeric reference becomes UTF-8 bytes, through
+perl's own uvchr_to_utf8() so that it agrees with what utf8::encode() produced
+in the perl parser: the result stays byte-consistent with the rest of the part,
+which read_table reads and hands back as raw UTF-8 bytes rather than as decoded
+characters.
+
+One left-to-right pass is also what makes "&amp;lt;" come back as "&lt;" and
+not "<" -- each reference is decoded once and its replacement is never rescanned.
+The perl version got to the same place from the other side, by running the &amp;
+substitution last.
+
+Anything else that starts with '&' is copied through verbatim, including an
+entity this does not know (&nbsp;) and a bare '&', which is what the perl
+version did with them.*/
+static void xlsx_xml_uncat(pTHX_ SV *restrict out, const char *restrict s, STRLEN len)
+{
+	STRLEN i = 0;
+	while (i < len) {
+		const char *amp = (const char*)memchr(s + i, '&', (size_t)(len - i));
+		const char *ent, *semi_p, *next_amp;
+		STRLEN run, semi, elen, restlen;
+		run = amp ? (STRLEN)(amp - (s + i)) : (len - i);
+		if (run) sv_catpvn(out, s + i, run);
+		i += run;
+		if (!amp) break;
+/*The reference ends at the first ';'.  A '&' before that one means this is not
+a reference at all -- a reference cannot contain another -- and stopping there
+rather than at a fixed window is what keeps "&bad &amp;" decoding its second
+half: taking the first ';' in sight would swallow the whole run as one unknown
+entity and leave the &amp; undecoded, which is not what the perl version's five
+global substitutions did with it.*/
+		ent      = s + i + 1;
+		restlen  = len - (i + 1);
+		semi_p   = (const char*)memchr(ent, ';', restlen);
+		next_amp = (const char*)memchr(ent, '&', restlen);
+		if (!semi_p || (next_amp && next_amp < semi_p)) {
+			sv_catpvn(out, "&", 1);
+			i++;
+			continue;
+		}
+		semi = (STRLEN)(semi_p - s);
+		elen = (STRLEN)(semi_p - ent);
+		if      (elen == 2 && memcmp(ent, "lt",   2) == 0) sv_catpvn(out, "<",  1);
+		else if (elen == 2 && memcmp(ent, "gt",   2) == 0) sv_catpvn(out, ">",  1);
+		else if (elen == 3 && memcmp(ent, "amp",  3) == 0) sv_catpvn(out, "&",  1);
+		else if (elen == 4 && memcmp(ent, "quot", 4) == 0) sv_catpvn(out, "\"", 1);
+		else if (elen == 4 && memcmp(ent, "apos", 4) == 0) sv_catpvn(out, "'",  1);
+		else if (elen >= 2 && ent[0] == '#') {
+			UV   cp = 0;
+			bool ok = TRUE;
+			STRLEN k;
+			const bool hex = (ent[1] == 'x' || ent[1] == 'X');
+			const STRLEN first = hex ? 2 : 1;
+			for (k = first; k < elen; k++) {
+				const char c = ent[k];
+				UV d;
+				if      (c >= '0' && c <= '9') d = (UV)(c - '0');
+				else if (hex && c >= 'a' && c <= 'f') d = (UV)(c - 'a' + 10);
+				else if (hex && c >= 'A' && c <= 'F') d = (UV)(c - 'A' + 10);
+				else { ok = FALSE; break; }
+/*Stop before the multiply can wrap.  0x7FFFFFFF is perl's own ceiling for
+chr(), and it fits a UV on a 32-bit build as well as a 64-bit one; past it the
+reference is left in the text verbatim, which is the only answer that is the
+same on every perl in the matrix.  The perl version handed the number to chr()
+unguarded, and that was not: "&#999999999999;" came back as thirteen bytes of
+perl's extended UTF-8 on an ivsize=8 build and died outright on 5.44.0-i686
+with "Use of code point 0xFFFFFFFF is not allowed".  XML 1.0 does not allow a
+character reference above #x10FFFF at all, so nothing legal is lost.*/
+				if (cp > (UV)0x7FFFFFFF / (hex ? 16 : 10)) { ok = FALSE; break; }
+				cp = cp * (hex ? 16 : 10) + d;
+			}
+			if (k == first) ok = FALSE;	//"&#;" or "&#x;"
+			if (ok) {
+				char buf[UTF8_MAXBYTES + 1];
+				U8 *e = uvchr_to_utf8((U8*)buf, cp);
+				sv_catpvn(out, buf, (STRLEN)((char*)e - buf));
+			} else {
+				sv_catpvn(out, s + i, semi + 1 - i);
+			}
+		} else {
+			sv_catpvn(out, s + i, semi + 1 - i);
+		}
+		i = semi + 1;
+	}
+}
+
+/*The text of the first <open> child at or after p, with *len_out its length and
+*after the position to resume scanning from; NULL when there is none.  'close'
+is the matching end tag ("</t>") passed in whole so that this does not have to
+build it.  A self-closing <t/> yields an empty text, and an unclosed one runs to
+the end of the span, which is the only thing left to do with it.
+
+<v> and <t> never nest inside themselves, so the first end tag found is the
+right one.*/
+static const char *xlsx_child(const char *restrict p, const char *restrict end,
+	const char *restrict open, size_t olen,
+	const char *restrict close, size_t clen,
+	STRLEN *restrict len_out, const char **restrict after)
+{
+	while (p < end) {
+		const char *lt = (const char*)memchr(p, '<', (size_t)(end - p));
+		const char *a, *txt, *ce;
+		STRLEN alen;
+		bool self;
+		if (!lt) return NULL;
+		p = lt + 1;
+		if ((size_t)(end - p) <= olen || memcmp(p, open, olen) != 0) continue;
+		{
+			const char c = p[olen];
+			if (c != '>' && c != '/' && !xlsx_is_ws(c)) continue;
+		}
+		p = xlsx_tag_end(p + olen, end, &a, &alen, &self);
+		if (self) { *len_out = 0; *after = p; return p; }
+		txt = p;
+		ce  = xlsx_find(p, end, close, clen);
+		*len_out = (STRLEN)((ce ? ce : end) - txt);
+		*after   = ce ? ce + clen : end;
+		return txt;
+	}
+	return NULL;
+}
+
+/*A slot of the row buffer that no cell was stored into.
+
+It is not always NULL.  A cell is placed by its column reference, so a row with
+a gap leaves the slots between untouched, and what av_extend() left in them is
+the perl's business: 5.14 and later zero the region they allocate, but 5.10 and
+5.12 fill it with &PL_sv_undef instead.  Handing one of those to S_fast_row() is
+a segfault -- SvCUR() dereferences SvANY(), which is NULL on the immortal undef
+-- and it is not caught by any perl in the matrix from 5.14 up.  Neither value
+can be a cell this parser stored, so testing for both is the whole of it.*/
+#define XLSX_IS_HOLE(sv) (!(sv) || (sv) == &PL_sv_undef)
+
+/*The state one worksheet parse carries between its two passes and across the
+callback that reads the header.  Nothing in here is owned except 'row'.*/
+typedef struct {
+	const char *xml;
+	const char *end;
+	SV        **sst;	//shared strings, borrowed from the perl array
+	size_t      nsst;
+	size_t      width;	//pass 2: the width every emitted row is padded to
+	size_t      gmax;	//pass 1: one past the widest column index in the sheet
+	size_t      maxc;	//one past the widest column index in the current row
+	AV         *row;	//pass 2's row buffer, reused between rows
+	csv_plan   *plan;
+	SV         *callback;
+	HV         *plan_hv;	//the plan hash, until the callback has filled it in
+	bool        any;	//the current row has at least one non-empty cell
+	bool        in_row;
+} xlsx_ws;
+
+/*Hand one finished row on: to the plan's fast path once read_table has filled
+the plan in, and to the perl callback until then (which is how the header gets
+read, and the only path when a filter or a 'hoh' shape needs per-row perl).
+
+The row is padded to the sheet's width and its gaps filled with empty strings,
+because a caller reads by index and S_fast_row() tests SvCUR() for "empty".  A
+row with nothing but empty cells is dropped, as _parse_csv_file() drops a blank
+line.
+
+Ownership on the callback path matches S_emit_row(): the AV's single reference
+becomes a mortal RV before the call, so a die inside the callback releases it on
+the unwind, and w->row is cleared first so the unwind cannot reach it twice.*/
+static void xlsx_ws_row_end(pTHX_ xlsx_ws *restrict w, bool measure)
+{
+	SV **ary;
+	size_t j;
+
+	if (measure) {
+		if (w->maxc > w->gmax) w->gmax = w->maxc;
+		w->maxc = 0;
+		return;
+	}
+	if (!w->any) {	//blank row: free what it holds and reuse the buffer
+		ary = AvARRAY(w->row);
+		for (j = 0; (SSize_t)j <= AvFILLp(w->row); j++) {
+			if (!XLSX_IS_HOLE(ary[j])) SvREFCNT_dec(ary[j]);
+			ary[j] = NULL;
+		}
+		AvFILLp(w->row) = -1;
+		w->maxc = 0;
+		return;
+	}
+	if ((SSize_t)(w->width - 1) > AvFILLp(w->row)) {
+		const SSize_t from = AvFILLp(w->row) + 1;
+		av_extend(w->row, (SSize_t)(w->width - 1));
+/*av_extend() writes only the part of the buffer it had to allocate, so a row
+that comes back with spare capacity from the last one would keep whatever was
+in the slots past its fill.  Clear them here rather than reason about which
+branch av_extend() took.*/
+		Zero(AvARRAY(w->row) + from, (SSize_t)w->width - from, SV*);
+		AvFILLp(w->row) = (SSize_t)(w->width - 1);
+	}
+	ary = AvARRAY(w->row);
+	for (j = 0; j < w->width; j++)
+		if (XLSX_IS_HOLE(ary[j])) ary[j] = newSVpvs("");
+	w->maxc = 0;
+	w->any  = FALSE;
+	if (w->plan->active) {
+/*S_fast_row() frees the row itself before it croaks -- it has to, because it
+unwinds past _parse_csv_file()'s local -- so w->row must not still point at it
+when S_xlsx_ws_free() runs on that unwind.  Hand it over and take it back only
+if the call returns.*/
+		AV *row = w->row;
+		w->row = NULL;
+		S_fast_row(aTHX_ w->plan, row);		//empties the AV for the next row
+		w->row = row;
+		return;
+	}
+	{
+		AV *row = w->row;
+		dSP;
+		w->row = NULL;		//ownership leaves this function NOW
+		ENTER;
+		SAVETMPS;
+		PUSHMARK(SP);
+		XPUSHs(sv_2mortal(newRV_noinc((SV*)row)));
+		PUTBACK;
+		call_sv(w->callback, G_DISCARD);	//may die: w->row is NULL, nothing leaks
+		FREETMPS;
+		LEAVE;
+		w->row = newAV();
+		av_extend(w->row, (SSize_t)(w->width - 1));
+	}
+/*read_table fills the plan in from the row that fixes the header, so this is
+looked at once per row until it does -- twice in practice -- and never again.*/
+	if (w->plan_hv && hv_exists(w->plan_hv, "out", 3)) {
+		S_plan_init(aTHX_ w->plan, w->plan_hv);
+		w->plan_hv = NULL;
+	}
+}
+
+/*One pass over the worksheet XML.  measure = TRUE finds every cell but builds
+none of them, which is how the width each row will be padded to is known before
+the first row is built; measure = FALSE builds the cells and emits the rows
+through xlsx_ws_row_end().*/
+static void xlsx_ws_scan(pTHX_ xlsx_ws *restrict w, bool measure)
+{
+	const char *p = w->xml;
+	const char *const end = w->end;
+
+	w->maxc   = 0;
+	w->any    = FALSE;
+	w->in_row = FALSE;
+	while (p < end) {
+		const char *lt = (const char*)memchr(p, '<', (size_t)(end - p));
+		const char *a;
+		STRLEN alen;
+		bool self;
+		if (!lt) break;
+		p = lt + 1;
+		if (p >= end) break;
+		if (*p == '/') {
+/*Only </row> matters; every other end tag falls through to the next '<'.*/
+			if ((size_t)(end - p) >= 5 && memcmp(p, "/row>", 5) == 0) {
+				if (w->in_row) {
+					xlsx_ws_row_end(aTHX_ w, measure);
+					w->in_row = FALSE;
+				}
+				p += 5;
+			}
+			continue;
+		}
+		if ((size_t)(end - p) > 3 && memcmp(p, "row", 3) == 0
+		    && (p[3] == '>' || p[3] == '/' || xlsx_is_ws(p[3]))) {
+/*A <row> that opens while one is already open cannot happen in valid XML, but
+closing the old one first is the only sane reading of it if it does.*/
+			if (w->in_row) xlsx_ws_row_end(aTHX_ w, measure);
+			p = xlsx_tag_end(p + 3, end, &a, &alen, &self);
+			w->in_row = TRUE;
+			if (self) {	//<row r="7"/>: an empty row, and so dropped
+				xlsx_ws_row_end(aTHX_ w, measure);
+				w->in_row = FALSE;
+			}
+			continue;
+		}
+		if (!((size_t)(end - p) > 1 && *p == 'c'
+		      && (p[1] == '>' || p[1] == '/' || xlsx_is_ws(p[1]))))
+			continue;	//<cols>, <col>, <conditionalFormatting>, ...
+		{
+			const char *rv;
+			STRLEN rvlen;
+			size_t ci;
+			p = xlsx_tag_end(p + 1, end, &a, &alen, &self);
+			if (!w->in_row) continue;	//a <c> outside <sheetData>
+			rv = xlsx_attr(a, alen, "r", 1, &rvlen);
+			ci = rv ? xlsx_ref_col(rv, rvlen) : (size_t)-1;
+			if (ci == (size_t)-1) ci = w->maxc;	//no usable r=: the next column
+			if (ci + 1 > w->maxc) w->maxc = ci + 1;
+			{
+				const char *body = p;
+				const char *tv, *txt;
+				STRLEN blen, tvlen, tlen;
+				SV *v;
+				short int t = 0;	// 0 = literal <v>, 1 = shared string, 2 = inline
+/*Skip to past </c> on BOTH passes, even though pass 1 wants nothing out of the
+body.  It is not an optimisation to leave it out: on malformed input -- a cell
+whose </c> is missing -- the search runs on to the next cell's, and a pass that
+skips then sees fewer cells than one that does not.  The width would come from
+one reading of the file and the rows from another, and a row would be built to
+the wrong length.  The scan is the same scan or it is not the same file.*/
+				if (self) {
+					blen = 0;
+				} else {
+					const char *ce = xlsx_find(p, end, "</c>", 4);
+					blen = (STRLEN)((ce ? ce : end) - body);
+					p    = ce ? ce + 4 : end;
+				}
+				if (measure) continue;
+				tv = xlsx_attr(a, alen, "t", 1, &tvlen);
+				if (tv && tvlen == 1 && tv[0] == 's') t = 1;
+				else if (tv && tvlen == 9 && memcmp(tv, "inlineStr", 9) == 0) t = 2;
+				if (t == 2) {
+					const char *q = body;
+					const char *after;
+					v = newSVpvs("");
+					while ((txt = xlsx_child(q, body + blen, "t", 1, "</t>", 4,
+					                         &tlen, &after)) != NULL) {
+						xlsx_xml_uncat(aTHX_ v, txt, tlen);
+						q = after;
+					}
+				} else {
+					const char *after;
+					txt = xlsx_child(body, body + blen, "v", 1, "</v>", 4,
+					                 &tlen, &after);
+					if (!txt) {
+						v = newSVpvs("");
+					} else if (t == 1) {
+/*A shared-string cell's <v> is an index into sharedStrings.xml.  Anything else
+in there -- and an index past the end of the table -- reads as an empty cell,
+which is what the perl parser's /^\d+\z/ test and its // '' did with it.
+
+Copying the shared string rather than building a fresh buffer is what makes this
+cheap, but only if the copy is allowed to be a copy-on-write one, and from XS it
+is not by default: sv.h defines SV_DO_COW_SVSETSV -- which is what sv_setsv()
+and newSVsv() pass -- to the real flags only under PERL_CORE, and to 0 otherwise,
+because "XS code on CPAN may not be" safe for it.  Asking for it explicitly is
+safe here: nothing in this file ever writes through SvPVX of a cell, and the
+value is handed straight to perl, which drops the sharing on the first write.
+Without the flag every cell allocated its own buffer.
+
+SV_COW_SHARED_HASH_KEYS is the flag on every perl back to 5.9.5, and ppport.h
+defines it away to 0 below that, which just returns the ordinary copy.  Perl
+5.20 is where it started covering plain strings and not only shared hash keys,
+so on 5.10 and 5.12 this is an ordinary copy again.  Sharing also stops at 256
+cells per string, which is where the one-byte COW refcount saturates and perl
+falls back to copying; a table of many distinct strings -- 117,870 of them for
+688,268 string cells in the workbook above -- stays well inside that.*/
+						size_t ix = 0;
+						bool ok = tlen > 0;
+						STRLEN k;
+						for (k = 0; k < tlen; k++) {
+							if (txt[k] < '0' || txt[k] > '9') { ok = FALSE; break; }
+							if (ix > ((size_t)-1 - 9) / 10) { ok = FALSE; break; }
+							ix = ix * 10 + (size_t)(txt[k] - '0');
+						}
+						if (ok && ix < w->nsst && w->sst[ix] && SvPOK(w->sst[ix])) {
+							v = newSV(0);
+							sv_setsv_flags(v, w->sst[ix],
+							               SV_COW_SHARED_HASH_KEYS);
+						} else {
+							v = newSVpvs("");
+						}
+					} else if (memchr(txt, '&', tlen)) {
+						v = newSVpvs("");
+						xlsx_xml_uncat(aTHX_ v, txt, tlen);
+					} else {
+						v = newSVpvn(txt, tlen);	//the common case: no entities
+					}
+				}
+/*av_store() releases whatever was in the slot, which is what makes a repeated
+r= in one row -- only malformed input produces one -- keep the last cell rather
+than leak the first.  Do not drop the old value here as well: that is a double
+free, and it is exactly what a mutation fuzz of the worksheet XML found.*/
+				av_store(w->row, (SSize_t)ci, v);
+				if (SvCUR(v)) w->any = TRUE;
+			}
+		}
+	}
+	if (w->in_row) xlsx_ws_row_end(aTHX_ w, measure);	//no </row> at the end
+}
+
+/*Save-stack destructor for the row buffer: a croak from S_fast_row(), or a die
+inside the header callback, unwinds past the XSUB body before it can drop it.
+w->row is NULL for exactly the two windows where someone else owns the row --
+while the callback holds it, and while S_fast_row() may croak with it -- so this
+frees it once or not at all.*/
+static void S_xlsx_ws_free(pTHX_ void *v)
+{
+	xlsx_ws *w = (xlsx_ws*)v;
+	SvREFCNT_dec((SV*)w->row);
+	Safefree(w);
+}
+
+/*The workbook's shared-string table, as an AV of byte strings indexed by
+shared-string id.
+
+Each <si> holds one <t> run, or several when the string is rich text, and the
+runs are concatenated -- so a string that Excel split across two formatting runs
+comes back whole, without its formatting.  The perl loop this replaces cost
+0.205 s on an 8 MB table of 117,870 strings, most of it the two nested regexes
+and a sub call per run.
+
+<t> elements inside a phonetic-guide <rPh> are picked up along with the real
+runs, as they were by the perl version; a furigana annotation is the only thing
+that puts one there and no writer this reads emits them.*/
+static AV *xlsx_sst_parse(pTHX_ const char *restrict xml, STRLEN xlen)
+{
+	AV *sst = newAV();
+	const char *p = xml;
+	const char *const end = xml + xlen;
+
+	while (p < end) {
+		const char *lt = (const char*)memchr(p, '<', (size_t)(end - p));
+		const char *a, *si_end, *body, *txt, *after;
+		STRLEN alen, tlen;
+		bool self;
+		SV *v;
+		if (!lt) break;
+		p = lt + 1;
+		if (!((size_t)(end - p) > 2 && p[0] == 's' && p[1] == 'i'
+		      && (p[2] == '>' || p[2] == '/' || xlsx_is_ws(p[2]))))
+			continue;
+		p = xlsx_tag_end(p + 2, end, &a, &alen, &self);
+		if (self) { av_push(sst, newSVpvs("")); continue; }
+		body   = p;
+		si_end = xlsx_find(p, end, "</si>", 5);
+		p      = si_end ? si_end + 5 : end;
+		v      = newSVpvs("");
+		{
+			const char *q = body;
+			const char *const b_end = si_end ? si_end : end;
+			while ((txt = xlsx_child(q, b_end, "t", 1, "</t>", 4,
+			                         &tlen, &after)) != NULL) {
+				if (memchr(txt, '&', tlen)) xlsx_xml_uncat(aTHX_ v, txt, tlen);
+				else                        sv_catpvn(v, txt, tlen);
+				q = after;
+			}
+		}
+		av_push(sst, v);
+	}
+	return sst;
+}
+
 static void lm_append(pTHX_ char **bufp, size_t *lenp, size_t *capp, const char *s){
 	size_t slen = strlen(s);
 	size_t sep  = (*lenp > 0) ? 1 : 0;
@@ -10175,7 +10772,7 @@ p_adjust() puts it too.
 
 Keep this list and dunn_padjust()'s dispatch in step; the croak at the end of
 that chain is now unreachable from dunn_test() and is left as a guard for any
-future caller that does not ask first.*/
+future caller that does not ask first*/
 static bool dunn_meth_known(const char *m) {
 	return strEQ(m, "none") || strEQ(m, "bonferroni") || strEQ(m, "sidak")
 	    || strEQ(m, "holm") || strEQ(m, "hs")         || strEQ(m, "bh")
@@ -10320,7 +10917,7 @@ static void moment_args(pTHX_ SV **args, size_t items,
 
 /*==
 density() and the bw.* bandwidth selectors
----------------------------------------------------------------------------
+---
 A port of R 4.6.1's stats::density.default(), together with the five bandwidth
 rules its `bw =` string can name, so that a Perl caller gets the same grid, the
 same bandwidth and the same estimate R would give.
@@ -10342,16 +10939,15 @@ R disperses the data onto a grid, convolves it with the discretised kernel
 using fft(), and interpolates back with approx().  It rounds n up to a power of
 two precisely so that transform is cheap, which means the transform length here
 (2n) is always a power of two and a plain radix-2 Cooley-Tukey is all that is
-needed -- see dens_fft().
- ==========================================================================*/
+needed -- see dens_fft()*/
 
 /*bandwidths.c: "Avoid slow and possibly error-producing underflows by cutting
-off at plus/minus sqrt(DELMAX) std deviations".*/
+off at plus/minus sqrt(DELMAX) std deviations"*/
 #define DENS_DELMAX 1000.0
 
 /*all.equal.numeric()'s default tolerance.  density() reaches for it twice:
 to decide whether user weights summed to one (and so should be re-normalised
-after NA removal), and to decide whether to warn that they did not.*/
+after NA removal), and to decide whether to warn that they did not*/
 #define DENS_ALL_EQ_TOL 1.5e-8
 
 /*pi at the full width of an NV.  A literal cannot supply this: an unsuffixed C
@@ -15825,7 +16421,7 @@ PPCODE:
 					croak("write_table: For ARRAY data, every element must be a HASH reference "
 						  "(Array of Hashes) or all ARRAY references (Array of Arrays); element 0 is undef\n");
 			}
-// FIX: i was size_t while av_len() returns SSize_t; keep both signed.
+// i was size_t while av_len() returns SSize_t; keep both signed.
 			for (SSize_t i = 0; i <= av_len(av); i++) {
 				SV **ptr = av_fetch(av, i, 0);
 				if (!ptr || !*ptr || !SvROK(*ptr) || SvTYPE(SvRV(*ptr)) != SVt_PVHV) {
@@ -16460,6 +17056,81 @@ practice, and never again afterwards.*/
 OUTPUT:
 	RETVAL
 
+SV* _parse_xlsx_sheet_xs(SV* xml_sv, SV* sst_sv, SV* callback, SV* plan_sv = &PL_sv_undef)
+PREINIT:
+	xlsx_ws  *w    = NULL;
+	csv_plan *plan = NULL;
+	AV *sst_av;
+	STRLEN xlen;
+	const char *xml;
+CODE:
+/*Stats::LikeR::_parse_xlsx_sheet() hands the decompressed worksheet part here.
+Everything about the shape of the answer is decided in perl exactly as it is for
+a CSV: the callback reads the header, and once read_table has filled the plan in
+S_fast_row() builds the rows.  See xlsx_ws_scan() above for the parser itself.*/
+	if (!SvROK(callback) || SvTYPE(SvRV(callback)) != SVt_PVCV)
+		croak("_parse_xlsx_sheet_xs: callback must be a CODE reference");
+	if (!SvROK(sst_sv) || SvTYPE(SvRV(sst_sv)) != SVt_PVAV)
+		croak("_parse_xlsx_sheet_xs: shared strings must be an ARRAY reference");
+	sst_av = (AV*)SvRV(sst_sv);
+	xml    = SvPV_const(xml_sv, xlen);
+	ENTER;
+	Newxz(plan, 1, csv_plan);
+	SAVEDESTRUCTOR_X(S_plan_free, plan);
+	Newxz(w, 1, xlsx_ws);
+	SAVEDESTRUCTOR_X(S_xlsx_ws_free, w);
+	w->row = newAV();
+	if (SvOK(plan_sv)) {
+		if (!SvROK(plan_sv) || SvTYPE(SvRV(plan_sv)) != SVt_PVHV)
+			croak("_parse_xlsx_sheet_xs: plan must be a HASH reference");
+		w->plan_hv = (HV*)SvRV(plan_sv);
+	}
+	w->xml      = xml;
+	w->end      = xml + xlen;
+/*Borrowed for the length of the parse.  Nothing on the callback's side touches
+the shared-string table -- read_table holds it only to pass it here -- so the
+array cannot be reallocated under this pointer.*/
+	w->sst      = AvARRAY(sst_av);
+	w->nsst     = (size_t)(AvFILLp(sst_av) + 1);
+	w->plan     = plan;
+	w->callback = callback;
+	xlsx_ws_scan(aTHX_ w, TRUE);	//pass 1: the width, from the cell references
+	w->width = w->gmax;
+/*A sheet with no cells at all has no rows to emit, and skipping pass 2 is also
+what keeps a width of 0 out of the row padding, which counts from width - 1.*/
+	if (w->width) {
+		av_extend(w->row, (SSize_t)(w->width - 1));
+		xlsx_ws_scan(aTHX_ w, FALSE);	//pass 2: build and emit
+	}
+	LEAVE;
+	RETVAL = newSV(0);
+OUTPUT:
+	RETVAL
+
+SV* _xlsx_sst_xs(SV* xml_sv)
+	CODE:
+	{
+		STRLEN xlen;
+		const char *xml = SvPV_const(xml_sv, xlen);
+		RETVAL = newRV_noinc((SV*)xlsx_sst_parse(aTHX_ xml, xlen));
+	}
+	OUTPUT:
+		RETVAL
+
+IV _xlsx_col_idx(SV* ref_sv)
+	CODE:
+	{
+/*"AB12" -> 27, and -1 when the reference does not start with a letter.  This is
+xlsx_ref_col(), which is what places every cell the worksheet parser reads; it
+is exposed because t/xlsx_col_idx.t exercises the letter arithmetic directly.*/
+		STRLEN len;
+		const char *r = SvPV_const(ref_sv, len);
+		size_t c = xlsx_ref_col(r, len);
+		RETVAL = (c == (size_t)-1) ? -1 : (IV)c;
+	}
+	OUTPUT:
+		RETVAL
+
 SV* cov(SV* x_sv, SV* y_sv, const char* method = "pearson")
 	CODE:
 	{
@@ -16554,17 +17225,15 @@ SV* cov(SV* x_sv, SV* y_sv, const char* method = "pearson")
 SV *predict(...)
 	CODE:
 	{
-		SV   *model_sv   = NULL;
-		SV   *newdata_sv  = NULL;
-		const char *type  = "response";
+		SV   *model_sv   = NULL, *newdata_sv  = NULL;
 		HV   *model = NULL, *coef_hv = NULL, *xlevels_hv = NULL;
 		HV   *dummy_hv = NULL;
 		SV  **svp = NULL;
-		bool  is_binomial = FALSE, want_response = TRUE;
+		bool  is_binomial = 0, want_response = 1;
 		HV   *data_hoa = NULL;
 		HV  **row_hashes = NULL;
 		char **row_names = NULL;
-		const char **fbase = NULL; //factor base column names (borrowed)
+		const char *type  = "response", **fbase = NULL; //factor base column names (borrowed)
 		AV  **flev = NULL;         //factor level lists      (borrowed)
 		size_t nbase = 0, scratch_cap = 16,  n = 0, ncoef = 0, i, j, kk;
 		char  *scratch = NULL;     //buffer for "base"."level"
@@ -16736,13 +17405,13 @@ SV *predict(...)
 					{
 						size_t blen2 = strlen(fbase[kk]);
 						SSize_t nl = av_len(flev[kk]) + 1, l1;
-						/*Every level, not just levels[1..]. A factor coded in
-						full -- one in a model with no intercept, or one whose
-						margin is absent -- also has a column for its first
-						level, and without it registered here that column
-						would be mistaken for a continuous term and looked up
-						as a data column. A reduced-coded model simply never
-						names the extra entry.*/
+	/*Every level, not just levels[1..]. A factor coded in
+	full -- one in a model with no intercept, or one whose
+	margin is absent -- also has a column for its first
+	level, and without it registered here that column
+	would be mistaken for a continuous term and looked up
+	as a data column. A reduced-coded model simply never
+	names the extra entry.*/
 						for (l1 = 0; l1 < nl; l1++) {
 							SV **ls = av_fetch(flev[kk], l1, 0);
 							if (ls && *ls && SvOK(*ls)) {
@@ -16769,19 +17438,19 @@ SV *predict(...)
 				I32 nk = (I32)HvUSEDKEYS(coef_hv);
 				Newx(cterm, nk ? nk : 1, const char*); SAVEFREEPV(cterm);
 				Newx(cbeta, nk ? nk : 1, NV);          SAVEFREEPV(cbeta);
-				Newx(icopy, nk ? nk : 1, char*);       SAVEFREEPV(icopy);   //NEW
-				Newx(ibeta, nk ? nk : 1, NV);          SAVEFREEPV(ibeta);   //NEW
+				Newx(icopy, nk ? nk : 1, char*);       SAVEFREEPV(icopy);
+				Newx(ibeta, nk ? nk : 1, NV);          SAVEFREEPV(ibeta);
 				hv_iterinit(coef_hv);
 				ncoef = 0;
 				while ((he = hv_iternext(coef_hv))) {
 					I32 klen;
 					const char *t = hv_iterkey(he, &klen);
 					NV b = SvNV(HeVAL(he));
-					if (nv_isnan(b)) continue;                         //aliased -> drop
+					if (nv_isnan(b)) continue; //aliased -> drop
 					if (dummy_hv && hv_exists(dummy_hv, t, klen)) continue;  //main-effect factor
 
-					/*an interaction with >=1 factor component needs special handling;
-					pure-continuous interactions (e.g. x:z) stay on the evaluate_term path*/
+	/*an interaction with >=1 factor component needs special handling;
+	pure-continuous interactions (e.g. x:z) stay on the evaluate_term path*/
 					if (strchr(t, ':')) {
 						char tbuf[512];
 						snprintf(tbuf, sizeof(tbuf), "%s", t);
@@ -16801,13 +17470,12 @@ SV *predict(...)
 							continue;
 						}
 					}
-					cterm[ncoef] = t;     //continuous term or pure-continuous interaction
+					cterm[ncoef] = t; //continuous term or pure-continuous interaction
 					cbeta[ncoef] = b;
 					ncoef++;
 				}
 			}
-	// parse factor-bearing interactions into flat components
-			{
+			{// parse factor-bearing interactions into flat components
 				size_t total_comp = 0, k, pos = 0;
 				for (k = 0; k < nint; k++) {
 					const char *restrict s = icopy[k];
@@ -16853,7 +17521,6 @@ SV *predict(...)
 					ic_cnt[k] = pos - ic_off[k];
 				}
 			}
-
 			// validate required columns are present (clean die, not NaN)
 			for (kk = 0; kk < nbase; kk++) {
 				const char *b = fbase[kk];
@@ -16910,7 +17577,7 @@ SV *predict(...)
 						if (!nv_isnan(b)) eta += b;
 					}
 				}
-				//non-factor terms via the same engine used at fit time
+	//non-factor terms via the same engine used at fit time
 				for (j = 0; ok && j < ncoef; j++) {
 					NV v;
 					if (strEQ(cterm[j], "Intercept")) v = 1.0;
@@ -16918,7 +17585,7 @@ SV *predict(...)
 					if (nv_isnan(v)) { ok = FALSE; break; }
 					eta += cbeta[j] * v;
 				}
-				//factor-bearing interactions — product of component values
+	//factor-bearing interactions — product of component values
 				for (size_t k = 0; ok && k < nint; k++) {
 					NV prod = 1.0;
 					size_t off = ic_off[k], cnt = ic_cnt[k], m;
@@ -16955,11 +17622,9 @@ SV *predict(...)
 SV *glm(...)
 	CODE:
 	{
-	const char *formula  = NULL;
 	SV *data_sv = NULL;
-	const char *family_str = "gaussian";
-	char *f_cpy = NULL;
-	char *lhs = NULL, *rhs = NULL;
+	const char *formula  = NULL, *family_str = "gaussian";
+	char *f_cpy = NULL, *lhs = NULL, *rhs = NULL;
 
 	char **terms = NULL, **uniq_terms = NULL;
 	LmDesign *design = NULL;
@@ -16972,10 +17637,8 @@ SV *glm(...)
 	NV theta = 0.0, conf_level = NV_CONF_95;
 	bool theta_given = FALSE;
 
-	char **row_names = NULL;
-	char **valid_row_names = NULL;
-	HV **row_hashes = NULL;
-	HV *data_hoa = NULL;
+	char **row_names = NULL, **valid_row_names = NULL;
+	HV **row_hashes = NULL, *data_hoa = NULL;
 
 	NV *X = NULL, *Y = NULL, *mu = NULL, *eta = NULL;
 	NV *W = NULL, *Z = NULL, *beta = NULL, *beta_old = NULL;
@@ -17261,29 +17924,29 @@ SV *glm(...)
 					 deviance_new += res * res;
 				 }
 			}
-			/*Halve the step only when the deviance came out non-finite, which is
-			R's rule (glm.fit truncates the step "due to divergence" for a
-			non-finite deviance, or when the link puts eta or mu outside its
-			range -- the clamps above already prevent that here).
-			
-			A deviance that merely rose is NOT divergence, and treating it as
-			such was costing iterations on every non-gaussian fit. The standard
-			IRLS start puts mu at y + 0.1, i.e. essentially on the data, so the
-			initial deviance is near zero -- 0.016 for the nine-point poisson
-			fit in t/glm.t -- and the first real step necessarily raises it, to
-			1.54 there. The old test read that as divergence and halved the
-			step ten times over, crippling the first move and turning a
-			four-iteration fit into a seven-iteration one. The extra iterations
-			converged to the same coefficients, but they left the weights of
-			the penultimate iterate -- the ones the standard errors are built
-			from, here and in R alike -- a different distance from the MLE than
-			R's, which is why poisson and binomial standard errors used to sit
-			5e-8 to 2e-5 away from R's while the coefficients agreed to twelve
-			digits.
-			
-			Note also that the old condition had the isfinite test on the
-			accepting side, so a genuinely divergent step producing a NaN
-			deviance was kept rather than truncated.*/
+	/*Halve the step only when the deviance came out non-finite, which is
+	R's rule (glm.fit truncates the step "due to divergence" for a
+	non-finite deviance, or when the link puts eta or mu outside its
+	range -- the clamps above already prevent that here).
+	
+	A deviance that merely rose is NOT divergence, and treating it as
+	such was costing iterations on every non-gaussian fit. The standard
+	IRLS start puts mu at y + 0.1, i.e. essentially on the data, so the
+	initial deviance is near zero -- 0.016 for the nine-point poisson
+	fit in t/glm.t -- and the first real step necessarily raises it, to
+	1.54 there. The old test read that as divergence and halved the
+	step ten times over, crippling the first move and turning a
+	four-iteration fit into a seven-iteration one. The extra iterations
+	converged to the same coefficients, but they left the weights of
+	the penultimate iterate -- the ones the standard errors are built
+	from, here and in R alike -- a different distance from the MLE than
+	R's, which is why poisson and binomial standard errors used to sit
+	5e-8 to 2e-5 away from R's while the coefficients agreed to twelve
+	digits.
+	
+	Note also that the old condition had the isfinite test on the
+	accepting side, so a genuinely divergent step producing a NaN
+	deviance was kept rather than truncated.*/
 			if (is_gaussian || nv_isfinite(deviance_new)) break;
 			if (half + 1 >= 10) break;   //stop halving rather than spin
 			boundary = TRUE;
@@ -17297,11 +17960,11 @@ SV *glm(...)
 	}
 	if (is_negbin && !theta_given) {
 		if (nb_pois_pass) {
-			/*Pre-loop half of glm.nb: the Poisson fit is done, so take the first
-			theta from its means, size the log-likelihood scale d1 from its
-			residual degrees of freedom, and prime the test the way MASS does
-			-- Lm0 = Lm + 2 * d1, which makes the first term 2 and guarantees
-			at least one alternation.*/
+	/*Pre-loop half of glm.nb: the Poisson fit is done, so take the first
+	theta from its means, size the log-likelihood scale d1 from its
+	residual degrees of freedom, and prime the test the way MASS does
+	-- Lm0 = Lm + 2 * d1, which makes the first term 2 and guarantees
+	at least one alternation.*/
 			int pois_df = (int)valid_n - final_rank;
 			nb_d1  = nv_sqrt(2.0 * (NV)(pois_df > 1 ? pois_df : 1));
 			theta  = nb_theta_ml(Y, mu, valid_n, max_iter);
@@ -17309,11 +17972,11 @@ SV *glm(...)
 			nb_Lm0 = nb_Lm + 2.0 * nb_d1;
 			nb_del = 1.0;
 		} else {
-			/*One alternation. theta comes from the means this pass STARTED at,
-			which is the lag glm.nb has; mu is by now the means this pass
-			produced, and the log-likelihood is taken at the pair (new theta,
-			new mu). d2 is 1 in MASS and never changes, so |del| enters the
-			test unscaled.*/
+	/*One alternation. theta comes from the means this pass STARTED at,
+	which is the lag glm.nb has; mu is by now the means this pass
+	produced, and the log-likelihood is taken at the pair (new theta,
+	new mu). d2 is 1 in MASS and never changes, so |del| enters the
+	test unscaled.*/
 			NV th_prev = theta;
 			theta  = nb_theta_ml(Y, nb_mu_prev, valid_n, max_iter);
 			nb_del = th_prev - theta;
@@ -17575,19 +18238,19 @@ CODE:
 			M2_y += dy * (y[i] - mean_y);
 			cov  += dx * (y[i] - mean_y);
 	  }
-	  /*A column with no variance has no correlation to report, and saying so
-	  is the whole point: R's cor() returns NA there with the warning "the
-	  standard deviation is zero", and cor.test() prints t = NA, df = 2,
-	  p-value = NA, cor = NA.  This returned 0 instead -- estimate 0,
-	  statistic 0, p-value 1 -- which reads as a real, well-supported null
-	  result and no caller can tell the two apart.  Nothing else in this file
-	  agreed with it either: cor() croaks ("standard deviation of x is 0"),
-	  the shared pearson_cor() helper returns NV_NAN, and the kendall branch
-	  below already answers NaN on its own degenerate denominator.
+  /*A column with no variance has no correlation to report, and saying so
+  is the whole point: R's cor() returns NA there with the warning "the
+  standard deviation is zero", and cor.test() prints t = NA, df = 2,
+  p-value = NA, cor = NA.  This returned 0 instead -- estimate 0,
+  statistic 0, p-value 1 -- which reads as a real, well-supported null
+  result and no caller can tell the two apart.  Nothing else in this file
+  agreed with it either: cor() croaks ("standard deviation of x is 0"),
+  the shared pearson_cor() helper returns NV_NAN, and the kendall branch
+  below already answers NaN on its own degenerate denominator.
 
-	  The guard is a flag rather than a test of `estimate` because none of
-	  incbeta_xy(), nv_tanh() or std_qnorm() is audited for NaN input; the
-	  degenerate case skips them instead of relying on NaN to propagate.*/
+  The guard is a flag rather than a test of `estimate` because none of
+  incbeta_xy(), nv_tanh() or std_qnorm() is audited for NaN input; the
+  degenerate case skips them instead of relying on NaN to propagate.*/
 	  const bool no_variance = !(M2_x > 0.0) || !(M2_y > 0.0);
 	  df = (NV)(n - 2);
 	  if (no_variance) {
@@ -17604,21 +18267,21 @@ CODE:
 			  statistic = (estimate > 0.0) ? INFINITY : -INFINITY;
 		  else
 			  statistic = estimate * nv_sqrt(df / denom_t);
-		  /*Confidence interval via Fisher's Z transform.
-		  when |estimate| == 1 the log blows up; clamp first.
-		  We use a half-ULP margin so tanh can recover ±1 cleanly.*/
+  /*Confidence interval via Fisher's Z transform.
+  when |estimate| == 1 the log blows up; clamp first.
+  We use a half-ULP margin so tanh can recover ±1 cleanly.*/
 		  NV est_clamped = estimate;
 		  if      (est_clamped >=  1.0) est_clamped =  1.0 - DBL_EPSILON;
 		  else if (est_clamped <= -1.0) est_clamped = -1.0 + DBL_EPSILON;
 		  NV z     = 0.5 * nv_log((1.0 + est_clamped) / (1.0 - est_clamped));
 		  NV se    = 1.0 / nv_sqrt((NV)(n - 3));
 		  NV alpha = 1.0 - conf_level;
-		  /*The interval follows the alternative, as R's does (cor.test.R: the
-		  switch on `alternative` around cint).  A one-sided test gets a one-sided
-		  interval -- R writes the open end as tanh(-Inf) and tanh(Inf), which are
-		  exactly -1 and 1.  Through 0.311 the two-sided interval came back whatever
-		  the alternative, so cor_test(..., alternative => 'greater') reported
-		  [0.5217431448512, 0.9680507713838] where R gives [0.6029901323843, 1].*/
+  /*The interval follows the alternative, as R's does (cor.test.R: the
+  switch on `alternative` around cint).  A one-sided test gets a one-sided
+  interval -- R writes the open end as tanh(-Inf) and tanh(Inf), which are
+  exactly -1 and 1.  Through 0.311 the two-sided interval came back whatever
+  the alternative, so cor_test(..., alternative => 'greater') reported
+  [0.5217431448512, 0.9680507713838] where R gives [0.6029901323843, 1].*/
 		  if (strEQ(alternative, "less")) {
 			  ci_lower = -1.0;
 			  ci_upper = nv_tanh(z + se * std_qnorm(conf_level));
@@ -17634,14 +18297,14 @@ CODE:
 		  p_value = get_t_pvalue(statistic, df, alternative);
 	  }
 	} else if (is_kendall) {
-	  /*One O(n log n) pass for the pair counts and the tie moments both.  This
-	  was an O(n^2) double loop over every (i, j) until 0.312 -- the same counts
-	  cor() had already been taking with Knight's algorithm since 0.31, at
-	  0.0135 s against that loop's 14.7 s for n = 64000.*/
+  /*One O(n log n) pass for the pair counts and the tie moments both.  This
+  was an O(n^2) double loop over every (i, j) until 0.312 -- the same counts
+  cor() had already been taking with Knight's algorithm since 0.31, at
+  0.0135 s against that loop's 14.7 s for n = 64000*/
 	  kendall_counts K;
 	  kendall_count_pairs(x, y, n, &K);
-	  const NV cd  = kendall_score(&K);                                 //C - D
-	  const NV cpd = (NV)K.tot - (NV)K.xtie - (NV)K.ytie + (NV)K.ntie;  //C + D
+	  const NV cd  = kendall_score(&K); //C - D
+	  const NV cpd = (NV)K.tot - (NV)K.xtie - (NV)K.ytie + (NV)K.ntie; //C + D
 	  /*The same expression kendall_tau_b() uses, so cor() and cor_test() cannot
 	  differ in the last bit: (tot - xtie) is C + D + T_y and (tot - ytie) is
 	  C + D + T_x, so this is the tau-b denominator with the two factors named
@@ -17657,24 +18320,24 @@ CODE:
 	  //R overrides forced-exact back to approximation when ties exist
 	  if (do_exact && has_ties) do_exact = 0;
 	  if (do_exact) {
-		  /*T, the concordant-pair count R reports on this branch, is
-		  round((tau + 1) n (n-1) / 4).  With no ties -- which is the only way
-		  to be here -- C + D is every pair, so C = (C + D + (C - D)) / 2 is
-		  the same number without going back through tau.*/
+  /*T, the concordant-pair count R reports on this branch, is
+  round((tau + 1) n (n-1) / 4).  With no ties -- which is the only way
+  to be here -- C + D is every pair, so C = (C + D + (C - D)) / 2 is
+  the same number without going back through tau.*/
 		  statistic = (cpd + cd) / 2.0;
 		  p_value = kendall_exact_pvalue(n, cd, alternative);
 	  } else {
-		  /*Normal approximation, for large n or for ties.  var_S is R's, tie
-		  corrections and all (cor.test.R, the `else` of `if(exact && !TIES)`):
+  /*Normal approximation, for large n or for ties.  var_S is R's, tie
+  corrections and all (cor.test.R, the `else` of `if(exact && !TIES)`):
 
-		    var_S = (v0 - vt - vu)/18 + v1/(2n(n-1)) + v2/(9n(n-1)(n-2))
+    var_S = (v0 - vt - vu)/18 + v1/(2n(n-1)) + v2/(9n(n-1)(n-2))
 
-		  Through 0.311 this was the no-tie variance n(n-1)(2n+5)/18 alone,
-		  which is the whole of var_S only when there are no ties -- and with no
-		  ties and n < 50 the branch is not taken at all, so the correction was
-		  missing exactly where it applies.  On 15 points of tied integer data
-		  it reported z = -1.8805123053604953 where R gives -2.0721033457107345,
-		  and p = 0.060038290909579115 against R's 0.038255804392841472.*/
+  Through 0.311 this was the no-tie variance n(n-1)(2n+5)/18 alone,
+  which is the whole of var_S only when there are no ties -- and with no
+  ties and n < 50 the branch is not taken at all, so the correction was
+  missing exactly where it applies.  On 15 points of tied integer data
+  it reported z = -1.8805123053604953 where R gives -2.0721033457107345,
+  and p = 0.060038290909579115 against R's 0.038255804392841472.*/
 		  const NV nv = (NV)n;
 		  const NV v0 = nv * (nv - 1.0) * (2.0 * nv + 5.0);
 		  const NV v1 = K.t1 * K.t2;
@@ -17683,21 +18346,21 @@ CODE:
 		           + v1 / (2.0 * nv * (nv - 1.0))
 		           + v2 / (9.0 * nv * (nv - 1.0) * (nv - 2.0));
 		  NV S = cd;
-		  /*R's `S <- sign(S) * (abs(S) - 1)`, and sign(0) is 0, so a score of
-		  exactly 0 stays 0.  Subtracting a signum that treats 0 as negative --
-		  what this did through 0.311 -- moved it to +1 instead, and reported
-		  z = 0.019410388389502 with p = 0.98451372323408 for data whose score
-		  is 0 and whose answer is z = 0, p = 1.*/
+  /*R's `S <- sign(S) * (abs(S) - 1)`, and sign(0) is 0, so a score of
+  exactly 0 stays 0.  Subtracting a signum that treats 0 as negative --
+  what this did through 0.311 -- moved it to +1 instead, and reported
+  z = 0.019410388389502 with p = 0.98451372323408 for data whose score
+  is 0 and whose answer is z = 0, p = 1*/
 		  if (continuity) {
 			  const NV sgn = (NV)((S > 0.0) - (S < 0.0));
 			  S = sgn * (nv_fabs(S) - 1.0);
 		  }
 		  statistic = S / nv_sqrt(var_S);
 
-		  /*Tails evaluated where they lie: approx_pnorm is erfc-based and so
-		  is accurate deep into its lower tail, but subtracting a near-1
-		  value from 1 discards the answer below ~1e-16. pnorm(-x) is the
-		  upper tail exactly, by symmetry, at no cost.*/
+  /*Tails evaluated where they lie: approx_pnorm is erfc-based and so
+  is accurate deep into its lower tail, but subtracting a near-1
+  value from 1 discards the answer below ~1e-16. pnorm(-x) is the
+  upper tail exactly, by symmetry, at no cost*/
 		  if      (strcmp(alternative, "two.sided") == 0)
 			  p_value = 2.0 * approx_pnorm(-nv_fabs(statistic));
 		  else if (strcmp(alternative, "less") == 0)
@@ -17723,54 +18386,52 @@ CODE:
 		  M2_y += dy * (rank_y[i] - mean_y);
 		  cov  += dx * (rank_y[i] - mean_y);
 	  }
-	  /*Constant ranks -- every value in a column tied -- leave rho undefined,
-	  and R says so: S = NA, p-value = NA, rho = NA.  Returning 0 reported
-	  "rho = 0, p = 1", a null result the caller cannot distinguish from a
-	  supported one; see the same guard on the pearson branch above.  The
-	  early exit also keeps NaN out of spearman_prho() and get_t_pvalue(),
-	  neither of which is audited for it.*/
+  /*Constant ranks -- every value in a column tied -- leave rho undefined,
+  and R says so: S = NA, p-value = NA, rho = NA.  Returning 0 reported
+  "rho = 0, p = 1", a null result the caller cannot distinguish from a
+  supported one; see the same guard on the pearson branch above.  The
+  early exit also keeps NaN out of spearman_prho() and get_t_pvalue(),
+  neither of which is audited for it*/
 	  if (!(M2_x > 0.0) || !(M2_y > 0.0)) {
 		  estimate = statistic = p_value = NV_NAN;
 		  Safefree(rank_x);	  Safefree(rank_y);
 		  goto spearman_done;
 	  }
 	  estimate = cov / nv_sqrt(M2_x * M2_y);
-
 	  //Clamp to [-1, 1] to guard against floating-point overshoot
 	  if      (estimate >  1.0) estimate =  1.0;
 	  else if (estimate < -1.0) estimate = -1.0;
+  /*S, the statistic R reports, formed the way R forms it:
 
-	  /*S, the statistic R reports, formed the way R forms it:
+    q <- (n^3 - n) * (1 - r) / 6  [cor.test.R]
 
-	    q <- (n^3 - n) * (1 - r) / 6            [cor.test.R]
+  and not as sum((rank(x) - rank(y))^2), which is the same number only when
+  there are no ties -- R's own source says so, and says it in the comment
+  right above that line.  Through 0.311 this was the sum of squared rank
+  differences, so on tied data it reported a different quantity from R: for
+  x = 1..10 against y = (1,1,2,2,3,3,4,4,5,5) it gave 2.5 where R gives
+  2.5192319072807861, and on 15 points of tied integer data 793.5 against
+  R's 865.39724699477085.
 
-	  and not as sum((rank(x) - rank(y))^2), which is the same number only when
-	  there are no ties -- R's own source says so, and says it in the comment
-	  right above that line.  Through 0.311 this was the sum of squared rank
-	  differences, so on tied data it reported a different quantity from R: for
-	  x = 1..10 against y = (1,1,2,2,3,3,4,4,5,5) it gave 2.5 where R gives
-	  2.5192319072807861, and on 15 points of tied integer data 793.5 against
-	  R's 865.39724699477085.
-
-	  This does not make the two agree bit for bit at perfect correlation, and
-	  the reason is not this formula: R's cor() returns a rho 2.2e-16 short of
-	  1 there, so R reports S = 3.6637359812630166e-14 for an exact 0 at
-	  n = 10, while the Welford accumulation above returns exactly 1 and so
-	  gives exactly 0.  Same identity, better input.*/
+  This does not make the two agree bit for bit at perfect correlation, and
+  the reason is not this formula: R's cor() returns a rho 2.2e-16 short of
+  1 there, so R reports S = 3.6637359812630166e-14 for an exact 0 at
+  n = 10, while the Welford accumulation above returns exactly 1 and so
+  gives exactly 0.  Same identity, better input*/
 	  const NV n_nv = (NV)n;
 	  NV S_stat = (n_nv * n_nv * n_nv - n_nv) * (1.0 - estimate) / 6.0;
 	  //R's TIES: a repeated value in either vector, whatever its rank averages to
 	  const bool has_ties = (ties_x || ties_y);
-	  /*Which tail, and by which method -- R's cor.test() spearman branch.
+  /*Which tail, and by which method -- R's cor.test() spearman branch.
 
-	  `exact` defaults to TRUE, not to (n < 10): R hands every n up to 1290 to
-	  prho(), which is exact below 10 and AS 89 above it, and only past 1290
-	  falls back to the asymptotic t. Defaulting to (n < 10) here meant every
-	  sample of 10 or more silently took the t branch instead, which is R's
-	  exact = FALSE, and the p-values were out by tens of percent all the way
-	  down the range -- 1.76e-07 against R's 1.15e-06 on a 32-point sample, and
-	  5.07e-17 against 5.79e-06 on a 16-point one. Ties still force the
-	  approximation, as they do in R.*/
+  `exact` defaults to TRUE, not to (n < 10): R hands every n up to 1290 to
+  prho(), which is exact below 10 and AS 89 above it, and only past 1290
+  falls back to the asymptotic t. Defaulting to (n < 10) here meant every
+  sample of 10 or more silently took the t branch instead, which is R's
+  exact = FALSE, and the p-values were out by tens of percent all the way
+  down the range -- 1.76e-07 against R's 1.15e-06 on a 32-point sample, and
+  5.07e-17 against 5.79e-06 on a 16-point one. Ties still force the
+  approximation, as they do in R.*/
 	  bool do_exact;
 	  if (!exact_sv || !SvOK(exact_sv))
 		  do_exact = TRUE;
@@ -17803,9 +18464,8 @@ CODE:
 		  }
 	  } else {
 		  NV r = estimate;
-		  /*NOTE: R silently ignores continuity correction for Spearman.
-		  The adjustment below is non-standard; a warning is emitted
-		  so callers are not silently misled.*/
+  /*NOTE: R silently ignores continuity correction for Spearman.
+  The adjustment below is non-standard; a warning is emitted so callers are not silently misled*/
 		  if (continuity) {
 			  warn("cor_test: continuity correction is not defined for Spearman in R and is ignored here");
 		  }
@@ -17832,10 +18492,10 @@ spearman_done:	//the degenerate spearman case jumps here with its ranks freed
 	hv_stores(rhv, "alternative", newSVpv(alternative, 0));
 	if (is_pearson) {
 	  hv_stores(rhv, "parameter", newSVnv(df));
-	  /*R guards the interval with `if(n > 3)` and leaves conf.int out of the
-	  htest below that, since Fisher's z has 1/sqrt(n-3) for its standard
-	  error.  Returning tanh(+-Inf) = [-1, 1] there says nothing and reads as
-	  an answer.*/
+  /*R guards the interval with `if(n > 3)` and leaves conf.int out of the
+  htest below that, since Fisher's z has 1/sqrt(n-3) for its standard
+  error.  Returning tanh(+-Inf) = [-1, 1] there says nothing and reads as
+  an answer*/
 	  if (n > 3) {
 		  AV *ci_av = newAV();
 		  av_push(ci_av, newSVnv(ci_lower));
@@ -25766,8 +26426,7 @@ SV* density(...)
 			RETVAL = newSVnv(dens_rkern(kernel));
 		} else {
 		NV *xall = NULL, *wall = NULL, *xv = NULL, *wv = NULL;
-		NV *xf = NULL, *wf = NULL, *xs = NULL;
-		NV *yre = NULL, *yim = NULL, *kre = NULL, *kim = NULL;
+		NV *xf = NULL, *wf = NULL, *xs = NULL, *yre = NULL, *yim = NULL, *kre = NULL, *kim = NULL;
 		NV *twr = NULL, *twi = NULL, *xords = NULL, *xout = NULL;
 		bool *restrict isna = NULL;
 		const char *err = NULL;
@@ -25946,7 +26605,6 @@ SV* density(...)
 			dens_bindist(xf, wf, nx, lo, up, n, yre);
 			for (size_t i = 0; i < m; i++) yre[i] *= totMass;
 			dens_kernel_grid(kernel, bw, mult * (up - lo), n, kre);
-
 			for (size_t k = 0; k < m / 2; k++) {
 				NV ang = -2.0 * pi * (NV)k / (NV)m;
 				twr[k] = nv_cos(ang);
@@ -25954,8 +26612,7 @@ SV* density(...)
 			}
 			dens_fft(yre, yim, twr, twi, m);
 			dens_fft(kre, kim, twr, twi, m);
-			//fft(y) * Conj(fft(kords))
-			for (size_t i = 0; i < m; i++) {
+			for (size_t i = 0; i < m; i++) {//fft(y) * Conj(fft(kords))
 				NV pr = yre[i] * kre[i] + yim[i] * kim[i];
 				NV pj = yim[i] * kre[i] - yre[i] * kim[i];
 				yre[i] = pr; yim[i] = pj;

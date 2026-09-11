@@ -1,6 +1,157 @@
 Revision history for Stats-LikeR
 
-0.316 2026-09-05 CDT
+0.316 2026-09-11 CDT
+
+ [read_table on .xlsx: the worksheet parser moved from perl to XS]
+
+ - Reading an .xlsx was slow out of all proportion to the format. On a
+   21,845 x 50 workbook (7.8 MB on disk, 36 MB of worksheet XML, 1,013,220
+   cells, an 8 MB shared-string table of 117,870 entries) `read_table` took
+   2.47 s and peaked at 263 MB. The same table written out as a 34.7 MB CSV
+   and read back through `_parse_csv_file` took 0.139 s and 156 MB -- from a
+   larger file, into the same array of hashes. Almost the whole gap was the
+   perl side, not the format.
+
+ - Where it went: the nested regexes in `_parse_xlsx_sheet` were 1.68 s of
+   the 2.47 s, or 1.66 us per cell, against 0.099 s for a bare
+   `$ws =~ m{<c\b}g` count of the same string -- so the scan was 6% of it and
+   perl's per-op overhead the rest. Decompressing the worksheet was 0.25 s,
+   the shared strings 0.21 s, and read_table's own per-row closure 0.32 s.
+
+ - The parse is now `xlsx_ws_scan()` in `LikeR.xs`, and `read_table` offers
+   it the same `csv_plan` fast path a delimited file gets, so an `aoh` or
+   `hoa` is assembled in C from the cells the parser already has. The perl
+   callback still reads the header, and still takes every row when a `filter`
+   or a `hoh` shape needs per-row perl, exactly as it does for a CSV.
+
+ - Rows are emitted as they are parsed. They have to be padded to the widest
+   row in the sheet, which the perl parser could not know until it had read
+   the last one, so it buffered the whole sheet as an array of arrays first
+   -- 76 MB on that workbook, before a single row had been handed on. A first
+   pass now reads nothing but the cell references and the width is known
+   before any row is built. Both passes are the same function so that they
+   cannot see different cells.
+
+ - Shared-string cells are copy-on-write copies of the table entry rather
+   than fresh buffers, which is worth 29 MB there. That needs asking for:
+   `sv.h` defines `SV_DO_COW_SVSETSV` -- what `sv_setsv()` and `newSVsv()`
+   pass -- to the real flags only under `PERL_CORE`, and to 0 otherwise, so
+   an XS copy is an ordinary copy unless it names `SV_COW_SHARED_HASH_KEYS`
+   itself. Nothing here writes through `SvPVX` of a cell, so it is safe to.
+   Perl 5.20 is where copy-on-write started covering plain strings, so on
+   5.10 and 5.12 this is an ordinary copy as before.
+
+ - `_unzip_member` reads onto the end of its buffer instead of concatenating
+   through a second scalar: `IO::Uncompress::Base::read()` makes its
+   truncating `substr()` a no-op when the offset is already the buffer's
+   length. 0.171 s against 0.243 s on the 36 MB part, and no realloc slack
+   left behind. (`BlockSize => 1<<20` is not the way to do this: 2.08 s.)
+
+ - `xl/sharedStrings.xml` is parsed in XS too, and `_xlsx_col_idx` is now the
+   `xlsx_ref_col()` that places the cells, exposed to perl so that
+   `t/xlsx_col_idx.t` still exercises the letter arithmetic on its own.
+
+ - Together: 2.47 s -> 0.48 s and 263 MB -> 221 MB on that workbook, and
+   0.083 s -> 0.031 s on a 2,207-row one that uses inline strings and no
+   shared-string table. What is left of the peak is the table the caller
+   asked for, plus the 36 MB worksheet part and the 33 MB shared-string
+   table, which are both live for the length of the parse.
+
+ [What the new parser answers differently]
+
+ - Two things, both on input the format does not allow. A cell reference past
+   `XFD` -- the last of the 16,384 columns ECMA-376 gives a worksheet -- is
+   now read as no reference at all, which puts the cell in the next column,
+   the same place a cell with no `r=` goes. Every row is padded to the widest
+   column the sheet mentions, so the reference is what decides what a row
+   costs in memory, and a bad one should cost the 16,384 the format allows
+   rather than the twelve million `ZZZZZ` asks for or the three hundred
+   million of `ZZZZZZ`. The perl parser placed the cell wherever the
+   arithmetic landed.
+
+ - A numeric character reference above `&#x7FFFFFFF;` is now left in the text
+   instead of being decoded. The perl version handed the number to `chr()`
+   unguarded, and that was not one answer but two: `&#999999999999;` came back
+   as thirteen bytes of perl's extended UTF-8 on an ivsize=8 build, and died
+   outright on `5.44.0-i686` with "Use of code point 0xFFFFFFFF is not
+   allowed". XML 1.0 does not allow a character reference above `#x10FFFF` at
+   all, so nothing legal is lost, and the answer is now the same on every perl
+   in the matrix.
+
+ - Everything else is unchanged, and was checked rather than assumed: the two
+   parsers were run side by side over `Affinity Dataset(main).xlsx` and
+   `titanic.xlsx` in all three `output.type` shapes with and without a
+   `filter` and `na.strings`, over fifteen hand-built worksheets covering the
+   awkward layouts, and over 400 generated strings of entity soup. Every
+   `Data::Dumper` of the result is byte-identical, warnings and die messages
+   included.
+
+ [How the new parser was checked]
+
+ - A tokenizer is only as good as the malformed input it survives, so it was
+   fuzzed rather than reasoned about: every one of the 362 prefixes of a
+   worksheet part, 20,000 byte-level mutations of it, and 12,000 generated
+   workbooks each read twice -- once through the XS fast path and once through
+   the perl callback -- so that the two could be required to agree cell for
+   cell. They do, on all of them. Three defects in the new code turned up that
+   way and are fixed:
+
+ - `av_store()` already releases whatever was in the slot, so the parser's own
+   `SvREFCNT_dec` for a repeated `r=` in one row was a second free of the same
+   SV. Only malformed input has two cells claiming one column, which is why
+   nothing but a fuzz would have found it.
+
+ - The two passes could see different cells. The second skipped each cell body
+   to `</c>`; the first had no reason to and did not. On a cell whose `</c>` is
+   missing that search runs on to the next cell's, so the pass that skipped saw
+   fewer cells, and rows were then built to a width measured from a different
+   reading of the same file. Both passes now skip -- the scan is the same scan
+   or it is not the same file.
+
+ - The alignment croak that followed segfaulted. `S_fast_row()` frees the row
+   buffer itself before it croaks, because it unwinds past
+   `_parse_csv_file`'s local, and the new parser's save-stack destructor then
+   freed it again. It now hands the buffer over and takes it back only if the
+   call returns.
+
+ - A fourth was found by the new test on `perl-5.10.1` and `perl-5.12.5`, and
+   by nothing else: a cell is placed by its column reference, so a row with a
+   gap leaves the slots between untouched, and perl 5.10 and 5.12 fill a newly
+   extended array with `&PL_sv_undef` where 5.14 and later zero it. `SvCUR()`
+   on the immortal undef dereferences a NULL `SvANY`. Only the first row after
+   a fresh buffer can meet one -- every later row is cleared to NULLs -- and
+   `t/read_table.xlsx.t`'s sparse cells are not in its first data row, so it
+   passed on both perls while the new file segfaulted. The hole test now
+   accepts either value.
+
+ [Tests]
+
+ - `t/read_table.xlsx.parser.t` is new: the tokenizer's own cases, which a
+   well-formed workbook never reaches. Cells with no `r=` and with `r=` not
+   first, self-closing `<c/>` and `<row/>`, blank rows, mid-row gaps, every
+   entity form and the ones that must not be decoded, a shared-string index
+   that is out of range or not a number, `t="str"`/`t="b"`/`t="e"`, a `>`
+   inside an attribute value, `XFD` and the references past it, a repeated
+   reference in one row, a cell with no `</c>`, an empty sheet, a header with
+   no data rows, and the fast path and the callback path agreeing cell for
+   cell. Leak checks on every path through the row emitter, with no `qr//`
+   inside a measured block.
+
+ - Those leak checks measure the parser with the worksheet part already
+   decompressed. `read_table` itself is measured too, but only where
+   decompressing is clean: `perl-5.10.1`'s bundled `Compress::Raw::Zlib` leaks
+   18 SVs per read in `crc32(undef)` (`IO/Uncompress/Unzip.pm` line 608), and a
+   check around `read_table` counts those as this module's. The test asks this
+   perl whether it leaks rather than naming versions, and skips only the four
+   checks that need a file.
+
+ - The whole suite passes on all seven perls in the local matrix -- 5.10.1,
+   5.12.5 (`long double`), 5.42.3-thr, 5.44.0, 5.44.0+x87, 5.44.0-quadmath
+   (`__float128`) and 5.44.0-i686 (`ivsize=4`) -- and the generated `.c`
+   compiles clean under strict `-std=c99`. Valgrind reports no errors over the
+   truncation and mutation corpora.
+
+0.3151 2026-09-05 CDT
 
  [Two leak checks failed on perl 5.10.0, which leaks every `qr//` itself]
 

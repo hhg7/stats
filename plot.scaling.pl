@@ -13,8 +13,21 @@
 # to run only those.
 #
 #     --data      write the fixtures the I/O panels read
-#     --measure   time Stats::LikeR                 -> perl_scaling.tsv
+#     --measure   time and weigh Stats::LikeR      -> perl_scaling.tsv
 #     --plot      draw the three .tsv files         -> scaling.*.svg
+#
+# Every measurement is two numbers, not one: the seconds the call took, and the
+# bytes of resident memory it held at its high-water mark.  They are drawn as
+# two images per figure -- scaling.vector.svg against seconds and
+# scaling.vector.ram.svg against bytes -- carrying the same panels, the same
+# ladder and the same runs, so every curve in one has its counterpart in the
+# same position in the other.
+#
+# The second axis is worth the trouble because a function can be flat in one and
+# linear in the other, and it is memory rather than time that decides whether a
+# call is usable at a million rows: sum() walks the whole vector for the price
+# of one scalar, while seq() barely computes anything and pays for all of it in
+# the list it returns.
 #
 # Python and R are measured by their own programs, so a full run is:
 #
@@ -80,6 +93,7 @@ use File::Spec ();
 use Getopt::Long ();
 use IO::Compress::Zip ();
 use POSIX ();
+use Scalar::Util ();
 use Time::HiRes ();
 use Stats::LikeR;
 
@@ -93,7 +107,7 @@ my $usage = <<"USAGE";
 usage: perl [-Iblib/arch -Iblib/lib] $0 [--data] [--measure] [--plot]
 
   --data      write the read_table/write_table fixtures into \$SCALE_DIR
-  --measure   time Stats::LikeR at every size  -> perl_scaling.tsv
+  --measure   time and weigh Stats::LikeR      -> perl_scaling.tsv
   --plot      draw perl/python/r_scaling.tsv   -> scaling.*.svg
 
 With no switch, all three run in that order.  See the comment at the top of
@@ -132,11 +146,20 @@ my @vec_n   = (1_000, 3_000, 10_000, 30_000, 100_000, 300_000, 1_000_000);
 my @io_n    = (1_000, 3_000, 10_000, 30_000, 100_000, 300_000);
 my @frame_n = (1_000, 3_000, 10_000, 30_000, 100_000, 300_000);
 
-# The fixture row counts are @io_n before SCALE_MAX_N is applied, and stay that
-# way: the files are shared with scale.py and scale.R, which have their own
-# ladders and their own idea of a partial run, so a truncated --measure must not
-# leave them a truncated corpus.
-my @fixture_n = @io_n;
+# Every measurement makes one call on a deliberately small input before the one
+# it weighs; see the comment above measure() for what that call is paying for.
+# 100 rows is the size of it.  It has to be far enough below the smallest rung
+# of the ladder that the arena it leaves behind cannot cover the real call --
+# at a tenth of 1,000 it covers a tenth of it -- and it costs one extra call
+# per reading, on an input a hundred elements long.
+my $warm_n = 100;
+
+# The fixture row counts are @io_n before SCALE_MAX_N is applied, plus the
+# warm-up size, and stay that way: the files are shared with scale.py and
+# scale.R, which have their own ladders and their own idea of a partial run, so
+# a truncated --measure must not leave them a truncated corpus.  The extra
+# 100-row set is only read here; nothing in the other two looks for it.
+my @fixture_n = ($warm_n, @io_n);
 
 if ($max_n) {
 	@vec_n   = grep { $_ <= $max_n } @vec_n;
@@ -701,15 +724,22 @@ sub pin_to_one_cpu {
 # effects grow with n, which is exactly the axis being measured.  A child that
 # starts from the parent's untouched heap every time cannot do that.
 #
-# Inside the child the call is made once untimed before the clock starts.  That
-# is not politeness towards the cache: a freshly forked process has a
+# Inside the child the call is made twice untimed before the clock starts: once
+# on a hundred-element input of the same shape, and once on the real one.  That
+# is not politeness towards the cache.  A freshly forked process has a
 # copy-on-write address space, and the first dozen writes perl makes -- its
 # stack, the eval context, the first temporaries -- each take a page fault that
 # copies 4 KiB.  Measured, that is a fixed ~50 microseconds sitting on top of
 # every reading, which at n = 1,000 is ten times the call itself and would draw
 # a Perl line that looks flat up to n = 10,000 for reasons that have nothing to
-# do with Stats::LikeR.  The untimed call pays it, and what is then measured is
+# do with Stats::LikeR.  The untimed calls pay it, and what is then measured is
 # the steady-state cost -- the same quantity scale.py and scale.R measure.
+#
+# The one on the small input is there for the memory figure and is described
+# below; for the timing it changes nothing, because the call on the real input
+# still happens in the position it always did, immediately before the clocked
+# one, and still warms the page cache for the file an I/O panel is about to
+# read.
 #
 # A call faster than $target is repeated until the pair of clock readings spans
 # $target and the total divided by the count, because Time::HiRes resolves
@@ -721,8 +751,110 @@ sub pin_to_one_cpu {
 # Sharing one channel would splice that announcement into the timing, and
 # leaving it connected to the terminal would put a few hundred lines of noise
 # in the middle of the progress report and charge the write for it.
+#
+# The memory figure is how far the resident set rose while the call on the real
+# input ran: VmHWM reset to the current VmRSS just before it, read again just
+# after.  The fork this function already performs is what makes it mean
+# anything: perl hands freed memory back to its own arenas rather than to the
+# OS, so weighing one process run after run gives the first run the whole bill
+# and every run after it zero, while a child that starts from the parent's
+# untouched heap reads the same number seven times.
+#
+# What the number contains: the memory the result holds, plus whatever the call
+# allocated and freed along the way, plus the copy-on-write copies of any input
+# the call writes to -- reading a column as a number caches the conversion in
+# the SV, which dirties its page.  It is page-granular, so a call that
+# allocates less than a page reads as zero.
+#
+# It is the peak and not the difference between the two resident sets, because
+# a difference cannot see anything the call gave back before it returned, and
+# glibc hands a block above its 128 KiB mmap threshold straight back to the
+# kernel on free.  That is not a rounding error, it is most of the answer.  The
+# same four calls read either way, in a child that had already made a
+# hundred-element call of the same kind:
+#
+#     n            1,000      10,000     100,000    1,000,000
+#     median rss    4096       77824       65536        65536
+#            hwm    4096       77824      335872      7708672
+#     cor    rss   12288      196608       65536        65536
+#            hwm   12288      196608     1253376     15507456
+#     rank   rss   49152      643072     4284416     44511232
+#            hwm   49152      643072     5451776     61214720
+#
+# Below the threshold the two agree exactly.  Above it the difference flattens
+# at 64 KiB and stays there over two more decades, so median() and cor() would
+# be drawn as O(1) in memory when both copy their input; rank() survives it only
+# because it returns the vector it built and so cannot free it.  The peak also
+# makes this the same *kind* of quantity as the other two languages report --
+# tracemalloc's high-water mark in scale.py, gc()'s "max used" in scale.R --
+# where the difference was not.
+#
+# Why a hundred-element call runs first.  A fresh child's whole address space
+# is copy-on-write, perl's interpreter state included, so the first call into
+# the module writes to a hundred-odd pages of arena headers, free lists and
+# stacks that it does not allocate -- it copies them.  Reading /proc either side
+# of four consecutive calls in one child, on this build:
+#
+#     n          call      1st       2nd    3rd  4th
+#     1,000      min    544768         0      0    0
+#     100,000    min    544768         0      0    0
+#     1,000      rank   737280     24576      0    0
+#     100,000    rank  4902912   4001792      0    0
+#
+# min() returns one scalar and allocates nothing at either size, yet its first
+# call reads 544,768 bytes at both -- the identical figure at two sizes a
+# hundredfold apart, which is what gives it away.  Left in, that would put half
+# a megabyte under every curve and turn the small-n end of every RAM panel into
+# a picture of the apparatus.
+#
+# Weighing the second call on the real input instead is worse, and the same
+# table says why: by then the arena holds one call's worth of everything, so the
+# second reading is what the first call failed to cover rather than what the
+# call costs.  rank at n = 100,000 loses a fifth that way, and by the third call
+# there is nothing left to read at all.  Run across the whole transform panel,
+# seq() and scale() came back at 0 bytes at n = 10,000 -- both return a vector
+# of n elements.
+#
+# The hundred-element call pays the copy-on-write bill on an input two to four
+# decades below the real one, so what it leaves in the arena covers at most a
+# hundredth of what is weighed next, and what is weighed next is still a first
+# call on its own input.  With it in place min() reads 0 at every size and
+# rank(), uniq() and scale() come back linear in n, which is what all four are.
+#
+# Forking, redirecting and reporting cost some memory of their own, the same
+# amount every time.  That floor is measured in measure_all() by weighing an
+# empty subroutine and is subtracted from every reading, which is what
+# benchmark.pl's $floor and benchmark.R's base_mem do.  With the warm-up call
+# ahead of it the floor reads zero on this machine; it stays because it is what
+# would catch the offset coming back.
+
+# One field of /proc/self/status, in bytes.  'VmRSS' is the resident set now,
+# 'VmHWM' the largest it has been since the last reset.
+sub proc_bytes {
+	my ($field) = @_;
+	open my $fh, '<', '/proc/self/status' or return undef;
+	while (my $line = <$fh>) {
+		return $1 * 1024 if $line =~ /^\Q$field\E:\s+(\d+)\s+kB/;
+	}
+	return undef;	#no such field: a kernel too old to report it
+}
+
+# Set VmHWM back to the resident set as it is now, so that the next reading of
+# it is the peak of what happens in between and not of the whole process's life.
+# 5 is CLEAR_REFS_MM_HIWATER_RSS, which is the only one of the five values this
+# file takes that has no side effect beyond that -- 1 through 4 clear the
+# soft-dirty and referenced bits on every PTE, which would cost a fault per page
+# on the next touch and land in the timing.  Linux 4.0 and later; where the
+# write is refused the caller falls back to the plain resident set.
+sub reset_peak_rss {
+	open my $fh, '>', '/proc/self/clear_refs' or return 0;
+	my $ok = print {$fh} "5\n";
+	close $fh or return 0;
+	return $ok ? 1 : 0;
+}
+
 sub measure {
-	my ($code, $input) = @_;
+	my ($code, $input, $warm) = @_;
 
 	pipe(my $from_child, my $to_parent) or die "pipe failed: $!\n";
 
@@ -735,9 +867,26 @@ sub measure {
 		open my $saved_out, '>&', \*STDOUT or POSIX::_exit(1);
 		open STDOUT, '>', File::Spec->devnull() or POSIX::_exit(1);
 
+		# The hundred-element call, whose only job is to pay the copy-on-write
+		# bill before the baseline is read.  Whatever it throws is ignored: the
+		# call on the real input is a moment away and reports the same failure
+		# properly.  The floor run passes no warm-up input and skips this.
+		eval { $code->($warm) } if defined $warm;
+
+		# The first proc_bytes() allocates the handle and its buffer and costs
+		# ~300 KiB of its own, so it is spent before the peak is reset and the
+		# baseline read, rather than inside them.
+		proc_bytes('VmRSS');
+		my $peak   = reset_peak_rss();
+		my $before = proc_bytes('VmRSS');
+
 		# untimed: page faults, allocator, page cache, and a broken call
 		my $ok  = eval { $code->($input); 1 };
 		my $err = $ok ? '' : $@;
+
+		my $after = proc_bytes($peak ? 'VmHWM' : 'VmRSS');
+		my $bytes = ($ok && defined $before && defined $after)
+		          ? $after - $before : '';
 
 		my $secs = 0;
 		my $reps = 1;
@@ -758,7 +907,7 @@ sub measure {
 		$err =~ s/\s+/ /g;
 
 		open STDOUT, '>&', $saved_out or POSIX::_exit(1);
-		print {$to_parent} join("\t", $secs, $reps, $err), "\n";
+		print {$to_parent} join("\t", $secs, $reps, $bytes, $err), "\n";
 		POSIX::_exit(0);
 	}
 
@@ -766,11 +915,14 @@ sub measure {
 	my $line = <$from_child>;
 	close $from_child;
 	waitpid $pid, 0;
-	return (undef, undef, 'the child died without reporting') unless defined $line;
+	return (undef, undef, undef, 'the child died without reporting')
+		unless defined $line;
 
 	chomp $line;
-	my ($secs, $reps, $err) = split /\t/, $line, 3;
-	return ($secs, $reps, (defined $err && length $err) ? $err : undef);
+	my ($secs, $reps, $bytes, $err) = split /\t/, $line, 4;
+	#the memory field is empty where there is no /proc/self/status to read
+	$bytes = undef unless defined $bytes && length $bytes;
+	return ($secs, $reps, $bytes, (defined $err && length $err) ? $err : undef);
 }
 
 # ---------------------------------------------------------------------------
@@ -782,6 +934,37 @@ sub measure_all {
 	my @results;
 	my %too_slow; # name => 1 once it exceeds $cap, or once it fails
 
+	# What a measured run of nothing at all weighs: everything measure() does
+	# between resetting the peak and reading it, with an empty subroutine where
+	# the call would be.  undef is passed where the warm-up input would go, so
+	# the warm-up call is skipped and the floor covers only the eval, the two
+	# /proc reads and whatever they fault in.  It comes off every reading below,
+	# which is what benchmark.pl's $floor and benchmark.R's base_mem do.
+	#
+	# The smallest of five is taken rather than the mean, because the quantity
+	# wanted is the unavoidable part: a floor run that happened to fault in one
+	# extra page would otherwise be subtracted from every function in the file.
+	#
+	# A floor of zero and a floor that could not be read are different answers,
+	# and only the second is worth saying out loud.  Zero is what this is
+	# expected to report here -- the reset moves the whole of the apparatus
+	# outside the window -- and it has read zero on every run of this so far.
+	my $floor     = 0;
+	my $can_weigh = 0;
+	for (1 .. 5) {
+		my (undef, undef, $bytes) = measure(sub { }, undef);
+		next unless defined $bytes;
+		$floor = $bytes if !$can_weigh || $bytes < $floor;
+		$can_weigh = 1;
+	}
+	if ($can_weigh) {
+		printf "Measurement floor: %d bytes, subtracted from every RAM figure.\n",
+			$floor;
+	} else {
+		print "cannot read this process's resident set, so the RAM column is "
+		    . "NA throughout; /proc/self/status is what supplies it\n";
+	}
+
 	# Grouped by figure, then by size, so each input is built once and every
 	# benchmark that wants it is measured before it is thrown away.  The
 	# 1,000,000 element frames are large enough that holding two ladders' worth
@@ -791,6 +974,13 @@ sub measure_all {
 
 	foreach my $figure (@figure_order) {
 		my $list = $by_figure{$figure} or next;
+
+		# The input the warm-up call is made on, built once and held for the
+		# whole figure.  It is the same builder the ladder uses, at $warm_n, so
+		# the warm-up runs the identical code path on an input two to four
+		# decades smaller than the one being weighed.
+		my $warm = $build{ $builder_for{$figure} }->($warm_n);
+
 		foreach my $n (@{ $ladder{$figure} }) {
 			my @todo = grep { !$too_slow{ $_->{name} } } @$list;
 			next unless @todo;
@@ -798,8 +988,10 @@ sub measure_all {
 			my $input = $build{ $builder_for{$figure} }->($n);
 			foreach my $b (@todo) {
 				my ($slowest, $reps_used, $failed) = (0, 0, 0);
+				my $heaviest;	#stays undef where the resident set cannot be read
 				for my $run (0 .. $runs - 1) {
-					my ($secs, $reps, $err) = measure($b->{code}, $input);
+					my ($secs, $reps, $bytes, $err)
+						= measure($b->{code}, $input, $warm);
 					if (defined $err) {
 						# Report it once and stop trying this function at every
 						# larger size too: a call that dies at n = 1,000 is not
@@ -809,13 +1001,24 @@ sub measure_all {
 						$failed = 1;
 						last;
 					}
+					if (defined $bytes) {
+						# A call cheaper than the floor's own page faults reads
+						# below it; that is resolution, not a negative footprint.
+						$bytes -= $floor;
+						$bytes = 0 if $bytes < 0;
+						$heaviest = $bytes
+							if !defined $heaviest || $bytes > $heaviest;
+					}
 					$slowest   = $secs if $secs > $slowest;
 					$reps_used = $reps;
-					push @results, [ $figure, $b->{name}, $b->{call}, $n, $run, $secs ];
+					push @results, [ $figure, $b->{name}, $b->{call}, $n, $run,
+					                 $secs, defined $bytes ? $bytes : 'NA' ];
 				}
 				next if $failed;
-				printf "%-9s %-30s n=%-8d %.6f s%s\n", $figure, $b->{name}, $n,
-					$slowest, $reps_used > 1 ? " (x$reps_used)" : '';
+				printf "%-9s %-30s n=%-8d %.6f s %9s%s\n", $figure, $b->{name},
+					$n, $slowest,
+					defined $heaviest ? human_bytes($heaviest) : '',
+					$reps_used > 1 ? " (x$reps_used)" : '';
 				$too_slow{ $b->{name} } = 1 if $slowest > $cap;
 			}
 			undef $input;
@@ -836,8 +1039,15 @@ sub measure_all {
 		unlink $out if -f $out;
 	}
 
+	# 'bytes' is how far the resident set rose above its baseline during one
+	# call, floor subtracted, and 'NA' where this platform has no
+	# /proc/self/status to read it from.  scale.py and scale.R write the same
+	# seven columns, each weighing the call the way its own language can --
+	# tracemalloc's peak and gc()'s max-used -- so the RAM panels compare the
+	# three the way the benchmark.* trio already does.
 	write_table(
-		[ [ 'figure', 'function', 'call', 'n', 'run', 'seconds' ], @results ],
+		[ [ 'figure', 'function', 'call', 'n', 'run', 'seconds', 'bytes' ],
+		  @results ],
 		$perl_tsv,
 		sep         => "\t",
 		'row.names' => 0,
@@ -870,6 +1080,31 @@ sub time_label {
 	return sprintf('%gms', 10 ** ($e + 3))  if $e >= -3;
 	return sprintf('%gus', 10 ** ($e + 6))  if $e >= -6;
 	return sprintf('%gns', 10 ** ($e + 9));
+}
+
+# 0 -> 1B, 3 -> 1kB, 6 -> 1MB.  Decimal prefixes, not binary ones: the axis is
+# ruled in decades of ten, so the tick at 6 stands for 10**6 bytes and calling
+# it "1MiB" would be off by five per cent.  Below a byte there is nothing
+# sensible to name, and nothing to name it for -- the readings are page
+# granular -- so those ticks keep their power of ten.
+sub byte_label {
+	my ($e) = @_;
+	return sprintf('%gGB', 10 ** ($e - 9)) if $e >= 9;
+	return sprintf('%gMB', 10 ** ($e - 6)) if $e >= 6;
+	return sprintf('%gkB', 10 ** ($e - 3)) if $e >= 3;
+	return sprintf('%gB',  10 ** $e)       if $e >= 0;
+	return sprintf('1e%dB', $e);
+}
+
+# The same units for the progress report, which prints a count rather than an
+# exponent: "4.00 MB", and a bare "0 B" for a call whose peak never rose a whole
+# page above where it started -- the granularity the reading comes at.
+sub human_bytes {
+	my ($b) = @_;
+	return sprintf('%.2f GB', $b / 1e9) if $b >= 1e9;
+	return sprintf('%.2f MB', $b / 1e6) if $b >= 1e6;
+	return sprintf('%.2f kB', $b / 1e3) if $b >= 1e3;
+	return sprintf('%d B', $b);
 }
 
 # Matplotlib::Simple quotes a title for you only when it holds no comma and no
@@ -946,70 +1181,85 @@ my @sources = (
 	{ file => 'r_scaling.tsv',      group => 'R',            color => 'red'   },
 );
 
-sub plot_all {
-	# require does not run import(), so plt is never installed into main and is
-	# called below by its full name.  That is the point: a "use" at the top of
-	# the file would make --measure -- the stage that takes hours -- fail at
-	# startup on a machine with no plotting stack.
-	require Matplotlib::Simple;
+# What the two images per figure measure.  Both are drawn from the same rows of
+# the same .tsv files -- the same figures, panels, languages, runs and sizes --
+# and differ only in which column supplies y, so a curve in one has its
+# counterpart in the same panel of the other.
+#
+# 'floor' is the smallest y the axis can show.  Nothing is quantised away in
+# the timing, so a non-positive reading there is a bug and is dropped; the
+# resident set is reported in whole pages, so a call that allocates less than
+# one reads as zero, which is a statement about the resolution rather than a
+# claim that nothing was allocated.  Those are drawn at one page and counted,
+# so that a line lying flat along the bottom of a RAM panel is recognisably at
+# the floor rather than measured there.
+my $page_bytes = eval { POSIX::sysconf(POSIX::_SC_PAGESIZE()) } || 4096;
 
-	# $t{$figure}{$function}{$group}{$run} = [ [n, seconds], ... ]
-	# $panel_order{$figure} keeps first-appearance order, so the panels come out
-	# in the order --measure took them rather than in hash order.
-	my (%t, %panel_order, %seen_panel, %color);
+my @quantities = (
+	{ key      => 'seconds',
+	  suffix   => '',                      # scaling.vector.svg
+	  measures => 'seconds per call',
+	  ylabel   => 'seconds per call',
+	  tick     => \&time_label,
+	  floor    => 0 },
+	{ key      => 'bytes',
+	  suffix   => '.ram',                  # scaling.vector.ram.svg
+	  measures => 'resident memory per call',
+	  ylabel   => 'bytes per call',
+	  tick     => \&byte_label,
+	  floor    => $page_bytes },
+);
 
-	foreach my $src (@sources) {
-		unless (-f $src->{file}) {
-			warn "$src->{file} is not there; skipping $src->{group}\n";
-			next;
-		}
-		$color{ $src->{group} } = $src->{color};
+# One image: every panel of one figure, for one quantity.  Everything that
+# differs between the seconds and the RAM version of a figure is in $q; the
+# rest of this is the same picture drawn twice.
+#
+#   $series->{$figure}{$function}{$group}{$run} = [ [n, y], ... ]
+#
+# Slope rows are pushed onto $slope_rows rather than returned, so that the two
+# calls fill one table.
+sub draw_figure_set {
+	my ($series, $panel_order, $color, $q, $slope_rows) = @_;
 
-		my $tab = read_table($src->{file}, sep => "\t", 'output.type' => 'hoa');
-		my $rows = @{ $tab->{function} };
-		for my $i (0 .. $rows - 1) {
-			my $figure = $tab->{figure}[$i];
-			my $fn     = $tab->{function}[$i];
-			push @{ $panel_order{$figure} }, $fn unless $seen_panel{$figure}{$fn}++;
-			push @{ $t{$figure}{$fn}{ $src->{group} }{ $tab->{run}[$i] } },
-				[ $tab->{n}[$i], $tab->{seconds}[$i] ];
-		}
-	}
-
-	die "no *_scaling.tsv found; run --measure, scale.py and scale.R first\n"
-		unless %t;
-
-	my @slope_rows;
+	my $floored = 0;	#readings drawn at the floor rather than where measured
 
 	foreach my $figure (@figure_order) {
-		next unless $t{$figure};
+		next unless $series->{$figure};
 
-		my (@plots, $lo_x, $hi_x, $lo_y, $hi_y);
+		my (@plots, $lo_x, $hi_x, $lo_y, $hi_y, %group_seen);
 
-		foreach my $fn (@{ $panel_order{$figure} }) {
+		foreach my $fn (@{ $panel_order->{$figure} }) {
 			my %data;
 
 			foreach my $group (map { $_->{group} } @sources) {
-				my $group_runs = $t{$figure}{$fn}{$group} or next;
+				my $group_runs = $series->{$figure}{$fn}{$group} or next;
 
 				# One faint line per run: the x of that line is the size ladder
-				# and the y is that run's time at each size.
+				# and the y is that run's reading at each size.
 				foreach my $run (sort { $a <=> $b } keys %$group_runs) {
 					my @pts = sort { $a->[0] <=> $b->[0] } @{ $group_runs->{$run} };
 					next unless @pts;
 					my (@x, @y);
 					foreach my $p (@pts) {
-						# A measurement of exactly zero cannot be logged.  None
-						# has ever been seen -- the repeat loop in the three
-						# scripts exists so that no reading is at the clock's
-						# resolution -- but a zero would take the whole panel
-						# with it.
-						next unless $p->[1] > 0;
+						my $v = $p->[1];
+						if ($v < $q->{floor}) {
+							# On the seconds axis $floor is zero, so this is
+							# only reached by a reading of exactly zero -- none
+							# has ever been seen, the repeat loop in the three
+							# scripts exists so that no reading sits at the
+							# clock's resolution, but one would take the whole
+							# panel with it.  On the bytes axis it is the
+							# ordinary case at small n.
+							next if $q->{floor} <= 0;
+							$v = $q->{floor};
+							$floored++;
+						}
 						push @x, log10($p->[0]);
-						push @y, log10($p->[1]);
+						push @y, log10($v);
 					}
 					next unless @x;
 					push @{ $data{$group} }, [ \@x, \@y ];
+					$group_seen{$group} = 1;
 
 					for my $v (@x) {
 						$lo_x = $v if !defined $lo_x || $v < $lo_x;
@@ -1021,11 +1271,17 @@ sub plot_all {
 					}
 				}
 
-				# the exponent, from the mean over runs at each size
+				# the exponent, from the mean over runs at each size.  The same
+				# floor applies: a function that allocates nothing at any size
+				# has a flat memory curve, and fitting the clamped readings says
+				# so with a slope of zero, where dropping them would leave
+				# nothing to fit and report the function as unmeasured.
 				my (%sum, %count);
 				foreach my $run (keys %$group_runs) {
 					foreach my $p (@{ $group_runs->{$run} }) {
-						$sum{ $p->[0] }   += $p->[1];
+						my $v = $p->[1];
+						$v = $q->{floor} if $v < $q->{floor};
+						$sum{ $p->[0] }   += $v;
 						$count{ $p->[0] } += 1;
 					}
 				}
@@ -1036,8 +1292,8 @@ sub plot_all {
 				my @tail = @means > 3 ? @means[ -3 .. -1 ] : @means;
 				my $all  = fit_slope(\@means);
 				my $tail = fit_slope(\@tail);
-				push @slope_rows, [
-					$figure, $fn, $group, scalar @means,
+				push @$slope_rows, [
+					$figure, $fn, $group, $q->{key}, scalar @means,
 					defined $all  ? sprintf('%.3f', $all)  : 'NA',
 					defined $tail ? sprintf('%.3f', $tail) : 'NA',
 				];
@@ -1047,7 +1303,7 @@ sub plot_all {
 			push @plots, {
 				'plot.type' => 'wide',
 				data        => \%data,
-				color       => { map { $_ => $color{$_} } keys %data },
+				color       => { map { $_ => $color->{$_} } keys %data },
 				title       => pyq($fn),
 			};
 		}
@@ -1069,28 +1325,33 @@ sub plot_all {
 		my $xticks = '[' . join(',', @xt) . '], ['
 			. join(',', map { pyq(count_label($_)) } @xt) . ']';
 		my $yticks = '[' . join(',', @yt) . '], ['
-			. join(',', map { pyq(time_label($_)) } @yt) . ']';
+			. join(',', map { pyq($q->{tick}->($_)) } @yt) . ']';
 
 		# Only the outermost panels get axis labels; four columns of "rows" and
-		# "seconds per call" is noise, and the ticks already say what the units
-		# are.
+		# four of whatever this quantity is called is noise, and the ticks already
+		# say what the units are.
 		my $ncols = @plots >= 8 ? 4 : (@plots >= 3 ? 3 : scalar @plots);
 		for my $i (0 .. $#plots) {
 			$plots[$i]{set_xticks} = $xticks;
 			$plots[$i]{set_yticks} = $yticks;
 			$plots[$i]{xlabel} = pyq('rows / elements')
 				if $i >= @plots - $ncols;
-			$plots[$i]{ylabel} = pyq('seconds per call')
+			$plots[$i]{ylabel} = pyq($q->{ylabel})
 				if $i % $ncols == 0;
 			# One legend is enough for a whole figure, and "wide" draws its own
 			# in every panel it is left on for.
 			$plots[$i]{'show.legend'} = 0 if $i > 0;
 		}
-		$plots[0]{suptitle} = pyq(
-			$figure_title{$figure} . ' -- Stats::LikeR vs Python vs R'
-		);
+		# The languages are named from the ones this figure actually drew rather
+		# than from @sources, because a .tsv written before the bytes column
+		# existed contributes to the seconds image and not to the RAM one, and a
+		# title promising three comparisons over two lines is a lie the reader
+		# has no way to check.
+		my @langs = grep { $group_seen{$_} } map { $_->{group} } @sources;
+		$plots[0]{suptitle} = pyq(sprintf '%s -- %s, %s',
+			$figure_title{$figure}, $q->{measures}, join(' vs ', @langs));
 
-		my $out = "scaling.$figure.svg";
+		my $out = "scaling.$figure$q->{suffix}.svg";
 		Matplotlib::Simple::plt(
 			'output.file' => $out,
 			ncols         => $ncols,
@@ -1101,20 +1362,91 @@ sub plot_all {
 		printf "%s: %d panels\n", $out, scalar @plots;
 	}
 
+	printf "%d %s readings were at or below %s and are drawn there\n",
+		$floored, $q->{key}, human_bytes($q->{floor}) if $floored;
+}
+
+sub plot_all {
+	# require does not run import(), so plt is never installed into main and is
+	# called below by its full name.  That is the point: a "use" at the top of
+	# the file would make --measure -- the stage that takes hours -- fail at
+	# startup on a machine with no plotting stack.
+	require Matplotlib::Simple;
+
+	# $series{$quantity}{$figure}{$function}{$group}{$run} = [ [n, y], ... ]
+	# $panel_order{$figure} keeps first-appearance order, so the panels come out
+	# in the order --measure took them rather than in hash order.  It is shared
+	# by both quantities, so the RAM image lays its panels out exactly as the
+	# seconds image does even where a language is missing from one of them.
+	my (%series, %panel_order, %seen_panel, %color);
+
+	foreach my $src (@sources) {
+		unless (-f $src->{file}) {
+			warn "$src->{file} is not there; skipping $src->{group}\n";
+			next;
+		}
+		$color{ $src->{group} } = $src->{color};
+
+		my $tab = read_table($src->{file}, sep => "\t", 'output.type' => 'hoa');
+		my $rows = @{ $tab->{function} };
+
+		# A file written before the bytes column existed is still worth drawing:
+		# it fills its share of the seconds image and is simply absent from the
+		# RAM one.  Say so once rather than leaving an empty panel unexplained.
+		my @have = grep { exists $tab->{ $_->{key} } } @quantities;
+		warn "$src->{file} has no 'bytes' column, so $src->{group} is missing "
+		   . "from the RAM panels; rerun its measurement stage to add one\n"
+			unless grep { $_->{key} eq 'bytes' } @have;
+
+		for my $i (0 .. $rows - 1) {
+			my $figure = $tab->{figure}[$i];
+			my $fn     = $tab->{function}[$i];
+			push @{ $panel_order{$figure} }, $fn unless $seen_panel{$figure}{$fn}++;
+			foreach my $q (@have) {
+				my $y = $tab->{ $q->{key} }[$i];
+				# 'NA' is what all three write where the platform could not
+				# weigh the call, and read_table hands it back as that literal
+				# string -- na.strings is off by default -- so every y is
+				# screened before it is logged rather than trusted to be a
+				# number.
+				next unless defined $y && Scalar::Util::looks_like_number($y);
+				push @{ $series{ $q->{key} }{$figure}{$fn}{ $src->{group} }
+				               { $tab->{run}[$i] } },
+					[ $tab->{n}[$i], $y ];
+			}
+		}
+	}
+
+	die "no *_scaling.tsv found; run --measure, scale.py and scale.R first\n"
+		unless %series;
+
+	my @slope_rows;
+	foreach my $q (@quantities) {
+		next unless $series{ $q->{key} };
+		draw_figure_set($series{ $q->{key} }, \%panel_order, \%color, $q,
+			\@slope_rows);
+	}
+
 	# "tail" is the slope over the largest three sizes and is the number to
 	# quote; "all" includes the flat, overhead-dominated left-hand end of every
 	# curve and is only there to show how much of the panel that end takes up.
+	# On the bytes rows the exponent reads the same way -- 0 is a function whose
+	# footprint does not grow with its input, 1 is one that returns as much as
+	# it is given -- and the two rows for one function are the interesting pair:
+	# a call that is linear in time and flat in memory is streaming its input.
 	write_table(
-		[ [ 'figure', 'function', 'language', 'sizes', 'slope.all', 'slope.tail' ],
+		[ [ 'figure', 'function', 'language', 'quantity', 'sizes',
+		    'slope.all', 'slope.tail' ],
 		  @slope_rows ],
 		'scaling.slopes.tsv',
 		sep         => "\t",
 		'row.names' => 0,
 	);
 
-	printf "%-9s %-30s %-13s %6s %6s\n",
-		'figure', 'function', 'language', 'all', 'tail';
-	printf "%-9s %-30s %-13s %6s %6s\n", @$_[0 .. 2], @$_[4, 5] for @slope_rows;
+	printf "%-9s %-30s %-13s %-8s %6s %6s\n",
+		'figure', 'function', 'language', 'quantity', 'all', 'tail';
+	printf "%-9s %-30s %-13s %-8s %6s %6s\n", @$_[0 .. 3], @$_[5, 6]
+		for @slope_rows;
 }
 
 # ---------------------------------------------------------------------------
@@ -1133,7 +1465,7 @@ if ($do_measure) {
 	# then writes all of it, because that is the corpus scale.py and scale.R
 	# expect to find and there is no partial version of it.
 	unless ($do_data) {
-		my @missing = grep { !-f $_ } map { fixture_files($_) } @io_n;
+		my @missing = grep { !-f $_ } map { fixture_files($_) } $warm_n, @io_n;
 		if (@missing) {
 			printf "%s is missing; writing the fixtures first\n", $missing[0];
 			write_fixtures();

@@ -5429,10 +5429,11 @@ leading comments are never mistaken for one. You may name such a column in a
 
 ### Excel (.xlsx) files
 A file whose name ends in `.xlsx` is read directly, with **no extra
-dependencies** — the parser uses the core `IO::Uncompress::Unzip` module to pull
-the parts out of the (zipped) workbook and reads the XML itself. All
-`output.type`, `filter`, and `row.names` options work exactly as they do for
-text files:
+dependencies** — the core `IO::Uncompress::Unzip` module pulls the parts out of
+the (zipped) workbook and the worksheet XML is parsed in XS, through the same
+fast path a delimited file takes: `read_table` reads the header in Perl and the
+rows are assembled in C. All `output.type`, `filter`, and `row.names` options
+work exactly as they do for text files:
 
     my $data = read_table('samples.xlsx');
     my $data = read_table('samples.xlsx', sheet => 'Results');   # by name
@@ -5450,9 +5451,14 @@ A workbook with a single worksheet, or a call that names a `sheet` explicitly,
 returns that one table directly (not wrapped in a hash).
 
 Limitations: dates and times are returned as their raw Excel serial numbers
-(cell number formats are not applied); and shared-string rich-text runs are
-concatenated into a single value. The `sep`, `delim`, and `comment` options do
-not apply to `.xlsx` files. Tested in `t/read_table.xlsx.t`.
+(cell number formats are not applied); shared-string rich-text runs are
+concatenated into a single value; and two things the format does not allow are
+read as if they were not there — a cell reference past `XFD`, the last of the
+16,384 columns a worksheet has, places the cell in the next column instead, and
+a numeric character reference above `&#x7FFFFFFF;` is left in the text rather
+than decoded. The `sep`, `delim`, and `comment` options do not
+apply to `.xlsx` files. Tested in `t/read_table.xlsx.t` and
+`t/read_table.xlsx.parser.t`.
 
 ## rename_cols
 
@@ -6880,13 +6886,6 @@ Verified against R 4.6.1 (`oneway.test`, `anova(aov())`, `anova(lm())`,
 `summary(lm())$fstatistic`, `summary(glm())$coefficients`) and against SciPy's
 `f.sf` / `norm.sf` and statsmodels' `anova_oneway`; see
 `t/model_pvalue_tails.t` and `t/oneway_test.R.scipy.t`.
-
-# Changes
-
-The release history is in the `Changes` file at the root of the distribution,
-in the format CPAN and MetaCPAN read. It is deliberately not repeated here:
-until 0.315 this section was the source `md2pod.pl` built `Changes` from, so
-the same prose had to be kept correct in two markups at once.
 
 # COPYRIGHT AND LICENSE
 

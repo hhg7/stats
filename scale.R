@@ -14,6 +14,12 @@
 #     Rscript scale.R                             # -> r_scaling.tsv
 #     perl plot.scaling.pl --plot                 # -> scaling.*.svg
 #
+# Every measurement is two numbers, not one: the seconds the call took and the
+# bytes of heap it took at its high-water mark.  plot.scaling.pl draws them as
+# two images per figure -- scaling.vector.svg against seconds and
+# scaling.vector.ram.svg against bytes -- so a curve in one has its counterpart
+# in the same panel of the other.
+#
 # Environment:
 #
 #     SCALE_DIR    where --data put the fixtures (/tmp/likeR.scaling)
@@ -257,6 +263,43 @@ measure <- function(body, data) {
     list(seconds = (as.numeric(Sys.time()) - t0) / reps, reps = reps)
 }
 
+# One reading: the bytes of heap a single call took at its high-water mark.
+#
+# This is benchmark.R's measurement, taken benchmark.R's way.  gc(reset = TRUE)
+# clears the recorded maximum so the figure is what this call cost rather than
+# the session-wide peak, which would include the fixture frame itself; column 6
+# of the gc() matrix is "max used" in megabytes, and Ncells are 56 bytes and
+# Vcells 8 bytes on 64-bit builds, which is where the baseline's weights come
+# from.
+#
+# It is measured in a call of its own rather than around the timed loop, for the
+# reason benchmark.R gives for keeping gc() outside Sys.time(): a full
+# collection either side of the clock is not free, and one taken around a loop
+# of reps calls reports the peak of the largest of them plus whatever the loop
+# failed to collect in between.  One call is the whole of the memory answer, so
+# this costs one extra call per run rather than a doubling of the stage.
+#
+# R's GC reports at page granularity, so this is coarser than the tracemalloc
+# figure scale.py takes and of the same kind as the peak resident set
+# plot.scaling.pl reads.  The three are not the same quantity: read the shape
+# of each curve, and compare the three across functions rather than to each
+# other at one size.
+weigh <- function(body, data) {
+    gc(reset = TRUE, full = TRUE)
+    base_mem <- sum(gc(full = TRUE)[, "used"] * c(56, 8))
+    body(data)
+    peak <- sum(gc(full = TRUE)[, 6] * 1024^2) - base_mem
+    max(0, peak)   # a call smaller than the collector's own noise reads below 0
+}
+
+# Decimal prefixes for the progress report, as plot.scaling.pl prints them.
+human_bytes <- function(b) {
+    if (b >= 1e9) return(sprintf("%.2f GB", b / 1e9))
+    if (b >= 1e6) return(sprintf("%.2f MB", b / 1e6))
+    if (b >= 1e3) return(sprintf("%.2f kB", b / 1e3))
+    sprintf("%d B", as.integer(b))
+}
+
 # The CPU this run is pinned to, fixed before the first measurement.
 #
 # Saying "run this under taskset" in a comment is not the same as running it
@@ -357,18 +400,22 @@ for (figure in c("vector", "transform", "io", "frame")) {
             }
 
             slowest <- 0
+            heaviest <- 0
             reps <- 0L
             for (run in seq_len(RUNS) - 1L) {
                 m <- measure(bm$body, data)
+                peak <- weigh(bm$body, data)
                 slowest <- max(slowest, m$seconds)
+                heaviest <- max(heaviest, peak)
                 reps <- m$reps
                 results[[length(results) + 1L]] <- data.frame(
                     figure = figure, `function` = bm$name, call = bm$call,
-                    n = n, run = run, seconds = m$seconds,
+                    n = n, run = run, seconds = m$seconds, bytes = peak,
                     stringsAsFactors = FALSE, check.names = FALSE)
             }
-            cat(sprintf("%-9s %-30s n=%-8d %.6f s%s\n", figure, bm$name, n,
-                        slowest, if (reps > 1) sprintf(" (x%d)", reps) else ""))
+            cat(sprintf("%-9s %-30s n=%-8d %.6f s %9s%s\n", figure, bm$name, n,
+                        slowest, human_bytes(heaviest),
+                        if (reps > 1) sprintf(" (x%d)", reps) else ""))
             if (slowest > CAP) too_slow <- c(too_slow, bm$name)
         }
         rm(data)

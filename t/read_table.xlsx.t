@@ -6,7 +6,9 @@ use Test::Exception;
 use File::Temp 'tempfile';
 use Stats::LikeR;
 
-# read_table's .xlsx support is pure Perl on top of core IO::Uncompress::Unzip.
+# read_table's .xlsx support decompresses the parts with core
+# IO::Uncompress::Unzip and parses the worksheet XML in XS (xlsx_ws_scan in
+# LikeR.xs); the tokenizer's own awkward cases are in t/read_table.xlsx.parser.t.
 # To keep this test self-contained (no openpyxl, no committed binary fixture) we
 # build a tiny-but-valid .xlsx here with core IO::Compress::Zip and read it back.
 # The workbook exercises the parser's interesting paths:
