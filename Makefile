@@ -6,7 +6,7 @@
 #
 #       ANY CHANGES MADE HERE WILL BE LOST!
 #
-#   MakeMaker ARGV: (q[OPTIMIZE=-O2 -Wall])
+#   MakeMaker ARGV: ()
 #
 
 #   MakeMaker Parameters:
@@ -22,8 +22,8 @@
 #     LICENSE => q[perl]
 #     NAME => q[Stats::LikeR]
 #     PL_FILES => {  }
-#     PREREQ_PM => { Devel::Confess=>q[0], Digest::SHA=>q[0], Scalar::Util=>q[0], Test::Exception=>q[0], Test::LeakTrace=>q[0], Test::More=>q[0] }
-#     TEST_REQUIRES => {  }
+#     PREREQ_PM => { Cwd=>q[0], IO::Uncompress::Unzip=>q[0], Scalar::Util=>q[1.22], Test::Exception=>q[0], Test::LeakTrace=>q[0], Test::More=>q[0] }
+#     TEST_REQUIRES => { Test::Exception=>q[0], Test::LeakTrace=>q[0], Test::More=>q[0] }
 #     VERSION_FROM => q[lib/Stats/LikeR.pm]
 #     test => { TESTS=>q[t/*.t] }
 
@@ -298,7 +298,7 @@ DISTVNAME = Stats-LikeR-0.316
 # --- MakeMaker cflags section:
 
 CCFLAGS = -fwrapv -fno-strict-aliasing -pipe -fstack-protector-strong -I/usr/local/include -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64 -std=gnu99 -fexcess-precision=standard
-OPTIMIZE = -O2 -Wall
+OPTIMIZE = -O2
 PERLTYPE = 
 MPOLLUTE = 
 
@@ -613,6 +613,9 @@ metafile : create_distdir
 	$(NOECHO) $(ECHO) '  - '\''David E. Condon <dec986@gmail.com>'\''' >> META_new.yml
 	$(NOECHO) $(ECHO) 'build_requires:' >> META_new.yml
 	$(NOECHO) $(ECHO) '  ExtUtils::MakeMaker: '\''0'\''' >> META_new.yml
+	$(NOECHO) $(ECHO) '  Test::Exception: '\''0'\''' >> META_new.yml
+	$(NOECHO) $(ECHO) '  Test::LeakTrace: '\''0'\''' >> META_new.yml
+	$(NOECHO) $(ECHO) '  Test::More: '\''0'\''' >> META_new.yml
 	$(NOECHO) $(ECHO) 'configure_requires:' >> META_new.yml
 	$(NOECHO) $(ECHO) '  ExtUtils::MakeMaker: '\''0'\''' >> META_new.yml
 	$(NOECHO) $(ECHO) 'dynamic_config: 1' >> META_new.yml
@@ -627,12 +630,9 @@ metafile : create_distdir
 	$(NOECHO) $(ECHO) '    - t' >> META_new.yml
 	$(NOECHO) $(ECHO) '    - inc' >> META_new.yml
 	$(NOECHO) $(ECHO) 'requires:' >> META_new.yml
-	$(NOECHO) $(ECHO) '  Devel::Confess: '\''0'\''' >> META_new.yml
-	$(NOECHO) $(ECHO) '  Digest::SHA: '\''0'\''' >> META_new.yml
-	$(NOECHO) $(ECHO) '  Scalar::Util: '\''0'\''' >> META_new.yml
-	$(NOECHO) $(ECHO) '  Test::Exception: '\''0'\''' >> META_new.yml
-	$(NOECHO) $(ECHO) '  Test::LeakTrace: '\''0'\''' >> META_new.yml
-	$(NOECHO) $(ECHO) '  Test::More: '\''0'\''' >> META_new.yml
+	$(NOECHO) $(ECHO) '  Cwd: '\''0'\''' >> META_new.yml
+	$(NOECHO) $(ECHO) '  IO::Uncompress::Unzip: '\''0'\''' >> META_new.yml
+	$(NOECHO) $(ECHO) '  Scalar::Util: '\''1.22'\''' >> META_new.yml
 	$(NOECHO) $(ECHO) 'version: 0.316' >> META_new.yml
 	$(NOECHO) $(ECHO) 'x_serialization_backend: '\''CPAN::Meta::YAML version 0.020'\''' >> META_new.yml
 	-$(NOECHO) $(MV) META_new.yml $(DISTVNAME)/META.yml
@@ -671,9 +671,13 @@ metafile : create_distdir
 	$(NOECHO) $(ECHO) '      },' >> META_new.json
 	$(NOECHO) $(ECHO) '      "runtime" : {' >> META_new.json
 	$(NOECHO) $(ECHO) '         "requires" : {' >> META_new.json
-	$(NOECHO) $(ECHO) '            "Devel::Confess" : "0",' >> META_new.json
-	$(NOECHO) $(ECHO) '            "Digest::SHA" : "0",' >> META_new.json
-	$(NOECHO) $(ECHO) '            "Scalar::Util" : "0",' >> META_new.json
+	$(NOECHO) $(ECHO) '            "Cwd" : "0",' >> META_new.json
+	$(NOECHO) $(ECHO) '            "IO::Uncompress::Unzip" : "0",' >> META_new.json
+	$(NOECHO) $(ECHO) '            "Scalar::Util" : "1.22"' >> META_new.json
+	$(NOECHO) $(ECHO) '         }' >> META_new.json
+	$(NOECHO) $(ECHO) '      },' >> META_new.json
+	$(NOECHO) $(ECHO) '      "test" : {' >> META_new.json
+	$(NOECHO) $(ECHO) '         "requires" : {' >> META_new.json
 	$(NOECHO) $(ECHO) '            "Test::Exception" : "0",' >> META_new.json
 	$(NOECHO) $(ECHO) '            "Test::LeakTrace" : "0",' >> META_new.json
 	$(NOECHO) $(ECHO) '            "Test::More" : "0"' >> META_new.json
@@ -763,7 +767,7 @@ distdir : create_distdir distmeta
 
 # --- MakeMaker dist_test section:
 disttest : distdir
-	cd $(DISTVNAME) && $(ABSPERLRUN) Makefile.PL "OPTIMIZE=-O2 -Wall"
+	cd $(DISTVNAME) && $(ABSPERLRUN) Makefile.PL 
 	cd $(DISTVNAME) && $(MAKE) $(PASTHRU)
 	cd $(DISTVNAME) && $(MAKE) test $(PASTHRU)
 
@@ -1020,7 +1024,7 @@ $(FIRST_MAKEFILE) : Makefile.PL $(CONFIGDEP)
 	-$(NOECHO) $(RM_F) $(MAKEFILE_OLD)
 	-$(NOECHO) $(MV)   $(FIRST_MAKEFILE) $(MAKEFILE_OLD)
 	- $(MAKE) $(USEMAKEFILE) $(MAKEFILE_OLD) clean $(DEV_NULL)
-	$(PERLRUN) Makefile.PL "OPTIMIZE=-O2 -Wall"
+	$(PERLRUN) Makefile.PL 
 	$(NOECHO) $(ECHO) "==> Your Makefile has been rebuilt. <=="
 	$(NOECHO) $(ECHO) "==> Please rerun the $(MAKE) command.  <=="
 	$(FALSE)
@@ -1042,8 +1046,7 @@ $(MAKE_APERL_FILE) : static $(FIRST_MAKEFILE) pm_to_blib
 	$(NOECHO) $(PERLRUNINST) \
 		Makefile.PL DIR="" \
 		MAKEFILE=$(MAKE_APERL_FILE) LINKTYPE=static \
-		MAKEAPERL=1 NORECURS=1 CCCDLFLAGS= \
-		OPTIMIZE='-O2 -Wall'
+		MAKEAPERL=1 NORECURS=1 CCCDLFLAGS=
 
 
 # --- MakeMaker test section:
@@ -1088,12 +1091,9 @@ ppd :
 	$(NOECHO) $(ECHO) '    <ABSTRACT>Get basic statistical functions, like in R, but with Perl using XS for performance</ABSTRACT>' >> Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '    <AUTHOR>David E. Condon &lt;dec986@gmail.com&gt;</AUTHOR>' >> Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '    <IMPLEMENTATION>' >> Stats-LikeR.ppd
-	$(NOECHO) $(ECHO) '        <REQUIRE NAME="Devel::Confess" />' >> Stats-LikeR.ppd
-	$(NOECHO) $(ECHO) '        <REQUIRE NAME="Digest::SHA" />' >> Stats-LikeR.ppd
-	$(NOECHO) $(ECHO) '        <REQUIRE NAME="Scalar::Util" />' >> Stats-LikeR.ppd
-	$(NOECHO) $(ECHO) '        <REQUIRE NAME="Test::Exception" />' >> Stats-LikeR.ppd
-	$(NOECHO) $(ECHO) '        <REQUIRE NAME="Test::LeakTrace" />' >> Stats-LikeR.ppd
-	$(NOECHO) $(ECHO) '        <REQUIRE NAME="Test::More" />' >> Stats-LikeR.ppd
+	$(NOECHO) $(ECHO) '        <REQUIRE NAME="Cwd::" />' >> Stats-LikeR.ppd
+	$(NOECHO) $(ECHO) '        <REQUIRE NAME="IO::Uncompress::Unzip" />' >> Stats-LikeR.ppd
+	$(NOECHO) $(ECHO) '        <REQUIRE NAME="Scalar::Util" VERSION="1.22" />' >> Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '        <ARCHITECTURE NAME="x86_64-linux-5.44" />' >> Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '        <CODEBASE HREF="" />' >> Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '    </IMPLEMENTATION>' >> Stats-LikeR.ppd

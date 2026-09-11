@@ -253,14 +253,24 @@ BUILDER_FOR <- list(vector = "vector", transform = "vector", io = "io",
 # count: Sys.time() resolves microseconds, and min() on a thousand doubles does
 # not take one.  The repeat count comes from a second untimed call, so all
 # three scripts average over the same span of work.
-measure <- function(body, data) {
+# How many calls it takes to span TARGET, from one clocked call.
+#
+# Once per (function, size), not once per run: the answer is a property of the
+# call and the input, and nothing about run 3 makes it differ from run 0.  It
+# used to be recomputed inside every run, and moving it out here is what pays
+# for the call weigh() makes -- the two together leave the number of calls per
+# run exactly where it was before memory was measured at all.
+repeat_count <- function(body, data) {
     t0 <- as.numeric(Sys.time())
     body(data)
     one <- as.numeric(Sys.time()) - t0
-    reps <- if (one > 0) min(MAX_REPS, as.integer(TARGET / one) + 1L) else MAX_REPS
+    if (one > 0) min(MAX_REPS, as.integer(TARGET / one) + 1L) else MAX_REPS
+}
+
+measure <- function(body, data, reps) {
     t0 <- as.numeric(Sys.time())
     for (i in seq_len(reps)) body(data)
-    list(seconds = (as.numeric(Sys.time()) - t0) / reps, reps = reps)
+    (as.numeric(Sys.time()) - t0) / reps
 }
 
 # One reading: the bytes of heap a single call took at its high-water mark.
@@ -272,12 +282,30 @@ measure <- function(body, data) {
 # Vcells 8 bytes on 64-bit builds, which is where the baseline's weights come
 # from.
 #
-# It is measured in a call of its own rather than around the timed loop, for the
-# reason benchmark.R gives for keeping gc() outside Sys.time(): a full
-# collection either side of the clock is not free, and one taken around a loop
-# of reps calls reports the peak of the largest of them plus whatever the loop
-# failed to collect in between.  One call is the whole of the memory answer, so
-# this costs one extra call per run rather than a doubling of the stage.
+# It is one call and not the timed loop, and the difference is not small.  R
+# collects when its heap grows past a trigger, not when a value goes out of
+# scope, so the max-used over a loop is the garbage the loop piled up before it
+# got round to collecting.  Over a 100,000-row frame:
+#
+#     reps        1          5         20        100
+#     sort  1548920    6814634   24639250   60500549
+#     rank  4192018   20835264   59526606   59526606
+#     uniq  2379214   12025690   45159579   59420213
+#
+# One call's sort() costs 1.5 MB; the same sort() read forty times that at
+# reps = 100, and all three converge on the size of the heap rather than on
+# anything about the function.  Only reps = 1 is a measurement.
+#
+# The gc() pair is what this costs, not the call -- see the measurements in
+# weigh() below -- so it is taken once per
+# (function, size) and not once per run.  Seven of them would be seven copies
+# of one number: the runs exist to average a stopwatch, and gc() reports an
+# exact count of what the heap held rather than a reading that scatters.
+# Timed at SCALE_MAX_N=30000, one per run cost 62 s against the 11 s this stage
+# took before memory was measured at all; one per (function, size), with
+# repeat_count() hoisted out of the run loop to pay for it, costs a pair of
+# collections per cell and no extra calls -- seven calibration calls per cell
+# went away and one weighed call came back.
 #
 # R's GC reports at page granularity, so this is coarser than the tracemalloc
 # figure scale.py takes and of the same kind as the peak resident set
@@ -285,10 +313,31 @@ measure <- function(body, data) {
 # of each curve, and compare the three across functions rather than to each
 # other at one size.
 weigh <- function(body, data) {
-    gc(reset = TRUE, full = TRUE)
-    base_mem <- sum(gc(full = TRUE)[, "used"] * c(56, 8))
+    # gc() returns the state it leaves behind, so the reset call is also the
+    # baseline reading; benchmark.R spends a third collection to take the two
+    # separately, and at a hundredth of a second each that is one worth not
+    # spending.
+    #
+    # Neither is full.  benchmark.R's are, and a full collection here costs 3x
+    # to 13x what a partial one does while moving the answer by a fixed amount:
+    # the same three calls weighed both ways, five times each --
+    #
+    #     n         call     full = TRUE          full = FALSE
+    #     30,000    sort     485216  0.0324s      473488  0.0024s
+    #     30,000    rank    1323893  0.0343s     1312293  0.0055s
+    #     30,000    uniq     799181  0.0303s      787581  0.0013s
+    #     300,000   sort    3756365  0.0408s     3744765  0.0116s
+    #     300,000   rank   12144973  0.1011s    12134285  0.0711s
+    #     300,000   uniq    7950669  0.0369s     7939069  0.0064s
+    #
+    # -- the partial reads 11,600 bytes lower in five of the six and 10,688 in
+    # the other, because the young garbage it leaves behind is counted into the
+    # baseline.  A fixed 11.6 kB, on an axis ruled in decades from a page to a
+    # hundred megabytes, sits below the page the readings are floored at
+    # anyway.  Ten times the speed for that is worth taking.
+    base_mem <- sum(gc(reset = TRUE)[, "used"] * c(56, 8))
     body(data)
-    peak <- sum(gc(full = TRUE)[, 6] * 1024^2) - base_mem
+    peak <- sum(gc()[, 6] * 1024^2) - base_mem
     max(0, peak)   # a call smaller than the collector's own noise reads below 0
 }
 
@@ -399,22 +448,22 @@ for (figure in c("vector", "transform", "io", "frame")) {
                 next
             }
 
+            reps <- repeat_count(bm$body, data)
+            peak <- weigh(bm$body, data)
             slowest <- 0
-            heaviest <- 0
-            reps <- 0L
             for (run in seq_len(RUNS) - 1L) {
-                m <- measure(bm$body, data)
-                peak <- weigh(bm$body, data)
-                slowest <- max(slowest, m$seconds)
-                heaviest <- max(heaviest, peak)
-                reps <- m$reps
+                secs <- measure(bm$body, data, reps)
+                slowest <- max(slowest, secs)
+                # The one memory reading goes on every run's row: the column
+                # has to line up with the seconds column row for row, and it is
+                # the same call at the same size each time.
                 results[[length(results) + 1L]] <- data.frame(
                     figure = figure, `function` = bm$name, call = bm$call,
-                    n = n, run = run, seconds = m$seconds, bytes = peak,
+                    n = n, run = run, seconds = secs, bytes = peak,
                     stringsAsFactors = FALSE, check.names = FALSE)
             }
             cat(sprintf("%-9s %-30s n=%-8d %.6f s %9s%s\n", figure, bm$name, n,
-                        slowest, human_bytes(heaviest),
+                        slowest, human_bytes(peak),
                         if (reps > 1) sprintf(" (x%d)", reps) else ""))
             if (slowest > CAP) too_slow <- c(too_slow, bm$name)
         }

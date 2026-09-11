@@ -115,19 +115,23 @@ this file for the environment variables and for how scale.py and scale.R fit
 in.
 USAGE
 
-my ($do_data, $do_measure, $do_plot, $want_help) = (0, 0, 0, 0);
+my ($do_data, $do_measure, $do_plot, $want_help, $do_weigh) = (0, 0, 0, 0, 0);
 Getopt::Long::GetOptions(
 	'data!'    => \$do_data,
 	'measure!' => \$do_measure,
 	'plot!'    => \$do_plot,
 	'help|h'   => \$want_help,
+	# --measure re-runs this file with --weigh to take one memory reading in a
+	# process of its own; see weigh_one().  Not in $usage: it is not a stage
+	# anyone runs by hand, and its three arguments are positional.
+	'weigh'    => \$do_weigh,
 ) or die $usage;
 if ($want_help) {
 	print $usage;
 	exit 0;
 }
 ($do_data, $do_measure, $do_plot) = (1, 1, 1)
-	unless $do_data || $do_measure || $do_plot;
+	unless $do_data || $do_measure || $do_plot || $do_weigh;
 
 my $dir      = $ENV{SCALE_DIR}  || '/tmp/likeR.scaling';
 my $runs     = $ENV{SCALE_RUNS} || 7;
@@ -146,12 +150,10 @@ my @vec_n   = (1_000, 3_000, 10_000, 30_000, 100_000, 300_000, 1_000_000);
 my @io_n    = (1_000, 3_000, 10_000, 30_000, 100_000, 300_000);
 my @frame_n = (1_000, 3_000, 10_000, 30_000, 100_000, 300_000);
 
-# Every measurement makes one call on a deliberately small input before the one
-# it weighs; see the comment above measure() for what that call is paying for.
-# 100 rows is the size of it.  It has to be far enough below the smallest rung
-# of the ladder that the arena it leaves behind cannot cover the real call --
-# at a tenth of 1,000 it covers a tenth of it -- and it costs one extra call
-# per reading, on an input a hundred elements long.
+# The size of the input weigh_one() makes its warm-up call on; see the comment
+# above it for what that call is paying for.  It has to be far enough below the
+# smallest rung of the ladder that what it leaves behind cannot cover the call
+# being weighed, and at a tenth of 1,000 it covers a tenth of it.
 my $warm_n = 100;
 
 # The fixture row counts are @io_n before SCALE_MAX_N is applied, plus the
@@ -623,6 +625,12 @@ my @benchmarks = (
 	  code => sub { aoh2hoa($_[0]{aoh}) } },
 );
 
+# figure => name => the benchmark.  --weigh is handed a figure and a name on
+# the command line and has no list to walk, and the names are unique within a
+# figure because the plot joins the three languages' files on them.
+my %bench_by_name;
+$bench_by_name{ $_->{figure} }{ $_->{name} } = $_ for @benchmarks;
+
 my %ladder = (vector => \@vec_n, transform => \@vec_n,
               io => \@io_n, frame => \@frame_n);
 my %builder_for = (vector => 'vector', transform => 'vector',
@@ -724,22 +732,18 @@ sub pin_to_one_cpu {
 # effects grow with n, which is exactly the axis being measured.  A child that
 # starts from the parent's untouched heap every time cannot do that.
 #
-# Inside the child the call is made twice untimed before the clock starts: once
-# on a hundred-element input of the same shape, and once on the real one.  That
-# is not politeness towards the cache.  A freshly forked process has a
+# Inside the child the call is made once untimed before the clock starts.  That
+# is not politeness towards the cache: a freshly forked process has a
 # copy-on-write address space, and the first dozen writes perl makes -- its
 # stack, the eval context, the first temporaries -- each take a page fault that
 # copies 4 KiB.  Measured, that is a fixed ~50 microseconds sitting on top of
 # every reading, which at n = 1,000 is ten times the call itself and would draw
 # a Perl line that looks flat up to n = 10,000 for reasons that have nothing to
-# do with Stats::LikeR.  The untimed calls pay it, and what is then measured is
+# do with Stats::LikeR.  The untimed call pays it, and what is then measured is
 # the steady-state cost -- the same quantity scale.py and scale.R measure.
 #
-# The one on the small input is there for the memory figure and is described
-# below; for the timing it changes nothing, because the call on the real input
-# still happens in the position it always did, immediately before the clocked
-# one, and still warms the page cache for the file an I/O panel is about to
-# read.
+# Nothing here weighs anything.  Memory is read in weigh_one(), in a process of
+# its own, for the reason set out above it.
 #
 # A call faster than $target is repeated until the pair of clock readings spans
 # $target and the total divided by the count, because Time::HiRes resolves
@@ -751,82 +755,6 @@ sub pin_to_one_cpu {
 # Sharing one channel would splice that announcement into the timing, and
 # leaving it connected to the terminal would put a few hundred lines of noise
 # in the middle of the progress report and charge the write for it.
-#
-# The memory figure is how far the resident set rose while the call on the real
-# input ran: VmHWM reset to the current VmRSS just before it, read again just
-# after.  The fork this function already performs is what makes it mean
-# anything: perl hands freed memory back to its own arenas rather than to the
-# OS, so weighing one process run after run gives the first run the whole bill
-# and every run after it zero, while a child that starts from the parent's
-# untouched heap reads the same number seven times.
-#
-# What the number contains: the memory the result holds, plus whatever the call
-# allocated and freed along the way, plus the copy-on-write copies of any input
-# the call writes to -- reading a column as a number caches the conversion in
-# the SV, which dirties its page.  It is page-granular, so a call that
-# allocates less than a page reads as zero.
-#
-# It is the peak and not the difference between the two resident sets, because
-# a difference cannot see anything the call gave back before it returned, and
-# glibc hands a block above its 128 KiB mmap threshold straight back to the
-# kernel on free.  That is not a rounding error, it is most of the answer.  The
-# same four calls read either way, in a child that had already made a
-# hundred-element call of the same kind:
-#
-#     n            1,000      10,000     100,000    1,000,000
-#     median rss    4096       77824       65536        65536
-#            hwm    4096       77824      335872      7708672
-#     cor    rss   12288      196608       65536        65536
-#            hwm   12288      196608     1253376     15507456
-#     rank   rss   49152      643072     4284416     44511232
-#            hwm   49152      643072     5451776     61214720
-#
-# Below the threshold the two agree exactly.  Above it the difference flattens
-# at 64 KiB and stays there over two more decades, so median() and cor() would
-# be drawn as O(1) in memory when both copy their input; rank() survives it only
-# because it returns the vector it built and so cannot free it.  The peak also
-# makes this the same *kind* of quantity as the other two languages report --
-# tracemalloc's high-water mark in scale.py, gc()'s "max used" in scale.R --
-# where the difference was not.
-#
-# Why a hundred-element call runs first.  A fresh child's whole address space
-# is copy-on-write, perl's interpreter state included, so the first call into
-# the module writes to a hundred-odd pages of arena headers, free lists and
-# stacks that it does not allocate -- it copies them.  Reading /proc either side
-# of four consecutive calls in one child, on this build:
-#
-#     n          call      1st       2nd    3rd  4th
-#     1,000      min    544768         0      0    0
-#     100,000    min    544768         0      0    0
-#     1,000      rank   737280     24576      0    0
-#     100,000    rank  4902912   4001792      0    0
-#
-# min() returns one scalar and allocates nothing at either size, yet its first
-# call reads 544,768 bytes at both -- the identical figure at two sizes a
-# hundredfold apart, which is what gives it away.  Left in, that would put half
-# a megabyte under every curve and turn the small-n end of every RAM panel into
-# a picture of the apparatus.
-#
-# Weighing the second call on the real input instead is worse, and the same
-# table says why: by then the arena holds one call's worth of everything, so the
-# second reading is what the first call failed to cover rather than what the
-# call costs.  rank at n = 100,000 loses a fifth that way, and by the third call
-# there is nothing left to read at all.  Run across the whole transform panel,
-# seq() and scale() came back at 0 bytes at n = 10,000 -- both return a vector
-# of n elements.
-#
-# The hundred-element call pays the copy-on-write bill on an input two to four
-# decades below the real one, so what it leaves in the arena covers at most a
-# hundredth of what is weighed next, and what is weighed next is still a first
-# call on its own input.  With it in place min() reads 0 at every size and
-# rank(), uniq() and scale() come back linear in n, which is what all four are.
-#
-# Forking, redirecting and reporting cost some memory of their own, the same
-# amount every time.  That floor is measured in measure_all() by weighing an
-# empty subroutine and is subtracted from every reading, which is what
-# benchmark.pl's $floor and benchmark.R's base_mem do.  With the warm-up call
-# ahead of it the floor reads zero on this machine; it stays because it is what
-# would catch the offset coming back.
 
 # One field of /proc/self/status, in bytes.  'VmRSS' is the resident set now,
 # 'VmHWM' the largest it has been since the last reset.
@@ -854,7 +782,7 @@ sub reset_peak_rss {
 }
 
 sub measure {
-	my ($code, $input, $warm) = @_;
+	my ($code, $input) = @_;
 
 	pipe(my $from_child, my $to_parent) or die "pipe failed: $!\n";
 
@@ -867,26 +795,9 @@ sub measure {
 		open my $saved_out, '>&', \*STDOUT or POSIX::_exit(1);
 		open STDOUT, '>', File::Spec->devnull() or POSIX::_exit(1);
 
-		# The hundred-element call, whose only job is to pay the copy-on-write
-		# bill before the baseline is read.  Whatever it throws is ignored: the
-		# call on the real input is a moment away and reports the same failure
-		# properly.  The floor run passes no warm-up input and skips this.
-		eval { $code->($warm) } if defined $warm;
-
-		# The first proc_bytes() allocates the handle and its buffer and costs
-		# ~300 KiB of its own, so it is spent before the peak is reset and the
-		# baseline read, rather than inside them.
-		proc_bytes('VmRSS');
-		my $peak   = reset_peak_rss();
-		my $before = proc_bytes('VmRSS');
-
 		# untimed: page faults, allocator, page cache, and a broken call
 		my $ok  = eval { $code->($input); 1 };
 		my $err = $ok ? '' : $@;
-
-		my $after = proc_bytes($peak ? 'VmHWM' : 'VmRSS');
-		my $bytes = ($ok && defined $before && defined $after)
-		          ? $after - $before : '';
 
 		my $secs = 0;
 		my $reps = 1;
@@ -907,7 +818,7 @@ sub measure {
 		$err =~ s/\s+/ /g;
 
 		open STDOUT, '>&', $saved_out or POSIX::_exit(1);
-		print {$to_parent} join("\t", $secs, $reps, $bytes, $err), "\n";
+		print {$to_parent} join("\t", $secs, $reps, $err), "\n";
 		POSIX::_exit(0);
 	}
 
@@ -915,14 +826,136 @@ sub measure {
 	my $line = <$from_child>;
 	close $from_child;
 	waitpid $pid, 0;
-	return (undef, undef, undef, 'the child died without reporting')
-		unless defined $line;
+	return (undef, undef, 'the child died without reporting') unless defined $line;
 
 	chomp $line;
-	my ($secs, $reps, $bytes, $err) = split /\t/, $line, 4;
-	#the memory field is empty where there is no /proc/self/status to read
-	$bytes = undef unless defined $bytes && length $bytes;
-	return ($secs, $reps, $bytes, (defined $err && length $err) ? $err : undef);
+	my ($secs, $reps, $err) = split /\t/, $line, 3;
+	return ($secs, $reps, (defined $err && length $err) ? $err : undef);
+}
+
+# ---------------------------------------------------------------------------
+# 5a. Weighing one call, in a process of its own
+# ---------------------------------------------------------------------------
+# What the memory figure is: how far the resident set rose while one call ran.
+# VmHWM is reset to the current VmRSS just before it and read again just after,
+# so the window holds the call and nothing else -- not the fork, not the build,
+# not the report.  It contains the memory the result holds, plus whatever the
+# call allocated and freed along the way, plus the copy-on-write copies of any
+# input the call writes to; reading a column as a number caches the conversion
+# in the SV, which dirties its page.  It is page-granular, so a call that
+# allocates less than a page reads as zero.
+#
+# It is the peak and not the difference between two resident sets, because a
+# difference cannot see anything the call gave back before it returned, and
+# glibc hands a block above its 128 KiB mmap threshold straight back to the
+# kernel on free.  That is not a rounding error, it is most of the answer.  The
+# same three calls read either way:
+#
+#     n            1,000      10,000     100,000    1,000,000
+#     median rss    4096       77824       65536        65536
+#            hwm    4096       77824      335872      7708672
+#     cor    rss   12288      196608       65536        65536
+#            hwm   12288      196608     1253376     15507456
+#     rank   rss   49152      643072     4284416     44511232
+#            hwm   49152      643072     5451776     61214720
+#
+# Below the threshold the two agree exactly.  Above it the difference flattens
+# at 64 KiB and stays there over two more decades, so median() and cor() would
+# be drawn as O(1) in memory when both copy their input.  The peak also makes
+# this the same *kind* of quantity the other two languages report --
+# tracemalloc's high-water mark in scale.py, gc()'s "max used" in scale.R.
+#
+# Why a whole process, and not the child measure() already forks.  A resident
+# set only rises when a call makes the process ask the kernel for pages it does
+# not have, so an allocation that fits in the heap the process is already
+# holding does not register at all.  Perl hands freed memory back to its own
+# arenas rather than to the OS, so a parent that has built and dropped one rung
+# of the ladder leaves every child it forks afterwards enough slack to swallow
+# the next.  The same rank() call, same size, weighed in a child of a parent
+# that had just freed a large array and of one that had not:
+#
+#     n          parent tight   parent with freed heap
+#     1,000            122880                        0
+#     3,000                 0                        0
+#     10,000                0                        0
+#     30,000                0                        0
+#
+# The right-hand column is not a measurement of rank(), it is a measurement of
+# what the ladder happened to free beforehand, and it is what drew rank() flat
+# along the floor to n = 3,000 and then straight up to 786 kB at n = 10,000.
+# Forcing every allocation through mmap (MALLOC_MMAP_THRESHOLD_=4096) does not
+# rescue it: perl hands out SVs from arenas it allocates in chunks, so malloc
+# never sees the individual allocations and n = 3,000 still read 0.
+#
+# A process that has just started has no slack, which is the left-hand column,
+# so each reading is taken in one -- built fresh, one call, gone.  What that
+# costs is the input built a second time, once per (function, size) rather than
+# once per (figure, size), plus a perl startup with the module loaded.  Both
+# measured here: startup 0.040 s, and the builders 0.000 s (vector, n = 1,000)
+# to 0.590 s (frame, n = 300,000), which comes to about 20 s over the whole
+# ladder against a stage that runs for hours.
+#
+# One reading per (function, size), not one per run: the runs exist to average
+# a stopwatch, and this is not one.  scale.py and scale.R weigh once per cell
+# for the same reason.
+#
+# The warm-up call is what the fresh process costs instead of a floor
+# subtraction.  The first call into the module in a new address space faults in
+# its code and its arenas -- 544,768 bytes on this build, the same figure at
+# n = 1,000 and at n = 100,000, which is what gives it away as apparatus rather
+# than algorithm.  A call on a hundred-element input pays it before the peak is
+# reset, and leaves behind slack of its own that is two to four decades below
+# what is weighed next.
+sub weigh_one {
+	my ($figure, $name, $n) = @_;
+	my $b = $bench_by_name{$figure} && $bench_by_name{$figure}{$name}
+		or die "--weigh: no benchmark '$name' in figure '$figure'\n";
+
+	# Everything up to the answer goes to the bit bucket: the parent reads this
+	# process's STDOUT, and write_table announces the file it wrote.
+	open my $saved_out, '>&', \*STDOUT or die "cannot save STDOUT: $!\n";
+	open STDOUT, '>', File::Spec->devnull() or die "cannot open devnull: $!\n";
+
+	my $builder = $build{ $builder_for{$figure} };
+	my $warm    = $builder->($warm_n);
+	my $input   = $builder->($n);
+
+	eval { $b->{code}->($warm) };	#pays the module's first call in this process
+
+	# The first proc_bytes() allocates the handle and its buffer and costs
+	# ~300 KiB of its own, so it is spent before the peak is reset rather than
+	# inside the window.
+	proc_bytes('VmRSS');
+	my $peak   = reset_peak_rss();
+	my $before = proc_bytes('VmRSS');
+	my $ok     = eval { $b->{code}->($input); 1 };
+	my $after  = proc_bytes($peak ? 'VmHWM' : 'VmRSS');
+
+	open STDOUT, '>&', $saved_out or die "cannot restore STDOUT: $!\n";
+	print +($ok && defined $before && defined $after ? $after - $before : ''), "\n";
+	return;
+}
+
+# The parent side: run this file again with --weigh and read back the one
+# number it prints.  @INC is passed through as -I arguments because --measure
+# is always run against a build that is not installed, and a re-exec that lost
+# "-Iblib/arch -Iblib/lib" would weigh whatever Stats::LikeR is on the system.
+# The list form of open keeps the shell out of it, which matters: half these
+# names hold spaces and parentheses.
+my @weigh_inc = map { "-I$_" } grep { !ref } @INC;
+
+sub weigh_in_new_process {
+	my ($figure, $name, $n) = @_;
+	my @cmd = ($^X, @weigh_inc, $0, '--weigh', $figure, $name, $n);
+	open my $fh, '-|', @cmd or do {
+		warn "cannot weigh $name at n=$n: $!\n";
+		return undef;
+	};
+	my $line = <$fh>;
+	close $fh;
+	return undef unless defined $line;
+	chomp $line;
+	return length $line ? $line : undef;
 }
 
 # ---------------------------------------------------------------------------
@@ -934,36 +967,15 @@ sub measure_all {
 	my @results;
 	my %too_slow; # name => 1 once it exceeds $cap, or once it fails
 
-	# What a measured run of nothing at all weighs: everything measure() does
-	# between resetting the peak and reading it, with an empty subroutine where
-	# the call would be.  undef is passed where the warm-up input would go, so
-	# the warm-up call is skipped and the floor covers only the eval, the two
-	# /proc reads and whatever they fault in.  It comes off every reading below,
-	# which is what benchmark.pl's $floor and benchmark.R's base_mem do.
-	#
-	# The smallest of five is taken rather than the mean, because the quantity
-	# wanted is the unavoidable part: a floor run that happened to fault in one
-	# extra page would otherwise be subtracted from every function in the file.
-	#
-	# A floor of zero and a floor that could not be read are different answers,
-	# and only the second is worth saying out loud.  Zero is what this is
-	# expected to report here -- the reset moves the whole of the apparatus
-	# outside the window -- and it has read zero on every run of this so far.
-	my $floor     = 0;
-	my $can_weigh = 0;
-	for (1 .. 5) {
-		my (undef, undef, $bytes) = measure(sub { }, undef);
-		next unless defined $bytes;
-		$floor = $bytes if !$can_weigh || $bytes < $floor;
-		$can_weigh = 1;
-	}
-	if ($can_weigh) {
-		printf "Measurement floor: %d bytes, subtracted from every RAM figure.\n",
-			$floor;
-	} else {
-		print "cannot read this process's resident set, so the RAM column is "
-		    . "NA throughout; /proc/self/status is what supplies it\n";
-	}
+	# Whether there is a resident set to read at all.  Where there is not --
+	# macOS, the BSDs, Windows, a kernel too old to report the field -- no
+	# weighing process is started, so the cost of asking is skipped along with
+	# the answer and the column comes out NA throughout.  There is no floor to
+	# subtract: weigh_one() puts nothing but the call itself inside the window.
+	my $can_weigh = defined proc_bytes('VmRSS');
+	print "cannot read this process's resident set, so the RAM column is NA "
+	    . "throughout; /proc/self/status is what supplies it\n"
+		unless $can_weigh;
 
 	# Grouped by figure, then by size, so each input is built once and every
 	# benchmark that wants it is measured before it is thrown away.  The
@@ -975,12 +987,6 @@ sub measure_all {
 	foreach my $figure (@figure_order) {
 		my $list = $by_figure{$figure} or next;
 
-		# The input the warm-up call is made on, built once and held for the
-		# whole figure.  It is the same builder the ladder uses, at $warm_n, so
-		# the warm-up runs the identical code path on an input two to four
-		# decades smaller than the one being weighed.
-		my $warm = $build{ $builder_for{$figure} }->($warm_n);
-
 		foreach my $n (@{ $ladder{$figure} }) {
 			my @todo = grep { !$too_slow{ $_->{name} } } @$list;
 			next unless @todo;
@@ -988,10 +994,8 @@ sub measure_all {
 			my $input = $build{ $builder_for{$figure} }->($n);
 			foreach my $b (@todo) {
 				my ($slowest, $reps_used, $failed) = (0, 0, 0);
-				my $heaviest;	#stays undef where the resident set cannot be read
 				for my $run (0 .. $runs - 1) {
-					my ($secs, $reps, $bytes, $err)
-						= measure($b->{code}, $input, $warm);
+					my ($secs, $reps, $err) = measure($b->{code}, $input);
 					if (defined $err) {
 						# Report it once and stop trying this function at every
 						# larger size too: a call that dies at n = 1,000 is not
@@ -1001,23 +1005,25 @@ sub measure_all {
 						$failed = 1;
 						last;
 					}
-					if (defined $bytes) {
-						# A call cheaper than the floor's own page faults reads
-						# below it; that is resolution, not a negative footprint.
-						$bytes -= $floor;
-						$bytes = 0 if $bytes < 0;
-						$heaviest = $bytes
-							if !defined $heaviest || $bytes > $heaviest;
-					}
 					$slowest   = $secs if $secs > $slowest;
 					$reps_used = $reps;
 					push @results, [ $figure, $b->{name}, $b->{call}, $n, $run,
-					                 $secs, defined $bytes ? $bytes : 'NA' ];
+					                 $secs ];
 				}
 				next if $failed;
+
+				# One weighing for the whole cell, in a process of its own, and
+				# the same figure goes on each of the runs' rows: the column
+				# has to line up with the seconds column row for row, and it is
+				# the same call at the same size each time.
+				my $bytes = $can_weigh
+					? weigh_in_new_process($figure, $b->{name}, $n) : undef;
+				push @$_, defined $bytes ? $bytes : 'NA'
+					for @results[ -$runs .. -1 ];
+
 				printf "%-9s %-30s n=%-8d %.6f s %9s%s\n", $figure, $b->{name},
 					$n, $slowest,
-					defined $heaviest ? human_bytes($heaviest) : '',
+					defined $bytes ? human_bytes($bytes) : '',
 					$reps_used > 1 ? " (x$reps_used)" : '';
 				$too_slow{ $b->{name} } = 1 if $slowest > $cap;
 			}
@@ -1452,6 +1458,16 @@ sub plot_all {
 # ---------------------------------------------------------------------------
 # 9. Run the requested stages
 # ---------------------------------------------------------------------------
+# --weigh first and alone: it is one reading for one call, started by
+# --measure, and it must not draw or measure anything else.  Its three
+# arguments are positional -- figure, function name, n -- because a function
+# name like "read_table (csv, mixed)" is nobody's idea of an option value.
+if ($do_weigh) {
+	@ARGV == 3 or die "--weigh takes a figure, a function name and an n\n";
+	weigh_one(@ARGV);
+	exit 0;
+}
+
 write_fixtures() if $do_data;
 
 if ($do_measure) {

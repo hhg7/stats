@@ -5,13 +5,50 @@ use strict;
 package Stats::LikeR;
 our $VERSION = 0.316;
 require XSLoader;
-use autodie ':default';
 use warnings FATAL => 'all';
 use Exporter 'import';
 use Scalar::Util qw(reftype looks_like_number);
 XSLoader::load('Stats::LikeR', $VERSION);
 our @EXPORT_OK = qw(h add_data age_standardize agg anova aoh2h aoh2hoa aoh2hoh aov assign auc auroc avals bedroc bfill binom_test cfilter chisq_test chunk col col2col colnames concat cmh_test cor cor_test cov csort density bw_nrd0 bw_nrd bw_ucv bw_bcv bw_sj dnorm cohen_d cramers_v eta_squared drop_cols drop_duplicates dropna epi_2x2 ffill fillna filter fisher_test get_union glm group_by h2aoh hoa2aoh hoa2hoh hoh2hoa hist interpolate intersection is_equivalent kruskal_test ks_test kurtosis Lonly ljoin lm map_cell matrix max mean median melt merge min mode ncol nrow oneway_test p_adjust pivot_table pnorm pt qt pchisq qchisq pf qf pbinom qnorm power_t_test predict prop_test mcnemar_test friedman_test dunn_test prcomp ptukey qcut qtukey quantile rank roc Ronly rbind rbinom read_table rename_cols rnorm rownames runif sample scale sd select_cols seq shapiro_test skew smd sum summary survfit logrank_test coxph table_one t_test transpose TukeyHSD uniq vals value_counts var var_test vif hosmer_lemeshow view wilcox_test write_table);
 our @EXPORT = @EXPORT_OK;
+
+# File operations: failure reporting
+#
+# Before 0.316 this file ran under `use autodie ':default';', which replaced
+# open() and close() with versions that threw an autodie::exception the moment
+# either failed.  0.316 drops the dependency; _open_read() and _close() take its
+# place, raising the same failure at the same points with the same text, so a
+# caller's eval sees the message it has always seen.  The one visible difference
+# is that $@ is now a plain string rather than an autodie::exception object,
+# which nothing in the module, the tests or the documentation ever inspected.
+#
+# The wording is autodie::exception 2.37's: _format_open() (through
+# _FORMAT_OPEN and _format_open_with_mode()) for the open, _format_close() for
+# the close, each followed by add_file_and_line().  That last method is where the
+# trailing newline comes from, and it is also what stops perl appending a second,
+# differently punctuated " at ... line ..." of its own.
+
+# autodie reported the caller's file and line, not its own, so build the message
+# one frame up.
+sub _io_die {
+	my ($msg) = @_;
+	my (undef, $file, $line) = caller(1);
+	die sprintf("%s at %s line %d\n", $msg, $file, $line);
+}
+
+sub _open_read {
+	my ($file) = @_;
+	my $fh;
+	open $fh, '<', $file
+		or _io_die("Can't open '$file' for reading: '$!'");
+	return $fh;
+}
+
+sub _close {
+	my ($fh) = @_;
+	close $fh or _io_die("Can't close($fh) filehandle: '$!'");
+	return;
+}
 
 # Help
 #
@@ -213,7 +250,7 @@ sub _pod_topics {
 		# helper, comes out as I<rename>inplace)
 		push @t, $n if length($n) && grep { $_ eq $n } @EXPORT_OK;
 	}
-	close $fh;
+	_close($fh);
 	return @t;
 }
 
@@ -291,9 +328,7 @@ sub _pod_open {
 	my $file = defined($POD_FILE) ? $POD_FILE : __FILE__;
 	$file = $INC{'Stats/LikeR.pm'} unless defined($file) && -r $file;
 	return undef unless defined($file) && -r $file;
-	my $fh;
-	open $fh, '<', $file or return undef;
-	return $fh;
+	return _open_read($file);
 }
 
 # Reduce a heading or a function name to a comparison key.  Dropping every
@@ -333,7 +368,7 @@ sub _pod_section {
 		last if $in && $line =~ /^=cut\s*$/;
 		push @out, $line if $in;
 	}
-	close $fh;
+	_close($fh);
 	return @out;
 }
 
@@ -2943,10 +2978,9 @@ sub read_table {
 	# delivered by the parser and un-commented in the callback as usual, so it
 	# never reaches this branch.
 	if (!$is_xlsx && length( $args{comment} // '' ) && length( $args{sep} // '' )) {
-		open my $fh, '<', $file
-			or die "read_table: can't open $file: $!\n";
+		my $fh    = _open_read($file);
 		my $first = <$fh>;
-		close $fh;
+		_close($fh);
 		if (defined $first && $first =~ /^\Q$args{comment}\E\s/) {
 			$first =~ s/\r?\n\z//;
 			my @cols = split /\Q$args{sep}\E/, $first, -1;

@@ -135,10 +135,16 @@ my %WriteMakefileArgs = (
   "DISTNAME" => "Stats-LikeR",
   "LICENSE" => "perl",
   "NAME" => "Stats::LikeR",
+  # Kept in step with dist.ini by hand: this copy is excluded from the dist
+  # (Git::GatherDir excludes it), so dzil never regenerates it and a clone is
+  # the only thing that reads it.  Devel::Confess and Digest::SHA were listed
+  # here long after the last use of either was removed.
   "PREREQ_PM" => {
-    "Devel::Confess" => 0,
-    "Digest::SHA" => 0,
-    "Scalar::Util" => 0,
+    "Cwd" => 0,
+    "IO::Uncompress::Unzip" => 0,
+    "Scalar::Util" => "1.22"
+  },
+  "TEST_REQUIRES" => {
     "Test::Exception" => 0,
     "Test::LeakTrace" => 0,
     "Test::More" => 0
@@ -173,10 +179,12 @@ my %WriteMakefileArgs = (
     PL_FILES => {},
 );
 
+# Every phase flattened into one list, for the pre-6.63_03 ExtUtils::MakeMaker
+# that has no TEST_REQUIRES to put the test-only modules in.
 my %FallbackPrereqs = (
-  "Devel::Confess" => 0,
-  "Digest::SHA" => 0,
-  "Scalar::Util" => 0,
+  "Cwd" => 0,
+  "IO::Uncompress::Unzip" => 0,
+  "Scalar::Util" => "1.22",
   "Test::Exception" => 0,
   "Test::LeakTrace" => 0,
   "Test::More" => 0

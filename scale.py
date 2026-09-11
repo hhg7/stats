@@ -340,28 +340,57 @@ def human_bytes(b):
     return '%d B' % b
 
 
-def measure(body, data):
-    """One reading: seconds per call, averaged over however many calls fit."""
+def repeat_count(body, data):
+    """How many calls it takes to span TARGET, from one clocked call.
+
+    Once per (function, size), not once per run: the answer is a property of
+    the call and the input, and nothing about run 3 makes it differ from run 0.
+    It used to be recomputed inside every run, and moving it out here is what
+    pays for the traced call weigh() makes -- the two together leave the number
+    of calls per run exactly where it was before memory was measured at all.
+    """
     t0 = time.perf_counter()
     body(data)
     one = time.perf_counter() - t0
-    reps = min(MAX_REPS, int(TARGET / one) + 1) if one > 0 else MAX_REPS
+    return min(MAX_REPS, int(TARGET / one) + 1) if one > 0 else MAX_REPS
+
+
+def measure(body, data, reps):
+    """One reading: seconds per call, averaged over however many calls fit."""
     t0 = time.perf_counter()
     for _ in range(reps):
         body(data)
-    return (time.perf_counter() - t0) / reps, reps
+    return (time.perf_counter() - t0) / reps
 
 
 def weigh(body, data):
     """One reading: bytes allocated by a single call, at its high-water mark.
 
-    Time and memory are measured in separate calls, for the reason benchmark.py
-    gives: tracemalloc hooks every allocation, so a call made while it is
-    running takes 1.4x to 3x as long as the same call made without it, and a
-    clock running over a traced call measures tracemalloc rather than pandas.
-    Here it costs one extra call per run rather than a doubling of the stage,
-    because the repeat loop above is what the seconds cost, and the peak of one
-    call is the whole of the memory answer.
+    Time and memory come off separate calls, for the reason benchmark.py gives:
+    tracemalloc hooks every allocation, so a call made while it is running takes
+    1.4x to 3x as long as the same call made without it, and a clock running
+    over a traced call measures tracemalloc rather than pandas.
+
+    Reading the peak resident set around the timed loop instead would cost
+    nothing, and does not work: the pages a run frees stay with the allocator,
+    so only the first run ever sees the resident set rise.  Measured here over
+    seven runs in one process, tracemalloc against VmHWM after a clear_refs
+    reset, at n = 300,000 -- np.sort read 2402728 traced against 0 resident on
+    all seven runs, df.copy 7202672 against 4800512 on the first and 0 on the
+    other six.  tracemalloc counts what a call allocates whether or not the
+    pages had to be asked for, which is the whole reason it is the instrument
+    here.
+
+    So it is one call -- and one per (function, size) rather than one per run,
+    because seven of them would be seven copies of the same number.  The runs
+    exist to average a stopwatch; tracemalloc returns an exact count of what the
+    allocator was asked for, and in the seven-run probe above np.sort read
+    2402728 on all seven while the noisiest of them, a groupby mean, drifted by
+    0.02 per cent.  Timed at SCALE_MAX_N=30000, one per run cost 201 s against
+    the 73 s this stage took before memory was measured at all; one per
+    (function, size), with repeat_count() hoisted out of the run loop to pay for
+    it, is cheaper than that 73 s, because seven calibration calls per cell went
+    away and one traced call came back.
 
     What the number contains: every allocation Python's allocator sees during
     the call, including NumPy and pandas buffers, which route through PyDataMem.
@@ -404,17 +433,18 @@ def main():
                     too_slow.add(name)
                     continue
 
+                reps = repeat_count(body, data)
+                peak = weigh(body, data)
                 slowest = 0.0
-                heaviest = 0
-                reps = 0
                 for run in range(RUNS):
-                    elapsed, reps = measure(body, data)
-                    peak = weigh(body, data)
+                    elapsed = measure(body, data, reps)
                     slowest = max(slowest, elapsed)
-                    heaviest = max(heaviest, peak)
+                    # The one memory reading goes on every run's row: the
+                    # column has to line up with the seconds column row for
+                    # row, and it is the same call at the same size each time.
                     results.append((figure, name, call, n, run, elapsed, peak))
                 print('%-9s %-30s n=%-8d %.6f s %9s%s'
-                      % (figure, name, n, slowest, human_bytes(heaviest),
+                      % (figure, name, n, slowest, human_bytes(peak),
                          ' (x%d)' % reps if reps > 1 else ''))
                 if slowest > CAP:
                     too_slow.add(name)
