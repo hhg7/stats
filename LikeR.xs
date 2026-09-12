@@ -172,6 +172,39 @@ fisher_test and binom_test have done this since 0.29x; the macro is so the
 other eleven call sites can say it in one token rather than eleven copies of
 the rationale. Costs one mortal SV per call, not per row.*/
 #define NV_CONF_95     SvNV(sv_2mortal(newSVpvs("0.95")))
+/*NV_MIN_EXP: the NV's minimum binary exponent, i.e. where its normals stop.
+
+perl.h has defined it since 5.22 but 5.10.1 and 5.12.5 -- both in the support
+matrix -- have neither it nor NV_MAX_EXP, and ppport.h does not backport a
+macro that is not an API function, so this is the fallback the "write it
+yourself rather than raise the minimum" rule calls for.  It is perl.h's own
+derivation, from the same <float.h> constants and the same USE_QUADMATH /
+USE_LONG_DOUBLE tests the nv_* libm layer above already switches on, so on a
+perl that does define it the definition here is never reached and on one that
+does not it is the value that perl would have given.
+
+NV_MANT_DIG is guarded alongside it for the same reason even though every perl
+in the matrix has it: the two are used together, by c_dnorm(), and a build that
+had one without the other would fail in a way that pointed at the wrong line.
+NV_MAX, NV_MIN and NV_EPSILON go back to 5.8 and need nothing.*/
+#ifndef NV_MANT_DIG
+#  if defined(USE_QUADMATH) && defined(FLT128_MANT_DIG)
+#    define NV_MANT_DIG FLT128_MANT_DIG
+#  elif defined(USE_LONG_DOUBLE)
+#    define NV_MANT_DIG LDBL_MANT_DIG
+#  else
+#    define NV_MANT_DIG DBL_MANT_DIG
+#  endif
+#endif
+#ifndef NV_MIN_EXP
+#  if defined(USE_QUADMATH) && defined(FLT128_MIN_EXP)
+#    define NV_MIN_EXP FLT128_MIN_EXP
+#  elif defined(USE_LONG_DOUBLE)
+#    define NV_MIN_EXP LDBL_MIN_EXP
+#  else
+#    define NV_MIN_EXP DBL_MIN_EXP
+#  endif
+#endif
 /*Float classification for an NV: NaN, infinite, finite. Every obvious spelling
 of these is wrong here.
 
@@ -1451,14 +1484,21 @@ static size_t binom_draw(pTHX_ const BinomCtx *B, size_t size, NV prob) {
 	IV ix = 0;
 	if (prob <= 0.0) return 0;
 	if (prob >= 1.0) return size;
-	/*A size past IV_MAX indexes nothing BTPE can carry, and R refuses the same
-	case (it falls back to qbinom() above INT_MAX).  Keep the Bernoulli loop
-	for it: it is what ran before 0.316, so nothing that worked stops working,
-	and no call that reaches it was ever going to finish anyway.*/
+	/*A size past IV_MAX indexes nothing BTPE's `ix` can carry, and R refuses the
+	same case (it falls back to qbinom() above INT_MAX).  Keep the Bernoulli
+	loop for it: it is what ran before 0.316, so nothing that worked stops
+	working, and no call that reaches it was ever going to finish anyway.  It
+	is reachable only where size_t is wider than IV, which in this matrix means
+	5.44.0-i686 (ivsize 4) for a size between 2^31 and 2^32.
+
+	`prob` and not B->p: binom_setup() returns before filling the struct in
+	this case, so B->p is 0 and B->reflect FALSE.  The loop needs no reflection
+	anyway -- it draws from the caller's own probability rather than from
+	min(p, 1-p).*/
 	if (B->huge) {
 		size_t successes = 0;
-		for (size_t i = 0; i < size; i++) if (Drand01() <= B->p) successes++;
-		return B->reflect ? size - successes : successes;
+		for (size_t i = 0; i < size; i++) if (Drand01() <= prob) successes++;
+		return successes;
 	}
 
 	if (B->small) {
@@ -1537,12 +1577,24 @@ static size_t binom_draw(pTHX_ const BinomCtx *B, size_t size, NV prob) {
 	return B->reflect ? (size_t)(B->n - ix) : (size_t)ix;
 }
 
-/*The machine epsilon Brent-Dekker measures its bracket against, at the width
-the arithmetic is actually done in.  It was the decimal expansion of
-DBL_EPSILON, which is what NV_EPSILON is on a double build, so this moves
-nothing there and stops the root finder declaring victory sixteen digits in on
-the wider ones.*/
-#define FT_EPS NV_EPSILON
+/*DBL_EPSILON, deliberately, on every build -- these two are R's numbers and
+not this file's.
+
+FT_TOL is R's uniroot() default, .Machine$double.eps^0.25, and FT_EPS is the
+other half of the same criterion: zeroin() stops when the bracket is inside
+2*FT_EPS*|b| + FT_TOL/2, so widening FT_EPS to the build's own NV_EPSILON does
+not make the root more accurate, it makes it a root of a DIFFERENT stopping
+rule from the one the expected values were taken from.  Tried, on a __float128
+build: fisher_test's conditional odds ratio for SciPy's gh-3014 table moved
+1.2e-9 away from R, against a test tolerance of 1e-10.
+
+FT_EPS is also the lower endpoint of the bracket the confidence interval is
+inverted over -- calculate_exact_stats() roots on [FT_EPS, 1] and reports
+1/root -- so it sets the largest odds ratio the interval can name.  R's is
+1/DBL_EPSILON = 4503599627370496, which is the value t/fisher_test.R.scipy.t
+pins for that table's upper limit; at NV_EPSILON the same case reported
+5.2e+33.  The saturation point is part of the answer, so it has to be R's.*/
+#define FT_EPS 2.220446049250313e-16  // DBL_EPSILON, as R's zeroin uses
 #define FT_TOL 0.0001220703125 // .Machine$double.eps^0.25, R uniroot default
 
 static NV ft_lchoose(long n, long k) {
@@ -10773,9 +10825,14 @@ static void ip_build_quad(pTHX_ ip_fit *F) {
 		b[i] = ya[i];
 		/*Partition of unity: anything else means the window missed a
 		non-zero basis function and the band is not wide enough.*/
+		/*croak_nv(), not croak(): NVgf is "Qg" on a quadmath build and the
+		compiler's format checker does not know the Q length modifier, so a
+		bare croak() here draws the bogus -Wformat / -Wformat-extra-args pair
+		its own comment describes.  The anchor index goes into the message as
+		a plain number for the same reason -- croak_nv() takes one NV.*/
 		if (nv_fabs(rowsum - 1.0) > 1e-9)
-			croak("interpolate: degree-2 B-spline basis did not sum to 1 at "
-			      "anchor %" IVdf " (got %" NVgf ")", (IV)i, (NV)rowsum);
+			croak_nv("interpolate: degree-2 B-spline basis at anchor %ld did "
+			         "not sum to 1 (got %" NVgf ")", (long)i, (NV)rowsum);
 	}
 	Newx(F->coef, m, NV); SAVEFREEPV(F->coef);
 	ip_solve_band(aTHX_ A, b, n, kl, ku, F->coef);

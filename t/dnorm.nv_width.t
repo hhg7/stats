@@ -33,20 +33,32 @@ use Config;
 use Stats::LikeR qw(dnorm);
 
 # R 4.6.1: [ x, dnorm(x) ]
+#
+# The table stops at |x| = 29, where the density is 9.55e-184.  Not because
+# anything goes wrong further out, but because perl-5.10.1 -- the oldest perl
+# this module supports, and one in the local matrix -- cannot READ a decimal
+# literal out there: its atof gives 1.999999999999999e-298 for
+# 2.1200065515246056e-298, six percent wrong, and a flat 0 for anything below
+# about 1e-308.  A table of R's values past that point would be testing perl's
+# number parser, and failing.  The far tail is covered by the identity below
+# instead, which is computed rather than parsed and so is exact on every perl.
 my @R_DNORM = (
-	[ 0,       0.3989422804014327      ],
-	[ 1,       0.24197072451914337     ],
-	[ 5,       1.4867195147342977e-06  ],
-	[ 10,      7.6945986267064199e-23  ],
-	[ 20,      5.5209483621597635e-88  ],
-	[ 30,      1.4736461348785476e-196 ],
-	[ 37,      2.1200065515246056e-298 ],
-	[ 38,      1.0972210519949712e-314 ],   # subnormal on a double
-	[ 38.5,    5.434722104253712e-323  ],
-	[ 38.56,   4.9406564584124654e-324 ],   # the last subnormal
-	[ 38.567,  4.9406564584124654e-324 ],
-	[ -1,      0.24197072451914337     ],
-	[ -38.5,   5.434722104253712e-323  ],
+	[ 0,    0.3989422804014327      ],
+	[ 0.5,  0.35206532676429952     ],
+	[ 1,    0.24197072451914337     ],
+	[ 2,    0.053990966513188063    ],
+	[ 3,    0.0044318484119380075   ],
+	[ 5,    1.4867195147342977e-06  ],
+	[ 8,    5.0522710835368927e-15  ],
+	[ 10,   7.6945986267064199e-23  ],
+	[ 15,   5.5307095498444164e-50  ],
+	[ 20,   5.5209483621597635e-88  ],
+	[ 25,   7.6539297364193932e-137 ],
+	[ 29,   9.551694541948838e-184  ],
+	[ -1,   0.24197072451914337     ],
+	[ -5,   1.4867195147342977e-06  ],
+	[ -20,  5.5209483621597635e-88  ],
+	[ -29,  9.551694541948838e-184  ],
 );
 # R 4.6.1: [ x, dnorm(x, log = TRUE) ] -- log_p carries all the way out, at
 # every width, and so is the same on every build.
@@ -69,21 +81,16 @@ my @R_DNORM_ARGS = (
 	[ -7,   2,    0.5,   3.5174990851902079e-71  ],
 );
 
-# 8 ulp of a double.  The body of the density is one exp() and one multiply, so
-# the error is a couple of ulp; the subnormal values at the far end have fewer
-# bits than that and are compared exactly below instead.  Worst relative
-# disagreement observed on a double build: 0.
+# 8 ulp of a double.  The density is one exp() and one multiply, so two or
+# three ulp is the whole budget; the rest is headroom for perl-5.10.1, whose
+# atof is already one to two ulp out on the smallest literals in the table
+# (5.1409092665391496e-136 reads back as ...78e-136 there).  Worst relative
+# disagreement observed: 1.4e-16 on 5.44.0, 4.0e-16 on 5.10.1.
 my $TOL = 8 * 2.220446049250313e-16;
 
 sub rel_ok {
 	my ($got, $exp, $label) = @_;
 	if ($exp == 0) { return is($got, 0, $label) }
-	# A subnormal double carries only a handful of significant bits, so
-	# anything at or below the smallest normal is compared for equality: there
-	# is no relative tolerance to speak of down there.
-	if (abs($exp) < 2.2250738585072014e-308) {
-		return ok($got == $exp, $label) || diag("got $got, expected $exp");
-	}
 	return ok(abs($got - $exp) <= $TOL * abs($exp), $label)
 		|| diag("got $got, expected $exp");
 }
