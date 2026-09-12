@@ -10232,13 +10232,6 @@ C<summary(lm())$fstatistic>, C<summary(glm())$coefficients>) and against SciPy's
 C<f.sf> / C<norm.sf> and statsmodels' C<anova_oneway>; see
 C<t/model_pvalue_tails.t> and C<t/oneway_test.R.scipy.t>.
 
-=head1 Changes
-
-The release history is in the C<Changes> file at the root of the distribution,
-in the format CPAN and MetaCPAN read. It is deliberately not repeated here:
-until 0.315 this section was the source C<md2pod.pl> built C<Changes> from, so
-the same prose had to be kept correct in two markups at once.
-
 =head1 COPYRIGHT AND LICENSE
 
 This software is free.  It is licensed under the same terms as Perl itself
