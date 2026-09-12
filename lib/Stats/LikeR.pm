@@ -788,11 +788,21 @@ sub colnames {
 	} elsif ($shape eq 'HoA') {                  # keys ARE the columns
 		@cols = sort keys %$df;
 	} else {                                     # AoH / HoH: union of row keys
-		my @rows = $shape eq 'AoH' ? @$df : values %$df;
+		# `for my $row (@$df)` walks the array in place; `my @rows = @$df`
+		# flattens a copy of every row reference in the frame first, which on a
+		# million-row AoH is eight megabytes of list that is read once and
+		# thrown away.  Two loops, no copy.
 		my %seen;
-		for my $row (@rows) {
-			next unless ref $row eq 'HASH';
-			$seen{$_} = 1 for keys %$row;
+		if ($shape eq 'AoH') {
+			for my $row (@$df) {
+				next unless ref $row eq 'HASH';
+				$seen{$_} = 1 for keys %$row;
+			}
+		} else {
+			for my $row (values %$df) {
+				next unless ref $row eq 'HASH';
+				$seen{$_} = 1 for keys %$row;
+			}
 		}
 		@cols = sort keys %seen;
 	}
@@ -909,9 +919,12 @@ sub _aoa_int_cols { # validate integer positions in range
 
 sub _present_keys { # union of keys over AoH/HoH rows
 	my ($df, $shape) = @_;
-	my @rows = $shape eq 'AoH' ? @$df : values %$df;
-	my %seen;
-	for my $r (@rows) { next unless ref $r eq 'HASH'; $seen{$_} = 1 for keys %$r }
+	my %seen;                                   # no whole-frame list copy: see colnames
+	if ($shape eq 'AoH') {
+		for my $r (@$df)        { next unless ref $r eq 'HASH'; $seen{$_} = 1 for keys %$r }
+	} else {
+		for my $r (values %$df) { next unless ref $r eq 'HASH'; $seen{$_} = 1 for keys %$r }
+	}
 	return \%seen;
 }
 
@@ -926,16 +939,18 @@ sub _rename_inplace { # VOID-context rename: mutate the source
 		$df->{$_} = $vals{$_} for keys %vals;
 		return;
 	}
-	my @rows = $shape eq 'AoH' ? @$df : values %$df;    # AoH / HoH row hashes
-	for my $row (@rows) {
-		next unless ref $row eq 'HASH';
+	my $one = sub {                                 # AoH / HoH row hashes
+		my ($row) = @_;
+		return unless ref $row eq 'HASH';
 		my %vals;                                   # gather-then-set = swap-safe
 		for my $o (keys %$map) {
 			next unless exists $row->{$o};
 			$vals{ $map->{$o} } = delete $row->{$o};
 		}
 		$row->{$_} = $vals{$_} for keys %vals;
-	}
+	};
+	if ($shape eq 'AoH') { $one->($_) for @$df }        # no list copy: see colnames
+	else                 { $one->($_) for values %$df }
 	return;
 }
 
@@ -1700,11 +1715,17 @@ sub assign {
 				# snapshot current columns once (refs, not data)
 				my @keys = keys %$df;
 				my @col  = map { my $c = $df->{$_}; ref $c eq 'ARRAY' ? $c : undef } @keys;
+				# One hash slice rather than a keyed store per column: the view
+				# still has to be a fresh hash every row (the block may keep
+				# it, unlike the map_cell path above, which documents that it
+				# may not), but filling it need not be a loop of single-key
+				# assignments.
 				my $view_for = sub {
 					my $i = shift;
 					my %view;
-					$view{ $keys[$_] } = defined $col[$_] ? $col[$_][$i] : $df->{ $keys[$_] }
-						for 0 .. $#keys;
+					@view{ @keys } =
+						map { defined $col[$_] ? $col[$_][$i] : $df->{ $keys[$_] } }
+						0 .. $#keys;
 					return \%view;
 				};
 
@@ -4013,47 +4034,40 @@ sub melt {
 	my %need; $need{$_} = 1 for @id, @val;
 	my ($col, $R) = _frame_cols($df, $shape, [ keys %need ]);
 
-	# column-major stack: [ \@id_values, variable, value ]
-	my @rec;
+	# Column-major, straight into the requested shape.  This used to build the
+	# whole long frame first, as one arrayref-of-arrayrefs record per output
+	# row, and then walk it again to materialise -- so a melt of R rows over V
+	# value columns held R*V records, each with a nested arrayref of the id
+	# values, alive at the same time as the result it was about to become.  On
+	# a million-row frame with ten value columns that is ten million throwaway
+	# containers, and none of them is anything the output needs.  Emitting as
+	# the loops go keeps only the result.
+	my (@aoa, @aoh, %hoa, %hoh);
+	if ($otype eq 'hoa') { $hoa{$_} = [] for @id, $var_name, $value_name }
+	my $n = 0;
 	for my $v (@val) {
+		my $vcol = $col->{$v};
 		for (my $i = 0; $i < $R; $i++) {
-			my @idvals = map { $col->{$_}[$i] } @id;
-			push @rec, [ \@idvals, $v, $col->{$v}[$i] ];
+			if ($otype eq 'aoa') {
+				push @aoa, [ (map { $col->{$_}[$i] } @id), $v, $vcol->[$i] ];
+			} elsif ($otype eq 'hoa') {
+				push @{ $hoa{ $id[$_] } }, $col->{ $id[$_] }[$i] for 0 .. $#id;
+				push @{ $hoa{$var_name} },   $v;
+				push @{ $hoa{$value_name} }, $vcol->[$i];
+			} else {                             # aoh and hoh share the row
+				my %h;
+				@h{ @id } = map { $col->{$_}[$i] } @id;
+				$h{$var_name}   = $v;
+				$h{$value_name} = $vcol->[$i];
+				if ($otype eq 'aoh') { push @aoh, \%h }
+				else                 { $hoh{ $n++ } = \%h }   # hoh: RangeIndex
+			}
 		}
 	}
-
-	if ($otype eq 'aoa') {
-		return [ map { [ @{ $_->[0] }, $_->[1], $_->[2] ] } @rec ];
-	} elsif ($otype eq 'aoh') {
-		my @out;
-		for my $r (@rec) {
-			my %h;
-			@h{ @id } = @{ $r->[0] };
-			$h{$var_name}   = $r->[1];
-			$h{$value_name} = $r->[2];
-			push @out, \%h;
-		}
-		return \@out;
-	} elsif ($otype eq 'hoa') {
-		my %out = map { $_ => [] } @id, $var_name, $value_name;
-		for my $r (@rec) {
-			push @{ $out{ $id[$_] } }, $r->[0][$_] for 0 .. $#id;
-			push @{ $out{$var_name} },   $r->[1];
-			push @{ $out{$value_name} }, $r->[2];
-		}
-		return \%out;
-	} else {                                     # hoh, RangeIndex 0..N-1
-		my %out;
-		my $n = 0;
-		for my $r (@rec) {
-			my %h;
-			@h{ @id } = @{ $r->[0] };
-			$h{$var_name}   = $r->[1];
-			$h{$value_name} = $r->[2];
-			$out{ $n++ } = \%h;
-		}
-		return \%out;
-	}
+	return \@aoa if $otype eq 'aoa';
+	return \@aoh if $otype eq 'aoh';
+	return \%hoa if $otype eq 'hoa';
+	return \%hoh;
 }
 
 # pivot_table($df, index => $col|\@cols, columns => $col|\@cols,
@@ -4757,7 +4771,13 @@ sub table_one {
 	        : ('Overall') x $R;
 	my %seen; my @groups = grep { !$seen{$_}++ } @grp;
 	@groups = sort @groups if defined $by;
-	my @grp_rows = map { my $g = $_; [ grep { $grp[$_] eq $g } 0 .. $R - 1 ] } @groups;
+	# One pass that buckets every row, rather than a full scan of the frame per
+	# group: the row lists were built by O(groups x rows) greps, which is the
+	# same shape as the O(levels x groups x rows) counting further down that
+	# this file already records having replaced with a single pass.
+	my %gpos; @gpos{ @groups } = 0 .. $#groups;
+	my @grp_rows = map { [] } @groups;
+	for my $r (0 .. $R - 1) { push @{ $grp_rows[ $gpos{ $grp[$r] } ] }, $r }
 
 	my @out;
 	for my $v (@vars) {
@@ -5128,16 +5148,27 @@ sub hosmer_lemeshow {
 
 # _qgamma($p, $shape, $scale): quantile of the gamma distribution, found by
 # inverting the regularized lower incomplete gamma P(shape, x) = p (bisection).
+#
+# The bisection compares against _pgamma_lower, which is the XS igam() and
+# computes the lower tail directly.  It used to form that tail as
+# `1 - _igamc($shape, $x)`, and subtracting from 1 is precisely the
+# cancellation igam() was added to avoid: below a lower tail of about
+# NV_EPSILON the difference can only be a multiple of NV_EPSILON, so every
+# candidate the bisection tried compared equal and the search converged on
+# noise.  age_standardize() reaches this with p = alpha/2, so it is the lower
+# confidence limit at a high conf.level that was affected -- conf.level =>
+# 0.9999 asks for the 5e-5 quantile, and 1 - _igamc could not resolve one.
 sub _qgamma {
 	my ($p, $shape, $scale) = @_;
 	$scale = 1 unless defined $scale;
 	return 0 if $p <= 0 || $shape <= 0;
 	return 9**9**9 if $p >= 1;
 	my ($lo, $hi) = (0, 1);
-	$hi *= 2 while (1 - _igamc($shape, $hi)) < $p && $hi < 1e15;
+	$hi *= 2 while _pgamma_lower($shape, $hi) < $p && $hi < 1e15;
 	for (1 .. 300) {
 		my $mid = ($lo + $hi) / 2;
-		if ((1 - _igamc($shape, $mid)) < $p) { $lo = $mid } else { $hi = $mid }
+		last if $mid <= $lo || $mid >= $hi;      # adjacent NVs: nothing left
+		if (_pgamma_lower($shape, $mid) < $p) { $lo = $mid } else { $hi = $mid }
 		last if ($hi - $lo) <= 1e-12 * ($hi + 1e-300);
 	}
 	return $scale * ($lo + $hi) / 2;
