@@ -3097,8 +3097,25 @@ sub read_table {
 		}
 		my %seen_h;
 		@uniq_header = grep { !$seen_h{$_}++ } @header;
-		my @dup_cols = grep { $seen_h{$_} > 1 } @uniq_header;
-		warn "read_table: duplicate column name(s) in $file: @dup_cols (later values win)\n"
+		# Name each repeated column, with how many fields carry it and which
+		# ones (1-based, as a spreadsheet or `cut -f` counts them). A bare
+		# list of the names is not enough to find them: a merged banner row
+		# repeats the *empty* name, which prints as nothing at all, and a name
+		# repeated three times reads the same as one repeated twice.
+		my %at;
+		push @{ $at{ $header[$_] } }, $_ + 1 for 0 .. $#header;
+		# 12 positions is what fits on one terminal line beside the name and
+		# the count; a merged banner row can repeat the empty name across
+		# every field of the sheet (66 of them in the file this was written
+		# for), and the count still says how many there are in total.
+		my @dup_cols = map {
+			my @f = @{ $at{$_} };
+			my $more = @f > 12 ? ', ...' : '';
+			splice @f, 12 if @f > 12;
+			"'$_' x $seen_h{$_} (fields " . join(', ', @f) . "$more)"
+		} grep { $seen_h{$_} > 1 } @uniq_header;
+		warn "read_table: duplicate column name(s) in $file (later values win): "
+			. join('; ', @dup_cols) . "\n"
 			if @dup_cols;
 		if ($otype eq 'hoh' && !defined $args{'row.names'}) {
 			$args{'row.names'} = $header[0];

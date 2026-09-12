@@ -1288,7 +1288,7 @@ static void kw_sort(KWObs *a, size_t n, unsigned short int depth) {
 	kw_insertion(a, n);
 }
 
-/*2*floor(log2(n)), the standard introsort depth limit.*/
+//2*floor(log2(n)), the standard introsort depth limit
 static unsigned short int kw_depth_limit(size_t n) {
 	unsigned short int lg = 0;
 	while (n > 1) { n >>= 1; lg++; }
@@ -1424,7 +1424,7 @@ The second has a consequence worth stating plainly: for a given seed this
 produces DIFFERENT numbers from those 0.315 produced, because BTPE consumes a
 different number of uniforms per variate than the Bernoulli loop did.  The
 distribution is unchanged and srand() still makes a run reproducible; only a
-script that hardcoded the values one seed used to give will see new ones.*/
+script that hardcoded the values one seed used to give will see new ones*/
 typedef struct {
 	NV   p, q, np, r, g, qn;   //p = min(prob, 1 - prob), q = 1 - p
 	NV   c, fm, npq, p1, p2, p3, p4, xl, xll, xlr, xm, xr;

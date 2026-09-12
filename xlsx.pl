@@ -20,4 +20,8 @@ my $t0 = Time::HiRes::time();
 my $tmp = read_table('Affinity Dataset(main).xlsx');
 my $t1 = Time::HiRes::time();
 printf("read the affinity xlsx in %lf seconds.\n", $t1 - $t0);
-view($tmp);
+#view($tmp);
+$tmp = read_table('/home/con/Documents/xlsx/Journal Club Schedule.xlsx');
+foreach my $sheet (sort keys %{ $tmp }) {
+	view($tmp->{$sheet});
+}
