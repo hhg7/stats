@@ -19,7 +19,8 @@ use Stats::LikeR 'read_table';
 #     character references included, and the ones that must NOT be decoded
 #   * a shared-string index that is out of range or not a number
 #   * t="str" / t="b" / t="e", which take the raw <v> like a number
-#   * a column reference too long to be one
+#   * a column reference too long to be one, and the ceiling that keeps one
+#     from costing more than the format's own 16,384 columns
 #   * the fast path (aoh/hoa, assembled in XS) and the callback path (a filter,
 #     or hoh) agreeing cell for cell -- the same rows reach both
 #
@@ -200,8 +201,9 @@ sub mk {
 
 # A reference past XFD, the last column ECMA-376 allows, is not a reference: the
 # cell goes in the next column instead. Every row is padded to the widest column
-# the sheet mentions, so this is what bounds a row at the 16,384 cells the format
-# allows rather than the twelve million "ZZZZZ" would ask for.
+# the sheet mentions, so a row's width is what a bad reference costs -- twelve
+# million cells for "ZZZZZ" if it were read as one, and the next column if it is
+# not. The block below this one covers the ceiling on the next column itself.
 {
 	my $f = mk('<row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c></row>'
 	         . '<row r="2"><c r="A2"><v>1</v></c><c r="ZZZZZ2"><v>2</v></c></row>',
@@ -223,6 +225,32 @@ sub mk {
 	  . '<row r="2"><c r="A2"><v>1</v></c><c r="XFD2"><v>2</v></c></row></sheetData>',
 		['h1', 'h2'], sub { push @w, scalar @{ $_[0] } });
 	is_deeply( \@w, [ 16384, 16384 ], 'a cell at XFD makes the row 16,384 wide' );
+}
+
+# The next-column counter has the same ceiling, and it has to: every unreadable
+# reference lands on it, so without one the cap on the reference buys nothing.
+# A row of 20,000 cells that answer "not a reference" asked for 20,000 columns,
+# and with every row in the sheet padded to the widest, a 54 KB workbook came
+# back as 264 MB of empty strings (804 MB at 60,000 cells, and no bound but the
+# size of the input). Past the ceiling the cells pile up in the last column,
+# last one winning, as a repeated r= in one row already did.
+#
+# Asserted on the parser rather than through read_table(), for the same reason
+# the XFD case above is: read_table would fold the unnamed columns into one key.
+{
+	my $wide = '<row r="1">' . ('<c r="ZZZZZ1"><v>1</v></c>' x 20000) . '</row>'
+	         . '<row r="2"><c r="A2"><v>2</v></c></row>';
+	my @n;
+	Stats::LikeR::_parse_xlsx_sheet_xs("<sheetData>$wide</sheetData>", [],
+		sub { push @n, scalar @{ $_[0] } });
+	is_deeply( \@n, [ 16384, 16384 ],
+		'20,000 unreadable references stop at the 16,384 the format allows' );
+	# and a cell with no r= at all reaches the counter by the other route
+	my @m;
+	my $bare = '<row r="1">' . ('<c><v>1</v></c>' x 20000) . '</row>';
+	Stats::LikeR::_parse_xlsx_sheet_xs("<sheetData>$bare</sheetData>", [],
+		sub { push @m, scalar @{ $_[0] } });
+	is_deeply( \@m, [ 16384 ], '20,000 cells with no r= stop there too' );
 }
 
 # Two cells claiming the same column in one row: the last one wins, and the

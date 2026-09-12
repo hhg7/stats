@@ -141,6 +141,7 @@ my %WriteMakefileArgs = (
   # here long after the last use of either was removed.
   "PREREQ_PM" => {
     "Cwd" => 0,
+    "Compress::Raw::Zlib" => 0,
     "IO::Uncompress::Unzip" => 0,
     "Scalar::Util" => "1.22"
   },
@@ -183,6 +184,7 @@ my %WriteMakefileArgs = (
 # that has no TEST_REQUIRES to put the test-only modules in.
 my %FallbackPrereqs = (
   "Cwd" => 0,
+  "Compress::Raw::Zlib" => 0,
   "IO::Uncompress::Unzip" => 0,
   "Scalar::Util" => "1.22",
   "Test::Exception" => 0,

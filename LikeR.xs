@@ -7471,6 +7471,16 @@ closing the old one first is the only sane reading of it if it does.*/
 			rv = xlsx_attr(a, alen, "r", 1, &rvlen);
 			ci = rv ? xlsx_ref_col(rv, rvlen) : (size_t)-1;
 			if (ci == (size_t)-1) ci = w->maxc;	//no usable r=: the next column
+/*...and the next-column counter needs XLSX_MAX_COL as much as a reference does,
+because it is where every unreadable reference ends up.  Without it the ceiling
+xlsx_ref_col() puts on "ZZZZZ1" buys nothing: a row of 20,000 of them answered
+"not a reference" 20,000 times and got 20,000 columns, and since every row in
+the sheet is padded to the widest one, a 54 KB file came back as 264 MB of
+empty strings -- 804 MB at 60,000 cells, growing with no bound but the input.
+Past the ceiling the cells pile up in the last column, last one winning, which
+is what a repeated r= in one row already did.  Both passes run this line, so
+they go on agreeing about the width.*/
+			if (ci >= XLSX_MAX_COL) ci = XLSX_MAX_COL - 1;
 			if (ci + 1 > w->maxc) w->maxc = ci + 1;
 			{
 				const char *body = p;

@@ -22,7 +22,7 @@
 #     LICENSE => q[perl]
 #     NAME => q[Stats::LikeR]
 #     PL_FILES => {  }
-#     PREREQ_PM => { Cwd=>q[0], IO::Uncompress::Unzip=>q[0], Scalar::Util=>q[1.22], Test::Exception=>q[0], Test::LeakTrace=>q[0], Test::More=>q[0] }
+#     PREREQ_PM => { Compress::Raw::Zlib=>q[0], Cwd=>q[0], IO::Uncompress::Unzip=>q[0], Scalar::Util=>q[1.22], Test::Exception=>q[0], Test::LeakTrace=>q[0], Test::More=>q[0] }
 #     TEST_REQUIRES => { Test::Exception=>q[0], Test::LeakTrace=>q[0], Test::More=>q[0] }
 #     VERSION_FROM => q[lib/Stats/LikeR.pm]
 #     test => { TESTS=>q[t/*.t] }
@@ -630,6 +630,7 @@ metafile : create_distdir
 	$(NOECHO) $(ECHO) '    - t' >> META_new.yml
 	$(NOECHO) $(ECHO) '    - inc' >> META_new.yml
 	$(NOECHO) $(ECHO) 'requires:' >> META_new.yml
+	$(NOECHO) $(ECHO) '  Compress::Raw::Zlib: '\''0'\''' >> META_new.yml
 	$(NOECHO) $(ECHO) '  Cwd: '\''0'\''' >> META_new.yml
 	$(NOECHO) $(ECHO) '  IO::Uncompress::Unzip: '\''0'\''' >> META_new.yml
 	$(NOECHO) $(ECHO) '  Scalar::Util: '\''1.22'\''' >> META_new.yml
@@ -671,6 +672,7 @@ metafile : create_distdir
 	$(NOECHO) $(ECHO) '      },' >> META_new.json
 	$(NOECHO) $(ECHO) '      "runtime" : {' >> META_new.json
 	$(NOECHO) $(ECHO) '         "requires" : {' >> META_new.json
+	$(NOECHO) $(ECHO) '            "Compress::Raw::Zlib" : "0",' >> META_new.json
 	$(NOECHO) $(ECHO) '            "Cwd" : "0",' >> META_new.json
 	$(NOECHO) $(ECHO) '            "IO::Uncompress::Unzip" : "0",' >> META_new.json
 	$(NOECHO) $(ECHO) '            "Scalar::Util" : "1.22"' >> META_new.json
@@ -1091,6 +1093,7 @@ ppd :
 	$(NOECHO) $(ECHO) '    <ABSTRACT>Get basic statistical functions, like in R, but with Perl using XS for performance</ABSTRACT>' >> Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '    <AUTHOR>David E. Condon &lt;dec986@gmail.com&gt;</AUTHOR>' >> Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '    <IMPLEMENTATION>' >> Stats-LikeR.ppd
+	$(NOECHO) $(ECHO) '        <REQUIRE NAME="Compress::Raw::Zlib" />' >> Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '        <REQUIRE NAME="Cwd::" />' >> Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '        <REQUIRE NAME="IO::Uncompress::Unzip" />' >> Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '        <REQUIRE NAME="Scalar::Util" VERSION="1.22" />' >> Stats-LikeR.ppd

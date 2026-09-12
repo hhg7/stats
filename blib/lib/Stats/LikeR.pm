@@ -2616,7 +2616,21 @@ sub summary {
 # serial numbers (no style-based formatting); shared-string rich-text runs are
 # concatenated.
 
-# Return the decompressed bytes of a named archive member, or undef if absent.
+# The decompressed bytes of a named archive member as a SCALAR REFERENCE, or
+# undef if the member is absent.
+#
+# The reference is the point.  Returning the string itself costs a full copy of
+# it -- perl cannot hand back the pad slot of a lexical, so `return $content'
+# copies, and on the 36 MB worksheet part of a 21,845 x 50 workbook that was
+# 34 MB of peak RSS for nothing: 82.4 MB against 48.5 MB for the reference, and
+# 81 MB still resident afterwards against 13 MB, the difference being heap the
+# allocator never gave back.  Every caller dereferences; `$$ws' on an argument
+# list pushes the SV itself, so the part reaches the XS parser without a copy
+# either.
+#
+# _unzip_member_fast() handles the archives Excel, LibreOffice and openpyxl
+# actually write; the loop below is the fallback for everything else, and is
+# what every member went through up to 0.316.
 #
 # The read appends onto the end of $content rather than going through a second
 # scalar: IO::Uncompress::Base::read() turns its truncating substr() into a
@@ -2625,10 +2639,13 @@ sub summary {
 # worksheet part of a 21,845 x 50 workbook that is 0.171 s against 0.243 s for
 # `$content .= $buf`, over three runs each in a fresh process, and it leaves
 # behind none of the ~25 MB of realloc slack the concatenation did.
-# Do NOT reach for BlockSize => 1<<20 instead: measured at 2.08 s on the same
-# part, 8x worse than the default.
+# Do NOT reach for BlockSize => 1<<20 instead: measured at 0.262 s on the same
+# part against 0.174 s for the default. (The 2.08 s this comment used to quote
+# does not reproduce here, but its conclusion does.)
 sub _unzip_member {
 	my ($file, $member) = @_;
+	my ($handled, $ref) = _unzip_member_fast($file, $member);
+	return $ref if $handled;
 	require IO::Uncompress::Unzip;
 	my $z = IO::Uncompress::Unzip->new($file, Name => $member)
 		or return undef;
@@ -2636,7 +2653,144 @@ sub _unzip_member {
 	my ($off, $n) = (0, 0);
 	while (($n = $z->read($content, 1 << 20, $off)) > 0) { $off += $n }
 	$z->close;
-	return $content;
+	return \$content;
+}
+
+# The same member, read straight out of the archive with Compress::Raw::Zlib
+# instead of through IO::Uncompress::Unzip.
+#
+# Returns a two-element list: (1, \$bytes) for a member it read, (1, undef) for
+# an archive it understood that does not hold the member, and (0, undef) for
+# anything it declines -- at which point _unzip_member falls back and the old
+# path decides. Declining is never an error: this reads the central directory
+# and one deflate stream and nothing else, and hands everything beyond that to
+# the module that has been ported to all of it.
+#
+# Why bother: with the worksheet parser in XS since 0.316, decompression is what
+# a read of an .xlsx now spends its time on -- 0.239 s of the 0.413 s a
+# 21,845 x 50 workbook takes, against 0.015 s to parse its 117,870 shared
+# strings. IO::Uncompress::Unzip needs 0.174 s for the 36 MB worksheet part
+# where inflating it directly needs 0.052 s, plus 0.004 s to read the 5.5 MB of
+# compressed bytes.
+#
+# Most of that gap is one thing. Unzip.pm's ckParams() sets `crc32 => 1'
+# unconditionally ("unzip always needs crc32"), so every byte is run through
+# Compress::Raw::Zlib::crc32() -- 0.076 s on this part, more than the inflate
+# itself -- and then the comparison against the stored CRC happens only under
+# `Strict', which defaults to 0. The check is paid for and not made. This path
+# does not compute it either, which is the same answer for the same money;
+# asking Inflate for -CRC32 => 1 costs the identical 0.076 s (it is the same
+# per-chunk call), so turning it on here would want `Strict'-like behaviour --
+# a croak on mismatch -- to be worth anything, and that is a change in what
+# read_table does with a damaged file rather than a speed decision.
+#
+# Bufsize 1<<16: 0.052 s against 0.063 s at the 4 KB default on that part, and
+# flat from there (1<<18 through 1<<22 all measure 0.052 s).
+#
+# Layout constants are ECMA-376's container, i.e. PKWARE's APPNOTE.TXT 6.3.10:
+# section 4.3.16 for the end-of-central-directory record, 4.3.12 for a central
+# directory entry, 4.3.7 for a local file header.
+sub _unzip_member_fast {
+	my ($file, $member) = @_;
+	require Compress::Raw::Zlib;
+	my $fh;
+	open $fh, '<', $file or return (0, undef);
+	binmode $fh;
+	my $size = -s $fh;
+	return (0, undef) unless defined $size && $size >= 22;
+
+	# The EOCD is 22 bytes plus a comment of up to 65535, so it begins no
+	# earlier than 65557 from the end. Its signature can also occur inside the
+	# comment (or inside compressed data, for an archive with no comment), so
+	# a candidate counts only when the record it starts ends exactly at the end
+	# of the file.
+	my $want = $size < 65557 ? $size : 65557;
+	seek $fh, $size - $want, 0 or return (0, undef);
+	my $tail = '';
+	return (0, undef) unless read($fh, $tail, $want) == $want;
+	my ($ncd, $cdsz, $cdoff);
+	my $at = length($tail) - 22;
+	while ($at >= 0) {
+		$at = rindex($tail, "PK\5\6", $at);
+		last if $at < 0;
+		my ($d1, $d2, $nd, $nt, $sz, $off, $cmt)
+			= unpack('x' . ($at + 4) . ' v v v v V V v', $tail);
+		if ($at + 22 + $cmt == length $tail) {
+			# a split archive has its directory somewhere this cannot reach
+			return (0, undef) if $d1 || $d2 || $nd != $nt;
+			# the zip64 sentinels: the real values are in a record this does
+			# not read, so hand the whole archive back
+			return (0, undef)
+				if $nt == 0xFFFF || $sz == 0xFFFFFFFF || $off == 0xFFFFFFFF;
+			($ncd, $cdsz, $cdoff) = ($nt, $sz, $off);
+			last;
+		}
+		$at--;
+	}
+	return (0, undef) unless defined $cdoff;
+	return (0, undef) if $cdoff + $cdsz > $size;
+	seek $fh, $cdoff, 0 or return (0, undef);
+	my $cd = '';
+	return (0, undef) unless read($fh, $cd, $cdsz) == $cdsz;
+
+	# Walk the directory to the member. Entries are in the order the local
+	# headers are, so stopping at the first match is what Unzip.pm's own
+	# sequential scan would have found.
+	my ($gp, $method, $csz, $usz, $lho);
+	my $p = 0;
+	for (my $i = 0; $i < $ncd; $i++) {
+		return (0, undef) if $p + 46 > $cdsz;
+		return (0, undef) unless substr($cd, $p, 4) eq "PK\1\2";
+		my ($g, $m, $cs, $us, $nl, $el, $cl, $lo)
+			= unpack('x' . ($p + 8) . ' v v x8 V V v v v x8 V', $cd);
+		return (0, undef) if $p + 46 + $nl + $el + $cl > $cdsz;
+		if (substr($cd, $p + 46, $nl) eq $member) {
+			($gp, $method, $csz, $usz, $lho) = ($g, $m, $cs, $us, $lo);
+			last;
+		}
+		$p += 46 + $nl + $el + $cl;
+	}
+	return (1, undef) unless defined $lho;	# the archive has no such member
+
+	# bit 0 is encryption and bit 6 strong encryption; bit 3 only moves the
+	# sizes into a trailing descriptor, and the directory's copies (which is
+	# what is read here) are authoritative either way.
+	return (0, undef) if $gp & 0x41;
+	return (0, undef) if $method != 0 && $method != 8;	# 0 stored, 8 deflate
+	return (0, undef) if $csz == 0xFFFFFFFF || $usz == 0xFFFFFFFF
+	                  || $lho == 0xFFFFFFFF;		# zip64 again
+	return (0, undef) if $lho + 30 > $size;
+
+	# The local header repeats the name and carries its own extra field, which
+	# need not be the directory's: only its two lengths are read here, to step
+	# over them to the data.
+	seek $fh, $lho, 0 or return (0, undef);
+	my $lh = '';
+	return (0, undef) unless read($fh, $lh, 30) == 30;
+	return (0, undef) unless substr($lh, 0, 4) eq "PK\3\4";
+	my ($lnl, $lel) = unpack('x26 v v', $lh);
+	my $data = $lho + 30 + $lnl + $lel;
+	return (0, undef) if $data + $csz > $size;
+	seek $fh, $data, 0 or return (0, undef);
+	my $comp = '';
+	return (0, undef) unless read($fh, $comp, $csz) == $csz;
+	close $fh or return (0, undef);
+
+	if ($method == 0) {
+		return (0, undef) unless length($comp) == $usz;
+		return (1, \$comp);
+	}
+	my ($inf, $st) = Compress::Raw::Zlib::Inflate->new(
+		-WindowBits => -Compress::Raw::Zlib::MAX_WBITS(),
+		-Bufsize    => 1 << 16);
+	return (0, undef) unless $inf;
+	my $out = '';
+	# inflate() eats $comp as it goes, so the two are never both whole
+	$st = $inf->inflate($comp, $out);
+	return (0, undef) unless $st == Compress::Raw::Zlib::Z_STREAM_END()
+	                      || $st == Compress::Raw::Zlib::Z_OK();
+	return (0, undef) unless length($out) == $usz;
+	return (1, \$out);
 }
 
 # Decode the five predefined XML entities plus numeric character references.
@@ -2662,7 +2816,7 @@ sub _xml_unescape {
 sub _xlsx_shared_strings {
 	my ($file) = @_;
 	my $ss = _unzip_member($file, 'xl/sharedStrings.xml');
-	return defined $ss ? _xlsx_sst_xs($ss) : [];
+	return defined $ss ? _xlsx_sst_xs($$ss) : [];
 }
 
 # The workbook's worksheets, in document order, as a list of
@@ -2673,7 +2827,7 @@ sub _xlsx_sheets {
 	my ($file) = @_;
 	my %target;
 	if (defined(my $rels = _unzip_member($file, 'xl/_rels/workbook.xml.rels'))) {
-		while ($rels =~ m{<Relationship\b([^>]*?)/?>}gs) {
+		while ($$rels =~ m{<Relationship\b([^>]*?)/?>}gs) {
 			my $a = $1;
 			my ($id) = $a =~ /\bId="([^"]*)"/;
 			my ($tg) = $a =~ /\bTarget="([^"]*)"/;
@@ -2682,7 +2836,7 @@ sub _xlsx_sheets {
 	}
 	my @sheets;
 	if (defined(my $wb = _unzip_member($file, 'xl/workbook.xml'))) {
-		while ($wb =~ m{<sheet\b([^>]*?)/?>}gs) {
+		while ($$wb =~ m{<sheet\b([^>]*?)/?>}gs) {
 			my $a = $1;
 			my ($name) = $a =~ /\bname="([^"]*)"/;
 			my ($rid)  = $a =~ /\br:id="([^"]*)"/;
@@ -2736,7 +2890,7 @@ sub _parse_xlsx_sheet {
 	my $ws = _unzip_member($file, $path);
 	die "read_table: could not read worksheet '$path' in $file\n"
 		unless defined $ws;
-	_parse_xlsx_sheet_xs($ws, $sst, $callback, $plan);
+	_parse_xlsx_sheet_xs($$ws, $sst, $callback, $plan);
 	return;
 }
 

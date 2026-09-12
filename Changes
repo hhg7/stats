@@ -124,6 +124,126 @@ Revision history for Stats-LikeR
    passed on both perls while the new file segfaulted. The hole test now
    accepts either value.
 
+ [read_table on .xlsx: a third off the time, straight to Compress::Raw::Zlib]
+
+ - With the worksheet parser in XS, decompression is what a read of an .xlsx
+   spends its time on: 0.239 s of the 0.413 s the 21,845 x 50 workbook takes,
+   against 0.015 s to parse its 117,870 shared strings. `_unzip_member_fast()`
+   reads the archive's central directory itself and inflates one member with
+   `Compress::Raw::Zlib`. The 36 MB worksheet part goes from 0.174 s to
+   0.067 s and the 8 MB shared-string part from 0.052 s to 0.023 s. Reading
+   the whole workbook: 0.481 s to 0.323 s, with peak RSS unchanged at 179 MB.
+
+ - Most of that gap is one thing, and it is not the inflate. `Unzip.pm`'s
+   `ckParams()` sets `crc32 => 1` unconditionally ("unzip always needs
+   crc32"), so every byte goes through `Compress::Raw::Zlib::crc32()` --
+   0.076 s on that part, more than the 0.052 s the inflate itself costs --
+   and the comparison against the stored CRC happens only under `Strict`,
+   which defaults to 0. The check is paid for and never made. This path does
+   not compute it either, which is the same answer for the same money.
+   Asking `Inflate` for `-CRC32 => 1` costs the identical 0.076 s, being the
+   same per-chunk call, so turning it on here would only be worth anything
+   with a croak on mismatch behind it -- and that is a decision about what
+   `read_table` should do with a damaged workbook, not a speed one.
+
+ - `-Bufsize => 1<<16`: 0.052 s against 0.063 s at the 4 KB default on that
+   part, and flat from there (1<<18, 1<<20 and 1<<22 all measure 0.052 s).
+
+ - What it declines, handing the archive back to `IO::Uncompress::Unzip`
+   unchanged: zip64 (whether by the end-of-central-directory sentinels or a
+   member's own), split archives, encrypted members, a compression method
+   that is neither stored nor deflate, a directory that does not check out
+   against its own signatures and lengths, a local header that is not one,
+   and an inflate that does not end where the directory says it should.
+   Declining is not an error -- it reads the central directory and one
+   deflate stream and leaves everything past that to the module that has been
+   ported to all of it.
+
+ - Two things worth knowing about the shape of an archive. `IO::Compress::Zip`
+   with `Append => 1` does not extend one: it writes a second complete archive
+   after the first, and the final end-of-central-directory record describes
+   only that second one, with offsets counted from where it begins. It reads
+   as a single archive only to a reader that scans local headers forwards,
+   which is what `IO::Uncompress::Unzip` does -- so `t/read_table.xlsx.t` and
+   `t/read_table.xlsx.parser.t`, whose fixtures are built that way, go on
+   exercising the fallback. Real workbooks do not have this: Excel,
+   LibreOffice, openpyxl and this module's own `write_table` all take the fast
+   path, which `t/unzip_member.t` pins by reading one that `write_table` wrote.
+   Second, `IO::Uncompress` defaults to `Transparent => 1`, so a file that is
+   not an archive at all comes back as its own raw bytes rather than failing.
+   That has always been true of `_unzip_member`; the fast path declines such a
+   file and changes none of it.
+
+ - `Compress::Raw::Zlib` joins the prerequisites. It is core since 5.8.8 and
+   `IO::Uncompress::Unzip` was already loading it, but it is dual-life and it
+   is now named directly.
+
+ - It also reads members the fallback cannot. `IO::Uncompress::Unzip` 2.020
+   (perl 5.10.1) and 2.024 (5.12.5) refuse a stored member written in
+   streaming mode -- "Header Error: Streamed Stored content not supported" --
+   and fail to find any member past the first in a streamed multi-member
+   archive at all, both of which this path reads on every perl in the matrix.
+   That is why the new tests assert an accepted member against the bytes that
+   went into the fixture rather than against what the fallback makes of it,
+   and cross-check the fallback only where it can answer.
+
+ - `t/unzip_member.t` is new, 82 tests: deflated, stored, empty and streamed
+   members, and one whose sizes are in its local header rather than a trailing
+   descriptor; a name another name begins with and one another ends with; an
+   archive comment, and a comment holding the end-of-central-directory
+   signature as a decoy for the backwards scan; an absent member (answered
+   "handled, no such member", so that the sharedStrings.xml plenty of
+   workbooks lack does not pay for a second scan); zip64, a concatenated
+   archive, a file that is not an archive, one that does not exist, an empty
+   one and a truncated one -- each asserted to be declined and then to come
+   back from the fallback exactly as it did before, undef included; and
+   read_table over two workbooks whose directories are intact, one from
+   `write_table` and one with a shared-string table.
+
+ [A malformed .xlsx could ask for an unbounded amount of memory]
+
+ - `xlsx_ref_col()` refuses a column reference past XFD, the last of the 16,384
+   columns ECMA-376 allows, and its comment says why: every row in a sheet is
+   padded to the widest column the sheet mentions, so "a bad one should cost
+   the 16,384 the format allows rather than the twelve million `ZZZZZ` would
+   ask for". It did not. A reference it refuses falls back to "the next
+   column", and that counter had no ceiling at all, so `ZZZZZ1` repeated 20,000
+   times in one row got 20,000 columns -- the exact outcome the cap was written
+   to prevent, reached through the cap's own fallback.
+
+ - What it cost: a 54 KB workbook of 20,000 such cells, plus 200 ordinary
+   one-cell rows, came back as 264 MB of empty strings in 0.41 s; 60,000 cells
+   made it 804 MB and 1.35 s, and nothing bounded it but the size of the input.
+   The amplification is about 5,000x, so a 16 MB file of that shape would ask
+   for tens of gigabytes. A cell with no `r=` at all reaches the same counter,
+   so it did not even need a malformed reference.
+
+ - `xlsx_ws_scan()` now clamps the column index to XLSX_MAX_COL on that path
+   too. Past the ceiling the cells pile up in the last column, last one
+   winning, which is what a repeated `r=` in one row already did. The same line
+   runs on both passes, so they go on agreeing about the width. The two cases
+   above now stop at 16,384 columns and 234 MB, and stop growing: 60,000 cells
+   cost what 20,000 do.
+
+ - `t/read_table.xlsx.parser.t` covers both routes to the counter -- 20,000
+   unreadable references and 20,000 cells with no `r=` -- asserted on
+   `_parse_xlsx_sheet_xs` directly, because `read_table` would fold the unnamed
+   columns into one key and hide the width. Both fail without the clamp.
+
+ [read_table on .xlsx: 42 MB less peak RSS]
+
+ - `_unzip_member()` returned the decompressed part as a string, which costs a
+   full copy of it: perl cannot hand back a lexical's pad slot, so `return
+   $content` copies. On the 36 MB worksheet part of the 21,845 x 50 workbook
+   that was 34 MB of peak RSS for nothing -- 82.4 MB against 48.5 MB for a
+   scalar reference, and 81 MB still resident after the string went out of
+   scope against 13 MB, the rest being heap the allocator never gave back.
+
+ - It returns a reference now and its four callers dereference. `$$ws` on an
+   argument list pushes the SV itself, so the part still reaches
+   `_parse_xlsx_sheet_xs` and `_xlsx_sst_xs` without a copy. Reading the whole
+   workbook went from 220.2 MB and 0.487 s to 177.9 MB and 0.475 s.
+
  [The `autodie` dependency is gone]
 
  - `autodie` was a prerequisite for five calls in one file: three `close`s and
