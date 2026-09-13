@@ -3,7 +3,7 @@
 require 5.010;
 use strict;
 package Stats::LikeR;
-our $VERSION = 0.316;
+our $VERSION = 0.317;
 require XSLoader;
 use warnings FATAL => 'all';
 use Exporter 'import';

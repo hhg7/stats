@@ -984,6 +984,55 @@ would have been the same sequence in every process.  Removed rather than
 fixed, because Drand01() is the behaviour that is wanted and the behaviour
 that sample() already had.*/
 
+/*Drand01() has to reach the same generator state perl's own srand() seeds.
+
+On a threaded perl before 5.20 it does not.  config.h defines Drand01() as
+libc's drand48() and seedDrand01() as srand48(); reentr.h then redefines both
+in terms of drand48_r()/srand48_r() over the interpreter's own
+PL_reentrant_buffer, so that two threads do not share libc's global state.
+That rewrite is wrapped in `#if PERL_REENTR_API == 1`, and reentr.h sets that
+only for PERL_CORE and PERL_EXT -- perlxs says so in as many words under
+"Thread-aware system interfaces", and warns there that mixing the _r and
+_r-less forms of one interface is not well defined.  An XS file outside the
+core is neither, so pp_srand() seeds PL_reentrant_buffer->_drand48_struct
+while every Drand01() in this file reads libc's process-global state, which
+srand48() is then never called on: srand($seed) has no effect whatever on
+rbinom(), rnorm(), runif() or sample(), and two identical calls return
+consecutive stretches of one stream that is never reset.
+
+That is how 0.316 got a FAIL from a 5.18.3 smoker (x86_64-linux-thread-multi-
+ld, USE_ITHREADS + USE_REENTRANT_API): t/rbinom.dist.t's two reproducibility
+subtests failed and nothing else did, because an unseeded drand48 is still a
+perfectly good drand48 and every distribution test passes either way.
+Reproduced here by building perl 5.16.3 with -Duseithreads -Duselongdouble.
+The matrix did have a threaded perl before that, 5.42.3 -- but it is a 5.20-or-
+later one, where perl's own Perl_drand48() has replaced the libc call and
+reentr.h no longer wraps drand48, so it cannot show this and no local run
+could have caught it.
+
+So do for this file exactly what reentr.h does for perl's own: the two macros
+below are copied from it verbatim, prototype guards included, and Drand01()
+and seedDrand01() then expand through them.  Perl 5.20 replaced the libc call
+with its own Perl_drand48() and reentr.h stopped wrapping drand48 in the same
+release, so PL_random_state existing is the test for "this perl was never
+affected"; on an unthreaded perl USE_REENTRANT_API is undefined and none of
+this applies either.
+
+random()/srandom() -- the other generator Configure will pick -- is left
+alone.  reentr.h's own pair there reads _random_struct and seeds
+_srandom_struct, two different buffers, so on such a perl srand() does not
+reach perl's own rand() and there is nothing here to be consistent with.
+Configure offers drand48 as the default wherever it exists, which is every
+platform that has the drand48_r() this block needs.*/
+#if defined(USE_REENTRANT_API) && !defined(PL_random_state) \
+	&& defined(HAS_DRAND48_R) && DRAND48_R_PROTO == REENTRANT_PROTO_I_ST \
+	&& defined(HAS_SRAND48_R) && SRAND48_R_PROTO == REENTRANT_PROTO_I_LS
+#  undef drand48
+#  define drand48() (drand48_r(&PL_reentrant_buffer->_drand48_struct, &PL_reentrant_buffer->_drand48_double) == 0 ? PL_reentrant_buffer->_drand48_double : 0)
+#  undef srand48
+#  define srand48(a) (srand48_r(a, &PL_reentrant_buffer->_drand48_struct) == 0 ? &PL_reentrant_buffer->_drand48_struct : 0)
+#endif
+
 // Ensure Perl's PRNG is seeded, matching the lazy-evaluation of Perl's rand()
 #define AUTO_SEED_PRNG() \
 	do { \

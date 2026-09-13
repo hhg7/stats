@@ -166,9 +166,19 @@ for my $c (@CASES) {
 # BTPE draws for min(p, 1-p) and returns n - ix when p > 0.5, so the two must
 # be the same stream mirrored.  This is also what makes the p > 0.5 cases above
 # test the same code the p < 0.5 ones do.
+#
+# 3/4 and 1/4, and not the 0.68 and 0.32 this used to ask for, because the
+# identity is only exact when `1.0 - prob_hi` is bit-for-bit `prob_lo` -- that
+# is what makes the two setups the same setup.  A dyadic pair is that in every
+# NV width; 0.68 and 0.32 are not even in a double, where 1.0 - 0.68 lands one
+# ulp below 0.32.  It passed anyway -- 200 seeds x 30 variates, no divergence,
+# because an ulp in p is far too small to flip an accept/reject test -- but it
+# passed by luck rather than by construction, and the luck is NV-width
+# dependent.  np is 100 here, so this is still the BTPE branch the old pair
+# exercised.
 {
-	srand 99; my $hi = rbinom(n => 30, size => 400, prob => 0.68);
-	srand 99; my $lo = rbinom(n => 30, size => 400, prob => 0.32);
+	srand 99; my $hi = rbinom(n => 30, size => 400, prob => 0.75);
+	srand 99; my $lo = rbinom(n => 30, size => 400, prob => 0.25);
 	is_deeply($hi, [ map { 400 - $_ } @$lo ],
 	          'prob and 1-prob mirror each other on the same seed');
 }

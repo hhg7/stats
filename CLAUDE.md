@@ -218,11 +218,16 @@ hold for every installed perl, all three NV widths, Windows, and perl 5.10.
 at minimum the affected versions with `-p`) for anything touching `LikeR.xs`.
 The local matrix under `/home/con/perl5/perlbrew/perls/`, by `$Config{nvtype}`:
 
-- `perl-5.44.0` (default), `perl-5.42.3`, `perl-5.10.1` — `double`, NVgf `"g"`
+- `perl-5.44.0` (default), `perl-5.42.3`, `perl-5.10.1` — `double`, NVgf `"g"`.
+  `perl-5.42.3` is the only threaded one of the three (`useithreads`).
 - `perl-5.12.5` — `long double`, NVgf `"Lg"` (archname `x86_64-linux-ld`)
 - `5.44.0-quadmath` — `__float128`, NVgf `"Qg"`
 - `5.44.0-i686` — `double`, but a 32-bit build: `ivsize=4`, so `IV_MAX` is
   2147483647. See "The IV is not always 64 bits" below.
+- `5.16.3-thr-ld` — `long double`, `useithreads`, `usemultiplicity`,
+  `USE_REENTRANT_API`, and the only threaded perl here older than 5.20. See
+  "Threads change which libc function perl calls" below for why the age
+  matters as much as the threads.
 
 All three NV widths can be compile-checked without reconfiguring the tree
 (which would clobber the current `Makefile`) by generating the `.c` and
@@ -269,6 +274,30 @@ has no such perl. Two traps are worth knowing before rebuilding it:
   optional, so `-Dlibswanted='pthread dl m util c'` avoids needing
   `libcrypt-dev:i386`. The only casualty is the `crypt()` builtin, which this
   module never calls.
+
+### Threads change which libc function perl calls
+
+A threaded perl defines `USE_REENTRANT_API`, and `reentr.h` then redefines a
+long list of libc interfaces (`drand48`, `random`, `strerror`, `readdir`,
+`localtime`, `setlocale`, the `getpw*`/`getgr*` family, …) in terms of their
+`_r` forms over `PL_reentrant_buffer`. **That rewrite is wrapped in
+`#if PERL_REENTR_API == 1`, which `reentr.h` sets for `PERL_CORE` and
+`PERL_EXT` and for nothing else**, so perl's own source gets the `_r` form of
+a function and `LikeR.xs` gets the plain one. `perlxs` documents this under
+"Thread-aware system interfaces" and warns that mixing the two forms of one
+interface is not well defined.
+
+Never call a libc function from `LikeR.xs` that appears in `reentr.h`'s list
+without checking what perl's core does with it first. 0.316 shipped with
+`Drand01()` — libc `drand48()` on any perl before 5.20 — reading libc's
+process-global state while `pp_srand()` seeded the interpreter's buffer, so
+`srand($seed)` governed nothing the module drew. It took a 5.18.3 smoker to
+find it: the matrix's one threaded perl, `perl-5.42.3`, is new enough that
+`Perl_drand48()` has replaced the libc call and `reentr.h` no longer wraps
+`drand48` at all, so it cannot show this. The block below
+`AUTO_SEED_PRNG()` in `LikeR.xs` is the fix and records the whole of it;
+`t/srand.stream.t` is the regression test, and `5.16.3-thr-ld` the perl it
+fails on without the fix.
 
 ### Long double and quadmath
 
@@ -347,6 +376,13 @@ Windows specifically:
 - Printf lengths must be perl's: `%" UVuf "`, `%" IVdf "`, `%" NVgf "`,
   `%" UVxf "`. `%zu`, `%zd`, `%lld` and `%llu` are not portable to MSVC's
   older CRT — cast to `UV`/`IV` and use the perl macro.
+- A test must never build a shell command line. Backticks, `qx//` and the
+  one-argument `system()` go through `cmd.exe` there, which does not treat
+  `'` as a quote character at all, so a `sh`-quoted `-e '...'` reaches perl
+  as a syntax error. Spawn with the list form of `system()`, put the program
+  in a file, and pass paths in `@ARGV` rather than interpolating them (a
+  Windows path is full of backslashes). `t/arg.crash.regressions.t` is the
+  worked example, and 0.317 the release that had to learn it.
 
 Solaris, illumos and the BSDs specifically:
 

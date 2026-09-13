@@ -1,5 +1,91 @@
 Revision history for Stats-LikeR
 
+0.317 2026-09-12 CDT
+
+ [srand() reached nothing this module drew, on a threaded perl before 5.20]
+
+ - A CPAN smoker running perl 5.18.3 (`x86_64-linux-thread-multi-ld`:
+   `useithreads`, `long double` NV) failed 0.316 in `t/rbinom.dist.t`, two
+   subtests out of ninety. Both were reproducibility checks -- the same seed
+   drawn twice, and the `prob`/`1-prob` mirror -- and every distribution test
+   in the file passed, there and everywhere else.
+
+ - On a perl older than 5.20, `Drand01()` is libc's `drand48()` and
+   `seedDrand01()` is `srand48()`. When that perl is threaded, `reentr.h`
+   redefines both over the interpreter's own `PL_reentrant_buffer` so that two
+   threads do not share libc's global state -- but the whole block is wrapped
+   in `#if PERL_REENTR_API == 1`, which `reentr.h` sets for `PERL_CORE` and
+   `PERL_EXT` and nothing else. `perlxs` says as much under "Thread-aware
+   system interfaces", and warns there that mixing the `_r` and `_r`-less
+   forms of one interface is not well defined.
+
+ - An XS file outside the core is neither, so `pp_srand()` seeded
+   `PL_reentrant_buffer->_drand48_struct` while every draw in `LikeR.xs` read
+   libc's process-global state, which nothing ever called `srand48()` on.
+   `srand($seed)` had no effect whatever on `rbinom()`, `rnorm()`, `runif()`
+   or `sample()`: two identical calls returned consecutive stretches of one
+   stream that was never reset, and the first number a process drew came off
+   an uninitialised `struct drand48_data` (3.9e-14, measured). The
+   distribution was never wrong, which is why two reproducibility subtests
+   were the only thing that ever failed.
+
+ - `LikeR.xs` now carries `reentr.h`'s own two macros for `drand48()` and
+   `srand48()`, copied verbatim and under the same prototype guards, so
+   `Drand01()` and `seedDrand01()` expand to the state perl seeds. Perl 5.20
+   replaced the libc call with `Perl_drand48()` and `reentr.h` stopped
+   wrapping `drand48` in the same release, so `PL_random_state` existing is
+   the test for a perl that was never affected; on an unthreaded perl
+   `USE_REENTRANT_API` is undefined and none of it applies. `random()` is
+   left alone deliberately: `reentr.h` reads `_random_struct` and seeds
+   `_srandom_struct` there, two different buffers, so on a perl configured
+   that way `srand()` does not reach perl's own `rand()` either.
+
+ [t/srand.stream.t]
+
+ - New, and the reason the bug was module-wide but showed up as two subtests
+   of one file: `t/rbinom.dist.t` was the only test in the suite that ever
+   drew one seed twice. Fifteen checks that a seed determines what `runif()`,
+   `rnorm()`, `rbinom()` and `sample()` return, that a different seed moves
+   them, and that a draw made in XS and a draw made by perl's `rand()` come
+   off one stream in order. Nine of the fifteen fail against 0.316 on an
+   affected perl. No value is pinned: which numbers a seed gives is libc's
+   business on some builds and perl's on others.
+
+ [t/arg.crash.regressions.t ran its child perls through a sh command line]
+
+ - A Strawberry perl 5.42 smoker (`MSWin32-x64-multi-thread`) failed 0.316
+   with 26 of that file's 98 subtests, which is every subtest in it that
+   spawns a child. `child_result()` built the child's command as
+   `` `$^X @inc -e '$prog' 2>&1` ``, and `cmd.exe` does not treat `'` as a
+   quote character: perl was handed `'use` as its `-e` program and answered
+   `Can't find string terminator "'" anywhere before EOF at -e line 1.` The
+   snippets that carry a `"` failed differently and silently, as `exit 255
+   ()`. Nothing was wrong with the module -- every case those 26 subtests
+   guard was still being rejected correctly.
+
+ - The snippet now goes to the child in a file and the child is spawned with
+   the list form of `system()`, so there is no shell and nothing in the
+   snippet has to survive one. That matters beyond the quote character: the
+   snippets hold `'`, `"` and a literal NUL between them, and no single
+   quoting of a command line is right for both `sh` and `cmd.exe`. The
+   child's verdict comes back in a file of its own whose path is passed in
+   `@ARGV`, so it does not depend on inheriting a redirected handle either;
+   the child's output is still captured, but only for the diagnostic.
+
+ - It was the only test in the suite that shelled out, and the whole of what
+   the smoker reported.
+
+ [A threaded perl in the local matrix]
+
+ - There was no threaded perl *older than 5.20*, which is what this needs, so
+   no run here could have caught it: `perl-5.42.3` is threaded but is a
+   5.20-or-later perl, where `Perl_drand48()` has replaced the libc call and
+   `reentr.h` no longer wraps `drand48` at all. `perl-5.16.3` built with
+   `-Duseithreads -Duselongdouble` -- `USE_ITHREADS`, `USE_REENTRANT_API`,
+   `randfunc=drand48`, the same three that matter on the smoker -- reproduces
+   its two failures exactly, and is what the fix was tested against.
+   `./test.all.perls.pl` picks it up like any other perlbrew perl.
+
 0.316 2026-09-11 CDT
 
  [read_table on .xlsx: the worksheet parser moved from perl to XS]
