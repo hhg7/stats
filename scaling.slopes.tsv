@@ -1,105 +1,141 @@
 figure	function	language	quantity	sizes	slope.all	slope.tail
-vector	sum	Stats::LikeR	seconds	7	1.064	1.212
+vector	sum	Stats::LikeR	seconds	7	1.062	1.249
 vector	sum	Python	seconds	7	0.706	1.035
 vector	sum	R	seconds	7	0.939	0.997
-vector	min	Stats::LikeR	seconds	7	1.024	1.146
+vector	min	Stats::LikeR	seconds	7	1.027	1.146
 vector	min	Python	seconds	7	0.684	0.981
 vector	min	R	seconds	7	0.954	0.998
-vector	max	Stats::LikeR	seconds	7	1.024	1.141
+vector	max	Stats::LikeR	seconds	7	1.029	1.153
 vector	max	Python	seconds	7	0.685	0.983
 vector	max	R	seconds	7	0.958	0.999
-vector	mean	Stats::LikeR	seconds	7	1.064	1.229
+vector	mean	Stats::LikeR	seconds	7	1.069	1.247
 vector	mean	Python	seconds	7	0.652	1.013
 vector	mean	R	seconds	7	0.896	0.995
-vector	median	Stats::LikeR	seconds	7	1.143	1.043
+vector	median	Stats::LikeR	seconds	7	1.146	1.039
 vector	median	Python	seconds	7	1.039	0.995
 vector	median	R	seconds	7	0.991	1.014
-vector	sd	Stats::LikeR	seconds	7	1.060	1.217
+vector	sd	Stats::LikeR	seconds	7	1.060	1.218
 vector	sd	Python	seconds	7	0.716	1.052
 vector	sd	R	seconds	7	0.884	0.987
-vector	var	Stats::LikeR	seconds	7	1.062	1.202
+vector	var	Stats::LikeR	seconds	7	1.063	1.214
 vector	var	Python	seconds	7	0.726	1.041
 vector	var	R	seconds	7	0.858	0.988
-vector	quantile	Stats::LikeR	seconds	7	1.140	0.961
+vector	quantile	Stats::LikeR	seconds	7	1.135	0.958
 vector	quantile	Python	seconds	7	0.920	1.051
 vector	quantile	R	seconds	7	0.853	0.957
-vector	cor	Stats::LikeR	seconds	7	1.171	1.120
+vector	cor	Stats::LikeR	seconds	7	1.171	1.117
 vector	cor	Python	seconds	7	0.788	1.159
 vector	cor	R	seconds	7	0.887	0.996
-vector	cov	Stats::LikeR	seconds	7	1.157	1.111
+vector	cov	Stats::LikeR	seconds	7	1.152	1.117
 vector	cov	Python	seconds	7	0.848	1.168
 vector	cov	R	seconds	7	0.850	0.990
-vector	skew	Stats::LikeR	seconds	7	1.000	1.001
+vector	skew	Stats::LikeR	seconds	7	1.000	1.000
 vector	skew	Python	seconds	7	0.475	1.026
 vector	kurtosis	Stats::LikeR	seconds	7	1.001	1.001
 vector	kurtosis	Python	seconds	7	0.445	0.969
-transform	rank	Stats::LikeR	seconds	7	1.172	1.089
+transform	rank	Stats::LikeR	seconds	7	1.170	1.087
 transform	rank	Python	seconds	7	1.019	1.268
 transform	rank	R	seconds	7	1.161	1.187
-transform	uniq	Stats::LikeR	seconds	7	1.113	1.195
+transform	uniq	Stats::LikeR	seconds	7	1.115	1.222
 transform	uniq	Python	seconds	7	1.045	1.132
 transform	uniq	R	seconds	7	1.115	1.139
-transform	scale	Stats::LikeR	seconds	7	1.034	1.101
+transform	scale	Stats::LikeR	seconds	7	1.035	1.100
 transform	scale	Python	seconds	7	0.509	0.952
 transform	scale	R	seconds	7	0.884	1.265
-transform	sample	Stats::LikeR	seconds	7	1.148	1.510
+transform	sample	Stats::LikeR	seconds	7	1.165	1.531
 transform	sample	Python	seconds	7	0.612	1.017
 transform	sample	R	seconds	7	0.951	1.048
-transform	seq	Stats::LikeR	seconds	7	1.052	1.140
+transform	seq	Stats::LikeR	seconds	7	1.051	1.143
 transform	seq	Python	seconds	7	0.882	0.997
 transform	seq	R	seconds	7	-0.036	0.010
-transform	auc	Stats::LikeR	seconds	7	1.139	1.106
+transform	auc	Stats::LikeR	seconds	7	1.136	1.101
 transform	auc	Python	seconds	7	0.825	1.132
 transform	auc	R	seconds	7	0.946	1.114
-io	read_table (csv, numeric)	Stats::LikeR	seconds	6	1.015	1.082
+io	read_table (csv, numeric)	Stats::LikeR	seconds	6	1.014	1.073
 io	read_table (csv, numeric)	Python	seconds	6	0.809	0.992
 io	read_table (csv, numeric)	R	seconds	6	1.135	1.348
-io	read_table (csv, mixed)	Stats::LikeR	seconds	6	1.029	1.093
+io	read_table (csv, mixed)	Stats::LikeR	seconds	6	1.024	1.086
 io	read_table (csv, mixed)	Python	seconds	6	1.017	0.974
 io	read_table (csv, mixed)	R	seconds	6	1.087	1.199
-io	read_table (tsv, mixed)	Stats::LikeR	seconds	6	1.029	1.095
+io	read_table (tsv, mixed)	Stats::LikeR	seconds	6	1.022	1.086
 io	read_table (tsv, mixed)	Python	seconds	6	1.017	1.050
 io	read_table (tsv, mixed)	R	seconds	6	1.083	1.283
-io	read_table (csv, hoa)	Stats::LikeR	seconds	6	1.104	1.293
+io	read_table (csv, hoa)	Stats::LikeR	seconds	6	1.105	1.290
 io	read_table (csv, hoa)	Python	seconds	6	0.788	1.008
 io	read_table (csv, hoa)	R	seconds	6	1.066	1.238
-io	read_table (xlsx)	Stats::LikeR	seconds	6	0.941	1.016
+io	read_table (xlsx)	Stats::LikeR	seconds	6	0.986	1.046
 io	read_table (xlsx)	Python	seconds	5	0.988	0.980
 io	read_table (xlsx)	R	seconds	6	0.907	1.015
-io	write_table (csv, hoa)	Stats::LikeR	seconds	6	0.909	1.013
+io	write_table (csv, hoa)	Stats::LikeR	seconds	6	0.954	1.033
 io	write_table (csv, hoa)	Python	seconds	6	0.964	1.002
 io	write_table (csv, hoa)	R	seconds	6	0.940	0.999
-io	write_table (tsv, hoa)	Stats::LikeR	seconds	6	0.989	1.083
+io	write_table (tsv, hoa)	Stats::LikeR	seconds	6	0.994	1.048
 io	write_table (tsv, hoa)	Python	seconds	6	0.979	1.006
 io	write_table (tsv, hoa)	R	seconds	6	0.978	1.005
-io	write_table (csv, aoa)	Stats::LikeR	seconds	6	1.028	1.173
+io	write_table (csv, aoa)	Stats::LikeR	seconds	6	0.975	1.027
 io	write_table (csv, aoa)	Python	seconds	6	0.978	1.003
 io	write_table (csv, aoa)	R	seconds	6	0.985	1.001
-io	write_table (csv, row.names)	Stats::LikeR	seconds	6	1.027	1.165
+io	write_table (csv, row.names)	Stats::LikeR	seconds	6	1.000	1.037
 io	write_table (csv, row.names)	Python	seconds	6	0.982	1.001
 io	write_table (csv, row.names)	R	seconds	6	0.995	1.016
-io	write_table (xlsx, hoa)	Stats::LikeR	seconds	6	1.037	1.031
+io	write_table (xlsx, hoa)	Stats::LikeR	seconds	6	1.043	1.043
 io	write_table (xlsx, hoa)	Python	seconds	5	0.995	1.007
-frame	filter	Stats::LikeR	seconds	6	1.088	1.220
+frame	filter	Stats::LikeR	seconds	6	1.097	0.908
 frame	filter	Python	seconds	6	0.574	0.892
 frame	filter	R	seconds	6	1.121	1.189
-frame	select_cols	Stats::LikeR	seconds	6	0.008	-0.014
+frame	select_cols	Stats::LikeR	seconds	6	0.019	0.072
 frame	select_cols	Python	seconds	6	0.338	0.630
 frame	select_cols	R	seconds	6	-0.005	0.007
-frame	group_by + mean	Stats::LikeR	seconds	6	1.046	1.406
+frame	group_by + mean	Stats::LikeR	seconds	6	0.953	0.883
 frame	group_by + mean	Python	seconds	6	0.644	0.891
 frame	group_by + mean	R	seconds	6	0.244	0.530
-frame	merge	Stats::LikeR	seconds	6	1.112	1.276
+frame	merge	Stats::LikeR	seconds	6	1.051	0.872
 frame	merge	Python	seconds	6	0.438	0.856
 frame	merge	R	seconds	6	1.096	1.063
-frame	value_counts	Stats::LikeR	seconds	6	0.996	1.001
+frame	value_counts	Stats::LikeR	seconds	6	1.016	1.040
 frame	value_counts	Python	seconds	6	0.780	0.952
 frame	value_counts	R	seconds	6	0.941	1.031
-frame	drop_duplicates	Stats::LikeR	seconds	6	1.081	1.179
+frame	drop_duplicates	Stats::LikeR	seconds	6	1.097	1.021
 frame	drop_duplicates	Python	seconds	6	0.784	1.031
 frame	drop_duplicates	R	seconds	6	1.110	1.033
-frame	transpose	Stats::LikeR	seconds	6	1.195	1.242
+frame	transpose	Stats::LikeR	seconds	6	1.074	0.758
 frame	transpose	Python	seconds	6	1.073	1.174
 frame	transpose	R	seconds	6	1.115	1.237
-frame	aoh2hoa	Stats::LikeR	seconds	6	1.084	1.112
+frame	aoh2hoa	Stats::LikeR	seconds	6	0.965	0.654
 frame	aoh2hoa	Python	seconds	6	0.954	1.004
+vector	sum	Stats::LikeR	bytes	7	-0.000	-0.000
+vector	min	Stats::LikeR	bytes	7	-0.000	-0.000
+vector	max	Stats::LikeR	bytes	7	-0.000	-0.000
+vector	mean	Stats::LikeR	bytes	7	-0.000	-0.000
+vector	median	Stats::LikeR	bytes	7	1.078	1.113
+vector	sd	Stats::LikeR	bytes	7	-0.000	-0.000
+vector	var	Stats::LikeR	bytes	7	-0.000	-0.000
+vector	quantile	Stats::LikeR	bytes	7	1.069	1.038
+vector	cor	Stats::LikeR	bytes	7	1.063	1.017
+vector	cov	Stats::LikeR	bytes	7	1.063	1.018
+vector	skew	Stats::LikeR	bytes	7	-0.000	-0.000
+vector	kurtosis	Stats::LikeR	bytes	7	-0.000	-0.000
+transform	rank	Stats::LikeR	bytes	7	0.967	1.022
+transform	uniq	Stats::LikeR	bytes	7	0.961	0.990
+transform	scale	Stats::LikeR	bytes	7	0.975	0.998
+transform	sample	Stats::LikeR	bytes	7	1.070	1.152
+transform	seq	Stats::LikeR	bytes	7	0.987	0.998
+transform	auc	Stats::LikeR	bytes	7	1.001	1.007
+io	read_table (csv, numeric)	Stats::LikeR	bytes	6	1.009	1.002
+io	read_table (csv, mixed)	Stats::LikeR	bytes	6	1.008	1.002
+io	read_table (tsv, mixed)	Stats::LikeR	bytes	6	1.009	1.003
+io	read_table (csv, hoa)	Stats::LikeR	bytes	6	1.006	1.000
+io	read_table (xlsx)	Stats::LikeR	bytes	6	1.051	1.007
+io	write_table (csv, hoa)	Stats::LikeR	bytes	6	0.000	-0.000
+io	write_table (tsv, hoa)	Stats::LikeR	bytes	6	0.000	-0.000
+io	write_table (csv, aoa)	Stats::LikeR	bytes	6	0.017	-0.305
+io	write_table (csv, row.names)	Stats::LikeR	bytes	6	0.000	-0.000
+io	write_table (xlsx, hoa)	Stats::LikeR	bytes	6	1.032	1.008
+frame	filter	Stats::LikeR	bytes	6	1.237	1.034
+frame	select_cols	Stats::LikeR	bytes	6	0.000	-0.000
+frame	group_by + mean	Stats::LikeR	bytes	6	1.048	1.226
+frame	merge	Stats::LikeR	bytes	6	1.080	1.020
+frame	value_counts	Stats::LikeR	bytes	6	0.000	-0.000
+frame	drop_duplicates	Stats::LikeR	bytes	6	0.997	1.054
+frame	transpose	Stats::LikeR	bytes	6	1.061	1.050
+frame	aoh2hoa	Stats::LikeR	bytes	6	0.000	-0.000
