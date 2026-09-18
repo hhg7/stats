@@ -26164,42 +26164,80 @@ CODE:
 	  croak("Stats::LikeR::transpose: Input must be a hash ref or array ref");
 	ref_type = SvTYPE(SvRV(input_ref));
 	if (ref_type == SVt_PVHV) {// ── Hash-of-Hashes
-		HV *in_hv  = (HV *)SvRV(input_ref);
-		HV *out_hv = newHV();
-		HE *he_row, *he_col, *out_inner_he;
+		HV      *in_hv  = (HV *)SvRV(input_ref);
+		HV      *out_hv = newHV();
+		//how many keys each output row ends up with; 0 for a tied hash, which
+		//keeps its keys behind FIRSTKEY/NEXTKEY and so just skips the pre-size
+		const IV nrows  = (IV)HvUSEDKEYS(in_hv);
+		HE      *he_row;
 		retval_sv = sv_2mortal(newRV_noinc((SV *)out_hv));
 		hv_iterinit(in_hv);
 		while ((he_row = hv_iternext(in_hv))) {
-			SV *row_key_sv  = hv_iterkeysv(he_row);
-			SV *row_val     = hv_iterval(in_hv, he_row);
-			HV *in_inner_hv;
+			SV         *row_val = hv_iterval(in_hv, he_row);
+			HV         *in_inner_hv;
+			HE         *he_col;
+			const char *rkey;	// the input row's key bytes, reused by every cell of the row
+			STRLEN      rkl;
+			I32         rklen;// same length, negated when the key is utf8 -- what hv_store wants
+			U32         rhash; // 0 where HeHASH() is not a hash: an SV key has none
 			SvGETMAGIC(row_val);
 			if (!SvROK(row_val) || SvTYPE(SvRV(row_val)) != SVt_PVHV)
 				 croak("Stats::LikeR::transpose: Hash mode – inner element is not a hash ref");
 			in_inner_hv = (HV *)SvRV(row_val);
+	/*Both keys are read out of the HE itself rather than built as
+	an SV.  Up to 0.317 the cell loop below called hv_iterkeysv() for
+	the column key once per *cell*, and every one of those SVs was
+	mortal, so none of them was reclaimed until the XSUB returned: a
+	3000x100 frame took 29.1 MB of resident memory to produce a result
+	of about 14.5 MB.  Reading the key through HePV()/HeHASH() instead
+	allocates nothing, and the same frame now peaks at 14.6 MB.
+
+	HeHASH() is also what lets the row key be stored without being
+	re-hashed once per cell -- hv_store() takes a precomputed hash and
+	hv_store_ent() does not.  Handing it over together with a negative
+	(utf8) klen is safe because perl invalidates a passed-in hash
+	itself when it has to downgrade such a key to bytes (hv.c, the
+	HVhek_KEYCANONICAL block); row_drop() above relies on the same
+	thing.  An SV key -- what a tied hash iterates with -- has no HEK,
+	so HeHASH() is not a hash there and 0 asks perl to compute one.*/
+			rkey  = HePV(he_row, rkl);
+			rklen = HeUTF8(he_row) ? -(I32)rkl : (I32)rkl;
+			rhash = (HeKLEN(he_row) == HEf_SVKEY) ? 0 : HeHASH(he_row);
 			hv_iterinit(in_inner_hv);
 			while ((he_col = hv_iternext(in_inner_hv))) {
-				SV *col_key_sv = hv_iterkeysv(he_col);
-				SV *val        = hv_iterval(in_inner_hv, he_col);
-				HV *out_inner_hv;
-				SV *inner_ref;
+				SV         *val = hv_iterval(in_inner_hv, he_col);
+				const char *ckey;
+				STRLEN      ckl;
+				I32         cklen;
+				U32         chash;
+				HV         *out_inner_hv;
+				SV        **slot;
 				SvGETMAGIC(val);
-				out_inner_he = hv_fetch_ent(out_hv, col_key_sv, 0, 0);
-				if (out_inner_he) {
-				  inner_ref = HeVAL(out_inner_he);
-				  if (!SvROK(inner_ref) || SvTYPE(SvRV(inner_ref)) != SVt_PVHV)
+				ckey  = HePV(he_col, ckl);
+				cklen = HeUTF8(he_col) ? -(I32)ckl : (I32)ckl;
+				chash = (HeKLEN(he_col) == HEf_SVKEY) ? 0 : HeHASH(he_col);
+				slot  = hv_fetch(out_hv, ckey, cklen, 0);
+				if (slot && *slot) {
+				  if (!SvROK(*slot) || SvTYPE(SvRV(*slot)) != SVt_PVHV)
 						croak("Stats::LikeR::transpose: Internal error – output structure corrupted");
-				  out_inner_hv = (HV *)SvRV(inner_ref);
+				  out_inner_hv = (HV *)SvRV(*slot);
 				} else {
+				  SV *inner_ref;
 				  out_inner_hv = newHV();
-				  inner_ref    = newRV_noinc((SV *)out_inner_hv);
-				  if (!hv_store_ent(out_hv, col_key_sv, inner_ref, 0)) {
+				  /*Sized for the whole input up front: this column will end up
+				  holding one key per input row, and letting it split its way
+				  there rehashes everything already in it once per doubling.
+				  On a 3000x100 frame that one call is most of the hash
+				  branch's time -- 33.8 ms without it against 20.2 ms with.*/
+				  if (nrows > 0) hv_ksplit(out_inner_hv, nrows);
+				  inner_ref = newRV_noinc((SV *)out_inner_hv);
+				  if (!hv_store(out_hv, ckey, cklen, inner_ref, chash)) {
 						SvREFCNT_dec(inner_ref);
 						croak("Stats::LikeR::transpose: Failed to allocate inner hash");
 				  }
 				}
-				SvREFCNT_inc(val);
-				if (!hv_store_ent(out_inner_hv, row_key_sv, val, 0)) {
+				SvREFCNT_inc_simple_void(val);
+				if (!hv_store(out_inner_hv, rkey, rklen, val, rhash)) {
 				  SvREFCNT_dec(val);
 				  croak("Stats::LikeR::transpose: Failed to store transposed value");
 				}
@@ -26208,61 +26246,104 @@ CODE:
 	} else if (ref_type == SVt_PVAV) { // Array-of-Arrays
 		AV     *in_av  = (AV *)SvRV(input_ref);
 		AV     *out_av = newAV();
-		size_t nrows  = av_len(in_av) + 1, ncols  = 0;
+		size_t  nrows  = (size_t)(AvFILL(in_av) + 1), ncols = 0;
 		retval_sv = sv_2mortal(newRV_noinc((SV *)out_av));
-		if (nrows > 0) {// Pass 1: validate all rows; fix ncols from row 0
-			{
-				 SV **elem = av_fetch(in_av, 0, 0);
-				 if (!elem || !*elem)
-					  croak("Stats::LikeR::transpose: Array mode – row 0 is missing");
-				 SvGETMAGIC(*elem);
-				 if (!SvROK(*elem) || SvTYPE(SvRV(*elem)) != SVt_PVAV)
-					  croak("Stats::LikeR::transpose: Array mode – row 0 is not an array ref");
-				 ncols = av_len((AV *)SvRV(*elem)) + 1;
+		if (nrows > 0) {
+			AV   **cols;	// the output columns; out_av owns them, this is a borrowed index
+			SV  ***body;	// each column's block
+			size_t i, j;
+			{	// row 0 fixes the width every other row has to match
+				SV *row0 = av_at(aTHX_ in_av, 0);
+				if (!row0)
+					 croak("Stats::LikeR::transpose: Array mode – row 0 is missing");
+				SvGETMAGIC(row0);
+				if (!SvROK(row0) || SvTYPE(SvRV(row0)) != SVt_PVAV)
+					 croak("Stats::LikeR::transpose: Array mode – row 0 is not an array ref");
+				ncols = (size_t)(AvFILL((AV *)SvRV(row0)) + 1);
 			}
-			for (size_t i = 1; i < nrows; i++) {
-				SV     **elem      = av_fetch(in_av, (SSize_t)i, 0);
-				size_t   row_ncols;   //as ncols is; av_len() + 1 is never negative
-				if (!elem || !*elem)
-				  croak("Stats::LikeR::transpose: Array mode – row %d is missing", (int)i);
-				SvGETMAGIC(*elem);
-				if (!SvROK(*elem) || SvTYPE(SvRV(*elem)) != SVt_PVAV)
-				  croak("Stats::LikeR::transpose: Array mode – row %d is not an array ref", (int)i);
-				row_ncols = (size_t)(av_len((AV *)SvRV(*elem)) + 1);
-				if (row_ncols != ncols)
-				  croak("Stats::LikeR::transpose: Array mode – ragged array: "
-						"row 0 has %d cols, row %d has %d",
-						(int)ncols, (int)i, (int)row_ncols);
-			}
-			if (ncols > 0) {// Pass 2: output[j][i] = input[i][j]
-				av_extend(out_av, ncols - 1);
-				for (size_t j = 0; j < ncols; j++) {
-					AV *out_col_av = newAV();
-					SV *col_ref    = newRV_noinc((SV *)out_col_av);
-					if (!av_store(out_av, j, col_ref)) {
-						SvREFCNT_dec(col_ref);
-						croak("Stats::LikeR::transpose: Array mode: "
-								"failed to allocate output column %d", (int)j);
-					}
-					av_extend(out_col_av, nrows - 1);
-					for (size_t i = 0; i < nrows; i++) {
-						SV **elem = av_fetch(in_av, i, 0);
-						if (elem && *elem) {
-							SvGETMAGIC(*elem); 
-						}
-						AV *in_row_av = (AV *)SvRV(*elem);
-						SV **val_ptr   = av_fetch(in_row_av, j, 0);
-						SV  *val       = (val_ptr && *val_ptr) ? *val_ptr : &PL_sv_undef;
-						SvGETMAGIC(val);
-						SvREFCNT_inc(val);
-						if (!av_store(out_col_av, i, val)) {
-							SvREFCNT_dec(val);
-							croak("Stats::LikeR::transpose: Array mode – "
-									 "failed to store [%d][%d]", (int)j, (int)i);
-						}
-					}
+	/*One pass down the rows filling every column, not one pass per
+	column.  Up to 0.317 the nest was column-outer, so every cell cost
+	two out-of-line av_fetch() calls -- one to re-reach row i through
+	the outer array, one for the cell itself -- plus an av_store() and
+	a second round of get magic: a 300_000 x 3 frame fetched the outer
+	array 900_000 times for the 300_000 rows it has, and a 950 x 950
+	one walked the whole outer array 950 times over.  That is the same
+	shape the AoH-to-HoA reader above records having turned inside
+	out.  Row-outer costs one fetch of each row; on this machine
+	(perl 5.44.0, -O2, best of seven) those three shapes went
+	15.8 -> 5.8 ms, 17.9 -> 4.5 ms and 14.4 -> 3.7 ms, all of them
+	900_000 cells.
+
+	The columns are allocated at their final length first, so nothing
+	is grown or copied, and their blocks are zeroed with AvFILLp set
+	to the last row up front instead of being advanced behind each
+	store the way filter() and mg_column() do it.  That is one store
+	per cell rather than two, and it is still croak-safe: a ragged row
+	or an overloaded get magic can throw part-way through, and every
+	slot not yet written is a NULL that av_undef()'s SvREFCNT_dec()
+	ignores.  The Zero() is what makes that true on every perl rather
+	than on some -- av_extend() does initialise the slots it adds, but
+	to NULL only since 5.20; on 5.10 it fills them with &PL_sv_undef.
+
+	ENTER/LEAVE is what makes SAVEFREEPV reclaim the two indexes here
+	rather than at the caller's next scope exit.*/
+			ENTER;
+			Newx(cols, ncols ? ncols : 1, AV *);
+			SAVEFREEPV(cols);
+			Newx(body, ncols ? ncols : 1, SV **);
+			SAVEFREEPV(body);
+			if (ncols > 0) av_extend(out_av, (SSize_t)ncols - 1);
+			for (j = 0; j < ncols; j++) {
+				SV *col_ref;
+				cols[j] = newAV();
+				av_extend(cols[j], (SSize_t)nrows - 1);
+				body[j] = AvARRAY(cols[j]);
+				Zero(body[j], nrows, SV *);
+				AvFILLp(cols[j]) = (SSize_t)nrows - 1;
+				col_ref = newRV_noinc((SV *)cols[j]);
+				if (!av_store(out_av, (SSize_t)j, col_ref)) {
+					SvREFCNT_dec(col_ref);
+					croak("Stats::LikeR::transpose: Array mode: "
+							"failed to allocate output column %" UVuf, (UV)j);
 				}
 			}
+			for (i = 0; i < nrows; i++) {
+				SV    *row = av_at(aTHX_ in_av, (SSize_t)i);
+				AV    *in_row_av;
+				SV   **rb;	// the row's block, or NULL when it has to be read through magic
+				size_t row_ncols;	//as ncols is; AvFILL() + 1 is never negative
+				if (!row)
+				  croak("Stats::LikeR::transpose: Array mode – row %" UVuf " is missing",
+						(UV)i);
+				SvGETMAGIC(row);
+				if (!SvROK(row) || SvTYPE(SvRV(row)) != SVt_PVAV)
+				  croak("Stats::LikeR::transpose: Array mode – row %" UVuf
+						" is not an array ref", (UV)i);
+				in_row_av = (AV *)SvRV(row);
+				row_ncols = (size_t)(AvFILL(in_row_av) + 1);
+				if (row_ncols != ncols)
+				  croak("Stats::LikeR::transpose: Array mode – ragged array: "
+						"row 0 has %" UVuf " cols, row %" UVuf " has %" UVuf,
+						(UV)ncols, (UV)i, (UV)row_ncols);
+				rb = SvRMAGICAL(in_row_av) ? NULL : AvARRAY(in_row_av);
+				for (j = 0; j < ncols; j++) {
+					SV *val = rb ? rb[j] : av_at(aTHX_ in_row_av, (SSize_t)j);
+					if (!val) val = &PL_sv_undef;
+					else if (SvGMAGICAL(val)) {
+						mg_get(val);
+						/*The one thing in this loop that runs perl, and perl
+						can push to the very row being read, which reallocs
+						it.  Re-deriving the block is what keeps the walk off
+						a freed one; if the row was undef'd outright the block
+						is now NULL and the rest of the row falls back to the
+						guarded reader, which reads it as holes.*/
+						if (rb) rb = AvARRAY(in_row_av);
+					}
+					SvREFCNT_inc_simple_void(val);
+					body[j][i] = val;
+				}
+			}
+			LEAVE;
 		}
 	} else { // Unsupported
 		croak("Stats::LikeR::transpose: Input must be a hash ref or array ref");

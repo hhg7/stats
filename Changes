@@ -1,5 +1,104 @@
 Revision history for Stats-LikeR
 
+0.318 2026-09-18 CDT
+
+ [transpose() took the interpreter down on a tied array of arrays]
+
+ - The array branch walked its input twice: one pass validated every row as
+   an array ref of row 0's width, then one pass per output column re-fetched
+   each row to copy a cell out of it. The copying pass tested what the second
+   fetch returned -- `if (elem && *elem) SvGETMAGIC(*elem);` -- and then
+   dereferenced it regardless, `(AV *)SvRV(*elem)`, without re-testing
+   `SvROK`.
+
+ - A tied array's elements do not exist until `FETCH` has run, so the second
+   read of a row is a fresh call that may hand back something other than what
+   the first one did. `SvRV()` on a plain string then takes the PV's buffer
+   for an `AV *` and the walk runs off into it: SIGSEGV, which `eval` does
+   not see. A two-row tied array whose `FETCH` stops returning an array ref
+   once the validating pass is over reproduces it in one call. Nothing a
+   plain array could hold reached it, because nothing between the two passes
+   could change a row.
+
+ - There is one pass now, so the read that is validated is the read that is
+   copied, and the check that rejects `transpose([1, 2, 3])` rejects this
+   too.
+
+ [transpose() on an array-of-arrays: the loop nest was column-outer]
+
+ - Every cell cost two out-of-line `av_fetch()` calls -- one to re-reach row
+   i through the outer array, one for the cell itself -- plus an `av_store()`
+   and a second round of get magic. A 300,000 x 3 frame fetched the outer
+   array 900,000 times for the 300,000 rows it has, and a 950 x 950 one
+   walked the whole outer array 950 times over. It is the same shape
+   `cor_extract_cols()` and the AoH-to-HoA reader in this file already record
+   having turned inside out.
+
+ - Row-outer costs one fetch of each row. The output columns are allocated at
+   their final length, so nothing is grown or copied, and their blocks are
+   zeroed with `AvFILLp` set to the last row up front rather than advanced
+   behind each store: one store per cell instead of two, and still safe to
+   croak out of part-way through, because a slot not yet written is a `NULL`
+   that `SvREFCNT_dec()` ignores. The `Zero()` is what makes that true on
+   5.10, where `av_extend()` fills the slots it adds with `&PL_sv_undef`
+   rather than the `NULL` it has used since 5.20.
+
+ - On perl 5.44.0 at -O2, best of seven, at 900,000 cells throughout:
+   300,000 x 3 went 15.8 ms to 5.8 ms, 3,000 x 300 went 17.9 ms to 4.5 ms,
+   and 950 x 950 went 14.4 ms to 3.7 ms.
+
+ [transpose() on a hash-of-hashes: a mortal key SV per cell]
+
+ - The cell loop called `hv_iterkeysv()` for the column key once per cell,
+   and a mortal is not reclaimed until the XSUB returns. A 3,000 x 100 frame
+   held 300,000 of them for the length of the call: 29.1 MB of resident
+   memory to produce a result of about 14.5 MB. Both keys are read straight
+   out of the HE now -- `HePV()` for the bytes, `HeUTF8()` for the flag,
+   `HeHASH()` for the hash -- so a transpose allocates no key SV at all, and
+   the same frame peaks at 14.6 MB.
+
+ - Handing perl a precomputed hash together with a negative (utf8) klen is
+   safe because perl invalidates the hash itself when it has to downgrade
+   such a key to bytes, in hv.c's `HVhek_KEYCANONICAL` block; `row_drop()`
+   already relied on that. A tied hash iterates with SV keys, which have no
+   HEK and so no `HeHASH()`; those pass 0 and let perl compute one.
+
+ - Each output column is also pre-sized with `hv_ksplit()` to the number of
+   input rows it will end up holding, rather than splitting its way there and
+   rehashing everything already in it once per doubling. That one call is
+   most of this branch's time: the same 3,000 x 100 frame takes 33.8 ms
+   without it and 20.2 ms with, against 30.7 ms in 0.317.
+
+ [transpose(): what did not change, and two smaller fixes]
+
+ - Nothing about what it returns moved. Cells are still shared by refcount
+   rather than copied, a ragged array still croaks, a physical hole still
+   reads as undef, a tied input still reads through its magic, and the croak
+   messages are the same text.
+
+ - Those messages formatted a `size_t` with `%d` and a cast to `int`, which
+   truncates above 2**31; they use `%" UVuf "` now. `av_len()` gave way to
+   `AvFILL()`, which is the same answer with the untied case inline.
+
+ [t/transpose.t]
+
+ - Nine new subtests, 43 to 52. A well-behaved tied outer array and a tied
+   inner row, both of which 0.317 handled and which are here so that the fast
+   path cannot quietly stop handling them. The tied row that stops being an
+   array ref, which is the SIGSEGV above, and which fails 0.317 as a signal
+   rather than as a test. A tied hash, whose keys iterate as SVs and so take
+   the `HEf_SVKEY` path through the new key reads. utf8 row and column keys,
+   including one that perl downgrades to bytes on the way in, which is the
+   case that says the hash handover is right. And a 20-wide frame whose 51st
+   row is one cell short, which croaks with most of the result already
+   written. Two of the nine are leak checks, on that part-filled croak and on
+   the utf8 keys.
+
+ - All eight perls in the local matrix pass, warning-free: 5.10.1, 5.12.5
+   (long double), 5.16.3 threaded long double, 5.42.3 threaded, 5.44.0,
+   5.44.0 with x87 arithmetic, 5.44.0 32-bit (`ivsize=4`), and 5.44.0
+   quadmath.
+
 0.317 2026-09-12 CDT
 
  [srand() reached nothing this module drew, on a threaded perl before 5.20]
