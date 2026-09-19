@@ -4553,6 +4553,44 @@ row is only collected, not rendered (tex-only output).*/
 	if (collect) av_push(collect, newRV_noinc((SV*)crow));
 }
 
+/*Take the header names from an explicit col.names argument.
+
+write_table() offers col.names on every shape it accepts and reads it the
+same way for each, so the five branches share this rather than carrying a
+copy apiece. The argument has already been checked for ARRAY-ness at the top
+of the XSUB; an element that is undef is skipped, not emitted as an empty
+header, which is the behaviour every branch had.*/
+static void wt_headers_given(pTHX_ AV *headers_av, SV *col_names_sv) {
+	AV *c_av = (AV*)SvRV(col_names_sv);
+	for (SSize_t i = 0; i <= av_len(c_av); i++) {
+		SV **c = av_fetch(c_av, i, 0);
+		if (c && SvOK(*c)) av_push(headers_av, newSVsv(*c));
+	}
+}
+
+/*Emit the header record -- the optional leading row-label cell, then one
+field per header -- and return the header count, which each branch then
+sizes its row buffer from.
+
+*h_ptr is tested as well as h_ptr: av_fetch() returns NULL for a hole, and
+four of the five call sites this replaces dereferenced it without checking.
+The fifth did check, so this takes the safe reading of the two.*/
+static size_t wt_emit_header(pTHX_ PerlIO *fh, AV *headers_av,
+                             bool inc_rownames, const char *sep,
+                             AV *collect_av) {
+	const size_t num_headers = (size_t)(av_len(headers_av) + 1);
+	const char **header_row = safemalloc((num_headers + 1) * sizeof(char*));
+	size_t h_idx = 0;
+	if (inc_rownames) header_row[h_idx++] = "";
+	for (size_t i = 0; i < num_headers; i++) {
+		SV **h_ptr = av_fetch(headers_av, (SSize_t)i, 0);
+		header_row[h_idx++] = (h_ptr && *h_ptr && SvOK(*h_ptr)) ? SvPV_nolen(*h_ptr) : "";
+	}
+	print_string_row(aTHX_ fh, header_row, h_idx, sep, collect_av);
+	safefree(header_row);
+	return num_headers;
+}
+
 /*  write_table: LaTeX tabular output (the 'tex' option / a ".tex" file name).
 
 Modeled on a stand-alone "2D array -> LaTeX tabular" routine, but driven by
@@ -9770,31 +9808,60 @@ static void anova_expand_rhs(pTHX_ const char *rhs,
 	for (size_t si = 0; si < nsum; si++) Safefree(sum[si]);
 	Safefree(sum);
 }
+/*The output of one sequential fit: the reduced system plus the layout needed
+to read a term-by-term table out of it.
 
-/*Fit a single model `lhs ~ rhs` on the shared complete-case row set
-(ridx[0..n_used-1]) and report its residual SS and model rank. Builds its
-own term/factor registries and design matrix, runs the sequential QR, then
-frees all of its own scratch. Returns 1 on success, 0 if the RHS expands to
-no predictor terms (caller croaks). Used only by the model-comparison form;
-the single-model table path below is unchanged.*/
-static int anova_fit_one(pTHX_ HV *hoa, HV **rows, size_t n,
-		const bool *complete, const size_t *ridx, size_t n_used,
-		const char *lhs, const char *rhs,
-		NV *rss_out, size_t *rank_out) {
-	AnTerm *terms = NULL;
-	AnFac  *facs  = NULL;
-	size_t nterms = 0, tcap = 0, nfac = 0, fcap = 0;
+apply_householder_aov() reduces X in place and overwrites y, leaving
+y[rank_map[k]] as column k's contribution to the model sum of squares --
+which is what lets the single-model path build its whole table without a
+second pass over the design. terms/facs are not owned here; they belong to
+whoever called anova_bind_facs().*/
+typedef struct {
+	NV    **X;         //n_used rows of p columns, one Newx per row
+	NV     *y;         //response, overwritten by the QR
+	bool   *aliased;   //TRUE where a column was dropped as collinear
+	size_t *rank_map;  //design column -> its row in the reduced system
+	size_t  p;         //columns: the intercept plus every term's width
+	size_t  rank;
+	NV      rss;
+} AnFit;
 
-	anova_expand_rhs(aTHX_ rhs, &terms, &nterms, &tcap);
-	if (nterms == 0) { anova_free_terms(aTHX_ terms, nterms); return 0; }
+/*Expand `rhs` into ordered terms and register every factor they name, without
+coding anything yet.
 
-	//factor registry + per-term factor indices
-	for (size_t t = 0; t < nterms; t++) {
-		Newx(terms[t].fi, terms[t].nf, size_t);
-		for (size_t j = 0; j < terms[t].nf; j++)
-			terms[t].fi[j] = anova_fac(aTHX_ &facs, &nfac, &fcap, hoa, rows, n, terms[t].factors[j]);
+The split exists because the single-model table path needs the factor names
+before it can decide which rows are complete, and the row set is in turn
+what the coding below is computed over. Returns the term count; 0 means the
+RHS had no predictors, and the caller still frees *tp.*/
+static size_t anova_bind_facs(pTHX_ HV *hoa, HV **rows, size_t n,
+		const char *rhs, AnTerm **tp, size_t *ntp, size_t *tcp,
+		AnFac **fp, size_t *nfp, size_t *fcp) {
+	anova_expand_rhs(aTHX_ rhs, tp, ntp, tcp);
+	if (*ntp == 0) return 0;
+	for (size_t t = 0; t < *ntp; t++) {
+		Newx((*tp)[t].fi, (*tp)[t].nf, size_t);
+		for (size_t j = 0; j < (*tp)[t].nf; j++)
+			(*tp)[t].fi[j] = anova_fac(aTHX_ fp, nfp, fcp, hoa, rows, n,
+			                           (*tp)[t].factors[j]);
 	}
+	return *ntp;
+}
 
+/*Code the factors over the surviving rows, lay the terms out across the
+design, and run the sequential Householder QR.
+
+Both callers -- the model-comparison fitter below and the single-model table
+path in the XSUB -- reach the QR through here, so the two cannot drift apart
+on dummy coding, interaction column order or design layout. They did drift
+once: this was a verbatim copy in each until 0.319.
+
+terms[] is written through (width and start are filled in), as is facs[]
+(nlv, width, col), so neither can be restrict-qualified against the other --
+an interaction term reads the very factor columns this fills.*/
+static void anova_build_fit(pTHX_ HV *hoa, HV **rows, size_t n,
+		const bool *complete, const size_t *ridx, size_t n_used,
+		const char *lhs, AnTerm *terms, size_t nterms,
+		AnFac *facs, size_t nfac, AnFit *F) {
 	// factor widths + coded columns (levels taken over the shared row set)
 	for (size_t f = 0; f < nfac; f++) {
 		if (facs[f].is_cat) {
@@ -9839,7 +9906,7 @@ static int anova_fit_one(pTHX_ HV *hoa, HV **rows, size_t n,
 	}
 	for (size_t t = 0; t < nterms; t++) {
 		size_t w = terms[t].width;
-		if (w == 0) continue;
+		if (w == 0) continue;                    //degenerate: no columns
 		for (size_t r = 0; r < n_used; r++) {
 			for (size_t c = 0; c < w; c++) {
 				size_t rem = c; NV v = 1.0;
@@ -9866,11 +9933,48 @@ static int anova_fit_one(pTHX_ HV *hoa, HV **rows, size_t n,
 	NV rss = 0.0;
 	for (size_t r = rank; r < n_used; r++) rss += y[r] * y[r];
 
-	*rss_out  = rss;
-	*rank_out = rank;
+	F->X = X; F->y = y; F->aliased = aliased; F->rank_map = rank_map;
+	F->p = p; F->rank = rank; F->rss = rss;
+}
 
-	for (size_t r = 0; r < n_used; r++) Safefree(X[r]);
-	Safefree(X); Safefree(y);	Safefree(aliased); Safefree(rank_map);
+/*Release what anova_build_fit() allocated. n_used must be the same count it
+was fitted with, since X is one allocation per row.*/
+static void anova_fit_free(pTHX_ AnFit *F, size_t n_used) {
+	if (F->X) {
+		for (size_t r = 0; r < n_used; r++) Safefree(F->X[r]);
+		Safefree(F->X);
+	}
+	Safefree(F->y); Safefree(F->aliased); Safefree(F->rank_map);
+	F->X = NULL; F->y = NULL; F->aliased = NULL; F->rank_map = NULL;
+}
+
+/*Fit a single model `lhs ~ rhs` on the shared complete-case row set
+(ridx[0..n_used-1]) and report its residual SS and model rank. Builds its
+own term/factor registries, fits, then frees all of its own scratch.
+Returns 1 on success, 0 if the RHS expands to no predictor terms (caller
+croaks). Used only by the model-comparison form.*/
+static int anova_fit_one(pTHX_ HV *hoa, HV **rows, size_t n,
+		const bool *complete, const size_t *ridx, size_t n_used,
+		const char *lhs, const char *rhs,
+		NV *rss_out, size_t *rank_out) {
+	AnTerm *terms = NULL;
+	AnFac  *facs  = NULL;
+	size_t nterms = 0, tcap = 0, nfac = 0, fcap = 0;
+	AnFit F;
+
+	if (anova_bind_facs(aTHX_ hoa, rows, n, rhs, &terms, &nterms, &tcap,
+			&facs, &nfac, &fcap) == 0) {
+		anova_free_terms(aTHX_ terms, nterms);
+		anova_free_facs(aTHX_ facs, nfac);
+		return 0;
+	}
+	anova_build_fit(aTHX_ hoa, rows, n, complete, ridx, n_used, lhs,
+			terms, nterms, facs, nfac, &F);
+
+	*rss_out  = F.rss;
+	*rank_out = F.rank;
+
+	anova_fit_free(aTHX_ &F, n_used);
 	anova_free_terms(aTHX_ terms, nterms);	anova_free_facs(aTHX_ facs, nfac);
 	return 1;
 }
@@ -13192,10 +13296,11 @@ void anova(...)
 		AnTerm *terms = NULL;
 		AnFac  *facs  = NULL;
 		size_t nterms = 0, tcap = 0, nfac = 0, fcap = 0;
-		bool *complete = NULL, *aliased = NULL;
-		size_t *ridx = NULL, *rank_map = NULL;
-		size_t n = 0, n_used = 0, p, rank;
-		NV **X = NULL, *y = NULL, rss, msres;
+		bool *complete = NULL;
+		size_t *ridx = NULL;
+		size_t n = 0, n_used = 0;
+		AnFit fit = { NULL, NULL, NULL, NULL, 0, 0, 0.0 };
+		NV msres;
 		IV dfres;
 	PPCODE:
 	{
@@ -13397,18 +13502,15 @@ void anova(...)
 					croak("anova: first argument must be a hash or array reference");
 				}
 			}
-			//expand RHS into ordered, de-duplicated terms
-			anova_expand_rhs(aTHX_ rhs, &terms, &nterms, &tcap);
-			if (nterms == 0) {
-				anova_free_terms(aTHX_ terms, nterms); Safefree(rows);
+	/*expand the RHS and register its factors. The coding and the fit itself
+	wait for the complete-case row set below, because a level that appears
+	only in an incomplete row is not a level of the fitted model.*/
+			if (anova_bind_facs(aTHX_ hoa, rows, n, rhs, &terms, &nterms, &tcap,
+					&facs, &nfac, &fcap) == 0) {
+				anova_free_terms(aTHX_ terms, nterms);
+				anova_free_facs(aTHX_ facs, nfac); Safefree(rows);
 				safefree(lhs); safefree(rhs);
 				croak("anova: formula has no predictor terms");
-			}
-			//factor registry + per-term factor indices
-			for (size_t t = 0; t < nterms; t++) {
-				Newx(terms[t].fi, terms[t].nf, size_t);
-				for (size_t j = 0; j < terms[t].nf; j++)
-					terms[t].fi[j] = anova_fac(aTHX_ &facs, &nfac, &fcap, hoa, rows, n, terms[t].factors[j]);
 			}
 			// listwise completeness
 			Newx(complete, n ? n : 1, bool);
@@ -13434,86 +13536,26 @@ void anova(...)
 			}
 			Newx(ridx, n_used, size_t);
 			{ size_t r = 0; for (size_t i = 0; i < n; i++) if (complete[i]) ridx[r++] = i; }
-			for (size_t f = 0; f < nfac; f++) {//factor widths + coded columns
-				if (facs[f].is_cat) {
-					facs[f].nlv = anova_levels(aTHX_ hoa, rows, n, complete, facs[f].name, &facs[f].lv);
-					facs[f].width = facs[f].nlv > 1 ? facs[f].nlv - 1 : 0;
-				} else {
-					facs[f].width = 1;
-				}
-				if (facs[f].width == 0) continue;
-				Newx(facs[f].col, n_used * facs[f].width, NV);
-				if (facs[f].is_cat) {
-					for (size_t r = 0; r < n_used; r++) {
-						char *sv = get_data_string_alloc(aTHX_ hoa, rows, ridx[r], facs[f].name);
-						for (size_t j = 1; j < facs[f].nlv; j++)
-							facs[f].col[r * facs[f].width + (j - 1)] =
-								(sv && strcmp(sv, facs[f].lv[j]) == 0) ? 1.0 : 0.0;
-						Safefree(sv);
-					}
-				} else {
-					for (size_t r = 0; r < n_used; r++)
-						facs[f].col[r] = evaluate_term(aTHX_ hoa, rows, (unsigned)ridx[r], facs[f].name);
-				}
-			}
-			//term widths + design layout
-			p = 1;
-			for (size_t t = 0; t < nterms; t++) {
-				size_t w = 1;
-				for (size_t j = 0; j < terms[t].nf; j++) w *= facs[terms[t].fi[j]].width;
-				terms[t].width = w;
-				terms[t].start = p;
-				p += w;
-			}
-			//build design matrix (intercept + term blocks)
-			Newx(y, n_used, NV);
-			Newx(X, n_used, NV*);
-			for (size_t r = 0; r < n_used; r++) {
-				Newx(X[r], p, NV);
-				X[r][0] = 1.0;
-				y[r] = evaluate_term(aTHX_ hoa, rows, (unsigned)ridx[r], lhs);
-			}
-			for (size_t t = 0; t < nterms; t++) {
-				size_t w = terms[t].width;
-				if (w == 0) continue;                    //degenerate: no columns
-				for (size_t r = 0; r < n_used; r++) {
-					for (size_t c = 0; c < w; c++) {
-						size_t rem = c; NV v = 1.0;
-						for (size_t j = 0; j < terms[t].nf; j++) {
-							AnFac *fj = &facs[terms[t].fi[j]];
-							size_t d = rem % fj->width; rem /= fj->width;
-							v *= fj->col[r * fj->width + d];
-						}
-						X[r][terms[t].start + c] = v;
-					}
-				}
-			}
-			// sequential QR (X, y overwritten in place)
-			Newx(aliased,  p, bool);
-			Newx(rank_map, p, size_t);
-			for (size_t k = 0; k < p; k++) rank_map[k] = 0;
-			apply_householder_aov(X, y, n_used, p, aliased, rank_map);
 
-			rank = 0;
-			for (size_t k = 0; k < p; k++) if (!aliased[k]) rank++;
-			rss = 0.0;
-			for (size_t r = rank; r < n_used; r++) rss += y[r] * y[r];
-			dfres = (IV)n_used - (IV)rank;
-			msres = dfres > 0 ? rss / (NV)dfres : NAN;
+			//code, lay out, and run the sequential QR -- shared with anova_fit_one()
+			anova_build_fit(aTHX_ hoa, rows, n, complete, ridx, n_used, lhs,
+					terms, nterms, facs, nfac, &fit);
+			dfres = (IV)n_used - (IV)fit.rank;
+			msres = dfres > 0 ? fit.rss / (NV)dfres : NAN;
 
 			// assemble term-keyed table
 			result = newHV();
 			for (size_t t = 0; t < nterms; t++) {
 				NV ss = 0.0; IV df = 0;
 				for (size_t k = terms[t].start; k < terms[t].start + terms[t].width; k++)
-					if (!aliased[k]) { ss += y[rank_map[k]] * y[rank_map[k]]; df++; }
+					if (!fit.aliased[k]) { ss += fit.y[fit.rank_map[k]] * fit.y[fit.rank_map[k]]; df++; }
 
 				HV *in = newHV();
 				(void)hv_store(in, "Df", 2, newSViv(df), 0);
 				(void)hv_store(in, "Sum Sq", 6, newSVnv(ss), 0);
 				if (df > 0) {
 					(void)hv_store(in, "Mean Sq", 7, newSVnv(ss / (NV)df), 0);
-					if (dfres > 0 && rss > 0.0) {
+					if (dfres > 0 && fit.rss > 0.0) {
 						NV F = (ss / (NV)df) / msres;
 						(void)hv_store(in, "F value", 7, newSVnv(F), 0);
 						(void)hv_store(in, "Pr(>F)", 6, newSVnv(pf_upper(F, (NV)df, (NV)dfres)), 0);
@@ -13525,14 +13567,13 @@ void anova(...)
 			{
 				HV *in = newHV();
 				(void)hv_store(in, "Df", 2, newSViv(dfres), 0);
-				(void)hv_store(in, "Sum Sq", 6, newSVnv(rss), 0);
+				(void)hv_store(in, "Sum Sq", 6, newSVnv(fit.rss), 0);
 				if (dfres > 0) (void)hv_store(in, "Mean Sq", 7, newSVnv(msres), 0);
 				(void)hv_store(result, "Residuals", 9, newRV_noinc((SV*)in), 0);
 			}
 			// teardown
-			for (size_t r = 0; r < n_used; r++) Safefree(X[r]);
-			Safefree(X); Safefree(y);
-			Safefree(aliased); Safefree(rank_map); Safefree(ridx); Safefree(complete);
+			anova_fit_free(aTHX_ &fit, n_used);
+			Safefree(ridx); Safefree(complete);
 			anova_free_terms(aTHX_ terms, nterms);
 			anova_free_facs(aTHX_ facs, nfac);
 			Safefree(rows);
@@ -17067,11 +17108,7 @@ PPCODE:
 	AV *collect_av = collect ? (AV*)sv_2mortal((SV*)newAV()) : NULL;
 	if (is_hoh) {// ----- Hash of Hashes -----
 		if (col_names_sv && SvOK(col_names_sv)) {
-			AV *c_av = (AV*)SvRV(col_names_sv);
-			for (SSize_t i = 0; i <= av_len(c_av); i++) {
-				SV **c = av_fetch(c_av, i, 0);
-				if (c && SvOK(*c)) av_push(headers_av, newSVsv(*c));
-			}
+			wt_headers_given(aTHX_ headers_av, col_names_sv);
 		} else {
 			HV *col_map = newHV();
 			hv_iterinit((HV*)data_ref);
@@ -17093,16 +17130,7 @@ PPCODE:
 				sortsv(AvARRAY(headers_av), num_cols, Perl_sv_cmp);
 			SvREFCNT_dec(col_map);
 		}
-		size_t num_headers = (size_t)(av_len(headers_av) + 1);
-		const char **header_row = safemalloc((num_headers + 1) * sizeof(char*));
-		size_t h_idx = 0;
-		if (inc_rownames) header_row[h_idx++] = "";
-		for (size_t i = 0; i < num_headers; i++) {
-			SV **h_ptr = av_fetch(headers_av, (SSize_t)i, 0);
-			header_row[h_idx++] = (h_ptr && SvOK(*h_ptr)) ? SvPV_nolen(*h_ptr) : "";
-		}
-		print_string_row(aTHX_ fh, header_row, h_idx, sep, collect_av);
-		safefree(header_row);
+		const size_t num_headers = wt_emit_header(aTHX_ fh, headers_av, inc_rownames, sep, collect_av);
 		size_t num_rows = (size_t)(av_len(rows_av) + 1);
 		sortsv(AvARRAY(rows_av), num_rows, Perl_sv_cmp);
 		HV *data_hv = (HV*)data_ref;
@@ -17139,11 +17167,7 @@ PPCODE:
 	} else if (is_flat_hash) {// Flat Hash
 		HV *data_hv = (HV*)data_ref;
 		if (col_names_sv && SvOK(col_names_sv)) {
-			AV *c_av = (AV*)SvRV(col_names_sv);
-			for (SSize_t i = 0; i <= av_len(c_av); i++) {
-				SV **c = av_fetch(c_av, i, 0);
-				if (c && SvOK(*c)) av_push(headers_av, newSVsv(*c));
-			}
+			wt_headers_given(aTHX_ headers_av, col_names_sv);
 		} else {
 /* UTF-8 safety: keep the key SVs (flags intact) and sort
   them with sv_cmp instead of round-tripping through char*.*/
@@ -17155,16 +17179,7 @@ PPCODE:
 			if (num_cols > 1)
 				sortsv(AvARRAY(headers_av), num_cols, Perl_sv_cmp);
 		}
-		size_t num_headers = (size_t)(av_len(headers_av) + 1);
-		const char **header_row = safemalloc((num_headers + 1) * sizeof(char*));
-		size_t h_idx = 0;
-		if (inc_rownames) header_row[h_idx++] = "";
-		for (size_t i = 0; i < num_headers; i++) {
-			SV **h_ptr = av_fetch(headers_av, (SSize_t)i, 0);
-			header_row[h_idx++] = (h_ptr && SvOK(*h_ptr)) ? SvPV_nolen(*h_ptr) : "";
-		}
-		print_string_row(aTHX_ fh, header_row, h_idx, sep, collect_av);
-		safefree(header_row);
+		const size_t num_headers = wt_emit_header(aTHX_ fh, headers_av, inc_rownames, sep, collect_av);
 		const char **row_data = safemalloc((num_headers + 1) * sizeof(char*));
 		size_t d_idx = 0;
 // Give the single row a default numeric identifier if row names are on
@@ -17199,11 +17214,7 @@ PPCODE:
 			if (len > max_rows) max_rows = len;
 		}
 		if (col_names_sv && SvOK(col_names_sv)) {
-			AV *c_av = (AV*)SvRV(col_names_sv);
-			for (SSize_t i = 0; i <= av_len(c_av); i++) {
-				SV **c = av_fetch(c_av, i, 0);
-				if (c && SvOK(*c)) av_push(headers_av, newSVsv(*c));
-			}
+			wt_headers_given(aTHX_ headers_av, col_names_sv);
 		} else {
 			unsigned int num_cols = hv_iterinit(data_hv);
 			for (unsigned int i = 0; i < num_cols; i++) {
@@ -17232,16 +17243,7 @@ PPCODE:
 			SvREFCNT_dec(headers_av);
 			headers_av = filtered_headers;
 		}
-		size_t num_headers = (size_t)(av_len(headers_av) + 1);
-		const char **header_row = safemalloc((num_headers + 1) * sizeof(char*));
-		size_t h_idx = 0;
-		if (inc_rownames) header_row[h_idx++] = "";
-		for (size_t i = 0; i < num_headers; i++) {
-			SV **h_ptr = av_fetch(headers_av, (SSize_t)i, 0);
-			header_row[h_idx++] = (h_ptr && SvOK(*h_ptr)) ? SvPV_nolen(*h_ptr) : "";
-		}
-		print_string_row(aTHX_ fh, header_row, h_idx, sep, collect_av);
-		safefree(header_row);
+		const size_t num_headers = wt_emit_header(aTHX_ fh, headers_av, inc_rownames, sep, collect_av);
 		const char **row_data = safemalloc((num_headers + 1) * sizeof(char*));
 		char rn_buf[32];
 		for (size_t i = 0; i < max_rows; i++) {
@@ -17302,11 +17304,7 @@ PPCODE:
 		AV *data_av = (AV*)data_ref;
 		size_t num_rows = (size_t)(av_len(data_av) + 1);
 		if (col_names_sv && SvOK(col_names_sv)) {
-			AV *c_av = (AV*)SvRV(col_names_sv);
-			for (SSize_t i = 0; i <= av_len(c_av); i++) {
-				SV **c = av_fetch(c_av, i, 0);
-				if (c && SvOK(*c)) av_push(headers_av, newSVsv(*c));
-			}
+			wt_headers_given(aTHX_ headers_av, col_names_sv);
 		} else {
 			HV *col_map = newHV();
 			for (size_t i = 0; i < num_rows; i++) {
@@ -17345,16 +17343,7 @@ PPCODE:
 			SvREFCNT_dec(headers_av);
 			headers_av = filtered_headers;
 		}
-		size_t num_headers = (size_t)(av_len(headers_av) + 1);
-		const char **header_row = safemalloc((num_headers + 1) * sizeof(char*));
-		size_t h_idx = 0;
-		if (inc_rownames) header_row[h_idx++] = "";
-		for (size_t i = 0; i < num_headers; i++) {
-			SV **h_ptr = av_fetch(headers_av, (SSize_t)i, 0);
-			header_row[h_idx++] = (h_ptr && SvOK(*h_ptr)) ? SvPV_nolen(*h_ptr) : "";
-		}
-		print_string_row(aTHX_ fh, header_row, h_idx, sep, collect_av);
-		safefree(header_row);
+		const size_t num_headers = wt_emit_header(aTHX_ fh, headers_av, inc_rownames, sep, collect_av);
 		const char **row_data = safemalloc((num_headers + 1) * sizeof(char*));
 		char rn_buf[32];
 		for (size_t i = 0; i < num_rows; i++) {
@@ -17408,11 +17397,7 @@ PPCODE:
 /* Headers: explicit col.names, else the first inner array (which is
   then consumed as the header rather than emitted as data).*/
 		if (col_names_sv && SvOK(col_names_sv)) {
-			AV *c_av = (AV*)SvRV(col_names_sv);
-			for (SSize_t i = 0; i <= av_len(c_av); i++) {
-				SV **c = av_fetch(c_av, i, 0);
-				if (c && SvOK(*c)) av_push(headers_av, newSVsv(*c));
-			}
+			wt_headers_given(aTHX_ headers_av, col_names_sv);
 		} else {
 			SV **h0 = av_fetch(data_av, 0, 0);
 			AV *h_av = (h0 && *h0 && SvROK(*h0)) ? (AV*)SvRV(*h0) : NULL;
@@ -17424,16 +17409,7 @@ PPCODE:
 			}
 			data_start = 1;
 		}
-		size_t num_headers = (size_t)(av_len(headers_av) + 1);
-		const char **header_row = safemalloc((num_headers + 1) * sizeof(char*));
-		size_t h_idx = 0;
-		if (inc_rownames) header_row[h_idx++] = "";
-		for (size_t i = 0; i < num_headers; i++) {
-			SV **h_ptr = av_fetch(headers_av, (SSize_t)i, 0);
-			header_row[h_idx++] = (h_ptr && *h_ptr && SvOK(*h_ptr)) ? SvPV_nolen(*h_ptr) : "";
-		}
-		print_string_row(aTHX_ fh, header_row, h_idx, sep, collect_av);
-		safefree(header_row);
+		const size_t num_headers = wt_emit_header(aTHX_ fh, headers_av, inc_rownames, sep, collect_av);
 		const char **row_data = safemalloc((num_headers + 1) * sizeof(char*));
 		char rn_buf[32]; // numeric row labels, printed before reuse (see HoA)
 		unsigned long rn = 0;
