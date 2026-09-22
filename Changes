@@ -1,5 +1,95 @@
 Revision history for Stats-LikeR
 
+0.319 2026-09-22 CDT
+
+ [glm(): offsets, prior weights, robust covariance, absorbed factors]
+
+ - glm() took only formula, data, family, theta and conf.level, and died on
+   anything else, which left count models unable to put a rate on
+   person-time. It now takes offset() terms in the formula and an offset
+   argument (a column, an expression such as 'log(t)', or an array ref),
+   and the negative-binomial theta search and the null deviance both see
+   the offset, as MASS::glm.nb()'s do.
+
+ - weights are R's prior weights. A binomial fit whose weights make a
+   non-integer number of successes warns as R does.
+
+ - vcov => 'HC0' .. 'HC3' gives sandwich::vcovHC()'s covariance and cluster
+   gives vcovCL()'s, one to four ways ('firm + year'), with every standard
+   error, z, p-value and interval recomputed from it. A poisson fit on a 0/1
+   outcome with HC0 is the modified-Poisson risk ratio.
+
+ - A factor after '|' in the formula, or in absorb, is absorbed by weighted
+   within-group demeaning instead of expanded into dummy columns, so a
+   factor with thousands of levels costs a vector per level rather than a
+   column. Groups whose outcome sits at a boundary are dropped, as
+   fixest::feglm() drops them, and fe.removed counts their rows.
+
+ - The IRLS loop was rewritten around one core shared with the new models
+   below, with maxit and epsilon exposed and R's convergence rule and
+   penultimate-iterate standard errors. New results: loglik, vcov,
+   vcov.type, dispersion, nobs and, where they apply, n.clusters, absorb,
+   fe.removed, twologlik and SE.theta. predict() re-evaluates an offset on
+   new rows, and croaks on a model it cannot predict from (an offset given
+   as an array, or absorbed factors) rather than leaving the term out.
+
+ - The formula reader now evaluates log(), exp(), sqrt(), log2(), log10(),
+   log1p() and abs() of a column, which offsets and ivreg's examples need.
+
+ - Validated in t/glm_offset_weights.R.t, t/glm_vcov.R.t and
+   t/glm_absorb.R.t against R's glm, MASS, sandwich and fixest test suites,
+   statsmodels' and Stata's pinned results, and a full-dummy fit.
+
+ [coxph(): counting-process data, strata, robust variance, a formula]
+
+ - coxph() took only (\@time, \@status, covariates), which cannot express a
+   time-varying covariate or late entry. It now takes (start, stop] data,
+   strata, a cluster with the grouped-dfbeta robust variance, case weights
+   and an offset, either as options to the positional form or through
+   formula => 'Surv(start, stop, event) ~ x + strata(g) + cluster(id)' over a
+   data set. Intervals that span no event are skipped, as survival's
+   agreg.fit skips them. New results: var and vcov, the score and Wald
+   tests, and naive.se, naive.var, robust.score.test and n.clusters under a
+   robust variance.
+
+ - Validated in t/coxph_extended.R.t against survival's own tests (bladder,
+   the phreg corpora) and statsmodels'.
+
+ [New models: zerotrunc, hurdle, svyglm, ivreg, lmer]
+
+ - zerotrunc() is countreg::zerotrunc(), a Poisson, negative binomial or
+   geometric regression truncated at zero, fitted by damped Newton on the
+   exact likelihood and its analytic Hessian. hurdle() is pscl::hurdle(),
+   with a logit or a censored count zero part and the regressors after '|'
+   for it. t/zerotrunc_hurdle.R.t pins both to countreg and pscl, with an
+   mpmath third opinion at 60 digits (t/zerotrunc_hurdle.mpmath.py).
+
+ - svyglm() is survey::svyglm() on a one-stage design: sampling weights,
+   strata, PSUs and a finite-population correction, with the Taylor
+   linearisation variance and design degrees of freedom. t/svyglm.R.t is
+   taken from survey's tests on the api data.
+
+ - ivreg() is ivreg::ivreg(): two-stage least squares by Householder QR,
+   two- or three-part formulas, weights, HC0/HC1 and clustering, and the
+   weak-instrument, Wu-Hausman and Sargan diagnostics. t/ivreg.R.t follows
+   ivreg's tests and examples and statsmodels' Stata ivreg2 results.
+
+ - lmer() is lme4::lmer() by REML or ML, with random intercepts and slopes,
+   correlated or not, crossed or nested grouping factors, and lmerTest's
+   Satterthwaite degrees of freedom. The fit is held to a tightly converged
+   lme4 fit rather than to lme4's default one, which stops about 1e-6 short
+   in theta. t/lmer.R.t covers lme4's and lmerTest's examples and
+   statsmodels' mixed-model corpora.
+
+ [anova() compares fitted models]
+
+ - anova($m0, $m1, ...) with lm or glm fits is R's anova.lmlist /
+   anova.glmlist, with test => 'F', 'Chisq' or 'LRT' and dispersion, and
+   with negbin fits MASS's anova.negbin likelihood-ratio table; data and
+   formulas still go to the XS anova() as before. The dispatching wrapper
+   has no prototype, because the XS one's ($@) would put anova(@fits) in
+   scalar context. Validated in t/anova_fits.R.t against R and MASS.
+
 0.318 2026-09-18 CDT
 
  [transpose() took the interpreter down on a tied array of arrays]

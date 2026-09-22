@@ -58,7 +58,7 @@
 .\" ========================================================================
 .\"
 .IX Title "read.me 3"
-.TH read.me 3 2026-09-18 "perl v5.44.0" "User Contributed Perl Documentation"
+.TH read.me 3 2026-09-22 "perl v5.44.0" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -526,6 +526,30 @@ after the first adds \f(CW\*(C`Df\*(C'\fR, \f(CW\*(C`Sum of Sq\*(C'\fR, \f(CW\*(
 \& printf "adding x2: F = %.4g, p = %.4g\en", $tab\->[1]{F}, $tab\->[1]{\*(AqPr(>F)\*(Aq};
 .Ve
 .PP
+Given two or more \fBfitted models\fR instead \-\- \f(CW\*(C`lm\*(C'\fR or \f(CW\*(C`glm\*(C'\fR fits (or
+\&\f(CW\*(C`negbin\*(C'\fR \f(CW\*(C`glm\*(C'\fR fits) of the same response on the same rows \-\- \f(CW\*(C`anova\*(C'\fR compares
+them as R\*(Aqs \f(CW\*(C`anova(m0, m1, ...)\*(C'\fR does, and also returns an array ref of rows
+in the order supplied. For \f(CW\*(C`lm\*(C'\fR fits it is \f(CW\*(C`anova.lmlist\*(C'\fR\*(Aqs F test, on the
+largest model\*(Aqs residual mean square (\f(CW\*(C`Res.Df\*(C'\fR, \f(CW\*(C`RSS\*(C'\fR, \f(CW\*(C`Df\*(C'\fR, \f(CW\*(C`Sum of Sq\*(C'\fR, \f(CW\*(C`F\*(C'\fR,
+\&\f(CWPr(>F)\fR). For \f(CW\*(C`glm\*(C'\fR fits it is \f(CW\*(C`anova.glmlist\*(C'\fR\*(Aqs table (\f(CW\*(C`Resid. Df\*(C'\fR,
+\&\f(CW\*(C`Resid. Dev\*(C'\fR, \f(CW\*(C`Df\*(C'\fR, \f(CW\*(C`Deviance\*(C'\fR) with a test chosen as R chooses it: a
+likelihood\-ratio \f(CWPr(>Chi)\fR for the families with a known dispersion, an F on
+the largest model\*(Aqs dispersion for \f(CW\*(C`gaussian\*(C'\fR; ask for one with
+\&\f(CW\*(C`test => \*(AqChisq\*(Aq\*(C'\fR, \f(CW\*(AqLRT\*(Aq\fR or \f(CW\*(AqF\*(Aq\fR, or fix the scale with \f(CW\*(C`dispersion\*(C'\fR.
+\&\f(CW\*(C`negbin\*(C'\fR fits give \f(CW\*(C`MASS::anova.negbin\*(C'\fR\*(Aqs likelihood\-ratio table (\f(CW\*(C`theta\*(C'\fR,
+\&\f(CW\*(C`Resid. df\*(C'\fR, \f(CW\*(C`2 x log\-lik.\*(C'\fR, \f(CW\*(C`df\*(C'\fR, \f(CW\*(C`LR stat.\*(C'\fR, \f(CWPr(Chi)\fR), whose rows
+are ordered by residual degrees of freedom.
+.PP
+.Vb 4
+\& my $m0 = glm(formula => \*(Aqy ~ age\*(Aq,         data => \e%d, family => \*(Aqpoisson\*(Aq);
+\& my $m1 = glm(formula => \*(Aqy ~ age + hours\*(Aq, data => \e%d, family => \*(Aqpoisson\*(Aq);
+\& my $t  = anova($m0, $m1);
+\& printf "LR test for hours: p = %.3g\en", $t\->[1]{\*(AqPr(>Chi)\*(Aq};
+.Ve
+.PP
+This is also how a first\-stage F on a block of instruments is had without
+\&\f(CW\*(C`ivreg\*(C'\fR.
+.PP
 Both forms evaluate \f(CWPr(>F)\fR in the upper tail of the F distribution rather
 than as \f(CW\*(C`1 \- pf(F, df1, df2)\*(C'\fR; see
 "F and z tail p\-values".
@@ -566,9 +590,8 @@ table" call. Note that both are \fBType\-I / sequential\fR, so term order in the
 formula matters, and both share this module\*(Aqs \f(CW\*(C`pf\*(C'\fR, so p\-values agree with
 \&\f(CW\*(C`oneway_test\*(C'\fR and the rest of Stats::LikeR.
 .PP
-\&\fI(R\*(Aqs \fR\f(CI\*(C`anova\*(C'\fR\fI generic can additionally compare several nested models,
-\&\fR\f(CI\*(C`anova(m1, m2)\*(C'\fR\fI, giving an F/LRT between them — a capability neither this
-\&\fR\f(CI\*(C`anova\*(C'\fR\fI nor \fR\f(CI\*(C`aov\*(C'\fR\fI currently provides. Ask if that would be useful.)\fR
+Comparing nested models \-\- \f(CW\*(C`anova(m1, m2)\*(C'\fR in R \-\- is done by giving \f(CW\*(C`anova\*(C'\fR
+two or more formulas, or two or more fitted models; see above.
 .SS aoh2h
 .IX Subsection "aoh2h"
 Fold a two\-column \fBarray\-of\-hashes\fR back down into a plain hash. This is the
@@ -2237,12 +2260,68 @@ Give times, an event flag (1 = event, 0 = censored), and one or more covariates
 \& print $fit\->{p.value}[0];     # its p\-value
 .Ve
 .PP
-Options: \f(CW\*(C`names\*(C'\fR, \f(CW\*(C`ties\*(C'\fR (\f(CW\*(Aqefron\*(Aq\fR default, or \f(CW\*(Aqbreslow\*(Aq\fR), \f(CW\*(C`conf.level\*(C'\fR
-(default \f(CW0.95\fR), \f(CW\*(C`maxit\*(C'\fR. The result has parallel per\-covariate arrays \f(CW\*(C`coef\*(C'\fR
-(log\-HR), \f(CW\*(C`exp.coef\*(C'\fR (HR), \f(CW\*(C`se\*(C'\fR, \f(CW\*(C`z\*(C'\fR, \f(CW\*(C`p.value\*(C'\fR, \f(CW\*(C`conf.int\*(C'\fR (HR scale), plus
-model\-level \f(CW\*(C`loglik\*(C'\fR, \f(CW\*(C`lr.stat\*(C'\fR/\f(CW\*(C`lr.p.value\*(C'\fR (likelihood\-ratio test), \f(CW\*(C`n\*(C'\fR,
-\&\f(CW\*(C`nevent\*(C'\fR, and \f(CW\*(C`converged\*(C'\fR. See \f(CW\*(C`survfit\*(C'\fR and
-\&\f(CW\*(C`logrank_test\*(C'\fR.
+Or name the columns of a data set in a formula, as \f(CW\*(C`survival::coxph\*(C'\fR does. The
+response is \f(CW\*(C`Surv(time, status)\*(C'\fR, or \f(CW\*(C`Surv(start, stop, status)\*(C'\fR for
+counting\-process data; covariates expand as they do for \f(CW\*(C`lm\*(C'\fR and
+\&\f(CW\*(C`glm\*(C'\fR (factors, interactions, \f(CWI()\fR, \f(CWlog()\fR), and \f(CWstrata(g)\fR and
+\&\f(CWcluster(id)\fR terms are taken out of the covariates and used as below:
+.PP
+.Vb 2
+\& my $fit = coxph(formula => \*(AqSurv(tstart, tstop, event) ~ hours + age + strata(tech)\*(Aq,
+\&                 data => \e%d, cluster => \*(Aqchild_id\*(Aq);
+.Ve
+.PP
+\&\fBCounting\-process data\fR \-\- one row per interval \f(CW\*(C`(start, stop]\*(C'\fR over which a
+subject\*(Aqs covariates are constant \-\- is what a time\-varying covariate and late
+entry both need. A subject is at risk at an event time only in the interval
+that covers it. In the positional form give the start times as \f(CW\*(C`start => \e@t0\*(C'\fR.
+Intervals that span no event contribute nothing and are skipped, as
+\&\f(CW\*(C`survival\*(C'\fR\*(Aqs \f(CW\*(C`agreg.fit\*(C'\fR skips them.
+.PP
+\&\fBStrata\fR (\f(CWstrata(g)\fR in a formula, or \f(CW\*(C`strata => \e@g\*(C'\fR) give each level its
+own baseline hazard, with the covariate effects shared.
+.PP
+\&\fBRobust variance.\fR With a cluster (\f(CWcluster(id)\fR, or \f(CW\*(C`cluster => \e@id\*(C'\fR or a
+column name), \f(CW\*(C`se\*(C'\fR is the grouped\-jackknife (dfbeta) robust standard error that
+\&\f(CW\*(C`coxph(..., cluster = id)\*(C'\fR reports, and the model\-based one moves to
+\&\f(CW\*(C`naive.se\*(C'\fR. \f(CW\*(C`robust => 1\*(C'\fR without a cluster makes each row its own cluster,
+which \f(CW\*(C`(start, stop]\*(C'\fR data does not allow: a subject\*(Aqs intervals have to be
+grouped by a cluster.
+\&\f(CW\*(C`weights\*(C'\fR are case weights and \f(CW\*(C`offset\*(C'\fR a term with coefficient fixed at 1.
+.PP
+\&\fBA changepoint profile\fR needs no function of its own: refit over a grid of
+candidate thresholds and keep each \f(CW\*(C`loglik\*(C'\fR. The maximum is the estimate; the
+thresholds within \f(CW\*(C`qchisq(0.95, 1) / 2 = 1.92\*(C'\fR of it are a likelihood\-ratio
+interval, which for a changepoint is only approximate, since the profile is a
+step function of \f(CW\*(C`c\*(C'\fR and the usual regularity conditions do not hold.
+.PP
+.Vb 9
+\& my @grid = map { 40 + $_ } 0 .. 30;
+\& my %ll;
+\& for my $c (@grid) {
+\&     $d{above} = [ map { $_ > $c ? 1 : 0 } @{ $d{hours} } ];
+\&     $ll{$c} = coxph(formula => \*(AqSurv(tstart, tstop, event) ~ above + age + strata(tech)\*(Aq,
+\&                     data => \e%d)\->{loglik};
+\& }
+\& my ($best) = sort { $ll{$b} <=> $ll{$a} } @grid;
+\& my @ci = grep { $ll{$best} \- $ll{$_} <= 1.92 } @grid;
+.Ve
+.PP
+\fIOptions\fR
+.IX Subsection "Options"
+.PP
+\fIResult\fR
+.IX Subsection "Result"
+.PP
+Parallel per\-covariate arrays \f(CW\*(C`coef\*(C'\fR (log\-HR), \f(CW\*(C`exp.coef\*(C'\fR (HR), \f(CW\*(C`se\*(C'\fR, \f(CW\*(C`z\*(C'\fR,
+\&\f(CW\*(C`p.value\*(C'\fR and \f(CW\*(C`conf.int\*(C'\fR (HR scale), with \f(CW\*(C`names\*(C'\fR; \f(CW\*(C`coefficients\*(C'\fR by name;
+\&\f(CW\*(C`var\*(C'\fR (a matrix) and \f(CW\*(C`vcov\*(C'\fR (a hash of hashes by name), the covariance the standard errors
+come from; model\-level \f(CW\*(C`loglik\*(C'\fR (at the fit) and \f(CW\*(C`loglik.null\*(C'\fR,
+\&\f(CW\*(C`lr.stat\*(C'\fR/\f(CW\*(C`lr.df\*(C'\fR/\f(CW\*(C`lr.p.value\*(C'\fR (likelihood\-ratio test), \f(CW\*(C`score.test\*(C'\fR and
+\&\f(CW\*(C`wald.test\*(C'\fR, \f(CW\*(C`n\*(C'\fR, \f(CW\*(C`nevent\*(C'\fR, \f(CW\*(C`iterations\*(C'\fR and \f(CW\*(C`converged\*(C'\fR. With a robust
+variance it adds \f(CW\*(C`naive.se\*(C'\fR and \f(CW\*(C`naive.var\*(C'\fR, \f(CW\*(C`robust.score.test\*(C'\fR, and
+\&\f(CW\*(C`n.clusters\*(C'\fR; with strata, \f(CW\*(C`strata\*(C'\fR lists their labels. See
+\&\f(CW\*(C`survfit\*(C'\fR and \f(CW\*(C`logrank_test\*(C'\fR.
 .SS cramers_v
 .IX Subsection "cramers_v"
 Cramér\*(Aqs \fIV\fR, a measure of association for an \fIr\fR × \fIc\fR contingency table
@@ -3509,6 +3588,70 @@ can differ from R\*(Aqs in the 6th to 8th significant digit, which a p\-value fa
 out in the tail amplifies — at \f(CW\*(C`|z| = 37\*(C'\fR a 1.5e\-5 difference in \f(CW\*(C`z\*(C'\fR moves the
 p\-value by about 2%.
 .PP
+\fIOffsets, prior weights, robust covariance and absorbed factors\fR
+.IX Subsection "Offsets, prior weights, robust covariance and absorbed factors"
+.PP
+An \fBoffset\fR is a term whose coefficient is fixed at 1 rather than estimated,
+which is how a count model is put on a per\-person\-time scale. Write it into the
+formula, as R does, or pass it as \f(CW\*(C`offset\*(C'\fR (a column name, an expression over
+columns, or an array ref with one value per row); the two forms add together.
+The negative\-binomial \f(CW\*(C`theta\*(C'\fR search sees the offset too, as \f(CW\*(C`MASS::glm.nb\*(C'\fR\*(Aqs
+does, and the null deviance is that of an intercept\-plus\-offset fit:
+.PP
+.Vb 4
+\& my $rate = glm(formula => \*(Aqadmits ~ hours + age + offset(log(persontime))\*(Aq,
+\&                data => \e%d, family => \*(Aqpoisson\*(Aq);
+\& my $same = glm(formula => \*(Aqadmits ~ hours + age\*(Aq, offset => \*(Aqlog(persontime)\*(Aq,
+\&                data => \e%d, family => \*(Aqpoisson\*(Aq);
+.Ve
+.PP
+\&\fBPrior weights\fR (\f(CW\*(C`weights\*(C'\fR, a column name or an array ref) are R\*(Aqs
+\&\f(CW\*(C`glm(weights = )\*(C'\fR. A binomial fit whose weights make a non\-integer number of
+successes warns \f(CW\*(C`non\-integer #successes in a binomial glm!\*(C'\fR, as R does. A row
+with weight 0 is kept out of the fit and out of \f(CW\*(C`nobs\*(C'\fR.
+.PP
+\&\f(CW\*(C`vcov => \*(AqHC0\*(Aq\*(C'\fR (through \f(CW\*(AqHC3\*(Aq\fR) replaces the model\-based covariance by a
+heteroskedasticity\-consistent sandwich, \f(CWsandwich::vcovHC()\fR, and \f(CW\*(C`cluster\*(C'\fR
+by a cluster\-robust one, \f(CWsandwich::vcovCL()\fR. Naming a cluster alone implies
+\&\f(CW\*(C`HC0\*(C'\fR, which is \f(CWvcovCL()\fR\*(Aqs own default for a glm; \f(CW\*(C`HC1\*(C'\fR adds the
+\&\f(CW\*(C`(n \- 1)/(n \- k)\*(C'\fR factor. \f(CW\*(C`cluster => \*(Aqfirm + year\*(Aq\*(C'\fR clusters two ways (up to
+four) by inclusion\-exclusion, as \f(CW\*(C`vcovCL(cluster = ~ firm + year)\*(C'\fR does. The
+\&\f(CW\*(C`summary\*(C'\fR standard errors, \f(CW\*(C`z\*(C'\fR, p\-values and both kinds of confidence interval
+are then all computed from the robust covariance, as \f(CWlmtest::coeftest()\fR
+would. A \f(CW\*(C`poisson\*(C'\fR fit on a 0/1 outcome with \f(CW\*(C`vcov => \*(AqHC0\*(Aq\*(C'\fR is the
+"modified Poisson" risk\-ratio regression (Zou 2004, \fIAm J Epidemiol\fR 159:702):
+.PP
+.Vb 3
+\& my $rr = glm(formula => \*(Aqreadmit ~ hours + age\*(Aq, data => \e%d,
+\&              family => \*(Aqpoisson\*(Aq, vcov => \*(AqHC0\*(Aq, cluster => \*(Aqchild_id\*(Aq);
+\& printf "RR = %.3f (%.3f\-%.3f)\en", @{ $rr\->{exp}{hours} }{qw(estimate conf.low conf.high)};
+.Ve
+.PP
+A factor with thousands of levels (a within\-subject comparison) can be
+\&\fBabsorbed\fR instead of expanded into dummy columns: put it after a \f(CW\*(C`|\*(C'\fR in the
+formula, as \f(CW\*(C`fixest\*(C'\fR does, or name it in \f(CW\*(C`absorb\*(C'\fR. The fit then demeans within
+groups (weighted, by alternating projections for more than one factor) and
+reports only the remaining coefficients, which equal those of the
+full\-dummy fit. As \f(CWfixest::feglm()\fR does, a group whose outcome is constant at
+a boundary (all zeros for \f(CW\*(C`poisson\*(C'\fR/\f(CW\*(C`negbin\*(C'\fR, all 0 or all 1 for \f(CW\*(C`binomial\*(C'\fR)
+carries no information and is dropped; \f(CW\*(C`fe.removed\*(C'\fR counts the rows that goes
+with. HC2/HC3 are not available with absorbed factors.
+.PP
+.Vb 2
+\& my $fe = glm(formula => \*(Aqvisits ~ hours | child_id + year\*(Aq, data => \e%d,
+\&              family => \*(Aqpoisson\*(Aq, cluster => \*(Aqchild_id\*(Aq);
+.Ve
+.PP
+\&\f(CW\*(C`maxit\*(C'\fR (default 25) and \f(CW\*(C`epsilon\*(C'\fR (default \f(CW1e\-8\fR) are \f(CW\*(C`glm.control()\*(C'\fR\*(Aqs.
+.PP
+A \fBcontrol\-function\fR IV estimate for a count outcome is two calls: fit the
+first stage with \f(CW\*(C`lm\*(C'\fR, add its residuals to the data, and include them
+as a regressor in the \f(CW\*(C`poisson\*(C'\fR/\f(CW\*(C`negbin\*(C'\fR \f(CW\*(C`glm\*(C'\fR. The coefficient of the
+residual is a test of exogeneity, but the second\-stage standard errors do not
+account for the first stage having been estimated; bootstrap the pair of fits
+for those. For a continuous outcome use \f(CW\*(C`ivreg\*(C'\fR, whose standard
+errors are right as they stand.
+.PP
 \fIInput Parameters\fR
 .IX Subsection "Input Parameters"
 .PP
@@ -3923,6 +4066,35 @@ it was validated numerically.
 .PP
 \fIOutput variables\fR
 .IX Subsection "Output variables"
+.SS hurdle
+.IX Subsection "hurdle"
+A two\-part count model, \f(CWpscl::hurdle()\fR (also \f(CWcountreg::hurdle()\fR): a binary
+model for whether the count is zero, and a zero\-truncated count
+model for how large it is given that it is positive. The typical use is an
+outcome such as inpatient days, where "any stay" and "how long" have different
+explanations.
+.PP
+.Vb 1
+\& use Stats::LikeR \*(Aqhurdle\*(Aq;
+\&
+\& my $h = hurdle(formula => \*(Aqdays ~ hours + age | hours\*(Aq, data => \e%d,
+\&                dist => \*(Aqnegbin\*(Aq);
+\& print $h\->{coefficients}{count}{hours};    # log rate ratio, given a stay
+\& print $h\->{coefficients}{zero}{hours};     # log odds of any stay
+.Ve
+.PP
+The regressors after \f(CW\*(C`|\*(C'\fR are the zero part\*(Aqs; without a bar both parts use the
+same ones. The likelihood separates into the two parts, so they are fitted
+separately, as both packages do by default.
+.PP
+The result holds \f(CW\*(C`coefficients\*(C'\fR, \f(CW\*(C`summary\*(C'\fR (with \f(CW\*(C`Estimate\*(C'\fR, \f(CW\*(C`Std. Error\*(C'\fR,
+\&\f(CW\*(C`z value\*(C'\fR, \f(CWPr(>|z|)\fR, \f(CW\*(C`CI.lower\*(C'\fR, \f(CW\*(C`CI.upper\*(C'\fR), \f(CW\*(C`vcov\*(C'\fR and \f(CW\*(C`terms\*(C'\fR, each split
+into \f(CW\*(C`count\*(C'\fR and \f(CW\*(C`zero\*(C'\fR halves; \f(CW\*(C`loglik\*(C'\fR and its two parts \f(CW\*(C`loglik.count\*(C'\fR and
+\&\f(CW\*(C`loglik.zero\*(C'\fR, \f(CW\*(C`aic\*(C'\fR, \f(CW\*(C`df.residual\*(C'\fR, \f(CW\*(C`nobs\*(C'\fR, \f(CW\*(C`converged\*(C'\fR, \f(CW\*(C`iter\*(C'\fR and
+\&\f(CW\*(C`iter.zero\*(C'\fR; \f(CW\*(C`theta\*(C'\fR and \f(CW\*(C`SE.logtheta\*(C'\fR for a \f(CW\*(C`negbin\*(C'\fR count part, and
+\&\f(CW\*(C`theta.zero\*(C'\fR/\f(CW\*(C`SE.logtheta.zero\*(C'\fR for a \f(CW\*(C`negbin\*(C'\fR zero part; and \f(CW\*(C`fitted.values\*(C'\fR,
+the fitted mean \f(CW\*(C`P(y > 0) mu / (1 \- f(0))\*(C'\fR. Validated against \f(CW\*(C`pscl\*(C'\fR and
+\&\f(CW\*(C`countreg\*(C'\fR on their documented examples, with a third opinion from \f(CW\*(C`mpmath\*(C'\fR.
 .SS interpolate
 .IX Subsection "interpolate"
 Fill NA (undef) cells along the row axis, like \f(CW\*(C`pandas.DataFrame.interpolate\*(C'\fR.
@@ -4145,6 +4317,48 @@ Every argument must be an \fBarray ref\fR; anything else croaks.
 .IP \(bu 4
 \&\fR\f(CB\*(C`undef\*(C'\fR\fB inside a list croaks\fR — decide what a missing value means before
 calling, rather than letting it silently match.
+.SS ivreg
+.IX Subsection "ivreg"
+Instrumental\-variables regression by two\-stage least squares, \f(CWivreg::ivreg()\fR
+(and \f(CWAER::ivreg()\fR), with \f(CW\*(C`summary(fit, diagnostics = TRUE)\*(C'\fR\*(Aqs tests. The
+standard errors are the proper 2SLS ones, from the residuals of the structural
+equation with the original regressors, not the naive ones that come from
+running the two stages as separate \f(CW\*(C`lm\*(C'\fR fits.
+.PP
+.Vb 1
+\& use Stats::LikeR \*(Aqivreg\*(Aq;
+\&
+\& # regressors | instruments: exogenous regressors appear on both sides
+\& my $iv = ivreg(formula => \*(Aqlog(packs) ~ log(rprice) + log(rincome) | log(rincome) + tdiff + rtax\*(Aq,
+\&                data => \e%cig);
+\& # or three parts: exogenous | endogenous | excluded instruments
+\& my $iv3 = ivreg(formula => \*(Aqlog(packs) ~ log(rincome) | log(rprice) | tdiff + rtax\*(Aq,
+\&                 data => \e%cig, cluster => \*(Aqstate\*(Aq);
+\&
+\& my $d = $iv\->{diagnostics};
+\& printf "first\-stage F = %.1f\en", $d\->{weak}{\*(Aqlog(rprice)\*(Aq}{statistic};
+.Ve
+.PP
+The result holds \f(CW\*(C`coefficients\*(C'\fR, \f(CW\*(C`summary\*(C'\fR (per term \f(CW\*(C`Estimate\*(C'\fR,
+\&\f(CW\*(C`Std. Error\*(C'\fR, \f(CW\*(C`t value\*(C'\fR, \f(CWPr(>|t|)\fR), \f(CW\*(C`vcov\*(C'\fR, \f(CW\*(C`vcov.type\*(C'\fR, \f(CW\*(C`conf.int\*(C'\fR,
+\&\f(CW\*(C`terms\*(C'\fR, \f(CW\*(C`endogenous\*(C'\fR and \f(CW\*(C`instruments\*(C'\fR (the terms each role was given),
+\&\f(CW\*(C`fitted.values\*(C'\fR, \f(CW\*(C`residuals\*(C'\fR, \f(CW\*(C`sigma\*(C'\fR, \f(CW\*(C`rss\*(C'\fR, \f(CW\*(C`r.squared\*(C'\fR, \f(CW\*(C`adj.r.squared\*(C'\fR,
+\&\f(CW\*(C`df.residual\*(C'\fR, \f(CW\*(C`rank\*(C'\fR, \f(CW\*(C`nobs\*(C'\fR, \f(CW\*(C`n.clusters\*(C'\fR with a cluster, and \f(CW\*(C`waldtest\*(C'\fR, the
+F test of every coefficient but the intercept. \f(CW\*(C`diagnostics\*(C'\fR has
+.IP \(bu 4
+\&\f(CW\*(C`weak\*(C'\fR: per endogenous regressor, the first\-stage F test of the excluded
+instruments (\f(CW\*(C`statistic\*(C'\fR, \f(CW\*(C`df1\*(C'\fR, \f(CW\*(C`df2\*(C'\fR, \f(CW\*(C`p.value\*(C'\fR);
+.IP \(bu 4
+\&\f(CW\*(C`wu.hausman\*(C'\fR: the test of whether the endogenous regressors are in fact
+exogenous: an F test of the first\-stage residuals added to the
+structural regression;
+.IP \(bu 4
+\&\f(CW\*(C`sargan\*(C'\fR: with more instruments than endogenous regressors, the test of
+overidentifying restrictions (\f(CW\*(C`statistic\*(C'\fR, \f(CW\*(C`df\*(C'\fR, \f(CW\*(C`p.value\*(C'\fR).
+.PP
+Validated against \f(CW\*(C`ivreg\*(C'\fR\*(Aqs tests and documented examples, and against Stata
+\&\f(CW\*(C`ivreg2\*(C'\fR output that \f(CW\*(C`statsmodels\*(C'\fR pins. For a count outcome, see the
+control\-function note under \f(CW\*(C`glm\*(C'\fR.
 .SS kruskal_test
 .IX Subsection "kruskal_test"
 Essentially the test determines if all groups have the same median (same distribution) (an excellent review is at https://library.virginia.edu/data/articles/getting\-started\-with\-the\-kruskal\-wallis\-test)
@@ -4506,6 +4720,43 @@ strongly significant model reports its actual p\-value instead of a flat \f(CW0\
 see "F and z tail p\-values". The per\-coefficient
 \&\f(CWPr(>|t|)\fR values were already computed as a direct two\-tail probability and
 are unaffected.
+.SS lmer
+.IX Subsection "lmer"
+Linear mixed\-effects regression, \f(CWlme4::lmer()\fR, fitted by REML (the default)
+or maximum likelihood, with the Satterthwaite degrees of freedom and t tests
+that \f(CW\*(C`lmerTest\*(C'\fR adds to its summary.
+.PP
+.Vb 1
+\& use Stats::LikeR \*(Aqlmer\*(Aq;
+\&
+\& # a random intercept and a random slope for Days, correlated, per Subject
+\& my $m = lmer(formula => \*(AqReaction ~ Days + (Days | Subject)\*(Aq, data => \e%sleepstudy);
+\& printf "Days: %.2f (SE %.2f, df %.1f)\en",
+\&     @{ $m\->{summary}{Days} }{\*(AqEstimate\*(Aq, \*(AqStd. Error\*(Aq, \*(Aqdf\*(Aq};
+\& printf "subject sd of the slope: %.2f\en", $m\->{varcor}[0]{sd}{Days};
+.Ve
+.PP
+Random\-effects terms are written as in \f(CW\*(C`lme4\*(C'\fR: \f(CW\*(C`(1 | g)\*(C'\fR a random intercept,
+\&\f(CW\*(C`(x | g)\*(C'\fR a correlated intercept and slope, \f(CW\*(C`(0 + x | g)\*(C'\fR a slope alone, so that
+\&\f(CW\*(C`(1 | g) + (0 + x | g)\*(C'\fR is the uncorrelated pair; several grouping factors,
+crossed or nested, are allowed, and \f(CW\*(C`(1 | a/b)\*(C'\fR expands to \f(CW\*(C`(1 | a) + (1 | a:b)\*(C'\fR.
+The fixed part is expanded as for \f(CW\*(C`lm\*(C'\fR.
+.PP
+The result holds \f(CW\*(C`coefficients\*(C'\fR, \f(CW\*(C`summary\*(C'\fR (per term \f(CW\*(C`Estimate\*(C'\fR,
+\&\f(CW\*(C`Std. Error\*(C'\fR, \f(CW\*(C`df\*(C'\fR, \f(CW\*(C`t value\*(C'\fR, \f(CWPr(>|t|)\fR), \f(CW\*(C`vcov\*(C'\fR, \f(CW\*(C`conf.int\*(C'\fR, \f(CW\*(C`terms\*(C'\fR,
+\&\f(CW\*(C`fitted.values\*(C'\fR (including the predicted random effects), \f(CW\*(C`sigma\*(C'\fR (residual
+sd), \f(CW\*(C`theta\*(C'\fR (\f(CW\*(C`lme4\*(C'\fR\*(Aqs relative covariance factor, \f(CW\*(C`getME(fit, "theta")\*(C'\fR),
+\&\f(CW\*(C`REML\*(C'\fR or \f(CW\*(C`deviance\*(C'\fR (the criterion minimised), \f(CW\*(C`loglik\*(C'\fR, \f(CW\*(C`AIC\*(C'\fR, \f(CW\*(C`BIC\*(C'\fR,
+\&\f(CW\*(C`nobs\*(C'\fR, \f(CW\*(C`reml\*(C'\fR, \f(CW\*(C`converged\*(C'\fR and \f(CW\*(C`singular\*(C'\fR (a variance component on its
+boundary, \f(CW\*(C`lme4\*(C'\fR\*(Aqs "singular fit"). \f(CW\*(C`varcor\*(C'\fR is \f(CWVarCorr()\fR: one entry per
+random\-effects term, in formula order, each with \f(CW\*(C`group\*(C'\fR, \f(CW\*(C`levels\*(C'\fR, \f(CW\*(C`names\*(C'\fR,
+\&\f(CW\*(C`sd\*(C'\fR by name and the correlation matrix \f(CW\*(C`corr\*(C'\fR.
+.PP
+The criterion is \f(CW\*(C`lme4\*(C'\fR\*(Aqs profiled deviance, minimised by Nelder\-Mead and
+then polished by Newton steps, so the estimates are those of a tightly
+converged \f(CW\*(C`lme4\*(C'\fR fit; \f(CW\*(C`lme4\*(C'\fR\*(Aqs default optimiser stops about 1e\-6 short in
+theta, which moves the standard errors in their fifth digit. Validated against
+\&\f(CW\*(C`lme4\*(C'\fR, \f(CW\*(C`lmerTest\*(C'\fR and \f(CW\*(C`statsmodels\*(C'\fR\*(Aq mixed\-model corpora.
 .SS logrank_test
 .IX Subsection "logrank_test"
 The log\-rank (Mantel–Cox) test: do the survival curves of two or more groups
@@ -5468,6 +5719,14 @@ the inverse link.
 (the inverse link applied — logistic for binomial); \f(CW\*(Aqlink\*(Aq\fR returns the linear
 predictor. For \f(CW\*(C`lm\*(C'\fR and gaussian \f(CW\*(C`glm\*(C'\fR the link is the identity, so the two are
 the same.
+.PP
+A \f(CW\*(C`glm\*(C'\fR fitted with an offset \-\- \f(CWoffset()\fR in the formula or a named \f(CW\*(C`offset\*(C'\fR
+column \-\- has the offset re\-evaluated on each new row and added to the linear
+predictor, so a rate model predicts counts at the new rows\*(Aq exposure. An offset
+given as an array ref has nothing to be re\-evaluated from, and a model with
+absorbed factors has no estimates of their effects to predict with; \f(CW\*(C`predict\*(C'\fR
+croaks on either rather than quietly leaving them out. \f(CW\*(C`poisson\*(C'\fR and \f(CW\*(C`negbin\*(C'\fR
+fits are put on the response scale with \f(CW\*(C`exp\*(C'\fR.
 .PP
 \fIWhat it returns\fR
 .IX Subsection "What it returns"
@@ -6620,6 +6879,31 @@ Option \f(CW\*(C`conf.level\*(C'\fR (default \f(CW0.95\fR). Each stratum has arr
 \&\f(CW\*(C`n.event\*(C'\fR, \f(CW\*(C`n.censor\*(C'\fR, \f(CW\*(C`surv\*(C'\fR, \f(CW\*(C`std.err\*(C'\fR, \f(CW\*(C`lower\*(C'\fR, \f(CW\*(C`upper\*(C'\fR, plus \f(CW\*(C`median\*(C'\fR, \f(CW\*(C`n\*(C'\fR,
 and \f(CW\*(C`events\*(C'\fR. Compare curves with \f(CW\*(C`logrank_test\*(C'\fR; model
 covariate effects with \f(CW\*(C`coxph\*(C'\fR.
+.SS svyglm
+.IX Subsection "svyglm"
+Design\-based regression for survey data, \f(CWsurvey::svyglm()\fR on a
+\&\f(CWsurvey::svydesign()\fR: point estimates weighted by the sampling weights, and
+standard errors by Taylor linearization that respect the strata and the
+clustering into primary sampling units (PSUs). Putting the sampling weights
+into \f(CW\*(C`glm\*(C'\fR\*(Aqs \f(CW\*(C`weights\*(C'\fR gives the same point estimates but standard
+errors that are wrong for a complex sample.
+.PP
+.Vb 1
+\& use Stats::LikeR \*(Aqsvyglm\*(Aq;
+\&
+\& my $s = svyglm(formula => \*(Aqapi00 ~ ell + meals + mobility\*(Aq, data => \e%apistrat,
+\&                weights => \*(Aqpw\*(Aq, strata => \*(Aqstype\*(Aq);
+\& my $c = svyglm(formula => \*(Aqsch.wide ~ ell\*(Aq, data => \e%apiclus1, family => \*(Aqquasibinomial\*(Aq,
+\&                weights => \*(Aqpw\*(Aq, cluster => \*(Aqdnum\*(Aq, fpc => \*(Aqfpc\*(Aq);
+.Ve
+.PP
+The result holds \f(CW\*(C`coefficients\*(C'\fR, \f(CW\*(C`summary\*(C'\fR (per term \f(CW\*(C`Estimate\*(C'\fR, \f(CW\*(C`Std. Error\*(C'\fR,
+\&\f(CW\*(C`t value\*(C'\fR, \f(CWPr(>|t|)\fR), \f(CW\*(C`vcov\*(C'\fR, \f(CW\*(C`conf.int\*(C'\fR, \f(CW\*(C`terms\*(C'\fR, \f(CW\*(C`fitted.values\*(C'\fR,
+\&\f(CW\*(C`deviance\*(C'\fR, \f(CW\*(C`dispersion\*(C'\fR (\f(CW\*(C`summary.svyglm\*(C'\fR\*(Aqs), \f(CW\*(C`df.residual\*(C'\fR, \f(CW\*(C`degf\*(C'\fR (the
+design degrees of freedom, PSUs minus strata, which the t tests use), \f(CW\*(C`rank\*(C'\fR,
+\&\f(CW\*(C`nobs\*(C'\fR, \f(CW\*(C`n.psu\*(C'\fR, \f(CW\*(C`n.strata\*(C'\fR, \f(CW\*(C`converged\*(C'\fR and \f(CW\*(C`iter\*(C'\fR. Only single\-stage designs
+are implemented (the first stage\*(Aqs PSUs and strata, as \f(CW\*(C`survey\*(C'\fR uses by
+default). Validated against \f(CW\*(C`survey\*(C'\fR\*(Aqs own tests on the \f(CW\*(C`api\*(C'\fR data.
 .SS table_one
 .IX Subsection "table_one"
 The stratified descriptive "Table 1" that opens most clinical papers: for each
@@ -7506,6 +7790,29 @@ raw values (no cell number formats), matching the round\-trip behaviour of
 .IX Subsection "Options"
 .SH "Numerical accuracy"
 .IX Header "Numerical accuracy"
+.SS zerotrunc
+.IX Subsection "zerotrunc"
+A count regression truncated at zero, \f(CWcountreg::zerotrunc()\fR: the model for a
+count that is only observed when it is at least 1, such as length of stay among
+those admitted. Fitting an ordinary Poisson or negative binomial to such data
+underestimates the mean at low counts, because it expects zeros that can never
+be seen.
+.PP
+.Vb 1
+\& use Stats::LikeR \*(Aqzerotrunc\*(Aq;
+\&
+\& my $z = zerotrunc(formula => \*(Aqdays ~ hours + age\*(Aq, data => \e%admitted,
+\&                   dist => \*(Aqnegbin\*(Aq);
+\& printf "theta = %.3f\en", $z\->{theta};
+.Ve
+.PP
+The result holds \f(CW\*(C`coefficients\*(C'\fR, \f(CW\*(C`summary\*(C'\fR (per term \f(CW\*(C`Estimate\*(C'\fR, \f(CW\*(C`Std. Error\*(C'\fR,
+\&\f(CW\*(C`z value\*(C'\fR, \f(CWPr(>|z|)\fR, \f(CW\*(C`CI.lower\*(C'\fR, \f(CW\*(C`CI.upper\*(C'\fR), \f(CW\*(C`vcov\*(C'\fR, \f(CW\*(C`terms\*(C'\fR, \f(CW\*(C`loglik\*(C'\fR,
+\&\f(CW\*(C`aic\*(C'\fR, \f(CW\*(C`df.residual\*(C'\fR, \f(CW\*(C`df.null\*(C'\fR, \f(CW\*(C`nobs\*(C'\fR, \f(CW\*(C`converged\*(C'\fR and \f(CW\*(C`iter\*(C'\fR; \f(CW\*(C`theta\*(C'\fR and
+\&\f(CW\*(C`SE.logtheta\*(C'\fR for \f(CW\*(C`negbin\*(C'\fR, as \f(CW\*(C`countreg\*(C'\fR reports them; \f(CW\*(C`fitted.values\*(C'\fR, the
+truncated mean \f(CW\*(C`mu / (1 \- f(0))\*(C'\fR, and Pearson\-style \f(CW\*(C`residuals\*(C'\fR. The fit is a
+damped Newton iteration on the exact likelihood and its analytic Hessian.
+Validated against \f(CW\*(C`countreg\*(C'\fR and against \f(CW\*(C`mpmath\*(C'\fR at 60 digits.
 .SS "F and z tail p\-values"
 .IX Subsection "F and z tail p-values"
 A p\-value is an upper\-tail probability, and the obvious way to get one from a

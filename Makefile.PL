@@ -86,7 +86,7 @@ my $define = '';
 if ($Config{nvtype} eq 'long double') {
     my $ld = "#include <math.h>\n"
            . "int main(void) { int e; long double x = 1.0L;\n"
-           . "  volatile long double r = lgammal(x) + sqrtl(x) + logl(x) + log1pl(x)\n"
+           . "  volatile long double r = lgammal(x) + sqrtl(x) + logl(x) + log1pl(x) + expm1l(x)\n"
            . "    + log2l(x) + log10l(x) + expl(x) + powl(x, x) + floorl(x) + ceill(x) + roundl(x)\n"
            . "    + rintl(x) + truncl(x) + fmaxl(x, x) + erfcl(x) + asinl(x) + sinhl(x) + coshl(x)\n"
            . "    + tanhl(x) + fabsl(x) + ldexpl(x, 2) + frexpl(x, &e)\n"

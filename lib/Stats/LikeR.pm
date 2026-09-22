@@ -3,13 +3,13 @@
 require 5.010;
 use strict;
 package Stats::LikeR;
-our $VERSION = 0.318;
+our $VERSION = 0.319;
 require XSLoader;
 use warnings FATAL => 'all';
 use Exporter 'import';
 use Scalar::Util qw(reftype looks_like_number);
 XSLoader::load('Stats::LikeR', $VERSION);
-our @EXPORT_OK = qw(h add_data age_standardize agg anova aoh2h aoh2hoa aoh2hoh aov assign auc auroc avals bedroc bfill binom_test cfilter chisq_test chunk col col2col colnames concat cmh_test cor cor_test cov csort density bw_nrd0 bw_nrd bw_ucv bw_bcv bw_sj dnorm cohen_d cramers_v eta_squared drop_cols drop_duplicates dropna epi_2x2 ffill fillna filter fisher_test get_union glm group_by h2aoh hoa2aoh hoa2hoh hoh2hoa hist interpolate intersection is_equivalent kruskal_test ks_test kurtosis Lonly ljoin lm map_cell matrix max mean median melt merge min mode ncol nrow oneway_test p_adjust pivot_table pnorm pt qt pchisq qchisq pf qf pbinom qnorm power_t_test predict prop_test mcnemar_test friedman_test dunn_test prcomp ptukey qcut qtukey quantile rank roc Ronly rbind rbinom read_table rename_cols rnorm rownames runif sample scale sd select_cols seq shapiro_test skew smd sum summary survfit logrank_test coxph table_one t_test transpose TukeyHSD uniq vals value_counts var var_test vif hosmer_lemeshow view wilcox_test write_table);
+our @EXPORT_OK = qw(h add_data age_standardize agg anova aoh2h aoh2hoa aoh2hoh aov assign auc auroc avals bedroc bfill binom_test cfilter chisq_test chunk col col2col colnames concat cmh_test cor cor_test cov csort density bw_nrd0 bw_nrd bw_ucv bw_bcv bw_sj dnorm cohen_d cramers_v eta_squared drop_cols drop_duplicates dropna epi_2x2 ffill fillna filter fisher_test get_union glm group_by h2aoh hoa2aoh hoa2hoh hoh2hoa hist interpolate intersection is_equivalent kruskal_test ks_test kurtosis Lonly ljoin lm map_cell matrix max mean median melt merge min mode ncol nrow oneway_test p_adjust pivot_table pnorm pt qt pchisq qchisq pf qf pbinom qnorm power_t_test predict prop_test mcnemar_test friedman_test dunn_test prcomp ptukey qcut qtukey quantile rank roc Ronly rbind rbinom read_table rename_cols rnorm rownames runif sample scale sd select_cols seq shapiro_test skew smd sum summary survfit logrank_test coxph table_one t_test transpose TukeyHSD uniq vals value_counts var var_test vif hosmer_lemeshow view wilcox_test write_table zerotrunc hurdle svyglm ivreg lmer);
 our @EXPORT = @EXPORT_OK;
 
 # File operations: failure reporting
@@ -5263,6 +5263,143 @@ sub age_standardize {
 	};
 }
 
+
+# anova($fit0, $fit1, ..., test => 'Chisq' | 'LRT' | 'F', dispersion => $phi)
+#
+# Nested-model comparison on fits that already exist -- R's anova(m0, m1) --
+# for lm() and glm() results, and MASS's likelihood-ratio table for
+# negative-binomial fits whose theta was estimated.  The XS anova() compares
+# models it fits itself from a data set and formulas; this is the same
+# question asked of fits the caller already has, which is what a first-stage
+# F on excluded instruments or a joint test of a block of terms needs.  Any
+# call whose first argument is not a fitted model goes to the XS function
+# unchanged.
+#
+# The arithmetic is R's: anova.lmlist() for lm, anova.glmlist() and
+# stat.anova() for glm, anova.negbin() for glm.nb.  Rows come back in the
+# order given (MASS's negbin table is sorted by residual df, as it sorts it),
+# each a hash; every row after the first carries the comparison with the row
+# before it.
+{
+	my $xs_anova = \&anova;
+	# The XS anova() is prototyped ($@), which would put anova(@fits) in
+	# scalar context and hand it the number of fits; the replacement has no
+	# prototype, which changes nothing for the XS call forms.
+	no warnings qw(redefine prototype);
+	*anova = sub {
+		return _anova_fits(@_) if @_ && _is_fit($_[0]);
+		goto &$xs_anova;
+	};
+}
+
+sub _is_fit {
+	my $f = shift;
+	return ref $f eq 'HASH' && exists $f->{coefficients} && exists $f->{'df.residual'}
+		&& !ref $f->{'df.residual'} && (exists $f->{rss} || exists $f->{deviance});
+}
+
+sub _anova_fits {
+	my @m;
+	push @m, shift while @_ && _is_fit($_[0]);
+	die "anova: options after the models must be name => value pairs\n" if @_ % 2;
+	my %opt = @_;
+	for (keys %opt) {
+		die "anova: unknown argument '$_'\n" unless /^(?:test|dispersion)$/;
+	}
+	die "anova: give at least two fitted models to compare\n" if @m < 2;
+	my $is_glm = exists $m[0]{family};
+	for (@m) {
+		die "anova: cannot compare lm() and glm() fits in one table\n"
+			if (exists $_->{family}) != $is_glm;
+		die "anova: models are not all of the same family\n"
+			if $is_glm && $_->{family} ne $m[0]{family};
+	}
+	# anova.lmlist / anova.glmlist: "models were not all fitted to the same
+	# size of dataset"
+	my @n = map { $is_glm ? $_->{nobs} : $_->{'df.residual'} + $_->{rank} } @m;
+	for (@n) {
+		die "anova: models were not all fitted to the same size of dataset\n"
+			unless defined $_ && $_ == $n[0];
+	}
+	my $fam = $is_glm ? $m[0]{family} : 'lm';
+	$fam = 'negbin' if $fam eq 'negative.binomial' || $fam eq 'nb';
+	if ($fam eq 'negbin' && !grep { !exists $_->{'SE.theta'} } @m) {
+		# MASS anova.negbin(): theta was estimated in every model, so the
+		# models differ in theta too and only the likelihood-ratio test is
+		# valid.  MASS sorts by residual df, largest first.
+		die "anova: negbin models are compared by the likelihood-ratio test only\n"
+			if defined $opt{test} && $opt{test} !~ /^(?:Chisq|LRT)$/;
+		my @o = sort { $b->{'df.residual'} <=> $a->{'df.residual'} } @m;
+		my @rows;
+		for my $i (0 .. $#o) {
+			my %r = (theta => $o[$i]{theta}, 'Resid. df' => $o[$i]{'df.residual'},
+			         '2 x log-lik.' => $o[$i]{twologlik});
+			if ($i) {
+				my $df = $o[$i - 1]{'df.residual'} - $o[$i]{'df.residual'};
+				my $lr = $o[$i]{twologlik} - $o[$i - 1]{twologlik};
+				$r{df} = $df;
+				$r{'LR stat.'} = $lr;
+				# MASS: 1 - pchisq(x2, df); the upper tail directly here
+				$r{'Pr(Chi)'} = pchisq($lr, $df, lower => 0);
+			}
+			push @rows, \%r;
+		}
+		return \@rows;
+	}
+	my @resdf  = map { $_->{'df.residual'} } @m;
+	my @resdev = map { $is_glm ? $_->{deviance} : $_->{rss} } @m;
+	my ($big) = sort { $resdf[$a] <=> $resdf[$b] } 0 .. $#m;   # order(resdf)[1]
+	my ($test, $scale, $df_scale);
+	if (!$is_glm) {
+		# anova.lmlist: an F test on the largest model's residual mean square
+		$test = defined $opt{test} ? $opt{test} : 'F';
+		$scale = defined $opt{dispersion} ? $opt{dispersion} : $resdev[$big] / $resdf[$big];
+		$df_scale = $resdf[$big];
+	} else {
+		# anova.glmlist: family$dispersion is 1 for binomial and poisson and
+		# NA for gaussian; a negbin at a fixed theta has its variance fully
+		# specified, and is treated like poisson (see glm's dispersion).
+		my $known = $fam ne 'gaussian';
+		$test = defined $opt{test} ? $opt{test} : ($known ? 'Chisq' : 'F');
+		$scale = defined $opt{dispersion} ? $opt{dispersion} : $m[$big]{dispersion};
+		$df_scale = (defined $opt{dispersion} ? $opt{dispersion} == 1 : $known)
+		          ? 9**9**9 : $resdf[$big];
+		if ($test eq 'F' && $df_scale == 9**9**9) {
+			warn(($fam eq 'binomial' || $fam eq 'poisson')
+			     ? "anova: using F test with a '$fam' family is inappropriate\n"
+			     : "anova: using F test with a fixed dispersion is inappropriate\n");
+		}
+	}
+	die "anova: test must be 'F', 'Chisq' or 'LRT'\n" unless $test =~ /^(?:F|Chisq|LRT)$/;
+	my @rows;
+	for my $i (0 .. $#m) {
+		my %r = $is_glm ? ('Resid. Df' => $resdf[$i], 'Resid. Dev' => $resdev[$i])
+		                : ('Res.Df' => $resdf[$i], 'RSS' => $resdev[$i]);
+		if ($i) {
+			my $df = $resdf[$i - 1] - $resdf[$i];
+			my $dv = $resdev[$i - 1] - $resdev[$i];
+			$r{Df} = $df;
+			$r{ $is_glm ? 'Deviance' : 'Sum of Sq' } = $dv;
+			# stat.anova(): a zero or negative statistic has no p-value (NA)
+			if ($test eq 'F') {
+				my $F = ($df != 0) ? ($dv / $df) / $scale : undef;
+				$F = undef if defined $F && $F < 0;
+				$r{F} = $F;
+				$r{'Pr(>F)'} = defined $F
+					? ($df_scale == 9**9**9 ? pchisq($F * abs($df), abs($df), lower => 0)
+					                        : pf($F, abs($df), $df_scale, lower => 0))
+					: undef;
+			} else {
+				my $v = ($df != 0) ? ($dv / $scale) * ($df <=> 0) : undef;
+				$v = undef if defined $v && $v < 0;
+				$r{'Pr(>Chi)'} = defined $v ? pchisq($v, abs($df), lower => 0) : undef;
+			}
+		}
+		push @rows, \%r;
+	}
+	return \@rows;
+}
+
 1;
 =encoding utf8
 
@@ -5881,6 +6018,28 @@ after the first adds C<Df>, C<Sum of Sq>, C<F> and C<< Pr(E<gt>F) >>:
  my $tab = anova($data, 'y ~ x1', 'y ~ x1 + x2');
  printf "adding x2: F = %.4g, p = %.4g\n", $tab->[1]{F}, $tab->[1]{'Pr(>F)'};
 
+Given two or more B<fitted models> instead -- C<lm> or C<glm> fits (or
+C<negbin> C<glm> fits) of the same response on the same rows -- C<anova> compares
+them as R's C<anova(m0, m1, ...)> does, and also returns an array ref of rows
+in the order supplied. For C<lm> fits it is C<anova.lmlist>'s F test, on the
+largest model's residual mean square (C<Res.Df>, C<RSS>, C<Df>, C<Sum of Sq>, C<F>,
+C<< Pr(E<gt>F) >>). For C<glm> fits it is C<anova.glmlist>'s table (C<Resid. Df>,
+C<Resid. Dev>, C<Df>, C<Deviance>) with a test chosen as R chooses it: a
+likelihood-ratio C<< Pr(E<gt>Chi) >> for the families with a known dispersion, an F on
+the largest model's dispersion for C<gaussian>; ask for one with
+C<< test =E<gt> 'Chisq' >>, C<'LRT'> or C<'F'>, or fix the scale with C<dispersion>.
+C<negbin> fits give C<MASS::anova.negbin>'s likelihood-ratio table (C<theta>,
+C<Resid. df>, C<2 x log-lik.>, C<df>, C<LR stat.>, C<Pr(Chi)>), whose rows
+are ordered by residual degrees of freedom.
+
+ my $m0 = glm(formula => 'y ~ age',         data => \%d, family => 'poisson');
+ my $m1 = glm(formula => 'y ~ age + hours', data => \%d, family => 'poisson');
+ my $t  = anova($m0, $m1);
+ printf "LR test for hours: p = %.3g\n", $t->[1]{'Pr(>Chi)'};
+
+This is also how a first-stage F on a block of instruments is had without
+L<C<ivreg>|/"ivreg">.
+
 Both forms evaluate C<< Pr(E<gt>F) >> in the upper tail of the F distribution rather
 than as C<1 - pf(F, df1, df2)>; see
 L</"F and z tail p-values">.
@@ -5991,9 +6150,8 @@ table" call. Note that both are B<Type-I / sequential>, so term order in the
 formula matters, and both share this module's C<pf>, so p-values agree with
 C<oneway_test> and the rest of Stats::LikeR.
 
-I<< (R's C<anova> generic can additionally compare several nested models,
-C<anova(m1, m2)>, giving an F/LRT between them — a capability neither this
-C<anova> nor C<aov> currently provides. Ask if that would be useful.) >>
+Comparing nested models -- C<anova(m1, m2)> in R -- is done by giving C<anova>
+two or more formulas, or two or more fitted models; see above.
 
 =head2 aoh2h
 
@@ -7928,12 +8086,137 @@ Give times, an event flag (1 = event, 0 = censored), and one or more covariates
  print $fit->{exp.coef}[0];    # hazard ratio for age
  print $fit->{p.value}[0];     # its p-value
 
-Options: C<names>, C<ties> (C<'efron'> default, or C<'breslow'>), C<conf.level>
-(default C<0.95>), C<maxit>. The result has parallel per-covariate arrays C<coef>
-(log-HR), C<exp.coef> (HR), C<se>, C<z>, C<p.value>, C<conf.int> (HR scale), plus
-model-level C<loglik>, C<lr.stat>/C<lr.p.value> (likelihood-ratio test), C<n>,
-C<nevent>, and C<converged>. See L<C<survfit>|/"survfit"> and
-L<C<logrank_test>|/"logrank_test">.
+Or name the columns of a data set in a formula, as C<survival::coxph> does. The
+response is C<Surv(time, status)>, or C<Surv(start, stop, status)> for
+counting-process data; covariates expand as they do for L<C<lm>|/"lm"> and
+L<C<glm>|/"glm"> (factors, interactions, C<I()>, C<log()>), and C<strata(g)> and
+C<cluster(id)> terms are taken out of the covariates and used as below:
+
+ my $fit = coxph(formula => 'Surv(tstart, tstop, event) ~ hours + age + strata(tech)',
+                 data => \%d, cluster => 'child_id');
+
+B<Counting-process data> -- one row per interval C<(start, stop]> over which a
+subject's covariates are constant -- is what a time-varying covariate and late
+entry both need. A subject is at risk at an event time only in the interval
+that covers it. In the positional form give the start times as C<< start =E<gt> \@t0 >>.
+Intervals that span no event contribute nothing and are skipped, as
+C<survival>'s C<agreg.fit> skips them.
+
+B<Strata> (C<strata(g)> in a formula, or C<< strata =E<gt> \@g >>) give each level its
+own baseline hazard, with the covariate effects shared.
+
+B<Robust variance.> With a cluster (C<cluster(id)>, or C<< cluster =E<gt> \@id >> or a
+column name), C<se> is the grouped-jackknife (dfbeta) robust standard error that
+C<coxph(..., cluster = id)> reports, and the model-based one moves to
+C<naive.se>. C<< robust =E<gt> 1 >> without a cluster makes each row its own cluster,
+which C<(start, stop]> data does not allow: a subject's intervals have to be
+grouped by a cluster.
+C<weights> are case weights and C<offset> a term with coefficient fixed at 1.
+
+B<A changepoint profile> needs no function of its own: refit over a grid of
+candidate thresholds and keep each C<loglik>. The maximum is the estimate; the
+thresholds within C<qchisq(0.95, 1) / 2 = 1.92> of it are a likelihood-ratio
+interval, which for a changepoint is only approximate, since the profile is a
+step function of C<c> and the usual regularity conditions do not hold.
+
+ my @grid = map { 40 + $_ } 0 .. 30;
+ my %ll;
+ for my $c (@grid) {
+     $d{above} = [ map { $_ > $c ? 1 : 0 } @{ $d{hours} } ];
+     $ll{$c} = coxph(formula => 'Surv(tstart, tstop, event) ~ above + age + strata(tech)',
+                     data => \%d)->{loglik};
+ }
+ my ($best) = sort { $ll{$b} <=> $ll{$a} } @grid;
+ my @ci = grep { $ll{$best} - $ll{$_} <= 1.92 } @grid;
+
+=head3 Options
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>Option</th>
+  <th>Default</th>
+  <th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>names</code></td>
+  <td><code>x1</code>, <code>x2</code>, ...</td>
+  <td>Covariate names in the positional form.</td>
+</tr>
+<tr>
+  <td><code>ties</code></td>
+  <td><code>'efron'</code></td>
+  <td><code>'efron'</code> or <code>'breslow'</code>.</td>
+</tr>
+<tr>
+  <td><code>conf.level</code></td>
+  <td><code>0.95</code></td>
+  <td>Level of <code>conf.int</code>.</td>
+</tr>
+<tr>
+  <td><code>maxit</code></td>
+  <td><code>20</code></td>
+  <td>Newton iteration limit (<code>iter.max</code>).</td>
+</tr>
+<tr>
+  <td><code>eps</code></td>
+  <td><code>1e-9</code></td>
+  <td>Convergence tolerance on the relative log-likelihood change, <code>coxph.control(eps = )</code>.</td>
+</tr>
+<tr>
+  <td><code>start</code></td>
+  <td><i>none</i></td>
+  <td>Positional form: interval start times, for <code>(start, stop]</code> data.</td>
+</tr>
+<tr>
+  <td><code>strata</code></td>
+  <td><i>none</i></td>
+  <td>Positional form: one stratum label per row.</td>
+</tr>
+<tr>
+  <td><code>cluster</code></td>
+  <td><i>none</i></td>
+  <td>One cluster label per row, or (formula form) a column name.</td>
+</tr>
+<tr>
+  <td><code>weights</code></td>
+  <td><i>none</i></td>
+  <td>Case weights.</td>
+</tr>
+<tr>
+  <td><code>offset</code></td>
+  <td><i>none</i></td>
+  <td>One offset per row.</td>
+</tr>
+<tr>
+  <td><code>robust</code></td>
+  <td><code>0</code>, or <code>1</code> with a cluster</td>
+  <td>Report the robust variance.</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+=head3 Result
+
+Parallel per-covariate arrays C<coef> (log-HR), C<exp.coef> (HR), C<se>, C<z>,
+C<p.value> and C<conf.int> (HR scale), with C<names>; C<coefficients> by name;
+C<var> (a matrix) and C<vcov> (a hash of hashes by name), the covariance the standard errors
+come from; model-level C<loglik> (at the fit) and C<loglik.null>,
+C<lr.stat>/C<lr.df>/C<lr.p.value> (likelihood-ratio test), C<score.test> and
+C<wald.test>, C<n>, C<nevent>, C<iterations> and C<converged>. With a robust
+variance it adds C<naive.se> and C<naive.var>, C<robust.score.test>, and
+C<n.clusters>; with strata, C<strata> lists their labels. See
+L<C<survfit>|/"survfit"> and L<C<logrank_test>|/"logrank_test">.
 
 =head2 cramers_v
 
@@ -9709,6 +9992,63 @@ can differ from R's in the 6th to 8th significant digit, which a p-value far
 out in the tail amplifies — at C<|z| = 37> a 1.5e-5 difference in C<z> moves the
 p-value by about 2%.
 
+=head3 Offsets, prior weights, robust covariance and absorbed factors
+
+An B<offset> is a term whose coefficient is fixed at 1 rather than estimated,
+which is how a count model is put on a per-person-time scale. Write it into the
+formula, as R does, or pass it as C<offset> (a column name, an expression over
+columns, or an array ref with one value per row); the two forms add together.
+The negative-binomial C<theta> search sees the offset too, as C<MASS::glm.nb>'s
+does, and the null deviance is that of an intercept-plus-offset fit:
+
+ my $rate = glm(formula => 'admits ~ hours + age + offset(log(persontime))',
+                data => \%d, family => 'poisson');
+ my $same = glm(formula => 'admits ~ hours + age', offset => 'log(persontime)',
+                data => \%d, family => 'poisson');
+
+B<Prior weights> (C<weights>, a column name or an array ref) are R's
+C<glm(weights = )>. A binomial fit whose weights make a non-integer number of
+successes warns C<non-integer #successes in a binomial glm!>, as R does. A row
+with weight 0 is kept out of the fit and out of C<nobs>.
+
+C<< vcov =E<gt> 'HC0' >> (through C<'HC3'>) replaces the model-based covariance by a
+heteroskedasticity-consistent sandwich, C<sandwich::vcovHC()>, and C<cluster>
+by a cluster-robust one, C<sandwich::vcovCL()>. Naming a cluster alone implies
+C<HC0>, which is C<vcovCL()>'s own default for a glm; C<HC1> adds the
+C<(n - 1)/(n - k)> factor. C<< cluster =E<gt> 'firm + year' >> clusters two ways (up to
+four) by inclusion-exclusion, as C<vcovCL(cluster = ~ firm + year)> does. The
+C<summary> standard errors, C<z>, p-values and both kinds of confidence interval
+are then all computed from the robust covariance, as C<lmtest::coeftest()>
+would. A C<poisson> fit on a 0/1 outcome with C<< vcov =E<gt> 'HC0' >> is the
+"modified Poisson" risk-ratio regression (Zou 2004, I<Am J Epidemiol> 159:702):
+
+ my $rr = glm(formula => 'readmit ~ hours + age', data => \%d,
+              family => 'poisson', vcov => 'HC0', cluster => 'child_id');
+ printf "RR = %.3f (%.3f-%.3f)\n", @{ $rr->{exp}{hours} }{qw(estimate conf.low conf.high)};
+
+A factor with thousands of levels (a within-subject comparison) can be
+B<absorbed> instead of expanded into dummy columns: put it after a C<|> in the
+formula, as C<fixest> does, or name it in C<absorb>. The fit then demeans within
+groups (weighted, by alternating projections for more than one factor) and
+reports only the remaining coefficients, which equal those of the
+full-dummy fit. As C<fixest::feglm()> does, a group whose outcome is constant at
+a boundary (all zeros for C<poisson>/C<negbin>, all 0 or all 1 for C<binomial>)
+carries no information and is dropped; C<fe.removed> counts the rows that goes
+with. HC2/HC3 are not available with absorbed factors.
+
+ my $fe = glm(formula => 'visits ~ hours | child_id + year', data => \%d,
+              family => 'poisson', cluster => 'child_id');
+
+C<maxit> (default 25) and C<epsilon> (default C<1e-8>) are C<glm.control()>'s.
+
+A B<control-function> IV estimate for a count outcome is two calls: fit the
+first stage with L<C<lm>|/"lm">, add its residuals to the data, and include them
+as a regressor in the C<poisson>/C<negbin> C<glm>. The coefficient of the
+residual is a test of exogeneity, but the second-stage standard errors do not
+account for the first stage having been estimated; bootstrap the pair of fits
+for those. For a continuous outcome use L<C<ivreg>|/"ivreg">, whose standard
+errors are right as they stand.
+
 =head3 Input Parameters
 
 
@@ -9730,7 +10070,7 @@ p-value by about 2%.
   <td><code>formula</code></td>
   <td><code>String</code></td>
   <td><i>None (Required)</i></td>
-  <td>A symbolic description of the model to be fitted. Parsed by the same code as [<code>lm</code>](#lm)'s, so it takes the same operators: <code>+</code>, <code>:</code>, <code>*</code>, <code>^</code>, <code>.</code> for every remaining column, and <code>-1</code> / <code>+0</code> to remove the intercept.</td>
+  <td>A symbolic description of the model to be fitted. Parsed by the same code as [<code>lm</code>](#lm)'s, so it takes the same operators: <code>+</code>, <code>:</code>, <code>*</code>, <code>^</code>, <code>.</code> for every remaining column, and <code>-1</code> / <code>+0</code> to remove the intercept. It may also hold <code>offset()</code> terms, and factors to absorb after a <code>|</code>.</td>
   <td><code>'am ~ wt + hp'</code>, <code>'y ~ x - 1'</code>, <code>'y ~ .'</code></td>
 </tr>
 <tr>
@@ -9760,6 +10100,55 @@ p-value by about 2%.
   <td><code>0.95</code></td>
   <td>Confidence level for the Wald coefficient / exponentiated-coefficient intervals.</td>
   <td><code>0.90</code></td>
+</tr>
+<tr>
+  <td><code>offset</code></td>
+  <td><code>String</code> or <code>ArrayRef</code></td>
+  <td><i>none</i></td>
+  <td>A column, an expression over columns such as <code>'log(t)'</code>, or one value per row, added to the linear predictor with coefficient 1. Adds to any <code>offset()</code> terms in the formula.</td>
+  <td><code>'log(persontime)'</code></td>
+</tr>
+<tr>
+  <td><code>weights</code></td>
+  <td><code>String</code> or <code>ArrayRef</code></td>
+  <td><i>none</i></td>
+  <td>Prior weights, R's <code>glm(weights = )</code>: a column name, or one value per row. Must be non-negative.</td>
+  <td><code>'w'</code></td>
+</tr>
+<tr>
+  <td><code>vcov</code></td>
+  <td><code>String</code></td>
+  <td><code>'model'</code></td>
+  <td><code>'model'</code>, or a sandwich: <code>'HC0'</code>, <code>'HC1'</code>, <code>'HC2'</code> or <code>'HC3'</code> (<code>sandwich::vcovHC</code>). Also accepted as <code>vcov_type</code>.</td>
+  <td><code>'HC0'</code></td>
+</tr>
+<tr>
+  <td><code>cluster</code></td>
+  <td><code>String</code> or <code>ArrayRef</code></td>
+  <td><i>none</i></td>
+  <td>Cluster variable(s) for <code>sandwich::vcovCL</code>: a column name, <code>'a + b'</code> for multiway clustering, or one label per row. Implies <code>vcov =&gt; 'HC0'</code> unless <code>'HC1'</code> is given.</td>
+  <td><code>'child_id'</code></td>
+</tr>
+<tr>
+  <td><code>absorb</code></td>
+  <td><code>String</code> or <code>ArrayRef</code></td>
+  <td><i>none</i></td>
+  <td>Factor(s) to absorb as fixed effects rather than expand, like the formula's <code>| f1 + f2</code> part.</td>
+  <td><code>'child_id'</code></td>
+</tr>
+<tr>
+  <td><code>maxit</code></td>
+  <td><code>Integer</code></td>
+  <td><code>25</code></td>
+  <td>IRLS iteration limit, as <code>glm.control(maxit = )</code>.</td>
+  <td><code>50</code></td>
+</tr>
+<tr>
+  <td><code>epsilon</code></td>
+  <td><code>Number</code></td>
+  <td><code>1e-8</code></td>
+  <td>IRLS convergence tolerance on the relative deviance change, as <code>glm.control(epsilon = )</code>.</td>
+  <td><code>1e-10</code></td>
 </tr>
 </tbody>
 </table>
@@ -9897,6 +10286,72 @@ p-value by about 2%.
   <td><code>Double</code></td>
   <td><code>negbin</code> family only: the negative-binomial dispersion parameter (ML estimate, or the fixed value supplied).</td>
   <td><code>1.73</code></td>
+</tr>
+<tr>
+  <td><code>loglik</code></td>
+  <td><code>Double</code></td>
+  <td>The log-likelihood, as R's <code>logLik()</code>.</td>
+  <td><code>-120.3</code></td>
+</tr>
+<tr>
+  <td><code>dispersion</code></td>
+  <td><code>Double</code></td>
+  <td>The dispersion the standard errors use: estimated (Pearson) for <code>gaussian</code>, 1 for the other families.</td>
+  <td><code>1</code></td>
+</tr>
+<tr>
+  <td><code>nobs</code></td>
+  <td><code>Integer</code></td>
+  <td>Rows in the fit (non-missing, non-zero weight, and not dropped with an absorbed group).</td>
+  <td><code>98</code></td>
+</tr>
+<tr>
+  <td><code>vcov</code></td>
+  <td><code>HashRef</code></td>
+  <td>The coefficient covariance, model-based or robust as <code>vcov.type</code> says, as a hash of hashes by term.</td>
+  <td><code>{'wt' =&gt; {'wt' =&gt; 0.01, ...}}</code></td>
+</tr>
+<tr>
+  <td><code>vcov.type</code></td>
+  <td><code>String</code></td>
+  <td><code>'model'</code>, <code>'HC0'</code>, <code>'HC1'</code>, <code>'HC2'</code> or <code>'HC3'</code>.</td>
+  <td><code>'HC0'</code></td>
+</tr>
+<tr>
+  <td><code>n.clusters</code></td>
+  <td><code>Integer</code> or <code>ArrayRef</code></td>
+  <td>With <code>cluster</code>: the number of clusters, or one count per variable when clustering several ways.</td>
+  <td><code>120</code></td>
+</tr>
+<tr>
+  <td><code>absorb</code></td>
+  <td><code>HashRef</code></td>
+  <td>With absorbed factors: each factor's number of groups in the fit.</td>
+  <td><code>{'child_id' =&gt; 812}</code></td>
+</tr>
+<tr>
+  <td><code>fe.removed</code></td>
+  <td><code>Integer</code></td>
+  <td>With absorbed factors: rows dropped because their group's outcome was constant at a boundary.</td>
+  <td><code>14</code></td>
+</tr>
+<tr>
+  <td><code>offset.terms</code></td>
+  <td><code>ArrayRef</code></td>
+  <td>With an offset: the expressions it is made of, which [<code>predict</code>](#predict) re-evaluates on new data.</td>
+  <td><code>['log(persontime)']</code></td>
+</tr>
+<tr>
+  <td><code>twologlik</code></td>
+  <td><code>Double</code></td>
+  <td><code>negbin</code> only: twice the log-likelihood, as <code>MASS::glm.nb</code>.</td>
+  <td><code>-240.6</code></td>
+</tr>
+<tr>
+  <td><code>SE.theta</code></td>
+  <td><code>Double</code></td>
+  <td><code>negbin</code> with <code>theta</code> estimated: its standard error.</td>
+  <td><code>0.41</code></td>
 </tr>
 </tbody>
 </table>
@@ -10506,6 +10961,94 @@ it was validated numerically.
 
 
 
+=head2 hurdle
+
+A two-part count model, C<pscl::hurdle()> (also C<countreg::hurdle()>): a binary
+model for whether the count is zero, and a L<zero-truncated|/"zerotrunc"> count
+model for how large it is given that it is positive. The typical use is an
+outcome such as inpatient days, where "any stay" and "how long" have different
+explanations.
+
+ use Stats::LikeR 'hurdle';
+
+ my $h = hurdle(formula => 'days ~ hours + age | hours', data => \%d,
+                dist => 'negbin');
+ print $h->{coefficients}{count}{hours};    # log rate ratio, given a stay
+ print $h->{coefficients}{zero}{hours};     # log odds of any stay
+
+The regressors after C<|> are the zero part's; without a bar both parts use the
+same ones. The likelihood separates into the two parts, so they are fitted
+separately, as both packages do by default.
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>Option</th>
+  <th>Default</th>
+  <th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>formula</code></td>
+  <td><i>(required)</i></td>
+  <td><code>'y ~ count regressors'</code> or <code>'y ~ count regressors | zero regressors'</code>; <code>offset()</code> terms are allowed in either part.</td>
+</tr>
+<tr>
+  <td><code>data</code></td>
+  <td><i>(required)</i></td>
+  <td>HoA, AoH or HoH.</td>
+</tr>
+<tr>
+  <td><code>dist</code></td>
+  <td><code>'poisson'</code></td>
+  <td>The count part: <code>'poisson'</code>, <code>'negbin'</code> or <code>'geometric'</code>.</td>
+</tr>
+<tr>
+  <td><code>zero.dist</code></td>
+  <td><code>'binomial'</code></td>
+  <td>The zero part: <code>'binomial'</code> (a logit), or a count distribution censored at 1, <code>'poisson'</code>, <code>'negbin'</code> or <code>'geometric'</code>.</td>
+</tr>
+<tr>
+  <td><code>link</code></td>
+  <td><code>'logit'</code></td>
+  <td>The binomial zero part's link; only <code>'logit'</code> is implemented.</td>
+</tr>
+<tr>
+  <td><code>offset</code></td>
+  <td><i>none</i></td>
+  <td>A column, an expression or an array ref, added to the count part only, as <code>pscl</code>'s <code>offset = </code> is; an <code>offset()</code> term in the zero part's formula offsets that part.</td>
+</tr>
+<tr>
+  <td><code>weights</code></td>
+  <td><i>none</i></td>
+  <td>Case weights.</td>
+</tr>
+<tr>
+  <td><code>conf.level</code></td>
+  <td><code>0.95</code></td>
+  <td>Level of the Wald intervals in <code>summary</code>.</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+The result holds C<coefficients>, C<summary> (with C<Estimate>, C<Std. Error>,
+C<z value>, C<< Pr(E<gt>|z|) >>, C<CI.lower>, C<CI.upper>), C<vcov> and C<terms>, each split
+into C<count> and C<zero> halves; C<loglik> and its two parts C<loglik.count> and
+C<loglik.zero>, C<aic>, C<df.residual>, C<nobs>, C<converged>, C<iter> and
+C<iter.zero>; C<theta> and C<SE.logtheta> for a C<negbin> count part, and
+C<theta.zero>/C<SE.logtheta.zero> for a C<negbin> zero part; and C<fitted.values>,
+the fitted mean C<< P(y E<gt> 0) mu / (1 - f(0)) >>. Validated against C<pscl> and
+C<countreg> on their documented examples, with a third opinion from C<mpmath>.
+
 =head2 interpolate
 
 Fill NA (undef) cells along the row axis, like C<pandas.DataFrame.interpolate>.
@@ -10794,6 +11337,101 @@ same, but C<2> and C<"2.0"> are not.
 calling, rather than letting it silently match.
 
 =back
+
+=head2 ivreg
+
+Instrumental-variables regression by two-stage least squares, C<ivreg::ivreg()>
+(and C<AER::ivreg()>), with C<summary(fit, diagnostics = TRUE)>'s tests. The
+standard errors are the proper 2SLS ones, from the residuals of the structural
+equation with the original regressors, not the naive ones that come from
+running the two stages as separate C<lm> fits.
+
+ use Stats::LikeR 'ivreg';
+
+ # regressors | instruments: exogenous regressors appear on both sides
+ my $iv = ivreg(formula => 'log(packs) ~ log(rprice) + log(rincome) | log(rincome) + tdiff + rtax',
+                data => \%cig);
+ # or three parts: exogenous | endogenous | excluded instruments
+ my $iv3 = ivreg(formula => 'log(packs) ~ log(rincome) | log(rprice) | tdiff + rtax',
+                 data => \%cig, cluster => 'state');
+
+ my $d = $iv->{diagnostics};
+ printf "first-stage F = %.1f\n", $d->{weak}{'log(rprice)'}{statistic};
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>Option</th>
+  <th>Default</th>
+  <th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>formula</code></td>
+  <td><i>(required)</i></td>
+  <td><code>'y ~ regressors | instruments'</code>, or <code>'y ~ exogenous | endogenous | instruments'</code>. Terms expand as for [<code>lm</code>](#lm).</td>
+</tr>
+<tr>
+  <td><code>data</code></td>
+  <td><i>(required)</i></td>
+  <td>HoA, AoH or HoH.</td>
+</tr>
+<tr>
+  <td><code>weights</code></td>
+  <td><i>none</i></td>
+  <td>Weights, as <code>ivreg(weights = )</code>.</td>
+</tr>
+<tr>
+  <td><code>vcov</code></td>
+  <td><code>'model'</code></td>
+  <td><code>'model'</code>, <code>'HC0'</code> or <code>'HC1'</code>; the diagnostics use the same covariance, as when <code>summary.ivreg</code> is given <code>vcov. = </code>.</td>
+</tr>
+<tr>
+  <td><code>cluster</code></td>
+  <td><i>none</i></td>
+  <td>A cluster variable (column name or array ref) for <code>sandwich::vcovCL</code>; implies <code>'HC0'</code>.</td>
+</tr>
+<tr>
+  <td><code>conf.level</code></td>
+  <td><code>0.95</code></td>
+  <td>Level of <code>conf.int</code>.</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+The result holds C<coefficients>, C<summary> (per term C<Estimate>,
+C<Std. Error>, C<t value>, C<< Pr(E<gt>|t|) >>), C<vcov>, C<vcov.type>, C<conf.int>,
+C<terms>, C<endogenous> and C<instruments> (the terms each role was given),
+C<fitted.values>, C<residuals>, C<sigma>, C<rss>, C<r.squared>, C<adj.r.squared>,
+C<df.residual>, C<rank>, C<nobs>, C<n.clusters> with a cluster, and C<waldtest>, the
+F test of every coefficient but the intercept. C<diagnostics> has
+
+=over
+
+=item * C<weak>: per endogenous regressor, the first-stage F test of the excluded
+instruments (C<statistic>, C<df1>, C<df2>, C<p.value>);
+
+=item * C<wu.hausman>: the test of whether the endogenous regressors are in fact
+exogenous: an F test of the first-stage residuals added to the
+structural regression;
+
+=item * C<sargan>: with more instruments than endogenous regressors, the test of
+overidentifying restrictions (C<statistic>, C<df>, C<p.value>).
+
+=back
+
+Validated against C<ivreg>'s tests and documented examples, and against Stata
+C<ivreg2> output that C<statsmodels> pins. For a count outcome, see the
+control-function note under L<C<glm>|/"glm">.
 
 =head2 kruskal_test
 
@@ -11173,6 +11811,82 @@ strongly significant model reports its actual p-value instead of a flat C<0>;
 see L</"F and z tail p-values">. The per-coefficient
 C<< Pr(E<gt>|t|) >> values were already computed as a direct two-tail probability and
 are unaffected.
+
+=head2 lmer
+
+Linear mixed-effects regression, C<lme4::lmer()>, fitted by REML (the default)
+or maximum likelihood, with the Satterthwaite degrees of freedom and t tests
+that C<lmerTest> adds to its summary.
+
+ use Stats::LikeR 'lmer';
+
+ # a random intercept and a random slope for Days, correlated, per Subject
+ my $m = lmer(formula => 'Reaction ~ Days + (Days | Subject)', data => \%sleepstudy);
+ printf "Days: %.2f (SE %.2f, df %.1f)\n",
+     @{ $m->{summary}{Days} }{'Estimate', 'Std. Error', 'df'};
+ printf "subject sd of the slope: %.2f\n", $m->{varcor}[0]{sd}{Days};
+
+Random-effects terms are written as in C<lme4>: C<(1 | g)> a random intercept,
+C<(x | g)> a correlated intercept and slope, C<(0 + x | g)> a slope alone, so that
+C<(1 | g) + (0 + x | g)> is the uncorrelated pair; several grouping factors,
+crossed or nested, are allowed, and C<(1 | a/b)> expands to C<(1 | a) + (1 | a:b)>.
+The fixed part is expanded as for L<C<lm>|/"lm">.
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>Option</th>
+  <th>Default</th>
+  <th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>formula</code></td>
+  <td><i>(required)</i></td>
+  <td>Fixed effects plus one or more <code>( terms | group )</code> random-effects terms.</td>
+</tr>
+<tr>
+  <td><code>data</code></td>
+  <td><i>(required)</i></td>
+  <td>HoA, AoH or HoH.</td>
+</tr>
+<tr>
+  <td><code>REML</code></td>
+  <td><code>1</code></td>
+  <td><code>0</code> for a maximum-likelihood fit (needed to compare fixed effects by likelihood ratio).</td>
+</tr>
+<tr>
+  <td><code>conf.level</code></td>
+  <td><code>0.95</code></td>
+  <td>Level of <code>conf.int</code>, from the Satterthwaite t.</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+The result holds C<coefficients>, C<summary> (per term C<Estimate>,
+C<Std. Error>, C<df>, C<t value>, C<< Pr(E<gt>|t|) >>), C<vcov>, C<conf.int>, C<terms>,
+C<fitted.values> (including the predicted random effects), C<sigma> (residual
+sd), C<theta> (C<lme4>'s relative covariance factor, C<getME(fit, "theta")>),
+C<REML> or C<deviance> (the criterion minimised), C<loglik>, C<AIC>, C<BIC>,
+C<nobs>, C<reml>, C<converged> and C<singular> (a variance component on its
+boundary, C<lme4>'s "singular fit"). C<varcor> is C<VarCorr()>: one entry per
+random-effects term, in formula order, each with C<group>, C<levels>, C<names>,
+C<sd> by name and the correlation matrix C<corr>.
+
+The criterion is C<lme4>'s profiled deviance, minimised by Nelder-Mead and
+then polished by Newton steps, so the estimates are those of a tightly
+converged C<lme4> fit; C<lme4>'s default optimiser stops about 1e-6 short in
+theta, which moves the standard errors in their fifth digit. Validated against
+C<lme4>, C<lmerTest> and C<statsmodels>' mixed-model corpora.
 
 =head2 logrank_test
 
@@ -12523,6 +13237,14 @@ predictor. For C<lm> and gaussian C<glm> the link is the identity, so the two ar
 the same.
 
 =back
+
+A C<glm> fitted with an offset -- C<offset()> in the formula or a named C<offset>
+column -- has the offset re-evaluated on each new row and added to the linear
+predictor, so a rate model predicts counts at the new rows' exposure. An offset
+given as an array ref has nothing to be re-evaluated from, and a model with
+absorbed factors has no estimates of their effects to predict with; C<predict>
+croaks on either rather than quietly leaving them out. C<poisson> and C<negbin>
+fits are put on the response scale with C<exp>.
 
 =head3 What it returns
 
@@ -14050,6 +14772,100 @@ C<n.event>, C<n.censor>, C<surv>, C<std.err>, C<lower>, C<upper>, plus C<median>
 and C<events>. Compare curves with L<C<logrank_test>|/"logrank_test">; model
 covariate effects with L<C<coxph>|/"coxph">.
 
+=head2 svyglm
+
+Design-based regression for survey data, C<survey::svyglm()> on a
+C<survey::svydesign()>: point estimates weighted by the sampling weights, and
+standard errors by Taylor linearization that respect the strata and the
+clustering into primary sampling units (PSUs). Putting the sampling weights
+into L<C<glm>|/"glm">'s C<weights> gives the same point estimates but standard
+errors that are wrong for a complex sample.
+
+ use Stats::LikeR 'svyglm';
+
+ my $s = svyglm(formula => 'api00 ~ ell + meals + mobility', data => \%apistrat,
+                weights => 'pw', strata => 'stype');
+ my $c = svyglm(formula => 'sch.wide ~ ell', data => \%apiclus1, family => 'quasibinomial',
+                weights => 'pw', cluster => 'dnum', fpc => 'fpc');
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>Option</th>
+  <th>Default</th>
+  <th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>formula</code></td>
+  <td><i>(required)</i></td>
+  <td>Formula as for [<code>glm</code>](#glm), with <code>offset()</code> terms allowed.</td>
+</tr>
+<tr>
+  <td><code>data</code></td>
+  <td><i>(required)</i></td>
+  <td>HoA, AoH or HoH.</td>
+</tr>
+<tr>
+  <td><code>family</code></td>
+  <td><code>'gaussian'</code></td>
+  <td><code>'gaussian'</code>, <code>'binomial'</code>, <code>'quasibinomial'</code>, <code>'poisson'</code> or <code>'quasipoisson'</code>. The <code>quasi</code> names give the same fit, as in <code>survey</code>.</td>
+</tr>
+<tr>
+  <td><code>weights</code></td>
+  <td>1</td>
+  <td>Sampling weights (<code>svydesign(weights = )</code>): a column name or an array ref.</td>
+</tr>
+<tr>
+  <td><code>strata</code></td>
+  <td><i>none</i></td>
+  <td>Stratum of each row.</td>
+</tr>
+<tr>
+  <td><code>cluster</code></td>
+  <td>one PSU per row</td>
+  <td>The PSU of each row (<code>svydesign(ids = )</code>); also accepted as <code>ids</code>, <code>id</code> or <code>psu</code>.</td>
+</tr>
+<tr>
+  <td><code>fpc</code></td>
+  <td><i>none</i></td>
+  <td>Finite population correction: the population size of the stratum, or the sampling fraction (a value at most 1), as <code>svydesign(fpc = )</code> reads it.</td>
+</tr>
+<tr>
+  <td><code>nest</code></td>
+  <td><code>0</code></td>
+  <td><code>svydesign(nest = TRUE)</code>: PSU labels are only unique within a stratum.</td>
+</tr>
+<tr>
+  <td><code>offset</code></td>
+  <td><i>none</i></td>
+  <td>A column, an expression or an array ref.</td>
+</tr>
+<tr>
+  <td><code>conf.level</code></td>
+  <td><code>0.95</code></td>
+  <td>Level of <code>conf.int</code>.</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+The result holds C<coefficients>, C<summary> (per term C<Estimate>, C<Std. Error>,
+C<t value>, C<< Pr(E<gt>|t|) >>), C<vcov>, C<conf.int>, C<terms>, C<fitted.values>,
+C<deviance>, C<dispersion> (C<summary.svyglm>'s), C<df.residual>, C<degf> (the
+design degrees of freedom, PSUs minus strata, which the t tests use), C<rank>,
+C<nobs>, C<n.psu>, C<n.strata>, C<converged> and C<iter>. Only single-stage designs
+are implemented (the first stage's PSUs and strata, as C<survey> uses by
+default). Validated against C<survey>'s own tests on the C<api> data.
+
 =head2 table_one
 
 The stratified descriptive "Table 1" that opens most clinical papers: for each
@@ -15443,6 +16259,83 @@ C<read_table>.
 
 
 =head1 Numerical accuracy
+
+=head2 zerotrunc
+
+A count regression truncated at zero, C<countreg::zerotrunc()>: the model for a
+count that is only observed when it is at least 1, such as length of stay among
+those admitted. Fitting an ordinary Poisson or negative binomial to such data
+underestimates the mean at low counts, because it expects zeros that can never
+be seen.
+
+ use Stats::LikeR 'zerotrunc';
+
+ my $z = zerotrunc(formula => 'days ~ hours + age', data => \%admitted,
+                   dist => 'negbin');
+ printf "theta = %.3f\n", $z->{theta};
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>Option</th>
+  <th>Default</th>
+  <th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>formula</code></td>
+  <td><i>(required)</i></td>
+  <td>Formula as for [<code>glm</code>](#glm), with <code>offset()</code> terms allowed.</td>
+</tr>
+<tr>
+  <td><code>data</code></td>
+  <td><i>(required)</i></td>
+  <td>HoA, AoH or HoH. The response must be positive integers.</td>
+</tr>
+<tr>
+  <td><code>dist</code></td>
+  <td><code>'poisson'</code></td>
+  <td><code>'poisson'</code>, <code>'negbin'</code> or <code>'geometric'</code>.</td>
+</tr>
+<tr>
+  <td><code>theta</code></td>
+  <td><i>estimated</i></td>
+  <td>For <code>negbin</code>, a fixed dispersion instead of an estimated one, as <code>countreg</code>'s <code>theta = </code>.</td>
+</tr>
+<tr>
+  <td><code>offset</code></td>
+  <td><i>none</i></td>
+  <td>A column, an expression, or an array ref.</td>
+</tr>
+<tr>
+  <td><code>weights</code></td>
+  <td><i>none</i></td>
+  <td>Case weights.</td>
+</tr>
+<tr>
+  <td><code>conf.level</code></td>
+  <td><code>0.95</code></td>
+  <td>Level of the Wald intervals in <code>summary</code>.</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+The result holds C<coefficients>, C<summary> (per term C<Estimate>, C<Std. Error>,
+C<z value>, C<< Pr(E<gt>|z|) >>, C<CI.lower>, C<CI.upper>), C<vcov>, C<terms>, C<loglik>,
+C<aic>, C<df.residual>, C<df.null>, C<nobs>, C<converged> and C<iter>; C<theta> and
+C<SE.logtheta> for C<negbin>, as C<countreg> reports them; C<fitted.values>, the
+truncated mean C<mu / (1 - f(0))>, and Pearson-style C<residuals>. The fit is a
+damped Newton iteration on the exact likelihood and its analytic Hessian.
+Validated against C<countreg> and against C<mpmath> at 60 digits.
 
 =head2 F and z tail p-values
 
