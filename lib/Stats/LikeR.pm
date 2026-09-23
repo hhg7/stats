@@ -3054,17 +3054,17 @@ sub read_table {
 # read_table's wall clock -- on a 300,000 x 5 CSV, 0.42 s of 0.53 s -- doing in
 # perl what C can do from the fields it has already cut.
 #
-# Only the shapes that need no per-row perl can go this way: 'hoh' names each
-# row from one of its own columns, and a 'filter' is perl by definition, so
-# both keep streaming through $on_line. $plan stays undef in both, and that is
-# how the parser knows not to look for one. An .xlsx goes through a different
-# parser (_parse_xlsx_sheet_xs) but the same plan: both hand a finished row to
-# the same S_fast_row().
+# Only a read with no 'filter' can go this way, since a filter is perl by
+# definition; one keeps streaming through $on_line. $plan stays undef then,
+# and that is how the parser knows not to look for one. 'hoh' went through the
+# closure too until 0.319, which on a 300,000 x 5 CSV cost 0.91 s; it now
+# takes 0.20 s. An .xlsx goes through a different parser (_parse_xlsx_sheet_xs)
+# but the same plan: both hand a finished row to the same S_fast_row().
 #
 # See csv_plan in LikeR.xs for what each key means. install_plan() runs exactly
 # once, from wherever $header_done is first set, and writes 'out' last because
 # that is the key the parser tests for.
-	my $plan = (!$filter && $otype ne 'hoh') ? {} : undef;
+	my $plan = !$filter ? {} : undef;
 	my $install_plan = sub {
 		return if !$plan || %$plan;
 		# A repeated column name resolves to its LAST field, which is what
@@ -3082,9 +3082,16 @@ sub read_table {
 		if ($otype eq 'aoh') {
 			$plan->{mode} = 0;
 			$plan->{out}  = \@data;
-		} else {
+		} elsif ($otype eq 'hoa') {
 			$plan->{mode} = 1;
 			$plan->{out}  = [ @hoa_cols ];
+		} else {
+			# $finalize_header has already checked that row.names is a column
+			my ($rn) = grep { $uniq_header[$_] eq $args{'row.names'} }
+				0 .. $#uniq_header;
+			$plan->{mode} = 2;
+			$plan->{rn}   = $rn;
+			$plan->{out}  = \%data;
 		}
 	};
 
@@ -3170,9 +3177,13 @@ sub read_table {
 	# delivered by the parser and un-commented in the callback as usual, so it
 	# never reaches this branch.
 	if (!$is_xlsx && length( $args{comment} // '' ) && length( $args{sep} // '' )) {
+		# $/ is the caller's, and under a `local $/;` this read the whole
+		# file; _parse_csv_file() splits on "\n" whatever $/ is, and so does
+		# this. A UTF-8 byte-order mark is dropped here as the parser drops it.
 		my $fh    = _open_read($file);
-		my $first = <$fh>;
+		my $first = do { local $/ = "\n"; <$fh> };
 		_close($fh);
+		$first =~ s/\A\xEF\xBB\xBF// if defined $first;
 		if (defined $first && $first =~ /^\Q$args{comment}\E\s/) {
 			$first =~ s/\r?\n\z//;
 			my @cols = split /\Q$args{sep}\E/, $first, -1;
@@ -3286,9 +3297,13 @@ sub read_table {
 				unless defined $row_name;
 			warn "read_table: duplicate row name '$row_name' in $file (later values win)\n"
 				if $seen_rownames{$row_name}++;
+			# made up front, so that a file whose only column is the row name
+			# still has its rows -- as empty hashes, the way R's read.table
+			# gives it a data frame of n rows and 0 columns -- rather than none
+			my $row = $data{$row_name} ||= {};
 			foreach my $col (@uniq_header) {
 				next if $col eq $args{'row.names'};
-				$data{$row_name}{$col} = $line_hash{$col};
+				$row->{$col} = $line_hash{$col};
 			}
 		}
 	};
@@ -13983,6 +13998,13 @@ and, like Text::CSV_XS, filters can be applied in order to save RAM on big files
 the default delimiter is C<,>
 Suffixes C<.csv> and C<.tsv> are automatically detected from file names, but if specified, are overridden by C<delim> and/or C<sep>. C<sep> is given priority.
 
+A UTF-8 byte-order mark at the start of a text file, which Excel's "CSV UTF-8"
+export writes, is dropped rather than read as part of the first column's name,
+as pandas' C<read_csv> drops it. Lines always end at a newline whatever C<$/> is
+set to, so a C<local $/;> in the calling code does not change what is read.
+With C<< 'output.type' =E<gt> 'hoh' >> a file whose only column is the row name gives
+one empty hash per row, as R's C<read.table> gives a data frame of zero columns.
+
 =head3 missing values (C<na.strings> / C<na_values> / C<undef.val>)
 
 An empty field is always read as C<undef>. Any I<other> text that a file uses to
@@ -14119,7 +14141,9 @@ returns that one table directly (not wrapped in a hash).
 
 Limitations: dates and times are returned as their raw Excel serial numbers
 (cell number formats are not applied); shared-string rich-text runs are
-concatenated into a single value; and two things the format does not allow are
+concatenated into a single value; a cell that has formatting but no value is a
+blank, and blanks past a row's last value do not add columns (readxl and pandas
+leave them out too); and two things the format does not allow are
 read as if they were not there — a cell reference past C<XFD>, the last of the
 16,384 columns a worksheet has, places the cell in the next column instead, and
 a numeric character reference above C<&#x7FFFFFFF;> is left in the text rather

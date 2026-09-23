@@ -125,6 +125,44 @@ Leave `restrict` off — and say why in a short comment — when:
 Do not churn existing declarations solely to add or remove `restrict`; apply
 this when writing new code or when already editing the function.
 
+## Loop variables live inside their loop
+
+A loop counter, and any variable a loop uses and nothing after it reads, is
+declared *in* the loop, so it is out of scope once the loop ends:
+
+```c
+for (size_t j = 0; j < p->nout; j++) {
+	SV *v = ary[p->idx[j]];	//per-iteration: declared in the body
+	...
+}
+```
+
+not a `size_t j;` at the top of the function followed by `for (j = 0; ...)`.
+A counter that is out of scope cannot be read by mistake with its end value,
+or reused by the next loop with a stale one, and the separate declaration line
+it no longer needs is how this keeps `LikeR.xs` shorter.
+
+- Each loop declares its own counter. Two loops in a row each get a
+  `size_t j`; they do not share one declared above both.
+- The type rules above still decide the type: `size_t` for a runtime bound,
+  `unsigned short int` for a small literal one, `SSize_t` when the bound is
+  `AvFILLp()`/`av_len()` and the comparison would otherwise mix signs.
+- A per-iteration temporary goes in the innermost block that uses it, not at
+  the top of the function.
+- **The exception** is a value the code reads *after* the loop -- where a scan
+  stopped (`if (k == first)` in `xlsx_xml_uncat()`), a found index, a count.
+  That one is declared before the loop, with a short comment saying it is
+  read afterwards, as any departure from a stated convention is.
+- Declarations in a `for` init clause are C99, which `Makefile.PL` already
+  requires (it probes the vendor's C99 flag), and MSVC has accepted them since
+  Visual Studio 2013; the file has used them for years
+  (`lm_is_row_name_key()`).
+- Perl code follows the same rule with `for my $i (...)`, and a `my` inside
+  the loop body rather than above it.
+
+As with `restrict`, do not churn functions solely to move declarations; apply
+this to new code and to any function already being edited.
+
 ## Tests must come from R's and Python's own test suites
 
 If a function has an equivalent in R or in Python (SciPy, NumPy, pandas,

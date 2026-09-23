@@ -90,6 +90,46 @@ Revision history for Stats-LikeR
    has no prototype, because the XS one's ($@) would put anova(@fits) in
    scalar context. Validated in t/anova_fits.R.t against R and MASS.
 
+ [read_table: five bugs]
+
+ - The CSV parser split lines on $/, not on newlines, because sv_gets()
+   reads PL_rs. Under a `local $/;` anywhere up the call stack the whole
+   file was one "line" and read_table returned [] without a word; a record
+   length ($/ = \N) cut rows at N bytes. The parser, and the perl-side peek
+   that recovers a commented-out header, now split on "\n" whatever $/ is,
+   and a filter still sees the caller's $/.
+   t/read_table.input_record_separator.t.
+
+ - A UTF-8 byte-order mark, which Excel's "CSV UTF-8" export writes, was
+   read as part of the first header name ("\xEF\xBB\xBFid"), and hid a
+   comment or commented-out header behind it. It is dropped from the start
+   of the file, as pandas drops it; t/read_table.bom.pandas.t takes its
+   cases from pandas' test_utf8_bom and test_first_row_bom.
+
+ - In an .xlsx, a cell with formatting and no value (<c r="D1" s="1"/>)
+   past a row's last value widened every row to reach it, so a shaded
+   column came back as unnamed columns of undef and a duplicate-name
+   warning. Such cells no longer count toward the width, which is what
+   readxl 1.5.0 and pandas 2.2.3 give for the same workbook.
+
+ - A hoh read of a file whose only column is the row name came back as {}:
+   the per-row hash was only made when a value was stored in it. Each row
+   is now an empty hash, as R's read.table gives n rows of 0 columns. A read
+   error part-way through a CSV is now an error rather than a truncated
+   table.
+
+ [read_table: faster]
+
+ - 'hoh' now goes through the XS fast path that aoh and hoa already took,
+   with the perl closure's duplicate-row-name warning and undefined-row-name
+   error spelled the same; a 300,000 x 5 CSV reads in 0.20 s rather than
+   0.91 s. Only a 'filter' still needs the closure.
+
+ - An unquoted field is copied straight from the line buffer instead of
+   through the field accumulator, and the row hashes are filled through
+   shared-hash-key copies of the column names, so no key is hashed again
+   per cell. The same file reads as an aoh in 0.096 s rather than 0.120 s.
+
 0.318 2026-09-18 CDT
 
  [transpose() took the interpreter down on a tied array of arrays]

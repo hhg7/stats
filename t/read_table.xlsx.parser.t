@@ -21,8 +21,10 @@ use Stats::LikeR 'read_table';
 #   * t="str" / t="b" / t="e", which take the raw <v> like a number
 #   * a column reference too long to be one, and the ceiling that keeps one
 #     from costing more than the format's own 16,384 columns
-#   * the fast path (aoh/hoa, assembled in XS) and the callback path (a filter,
-#     or hoh) agreeing cell for cell -- the same rows reach both
+#   * the fast path (aoh/hoa/hoh, assembled in XS) and the callback path (a
+#     filter) agreeing cell for cell -- the same rows reach both
+#   * a self-closing cell with no value (a formatted blank) past the last
+#     value, which must not widen the table
 #
 # Fixtures are built here with core IO::Compress::Zip, as t/read_table.xlsx.t
 # builds its own, so the test needs no binary fixture and no CPAN reader.
@@ -289,6 +291,45 @@ sub mk {
 		'the two passes agree, so both output paths do too' );
 }
 
+# A formatted blank: a cell with a style and no value, which a writer records as
+# a self-closing <c r="D1" s="1"/>. Until 0.319 one past the last value widened
+# every row to reach it, so a column shaded to the bottom of the sheet came back
+# as unnamed columns of undef and a duplicate-name warning about ''. The sheet
+# XML below is openpyxl 3.1's, verbatim, for A1:B2 holding values and D1:D2
+# given a PatternFill and nothing else; pandas 2.2.3's read_excel() of that
+# workbook gives the two columns h1 and h2 and one row (1, 2), because its
+# openpyxl reader trims trailing empty cells from each row
+# (pandas/io/excel/_openpyxl.py, get_sheet_data: "trim trailing empty
+# elements"), and readxl 1.5.0's read_excel() of the same file gives the same
+# data frame. That is the table expected here.
+{
+	my $f = mk('<row r="1"><c r="A1" t="inlineStr"><is><t>h1</t></is></c>'
+	         .            '<c r="B1" t="inlineStr"><is><t>h2</t></is></c><c r="D1" s="1" t="n" /></row>'
+	         . '<row r="2"><c r="A2" t="n"><v>1</v></c><c r="B2" t="n"><v>2</v></c>'
+	         .            '<c r="D2" s="1" t="n" /></row>');
+	my @warn;
+	my $aoh = do { local $SIG{__WARN__} = sub { push @warn, $_[0] }; read_table($f) };
+	is_deeply( $aoh, [ { h1 => '1', h2 => '2' } ],
+		'formatted blank cells past the last value do not widen the table' );
+	is_deeply( \@warn, [], 'and there is no unnamed column to warn about' );
+	is_deeply( read_table($f, filter => { 0 => sub { 1 } }), $aoh,
+		'the callback path agrees' );
+	# the width is the parser's, so ask it directly as well
+	my @w;
+	Stats::LikeR::_parse_xlsx_sheet_xs('<sheetData><row r="1"><c r="A1"><v>1</v></c>'
+	  . '<c r="C1" s="2"/><c r="F1" s="2"/></row></sheetData>', [],
+		sub { push @w, [ @{ $_[0] } ] });
+	is_deeply( \@w, [ [ '1' ] ], 'a row of one value and two formatted blanks is one wide' );
+	# A formatted blank BEFORE the last value is a gap like any other, and a
+	# cell with no r= after one still goes to the column after it.
+	@w = ();
+	Stats::LikeR::_parse_xlsx_sheet_xs('<sheetData><row r="1"><c r="A1"><v>1</v></c>'
+	  . '<c r="B1" s="2"/><c><v>3</v></c></row></sheetData>', [],
+		sub { push @w, [ @{ $_[0] } ] });
+	is_deeply( \@w, [ [ '1', '', '3' ] ],
+		'a formatted blank mid-row still takes its column' );
+}
+
 # lower-case references
 {
 	my $f = mk('<row r="1"><c r="a1" t="s"><v>0</v></c><c r="b1" t="s"><v>1</v></c></row>'
@@ -333,9 +374,9 @@ sub mk {
 		'and the unnamed columns it adds warn once as duplicates' );
 }
 
-# The fast path and the callback path must see the same cells. aoh and hoa are
-# assembled in XS from the plan; a filter and hoh are not, so the same file read
-# four ways is the check that both paths agree.
+# The fast path and the callback path must see the same cells. aoh, hoa and
+# (since 0.319) hoh are assembled in XS from the plan; a filter is not, so the
+# same file read every way is the check that both paths agree.
 {
 	my $f = mk('<row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c><c r="C1" t="s"><v>2</v></c></row>'
 	         . '<row r="2"><c r="A2" t="s"><v>3</v></c><c r="B2"><v>1</v></c></row>'
@@ -352,10 +393,13 @@ sub mk {
 		'hoa through the XS fast path' );
 	is_deeply( read_table($f, filter => { 0 => sub { 1 } }), $aoh,
 		'a filter keeps every row through the perl callback path' );
+	my $hoh = { alpha => { n => '1', tag => undef },
+	            beta  => { n => '2', tag => 'alpha' } };
 	is_deeply( read_table($f, 'output.type' => 'hoh', 'row.names' => 'name'),
-		{ alpha => { n => '1', tag => undef },
-		  beta  => { n => '2', tag => 'alpha' } },
-		'hoh through the perl callback path' );
+		$hoh, 'hoh through the XS fast path' );
+	is_deeply( read_table($f, 'output.type' => 'hoh', 'row.names' => 'name',
+			filter => { 0 => sub { 1 } }),
+		$hoh, 'hoh through the perl callback path' );
 	is_deeply( read_table($f, 'na.strings' => 'alpha'),
 		[ { name => undef, n => '1', tag => undef },
 		  { name => 'beta', n => '2', tag => undef } ],
@@ -363,8 +407,8 @@ sub mk {
 }
 
 SKIP: {
-	skip 'Test::LeakTrace not installed', 8 unless $HAVE_LEAKTRACE;
-	skip 'running under Devel::Cover', 8 if $INC{'Devel/Cover.pm'};
+	skip 'Test::LeakTrace not installed', 9 unless $HAVE_LEAKTRACE;
+	skip 'running under Devel::Cover', 9 if $INC{'Devel/Cover.pm'};
 
 	# The parser is measured with the worksheet part already decompressed, so
 	# that what is counted is the code this file is about. Every path through
@@ -405,7 +449,7 @@ SKIP: {
 	my $unzip_leaks = Test::LeakTrace::leaked_count(
 		sub { Stats::LikeR::_unzip_member($f, 'xl/worksheets/sheet1.xml') });
 	skip "IO::Uncompress::Unzip leaks $unzip_leaks SV(s) per member on this perl",
-		4 if $unzip_leaks;
+		5 if $unzip_leaks;
 
 	my $dup = mk('<row r="1"><c r="A1" t="s"><v>0</v></c></row>'
 	           . '<row r="2"><c r="A2"><v>1</v></c><c r="A2" t="inlineStr"><is><t>d</t></is></c></row>',
@@ -416,6 +460,7 @@ SKIP: {
 	no_leaks_ok { read_table($f, 'output.type' => 'hoa') }       'no leaks: hoa fast path';
 	no_leaks_ok { read_table($f, filter => { 0 => sub { 1 } }) } 'no leaks: callback path';
 	no_leaks_ok { read_table($dup) }                             'no leaks: repeated column reference';
+	no_leaks_ok { read_table($f, 'output.type' => 'hoh') }       'no leaks: hoh fast path';
 }
 
 done_testing;

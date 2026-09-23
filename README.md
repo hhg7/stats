@@ -5656,6 +5656,13 @@ and, like Text::CSV_XS, filters can be applied in order to save RAM on big files
     );
 the default delimiter is `,`
 Suffixes `.csv` and `.tsv` are automatically detected from file names, but if specified, are overridden by `delim` and/or `sep`. `sep` is given priority.
+
+A UTF-8 byte-order mark at the start of a text file, which Excel's "CSV UTF-8"
+export writes, is dropped rather than read as part of the first column's name,
+as pandas' `read_csv` drops it. Lines always end at a newline whatever `$/` is
+set to, so a `local $/;` in the calling code does not change what is read.
+With `'output.type' => 'hoh'` a file whose only column is the row name gives
+one empty hash per row, as R's `read.table` gives a data frame of zero columns.
 ### missing values (`na.strings` / `na_values` / `undef.val`)
 An empty field is always read as `undef`. Any *other* text that a file uses to
 mean "missing" — `NA`, `N/A`, `NULL`, `-`, `-999` — has to be named. It is one
@@ -5750,7 +5757,9 @@ returns that one table directly (not wrapped in a hash).
 
 Limitations: dates and times are returned as their raw Excel serial numbers
 (cell number formats are not applied); shared-string rich-text runs are
-concatenated into a single value; and two things the format does not allow are
+concatenated into a single value; a cell that has formatting but no value is a
+blank, and blanks past a row's last value do not add columns (readxl and pandas
+leave them out too); and two things the format does not allow are
 read as if they were not there — a cell reference past `XFD`, the last of the
 16,384 columns a worksheet has, places the cell in the next column instead, and
 a numeric character reference above `&#x7FFFFFFF;` is left in the text rather

@@ -71,7 +71,7 @@ from sklearn import metrics
 
 DIR = os.environ.get('SCALE_DIR', '/tmp/likeR.scaling')
 RUNS = int(os.environ.get('SCALE_RUNS', 7))
-CAP = float(os.environ.get('SCALE_CAP', 4))
+CAP = float(os.environ.get('SCALE_CAP', 19))
 MAX_N = int(os.environ.get('SCALE_MAX_N', 0))
 TARGET = float(os.environ.get('SCALE_TARGET', 0.002))
 MAX_REPS = 10_000

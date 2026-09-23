@@ -14,12 +14,12 @@
 #
 #     --data      write the fixtures the I/O panels read
 #     --measure   time and weigh Stats::LikeR      -> perl_scaling.tsv
-#     --plot      draw the three .tsv files         -> scaling.*.svg
+#     --plot      draw the three .tsv files         -> svg/scaling.*.svg
 #
 # Every measurement is two numbers, not one: the seconds the call took, and the
 # bytes of resident memory it held at its high-water mark.  They are drawn as
-# two images per figure -- scaling.vector.svg against seconds and
-# scaling.vector.ram.svg against bytes -- carrying the same panels, the same
+# two images per figure -- svg/scaling.vector.svg against seconds and
+# svg/scaling.vector.ram.svg against bytes -- carrying the same panels, the same
 # ladder and the same runs, so every curve in one has its counterpart in the
 # same position in the other.
 #
@@ -36,7 +36,7 @@
 #          plot.scaling.pl --measure               # -> perl_scaling.tsv
 #     python3 scale.py                             # -> python_scaling.tsv
 #     Rscript scale.R                              # -> r_scaling.tsv
-#     perl plot.scaling.pl --plot                  # -> scaling.*.svg
+#     perl plot.scaling.pl --plot                  # -> svg/scaling.*.svg
 #
 # --measure writes any fixture that is missing before it starts, so --data is
 # only worth naming on its own when scale.py or scale.R will run first: those
@@ -108,7 +108,7 @@ usage: perl [-Iblib/arch -Iblib/lib] $0 [--data] [--measure] [--plot]
 
   --data      write the read_table/write_table fixtures into \$SCALE_DIR
   --measure   time and weigh Stats::LikeR      -> perl_scaling.tsv
-  --plot      draw perl/python/r_scaling.tsv   -> scaling.*.svg
+  --plot      draw perl/python/r_scaling.tsv   -> svg/scaling.*.svg
 
 With no switch, all three run in that order.  See the comment at the top of
 this file for the environment variables and for how scale.py and scale.R fit
@@ -130,6 +130,11 @@ if ($want_help) {
 	print $usage;
 	exit 0;
 }
+# A stage named without its dashes ("plot" for "--plot") is left in @ARGV by
+# Getopt::Long, and with no switch set the default below would then start all
+# three stages -- hours of --measure for someone who asked for a plot.  Only
+# --weigh takes positional arguments.
+die "unexpected argument(s): @ARGV\n$usage" if @ARGV && !$do_weigh;
 ($do_data, $do_measure, $do_plot) = (1, 1, 1)
 	unless $do_data || $do_measure || $do_plot || $do_weigh;
 
@@ -715,8 +720,8 @@ sub pin_to_one_cpu {
 	$said = '' unless defined $said;
 	my $after = cpus_allowed();
 	if (defined $after && $after eq $want) {
-		printf "pinned to CPU %s (was %s); run scale.py and scale.R under "
-		     . "taskset -c %s to match\n", $after, $before, $want;
+		printf "pinned to CPU %s (was %s); scale.py and scale.R pin to the "
+		     . "same CPU when given the same SCALE_CPU\n", $after, $before;
 	} else {
 		$said =~ s/\s+/ /g;
 		$said =~ s/\s+\z//;
@@ -931,6 +936,15 @@ sub weigh_one {
 	my $ok     = eval { $b->{code}->($input); 1 };
 	my $after  = proc_bytes($peak ? 'VmHWM' : 'VmRSS');
 
+	# The io builder names its write_table targets after $$, which here is this
+	# process and not the measure stage whose cleanup removes them, so they go
+	# now or they are left in $dir, one pair per weighing.
+	if (ref $input eq 'HASH') {
+		for my $out (grep { defined } @$input{qw(out out_xlsx)}) {
+			unlink $out if -f $out;
+		}
+	}
+
 	open STDOUT, '>&', $saved_out or die "cannot restore STDOUT: $!\n";
 	print +($ok && defined $before && defined $after ? $after - $before : ''), "\n";
 	return;
@@ -1003,6 +1017,11 @@ sub measure_all {
 						printf STDERR "%s at n=%d: %s\n", $b->{name}, $n, $err;
 						$too_slow{ $b->{name} } = 1;
 						$failed = 1;
+						# The runs before this one are already in @results
+						# without their bytes column, which would leave the .tsv
+						# ragged; a cell where the call died is not a
+						# measurement, so they go.
+						splice @results, -$run if $run;
 						last;
 					}
 					$slowest   = $secs if $secs > $slowest;
@@ -1046,7 +1065,7 @@ sub measure_all {
 	}
 
 	# 'bytes' is how far the resident set rose above its baseline during one
-	# call, floor subtracted, and 'NA' where this platform has no
+	# call, as weigh_one() takes it, and 'NA' where this platform has no
 	# /proc/self/status to read it from.  scale.py and scale.R write the same
 	# seven columns, each weighing the call the way its own language can --
 	# tracemalloc's peak and gc()'s max-used -- so the RAM panels compare the
@@ -1147,7 +1166,7 @@ sub fit_slope {
 # 8. The --plot stage
 # ---------------------------------------------------------------------------
 # One image per figure -- scaling.vector.svg, scaling.transform.svg,
-# scaling.io.svg, scaling.frame.svg -- and one panel per function inside it,
+# scaling.io.svg, scaling.frame.svg, all under $svg_dir -- and one panel per function inside it,
 # with Stats::LikeR, Python and R drawn together.
 #
 # The panels are Matplotlib::Simple's "wide" plot type, which is what these
@@ -1181,6 +1200,8 @@ sub fit_slope {
 # The three files, in the order their lines are labelled.  A file that is not
 # there is skipped with a warning rather than being fatal: one language's
 # curves are still worth looking at.
+my $svg_dir = 'svg';	# every image goes here; the .tsv files stay beside this script
+
 my @sources = (
 	{ file => $perl_tsv,            group => 'Stats::LikeR', color => 'blue'  },
 	{ file => 'python_scaling.tsv', group => 'Python',       color => 'green' },
@@ -1357,7 +1378,7 @@ sub draw_figure_set {
 		$plots[0]{suptitle} = pyq(sprintf '%s -- %s, %s',
 			$figure_title{$figure}, $q->{measures}, join(' vs ', @langs));
 
-		my $out = "scaling.$figure$q->{suffix}.svg";
+		my $out = File::Spec->catfile($svg_dir, "scaling.$figure$q->{suffix}.svg");
 		Matplotlib::Simple::plt(
 			'output.file' => $out,
 			ncols         => $ncols,
@@ -1378,6 +1399,7 @@ sub plot_all {
 	# the file would make --measure -- the stage that takes hours -- fail at
 	# startup on a machine with no plotting stack.
 	require Matplotlib::Simple;
+	File::Path::make_path($svg_dir) unless -d $svg_dir;
 
 	# $series{$quantity}{$figure}{$function}{$group}{$run} = [ [n, y], ... ]
 	# $panel_order{$figure} keeps first-appearance order, so the panels come out

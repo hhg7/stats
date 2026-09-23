@@ -58,7 +58,7 @@
 .\" ========================================================================
 .\"
 .IX Title "read.me 3"
-.TH read.me 3 2026-09-22 "perl v5.44.0" "User Contributed Perl Documentation"
+.TH read.me 3 2026-09-23 "perl v5.44.0" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -6140,6 +6140,13 @@ and, like Text::CSV_XS, filters can be applied in order to save RAM on big files
 the default delimiter is \f(CW\*(C`,\*(C'\fR
 Suffixes \f(CW\*(C`.csv\*(C'\fR and \f(CW\*(C`.tsv\*(C'\fR are automatically detected from file names, but if specified, are overridden by \f(CW\*(C`delim\*(C'\fR and/or \f(CW\*(C`sep\*(C'\fR. \f(CW\*(C`sep\*(C'\fR is given priority.
 .PP
+A UTF\-8 byte\-order mark at the start of a text file, which Excel\*(Aqs "CSV UTF\-8"
+export writes, is dropped rather than read as part of the first column\*(Aqs name,
+as pandas\*(Aq \f(CW\*(C`read_csv\*(C'\fR drops it. Lines always end at a newline whatever \f(CW$/\fR is
+set to, so a \f(CW\*(C`local $/;\*(C'\fR in the calling code does not change what is read.
+With \f(CW\*(Aqoutput.type\*(Aq => \*(Aqhoh\*(Aq\fR a file whose only column is the row name gives
+one empty hash per row, as R\*(Aqs \f(CW\*(C`read.table\*(C'\fR gives a data frame of zero columns.
+.PP
 \fImissing values (\fR\f(CI\*(C`na.strings\*(C'\fR\fI / \fR\f(CI\*(C`na_values\*(C'\fR\fI / \fR\f(CI\*(C`undef.val\*(C'\fR\fI)\fR
 .IX Subsection "missing values (na.strings / na_values / undef.val)"
 .PP
@@ -6252,7 +6259,9 @@ returns that one table directly (not wrapped in a hash).
 .PP
 Limitations: dates and times are returned as their raw Excel serial numbers
 (cell number formats are not applied); shared\-string rich\-text runs are
-concatenated into a single value; and two things the format does not allow are
+concatenated into a single value; a cell that has formatting but no value is a
+blank, and blanks past a row\*(Aqs last value do not add columns (readxl and pandas
+leave them out too); and two things the format does not allow are
 read as if they were not there — a cell reference past \f(CW\*(C`XFD\*(C'\fR, the last of the
 16,384 columns a worksheet has, places the cell in the next column instead, and
 a numeric character reference above \f(CW\*(C`&#x7FFFFFFF;\*(C'\fR is left in the text rather
