@@ -23,7 +23,9 @@ Revision history for Stats-LikeR
    within-group demeaning instead of expanded into dummy columns, so a
    factor with thousands of levels costs a vector per level rather than a
    column. Groups whose outcome sits at a boundary are dropped, as
-   fixest::feglm() drops them, and fe.removed counts their rows.
+   fixest::feglm() drops them, and fe.removed counts their rows; only rows
+   with a positive weight decide that, so a zero-weight count cannot keep an
+   all-zero group in the fit.
 
  - The IRLS loop was rewritten around one core shared with the new models
    below, with maxit and epsilon exposed and R's convergence rule and
@@ -39,6 +41,30 @@ Revision history for Stats-LikeR
  - Validated in t/glm_offset_weights.R.t, t/glm_vcov.R.t and
    t/glm_absorb.R.t against R's glm, MASS, sandwich and fixest test suites,
    statsmodels' and Stata's pinned results, and a full-dummy fit.
+
+ [glm(): Inf, a NaN in step-halving, and large negative-binomial counts]
+
+ - An infinite response, covariate, offset or weight is not missing, so its
+   row went into the fit and every coefficient came back NaN without a word.
+   glm() now croaks "NA/NaN/Inf in 'y'" (or 'x', 'offset', 'weights') with
+   the row name, as R's Cdqrls() stops.
+
+ - A coefficient aliased on one IRLS iteration was carried into the next as
+   NaN, so if the column stopped being aliased and the step was halved, the
+   NaN reached the linear predictor. It is carried as 0, as glm.fit() does.
+
+ - The negative-binomial log-likelihood summed y logs per row for every
+   count below 1e6, so a fit cost O(sum y): 20000 counts near 34000 took
+   11.7 s against 0.01 s for the Poisson fit. Counts from 64 up now go
+   through Loader's stirlerr(), and the fit takes 0.03 s. It is also more
+   accurate: 3e-13 relative against mpmath at 60 digits, where the long sum
+   was 1.9e-9 out. t/glm.t pins it.
+
+ - X'WX is accumulated over its upper triangle only and skips zero-weight
+   rows, halving the IRLS loop's main cost and leaving the matrix exactly
+   symmetric; coefficients move by about 1e-12. Absorbed factors are
+   demeaned all columns in one pass over the rows, bit for bit as before,
+   and vcovHC() no longer holds an n x p copy of the scores.
 
  [coxph(): counting-process data, strata, robust variance, a formula]
 
@@ -129,6 +155,22 @@ Revision history for Stats-LikeR
    through the field accumulator, and the row hashes are filled through
    shared-hash-key copies of the column names, so no key is hashed again
    per cell. The same file reads as an aoh in 0.096 s rather than 0.120 s.
+
+ [write_table: wide characters in row.names and tex.longtable.head]
+
+ - write_table() croaked "Wide character in subroutine entry" when
+   row.names named a column outside Latin-1, or when tex.longtable.head was
+   such a caption: the XS check for a non-numeric value read it with
+   SvPVbyte. It now reads the bytes as stored, and no longer downgrades the
+   caller's string in place or hands isdigit() a negative char. Found by
+   XS::Check; t/write_table.t and t/write_table.longtable.t pin both.
+
+ [dunn_test, p_adjust: method names fold by ASCII rules]
+
+ - The method name was lowercased with tolower(), which is undefined for a
+   byte >= 0x80 in a signed char and follows LC_CTYPE, so under a Turkish
+   single-byte locale 'BONFERRONI' folded its I outside ASCII and was
+   rejected. Both now fold A-Z only. t/dunn_test.t and t/p_adjust.R.t.
 
 0.318 2026-09-18 CDT
 

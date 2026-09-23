@@ -232,6 +232,11 @@ wrote_ok( "name\nAlice\nBob\n", 'col.names selects a subset in order', \%hoa, 'c
 wrote_ok( "age,name\n30,Alice\n25,Bob\n", 'row.names => 0 omits the label column', \%hoa, 'row.names' => 0, 'undef.val' => 'NA' );
 # 7. row.names => 'col' uses that column as the labels and drops it from headers.
 wrote_ok( ",age\nAlice,30\nBob,25\n", "row.names => 'name' uses that column as labels", \%hoa, 'row.names' => 'name', 'undef.val' => 'NA' );
+#    ... including a column name outside Latin-1, which up to 0.319 croaked
+#    "Wide character" in the XS digit check before it was ever looked up.
+wrote_ok( ",age\nAlice,30\nBob,25\n", 'row.names => a wide-character column name',
+	{ "\x{540d}" => [ 'Alice', 'Bob' ], 'age' => [ 30, 25 ] },
+	'row.names' => "\x{540d}", 'undef.val' => 'NA' );
 # 8. Explicit separator.
 wrote_ok( "a;b;c\n1;2;3\n", 'sep => ";" is honored', \%flat, 'sep' => ';', 'undef.val' => 'NA' );
 # 9. delim is an alias for sep.

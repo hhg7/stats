@@ -2842,7 +2842,8 @@ order it arrived in.*/
 // Lowercase `method` into `out` (PA_METH_LEN bytes) and resolve its aliases
 static void pa_method(const char *method, char *out) {
 	strncpy(out, method, PA_METH_LEN - 1); out[PA_METH_LEN - 1] = '\0';
-	for (unsigned short int i = 0; out[i]; i++) out[i] = tolower(out[i]);
+	/*ASCII fold, not tolower(): see the same loop in dunn_test.*/
+	for (unsigned short int i = 0; out[i]; i++) out[i] = toLOWER((U8)out[i]);
 	if (strstr(out, "benjamini") && strstr(out, "hochberg"))  strcpy(out, "bh");
 	if (strstr(out, "benjamini") && strstr(out, "yekutieli")) strcpy(out, "by");
 	if (strcmp(out, "fdr") == 0) strcpy(out, "bh");
@@ -4514,15 +4515,23 @@ static void write_table_announce(pTHX_ const char *file) {
 	PerlIO_flush(out);
 }
 
-// Emulates Perl's /\D/ check
+/*Does `sv` hold anything but ASCII digits -- Perl's /\D/ under /a.
+
+This asks about bytes, not characters, so it reads the buffer as stored with
+plain SvPV (xs.check.pl flags it for that; the ambiguity is deliberate). Every
+byte of a UTF-8 multibyte sequence is >= 0x80, so a character outside ASCII is
+a non-digit in either encoding. SvPVbyte was what this used, and it croaked
+"Wide character" on any non-Latin-1 row.names or tex.longtable.head, and
+downgraded the caller's SV in place. isdigit() is avoided because a byte >=
+0x80 in a signed char is a negative argument, which is undefined behaviour.*/
 static bool contains_nondigit(pTHX_ SV *sv) {
-	if (!sv || !SvOK(sv)) return 0;
+	if (!sv || !SvOK(sv)) return FALSE;
 	STRLEN len;
-	char *s = SvPVbyte(sv, len);
+	const char *s = SvPV(sv, len);	// no restrict: a PV perl may share (COW)
 	for (size_t i = 0; i < len; i++) {
-	  if (!isdigit(s[i])) return 1;
+		if (s[i] < '0' || s[i] > '9') return TRUE;
 	}
-	return 0;
+	return FALSE;
 }
 
 static void print_string_row(pTHX_ PerlIO *fh,
@@ -5464,19 +5473,46 @@ static NV dev_negbin(NV y, NV mu, NV th) {
 /*Total log-likelihood of a fitted negative-binomial model (used for the
 theta outer-loop convergence check and AIC), weighted by w when it is not
 NULL -- glm.nb's loglik(n, th, mu, y, w).*/
+static NV bt_stirlerr(NV n);   //defined with the binomial helpers below
+
+/*Counts below this have lgamma(th + y) - lgamma(th) summed as the logs of
+th, th + 1, ..., th + y - 1, which is exact where the two lgamma()s would
+cancel.  Up to 0.318 the sum ran for every count below 1e6, which made a
+negative-binomial fit cost O(sum y) logs per log-likelihood: 20000 counts
+averaging 34000 took 11.7 s against 0.01 s for the Poisson fit of the same
+data.  64 keeps the exact sum for every count in the test corpora.*/
+#define NB_LGDIFF_LOOP 64
+
+/*lgamma(th + y) - lgamma(th) for y >= 0 without cancellation at large th.
+
+Past NB_LGDIFF_LOOP, with th > 15, it is written through Loader's stirlerr()
+(lgamma(z + 1) = stirlerr(z) + (z + 1/2) log z - z + log sqrt(2 pi)): with
+N = th + y,
+
+    lgamma(N) - lgamma(th) = stirlerr(N) - stirlerr(th) + (th - 1/2) log1p(y/th)
+                             + y (log N - 1)
+
+in which no term is larger than the answer by more than a factor of log N.
+At th <= 15 lgamma(th) is small, so the plain difference loses nothing.*/
+static NV nb_lgamma_diff(NV y, NV th) {
+	NV k = nv_floor(y + 0.5);
+	if (nv_fabs(y - k) < 1e-9 && k >= 0.0 && k < NB_LGDIFF_LOOP) {
+		NV lg = 0.0;
+		for (NV j = 0.0; j < k; j += 1.0) lg += nv_log(th + j);
+		return lg;
+	}
+	if (th <= 15.0) return nv_lgamma(th + y) - nv_lgamma(th);
+	{
+		NV N = th + y;
+		return bt_stirlerr(N) - bt_stirlerr(th) + (th - 0.5) * nv_log1p(y / th) + y * (nv_log(N) - 1.0);
+	}
+}
+
 static NV nb_loglik(const NV *y, const NV *mu, const NV *w, size_t n, NV th) {
 	NV ll = 0.0;
 	for (size_t i = 0; i < n; i++) {
 		NV yi = y[i], mi = mu[i];
-		/*lgamma(th+yi) - lgamma(th): sum logs directly for integer counts to
-		avoid catastrophic cancellation when th is large (near-Poisson).*/
-		NV lg, k = nv_floor(yi + 0.5);
-		if (nv_fabs(yi - k) < 1e-9 && k >= 0.0 && k < 1e6) {
-			lg = 0.0;
-			for (NV j = 0.0; j < k; j += 1.0) lg += nv_log(th + j);
-		} else {
-			lg = nv_lgamma(th + yi) - nv_lgamma(th);
-		}
+		NV lg = nb_lgamma_diff(yi, th);
 		//th*log(th) + yi*log(mu) - (th+yi)*log(th+mu), regrouped for stability
 		ll += (w ? w[i] : 1.0) * (lg - nv_lgamma(yi + 1.0)
 			- th * nv_log1p(mi / th)
@@ -5540,6 +5576,11 @@ two-factor corpus in t/glm_absorb.R.t it takes 30 to 40 sweeps.  One factor
 needs no iteration at all.*/
 #define GLM_FE_TOL      1e-13
 #define GLM_FE_MAXSWEEP 100000   //bound only; never reached on the test corpora
+/*Columns demeaned together in one pass over the rows.  Each fe_s[k] scratch
+holds ng[k] * GLM_FE_BLOCK sums, so this caps what a factor with nearly as many
+levels as rows costs in memory; 16 covers every design in the test corpora in a
+single block.*/
+#define GLM_FE_BLOCK    16
 
 typedef struct {
 	size_t        n, p;      //rows (zero-weight ones included), design columns
@@ -5553,7 +5594,7 @@ typedef struct {
 	size_t      **fe;        //fe[k][i]: row i's group in factor k
 	const size_t *ng;        //fe[k] takes values 0 .. ng[k] - 1
 	NV          **fe_sw;     //scratch, ng[k] each: sum of weights per group
-	NV          **fe_s;      //scratch, ng[k] each: weighted sum per group
+	NV          **fe_s;      //scratch, ng[k] * GLM_FE_BLOCK each: weighted sums per group
 	NV           *Xd, *Zd;   //demeaned X and z; NULL when nfe == 0
 	NV           *lin;       //nfe > 0: eta - offset at the current step
 	NV           *lin_prev;  //nfe > 0: the same at the last accepted step
@@ -5598,33 +5639,65 @@ static NV glm_mu_eta(short int fam, NV mu) {
 	return 1.0;
 }
 
-/*Weighted within-group demeaning of the vector v[0], v[stride], ...,
-v[(n-1)*stride], in place, against every absorbed factor.  g->fe_sw must
+/*Weighted within-group demeaning of columns 0 .. ncol-1 of the row-major
+n x ld matrix v, in place, against every absorbed factor.  g->fe_sw must
 already hold this iteration's per-group weight sums.  Neither pointer is
-restrict: v points into g->Xd or g->Zd.*/
-static void glm_fe_demean(GlmIrls *g, NV *v, size_t stride) {
-	size_t n = g->n, i;
-	NV scale = 0.0;
-	for (i = 0; i < n; i++) {
-		NV a = nv_fabs(v[i * stride]);
-		if (a > scale) scale = a;
-	}
-	for (unsigned int sweep = 0; sweep < GLM_FE_MAXSWEEP; sweep++) {
-		NV moved = 0.0;
-		for (unsigned short int k = 0; k < g->nfe; k++) {
-			NV *s = g->fe_s[k];
-			const NV *sw = g->fe_sw[k];
-			const size_t *grp = g->fe[k];
-			for (size_t q = 0; q < g->ng[k]; q++) s[q] = 0.0;
-			for (i = 0; i < n; i++) s[grp[i]] += g->W[i] * v[i * stride];
-			for (size_t q = 0; q < g->ng[k]; q++) {
-				s[q] = (sw[q] > 0.0) ? s[q] / sw[q] : 0.0;
-				if (nv_fabs(s[q]) > moved) moved = nv_fabs(s[q]);
+restrict: v points into g->Xd or g->Zd.
+
+This used to take one column at a time, striding through a row-major Xd p
+times per factor per sweep.  The columns now go through together, up to
+GLM_FE_BLOCK at once, but each keeps its own scale and its own stopping sweep
+-- a column leaves the active list after exactly the sweep it would have
+stopped on alone -- so every column gets the arithmetic it got before, in the
+same order, bit for bit.*/
+static void glm_fe_demean(GlmIrls *g, NV *v, size_t ld, size_t ncol) {
+	const size_t n = g->n;
+	for (size_t j0 = 0; j0 < ncol; j0 += GLM_FE_BLOCK) {
+		const size_t b = (ncol - j0 < GLM_FE_BLOCK) ? ncol - j0 : GLM_FE_BLOCK;
+		NV scale[GLM_FE_BLOCK], moved[GLM_FE_BLOCK];
+		size_t act[GLM_FE_BLOCK], nact = b;   //act[0 .. nact-1]: columns still sweeping
+		NV *vb = v + j0;
+		for (size_t c = 0; c < b; c++) { scale[c] = 0.0; act[c] = c; }
+		for (size_t i = 0; i < n; i++)
+			for (size_t c = 0; c < b; c++) {
+				NV a = nv_fabs(vb[i * ld + c]);
+				if (a > scale[c]) scale[c] = a;
 			}
-			for (i = 0; i < n; i++) v[i * stride] -= s[grp[i]];
+		for (unsigned int sweep = 0; sweep < GLM_FE_MAXSWEEP; sweep++) {
+			size_t keep = 0;
+			for (size_t a = 0; a < nact; a++) moved[act[a]] = 0.0;
+			for (unsigned short int k = 0; k < g->nfe; k++) {
+				NV *s = g->fe_s[k];
+				const NV *sw = g->fe_sw[k];
+				const size_t *grp = g->fe[k];
+				for (size_t q = 0; q < g->ng[k]; q++)
+					for (size_t a = 0; a < nact; a++) s[q * b + act[a]] = 0.0;
+				for (size_t i = 0; i < n; i++) {
+					NV *sq = s + grp[i] * b;
+					const NV *vi = vb + i * ld;
+					for (size_t a = 0; a < nact; a++) sq[act[a]] += g->W[i] * vi[act[a]];
+				}
+				for (size_t q = 0; q < g->ng[k]; q++)
+					for (size_t a = 0; a < nact; a++) {
+						size_t c = act[a];
+						NV m = (sw[q] > 0.0) ? s[q * b + c] / sw[q] : 0.0;
+						s[q * b + c] = m;
+						if (nv_fabs(m) > moved[c]) moved[c] = nv_fabs(m);
+					}
+				for (size_t i = 0; i < n; i++) {
+					const NV *sq = s + grp[i] * b;
+					NV *vi = vb + i * ld;
+					for (size_t a = 0; a < nact; a++) vi[act[a]] -= sq[act[a]];
+				}
+			}
+			if (g->nfe == 1) break;              //one factor: exact in one pass
+			for (size_t a = 0; a < nact; a++) {
+				size_t c = act[a];
+				if (!(moved[c] <= GLM_FE_TOL * scale[c] || moved[c] == 0.0)) act[keep++] = c;
+			}
+			nact = keep;
+			if (nact == 0) break;
 		}
-		if (g->nfe == 1) break;              //one factor: exact in one pass
-		if (moved <= GLM_FE_TOL * scale || moved == 0.0) break;
 	}
 }
 
@@ -5648,9 +5721,11 @@ static void glm_irls(GlmIrls *restrict g, bool warm, unsigned int max_iter, NV e
 	NV *beta = g->beta, *beta_old = g->beta_old, *XtWX = g->XtWX, *XtWZ = g->XtWZ;
 	bool *aliased = g->aliased;
 	NV deviance_old = 0.0, deviance_new = 0.0;
+	NV *raw = NULL;      //nfe > 0: each column's weighted sum of squares before demeaning
 	unsigned int iter;
 	size_t i, j;
 
+	if (g->nfe) Newx(raw, p ? p : 1, NV);
 	g->converged = FALSE;
 	g->boundary  = FALSE;
 	if (warm) {
@@ -5722,21 +5797,28 @@ static void glm_irls(GlmIrls *restrict g, bool warm, unsigned int max_iter, NV e
 			}
 			memcpy(g->Xd, X, n * p * sizeof(NV));
 			memcpy(g->Zd, Z, n * sizeof(NV));
-			for (j = 0; j < p; j++) glm_fe_demean(g, g->Xd + j, p);
-			glm_fe_demean(g, g->Zd, 1);
+			glm_fe_demean(g, g->Xd, p, p);
+			glm_fe_demean(g, g->Zd, 1, 1);
 			Xs = g->Xd; Zs = g->Zd;
 		} else {
 			Xs = X; Zs = Z;
 		}
-		for (i = 0; i < p; i++) { XtWZ[i] = 0.0; for (j = 0; j < p; j++) XtWX[i * p + j] = 0.0; }
+	/*Only the upper triangle is accumulated and then mirrored: it halves the
+	O(n p^2) work that dominates a fit without absorbed factors, and leaves
+	the matrix handed to the sweep exactly symmetric.  A zero-weight row adds
+	nothing, and is skipped.*/
+		for (i = 0; i < p; i++) { XtWZ[i] = 0.0; for (j = i; j < p; j++) XtWX[i * p + j] = 0.0; }
 		for (size_t k = 0; k < n; k++) {
-			NV w = W[k], z = Zs[k];
+			const NV w = W[k], z = Zs[k];
+			const NV *xk = Xs + k * p;
+			if (w == 0.0) continue;
 			for (i = 0; i < p; i++) {
-				XtWZ[i] += Xs[k * p + i] * w * z;
-				NV xw = Xs[k * p + i] * w;
-				for (j = 0; j < p; j++) XtWX[i * p + j] += xw * Xs[k * p + j];
+				const NV xw = xk[i] * w;
+				XtWZ[i] += xw * z;
+				for (j = i; j < p; j++) XtWX[i * p + j] += xw * xk[j];
 			}
 		}
+		for (i = 1; i < p; i++) for (j = 0; j < i; j++) XtWX[i * p + j] = XtWX[j * p + i];
 		if (g->nfe) {
 	/*A column the absorbed factors explain completely -- a covariate that
 	never changes within a child -- demeans to rounding noise rather than to
@@ -5744,10 +5826,13 @@ static void glm_irls(GlmIrls *restrict g, bool warm, unsigned int max_iter, NV e
 	it is handed, which is then that same noise.  Judge it against the
 	column's weighted sum of squares BEFORE demeaning instead, with the
 	sweep's own 1e-10, and zero it so the sweep sees what it is.*/
+			for (j = 0; j < p; j++) raw[j] = 0.0;
+			for (i = 0; i < n; i++) {
+				const NV *xi = X + i * p;
+				for (j = 0; j < p; j++) raw[j] += W[i] * xi[j] * xi[j];
+			}
 			for (j = 0; j < p; j++) {
-				NV raw = 0.0;
-				for (i = 0; i < n; i++) raw += W[i] * X[i * p + j] * X[i * p + j];
-				if (XtWX[j * p + j] <= 1e-10 * raw) {
+				if (XtWX[j * p + j] <= 1e-10 * raw[j]) {
 					for (i = 0; i < p; i++) { XtWX[j * p + i] = 0.0; XtWX[i * p + j] = 0.0; }
 					XtWZ[j] = 0.0;
 				}
@@ -5804,11 +5889,16 @@ static void glm_irls(GlmIrls *restrict g, bool warm, unsigned int max_iter, NV e
 			g->converged = TRUE; break;
 		}
 		deviance_old = deviance_new;
-		for (j = 0; j < p; j++) beta_old[j] = beta[j];
+	/*An aliased coefficient is carried as 0, not NaN, into the next step's
+	halving -- glm.fit() likewise iterates on Cdqrls()'s zero there -- so a
+	column that is aliased on one iteration and not on the next cannot pull a
+	NaN into the halved linear predictor.*/
+		for (j = 0; j < p; j++) beta_old[j] = aliased[j] ? 0.0 : beta[j];
 		if (g->nfe) memcpy(g->lin_prev, g->lin, n * sizeof(NV));
 	}
 	g->iter = iter > max_iter ? max_iter : iter;
 	g->dev  = deviance_new;
+	if (raw) Safefree(raw);
 }
 
 //lm_design_free() in the shape SAVEDESTRUCTOR_X() calls.
@@ -6034,14 +6124,26 @@ Xs is the design the bread was formed from -- the demeaned one when factors
 were absorbed, which gives exactly the beta block of the dummy-column model's
 sandwich (the dummies' own score rows sum to zero within each group).
 out is p x p; aliased rows and columns come back 0.*/
+/*M += s s', upper triangle only; the caller mirrors it once at the end.*/
+static void glm_meat_add(const NV *restrict s, size_t p, NV *restrict M) {
+	for (size_t j = 0; j < p; j++) {
+		const NV a = s[j];
+		if (a == 0.0) continue;
+		for (size_t l = j; l < p; l++) M[j * p + l] += a * s[l];
+	}
+}
+
 static void glm_sandwich(size_t n, size_t p, const NV *restrict Xs, const NV *restrict W,
                          const NV *restrict wres, const NV *restrict XtWXinv, const bool *restrict aliased,
                          const size_t *restrict cl, size_t G, short int type,
                          size_t n_ok, size_t k, NV *restrict out) {
 	//type: 0 = HC0, 1 = HC1, 2 = HC2, 3 = HC3 (2 and 3 only without clusters)
 	NV *S, *M, *T;
-	size_t i, j, l, ng = cl ? G : n;
+	size_t i, j, l, ng = cl ? G : 1;
 	NV adj;
+	/*With clusters S holds one score sum per cluster.  Without, every row is
+	its own cluster and its score is folded into M as soon as it is formed, so
+	S is a single row rather than a second n x p copy of the design.*/
 	Newxz(S, (ng ? ng : 1) * (p ? p : 1), NV);
 	Newxz(M, (p ? p * p : 1), NV);
 	Newxz(T, (p ? p * p : 1), NV);
@@ -6059,14 +6161,15 @@ static void glm_sandwich(size_t n, size_t p, const NV *restrict Xs, const NV *re
 			h *= W[i];
 			sc = (type == 2) ? sc / nv_sqrt(1.0 - h) : sc / (1.0 - h);
 		}
-		for (j = 0; j < p; j++) if (!aliased[j]) S[row * p + j] += sc * Xs[i * p + j];
-	}
-	for (size_t q = 0; q < ng; q++)
-		for (j = 0; j < p; j++) {
-			NV a = S[q * p + j];
-			if (a == 0.0) continue;
-			for (l = 0; l < p; l++) M[j * p + l] += a * S[q * p + l];
+		if (cl) {
+			for (j = 0; j < p; j++) if (!aliased[j]) S[row * p + j] += sc * Xs[i * p + j];
+		} else {
+			for (j = 0; j < p; j++) S[j] = aliased[j] ? 0.0 : sc * Xs[i * p + j];
+			glm_meat_add(S, p, M);
 		}
+	}
+	if (cl) for (size_t q = 0; q < ng; q++) glm_meat_add(S + q * p, p, M);
+	for (j = 1; j < p; j++) for (l = 0; l < j; l++) M[j * p + l] = M[l * p + j];
 	//T = B M, out = T B
 	for (j = 0; j < p; j++)
 		for (l = 0; l < p; l++) {
@@ -6114,7 +6217,7 @@ static void glm_vcov_robust(pTHX_ size_t n, size_t p, const NV *restrict Xs, con
 	}
 	{
 		NV *part;
-		size_t *lab;
+		size_t *lab;         //the intersection's labels, for a subset of two or more
 		Newx(part, p * p, NV);
 		Newx(lab, n, size_t);
 		for (size_t q = 0; q < p * p; q++) out[q] = 0.0;
@@ -6122,12 +6225,13 @@ static void glm_vcov_robust(pTHX_ size_t n, size_t p, const NV *restrict Xs, con
 			unsigned int bits = 0;
 			NV sign;
 			size_t G;
+			const size_t *labs = lab;   //a single clustering's own labels are used as they are
 			for (unsigned short int c = 0; c < ncl; c++) if (mask & (1u << c)) bits++;
 			sign = (bits % 2) ? 1.0 : -1.0;
 			if (bits == 1) {
 				unsigned short int c = 0;
 				while (!(mask & (1u << c))) c++;
-				memcpy(lab, CLv[c], n * sizeof(size_t));
+				labs = CLv[c];
 				G = Gv[c];
 			} else {
 				HV *map = newHV();
@@ -6153,7 +6257,7 @@ static void glm_vcov_robust(pTHX_ size_t n, size_t p, const NV *restrict Xs, con
 			other completely -- then every row is its own group or all share
 			one, and the subset adds nothing.*/
 			if (G < 2) continue;
-			glm_sandwich(n, p, Xs, W, wres, XtWXinv, aliased, lab, G, 0, n_ok, k, part);
+			glm_sandwich(n, p, Xs, W, wres, XtWXinv, aliased, labs, G, 0, n_ok, k, part);
 			for (size_t q = 0; q < p * p; q++) out[q] += sign * part[q];
 		}
 		if (type == 1)
@@ -20893,6 +20997,17 @@ SV *glm(...)
 				                   fe_map[k], &fe_count[k], &FE[k][valid_n]))
 					ok = FALSE;
 			if (!ok) continue;
+	/*An infinite value is not missing, so na.omit keeps its row, and R then
+	stops in Cdqrls() with "NA/NaN/Inf in 'y'" (or 'x').  Up to 0.318 such a
+	row went into the fit here and every coefficient came back NaN.*/
+			if (!nv_isfinite(y_val))
+				croak("glm: NA/NaN/Inf in 'y' (row '%s')", row_names[i]);
+			for (j = col0; j < p_full; j++)
+				if (!nv_isfinite(rowbuf[j]))
+					croak("glm: NA/NaN/Inf in 'x' (row '%s')", row_names[i]);
+			if (!nv_isfinite(o) || !nv_isfinite(w))
+				croak("glm: NA/NaN/Inf in '%s' (row '%s')", nv_isfinite(o) ? "weights" : "offset",
+				      row_names[i]);
 	/*A missing cluster is an error rather than a dropped row: the cluster is
 	not part of the model, so dropping the row would change the fit, and
 	sandwich::vcovCL() refuses one too ("cannot handle NAs in 'cluster'").*/
@@ -20959,8 +21074,15 @@ SV *glm(...)
 			bool any = FALSE;
 			for (i = 0; i < valid_n; i++) drop[i] = FALSE;
 			for (unsigned short int k = 0; k < nfe; k++) {
+	/*Only rows with a positive prior weight say anything about a group's
+	effect: a zero-weight row is carried through the fit but contributes
+	nothing to it, so a group whose weighted rows are all 0 is still at the
+	boundary however many zero-weight positive counts it holds.*/
 				for (size_t q = 0; q < NG[k]; q++) { gs[q] = 0.0; gc[q] = 0; }
-				for (i = 0; i < valid_n; i++) { gs[FE[k][i]] += Y[i]; gc[FE[k][i]]++; }
+				for (i = 0; i < valid_n; i++) {
+					if (PW && !(PW[i] > 0.0)) continue;
+					gs[FE[k][i]] += Y[i]; gc[FE[k][i]]++;
+				}
 				for (i = 0; i < valid_n; i++) {
 					size_t q = FE[k][i];
 					if (gs[q] == 0.0 || (fam == GLM_BINOMIAL && gs[q] == (NV)gc[q])) {
@@ -20988,6 +21110,8 @@ SV *glm(...)
 			}
 			if (valid_n == 0) croak("glm: every group of the absorbed factor has a constant outcome");
 		}
+		if (valid_n < p)
+			croak("glm: 0 degrees of freedom (too many NAs or parameters > observations)");
 	}
 	/*Dense 0-based numbering again, now that groups may have gone.*/
 	{
@@ -21026,9 +21150,10 @@ SV *glm(...)
 		Newx(g.lin_prev, valid_n, NV);         SAVEFREEPV(g.lin_prev);
 		Newx(g.fe_sw, nfe, NV *);              SAVEFREEPV(g.fe_sw);
 		Newx(g.fe_s,  nfe, NV *);              SAVEFREEPV(g.fe_s);
+		const size_t blk = (p == 0) ? 1 : (p < GLM_FE_BLOCK) ? p : GLM_FE_BLOCK;
 		for (unsigned short int k = 0; k < nfe; k++) {
-			Newx(g.fe_sw[k], NG[k] ? NG[k] : 1, NV); SAVEFREEPV(g.fe_sw[k]);
-			Newx(g.fe_s[k],  NG[k] ? NG[k] : 1, NV); SAVEFREEPV(g.fe_s[k]);
+			Newx(g.fe_sw[k], NG[k] ? NG[k] : 1, NV);         SAVEFREEPV(g.fe_sw[k]);
+			Newx(g.fe_s[k],  (NG[k] ? NG[k] : 1) * blk, NV); SAVEFREEPV(g.fe_s[k]);
 		}
 	}
 
@@ -24947,7 +25072,10 @@ PPCODE:
 		else croak("dunn_test: unknown argument '%s'", key);
 	}
 	char meth[32]; strncpy(meth, method, 31); meth[31] = '\0';
-	for (unsigned i = 0; meth[i]; i++) meth[i] = tolower(meth[i]);
+	/*ASCII fold, not tolower(): a byte >= 0x80 in a signed char is a negative
+	argument to tolower(), which is undefined, and tolower() follows LC_CTYPE,
+	which under tr_TR.ISO-8859-9 folds the `I` of "BONFERRONI" outside ASCII.*/
+	for (unsigned short int i = 0; meth[i]; i++) meth[i] = toLOWER((U8)meth[i]);
 	if (strEQ(meth, "fdr")) strcpy(meth, "bh");
 	if (strEQ(meth, "holm-sidak")) strcpy(meth, "hs");
 	/*Rejected here, before the first allocation: dunn_padjust() used to be

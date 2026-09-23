@@ -264,6 +264,17 @@ like($c, qr/\\endfirsthead\n\\caption\[\]\{220 \\textDelta\{\}G \(continued\)\}\
 unlike($c, qr/\\endfirsthead\n\\caption[^\n]*\n[^\n]*\\endfirsthead/,
 	'caption is not repeated in the first head');
 
+# A caption outside Latin-1 is still non-numeric. Up to 0.319 the digit check
+# read it with SvPVbyte, which croaked "Wide character" before a byte was
+# written; the caption is passed through as the SV's UTF-8 bytes.
+$file = "$dir/head.caption.wide.tex";
+lives_ok {
+	write_table(\@aoh, $file, 'col.names' => \@order,
+		'tex.longtable.head' => "\x{3b1} (continued)");
+} 'a caption with a wide character does not croak';
+like(read_tex($file), qr/\\caption\[\]\{\xce\xb1 \(continued\)\}\\\\\n/,
+	'wide caption is written as its UTF-8 bytes');
+
 # A true-but-numeric value asks for the machinery with no continuation caption.
 $file = "$dir/head.nocaption.tex";
 write_table(\@aoh, $file, 'col.names' => \@order, 'tex.longtable.head' => 1);
