@@ -1,9 +1,6 @@
 # Synopsis
 
 Get basic statistical functions working in Perl as if they were part of List::Util, like `min`, `max`, `sum`, etc.
-There are other similar tools on CPAN, but I want speed and a form like List::Util.
-
-There **are** other modules on CPAN that can do **PARTS** of this, but this works the way that I **want** it to.
 
 # Getting help
 
@@ -5635,8 +5632,11 @@ minimal example:
 |`filter`| Only take in rows matching a filter | `filter => { Sex => sub {$_ eq 'f'} }`|
 |`row.names` | include row names in retrieved data; off by default | |
 |`auto.row.names` | read R's default `write.table` output, where the header is one field short of every data row because R writes no label for the row-names column: the leading field of each row becomes a row-names column. `1` names it `row_name`, a string names it whatever you pass. Off by default, so a genuinely ragged file is still an error | `'auto.row.names' => 1` |
-|`sep` | field separator character; synonym with `delim`| `sep => "\t"` |
-| `delim`| field separator character; synonym with `sep`| `delim => "\t"` |
+|`sep` | field separator: a literal string, or a `qr//` regex (see below); synonym with `delim`| `sep => "\t"`, `sep => qr/\s+/` |
+| `delim`| field separator: a literal string, or a `qr//` regex; synonym with `sep`| `delim => "\t"` |
+| `header` | `1` (the default): the first line holds the column names. `0`: the first line is data, as R's `header = FALSE` and pandas' `header=None` | `header => 0` |
+| `col.names` | an array reference of column names. With `header => 0` it names the columns, which are otherwise `V1`, `V2`, … as in R; with a header it replaces the header's names | `'col.names' => ['id', 'name']` |
+| `quote` | `'"'` (the default): a double quote starts a quoted field. `''`: quotes are ordinary text, as R's `quote = ""` and pandas' `quoting=csv.QUOTE_NONE` | `quote => ''` |
 | `sheet`| which worksheet to read from an `.xlsx` file: a 1-based index or a sheet name (default: first sheet). Ignored for text files | `sheet => 'Sheet2'` |
 | `na.strings` | field texts that mean "missing"; a string or an array reference of strings, mapped to `undef`. Off by default | `'na.strings' => 'NA'` |
 | `na_values` | pandas' spelling of `na.strings` | `na_values => ['NA', 'N/A']` |
@@ -5663,6 +5663,68 @@ as pandas' `read_csv` drops it. Lines always end at a newline whatever `$/` is
 set to, so a `local $/;` in the calling code does not change what is read.
 With `'output.type' => 'hoh'` a file whose only column is the row name gives
 one empty hash per row, as R's `read.table` gives a data frame of zero columns.
+### regular-expression separators
+A string `sep` is always a literal: `sep => '\s+'` splits on the three
+characters backslash, `s` and plus. Pass a `qr//` to split on a pattern instead:
+
+    my $d = read_table('aligned.txt', sep => qr/\s+/);      # whitespace-aligned columns
+    my $d = read_table('messy.csv',   sep => qr/\s*,\s*/);  # commas, with blanks around them
+    my $d = read_table('mixed.txt',   sep => qr/[;,]/);      # either of two characters
+
+Everything else reads as it does with a literal separator: quoted fields
+(a separator inside quotes is text, `""` is one quote, a quoted field may run
+over lines), comments and commented-out headers, blank lines, a byte-order
+mark, CRLF line ends, `filter`, `row.names`, `auto.row.names`, `na.strings` and
+all three output types. Details worth knowing:
+
+- **`qr/\s+/` is whitespace-delimited**, as `sep=r"\s+"` is in pandas and
+  `sep = ""` in R's `read.table`: leading and trailing whitespace on a line make
+  no field, so indented or right-padded columns read cleanly. This is decided by
+  the pattern text alone, so `qr/\s+/x` qualifies and `qr/[ \t]+/` does not.
+- **Any other pattern cuts as `split` does**: a separator at the start of a line
+  leaves an empty first field, and one at the end an empty last field, just as a
+  literal separator would.
+- Capture groups in the pattern are not returned as fields, unlike with `split`,
+  and the pattern keeps its own flags (`qr/x/i`).
+- A pattern that can match the empty string, such as `qr/\s*/`, is refused,
+  since it would cut between every character.
+- In a whitespace-delimited file, a comment line with as many words as the data
+  has columns will be taken for a commented-out header, since that is how one
+  is recognised; see *commented-out headers* below.
+- An `.xlsx` file ignores `sep` and `quote`, whether a string or a pattern.
+- The separators are found by perl's regex engine rather than in C, so a
+  regex read is slower than a literal one: about 1.3 s rather than 0.2 s on a
+  300,000 x 5 CSV. For a single fixed character, a string is the faster choice.
+### files with no header, and files with stray quotes (`header`, `col.names`, `quote`)
+`header => 0` reads the first line as data. The columns are named by
+`col.names`, or else `V1`, `V2`, … as R names them, counted from the first row:
+
+    my $d = read_table('pairs.csv', header => 0);                 # V1, V2, ...
+    my $d = read_table('pairs.csv', header => 0, 'col.names' => ['id', 'score']);
+
+`col.names` with a header (the default) renames the header's columns instead;
+if the two differ in length, `read_table` warns, as R does, and uses
+`col.names`. With `header => 0`, a line starting with the comment marker is
+always a comment, even `#text` with no space after the marker, as in R; with a
+header, such a line can be a commented-out header, as described below.
+
+`quote => ''` turns quoting off: a `"` is kept as ordinary text wherever it
+appears. By default a `"` anywhere in a field opens a quoted field that runs to
+the next `"`, possibly many lines later, so a file whose quotes are not CSV
+quoting -- a name such as `'Beach rock 4+5"'` -- would have every line up to the
+next `"` read into one cell. Formats that never quote, such as NCBI's taxonomy
+dumps, want both options:
+
+    # NCBI fullnamelineage.dmp: "id\t|\tname\t|\tlineage\t|", no header
+    my $lineage = read_table('fullnamelineage.dmp',
+        sep => qr/\t\|\t?/, header => 0, quote => '',
+        'col.names' => [qw(tax_id tax_name lineage end)],   # 'end' is the empty field after the last "\t|"
+        'output.type' => 'hoa');
+
+On that 3,015,956-line, 900 MB file this takes 14 s. A literal
+`sep => "\t|\t"` takes 2 s, but leaves each line's closing `"\t|"` on the
+lineage.
+
 ### missing values (`na.strings` / `na_values` / `undef.val`)
 An empty field is always read as `undef`. Any *other* text that a file uses to
 mean "missing" — `NA`, `N/A`, `NULL`, `-`, `-999` — has to be named. It is one

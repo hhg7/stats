@@ -3,7 +3,7 @@
 require 5.010;
 use strict;
 package Stats::LikeR;
-our $VERSION = 0.319;
+our $VERSION = '0.320';	# quoted: a bare 0.320 is the number 0.32, which the dist would be named
 require XSLoader;
 use warnings FATAL => 'all';
 use Exporter 'import';
@@ -2915,6 +2915,190 @@ sub _parse_xlsx_sheet {
 	return;
 }
 
+# True when a sep regex is pandas' whitespace-delimited spelling. pandas reads
+# sep=r"\s+" as delim_whitespace, not as a plain re.split(): leading and
+# trailing whitespace on a line make no empty field (pandas 3.0.4,
+# tests/io/parser/common/test_common_basic.py, test_ignore_leading_whitespace
+# and test_whitespace_regex_separator). R's read.table(sep = "") and Perl's own
+# split ' ' treat whitespace the same way. Only the pattern text counts, so
+# qr/\s+/x qualifies and qr/[ \t]+/ does not.
+sub _sep_re_is_ws {
+	my ($re) = @_;
+	my ($pat) = re::regexp_pattern($re);
+	return defined $pat && $pat eq '\s+';
+}
+
+# Cut one line on a sep regex with no quote handling, as split() would but
+# with capture groups in the pattern left out of the fields. $cap is the
+# pattern wrapped in one more capture, which split() hands back between the
+# fields so that an empty match can be seen, and $step is how many elements
+# split() gives per field (see _sep_re_step). Returns an empty list when the
+# pattern matched an empty string, which split() never reports at the start of
+# a line; with $ws (see _sep_re_is_ws), leading and trailing whitespace make no
+# field. A line that is all whitespace under $ws is one empty field.
+sub _sep_re_cut {
+	my ($str, $cap, $step, $ws) = @_;
+	$str =~ s/\A\s+// if $ws;
+	my @p = split $cap, $str, -1;
+	my @f;
+	for (my $k = 0; $k < @p; $k += $step) {
+		push @f, $p[$k];
+		return if $k + 1 < @p && !length $p[$k + 1];
+	}
+	return ('') unless @f;
+	pop @f if $ws && @f > 1 && $f[-1] eq '';
+	return @f;
+}
+
+# How many elements split() gives per field when it cuts on qr/($re)/: the
+# field, the whole separator, and then each of the pattern's own groups.
+sub _sep_re_step {
+	my ($re) = @_;
+	'' =~ /|$re/;	# always matches, so $#+ is the pattern's group count
+	return $#+ + 2;
+}
+
+# read_table's parser for a qr// separator: the same contract as
+# _parse_csv_file(), calling $callback->(\@fields) once per row, header
+# included, but with the separator found by the regex engine rather than by
+# memcmp(). The loop is a line-for-line transcription of that XSUB's state
+# machine, and a line with no quote in it is handed to split() instead, so that
+# everything but how a separator is recognised stays the same:
+#
+#   - lines end at "\n" whatever the caller's $/ is (the callback still sees
+#     the caller's $/), and one "\r" before it is dropped;
+#   - a UTF-8 byte-order mark on the first line is dropped;
+#   - outside a quoted field, a line of only spaces and tabs is skipped, and so
+#     is one starting with the comment marker followed by a space, a tab or the
+#     end of the line;
+#   - a field that starts or continues with '"' is quoted: '""' in it is one
+#     quote, separators in it are text, and it may run over several lines,
+#     which are joined with "\n"; a quote right after a closing quote, and a
+#     stray "\r" outside quotes, are dropped;
+#   - a separator at the end of a line leaves an empty last field;
+#   - $quote false is quote => '': '"' is ordinary text;
+#   - $bare_comment true is header => 0: any line starting with the marker is
+#     a comment, since there is no "#"-prefixed header to rescue.
+#
+# A leading separator likewise leaves an empty first field, as split() does,
+# except for qr/\s+/, which follows pandas (see _sep_re_is_ws). The fast path is
+# written in C against _parse_csv_file's buffers, so this parser never gets a
+# plan and every row goes through the callback, as a read with a filter does.
+sub _parse_regex_file {
+	my ($file, $sep, $comment, $callback, $quote, $bare_comment) = @_;
+	$quote = 1 unless defined $quote;	# as _parse_csv_file defaults it
+	my $ws   = _sep_re_is_ws($sep);
+	my $clen = length $comment;
+	my $cap  = qr/($sep)/;
+	my $step = _sep_re_step($sep);
+	my $stops = $quote ? qr/["\r]/ : qr/\r/;	# what ends an unquoted run
+	my $fh   = _open_read($file);
+	my $row        = [];
+	my $field      = '';	# a field the parser had to assemble: quoted, or cut by a CR
+	my $in_quotes  = 0;
+	my $post_quote = 0;	# a quote has just closed: another '"' in this field is dropped
+	my $lineno     = 0;
+	while (defined( my $line = do { local $/ = "\n"; readline $fh } )) {
+		$lineno++;
+		$line =~ s/\r\z// if $line =~ s/\n\z//;
+		$line =~ s/\A\xEF\xBB\xBF// if $lineno == 1;
+		my $len = length $line;
+		my $i   = 0;
+		if (!$in_quotes) {
+			next if $line =~ /\A[ \t]*\z/;
+			next if $clen && $len >= $clen
+				&& substr($line, 0, $clen) eq $comment
+				&& ($bare_comment || $len == $clen
+					|| substr($line, $clen, 1) =~ /\A[ \t]\z/);
+			if ($ws && $line =~ /\A\s+/) {
+				$i = $+[0];
+			}
+# A line with no quote and no CR in it -- every line of most files -- has
+# nothing for the loop below to do but find separators, and split() does that
+# in C: on a 300,000 x 5 CSV it took read_table from 2.5 s to 1.2 s. The
+# separator is captured so that an empty match can still be refused. split()
+# ignores one at the start of the line, and the loop below does the same.
+			if ((!$quote || index($line, '"') < 0) && index($line, "\r") < 0) {
+				my @f = _sep_re_cut($line, $cap, $step, $ws);
+				die "read_table: the sep regex $sep matched an empty string at "
+				  . "$file line $lineno; it must match at least one character\n"
+					unless @f;
+				$callback->(\@f);
+				next;
+			}
+		}
+		my $tail  = '';	# an unquoted run that ends the line
+		my $trail = 0;	# the line ended on a separator
+		my $stop  = -1;	# next '"' or "\r" at or after $i; -1 = not yet looked for
+		while ($i < $len) {
+			if ($in_quotes) {
+				my $q = index $line, '"', $i;
+				if ($q < 0) {
+					$field .= substr $line, $i;
+					last;
+				}
+				$field .= substr $line, $i, $q - $i;
+				if ($q + 1 < $len && substr($line, $q + 1, 1) eq '"') {
+					$field .= '"';
+					$i = $q + 2;
+				} else {
+					$in_quotes  = 0;
+					$post_quote = 1;
+					$i = $q + 1;
+				}
+				$trail = 0;
+				next;
+			}
+			if ($stop < $i) {
+				pos($line) = $i;
+				$stop = $line =~ /$stops/g ? $-[0] : $len;
+			}
+			pos($line) = $i;
+			my $hit = $line =~ /$sep/g;
+			if ($hit && $+[0] == 0) {	# empty, at the line's start: not a cut, as in split()
+				pos($line) = 1;
+				$hit = $line =~ /$sep/g;
+			}
+			if ($hit && $-[0] < $stop) {
+				die "read_table: the sep regex $sep matched an empty string at "
+				  . "$file line $lineno; it must match at least one character\n"
+					if $+[0] == $-[0];
+				push @$row, $field . substr($line, $i, $-[0] - $i);
+				$field      = '';
+				$post_quote = 0;
+				$i          = $+[0];
+				$trail      = $i == $len;
+			} elsif ($stop < $len) {
+				$field .= substr $line, $i, $stop - $i;
+				$in_quotes = 1
+					if substr($line, $stop, 1) eq '"' && !$post_quote;
+				$i     = $stop + 1;
+				$trail = 0;
+			} else {
+				$tail = substr $line, $i;
+				last;
+			}
+		}
+		if ($in_quotes) {
+			$field .= "\n";
+			next;
+		}
+		$post_quote = 0;
+		# pandas' delim_whitespace: trailing whitespace is not a separator
+		push @$row, $field . $tail unless $ws && $trail;
+		$field = '';
+		my $done = $row;
+		$row = [];
+		$callback->($done);
+	}
+	_close($fh);
+	if ($in_quotes) {
+		push @$row, $field;
+		$callback->($row);
+	}
+	return;
+}
+
 sub read_table {
 	my $file = shift;
 	die "read_table: \"$file\" is not a file\n"   unless -f $file;
@@ -2949,7 +3133,7 @@ sub read_table {
 
 	my %allowed_args = map { $_ => 1 } (
 		'comment', 'output.type', 'filter', 'row.names', 'sep',
-		'auto.row.names', 'sheet', 'na.strings',
+		'auto.row.names', 'sheet', 'na.strings', 'header', 'col.names', 'quote',
 		# private, undocumented: the multi-sheet expansion passes an already
 		# parsed worksheet list / shared-string table to each per-sheet recursion
 		# so a big sharedStrings.xml is not re-decompressed once per worksheet.
@@ -2963,6 +3147,49 @@ sub read_table {
 	my $otype = $args{'output.type'} // 'aoh';
 	die "read_table: output.type \"$otype\" isn't allowed (aoh, hoa, hoh)\n"
 		unless $otype =~ m/^(?:aoh|hoa|hoh)$/;
+	# A qr// separator is found by the regex engine, in perl; any other sep is
+	# a literal string, as it has always been. A regex is not looked at for an
+	# .xlsx, where a literal sep is not either.
+	if (ref $args{sep} && ref $args{sep} ne 'Regexp') {
+		die "read_table: 'sep' must be a string or a qr// regex, not a "
+		  . ref($args{sep}) . " reference\n";
+	}
+	my $sep_re = (ref $args{sep} && !$is_xlsx) ? $args{sep} : undef;
+	# Refused before the file is read, so that qr/\s*/ fails the same way
+	# whatever the file holds. A pattern that matches nothing but an empty
+	# string -- a bare lookahead, say -- passes this, and is refused where it
+	# first matches one anywhere but at the start of a line.
+	die "read_table: the sep regex $sep_re matches an empty string; it must "
+	  . "match at least one character\n"
+		if $sep_re && '' =~ /\A(?:$sep_re)\z/;
+	# header => 0 is R's header = FALSE and pandas' header=None: the first line
+	# is data, and the columns are named by 'col.names' or, as R names them,
+	# V1, V2, ... 'col.names' with a header renames its columns, as in R.
+	my $want_header = 1;
+	if (exists $args{header}) {
+		die "read_table: 'header' must be 0 or 1\n"
+			unless defined $args{header} && $args{header} =~ /\A[01]\z/;
+		$want_header = $args{header};
+	}
+	my $col_names = $args{'col.names'};
+	if (defined $col_names) {
+		die "read_table: 'col.names' must be an ARRAY reference of names\n"
+			unless ref $col_names eq 'ARRAY' && @$col_names;
+		for my $n (@$col_names) {
+			die "read_table: 'col.names' may only hold defined, plain strings\n"
+				if !defined $n || ref $n;
+		}
+	}
+	# quote => '' is R's quote = "" and pandas' quoting=QUOTE_NONE: '"' is
+	# ordinary text. Only '"' can quote, so it is the only other value; R's
+	# read.table would also take "'", which neither parser here knows.
+	my $quote = 1;
+	if (exists $args{quote}) {
+		die "read_table: 'quote' must be '\"' (the default) or '' (no quoting)\n"
+			unless defined $args{quote} && !ref $args{quote}
+				&& ($args{quote} eq '' || $args{quote} eq '"');
+		$quote = $args{quote} eq '"' ? 1 : 0;
+	}
 
 	# A multi-worksheet .xlsx with no explicit 'sheet' is returned as a hash
 	# keyed by worksheet name, each value being that sheet parsed with the same
@@ -3002,6 +3229,7 @@ sub read_table {
 # as an (otherwise unlabelled) row-names column. Any truthy value enables
 # it; a non-1 string is used as the synthesized column name.
 	my $want_auto_rn = $args{'auto.row.names'} ? 1 : 0;
+	my $auto_rn_added = 0;	# the row-names column was put in front of @header
 	my $auto_rn_name =
 		($want_auto_rn && "$args{'auto.row.names'}" ne '1')
 			? $args{'auto.row.names'} : 'row_name';
@@ -3060,11 +3288,13 @@ sub read_table {
 # closure too until 0.319, which on a 300,000 x 5 CSV cost 0.91 s; it now
 # takes 0.20 s. An .xlsx goes through a different parser (_parse_xlsx_sheet_xs)
 # but the same plan: both hand a finished row to the same S_fast_row().
+# A qr// sep cannot go this way either: its rows are cut by
+# _parse_regex_file() in perl, which has no C row buffer to hand over.
 #
 # See csv_plan in LikeR.xs for what each key means. install_plan() runs exactly
 # once, from wherever $header_done is first set, and writes 'out' last because
 # that is the key the parser tests for.
-	my $plan = !$filter ? {} : undef;
+	my $plan = (!$filter && !$sep_re) ? {} : undef;
 	my $install_plan = sub {
 		return if !$plan || %$plan;
 		# A repeated column name resolves to its LAST field, which is what
@@ -3099,6 +3329,16 @@ sub read_table {
 	# it can run either right after the header line (strict mode) or deferred
 	# to the first data row (auto.row.names mode, once the width is known).
 	my $finalize_header = sub {
+		# R's read.table: 'col.names' replaces a header's names, and a header
+		# of another length is warned about ("header and 'col.names' are of
+		# different lengths") and then the names are used all the same.
+		if ($col_names && $want_header) {
+			my $n = @header - $auto_rn_added;
+			warn "read_table: header and 'col.names' are of different lengths "
+			  . "($n and " . scalar(@$col_names) . ") in $file\n"
+				if $n != @$col_names;
+			splice @header, $auto_rn_added, $n, @$col_names;
+		}
 		if (@header && $header[0] eq '') {
 			$header[0] = 'row_name';
 		}
@@ -3176,7 +3416,8 @@ sub read_table {
 	# comment and is discarded. A marker hugging its text ("#id,val") is
 	# delivered by the parser and un-commented in the callback as usual, so it
 	# never reaches this branch.
-	if (!$is_xlsx && length( $args{comment} // '' ) && length( $args{sep} // '' )) {
+	if ($want_header && !$is_xlsx && length( $args{comment} // '' )
+			&& length( $args{sep} // '' )) {
 		# $/ is the caller's, and under a `local $/;` this read the whole
 		# file; _parse_csv_file() splits on "\n" whatever $/ is, and so does
 		# this. A UTF-8 byte-order mark is dropped here as the parser drops it.
@@ -3186,9 +3427,18 @@ sub read_table {
 		$first =~ s/\A\xEF\xBB\xBF// if defined $first;
 		if (defined $first && $first =~ /^\Q$args{comment}\E\s/) {
 			$first =~ s/\r?\n\z//;
-			my @cols = split /\Q$args{sep}\E/, $first, -1;
-			if (@cols >= 2) {
+			my @cols;
+			if ($sep_re) {
+				# The marker and the blanks after it come off before the cut,
+				# since qr/\s+/ would otherwise make the marker a field.
+				(my $body = $first) =~ s/^\Q$args{comment}\E\s*//;
+				@cols = _sep_re_cut($body, qr/($sep_re)/,
+					_sep_re_step($sep_re), _sep_re_is_ws($sep_re));
+			} else {
+				@cols = split /\Q$args{sep}\E/, $first, -1;
 				$cols[0] =~ s/^\Q$args{comment}\E\s*//;
+			}
+			if (@cols >= 2) {
 				@header          = @cols;
 				$header_seen     = 1;
 				$provisional_hdr = 1;	# confirm against the first data row
@@ -3199,6 +3449,13 @@ sub read_table {
 	my $on_line = sub {
 		my ($line_ref) = @_;
 
+		if (!$header_seen && !$want_header) {
+			# header => 0: this line is the first data row, so it only sets the
+			# width; the names come from 'col.names' or are V1, V2, ... It falls
+			# through to be finalized and read as data below.
+			@header = $col_names ? @$col_names : map { "V$_" } 1 .. @$line_ref;
+			$header_seen = 1;
+		}
 		if (!$header_seen) {
 			# HEADER CAPTURE (copy made only here; runs once)
 			my @line = @$line_ref;
@@ -3242,6 +3499,7 @@ sub read_table {
 # row-names column (header exactly one field short).
 			if ($want_auto_rn && @$line_ref == @header + 1) {
 				unshift @header, $auto_rn_name;
+				$auto_rn_added = 1;
 			}
 			$finalize_header->();
 			$header_done = 1;
@@ -3311,9 +3569,12 @@ sub read_table {
 		my $sst    = $args{_sst} // _xlsx_shared_strings($file);
 		my $chosen = _xlsx_choose_sheet($file, $xlsx_sheets, $args{sheet});
 		_parse_xlsx_sheet($file, $sst, $chosen->{path}, $on_line, $plan);
+	} elsif ($sep_re) {
+		_parse_regex_file($file, $sep_re, $args{comment} // '', $on_line,
+			$quote, !$want_header);
 	} else {
 		_parse_csv_file($file, $args{sep} // '', $args{comment} // '',
-			$on_line, $plan);
+			$on_line, $plan, $quote, $want_header ? 0 : 1);
 	}
 	# header-only files never hit a data row. A provisional (commented-out)
 	# header was never confirmed against a data row, but with no data to
@@ -5421,9 +5682,6 @@ sub _anova_fits {
 =head1 Synopsis
 
 Get basic statistical functions working in Perl as if they were part of List::Util, like C<min>, C<max>, C<sum>, etc.
-There are other similar tools on CPAN, but I want speed and a form like List::Util.
-
-There B<are> other modules on CPAN that can do B<PARTS> of this, but this works the way that I B<want> it to.
 
 =head1 Getting help
 
@@ -13945,13 +14203,28 @@ minimal example:
 </tr>
 <tr>
   <td><code>sep</code></td>
-  <td>field separator character; synonym with <code>delim</code></td>
-  <td><code>sep =&gt; "\t"</code></td>
+  <td>field separator: a literal string, or a <code>qr//</code> regex (see below); synonym with <code>delim</code></td>
+  <td><code>sep =&gt; "\t"</code>, <code>sep =&gt; qr/\s+/</code></td>
 </tr>
 <tr>
   <td><code>delim</code></td>
-  <td>field separator character; synonym with <code>sep</code></td>
+  <td>field separator: a literal string, or a <code>qr//</code> regex; synonym with <code>sep</code></td>
   <td><code>delim =&gt; "\t"</code></td>
+</tr>
+<tr>
+  <td><code>header</code></td>
+  <td><code>1</code> (the default): the first line holds the column names. <code>0</code>: the first line is data, as R's <code>header = FALSE</code> and pandas' <code>header=None</code></td>
+  <td><code>header =&gt; 0</code></td>
+</tr>
+<tr>
+  <td><code>col.names</code></td>
+  <td>an array reference of column names. With <code>header =&gt; 0</code> it names the columns, which are otherwise <code>V1</code>, <code>V2</code>, … as in R; with a header it replaces the header's names</td>
+  <td><code>'col.names' =&gt; ['id', 'name']</code></td>
+</tr>
+<tr>
+  <td><code>quote</code></td>
+  <td><code>'"'</code> (the default): a double quote starts a quoted field. <code>''</code>: quotes are ordinary text, as R's <code>quote = ""</code> and pandas' <code>quoting=csv.QUOTE_NONE</code></td>
+  <td><code>quote =&gt; ''</code></td>
 </tr>
 <tr>
   <td><code>sheet</code></td>
@@ -14004,6 +14277,81 @@ as pandas' C<read_csv> drops it. Lines always end at a newline whatever C<$/> is
 set to, so a C<local $/;> in the calling code does not change what is read.
 With C<< 'output.type' =E<gt> 'hoh' >> a file whose only column is the row name gives
 one empty hash per row, as R's C<read.table> gives a data frame of zero columns.
+
+=head3 regular-expression separators
+
+A string C<sep> is always a literal: C<< sep =E<gt> '\s+' >> splits on the three
+characters backslash, C<s> and plus. Pass a C<qr//> to split on a pattern instead:
+
+ my $d = read_table('aligned.txt', sep => qr/\s+/);      # whitespace-aligned columns
+ my $d = read_table('messy.csv',   sep => qr/\s*,\s*/);  # commas, with blanks around them
+ my $d = read_table('mixed.txt',   sep => qr/[;,]/);      # either of two characters
+
+Everything else reads as it does with a literal separator: quoted fields
+(a separator inside quotes is text, C<""> is one quote, a quoted field may run
+over lines), comments and commented-out headers, blank lines, a byte-order
+mark, CRLF line ends, C<filter>, C<row.names>, C<auto.row.names>, C<na.strings> and
+all three output types. Details worth knowing:
+
+=over
+
+=item * B<< C<qr/\s+/> is whitespace-delimited >>, as C<sep=r"\s+"> is in pandas and
+C<sep = ""> in R's C<read.table>: leading and trailing whitespace on a line make
+no field, so indented or right-padded columns read cleanly. This is decided by
+the pattern text alone, so C<qr/\s+/x> qualifies and C<qr/[ \t]+/> does not.
+
+=item * B<< Any other pattern cuts as C<split> does >>: a separator at the start of a line
+leaves an empty first field, and one at the end an empty last field, just as a
+literal separator would.
+
+=item * Capture groups in the pattern are not returned as fields, unlike with C<split>,
+and the pattern keeps its own flags (C<qr/x/i>).
+
+=item * A pattern that can match the empty string, such as C<qr/\s*/>, is refused,
+since it would cut between every character.
+
+=item * In a whitespace-delimited file, a comment line with as many words as the data
+has columns will be taken for a commented-out header, since that is how one
+is recognised; see I<commented-out headers> below.
+
+=item * An C<.xlsx> file ignores C<sep> and C<quote>, whether a string or a pattern.
+
+=item * The separators are found by perl's regex engine rather than in C, so a
+regex read is slower than a literal one: about 1.3 s rather than 0.2 s on a
+300,000 x 5 CSV. For a single fixed character, a string is the faster choice.
+
+=back
+
+=head3 files with no header, and files with stray quotes (C<header>, C<col.names>, C<quote>)
+
+C<< header =E<gt> 0 >> reads the first line as data. The columns are named by
+C<col.names>, or else C<V1>, C<V2>, … as R names them, counted from the first row:
+
+ my $d = read_table('pairs.csv', header => 0);                 # V1, V2, ...
+ my $d = read_table('pairs.csv', header => 0, 'col.names' => ['id', 'score']);
+
+C<col.names> with a header (the default) renames the header's columns instead;
+if the two differ in length, C<read_table> warns, as R does, and uses
+C<col.names>. With C<< header =E<gt> 0 >>, a line starting with the comment marker is
+always a comment, even C<#text> with no space after the marker, as in R; with a
+header, such a line can be a commented-out header, as described below.
+
+C<< quote =E<gt> '' >> turns quoting off: a C<"> is kept as ordinary text wherever it
+appears. By default a C<"> anywhere in a field opens a quoted field that runs to
+the next C<">, possibly many lines later, so a file whose quotes are not CSV
+quoting -- a name such as C<'Beach rock 4+5"'> -- would have every line up to the
+next C<"> read into one cell. Formats that never quote, such as NCBI's taxonomy
+dumps, want both options:
+
+ # NCBI fullnamelineage.dmp: "id\t|\tname\t|\tlineage\t|", no header
+ my $lineage = read_table('fullnamelineage.dmp',
+     sep => qr/\t\|\t?/, header => 0, quote => '',
+     'col.names' => [qw(tax_id tax_name lineage end)],   # 'end' is the empty field after the last "\t|"
+     'output.type' => 'hoa');
+
+On that 3,015,956-line, 900 MB file this takes 14 s. A literal
+C<< sep =E<gt> "\t|\t" >> takes 2 s, but leaves each line's closing C<"\t|"> on the
+lineage.
 
 =head3 missing values (C<na.strings> / C<na_values> / C<undef.val>)
 

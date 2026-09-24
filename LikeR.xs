@@ -19944,7 +19944,7 @@ PPCODE:
 	XSRETURN_EMPTY;
 }
 
-SV* _parse_csv_file(char* file, const char* sep_str, const char* comment_str, SV* callback = &PL_sv_undef, SV* plan_sv = &PL_sv_undef)
+SV* _parse_csv_file(char* file, const char* sep_str, const char* comment_str, SV* callback = &PL_sv_undef, SV* plan_sv = &PL_sv_undef, bool quote = TRUE, bool bare_comment = FALSE)
 PREINIT:
 	PerlIO *fp;
 	AV *data = NULL;
@@ -20040,10 +20040,12 @@ test_utf8_bom), so a BOM-only first line is a blank line.*/
 /*A line is a comment only when the marker is followed by whitespace
  or end-of-line: "# prose" and a bare "#" are skipped, but "#id,val"
  (marker hugging content) is treated as content so a "#"-prefixed
- header survives to read_table for stripping.*/
+ header survives to read_table for stripping.  read_table sets
+ bare_comment when the file has no header to rescue (header => 0), and
+ then any line starting with the marker is a comment, as in R.*/
 			if (comment_len && len >= comment_len
 					&& memcmp(line, comment_str, comment_len) == 0
-					&& (len == comment_len
+					&& (bare_comment || len == comment_len
 						|| line[comment_len] == 0x20 || line[comment_len] == 0x09))
 				continue;
 		}
@@ -20072,7 +20074,7 @@ test_utf8_bom), so a BOM-only first line is a blank line.*/
 				const size_t start = i;
 				while (i < len) {
 					const char c = line[i];
-					if (c == '"' || c == '\r')
+					if ((c == '"' && quote) || c == '\r')	//quote is FALSE for quote => ''
 						break;
 					if (c == sep0 && sep_len && (len - i) >= sep_len
 							&& (sep_len == 1
@@ -20085,7 +20087,7 @@ test_utf8_bom), so a BOM-only first line is a blank line.*/
 					tail_len = i - start;
 					break;
 				}
-				if (line[i] == '"' || line[i] == '\r') {
+				if ((line[i] == '"' && quote) || line[i] == '\r') {	//a '"' sep under quote => '' is a sep
 					if (i > start)
 						sv_catpvn(field, line + start, i - start);
 					if (line[i] == '"' && !post_quote)
