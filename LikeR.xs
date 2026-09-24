@@ -27122,13 +27122,13 @@ void scale(...)
 				SV**scale_sv = hv_fetch(opt_hv, "scale", 5, 0);
 				if (scale_sv)  scale_opt(aTHX_ *scale_sv,  &do_scale_sd,   &scale_val,  TRUE);
 			} else {
-				/*The same two options written as trailing name => value pairs,
-				which is how every other function in this module takes them --
-				density(\@x, n => 512), cor_test(..., method => 'kendall').
-				Through 0.311 only the hashref form was read and a flat pair
-				fell through into the data, where the name numified to 0:
-				scale([1,2,3], center => 0) scaled the five values 1, 2, 3, 0, 0
-				and handed back five numbers for a three-element input.*/
+	/*The same two options written as trailing name => value pairs,
+	which is how every other function in this module takes them --
+	density(\@x, n => 512), cor_test(..., method => 'kendall').
+	Through 0.311 only the hashref form was read and a flat pair
+	fell through into the data, where the name numified to 0:
+	scale([1,2,3], center => 0) scaled the five values 1, 2, 3, 0, 0
+	and handed back five numbers for a three-element input.*/
 				while (data_items >= 2) {
 					SV *key_sv = ST((Stack_off_t)data_items - 2);
 					if (SvROK(key_sv) || !SvPOK(key_sv)) break;
@@ -27195,7 +27195,7 @@ void scale(...)
 				 }
 				 NV col_center = do_center_mean ? (col_sum / nrow) : center_val;
 				 NV col_scale = scale_val;
-				 // Calculate Standard Deviation for this specific column if needed
+	 // Calculate Standard Deviation for this specific column if needed
 				 if (do_scale_sd) {
 					 if (nrow <= 1) {
 						 Safefree(col_data);
@@ -27223,8 +27223,7 @@ void scale(...)
 			PUSHs(sv_2mortal(newRV_noinc((SV*)result_av)));
 		} else {// FLAT LIST MODE: Original functionality
 			size_t total_count = 0, k = 0;
-			NV *nums;
-			NV sum = 0.0;
+			NV *nums, sum = 0.0;
 			for (size_t i = 0; i < data_items; i++) {
 				SV*arg = ST(i);
 				if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
@@ -27383,23 +27382,18 @@ SV *lm(...)
 	{
 		const char *formula = NULL;
 		SV   *data_sv = NULL;
-		char *f_cpy   = NULL;
-		char *lhs = NULL, *rhs = NULL, **terms = NULL, **uniq_terms = NULL;
+		char *f_cpy   = NULL, *lhs = NULL, *rhs = NULL, **terms = NULL, **uniq_terms = NULL;
 		LmDesign *design = NULL;
 		unsigned int num_terms = 0, num_uniq = 0, p = 0;
 		size_t n = 0, valid_n = 0, i, j, k;
 		bool has_intercept = 1;
 		char **row_names = NULL, **restrict valid_row_names = NULL;
-		HV  **row_hashes = NULL;
-		HV   *data_hoa = NULL;
-		NV   *X = NULL, *Y = NULL, *XtX = NULL, *XtY = NULL;
+		HV  **row_hashes = NULL, *data_hoa = NULL;
+		NV   *X = NULL, *Y = NULL, *XtX = NULL, *XtY = NULL, *beta = NULL, rss = 0.0, rse_sq = 0.0;
 		bool *restrict aliased = NULL;
-		NV   *beta = NULL;
 		int   final_rank = 0, df_res = 0;
-		HV   *res_hv, *coef_hv, *fitted_hv, *resid_hv, *summary_hv;
+		HV   *res_hv, *coef_hv, *fitted_hv, *resid_hv, *summary_hv, *xlevels_hv = NULL;;
 		AV   *terms_av;
-		HV   *xlevels_hv = NULL;
-		NV    rss = 0.0, rse_sq = 0.0;
 		if (items % 2 != 0)
 			croak("Usage: lm(formula => 'mpg ~ wt * hp', data => \\%%mtcars)");
 		for (I32 i_arg = 0; i_arg < items; i_arg += 2) {
