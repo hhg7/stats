@@ -26004,7 +26004,7 @@ PPCODE:
 	AV *names_av = NULL;
 	NV conf_level = NV_CONF_95, eps = 1e-9;
 	bool breslow = FALSE, robust = FALSE, robust_given = FALSE, positional;
-	unsigned int maxit = 20;
+	unsigned short int maxit = 20;
 	size_t n = 0, p = 0, i, j, G = 0, nstrata = 1;
 	NV *X = NULL, *T0 = NULL, *T1, *W, *OFF = NULL;
 	bool *EV;
@@ -26126,8 +26126,7 @@ PPCODE:
 			if (CL && !glm_var_label(aTHX_ &sc, NULL, NULL, i, cl_map, &cl_count, &CL[i]))
 				croak("coxph: cluster is undef at index %" UVuf, (UV)i);
 		}
-		if (sg.av) {
-			/*labels in index order, for the result*/
+		if (sg.av) {//labels in index order, for the result
 			SV **lab;
 			Newxz(lab, st_count ? st_count : 1, SV *); SAVEFREEPV(lab);
 			for (i = 0; i < n; i++) if (!lab[SG[i]]) lab[SG[i]] = av_at(aTHX_ sg.av, (SSize_t)i);
@@ -26148,8 +26147,7 @@ PPCODE:
 		MfRows R;
 		MfPart P;
 		GlmVarSpec sc, sw, so;
-		char *fcopy, *tilde, *lhs, *args[3];
-		char **strata_terms = NULL, **cluster_terms = NULL;
+		char *fcopy, *tilde, *lhs, *args[3], **strata_terms = NULL, **cluster_terms = NULL;
 		size_t nst = 0, ncl = 0, nargs = 0, k;
 		char *fnew;
 		HV *xlev = (HV *)sv_2mortal((SV *)newHV());
@@ -26546,8 +26544,7 @@ void p_adjust(...)
 			AV *p_av = (AV*)ref;
 			size_t n = av_len(p_av) + 1;
 			if (n == 0) XSRETURN_EMPTY;
-			NV *pv;
-			NV *adj;
+			NV *pv, *adj;
 			Newx(pv, n, NV);
 			Newx(adj, n, NV);
 			for (size_t i = 0; i < n; i++) {
@@ -26561,7 +26558,6 @@ void p_adjust(...)
 			Safefree(adj); adj = NULL;
 			XSRETURN((int)n);
 		}
-
 		/* a frame: validate and size the family before building anything,
 		so the second pass cannot die part way through and strand memory.*/
 		size_t n = 0;
@@ -26656,19 +26652,15 @@ void p_adjust(...)
 					croak("p_adjust: the frame has no column named '%s'",
 					      HePV(e, PL_na));
 		}
-
 		//---- second pass: rebuild the frame, reserving a slot per p-value
-		NV *pv     = NULL;
-		NV *adj    = NULL;
+		NV *pv     = NULL, *adj    = NULL;
 		SV **slots = NULL;
-		HE **kbuf  = NULL;
-		HE **obuf  = NULL;
+		HE **kbuf  = NULL, **obuf  = NULL;
 		if (n) { Newx(pv, n, NV); Newx(adj, n, NV); Newx(slots, n, SV*); }
 		if (maxk)   Newx(kbuf, maxk,   HE*);
 		if (nouter) Newx(obuf, nouter, HE*);
 		size_t k = 0;
 		SV *out_sv;
-
 		if (kind == PA_AOA) {
 			AV *in = (AV*)ref, *out = newAV();
 			out_sv = sv_2mortal(newRV_noinc((SV*)out));
@@ -26776,8 +26768,7 @@ NV median(...)
 	PROTOTYPE: @
 	INIT:
 	  size_t total_count = 0, k = 0;
-	  NV* nums;
-	  NV median_val = 0.0;
+	  NV* nums, median_val = 0.0;
 	  /*Small samples -- a per-group median under agg()/group_by(), say --
 	  are the common case by call count, and for those the malloc/free pair
 	  cost more than the arithmetic.  They borrow the C stack instead.*/
@@ -26888,7 +26879,7 @@ SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 	/*The method is resolved to a code once here rather than re-compared at
 	every column pair: a p-column matrix asks for a correlation p(p-1)/2
 	times, and each ask used to run up to two strcmp()s first.*/
-	short int meth;		// 0 = pearson, 1 = spearman, 2 = kendall
+	short int meth;	// 0 = pearson, 1 = spearman, 2 = kendall
 	if      (strEQ(method, "pearson"))  meth = COR_PEARSON;
 	else if (strEQ(method, "spearman")) meth = COR_SPEARMAN;
 	else if (strEQ(method, "kendall"))  meth = COR_KENDALL;
@@ -26926,8 +26917,7 @@ SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 	}
 
 	CODE:
-	// Branch 1: both inputs are flat vectors  →  scalar result
-	if (!x_is_matrix && !y_is_matrix) {
+	if (!x_is_matrix && !y_is_matrix) {// Branch 1: both inputs are flat vectors  →  scalar result
 		if (!has_y) {
 			// cor(vector) == 1 by definition
 			RETVAL = newSVnv(1.0);
@@ -26940,12 +26930,12 @@ SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 			NV *xd, *yd;
 			Newx(xd, nx, NV);
 			Newx(yd, ny, NV);
-			/* Read both columns first, then look for zero variance in the NV
-			buffers.  Splitting the pass costs one more sweep over memory the
-			extraction has just left in cache, and buys the extraction the
-			direct AvARRAY() walk.  nv_all_equal() stops at the first pair
-			that differs, so that sweep is two elements long on any column
-			that actually varies. */
+	/* Read both columns first, then look for zero variance in the NV
+	buffers.  Splitting the pass costs one more sweep over memory the
+	extraction has just left in cache, and buys the extraction the
+	direct AvARRAY() walk.  nv_all_equal() stops at the first pair
+	that differs, so that sweep is two elements long on any column
+	that actually varies. */
 			av_extract_or_nan(aTHX_ x_av, (SSize_t)nx, xd);
 			av_extract_or_nan(aTHX_ y_av, (SSize_t)ny, yd);
 			const bool x_sd0 = nv_all_equal(xd, nx);
@@ -26960,27 +26950,22 @@ SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 			RETVAL = newSVnv(r);
 		}
 	} else {//Branch 2: x is a matrix (or y is a matrix)  →  AoA result
-		// resolve x matrix dimensions
-		if (!x_is_matrix)
+		if (!x_is_matrix)// resolve x matrix dimensions
 			croak("cor: x must be a matrix (array ref of array refs) "
 				   "when y is a matrix");
-
 		SV**xr0 = av_fetch(x_av, 0, 0);
 		if (!xr0 || !SvROK(*xr0) || SvTYPE(SvRV(*xr0)) != SVt_PVAV)
 			croak("cor: each row of x must be an ARRAY reference");
-
 		size_t ncols_x = av_len((AV*)SvRV(*xr0)) + 1;
 		if (ncols_x == 0) croak("cor: x matrix has zero columns");
-
-		size_t nrows   = nx;    //observations
+		size_t nrows   = nx; //observations
 		size_t ncols_y = 0;
 		/*Everything a croak below this point has to hand back, in one place.
 		All of it is NULL until it is fully built -- a col_* table is only
 		published once every column in it is allocated -- so the macro can
 		free unconditionally.  Safefree(NULL) is a no-op.*/
 		AV **xrows = NULL, **yrows = NULL;
-		NV **col_x = NULL, **col_y = NULL;
-		NV *rowbuf = NULL;
+		NV **col_x = NULL, **col_y = NULL, *rowbuf = NULL;
 		bool symmetric = FALSE;
 #define COR_MAT_FREE STMT_START {						\
 	if (col_x) { for (size_t f_ = 0; f_ < ncols_x; f_++) Safefree(col_x[f_]); }	\
