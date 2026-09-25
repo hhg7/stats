@@ -95,6 +95,14 @@ Revision history for Stats-LikeR
    pandas' test_compression.py; t/read_table.compressed.R writes the
    fixtures.
 
+ [Tests]
+
+ - t/read_table.aoa.t failed 3 subtests on Windows (Strawberry Perl
+   5.42.2): write_table writes its file in text mode, so its lines end
+   "\r\n" there, as R's write.csv() does, and the test read the result
+   back raw. It now reads it through the platform's text layer. Nothing
+   in the module changed.
+
 0.320 2026-09-25 CDT
 
  [read_table(): sep may be a qr// regex]

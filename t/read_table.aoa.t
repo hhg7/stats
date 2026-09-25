@@ -32,10 +32,13 @@ sub fixture {
 	close $fh or die "cannot close \"$path\": $!\n";
 	return $path;
 }
-sub slurp {
+# No binmode: write_table opens its file in text mode, so on Windows each line
+# ends "\r\n", as R's write.csv does there, and the :crlf layer that '<' gets on
+# that platform folds them back to the "\n" the fixtures are written with.
+# Reading raw is what failed 0.320 on Strawberry Perl 5.42.2.
+sub slurp_text {
 	my ($path) = @_;
 	open my $fh, '<', $path or die "cannot read \"$path\": $!\n";
-	binmode $fh;
 	local $/;
 	return scalar <$fh>;
 }
@@ -105,7 +108,7 @@ sub slurp {
 }
 
 # write_table reads an AoA's first row as its header, so the two round-trip,
-# byte for byte, in each delimited format.
+# line for line, in each delimited format (line ends are the platform's).
 {
 	for my $case ([ ".csv", "taxid,genus,species\n10090,,Mus musculus\n9606,Homo,Homo sapiens\n" ],
 	              [ ".tsv", "taxid\tgenus\tspecies\n10090\t\tMus musculus\n9606\tHomo\tHomo sapiens\n" ],
@@ -114,7 +117,7 @@ sub slurp {
 		my $in  = fixture($text, $ext);
 		my $out = File::Spec->catfile($dir, 'out' . $seq++ . $ext);
 		write_table(read_table($in, 'output.type' => 'aoa'), $out, quiet => 1);
-		is( slurp($out), $text, "$ext round trip through an aoa is byte for byte" );
+		is( slurp_text($out), $text, "$ext round trip through an aoa is line for line" );
 	}
 	my @aoa = ([qw(taxid species)], [ '9606', 'Homo sapiens' ], [ '10090', undef ]);
 	my $x = File::Spec->catfile($dir, 'rt.xlsx');
