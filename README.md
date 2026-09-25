@@ -5628,7 +5628,7 @@ minimal example:
 | Option | Description | Example |
 | -------- | ------- | ------- |
 |`comment` | Comment character, by default `#`; lines beginning with it are skipped | `comment => '%'` |
-|`output.type`| data type for output: array of hash, hash of array, or hash of hash | `'output.type' => 'aoh'`|
+|`output.type`| data type for output: array of hash (the default), array of array, hash of array, or hash of hash | `'output.type' => 'aoh'`|
 |`filter`| Only take in rows matching a filter | `filter => { Sex => sub {$_ eq 'f'} }`|
 |`row.names` | include row names in retrieved data; off by default | |
 |`auto.row.names` | read R's default `write.table` output, where the header is one field short of every data row because R writes no label for the row-names column: the leading field of each row becomes a row-names column. `1` names it `row_name`, a string names it whatever you pass. Off by default, so a genuinely ragged file is still an error | `'auto.row.names' => 1` |
@@ -5641,10 +5641,16 @@ minimal example:
 | `na.strings` | field texts that mean "missing"; a string or an array reference of strings, mapped to `undef`. Off by default | `'na.strings' => 'NA'` |
 | `na_values` | pandas' spelling of `na.strings` | `na_values => ['NA', 'N/A']` |
 | `undef.val` | `write_table`'s spelling of `na.strings`, so a round trip can use one name on both halves | `'undef.val' => 'NA'` |
-output types can be AOH (aoh), HOA (hoa), HOH (hoh)
+output types can be AOH (aoh), AOA (aoa), HOA (hoa), HOH (hoh)
 
     read_table($filename, 'output.type' => 'aoh');
+    read_table($filename, 'output.type' => 'aoa');
     read_table($filename, 'output.type' => 'hoa');
+
+An AoA's first row is the header, then one array per data row, every row in file column order. That is the shape `write_table` reads an AoA as, so the two round-trip. It is also the only output type that keeps every field when the header repeats a name, so it does not give the "later values win" warning. Nothing labels an AoA's rows, so `row.names` is an error with it; a row-names column is read as an ordinary column.
+
+    read_table('taxa.tsv', 'output.type' => 'aoa');
+    # [ ['taxid', 'genus', 'species'], ['10090', undef, 'Mus musculus'], ['9606', 'Homo', 'Homo sapiens'] ]
 and, like Text::CSV_XS, filters can be applied in order to save RAM on big files:
 
     $test_data = read_table(
@@ -5675,7 +5681,7 @@ Everything else reads as it does with a literal separator: quoted fields
 (a separator inside quotes is text, `""` is one quote, a quoted field may run
 over lines), comments and commented-out headers, blank lines, a byte-order
 mark, CRLF line ends, `filter`, `row.names`, `auto.row.names`, `na.strings` and
-all three output types. Details worth knowing:
+all four output types. Details worth knowing:
 
 - **`qr/\s+/` is whitespace-delimited**, as `sep=r"\s+"` is in pandas and
   `sep = ""` in R's `read.table`: leading and trailing whitespace on a line make
@@ -7116,6 +7122,10 @@ You can also precisely filter and reorder which columns are written by passing a
 undefined variables are printed as `NA` by default, but can be set as you wish using `undef.val`
 
     write_table(\%data_hoa, '/tmp/undef.val.tsv', sep => "\t", 'undef.val' => 'nan')
+A hash of hashes keeps its outer keys as a leading column by default, since that is the only place they exist. Name that column with `row.names`, or drop it with `row.names => 0`:
+
+    my %taxa = (9606 => { species => 'Homo sapiens' }, 10090 => { species => 'Mus musculus' });
+    write_table(\%taxa, 'taxa.tsv', 'row.names' => 'taxid');   # taxid  species
 `write_table` determines comma and tab-separated delimiters from the filename, but will override if `sep` or `delim` are explicitly set.
 Args can also be accepted:
 
@@ -7139,7 +7149,7 @@ The colour is unconditional; it is not suppressed when standard output is a pipe
 
     write_table(\@data_aoh, 'table.tex');            # .tex name selects LaTeX
     write_table(\@data_aoh, $tmp_file, 'tex' => 1);  # force LaTeX for any name
-The file begins with a `%written by <cwd>/<script>` provenance comment (the working directory and script name). The header row is bold and the table is ruled with `\hline`. As with every other format, `row.names` is **off** unless you ask for it: pass `row.names => 1` to prepend a label column, whose labels are the outer keys for a HoH and a 1-based index otherwise. Cell text is LaTeX-escaped: `#`, `_`, `%`, and `&` are backslash-escaped, `>` becomes `\textgreater{}`, and a cell consisting solely of `\includesvg{...svg}` is passed through untouched. The `tex.*` options tune the output:
+The file begins with a `%written by <cwd>/<script>` provenance comment (the working directory and script name). The header row is bold and the table is ruled with `\hline`. As with every other format, `row.names` is **off** unless you ask for it, except for a HoH: pass `row.names => 1` to prepend a label column of 1-based indices. A HoH writes its outer keys as that column by default, and `row.names => 0` drops them. Cell text is LaTeX-escaped: `#`, `_`, `%`, and `&` are backslash-escaped, `>` becomes `\textgreater{}`, and a cell consisting solely of `\includesvg{...svg}` is passed through untouched. The `tex.*` options tune the output:
 
     write_table(\@rows, 'table.tex',
         'tex.col.align'    => 'l',                   # 'c' (default), 'l', or 'r'
@@ -7229,7 +7239,7 @@ raw values (no cell number formats), matching the round-trip behaviour of
 | `data` (1st positional, or `data =>`) | *required* | both | the table: flat hash, HoA, HoH, AoH, or AoA |
 | `file` (2nd positional, or `file =>`) | *required* | both | output path; written as a delimited table, or as LaTeX when `tex` is on |
 | `sep` / `delim` | from extension (`,` for `.csv`, tab for `.tsv`), else `,` | delimited | field separator; the two are aliases |
-| `row.names` | `0` (off) | both | true prepends a label column (numeric 1-based index, or the outer key for a HoH); `0` omits it. Off by default in **every** format — delimited, LaTeX and `.xlsx` alike. (R's `write.table` defaults it on and this once followed suit for LaTeX; it no longer does.) For a HoA/AoH a non-numeric *column name* uses that column's values as the labels and drops it from the body |
+| `row.names` | `0` (off); `1` (on) for a HoH | both | true prepends a label column (numeric 1-based index, or the outer key for a HoH); `0` omits it. Off by default in **every** format — delimited, LaTeX and `.xlsx` alike — for every shape but a HoH. (R's `write.table` defaults it on and this once followed suit for LaTeX; it no longer does.) A HoH defaults it on, because its outer keys are the row identifiers and exist nowhere else. For a HoA/AoH a non-numeric *column name* uses that column's values as the labels and drops it from the body. For a HoH a non-numeric string *names* the key column, so `row.names => 'taxid'` heads it `taxid` instead of leaving the header cell empty; it dies if that name is also a column being written |
 | `col.names` | all columns, sorted | both | array ref selecting and ordering columns; for an AoA it also supplies the column names |
 | `undef.val` | `''` (empty field) | both | text written for an undefined/missing cell, e.g. `'NA'` |
 | `tex` | auto: `1` when `file` ends in `.tex`, else `0` | LaTeX | write the output file as a LaTeX `tabular` instead of a delimited table; `tex => 0` forces delimited even for a `.tex` name |

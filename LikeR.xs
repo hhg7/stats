@@ -4604,18 +4604,19 @@ static void wt_headers_given(pTHX_ AV *headers_av, SV *col_names_sv) {
 
 /*Emit the header record -- the optional leading row-label cell, then one
 field per header -- and return the header count, which each branch then
-sizes its row buffer from.
+sizes its row buffer from. rn_header is that label cell's text, or NULL for
+no label column at all.
 
 *h_ptr is tested as well as h_ptr: av_fetch() returns NULL for a hole, and
 four of the five call sites this replaces dereferenced it without checking.
 The fifth did check, so this takes the safe reading of the two.*/
 static size_t wt_emit_header(pTHX_ PerlIO *fh, AV *headers_av,
-                             bool inc_rownames, const char *sep,
+                             const char *rn_header, const char *sep,
                              AV *collect_av) {
 	const size_t num_headers = (size_t)(av_len(headers_av) + 1);
 	const char **header_row = safemalloc((num_headers + 1) * sizeof(char*));
 	size_t h_idx = 0;
-	if (inc_rownames) header_row[h_idx++] = "";
+	if (rn_header) header_row[h_idx++] = rn_header;
 	for (size_t i = 0; i < num_headers; i++) {
 		SV **h_ptr = av_fetch(headers_av, (SSize_t)i, 0);
 		header_row[h_idx++] = (h_ptr && *h_ptr && SvOK(*h_ptr)) ? SvPV_nolen(*h_ptr) : "";
@@ -8361,10 +8362,13 @@ The plan's keys, all set by read_table's install_plan():
         builds one hash per row.
   ncol  the field count every data row must have -- the full header width,
         which is >= the number of output columns when names repeat
-  out    mode 0: the array read_table returns.  mode 1: the column arrays, in
-         the same order as keys.  mode 2: the hash read_table returns.
+  out    modes 0 and 3: the array read_table returns.  mode 1: the column
+         arrays, in the same order as keys.  mode 2: the hash read_table
+         returns.
   mode   0 = aoh, one hash per row; 1 = hoa, one array per column; 2 = hoh,
-         one hash per row, keyed by the row's own name
+         one hash per row, keyed by the row's own name; 3 = aoa, one array
+         per row holding every field in file order, so keys and idx are
+         validated but not used and a repeated name keeps all its fields
   rn     mode 2 only: the index into keys of the row.names column
   na     the na.strings set, or undef when there is none
   file   for the alignment message
@@ -8372,7 +8376,7 @@ The plan's keys, all set by read_table's install_plan():
          picked up: the callback has already emitted the rows before this
          point, and the alignment message counts rows from 1 across both.*/
 typedef struct {
-	AV     *out;	//modes 0 and 1
+	AV     *out;	//modes 0, 1 and 3
 	HV     *hout;	//mode 2
 	SV    **keys;	//modes 0 and 2; OWNED shared-hash-key copies, see S_plan_init()
 	AV    **cols;	//mode 1 only; borrowed from the plan hash
@@ -8384,7 +8388,7 @@ typedef struct {
 	size_t  ncol;
 	size_t  rn;	//mode 2 only
 	size_t  row_n;	//data rows emitted so far, by both paths together
-	short int mode;	// 0 = aoh, 1 = hoa, 2 = hoh
+	short int mode;	// 0 = aoh, 1 = hoa, 2 = hoh, 3 = aoa
 	bool    active;	//has the callback filled the plan in yet
 } csv_plan;
 
@@ -8440,8 +8444,8 @@ static void S_plan_init(pTHX_ csv_plan *restrict p, HV *restrict h)
 		p->na = (e && *e && SvROK(*e) && SvTYPE(SvRV(*e)) == SVt_PVHV)
 		        ? (HV*)SvRV(*e) : NULL;
 	}
-	if (p->mode < 0 || p->mode > 2)
-		croak("_parse_csv_file: plan 'mode' %d is not 0 (aoh), 1 (hoa) or 2 (hoh)",
+	if (p->mode < 0 || p->mode > 3)
+		croak("_parse_csv_file: plan 'mode' %d is not 0 (aoh), 1 (hoa), 2 (hoh) or 3 (aoa)",
 		      (int)p->mode);
 	if (p->mode == 2)
 		p->hout = (HV*)S_plan_ref(aTHX_ h, "out", SVt_PVHV);
@@ -8452,7 +8456,7 @@ static void S_plan_init(pTHX_ csv_plan *restrict p, HV *restrict h)
 
 	p->nout = (size_t)(av_len(keys) + 1);
 	Newx(p->idx, p->nout ? p->nout : 1, size_t);
-	if (p->mode != 1)	//zeroed, so S_plan_free() can tell how far this got
+	if (p->mode == 0 || p->mode == 2)	//zeroed, so S_plan_free() can tell how far this got
 		Newxz(p->keys, p->nout ? p->nout : 1, SV*);
 	for (size_t j = 0; j < p->nout; j++) {
 		SV **ie = av_fetch(idx,  (SSize_t)j, 0);
@@ -8551,6 +8555,22 @@ static void S_fast_row(pTHX_ csv_plan *restrict p, AV *restrict row)
 		      p->file, (UV)(p->row_n + 1), (UV)w, (UV)p->ncol);
 	p->row_n++;
 	ary = AvARRAY(row);
+	if (p->mode == 3) {	//aoa: the whole row, in file order
+		AV *out_row = newAV();
+		av_extend(out_row, w ? (SSize_t)w - 1 : 0);
+		for (size_t j = 0; j < w; j++) {
+			SV *v = ary[j];
+			ary[j] = NULL;	//ownership leaves the row here
+			if (!v || S_cell_is_na(aTHX_ p, v)) {
+				SvREFCNT_dec(v);
+				v = newSV(0);	//undef: an empty or na.strings cell
+			}
+			av_push(out_row, v);
+		}
+		av_push(p->out, newRV_noinc((SV*)out_row));
+		AvFILLp(row) = -1;
+		return;
+	}
 	if (p->mode == 2) {
 		HE *he;
 		rn = ary[p->idx[p->rn]];
@@ -19373,7 +19393,7 @@ PPCODE:
   undef cell now prints as nothing at all: a,,c -- not a,'',c or a,"",c.
   'undef.val' => 'NA' (etc.) still overrides this.*/
 	const char *undef_val = "";
-	SV *row_names_sv = sv_2mortal(newSViv(0));
+	SV *row_names_sv = NULL; // NULL = not given: on for a HoH, off for every other shape
 	SV *col_names_sv = NULL;
 /* LaTeX tabular output. 'tex' selects LaTeX for the main output file; the
   remaining tex.* keys tune the rendering. tex_opt is tri-state: -1 = not
@@ -19513,6 +19533,7 @@ PPCODE:
 		}
 	}
 	bool is_hoh = 0, is_hoa = 0, is_aoh = 0, is_flat_hash = 0, is_aoa = 0;
+	bool rn_named = FALSE; // HoH only: row.names is a name for the key column, not a flag
 	AV *rows_av = NULL;
 // Validate Input Structures & Homogeneity
 	if (SvTYPE(data_ref) == SVt_PVHV) {
@@ -19549,6 +19570,29 @@ PPCODE:
 			}
 		}
 		if (is_hoh) { // Rows are only explicitly pre-gathered for HOH
+/* A non-numeric row.names names the key column. It is refused when that name
+  is also a column being written -- in col.names if that was given, otherwise
+  a key of any inner hash -- since the file would then hold two columns of
+  that name, which read_table() cannot tell apart. Checked here, before the
+  output file is opened, so a refused call leaves an existing file intact.*/
+			rn_named = row_names_sv && SvTRUE(row_names_sv) && contains_nondigit(aTHX_ row_names_sv);
+			if (rn_named) {
+				bool clash = FALSE;
+				if (col_names_sv && SvOK(col_names_sv)) {
+					AV *c_av = (AV*)SvRV(col_names_sv);
+					for (SSize_t i = 0; !clash && i <= av_len(c_av); i++) {
+						SV **c = av_fetch(c_av, i, 0);
+						if (c && SvOK(*c) && sv_eq(*c, row_names_sv)) clash = TRUE;
+					}
+				} else {
+					hv_iterinit(hv);
+					while (!clash && (entry = hv_iternext(hv))) {
+						if (hv_exists_ent((HV*)SvRV(hv_iterval(hv, entry)), row_names_sv, 0)) clash = TRUE;
+					}
+				}
+				if (clash)
+					croak("write_table: row.names '%" SVf "' collides with an existing column\n", SVfARG(row_names_sv));
+			}
 			rows_av = newAV();
 			hv_iterinit(hv);
 			while ((entry = hv_iternext(hv))) {
@@ -19603,13 +19647,19 @@ PPCODE:
 	}
 	AV *headers_av = newAV();
 /* row.names is off unless asked for, in every format -- delimited, LaTeX and
-  .xlsx alike. R's write.table() defaults it on, and this used to follow suit,
-  but a label column nobody asked for is the wrong default here: the common
-  case is a frame whose rows are already identified by one of its own columns,
-  and the leading empty header cell it produces (",gene,n") is a well known
-  nuisance to read back. row.names => 1 opts in and gives the old behaviour;
-  row.names => 'col' uses that column's values as the labels.*/
-	bool inc_rownames = (row_names_sv && SvTRUE(row_names_sv)) ? 1 : 0;
+  .xlsx alike -- for every shape but a HoH. R's write.table() defaults it on,
+  and this used to follow suit, but a label column nobody asked for is the
+  wrong default here: the common case is a frame whose rows are already
+  identified by one of its own columns, and the leading empty header cell it
+  produces (",gene,n") is a well known nuisance to read back. row.names => 1
+  opts in and gives the old behaviour; row.names => 'col' uses that column's
+  values as the labels.
+  A HoH is the exception, and defaults it on: its outer keys are the only place
+  the row identifiers exist, not a 1..n index, so leaving them out silently
+  discards a column of data (an NCBI taxid-keyed HoH came out with no taxids).
+  There row.names => 'name' writes 'name' as the label column's header instead
+  of an empty cell, and row.names => 0 still turns the keys off.*/
+	bool inc_rownames = row_names_sv ? (SvTRUE(row_names_sv) ? TRUE : FALSE) : is_hoh;
 	const char *rownames_col = NULL;
 /* When 'tex' or 'xlsx' is on, collect every record here (as an AV of AVs of
   SVs) so the renderer can build the output afterwards. Mortal => reclaimed
@@ -19639,7 +19689,9 @@ PPCODE:
 				sortsv(AvARRAY(headers_av), num_cols, Perl_sv_cmp);
 			SvREFCNT_dec(col_map);
 		}
-		const size_t num_headers = wt_emit_header(aTHX_ fh, headers_av, inc_rownames, sep, collect_av);
+// NULL = no key column, "" = unnamed, else the name checked above
+		const char *rn_header = !inc_rownames ? NULL : rn_named ? SvPV_nolen(row_names_sv) : "";
+		const size_t num_headers = wt_emit_header(aTHX_ fh, headers_av, rn_header, sep, collect_av);
 		size_t num_rows = (size_t)(av_len(rows_av) + 1);
 		sortsv(AvARRAY(rows_av), num_rows, Perl_sv_cmp);
 		HV *data_hv = (HV*)data_ref;
@@ -19688,7 +19740,7 @@ PPCODE:
 			if (num_cols > 1)
 				sortsv(AvARRAY(headers_av), num_cols, Perl_sv_cmp);
 		}
-		const size_t num_headers = wt_emit_header(aTHX_ fh, headers_av, inc_rownames, sep, collect_av);
+		const size_t num_headers = wt_emit_header(aTHX_ fh, headers_av, inc_rownames ? "" : NULL, sep, collect_av);
 		const char **row_data = safemalloc((num_headers + 1) * sizeof(char*));
 		size_t d_idx = 0;
 // Give the single row a default numeric identifier if row names are on
@@ -19752,7 +19804,7 @@ PPCODE:
 			SvREFCNT_dec(headers_av);
 			headers_av = filtered_headers;
 		}
-		const size_t num_headers = wt_emit_header(aTHX_ fh, headers_av, inc_rownames, sep, collect_av);
+		const size_t num_headers = wt_emit_header(aTHX_ fh, headers_av, inc_rownames ? "" : NULL, sep, collect_av);
 		const char **row_data = safemalloc((num_headers + 1) * sizeof(char*));
 		char rn_buf[32];
 		for (size_t i = 0; i < max_rows; i++) {
@@ -19852,7 +19904,7 @@ PPCODE:
 			SvREFCNT_dec(headers_av);
 			headers_av = filtered_headers;
 		}
-		const size_t num_headers = wt_emit_header(aTHX_ fh, headers_av, inc_rownames, sep, collect_av);
+		const size_t num_headers = wt_emit_header(aTHX_ fh, headers_av, inc_rownames ? "" : NULL, sep, collect_av);
 		const char **row_data = safemalloc((num_headers + 1) * sizeof(char*));
 		char rn_buf[32];
 		for (size_t i = 0; i < num_rows; i++) {
@@ -19918,7 +19970,7 @@ PPCODE:
 			}
 			data_start = 1;
 		}
-		const size_t num_headers = wt_emit_header(aTHX_ fh, headers_av, inc_rownames, sep, collect_av);
+		const size_t num_headers = wt_emit_header(aTHX_ fh, headers_av, inc_rownames ? "" : NULL, sep, collect_av);
 		const char **row_data = safemalloc((num_headers + 1) * sizeof(char*));
 		char rn_buf[32]; // numeric row labels, printed before reuse (see HoA)
 		unsigned long rn = 0;

@@ -6115,11 +6115,19 @@ minimal example:
 \fIoptions\fR
 .IX Subsection "options"
 .PP
-output types can be AOH (aoh), HOA (hoa), HOH (hoh)
+output types can be AOH (aoh), AOA (aoa), HOA (hoa), HOH (hoh)
+.PP
+.Vb 3
+\& read_table($filename, \*(Aqoutput.type\*(Aq => \*(Aqaoh\*(Aq);
+\& read_table($filename, \*(Aqoutput.type\*(Aq => \*(Aqaoa\*(Aq);
+\& read_table($filename, \*(Aqoutput.type\*(Aq => \*(Aqhoa\*(Aq);
+.Ve
+.PP
+An AoA\*(Aqs first row is the header, then one array per data row, every row in file column order. That is the shape \f(CW\*(C`write_table\*(C'\fR reads an AoA as, so the two round\-trip. It is also the only output type that keeps every field when the header repeats a name, so it does not give the "later values win" warning. Nothing labels an AoA\*(Aqs rows, so \f(CW\*(C`row.names\*(C'\fR is an error with it; a row\-names column is read as an ordinary column.
 .PP
 .Vb 2
-\& read_table($filename, \*(Aqoutput.type\*(Aq => \*(Aqaoh\*(Aq);
-\& read_table($filename, \*(Aqoutput.type\*(Aq => \*(Aqhoa\*(Aq);
+\& read_table(\*(Aqtaxa.tsv\*(Aq, \*(Aqoutput.type\*(Aq => \*(Aqaoa\*(Aq);
+\& # [ [\*(Aqtaxid\*(Aq, \*(Aqgenus\*(Aq, \*(Aqspecies\*(Aq], [\*(Aq10090\*(Aq, undef, \*(AqMus musculus\*(Aq], [\*(Aq9606\*(Aq, \*(AqHomo\*(Aq, \*(AqHomo sapiens\*(Aq] ]
 .Ve
 .PP
 and, like Text::CSV_XS, filters can be applied in order to save RAM on big files:
@@ -6160,7 +6168,7 @@ Everything else reads as it does with a literal separator: quoted fields
 (a separator inside quotes is text, \f(CW""\fR is one quote, a quoted field may run
 over lines), comments and commented\-out headers, blank lines, a byte\-order
 mark, CRLF line ends, \f(CW\*(C`filter\*(C'\fR, \f(CW\*(C`row.names\*(C'\fR, \f(CW\*(C`auto.row.names\*(C'\fR, \f(CW\*(C`na.strings\*(C'\fR and
-all three output types. Details worth knowing:
+all four output types. Details worth knowing:
 .IP \(bu 4
 \&\fR\f(CB\*(C`qr/\es+/\*(C'\fR\fB is whitespace\-delimited\fR, as \f(CW\*(C`sep=r"\es+"\*(C'\fR is in pandas and
 \&\f(CW\*(C`sep = ""\*(C'\fR in R\*(Aqs \f(CW\*(C`read.table\*(C'\fR: leading and trailing whitespace on a line make
@@ -7728,6 +7736,13 @@ undefined variables are printed as \f(CW\*(C`NA\*(C'\fR by default, but can be s
 \& write_table(\e%data_hoa, \*(Aq/tmp/undef.val.tsv\*(Aq, sep => "\et", \*(Aqundef.val\*(Aq => \*(Aqnan\*(Aq)
 .Ve
 .PP
+A hash of hashes keeps its outer keys as a leading column by default, since that is the only place they exist. Name that column with \f(CW\*(C`row.names\*(C'\fR, or drop it with \f(CW\*(C`row.names => 0\*(C'\fR:
+.PP
+.Vb 2
+\& my %taxa = (9606 => { species => \*(AqHomo sapiens\*(Aq }, 10090 => { species => \*(AqMus musculus\*(Aq });
+\& write_table(\e%taxa, \*(Aqtaxa.tsv\*(Aq, \*(Aqrow.names\*(Aq => \*(Aqtaxid\*(Aq);   # taxid  species
+.Ve
+.PP
 \&\f(CW\*(C`write_table\*(C'\fR determines comma and tab\-separated delimiters from the filename, but will override if \f(CW\*(C`sep\*(C'\fR or \f(CW\*(C`delim\*(C'\fR are explicitly set.
 Args can also be accepted:
 .PP
@@ -7764,7 +7779,7 @@ The colour is unconditional; it is not suppressed when standard output is a pipe
 \& write_table(\e@data_aoh, $tmp_file, \*(Aqtex\*(Aq => 1);  # force LaTeX for any name
 .Ve
 .PP
-The file begins with a \f(CW\*(C`%written by <cwd>/<script>\*(C'\fR provenance comment (the working directory and script name). The header row is bold and the table is ruled with \f(CW\*(C`\ehline\*(C'\fR. As with every other format, \f(CW\*(C`row.names\*(C'\fR is \fBoff\fR unless you ask for it: pass \f(CW\*(C`row.names => 1\*(C'\fR to prepend a label column, whose labels are the outer keys for a HoH and a 1\-based index otherwise. Cell text is LaTeX\-escaped: \f(CW\*(C`#\*(C'\fR, \f(CW\*(C`_\*(C'\fR, \f(CW\*(C`%\*(C'\fR, and \f(CW\*(C`&\*(C'\fR are backslash\-escaped, \f(CW\*(C`>\*(C'\fR becomes \f(CW\*(C`\etextgreater{}\*(C'\fR, and a cell consisting solely of \f(CW\*(C`\eincludesvg{...svg}\*(C'\fR is passed through untouched. The \f(CW\*(C`tex.*\*(C'\fR options tune the output:
+The file begins with a \f(CW\*(C`%written by <cwd>/<script>\*(C'\fR provenance comment (the working directory and script name). The header row is bold and the table is ruled with \f(CW\*(C`\ehline\*(C'\fR. As with every other format, \f(CW\*(C`row.names\*(C'\fR is \fBoff\fR unless you ask for it, except for a HoH: pass \f(CW\*(C`row.names => 1\*(C'\fR to prepend a label column of 1\-based indices. A HoH writes its outer keys as that column by default, and \f(CW\*(C`row.names => 0\*(C'\fR drops them. Cell text is LaTeX\-escaped: \f(CW\*(C`#\*(C'\fR, \f(CW\*(C`_\*(C'\fR, \f(CW\*(C`%\*(C'\fR, and \f(CW\*(C`&\*(C'\fR are backslash\-escaped, \f(CW\*(C`>\*(C'\fR becomes \f(CW\*(C`\etextgreater{}\*(C'\fR, and a cell consisting solely of \f(CW\*(C`\eincludesvg{...svg}\*(C'\fR is passed through untouched. The \f(CW\*(C`tex.*\*(C'\fR options tune the output:
 .PP
 .Vb 7
 \& write_table(\e@rows, \*(Aqtable.tex\*(Aq,

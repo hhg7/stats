@@ -3005,8 +3005,13 @@ sub read_table {
 		die "the args \"@undef_args\" aren't defined for $current_sub\n";
 	}
 	my $otype = $args{'output.type'} // 'aoh';
-	die "read_table: output.type \"$otype\" isn't allowed (aoh, hoa, hoh)\n"
-		unless $otype =~ m/^(?:aoh|hoa|hoh)$/;
+	die "read_table: output.type \"$otype\" isn't allowed (aoa, aoh, hoa, hoh)\n"
+		unless $otype =~ m/^(?:aoa|aoh|hoa|hoh)$/;
+	# An aoa is positional: its first row is the header and nothing labels a
+	# row, so a row.names column would only be a column like any other.
+	die "read_table: 'row.names' has no meaning for output.type \"aoa\"; "
+	  . "the row names column is read as an ordinary column\n"
+		if $otype eq 'aoa' && defined $args{'row.names'};
 	# A qr// separator is found by perl's regex engine; any other sep is
 	# a literal string, as it has always been. A regex is not looked at for an
 	# .xlsx, where a literal sep is not either.
@@ -3175,6 +3180,9 @@ sub read_table {
 		if ($otype eq 'aoh') {
 			$plan->{mode} = 0;
 			$plan->{out}  = \@data;
+		} elsif ($otype eq 'aoa') {
+			$plan->{mode} = 3;
+			$plan->{out}  = \@data;
 		} elsif ($otype eq 'hoa') {
 			$plan->{mode} = 1;
 			$plan->{out}  = [ @hoa_cols ];
@@ -3224,9 +3232,13 @@ sub read_table {
 			splice @f, 12 if @f > 12;
 			"'$_' x $seen_h{$_} (fields " . join(', ', @f) . "$more)"
 		} grep { $seen_h{$_} > 1 } @uniq_header;
+		# an aoa keeps every field, so a repeated name loses nothing there
 		warn "read_table: duplicate column name(s) in $file (later values win): "
 			. join('; ', @dup_cols) . "\n"
-			if @dup_cols;
+			if @dup_cols && $otype ne 'aoa';
+		# An aoa's first row is the header -- the shape write_table reads an
+		# AoA as -- in file order and with any repeated name kept.
+		@data = ([ @header ]) if $otype eq 'aoa';
 		if ($otype eq 'hoh' && !defined $args{'row.names'}) {
 			$args{'row.names'} = $header[0];
 		}
@@ -3407,6 +3419,13 @@ sub read_table {
 # Populate requested data structure
 		if ($otype eq 'aoh') {
 			push @data, \%line_hash;
+		} elsif ($otype eq 'aoa') {
+			# from the fields rather than %line_hash, so a repeated name keeps
+			# every one of its fields, as the fast path's mode 3 does
+			push @data, [ map {
+				( !defined($_) || $_ eq '' || ( $has_na && $na_string{$_} ) )
+					? undef : $_
+			} @$line_ref ];
 		} elsif ($otype eq 'hoa') {
 			my $c = 0;
 			push @{ $hoa_cols[ $c++ ] }, $line_hash{$_} for @uniq_header;
@@ -3446,7 +3465,7 @@ sub read_table {
 	# rows would come back as one empty array per column. It has always come
 	# back as {}, the way an aoh comes back as [], so keep it that way.
 	%data = () if $otype eq 'hoa' && @hoa_cols && !@{ $hoa_cols[0] };
-	if ($otype eq 'aoh') {
+	if ($otype eq 'aoh' || $otype eq 'aoa') {
 		return \@data;
 	} else { # hoa or hoh
 		return \%data;
@@ -14044,7 +14063,7 @@ minimal example:
 </tr>
 <tr>
   <td><code>output.type</code></td>
-  <td>data type for output: array of hash, hash of array, or hash of hash</td>
+  <td>data type for output: array of hash (the default), array of array, hash of array, or hash of hash</td>
   <td><code>'output.type' =&gt; 'aoh'</code></td>
 </tr>
 <tr>
@@ -14114,10 +14133,16 @@ minimal example:
 
 
 
-output types can be AOH (aoh), HOA (hoa), HOH (hoh)
+output types can be AOH (aoh), AOA (aoa), HOA (hoa), HOH (hoh)
 
  read_table($filename, 'output.type' => 'aoh');
+ read_table($filename, 'output.type' => 'aoa');
  read_table($filename, 'output.type' => 'hoa');
+
+An AoA's first row is the header, then one array per data row, every row in file column order. That is the shape C<write_table> reads an AoA as, so the two round-trip. It is also the only output type that keeps every field when the header repeats a name, so it does not give the "later values win" warning. Nothing labels an AoA's rows, so C<row.names> is an error with it; a row-names column is read as an ordinary column.
+
+ read_table('taxa.tsv', 'output.type' => 'aoa');
+ # [ ['taxid', 'genus', 'species'], ['10090', undef, 'Mus musculus'], ['9606', 'Homo', 'Homo sapiens'] ]
 
 and, like Text::CSV_XS, filters can be applied in order to save RAM on big files:
 
@@ -14152,7 +14177,7 @@ Everything else reads as it does with a literal separator: quoted fields
 (a separator inside quotes is text, C<""> is one quote, a quoted field may run
 over lines), comments and commented-out headers, blank lines, a byte-order
 mark, CRLF line ends, C<filter>, C<row.names>, C<auto.row.names>, C<na.strings> and
-all three output types. Details worth knowing:
+all four output types. Details worth knowing:
 
 =over
 
@@ -16240,6 +16265,11 @@ undefined variables are printed as C<NA> by default, but can be set as you wish 
 
  write_table(\%data_hoa, '/tmp/undef.val.tsv', sep => "\t", 'undef.val' => 'nan')
 
+A hash of hashes keeps its outer keys as a leading column by default, since that is the only place they exist. Name that column with C<row.names>, or drop it with C<< row.names =E<gt> 0 >>:
+
+ my %taxa = (9606 => { species => 'Homo sapiens' }, 10090 => { species => 'Mus musculus' });
+ write_table(\%taxa, 'taxa.tsv', 'row.names' => 'taxid');   # taxid  species
+
 C<write_table> determines comma and tab-separated delimiters from the filename, but will override if C<sep> or C<delim> are explicitly set.
 Args can also be accepted:
 
@@ -16266,7 +16296,7 @@ C<write_table> can write the output file as a LaTeX C<tabular> instead of a deli
  write_table(\@data_aoh, 'table.tex');            # .tex name selects LaTeX
  write_table(\@data_aoh, $tmp_file, 'tex' => 1);  # force LaTeX for any name
 
-The file begins with a C<< %written by E<lt>cwdE<gt>/E<lt>scriptE<gt> >> provenance comment (the working directory and script name). The header row is bold and the table is ruled with C<\hline>. As with every other format, C<row.names> is B<off> unless you ask for it: pass C<< row.names =E<gt> 1 >> to prepend a label column, whose labels are the outer keys for a HoH and a 1-based index otherwise. Cell text is LaTeX-escaped: C<#>, C<_>, C<%>, and C<&> are backslash-escaped, C<< E<gt> >> becomes C<\textgreater{}>, and a cell consisting solely of C<\includesvg{...svg}> is passed through untouched. The C<tex.*> options tune the output:
+The file begins with a C<< %written by E<lt>cwdE<gt>/E<lt>scriptE<gt> >> provenance comment (the working directory and script name). The header row is bold and the table is ruled with C<\hline>. As with every other format, C<row.names> is B<off> unless you ask for it, except for a HoH: pass C<< row.names =E<gt> 1 >> to prepend a label column of 1-based indices. A HoH writes its outer keys as that column by default, and C<< row.names =E<gt> 0 >> drops them. Cell text is LaTeX-escaped: C<#>, C<_>, C<%>, and C<&> are backslash-escaped, C<< E<gt> >> becomes C<\textgreater{}>, and a cell consisting solely of C<\includesvg{...svg}> is passed through untouched. The C<tex.*> options tune the output:
 
  write_table(\@rows, 'table.tex',
      'tex.col.align'    => 'l',                   # 'c' (default), 'l', or 'r'
@@ -16393,9 +16423,9 @@ C<read_table>.
 </tr>
 <tr>
   <td><code>row.names</code></td>
-  <td><code>0</code> (off)</td>
+  <td><code>0</code> (off); <code>1</code> (on) for a HoH</td>
   <td>both</td>
-  <td>true prepends a label column (numeric 1-based index, or the outer key for a HoH); <code>0</code> omits it. Off by default in <b>every</b> format — delimited, LaTeX and <code>.xlsx</code> alike. (R's <code>write.table</code> defaults it on and this once followed suit for LaTeX; it no longer does.) For a HoA/AoH a non-numeric <i>column name</i> uses that column's values as the labels and drops it from the body</td>
+  <td>true prepends a label column (numeric 1-based index, or the outer key for a HoH); <code>0</code> omits it. Off by default in <b>every</b> format — delimited, LaTeX and <code>.xlsx</code> alike — for every shape but a HoH. (R's <code>write.table</code> defaults it on and this once followed suit for LaTeX; it no longer does.) A HoH defaults it on, because its outer keys are the row identifiers and exist nowhere else. For a HoA/AoH a non-numeric <i>column name</i> uses that column's values as the labels and drops it from the body. For a HoH a non-numeric string <i>names</i> the key column, so <code>row.names =&gt; 'taxid'</code> heads it <code>taxid</code> instead of leaving the header cell empty; it dies if that name is also a column being written</td>
 </tr>
 <tr>
   <td><code>col.names</code></td>

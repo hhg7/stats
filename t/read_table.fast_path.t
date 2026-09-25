@@ -111,7 +111,7 @@ sub read_all {
 
 for my $case (@cases) {
 	my ($label, $file, $opts) = @$case;
-	for my $otype (qw(aoh hoa hoh)) {
+	for my $otype (qw(aoa aoh hoa hoh)) {
 		my $fast   = read_all($file, @$opts, 'output.type' => $otype);
 		my $closed = read_all($file, @$opts, 'output.type' => $otype,
 			filter => { 0 => sub { 1 } });
@@ -144,7 +144,7 @@ for my $case (@cases) {
 # The alignment message is produced by whichever path is reading, so the two
 # have to spell it the same way -- including the data row number, which the
 # fast path continues from wherever the closure stopped rather than restarting.
-for my $otype (qw(aoh hoa hoh)) {
+for my $otype (qw(aoa aoh hoa hoh)) {
 	my $fast   = eval { read_table($f{ragged}, 'output.type' => $otype); 1 }
 		? '' : $@;
 	my $closed = eval { read_table($f{ragged}, 'output.type' => $otype,
@@ -153,6 +153,22 @@ for my $otype (qw(aoh hoa hoh)) {
 		qr/\AAlignment error on \Q$f{ragged}\E data row 2 \(2 fields vs 3 headers\)\.$/m,
 		"ragged row ($otype): fast path names the row and both counts";
 	is $fast, $closed, "ragged row ($otype): both paths word it the same";
+}
+
+# The aoa cases above agree with each other; these pin what they agree ON. An
+# aoa is the one shape that keeps every field of a repeated column name.
+{
+	my $r = read_all($f{dup}, 'output.type' => 'aoa');
+	is_deeply $r->[0], [ [qw(a b a)], [1, 2, 3], [4, 5, 6], [7, 8, 9] ],
+		'aoa: header row first, then every field of every row in file order';
+	$r = read_all($f{empty}, 'output.type' => 'aoa', 'na.strings' => 'NA');
+	is_deeply $r->[0], [ [qw(a b)], [1, undef], [undef, 2], [undef, undef], [undef, 'x'] ],
+		'aoa: empty and na.strings cells are undef';
+	$r = read_all($f{hdronly}, 'output.type' => 'aoa');
+	is_deeply $r->[0], [ [qw(a b)] ], 'aoa: a header-only file is its header row';
+	$r = read_all($f{duprn}, 'output.type' => 'aoa', 'row.names' => 'id');
+	like $r->[1], qr/^read_table: 'row\.names' has no meaning for output\.type "aoa"/,
+		'aoa: row.names is refused';
 }
 
 # undef, not "", is what an empty cell becomes -- the one value transformation
@@ -176,8 +192,8 @@ for my $otype (qw(aoh hoa hoh)) {
 }
 
 SKIP: {
-	skip 'Test::LeakTrace not installed', 10 unless $HAVE_LEAKTRACE;
-	skip 'running under Devel::Cover', 10 if $INC{'Devel/Cover.pm'};
+	skip 'Test::LeakTrace not installed', 13 unless $HAVE_LEAKTRACE;
+	skip 'running under Devel::Cover', 13 if $INC{'Devel/Cover.pm'};
 
 	no_leaks_ok { read_table($f{plain}) } 'no leaks: aoh fast path';
 	no_leaks_ok { read_table($f{plain}, 'output.type' => 'hoa') }
@@ -195,6 +211,12 @@ SKIP: {
 		'no leaks: alignment error';
 	no_leaks_ok { read_table($f{plain}, 'output.type' => 'hoh') }
 		'no leaks: hoh fast path';
+	no_leaks_ok { read_table($f{empty}, 'output.type' => 'aoa', 'na.strings' => 'NA') }
+		'no leaks: aoa fast path';
+	no_leaks_ok { eval { read_table($f{ragged}, 'output.type' => 'aoa') } }
+		'no leaks: aoa alignment error';
+	no_leaks_ok { read_table($f{plain}, 'output.type' => 'aoa', filter => { 0 => sub { 1 } }) }
+		'no leaks: aoa through the closure';
 	# the row-name croak unwinds with the row still full of cells
 	no_leaks_ok { eval { read_table($f{undefrn}, 'output.type' => 'hoh') } }
 		'no leaks: missing row name';

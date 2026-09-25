@@ -8504,7 +8504,7 @@ minimal example:
 </tr>
 <tr>
   <td><code>output.type</code></td>
-  <td>data type for output: array of hash, hash of array, or hash of hash</td>
+  <td>data type for output: array of hash (the default), array of array, hash of array, or hash of hash</td>
   <td><code>'output.type' =&gt; 'aoh'</code></td>
 </tr>
 <tr>
@@ -8574,10 +8574,16 @@ minimal example:
 
 
 
-output types can be AOH (aoh), HOA (hoa), HOH (hoh)
+output types can be AOH (aoh), AOA (aoa), HOA (hoa), HOH (hoh)
 
  read_table($filename, 'output.type' => 'aoh');
+ read_table($filename, 'output.type' => 'aoa');
  read_table($filename, 'output.type' => 'hoa');
+
+An AoA's first row is the header, then one array per data row, every row in file column order. That is the shape C<write_table> reads an AoA as, so the two round-trip. It is also the only output type that keeps every field when the header repeats a name, so it does not give the "later values win" warning. Nothing labels an AoA's rows, so C<row.names> is an error with it; a row-names column is read as an ordinary column.
+
+ read_table('taxa.tsv', 'output.type' => 'aoa');
+ # [ ['taxid', 'genus', 'species'], ['10090', undef, 'Mus musculus'], ['9606', 'Homo', 'Homo sapiens'] ]
 
 and, like Text::CSV_XS, filters can be applied in order to save RAM on big files:
 
@@ -8612,7 +8618,7 @@ Everything else reads as it does with a literal separator: quoted fields
 (a separator inside quotes is text, C<""> is one quote, a quoted field may run
 over lines), comments and commented-out headers, blank lines, a byte-order
 mark, CRLF line ends, C<filter>, C<row.names>, C<auto.row.names>, C<na.strings> and
-all three output types. Details worth knowing:
+all four output types. Details worth knowing:
 
 =over
 
@@ -10700,6 +10706,11 @@ undefined variables are printed as C<NA> by default, but can be set as you wish 
 
  write_table(\%data_hoa, '/tmp/undef.val.tsv', sep => "\t", 'undef.val' => 'nan')
 
+A hash of hashes keeps its outer keys as a leading column by default, since that is the only place they exist. Name that column with C<row.names>, or drop it with C<< row.names =E<gt> 0 >>:
+
+ my %taxa = (9606 => { species => 'Homo sapiens' }, 10090 => { species => 'Mus musculus' });
+ write_table(\%taxa, 'taxa.tsv', 'row.names' => 'taxid');   # taxid  species
+
 C<write_table> determines comma and tab-separated delimiters from the filename, but will override if C<sep> or C<delim> are explicitly set.
 Args can also be accepted:
 
@@ -10726,7 +10737,7 @@ C<write_table> can write the output file as a LaTeX C<tabular> instead of a deli
  write_table(\@data_aoh, 'table.tex');            # .tex name selects LaTeX
  write_table(\@data_aoh, $tmp_file, 'tex' => 1);  # force LaTeX for any name
 
-The file begins with a C<< %written by E<lt>cwdE<gt>/E<lt>scriptE<gt> >> provenance comment (the working directory and script name). The header row is bold and the table is ruled with C<\hline>. As with every other format, C<row.names> is B<off> unless you ask for it: pass C<< row.names =E<gt> 1 >> to prepend a label column, whose labels are the outer keys for a HoH and a 1-based index otherwise. Cell text is LaTeX-escaped: C<#>, C<_>, C<%>, and C<&> are backslash-escaped, C<< E<gt> >> becomes C<\textgreater{}>, and a cell consisting solely of C<\includesvg{...svg}> is passed through untouched. The C<tex.*> options tune the output:
+The file begins with a C<< %written by E<lt>cwdE<gt>/E<lt>scriptE<gt> >> provenance comment (the working directory and script name). The header row is bold and the table is ruled with C<\hline>. As with every other format, C<row.names> is B<off> unless you ask for it, except for a HoH: pass C<< row.names =E<gt> 1 >> to prepend a label column of 1-based indices. A HoH writes its outer keys as that column by default, and C<< row.names =E<gt> 0 >> drops them. Cell text is LaTeX-escaped: C<#>, C<_>, C<%>, and C<&> are backslash-escaped, C<< E<gt> >> becomes C<\textgreater{}>, and a cell consisting solely of C<\includesvg{...svg}> is passed through untouched. The C<tex.*> options tune the output:
 
  write_table(\@rows, 'table.tex',
      'tex.col.align'    => 'l',                   # 'c' (default), 'l', or 'r'
@@ -10853,9 +10864,9 @@ C<read_table>.
 </tr>
 <tr>
   <td><code>row.names</code></td>
-  <td><code>0</code> (off)</td>
+  <td><code>0</code> (off); <code>1</code> (on) for a HoH</td>
   <td>both</td>
-  <td>true prepends a label column (numeric 1-based index, or the outer key for a HoH); <code>0</code> omits it. Off by default in <b>every</b> format — delimited, LaTeX and <code>.xlsx</code> alike. (R's <code>write.table</code> defaults it on and this once followed suit for LaTeX; it no longer does.) For a HoA/AoH a non-numeric <i>column name</i> uses that column's values as the labels and drops it from the body</td>
+  <td>true prepends a label column (numeric 1-based index, or the outer key for a HoH); <code>0</code> omits it. Off by default in <b>every</b> format — delimited, LaTeX and <code>.xlsx</code> alike — for every shape but a HoH. (R's <code>write.table</code> defaults it on and this once followed suit for LaTeX; it no longer does.) A HoH defaults it on, because its outer keys are the row identifiers and exist nowhere else. For a HoA/AoH a non-numeric <i>column name</i> uses that column's values as the labels and drops it from the body. For a HoH a non-numeric string <i>names</i> the key column, so <code>row.names =&gt; 'taxid'</code> heads it <code>taxid</code> instead of leaving the header cell empty; it dies if that name is also a column being written</td>
 </tr>
 <tr>
   <td><code>col.names</code></td>

@@ -173,6 +173,24 @@ my $xlsx = build_xlsx();
 		'all four columns present' );
 }
 
+# output.type => aoa: the header row, then each row padded to the sheet's width
+{
+	my $a = read_table($xlsx, sheet => 'Data', 'output.type' => 'aoa');
+	is_deeply( $a, [
+		[ 'name', 'mpg', 'cyl', 'note' ],
+		[ 'Mazda RX4', '21', '6', 'A & B <ok>' ],
+		[ 'Datsun 710', '22.8', '4', undef ],
+		[ 'Hornet', '21.4', undef, 'q"x' ],
+		[ 'Valiant', '18.1', '6', 'tab&end' ],
+	], 'aoa: header first, sparse and trailing empty cells undef, in column order' );
+	is_deeply( read_table($xlsx, sheet => 'Data', 'output.type' => 'aoa',
+			filter => { 0 => sub { 1 } }), $a,
+		'aoa: the closure path gives the same table' );
+	my $book = read_table($xlsx, 'output.type' => 'aoa');
+	is_deeply( $book->{Second}, [ [qw(x y)], [ '1', '2' ] ],
+		'aoa: a multi-sheet workbook gives one aoa per sheet' );
+}
+
 # output.type => hoh
 {
 	my $h = read_table($xlsx, sheet => 'Data', 'output.type' => 'hoh', 'row.names' => 'name');

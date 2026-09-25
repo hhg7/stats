@@ -53,6 +53,39 @@ Revision history for Stats-LikeR
    makes '"' ordinary text, with a literal sep and a regex one alike; that
    file now reads in full. The default is unchanged.
 
+ [write_table(): a hash of hashes keeps its outer keys]
+
+ - A HoH's outer keys were written only as row names, and row.names has
+   been off by default since it stopped following R's write.table. For
+   every other shape that label is a 1..n index nobody needs, but a HoH's
+   keys are the only place its row identifiers exist, so a taxid-keyed
+   HoH came out with no taxids in it at all. A HoH now defaults row.names
+   on, under an empty header cell, which read_table reads back as
+   row_name. row.names => 0 still drops the keys, and every other shape
+   is unchanged.
+
+ - row.names => 'name' on a HoH was accepted and did nothing a 1 would
+   not: the key column's header stayed empty. It now heads that column,
+   so row.names => 'taxid' writes "taxid,genus,species", in delimited,
+   LaTeX and .xlsx output alike. A name that is also a column being
+   written -- a col.names entry, or else a key of any inner hash -- dies
+   before the file is opened, rather than writing two columns of one name.
+
+ [read_table(): output.type => 'aoa']
+
+ - read_table could return an AoH, a HoA or a HoH, but not the AoA that
+   write_table, agg, csort and melt all take. output.type => 'aoa' returns
+   the header row, then one array per data row, every row in file column
+   order, with an empty or na.strings cell undef as in every other shape.
+   The header row is what write_table reads an AoA's first row as, so a
+   read and a write round-trip a delimited file byte for byte.
+
+ - It is the one shape that keeps every field when the header repeats a
+   name, so it gives no "later values win" warning. Nothing labels an
+   AoA's rows, so row.names with it is an error. It goes through the
+   same C fast path as the other three shapes when there is no filter,
+   and through the per-row closure when there is one.
+
  [Tests]
 
  - t/read_table.regex_sep.t takes its whitespace and multi-character cases
