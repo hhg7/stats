@@ -3,7 +3,7 @@
 require 5.010;
 use strict;
 package Stats::LikeR;
-our $VERSION = '0.320';	# quoted: a bare 0.320 is the number 0.32, which the dist would be named
+our $VERSION = '0.321';	# quoted: a bare version ending in 0, such as 0.320, is the number 0.32, which the dist would be named
 require XSLoader;
 use warnings FATAL => 'all';
 use Exporter 'import';
@@ -2959,6 +2959,69 @@ sub _sep_re_cut {
 	return @f;
 }
 
+# Compressed input for read_table
+#
+# A gzip or bzip2 file is recognised by its first bytes, not its name, the way
+# R's file() recognises one for read.table: do_url() in src/main/connections.c
+# calls comp_type_from_memory() on the first bytes of a file opened "r" or
+# "rt" (R-devel 4.7.0, r-source commit b3c233dd). pandas' compression='infer'
+# goes by the extension instead; sniffing reads every file pandas would, and a
+# compressed one that has lost its suffix too.
+#
+# The magic numbers are that function's:
+#   gzip   1f 8b, RFC 1952 section 2.3.1's ID1 and ID2. A method other than
+#          deflate after them is reported by zlib as corrupt data, as R's
+#          gzio.h check_header() refuses it.
+#   bzip2  "BZh" and a block size of '1'..'9', then the 48-bit magic of either
+#          the first block (0x314159265359, BCD pi) or the end-of-stream
+#          marker (0x177245385090, BCD sqrt(pi)), which is all an empty stream
+#          holds -- bzip2 1.0.8 compress.c, BZ_HDR_h/BZ_HDR_0 and the
+#          bsPutUChar() runs. R added the last six bytes in PR#18768, after a
+#          text file that began "BZh" was taken for bzip2.
+# Neither is how text begins: 0x1f is a control character, 0x8b is not ASCII
+# and cannot start a UTF-8 sequence, and the bzip2 test runs to ten bytes.
+sub _sniff_compression {
+	my ($file) = @_;
+	open my $fh, '<', $file or return '';	# read_table's own open reports it
+	binmode $fh;
+	my $got = read $fh, my $head, 10;
+	close $fh;
+	return '' unless $got;
+	return 'gzip' if $head =~ /\A\x1f\x8b/;
+	return 'bzip2'
+		if $head =~ /\ABZh[1-9](?:\x31\x41\x59\x26\x53\x59|\x17\x72\x45\x38\x50\x90)/;
+	return '';
+}
+
+# An input handle on the decompressed text of $file, streamed through the
+# PerlIO::via layer below, so a multi-gigabyte .tsv.gz is inflated a buffer
+# at a time as the parser reads it rather than into memory first. Both halves
+# are core: PerlIO::via since 5.8, Compress::Raw::Zlib since 5.9.4.
+# Compress::Raw::Bzip2 is core only from 5.10.1, and this distribution
+# supports 5.10.0, so it is loaded here, when a bzip2 file is actually read,
+# and its absence is reported as what it is.
+sub _open_decompressed {
+	my ($file, $codec) = @_;
+	require PerlIO::via;
+	my $layer;
+	if ($codec eq 'gzip') {
+		require Compress::Raw::Zlib;
+		$layer = 'Stats::LikeR::_Gunzip';
+	} else {
+		eval { require Compress::Raw::Bzip2; 1 }
+			or die "read_table: \"$file\" is bzip2-compressed, and reading it "
+			     . "needs Compress::Raw::Bzip2, which is core only from perl "
+			     . "5.10.1; install it from CPAN\n";
+		$layer = 'Stats::LikeR::_Bunzip2';
+	}
+	# PUSHED is given no file name, so it reads this one while the open runs.
+	local $Stats::LikeR::_Decompress::name = $file;
+	my $fh;
+	open $fh, "<:raw:via($layer)", $file
+		or _io_die("Can't open '$file' for reading: '$!'");
+	return $fh;
+}
+
 sub read_table {
 	my $file = shift;
 	die "read_table: \"$file\" is not a file\n"   unless -f $file;
@@ -2986,7 +3049,11 @@ sub read_table {
 	}
 
 	my $is_xlsx = $file =~ /\.xlsx\z/i;
-	my $default_sep = $file =~ /\.tsv$/i ? "\t" : ',';
+	my $codec   = $is_xlsx ? '' : _sniff_compression($file);
+	# The extension only picks the default sep, and a compressed file's is
+	# that of the text inside it: x.tsv.gz is tab-separated.
+	(my $sep_name = $file) =~ s/\.(?:gz|bgz|bz2)\z//i if $codec;
+	my $default_sep = ($codec ? $sep_name : $file) =~ /\.tsv$/i ? "\t" : ',';
 	my %args = (
 		sep => $default_sep, comment => '#', %input_args,
 	);
@@ -3296,7 +3363,8 @@ sub read_table {
 		# $/ is the caller's, and under a `local $/;` this read the whole
 		# file; _parse_csv_file() splits on "\n" whatever $/ is, and so does
 		# this. A UTF-8 byte-order mark is dropped here as the parser drops it.
-		my $fh    = _open_read($file);
+		my $fh    = $codec ? _open_decompressed($file, $codec)
+		                   : _open_read($file);
 		my $first = do { local $/ = "\n"; <$fh> };
 		_close($fh);
 		$first =~ s/\A\xEF\xBB\xBF// if defined $first;
@@ -3320,8 +3388,22 @@ sub read_table {
 		}
 	}
 
+	# $quote_note is the parser's account of a quoted field that ran this row
+	# across lines (S_quote_note() in LikeR.xs), undef for a one-line row; it
+	# only ever goes into the alignment message.
 	my $on_line = sub {
-		my ($line_ref) = @_;
+		my ($line_ref, $quote_note) = @_;
+
+		# quote => '' on a file whose first line has every field in '"' keeps
+		# the quote marks in every name or value: R's write.csv() writes
+		# exactly that header, and it is read as intended only with the
+		# default quote. 'quote' means nothing to an .xlsx, so it is not checked.
+		if (!$header_seen && !$quote && !$is_xlsx && @$line_ref
+				&& !grep { !defined || !/\A".*"\z/s } @$line_ref) {
+			warn "read_table: every field on the first line of $file is "
+				. "wrapped in '\"', and quote => '' keeps the quote marks as "
+				. "part of the text; leave 'quote' out to read them as quoting\n";
+		}
 
 		if (!$header_seen && !$want_header) {
 			# header => 0: this line is the first data row, so it only sets the
@@ -3385,8 +3467,9 @@ sub read_table {
 		$data_row++;
 		if (@$line_ref != @header) {
 			# FIX: alignment errors now say WHICH row is ragged
-			die sprintf "Alignment error on %s data row %d (%d fields vs %d headers).\n",
-				$file, $data_row, scalar @$line_ref, scalar @header;
+			die sprintf "Alignment error on %s data row %d (%d fields vs %d headers)%s.\n",
+				$file, $data_row, scalar @$line_ref, scalar @header,
+				defined $quote_note ? "; $quote_note" : '';
 		}
 		my %line_hash;
 		for my $i (0 .. $#header) {
@@ -3451,10 +3534,12 @@ sub read_table {
 		my $chosen = _xlsx_choose_sheet($file, $xlsx_sheets, $args{sheet});
 		_parse_xlsx_sheet($file, $sst, $chosen->{path}, $on_line, $plan);
 	} else {
+		my $fh = $codec ? _open_decompressed($file, $codec) : undef;
 		_parse_csv_file($file, $sep_re ? '' : $args{sep} // '',
 			$args{comment} // '', $on_line, $plan, $quote,
 			$want_header ? 0 : 1, $sep_re,
-			$sep_re && _sep_re_is_ws($sep_re) ? 1 : 0);
+			$sep_re && _sep_re_is_ws($sep_re) ? 1 : 0, $fh);
+		_close($fh) if $fh;
 	}
 	# header-only files never hit a data row. A provisional (commented-out)
 	# header was never confirmed against a data row, but with no data to
@@ -5555,6 +5640,142 @@ sub _anova_fits {
 	}
 	return \@rows;
 }
+
+# The PerlIO::via layers _open_decompressed() reads a compressed file through.
+# PerlIO::via calls FILL whenever the parser's sv_gets() has used up the
+# buffer, and FILL returns the next piece of decompressed text, or undef at
+# the end.
+#
+# A file may hold several compressed members one after another, and every one
+# of them is read: `cat a.gz b.gz' is a valid gzip file (RFC 1952 section 2.2)
+# holding both, bgzip -- the BGZF format of tabix and every .vcf.gz -- writes
+# nothing else, and pbzip2 does the same with bzip2 streams. Stopping at the
+# first would drop all but the first 64 KB of a bgzip file without a word. NUL
+# bytes between or after members are skipped, as Python's gzip module skips
+# them (Lib/gzip.py, _GzipReader._read_eof(): "Gzip files can be padded with
+# zeroes and still have archives"); anything else there is an error, as it is
+# in Python, rather than being passed on as text, as R's gzio.h does
+# ("transparent" mode).
+#
+# Each member's own check is made: zlib compares a gzip member's CRC-32 and
+# length against its trailer, bzip2 its block and stream CRCs, and a mismatch
+# comes back as corrupt data.
+package Stats::LikeR::_Decompress;
+
+our $name;	# the file being opened; see _open_decompressed()
+
+# 1<<16, as a read of both the compressed bytes and the text made per call.
+# read_table of a 2,000,000 x 5 CSV (110 MB, 47 MB gzipped) took 1.50 s from
+# the .gz against 0.82 s from the plain file, three runs each; 1<<12 took
+# 1.66 s, 1<<14 1.60 s, and 1<<18 and 1<<20 both 1.45 s. `zcat' alone takes
+# 0.69 s, so the layer adds almost nothing to the inflate itself, and the last
+# 3% is not worth four times the buffer. The .bz2 took 4.47 s, against 3.69 s
+# for `bzip2 -dc' alone.
+my $BUFSIZE = 1 << 16;
+
+sub PUSHED {
+	my ($class) = @_;
+	return bless { name => $name, in => '', eof => 0, z => undef,
+		members => 0 }, $class;
+}
+
+sub FILL {
+	my ($self, $fh) = @_;
+	my $magic = $self->MAGIC;
+	for (;;) {
+		if (!$self->{z}) {	# at the start of a member, or past the last
+			$self->{in} =~ s/\A\0+// if $self->{members};
+			if (length $self->{in} < length($magic) && !$self->{eof}) {
+				$self->_more($fh);
+				next;
+			}
+			return undef if !length $self->{in} && $self->{members};
+			die "read_table: \"$self->{name}\" has data after its last "
+			  . $self->CODEC . " member that is not " . $self->CODEC . "\n"
+				unless substr($self->{in}, 0, length $magic) eq $magic;
+			$self->{z} = $self->NEW;
+		}
+		my $before = length $self->{in};
+		my $out = '';
+		my ($status, $ended) = $self->INFLATE($out);
+		die "read_table: \"$self->{name}\" is not valid " . $self->CODEC
+		  . " data ($status)\n" unless defined $ended;
+		if ($ended) {
+			$self->{z} = undef;
+			$self->{members}++;
+		}
+		return $out if length $out;
+		next if $ended || length $self->{in} != $before;
+		# no progress: the member wants more input than has been read
+		die "read_table: \"$self->{name}\" ends in the middle of its "
+		  . $self->CODEC . " data; it is truncated\n" if $self->{eof};
+		$self->_more($fh);
+	}
+}
+
+sub _more {
+	my ($self, $fh) = @_;
+	my $n = read $fh, $self->{in}, $BUFSIZE, length $self->{in};
+	die "read_table: could not read \"$self->{name}\": $!\n" unless defined $n;
+	$self->{eof} = 1 unless $n;
+	return;
+}
+
+package Stats::LikeR::_Gunzip;
+our @ISA = ('Stats::LikeR::_Decompress');
+
+sub CODEC { 'gzip' }
+sub MAGIC { "\x1f\x8b" }
+
+sub NEW {
+	# WANT_GZIP: a gzip wrapper, header and trailer, around each deflate
+	# stream. LimitOutput caps what one call makes at about Bufsize, so one
+	# 64 KB read of a highly compressible member cannot inflate into hundreds
+	# of megabytes at once.
+	my ($z, $err) = Compress::Raw::Zlib::Inflate->new(
+		-WindowBits   => Compress::Raw::Zlib::WANT_GZIP(),
+		-Bufsize      => $BUFSIZE,
+		-ConsumeInput => 1,
+		-LimitOutput  => 1);
+	die "read_table: could not start inflating: $err\n" unless $z;
+	return $z;
+}
+
+# (status, 1) at the end of a member, (status, 0) to go on, (status, undef) on
+# corrupt data. Z_BUF_ERROR is "no progress possible", which with LimitOutput
+# and ConsumeInput is how the stream asks for more input, not an error.
+sub INFLATE {
+	my ($self) = @_;
+	my $status = $self->{z}->inflate($self->{in}, $_[1]);
+	return ($status, 1) if $status == Compress::Raw::Zlib::Z_STREAM_END();
+	return ($status, 0) if $status == Compress::Raw::Zlib::Z_OK()
+		|| $status == Compress::Raw::Zlib::Z_BUF_ERROR();
+	return ("$status", undef);
+}
+
+package Stats::LikeR::_Bunzip2;
+our @ISA = ('Stats::LikeR::_Decompress');
+
+sub CODEC { 'bzip2' }
+sub MAGIC { 'BZh' }
+
+sub NEW {
+	# appendOutput 0, consumeInput 1, small 0, verbosity 0, limitOutput 1:
+	# the same streaming contract as _Gunzip's.
+	my ($z, $err) = Compress::Raw::Bunzip2->new(0, 1, 0, 0, 1);
+	die "read_table: could not start bunzipping: $err\n" unless $z;
+	return $z;
+}
+
+sub INFLATE {
+	my ($self) = @_;
+	my $status = $self->{z}->bzinflate($self->{in}, $_[1]);
+	return ($status, 1) if $status == Compress::Raw::Bzip2::BZ_STREAM_END();
+	return ($status, 0) if $status == Compress::Raw::Bzip2::BZ_OK();
+	return ("$status", undef);
+}
+
+package Stats::LikeR;
 
 1;
 =encoding utf8
@@ -14229,8 +14450,33 @@ C<< quote =E<gt> '' >> turns quoting off: a C<"> is kept as ordinary text wherev
 appears. By default a C<"> anywhere in a field opens a quoted field that runs to
 the next C<">, possibly many lines later, so a file whose quotes are not CSV
 quoting -- a name such as C<'Beach rock 4+5"'> -- would have every line up to the
-next C<"> read into one cell. Formats that never quote, such as NCBI's taxonomy
-dumps, want both options:
+next C<"> read into one cell.
+
+C<read_table> cannot tell a stray C<"> from CSV quoting by looking at the bytes,
+and neither can R or pandas. It does say when the file looks like it has one,
+and names the line where the quote opened:
+
+=over
+
+=item * If the file ends inside a quoted field, C<read_table> warns and keeps what it
+read, as R's C<scan()> does. pandas raises an error here instead.
+
+=item * If a C<"> in the middle of a field, such as C<5'10">, opens a quoted field that
+runs past the end of its line, C<read_table> warns, once per file. R reads such
+a field the same way; pandas keeps a C<"> in the middle of a field as text.
+
+=item * An C<Alignment error> on a row that a quoted field ran across lines in says so.
+
+=item * C<< quote =E<gt> '' >> warns when every field on the first line is wrapped in C<">, as
+R's C<write.csv()> writes them, because those quote marks would then stay in
+every name.
+
+=back
+
+A quoted cell that starts at the beginning of its field and holds a line break
+is ordinary CSV, and is read without a warning.
+
+Formats that never quote, such as NCBI's taxonomy dumps, want both options:
 
  # NCBI fullnamelineage.dmp: "id\t|\tname\t|\tlineage\t|", no header
  my $lineage = read_table('fullnamelineage.dmp',
@@ -14241,6 +14487,40 @@ dumps, want both options:
 On that 3,015,956-line, 900 MB file this takes 2.6 s. A literal
 C<< sep =E<gt> "\t|\t" >> takes 1.6 s, but leaves each line's closing C<"\t|"> on the
 lineage.
+
+=head3 compressed files (gzip, bzip2)
+
+A gzip- or bzip2-compressed file is read as the text inside it; there is no
+option to set:
+
+ my $d = read_table('cohort.tsv.gz');                  # tab-separated, from the .tsv
+ my $v = read_table('variants.tsv.bgz');               # bgzip / BGZF
+ my $b = read_table('export.csv.bz2');
+
+=over
+
+=item * B<The bytes decide, not the name>, as with R's C<read.table>: a
+compressed file without a C<.gz> suffix is still read, and a plain file
+named C<.gz> is still text. The name does still pick the default C<sep>,
+from the part before C<.gz>, C<.bgz> or C<.bz2>, so C<x.tsv.gz> is
+tab-separated.
+
+=item * B<It is streamed>, inflated 64 KB at a time as the rows are read, so a
+large compressed file takes no more memory than the plain one would.
+
+=item * B<Every member is read.> bgzip (every C<.vcf.gz>), C<pbzip2>, R's
+C<gzfile(, "a")> and C<cat a.gz b.gz> all write files of several
+compressed members, and all of them come back whole.
+
+=item * B<Damage is an error, not a short read>: a truncated file, a bad
+checksum, or anything but NUL padding after the last member dies naming
+the file.
+
+=item * gzip needs only core modules. bzip2 needs C<Compress::Raw::Bzip2>, which
+is core from perl 5.10.1; on 5.10.0 install it from CPAN. xz, zstd and
+C<.zip> are not read (an C<.xlsx>, which is a zip archive, is).
+
+=back
 
 =head3 missing values (C<na.strings> / C<na_values> / C<undef.val>)
 

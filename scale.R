@@ -483,5 +483,9 @@ out <- file.path(DIR, sprintf("out.r.%d.tmp", Sys.getpid()))
 if (file.exists(out)) unlink(out)
 
 all <- do.call(rbind, results)
+# The version column is R's own, which plot.scaling.pl puts in the legend; it is
+# the same on every row, and is repeated there so the file cannot be separated
+# from what produced it.
+all$version <- paste(R.version$major, R.version$minor, sep = ".")
 write.table(all, "r_scaling.tsv", sep = "\t", quote = FALSE, row.names = FALSE)
 cat(sprintf("Done. %d measurements written to r_scaling.tsv\n", nrow(all)))

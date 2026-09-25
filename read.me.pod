@@ -8670,8 +8670,33 @@ C<< quote =E<gt> '' >> turns quoting off: a C<"> is kept as ordinary text wherev
 appears. By default a C<"> anywhere in a field opens a quoted field that runs to
 the next C<">, possibly many lines later, so a file whose quotes are not CSV
 quoting -- a name such as C<'Beach rock 4+5"'> -- would have every line up to the
-next C<"> read into one cell. Formats that never quote, such as NCBI's taxonomy
-dumps, want both options:
+next C<"> read into one cell.
+
+C<read_table> cannot tell a stray C<"> from CSV quoting by looking at the bytes,
+and neither can R or pandas. It does say when the file looks like it has one,
+and names the line where the quote opened:
+
+=over
+
+=item * If the file ends inside a quoted field, C<read_table> warns and keeps what it
+read, as R's C<scan()> does. pandas raises an error here instead.
+
+=item * If a C<"> in the middle of a field, such as C<5'10">, opens a quoted field that
+runs past the end of its line, C<read_table> warns, once per file. R reads such
+a field the same way; pandas keeps a C<"> in the middle of a field as text.
+
+=item * An C<Alignment error> on a row that a quoted field ran across lines in says so.
+
+=item * C<< quote =E<gt> '' >> warns when every field on the first line is wrapped in C<">, as
+R's C<write.csv()> writes them, because those quote marks would then stay in
+every name.
+
+=back
+
+A quoted cell that starts at the beginning of its field and holds a line break
+is ordinary CSV, and is read without a warning.
+
+Formats that never quote, such as NCBI's taxonomy dumps, want both options:
 
  # NCBI fullnamelineage.dmp: "id\t|\tname\t|\tlineage\t|", no header
  my $lineage = read_table('fullnamelineage.dmp',
@@ -8682,6 +8707,40 @@ dumps, want both options:
 On that 3,015,956-line, 900 MB file this takes 2.6 s. A literal
 C<< sep =E<gt> "\t|\t" >> takes 1.6 s, but leaves each line's closing C<"\t|"> on the
 lineage.
+
+=head3 compressed files (gzip, bzip2)
+
+A gzip- or bzip2-compressed file is read as the text inside it; there is no
+option to set:
+
+ my $d = read_table('cohort.tsv.gz');                  # tab-separated, from the .tsv
+ my $v = read_table('variants.tsv.bgz');               # bgzip / BGZF
+ my $b = read_table('export.csv.bz2');
+
+=over
+
+=item * B<The bytes decide, not the name>, as with R's C<read.table>: a
+compressed file without a C<.gz> suffix is still read, and a plain file
+named C<.gz> is still text. The name does still pick the default C<sep>,
+from the part before C<.gz>, C<.bgz> or C<.bz2>, so C<x.tsv.gz> is
+tab-separated.
+
+=item * B<It is streamed>, inflated 64 KB at a time as the rows are read, so a
+large compressed file takes no more memory than the plain one would.
+
+=item * B<Every member is read.> bgzip (every C<.vcf.gz>), C<pbzip2>, R's
+C<gzfile(, "a")> and C<cat a.gz b.gz> all write files of several
+compressed members, and all of them come back whole.
+
+=item * B<Damage is an error, not a short read>: a truncated file, a bad
+checksum, or anything but NUL padding after the last member dies naming
+the file.
+
+=item * gzip needs only core modules. bzip2 needs C<Compress::Raw::Bzip2>, which
+is core from perl 5.10.1; on 5.10.0 install it from CPAN. xz, zstd and
+C<.zip> are not read (an C<.xlsx>, which is a zip archive, is).
+
+=back
 
 =head3 missing values (C<na.strings> / C<na_values> / C<undef.val>)
 

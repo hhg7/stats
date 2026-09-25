@@ -13,7 +13,8 @@
 # to run only those.
 #
 #     --data      write the fixtures the I/O panels read
-#     --measure   time and weigh Stats::LikeR      -> perl_scaling.tsv
+#     --measure   time and weigh Stats::LikeR,
+#                 and List::Util where it overlaps -> perl_scaling.tsv
 #     --plot      draw the three .tsv files         -> svg/scaling.*.svg
 #
 # Every measurement is two numbers, not one: the seconds the call took, and the
@@ -77,6 +78,14 @@
 #     that is impossible the panel is simply missing that language rather than
 #     being filled with something else: R has no skew(), no kurtosis() and no
 #     row-record frame to build, so it does not appear in those four panels.
+#   * sum, min and max also carry a fourth line, List::Util's, because that is
+#     what a Perl programmer reaches for without Stats::LikeR and is the
+#     baseline the module has to beat on its own side.  Its rows go into
+#     perl_scaling.tsv with "List::Util" in the language column.
+#   * Every row records the version of what produced it -- Stats::LikeR's or
+#     List::Util's $VERSION, Python's platform.python_version(), R's
+#     major.minor -- and the legends carry it, so an image says what was
+#     tested without anyone having to remember when it was drawn.
 #   * The read_table and write_table panels all read the byte-identical files
 #     --data wrote, so no reader is handed a quoting or type-guessing job the
 #     others were spared.
@@ -92,6 +101,7 @@ use File::Path ();
 use File::Spec ();
 use Getopt::Long ();
 use IO::Compress::Zip ();
+use List::Util ();
 use POSIX ();
 use Scalar::Util ();
 use Time::HiRes ();
@@ -123,7 +133,7 @@ Getopt::Long::GetOptions(
 	'help|h'   => \$want_help,
 	# --measure re-runs this file with --weigh to take one memory reading in a
 	# process of its own; see weigh_one().  Not in $usage: it is not a stage
-	# anyone runs by hand, and its three arguments are positional.
+	# anyone runs by hand, and its four arguments are positional.
 	'weigh'    => \$do_weigh,
 ) or die $usage;
 if ($want_help) {
@@ -505,6 +515,8 @@ my %build = (
 # name    the panel title, and the key scale.py and scale.R must agree with
 # call    what was actually called, recorded in the file for the reader
 # code    the timed body, handed the builder's return value
+# group   whose line it is: 'Stats::LikeR' unless given, which every entry but
+#         the List::Util ones leaves it
 my @benchmarks = (
 	# --- reductions over one numeric vector --------------------------------
 	{ figure => 'vector', name => 'sum',      call => 'sum($x)',
@@ -513,6 +525,19 @@ my @benchmarks = (
 	  code => sub { min($_[0]{x}) } },
 	{ figure => 'vector', name => 'max',      call => 'max($x)',
 	  code => sub { max($_[0]{x}) } },
+	# List::Util takes a list, not an array reference, so the dereference is
+	# part of its call and is timed with it: that is what calling it on the
+	# same array costs.  Called by full name because Stats::LikeR exports its
+	# own sum, min and max into this package.
+	{ figure => 'vector', name => 'sum',      call => 'List::Util::sum(@$x)',
+	  group  => 'List::Util',
+	  code => sub { List::Util::sum(@{ $_[0]{x} }) } },
+	{ figure => 'vector', name => 'min',      call => 'List::Util::min(@$x)',
+	  group  => 'List::Util',
+	  code => sub { List::Util::min(@{ $_[0]{x} }) } },
+	{ figure => 'vector', name => 'max',      call => 'List::Util::max(@$x)',
+	  group  => 'List::Util',
+	  code => sub { List::Util::max(@{ $_[0]{x} }) } },
 	{ figure => 'vector', name => 'mean',     call => 'mean($x)',
 	  code => sub { mean($_[0]{x}) } },
 	{ figure => 'vector', name => 'median',   call => 'median($x)',
@@ -630,11 +655,27 @@ my @benchmarks = (
 	  code => sub { aoh2hoa($_[0]{aoh}) } },
 );
 
-# figure => name => the benchmark.  --weigh is handed a figure and a name on
-# the command line and has no list to walk, and the names are unique within a
-# figure because the plot joins the three languages' files on them.
+$_->{group} //= 'Stats::LikeR' for @benchmarks;
+
+# What goes in the version column of each group's rows.
+my %group_version = (
+	'Stats::LikeR' => $Stats::LikeR::VERSION,
+	'List::Util'   => $List::Util::VERSION,
+);
+
+# How a benchmark is named in the progress report and in the list of the ones
+# the cap stopped: the panel name alone for Stats::LikeR, as it always was, and
+# with its group in front otherwise, because "sum" is now two benchmarks.
+sub bench_id {
+	my ($b) = @_;
+	return $b->{group} eq 'Stats::LikeR' ? $b->{name} : "$b->{group} $b->{name}";
+}
+
+# figure => group => name => the benchmark.  --weigh is handed all three on the
+# command line and has no list to walk, and the names are unique within a
+# figure and group because the plot joins the languages' files on them.
 my %bench_by_name;
-$bench_by_name{ $_->{figure} }{ $_->{name} } = $_ for @benchmarks;
+$bench_by_name{ $_->{figure} }{ $_->{group} }{ $_->{name} } = $_ for @benchmarks;
 
 my %ladder = (vector => \@vec_n, transform => \@vec_n,
               io => \@io_n, frame => \@frame_n);
@@ -912,9 +953,10 @@ sub measure {
 # reset, and leaves behind slack of its own that is two to four decades below
 # what is weighed next.
 sub weigh_one {
-	my ($figure, $name, $n) = @_;
-	my $b = $bench_by_name{$figure} && $bench_by_name{$figure}{$name}
-		or die "--weigh: no benchmark '$name' in figure '$figure'\n";
+	my ($figure, $group, $name, $n) = @_;
+	my $b = $bench_by_name{$figure} && $bench_by_name{$figure}{$group}
+	     && $bench_by_name{$figure}{$group}{$name}
+		or die "--weigh: no $group benchmark '$name' in figure '$figure'\n";
 
 	# Everything up to the answer goes to the bit bucket: the parent reads this
 	# process's STDOUT, and write_table announces the file it wrote.
@@ -959,10 +1001,10 @@ sub weigh_one {
 my @weigh_inc = map { "-I$_" } grep { !ref } @INC;
 
 sub weigh_in_new_process {
-	my ($figure, $name, $n) = @_;
-	my @cmd = ($^X, @weigh_inc, $0, '--weigh', $figure, $name, $n);
+	my ($figure, $group, $name, $n) = @_;
+	my @cmd = ($^X, @weigh_inc, $0, '--weigh', $figure, $group, $name, $n);
 	open my $fh, '-|', @cmd or do {
-		warn "cannot weigh $name at n=$n: $!\n";
+		warn "cannot weigh $group $name at n=$n: $!\n";
 		return undef;
 	};
 	my $line = <$fh>;
@@ -979,7 +1021,7 @@ my $perl_tsv = 'perl_scaling.tsv';
 
 sub measure_all {
 	my @results;
-	my %too_slow; # name => 1 once it exceeds $cap, or once it fails
+	my %too_slow; # bench_id => 1 once it exceeds $cap, or once it fails
 
 	# Whether there is a resident set to read at all.  Where there is not --
 	# macOS, the BSDs, Windows, a kernel too old to report the field -- no
@@ -1002,11 +1044,12 @@ sub measure_all {
 		my $list = $by_figure{$figure} or next;
 
 		foreach my $n (@{ $ladder{$figure} }) {
-			my @todo = grep { !$too_slow{ $_->{name} } } @$list;
+			my @todo = grep { !$too_slow{ bench_id($_) } } @$list;
 			next unless @todo;
 
 			my $input = $build{ $builder_for{$figure} }->($n);
 			foreach my $b (@todo) {
+				my $id = bench_id($b);
 				my ($slowest, $reps_used, $failed) = (0, 0, 0);
 				for my $run (0 .. $runs - 1) {
 					my ($secs, $reps, $err) = measure($b->{code}, $input);
@@ -1014,8 +1057,8 @@ sub measure_all {
 						# Report it once and stop trying this function at every
 						# larger size too: a call that dies at n = 1,000 is not
 						# going to start working at n = 1,000,000.
-						printf STDERR "%s at n=%d: %s\n", $b->{name}, $n, $err;
-						$too_slow{ $b->{name} } = 1;
+						printf STDERR "%s at n=%d: %s\n", $id, $n, $err;
+						$too_slow{$id} = 1;
 						$failed = 1;
 						# The runs before this one are already in @results
 						# without their bytes column, which would leave the .tsv
@@ -1034,17 +1077,21 @@ sub measure_all {
 				# One weighing for the whole cell, in a process of its own, and
 				# the same figure goes on each of the runs' rows: the column
 				# has to line up with the seconds column row for row, and it is
-				# the same call at the same size each time.
+				# the same call at the same size each time.  The language and
+				# version columns go on with it, after the bytes, which is
+				# where they sit in the header.
 				my $bytes = $can_weigh
-					? weigh_in_new_process($figure, $b->{name}, $n) : undef;
-				push @$_, defined $bytes ? $bytes : 'NA'
+					? weigh_in_new_process($figure, $b->{group}, $b->{name}, $n)
+					: undef;
+				push @$_, (defined $bytes ? $bytes : 'NA'), $b->{group},
+					$group_version{ $b->{group} }
 					for @results[ -$runs .. -1 ];
 
-				printf "%-9s %-30s n=%-8d %.6f s %9s%s\n", $figure, $b->{name},
+				printf "%-9s %-30s n=%-8d %.6f s %9s%s\n", $figure, $id,
 					$n, $slowest,
 					defined $bytes ? human_bytes($bytes) : '',
 					$reps_used > 1 ? " (x$reps_used)" : '';
-				$too_slow{ $b->{name} } = 1 if $slowest > $cap;
+				$too_slow{$id} = 1 if $slowest > $cap;
 			}
 			undef $input;
 		}
@@ -1067,11 +1114,14 @@ sub measure_all {
 	# 'bytes' is how far the resident set rose above its baseline during one
 	# call, as weigh_one() takes it, and 'NA' where this platform has no
 	# /proc/self/status to read it from.  scale.py and scale.R write the same
-	# seven columns, each weighing the call the way its own language can --
-	# tracemalloc's peak and gc()'s max-used -- so the RAM panels compare the
-	# three the way the benchmark.* trio already does.
+	# first seven columns, each weighing the call the way its own language can
+	# -- tracemalloc's peak and gc()'s max-used -- so the RAM panels compare the
+	# three the way the benchmark.* trio already does.  Their eighth is the
+	# version; this file has one more before it, 'language', because it is the
+	# only one of the three that holds two groups' lines.
 	write_table(
-		[ [ 'figure', 'function', 'call', 'n', 'run', 'seconds', 'bytes' ],
+		[ [ 'figure', 'function', 'call', 'n', 'run', 'seconds', 'bytes',
+		    'language', 'version' ],
 		  @results ],
 		$perl_tsv,
 		sep         => "\t",
@@ -1167,7 +1217,9 @@ sub fit_slope {
 # ---------------------------------------------------------------------------
 # One image per figure -- scaling.vector.svg, scaling.transform.svg,
 # scaling.io.svg, scaling.frame.svg, all under $svg_dir -- and one panel per function inside it,
-# with Stats::LikeR, Python and R drawn together.
+# with Stats::LikeR, Python and R drawn together, and List::Util as well in the
+# three panels it has a counterpart for.  Each legend entry carries the version
+# its rows were measured under.
 #
 # The panels are Matplotlib::Simple's "wide" plot type, which is what these
 # measurements want: every one of the seven runs is drawn as a faint line, the
@@ -1197,16 +1249,26 @@ sub fit_slope {
 # overhead if it closes as n grows, and per-element cost if it does not.  The
 # fitted exponents are printed at the end and written to scaling.slopes.tsv.
 
-# The three files, in the order their lines are labelled.  A file that is not
-# there is skipped with a warning rather than being fatal: one language's
-# curves are still worth looking at.
+# The three files.  A file that is not there is skipped with a warning rather
+# than being fatal: one language's curves are still worth looking at.  'group'
+# is the line every row of the file belongs to unless the file has a language
+# column to say otherwise, which perl_scaling.tsv does and the other two do not.
 my $svg_dir = 'svg';	# every image goes here; the .tsv files stay beside this script
 
 my @sources = (
-	{ file => $perl_tsv,            group => 'Stats::LikeR', color => 'blue'  },
-	{ file => 'python_scaling.tsv', group => 'Python',       color => 'green' },
-	{ file => 'r_scaling.tsv',      group => 'R',            color => 'red'   },
+	{ file => $perl_tsv,            group => 'Stats::LikeR' },
+	{ file => 'python_scaling.tsv', group => 'Python'       },
+	{ file => 'r_scaling.tsv',      group => 'R'            },
 );
+
+# Every line a panel can carry, in the order they are named in a title.
+my @groups = (
+	{ group => 'Stats::LikeR', color => 'blue'   },
+	{ group => 'List::Util',   color => 'purple' },
+	{ group => 'Python',       color => 'green'  },
+	{ group => 'R',            color => 'red'    },
+);
+my %group_color = map { $_->{group} => $_->{color} } @groups;
 
 # What the two images per figure measure.  Both are drawn from the same rows of
 # the same .tsv files -- the same figures, panels, languages, runs and sizes --
@@ -1243,12 +1305,14 @@ my @quantities = (
 #
 #   $series->{$figure}{$function}{$group}{$run} = [ [n, y], ... ]
 #
-# Slope rows are pushed onto $slope_rows rather than returned, so that the two
-# calls fill one table.
+# $label maps a group to what its legend entry says, which is the group with
+# the version it was measured at.  Slope rows are pushed onto $slope_rows
+# rather than returned, so that the two calls fill one table.
 sub draw_figure_set {
-	my ($series, $panel_order, $color, $q, $slope_rows) = @_;
+	my ($series, $panel_order, $label, $q, $slope_rows) = @_;
 
 	my $floored = 0;	#readings drawn at the floor rather than where measured
+	my %label_color = map { $label->{ $_->{group} } => $_->{color} } @groups;
 
 	foreach my $figure (@figure_order) {
 		next unless $series->{$figure};
@@ -1258,7 +1322,7 @@ sub draw_figure_set {
 		foreach my $fn (@{ $panel_order->{$figure} }) {
 			my %data;
 
-			foreach my $group (map { $_->{group} } @sources) {
+			foreach my $group (map { $_->{group} } @groups) {
 				my $group_runs = $series->{$figure}{$fn}{$group} or next;
 
 				# One faint line per run: the x of that line is the size ladder
@@ -1285,7 +1349,9 @@ sub draw_figure_set {
 						push @y, log10($v);
 					}
 					next unless @x;
-					push @{ $data{$group} }, [ \@x, \@y ];
+					# keyed by the legend text, because that is what "wide"
+					# labels each group with
+					push @{ $data{ $label->{$group} } }, [ \@x, \@y ];
 					$group_seen{$group} = 1;
 
 					for my $v (@x) {
@@ -1330,7 +1396,7 @@ sub draw_figure_set {
 			push @plots, {
 				'plot.type' => 'wide',
 				data        => \%data,
-				color       => { map { $_ => $color->{$_} } keys %data },
+				color       => { map { $_ => $label_color{$_} } keys %data },
 				title       => pyq($fn),
 			};
 		}
@@ -1370,11 +1436,11 @@ sub draw_figure_set {
 			$plots[$i]{'show.legend'} = 0 if $i > 0;
 		}
 		# The languages are named from the ones this figure actually drew rather
-		# than from @sources, because a .tsv written before the bytes column
+		# than from @groups, because a .tsv written before the bytes column
 		# existed contributes to the seconds image and not to the RAM one, and a
 		# title promising three comparisons over two lines is a lie the reader
 		# has no way to check.
-		my @langs = grep { $group_seen{$_} } map { $_->{group} } @sources;
+		my @langs = grep { $group_seen{$_} } map { $_->{group} } @groups;
 		$plots[0]{suptitle} = pyq(sprintf '%s -- %s, %s',
 			$figure_title{$figure}, $q->{measures}, join(' vs ', @langs));
 
@@ -1406,14 +1472,14 @@ sub plot_all {
 	# in the order --measure took them rather than in hash order.  It is shared
 	# by both quantities, so the RAM image lays its panels out exactly as the
 	# seconds image does even where a language is missing from one of them.
-	my (%series, %panel_order, %seen_panel, %color);
+	# $versions{$group}{$version} counts the rows that named it; see %label below.
+	my (%series, %panel_order, %seen_panel, %versions);
 
 	foreach my $src (@sources) {
 		unless (-f $src->{file}) {
 			warn "$src->{file} is not there; skipping $src->{group}\n";
 			next;
 		}
-		$color{ $src->{group} } = $src->{color};
 
 		my $tab = read_table($src->{file}, sep => "\t", 'output.type' => 'hoa');
 		my $rows = @{ $tab->{function} };
@@ -1429,6 +1495,13 @@ sub plot_all {
 		for my $i (0 .. $rows - 1) {
 			my $figure = $tab->{figure}[$i];
 			my $fn     = $tab->{function}[$i];
+			my $group  = $tab->{language} ? $tab->{language}[$i] : $src->{group};
+			die "$src->{file} row ", $i + 2, ": no colour for language '$group'; "
+			  . "add it to \@groups\n" unless $group_color{$group};
+			# A file written before the version column existed has none to
+			# give, and its lines are labelled with the group alone.
+			my $v = $tab->{version} ? $tab->{version}[$i] : undef;
+			$versions{$group}{$v}++ if defined $v && length $v && $v ne 'NA';
 			push @{ $panel_order{$figure} }, $fn unless $seen_panel{$figure}{$fn}++;
 			foreach my $q (@have) {
 				my $y = $tab->{ $q->{key} }[$i];
@@ -1438,7 +1511,7 @@ sub plot_all {
 				# screened before it is logged rather than trusted to be a
 				# number.
 				next unless defined $y && Scalar::Util::looks_like_number($y);
-				push @{ $series{ $q->{key} }{$figure}{$fn}{ $src->{group} }
+				push @{ $series{ $q->{key} }{$figure}{$fn}{$group}
 				               { $tab->{run}[$i] } },
 					[ $tab->{n}[$i], $y ];
 			}
@@ -1448,10 +1521,21 @@ sub plot_all {
 	die "no *_scaling.tsv found; run --measure, scale.py and scale.R first\n"
 		unless %series;
 
+	# "Python 3.14.2", "R 4.6.1".  One file is one run of one program, so a
+	# group should only ever have one version; if a file was stitched together
+	# from runs under two, the legend names both rather than picking one, and
+	# says so here.
+	my %label;
+	foreach my $group (map { $_->{group} } @groups) {
+		my @v = sort keys %{ $versions{$group} || {} };
+		$label{$group} = @v ? "$group " . join('/', @v) : $group;
+		warn "$group was measured under more than one version: @v\n" if @v > 1;
+	}
+
 	my @slope_rows;
 	foreach my $q (@quantities) {
 		next unless $series{ $q->{key} };
-		draw_figure_set($series{ $q->{key} }, \%panel_order, \%color, $q,
+		draw_figure_set($series{ $q->{key} }, \%panel_order, \%label, $q,
 			\@slope_rows);
 	}
 
@@ -1481,11 +1565,11 @@ sub plot_all {
 # 9. Run the requested stages
 # ---------------------------------------------------------------------------
 # --weigh first and alone: it is one reading for one call, started by
-# --measure, and it must not draw or measure anything else.  Its three
-# arguments are positional -- figure, function name, n -- because a function
+# --measure, and it must not draw or measure anything else.  Its four
+# arguments are positional -- figure, group, function name, n -- because a function
 # name like "read_table (csv, mixed)" is nobody's idea of an option value.
 if ($do_weigh) {
-	@ARGV == 3 or die "--weigh takes a figure, a function name and an n\n";
+	@ARGV == 4 or die "--weigh takes a figure, a group, a function name and an n\n";
 	weigh_one(@ARGV);
 	exit 0;
 }

@@ -5721,8 +5721,26 @@ header, such a line can be a commented-out header, as described below.
 appears. By default a `"` anywhere in a field opens a quoted field that runs to
 the next `"`, possibly many lines later, so a file whose quotes are not CSV
 quoting -- a name such as `'Beach rock 4+5"'` -- would have every line up to the
-next `"` read into one cell. Formats that never quote, such as NCBI's taxonomy
-dumps, want both options:
+next `"` read into one cell.
+
+`read_table` cannot tell a stray `"` from CSV quoting by looking at the bytes,
+and neither can R or pandas. It does say when the file looks like it has one,
+and names the line where the quote opened:
+
+- If the file ends inside a quoted field, `read_table` warns and keeps what it
+  read, as R's `scan()` does. pandas raises an error here instead.
+- If a `"` in the middle of a field, such as `5'10"`, opens a quoted field that
+  runs past the end of its line, `read_table` warns, once per file. R reads such
+  a field the same way; pandas keeps a `"` in the middle of a field as text.
+- An `Alignment error` on a row that a quoted field ran across lines in says so.
+- `quote => ''` warns when every field on the first line is wrapped in `"`, as
+  R's `write.csv()` writes them, because those quote marks would then stay in
+  every name.
+
+A quoted cell that starts at the beginning of its field and holds a line break
+is ordinary CSV, and is read without a warning.
+
+Formats that never quote, such as NCBI's taxonomy dumps, want both options:
 
     # NCBI fullnamelineage.dmp: "id\t|\tname\t|\tlineage\t|", no header
     my $lineage = read_table('fullnamelineage.dmp',
@@ -5733,6 +5751,31 @@ dumps, want both options:
 On that 3,015,956-line, 900 MB file this takes 2.6 s. A literal
 `sep => "\t|\t"` takes 1.6 s, but leaves each line's closing `"\t|"` on the
 lineage.
+
+### compressed files (gzip, bzip2)
+A gzip- or bzip2-compressed file is read as the text inside it; there is no
+option to set:
+
+    my $d = read_table('cohort.tsv.gz');                  # tab-separated, from the .tsv
+    my $v = read_table('variants.tsv.bgz');               # bgzip / BGZF
+    my $b = read_table('export.csv.bz2');
+
+  - **The bytes decide, not the name**, as with R's `read.table`: a
+    compressed file without a `.gz` suffix is still read, and a plain file
+    named `.gz` is still text. The name does still pick the default `sep`,
+    from the part before `.gz`, `.bgz` or `.bz2`, so `x.tsv.gz` is
+    tab-separated.
+  - **It is streamed**, inflated 64 KB at a time as the rows are read, so a
+    large compressed file takes no more memory than the plain one would.
+  - **Every member is read.** bgzip (every `.vcf.gz`), `pbzip2`, R's
+    `gzfile(, "a")` and `cat a.gz b.gz` all write files of several
+    compressed members, and all of them come back whole.
+  - **Damage is an error, not a short read**: a truncated file, a bad
+    checksum, or anything but NUL padding after the last member dies naming
+    the file.
+  - gzip needs only core modules. bzip2 needs `Compress::Raw::Bzip2`, which
+    is core from perl 5.10.1; on 5.10.0 install it from CPAN. xz, zstd and
+    `.zip` are not read (an `.xlsx`, which is a zip archive, is).
 
 ### missing values (`na.strings` / `na_values` / `undef.val`)
 An empty field is always read as `undef`. Any *other* text that a file uses to

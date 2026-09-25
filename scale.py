@@ -60,6 +60,7 @@ draws one fewer line in that panel.
 """
 import csv
 import os
+import platform
 import sys
 import time
 import tracemalloc
@@ -461,10 +462,14 @@ def main():
         if os.path.isfile(out):
             os.unlink(out)
 
+    # The version column is the interpreter's, which plot.scaling.pl puts in
+    # the legend; it is the same on every row, and is repeated there so the
+    # file cannot be separated from what produced it.
+    version = platform.python_version()
     with open('python_scaling.tsv', 'w') as fh:
-        fh.write('figure\tfunction\tcall\tn\trun\tseconds\tbytes\n')
+        fh.write('figure\tfunction\tcall\tn\trun\tseconds\tbytes\tversion\n')
         for row in results:
-            fh.write('%s\t%s\t%s\t%d\t%d\t%.9f\t%d\n' % row)
+            fh.write('%s\t%s\t%s\t%d\t%d\t%.9f\t%d\t%s\n' % (row + (version,)))
     print('Done. %d measurements written to python_scaling.tsv' % len(results))
 
 

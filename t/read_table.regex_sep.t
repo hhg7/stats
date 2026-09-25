@@ -227,9 +227,16 @@ is_deeply read_table(fixture(qq{a b\n"x\n  y" 2\n 3 4\n}), sep => $ws),
 	'a quoted field runs over lines, which keep their leading blanks';
 is_deeply read_table(fixture(qq{a;b\n1;"2;3"\n}), sep => qr/;/),
 	[ { a => 1, b => '2;3' } ], 'a separator inside quotes is text';
-is_deeply read_table(fixture(qq{a;b\n1;"unterminated\n}), sep => qr/;/),
-	[ { a => 1, b => "unterminated\n" } ],
-	'a quote still open at the end of the file ends the last field';
+{
+	my @warn;
+	local $SIG{__WARN__} = sub { push @warn, @_ };
+	is_deeply read_table(fixture(qq{a;b\n1;"unterminated\n}), sep => qr/;/),
+		[ { a => 1, b => "unterminated\n" } ],
+		'a quote still open at the end of the file ends the last field';
+	is scalar @warn, 1, '... and says so, once';
+	like $warn[0], qr/\Aread_table: end of file inside a quoted field in \S+: a '"' at the start of a field on line 2 opened/,
+		'... naming the line the quote opened on';
+}
 is_deeply read_table(fixture("a;b\r\n1;2\r\n"), sep => qr/;/),
 	[ { a => 1, b => 2 } ], 'CRLF line ends';
 is_deeply read_table(fixture("a;b\n1\r;2\n"), sep => qr/;/),

@@ -8281,6 +8281,40 @@ static bool S_csv_rx_find(pTHX_ REGEXP *restrict rx, SV *line_sv, char *line,
 	return TRUE;
 }
 
+/*What went wrong with a quote, for read_table's messages.
+
+A '"' that opens a quoted field and is still open at the end of the line takes
+the newline and every following line into that one field, up to the next '"'.
+That is right for a CSV cell that holds a line break, and silent damage when
+the file's '"' is plain text -- an inch mark, a name ending in 'rock 4+5"' --
+and the next '"' is lines or a whole file away.  Neither pandas nor R can tell
+which from the bytes either; this names the line the quote opened on so that
+the reader can look, and says what to pass if it is text.
+
+q_line is the physical line the quote opened on, mid is TRUE when text other
+than blanks came before it in its field, and to is the line the field ran on to,
+0 = it never closed before the end of the file.  The SV is mortal.*/
+static SV *S_quote_note(pTHX_ size_t q_line, bool mid, size_t to)
+{
+	SV *note = sv_2mortal(newSVpvf("a '\"' %s on line %" UVuf " opened a quoted field that ",
+		mid ? "in the middle of a field" : "at the start of a field", (UV)q_line));
+	if (to)
+		sv_catpvf(note, "ran on to line %" UVuf, (UV)to);
+	else
+		sv_catpvs(note, "the file never closes");
+	sv_catpvs(note, " (pass quote => '' if '\"' is literal text in this file)");
+	return note;
+}
+
+/*TRUE when the n bytes at s are all spaces and tabs, n = 0 included.*/
+static bool S_blank_run(const char *restrict s, size_t n)
+{
+	for (size_t k = 0; k < n; k++)
+		if (s[k] != ' ' && s[k] != '\t')
+			return FALSE;
+	return TRUE;
+}
+
 /*Append one finished field to the row.
 
 A field that is a single unquoted run -- the common case, and every field of a
@@ -8307,7 +8341,10 @@ static void S_push_field(pTHX_ AV *restrict row, SV *restrict field,
 }
 
 /*Hand a finished row to the callback (streaming) or to @$data (slurp), and
-start a fresh one.
+start a fresh one.  For a row that a quoted field ran across lines in, the
+callback is also passed S_quote_note(q_line, mid, to) after the row; q_line = 0
+means there was none.  The note is made inside this call's SAVETMPS, so a file
+of many multi-line cells does not pile them up until the parse ends.
 
 Ownership: the row AV's single reference is transferred to a MORTAL RV
 (newRV_noinc + sv_2mortal). On the normal path the inner FREETMPS releases
@@ -8317,7 +8354,8 @@ the row survives for the caller -- exactly the old semantics, minus the
 leak and minus one SvREFCNT_dec per row.  *rowp is csv_plan's 'row', which
 S_plan_free() releases on an unwind, so it is NULL for exactly as long as the
 callback owns the row.*/
-static void S_emit_row(pTHX_ AV **rowp, bool use_cb, SV *callback, AV *data)
+static void S_emit_row(pTHX_ AV **rowp, bool use_cb, SV *callback, AV *data,
+	size_t q_line, bool mid, size_t to)
 {
 	AV *row = *rowp;
 	*rowp = NULL;	//ownership leaves this function NOW
@@ -8327,6 +8365,8 @@ static void S_emit_row(pTHX_ AV **rowp, bool use_cb, SV *callback, AV *data)
 		SAVETMPS;
 		PUSHMARK(SP);
 		XPUSHs(sv_2mortal(newRV_noinc((SV*)row)));
+		if (q_line)	//read_table adds it to an alignment message
+			XPUSHs(S_quote_note(aTHX_ q_line, mid, to));
 		PUTBACK;
 		call_sv(callback, G_DISCARD);	//may die: nothing left to leak
 		FREETMPS;
@@ -8372,6 +8412,9 @@ The plan's keys, all set by read_table's install_plan():
   rn     mode 2 only: the index into keys of the row.names column
   na     the na.strings set, or undef when there is none
   file   for the alignment message
+
+span_line, span_to and span_mid are not plan keys: _parse_csv_file() sets them
+before each row it hands on, and they stay 0 for an .xlsx.
   row    a REFERENCE to read_table's $data_row, read once when the plan is
          picked up: the callback has already emitted the rows before this
          point, and the alignment message counts rows from 1 across both.*/
@@ -8388,7 +8431,10 @@ typedef struct {
 	size_t  ncol;
 	size_t  rn;	//mode 2 only
 	size_t  row_n;	//data rows emitted so far, by both paths together
+	size_t  span_line;	//0 = the row is on one line; else where the quote that ran it across lines opened
+	size_t  span_to;	//the line that field ran on to, 0 = the end of the file
 	short int mode;	// 0 = aoh, 1 = hoa, 2 = hoh, 3 = aoa
+	bool    span_mid;	//that quote came after text in its field
 	bool    active;	//has the callback filled the plan in yet
 } csv_plan;
 
@@ -8550,9 +8596,14 @@ static void S_fast_row(pTHX_ csv_plan *restrict p, AV *restrict row)
 	HV  *h  = NULL;
 	bool dup = FALSE;	//mode 2: the name was already taken
 
-	if (w != p->ncol)
+	if (w != p->ncol) {
+		if (p->span_line)
+			croak("Alignment error on %s data row %" UVuf " (%" UVuf " fields vs %" UVuf " headers); %" SVf ".\n",
+			      p->file, (UV)(p->row_n + 1), (UV)w, (UV)p->ncol,
+			      SVfARG(S_quote_note(aTHX_ p->span_line, p->span_mid, p->span_to)));
 		croak("Alignment error on %s data row %" UVuf " (%" UVuf " fields vs %" UVuf " headers).\n",
 		      p->file, (UV)(p->row_n + 1), (UV)w, (UV)p->ncol);
+	}
 	p->row_n++;
 	ary = AvARRAY(row);
 	if (p->mode == 3) {	//aoa: the whole row, in file order
@@ -20039,9 +20090,9 @@ PPCODE:
 	XSRETURN_EMPTY;
 }
 
-SV* _parse_csv_file(char* file, const char* sep_str, const char* comment_str, SV* callback = &PL_sv_undef, SV* plan_sv = &PL_sv_undef, bool quote = TRUE, bool bare_comment = FALSE, SV* sep_rx = &PL_sv_undef, bool sep_ws = FALSE)
+SV* _parse_csv_file(char* file, const char* sep_str, const char* comment_str, SV* callback = &PL_sv_undef, SV* plan_sv = &PL_sv_undef, bool quote = TRUE, bool bare_comment = FALSE, SV* sep_rx = &PL_sv_undef, bool sep_ws = FALSE, SV* fh_sv = &PL_sv_undef)
 PREINIT:
-	PerlIO *fp;
+	PerlIO *fp;	//not restrict: with fh_sv it is the caller's handle, perl-managed
 	AV *data = NULL;
 	SV *field = NULL;
 	SV *line_sv = NULL;
@@ -20051,7 +20102,12 @@ PREINIT:
 	bool in_quotes = FALSE, post_quote = FALSE, use_cb = FALSE;
 	bool first_line = TRUE;	//a byte-order mark can only be on the first line
 	size_t sep_len, comment_len;
-	size_t lineno = 0;	//physical lines read so far, for the empty-match message
+	size_t lineno = 0;	//physical lines read so far, for the messages
+	size_t q_line = 0;	//the line the open quoted field began on
+	bool q_mid = FALSE;	//that quote came after text in its field
+	size_t span_line = 0;	//0 = the row so far is on one line; else q_line of the quote that ran it across
+	bool span_mid = FALSE;	//q_mid of that quote
+	bool warned_mid = FALSE;	//the mid-field warning is given once per file
 	char sep0 = 0;
 	REGEXP *rx = NULL;	//a qr// sep; NULL = sep_str is the literal separator
 CODE:
@@ -20084,11 +20140,24 @@ as pandas reads sep=r"\s+": leading and trailing whitespace make no field.*/
 	sep_len = (sep_str && !rx) ? strlen(sep_str) : 0;
 	comment_len = comment_str ? strlen(comment_str) : 0;
 	sep0 = sep_len ? sep_str[0] : 0;
-	fp = PerlIO_open(file, "r");
-	if (!fp)
-		croak("Could not open file '%s'", file);
-	ENTER;
-	SAVEDESTRUCTOR_X(S_pclose, fp);
+/*fh_sv is an open handle to read instead of opening file, which then only
+names the input in the messages.  read_table passes one for a compressed file,
+opened through the decompressing PerlIO::via layer in LikeR.pm, so the input is
+inflated as it is read rather than into memory first.  The handle is the
+caller's to close.*/
+	if (SvOK(fh_sv)) {
+		IO *io = sv_2io(fh_sv);
+		fp = IoIFP(io);
+		if (!fp)
+			croak("_parse_csv_file: fh is not an open handle");
+		ENTER;
+	} else {
+		fp = PerlIO_open(file, "r");
+		if (!fp)
+			croak("Could not open file '%s'", file);
+		ENTER;
+		SAVEDESTRUCTOR_X(S_pclose, fp);
+	}
 	Newxz(plan, 1, csv_plan);
 	SAVEDESTRUCTOR_X(S_plan_free, plan);
 	line_sv = newSV(128);
@@ -20122,7 +20191,9 @@ rs_nl's SAVEFREESV so that it runs first on the unwind.*/
 		lineno++;
 		line = SvPVX(line_sv);
 		len  = SvCUR(line_sv);
+		bool had_nl = FALSE;	//only the file's last line can lack one
 		if (len && line[len-1] == '\n') {
+			had_nl = TRUE;
 			len--;
 			if (len && line[len-1] == '\r')
 				len--;
@@ -20216,8 +20287,11 @@ the search resumes after it.*/
 				} else if (stop < len) {
 					if (stop > i)
 						sv_catpvn(field, line + i, stop - i);
-					if (line[stop] == '"' && !post_quote)
+					if (line[stop] == '"' && !post_quote) {
 						in_quotes = TRUE;
+						q_line    = lineno;
+						q_mid     = !S_blank_run(SvPVX(field), SvCUR(field));
+					}
 					i     = stop + 1;	//a quote after a closing quote, or a stray CR, is dropped
 					trail = FALSE;
 				} else {
@@ -20245,8 +20319,11 @@ the search resumes after it.*/
 				if ((line[i] == '"' && quote) || line[i] == '\r') {	//a '"' sep under quote => '' is a sep
 					if (i > start)
 						sv_catpvn(field, line + start, i - start);
-					if (line[i] == '"' && !post_quote)
+					if (line[i] == '"' && !post_quote) {
 						in_quotes = TRUE;
+						q_line    = lineno;
+						q_mid     = !S_blank_run(SvPVX(field), SvCUR(field));
+					}
 					i++;	//a quote after a closing quote, or a stray CR, is dropped
 				} else {
 					S_push_field(aTHX_ plan->row, field, line + start, i - start);
@@ -20256,33 +20333,64 @@ the search resumes after it.*/
 			}
 		}
 		if (in_quotes) {
-			sv_catpvn(field, "\n", 1);
+			if (had_nl)	//a file ending inside the quote gets no newline it did not have
+				sv_catpvn(field, "\n", 1);
+			if (!span_line) {
+				span_line = q_line;
+				span_mid  = q_mid;
+			}
 		} else {
 			post_quote = FALSE;
 			if (!(sep_ws && trail))	//trailing whitespace is not a separator either
 				S_push_field(aTHX_ plan->row, field, tail, tail_len);
 			if (plan->active) {
+				plan->span_line = span_line;
+				plan->span_mid  = span_mid;
+				plan->span_to   = lineno;
 				S_fast_row(aTHX_ plan, plan->row);
 			} else {
-				S_emit_row(aTHX_ &plan->row, use_cb, callback, data);
+				S_emit_row(aTHX_ &plan->row, use_cb, callback, data,
+					span_line, span_mid, lineno);
 				/*The callback fills the plan in on the row that fixes
 the header, so this is looked at once per row until it does -- twice in
 practice, and never again afterwards.*/
 				if (plan_hv && hv_exists(plan_hv, "out", 3))
 					S_plan_init(aTHX_ plan, plan_hv);
 			}
+/*A quoted field that starts at the start of its field and runs across lines is
+a CSV cell with a line break in it.  One that starts after text -- 5'10" -- is
+almost always a '"' that was meant as text, and R's scan() and this parser both
+open a quote there all the same (R 4.6.1's tests/reg-tests-1d.R pins '="Total'
+opening one), where pandas would keep it as text.  A row that it misaligned has
+already died above with the same words, so this is for the row it did not.*/
+			if (span_line && span_mid && !warned_mid) {
+				warned_mid = TRUE;
+				warn("read_table: %s: %" SVf "\n", file,
+				     SVfARG(S_quote_note(aTHX_ span_line, TRUE, lineno)));
+			}
+			span_line = 0;
 		}
 	}
 /*sv_gets() answers NULL for a read error as well as for end of file, so without
 this a failing disk or a dropped network mount handed back a truncated table.*/
 	if (PerlIO_error(fp))
 		croak("Error reading file '%s': %s", file, Strerror(errno));
+/*R's scan() warns "EOF within quoted string" here (src/main/scan.c, R 4.6.1)
+and keeps what it read; pandas' C engine raises "EOF inside string starting at
+row N".  This keeps the row, as R does, but says where the quote opened: up to
+0.320 it said nothing, and everything after one stray '"' came back as a single
+cell.*/
 	if (in_quotes) {
+		warn("read_table: end of file inside a quoted field in %s: %" SVf "\n",
+		     file, SVfARG(S_quote_note(aTHX_ q_line, q_mid, 0)));
 		S_push_field(aTHX_ plan->row, field, "", 0);
-		if (plan->active)
+		if (plan->active) {
+			plan->span_line = q_line;
+			plan->span_mid  = q_mid;
+			plan->span_to   = 0;
 			S_fast_row(aTHX_ plan, plan->row);
-		else
-			S_emit_row(aTHX_ &plan->row, use_cb, callback, data);
+		} else
+			S_emit_row(aTHX_ &plan->row, use_cb, callback, data, q_line, q_mid, 0);
 	}
 	LEAVE;
 	RETVAL = use_cb ? newSV(0) : newRV_inc((SV*)data);
