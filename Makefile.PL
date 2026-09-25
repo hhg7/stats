@@ -142,6 +142,7 @@ my %WriteMakefileArgs = (
   "PREREQ_PM" => {
     "Cwd" => 0,
     "Compress::Raw::Zlib" => 0,
+    "Compress::Raw::Bzip2" => 0,
     "IO::Uncompress::Unzip" => 0,
     "Scalar::Util" => "1.22"
   },
@@ -185,6 +186,7 @@ my %WriteMakefileArgs = (
 my %FallbackPrereqs = (
   "Cwd" => 0,
   "Compress::Raw::Zlib" => 0,
+  "Compress::Raw::Bzip2" => 0,
   "IO::Uncompress::Unzip" => 0,
   "Scalar::Util" => "1.22",
   "Test::Exception" => 0,

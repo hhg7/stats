@@ -32,6 +32,7 @@
       },
       "runtime" : {
          "requires" : {
+            "Compress::Raw::Bzip2" : "0",
             "Compress::Raw::Zlib" : "0",
             "Cwd" : "0",
             "IO::Uncompress::Unzip" : "0",

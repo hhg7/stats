@@ -45,7 +45,7 @@
 # with Compress::Raw::Zlib and Compress::Raw::Bzip2, the modules the layer
 # reads them with, and their expected values are the plain text they were
 # made from.
-require 5.010;
+require 5.010001;
 use strict;
 use warnings FATAL => 'all';
 use Test::More;
@@ -99,13 +99,11 @@ sub gz {
 	return $out;
 }
 
-# Compress::Raw::Bzip2 is core only from perl 5.10.1 (see _open_decompressed),
-# so on 5.10.0 without it from CPAN the bzip2 reads are checked for the message
-# that says so instead. This is the module's own prerequisite, not a reference
-# implementation: every bzip2 fixture is committed or made from it.
-#
-# Before it is loaded, a read of a bzip2 file is made with the load forced to
-# fail, which is the one way to reach that message on a perl that has it.
+# Compress::Raw::Bzip2 is core from perl 5.10.1, the oldest supported, and a
+# declared prerequisite, but _open_decompressed() loads it only for a bzip2
+# file and says so if it is missing, since some vendors split core modules
+# into packages of their own. Before it is loaded, one read is made with the
+# load forced to fail, which is the one way to reach that message.
 {
 	my $f = t_file('morley.tab.bz2');
 	local @INC = (sub { die "no Compress::Raw::Bzip2 here\n"
@@ -114,11 +112,10 @@ sub gz {
 	delete $INC{'Compress/Raw/Bzip2.pm'};
 	eval { read_table($f, sep => qr/\s+/) };
 	is $@, "read_table: \"$f\" is bzip2-compressed, and reading it needs "
-	     . "Compress::Raw::Bzip2, which is core only from perl 5.10.1; "
-	     . "install it from CPAN\n",
+	     . "Compress::Raw::Bzip2, which is not installed\n",
 		'bzip2 without Compress::Raw::Bzip2: the message says what is missing';
 }
-my $HAVE_BZIP2 = eval { require Compress::Raw::Bzip2; 1 } ? 1 : 0;
+require Compress::Raw::Bzip2;
 
 # One bzip2 stream holding $text.
 sub bz {
@@ -148,11 +145,6 @@ my $plain  = t_file('morley.tab');
 		my $f = t_file($name);
 		is substr(slurp($f), 0, length $magic{$name}), $magic{$name},
 			"$name is compressed";
-		if ($name =~ /bz2/ && !$HAVE_BZIP2) {
-			eval { read_table($f, %morley) };
-			like $@, qr/needs Compress::Raw::Bzip2/, "$name: bzip2 is missing";
-			next;
-		}
 		for my $otype (qw(aoh aoa hoa)) {
 			is_deeply read_table($f, %morley, 'output.type' => $otype),
 				read_table($plain, %morley, 'output.type' => $otype),
@@ -177,11 +169,6 @@ my $plain  = t_file('morley.tab');
 	my @want = ([ 'V1' ], map { [ $_ ] } 1 .. 70);
 	for my $name (qw(append70.gz append70.bz2)) {
 		my $f = t_file($name);
-		if ($name =~ /bz2/ && !$HAVE_BZIP2) {
-			eval { read_table($f, header => 0) };
-			like $@, qr/needs Compress::Raw::Bzip2/, "$name: bzip2 is missing";
-			next;
-		}
 		is_deeply read_table($f, header => 0, 'output.type' => 'aoa'), \@want,
 			"$name: both members are read, 70 lines as readLines() gives";
 	}
@@ -222,8 +209,7 @@ my $plain  = t_file('morley.tab');
 	is_deeply read_table(fixture('t.csv.gz', gz($tsv))),
 		[ { "a\tb" => "1\tx" }, { "a\tb" => "2\ty" } ],
 		'x.csv.gz is comma-separated by default';
-	SKIP: {
-		skip 'Compress::Raw::Bzip2 is not installed', 1 unless $HAVE_BZIP2;
+	{
 		is_deeply read_table(fixture('t.tsv.bz2', bz($tsv))), $want,
 			'x.tsv.bz2 is tab-separated by default';
 	}
@@ -270,8 +256,7 @@ my $plain  = t_file('morley.tab');
 	is_deeply read_table(fixture('pad.csv.gz', gz("a\n1\n") . ("\0" x 5000)
 		. gz("2\n") . "\0\0")), [ { a => 1 }, { a => 2 } ],
 		'NUL padding between and after members is skipped';
-	SKIP: {
-		skip 'Compress::Raw::Bzip2 is not installed', 2 unless $HAVE_BZIP2;
+	{
 		is_deeply read_table(fixture('big.csv.bz2', bz($text))), $want,
 			'bzip2: one stream, many reads';
 		is_deeply read_table(fixture('streams.csv.bz2', bz("n,sq,s\n")
@@ -286,8 +271,7 @@ my $plain  = t_file('morley.tab');
 		'an empty gzip member reads as an empty file';
 	is_deeply read_table(fixture('hdronly.csv.gz', gz("a,b\n")), 'output.type' => 'hoa'),
 		{}, 'a header and no rows, compressed';
-	SKIP: {
-		skip 'Compress::Raw::Bzip2 is not installed', 1 unless $HAVE_BZIP2;
+	{
 		is_deeply read_table(fixture('empty.csv.bz2', bz(''))), [],
 			'an empty bzip2 stream reads as an empty file';
 	}
@@ -305,8 +289,7 @@ my $plain  = t_file('morley.tab');
 		push @bad, "$len: $@" if $@ && $@ !~ /\Aread_table: "\Q$f\E" (?:ends in the middle of its gzip data; it is truncated|is not valid gzip data \(.+\))\n\z/;
 	}
 	is_deeply \@bad, [], 'every truncation of morley.tab.gz is refused';
-	SKIP: {
-		skip 'Compress::Raw::Bzip2 is not installed', 1 unless $HAVE_BZIP2;
+	{
 		my $bz = slurp(t_file('morley.tab.bz2'));
 		@bad = ();
 		for my $len (10 .. length($bz) - 1) {
@@ -344,8 +327,7 @@ my $plain  = t_file('morley.tab');
 	eval { read_table($f) };
 	like $@, qr/has data after its last gzip member/,
 		'so is one byte of a magic number';
-	SKIP: {
-		skip 'Compress::Raw::Bzip2 is not installed', 1 unless $HAVE_BZIP2;
+	{
 		$f = fixture('garbage.bz2', bz($csv) . 'x');
 		eval { read_table($f) };
 		is $@, "read_table: \"$f\" has data after its last bzip2 member that is not bzip2\n",

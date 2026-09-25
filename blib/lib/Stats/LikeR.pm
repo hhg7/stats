@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 # ABSTRACT: Get basic statistical functions, like in R, but with Perl using XS for performance
-require 5.010;
+require 5.010001;
 use strict;
 package Stats::LikeR;
 our $VERSION = '0.321';	# quoted: a bare version ending in 0, such as 0.320, is the number 0.32, which the dist would be named
@@ -2996,10 +2996,10 @@ sub _sniff_compression {
 # An input handle on the decompressed text of $file, streamed through the
 # PerlIO::via layer below, so a multi-gigabyte .tsv.gz is inflated a buffer
 # at a time as the parser reads it rather than into memory first. Both halves
-# are core: PerlIO::via since 5.8, Compress::Raw::Zlib since 5.9.4.
-# Compress::Raw::Bzip2 is core only from 5.10.1, and this distribution
-# supports 5.10.0, so it is loaded here, when a bzip2 file is actually read,
-# and its absence is reported as what it is.
+# are core: PerlIO::via since 5.8, Compress::Raw::Zlib since 5.9.4 and
+# Compress::Raw::Bzip2 since 5.10.1, the oldest perl this supports. The bzip2
+# one is still loaded only when a bzip2 file is read, and its absence reported
+# as what it is: some vendors' perls ship core modules as separate packages.
 sub _open_decompressed {
 	my ($file, $codec) = @_;
 	require PerlIO::via;
@@ -3010,8 +3010,7 @@ sub _open_decompressed {
 	} else {
 		eval { require Compress::Raw::Bzip2; 1 }
 			or die "read_table: \"$file\" is bzip2-compressed, and reading it "
-			     . "needs Compress::Raw::Bzip2, which is core only from perl "
-			     . "5.10.1; install it from CPAN\n";
+			     . "needs Compress::Raw::Bzip2, which is not installed\n";
 		$layer = 'Stats::LikeR::_Bunzip2';
 	}
 	# PUSHED is given no file name, so it reads this one while the open runs.
@@ -5773,6 +5772,123 @@ sub INFLATE {
 	return ($status, 1) if $status == Compress::Raw::Bzip2::BZ_STREAM_END();
 	return ($status, 0) if $status == Compress::Raw::Bzip2::BZ_OK();
 	return ("$status", undef);
+}
+
+# The PerlIO::via layers write_table writes a .gz or .bz2 file through. The XS
+# opens the file as for plain text and pushes :raw:via(<class>):perlio onto it,
+# so the rows reach WRITE 8 KB at a time from the :perlio buffer above rather
+# than a field or a character at a time.
+#
+# The end of the stream -- zlib's final block and the gzip trailer, bzip2's
+# end-of-stream marker -- cannot be written from FLUSH or CLOSE. The :perlio
+# buffer above calls FLUSH after every 8 KB it hands down, so FLUSH does not
+# mean "done", and PerlIO::via calls CLOSE only once the layer below has been
+# closed (PerlIOVia_close() runs PerlIOBase_close() first; perl 5.10.1 and
+# 5.42.0 ext/PerlIO-via/via.xs). So once the last row is written, the XS pops
+# the :perlio layer and then this one, and POPPED finishes the stream while
+# the file is still open.
+#
+# A write that croaks partway closes the handle without the pops, and then
+# CLOSE runs before POPPED: the stream is left unfinished, on purpose, so that
+# the file is a truncated .gz that read_table refuses rather than a complete
+# one holding half the table.
+#
+# A failure goes back the PerlIO way, as -1 from PUSHED or WRITE; the XS turns
+# it into a croak naming the file. PUSHED leaves its reason in $error.
+package Stats::LikeR::_Compress;
+
+our $error;
+
+sub PUSHED {
+	my ($class) = @_;
+	my $z = eval { $class->NEW };
+	if (!$z) {
+		$error = $@ || 'could not start compressing';
+		$error =~ s/\n\z//;
+		return -1;
+	}
+	return bless { z => $z, closed => 0 }, $class;
+}
+
+sub WRITE {
+	my ($self, $buf, $fh) = @_;
+	my $out = '';
+	return -1 unless $self->DEFLATE($buf, $out);
+	return -1 if length $out && !print {$fh} $out;
+	return length $buf;
+}
+
+sub FLUSH { 0 }
+
+sub CLOSE {
+	$_[0]{closed} = 1;
+	return 0;
+}
+
+sub POPPED {
+	my ($self, $fh) = @_;
+	return if $self->{closed} || !$self->{z};
+	my $out = '';
+	# a failure here shows up as the error flag or the close of the layer
+	# below, which is what the XS checks next
+	print {$fh} $out if $self->FINISH($out) && length $out;
+	$self->{z} = undef;
+	return;
+}
+
+package Stats::LikeR::_Gzip;
+our @ISA = ('Stats::LikeR::_Compress');
+
+# Level 6 is Z_DEFAULT_COMPRESSION, the level of gzip(1) and of R's
+# gzfile(compression = 6). zlib's gzip wrapper writes a header with no name
+# and an mtime of 0, so the same table always makes the same bytes.
+sub NEW {
+	require Compress::Raw::Zlib;
+	my ($z, $err) = Compress::Raw::Zlib::Deflate->new(
+		-WindowBits => Compress::Raw::Zlib::WANT_GZIP(),
+		-Level      => Compress::Raw::Zlib::Z_DEFAULT_COMPRESSION());
+	die "could not start gzip compression: $err\n" unless $z;
+	return $z;
+}
+
+sub DEFLATE {
+	$_[0]{z}->deflate($_[1], $_[2]) == Compress::Raw::Zlib::Z_OK();
+}
+
+sub FINISH {
+	$_[0]{z}->flush($_[1]) == Compress::Raw::Zlib::Z_OK();
+}
+
+package Stats::LikeR::_Bzip2;
+our @ISA = ('Stats::LikeR::_Compress');
+
+# appendOutput 1, blockSize100k 9, workfactor 0 (the default, 30), verbosity
+# 0. 9 is bzip2(1)'s default and R's bzfile(compression = 9). Output is
+# appended because DEFLATE may make it in two calls; WRITE and POPPED each pass
+# an empty buffer.
+sub NEW {
+	require Compress::Raw::Bzip2;
+	my ($z, $err) = Compress::Raw::Bzip2->new(1, 9, 0, 0);
+	die "could not start bzip2 compression: $err\n" unless $z;
+	return $z;
+}
+
+# bzip2 writes nothing until it has a whole 900 KB block, so a write that
+# croaked before then would leave an empty file, and an empty file reads as an
+# empty table rather than a broken one. The first WRITE therefore ends its
+# block at once, which puts the stream header and that block on disk, and a
+# file that is never finished is then a truncated bzip2 file, as a gzip one
+# already is from its first write. It costs one short block at the start.
+sub DEFLATE {
+	my ($self) = @_;
+	return 0 unless $self->{z}->bzdeflate($_[1], $_[2])
+		== Compress::Raw::Bzip2::BZ_RUN_OK();
+	return 1 if $self->{started}++;
+	return $self->{z}->bzflush($_[2]) == Compress::Raw::Bzip2::BZ_RUN_OK();
+}
+
+sub FINISH {
+	$_[0]{z}->bzclose($_[1]) == Compress::Raw::Bzip2::BZ_STREAM_END();
 }
 
 package Stats::LikeR;
@@ -14516,9 +14632,12 @@ compressed members, and all of them come back whole.
 checksum, or anything but NUL padding after the last member dies naming
 the file.
 
-=item * gzip needs only core modules. bzip2 needs C<Compress::Raw::Bzip2>, which
-is core from perl 5.10.1; on 5.10.0 install it from CPAN. xz, zstd and
-C<.zip> are not read (an C<.xlsx>, which is a zip archive, is).
+=item * Both need only core modules (C<Compress::Raw::Zlib> and
+C<Compress::Raw::Bzip2>). xz, zstd and C<.zip> are not read (an C<.xlsx>,
+which is a zip archive, is).
+
+=item * L<C<write_table>|/"write_table"> writes C<.gz> and C<.bz2> files that read
+back through this.
 
 =back
 
@@ -16554,6 +16673,40 @@ C<write_table> determines comma and tab-separated delimiters from the filename, 
 Args can also be accepted:
 
  write_table( 'data' => \%flat, 'file' => $f );
+
+=head3 compressed files (C<.gz>, C<.bz2>)
+
+A file name ending in C<.gz> is written gzip-compressed, and one ending in
+C<.bz2> bzip2-compressed:
+
+ write_table(\@rows, 'cohort.tsv.gz');     # tab-separated, then gzipped
+ write_table(\@rows, 'cohort.csv.bz2');
+
+=over
+
+=item * B<The rest of the name means what it always did>: the default C<sep>
+comes from the part before the suffix, so C<cohort.tsv.gz> is
+tab-separated. The text inside is exactly what the plain file would
+hold.
+
+=item * B<It is streamed>, compressed as the rows are written, at gzip's and
+bzip2's default levels (6 and 9, as R's C<gzfile> and C<bzfile> use).
+A gzip file's header carries no name or time, so the same table always
+makes the same bytes.
+
+=item * B<A write that fails partway leaves a truncated file>, which
+L<C<read_table>|/"read_table"> refuses, never one that looks whole. A
+compressed write also croaks if the disk fills or the file cannot be
+finished.
+
+=item * B<Only delimited text is compressed.> A name such as C<table.tex.gz> or
+C<book.xlsx.bz2>, or C<tex>/C<xlsx> with a compressed name, is an error.
+
+=item * Both use core modules only. A C<.bgz> name is an error: it promises
+bgzip's BGZF, which tabix can index and plain gzip is not. Write C<.gz>,
+and run C<bgzip> on the plain file if you need BGZF.
+
+=back
 
 =head3 The confirmation line
 

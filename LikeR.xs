@@ -19530,15 +19530,34 @@ PPCODE:
 	}
 	if (!file_sv || !SvOK(file_sv)) croak("write_table: file name missing\n");
 	const char *file = SvPV_nolen(file_sv);
+/* A name ending .gz or .bz2 is written compressed (see write_table's layers
+  near the end of LikeR.pm), and whatever else the name decides -- LaTeX,
+  .xlsx, the default sep -- is read from the part before that suffix, so
+  x.tsv.gz is tab-separated text, gzipped. Only the name says so, as it does
+  for pandas' to_csv(compression='infer'); there are no bytes yet to sniff.*/
+	short int compress = 0;	// 0 = plain, 1 = gzip, 2 = bzip2
+	size_t base_len = strlen(file);	// the name up to any .gz / .bz2
+	if (base_len >= 3 && (strEQ(file + base_len - 3, ".gz") || strEQ(file + base_len - 3, ".GZ"))) {
+		compress = 1;
+		base_len -= 3;
+	} else if (base_len >= 4 && (strEQ(file + base_len - 4, ".bz2") || strEQ(file + base_len - 4, ".BZ2"))) {
+		compress = 2;
+		base_len -= 4;
+	}
+/* .bgz promises bgzip's BGZF -- gzip members of at most 64 KB, each with a
+  BC extra field giving its size, that tabix can index -- which plain gzip is
+  not, and the plain text this used to write under that name is not either.*/
+	if (base_len >= 4 && (memEQ(file + base_len - 4, ".bgz", 4) || memEQ(file + base_len - 4, ".BGZ", 4)))
+		croak("write_table: '%s' names a bgzip (BGZF) file, which write_table does "
+			"not write; name it .gz for gzip\n", file);
 	/* Decide LaTeX vs delimited. A ".tex" file name turns LaTeX on by default;
 	 an explicit tex => 0/1 always wins (so tex => 0 forces a delimited file
 	 even when it is named *.tex, and tex => 1 forces LaTeX for any name).*/
 	bool tex = 0;
 	if (tex_opt == -1) {
-		size_t file_len = strlen(file);
-		if (file_len >= 4) {
-			const char *ext = file + file_len - 4;
-			if (strEQ(ext, ".tex") || strEQ(ext, ".TEX")) tex = 1;
+		if (base_len >= 4) {
+			const char *ext = file + base_len - 4;
+			if (memEQ(ext, ".tex", 4) || memEQ(ext, ".TEX", 4)) tex = 1;
 		}
 	} else {
 		tex = tex_opt ? 1 : 0;
@@ -19554,26 +19573,27 @@ PPCODE:
   unless an explicit xlsx => 0/1 says otherwise.*/
 	bool xlsx = 0;
 	if (xlsx_opt == -1) {
-		size_t file_len = strlen(file);
-		if (file_len >= 5) {
-			const char *ext = file + file_len - 5;
-			if (strEQ(ext, ".xlsx") || strEQ(ext, ".XLSX")) xlsx = 1;
+		if (base_len >= 5) {
+			const char *ext = file + base_len - 5;
+			if (memEQ(ext, ".xlsx", 5) || memEQ(ext, ".XLSX", 5)) xlsx = 1;
 		}
 	} else {
 		xlsx = xlsx_opt ? 1 : 0;
 	}
 	if (tex && xlsx)
 		croak("write_table: 'tex' and 'xlsx' output are mutually exclusive\n");
+	if (compress && (tex || xlsx))
+		croak("write_table: '%s' names a compressed file, and only delimited text "
+			"is written compressed, not LaTeX or .xlsx\n", file);
 /* LaTeX and xlsx are both rendered from collected rows, not streamed to a
   delimited file handle.*/
 	bool collect = tex || xlsx;
 	if (!explicit_sep) {// Auto-detect separator from file extension if not overridden
-		size_t file_len = strlen(file);
-		if (file_len >= 4) {
-			const char *ext = file + file_len - 4;
-			if (strEQ(ext, ".tsv") || strEQ(ext, ".TSV")) {
+		if (base_len >= 4) {
+			const char *ext = file + base_len - 4;
+			if (memEQ(ext, ".tsv", 4) || memEQ(ext, ".TSV", 4)) {
 				sep = "\t";
-			} else if (strEQ(ext, ".csv") || strEQ(ext, ".CSV")) {
+			} else if (memEQ(ext, ".csv", 4) || memEQ(ext, ".CSV", 4)) {
 				sep = ",";
 			}
 		}
@@ -19695,6 +19715,22 @@ PPCODE:
 	if (!collect && !fh) {
 		if (rows_av) SvREFCNT_dec(rows_av);
 		croak("write_table: Could not open '%s' for writing", file);
+	}
+/* Compressed output goes through a PerlIO::via layer, with a :perlio buffer
+  above it so the layer's perl method is called per 8 KB and not per field.
+  PerlIO_apply_layers() is binmode($fh, ...) and is in perlapio, so this is
+  the documented API; the layers are undone again at the end, below.*/
+	if (fh && compress) {
+		SV *err = get_sv("Stats::LikeR::_Compress::error", GV_ADD);
+		sv_setpvs(err, "");
+		if (PerlIO_apply_layers(aTHX_ fh, "w", compress == 1
+				? ":raw:via(Stats::LikeR::_Gzip):perlio"
+				: ":raw:via(Stats::LikeR::_Bzip2):perlio") != 0) {
+			PerlIO_close(fh);
+			if (rows_av) SvREFCNT_dec(rows_av);
+			croak("write_table: could not write '%s' compressed: %" SVf "\n",
+				file, SVfARG(err));
+		}
 	}
 	AV *headers_av = newAV();
 /* row.names is off unless asked for, in every format -- delimited, LaTeX and
@@ -20053,7 +20089,32 @@ PPCODE:
 	}
 	if (headers_av) SvREFCNT_dec(headers_av);
 	if (rows_av) SvREFCNT_dec(rows_av);
-	if (fh) PerlIO_close(fh);
+/* A compressed file is finished by popping the :perlio buffer and then the
+  via layer while the file is still open: the layer's POPPED writes the end of
+  the stream, which PerlIO::via gives no later chance to do (the reason is at
+  Stats::LikeR::_Compress). Every croak above closes without the pops, and
+  leaves a truncated file that read_table refuses, not a whole one.
+
+  A plain file's write errors have never been checked here. A compressed
+  one's are, because a stream that failed to write its end is a file no
+  reader can open: the first flush reports an error from WRITE, the second
+  one from the end POPPED wrote, and the close whatever is left.*/
+	if (fh && compress) {
+		bool failed = PerlIO_flush(fh) != 0 || PerlIO_error(fh);
+		if (PerlIO_apply_layers(aTHX_ fh, "w", ":pop") != 0
+				|| PerlIO_apply_layers(aTHX_ fh, "w", ":pop") != 0)
+			failed = TRUE;
+		/* bzip2 holds a whole 900 KB block before it writes anything, so a
+		  small table's first write to disk is the one POPPED makes, and its
+		  failure is flagged here, on the layer below */
+		if (PerlIO_flush(fh) != 0 || PerlIO_error(fh))
+			failed = TRUE;
+		if (PerlIO_close(fh) != 0)
+			failed = TRUE;
+		if (failed)
+			croak("write_table: could not write '%s'\n", file);
+	} else if (fh)
+		PerlIO_close(fh);
 /* Delimited output is already on disk by the time the handle closes, so this
   is where csv/tsv announces itself. Guarded on 'fh' rather than on '!collect'
   so the line is printed only when a file was actually opened and written.*/

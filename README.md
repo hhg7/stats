@@ -5773,9 +5773,11 @@ option to set:
   - **Damage is an error, not a short read**: a truncated file, a bad
     checksum, or anything but NUL padding after the last member dies naming
     the file.
-  - gzip needs only core modules. bzip2 needs `Compress::Raw::Bzip2`, which
-    is core from perl 5.10.1; on 5.10.0 install it from CPAN. xz, zstd and
-    `.zip` are not read (an `.xlsx`, which is a zip archive, is).
+  - Both need only core modules (`Compress::Raw::Zlib` and
+    `Compress::Raw::Bzip2`). xz, zstd and `.zip` are not read (an `.xlsx`,
+    which is a zip archive, is).
+  - [`write_table`](#write_table) writes `.gz` and `.bz2` files that read
+    back through this.
 
 ### missing values (`na.strings` / `na_values` / `undef.val`)
 An empty field is always read as `undef`. Any *other* text that a file uses to
@@ -7173,6 +7175,31 @@ A hash of hashes keeps its outer keys as a leading column by default, since that
 Args can also be accepted:
 
     write_table( 'data' => \%flat, 'file' => $f );
+
+### compressed files (`.gz`, `.bz2`)
+A file name ending in `.gz` is written gzip-compressed, and one ending in
+`.bz2` bzip2-compressed:
+
+    write_table(\@rows, 'cohort.tsv.gz');     # tab-separated, then gzipped
+    write_table(\@rows, 'cohort.csv.bz2');
+
+  - **The rest of the name means what it always did**: the default `sep`
+    comes from the part before the suffix, so `cohort.tsv.gz` is
+    tab-separated. The text inside is exactly what the plain file would
+    hold.
+  - **It is streamed**, compressed as the rows are written, at gzip's and
+    bzip2's default levels (6 and 9, as R's `gzfile` and `bzfile` use).
+    A gzip file's header carries no name or time, so the same table always
+    makes the same bytes.
+  - **A write that fails partway leaves a truncated file**, which
+    [`read_table`](#read_table) refuses, never one that looks whole. A
+    compressed write also croaks if the disk fills or the file cannot be
+    finished.
+  - **Only delimited text is compressed.** A name such as `table.tex.gz` or
+    `book.xlsx.bz2`, or `tex`/`xlsx` with a compressed name, is an error.
+  - Both use core modules only. A `.bgz` name is an error: it promises
+    bgzip's BGZF, which tabix can index and plain gzip is not. Write `.gz`,
+    and run `bgzip` on the plain file if you need BGZF.
 
 ### The confirmation line
 

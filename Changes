@@ -38,6 +38,33 @@ Revision history for Stats-LikeR
    4.6.1's reading of the same inputs; t/read_table.quote.R and
    t/read_table.quote.pandas.py regenerate the reference values.
 
+ [write_table(): .gz and .bz2 output]
+
+ - A file name ending in .gz or .bz2 is written gzip- or bzip2-compressed,
+   holding exactly the text the plain file would. The rest of the name
+   picks the default sep as before, so x.tsv.gz is tab-separated. It is
+   streamed through a PerlIO::via layer at gzip's and bzip2's default
+   levels, and a gzip header carries no name or time, so the same table
+   always makes the same bytes. Up to 0.320 such a name got plain text.
+
+ - A write that croaks partway leaves a truncated file, which read_table
+   refuses, never a whole-looking one; for bzip2 the first block is
+   written at once so that even a croak on the first row leaves one. A
+   compressed write that cannot reach the disk croaks; a plain write's
+   errors are still not checked.
+
+ - Only delimited text is compressed: .tex.gz, .xlsx.bz2, or tex/xlsx with
+   a compressed name, is an error. So is a .bgz name, which promises
+   bgzip's BGZF, which this does not write.
+
+ - t/write_table.compressed.pandas.t covers it, from pandas'
+   test_compression.py and test_to_csv.py.
+
+ [Minimum perl]
+
+ - perl 5.10.1 is now the oldest supported, and Compress::Raw::Bzip2, core
+   from that release, is a declared prerequisite.
+
  [read_table(): gzip and bzip2 input]
 
  - A gzip or bzip2 file is read as the text inside it, with nothing to ask
@@ -60,9 +87,8 @@ Revision history for Stats-LikeR
    a bad CRC, and data after the last member that is not NUL padding are
    errors that name the file, never a short read.
 
- - Compress::Raw::Bzip2 is core only from perl 5.10.1, so it is loaded
-   when a bzip2 file is read, and on a 5.10.0 without it that read dies
-   saying what to install. gzip needs only core modules on every perl.
+ - Both need only core modules. Compress::Raw::Bzip2 is loaded only when
+   a bzip2 file is read, and a read without it says what is missing.
 
  - t/read_table.compressed.R.t covers it, from R 4.6.1's
    tests/reg-tests-1b.R compressed read.table and append-mode cases and
