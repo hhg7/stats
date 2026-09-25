@@ -5634,7 +5634,7 @@ minimal example:
 |`auto.row.names` | read R's default `write.table` output, where the header is one field short of every data row because R writes no label for the row-names column: the leading field of each row becomes a row-names column. `1` names it `row_name`, a string names it whatever you pass. Off by default, so a genuinely ragged file is still an error | `'auto.row.names' => 1` |
 |`sep` | field separator: a literal string, or a `qr//` regex (see below); synonym with `delim`| `sep => "\t"`, `sep => qr/\s+/` |
 | `delim`| field separator: a literal string, or a `qr//` regex; synonym with `sep`| `delim => "\t"` |
-| `header` | `1` (the default): the first line holds the column names. `0`: the first line is data, as R's `header = FALSE` and pandas' `header=None` | `header => 0` |
+| `header` | `1` (the default): the first line holds the column names. `0`, or perl's false `''`: the first line is data, as R's `header = FALSE` and pandas' `header=None` | `header => 0` |
 | `col.names` | an array reference of column names. With `header => 0` it names the columns, which are otherwise `V1`, `V2`, … as in R; with a header it replaces the header's names | `'col.names' => ['id', 'name']` |
 | `quote` | `'"'` (the default): a double quote starts a quoted field. `''`: quotes are ordinary text, as R's `quote = ""` and pandas' `quoting=csv.QUOTE_NONE` | `quote => ''` |
 | `sheet`| which worksheet to read from an `.xlsx` file: a 1-based index or a sheet name (default: first sheet). Ignored for text files | `sheet => 'Sheet2'` |
@@ -5685,16 +5685,19 @@ all three output types. Details worth knowing:
   leaves an empty first field, and one at the end an empty last field, just as a
   literal separator would.
 - Capture groups in the pattern are not returned as fields, unlike with `split`,
-  and the pattern keeps its own flags (`qr/x/i`).
+  and the pattern keeps its own flags (`qr/x/i`) and its own group numbers, so a
+  backreference works: `qr/(:)\1/` splits on `::`.
 - A pattern that can match the empty string, such as `qr/\s*/`, is refused,
   since it would cut between every character.
 - In a whitespace-delimited file, a comment line with as many words as the data
   has columns will be taken for a commented-out header, since that is how one
   is recognised; see *commented-out headers* below.
 - An `.xlsx` file ignores `sep` and `quote`, whether a string or a pattern.
-- The separators are found by perl's regex engine rather than in C, so a
-  regex read is slower than a literal one: about 1.3 s rather than 0.2 s on a
-  300,000 x 5 CSV. For a single fixed character, a string is the faster choice.
+- The separators are found by perl's regex engine, called from the same C
+  parser a literal separator uses, so a regex read costs little more than a
+  literal one: on a 300,000 x 5 CSV, `qr/,/` takes 0.17 s and `','` 0.14 s. A
+  string is still the faster choice for a fixed separator, and a pattern that
+  has to backtrack, such as `qr/\s*,\s*/` (0.34 s), costs more.
 ### files with no header, and files with stray quotes (`header`, `col.names`, `quote`)
 `header => 0` reads the first line as data. The columns are named by
 `col.names`, or else `V1`, `V2`, … as R names them, counted from the first row:
@@ -5721,8 +5724,8 @@ dumps, want both options:
         'col.names' => [qw(tax_id tax_name lineage end)],   # 'end' is the empty field after the last "\t|"
         'output.type' => 'hoa');
 
-On that 3,015,956-line, 900 MB file this takes 14 s. A literal
-`sep => "\t|\t"` takes 2 s, but leaves each line's closing `"\t|"` on the
+On that 3,015,956-line, 900 MB file this takes 2.6 s. A literal
+`sep => "\t|\t"` takes 1.6 s, but leaves each line's closing `"\t|"` on the
 lineage.
 
 ### missing values (`na.strings` / `na_values` / `undef.val`)

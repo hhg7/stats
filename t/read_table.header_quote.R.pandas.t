@@ -387,6 +387,9 @@ is_deeply read_table(fixture(qq{a b\n"1 2" 3\n}), sep => $ws, quote => '',
 
 {
 	my $f = fixture("a,b\n1,2\n");
+	# perl's own false is '', which is taken as 0
+	is_deeply read_table($f, header => !!0), [ { V1 => 'a', V2 => 'b' },
+		{ V1 => 1, V2 => 2 } ], "header => !!0 is header => 0";
 	for my $bad ([ 2, '2' ], [ undef, 'undef' ], [ 'no', "'no'" ], [ [], 'an ARRAY' ]) {
 		like error_of(sub { read_table($f, header => $bad->[0]) }),
 			qr/^read_table: 'header' must be 0 or 1$/, "header => $bad->[1] is refused";

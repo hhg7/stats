@@ -58,7 +58,7 @@
 .\" ========================================================================
 .\"
 .IX Title "Stats::LikeR 3"
-.TH Stats::LikeR 3 2026-09-24 "perl v5.44.0" "User Contributed Perl Documentation"
+.TH Stats::LikeR 3 2026-09-25 "perl v5.44.0" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -6172,7 +6172,8 @@ leaves an empty first field, and one at the end an empty last field, just as a
 literal separator would.
 .IP \(bu 4
 Capture groups in the pattern are not returned as fields, unlike with \f(CW\*(C`split\*(C'\fR,
-and the pattern keeps its own flags (\f(CW\*(C`qr/x/i\*(C'\fR).
+and the pattern keeps its own flags (\f(CW\*(C`qr/x/i\*(C'\fR) and its own group numbers, so a
+backreference works: \f(CW\*(C`qr/(:)\e1/\*(C'\fR splits on \f(CW\*(C`::\*(C'\fR.
 .IP \(bu 4
 A pattern that can match the empty string, such as \f(CW\*(C`qr/\es*/\*(C'\fR, is refused,
 since it would cut between every character.
@@ -6183,9 +6184,11 @@ is recognised; see \fIcommented\-out headers\fR below.
 .IP \(bu 4
 An \f(CW\*(C`.xlsx\*(C'\fR file ignores \f(CW\*(C`sep\*(C'\fR and \f(CW\*(C`quote\*(C'\fR, whether a string or a pattern.
 .IP \(bu 4
-The separators are found by perl\*(Aqs regex engine rather than in C, so a
-regex read is slower than a literal one: about 1.3 s rather than 0.2 s on a
-300,000 x 5 CSV. For a single fixed character, a string is the faster choice.
+The separators are found by perl\*(Aqs regex engine, called from the same C
+parser a literal separator uses, so a regex read costs little more than a
+literal one: on a 300,000 x 5 CSV, \f(CW\*(C`qr/,/\*(C'\fR takes 0.17 s and \f(CW\*(Aq,\*(Aq\fR 0.14 s. A
+string is still the faster choice for a fixed separator, and a pattern that
+has to backtrack, such as \f(CW\*(C`qr/\es*,\es*/\*(C'\fR (0.34 s), costs more.
 .PP
 \fIfiles with no header, and files with stray quotes (\fR\f(CI\*(C`header\*(C'\fR\fI, \fR\f(CI\*(C`col.names\*(C'\fR\fI, \fR\f(CI\*(C`quote\*(C'\fR\fI)\fR
 .IX Subsection "files with no header, and files with stray quotes (header, col.names, quote)"
@@ -6219,8 +6222,8 @@ dumps, want both options:
 \&     \*(Aqoutput.type\*(Aq => \*(Aqhoa\*(Aq);
 .Ve
 .PP
-On that 3,015,956\-line, 900 MB file this takes 14 s. A literal
-\&\f(CW\*(C`sep => "\et|\et"\*(C'\fR takes 2 s, but leaves each line\*(Aqs closing \f(CW"\et|"\fR on the
+On that 3,015,956\-line, 900 MB file this takes 2.6 s. A literal
+\&\f(CW\*(C`sep => "\et|\et"\*(C'\fR takes 1.6 s, but leaves each line\*(Aqs closing \f(CW"\et|"\fR on the
 lineage.
 .PP
 \fImissing values (\fR\f(CI\*(C`na.strings\*(C'\fR\fI / \fR\f(CI\*(C`na_values\*(C'\fR\fI / \fR\f(CI\*(C`undef.val\*(C'\fR\fI)\fR

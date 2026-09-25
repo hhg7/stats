@@ -4,8 +4,8 @@
 # Up to 0.319 'sep' was only ever a literal string: a qr// was stringified to
 # "(?^:\s+)", matched byte for byte, never found, and every line came back as
 # one field keyed by the whole header line. A qr// is now found by the regex
-# engine, in perl (_parse_regex_file), and any other sep is the literal it
-# always was.
+# engine, called from the same C parser (_parse_csv_file) that reads a literal
+# sep, and any other sep is the literal it always was.
 #
 # Provenance. The whitespace and multi-character cases are pandas' own, from
 # pandas 3.0.4
@@ -291,6 +291,9 @@ is_deeply read_table(fixture("% id v\n1 2\n"), sep => $ws, comment => '%'),
 	is_deeply read_table(fixture("xa\nx1\n"), sep => qr/(?=x)/),
 		[ { xa => 'x1' } ],
 		'an empty match at the start of a line is not a cut, as in split()';
+	is_deeply read_table(fixture(qq{a,b\n"(q)",2\n}), sep => qr/,|(?=q)/),
+		[ { a => '(q)', b => 2 } ],
+		'an empty match inside a quoted field is text, as a separator there is';
 	like error_of(sub { read_table($f, sep => [' ']) }),
 		qr/^read_table: 'sep' must be a string or a qr\/\/ regex, not a ARRAY reference$/,
 		'an ARRAY sep is refused';
@@ -304,6 +307,19 @@ is_deeply read_table(fixture("% id v\n1 2\n"), sep => $ws, comment => '%'),
 		qr/^Alignment error on \S+ data row 1 \(3 fields vs 2 headers\)\.$/,
 		'a ragged row is the same alignment error';
 }
+
+# --- backreferences ---------------------------------------------------------
+
+# The pattern is matched as it was written. 0.320's first regex parser wrapped
+# it in a capture of its own to cut lines with split(), which renumbered its
+# groups: \1 then meant the whole separator, so a line with no quote in it was
+# one field while a line with one was cut correctly.
+is_deeply read_table(fixture(qq{a::b\n1::2\n"q"::3\n}), sep => qr/(:)\1/),
+	[ { a => 1, b => 2 }, { a => 'q', b => 3 } ],
+	'a backreference in the pattern refers to its own group';
+is_deeply read_table(fixture(qq{# a::b\n1::2\n}), sep => qr/(:)\1/),
+	[ { a => 1, b => 2 } ],
+	'and so it does in a commented-out header';
 
 # --- equivalence with the literal parser ------------------------------------
 

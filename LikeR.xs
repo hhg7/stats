@@ -8237,6 +8237,49 @@ static void S_pclose(pTHX_ void *p) {
 	PerlIO_close((PerlIO*)p);
 }
 
+/*Where the last pregexec() of rx matched, as offsets from the strbeg it was
+given: $-[0] and $+[0].
+
+perl 5.10.1 up to 5.36 spell this RX_OFFS(rx)[0].start; 5.38 added
+RX_OFFS_START()/RX_OFFS_END() and 5.44 no longer defines RX_OFFS at all.
+5.10.0 has neither macro, but a REGEXP there is still the struct regexp itself,
+whose offs array RX_OFFS reads everywhere it is defined.*/
+#ifdef RX_OFFS_START
+#  define CSV_RX_START(rx)	((size_t)RX_OFFS_START(rx, 0))
+#  define CSV_RX_END(rx)	((size_t)RX_OFFS_END(rx, 0))
+#else
+#  ifndef RX_OFFS
+#    define RX_OFFS(rx)	((rx)->offs)
+#  endif
+#  define CSV_RX_START(rx)	((size_t)RX_OFFS(rx)[0].start)
+#  define CSV_RX_END(rx)	((size_t)RX_OFFS(rx)[0].end)
+#endif
+
+/*Find the sep regex in line[from .. len), with line itself as the start of
+the string, so that ^, \b and lookbehinds see the whole line as $line =~ /$sep/g
+with pos($line) = from would.  On a match, *ms and *me are where it starts and
+ends.
+
+minend = 1 is what pp_split() passes: a match must end at least one character
+past where the search starts.  So an empty match there is passed over, which is
+why one at the very start of a line is no separator, as in split(); an empty
+match further on is still found, and the caller refuses it if it is taken as a
+separator.
+
+line_sv is only the SV the engine is told the string belongs to: it is never
+UTF-8 here and nothing asks for $&, so the buffer is matched in place (nosave)
+and no copy of the line is made.  line is not restrict: it points into
+line_sv's buffer, which the engine is handed as well.*/
+static bool S_csv_rx_find(pTHX_ REGEXP *restrict rx, SV *line_sv, char *line,
+	size_t from, size_t len, size_t *restrict ms, size_t *restrict me)
+{
+	if (!pregexec(rx, line + from, line + len, line, 1, line_sv, 1))
+		return FALSE;
+	*ms = CSV_RX_START(rx);
+	*me = CSV_RX_END(rx);
+	return TRUE;
+}
+
 /*Append one finished field to the row.
 
 A field that is a single unquoted run -- the common case, and every field of a
@@ -19944,7 +19987,7 @@ PPCODE:
 	XSRETURN_EMPTY;
 }
 
-SV* _parse_csv_file(char* file, const char* sep_str, const char* comment_str, SV* callback = &PL_sv_undef, SV* plan_sv = &PL_sv_undef, bool quote = TRUE, bool bare_comment = FALSE)
+SV* _parse_csv_file(char* file, const char* sep_str, const char* comment_str, SV* callback = &PL_sv_undef, SV* plan_sv = &PL_sv_undef, bool quote = TRUE, bool bare_comment = FALSE, SV* sep_rx = &PL_sv_undef, bool sep_ws = FALSE)
 PREINIT:
 	PerlIO *fp;
 	AV *data = NULL;
@@ -19956,7 +19999,9 @@ PREINIT:
 	bool in_quotes = FALSE, post_quote = FALSE, use_cb = FALSE;
 	bool first_line = TRUE;	//a byte-order mark can only be on the first line
 	size_t sep_len, comment_len;
+	size_t lineno = 0;	//physical lines read so far, for the empty-match message
 	char sep0 = 0;
+	REGEXP *rx = NULL;	//a qr// sep; NULL = sep_str is the literal separator
 CODE:
 	if (SvOK(callback)) {
 		if (SvROK(callback) && SvTYPE(SvRV(callback)) == SVt_PVCV)
@@ -19975,7 +20020,16 @@ no per-row perl.*/
 			croak("_parse_csv_file: plan must be a HASH reference");
 		plan_hv = (HV*)SvRV(plan_sv);
 	}
-	sep_len = sep_str ? strlen(sep_str) : 0;
+/*A qr// sep is matched by perl's own engine against the line buffer, so a
+regex read keeps the C state machine and the fast path below; only how a
+separator is found changes.  sep_str is then ignored.  sep_ws is qr/\s+/, read
+as pandas reads sep=r"\s+": leading and trailing whitespace make no field.*/
+	if (SvOK(sep_rx)) {
+		rx = SvRX(sep_rx);
+		if (!rx)
+			croak("_parse_csv_file: sep_rx must be a qr// regex");
+	}
+	sep_len = (sep_str && !rx) ? strlen(sep_str) : 0;
 	comment_len = comment_str ? strlen(comment_str) : 0;
 	sep0 = sep_len ? sep_str[0] : 0;
 	fp = PerlIO_open(file, "r");
@@ -20013,6 +20067,7 @@ rs_nl's SAVEFREESV so that it runs first on the unwind.*/
 		PL_rs = rs_user;
 		if (!line)
 			break;
+		lineno++;
 		line = SvPVX(line_sv);
 		len  = SvCUR(line_sv);
 		if (len && line[len-1] == '\n') {
@@ -20031,6 +20086,10 @@ test_utf8_bom), so a BOM-only first line is a blank line.*/
 				len  -= 3;
 			}
 		}
+		size_t i0 = 0;	//where the line's first field starts
+		bool trail = FALSE;	//read after the loop: the line ended on a separator
+		size_t stop = 0;	//regex sep: the next '"' or CR at or after i
+		bool have_stop = FALSE;	//stop has been looked for on this line
 		if (!in_quotes) {
 			size_t k = 0;
 			while (k < len && (line[k] == ' ' || line[k] == '\t'))
@@ -20048,8 +20107,14 @@ test_utf8_bom), so a BOM-only first line is a blank line.*/
 					&& (bare_comment || len == comment_len
 						|| line[comment_len] == 0x20 || line[comment_len] == 0x09))
 				continue;
+/*qr/\s+/ is whitespace-delimited: leading whitespace is not a separator, so
+it is stepped over rather than cut, as $line =~ s/\A\s+// would.  isSPACE()
+is the \s of a byte string on the running perl.*/
+			if (sep_ws)
+				while (i0 < len && isSPACE(line[i0]))
+					i0++;
 		}
-		for (size_t i = 0; i < len; ) {
+		for (size_t i = i0; i < len; ) {
 			if (in_quotes) {
 				const char *q = (const char *)memchr(line + i, '"', len - i);
 				if (!q) {
@@ -20069,6 +20134,44 @@ test_utf8_bom), so a BOM-only first line is a blank line.*/
 					in_quotes = FALSE;
 					post_quote = TRUE;
 					i += 1;
+				}
+				trail = FALSE;
+			} else if (rx) {
+/*The same three outcomes as the literal scan below -- a separator, a '"' or
+CR, the end of the line -- but with the separator found by the regex engine,
+which may look past the next '"' or CR.  A separator is taken only when it
+starts before that character; otherwise the character is handled first and
+the search resumes after it.*/
+				size_t ms = 0, me = 0;
+				bool hit;
+				if (!have_stop || stop < i) {
+					stop = i;
+					while (stop < len
+							&& !((line[stop] == '"' && quote) || line[stop] == '\r'))
+						stop++;
+					have_stop = TRUE;
+				}
+				hit = S_csv_rx_find(aTHX_ rx, line_sv, line, i, len, &ms, &me);
+				if (hit && (ms < stop || stop == len)) {	//stop == len: an empty match at the very end counts too
+					if (ms == me)	//it would cut between every character from here on
+						croak("read_table: the sep regex %" SVf " matched an empty "
+						      "string at %s line %" UVuf "; it must match at least "
+						      "one character\n", SVfARG(sep_rx), file, (UV)lineno);
+					S_push_field(aTHX_ plan->row, field, line + i, ms - i);
+					post_quote = FALSE;
+					i     = me;
+					trail = (i == len);
+				} else if (stop < len) {
+					if (stop > i)
+						sv_catpvn(field, line + i, stop - i);
+					if (line[stop] == '"' && !post_quote)
+						in_quotes = TRUE;
+					i     = stop + 1;	//a quote after a closing quote, or a stray CR, is dropped
+					trail = FALSE;
+				} else {
+					tail     = line + i;	//the line's last field, pushed below
+					tail_len = len - i;
+					break;
 				}
 			} else {
 				const size_t start = i;
@@ -20104,7 +20207,8 @@ test_utf8_bom), so a BOM-only first line is a blank line.*/
 			sv_catpvn(field, "\n", 1);
 		} else {
 			post_quote = FALSE;
-			S_push_field(aTHX_ plan->row, field, tail, tail_len);
+			if (!(sep_ws && trail))	//trailing whitespace is not a separator either
+				S_push_field(aTHX_ plan->row, field, tail, tail_len);
 			if (plan->active) {
 				S_fast_row(aTHX_ plan, plan->row);
 			} else {
@@ -27394,7 +27498,7 @@ SV *lm(...)
 		NV   *X = NULL, *Y = NULL, *XtX = NULL, *XtY = NULL, *beta = NULL, rss = 0.0, rse_sq = 0.0;
 		bool *restrict aliased = NULL;
 		int   final_rank = 0, df_res = 0;
-		HV   *res_hv, *coef_hv, *fitted_hv, *resid_hv, *summary_hv, *xlevels_hv = NULL;;
+		HV   *res_hv, *coef_hv, *fitted_hv, *resid_hv, *summary_hv, *xlevels_hv = NULL;
 		AV   *terms_av;
 		if (items % 2 != 0)
 			croak("Usage: lm(formula => 'mpg ~ wt * hp', data => \\%%mtcars)");

@@ -176,8 +176,8 @@ for my $otype (qw(aoh hoa hoh)) {
 }
 
 SKIP: {
-	skip 'Test::LeakTrace not installed', 8 unless $HAVE_LEAKTRACE;
-	skip 'running under Devel::Cover', 8 if $INC{'Devel/Cover.pm'};
+	skip 'Test::LeakTrace not installed', 10 unless $HAVE_LEAKTRACE;
+	skip 'running under Devel::Cover', 10 if $INC{'Devel/Cover.pm'};
 
 	no_leaks_ok { read_table($f{plain}) } 'no leaks: aoh fast path';
 	no_leaks_ok { read_table($f{plain}, 'output.type' => 'hoa') }
@@ -204,6 +204,14 @@ SKIP: {
 		local $SIG{__WARN__} = sub { die $_[0] };
 		eval { read_table($f{duprn}, 'output.type' => 'hoh') };
 	} 'no leaks: dying on the repeated-row-name warning';
+	# compiled outside the blocks: 5.10.0's pp_qr() leaks an SV per qr//
+	my $comma = qr/,/;
+	my $empty = qr/(?=,)/;
+	no_leaks_ok { read_table($f{plain}, sep => $comma) }
+		'no leaks: a regex sep through the fast path';
+	# the empty-match croak unwinds out of the middle of a line
+	no_leaks_ok { eval { read_table($f{plain}, sep => $empty) } }
+		'no leaks: a regex sep that matches an empty string';
 }
 
 done_testing;

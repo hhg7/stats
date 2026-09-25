@@ -8534,7 +8534,7 @@ minimal example:
 </tr>
 <tr>
   <td><code>header</code></td>
-  <td><code>1</code> (the default): the first line holds the column names. <code>0</code>: the first line is data, as R's <code>header = FALSE</code> and pandas' <code>header=None</code></td>
+  <td><code>1</code> (the default): the first line holds the column names. <code>0</code>, or perl's false <code>''</code>: the first line is data, as R's <code>header = FALSE</code> and pandas' <code>header=None</code></td>
   <td><code>header =&gt; 0</code></td>
 </tr>
 <tr>
@@ -8626,7 +8626,8 @@ leaves an empty first field, and one at the end an empty last field, just as a
 literal separator would.
 
 =item * Capture groups in the pattern are not returned as fields, unlike with C<split>,
-and the pattern keeps its own flags (C<qr/x/i>).
+and the pattern keeps its own flags (C<qr/x/i>) and its own group numbers, so a
+backreference works: C<qr/(:)\1/> splits on C<::>.
 
 =item * A pattern that can match the empty string, such as C<qr/\s*/>, is refused,
 since it would cut between every character.
@@ -8637,9 +8638,11 @@ is recognised; see I<commented-out headers> below.
 
 =item * An C<.xlsx> file ignores C<sep> and C<quote>, whether a string or a pattern.
 
-=item * The separators are found by perl's regex engine rather than in C, so a
-regex read is slower than a literal one: about 1.3 s rather than 0.2 s on a
-300,000 x 5 CSV. For a single fixed character, a string is the faster choice.
+=item * The separators are found by perl's regex engine, called from the same C
+parser a literal separator uses, so a regex read costs little more than a
+literal one: on a 300,000 x 5 CSV, C<qr/,/> takes 0.17 s and C<','> 0.14 s. A
+string is still the faster choice for a fixed separator, and a pattern that
+has to backtrack, such as C<qr/\s*,\s*/> (0.34 s), costs more.
 
 =back
 
@@ -8670,8 +8673,8 @@ dumps, want both options:
      'col.names' => [qw(tax_id tax_name lineage end)],   # 'end' is the empty field after the last "\t|"
      'output.type' => 'hoa');
 
-On that 3,015,956-line, 900 MB file this takes 14 s. A literal
-C<< sep =E<gt> "\t|\t" >> takes 2 s, but leaves each line's closing C<"\t|"> on the
+On that 3,015,956-line, 900 MB file this takes 2.6 s. A literal
+C<< sep =E<gt> "\t|\t" >> takes 1.6 s, but leaves each line's closing C<"\t|"> on the
 lineage.
 
 =head3 missing values (C<na.strings> / C<na_values> / C<undef.val>)
