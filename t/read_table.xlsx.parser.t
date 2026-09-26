@@ -17,6 +17,7 @@ use Stats::LikeR 'read_table';
 #   * self-closing <c/> and <row/>, blank rows, and gaps mid-row
 #   * every entity form _xml_unescape used to handle, decimal and hex numeric
 #     character references included, and the ones that must NOT be decoded
+#   * sheet names, which _xml_unescape decodes through the same single pass
 #   * a shared-string index that is out of range or not a number
 #   * t="str" / t="b" / t="e", which take the raw <v> like a number
 #   * a column reference too long to be one, and the ceiling that keeps one
@@ -46,9 +47,12 @@ my $dir = tempdir(CLEANUP => 1);
 my $seq = 0;
 
 # Wrap a <sheetData> body (and an optional list of <si> elements) into a
-# minimal one-worksheet workbook, and return its path.
+# minimal workbook, and return its path. $names, the worksheets' name=
+# attributes as they are written in the XML, defaults to a single 'Data'; each
+# sheet named gets the same <sheetData>.
 sub mk {
-	my ($sheetdata, $shared) = @_;
+	my ($sheetdata, $shared, $names) = @_;
+	$names ||= ['Data'];
 	my $path = "$dir/x" . $seq++ . '.xlsx';
 	my $ns   = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
 	my $rns  = 'http://schemas.openxmlformats.org/package/2006/relationships';
@@ -62,16 +66,22 @@ sub mk {
 		'_rels/.rels' => qq{<?xml version="1.0"?><Relationships xmlns="$rns">}
 			. qq{<Relationship Id="rId1" Type="$ons/officeDocument" Target="xl/workbook.xml"/>}
 			. '</Relationships>',
-		'xl/workbook.xml' => qq{<?xml version="1.0"?><workbook xmlns="$ns" xmlns:r="$ons">}
-			. '<sheets><sheet name="Data" sheetId="1" r:id="rId1"/></sheets></workbook>',
+		'xl/workbook.xml' => qq{<?xml version="1.0"?><workbook xmlns="$ns" xmlns:r="$ons"><sheets>}
+			. join('', map { qq{<sheet name="$names->[$_ - 1]" sheetId="$_" r:id="rId$_"/>} }
+			           1 .. @$names)
+			. '</sheets></workbook>',
 		'xl/_rels/workbook.xml.rels' => qq{<?xml version="1.0"?><Relationships xmlns="$rns">}
-			. qq{<Relationship Id="rId1" Type="$ons/worksheet" Target="worksheets/sheet1.xml"/>}
+			. join('', map { qq{<Relationship Id="rId$_" Type="$ons/worksheet" Target="worksheets/sheet$_.xml"/>} }
+			           1 .. @$names)
 			. '</Relationships>',
-		'xl/worksheets/sheet1.xml' => qq{<?xml version="1.0"?><worksheet xmlns="$ns">}
-			. "<sheetData>$sheetdata</sheetData></worksheet>",
 	);
 	my @order = ('[Content_Types].xml', '_rels/.rels', 'xl/workbook.xml',
-	             'xl/_rels/workbook.xml.rels', 'xl/worksheets/sheet1.xml');
+	             'xl/_rels/workbook.xml.rels');
+	for my $i (1 .. @$names) {
+		$part{"xl/worksheets/sheet$i.xml"} = qq{<?xml version="1.0"?><worksheet xmlns="$ns">}
+			. "<sheetData>$sheetdata</sheetData></worksheet>";
+		push @order, "xl/worksheets/sheet$i.xml";
+	}
 	if (defined $shared) {
 		$part{'xl/sharedStrings.xml'} =
 			qq{<?xml version="1.0"?><sst xmlns="$ns">$shared</sst>};
@@ -87,6 +97,28 @@ sub mk {
 		$first = 0;
 	}
 	return $path;
+}
+
+# A sheet name is decoded in one pass, by the decoder the cells go through. Up
+# to 0.320 it was five substitutions in a row, so a reference produced by one
+# was decoded again by a later one ("&#38;lt;" became "<"), and a numeric
+# reference past what chr() takes died or made perl's extended UTF-8.
+{
+	my $f = mk('<row r="1"><c r="A1" t="inlineStr"><is><t>a</t></is></c></row>'
+	         . '<row r="2"><c r="A2"><v>1</v></c></row>', undef,
+	           [ 'x&#38;lt;y', 'p&amp;q &#x41;&#233; &#999999999999; &bad' ]);
+	my $book = read_table($f);
+	is_deeply( [ sort keys %$book ],
+		[ "p&q A\xc3\xa9 &#999999999999; &bad", 'x&lt;y' ],
+		'sheet names: each reference decoded once, UTF-8 bytes for a number, '
+		. 'and an out-of-range or unknown one left as it is' );
+	is_deeply( $book->{'x&lt;y'}, [ { a => 1 } ], 'sheet names: the sheet is read under it' );
+	is_deeply( read_table($f, sheet => 'x&lt;y'), [ { a => 1 } ],
+		'sheet names: and can be asked for by its decoded name' );
+	is( Stats::LikeR::_xml_unescape('&amp;lt;'), '&lt;',
+		'_xml_unescape: &amp;lt; is &lt;, as a cell decodes it' );
+	is( Stats::LikeR::_xml_unescape(undef), undef, '_xml_unescape: undef passes through' );
+	is( Stats::LikeR::_xml_unescape('plain'), 'plain', '_xml_unescape: text with no & is unchanged' );
 }
 
 # cells with no r= at all: each one lands in the column after the last
@@ -406,9 +438,28 @@ sub mk {
 		'na.strings is applied by the fast path too' );
 }
 
+# A gap in a row is undef once the fast path builds the rows -- made as undef
+# from the start since 0.321, where it used to be an empty string replaced by
+# one -- and the empty string it has always been to a filter.
+{
+	my $f = mk('<row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c><c r="C1" t="s"><v>2</v></c></row>'
+	         . '<row r="2"><c r="A2"><v>1</v></c><c r="C2"><v>3</v></c></row>'
+	         . '<row r="3"><c r="B3"><v>5</v></c></row>',
+	           '<si><t>a</t></si><si><t>b</t></si><si><t>c</t></si>');
+	is_deeply( read_table($f, 'output.type' => 'aoa'),
+		[ [qw(a b c)], [1, undef, 3], [undef, 5, undef] ],
+		'a gap is undef in an aoa' );
+	is_deeply( read_table($f, 'output.type' => 'hoa'),
+		{ a => [1, undef], b => [undef, 5], c => [3, undef] },
+		'a gap is undef in a hoa' );
+	my @seen;
+	read_table($f, filter => { 0 => sub { push @seen, [ @{ $_[0] } ]; 1 } });
+	is_deeply( \@seen, [ [1, '', 3], ['', 5, ''] ], 'a filter sees a gap as the empty string' );
+}
+
 SKIP: {
-	skip 'Test::LeakTrace not installed', 9 unless $HAVE_LEAKTRACE;
-	skip 'running under Devel::Cover', 9 if $INC{'Devel/Cover.pm'};
+	skip 'Test::LeakTrace not installed', 10 unless $HAVE_LEAKTRACE;
+	skip 'running under Devel::Cover', 10 if $INC{'Devel/Cover.pm'};
 
 	# The parser is measured with the worksheet part already decompressed, so
 	# that what is counted is the code this file is about. Every path through
@@ -449,7 +500,7 @@ SKIP: {
 	my $unzip_leaks = Test::LeakTrace::leaked_count(
 		sub { Stats::LikeR::_unzip_member($f, 'xl/worksheets/sheet1.xml') });
 	skip "IO::Uncompress::Unzip leaks $unzip_leaks SV(s) per member on this perl",
-		5 if $unzip_leaks;
+		6 if $unzip_leaks;
 
 	my $dup = mk('<row r="1"><c r="A1" t="s"><v>0</v></c></row>'
 	           . '<row r="2"><c r="A2"><v>1</v></c><c r="A2" t="inlineStr"><is><t>d</t></is></c></row>',
@@ -461,6 +512,7 @@ SKIP: {
 	no_leaks_ok { read_table($f, filter => { 0 => sub { 1 } }) } 'no leaks: callback path';
 	no_leaks_ok { read_table($dup) }                             'no leaks: repeated column reference';
 	no_leaks_ok { read_table($f, 'output.type' => 'hoh') }       'no leaks: hoh fast path';
+	no_leaks_ok { read_table($f, 'output.type' => 'aoa') }       'no leaks: aoa fast path, gaps included';
 }
 
 done_testing;

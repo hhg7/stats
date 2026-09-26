@@ -5,7 +5,7 @@ Revision history for Stats-LikeR
  [read_table(): warnings about stray quotes]
 
  - A '"' that opens a quoted field takes every newline into that field up
-   to the next '"'. Up to 0.320 nothing said when that had happened: a file
+   to the next '"'. <=0.320 nothing said when that had happened: a file
    with one unclosed '"' came back with the rest of the file in a single
    cell, and a '"' used as text in the middle of a field (an inch mark,
    5'10") ran rows together or ended in an "Alignment error" that said
@@ -94,6 +94,45 @@ Revision history for Stats-LikeR
    tests/reg-tests-1b.R compressed read.table and append-mode cases and
    pandas' test_compression.py; t/read_table.compressed.R writes the
    fixtures.
+
+ [read_table(): rows of empty fields, and two header fixes]
+
+ - A line holding nothing but separators is a row of empty fields, as R
+   4.6.1's read.table and pandas 3.0.4's read_csv both read it. Up to
+   0.320 a tab-separated "\t" was taken for a blank line and skipped, so
+   a TSV row with every cell empty went missing without a word and the
+   row count no longer matched R's or pandas'. A line of blanks none of
+   which is the separator is still skipped, and so is any line of blanks
+   under qr/\s+/. t/read_table.blank_lines.R.pandas.t covers it, from
+   pandas' test_empty_lines and test_whitespace_lines;
+   t/read_table.blank_lines.R and t/read_table.blank_lines.pandas.py
+   regenerate the reference values.
+
+ - auto.row.names with a commented-out header ("# a\tb") refused the
+   header, because the data rows are one field wider than it -- the very
+   shape auto.row.names looks for -- and made the first data row the
+   header instead. The header is now kept and the rows named.
+
+ - A worksheet name in an .xlsx is decoded by the one-pass decoder the
+   cells use. It went through five substitutions in turn before, so a
+   reference one of them produced was decoded again by a later one
+   ("&#38;lt;" became "<"), and a numeric reference too large for chr()
+   died.
+
+ [read_table(): speed]
+
+ - Once the XS fast path is building the rows, an empty field is parsed
+   straight to the undef it becomes, instead of to an empty string that
+   was then freed and replaced. On a 300,000 x 10 CSV with nine cells in
+   ten empty, an aoh read goes from 0.185 s to 0.106 s, a hoa from 0.164 s
+   to 0.097 s and an aoa from 0.152 s to 0.073 s; a file with no empty
+   cells is unchanged. A filter is still handed '' for an empty field, as
+   before, and an .xlsx gap is treated the same way.
+
+ - na.strings is checked by comparing the few strings given rather than
+   by hashing every cell: with three of them, an aoa read of a
+   300,000 x 10 CSV goes from 0.155 s to 0.134 s. Past eight strings the
+   hash is used as before.
 
  [Tests]
 

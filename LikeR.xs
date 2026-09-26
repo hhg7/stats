@@ -8326,13 +8326,22 @@ has 'run' appended and is copied out.  The first route saves a sv_catpvn()
 and a second memcpy() per cell; with the shared keys in S_plan_init() it took
 an aoh read of a 300,000 x 5 CSV from 0.120 s to 0.096 s.
 
+undef_empty is csv_plan's 'active': once S_fast_row() is building the rows, an
+empty field is pushed as the bodyless undef it is going to become, instead of
+as an empty string that S_fast_row() would free and replace.  On a 300,000 x 10
+CSV with nine cells in ten empty that took an aoh read from 0.185 s to 0.106 s,
+a hoa from 0.164 s to 0.097 s and an aoa from 0.152 s to 0.073 s (best of nine
+runs each), and a file with no empty cell by no more than 1 ms.  Before then
+the row goes to a perl callback -- the header, or a filter -- which has always
+been handed '' for an empty field.
+
 restrict holds: 'run' points into the line buffer or at a literal, never into
 the accumulator.*/
 static void S_push_field(pTHX_ AV *restrict row, SV *restrict field,
-	const char *restrict run, size_t n)
+	const char *restrict run, size_t n, bool undef_empty)
 {
 	if (SvCUR(field) == 0) {
-		av_push(row, newSVpvn(run, n));
+		av_push(row, (n || !undef_empty) ? newSVpvn(run, n) : newSV(0));
 		return;
 	}
 	if (n) sv_catpvn(field, run, n);
@@ -8425,6 +8434,9 @@ typedef struct {
 	AV    **cols;	//mode 1 only; borrowed from the plan hash
 	size_t *idx;	//validated against ncol in S_plan_init()
 	HV     *na;	//NULL when no na.strings were given
+	const char **na_s;	//na's keys, borrowed, when there are few enough; see S_plan_na()
+	STRLEN *na_len;	//their lengths; NULL = look cells up in na instead
+	size_t  n_na;
 	AV     *row;	//_parse_csv_file()'s row buffer, owned; NULL for an .xlsx
 	const char *file;
 	size_t  nout;
@@ -8459,6 +8471,42 @@ static SV *S_plan_ref(pTHX_ HV *restrict h, const char *restrict k, svtype t)
 	return SvRV(sv);
 }
 
+/*Copy the na.strings hash's keys out for S_cell_is_na()'s linear scan.
+
+The pointers are into the hash's own keys, which stay put: the hash is
+read_table's %na_string, which nothing writes to during the parse.  A key perl
+holds in UTF-8 form is left out, because hv_exists_ent() with a cell -- always
+a byte string -- could never have matched it either; one that perl downgraded
+to bytes on the way in (HVhek_WASUTF8) is kept, since that lookup matched it.
+
+Past NA_LINEAR_MAX keys the scan stops paying and the hash is used as before.
+Measured on the aoa read in S_cell_is_na()'s comment, which is the scan's worst
+case -- no cell is NA, and every cell is as long as the key "." -- 8 keys took
+0.140 s against 0.151 s for the hash, and by 12 the scan had drawn level
+(0.152 s against 0.151 s, measured on a build where it was not yet inline).*/
+#define NA_LINEAR_MAX 8
+
+static void S_plan_na(pTHX_ csv_plan *restrict p)
+{
+	const size_t n = (size_t)HvUSEDKEYS(p->na);
+	HE *he;
+	if (n == 0 || n > NA_LINEAR_MAX)
+		return;
+	Newx(p->na_s, n, const char*);
+	Newx(p->na_len, n, STRLEN);
+	p->n_na = 0;
+	hv_iterinit(p->na);
+	while ((he = hv_iternext(p->na)) != NULL) {
+		if (HeKLEN(he) == HEf_SVKEY || HeKUTF8(he))
+			continue;
+		if (p->n_na < n) {
+			p->na_s[p->n_na]   = HeKEY(he);
+			p->na_len[p->n_na] = (STRLEN)HeKLEN(he);
+			p->n_na++;
+		}
+	}
+}
+
 /*Read the plan hash into the struct above, once, the first time read_table has
 filled it in.  Every SV, AV and HV pointer taken here is borrowed except the
 keys: the plan hash is a lexical in read_table and outlives this parse, and
@@ -8489,6 +8537,8 @@ static void S_plan_init(pTHX_ csv_plan *restrict p, HV *restrict h)
 		SV **e = hv_fetchs(h, "na", 0);
 		p->na = (e && *e && SvROK(*e) && SvTYPE(SvRV(*e)) == SVt_PVHV)
 		        ? (HV*)SvRV(*e) : NULL;
+		if (p->na)
+			S_plan_na(aTHX_ p);
 	}
 	if (p->mode < 0 || p->mode > 3)
 		croak("_parse_csv_file: plan 'mode' %d is not 0 (aoh), 1 (hoa), 2 (hoh) or 3 (aoa)",
@@ -8556,16 +8606,52 @@ static void S_plan_free(pTHX_ void *v)
 	Safefree(p->idx);
 	Safefree(p->keys);
 	Safefree(p->cols);
+	Safefree(p->na_s);
+	Safefree(p->na_len);
 	Safefree(p);
 }
 
 /*An empty field, and a field listed in na.strings, become undef, which is the
 same rule the perl path applies and the same one that has always made an empty
-cell undef rather than "".  Every cell is SvPOK -- both parsers build each one
-as a PV -- so SvCUR() is the whole of the "is it empty" test.*/
-static bool S_cell_is_na(pTHX_ const csv_plan *restrict p, SV *restrict v)
+cell undef rather than "".  A cell is either a PV or, once S_push_field() is
+making them for the fast path, an empty field already undef; so !SvPOK() and
+SvCUR() are the whole of the "is it empty" test.
+
+The na.strings test is a length check and a memcmp() over a few borrowed keys
+rather than hv_exists_ent(), which hashed every non-empty cell.  With
+['NA', '.', 'NaN'], an aoa read of a 300,000 x 10 CSV of 1s went from 0.155 s to
+0.134 s, against 0.123 s with no na.strings at all (best of nine).  It is
+inline because as a call it cost that read 4% with no na.strings given.
+S_plan_na() says when the hash is used instead.*/
+PERL_STATIC_INLINE bool S_cell_is_na(pTHX_ const csv_plan *restrict p, SV *restrict v)
 {
-	return SvCUR(v) == 0 || (p->na && hv_exists_ent(p->na, v, 0));
+	if (!SvPOK(v) || SvCUR(v) == 0)
+		return TRUE;
+	if (p->na_len) {
+		const STRLEN n = SvCUR(v);
+		const char *const s = SvPVX_const(v);
+		for (size_t k = 0; k < p->n_na; k++)
+			if (p->na_len[k] == n && memcmp(p->na_s[k], s, n) == 0)
+				return TRUE;
+		return FALSE;
+	}
+	return p->na && hv_exists_ent(p->na, v, 0);
+}
+
+/*What a cell is stored as: itself, or a fresh bodyless undef in place of an
+empty or na.strings one, which is released.  v may be NULL -- a hole in an
+.xlsx row buffer -- and is then just the undef.*/
+PERL_STATIC_INLINE SV *S_cell_value(pTHX_ const csv_plan *restrict p, SV *restrict v)
+{
+	if (!v)
+		return newSV(0);
+	if (!SvOK(v))
+		return v;	//already the undef S_push_field() made for an empty field
+	if (S_cell_is_na(aTHX_ p, v)) {
+		SvREFCNT_dec(v);
+		return newSV(0);
+	}
+	return v;
 }
 
 /*One data row, straight from the parser's field list into the output shape.
@@ -8611,11 +8697,8 @@ static void S_fast_row(pTHX_ csv_plan *restrict p, AV *restrict row)
 		av_extend(out_row, w ? (SSize_t)w - 1 : 0);
 		for (size_t j = 0; j < w; j++) {
 			SV *v = ary[j];
-			ary[j] = NULL;	//ownership leaves the row here
-			if (!v || S_cell_is_na(aTHX_ p, v)) {
-				SvREFCNT_dec(v);
-				v = newSV(0);	//undef: an empty or na.strings cell
-			}
+			ary[j] = NULL;	//ownership leaves the row here, before v can be freed
+			v = S_cell_value(aTHX_ p, v);
 			av_push(out_row, v);
 		}
 		av_push(p->out, newRV_noinc((SV*)out_row));
@@ -8648,11 +8731,8 @@ static void S_fast_row(pTHX_ csv_plan *restrict p, AV *restrict row)
 		SV *v;
 		if (p->mode == 2 && j == p->rn) continue;	//left for the loop below
 		v = ary[p->idx[j]];
-		ary[p->idx[j]] = NULL;	//ownership leaves the row here
-		if (!v || S_cell_is_na(aTHX_ p, v)) {
-			SvREFCNT_dec(v);
-			v = newSV(0);	//undef: an empty or na.strings cell
-		}
+		ary[p->idx[j]] = NULL;	//ownership leaves the row here, before v can be freed
+		v = S_cell_value(aTHX_ p, v);
 		if (p->mode == 1) {
 			av_push(p->cols[j], v);
 		} else if (!hv_store_ent(h, p->keys[j], v, 0)) {
@@ -8988,10 +9068,11 @@ typedef struct {
 the plan in, and to the perl callback until then (which is how the header gets
 read, and the only path when a filter or a 'hoh' shape needs per-row perl).
 
-The row is padded to the sheet's width and its gaps filled with empty strings,
-because a caller reads by index and S_fast_row() tests SvCUR() for "empty".  A
-row with nothing but empty cells is dropped, as _parse_csv_file() drops a blank
-line.
+The row is padded to the sheet's width, because a caller reads by index.  Its
+gaps are filled with empty strings for the perl callback, which has always been
+handed '' there, and with undef for S_fast_row(), which is what it makes of
+them.  A row with nothing but empty cells is dropped, as _parse_csv_file()
+drops a blank line.
 
 Ownership on the callback path matches S_emit_row(): the AV's single reference
 becomes a mortal RV before the call, so a die inside the callback releases it on
@@ -9027,8 +9108,9 @@ branch av_extend() took.*/
 		AvFILLp(w->row) = (SSize_t)(w->width - 1);
 	}
 	ary = AvARRAY(w->row);
-	for (size_t j = 0; j < w->width; j++)
-		if (XLSX_IS_HOLE(ary[j])) ary[j] = newSVpvs("");
+	for (size_t j = 0; j < w->width; j++)	//undef on the fast path, as S_push_field() does
+		if (XLSX_IS_HOLE(ary[j]))
+			ary[j] = w->plan->active ? newSV(0) : newSVpvs("");
 	w->maxc = 0;
 	w->any  = FALSE;
 	if (w->plan->active) {
@@ -20278,6 +20360,17 @@ test_utf8_bom), so a BOM-only first line is a blank line.*/
 			size_t k = 0;
 			while (k < len && (line[k] == ' ' || line[k] == '\t'))
 				k++;
+/*A line of blanks is skipped only when none of its blanks is a separator.  A
+tab-separated "\t" is a row of two empty fields, which R 4.6.1's read.table and
+pandas 3.0.4 both read as a row of NA (t/read_table.blank_lines.R.pandas.t);
+up to 0.320 it was dropped.  qr/\s+/ is exempt, since leading and trailing
+whitespace there make no field at all.*/
+			if (k == len && !sep_ws && len) {
+				size_t ms, me;
+				if (rx ? (S_csv_rx_find(aTHX_ rx, line_sv, line, 0, len, &ms, &me) && me > ms)
+				       : (sep_len && xlsx_find(line, line + len, sep_str, sep_len)))
+					k = 0;	//not blank: read it as a row
+			}
 			if (k == len)
 				continue;
 /*A line is a comment only when the marker is followed by whitespace
@@ -20341,7 +20434,7 @@ the search resumes after it.*/
 						croak("read_table: the sep regex %" SVf " matched an empty "
 						      "string at %s line %" UVuf "; it must match at least "
 						      "one character\n", SVfARG(sep_rx), file, (UV)lineno);
-					S_push_field(aTHX_ plan->row, field, line + i, ms - i);
+					S_push_field(aTHX_ plan->row, field, line + i, ms - i, plan->active);
 					post_quote = FALSE;
 					i     = me;
 					trail = (i == len);
@@ -20387,7 +20480,7 @@ the search resumes after it.*/
 					}
 					i++;	//a quote after a closing quote, or a stray CR, is dropped
 				} else {
-					S_push_field(aTHX_ plan->row, field, line + start, i - start);
+					S_push_field(aTHX_ plan->row, field, line + start, i - start, plan->active);
 					post_quote = FALSE;
 					i += sep_len;
 				}
@@ -20403,7 +20496,7 @@ the search resumes after it.*/
 		} else {
 			post_quote = FALSE;
 			if (!(sep_ws && trail))	//trailing whitespace is not a separator either
-				S_push_field(aTHX_ plan->row, field, tail, tail_len);
+				S_push_field(aTHX_ plan->row, field, tail, tail_len, plan->active);
 			if (plan->active) {
 				plan->span_line = span_line;
 				plan->span_mid  = span_mid;
@@ -20444,7 +20537,7 @@ cell.*/
 	if (in_quotes) {
 		warn("read_table: end of file inside a quoted field in %s: %" SVf "\n",
 		     file, SVfARG(S_quote_note(aTHX_ q_line, q_mid, 0)));
-		S_push_field(aTHX_ plan->row, field, "", 0);
+		S_push_field(aTHX_ plan->row, field, "", 0, plan->active);
 		if (plan->active) {
 			plan->span_line = q_line;
 			plan->span_mid  = q_mid;
@@ -20515,6 +20608,20 @@ SV* _xlsx_sst_xs(SV* xml_sv)
 		STRLEN xlen;
 		const char *xml = SvPV_const(xml_sv, xlen);
 		RETVAL = newRV_noinc((SV*)xlsx_sst_parse(aTHX_ xml, xlen));
+	}
+	OUTPUT:
+		RETVAL
+
+SV* _xml_unescape_xs(SV* s_sv)
+	CODE:
+	{
+/*xlsx_xml_uncat() for Stats::LikeR::_xml_unescape(), so that a sheet name is
+decoded by the same single pass as a cell.  The perl substitutions it replaces
+decoded "&#38;lt;" twice, to "<", and handed an unbounded number to chr().*/
+		STRLEN len;
+		const char *s = SvPV_const(s_sv, len);
+		RETVAL = newSVpvs("");
+		xlsx_xml_uncat(aTHX_ RETVAL, s, len);
 	}
 	OUTPUT:
 		RETVAL

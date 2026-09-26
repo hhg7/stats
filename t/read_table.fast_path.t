@@ -65,7 +65,22 @@ my %f = (
 	duprn   => fixture('duprn.csv',   "id,v,w\nA,1,2\nB,3,4\nA,5,\n"),
 	undefrn => fixture('undefrn.csv', "id,v\nA,1\n,2\nC,3\n"),
 	nark    => fixture('nark.csv',    "id,v\nA,1\nNA,2\n"),
+	# Mostly empty: once the plan is on, an empty field is parsed straight to
+	# undef (S_push_field() in LikeR.xs), and a header with an empty name has
+	# to still be handed '' so that it becomes 'row_name'.
+	sparse  => fixture('sparse.csv',  ",b,c\n1,,\n,,\n,2,\n,,3\n"),
+	# a row of nothing but separators is a row of empty fields (0.321)
+	tabrow  => fixture('tabrow.tsv',  "a\tb\n1\t2\n\t\n3\t4\n"),
+	# a commented-out header one field short of the data, for auto.row.names
+	autocmt => fixture('autocmt.tsv', "# a\tb\nr1\t1\t2\nr2\t3\t4\n"),
+	# \xe9 is Latin-1 e-acute, and \xe2\x82\xac the UTF-8 bytes of the euro sign
+	bytes   => fixture('bytes.csv',   "a,b\n\xe9,1\n\xe2\x82\xac,2\nx,3\nNA,4\n"),
 );
+
+# na.strings is looked up by a linear scan up to NA_LINEAR_MAX (8) strings and in
+# a hash past that (S_plan_na() in LikeR.xs), so both sizes are read.
+my @na8 = ('NA', map { "n$_" } 1 .. 7);
+my @na9 = (@na8, 'x');
 
 # Each case is (label, file, extra read_table options).
 my @cases = (
@@ -84,6 +99,17 @@ my @cases = (
 	[ 'explicit sep',            $f{tabs},    [ sep => "\t" ] ],
 	[ 'CRLF line endings',       $f{crlf},    [] ],
 	[ 'single column',           $f{onecol},  [] ],
+	[ 'mostly empty',            $f{sparse},  [] ],
+	[ 'mostly empty, na.strings', $f{sparse}, [ 'na.strings' => '2' ] ],
+	[ 'a row of separators',     $f{tabrow},  [] ],
+	[ 'auto.row.names, commented header', $f{autocmt}, [ 'auto.row.names' => 1 ] ],
+	[ 'na.strings, 8 strings',   $f{empty},   [ 'na.strings' => \@na8 ] ],
+	[ 'na.strings, 9 strings',   $f{empty},   [ 'na.strings' => \@na9 ] ],
+	# a character key that perl stores downgraded matches the Latin-1 byte; one
+	# it keeps in UTF-8 form matches no byte string, the euro sign's bytes
+	# included -- as the perl path's hash lookup has always done
+	[ 'na.strings, character keys', $f{bytes}, [ 'na.strings' => [ "\x{e9}", "\x{20ac}" ] ] ],
+	[ 'na.strings, byte keys',   $f{bytes},   [ 'na.strings' => [ "\xe2\x82\xac", 'NA' ] ] ],
 );
 
 # A hoh keys every row by its row.names column, so the cases that only make
@@ -183,6 +209,49 @@ for my $otype (qw(aoa aoh hoa hoh)) {
 	is $na->[3]{b}, 'x', 'a cell that is not in na.strings is left alone';
 }
 
+# The cases added for 0.321 agree with each other; these pin what they agree ON.
+{
+	my $r = read_all($f{sparse});
+	is_deeply $r->[0], [
+		{ row_name => 1,     b => undef, c => undef },
+		{ row_name => undef, b => undef, c => undef },
+		{ row_name => undef, b => 2,     c => undef },
+		{ row_name => undef, b => undef, c => 3 },
+	], 'mostly empty: an empty header name is row_name, every empty cell undef';
+	$r = read_all($f{sparse}, 'output.type' => 'hoa', 'na.strings' => '2');
+	is_deeply $r->[0], { row_name => [1, undef, undef, undef],
+		b => [undef, undef, undef, undef], c => [undef, undef, undef, 3] },
+		'mostly empty: na.strings still applies beside the empty cells';
+	$r = read_all($f{tabrow}, 'output.type' => 'aoa');
+	is_deeply $r->[0], [ [qw(a b)], [1, 2], [undef, undef], [3, 4] ],
+		'a row of separators is a row of undef';
+	$r = read_all($f{autocmt}, 'auto.row.names' => 1);
+	is_deeply $r->[0], [ { row_name => 'r1', a => 1, b => 2 },
+		{ row_name => 'r2', a => 3, b => 4 } ],
+		'auto.row.names: a commented-out header one field short is the header';
+	$r = read_all($f{empty}, 'output.type' => 'aoa', 'na.strings' => \@na9);
+	is_deeply $r->[0], [ [qw(a b)], [1, undef], [undef, 2], [undef, undef], [undef, undef] ],
+		'na.strings, 9 strings: the hash lookup finds both NA and x';
+	$r = read_all($f{empty}, 'output.type' => 'aoa', 'na.strings' => \@na8);
+	is_deeply $r->[0], [ [qw(a b)], [1, undef], [undef, 2], [undef, undef], [undef, 'x'] ],
+		'na.strings, 8 strings: the scan finds NA, and x is not one of them';
+	$r = read_all($f{bytes}, 'output.type' => 'aoa', 'na.strings' => [ "\x{e9}", "\x{20ac}" ]);
+	is_deeply $r->[0], [ [qw(a b)], [undef, 1], ["\xe2\x82\xac", 2], ['x', 3], ['NA', 4] ],
+		'na.strings, character keys: e-acute matches its byte, the euro sign nothing';
+	$r = read_all($f{bytes}, 'output.type' => 'aoa', 'na.strings' => [ "\xe2\x82\xac", 'NA' ]);
+	is_deeply $r->[0], [ [qw(a b)], ["\xe9", 1], [undef, 2], ['x', 3], [undef, 4] ],
+		'na.strings, byte keys: the euro sign\'s bytes match their own cell';
+}
+
+# A filter is perl, and has always been handed '' for an empty field, not the
+# undef the fast path now parses one to.
+{
+	my @seen;
+	read_table($f{sparse}, filter => { 0 => sub { push @seen, [ @{ $_[0] } ]; 1 } });
+	is_deeply \@seen, [ [1, '', ''], ['', '', ''], ['', 2, ''], ['', '', 3] ],
+		'a filter sees an empty field as the empty string';
+}
+
 # The plan is installed once and then never consulted again, so reading the
 # same file twice through the same process has to give the same thing.
 {
@@ -192,8 +261,8 @@ for my $otype (qw(aoa aoh hoa hoh)) {
 }
 
 SKIP: {
-	skip 'Test::LeakTrace not installed', 13 unless $HAVE_LEAKTRACE;
-	skip 'running under Devel::Cover', 13 if $INC{'Devel/Cover.pm'};
+	skip 'Test::LeakTrace not installed', 17 unless $HAVE_LEAKTRACE;
+	skip 'running under Devel::Cover', 17 if $INC{'Devel/Cover.pm'};
 
 	no_leaks_ok { read_table($f{plain}) } 'no leaks: aoh fast path';
 	no_leaks_ok { read_table($f{plain}, 'output.type' => 'hoa') }
@@ -231,6 +300,14 @@ SKIP: {
 	my $empty = qr/(?=,)/;
 	no_leaks_ok { read_table($f{plain}, sep => $comma) }
 		'no leaks: a regex sep through the fast path';
+	no_leaks_ok { read_table($f{sparse}, 'output.type' => 'aoa') }
+		'no leaks: empty fields parsed straight to undef';
+	no_leaks_ok { eval { read_table($f{sparse}, 'output.type' => 'hoh') } }
+		'no leaks: an undef row name croaks with the row full of undef cells';
+	no_leaks_ok { read_table($f{empty}, 'na.strings' => \@na8) }
+		'no leaks: na.strings by the scan';
+	no_leaks_ok { read_table($f{empty}, 'na.strings' => \@na9) }
+		'no leaks: na.strings by the hash';
 	# the empty-match croak unwinds out of the middle of a line
 	no_leaks_ok { eval { read_table($f{plain}, sep => $empty) } }
 		'no leaks: a regex sep that matches an empty string';

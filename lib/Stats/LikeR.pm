@@ -2814,20 +2814,16 @@ sub _unzip_member_fast {
 	return (1, \$out);
 }
 
-# Decode the five predefined XML entities plus numeric character references.
-# Numeric refs are re-encoded to UTF-8 bytes so the result stays byte-consistent
-# with the rest of the file (which we read, and return, as raw UTF-8 bytes).
+# Decode the five predefined XML entities plus numeric character references,
+# the latter as UTF-8 bytes so the result stays byte-consistent with the rest of
+# the file (which we read, and return, as raw UTF-8 bytes). The decoding is
+# xlsx_xml_uncat() in LikeR.xs, the one the cells go through: up to 0.320 this
+# was five substitutions in a row, and a reference the first one produced was
+# decoded again by a later one, so "&#38;lt;" came back as "<".
 sub _xml_unescape {
 	my ($s) = @_;
 	return $s unless defined $s && index($s, '&') >= 0;
-	$s =~ s/&#x([0-9a-fA-F]+);/my $c = chr hex $1; utf8::encode($c); $c/ge;
-	$s =~ s/&#([0-9]+);/my $c = chr $1; utf8::encode($c); $c/ge;
-	$s =~ s/&lt;/</g;
-	$s =~ s/&gt;/>/g;
-	$s =~ s/&quot;/"/g;
-	$s =~ s/&apos;/'/g;
-	$s =~ s/&amp;/&/g;	# must be last so "&amp;lt;" -> "&lt;", not "<"
-	return $s;
+	return _xml_unescape_xs($s);
 }
 
 # Shared strings (optional part): each <si> may hold several <t> runs, which
@@ -3433,7 +3429,11 @@ sub read_table {
 			# discard it and treat THIS delivered line as the header instead.
 			if ($provisional_hdr) {
 				$provisional_hdr = 0;
-				if (@$line_ref != @header) {
+				# Under auto.row.names a header one field short of the data is
+				# the shape being looked for, not a mismatch; refusing it here
+				# made the first data row the header (0.320 and before).
+				if (@$line_ref != @header
+						&& !($want_auto_rn && @$line_ref == @header + 1)) {
 					@header = @$line_ref;
 					$header[0] =~ s/^\Q$args{comment}\E\s*//
 						if @header && defined $header[0]

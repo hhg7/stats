@@ -16,7 +16,7 @@ my $table = read_table(
 		Sex => sub {$_ eq 'f'}
 	}
 );
-p $table;
+#p $table;
 my %t = (
 	A => {
 		a => 1,
@@ -37,3 +37,5 @@ $t = read_table(
 );
 view($t);
 say ref $t;
+$t = read_table('t/morley.tab.gz');
+view($t);
