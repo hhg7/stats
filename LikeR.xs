@@ -383,54 +383,101 @@ while min([1,2,NaN]) was 1, off both from R, which gives NaN for both, and
 from every other reduction in this file. Testing nv_isnan(v) first fixes it in
 one direction and needs no second pass: once mn is NaN every later v < mn is
 false, so the NaN is what survives to the end.*/
+/*The scans fold four elements per step, one into each of four independent
+accumulators, and combine the four when they stop.
+
+A single accumulator is a loop-carried dependency: every add or
+compare-and-move waits on the previous element's result, so the loop runs at
+the latency of that one instruction however little else it does. For min() and
+max() that latency was most of the cost: on 1e4 NVs (perl-5.44.0, -O2, one
+pinned core, best of at least 45 timings) they took 1.06 ns/element against 0.67
+for sum(), and a scalar max over a flat C array of doubles took 1.08 -- no
+faster than the SV walk. With four chains min() and max() take 0.85 and sum()
+and mean() 0.57. On 1e6 NVs, where the walk starts to miss cache, min() and
+max() go from 1.36-1.40 to 1.05 and sum() from 1.19 to 1.05.
+
+min() and max() are separate XSUBs, so each gets its own scan rather than a
+shared one computing both: tracking the end the caller will not return costs a
+second set of chains for nothing.
+
+Four lanes make av_scan_sum() -- the first pass of sum(), mean(), sd() and
+var() -- add in a different order from the one the elements come in: lane k
+holds every fourth element from its start, and the lanes are added pairwise at
+the end. The total can therefore differ in the last bits from a left-to-right
+sum, as NumPy's pairwise sum does; its worst-case error bound is smaller, since
+each partial sum is a quarter as long. For min() and max() the order changes
+nothing but which of two equal values is returned, and the only equal values
+that differ are -0 and +0: max([-0.0, 0.0]) returned the first-seen zero before
+and may now return either.
+
+A group of four is folded only when all four elements are plain, so a group that
+holds the element the scan must stop at is left whole to the one-at-a-time tail
+loop, which folds up to it and stops there.*/
 static LIKER_NOINLINE void av_scan_sum(AV *av, SSize_t *jp, SSize_t len,
 	NvAcc *acc)
 {
 	SV **el = AvARRAY(av);
-	NV sum = acc->sum;
-	size_t count = acc->count;
-	SSize_t j = *jp;
+	NV s0 = acc->sum, s1 = 0.0, s2 = 0.0, s3 = 0.0;
+	const SSize_t start = *jp;
+	SSize_t j = start;	//read after both loops: where the scan stopped
+	for (; j + 4 <= len; j += 4) {
+		NV a, b, c, d;
+		if (!el[j] || !el[j + 1] || !el[j + 2] || !el[j + 3]
+		 || !sv_plain_nv(el[j], &a)     || !sv_plain_nv(el[j + 1], &b)
+		 || !sv_plain_nv(el[j + 2], &c) || !sv_plain_nv(el[j + 3], &d)) break;
+		s0 += a;
+		s1 += b;
+		s2 += c;
+		s3 += d;
+	}
 	for (; j < len; j++) {
 		NV v;
 		if (!el[j] || !sv_plain_nv(el[j], &v)) break;
-		sum += v;
-		count++;
+		s0 += v;
 	}
-	acc->sum = sum;
-	acc->count = count;
+	acc->sum = (s0 + s1) + (s2 + s3);
+	acc->count += (size_t)(j - start);
 	*jp = j;
 }
-/*As av_scan_sum(), tracking one end of the range instead of the total. min()
-and max() are separate XSUBs, so each gets its own scan rather than a shared
-one computing both: the running extreme is a loop-carried dependency (each
-compare-and-move waits on the previous element's result), so tracking the end
-the caller will not return costs a second chain for nothing -- 1.79 ms against
-1.35 ms on 1e6 NVs, where sum() over the same column is 1.35.
+/*As av_scan_sum(), tracking one end of the range instead of the total.
 
-The first value seeds the extreme, which is what keeps the "have I seen one
-yet" test out of the loop body.*/
+The first value seeds all four lanes, which is what keeps the "have I seen one
+yet" test out of the loop body. The lanes are combined with the same NaN-first
+rule the loop uses, so a NaN in any lane is the answer.*/
 static LIKER_NOINLINE void av_scan_min(AV *av, SSize_t *jp, SSize_t len,
 	NvAcc *acc)
 {
 	SV **el = AvARRAY(av);
-	NV mn = acc->min;
-	size_t count = acc->count;
-	SSize_t j = *jp;
-	if (count == 0 && j < len) {
+	SSize_t j = *jp;	//read after both loops: where the scan stopped
+	if (acc->count == 0) {
 		NV v;
-		if (!el[j] || !sv_plain_nv(el[j], &v)) { *jp = j; return; }
-		mn = v;
-		count = 1;
+		if (j >= len || !el[j] || !sv_plain_nv(el[j], &v)) return;
+		acc->min = v;
+		acc->count = 1;
 		j++;
+	}
+	const SSize_t start = j;
+	NV m0 = acc->min, m1 = m0, m2 = m0, m3 = m0;
+	for (; j + 4 <= len; j += 4) {
+		NV a, b, c, d;
+		if (!el[j] || !el[j + 1] || !el[j + 2] || !el[j + 3]
+		 || !sv_plain_nv(el[j], &a)     || !sv_plain_nv(el[j + 1], &b)
+		 || !sv_plain_nv(el[j + 2], &c) || !sv_plain_nv(el[j + 3], &d)) break;
+		if (nv_isnan(a) || a < m0) m0 = a;   //NaN wins and stays; see the contract
+		if (nv_isnan(b) || b < m1) m1 = b;
+		if (nv_isnan(c) || c < m2) m2 = c;
+		if (nv_isnan(d) || d < m3) m3 = d;
 	}
 	for (; j < len; j++) {
 		NV v;
 		if (!el[j] || !sv_plain_nv(el[j], &v)) break;
-		if (nv_isnan(v) || v < mn) mn = v;   //NaN wins and stays; see the contract
-		count++;
+		if (nv_isnan(v) || v < m0) m0 = v;
 	}
-	acc->min = mn;
-	acc->count = count;
+	if (nv_isnan(m1) || m1 < m0) m0 = m1;
+	if (nv_isnan(m2) || m2 < m0) m0 = m2;
+	if (nv_isnan(m3) || m3 < m0) m0 = m3;
+	acc->min = m0;
+	acc->count += (size_t)(j - start);
 	*jp = j;
 }
 
@@ -438,24 +485,36 @@ static LIKER_NOINLINE void av_scan_max(AV *av, SSize_t *jp, SSize_t len,
 	NvAcc *acc)
 {
 	SV **el = AvARRAY(av);
-	NV mx = acc->max;
-	size_t count = acc->count;
-	SSize_t j = *jp;
-	if (count == 0 && j < len) {
+	SSize_t j = *jp;	//read after both loops: where the scan stopped
+	if (acc->count == 0) {
 		NV v;
-		if (!el[j] || !sv_plain_nv(el[j], &v)) { *jp = j; return; }
-		mx = v;
-		count = 1;
+		if (j >= len || !el[j] || !sv_plain_nv(el[j], &v)) return;
+		acc->max = v;
+		acc->count = 1;
 		j++;
+	}
+	const SSize_t start = j;
+	NV m0 = acc->max, m1 = m0, m2 = m0, m3 = m0;
+	for (; j + 4 <= len; j += 4) {
+		NV a, b, c, d;
+		if (!el[j] || !el[j + 1] || !el[j + 2] || !el[j + 3]
+		 || !sv_plain_nv(el[j], &a)     || !sv_plain_nv(el[j + 1], &b)
+		 || !sv_plain_nv(el[j + 2], &c) || !sv_plain_nv(el[j + 3], &d)) break;
+		if (nv_isnan(a) || a > m0) m0 = a;   //NaN wins and stays; see the contract
+		if (nv_isnan(b) || b > m1) m1 = b;
+		if (nv_isnan(c) || c > m2) m2 = c;
+		if (nv_isnan(d) || d > m3) m3 = d;
 	}
 	for (; j < len; j++) {
 		NV v;
 		if (!el[j] || !sv_plain_nv(el[j], &v)) break;
-		if (nv_isnan(v) || v > mx) mx = v; //NaN wins and stays; see the contract
-		count++;
+		if (nv_isnan(v) || v > m0) m0 = v;
 	}
-	acc->max = mx;
-	acc->count = count;
+	if (nv_isnan(m1) || m1 > m0) m0 = m1;
+	if (nv_isnan(m2) || m2 > m0) m0 = m2;
+	if (nv_isnan(m3) || m3 > m0) m0 = m3;
+	acc->max = m0;
+	acc->count += (size_t)(j - start);
 	*jp = j;
 }
 /*Second pass of the two-pass variance: fold (x - mean) into *compp and

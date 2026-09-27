@@ -122,6 +122,41 @@ Revision history for Stats-LikeR
  - t/rownames.utf8.t checks every one of those functions with each data
    shape that carries names.
 
+ [min(), max(), sum(), mean(), sd() and var(): faster on plain arrays]
+
+ - The loops that walk an ordinary array of numbers now keep four running
+   values instead of one, and combine them at the end. With one, every
+   add or compare waited on the result for the previous element, and for
+   min() and max() that wait was most of the cost: they ran at 1.06
+   ns/element on 1e4 values where sum() ran at 0.67, and a plain C loop
+   over a flat array of doubles was no faster. sd() and var() share the
+   first pass of sum(), so they gain too, by less.
+
+ - Times are nanoseconds per element, on perl 5.44.0 at -O2, one
+   pinned core, best of at least 45 timings, on rnorm() data. Each cell is
+   the time before -> after, with the change.
+
+ - | function | n = 1e3 | n = 1e4 | n = 1e5 | n = 1e6 |
+   |---|---|---|---|---|
+   | `max` | 1.085 -> 0.885 (-18%) | 1.063 -> 0.849 (-20%) | 1.062 -> 0.846 (-20%) | 1.359 -> 1.049 (-23%) |
+   | `min` | 1.084 -> 0.885 (-18%) | 1.063 -> 0.849 (-20%) | 1.063 -> 0.845 (-20%) | 1.403 -> 1.046 (-25%) |
+   | `sum` | 0.705 -> 0.606 (-14%) | 0.671 -> 0.572 (-15%) | 0.721 -> 0.615 (-15%) | 1.193 -> 1.051 (-12%) |
+   | `mean` | 0.703 -> 0.606 (-14%) | 0.671 -> 0.572 (-15%) | 0.722 -> 0.615 (-15%) | 1.152 -> 0.978 (-15%) |
+   | `sd` | 1.427 -> 1.368 (-4%) | 1.385 -> 1.285 (-7%) | 1.487 -> 1.382 (-7%) | 2.466 -> 2.173 (-12%) |
+   | `var` | 1.427 -> 1.352 (-5%) | 1.385 -> 1.286 (-7%) | 1.489 -> 1.380 (-7%) | 2.504 -> 2.165 (-14%) |
+
+ - sum(), mean(), sd() and var() now add the elements in a different
+   order, four interleaved partial sums added pairwise, so a result can
+   differ from 0.321's in the last bits. The worst-case rounding error is
+   smaller, since each partial sum is a quarter as long. For min() and
+   max() the order decides only which of two equal values is returned,
+   and the only equal values that differ are -0 and +0: max([-0.0, 0.0])
+   returned the first zero it met, and may now return either.
+
+ - An array holding a numeric string, a tied element or a hole is still
+   read exactly as before: the fast loop stops at that element and the
+   ordinary one finishes from there.
+
 0.321 2026-09-25 CDT
 
  [read_table(): warnings about stray quotes]
