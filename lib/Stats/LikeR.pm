@@ -3,7 +3,7 @@
 require 5.010001;
 use strict;
 package Stats::LikeR;
-our $VERSION = '0.321';	# quoted: a bare version ending in 0, such as 0.320, is the number 0.32, which the dist would be named
+our $VERSION = '0.3211';	# quoted: a bare version ending in 0, such as 0.320, is the number 0.32, which the dist would be named
 require XSLoader;
 use warnings FATAL => 'all';
 use Exporter 'import';
@@ -5775,9 +5775,10 @@ sub INFLATE {
 }
 
 # The PerlIO::via layers write_table writes a .gz or .bz2 file through. The XS
-# opens the file as for plain text and pushes :raw:via(<class>):perlio onto it,
-# so the rows reach WRITE 8 KB at a time from the :perlio buffer above rather
-# than a field or a character at a time.
+# opens the file as for plain text and pushes :raw:via(<class>):perlio onto it
+# (:crlf in place of :perlio where perl is a CRLF shop, so that Windows gets
+# the CRLF a plain file would), and the rows reach WRITE 8 KB at a time from
+# that buffer above rather than a field or a character at a time.
 #
 # The end of the stream -- zlib's final block and the gzip trailer, bzip2's
 # end-of-stream marker -- cannot be written from FLUSH or CLOSE. The :perlio

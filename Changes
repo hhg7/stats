@@ -1,5 +1,25 @@
 Revision history for Stats-LikeR
 
+0.3211 2026-09-27 CDT
+
+ [write_table(): .gz and .bz2 on Windows]
+
+ - A compressed file is meant to hold exactly the text the plain file
+   would, and on Windows it did not. The plain file is opened with perl's
+   default layers, which there translate "\n" to CRLF; the :raw that makes
+   way for the compressing layer removed that translation, so in 0.321 a
+   .gz or .bz2 held LF lines where the same call to a plain file wrote
+   CRLF. Where perl is a CRLF shop (PERLIO_USING_CRLF), the buffer above
+   the compressor is now :crlf instead of :perlio, and the two files match
+   again. Other platforms are unchanged. read_table reads either line end
+   from a compressed file, as it does from a plain one.
+
+ - t/write_table.compressed.pandas.t failed 16 of its 88 tests on an
+   MSWin32 smoker for this. Its expected text now uses the line end a plain
+   file actually gets, and the check of the "wrote" line reads its pipe in
+   binary mode and ignores a CRLF from STDOUT's layers, which is perl's
+   doing rather than write_table's.
+
 0.321 2026-09-25 CDT
 
  [read_table(): warnings about stray quotes]

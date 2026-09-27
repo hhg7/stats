@@ -57,6 +57,17 @@ BEGIN {
 my $dir = File::Temp::tempdir(CLEANUP => 1);
 sub path { File::Spec->catfile($dir, @_) }
 
+# The line end a plain write_table file gets: PerlIO_open()'s default layers,
+# which are :crlf where perl is a CRLF shop (Windows), and a compressed file
+# holds the same text. Literals below are written with \n and put through nl().
+my $NL = do {
+	open my $fh, '>', path('nl.probe') or die "cannot write a probe: $!\n";
+	my $crlf = grep { $_ eq 'crlf' } PerlIO::get_layers($fh);
+	close $fh;
+	$crlf ? "\r\n" : "\n";
+};
+sub nl { (my $s = shift) =~ s/\n/$NL/g; $s }
+
 sub slurp {
 	my ($path) = @_;
 	open my $fh, '<', $path or die "cannot read \"$path\": $!\n";
@@ -117,7 +128,7 @@ same_as_plain('GH22004',
 {
 	my $text = same_as_plain('gh-15008', { 0 => { A => 1 } }, 'gh15008.csv',
 		'row.names' => 'idx');
-	is $text, "idx,A\n0,1\n", 'gh-15008: the index is a column';
+	is $text, nl("idx,A\n0,1\n"),'gh-15008: the index is a column';
 }
 
 # test_to_csv_iterative_compression_name (GH 38714)
@@ -157,7 +168,7 @@ same_as_plain('GH22004',
 	for my $case ([ 't.tsv.gz', "a\tb\n1\t2\n" ], [ 't.TSV.GZ', "a\tb\n1\t2\n" ],
 			[ 't.tsv.bz2', "a\tb\n1\t2\n" ], [ 't.csv.BZ2', "a,b\n1,2\n" ],
 			[ 't.gz', "a,b\n1,2\n" ]) {
-		my ($name, $want) = @$case;
+		my ($name, $want) = ($case->[0], nl($case->[1]));
 		my $f = path($name);
 		write_table(\@d, $f, quiet => 1);
 		my ($got) = $name =~ /gz\z/i ? gunzip(slurp($f)) : bunzip(slurp($f));
@@ -165,7 +176,7 @@ same_as_plain('GH22004',
 	}
 	my $f = path('semi.tsv.gz');
 	write_table(\@d, $f, quiet => 1, sep => ';');
-	is((gunzip(slurp($f)))[0], "a;b\n1;2\n", 'an explicit sep wins over .tsv.gz');
+	is((gunzip(slurp($f)))[0], nl("a;b\n1;2\n"), 'an explicit sep wins over .tsv.gz');
 }
 
 # The same table makes the same bytes: zlib's gzip header carries no name and
@@ -223,7 +234,7 @@ for my $ext (qw(gz bz2)) {
 	# tex => 0 on a .tex.gz name is delimited, and so is compressed
 	my $f = path('y.tex.gz');
 	write_table(\@d, $f, quiet => 1, tex => 0);
-	is((gunzip(slurp($f)))[0], "a\n1\n", 'tex => 0 with a .tex.gz name: gzipped text');
+	is((gunzip(slurp($f)))[0], nl("a\n1\n"), 'tex => 0 with a .tex.gz name: gzipped text');
 }
 
 # A write that cannot be finished croaks. /dev/full takes the open and fails
@@ -253,9 +264,14 @@ SKIP: {
 		write_table([ { a => 1 } ], $f);
 		open STDOUT, '>&', $save or die "restore: $!\n";
 		close $w;
+		binmode $r;
 		local $/;
 		$out = <$r>;
 	}
+	# STDOUT's line end is perl's layers' doing, not write_table's: on MSWin32
+	# the smoker for 0.321 read "\r\n" back through this pipe. The name is
+	# what is under test here.
+	$out =~ s/\r\n/\n/g;
 	is $out, "wrote \e[30;46m$f\e[0m\n", 'a compressed write announces itself as any other';
 }
 

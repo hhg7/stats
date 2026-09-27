@@ -19801,13 +19801,27 @@ PPCODE:
 /* Compressed output goes through a PerlIO::via layer, with a :perlio buffer
   above it so the layer's perl method is called per 8 KB and not per field.
   PerlIO_apply_layers() is binmode($fh, ...) and is in perlapio, so this is
-  the documented API; the layers are undone again at the end, below.*/
+  the documented API; the layers are undone again at the end, below.
+
+  The :raw that clears the way for the compressor also drops the newline
+  translation PerlIO_open() gave the handle where perl is a CRLF shop
+  (PERLIO_USING_CRLF in perl.h, which is also what makes :crlf perl's default
+  layer there), so on Windows the text went in with LF while the same call to
+  a plain file wrote CRLF. The top buffer is :crlf there instead of :perlio --
+  it buffers just as :perlio does -- so the compressed file holds exactly the
+  bytes the plain one would. 0.321 failed t/write_table.compressed.pandas.t on
+  MSWin32 for this.*/
 	if (fh && compress) {
 		SV *err = get_sv("Stats::LikeR::_Compress::error", GV_ADD);
 		sv_setpvs(err, "");
+#ifdef PERLIO_USING_CRLF
+#  define WT_COMPRESS_TOP ":crlf"
+#else
+#  define WT_COMPRESS_TOP ":perlio"
+#endif
 		if (PerlIO_apply_layers(aTHX_ fh, "w", compress == 1
-				? ":raw:via(Stats::LikeR::_Gzip):perlio"
-				: ":raw:via(Stats::LikeR::_Bzip2):perlio") != 0) {
+				? ":raw:via(Stats::LikeR::_Gzip)" WT_COMPRESS_TOP
+				: ":raw:via(Stats::LikeR::_Bzip2)" WT_COMPRESS_TOP) != 0) {
 			PerlIO_close(fh);
 			if (rows_av) SvREFCNT_dec(rows_av);
 			croak("write_table: could not write '%s' compressed: %" SVf "\n",
@@ -20171,11 +20185,11 @@ PPCODE:
 	}
 	if (headers_av) SvREFCNT_dec(headers_av);
 	if (rows_av) SvREFCNT_dec(rows_av);
-/* A compressed file is finished by popping the :perlio buffer and then the
-  via layer while the file is still open: the layer's POPPED writes the end of
-  the stream, which PerlIO::via gives no later chance to do (the reason is at
-  Stats::LikeR::_Compress). Every croak above closes without the pops, and
-  leaves a truncated file that read_table refuses, not a whole one.
+/* A compressed file is finished by popping the buffer (:perlio, or :crlf) and
+  then the via layer while the file is still open: the layer's POPPED writes
+  the end of the stream, which PerlIO::via gives no later chance to do (the
+  reason is at Stats::LikeR::_Compress). Every croak above closes without the
+  pops, and leaves a truncated file that read_table refuses, not a whole one.
 
   A plain file's write errors have never been checked here. A compressed
   one's are, because a stream that failed to write its end is a file no
