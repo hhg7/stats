@@ -43,7 +43,7 @@
 #
 # The GETMAGIC block is upstream's regression test for arguments whose value
 # exists only once their get magic has run: `$#list` has no value flags until
-# then. Up to 0.3211 all three functions croaked "undefined value at argument
+# then. Up to 0.321 all three functions croaked "undefined value at argument
 # index 1" on it; t/get.magic.args.t covers the rest of the family.
 
 require 5.010;

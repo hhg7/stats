@@ -65,11 +65,11 @@ DIRFILESEP = /
 DFSEP = $(DIRFILESEP)
 NAME = Stats::LikeR
 NAME_SYM = Stats_LikeR
-VERSION = 0.3212
+VERSION = 0.3211
 VERSION_MACRO = VERSION
-VERSION_SYM = 0_3212
+VERSION_SYM = 0_3211
 DEFINE_VERSION = -D$(VERSION_MACRO)=\"$(VERSION)\"
-XS_VERSION = 0.3212
+XS_VERSION = 0.3211
 XS_VERSION_MACRO = XS_VERSION
 XS_DEFINE_VERSION = -D$(XS_VERSION_MACRO)=\"$(XS_VERSION)\"
 INST_ARCHLIB = blib/arch
@@ -286,7 +286,7 @@ RCS_LABEL = rcs -Nv$(VERSION_SYM): -q
 DIST_CP = best
 DIST_DEFAULT = tardist
 DISTNAME = Stats-LikeR
-DISTVNAME = Stats-LikeR-0.3212
+DISTVNAME = Stats-LikeR-0.3211
 
 
 # --- MakeMaker macro section:
@@ -635,7 +635,7 @@ metafile : create_distdir
 	$(NOECHO) $(ECHO) '  Cwd: '\''0'\''' >> META_new.yml
 	$(NOECHO) $(ECHO) '  IO::Uncompress::Unzip: '\''0'\''' >> META_new.yml
 	$(NOECHO) $(ECHO) '  Scalar::Util: '\''1.22'\''' >> META_new.yml
-	$(NOECHO) $(ECHO) 'version: '\''0.3212'\''' >> META_new.yml
+	$(NOECHO) $(ECHO) 'version: '\''0.3211'\''' >> META_new.yml
 	$(NOECHO) $(ECHO) 'x_serialization_backend: '\''CPAN::Meta::YAML version 0.020'\''' >> META_new.yml
 	-$(NOECHO) $(MV) META_new.yml $(DISTVNAME)/META.yml
 	$(NOECHO) $(ECHO) Generating META.json
@@ -689,7 +689,7 @@ metafile : create_distdir
 	$(NOECHO) $(ECHO) '      }' >> META_new.json
 	$(NOECHO) $(ECHO) '   },' >> META_new.json
 	$(NOECHO) $(ECHO) '   "release_status" : "stable",' >> META_new.json
-	$(NOECHO) $(ECHO) '   "version" : "0.3212",' >> META_new.json
+	$(NOECHO) $(ECHO) '   "version" : "0.3211",' >> META_new.json
 	$(NOECHO) $(ECHO) '   "x_serialization_backend" : "JSON::PP version 4.16"' >> META_new.json
 	$(NOECHO) $(ECHO) '}' >> META_new.json
 	-$(NOECHO) $(MV) META_new.json $(DISTVNAME)/META.json
@@ -1091,7 +1091,7 @@ testdb_static :: static pure_all $(MAP_TARGET)
 # --- MakeMaker ppd section:
 # Creates a PPD (Perl Package Description) for a binary distribution.
 ppd :
-	$(NOECHO) $(ECHO) '<SOFTPKG NAME="Stats-LikeR" VERSION="0.3212">' > Stats-LikeR.ppd
+	$(NOECHO) $(ECHO) '<SOFTPKG NAME="Stats-LikeR" VERSION="0.3211">' > Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '    <ABSTRACT>Get basic statistical functions, like in R, but with Perl using XS for performance</ABSTRACT>' >> Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '    <AUTHOR>David E. Condon &lt;dec986@gmail.com&gt;</AUTHOR>' >> Stats-LikeR.ppd
 	$(NOECHO) $(ECHO) '    <IMPLEMENTATION>' >> Stats-LikeR.ppd

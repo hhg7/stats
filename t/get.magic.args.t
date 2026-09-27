@@ -4,7 +4,7 @@
 # Found by List::Util 1.70's t/min.t (see t/min.max.sum.ListUtil.t), whose
 # GETMAGIC block calls sum(0, $#list). A scalar whose value exists only after
 # mg_get() -- $#array, a tied scalar whose FETCH has not run, a substr() lvalue
-# -- has no value flags before then, and up to 0.3211 every function below
+# -- has no value flags before then, and up to 0.321 every function below
 # tested SvOK() first and croaked "undefined value at argument index N" on it.
 # The same held for a tied *element* of an ordinary array in median(),
 # skew(), kurtosis() and mode(), which read AvARRAY directly, and scale(),

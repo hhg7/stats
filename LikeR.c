@@ -600,7 +600,7 @@ An argument whose value exists only once mg_get() has run -- $#array, a tied
 scalar whose FETCH has not been called yet, a substr() or vec() lvalue -- has
 no value flags before then, so the SvOK() and SvROK() tests the reductions
 branch on called it undef: sum(0, $#list) croaked "undefined value at argument
-index 1" up to 0.3211, where List::Util's sum() returns the index. It is
+index 1" up to 0.321, where List::Util's sum() returns the index. It is
 List::Util 1.70's own t/min.t that calls it that way.
 
 Running the magic in place is not enough, because every one of these XSUBs
