@@ -383,6 +383,94 @@ while min([1,2,NaN]) was 1, off both from R, which gives NaN for both, and
 from every other reduction in this file. Testing nv_isnan(v) first fixes it in
 one direction and needs no second pass: once mn is NaN every later v < mn is
 false, so the NaN is what survives to the end.*/
+/*One step of min() or max(): the extreme of the running m and the next v.
+
+A NaN in either is the answer, per the scan contract above. Two zeros of
+opposite sign compare equal, so `v > m` alone keeps whichever came first, and
+the four-lane scan below would make that depend on which lane each landed in.
+These follow IEEE 754-2019 maximum() and minimum() instead, which order -0
+below +0: max(-0.0, 0.0) and max(0.0, -0.0) are both +0, and both min()s are
+-0, whatever the order. That is a deliberate departure from R 4.6.1, whose
+max(-0, 0) is -0 and max(0, -0) is +0 (first seen), and from NumPy 2.4.6 and
+List::Util 1.70, which return the last seen; t/min.max.signed_zero.t records
+all three.
+
+No sign-bit test is needed, which matters because the C99 signbit() macro is
+not width-safe everywhere (see nv_isnan()). IEEE addition already has the rule:
+under round-to-nearest -0 + +0 is +0 and only -0 + -0 is -0, so m + v is the
+larger of two zeros and -(-m - v) the smaller. The addition is reached only
+when both are zero, since equal nonzero values need no update.*/
+PERL_STATIC_INLINE NV nv_max_step(NV m, NV v)
+{
+	if (nv_isnan(v) || v > m) return v;
+	if (v == 0 && m == 0) return m + v;	//-0 + +0 is +0
+	return m;
+}
+PERL_STATIC_INLINE NV nv_min_step(NV m, NV v)
+{
+	if (nv_isnan(v) || v < m) return v;
+	if (v == 0 && m == 0) return -(-m - v);	//-0 unless both are +0
+	return m;
+}
+/*Signed zeros in the four-lane min and max scans, without a branch per element.
+
+nv_max_step() in the loop body costs an unpredictable branch wherever the data
+ties with the running extreme: on 1e6 integers drawn from 1..5 it made max()
+2.9 times slower than the plain compare. So the loop keeps the plain compare,
+which may keep the wrong zero, and each lane k also carries zk += v * 0 (max) or
+zk -= v * 0 (min), seeded -0. For a finite v, v * 0 is a zero with v's sign.
+
+That matters only when lane k's extreme mk is a zero, and then every element of
+lane k is on the same side of it: all <= 0 for max, all >= 0 for min. For max,
+zk is then the sum of -0 for each negative or -0 element and +0 for each +0, so
+it is +0 exactly when the lane saw a +0, and mk + zk is the IEEE maximum of mk
+and every zero in the lane. For min, zk ends +0 exactly when the lane saw a -0,
+and -(-mk + zk) is the minimum. mk is itself one of the lane's values, or the
+seed, so its own sign is counted.
+
+v * 0 is NaN when v is infinite. In a lane whose extreme is a zero that can only
+be -Inf (max) or +Inf (min), which leaves zk NaN and its sign unknown; the fix
+then reports FALSE and the caller recomputes the range exactly with
+av_max_exact()/av_min_exact(). A NaN element needs no such care: it makes mk
+NaN, and mk is not then a zero.*/
+PERL_STATIC_INLINE bool nv_max_zero_fix(NV *restrict m, NV z)
+{
+	if (*m != 0) return TRUE;	//a NaN or a nonzero extreme stands
+	if (nv_isnan(z)) return FALSE;
+	*m = *m + z;
+	return TRUE;
+}
+PERL_STATIC_INLINE bool nv_min_zero_fix(NV *restrict m, NV z)
+{
+	if (*m != 0) return TRUE;
+	if (nv_isnan(z)) return FALSE;
+	*m = -(-*m + z);
+	return TRUE;
+}
+/*The exact extreme of el[from .. to-1] and the running acc, one element at a
+time. Only the rare case above reaches it, and every element in the range has
+already been read by the scan, so sv_plain_nv() takes each one. el is the AV's
+own AvARRAY() block, which is why it is not restrict.*/
+static NV av_max_exact(SV *const *el, SSize_t from, SSize_t to,
+	const NvAcc *restrict acc)
+{
+	NV m = acc->max;
+	for (SSize_t k = from; k < to; k++) {
+		NV v;
+		if (sv_plain_nv(el[k], &v)) m = nv_max_step(m, v);
+	}
+	return m;
+}
+static NV av_min_exact(SV *const *el, SSize_t from, SSize_t to,
+	const NvAcc *restrict acc)
+{
+	NV m = acc->min;
+	for (SSize_t k = from; k < to; k++) {
+		NV v;
+		if (sv_plain_nv(el[k], &v)) m = nv_min_step(m, v);
+	}
+	return m;
+}
 /*The scans fold four elements per step, one into each of four independent
 accumulators, and combine the four when they stop.
 
@@ -406,9 +494,8 @@ holds every fourth element from its start, and the lanes are added pairwise at
 the end. The total can therefore differ in the last bits from a left-to-right
 sum, as NumPy's pairwise sum does; its worst-case error bound is smaller, since
 each partial sum is a quarter as long. For min() and max() the order changes
-nothing but which of two equal values is returned, and the only equal values
-that differ are -0 and +0: max([-0.0, 0.0]) returned the first-seen zero before
-and may now return either.
+nothing: the only equal values that differ are -0 and +0, and nv_max_step() and
+nv_min_step() choose between those by sign, not by position.
 
 A group of four is folded only when all four elements are plain, so a group that
 holds the element the scan must stop at is left whole to the one-at-a-time tail
@@ -442,8 +529,9 @@ static LIKER_NOINLINE void av_scan_sum(AV *av, SSize_t *jp, SSize_t len,
 /*As av_scan_sum(), tracking one end of the range instead of the total.
 
 The first value seeds all four lanes, which is what keeps the "have I seen one
-yet" test out of the loop body. The lanes are combined with the same NaN-first
-rule the loop uses, so a NaN in any lane is the answer.*/
+yet" test out of the loop body. Each lane's zero is given its IEEE sign by
+nv_min_zero_fix()/nv_max_zero_fix(), and the lanes are then combined with
+nv_min_step()/nv_max_step(), so a NaN in any lane is the answer.*/
 static LIKER_NOINLINE void av_scan_min(AV *av, SSize_t *jp, SSize_t len,
 	NvAcc *acc)
 {
@@ -458,24 +546,33 @@ static LIKER_NOINLINE void av_scan_min(AV *av, SSize_t *jp, SSize_t len,
 	}
 	const SSize_t start = j;
 	NV m0 = acc->min, m1 = m0, m2 = m0, m3 = m0;
+	NV z0 = -0.0, z1 = -0.0, z2 = -0.0, z3 = -0.0;	//zk: whether lane k has seen a -0; see nv_max_zero_fix()
 	for (; j + 4 <= len; j += 4) {
 		NV a, b, c, d;
 		if (!el[j] || !el[j + 1] || !el[j + 2] || !el[j + 3]
 		 || !sv_plain_nv(el[j], &a)     || !sv_plain_nv(el[j + 1], &b)
 		 || !sv_plain_nv(el[j + 2], &c) || !sv_plain_nv(el[j + 3], &d)) break;
 		if (nv_isnan(a) || a < m0) m0 = a;   //NaN wins and stays; see the contract
+		z0 -= a * 0;
 		if (nv_isnan(b) || b < m1) m1 = b;
+		z1 -= b * 0;
 		if (nv_isnan(c) || c < m2) m2 = c;
+		z2 -= c * 0;
 		if (nv_isnan(d) || d < m3) m3 = d;
+		z3 -= d * 0;
 	}
 	for (; j < len; j++) {
 		NV v;
 		if (!el[j] || !sv_plain_nv(el[j], &v)) break;
 		if (nv_isnan(v) || v < m0) m0 = v;
+		z0 -= v * 0;
 	}
-	if (nv_isnan(m1) || m1 < m0) m0 = m1;
-	if (nv_isnan(m2) || m2 < m0) m0 = m2;
-	if (nv_isnan(m3) || m3 < m0) m0 = m3;
+	if (!nv_min_zero_fix(&m0, z0) || !nv_min_zero_fix(&m1, z1)
+	 || !nv_min_zero_fix(&m2, z2) || !nv_min_zero_fix(&m3, z3))
+		m0 = m1 = m2 = m3 = av_min_exact(el, *jp, j, acc);
+	m0 = nv_min_step(m0, m1);
+	m0 = nv_min_step(m0, m2);
+	m0 = nv_min_step(m0, m3);
 	acc->min = m0;
 	acc->count += (size_t)(j - start);
 	*jp = j;
@@ -495,24 +592,33 @@ static LIKER_NOINLINE void av_scan_max(AV *av, SSize_t *jp, SSize_t len,
 	}
 	const SSize_t start = j;
 	NV m0 = acc->max, m1 = m0, m2 = m0, m3 = m0;
+	NV z0 = -0.0, z1 = -0.0, z2 = -0.0, z3 = -0.0;	//zk: whether lane k has seen a +0; see nv_max_zero_fix()
 	for (; j + 4 <= len; j += 4) {
 		NV a, b, c, d;
 		if (!el[j] || !el[j + 1] || !el[j + 2] || !el[j + 3]
 		 || !sv_plain_nv(el[j], &a)     || !sv_plain_nv(el[j + 1], &b)
 		 || !sv_plain_nv(el[j + 2], &c) || !sv_plain_nv(el[j + 3], &d)) break;
 		if (nv_isnan(a) || a > m0) m0 = a;   //NaN wins and stays; see the contract
+		z0 += a * 0;
 		if (nv_isnan(b) || b > m1) m1 = b;
+		z1 += b * 0;
 		if (nv_isnan(c) || c > m2) m2 = c;
+		z2 += c * 0;
 		if (nv_isnan(d) || d > m3) m3 = d;
+		z3 += d * 0;
 	}
 	for (; j < len; j++) {
 		NV v;
 		if (!el[j] || !sv_plain_nv(el[j], &v)) break;
 		if (nv_isnan(v) || v > m0) m0 = v;
+		z0 += v * 0;
 	}
-	if (nv_isnan(m1) || m1 > m0) m0 = m1;
-	if (nv_isnan(m2) || m2 > m0) m0 = m2;
-	if (nv_isnan(m3) || m3 > m0) m0 = m3;
+	if (!nv_max_zero_fix(&m0, z0) || !nv_max_zero_fix(&m1, z1)
+	 || !nv_max_zero_fix(&m2, z2) || !nv_max_zero_fix(&m3, z3))
+		m0 = m1 = m2 = m3 = av_max_exact(el, *jp, j, acc);
+	m0 = nv_max_step(m0, m1);
+	m0 = nv_max_step(m0, m2);
+	m0 = nv_max_step(m0, m3);
 	acc->max = m0;
 	acc->count += (size_t)(j - start);
 	*jp = j;
@@ -24247,7 +24353,7 @@ NV min(...)
 					 SV* tv = av_slow_at(aTHX_ av, j);
 					 if (tv) {
 						 NV val = nv_arg_at(aTHX_ tv, "min", (UV)j, (UV)i);
-						 if (acc.count == 0 || nv_isnan(val) || val < acc.min) acc.min = val;   //NaN wins; see the av_scan contract
+						 acc.min = acc.count == 0 ? val : nv_min_step(acc.min, val);
 						 acc.count++;
 					 } else {
 						 croak("min: undefined value at array ref index %" UVuf " (argument %" UVuf ")", (UV)j, (UV)i);
@@ -24255,7 +24361,7 @@ NV min(...)
 				 }
 			} else if (SvOK(arg)) {
 				 NV val = nv_arg(aTHX_ arg, "min", (UV)i);
-				 if (acc.count == 0 || nv_isnan(val) || val < acc.min) acc.min = val;   //NaN wins; see the av_scan contract
+				 acc.min = acc.count == 0 ? val : nv_min_step(acc.min, val);
 				 acc.count++;
 			} else {
 				 croak("min: undefined value at argument index %" UVuf, (UV)i);
@@ -24282,7 +24388,7 @@ NV max(...)
 				   SV* tv = av_slow_at(aTHX_ av, j);
 				   if (tv) {
 					   NV val = nv_arg_at(aTHX_ tv, "max", (UV)j, (UV)i);
-					   if (acc.count == 0 || nv_isnan(val) || val > acc.max) acc.max = val;   //NaN wins; see the av_scan contract
+					   acc.max = acc.count == 0 ? val : nv_max_step(acc.max, val);
 					   acc.count++;
 				   } else {
 					   croak("max: undefined value at array ref index %" UVuf " (argument %" UVuf ")", (UV)j, (UV)i);
@@ -24290,7 +24396,7 @@ NV max(...)
 			   }
 		   } else if (SvOK(arg)) {
 			   NV val = nv_arg(aTHX_ arg, "max", (UV)i);
-			   if (acc.count == 0 || nv_isnan(val) || val > acc.max) acc.max = val;   //NaN wins; see the av_scan contract
+			   acc.max = acc.count == 0 ? val : nv_max_step(acc.max, val);
 			   acc.count++;
 		   } else {
 			   croak("max: undefined value at argument index %" UVuf, (UV)i);

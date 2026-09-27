@@ -148,10 +148,18 @@ Revision history for Stats-LikeR
  - sum(), mean(), sd() and var() now add the elements in a different
    order, four interleaved partial sums added pairwise, so a result can
    differ from 0.321's in the last bits. The worst-case rounding error is
-   smaller, since each partial sum is a quarter as long. For min() and
-   max() the order decides only which of two equal values is returned,
-   and the only equal values that differ are -0 and +0: max([-0.0, 0.0])
-   returned the first zero it met, and may now return either.
+   smaller, since each partial sum is a quarter as long.
+
+ - min() and max() now order -0 below +0, as IEEE 754-2019's minimum()
+   and maximum() do: max(-0.0, 0.0) and max(0.0, -0.0) are both +0, and
+   both min()s are -0. They used to return the first zero they met, as R
+   does, and with four lanes that would have come to depend on which lane
+   each zero fell in. NumPy and List::Util return the last zero they meet,
+   so none of the three agrees with this, and t/min.max.signed_zero.t
+   records all of them. The perl literal -0 is the integer 0, which has no
+   sign, so max(-0, 0) was always 0. The table above was measured before
+   this; tracking the sign costs min() and max() 0-6% more on normal and
+   integer data, and up to 9% on data that is mostly zeros.
 
  - An array holding a numeric string, a tied element or a hole is still
    read exactly as before: the fast loop stops at that element and the
