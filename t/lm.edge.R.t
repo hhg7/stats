@@ -25,9 +25,18 @@
 # used to fit it, return every coefficient NaN, and report each with t = -Inf
 # and p = 0.
 #
-# Row names: the fitted.values and residuals hashes are keyed by row name, and
-# a UTF-8 name used to be stored as its bytes, so the caller's own key did not
-# find it.  R has no counterpart to test against; this is the Perl surface.
+# exact_inf and exact_neg_inf: x = (0, 0, 1, 1) makes every step of lm()'s
+# sweep exact in binary -- pivots 4 and 1, multipliers 1/2 -- so the estimates
+# are exact, the residuals exactly 0, and every standard error exactly 0 at
+# every NV width.  summary.lm() defines t as Estimate / Std. Error, so a nonzero
+# estimate has t = +-Inf and p = 0, a zero one t = NaN, and F = Inf.  R 4.6.1
+# itself does NOT report those numbers: its Householder QR leaves 9.9e-32 of
+# rounding in the residual sum of squares for both cases, and so reports
+# t = 9.0e15 and an intercept of -2.2e-16 with t = -1.41, p = 0.29 for the first.
+# That is a known divergence, kept on purpose -- R's figures are noise from its
+# own rounding -- and the expectations below are the definition's, not R's.
+# (UTF-8 row names, and the other model functions' row-keyed results, are
+# t/rownames.utf8.t.)
 #
 # On tolerances: kappa(X'X) is 6.5e8 for disp_1_5, the worst of the three
 # mtcars designs (R's kappa(crossprod(X), exact = TRUE)), so the normal
@@ -196,24 +205,28 @@ throws_ok { lm(formula => 'y ~ I(x^-1)', data => { y => [1, 2, 3, 4], x => [1, 0
 throws_ok { lm(formula => 'y ~ x + z', data => { y => [1, 2], x => [1, 2], z => [2, 4] }) }
 	qr/0 degrees of freedom/, 'rank 2 on 2 rows croaks';
 
-# UTF-8 row names come back as the keys the caller used
-{
-	my ($cafe, $nihon) = ("caf\x{e9}", "\x{65e5}\x{672c}");
-	my %want = map { $_ => 1 } ($cafe, $nihon, 'c', 'd');
-	my %hoh = ($cafe => { y => 1, x => 1 }, $nihon => { y => 2, x => 3 },
-	           c => { y => 4, x => 4 }, d => { y => 4, x => 6 });
-	my @names = ($cafe, $nihon, 'c', 'd');
-	my @shapes = (
-		['HoH',           \%hoh],
-		['HoA row.names', { y => [1, 2, 4, 4], x => [1, 3, 4, 6], 'row.names' => \@names }],
-		['AoH _row',      [ map { { _row => $names[$_], y => (1, 2, 4, 4)[$_], x => (1, 3, 4, 6)[$_] } } 0 .. 3 ]],
-	);
-	for my $sh (@shapes) {
-		my $r = lm(formula => 'y ~ x', data => $sh->[1]);
-		for my $h ('fitted.values', 'residuals') {
-			is_deeply([sort keys %{ $r->{$h} }], [sort keys %want], "$sh->[0]: $h keyed by the caller's row names");
+# Exact zero residuals: see exact_inf above.  Columns: case, y, t per
+# coefficient, p per coefficient; undef is NaN.
+for my $c (['exact_inf',     [0, 0, 2, 2],     [undef, $INF],  [undef, 0]],
+           ['exact_neg_inf', [-3, -3, -5, -5], [-$INF, -$INF], [0, 0]]) {
+	my ($key, $y, $t, $p) = @$c;
+	my $r = lm(formula => 'y ~ x', data => { x => [0, 0, 1, 1], y => $y });
+	my @n = ('Intercept', 'x');
+	for my $j (0, 1) {
+		my $s = $r->{summary}{ $n[$j] };
+		is($s->{'Std. Error'}, 0, "$key: $n[$j] std. error is exactly 0");
+		if (!defined $t->[$j]) {
+			ok(is_nanish($s->{'t value'}),  "$key: $n[$j] t is NaN (0/0)");
+			ok(is_nanish($s->{'Pr(>|t|)'}), "$key: $n[$j] p is NaN");
+		} else {
+			is($s->{'t value'},  $t->[$j], "$key: $n[$j] t is " . ($t->[$j] > 0 ? '+' : '-') . 'Inf');
+			is($s->{'Pr(>|t|)'}, $p->[$j], "$key: $n[$j] p is 0");
 		}
 	}
+	is($r->{rss}, 0, "$key: rss is exactly 0");
+	is($r->{'r.squared'}, 1, "$key: R^2 is 1");
+	is($r->{fstatistic}[0], $INF, "$key: F is Inf");
+	is($r->{'f.pvalue'}, 0, "$key: F's p is 0");
 }
 
 # The croaks above run after every allocation is made; none may leak

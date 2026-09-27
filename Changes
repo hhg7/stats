@@ -71,6 +71,57 @@ Revision history for Stats-LikeR
    binary mode and ignores a CRLF from STDOUT's layers, which is perl's
    doing rather than write_table's.
 
+ [lm()]
+
+ - A non-integer exponent inside I() was truncated: the exponent was read
+   with atoi(), so I(hp^0.5) became hp^0, a column of ones that was then
+   aliased against the intercept and reported as NaN, with no sign that
+   anything had gone wrong. I(x^1.5) became x^1. The exponent is now read
+   as a number at the build's NV width, and one that is not a number, such
+   as I(x^abc), is missing rather than 0. glm(), aov() and the other model
+   functions read I() the same way and are fixed with it.
+
+ - An infinite value in the data is refused with R's own message, "lm:
+   NA/NaN/Inf in 'y'" (or 'x'), naming the row, as glm() already refuses
+   it. It used to go into the fit, and every coefficient came back NaN,
+   each reported with t = -Inf and p = 0: a test on the standard error
+   being positive sent a NaN one to the infinite branch. NaN, which is
+   missing, still drops its row.
+
+ - t values, R^2, adjusted R^2 and F are the plain ratios summary.lm()
+   takes, so 0/0 is NaN. A response with no variation at all reported
+   t = Inf, p = 0 and R^2 = 0 for every coefficient; it now reports NaN, as
+   R does, and a nonzero estimate over a standard error of exactly 0 is
+   +-Inf with p = 0.
+
+ - The residual degrees of freedom are now tested against the rank, not
+   the column count. y ~ x + z on three rows with z = 2x has one residual
+   degree of freedom, and R fits it with z NA; lm() refused it as "0
+   degrees of freedom". A fit with none at all is still refused.
+
+ - Everything lm() allocates is on the save stack, so the new croaks free
+   it all.
+
+ - t/lm.edge.R.t covers it, from R 4.6.1 on its own mtcars and from SciPy
+   1.18.0's test_regressZEROX (Wilkinson's W.IV.D); t/lm.edge.R.R
+   regenerates the reference values. Where R's QR leaves rounding in an
+   exactly zero residual sum of squares and so reports t = 9.0e15 instead
+   of Inf, the test pins the definition and says why.
+
+ [Row names that are not ASCII]
+
+ - fitted.values, residuals and the other hashes keyed by row name, from
+   lm(), glm(), zerotrunc(), hurdle(), svyglm(), ivreg(), lmer(), aov()
+   and predict(), dropped the UTF-8 flag of a name, so "\x{65e5}\x{672c}"
+   came back as its six bytes and the caller's own key did not find it. A
+   HoH key that fits in Latin-1 happened to survive, but the same name
+   given in row.names or _row did not. Row names are now held as UTF-8
+   and stored as UTF-8 keys, which perl downgrades where it can, so ASCII
+   and Latin-1 byte names come back exactly as they were given.
+
+ - t/rownames.utf8.t checks every one of those functions with each data
+   shape that carries names.
+
 0.321 2026-09-25 CDT
 
  [read_table(): warnings about stray quotes]

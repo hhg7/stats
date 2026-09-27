@@ -9515,16 +9515,33 @@ static bool lm_is_row_name_key(const char *k, STRLEN len) {
 	return FALSE;
 }
 
+/*A row name, copied out of the caller's data as UTF-8 bytes.
+
+Row names come back as the keys of fitted.values, residuals and predict()'s
+result, and a char * has no room for the UTF-8 flag, so up to 0.3211 a key such
+as "\x{65e5}\x{672c}" was stored as its six bytes and the caller's own key did
+not find it. Holding every name as UTF-8 needs no flag: ROWNAME_KLEN() stores
+it as a UTF-8 key, and perl downgrades any key that fits in Latin-1, so an
+ASCII or Latin-1 byte name comes back byte-for-byte what the caller used.
+bytes_to_utf8() returns a Newx buffer, so the caller Safefree()s either kind.*/
+static char *rowname_dup(pTHX_ SV *sv) {
+	STRLEN l;
+	const char *s = SvPV(sv, l);
+	if (SvUTF8(sv)) return savepvn(s, l);
+	return (char *)bytes_to_utf8((const U8 *)s, &l);
+}
+
+//hv_store() length for a name from rowname_dup(): negative marks it UTF-8.
+#define ROWNAME_KLEN(s) (-(I32)strlen(s))
+
 /*Work out whether the data argument is a hash of columns (HoA), a hash of rows
 (HoH) or an array of rows (AoH), label every observation, and hand back the
 two views the design-matrix helpers accept: *data_hoa_out for a HoA,
 *row_hashes_out otherwise (exactly one of the two is non-NULL).
 
 Returns the observation count. *row_names_out is a Newx array of savepv'd
-names; the caller frees each name and then the array. row_utf8_out may be NULL;
-otherwise it receives a Newx array, freed the same way, saying which names are
-UTF-8 -- the char * alone cannot say, and a hash keyed by the names has to be
-given the flag back or a key such as "\x{65e5}\x{672c}" is stored as its bytes. Croaks -- with fname as
+names; the caller frees each name and then the array. Every name is UTF-8,
+from rowname_dup(), and is stored as a key with ROWNAME_KLEN(). Croaks -- with fname as
 the message prefix, and after freeing whatever it had allocated -- on a shape
 neither function can read. Callers run lm_formula_split() first and pass its
 buffer as fbuf so that those croaks release it too.*/
@@ -9532,18 +9549,15 @@ static size_t lm_read_rows(pTHX_ SV *data_sv, const char *fname,
                            char *fbuf,
                            HV  **data_hoa_out,
                            HV ***row_hashes_out,
-                           char ***row_names_out,
-                           bool **row_utf8_out) {
+                           char ***row_names_out) {
 	SV  *ref        = SvRV(data_sv);
 	HV  *data_hoa   = NULL;
 	HV **row_hashes = NULL;
 	char **row_names = NULL;
-	bool *row_utf8   = NULL;	//per name: TRUE when its bytes are UTF-8
 	size_t n = 0, i, k;
 	HE *entry;
 
 	*data_hoa_out = NULL; *row_hashes_out = NULL; *row_names_out = NULL;
-	if (row_utf8_out) *row_utf8_out = NULL;
 
 	if (SvTYPE(ref) == SVt_PVHV) {
 		HV *hv = (HV*)ref;
@@ -9596,13 +9610,10 @@ static size_t lm_read_rows(pTHX_ SV *data_sv, const char *fname,
 				}
 			}
 			Newx(row_names, n ? n : 1, char*);
-			Newxz(row_utf8, n ? n : 1, bool);
 			for (i = 0; i < n; i++) {
 				SV **nm = rn_av ? av_fetch(rn_av, (SSize_t)i, 0) : NULL;
 				if (nm && *nm && SvOK(*nm)) {
-					STRLEN l; const char *s = SvPV(*nm, l);
-					row_names[i] = savepvn(s, l);
-					row_utf8[i]  = SvUTF8(*nm) ? TRUE : FALSE;
+					row_names[i] = rowname_dup(aTHX_ *nm);
 				} else {
 					char buf[32];
 					snprintf(buf, sizeof buf, "%lu", (unsigned long)(i + 1));
@@ -9613,7 +9624,6 @@ static size_t lm_read_rows(pTHX_ SV *data_sv, const char *fname,
 			//HoH: the outer keys already name the rows.
 			n = (size_t)HvUSEDKEYS(hv);
 			Newx(row_names, n ? n : 1, char*);
-			Newxz(row_utf8, n ? n : 1, bool);
 			Newx(row_hashes, n ? n : 1, HV*);
 			hv_iterinit(hv);
 			i = 0;
@@ -9621,17 +9631,10 @@ static size_t lm_read_rows(pTHX_ SV *data_sv, const char *fname,
 				SV *rval = hv_iterval(hv, entry);
 				if (!SvROK(rval) || SvTYPE(SvRV(rval)) != SVt_PVHV) {
 					for (k = 0; k < i; k++) Safefree(row_names[k]);
-					Safefree(row_names); Safefree(row_utf8); Safefree(row_hashes); Safefree(fbuf);
+					Safefree(row_names); Safefree(row_hashes); Safefree(fbuf);
 					croak("%s: Hash values must all be HashRefs (HoH)", fname);
 				}
-	/*hv_iterkeysv(), not hv_iterkey(): perl stores a UTF-8 key that fits in
-	Latin-1 downgraded, and only the SV form says what the key really was.*/
-				{
-					STRLEN l; SV *ksv = hv_iterkeysv(entry);
-					const char *s = SvPV(ksv, l);
-					row_names[i] = savepvn(s, l);
-					row_utf8[i]  = SvUTF8(ksv) ? TRUE : FALSE;
-				}
+				row_names[i]  = rowname_dup(aTHX_ hv_iterkeysv(entry));
 				row_hashes[i] = (HV*)SvRV(rval);
 				i++;
 			}
@@ -9640,7 +9643,6 @@ static size_t lm_read_rows(pTHX_ SV *data_sv, const char *fname,
 		AV *av = (AV*)ref;
 		n = (size_t)(av_len(av) + 1);
 		Newx(row_names, n ? n : 1, char*);
-		Newxz(row_utf8, n ? n : 1, bool);
 		Newx(row_hashes, n ? n : 1, HV*);
 		for (i = 0; i < n; i++) {
 			SV **val = av_fetch(av, (SSize_t)i, 0);
@@ -9648,7 +9650,7 @@ static size_t lm_read_rows(pTHX_ SV *data_sv, const char *fname,
 			SV **nm = NULL;
 			if (!val || !SvROK(*val) || SvTYPE(SvRV(*val)) != SVt_PVHV) {
 				for (k = 0; k < i; k++) Safefree(row_names[k]);
-				Safefree(row_names); Safefree(row_utf8); Safefree(row_hashes); Safefree(fbuf);
+				Safefree(row_names); Safefree(row_hashes); Safefree(fbuf);
 				croak("%s: Array values must be HashRefs (AoH)", fname);
 			}
 			rh = (HV*)SvRV(*val);
@@ -9660,9 +9662,7 @@ static size_t lm_read_rows(pTHX_ SV *data_sv, const char *fname,
 				nm = NULL;
 			}
 			if (nm && *nm && SvOK(*nm)) {
-				STRLEN l; const char *s = SvPV(*nm, l);
-				row_names[i] = savepvn(s, l);
-				row_utf8[i]  = SvUTF8(*nm) ? TRUE : FALSE;
+				row_names[i] = rowname_dup(aTHX_ *nm);
 			} else {
 				char buf[32];
 				snprintf(buf, sizeof buf, "%lu", (unsigned long)(i + 1));
@@ -9674,8 +9674,6 @@ static size_t lm_read_rows(pTHX_ SV *data_sv, const char *fname,
 	*data_hoa_out   = data_hoa;
 	*row_hashes_out = row_hashes;
 	*row_names_out  = row_names;
-	if (row_utf8_out) *row_utf8_out = row_utf8;
-	else Safefree(row_utf8);
 	return n;
 }
 
@@ -9855,7 +9853,7 @@ typedef struct {
 static void mf_rows(pTHX_ const char *restrict fname, SV *data_sv, MfRows *restrict r) {
 	size_t i;
 	if (!data_sv || !SvROK(data_sv)) croak("%s: data is required and must be a reference", fname);
-	r->n = lm_read_rows(aTHX_ data_sv, fname, NULL, &r->data_hoa, &r->row_hashes, &r->row_names, NULL);
+	r->n = lm_read_rows(aTHX_ data_sv, fname, NULL, &r->data_hoa, &r->row_hashes, &r->row_names);
 	if (r->row_hashes) SAVEFREEPV(r->row_hashes);
 	if (r->row_names) {
 		SAVEFREEPV(r->row_names);
@@ -20944,8 +20942,7 @@ SV *predict(...)
 					for (i = 0; i < n; i++) {
 						SV **nm = rn_av ? av_fetch(rn_av, (SSize_t)i, 0) : NULL;
 						if (nm && *nm && SvOK(*nm)) {
-							STRLEN l; const char *s = SvPV(*nm, l);
-							row_names[i] = savepvn(s, l);
+							row_names[i] = rowname_dup(aTHX_ *nm);
 						} else {
 							char buf[32];
 							snprintf(buf, sizeof(buf), "%lu", (unsigned long)(i + 1));
@@ -20960,8 +20957,7 @@ SV *predict(...)
 					hv_iterinit(hv);
 					i = 0;
 					while ((e = hv_iternext(hv))) {
-						I32 klen;
-						row_names[i]  = savepv(hv_iterkey(e, &klen)); SAVEFREEPV(row_names[i]);
+						row_names[i]  = rowname_dup(aTHX_ hv_iterkeysv(e)); SAVEFREEPV(row_names[i]);
 						row_hashes[i] = (HV*)SvRV(HeVAL(e));
 						i++;
 					}
@@ -20993,8 +20989,7 @@ SV *predict(...)
 						nm = NULL;
 					}
 					if (nm && *nm && SvOK(*nm)) {
-						STRLEN l; const char *s = SvPV(*nm, l);
-						row_names[i] = savepvn(s, l);
+						row_names[i] = rowname_dup(aTHX_ *nm);
 					} else {
 						char buf[32];
 						snprintf(buf, sizeof(buf), "%lu", (unsigned long)(i + 1));
@@ -21238,7 +21233,7 @@ SV *predict(...)
 				     : (is_binomial && want_response) ? (1.0 / (1.0 + nv_exp(-eta)))
 				     : (is_log && want_response) ? nv_exp(eta)
 				     : eta;
-				hv_store(out_hv, row_names[i], (I32)strlen(row_names[i]), newSVnv(pred), 0);
+				hv_store(out_hv, row_names[i], ROWNAME_KLEN(row_names[i]), newSVnv(pred), 0);
 			}
 
 			RETVAL = newRV_inc((SV*)out_hv);   //+1 -> survives the SAVEFREESV decrement at LEAVE
@@ -21407,7 +21402,7 @@ SV *glm(...)
 		SAVEFREEPV(off_terms);
 		for (i = 0; i < noff; i++) SAVEFREEPV(off_terms[i]);
 	}
-	n = lm_read_rows(aTHX_ data_sv, "glm", NULL, &data_hoa, &row_hashes, &row_names, NULL);
+	n = lm_read_rows(aTHX_ data_sv, "glm", NULL, &data_hoa, &row_hashes, &row_names);
 	if (row_hashes) SAVEFREEPV(row_hashes);
 	if (row_names) {
 		SAVEFREEPV(row_names);
@@ -21907,8 +21902,8 @@ SV *glm(...)
 					if (fam == GLM_BINOMIAL) res = (Y[i] > mu[i]) ? d : -d;
 					else                     res = (Y[i] >= mu[i]) ? d : -d;
 				}
-				hv_store(fitted_hv, vnames[i], (I32)strlen(vnames[i]), newSVnv(mu[i]), 0);
-				hv_store(resid_hv,  vnames[i], (I32)strlen(vnames[i]), newSVnv(res), 0);
+				hv_store(fitted_hv, vnames[i], ROWNAME_KLEN(vnames[i]), newSVnv(mu[i]), 0);
+				hv_store(resid_hv,  vnames[i], ROWNAME_KLEN(vnames[i]), newSVnv(res), 0);
 			}
 	/*Wald confidence intervals on the link scale (confint.default), and, for
 	the non-gaussian families, exponentiated coefficients: odds ratios
@@ -22165,8 +22160,8 @@ SV *zerotrunc(...)
 		hv_store(res, "terms", 5, newRV_noinc((SV *)t), 0);
 	}
 	for (i = 0; i < n; i++) {
-		hv_store(fit_hv, names[i], (I32)strlen(names[i]), newSVnv(fit[i]), 0);
-		hv_store(resid_hv, names[i], (I32)strlen(names[i]),
+		hv_store(fit_hv, names[i], ROWNAME_KLEN(names[i]), newSVnv(fit[i]), 0);
+		hv_store(resid_hv, names[i], ROWNAME_KLEN(names[i]),
 		         newSVnv(nv_sqrt(W[i]) * (Y[i] - fit[i])), 0);
 	}
 	{
@@ -22406,7 +22401,7 @@ SV *hurdle(...)
 					NV th = (zm.dist == ZT_NEGBIN) ? nv_exp(par[pc]) : zm.theta;
 					B = -th * nv_log1p(nv_exp(eta) / th);
 				}
-				hv_store(fit_hv, names[i], (I32)strlen(names[i]),
+				hv_store(fit_hv, names[i], ROWNAME_KLEN(names[i]),
 				         newSVnv(pz_i * nv_exp(eta - nv_log1mexp(B))), 0);
 			}
 			hv_store(res, "fitted.values", 13, newRV_noinc((SV *)fit_hv), 0);
@@ -22739,7 +22734,7 @@ SV *svyglm(...)
 			}
 			for (i = 0; i < n; i++) {
 				const char *rn = R.row_names[fit_row[i]];
-				hv_store(fitv, rn, (I32)strlen(rn), newSVnv(g.mu[i]), 0);
+				hv_store(fitv, rn, ROWNAME_KLEN(rn), newSVnv(g.mu[i]), 0);
 			}
 			hv_store(res, "coefficients", 12, newRV_noinc((SV *)coef), 0);
 			hv_store(res, "summary", 7, newRV_noinc((SV *)summ), 0);
@@ -22986,8 +22981,8 @@ SV *ivreg(...)
 				wres[i] = Y[i] - s;
 				rss += W[i] * wres[i] * wres[i];
 				sw += W[i]; ybar += W[i] * Y[i];
-				hv_store(fitv, names[i], (I32)strlen(names[i]), newSVnv(s), 0);
-				hv_store(resv, names[i], (I32)strlen(names[i]), newSVnv(wres[i]), 0);
+				hv_store(fitv, names[i], ROWNAME_KLEN(names[i]), newSVnv(s), 0);
+				hv_store(resv, names[i], ROWNAME_KLEN(names[i]), newSVnv(wres[i]), 0);
 			}
 			ybar /= sw;
 			df_res = second.df;
@@ -23653,7 +23648,7 @@ SV *lmer(...)
 						}
 						for (size_t c = 0; c < terms[k].q; c++) f += ZR[k][i * terms[k].q + c] * bvec[o + c];
 					}
-					hv_store(fit, names[i], (I32)strlen(names[i]), newSVnv(f), 0);
+					hv_store(fit, names[i], ROWNAME_KLEN(names[i]), newSVnv(f), 0);
 				}
 				hv_store(res, "fitted.values", 13, newRV_noinc((SV *)fit), 0);
 			}
@@ -27931,7 +27926,6 @@ SV *lm(...)
 		size_t n = 0, valid_n = 0, p = 0, final_rank = 0, df_res = 0;
 		bool has_intercept = TRUE;
 		char **row_names = NULL;
-		bool *row_utf8   = NULL;	//per row_names[i]: TRUE when it is UTF-8
 		HV  **row_hashes = NULL, *data_hoa = NULL;
 		NV   *X = NULL, *Y = NULL, *XtX = NULL, *XtY = NULL, *beta = NULL, rss = 0.0, rse_sq = 0.0;
 		size_t *vrow = NULL;	//fitted row -> its index in row_names
@@ -27957,10 +27951,9 @@ SV *lm(...)
 	mf_part(), so that the croaks below on non-finite data and on zero
 	residual degrees of freedom free it all.*/
 		f_cpy = lm_formula_split(aTHX_ formula, "lm", &lhs, &rhs, &has_intercept);
-		n = lm_read_rows(aTHX_ data_sv, "lm", f_cpy, &data_hoa, &row_hashes, &row_names, &row_utf8);
+		n = lm_read_rows(aTHX_ data_sv, "lm", f_cpy, &data_hoa, &row_hashes, &row_names);
 		SAVEFREEPV(f_cpy);
 		if (row_hashes) SAVEFREEPV(row_hashes);
-		if (row_utf8)   SAVEFREEPV(row_utf8);
 		if (row_names) {
 			SAVEFREEPV(row_names);
 			for (size_t i = 0; i < n; i++) SAVEFREEPV(row_names[i]);
@@ -28044,10 +28037,8 @@ SV *lm(...)
 			mss      += diff_m * diff_m;
 			{
 				const char *rn = row_names[vrow[i]];
-				I32 klen = (I32)strlen(rn);
-				if (row_utf8 && row_utf8[vrow[i]]) klen = -klen;	//negative: the key is UTF-8
-				hv_store(fitted_hv, rn, klen, newSVnv(y_hat), 0);
-				hv_store(resid_hv,  rn, klen, newSVnv(res),   0);
+				hv_store(fitted_hv, rn, ROWNAME_KLEN(rn), newSVnv(y_hat), 0);
+				hv_store(resid_hv,  rn, ROWNAME_KLEN(rn), newSVnv(res),   0);
 			}
 		}
 		rse_sq = rss / (NV)df_res;
@@ -28505,7 +28496,6 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 				  Newx(row_names, n ? n : 1, char*); Newx(row_hashes, n ? n : 1, HV*);
 				  i = 0;
 				  while ((entry = hv_iternext(hv))) {
-					  I32 len;
 					  SV *rval = hv_iterval(hv, entry);
 	/*Only the FIRST value decided that this is a HoH, so every later one has
 	still to be checked.  SvRV() on a plain scalar reads a pointer out of a
@@ -28519,7 +28509,7 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 						  Safefree(row_names); Safefree(row_hashes);
 						  croak("aov: Hash values must all be HashRefs (HoH)");
 					  }
-					  row_names[i] = savepv(hv_iterkey(entry, &len));
+					  row_names[i] = rowname_dup(aTHX_ hv_iterkeysv(entry));
 					  row_hashes[i] = (HV*)SvRV(rval);
 					  i++;
 				  }
@@ -29041,7 +29031,7 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 			NV fit = 0.0;
 			for (j = 0; j < p_exp; j++)
 				if (!aliased_qr[j]) fit += Dsav[i][j] * beta[j];
-			hv_store(fitted_hv, surv_names[i], (I32)strlen(surv_names[i]), newSVnv(fit), 0);
+			hv_store(fitted_hv, surv_names[i], ROWNAME_KLEN(surv_names[i]), newSVnv(fit), 0);
 		}
 		hv_stores(ret_hash, "fitted.values", newRV_noinc((SV*)fitted_hv));
 
