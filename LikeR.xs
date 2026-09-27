@@ -2325,16 +2325,24 @@ static NV evaluate_term(pTHX_ HV *data_hoa, HV **row_hashes, unsigned int i, con
 		if (end) *end = '\0';
 		char *inner = term_cpy + 2;
 		char *caret = strchr(inner, '^');
-		int power = 1;
+		NV power = 1.0;
+	/*The exponent is any number R would accept, read at the build's NV width.
+	It was atoi(), which truncated I(x^0.5) to x^0 -- a column of ones that
+	was then aliased against the intercept -- and gave no sign of it. An
+	exponent that is not a number is NaN, as an unreadable column is.*/
 		if (caret) {
 			*caret = '\0';
-			power = atoi(caret + 1);
+			if (grok_number(caret + 1, strlen(caret + 1), NULL) == 0) {
+				Safefree(term_cpy);
+				return NV_NAN;
+			}
+			power = my_atof(caret + 1);
 		}
 		NV v = get_data_value(aTHX_ data_hoa, row_hashes, i, inner);
-		Safefree(term_cpy); 
+		Safefree(term_cpy);
 
-		if (nv_isnan(v)) return NAN;
-		return power == 1 ? v : nv_pow(v, power);
+		if (nv_isnan(v)) return NV_NAN;
+		return power == 1.0 ? v : nv_pow(v, power);
 	}
 	NV result = get_data_value(aTHX_ data_hoa, row_hashes, i, term_cpy);
 	Safefree(term_cpy); 
@@ -9513,7 +9521,10 @@ two views the design-matrix helpers accept: *data_hoa_out for a HoA,
 *row_hashes_out otherwise (exactly one of the two is non-NULL).
 
 Returns the observation count. *row_names_out is a Newx array of savepv'd
-names; the caller frees each name and then the array. Croaks -- with fname as
+names; the caller frees each name and then the array. row_utf8_out may be NULL;
+otherwise it receives a Newx array, freed the same way, saying which names are
+UTF-8 -- the char * alone cannot say, and a hash keyed by the names has to be
+given the flag back or a key such as "\x{65e5}\x{672c}" is stored as its bytes. Croaks -- with fname as
 the message prefix, and after freeing whatever it had allocated -- on a shape
 neither function can read. Callers run lm_formula_split() first and pass its
 buffer as fbuf so that those croaks release it too.*/
@@ -9521,15 +9532,18 @@ static size_t lm_read_rows(pTHX_ SV *data_sv, const char *fname,
                            char *fbuf,
                            HV  **data_hoa_out,
                            HV ***row_hashes_out,
-                           char ***row_names_out) {
+                           char ***row_names_out,
+                           bool **row_utf8_out) {
 	SV  *ref        = SvRV(data_sv);
 	HV  *data_hoa   = NULL;
 	HV **row_hashes = NULL;
 	char **row_names = NULL;
+	bool *row_utf8   = NULL;	//per name: TRUE when its bytes are UTF-8
 	size_t n = 0, i, k;
 	HE *entry;
 
 	*data_hoa_out = NULL; *row_hashes_out = NULL; *row_names_out = NULL;
+	if (row_utf8_out) *row_utf8_out = NULL;
 
 	if (SvTYPE(ref) == SVt_PVHV) {
 		HV *hv = (HV*)ref;
@@ -9582,11 +9596,13 @@ static size_t lm_read_rows(pTHX_ SV *data_sv, const char *fname,
 				}
 			}
 			Newx(row_names, n ? n : 1, char*);
+			Newxz(row_utf8, n ? n : 1, bool);
 			for (i = 0; i < n; i++) {
 				SV **nm = rn_av ? av_fetch(rn_av, (SSize_t)i, 0) : NULL;
 				if (nm && *nm && SvOK(*nm)) {
 					STRLEN l; const char *s = SvPV(*nm, l);
 					row_names[i] = savepvn(s, l);
+					row_utf8[i]  = SvUTF8(*nm) ? TRUE : FALSE;
 				} else {
 					char buf[32];
 					snprintf(buf, sizeof buf, "%lu", (unsigned long)(i + 1));
@@ -9597,18 +9613,25 @@ static size_t lm_read_rows(pTHX_ SV *data_sv, const char *fname,
 			//HoH: the outer keys already name the rows.
 			n = (size_t)HvUSEDKEYS(hv);
 			Newx(row_names, n ? n : 1, char*);
+			Newxz(row_utf8, n ? n : 1, bool);
 			Newx(row_hashes, n ? n : 1, HV*);
 			hv_iterinit(hv);
 			i = 0;
 			while ((entry = hv_iternext(hv))) {
 				SV *rval = hv_iterval(hv, entry);
-				I32 klen;
 				if (!SvROK(rval) || SvTYPE(SvRV(rval)) != SVt_PVHV) {
 					for (k = 0; k < i; k++) Safefree(row_names[k]);
-					Safefree(row_names); Safefree(row_hashes); Safefree(fbuf);
+					Safefree(row_names); Safefree(row_utf8); Safefree(row_hashes); Safefree(fbuf);
 					croak("%s: Hash values must all be HashRefs (HoH)", fname);
 				}
-				row_names[i]  = savepv(hv_iterkey(entry, &klen));
+	/*hv_iterkeysv(), not hv_iterkey(): perl stores a UTF-8 key that fits in
+	Latin-1 downgraded, and only the SV form says what the key really was.*/
+				{
+					STRLEN l; SV *ksv = hv_iterkeysv(entry);
+					const char *s = SvPV(ksv, l);
+					row_names[i] = savepvn(s, l);
+					row_utf8[i]  = SvUTF8(ksv) ? TRUE : FALSE;
+				}
 				row_hashes[i] = (HV*)SvRV(rval);
 				i++;
 			}
@@ -9617,6 +9640,7 @@ static size_t lm_read_rows(pTHX_ SV *data_sv, const char *fname,
 		AV *av = (AV*)ref;
 		n = (size_t)(av_len(av) + 1);
 		Newx(row_names, n ? n : 1, char*);
+		Newxz(row_utf8, n ? n : 1, bool);
 		Newx(row_hashes, n ? n : 1, HV*);
 		for (i = 0; i < n; i++) {
 			SV **val = av_fetch(av, (SSize_t)i, 0);
@@ -9624,7 +9648,7 @@ static size_t lm_read_rows(pTHX_ SV *data_sv, const char *fname,
 			SV **nm = NULL;
 			if (!val || !SvROK(*val) || SvTYPE(SvRV(*val)) != SVt_PVHV) {
 				for (k = 0; k < i; k++) Safefree(row_names[k]);
-				Safefree(row_names); Safefree(row_hashes); Safefree(fbuf);
+				Safefree(row_names); Safefree(row_utf8); Safefree(row_hashes); Safefree(fbuf);
 				croak("%s: Array values must be HashRefs (AoH)", fname);
 			}
 			rh = (HV*)SvRV(*val);
@@ -9638,6 +9662,7 @@ static size_t lm_read_rows(pTHX_ SV *data_sv, const char *fname,
 			if (nm && *nm && SvOK(*nm)) {
 				STRLEN l; const char *s = SvPV(*nm, l);
 				row_names[i] = savepvn(s, l);
+				row_utf8[i]  = SvUTF8(*nm) ? TRUE : FALSE;
 			} else {
 				char buf[32];
 				snprintf(buf, sizeof buf, "%lu", (unsigned long)(i + 1));
@@ -9649,6 +9674,8 @@ static size_t lm_read_rows(pTHX_ SV *data_sv, const char *fname,
 	*data_hoa_out   = data_hoa;
 	*row_hashes_out = row_hashes;
 	*row_names_out  = row_names;
+	if (row_utf8_out) *row_utf8_out = row_utf8;
+	else Safefree(row_utf8);
 	return n;
 }
 
@@ -9828,7 +9855,7 @@ typedef struct {
 static void mf_rows(pTHX_ const char *restrict fname, SV *data_sv, MfRows *restrict r) {
 	size_t i;
 	if (!data_sv || !SvROK(data_sv)) croak("%s: data is required and must be a reference", fname);
-	r->n = lm_read_rows(aTHX_ data_sv, fname, NULL, &r->data_hoa, &r->row_hashes, &r->row_names);
+	r->n = lm_read_rows(aTHX_ data_sv, fname, NULL, &r->data_hoa, &r->row_hashes, &r->row_names, NULL);
 	if (r->row_hashes) SAVEFREEPV(r->row_hashes);
 	if (r->row_names) {
 		SAVEFREEPV(r->row_names);
@@ -21380,7 +21407,7 @@ SV *glm(...)
 		SAVEFREEPV(off_terms);
 		for (i = 0; i < noff; i++) SAVEFREEPV(off_terms[i]);
 	}
-	n = lm_read_rows(aTHX_ data_sv, "glm", NULL, &data_hoa, &row_hashes, &row_names);
+	n = lm_read_rows(aTHX_ data_sv, "glm", NULL, &data_hoa, &row_hashes, &row_names, NULL);
 	if (row_hashes) SAVEFREEPV(row_hashes);
 	if (row_names) {
 		SAVEFREEPV(row_names);
@@ -27900,14 +27927,15 @@ SV *lm(...)
 		SV   *data_sv = NULL;
 		char *f_cpy   = NULL, *lhs = NULL, *rhs = NULL, **terms = NULL, **uniq_terms = NULL;
 		LmDesign *design = NULL;
-		unsigned int num_terms = 0, num_uniq = 0, p = 0;
-		size_t n = 0, valid_n = 0, i, j, k;
-		bool has_intercept = 1;
-		char **row_names = NULL, **restrict valid_row_names = NULL;
+		unsigned int num_terms = 0, num_uniq = 0;
+		size_t n = 0, valid_n = 0, p = 0, final_rank = 0, df_res = 0;
+		bool has_intercept = TRUE;
+		char **row_names = NULL;
+		bool *row_utf8   = NULL;	//per row_names[i]: TRUE when it is UTF-8
 		HV  **row_hashes = NULL, *data_hoa = NULL;
 		NV   *X = NULL, *Y = NULL, *XtX = NULL, *XtY = NULL, *beta = NULL, rss = 0.0, rse_sq = 0.0;
+		size_t *vrow = NULL;	//fitted row -> its index in row_names
 		bool *restrict aliased = NULL;
-		int   final_rank = 0, df_res = 0;
 		HV   *res_hv, *coef_hv, *fitted_hv, *resid_hv, *summary_hv, *xlevels_hv = NULL;
 		AV   *terms_av;
 		if (items % 2 != 0)
@@ -27923,108 +27951,122 @@ SV *lm(...)
 		if (!data_sv || !SvROK(data_sv)) croak("lm: data is required and must be a reference");
 	/*Split the formula before touching the data: a malformed one croaks
 	with nothing else allocated. '.' needs the columns, so the term list
-	has to wait until after the rows are read.*/
+	has to wait until after the rows are read.
+
+	Everything from here on is on the save stack, as in mf_rows() and
+	mf_part(), so that the croaks below on non-finite data and on zero
+	residual degrees of freedom free it all.*/
 		f_cpy = lm_formula_split(aTHX_ formula, "lm", &lhs, &rhs, &has_intercept);
-		n = lm_read_rows(aTHX_ data_sv, "lm", f_cpy, &data_hoa, &row_hashes, &row_names);
+		n = lm_read_rows(aTHX_ data_sv, "lm", f_cpy, &data_hoa, &row_hashes, &row_names, &row_utf8);
+		SAVEFREEPV(f_cpy);
+		if (row_hashes) SAVEFREEPV(row_hashes);
+		if (row_utf8)   SAVEFREEPV(row_utf8);
+		if (row_names) {
+			SAVEFREEPV(row_names);
+			for (size_t i = 0; i < n; i++) SAVEFREEPV(row_names[i]);
+		}
 		lm_formula_terms(aTHX_ rhs, lhs, data_hoa, row_hashes, n, has_intercept, "lm",
 		                 &terms, &num_terms, &uniq_terms, &num_uniq);
-			xlevels_hv = newHV(); sv_2mortal((SV*)xlevels_hv);
+		SAVEFREEPV(terms); SAVEFREEPV(uniq_terms);
+		for (unsigned int i = 0; i < num_terms; i++) SAVEFREEPV(terms[i]);
+		for (unsigned int i = 0; i < num_uniq; i++)  SAVEFREEPV(uniq_terms[i]);
+		xlevels_hv = newHV(); sv_2mortal((SV*)xlevels_hv);
 		design = lm_design_build(aTHX_ data_hoa, row_hashes, n,
 		                         uniq_terms, num_uniq, has_intercept, xlevels_hv);
+		SAVEDESTRUCTOR_X(lm_design_free_cb, design);
 		p = design->ncol;
-		Newx(X, n * (p ? p : 1), NV); Newx(Y, n, NV);
-		Newx(valid_row_names, n, char*);
+		Newx(X, n * (p ? p : 1), NV);  SAVEFREEPV(X);
+		Newx(Y, n ? n : 1, NV);         SAVEFREEPV(Y);
+		Newx(vrow, n ? n : 1, size_t);  SAVEFREEPV(vrow);
 
-		for (i = 0; i < n; i++) {
+		for (size_t i = 0; i < n; i++) {
 			NV y_val = evaluate_term(aTHX_ data_hoa, row_hashes, i, lhs);
-			if (nv_isnan(y_val)) { Safefree(row_names[i]); continue; }
-
-			if (!lm_design_row(aTHX_ design, data_hoa, row_hashes, i,
-			                   X + valid_n * (size_t)p)) {
-				Safefree(row_names[i]); continue;
-			}
-			Y[valid_n] = y_val;
-			valid_row_names[valid_n] = row_names[i];
+			NV *restrict xrow = X + valid_n * p;
+			if (nv_isnan(y_val)) continue;
+			if (!lm_design_row(aTHX_ design, data_hoa, row_hashes, i, xrow)) continue;
+	/*An infinite value is not missing, so na.omit keeps its row, and R then
+	stops in lm.fit() with "NA/NaN/Inf in 'y'" (or 'x'). Such a row used to
+	go into the fit, every coefficient came back NaN, and each was then
+	reported with t = -Inf and p = 0. glm() refuses the same way.*/
+			if (!nv_isfinite(y_val))
+				croak("lm: NA/NaN/Inf in 'y' (row '%s')", row_names[i]);
+			for (size_t j = 0; j < p; j++)
+				if (!nv_isfinite(xrow[j]))
+					croak("lm: NA/NaN/Inf in 'x' (row '%s')", row_names[i]);
+			Y[valid_n]    = y_val;
+			vrow[valid_n] = i;
 			valid_n++;
 		}
-		Safefree(row_names);
-		if (valid_n <= p) {
-			for (i = 0; i < num_terms; i++) Safefree(terms[i]); Safefree(terms);
-			for (i = 0; i < num_uniq; i++) Safefree(uniq_terms[i]); Safefree(uniq_terms);
-			lm_design_free(aTHX_ design);
-			for (i = 0; i < valid_n; i++) Safefree(valid_row_names[i]);
-			Safefree(X); Safefree(Y); Safefree(valid_row_names);
-			if (row_hashes) Safefree(row_hashes);
-			Safefree(f_cpy);
-			croak("lm: 0 degrees of freedom (too many NAs or parameters > observations)");
-		}
-		Safefree(f_cpy); f_cpy = NULL;
 
-		if (valid_n < n) Renew(X, valid_n * (size_t)p, NV);
-
-		Newxz(XtX, p * p, NV);
-		for (i = 0; i < p; i++)
-			for (j = 0; j < p; j++) {
+		Newxz(XtX, p ? p * p : 1, NV); SAVEFREEPV(XtX);
+		for (size_t i = 0; i < p; i++)
+			for (size_t j = 0; j < p; j++) {
 				NV sum = 0.0;
-				for (k = 0; k < valid_n; k++) sum += X[k * p + i] * X[k * p + j];
+				for (size_t k = 0; k < valid_n; k++) sum += X[k * p + i] * X[k * p + j];
 				XtX[i * p + j] = sum;
 			}
-		Newxz(XtY, p, NV);
-		for (i = 0; i < p; i++) {
+		Newxz(XtY, p ? p : 1, NV); SAVEFREEPV(XtY);
+		for (size_t i = 0; i < p; i++) {
 			NV sum = 0.0;
-			for (k = 0; k < valid_n; k++) sum += X[k * p + i] * Y[k];
+			for (size_t k = 0; k < valid_n; k++) sum += X[k * p + i] * Y[k];
 			XtY[i] = sum;
 		}
-		Newx(aliased, p, bool);
-		final_rank = sweep_matrix_ols(XtX, p, aliased);
-		Newxz(beta, p, NV);
-		for (i = 0; i < p; i++) {
-			if (aliased[i]) { beta[i] = NAN; }
+		Newx(aliased, p ? p : 1, bool); SAVEFREEPV(aliased);
+		final_rank = (size_t)sweep_matrix_ols(XtX, p, aliased);
+	/*Residual degrees of freedom are n minus the RANK, not minus the column
+	count: y ~ x + z on three rows with z = 2x has one, and R fits it with z
+	NA. Testing valid_n <= p refused it. No residual degrees of freedom at
+	all is still refused, which R is not -- it returns NaN standard errors.*/
+		if (valid_n <= final_rank)
+			croak("lm: 0 degrees of freedom (too many NAs or parameters > observations)");
+		df_res = valid_n - final_rank;
+		Newxz(beta, p ? p : 1, NV); SAVEFREEPV(beta);
+		for (size_t i = 0; i < p; i++) {
+			if (aliased[i]) { beta[i] = NV_NAN; }
 			else {
 				NV sum = 0.0;
-				for (j = 0; j < p; j++) if (!aliased[j]) sum += XtX[i * p + j] * XtY[j];
+				for (size_t j = 0; j < p; j++) if (!aliased[j]) sum += XtX[i * p + j] * XtY[j];
 				beta[i] = sum;
 			}
 		}
 
 		res_hv = newHV(); coef_hv = newHV(); fitted_hv = newHV(); resid_hv = newHV();
 		summary_hv = newHV(); terms_av = newAV();
-		df_res = (int)valid_n - final_rank;
 		NV sum_y = 0.0, mss = 0.0;
-		for (i = 0; i < valid_n; i++) sum_y += Y[i];
+		for (size_t i = 0; i < valid_n; i++) sum_y += Y[i];
 		NV mean_y = sum_y / (NV)valid_n;
-		for (i = 0; i < valid_n; i++) {
+		for (size_t i = 0; i < valid_n; i++) {
 			NV y_hat = 0.0;
-			for (j = 0; j < p; j++) if (!aliased[j]) y_hat += X[i * p + j] * beta[j];
+			for (size_t j = 0; j < p; j++) if (!aliased[j]) y_hat += X[i * p + j] * beta[j];
 			NV res    = Y[i] - y_hat;
 			rss      += res * res;
 			NV diff_m = has_intercept ? (y_hat - mean_y) : y_hat;
 			mss      += diff_m * diff_m;
-			hv_store(fitted_hv, valid_row_names[i], strlen(valid_row_names[i]), newSVnv(y_hat), 0);
-			hv_store(resid_hv,  valid_row_names[i], strlen(valid_row_names[i]), newSVnv(res),   0);
-			Safefree(valid_row_names[i]);
+			{
+				const char *rn = row_names[vrow[i]];
+				I32 klen = (I32)strlen(rn);
+				if (row_utf8 && row_utf8[vrow[i]]) klen = -klen;	//negative: the key is UTF-8
+				hv_store(fitted_hv, rn, klen, newSVnv(y_hat), 0);
+				hv_store(resid_hv,  rn, klen, newSVnv(res),   0);
+			}
 		}
-		Safefree(valid_row_names);
-		rse_sq = (df_res > 0) ? (rss / (NV)df_res) : NAN;
+		rse_sq = rss / (NV)df_res;
 
-		int df_int = has_intercept ? 1 : 0;
-		NV r_squared = 0.0, adj_r_squared = 0.0, f_stat = NAN, f_pvalue = NAN;
-		int numdf = final_rank - df_int;
-
-		if (final_rank != df_int && (mss + rss) > 0.0) {
+		size_t df_int = has_intercept ? 1 : 0;
+		NV r_squared = 0.0, adj_r_squared = 0.0, f_stat = NV_NAN, f_pvalue = NV_NAN;
+		size_t numdf = final_rank - df_int;
+	/*summary.lm(), transcribed: with any term beyond the intercept every
+	statistic is the plain ratio, so 0/0 -- a response with no variation at
+	all -- is NaN rather than a quiet 0 or Inf, and a perfect fit's F is Inf.
+	final_rank >= df_int here: the intercept column is all ones and so is
+	never aliased.*/
+		if (final_rank != df_int) {
 			r_squared     = mss / (mss + rss);
 			adj_r_squared = 1.0 - (1.0 - r_squared) * ((NV)(valid_n - df_int) / (NV)df_res);
-			if (rse_sq > 0.0 && numdf > 0) {
-				f_stat   = (mss / (NV)numdf) / rse_sq;
-				f_pvalue = pf_upper(f_stat, (NV)numdf, (NV)df_res);
-			} else if (rse_sq == 0.0) {
-				f_stat   = INFINITY;
-				f_pvalue = 0.0;
-			}
-		} else if (final_rank == df_int) {
-			r_squared = 0.0; adj_r_squared = 0.0;
+			f_stat        = (mss / (NV)numdf) / rse_sq;
+			f_pvalue      = pf_upper(f_stat, (NV)numdf, (NV)df_res);
 		}
-		for (j = 0; j < p; j++) {
+		for (size_t j = 0; j < p; j++) {
 			const char *cname = design->col[j].name;
 			hv_store(coef_hv, cname, strlen(cname), newSVnv(beta[j]), 0);
 			av_push(terms_av, newSVpv(cname, 0));
@@ -28035,9 +28077,12 @@ SV *lm(...)
 				hv_store(row_hv, "t value",    7,  newSVpv("NaN", 0), 0);
 				hv_store(row_hv, "Pr(>|t|)",   8,  newSVpv("NaN", 0), 0);
 			} else {
+	/*The plain quotient, as summary.lm() takes it: 0/0 is NaN and x/0 is
+	+-Inf. A test on se > 0 used to send a NaN se, and a 0 estimate over a 0
+	se, to +-Inf with p = 0.*/
 				NV se    = nv_sqrt(rse_sq * XtX[j * p + j]);
-				NV t_val = (se > 0.0) ? (beta[j] / se) : (INFINITY * (beta[j] >= 0.0 ? 1.0 : -1.0));
-				NV p_val = get_t_pvalue(t_val, df_res, "two.sided");
+				NV t_val = beta[j] / se;
+				NV p_val = nv_isnan(t_val) ? NV_NAN : get_t_pvalue(t_val, (NV)df_res, "two.sided");
 				hv_store(row_hv, "Estimate",   8,  newSVnv(beta[j]), 0);
 				hv_store(row_hv, "Std. Error", 10, newSVnv(se),      0);
 				hv_store(row_hv, "t value",    7,  newSVnv(t_val),   0);
@@ -28048,8 +28093,8 @@ SV *lm(...)
 		hv_store(res_hv, "coefficients",  12, newRV_noinc((SV*)coef_hv),   0);
 		hv_store(res_hv, "fitted.values", 13, newRV_noinc((SV*)fitted_hv), 0);
 		hv_store(res_hv, "residuals",      9, newRV_noinc((SV*)resid_hv),  0);
-		hv_store(res_hv, "df.residual",   11, newSVuv(df_res),             0);
-		hv_store(res_hv, "rank",           4, newSVuv(final_rank),         0);
+		hv_store(res_hv, "df.residual",   11, newSVuv((UV)df_res),         0);
+		hv_store(res_hv, "rank",           4, newSVuv((UV)final_rank),     0);
 		hv_store(res_hv, "rss",            3, newSVnv(rss),                0);
 		hv_store(res_hv, "summary",        7, newRV_noinc((SV*)summary_hv),0);
 		hv_store(res_hv, "terms",          5, newRV_noinc((SV*)terms_av),  0);
@@ -28059,18 +28104,11 @@ SV *lm(...)
 		if (!nv_isnan(f_stat)) {
 			AV *fstat_av = newAV();
 			av_push(fstat_av, newSVnv(f_stat));
-			av_push(fstat_av, newSViv(numdf));
-			av_push(fstat_av, newSViv(df_res));
+			av_push(fstat_av, newSVuv((UV)numdf));
+			av_push(fstat_av, newSVuv((UV)df_res));
 			hv_store(res_hv, "fstatistic", 10, newRV_noinc((SV*)fstat_av), 0);
 			hv_store(res_hv, "f.pvalue",    8, newSVnv(f_pvalue),          0);
 		}
-		for (i = 0; i < num_terms; i++) Safefree(terms[i]); Safefree(terms);
-		for (i = 0; i < num_uniq; i++) Safefree(uniq_terms[i]); Safefree(uniq_terms);
-		lm_design_free(aTHX_ design);
-		Safefree(X); Safefree(Y); Safefree(XtX); Safefree(XtY);
-		Safefree(beta); Safefree(aliased);
-		if (row_hashes) Safefree(row_hashes);
-
 		RETVAL = newRV_noinc((SV*)res_hv);
 	}
 	OUTPUT:
