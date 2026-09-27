@@ -132,18 +132,20 @@ Revision history for Stats-LikeR
    over a flat array of doubles was no faster. sd() and var() share the
    first pass of sum(), so they gain too, by less.
 
- - Times are nanoseconds per element, on perl 5.44.0 at -O2, one
-   pinned core, best of at least 45 timings, on rnorm() data. Each cell is
-   the time before -> after, with the change.
+ - Times are nanoseconds per element, 0.321 -> 0.3211, on perl 5.44.0
+   at -O2, one pinned core, best of 120 timings taken in alternating runs
+   of the two releases, on the same normal data. At n = 1e6 the data no
+   longer fits in cache, so that column is memory-bound and its cells
+   moved by up to 10% between runs; the others moved by under 1%.
 
  - | function | n = 1e3 | n = 1e4 | n = 1e5 | n = 1e6 |
    |---|---|---|---|---|
-   | `max` | 1.085 -> 0.885 (-18%) | 1.063 -> 0.849 (-20%) | 1.062 -> 0.846 (-20%) | 1.359 -> 1.049 (-23%) |
-   | `min` | 1.084 -> 0.885 (-18%) | 1.063 -> 0.849 (-20%) | 1.063 -> 0.845 (-20%) | 1.403 -> 1.046 (-25%) |
-   | `sum` | 0.705 -> 0.606 (-14%) | 0.671 -> 0.572 (-15%) | 0.721 -> 0.615 (-15%) | 1.193 -> 1.051 (-12%) |
-   | `mean` | 0.703 -> 0.606 (-14%) | 0.671 -> 0.572 (-15%) | 0.722 -> 0.615 (-15%) | 1.152 -> 0.978 (-15%) |
-   | `sd` | 1.427 -> 1.368 (-4%) | 1.385 -> 1.285 (-7%) | 1.487 -> 1.382 (-7%) | 2.466 -> 2.173 (-12%) |
-   | `var` | 1.427 -> 1.352 (-5%) | 1.385 -> 1.286 (-7%) | 1.489 -> 1.380 (-7%) | 2.504 -> 2.165 (-14%) |
+   | `max` | 1.094 -> 0.905 (-17%) | 1.063 -> 0.855 (-20%) | 1.060 -> 0.850 (-20%) | 1.461 -> 1.160 (-21%) |
+   | `min` | 1.094 -> 0.906 (-17%) | 1.063 -> 0.854 (-20%) | 1.064 -> 0.850 (-20%) | 1.392 -> 1.176 (-16%) |
+   | `sum` | 0.712 -> 0.617 (-13%) | 0.670 -> 0.572 (-15%) | 0.721 -> 0.578 (-20%) | 1.295 -> 1.064 (-18%) |
+   | `mean` | 0.712 -> 0.617 (-13%) | 0.670 -> 0.571 (-15%) | 0.721 -> 0.583 (-19%) | 1.325 -> 1.048 (-21%) |
+   | `sd` | 1.436 -> 1.352 (-6%) | 1.384 -> 1.286 (-7%) | 1.488 -> 1.332 (-10%) | 2.700 -> 2.596 (-4%) |
+   | `var` | 1.436 -> 1.378 (-4%) | 1.383 -> 1.293 (-6%) | 1.483 -> 1.357 (-9%) | 2.739 -> 2.542 (-7%) |
 
  - sum(), mean(), sd() and var() now add the elements in a different
    order, four interleaved partial sums added pairwise, so a result can
@@ -157,9 +159,9 @@ Revision history for Stats-LikeR
    each zero fell in. NumPy and List::Util return the last zero they meet,
    so none of the three agrees with this, and t/min.max.signed_zero.t
    records all of them. The perl literal -0 is the integer 0, which has no
-   sign, so max(-0, 0) was always 0. The table above was measured before
-   this; tracking the sign costs min() and max() 0-6% more on normal and
-   integer data, and up to 9% on data that is mostly zeros.
+   sign, so max(-0, 0) was always 0. The table above includes the cost of
+   tracking the sign, which is 0-6% on normal and integer data and up to
+   9% on data that is mostly zeros.
 
  - An array holding a numeric string, a tied element or a hole is still
    read exactly as before: the fast loop stops at that element and the
