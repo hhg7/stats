@@ -58,7 +58,7 @@
 .\" ========================================================================
 .\"
 .IX Title "read.me 3"
-.TH read.me 3 2026-09-26 "perl v5.44.0" "User Contributed Perl Documentation"
+.TH read.me 3 2026-09-27 "perl v5.44.0" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -4825,7 +4825,8 @@ or
 \& max(@arr, 4, 5)
 .Ve
 .PP
-max will die if any undefined values are provided
+max will die if any undefined values are provided. A \f(CW\*(C`NaN\*(C'\fR anywhere in the input makes the answer \f(CW\*(C`NaN\*(C'\fR, as it does in R.
+See "Compared with List::Util" under \f(CW\*(C`sum\*(C'\fR for the other ways it differs from List::Util\*(Aqs \f(CW\*(C`max\*(C'\fR.
 .SS mcnemar_test
 .IX Subsection "mcnemar_test"
 McNemar\*(Aqs test for paired categorical data (e.g. before/after, matched
@@ -5011,7 +5012,8 @@ or
 \& min(@arr, 4, 5)
 .Ve
 .PP
-min will die if any undefined values are provided
+min will die if any undefined values are provided. A \f(CW\*(C`NaN\*(C'\fR anywhere in the input makes the answer \f(CW\*(C`NaN\*(C'\fR, as it does in R.
+See "Compared with List::Util" under \f(CW\*(C`sum\*(C'\fR for the other ways it differs from List::Util\*(Aqs \f(CW\*(C`min\*(C'\fR.
 .SS mode
 .IX Subsection "mode"
 Takes either an array or an array reference, and returns an array of the most common scalars (numbers or strings)
@@ -6985,6 +6987,18 @@ which I prefer, compared to List::Util\*(Aqs required casting into an array:
 which passing a reference is shorter and much easier to read.  Stats::LikeR, however, will work for \fBboth\fR
 .PP
 \&\f(CW\*(C`sum\*(C'\fR will cause the script to die if any undefined values are provided
+.PP
+\fICompared with List::Util\fR
+.IX Subsection "Compared with List::Util"
+.PP
+\&\f(CW\*(C`min\*(C'\fR, \f(CW\*(C`max\*(C'\fR and \f(CW\*(C`sum\*(C'\fR pass List::Util\*(Aqs own tests for the same names
+(\f(CW\*(C`t/min.max.sum.ListUtil.t\*(C'\fR carries them) except where the two differ on
+purpose:
+.PP
+Anything else that is a number is taken as one: an object that overloads \f(CW\*(C`0+\*(C'\fR
+(when it is not a blessed array reference), a tied scalar, \f(CW$#array\fR, or a
+\&\f(CWsubstr()\fR lvalue. Each is fetched once. The same rules hold for \f(CW\*(C`mean\*(C'\fR,
+\&\f(CW\*(C`median\*(C'\fR, \f(CW\*(C`sd\*(C'\fR, \f(CW\*(C`var\*(C'\fR, \f(CW\*(C`mode\*(C'\fR, \f(CW\*(C`uniq\*(C'\fR, \f(CW\*(C`scale\*(C'\fR, \f(CW\*(C`skew\*(C'\fR and \f(CW\*(C`kurtosis\*(C'\fR.
 .SS summary
 .IX Subsection "summary"
 Analogous to R\*(Aqs \f(CW\*(C`summary\*(C'\fR: a five\-number\-plus\-mean description (\f(CW\*(C`# values\*(C'\fR, \f(CW\*(C`Min.\*(C'\fR, \f(CW\*(C`1st Qu.\*(C'\fR, \f(CW\*(C`Median\*(C'\fR, \f(CW\*(C`Mean\*(C'\fR, \f(CW\*(C`3rd Qu.\*(C'\fR, \f(CW\*(C`Max.\*(C'\fR) of the data as entered (it does not summarise fitted\-model objects). It produces one statistics row per numeric \fIvariable\fR and renders the table exactly like \f(CW\*(C`view\*(C'\fR — the same colourised, wide\-character\-aware, terminal\-fitting output — through the same internal renderer, so all of \f(CW\*(C`view\*(C'\fR\*(Aqs display options apply.

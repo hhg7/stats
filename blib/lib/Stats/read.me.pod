@@ -6542,7 +6542,8 @@ or
  my @arr = 1..8;
  max(@arr, 4, 5)
 
-max will die if any undefined values are provided
+max will die if any undefined values are provided. A C<NaN> anywhere in the input makes the answer C<NaN>, as it does in R.
+See L</"Compared with List::Util"> under C<sum> for the other ways it differs from List::Util's C<max>.
 
 =head2 mcnemar_test
 
@@ -6806,7 +6807,8 @@ or
  my @arr = 1..8;
  min(@arr, 4, 5)
 
-min will die if any undefined values are provided
+min will die if any undefined values are provided. A C<NaN> anywhere in the input makes the answer C<NaN>, as it does in R.
+See L</"Compared with List::Util"> under C<sum> for the other ways it differs from List::Util's C<min>.
 
 =head2 mode
 
@@ -9452,6 +9454,72 @@ which I prefer, compared to List::Util's required casting into an array:
 which passing a reference is shorter and much easier to read.  Stats::LikeR, however, will work for B<both>
 
 C<sum> will cause the script to die if any undefined values are provided
+
+=head3 Compared with List::Util
+
+C<min>, C<max> and C<sum> pass List::Util's own tests for the same names
+(C<t/min.max.sum.ListUtil.t> carries them) except where the two differ on
+purpose:
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th></th>
+  <th>List::Util</th>
+  <th>Stats::LikeR</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>an array reference</td>
+  <td>a number (its address)</td>
+  <td>its elements, read as data</td>
+</tr>
+<tr>
+  <td>a blessed array reference that overloads <code>0+</code></td>
+  <td>one number</td>
+  <td>still its elements, read as data</td>
+</tr>
+<tr>
+  <td>no arguments</td>
+  <td><code>undef</code></td>
+  <td>dies: <code>sum needs &gt;= 1 element</code> (and likewise for <code>min</code> and <code>max</code>)</td>
+</tr>
+<tr>
+  <td>a string that is not a number, such as <code>'abc'</code></td>
+  <td>0</td>
+  <td>dies, naming the argument</td>
+</tr>
+<tr>
+  <td><code>NaN</code> anywhere</td>
+  <td>depends on where it is: <code>min(NaN, 1, 2)</code> is <code>NaN</code> but <code>min(1, 2, NaN)</code> is 1</td>
+  <td><code>NaN</code>, wherever it is, as in R</td>
+</tr>
+<tr>
+  <td>the result</td>
+  <td>an IV while every value fits one, so <code>sum(1&lt;&lt;60, 1)</code> is exact</td>
+  <td>an NV, so on a <code>double</code> perl <code>sum(1&lt;&lt;60, 1) == 1&lt;&lt;60</code>, as R's <code>sum</code> gives too</td>
+</tr>
+<tr>
+  <td>a Math::BigInt</td>
+  <td>a Math::BigInt</td>
+  <td>the NV its <code>0+</code> overload gives</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+Anything else that is a number is taken as one: an object that overloads C<0+>
+(when it is not a blessed array reference), a tied scalar, C<$#array>, or a
+C<substr()> lvalue. Each is fetched once. The same rules hold for C<mean>,
+C<median>, C<sd>, C<var>, C<mode>, C<uniq>, C<scale>, C<skew> and C<kurtosis>.
 
 =head2 summary
 

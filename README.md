@@ -4406,7 +4406,8 @@ or
     my @arr = 1..8;
     max(@arr, 4, 5)
 
-max will die if any undefined values are provided
+max will die if any undefined values are provided. A `NaN` anywhere in the input makes the answer `NaN`, as it does in R.
+See [Compared with List::Util](#compared-with-listutil) under `sum` for the other ways it differs from List::Util's `max`.
 
 ## mcnemar_test
 
@@ -4575,7 +4576,8 @@ or
     my @arr = 1..8;
     min(@arr, 4, 5)
 
-min will die if any undefined values are provided
+min will die if any undefined values are provided. A `NaN` anywhere in the input makes the answer `NaN`, as it does in R.
+See [Compared with List::Util](#compared-with-listutil) under `sum` for the other ways it differs from List::Util's `min`.
 
 ## mode
 
@@ -6374,6 +6376,27 @@ which I prefer, compared to List::Util's required casting into an array:
 which passing a reference is shorter and much easier to read.  Stats::LikeR, however, will work for **both**
 
 `sum` will cause the script to die if any undefined values are provided
+
+### Compared with List::Util
+
+`min`, `max` and `sum` pass List::Util's own tests for the same names
+(`t/min.max.sum.ListUtil.t` carries them) except where the two differ on
+purpose:
+
+| | List::Util | Stats::LikeR |
+|---|---|---|
+| an array reference | a number (its address) | its elements, read as data |
+| a blessed array reference that overloads `0+` | one number | still its elements, read as data |
+| no arguments | `undef` | dies: `sum needs >= 1 element` (and likewise for `min` and `max`) |
+| a string that is not a number, such as `'abc'` | 0 | dies, naming the argument |
+| `NaN` anywhere | depends on where it is: `min(NaN, 1, 2)` is `NaN` but `min(1, 2, NaN)` is 1 | `NaN`, wherever it is, as in R |
+| the result | an IV while every value fits one, so `sum(1<<60, 1)` is exact | an NV, so on a `double` perl `sum(1<<60, 1) == 1<<60`, as R's `sum` gives too |
+| a Math::BigInt | a Math::BigInt | the NV its `0+` overload gives |
+
+Anything else that is a number is taken as one: an object that overloads `0+`
+(when it is not a blessed array reference), a tied scalar, `$#array`, or a
+`substr()` lvalue. Each is fetched once. The same rules hold for `mean`,
+`median`, `sd`, `var`, `mode`, `uniq`, `scale`, `skew` and `kurtosis`.
 
 ## summary
 

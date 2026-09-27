@@ -1,6 +1,57 @@
 Revision history for Stats-LikeR
 
-0.3211 2026-09-27 CDT
+0.3212 2026-09-27 CDT
+
+ [min(), max(), sum() and the other reductions: magical arguments]
+
+ - An argument whose value exists only once its get magic has run was
+   read as undef. That covers `$#array`, a tied scalar whose FETCH had not
+   yet been called, and a `substr()` lvalue: none has any value flags
+   before `mg_get()`, and the reductions asked `SvOK()` first, so
+   `sum(0, $#list)` croaked "undefined value at argument index 1" where
+   List::Util's `sum()` returns the index. A tied scalar holding an array
+   ref was likewise not seen as one. This affected `min`, `max`, `sum`,
+   `mean`, `sd`, `var`, `median`, `mode`, `uniq`, `scale`, `skew` and
+   `kurtosis`. Each now runs every argument's get magic once, on entry,
+   and reads the fetched value from then on.
+
+ - The same fault reached a tied element of an ordinary array in `median`,
+   `skew`, `kurtosis`, `mode` and `scale`, which read the array's cells
+   without running their magic. The first four croaked on it; `scale`,
+   which skips undef, silently returned one value fewer than it was given.
+   `sum`, `mean` and the rest already read such an element correctly.
+
+ - A value is now fetched once. Reading one after its magic had run could
+   run FETCH again, on every perl before 5.18 and in `mode` and `uniq` on
+   all of them, and a tie that computes its value then answers differently
+   the second time. `sd`, `var` and `scale` still read a tied array, or a
+   tied element, once per pass, as they are documented to.
+
+ - `median` on a tied array now croaks on a non-numeric element, as it
+   already did on an ordinary one, instead of converting it to a number.
+   `scale` croaks if a tied array answers differently between its counting
+   pass and its value pass, which could previously write past the buffer
+   the first pass sized.
+
+ [Tests]
+
+ - t/min.max.sum.ListUtil.t carries List::Util 1.70's own t/min.t, t/max.t
+   and t/sum.t, from the copy bundled with perl 5.44.0. Their GETMAGIC
+   block is what found the fault above. Where the two modules differ by
+   design the header says so: `sum()` of nothing croaks rather than
+   returning undef; a Math::BigInt is reduced as the NV its 0+ overload
+   yields; and a sum is carried in an NV, not an IV.
+
+ - An array reference is read as data whether or not it is blessed and
+   whether or not its class overloads 0+, where List::Util would treat an
+   overloaded object as a single number. This is a decision, not an
+   oversight, so that an array-based object keeps being read as the values
+   it holds, and the port now asserts it in place of upstream's three
+   `example` cases.
+
+ - t/get.magic.args.t checks all twelve functions with six kinds of
+   magical input against the same call with plain values, and counts how
+   often FETCH runs.
 
  [write_table(): .gz and .bz2 on Windows]
 

@@ -553,8 +553,24 @@ PERL_STATIC_INLINE bool sv_is_numeric_arg(pTHX_ SV *sv)
 	return (SvROK(sv) && SvAMAGIC(sv)) ? TRUE : FALSE;
 }
 
+/*The value an SV's get magic has already produced, without running it again.
+
+Every caller of nv_arg() and nv_arg_at() has run the magic once --
+args_get_magic() for the arguments, av_slow_at() for the elements -- and a
+second FETCH is both a second call into perl and, for a tie that counts or
+computes, a different value. SvNV() on a magical SV re-runs it whenever the
+value sits in the private flags alone, which is how every perl before 5.18
+leaves it, and 5.10's looks_like_number() does too through SvPV_const(). A copy
+made without SV_GMAGIC carries the fetched value and no magic, so both read it
+as it is.*/
+PERL_STATIC_INLINE SV *sv_fetched(pTHX_ SV *sv)
+{
+	return SvGMAGICAL(sv) ? sv_mortalcopy_flags(sv, SV_NOSTEAL) : sv;
+}
+
 PERL_STATIC_INLINE NV nv_arg_at(pTHX_ SV *sv, const char *fname, UV j, UV argi)
 {
+	sv = sv_fetched(aTHX_ sv);
 	if (!sv_is_numeric_arg(aTHX_ sv))
 		croak("%s: non-numeric value at array ref index %" UVuf
 		      " (argument %" UVuf ")", fname, j, argi);
@@ -563,9 +579,40 @@ PERL_STATIC_INLINE NV nv_arg_at(pTHX_ SV *sv, const char *fname, UV j, UV argi)
 
 PERL_STATIC_INLINE NV nv_arg(pTHX_ SV *sv, const char *fname, UV argi)
 {
+	sv = sv_fetched(aTHX_ sv);
 	if (!sv_is_numeric_arg(aTHX_ sv))
 		croak("%s: non-numeric value at argument index %" UVuf, fname, argi);
 	return SvNV(sv);
+}
+
+/*Run the get magic of every argument once, and leave its value on the stack.
+
+An argument whose value exists only once mg_get() has run -- $#array, a tied
+scalar whose FETCH has not been called yet, a substr() or vec() lvalue -- has
+no value flags before then, so the SvOK() and SvROK() tests the reductions
+branch on called it undef: sum(0, $#list) croaked "undefined value at argument
+index 1" up to 0.3211, where List::Util's sum() returns the index. It is
+List::Util 1.70's own t/min.t that calls it that way.
+
+Running the magic in place is not enough, because every one of these XSUBs
+reads the stack more than once -- a sizing pass, then the values, and sd() and
+var() a pass for the mean and another for the deviations -- and each read of a
+magical SV is another FETCH. So each magical argument is replaced on the stack
+by a mortal copy of what it fetched, which carries no magic, and every later
+pass reads that.
+
+ST(i) is re-derived on each iteration rather than taken as an SV ** once:
+FETCH is perl code, perl code can grow the stack, and growing it reallocates
+PL_stack_base.*/
+static void args_get_magic(pTHX_ Stack_off_t ax, Stack_off_t items)
+{
+	for (Stack_off_t i = 0; i < items; i++) {
+		SV *sv = ST(i);
+		if (!SvGMAGICAL(sv)) continue;
+		SvGETMAGIC(sv);
+		sv = sv_mortalcopy_flags(sv, SV_NOSTEAL);
+		ST(i) = sv;
+	}
 }
 
 /*A size argument -- a row count, a bin count, a number of draws -- validated
@@ -14220,25 +14267,25 @@ static void moment_push(moment_acc *a, NV x) {
 static void moment_av(pTHX_ AV *av, size_t argi,
                       const char *fname, moment_acc *acc) {
 	const size_t len = av_len(av) + 1;
-	if (SvRMAGICAL((SV*)av)) {
-		/*Tied, so the cells are not in AvARRAY at all.  av_fetch hands back
-		a deferred PVLV rather than the value, and SvOK on that is false
-		until the get-magic runs -- without SvGETMAGIC every element of a
-		tied array looks undefined.*/
-		for (size_t j = 0; j < len; j++) {
-			SV **tv = av_fetch(av, j, 0);
-			if (tv) SvGETMAGIC(*tv);
-			if (tv && SvOK(*tv))
-				moment_push(acc, nv_arg_at(aTHX_ *tv, fname, (UV)j, (UV)argi));
-			else croak("%s: undefined value at array ref index %" UVuf
-			           " (argument %" UVuf ")", fname, (UV)j, (UV)argi);
-		}
-		return;
-	}
-	SV **src = AvARRAY(av);
+	const bool tied = SvRMAGICAL((SV*)av) ? TRUE : FALSE; // cells not in AvARRAY at all
+	/*A plain number is read straight out of AvARRAY; anything else -- a hole,
+	a tied array's cell, a magical or overloaded element -- goes through
+	av_slow_at(), which runs the element's get magic before SvOK() is asked.
+	Testing SvOK() on the raw cell called a tied element undef until its FETCH
+	had run, so skew([1, $tied, 3, 4]) croaked where sum() did not.
+
+	AvARRAY is re-read on every element, not cached: av_slow_at() runs perl,
+	and perl can push to or clear this array, reallocating or freeing the
+	block. `len` is fixed, so a growing array cannot push past it.*/
 	for (size_t j = 0; j < len; j++) {
-		SV *tv = src[j];
-		if (tv && SvOK(tv))
+		NV v;
+		SV *tv = (!tied && (SSize_t)j <= AvFILLp(av)) ? AvARRAY(av)[j] : NULL;
+		if (tv && sv_plain_nv(tv, &v)) {
+			moment_push(acc, v);
+			continue;
+		}
+		tv = av_slow_at(aTHX_ av, (SSize_t)j);
+		if (tv)
 			moment_push(acc, nv_arg_at(aTHX_ tv, fname, (UV)j, (UV)argi));
 		else croak("%s: undefined value at array ref index %" UVuf
 		           " (argument %" UVuf ")", fname, (UV)j, (UV)argi);
@@ -24105,6 +24152,7 @@ NV min(...)
 	INIT:
 		NvAcc acc = { 0.0, 0.0, 0.0, 0 };
 	CODE:
+		args_get_magic(aTHX_ ax, items);	//before any SvOK() or SvROK() reads an argument
 		/*Stack_off_t, not a short: `items` is the whole flattened argument
 		list, so min(@x) on a 70k-element array puts 70k scalars here. An
 		`unsigned short int` counter wrapped at 65536 and looped forever.*/
@@ -24142,6 +24190,7 @@ NV max(...)
 	INIT:
 		NvAcc acc = { 0.0, 0.0, 0.0, 0 };
 	CODE:
+		args_get_magic(aTHX_ ax, items);	//before any SvOK() or SvROK() reads an argument
 		for (Stack_off_t i = 0; i < items; i++) {
 		   SV* arg = ST(i);
 		   if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
@@ -24619,6 +24668,7 @@ NV mean(...)
 	INIT:
 		NvAcc acc = { 0.0, 0.0, 0.0, 0 };
 	CODE:
+		args_get_magic(aTHX_ ax, items);	//before any SvOK() or SvROK() reads an argument
 		for (Stack_off_t i = 0; i < items; i++) {
 			SV* arg = ST(i);
 			if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
@@ -24654,6 +24704,7 @@ void mode(...)
 	size_t max_count = 0, arg_count = 0;
 	HE *he;
 	PPCODE:
+	args_get_magic(aTHX_ ax, items);	//before any SvOK() or SvROK() reads an argument
 	//counts:    string(value) -> occurrence count
 
 	//originals: string(value) -> SV* first-seen original
@@ -24666,17 +24717,21 @@ void mode(...)
 			AV *av = (AV *)SvRV(arg);
 			SSize_t len = av_len(av) + 1;
 			for (SSize_t j = 0; j < len; j++) {
-				SV **tv = av_fetch(av, j, 0);
-				if (tv && SvOK(*tv)) {
+				/*av_slow_at(), not av_fetch(): SvOK() on a cell whose get
+				magic has not run calls a tied element undef. sv_fetched()
+				then keeps SvPV() and newSVsv() from running FETCH twice more.*/
+				SV *tv = av_slow_at(aTHX_ av, j);
+				if (tv) {
 					STRLEN klen;
-					const char *key = SvPV(*tv, klen);
+					tv = sv_fetched(aTHX_ tv);
+					const char *key = SvPV(tv, klen);
 					SV **slot = hv_fetch(counts, key, klen, 1);
 					if (!slot) croak("mode: internal hash error");
 					size_t cnt = SvOK(*slot) ? SvIV(*slot) + 1 : 1;
 					sv_setiv(*slot, cnt);
 					if (cnt > max_count) max_count = cnt;
 					if (cnt == 1)
-						 hv_store(originals, key, klen, newSVsv(*tv), 0);
+						 hv_store(originals, key, klen, newSVsv(tv), 0);
 					arg_count++;
 				} else {
 					croak("mode: undefined value at array ref index %" UVuf " (argument %" UVuf ")", (UV)j, (UV)i);
@@ -24716,6 +24771,7 @@ NV sum(...)
 	INIT:
 		NvAcc acc = { 0.0, 0.0, 0.0, 0 };
 	CODE:
+		args_get_magic(aTHX_ ax, items);	//before any SvOK() or SvROK() reads an argument
 		for (Stack_off_t i = 0; i < items; i++) {
 			SV* arg = ST(i);
 			if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
@@ -24749,6 +24805,7 @@ NV sd(...)
 	  NvAcc acc = { 0.0, 0.0, 0.0, 0 };
 	  NV mean, m2 = 0.0, comp = 0.0;
 	CODE:
+		args_get_magic(aTHX_ ax, items);	//before any SvOK() or SvROK() reads an argument
 	/*Two passes, not Welford.
 
 	Welford's update carries a divide (mean += delta / count) in a
@@ -24829,6 +24886,7 @@ void uniq(...)
 		int gimme;
 		char numbuf[NK_NUMBUF];
 	PPCODE:
+		args_get_magic(aTHX_ ax, items);	//before any SvOK() or SvROK() reads an argument
 		gimme = GIMME_V;
 		ENTER;                          //the tables are freed on croak too
 		Newxz(T, 1, dd_ctx);
@@ -24854,11 +24912,12 @@ void uniq(...)
 					/*av_slow_at(), not av_fetch(): a tied array's element is a
 					PVLV that reads undef until mg_get() has run on it, so up
 					to 0.301 uniq(\@tied) croaked on its own first element.
-					Same fix sum() had.*/
+					Same fix sum() had. sv_fetched() then keeps uniq_take()'s
+					reads from running FETCH again.*/
 					SV *tv = av_slow_at(aTHX_ av, j);
 					if (!tv)
 						croak("uniq: undefined value at array ref index %" UVuf " (argument %" UVuf ")", (UV)j, (UV)i);
-					uniq_take(aTHX_ T, tv, out, scratch, numbuf);
+					uniq_take(aTHX_ T, sv_fetched(aTHX_ tv), out, scratch, numbuf);
 				}
 			} else if (SvOK(arg)) {
 				uniq_take(aTHX_ T, arg, out, scratch, numbuf);
@@ -24884,6 +24943,7 @@ NV var(...)
 	  NvAcc acc = { 0.0, 0.0, 0.0, 0 };
 	  NV mean, m2 = 0.0, comp = 0.0;
 	CODE:
+		args_get_magic(aTHX_ ax, items);	//before any SvOK() or SvROK() reads an argument
 	/*Two passes, not Welford.
 
 	Welford's update carries a divide (mean += delta / count) in a
@@ -24960,6 +25020,7 @@ NV skew(...)
 	  moment_acc acc = { 0.0, 0.0, 0.0, 0.0, 0 };
 	  IV type = 2;
 	CODE:
+		args_get_magic(aTHX_ ax, items);	//before any SvOK() or SvROK() reads an argument
 		/*Sample skewness.  type 2 (the default) is G1, the estimator SAS,
 		SPSS, Stata, Excel's SKEW() and scipy's bias=FALSE all report;
 		type 1 is the plain moment ratio g1 (moments::skewness) and type 3
@@ -24987,6 +25048,7 @@ NV kurtosis(...)
 	  moment_acc acc = { 0.0, 0.0, 0.0, 0.0, 0 };
 	  IV type = 2;
 	CODE:
+		args_get_magic(aTHX_ ax, items);	//before any SvOK() or SvROK() reads an argument
 /*Excess kurtosis: 3 is already subtracted, so a normal sample sits
  near 0 rather than near 3.  type 2 (the default) is G2, as in SAS,
  SPSS, Stata, Excel's KURT() and scipy's bias=FALSE; type 1 is g2
@@ -27222,6 +27284,7 @@ NV median(...)
 	  cost more than the arithmetic.  They borrow the C stack instead.*/
 	  NV stackbuf[256];
 	CODE:
+	  args_get_magic(aTHX_ ax, items);	//before any SvOK() or SvROK() reads an argument
 	  /*How many values there are, from the array lengths alone.  Every
 	  element has to be defined (an undef croaks below, as it always has),
 	  so this bound is exact and the old counting pass over every SV -- a
@@ -27244,40 +27307,35 @@ NV median(...)
 		   if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
 			   AV* av = (AV*)SvRV(arg);
 			   size_t len = av_len(av) + 1;
-			   if (SvRMAGICAL((SV*)av)) {
-				   /*Tied, so the cells are not in AvARRAY -- which is NULL,
-				   while av_len reports the tied FETCHSIZE, so the branch
-				   below would read off a null pointer.  av_fetch hands back
-				   a deferred PVLV rather than the value, and SvOK on that is
-				   false until its get-magic runs: without SvGETMAGIC every
-				   element of a tied array looks undefined and this croaks
-				   on data that is perfectly well defined.*/
-				   for (size_t j = 0; j < len; j++) {
-					   SV** tv = av_fetch(av, j, 0);
-					   if (tv) SvGETMAGIC(*tv);
-					   if (tv && SvOK(*tv)) {
-						   nums[k++] = SvNV(*tv);
-					   } else {
-						   if (nums != stackbuf) Safefree(nums);
-						   /*UVuf, not %zu: croak() runs perl's own formatter, which does not
-						   understand the C99 z modifier and prints it literally on older
-						   perls (5.10 and 5.12 both do)*/
-						   croak("median: undefined value at array ref index %" UVuf " (argument %" UVuf ")", (UV)j, (UV)i);
-					   }
+			   const bool tied = SvRMAGICAL((SV*)av) ? TRUE : FALSE; // cells not in AvARRAY at all
+			   /*A plain number is read straight out of AvARRAY; anything
+			   else goes through av_slow_at(), which runs the element's get
+			   magic before SvOK() is asked. A tied array's AvARRAY is NULL
+			   while av_len() reports its FETCHSIZE, so none of it is read
+			   directly. Testing SvOK() on a raw cell called a tied element
+			   of a plain array undef until its FETCH had run, so
+			   median([1, $tied, 3]) croaked where sum() did not.
+
+			   AvARRAY is re-read on every element: av_slow_at() runs perl,
+			   which can reallocate or free the block. `len` is fixed, so a
+			   growing array cannot write past `nums`, which was sized from
+			   it.*/
+			   for (size_t j = 0; j < len; j++) {
+				   NV v;
+				   SV* tv = (!tied && (SSize_t)j <= AvFILLp(av)) ? AvARRAY(av)[j] : NULL;
+				   if (tv && sv_plain_nv(tv, &v)) {
+					   nums[k++] = v;
+					   continue;
 				   }
-			   } else {
-				   /*AvARRAY, not av_fetch: the length is known and the cells
-				   are right there, so the bounds check and the call per
-				   element buy nothing*/
-				   SV** src = AvARRAY(av);
-				   for (size_t j = 0; j < len; j++) {
-					   SV* tv = src[j];
-					   if (tv && SvOK(tv)) {
-						   nums[k++] = nv_arg_at(aTHX_ tv, "median", (UV)j, (UV)i);
-					   } else {
-						   if (nums != stackbuf) Safefree(nums);
-						   croak("median: undefined value at array ref index %" UVuf " (argument %" UVuf ")", (UV)j, (UV)i);
-					   }
+				   tv = av_slow_at(aTHX_ av, (SSize_t)j);
+				   if (tv) {
+					   nums[k++] = nv_arg_at(aTHX_ tv, "median", (UV)j, (UV)i);
+				   } else {
+					   if (nums != stackbuf) Safefree(nums);
+					   /*UVuf, not %zu: croak() runs perl's own formatter, which does not
+					   understand the C99 z modifier and prints it literally on older
+					   perls (5.10 and 5.12 both do)*/
+					   croak("median: undefined value at array ref index %" UVuf " (argument %" UVuf ")", (UV)j, (UV)i);
 				   }
 			   }
 		   } else if (SvOK(arg)) {
@@ -27556,6 +27614,7 @@ SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 void scale(...)
 	PROTOTYPE: @
 	PPCODE:
+		args_get_magic(aTHX_ ax, items);	//before any SvOK() or SvROK() reads an argument
 	{
 		bool do_center_mean = 1, do_scale_sd = 1;
 		NV center_val = 0.0, scale_val = 1.0;
@@ -27677,15 +27736,21 @@ void scale(...)
 				if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
 					AV*av = (AV*)SvRV(arg);
 					size_t len = av_len(av) + 1;
-					for (unsigned int j = 0; j < len; j++) {
-						SV**tv = av_fetch(av, j, 0);
-						if (tv && SvOK(*tv)) { total_count++; }
-					}
+					/*av_slow_at(), not av_fetch(): SvOK() on a cell whose
+					get magic has not run calls a tied element undef, and
+					scale() skips undef, so it dropped the element from the
+					result without a word*/
+					for (size_t j = 0; j < len; j++)
+						if (av_slow_at(aTHX_ av, (SSize_t)j)) total_count++;
 				} else if (SvOK(arg)) {
 					total_count++;
 				}
 			}
 			if (total_count == 0) croak("scale requires at least 1 numeric element");
+	/*A tied array is read once to count and again for the values, so its
+	FETCH and FETCHSIZE run twice and can answer differently. The count sizes
+	`nums`, so a second answer with more defined values would write past it.*/
+			const char *restrict const changed = "scale: a tied array changed between the counting pass and the value pass";
 	/*On the save stack: nv_arg()/nv_arg_at() croak on a non-numeric element,
 	and croak() does not reach a Safefree() written after it, so this buffer
 	was leaked whole -- 8 bytes per element of the input, 160 KB on a
@@ -27697,17 +27762,20 @@ void scale(...)
 					 AV*av = (AV*)SvRV(arg);
 					 size_t len = av_len(av) + 1;
 					 for (size_t j = 0; j < len; j++) {
-						 SV**tv = av_fetch(av, j, 0);
-						 if (tv && SvOK(*tv)) { 
-							 NV val = nv_arg_at(aTHX_ *tv, "scale", (UV)j, (UV)i);
+						 SV *tv = av_slow_at(aTHX_ av, (SSize_t)j);
+						 if (tv) {
+							 NV val = nv_arg_at(aTHX_ tv, "scale", (UV)j, (UV)i);
+							 if (k == total_count) croak("%s", changed);
 							 nums[k++] = val; sum += val;
 						 }
 					 }
 				 } else if (SvOK(arg)) {
 					 NV val = nv_arg(aTHX_ arg, "scale", (UV)i);
+					 if (k == total_count) croak("%s", changed);
 					 nums[k++] = val; sum += val;
 				 }
 			}
+			if (k != total_count) croak("%s", changed);
 			if (do_center_mean) center_val = sum / total_count;
 			if (do_scale_sd) {
 				 if (total_count <= 1)
