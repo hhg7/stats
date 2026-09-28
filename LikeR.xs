@@ -4829,17 +4829,24 @@ no label column at all.
 
 *h_ptr is tested as well as h_ptr: av_fetch() returns NULL for a hole, and
 four of the five call sites this replaces dereferenced it without checking.
-The fifth did check, so this takes the safe reading of the two.*/
+The fifth did check, so this takes the safe reading of the two.
+
+The header cells with no name are counted into *unnamed, and the 1-based file
+column of the first is stored in *first_unnamed, for write_table() to warn
+about once the file is written (the reason is at that warning).*/
 static size_t wt_emit_header(pTHX_ PerlIO *fh, AV *headers_av,
                              const char *rn_header, const char *sep,
-                             AV *collect_av) {
+                             AV *collect_av, size_t *restrict unnamed,
+                             size_t *restrict first_unnamed) {
 	const size_t num_headers = (size_t)(av_len(headers_av) + 1);
 	const char **header_row = safemalloc((num_headers + 1) * sizeof(char*));
 	size_t h_idx = 0;
 	if (rn_header) header_row[h_idx++] = rn_header;
 	for (size_t i = 0; i < num_headers; i++) {
 		SV **h_ptr = av_fetch(headers_av, (SSize_t)i, 0);
-		header_row[h_idx++] = (h_ptr && *h_ptr && SvOK(*h_ptr)) ? SvPV_nolen(*h_ptr) : "";
+		header_row[h_idx] = (h_ptr && *h_ptr && SvOK(*h_ptr)) ? SvPV_nolen(*h_ptr) : "";
+		if (!*header_row[h_idx] && (*unnamed)++ == 0) *first_unnamed = h_idx + 1;
+		h_idx++;
 	}
 	print_string_row(aTHX_ fh, header_row, h_idx, sep, collect_av);
 	safefree(header_row);
@@ -20085,6 +20092,8 @@ PPCODE:
   SVs) so the renderer can build the output afterwards. Mortal => reclaimed
   automatically if any of the croak paths below fire.*/
 	AV *collect_av = collect ? (AV*)sv_2mortal((SV*)newAV()) : NULL;
+	size_t n_unnamed = 0;	// data columns whose header cell is empty, set by wt_emit_header()
+	size_t first_unnamed = 0;	// 1-based file column of the first of them; 0 = none
 	if (is_hoh) {// ----- Hash of Hashes -----
 		if (col_names_sv && SvOK(col_names_sv)) {
 			wt_headers_given(aTHX_ headers_av, col_names_sv);
@@ -20111,7 +20120,7 @@ PPCODE:
 		}
 // NULL = no key column, "" = unnamed, else the name checked above
 		const char *rn_header = !inc_rownames ? NULL : rn_named ? SvPV_nolen(row_names_sv) : "";
-		const size_t num_headers = wt_emit_header(aTHX_ fh, headers_av, rn_header, sep, collect_av);
+		const size_t num_headers = wt_emit_header(aTHX_ fh, headers_av, rn_header, sep, collect_av, &n_unnamed, &first_unnamed);
 		size_t num_rows = (size_t)(av_len(rows_av) + 1);
 		sortsv(AvARRAY(rows_av), num_rows, Perl_sv_cmp);
 		HV *data_hv = (HV*)data_ref;
@@ -20160,7 +20169,7 @@ PPCODE:
 			if (num_cols > 1)
 				sortsv(AvARRAY(headers_av), num_cols, Perl_sv_cmp);
 		}
-		const size_t num_headers = wt_emit_header(aTHX_ fh, headers_av, inc_rownames ? "" : NULL, sep, collect_av);
+		const size_t num_headers = wt_emit_header(aTHX_ fh, headers_av, inc_rownames ? "" : NULL, sep, collect_av, &n_unnamed, &first_unnamed);
 		const char **row_data = safemalloc((num_headers + 1) * sizeof(char*));
 		size_t d_idx = 0;
 // Give the single row a default numeric identifier if row names are on
@@ -20224,7 +20233,7 @@ PPCODE:
 			SvREFCNT_dec(headers_av);
 			headers_av = filtered_headers;
 		}
-		const size_t num_headers = wt_emit_header(aTHX_ fh, headers_av, inc_rownames ? "" : NULL, sep, collect_av);
+		const size_t num_headers = wt_emit_header(aTHX_ fh, headers_av, inc_rownames ? "" : NULL, sep, collect_av, &n_unnamed, &first_unnamed);
 		const char **row_data = safemalloc((num_headers + 1) * sizeof(char*));
 		char rn_buf[32];
 		for (size_t i = 0; i < max_rows; i++) {
@@ -20324,7 +20333,7 @@ PPCODE:
 			SvREFCNT_dec(headers_av);
 			headers_av = filtered_headers;
 		}
-		const size_t num_headers = wt_emit_header(aTHX_ fh, headers_av, inc_rownames ? "" : NULL, sep, collect_av);
+		const size_t num_headers = wt_emit_header(aTHX_ fh, headers_av, inc_rownames ? "" : NULL, sep, collect_av, &n_unnamed, &first_unnamed);
 		const char **row_data = safemalloc((num_headers + 1) * sizeof(char*));
 		char rn_buf[32];
 		for (size_t i = 0; i < num_rows; i++) {
@@ -20390,7 +20399,7 @@ PPCODE:
 			}
 			data_start = 1;
 		}
-		const size_t num_headers = wt_emit_header(aTHX_ fh, headers_av, inc_rownames ? "" : NULL, sep, collect_av);
+		const size_t num_headers = wt_emit_header(aTHX_ fh, headers_av, inc_rownames ? "" : NULL, sep, collect_av, &n_unnamed, &first_unnamed);
 		const char **row_data = safemalloc((num_headers + 1) * sizeof(char*));
 		char rn_buf[32]; // numeric row labels, printed before reuse (see HoA)
 		unsigned long rn = 0;
@@ -20481,6 +20490,24 @@ PPCODE:
 			(unsigned)xlsx_freeze_rows, (unsigned)xlsx_freeze_cols);
 		if (!quiet) write_table_announce(aTHX_ file);
 	}
+/* An empty header cell is warned about, because the file then gives that column
+  no name to address it by, and every reader invents one: read_table() says
+  row_name, pandas "Unnamed: 0". For a HoH the empty cell is the key column's,
+  and row.names => 'name' names it, so the warning says so. Every other shape
+  writes its label cell empty only when row.names => 1 asked for it -- R's own
+  layout -- and nothing can name it, so warning there could not be silenced.
+  The warnings come last, after every buffer and handle above is released,
+  because a __WARN__ handler may die. 'quiet' does not silence them: it is the
+  opt-out for the confirmation line, and this is a problem with the data.*/
+	if (is_hoh && inc_rownames && !rn_named)
+		warn("write_table: the row-name column (column 1) of '%s' has no name in "
+			"the header; name it with row.names => 'name', or drop it with "
+			"row.names => 0\n", file);
+	if (n_unnamed)
+		warn("write_table: %" UVuf " column%s of '%s' ha%s no name in the header "
+			"(the first is column %" UVuf ")\n", (UV)n_unnamed,
+			n_unnamed == 1 ? "" : "s", file, n_unnamed == 1 ? "s" : "ve",
+			(UV)first_unnamed);
 	XSRETURN_EMPTY;
 }
 

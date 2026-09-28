@@ -526,7 +526,7 @@ wrote_ok( qq{a\n"$utf8_cafe,$utf8_ole"\n},
 {
 	my @warnings;
 	local $SIG{__WARN__} = sub { push @warnings, @_ };
-	write_table( { 'r1' => { 'a' => "\x{263a}" } }, path() );
+	write_table( { 'r1' => { 'a' => "\x{263a}" } }, path(), 'row.names' => 'id' );
 	is( scalar @warnings, 0, 'writing a wide-character value emits no warnings' )
 		or diag "warnings seen: @warnings";
 }
@@ -569,4 +569,86 @@ no_leaks_ok {
 	};
 } 'write_table/read_table: no memory leaks on a UTF-8 round trip' unless $INC{'Devel/Cover.pm'};
 
+# 36. A header cell with no name is warned about. For a HoH the empty cell is the
+#     key column's, which row.names can name, so the warning says how; the
+#     other shapes write that cell empty only when row.names => 1 asked for it,
+#     by R's convention, and nothing can name it, so they stay quiet. A data
+#     column with an empty name is warned about in every shape.
+{
+	my $warns = sub {
+		my ($code) = @_;
+		my @w;
+		local $SIG{__WARN__} = sub { push @w, @_ };
+		$code->();
+		return \@w;
+	};
+	my %hoh = ( 'r1' => { 'a' => 1 }, 'r2' => { 'a' => 2 } );
+	my $rn_re = qr/^write_table: the row-name column \(column 1\) of '[^']*' has no name in the header; name it with row\.names => 'name', or drop it with row\.names => 0$/;
+	my $f = path();
+	my $w = $warns->( sub { write_table( \%hoh, $f ) } );
+	is( scalar @$w, 1, 'HoH, default row.names: one warning' );
+	like( $w->[0], $rn_re, 'HoH, default row.names: the warning names row.names' );
+	like( $w->[0], qr/\Q$f\E/, 'HoH, default row.names: the warning names the file' );
+	is( slurp($f), ",a\nr1,1\nr2,2\n", 'HoH, default row.names: the output is unchanged' );
+	$w = $warns->( sub { write_table( \%hoh, path(), 'row.names' => 1 ) } );
+	is( scalar @$w, 1, 'HoH, row.names => 1: one warning' );
+	like( $w->[0], $rn_re, 'HoH, row.names => 1: the warning names row.names' );
+	$f = path();
+	$w = $warns->( sub { write_table( \%hoh, $f, 'row.names' => 'id' ) } );
+	is( scalar @$w, 0, 'HoH, row.names => name: no warning' ) or diag "@$w";
+	is( slurp($f), "id,a\nr1,1\nr2,2\n", 'HoH, row.names => name: the key column is named' );
+	$w = $warns->( sub { write_table( \%hoh, path(), 'row.names' => 0 ) } );
+	is( scalar @$w, 0, 'HoH, row.names => 0: no warning' ) or diag "@$w";
+	$w = $warns->( sub { write_table( \%hoh, path('t.tex'), quiet => 1 ) } );
+	is( scalar @$w, 1, 'HoH to LaTeX, default row.names: one warning' );
+	like( $w->[0], $rn_re, 'HoH to LaTeX: the same warning' );
+	$w = $warns->( sub { write_table( \%hoh, path('t.xlsx'), quiet => 1 ) } );
+	is( scalar @$w, 1, 'HoH to .xlsx, default row.names: one warning' );
+	like( $w->[0], $rn_re, 'HoH to .xlsx: the same warning' );
+
+	my @aoh = ( { 'a' => 1 }, { 'a' => 2 } );
+	$f = path();
+	$w = $warns->( sub { write_table( \@aoh, $f, 'row.names' => 1 ) } );
+	is( scalar @$w, 0, 'AoH, row.names => 1: no warning for the R-style label cell' ) or diag "@$w";
+	is( slurp($f), ",a\n1,1\n2,2\n", 'AoH, row.names => 1: the label cell is still empty' );
+	$w = $warns->( sub { write_table( { 'a' => [1], 'b' => [2] }, path(), 'row.names' => 1 ) } );
+	is( scalar @$w, 0, 'HoA, row.names => 1: no warning' ) or diag "@$w";
+	$w = $warns->( sub { write_table( { 'a' => 1 }, path(), 'row.names' => 1 ) } );
+	is( scalar @$w, 0, 'flat hash, row.names => 1: no warning' ) or diag "@$w";
+	$w = $warns->( sub { write_table( [ ['a'], [1] ], path(), 'row.names' => 1 ) } );
+	is( scalar @$w, 0, 'AoA, row.names => 1: no warning' ) or diag "@$w";
+
+	$f = path();
+	$w = $warns->( sub { write_table( [ [ '', 'b', undef ], [ 1, 2, 3 ] ], $f ) } );
+	is( scalar @$w, 1, 'AoA with two unnamed header cells: one warning' );
+	like( $w->[0], qr/^write_table: 2 columns of '\Q$f\E' have no name in the header \(the first is column 1\)$/,
+		'AoA: the warning counts the unnamed columns and gives the first' );
+	is( slurp($f), ",b,\n1,2,3\n", 'AoA with unnamed header cells: the output is unchanged' );
+	$f = path();
+	$w = $warns->( sub { write_table( \@aoh, $f, 'col.names' => [ 'a', '' ], 'row.names' => 1 ) } );
+	is( scalar @$w, 1, 'AoH, an empty col.names entry: one warning' );
+	like( $w->[0], qr/^write_table: 1 column of '\Q$f\E' has no name in the header \(the first is column 3\)$/,
+		'AoH: the column number counts the label column' );
+	$w = $warns->( sub { write_table( \%hoh, path(), 'col.names' => [''] ) } );
+	is( scalar @$w, 2, 'HoH, default row.names and an empty col.names entry: both warnings' );
+}
+no_leaks_ok {
+	local $SIG{__WARN__} = sub {};
+	write_table( { 'r1' => { 'a' => 1 } }, path(), 'col.names' => [ 'a', '' ] );
+} 'write_table: no memory leaks when warning about unnamed columns' unless $INC{'Devel/Cover.pm'};
+# The warnings are given after the file is written and every buffer released,
+# so a __WARN__ handler that dies loses nothing and leaks nothing.
+{
+	my $f = path();
+	eval {
+		local $SIG{__WARN__} = sub { die @_ };
+		write_table( { 'r1' => { 'a' => 1 } }, $f, quiet => 1 );
+	};
+	like( $@, qr/^write_table: the row-name column/, 'a dying __WARN__ handler sees the warning' );
+	is( slurp($f), ",a\nr1,1\n", 'a dying __WARN__ handler still leaves the whole file' );
+}
+no_leaks_ok {
+	local $SIG{__WARN__} = sub { die @_ };
+	eval { write_table( { 'r1' => { 'a' => 1 } }, path(), 'col.names' => [ 'a', '' ], quiet => 1 ) };
+} 'write_table: no memory leaks when a __WARN__ handler dies' unless $INC{'Devel/Cover.pm'};
 done_testing();

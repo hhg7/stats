@@ -3,7 +3,7 @@
 require 5.010001;
 use strict;
 package Stats::LikeR;
-our $VERSION = '0.3211';	# quoted: a bare version ending in 0, such as 0.320, is the number 0.32, which the dist would be named
+our $VERSION = '0.3212';	# quoted: a bare version ending in 0, such as 0.320, is the number 0.32, which the dist would be named
 require XSLoader;
 use warnings FATAL => 'all';
 use Exporter 'import';
@@ -16737,6 +16737,8 @@ A hash of hashes keeps its outer keys as a leading column by default, since that
 
  my %taxa = (9606 => { species => 'Homo sapiens' }, 10090 => { species => 'Mus musculus' });
  write_table(\%taxa, 'taxa.tsv', 'row.names' => 'taxid');   # taxid  species
+
+Leaving that column unnamed writes an empty first header cell, and every reader then has to invent a name for it (C<read_table> calls it C<row_name>, pandas C<Unnamed: 0>). C<write_table> therefore warns and suggests C<row.names>. It also warns when any data column has an empty name, whatever the shape. The empty label cell that C<< row.names =E<gt> 1 >> writes for the other shapes is R's own layout, and nothing can name it, so that one is not warned about.
 
 C<write_table> determines comma and tab-separated delimiters from the filename, but will override if C<sep> or C<delim> are explicitly set.
 Args can also be accepted:

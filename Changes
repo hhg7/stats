@@ -1,5 +1,33 @@
 Revision history for Stats-LikeR
 
+0.3212 2026-09-28 CDT
+
+ [write_table(): a warning for a header cell with no name]
+
+ - A hash of hashes writes its outer keys as a leading column by default,
+   and unless row.names names that column its header cell is empty, so the
+   file gives the column no name and every reader invents one: read_table
+   calls it row_name, pandas "Unnamed: 0". write_table now warns when it
+   writes that, and says that row.names => 'name' names the column and
+   row.names => 0 drops it. This holds for LaTeX and .xlsx output too.
+
+ - It also warns, for every shape, when a data column's header is empty:
+   an empty or undef cell in an array of arrays' header row, or '' in
+   col.names. The warning counts such columns and gives the first one's
+   position in the file.
+
+ - The empty label cell that row.names => 1 writes for the other shapes is
+   not warned about. It is R's own layout, asked for explicitly, and
+   row.names cannot name it for those shapes, so the warning could not be
+   silenced. The file written is unchanged in every case, and quiet => 1
+   does not suppress the warnings, which are about the data and not the
+   confirmation line.
+
+ - The warnings are given after the file is written and closed and every
+   buffer is released, so a __WARN__ handler that dies loses no output and
+   leaks nothing. t/write_table.t covers each shape, each row.names mode,
+   LaTeX and .xlsx, the dying handler, and leaks.
+
 0.3211 2026-09-27 CDT
 
  [min(), max(), sum() and the other reductions: magical arguments]

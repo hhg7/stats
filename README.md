@@ -7194,6 +7194,8 @@ A hash of hashes keeps its outer keys as a leading column by default, since that
 
     my %taxa = (9606 => { species => 'Homo sapiens' }, 10090 => { species => 'Mus musculus' });
     write_table(\%taxa, 'taxa.tsv', 'row.names' => 'taxid');   # taxid  species
+Leaving that column unnamed writes an empty first header cell, and every reader then has to invent a name for it (`read_table` calls it `row_name`, pandas `Unnamed: 0`). `write_table` therefore warns and suggests `row.names`. It also warns when any data column has an empty name, whatever the shape. The empty label cell that `row.names => 1` writes for the other shapes is R's own layout, and nothing can name it, so that one is not warned about.
+
 `write_table` determines comma and tab-separated delimiters from the filename, but will override if `sep` or `delim` are explicitly set.
 Args can also be accepted:
 

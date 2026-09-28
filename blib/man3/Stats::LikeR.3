@@ -58,7 +58,7 @@
 .\" ========================================================================
 .\"
 .IX Title "Stats::LikeR 3"
-.TH Stats::LikeR 3 2026-09-27 "perl v5.44.0" "User Contributed Perl Documentation"
+.TH Stats::LikeR 3 2026-09-28 "perl v5.44.0" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -7813,6 +7813,8 @@ A hash of hashes keeps its outer keys as a leading column by default, since that
 \& my %taxa = (9606 => { species => \*(AqHomo sapiens\*(Aq }, 10090 => { species => \*(AqMus musculus\*(Aq });
 \& write_table(\e%taxa, \*(Aqtaxa.tsv\*(Aq, \*(Aqrow.names\*(Aq => \*(Aqtaxid\*(Aq);   # taxid  species
 .Ve
+.PP
+Leaving that column unnamed writes an empty first header cell, and every reader then has to invent a name for it (\f(CW\*(C`read_table\*(C'\fR calls it \f(CW\*(C`row_name\*(C'\fR, pandas \f(CW\*(C`Unnamed: 0\*(C'\fR). \f(CW\*(C`write_table\*(C'\fR therefore warns and suggests \f(CW\*(C`row.names\*(C'\fR. It also warns when any data column has an empty name, whatever the shape. The empty label cell that \f(CW\*(C`row.names => 1\*(C'\fR writes for the other shapes is R\*(Aqs own layout, and nothing can name it, so that one is not warned about.
 .PP
 \&\f(CW\*(C`write_table\*(C'\fR determines comma and tab\-separated delimiters from the filename, but will override if \f(CW\*(C`sep\*(C'\fR or \f(CW\*(C`delim\*(C'\fR are explicitly set.
 Args can also be accepted:
