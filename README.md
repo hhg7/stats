@@ -7436,3 +7436,7 @@ Verified against R 4.6.1 (`oneway.test`, `anova(aov())`, `anova(lm())`,
 # COPYRIGHT AND LICENSE
 
 This software is free.  It is licensed under the same terms as Perl itself
+
+# Thanks
+
+A lot of this work used Claude AI, which was paid for by the University of Idaho's IMCI
