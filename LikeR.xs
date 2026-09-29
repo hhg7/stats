@@ -7128,11 +7128,8 @@ static NV wilcox_one_ptail(pTHX_ WilcoxDist *D, RankInfo *restrict ri, UV *restr
 	return p;
 }
 
-static NV wilcox_two_ptail(pTHX_ WilcoxDist *D, RankInfo *restrict ri,
-                           UV *restrict z,
-                           const NV *restrict x, size_t n_x,
-                           const NV *restrict y, size_t n_y,
-                           NV shift, bool lower) {
+static NV wilcox_two_ptail(pTHX_ WilcoxDist *D, RankInfo *restrict ri, UV *restrict z,
+ const NV *restrict x, size_t n_x, const NV *restrict y, size_t n_y, NV shift, bool lower) {
 	size_t total_n = n_x + n_y;
 	for (size_t i = 0; i < n_x; i++) { ri[i].val = x[i] - shift; ri[i].idx = 1; }
 	for (size_t i = 0; i < n_y; i++) { ri[n_x + i].val = y[i];   ri[n_x + i].idx = 2; }
@@ -7153,10 +7150,9 @@ static NV wilcox_two_ptail(pTHX_ WilcoxDist *D, RankInfo *restrict ri,
 }
 
 /* R's root(): uniroot() over [lo, hi], but returning the endpoint outright
-   when the bracket does not actually straddle zero.  R's two-sample interval
-   does this explicitly for cases like wilcox.test(1, 2:60, conf.int = TRUE). */
-static NV wilcox_ci_root(WilcoxCiCtx *C, NV lo, NV hi, NV f_lo, NV f_hi,
-                         NV zq, NV tol) {
+ when the bracket does not actually straddle zero.  R's two-sample interval
+ does this explicitly for cases like wilcox.test(1, 2:60, conf.int = TRUE) */
+static NV wilcox_ci_root(WilcoxCiCtx *C, NV lo, NV hi, NV f_lo, NV f_hi, NV zq, NV tol) {
 	C->zq = zq;
 	if (!(f_lo - zq > 0.0)) return lo;
 	if (!(f_hi - zq < 0.0)) return hi;
