@@ -10,9 +10,10 @@ use Test::LeakTrace 'no_leaks_ok';
 # hashes. A call that omits it writes the data columns and nothing else.
 # row.names => 1 opts in and prepends a leading empty header cell plus a
 # per-row label column (1..n); row.names => 'col' promotes an existing column
-# to the labels. A HoH defaults it ON, because its outer keys are the row
-# identifiers and exist nowhere else: row.names => 0 turns them off, and
-# row.names => 'name' writes 'name' as the key column's header.
+# to the labels, headed with its own name. A HoH defaults it ON, because its
+# outer keys are the row identifiers and exist nowhere else: row.names => 0
+# turns them off, and row.names => 'name' writes 'name' as the key column's
+# header.
 
 # Every temporary file this test writes goes inside this one directory, which
 # File::Temp removes at exit: a fixed name in the shared temporary directory is
@@ -284,11 +285,17 @@ wrote_ok( "a,b,c\n1,2,3\n", 'flat hash: single row, unlabelled by default', \%fl
 wrote_ok( "name\nAlice\nBob\n", 'col.names selects a subset in order', \%hoa, 'col.names' => [ 'name' ], 'undef.val' => 'NA' );
 # 6. row.names => 0 turns off the row-name column.
 wrote_ok( "age,name\n30,Alice\n25,Bob\n", 'row.names => 0 omits the label column', \%hoa, 'row.names' => 0, 'undef.val' => 'NA' );
-# 7. row.names => 'col' uses that column as the labels and drops it from headers.
-wrote_ok( ",age\nAlice,30\nBob,25\n", "row.names => 'name' uses that column as labels", \%hoa, 'row.names' => 'name', 'undef.val' => 'NA' );
+# 7. row.names => 'col' uses that column as the labels, drops it from headers,
+#    and heads the label column with its name.  Up to 0.3212 that header cell
+#    was left empty, so the name was lost and read_table() read the column back
+#    as row_name.  pandas writes an index's name over it the same way: pandas
+#    3.0.4 tests/io/formats/test_to_csv.py, test_to_csv_single_level_multi_index
+#    (gh-19589), pins "x,data\n1.0,1\n" for an index named x.
+wrote_ok( "name,age\nAlice,30\nBob,25\n", "row.names => 'name' uses that column as labels", \%hoa, 'row.names' => 'name', 'undef.val' => 'NA' );
 #    ... including a column name outside Latin-1, which up to 0.319 croaked
-#    "Wide character" in the XS digit check before it was ever looked up.
-wrote_ok( ",age\nAlice,30\nBob,25\n", 'row.names => a wide-character column name',
+#    "Wide character" in the XS digit check before it was ever looked up.  The
+#    name is written as its UTF-8 bytes, as every other header is.
+wrote_ok( "\xe5\x90\x8d,age\nAlice,30\nBob,25\n", 'row.names => a wide-character column name',
 	{ "\x{540d}" => [ 'Alice', 'Bob' ], 'age' => [ 30, 25 ] },
 	'row.names' => "\x{540d}", 'undef.val' => 'NA' );
 # 8. Explicit separator.
@@ -397,7 +404,7 @@ wrote_ok( "a,b\n1,10\n2,\n", 'default undef renders as an empty field', \%u_jag 
 	my $f = path();
 	lives_ok { write_table( \@aoh3, $f, 'col.names' => [], 'row.names' => 'x' ) }
 		"AoH: empty col.names + row.names => 'x' terminates (filtered-header loop)";
-	is( slurp($f), "\np\nq\n", 'AoH: row labels taken from x; no data columns' );
+	is( slurp($f), "x\np\nq\n", 'AoH: row labels taken from x, under its name; no data columns' );
 }
 
 # 22. Numeric row labels in sequence across many rows (regression guard for
@@ -440,17 +447,28 @@ wrote_ok( "a,ghost\n1,NA\n2,NA\n", 'missing col.names column pads with undef.val
 wrote_ok( "a,ghost\n1,\n2,\n", 'missing col.names column pads empty by default',
 	{ 'a' => [ 1, 2 ] }, 'col.names' => [ 'a', 'ghost' ], 'row.names' => 0 );
 
-# 27. Empty data returns an empty list and writes NO file (the early return
-#     happens before the file is opened).
+# 27. Empty data is a table with no rows, and is written as one.  Up to 0.3212
+#     it returned before a file was opened, so nothing was written and nothing
+#     said, and a script that went on to read the file found it missing.  The
+#     header is whatever col.names and row.names give: pandas 3.0.4
+#     tests/io/formats/test_to_csv.py, test_empty_dataframe, pins ",A\n" for
+#     DataFrame({"A": []}).to_csv(), whose index gives the leading empty cell
+#     row.names => 1 gives here.  With no columns at all the header is a lone
+#     empty record, which is also what a flat hash with col.names => [] writes.
 {
 	my $f = path();
-	my @r = write_table( {}, $f );
+	my @r = write_table( {}, $f, quiet => 1 );
 	is( scalar @r, 0, 'empty hash returns an empty list' );
-	ok( !-e $f, 'empty hash creates no file' );
+	is( slurp($f), "\n", 'empty hash writes a file holding one empty header record' );
 	$f = path();
-	@r = write_table( [], $f );
+	@r = write_table( [], $f, quiet => 1 );
 	is( scalar @r, 0, 'empty array returns an empty list' );
-	ok( !-e $f, 'empty array creates no file' );
+	is( slurp($f), "\n", 'empty array writes a file holding one empty header record' );
+	wrote_ok( ",A\n", 'empty data with col.names and row.names => 1: pandas test_empty_dataframe',
+		[], 'col.names' => ['A'], 'row.names' => 1, quiet => 1 );
+	wrote_ok( "A,B\n", 'empty data with col.names: the header alone', {}, 'col.names' => [qw(A B)], quiet => 1 );
+	wrote_ok( "id,A\n", "empty data with row.names => 'id': the label column is named", [],
+		'col.names' => ['A'], 'row.names' => 'id', quiet => 1 );
 }
 
 # 28. Documented limitation: a positional filename equal to an option key is
@@ -651,4 +669,162 @@ no_leaks_ok {
 	local $SIG{__WARN__} = sub { die @_ };
 	eval { write_table( { 'r1' => { 'a' => 1 } }, path(), 'col.names' => [ 'a', '' ], quiet => 1 ) };
 } 'write_table: no memory leaks when a __WARN__ handler dies' unless $INC{'Devel/Cover.pm'};
+
+# 37. What 0.3212 fixed, one block apiece.
+{
+	my $capture = sub {
+		my ($code) = @_;
+		my @w;
+		local $SIG{__WARN__} = sub { push @w, @_ };
+		$code->();
+		return \@w;
+	};
+
+	# A write that fails reports it.  The buffer goes out at the close, which
+	# nothing checked, so a table written to a full disk returned normally and
+	# announced itself.  R's own tests/reg-tests-1d.R (PR#17243) writes to
+	# /dev/full and expects R to complain, and guards the test the same way:
+	# only where /dev/full exists and can be written.
+	SKIP: {
+		skip 'no writable /dev/full here', 7 unless -e '/dev/full' && -w '/dev/full';
+		my @big = map { { a => $_, b => 'x' x 50 } } 1 .. 20000;
+		# The message gives the system's reason, which is what tells a full disk
+		# from a quota or an I/O error; $! is formatted here the way the XS reads
+		# it, so the text matches in any locale.
+		require Errno;
+		my $enospc = do { local $! = Errno::ENOSPC(); "$!" };
+		foreach my $c ( [ 'small csv', [ { a => 1 } ], [] ], [ 'large csv', \@big, [] ],
+		                [ 'LaTeX', [ { a => 1 } ], [ tex => 1 ] ], [ '.xlsx', \@big, [ xlsx => 1 ] ] ) {
+			my ($what, $data, $opts) = @$c;
+			throws_ok { write_table( $data, '/dev/full', @$opts, quiet => 1 ) }
+				qr{^write_table: could not finish writing '/dev/full': \Q$enospc\E\n\z},
+				"a full disk croaks, and says why: $what";
+		}
+		eval { write_table( [ { a => 1 } ], '/dev/full', quiet => 1 ) };
+		ok( $!{ENOSPC}, 'a full disk: $! says why too' );
+		no_leaks_ok { eval { write_table( [ { a => 1 } ], '/dev/full', quiet => 1 ) } }
+			'a full disk: no leaks' unless $INC{'Devel/Cover.pm'};
+		no_leaks_ok { eval { write_table( [ { a => 1 } ], '/dev/full', xlsx => 1, quiet => 1 ) } }
+			'a full disk: no leaks, .xlsx' unless $INC{'Devel/Cover.pm'};
+	}
+
+	# A file that cannot be opened says why, as a file that cannot be finished does.
+	{
+		require Errno;
+		my $enoent = do { local $! = Errno::ENOENT(); "$!" };
+		foreach my $name ( 'x.csv', 'x.tex', 'x.xlsx' ) {
+			my $f = "$dir/no/such/directory/$name";
+			throws_ok { write_table( [ { a => 1 } ], $f, quiet => 1 ) }
+				qr{^write_table: Could not open '\Q$f\E' for writing: \Q$enoent\E at },
+				"an unopenable $name says why";
+		}
+	}
+
+	# Tied rows and columns.  A tied hash or array hands back a proxy that has no
+	# value until its FETCH runs, and SvOK() does not run it, so every cell of a
+	# tied row or column was written empty.  Tie::IxHash, which keeps a hash's
+	# keys in order, is the usual way to meet this.
+	require Tie::Hash;
+	require Tie::Array;
+	my @plain_rows = ( { a => 1, b => 'x' }, { a => 2, b => 'y' } );
+	my @tied_rows = map { tie my %h, 'Tie::StdHash'; %h = %$_; \%h } @plain_rows;
+	my %plain_cols = ( a => [ 1, 2 ], b => [ 'x', 'y' ] );
+	my %tied_cols = map { tie my @c, 'Tie::StdArray'; @c = @{ $plain_cols{$_} }; ( $_ => \@c ) } keys %plain_cols;
+	tie my %tied_top, 'Tie::StdHash';
+	%tied_top = %plain_cols;
+	tie my @tied_list, 'Tie::StdArray';
+	@tied_list = @plain_rows;
+	my $expect = "a,b\n1,x\n2,y\n";
+	foreach my $c ( [ 'AoH of tied hashes', \@tied_rows ], [ 'HoA of tied arrays', \%tied_cols ],
+	                [ 'a tied HoA', \%tied_top ], [ 'a tied AoH', \@tied_list ] ) {
+		my ($what, $data) = @$c;
+		my $f = path();
+		write_table( $data, $f, quiet => 1 );
+		is( slurp($f), $expect, "tied data is written: $what" );
+		my $x = path('tied.xlsx');
+		write_table( $data, $x, quiet => 1 );
+		is_deeply( read_table($x, 'output.type' => 'aoh'), read_table($f, 'output.type' => 'aoh'), "tied data is written: $what, .xlsx" );
+	}
+	# A FETCH that dies is a croak like any other: the handle is closed and
+	# nothing leaks.
+	{
+		package DyingHash;
+		our @ISA = ('Tie::StdHash');
+		sub FETCH { die "FETCH failed\n" }
+	}
+	tie my %dying, 'DyingHash';
+	%dying = ( a => 1 );
+	throws_ok { write_table( [ { a => 0 }, \%dying ], path(), quiet => 1 ) } qr/^FETCH failed/,
+		'a dying FETCH propagates';
+	no_leaks_ok { eval { write_table( [ { a => 0 }, \%dying ], path(), quiet => 1 ) } }
+		'a dying FETCH leaks nothing' unless $INC{'Devel/Cover.pm'};
+
+	# A number is formatted without caching the text in the caller's SV.  SvPV()
+	# upgrades the SV it formats to carry a string buffer, and a numeric table
+	# came back from write_table about three times its size.
+	require B;
+	my @cells = ( 0.37, 12345, -1e300 );
+	my @before = map { ref B::svref_2object( \$_ ) } @cells;
+	write_table( { v => \@cells }, path(), quiet => 1 );
+	is_deeply( [ map { ref B::svref_2object( \$_ ) } @cells ], \@before, 'numeric cells are not upgraded by being written' );
+	wrote_ok( "v\n0.37\n12345\n-1e+300\n", 'numeric cells are written as perl formats them', { v => [ 0.37, 12345, -1e300 ] }, quiet => 1 );
+
+	# An array of arrays' row longer than its header: the header is widened
+	# with empty cells, where the extra cells used to be dropped without a word,
+	# and the long rows are warned about.  pandas pads DataFrame([[1, 2], [4, 5, 6]])
+	# the same way (tests/io/json/test_pandas.py, test_frame_from_json_missing_data).
+	my $f = path();
+	my $w = $capture->( sub { write_table( [ [qw(a b)], [ 1, 2, 3 ], [ 4, 5 ] ], $f, quiet => 1 ) } );
+	is( slurp($f), "a,b,\n1,2,3\n4,5,\n", 'AoA: a long row widens the header, and nothing is dropped' );
+	is( scalar @$w, 1, 'AoA: one warning for the long row, and none for the widened cells' );
+	like( $w->[0], qr/^write_table: 1 data row of '\Q$f\E' has more cells than the header's 2 \(the first is row 1, with 3\)/,
+		'AoA: the warning counts the long rows and gives the first' );
+	$f = path();
+	$w = $capture->( sub { write_table( [ [ 1, 2, 3 ], [ 4, 5, 6 ] ], $f, 'col.names' => [qw(a b)], quiet => 1 ) } );
+	is( slurp($f), "a,b,\n1,2,3\n4,5,6\n", 'AoA with col.names: a long row widens the header too' );
+	like( $w->[0], qr/^write_table: 2 data rows of '\Q$f\E' have more cells than the header's 2/, 'AoA with col.names: warned' );
+	$f = path();
+	$w = $capture->( sub { write_table( [ [ '', 'b' ], [ 1, 2, 3 ] ], $f, quiet => 1 ) } );
+	is( scalar @$w, 2, 'AoA: a long row and an unnamed column are two warnings' );
+	like( $w->[0], qr/1 column of '\Q$f\E' has no name in the header \(the first is column 1\)/,
+		'AoA: the unnamed-column warning counts only the columns the data named' );
+
+	# A HoA's row count comes from the columns written.  col.names leaving out a
+	# longer array used to add rows of nothing but separators.
+	wrote_ok( "a,b\n1,3\n2,4\n", 'HoA: rows run out with the columns written, not with every array',
+		{ a => [ 1, 2 ], b => [ 3, 4 ], c => [ 1 .. 6 ] }, 'col.names' => [qw(a b)], quiet => 1 );
+	wrote_ok( "c,a\n1,1\n2,2\n3,\n", 'HoA: the label column counts toward the rows',
+		{ a => [ 1, 2 ], c => [ 1, 2, 3 ] }, 'col.names' => ['a'], 'row.names' => 'c', quiet => 1 );
+
+	# A HoA col.names naming no column is refused before the file is opened,
+	# so an existing file of that name survives.  It used to be emptied first.
+	$f = path();
+	open my $keep, '>', $f or die "cannot write $f: $!";
+	print {$keep} "precious\n";
+	close $keep;
+	throws_ok { write_table( { a => [1] }, $f, 'col.names' => [] ) } qr/Could not get headers/,
+		'HoA: an empty col.names still croaks';
+	is( slurp($f), "precious\n", 'HoA: an empty col.names leaves an existing file intact' );
+	throws_ok { write_table( { a => [1] }, $f, 'col.names' => [undef] ) } qr/Could not get headers/,
+		'HoA: a col.names of nothing but undef croaks the same way';
+
+	# A cell holding a NUL is written whole, raw and unquoted -- what CPython
+	# 3.14.2's csv.writer and pandas 3.0.4's to_csv() both write (run, not pinned
+	# by either suite).  It used to be cut at the NUL.
+	wrote_ok( "a,b\nx\0y,2\n", 'a NUL in a cell is written whole', [ { a => "x\0y", b => 2 } ], quiet => 1 );
+	wrote_ok( "a\0b\n1\n", 'a NUL in a header is written whole', [ { "a\0b" => 1 } ], quiet => 1 );
+	wrote_ok( "a\nNA\0NA\n", 'a NUL in undef.val is written whole', [ { a => undef } ], 'undef.val' => "NA\0NA", quiet => 1 );
+
+	# A LaTeX table with no columns is "Missing # inserted in alignment
+	# preamble" to LaTeX.  It is refused before the file is opened.
+	$f = path('none.tex');
+	open $keep, '>', $f or die "cannot write $f: $!";
+	print {$keep} "precious\n";
+	close $keep;
+	throws_ok { write_table( [], $f, quiet => 1 ) } qr/^write_table: '\Q$f\E' would be a LaTeX table with no columns/,
+		'LaTeX: a table with no columns croaks';
+	is( slurp($f), "precious\n", 'LaTeX: and leaves an existing file intact' );
+	throws_ok { write_table( [ [] ], path('none2.tex'), quiet => 1 ) } qr/no columns/,
+		'LaTeX: an AoA whose header row is empty croaks too';
+}
 done_testing();

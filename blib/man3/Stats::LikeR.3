@@ -58,7 +58,7 @@
 .\" ========================================================================
 .\"
 .IX Title "Stats::LikeR 3"
-.TH Stats::LikeR 3 2026-09-28 "perl v5.44.0" "User Contributed Perl Documentation"
+.TH Stats::LikeR 3 2026-09-29 "perl v5.44.0" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -7763,21 +7763,27 @@ with zero differences, \fBV\fR itself changes. The exact test ranks \f(CW\*(C`|x
 .PP
 The exact table is refused rather than attempted if it would need more than 16 million cells, with a message suggesting \f(CW\*(C`exact => 0\*(C'\fR. This is only reachable by forcing \f(CW\*(C`exact => 1\*(C'\fR on samples far larger than the automatic threshold.
 .PP
+The exact confidence interval on tied data is found as R finds it, by trying the shift between each pair of neighbouring pairwise differences, up to \f(CW\*(C`m * n\*(C'\fR of them, each with its own conditional distribution. That distribution depends only on the ranks, so it is rebuilt only when a shift changes them. Two samples of 49 five\-point scores, which take the exact path by default, get their interval in about 0.03 seconds; R 4.6.1 takes 10.
+.PP
 \fINotes and edge cases\fR
 .IX Subsection "Notes and edge cases"
 .PP
-Missing data is handled by listwise removal of non\-numeric, undefined and \f(CW\*(C`NaN\*(C'\fR cells before ranking; in the paired case a pair is dropped if either member is missing or if the difference is not a number. An empty \f(CW\*(C`x\*(C'\fR (or a \f(CW\*(C`y\*(C'\fR that is present but empty) after this filtering is fatal. All\-zero differences are not: \f(CW\*(C`wilcox_test([0, 0, 0, 0, 0])\*(C'\fR returns \f(CW\*(C`V = 0\*(C'\fR, \f(CW\*(C`p = 1\*(C'\fR, which is what the permutation distribution over an empty set of sign flips says.
+Missing data is handled by listwise removal of non\-numeric, undefined and \f(CW\*(C`NaN\*(C'\fR cells before ranking; in the paired case a pair is dropped if either member is missing or if the difference is not a number. An empty \f(CW\*(C`x\*(C'\fR (or a \f(CW\*(C`y\*(C'\fR that is present but empty) after this filtering is fatal. All\-zero differences are not: \f(CW\*(C`wilcox_test([0, 0, 0, 0, 0])\*(C'\fR returns \f(CW\*(C`V = 0\*(C'\fR, \f(CW\*(C`p = 1\*(C'\fR, which is what the permutation distribution over an empty set of sign flips says. A tied array is read like any other, one \f(CW\*(C`FETCH\*(C'\fR per element.
+.PP
+\&\f(CW\*(C`Inf\*(C'\fR and \f(CW\*(C`\-Inf\*(C'\fR are values, not missing data, and a rank test has no trouble with them. In a confidence interval, a difference of two infinities of the same sign (\f(CW\*(C`Inf \- Inf\*(C'\fR) is \f(CW\*(C`NaN\*(C'\fR, and it is left out of the differences (or Walsh averages) the estimate and the interval are read from, just as R\*(Aqs \f(CWsort()\fR leaves it out.
 .PP
 Ties are detected during ranking and trigger the tie\-corrected variance in the normal approximation. When \f(CW\*(C`exact\*(C'\fR is left on auto, the size thresholds (\f(CW\*(C`< 50\*(C'\fR per group, or \f(CW\*(C`< 50\*(C'\fR observations) are the only thing gating the exact vs. approximate decision.
 .PP
 \fIDifferences from R\fR
 .IX Subsection "Differences from R"
 .PP
-Two, both deliberate:
+Three, all deliberate:
 .IP \(bu 4
 \&\fR\f(CB\*(C`correct\*(C'\fR\fB is a boolean here.\fR R 4.6.0 turned its \f(CW\*(C`correct\*(C'\fR into an integer \f(CW\*(C`0:3\*(C'\fR, in which numeric \f(CW0\fR still applies the continuity correction and only \f(CW\*(C`FALSE\*(C'\fR removes it. Keeping that would mean \f(CW\*(C`correct => 0\*(C'\fR no longer meaning "off", which is what it means for every other flag in this module. So \f(CW\*(C`correct\*(C'\fR stays a boolean and the Edgeworth terms live under \f(CW\*(C`edgeworth\*(C'\fR: R\*(Aqs \f(CW\*(C`correct = k\*(C'\fR for \f(CW\*(C`k\*(C'\fR in \f(CW\*(C`1, 2, 3\*(C'\fR is \f(CW\*(C`correct => 1, edgeworth => k\*(C'\fR here, and R\*(Aqs \f(CW\*(C`correct = 0\*(C'\fR is \f(CW\*(C`correct => 1\*(C'\fR.
 .IP \(bu 4
 \&\fBA zero variance is reported, not propagated.\fR With \f(CW\*(C`exact => 0\*(C'\fR and every observation tied there is nothing to divide by; R divides anyway and returns \f(CW\*(C`NaN\*(C'\fR for the p\-value, and its two\-sample confidence interval then dies inside \f(CW\*(C`uniroot\*(C'\fR with \fImissing value where TRUE/FALSE needed\fR. This warns instead, and returns \f(CW\*(C`p = 1\*(C'\fR and a \f(CW\*(C`NaN\*(C'\fR interval at level \f(CW0\fR — which is what R\*(Aqs own one\-sample code does. The default path no longer reaches any of this, since the exact test handles all\-tied data.
+.IP \(bu 4
+\&\fBInfinite observations get an answer or a reason, never an error.\fR The asymptotic interval has no finite bracket to search when an observation is infinite. R\*(Aqs two\-sample code dies in \f(CW\*(C`uniroot\*(C'\fR with \fIinvalid \*(Aqxmin\*(Aq value\fR, and its one\-sample code returns a \f(CW\*(C`NaN\*(C'\fR interval at level \f(CW0\fR. Both give that \f(CW\*(C`NaN\*(C'\fR interval here, with a warning. The exact one\-sample interval on data holding both \f(CW\*(C`Inf\*(C'\fR and \f(CW\*(C`\-Inf\*(C'\fR stops R with \fImissing value where TRUE/FALSE needed\fR; here it is computed, ranking the \f(CW\*(C`NaN\*(C'\fR those make last, as R\*(Aqs \f(CWrank()\fR does.
 .PP
 Everything else is checked against R\*(Aqs and SciPy\*(Aqs own test suites in \f(CW\*(C`t/wilcox_test.R.scipy.t\*(C'\fR.
 .SS write_table
@@ -7795,13 +7801,15 @@ mimics R\*(Aqs \f(CW\*(C`write.table\*(C'\fR, with data as first argument to sub
 \& write_table([[\*(AqTP53\*(Aq, 0.9], [\*(AqBRCA1\*(Aq, 0.7]], $tmp_file, \*(Aqcol.names\*(Aq => [qw(gene score)]);
 .Ve
 .PP
+A data row longer than the header is not cut short: the header is widened with empty cells over the extra columns, the shape pandas gives \f(CW\*(C`DataFrame([[1, 2], [4, 5, 6]])\*(C'\fR, and \f(CW\*(C`write_table\*(C'\fR warns, naming the first long row.
+.PP
 You can also precisely filter and reorder which columns are written by passing an array reference to \f(CW\*(C`col.names\*(C'\fR:
 .PP
 .Vb 1
 \& write_table(\e@data, $tmp_file, sep => "\et", \*(Aqcol.names\*(Aq => [\*(Aqc\*(Aq, \*(Aqa\*(Aq]);
 .Ve
 .PP
-undefined variables are printed as \f(CW\*(C`NA\*(C'\fR by default, but can be set as you wish using \f(CW\*(C`undef.val\*(C'\fR
+undefined values are written as empty fields by default, but can be set as you wish using \f(CW\*(C`undef.val\*(C'\fR
 .PP
 .Vb 1
 \& write_table(\e%data_hoa, \*(Aq/tmp/undef.val.tsv\*(Aq, sep => "\et", \*(Aqundef.val\*(Aq => \*(Aqnan\*(Aq)
@@ -7815,6 +7823,18 @@ A hash of hashes keeps its outer keys as a leading column by default, since that
 .Ve
 .PP
 Leaving that column unnamed writes an empty first header cell, and every reader then has to invent a name for it (\f(CW\*(C`read_table\*(C'\fR calls it \f(CW\*(C`row_name\*(C'\fR, pandas \f(CW\*(C`Unnamed: 0\*(C'\fR). \f(CW\*(C`write_table\*(C'\fR therefore warns and suggests \f(CW\*(C`row.names\*(C'\fR. It also warns when any data column has an empty name, whatever the shape. The empty label cell that \f(CW\*(C`row.names => 1\*(C'\fR writes for the other shapes is R\*(Aqs own layout, and nothing can name it, so that one is not warned about.
+.PP
+For a hash of arrays or an array of hashes, \f(CW\*(C`row.names => \*(Aqcol\*(Aq\*(C'\fR takes the labels from column \f(CW\*(C`col\*(C'\fR and heads the label column \f(CW\*(C`col\*(C'\fR, as pandas heads an index with its name:
+.PP
+.Vb 1
+\& write_table(\e%hoa, \*(Aqout.csv\*(Aq, \*(Aqrow.names\*(Aq => \*(Aqgene\*(Aq);   # gene,score / TP53,0.9 / ...
+.Ve
+.PP
+A hash of arrays has as many rows as the longest of the arrays it writes; an array that \f(CW\*(C`col.names\*(C'\fR leaves out does not add rows.
+.PP
+An empty \f(CW\*(C`{}\*(C'\fR or \f(CW\*(C`[]\*(C'\fR is a table with no rows, and is written as one: the header \f(CW\*(C`col.names\*(C'\fR and \f(CW\*(C`row.names\*(C'\fR give, if any, and otherwise a single empty record. \f(CW\*(C`write_table([], \*(Aqout.csv\*(Aq, \*(Aqcol.names\*(Aq => [\*(AqA\*(Aq], \*(Aqrow.names\*(Aq => 1)\*(C'\fR writes \f(CW\*(C`,A\*(C'\fR, as pandas writes \f(CW\*(C`DataFrame({"A": []}).to_csv()\*(C'\fR.
+.PP
+Every cell of delimited output is written whole, including one holding a NUL byte, and a cell of a tied hash or array (such as \f(CW\*(C`Tie::IxHash\*(C'\fR) is read through its \f(CW\*(C`FETCH\*(C'\fR. A number is formatted the way perl formats it, but in a copy, so writing a table does not add a string buffer to every numeric scalar in it.
 .PP
 \&\f(CW\*(C`write_table\*(C'\fR determines comma and tab\-separated delimiters from the filename, but will override if \f(CW\*(C`sep\*(C'\fR or \f(CW\*(C`delim\*(C'\fR are explicitly set.
 Args can also be accepted:
@@ -7846,8 +7866,7 @@ makes the same bytes.
 .IP \(bu 4
 \&\fBA write that fails partway leaves a truncated file\fR, which
 \&\f(CW\*(C`read_table\*(C'\fR refuses, never one that looks whole. A
-compressed write also croaks if the disk fills or the file cannot be
-finished.
+compressed write also croaks if the file cannot be finished.
 .IP \(bu 4
 \&\fBOnly delimited text is compressed.\fR A name such as \f(CW\*(C`table.tex.gz\*(C'\fR or
 \&\f(CW\*(C`book.xlsx.bz2\*(C'\fR, or \f(CW\*(C`tex\*(C'\fR/\f(CW\*(C`xlsx\*(C'\fR with a compressed name, is an error.
@@ -7865,7 +7884,7 @@ Every successful write prints one line to standard output naming the file, with 
 \& wrote output.tsv
 .Ve
 .PP
-This is \f(CW\*(C`say \*(Aqwrote \*(Aq . colored([\*(Aqblack on_cyan\*(Aq], $file)\*(C'\fR, but the SGR codes (\f(CW\*(C`\ee[30;46m\*(C'\fR … \f(CW\*(C`\ee[0m\*(C'\fR) are written out inline, so the module takes no dependency on \f(CW\*(C`Term::ANSIColor\*(C'\fR. Every format announces itself the same way — delimited, LaTeX and \f(CW\*(C`.xlsx\*(C'\fR alike — so you always learn where a table went, in the same shape whatever you asked for. Nothing is printed when nothing is written: an empty data frame returns before a file is opened, and a write that cannot open its file croaks instead.
+This is \f(CW\*(C`say \*(Aqwrote \*(Aq . colored([\*(Aqblack on_cyan\*(Aq], $file)\*(C'\fR, but the SGR codes (\f(CW\*(C`\ee[30;46m\*(C'\fR … \f(CW\*(C`\ee[0m\*(C'\fR) are written out inline, so the module takes no dependency on \f(CW\*(C`Term::ANSIColor\*(C'\fR. Every format announces itself the same way — delimited, LaTeX and \f(CW\*(C`.xlsx\*(C'\fR alike — so you always learn where a table went, in the same shape whatever you asked for. Nothing is printed when nothing is written: a write that cannot open its file, or that loses data on the way to it, croaks instead. That includes a full disk, which a buffered write only discovers at the close; every format checks for it, as R\*(Aqs \f(CW\*(C`write.table\*(C'\fR does. The message gives the system\*(Aqs reason, so a full disk reads \f(CW\*(C`write_table: could not finish writing \*(Aqout.csv\*(Aq: No space left on device\*(C'\fR, and a quota or an I/O error says so instead; \f(CW$!\fR is left set to it. A file that cannot be opened gives its reason the same way (\f(CW\*(C`Permission denied\*(C'\fR, \f(CW\*(C`No such file or directory\*(C'\fR). An empty data frame is written, and so announced.
 .PP
 The colour is unconditional; it is not suppressed when standard output is a pipe or a file. Pass \f(CW\*(C`quiet => 1\*(C'\fR to suppress the line altogether, which is what a script writing to a pipe or a data file usually wants:
 .PP
@@ -7885,7 +7904,7 @@ The colour is unconditional; it is not suppressed when standard output is a pipe
 \& write_table(\e@data_aoh, $tmp_file, \*(Aqtex\*(Aq => 1);  # force LaTeX for any name
 .Ve
 .PP
-The file begins with a \f(CW\*(C`%written by <cwd>/<script>\*(C'\fR provenance comment (the working directory and script name). The header row is bold and the table is ruled with \f(CW\*(C`\ehline\*(C'\fR. As with every other format, \f(CW\*(C`row.names\*(C'\fR is \fBoff\fR unless you ask for it, except for a HoH: pass \f(CW\*(C`row.names => 1\*(C'\fR to prepend a label column of 1\-based indices. A HoH writes its outer keys as that column by default, and \f(CW\*(C`row.names => 0\*(C'\fR drops them. Cell text is LaTeX\-escaped: \f(CW\*(C`#\*(C'\fR, \f(CW\*(C`_\*(C'\fR, \f(CW\*(C`%\*(C'\fR, and \f(CW\*(C`&\*(C'\fR are backslash\-escaped, \f(CW\*(C`>\*(C'\fR becomes \f(CW\*(C`\etextgreater{}\*(C'\fR, and a cell consisting solely of \f(CW\*(C`\eincludesvg{...svg}\*(C'\fR is passed through untouched. The \f(CW\*(C`tex.*\*(C'\fR options tune the output:
+The file begins with a \f(CW\*(C`%written by <cwd>/<script>\*(C'\fR provenance comment (the working directory and script name). The header row is bold and the table is ruled with \f(CW\*(C`\ehline\*(C'\fR. As with every other format, \f(CW\*(C`row.names\*(C'\fR is \fBoff\fR unless you ask for it, except for a HoH: pass \f(CW\*(C`row.names => 1\*(C'\fR to prepend a label column of 1\-based indices. A HoH writes its outer keys as that column by default, and \f(CW\*(C`row.names => 0\*(C'\fR drops them. Cell text is LaTeX\-escaped: \f(CW\*(C`#\*(C'\fR, \f(CW\*(C`_\*(C'\fR, \f(CW\*(C`%\*(C'\fR, and \f(CW\*(C`&\*(C'\fR are backslash\-escaped, \f(CW\*(C`>\*(C'\fR becomes \f(CW\*(C`\etextgreater{}\*(C'\fR, and a cell consisting solely of \f(CW\*(C`\eincludesvg{...svg}\*(C'\fR is passed through untouched. A table with no columns at all is an error, since LaTeX rejects one, and it is refused before the file is opened. The \f(CW\*(C`tex.*\*(C'\fR options tune the output:
 .PP
 .Vb 7
 \& write_table(\e@rows, \*(Aqtable.tex\*(Aq,
@@ -7968,14 +7987,25 @@ writer, so it works for every shape above:
 .PP
 A numeric\-looking cell is written as a number; every other non\-empty cell as an
 inline string (\f(CW\*(C`undef\*(C'\fR/empty cells are omitted). The result reads straight back
-with \f(CW\*(C`read_table\*(C'\fR.
+with \f(CW\*(C`read_table\*(C'\fR. XML cannot hold a NUL or most other control
+characters, so those are dropped from a cell\*(Aqs text.
+.PP
+The worksheet is streamed to the file as the rows are formatted, so writing a
+workbook takes little memory beyond the data itself: a 200000 x 20 array of
+hashes needs 30 MB for a 308 MB workbook, where it used to need 1.1 GB. Like
+delimited output, a write that croaks partway (a nested reference in a late row,
+say) leaves a truncated file behind. A file that cannot seek, such as a pipe,
+still works; its worksheet is gathered in memory first. A workbook larger than
+4 GB, the most a ZIP archive holds without ZIP64, is refused.
 .PP
 Mirroring \f(CW\*(C`Excel::Writer::XLSX\*(C'\fR\*(Aqs
 \&\f(CW\*(C`$workbook\->set_properties(comments => comments())\*(C'\fR, the same
 \&\f(CW\*(C`written by <cwd>/<script>\*(C'\fR provenance line the LaTeX writer emits is stored in
 the workbook\*(Aqs document \fBcomments\fR property (\f(CW\*(C`dc:description\*(C'\fR in
 \&\f(CW\*(C`docProps/core.xml\*(C'\fR); a \f(CW\*(C`xlsx.comment\*(C'\fR string (or array ref of strings) is
-appended after it. \f(CW\*(C`xlsx.sheet\*(C'\fR sets the worksheet name (default \f(CW\*(C`Sheet1\*(C'\fR):
+appended after it. \f(CW\*(C`xlsx.sheet\*(C'\fR sets the worksheet name (default \f(CW\*(C`Sheet1\*(C'\fR). As
+in openpyxl, a name that is empty or holds any of \f(CW\*(C`\e * ? : / [ ]\*(C'\fR is an error, and
+one longer than 31 characters draws a warning, since Excel cannot read it:
 .PP
 .Vb 4
 \& write_table(\e@rows, \*(Aqreport.xlsx\*(Aq,
@@ -8074,3 +8104,6 @@ Verified against R 4.6.1 (\f(CW\*(C`oneway.test\*(C'\fR, \f(CW\*(C`anova(aov())\
 .SH "COPYRIGHT AND LICENSE"
 .IX Header "COPYRIGHT AND LICENSE"
 This software is free.  It is licensed under the same terms as Perl itself
+.SH Thanks
+.IX Header "Thanks"
+A lot of this work used Claude AI, which was paid for by the University of Idaho\*(Aqs IMCI

@@ -9,13 +9,6 @@ use Devel::Confess 'color';
 use Stats::LikeR;
 use Time::HiRes;
 
-#my $titanic = read_table('titanic.csv');
-#write_table(
-#	$titanic,
-#	'titanic.more.complete.xlsx',
-#	'xlsx.freeze.rows' => 1
-#);
-
 my $t0 = Time::HiRes::time();
 my $tmp = read_table('Affinity Dataset(main).xlsx');
 my $t1 = Time::HiRes::time();
