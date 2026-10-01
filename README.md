@@ -2578,11 +2578,11 @@ Return a new data frame with the named columns removed and the rest kept —
 `select_cols`.
 
     my $hoa = { a => [1,4], b => [2,5], c => [3,6] };
-    drop_cols($hoa, 'b');
+    $aoa = drop_cols($hoa, 'b');
     # { a => [1,4], c => [3,6] }
 
     my $aoa = [ [1,2,3], [4,5,6] ];
-    drop_cols($aoa, 1);          # result is re-indexed 0,1
+    $aoa = drop_cols($aoa, 1); # result is re-indexed 0,1
     # [ [1,3], [4,6] ]
 
 Unlike `select_cols`, `drop_cols` touches only the keys a row actually has,
