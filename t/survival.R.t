@@ -41,7 +41,11 @@
 #   * std.err is the standard error of S, R's std.err * surv, as in
 #     t/survival.t.
 #
-# Tolerance.  TOLERANCE_PLACEHOLDER
+# Tolerance.  1e-12 relative (absolute below 1) on every real-valued field;
+# the counts and the df are compared exactly.  Worst observed, on 2026-10-01
+# with AUTHOR_TESTING=1, which reports it: 1.05e-15 on the double build and
+# 8.66e-16 on long double and quadmath, where what is left is R's own double
+# rounding.  That is about 1000x headroom.
 
 require 5.010;
 use strict;
