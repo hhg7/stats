@@ -2989,6 +2989,39 @@ sub _sniff_compression {
 	return '';
 }
 
+# True when $file's lines end in a bare CR, as classic Mac OS wrote them.
+# R's scan() and pandas' C tokenizer both take a lone CR as a line end (R
+# 4.6.1 tests/reg-tests-1a.R, PR#2469; pandas 3.0.4
+# tests/io/parser/test_textreader.py, test_cr_delimited); _parse_csv_file()
+# reads LF and CRLF only, and handed such a file back as one long header.
+#
+# The file is taken for one only when what is read of it holds a CR and no LF
+# at all, so an LF or CRLF file with a stray CR in its first line still reads
+# as it always has. A CR that ends the block may be the first half of a CRLF,
+# so the block is extended past it. 64 KB is one read; reading stops at 1 MB,
+# which bounds the cost for a file with no line end in its first megabyte, and
+# reads that one as LF, as it was read before.
+sub _eol_is_cr {
+	my ($file, $codec) = @_;
+	# not on a compressed handle: it is opened :raw already, and a bare binmode
+	# is :raw, which can pop the via layer that is doing the decompressing
+	my $fh = $codec ? _open_decompressed($file, $codec) : _open_read($file);
+	binmode $fh unless $codec;
+	my $buf = '';
+	my $eof = 0;
+	while (length $buf < 1 << 20) {
+		my $got = read $fh, $buf, 1 << 16, length $buf;
+		if (!$got) { $eof = 1; last }
+		last if index($buf, "\n") >= 0;
+		last if index($buf, "\r") >= 0 && substr($buf, -1) ne "\r";
+	}
+	_close($fh);
+	return 0 if index($buf, "\n") >= 0;
+	return 0 if index($buf, "\r") < 0;
+	return 1 if $eof || substr($buf, -1) ne "\r";
+	return 0;	# 1 MB ending in a CR whose partner was not read: as before
+}
+
 # An input handle on the decompressed text of $file, streamed through the
 # PerlIO::via layer below, so a multi-gigabyte .tsv.gz is inflated a buffer
 # at a time as the parser reads it rather than into memory first. Both halves
@@ -3045,12 +3078,21 @@ sub read_table {
 
 	my $is_xlsx = $file =~ /\.xlsx\z/i;
 	my $codec   = $is_xlsx ? '' : _sniff_compression($file);
+	my $cr_eol  = $is_xlsx ? 0  : _eol_is_cr($file, $codec);	# lines end in a bare CR
+	my $eol     = $cr_eol ? "\r" : "\n";
 	# The extension only picks the default sep, and a compressed file's is
 	# that of the text inside it: x.tsv.gz is tab-separated.
 	(my $sep_name = $file) =~ s/\.(?:gz|bgz|bz2)\z//i if $codec;
-	my $default_sep = ($codec ? $sep_name : $file) =~ /\.tsv$/i ? "\t" : ',';
+	$sep_name = $file unless $codec;
+	# A VCF (VCF 4.2/4.3 spec, section 1: "##" meta-information lines, then
+	# one "#CHROM POS ID REF ALT QUAL FILTER INFO [FORMAT sample...]" header
+	# line, then tab-separated data) is read with its own defaults: sep is a
+	# tab, the comment marker is "##" so that only the meta lines are
+	# comments, and the "#" in front of CHROM comes off (see $finalize_header).
+	my $is_vcf = $sep_name =~ /\.vcf\z/i;
+	my $default_sep = $is_vcf || $sep_name =~ /\.tsv\z/i ? "\t" : ',';
 	my %args = (
-		sep => $default_sep, comment => '#', %input_args,
+		sep => $default_sep, comment => $is_vcf ? '##' : '#', %input_args,
 	);
 
 	my %allowed_args = map { $_ => 1 } (
@@ -3205,6 +3247,9 @@ sub read_table {
 	my (@data, %data, @header, @uniq_header, @hoa_cols,
 	    %mapped_filters, @sorted_filter_flds, %seen_rownames);
 	my ($data_row, $header_seen, $header_done, $provisional_hdr) = (0, 0, 0, 0);
+	# hoh: rows whose name an earlier row already had, and the first of them as
+	# [name, data row]. Counted and warned about once, after the parse.
+	my ($n_dup_rn, $first_dup_rn) = (0, undef);
 
 # Once the header is fixed there is nothing left for the row closure below to
 # decide, so the parser is given a plan and builds the rest of the table
@@ -3262,6 +3307,13 @@ sub read_table {
 	# it can run either right after the header line (strict mode) or deferred
 	# to the first data row (auto.row.names mode, once the width is known).
 	my $finalize_header = sub {
+		# A VCF header line is "#CHROM\tPOS...": under the default "##" marker it
+		# is not a comment, so it arrives with its "#" on. Read with
+		# comment => '#' instead, the marker is already off and this is a no-op.
+		# Its first column, not $header[0], since auto.row.names may have put a
+		# row-names column in front of it.
+		$header[$auto_rn_added] =~ s/\A#//
+			if $is_vcf && $want_header && defined $header[$auto_rn_added];
 		# R's read.table: 'col.names' replaces a header's names, and a header
 		# of another length is warned about ("header and 'col.names' are of
 		# different lengths") and then the names are used all the same.
@@ -3349,22 +3401,24 @@ sub read_table {
 	# be mistaken for the header. Recover it: read the first physical line, and
 	# if it is marker + whitespace and splits into >=2 fields, hold it as a
 	# CANDIDATE header. It is confirmed (in the callback) only if its field
-	# count matches the first data row; otherwise it was an ordinary leading
-	# comment and is discarded. A marker hugging its text ("#id,val") is
-	# delivered by the parser and un-commented in the callback as usual, so it
-	# never reaches this branch.
+	# count matches the first line the parser delivers and that line looks
+	# like data rather than a header (see $is_data below); otherwise it was an
+	# ordinary leading comment and is discarded. A marker hugging its text ("#id,val") is
+	# delivered by the parser and held as a candidate in the same way by the
+	# callback, so it never reaches this branch.
 	if ($want_header && !$is_xlsx && length( $args{comment} // '' )
 			&& length( $args{sep} // '' )) {
 		# $/ is the caller's, and under a `local $/;` this read the whole
-		# file; _parse_csv_file() splits on "\n" whatever $/ is, and so does
-		# this. A UTF-8 byte-order mark is dropped here as the parser drops it.
+		# file; _parse_csv_file() splits on "\n" (or "\r", see _eol_is_cr)
+		# whatever $/ is, and so does this. A UTF-8 byte-order mark is dropped
+		# here as the parser drops it.
 		my $fh    = $codec ? _open_decompressed($file, $codec)
 		                   : _open_read($file);
-		my $first = do { local $/ = "\n"; <$fh> };
+		my $first = do { local $/ = $eol; <$fh> };
 		_close($fh);
 		$first =~ s/\A\xEF\xBB\xBF// if defined $first;
 		if (defined $first && $first =~ /^\Q$args{comment}\E\s/) {
-			$first =~ s/\r?\n\z//;
+			if ($cr_eol) { $first =~ s/\r\z// } else { $first =~ s/\r?\n\z// }
 			my @cols;
 			if ($sep_re) {
 				# The marker and the blanks after it come off before the cut,
@@ -3407,12 +3461,29 @@ sub read_table {
 			@header = $col_names ? @$col_names : map { "V$_" } 1 .. @$line_ref;
 			$header_seen = 1;
 		}
+		# A line whose marker hugs its text ("#id,val") is not dropped by the
+		# parser, since it may be a commented-out header. It is held as a
+		# CANDIDATE, as the "# id,val" form read above is, and a later one
+		# replaces it, so in a run of them it is the last -- the one next to
+		# the data -- that is tried. Up to 0.3213 the first was taken for the
+		# header on the spot, so a VCF's 140 "##" meta lines became one
+		# column called "fileformat=VCFv4.2" and the "#CHROM" line an
+		# alignment error. Only while no real header has been taken: after
+		# that, such a line is data, as it has always been.
+		if ((!$header_seen || $provisional_hdr) && length( $args{comment} // '' )
+				&& @$line_ref && defined $line_ref->[0]
+				&& index($line_ref->[0], $args{comment}) == 0) {
+			@header = @$line_ref;
+			$header[0] =~ s/^\Q$args{comment}\E\s*//;
+			$header_seen     = 1;
+			$provisional_hdr = 1;	# confirm against the first data row
+			return;
+		}
+
 		if (!$header_seen) {
-			# HEADER CAPTURE (copy made only here; runs once)
-			my @line = @$line_ref;
-			$line[0] =~ s/^\Q$args{comment}\E\s*//
-				if @line && defined $line[0] && length( $args{comment} // '' );
-			@header      = @line;
+			# HEADER CAPTURE (copy made only here; runs once). A commented
+			# line never gets here: it was taken as a candidate just above.
+			@header      = @$line_ref;
 			$header_seen = 1;
 			unless ($want_auto_rn) {	# strict: finalize immediately
 				$finalize_header->();
@@ -3432,12 +3503,23 @@ sub read_table {
 				# Under auto.row.names a header one field short of the data is
 				# the shape being looked for, not a mismatch; refusing it here
 				# made the first data row the header (0.320 and before).
-				if (@$line_ref != @header
-						&& !($want_auto_rn && @$line_ref == @header + 1)) {
+				my $one_short = $want_auto_rn && @$line_ref == @header + 1;
+				# The same width is not enough on its own. "# written by foo,
+				# v2" before "id,val" has two fields too, and up to 0.3213 that
+				# comment became the header and "id,val" the first data row,
+				# without a word. A row the same width is taken for data only
+				# when one of its fields is a number or an na.strings token, or
+				# every field is empty, which no header is; otherwise it is the
+				# file's own header, as R and pandas read it, and the comment
+				# is a comment.
+				my $is_data = (!grep { defined && length } @$line_ref)
+					|| grep {
+						defined && length
+						&& (looks_like_number($_) || ($has_na && $na_string{$_}))
+					} @$line_ref;
+				if (!$one_short && (@$line_ref != @header || !$is_data)) {
+					# not commented: a commented line is a candidate above
 					@header = @$line_ref;
-					$header[0] =~ s/^\Q$args{comment}\E\s*//
-						if @header && defined $header[0]
-						&& length( $args{comment} // '' );
 					unless ($want_auto_rn) {
 						$finalize_header->();
 						$header_done = 1;
@@ -3445,8 +3527,9 @@ sub read_table {
 					}
 					return;	# this line WAS the header, not data
 				}
-				# widths match: accept the commented header, and let the
-				# auto.row.names / finalize logic below run on THIS data row.
+				# widths match and the row is data: accept the commented
+				# header, and let the auto.row.names / finalize logic below
+				# run on THIS data row.
 			}
 
 # First data row in auto.row.names mode: now the data width is
@@ -3516,8 +3599,10 @@ sub read_table {
 			die sprintf "read_table: undefined row name (column '%s') in %s data row %d\n",
 				$args{'row.names'}, $file, $data_row
 				unless defined $row_name;
-			warn "read_table: duplicate row name '$row_name' in $file (later values win)\n"
-				if $seen_rownames{$row_name}++;
+			if ($seen_rownames{$row_name}++) {
+				$n_dup_rn++;
+				$first_dup_rn ||= [ $row_name, $data_row ];
+			}
 			# made up front, so that a file whose only column is the row name
 			# still has its rows -- as empty hashes, the way R's read.table
 			# gives it a data frame of n rows and 0 columns -- rather than none
@@ -3537,8 +3622,24 @@ sub read_table {
 		_parse_csv_file($file, $sep_re ? '' : $args{sep} // '',
 			$args{comment} // '', $on_line, $plan, $quote,
 			$want_header ? 0 : 1, $sep_re,
-			$sep_re && _sep_re_is_ws($sep_re) ? 1 : 0, $fh);
+			$sep_re && _sep_re_is_ws($sep_re) ? 1 : 0, $fh, $cr_eol);
 		_close($fh) if $fh;
+	}
+	# A hoh's repeated row names, from this closure and from the fast path
+	# (S_plan_report() in LikeR.xs) together. One warning for the file: up to
+	# 0.3213 there was one per repeated row, 40,820 of them for a 300,000-row
+	# file. A single repeat keeps the words it has always had.
+	if ($plan && $plan->{dup_n}) {
+		$n_dup_rn += $plan->{dup_n};
+		$first_dup_rn ||= [ $plan->{dup_first}, $plan->{dup_row} ];
+	}
+	if ($n_dup_rn == 1) {
+		warn "read_table: duplicate row name '$first_dup_rn->[0]' in $file "
+		   . "(later values win)\n";
+	} elsif ($n_dup_rn) {
+		warn "read_table: $n_dup_rn rows of $file repeat an earlier row's name "
+		   . "(later values win); the first is '$first_dup_rn->[0]', on data "
+		   . "row $first_dup_rn->[1]\n";
 	}
 	# header-only files never hit a data row. A provisional (commented-out)
 	# header was never confirmed against a data row, but with no data to
@@ -14398,7 +14499,7 @@ minimal example:
 <tbody>
 <tr>
   <td><code>comment</code></td>
-  <td>Comment character, by default <code>#</code>; lines beginning with it are skipped</td>
+  <td>Comment marker, by default <code>#</code> (<code>##</code> for a VCF); lines beginning with it are skipped. It may be more than one character</td>
   <td><code>comment =&gt; '%'</code></td>
 </tr>
 <tr>
@@ -14495,14 +14596,22 @@ and, like Text::CSV_XS, filters can be applied in order to save RAM on big files
  );
 
 the default delimiter is C<,>
-Suffixes C<.csv> and C<.tsv> are automatically detected from file names, but if specified, are overridden by C<delim> and/or C<sep>. C<sep> is given priority.
+Suffixes C<.csv>, C<.tsv> and C<.vcf> are automatically detected from file names, but if specified, are overridden by C<delim> and/or C<sep>. C<sep> is given priority. A C<.vcf> also changes the default C<comment>; see L</"VCF files">.
 
 A UTF-8 byte-order mark at the start of a text file, which Excel's "CSV UTF-8"
 export writes, is dropped rather than read as part of the first column's name,
 as pandas' C<read_csv> drops it. Lines always end at a newline whatever C<$/> is
 set to, so a C<local $/;> in the calling code does not change what is read.
+Lines may end in LF or CRLF, and a file whose lines end in a bare CR, as
+classic Mac OS wrote them, is read as R and pandas read it. The start of the
+file is read 64 KB at a time, up to 1 MB, until a CR turns up; if no LF has by
+then, the file is split on CR. In any other file a lone CR outside quotes is
+dropped.
 With C<< 'output.type' =E<gt> 'hoh' >> a file whose only column is the row name gives
 one empty hash per row, as R's C<read.table> gives a data frame of zero columns.
+Rows that repeat an earlier row's name overwrite it, later values winning, and
+C<read_table> warns once for the file, with how many rows did it and the first
+of them.
 
 =head3 regular-expression separators
 
@@ -14516,7 +14625,7 @@ characters backslash, C<s> and plus. Pass a C<qr//> to split on a pattern instea
 Everything else reads as it does with a literal separator: quoted fields
 (a separator inside quotes is text, C<""> is one quote, a quoted field may run
 over lines), comments and commented-out headers, blank lines, a byte-order
-mark, CRLF line ends, C<filter>, C<row.names>, C<auto.row.names>, C<na.strings> and
+mark, CRLF and CR line ends, C<filter>, C<row.names>, C<auto.row.names>, C<na.strings> and
 all four output types. Details worth knowing:
 
 =over
@@ -14538,8 +14647,8 @@ backreference works: C<qr/(:)\1/> splits on C<::>.
 since it would cut between every character.
 
 =item * In a whitespace-delimited file, a comment line with as many words as the data
-has columns will be taken for a commented-out header, since that is how one
-is recognised; see I<commented-out headers> below.
+has columns can be taken for a commented-out header, since that is how one
+is recognised; see I<commented-out headers> below for when it is.
 
 =item * An C<.xlsx> file ignores C<sep> and C<quote>, whether a string or a pattern.
 
@@ -14644,6 +14753,41 @@ back through this.
 
 =back
 
+=head3 VCF files
+
+A file named C<.vcf>, C<.vcf.gz> or C<.vcf.bgz>, in any case, is read as a VCF
+with no options:
+
+ my $variants = read_table('calls.vcf.gz');
+ # [ { CHROM => '1', POS => '12065947', ID => 'PTV001', REF => 'C', ALT => 'T,A',
+ #     QUAL => '29', FILTER => 'PASS', INFO => '.', FORMAT => 'GT:GATK:AD:DP:GQ',
+ #     NA00001 => '0/1:0/1:3,2:5:19' }, ... ]
+
+That changes three things and nothing else:
+
+=over
+
+=item * C<sep> is a tab.
+
+=item * C<comment> is C<##>, so the C<##> meta-information lines are skipped and the
+C<#CHROM POS ID ...> line is the header.
+
+=item * The C<#> comes off C<#CHROM>, so the first column is C<CHROM>.
+
+=back
+
+Everything else is an ordinary C<read_table>. All four output types work, as do
+C<filter>, C<col.names> and C<< header =E<gt> 0 >> (which reads the C<#CHROM> line as the
+first data row, C<#> and all). Passing C<sep> or C<comment> overrides the VCF
+default, and C<< comment =E<gt> '#' >> reads the same table. A field is returned as its
+text: C<INFO>, C<FORMAT> and the sample columns are not split, and C<.> is not
+read as missing unless you pass C<< 'na.strings' =E<gt> '.' >>. Under any other name,
+such as C<.tsv> or C<.txt>, the file is not a VCF to C<read_table>. With
+C<< comment =E<gt> '##' >> the meta lines are still skipped, but the first column is
+C<#CHROM>.
+
+On a 3,499,678-record single-sample C<.vcf.gz>, an aoa takes 8.4 s.
+
 =head3 missing values (C<na.strings> / C<na_values> / C<undef.val>)
 
 An empty field is always read as C<undef>. Any I<other> text that a file uses to
@@ -14747,10 +14891,45 @@ A header that is itself commented out is detected and used automatically, so
  3c4d    20
 
 reads as though the header were C<PDB, score> (the comment marker and any
-following whitespace are stripped from the first column). A commented line is
-only taken as the header when its field count matches the data, so ordinary
-leading comments are never mistaken for one. You may name such a column in a
-C<filter> either as it appears in the file or by its clean name:
+following whitespace are stripped from the first column). A commented first
+line is only taken as the header when its field count matches the line after
+it, and that line looks like data: a number or an C<na.strings> token in one of
+its fields, or nothing but empty fields. So
+
+ # written by foo, v2
+ id,val
+ 1,2
+
+reads with the header C<id, val>, as R and pandas read it: the comment is as
+wide as the header, but C<id,val> has no number in it, so it is the header and
+the comment is a comment. The rule cannot tell a commented-out header over rows
+with no numbers in them from a comment, and reads the first of those rows as
+the header.
+
+When several comment lines come before the header, it is the last of them,
+the one next to the data, that is tried as the header, and the rest are
+comments:
+
+ #written by foo
+ #id,val
+ 1,2
+
+reads with the header C<id, val>. If the last one fails the test above, the
+line after the comments is the header, so R's own
+
+ #comment
+ #another
+ C1    C2    C3
+ "Panel"    "Area Examined"    "# Blemishes"
+
+reads with the header C<C1, C2, C3>, as C<read.table(header = TRUE)> reads it.
+Only lines before the header are looked at this way: a line starting with the
+comment marker I<after> the header, if the marker hugs its text (C<#3,4>), is a
+data row, while one with a blank after the marker (C<# note>) is a comment
+wherever it is.
+
+You may name a commented-out header's column in a C<filter> either
+as it appears in the file or by its clean name:
 
  read_table('ranks.tabular.tsv', filter => { '# PDB' => sub { $_ == 2 } });
 

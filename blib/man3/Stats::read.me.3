@@ -6145,14 +6145,22 @@ and, like Text::CSV_XS, filters can be applied in order to save RAM on big files
 .Ve
 .PP
 the default delimiter is \f(CW\*(C`,\*(C'\fR
-Suffixes \f(CW\*(C`.csv\*(C'\fR and \f(CW\*(C`.tsv\*(C'\fR are automatically detected from file names, but if specified, are overridden by \f(CW\*(C`delim\*(C'\fR and/or \f(CW\*(C`sep\*(C'\fR. \f(CW\*(C`sep\*(C'\fR is given priority.
+Suffixes \f(CW\*(C`.csv\*(C'\fR, \f(CW\*(C`.tsv\*(C'\fR and \f(CW\*(C`.vcf\*(C'\fR are automatically detected from file names, but if specified, are overridden by \f(CW\*(C`delim\*(C'\fR and/or \f(CW\*(C`sep\*(C'\fR. \f(CW\*(C`sep\*(C'\fR is given priority. A \f(CW\*(C`.vcf\*(C'\fR also changes the default \f(CW\*(C`comment\*(C'\fR; see "VCF files".
 .PP
 A UTF\-8 byte\-order mark at the start of a text file, which Excel\*(Aqs "CSV UTF\-8"
 export writes, is dropped rather than read as part of the first column\*(Aqs name,
 as pandas\*(Aq \f(CW\*(C`read_csv\*(C'\fR drops it. Lines always end at a newline whatever \f(CW$/\fR is
 set to, so a \f(CW\*(C`local $/;\*(C'\fR in the calling code does not change what is read.
+Lines may end in LF or CRLF, and a file whose lines end in a bare CR, as
+classic Mac OS wrote them, is read as R and pandas read it. The start of the
+file is read 64 KB at a time, up to 1 MB, until a CR turns up; if no LF has by
+then, the file is split on CR. In any other file a lone CR outside quotes is
+dropped.
 With \f(CW\*(Aqoutput.type\*(Aq => \*(Aqhoh\*(Aq\fR a file whose only column is the row name gives
 one empty hash per row, as R\*(Aqs \f(CW\*(C`read.table\*(C'\fR gives a data frame of zero columns.
+Rows that repeat an earlier row\*(Aqs name overwrite it, later values winning, and
+\&\f(CW\*(C`read_table\*(C'\fR warns once for the file, with how many rows did it and the first
+of them.
 .PP
 \fIregular\-expression separators\fR
 .IX Subsection "regular-expression separators"
@@ -6169,7 +6177,7 @@ characters backslash, \f(CW\*(C`s\*(C'\fR and plus. Pass a \f(CW\*(C`qr//\*(C'\f
 Everything else reads as it does with a literal separator: quoted fields
 (a separator inside quotes is text, \f(CW""\fR is one quote, a quoted field may run
 over lines), comments and commented\-out headers, blank lines, a byte\-order
-mark, CRLF line ends, \f(CW\*(C`filter\*(C'\fR, \f(CW\*(C`row.names\*(C'\fR, \f(CW\*(C`auto.row.names\*(C'\fR, \f(CW\*(C`na.strings\*(C'\fR and
+mark, CRLF and CR line ends, \f(CW\*(C`filter\*(C'\fR, \f(CW\*(C`row.names\*(C'\fR, \f(CW\*(C`auto.row.names\*(C'\fR, \f(CW\*(C`na.strings\*(C'\fR and
 all four output types. Details worth knowing:
 .IP \(bu 4
 \&\fR\f(CB\*(C`qr/\es+/\*(C'\fR\fB is whitespace\-delimited\fR, as \f(CW\*(C`sep=r"\es+"\*(C'\fR is in pandas and
@@ -6189,8 +6197,8 @@ A pattern that can match the empty string, such as \f(CW\*(C`qr/\es*/\*(C'\fR, i
 since it would cut between every character.
 .IP \(bu 4
 In a whitespace\-delimited file, a comment line with as many words as the data
-has columns will be taken for a commented\-out header, since that is how one
-is recognised; see \fIcommented\-out headers\fR below.
+has columns can be taken for a commented\-out header, since that is how one
+is recognised; see \fIcommented\-out headers\fR below for when it is.
 .IP \(bu 4
 An \f(CW\*(C`.xlsx\*(C'\fR file ignores \f(CW\*(C`sep\*(C'\fR and \f(CW\*(C`quote\*(C'\fR, whether a string or a pattern.
 .IP \(bu 4
@@ -6293,6 +6301,40 @@ which is a zip archive, is).
 \&\f(CW\*(C`write_table\*(C'\fR writes \f(CW\*(C`.gz\*(C'\fR and \f(CW\*(C`.bz2\*(C'\fR files that read
 back through this.
 .PP
+\fIVCF files\fR
+.IX Subsection "VCF files"
+.PP
+A file named \f(CW\*(C`.vcf\*(C'\fR, \f(CW\*(C`.vcf.gz\*(C'\fR or \f(CW\*(C`.vcf.bgz\*(C'\fR, in any case, is read as a VCF
+with no options:
+.PP
+.Vb 4
+\& my $variants = read_table(\*(Aqcalls.vcf.gz\*(Aq);
+\& # [ { CHROM => \*(Aq1\*(Aq, POS => \*(Aq12065947\*(Aq, ID => \*(AqPTV001\*(Aq, REF => \*(AqC\*(Aq, ALT => \*(AqT,A\*(Aq,
+\& #     QUAL => \*(Aq29\*(Aq, FILTER => \*(AqPASS\*(Aq, INFO => \*(Aq.\*(Aq, FORMAT => \*(AqGT:GATK:AD:DP:GQ\*(Aq,
+\& #     NA00001 => \*(Aq0/1:0/1:3,2:5:19\*(Aq }, ... ]
+.Ve
+.PP
+That changes three things and nothing else:
+.IP \(bu 4
+\&\f(CW\*(C`sep\*(C'\fR is a tab.
+.IP \(bu 4
+\&\f(CW\*(C`comment\*(C'\fR is \f(CW\*(C`##\*(C'\fR, so the \f(CW\*(C`##\*(C'\fR meta\-information lines are skipped and the
+\&\f(CW\*(C`#CHROM POS ID ...\*(C'\fR line is the header.
+.IP \(bu 4
+The \f(CW\*(C`#\*(C'\fR comes off \f(CW\*(C`#CHROM\*(C'\fR, so the first column is \f(CW\*(C`CHROM\*(C'\fR.
+.PP
+Everything else is an ordinary \f(CW\*(C`read_table\*(C'\fR. All four output types work, as do
+\&\f(CW\*(C`filter\*(C'\fR, \f(CW\*(C`col.names\*(C'\fR and \f(CW\*(C`header => 0\*(C'\fR (which reads the \f(CW\*(C`#CHROM\*(C'\fR line as the
+first data row, \f(CW\*(C`#\*(C'\fR and all). Passing \f(CW\*(C`sep\*(C'\fR or \f(CW\*(C`comment\*(C'\fR overrides the VCF
+default, and \f(CW\*(C`comment => \*(Aq#\*(Aq\*(C'\fR reads the same table. A field is returned as its
+text: \f(CW\*(C`INFO\*(C'\fR, \f(CW\*(C`FORMAT\*(C'\fR and the sample columns are not split, and \f(CW\*(C`.\*(C'\fR is not
+read as missing unless you pass \f(CW\*(Aqna.strings\*(Aq => \*(Aq.\*(Aq\fR. Under any other name,
+such as \f(CW\*(C`.tsv\*(C'\fR or \f(CW\*(C`.txt\*(C'\fR, the file is not a VCF to \f(CW\*(C`read_table\*(C'\fR. With
+\&\f(CW\*(C`comment => \*(Aq##\*(Aq\*(C'\fR the meta lines are still skipped, but the first column is
+\&\f(CW\*(C`#CHROM\*(C'\fR.
+.PP
+On a 3,499,678\-record single\-sample \f(CW\*(C`.vcf.gz\*(C'\fR, an aoa takes 8.4 s.
+.PP
 \fImissing values (\fR\f(CI\*(C`na.strings\*(C'\fR\fI / \fR\f(CI\*(C`na_values\*(C'\fR\fI / \fR\f(CI\*(C`undef.val\*(C'\fR\fI)\fR
 .IX Subsection "missing values (na.strings / na_values / undef.val)"
 .PP
@@ -6365,10 +6407,51 @@ A header that is itself commented out is detected and used automatically, so
 .Ve
 .PP
 reads as though the header were \f(CW\*(C`PDB, score\*(C'\fR (the comment marker and any
-following whitespace are stripped from the first column). A commented line is
-only taken as the header when its field count matches the data, so ordinary
-leading comments are never mistaken for one. You may name such a column in a
-\&\f(CW\*(C`filter\*(C'\fR either as it appears in the file or by its clean name:
+following whitespace are stripped from the first column). A commented first
+line is only taken as the header when its field count matches the line after
+it, and that line looks like data: a number or an \f(CW\*(C`na.strings\*(C'\fR token in one of
+its fields, or nothing but empty fields. So
+.PP
+.Vb 3
+\& # written by foo, v2
+\& id,val
+\& 1,2
+.Ve
+.PP
+reads with the header \f(CW\*(C`id, val\*(C'\fR, as R and pandas read it: the comment is as
+wide as the header, but \f(CW\*(C`id,val\*(C'\fR has no number in it, so it is the header and
+the comment is a comment. The rule cannot tell a commented\-out header over rows
+with no numbers in them from a comment, and reads the first of those rows as
+the header.
+.PP
+When several comment lines come before the header, it is the last of them,
+the one next to the data, that is tried as the header, and the rest are
+comments:
+.PP
+.Vb 3
+\& #written by foo
+\& #id,val
+\& 1,2
+.Ve
+.PP
+reads with the header \f(CW\*(C`id, val\*(C'\fR. If the last one fails the test above, the
+line after the comments is the header, so R\*(Aqs own
+.PP
+.Vb 4
+\& #comment
+\& #another
+\& C1    C2    C3
+\& "Panel"    "Area Examined"    "# Blemishes"
+.Ve
+.PP
+reads with the header \f(CW\*(C`C1, C2, C3\*(C'\fR, as \f(CW\*(C`read.table(header = TRUE)\*(C'\fR reads it.
+Only lines before the header are looked at this way: a line starting with the
+comment marker \fIafter\fR the header, if the marker hugs its text (\f(CW\*(C`#3,4\*(C'\fR), is a
+data row, while one with a blank after the marker (\f(CW\*(C`# note\*(C'\fR) is a comment
+wherever it is.
+.PP
+You may name a commented\-out header\*(Aqs column in a \f(CW\*(C`filter\*(C'\fR either
+as it appears in the file or by its clean name:
 .PP
 .Vb 1
 \& read_table(\*(Aqranks.tabular.tsv\*(Aq, filter => { \*(Aq# PDB\*(Aq => sub { $_ == 2 } });

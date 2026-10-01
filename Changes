@@ -2,6 +2,64 @@ Revision history for Stats-LikeR
 
 0.3213 2026-10-01 CDT
 
+ [read_table(): a comment as wide as the header]
+
+ - A leading comment that split into as many fields as the next line was
+   taken for a commented-out header, and the file's real header then read
+   as the first data row, with no warning: "# written by foo, v2" before
+   "id,val" named the columns "written by foo" and " v2". A commented line
+   is now the header only when the line after it looks like data -- a
+   number or an na.strings token in one of its fields, or nothing but
+   empty fields; otherwise it is a comment, as in R and pandas. Over rows
+   of text alone a commented-out header cannot be told from a comment, and
+   the first row is read as the header.
+
+ [read_table(): VCF files]
+
+ - A VCF could not be read. Its "##" meta lines have the marker hugging
+   the text ("##fileformat=VCFv4.2"), which the parser passes on as a
+   possible commented-out header, and the first such line was taken for
+   the header on the spot: the file was one column named
+   "fileformat=VCFv4.2", and the "#CHROM" line an alignment error. That
+   happened with comment => '##' and with '#' alike. A run of these lines
+   before the header is now a run of candidates; the last, the one next to
+   the data, is tried under the rule above, and if it fails the next line
+   is the header. R's tests/reg-IO2.R test.dat ("#comment", "#another",
+   "#", then a C1 C2 C3 header) now reads with header = TRUE as R reads it,
+   where it was an alignment error.
+
+ - A file named .vcf, .vcf.gz or .vcf.bgz is read with a tab sep, a "##"
+   comment marker and the "#" taken off "#CHROM", so read_table('x.vcf.gz')
+   needs no options. Fields are returned as text, INFO and the sample
+   columns unsplit. The cases are htslib 1.21's own test VCFs, with
+   bcftools 1.21's reading of them as the expected values.
+
+ [read_table(): CR line ends]
+
+ - A file whose lines end in a bare CR, as classic Mac OS wrote them, was
+   read as one line with every CR dropped, and came back as []. One whose
+   start has a CR and no LF is now split on CR, as R's scan() and pandas'
+   C tokenizer split it. A stray CR in an LF or CRLF file is still dropped.
+   The cases are pandas 3.0.4's test_cr_delimited and
+   test_tokenize_CR_with_quoting, and R's PR#2469.
+
+ [read_table(): repeated row names]
+
+ - A hoh warned once for every row that repeated an earlier row's name:
+   40,820 warnings for a 300,000-row file of random names. It now warns
+   once for the file, with the count and the first repeated name and row.
+   A single repeat keeps the words it has always had.
+
+ [read_table(): speed]
+
+ - The CSV parser stores into its own arrays without going through
+   av_push(), finds the next special byte with one table lookup instead of
+   three tests, hands its row buffer over as an aoa's output row instead of
+   copying it, and looks a hoh's row name up once instead of twice. On a
+   300,000 x 10 CSV, best of seven: aoa 0.147 s to 0.117 s, hoa 0.204 s to
+   0.178 s, aoh 0.179 s to 0.165 s, and a 300,000-row hoh 0.357 s to
+   0.339 s.
+
  [t_test(): tied input]
 
  - A sample's length came from av_len(), which is FETCHSIZE on a tied

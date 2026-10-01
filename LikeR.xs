@@ -9218,6 +9218,27 @@ static bool S_blank_run(const char *restrict s, size_t n){
 	return 1;
 }
 
+/*av_push() without the call, for the parser's own arrays.
+
+av_push() is a call to av_store(), which checks for magic, a READONLY array and
+a key past the end before it stores; reading the first 3 MB of a 10-column CSV
+(38,613 lines) as an aoa, the pair was 10% of the instructions callgrind
+counted, near the 11% of the parser's own scan.  Every array this is used on is
+either one the parser made itself or one S_plan_init() has checked has no magic
+(S_plan_plain_av()), so while there is room the store is one pointer write.  With the byte table in _parse_csv_file() and the aoa and
+hoh changes in S_fast_row(), it took the best of seven reads of that CSV from
+0.147 s to 0.117 s (aoa), 0.179 s to 0.165 s (aoh), 0.204 s to 0.178 s (hoa),
+and 0.357 s to 0.339 s for a 300,000-row hoh, on perl 5.44.0.
+
+A slot past the fill may still hold a pointer from an earlier row, which is not
+a reference: the fill is what says what the array owns.*/
+PERL_STATIC_INLINE void S_av_push_own(pTHX_ AV *restrict av, SV *restrict sv){
+	if (AvFILLp(av) < AvMAX(av))
+		AvARRAY(av)[++AvFILLp(av)] = sv;
+	else
+		av_push(av, sv);
+}
+
 /*Append one finished field to the row.
 
 A field that is a single unquoted run -- the common case, and every field of a
@@ -9243,11 +9264,11 @@ the accumulator.*/
 static void S_push_field(pTHX_ AV *restrict row, SV *restrict field,
 	const char *restrict run, size_t n, bool undef_empty){
 	if (SvCUR(field) == 0) {
-		av_push(row, (n || !undef_empty) ? newSVpvn(run, n) : newSV(0));
+		S_av_push_own(aTHX_ row, (n || !undef_empty) ? newSVpvn(run, n) : newSV(0));
 		return;
 	}
 	if (n) sv_catpvn(field, run, n);
-	av_push(row, newSVsv(field));
+	S_av_push_own(aTHX_ row, newSVpvn(SvPVX_const(field), SvCUR(field)));
 	sv_setpvs(field, "");
 }
 
@@ -9342,6 +9363,9 @@ typedef struct {
 	const char *file;
 	size_t nout, ncol, rn;// rn mode 2 only
 	size_t row_n;	//data rows emitted so far, by both paths together
+	size_t n_dup;	//mode 2: rows whose name an earlier row already had
+	size_t dup_row;	//mode 2: the data row of the first of those, 0 = none yet
+	SV    *dup_first;	//mode 2: that row's name, OWNED; NULL = none yet
 	size_t span_line;	//0 = the row is on one line; else where the quote that ran it across lines opened
 	size_t span_to;	//the line that field ran on to, 0 = the end of the file
 	short int mode;	// 0 = aoh, 1 = hoa, 2 = hoh, 3 = aoa
@@ -9403,6 +9427,15 @@ static void S_plan_na(pTHX_ csv_plan *restrict p){
 	}
 }
 
+/*An output array S_av_push_own() may store into directly: one with no magic
+and not READONLY.  read_table's own arrays always are; a croak is the answer for
+anything else, as for the other plan checks above.*/
+static AV *S_plan_plain_av(pTHX_ AV *restrict av, const char *restrict what){
+	if (SvMAGICAL((SV*)av) || SvREADONLY((SV*)av))
+		croak("_parse_csv_file: plan %s is tied, magical or read-only", what);
+	return av;
+}
+
 /*Read the plan hash into the struct above, once, the first time read_table has
 filled it in.  Every SV, AV and HV pointer taken here is borrowed except the
 keys: the plan hash is a lexical in read_table and outlives this parse, and
@@ -9437,10 +9470,13 @@ static void S_plan_init(pTHX_ csv_plan *restrict p, HV *restrict h){
 	if (p->mode < 0 || p->mode > 3)
 		croak("_parse_csv_file: plan 'mode' %d is not 0 (aoh), 1 (hoa), 2 (hoh) or 3 (aoa)",
 		      (int)p->mode);
-	if (p->mode == 2)
+	if (p->mode == 2) {	//no magic, so S_fast_row() may replace a value in place
 		p->hout = (HV*)S_plan_ref(aTHX_ h, "out", SVt_PVHV);
+		if (SvMAGICAL((SV*)p->hout) || SvREADONLY((SV*)p->hout))
+			croak("_parse_csv_file: plan 'out' is tied, magical or read-only");
+	}
 	else
-		p->out  = (AV*)S_plan_ref(aTHX_ h, "out", SVt_PVAV);
+		p->out  = S_plan_plain_av(aTHX_ (AV*)S_plan_ref(aTHX_ h, "out", SVt_PVAV), "'out'");
 	if (av_len(idx) != av_len(keys))
 		croak("_parse_csv_file: plan 'idx' and 'keys' are different lengths");
 
@@ -9472,7 +9508,7 @@ static void S_plan_init(pTHX_ csv_plan *restrict p, HV *restrict h){
 			if (!ce || !*ce || !SvROK(*ce) || SvTYPE(SvRV(*ce)) != SVt_PVAV)
 				croak("_parse_csv_file: plan 'out' entry %" UVuf " is not an "
 				      "ARRAY reference", (UV)j);
-			p->cols[j] = (AV*)SvRV(*ce);
+			p->cols[j] = S_plan_plain_av(aTHX_ (AV*)SvRV(*ce), "'out' column");
 		}
 	}
 	if (p->mode == 2) {
@@ -9497,12 +9533,25 @@ static void S_plan_free(pTHX_ void *v)
 		for (size_t j = 0; j < p->nout; j++)
 			SvREFCNT_dec(p->keys[j]);	//NULL past a croak in S_plan_init()
 	SvREFCNT_dec((SV*)p->row);
+	SvREFCNT_dec(p->dup_first);
 	Safefree(p->idx);
 	Safefree(p->keys);
 	Safefree(p->cols);
 	Safefree(p->na_s);
 	Safefree(p->na_len);
 	Safefree(p);
+}
+
+/*What S_fast_row() counted rather than warned about, handed back to read_table
+in the plan hash it filled in: 'dup_n' rows of a hoh had a name an earlier row
+already had, the first of them being 'dup_first' on data row 'dup_row'.  It is
+called once the last row is built, so a parse that croaks reports nothing.*/
+static void S_plan_report(pTHX_ const csv_plan *restrict p, HV *restrict h){
+	if (!h || !p->n_dup)
+		return;
+	(void)hv_stores(h, "dup_n",     newSVuv((UV)p->n_dup));
+	(void)hv_stores(h, "dup_row",   newSVuv((UV)p->dup_row));
+	(void)hv_stores(h, "dup_first", newSVsv(p->dup_first));
 }
 
 /*An empty field, and a field listed in na.strings, become undef, which is the
@@ -9551,27 +9600,30 @@ PERL_STATIC_INLINE SV *S_cell_value(pTHX_ const csv_plan *restrict p, SV *restri
 The field SVs are MOVED, not copied: the row AV holds the only reference to
 each, so handing it to the hash or the column array costs a pointer rather
 than a newSVsv() of every cell.  The AV is then reset to empty and reused for
-the next row.  Any field no output column asked for -- which happens only when
+the next row -- except by an aoa, whose output row is the AV itself: the row
+buffer is handed over whole and *rowp gets a fresh one, which saves a second
+array and a copy of every cell pointer into it.  Any field no output column asked for -- which happens only when
 the header repeats a name -- is released here instead, and so is the row.names
 field of a hoh, which becomes the row's key rather than one of its values.
 
-This never frees the row, even when it croaks: the caller's save stack owns it
-(csv_plan's 'row' for a CSV, xlsx_ws's for a worksheet), and it is released
-from there on the unwind with whatever cells it still holds.
+This never frees the row, even when it croaks: the caller's save stack owns
+*rowp (csv_plan's 'row' for a CSV, xlsx_ws's for a worksheet), and it is
+released from there on the unwind with whatever cells it still holds.
 
 In hoh mode a repeated row name updates the hash already under that name, as
-the perl path's $data{$row_name}{$col} = ... does, and warns with that path's
-words.  The warning is raised once every cell has been handed on or is still the row's
-to free, so a __WARN__ handler that dies leaves nothing half-owned behind.
+the perl path's $data{$row_name}{$col} = ... does.  It is counted rather than
+warned about: S_plan_report() hands the count and the first such name back to
+read_table, which warns once for the whole file.  A warning per row was 40,820
+warnings for a 300,000-row file of random names.
 
-restrict holds on both: row is the parser's own buffer, never one of the arrays
-the plan points at, and the plan is not reachable from it.*/
-static void S_fast_row(pTHX_ csv_plan *restrict p, AV *restrict row){
+restrict holds on both: *rowp is the parser's own buffer, never one of the
+arrays the plan points at, and the plan is not reachable from it.*/
+static void S_fast_row(pTHX_ csv_plan *restrict p, AV **restrict rowp){
+	AV *const row = *rowp;
 	const size_t w = (size_t)(AvFILLp(row) + 1);
 	SV **ary;
 	SV  *rn = NULL;	//mode 2: the row's name, still owned by the row
 	HV  *h  = NULL;
-	bool dup = 0;	//mode 2: the name was already taken
 
 	if (w != p->ncol) {
 		if (p->span_line)
@@ -9583,17 +9635,14 @@ static void S_fast_row(pTHX_ csv_plan *restrict p, AV *restrict row){
 	}
 	p->row_n++;
 	ary = AvARRAY(row);
-	if (p->mode == 3) {	//aoa: the whole row, in file order
-		AV *out_row = newAV();
-		av_extend(out_row, w ? (SSize_t)w - 1 : 0);
-		for (size_t j = 0; j < w; j++) {
-			SV *v = ary[j];
-			ary[j] = NULL;	//ownership leaves the row here, before v can be freed
-			v = S_cell_value(aTHX_ p, v);
-			av_push(out_row, v);
-		}
-		av_push(p->out, newRV_noinc((SV*)out_row));
-		AvFILLp(row) = -1;
+	if (p->mode == 3) {	//aoa: the row buffer itself becomes the output row
+		AV *fresh;
+		for (size_t j = 0; j < w; j++)
+			ary[j] = S_cell_value(aTHX_ p, ary[j]);
+		fresh = newAV();
+		av_extend(fresh, w ? (SSize_t)w - 1 : 0);
+		*rowp = fresh;
+		S_av_push_own(aTHX_ p->out, newRV_noinc((SV*)row));
 		return;
 	}
 	if (p->mode == 2) {
@@ -9602,17 +9651,24 @@ static void S_fast_row(pTHX_ csv_plan *restrict p, AV *restrict row){
 		if (!rn || S_cell_is_na(aTHX_ p, rn))
 			croak("read_table: undefined row name (column '%" SVf "') in %s data row %" UVuf "\n",
 			      SVfARG(p->keys[p->rn]), p->file, (UV)p->row_n);
-		he = hv_fetch_ent(p->hout, rn, 0, 0);
-		if (he && SvROK(HeVAL(he)) && SvTYPE(SvRV(HeVAL(he))) == SVt_PVHV) {
-			h   = (HV*)SvRV(HeVAL(he));
-			dup = 1;
+/*One lookup, which creates the entry when the name is new: a fetch and then a
+store hashed every row name twice.  A new entry's value is a fresh undef the
+hash owns, replaced here by the row's reference.  It is not set through a mortal
+(sv_setsv() from sv_2mortal(newRV_noinc())), because nothing frees temporaries
+between rows on this path, and every row's would wait for the parse to end.*/
+		he = hv_fetch_ent(p->hout, rn, 1, 0);
+		if (SvROK(HeVAL(he)) && SvTYPE(SvRV(HeVAL(he))) == SVt_PVHV) {
+			h = (HV*)SvRV(HeVAL(he));
+			p->n_dup++;
+			if (!p->dup_first) {
+				p->dup_first = newSVsv(rn);
+				p->dup_row   = p->row_n;
+			}
 		} else {
-			SV *ref;
 			h = newHV();
 			if (p->nout > 1) hv_ksplit(h, (IV)(p->nout - 1));
-			ref = newRV_noinc((SV*)h);
-			if (!hv_store_ent(p->hout, rn, ref, 0))
-				SvREFCNT_dec(ref);
+			SvREFCNT_dec(HeVAL(he));
+			HeVAL(he) = newRV_noinc((SV*)h);
 		}
 	} else if (p->mode == 0) {
 		h = newHV();
@@ -9625,16 +9681,13 @@ static void S_fast_row(pTHX_ csv_plan *restrict p, AV *restrict row){
 		ary[p->idx[j]] = NULL;	//ownership leaves the row here, before v can be freed
 		v = S_cell_value(aTHX_ p, v);
 		if (p->mode == 1) {
-			av_push(p->cols[j], v);
+			S_av_push_own(aTHX_ p->cols[j], v);
 		} else if (!hv_store_ent(h, p->keys[j], v, 0)) {
 			SvREFCNT_dec(v);
 		}
 	}
 	if (p->mode == 0)
-		av_push(p->out, newRV_noinc((SV*)h));
-	if (dup)
-		warn("read_table: duplicate row name '%" SVf "' in %s (later values win)\n",
-		     SVfARG(rn), p->file);
+		S_av_push_own(aTHX_ p->out, newRV_noinc((SV*)h));
 	for (size_t j = 0; j < p->ncol; j++) {	//a repeated header name, or a hoh's row name
 		SvREFCNT_dec(ary[j]);
 		ary[j] = NULL;
@@ -9998,7 +10051,7 @@ branch av_extend() took.*/
 	if (w->plan->active) {
 /*S_fast_row() leaves the row where it is when it croaks, so S_xlsx_ws_free()
 releases it, and whatever cells it still holds, on the unwind.*/
-		S_fast_row(aTHX_ w->plan, w->row);	//empties the AV for the next row
+		S_fast_row(aTHX_ w->plan, &w->row);	//empties the AV for the next row
 		return;
 	}
 	{
@@ -21250,7 +21303,7 @@ PPCODE:
 	XSRETURN_EMPTY;
 }
 
-SV* _parse_csv_file(char* file, const char* sep_str, const char* comment_str, SV* callback = &PL_sv_undef, SV* plan_sv = &PL_sv_undef, bool quote = TRUE, bool bare_comment = FALSE, SV* sep_rx = &PL_sv_undef, bool sep_ws = FALSE, SV* fh_sv = &PL_sv_undef)
+SV* _parse_csv_file(char* file, const char* sep_str, const char* comment_str, SV* callback = &PL_sv_undef, SV* plan_sv = &PL_sv_undef, bool quote = TRUE, bool bare_comment = FALSE, SV* sep_rx = &PL_sv_undef, bool sep_ws = FALSE, SV* fh_sv = &PL_sv_undef, bool cr_eol = FALSE)
 PREINIT:
 	PerlIO *fp;	//not restrict: with fh_sv it is the caller's handle, perl-managed
 	AV *data = NULL;
@@ -21269,6 +21322,7 @@ PREINIT:
 	bool span_mid = 0;	//q_mid of that quote
 	bool warned_mid = 0;	//the mid-field warning is given once per file
 	char sep0 = 0;
+	unsigned char stop_at[256];	//1 = a byte the literal scan has to stop at
 	REGEXP *rx = NULL;	//a qr// sep; NULL = sep_str is the literal separator
 CODE:
 	if (SvOK(callback)) {
@@ -21300,6 +21354,15 @@ as pandas reads sep=r"\s+": leading and trailing whitespace make no field.*/
 	sep_len = (sep_str && !rx) ? strlen(sep_str) : 0;
 	comment_len = comment_str ? strlen(comment_str) : 0;
 	sep0 = sep_len ? sep_str[0] : 0;
+/*The literal scan stops at a CR, at a '"' when quoting is on, and at the first
+byte of the separator, and nowhere else.  One table lookup per byte replaces
+the three tests it used to make of each one; a multi-byte separator is still
+confirmed with memcmp() where the table stops.  It is part of the speedup
+measured at S_av_push_own().*/
+	Zero(stop_at, 256, unsigned char);
+	stop_at['\r'] = 1;
+	if (quote)   stop_at['"'] = 1;
+	if (sep_len) stop_at[(unsigned char)sep0] = 1;
 /*fh_sv is an open handle to read instead of opening file, which then only
 names the input in the messages.  read_table passes one for a compressed file,
 opened through the decompressing PerlIO::via layer in LikeR.pm, so the input is
@@ -21330,8 +21393,13 @@ back as one "line" and read_table returned [] without a word, and $/ = \4096
 cut rows at 4 KB.  The newline separator is swapped in around each sv_gets()
 only, so a callback -- a user's filter -- still sees the caller's $/.  The
 SAVESPTR restores PL_rs if sv_gets() itself croaks, and is saved after
-rs_nl's SAVEFREESV so that it runs first on the unwind.*/
-	rs_nl = newSVpvs("\n");
+rs_nl's SAVEFREESV so that it runs first on the unwind.
+cr_eol is a file whose lines end in a bare CR, as the classic Mac OS wrote them.
+read_table sets it when the start of the file has a CR and no LF at all
+(_eol_is_cr() in LikeR.pm), and the lines are then split on CR instead.  Without
+it the whole file was one line with every CR dropped as a stray, so a header and
+rows came back as one long header and the table as [].*/
+	rs_nl = cr_eol ? newSVpvs("\r") : newSVpvs("\n");
 	SAVEFREESV(rs_nl);
 	SAVESPTR(PL_rs);
 	if (!use_cb)	//mortal, so a croak below cannot leak it
@@ -21351,11 +21419,11 @@ rs_nl's SAVEFREESV so that it runs first on the unwind.*/
 		lineno++;
 		line = SvPVX(line_sv);
 		len  = SvCUR(line_sv);
-		bool had_nl = 0;	//only the file's last line can lack one
-		if (len && line[len-1] == '\n') {
+		bool had_nl = 0;	//only the file's last line can lack its line end
+		if (len && line[len-1] == (cr_eol ? '\r' : '\n')) {
 			had_nl = 1;
 			len--;
-			if (len && line[len-1] == '\r')
+			if (!cr_eol && len && line[len-1] == '\r')
 				len--;
 		}
 /*A UTF-8 byte-order mark is not part of the first field.  Excel's "CSV UTF-8"
@@ -21472,14 +21540,14 @@ the search resumes after it.*/
 				}
 			} else {
 				const size_t start = i;
-				while (i < len) {
-					const char c = line[i];
-					if ((c == '"' && quote) || c == '\r')	//quote is FALSE for quote => ''
+				for (;;) {
+					while (i < len && !stop_at[(unsigned char)line[i]])
+						i++;
+					if (i >= len || line[i] == '\r' || (line[i] == '"' && quote))
 						break;
-					if (c == sep0 && sep_len && (len - i) >= sep_len
-							&& (sep_len == 1
-								|| memcmp(line + i, sep_str, sep_len) == 0))
-						break;
+					if ((len - i) >= sep_len
+							&& (sep_len == 1 || memcmp(line + i, sep_str, sep_len) == 0))
+						break;	//line[i] is sep0
 					i++;
 				}
 				if (i >= len) {	//the line's last field, pushed below
@@ -21518,7 +21586,7 @@ the search resumes after it.*/
 				plan->span_line = span_line;
 				plan->span_mid  = span_mid;
 				plan->span_to   = lineno;
-				S_fast_row(aTHX_ plan, plan->row);
+				S_fast_row(aTHX_ plan, &plan->row);
 			} else {
 				S_emit_row(aTHX_ &plan->row, use_cb, callback, data,
 					span_line, span_mid, lineno);
@@ -21559,10 +21627,11 @@ cell.*/
 			plan->span_line = q_line;
 			plan->span_mid  = q_mid;
 			plan->span_to   = 0;
-			S_fast_row(aTHX_ plan, plan->row);
+			S_fast_row(aTHX_ plan, &plan->row);
 		} else
 			S_emit_row(aTHX_ &plan->row, use_cb, callback, data, q_line, q_mid, 0);
 	}
+	S_plan_report(aTHX_ plan, plan_hv);
 	LEAVE;
 	RETVAL = use_cb ? newSV(0) : newRV_inc((SV*)data);
 OUTPUT:
@@ -21614,6 +21683,7 @@ what keeps a width of 0 out of the row padding, which counts from width - 1.*/
 		av_extend(w->row, (SSize_t)(w->width - 1));
 		xlsx_ws_scan(aTHX_ w, FALSE);	//pass 2: build and emit
 	}
+	S_plan_report(aTHX_ plan, SvOK(plan_sv) ? (HV*)SvRV(plan_sv) : NULL);
 	LEAVE;
 	RETVAL = newSV(0);
 OUTPUT:

@@ -246,10 +246,13 @@ is_deeply read_table(fixture("a;b\n1\r;2\n"), sep => qr/;/),
 
 is_deeply read_table(fixture("\xEF\xBB\xBFid  v\n1  2\n"), sep => $ws),
 	[ { id => 1, v => 2 } ], 'a UTF-8 byte-order mark is dropped';
-# The leading comment has three words to the data's two fields: one with two
-# would be taken for a commented-out header, as the next case shows.
 is_deeply read_table(fixture("# three word note\nid v\n\n# more\n1 2\n"), sep => $ws),
 	[ { id => 1, v => 2 } ], 'comment and blank lines are skipped';
+# Up to 0.3213 a comment with as many words as the header has fields was taken
+# for a commented-out header, and the header for a data row. It is now the
+# header only when the line after it has a number in it, as the next case does.
+is_deeply read_table(fixture("# two words\nid v\n1 2\n"), sep => $ws),
+	[ { id => 1, v => 2 } ], 'a comment as wide as the header is skipped';
 is_deeply read_table(fixture("# PDB   score\n1a2b   10\n3c4d   20\n"), sep => $ws),
 	[ { PDB => '1a2b', score => 10 }, { PDB => '3c4d', score => 20 } ],
 	'a commented-out header is found with a regex separator';

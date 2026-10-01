@@ -8501,7 +8501,7 @@ minimal example:
 <tbody>
 <tr>
   <td><code>comment</code></td>
-  <td>Comment character, by default <code>#</code>; lines beginning with it are skipped</td>
+  <td>Comment marker, by default <code>#</code> (<code>##</code> for a VCF); lines beginning with it are skipped. It may be more than one character</td>
   <td><code>comment =&gt; '%'</code></td>
 </tr>
 <tr>
@@ -8598,14 +8598,22 @@ and, like Text::CSV_XS, filters can be applied in order to save RAM on big files
  );
 
 the default delimiter is C<,>
-Suffixes C<.csv> and C<.tsv> are automatically detected from file names, but if specified, are overridden by C<delim> and/or C<sep>. C<sep> is given priority.
+Suffixes C<.csv>, C<.tsv> and C<.vcf> are automatically detected from file names, but if specified, are overridden by C<delim> and/or C<sep>. C<sep> is given priority. A C<.vcf> also changes the default C<comment>; see L</"VCF files">.
 
 A UTF-8 byte-order mark at the start of a text file, which Excel's "CSV UTF-8"
 export writes, is dropped rather than read as part of the first column's name,
 as pandas' C<read_csv> drops it. Lines always end at a newline whatever C<$/> is
 set to, so a C<local $/;> in the calling code does not change what is read.
+Lines may end in LF or CRLF, and a file whose lines end in a bare CR, as
+classic Mac OS wrote them, is read as R and pandas read it. The start of the
+file is read 64 KB at a time, up to 1 MB, until a CR turns up; if no LF has by
+then, the file is split on CR. In any other file a lone CR outside quotes is
+dropped.
 With C<< 'output.type' =E<gt> 'hoh' >> a file whose only column is the row name gives
 one empty hash per row, as R's C<read.table> gives a data frame of zero columns.
+Rows that repeat an earlier row's name overwrite it, later values winning, and
+C<read_table> warns once for the file, with how many rows did it and the first
+of them.
 
 =head3 regular-expression separators
 
@@ -8619,7 +8627,7 @@ characters backslash, C<s> and plus. Pass a C<qr//> to split on a pattern instea
 Everything else reads as it does with a literal separator: quoted fields
 (a separator inside quotes is text, C<""> is one quote, a quoted field may run
 over lines), comments and commented-out headers, blank lines, a byte-order
-mark, CRLF line ends, C<filter>, C<row.names>, C<auto.row.names>, C<na.strings> and
+mark, CRLF and CR line ends, C<filter>, C<row.names>, C<auto.row.names>, C<na.strings> and
 all four output types. Details worth knowing:
 
 =over
@@ -8641,8 +8649,8 @@ backreference works: C<qr/(:)\1/> splits on C<::>.
 since it would cut between every character.
 
 =item * In a whitespace-delimited file, a comment line with as many words as the data
-has columns will be taken for a commented-out header, since that is how one
-is recognised; see I<commented-out headers> below.
+has columns can be taken for a commented-out header, since that is how one
+is recognised; see I<commented-out headers> below for when it is.
 
 =item * An C<.xlsx> file ignores C<sep> and C<quote>, whether a string or a pattern.
 
@@ -8747,6 +8755,41 @@ back through this.
 
 =back
 
+=head3 VCF files
+
+A file named C<.vcf>, C<.vcf.gz> or C<.vcf.bgz>, in any case, is read as a VCF
+with no options:
+
+ my $variants = read_table('calls.vcf.gz');
+ # [ { CHROM => '1', POS => '12065947', ID => 'PTV001', REF => 'C', ALT => 'T,A',
+ #     QUAL => '29', FILTER => 'PASS', INFO => '.', FORMAT => 'GT:GATK:AD:DP:GQ',
+ #     NA00001 => '0/1:0/1:3,2:5:19' }, ... ]
+
+That changes three things and nothing else:
+
+=over
+
+=item * C<sep> is a tab.
+
+=item * C<comment> is C<##>, so the C<##> meta-information lines are skipped and the
+C<#CHROM POS ID ...> line is the header.
+
+=item * The C<#> comes off C<#CHROM>, so the first column is C<CHROM>.
+
+=back
+
+Everything else is an ordinary C<read_table>. All four output types work, as do
+C<filter>, C<col.names> and C<< header =E<gt> 0 >> (which reads the C<#CHROM> line as the
+first data row, C<#> and all). Passing C<sep> or C<comment> overrides the VCF
+default, and C<< comment =E<gt> '#' >> reads the same table. A field is returned as its
+text: C<INFO>, C<FORMAT> and the sample columns are not split, and C<.> is not
+read as missing unless you pass C<< 'na.strings' =E<gt> '.' >>. Under any other name,
+such as C<.tsv> or C<.txt>, the file is not a VCF to C<read_table>. With
+C<< comment =E<gt> '##' >> the meta lines are still skipped, but the first column is
+C<#CHROM>.
+
+On a 3,499,678-record single-sample C<.vcf.gz>, an aoa takes 8.4 s.
+
 =head3 missing values (C<na.strings> / C<na_values> / C<undef.val>)
 
 An empty field is always read as C<undef>. Any I<other> text that a file uses to
@@ -8850,10 +8893,45 @@ A header that is itself commented out is detected and used automatically, so
  3c4d    20
 
 reads as though the header were C<PDB, score> (the comment marker and any
-following whitespace are stripped from the first column). A commented line is
-only taken as the header when its field count matches the data, so ordinary
-leading comments are never mistaken for one. You may name such a column in a
-C<filter> either as it appears in the file or by its clean name:
+following whitespace are stripped from the first column). A commented first
+line is only taken as the header when its field count matches the line after
+it, and that line looks like data: a number or an C<na.strings> token in one of
+its fields, or nothing but empty fields. So
+
+ # written by foo, v2
+ id,val
+ 1,2
+
+reads with the header C<id, val>, as R and pandas read it: the comment is as
+wide as the header, but C<id,val> has no number in it, so it is the header and
+the comment is a comment. The rule cannot tell a commented-out header over rows
+with no numbers in them from a comment, and reads the first of those rows as
+the header.
+
+When several comment lines come before the header, it is the last of them,
+the one next to the data, that is tried as the header, and the rest are
+comments:
+
+ #written by foo
+ #id,val
+ 1,2
+
+reads with the header C<id, val>. If the last one fails the test above, the
+line after the comments is the header, so R's own
+
+ #comment
+ #another
+ C1    C2    C3
+ "Panel"    "Area Examined"    "# Blemishes"
+
+reads with the header C<C1, C2, C3>, as C<read.table(header = TRUE)> reads it.
+Only lines before the header are looked at this way: a line starting with the
+comment marker I<after> the header, if the marker hugs its text (C<#3,4>), is a
+data row, while one with a blank after the marker (C<# note>) is a comment
+wherever it is.
+
+You may name a commented-out header's column in a C<filter> either
+as it appears in the file or by its clean name:
 
  read_table('ranks.tabular.tsv', filter => { '# PDB' => sub { $_ == 2 } });
 

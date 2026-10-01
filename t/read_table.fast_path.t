@@ -22,7 +22,7 @@ use warnings FATAL => 'all';
 use Test::More;
 use File::Temp ();
 use File::Spec ();
-use Stats::LikeR qw(read_table);
+use Stats::LikeR qw(read_table write_table);
 
 my $HAVE_LEAKTRACE;
 BEGIN {
@@ -63,6 +63,8 @@ my %f = (
 	onecol  => fixture('onecol.csv',  "a\n1\n2\n3\n"),
 	ragged  => fixture('ragged.csv',  "a,b,c\n1,2,3\n4,5\n6,7,8\n"),
 	duprn   => fixture('duprn.csv',   "id,v,w\nA,1,2\nB,3,4\nA,5,\n"),
+	# three repeats, the first on data row 3
+	dup3    => fixture('dup3.csv',    "id,v\nA,1\nB,2\nA,3\nB,4\nA,5\n"),
 	undefrn => fixture('undefrn.csv', "id,v\nA,1\n,2\nC,3\n"),
 	nark    => fixture('nark.csv',    "id,v\nA,1\nNA,2\n"),
 	# Mostly empty: once the plan is on, an empty field is parsed straight to
@@ -117,6 +119,7 @@ my @cases = (
 # into a missing one, and an explicit row.names -- are added here.
 push @cases,
 	[ 'repeated row name',        $f{duprn},   [] ],
+	[ 'three repeated row names', $f{dup3},    [] ],
 	[ 'missing row name',         $f{undefrn}, [] ],
 	[ 'na.strings row name',      $f{nark},    [ 'na.strings' => 'NA' ] ],
 	[ 'explicit row.names',       $f{duprn},   [ 'row.names' => 'w' ] ],
@@ -155,6 +158,27 @@ for my $case (@cases) {
 	is_deeply $r->[2],
 		[ "read_table: duplicate row name 'A' in $f{duprn} (later values win)\n" ],
 		'hoh: and warns once, naming it';
+	# One warning for the file however many rows repeat a name: up to 0.3213
+	# there was one per row.
+	$r = read_all($f{dup3}, 'output.type' => 'hoh');
+	is_deeply $r->[0], { A => { v => 5 }, B => { v => 4 } },
+		'hoh: three repeats keep the latest values';
+	is_deeply $r->[2],
+		[ "read_table: 3 rows of $f{dup3} repeat an earlier row's name (later "
+		. "values win); the first is 'A', on data row 3\n" ],
+		'hoh: and warn once, with the count and the first';
+	# An .xlsx is parsed by _parse_xlsx_sheet_xs(), which hands its count back
+	# the same way
+	my $xlsx = File::Spec->catfile(File::Temp::tempdir(CLEANUP => 1), 'dup3.xlsx');
+	write_table([ [qw(id v)], [ 'A', 1 ], [ 'B', 2 ], [ 'A', 3 ], [ 'B', 4 ],
+		[ 'A', 5 ] ], $xlsx, quiet => 1);
+	for my $path ([ fast => [] ], [ filter => [ filter => sub { 1 } ] ]) {
+		$r = read_all($xlsx, 'output.type' => 'hoh', @{ $path->[1] });
+		is_deeply $r, [ { A => { v => 5 }, B => { v => 4 } }, '',
+			[ "read_table: 3 rows of $xlsx repeat an earlier row's name (later "
+			. "values win); the first is 'A', on data row 3\n" ] ],
+			"hoh from an .xlsx ($path->[0] path): one warning";
+	}
 	$r = read_all($f{undefrn}, 'output.type' => 'hoh');
 	is $r->[1],
 		"read_table: undefined row name (column 'id') in $f{undefrn} data row 2\n",
@@ -311,6 +335,41 @@ SKIP: {
 	# the empty-match croak unwinds out of the middle of a line
 	no_leaks_ok { eval { read_table($f{plain}, sep => $empty) } }
 		'no leaks: a regex sep that matches an empty string';
+}
+
+# The fast path stores into the plan's output arrays directly (S_av_push_own()
+# in LikeR.xs), so S_plan_init() refuses one with magic. read_table's own never
+# have any; this is what a plan from anywhere else gets.
+{
+	package Local::TiedAV; require Tie::Array; our @ISA = ('Tie::StdArray');
+	package Local::TiedHV; require Tie::Hash;  our @ISA = ('Tie::StdHash');
+}
+{
+	my $file = $f{duprn};
+	my $try = sub {
+		my ($mode, $out) = @_;
+		my $p = {};
+		my $z = 0;
+		my $cb = sub {
+			return if %$p;
+			@$p{qw(keys idx ncol file row mode)}
+				= ([qw(id v w)], [0, 1, 2], 3, $file, \$z, $mode);
+			$p->{rn}  = 0 if $mode == 2;
+			$p->{out} = $out;
+		};
+		return eval { Stats::LikeR::_parse_csv_file($file, ',', '#', $cb, $p); 1 }
+			? '' : $@;
+	};
+	tie my @t, 'Local::TiedAV';
+	like $try->(3, \@t), qr/^_parse_csv_file: plan 'out' is tied, magical or read-only/,
+		'a tied output array is refused';
+	tie my @c, 'Local::TiedAV';
+	like $try->(1, [ [], \@c, [] ]),
+		qr/^_parse_csv_file: plan 'out' column is tied, magical or read-only/,
+		'a tied hoa column is refused';
+	tie my %h, 'Local::TiedHV';
+	like $try->(2, \%h), qr/^_parse_csv_file: plan 'out' is tied, magical or read-only/,
+		'a tied hoh hash is refused';
 }
 
 done_testing;

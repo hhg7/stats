@@ -5629,7 +5629,7 @@ minimal example:
 ### options
 | Option | Description | Example |
 | -------- | ------- | ------- |
-|`comment` | Comment character, by default `#`; lines beginning with it are skipped | `comment => '%'` |
+|`comment` | Comment marker, by default `#` (`##` for a VCF); lines beginning with it are skipped. It may be more than one character | `comment => '%'` |
 |`output.type`| data type for output: array of hash (the default), array of array, hash of array, or hash of hash | `'output.type' => 'aoh'`|
 |`filter`| Only take in rows matching a filter | `filter => { Sex => sub {$_ eq 'f'} }`|
 |`row.names` | include row names in retrieved data; off by default | |
@@ -5663,14 +5663,22 @@ and, like Text::CSV_XS, filters can be applied in order to save RAM on big files
         'output.type' => 'aoh'
     );
 the default delimiter is `,`
-Suffixes `.csv` and `.tsv` are automatically detected from file names, but if specified, are overridden by `delim` and/or `sep`. `sep` is given priority.
+Suffixes `.csv`, `.tsv` and `.vcf` are automatically detected from file names, but if specified, are overridden by `delim` and/or `sep`. `sep` is given priority. A `.vcf` also changes the default `comment`; see [VCF files](#vcf-files).
 
 A UTF-8 byte-order mark at the start of a text file, which Excel's "CSV UTF-8"
 export writes, is dropped rather than read as part of the first column's name,
 as pandas' `read_csv` drops it. Lines always end at a newline whatever `$/` is
 set to, so a `local $/;` in the calling code does not change what is read.
+Lines may end in LF or CRLF, and a file whose lines end in a bare CR, as
+classic Mac OS wrote them, is read as R and pandas read it. The start of the
+file is read 64 KB at a time, up to 1 MB, until a CR turns up; if no LF has by
+then, the file is split on CR. In any other file a lone CR outside quotes is
+dropped.
 With `'output.type' => 'hoh'` a file whose only column is the row name gives
 one empty hash per row, as R's `read.table` gives a data frame of zero columns.
+Rows that repeat an earlier row's name overwrite it, later values winning, and
+`read_table` warns once for the file, with how many rows did it and the first
+of them.
 ### regular-expression separators
 A string `sep` is always a literal: `sep => '\s+'` splits on the three
 characters backslash, `s` and plus. Pass a `qr//` to split on a pattern instead:
@@ -5682,7 +5690,7 @@ characters backslash, `s` and plus. Pass a `qr//` to split on a pattern instead:
 Everything else reads as it does with a literal separator: quoted fields
 (a separator inside quotes is text, `""` is one quote, a quoted field may run
 over lines), comments and commented-out headers, blank lines, a byte-order
-mark, CRLF line ends, `filter`, `row.names`, `auto.row.names`, `na.strings` and
+mark, CRLF and CR line ends, `filter`, `row.names`, `auto.row.names`, `na.strings` and
 all four output types. Details worth knowing:
 
 - **`qr/\s+/` is whitespace-delimited**, as `sep=r"\s+"` is in pandas and
@@ -5698,8 +5706,8 @@ all four output types. Details worth knowing:
 - A pattern that can match the empty string, such as `qr/\s*/`, is refused,
   since it would cut between every character.
 - In a whitespace-delimited file, a comment line with as many words as the data
-  has columns will be taken for a commented-out header, since that is how one
-  is recognised; see *commented-out headers* below.
+  has columns can be taken for a commented-out header, since that is how one
+  is recognised; see *commented-out headers* below for when it is.
 - An `.xlsx` file ignores `sep` and `quote`, whether a string or a pattern.
 - The separators are found by perl's regex engine, called from the same C
   parser a literal separator uses, so a regex read costs little more than a
@@ -5781,6 +5789,34 @@ option to set:
   - [`write_table`](#write_table) writes `.gz` and `.bz2` files that read
     back through this.
 
+### VCF files
+A file named `.vcf`, `.vcf.gz` or `.vcf.bgz`, in any case, is read as a VCF
+with no options:
+
+    my $variants = read_table('calls.vcf.gz');
+    # [ { CHROM => '1', POS => '12065947', ID => 'PTV001', REF => 'C', ALT => 'T,A',
+    #     QUAL => '29', FILTER => 'PASS', INFO => '.', FORMAT => 'GT:GATK:AD:DP:GQ',
+    #     NA00001 => '0/1:0/1:3,2:5:19' }, ... ]
+
+That changes three things and nothing else:
+
+  - `sep` is a tab.
+  - `comment` is `##`, so the `##` meta-information lines are skipped and the
+    `#CHROM POS ID ...` line is the header.
+  - The `#` comes off `#CHROM`, so the first column is `CHROM`.
+
+Everything else is an ordinary `read_table`. All four output types work, as do
+`filter`, `col.names` and `header => 0` (which reads the `#CHROM` line as the
+first data row, `#` and all). Passing `sep` or `comment` overrides the VCF
+default, and `comment => '#'` reads the same table. A field is returned as its
+text: `INFO`, `FORMAT` and the sample columns are not split, and `.` is not
+read as missing unless you pass `'na.strings' => '.'`. Under any other name,
+such as `.tsv` or `.txt`, the file is not a VCF to `read_table`. With
+`comment => '##'` the meta lines are still skipped, but the first column is
+`#CHROM`.
+
+On a 3,499,678-record single-sample `.vcf.gz`, an aoa takes 8.4 s.
+
 ### missing values (`na.strings` / `na_values` / `undef.val`)
 An empty field is always read as `undef`. Any *other* text that a file uses to
 mean "missing" — `NA`, `N/A`, `NULL`, `-`, `-999` — has to be named. It is one
@@ -5843,10 +5879,45 @@ A header that is itself commented out is detected and used automatically, so
     1a2b	10
     3c4d	20
 reads as though the header were `PDB, score` (the comment marker and any
-following whitespace are stripped from the first column). A commented line is
-only taken as the header when its field count matches the data, so ordinary
-leading comments are never mistaken for one. You may name such a column in a
-`filter` either as it appears in the file or by its clean name:
+following whitespace are stripped from the first column). A commented first
+line is only taken as the header when its field count matches the line after
+it, and that line looks like data: a number or an `na.strings` token in one of
+its fields, or nothing but empty fields. So
+
+    # written by foo, v2
+    id,val
+    1,2
+
+reads with the header `id, val`, as R and pandas read it: the comment is as
+wide as the header, but `id,val` has no number in it, so it is the header and
+the comment is a comment. The rule cannot tell a commented-out header over rows
+with no numbers in them from a comment, and reads the first of those rows as
+the header.
+
+When several comment lines come before the header, it is the last of them,
+the one next to the data, that is tried as the header, and the rest are
+comments:
+
+    #written by foo
+    #id,val
+    1,2
+
+reads with the header `id, val`. If the last one fails the test above, the
+line after the comments is the header, so R's own
+
+    #comment
+    #another
+    C1	C2	C3
+    "Panel"	"Area Examined"	"# Blemishes"
+
+reads with the header `C1, C2, C3`, as `read.table(header = TRUE)` reads it.
+Only lines before the header are looked at this way: a line starting with the
+comment marker *after* the header, if the marker hugs its text (`#3,4`), is a
+data row, while one with a blank after the marker (`# note`) is a comment
+wherever it is.
+
+You may name a commented-out header's column in a `filter` either
+as it appears in the file or by its clean name:
 
     read_table('ranks.tabular.tsv', filter => { '# PDB' => sub { $_ == 2 } });
 
