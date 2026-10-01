@@ -181,6 +181,53 @@ Revision history for Stats-LikeR
  - The documentation said x needs 2 values even under var_equal, where
    either sample may have 1. It now says so.
 
+ [logrank_test(): a group with no expected events]
+
+ - A group never at risk at an event time -- one whose subjects are all
+   censored before the first event -- has no expected events and a zero
+   row and column in the variance matrix. Every group was kept in the test
+   and the last one dropped, so that matrix was singular, the solve
+   failed, and the statistic was left at 0 with no warning: p = 1, on a df
+   that counted the empty group. survival's own tests/difftest.R adds such
+   a group of seven early censorings to aml and expects aml's answer back,
+   3.396 on 1 df, p = 0.065; this gave 0 on 2 df, p = 1. Such groups are
+   now left out of the test, as survdiff() leaves them out. With only one
+   group left the statistic is 0 on 0 df with p = 1, as in survdiff(); with
+   no events at all it is NaN on 0 df, where survdiff() gives df = -1. A
+   variance matrix that is still singular -- every event time empties the
+   risk set -- croaks, as survdiff() stops, instead of reporting p = 1.
+
+ - An event time with one subject at risk was skipped outright, to keep
+   the variance term's n - 1 divisor away from zero, so the last subject
+   dying went uncounted in observed and expected alike. The statistic was
+   right, the two cancelling, but the group's observed and expected
+   events were each one too few. Only the variance term is skipped now.
+
+ [survfit(): the median on a flat stretch at 0.5]
+
+ - When S(t) steps onto exactly 0.5, survival:::survmean() puts the median
+   halfway between that time and the next drop. survfit() took the start
+   of the flat stretch instead, so 4 deaths among 8 at t = 5 with the next
+   at t = 6 gave a median of 5 where R gives 5.5. It now follows R's rule,
+   to R's tolerance of 2^-26 for "is 0.5".
+
+ [Documentation: dotted result keys]
+
+ - The examples read result fields as $r->{p.value}, which perl parses as
+   "p" . "value": it does not compile under use strict, and without it
+   looks up "pvalue" and returns undef. Every dotted key in the examples
+   is now quoted -- 'p.value', 'odds.ratio', 'exp.coef', 'auc.ci' and the
+   rest. dunn_test()'s example also read $c->{p_adjust}, a key that does
+   not exist; the adjusted p-value is $c->{'p.adjust'}.
+
+ [Tests: survival]
+
+ - t/survival.R.t pins logrank_test() and survfit() to R 4.6.1 with
+   survival 3.8-12 at full precision, on aml and aml3 from
+   tests/difftest.R, test1 from tests/quantile.R, and data built to reach
+   each new branch. t/survival.t had covered aml alone. The generator is
+   t/survival.R.R.
+
 0.3212 2026-09-28 CDT
 
  [write_table(): a warning for a header cell with no name]

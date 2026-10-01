@@ -14947,6 +14947,12 @@ static int survobs_cmp(const void *a, const void *b) {
 	return pb->status - pa->status;      //events before censors at a tie
 }
 
+/*Tolerance for "S is 0.5" in survfit()'s median: survival:::survmean() uses
+.Machine$double.eps^0.5 = 2^-26.  It is R's decision rule, not a precision
+bound, so it stays this width on long double and quadmath builds rather than
+scaling off NV_EPSILON.*/
+#define SURV_MEDIAN_TOL 1.4901161193847656e-08
+
 /*Gauss-Jordan solve of A x = b (A is n*n row-major, destroyed in place).
 Returns 0 on success, 1 if (near-)singular.  Used for the log-rank quadratic
 form on the (g-1)-dimensional reduced observed-minus-expected vector.*/
@@ -27851,9 +27857,18 @@ PPCODE:
 		size_t ng = 0; for (size_t i = 0; i < N; i++) if (o[i].grp == g) ng++;
 		AV *t_av=newAV(), *nr_av=newAV(), *ne_av=newAV(), *nc_av=newAV(),
 		   *s_av=newAV(), *se_av=newAV(), *lo_av=newAV(), *hi_av=newAV();
-		NV S = 1.0, vterm = 0.0, median = NAN;
+		NV S = 1.0, vterm = 0.0, median = NV_NAN;
+		/*The median follows survival:::survmean()'s minmin(): it is the first
+		time at which S < 0.5 + tol, except that when S there is 0.5 to within
+		tol and the curve drops again later, it is the midpoint of that time
+		and the time of the next drop.  Through 0.3212 it was the first time
+		with S <= 0.5, so a curve that stepped onto exactly 0.5 -- 4 of 8
+		events, say -- gave the left end of the flat stretch where R gives its
+		middle.*/
+		bool median_on_half = FALSE;	//S was 0.5 at `median`; waiting for the next drop
+		NV median_S = 0.0;	//S at `median`, read only while median_on_half
 		/*Set once the Greenwood sum has a term this data cannot supply.*/
-		bool var_undefined = 0;
+		bool var_undefined = FALSE;
 		size_t at_risk = ng, total_events = 0;
 		size_t i = 0;
 		while (i < N) {
@@ -27878,7 +27893,7 @@ PPCODE:
 				reported 0 for all three, which is a number where there is no
 				answer, and 0 is a plausible-looking one.*/
 				S = 0.0; total_events += d;
-				var_undefined = 1;
+				var_undefined = TRUE;
 			}
 			av_push(t_av,  newSVnv(t));
 			av_push(nr_av, newSViv((IV)nr));
@@ -27898,7 +27913,16 @@ PPCODE:
 				av_push(lo_av, newSVnv(lo));
 				av_push(hi_av, newSVnv(hi));
 			}
-			if (nv_isnan(median) && S <= 0.5) median = t;
+			if (nv_isnan(median)) {
+				if (S < 0.5 + SURV_MEDIAN_TOL) {
+					median = t;
+					median_S = S;
+					median_on_half = nv_fabs(S - 0.5) < SURV_MEDIAN_TOL;
+				}
+			} else if (median_on_half && S < median_S) {
+				median = (median + t) / 2.0;
+				median_on_half = FALSE;
+			}
 			at_risk -= block;
 			i = j;
 		}
@@ -27958,11 +27982,17 @@ PPCODE:
 		for (SSize_t k = 0; k < G; k++) n_tot += nrisk[k];
 		size_t j = i, block_j0 = 0; (void)block_j0;
 		while (j < N && o[j].time == t) { if (o[j].status) { dj[o[j].grp]++; d_tot++; } j++; }
-		if (d_tot > 0 && n_tot > 1) {
+		/*Only V's term needs n > 1, for its n - 1 divisor, and it is 0 there
+		anyway (n == d).  Through 0.3212 the whole time was skipped when n was
+		1, so the last subject at risk dying went uncounted in both observed
+		and expected -- which left the statistic alone, the two cancelling,
+		but reported one event too few for that group.*/
+		if (d_tot > 0) {
 			for (SSize_t a = 0; a < G; a++) {
 				NV nja = (NV)nrisk[a];
 				O[a] += (NV)dj[a];
 				E[a] += (NV)d_tot * nja / (NV)n_tot;
+				if (n_tot < 2) continue;
 				for (SSize_t b = 0; b < G; b++) {
 					NV njb = (NV)nrisk[b];
 					NV term = (NV)d_tot * ((NV)n_tot - (NV)d_tot) / ((NV)n_tot - 1.0)
@@ -27977,15 +28007,51 @@ PPCODE:
 		i = j;
 	}
 
-	int m = (int)G - 1; // reduced dimension
-	NV *Vr; Newx(Vr, m * m, NV);
-	NV *OE; Newx(OE, m, NV);
-	for (int a = 0; a < m; a++) { OE[a] = O[a] - E[a]; for (int b = 0; b < m; b++) Vr[a*m+b] = V[a*G+b]; }
-	NV *xsol; Newx(xsol, m, NV);
-	NV chi = 0.0;
-	if (srv_solve(Vr, OE, m, xsol) == 0)
-		for (int a = 0; a < m; a++) chi += OE[a] * xsol[a];
-	NV pval = get_p_value(chi, m);
+	/*The test is over the groups with a nonzero expected count, as in
+	survival::survdiff() (`df <- (etmp > 0)`), and one of those is dropped to
+	make V invertible.  A group that is never at risk at an event time -- one
+	whose subjects are all censored before the first event -- has E = 0 and a
+	zero row and column in V.  Through 0.3212 every group was kept and the
+	last dropped, so such a group left the reduced V singular, srv_solve()
+	failed, and the statistic stayed at 0: p = 1, with df counting the dead
+	group, where survdiff() gives a significant result on one fewer df.
+	Dropping the last kept group rather than survdiff()'s first changes
+	nothing: the quadratic form is the same whichever one goes.*/
+	SSize_t *keep; Newx(keep, G, SSize_t);	//indices of the groups with E > 0
+	int nkeep = 0;	//int, not size_t: srv_solve() and get_p_value() take an int dimension
+	for (SSize_t k = 0; k < G; k++) if (E[k] > 0.0) keep[nkeep++] = k;
+	int m = nkeep - 1; // reduced dimension
+	NV chi = 0.0, pval;
+	if (nkeep == 0) {
+		/*No events at all.  survdiff() reports df = -1 and a NaN p-value
+		with a warning; a negative df means nothing, so df is 0 here and
+		the NaN is kept.*/
+		m = 0;
+		pval = NV_NAN;
+	} else if (nkeep == 1) {	//survdiff(): chisq 0 on 0 df, p = 1
+		pval = 1.0;
+	} else {
+		NV *Vr; Newx(Vr, m * m, NV);
+		NV *OE; Newx(OE, m, NV);
+		NV *xsol; Newx(xsol, m, NV);
+		for (int a = 0; a < m; a++) {
+			OE[a] = O[keep[a]] - E[keep[a]];
+			for (int b = 0; b < m; b++) Vr[a*m+b] = V[keep[a]*G+keep[b]];
+		}
+		bool singular = srv_solve(Vr, OE, m, xsol) != 0;
+		if (!singular)
+			for (int a = 0; a < m; a++) chi += OE[a] * xsol[a];
+		Safefree(Vr); Safefree(OE); Safefree(xsol);
+		if (singular) {
+			/*Still singular with every E = 0 group gone: every event time
+			emptied the risk set (n == d), so no term of V is nonzero.
+			survdiff() stops here too ("system is exactly singular").*/
+			Safefree(O); Safefree(E); Safefree(V); Safefree(nrisk); Safefree(keep);
+			croak("logrank_test: the variance matrix is singular (every event time empties the risk set), so there is no test");
+		}
+		pval = get_p_value(chi, m);
+	}
+	Safefree(keep);
 
 	HV *ret = newHV();
 	hv_stores(ret, "statistic", newSVnv(chi));
@@ -27999,7 +28065,6 @@ PPCODE:
 	hv_stores(ret, "method",    newSVpv("Log-rank (Mantel-Cox) test", 0));
 
 	Safefree(O); Safefree(E); Safefree(V); Safefree(nrisk);	//o: save stack
-	Safefree(Vr); Safefree(OE); Safefree(xsol);
 	ST(0) = sv_2mortal(newRV_noinc((SV *)ret));
 	XSRETURN(1);
 }

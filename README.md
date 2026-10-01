@@ -990,7 +990,7 @@ machine precision in a single line.
         cutoff => 6.5,
         top    => 0.05);
     print $r->{bedroc};
-    print $r->{enrichment}{enrichment.factor};   # e.g. 2.0 => 2x over random
+    print $r->{enrichment}{'enrichment.factor'}; # e.g. 2.0 => 2x over random
 
     # fraction-defined actives straight from a raw ΔG column: the strongest-
     # binding 10% (lowest ΔG) are the actives, best predictions rank first.
@@ -1069,7 +1069,7 @@ You play 10 rounds and the toddler gets 6 right. Real skill, or just luck?
 
     my $r = binom_test(6, 10, p => 0.5); # 6 wins, 10 rounds, guessing rate 0.5
 
-    print $r->{p.value};                 # 0.7539
+    print $r->{'p.value'};               # 0.7539
 
 The full result is a hashref:
 
@@ -1098,7 +1098,7 @@ Suppose the toddler had gone 9 for 10 instead:
 
     my $r = binom_test(9, 10, p => 0.5);
 
-    print $r->{p.value};                   # 0.0215
+    print $r->{'p.value'};                 # 0.0215
 
 Now `p = 0.02`, under `0.05`. A pure guesser almost never does that well, so
 this **is** good evidence the toddler can actually tell the cards apart.
@@ -1440,7 +1440,7 @@ e.g. an exposure/outcome odds ratio adjusted for study site. Same as R's
                        [20,6,8,15],     # stratum 2
                        [ 7,4,9,11] ]);  # stratum 3
 
-    print $r->{p.value};    # combined test across strata
+    print $r->{'p.value'};  # combined test across strata
     print $r->{estimate};   # Mantel–Haenszel common odds ratio
 
 Each 2×2 uses the same layout as [`epi_2x2`](#epi_2x2). Options: `correct`
@@ -1939,8 +1939,8 @@ Give times, an event flag (1 = event, 0 = censored), and one or more covariates
     my $fit = coxph(\@time, \@status, [\@age, \@sex],
                     names => ['age', 'sex']);
 
-    print $fit->{exp.coef}[0];    # hazard ratio for age
-    print $fit->{p.value}[0];     # its p-value
+    print $fit->{'exp.coef'}[0];  # hazard ratio for age
+    print $fit->{'p.value'}[0];   # its p-value
 
 Or name the columns of a data set in a formula, as `survival::coxph` does. The
 response is `Surv(time, status)`, or `Surv(start, stop, status)` for
@@ -2731,7 +2731,7 @@ numerically against the canonical formula computed in base R.
     my $res = dunn_test(\@values, \@group, method => 'bh');
     for my $c (@$res) {
         printf "%-9s  Z=%+.3f  p=%.4f  (adj %.4f)\n",
-            $c->{comparison}, $c->{Z}, $c->{p.value}, $c->{p_adjust};
+            $c->{comparison}, $c->{Z}, $c->{'p.value'}, $c->{'p.adjust'};
     }
 
 Values and groups are given as two parallel arrays; observations with a missing
@@ -2773,8 +2773,8 @@ Pass the four counts (or a `[a,b,c,d]` / `[[a,b],[c,d]]` array ref):
     use Stats::LikeR 'epi_2x2';
 
     my $r = epi_2x2(30, 70, 20, 80);
-    print $r->{odds.ratio};             # 1.714
-    print "@{ $r->{odds.ratio.ci} }";   # 0.895 3.285
+    print $r->{'odds.ratio'};           # 1.714
+    print "@{ $r->{'odds.ratio.ci'} }"; # 0.895 3.285
 
 Options: `conf.level` (default `0.95`) and `correct` (add 0.5 to every cell,
 done automatically when a cell is 0). Result keys: `odds.ratio`, `risk.ratio`,
@@ -3108,7 +3108,7 @@ non-numeric value are dropped, mirroring R's `complete.cases`.
         [9, 10,  9],   # subject 3
         [8,  8,  6],   # subject 4
     ]);
-    printf "chi2=%.3f  df=%d  p=%.4g\n", $r->{statistic}, $r->{parameter}, $r->{p.value};
+    printf "chi2=%.3f  df=%d  p=%.4g\n", $r->{statistic}, $r->{parameter}, $r->{'p.value'};
 
 A significant result says the conditions differ overall; follow up with pairwise
 comparisons (for example [dunn_test](#dunn_test) on the paired differences, or
@@ -3664,7 +3664,7 @@ it was validated numerically.
     my @prob = map { $fit->{'fitted.values'}{$_} } @ids;
 
     my $hl = hosmer_lemeshow(\@obs, \@prob, g => 10);
-    printf "HL chi2=%.2f df=%d p=%.3f\n", $hl->{statistic}, $hl->{parameter}, $hl->{p.value};
+    printf "HL chi2=%.2f df=%d p=%.3f\n", $hl->{statistic}, $hl->{parameter}, $hl->{'p.value'};
 
 ### Input Parameters
 
@@ -4108,9 +4108,9 @@ the asymptotic one, so it always names the p-value you actually got.
 For example:
 
     my $ks = ks_test(\@x, \@y);
-    if ($ks->{p.value} < 0.05) {
+    if ($ks->{'p.value'} < 0.05) {
         printf "reject H0: D=%.4f, p=%.4g (%s)\n",
-            $ks->{statistic}, $ks->{p.value}, $ks->{method};
+            $ks->{statistic}, $ks->{'p.value'}, $ks->{method};
     }
 
 ## kurtosis
@@ -4356,7 +4356,7 @@ Give times, an event flag (1 = event, 0 = censored), and a group label per row:
     use Stats::LikeR 'logrank_test';
 
     my $r = logrank_test(\@time, \@status, \@group);
-    print $r->{p.value};
+    print $r->{'p.value'};
 
 Result keys: `statistic` (chi-squared), `parameter` (df = groups − 1),
 `p.value`, `observed` and `expected` events per group, and `groups`. See
@@ -4421,7 +4421,7 @@ numerically against R.
 
     # counts as a square matrix: [[a, b], [c, d]]
     my $r = mcnemar_test([[794, 86], [150, 570]]);
-    printf "chi2=%.2f df=%d p=%.4g\n", $r->{statistic}, $r->{parameter}, $r->{p.value};
+    printf "chi2=%.2f df=%d p=%.4g\n", $r->{statistic}, $r->{parameter}, $r->{'p.value'};
 
     # small samples: exact binomial test on the discordant pairs
     my $e = mcnemar_test([[794, 86], [150, 570]], exact => 1);
@@ -4787,7 +4787,7 @@ the factor's *name* becomes the top-level key:
         },
         formula => 'len ~ supp',
     );
-    # $res->{supp}, $res->{Residuals}, $res->{group.stats} ...
+    # $res->{supp}, $res->{Residuals}, $res->{'group.stats'} ...
 
 ### Classic equal-variance form
 
@@ -5302,7 +5302,7 @@ Validated numerically against R.
     # one sample vs a target probability (default 0.5)
     my $r = prop_test(83, 100);              # 83 successes in 100 trials
     printf "p-hat=%.2f  95%% CI %.3f–%.3f  p=%.4g\n",
-        $r->{estimate}[0], $r->{'conf.int'}[0], $r->{'conf.int'}[1], $r->{p.value};
+        $r->{estimate}[0], $r->{'conf.int'}[0], $r->{'conf.int'}[1], $r->{'p.value'};
 
     # two groups: difference in proportions + CI
     my $two = prop_test([83, 90], [100, 100]);
@@ -6073,7 +6073,7 @@ well a score separates cases from non-cases.
 
     my $r = roc(\@scores, \@labels);
     print $r->{auc};                 # 0.848
-    print "@{ $r->{auc.ci} }";       # 0.649 1.000
+    print "@{ $r->{'auc.ci'} }";     # 0.649 1.000
     my $cut = $r->{youden};          # best operating point
     print "$cut->{threshold}: sens=$cut->{sensitivity} spec=$cut->{specificity}";
 
