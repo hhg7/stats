@@ -5630,7 +5630,7 @@ minimal example:
 | Option | Description | Example |
 | -------- | ------- | ------- |
 |`comment` | Comment marker, by default `#` (`##` for a VCF); lines beginning with it are skipped. It may be more than one character | `comment => '%'` |
-|`output.type`| data type for output: array of hash (the default), array of array, hash of array, or hash of hash | `'output.type' => 'aoh'`|
+|`output.type`| data type for output: array of hash (the default; hash of hash for a VCF), array of array, hash of array, or hash of hash | `'output.type' => 'aoh'`|
 |`filter`| Only take in rows matching a filter | `filter => { Sex => sub {$_ eq 'f'} }`|
 |`row.names` | include row names in retrieved data; off by default | |
 |`auto.row.names` | read R's default `write.table` output, where the header is one field short of every data row because R writes no label for the row-names column: the leading field of each row becomes a row-names column. `1` names it `row_name`, a string names it whatever you pass. Off by default, so a genuinely ragged file is still an error | `'auto.row.names' => 1` |
@@ -5643,6 +5643,7 @@ minimal example:
 | `na.strings` | field texts that mean "missing"; a string or an array reference of strings, mapped to `undef`. Off by default | `'na.strings' => 'NA'` |
 | `na_values` | pandas' spelling of `na.strings` | `na_values => ['NA', 'N/A']` |
 | `undef.val` | `write_table`'s spelling of `na.strings`, so a round trip can use one name on both halves | `'undef.val' => 'NA'` |
+| `explode` | VCF only. `1` (the default): split each sample column into one column per `FORMAT` key, and return a hoh keyed by `CHROM:POS:REF:ALT`; `0`: the file's own columns. See [VCF files](#vcf-files) | `explode => 0` |
 output types can be AOH (aoh), AOA (aoa), HOA (hoa), HOH (hoh)
 
     read_table($filename, 'output.type' => 'aoh');
@@ -5791,31 +5792,62 @@ option to set:
 
 ### VCF files
 A file named `.vcf`, `.vcf.gz` or `.vcf.bgz`, in any case, is read as a VCF
-with no options:
+with no options. Each sample's column is split ("exploded") into one column per
+`FORMAT` key, and the records come back as a hash of hashes keyed by
+`CHROM:POS:REF:ALT`:
 
     my $variants = read_table('calls.vcf.gz');
-    # [ { CHROM => '1', POS => '12065947', ID => 'PTV001', REF => 'C', ALT => 'T,A',
-    #     QUAL => '29', FILTER => 'PASS', INFO => '.', FORMAT => 'GT:GATK:AD:DP:GQ',
-    #     NA00001 => '0/1:0/1:3,2:5:19' }, ... ]
+    # { '20:14370:G:A' => {
+    #       CHROM => '20', POS => '14370', ID => 'rs6054257', REF => 'G', ALT => 'A',
+    #       QUAL => '29.1', FILTER => '.', INFO => 'NS=3;DP=14;AF=0.5;HOMSEQ;DB',
+    #       'NA00001.GT' => '0|0', 'NA00001.GQ' => '48', 'NA00001.DP' => '1',
+    #       'NA00001.HQ' => '25,30', 'NA00001.CNL' => '10,20',
+    #       'NA00002.GT' => '1|0', ...  },
+    #   '20:17330:T:A' => { ..., 'NA00001.CNL' => undef, ... },   # no CNL in this record's FORMAT
+    #   ... }
 
-That changes three things and nothing else:
+  - **Defaults.** `sep` is a tab and `comment` is `##`, so the `##`
+    meta-information lines are skipped and the `#CHROM POS ID ...` line is the
+    header. The `#` comes off `#CHROM`, so the first column is `CHROM`.
+  - **The columns.** The eight fixed columns come first, then
+    `<sample>.<key>` for every sample and every key. `FORMAT` can differ from
+    record to record (GATK writes `GT:AD:DP:GQ:PL` on most and
+    `GT:AD:DP:GQ:PGT:PID:PL` on phased ones), so the keys are those of every
+    record read, in the order each first appears. A key missing from a
+    record's `FORMAT` is `undef`, and so is a value a sample leaves off the end,
+    which the VCF spec allows (`./.` under `GT:AD:DP` is `GT` alone). `FORMAT`
+    and the unsplit sample columns are not returned. A sample with *more*
+    values than its `FORMAT` has keys is an error.
+  - **Values are text.** `0/1`, `34,7` and `73,0,1043` are returned as
+    written: `AD`, `PL` and `INFO` are not split further, and `.` is not
+    missing unless you pass `'na.strings' => '.'`, which then applies to the
+    split values as well as to whole fields.
+  - **The key.** `CHROM:POS:REF:ALT` identifies a record in practice; `ID` is
+    usually `.`. A key that repeats is warned about once, later records
+    winning, as with any hoh. `'row.names' => 'POS'`, or any other column
+    including an exploded one, keys the hash by that column instead.
+  - **Other shapes.** `'output.type'` still gives an aoa, aoh or hoa of the
+    same columns. An aoa is the one to hand to `write_table`.
+  - **`filter` runs before the split**, while the file is read, so it sees the
+    file's own columns: `FORMAT` and each sample's text whole
+    (`filter => { FORMAT => sub { /PGT/ } }`), not `NA00001.GT`. The columns
+    are the keys of the records it kept.
+  - **`col.names`** renames the file's columns before the split, so a
+    renamed sample names its exploded columns.
+  - **`explode => 0`** returns the file's own columns instead, an aoh by
+    default, with `FORMAT` and the samples unsplit. `header => 0` reads the
+    file that way too, having no `FORMAT` column to split by, and its
+    `#CHROM` line is the first data row, `#` and all. `explode` is refused for
+    a file not named as a VCF.
 
-  - `sep` is a tab.
-  - `comment` is `##`, so the `##` meta-information lines are skipped and the
-    `#CHROM POS ID ...` line is the header.
-  - The `#` comes off `#CHROM`, so the first column is `CHROM`.
+Passing `sep` or `comment` overrides the VCF default, and `comment => '#'`
+reads the same table. Under any other name, such as `.tsv` or `.txt`, the file
+is not a VCF to `read_table`: with `comment => '##'` the meta lines are still
+skipped, but the first column is `#CHROM` and nothing is split.
 
-Everything else is an ordinary `read_table`. All four output types work, as do
-`filter`, `col.names` and `header => 0` (which reads the `#CHROM` line as the
-first data row, `#` and all). Passing `sep` or `comment` overrides the VCF
-default, and `comment => '#'` reads the same table. A field is returned as its
-text: `INFO`, `FORMAT` and the sample columns are not split, and `.` is not
-read as missing unless you pass `'na.strings' => '.'`. Under any other name,
-such as `.tsv` or `.txt`, the file is not a VCF to `read_table`. With
-`comment => '##'` the meta lines are still skipped, but the first column is
-`#CHROM`.
-
-On a 3,499,678-record single-sample `.vcf.gz`, an aoa takes 8.4 s.
+The split is done in C. On a 3,499,678-record single-sample GATK `.vcf.gz`,
+the exploded hoh takes 11.7 s, against 9.1 s for the file's own columns as a
+hoh, and an exploded aoa 8.4 s, against 7.0 s for the plain one.
 
 ### missing values (`na.strings` / `na_values` / `undef.val`)
 An empty field is always read as `undef`. Any *other* text that a file uses to

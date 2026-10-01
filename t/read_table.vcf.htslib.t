@@ -9,7 +9,8 @@
 # such lines is now a run of candidates, the last of which is tried against
 # the data (t/read_table.comments.t), and a file named *.vcf, *.vcf.gz or
 # *.vcf.bgz is read with a tab sep, a "##" comment marker and the "#" taken
-# off "#CHROM".
+# off "#CHROM". Every read here is with explode => 0, the file's own columns;
+# splitting the sample columns by FORMAT is t/read_table.vcf_explode.bcftools.t.
 #
 # Provenance. Every fixture is a file of htslib's own test suite, copied byte
 # for byte from htslib 1.21-34-gb14fffb4, test/: formatmissing.vcf,
@@ -55,6 +56,15 @@ sub fixture {
 	print {$fh} $bytes;
 	close $fh or die "cannot close \"$path\": $!\n";
 	return $path;
+}
+
+# The file as written: these tests are of reading a VCF's text, so each is
+# made with explode => 0, which is the default's opposite for a file named as
+# a VCF and is refused for any other. The exploded table is tested in
+# t/read_table.vcf_explode.bcftools.t.
+sub read_plain {
+	my $path = shift;
+	return read_table($path, ($path =~ /\.vcf(?:\.b?gz)?\z/i ? (explode => 0) : ()), @_);
 }
 
 # One gzip member holding $text.
@@ -333,39 +343,39 @@ for my $name (sort keys %fixture) {
 	(my $stem = $name) =~ s/\.vcf\z//;
 	my $f = fixture($name, $fx->{vcf});
 
-	is_deeply read_table($f, 'output.type' => 'aoa'), $aoa, "$name: aoa";
-	is_deeply read_table($f), $aoh, "$name: aoh, the default";
-	is_deeply read_table($f, 'output.type' => 'hoa'), $hoa, "$name: hoa";
-	is_deeply read_table($f, filter => sub { 1 }), $aoh,
+	is_deeply read_plain($f, 'output.type' => 'aoa'), $aoa, "$name: aoa";
+	is_deeply read_plain($f), $aoh, "$name: aoh, the default with explode => 0";
+	is_deeply read_plain($f, 'output.type' => 'hoa'), $hoa, "$name: hoa";
+	is_deeply read_plain($f, filter => sub { 1 }), $aoh,
 		"$name: aoh through the filter closure";
-	is_deeply read_table($f, 'output.type' => 'aoa', filter => sub { 1 }), $aoa,
+	is_deeply read_plain($f, 'output.type' => 'aoa', filter => sub { 1 }), $aoa,
 		"$name: aoa through the filter closure";
 	# what read.vcf.pl passed, and the marker R and pandas would use
-	is_deeply read_table($f, comment => '##', sep => "\t", 'output.type' => 'aoa'),
+	is_deeply read_plain($f, comment => '##', sep => "\t", 'output.type' => 'aoa'),
 		$aoa, "$name: comment => '##', sep => \"\\t\" given explicitly";
-	is_deeply read_table($f, comment => '#', 'output.type' => 'aoa'), $aoa,
+	is_deeply read_plain($f, comment => '#', 'output.type' => 'aoa'), $aoa,
 		"$name: comment => '#'";
 	# the name decides, whatever its case and however it is compressed
-	is_deeply read_table(fixture("$stem.VCF", $fx->{vcf}), 'output.type' => 'aoa'),
+	is_deeply read_plain(fixture("$stem.VCF", $fx->{vcf}), 'output.type' => 'aoa'),
 		$aoa, "$name: as .VCF";
-	is_deeply read_table(fixture("$name.gz", gz($fx->{vcf})), 'output.type' => 'aoa'),
+	is_deeply read_plain(fixture("$name.gz", gz($fx->{vcf})), 'output.type' => 'aoa'),
 		$aoa, "$name: gzipped, as .vcf.gz";
-	is_deeply read_table(fixture("$name.bgz", gz($fx->{vcf}) . $bgzf_eof),
+	is_deeply read_plain(fixture("$name.bgz", gz($fx->{vcf}) . $bgzf_eof),
 			'output.type' => 'aoa'),
 		$aoa, "$name: bgzipped, as .vcf.bgz";
 	# Under another name it is an ordinary file: "##" lines are comments if
 	# asked for, and "#CHROM" keeps its "#", as R's read.table(comment.char =
 	# "") would keep it.
 	my $as_tsv = [ [ "#$hdr[0]", @hdr[ 1 .. $#hdr ] ], @$aoa[ 1 .. $#$aoa ] ];
-	is_deeply read_table(fixture("$stem.tsv", $fx->{vcf}), comment => '##',
+	is_deeply read_plain(fixture("$stem.tsv", $fx->{vcf}), comment => '##',
 			'output.type' => 'aoa'),
 		$as_tsv, "$name: as .tsv with comment => '##', \"#CHROM\" keeps its \"#\"";
 	# header => 0: the "#CHROM" line is the first row, as written
-	is_deeply read_table($f, header => 0, 'output.type' => 'aoa'),
+	is_deeply read_plain($f, header => 0, 'output.type' => 'aoa'),
 		[ [ map { "V$_" } 1 .. @hdr ], @$as_tsv ],
 		"$name: header => 0 reads the \"#CHROM\" line as data";
 	my @cn = map { "c$_" } 1 .. @hdr;
-	is_deeply read_table($f, 'col.names' => \@cn, 'output.type' => 'aoa'),
+	is_deeply read_plain($f, 'col.names' => \@cn, 'output.type' => 'aoa'),
 		[ \@cn, @$aoa[ 1 .. $#$aoa ] ], "$name: col.names renames the columns";
 }
 
@@ -378,21 +388,21 @@ for my $name (sort keys %fixture) {
 	for my $r (@{ $fx->{rows} }) {
 		$want{ $r->[2] } = { map { $hdr[$_] => $r->[$_] } grep { $_ != 2 } 0 .. $#hdr };
 	}
-	is_deeply read_table($f, 'output.type' => 'hoh', 'row.names' => 'ID'), \%want,
+	is_deeply read_plain($f, 'output.type' => 'hoh', 'row.names' => 'ID'), \%want,
 		'test-vcf-hdr-in.vcf: hoh by ID';
 	$fx = $fixture{'formatmissing.vcf'};
 	$f  = fixture('hoh1.vcf', $fx->{vcf});
 	@hdr = @{ $fx->{header} };
 	my $r = $fx->{rows}[0];
-	is_deeply read_table($f, 'output.type' => 'hoh'),
+	is_deeply read_plain($f, 'output.type' => 'hoh'),
 		{ $r->[0] => { map { $hdr[$_] => $r->[$_] } 1 .. $#hdr } },
 		'formatmissing.vcf: hoh by CHROM, the first column, by default';
 }
 
 if ($HAVE_LEAKTRACE && !$INC{'Devel/Cover.pm'}) {
 	my $f = fixture('leak.vcf', $fixture{'test-vcf-hdr-in.vcf'}{vcf});
-	no_leaks_ok { read_table($f) } 'no leaks reading a VCF';
-	no_leaks_ok { read_table($f, filter => sub { 1 }) }
+	no_leaks_ok { read_plain($f) } 'no leaks reading a VCF';
+	no_leaks_ok { read_plain($f, filter => sub { 1 }) }
 		'no leaks reading a VCF through the filter closure';
 }
 

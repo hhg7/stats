@@ -30,9 +30,20 @@ Revision history for Stats-LikeR
 
  - A file named .vcf, .vcf.gz or .vcf.bgz is read with a tab sep, a "##"
    comment marker and the "#" taken off "#CHROM", so read_table('x.vcf.gz')
-   needs no options. Fields are returned as text, INFO and the sample
-   columns unsplit. The cases are htslib 1.21's own test VCFs, with
+   needs no options. The cases are htslib 1.21's own test VCFs, with
    bcftools 1.21's reading of them as the expected values.
+
+ - Each sample column of a VCF is split on ':' into one column per FORMAT
+   key, named "<sample>.<key>", and the records come back as a hoh keyed by
+   CHROM:POS:REF:ALT. FORMAT may change from record to record, so the keys
+   are those of every record read; a key a record lacks, or a value a
+   sample drops off the end, is undef. Values stay text. 'output.type' still
+   gives the other shapes, 'row.names' another key, and the new explode => 0
+   the file's own columns. A filter sees the file's own columns, since it
+   runs while the file is read. The cases are bcftools 1.21's test VCFs,
+   with each value as bcftools query prints it. The split is done in C: on
+   a 3,499,678-record single-sample .vcf.gz it adds 2.6 s to the 9.1 s a
+   plain hoh takes, where the first version, in perl, added 12.6 s.
 
  [read_table(): CR line ends]
 

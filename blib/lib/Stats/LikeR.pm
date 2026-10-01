@@ -3098,6 +3098,7 @@ sub read_table {
 	my %allowed_args = map { $_ => 1 } (
 		'comment', 'output.type', 'filter', 'row.names', 'sep',
 		'auto.row.names', 'sheet', 'na.strings', 'header', 'col.names', 'quote',
+		'explode',
 		# private, undocumented: the multi-sheet expansion passes an already
 		# parsed worksheet list / shared-string table to each per-sheet recursion
 		# so a big sharedStrings.xml is not re-decompressed once per worksheet.
@@ -3108,7 +3109,21 @@ sub read_table {
 		my $current_sub = ( split /::/, (caller(0))[3] )[-1];
 		die "the args \"@undef_args\" aren't defined for $current_sub\n";
 	}
-	my $otype = $args{'output.type'} // 'aoh';
+	# explode => 1, the default for a VCF read with its header: every sample
+	# column is split on ':' into one column per FORMAT key, and the table is
+	# a hoh keyed by CHROM:POS:REF:ALT (see _vcf_explode). Without a header
+	# there is no FORMAT column to split by, so header => 0 reads it plain.
+	if (exists $args{explode}) {
+		die "read_table: 'explode' applies only to a VCF (.vcf, .vcf.gz or "
+		  . ".vcf.bgz), and \"$file\" is not named as one\n"
+			unless $is_vcf;
+		die "read_table: 'explode' must be 0 or 1\n"
+			unless defined $args{explode} && !ref $args{explode}
+				&& $args{explode} =~ /\A[01]?\z/;
+	}
+	my $explode = $is_vcf && ($args{explode} // 1)
+		&& !(exists $args{header} && defined $args{header} && !$args{header});
+	my $otype = $args{'output.type'} // ($explode ? 'hoh' : 'aoh');
 	die "read_table: output.type \"$otype\" isn't allowed (aoa, aoh, hoa, hoh)\n"
 		unless $otype =~ m/^(?:aoa|aoh|hoa|hoh)$/;
 	# An aoa is positional: its first row is the header and nothing labels a
@@ -3161,6 +3176,23 @@ sub read_table {
 			unless defined $args{quote} && !ref $args{quote}
 				&& ($args{quote} eq '' || $args{quote} eq '"');
 		$quote = $args{quote} eq '"' ? 1 : 0;
+	}
+
+	# The file is read plain, as an aoa, with every option but the output
+	# type and row.names, so 'filter' sees the file's own columns (FORMAT and
+	# each sample's unsplit text), and is then exploded into the shape asked
+	# for. Each raw row is released as it is exploded.
+	if ($explode) {
+		my %raw_args = (%input_args, explode => 0, 'output.type' => 'aoa');
+		delete $raw_args{'row.names'};
+		my $raw = read_table($file, %raw_args);
+		my %na = map { $_ => 1 } !defined $args{'na.strings'} ? ()
+			: ref $args{'na.strings'} ? @{ $args{'na.strings'} }
+			: ($args{'na.strings'});
+		# _vcf_explode() in LikeR.xs; its comment says what the columns are
+		my %mode = (aoh => 0, hoa => 1, hoh => 2, aoa => 3);
+		return _vcf_explode($raw, $mode{$otype}, $args{'row.names'}, $file,
+			%na ? \%na : undef);
 	}
 
 	# A multi-worksheet .xlsx with no explicit 'sheet' is returned as a hash
@@ -14504,7 +14536,7 @@ minimal example:
 </tr>
 <tr>
   <td><code>output.type</code></td>
-  <td>data type for output: array of hash (the default), array of array, hash of array, or hash of hash</td>
+  <td>data type for output: array of hash (the default; hash of hash for a VCF), array of array, hash of array, or hash of hash</td>
   <td><code>'output.type' =&gt; 'aoh'</code></td>
 </tr>
 <tr>
@@ -14566,6 +14598,11 @@ minimal example:
   <td><code>undef.val</code></td>
   <td><code>write_table</code>'s spelling of <code>na.strings</code>, so a round trip can use one name on both halves</td>
   <td><code>'undef.val' =&gt; 'NA'</code></td>
+</tr>
+<tr>
+  <td><code>explode</code></td>
+  <td>VCF only. <code>1</code> (the default): split each sample column into one column per <code>FORMAT</code> key, and return a hoh keyed by <code>CHROM:POS:REF:ALT</code>; <code>0</code>: the file's own columns. See [VCF files](#vcf-files)</td>
+  <td><code>explode =&gt; 0</code></td>
 </tr>
 </tbody>
 </table>
@@ -14756,37 +14793,73 @@ back through this.
 =head3 VCF files
 
 A file named C<.vcf>, C<.vcf.gz> or C<.vcf.bgz>, in any case, is read as a VCF
-with no options:
+with no options. Each sample's column is split ("exploded") into one column per
+C<FORMAT> key, and the records come back as a hash of hashes keyed by
+C<CHROM:POS:REF:ALT>:
 
  my $variants = read_table('calls.vcf.gz');
- # [ { CHROM => '1', POS => '12065947', ID => 'PTV001', REF => 'C', ALT => 'T,A',
- #     QUAL => '29', FILTER => 'PASS', INFO => '.', FORMAT => 'GT:GATK:AD:DP:GQ',
- #     NA00001 => '0/1:0/1:3,2:5:19' }, ... ]
-
-That changes three things and nothing else:
+ # { '20:14370:G:A' => {
+ #       CHROM => '20', POS => '14370', ID => 'rs6054257', REF => 'G', ALT => 'A',
+ #       QUAL => '29.1', FILTER => '.', INFO => 'NS=3;DP=14;AF=0.5;HOMSEQ;DB',
+ #       'NA00001.GT' => '0|0', 'NA00001.GQ' => '48', 'NA00001.DP' => '1',
+ #       'NA00001.HQ' => '25,30', 'NA00001.CNL' => '10,20',
+ #       'NA00002.GT' => '1|0', ...  },
+ #   '20:17330:T:A' => { ..., 'NA00001.CNL' => undef, ... },   # no CNL in this record's FORMAT
+ #   ... }
 
 =over
 
-=item * C<sep> is a tab.
+=item * B<Defaults.> C<sep> is a tab and C<comment> is C<##>, so the C<##>
+meta-information lines are skipped and the C<#CHROM POS ID ...> line is the
+header. The C<#> comes off C<#CHROM>, so the first column is C<CHROM>.
 
-=item * C<comment> is C<##>, so the C<##> meta-information lines are skipped and the
-C<#CHROM POS ID ...> line is the header.
+=item * B<The columns.> The eight fixed columns come first, then
+C<< E<lt>sampleE<gt>.E<lt>keyE<gt> >> for every sample and every key. C<FORMAT> can differ from
+record to record (GATK writes C<GT:AD:DP:GQ:PL> on most and
+C<GT:AD:DP:GQ:PGT:PID:PL> on phased ones), so the keys are those of every
+record read, in the order each first appears. A key missing from a
+record's C<FORMAT> is C<undef>, and so is a value a sample leaves off the end,
+which the VCF spec allows (C<./.> under C<GT:AD:DP> is C<GT> alone). C<FORMAT>
+and the unsplit sample columns are not returned. A sample with I<more>
+values than its C<FORMAT> has keys is an error.
 
-=item * The C<#> comes off C<#CHROM>, so the first column is C<CHROM>.
+=item * B<Values are text.> C<0/1>, C<34,7> and C<73,0,1043> are returned as
+written: C<AD>, C<PL> and C<INFO> are not split further, and C<.> is not
+missing unless you pass C<< 'na.strings' =E<gt> '.' >>, which then applies to the
+split values as well as to whole fields.
+
+=item * B<The key.> C<CHROM:POS:REF:ALT> identifies a record in practice; C<ID> is
+usually C<.>. A key that repeats is warned about once, later records
+winning, as with any hoh. C<< 'row.names' =E<gt> 'POS' >>, or any other column
+including an exploded one, keys the hash by that column instead.
+
+=item * B<Other shapes.> C<'output.type'> still gives an aoa, aoh or hoa of the
+same columns. An aoa is the one to hand to C<write_table>.
+
+=item * B<< C<filter> runs before the split >>, while the file is read, so it sees the
+file's own columns: C<FORMAT> and each sample's text whole
+(C<< filter =E<gt> { FORMAT =E<gt> sub { /PGT/ } } >>), not C<NA00001.GT>. The columns
+are the keys of the records it kept.
+
+=item * B<< C<col.names> >> renames the file's columns before the split, so a
+renamed sample names its exploded columns.
+
+=item * B<< C<< explode =E<gt> 0 >> >> returns the file's own columns instead, an aoh by
+default, with C<FORMAT> and the samples unsplit. C<< header =E<gt> 0 >> reads the
+file that way too, having no C<FORMAT> column to split by, and its
+C<#CHROM> line is the first data row, C<#> and all. C<explode> is refused for
+a file not named as a VCF.
 
 =back
 
-Everything else is an ordinary C<read_table>. All four output types work, as do
-C<filter>, C<col.names> and C<< header =E<gt> 0 >> (which reads the C<#CHROM> line as the
-first data row, C<#> and all). Passing C<sep> or C<comment> overrides the VCF
-default, and C<< comment =E<gt> '#' >> reads the same table. A field is returned as its
-text: C<INFO>, C<FORMAT> and the sample columns are not split, and C<.> is not
-read as missing unless you pass C<< 'na.strings' =E<gt> '.' >>. Under any other name,
-such as C<.tsv> or C<.txt>, the file is not a VCF to C<read_table>. With
-C<< comment =E<gt> '##' >> the meta lines are still skipped, but the first column is
-C<#CHROM>.
+Passing C<sep> or C<comment> overrides the VCF default, and C<< comment =E<gt> '#' >>
+reads the same table. Under any other name, such as C<.tsv> or C<.txt>, the file
+is not a VCF to C<read_table>: with C<< comment =E<gt> '##' >> the meta lines are still
+skipped, but the first column is C<#CHROM> and nothing is split.
 
-On a 3,499,678-record single-sample C<.vcf.gz>, an aoa takes 8.4 s.
+The split is done in C. On a 3,499,678-record single-sample GATK C<.vcf.gz>,
+the exploded hoh takes 11.7 s, against 9.1 s for the file's own columns as a
+hoh, and an exploded aoa 8.4 s, against 7.0 s for the plain one.
 
 =head3 missing values (C<na.strings> / C<na_values> / C<undef.val>)
 

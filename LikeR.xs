@@ -9695,6 +9695,418 @@ between rows on this path, and every row's would wait for the parse to end.*/
 	AvFILLp(row) = -1;
 }
 
+/*read_table's explode => 1 for a VCF: every sample column split on ':' into
+one column per FORMAT key.
+
+read_table reads the file as an aoa first, with every option but the shape --
+so a 'filter' has already run, on the file's own columns -- and hands that aoa
+here to be turned into the shape asked for.  It was perl up to the release it
+arrived in; on a 3,499,678-record single-sample GATK .vcf.gz, timed inside the
+call, the plain read as a hoh took 9.1 s, the perl explode 21.7 s, and the
+maintainer judged the 12 s worth this second path.
+
+The VCF spec (4.2 and 4.3, section 1.6.2, "Genotype fields") makes column 9
+FORMAT, a ':'-separated list of keys, and each column after it one sample's
+values for those keys in the same order, ':'-separated; trailing values may be
+dropped, so a sample can have fewer values than FORMAT has keys, never more.
+FORMAT may differ from row to row, so the columns are the union of the keys of
+every row read, in the order each first appears (GT, which the spec puts
+first, comes first), named "<sample>.<key>".  A key a row's FORMAT lacks, a
+value a sample dropped, an empty value and an na.strings token are undef, the
+same rule a field is read by.  FORMAT and the unsplit sample columns are not
+returned; a FORMAT column with no samples after it is kept, having nothing to
+be split into.
+
+It takes two passes over the rows.  The first finds the keys, so the column
+layout is known before the first output row is built; a FORMAT string is split
+only the first time it is seen (a file has few: 2 in the 3,499,678 rows above).
+The second builds each output row, and releases the raw row behind it, so the
+aoa is never held twice over.
+
+A hoh is keyed by CHROM:POS:REF:ALT unless row.names names a column; ID would
+not do as the default, being "." on most rows of most files.*/
+
+typedef struct {
+	char   *s;	//the FORMAT text, OWNED (savepvn): the row it came from is freed in the second pass
+	STRLEN  len;
+	size_t *pos;	//for each of its keys, that key's index in the union, OWNED
+	size_t  npos;
+} vcf_fmt;
+
+typedef struct {
+	vcf_fmt  *fmt;	//the distinct FORMAT strings, in first-appearance order
+	size_t    nfmt, fmt_max;
+	HV       *fmt_ix;	//FORMAT text -> index into fmt
+	HV       *key_ix;	//key -> index into keys
+	AV       *keys;	//the union of the keys, in first-appearance order
+	SV      **col;	//output column names, shared-hash-key SVs (see S_plan_init())
+	size_t    ncol;
+	SV      **slot;	//the output row being assembled; NULL = not set yet
+	SV       *name;	//hoh: the row being keyed's synthesized name
+	SV       *dup_first;	//hoh: the first repeated name, NULL = none yet
+	csv_plan  na;	//only its na, na_s, na_len and n_na are used
+} vcf_ex;
+
+/*Save-stack destructor, for the same reason as S_plan_free(): a croak part-way
+through leaves the half-built row's cells and every table above to release.*/
+static void S_vcf_ex_free(pTHX_ void *v)
+{
+	vcf_ex *x = (vcf_ex*)v;
+	for (size_t i = 0; i < x->nfmt; i++) {
+		Safefree(x->fmt[i].s);
+		Safefree(x->fmt[i].pos);
+	}
+	Safefree(x->fmt);
+	if (x->col)
+		for (size_t c = 0; c < x->ncol; c++)
+			SvREFCNT_dec(x->col[c]);	//NULL past a croak while they were made
+	if (x->slot)
+		for (size_t c = 0; c < x->ncol; c++)
+			SvREFCNT_dec(x->slot[c]);
+	Safefree(x->col);
+	Safefree(x->slot);
+	SvREFCNT_dec((SV*)x->fmt_ix);
+	SvREFCNT_dec((SV*)x->key_ix);
+	SvREFCNT_dec((SV*)x->keys);
+	SvREFCNT_dec(x->name);
+	SvREFCNT_dec(x->dup_first);
+	Safefree(x->na.na_s);
+	Safefree(x->na.na_len);
+	Safefree(x);
+}
+
+/*S_cell_is_na() for a value still in the sample's text, before it has an SV:
+empty, or one of the na.strings.*/
+PERL_STATIC_INLINE bool S_bytes_is_na(pTHX_ const csv_plan *restrict p,
+	const char *restrict s, STRLEN n){
+	if (n == 0)
+		return 1;
+	if (p->na_len) {
+		for (size_t k = 0; k < p->n_na; k++)
+			if (p->na_len[k] == n && memcmp(p->na_s[k], s, n) == 0)
+				return 1;
+		return 0;
+	}
+	return p->na && hv_exists(p->na, s, (I32)n);
+}
+
+/*The FORMAT entry for this row's FORMAT field, or NULL when it has none (undef
+or "."), adding it -- and any key not seen before -- when add is set.  *last is
+the entry the previous row used, tried first since consecutive rows mostly
+share one.  fmt_ix maps the text to an index rather than a pointer, because
+x->fmt moves when it grows.*/
+static vcf_fmt *S_vcf_format(pTHX_ vcf_ex *restrict x, SV *fsv, vcf_fmt **restrict last,
+	bool add){	//fsv not restrict: it is a cell of perl's row array
+	STRLEN len;
+	const char *s;
+	SV **e;
+	vcf_fmt *f;
+	if (!fsv || !SvOK(fsv))
+		return NULL;
+	s = SvPV_const(fsv, len);
+	if (len == 1 && s[0] == '.')
+		return NULL;
+	if (*last && (*last)->len == len && memEQ((*last)->s, s, len))
+		return *last;
+	e = hv_fetch(x->fmt_ix, s, SvUTF8(fsv) ? -(I32)len : (I32)len, 0);
+	if (e)
+		return *last = &x->fmt[SvUV(*e)];
+	if (!add)	//the first pass saw every row, so this cannot happen
+		croak("_vcf_explode: FORMAT '%" SVf "' was not seen in the first pass", SVfARG(fsv));
+	if (x->nfmt == x->fmt_max) {
+		x->fmt_max = x->fmt_max ? 2 * x->fmt_max : 4;
+		Renew(x->fmt, x->fmt_max, vcf_fmt);
+	}
+	f = &x->fmt[x->nfmt];
+	f->s    = savepvn(s, len);
+	f->len  = len;
+	f->npos = 1;
+	for (STRLEN k = 0; k < len; k++)
+		if (s[k] == ':')
+			f->npos++;
+	Newx(f->pos, f->npos, size_t);
+	x->nfmt++;	//counted now, so S_vcf_ex_free() releases s and pos past a croak below
+	{
+		size_t i = 0;	//which key of this FORMAT; read after the loop for none
+		const char *k = s;
+		for (const char *p = s; p <= s + len; p++) {
+			if (p < s + len && *p != ':')
+				continue;
+			{
+				const I32 kl = SvUTF8(fsv) ? -(I32)(p - k) : (I32)(p - k);
+				SV **ke = hv_fetch(x->key_ix, k, kl, 0);
+				if (ke)
+					f->pos[i] = (size_t)SvUV(*ke);
+				else {
+					f->pos[i] = (size_t)(av_len(x->keys) + 1);
+					av_push(x->keys, newSVpvn_flags(k, (STRLEN)(p - k),
+						SvUTF8(fsv) ? SVf_UTF8 : 0));
+					(void)hv_store(x->key_ix, k, kl, newSVuv((UV)f->pos[i]), 0);
+				}
+			}
+			i++;
+			k = p + 1;
+		}
+	}
+	(void)hv_store(x->fmt_ix, s, SvUTF8(fsv) ? -(I32)len : (I32)len,
+		newSVuv((UV)(x->nfmt - 1)), 0);
+	return *last = f;
+}
+
+/*A cell of a raw row, moved out of it when the row is read_table's alone, as
+S_fast_row() moves a field, and copied otherwise.  ary is perl's row array, so
+not restrict.*/
+PERL_STATIC_INLINE SV *S_vcf_take(pTHX_ SV **ary, size_t c, bool own){
+	SV *v = ary[c];
+	if (!v)
+		return NULL;
+	if (own) {
+		ary[c] = NULL;
+		return v;
+	}
+	return newSVsv(v);
+}
+
+/*mode: 0 = aoh, 1 = hoa, 2 = hoh, 3 = aoa, as csv_plan's.  raw is consumed: each
+row is released once it has been built from.  raw is not restrict: it is
+read_table's own array, perl-managed.*/
+static SV *S_vcf_explode(pTHX_ AV *raw, short int mode, SV *rn, const char *file, HV *na){
+	vcf_ex *x;
+	SV **hdr;
+	SV *ret;
+	AV *aout = NULL;	//modes 0 and 3
+	HV *hout = NULL;	//modes 1 and 2
+	AV **cols = NULL;	//mode 1: each column's array, borrowed from hout
+	vcf_fmt *last = NULL;
+	size_t hw, nf, nsample, nkeys, nrow, n_dup = 0, dup_row = 0;
+	SSize_t rn_c = -1;	//mode 2: the row.names column; -1 = CHROM:POS:REF:ALT
+	const bool plain = !SvMAGICAL((SV*)raw) && !SvREADONLY((SV*)raw);
+	bool keep_fmt;	//a FORMAT column with no samples is returned as it is
+
+	if (av_len(raw) < 0)
+		croak("_vcf_explode: no header row");
+	{
+		SV **h0 = av_fetch(raw, 0, 0);
+		if (!h0 || !SvROK(*h0) || SvTYPE(SvRV(*h0)) != SVt_PVAV)
+			croak("_vcf_explode: the header row is not an ARRAY reference");
+		hw  = (size_t)(av_len((AV*)SvRV(*h0)) + 1);
+		hdr = AvARRAY((AV*)SvRV(*h0));
+	}
+	nrow     = (size_t)av_len(raw);	//data rows, after the header
+	nf       = hw < 8 ? hw : 8;	//CHROM POS ID REF ALT QUAL FILTER INFO
+	nsample  = hw > 9 ? hw - 9 : 0;
+	keep_fmt = hw == 9;
+	Newxz(x, 1, vcf_ex);
+	SAVEDESTRUCTOR_X(S_vcf_ex_free, x);
+	x->fmt_ix = newHV();
+	x->key_ix = newHV();
+	x->keys   = newAV();
+	if (na && HvUSEDKEYS(na)) {
+		x->na.na = na;
+		S_plan_na(aTHX_ &x->na);
+	}
+
+	for (size_t i = 1; i <= nrow; i++) {	//pass 1: the keys
+		SV **re = av_fetch(raw, (SSize_t)i, 0);
+		AV *row;
+		if (!re || !SvROK(*re) || SvTYPE(SvRV(*re)) != SVt_PVAV)
+			croak("_vcf_explode: data row %" UVuf " is not an ARRAY reference", (UV)i);
+		row = (AV*)SvRV(*re);
+		if ((size_t)(av_len(row) + 1) != hw)	//read_table's own read has checked it
+			croak("_vcf_explode: data row %" UVuf " has %" UVuf " fields, not %" UVuf,
+			      (UV)i, (UV)(av_len(row) + 1), (UV)hw);
+		if (nsample)
+			(void)S_vcf_format(aTHX_ x, AvARRAY(row)[8], &last, TRUE);
+	}
+	nkeys   = (size_t)(av_len(x->keys) + 1);
+	x->ncol = nf + (keep_fmt ? 1 : 0) + nsample * nkeys;
+	Newxz(x->col,  x->ncol ? x->ncol : 1, SV*);
+	Newxz(x->slot, x->ncol ? x->ncol : 1, SV*);
+	for (size_t c = 0; c < nf + (keep_fmt ? 1 : 0); c++) {
+		STRLEN l;
+		const char *s = SvPV_const(hdr[c], l);
+		x->col[c] = newSVpvn_share(s, SvUTF8(hdr[c]) ? -(I32)l : (I32)l, 0);
+	}
+	for (size_t j = 0; j < nsample; j++)
+		for (size_t k = 0; k < nkeys; k++) {
+			SV *nm = newSVsv(hdr[9 + j]);
+			STRLEN l;
+			const char *s;
+			sv_catpvs(nm, ".");
+			sv_catsv(nm, AvARRAY(x->keys)[k]);
+			s = SvPV_const(nm, l);
+			x->col[nf + j * nkeys + k] = newSVpvn_share(s, SvUTF8(nm) ? -(I32)l : (I32)l, 0);
+			SvREFCNT_dec(nm);
+		}
+
+	if (mode == 0 || mode == 3) {
+		aout = newAV();
+		ret  = sv_2mortal(newRV_noinc((SV*)aout));
+		av_extend(aout, (SSize_t)nrow);
+		if (mode == 3) {
+			AV *h = newAV();
+			av_extend(h, x->ncol ? (SSize_t)x->ncol - 1 : 0);
+			for (size_t c = 0; c < x->ncol; c++)
+				S_av_push_own(aTHX_ h, newSVsv(x->col[c]));
+			S_av_push_own(aTHX_ aout, newRV_noinc((SV*)h));
+		}
+	} else {
+		hout = newHV();
+		ret  = sv_2mortal(newRV_noinc((SV*)hout));
+	}
+	if (mode == 1 && nrow) {	//a header and no rows is {}, as for any file
+		Newx(cols, x->ncol ? x->ncol : 1, AV*);
+		SAVEFREEPV(cols);
+		for (size_t c = 0; c < x->ncol; c++) {
+			cols[c] = newAV();
+			av_extend(cols[c], (SSize_t)nrow - 1);
+			(void)hv_store_ent(hout, x->col[c], newRV_noinc((SV*)cols[c]), 0);
+		}
+	}
+	if (mode == 2) {
+		if (rn && SvOK(rn)) {
+			for (size_t c = 0; c < x->ncol; c++)
+				if (sv_eq(x->col[c], rn)) {
+					rn_c = (SSize_t)c;
+					break;
+				}
+			if (rn_c < 0)
+				croak("\"%" SVf "\" isn't in the header of %s\n", SVfARG(rn), file);
+		} else if (nf < 5)
+			croak("read_table: %s has fewer than the 5 columns (CHROM POS ID REF "
+			      "ALT) that key a VCF's rows; pass 'row.names'\n", file);
+		if (x->ncol > 1)
+			hv_ksplit(hout, (IV)nrow);
+	}
+
+	last = NULL;
+	for (size_t i = 1; i <= nrow; i++) {	//pass 2: the rows
+		SV **rslot = AvARRAY(raw) + i;	//its reference is dropped once the row is built
+		AV *row    = (AV*)SvRV(*rslot);
+		SV **ary   = AvARRAY(row);
+		const bool own = plain && SvREFCNT(*rslot) == 1 && SvREFCNT((SV*)row) == 1
+			&& !SvMAGICAL((SV*)row) && !SvREADONLY((SV*)row);
+		vcf_fmt *f = nsample ? S_vcf_format(aTHX_ x, ary[8], &last, FALSE) : NULL;
+		for (size_t c = 0; c < nf; c++)
+			x->slot[c] = S_vcf_take(aTHX_ ary, c, own);
+		if (keep_fmt)
+			x->slot[8] = S_vcf_take(aTHX_ ary, 8, own);
+		for (size_t j = 0; f && j < nsample; j++) {
+			SV *v = ary[9 + j];
+			STRLEN len;
+			const char *s, *k;
+			size_t vi = 0;	//which value of the sample; checked against f->npos
+			SV **dst = x->slot + nf + j * nkeys;
+			if (!v || !SvOK(v))
+				continue;
+			s = SvPV_const(v, len);
+			k = s;
+			for (const char *p = s; p <= s + len; p++) {
+				if (p < s + len && *p != ':')
+					continue;
+				if (vi == f->npos) {	//one value too many: count the rest for the message
+					size_t nv = f->npos + 1;
+					for (const char *q = p; q < s + len; q++)
+						if (*q == ':')
+							nv++;
+					croak("read_table: %s data row %" UVuf ": sample '%" SVf "' has %"
+					      UVuf " values for the %" UVuf " keys of FORMAT '%s'\n",
+					      file, (UV)i, SVfARG(hdr[9 + j]), (UV)nv, (UV)f->npos, f->s);
+				}
+				{
+					SV **d = dst + f->pos[vi];
+					SvREFCNT_dec(*d);	//a key FORMAT repeats: the later value wins
+					*d = S_bytes_is_na(aTHX_ &x->na, k, (STRLEN)(p - k)) ? NULL
+						: newSVpvn_flags(k, (STRLEN)(p - k), SvUTF8(v) ? SVf_UTF8 : 0);
+				}
+				vi++;
+				k = p + 1;
+			}
+		}
+		for (size_t c = 0; c < x->ncol; c++)
+			if (!x->slot[c])
+				x->slot[c] = newSV(0);
+
+		if (mode == 3) {
+			AV *r = newAV();
+			av_extend(r, x->ncol ? (SSize_t)x->ncol - 1 : 0);
+			Copy(x->slot, AvARRAY(r), x->ncol, SV*);
+			AvFILLp(r) = (SSize_t)x->ncol - 1;
+			Zero(x->slot, x->ncol, SV*);
+			S_av_push_own(aTHX_ aout, newRV_noinc((SV*)r));
+		} else if (mode == 1) {
+			for (size_t c = 0; c < x->ncol; c++) {
+				S_av_push_own(aTHX_ cols[c], x->slot[c]);
+				x->slot[c] = NULL;
+			}
+		} else {
+			HV *h;
+			SV *rv;
+			SV *key = NULL;	//mode 2: the row's name, x->slot[rn_c] or x->name
+			if (mode == 2) {	//named before the cells move into the row's hash
+				if (rn_c >= 0) {
+					key = x->slot[rn_c];
+					if (!SvOK(key))
+						croak("read_table: undefined row name (column '%" SVf "') in %s data row %" UVuf "\n",
+						      SVfARG(rn), file, (UV)i);
+				} else {
+					static const unsigned short int part[4] = { 0, 1, 3, 4 };	// CHROM POS REF ALT
+					key = x->name = newSVpvs("");
+					for (unsigned short int q = 0; q < 4; q++) {
+						if (q) sv_catpvs(key, ":");
+						if (SvOK(x->slot[part[q]]))
+							sv_catsv(key, x->slot[part[q]]);
+					}
+				}
+			}
+			h  = newHV();
+			rv = newRV_noinc((SV*)h);	//owns h from here, so a croak below frees it
+			hv_ksplit(h, (IV)x->ncol);
+			for (size_t c = 0; c < x->ncol; c++) {
+				if ((SSize_t)c == rn_c)	//the row's name, not one of its values
+					continue;
+				if (!hv_store_ent(h, x->col[c], x->slot[c], 0))
+					SvREFCNT_dec(x->slot[c]);
+				x->slot[c] = NULL;
+			}
+			if (mode == 0)
+				S_av_push_own(aTHX_ aout, rv);
+			else {
+				HE *he = hv_fetch_ent(hout, key, 1, 0);
+				if (SvOK(HeVAL(he))) {	//a repeated name: the later row wins, warned about below
+					n_dup++;
+					if (!x->dup_first) {
+						x->dup_first = newSVsv(key);
+						dup_row = i;
+					}
+				}
+				SvREFCNT_dec(HeVAL(he));
+				HeVAL(he) = rv;
+				if (rn_c >= 0) {
+					SvREFCNT_dec(x->slot[rn_c]);
+					x->slot[rn_c] = NULL;
+				} else {
+					SvREFCNT_dec(x->name);
+					x->name = NULL;
+				}
+			}
+		}
+		if (plain) {
+			SvREFCNT_dec(*rslot);
+			*rslot = NULL;
+		}
+	}
+	/*worded as read_table's own warnings for a hoh*/
+	if (n_dup == 1)
+		warn("read_table: duplicate row name '%" SVf "' in %s (later values win)\n",
+		     SVfARG(x->dup_first), file);
+	else if (n_dup)
+		warn("read_table: %" UVuf " rows of %s repeat an earlier row's name (later "
+		     "values win); the first is '%" SVf "', on data row %" UVuf "\n",
+		     (UV)n_dup, file, SVfARG(x->dup_first), (UV)dup_row);
+	return SvREFCNT_inc_simple_NN(ret);
+}
+
 /*read_table: parsing an .xlsx worksheet.
 
 A worksheet part is XML, but a very regular XML: <sheetData> holds <row>
@@ -21634,6 +22046,27 @@ cell.*/
 	S_plan_report(aTHX_ plan, plan_hv);
 	LEAVE;
 	RETVAL = use_cb ? newSV(0) : newRV_inc((SV*)data);
+OUTPUT:
+	RETVAL
+
+SV* _vcf_explode(SV* raw_ref, short mode, SV* rn, const char* file, SV* na_ref = &PL_sv_undef)
+PREINIT:
+	HV *na = NULL;
+CODE:
+/*'short' rather than 'short int' in the signature: the same type, and the
+only spelling perl's default typemap has.  0 = aoh, 1 = hoa, 2 = hoh, 3 = aoa.*/
+	if (!SvROK(raw_ref) || SvTYPE(SvRV(raw_ref)) != SVt_PVAV)
+		croak("_vcf_explode: the table must be an ARRAY reference");
+	if (mode < 0 || mode > 3)
+		croak("_vcf_explode: mode %d is not 0 (aoh), 1 (hoa), 2 (hoh) or 3 (aoa)", (int)mode);
+	if (SvOK(na_ref)) {
+		if (!SvROK(na_ref) || SvTYPE(SvRV(na_ref)) != SVt_PVHV)
+			croak("_vcf_explode: na must be a HASH reference");
+		na = (HV*)SvRV(na_ref);
+	}
+	ENTER;	//S_vcf_explode()'s destructor runs at the LEAVE, or on a croak's unwind
+	RETVAL = S_vcf_explode(aTHX_ (AV*)SvRV(raw_ref), (short int)mode, rn, file, na);
+	LEAVE;
 OUTPUT:
 	RETVAL
 
