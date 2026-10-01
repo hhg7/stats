@@ -6,7 +6,8 @@ use Tie::Array;
 use Tie::Scalar;
 use Stats::LikeR 't_test';
 
-# t_test() regressions fixed in 0.3212's successor, checked against R.
+# t_test() regressions found in 0.3212, checked against R and, where R is the
+# one that is wrong, against exact arithmetic.
 #
 # PROVENANCE
 # ----------
@@ -47,21 +48,31 @@ use Stats::LikeR 't_test';
 #
 # A NaN conf_level gave an interval of (-Inf, Inf) and a NaN mu a NaN t, both
 # without an error; R stops on both (t.test.R: is.na(mu), !is.finite(conf.level)).
+# An undef or reference mu or conf_level was read as 0 or as an address.
+#
+# The variance was Welford's, which loses digits R's two-pass form keeps and
+# overflows where R's long double does not; the exact-arithmetic block pins
+# the two-pass replacement, and the mean's low part that keeps t accurate past
+# where R's is.  The pt() symmetry block is d-p-q-r-tests.R:249.
 #
 # TOLERANCES
 # ----------
-# Measured worst relative disagreement with R on a double NV:
+# Measured worst relative error, on every perl in the local matrix:
 #
-#   tail rows    statistic 0 (bit-identical), df 0, p.value 1.21e-14 (Welch),
-#                3.3e-15 (df 2), 3.0e-15 (df 1)
-#   sleep rows   statistic 2.4e-16, df 2.0e-16, p.value 2.6e-15,
-#                conf.int 2.6e-15
+#                          double     long double / __float128
+#   tail rows  statistic   1.6e-16    1.2e-16
+#              df          2.2e-16    6.7e-17
+#              p.value     1.14e-13   1.38e-14   (the Welch rows)
+#   sleep rows             2.6e-15
+#   exact rows statistic   2.5e-16
+#              stderr      1.9e-16
+#              p.value     1.5e-15
 #
-# The tail p-values go through pt_upper()'s asymptotic branch, whose comment in
-# LikeR.xs measures it within 1.2e-14 of R's pt(); on a long-double or quadmath
-# perl the k = 50..83 inputs also round differently (1.5 - 2^k is exact there),
-# moving t by up to 1.5 / 2^51 ~ 7e-16 relative.  1e-12 leaves two orders over
-# the worst of those.  Do not widen it to make a failure go away.
+# The Welch tail p-values are the large ones because p ~ |t|^-df there: the
+# relative error of p is ln|t| times the absolute error of df, and ln(2^500) is
+# 347, so a df of 2.03 that is one ulp (4.4e-16) from R's moves p by 1.5e-13.
+# That is R's df and this module's differing in the last bit.  The double build is the worst; 1e-12 leaves nine times
+# its worst.  Do not widen it to make a failure go away.
 my $TOL = 1e-12;
 
 my $INF = 9**9**9;
@@ -181,6 +192,77 @@ sleep_cases(\@S1, \@S2, 'plain arrays');
 	sleep_cases($xs, $ys, 'tied scalars holding the refs');
 }
 
+# tests/d-p-q-r-tests.R:249 -- pt(z, df) == 1 - pt(-z, df) to 1e-15 for df in
+# 1:10, over rt(1000, df = 2) and +-Inf.  t_test()'s 'less' is pt(t) and its
+# 'greater' pt(-t), so the two must sum to 1 at R's own tolerance.  The data are
+# 1 .. df + 1, and mu sweeps t across [-40, 40] (where rt(.., 2) puts nearly all
+# of its draws) and out to +-Inf.
+for my $df (1 .. 10) {
+	my @x = (1 .. $df + 1);
+	my $worst = 0;
+	for my $mu ((map { 1 + $df / 2 + $_ / 4 } -160 .. 160), $INF, -$INF) {
+		my $lt = t_test(\@x, mu => $mu, alternative => 'less')->{'p.value'};
+		my $gt = t_test(\@x, mu => $mu, alternative => 'greater')->{'p.value'};
+		my $err = abs($lt + $gt - 1);
+		$worst = $err if $err > $worst;
+	}
+	ok($worst <= 1e-15, "df $df: P(T < t) + P(T > t) == 1 (worst $worst)");
+}
+
+# The variance and the mean difference on data R's own arithmetic cannot
+# resolve.  R is not the reference here, because it is the one that is wrong:
+# each expected value is exact rational arithmetic on the input doubles
+# (Python's fractions.Fraction), with the p-value from mpmath 1.3.0's
+# regularized betainc at mp.dps = 60, I_{df/(df+t^2)}(df/2, 1/2).  R 4.6.1's
+# answer is recorded beside each, so that moving towards it is a deliberate act.
+#
+# The data are dyadic, so every NV width reads the same doubles.
+#
+#   ill-conditioned: seven values 2^33 + (0,1,2,4,5,9,10) * 2^-13, and five at
+#   2^33 + (3,7,8,12,13) * 2^-13 -- a spread of 64 to 104 ulps of the mean.
+#   R's two-pass variance is good there, but no double holds the mean, and
+#   mean - mu cancels to its last bits: R's t is 1.5e-3 out (one-sample
+#   3.0255166349294687, Welch -1.7959425214259144).  Welford here was worse
+#   than both, as 0.3212's t_test(1e10 + (0..3) * 1e-4) showed.
+#
+#   overflowing: c(2^511, -2^511, 2^509) and c(2^512, -2^509, 2^510), whose
+#   squares are past DBL_MAX.  R's Welch df is written in stderr^4 and comes out
+#   NaN, so its p-value is NaN; its pooled variance overflows to Inf and gives
+#   t = -0, p = 1.  Its one-sample test survives on long-double accumulation.
+#   t_test() returned t = -0 and df = NaN on the Welch case until this fix.
+my @ILL_X = map { 2**33 + $_ * 2**-13 } 0, 1, 2, 4, 5, 9, 10;
+my @ILL_Y = map { 2**33 + $_ * 2**-13 } 3, 7, 8, 12, 13;
+my @BIG_X = (2**511, -2**511, 2**509);
+my @BIG_Y = (2**512, -2**509, 2**510);
+my @EXACT = (
+	# name, call, statistic, df, p.value, stderr
+	['ill 1s', sub { t_test(\@ILL_X, mu => 2**33) },
+		3.0301037378974968298, 6, 0.023094835525958571617, 0.00017840877573036186901],
+	['ill Welch', sub { t_test(\@ILL_X, \@ILL_Y) },
+		-1.7957532077704248405, 8.5204508934796146604, 0.10797820075354189341,
+		0.00028356212149994561222],
+	['ill pooled', sub { t_test(\@ILL_X, \@ILL_Y, var_equal => 1) },
+		-1.810016259310846606, 10, 0.10039963237144799446, 0.00028132763264767145163],
+	['big 1s', sub { t_test(\@BIG_X) },
+		1 / 7, 2, 0.89949621847407879245, 3.9106106462332574874e+153],
+	['big Welch', sub { t_test(\@BIG_X, \@BIG_Y) },
+		-0.75592894601845445443, 256 / 65, 0.49238333068982682199, 5.9122875681913067771e+153],
+	['big pooled', sub { t_test(\@BIG_X, \@BIG_Y, var_equal => 1) },
+		-0.75592894601845445443, 4, 0.49176700102216896684, 5.9122875681913067771e+153],
+);
+for my $c (@EXACT) {
+	my ($name, $call, @want) = @$c;
+	my $r = $call->();
+	my @what = qw(statistic df p.value stderr);
+	rel_ok($r->{ $what[$_] }, $want[$_], "exact $name: $what[$_]") for 0 .. 3;
+}
+
+# t.test()'s stderr component, R >= 3.6.0 (doc/NEWS.3.Rd:615), on the sleep rows
+{
+	my $r = t_test(\@S1, \@S2, paired => 1);
+	rel_ok($r->{stderr}, ($r->{estimate} - 0) / $r->{statistic}, 'stderr is estimate / statistic');
+}
+
 # R stops on both; these used to return (-Inf, Inf) and a NaN t
 for my $nan ('NaN', 9**9**9 / 9**9**9) {
 	eval { t_test([1, 2, 3], conf_level => $nan) };
@@ -188,6 +270,22 @@ for my $nan ('NaN', 9**9**9 / 9**9**9) {
 	eval { t_test([1, 2, 3], mu => $nan) };
 	like($@, qr/'mu' must be a single number/, "mu => $nan croaks");
 }
+# t.test.R: length(mu) != 1 and length(conf.level) != 1 are errors, and undef
+# is R's NULL.  A reference is not a number either; SvNV() on one used to be
+# its address.
+for my $bad (['undef', undef], ['an array ref', [1]], ['a hash ref', {}]) {
+	my ($what, $v) = @$bad;
+	eval { t_test([1, 2, 3], mu => $v) };
+	like($@, qr/'mu' must be a single number/, "mu => $what croaks");
+	eval { t_test([1, 2, 3], conf_level => $v) };
+	like($@, qr/'conf_level' must be a single number/, "conf_level => $what croaks");
+}
+{
+	package Two;	# an object that numifies is a number
+	use overload '0+' => sub { 2 }, fallback => 1;
+}
+is(t_test([1, 2, 3], mu => bless({}, 'Two'))->{statistic}, 0,
+	'an object overloading 0+ is accepted as mu');
 
 done_testing();
 

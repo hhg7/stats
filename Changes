@@ -1,5 +1,87 @@
 Revision history for Stats-LikeR
 
+0.3213 2026-10-01 CDT
+
+ [t_test(): tied input]
+
+ - A sample's length came from av_len(), which is FETCHSIZE on a tied
+   array, but its elements were read straight out of the array's own
+   storage, which a tied array does not use. A tied array that still held
+   real elements from before the tie was read past their end and
+   segfaulted; a freshly tied one read as empty and croaked "'x' needs at
+   least 2 elements". Elements are now read through FETCH on a tied array.
+
+ - Get magic was not run before testing whether an element or argument was
+   defined, so a tied element read as missing and was dropped, and a tied
+   scalar holding the array reference was refused with "Usage: ...". Both
+   now work, and each element is fetched once.
+
+ [t_test(): far-tail p-values]
+
+ - The p-value squared the t statistic itself, so for |t| above
+   sqrt(DBL_MAX), about 1.34e154, it came back as exactly 0 where R's is a
+   positive number. That tail is still far above underflow at df <= 2:
+   t_test([1e-160, 2e-160], mu => 1) gave 0 for R's 3.18e-161. It now goes
+   through the same tail code as pt(), which has R's asymptotic branch.
+   R's own check for this, pt(-a, df = 1) == pcauchy(-a) out to a = 1e300
+   (tests/d-p-q-r-tst-2.R), is now in t/t_test.tails.R.t.
+
+ [t_test(): the variance]
+
+ - Welford's update was replaced with R's two-pass variance. It lost
+   digits on data with a large offset: four values 1e-4 apart at 1e10 gave
+   t = 1.54414e14 for an exact 1.55003e14, and a 1e6 +- 1e-6 sample's
+   standard error was 6e-5 out against R's 7e-9.
+
+ - It goes past R in two ways. The squared deviations have
+   (sum of deviations)^2 / n subtracted, the Chan-Golub-LeVeque
+   correction, and the same sum is carried into t as the part of the mean
+   no double holds. On a sample whose spread is a few dozen ulps of its
+   mean, R's t is out in the third digit and this one is within 2e-16 of
+   exact rational arithmetic.
+
+ - The data are scaled by a power of two before squaring, so squares past
+   DBL_MAX no longer overflow. t_test([1e154, -1e154, 3e153],
+   [2e154, -1e153, 5e153]) returned t = -0 and df = NaN. Its Welch df and
+   standard error are now formed from ratios and are finite, where R's
+   df, written in stderr^4, is NaN.
+
+ [t_test(): arguments]
+
+ - A NaN conf_level passed the range check and gave an interval of
+   (-Inf, Inf); a NaN mu gave a NaN t. Both now croak, as R stops on both.
+
+ - An undef mu or conf_level, R's NULL, was read as 0, and a reference was
+   read as its address. Both croak "'mu' must be a single number", as R
+   does; an object that overloads numification is still accepted.
+
+ - The result carries stderr, the standard error the statistic divides
+   by, which R's t.test() has returned since 3.6.0.
+
+ [Incomplete beta: a NaN argument hung __float128 builds]
+
+ - The continued fraction behind pt(), pf() and the binomial tails cast
+   its iteration cap to long, and a NaN shape parameter reached the cast.
+   That is undefined behaviour. A double build got LONG_MIN and skipped
+   the loop; a quadmath build got a count it never finished, so t_test()
+   on a sample holding an infinity, whose Welch df is NaN as R's is, hung.
+   incbeta_xy() now returns NaN for a NaN argument, and the cap check
+   sends a NaN to the ceiling instead of the cast.
+
+ [Tests: every t.test() call in R]
+
+ - t/t_test.R.scipy.t now carries every t.test() call in R's sources and
+   tests: the examples of ?t.test, ?sleep, ?ks.test (drawn under R CMD
+   check's set.seed(1)), ?array2DF and ?pairwise.t.test, R-intro, the
+   tcltk demo, and reg-tests-1a, -1e and -2. Each is crossed over every
+   alternative, var_equal, mu and conf.level, and the examples are also
+   checked against R's pinned .Rout.save output at the digits R printed.
+   PR#18901's stopifnot() is reproduced in full, where the test had only
+   checked that the call did not crash.
+
+ - The documentation said x needs 2 values even under var_equal, where
+   either sample may have 1. It now says so.
+
 0.3212 2026-09-28 CDT
 
  [write_table(): a warning for a header cell with no name]

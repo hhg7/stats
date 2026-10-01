@@ -3,7 +3,7 @@
 require 5.010001;
 use strict;
 package Stats::LikeR;
-our $VERSION = '0.3212';	# quoted: a bare version ending in 0, such as 0.320, is the number 0.32, which the dist would be named
+our $VERSION = '0.3213';	# quoted: a bare version ending in 0, such as 0.320, is the number 0.32, which the dist would be named
 require XSLoader;
 use warnings FATAL => 'all';
 use Exporter 'import';
@@ -9610,11 +9610,11 @@ C<df.drop(columns=[...])>. Same identifiers and argument forms as
 C<select_cols>.
 
  my $hoa = { a => [1,4], b => [2,5], c => [3,6] };
- drop_cols($hoa, 'b');
+ $aoa = drop_cols($hoa, 'b');
  # { a => [1,4], c => [3,6] }
 
  my $aoa = [ [1,2,3], [4,5,6] ];
- drop_cols($aoa, 1);          # result is re-indexed 0,1
+ $aoa = drop_cols($aoa, 1); # result is re-indexed 0,1
  # [ [1,3], [4,6] ]
 
 Unlike C<select_cols>, C<drop_cols> touches only the keys a row actually has,
@@ -15691,7 +15691,7 @@ one of its two tails, magnified until it can be seen.
   <td><code>x</code></td>
   <td>Array Reference</td>
   <td>Required</td>
-  <td>The first vector of data. Must have at least 2 non-missing elements (1 is enough for the <code>y</code> of a <code>var_equal</code> test).</td>
+  <td>The first vector of data. Must have at least 2 non-missing elements, except in a <code>var_equal</code> test, where either <code>x</code> or <code>y</code> may have 1.</td>
 </tr>
 <tr>
   <td><code>y</code></td>
@@ -15903,7 +15903,9 @@ is missing the pair goes whole, keeping the differences aligned.
 Dies if:
 - C<x> is missing or is not an array reference, or C<y> is defined but is not one
 - C<alternative> is not one of the values above
-- C<conf.level> is not strictly between 0 and 1
+- C<conf.level> is not strictly between 0 and 1, or is C<NaN>
+- C<mu> or C<conf.level> is C<undef> or a reference (R's "must be a single
+  number"), or C<mu> is C<NaN>; an object that overloads numification is a number
 - C<paired> is set without a C<y>, or with an C<x> and C<y> of different lengths
 - fewer than 2 observations survive: 2 in C<x> for a one-sample test, 2 complete
   pairs when C<paired>, and for two samples R's own thresholds — a Welch test
@@ -15957,6 +15959,10 @@ Dies if:
   <td><code>estimate.y</code></td>
   <td>The estimated mean of the <code>y</code> vector (only returned in two-sample tests).</td>
 </tr>
+<tr>
+  <td><code>stderr</code></td>
+  <td>The standard error <code>statistic</code> divides by, as R has returned it since 3.6.0.</td>
+</tr>
 </tbody>
 </table>
 
@@ -15964,9 +15970,30 @@ Dies if:
 
 
 
-Validated against R 4.x's C<stats::t.test> and against C<scipy.stats> — cases
-lifted from R's own regression suite and from SciPy's C<TestTTest_1samp>,
-C<TestTTest_ind> and confidence-interval tests — by C<t/t_test.t>.
+=head3 Accuracy
+
+The variance is R's: a mean, a correction by the mean of the residuals, then
+the squared deviations about it. Two things go beyond R. The deviations are
+also summed and their square taken back out (the Chan–Golub–LeVeque
+correction), and that same sum is carried into C<statistic> as the part of the
+mean no double can hold. That keeps C<statistic> accurate on a sample whose
+spread is a few dozen ulps of its mean, where R's is out in the third digit.
+The data are also scaled by a power of two before squaring, so a sample whose
+squares pass C<DBL_MAX> still gets a finite variance and Welch C<df>, where R's
+Welch C<df> is C<NaN>. On ordinary data the two agree to about 1e-13.
+
+Tied arrays, tied elements and tied scalars holding the array reference are
+all read through their C<FETCH>, once each.
+
+Validated against R 4.6.1's C<stats::t.test> and against C<scipy.stats>, by
+C<t/t_test.R.scipy.t> and C<t/t_test.tails.R.t>. The R cases are every C<t.test()>
+call in R's own sources: the examples of C<?t.test>, C<?sleep>, C<?ks.test>,
+C<?array2DF> and C<?pairwise.t.test>, R-intro, the tcltk demo, and
+C<reg-tests-1a.R>, C<reg-tests-1e.R> and C<reg-tests-2.R>. Each is checked against
+R's pinned C<.Rout.save> output and crossed over every alternative,
+C<var_equal>, C<mu> and C<conf.level>. The far tails are checked against
+C<d-p-q-r-tst-2.R>'s C<pt()> cases. The SciPy cases come from C<TestTTest_1samp>,
+C<TestTTestIndMore>, C<TestTTestRel> and C<TestTTestCI>.
 
 The figures above are drawn by C<t.test.plots.pl> in the repository, from the
 two examples in R's C<?t.test>: the C<sleep> data (C<t = -1.8608>, C<df = 17.776>,

@@ -3675,11 +3675,18 @@ MAX_CF_ITER is a ceiling on that scaling, so the cap stays a safety net and
 never becomes a way to spend billions of iterations: a+b can legitimately
 reach 1e18 here (binom_test accepts any n up to LONG_MAX), and 2*sqrt of that
 is 2e9.  The ceiling still covers a+b up to 2.5e9, past any real cohort, and
-beyond it the continued fraction is the wrong algorithm anyway.*/
+beyond it the continued fraction is the wrong algorithm anyway.
+
+The test is written `scaled < MAX_CF_ITER` so that a NaN takes the ceiling
+rather than the cast: (long)NaN is undefined, and where `scaled > MAX_CF_ITER`
+let a NaN a + b through to it, a double build happened to get LONG_MIN and
+skip the loop while a __float128 build got a count it never finished --
+t_test() on a sample holding an infinity, whose Welch df is NaN as R's is,
+hung the quadmath perl. incbeta_xy() now returns NaN before reaching here.*/
 #define MAX_CF_ITER 100000
 static NV _incbeta_cf(NV a, NV b, NV x) {
 	NV scaled = MAX_ITER + 2.0 * nv_sqrt(a + b);
-	long m, maxit = (scaled > (NV)MAX_CF_ITER) ? MAX_CF_ITER : (long)scaled;
+	long m, maxit = (scaled < (NV)MAX_CF_ITER) ? (long)scaled : MAX_CF_ITER;
 	NV aa, c, d, del, h, qab, qam, qap;
 	qab = a + b; qap = a + 1.0; qam = a - 1.0;
 	c = 1.0; d = 1.0 - qab * x / qap;
@@ -3750,6 +3757,8 @@ function exists to get right, and the front factor's x^(n-k) is then wrong
 by a relative (n-k)*y, which is smaller than y itself at every call site
 here.  Only y <= 0 means the upper tail has really vanished.*/
 static NV incbeta_xy(NV a, NV b, NV x, NV y) {
+	//a NaN reaches neither test below, and only the continued fraction after them
+	if (nv_isnan(a) || nv_isnan(b) || nv_isnan(x) || nv_isnan(y)) return NV_NAN;
 	if (x <= 0.0) return 0.0;
 	if (y <= 0.0) return 1.0;
 	if (x < (a + 1.0) / (a + b + 2.0))
@@ -3883,11 +3892,21 @@ static NV qt_tail(NV df, NV p_tail) {
 	return 0.5 * (low + high);
 }
 
-/*Welford over one sample for t_test(), skipping undef and NaN the way R's
-t.test() drops NA (is.na(NaN) is TRUE there too). Infinities are kept, as R
-keeps them. Returns the number of values used; *var_out is NaN for a single
-value, matching var() of length one, and the caller must not fold that into a
-pooled variance -- R skips the term instead.
+/*A numeric t_test() argument, which R requires to be "a single number": undef
+is R's NULL, of length zero, and a reference is not a number at all -- SvNV()
+on one is its address, so mu => [1] used to test against 9.4e13 or so.  An
+object that overloads numification is allowed through, being one.  NaN is
+left for the caller's range check.*/
+static NV t_test_num(pTHX_ SV *val, const char *restrict what) {
+	if (!SvOK(val) || (SvROK(val) && !SvAMAGIC(val)))
+		croak("t_test: '%s' must be a single number", what);
+	return SvNV(val);
+}
+
+/*One sample for t_test(), as the values R's t.test() keeps: undef and NaN are
+dropped the way R drops NA (is.na(NaN) is TRUE there too), and infinities are
+kept, as R keeps them. Writes them to out[], which has room for av_len() + 1,
+and returns how many there were.
 
 Elements come through av_at(), which reads the block directly on a plain array
 and takes av_fetch() on a tied one. This read AvARRAY() unconditionally up to
@@ -3895,26 +3914,93 @@ and takes av_fetch() on a tied one. This read AvARRAY() unconditionally up to
 a tied sample was read out of the stale real storage: an empty one croaked
 "needs at least 2 elements", and one with a few real slots left over from
 before the tie ran off their end and segfaulted. The get magic is run once per
-element before SvOK(), or a tied element reads as undef and is dropped.*/
-static size_t t_test_scan(pTHX_ AV *av, NV *mean_out, NV *var_out) {
+element before SvOK(), or a tied element reads as undef and is dropped; copying
+the values out is what lets the moments below take three passes over them
+while FETCH runs once.*/
+static size_t t_test_collect(pTHX_ AV *av, NV *restrict out) {
 	const size_t n = (size_t)(av_len(av) + 1);
 	size_t kept = 0;
-	NV mean = 0.0, M2 = 0.0;
 	for (size_t i = 0; i < n; i++) {
 		SV *e = av_at(aTHX_ av, (SSize_t)i);
 		if (!e) continue;
 		SvGETMAGIC(e);
 		if (!SvOK(e)) continue;
 		const NV v = SvNV_nomg(e);
-		if (v != v) continue;
-		kept++;
-		const NV delta = v - mean;
-		mean += delta / (NV)kept;
-		M2   += delta * (v - mean);
+		if (!nv_isnan(v)) out[kept++] = v;
 	}
-	*mean_out = mean;
-	*var_out  = (kept > 1) ? M2 / (NV)(kept - 1) : NAN;
 	return kept;
+}
+
+/*Mean and standard deviation of x[0..n-1], as R's mean() and sd() compute
+them, without their overflow.
+
+R's cov.c takes a first mean, refines it by the mean of the residuals (the
+MEAN macro: tmp + sum(x - tmp)/n) and sums the squared deviations about the
+refined mean -- the same three passes as dens_var() -- and this subtracts
+(sum d)^2 / n from that sum as sd() does, the Chan-Golub-LeVeque correction.
+That term is not in R. The refined mean is still only the nearest NV to the
+true one, off by up to half an ulp, and the sum of squares about it is high by
+n times that offset squared; the term takes it back out. Where the spread is
+near an ulp of the mean this is the larger error: four values 1e-4 apart at
+1e10 have a standard error R gets 3.6e-5 out. t_test() used Welford
+until 0.3212, whose `mean += delta / k` leaves an error of an ulp of the mean
+at every step; once the spread is near that ulp the error is the variance.
+t_test(1e10 + (0..3) * 1e-4) gave t = 1.54414e14 for an exact 1.55003e14,
+3.8e-3 out, and a 1e6 +- 1e-6 sample's standard error was 6e-5 out against
+R's 7e-9.
+
+The data are divided by 2^e, the power of two just below max|x|, which is
+exact, so no square can overflow: R accumulates in long double and keeps
+var(c(1e154, -1e154, 3e153)) finite, and a double sum of squares did not --
+t_test() returned t = -0 and df = NaN on it. The sd is handed back rather than
+the variance for the same reason: it is scaled back by 2^e at the end, and the
+caller forms the standard errors and the Welch df from sd ratios.
+
+*lo_out is what the NV mean leaves out: the true mean is *mean_out + *lo_out
+to well beyond an NV's precision. It is the same sum of deviations, divided by
+n. A sample whose spread is a few dozen ulps of its mean has a mean no NV can
+hold, and mean - mu then cancels to the last few bits: the seven values
+2^33 + (0,1,2,4,5,9,10) * 2^-13 tested against mu = 2^33 give t = 3.02552 in R
+and here without it, for an exact 3.03010. The caller adds it to the
+difference it tests.
+
+An infinite value makes the mean +-Inf (NaN with both signs) and the sd NaN,
+which is what R returns; so is a single value's sd.*/
+static void t_test_moments(const NV *restrict x, size_t n, NV *restrict mean_out,
+	NV *restrict lo_out, NV *restrict sd_out) {
+	NV amax = 0.0;
+	for (size_t i = 0; i < n; i++) amax = nv_fmax(amax, nv_fabs(x[i]));
+	if (n == 0 || !nv_isfinite(amax) || amax == 0.0) {
+		NV s = 0.0;
+		for (size_t i = 0; i < n; i++) s += x[i];
+		*mean_out = (n > 0) ? s / (NV)n : NV_NAN;
+		*lo_out   = 0.0;
+		*sd_out   = (n > 1 && amax == 0.0) ? 0.0 : NV_NAN;
+		return;
+	}
+	int e;	//frexp() takes an int *
+	(void)nv_frexp(amax, &e);
+	/*2^(e-1) <= amax < 2^e, so every x / scale is in (-2, 2); 2^e itself is
+	Inf when amax is within a factor of two of NV_MAX.*/
+	const NV scale = nv_ldexp(1.0, e - 1);
+	NV s = 0.0;
+	for (size_t i = 0; i < n; i++) s += x[i] / scale;
+	NV m = s / (NV)n;
+	s = 0.0;
+	for (size_t i = 0; i < n; i++) s += x[i] / scale - m;
+	m += s / (NV)n;
+	*mean_out = m * scale;
+	*lo_out   = 0.0;
+	if (n < 2) { *sd_out = NV_NAN; return; }
+	s = 0.0;
+	NV comp = 0.0;
+	for (size_t i = 0; i < n; i++) {
+		const NV d = x[i] / scale - m;
+		s    += d * d;
+		comp += d;
+	}
+	*lo_out = comp / (NV)n * scale;
+	*sd_out = nv_sqrt((s - comp * comp / (NV)n) / (NV)(n - 1)) * scale;
 }
 
 /*order statistics
@@ -25877,7 +25963,7 @@ SV* t_test(...)
 		SV*x_sv = NULL;
 		SV*y_sv = NULL;
 		NV mu = 0.0, conf_level = NV_CONF_95;
-		bool paired = FALSE, var_equal = 0;
+		bool paired = FALSE, var_equal = FALSE;
 		const char*alternative = "two.sided";
 		Stack_off_t arg_idx = 0;
 		args_get_magic(aTHX_ ax, items);	//before any SvOK() or SvROK() reads an argument
@@ -25902,7 +25988,7 @@ SV* t_test(...)
 
 			if      (strEQ(key, "x"))           x_sv        = val;
 			else if (strEQ(key, "y"))           y_sv        = val;
-			else if (strEQ(key, "mu"))          mu          = SvNV(val);
+			else if (strEQ(key, "mu"))          mu          = t_test_num(aTHX_ val, "mu");
 			else if (strEQ(key, "paired"))      paired      = SvTRUE(val);
 			/*Both spellings of the two dotted R names, as every sibling here
 			already accepts (var_test, wilcox_test, prop_test, glm, ...).
@@ -25912,7 +25998,7 @@ SV* t_test(...)
 			else if (strEQ(key, "var_equal") || strEQ(key, "var.equal"))
 				var_equal = SvTRUE(val);
 			else if (strEQ(key, "conf_level") || strEQ(key, "conf.level"))
-				conf_level = SvNV(val);
+				conf_level = t_test_num(aTHX_ val, "conf_level");
 			else if (strEQ(key, "alternative")) alternative = SvPV_nolen(val);
 			else croak("t_test: unknown argument '%s'", key);
 		}
@@ -25950,23 +26036,29 @@ SV* t_test(...)
 		if (paired && !y_av)
 			croak("t_test: 'y' must be provided for paired or two-sample tests");
 
-		//Computation via Welford's Algorithm
-		NV mean_x = 0.0, var_x = NAN, mean_y = 0.0, var_y = NAN;
+		NV mean_x = 0.0, sd_x = NV_NAN, mean_y = 0.0, sd_y = NV_NAN;
+		NV lo_x = 0.0, lo_y = 0.0;	//what each NV mean leaves out; see t_test_moments()
+		NV cint_lo;	//the same for cint_est
 		NV t_stat, df, p_val, std_err, cint_est, constant_scale;
 		/*which estimate keys the result carries; set with the branch below so
 		the hash is only built once every croak is behind us*/
 		enum { EST_MEAN_X, EST_MEAN_DIFF, EST_BOTH } estimates = EST_MEAN_X;
+		/*Each sample's kept values, copied out once by t_test_collect(). A
+		FETCH is perl code and can die, so the buffers are on the save stack
+		rather than freed by hand.*/
+		const size_t nx_raw = (size_t)(av_len(x_av) + 1);
+		const size_t ny_raw = y_av ? (size_t)(av_len(y_av) + 1) : 0;
+		NV *restrict xbuf, *restrict ybuf = NULL;
+		Newx(xbuf, nx_raw ? nx_raw : 1, NV);	//never a zero-byte allocation
+		SAVEFREEPV(xbuf);
 
 		if (paired) {
 			/*R uses complete.cases(x, y): a pair goes whole if either side is
 			NA, so the differences stay paired. Lengths are compared before
 			any filtering, as complete.cases() refuses unequal ones.*/
-			const size_t nx_raw = (size_t)(av_len(x_av) + 1);
-			const size_t ny_raw = (size_t)(av_len(y_av) + 1);
 			if (nx_raw != ny_raw) croak("t_test: Paired arrays must be same length");
 			size_t n = 0;
-			NV mean_d = 0.0, M2_d = 0.0;
-			//av_at() and the get magic for the reason t_test_scan() gives
+			//av_at() and the get magic for the reason t_test_collect() gives
 			for (size_t i = 0; i < nx_raw; i++) {
 				SV *xe = av_at(aTHX_ x_av, (SSize_t)i);
 				SV *ye = av_at(aTHX_ y_av, (SSize_t)i);
@@ -25975,23 +26067,23 @@ SV* t_test(...)
 				SvGETMAGIC(ye);
 				if (!SvOK(xe) || !SvOK(ye)) continue;
 				const NV dx = SvNV_nomg(xe), dy = SvNV_nomg(ye);
-				if (dx != dx || dy != dy) continue;
-				const NV val = dx - dy;
-				n++;
-				const NV delta = val - mean_d;
-				mean_d += delta / (NV)n;
-				M2_d   += delta * (val - mean_d);
+				if (nv_isnan(dx) || nv_isnan(dy)) continue;
+				xbuf[n++] = dx - dy;
 			}
 			if (n < 2) croak("t_test: not enough complete pairs; need at least 2");
-			const NV var_d = M2_d / (NV)(n - 1);
+			NV mean_d, sd_d;
+			t_test_moments(xbuf, n, &mean_d, &lo_x, &sd_d);
 			cint_est       = mean_d;
-			std_err        = nv_sqrt(var_d / (NV)n);
+			cint_lo        = lo_x;
+			std_err        = sd_d / nv_sqrt((NV)n);
 			df             = (NV)n - 1.0;
 			constant_scale = nv_fabs(mean_d);
 			estimates      = EST_MEAN_DIFF;
 		} else if (y_av) {
-			const size_t nx = t_test_scan(aTHX_ x_av, &mean_x, &var_x);
-			const size_t ny = t_test_scan(aTHX_ y_av, &mean_y, &var_y);
+			Newx(ybuf, ny_raw ? ny_raw : 1, NV);
+			SAVEFREEPV(ybuf);
+			const size_t nx = t_test_collect(aTHX_ x_av, xbuf);
+			const size_t ny = t_test_collect(aTHX_ y_av, ybuf);
 			/*R's thresholds: a pooled variance can carry a group of one, since
 			that group contributes no sum of squares, but a Welch test needs a
 			variance from each side. Both were missing here, so an n = 1 'y'
@@ -26002,28 +26094,50 @@ SV* t_test(...)
 				croak("t_test: not enough 'y' observations");
 			if (var_equal && nx + ny < 3)
 				croak("t_test: not enough observations");
+			t_test_moments(xbuf, nx, &mean_x, &lo_x, &sd_x);
+			t_test_moments(ybuf, ny, &mean_y, &lo_y, &sd_y);
 			cint_est       = mean_x - mean_y;
+			cint_lo        = lo_x - lo_y;
 			constant_scale = nv_fmax(nv_fabs(mean_x), nv_fabs(mean_y));
 			estimates      = EST_BOTH;
+			/*Both branches divide through by the larger of the two scales
+			before squaring, so that nothing overflows that R's long double
+			would have held: R's own Welch df, written in stderr^4, is NaN past
+			|x| ~ 1e77 on a double. big is NaN whenever either side is (an
+			infinite value, as R gives), which nv_fmax() would hide.*/
 			if (var_equal) {
 				df = (NV)nx + (NV)ny - 2.0;
-				NV pooled_var = 0.0;
-				if (nx > 1) pooled_var += ((NV)nx - 1.0) * var_x;
-				if (ny > 1) pooled_var += ((NV)ny - 1.0) * var_y;
-				pooled_var /= df;
-				std_err = nv_sqrt(pooled_var * (1.0 / (NV)nx + 1.0 / (NV)ny));
+				const NV wx = (nx > 1) ? sd_x : 0.0;   //a group of one adds no sum of squares
+				const NV wy = (ny > 1) ? sd_y : 0.0;
+				const NV big = (nv_isnan(wx) || wx > wy) ? wx : wy;
+				if (big > 0.0) {
+					const NV rx = wx / big, ry = wy / big;
+					const NV pooled_sd = big * nv_sqrt((((NV)nx - 1.0) * rx * rx
+					                                  + ((NV)ny - 1.0) * ry * ry) / df);
+					std_err = pooled_sd * nv_sqrt(1.0 / (NV)nx + 1.0 / (NV)ny);
+				} else std_err = big;	//0, which croaks below, or NaN
 			} else {
-				const NV stderr_x2 = var_x / (NV)nx;
-				const NV stderr_y2 = var_y / (NV)ny;
-				std_err = nv_sqrt(stderr_x2 + stderr_y2);
-				df = nv_pow(stderr_x2 + stderr_y2, 2) /
-				     (nv_pow(stderr_x2, 2) / ((NV)nx - 1.0) + nv_pow(stderr_y2, 2) / ((NV)ny - 1.0));
+				const NV se_x = sd_x / nv_sqrt((NV)nx);
+				const NV se_y = sd_y / nv_sqrt((NV)ny);
+				const NV big  = (nv_isnan(se_x) || se_x > se_y) ? se_x : se_y;
+				if (big > 0.0) {
+					const NV rx2 = (se_x / big) * (se_x / big);
+					const NV ry2 = (se_y / big) * (se_y / big);
+					std_err = big * nv_sqrt(rx2 + ry2);
+					df = (rx2 + ry2) * (rx2 + ry2)
+					   / (rx2 * rx2 / ((NV)nx - 1.0) + ry2 * ry2 / ((NV)ny - 1.0));
+				} else {
+					std_err = big;	//0, which croaks below, or NaN
+					df      = NV_NAN;
+				}
 			}
 		} else {
-			const size_t nx = t_test_scan(aTHX_ x_av, &mean_x, &var_x);
+			const size_t nx = t_test_collect(aTHX_ x_av, xbuf);
 			if (nx < 2) croak("t_test: 'x' needs at least 2 elements");
+			t_test_moments(xbuf, nx, &mean_x, &lo_x, &sd_x);
 			cint_est       = mean_x;
-			std_err        = nv_sqrt(var_x / (NV)nx);
+			cint_lo        = lo_x;
+			std_err        = sd_x / nv_sqrt((NV)nx);
 			df             = (NV)nx - 1.0;
 			constant_scale = nv_fabs(mean_x);
 		}
@@ -26036,7 +26150,9 @@ SV* t_test(...)
 		if (std_err == 0.0
 		    || (nv_isfinite(std_err) && std_err < 10.0 * DBL_EPSILON * constant_scale))
 			croak("t_test: data are essentially constant");
-		t_stat = (cint_est - mu) / std_err;
+		/*cint_est - mu is formed first, then cint_lo added: when it cancels,
+		the low part is what is left of the difference.*/
+		t_stat = ((cint_est - mu) + cint_lo) / std_err;
 		p_val  = get_t_pvalue(t_stat, df, alternative);
 		HV*results = newHV();
 		switch (estimates) {
@@ -26053,12 +26169,12 @@ SV* t_test(...)
 		NV alpha = 1.0 - conf_level, t_crit, ci_lower, ci_upper;
 		if (strcmp(alternative, "less") == 0) {
 			t_crit   = qt_tail(df, alpha);
-			ci_lower = -INFINITY;
+			ci_lower = -NV_INF;
 			ci_upper = cint_est + t_crit * std_err;
 		} else if (strcmp(alternative, "greater") == 0) {
 			t_crit   = qt_tail(df, alpha);
 			ci_lower = cint_est - t_crit * std_err;
-			ci_upper = INFINITY;
+			ci_upper = NV_INF;
 		} else {
 			t_crit   = qt_tail(df, alpha / 2.0);
 			ci_lower = cint_est - t_crit * std_err;
@@ -26071,6 +26187,7 @@ SV* t_test(...)
 		hv_store(results, "df",        2, newSVnv(df),     0);
 		hv_store(results, "p.value",   7, newSVnv(p_val),  0);
 		hv_store(results, "conf.int",  8, newRV_noinc((SV*)conf_int), 0);
+		hv_store(results, "stderr",    6, newSVnv(std_err), 0);	//R's component since 3.6.0
 		RETVAL = newRV_noinc((SV*)results);
 	}
 	OUTPUT:

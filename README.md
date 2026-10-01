@@ -6557,7 +6557,7 @@ one of its two tails, magnified until it can be seen.
 
 | Parameter | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `x` | Array Reference | Required | The first vector of data. Must have at least 2 non-missing elements (1 is enough for the `y` of a `var_equal` test). |
+| `x` | Array Reference | Required | The first vector of data. Must have at least 2 non-missing elements, except in a `var_equal` test, where either `x` or `y` may have 1. |
 | `y` | Array Reference | `undef` | The second vector of data. Required for two-sample or paired tests. An explicit `undef` means "absent", as R's `y = NULL` does; anything else that is not an array reference is a fatal error rather than a silently ignored argument. |
 | `mu` | Float | 0.0 | The true value of the mean (or difference in means) for the null hypothesis. Shifts `statistic` and `p.value`; `conf.int` is centred on the estimate and does not move. |
 | `paired` | Boolean | `FALSE` | If true, performs a paired t-test. `x` and `y` must be the same length. |
@@ -6692,7 +6692,9 @@ is missing the pair goes whole, keeping the differences aligned.
 Dies if:
 - `x` is missing or is not an array reference, or `y` is defined but is not one
 - `alternative` is not one of the values above
-- `conf.level` is not strictly between 0 and 1
+- `conf.level` is not strictly between 0 and 1, or is `NaN`
+- `mu` or `conf.level` is `undef` or a reference (R's "must be a single
+  number"), or `mu` is `NaN`; an object that overloads numification is a number
 - `paired` is set without a `y`, or with an `x` and `y` of different lengths
 - fewer than 2 observations survive: 2 in `x` for a one-sample test, 2 complete
   pairs when `paired`, and for two samples R's own thresholds — a Welch test
@@ -6715,10 +6717,32 @@ Dies if:
 | `estimate` | The estimated mean of `x` (one-sample) OR the mean of the differences (paired). |
 | `estimate.x` | The estimated mean of the `x` vector (only returned in two-sample tests). |
 | `estimate.y` | The estimated mean of the `y` vector (only returned in two-sample tests). |
+| `stderr` | The standard error `statistic` divides by, as R has returned it since 3.6.0. |
 
-Validated against R 4.x's `stats::t.test` and against `scipy.stats` — cases
-lifted from R's own regression suite and from SciPy's `TestTTest_1samp`,
-`TestTTest_ind` and confidence-interval tests — by `t/t_test.t`.
+### Accuracy
+
+The variance is R's: a mean, a correction by the mean of the residuals, then
+the squared deviations about it. Two things go beyond R. The deviations are
+also summed and their square taken back out (the Chan–Golub–LeVeque
+correction), and that same sum is carried into `statistic` as the part of the
+mean no double can hold. That keeps `statistic` accurate on a sample whose
+spread is a few dozen ulps of its mean, where R's is out in the third digit.
+The data are also scaled by a power of two before squaring, so a sample whose
+squares pass `DBL_MAX` still gets a finite variance and Welch `df`, where R's
+Welch `df` is `NaN`. On ordinary data the two agree to about 1e-13.
+
+Tied arrays, tied elements and tied scalars holding the array reference are
+all read through their `FETCH`, once each.
+
+Validated against R 4.6.1's `stats::t.test` and against `scipy.stats`, by
+`t/t_test.R.scipy.t` and `t/t_test.tails.R.t`. The R cases are every `t.test()`
+call in R's own sources: the examples of `?t.test`, `?sleep`, `?ks.test`,
+`?array2DF` and `?pairwise.t.test`, R-intro, the tcltk demo, and
+`reg-tests-1a.R`, `reg-tests-1e.R` and `reg-tests-2.R`. Each is checked against
+R's pinned `.Rout.save` output and crossed over every alternative,
+`var_equal`, `mu` and `conf.level`. The far tails are checked against
+`d-p-q-r-tst-2.R`'s `pt()` cases. The SciPy cases come from `TestTTest_1samp`,
+`TestTTestIndMore`, `TestTTestRel` and `TestTTestCI`.
 
 The figures above are drawn by `t.test.plots.pl` in the repository, from the
 two examples in R's `?t.test`: the `sleep` data (`t = -1.8608`, `df = 17.776`,
