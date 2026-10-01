@@ -44,7 +44,9 @@ use Stats::LikeR 't_test';
 # croaked "needs at least 2 elements", one with real slots left from before the
 # tie segfaulted.  Nor was get magic run on an element or argument before
 # SvOK()/SvROK(), so a tied element read as missing and a tied scalar holding
-# the array reference was refused.  The sleep rows are run through each of those.
+# the array reference was refused.  The sleep rows are run through each of those,
+# and through a tied array whose FETCHSIZE grows between calls, which up to
+# 0.3212 was written past the end of the buffer sized from the first.
 #
 # A NaN conf_level gave an interval of (-Inf, Inf) and a NaN mu a NaN t, both
 # without an error; R stops on both (t.test.R: is.na(mu), !is.finite(conf.level)).
@@ -190,6 +192,23 @@ sleep_cases(\@S1, \@S2, 'plain arrays');
 	${ tied $xs } = [@S1];
 	${ tied $ys } = [@S2];
 	sleep_cases($xs, $ys, 'tied scalars holding the refs');
+}
+
+{
+	# FETCHSIZE is perl code and need not answer the same twice.  t_test()
+	# sized its buffer from one call and t_test_collect() read up to a second,
+	# so an array that grew in between -- with defined values past the old
+	# end, as here -- was written past the buffer and segfaulted.  The length
+	# t_test() sized from is the one read, so the answers are the sleep rows'.
+	package Growing;
+	sub TIEARRAY  { my ($c, @v) = @_; bless { v => [@v], calls => 0 }, $c }
+	sub FETCHSIZE { my $s = shift; scalar(@{ $s->{v} }) + ($s->{calls}++ ? 100000 : 0) }
+	sub FETCH     { my ($s, $i) = @_; $i < @{ $s->{v} } ? $s->{v}[$i] : $i }
+	package main;
+	my $grown = sub { tie my @a, 'Growing', @_; \@a };	# fresh, so each call's first FETCHSIZE is the real one
+	cmp_r('sleep|1s',     t_test($grown->(@S1)),                         'FETCHSIZE grows');
+	cmp_r('sleep|welch',  t_test($grown->(@S1), $grown->(@S2)),          'FETCHSIZE grows');
+	cmp_r('sleep|paired', t_test($grown->(@S1), $grown->(@S2), paired => 1), 'FETCHSIZE grows');
 }
 
 # tests/d-p-q-r-tests.R:249 -- pt(z, df) == 1 - pt(-z, df) to 1e-15 for df in

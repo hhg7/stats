@@ -7279,7 +7279,7 @@ is missing the pair goes whole, keeping the differences aligned.
 Dies if:
 \&\- \f(CW\*(C`x\*(C'\fR is missing or is not an array reference, or \f(CW\*(C`y\*(C'\fR is defined but is not one
 \&\- \f(CW\*(C`alternative\*(C'\fR is not one of the values above
-\&\- \f(CW\*(C`conf.level\*(C'\fR is not strictly between 0 and 1, or is \f(CW\*(C`NaN\*(C'\fR
+\&\- \f(CW\*(C`conf.level\*(C'\fR is below 0, above 1, or \f(CW\*(C`NaN\*(C'\fR
 \&\- \f(CW\*(C`mu\*(C'\fR or \f(CW\*(C`conf.level\*(C'\fR is \f(CW\*(C`undef\*(C'\fR or a reference (R\*(Aqs "must be a single
   number"), or \f(CW\*(C`mu\*(C'\fR is \f(CW\*(C`NaN\*(C'\fR; an object that overloads numification is a number
 \&\- \f(CW\*(C`paired\*(C'\fR is set without a \f(CW\*(C`y\*(C'\fR, or with an \f(CW\*(C`x\*(C'\fR and \f(CW\*(C`y\*(C'\fR of different lengths

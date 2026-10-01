@@ -6562,7 +6562,7 @@ one of its two tails, magnified until it can be seen.
 | `mu` | Float | 0.0 | The true value of the mean (or difference in means) for the null hypothesis. Shifts `statistic` and `p.value`; `conf.int` is centred on the estimate and does not move. |
 | `paired` | Boolean | `FALSE` | If true, performs a paired t-test. `x` and `y` must be the same length. |
 | `var_equal` (alias `var.equal`) | Boolean | `FALSE` | If true, assumes equal variances (standard two-sample). If false, performs Welch's t-test with unequal variances. |
-| `conf.level` (alias `conf_level`) | Float | 0.95 | Confidence level for the returned confidence interval. Must be strictly between 0 and 1 (R also accepts the degenerate 0 and 1). See [Extreme `conf.level`](#extreme-conf.level) for the precision limit past about `0.9999`. |
+| `conf.level` (alias `conf_level`) | Float | 0.95 | Confidence level for the returned confidence interval, from 0 to 1 inclusive, as in R: 1 gives `(-Inf, Inf)` and 0 a point at the estimate (or an infinite point for a one-sided test). See [Extreme `conf.level`](#extreme-conf.level) for the precision limit past about `0.9999`. |
 | `alternative` | String | `"two.sided"` | Direction of the alternative hypothesis: `"two.sided"`, `"less"`, or `"greater"`. `"two-sided"` and `"two_sided"` are accepted as `scipy`'s spelling of the same thing. Anything else is a fatal error — an unrecognised value must not quietly become a two-sided test. |
 
 ### `conf.int`
@@ -6692,7 +6692,7 @@ is missing the pair goes whole, keeping the differences aligned.
 Dies if:
 - `x` is missing or is not an array reference, or `y` is defined but is not one
 - `alternative` is not one of the values above
-- `conf.level` is not strictly between 0 and 1, or is `NaN`
+- `conf.level` is below 0, above 1, or `NaN`
 - `mu` or `conf.level` is `undef` or a reference (R's "must be a single
   number"), or `mu` is `NaN`; an object that overloads numification is a number
 - `paired` is set without a `y`, or with an `x` and `y` of different lengths

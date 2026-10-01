@@ -3781,7 +3781,7 @@ That form dies in the far tail, and not only past the overflow of t*t: z
 underflows long before, and incbeta() returns a flat 0 from z = 0 with no way
 back. On a double build pt(-1e160, 1) came back 0 where the true tail is
 3.18e-161, and every |t| above sqrt(DBL_MAX) = 1.34e154 gave 0 outright,
-because t*t is then Inf and z is exactly 0. qt_tail() bisects against this
+because t*t is then Inf and z is exactly 0. qt_tail() searches against this
 function, so the collapse also capped every t quantile at 1.34e154 (see the
 ceiling there).
 
@@ -3840,24 +3840,66 @@ static NV get_t_pvalue(NV t, NV df, const char*alt) {
 	return 2.0 * pt_upper(nv_fabs(t), df);
 }
 
+/*log of the t density at t, for qt_tail()'s Newton step.
+
+The normalising constant is lgamma((df+1)/2) - lgamma(df/2) - log(df*pi)/2,
+which cancels catastrophically once df is large: at df = 1e7 both lgammas are
+near 7e7 and the difference is about 8, so seven digits go, and by df ~ 1e15
+none are left. Past df = 100 it is the asymptotic series instead,
+lgamma(z + 1/2) - lgamma(z) = log(z)/2 - 1/(8z) + 1/(192 z^3) + O(z^-5) at
+z = df/2, whose first omitted term is under 1e-11 there. Newton only needs
+the derivative to a few digits -- an error d in it slows convergence to a rate
+of d per step but cannot move the root, which pt_upper() alone fixes -- so
+neither branch has to be exact. The kernel takes log(1 + t^2/df) by the same
+split as pt_upper(), so nothing overflows out to |t| ~ NV_MAX.*/
+static NV t_log_density(NV t, NV df) {
+	const NV lconst = (df > 100.0)
+		? -0.5 * nv_log(2.0 * M_PI) - 0.25 / df + 1.0 / (24.0 * df * df * df)
+		: nv_lgamma(0.5 * (df + 1.0)) - nv_lgamma(0.5 * df) - 0.5 * nv_log(df * M_PI);
+	const NV nx = 1.0 + (t / df) * t;
+	const NV lnx = (nx > 1e100) ? 2.0 * nv_log(nv_fabs(t)) - nv_log(df)
+	                            : nv_log1p((t / df) * t);
+	return lconst - 0.5 * (df + 1.0) * lnx;
+}
+
 /*qt(p_tail, df, lower.tail = FALSE): the t with P(T > t) == p_tail.
 
 Symmetry first, so the bracket is always [0, high) and the root always
-positive; then bisection to adjacent doubles. Searching upward from zero
-alone cannot express the negative quantile a p_tail above 0.5 asks for --
-which is what a one-sided interval at conf_level < 0.5 needs -- and the old
-1e6 ceiling on the doubling silently saturated instead of failing, so two
-different extreme conf_levels came back with the identical interval. The
-convergence test is relative for the same reason: an absolute 1e-8 on the
-quantile is an error of 1e-8 * std_err on the interval, which grows without
-bound as the data's scale does.*/
+positive. Searching upward from zero alone cannot express the negative
+quantile a p_tail above 0.5 asks for -- which is what a one-sided interval at
+conf_level < 0.5 needs -- and the old 1e6 ceiling on the doubling silently
+saturated instead of failing, so two different extreme conf_levels came back
+with the identical interval. The convergence test is relative for the same
+reason: an absolute 1e-8 on the quantile is an error of 1e-8 * std_err on the
+interval, which grows without bound as the data's scale does.
+
+Inside the bracket it is Newton, safeguarded by the bracket. Up to 0.3212 it
+was bisection all the way to adjacent NVs, which cost 40 to 55 pt_upper()
+calls on a double build and about twice that on quadmath: qt(0.975, df) took
+11 to 33 us against pt()'s 0.3 to 0.8, and was most of the time t_test()
+spent on any sample under a thousand values. Newton takes a handful.
+
+It is Newton on log S against log t, not on S against t. The tail is a power
+of t out there, S ~ c t^-df, so log S is nearly linear in log t and a step
+lands close to the root, where in t itself each step from below moved about
+t/df and crept: a first version in t stopped qt(1e-50, 30) at 204.9 for
+232.8. The step is du = (log S - log p_tail) * S / (t * density), with
+S / (t * density) taken as exp(log S - log t - log density), since in the far
+tail the density underflows long before S does (qt(1e-300, 1) is 3.2e299,
+where the density is ~1e-600). Each evaluation also tightens the bracket by
+the sign of S - p_tail, and a step that would leave it falls back to the
+midpoint, so the iteration cannot wander off. It stops when a step is within
+a few NV_EPSILON of the iterate, or when steps stop shrinking: by then
+S - p_tail is pt_upper()'s own rounding, about 1e-13 relative at worst (see
+pt_upper()), and further steps only redistribute that noise.*/
 static NV qt_tail(NV df, NV p_tail) {
 	if (!(p_tail > 0.0)) return INFINITY;    //also catches NaN
 	if (p_tail >= 1.0)   return -INFINITY;
+	if (nv_isnan(df))    return NV_NAN;      //pt_upper() is NaN everywhere, so no bracket closes
 	if (p_tail == 0.5)   return 0.0;
 	if (p_tail  > 0.5)   return -qt_tail(df, 1.0 - p_tail);
 	NV low = 0.0, high = 1.0;
-	/*Double until pt_upper() has dropped to p_tail, then bisect in [low, high].
+	/*Double until pt_upper() has dropped to p_tail, then search in [low, high].
 
 	This used to stop at sqrt(DBL_MAX), on the reasoning that t * t overflows
 	past it and pt_upper() is 0 there anyway. Both halves were wrong. The
@@ -3875,21 +3917,41 @@ static NV qt_tail(NV df, NV p_tail) {
 	is not a number the answer can be. Reaching it means the tail never fell to
 	p_tail below NV_MAX, and the quantile really is past what an NV can name --
 	so say Inf rather than the ceiling, which is the answer R gives there too
-	(qt(1e-300, 0.5) is -Inf on a double build). Bisection needs no iteration
-	bump: the bracket is a factor of two wide however far out it sits, so it
-	still closes on adjacent NVs in mantissa-many steps -- 53 on a double, 113
-	on quadmath, against the 200 the loop allows.*/
+	(qt(1e-300, 0.5) is -Inf on a double build). The 200-iteration cap is the
+	bisection's worst case with room to spare: the bracket is a factor of two
+	wide however far out it sits, so halving alone closes it on adjacent NVs in
+	mantissa-many steps -- 53 on a double, 113 on quadmath.*/
 	while (pt_upper(high, df) > p_tail) {
 		low   = high;
 		high *= 2.0;
 		if (high > NV_MAX / 2.0) return NV_INF;
 	}
+	const NV log_p = nv_log(p_tail);
+	NV x = 0.5 * (low + high);
+	NV prev_step = NV_INF;	//|step| of the previous in-bracket Newton step
 	for (unsigned short int i = 0; i < 200; i++) {
-		NV mid = 0.5 * (low + high);
-		if (mid <= low || mid >= high) break;   //low and high are adjacent
-		if (pt_upper(mid, df) > p_tail) low = mid; else high = mid;
+		const NV s = pt_upper(x, df);
+		if (s == p_tail) return x;
+		if (s > p_tail) low = x; else high = x;
+		/*Newton on log S against log t, where S's d/dlog(t) is -t * density.
+		An underflowed s makes du NaN, which the bracket test sends to the
+		midpoint.*/
+		const NV ls = nv_log(s);
+		const NV du = (ls - log_p) * nv_exp(ls - nv_log(x) - t_log_density(x, df));
+		NV xn = x * nv_exp(du);
+		if (!(xn > low && xn < high)) {	//outside the bracket, or NaN
+			xn = 0.5 * (low + high);
+			if (xn <= low || xn >= high) return xn;   //low and high are adjacent
+			prev_step = NV_INF;
+		} else {
+			const NV step = nv_fabs(xn - x);
+			if (step <= 4.0 * NV_EPSILON * x) return xn;
+			if (step >= prev_step) return xn;  //into pt_upper()'s noise
+			prev_step = step;
+		}
+		x = xn;
 	}
-	return 0.5 * (low + high);
+	return x;
 }
 
 /*A numeric t_test() argument, which R requires to be "a single number": undef
@@ -3905,8 +3967,15 @@ static NV t_test_num(pTHX_ SV *val, const char *restrict what) {
 
 /*One sample for t_test(), as the values R's t.test() keeps: undef and NaN are
 dropped the way R drops NA (is.na(NaN) is TRUE there too), and infinities are
-kept, as R keeps them. Writes them to out[], which has room for av_len() + 1,
-and returns how many there were.
+kept, as R keeps them. Reads elements 0 .. cap - 1, writes the kept ones to
+out[], which has room for cap, and returns how many there were.
+
+cap is the length the caller sized out[] from, not a fresh av_len(). Up to
+0.3212 this called av_len() again, and on a tied array that is FETCHSIZE, which
+is perl code and need not return the same thing twice: one that grew between
+the caller's call and this one was written past the end of out[] and
+segfaulted. An array that shrank in between is safe either way -- av_at()
+returns NULL past the end, and a missing element is dropped.
 
 Elements come through av_at(), which reads the block directly on a plain array
 and takes av_fetch() on a tied one. This read AvARRAY() unconditionally up to
@@ -3917,10 +3986,9 @@ before the tie ran off their end and segfaulted. The get magic is run once per
 element before SvOK(), or a tied element reads as undef and is dropped; copying
 the values out is what lets the moments below take three passes over them
 while FETCH runs once.*/
-static size_t t_test_collect(pTHX_ AV *av, NV *restrict out) {
-	const size_t n = (size_t)(av_len(av) + 1);
+static size_t t_test_collect(pTHX_ AV *av, NV *restrict out, size_t cap) {
 	size_t kept = 0;
-	for (size_t i = 0; i < n; i++) {
+	for (size_t i = 0; i < cap; i++) {
 		SV *e = av_at(aTHX_ av, (SSize_t)i);
 		if (!e) continue;
 		SvGETMAGIC(e);
@@ -26028,8 +26096,14 @@ SV* t_test(...)
 		/*Written as the negation so that NaN fails it: the old
 		`conf_level <= 0 || conf_level >= 1` was false for NaN, and qt_tail()
 		then returned an interval of (-Inf, Inf) with no error. R's
-		!is.finite(conf.level) refuses it, and so does mu's is.na(mu).*/
-		if (!(conf_level > 0.0 && conf_level < 1.0))
+		!is.finite(conf.level) refuses it, and so does mu's is.na(mu).
+
+		The ends are R's and included: conf.level < 0 || conf.level > 1 is its
+		error. Up to 0.3212 they were refused here, which also refused every
+		conf_level within an ulp of 1 -- 1 - 1e-20 is 1.0 on a double. qt_tail()
+		already answers both, as +-Inf at a tail of 0 or 1 and 0 at 0.5, so 1
+		gives (-Inf, Inf) and 0 a point at the estimate, as in R.*/
+		if (!(conf_level >= 0.0 && conf_level <= 1.0))
 			croak("t_test: 'conf_level' must be between 0 and 1");
 		if (nv_isnan(mu))
 			croak("t_test: 'mu' must be a single number");
@@ -26044,13 +26118,19 @@ SV* t_test(...)
 		the hash is only built once every croak is behind us*/
 		enum { EST_MEAN_X, EST_MEAN_DIFF, EST_BOTH } estimates = EST_MEAN_X;
 		/*Each sample's kept values, copied out once by t_test_collect(). A
-		FETCH is perl code and can die, so the buffers are on the save stack
-		rather than freed by hand.*/
+		FETCH is perl code and can die, so the buffer is on the save stack
+		rather than freed by hand.
+
+		One buffer serves both samples of a two-sample test: x is reduced to
+		its moments before y is read into the same space. Up to 0.3212 each
+		had its own, so the peak was nx + ny NVs where max(nx, ny) does --
+		800 MB more on a double build for two groups of 1e8.*/
 		const size_t nx_raw = (size_t)(av_len(x_av) + 1);
 		const size_t ny_raw = y_av ? (size_t)(av_len(y_av) + 1) : 0;
-		NV *restrict xbuf, *restrict ybuf = NULL;
-		Newx(xbuf, nx_raw ? nx_raw : 1, NV);	//never a zero-byte allocation
-		SAVEFREEPV(xbuf);
+		const size_t nbuf = (nx_raw > ny_raw) ? nx_raw : ny_raw;
+		NV *restrict buf;
+		Newx(buf, nbuf ? nbuf : 1, NV);	//never a zero-byte allocation
+		SAVEFREEPV(buf);
 
 		if (paired) {
 			/*R uses complete.cases(x, y): a pair goes whole if either side is
@@ -26068,11 +26148,11 @@ SV* t_test(...)
 				if (!SvOK(xe) || !SvOK(ye)) continue;
 				const NV dx = SvNV_nomg(xe), dy = SvNV_nomg(ye);
 				if (nv_isnan(dx) || nv_isnan(dy)) continue;
-				xbuf[n++] = dx - dy;
+				buf[n++] = dx - dy;
 			}
 			if (n < 2) croak("t_test: not enough complete pairs; need at least 2");
 			NV mean_d, sd_d;
-			t_test_moments(xbuf, n, &mean_d, &lo_x, &sd_d);
+			t_test_moments(buf, n, &mean_d, &lo_x, &sd_d);
 			cint_est       = mean_d;
 			cint_lo        = lo_x;
 			std_err        = sd_d / nv_sqrt((NV)n);
@@ -26080,22 +26160,20 @@ SV* t_test(...)
 			constant_scale = nv_fabs(mean_d);
 			estimates      = EST_MEAN_DIFF;
 		} else if (y_av) {
-			Newx(ybuf, ny_raw ? ny_raw : 1, NV);
-			SAVEFREEPV(ybuf);
-			const size_t nx = t_test_collect(aTHX_ x_av, xbuf);
-			const size_t ny = t_test_collect(aTHX_ y_av, ybuf);
 			/*R's thresholds: a pooled variance can carry a group of one, since
 			that group contributes no sum of squares, but a Welch test needs a
 			variance from each side. Both were missing here, so an n = 1 'y'
 			divided by (ny - 1) == 0 and returned NaN throughout.*/
+			const size_t nx = t_test_collect(aTHX_ x_av, buf, nx_raw);
 			if (nx < 1 || (!var_equal && nx < 2))
 				croak("t_test: not enough 'x' observations");
+			t_test_moments(buf, nx, &mean_x, &lo_x, &sd_x);
+			const size_t ny = t_test_collect(aTHX_ y_av, buf, ny_raw);	//x is done with buf
 			if (ny < 1 || (!var_equal && ny < 2))
 				croak("t_test: not enough 'y' observations");
 			if (var_equal && nx + ny < 3)
 				croak("t_test: not enough observations");
-			t_test_moments(xbuf, nx, &mean_x, &lo_x, &sd_x);
-			t_test_moments(ybuf, ny, &mean_y, &lo_y, &sd_y);
+			t_test_moments(buf, ny, &mean_y, &lo_y, &sd_y);
 			cint_est       = mean_x - mean_y;
 			cint_lo        = lo_x - lo_y;
 			constant_scale = nv_fmax(nv_fabs(mean_x), nv_fabs(mean_y));
@@ -26132,9 +26210,9 @@ SV* t_test(...)
 				}
 			}
 		} else {
-			const size_t nx = t_test_collect(aTHX_ x_av, xbuf);
+			const size_t nx = t_test_collect(aTHX_ x_av, buf, nx_raw);
 			if (nx < 2) croak("t_test: 'x' needs at least 2 elements");
-			t_test_moments(xbuf, nx, &mean_x, &lo_x, &sd_x);
+			t_test_moments(buf, nx, &mean_x, &lo_x, &sd_x);
 			cint_est       = mean_x;
 			cint_lo        = lo_x;
 			std_err        = sd_x / nv_sqrt((NV)nx);

@@ -16,6 +16,11 @@ Revision history for Stats-LikeR
    scalar holding the array reference was refused with "Usage: ...". Both
    now work, and each element is fetched once.
 
+ - A sample's buffer was sized from one call to FETCHSIZE and filled up to
+   a second. A tied array whose FETCHSIZE grew in between was written past
+   the end of the buffer and segfaulted. The length the buffer was sized
+   from is now the one read.
+
  [t_test(): far-tail p-values]
 
  - The p-value squared the t statistic itself, so for |t| above
@@ -57,6 +62,31 @@ Revision history for Stats-LikeR
 
  - The result carries stderr, the standard error the statistic divides
    by, which R's t.test() has returned since 3.6.0.
+
+ - conf_level 0 and 1 were refused; R accepts both, as the ends of its
+   range. 1 now gives (-Inf, Inf) and 0 a point at the estimate, as in R.
+   This also stops a conf_level within an ulp of 1, such as 1 - 1e-20,
+   which is 1.0 on a double, from croaking.
+
+ [t_test(): memory]
+
+ - A two-sample test copied x and y into separate buffers at once. x is
+   now reduced to its moments before y is read into the same buffer, so
+   the extra memory peaks at max(nx, ny) values instead of nx + ny: 800 MB
+   less on a double build for two groups of 1e8.
+
+ [qt(): Newton instead of bisection]
+
+ - qt_tail(), the t quantile behind qt(), t_test()'s confidence interval,
+   power_t_test(), svyglm(), ivreg() and lmer(), bisected all the way to
+   adjacent doubles. That took 40 to 55 evaluations of the t tail, about
+   twice as many on quadmath, and was most of t_test()'s time on samples
+   under about a thousand values. It is now Newton on the log tail against
+   log t, kept inside the same bracket and falling back to the midpoint
+   when a step would leave it. qt(0.975, df) takes 2 to 9 us instead of 11
+   to 33. Results agree with the old ones to 7e-15 relative except near
+   p = 0.5, where both are limited by the tail's own rounding and, where
+   checked against mpmath, the new ones are the closer.
 
  [Incomplete beta: a NaN argument hung __float128 builds]
 

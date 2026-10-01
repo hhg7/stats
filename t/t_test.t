@@ -232,10 +232,50 @@ throws_ok { t_test([1..5], 'y' => [1..5], 'bogus' => 1) }
 	qr/unknown argument 'bogus'/, 'unknown named argument dies';
 throws_ok { t_test([5]) }
 	qr/needs at least 2 elements/, 'single-element x dies';
-throws_ok { t_test([1..5], conf_level => 0) }
-	qr/'conf_level' must be between 0 and 1/, 'conf_level = 0 dies';
-throws_ok { t_test([1..5], conf_level => 1) }
-	qr/'conf_level' must be between 0 and 1/, 'conf_level = 1 dies';
+# conf.level 0 and 1 are inside R's range (t.test.R stops only on
+# conf.level < 0 || conf.level > 1).  Expected intervals from R 4.6.1,
+#   for (cl in c(0,1)) for (a in c("two.sided","less","greater"))
+#     print(t.test(1:5, conf.level = cl, alternative = a)$conf.int)
+# and t.test(c(1,2,4), c(3,5,9,11), var.equal = TRUE, conf.level = 0)$conf.int
+# = c(-4.666666666666667, -4.666666666666667).  1 - 1e-20 is 1.0 on a double.
+{
+	my $inf = 9**9**9;
+	my %want = (
+		'0 two.sided' => [3, 3],         '1 two.sided' => [-$inf, $inf],
+		'0 less'      => [-$inf, -$inf], '1 less'      => [-$inf, $inf],
+		'0 greater'   => [$inf, $inf],   '1 greater'   => [-$inf, $inf],
+	);
+	for my $cl (0, 1) {
+		for my $alt (qw(two.sided less greater)) {
+			my $r = t_test([1..5], conf_level => $cl, alternative => $alt);
+			my $w = $want{"$cl $alt"};
+			for my $k (0, 1) {
+				if (abs($w->[$k]) == $inf) {
+					is($r->{'conf.int'}[$k], $w->[$k], "conf_level = $cl $alt: conf.int[$k]");
+				} else {
+					is_approx($r->{'conf.int'}[$k], $w->[$k], "conf_level = $cl $alt: conf.int[$k]", 1e-14);
+				}
+			}
+		}
+	}
+	my $r = t_test([1, 2, 4], [3, 5, 9, 11], var_equal => 1, conf_level => 0);
+	is_approx($r->{'conf.int'}[$_], -4.666666666666667, "var_equal conf_level = 0: conf.int[$_]", 1e-14)
+		for 0, 1;
+	# 1 - 1e-20 rounds to 1 on a double or x87 long double, and is the
+	# infinite interval; __float128 holds it, and it must not croak there either.
+	my $cl = 1 - 1e-20;
+	$r = t_test([1..5], conf_level => $cl);
+	if ($cl == 1) {
+		is_deeply($r->{'conf.int'}, [-$inf, $inf], 'conf_level = 1 - 1e-20 rounds to 1: (-Inf, Inf)');
+	} else {
+		ok($r->{'conf.int'}[0] > -$inf && $r->{'conf.int'}[1] < $inf,
+		   'conf_level = 1 - 1e-20 below 1 at this NV width: a finite interval');
+	}
+}
+throws_ok { t_test([1..5], conf_level => -0.1) }
+	qr/'conf_level' must be between 0 and 1/, 'conf_level < 0 dies';
+throws_ok { t_test([1..5], conf_level => 1.1) }
+	qr/'conf_level' must be between 0 and 1/, 'conf_level > 1 dies';
 throws_ok { t_test('x' => 'not a ref') }
 	qr/must be an ARRAY reference/, 'non-reference x dies';
 

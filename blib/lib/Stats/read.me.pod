@@ -9824,7 +9824,7 @@ one of its two tails, magnified until it can be seen.
   <td><code>conf.level</code> (alias <code>conf_level</code>)</td>
   <td>Float</td>
   <td>0.95</td>
-  <td>Confidence level for the returned confidence interval. Must be strictly between 0 and 1 (R also accepts the degenerate 0 and 1). See [Extreme <code>conf.level</code>](#extreme-conf.level) for the precision limit past about <code>0.9999</code>.</td>
+  <td>Confidence level for the returned confidence interval, from 0 to 1 inclusive, as in R: 1 gives <code>(-Inf, Inf)</code> and 0 a point at the estimate (or an infinite point for a one-sided test). See [Extreme <code>conf.level</code>](#extreme-conf.level) for the precision limit past about <code>0.9999</code>.</td>
 </tr>
 <tr>
   <td><code>alternative</code></td>
@@ -10006,7 +10006,7 @@ is missing the pair goes whole, keeping the differences aligned.
 Dies if:
 - C<x> is missing or is not an array reference, or C<y> is defined but is not one
 - C<alternative> is not one of the values above
-- C<conf.level> is not strictly between 0 and 1, or is C<NaN>
+- C<conf.level> is below 0, above 1, or C<NaN>
 - C<mu> or C<conf.level> is C<undef> or a reference (R's "must be a single
   number"), or C<mu> is C<NaN>; an object that overloads numification is a number
 - C<paired> is set without a C<y>, or with an C<x> and C<y> of different lengths
