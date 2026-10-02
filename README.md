@@ -439,6 +439,15 @@ returns
         }
     }
 
+Each term's `Sum Sq` is what it adds to the terms before it in the formula,
+not what it would explain alone. When the regressors are correlated, as in
+`anova.lm`'s own example on R's `LifeCycleSavings`, reversing the formula
+moves sum of squares from one term to another and changes their p-values. The
+total of the terms and the `Residuals` row do not move. In a balanced design
+such as `warpbreaks` the terms are orthogonal, so the order changes nothing.
+
+![anova term order: the Sum Sq of sr ~ pop15 + pop75 + dpi + ddpi and of the reversed formula as stacked bars that differ term by term but share one total and one Residuals, beside breaks ~ wool + tension and tension + wool, which are identical](https://raw.githubusercontent.com/hhg7/stats/main/img/anova.order.png)
+
 Two-way (and higher) models use the `*` operator, which implicitly evaluates
 the main effects alongside the interaction (`a * b` expands to `a + b + a:b`;
 `a * b * c` to the full factorial `a + b + c + a:b + a:c + b:c + a:b:c`):
@@ -482,6 +491,13 @@ square is 0. Every model is fitted on the same rows: those complete for all of
 them. As R's `anova.lmlist` does, a model whose response differs from the
 first model's is dropped with a warning, and if only one model is left, its
 single-model table is returned.
+
+Below, `warpbreaks` is fitted as four nested formulas, each adding one term.
+Each row's `Sum of Sq` is the drop in `RSS` from the row before it. Because
+every `F` is taken over the largest model's residual mean square, the chain
+gives the same F values as the single-model table of the largest formula.
+
+![anova of nested formulas on warpbreaks: the RSS of breaks ~ 1, + wool, + tension and + wool:tension as bars, each drop labelled as that row's Sum of Sq and Df, and each drop per Df over the largest model's RSS / Res.Df giving an F equal to the one-model anova table's](https://raw.githubusercontent.com/hhg7/stats/main/img/anova.compare.png)
 
 Given two or more **fitted models** instead -- `lm` or `glm` fits (or
 `negbin` `glm` fits) of the same response on the same rows -- `anova` compares
@@ -767,6 +783,20 @@ which returns
        }
     }
 
+With one factor, the table is built like this. The factor's `Sum Sq` is how
+far its group means lie from the grand mean, and the `Residuals` `Sum Sq` is
+how far the observations lie from their own group's mean, each squared and
+summed. Each is divided by its `Df` to
+give its `Mean Sq`. `F value` is the term's `Mean Sq` over the residual one,
+and `Pr(>F)` is the area of the F distribution on those two `Df` beyond it.
+Below, R's `PlantGrowth` is given as a named list of three groups, which `aov`
+stacks into `Value ~ Group`. The vertical lines on the left are the two kinds
+of deviation: blue for each group's mean from the grand mean, grey for each
+observation from its group's mean. The right-hand panel magnifies the tail
+that `Pr(>F)` measures, which is too thin to see at full scale.
+
+![aov on PlantGrowth: the stacked observations with their group means and the grand mean, the Sum Sq split into Group and Residuals and divided by Df into Mean Sq and F, and Pr(>F) as the tail of F(2, 27) beyond F = 4.846, also shown magnified](https://raw.githubusercontent.com/hhg7/stats/main/img/aov.what.png)
+
 You can also perform Two-Way ANOVA with categorical interactions using the `*` operator. The parser will implicitly evaluate the main effects alongside the interaction:
 
     my $res_2way = aov($data_2way, 'len ~ supp * dose');
@@ -813,6 +843,23 @@ The function returns a single `HashRef` containing the evaluated statistical res
 | `coefficients` | `HashRef` | `undef` | The coefficients, under treatment contrasts and with R's names (`Intercept`, `woolB`, `woolB:tensionL`). An aliased one is `NaN`, R's `NA`. | `{'Intercept' => 2, 'gB' => 3}` |
 | `fitted.values` | `HashRef` | `undef` | Fitted values, offsets included, keyed by row name: the HoH key, a `row.names` column, or 1..n. Rows dropped for a missing value have none. | `{'1' => 2, '2' => 2}` |
 | `xlevels` | `HashRef` | `undef` | Each factor's levels, sorted, the reference level first; with `family` (`'gaussian'`), what `predict` reads. | `{'g' => ['A', 'B', 'C']}` |
+
+The coefficients are steps away from one reference cell, which is the first
+level of each factor in `xlevels`. Because the levels are sorted, R's
+`warpbreaks` under `breaks ~ wool * tension` has tension `H` as its reference,
+not `L`. `Intercept` is that cell's mean. Every other cell adds a main effect
+for each of its non-reference levels and an interaction for each
+non-reference pair, and the sum is the cell's fitted value. In a full
+factorial such as this one, that fitted value is the cell mean.
+
+![aov coefficients on warpbreaks: for each of the six wool-by-tension cells, a staircase of Intercept, tension, wool and interaction coefficients that ends on that cell's fitted value](https://raw.githubusercontent.com/hhg7/stats/main/img/aov.coefficients.png)
+
+`group.stats` is something else again. It holds each factor's own means, each
+averaged over the other factors, so the cell means above are not among them.
+The table has one row per term in R's order, followed by `Residuals`, which
+has no F test of its own.
+
+![aov group.stats and table on warpbreaks: the marginal mean and size of each wool and tension level against the grand mean, and the Sum Sq, Df, Mean Sq, F value and Pr(>F) of wool, tension, wool:tension and Residuals](https://raw.githubusercontent.com/hhg7/stats/main/img/aov.outputs.png)
 
 ### omitting formula
 
