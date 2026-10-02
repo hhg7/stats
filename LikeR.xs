@@ -2495,6 +2495,51 @@ scope, so it must not be used after it.*/
 #define ITER_KEEP_BEGIN(hv)	STMT_START { ENTER; iter_keep(aTHX_ (HV*)(hv)); } STMT_END
 #define ITER_KEEP_END		LEAVE
 
+/*Reading a hash that may be tied.
+
+A tied hash keeps nothing in its buckets: hv_iternext() hands back an entry
+whose value is never filled in (HeVAL() is NULL, or stale), a value from
+hv_fetch()/hv_fetch_ent() is a placeholder until its get magic runs, and the
+key counts -- HvUSEDKEYS, HvKEYS, HvTOTALKEYS, hv_iterinit()'s return -- all
+read 0. Code that trusted any of those segfaulted on a tied frame (csort,
+value_counts, kruskal_test, merge, agg, drop_duplicates) or refused it as
+empty or malformed (lm, chisq_test, hoa2aoh, ...).
+
+he_val() is the value of an iterated entry with its magic run, and hv_nkeys()
+a count that walks a tied hash. A tied iterator is also why key pointers from
+HePV() must be copied before the next hv_iternext(): it replaces its key SV at
+every step. And a tied walk must run to the end -- see cfilter for the leak
+perl before 5.18 has when hv_iterinit() cuts one short.*/
+#define HV_IS_TIED(hv)	(SvRMAGICAL(hv) && mg_find((const SV *)(hv), PERL_MAGIC_tied))
+static SV *he_val(pTHX_ HV *hv, HE *he) {
+	if (!SvRMAGICAL(hv)) return HeVAL(he);
+	SV *v = hv_iterval(hv, he);
+	SvGETMAGIC(v);
+	return v;
+}
+static size_t hv_nkeys(pTHX_ HV *hv) {
+	if (!HV_IS_TIED(hv)) return (size_t)HvUSEDKEYS(hv);
+	size_t n = 0;	//a tied hash's FIRSTKEY/NEXTKEY restart on any walk, so nothing to keep
+	hv_iterinit(hv);
+	while (hv_iternext(hv)) n++;
+	return n;
+}
+/*One prcomp() cell as a finite number, or FALSE for a missing, undef,
+non-numeric, NaN or infinite one -- any of which drops the row, as R's
+na.omit() does before the decomposition. Get magic runs once, here, so a tied
+row or column is FETCHed once and read with the _nomg form after: tested
+before its magic ran, every tied cell read as undef and the row was dropped
+without a word.*/
+static bool pc_num(pTHX_ SV *cell, NV *restrict out) {
+	if (!cell) return FALSE;	// no restrict on cell: perl-managed, a proxy for a tied element
+	SvGETMAGIC(cell);
+	if (!SvOK(cell) || !looks_like_number(cell)) return FALSE;
+	const NV v = SvNV_nomg(cell);
+	if (!nv_isfinite(v)) return FALSE;
+	*out = v;
+	return TRUE;
+}
+
 /*Every available column, for the '.' operator's expansion -- in SORTED order.
 
 They used to come back in hash-iteration order, which perl randomises per
@@ -32567,13 +32612,21 @@ CODE:
 	/*A scope of its own, so the SAVEFREEPV()d buffers below go at the end of the
 	call rather than at the end of the caller's enclosing block.*/
 	ENTER;
-	char **colnames = NULL;
+	/*The column names as SVs, copied from the keys, so a UTF-8 name keeps its
+	flag and a name with a NUL keeps its length; looked up with hv_fetch_ent()
+	and handed back in varnames as they are. They were char* from savepv() up to
+	0.3212 and were looked up again with strlen(): a column named "\x{e9}" could
+	not be found (a HoA croaked "cannot be looked up by name", an AoH or HoH
+	read every cell as missing and croaked "0 valid observations"), and the
+	names came back without their UTF-8 flag. NULL for an AoA, which has none.*/
+	AV *names = NULL;
 	SV *ref = SvRV(x_sv);
 	if (SvTYPE(ref) == SVt_PVAV) {
 	  AV *av = (AV*)ref;
 	  n_raw = av_len(av) + 1;
 	  if (n_raw > 0) {
 		   SV **first = av_fetch(av, 0, 0);
+		   if (first) SvGETMAGIC(*first);	// a tied frame's row is only fetched here
 		   if (first && SvROK(*first) && SvTYPE(SvRV(*first)) == SVt_PVAV) {
 			   is_aoa = 1;
 			   p = av_len((AV*)SvRV(*first)) + 1;
@@ -32584,15 +32637,17 @@ CODE:
 	} else if (SvTYPE(ref) == SVt_PVHV) {
 		HV *hv = (HV*)ref;
 		ITER_KEEP_BEGIN(hv);
-		if (hv_iterinit(hv) > 0) {
-			HE *entry = hv_iternext(hv);
-			SV *val = hv_iterval(hv, entry);
+		hv_iterinit(hv);
+		HE *entry = hv_iternext(hv);	// rather than hv_iterinit()'s count, 0 for a tied hash
+		if (entry) {
+			SV *val = he_val(aTHX_ hv, entry);
 			if (SvROK(val) && SvTYPE(SvRV(val)) == SVt_PVAV) {
 				is_hoa = 1;
 				n_raw = av_len((AV*)SvRV(val)) + 1;
+				if (HV_IS_TIED(hv)) while (hv_iternext(hv)) {}	// finish the tied walk: see hv_nkeys()
 			} else if (SvROK(val) && SvTYPE(SvRV(val)) == SVt_PVHV) {
 				is_hoh = 1;
-				n_raw = hv_iterinit(hv);
+				n_raw = hv_nkeys(aTHX_ hv);
 			} else croak("prcomp: Hash reference must contain ArrayRefs (HoA) or HashRefs (HoH)");
 		}
 		ITER_KEEP_END;
@@ -32612,7 +32667,7 @@ CODE:
 		ITER_KEEP_BEGIN(hv);
 		hv_iterinit(hv);
 		while ((ce = hv_iternext(hv))) {
-			SV *cv = HeVAL(ce);
+			SV *cv = he_val(aTHX_ hv, ce);
 			if (!cv || !SvROK(cv) || SvTYPE(SvRV(cv)) != SVt_PVAV)
 				croak("prcomp: HoA value for column '%s' is not an array-ref",
 				      HePV(ce, PL_na));
@@ -32635,7 +32690,7 @@ CODE:
 		ITER_KEEP_BEGIN(hv);
 		hv_iterinit(hv);
 		while ((re = hv_iternext(hv))) {
-			SV *rv = HeVAL(re);
+			SV *rv = he_val(aTHX_ hv, re);
 			if (!rv || !SvROK(rv) || SvTYPE(SvRV(rv)) != SVt_PVHV)
 				croak("prcomp: HoH value for row '%s' is not a hash-ref",
 				      HePV(re, PL_na));
@@ -32645,6 +32700,7 @@ CODE:
 		AV *av = (AV*)ref;
 		for (size_t r = 0; r < n_raw; r++) {
 			SV **rp = av_fetch(av, (SSize_t)r, 0);
+			if (rp && *rp) SvGETMAGIC(*rp);
 			if (!rp || !*rp || !SvROK(*rp) || SvTYPE(SvRV(*rp)) != SVt_PVAV)
 				croak("prcomp: AoA row %" UVuf " is not an array-ref", (UV)r);
 			size_t len = (size_t)(av_len((AV*)SvRV(*rp)) + 1);
@@ -32654,60 +32710,33 @@ CODE:
 				      (UV)r, (UV)len, (UV)p);
 		}
 	}
-	if (is_aoh) {// 4. Extract and Sort Column Names (for named-column inputs)
-		AV *av = (AV*)ref;
-		HV *first = (HV*)SvRV(*av_fetch(av, 0, 0));
-		ITER_KEEP_BEGIN(first);
-		p = hv_iterinit(first);
-		if (p == 0) croak("prcomp: row hashes cannot be empty");
-		colnames = (char**)safemalloc(p * sizeof(char*));
-		size_t c = 0;	//read after the walk: the columns actually seen
+	// 4. Extract and Sort Column Names (for named-column inputs)
+	if (is_aoh || is_hoh || is_hoa) {
+		HV *keys_hv;	//the hash whose keys name the columns
+		if (is_aoh) {
+			SV **first = av_fetch((AV*)ref, 0, 0);	// its magic already ran in step 3
+			keys_hv = (HV*)SvRV(*first);
+		} else if (is_hoh) {
+			HV *hv = (HV*)ref;
+			ITER_KEEP_BEGIN(hv);
+			hv_iterinit(hv);
+			keys_hv = (HV*)SvRV(he_val(aTHX_ hv, hv_iternext(hv)));	//step 3 checked every row is a hash-ref
+			if (HV_IS_TIED(hv)) while (hv_iternext(hv)) {}	// finish the tied walk: see hv_nkeys()
+			ITER_KEEP_END;
+		} else keys_hv = (HV*)ref;
+		names = (AV*)sv_2mortal((SV*)newAV());
 		HE *entry;
-		while (c < p && (entry = hv_iternext(first))) {
-			colnames[c++] = savepv(SvPV_nolen(hv_iterkeysv(entry)));
-		}
+		ITER_KEEP_BEGIN(keys_hv);
+		hv_iterinit(keys_hv);
+		while ((entry = hv_iternext(keys_hv)))
+			av_push(names, newSVsv(hv_iterkeysv(entry)));
 		ITER_KEEP_END;
-		p = c;
-		SAVEFREEPV(colnames);	//this and the names after ITER_KEEP_END, whose LEAVE would free them
-		for (size_t j = 0; j < p; j++) SAVEFREEPV(colnames[j]);
-		qsort(colnames, p, sizeof(char*), cmp_string_wt);
-	} else if (is_hoh) {
-		HV *hv = (HV*)ref;
-		ITER_KEEP_BEGIN(hv);
-		hv_iterinit(hv);
-		HE *entry = hv_iternext(hv);
-		HV *inner = (HV*)SvRV(hv_iterval(hv, entry));
-		ITER_KEEP_END;
-		ITER_KEEP_BEGIN(inner);
-		p = hv_iterinit(inner);
-		if (p == 0) croak("prcomp: inner hashes cannot be empty");
-
-		colnames = (char**)safemalloc(p * sizeof(char*));
-		size_t c = 0;	//read after the walk: the columns actually seen
-		while (c < p && (entry = hv_iternext(inner))) {
-			colnames[c++] = savepv(SvPV_nolen(hv_iterkeysv(entry)));
-		}
-		ITER_KEEP_END;
-		p = c;
-		SAVEFREEPV(colnames);	//this and the names after ITER_KEEP_END, whose LEAVE would free them
-		for (size_t j = 0; j < p; j++) SAVEFREEPV(colnames[j]);
-		qsort(colnames, p, sizeof(char*), cmp_string_wt);
-	} else if (is_hoa) {
-		HV *hv = (HV*)ref;
-		ITER_KEEP_BEGIN(hv);
-		p = hv_iterinit(hv);
-		if (p == 0) croak("prcomp: input hash is empty");
-		colnames = (char**)safemalloc(p * sizeof(char*));
-		size_t c = 0;	//read after the walk: the columns actually seen
-		HE *entry;
-		while (c < p && (entry = hv_iternext(hv))) {
-			colnames[c++] = savepv(SvPV_nolen(hv_iterkeysv(entry)));
-		}
-		ITER_KEEP_END;
-		p = c;
-		SAVEFREEPV(colnames);	//this and the names after ITER_KEEP_END, whose LEAVE would free them
-		for (size_t j = 0; j < p; j++) SAVEFREEPV(colnames[j]);
-		qsort(colnames, p, sizeof(char*), cmp_string_wt);
+		p = (size_t)(av_len(names) + 1);
+		if (p == 0)
+			croak(is_aoh ? "prcomp: row hashes cannot be empty"
+			      : is_hoh ? "prcomp: inner hashes cannot be empty"
+			      : "prcomp: input hash is empty");
+		if (p > 1) sortsv(AvARRAY(names), p, Perl_sv_cmp);	//the order get_all_columns() uses
 	}
 	// 5. Extract data & apply listwise deletion for NaNs
 	NV *restrict X_mat = (NV*)safemalloc(n_raw * p * sizeof(NV));
@@ -32717,16 +32746,15 @@ CODE:
 		AV *av = (AV*)ref;
 		for (size_t i = 0; i < n_raw; i++) {
 			SV **row_sv = av_fetch(av, i, 0);
+			if (row_sv) SvGETMAGIC(*row_sv);
 			if (row_sv && SvROK(*row_sv) && SvTYPE(SvRV(*row_sv)) == SVt_PVAV) {
 				AV *row_av = (AV*)SvRV(*row_sv);
 				bool row_ok = 1;
 				for (size_t j = 0; j < p; j++) {
 					SV **cell_sv = av_fetch(row_av, j, 0);
-					if (cell_sv && SvOK(*cell_sv) && looks_like_number(*cell_sv)) {
-						NV v = SvNV(*cell_sv);
-						if (!nv_isfinite(v)) row_ok = 0;
-						else X_mat[n * p + j] = v;
-					} else row_ok = 0;
+					NV v;
+					if (pc_num(aTHX_ cell_sv ? *cell_sv : NULL, &v)) X_mat[n * p + j] = v;
+					else row_ok = 0;
 				}
 				if (row_ok) n++;
 			}
@@ -32735,16 +32763,15 @@ CODE:
 	  AV *av = (AV*)ref;
 	  for (size_t i = 0; i < n_raw; i++) {
 		   SV **row_sv = av_fetch(av, i, 0);
+		   if (row_sv) SvGETMAGIC(*row_sv);
 		   if (row_sv && SvROK(*row_sv) && SvTYPE(SvRV(*row_sv)) == SVt_PVHV) {
 			   HV *row_hv = (HV*)SvRV(*row_sv);
 			   bool row_ok = 1;
 			   for (size_t j = 0; j < p; j++) {
-				   SV **cell = hv_fetch(row_hv, colnames[j], strlen(colnames[j]), 0);
-				   if (cell && SvOK(*cell) && looks_like_number(*cell)) {
-					   NV v = SvNV(*cell);
-					   if (!nv_isfinite(v)) row_ok = 0;
-					   else X_mat[n * p + j] = v;
-				   } else row_ok = 0;
+				   HE *he = hv_fetch_ent(row_hv, AvARRAY(names)[j], 0, 0);
+				   NV v;
+				   if (pc_num(aTHX_ he ? HeVAL(he) : NULL, &v)) X_mat[n * p + j] = v;
+				   else row_ok = 0;
 			   }
 			   if (row_ok) n++;
 		   }
@@ -32754,28 +32781,24 @@ CODE:
 		AV **col_arrays = (AV**)safemalloc(p * sizeof(AV*));
 		SAVEFREEPV(col_arrays);
 		for (size_t j = 0; j < p; j++) {
-			SV **val = hv_fetch(hv, colnames[j], strlen(colnames[j]), 0);
-	/*The loop above has already refused every value that is not an
-	array-ref, so this can only miss if the name did not survive the round
-	trip through savepv()/strlen() -- a key with an embedded NUL, which
-	truncates here and then fails to match.  Dereferencing the NULL would
-	segfault, so say what happened instead.*/
-			if (!val || !*val || !SvROK(*val)
-			    || SvTYPE(SvRV(*val)) != SVt_PVAV) {
-				croak("prcomp: HoA column '%s' cannot be looked up by name "
-				      "(an embedded NUL in a column name?)", colnames[j]);
-			}
-			col_arrays[j] = (AV*)SvRV(*val);
+			HE *he = hv_fetch_ent(hv, AvARRAY(names)[j], 0, 0);
+			SV *val = he ? HeVAL(he) : NULL;
+			if (val) SvGETMAGIC(val);
+	/*Step 3 refused every value that is not an array-ref and the names are
+	the keys themselves, so this can only miss if the hash changed under us --
+	a tied one whose FETCH disagrees with its NEXTKEY.*/
+			if (!val || !SvROK(val) || SvTYPE(SvRV(val)) != SVt_PVAV)
+				croak("prcomp: HoA column '%" SVf "' is not an array-ref when fetched by name",
+				      SVfARG(AvARRAY(names)[j]));
+			col_arrays[j] = (AV*)SvRV(val);
 		}
 		for (size_t i = 0; i < n_raw; i++) {
 			bool row_ok = 1;
 			for (size_t j = 0; j < p; j++) {
 				SV **cell = av_fetch(col_arrays[j], i, 0);
-				if (cell && SvOK(*cell) && looks_like_number(*cell)) {
-				  NV v = SvNV(*cell);
-				  if (!nv_isfinite(v)) row_ok = 0;
-				  else X_mat[n * p + j] = v;
-				} else row_ok = 0;
+				NV v;
+				if (pc_num(aTHX_ cell ? *cell : NULL, &v)) X_mat[n * p + j] = v;
+				else row_ok = 0;
 			}
 			if (row_ok) n++;
 		}
@@ -32784,16 +32807,14 @@ CODE:
 		ITER_KEEP_BEGIN(hv);
 		hv_iterinit(hv);
 		HE *entry;
-		while ((entry = hv_iternext(hv))) {
-			HV *row_hv = (HV*)SvRV(hv_iterval(hv, entry));
+		while ((entry = hv_iternext(hv)) && n < n_raw) {	// n < n_raw: X_mat holds n_raw rows
+			HV *row_hv = (HV*)SvRV(he_val(aTHX_ hv, entry));
 			bool row_ok = 1;
 			for (size_t j = 0; j < p; j++) {
-				SV **cell = hv_fetch(row_hv, colnames[j], strlen(colnames[j]), 0);
-				if (cell && SvOK(*cell) && looks_like_number(*cell)) {
-				  NV v = SvNV(*cell);
-				  if (!nv_isfinite(v)) row_ok = 0;
-				  else X_mat[n * p + j] = v;
-				} else row_ok = 0;
+				HE *he = hv_fetch_ent(row_hv, AvARRAY(names)[j], 0, 0);
+				NV v;
+				if (pc_num(aTHX_ he ? HeVAL(he) : NULL, &v)) X_mat[n * p + j] = v;
+				else row_ok = 0;
 			}
 			if (row_ok) n++;
 		}
@@ -32901,11 +32922,9 @@ CODE:
 		}
 		hv_stores(res_hv, "x", newRV_noinc((SV*)x_ret_av));
 	}
-	if (colnames) {
+	if (names) {
 		AV *names_av = newAV();
-		for (size_t j = 0; j < p; j++) {
-			av_push(names_av, newSVpv(colnames[j], 0));
-		}
+		for (size_t j = 0; j < p; j++) av_push(names_av, newSVsv(AvARRAY(names)[j]));	//keeps a UTF-8 name's flag
 		hv_stores(res_hv, "varnames", newRV_noinc((SV*)names_av));
 	}
 	if (center) {

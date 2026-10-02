@@ -198,14 +198,14 @@ sub child_result {
 			or diag explain \%seen;
 	}
 	# The HoA branch reached the same crash by a different route: column names
-	# are copied with savepv() and looked up again with strlen(), so a name
-	# holding a NUL byte truncates, hv_fetch() misses, and the NULL it returns
-	# was dereferenced.
-	is(child_result(q{prcomp({ "a\0b" => [1,2,3], c => [4,5,7] })}), 'croak',
-	   'prcomp: a NUL in a HoA column name croaks rather than segfaulting');
-	like(do { local $@; eval { prcomp({ "a\0b" => [1,2,3], c => [4,5,7] }) }; $@ },
-	     qr/cannot be looked up by name/,
-	     'prcomp: and says why');
+	# were copied with savepv() and looked up again with strlen(), so a name
+	# holding a NUL byte truncated, hv_fetch() missed, and the NULL it returned
+	# was dereferenced. 0.315 made that a croak; 0.3213 keeps the names as SVs,
+	# so the column is simply found.
+	is(child_result(q{prcomp({ "a\0b" => [1,2,3], c => [4,5,7] })}), 'ok',
+	   'prcomp: a NUL in a HoA column name is no signal, and no croak');
+	is_deeply(prcomp({ "a\0b" => [1,2,3], c => [4,5,7] })->{varnames}, [ "a\0b", 'c' ],
+	     'prcomp: and the name comes back whole');
 	# An ordinary HoH still decomposes.
 	my $ok = prcomp({ r1 => {a=>1, b=>2}, r2 => {a=>3, b=>5},
 	                  r3 => {a=>4, b=>4}, r4 => {a=>7, b=>9} });
