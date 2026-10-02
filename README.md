@@ -7141,8 +7141,8 @@ Extract a single column from a data frame as a flat array reference, similar to 
 ### Behavior and notes
 
 - **The result is a copy.** Every value is duplicated, so mutating the returned array never touches `$df`, and `undef` slots are ordinary writable scalars.
-- **A missing cell is `undef`.** For AoH and HoH, a row that lacks the column (or isn't a hashref) yields `undef` for that row.
-- **An absent column is strict only for HoA.** Because a HoA column *is* the structure, asking for a column the hash doesn't have dies. For AoH/HoH the column is per-row, so an entirely-absent column simply yields all-`undef` (it is not an error). This asymmetry is deliberate; pass the column name carefully for AoH/HoH, since a typo returns `undef`s rather than dying.
+- **A missing cell is `undef`.** For AoH and HoH, a row that lacks the column yields `undef` for that row, as long as at least one row has it. A row that isn't a hashref dies, naming the row.
+- **An absent column dies, in every shape.** When no row of an AoH or HoH has the column, or a HoA has no such key, `vals` dies with `vals: no column named "Method"` (and `avals` with `avals: no column named "Method"`) instead of returning a column of `undef`s, which almost always meant a misspelt name. A column that exists but holds only `undef` is not absent, and neither is a HoA column whose value is not an arrayref, which dies with its own message.
 - **Empty frames return `[]`** -- an empty AoH or an empty hash both give a clean empty arrayref.
 - UTF-8 column names and HoH keys are handled correctly (lookups use the key SV; HoH keys sort by Perl string order).
 

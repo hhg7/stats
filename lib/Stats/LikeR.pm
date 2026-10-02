@@ -16715,9 +16715,9 @@ C<vals> accepts all three data-frame shapes and always returns a new arrayref of
 
 =item * B<The result is a copy.> Every value is duplicated, so mutating the returned array never touches C<$df>, and C<undef> slots are ordinary writable scalars.
 
-=item * B<< A missing cell is C<undef>. >> For AoH and HoH, a row that lacks the column (or isn't a hashref) yields C<undef> for that row.
+=item * B<< A missing cell is C<undef>. >> For AoH and HoH, a row that lacks the column yields C<undef> for that row, as long as at least one row has it. A row that isn't a hashref dies, naming the row.
 
-=item * B<An absent column is strict only for HoA.> Because a HoA column I<is> the structure, asking for a column the hash doesn't have dies. For AoH/HoH the column is per-row, so an entirely-absent column simply yields all-C<undef> (it is not an error). This asymmetry is deliberate; pass the column name carefully for AoH/HoH, since a typo returns C<undef>s rather than dying.
+=item * B<An absent column dies, in every shape.> When no row of an AoH or HoH has the column, or a HoA has no such key, C<vals> dies with C<vals: no column named "Method"> (and C<avals> with C<avals: no column named "Method">) instead of returning a column of C<undef>s, which almost always meant a misspelt name. A column that exists but holds only C<undef> is not absent, and neither is a HoA column whose value is not an arrayref, which dies with its own message.
 
 =item * B<< Empty frames return C<[]> >> -- an empty AoH or an empty hash both give a clean empty arrayref.
 

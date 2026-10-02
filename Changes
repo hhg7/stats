@@ -41,6 +41,16 @@ Revision history for Stats-LikeR
  - A whole-column result on a HoA is installed without a second copy of
    the list, which takes 1.5 MB off the call's peak on 200000 rows.
 
+ [vals(), avals(): a column no row has is an error]
+
+ - On an AoH or HoH, asking for a column that no row has returned one
+   undef per row, so a misspelt name went unnoticed until something
+   downstream choked on the undefs. Both now die with 'vals: no column
+   named "Method"' (or 'avals: ...'), as a HoA already did, and a HoA's
+   missing column says the same thing rather than "not found or is not an
+   array-ref". A column that some rows lack, or that holds only undef, is
+   still read as before, and an empty frame still gives an empty result.
+
  [read_table(): a comment as wide as the header]
 
  - A leading comment that split into as many fields as the next line was

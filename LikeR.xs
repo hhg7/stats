@@ -33899,8 +33899,7 @@ void vals(data, colname_sv)
 PREINIT:
 	bool is_aoh = 0, is_hoh = 0;
 	bool is_empty = 1;	//the hash has no keys: decided by the first walk, as a tied hash's counts read 0
-	const char *colname = NULL;
-	STRLEN collen = 0;
+	bool found = FALSE;	//some row (AoH/HoH) or the frame (HoA) has the column; a frame with rows and no such column dies
 	AV *src_av = NULL, *out_av = NULL;
 	HV *src_hv = NULL;
 	SSize_t n = 0;
@@ -33908,7 +33907,6 @@ PPCODE:
 {
 	if (!SvOK(colname_sv))
 		croak("vals: column name must be defined");
-	colname = SvPV(colname_sv, collen);		//kept for the error message
 	if (!SvROK(data))
 		croak("vals: first argument must be an array-ref (AoH) or hash-ref (HoA, HoH)");
 	data = frame_untied(aTHX_ data, 0);	//the first value was FETCHed for the shape and again for its cells
@@ -33950,6 +33948,9 @@ PPCODE:
 			if (!SvROK(row) || SvTYPE(SvRV(row)) != SVt_PVHV)
 				croak("vals: AoH row %" IVdf " is not a hash-ref", (IV)i);
 			HE *ent = hv_fetch_ent((HV *)SvRV(row), colname_sv, 0, 0);
+			/*a tied row hands back an entry for any key, so existence is asked
+			for separately, and only until the first row that has the column*/
+			if (!found && ent) found = hv_exists_ent((HV *)SvRV(row), colname_sv, 0);
 			// a valid row that simply lacks the column still yields undef (R-like NA)
 			SV *cell = (ent && HeVAL(ent)) ? HeVAL(ent) : &PL_sv_undef;
 			/*copy, so the result is independent of the source and undef
@@ -33984,6 +33985,7 @@ PPCODE:
 					croak("vals: HoH value for key '%s' is not a hash-ref",
 						SvPV_nolen(kr[i].k));
 				HE *ent = hv_fetch_ent((HV *)SvRV(row_sv), colname_sv, 0, 0);
+				if (!found && ent) found = hv_exists_ent((HV *)SvRV(row_sv), colname_sv, 0);	//as for an AoH row
 				SV *cell = (ent && HeVAL(ent)) ? HeVAL(ent) : &PL_sv_undef;
 				av_push(out_av, newSVsv(cell));
 			}
@@ -33996,8 +33998,11 @@ PPCODE:
 			HE *colent = hv_fetch_ent(src_hv, colname_sv, 0, 0);
 			SV *cv = colent ? HeVAL(colent) : NULL;
 			if (cv) SvGETMAGIC(cv);	//a tied frame's column is a placeholder until fetched
-			if (!cv || !SvROK(cv) || SvTYPE(SvRV(cv)) != SVt_PVAV)
-				croak("vals: column '%s' not found or is not an array-ref", colname);
+			if (!cv)
+				croak("vals: no column named \"%" SVf "\"", SVfARG(colname_sv));
+			if (!SvROK(cv) || SvTYPE(SvRV(cv)) != SVt_PVAV)
+				croak("vals: column '%" SVf "' is not an array-ref", SVfARG(colname_sv));
+			found = TRUE;
 			AV *col_av = (AV *)SvRV(cv);
 			n = av_len(col_av) + 1;
 			if (n > 0 && SvRMAGICAL(col_av)) {
@@ -34022,6 +34027,10 @@ PPCODE:
 		}
 		ITER_KEEP_END;
 	}
+	/*a missing cell is NA, but a column that no row has is almost always a
+	misspelt name, and all-undef hides it; an empty frame still gives nothing*/
+	if (!found && AvFILLp(out_av) >= 0)
+		croak("vals: no column named \"%" SVf "\"", SVfARG(colname_sv));
 	/*out_av is mortal (freed on any croak); newRV_inc balances that so the
 	returned RV holds the surviving reference -- newRV_noinc here would
 	double-free with the mortal.*/
@@ -34035,8 +34044,7 @@ void avals(data, colname_sv)
 PREINIT:
 	bool is_aoh = 0, is_hoh = 0;
 	bool is_empty = 1;	//the hash has no keys: decided by the first walk, as a tied hash's counts read 0
-	const char *colname = NULL;
-	STRLEN collen = 0;
+	bool found = FALSE;	//some row (AoH/HoH) or the frame (HoA) has the column; a frame with rows and no such column dies
 	AV *src_av = NULL, *out_av = NULL;;
 	HV *src_hv = NULL;
 	SSize_t n = 0, nret = 0;
@@ -34052,7 +34060,6 @@ PPCODE:
 	could otherwise grow underneath us.*/
 	if (!SvOK(colname_sv))
 		croak("avals: column name must be defined");
-	colname = SvPV(colname_sv, collen);		//kept for the error message
 	if (!SvROK(data))
 		croak("avals: first argument must be an array-ref (AoH) or hash-ref (HoA, HoH)");
 	data = frame_untied(aTHX_ data, 0);	//the first value was FETCHed for the shape and again for its cells
@@ -34096,6 +34103,9 @@ PPCODE:
 			if (!SvROK(row) || SvTYPE(SvRV(row)) != SVt_PVHV)
 				croak("avals: AoH row %" IVdf " is not a hash-ref", (IV)i);
 			HE *ent = hv_fetch_ent((HV *)SvRV(row), colname_sv, 0, 0);
+			/*a tied row hands back an entry for any key, so existence is asked
+			for separately, and only until the first row that has the column*/
+			if (!found && ent) found = hv_exists_ent((HV *)SvRV(row), colname_sv, 0);
 			// a valid row that simply lacks the column still yields undef (R-like NA)
 			SV *cell = (ent && HeVAL(ent)) ? HeVAL(ent) : &PL_sv_undef;
 			/*copy, so the result is independent of the source and undef
@@ -34130,6 +34140,7 @@ PPCODE:
 					croak("avals: HoH value for key '%s' is not a hash-ref",
 						SvPV_nolen(kr[i].k));
 				HE *ent = hv_fetch_ent((HV *)SvRV(row_sv), colname_sv, 0, 0);
+				if (!found && ent) found = hv_exists_ent((HV *)SvRV(row_sv), colname_sv, 0);	//as for an AoH row
 				SV *cell = (ent && HeVAL(ent)) ? HeVAL(ent) : &PL_sv_undef;
 				av_push(out_av, newSVsv(cell));
 			}
@@ -34142,8 +34153,11 @@ PPCODE:
 			HE *colent = hv_fetch_ent(src_hv, colname_sv, 0, 0);
 			SV *cv = colent ? HeVAL(colent) : NULL;
 			if (cv) SvGETMAGIC(cv);	//a tied frame's column is a placeholder until fetched
-			if (!cv || !SvROK(cv) || SvTYPE(SvRV(cv)) != SVt_PVAV)
-				croak("avals: column '%s' not found or is not an array-ref", colname);
+			if (!cv)
+				croak("avals: no column named \"%" SVf "\"", SVfARG(colname_sv));
+			if (!SvROK(cv) || SvTYPE(SvRV(cv)) != SVt_PVAV)
+				croak("avals: column '%" SVf "' is not an array-ref", SVfARG(colname_sv));
+			found = TRUE;
 			AV *col_av = (AV *)SvRV(cv);
 			n = av_len(col_av) + 1;
 			if (n > 0 && SvRMAGICAL(col_av)) {
@@ -34168,6 +34182,10 @@ PPCODE:
 		}
 		ITER_KEEP_END;
 	}
+	/*a missing cell is NA, but a column that no row has is almost always a
+	misspelt name, and all-undef hides it; an empty frame still gives nothing*/
+	if (!found && AvFILLp(out_av) >= 0)
+		croak("avals: no column named \"%" SVf "\"", SVfARG(colname_sv));
 	/*out_av stays mortal, so a croak above still frees it; each value goes onto
 	the stack with a mortal reference of its own, which keeps it alive for the
 	caller no matter when the array behind it is reclaimed.*/
