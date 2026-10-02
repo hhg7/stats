@@ -3069,9 +3069,12 @@ my $data_interact = {
 	A   => ['a', 'b', 'a', 'b'],
 	B   => ['x', 'x', 'y', 'y']
 };
-# Without explicit A and B added, Cartesian cross-product dummy building fails.
-eval { aov($data_interact, 'y ~ A:B') };
-like($@, qr/requires its main effects to be explicitly included/, 'aov: cleanly croaks when main effects are missing for interaction evaluation');
+# Without A and B, R codes both in full and A:B spans all four cells:
+# anova(aov(y ~ A:B)) in R 4.6.1 gives A:B Df 3, Sum Sq 5, Residuals Df 0.
+{
+	my $r = aov($data_interact, 'y ~ A:B');
+	is($r->{'A:B'}{Df}, 3, 'aov: y ~ A:B with no main effects spans every cell, as in R');
+}
 # chi-squared test
 # https://www.rdocumentation.org/packages/stats/versions/3.6.2/topics/chisq.test
 @test_data = ([762, 327, 468], [484, 239, 477]);
@@ -3319,9 +3322,8 @@ dies_ok {
 	lm(formula => 'y ~ x1 + x2', data => $short_data) 
 } 'lm: dies safely on 0 degrees of freedom (too few rows)';
 
-dies_ok { 
-	aov($short_data, 'y ~ x1 + x2') 
-} 'aov: dies safely on 0 degrees of freedom (too few rows)';
+# R 4.6.1 fits this: x2 is aliased, x1 takes the one df, Residuals have none.
+is(aov($short_data, 'y ~ x1 + x2')->{Residuals}{Df}, 0, 'aov: 0 residual df fits, as in R');
 # 2. Listwise Deletion resulting in 0 DF
 my $na_data = { 
 	'y' => [undef, undef, undef, 1], 

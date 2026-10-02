@@ -647,9 +647,9 @@ In short: same numbers for one model; \f(CW\*(C`aov\*(C'\fR is the richer "fit +
 call (and the only one that stacks), \f(CW\*(C`anova\*(C'\fR is the minimal "give me the
 table" call. Note that both are \fBType\-I / sequential\fR, so the order of terms
 of the same degree matters, and both share this module\*(Aqs \f(CW\*(C`pf\*(C'\fR, so p\-values
-agree with \f(CW\*(C`oneway_test\*(C'\fR and the rest of Stats::LikeR. \f(CW\*(C`aov\*(C'\fR refuses an
-interaction whose main effects are not in the model; \f(CW\*(C`anova\*(C'\fR fits it as R
-does.
+agree with \f(CW\*(C`oneway_test\*(C'\fR and the rest of Stats::LikeR. Both read the formula
+with \f(CW\*(C`lm\*(C'\fR\*(Aqs parser and fit it the same way, so any formula one accepts the
+other fits identically.
 .PP
 Comparing nested models \-\- \f(CW\*(C`anova(m1, m2)\*(C'\fR in R \-\- is done by giving \f(CW\*(C`anova\*(C'\fR
 two or more formulas, or two or more fitted models; see above.
@@ -892,7 +892,24 @@ You can also perform Two\-Way ANOVA with categorical interactions using the \f(C
 \& my $res_2way = aov($data_2way, \*(Aqlen ~ supp * dose\*(Aq);
 .Ve
 .PP
-It is robust against rank deficiency; collinear terms will gracefully receive 0 degrees of freedom and 0 sum of squares, matching R\*(Aqs behavior.
+The formula is read by \f(CW\*(C`lm\*(C'\fR\*(Aqs parser, the same one \f(CW\*(C`anova\*(C'\fR uses, so it
+accepts everything \f(CW\*(C`lm\*(C'\fR does: \f(CW\*(C`+\*(C'\fR, \f(CW\*(C`:\*(C'\fR, \f(CW\*(C`*\*(C'\fR (\f(CW\*(C`a*b*c\*(C'\fR is every main effect and
+interaction), \f(CW\*(C`.\*(C'\fR, \f(CW\*(C`\- 1\*(C'\fR/\f(CW\*(C`0 +\*(C'\fR and \f(CWoffset()\fR. Factors are coded by R\*(Aqs margin
+rule, so an interaction need not have its main effects: \f(CW\*(C`y ~ a:b\*(C'\fR spans every
+cell, \f(CW\*(C`y ~ a + a:b\*(C'\fR nests b in a, and \f(CW\*(C`y ~ g + g:x\*(C'\fR fits a slope per group.
+Terms are taken in R\*(Aqs order (main effects, then two\-way interactions, …),
+and \f(CW\*(C`a:b\*(C'\fR and \f(CW\*(C`b:a\*(C'\fR are one term, named as R names it. A column of strings is
+a factor with its levels sorted; a column of numbers is a covariate.
+.PP
+It is robust against rank deficiency: a column is aliased when what the
+earlier columns leave of it has a norm below 1e\-7 of its own, R\*(Aqs \f(CW\*(C`lm.fit\*(C'\fR
+rule, and a term left with no columns stays in the table with 0 degrees of
+freedom and 0 sum of squares. R\*(Aqs \f(CWanova()\fR leaves such a term out.
+.PP
+The fit is Gentleman\*(Aqs Givens rotations, one row at a time, as \f(CW\*(C`anova\*(C'\fR and
+R\*(Aqs \f(CW\*(C`biglm\*(C'\fR fit, so memory does not grow with the number of rows beyond the
+row names that \f(CW\*(C`fitted.values\*(C'\fR is keyed by. \f(CW\*(C`y ~ g*h + x\*(C'\fR over 100,000 rows
+with a 50\-level \f(CW\*(C`g\*(C'\fR takes 1.8 s and 52 MB.
 .PP
 \&\f(CWPr(>F)\fR is evaluated in the upper tail of the F distribution rather than as
 \&\f(CW\*(C`1 \- pf(F, df1, df2)\*(C'\fR, so a highly significant term reports its actual p\-value

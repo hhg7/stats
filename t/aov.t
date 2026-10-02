@@ -79,8 +79,8 @@ my %oneway = (
 	is_deeply($r->{xlevels}{g}, [qw(A B C)], 'xlevels{g} sorted, reference first');
 
 	is(ref $r->{'group.stats'}, 'HASH', 'group_stats present');
-	is_approx($r->{'group.stats'}{mean}{y}, 5, 'group_stats mean of y');
-	is($r->{'group.stats'}{size}{y}, 9, 'group_stats size of y');
+	is_deeply($r->{'group.stats'}{mean}, { A => 2, B => 5, C => 8 }, 'group_stats: the response mean in each level of g');
+	is_deeply($r->{'group.stats'}{size}, { A => 3, B => 3, C => 3 }, 'group_stats: rows fitted in each level of g');
 }
 
 # same data via HoH and AoH -> identical table & coefficients
@@ -184,10 +184,17 @@ throws_ok { aov({}, 'y~x') } qr/empty/i, 'empty data hash croaks';
 throws_ok { aov({ y => [1, 2], x => [3, 4] }, 'y x') } qr/missing '~'/, 'formula without ~ croaks';
 throws_ok { aov([1, 2, 3], 'y~x') } qr/HashRefs/, 'AoH of non-hashrefs croaks';
 throws_ok { aov({ a => 1 }) } qr/ArrayRefs/, 'no-formula non-HoA croaks';
-throws_ok {
-	aov({ y => [1, 2, 3, 4], a => [qw(p q p q)], b => [qw(r r s s)] }, 'y~a:b');
-} qr/main effects/, 'interaction without main effects croaks';
-throws_ok { aov({ y => [1, 2], g => [qw(A B)] }, 'y~g') } qr/degrees of freedom/, '0 df croaks';
+throws_ok { aov({ y => [1, undef, undef], g => [qw(A B C)] }, 'y~g') }
+	qr/aov: fewer than 2 complete observations/, 'one complete row croaks';
+throws_ok { aov({ y => [1, 2] }, \'y~g') } qr/aov: formula must be a string/, 'formula reference croaks';
+# R fits both of these; the old parser refused the first and croaked on the second.
+{
+	my $r = aov({ y => [1, 2, 3, 4], a => [qw(p q p q)], b => [qw(r r s s)] }, 'y~a:b');
+	is($r->{'a:b'}{Df}, 3, 'a:b without main effects spans all four cells, as in R');
+	$r = aov({ y => [1, 2], g => [qw(A B)] }, 'y~g');
+	is($r->{Residuals}{Df}, 0, '0 residual df: fitted, as in R');
+	ok(!exists $r->{g}{'F value'}, '0 residual df: no F test');
+}
 
 # leak checks
 no_leaks_ok {
@@ -199,5 +206,14 @@ no_leaks_ok {
 no_leaks_ok {
 	eval { aov({}, 'y~x') }
 } 'aov croak path: no leaks' unless $INC{'Devel/Cover.pm'};
+no_leaks_ok {
+	eval { aov({ y => [1, undef, undef], g => [qw(A B C)] }, 'y~g') }
+} 'aov croak after the design is built: no leaks' unless $INC{'Devel/Cover.pm'};
+no_leaks_ok {
+	eval { aov({ A => [1, 2, 3], B => [4, 5, 6], C => [7, 8, 9] }) }
+} 'aov stacked form: no leaks' unless $INC{'Devel/Cover.pm'};
+no_leaks_ok {
+	eval { aov({ A => [1, 2, 3], B => 4 }) }
+} 'aov stacked form croak: no leaks' unless $INC{'Devel/Cover.pm'};
 
 done_testing();

@@ -2626,6 +2626,7 @@ typedef struct {
 	char       **var;  //every distinct variable named by any term
 	char       **raw;  //scratch: this row's raw level per factor
 	char       **term; //term labels in column order (by degree), as R spells them
+	size_t      *lev;  //nfactor: this row's level index per factor, filled by lm_design_row() only when a caller allocates it (aov()'s group.stats); NULL otherwise
 } LmDesign;
 
 static void lm_design_free(pTHX_ LmDesign *d) {
@@ -2654,6 +2655,7 @@ static void lm_design_free(pTHX_ LmDesign *d) {
 		Safefree(d->var);
 	}
 	if (d->raw) Safefree(d->raw);
+	if (d->lev) Safefree(d->lev);
 	if (d->term) {
 		for (i = 0; i < d->nterm; i++) Safefree(d->term[i]);
 		Safefree(d->term);
@@ -2664,9 +2666,7 @@ static void lm_design_free(pTHX_ LmDesign *d) {
 /*Split a term on top-level ':' only, so that a ':' inside I(...) is left
 alone. Returns the component count and fills starts[]/lens[].*/
 static unsigned int lm_split_term(const char *restrict term,
-                                  const char **restrict starts,
-                                  size_t *restrict lens,
-                                  unsigned int cap) {
+const char **restrict starts, size_t *restrict lens, unsigned int cap) {
 	unsigned int n = 0;
 	int depth = 0;
 	const char *restrict p = term, *start = term;
@@ -2686,13 +2686,15 @@ static unsigned int lm_split_term(const char *restrict term,
 /*Build the design description for a set of unique model terms. Returns NULL
 only on an allocation path that cannot happen; croaks nowhere, so callers can
 free their own state. xlevels_hv, when non-NULL, receives every factor's
-sorted level list.*/
-static LmDesign *lm_design_build(pTHX_ HV *data_hoa,
-                                 HV **row_hashes, size_t n,
-                                 char **uniq_terms,
-                                 unsigned int num_uniq,
-                                 bool has_intercept,
-                                 HV *xlevels_hv) {
+sorted level list.
+
+as_factor, when non-NULL, names a variable that is a factor whatever its values
+look like. is_column_categorical() decides by whether the first value looks like
+a number, which is right for a data column and wrong for aov()'s stacked Group,
+whose values are the caller's hash keys: groups named 1, 2, 3 were fitted as
+one slope with 1 df where R's stack() makes a 3-level factor.*/
+static LmDesign *lm_design_build(pTHX_ HV *data_hoa, HV **row_hashes, size_t n,
+ char **uniq_terms, unsigned int num_uniq, bool has_intercept, HV *xlevels_hv, const char *as_factor) {
 	LmDesign *d;
 	unsigned int i, j, k, t, c, max_comp = 0, tcount = 0, col_cap, comp_cap;
 	unsigned int *restrict tstart = NULL, *restrict tlen = NULL;
@@ -2743,6 +2745,18 @@ static LmDesign *lm_design_build(pTHX_ HV *data_hoa,
 				else { d->var[d->nvar] = nm; tvar[flat] = d->nvar; d->nvar++; }
 				flat++;
 			}
+	/*A term's variables in the order they first appear in the formula, as
+	R's terms() keeps them, whatever order the term was written in: d->var is
+	interned in that order, so this is a sort of the term's indices. Its label,
+	its coefficient names and the order of its columns all follow from it, so
+	`y ~ w + t + t:w` names the interaction's columns wB:tL, as R does, where
+	they were tL:wB.*/
+			for (c = 1; c < nc; c++) {
+				const unsigned int v = tvar[tstart[t] + c];
+				for (k = c; k > 0 && tvar[tstart[t] + k - 1] > v; k--)
+					tvar[tstart[t] + k] = tvar[tstart[t] + k - 1];
+				tvar[tstart[t] + k] = v;
+			}
 			t++;
 		}
 		Safefree(cs); Safefree(cl);
@@ -2752,7 +2766,8 @@ static LmDesign *lm_design_build(pTHX_ HV *data_hoa,
 	Newxz(d->factor, d->nvar ? d->nvar : 1, LmFactor);
 	for (j = 0; j < d->nvar; j++) {
 		vfac[j] = -1;
-		if (!is_column_categorical(aTHX_ data_hoa, row_hashes, n, d->var[j])) continue;
+		if (!(as_factor && strEQ(d->var[j], as_factor))
+		    && !is_column_categorical(aTHX_ data_hoa, row_hashes, n, d->var[j])) continue;
 		{
 			char       **levels = NULL;
 			unsigned int nlev = 0, cap = 8;
@@ -2816,28 +2831,19 @@ static LmDesign *lm_design_build(pTHX_ HV *data_hoa,
 		}
 		Safefree(order);
 	}
-	/*Term labels, for the callers that report by term (anova()). R's terms()
-	writes a term's variables in the order they first appear in the formula,
-	so `y ~ a + b:a` labels its interaction "a:b"; d->var was interned in that
-	order, so sorting a term's variable indices gives R's spelling.*/
+	/*Term labels, for the callers that report by term (anova(), aov()). Pass 1
+	left each term's variables in R's order, so `y ~ a + b:a` labels its
+	interaction "a:b".*/
 	Newxz(d->term, tcount ? tcount : 1, char*);
 	d->nterm = tcount;
 	for (t = 0; t < tcount; t++) {
-		unsigned int *restrict vi = NULL;
 		size_t len = 0;
-		Newx(vi, tlen[t] ? tlen[t] : 1, unsigned int);
-		for (c = 0; c < tlen[t]; c++) {
-			unsigned int v = tvar[tstart[t] + c];
-			for (k = c; k > 0 && vi[k - 1] > v; k--) vi[k] = vi[k - 1];
-			vi[k] = v;
-			len += strlen(d->var[v]) + 1;
-		}
+		for (c = 0; c < tlen[t]; c++) len += strlen(d->var[tvar[tstart[t] + c]]) + 1;
 		Newxz(d->term[t], len + 1, char);
 		for (c = 0; c < tlen[t]; c++) {
 			if (c) strcat(d->term[t], ":");
-			strcat(d->term[t], d->var[vi[c]]);
+			strcat(d->term[t], d->var[tvar[tstart[t] + c]]);
 		}
-		Safefree(vi);
 	}
 	// pass 4: the margin rule
 	nwords = (d->nvar + (unsigned int)(8 * sizeof(UV)) - 1) / (unsigned int)(8 * sizeof(UV));
@@ -2976,11 +2982,8 @@ a component is dropped -- `hp^2` is just hp -- unless the component is an
 I(...) escape, where the caret is arithmetic and belongs to evaluate_term.
 
 chunk is written through: the separators become NULs.*/
-static void lm_expand_cross(pTHX_ char *chunk,
-                            const char *fname,
-                            char ***terms,
-                            unsigned int *num_terms,
-                            unsigned int *term_cap) {
+static void lm_expand_cross(pTHX_ char *chunk, const char *fname, char ***terms,
+	unsigned int *num_terms, unsigned int *term_cap) {
 	char *part[16];
 	unsigned int k = 0;
 	char *s = chunk;
@@ -3035,6 +3038,15 @@ static bool lm_design_row(pTHX_ LmDesign *d, HV *data_hoa, HV **row_hashes, size
 		d->raw[f] = get_data_string_alloc(aTHX_ data_hoa, row_hashes, i,
 		                                  d->factor[f].name);
 		if (!d->raw[f]) ok = 0;
+	}
+	if (ok && d->lev) {
+		for (unsigned int f = 0; f < d->nfactor; f++) {
+			//levels[] is sorted by cmp_string_wt(), and every raw value is one of them
+			char **hit = (char **)bsearch(&d->raw[f], d->factor[f].level, d->factor[f].nlevel,
+			                              sizeof(char*), cmp_string_wt);
+			if (!hit) { ok = 0; break; } //cannot happen short of a value that changes between reads (tie, magic)
+			d->lev[f] = (size_t)(hit - d->factor[f].level);
+		}
 	}
 	if (ok) {
 		for (unsigned int j = 0; j < d->ncol && ok; j++) {
@@ -3151,8 +3163,7 @@ static void pa_kernel(const NV *p, NV *adj, size_t n, const char *meth) {
 		NV *pa, *q_arr;
 		Newx(pa, n, NV);
 		Newx(q_arr, n, NV);
-		// Initial: min(n * p[i] / (i + 1))
-		NV min_val = n * arr[0].p;
+		NV min_val = n * arr[0].p;// Initial: min(n * p[i] / (i + 1))
 		for (size_t i = 1; i < n; i++) {
 			NV temp = (n * arr[i].p) / (i + 1.0);
 			if (temp < min_val) {
@@ -3460,9 +3471,9 @@ typedef struct {
 	uint64_t ytie; //pairs tied on y, joint ties included
 	uint64_t ntie; //pairs tied on both
 	uint64_t dis;  //discordant pairs
-	NV vt, vu;     //sum t(t-1)(2t+5) over the x / y tie groups
-	NV t1, t2;     //sum t(t-1)       over the x / y tie groups
-	NV w1, w2;     //sum t(t-1)(t-2)  over the x / y tie groups
+	NV vt, vu; //sum t(t-1)(2t+5) over the x / y tie groups
+	NV t1, t2; //sum t(t-1)       over the x / y tie groups
+	NV w1, w2; //sum t(t-1)(t-2)  over the x / y tie groups
 } kendall_counts;
 
 /*Accumulate one tie group of size t into a (moment-sum, pair-count) pair.
@@ -4202,8 +4213,8 @@ static void nv_introsort(NV *a, size_t lo, size_t hi, unsigned int depth) {
 }
 
 static void nv_sort(NV *a, size_t n) {
-	unsigned int depth = 0;
 	if (n < 2) return;
+	unsigned int depth = 0;
 	for (size_t t = n; t > 1; t >>= 1) depth += 2;	//2*floor(log2 n)
 	nv_introsort(a, 0, n - 1, depth);
 }
@@ -4300,22 +4311,22 @@ cannot be negative, but the adjustment below forms k = min_n - k and divides it
 by 2 with a signed remainder, which is R's arithmetic and stops being R's if
 either side wraps.*/
 static NV nv_pretty_bounds(NV *restrict lo, NV *restrict up, int *restrict ndiv, int min_n){
-	const NV h  = 1.5;                   //high.u.bias
-	const NV h5 = 0.5 + 1.5 * 1.5;       //u5.bias = .5 + 1.5*high.u.bias
-	const NV f_min = 1.0 / 1048576.0;    //2^-20
+	const NV h  = 1.5;                //high.u.bias
+	const NV h5 = 0.5 + 1.5 * 1.5;    //u5.bias = .5 + 1.5*high.u.bias
+	const NV f_min = 1.0 / 1048576.0; //2^-20
 	const NV shrink_sml = 0.75;
 	const NV lo_ = *lo, up_ = *up, dx = up_ - lo_;
 	NV cell, U;
 	bool i_small;
 
-	if (dx == 0.0 && up_ == 0.0) {       //up == lo == 0
+	if (dx == 0.0 && up_ == 0.0) { //up == lo == 0
 		cell = 1.0;
 		i_small = 1;
 	} else {
 		cell = nv_fmax(nv_fabs(lo_), nv_fabs(up_));
 		U = 1.0 + ((h5 >= 1.5 * h + 0.5) ? 1.0 / (1.0 + h) : 1.5 / (1.0 + h5));
 		U *= (NV)(*ndiv > 1 ? *ndiv : 1) * NV_EPSILON;   //avoid overflow for large ndiv
-		i_small = dx < cell * U * 3.0;   //times 3, as several calculations follow
+		i_small = dx < cell * U * 3.0; //times 3, as several calculations follow
 	}
 	if (i_small) {
 		if (cell > 10.0) cell = 9.0 + cell / 10.0;
@@ -4325,7 +4336,7 @@ static NV nv_pretty_bounds(NV *restrict lo, NV *restrict up, int *restrict ndiv,
 		cell = dx;
 		if (nv_isfinite(dx)) {
 			if (*ndiv > 1) cell /= *ndiv;
-		} else if (*ndiv >= 2) {         //up - lo overflowed, both finite
+		} else if (*ndiv >= 2) { //up - lo overflowed, both finite
 			cell = up_ / (*ndiv) - lo_ / (*ndiv);
 		}
 	}
@@ -4394,8 +4405,7 @@ static void nv_pretty_plan(NV lo, NV up, int *restrict ndiv, int min_n, NV *rest
 /*seq.int(l, u, length.out = n + 1), which puts both ends in exactly and spaces
 the rest, followed by pretty.default()'s zap of anything the spacing left
 within 1e-14 of zero.*/
-static void nv_pretty_fill(NV l, NV u, int n, NV *restrict out)
-{
+static void nv_pretty_fill(NV l, NV u, int n, NV *restrict out){
 	if (n <= 0) { out[0] = l; return; }
 	const NV by = (u - l) / (NV)n;
 	out[0] = l;
@@ -4421,10 +4431,8 @@ hist() needs: right-closed intervals, lowest included.  A binary search per
 value, which is what makes it O(n log nbins) rather than the arithmetic
 "which bin is (val - min) / step" the old code used -- and correct for breaks
 that are not equally spaced, which pretty()'s need not be at the ends.*/
-static void hist_bincount(const NV *restrict x, size_t n,
-                          const NV *restrict breaks, size_t nb,
-                          size_t *restrict count)
-{
+static void hist_bincount(const NV *restrict x, size_t n, const NV *restrict breaks, size_t nb,
+ size_t *restrict count){
 	const size_t nb1 = nb - 1;
 	for (size_t i = 0; i < nb1; i++) count[i] = 0;
 	for (size_t i = 0; i < n; i++) {
@@ -4789,79 +4797,6 @@ static NV pf_upper(NV f, NV df1, NV df2) {
 	return incbeta_xy(df2 / 2.0, df1 / 2.0, df2 / denom, (df1 * f) / denom);
 }
 
-/*Householder QR Decomposition for Sequential Sums of Squares
-
-The rank test is RELATIVE to each column's own scale, taken once before the
-reduction starts.  It used to be the absolute `max_val < 1e-10`, which is not a
-statement about collinearity at all -- it is a statement about units.  A design
-whose columns are all smaller than 1e-10 (a predictor in metres that wanted
-micrometres, a rate per person-year, a probability times a small weight) had
-every column declared aliased at step 0, and aov() reported 0 degrees of
-freedom and a zero sum of squares for every term on data that is perfectly well
-conditioned.  Multiplying the same column by 1e12 changed the answer, which a
-least-squares fit's rank must not do.
-
-sweep_matrix_ols(), which fits the same normal equations for lm(), has always
-used a relative test with a tiny absolute floor; this is that test, written for
-the column scale a QR has available.  A column that is identically zero has
-scale 0 and is still aliased, which is the case the old absolute form was
-really there for.*/
-static void apply_householder_aov(NV** restrict X, NV* restrict y, size_t n, size_t p, bool* restrict aliased, size_t* restrict rank_map) {
-	size_t r = 0; // Rank/Row tracker
-	NV *restrict col_scale = NULL;
-	Newxz(col_scale, p ? p : 1, NV);
-	for (size_t k = 0; k < p; k++)
-		for (size_t i = 0; i < n; i++) {
-			const NV a = nv_fabs(X[i][k]);
-			if (a > col_scale[k]) col_scale[k] = a;
-		}
-	for (size_t k = 0; k < p; k++) {
-		aliased[k] = 0;
-		if (r >= n) {
-			aliased[k] = 1;
-			continue;
-		}
-
-		NV max_val = 0;
-		for (size_t i = r; i < n; i++) {
-			if (nv_fabs(X[i][k]) > max_val) max_val = nv_fabs(X[i][k]);
-		}
-		if (max_val <= 1e-10 * col_scale[k]) {
-			aliased[k] = 1;
-			continue;
-		} // Collinear or zero column
-
-		NV norm = 0;
-		for (size_t i = r; i < n; i++) {
-			X[i][k] /= max_val;
-			norm += X[i][k] * X[i][k];
-		}
-		norm = nv_sqrt(norm);
-		NV s = (X[r][k] > 0) ? -norm : norm;
-		NV u1 = X[r][k] - s;
-		X[r][k] = s * max_val;
-
-		for (size_t j = k + 1; j < p; j++) {
-			NV dot = u1 * X[r][j];
-			for (size_t i = r + 1; i < n; i++) dot += X[i][j] * X[i][k];
-			NV tau = dot / (s * u1);
-			X[r][j] += tau * u1;
-			for (size_t i = r + 1; i < n; i++) X[i][j] += tau * X[i][k];
-		}
-
-		// Transform the response vector y
-		NV dot_y = u1 * y[r];
-		for (size_t i = r + 1; i < n; i++) dot_y += y[i] * X[i][k];
-		NV tau_y = dot_y / (s * u1);
-		y[r] += tau_y * u1;
-		for (size_t i = r + 1; i < n; i++) y[i] += tau_y * X[i][k];
-
-		rank_map[k] = r; // Map original column index to orthogonal row index
-		r++;
-	}
-	Safefree(col_scale);
-}
-
 /* write_table Helpers
  Sorts string arrays alphabetically*/
 static int cmp_string_wt(const void *a, const void *b) {
@@ -4949,15 +4884,15 @@ all, exactly what `keys %$_` on every row costs in perl itself.*/
 typedef struct {
 	PerlIO *fh;
 	const char *file;
-	SV *buf;           // worksheet XML not yet handed to the file: all of it when !seekable
-	SV *cell;          // one cell's text, upgraded to UTF-8 when it arrives as Latin-1
-	SV *cdir;          // the ZIP central directory, written last
+	SV *buf; // worksheet XML not yet handed to the file: all of it when !seekable
+	SV *cell; // one cell's text, upgraded to UTF-8 when it arrives as Latin-1
+	SV *cdir; // the ZIP central directory, written last
 	uint64_t sheet_len; // worksheet bytes handed to the file so far
-	uint32_t crc;      // their CRC-32
-	uint32_t off;      // bytes written before the worksheet's local header
-	unsigned count;    // ZIP members so far
-	size_t row;        // the number the next <row> gets, from 1
-	bool seekable;     // the local header is patched in place once the size is known
+	uint32_t crc; // their CRC-32
+	uint32_t off; // bytes written before the worksheet's local header
+	unsigned count; // ZIP members so far
+	size_t row; // the number the next <row> gets, from 1
+	bool seekable; // the local header is patched in place once the size is known
 } WtXlsx;
 
 static void wt_xlsx_row(pTHX_ WtXlsx *restrict X, const char *const *restrict fields,
@@ -4965,9 +4900,9 @@ static void wt_xlsx_row(pTHX_ WtXlsx *restrict X, const char *const *restrict fi
 
 /*Where write_table()'s records go.  Exactly one of fh, collect and xlsx is set.*/
 typedef struct {
-	PerlIO *fh;        // delimited text
-	AV *collect;       // LaTeX: every record kept for write_tex_tabular()
-	WtXlsx *xlsx;      // .xlsx: every record rendered into the streamed worksheet
+	PerlIO *fh; // delimited text
+	AV *collect; // LaTeX: every record kept for write_tex_tabular()
+	WtXlsx *xlsx; // .xlsx: every record rendered into the streamed worksheet
 	const char *sep;
 	STRLEN sep_len;
 } WtSink;
@@ -4998,7 +4933,7 @@ no flag, and invalid or Latin-1 bytes stay bytes.*/
 			const char *f = fields[i] ? fields[i] : "";
 			const STRLEN flen = fields[i] ? lens[i] : 0;
 			SV *fsv = newSVpvn(f, flen);
-			bool high = FALSE;
+			bool high = 0;
 			for (STRLEN k = 0; k < flen; k++) if ((U8)f[k] >= 0x80) { high = TRUE; break; }
 			if (high && is_utf8_string((const U8*)f, flen)) SvUTF8_on(fsv);
 			av_push(crow, fsv);
@@ -5013,7 +4948,7 @@ no flag, and invalid or Latin-1 bytes stay bytes.*/
 		const char *f = fields[i];
 		const STRLEN len = f ? lens[i] : 0;
 		if (!len) continue; //undef/empty -> print nothing
-		bool need_quotes = FALSE;
+		bool need_quotes = 0;
 		for (STRLEN k = 0; k < len; k++) {
 			const char c = f[k];
 			if (c == '"' || c == '\n' || c == '\r'
@@ -5158,7 +5093,7 @@ still holds a write's reason then: every later write to a full disk fails the
 same way, and a system call that succeeds leaves errno alone.*/
 static void wt_close_checked(pTHX_ PerlIO *fh, const char *file) {
 	int errnum = 0;	// errno at the first failure seen
-	bool failed = FALSE;
+	bool failed = 0;
 	if (PerlIO_flush(fh) != 0 || PerlIO_error(fh)) { failed = TRUE; errnum = errno; }
 	if (PerlIO_close(fh) != 0) { if (!failed) errnum = errno; failed = TRUE; }
 	if (failed) wt_write_failed(aTHX_ file, errnum);
@@ -5452,9 +5387,7 @@ static SV *xlsx_written_by(pTHX) {
 /*Emit one header record -- bold cells joined by " & ", no row terminator.
 Factored out because 'tex.longtable.head' writes the same record twice
 (\endfirsthead and \endhead), and the two must never drift apart.*/
-static void tex_put_header_row(pTHX_ PerlIO *fh, AV *header,
-	size_t ncols, SV *scratch)
-{
+static void tex_put_header_row(pTHX_ PerlIO *fh, AV *header, size_t ncols, SV *scratch){
 	for (size_t j = 0; j < ncols; j++) {
 		if (j) TEX_PUTS(fh, " & ");
 		SV **cp = av_fetch(header, (SSize_t)j, 0);
@@ -5716,25 +5649,25 @@ static bool xlsx_plain_number(pTHX_ const char *s, STRLEN l) {
 /*A STORED member's local header, into h.*/
 static void zip_local_header(pTHX_ SV *h, const char *name, STRLEN nlen, uint32_t crc, uint32_t size) {
 	zip_le32(aTHX_ h, 0x04034b50);
-	zip_le16(aTHX_ h, 20);		//version needed to extract
-	zip_le16(aTHX_ h, 0);			//general-purpose flags
-	zip_le16(aTHX_ h, 0);			//method 0 = stored
-	zip_le16(aTHX_ h, 0);			//mod time
-	zip_le16(aTHX_ h, 0x21);		//mod date = 1980-01-01
+	zip_le16(aTHX_ h, 20); //version needed to extract
+	zip_le16(aTHX_ h, 0); //general-purpose flags
+	zip_le16(aTHX_ h, 0); //method 0 = stored
+	zip_le16(aTHX_ h, 0); //mod time
+	zip_le16(aTHX_ h, 0x21); //mod date = 1980-01-01
 	zip_le32(aTHX_ h, crc);
-	zip_le32(aTHX_ h, size);		//compressed size
-	zip_le32(aTHX_ h, size);		//uncompressed size
+	zip_le32(aTHX_ h, size); //compressed size
+	zip_le32(aTHX_ h, size); //uncompressed size
 	zip_le16(aTHX_ h, (unsigned)nlen);
-	zip_le16(aTHX_ h, 0);			//extra length
+	zip_le16(aTHX_ h, 0); //extra length
 	sv_catpvn(h, name, nlen);
 }
 
 /*That member's central-directory record, into cdir.*/
 static void zip_central_entry(pTHX_ SV *cdir, const char *name, STRLEN nlen,
-                              uint32_t crc, uint32_t size, uint32_t off) {
+ uint32_t crc, uint32_t size, uint32_t off) {
 	zip_le32(aTHX_ cdir, 0x02014b50);
-	zip_le16(aTHX_ cdir, 20);		//version made by
-	zip_le16(aTHX_ cdir, 20);		//version needed
+	zip_le16(aTHX_ cdir, 20);//version made by
+	zip_le16(aTHX_ cdir, 20);	//version needed
 	zip_le16(aTHX_ cdir, 0);
 	zip_le16(aTHX_ cdir, 0);
 	zip_le16(aTHX_ cdir, 0);
@@ -5743,12 +5676,12 @@ static void zip_central_entry(pTHX_ SV *cdir, const char *name, STRLEN nlen,
 	zip_le32(aTHX_ cdir, size);
 	zip_le32(aTHX_ cdir, size);
 	zip_le16(aTHX_ cdir, (unsigned)nlen);
-	zip_le16(aTHX_ cdir, 0);		//extra length
-	zip_le16(aTHX_ cdir, 0);		//comment length
-	zip_le16(aTHX_ cdir, 0);		//disk number start
-	zip_le16(aTHX_ cdir, 0);		//internal attributes
-	zip_le32(aTHX_ cdir, 0);		//external attributes
-	zip_le32(aTHX_ cdir, off);		//local-header offset
+	zip_le16(aTHX_ cdir, 0); //extra length
+	zip_le16(aTHX_ cdir, 0); //comment length
+	zip_le16(aTHX_ cdir, 0); //disk number start
+	zip_le16(aTHX_ cdir, 0); //internal attributes
+	zip_le32(aTHX_ cdir, 0); //external attributes
+	zip_le32(aTHX_ cdir, off); //local-header offset
 	sv_catpvn(cdir, name, nlen);
 }
 
@@ -5954,7 +5887,7 @@ static void wt_xlsx_row(pTHX_ WtXlsx *restrict X, const char *const *restrict fi
 		}
 		const char *u = f;
 		STRLEN ul = l;
-		bool high = FALSE;
+		bool high = 0;
 		for (STRLEN k = 0; k < l; k++) if ((U8)f[k] >= 0x80) { high = TRUE; break; }
 		if (high && !is_utf8_string((const U8*)f, l)) {
 			sv_setpvn(X->cell, f, l);
@@ -5977,7 +5910,7 @@ here, so a croak on the way still closes it.*/
 static void wt_xlsx_finish(pTHX_ WtXlsx *restrict X, PerlIO **slot) {
 	SV_CATLIT(X->buf, "</sheetData></worksheet>");
 	const uint32_t hdr_at = X->off;	// the worksheet's local header
-	bool failed = FALSE;
+	bool failed = 0;
 	int errnum = 0;	// errno when a seek failed
 	if (X->seekable) {
 		wt_xlsx_flush(aTHX_ X);
@@ -10760,27 +10693,6 @@ static void lm_append(pTHX_ char **bufp, size_t *lenp, size_t *capp, const char 
 	*lenp += sep + slen;
 }
 
-/*Own a buffer that lm_append() is still going to grow.
-
-SAVEFREEPV() records the pointer it is handed, so it cannot own one of these:
-lm_append() Renew()s the buffer, and the save stack would then free the block
-the buffer used to be in while the live one leaked.  It is not a theoretical
-race -- Renew() of a 1-byte allocation to 16 usually returns the same address,
-so a short formula survived it and a slightly longer one corrupted the heap.
-
-So the destructor frees through a holder rather than through a value, and the
-holder is on the HEAP: croak() longjmps past the XSUB's C frame before the save
-stack is unwound, so a destructor pointing at one of its locals would be
-reading a dead stack slot.  S_plan_free() is on the save stack for the same
-reason and says so at more length.*/
-typedef struct { char *buf; } lm_buf;
-
-static void lm_buf_free(pTHX_ void *p) {
-	lm_buf *b = (lm_buf *)p;
-	Safefree(b->buf);
-	Safefree(b);
-}
-
 /*strtok(), with the caller holding the cursor.
 
 strtok() keeps its position in a static, so two interpreters splitting a
@@ -11104,7 +11016,7 @@ static bool lm_same_term(pTHX_ const char *restrict a, const char *restrict b) {
 	(void)lm_split_term(a, as, al, na);
 	(void)lm_split_term(b, bs, bl, nb);
 	for (unsigned int i = 0; i < na && same; i++) {
-		bool found = FALSE;
+		bool found = 0;
 		for (unsigned int j = 0; j < nb; j++)
 			if (!used[j] && al[i] == bl[j] && memEQ(as[i], bs[j], al[i])) {
 				used[j] = TRUE; found = TRUE; break;
@@ -11245,7 +11157,7 @@ static void mf_part(pTHX_ const char *restrict fname, const char *restrict formu
 	for (i = 0; i < nt; i++) SAVEFREEPV(terms[i]);
 	for (i = 0; i < nu; i++) SAVEFREEPV(uniq[i]);
 	m->design = lm_design_build(aTHX_ r->data_hoa, r->row_hashes, r->n, uniq, nu,
-	                            hi || drop_intercept, xlevels_hv);
+	                            hi || drop_intercept, xlevels_hv, NULL);
 	SAVEDESTRUCTOR_X(lm_design_free_cb, m->design);
 	m->col0 = (drop_intercept && m->design->ncol > 0 && m->design->col[0].ncomp == 0) ? 1 : 0;
 	m->p = m->design->ncol - m->col0;
@@ -13365,17 +13277,57 @@ static size_t anova_sing(size_t p, NV *restrict x, NV *restrict d, NV *restrict 
 	return rank;
 }
 
-/*Parse formula `f` and build its design over the rows, everything on the save
-stack. `which` is 0 for the single-model form's messages, else the 1-based
-argument number.*/
-static void anova_model(pTHX_ SV *fsv, size_t which, HV *hoa, HV **rows, size_t n,
+/*Build model m from formula f over the rows, everything on the save stack:
+the design, its offsets and the zeroed AS 274 factor. Shared by anova() and
+aov(); fname prefixes the messages, and xlevels_hv and as_factor go through to
+lm_design_build().*/
+static void anova_model_build(pTHX_ const char *restrict fname, const char *restrict f,
+		HV *hoa, HV **rows, size_t n, HV *xlevels_hv, const char *restrict as_factor,
 		AnModel *restrict m) {
-	char *pl = NULL, *pr = NULL, *f_cpy, *lhs, *rhs;
+	char *f_cpy, *lhs, *rhs;
 	char **terms = NULL, **uniq = NULL;
 	unsigned int nt = 0, nu = 0;
 	bool hi = TRUE;
-	const char *f;
 	size_t p;
+	f_cpy = lm_formula_split(aTHX_ f, fname, &lhs, &rhs, &hi);
+	SAVEFREEPV(f_cpy);
+	m->noff = glm_take_offsets(aTHX_ fname, rhs, &m->off);
+	if (m->off) {
+		SAVEFREEPV(m->off);
+		for (size_t k = 0; k < m->noff; k++) SAVEFREEPV(m->off[k]);
+	}
+	lm_formula_terms(aTHX_ rhs, lhs, hoa, rows, n, hi, fname, &terms, &nt, &uniq, &nu);
+	SAVEFREEPV(terms); SAVEFREEPV(uniq);
+	for (unsigned int i = 0; i < nt; i++) SAVEFREEPV(terms[i]);
+	for (unsigned int i = 0; i < nu; i++) SAVEFREEPV(uniq[i]);
+	m->design = lm_design_build(aTHX_ hoa, rows, n, uniq, nu, hi, xlevels_hv, as_factor);
+	SAVEDESTRUCTOR_X(lm_design_free_cb, m->design);
+	m->lhs = lhs;
+	m->p = p = m->design->ncol;
+	/*rbar holds p(p-1)/2 NVs, which wraps a 32-bit size_t near p = 23,000 --
+	5.44.0-i686 in the local matrix. The old aov() guarded its n-by-p design
+	the same way; the triangle is what can overflow now.*/
+	if (p > 1 && (p - 1) / 2 >= ((size_t)-1 / sizeof(NV)) / p)
+		croak("%s: design too wide (%" UVuf " columns)", fname, (UV)p);
+	{
+		const size_t np = p ? p : 1, ntri = p > 1 ? p * (p - 1) / 2 : 1;
+		Newxz(m->x, np, NV);        SAVEFREEPV(m->x);
+		Newxz(m->d, np, NV);        SAVEFREEPV(m->d);
+		Newxz(m->rbar, ntri, NV);   SAVEFREEPV(m->rbar);
+		Newxz(m->thetab, np, NV);   SAVEFREEPV(m->thetab);
+		Newxz(m->colss, np, NV);    SAVEFREEPV(m->colss);
+		Newxz(m->aliased, np, bool); SAVEFREEPV(m->aliased);
+	}
+	m->sserr = 0.0;
+	m->rank = 0;
+}
+
+/*Parse anova()'s formula argument `fsv` and build its model. `which` is 0 for
+the single-model form's messages, else the 1-based argument number.*/
+static void anova_model(pTHX_ SV *fsv, size_t which, HV *hoa, HV **rows, size_t n,
+		AnModel *restrict m) {
+	char *pl = NULL, *pr = NULL;
+	const char *f;
 	if (!SvOK(fsv) || SvROK(fsv)) {
 		if (which) croak("anova: model argument %" UVuf " must be a formula string", (UV)which);
 		croak("anova: second argument must be a formula string");
@@ -13396,33 +13348,67 @@ static void anova_model(pTHX_ SV *fsv, size_t which, HV *hoa, HV **rows, size_t 
 		m->label = label;
 		SAVEFREEPV(label);
 	}
-	f_cpy = lm_formula_split(aTHX_ f, "anova", &lhs, &rhs, &hi);
-	SAVEFREEPV(f_cpy);
-	m->noff = glm_take_offsets(aTHX_ "anova", rhs, &m->off);
-	if (m->off) {
-		SAVEFREEPV(m->off);
-		for (size_t k = 0; k < m->noff; k++) SAVEFREEPV(m->off[k]);
-	}
-	lm_formula_terms(aTHX_ rhs, lhs, hoa, rows, n, hi, "anova", &terms, &nt, &uniq, &nu);
-	SAVEFREEPV(terms); SAVEFREEPV(uniq);
-	for (unsigned int i = 0; i < nt; i++) SAVEFREEPV(terms[i]);
-	for (unsigned int i = 0; i < nu; i++) SAVEFREEPV(uniq[i]);
-	m->design = lm_design_build(aTHX_ hoa, rows, n, uniq, nu, hi, NULL);
-	SAVEDESTRUCTOR_X(lm_design_free_cb, m->design);
-	m->lhs = lhs;
-	m->p = p = m->design->ncol;
-	{
-		const size_t np = p ? p : 1, ntri = p > 1 ? p * (p - 1) / 2 : 1;
-		Newxz(m->x, np, NV);        SAVEFREEPV(m->x);
-		Newxz(m->d, np, NV);        SAVEFREEPV(m->d);
-		Newxz(m->rbar, ntri, NV);   SAVEFREEPV(m->rbar);
-		Newxz(m->thetab, np, NV);   SAVEFREEPV(m->thetab);
-		Newxz(m->colss, np, NV);    SAVEFREEPV(m->colss);
-		Newxz(m->aliased, np, bool); SAVEFREEPV(m->aliased);
-	}
-	m->sserr = 0.0;
-	m->rank = 0;
+	anova_model_build(aTHX_ "anova", f, hoa, rows, n, NULL, NULL, m);
 }
+
+/*Read row i into m->x and m->y (the response y less the offsets). Returns
+FALSE when the row is incomplete for this model -- a factor with no value, or a
+design value or offset that is not finite -- and the caller then drops it, as
+na.omit does.*/
+static bool anova_row(pTHX_ AnModel *restrict m, HV *hoa, HV **rows, size_t i, NV y) {
+	NV o = 0.0;
+	if (!lm_design_row(aTHX_ m->design, hoa, rows, i, m->x)) return FALSE;
+	for (size_t j = 0; j < m->p; j++)
+		if (!nv_isfinite(m->x[j])) return FALSE;
+	for (size_t j = 0; j < m->noff; j++) {
+		const NV v = evaluate_term(aTHX_ hoa, rows, (unsigned int)i, m->off[j]);
+		if (!nv_isfinite(v)) return FALSE;
+		o += v;
+	}
+	m->y = y - o;
+	return TRUE;
+}
+
+/*Fill `result` with m's sequential (Type I) table, one row per term in the
+design's (degree) order plus Residuals; m must already be through anova_sing().
+"Mean Sq" is left out of a 0-df row, and "F value"/"Pr(>F)" wherever there is
+no residual df or the fit is exact -- R's NA.*/
+static void anova_term_table(pTHX_ const AnModel *restrict m, size_t n_used, HV *result) {
+	const LmDesign *restrict ds = m->design;
+	const IV dfres = (IV)n_used - (IV)m->rank;
+	const NV msres = dfres > 0 ? m->sserr / (NV)dfres : NV_NAN;
+	NV *ss = NULL;
+	IV *df = NULL;
+	Newxz(ss, ds->nterm ? ds->nterm : 1, NV); SAVEFREEPV(ss);
+	Newxz(df, ds->nterm ? ds->nterm : 1, IV); SAVEFREEPV(df);
+	for (size_t j = 0; j < m->p; j++) {
+		if (ds->col[j].ncomp == 0 || m->aliased[j]) continue; //intercept, or no df
+		ss[ds->col[j].term] += m->d[j] * m->thetab[j] * m->thetab[j];
+		df[ds->col[j].term]++;
+	}
+	for (unsigned int t = 0; t < ds->nterm; t++) {
+		HV *in = newHV();
+		(void)hv_store(result, ds->term[t], (I32)strlen(ds->term[t]), newRV_noinc((SV*)in), 0);
+		(void)hv_store(in, "Df", 2, newSViv(df[t]), 0);
+		(void)hv_store(in, "Sum Sq", 6, newSVnv(ss[t]), 0);
+		if (df[t] > 0) {
+			(void)hv_store(in, "Mean Sq", 7, newSVnv(ss[t] / (NV)df[t]), 0);
+			if (dfres > 0 && m->sserr > 0.0) {
+				const NV F = (ss[t] / (NV)df[t]) / msres;
+				(void)hv_store(in, "F value", 7, newSVnv(F), 0);
+				(void)hv_store(in, "Pr(>F)", 6, newSVnv(pf_upper(F, (NV)df[t], (NV)dfres)), 0);
+			}
+		}
+	}
+	{
+		HV *in = newHV();
+		(void)hv_store(result, "Residuals", 9, newRV_noinc((SV*)in), 0);
+		(void)hv_store(in, "Df", 2, newSViv(dfres), 0);
+		(void)hv_store(in, "Sum Sq", 6, newSVnv(m->sserr), 0);
+		if (dfres > 0) (void)hv_store(in, "Mean Sq", 7, newSVnv(msres), 0);
+	}
+}
+
 /* rank() helpers: sort a small record carrying value, original index
  (among non-NA elements) and a random tie-break key*/
 typedef struct {
@@ -17521,19 +17507,8 @@ void anova(...)
 		for (size_t i = 0; i < n; i++) {
 			const NV y = evaluate_term(aTHX_ hoa, rows, (unsigned int)i, mods[0].lhs);
 			bool ok = nv_isfinite(y) ? TRUE : FALSE;
-			for (size_t k = 0; ok && k < nkeep; k++) {
-				AnModel *restrict m = &mods[k];
-				NV o = 0.0;
-				if (!lm_design_row(aTHX_ m->design, hoa, rows, i, m->x)) { ok = FALSE; break; }
-				for (size_t j = 0; j < m->p; j++)
-					if (!nv_isfinite(m->x[j])) { ok = FALSE; break; }
-				for (size_t j = 0; ok && j < m->noff; j++) {
-					const NV v = evaluate_term(aTHX_ hoa, rows, (unsigned int)i, m->off[j]);
-					if (!nv_isfinite(v)) ok = FALSE;
-					else o += v;
-				}
-				m->y = y - o;
-			}
+			for (size_t k = 0; ok && k < nkeep; k++)
+				ok = anova_row(aTHX_ &mods[k], hoa, rows, i, y);
 			if (!ok) continue;
 			n_used++;
 			for (size_t k = 0; k < nkeep; k++) {
@@ -17552,42 +17527,9 @@ void anova(...)
 
 		if (nkeep == 1) {
 	//single-model Type-I table, by term in the design's (degree) order
-			const AnModel *restrict m = &mods[0];
-			const LmDesign *restrict ds = m->design;
-			const IV dfres = (IV)n_used - (IV)m->rank;
-			const NV msres = dfres > 0 ? m->sserr / (NV)dfres : NV_NAN;
-			NV *ss = NULL;
-			IV *df = NULL;
 			HV *result = newHV();
 			ret = newRV_noinc((SV*)result); //made after the last croak, so no leak path
-			Newxz(ss, ds->nterm ? ds->nterm : 1, NV); SAVEFREEPV(ss);
-			Newxz(df, ds->nterm ? ds->nterm : 1, IV); SAVEFREEPV(df);
-			for (size_t j = 0; j < m->p; j++) {
-				if (ds->col[j].ncomp == 0 || m->aliased[j]) continue; //intercept, or no df
-				ss[ds->col[j].term] += m->d[j] * m->thetab[j] * m->thetab[j];
-				df[ds->col[j].term]++;
-			}
-			for (unsigned int t = 0; t < ds->nterm; t++) {
-				HV *in = newHV();
-				(void)hv_store(in, "Df", 2, newSViv(df[t]), 0);
-				(void)hv_store(in, "Sum Sq", 6, newSVnv(ss[t]), 0);
-				if (df[t] > 0) {
-					(void)hv_store(in, "Mean Sq", 7, newSVnv(ss[t] / (NV)df[t]), 0);
-					if (dfres > 0 && m->sserr > 0.0) {
-						const NV F = (ss[t] / (NV)df[t]) / msres;
-						(void)hv_store(in, "F value", 7, newSVnv(F), 0);
-						(void)hv_store(in, "Pr(>F)", 6, newSVnv(pf_upper(F, (NV)df[t], (NV)dfres)), 0);
-					}
-				}
-				(void)hv_store(result, ds->term[t], (I32)strlen(ds->term[t]), newRV_noinc((SV*)in), 0);
-			}
-			{
-				HV *in = newHV();
-				(void)hv_store(in, "Df", 2, newSViv(dfres), 0);
-				(void)hv_store(in, "Sum Sq", 6, newSVnv(m->sserr), 0);
-				if (dfres > 0) (void)hv_store(in, "Mean Sq", 7, newSVnv(msres), 0);
-				(void)hv_store(result, "Residuals", 9, newRV_noinc((SV*)in), 0);
-			}
+			anova_term_table(aTHX_ &mods[0], n_used, result);
 		} else {
 	/*model comparison, one row per model in the order given. The scale is
 	the residual mean square of the model with the fewest residual df, the
@@ -21114,7 +21056,7 @@ PPCODE:
   intact, and read as UTF-8 from a copy: the bytes of a Latin-1 name used to go
   into workbook.xml as they were, which is not UTF-8.*/
 	SV *sheet_name = NULL;
-	bool sheet_long = FALSE;	// warned about at the end, with the other warnings
+	bool sheet_long = 0;	// warned about at the end, with the other warnings
 	if (xlsx) {
 		sheet_name = sv_2mortal(xlsx_sheet_sv ? newSVsv(xlsx_sheet_sv) : newSVpvs("Sheet1"));
 		STRLEN snl;
@@ -21132,7 +21074,7 @@ PPCODE:
   is whatever col.names and row.names give, as pandas writes ",A\n" for
   DataFrame({"A": []}).to_csv() (tests/io/formats/test_to_csv.py,
   test_empty_dataframe), and a lone empty record for no columns at all. */
-	bool is_empty = FALSE;
+	bool is_empty = 0;
 	bool rn_named = 0; // HoH only: row.names is a name for the key column, not a flag
 	AV *rows_av = NULL; // HoH: its row keys, mortal
 /* Validate Input Structures & Homogeneity.  A value is read through wt_got(),
@@ -21683,7 +21625,7 @@ PPCODE:
 		  WRITE that fails does so at a print in the layer's perl code, which
 		  leaves the reason there. */
 		int errnum = 0;
-		bool failed = FALSE;
+		bool failed = 0;
 		if (PerlIO_flush(fh) != 0 || PerlIO_error(fh)) { failed = TRUE; errnum = errno; }
 		if ((PerlIO_apply_layers(aTHX_ fh, "w", ":pop") != 0
 				|| PerlIO_apply_layers(aTHX_ fh, "w", ":pop") != 0) && !failed) {
@@ -22923,7 +22865,7 @@ SV *glm(...)
 	xlevels_hv = newHV(); sv_2mortal((SV*)xlevels_hv);
 	design = lm_design_build(aTHX_ data_hoa, row_hashes, n,
 	                         uniq_terms, num_uniq, has_intercept || nfe > 0,
-	                         xlevels_hv);
+	                         xlevels_hv, NULL);
 	SAVEDESTRUCTOR_X(lm_design_free_cb, design);
 	p_full = design->ncol;
 	col0 = (nfe > 0 && p_full > 0 && design->col[0].ncomp == 0) ? 1 : 0;
@@ -26567,7 +26509,7 @@ SV* t_test(...)
 		SV*x_sv = NULL;
 		SV*y_sv = NULL;
 		NV mu = 0.0, conf_level = NV_CONF_95;
-		bool paired = FALSE, var_equal = FALSE;
+		bool paired = FALSE, var_equal = 0;
 		const char*alternative = "two.sided";
 		Stack_off_t arg_idx = 0;
 		args_get_magic(aTHX_ ax, items);	//before any SvOK() or SvROK() reads an argument
@@ -27892,10 +27834,10 @@ PPCODE:
 		with S <= 0.5, so a curve that stepped onto exactly 0.5 -- 4 of 8
 		events, say -- gave the left end of the flat stretch where R gives its
 		middle.*/
-		bool median_on_half = FALSE;	//S was 0.5 at `median`; waiting for the next drop
+		bool median_on_half = 0;	//S was 0.5 at `median`; waiting for the next drop
 		NV median_S = 0.0;	//S at `median`, read only while median_on_half
 		/*Set once the Greenwood sum has a term this data cannot supply.*/
-		bool var_undefined = FALSE;
+		bool var_undefined = 0;
 		size_t at_risk = ng, total_events = 0;
 		size_t i = 0;
 		while (i < N) {
@@ -27948,7 +27890,7 @@ PPCODE:
 				}
 			} else if (median_on_half && S < median_S) {
 				median = (median + t) / 2.0;
-				median_on_half = FALSE;
+				median_on_half = 0;
 			}
 			at_risk -= block;
 			i = j;
@@ -29542,7 +29484,7 @@ SV *lm(...)
 		for (unsigned int i = 0; i < num_uniq; i++)  SAVEFREEPV(uniq_terms[i]);
 		xlevels_hv = newHV(); sv_2mortal((SV*)xlevels_hv);
 		design = lm_design_build(aTHX_ data_hoa, row_hashes, n,
-		                         uniq_terms, num_uniq, has_intercept, xlevels_hv);
+		                         uniq_terms, num_uniq, has_intercept, xlevels_hv, NULL);
 		SAVEDESTRUCTOR_X(lm_design_free_cb, design);
 		p = design->ncol;
 		Newx(X, n * (p ? p : 1), NV);  SAVEFREEPV(X);
@@ -29951,696 +29893,194 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 	SV* formula_sv
 	CODE:
 	{
-	const char *formula;
-	SV *orig_data_sv = data_sv; // dropped `restrict` — this aliases data_sv (UB)
-	bool is_stacked = 0;
-	/*
-	 PHASE 0: R-style stack() for missing formula
-	*/
-	if (!formula_sv || !SvOK(formula_sv) || SvCUR(formula_sv) == 0) {
-		if (!SvROK(data_sv) || SvTYPE(SvRV(data_sv)) != SVt_PVHV) {
-		  croak("aov: Without a formula, data must be a HashRef of ArrayRefs (mimicking R's named list)");
-		}
-		is_stacked = 1;
-		HV *input_hv = (HV*)SvRV(data_sv);
-		HV *stacked_hv = newHV();
-		AV *val_av = newAV();
-		AV *grp_av = newAV();
-	/*The groups are stacked in SORTED key order, not hash-iteration order.
+	/*aov(): R's aov() on one stratum -- the sequential (Type I) table, plus
+	coefficients, fitted.values, xlevels and group.stats.
 
-	R's stack() has a column order to preserve; a Perl hash has none, and
-	reading the groups in whatever order hv_iternext() offered meant the
-	stacked observations -- and so the row names 1..n that fitted.values is
-	keyed by -- were shuffled differently on every run.  The F statistic
-	survived that, being invariant to the order of the rows, but only to
-	within rounding: aov() on the same three groups reported Pr(>F) as
-	0.0363396692989842 on one run and ...43 on the next, and its
-	fitted.values named entirely different rows.  Sorting is the only order
-	that is the same twice.*/
-		AV *gkeys = (AV*)sv_2mortal((SV*)newAV());
+	The model is anova()'s: lm_formula_split(), lm_formula_terms() and
+	lm_design_build() read the formula and build the design, and Gentleman's
+	Givens rotations (AS 274, anova_include()/anova_sing()) fit it one row at a
+	time with nothing kept that grows with n but the row names. Through 0.3213
+	aov() had a parser and a Householder QR of its own, with these faults:
+
+	  * groups whose names look like numbers -- aov({1 => [..], 2 => [..],
+	    3 => [..]}) -- were one slope with 1 df, not a factor;
+	  * `a*b*c` crossed only the first `*`, and offset() was a column name, so
+	    both died with "0 degrees of freedom";
+	  * every factor in an interaction was coded by contrasts, so `y ~ a:b`,
+	    `y ~ a + a:b` and `y ~ g + g:x` were refused, and `y ~ g - 1` lost a
+	    level;
+	  * terms were taken in formula order and spelled as typed, so
+	    `y ~ a + b:a + b` was refused and `a:b + b:a` was two terms;
+	  * a column was aliased on an absolute-value test, not R's 1e-7 norm
+	    ratio (ANOVA_TOL2);
+	  * the design was held twice, n x p each, and each factor level of each
+	    row was a string copy: y ~ g*h + x over 1e5 rows with a 50-level g took
+	    40.9 s and 367 MB, against anova()'s 1.6 s and 33 MB for the same
+	    table.
+
+	Without a formula the data is a hash of groups, stacked as R's stack()
+	stacks a named list -- in sorted key order, since a hash has none -- and
+	fitted as Value ~ Group with Group a factor whatever its labels are.*/
+	const char *formula;
+	const char *as_factor = NULL;     //"Group" in the stacked form: a factor whatever its values look like
+	AV *gkeys = NULL;                 //the stacked form's group names, sorted; NULL with a formula
+	MfRows rows;
+	AnModel m;
+	HV *xlevels_hv, *ret_hash;
+	NV *beta = NULL;
+	size_t n_used = 0;
+	ENTER;   //paired with the LEAVE before RETVAL: a croak anywhere frees everything
+	bool stacked = !formula_sv || !SvOK(formula_sv);   //no formula: stack the groups, R's stack()
+	if (!stacked && !SvROK(formula_sv)) {
+		STRLEN fl;
+		(void)SvPV(formula_sv, fl);
+		stacked = fl == 0;
+	}
+	if (stacked) {
+		HV *input_hv, *stacked_hv;
+		AV *val_av, *grp_av;
 		HE *entry;
-		SSize_t gi, ngk;
+		if (!SvROK(data_sv) || SvTYPE(SvRV(data_sv)) != SVt_PVHV)
+			croak("aov: Without a formula, data must be a HashRef of ArrayRefs (mimicking R's named list)");
+		input_hv = (HV*)SvRV(data_sv);
+	/*Mortal before it is filled, so the croak below frees it. Sorted order
+	because hash order changes from run to run, and with it the row names
+	fitted.values is keyed by.*/
+		stacked_hv = (HV*)sv_2mortal((SV*)newHV());
+		val_av = newAV(); grp_av = newAV();
+		(void)hv_stores(stacked_hv, "Value", newRV_noinc((SV*)val_av));
+		(void)hv_stores(stacked_hv, "Group", newRV_noinc((SV*)grp_av));
+		gkeys = (AV*)sv_2mortal((SV*)newAV());
 		hv_iterinit(input_hv);
 		while ((entry = hv_iternext(input_hv)))
-		  av_push(gkeys, newSVsv(hv_iterkeysv(entry)));
-		ngk = av_len(gkeys) + 1;
-		if (ngk > 1) sortsv(AvARRAY(gkeys), (size_t)ngk, Perl_sv_cmp);
-		for (gi = 0; gi < ngk; gi++) {
-		  SV *grp_name_sv = AvARRAY(gkeys)[gi];
-		  HE *ge = hv_fetch_ent(input_hv, grp_name_sv, 0, 0);
-		  SV *arr_ref = ge ? HeVAL(ge) : &PL_sv_undef;
-		  if (SvROK(arr_ref) && SvTYPE(SvRV(arr_ref)) == SVt_PVAV) {
-				AV *arr = (AV*)SvRV(arr_ref);
-				SSize_t len = av_len(arr);           // signed — av_len is -1 when empty
-				for (SSize_t k = 0; k <= len; k++) { // SSize_t, no SIZE_MAX underflow
-					SV **v = av_fetch(arr, k, 0);
-					if (v && *v && SvOK(*v)) {
-						av_push(val_av, newSVsv(*v));
-						av_push(grp_av, newSVsv(grp_name_sv));
-					}
-				}
-		  } else {
-				SvREFCNT_dec(val_av); SvREFCNT_dec(grp_av); SvREFCNT_dec(stacked_hv);
+			av_push(gkeys, newSVsv(hv_iterkeysv(entry)));
+		if (av_len(gkeys) > 0) sortsv(AvARRAY(gkeys), (size_t)(av_len(gkeys) + 1), Perl_sv_cmp);
+		for (SSize_t gi = 0; gi <= av_len(gkeys); gi++) {
+			SV *gname = AvARRAY(gkeys)[gi];
+			HE *ge = hv_fetch_ent(input_hv, gname, 0, 0);
+			SV *arr_ref = ge ? HeVAL(ge) : &PL_sv_undef;
+			AV *arr;
+			if (!SvROK(arr_ref) || SvTYPE(SvRV(arr_ref)) != SVt_PVAV)
 				croak("aov: Hash values must be ArrayRefs when no formula is provided");
-		  }
+			arr = (AV*)SvRV(arr_ref);
+			for (SSize_t k = 0; k <= av_len(arr); k++) {
+				SV **v = av_fetch(arr, k, 0);
+				if (v && *v && SvOK(*v)) {
+					av_push(val_av, newSVsv(*v));
+					av_push(grp_av, newSVsv(gname));
+				}
+			}
 		}
-		hv_stores(stacked_hv, "Value", newRV_noinc((SV*)val_av));
-		hv_stores(stacked_hv, "Group", newRV_noinc((SV*)grp_av));
-		// sv_2mortal ensures memory is freed automatically on return or croak
-		data_sv = sv_2mortal(newRV_noinc((SV*)stacked_hv));
+		data_sv = sv_2mortal(newRV_inc((SV*)stacked_hv));
 		formula = "Value~Group";
+		as_factor = "Group";
 	} else {
-		 formula = SvPV_nolen(formula_sv);
+		if (SvROK(formula_sv)) croak("aov: formula must be a string");
+		formula = SvPV_nolen(formula_sv);
 	}
-	char *f_cpy = NULL;                    //lm_formula_split()'s buffer; SAVEFREEPV'd
-	char *lhs, *rhs, *chunk;
-	char **terms = NULL, **uniq_terms = NULL, **exp_terms = NULL, **parent_term = NULL;
-	bool *is_dummy = NULL, *is_interact = NULL;
-	char **dummy_base = NULL, **dummy_level = NULL;
-	int *term_map = NULL, *left_idx = NULL, *right_idx = NULL;
-	unsigned int term_cap = 64, exp_cap = 64, num_terms = 0, num_uniq = 0, p = 0, p_exp = 0;
-	size_t n = 0, valid_n = 0, i, j;
-	bool has_intercept = 1;
-	char **row_names = NULL;
-	HV **row_hashes = NULL;
-	HV *data_hoa = NULL;
-	SV *ref = NULL;
-	HE *entry;
-	NV **X_mat = NULL;
-	NV *Y = NULL;
-	char **term_base_level = NULL;  //reference level for each uniq_term (NULL if not categorical)
-	if (!SvROK(data_sv)) croak("aov: data is required and must be a reference");
-	// PHASE 1: Data Extraction
-	ref = SvRV(data_sv);
-	if (SvTYPE(ref) == SVt_PVHV) {
-		HV*hv = (HV*)ref;
-		if (hv_iterinit(hv) == 0) croak("aov: Data hash is empty");
-		entry = hv_iternext(hv);
-		if (entry) {
-			 SV*val = hv_iterval(hv, entry);
-			 if (SvROK(val) && SvTYPE(SvRV(val)) == SVt_PVAV) {
-				  data_hoa = hv;
-				  n = av_len((AV*)SvRV(val)) + 1;
-	/*n is the length of whichever column hv_iternext() handed back first, so
-	without this check a ragged frame did not merely fit on the wrong number of
-	rows -- which column set n, and so how many observations the fit used,
-	moved with perl's hash order from run to run.  lm_read_rows() refuses the
-	same shape, with the same message and for the same reason; the implied-
-	formula (stack()) path above can never produce one, since it builds Value
-	and Group together.*/
-				  {
-					  HE *ce;
-					  hv_iterinit(hv);
-					  while ((ce = hv_iternext(hv))) {
-						  SV *cv = HeVAL(ce);
-						  size_t len;
-						  if (!cv || !SvROK(cv) || SvTYPE(SvRV(cv)) != SVt_PVAV) continue;
-						  len = (size_t)(av_len((AV*)SvRV(cv)) + 1);
-						  if (len != n)
-							  croak("aov: HoA columns have unequal lengths "
-							        "(column '%s' has %" UVuf ", expected %" UVuf ")",
-							        HePV(ce, PL_na), (UV)len, (UV)n);
-					  }
-				  }
-				  Newx(row_names, n ? n : 1, char*);
-				  for(i = 0; i < n; i++) {
-					  char buf[32]; snprintf(buf, sizeof(buf), "%lu", (unsigned long)(i+1));
-					  row_names[i] = savepv(buf);
-				  }
-			 } else if (SvROK(val) && SvTYPE(SvRV(val)) == SVt_PVHV) {
-				  n = (size_t)HvUSEDKEYS(hv);     //CHANGED: real key count, not hv_iterinit's return
-				  hv_iterinit(hv);
-				  Newx(row_names, n ? n : 1, char*); Newx(row_hashes, n ? n : 1, HV*);
-				  i = 0;
-				  while ((entry = hv_iternext(hv))) {
-					  SV *rval = hv_iterval(hv, entry);
-	/*Only the FIRST value decided that this is a HoH, so every later one has
-	still to be checked.  SvRV() on a plain scalar reads a pointer out of a
-	field that does not hold one, and aov({r1 => {...}, bad => 42}) then
-	segfaulted -- whether it did depended on hash order, since a non-reference
-	that came first was rejected by the branch above.  lm() and glm() have
-	always checked this in lm_read_rows(); this is the same check and the same
-	message.*/
-					  if (!SvROK(rval) || SvTYPE(SvRV(rval)) != SVt_PVHV) {
-						  for (size_t k = 0; k < i; k++) Safefree(row_names[k]);
-						  Safefree(row_names); Safefree(row_hashes);
-						  croak("aov: Hash values must all be HashRefs (HoH)");
-					  }
-					  row_names[i] = rowname_dup(aTHX_ hv_iterkeysv(entry));
-					  row_hashes[i] = (HV*)SvRV(rval);
-					  i++;
-				  }
-			 } else croak("aov: Hash values must be ArrayRefs (HoA) or HashRefs (HoH)");
-		}
-	} else if (SvTYPE(ref) == SVt_PVAV) {
-		AV*av = (AV*)ref;
-		n = av_len(av) + 1;
-		Newx(row_names, n, char*);
-		Newx(row_hashes, n, HV*);
-		for (i = 0; i < n; i++) {
-			SV**val = av_fetch(av, i, 0);
-			if (val && SvROK(*val) && SvTYPE(SvRV(*val)) == SVt_PVHV) {
-			  row_hashes[i] = (HV*)SvRV(*val);
-			  char buf[32];
-			  snprintf(buf, sizeof(buf), "%lu", (unsigned long)(i + 1));
-			  row_names[i] = savepv(buf);
-			} else {
-			  for (size_t k = 0; k < i; k++) Safefree(row_names[k]);
-			  Safefree(row_names); Safefree(row_hashes);
-			  croak("aov: Array values must be HashRefs (AoH)");
-			}
-		}
-	} else croak("aov: Data must be an Array or Hash reference");
-	/*
-	 PHASE 2: Formula Parsing & `.` Expansion
-
-	The split, the whitespace strip and the intercept markers are
-	lm_formula_split()'s, not a second copy of them.  The copy that used to
-	live here differed in three ways, all of them wrong:
-
-	  * it wrote into a 512-byte stack array and stopped at 511 characters, so
-	    a longer formula was silently truncated and a different model was fit
-	    than the one asked for;
-	  * it removed `-1`, `+0`, `+1` and a leading `1+` with strstr() over the
-	    whole right-hand side, so `I(x-1)` lost its -1 and a column whose name
-	    contains one of those pairs was corrupted;
-	  * `.` expanded into a 2048-byte stack array and simply DROPPED every
-	    column that no longer fit, so `y ~ .` on a wide frame quietly fit a
-	    smaller model than the caller wrote.
-
-	lm_formula_split() steps over I(...), grows with the formula, and is
-	already what lm() and glm() parse with.  Its buffer is on the save stack,
-	so the croak paths below -- and any croak further down -- release it.  lhs
-	and rhs point into it, so it has to outlive both, which is exactly what
-	the save stack gives.*/
-	ENTER;   //paired with the LEAVE just before RETVAL; see SAVEFREEPV below
-	f_cpy = lm_formula_split(aTHX_ formula, "aov", &lhs, &rhs, &has_intercept);
-	SAVEFREEPV(f_cpy);
-	/*`.` expands through lm_append(), which grows, rather than into a fixed
-	buffer that drops what does not fit.*/
+	mf_rows(aTHX_ "aov", data_sv, &rows);
+	xlevels_hv = (HV*)sv_2mortal((SV*)newHV());   //factor -> [sorted levels], idx 0 = reference
+	Zero(&m, 1, AnModel);
+	anova_model_build(aTHX_ "aov", formula, rows.data_hoa, rows.row_hashes, rows.n,
+	                  xlevels_hv, as_factor, &m);
 	{
-		lm_buf *eb = NULL;
-		size_t rhs_len = 0, rhs_cap = 1;
-		char *cursor;
-		Newxz(eb, 1, lm_buf);
-		SAVEDESTRUCTOR_X(lm_buf_free, eb);   //owns eb->buf across every Renew
-		Newxz(eb->buf, 1, char);
-		cursor = rhs;                      //lm_tok(), not strtok(): see lm_tok()
-		chunk = lm_tok(&cursor, '+');
-		while (chunk != NULL) {
-			if (strcmp(chunk, ".") == 0) {
-				AV *cols = get_all_columns(aTHX_ data_hoa, row_hashes, n);
-				SSize_t ncols = av_len(cols); // signed bound
-				for (SSize_t c = 0; c <= ncols; c++) { // SSize_t loop
-					SV **col_sv = av_fetch(cols, c, 0);
-					if (col_sv && SvOK(*col_sv)) {
-						const char *col_name = SvPV_nolen(*col_sv);
-						if (strcmp(col_name, lhs) != 0)
-							lm_append(aTHX_ &eb->buf, &rhs_len, &rhs_cap, col_name);
-					}
-				}
-				SvREFCNT_dec(cols);
-			} else {
-				lm_append(aTHX_ &eb->buf, &rhs_len, &rhs_cap, chunk);
+		const LmDesign *ds = m.design;       //not restrict: ds->lev is allocated, then written by lm_design_row(), through m.design
+		size_t nlev = 0;                     //levels over every factor
+		size_t *restrict lev_at = NULL;      //nfactor: factor f's first slot in gsum/gcnt
+		NV *restrict gsum = NULL;            //response sum per level, over the rows fitted
+		size_t *restrict gcnt = NULL;        //rows fitted per level
+		Newxz(lev_at, ds->nfactor ? ds->nfactor : 1, size_t); SAVEFREEPV(lev_at);
+		for (unsigned int f = 0; f < ds->nfactor; f++) { lev_at[f] = nlev; nlev += ds->factor[f].nlevel; }
+		Newxz(gsum, nlev ? nlev : 1, NV);     SAVEFREEPV(gsum);
+		Newxz(gcnt, nlev ? nlev : 1, size_t); SAVEFREEPV(gcnt);
+		if (ds->nfactor) Newxz(m.design->lev, ds->nfactor, size_t); //freed with the design
+	//Pass 1: rotate each complete row into the triangle; keep only the level tallies.
+		for (size_t i = 0; i < rows.n; i++) {
+			const NV y = evaluate_term(aTHX_ rows.data_hoa, rows.row_hashes, (unsigned int)i, m.lhs);
+			if (!nv_isfinite(y) || !anova_row(aTHX_ &m, rows.data_hoa, rows.row_hashes, i, y)) continue;
+			n_used++;
+			for (unsigned int f = 0; f < ds->nfactor; f++) {
+				gsum[lev_at[f] + ds->lev[f]] += y;
+				gcnt[lev_at[f] + ds->lev[f]]++;
 			}
-			chunk = lm_tok(&cursor, '+');
+			for (size_t j = 0; j < m.p; j++) m.colss[j] += m.x[j] * m.x[j];
+			anova_include(m.p, 0, 1.0, m.x, m.y, m.d, m.rbar, m.thetab, &m.sserr);
 		}
-		rhs = eb->buf;                     //what PHASE 2's second pass tokenises
-	}
-	// Setup arrays safely
-	Newx(terms, term_cap, char*);
-	Newx(uniq_terms, term_cap, char*);
-	Newx(exp_terms, exp_cap, char*); Newx(parent_term, exp_cap, char*);
-	Newx(is_dummy, exp_cap, bool); Newx(is_interact, exp_cap, bool);
-	Newx(dummy_base, exp_cap, char*); Newx(dummy_level, exp_cap, char*);
-	Newx(term_map, exp_cap, int); Newx(left_idx, exp_cap, int); Newx(right_idx, exp_cap, int);
-	if (has_intercept) { terms[num_terms++] = savepv("Intercept"); }
-	if (*rhs) {
-		char *cursor = rhs;
-		chunk = lm_tok(&cursor, '+');
-		while (chunk != NULL) {
-			 if (num_terms >= term_cap - 3) {
-				  term_cap *= 2;
-				  Renew(terms, term_cap, char*); Renew(uniq_terms, term_cap, char*);
-			 }
-			 char *star = strchr(chunk, '*');
-			 if (star) {
-				  *star = '\0';
-				  char *left = chunk;
-				  char *right = star + 1;
-				  char *c_l = strchr(left, '^');
-				  if (c_l && strncmp(left, "I(", 2) != 0) *c_l = '\0';
-				  char *c_r = strchr(right, '^'); if (c_r && strncmp(right, "I(", 2) != 0) *c_r = '\0';
-				  terms[num_terms++] = savepv(left);
-				  terms[num_terms++] = savepv(right);
-				  size_t inter_len = strlen(left) + strlen(right) + 2;
-				  terms[num_terms] = (char*)safemalloc(inter_len);
-				  snprintf(terms[num_terms++], inter_len, "%s:%s", left, right);
-			 } else {
-				  char *c_chunk = strchr(chunk, '^');
-				  if (c_chunk && strncmp(chunk, "I(", 2) != 0) *c_chunk = '\0';
-				  terms[num_terms++] = savepv(chunk);
-			 }
-			 chunk = lm_tok(&cursor, '+');
-		}
-	}
-	for (i = 0; i < num_terms; i++) {
-		bool found = 0;
-		for (size_t k = 0; k < num_uniq; k++) {
-			if (strcmp(terms[i], uniq_terms[k]) == 0) { found = 1; break; }
-		}
-		if (!found) uniq_terms[num_uniq++] = savepv(terms[i]);
-	}
-	p = num_uniq;
-	Newxz(term_base_level, num_uniq, char*);
-	HV *xlevels_hv = newHV();   //factor base -> [sorted levels], idx 0 = reference
-	//PHASE 3: Categorical & Interaction Expansion
-	for (j = 0; j < p; j++) {
-		if (p_exp + 64 >= exp_cap) {
-			exp_cap *= 2;
-			Renew(exp_terms, exp_cap, char*); Renew(parent_term, exp_cap, char*);
-			Renew(is_dummy, exp_cap, bool); Renew(is_interact, exp_cap, bool);
-			Renew(dummy_base, exp_cap, char*); Renew(dummy_level, exp_cap, char*);
-			Renew(term_map, exp_cap, int); Renew(left_idx, exp_cap, int); Renew(right_idx, exp_cap, int);
-		}
-
-		if (strcmp(uniq_terms[j], "Intercept") == 0) {
-			exp_terms[p_exp] = savepv("Intercept");
-			parent_term[p_exp] = savepv("Intercept");
-			is_dummy[p_exp] = 0; is_interact[p_exp] = 0;
-			term_map[p_exp] = j;
-			p_exp++;
-			continue;
-		}
-
-		char *colon = strchr(uniq_terms[j], ':');
-		if (colon) {
-	/*The two halves are copied to the heap, at the length they actually have.
-	They used to be `char left[256], right[256]`, and `left` was filled with
-
-	    strncpy(left, uniq_terms[j], colon - uniq_terms[j]);
-	    left[colon - uniq_terms[j]] = '\0';
-
-	-- strncpy() writes exactly the count it is given and knows nothing about
-	the destination, so an interaction whose left component ran past 255
-	characters wrote off the end of the frame and the `left[...] = 0` that
-	follows it stored past the end as well.  glibc caught it as "*** buffer
-	overflow detected ***" and aborted the interpreter, which no eval can
-	catch; `right` had already been moved off strcpy() for the same reason but
-	only as far as a truncating snprintf().  Both are exact now, and nothing
-	here has a length limit.*/
-			char *left  = savepvn(uniq_terms[j], (STRLEN)(colon - uniq_terms[j]));
-			char *right = savepv(colon + 1);
-			SAVEFREEPV(left);
-			SAVEFREEPV(right);
-			int *restrict l_indices = (int*)safemalloc(p_exp * sizeof(int)); unsigned int l_count = 0;
-			int *restrict r_indices = (int*)safemalloc(p_exp * sizeof(int)); unsigned int r_count = 0;
-			for (size_t e = 0; e < p_exp; e++) {
-				if (strcmp(parent_term[e], left) == 0) l_indices[l_count++] = e;
-				if (strcmp(parent_term[e], right) == 0) r_indices[r_count++] = e;
-			}
-
-			if (l_count == 0 || r_count == 0) {
-	/*Everything PHASE 1 and PHASE 2 built has to go back before this croak.
-	Only l_indices, r_indices and xlevels_hv used to, so the formula
-	`y ~ a:b` -- an interaction whose main effects are not in the formula,
-	which is an easy thing to type -- leaked the row names, the term and
-	unique-term tables with a savepv per entry, the nine expansion arrays and
-	the base-level table: 7.7 KB a call, and 375 MB over 50000 of them.
-
-	The order below mirrors the "Full Clean Up" block further down so the two
-	can be read side by side; what is deliberately absent is everything PHASE
-	4 allocates (X_blk, D_blk, X_mat, Dsav, Y, surv_names), because none of it
-	exists yet here.  The message is built before the frees, since it reads
-	uniq_terms[j].*/
-				SV *msg = sv_2mortal(newSVpvf(
-					"aov: Interaction term '%s' requires its main effects to be explicitly included in the formula",
-					uniq_terms[j]));
-				Safefree(l_indices); Safefree(r_indices);
-				for (i = 0; i < n; i++) Safefree(row_names[i]);
-				Safefree(row_names);
-				if (row_hashes) Safefree(row_hashes);
-				for (i = 0; i < num_terms; i++) Safefree(terms[i]);
-				Safefree(terms);
-				for (i = 0; i < num_uniq; i++) Safefree(uniq_terms[i]);
-				Safefree(uniq_terms);
-				for (size_t e = 0; e < p_exp; e++) {
-					Safefree(exp_terms[e]); Safefree(parent_term[e]);
-					if (is_dummy[e]) { Safefree(dummy_base[e]); Safefree(dummy_level[e]); }
+		if (n_used < 2)
+			croak("aov: fewer than 2 complete observations after dropping NA");
+		m.rank = anova_sing(m.p, m.x, m.d, m.rbar, m.thetab, m.colss, m.aliased, &m.sserr);
+		ret_hash = newHV();
+		RETVAL = newRV_noinc((SV*)ret_hash);
+		sv_2mortal(RETVAL);   //until the LEAVE: nothing below croaks, but a croak must not leak it
+		anova_term_table(aTHX_ &m, n_used, ret_hash);
+	/*group.stats: the response's mean and count in each level of each factor,
+	over the rows the model was fitted on. A model with one factor -- the
+	stacked form's Group, or y ~ g -- keys mean and size by level, the shape
+	oneway_test() returns; with several, by factor and then level. A stacked
+	group with no usable value is listed with size 0 and a NaN mean. A model
+	with no factor has no groups, and both hashes are empty.*/
+		{
+			HV *gs_hv = newHV(), *mean_hv = newHV(), *size_hv = newHV();
+			(void)hv_stores(ret_hash, "group.stats", newRV_noinc((SV*)gs_hv));
+			(void)hv_stores(gs_hv, "mean", newRV_noinc((SV*)mean_hv));
+			(void)hv_stores(gs_hv, "size", newRV_noinc((SV*)size_hv));
+			for (unsigned int f = 0; f < ds->nfactor; f++) {
+				const LmFactor *restrict fa = &ds->factor[f];
+				HV *mh = mean_hv, *sh = size_hv;
+				if (ds->nfactor > 1) {
+					mh = newHV(); sh = newHV();
+					(void)hv_store(mean_hv, fa->name, (I32)strlen(fa->name), newRV_noinc((SV*)mh), 0);
+					(void)hv_store(size_hv, fa->name, (I32)strlen(fa->name), newRV_noinc((SV*)sh), 0);
 				}
-				Safefree(exp_terms); Safefree(parent_term);
-				Safefree(is_dummy);  Safefree(is_interact);
-				Safefree(dummy_base); Safefree(dummy_level);
-				Safefree(term_map); Safefree(left_idx); Safefree(right_idx);
-				for (i = 0; i < num_uniq; i++) Safefree(term_base_level[i]);
-				Safefree(term_base_level);
-				SvREFCNT_dec((SV*)xlevels_hv);
-				croak("%s", SvPV_nolen(msg));
-			} else {
-				for (unsigned int li = 0; li < l_count; li++) {
-					for (unsigned int ri = 0; ri < r_count; ri++) {
-						if (p_exp >= exp_cap) {
-							exp_cap *= 2;
-							Renew(exp_terms, exp_cap, char*); Renew(parent_term, exp_cap, char*);
-							Renew(is_dummy, exp_cap, bool); Renew(is_interact, exp_cap, bool);
-							Renew(dummy_base, exp_cap, char*); Renew(dummy_level, exp_cap, char*);
-							Renew(term_map, exp_cap, int); Renew(left_idx, exp_cap, int); Renew(right_idx, exp_cap, int);
-						}
-						size_t t_len = strlen(exp_terms[l_indices[li]]) + strlen(exp_terms[r_indices[ri]]) + 2;
-						exp_terms[p_exp] = (char*)safemalloc(t_len);
-						snprintf(exp_terms[p_exp], t_len, "%s:%s", exp_terms[l_indices[li]], exp_terms[r_indices[ri]]);
-						parent_term[p_exp] = savepv(uniq_terms[j]);
-						is_dummy[p_exp] = 0; is_interact[p_exp] = 1;
-						left_idx[p_exp] = l_indices[li];
-						right_idx[p_exp] = r_indices[ri];
-						term_map[p_exp] = j;
-						p_exp++;
-					}
+				for (unsigned int l = 0; l < fa->nlevel; l++) {
+					const size_t c = gcnt[lev_at[f] + l];
+					(void)hv_store(mh, fa->level[l], (I32)strlen(fa->level[l]),
+					               newSVnv(c ? gsum[lev_at[f] + l] / (NV)c : NV_NAN), 0);
+					(void)hv_store(sh, fa->level[l], (I32)strlen(fa->level[l]), newSVuv((UV)c), 0);
 				}
 			}
-			Safefree(l_indices); Safefree(r_indices);
-		} else {
-			if (is_column_categorical(aTHX_ data_hoa, row_hashes, n, uniq_terms[j])) {
-				char **levels = NULL;
-				unsigned int num_levels = 0, levels_cap = 8;
-				Newx(levels, levels_cap, char*);
-				for (i = 0; i < n; i++) {
-					 char*str_val = get_data_string_alloc(aTHX_ data_hoa, row_hashes, i, uniq_terms[j]);
-					 if (str_val) {
-						  bool found = 0;
-						  for (size_t l = 0; l < num_levels; l++) {
-							  if (strcmp(levels[l], str_val) == 0) { found = 1; break; }
-						  }
-						  if (!found) {
-							  if (num_levels >= levels_cap) { levels_cap *= 2; Renew(levels, levels_cap, char*); }
-							  levels[num_levels++] = savepv(str_val);
-						  }
-						  Safefree(str_val);
-					 }
-				}
-				if (num_levels > 0) {
-					for (size_t l1 = 0; l1 < num_levels - 1; l1++) {
-						for (size_t l2 = l1 + 1; l2 < num_levels; l2++) {
-							if (strcmp(levels[l1], levels[l2]) > 0) {
-								char *tmp = levels[l1]; levels[l1] = levels[l2]; levels[l2] = tmp;
-							}
-						}
-					}
-					 term_base_level[j] = savepv(levels[0]);
-					 // expose full sorted level list for predict (idx 0 = reference)
-					 {
-						 AV *lv_av = newAV();
-						 for (size_t l = 0; l < num_levels; l++)
-							 av_push(lv_av, newSVpv(levels[l], 0));
-						 hv_store(xlevels_hv, uniq_terms[j], (I32)strlen(uniq_terms[j]),
-							 newRV_noinc((SV*)lv_av), 0);
-					 }
-
-					 for (size_t l = 1; l < num_levels; l++) {
-						  if (p_exp >= exp_cap) {
-							  exp_cap *= 2;
-							  Renew(exp_terms, exp_cap, char*); Renew(parent_term, exp_cap, char*);
-							  Renew(is_dummy, exp_cap, bool); Renew(is_interact, exp_cap, bool);
-							  Renew(dummy_base, exp_cap, char*); Renew(dummy_level, exp_cap, char*);
-							  Renew(term_map, exp_cap, int); Renew(left_idx, exp_cap, int); Renew(right_idx, exp_cap, int);
-						  }
-						  size_t t_len = strlen(uniq_terms[j]) + strlen(levels[l]) + 1;
-						  exp_terms[p_exp] = (char*)safemalloc(t_len);
-						  snprintf(exp_terms[p_exp], t_len, "%s%s", uniq_terms[j], levels[l]);
-						  parent_term[p_exp] = savepv(uniq_terms[j]);
-						  is_dummy[p_exp] = 1; is_interact[p_exp] = 0;
-						  dummy_base[p_exp] = savepv(uniq_terms[j]);
-						  dummy_level[p_exp] = savepv(levels[l]);
-						  term_map[p_exp] = j;
-						  p_exp++;
-					 }
-					 for (size_t l = 0; l < num_levels; l++) Safefree(levels[l]);
-					 Safefree(levels);
-				} else {
-					 Safefree(levels);
-					 exp_terms[p_exp] = savepv(uniq_terms[j]);
-					 parent_term[p_exp] = savepv(uniq_terms[j]);
-					 is_dummy[p_exp] = 0; is_interact[p_exp] = 0;
-					 term_map[p_exp] = j;
-					 p_exp++;
-				}
-			} else {
-				exp_terms[p_exp] = savepv(uniq_terms[j]);
-				parent_term[p_exp] = savepv(uniq_terms[j]);
-				is_dummy[p_exp] = 0; is_interact[p_exp] = 0;
-				term_map[p_exp] = j;
-				p_exp++;
+			for (SSize_t gi = 0; gkeys && gi <= av_len(gkeys); gi++) {
+				SV *gname = AvARRAY(gkeys)[gi];
+				if (hv_exists_ent(mean_hv, gname, 0)) continue;
+				(void)hv_store_ent(mean_hv, gname, newSVnv(NV_NAN), 0);
+				(void)hv_store_ent(size_hv, gname, newSVuv(0), 0);
 			}
 		}
 	}
-	/*The design and its snapshot are one block each, with the row-pointer
-	array pointing into them, rather than n separate row allocations apiece.
-	lm() has always done it this way, as one Newx of n * p; aov() paid 2n
-	allocator calls and 2n malloc headers for the same matrix, which on a
-	four-column fit is 16 bytes of header per 32 bytes of data.
-	apply_householder_aov() reduces X in place and never permutes X_mat[], so
-	the block stays the rows' backing store; freeing it is one call, and stays
-	correct even if a future pivot does permute the pointers.
-
-	The multiply is guarded because size_t is 32 bits on a 32-bit perl --
-	5.44.0-i686 in the local matrix -- where n * p_exp * sizeof(NV) wraps at a
-	512 MB design.  Allocating per row could not overflow that way, so the
-	guard arrives together with the block.*/
-	if (p_exp && n > ((size_t)-1 / sizeof(NV)) / p_exp)
-		croak("aov: design matrix too large (%" UVuf " rows x %u columns)",
-		      (UV)n, p_exp);
-	NV *X_blk = (NV*)safemalloc(n * p_exp * sizeof(NV));
-	NV *D_blk = (NV*)safemalloc(n * p_exp * sizeof(NV));
-	X_mat = (NV**)safemalloc(n * sizeof(NV*));
-	for(i = 0; i < n; i++) X_mat[i] = X_blk + i * p_exp;
-	NV **Dsav = (NV**)safemalloc(n * sizeof(NV*)); //preserved design rows for fitted.values
-	char **surv_names = NULL; //row names of surviving rows
-	Newx(surv_names, n ? n : 1, char*);
-	Newx(Y, n, NV);
-	// PHASE 4: Matrix Construction & Listwise Deletion
-	for (i = 0; i < n; i++) {
-		NV y_val = evaluate_term(aTHX_ data_hoa, row_hashes, i, lhs);
-		if (nv_isnan(y_val)) { Safefree(row_names[i]); row_names[i] = NULL; continue; }
-		bool row_ok = 1;
-		NV *row_x = X_mat[valid_n];   //CHANGED: build straight into the QR row (no per-row temp)
-		for (j = 0; j < p_exp; j++) {
-			if (strcmp(exp_terms[j], "Intercept") == 0) {
-				row_x[j] = 1.0;
-			} else if (is_interact[j]) {
-				row_x[j] = row_x[left_idx[j]] * row_x[right_idx[j]];   //left/right already filled this row
-			} else if (is_dummy[j]) {
-				char*str_val = get_data_string_alloc(aTHX_ data_hoa, row_hashes, i, dummy_base[j]);
-				if (str_val) {
-					 row_x[j] = (strcmp(str_val, dummy_level[j]) == 0) ? 1.0 : 0.0;
-					 Safefree(str_val);
-				} else { row_ok = 0; break; }
-			} else {
-				row_x[j] = evaluate_term(aTHX_ data_hoa, row_hashes, i, parent_term[j]);
-				if (nv_isnan(row_x[j])) { row_ok = 0; break; }
-			}
-		}
-		if (!row_ok) { Safefree(row_names[i]); row_names[i] = NULL; continue; }  //X_mat[valid_n] reused next iter
-		Y[valid_n] = y_val;
-		Dsav[valid_n] = D_blk + valid_n * p_exp;	//snapshot before QR destroys X_mat
-		memcpy(Dsav[valid_n], row_x, p_exp * sizeof(NV));
-		surv_names[valid_n] = row_names[i]; //transfer ownership
-		row_names[i] = NULL;
-		valid_n++;
+	/*coefficients: back-substitution through the unit triangle, thetab = Rbar
+	beta (AS 274's regcf()). An aliased column's beta is held at 0 while the
+	others are solved, which is the fit without it, and reported as NaN --
+	R's NA.*/
+	Newxz(beta, m.p ? m.p : 1, NV); SAVEFREEPV(beta);
+	for (size_t j = m.p; j-- > 0; ) {
+		const NV *restrict r = m.rbar + j * (2 * m.p - j - 1) / 2;   //row j of the packed triangle
+		NV acc = m.thetab[j];
+		if (m.aliased[j]) continue;
+		for (size_t k = j + 1; k < m.p; k++) acc -= r[k - j - 1] * beta[k];
+		beta[j] = acc;
 	}
-	Safefree(row_names);   //entries either transferred to surv_names or already freed
-	if (valid_n <= p_exp) {// Full Clean Up
-		for (i = 0; i < num_terms; i++) Safefree(terms[i]); Safefree(terms);
-		for (i = 0; i < num_uniq; i++) Safefree(uniq_terms[i]); Safefree(uniq_terms);
-		for (j = 0; j < p_exp; j++) {
-			 Safefree(exp_terms[j]); Safefree(parent_term[j]);
-			 if (is_dummy[j]) { Safefree(dummy_base[j]); Safefree(dummy_level[j]); }
-		}
-		Safefree(exp_terms); Safefree(parent_term);
-		Safefree(is_dummy); Safefree(is_interact);
-		Safefree(dummy_base); Safefree(dummy_level);
-		Safefree(term_map); Safefree(left_idx); Safefree(right_idx);
-		Safefree(X_blk); Safefree(X_mat); Safefree(Y);
-		Safefree(D_blk); Safefree(Dsav);
-		for (i = 0; i < valid_n; i++) Safefree(surv_names[i]);
-		Safefree(surv_names);
-		SvREFCNT_dec((SV*)xlevels_hv);
-		if (row_hashes) Safefree(row_hashes);
-		for (i = 0; i < num_uniq; i++) { if (term_base_level[i]) Safefree(term_base_level[i]); }
-		Safefree(term_base_level);
-		croak("aov: 0 degrees of freedom (too many NAs or parameters > observations)");
-	}
-	// PHASE 5: Math & Output Formatting
-	bool *aliased_qr = (bool*)safemalloc(p_exp * sizeof(bool));
-	size_t *rank_map = (size_t*)safemalloc(p_exp * sizeof(size_t));
-	apply_householder_aov(X_mat, Y, valid_n, p_exp, aliased_qr, rank_map);
-	NV *term_ss;
-	int *restrict term_df;
-	Newxz(term_ss, num_uniq, NV);
-	Newxz(term_df, num_uniq, int);
-	for (i = 0; i < p_exp; i++) {
-		if (strcmp(exp_terms[i], "Intercept") == 0) continue;
-		if (aliased_qr[i]) continue;
-		int t_idx = term_map[i];
-		size_t r_k = rank_map[i];
-		term_ss[t_idx] += Y[r_k] * Y[r_k];
-		term_df[t_idx] += 1;
-	}
-	int rank = 0;
-	for (i = 0; i < p_exp; i++) {
-		  if (!aliased_qr[i]) rank++;
-	}
-	NV rss_prev = 0.0;
-	for (i = rank; i < valid_n; i++) {
-		  rss_prev += Y[i] * Y[i];
-	}
-	int res_df = valid_n - rank;
-	NV ms_res = (res_df > 0) ? rss_prev / res_df : 0.0;
-	HV*ret_hash = newHV();
-	for (j = 0; j < num_uniq; j++) {
-		if (strcmp(uniq_terms[j], "Intercept") == 0) continue;
-		HV*term_stats = newHV();
-		NV ss = term_ss[j];
-		int df = term_df[j];
-		NV ms = (df > 0) ? ss / df : 0.0;
-
-		hv_stores(term_stats, "Df", newSViv(df));
-		hv_stores(term_stats, "Sum Sq", newSVnv(ss));
-		hv_stores(term_stats, "Mean Sq", newSVnv(ms));
-		if (ms_res > 0.0 && df > 0) {
-			NV f_val = ms / ms_res;
-			hv_stores(term_stats, "F value", newSVnv(f_val));
-			hv_stores(term_stats, "Pr(>F)", newSVnv(pf_upper(f_val, (NV)df, (NV)res_df)));
-		} else {
-			hv_stores(term_stats, "F value", newSVnv(NAN));
-			hv_stores(term_stats, "Pr(>F)", newSVnv(NAN));
-		}
-		hv_store(ret_hash, uniq_terms[j], strlen(uniq_terms[j]), newRV_noinc((SV*)term_stats), 0);
-	}
-	HV*res_stats = newHV();
-	hv_stores(res_stats, "Df", newSViv(res_df));
-	hv_stores(res_stats, "Sum Sq", newSVnv(rss_prev));
-	hv_stores(res_stats, "Mean Sq", newSVnv(ms_res));
-	hv_stores(ret_hash, "Residuals", newRV_noinc((SV*)res_stats));
 	{
-		HV *tgt_hoa = data_hoa;
-		HV **tgt_row_hashes = row_hashes;
-		size_t tgt_n = n;
-		// Route evaluation to the original unstacked HoA when a formula was implied
-		if (is_stacked) {
-			tgt_hoa = (HV*)SvRV(orig_data_sv);
-			tgt_row_hashes = NULL;
+		HV *coef_hv = newHV(), *fitted_hv = newHV();
+		(void)hv_stores(ret_hash, "coefficients", newRV_noinc((SV*)coef_hv));
+		(void)hv_stores(ret_hash, "fitted.values", newRV_noinc((SV*)fitted_hv));
+		for (size_t j = 0; j < m.p; j++)
+			(void)hv_store(coef_hv, m.design->col[j].name, (I32)strlen(m.design->col[j].name),
+			               newSVnv(m.aliased[j] ? NV_NAN : beta[j]), 0);
+	/*Pass 2: fitted.values, offsets included as R includes them, keyed by row
+	name. The rows are re-read rather than kept, so the fit holds nothing n by p.*/
+		for (size_t i = 0; i < rows.n; i++) {
+			const NV y = evaluate_term(aTHX_ rows.data_hoa, rows.row_hashes, (unsigned int)i, m.lhs);
+			NV fit;
+			if (!nv_isfinite(y) || !anova_row(aTHX_ &m, rows.data_hoa, rows.row_hashes, i, y)) continue;
+			fit = y - m.y;                  //the offsets
+			for (size_t j = 0; j < m.p; j++) fit += m.x[j] * beta[j];   //an aliased beta is 0
+			(void)hv_store(fitted_hv, rows.row_names[i], ROWNAME_KLEN(rows.row_names[i]), newSVnv(fit), 0);
 		}
-		AV *all_cols = get_all_columns(aTHX_ tgt_hoa, tgt_row_hashes, tgt_n);
-		HV *mean_hv  = newHV();
-		HV *size_hv  = newHV();
-		SSize_t ncols = av_len(all_cols);                  //CHANGED: signed bound
-		for (SSize_t c = 0; c <= ncols; c++) {              //CHANGED: SSize_t loop
-			SV **col_sv = av_fetch(all_cols, c, 0);
-			if (!col_sv || !SvOK(*col_sv)) continue;
-			STRLEN cn_len;
-			const char *col_name = SvPV(*col_sv, cn_len);
-			NV col_sum = 0.0;
-			IV      col_count = 0;
-	/*Every column is summarised over ITS OWN length.
-
-	A single row count for the whole frame was taken from whichever column
-	hv_iternext() happened to hand back first, and for the implied-formula
-	(R stack()) form that frame is the caller's original hash -- whose columns
-	are the unequal-length groups the stacking exists to flatten.  So the
-	answer moved with perl's hash-order randomisation from one run to the next:
-	aov({short => [1..3], long => [1..20]}) reported long's mean as 10.5 and
-	its n as 20 on some runs and 2 and 3 on others, on the same data in the
-	same process image.  It is the defect lm_read_rows() records having fixed
-	on the model side ("which column set n ... moved with hash order from run
-	to run"); this is the reporting side of it.
-
-	Reading each column's own length is also what stops the evaluation running
-	past the end of the short ones, which is where most of this loop's work
-	went on a ragged frame.*/
-			size_t col_n = tgt_n;
-			if (tgt_hoa && !tgt_row_hashes) {
-				SV **cv = hv_fetch(tgt_hoa, col_name, (I32)cn_len, 0);
-				col_n = (cv && *cv && SvROK(*cv) && SvTYPE(SvRV(*cv)) == SVt_PVAV)
-				      ? (size_t)(av_len((AV*)SvRV(*cv)) + 1) : 0;
-			}
-			for (i = 0; i < col_n; i++) {
-				 NV val = evaluate_term(aTHX_ tgt_hoa, tgt_row_hashes, i, col_name);
-				 if (!nv_isnan(val)) { col_sum += val; col_count++; }
-			}
-			NV col_mean = (col_count > 0) ? col_sum / col_count : NV_NAN;
-			hv_store(mean_hv, col_name, (I32)cn_len, newSVnv(col_mean), 0);
-			hv_store(size_hv, col_name, (I32)cn_len, newSViv(col_count), 0);
-		}
-		SvREFCNT_dec(all_cols);
-		HV *gs_hv = newHV();
-		hv_stores(gs_hv, "mean", newRV_noinc((SV*)mean_hv));
-		hv_stores(gs_hv, "size", newRV_noinc((SV*)size_hv));
-		hv_stores(ret_hash, "group.stats", newRV_noinc((SV*)gs_hv));
 	}
-	/*	predict-compatible output -- coefficients, fitted.values, xlevels, family
-	 X_mat now holds R (rows 0..rank-1, original column index, original units);
-	 Y holds Q'y (effects in y[0..rank-1]). Recover beta by back-substitution*/
-	{
-		size_t *restrict col_of_rank = (size_t*)safemalloc((rank ? (size_t)rank : 1) * sizeof(size_t));
-		NV *beta = (NV*)safemalloc((p_exp ? p_exp : 1) * sizeof(NV));
-		for (j = 0; j < p_exp; j++) {
-			beta[j] = NAN;
-			if (!aliased_qr[j]) col_of_rank[rank_map[j]] = j;   //rank row -> actual column
-		}
-		for (size_t mi = (size_t)rank; mi-- > 0; ) {            //unsigned countdown
-			size_t km = col_of_rank[mi];
-			NV acc = Y[mi];
-			for (size_t l = mi + 1; l < (size_t)rank; l++) {
-				size_t kl = col_of_rank[l];
-				acc -= X_mat[mi][kl] * beta[kl];                //R[mi][kl] * beta[kl]
-			}
-			beta[km] = acc / X_mat[mi][km];                     //diagonal nonzero by construction
-		}
-
-		HV *coef_hv = newHV();
-		for (j = 0; j < p_exp; j++)
-			hv_store(coef_hv, exp_terms[j], (I32)strlen(exp_terms[j]), newSVnv(beta[j]), 0);
-		hv_stores(ret_hash, "coefficients", newRV_noinc((SV*)coef_hv));
-
-		//fitted.values: Xb over non-aliased columns, keyed by surviving row name
-		HV *fitted_hv = newHV();
-		for (i = 0; i < valid_n; i++) {
-			NV fit = 0.0;
-			for (j = 0; j < p_exp; j++)
-				if (!aliased_qr[j]) fit += Dsav[i][j] * beta[j];
-			hv_store(fitted_hv, surv_names[i], ROWNAME_KLEN(surv_names[i]), newSVnv(fit), 0);
-		}
-		hv_stores(ret_hash, "fitted.values", newRV_noinc((SV*)fitted_hv));
-
-		hv_stores(ret_hash, "xlevels", newRV_noinc((SV*)xlevels_hv));
-		hv_stores(ret_hash, "family",  newSVpvn("gaussian", 8));
-
-		Safefree(col_of_rank);
-		Safefree(beta);
-	}
-	// Deep Cleanup
-	for (i = 0; i < num_terms; i++) Safefree(terms[i]); Safefree(terms);
-	for (i = 0; i < num_uniq; i++) Safefree(uniq_terms[i]); Safefree(uniq_terms);
-	for (j = 0; j < p_exp; j++) {
-		  Safefree(exp_terms[j]); Safefree(parent_term[j]);
-		  if (is_dummy[j]) { Safefree(dummy_base[j]); Safefree(dummy_level[j]); }
-	}
-	Safefree(exp_terms); Safefree(parent_term);
-	Safefree(is_dummy); Safefree(is_interact);
-	Safefree(dummy_base); Safefree(dummy_level);
-	Safefree(term_map); Safefree(left_idx); Safefree(right_idx);
-	Safefree(term_ss); Safefree(term_df);
-	Safefree(X_blk); Safefree(X_mat); Safefree(Y);
-	Safefree(D_blk); Safefree(Dsav);
-	for (i = 0; i < valid_n; i++) Safefree(surv_names[i]);   //NEW
-	Safefree(surv_names);                                    //NEW
-	Safefree(aliased_qr); Safefree(rank_map);
-	for (i = 0; i < num_uniq; i++) { if (term_base_level[i]) Safefree(term_base_level[i]); }
-	Safefree(term_base_level);
-	if (row_hashes) Safefree(row_hashes);
-	LEAVE;   //frees f_cpy and the expanded RHS; a croak above does the same
-	//xlevels_hv ownership transferred to ret_hash; do not dec here
-	RETVAL = newRV_noinc((SV*)ret_hash);
+	(void)hv_stores(ret_hash, "xlevels", newRV_inc((SV*)xlevels_hv));
+	(void)hv_stores(ret_hash, "family", newSVpvs("gaussian"));
+	SvREFCNT_inc_simple_void_NN(RETVAL);   //out of the mortal it was held in
+	LEAVE;
 	}
 OUTPUT:
 	RETVAL

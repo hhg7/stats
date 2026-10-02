@@ -363,6 +363,79 @@ Revision history for Stats-LikeR
    t/anova.R.R. t/anova.t gains leak checks for the paths that croak
    after the designs are built.
 
+ [aov(): the model R fits]
+
+ - aov() had a formula parser and a Householder QR of its own. It now
+   reads the formula with lm()'s parser and fits it as anova() does,
+   which fixes the models below.
+
+ - Groups whose names look like numbers were fitted as one slope.
+   aov({1 => [..], 2 => [..], 3 => [..]}), the documented no-formula
+   form, gave Group 1 df where R's stack() makes a three-level factor
+   with 2: F = 26.43 for R's 12.04 on the same data. The stacked Group is
+   now a factor whatever its labels are.
+
+ - a*b*c crossed only its first `*`, and offset() was read as a column
+   name, so both died with a misleading "0 degrees of freedom".
+
+ - Every factor in an interaction was coded by contrasts, so y ~ a:b,
+   y ~ a + a:b and y ~ g + g:x died with "requires its main effects", and
+   y ~ g - 1 lost a level of g. Factors are now coded by R's margin rule.
+
+ - Terms were taken in the order written, so y ~ a + b:a + b died the
+   same way and a:b + b:a was two terms. They are now in R's order, by
+   degree, and named as R names them.
+
+ - A column was aliased when its largest remaining entry fell below 1e-10
+   of its largest entry. It is now R's lm.fit rule: aliased when the part
+   the earlier columns leave has a norm below 1e-7 of its own.
+
+ - The table now follows anova(): a 0-df term has no Mean Sq, and no
+   term has an F test when there are no residual df or the fit is exact,
+   where they used to be 0 and NaN. Two complete rows are enough, as in
+   R; "0 degrees of freedom" used to stop any fit with no residual df.
+
+ - fitted.values include the offsets, as R's do, and are keyed by a
+   row.names column when there is one, as lm()'s are.
+
+ [aov(): group.stats]
+
+ - With a formula, group.stats held the mean and count of every column of
+   the data, over every row: the response's overall mean, and NaN for each
+   factor. It now holds the response's mean and count in each level of
+   each factor of the model, over the rows fitted. With one factor it is
+   keyed by level, as the stacked form and oneway_test() key it; with
+   several, by factor and then level. The stacked form's values are
+   unchanged.
+
+ [aov(): speed and memory]
+
+ - The design was held twice, n by p each, and every level of every
+   factor in every row was a string copy. The fit now keeps a p-by-p
+   triangle and re-reads the rows for fitted.values. y ~ g*h + x over 1e5
+   rows with a 50-level g went from 40.9 s and 367 MB to 1.8 s and 52 MB;
+   anova() takes 1.6 s.
+
+ [lm(), glm(), anova(): interaction coefficient names]
+
+ - An interaction's coefficients were named in the order its variables
+   were written, so y ~ w + t + t:w named them tL:wB where R has wB:tL.
+   A term's variables now follow their first appearance in the formula,
+   as R's terms() orders them, which also gives the columns of the term
+   R's order.
+
+ [Tests: aov()]
+
+ - t/aov.R.t pins aov()'s table, coefficients, fitted values and
+   group.stats to R 4.6.1: aov.Rd's npk models, warpbreaks.Rd,
+   reg-tests-1b's warpbreaks with NA rows, reg-tests-3's oats (PR#7829),
+   ToothGrowth with a slope per supplement and with an offset,
+   reg-tests-2's PR#16437 with and without an intercept, and PlantGrowth
+   stacked, under its own group names and under "1", "10" and "2". The
+   generator is t/aov.R.R. One divergence is recorded there: R drops a
+   factor level whose rows were all dropped for NA, and lm()'s design
+   builder keeps it as an aliased column.
+
 0.3212 2026-09-28 CDT
 
  [write_table(): a warning for a header cell with no name]

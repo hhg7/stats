@@ -547,9 +547,9 @@ In short: same numbers for one model; `aov` is the richer "fit + describe"
 call (and the only one that stacks), `anova` is the minimal "give me the
 table" call. Note that both are **Type-I / sequential**, so the order of terms
 of the same degree matters, and both share this module's `pf`, so p-values
-agree with `oneway_test` and the rest of Stats::LikeR. `aov` refuses an
-interaction whose main effects are not in the model; `anova` fits it as R
-does.
+agree with `oneway_test` and the rest of Stats::LikeR. Both read the formula
+with `lm`'s parser and fit it the same way, so any formula one accepts the
+other fits identically.
 
 Comparing nested models -- `anova(m1, m2)` in R -- is done by giving `anova`
 two or more formulas, or two or more fitted models; see above.
@@ -771,7 +771,24 @@ You can also perform Two-Way ANOVA with categorical interactions using the `*` o
 
     my $res_2way = aov($data_2way, 'len ~ supp * dose');
 
-It is robust against rank deficiency; collinear terms will gracefully receive 0 degrees of freedom and 0 sum of squares, matching R's behavior.
+The formula is read by `lm`'s parser, the same one `anova` uses, so it
+accepts everything `lm` does: `+`, `:`, `*` (`a*b*c` is every main effect and
+interaction), `.`, `- 1`/`0 +` and `offset()`. Factors are coded by R's margin
+rule, so an interaction need not have its main effects: `y ~ a:b` spans every
+cell, `y ~ a + a:b` nests b in a, and `y ~ g + g:x` fits a slope per group.
+Terms are taken in R's order (main effects, then two-way interactions, …),
+and `a:b` and `b:a` are one term, named as R names it. A column of strings is
+a factor with its levels sorted; a column of numbers is a covariate.
+
+It is robust against rank deficiency: a column is aliased when what the
+earlier columns leave of it has a norm below 1e-7 of its own, R's `lm.fit`
+rule, and a term left with no columns stays in the table with 0 degrees of
+freedom and 0 sum of squares. R's `anova()` leaves such a term out.
+
+The fit is Gentleman's Givens rotations, one row at a time, as `anova` and
+R's `biglm` fit, so memory does not grow with the number of rows beyond the
+row names that `fitted.values` is keyed by. `y ~ g*h + x` over 100,000 rows
+with a 50-level `g` takes 1.8 s and 52 MB.
 
 `Pr(>F)` is evaluated in the upper tail of the F distribution rather than as
 `1 - pf(F, df1, df2)`, so a highly significant term reports its actual p-value
@@ -782,7 +799,7 @@ instead of a flat `0`; see [F and z tail p-values](#f-and-z-tail-p-values).
 | Parameter | Type | Default | Description | Example |
 | --- | --- | --- | --- | --- |
 | `data_sv` | `HashRef` or `ArrayRef` | *(Required)* | The dataset to analyze. Accepts a Hash of Arrays (HoA) or Array of Hashes (AoH). If no formula is provided, it must be an HoA to allow automatic stacking (mimicking R's `stack()` on a named list). |
-| `formula_sv` | `String` | `undef` | A symbolic description of the model to be fitted. If omitted, the formula automatically defaults to `'Value ~ Group'` and the input data is stacked. | `'yield ~ N * P'` |
+| `formula_sv` | `String` | `undef` | A symbolic description of the model to be fitted. If omitted, the formula automatically defaults to `'Value ~ Group'` and the input data is stacked, with `Group` a factor whatever its names look like. | `'yield ~ N * P'` |
 
 ### Output Variables
 
@@ -790,9 +807,12 @@ The function returns a single `HashRef` containing the evaluated statistical res
 
 | Parameter | Type | Default | Description | Example |
 | --- | --- | --- | --- | --- |
-| *(Term Name)* | `HashRef` | `undef` | A nested hash for each independent term in the formula (e.g., `'Group'`, `'N:P'`), containing its ANOVA table statistics. | `{'Df' => 1, 'Sum Sq' => 14.2, 'Mean Sq' => 14.2, 'F value' => 25.81, 'Pr(>F)' => 0.0004}` |
-| `Residuals` | `HashRef` | `undef` | A nested hash containing the residual (error) statistics for the fitted model. | `{'Df' => 10, 'Sum Sq' => 5.5, 'Mean Sq' => 0.55}` |
-| `group.stats` | `HashRef` | `undef` | A nested hash containing descriptive statistics (`mean` and `size` / count) for every column evaluated in the original unstacked data structure. | `{'mean' => {'A' => 2.1, 'B' => 5.4}, 'size' => {'A' => 10, 'B' => 10}}` |
+| *(Term Name)* | `HashRef` | `undef` | A nested hash for each term of the model (e.g., `'Group'`, `'N:P'`), containing its ANOVA table statistics. `'Mean Sq'` is omitted for a 0-df (aliased) term, and `'F value'` and `'Pr(>F)'` wherever there are no residual degrees of freedom or the fit is exact (R's `NA`). | `{'Df' => 1, 'Sum Sq' => 14.2, 'Mean Sq' => 14.2, 'F value' => 25.81, 'Pr(>F)' => 0.0004}` |
+| `Residuals` | `HashRef` | `undef` | A nested hash containing the residual (error) statistics for the fitted model. `'Mean Sq'` is omitted when there are no residual degrees of freedom. | `{'Df' => 10, 'Sum Sq' => 5.5, 'Mean Sq' => 0.55}` |
+| `group.stats` | `HashRef` | `undef` | The response's mean and count in each level of each factor of the model, over the rows the model was fitted on. With one factor -- the stacked form's `Group`, or `y ~ g` -- `mean` and `size` are keyed by level, the shape `oneway_test` returns; with several, by factor and then level. A model with no factor has none, and both are empty. A stacked group with no usable value has size 0 and a `NaN` mean. | `{'mean' => {'A' => 2.1, 'B' => 5.4}, 'size' => {'A' => 10, 'B' => 10}}`, or `{'mean' => {'wool' => {'A' => 31.04, 'B' => 25.26}, 'tension' => {...}}, ...}` |
+| `coefficients` | `HashRef` | `undef` | The coefficients, under treatment contrasts and with R's names (`Intercept`, `woolB`, `woolB:tensionL`). An aliased one is `NaN`, R's `NA`. | `{'Intercept' => 2, 'gB' => 3}` |
+| `fitted.values` | `HashRef` | `undef` | Fitted values, offsets included, keyed by row name: the HoH key, a `row.names` column, or 1..n. Rows dropped for a missing value have none. | `{'1' => 2, '2' => 2}` |
+| `xlevels` | `HashRef` | `undef` | Each factor's levels, sorted, the reference level first; with `family` (`'gaussian'`), what `predict` reads. | `{'g' => ['A', 'B', 'C']}` |
 
 ### omitting formula
 

@@ -72,10 +72,11 @@ my $R_F_X   = 1.9927680012954403;
 my $R_P_X   = 0.18840173513785918;
 
 # Every quantity below is a ratio or a sum of squares of order 1..100 formed by
-# one Householder QR of a 12 x k design, so a handful of ulp is the whole error
+# Givens rotations of a 12 x k design, so a handful of ulp is the whole error
 # budget.  1e-12 relative is ~4500 ulp of a double and leaves room for the
 # wider NV widths to differ in their last digits; the worst disagreement
-# actually observed on a double build is 0.
+# observed on a double build is 3.4e-15 relative (Givens rotations against R's
+# Householder QR, so rounding rather than bit-for-bit).
 my $TOL = 1e-12;
 sub near {
 	my ($got, $exp, $label) = @_;
@@ -262,12 +263,13 @@ sub near {
 	my $noint = eval { aov({ y => \@Y, g => \@G }, 'y ~ g - 1') } || { coefficients => {} };
 	ok(!exists $noint->{coefficients}{Intercept},
 	   'y ~ g - 1 still drops the intercept');
-	# How aov() then CODES the factor is a separate question from whether it
-	# read the marker: it drops the intercept but still contrast-codes g, so a
-	# level is lost.  lm()/glm() get this right through lm_design_build()'s
-	# margin rule and aov() does not; that is not what this section is about
-	# and is left as it was found.
+	# Without an intercept R codes g in full, one column per level.  aov()
+	# contrast-coded it and lost a level until it moved onto lm()'s design
+	# builder, whose margin rule this is.
 	ok(exists $noint->{g}, 'y ~ g - 1: the factor term is still fitted');
+	is(join(',', sort keys %{ $noint->{coefficients} }), 'ga,gb,gc,gd',
+	   'y ~ g - 1: every level of g has a coefficient, as in R');
+	is($noint->{g}{Df}, 4, 'y ~ g - 1: g takes 4 df, as in R');
 }
 
 done_testing();
