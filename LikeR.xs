@@ -3467,8 +3467,7 @@ name. The pair counts stay integral: tot is at most n(n-1)/2, which is 2e10 at
 that n and exact in every NV width this module builds for.*/
 typedef struct {
 	uint64_t tot;  //n(n-1)/2, i.e. every pair
-	uint64_t xtie; //pairs tied on x, joint ties included
-	uint64_t ytie; //pairs tied on y, joint ties included
+	uint64_t xtie, ytie; //pairs tied on x/y, joint ties included
 	uint64_t ntie; //pairs tied on both
 	uint64_t dis;  //discordant pairs
 	NV vt, vu; //sum t(t-1)(2t+5) over the x / y tie groups
@@ -4311,8 +4310,8 @@ cannot be negative, but the adjustment below forms k = min_n - k and divides it
 by 2 with a signed remainder, which is R's arithmetic and stops being R's if
 either side wraps.*/
 static NV nv_pretty_bounds(NV *restrict lo, NV *restrict up, int *restrict ndiv, int min_n){
-	const NV h  = 1.5;                //high.u.bias
-	const NV h5 = 0.5 + 1.5 * 1.5;    //u5.bias = .5 + 1.5*high.u.bias
+	const NV h  = 1.5; //high.u.bias
+	const NV h5 = 0.5 + 1.5 * 1.5; //u5.bias = .5 + 1.5*high.u.bias
 	const NV f_min = 1.0 / 1048576.0; //2^-20
 	const NV shrink_sml = 0.75;
 	const NV lo_ = *lo, up_ = *up, dx = up_ - lo_;
@@ -4367,7 +4366,7 @@ static NV nv_pretty_bounds(NV *restrict lo, NV *restrict up, int *restrict ndiv,
 	while (!nv_isfinite(nu * unit)) nu--;
 
 	int k = (int)(0.5 + nu - ns);
-	if (k < min_n) {                     //ensure nu - ns == min_n
+	if (k < min_n) { //ensure nu - ns == min_n
 		k = min_n - k;
 		if (lo_ == 0.0 && ns == 0.0 && up_ != 0.0) {
 			nu += k;
@@ -4462,18 +4461,16 @@ first break moves down and every other break moves up.  Density and midpoints
 use the unfuzzed breaks, as in R.*/
 static void compute_hist_logic(const NV *restrict x, size_t n,
  const NV *restrict breaks, size_t n_bins, size_t *restrict counts,
- NV *restrict mids, NV *restrict density, NV data_range)
-{
+ NV *restrict mids, NV *restrict density, NV data_range){
 	const NV total_n = (NV)n;
 	const size_t nB = n_bins + 1;
-	NV *h, *fuzzy;
+	NV *h, *fuzzy, diddle;
 	Newx(h, n_bins ? n_bins : 1, NV);
 	Newx(fuzzy, nB, NV);
 	for (size_t i = 0; i < n_bins; i++) {
 		h[i] = breaks[i + 1] - breaks[i];
 		mids[i] = (breaks[i] + breaks[i + 1]) / 2.0;
 	}
-	NV diddle;
 	if (nB > 5) {
 		NV *hs;
 		Newx(hs, n_bins, NV);
@@ -4634,7 +4631,7 @@ static NV spearman_exact_upper(NV is, size_t n) {
 	  total += 1.0;                                          \
 	} while (0)
 
-	TALLY_PERM();   //initial permutation [1, 2, ..., n]
+	TALLY_PERM(); //initial permutation [1, 2, ..., n]
 
 	size_t k = 1;
 	while (k < n) {
@@ -32691,10 +32688,9 @@ PREINIT:
 	bool is_aoh = 0, is_hoh = 0;
 	const char *colname = NULL;
 	STRLEN collen = 0;
-	AV *src_av = NULL;
+	AV *src_av = NULL, *out_av = NULL;
 	HV *src_hv = NULL;
 	SSize_t n = 0;
-	AV *out_av = NULL;
 PPCODE:
 {
 	if (!SvOK(colname_sv))
@@ -32812,14 +32808,12 @@ void avals(data, colname_sv)
 	SV *data
 	SV *colname_sv
 PREINIT:
-	bool is_aoh = FALSE, is_hoh = 0;
+	bool is_aoh = 0, is_hoh = 0;
 	const char *colname = NULL;
 	STRLEN collen = 0;
-	AV *src_av = NULL;
+	AV *src_av = NULL, *out_av = NULL;;
 	HV *src_hv = NULL;
-	SSize_t n = 0;
-	AV *out_av = NULL;
-	SSize_t nret = 0;
+	SSize_t n = 0, nret = 0;
 PPCODE:
 {
 /*avals(): vals() returning a list rather than an array-ref.
@@ -32916,7 +32910,7 @@ PPCODE:
 			LEAVE;
 		}
 	} else { // HoA
-		if (hv_iterinit(src_hv) > 0) {		//non-empty hash
+		if (hv_iterinit(src_hv) > 0) {	//non-empty hash
 			HE *colent = hv_fetch_ent(src_hv, colname_sv, 0, 0);
 			SV *cv = colent ? HeVAL(colent) : NULL;
 			if (!cv || !SvROK(cv) || SvTYPE(SvRV(cv)) != SVt_PVAV)
@@ -32956,15 +32950,10 @@ _qcut_core(data_ref, probs_ref, drop_dups, want_codes)
 	IV drop_dups
 	IV want_codes
 PREINIT:
-	AV  *data_av;
-	AV  *probs_av;
-	AV  *edge_av;
-	AV  *code_av = NULL;
+	AV  *data_av, *probs_av, *edge_av, *code_av = NULL;
 	SV **el;
-	IV   n, m, i, j, ne, w;
-	NV  *srt  = NULL, *edges = NULL;
-	NV   p, h, frac, v;
-	IV   lo, bin, lo2, hi2, mid, k;
+	IV   n, m, i, j, ne, w, lo, bin, lo2, hi2, mid, k;
+	NV  *srt  = NULL, *edges = NULL, p, h, frac, v;
 PPCODE:
 	if (!SvROK(data_ref) || SvTYPE(SvRV(data_ref)) != SVt_PVAV)
 		croak("_qcut_core: data must be an ARRAY reference");
@@ -33123,8 +33112,7 @@ void Lonly(...)
 	PPCODE:
 		if (items == 0)
 			croak("Lonly needs >= 1 array ref");
-		SP = set_multiplicity(aTHX_ SP, &ST(0), (size_t)items, 0, 0,
-		                      "Lonly", GIMME_V);
+		SP = set_multiplicity(aTHX_ SP, &ST(0), (size_t)items, 0, 0, "Lonly", GIMME_V);
 
 void Ronly(...)
 	PROTOTYPE: @
@@ -33133,8 +33121,7 @@ void Ronly(...)
 			croak("Ronly needs >= 1 array ref");
 		/*mirror of Lonly: values only in the LAST array (from_last = 1), so
 		the two-array Ronly(a,b) still equals Lonly(b,a).*/
-		SP = set_multiplicity(aTHX_ SP, &ST(0), (size_t)items, 0, 1,
-		                      "Ronly", GIMME_V);
+		SP = set_multiplicity(aTHX_ SP, &ST(0), (size_t)items, 0, 1, "Ronly", GIMME_V);
 
 void is_equivalent(...)
 	PROTOTYPE: @
@@ -33731,9 +33718,8 @@ NV bw_bcv(...)
 			if (strEQ(SvPV_nolen(ST(i)), "x")) x_sv = ST(i + 1);
 		dens_bw_parse(aTHX_ &ST(0), ai, items, "bw_bcv", FALSE, &o);
 		dens_read_x(aTHX_ x_sv, "bw_bcv", &x, &xs, &n);
-		err = dens_bw_cv(aTHX_ x, xs, n, o.nb, TRUE,
-		                 o.have_lower, o.lower, o.have_upper, o.upper,
-		                 o.have_tol, o.tol, &RETVAL);
+		err = dens_bw_cv(aTHX_ x, xs, n, o.nb, TRUE, o.have_lower, o.lower, o.have_upper, o.upper,
+		          o.have_tol, o.tol, &RETVAL);
 		Safefree(x); Safefree(xs);
 		if (err) croak("bw_bcv: %s", err);
 	}
@@ -33758,9 +33744,8 @@ NV bw_sj(...)
 			if (strEQ(SvPV_nolen(ST(i)), "x")) x_sv = ST(i + 1);
 		dens_bw_parse(aTHX_ &ST(0), ai, items, "bw_sj", TRUE, &o);
 		dens_read_x(aTHX_ x_sv, "bw_sj", &x, &xs, &n);
-		err = dens_bw_sj(aTHX_ x, xs, n, o.nb, o.ste,
-		                 o.have_lower, o.lower, o.have_upper, o.upper,
-		                 o.have_tol, o.tol, &RETVAL);
+		err = dens_bw_sj(aTHX_ x, xs, n, o.nb, o.ste, o.have_lower, o.lower, o.have_upper, o.upper,
+		         o.have_tol, o.tol, &RETVAL);
 		Safefree(x); Safefree(xs);
 		if (err) croak("bw_sj: %s", err);
 	}
