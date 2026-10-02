@@ -170,4 +170,25 @@ no_leaks_ok { filter($LH,  sub { $_->{x} > 0 }, 'output.type' => 'hoa') } 'no le
 no_leaks_ok { filter($LA, col('x') > 1) } 'no leak: col predicate' unless $INC{'Devel/Cover.pm'};
 no_leaks_ok { eval { filter($LA, sub { die "x\n" }) } }					 'no leak: dying predicate' unless $INC{'Devel/Cover.pm'};
 
+# Tied frames. Up to 0.3212 any tied HoA or HoH died with "hash data frame must
+# be a hash of arrays (HoA) or a hash of hashes (HoH)": the shape test read
+# HeVAL(), which a tied hash's iterator never fills in, and the HoA column count
+# came from hv_iterinit(), which is 0 for a tied hash. A tied row of an AoH
+# already worked; it is here so all three shapes are pinned.
+{
+	require Tie::Hash;
+	tie my %th, 'Tie::StdHash';
+	%th = ( 'x' => [ 1, 2, 3 ], 'y' => [ 4, 5, 6 ] );
+	is_deeply( filter( \%th, col('x') > 1 ), { 'x' => [ 2, 3 ], 'y' => [ 5, 6 ] }, 'tied HoA: compiled predicate' );
+	is_deeply( filter( \%th, sub { $_->{'x'} > 1 } ), { 'x' => [ 2, 3 ], 'y' => [ 5, 6 ] }, 'tied HoA: code predicate' );
+	tie my %thh, 'Tie::StdHash';
+	%thh = ( 'r1' => { 'x' => 1 }, 'r2' => { 'x' => 3 } );
+	is_deeply( filter( \%thh, col('x') > 1 ), { 'r2' => { 'x' => 3 } }, 'tied HoH: compiled predicate' );
+	is_deeply( filter( \%thh, sub { $_->{'x'} > 1 } ), { 'r2' => { 'x' => 3 } }, 'tied HoH: code predicate' );
+	tie my %trow, 'Tie::StdHash';
+	%trow = ( 'x' => 5 );
+	is_deeply( filter( [ \%trow, { 'x' => 0 } ], col('x') > 1 ), [ { 'x' => 5 } ], 'tied AoH row: compiled predicate' );
+	no_leaks_ok { filter( \%th, col('x') > 1 ); filter( \%thh, sub { $_->{'x'} > 1 } ) } 'no leak: tied HoA and HoH' unless $INC{'Devel/Cover.pm'};
+}
+
 done_testing;

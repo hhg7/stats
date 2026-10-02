@@ -58,6 +58,16 @@
 #    with the old answer either: cor() croaks on the same input and
 #    cor_test()'s own kendall branch already returned NaN.
 #
+# 11. predict() segfaulted on HoH newdata with a row that was not a hash-ref:
+#     the shape came from the first row hv_iternext() reached and every other
+#     value was dereferenced as an HV, so the crash moved with hash order.
+#
+# 12. csort() and prcomp() segfaulted on a restricted (Hash::Util::lock_keys)
+#     hash with a deleted key. Both sized their key buffers by hv_iterinit()'s
+#     count, which includes the placeholder a delete leaves behind, so the
+#     walk filled one slot fewer than the loops after it read -- a sort over
+#     an uninitialised pointer.
+#
 # Provenance for every R behaviour quoted here: R 4.6.1 (2026-06-24).
 #   * cor.test(c(1,1,1,1), c(1,2,3,4), method = m) for m in
 #     pearson / kendall / spearman -> estimate NA, statistic NA, p-value NA;
@@ -392,6 +402,30 @@ sub child_result {
 		       'hist: the first break tracks the data, not DBL_MAX');
 		is($h->{counts}[0] > 0, 1, 'hist: the first bin is not empty');
 	}
+}
+
+# --- 11. predict: every HoH newdata row is checked ------------------------
+{
+	# Which row hv_iternext() reaches first decides the message (a plain value
+	# first reads as a flat row missing its column), so the loop gives both
+	# orders a chance; neither may be a signal.
+	my %seen;
+	my $call = q{my $f = lm(formula => "y ~ x", data => { y => [1,2,3,5], x => [1,2,3,4] });}
+	         . q{ predict($f, { r1 => { x => 1 }, r2 => 5, r3 => { x => 2 }, r4 => { x => 3 } })};
+	$seen{ child_result($call) }++ for 1 .. 10;
+	is_deeply([ keys %seen ], ['croak'], 'predict: a non-hash HoH newdata row croaks, never a signal');
+}
+
+# --- 12. a deleted key in a locked hash -----------------------------------
+{
+	is(child_result(q{use Hash::Util "lock_keys"; my %h = (r1 => { id => 2 }, r2 => { id => 1 }, r3 => { id => 3 });}
+	              . q{ lock_keys(%h, qw(r1 r2 r3 r4)); delete $h{r3}; my $r = csort(\%h, "id");}
+	              . q{ die "wrong rows" unless join(",", map { $_->{id} } @$r) eq "1,2"}), 'ok',
+	   'csort: a locked HoH with a deleted key sorts the rows that are there');
+	is(child_result(q{use Hash::Util "lock_keys"; my %h = (a => [1,2,3,4], b => [2,1,4,3], c => [9,9,9,9]);}
+	              . q{ lock_keys(%h, qw(a b c d)); delete $h{c}; my $p = prcomp(\%h);}
+	              . q{ die "wrong columns" unless join(",", @{ $p->{varnames} }) eq "a,b"}), 'ok',
+	   'prcomp: a locked HoA with a deleted key uses the columns that are there');
 }
 
 done_testing();

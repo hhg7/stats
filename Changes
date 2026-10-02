@@ -475,6 +475,60 @@ Revision history for Stats-LikeR
    factor level whose rows were all dropped for NA, and lm()'s design
    builder keeps it as an aliased column.
 
+ [each() survives every XS function]
+
+ - Every XS function that walked a hash it was handed reset that hash's
+   iterator, the one each(), keys() and values() share, so a caller part
+   way through while (my ($k, $v) = each %$df) started again and saw keys
+   twice: filter, csort, col2col, lm, glm, predict, aov, merge,
+   write_table, value_counts, group_by, p_adjust, prcomp, transpose, the
+   hoa2*/hoh2*/aoh2* converters and the rest, 40 functions in all, on the
+   table, on its rows, and on other hash arguments such as a model's
+   coefficients. Each walk now saves the iterator first and puts it back
+   afterwards, including when it croaks part-way. agg, select_cols,
+   drop_cols, rename_cols, drop_duplicates and assign still reset it: their
+   perl side calls keys() itself, as perl's own keys() always does.
+   t/iter.keep.t checks each function.
+
+ [Crashes]
+
+ - predict() segfaulted on HoH newdata with a row that was not a hash
+   ref: the shape came from whichever row the hash handed over first, and
+   every other value was dereferenced as a hash, so the crash came and
+   went with hash order. Every row is now checked, and the walk is bounded
+   by its buffers, which a tied hash (reporting no keys) would have
+   overrun.
+
+ - csort() and prcomp() segfaulted on a locked hash (Hash::Util) with a
+   deleted key. Both sized their key buffers by a count that includes the
+   placeholder a delete leaves behind, so the walk filled one slot fewer
+   than the loops after it read. Both now use the count the walk saw.
+
+ [csort(): HoH input is no longer quadratic]
+
+ - Folding a HoH into rows sorted the row names with an insertion sort:
+   82 s for 200000 rows, all of it there. It is now qsort() with the same
+   bytewise order, 0.61 s, and the output is unchanged (checked against
+   0.3212 in all three output shapes, under three hash seeds, with tied
+   sort keys and UTF-8 row names).
+
+ [Leaks on croak]
+
+ - hoh2hoa leaked its result and scratch tables on a non-hash row or a
+   row.names collision; kruskal_test leaked its observations and labels
+   when reading a label died (38 KB over 200 calls under valgrind);
+   col2col leaked its row table when a tied row could not be walked; and
+   prcomp freed by hand only on its own croaks. All four now leave their
+   tables to perl -- mortal, or on the save stack -- so nothing leaks
+   however the call ends. t/croak.leaks.t covers each.
+
+ [filter(): tied frames]
+
+ - A tied HoA or HoH died as "hash data frame must be a hash of arrays
+   (HoA) or a hash of hashes (HoH)", because the shape test read a value
+   a tied hash only fetches on request, and a tied HoA would then have had
+   no columns, its count read where a tied hash reports 0. Both work now.
+
  [cfilter(): crashes, leaks and memory]
 
  - A predicate that replaced a row or column of the data it was filtering,
