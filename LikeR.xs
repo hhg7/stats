@@ -1314,7 +1314,7 @@ counterpart there, R using one series throughout.*/
 
 /*Integer power by squaring, for the w = z^m substitution below: m is a small
 integer, and pow() would neither be exact at z^4 nor as quick.*/
-static NV pow_uint(NV base, unsigned int e) {
+static NV pow_uint(NV base, unsigned e) {
 	NV r = 1.0;
 	while (e) {
 		if (e & 1u) r *= base;
@@ -1349,7 +1349,7 @@ delta => 0.4088, sd => 0.9733, sig_level => 0.001) has a power of 1.03e-3, and
 subtracting a lower tail of 0.99897 from 1 left only four good digits of it.*/
 static NV exact_pnt(NV t, NV df, NV ncp, bool upper) {
 	if (df <= 0.0) return 0.0;
-	const unsigned int n_steps = 30000; //even, for Simpson
+	const unsigned n_steps = 30000; //even, for Simpson
 	NV integral = 0.0;
 	const NV half_df = df / 2.0;
 
@@ -1380,7 +1380,7 @@ switches to the same formula at the same df.*/
 		const NV lo = 1.0 - 12.0 * s, hi = 1.0 + 12.0 * s; //lo > 0.7 here
 		const NV w_step = (hi - lo) / (NV)n_steps;
 		const NV log_peak = chi_log_peak(half_df);
-		for (unsigned int i = 0; i <= n_steps; i++) {
+		for (unsigned i = 0; i <= n_steps; i++) {
 			const NV w = lo + i * w_step;
 			const NV e = w - 1.0;
 /*Written against the mode rather than from log_coef: (df-1)log(w)
@@ -1414,14 +1414,14 @@ The upper limit only has to reach past the density: sqrt(120/df) puts
 exp(-df w^2 / 2) below e^-60 for a mode near zero, and 1 + 12/sqrt(2 df)
 covers twelve standard deviations once the mode has settled near w = 1.
 Whichever is larger serves both shapes.*/
-	const unsigned int m = (df >= 1.0) ? 4u
-		: (unsigned int)(nv_ceil(4.0 / df) > 64.0 ? 64.0 : nv_ceil(4.0 / df));
+	const unsigned m = (df >= 1.0) ? 4u
+		: (unsigned)(nv_ceil(4.0 / df) > 64.0 ? 64.0 : nv_ceil(4.0 / df));
 	const NV log_coef = nv_log(2.0) + half_df * nv_log(half_df) - nv_lgamma(half_df);
 	const NV w_max = nv_fmax(nv_sqrt(120.0 / df), 1.0 + 12.0 / nv_sqrt(2.0 * df));
 	const NV z_step = nv_pow(w_max, 1.0 / (NV)m) / (NV)n_steps;
 	/*i = 0 is skipped: z = 0 makes log(z) -inf, and the term it belongs to is
 	zero anyway since m*df - 1 > 0 by construction.*/
-	for (unsigned int i = 1; i <= n_steps; i++) {
+	for (unsigned i = 1; i <= n_steps; i++) {
 		const NV zq = i * z_step;
 		const NV w = pow_uint(zq, m);
 		const NV log_M = log_coef + ((NV)m * df - 1.0) * nv_log(zq) - half_df * w * w;
@@ -1435,7 +1435,7 @@ Whichever is larger serves both shapes.*/
  Ranking helper with tie adjustment (matches R's tie handling)*/
 typedef struct {
 	NV val, rank;
-	unsigned short int grp;	// rank sum: 1 = x, 2 = y; signed rank: 1 = positive, 2 = negative, 0 = exact zero
+	unsigned short grp;	// rank sum: 1 = x, 2 = y; signed rank: 1 = positive, 2 = negative, 0 = exact zero
 } RankInfo;
 /*One group label as perl handed it over, for the functions that report
 per-group results under the caller's own names (kruskal_test).  klen carries
@@ -1522,7 +1522,7 @@ neither scan's condition and the partition loses its sentinel.
 `a` is deliberately not restrict-qualified: it is re-pointed as the loop walks
 into the larger partition, and the recursive call reaches the same allocation
 by a second route.*/
-static void kw_sort(KWObs *a, size_t n, unsigned short int depth) {
+static void kw_sort(KWObs *a, size_t n, unsigned short depth) {
 	while (n > KW_INSERTION_MAX) {
 		if (depth == 0) { kw_heapsort(a, n); return; }
 		depth--;
@@ -1549,10 +1549,10 @@ static void kw_sort(KWObs *a, size_t n, unsigned short int depth) {
 }
 
 //2*floor(log2(n)), the standard introsort depth limit
-static unsigned short int kw_depth_limit(size_t n) {
-	unsigned short int lg = 0;
+static unsigned short kw_depth_limit(size_t n) {
+	unsigned short lg = 0;
 	while (n > 1) { n >>= 1; lg++; }
-	return (unsigned short int)(2 * lg);
+	return (unsigned short)(2 * lg);
 }
 /*The kw_sort() introsort above, generated for any struct and ordering.
 
@@ -1614,7 +1614,7 @@ static void PFX##_isort(T *a, size_t n) {                            \
 }                                                                             \
 /*No restrict on a[]: it is re-pointed as the loop walks into the larger       \
 partition, and the recursive call reaches the same allocation.*/              \
-static void PFX##_introsort(T *a, size_t n, unsigned short int depth) {       \
+static void PFX##_introsort(T *a, size_t n, unsigned short depth) {       \
 	while (n > LIKER_SORT_ISORT_MAX) {                                        \
 		if (depth == 0) { PFX##_heapsort(a, n); return; }                      \
 		depth--;                                                              \
@@ -1647,10 +1647,10 @@ static void PFX##_introsort(T *a, size_t n, unsigned short int depth) {       \
 	PFX##_isort(a, n);                                                        \
 }                                                                             \
 static void PFX##_sort(T *a, size_t n) {                                      \
-	unsigned short int lg = 0;                                                \
+	unsigned short lg = 0;                                                \
 	if (n < 2) return;                                                        \
 	for (size_t t = n; t > 1; t >>= 1) lg++;	/*floor(log2 n)*/             \
-	PFX##_introsort(a, n, (unsigned short int)(2 * lg));                      \
+	PFX##_introsort(a, n, (unsigned short)(2 * lg));                      \
 }
 
 /*Binomial variates, by R's own algorithm.
@@ -2246,7 +2246,7 @@ static NV fisher_rxc_pvalue(pTHX_ const long *restrict cells, unsigned nrow, uns
 	that the fattest row and the fattest column are the ones forced.*/
 	if (ncol > nrow) {
 		long *t = R; R = C; C = t;
-		unsigned int ti = nrow; nrow = ncol; ncol = ti;
+		unsigned ti = nrow; nrow = ncol; ncol = ti;
 	}
 	qsort(R, nrow, sizeof(long), ft_long_cmp);
 	qsort(C, ncol, sizeof(long), ft_long_cmp);
@@ -2423,7 +2423,7 @@ static int sweep_matrix_ols(NV *restrict A, size_t n, bool *restrict aliased) {
 }
 
 // Internal extractor resolving single data values. Returns NAN on missing or non-numeric.
-static NV get_data_value(pTHX_ HV *data_hoa, HV **row_hashes, unsigned int i, const char *var) {
+static NV get_data_value(pTHX_ HV *data_hoa, HV **row_hashes, unsigned i, const char *var) {
 	SV **val = NULL;
 	if (row_hashes) {
 		val = hv_fetch(row_hashes[i], var, strlen(var), 0);
@@ -2638,7 +2638,7 @@ plain frames, merge, lm, filter and drop_duplicates timed the same with the
 scan and without it, to within the 10% that runs of one build vary by.*/
 #define UNTIE_COLS 1	//copy a hash frame's tied array values (HoA columns)
 #define UNTIE_ROWS 2	//copy a frame's tied rows (AoH, HoH and AoA rows)
-static SV *frame_untied(pTHX_ SV *ref, unsigned short int flags) {
+static SV *frame_untied(pTHX_ SV *ref, unsigned short flags) {
 	if (!ref || !SvROK(ref)) return ref;
 	SV *f = SvRV(ref);
 	if (SvTYPE(f) != SVt_PVHV && SvTYPE(f) != SVt_PVAV) return ref;
@@ -2681,7 +2681,7 @@ static SV *frame_untied(pTHX_ SV *ref, unsigned short int flags) {
 		SV *v = HeVAL(e);	//f is plain here: the copy, or the caller's untied frame
 		if (!v || !SvROK(v)) continue;
 		const svtype t = SvTYPE(SvRV(v));
-		const unsigned short int want = t == SVt_PVAV ? UNTIE_COLS
+		const unsigned short want = t == SVt_PVAV ? UNTIE_COLS
 		                              : t == SVt_PVHV ? UNTIE_ROWS : 0;
 		if (!(flags & want)) break;	//a frame of a kind not asked for: nothing below to copy
 		if (!SvRMAGICAL(SvRV(v)) || !mg_find(SvRV(v), PERL_MAGIC_tied)) continue;
@@ -2770,7 +2770,7 @@ static AV* get_all_columns(pTHX_ HV *data_hoa, HV **row_hashes, size_t n) {
 }
 
 // Recursive formula resolver with tightened NaN and Null handling
-static NV evaluate_term(pTHX_ HV *data_hoa, HV **row_hashes, unsigned int i, const char *term) {
+static NV evaluate_term(pTHX_ HV *data_hoa, HV **row_hashes, unsigned i, const char *term) {
 	if (!term || term[0] == '\0') return NV_NAN;
 
 	/*A bare column name needs no writable copy, and a bare column name is what
@@ -2788,12 +2788,12 @@ static NV evaluate_term(pTHX_ HV *data_hoa, HV **row_hashes, unsigned int i, con
 	Only a call that spans the whole term counts, so log(a):b is split at
 	the ':' below first and each side comes back through here.*/
 	if (!strchr(term, ':')) {
-		static const struct { const char *name; unsigned short int len; } fn[] = {
+		static const struct { const char *name; unsigned short len; } fn[] = {
 			{ "log(", 4 }, { "exp(", 4 }, { "sqrt(", 5 }, { "log2(", 5 },
 			{ "log10(", 6 }, { "log1p(", 6 }, { "abs(", 4 }
 		};
 		size_t tl = strlen(term);
-		for (unsigned short int f = 0; f < sizeof fn / sizeof fn[0]; f++) {
+		for (unsigned short f = 0; f < sizeof fn / sizeof fn[0]; f++) {
 			if (strncmp(term, fn[f].name, fn[f].len) != 0 || term[tl - 1] != ')') continue;
 			{
 				char *inner = savepvn(term + fn[f].len, tl - fn[f].len - 1);
@@ -2952,19 +2952,19 @@ typedef struct {
 typedef struct {
 	char        *name;
 	char       **level;
-	unsigned int nlevel;
+	unsigned nlevel;
 } LmFactor;
 
 typedef struct {
 	char        *name; //the coefficient name, e.g. "woolB:tensionM"
 	LmComp      *comp;
-	unsigned int ncomp; //0 marks the intercept column
-	unsigned int term;  //index into LmDesign.term; meaningless when ncomp == 0
+	unsigned ncomp; //0 marks the intercept column
+	unsigned term;  //index into LmDesign.term; meaningless when ncomp == 0
 } LmCol;
 
 typedef struct {
 	LmFactor    *factor;
-	unsigned int nfactor, ncol, nvar, nterm;
+	unsigned nfactor, ncol, nvar, nterm;
 	LmCol       *col;
 	char       **var;  //every distinct variable named by any term
 	char       **raw;  //scratch: this row's raw level per factor
@@ -2973,7 +2973,7 @@ typedef struct {
 } LmDesign;
 
 static void lm_design_free(pTHX_ LmDesign *d) {
-	unsigned int i, j;
+	unsigned i, j;
 	if (!d) return;
 	if (d->factor) {
 		for (i = 0; i < d->nfactor; i++) {
@@ -3008,9 +3008,9 @@ static void lm_design_free(pTHX_ LmDesign *d) {
 
 /*Split a term on top-level ':' only, so that a ':' inside I(...) is left
 alone. Returns the component count and fills starts[]/lens[].*/
-static unsigned int lm_split_term(const char *restrict term,
-const char **restrict starts, size_t *restrict lens, unsigned int cap) {
-	unsigned int n = 0;
+static unsigned lm_split_term(const char *restrict term,
+const char **restrict starts, size_t *restrict lens, unsigned cap) {
+	unsigned n = 0;
 	int depth = 0;
 	const char *restrict p = term, *start = term;
 	for (;; p++) {
@@ -3037,13 +3037,13 @@ a number, which is right for a data column and wrong for aov()'s stacked Group,
 whose values are the caller's hash keys: groups named 1, 2, 3 were fitted as
 one slope with 1 df where R's stack() makes a 3-level factor.*/
 static LmDesign *lm_design_build(pTHX_ HV *data_hoa, HV **row_hashes, size_t n,
- char **uniq_terms, unsigned int num_uniq, bool has_intercept, HV *xlevels_hv, const char *as_factor) {
+ char **uniq_terms, unsigned num_uniq, bool has_intercept, HV *xlevels_hv, const char *as_factor) {
 	LmDesign *d;
-	unsigned int i, j, k, t, c, max_comp = 0, tcount = 0, col_cap, comp_cap;
-	unsigned int *restrict tstart = NULL, *restrict tlen = NULL;
-	unsigned int *restrict tvar = NULL; //flat variable indices per term
+	unsigned i, j, k, t, c, max_comp = 0, tcount = 0, col_cap, comp_cap;
+	unsigned *restrict tstart = NULL, *restrict tlen = NULL;
+	unsigned *restrict tvar = NULL; //flat variable indices per term
 	int          *restrict vfac = NULL; //variable -> factor index or -1
-	unsigned int  nwords;
+	unsigned  nwords;
 	UV           *restrict tmask = NULL, *restrict margin = NULL;
 	bool         *restrict full = NULL; //per flat component: full coding?
 	bool          empty_present = has_intercept;
@@ -3057,20 +3057,20 @@ static LmDesign *lm_design_build(pTHX_ HV *data_hoa, HV **row_hashes, size_t n,
 		tcount++;
 	}
 	if (max_comp == 0) max_comp = 1;
-	Newxz(tstart, tcount ? tcount : 1, unsigned int);
-	Newxz(tlen,   tcount ? tcount : 1, unsigned int);
-	Newxz(tvar,   max_comp, unsigned int);
+	Newxz(tstart, tcount ? tcount : 1, unsigned);
+	Newxz(tlen,   tcount ? tcount : 1, unsigned);
+	Newxz(tvar,   max_comp, unsigned);
 	Newxz(d->var, max_comp, char*);
 
 	{
 		const char **restrict cs = NULL;
 		size_t      *restrict cl = NULL;
-		unsigned int flat = 0;
+		unsigned flat = 0;
 		Newxz(cs, max_comp, const char*);
 		Newxz(cl, max_comp, size_t);
 		t = 0;
 		for (i = 0; i < num_uniq; i++) {
-			unsigned int nc;
+			unsigned nc;
 			if (strEQ(uniq_terms[i], "Intercept")) continue;
 			nc = lm_split_term(uniq_terms[i], cs, cl, max_comp);
 			tstart[t] = flat;
@@ -3095,7 +3095,7 @@ static LmDesign *lm_design_build(pTHX_ HV *data_hoa, HV **row_hashes, size_t n,
 	`y ~ w + t + t:w` names the interaction's columns wB:tL, as R does, where
 	they were tL:wB.*/
 			for (c = 1; c < nc; c++) {
-				const unsigned int v = tvar[tstart[t] + c];
+				const unsigned v = tvar[tstart[t] + c];
 				for (k = c; k > 0 && tvar[tstart[t] + k - 1] > v; k--)
 					tvar[tstart[t] + k] = tvar[tstart[t] + k - 1];
 				tvar[tstart[t] + k] = v;
@@ -3113,7 +3113,7 @@ static LmDesign *lm_design_build(pTHX_ HV *data_hoa, HV **row_hashes, size_t n,
 		    && !is_column_categorical(aTHX_ data_hoa, row_hashes, n, d->var[j])) continue;
 		{
 			char       **levels = NULL;
-			unsigned int nlev = 0, cap = 8;
+			unsigned nlev = 0, cap = 8;
 	/*Levels seen so far, by their bytes. This was a linear scan of levels[]
 	for every row, O(n * levels): 2e7 strcmp()s for a 200-level factor over
 	1e5 rows, for a question a hash answers in one probe.*/
@@ -3151,8 +3151,8 @@ static LmDesign *lm_design_build(pTHX_ HV *data_hoa, HV **row_hashes, size_t n,
 	}
 	//pass 3: order terms by degree, as R's terms() does
 	{
-		unsigned int *restrict order = NULL, w = 0, deg;
-		Newxz(order, tcount ? tcount : 1, unsigned int);
+		unsigned *restrict order = NULL, w = 0, deg;
+		Newxz(order, tcount ? tcount : 1, unsigned);
 		for (deg = 1; deg <= max_comp; deg++)
 			for (t = 0; t < tcount; t++)
 				if (tlen[t] == deg) order[w++] = t;
@@ -3165,9 +3165,9 @@ static LmDesign *lm_design_build(pTHX_ HV *data_hoa, HV **row_hashes, size_t n,
 				if (!seen) order[w++] = t;
 			}
 		{
-			unsigned int *restrict ns = NULL, *restrict nl = NULL;
-			Newxz(ns, tcount ? tcount : 1, unsigned int);
-			Newxz(nl, tcount ? tcount : 1, unsigned int);
+			unsigned *restrict ns = NULL, *restrict nl = NULL;
+			Newxz(ns, tcount ? tcount : 1, unsigned);
+			Newxz(nl, tcount ? tcount : 1, unsigned);
 			for (i = 0; i < tcount; i++) { ns[i] = tstart[order[i]]; nl[i] = tlen[order[i]]; }
 			Safefree(tstart); Safefree(tlen);
 			tstart = ns; tlen = nl;
@@ -3189,20 +3189,20 @@ static LmDesign *lm_design_build(pTHX_ HV *data_hoa, HV **row_hashes, size_t n,
 		}
 	}
 	// pass 4: the margin rule
-	nwords = (d->nvar + (unsigned int)(8 * sizeof(UV)) - 1) / (unsigned int)(8 * sizeof(UV));
+	nwords = (d->nvar + (unsigned)(8 * sizeof(UV)) - 1) / (unsigned)(8 * sizeof(UV));
 	if (nwords == 0) nwords = 1;
 	Newxz(tmask,  (size_t)tcount * nwords + nwords, UV);
 	Newxz(margin, nwords, UV);
 	Newxz(full,   max_comp, bool);
 	for (t = 0; t < tcount; t++)
 		for (c = 0; c < tlen[t]; c++) {
-			unsigned int v = tvar[tstart[t] + c];
+			unsigned v = tvar[tstart[t] + c];
 			tmask[(size_t)t * nwords + v / (8 * sizeof(UV))] |=
 				((UV)1 << (v % (8 * sizeof(UV))));
 		}
 	for (t = 0; t < tcount; t++) {
 		for (c = 0; c < tlen[t]; c++) {
-			unsigned int v = tvar[tstart[t] + c];
+			unsigned v = tvar[tstart[t] + c];
 			bool present = FALSE, empty = 1;
 			if (vfac[v] < 0) continue; //continuous: nothing to code
 			for (i = 0; i < nwords; i++) margin[i] = tmask[(size_t)t * nwords + i];
@@ -3232,13 +3232,13 @@ static LmDesign *lm_design_build(pTHX_ HV *data_hoa, HV **row_hashes, size_t n,
 		d->ncol = 1;
 	}
 	for (t = 0; t < tcount; t++) {
-		unsigned int nc = tlen[t];
-		unsigned int *restrict lo = NULL, *restrict hi = NULL, *restrict at = NULL;
+		unsigned nc = tlen[t];
+		unsigned *restrict lo = NULL, *restrict hi = NULL, *restrict at = NULL;
 		size_t combos = 1;
 		if (nc > comp_cap) comp_cap = nc;
-		Newxz(lo, nc ? nc : 1, unsigned int);
-		Newxz(hi, nc ? nc : 1, unsigned int);
-		Newxz(at, nc ? nc : 1, unsigned int);
+		Newxz(lo, nc ? nc : 1, unsigned);
+		Newxz(hi, nc ? nc : 1, unsigned);
+		Newxz(at, nc ? nc : 1, unsigned);
 		for (c = 0; c < nc; c++) {
 			int f = vfac[tvar[tstart[t] + c]];
 			if (f < 0) { lo[c] = 0; hi[c] = 1; }
@@ -3325,15 +3325,15 @@ I(...) escape, where the caret is arithmetic and belongs to evaluate_term.
 
 chunk is written through: the separators become NULs.*/
 static void lm_expand_cross(pTHX_ char *chunk, const char *fname, char ***terms,
-	unsigned int *num_terms, unsigned int *term_cap) {
-	char *part[16], *s = chunk;;
-	unsigned int k = 0;
+	unsigned *num_terms, unsigned *term_cap) {
+	char *part[16], *s = chunk;
+	unsigned k = 0;
 
 	for (;;) {
 		char *star = strchr(s, '*');
-		if (k >= (unsigned int)(sizeof(part) / sizeof(part[0])))
+		if (k >= (unsigned)(sizeof(part) / sizeof(part[0])))
 			croak("%s: formula crosses more than %u terms with '*'", fname,
-			      (unsigned int)(sizeof(part) / sizeof(part[0])));
+			      (unsigned)(sizeof(part) / sizeof(part[0])));
 		if (star) *star = '\0';
 		{
 			char *caret = strchr(s, '^');
@@ -3350,9 +3350,9 @@ static void lm_expand_cross(pTHX_ char *chunk, const char *fname, char ***terms,
 		while ((UV)*term_cap <= *num_terms + limit) *term_cap *= 2;
 		Renew(*terms, *term_cap, char*);
 	}
-	for (unsigned int i = 1; i <= k; i++) { //degree
+	for (unsigned i = 1; i <= k; i++) { //degree
 		for (UV mask = 1; mask < limit; mask++) {
-			unsigned int bits = 0, b;
+			unsigned bits = 0, b;
 			size_t len = 0;
 			char *nm;
 			for (b = 0; b < k; b++) if (mask & ((UV)1 << b)) bits++;
@@ -3375,13 +3375,13 @@ i.e. when any factor it needs has no readable value or any continuous term
 evaluates to NaN; the caller drops such rows, as R's na.omit does.*/
 static bool lm_design_row(pTHX_ LmDesign *d, HV *data_hoa, HV **row_hashes, size_t i, NV *out) {
 	bool ok = 1;
-	for (unsigned int f = 0; f < d->nfactor; f++) {
+	for (unsigned f = 0; f < d->nfactor; f++) {
 		d->raw[f] = get_data_string_alloc(aTHX_ data_hoa, row_hashes, i,
 		                                  d->factor[f].name);
 		if (!d->raw[f]) ok = 0;
 	}
 	if (ok && d->lev) {
-		for (unsigned int f = 0; f < d->nfactor; f++) {
+		for (unsigned f = 0; f < d->nfactor; f++) {
 			//levels[] is sorted by cmp_string_wt(), and every raw value is one of them
 			char **hit = (char **)bsearch(&d->raw[f], d->factor[f].level, d->factor[f].nlevel,
 			                              sizeof(char*), cmp_string_wt);
@@ -3390,15 +3390,15 @@ static bool lm_design_row(pTHX_ LmDesign *d, HV *data_hoa, HV **row_hashes, size
 		}
 	}
 	if (ok) {
-		for (unsigned int j = 0; j < d->ncol && ok; j++) {
+		for (unsigned j = 0; j < d->ncol && ok; j++) {
 			NV v = 1.0;
-			for (unsigned int c = 0; c < d->col[j].ncomp; c++) {
+			for (unsigned c = 0; c < d->col[j].ncomp; c++) {
 				const LmComp *cm = &d->col[j].comp[c];
 				if (cm->fbase >= 0) {
 					v *= strEQ(d->raw[cm->fbase], cm->level) ? 1.0 : 0.0;
 				} else {
 					NV e = evaluate_term(aTHX_ data_hoa, row_hashes,
-					                     (unsigned int)i, cm->expr);
+					                     (unsigned)i, cm->expr);
 					if (nv_isnan(e)) { ok = 0; break; }
 					v *= e;
 				}
@@ -3406,7 +3406,7 @@ static bool lm_design_row(pTHX_ LmDesign *d, HV *data_hoa, HV **row_hashes, size
 			out[j] = v;
 		}
 	}
-	for (unsigned int f = 0; f < d->nfactor; f++) {
+	for (unsigned f = 0; f < d->nfactor; f++) {
 		if (d->raw[f]) { Safefree(d->raw[f]); d->raw[f] = NULL; }
 	}
 	return ok;
@@ -3443,7 +3443,7 @@ order it arrived in.*/
 static void pa_method(const char *method, char *out) {
 	strncpy(out, method, PA_METH_LEN - 1); out[PA_METH_LEN - 1] = '\0';
 	/*ASCII fold, not tolower(): see the same loop in dunn_test.*/
-	for (unsigned short int i = 0; out[i]; i++) out[i] = toLOWER((U8)out[i]);
+	for (unsigned short i = 0; out[i]; i++) out[i] = toLOWER((U8)out[i]);
 	if (strstr(out, "benjamini") && strstr(out, "hochberg"))  strcpy(out, "bh");
 	if (strstr(out, "benjamini") && strstr(out, "yekutieli")) strcpy(out, "by");
 	if (strcmp(out, "fdr") == 0) strcpy(out, "bh");
@@ -3856,8 +3856,7 @@ static void kendall_tie_group(uint64_t t, uint64_t *restrict pairs, NV *restrict
 order, then count discordant pairs as y-inversions with a merge sort.  Was an
 O(n^2) double loop in cor_test() until 0.312; at n = 64000 that loop took 14.7 s
 against 0.0135 s here, and the gap is quadratic in n.*/
-static void kendall_count_pairs(const NV *x, const NV *y, size_t n,
-                                kendall_counts *restrict K) {
+static void kendall_count_pairs(const NV *x, const NV *y, size_t n, kendall_counts *restrict K) {
 	Zero(K, 1, kendall_counts);
 	K->tot = (uint64_t)n * (n - 1) / 2;
 	KPair *restrict p;
@@ -4332,7 +4331,7 @@ static NV qt_tail(NV df, NV p_tail) {
 	const NV log_p = nv_log(p_tail);
 	NV x = 0.5 * (low + high);
 	NV prev_step = NV_INF;	//|step| of the previous in-bracket Newton step
-	for (unsigned short int i = 0; i < 200; i++) {
+	for (unsigned short i = 0; i < 200; i++) {
 		const NV s = pt_upper(x, df);
 		if (s == p_tail) return x;
 		if (s > p_tail) low = x; else high = x;
@@ -4551,7 +4550,7 @@ drop them first; shapiro_test() does, quantile() does not.
 
 No restrict on a[]: the recursive call reaches the same allocation, which is
 the whole point of the recursion.*/
-static void nv_introsort(NV *a, size_t lo, size_t hi, unsigned int depth) {
+static void nv_introsort(NV *a, size_t lo, size_t hi, unsigned depth) {
 	while (hi - lo >= NV_SEL_ISORT) {
 		if (depth-- == 0) { nv_heapsort(a + lo, hi - lo + 1); return; }
 		/*median of three, left in place: a[lo] <= pivot <= a[hi], so both
@@ -4577,7 +4576,7 @@ static void nv_introsort(NV *a, size_t lo, size_t hi, unsigned int depth) {
 
 static void nv_sort(NV *a, size_t n) {
 	if (n < 2) return;
-	unsigned int depth = 0;
+	unsigned depth = 0;
 	for (size_t t = n; t > 1; t >>= 1) depth += 2;	//2*floor(log2 n)
 	nv_introsort(a, 0, n - 1, depth);
 }
@@ -4912,7 +4911,7 @@ The 1/sqrt(2*pi) literal is only ever a divisor of the correction, so its own
 rounding scales an already-converged step and never limits the answer.*/
 static NV normal_quantile_hp(NV p) {
 	NV z = inverse_normal_cdf(p);
-	for (unsigned short int i = 0; i < 4; i++) {
+	for (unsigned short i = 0; i < 4; i++) {
 		NV dens = 0.39894228040143267794 * nv_exp(-0.5 * z * z);
 		NV step;
 		if (!(dens > 0.0)) break;
@@ -4957,9 +4956,9 @@ static NV std_qnorm(NV p) {
 /* AS 181.2's poly(): the algebraic polynomial of order nord-1 whose zero
    order coefficient is cc[0].  Horner, exactly as R's swilk.c evaluates it,
    so the AS R94 coefficient blocks below can be transcribed unchanged. */
-static NV as181_poly(const NV *cc, unsigned short int nord, NV x) {
+static NV as181_poly(const NV *cc, unsigned short nord, NV x) {
 	NV p = cc[nord - 1];
-	for (unsigned short int j = nord - 1; j > 0; j--) p = p * x + cc[j - 1];
+	for (unsigned short j = nord - 1; j > 0; j--) p = p * x + cc[j - 1];
 	return p;
 }
 /*Exact Spearman tail by exhaustive permutation enumeration, for n <= 9 only.
@@ -5256,8 +5255,7 @@ typedef struct {
 	bool seekable; // the local header is patched in place once the size is known
 } WtXlsx;
 
-static void wt_xlsx_row(pTHX_ WtXlsx *restrict X, const char *const *restrict fields,
-                        const STRLEN *restrict lens, size_t n);
+static void wt_xlsx_row(pTHX_ WtXlsx *restrict X, const char *const *restrict fields, const STRLEN *restrict lens, size_t n);
 
 /*Where write_table()'s records go.  Exactly one of fh, collect and xlsx is set.*/
 typedef struct {
@@ -5511,8 +5509,7 @@ The header cells with no name are counted into *unnamed, and the 1-based file
 column of the first is stored in *first_unnamed, for write_table() to warn
 about once the file is written (the reason is at that warning).*/
 static size_t wt_emit_header(pTHX_ WtSink *restrict S, AV *headers_av,
-                             const char *rn_header, STRLEN rn_len,
-                             size_t *restrict unnamed, size_t *restrict first_unnamed) {
+ const char *rn_header, STRLEN rn_len, size_t *restrict unnamed, size_t *restrict first_unnamed) {
 	const size_t num_headers = (size_t)(av_len(headers_av) + 1);
 	WtRow R;
 	wt_row_init(aTHX_ &R, num_headers + 1);
@@ -5920,7 +5917,7 @@ static uint32_t xlsx_crc32(uint32_t crc, const unsigned char *data, size_t len) 
 	if (!table_ready) {
 		for (uint32_t i = 0; i < 256; i++) {
 			uint32_t c = i;
-			for (unsigned short int k = 0; k < 8; k++)
+			for (unsigned short k = 0; k < 8; k++)
 				c = (c & 1u) ? (0xEDB88320u ^ (c >> 1)) : (c >> 1);
 			table[i] = c;
 		}
@@ -5943,7 +5940,7 @@ static void zip_le32(pTHX_ SV *b, uint32_t v) {
 	sv_catpvn(b, (char*)x, 4);
 }
 
-// Append an unsigned integer's decimal text to an SV
+// Append an unsignedeger's decimal text to an SV
 static void xlsx_cat_uint(pTHX_ SV *b, unsigned long v) {
 	char tmp[24];
 	int n = snprintf(tmp, sizeof(tmp), "%lu", v);
@@ -6105,8 +6102,7 @@ such as a pipe, gets the whole worksheet gathered in memory and written behind
 a finished header, which is what every workbook used to cost.  Either way the
 bytes are the ones a single pass over the finished worksheet writes.*/
 static void wt_xlsx_begin(pTHX_ WtXlsx *restrict X, PerlIO **slot, const char *file,
-	SV *sheet_name, SV *comment, unsigned freeze_rows, unsigned freeze_cols)
-{
+	SV *sheet_name, SV *comment, unsigned freeze_rows, unsigned freeze_cols){
 	// document properties: provenance goes in the "comments" field
 	SV *core = sv_2mortal(newSVpvs(
 		"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
@@ -6228,7 +6224,7 @@ undef too, with the default undef.val) is left out.  The text is UTF-8 as it
 stands when it is valid UTF-8, and read as Latin-1 when it is not -- the same
 reading the LaTeX path gives it.*/
 static void wt_xlsx_row(pTHX_ WtXlsx *restrict X, const char *const *restrict fields,
-                        const STRLEN *restrict lens, size_t n) {
+  const STRLEN *restrict lens, size_t n) {
 	SV *b = X->buf;
 	SV_CATLIT(b, "<row r=\"");
 	xlsx_cat_uint(aTHX_ b, (unsigned long)X->row);
@@ -6277,8 +6273,8 @@ static void wt_xlsx_finish(pTHX_ WtXlsx *restrict X, PerlIO **slot) {
 		wt_xlsx_flush(aTHX_ X);
 		unsigned char p[12];
 		const uint32_t v[3] = { X->crc, (uint32_t)X->sheet_len, (uint32_t)X->sheet_len };
-		for (unsigned short int i = 0; i < 3; i++)
-			for (unsigned short int k = 0; k < 4; k++)
+		for (unsigned short i = 0; i < 3; i++)
+			for (unsigned short k = 0; k < 4; k++)
 				p[4 * i + k] = (unsigned char)((v[i] >> (8 * k)) & 0xFF);
 		const Off_t end = (Off_t)hdr_at + ZIP_LOCAL_FIXED + WT_XLSX_SHEET_LEN + (Off_t)X->sheet_len;
 		if (PerlIO_seek(X->fh, (Off_t)hdr_at + ZIP_LOCAL_CRC_AT, SEEK_SET) != 0) { failed = TRUE; errnum = errno; }
@@ -6457,7 +6453,7 @@ result at zero; the truncation is floored at a tiny positive value instead,
 because theta divides the variance downstream and an exact zero would poison
 the fit rather than report it.*/
 static NV nb_theta_ml(const NV *y, const NV *mu, const NV *w, size_t n,
-                      unsigned int limit, NV *se_out) {
+                      unsigned limit, NV *se_out) {
 	NV denom = 0.0, sw = 0.0, info = NV_NAN;
 	for (size_t i = 0; i < n; i++) {
 		NV r = y[i] / mu[i] - 1.0;
@@ -6470,7 +6466,7 @@ static NV nb_theta_ml(const NV *y, const NV *mu, const NV *w, size_t n,
 	{
 		const NV eps = nv_pow((NV)DBL_EPSILON, 0.25);   //MASS: double.eps^0.25
 		NV del = 1.0;
-		unsigned int it = 0;
+		unsigned it = 0;
 		//MASS: while ((it <- it + 1) < limit && abs(del) > eps)
 		while (++it < limit && nv_fabs(del) > eps) {
 			NV score = 0.0;
@@ -6628,7 +6624,7 @@ typedef struct {
 	const NV     *pw;        //prior weights; NULL: every weight is 1
 	short int     fam;       //GLM_GAUSSIAN, GLM_BINOMIAL, GLM_POISSON, GLM_NEGBIN
 	NV            theta;     //GLM_NEGBIN only
-	unsigned short int nfe;  //absorbed factors; 0 = none
+	unsigned short nfe;  //absorbed factors; 0 = none
 	size_t      **fe;        //fe[k][i]: row i's group in factor k
 	const size_t *ng;        //fe[k] takes values 0 .. ng[k] - 1
 	NV          **fe_sw;     //scratch, ng[k] each: sum of weights per group
@@ -6639,7 +6635,7 @@ typedef struct {
 	NV           *mu, *eta, *W, *Z, *beta, *beta_old, *XtWX, *XtWZ;
 	bool         *aliased;
 	NV            dev;
-	unsigned int  iter, rank;
+	unsigned  iter, rank;
 	bool          converged, boundary;
 } GlmIrls;
 
@@ -6701,10 +6697,10 @@ static void glm_fe_demean(GlmIrls *g, NV *v, size_t ld, size_t ncol) {
 				NV a = nv_fabs(vb[i * ld + c]);
 				if (a > scale[c]) scale[c] = a;
 			}
-		for (unsigned int sweep = 0; sweep < GLM_FE_MAXSWEEP; sweep++) {
+		for (unsigned sweep = 0; sweep < GLM_FE_MAXSWEEP; sweep++) {
 			size_t keep = 0;
 			for (size_t a = 0; a < nact; a++) moved[act[a]] = 0.0;
-			for (unsigned short int k = 0; k < g->nfe; k++) {
+			for (unsigned short k = 0; k < g->nfe; k++) {
 				NV *s = g->fe_s[k];
 				const NV *sw = g->fe_sw[k];
 				const size_t *grp = g->fe[k];
@@ -6750,7 +6746,7 @@ On return XtWX holds (X'WX)^-1 for the weights of the LAST iteration -- those
 computed from the mu that went into it, one step behind the returned mu --
 which is the matrix R's summary.glm() reports from, and W holds those
 weights.  See the note after the call in glm().*/
-static void glm_irls(GlmIrls *restrict g, bool warm, unsigned int max_iter, NV epsilon) {
+static void glm_irls(GlmIrls *restrict g, bool warm, unsigned max_iter, NV epsilon) {
 	const size_t n = g->n, p = g->p;
 	const NV *X = g->X, *Y = g->y, *off = g->off, *pw = g->pw;
 	const short int fam = g->fam;
@@ -6760,7 +6756,7 @@ static void glm_irls(GlmIrls *restrict g, bool warm, unsigned int max_iter, NV e
 	bool *aliased = g->aliased;
 	NV deviance_old = 0.0, deviance_new = 0.0;
 	NV *raw = NULL;      //nfe > 0: each column's weighted sum of squares before demeaning
-	unsigned int iter;
+	unsigned iter;
 	size_t i, j;
 
 	if (g->nfe) Newx(raw, p ? p : 1, NV);
@@ -6828,7 +6824,7 @@ static void glm_irls(GlmIrls *restrict g, bool warm, unsigned int max_iter, NV e
 			}
 		}
 		if (g->nfe) {
-			for (unsigned short int k = 0; k < g->nfe; k++) {
+			for (unsigned short k = 0; k < g->nfe; k++) {
 				NV *sw = g->fe_sw[k];
 				for (size_t q = 0; q < g->ng[k]; q++) sw[q] = 0.0;
 				for (i = 0; i < n; i++) sw[g->fe[k][i]] += W[i];
@@ -6876,7 +6872,7 @@ static void glm_irls(GlmIrls *restrict g, bool warm, unsigned int max_iter, NV e
 				}
 			}
 		}
-		g->rank = (unsigned int)sweep_matrix_ols(XtWX, p, aliased);
+		g->rank = (unsigned)sweep_matrix_ols(XtWX, p, aliased);
 		for (i = 0; i < p; i++) {
 			if (aliased[i]) { beta[i] = NV_NAN; } else {
 				NV sum = 0.0;
@@ -6891,7 +6887,7 @@ static void glm_irls(GlmIrls *restrict g, bool warm, unsigned int max_iter, NV e
 				g->lin[i] = lp;
 			}
 		g->boundary = 0;
-		for (unsigned short int half = 0; half < 10; half++) {
+		for (unsigned short half = 0; half < 10; half++) {
 			deviance_new = 0.0;
 			for (i = 0; i < n; i++) {
 				NV linear_pred;
@@ -7036,7 +7032,7 @@ static void glm_var_spec(pTHX_ const char *restrict fname, const char *restrict 
 
 //Row i of a numeric GlmVarSpec; NaN for missing or non-numeric.
 static NV glm_var_num(pTHX_ const GlmVarSpec *restrict s, HV *data_hoa, HV **row_hashes, size_t i) {
-	if (s->col) return evaluate_term(aTHX_ data_hoa, row_hashes, (unsigned int)i, s->col);
+	if (s->col) return evaluate_term(aTHX_ data_hoa, row_hashes, (unsigned)i, s->col);
 	if (s->av) {
 		SV *sv = av_at(aTHX_ s->av, (SSize_t)i);
 		if (sv && SvOK(sv) && looks_like_number(sv)) return SvNV(sv);
@@ -7102,10 +7098,10 @@ full rank again (the classic worker/firm case).  That is exact for one and two
 factors -- the components are counted with union-find over the bipartite
 level graph -- and for three or more counts only the first two's components,
 which is the same approximation fixest makes.*/
-static size_t glm_fe_rank(size_t *const *restrict fe, const size_t *restrict ng, unsigned short int nfe, size_t n) {
+static size_t glm_fe_rank(size_t *const *restrict fe, const size_t *restrict ng, unsigned short nfe, size_t n) {
 	size_t r = 0;
 	if (nfe == 0) return 0;
-	for (unsigned short int k = 0; k < nfe; k++) r += ng[k];
+	for (unsigned short k = 0; k < nfe; k++) r += ng[k];
 	r -= (size_t)(nfe - 1);
 	if (nfe >= 2) {
 		size_t *par, comps = 0;
@@ -7246,7 +7242,7 @@ intersection of a subset is built by labelling each observation with the tuple
 of its cluster indices.*/
 static void glm_vcov_robust(pTHX_ size_t n, size_t p, const NV *restrict Xs, const NV *restrict W,
                             const NV *restrict wres, const NV *restrict XtWXinv, const bool *restrict aliased,
-                            size_t *const *restrict CLv, const size_t *restrict Gv, unsigned short int ncl,
+                            size_t *const *restrict CLv, const size_t *restrict Gv, unsigned short ncl,
                             short int type, size_t n_ok, size_t k, NV *restrict out) {
 	if (ncl <= 1) {
 		glm_sandwich(n, p, Xs, W, wres, XtWXinv, aliased, ncl ? CLv[0] : NULL,
@@ -7259,15 +7255,15 @@ static void glm_vcov_robust(pTHX_ size_t n, size_t p, const NV *restrict Xs, con
 		Newx(part, p * p, NV);
 		Newx(lab, n, size_t);
 		for (size_t q = 0; q < p * p; q++) out[q] = 0.0;
-		for (unsigned int mask = 1; mask < (1u << ncl); mask++) {
-			unsigned int bits = 0;
+		for (unsigned mask = 1; mask < (1u << ncl); mask++) {
+			unsigned bits = 0;
 			NV sign;
 			size_t G;
 			const size_t *labs = lab;   //a single clustering's own labels are used as they are
-			for (unsigned short int c = 0; c < ncl; c++) if (mask & (1u << c)) bits++;
+			for (unsigned short c = 0; c < ncl; c++) if (mask & (1u << c)) bits++;
 			sign = (bits % 2) ? 1.0 : -1.0;
 			if (bits == 1) {
-				unsigned short int c = 0;
+				unsigned short c = 0;
 				while (!(mask & (1u << c))) c++;
 				labs = CLv[c];
 				G = Gv[c];
@@ -7276,9 +7272,9 @@ static void glm_vcov_robust(pTHX_ size_t n, size_t p, const NV *restrict Xs, con
 				size_t key[GLM_MAX_CLUSTER];
 				G = 0;
 				for (size_t i = 0; i < n; i++) {
-					unsigned short int m = 0;
+					unsigned short m = 0;
 					SV **hit;
-					for (unsigned short int c = 0; c < ncl; c++)
+					for (unsigned short c = 0; c < ncl; c++)
 						if (mask & (1u << c)) key[m++] = CLv[c][i];
 					hit = hv_fetch(map, (const char *)key, (I32)(m * sizeof(size_t)), 0);
 					if (hit) lab[i] = (size_t)SvUV(*hit);
@@ -7311,7 +7307,7 @@ and are not counted in the residual degrees of freedom, as lm.wfit() drops
 them.*/
 typedef struct {
 	size_t        n, p;
-	unsigned int  rank;
+	unsigned  rank;
 	NV           *beta;      //p; NaN where aliased
 	NV           *XtXinv;    //p x p, the swept (X'WX)^-1
 	bool         *aliased;
@@ -7385,7 +7381,7 @@ static void iv_wls(IvWls *restrict f, const NV *restrict X, size_t ldx, const si
 		pos[j] = r;
 		r++;
 	}
-	f->rank = (unsigned int)r;
+	f->rank = (unsigned)r;
 	/*R (r x r over the non-aliased columns in order) and its inverse*/
 	{
 		size_t *nzc, q = 0;
@@ -7432,7 +7428,7 @@ on the coefficients the larger model adds.  Returns the statistic and sets
 df1/df2.*/
 static NV iv_wald(pTHX_ const IvWls *restrict f0, const IvWls *restrict f1, const NV *restrict X1, size_t ld1,
                   const size_t *restrict cols1, const bool *restrict extra, const NV *restrict y, const NV *restrict w,
-                  short int vtype, size_t *const *restrict CLv, const size_t *restrict Gv, unsigned short int ncl,
+                  short int vtype, size_t *const *restrict CLv, const size_t *restrict Gv, unsigned short ncl,
                   IV *restrict df1, IV *restrict df2) {
 	*df1 = (IV)f1->rank - (IV)f0->rank;
 	*df2 = f1->df;
@@ -7505,7 +7501,7 @@ typedef struct {
 	NV *d, total; // total counts every cell of the support, mirrored ones too
 	size_t len;               // cells in the support
 	IV base;                  // scaled statistic that d[0] counts
-	unsigned short int scale; // 1 for integral ranks, 2 for half-integral
+	unsigned short scale; // 1 for integral ranks, 2 for half-integral
 	bool symmetric;           // d[i] == d[len-1-i], so d holds only the low half
 } WilcoxDist;
 
@@ -7696,7 +7692,7 @@ static void wdist_ranksum(pTHX_ WilcoxDist *restrict D, size_t m, size_t n) {
  the recurrence reads only lower cells, so that half is the full loop's, bit
  for bit. */
 static void wdist_signrank_perm(pTHX_ WilcoxDist *restrict D, const UV *restrict z, size_t n,
-                                unsigned short int scale) {
+                                unsigned short scale) {
 	size_t sum_a = 0;
 	for (size_t i = 0; i < n; i++) {
 		if (z[i] > WILCOX_MAX_CELLS - sum_a) wilcox_too_big(aTHX);
@@ -7745,7 +7741,7 @@ static void wdist_signrank_perm(pTHX_ WilcoxDist *restrict D, const UV *restrict
    counts are the ones the full loop produces, bit for bit.  With the table kept
    between trial shifts (wilcox_two_ptail()), the interval on 49 against 49 with
    a single tie went from 10.3s to 1.15s. */
-static void wdist_ranksum_perm(pTHX_ WilcoxDist *restrict D, const UV *restrict z, size_t total_n, size_t m, unsigned short int scale) {
+static void wdist_ranksum_perm(pTHX_ WilcoxDist *restrict D, const UV *restrict z, size_t total_n, size_t m, unsigned short scale) {
 	const size_t mm = (total_n - m < m) ? total_n - m : m;	// the sample the table is built for
 	size_t sum_b = 0;
 	for (size_t i = total_n - mm; i < total_n; i++) {
@@ -7941,7 +7937,7 @@ static NV wilcox_edge_finish(NV y, NV e, NV z, bool lower) {
 	return p;
 }
 
-static NV wilcox_edge_one(NV z, NV n, unsigned short int k, bool lower) {
+static NV wilcox_edge_one(NV z, NV n, unsigned short k, bool lower) {
 	NV y = lower ? approx_pnorm(z) : approx_pnorm(-z);
 	if (k < 1) return y;
 	NV nn2n = n * (n + 1.0) * (2.0 * n + 1.0);
@@ -7959,7 +7955,7 @@ static NV wilcox_edge_one(NV z, NV n, unsigned short int k, bool lower) {
 	return wilcox_edge_finish(y, e, z, lower);
 }
 
-static NV wilcox_edge_two(NV z, NV m, NV n, unsigned short int k, bool lower) {
+static NV wilcox_edge_two(NV z, NV m, NV n, unsigned short k, bool lower) {
 	NV y = lower ? approx_pnorm(z) : approx_pnorm(-z);
 	if (k < 1) return y;
 	NV mn = m * n, m2 = m * m, n2 = n * n, mpn = m + n, mpn1 = mpn + 1.0;
@@ -8120,7 +8116,7 @@ static NV wilcox_one_ptail(pTHX_ WilcoxScan *S, const NV *restrict x, size_t n, 
 	bool has_ties = 0;
 	(void)rank_and_count_ties(ri, n, &has_ties);
 	NV v = 0.0;
-	unsigned short int scale = 1;
+	unsigned short scale = 1;
 	for (size_t i = 0; i < n; i++) {
 		if (ri[i].grp == 1) v += ri[i].rank;
 		if (ri[i].rank != nv_floor(ri[i].rank)) scale = 2;
@@ -8149,7 +8145,7 @@ static NV wilcox_two_ptail(pTHX_ WilcoxScan *S, const NV *restrict x, size_t n_x
 	bool has_ties = 0;
 	(void)rank_and_count_ties(ri, total_n, &has_ties);
 	NV rank_sum = 0.0;
-	unsigned short int scale = 1;
+	unsigned short scale = 1;
 	for (size_t i = 0; i < total_n; i++) {
 		if (ri[i].grp == 1) rank_sum += ri[i].rank;
 		if (ri[i].rank != nv_floor(ri[i].rank)) scale = 2;
@@ -8211,10 +8207,10 @@ static NV wilcox_ci_root(WilcoxCiCtx *C, NV lo, NV hi, NV f_lo, NV f_hi, NV zq, 
 #endif
 
 // Scalar integer power used by K2x
-static NV r_pow_di(NV x, unsigned int n) {
+static NV r_pow_di(NV x, unsigned n) {
 	if (n == 0) return 1.0;
 	NV val = 1.0;
-	for (unsigned int i = 0; i < n; i++) val *= x;
+	for (unsigned i = 0; i < n; i++) val *= x;
 	return val;
 }
 
@@ -8324,10 +8320,10 @@ static NV K2x(size_t n, NV d) {
 	  }
 	}
 	for(size_t i = 0; i < m; i++) {
-	  H[i * m] -= r_pow_di(h, (unsigned int)(i + 1));
-	  H[(m - 1) * m + i] -= r_pow_di(h, (unsigned int)(m - i));
+	  H[i * m] -= r_pow_di(h, (unsigned)(i + 1));
+	  H[(m - 1) * m + i] -= r_pow_di(h, (unsigned)(m - i));
 	}
-	H[(m - 1) * m] += ((2 * h - 1 > 0) ? r_pow_di(2 * h - 1, (unsigned int)m) : 0);
+	H[(m - 1) * m] += ((2 * h - 1 > 0) ? r_pow_di(2 * h - 1, (unsigned)m) : 0);
 
 	for(size_t i = 0; i < m; i++) {
 	  for(size_t j = 0; j < m; j++) {
@@ -8511,7 +8507,7 @@ static NV ptt_root(const ptt_ctx *c, NV lo, NV hi, NV tol) {
 	against roughly fifty for the unconditional halving and sixty for plain
 	bisection, and matches what Brent's method needs on the same brackets.*/
 	int side = 0;
-	for (unsigned short int i = 0; i < 200; i++) {
+	for (unsigned short i = 0; i < 200; i++) {
 		x = hi - fhi * (hi - lo) / (fhi - flo);
 		/*an interpolation that lands on or outside the bracket (which the
 		halved stale value can produce) falls back to the midpoint*/
@@ -8977,7 +8973,7 @@ static SV* c2c_call(pTHX_ SV *cv, SV *rv1, SV *rv2) {
 	PUSHs(rv1);
 	PUSHs(rv2);
 	PUTBACK;
-	unsigned int count = call_sv(cv, G_SCALAR);
+	unsigned count = call_sv(cv, G_SCALAR);
 	SPAGAIN;
 	SV *ret = (count > 0) ? newSVsv(POPs) : newSV(0);
 	PUTBACK;
@@ -9261,7 +9257,7 @@ typedef struct {
 	SV **names;	// one shared-hash-key SV per distinct column
 	AV **cav;	// HoA only: that column's array, or NULL when absent
 	SV **cells;	// scratch: the current row's cell for each column
-	unsigned int nslots;
+	unsigned nslots;
 } flt_prog;
 
 static SV *flt_pe(pTHX_ AV *a, SSize_t i) {	//plan element or NULL
@@ -9478,7 +9474,7 @@ static bool flt_row_hoa(pTHX_ flt_prog *pg, SSize_t i) {
 
 //Resolve every column the predicate names against a HoA frame, once.
 static void flt_bind_hoa(pTHX_ flt_prog *pg, HV *data) {
-	for (unsigned int s = 0; s < pg->nslots; s++) {
+	for (unsigned s = 0; s < pg->nslots; s++) {
 		HE *e = hv_fetch_ent(data, pg->names[s], 0, 0);
 		SV *v = e ? HeVAL(e) : NULL;
 		if (v) SvGETMAGIC(v);	//a tied frame's value is only fetched here
@@ -9618,7 +9614,7 @@ like sub { sd($_[0]) == 0 } can pick columns out.*/
 static bool cf_pred(pTHX_ SV *cv_sv, AV *a_av, AV *b_av, SV *name_sv) {
 	dSP;
 	bool truth = 0;
-	unsigned int count;
+	unsigned count;
 	ENTER;
 	SAVETMPS;
 	PUSHMARK(SP);
@@ -9629,8 +9625,8 @@ static bool cf_pred(pTHX_ SV *cv_sv, AV *a_av, AV *b_av, SV *name_sv) {
 	count = call_sv(cv_sv, G_SCALAR);
 	SPAGAIN;
 	if (count > 0) {
-		SV *ret = POPs;        // POPs has a side effect: pop exactly once,
-		truth = cBOOL(SvTRUE(ret));     // because SvTRUE() may evaluate its arg twice.
+		SV *ret = POPs; // POPs has a side effect: pop exactly once,
+		truth = cBOOL(SvTRUE(ret)); // because SvTRUE() may evaluate its arg twice.
 	}
 	PUTBACK;
 	FREETMPS;
@@ -10097,20 +10093,15 @@ before the save stack is run, and this would then be freeing through a
 dangling pointer.  It is also what owns _parse_csv_file()'s row buffer, for
 the same reason: a croak from S_fast_row() or from S_plan_init() leaves the
 row to be released here.*/
-static void S_plan_free(pTHX_ void *v)
-{
+static void S_plan_free(pTHX_ void *v){
 	csv_plan *p = (csv_plan*)v;
 	if (p->keys)
 		for (size_t j = 0; j < p->nout; j++)
 			SvREFCNT_dec(p->keys[j]);	//NULL past a croak in S_plan_init()
 	SvREFCNT_dec((SV*)p->row);
 	SvREFCNT_dec(p->dup_first);
-	Safefree(p->idx);
-	Safefree(p->keys);
-	Safefree(p->cols);
-	Safefree(p->na_s);
-	Safefree(p->na_len);
-	Safefree(p);
+	Safefree(p->idx);	Safefree(p->keys);	Safefree(p->cols);	Safefree(p->na_s);
+	Safefree(p->na_len);	Safefree(p);
 }
 
 /*What S_fast_row() counted rather than warned about, handed back to read_table
@@ -10192,10 +10183,8 @@ arrays the plan points at, and the plan is not reachable from it.*/
 static void S_fast_row(pTHX_ csv_plan *restrict p, AV **restrict rowp){
 	AV *const row = *rowp;
 	const size_t w = (size_t)(AvFILLp(row) + 1);
-	SV **ary;
-	SV  *rn = NULL;	//mode 2: the row's name, still owned by the row
+	SV **ary, *rn = NULL;	//mode 2: the row's name, still owned by the row
 	HV  *h  = NULL;
-
 	if (w != p->ncol) {
 		if (p->span_line)
 			croak("Alignment error on %s data row %" UVuf " (%" UVuf " fields vs %" UVuf " headers); %" SVf ".\n",
@@ -10621,9 +10610,9 @@ static SV *S_vcf_explode(pTHX_ AV *raw, short int mode, SV *rn, const char *file
 						croak("read_table: undefined row name (column '%" SVf "') in %s data row %" UVuf "\n",
 						      SVfARG(rn), file, (UV)i);
 				} else {
-					static const unsigned short int part[4] = { 0, 1, 3, 4 };	// CHROM POS REF ALT
+					static const unsigned short part[4] = { 0, 1, 3, 4 };	// CHROM POS REF ALT
 					key = x->name = newSVpvs("");
-					for (unsigned short int q = 0; q < 4; q++) {
+					for (unsigned short q = 0; q < 4; q++) {
 						if (q) sv_catpvs(key, ":");
 						if (SvOK(x->slot[part[q]]))
 							sv_catsv(key, x->slot[part[q]]);
@@ -11640,7 +11629,7 @@ one term, so the ':'-separated components are compared as a multiset, not as a
 string. Comparing strings let `y ~ a:b + b:a` through as two terms, the second
 an exact copy of the first that the fit could only alias.*/
 static bool lm_same_term(pTHX_ const char *restrict a, const char *restrict b) {
-	unsigned int na, nb;
+	unsigned na, nb;
 	const char **as = NULL, **bs = NULL;
 	size_t *al = NULL, *bl = NULL;
 	bool *used = NULL, same = TRUE;
@@ -11653,9 +11642,9 @@ static bool lm_same_term(pTHX_ const char *restrict a, const char *restrict b) {
 	Newxz(used, nb, bool);
 	(void)lm_split_term(a, as, al, na);
 	(void)lm_split_term(b, bs, bl, nb);
-	for (unsigned int i = 0; i < na && same; i++) {
+	for (unsigned i = 0; i < na && same; i++) {
 		bool found = 0;
-		for (unsigned int j = 0; j < nb; j++)
+		for (unsigned j = 0; j < nb; j++)
 			if (!used[j] && al[i] == bl[j] && memEQ(as[i], bs[j], al[i])) {
 				used[j] = TRUE; found = TRUE; break;
 			}
@@ -11676,9 +11665,9 @@ expanded until the columns are known. rhs is consumed in place (lm_tok).
 *terms_out and *uniq_out come back as Newx arrays of savepv'd strings; the
 caller frees the strings and then the arrays.*/
 static void lm_formula_terms(pTHX_ char *rhs, const char *lhs,
-   HV *data_hoa, HV **row_hashes, size_t n, bool has_intercept, const char *fname, char ***terms_out, unsigned int *num_terms_out, char ***uniq_out, unsigned int *num_uniq_out) {
+   HV *data_hoa, HV **row_hashes, size_t n, bool has_intercept, const char *fname, char ***terms_out, unsigned *num_terms_out, char ***uniq_out, unsigned *num_uniq_out) {
 	char **terms = NULL, **uniq_terms = NULL;
-	unsigned int term_cap = 64, num_terms = 0, num_uniq = 0, i, j;
+	unsigned term_cap = 64, num_terms = 0, num_uniq = 0, i, j;
 	char *rhs_expanded = NULL, *chunk, *cursor;
 	size_t rhs_len = 0, rhs_cap = 1;
 
@@ -11781,7 +11770,7 @@ static void mf_part(pTHX_ const char *restrict fname, const char *restrict formu
 	char *f_cpy, *lhs, *rhs;
 	bool hi = 1;
 	char **terms = NULL, **uniq = NULL;
-	unsigned int nt = 0, nu = 0, i;
+	unsigned nt = 0, nu = 0, i;
 	f_cpy = lm_formula_split(aTHX_ formula, fname, &lhs, &rhs, &hi);
 	SAVEFREEPV(f_cpy);
 	m->noff = glm_take_offsets(aTHX_ fname, rhs, &m->off);
@@ -11818,7 +11807,7 @@ static bool mf_row(pTHX_ const MfPart *restrict m, const MfRows *restrict r, siz
 	if (off) {
 		NV o = 0.0;
 		for (size_t k = 0; k < m->noff; k++) {
-			NV v = evaluate_term(aTHX_ r->data_hoa, r->row_hashes, (unsigned int)i, m->off[k]);
+			NV v = evaluate_term(aTHX_ r->data_hoa, r->row_hashes, (unsigned)i, m->off[k]);
 			if (nv_isnan(v)) return 0;
 			o += v;
 		}
@@ -12079,13 +12068,13 @@ bound, reached only by a model with no interior maximum (a theta running off
 to infinity).  On return par holds the estimate and cov the inverse of the
 negative Hessian at it (np x np, zero for aliased entries).  Returns TRUE on
 convergence.*/
-static bool zt_fit(const ZtModel *restrict m, NV *restrict par, NV *restrict cov, bool *restrict aliased, unsigned int *restrict iter_out) {
+static bool zt_fit(const ZtModel *restrict m, NV *restrict par, NV *restrict cov, bool *restrict aliased, unsigned *restrict iter_out) {
 	const size_t k = m->k, np = k + (m->dist == ZT_NEGBIN ? 1 : 0);
 	NV *g, *H, *step, *trial, *A, *gs;
 	size_t *idx, q = 0, a, b;
 	NV ll;
 	bool conv = 0;
-	unsigned short int it;	// bounded by the literal 500 below
+	unsigned short it;	// bounded by the literal 500 below
 	Newx(g, np ? np : 1, NV); Newx(H, np ? np * np : 1, NV);
 	Newx(step, np ? np : 1, NV); Newx(trial, np ? np : 1, NV);
 	Newx(A, np ? np * np : 1, NV); Newx(gs, np ? np : 1, NV);
@@ -12107,7 +12096,7 @@ static bool zt_fit(const ZtModel *restrict m, NV *restrict par, NV *restrict cov
 	for (it = 1; it <= 500; it++) {
 		NV lambda = 0.0, ll_new = 0.0;
 		bool damped = 0;
-		unsigned short int tries, half;
+		unsigned short tries, half;
 		for (tries = 0; tries < 40; tries++) {
 			for (a = 0; a < q; a++)
 				for (b = 0; b < q; b++) {
@@ -12580,7 +12569,7 @@ static void lmm_fd(LmmModel *m, lmm_fn f, void *ctx, const NV *restrict x, size_
 	for (size_t a = 0; a < d; a++) {
 		NV ha = 1e-3 * (nv_fabs(x[a]) > 1e-3 ? nv_fabs(x[a]) : 1.0);
 		NV gd[2], hd[2];
-		for (unsigned short int r = 0; r < 2; r++) {
+		for (unsigned short r = 0; r < 2; r++) {
 			NV h = r ? ha / 2.0 : ha, fp, fm;
 			memcpy(xp, x, d * sizeof(NV));
 			xp[a] = x[a] + h; fp = f(m, xp, ctx);
@@ -12594,7 +12583,7 @@ static void lmm_fd(LmmModel *m, lmm_fn f, void *ctx, const NV *restrict x, size_
 			for (size_t b = 0; b < a; b++) {
 				NV hb = 1e-3 * (nv_fabs(x[b]) > 1e-3 ? nv_fabs(x[b]) : 1.0);
 				NV md[2];
-				for (unsigned short int r = 0; r < 2; r++) {
+				for (unsigned short r = 0; r < 2; r++) {
 					NV h1 = r ? ha / 2.0 : ha, h2 = r ? hb / 2.0 : hb, fpp, fpm, fmp, fmm;
 					memcpy(xp, x, d * sizeof(NV));
 					xp[a] = x[a] + h1; xp[b] = x[b] + h2; fpp = f(m, xp, ctx);
@@ -12619,12 +12608,12 @@ static bool lmm_newton(LmmModel *restrict m, NV *restrict x, size_t d) {
 	NV *g, *H, *A, *s, *xt, f0 = lmm_crit(m, x);
 	bool conv = 0;
 	Newx(g, d, NV); Newx(H, d * d, NV); Newx(A, d * d, NV); Newx(s, d, NV); Newx(xt, d, NV);
-	for (unsigned short int it = 0; it < 50; it++) {
+	for (unsigned short it = 0; it < 50; it++) {
 		NV lambda = 0.0, f1 = 0.0, big = 0.0;
 		bool damped = 0;
-		unsigned short int half;
+		unsigned short half;
 		lmm_fd(m, lmm_crit_fn, NULL, x, d, g, H);
-		for (unsigned short int tries = 0; tries < 40; tries++) {
+		for (unsigned short tries = 0; tries < 40; tries++) {
 			for (size_t a = 0; a < d * d; a++) A[a] = H[a];
 			for (size_t a = 0; a < d; a++) A[a * d + a] += lambda * (nv_fabs(H[a * d + a]) + 1e-12);
 			if (lmm_chol(A, d)) break;
@@ -13294,7 +13283,7 @@ static NV bt_qbeta(NV alpha, NV a, NV b) {
 	if (alpha <= 0.0) return 0.0;
 	if (alpha >= 1.0) return 1.0;
 	NV lo = 0.0, hi = 1.0, mid;
-	for (unsigned short int i = 0; i < 1200; i++) {
+	for (unsigned short i = 0; i < 1200; i++) {
 		mid = 0.5 * (lo + hi);
 		if (!(mid > lo && mid < hi)) break;	//lo and hi are neighbours
 		if (incbeta(a, b, mid) < alpha) lo = mid; else hi = mid;
@@ -13697,7 +13686,7 @@ static void c_pnorm_both(double x, double *cum, double *ccum, int i_tail, bool l
 		0.00378239633202758244, 7.29751555083966205e-5
 	};
 	double xden, xnum, temp, del, eps, xsq, y;
-	unsigned int i;
+	unsigned i;
 	bool lower, upper;
 
 	if (nv_isnan(x)) { *cum = *ccum = x; return; }
@@ -13948,7 +13937,7 @@ static void anova_model_build(pTHX_ const char *restrict fname, const char *rest
 		AnModel *restrict m) {
 	char *f_cpy, *lhs, *rhs;
 	char **terms = NULL, **uniq = NULL;
-	unsigned int nt = 0, nu = 0;
+	unsigned nt = 0, nu = 0;
 	bool hi = TRUE;
 	size_t p;
 	f_cpy = lm_formula_split(aTHX_ f, fname, &lhs, &rhs, &hi);
@@ -13960,8 +13949,8 @@ static void anova_model_build(pTHX_ const char *restrict fname, const char *rest
 	}
 	lm_formula_terms(aTHX_ rhs, lhs, hoa, rows, n, hi, fname, &terms, &nt, &uniq, &nu);
 	SAVEFREEPV(terms); SAVEFREEPV(uniq);
-	for (unsigned int i = 0; i < nt; i++) SAVEFREEPV(terms[i]);
-	for (unsigned int i = 0; i < nu; i++) SAVEFREEPV(uniq[i]);
+	for (unsigned i = 0; i < nt; i++) SAVEFREEPV(terms[i]);
+	for (unsigned i = 0; i < nu; i++) SAVEFREEPV(uniq[i]);
 	m->design = lm_design_build(aTHX_ hoa, rows, n, uniq, nu, hi, xlevels_hv, as_factor);
 	SAVEDESTRUCTOR_X(lm_design_free_cb, m->design);
 	m->lhs = lhs;
@@ -14023,7 +14012,7 @@ static bool anova_row(pTHX_ AnModel *restrict m, HV *hoa, HV **rows, size_t i, N
 	for (size_t j = 0; j < m->p; j++)
 		if (!nv_isfinite(m->x[j])) return FALSE;
 	for (size_t j = 0; j < m->noff; j++) {
-		const NV v = evaluate_term(aTHX_ hoa, rows, (unsigned int)i, m->off[j]);
+		const NV v = evaluate_term(aTHX_ hoa, rows, (unsigned)i, m->off[j]);
 		if (!nv_isfinite(v)) return FALSE;
 		o += v;
 	}
@@ -14048,7 +14037,7 @@ static void anova_term_table(pTHX_ const AnModel *restrict m, size_t n_used, HV 
 		ss[ds->col[j].term] += m->d[j] * m->thetab[j] * m->thetab[j];
 		df[ds->col[j].term]++;
 	}
-	for (unsigned int t = 0; t < ds->nterm; t++) {
+	for (unsigned t = 0; t < ds->nterm; t++) {
 		HV *in = newHV();
 		(void)hv_store(result, ds->term[t], (I32)strlen(ds->term[t]), newRV_noinc((SV*)in), 0);
 		(void)hv_store(in, "Df", 2, newSViv(df[t]), 0);
@@ -15926,20 +15915,20 @@ static void cox_work_alloc(pTHX_ CoxWork *restrict w, size_t n, size_t p) {
 
 /*inv <- I^-1 by the sweep, returning the rank; aliased[] marks columns the
 information does not identify.  I is not touched.*/
-static unsigned int cox_invert(const NV *restrict I, size_t p, NV *restrict inv, bool *restrict aliased) {
+static unsigned cox_invert(const NV *restrict I, size_t p, NV *restrict inv, bool *restrict aliased) {
 	memcpy(inv, I, p * p * sizeof(NV));
-	return (unsigned int)sweep_matrix_ols(inv, p, aliased);
+	return (unsigned)sweep_matrix_ols(inv, p, aliased);
 }
 
 /*coxfit6/agfit4's Newton-Raphson.  beta comes in as the start (zero) and
 leaves as the estimate; V gets the inverse information there.  Returns the
 iteration count, as survival's fit$iter reports it.*/
-static unsigned int cox_newton(const CoxData *restrict d, CoxWork *restrict w, NV *restrict beta, NV *restrict V, bool *restrict aliased,
-                               unsigned int maxit, NV eps, NV *restrict ll0, NV *restrict ll_out,
+static unsigned cox_newton(const CoxData *restrict d, CoxWork *restrict w, NV *restrict beta, NV *restrict V, bool *restrict aliased,
+                               unsigned maxit, NV eps, NV *restrict ll0, NV *restrict ll_out,
                                NV *restrict sctest, bool *restrict converged) {
 	const size_t p = d->p;
 	NV best = 0.0, ll = 0.0;
-	unsigned int iter, halving = 0, rank0 = 0;
+	unsigned iter, halving = 0, rank0 = 0;
 	size_t j, l;
 	*converged = 0;
 	for (iter = 0; iter <= maxit; iter++) {
@@ -16719,7 +16708,7 @@ static NV dens_brent_fmin(NV ax, NV bx, ft_fn f, void *info, NV tol)
 	__float128 (113-bit, the widest build) needs about 113*ln2/-ln(0.618) =
 	163 steps.  1000 leaves six times that, and returning the running best x
 	is what the loop would have returned anyway one step later.*/
-	for (unsigned short int iter = 0; iter < 1000; iter++) {
+	for (unsigned short iter = 0; iter < 1000; iter++) {
 		xm = (a + b) * 0.5;
 		tol1 = eps * nv_fabs(x) + tol3;
 		t2 = tol1 * 2.0;
@@ -16885,7 +16874,7 @@ static const char *dens_bw_sj(pTHX_ const NV *x, const NV *xs,
 		Safefree(P.cnt);
 		return "sample is too sparse to find alph2";
 	}
-	unsigned short int itry = 1;
+	unsigned short itry = 1;
 	while (dens_sj_fSD(lower, &ctx) * dens_sj_fSD(upper, &ctx) > 0.0) {
 		if (itry > 99 || !bnd_miss) {     //1.2^99 = 69'014'979, enough
 			Safefree(P.cnt);
@@ -16912,7 +16901,7 @@ static short int dens_match_kernel(const char *s)
 	size_t len = strlen(s);
 	if (len == 0) return -1;
 	short int hit = -1;
-	unsigned short int nhit = 0;
+	unsigned short nhit = 0;
 	for (short int k = 0; k < 7; k++) {
 		const char *nm = dens_kernel_name[k];
 		size_t j = 0;
@@ -17181,8 +17170,8 @@ typedef struct {
 	const char *name;                          //for croak() and warn()
 	const char *par_name[DIST_MAX_PAR];
 	NV          par_default[DIST_MAX_PAR];
-	unsigned short int npar;                   //how many parameters exist
-	unsigned short int nrequired;              //how many have no default
+	unsigned short npar;                   //how many parameters exist
+	unsigned short nrequired;              //how many have no default
 	dist_fn fn;
 } dist_spec;
 
@@ -17250,7 +17239,7 @@ static NV qchisq_solve(NV p, NV df, bool lower) {
 		lo = hi;
 		hi *= 2.0;
 	}
-	for (unsigned short int i = 0; i < 1200; i++) {
+	for (unsigned short i = 0; i < 1200; i++) {
 		const NV mid = 0.5 * (lo + hi);
 		if (!(mid > lo && mid < hi)) break;      //lo and hi are neighbours
 		const NV v = lower ? igam(df / 2.0, mid / 2.0) : igamc(df / 2.0, mid / 2.0);
@@ -17406,7 +17395,7 @@ static void dist_parse(pTHX_ const dist_spec *spec, SV **st,
                        Stack_off_t items, SV **x_out,
                        NV *par, bool *lower,
                        bool *give_log) {
-	unsigned short int filled = 0;
+	unsigned short filled = 0;
 	Stack_off_t i;
 	bool seen[DIST_MAX_PAR];
 
@@ -17428,7 +17417,7 @@ static void dist_parse(pTHX_ const dist_spec *spec, SV **st,
 		if (filled < spec->npar && SvOK(st[i])) {
 			bool is_name = 0;
 			key = SvPV_nolen(st[i]);
-			for (unsigned short int j = 0; j < spec->npar; j++)
+			for (unsigned short j = 0; j < spec->npar; j++)
 				if (strEQ(key, spec->par_name[j])) is_name = 1;
 			if (strEQ(key, "lower") || strEQ(key, "lower.tail")
 			 || strEQ(key, "log")   || strEQ(key, "log.p")) is_name = 1;
@@ -17450,18 +17439,18 @@ static void dist_parse(pTHX_ const dist_spec *spec, SV **st,
 			*give_log = SvTRUE(st[i + 1]) ? TRUE : FALSE;
 		else {
 			bool matched = 0;
-			for (unsigned short int j = 0; j < spec->npar; j++) {
+			for (unsigned short j = 0; j < spec->npar; j++) {
 				if (!strEQ(key, spec->par_name[j])) continue;
 				par[j]  = SvNV(st[i + 1]);
 				seen[j] = 1;
 				matched = 1;
-				if (j + 1 > filled) filled = (unsigned short int)(j + 1);
+				if (j + 1 > filled) filled = (unsigned short)(j + 1);
 			}
 			if (!matched) croak("%s: unknown argument '%s'", spec->name, key);
 		}
 		i += 2;
 	}
-	for (unsigned short int j = 0; j < spec->nrequired; j++)
+	for (unsigned short j = 0; j < spec->nrequired; j++)
 		if (!seen[j])
 			croak("%s: '%s' is required", spec->name, spec->par_name[j]);
 }
@@ -18082,13 +18071,13 @@ _agg_split(df, shape, by, cols, how)
 	HV *hoa = shape == 4 ? (HV *)SvRV(df) : NULL;
 	ag_set_init(aTHX_ &B, (short int)shape, (AV *)SvRV(by), hoa);
 	ag_set_init(aTHX_ &C, (short int)shape, (AV *)SvRV(cols), hoa);
-	unsigned short int *hw;    //per cols entry: 0, 1 or 2, as above
-	Newx(hw, C.n > 0 ? C.n : 1, unsigned short int);
+	unsigned short *hw;    //per cols entry: 0, 1 or 2, as above
+	Newx(hw, C.n > 0 ? C.n : 1, unsigned short);
 	SAVEFREEPV(hw);
 	for (SSize_t j = 0; j < C.n; j++) {
 		SV **e = av_fetch(how_av, j, 0);
 		const IV m = e ? SvIV(*e) : 0;
-		hw[j] = (unsigned short int)(m >= 0 && m <= 2 ? m : 0);
+		hw[j] = (unsigned short)(m >= 0 && m <= 2 ? m : 0);
 	}
 
 	if (shape == 4) {
@@ -18263,7 +18252,7 @@ void anova(...)
 	model, and is then rotated into each model's factor; nothing about it is
 	kept.*/
 		for (size_t i = 0; i < n; i++) {
-			const NV y = evaluate_term(aTHX_ hoa, rows, (unsigned int)i, mods[0].lhs);
+			const NV y = evaluate_term(aTHX_ hoa, rows, (unsigned)i, mods[0].lhs);
 			bool ok = nv_isfinite(y) ? TRUE : FALSE;
 			for (size_t k = 0; ok && k < nkeep; k++)
 				ok = anova_row(aTHX_ &mods[k], hoa, rows, i, y);
@@ -20751,7 +20740,7 @@ CODE:
 	SV *x_sv = NULL, *y_sv = NULL;
 	bool paired = FALSE, correct = TRUE, want_cint = 0;
 	short int exact = -1;               /* -1 = decide from the sample sizes */
-	unsigned short int edgeworth = 0;   /* Edgeworth terms wanted: 0 .. 3 */
+	unsigned short edgeworth = 0;   /* Edgeworth terms wanted: 0 .. 3 */
 	NV mu = 0.0, conf_level = NV_CONF_95, digits_rank = NV_INF, tol_root = 1e-4;
 	const char *alt_str = "two.sided";
 	Stack_off_t arg_idx = 0;
@@ -20791,7 +20780,7 @@ CODE:
 		else if (strEQ(key, "edgeworth")) {
 			IV e = SvIV(val);
 			if (e < 0 || e > 3) croak("wilcox_test: 'edgeworth' must be 0, 1, 2 or 3");
-			edgeworth = (unsigned short int)e;
+			edgeworth = (unsigned short)e;
 		}
 		else croak("wilcox_test: unknown argument '%s'", key);
 	}
@@ -20912,7 +20901,7 @@ CODE:
   has already left ri sorted ascending, which is the order the shift algorithm
   wants, and a tie group of even size is what makes a rank half-integral and
   the scale 2.*/
-				unsigned short int scale = 1;
+				unsigned short scale = 1;
 				for (size_t i = 0; i < total_n; i++)
 					if (ri[i].rank != nv_floor(ri[i].rank)) { scale = 2; break; }
 				UV *restrict z;
@@ -20937,7 +20926,7 @@ CODE:
 			       * ((NV)total_n + 1.0 - tie_adj / ((NV)total_n * ((NV)total_n - 1.0)));
 			NV z = statistic - mean_w;
 	// The Edgeworth series is derived for untied ranks
-			unsigned short int k = has_ties ? 0 : edgeworth;
+			unsigned short k = has_ties ? 0 : edgeworth;
 			NV corr = 0.0;
 			if (correct)
 				corr = (alt == 1) ? -0.5 : (alt == 2) ? 0.5
@@ -21147,7 +21136,7 @@ CODE:
 	  zeroes out, as R's .dsignrank() takes it from z.  Two tied zeroes share a
 	  half-integral rank that never reaches the table, and counting it used to
 	  double the table for nothing. */
-				unsigned short int scale = 1;
+				unsigned short scale = 1;
 				for (size_t i = 0; i < n_obs; i++)
 					if (ri[i].grp != 0 && ri[i].rank != nv_floor(ri[i].rank)) { scale = 2; break; }
 				UV *restrict z;
@@ -21184,7 +21173,7 @@ CODE:
 			       - tie_adj / 48.0;
 			NV z = statistic - mean_v;
 			/* R also switches the Edgeworth series off when zeroes were dropped. */
-			unsigned short int k = (has_ties || has_zero) ? 0 : edgeworth;
+			unsigned short k = (has_ties || has_zero) ? 0 : edgeworth;
 			NV corr = 0.0;
 			if (correct)
 				corr = (alt == 1) ? -0.5 : (alt == 2) ? 0.5
@@ -21421,29 +21410,29 @@ CODE:
 	NV *restrict obs = NULL;
 	AV *row_keys = NULL;
 	AV *col_keys = NULL;
-	unsigned int r = 0, c = 0;
+	unsigned r = 0, c = 0;
 	bool is_2d = 0;
 	if (input_type == SVt_PVAV) {
 		AV *obs_av = (AV *)SvRV(data_ref);
-		unsigned int n0 = (unsigned int)(av_top_index(obs_av) + 1);
+		unsigned n0 = (unsigned)(av_top_index(obs_av) + 1);
 		if (n0 == 0) croak("Empty data structure");
 		SV **first_elem = av_fetch(obs_av, 0, 0);
 		if (first_elem && SvROK(*first_elem) && SvTYPE(SvRV(*first_elem)) == SVt_PVAV) {
 			is_2d = 1;
 			r = n0;
-			c = (unsigned int)(av_top_index((AV *)SvRV(*first_elem)) + 1);
+			c = (unsigned)(av_top_index((AV *)SvRV(*first_elem)) + 1);
 			if (c == 0) croak("Empty data structure");
 			obs = (NV *)safemalloc((size_t)r * c * sizeof(NV));
 			SAVEFREEPV(obs);
-			for (unsigned int i = 0; i < r; i++) {
+			for (unsigned i = 0; i < r; i++) {
 				SV **row_sv = av_fetch(obs_av, i, 0);
 				if (!row_sv || !SvROK(*row_sv) || SvTYPE(SvRV(*row_sv)) != SVt_PVAV)
 					croak("chisq_test: row %u is not an array reference", i + 1);
 				AV *row_av = (AV *)SvRV(*row_sv);
-				if ((unsigned int)(av_top_index(row_av) + 1) != c)
+				if ((unsigned)(av_top_index(row_av) + 1) != c)
 					croak("chisq_test: all rows must have the same number of columns (row 1 has %u, row %u has %u)",
-						c, i + 1, (unsigned int)(av_top_index(row_av) + 1));
-				for (unsigned int j = 0; j < c; j++)
+						c, i + 1, (unsigned)(av_top_index(row_av) + 1));
+				for (unsigned j = 0; j < c; j++)
 					obs[i * c + j] = ct_cell(aTHX_ ct_av_get(aTHX_ row_av, j),
 						SvPV_nolen(sv_2mortal(newSVpvf("cell [%u][%u]", i, j))));
 			}
@@ -21452,7 +21441,7 @@ CODE:
 			c = n0;
 			obs = (NV *)safemalloc((size_t)c * sizeof(NV));
 			SAVEFREEPV(obs);
-			for (unsigned int j = 0; j < c; j++)
+			for (unsigned j = 0; j < c; j++)
 				obs[j] = ct_cell(aTHX_ ct_av_get(aTHX_ obs_av, j),
 					SvPV_nolen(sv_2mortal(newSVpvf("element [%u]", j))));
 		}
@@ -21501,7 +21490,7 @@ placeholder that is not yet a reference or a number.*/
 
 			obs = (NV *)safemalloc((size_t)r * c * sizeof(NV));
 			SAVEFREEPV(obs);
-			for (unsigned int i = 0; i < r; i++) {
+			for (unsigned i = 0; i < r; i++) {
 				SV **row_key_sv = av_fetch(row_keys, i, 0);
 				HE *inner_he = hv_fetch_ent(obs_hv, *row_key_sv, 0, 0);
 				SV *inner_sv = inner_he ? HeVAL(inner_he) : NULL;
@@ -21513,7 +21502,7 @@ placeholder that is not yet a reference or a number.*/
 				if (inner_n != c)
 					croak("chisq_test: every row must have the same %u column key(s); row '%s' has %" UVuf,
 						c, SvPV_nolen(*row_key_sv), (UV)inner_n);
-				for (unsigned int j = 0; j < c; j++) {
+				for (unsigned j = 0; j < c; j++) {
 					SV **col_key_sv = av_fetch(col_keys, j, 0);
 					SV *cell = hv_cell(aTHX_ inner_hv, *col_key_sv);
 					if (!cell)
@@ -21530,7 +21519,7 @@ placeholder that is not yet a reference or a number.*/
 			r = 1;
 			obs = (NV *)safemalloc((size_t)c * sizeof(NV));
 			SAVEFREEPV(obs);
-			for (unsigned int j = 0; j < c; j++) {
+			for (unsigned j = 0; j < c; j++) {
 				SV **col_key_sv = av_fetch(col_keys, j, 0);
 				obs[j] = ct_cell(aTHX_ hv_cell(aTHX_ obs_hv, *col_key_sv),
 					SvPV_nolen(sv_2mortal(newSVpvf("element {%s}", SvPV_nolen(*col_key_sv)))));
@@ -21543,10 +21532,10 @@ placeholder that is not yet a reference or a number.*/
   runs the goodness-of-fit test, and so does this.  Treating it as r x c
   instead gives df == 0 and the vacuous p-value 1.*/
 	bool gof = (!is_2d || r == 1 || c == 1);
-	unsigned int k = r * c;
+	unsigned k = r * c;
 
 	ct_acc_t total_acc = 0.0;
-	for (unsigned int idx = 0; idx < k; idx++) total_acc += obs[idx];
+	for (unsigned idx = 0; idx < k; idx++) total_acc += obs[idx];
 	NV grand_total = (NV)total_acc;
 	if (grand_total == 0.0) croak("chisq_test: at least one entry of 'x' must be positive");
 	if (gof && k < 2) croak("chisq_test: 'x' must at least have 2 elements");
@@ -21565,9 +21554,9 @@ placeholder that is not yet a reference or a number.*/
 			if (input_type == SVt_PVHV)
 				croak("chisq_test: 'p' must be a hash reference keyed like 'x' when 'x' is a hash reference");
 			AV *p_av = (AV *)SvRV(p_sv);
-			if ((unsigned int)(av_top_index(p_av) + 1) != k)
+			if ((unsigned)(av_top_index(p_av) + 1) != k)
 				croak("chisq_test: 'x' and 'p' must have the same number of elements");
-			for (unsigned int j = 0; j < k; j++)
+			for (unsigned j = 0; j < k; j++)
 				probs[j] = ct_prob(aTHX_ ct_av_get(aTHX_ p_av, j),
 					SvPV_nolen(sv_2mortal(newSVpvf("p[%u]", j))));
 		} else if (p_type == SVt_PVHV) {
@@ -21578,7 +21567,7 @@ placeholder that is not yet a reference or a number.*/
 			HV *p_hv = (HV *)SvRV(p_sv);
 			if (hv_nkeys(aTHX_ p_hv) != k)
 				croak("chisq_test: 'x' and 'p' must have the same number of elements");
-			for (unsigned int j = 0; j < k; j++) {
+			for (unsigned j = 0; j < k; j++) {
 				SV **key_sv = av_fetch(key_av, j, 0);
 				SV *pv = hv_cell(aTHX_ p_hv, *key_sv);
 				if (!pv) croak("chisq_test: 'p' has no entry for '%s'", SvPV_nolen(*key_sv));
@@ -21589,19 +21578,19 @@ placeholder that is not yet a reference or a number.*/
 			croak("chisq_test: 'p' must be an array reference or a hash reference");
 		}
 		NV p_sum = 0.0;
-		for (unsigned int j = 0; j < k; j++) p_sum += probs[j];
+		for (unsigned j = 0; j < k; j++) p_sum += probs[j];
 /* R's tolerance on the sum is sqrt(.Machine$double.eps), and it is a
   double there whatever the NV width is here.*/
 		if (nv_fabs(p_sum - 1.0) > nv_sqrt((NV)DBL_EPSILON)) {
 			if (!rescale_p) croak("chisq_test: probabilities must sum to 1");
 			if (p_sum <= 0.0) croak("chisq_test: probabilities must sum to a positive value to be rescaled");
-			for (unsigned int j = 0; j < k; j++) probs[j] /= p_sum;
+			for (unsigned j = 0; j < k; j++) probs[j] /= p_sum;
 		}
 	}
 	NV *restrict expect = (NV *)safemalloc((size_t)k * sizeof(NV));
 	SAVEFREEPV(expect);
 	ct_acc_t stat_acc = 0.0;
-	unsigned int df = 0;
+	unsigned df = 0;
 	bool yates = 0;
 
 	if (gof) {
@@ -21609,7 +21598,7 @@ placeholder that is not yet a reference or a number.*/
   expectation is n * (1/k) and not n / k: the two differ by an ulp for
   most k, and that ulp is visible in the statistic.*/
 		NV unif = 1.0 / (NV)k;
-		for (unsigned int idx = 0; idx < k; idx++) {
+		for (unsigned idx = 0; idx < k; idx++) {
 			NV E = probs ? grand_total * probs[idx] : grand_total * unif;
 			NV d = obs[idx] - E;
 			expect[idx] = E;
@@ -21622,18 +21611,18 @@ placeholder that is not yet a reference or a number.*/
 		NV *restrict col_sum = (NV *)safemalloc(c * sizeof(NV));
 		SAVEFREEPV(col_sum);
 		// one accumulator per margin, as R's rowSums()/colSums() do
-		for (unsigned int i = 0; i < r; i++) {
+		for (unsigned i = 0; i < r; i++) {
 			ct_acc_t acc = 0.0;
-			for (unsigned int j = 0; j < c; j++) acc += obs[i * c + j];
+			for (unsigned j = 0; j < c; j++) acc += obs[i * c + j];
 			row_sum[i] = (NV)acc;
 		}
-		for (unsigned int j = 0; j < c; j++) {
+		for (unsigned j = 0; j < c; j++) {
 			ct_acc_t acc = 0.0;
-			for (unsigned int i = 0; i < r; i++) acc += obs[i * c + j];
+			for (unsigned i = 0; i < r; i++) acc += obs[i * c + j];
 			col_sum[j] = (NV)acc;
 		}
-		for (unsigned int i = 0; i < r; i++)
-			for (unsigned int j = 0; j < c; j++)
+		for (unsigned i = 0; i < r; i++)
+			for (unsigned j = 0; j < c; j++)
 				expect[i * c + j] = (row_sum[i] * col_sum[j]) / grand_total;
 /* Yates' correction is one number for the whole table -- R's
   min(0.5, abs(x - E)) minimises over every cell before subtracting --
@@ -21646,13 +21635,13 @@ placeholder that is not yet a reference or a number.*/
 		NV y_corr = 0.0;
 		if (correct && r == 2 && c == 2) {
 			y_corr = 0.5;
-			for (unsigned int idx = 0; idx < k; idx++) {
+			for (unsigned idx = 0; idx < k; idx++) {
 				NV a = nv_fabs(obs[idx] - expect[idx]);
 				if (a < y_corr) y_corr = a;
 			}
 			yates = (y_corr > 0.0) ? 1 : 0;
 		}
-		for (unsigned int idx = 0; idx < k; idx++) {
+		for (unsigned idx = 0; idx < k; idx++) {
 			NV d = nv_fabs(obs[idx] - expect[idx]) - y_corr;
 			stat_acc += (d * d) / expect[idx];
 		}
@@ -21660,7 +21649,7 @@ placeholder that is not yet a reference or a number.*/
 	}
 	/* R warns whenever any expected count is below 5, the usual rule of thumb
 	 for the chi-squared approximation being trustworthy.*/
-	for (unsigned int idx = 0; idx < k; idx++) {
+	for (unsigned idx = 0; idx < k; idx++) {
 		if (expect[idx] < 5.0) {
 			warn("chisq_test: Chi-squared approximation may be incorrect");
 			break;
@@ -21671,26 +21660,26 @@ placeholder that is not yet a reference or a number.*/
 	if (input_type == SVt_PVAV) {
 		AV *expected_av = newAV();
 		if (is_2d) {
-			for (unsigned int i = 0; i < r; i++) {
+			for (unsigned i = 0; i < r; i++) {
 				AV *exp_row = newAV();
-				for (unsigned int j = 0; j < c; j++) av_push(exp_row, newSVnv(expect[i * c + j]));
+				for (unsigned j = 0; j < c; j++) av_push(exp_row, newSVnv(expect[i * c + j]));
 				av_push(expected_av, newRV_noinc((SV *)exp_row));
 			}
 		} else {
-			for (unsigned int j = 0; j < c; j++) av_push(expected_av, newSVnv(expect[j]));
+			for (unsigned j = 0; j < c; j++) av_push(expected_av, newSVnv(expect[j]));
 		}
 		expected_ref = newRV_noinc((SV *)expected_av);
 	} else {
 		HV *expected_hv = newHV();
 		if (is_2d) {
-			for (unsigned int i = 0; i < r; i++) {
+			for (unsigned i = 0; i < r; i++) {
 				HV *exp_row = newHV();
-				for (unsigned int j = 0; j < c; j++)
+				for (unsigned j = 0; j < c; j++)
 					hv_store_ent(exp_row, *av_fetch(col_keys, j, 0), newSVnv(expect[i * c + j]), 0);
 				hv_store_ent(expected_hv, *av_fetch(row_keys, i, 0), newRV_noinc((SV *)exp_row), 0);
 			}
 		} else {
-			for (unsigned int j = 0; j < c; j++)
+			for (unsigned j = 0; j < c; j++)
 				hv_store_ent(expected_hv, *av_fetch(col_keys, j, 0), newSVnv(expect[j]), 0);
 		}
 		expected_ref = newRV_noinc((SV *)expected_hv);
@@ -23528,7 +23517,7 @@ SV *predict(...)
 				for (kk = 0; kk < nbase; kk++) raw_lv[kk] = NULL;
 				//read each factor's raw level once; reused by main effects + interactions
 				for (kk = 0; ok && kk < nbase; kk++) {
-					char *raw = get_data_string_alloc(aTHX_ data_hoa, row_hashes, (unsigned int)i, fbase[kk]);
+					char *raw = get_data_string_alloc(aTHX_ data_hoa, row_hashes, (unsigned)i, fbase[kk]);
 					SSize_t nl, l1, found = -1;
 					if (!raw) { ok = 0; break; }             //missing value -> NaN row
 					nl = av_len(flev[kk]) + 1;
@@ -23567,7 +23556,7 @@ SV *predict(...)
 				for (j = 0; ok && j < ncoef; j++) {
 					NV v;
 					if (strEQ(cterm[j], "Intercept")) v = 1.0;
-					else v = evaluate_term(aTHX_ data_hoa, row_hashes, (unsigned int)i, cterm[j]);
+					else v = evaluate_term(aTHX_ data_hoa, row_hashes, (unsigned)i, cterm[j]);
 					if (nv_isnan(v)) { ok = 0; break; }
 					eta += cbeta[j] * v;
 				}
@@ -23581,7 +23570,7 @@ SV *predict(...)
 							//indicator: 1 iff this row's level for that base equals the dummy's level
 							prod *= (raw_lv[bidx] && strcmp(raw_lv[bidx], cf_lvl[m]) == 0) ? 1.0 : 0.0;
 						} else {
-							NV v = evaluate_term(aTHX_ data_hoa, row_hashes, (unsigned int)i, cf_term[m]);
+							NV v = evaluate_term(aTHX_ data_hoa, row_hashes, (unsigned)i, cf_term[m]);
 							if (nv_isnan(v)) { ok = 0; break; }
 							prod *= v;
 						}
@@ -23597,7 +23586,7 @@ SV *predict(...)
 						SV **e = av_fetch(off_av, q, 0);
 						NV v;
 						if (!e || !*e) continue;
-						v = evaluate_term(aTHX_ data_hoa, row_hashes, (unsigned int)i, SvPV_nolen(*e));
+						v = evaluate_term(aTHX_ data_hoa, row_hashes, (unsigned)i, SvPV_nolen(*e));
 						if (nv_isnan(v)) { ok = 0; break; }
 						eta += v;
 					}
@@ -23632,10 +23621,10 @@ SV *glm(...)
 	char **terms = NULL, **uniq_terms = NULL, **off_terms = NULL;
 	char **row_names = NULL, **vnames = NULL;
 	char **fe_names = NULL;
-	unsigned int num_terms = 0, num_uniq = 0, max_iter = 25;
+	unsigned num_terms = 0, num_uniq = 0, max_iter = 25;
 	size_t n, valid_n = 0, n_ok = 0, i, j, p, p_full, col0, noff = 0;
 	size_t fe_rank = 0, fe_removed = 0;
-	unsigned short int nfe = 0;
+	unsigned short nfe = 0;
 	bool has_intercept = TRUE, theta_given = FALSE, has_off, intercept_model;
 	NV theta = 0.0, conf_level = NV_CONF_95, epsilon = 1e-8;
 	short int fam = GLM_GAUSSIAN;  //GLM_GAUSSIAN, GLM_BINOMIAL, GLM_POISSON, GLM_NEGBIN
@@ -23646,7 +23635,7 @@ SV *glm(...)
 	NV *X, *Y, *OFF = NULL, *PW = NULL, *rowbuf;
 	size_t **FE = NULL, *NG = NULL;
 	size_t *CLv[GLM_MAX_CLUSTER], Gv[GLM_MAX_CLUSTER];
-	unsigned short int ncl = 0;    //cluster variables; 2 or more is multiway
+	unsigned short ncl = 0;    //cluster variables; 2 or more is multiway
 	GlmIrls g;
 	HV *res_hv, *coef_hv, *fitted_hv, *resid_hv, *summary_hv, *conf_hv, *exp_hv, *vcov_hv;
 	AV *terms_av;
@@ -23669,7 +23658,7 @@ SV *glm(...)
 	  else if (strEQ(key, "maxit")) {
 		NV m = SvNV(val);
 		if (!(m >= 1.0 && m <= 1e6)) croak("glm: maxit must be between 1 and 1e6");
-		max_iter = (unsigned int)m;
+		max_iter = (unsigned)m;
 	  }
 	  else if (strEQ(key, "epsilon")) {
 		epsilon = SvNV(val);
@@ -23754,7 +23743,7 @@ SV *glm(...)
 		}
 		na = av_len(fe_av) + 1;
 		if (na > 16) croak("glm: at most 16 factors can be absorbed");
-		nfe = (unsigned short int)na;
+		nfe = (unsigned short)na;
 		Newx(fe_names, na ? na : 1, char *); SAVEFREEPV(fe_names);
 		for (SSize_t a = 0; a < na; a++) {
 			SV **e = av_fetch(fe_av, a, 0);
@@ -23808,7 +23797,7 @@ SV *glm(...)
 					b = e;
 					while (b > q && isspace((unsigned char)b[-1])) b--;
 					if (ncl == GLM_MAX_CLUSTER)
-						croak("glm: at most %u cluster variables", (unsigned int)GLM_MAX_CLUSTER);
+						croak("glm: at most %u cluster variables", (unsigned)GLM_MAX_CLUSTER);
 					cl_spec[ncl].av = NULL;
 					cl_spec[ncl].col = q;
 					if (*e) { *b = '\0'; q = e + 1; } else { *b = '\0'; q = e; }
@@ -23843,12 +23832,12 @@ SV *glm(...)
 	Newx(vnames, n ? n : 1, char *);        SAVEFREEPV(vnames);
 	if (has_off) { Newx(OFF, n ? n : 1, NV); SAVEFREEPV(OFF); }
 	if (w_spec.col || w_spec.av) { Newx(PW, n ? n : 1, NV); SAVEFREEPV(PW); }
-	for (unsigned short int c = 0; c < ncl; c++) { Newx(CLv[c], n ? n : 1, size_t); SAVEFREEPV(CLv[c]); }
+	for (unsigned short c = 0; c < ncl; c++) { Newx(CLv[c], n ? n : 1, size_t); SAVEFREEPV(CLv[c]); }
 	{
 		HV *cl_map[GLM_MAX_CLUSTER], **fe_map = NULL;
 		size_t cl_count[GLM_MAX_CLUSTER], *fe_count = NULL;
 		GlmVarSpec *fe_spec = NULL;
-		for (unsigned short int c = 0; c < ncl; c++) {
+		for (unsigned short c = 0; c < ncl; c++) {
 			cl_map[c] = (HV *)sv_2mortal((SV *)newHV());
 			cl_count[c] = 0;
 		}
@@ -23858,20 +23847,20 @@ SV *glm(...)
 			Newx(fe_map, nfe, HV *);        SAVEFREEPV(fe_map);
 			Newxz(fe_count, nfe, size_t);   SAVEFREEPV(fe_count);
 			Newx(fe_spec, nfe, GlmVarSpec); SAVEFREEPV(fe_spec);
-			for (unsigned short int k = 0; k < nfe; k++) {
+			for (unsigned short k = 0; k < nfe; k++) {
 				Newx(FE[k], n ? n : 1, size_t); SAVEFREEPV(FE[k]);
 				fe_map[k] = (HV *)sv_2mortal((SV *)newHV());
 				fe_spec[k].col = fe_names[k]; fe_spec[k].av = NULL;
 			}
 		}
 		for (i = 0; i < n; i++) {
-			NV y_val = evaluate_term(aTHX_ data_hoa, row_hashes, (unsigned int)i, lhs);
+			NV y_val = evaluate_term(aTHX_ data_hoa, row_hashes, (unsigned)i, lhs);
 			NV o = 0.0, w = 1.0;
 			bool ok = 1;
 			if (nv_isnan(y_val)) continue;
 			if (!lm_design_row(aTHX_ design, data_hoa, row_hashes, i, rowbuf)) continue;
 			for (j = 0; ok && j < noff; j++) {
-				NV v = evaluate_term(aTHX_ data_hoa, row_hashes, (unsigned int)i, off_terms[j]);
+				NV v = evaluate_term(aTHX_ data_hoa, row_hashes, (unsigned)i, off_terms[j]);
 				if (nv_isnan(v)) ok = 0; else o += v;
 			}
 			if (ok && (off_spec.col || off_spec.av)) {
@@ -23883,7 +23872,7 @@ SV *glm(...)
 				if (nv_isnan(w)) ok = 0;
 				else if (w < 0.0) croak("glm: negative weights not allowed");
 			}
-			for (unsigned short int k = 0; ok && k < nfe; k++)
+			for (unsigned short k = 0; ok && k < nfe; k++)
 				if (!glm_var_label(aTHX_ &fe_spec[k], data_hoa, row_hashes, i,
 				                   fe_map[k], &fe_count[k], &FE[k][valid_n]))
 					ok = 0;
@@ -23902,7 +23891,7 @@ SV *glm(...)
 	/*A missing cluster is an error rather than a dropped row: the cluster is
 	not part of the model, so dropping the row would change the fit, and
 	sandwich::vcovCL() refuses one too ("cannot handle NAs in 'cluster'").*/
-			for (unsigned short int c = 0; c < ncl; c++)
+			for (unsigned short c = 0; c < ncl; c++)
 				if (!glm_var_label(aTHX_ &cl_spec[c], data_hoa, row_hashes, i,
 				                   cl_map[c], &cl_count[c], &CLv[c][valid_n]))
 					croak("glm: cluster is missing for row '%s'", row_names[i]);
@@ -23913,8 +23902,8 @@ SV *glm(...)
 			vnames[valid_n] = row_names[i];
 			valid_n++;
 		}
-		for (unsigned short int k = 0; k < nfe; k++) NG[k] = fe_count[k];
-		for (unsigned short int c = 0; c < ncl; c++) Gv[c] = cl_count[c];
+		for (unsigned short k = 0; k < nfe; k++) NG[k] = fe_count[k];
+		for (unsigned short c = 0; c < ncl; c++) Gv[c] = cl_count[c];
 	}
 	if (valid_n < p || valid_n == 0)
 		croak("glm: 0 degrees of freedom (too many NAs or parameters > observations)");
@@ -23957,14 +23946,14 @@ SV *glm(...)
 	if (nfe && fam != GLM_GAUSSIAN) {
 		NV *gs; size_t *gc, bound = 0;
 		bool *drop;
-		for (unsigned short int k = 0; k < nfe; k++) if (NG[k] > bound) bound = NG[k];
+		for (unsigned short k = 0; k < nfe; k++) if (NG[k] > bound) bound = NG[k];
 		Newx(gs, bound ? bound : 1, NV);   SAVEFREEPV(gs);
 		Newx(gc, bound ? bound : 1, size_t); SAVEFREEPV(gc);
 		Newx(drop, valid_n, bool);          SAVEFREEPV(drop);
 		for (;;) {
 			bool any = 0;
 			for (i = 0; i < valid_n; i++) drop[i] = 0;
-			for (unsigned short int k = 0; k < nfe; k++) {
+			for (unsigned short k = 0; k < nfe; k++) {
 	/*Only rows with a positive prior weight say anything about a group's
 	effect: a zero-weight row is carried through the fit but contributes
 	nothing to it, so a group whose weighted rows are all 0 is still at the
@@ -23991,8 +23980,8 @@ SV *glm(...)
 						Y[w] = Y[i];
 						if (OFF) OFF[w] = OFF[i];
 						if (PW)  PW[w]  = PW[i];
-						for (unsigned short int c = 0; c < ncl; c++) CLv[c][w] = CLv[c][i];
-						for (unsigned short int k = 0; k < nfe; k++) FE[k][w] = FE[k][i];
+						for (unsigned short c = 0; c < ncl; c++) CLv[c][w] = CLv[c][i];
+						for (unsigned short k = 0; k < nfe; k++) FE[k][w] = FE[k][i];
 						vnames[w] = vnames[i];
 					}
 					w++;
@@ -24008,11 +23997,11 @@ SV *glm(...)
 	{
 		size_t bound = 0;
 		size_t *scratch;
-		for (unsigned short int c = 0; c < ncl; c++) if (Gv[c] > bound) bound = Gv[c];
-		for (unsigned short int k = 0; k < nfe; k++) if (NG[k] > bound) bound = NG[k];
+		for (unsigned short c = 0; c < ncl; c++) if (Gv[c] > bound) bound = Gv[c];
+		for (unsigned short k = 0; k < nfe; k++) if (NG[k] > bound) bound = NG[k];
 		Newx(scratch, bound ? bound : 1, size_t); SAVEFREEPV(scratch);
-		for (unsigned short int k = 0; k < nfe; k++) NG[k] = glm_reindex(FE[k], valid_n, NG[k], scratch);
-		for (unsigned short int c = 0; c < ncl; c++) {
+		for (unsigned short k = 0; k < nfe; k++) NG[k] = glm_reindex(FE[k], valid_n, NG[k], scratch);
+		for (unsigned short c = 0; c < ncl; c++) {
 			Gv[c] = glm_reindex(CLv[c], valid_n, Gv[c], scratch);
 			if (Gv[c] < 2) croak("glm: cluster needs at least two distinct clusters");
 		}
@@ -24042,7 +24031,7 @@ SV *glm(...)
 		Newx(g.fe_sw, nfe, NV *);              SAVEFREEPV(g.fe_sw);
 		Newx(g.fe_s,  nfe, NV *);              SAVEFREEPV(g.fe_s);
 		const size_t blk = (p == 0) ? 1 : (p < GLM_FE_BLOCK) ? p : GLM_FE_BLOCK;
-		for (unsigned short int k = 0; k < nfe; k++) {
+		for (unsigned short k = 0; k < nfe; k++) {
 			Newx(g.fe_sw[k], NG[k] ? NG[k] : 1, NV);         SAVEFREEPV(g.fe_sw[k]);
 			Newx(g.fe_s[k],  (NG[k] ? NG[k] : 1) * blk, NV); SAVEFREEPV(g.fe_s[k]);
 		}
@@ -24080,14 +24069,14 @@ SV *glm(...)
 	Weights enter theta.ml() the way glm.nb passes them: n = sum(w), and every
 	term of the score and information multiplied by its row's weight.*/
 	{
-		unsigned int outer_max = (fam == GLM_NEGBIN && !theta_given) ? (max_iter + 1) : 1;
+		unsigned outer_max = (fam == GLM_NEGBIN && !theta_given) ? (max_iter + 1) : 1;
 		NV  nb_d1 = 1.0, nb_Lm = 0.0, nb_Lm0 = 0.0, nb_del = 1.0, se_theta = NV_NAN;
 		NV *nb_mu_prev = NULL;
 		bool nb_alt_converged = FALSE, nb_failed = 0;
 		if (fam == GLM_NEGBIN && !theta_given) {
 			Newx(nb_mu_prev, valid_n, NV); SAVEFREEPV(nb_mu_prev);
 		}
-		for (unsigned int outer = 0; outer < outer_max; outer++) {
+		for (unsigned outer = 0; outer < outer_max; outer++) {
 			bool nb_pois_pass = (fam == GLM_NEGBIN && !theta_given && outer == 0);
 			bool nb_warm      = (fam == GLM_NEGBIN && !theta_given && outer > 0);
 			g.fam   = nb_pois_pass ? GLM_POISSON : fam;
@@ -24164,7 +24153,7 @@ SV *glm(...)
 		{
 			const NV *mu = g.mu, *beta = g.beta, *XtWX = g.XtWX;
 			const bool *aliased = g.aliased;
-			const unsigned int final_rank = g.rank;
+			const unsigned final_rank = g.rank;
 			const size_t rank_total = final_rank + fe_rank;
 			const NV deviance = g.dev;
 			NV null_dev = 0.0, aic = 0.0, dispersion, twologlik = NV_NAN;
@@ -24378,13 +24367,13 @@ SV *glm(...)
 			if (ncl == 1) hv_store(res_hv, "n.clusters", 10, newSVuv((UV)Gv[0]), 0);
 			else if (ncl > 1) {
 				AV *nc = newAV();
-				for (unsigned short int c = 0; c < ncl; c++) av_push(nc, newSVuv((UV)Gv[c]));
+				for (unsigned short c = 0; c < ncl; c++) av_push(nc, newSVuv((UV)Gv[c]));
 				hv_store(res_hv, "n.clusters", 10, newRV_noinc((SV*)nc), 0);
 			}
 			hv_store(res_hv, "xlevels",       7, newRV_inc((SV*)xlevels_hv), 0);
 			if (nfe) {
 				HV *ab = newHV();
-				for (unsigned short int k = 0; k < nfe; k++)
+				for (unsigned short k = 0; k < nfe; k++)
 					hv_store(ab, fe_names[k], (I32)strlen(fe_names[k]), newSVuv((UV)NG[k]), 0);
 				hv_store(res_hv, "absorb",     6, newRV_noinc((SV*)ab), 0);
 				hv_store(res_hv, "fe.removed", 10, newSVuv((UV)fe_removed), 0);
@@ -24424,7 +24413,7 @@ SV *zerotrunc(...)
 	bool *aliased, conv;
 	char **names;
 	size_t i, j, n = 0, np, n_ok = 0;
-	unsigned int iter = 0;
+	unsigned iter = 0;
 	HV *res, *coef_hv, *summ_hv, *vcov_hv, *fit_hv, *resid_hv, *xlev;
 	NV ll;
 
@@ -24468,7 +24457,7 @@ SV *zerotrunc(...)
 	Newx(W, R.n ? R.n : 1, NV);   SAVEFREEPV(W);
 	Newx(names, R.n ? R.n : 1, char *); SAVEFREEPV(names);
 	for (i = 0; i < R.n; i++) {
-		NV y = evaluate_term(aTHX_ R.data_hoa, R.row_hashes, (unsigned int)i, P.lhs), o, w = 1.0;
+		NV y = evaluate_term(aTHX_ R.data_hoa, R.row_hashes, (unsigned)i, P.lhs), o, w = 1.0;
 		if (nv_isnan(y)) continue;
 		if (!mf_row(aTHX_ &P, &R, i, X + n * P.p, &o)) continue;
 		if (off_spec.col || off_spec.av) {
@@ -24645,7 +24634,7 @@ SV *hurdle(...)
 	Newx(W, R.n ? R.n : 1, NV);    SAVEFREEPV(W);
 	Newx(names, R.n ? R.n : 1, char *); SAVEFREEPV(names);
 	for (i = 0; i < R.n; i++) {
-		NV y = evaluate_term(aTHX_ R.data_hoa, R.row_hashes, (unsigned int)i, Pc.lhs), oc, oz, w = 1.0;
+		NV y = evaluate_term(aTHX_ R.data_hoa, R.row_hashes, (unsigned)i, Pc.lhs), oc, oz, w = 1.0;
 		if (nv_isnan(y)) continue;
 		if (!mf_row(aTHX_ &Pc, &R, i, Xc + n * Pc.p, &oc)) continue;
 		if (!mf_row(aTHX_ &Pz, &R, i, Xz + n * Pz.p, &oz)) continue;
@@ -24682,7 +24671,7 @@ SV *hurdle(...)
 		GlmIrls g;
 		NV *zpar, *zcov, *pnz, llz;
 		bool *zal, convz;
-		unsigned int iterz = 0;
+		unsigned iterz = 0;
 		size_t pz = Pz.p, npz = pz + (zdist == ZT_NEGBIN ? 1 : 0);
 		HV *coef_z = newHV(), *summ_z = newHV(), *vcov_z = newHV();
 		Zero(&g, 1, GlmIrls);
@@ -24720,7 +24709,7 @@ SV *hurdle(...)
 			size_t pc = Pc.p, np = pc + (zm.dist == ZT_NEGBIN ? 1 : 0), m = 0;
 			NV *Xp, *Yp, *Op, *Wp, *par, *cov, *fitp, llc;
 			bool *cal, convc;
-			unsigned int iter = 0;
+			unsigned iter = 0;
 			HV *coef_c = newHV(), *summ_c = newHV(), *vcov_c = newHV();
 			HV *coef = newHV(), *summ = newHV(), *vcov = newHV(), *fit_hv = newHV();
 			Newx(Xp, npos * (pc ? pc : 1), NV); SAVEFREEPV(Xp);
@@ -24956,7 +24945,7 @@ SV *svyglm(...)
 			}
 		}
 		for (i = 0; i < R.n; i++) {
-			NV y = evaluate_term(aTHX_ R.data_hoa, R.row_hashes, (unsigned int)i, P.lhs), o;
+			NV y = evaluate_term(aTHX_ R.data_hoa, R.row_hashes, (unsigned)i, P.lhs), o;
 			if (nv_isnan(y)) continue;
 			if (!mf_row(aTHX_ &P, &R, i, X + n * p, &o)) continue;
 			if (os.col || os.av) {
@@ -25189,7 +25178,7 @@ SV *ivreg(...)
 	GlmVarSpec ws, cs;
 	NV *X, *Z, *Y, *W;
 	size_t *CLv[GLM_MAX_CLUSTER], Gv[GLM_MAX_CLUSTER];
-	unsigned short int ncl = 0;
+	unsigned short ncl = 0;
 	char **names;
 	HV *res;
 
@@ -25275,7 +25264,7 @@ SV *ivreg(...)
 		HV *cmap = (HV *)sv_2mortal((SV *)newHV());
 		size_t cc = 0;
 		for (i = 0; i < R.n; i++) {
-			NV y = evaluate_term(aTHX_ R.data_hoa, R.row_hashes, (unsigned int)i, PX.lhs), w = 1.0;
+			NV y = evaluate_term(aTHX_ R.data_hoa, R.row_hashes, (unsigned)i, PX.lhs), w = 1.0;
 			if (nv_isnan(y)) continue;
 			if (!mf_row(aTHX_ &PX, &R, i, X + n * px, NULL)) continue;
 			if (!mf_row(aTHX_ &PZ, &R, i, Z + n * pz, NULL)) continue;
@@ -25659,7 +25648,7 @@ SV *lmer(...)
 			Newx(rf, strlen(PF.lhs) + strlen(re_expr[k]) + 4, char); SAVEFREEPV(rf);
 			sprintf(rf, "%s~%s", PF.lhs, re_expr[k][0] ? re_expr[k] : "1");
 			mf_part(aTHX_ "lmer", rf, &R, FALSE, xlev, &PR[k]);
-			if (PR[k].p == 0) croak("lmer: random-effects term %u has no columns", (unsigned int)(k + 1));
+			if (PR[k].p == 0) croak("lmer: random-effects term %u has no columns", (unsigned)(k + 1));
 		}
 	}
 	p = PF.p;
@@ -25677,7 +25666,7 @@ SV *lmer(...)
 			maps[k] = (HV *)sv_2mortal((SV *)newHV());
 		}
 		for (i = 0; i < R.n; i++) {
-			NV y = evaluate_term(aTHX_ R.data_hoa, R.row_hashes, (unsigned int)i, PF.lhs);
+			NV y = evaluate_term(aTHX_ R.data_hoa, R.row_hashes, (unsigned)i, PF.lhs);
 			bool ok = !nv_isnan(y);
 			size_t lv[64];
 			if (ok && !mf_row(aTHX_ &PF, &R, i, X + n * p, NULL)) ok = 0;
@@ -26551,7 +26540,7 @@ NV min(...)
 		args_get_magic(aTHX_ ax, items);	//before any SvOK() or SvROK() reads an argument
 		/*Stack_off_t, not a short: `items` is the whole flattened argument
 		list, so min(@x) on a 70k-element array puts 70k scalars here. An
-		`unsigned short int` counter wrapped at 65536 and looped forever.*/
+		`unsigned short` counter wrapped at 65536 and looped forever.*/
 		for (Stack_off_t i = 0; i < items; i++) {
 			SV* arg = ST(i);
 			if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
@@ -26921,7 +26910,7 @@ SV* quantile(...)
 		 vector that turns out to be invalid should not first cost a pass over
 		 a million-element column. */
 		NV default_probs[] = {0.0, 0.25, 0.50, 0.75, 1.0};
-		unsigned int n_probs = 5;
+		unsigned n_probs = 5;
 		NV *probs;
 		if (probs_sv && SvROK(probs_sv) && SvTYPE(SvRV(probs_sv)) == SVt_PVAV) {
 			AV *p_av = (AV*)SvRV(probs_sv);
@@ -26935,7 +26924,7 @@ SV* quantile(...)
 			const NV probs_eps = 2.220446049250313e-14;
 			n_probs = av_len(p_av) + 1;
 			Newx(probs, n_probs, NV);
-			for (unsigned int i = 0; i < n_probs; i++) {
+			for (unsigned i = 0; i < n_probs; i++) {
 				 SV **tv = av_fetch(p_av, i, 0);
 				 probs[i] = (tv && SvOK(*tv)) ? SvNV(*tv) : 0.0;
 				 if (probs[i] < -probs_eps || probs[i] > 1.0 + probs_eps) {
@@ -26947,7 +26936,7 @@ SV* quantile(...)
 			}
 		} else {
 			Newx(probs, n_probs, NV);
-			for (unsigned int i = 0; i < n_probs; i++) probs[i] = default_probs[i];
+			for (unsigned i = 0; i < n_probs; i++) probs[i] = default_probs[i];
 		}
 		/*Extract the values, dropping undef as documented.  A cell that is
 		neither undef nor a number is an error rather than a silent 0, and a
@@ -26994,7 +26983,7 @@ SV* quantile(...)
 		{
 			size_t *ks, nk = 0, uk = 0;
 			Newx(ks, (size_t)n_probs * 2 + 1, size_t);
-			for (unsigned int i = 0; i < n_probs; i++) {
+			for (unsigned i = 0; i < n_probs; i++) {
 				NV h = nv_narrow((NV)(n - 1) * probs[i]);
 				size_t j = (size_t)h;
 				if (j >= n) j = n - 1;		//guards p == 1 and any rounding at the top
@@ -28032,7 +28021,7 @@ PPCODE:
 	/*ASCII fold, not tolower(): a byte >= 0x80 in a signed char is a negative
 	argument to tolower(), which is undefined, and tolower() follows LC_CTYPE,
 	which under tr_TR.ISO-8859-9 folds the `I` of "BONFERRONI" outside ASCII.*/
-	for (unsigned short int i = 0; meth[i]; i++) meth[i] = toLOWER((U8)meth[i]);
+	for (unsigned short i = 0; meth[i]; i++) meth[i] = toLOWER((U8)meth[i]);
 	if (strEQ(meth, "fdr")) strcpy(meth, "bh");
 	if (strEQ(meth, "holm-sidak")) strcpy(meth, "hs");
 	/*Rejected here, before the first allocation: dunn_padjust() used to be
@@ -29020,7 +29009,7 @@ PPCODE:
 	AV *names_av = NULL;
 	NV conf_level = NV_CONF_95, eps = 1e-9;
 	bool breslow = FALSE, robust = FALSE, robust_given = FALSE, positional;
-	unsigned short int maxit = 20;
+	unsigned short maxit = 20;
 	size_t n = 0, p = 0, i, j, G = 0, nstrata = 1;
 	NV *X = NULL, *T0 = NULL, *T1, *W, *OFF = NULL;
 	bool *EV;
@@ -29051,7 +29040,7 @@ PPCODE:
 		else if (strEQ(k, "maxit") || strEQ(k, "iter.max")) {
 			NV m = SvNV(v);
 			if (!(m >= 0.0 && m <= 1e6)) croak("coxph: maxit must be between 0 and 1e6");
-			maxit = (unsigned int)m;
+			maxit = (unsigned)m;
 		}
 		else if (strEQ(k, "eps")) {
 			eps = SvNV(v);
@@ -29154,7 +29143,7 @@ PPCODE:
 			SV **nm = (names_av && (SSize_t)j <= av_len(names_av)) ? av_fetch(names_av, (SSize_t)j, 0) : NULL;
 			char buf[32];
 			if (nm && *nm && SvOK(*nm)) cnames[j] = savepv(SvPV_nolen(*nm));
-			else { snprintf(buf, sizeof buf, "x%u", (unsigned int)(j + 1)); cnames[j] = savepv(buf); }
+			else { snprintf(buf, sizeof buf, "x%u", (unsigned)(j + 1)); cnames[j] = savepv(buf); }
 			SAVEFREEPV(cnames[j]);
 		}
 	} else {
@@ -29228,9 +29217,9 @@ PPCODE:
 			Newx(sraw, R.n ? R.n : 1, NV); SAVEFREEPV(sraw);
 			if (nst) { Newxz(stl, R.n ? R.n : 1, char *); SAVEFREEPV(stl); }
 			for (i = 0; i < R.n; i++) {
-				NV t1 = evaluate_term(aTHX_ R.data_hoa, R.row_hashes, (unsigned int)i, args[nargs - 2]);
-				NV sv = evaluate_term(aTHX_ R.data_hoa, R.row_hashes, (unsigned int)i, args[nargs - 1]);
-				NV t0 = (nargs == 3) ? evaluate_term(aTHX_ R.data_hoa, R.row_hashes, (unsigned int)i, args[0]) : 0.0;
+				NV t1 = evaluate_term(aTHX_ R.data_hoa, R.row_hashes, (unsigned)i, args[nargs - 2]);
+				NV sv = evaluate_term(aTHX_ R.data_hoa, R.row_hashes, (unsigned)i, args[nargs - 1]);
+				NV t0 = (nargs == 3) ? evaluate_term(aTHX_ R.data_hoa, R.row_hashes, (unsigned)i, args[0]) : 0.0;
 				NV o = 0.0, w = 1.0;
 				bool ok = !nv_isnan(t1) && !nv_isnan(sv) && !nv_isnan(t0);
 				if (ok && !mf_row(aTHX_ &P, &R, i, X + n * p, &o)) ok = 0;
@@ -29323,7 +29312,7 @@ PPCODE:
 		CoxWork wk;
 		NV *beta, *V, *Vr = NULL, ll0 = 0.0, ll = 0.0, sctest = 0.0, zc;
 		bool *aliased, conv = 0;
-		unsigned int iter, rank = 0;
+		unsigned iter, rank = 0;
 		size_t nevent = 0;
 		HV *ret = (HV *)sv_2mortal((SV *)newHV());
 		AV *coef = newAV(), *hr = newAV(), *se = newAV(), *zv = newAV(), *pv = newAV(),
@@ -30440,7 +30429,7 @@ SV *lm(...)
 		SV   *data_sv = NULL;
 		char *f_cpy   = NULL, *lhs = NULL, *rhs = NULL, **terms = NULL, **uniq_terms = NULL;
 		LmDesign *design = NULL;
-		unsigned int num_terms = 0, num_uniq = 0;
+		unsigned num_terms = 0, num_uniq = 0;
 		size_t n = 0, valid_n = 0, p = 0, final_rank = 0, df_res = 0;
 		bool has_intercept = 1;
 		char **row_names = NULL;
@@ -30479,8 +30468,8 @@ SV *lm(...)
 		lm_formula_terms(aTHX_ rhs, lhs, data_hoa, row_hashes, n, has_intercept, "lm",
 		                 &terms, &num_terms, &uniq_terms, &num_uniq);
 		SAVEFREEPV(terms); SAVEFREEPV(uniq_terms);
-		for (unsigned int i = 0; i < num_terms; i++) SAVEFREEPV(terms[i]);
-		for (unsigned int i = 0; i < num_uniq; i++)  SAVEFREEPV(uniq_terms[i]);
+		for (unsigned i = 0; i < num_terms; i++) SAVEFREEPV(terms[i]);
+		for (unsigned i = 0; i < num_uniq; i++)  SAVEFREEPV(uniq_terms[i]);
 		xlevels_hv = newHV(); sv_2mortal((SV*)xlevels_hv);
 		design = lm_design_build(aTHX_ data_hoa, row_hashes, n,
 		                         uniq_terms, num_uniq, has_intercept, xlevels_hv, NULL);
@@ -30993,16 +30982,16 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 		NV *restrict gsum = NULL;            //response sum per level, over the rows fitted
 		size_t *restrict gcnt = NULL;        //rows fitted per level
 		Newxz(lev_at, ds->nfactor ? ds->nfactor : 1, size_t); SAVEFREEPV(lev_at);
-		for (unsigned int f = 0; f < ds->nfactor; f++) { lev_at[f] = nlev; nlev += ds->factor[f].nlevel; }
+		for (unsigned f = 0; f < ds->nfactor; f++) { lev_at[f] = nlev; nlev += ds->factor[f].nlevel; }
 		Newxz(gsum, nlev ? nlev : 1, NV);     SAVEFREEPV(gsum);
 		Newxz(gcnt, nlev ? nlev : 1, size_t); SAVEFREEPV(gcnt);
 		if (ds->nfactor) Newxz(m.design->lev, ds->nfactor, size_t); //freed with the design
 	//Pass 1: rotate each complete row into the triangle; keep only the level tallies.
 		for (size_t i = 0; i < rows.n; i++) {
-			const NV y = evaluate_term(aTHX_ rows.data_hoa, rows.row_hashes, (unsigned int)i, m.lhs);
+			const NV y = evaluate_term(aTHX_ rows.data_hoa, rows.row_hashes, (unsigned)i, m.lhs);
 			if (!nv_isfinite(y) || !anova_row(aTHX_ &m, rows.data_hoa, rows.row_hashes, i, y)) continue;
 			n_used++;
-			for (unsigned int f = 0; f < ds->nfactor; f++) {
+			for (unsigned f = 0; f < ds->nfactor; f++) {
 				gsum[lev_at[f] + ds->lev[f]] += y;
 				gcnt[lev_at[f] + ds->lev[f]]++;
 			}
@@ -31027,7 +31016,7 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 			(void)hv_stores(ret_hash, "group.stats", newRV_noinc((SV*)gs_hv));
 			(void)hv_stores(gs_hv, "mean", newRV_noinc((SV*)mean_hv));
 			(void)hv_stores(gs_hv, "size", newRV_noinc((SV*)size_hv));
-			for (unsigned int f = 0; f < ds->nfactor; f++) {
+			for (unsigned f = 0; f < ds->nfactor; f++) {
 				const LmFactor *restrict fa = &ds->factor[f];
 				HV *mh = mean_hv, *sh = size_hv;
 				if (ds->nfactor > 1) {
@@ -31035,7 +31024,7 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 					(void)hv_store(mean_hv, fa->name, (I32)strlen(fa->name), newRV_noinc((SV*)mh), 0);
 					(void)hv_store(size_hv, fa->name, (I32)strlen(fa->name), newRV_noinc((SV*)sh), 0);
 				}
-				for (unsigned int l = 0; l < fa->nlevel; l++) {
+				for (unsigned l = 0; l < fa->nlevel; l++) {
 					const size_t c = gcnt[lev_at[f] + l];
 					(void)hv_store(mh, fa->level[l], (I32)strlen(fa->level[l]),
 					               newSVnv(c ? gsum[lev_at[f] + l] / (NV)c : NV_NAN), 0);
@@ -31072,7 +31061,7 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 	/*Pass 2: fitted.values, offsets included as R includes them, keyed by row
 	name. The rows are re-read rather than kept, so the fit holds nothing n by p.*/
 		for (size_t i = 0; i < rows.n; i++) {
-			const NV y = evaluate_term(aTHX_ rows.data_hoa, rows.row_hashes, (unsigned int)i, m.lhs);
+			const NV y = evaluate_term(aTHX_ rows.data_hoa, rows.row_hashes, (unsigned)i, m.lhs);
 			NV fit;
 			if (!nv_isfinite(y) || !anova_row(aTHX_ &m, rows.data_hoa, rows.row_hashes, i, y)) continue;
 			fit = y - m.y;                  //the offsets
@@ -31151,7 +31140,7 @@ CODE:
 			if ((av_len(row) + 1) != (SSize_t)ncol) {
 				croak("All rows must have the same number of columns (%d)", ncol);
 			}
-			for (unsigned int cc = 0; cc < ncol; cc++)
+			for (unsigned cc = 0; cc < ncol; cc++)
 	/*av_at() for the same reason as binom_test above: *av_fetch() on a hole
 	is a NULL dereference, and ft_cell() already rejects a NULL sv.*/
 				cells[rr * ncol + cc] = ft_cell(aTHX_ av_at(aTHX_ row, cc), "array cell");
@@ -31173,7 +31162,7 @@ CODE:
 /*Bounded by rows[] but run to the end, so a tied walk is finished rather than
 restarted (see cfilter). The keys are mortal copies, which a tied iterator's
 next step cannot free; he_val() runs a tied row's get magic.*/
-		unsigned int nseen = 0;	//read after the loop: a tied hash may hand back fewer than it counted
+		unsigned nseen = 0;	//read after the loop: a tied hash may hand back fewer than it counted
 		for (HE *e; (e = hv_iternext(outer)) != NULL; ) {
 			if (nseen == nrow) continue;
 			rows[nseen].k = SvPV_nolen(hv_iterkeysv(e));
@@ -31207,14 +31196,14 @@ next step cannot free; he_val() runs a tied row's get magic.*/
 		qsort(cols, ncol, sizeof(ft_kv), ft_kv_cmp);
 
 		Newx(cells, (size_t)nrow * ncol, long); SAVEFREEPV(cells);	//see the AoA branch
-		for (unsigned int rr = 0; rr < nrow; rr++) {
+		for (unsigned rr = 0; rr < nrow; rr++) {
 			if (!SvROK(rows[rr].v) || SvTYPE(SvRV(rows[rr].v)) != SVt_PVHV)
 				croak("Inner elements must be hash refs");
 			HV *in = (HV *)SvRV(rows[rr].v);
 			if (hv_nkeys(aTHX_ in) != (size_t)ncol) {
 				croak("All rows must have the same %d column keys", ncol);
 			}
-			for (unsigned int cc = 0; cc < ncol; cc++) {
+			for (unsigned cc = 0; cc < ncol; cc++) {
 				const I32 klen = (I32)strlen(cols[cc].k);
 				//a tied row's fetch always returns an entry, so whether the key is there is asked first
 				SV **vp = (SvRMAGICAL(in) && !hv_exists(in, cols[cc].k, klen))
@@ -31287,7 +31276,7 @@ CODE:
 	NV tol = 1e-12;
 
 	if (items % 2 != 0) croak("Usage: power_t_test(n => 30, delta => 0.5, sd => 1.0, ...)");
-	for (unsigned short int i = 0; i < items; i += 2) {
+	for (unsigned short i = 0; i < items; i += 2) {
 	  const char*key = SvPV_nolen(ST(i));
 	  SV* val = ST(i+1);
 
@@ -31309,7 +31298,7 @@ CODE:
 	bool is_null_sd = (sv_sd && !SvOK(sv_sd)); 
 	bool is_null_sig_level = (sv_sig_level && !SvOK(sv_sig_level));
 
-	unsigned short int missing_count = 0;
+	unsigned short missing_count = 0;
 	if (is_null_n) missing_count++;
 	if (is_null_delta) missing_count++;
 	if (is_null_power) missing_count++;
@@ -32845,7 +32834,7 @@ OUTPUT:
 
 #define EVAL_FILTER(sub_sv, val_sv, keep) do {        \
  dSP;                                                 \
- unsigned int count;                                  \
+ unsigned count;                                  \
  SV *_ef_arg = (val_sv) ? (val_sv) : &PL_sv_undef; \
  ENTER;                                               \
  SAVETMPS;                                            \
