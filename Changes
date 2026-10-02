@@ -583,6 +583,19 @@ Revision history for Stats-LikeR
    directly, or tested a fetched value before its get magic had run; each
    now gives the untied answer, which t/tied.frames.t checks.
 
+ - More of them tested a fetched cell or row before its get magic had run.
+   group_by() returned {} for a HoA with tied columns. kruskal_test(),
+   aov() and oneway_test() croaked on tied groups ("all groups must
+   contain data", "fewer than 2 complete observations", "observation 0 is
+   undefined or non-numeric"), and lm() and glm() on tied HoA columns
+   ("0 degrees of freedom"). hoa2hoh() croaked on a tied key column,
+   binom_test() on a tied vector ("successes is undef"), and epi_2x2(),
+   cmh_test(), survfit(), logrank_test() and coxph() on tied vectors
+   ("... at index 0 is undef"). fisher_test() refused a tied outer AoA
+   with "each row must be an array ref". Each now copies the tied columns
+   or rows first, or runs the cell's magic before testing it, and gives
+   the untied answer; t/tied.frames.t checks them.
+
  [vals(), avals(): HoH input is no longer quadratic]
 
  - The row keys of a HoH were put in order with an insertion sort: 5.25 s

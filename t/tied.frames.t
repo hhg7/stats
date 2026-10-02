@@ -45,6 +45,22 @@
 #     a tied vector, before its get magic had run, and croaked "cell [0][0] is
 #     undef" (fisher_test: "array cell is undef").
 #
+# And later in 0.3213, more that tested a fetched cell or row before its get
+# magic had run:
+#
+#   * group_by() on a HoA with tied columns returned {}.
+#   * kruskal_test(), aov() and oneway_test() with tied groups croaked "all
+#     groups must contain data", "fewer than 2 complete observations" and
+#     "observation 0 is undefined or non-numeric".
+#   * lm() and glm() on a HoA with tied columns croaked "0 degrees of freedom".
+#   * hoa2hoh() with a tied key column croaked "has an undefined value at row
+#     0".
+#   * binom_test() on a tied vector croaked "successes is undef", and
+#     epi_2x2(), survfit() and coxph() on tied vectors "... at index 0 is
+#     undef".
+#   * fisher_test() on a tied AoA (the outer array tied) croaked "each row must
+#     be an array ref".
+#
 # Not covered here: a tied *frame* hash (the outer hash of a HoA or HoH), which
 # t/tied.hashes.t covers, and how many FETCHes any of this costs, which
 # t/tied.fetch.once.t does.  A tied column, a tied row array and a tied row hash
@@ -57,7 +73,8 @@ require 5.010;
 use strict;
 use warnings FATAL => 'all';
 use Test::More;
-use Stats::LikeR qw(merge filter col drop_duplicates sample vals avals col2col chisq_test fisher_test);
+use Stats::LikeR qw(merge filter col drop_duplicates sample vals avals col2col chisq_test fisher_test
+                    group_by kruskal_test aov oneway_test lm glm hoa2hoh binom_test epi_2x2 survfit coxph);
 
 # Imported at compile time so the (&;$) prototype is in scope for the block
 # call at the end, as t/merge.t does.  Absent module -> that one test is
@@ -124,6 +141,49 @@ sub sig {
 		join '|', map { "$_=" . (defined $r->{$_} ? $r->{$_} : 'UNDEF') }
 		          sort keys %$r;
 	} @rows;
+}
+
+# is_deeply() with numbers compared to 1e-12, relative above 1 and absolute
+# below it.  oneway_test() over a hash of groups sums them in hash-walk order,
+# and the untied copy of a tied hash is a different hash from the plain one it
+# is compared with, so the two can walk in different orders: perl-5.42.3
+# differed in the last digit of Pr(>F), 1e-17 on 0.0046.  1e-12 leaves five
+# orders of magnitude over that, and is still far below any difference a
+# misread cell would make.
+sub near_deeply {
+	my ($got, $want, $name) = @_;
+	my @diff = near_diff($got, $want, '$got');
+	ok !@diff, $name or diag @diff;
+}
+# The first place two structures differ, as a message, or () when they agree.
+sub near_diff {
+	my ($g, $w, $at) = @_;
+	return () if !defined $g && !defined $w;
+	return "$at: one side is undef" if !defined $g || !defined $w;
+	return "$at: " . (ref $g || 'scalar') . ' vs ' . (ref $w || 'scalar') if ref $g ne ref $w;
+	if (ref $w eq 'HASH') {
+		my $gk = join "\0", sort keys %$g;
+		return "$at: keys differ" if $gk ne join "\0", sort keys %$w;
+		for my $k (sort keys %$w) {
+			my @d = near_diff($g->{$k}, $w->{$k}, "$at\{$k}");
+			return @d if @d;
+		}
+		return ();
+	}
+	if (ref $w eq 'ARRAY') {
+		return "$at: lengths differ" if @$g != @$w;
+		for my $i (0 .. $#$w) {
+			my @d = near_diff($g->[$i], $w->[$i], "$at\[$i]");
+			return @d if @d;
+		}
+		return ();
+	}
+	my $num = qr/^\s*[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?\s*$/;
+	if ($g =~ $num && $w =~ $num) {
+		my $scale = abs($w) > 1 ? abs($w) : 1;
+		return abs($g - $w) <= 1e-12 * $scale ? () : "$at: $g vs $w";
+	}
+	return $g eq $w ? () : "$at: '$g' vs '$w'";
 }
 
 # The one assertion this file makes, over and over.
@@ -402,6 +462,81 @@ for my $how (qw(inner left right outer)) {
 	is_deeply chisq_test( ta( [ 10, 20, 30 ] ) ), chisq_test( [ 10, 20, 30 ] ), 'chisq_test: a tied vector';
 }
 
+# group_by(): tied HoA columns, a tied AoH, and an AoH of tied rows
+{
+	my @aoh = map { +{ id => $id[$_], x => $x[$_], cat => $cat[$_] } } 0 .. $#id;
+	my $want = group_by( $plain, 'x', 'id' );
+	is_deeply group_by( $tied, 'x', 'id' ), $want, 'group_by: tied HoA columns';
+	ok scalar( keys %$want ), 'group_by: and the answer is not empty';
+	is_deeply group_by( ta( \@aoh ), 'x', 'id' ), $want, 'group_by: a tied AoH';
+	is_deeply group_by( [ map { th($_) } @aoh ], 'x', 'id' ), $want, 'group_by: an AoH of tied rows';
+	is_deeply group_by( $tied, 'x', 'id', { x => sub { $_[0] > 0 } } ),
+	          group_by( $plain, 'x', 'id', { x => sub { $_[0] > 0 } } ), 'group_by: a filter over a tied column';
+}
+
+# kruskal_test(), aov(), oneway_test(): tied groups, in every input form
+my %grp = ( a => [ 1, 2, 3, 2.5 ], b => [ 4, 5, 6.5 ], c => [ 7, 8.5, 9, 6 ] );
+my $tgrp = { map { ( $_ => ta( $grp{$_} ) ) } keys %grp };
+my @gy = map { @{ $grp{$_} } } sort keys %grp;
+my @gg = map { ($_) x @{ $grp{$_} } } sort keys %grp;
+{
+	is_deeply kruskal_test($tgrp), kruskal_test( {%grp} ), 'kruskal_test: a hash of tied groups';
+	is_deeply kruskal_test( x => ta( \@gy ), g => ta( \@gg ) ), kruskal_test( x => [@gy], g => [@gg] ),
+	          'kruskal_test: tied x and g';
+	is_deeply aov($tgrp), aov( {%grp} ), 'aov: a hash of tied groups';
+	is_deeply aov( $tied, 'x ~ cat' ), aov( $plain, 'x ~ cat' ), 'aov: a formula over tied columns';
+	near_deeply( oneway_test($tgrp), oneway_test( {%grp} ), 'oneway_test: a hash of tied groups' );
+	is_deeply oneway_test( { y => ta( \@gy ), g => ta( \@gg ) }, formula => 'y ~ g' ),
+	          oneway_test( { y => [@gy], g => [@gg] }, formula => 'y ~ g' ), 'oneway_test: a formula over tied columns';
+	my @aoa = map { $grp{$_} } sort keys %grp;
+	is_deeply oneway_test( [ map { ta($_) } @aoa ] ), oneway_test( [@aoa] ), 'oneway_test: an AoA of tied rows';
+	is_deeply oneway_test( ta( [@aoa] ) ), oneway_test( [@aoa] ), 'oneway_test: a tied AoA';
+}
+
+# lm(), glm(): tied HoA columns.  b is 0/1 and not separable by x.
+{
+	my @xx = ( 1 .. 8 );
+	my @yy = ( 1, 2, 3, 4, 5, 6.5, 1.5, 3.7 );
+	my @bb = ( 0, 1, 0, 1, 1, 1, 0, 1 );
+	my $p = { x => [@xx], y => [@yy], b => [@bb] };
+	my $t = { x => ta( \@xx ), y => ta( \@yy ), b => ta( \@bb ) };
+	is_deeply lm( formula => 'y ~ x', data => $t ), lm( formula => 'y ~ x', data => $p ), 'lm: tied HoA columns';
+	is_deeply glm( formula => 'b ~ x', data => $t, family => 'binomial' ),
+	          glm( formula => 'b ~ x', data => $p, family => 'binomial' ), 'glm: tied HoA columns';
+}
+
+# hoa2hoh(): a tied key column, and tied other columns
+{
+	my $p = { id => [ 3, 1, 4 ], x => [ -2.5, 0.5, 7 ] };
+	is_deeply hoa2hoh( { id => ta( $p->{id} ), x => ta( $p->{x} ) }, 'id' ), hoa2hoh( $p, 'id' ),
+	          'hoa2hoh: tied key and value columns';
+}
+
+# binom_test(), epi_2x2(), survfit(), coxph(): tied vectors
+{
+	is_deeply binom_test( ta( [ 7, 3 ] ) ), binom_test( [ 7, 3 ] ), 'binom_test: a tied [successes, failures]';
+	eval { binom_test( ta( [ 7, undef ] ) ) };
+	like $@, qr/binom_test: failures is undef/, 'binom_test: a tied undef is still refused';
+	eval { binom_test( ta( [ 7, 'z' ] ) ) };
+	like $@, qr/binom_test: failures is not a number/, 'binom_test: a tied non-number is still refused';
+	is_deeply epi_2x2( ta( [ 10, 20, 30, 40 ] ) ), epi_2x2( [ 10, 20, 30, 40 ] ), 'epi_2x2: a tied vector';
+	is_deeply epi_2x2( [ ta( [ 10, 20 ] ), ta( [ 30, 40 ] ) ] ), epi_2x2( [ [ 10, 20 ], [ 30, 40 ] ] ),
+	          'epi_2x2: tied rows';
+	my @tm = ( 5, 8, 12, 3, 9, 15, 2, 7 );
+	my @st = ( 1, 0, 1, 1, 0, 1, 1, 0 );
+	my @cv = ( 0.5, 1.2, -0.3, 2.0, 0.1, -1.1, 1.7, 0.4 );
+	is_deeply survfit( ta( \@tm ), ta( \@st ) ), survfit( [@tm], [@st] ), 'survfit: tied time and status';
+	is_deeply coxph( ta( \@tm ), ta( \@st ), ta( \@cv ) ), coxph( [@tm], [@st], [@cv] ),
+	          'coxph: tied time, status and covariate';
+}
+
+# fisher_test(): a tied outer AoA, of plain rows and of tied rows
+{
+	my @t = ( [ 1, 5 ], [ 6, 2 ] );
+	is_deeply fisher_test( ta( [@t] ) ), fisher_test( [@t] ), 'fisher_test: a tied AoA';
+	is_deeply fisher_test( ta( [ map { ta($_) } @t ] ) ), fisher_test( [@t] ), 'fisher_test: a tied AoA of tied rows';
+}
+
 # The input must come back untouched: FETCH is allowed, STORE is not.
 {
 	is_deeply [ @{ $tied->{id} } ],  [@id],  'tied id column unchanged by the calls above';
@@ -428,6 +563,15 @@ SKIP: {
 		avals($tied, 'x');
 		vals(ta([ { x => 1 }, { x => 2 } ]), 'x');
 		col2col(ta([ { a => 1, b => 2 }, { a => 2, b => 1 }, { a => 3, b => 5 } ]), 'cor', [ 'a', 'b' ]);
+		group_by($tied, 'x', 'id');
+		kruskal_test($tgrp);
+		oneway_test($tgrp);
+		aov($tgrp);
+		lm(formula => 'x ~ id', data => $tied);
+		hoa2hoh({ k => ta([1, 2]), v => ta([3, 4]) }, 'k');
+		binom_test(ta([7, 3]));
+		epi_2x2(ta([10, 20, 30, 40]));
+		fisher_test(ta([ [1, 5], [6, 2] ]));
 	} 'no leaks over the tied paths';
 }
 

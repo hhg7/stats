@@ -913,14 +913,16 @@ rather than silently reading a string as zero.
 The index is named in the message because a hole is invisible at the call
 site: nothing about `[10, 20, 40]` printed from a sparse array says which slot
 is missing.*/
+static I32 sv_lln_nomg(pTHX_ SV *sv);	//defined with he_val(), further down
 static NV av_num_at(pTHX_ AV *av, SSize_t i, const char *who, const char *what)
 {
 	SV *sv = av_at(aTHX_ av, i);
+	if (sv) SvGETMAGIC(sv);	//once: a tied element is undef until fetched -- epi_2x2(\@tied) croaked "cell at index 0 is undef"
 	if (!sv || !SvOK(sv))
 		croak("%s: %s at index %" IVdf " is undef", who, what, (IV)i);
-	if (!looks_like_number(sv))
+	if (!sv_lln_nomg(aTHX_ sv))
 		croak("%s: %s at index %" IVdf " is not a number", who, what, (IV)i);
-	return SvNV(sv);
+	return SvNV_nomg(sv);
 }
 /*Read a whole column as NV, mapping anything that is not a number to NaN.
 
@@ -3039,11 +3041,11 @@ static LmDesign *lm_design_build(pTHX_ HV *data_hoa, HV **row_hashes, size_t n,
 	LmDesign *d;
 	unsigned int i, j, k, t, c, max_comp = 0, tcount = 0, col_cap, comp_cap;
 	unsigned int *restrict tstart = NULL, *restrict tlen = NULL;
-	unsigned int *restrict tvar = NULL;      //flat variable indices per term
-	int          *restrict vfac = NULL;      //variable -> factor index or -1
+	unsigned int *restrict tvar = NULL; //flat variable indices per term
+	int          *restrict vfac = NULL; //variable -> factor index or -1
 	unsigned int  nwords;
 	UV           *restrict tmask = NULL, *restrict margin = NULL;
-	bool         *restrict full = NULL;      //per flat component: full coding?
+	bool         *restrict full = NULL; //per flat component: full coding?
 	bool          empty_present = has_intercept;
 
 	Newxz(d, 1, LmDesign);
@@ -3247,8 +3249,8 @@ static LmDesign *lm_design_build(pTHX_ HV *data_hoa, HV **row_hashes, size_t n,
 			if (hi[c] <= lo[c]) { combos = 0; break; }
 			combos *= (size_t)(hi[c] - lo[c]);
 		}
-		/*combos == 0 happens for a single-level factor coded by contrasts:
-		the term contributes nothing, exactly as before.*/
+	/*combos == 0 happens for a single-level factor coded by contrasts:
+	the term contributes nothing, exactly as before.*/
 		for (c = 0; c < nc; c++) at[c] = lo[c];
 		while (combos > 0) {
 			size_t len = 0;
@@ -3291,8 +3293,7 @@ static LmDesign *lm_design_build(pTHX_ HV *data_hoa, HV **row_hashes, size_t n,
 			d->col[d->ncol].ncomp = nc;
 			d->col[d->ncol].term  = t;
 			d->ncol++;
-			/*Odometer, leftmost component fastest, which is R's column order
-			within a term.*/
+	//Odometer, leftmost component fastest, which is R's column order within a term
 			for (c = 0; c < nc; c++) {
 				at[c]++;
 				if (at[c] < hi[c]) break;
@@ -3325,9 +3326,8 @@ I(...) escape, where the caret is arithmetic and belongs to evaluate_term.
 chunk is written through: the separators become NULs.*/
 static void lm_expand_cross(pTHX_ char *chunk, const char *fname, char ***terms,
 	unsigned int *num_terms, unsigned int *term_cap) {
-	char *part[16];
+	char *part[16], *s = chunk;;
 	unsigned int k = 0;
-	char *s = chunk;
 
 	for (;;) {
 		char *star = strchr(s, '*');
@@ -3626,8 +3626,7 @@ static SSize_t pa_sorted_keys(pTHX_ HV *hv, PaEnt *out, SSize_t cap) {
 /*Is this column one of the ones holding p-values? `want == NULL` means the
 caller named none, so every column counts. Returns the marker SV for the
 column and flags it as seen, so an unmatched name can be reported.*/
-static SV *pa_mark(pTHX_ HV *want, const char *key,
-                   STRLEN klen, U32 utf8) {
+static SV *pa_mark(pTHX_ HV *want, const char *key, STRLEN klen, U32 utf8) {
 	if (!want) return &PL_sv_yes;
 	SV **m = hv_fetch(want, key, utf8 ? -(I32)klen : (I32)klen, 0);
 	if (!m) return NULL;
@@ -3689,8 +3688,7 @@ whole number, so y = (1,1,1,2,2,2,3,3,3,4,4,4) ranks as 2,2,2,5,5,5,8,8,8,
 cor_test(method => 'spearman') did through 0.311, which sent tied data of odd
 group size to the exact branch R reserves for tie-free data.  Pass NULL when
 the caller does not care.*/
-static void rank_data_ties(const NV *restrict in, NV *restrict out, size_t n,
-                           bool *restrict has_ties) {
+static void rank_data_ties(const NV *restrict in, NV *restrict out, size_t n, bool *restrict has_ties) {
 	RankItem *ri;
 	Newx(ri, n, RankItem);
 	for (size_t i = 0; i < n; i++) { ri[i].val = in[i]; ri[i].idx = i; }
@@ -4218,10 +4216,9 @@ static NV pt_upper(NV t, NV df) {
 		               - nv_lgamma(0.5 * df + 0.5);
 		prob_2tail = nv_exp(-0.5 * df * (2.0 * nv_log(nv_fabs(t)) - nv_log(df))
 		                    - lbeta - nv_log(0.5 * df));
-	} else {
-		/*t*t/(df + t*t) is the exact complement of df/(df + t*t); handing
-		both to incbeta_xy() is what keeps pt() accurate for small |t|,
-		where the complement is the tiny one.*/
+	} else { /*t*t/(df + t*t) is the exact complement of df/(df + t*t); handing
+	both to incbeta_xy() is what keeps pt() accurate for small |t|,
+	where the complement is the tiny one*/
 		const NV tt = t * t, dtt = df + tt;
 		prob_2tail = incbeta_xy(df / 2.0, 0.5, df / dtt, tt / dtt);
 	}
@@ -11399,9 +11396,11 @@ static size_t lm_read_rows(pTHX_ SV *data_sv, const char *fname,
                            char ***row_names_out) {
 	/*A tied frame's column was FETCHed again for every row the design matrix
 	read, and a tied row's first cell once for the shape and again for the
-	matrix. Nothing a fit returns holds a row. The copy is mortal, which
-	outlives every caller's use of the views.*/
-	data_sv = frame_untied(aTHX_ data_sv, UNTIE_ROWS);
+	matrix. A tied column was worse: the design reads its cells without get
+	magic, saw every one as undef, and lm() and glm() croaked "0 degrees of
+	freedom". Nothing a fit returns holds a row or a column. The copy is
+	mortal, which outlives every caller's use of the views.*/
+	data_sv = frame_untied(aTHX_ data_sv, UNTIE_COLS | UNTIE_ROWS);
 	SV  *ref        = SvRV(data_sv);
 	HV  *data_hoa   = NULL,  **row_hashes = NULL;
 	char **row_names = NULL;
@@ -13315,10 +13314,11 @@ static NV bt_pU(NV alpha, long x, long n) {
 }
 
 // Validate one count argument: a nonnegative integer
-static long bt_check_count(pTHX_ SV *sv, const char *what) {
+static long bt_check_count(pTHX_ SV *sv, const char *what) {	// no restrict: perl-managed
+	if (sv) SvGETMAGIC(sv);	//once: a tied element is a placeholder until fetched, and SvNV() would FETCH again
 	if (!sv || !SvOK(sv)) croak("binom_test: %s is undef", what);
-	if (!looks_like_number(sv)) croak("binom_test: %s is not a number", what);
-	NV v = SvNV(sv);
+	if (!sv_lln_nomg(aTHX_ sv)) croak("binom_test: %s is not a number", what);
+	NV v = SvNV_nomg(sv);
 	NV r = nv_floor(v + 0.5);
 	if (v < 0 || nv_fabs(v - r) > 1e-7)
 		croak("binom_test: %s must be a nonnegative integer", what);
@@ -20267,6 +20267,9 @@ SV *oneway_test(data_ref, ...)
 		// validate data_ref: must be an ARRAY or HASH reference
 		if (!SvROK(data_ref))
 			croak("oneway_test: first argument must be a hash or array reference");
+		/*Every mode tests a group's cells with SvOK() before any get magic, so a
+		tied group, a tied AoA row or a tied formula column read as undef.*/
+		data_ref = frame_untied(aTHX_ data_ref, UNTIE_COLS | UNTIE_ROWS);
 		SV *rv = SvRV(data_ref);
 		if      (SvTYPE(rv) == SVt_PVHV) in_hv = (HV *)rv;
 		else if (SvTYPE(rv) == SVt_PVAV) in_av = (AV *)rv;
@@ -30938,6 +30941,7 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 		HE *entry;
 		if (!SvROK(data_sv) || SvTYPE(SvRV(data_sv)) != SVt_PVHV)
 			croak("aov: Without a formula, data must be a HashRef of ArrayRefs (mimicking R's named list)");
+		data_sv = frame_untied(aTHX_ data_sv, UNTIE_COLS);	//a tied group's cells are tested with SvOK() before any get magic
 		input_hv = (HV*)SvRV(data_sv);
 	/*Mortal before it is filled, so the croak below frees it. Sorted order
 	because hash order changes from run to run, and with it the row names
@@ -31113,6 +31117,10 @@ CODE:
 		}
 	}
 	if (!SvROK(data_ref)) croak("fisher_test requires a reference to a 2D Array or Hash");
+	/*A tied outer AoA's rows were tested with SvROK() before any get magic and
+	refused as "not an array ref". A tied row's cells are fine: ft_cell() runs
+	their magic.*/
+	data_ref = frame_untied(aTHX_ data_ref, 0);
 	SV *deref = SvRV(data_ref);
 	/*Parse the input into a flat nrow x ncol table of nonnegative counts.
 	Both a 2D array-of-arrays and a 2D hash-of-hashes are accepted, and any
@@ -31484,7 +31492,10 @@ CODE:
 	if (h_sv) {
 		if (!SvROK(h_sv) || SvTYPE(SvRV(h_sv)) != SVt_PVHV)
 			croak("kruskal_test: 'h' must be a HASH reference");
-		h_sv = frame_untied(aTHX_ h_sv, 0);	//a tied hash's groups were FETCHed once per pass over it
+		/*UNTIE_COLS as well: a tied group's cells are tested with SvOK() below
+		before any get magic, and read as undef croaked "all groups must contain
+		data".*/
+		h_sv = frame_untied(aTHX_ h_sv, UNTIE_COLS);	//a tied hash's groups were FETCHed once per pass over it
 		HV *h_hv = (HV*)SvRV(h_sv);
 		// First pass – validate values and tally total elements
 		size_t total = 0;
@@ -31563,7 +31574,7 @@ CODE:
 		if (!g_sv || !SvROK(g_sv) || SvTYPE(SvRV(g_sv)) != SVt_PVAV)
 			croak("kruskal_test: 'g' is a required argument and must be an ARRAY reference");
 
-		AV *x_av = (AV*)SvRV(x_sv), *g_av = (AV*)SvRV(g_sv);
+		AV *x_av = (AV*)SvRV(frame_untied(aTHX_ x_sv, 0)), *g_av = (AV*)SvRV(frame_untied(aTHX_ g_sv, 0));	//as the 'h' path: a tied cell is undef until fetched
 		size_t nx = (size_t)(av_len(x_av) + 1);
 		size_t ng = (size_t)(av_len(g_av) + 1);
 		if (nx != ng) croak("kruskal_test: 'x' and 'g' must have the same length");
@@ -32921,7 +32932,9 @@ CODE:
 	if (!SvROK(data_ref)) {
 	croak("First argument to group_by must be a reference (Array of Hashes, Hash of Arrays, or Hash of Hashes)");
 	}
-	data_ref = frame_untied(aTHX_ data_ref, 0);	//a tied frame's rows were FETCHed once per pass
+	/*UNTIE_COLS: the HoA branch tests a column's cells with av_fetch() and SvOK(),
+	which on a tied column reads every cell as undef and returned {}.*/
+	data_ref = frame_untied(aTHX_ data_ref, UNTIE_COLS);	//a tied frame's rows were FETCHed once per pass
 /*Optional filters are every argument from ST(3) onward. Each must be a
 hashref of { column => sub }; all of them are ANDed together. The
 FOR_EACH_FILTER macro walks the arg stack directly (rather than collecting
@@ -33820,7 +33833,9 @@ SV *hoa2hoh(hoa, key)
 			croak("hoa2hoh: first argument must be a hash-of-arrays (hashref)");
 		if (!SvOK(key))
 			croak("hoa2hoh: key column name is undefined");
-		hoa = frame_untied(aTHX_ hoa, 0);	//the key column was FETCHed twice
+		/*UNTIE_COLS: a tied key column's cells were tested with SvOK() before any
+		get magic, and row 0 read as undef. The result copies every cell anyway.*/
+		hoa = frame_untied(aTHX_ hoa, UNTIE_COLS);	//the key column was FETCHed twice
 		in    = (HV *)SvRV(hoa);
 		ncols = hv_nkeys(aTHX_ in);	//HvUSEDKEYS is 0 for a tied hash
 		//the key column must exist and be an arrayref
