@@ -1270,7 +1270,10 @@ or the outer key of a **hash of arrays**:
 `cfilter` takes exactly one of `keep` or `remove`. `keep` returns only the
 matching columns; `remove` returns everything except them. The result is the
 same shape as the input (HoH → HoH, HoA → HoA, AoH → AoH), with cell values
-copied and the original structure left untouched.
+copied and the original structure left untouched. That includes the position
+of an `each` loop you are part-way through on the data or on one of its rows,
+which carries on where it was. Tied hashes and arrays are accepted anywhere in
+the data.
 
 The selector — the value of `keep` or `remove` — can be given three ways:
 
@@ -1311,10 +1314,23 @@ function name — evaluated once per column. It is called as
 
     $predicate->($column_values, $column_name)
 
-where `$column_values` is an array ref of the column's **defined** cells (undef
-and missing cells are dropped, so functions like `sd` get clean input).
+where `$column_values` is an array ref of a copy of **every** cell in the
+column, in row order, with undef standing in for an undef or missing cell.
 With `keep`, columns for which the predicate is true are kept; with `remove`,
 those columns are dropped.
+
+Two options change what the predicate is given, for functions that cannot take
+undef:
+
+- `na => 'omit'` drops the undef and missing cells, so a one-column function
+  such as `sd` gets clean input. `na => 'keep'` is the default described above.
+- `against => 'col'` compares every column with the column named `col`. The
+  predicate is called with three arguments,
+  `$predicate->($column_values, $col_values, $column_name)`, and both arrays
+  hold only the rows where **both** columns are defined (pairwise complete),
+  so a two-column function such as `cor` can take them directly.
+
+`na` and `against` cannot be given together.
 
     # Keep only the constant columns (standard deviation zero):
     my $const = cfilter(\%hoa, keep => sub { sd($_[0]) == 0 });   # { z => [0,0,0] }
@@ -1322,6 +1338,10 @@ those columns are dropped.
     my $varying = cfilter(\%hoa, remove => sub { sd($_[0]) == 0 }); # { x=>..., y=>... }
     # A bare function name resolves in Stats::LikeR:: (use a package for your own):
     cfilter(\%hoa, keep => 'some_predicate');
+    # Drop the constant columns of data with gaps: sd() gets only defined cells
+    cfilter(\%gappy, remove => sub { sd($_[0]) == 0 }, na => 'omit');
+    # Keep the columns strongly correlated with y (y itself included)
+    cfilter(\%hoa, keep => sub { abs(cor($_[0], $_[1])) > 0.9 }, against => 'y');
 
 A bare string is always treated as a **function name**, not a single column
 name, so to keep one column by name use an array ref: `keep => ['x']`.
@@ -1335,7 +1355,10 @@ name, so to keep one column by name use an array ref: `keep => ['x']`.
 - the selector is not an array ref, a `qr//` regex, or a code ref / function
   name, or the function name cannot be resolved,
 - `na` or `against` is given with a by-name or regex selector (they apply only
-  to a value predicate),
+  to a value predicate), both are given, `na` is not `'keep'` or `'omit'`, or
+  the `against` column is not present in the data,
+- the predicate itself dies, or replaces a row or column of the data with
+  something of the wrong shape while `cfilter` is running,
 - an unknown option is given, or the options are not `name => value` pairs,
 - the data is not a hash/array reference of the expected shape (a hash of hash
   refs or array refs, or an array of hash refs).

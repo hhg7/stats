@@ -9238,9 +9238,11 @@ static int h2h_keycmp(const void *pa, const void *pb) {
 	SV *const *b = (SV * const *)pb;
 	return sv_cmp(*a, *b);
 }
-/* Call a column predicate as $cv->($col_values, $col_name) and return its truth.
- $col_values is an array ref of the column's DEFINED cells; $col_name is the
- column key. Used so a block like sub { sd($_[0]) == 0 } can pick columns out.*/
+/*Call a column predicate and return its truth: $cv->($col, $name), or
+$cv->($col, $ref, $name) when b_av is given (cfilter's `against`). $col holds
+the column's cells as cfilter's na/against policy chose them -- every cell,
+undef included, unless na => 'omit' or against dropped some. Used so a block
+like sub { sd($_[0]) == 0 } can pick columns out.*/
 static bool cf_pred(pTHX_ SV *cv_sv, AV *a_av, AV *b_av, SV *name_sv) {
 	dSP;
 	bool truth = 0;
@@ -9262,6 +9264,163 @@ static bool cf_pred(pTHX_ SV *cv_sv, AV *a_av, AV *b_av, SV *name_sv) {
 	FREETMPS;
 	LEAVE;
 	return truth;
+}
+/*Keep the caller's each() position across a walk of a hash they handed in.
+
+hv_iterinit() resets the one iterator that each(), keys() and values() share,
+so an XSUB that walks a hash ends any each() loop the caller was part-way
+through, and a croak in mid-walk leaves the next each() starting part-way into
+the hash. (perl's own keys() resets it too, and perlfunc's each() warns about
+that, but a function that only reads the hash has no need to.) Call
+iter_keep() after an ENTER and before the walk's hv_iterinit(); the LEAVE of
+that scope puts the iterator back, as does the unwinding of a croak.
+
+An idle iterator (no each() in progress) is the usual case, and needs no copy:
+the LEAVE only resets it, which is all a croak in mid-walk leaves undone. A
+live one has HvRITER, HvEITER, the LAZYDEL flag and, where perl randomises key
+order, xhv_last_rand saved and put back. LAZYDEL means the caller deleted the
+entry each() is on: it is then detached from the buckets, and the next
+hv_iterinit() or hv_iternext() frees it. The flag is cleared for the walk so
+that the entry survives for the caller, and set again on the way out.
+
+An attached entry is only put back if it is still in the hash, because perl
+code that runs in the scope (a predicate, or FETCH on a tied cell) may have
+deleted and freed it. The check compares pointers along the entry's bucket
+chain, using the hash read while the entry was known to be live, so it never
+reads a freed one; if the entry has gone, the iterator is left reset, which is
+what every walk did before. A tied hash is left alone: its iterator is
+FIRSTKEY/NEXTKEY, which any walk restarts.
+
+The pointers carry no restrict: they are perl containers, reachable by other
+routes.*/
+#ifdef HvHasAUX
+#  define ITER_HASAUX(hv)	HvHasAUX(hv)
+#else
+#  define ITER_HASAUX(hv)	SvOOK(hv)	// before 5.36 the aux struct was flagged with OOK
+#endif
+typedef struct {
+	HV *hv;	// holds a reference, so the hash outlives the scope
+	I32 riter;
+	HE *eiter;
+	U32 hash;	// HeHASH(eiter), read while eiter was known to be live; 0 = not needed
+	bool lazydel;	// TRUE = eiter is detached and was deleted by the caller
+#ifdef PERL_HASH_RANDOMIZE_KEYS
+	U32 last_rand;
+#endif
+} iter_state;
+static void S_iter_reset(pTHX_ void *p) {
+	HV *hv = (HV*)p;
+	hv_iterinit(hv);
+	SvREFCNT_dec((SV*)hv);
+}
+static void S_iter_restore(pTHX_ void *p) {
+	iter_state *s = (iter_state*)p;
+	HV *hv = s->hv;
+	bool present = s->lazydel;	// a detached entry cannot have been freed: its flag was off
+	if (!present && HvARRAY(hv)) {
+		for (HE *he = HvARRAY(hv)[s->hash & HvMAX(hv)]; he; he = HeNEXT(he))
+			if (he == s->eiter) { present = TRUE; break; }
+	}
+	hv_iterinit(hv);	// frees an entry the walk left lazily deleted, and creates the aux struct
+	if (present) {
+		Perl_hv_riter_set(aTHX_ hv, s->riter);
+		Perl_hv_eiter_set(aTHX_ hv, s->eiter);
+		if (s->lazydel) HvLAZYDEL_on(hv);
+#ifdef PERL_HASH_RANDOMIZE_KEYS
+		if (ITER_HASAUX(hv)) HvAUX(hv)->xhv_last_rand = s->last_rand;
+#endif
+	}
+	SvREFCNT_dec((SV*)hv);
+}
+static void iter_keep(pTHX_ HV *hv) {
+	if (SvRMAGICAL(hv) && mg_find((SV*)hv, PERL_MAGIC_tied)) return;
+	SvREFCNT_inc_simple_void_NN((SV*)hv);
+	HE *eiter = HvEITER_get(hv);
+	if (!eiter) {// idle: riter is -1 whenever eiter is NULL outside a walk
+		SAVEDESTRUCTOR_X(S_iter_reset, hv);
+		return;
+	}
+	iter_state *s;
+	Newx(s, 1, iter_state);
+	SAVEFREEPV(s);	// saved first, so it is freed after S_iter_restore has run
+	s->hv = hv;
+	s->riter = HvRITER_get(hv);
+	s->eiter = eiter;
+	s->lazydel = cBOOL(HvLAZYDEL(hv));
+	s->hash = s->lazydel ? 0 : HeHASH(eiter);
+#ifdef PERL_HASH_RANDOMIZE_KEYS
+	s->last_rand = HvAUX(hv)->xhv_last_rand;	// eiter is set, so the aux struct exists
+#endif
+	if (s->lazydel) HvLAZYDEL_off(hv);	// keeps the walk's hv_iterinit() from freeing the caller's entry
+	SAVEDESTRUCTOR_X(S_iter_restore, s);
+}
+/*cfilter helpers. None of the pointers carries restrict: they are all perl
+containers (HV/AV/SV internals), which the perl API may reach by other routes.*/
+
+/*Add the keys of one AoH/HoH row that `universe` has not seen to it and to
+`colnames`, keeping first-seen order. hv_iterkeysv() returns a new mortal for
+every key, so the row gets its own temps scope: without one, a 20000 x 50 AoH
+left a million of them alive until the caller's statement ended (about 100 MB
+of RSS to select a 4.7 MB column).*/
+static void cf_union(pTHX_ HV *row, HV *universe, AV *colnames) {
+	ENTER;
+	SAVETMPS;
+	iter_keep(aTHX_ row);
+	hv_iterinit(row);
+	for (HE *ie; (ie = hv_iternext(row)) != NULL; ) {
+		SV *ck = hv_iterkeysv(ie);
+		if (!hv_exists_ent(universe, ck, 0)) {
+			(void)hv_store_ent(universe, ck, SvREFCNT_inc_simple_NN(&PL_sv_yes), 0);
+			av_push(colnames, newSVsv(ck));
+		}
+	}
+	FREETMPS;
+	LEAVE;
+}
+/*Row r of one column, or NULL where the cell is missing, with its get magic run. `src` is the column's
+AV for a HoA (NULL otherwise); for an AoH/HoH, `rows` holds references to the
+rows and `ck` is the column's key.*/
+static SV *cf_cell(pTHX_ AV *src, AV *rows, SV *ck, SSize_t r) {
+	SV *cell = NULL;
+	if (src) {
+		SV **ep = av_fetch(src, r, 0);
+		if (ep) cell = *ep;
+	} else {
+		HE *che = hv_fetch_ent((HV*)SvRV(AvARRAY(rows)[r]), ck, 0, 0);
+		if (che) cell = HeVAL(che);
+	}
+	if (cell) SvGETMAGIC(cell);	// a tied row or column only fetches here; copy with cf_dup()
+	return cell;
+}
+/*A copy of a cell whose get magic has already run, so a tied FETCH runs once.*/
+static SV *cf_dup(pTHX_ SV *cell) {
+	SV *c = newSV(0);
+	sv_setsv_flags(c, cell, SV_NOSTEAL);
+	return c;
+}
+/*One column of copied cells, as a new mortal AV for the predicate. omit drops
+undef and missing cells; otherwise they become undef and the AV is exactly
+nrows long, which is what lets a column line up with `against` row by row.*/
+static AV *cf_column(pTHX_ AV *src, AV *rows, SV *ck, SSize_t nrows, bool omit) {
+	AV *col = (AV*)sv_2mortal((SV*)newAV());
+	if (nrows > 0 && !omit) av_extend(col, nrows - 1);
+	for (SSize_t r = 0; r < nrows; r++) {
+		SV *cell = cf_cell(aTHX_ src, rows, ck, r);
+		if (cell && SvOK(cell)) av_push(col, cf_dup(aTHX_ cell));
+		else if (!omit) av_push(col, newSV(0));
+	}
+	return col;
+}
+/*Copy the cells of `row` whose key is in `keepset` into `nr`. The caller gives
+each row its own scope, with SAVETMPS: hv_iterkeysv() mortalises every key, and
+iter_keep() restores the row's iterator at its LEAVE.*/
+static void cf_copy_row(pTHX_ HV *row, HV *nr, HV *keepset) {
+	iter_keep(aTHX_ row);
+	hv_iterinit(row);
+	for (HE *ie; (ie = hv_iternext(row)) != NULL; ) {
+		SV *ck = hv_iterkeysv(ie);
+		if (hv_exists_ent(keepset, ck, 0)) (void)hv_store_ent(nr, ck, newSVsv(hv_iterval(row, ie)), 0);
+	}
 }
 /* Helpers for _parse_csv_file
 save-stack destructor: closes the input handle on ANY exit, including a
@@ -18520,17 +18679,20 @@ SV *cfilter(data, ...)
 		SV *data
 	CODE:
 	{
-/*0. options. Exactly one of keep/remove is required; it is either an
- array ref of column names or a value predicate (CODE ref / function
- name). For a predicate, undef handling is:
+/*0. options. Exactly one of keep/remove is required; it is either an array
+ ref of column names, a qr// name pattern, or a value predicate (CODE ref /
+ function name). For a predicate, undef handling is:
    na => 'keep' (default) - the predicate sees every cell, incl undef
    na => 'omit'           - single-column funcs (sd) get defined cells
    against => 'col'       - two-column funcs (cor): the predicate gets
-                            ($col, $ref) over rows defined in BOTH.*/
+                            ($col, $ref) over rows defined in BOTH.
+Every option is checked before anything is allocated, and every container
+allocated after that is mortal, so a croak -- cfilter's own, or one thrown by
+the predicate -- frees it instead of leaking a copy of the table.*/
 		SV *keep_sv = NULL, *remove_sv = NULL;
 		SV *na_sv = NULL, *against_sv = NULL;
 		if ((items - 1) & 1) croak("cfilter: trailing options must be name => value pairs");
-		for (int oi = 1; oi < items; oi += 2) {
+		for (size_t oi = 1; oi < (size_t)items; oi += 2) {
 			STRLEN ol;
 			const char *oname = SvPV(ST(oi), ol);
 			SV *oval = ST(oi + 1);
@@ -18546,10 +18708,10 @@ SV *cfilter(data, ...)
 		SV *sel = removing ? remove_sv : keep_sv;
 		/* classify the selector: array ref of names, a qr// name pattern, or a
 		 value predicate.*/
-		bool by_name = FALSE, by_regex = 0;
+		bool by_name = FALSE, by_regex = FALSE;
 		SV *cv_sv = NULL;
-		if (SvROK(sel) && SvTYPE(SvRV(sel)) == SVt_PVAV) by_name = 1;
-		else if (SvRXOK(sel)) by_regex = 1;
+		if (SvROK(sel) && SvTYPE(SvRV(sel)) == SVt_PVAV) by_name = TRUE;
+		else if (SvRXOK(sel)) by_regex = TRUE;
 		else if ((SvROK(sel) && SvTYPE(SvRV(sel)) == SVt_PVCV) || (SvOK(sel) && !SvROK(sel))) {
 			if (SvROK(sel)) cv_sv = SvRV(sel);
 			else {
@@ -18563,253 +18725,230 @@ SV *cfilter(data, ...)
 			}
 		}
 		else croak("cfilter: keep/remove must be an array ref of column names, a qr// regex, or a code ref / function name");
+		bool predicate = !by_name && !by_regex;
 		// decode the undef policy (predicate only).
-		bool na_omit = 0;
+		bool na_omit = FALSE;
 		if (na_sv && SvOK(na_sv)) {
 			STRLEN nl;
 			const char *nv = SvPV(na_sv, nl);
-			if (nl == 4 && memEQ(nv, "omit", 4)) na_omit = 1;
-			else if (nl == 4 && memEQ(nv, "keep", 4)) na_omit = 0;
+			if (nl == 4 && memEQ(nv, "omit", 4)) na_omit = TRUE;
+			else if (nl == 4 && memEQ(nv, "keep", 4)) na_omit = FALSE;
 			else croak("cfilter: na must be 'keep' or 'omit'");
 		}
-		if ((by_name || by_regex) && (na_sv || against_sv)) croak("cfilter: na/against only apply to a predicate selector");
+		if (!predicate && (na_sv || against_sv)) croak("cfilter: na/against only apply to a predicate selector");
 		if (against_sv && na_sv) croak("cfilter: give na or against, not both");
+		if (against_sv && (!SvOK(against_sv) || SvROK(against_sv))) croak("cfilter: against must be a column name (string)");
 		// 1. detect the data shape.
 		if (!SvROK(data)) croak("cfilter: data must be a reference");
 		SV *rv = SvRV(data);
-		short int kind; // 0 = array-of-hashes, 1 = hash-of-arrays, 2 = hash-of-hashes
+		/* this scope lasts until the result is built: its LEAVE is what puts back
+		 the iterator of a hash the caller passed in (see iter_keep).*/
+		ENTER;
+		short int kind; // 0 = array-of-hashes, 1 = hash-of-arrays, 2 = hash-of-hashes, -1 = none of these
 		if (SvTYPE(rv) == SVt_PVAV) kind = 0;
 		else if (SvTYPE(rv) == SVt_PVHV) {
 			HV *h = (HV*)rv;
+			iter_keep(aTHX_ h);
 			hv_iterinit(h);
 			HE *fe = hv_iternext(h);
-			if (!fe) kind = 2;
-			else {
+			kind = 2;	// also for an empty hash
+			if (fe) {
 				SV *fv = hv_iterval(h, fe);
+				SvGETMAGIC(fv);	// a tied hash's value is only fetched here
 				if (SvROK(fv) && SvTYPE(SvRV(fv)) == SVt_PVAV) kind = 1;
-				else if (SvROK(fv) && SvTYPE(SvRV(fv)) == SVt_PVHV) kind = 2;
-				else croak("cfilter: hash values must be array refs (HoA) or hash refs (HoH)");
+				else if (!SvROK(fv) || SvTYPE(SvRV(fv)) != SVt_PVHV) kind = -1;	// -1 = neither: croaks below
+				/* finish a tied walk rather than restart it: perl before 5.18 does
+				 not mark the entry a tied iterator holds for freeing, so the next
+				 hv_iterinit() leaked it and its key (t/cfilter.t's tied leak test
+				 failed on 5.10.1, 5.12.5 and 5.16.3). This only calls NEXTKEY.*/
+				if (SvRMAGICAL(h) && mg_find((SV*)h, PERL_MAGIC_tied))
+					while (hv_iternext(h)) {}
 			}
+			if (kind < 0) croak("cfilter: hash values must be array refs (HoA) or hash refs (HoH)");
 		} else croak("cfilter: data must be an array ref or hash ref");
-/*2. the column universe, and (predicate only) a row-aligned cell table
- `cellmap`: colname -> AV of length nrows, undef in the gaps. The
- alignment lets `against` pair two columns by row.*/
-		HV *universe = newHV();
-		AV *colnames = newAV();
-		HV *cellmap = (by_name || by_regex) ? NULL : newHV();
-		SSize_t nrows = 0;
+/*2. the column universe, in first-seen order. A predicate also gets a
+ snapshot of the table's containers: `srcs` holds a reference to each HoA
+ column (aligned with colnames), `rows` one to each AoH/HoH row. Columns are
+ built from it one at a time in step 3, so a predicate that rewrites the
+ caller's data cannot hand a later column a freed or non-hash row, nor shift
+ it against the `against` column. Selecting by name needs neither.*/
+		HV *universe = (HV*)sv_2mortal((SV*)newHV());	// column name -> yes
+		AV *colnames = (AV*)sv_2mortal((SV*)newAV());	// the same names, in first-seen order
+		AV *srcs = NULL, *rows = NULL;	// NULL = no snapshot (selecting by name)
+		SSize_t nrows = 0;	// a predicate's column length: the longest HoA column, or the row count
 		if (kind == 1) {
 			HV *h = (HV*)rv;
-			HE *e;
+			if (predicate) srcs = (AV*)sv_2mortal((SV*)newAV());
 			hv_iterinit(h);
-			while ((e = hv_iternext(h))) {
+			for (HE *e; (e = hv_iternext(h)) != NULL; ) {
 				SV *val = hv_iterval(h, e);
+				SvGETMAGIC(val);
 				if (!SvROK(val) || SvTYPE(SvRV(val)) != SVt_PVAV) croak("cfilter: every value must be an array ref (hash of arrays)");
-				SSize_t len = av_len((AV*)SvRV(val)) + 1;
-				if (len > nrows) nrows = len;
-			}
-			hv_iterinit(h);
-			while ((e = hv_iternext(h))) {
 				SV *ck = hv_iterkeysv(e);
-				(void)hv_store_ent(universe, ck, newSViv(1), 0);
+				(void)hv_store_ent(universe, ck, SvREFCNT_inc_simple_NN(&PL_sv_yes), 0);
 				av_push(colnames, newSVsv(ck));
-				if (!by_name && !by_regex) {
-					AV *src = (AV*)SvRV(hv_iterval(h, e)), *col = newAV();
-					if (nrows > 0) av_extend(col, nrows - 1);
-					for (SSize_t r = 0; r < nrows; r++) {
-						SV **ep = (r <= av_len(src)) ? av_fetch(src, r, 0) : NULL;
-						av_push(col, (ep && *ep && SvOK(*ep)) ? newSVsv(*ep) : newSV(0));
-					}
-					(void)hv_store_ent(cellmap, ck, newRV_noinc((SV*)col), 0);
+				if (srcs) {
+					SSize_t len = av_len((AV*)SvRV(val)) + 1;
+					if (len > nrows) nrows = len;
+					av_push(srcs, newRV_inc(SvRV(val)));
 				}
 			}
-		} else {// row-major: collect the rows in a stable order, then build per column.
-			AV *rows = newAV();
+		} else {
+			if (predicate) rows = (AV*)sv_2mortal((SV*)newAV());
 			if (kind == 0) {
 				AV *a = (AV*)rv;
 				SSize_t n = av_len(a) + 1;
 				for (SSize_t r = 0; r < n; r++) {
 					SV **ep = av_fetch(a, r, 0);
+					if (ep && *ep) SvGETMAGIC(*ep);
 					if (!ep || !*ep || !SvROK(*ep) || SvTYPE(SvRV(*ep)) != SVt_PVHV) croak("cfilter: array elements must be hash refs (array of hashes)");
-					av_push(rows, newRV_inc(SvRV(*ep)));
+					cf_union(aTHX_ (HV*)SvRV(*ep), universe, colnames);
+					if (rows) av_push(rows, newRV_inc(SvRV(*ep)));
 				}
 			} else {
 				HV *h = (HV*)rv;
-				HE *e;
 				hv_iterinit(h);
-				while ((e = hv_iternext(h))) {
+				for (HE *e; (e = hv_iternext(h)) != NULL; ) {
 					SV *val = hv_iterval(h, e);
+					SvGETMAGIC(val);
 					if (!SvROK(val) || SvTYPE(SvRV(val)) != SVt_PVHV) croak("cfilter: every value must be a hash ref (hash of hashes)");
-					av_push(rows, newRV_inc(SvRV(val)));
+					cf_union(aTHX_ (HV*)SvRV(val), universe, colnames);
+					if (rows) av_push(rows, newRV_inc(SvRV(val)));
 				}
 			}
-			nrows = av_len(rows) + 1;
-			{// union of columns, in first-seen order.
-				HV *seen = newHV();
-				for (SSize_t r = 0; r < nrows; r++) {
-					HV *row = (HV*)SvRV(*av_fetch(rows, r, 0));
-					HE *ie;
-					hv_iterinit(row);
-					while ((ie = hv_iternext(row))) {
-						SV *ck = hv_iterkeysv(ie);
-						if (!hv_exists_ent(seen, ck, 0)) {
-							(void)hv_store_ent(seen, ck, newSViv(1), 0);
-							(void)hv_store_ent(universe, ck, newSViv(1), 0);
-							av_push(colnames, newSVsv(ck));
-						}
-					}
-				}
-				SvREFCNT_dec((SV*)seen);
-			}
-			if (!by_name && !by_regex) {
-				SSize_t nc = av_len(colnames) + 1;
-				for (SSize_t c = 0; c < nc; c++) {
-					SV *ck = *av_fetch(colnames, c, 0);
-					AV *col = newAV();
-					if (nrows > 0) av_extend(col, nrows - 1);
-					for (SSize_t r = 0; r < nrows; r++) {
-						HV *row = (HV*)SvRV(*av_fetch(rows, r, 0));
-						HE *che = hv_fetch_ent(row, ck, 0, 0);
-						SV *cell = che ? HeVAL(che) : NULL;
-						av_push(col, (cell && SvOK(cell)) ? newSVsv(cell) : newSV(0));
-					}
-					(void)hv_store_ent(cellmap, ck, newRV_noinc((SV*)col), 0);
-				}
-			}
-			SvREFCNT_dec((SV*)rows);
+			if (rows) nrows = av_len(rows) + 1;
 		}
-		// 2b. resolve the `against` reference column into its cell array.
-		AV *against_av = NULL;
-		if (against_sv) {
-			if (!SvOK(against_sv) || SvROK(against_sv)) croak("cfilter: against must be a column name (string)");
-			if (!hv_exists_ent(universe, against_sv, 0)) croak("cfilter: against column '%s' not found in data", SvPV_nolen(against_sv));
-			against_av = (AV*)SvRV(HeVAL(hv_fetch_ent(cellmap, against_sv, 0, 0)));
-		}
+		SSize_t nc = av_len(colnames) + 1;
 		// 3. decide which columns to keep.
-		HV *keepset = newHV();
+		HV *keepset = (HV*)sv_2mortal((SV*)newHV());
 		if (by_name) {
 			AV *names = (AV*)SvRV(sel);
-			HV *listed = newHV();
+			HV *listed = (HV*)sv_2mortal((SV*)newHV());
 			SSize_t n = av_len(names) + 1;
 			for (SSize_t i = 0; i < n; i++) {
 				SV **ep = av_fetch(names, i, 0);
 				if (!ep || !*ep || !SvOK(*ep)) croak("cfilter: column list contains an undefined entry");
 				if (!hv_exists_ent(universe, *ep, 0)) croak("cfilter: column '%s' not found in data", SvPV_nolen(*ep));
-				(void)hv_store_ent(listed, *ep, newSViv(1), 0);
+				(void)hv_store_ent(listed, *ep, SvREFCNT_inc_simple_NN(&PL_sv_yes), 0);
 			}
-			SSize_t nc = av_len(colnames) + 1;
 			for (SSize_t c = 0; c < nc; c++) {
-				SV *ck = *av_fetch(colnames, c, 0);
+				SV *ck = AvARRAY(colnames)[c];
 				bool in_list = cBOOL(hv_exists_ent(listed, ck, 0));
-				if (removing ? !in_list : in_list) (void)hv_store_ent(keepset, ck, newSViv(1), 0);
+				if (removing ? !in_list : in_list) (void)hv_store_ent(keepset, ck, SvREFCNT_inc_simple_NN(&PL_sv_yes), 0);
 			}
-			SvREFCNT_dec((SV*)listed);
 		} else if (by_regex) {
 			/* name pattern: keep/drop each column by matching its name against
 			 the compiled qr//. No data is inspected, so na/against don't apply.*/
 			REGEXP *rx = SvRX(sel);
-			SSize_t nc = av_len(colnames) + 1;
 			for (SSize_t c = 0; c < nc; c++) {
-				SV *ck = *av_fetch(colnames, c, 0);
+				SV *ck = AvARRAY(colnames)[c];
 				STRLEN len;
 				char *s = SvPV(ck, len);
 				bool match = cBOOL(pregexec(rx, s, s + len, s, 0, ck, 1));
-				if (removing ? !match : match) (void)hv_store_ent(keepset, ck, newSViv(1), 0);
+				if (removing ? !match : match) (void)hv_store_ent(keepset, ck, SvREFCNT_inc_simple_NN(&PL_sv_yes), 0);
 			}
 		} else {
 			/* predicate over the flat colnames list (never a live hash iterator
-			 across call_sv). Apply the undef policy per column.*/
-			SSize_t nc = av_len(colnames) + 1;
+			 across call_sv). Each column is copied out of the snapshot just
+			 before its call and freed just after it, so the peak is one column
+			 (plus `against`) rather than a second copy of the whole table.*/
+			AV *ref_av = NULL;	// the `against` column, nrows long; NULL = not comparing
+			if (against_sv) {
+				if (!hv_exists_ent(universe, against_sv, 0)) croak("cfilter: against column '%s' not found in data", SvPV_nolen(against_sv));
+				AV *ref_src = NULL;	// the HoA column; NULL = row-major, read through `rows`
+				if (kind == 1) {
+					HE *he = hv_fetch_ent((HV*)rv, against_sv, 0, 0);	// before any predicate runs, so still the step-2 AV
+					SvGETMAGIC(HeVAL(he));
+					ref_src = (AV*)SvRV(HeVAL(he));
+				}
+				ref_av = cf_column(aTHX_ ref_src, rows, against_sv, nrows, FALSE);
+			}
 			for (SSize_t c = 0; c < nc; c++) {
-				SV *ck = *av_fetch(colnames, c, 0);
-				AV *cells = (AV*)SvRV(HeVAL(hv_fetch_ent(cellmap, ck, 0, 0)));
+				SV *ck = AvARRAY(colnames)[c];
+				AV *src = srcs ? (AV*)SvRV(AvARRAY(srcs)[c]) : NULL;	// NULL = row-major
 				bool pass;
-				if (against_av) {
-					// two columns, pairwise complete: rows defined in BOTH
-					AV *a1 = newAV(), *a2 = newAV();
+				ENTER;
+				SAVETMPS;
+				if (ref_av) {// two columns, pairwise complete: rows defined in BOTH
+					AV *a1 = (AV*)sv_2mortal((SV*)newAV()), *a2 = (AV*)sv_2mortal((SV*)newAV());
 					for (SSize_t r = 0; r < nrows; r++) {
-						SV **p1 = av_fetch(cells, r, 0);
-						SV **p2 = av_fetch(against_av, r, 0);
-						if (p1 && *p1 && SvOK(*p1) && p2 && *p2 && SvOK(*p2)) {
-							av_push(a1, newSVsv(*p1));
-							av_push(a2, newSVsv(*p2));
+						SV *cell = cf_cell(aTHX_ src, rows, ck, r), *ref = AvARRAY(ref_av)[r];
+						if (cell && SvOK(cell) && SvOK(ref)) {
+							av_push(a1, cf_dup(aTHX_ cell));
+							av_push(a2, cf_dup(aTHX_ ref));	// a copy: the predicate may write to $_[1]
 						}
 					}
 					pass = cf_pred(aTHX_ cv_sv, a1, a2, ck);
-					SvREFCNT_dec((SV*)a1);
-					SvREFCNT_dec((SV*)a2);
-				} else if (na_omit) {// one column, defined cells only
-					AV *a1 = newAV();
-					for (SSize_t r = 0; r < nrows; r++) {
-						SV **p = av_fetch(cells, r, 0);
-						if (p && *p && SvOK(*p)) av_push(a1, newSVsv(*p));
-					}
-					pass = cf_pred(aTHX_ cv_sv, a1, NULL, ck);
-					SvREFCNT_dec((SV*)a1);// one column, every cell including undef
 				} else {
-					pass = cf_pred(aTHX_ cv_sv, cells, NULL, ck);
+					pass = cf_pred(aTHX_ cv_sv, cf_column(aTHX_ src, rows, ck, nrows, na_omit), NULL, ck);
 				}
-				if (removing ? !pass : pass) (void)hv_store_ent(keepset, ck, newSViv(1), 0);
+				FREETMPS;
+				LEAVE;
+				if (removing ? !pass : pass) (void)hv_store_ent(keepset, ck, SvREFCNT_inc_simple_NN(&PL_sv_yes), 0);
 			}
 		}
-		// 4. rebuild the data in its original shape with only the kept columns.
+/*4. rebuild the data in its original shape with only the kept columns. This
+ reads the caller's data afresh, which a predicate may have rewritten since
+ step 2, so the shape is checked again rather than trusted: a row replaced by
+ a plain scalar used to be dereferenced as a hash and crash. Each new
+ container is stored in its parent before anything is copied into it, so a
+ croak frees it along with the mortal result.*/
 		SV *out;
 		if (kind == 1) {
-			HV *outh = newHV(), *h = (HV*)rv;
-			HE *e;
+			HV *outh = (HV*)sv_2mortal((SV*)newHV()), *h = (HV*)rv;
 			hv_iterinit(h);
-			while ((e = hv_iternext(h))) {
+			for (HE *e; (e = hv_iternext(h)) != NULL; ) {
 				SV *ck = hv_iterkeysv(e);
 				if (!hv_exists_ent(keepset, ck, 0)) continue;
-				AV *src = (AV*)SvRV(hv_iterval(h, e)), *dst = newAV();
+				SV *val = hv_iterval(h, e);
+				SvGETMAGIC(val);
+				if (!SvROK(val) || SvTYPE(SvRV(val)) != SVt_PVAV) croak("cfilter: every value must be an array ref (hash of arrays)");
+				AV *src = (AV*)SvRV(val), *dst = newAV();
+				(void)hv_store_ent(outh, ck, newRV_noinc((SV*)dst), 0);
 				SSize_t n = av_len(src) + 1;
 				if (n > 0) av_extend(dst, n - 1);
 				for (SSize_t i = 0; i < n; i++) {
 					SV **ep = av_fetch(src, i, 0);
 					av_push(dst, (ep && *ep) ? newSVsv(*ep) : newSV(0));
 				}
-				(void)hv_store_ent(outh, ck, newRV_noinc((SV*)dst), 0);
 			}
 			out = (SV*)outh;
 		} else if (kind == 2) {
-			HV *outh = newHV(), *h = (HV*)rv;
-			HE *e;
+			HV *outh = (HV*)sv_2mortal((SV*)newHV()), *h = (HV*)rv;
 			hv_iterinit(h);
-			while ((e = hv_iternext(h))) {
-				SV *rk = hv_iterkeysv(e);
-				HV *row = (HV*)SvRV(hv_iterval(h, e)), *nr = newHV();
-				HE *ie;
-				hv_iterinit(row);
-				while ((ie = hv_iternext(row))) {
-					SV *ck = hv_iterkeysv(ie);
-					if (!hv_exists_ent(keepset, ck, 0)) continue;
-					(void)hv_store_ent(nr, ck, newSVsv(HeVAL(ie)), 0);
-				}
-				(void)hv_store_ent(outh, rk, newRV_noinc((SV*)nr), 0);
+			for (HE *e; (e = hv_iternext(h)) != NULL; ) {
+				SV *val = hv_iterval(h, e);
+				SvGETMAGIC(val);
+				if (!SvROK(val) || SvTYPE(SvRV(val)) != SVt_PVHV) croak("cfilter: every value must be a hash ref (hash of hashes)");
+				HV *nr = newHV();
+				ENTER;
+				SAVETMPS;	// hv_iterkeysv()'s mortals, and the row's iterator: see cf_copy_row()
+				(void)hv_store_ent(outh, hv_iterkeysv(e), newRV_noinc((SV*)nr), 0);
+				cf_copy_row(aTHX_ (HV*)SvRV(val), nr, keepset);
+				FREETMPS;
+				LEAVE;
 			}
 			out = (SV*)outh;
 		} else {
-			AV *outa = newAV(), *a = (AV*)rv;
+			AV *outa = (AV*)sv_2mortal((SV*)newAV()), *a = (AV*)rv;
 			SSize_t n = av_len(a) + 1;
+			if (n > 0) av_extend(outa, n - 1);
 			for (SSize_t r = 0; r < n; r++) {
-				HV *row = (HV*)SvRV(*av_fetch(a, r, 0)), *nr = newHV();
-				HE *ie;
-				hv_iterinit(row);
-				while ((ie = hv_iternext(row))) {
-					SV *ck = hv_iterkeysv(ie);
-					if (!hv_exists_ent(keepset, ck, 0)) continue;
-					(void)hv_store_ent(nr, ck, newSVsv(HeVAL(ie)), 0);
-				}
+				SV **ep = av_fetch(a, r, 0);
+				if (ep && *ep) SvGETMAGIC(*ep);
+				if (!ep || !*ep || !SvROK(*ep) || SvTYPE(SvRV(*ep)) != SVt_PVHV) croak("cfilter: array elements must be hash refs (array of hashes)");
+				HV *nr = newHV();
 				av_push(outa, newRV_noinc((SV*)nr));
+				ENTER;
+				SAVETMPS;	// hv_iterkeysv()'s mortals, and the row's iterator: see cf_copy_row()
+				cf_copy_row(aTHX_ (HV*)SvRV(*ep), nr, keepset);
+				FREETMPS;
+				LEAVE;
 			}
 			out = (SV*)outa;
 		}
-		// 5. tidy up the scratch tables (the result keeps its own copies).
-		SvREFCNT_dec((SV*)universe);
-		SvREFCNT_dec((SV*)colnames);
-		SvREFCNT_dec((SV*)keepset);
-		if (cellmap) SvREFCNT_dec((SV*)cellmap);
-		RETVAL = newRV_noinc(out);
+		LEAVE;
+		RETVAL = newRV_inc(out);	// out is mortal: this reference is what keeps it
 	}
 	OUTPUT:
 		RETVAL

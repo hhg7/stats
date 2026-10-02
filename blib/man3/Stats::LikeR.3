@@ -1466,7 +1466,10 @@ or the outer key of a \fBhash of arrays\fR:
 \&\f(CW\*(C`cfilter\*(C'\fR takes exactly one of \f(CW\*(C`keep\*(C'\fR or \f(CW\*(C`remove\*(C'\fR. \f(CW\*(C`keep\*(C'\fR returns only the
 matching columns; \f(CW\*(C`remove\*(C'\fR returns everything except them. The result is the
 same shape as the input (HoH → HoH, HoA → HoA, AoH → AoH), with cell values
-copied and the original structure left untouched.
+copied and the original structure left untouched. That includes the position
+of an \f(CW\*(C`each\*(C'\fR loop you are part\-way through on the data or on one of its rows,
+which carries on where it was. Tied hashes and arrays are accepted anywhere in
+the data.
 .PP
 The selector — the value of \f(CW\*(C`keep\*(C'\fR or \f(CW\*(C`remove\*(C'\fR — can be given three ways:
 .IP \(bu 4
@@ -1518,18 +1521,36 @@ function name — evaluated once per column. It is called as
 \& $predicate\->($column_values, $column_name)
 .Ve
 .PP
-where \f(CW$column_values\fR is an array ref of the column\*(Aqs \fBdefined\fR cells (undef
-and missing cells are dropped, so functions like \f(CW\*(C`sd\*(C'\fR get clean input).
+where \f(CW$column_values\fR is an array ref of a copy of \fBevery\fR cell in the
+column, in row order, with undef standing in for an undef or missing cell.
 With \f(CW\*(C`keep\*(C'\fR, columns for which the predicate is true are kept; with \f(CW\*(C`remove\*(C'\fR,
 those columns are dropped.
 .PP
-.Vb 6
+Two options change what the predicate is given, for functions that cannot take
+undef:
+.IP \(bu 4
+\&\f(CW\*(C`na => \*(Aqomit\*(Aq\*(C'\fR drops the undef and missing cells, so a one\-column function
+such as \f(CW\*(C`sd\*(C'\fR gets clean input. \f(CW\*(C`na => \*(Aqkeep\*(Aq\*(C'\fR is the default described above.
+.IP \(bu 4
+\&\f(CW\*(C`against => \*(Aqcol\*(Aq\*(C'\fR compares every column with the column named \f(CW\*(C`col\*(C'\fR. The
+predicate is called with three arguments,
+\&\f(CW\*(C`$predicate\->($column_values, $col_values, $column_name)\*(C'\fR, and both arrays
+hold only the rows where \fBboth\fR columns are defined (pairwise complete),
+so a two\-column function such as \f(CW\*(C`cor\*(C'\fR can take them directly.
+.PP
+\&\f(CW\*(C`na\*(C'\fR and \f(CW\*(C`against\*(C'\fR cannot be given together.
+.PP
+.Vb 10
 \& # Keep only the constant columns (standard deviation zero):
 \& my $const = cfilter(\e%hoa, keep => sub { sd($_[0]) == 0 });   # { z => [0,0,0] }
 \& # Drop the constant columns instead:
 \& my $varying = cfilter(\e%hoa, remove => sub { sd($_[0]) == 0 }); # { x=>..., y=>... }
 \& # A bare function name resolves in Stats::LikeR:: (use a package for your own):
 \& cfilter(\e%hoa, keep => \*(Aqsome_predicate\*(Aq);
+\& # Drop the constant columns of data with gaps: sd() gets only defined cells
+\& cfilter(\e%gappy, remove => sub { sd($_[0]) == 0 }, na => \*(Aqomit\*(Aq);
+\& # Keep the columns strongly correlated with y (y itself included)
+\& cfilter(\e%hoa, keep => sub { abs(cor($_[0], $_[1])) > 0.9 }, against => \*(Aqy\*(Aq);
 .Ve
 .PP
 A bare string is always treated as a \fBfunction name\fR, not a single column
@@ -1548,7 +1569,11 @@ the selector is not an array ref, a \f(CW\*(C`qr//\*(C'\fR regex, or a code ref 
 name, or the function name cannot be resolved,
 .IP \(bu 4
 \&\f(CW\*(C`na\*(C'\fR or \f(CW\*(C`against\*(C'\fR is given with a by\-name or regex selector (they apply only
-to a value predicate),
+to a value predicate), both are given, \f(CW\*(C`na\*(C'\fR is not \f(CW\*(Aqkeep\*(Aq\fR or \f(CW\*(Aqomit\*(Aq\fR, or
+the \f(CW\*(C`against\*(C'\fR column is not present in the data,
+.IP \(bu 4
+the predicate itself dies, or replaces a row or column of the data with
+something of the wrong shape while \f(CW\*(C`cfilter\*(C'\fR is running,
 .IP \(bu 4
 an unknown option is given, or the options are not \f(CW\*(C`name => value\*(C'\fR pairs,
 .IP \(bu 4

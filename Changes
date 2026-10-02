@@ -475,6 +475,49 @@ Revision history for Stats-LikeR
    factor level whose rows were all dropped for NA, and lm()'s design
    builder keeps it as an aliased column.
 
+ [cfilter(): crashes, leaks and memory]
+
+ - A predicate that replaced a row or column of the data it was filtering,
+   as in cfilter(\@aoh, keep => sub { $aoh[1] = 5; 1 }), segfaulted: the
+   output was rebuilt from the caller's data on the assumption that it
+   still had the shape checked before the predicate ran. It is now checked
+   again, and such a call dies with the same message as bad input would.
+   Predicate columns are built from the rows as they were when cfilter was
+   called, so a predicate that edits the data cannot misalign a later
+   column against the one named by against.
+
+ - Every croak after the scratch tables were made leaked them: an unknown
+   column name, an unknown against column, a bad AoH element, and a
+   predicate that dies, which leaked a full copy of the table. They are
+   now mortal and are freed by the croak.
+
+ - Selecting from an AoH or HoH kept two short-lived SVs per cell alive
+   until the caller's statement ended, one for each key it looked at. On a
+   20000 x 50 AoH, keeping one column raised the peak by 101 MB for a
+   result that is 4.7 MB in pure perl; it is now 6.7 MB, and the call
+   takes 0.072s instead of 0.111s.
+
+ - A predicate no longer works on a second copy of the whole table made up
+   front. Each column is copied just before its call and freed just after
+   it, which halves the peak on a 20000 x 50 HoA (62 MB to 31 MB, the size
+   of the result) and takes 196 MB to 72 MB on the same AoH.
+
+ - A tied hash died with "hash values must be array refs", because the
+   value was tested before the tie had fetched it. Tied hashes and arrays
+   now work at every level: the table, a row, a column.
+
+ - An each() loop the caller was part-way through, on the table or on any
+   of its rows, started again after cfilter, because every walk of a hash
+   reset the iterator that each() shares; a croak in mid-walk left the
+   next each() starting part-way in. cfilter now saves the iterator and
+   puts it back on the way out, croaks included. If the predicate deletes
+   the entry that each() was on, perl has freed it, and the iterator is
+   left reset as before rather than pointed at freed memory.
+
+ - The documentation said the predicate is given only the defined cells.
+   By default it is given every cell, undef included; na => 'omit' and
+   against are what drop them, and both are now documented.
+
 0.3212 2026-09-28 CDT
 
  [write_table(): a warning for a header cell with no name]
