@@ -188,8 +188,19 @@ it was given:
     HoH  { r => { .. }, .. }     hash of hashrefs     (named rows)
 
 For AoA the column identifiers in `by` and in the `agg` spec are integer
-positions; for the other three shapes they are column names. The original frame
-is never modified.
+positions (a negative one counts from the end, as `$row->[-1]` does); for the
+other three shapes they are column names. A column that no row has is an error,
+so a misspelled name dies rather than coming back as a column of undef. An undef
+row of an AoA or AoH is skipped. The original frame is never modified, down to
+its scalars: a numeric cell is not given a cached string, nor a string cell a
+cached number.
+
+The split is done in C, in one pass that hashes each row's `by` cells into its
+group and a second that drops each aggregated cell straight into its group's
+array, sharing the frame's own scalars wherever only the numeric aggregators
+read them. On a million-row AoH in a thousand groups it takes about a quarter of
+the time the pure-Perl split it replaced did, in about a fifth of the extra
+memory.
 
 ### Usage
 
@@ -225,11 +236,14 @@ is never modified.
   aggregate the entire frame into one row.
 - **skipna** — `1` (default) drops undef cells before a numeric aggregator
   runs. `0` makes any undef in a group poison the numeric result for that group
-  (the cell comes back undef), matching pandas `skipna=False`. `count`, `n`,
+  (the cell comes back undef), matching pandas `skipna=False`; that covers
+  `mean`, `median`, `sum`, `sd`, `var`, `min`, `max` and `mode`. `count`, `n`,
   `nunique`, `first`, and `last` ignore this flag.
-- **sort** — `1` (default) sorts the output groups by key (numerically when
-  every key looks like a number, otherwise as strings); `0` keeps first-seen
-  order.
+- **sort** — `1` (default) sorts the output groups by key; `0` keeps first-seen
+  order. Each `by` column is compared on its own terms: numerically when every
+  value in it looks like a number, otherwise as strings. Within a column an
+  undef key sorts last (where pandas puts its NaN group) and a NaN sorts after
+  every number.
 - **output.type** — `aoa`, `aoh`, `hoa`, or `hoh`. Defaults to the same family
   as the input frame.
 
@@ -260,7 +274,9 @@ the smallest number, or the lowest string when the values are not numeric.
 
 A **coderef** may be supplied instead of a name for full control. It is called
 once per group as `$code->(\@cells)`, where `@cells` are every cell for that
-column in the group **including undef**, and must return a single scalar:
+column in the group **including undef**, and must return a single scalar. It
+is called in scalar context, so `sub { grep { .. } @{ $_[0] } }` returns a
+count. The cells are copies; changing them does not change the frame:
 
     # count the missing values in each group
     my $out = agg($df, by => 'sex', agg => {
@@ -278,7 +294,11 @@ columns, otherwise as strings), each expanded over its aggregator list in the
 order supplied.
 
 A column reduced by a **single** aggregator keeps its own name; reduced by
-**two or more** it becomes `<col>_<func>`:
+**two or more** it becomes `<col>_<func>`. A coderef's `<func>` is `fn`, or
+`fn1`, `fn2`, .. when a column has more than one. A column that is also a `by`
+column is always named `<col>_<func>`, so `by => 'g', agg => { g => 'count' }`
+gives `g` and `g_count`. Any name that would still be generated twice is an
+error, except under `output.type => 'aoa'`, whose columns are positional:
 
     my $df = [
         { sex => 'M', wt => 70, age => 30    },
@@ -319,6 +339,9 @@ Without `by`, the frame collapses to one row:
 
     # [ { wt => 66.25, age => 3 } ]
 
+That holds for a frame with no rows too, as for pandas `df.agg`: `count` and `n`
+are 0 and the numeric aggregators undef. A grouped empty frame has no groups.
+
 ### Array of Arrays (AoA)
 
 Columns are integer positions. Grouping on column 0 and reducing column 1:
@@ -351,7 +374,7 @@ By default (`skipna => 1`) undef cells are removed before a numeric aggregator
 runs, so a group of `(60, 55)` with a third undef still yields the mean of the
 two defined values. `count` reports only defined cells while `n` counts undef
 too. With `skipna => 0`, a group containing any undef returns undef for the
-numeric aggregators (`mean median sum sd var mode`); the counting and
+numeric aggregators (`mean median sum sd var min max mode`); the counting and
 positional aggregators are unaffected.
 
 A group without enough data yields undef rather than an error: `sd` and `var`
@@ -366,9 +389,17 @@ one.
 - no `agg` spec is given, or it is not a non-empty hashref;
 - an unknown option is passed;
 - an aggregator name is not recognized;
-- an aggregator list for a column is empty;
+- an aggregator list for a column is empty, or holds something that is
+  neither a name nor a coderef;
 - `output.type` is not one of `aoa`, `aoh`, `hoa`, `hoh`;
-- the trailing arguments are not `name => value` pairs.
+- the trailing arguments are not `name => value` pairs;
+- a column in `by` or in the spec is undef, is in no row, is not an integer
+  position (AoA), or is not an arrayref (HoA);
+- a row of an AoA or AoH is defined but not an ARRAY or HASH ref;
+- two output columns would get the same name (see above);
+- a numeric aggregator meets a cell that is not a number. The message names
+  the aggregator, the column and the group, as in
+  `agg: mean of column 'v' over group (g = 'F'): mean: non-numeric value ..`.
 
 ### See also
 
@@ -379,8 +410,10 @@ one.
 
 Sequential (Type-I) ANOVA table for a linear model, in the same shape `aov`
 returns. `anova` fits `response ~ terms`, then decomposes the model sum of
-squares one term at a time, **in formula order**, and F-tests each term
-against the residual mean square.
+squares one term at a time, **in R's term order** -- main effects first, then
+two-way interactions, and so on, each group in formula order -- and F-tests
+each term against the residual mean square. The formula is read by the same
+parser `lm` and `glm` use.
 
     anova(
     {
@@ -412,18 +445,43 @@ the main effects alongside the interaction (`a * b` expands to `a + b + a:b`;
 
     my $res_2way = anova($data_2way, 'len ~ supp * dose');
 
-Bare string columns are treated as factors and treatment-coded (first level =
-reference); numeric columns and `I(x^2)` enter as single regressors. It is
-robust against rank deficiency: collinear terms gracefully receive 0 degrees
-of freedom and 0 sum of squares, matching R's behavior.
+Bare string columns are treated as factors; numeric columns, `I(x^2)` and
+`log(x)` enter as single regressors. A factor is coded by treatment contrasts
+or by a full set of indicators exactly as R decides it (its "margin rule"), so
+nested and per-group-slope models come out as in R: `y ~ a + a:b` gives `a:b`
+`levels(a) * (levels(b) - 1)` degrees of freedom, and `y ~ g + g:x` fits a
+separate slope of `x` in each group. `- 1`, `+ 0` and `0 +` remove the
+intercept, `.` stands for every other column (taken in sorted order, since a
+hash has no column order), `offset(z)` is subtracted from the response, and
+`a:b` and `b:a` are the same term. A term with no estimable column -- one that
+is collinear with the terms before it -- is kept with 0 degrees of freedom and
+0 sum of squares, where R leaves it out of the table. A column is judged
+collinear by R's own rule: when what the earlier columns leave of it has a
+norm below `1e-7` of its own.
+
+The fit keeps memory independent of the number of rows: it rotates one row at
+a time into a `p`-by-`p` triangular factor (`p` the number of design columns),
+so a 100,000-row model with 801 columns needs about 2.5 MB rather than a
+640 MB design matrix.
 
 Given two or more formulas, `anova` compares nested models instead and returns
 an **array ref** of rows, one per model in the order supplied — R's
 `anova(m1, m2, ...)`. Each row carries `Res.Df`, `RSS` and `formula`; every row
-after the first adds `Df`, `Sum of Sq`, `F` and `Pr(>F)`:
+after the first adds `Df` and `Sum of Sq`, the drops from the row before it,
+and `F` and `Pr(>F)`:
 
-    my $tab = anova($data, 'y ~ x1', 'y ~ x1 + x2');
-    printf "adding x2: F = %.4g, p = %.4g\n", $tab->[1]{F}, $tab->[1]{'Pr(>F)'};
+    my $tab = anova($data, 'y ~ 1', 'y ~ x1', 'y ~ x1 + x2');
+    printf "adding x2: F = %.4g, p = %.4g\n", $tab->[2]{F}, $tab->[2]{'Pr(>F)'};
+
+`F` is the `Sum of Sq` per `Df` over the residual mean square of the model with
+the fewest residual degrees of freedom, and its p-value is taken on the
+absolute `Df`, so models listed largest first are tested too. As in R's
+`stat.anova`, `F` and `Pr(>F)` are left out where `Df` is 0 or `F` would be
+negative (models that are not nested), and also where that residual mean
+square is 0. Every model is fitted on the same rows: those complete for all of
+them. As R's `anova.lmlist` does, a model whose response differs from the
+first model's is dropped with a warning, and if only one model is left, its
+single-model table is returned.
 
 Given two or more **fitted models** instead -- `lm` or `glm` fits (or
 `negbin` `glm` fits) of the same response on the same rows -- `anova` compares
@@ -454,15 +512,15 @@ than as `1 - pf(F, df1, df2)`; see
 ### Input Parameters
 | Parameter | Type | Default | Description | Example |
 | --- | --- | --- | --- | --- |
-| `data_sv` | `HashRef` or `ArrayRef` | *(Required)* | The dataset. A Hash of Arrays (HoA, columns) or Array of Hashes (AoH, rows) — the same forms `aov`/`lm` accept. |
-| `formula_sv` | `String` | *(Required)* | Symbolic model `'response ~ rhs'`, with `+`, `:` and `*`. Unlike `aov`, `anova` does **not** auto-stack, so a formula is mandatory. | `'yield ~ N * P'` |
+| `data_sv` | `HashRef` or `ArrayRef` | *(Required)* | The dataset. A Hash of Arrays (HoA, columns, all the same length), Hash of Hashes (HoH) or Array of Hashes (AoH, rows) — the forms `lm` accepts. |
+| `formula_sv` | `String` | *(Required)* | Symbolic model `'response ~ rhs'`, with `+`, `:`, `*`, `.`, `- 1`/`0 +` and `offset()`, as `lm` reads it. Unlike `aov`, `anova` does **not** auto-stack, so a formula is mandatory. Give two or more to compare models. | `'yield ~ N * P'` |
 
 ### Output Variables
 A single `HashRef`; keys are the parsed term names, so the structure varies
 with the formula.
 | Parameter | Type | Description | Example |
 | --- | --- | --- | --- |
-| *(Term Name)* | `HashRef` | ANOVA-table stats for each term (`'ctrl'`, `'N:P'`, …). `'Mean Sq'`, `'F value'` and `'Pr(>F)'` are omitted for 0-df (aliased) terms. | `{'Df'=>1,'Sum Sq'=>14.2,'Mean Sq'=>14.2,'F value'=>25.81,'Pr(>F)'=>0.0004}` |
+| *(Term Name)* | `HashRef` | ANOVA-table stats for each term (`'ctrl'`, `'N:P'`, …), named as R names them: an interaction's variables in the order they first appear in the formula. `'Mean Sq'`, `'F value'` and `'Pr(>F)'` are omitted for 0-df (aliased) terms. | `{'Df'=>1,'Sum Sq'=>14.2,'Mean Sq'=>14.2,'F value'=>25.81,'Pr(>F)'=>0.0004}` |
 | `Residuals` | `HashRef` | Residual (error) statistics; never carries an F test. | `{'Df'=>10,'Sum Sq'=>5.5,'Mean Sq'=>0.55}` |
 
 ### `anova` vs `aov` — what's the difference?
@@ -487,9 +545,11 @@ above exactly). The difference is one of role, not arithmetic:
 
 In short: same numbers for one model; `aov` is the richer "fit + describe"
 call (and the only one that stacks), `anova` is the minimal "give me the
-table" call. Note that both are **Type-I / sequential**, so term order in the
-formula matters, and both share this module's `pf`, so p-values agree with
-`oneway_test` and the rest of Stats::LikeR.
+table" call. Note that both are **Type-I / sequential**, so the order of terms
+of the same degree matters, and both share this module's `pf`, so p-values
+agree with `oneway_test` and the rest of Stats::LikeR. `aov` refuses an
+interaction whose main effects are not in the model; `anova` fits it as R
+does.
 
 Comparing nested models -- `anova(m1, m2)` in R -- is done by giving `anova`
 two or more formulas, or two or more fitted models; see above.
@@ -4984,8 +5044,10 @@ rename inputs.
         aggfunc => [ 'count', 'sum' ]);
     # names: count.2020 count.2021 sum.2020 sum.2021
 
-Rows and columns are sorted by default (numeric if every key is numeric, else
-string); `sort => 0` keeps first-seen order. HoH output labels come from the
+Rows and columns are sorted by default, the same way `agg` sorts its groups:
+each key column numerically when every value in it is numeric, else as strings,
+with undef last and NaN after every number; `sort => 0` keeps first-seen
+order. HoH output labels come from the
 `index` values (`'all'` with no index) and are uniquified with a numeric
 suffix if two joined labels collide. Returns a NEW frame; the input is never
 modified.

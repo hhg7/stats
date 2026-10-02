@@ -302,8 +302,19 @@ it was given:
  HoH  { r => { .. }, .. }     hash of hashrefs     (named rows)
 
 For AoA the column identifiers in C<by> and in the C<agg> spec are integer
-positions; for the other three shapes they are column names. The original frame
-is never modified.
+positions (a negative one counts from the end, as C<< $row-E<gt>[-1] >> does); for the
+other three shapes they are column names. A column that no row has is an error,
+so a misspelled name dies rather than coming back as a column of undef. An undef
+row of an AoA or AoH is skipped. The original frame is never modified, down to
+its scalars: a numeric cell is not given a cached string, nor a string cell a
+cached number.
+
+The split is done in C, in one pass that hashes each row's C<by> cells into its
+group and a second that drops each aggregated cell straight into its group's
+array, sharing the frame's own scalars wherever only the numeric aggregators
+read them. On a million-row AoH in a thousand groups it takes about a quarter of
+the time the pure-Perl split it replaced did, in about a fifth of the extra
+memory.
 
 =head3 Usage
 
@@ -343,12 +354,15 @@ aggregate the entire frame into one row.
 
 =item * B<skipna> — C<1> (default) drops undef cells before a numeric aggregator
 runs. C<0> makes any undef in a group poison the numeric result for that group
-(the cell comes back undef), matching pandas C<skipna=False>. C<count>, C<n>,
+(the cell comes back undef), matching pandas C<skipna=False>; that covers
+C<mean>, C<median>, C<sum>, C<sd>, C<var>, C<min>, C<max> and C<mode>. C<count>, C<n>,
 C<nunique>, C<first>, and C<last> ignore this flag.
 
-=item * B<sort> — C<1> (default) sorts the output groups by key (numerically when
-every key looks like a number, otherwise as strings); C<0> keeps first-seen
-order.
+=item * B<sort> — C<1> (default) sorts the output groups by key; C<0> keeps first-seen
+order. Each C<by> column is compared on its own terms: numerically when every
+value in it looks like a number, otherwise as strings. Within a column an
+undef key sorts last (where pandas puts its NaN group) and a NaN sorts after
+every number.
 
 =item * B<output.type> — C<aoa>, C<aoh>, C<hoa>, or C<hoh>. Defaults to the same family
 as the input frame.
@@ -437,7 +451,9 @@ the smallest number, or the lowest string when the values are not numeric.
 
 A B<coderef> may be supplied instead of a name for full control. It is called
 once per group as C<< $code-E<gt>(\@cells) >>, where C<@cells> are every cell for that
-column in the group B<including undef>, and must return a single scalar:
+column in the group B<including undef>, and must return a single scalar. It
+is called in scalar context, so C<sub { grep { .. } @{ $_[0] } }> returns a
+count. The cells are copies; changing them does not change the frame:
 
  # count the missing values in each group
  my $out = agg($df, by => 'sex', agg => {
@@ -455,7 +471,11 @@ columns, otherwise as strings), each expanded over its aggregator list in the
 order supplied.
 
 A column reduced by a B<single> aggregator keeps its own name; reduced by
-B<two or more> it becomes C<< E<lt>colE<gt>_E<lt>funcE<gt> >>:
+B<two or more> it becomes C<< E<lt>colE<gt>_E<lt>funcE<gt> >>. A coderef's C<< E<lt>funcE<gt> >> is C<fn>, or
+C<fn1>, C<fn2>, .. when a column has more than one. A column that is also a C<by>
+column is always named C<< E<lt>colE<gt>_E<lt>funcE<gt> >>, so C<< by =E<gt> 'g', agg =E<gt> { g =E<gt> 'count' } >>
+gives C<g> and C<g_count>. Any name that would still be generated twice is an
+error, except under C<< output.type =E<gt> 'aoa' >>, whose columns are positional:
 
  my $df = [
      { sex => 'M', wt => 70, age => 30    },
@@ -496,6 +516,9 @@ Without C<by>, the frame collapses to one row:
 
  # [ { wt => 66.25, age => 3 } ]
 
+That holds for a frame with no rows too, as for pandas C<df.agg>: C<count> and C<n>
+are 0 and the numeric aggregators undef. A grouped empty frame has no groups.
+
 =head3 Array of Arrays (AoA)
 
 Columns are integer positions. Grouping on column 0 and reducing column 1:
@@ -528,7 +551,7 @@ By default (C<< skipna =E<gt> 1 >>) undef cells are removed before a numeric agg
 runs, so a group of C<(60, 55)> with a third undef still yields the mean of the
 two defined values. C<count> reports only defined cells while C<n> counts undef
 too. With C<< skipna =E<gt> 0 >>, a group containing any undef returns undef for the
-numeric aggregators (C<mean median sum sd var mode>); the counting and
+numeric aggregators (C<mean median sum sd var min max mode>); the counting and
 positional aggregators are unaffected.
 
 A group without enough data yields undef rather than an error: C<sd> and C<var>
@@ -549,11 +572,23 @@ C<agg> dies (with a trailing newline, so the message prints cleanly) when:
 
 =item * an aggregator name is not recognized;
 
-=item * an aggregator list for a column is empty;
+=item * an aggregator list for a column is empty, or holds something that is
+neither a name nor a coderef;
 
 =item * C<output.type> is not one of C<aoa>, C<aoh>, C<hoa>, C<hoh>;
 
-=item * the trailing arguments are not C<< name =E<gt> value >> pairs.
+=item * the trailing arguments are not C<< name =E<gt> value >> pairs;
+
+=item * a column in C<by> or in the spec is undef, is in no row, is not an integer
+position (AoA), or is not an arrayref (HoA);
+
+=item * a row of an AoA or AoH is defined but not an ARRAY or HASH ref;
+
+=item * two output columns would get the same name (see above);
+
+=item * a numeric aggregator meets a cell that is not a number. The message names
+the aggregator, the column and the group, as in
+C<agg: mean of column 'v' over group (g = 'F'): mean: non-numeric value ..>.
 
 =back
 
@@ -566,8 +601,10 @@ C<dropna>, C<assign>, C<value_counts>.
 
 Sequential (Type-I) ANOVA table for a linear model, in the same shape C<aov>
 returns. C<anova> fits C<response ~ terms>, then decomposes the model sum of
-squares one term at a time, B<in formula order>, and F-tests each term
-against the residual mean square.
+squares one term at a time, B<in R's term order> -- main effects first, then
+two-way interactions, and so on, each group in formula order -- and F-tests
+each term against the residual mean square. The formula is read by the same
+parser C<lm> and C<glm> use.
 
  anova(
  {
@@ -599,18 +636,43 @@ C<a * b * c> to the full factorial C<a + b + c + a:b + a:c + b:c + a:b:c>):
 
  my $res_2way = anova($data_2way, 'len ~ supp * dose');
 
-Bare string columns are treated as factors and treatment-coded (first level =
-reference); numeric columns and C<I(x^2)> enter as single regressors. It is
-robust against rank deficiency: collinear terms gracefully receive 0 degrees
-of freedom and 0 sum of squares, matching R's behavior.
+Bare string columns are treated as factors; numeric columns, C<I(x^2)> and
+C<log(x)> enter as single regressors. A factor is coded by treatment contrasts
+or by a full set of indicators exactly as R decides it (its "margin rule"), so
+nested and per-group-slope models come out as in R: C<y ~ a + a:b> gives C<a:b>
+C<levels(a) * (levels(b) - 1)> degrees of freedom, and C<y ~ g + g:x> fits a
+separate slope of C<x> in each group. C<- 1>, C<+ 0> and C<0 +> remove the
+intercept, C<.> stands for every other column (taken in sorted order, since a
+hash has no column order), C<offset(z)> is subtracted from the response, and
+C<a:b> and C<b:a> are the same term. A term with no estimable column -- one that
+is collinear with the terms before it -- is kept with 0 degrees of freedom and
+0 sum of squares, where R leaves it out of the table. A column is judged
+collinear by R's own rule: when what the earlier columns leave of it has a
+norm below C<1e-7> of its own.
+
+The fit keeps memory independent of the number of rows: it rotates one row at
+a time into a C<p>-by-C<p> triangular factor (C<p> the number of design columns),
+so a 100,000-row model with 801 columns needs about 2.5 MB rather than a
+640 MB design matrix.
 
 Given two or more formulas, C<anova> compares nested models instead and returns
 an B<array ref> of rows, one per model in the order supplied — R's
 C<anova(m1, m2, ...)>. Each row carries C<Res.Df>, C<RSS> and C<formula>; every row
-after the first adds C<Df>, C<Sum of Sq>, C<F> and C<< Pr(E<gt>F) >>:
+after the first adds C<Df> and C<Sum of Sq>, the drops from the row before it,
+and C<F> and C<< Pr(E<gt>F) >>:
 
- my $tab = anova($data, 'y ~ x1', 'y ~ x1 + x2');
- printf "adding x2: F = %.4g, p = %.4g\n", $tab->[1]{F}, $tab->[1]{'Pr(>F)'};
+ my $tab = anova($data, 'y ~ 1', 'y ~ x1', 'y ~ x1 + x2');
+ printf "adding x2: F = %.4g, p = %.4g\n", $tab->[2]{F}, $tab->[2]{'Pr(>F)'};
+
+C<F> is the C<Sum of Sq> per C<Df> over the residual mean square of the model with
+the fewest residual degrees of freedom, and its p-value is taken on the
+absolute C<Df>, so models listed largest first are tested too. As in R's
+C<stat.anova>, C<F> and C<< Pr(E<gt>F) >> are left out where C<Df> is 0 or C<F> would be
+negative (models that are not nested), and also where that residual mean
+square is 0. Every model is fitted on the same rows: those complete for all of
+them. As R's C<anova.lmlist> does, a model whose response differs from the
+first model's is dropped with a warning, and if only one model is left, its
+single-model table is returned.
 
 Given two or more B<fitted models> instead -- C<lm> or C<glm> fits (or
 C<negbin> C<glm> fits) of the same response on the same rows -- C<anova> compares
@@ -659,14 +721,14 @@ L</"F and z tail p-values">.
   <td><code>data_sv</code></td>
   <td><code>HashRef</code> or <code>ArrayRef</code></td>
   <td><i>(Required)</i></td>
-  <td>The dataset. A Hash of Arrays (HoA, columns) or Array of Hashes (AoH, rows) — the same forms <code>aov</code>/<code>lm</code> accept.</td>
+  <td>The dataset. A Hash of Arrays (HoA, columns, all the same length), Hash of Hashes (HoH) or Array of Hashes (AoH, rows) — the forms <code>lm</code> accepts.</td>
   <td></td>
 </tr>
 <tr>
   <td><code>formula_sv</code></td>
   <td><code>String</code></td>
   <td><i>(Required)</i></td>
-  <td>Symbolic model <code>'response ~ rhs'</code>, with <code>+</code>, <code>:</code> and <code>*</code>. Unlike <code>aov</code>, <code>anova</code> does <b>not</b> auto-stack, so a formula is mandatory.</td>
+  <td>Symbolic model <code>'response ~ rhs'</code>, with <code>+</code>, <code>:</code>, <code>*</code>, <code>.</code>, <code>- 1</code>/<code>0 +</code> and <code>offset()</code>, as <code>lm</code> reads it. Unlike <code>aov</code>, <code>anova</code> does <b>not</b> auto-stack, so a formula is mandatory. Give two or more to compare models.</td>
   <td><code>'yield ~ N * P'</code></td>
 </tr>
 </tbody>
@@ -698,7 +760,7 @@ with the formula.
 <tr>
   <td><i>(Term Name)</i></td>
   <td><code>HashRef</code></td>
-  <td>ANOVA-table stats for each term (<code>'ctrl'</code>, <code>'N:P'</code>, …). <code>'Mean Sq'</code>, <code>'F value'</code> and <code>'Pr(&gt;F)'</code> are omitted for 0-df (aliased) terms.</td>
+  <td>ANOVA-table stats for each term (<code>'ctrl'</code>, <code>'N:P'</code>, …), named as R names them: an interaction's variables in the order they first appear in the formula. <code>'Mean Sq'</code>, <code>'F value'</code> and <code>'Pr(&gt;F)'</code> are omitted for 0-df (aliased) terms.</td>
   <td><code>{'Df'=&gt;1,'Sum Sq'=&gt;14.2,'Mean Sq'=&gt;14.2,'F value'=&gt;25.81,'Pr(&gt;F)'=&gt;0.0004}</code></td>
 </tr>
 <tr>
@@ -740,9 +802,11 @@ F-tests, or when you want the leaner object to feed onward.
 
 In short: same numbers for one model; C<aov> is the richer "fit + describe"
 call (and the only one that stacks), C<anova> is the minimal "give me the
-table" call. Note that both are B<Type-I / sequential>, so term order in the
-formula matters, and both share this module's C<pf>, so p-values agree with
-C<oneway_test> and the rest of Stats::LikeR.
+table" call. Note that both are B<Type-I / sequential>, so the order of terms
+of the same degree matters, and both share this module's C<pf>, so p-values
+agree with C<oneway_test> and the rest of Stats::LikeR. C<aov> refuses an
+interaction whose main effects are not in the model; C<anova> fits it as R
+does.
 
 Comparing nested models -- C<anova(m1, m2)> in R -- is done by giving C<anova>
 two or more formulas, or two or more fitted models; see above.
@@ -7364,8 +7428,10 @@ rename inputs.
      aggfunc => [ 'count', 'sum' ]);
  # names: count.2020 count.2021 sum.2020 sum.2021
 
-Rows and columns are sorted by default (numeric if every key is numeric, else
-string); C<< sort =E<gt> 0 >> keeps first-seen order. HoH output labels come from the
+Rows and columns are sorted by default, the same way C<agg> sorts its groups:
+each key column numerically when every value in it is numeric, else as strings,
+with undef last and NaN after every number; C<< sort =E<gt> 0 >> keeps first-seen
+order. HoH output labels come from the
 C<index> values (C<'all'> with no index) and are uniquified with a numeric
 suffix if two joined labels collide. Returns a NEW frame; the input is never
 modified.

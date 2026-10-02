@@ -1233,8 +1233,8 @@ sub _df_shape {
 # the whole frame to a single row, like pandas df.agg(...).
 #
 # $df   : AoA | AoH | HoA | HoH.  For AoA the column identifiers in `by` and in
-#         the `agg` spec are integer positions; for the other three they are
-#         column names.
+#         the `agg` spec are integer positions (negative from the end); for the
+#         other three they are column names.  A column no row has dies.
 #
 # OPTIONS
 #   agg  => { col => spec, .. }   REQUIRED.  spec is one aggregator name, an
@@ -1247,43 +1247,60 @@ sub _df_shape {
 #             last     last  defined cell   (undef if none)
 #             mode     modal defined cell; ties resolved deterministically
 #                      (smallest number, else lowest string)
-#           A coderef is called as $code->(\@cells) with every cell for that
-#           column in the group (undef included) and must return one scalar.
+#           A coderef is called as $code->(\@cells), in scalar context, with a
+#           copy of every cell for that column in the group (undef included).
 #   by   => $col | \@cols         optional grouping column(s).
 #   skipna => 0|1                 default 1.  When 0, a numeric named aggregator
-#           (mean median sum sd var mode) over a group that contains any undef
+#           (mean median sum sd var min max mode) over a group with any undef
 #           yields undef, matching pandas skipna=False; count/n/nunique/first/
 #           last always ignore this flag.
-#   sort => 0|1                   default 1.  Sort output groups by key
-#           (numeric if every key looks like a number, else string); 0 keeps
-#           first-seen order.
+#   sort => 0|1                   default 1.  Sort output groups by key, each
+#           by column numerically if all its values look like numbers, else as
+#           strings, undef last (see _sort_group_keys); 0 keeps first-seen order.
 #   'output.type' => aoa|aoh|hoa|hoh    default: same family as $df.
 #
 # OUTPUT COLUMN ORDER is deterministic: the `by` columns in the given order,
 # then the aggregated columns sorted (numerically for AoA integer columns, else
 # as strings), each expanded over its aggregator list in the order supplied.  A
-# column reduced by a single aggregator keeps its own name; with two or more it
-# becomes "<col>_<func>" (e.g. age_mean, age_sd).  For hoh output the row label
+# column reduced by a single aggregator keeps its own name; with two or more, or
+# when it is also a `by` column, it becomes "<col>_<func>" (e.g. age_mean,
+# age_sd), a coderef's func being fn (fn1, fn2, .. for several).  A name
+# generated twice dies, except for positional aoa output.  For hoh output the row label
 # is the group value (multiple `by` columns joined with '.'), 'all' when there
 # is no grouping, and made unique with a .N suffix on collision.
 #
 # Numeric aggregators need enough defined cells or the cell is undef: mean /
-# median / sum / min / max need >= 1, sd / var need >= 2.  The original $df is
-# never modified.
+# median / sum / min / max need >= 1, sd / var need >= 2.  Ungrouped, a frame with
+# no rows is still one row.  The original $df is never modified.  The split itself
+# is the XS _agg_split(); see the comment above ag_set in LikeR.xs.
 {
 	my %AGG_MIN = (          # minimum defined count for the XS numeric reducers
 		mean => 1, median => 1, sum => 1, min => 1, max => 1,
 		sd   => 2, var    => 2,
 	);
-	my %AGG_NUMERIC = map { $_ => 1 } qw(mean median sum sd var mode);
+	# the reducers an undef poisons under skipna => 0 (pandas skipna=False)
+	my %AGG_NUMERIC = map { $_ => 1 } qw(mean median sum sd var min max mode);
+	my %AGG_OTHER   = map { $_ => 1 } qw(count n nunique first last mode);
+	# reducers that stringify their cells: a cell they read is copied, not shared
+	# with the caller's frame, because stringifying caches a PV on the SV
+	my %AGG_STRINGIFY = ( mode => 1, nunique => 1 );
 
 	sub _agg_reduce {
 		my ($func, $raw, $def, $skipna) = @_;   # $raw, $def: arrayrefs (def excl. undef)
-		return $func->($raw) if ref $func eq 'CODE';
+		# scalar: a coderef returning a list, or nothing, would otherwise shift
+		# every later column of the row
+		return scalar $func->($raw) if ref $func eq 'CODE';
+		return _agg_reduce_named($func, $def, @$raw - @$def, $skipna);
+	}
+
+	# a named reducer over the defined cells $def, of which the group had $nna
+	# more that were undef
+	sub _agg_reduce_named {
+		my ($func, $def, $nna, $skipna) = @_;
 		# NA policy for numeric reducers when the caller asked for skipna => 0
-		return undef if !$skipna && $AGG_NUMERIC{$func} && @$def != @$raw;
+		return undef if !$skipna && $nna && $AGG_NUMERIC{$func};
 		if ($func eq 'count')   { return scalar @$def }
-		if ($func eq 'n')       { return scalar @$raw }
+		if ($func eq 'n')       { return @$def + $nna }
 		if ($func eq 'nunique') { my %s; @s{ @$def } = (); return scalar keys %s }
 		if ($func eq 'first')   { return @$def ? $def->[0]  : undef }
 		if ($func eq 'last')    { return @$def ? $def->[-1] : undef }
@@ -1307,7 +1324,7 @@ sub _df_shape {
 
 	sub agg {
 		my $df = shift;
-		die 'agg: undefined data in first position' unless defined $df;
+		die "agg: undefined data in first position\n" unless defined $df;
 		my $shape = _df_shape($df, 'agg');
 		die "agg: arguments after the data frame must be name => value pairs\n"
 			if @_ % 2;
@@ -1323,6 +1340,7 @@ sub _df_shape {
 		my @by = !defined $arg{by}          ? ()
 		       : ref $arg{by} eq 'ARRAY'    ? @{ $arg{by} }
 		       :                              ( $arg{by} );
+		die "agg: 'by' contains an undefined column\n" if grep { !defined } @by;
 		my $skipna = exists $arg{skipna} ? ($arg{skipna} ? 1 : 0) : 1;
 		my $dosort = exists $arg{sort}   ? ($arg{sort}   ? 1 : 0) : 1;
 		my $otype  = defined $arg{'output.type'} ? lc $arg{'output.type'}
@@ -1331,117 +1349,111 @@ sub _df_shape {
 		die "agg: output.type '$otype' isn't allowed (aoa, aoh, hoa, hoh)\n"
 			unless $ok_otype{$otype};
 
-		# columns actually needed (grouping + aggregated), classified once
 		my @agg_cols = keys %$spec;
 		{
 			my $all_num = !grep { !looks_like_number($_) } @agg_cols;
 			@agg_cols = $all_num ? sort { $a <=> $b } @agg_cols : sort @agg_cols;
 		}
-		my %need; $need{$_} = 1 for @by, @agg_cols;
-
-		# extract each needed column ONCE, aligned to row positions 0 .. R-1.
-		# access is specialised per shape (no per-cell closure); for HoA the
-		# columns already are arrays, so they are aliased rather than rebuilt.
-		my (%col, $R);
-		if ($shape eq 'AoA') {
-			my @h = grep { defined } @$df;
-			$R = scalar @h;
-			for my $c (keys %need) { $col{$c} = [ map { $_->[$c] } @h ] }
-		} elsif ($shape eq 'AoH') {
-			my @h = grep { defined } @$df;
-			$R = scalar @h;
-			for my $c (keys %need) { $col{$c} = [ map { $_->{$c} } @h ] }
+		if ($shape eq 'AoA') {           # positions; Perl's own negative indexing
+			for my $c (@by, @agg_cols) {
+				die "agg: AoA columns are integer positions, not '$c'\n"
+					unless $c =~ /\A-?[0-9]+\z/;
+			}
 		} elsif ($shape eq 'HoA') {
-			$R = 0;
-			for my $v (values %$df) { $R = @$v if ref $v eq 'ARRAY' && @$v > $R }
-			for my $c (keys %need) {
-				$col{$c} = ref $df->{$c} eq 'ARRAY' ? $df->{$c} : [];
-			}
-		} else { # HoH
-			my @h = map { $df->{$_} } sort keys %$df;
-			$R = scalar @h;
-			for my $c (keys %need) { $col{$c} = [ map { $_->{$c} } @h ] }
-		}
-
-		# split row indices into groups, preserving first-seen order
-		my (%group, @order, %repr);
-		my $one = @by == 1 ? $by[0] : undef;   # single-key fast path
-		for (my $i = 0; $i < $R; $i++) {
-			my $key;
-			if (!@by) {
-				$key = "\0all";
-			} elsif (defined $one) {
-				my $v = $col{$one}[$i];
-				$key = defined $v ? "v$v" : "\0";
-			} else {
-				$key = join "\x1e",
-					map { my $v = $col{$_}[$i]; defined $v ? "v$v" : "\0" } @by;
-			}
-			my $g = $group{$key};
-			unless ($g) {
-				$group{$key} = $g = [];
-				push @order, $key;
-				$repr{$key} = [ map { $col{$_}[$i] } @by ];
-			}
-			push @$g, $i;
-		}
-		if ($dosort && @by) {                  # sort by the group value(s)
-			my $all_num = 1;
-			SORTNUM: for my $k (@order) {
-				for my $v (@{ $repr{$k} }) {
-					unless (defined $v && looks_like_number($v)) { $all_num = 0; last SORTNUM }
-				}
-			}
-			if ($all_num) {
-				@order = sort {
-					my ($ra, $rb) = ($repr{$a}, $repr{$b});
-					my $c = 0;
-					for my $j (0 .. $#$ra) { last if $c = $ra->[$j] <=> $rb->[$j] }
-					$c;
-				} @order;
-			} else {
-				@order = sort {
-					my ($ra, $rb) = ($repr{$a}, $repr{$b});
-					my $c = 0;
-					for my $j (0 .. $#$ra) {
-						my $x = defined $ra->[$j] ? $ra->[$j] : '';
-						my $y = defined $rb->[$j] ? $rb->[$j] : '';
-						last if $c = $x cmp $y;
-					}
-					$c;
-				} @order;
+			for my $c (@by, @agg_cols) {
+				die "agg: column '$c' not found\n" unless exists $df->{$c};
+				die "agg: column '$c' is not an ARRAY reference\n"
+					unless ref $df->{$c} eq 'ARRAY';
 			}
 		}
 
 # output plan: by-columns pass through, then each agg column with its
-# aggregator list contiguous.  A single aggregator keeps the column
-# name; two or more become "<col>_<func>".
-		my @agg_plan; # [ col, [funcs], [out_names] ]
+# aggregator list contiguous.  A single aggregator keeps the column name; two
+# or more, or a column that is also a `by` column, become "<col>_<func>".  More
+# than one coderef on a column are numbered fn1, fn2, ..; one is just fn.
+		my %is_by = map { $_ => 1 } @by;
+		my (@agg_plan, @how);    # [ col, [funcs], [out_names] ]; @how: _agg_split's modes
 		for my $c (@agg_cols) {
 			my $s = $spec->{$c};
 			my @funcs = ref $s eq 'ARRAY' ? @$s : ($s);
 			die "agg: empty aggregator list for column '$c'\n" unless @funcs;
-			my $multi = @funcs > 1;
+			for my $f (@funcs) {
+				next if ref $f eq 'CODE';
+				die "agg: aggregator for column '$c' must be a name or a coderef\n"
+					if !defined $f || ref $f;
+				die "agg: unknown aggregator '$f'\n"
+					unless exists $AGG_MIN{$f} || $AGG_OTHER{$f};
+			}
+			my $ncode = grep { ref $_ eq 'CODE' } @funcs;
+			my $ci    = 0;
+			my $multi = @funcs > 1 || $is_by{$c};
 			my @names = map {
-				my $l = ref $_ eq 'CODE' ? 'fn' : $_;
+				my $l = ref $_ ne 'CODE' ? $_ : $ncode > 1 ? 'fn' . ++$ci : 'fn';
 				$multi ? "${c}_${l}" : $c;
 			} @funcs;
 			push @agg_plan, [ $c, \@funcs, \@names ];
+			push @how, ( grep { ref $_ eq 'CODE' } @funcs )   ? 0  # cells incl. undef, copied
+			         : ( grep { $AGG_STRINGIFY{$_} } @funcs ) ? 1  # defined cells, copied
+			         :                                          2; # defined cells, shared
 		}
 		my @out_names = ( @by, map { @{ $_->[2] } } @agg_plan );
+		if ($otype ne 'aoa') {           # aoa is positional: a repeat costs nothing
+			my (%seen, @dup);
+			for my $n (@out_names) { push @dup, $n if $seen{$n}++ == 1 }
+			die "agg: output column name(s) generated twice: @dup\n" if @dup;
+		}
+
+# split, in XS: every row's group, and each aggregated cell dropped straight
+# into its group's array -- every cell for a column a coderef reads, only the
+# defined ones otherwise, with the undef cells counted instead
+		my ($src, $code) = $shape eq 'AoA' ? ( $df, 3 )
+		                 : $shape eq 'AoH' ? ( $df, 1 )
+		                 : $shape eq 'HoA' ? ( $df, 4 )
+		                 : ( [ @{$df}{ sort keys %$df } ], 1 );   # HoH: its rows, key order
+		my ($groups, $seen) = @{ _agg_split($src, $code, [ @by ], [ @agg_cols ], \@how) };
+		if (@$groups) {                  # a frame with no rows has no columns to miss
+			my @all = ( @by, @agg_cols );
+			for my $j (0 .. $#all) {
+				die "agg: column '$all[$j]' not found\n" unless $seen->[$j];
+			}
+		} elsif (!@by) {                 # ungrouped: always one row, as pandas df.agg
+			push @$groups, [ [], [ (0) x @agg_cols ], map { [] } @agg_cols ];
+		}
+
+		my @order = 0 .. $#$groups;
+		if ($dosort && @by && @order > 1) {
+			my %repr = map { $_ => $groups->[$_][0] } @order;
+			@order = @{ _sort_group_keys(\@order, \%repr) };
+		}
 
 # combine + materialise straight into the requested shape
-		my (@aoa_rows, @aoh_rows, %hoa, %hoh, %seen);
+		my (@aoa_rows, @aoh_rows, %hoa, %hoh, %seen_label);
 		if ($otype eq 'hoa') { $hoa{$_} = [] for @out_names }
 
-		for my $key (@order) {
-			my $idx = $group{$key};
-			my @vals = @{ $repr{$key} };            # by-column values, in order
-			for my $ap (@agg_plan) {
-				my ($c, $funcs, undef) = @$ap;
-				my @raw = @{ $col{$c} }[ @$idx ];   # one slice, shared by all funcs
-				my @def = grep { defined } @raw;
-				push @vals, _agg_reduce($_, \@raw, \@def, $skipna) for @$funcs;
+		for my $gi (@order) {
+			my ($repr, $nna, @cells) = @{ $groups->[$gi] };
+			$groups->[$gi] = undef;      # this group's cells go once it is reduced
+			my @vals = @$repr;           # by-column values, in order
+			for my $j (0 .. $#agg_plan) {
+				my ($c, $funcs) = @{ $agg_plan[$j] };
+				my $cells = $cells[$j];
+				my $def = $how[$j] || !$nna->[$j] ? $cells : [ grep { defined } @$cells ];
+				for my $f (@$funcs) {
+					if (ref $f eq 'CODE') {
+						push @vals, scalar $f->($cells);   # see _agg_reduce
+						next;
+					}
+					my $v = eval { _agg_reduce_named($f, $def, $nna->[$j], $skipna) };
+					if (!defined $v && $@) {
+						my $where = @by
+							? 'group (' . join(', ', map {
+								"$by[$_] = " . (defined $repr->[$_] ? "'$repr->[$_]'" : 'undef')
+							  } 0 .. $#by) . ')'
+							: 'the whole frame';
+						die "agg: $f of column '$c' over $where: $@";
+					}
+					push @vals, $v;
+				}
 			}
 			if ($otype eq 'aoa') {
 				push @aoa_rows, \@vals;
@@ -1451,11 +1463,11 @@ sub _df_shape {
 				push @{ $hoa{ $out_names[$_] } }, $vals[$_] for 0 .. $#out_names;
 			} else { # hoh
 				my $label = @by
-					? join('.', map { defined $_ ? $_ : '' } @{ $repr{$key} })
+					? join('.', map { defined $_ ? $_ : '' } @$repr)
 					: 'all';
 				my $uniq = $label; my $j = 0;
-				while (exists $seen{$uniq}) { $uniq = $label . '.' . (++$j) }
-				$seen{$uniq} = 1;
+				while (exists $seen_label{$uniq}) { $uniq = $label . '.' . (++$j) }
+				$seen_label{$uniq} = 1;
 				my %h; @h{ @out_names } = @vals; $hoh{$uniq} = \%h;
 			}
 		}
@@ -4324,33 +4336,47 @@ sub _frame_cols {
 
 # _sort_group_keys(\@order, \%repr) -> \@sorted
 #
-# Order group keys by their representative value tuple, numerically when
-# every tuple element (across every group) looks like a number, else as
-# strings (undef sorts as ''); the same rule agg() uses for its groups.
-# Not exported.
+# Order group keys by their representative value tuple.  Each tuple position
+# is compared on its own terms: numerically when every defined value in that
+# position (across every group) looks like a number, else as strings.  Within a
+# position undef sorts last, as pandas puts its NaN group, and a NaN sorts after
+# every number and before undef -- `<=>` has no answer for it, and under this
+# module's FATAL warnings a sort comparator that returns undef dies.
+#
+# Up to 0.3212 one numeric-or-string decision covered every position and any
+# undef made it "string", so by => ['sex', 'age'], or a single missing key,
+# sorted the numbers 10, 2, 9.  Used by agg() and pivot_table().  Not exported.
 sub _sort_group_keys {
 	my ($order, $repr) = @_;
-	my $all_num = 1;
-	SORTNUM: for my $k (@$order) {
-		for my $v (@{ $repr->{$k} }) {
-			unless (defined $v && looks_like_number($v)) { $all_num = 0; last SORTNUM }
+	return [ @$order ] unless @$order;
+	my $width = @{ $repr->{ $order->[0] } };
+	my @num = (1) x $width;
+	for my $k (@$order) {
+		my $t = $repr->{$k};
+		for my $j (0 .. $width - 1) {
+			$num[$j] = 0 if $num[$j] && defined $t->[$j] && !looks_like_number($t->[$j]);
 		}
 	}
-	if ($all_num) {
-		return [ sort {
-			my ($ra, $rb) = ($repr->{$a}, $repr->{$b});
-			my $c = 0;
-			for my $j (0 .. $#$ra) { last if $c = $ra->[$j] <=> $rb->[$j] }
-			$c;
-		} @$order ];
+	# per position: [ class, value ]; class 0 = value, 1 = NaN, 2 = undef
+	my %key;
+	for my $k (@$order) {
+		my $t = $repr->{$k};
+		$key{$k} = [ map {
+			my $v = $t->[$_];
+			!defined $v  ? ( 2, 0 )
+			: !$num[$_]  ? ( 0, $v )
+			: $v != $v   ? ( 1, 0 )
+			:              ( 0, 0 + $v )
+		} 0 .. $width - 1 ];
 	}
 	return [ sort {
-		my ($ra, $rb) = ($repr->{$a}, $repr->{$b});
+		my ($ka, $kb) = ($key{$a}, $key{$b});
 		my $c = 0;
-		for my $j (0 .. $#$ra) {
-			my $x = defined $ra->[$j] ? $ra->[$j] : '';
-			my $y = defined $rb->[$j] ? $rb->[$j] : '';
-			last if $c = $x cmp $y;
+		for my $j (0 .. $width - 1) {
+			my $i = 2 * $j;
+			last if $c = $ka->[$i] <=> $kb->[$i]
+			          || ( $num[$j] ? $ka->[$i + 1] <=> $kb->[$i + 1]
+			                        : $ka->[$i + 1] cmp $kb->[$i + 1] );
 		}
 		$c;
 	} @$order ];
@@ -6332,8 +6358,19 @@ it was given:
  HoH  { r => { .. }, .. }     hash of hashrefs     (named rows)
 
 For AoA the column identifiers in C<by> and in the C<agg> spec are integer
-positions; for the other three shapes they are column names. The original frame
-is never modified.
+positions (a negative one counts from the end, as C<< $row-E<gt>[-1] >> does); for the
+other three shapes they are column names. A column that no row has is an error,
+so a misspelled name dies rather than coming back as a column of undef. An undef
+row of an AoA or AoH is skipped. The original frame is never modified, down to
+its scalars: a numeric cell is not given a cached string, nor a string cell a
+cached number.
+
+The split is done in C, in one pass that hashes each row's C<by> cells into its
+group and a second that drops each aggregated cell straight into its group's
+array, sharing the frame's own scalars wherever only the numeric aggregators
+read them. On a million-row AoH in a thousand groups it takes about a quarter of
+the time the pure-Perl split it replaced did, in about a fifth of the extra
+memory.
 
 =head3 Usage
 
@@ -6373,12 +6410,15 @@ aggregate the entire frame into one row.
 
 =item * B<skipna> — C<1> (default) drops undef cells before a numeric aggregator
 runs. C<0> makes any undef in a group poison the numeric result for that group
-(the cell comes back undef), matching pandas C<skipna=False>. C<count>, C<n>,
+(the cell comes back undef), matching pandas C<skipna=False>; that covers
+C<mean>, C<median>, C<sum>, C<sd>, C<var>, C<min>, C<max> and C<mode>. C<count>, C<n>,
 C<nunique>, C<first>, and C<last> ignore this flag.
 
-=item * B<sort> — C<1> (default) sorts the output groups by key (numerically when
-every key looks like a number, otherwise as strings); C<0> keeps first-seen
-order.
+=item * B<sort> — C<1> (default) sorts the output groups by key; C<0> keeps first-seen
+order. Each C<by> column is compared on its own terms: numerically when every
+value in it looks like a number, otherwise as strings. Within a column an
+undef key sorts last (where pandas puts its NaN group) and a NaN sorts after
+every number.
 
 =item * B<output.type> — C<aoa>, C<aoh>, C<hoa>, or C<hoh>. Defaults to the same family
 as the input frame.
@@ -6467,7 +6507,9 @@ the smallest number, or the lowest string when the values are not numeric.
 
 A B<coderef> may be supplied instead of a name for full control. It is called
 once per group as C<< $code-E<gt>(\@cells) >>, where C<@cells> are every cell for that
-column in the group B<including undef>, and must return a single scalar:
+column in the group B<including undef>, and must return a single scalar. It
+is called in scalar context, so C<sub { grep { .. } @{ $_[0] } }> returns a
+count. The cells are copies; changing them does not change the frame:
 
  # count the missing values in each group
  my $out = agg($df, by => 'sex', agg => {
@@ -6485,7 +6527,11 @@ columns, otherwise as strings), each expanded over its aggregator list in the
 order supplied.
 
 A column reduced by a B<single> aggregator keeps its own name; reduced by
-B<two or more> it becomes C<< E<lt>colE<gt>_E<lt>funcE<gt> >>:
+B<two or more> it becomes C<< E<lt>colE<gt>_E<lt>funcE<gt> >>. A coderef's C<< E<lt>funcE<gt> >> is C<fn>, or
+C<fn1>, C<fn2>, .. when a column has more than one. A column that is also a C<by>
+column is always named C<< E<lt>colE<gt>_E<lt>funcE<gt> >>, so C<< by =E<gt> 'g', agg =E<gt> { g =E<gt> 'count' } >>
+gives C<g> and C<g_count>. Any name that would still be generated twice is an
+error, except under C<< output.type =E<gt> 'aoa' >>, whose columns are positional:
 
  my $df = [
      { sex => 'M', wt => 70, age => 30    },
@@ -6526,6 +6572,9 @@ Without C<by>, the frame collapses to one row:
 
  # [ { wt => 66.25, age => 3 } ]
 
+That holds for a frame with no rows too, as for pandas C<df.agg>: C<count> and C<n>
+are 0 and the numeric aggregators undef. A grouped empty frame has no groups.
+
 =head3 Array of Arrays (AoA)
 
 Columns are integer positions. Grouping on column 0 and reducing column 1:
@@ -6558,7 +6607,7 @@ By default (C<< skipna =E<gt> 1 >>) undef cells are removed before a numeric agg
 runs, so a group of C<(60, 55)> with a third undef still yields the mean of the
 two defined values. C<count> reports only defined cells while C<n> counts undef
 too. With C<< skipna =E<gt> 0 >>, a group containing any undef returns undef for the
-numeric aggregators (C<mean median sum sd var mode>); the counting and
+numeric aggregators (C<mean median sum sd var min max mode>); the counting and
 positional aggregators are unaffected.
 
 A group without enough data yields undef rather than an error: C<sd> and C<var>
@@ -6579,11 +6628,23 @@ C<agg> dies (with a trailing newline, so the message prints cleanly) when:
 
 =item * an aggregator name is not recognized;
 
-=item * an aggregator list for a column is empty;
+=item * an aggregator list for a column is empty, or holds something that is
+neither a name nor a coderef;
 
 =item * C<output.type> is not one of C<aoa>, C<aoh>, C<hoa>, C<hoh>;
 
-=item * the trailing arguments are not C<< name =E<gt> value >> pairs.
+=item * the trailing arguments are not C<< name =E<gt> value >> pairs;
+
+=item * a column in C<by> or in the spec is undef, is in no row, is not an integer
+position (AoA), or is not an arrayref (HoA);
+
+=item * a row of an AoA or AoH is defined but not an ARRAY or HASH ref;
+
+=item * two output columns would get the same name (see above);
+
+=item * a numeric aggregator meets a cell that is not a number. The message names
+the aggregator, the column and the group, as in
+C<agg: mean of column 'v' over group (g = 'F'): mean: non-numeric value ..>.
 
 =back
 
@@ -6596,8 +6657,10 @@ C<dropna>, C<assign>, C<value_counts>.
 
 Sequential (Type-I) ANOVA table for a linear model, in the same shape C<aov>
 returns. C<anova> fits C<response ~ terms>, then decomposes the model sum of
-squares one term at a time, B<in formula order>, and F-tests each term
-against the residual mean square.
+squares one term at a time, B<in R's term order> -- main effects first, then
+two-way interactions, and so on, each group in formula order -- and F-tests
+each term against the residual mean square. The formula is read by the same
+parser C<lm> and C<glm> use.
 
  anova(
  {
@@ -6629,18 +6692,43 @@ C<a * b * c> to the full factorial C<a + b + c + a:b + a:c + b:c + a:b:c>):
 
  my $res_2way = anova($data_2way, 'len ~ supp * dose');
 
-Bare string columns are treated as factors and treatment-coded (first level =
-reference); numeric columns and C<I(x^2)> enter as single regressors. It is
-robust against rank deficiency: collinear terms gracefully receive 0 degrees
-of freedom and 0 sum of squares, matching R's behavior.
+Bare string columns are treated as factors; numeric columns, C<I(x^2)> and
+C<log(x)> enter as single regressors. A factor is coded by treatment contrasts
+or by a full set of indicators exactly as R decides it (its "margin rule"), so
+nested and per-group-slope models come out as in R: C<y ~ a + a:b> gives C<a:b>
+C<levels(a) * (levels(b) - 1)> degrees of freedom, and C<y ~ g + g:x> fits a
+separate slope of C<x> in each group. C<- 1>, C<+ 0> and C<0 +> remove the
+intercept, C<.> stands for every other column (taken in sorted order, since a
+hash has no column order), C<offset(z)> is subtracted from the response, and
+C<a:b> and C<b:a> are the same term. A term with no estimable column -- one that
+is collinear with the terms before it -- is kept with 0 degrees of freedom and
+0 sum of squares, where R leaves it out of the table. A column is judged
+collinear by R's own rule: when what the earlier columns leave of it has a
+norm below C<1e-7> of its own.
+
+The fit keeps memory independent of the number of rows: it rotates one row at
+a time into a C<p>-by-C<p> triangular factor (C<p> the number of design columns),
+so a 100,000-row model with 801 columns needs about 2.5 MB rather than a
+640 MB design matrix.
 
 Given two or more formulas, C<anova> compares nested models instead and returns
 an B<array ref> of rows, one per model in the order supplied — R's
 C<anova(m1, m2, ...)>. Each row carries C<Res.Df>, C<RSS> and C<formula>; every row
-after the first adds C<Df>, C<Sum of Sq>, C<F> and C<< Pr(E<gt>F) >>:
+after the first adds C<Df> and C<Sum of Sq>, the drops from the row before it,
+and C<F> and C<< Pr(E<gt>F) >>:
 
- my $tab = anova($data, 'y ~ x1', 'y ~ x1 + x2');
- printf "adding x2: F = %.4g, p = %.4g\n", $tab->[1]{F}, $tab->[1]{'Pr(>F)'};
+ my $tab = anova($data, 'y ~ 1', 'y ~ x1', 'y ~ x1 + x2');
+ printf "adding x2: F = %.4g, p = %.4g\n", $tab->[2]{F}, $tab->[2]{'Pr(>F)'};
+
+C<F> is the C<Sum of Sq> per C<Df> over the residual mean square of the model with
+the fewest residual degrees of freedom, and its p-value is taken on the
+absolute C<Df>, so models listed largest first are tested too. As in R's
+C<stat.anova>, C<F> and C<< Pr(E<gt>F) >> are left out where C<Df> is 0 or C<F> would be
+negative (models that are not nested), and also where that residual mean
+square is 0. Every model is fitted on the same rows: those complete for all of
+them. As R's C<anova.lmlist> does, a model whose response differs from the
+first model's is dropped with a warning, and if only one model is left, its
+single-model table is returned.
 
 Given two or more B<fitted models> instead -- C<lm> or C<glm> fits (or
 C<negbin> C<glm> fits) of the same response on the same rows -- C<anova> compares
@@ -6689,14 +6777,14 @@ L</"F and z tail p-values">.
   <td><code>data_sv</code></td>
   <td><code>HashRef</code> or <code>ArrayRef</code></td>
   <td><i>(Required)</i></td>
-  <td>The dataset. A Hash of Arrays (HoA, columns) or Array of Hashes (AoH, rows) — the same forms <code>aov</code>/<code>lm</code> accept.</td>
+  <td>The dataset. A Hash of Arrays (HoA, columns, all the same length), Hash of Hashes (HoH) or Array of Hashes (AoH, rows) — the forms <code>lm</code> accepts.</td>
   <td></td>
 </tr>
 <tr>
   <td><code>formula_sv</code></td>
   <td><code>String</code></td>
   <td><i>(Required)</i></td>
-  <td>Symbolic model <code>'response ~ rhs'</code>, with <code>+</code>, <code>:</code> and <code>*</code>. Unlike <code>aov</code>, <code>anova</code> does <b>not</b> auto-stack, so a formula is mandatory.</td>
+  <td>Symbolic model <code>'response ~ rhs'</code>, with <code>+</code>, <code>:</code>, <code>*</code>, <code>.</code>, <code>- 1</code>/<code>0 +</code> and <code>offset()</code>, as <code>lm</code> reads it. Unlike <code>aov</code>, <code>anova</code> does <b>not</b> auto-stack, so a formula is mandatory. Give two or more to compare models.</td>
   <td><code>'yield ~ N * P'</code></td>
 </tr>
 </tbody>
@@ -6728,7 +6816,7 @@ with the formula.
 <tr>
   <td><i>(Term Name)</i></td>
   <td><code>HashRef</code></td>
-  <td>ANOVA-table stats for each term (<code>'ctrl'</code>, <code>'N:P'</code>, …). <code>'Mean Sq'</code>, <code>'F value'</code> and <code>'Pr(&gt;F)'</code> are omitted for 0-df (aliased) terms.</td>
+  <td>ANOVA-table stats for each term (<code>'ctrl'</code>, <code>'N:P'</code>, …), named as R names them: an interaction's variables in the order they first appear in the formula. <code>'Mean Sq'</code>, <code>'F value'</code> and <code>'Pr(&gt;F)'</code> are omitted for 0-df (aliased) terms.</td>
   <td><code>{'Df'=&gt;1,'Sum Sq'=&gt;14.2,'Mean Sq'=&gt;14.2,'F value'=&gt;25.81,'Pr(&gt;F)'=&gt;0.0004}</code></td>
 </tr>
 <tr>
@@ -6770,9 +6858,11 @@ F-tests, or when you want the leaner object to feed onward.
 
 In short: same numbers for one model; C<aov> is the richer "fit + describe"
 call (and the only one that stacks), C<anova> is the minimal "give me the
-table" call. Note that both are B<Type-I / sequential>, so term order in the
-formula matters, and both share this module's C<pf>, so p-values agree with
-C<oneway_test> and the rest of Stats::LikeR.
+table" call. Note that both are B<Type-I / sequential>, so the order of terms
+of the same degree matters, and both share this module's C<pf>, so p-values
+agree with C<oneway_test> and the rest of Stats::LikeR. C<aov> refuses an
+interaction whose main effects are not in the model; C<anova> fits it as R
+does.
 
 Comparing nested models -- C<anova(m1, m2)> in R -- is done by giving C<anova>
 two or more formulas, or two or more fitted models; see above.
@@ -13394,8 +13484,10 @@ rename inputs.
      aggfunc => [ 'count', 'sum' ]);
  # names: count.2020 count.2021 sum.2020 sum.2021
 
-Rows and columns are sorted by default (numeric if every key is numeric, else
-string); C<< sort =E<gt> 0 >> keeps first-seen order. HoH output labels come from the
+Rows and columns are sorted by default, the same way C<agg> sorts its groups:
+each key column numerically when every value in it is numeric, else as strings,
+with undef last and NaN after every number; C<< sort =E<gt> 0 >> keeps first-seen
+order. HoH output labels come from the
 C<index> values (C<'all'> with no index) and are uniquified with a numeric
 suffix if two joined labels collide. Returns a NEW frame; the input is never
 modified.

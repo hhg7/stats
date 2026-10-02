@@ -13,8 +13,9 @@ use Test::LeakTrace 'no_leaks_ok';
 #   * a single value + single aggfunc names each output column after the
 #     columns-tuple alone; multiple values and/or funcs prefix value / func
 #     (aggfunc-major ordering), joined with 'sep' (default '.')
-#   * rows/columns are sorted by default (numeric-if-all-numeric else string);
-#     sort => 0 keeps first-seen order
+#   * rows/columns are sorted by default, each key column numerically if all
+#     its values are numbers, else as strings, undef last; sort => 0 keeps
+#     first-seen order
 #   * skipna => 0 makes a numeric reducer return NA if the bucket has any NA
 #   * fill_value substitutes NA result cells
 #   * 'output.type' defaults to the input family
@@ -247,6 +248,22 @@ throws_ok {
 	pivot_table([ { a => 1, b => 23, v => 1 }, { a => 12, b => 3, v => 1 } ],
 		index => undef, columns => [ 'a', 'b' ], values => 'v', aggfunc => 'sum', sep => '')
 } qr/duplicate column name/, 'generated duplicate names die';
+
+# Row and column order share agg()'s per-column rule.  Up to 0.3212 one undef
+# index value, or a string index column alongside, sorted numbers as strings
+# (10 before 2), and an undef index sorted first as ''.
+{
+	my $df = [ map { { i => $_->[0], s => 'a', c => 'x', v => $_->[1] } }
+	           [ 10, 1 ], [ 2, 2 ], [ undef, 3 ], [ 9, 4 ] ];
+	my $p = pivot_table($df, index => 'i', columns => 'c', values => 'v',
+	                    aggfunc => 'sum', 'output.type' => 'aoa');
+	is_deeply([ map { $_->[0] } @$p ], [ 2, 9, 10, undef ],
+		'pivot_table: numeric index sorts numerically, undef last');
+	$p = pivot_table($df, index => [ 's', 'i' ], columns => 'c', values => 'v',
+	                 aggfunc => 'sum', 'output.type' => 'aoa');
+	is_deeply([ map { $_->[1] } @$p ], [ 2, 9, 10, undef ],
+		'pivot_table: a numeric index column beside a string one still sorts numerically');
+}
 
 # memory
 no_leaks_ok {

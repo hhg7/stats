@@ -353,4 +353,27 @@ no_leaks_ok {
 	eval { anova('bad', 'y ~ a', 'y ~ a + b') }
 } 'anova() comparison error path: no memory leaks' unless $INC{'Devel/Cover.pm'};
 
+# The croaks below come after every model's design is built; all of it is on
+# the save stack, and these check that nothing outlives it.
+no_leaks_ok {
+	eval { anova({ y => [1, undef, undef], A => [qw/a b a/] }, 'y ~ A', 'y ~ A + 1') }
+} 'anova() too few complete rows after the designs are built: no memory leaks'
+	unless $INC{'Devel/Cover.pm'};
+
+no_leaks_ok {
+	eval { anova({ y => [1, 2, 3], x => [1, 2] }, 'y ~ x') }
+} 'anova() ragged columns: no memory leaks' unless $INC{'Devel/Cover.pm'};
+
+no_leaks_ok {
+	eval { anova({ y => [5, 7, 6, 9, 8, 11], z => [1, 2, 3, 4, 5, 6] },
+	             'y ~ 1 + offset(z)', 'y ~ z + offset(z)') }
+} 'anova() with offset(): no memory leaks' unless $INC{'Devel/Cover.pm'};
+
+no_leaks_ok {
+	local $SIG{__WARN__} = sub {};
+	eval { anova({ y => [5, 7, 6, 9, 8, 11], A => [qw/a b a b a b/] },
+	             'y ~ A', 'log(y) ~ A', 'y ~ 0 + A') }
+} 'anova() dropping a model with another response: no memory leaks'
+	unless $INC{'Devel/Cover.pm'};
+
 done_testing();

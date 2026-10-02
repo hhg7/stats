@@ -58,7 +58,7 @@
 .\" ========================================================================
 .\"
 .IX Title "Stats::LikeR 3"
-.TH Stats::LikeR 3 2026-10-01 "perl v5.44.0" "User Contributed Perl Documentation"
+.TH Stats::LikeR 3 2026-10-02 "perl v5.44.0" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -261,8 +261,19 @@ it was given:
 .Ve
 .PP
 For AoA the column identifiers in \f(CW\*(C`by\*(C'\fR and in the \f(CW\*(C`agg\*(C'\fR spec are integer
-positions; for the other three shapes they are column names. The original frame
-is never modified.
+positions (a negative one counts from the end, as \f(CW\*(C`$row\->[\-1]\*(C'\fR does); for the
+other three shapes they are column names. A column that no row has is an error,
+so a misspelled name dies rather than coming back as a column of undef. An undef
+row of an AoA or AoH is skipped. The original frame is never modified, down to
+its scalars: a numeric cell is not given a cached string, nor a string cell a
+cached number.
+.PP
+The split is done in C, in one pass that hashes each row\*(Aqs \f(CW\*(C`by\*(C'\fR cells into its
+group and a second that drops each aggregated cell straight into its group\*(Aqs
+array, sharing the frame\*(Aqs own scalars wherever only the numeric aggregators
+read them. On a million\-row AoH in a thousand groups it takes about a quarter of
+the time the pure\-Perl split it replaced did, in about a fifth of the extra
+memory.
 .PP
 \fIUsage\fR
 .IX Subsection "Usage"
@@ -304,12 +315,15 @@ aggregate the entire frame into one row.
 .IP \(bu 4
 \&\fBskipna\fR — \f(CW1\fR (default) drops undef cells before a numeric aggregator
 runs. \f(CW0\fR makes any undef in a group poison the numeric result for that group
-(the cell comes back undef), matching pandas \f(CW\*(C`skipna=False\*(C'\fR. \f(CW\*(C`count\*(C'\fR, \f(CW\*(C`n\*(C'\fR,
+(the cell comes back undef), matching pandas \f(CW\*(C`skipna=False\*(C'\fR; that covers
+\&\f(CW\*(C`mean\*(C'\fR, \f(CW\*(C`median\*(C'\fR, \f(CW\*(C`sum\*(C'\fR, \f(CW\*(C`sd\*(C'\fR, \f(CW\*(C`var\*(C'\fR, \f(CW\*(C`min\*(C'\fR, \f(CW\*(C`max\*(C'\fR and \f(CW\*(C`mode\*(C'\fR. \f(CW\*(C`count\*(C'\fR, \f(CW\*(C`n\*(C'\fR,
 \&\f(CW\*(C`nunique\*(C'\fR, \f(CW\*(C`first\*(C'\fR, and \f(CW\*(C`last\*(C'\fR ignore this flag.
 .IP \(bu 4
-\&\fBsort\fR — \f(CW1\fR (default) sorts the output groups by key (numerically when
-every key looks like a number, otherwise as strings); \f(CW0\fR keeps first\-seen
-order.
+\&\fBsort\fR — \f(CW1\fR (default) sorts the output groups by key; \f(CW0\fR keeps first\-seen
+order. Each \f(CW\*(C`by\*(C'\fR column is compared on its own terms: numerically when every
+value in it looks like a number, otherwise as strings. Within a column an
+undef key sorts last (where pandas puts its NaN group) and a NaN sorts after
+every number.
 .IP \(bu 4
 \&\fBoutput.type\fR — \f(CW\*(C`aoa\*(C'\fR, \f(CW\*(C`aoh\*(C'\fR, \f(CW\*(C`hoa\*(C'\fR, or \f(CW\*(C`hoh\*(C'\fR. Defaults to the same family
 as the input frame.
@@ -326,7 +340,9 @@ the smallest number, or the lowest string when the values are not numeric.
 .PP
 A \fBcoderef\fR may be supplied instead of a name for full control. It is called
 once per group as \f(CW$code\->(\e@cells)\fR, where \f(CW@cells\fR are every cell for that
-column in the group \fBincluding undef\fR, and must return a single scalar:
+column in the group \fBincluding undef\fR, and must return a single scalar. It
+is called in scalar context, so \f(CW\*(C`sub { grep { .. } @{ $_[0] } }\*(C'\fR returns a
+count. The cells are copies; changing them does not change the frame:
 .PP
 .Vb 7
 \& # count the missing values in each group
@@ -347,7 +363,11 @@ columns, otherwise as strings), each expanded over its aggregator list in the
 order supplied.
 .PP
 A column reduced by a \fBsingle\fR aggregator keeps its own name; reduced by
-\&\fBtwo or more\fR it becomes \f(CW\*(C`<col>_<func>\*(C'\fR:
+\&\fBtwo or more\fR it becomes \f(CW\*(C`<col>_<func>\*(C'\fR. A coderef\*(Aqs \f(CW\*(C`<func>\*(C'\fR is \f(CW\*(C`fn\*(C'\fR, or
+\&\f(CW\*(C`fn1\*(C'\fR, \f(CW\*(C`fn2\*(C'\fR, .. when a column has more than one. A column that is also a \f(CW\*(C`by\*(C'\fR
+column is always named \f(CW\*(C`<col>_<func>\*(C'\fR, so \f(CW\*(C`by => \*(Aqg\*(Aq, agg => { g => \*(Aqcount\*(Aq }\*(C'\fR
+gives \f(CW\*(C`g\*(C'\fR and \f(CW\*(C`g_count\*(C'\fR. Any name that would still be generated twice is an
+error, except under \f(CW\*(C`output.type => \*(Aqaoa\*(Aq\*(C'\fR, whose columns are positional:
 .PP
 .Vb 6
 \& my $df = [
@@ -395,6 +415,9 @@ Without \f(CW\*(C`by\*(C'\fR, the frame collapses to one row:
 \& # [ { wt => 66.25, age => 3 } ]
 .Ve
 .PP
+That holds for a frame with no rows too, as for pandas \f(CW\*(C`df.agg\*(C'\fR: \f(CW\*(C`count\*(C'\fR and \f(CW\*(C`n\*(C'\fR
+are 0 and the numeric aggregators undef. A grouped empty frame has no groups.
+.PP
 \fIArray of Arrays (AoA)\fR
 .IX Subsection "Array of Arrays (AoA)"
 .PP
@@ -434,7 +457,7 @@ By default (\f(CW\*(C`skipna => 1\*(C'\fR) undef cells are removed before a nume
 runs, so a group of \f(CW\*(C`(60, 55)\*(C'\fR with a third undef still yields the mean of the
 two defined values. \f(CW\*(C`count\*(C'\fR reports only defined cells while \f(CW\*(C`n\*(C'\fR counts undef
 too. With \f(CW\*(C`skipna => 0\*(C'\fR, a group containing any undef returns undef for the
-numeric aggregators (\f(CW\*(C`mean median sum sd var mode\*(C'\fR); the counting and
+numeric aggregators (\f(CW\*(C`mean median sum sd var min max mode\*(C'\fR); the counting and
 positional aggregators are unaffected.
 .PP
 A group without enough data yields undef rather than an error: \f(CW\*(C`sd\*(C'\fR and \f(CW\*(C`var\*(C'\fR
@@ -454,11 +477,23 @@ an unknown option is passed;
 .IP \(bu 4
 an aggregator name is not recognized;
 .IP \(bu 4
-an aggregator list for a column is empty;
+an aggregator list for a column is empty, or holds something that is
+neither a name nor a coderef;
 .IP \(bu 4
 \&\f(CW\*(C`output.type\*(C'\fR is not one of \f(CW\*(C`aoa\*(C'\fR, \f(CW\*(C`aoh\*(C'\fR, \f(CW\*(C`hoa\*(C'\fR, \f(CW\*(C`hoh\*(C'\fR;
 .IP \(bu 4
-the trailing arguments are not \f(CW\*(C`name => value\*(C'\fR pairs.
+the trailing arguments are not \f(CW\*(C`name => value\*(C'\fR pairs;
+.IP \(bu 4
+a column in \f(CW\*(C`by\*(C'\fR or in the spec is undef, is in no row, is not an integer
+position (AoA), or is not an arrayref (HoA);
+.IP \(bu 4
+a row of an AoA or AoH is defined but not an ARRAY or HASH ref;
+.IP \(bu 4
+two output columns would get the same name (see above);
+.IP \(bu 4
+a numeric aggregator meets a cell that is not a number. The message names
+the aggregator, the column and the group, as in
+\&\f(CW\*(C`agg: mean of column \*(Aqv\*(Aq over group (g = \*(AqF\*(Aq): mean: non\-numeric value ..\*(C'\fR.
 .PP
 \fISee also\fR
 .IX Subsection "See also"
@@ -469,8 +504,10 @@ the trailing arguments are not \f(CW\*(C`name => value\*(C'\fR pairs.
 .IX Subsection "anova"
 Sequential (Type\-I) ANOVA table for a linear model, in the same shape \f(CW\*(C`aov\*(C'\fR
 returns. \f(CW\*(C`anova\*(C'\fR fits \f(CW\*(C`response ~ terms\*(C'\fR, then decomposes the model sum of
-squares one term at a time, \fBin formula order\fR, and F\-tests each term
-against the residual mean square.
+squares one term at a time, \fBin R\*(Aqs term order\fR \-\- main effects first, then
+two\-way interactions, and so on, each group in formula order \-\- and F\-tests
+each term against the residual mean square. The formula is read by the same
+parser \f(CW\*(C`lm\*(C'\fR and \f(CW\*(C`glm\*(C'\fR use.
 .PP
 .Vb 6
 \& anova(
@@ -508,20 +545,45 @@ the main effects alongside the interaction (\f(CW\*(C`a * b\*(C'\fR expands to \
 \& my $res_2way = anova($data_2way, \*(Aqlen ~ supp * dose\*(Aq);
 .Ve
 .PP
-Bare string columns are treated as factors and treatment\-coded (first level =
-reference); numeric columns and \f(CWI(x^2)\fR enter as single regressors. It is
-robust against rank deficiency: collinear terms gracefully receive 0 degrees
-of freedom and 0 sum of squares, matching R\*(Aqs behavior.
+Bare string columns are treated as factors; numeric columns, \f(CWI(x^2)\fR and
+\&\f(CWlog(x)\fR enter as single regressors. A factor is coded by treatment contrasts
+or by a full set of indicators exactly as R decides it (its "margin rule"), so
+nested and per\-group\-slope models come out as in R: \f(CW\*(C`y ~ a + a:b\*(C'\fR gives \f(CW\*(C`a:b\*(C'\fR
+\&\f(CW\*(C`levels(a) * (levels(b) \- 1)\*(C'\fR degrees of freedom, and \f(CW\*(C`y ~ g + g:x\*(C'\fR fits a
+separate slope of \f(CW\*(C`x\*(C'\fR in each group. \f(CW\*(C`\- 1\*(C'\fR, \f(CW\*(C`+ 0\*(C'\fR and \f(CW\*(C`0 +\*(C'\fR remove the
+intercept, \f(CW\*(C`.\*(C'\fR stands for every other column (taken in sorted order, since a
+hash has no column order), \f(CWoffset(z)\fR is subtracted from the response, and
+\&\f(CW\*(C`a:b\*(C'\fR and \f(CW\*(C`b:a\*(C'\fR are the same term. A term with no estimable column \-\- one that
+is collinear with the terms before it \-\- is kept with 0 degrees of freedom and
+0 sum of squares, where R leaves it out of the table. A column is judged
+collinear by R\*(Aqs own rule: when what the earlier columns leave of it has a
+norm below \f(CW1e\-7\fR of its own.
+.PP
+The fit keeps memory independent of the number of rows: it rotates one row at
+a time into a \f(CW\*(C`p\*(C'\fR\-by\-\f(CW\*(C`p\*(C'\fR triangular factor (\f(CW\*(C`p\*(C'\fR the number of design columns),
+so a 100,000\-row model with 801 columns needs about 2.5 MB rather than a
+640 MB design matrix.
 .PP
 Given two or more formulas, \f(CW\*(C`anova\*(C'\fR compares nested models instead and returns
 an \fBarray ref\fR of rows, one per model in the order supplied — R\*(Aqs
 \&\f(CW\*(C`anova(m1, m2, ...)\*(C'\fR. Each row carries \f(CW\*(C`Res.Df\*(C'\fR, \f(CW\*(C`RSS\*(C'\fR and \f(CW\*(C`formula\*(C'\fR; every row
-after the first adds \f(CW\*(C`Df\*(C'\fR, \f(CW\*(C`Sum of Sq\*(C'\fR, \f(CW\*(C`F\*(C'\fR and \f(CWPr(>F)\fR:
+after the first adds \f(CW\*(C`Df\*(C'\fR and \f(CW\*(C`Sum of Sq\*(C'\fR, the drops from the row before it,
+and \f(CW\*(C`F\*(C'\fR and \f(CWPr(>F)\fR:
 .PP
 .Vb 2
-\& my $tab = anova($data, \*(Aqy ~ x1\*(Aq, \*(Aqy ~ x1 + x2\*(Aq);
-\& printf "adding x2: F = %.4g, p = %.4g\en", $tab\->[1]{F}, $tab\->[1]{\*(AqPr(>F)\*(Aq};
+\& my $tab = anova($data, \*(Aqy ~ 1\*(Aq, \*(Aqy ~ x1\*(Aq, \*(Aqy ~ x1 + x2\*(Aq);
+\& printf "adding x2: F = %.4g, p = %.4g\en", $tab\->[2]{F}, $tab\->[2]{\*(AqPr(>F)\*(Aq};
 .Ve
+.PP
+\&\f(CW\*(C`F\*(C'\fR is the \f(CW\*(C`Sum of Sq\*(C'\fR per \f(CW\*(C`Df\*(C'\fR over the residual mean square of the model with
+the fewest residual degrees of freedom, and its p\-value is taken on the
+absolute \f(CW\*(C`Df\*(C'\fR, so models listed largest first are tested too. As in R\*(Aqs
+\&\f(CW\*(C`stat.anova\*(C'\fR, \f(CW\*(C`F\*(C'\fR and \f(CWPr(>F)\fR are left out where \f(CW\*(C`Df\*(C'\fR is 0 or \f(CW\*(C`F\*(C'\fR would be
+negative (models that are not nested), and also where that residual mean
+square is 0. Every model is fitted on the same rows: those complete for all of
+them. As R\*(Aqs \f(CW\*(C`anova.lmlist\*(C'\fR does, a model whose response differs from the
+first model\*(Aqs is dropped with a warning, and if only one model is left, its
+single\-model table is returned.
 .PP
 Given two or more \fBfitted models\fR instead \-\- \f(CW\*(C`lm\*(C'\fR or \f(CW\*(C`glm\*(C'\fR fits (or
 \&\f(CW\*(C`negbin\*(C'\fR \f(CW\*(C`glm\*(C'\fR fits) of the same response on the same rows \-\- \f(CW\*(C`anova\*(C'\fR compares
@@ -583,9 +645,11 @@ F\-tests, or when you want the leaner object to feed onward.
 .PP
 In short: same numbers for one model; \f(CW\*(C`aov\*(C'\fR is the richer "fit + describe"
 call (and the only one that stacks), \f(CW\*(C`anova\*(C'\fR is the minimal "give me the
-table" call. Note that both are \fBType\-I / sequential\fR, so term order in the
-formula matters, and both share this module\*(Aqs \f(CW\*(C`pf\*(C'\fR, so p\-values agree with
-\&\f(CW\*(C`oneway_test\*(C'\fR and the rest of Stats::LikeR.
+table" call. Note that both are \fBType\-I / sequential\fR, so the order of terms
+of the same degree matters, and both share this module\*(Aqs \f(CW\*(C`pf\*(C'\fR, so p\-values
+agree with \f(CW\*(C`oneway_test\*(C'\fR and the rest of Stats::LikeR. \f(CW\*(C`aov\*(C'\fR refuses an
+interaction whose main effects are not in the model; \f(CW\*(C`anova\*(C'\fR fits it as R
+does.
 .PP
 Comparing nested models \-\- \f(CW\*(C`anova(m1, m2)\*(C'\fR in R \-\- is done by giving \f(CW\*(C`anova\*(C'\fR
 two or more formulas, or two or more fitted models; see above.
@@ -5465,8 +5529,10 @@ rename inputs.
 \& # names: count.2020 count.2021 sum.2020 sum.2021
 .Ve
 .PP
-Rows and columns are sorted by default (numeric if every key is numeric, else
-string); \f(CW\*(C`sort => 0\*(C'\fR keeps first\-seen order. HoH output labels come from the
+Rows and columns are sorted by default, the same way \f(CW\*(C`agg\*(C'\fR sorts its groups:
+each key column numerically when every value in it is numeric, else as strings,
+with undef last and NaN after every number; \f(CW\*(C`sort => 0\*(C'\fR keeps first\-seen
+order. HoH output labels come from the
 \&\f(CW\*(C`index\*(C'\fR values (\f(CW\*(Aqall\*(Aq\fR with no index) and are uniquified with a numeric
 suffix if two joined labels collide. Returns a NEW frame; the input is never
 modified.

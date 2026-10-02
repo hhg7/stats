@@ -228,6 +228,141 @@ Revision history for Stats-LikeR
    each new branch. t/survival.t had covered aml alone. The generator is
    t/survival.R.R.
 
+ [agg(): the split moves to XS]
+
+ - Grouping is now done in C: one pass hashes each row's `by` cells into
+   its group, a second drops each aggregated cell straight into its
+   group's array. The perl split copied every needed column, built a row
+   index per group and sliced a second copy out of the columns for each.
+   On 1e6 AoH rows in 1000 groups agg() goes from 0.59 s to 0.14 s, and
+   from 157 MB above the frame to 31 MB; ungrouped, from 0.56 s and
+   162 MB to 0.10 s and 30 MB. Plain-number cells that only the numeric
+   reducers read are shared, not copied, and nothing is written back to
+   the caller's scalars: keying on a numeric column no longer leaves a
+   cached string on every cell, as "v$v" did.
+
+ [agg(): fixes]
+
+ - A coderef aggregator ran in list context, so one returning an empty
+   list or several values shifted every later column of the row:
+   { a => sub { grep { .. } @{ $_[0] } }, b => 'sum' } put b's sum under a.
+   It now runs in scalar context.
+
+ - Output names collided silently. Aggregating a `by` column
+   (by => 'g', agg => { g => 'count' }) overwrote the group's key, and in
+   hoa output left that column twice as long as the others; two coderefs
+   on one column were both "fn", so only the second survived. A `by`
+   column now aggregates to "<col>_<func>", several coderefs are fn1,
+   fn2, .., and any name still generated twice dies, except under
+   output.type aoa, whose columns are positional.
+
+ - Groups sorted wrong whenever any key was undef or any `by` column held
+   strings: one numeric-or-string decision covered every key column, and
+   an undef made it "string", so 10 sorted before 2. Each column is now
+   compared on its own terms, undef last and NaN after the numbers. A
+   NaN key used to die inside sort under the module's FATAL warnings.
+   pivot_table() shares the sort, and gets the same fix.
+
+ - Keys with several columns were joined with a bare "\x1e", so
+   ("p\x1evq", "r") and ("p", "q\x1evr") were one group. Cells are now
+   length-prefixed, as drop_duplicates() and merge() key them.
+
+ - skipna => 0 did not reach min and max, which pandas' skipna=False
+   does. It now covers mean, median, sum, sd, var, min, max and mode.
+
+ - A column in no row -- a misspelled name -- came back as a column of
+   undef; it now dies, as pandas' KeyError does. An undef `by` column, a
+   non-integer AoA position, a non-array HoA column and a defined row
+   that is not a reference now die with a message saying so, rather than
+   on a perl warning. A non-numeric cell now names the reducer, column
+   and group. An unknown aggregator is caught before any group is
+   reduced, so an empty frame no longer lets one through.
+
+ - An empty frame aggregated without `by` gave no rows; it is now one
+   row, as pandas' df.agg gives, with count and n 0.
+
+ [Tests: agg()]
+
+ - t/agg.R.pandas.t pins agg() to R 4.6.1's aggregate() -- every
+   aggregate.Rd example that is a data frame, and the reg-tests-1a/1c/1d
+   cases including PR#15004's 21 grouping columns -- and to pandas
+   3.0.4's own groupby tests, among them every float64 row of GH#15675's
+   skipna parametrisations. Every case runs through all four input
+   shapes. The generators are t/agg.R.pandas.R and t/agg.R.pandas.py.
+
+ [anova(): the model R fits]
+
+ - anova(\%data, formula) had a formula parser of its own, and it fitted
+   models R does not. Every factor in an interaction was coded by
+   contrasts, ignoring R's margin rule: y ~ a + a:b (b nested in a) gave
+   a:b 2 df on warpbreaks where R gives 4, y ~ a:b gave 2 where R gives
+   5, and y ~ g + g:x did not fit a slope per group. Because that coding
+   depended on which level came first, y ~ a:b gave a sum of squares of
+   5.40 or 22.08 on the same rows in a different order. Terms were taken
+   in formula order rather than R's (main effects, then two-way
+   interactions, ..), so y ~ a + b:a + b attributed b after the
+   interaction. y ~ 0 + x was fitted with an intercept; y ~ x - 1 read
+   "x - 1" as a column name and died on "fewer than 2 complete
+   observations"; y ~ ., offset(), y ~ 1 and a*b:x with b a factor all
+   died the same way or another; and y ~ a:b + b:a fitted the
+   interaction twice. anova() now reads the formula with lm()'s parser
+   and builds the design with lm()'s, and all of these match R 4.6.1.
+
+ - A column is aliased by R's rule, when what the earlier columns leave
+   of it has a norm below 1e-7 of its own (lm.fit's tol, dqrdc2.f). The
+   test was 1e-10 on the largest absolute entry.
+
+ - Data is read as lm() reads it, so a hash of hashes is accepted and a
+   hash of arrays whose columns differ in length dies, rather than
+   fitting on the response's length.
+
+ [anova(): model comparison]
+
+ - A list of formulas whose responses differ was compared on RSSs of
+   different responses: 'y ~ a' against 'log(y) ~ a + b' gave F = 91.4.
+   As anova.lmlist() does, a model whose response is not the first
+   model's is now dropped with a warning, and if one model is left its
+   own table is returned.
+
+ - F follows stat.anova(). A step with Df > 0 and a negative Sum of Sq
+   (models that are not nested) gave F < 0 and a p-value of 1; F and
+   Pr(>F) are now left out, R's NA. A step with Df < 0 -- models listed
+   largest first, as anova.lm.Rd's "unconventional order" example does
+   -- had no F; it is now tested on abs(Df), as R tests it.
+
+ [anova(): speed and memory]
+
+ - The fit held the whole n-by-p design, one allocation per row, plus a
+   dense copy of every factor's indicator columns, and reduced it by
+   Householder QR with loops that walked each column down those rows. It
+   now rotates one row at a time into a p-by-p triangle (Gentleman's
+   Givens rotations, AS 274, as R's biglm does) and keeps nothing that
+   grows with n. y ~ g*h + x on 1e5 rows with a 50-level g (201 design
+   columns) went from 47.5 s and 196 MB to 1.6 s and under 1 MB (R's
+   anova(lm()) takes 3.1 s); with a 200-level g (801 columns), from
+   638 s and 768 MB to 23 s and 2 MB.
+
+ - Factor levels are found with a hash rather than a linear search per
+   row. This is lm()'s design builder, so lm(), glm() and every model
+   built on it gain it too.
+
+ [lm(), glm(): a:b and b:a]
+
+ - The term list dropped a repeated term only when it was spelled the
+   same way, so y ~ a:b + b:a carried the interaction twice, the second
+   copy aliased. a:b and b:a are now one term, as in R.
+
+ [Tests: anova()]
+
+ - t/anova.R.t pins anova() to R 4.6.1's anova.lm() and anova.lmlist():
+   anova.lm.Rd's LifeCycleSavings tables, including the unconventional
+   order that stats-Ex.Rout.save pins; warpbreaks.Rd's model and the same
+   data nested, alone, out of order and without an intercept; npk.Rd's
+   confounded design; ToothGrowth with a slope per supplement;
+   reg-tests-2.R's offset (PR#8049) and 0-rank models. The generator is
+   t/anova.R.R. t/anova.t gains leak checks for the paths that croak
+   after the designs are built.
+
 0.3212 2026-09-28 CDT
 
  [write_table(): a warning for a header cell with no name]
