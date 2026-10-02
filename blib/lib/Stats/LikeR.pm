@@ -956,7 +956,7 @@ sub _rename_inplace { # VOID-context rename: mutate the source
 }
 
 sub select_cols {# shape code passed to the XS: 1 = AoH, 2 = HoH, 3 = AoA
-	my $df = shift;
+	my $df = _untied(shift);
 	die "select_cols: undefined data in first position\n" unless defined $df;
 	my @cols  = _cols_arg('select_cols', @_);
 	my $shape = _df_shape($df, 'select_cols');
@@ -981,7 +981,7 @@ sub select_cols {# shape code passed to the XS: 1 = AoH, 2 = HoH, 3 = AoA
 }
 
 sub drop_cols {
-	my $df = shift;
+	my $df = _untied(shift);
 	die "drop_cols: undefined data in first position\n" unless defined $df;
 	my @cols  = _cols_arg('drop_cols', @_);
 	my %drop  = map { $_ => 1 } @cols;
@@ -1009,6 +1009,7 @@ sub drop_cols {
 
 sub rename_cols {
 	my $df = shift;
+	$df = _untied($df) if defined wantarray;   # void context renames the frame itself
 	die "rename_cols: undefined data in first position\n" unless defined $df;
 	my %map;
 	if (@_ == 1 && ref $_[0] eq 'HASH') {
@@ -1200,6 +1201,19 @@ sub aoh2h {
 # Splice these in after the dropna sub. Also add  agg concat rbind  to
 # @EXPORT_OK. rbind is a true glob-alias synonym for concat.
 
+# A tied frame, as a plain copy of it; anything else, as it is. Each pass over a
+# tied frame -- _df_shape, _present_keys, the XS read -- FETCHes every row or
+# column again, so a read-only function copies it once, here, and makes its
+# passes over the copy. The copy holds the same row and column references.
+# Only for functions that leave the frame unchanged: one that writes to it
+# must write to the frame it was given.
+sub _untied {
+	my $df = shift;
+	return { %$df } if ref $df eq 'HASH'  && tied %$df;
+	return [ @$df ] if ref $df eq 'ARRAY' && tied @$df;
+	return $df;
+}
+
 sub _df_shape {
 	my ($df, $caller) = @_;
 	$caller = 'data frame' unless defined $caller;
@@ -1324,7 +1338,7 @@ sub _df_shape {
 	}
 
 	sub agg {
-		my $df = shift;
+		my $df = _untied(shift);
 		die "agg: undefined data in first position\n" unless defined $df;
 		my $shape = _df_shape($df, 'agg');
 		die "agg: arguments after the data frame must be name => value pairs\n"
@@ -2260,7 +2274,7 @@ sub dropna {
 # HoA builds new column arrays over the same cell SVs.  Assigning through a
 # survivor therefore reaches the input's cell.
 sub drop_duplicates {
-	my $df = shift;
+	my $df = _untied(shift);
 	die "drop_duplicates: undefined data in first position\n" unless defined $df;
 	die "drop_duplicates: arguments after the data frame must be name => value pairs\n"
 		if @_ % 2;

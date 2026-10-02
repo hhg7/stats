@@ -1165,6 +1165,9 @@ the key exactly as it would for a hash the caller built themselves, so
 nk_num_pv() renders a bare number, which is ASCII whatever the SV's flag says,
 so its length is always positive.*/
 static void increment_count(pTHX_ HV* counts_hv, SV* val, bool fast_nv) {
+	/*A value from a tied hash is a placeholder until its get magic runs; one
+	mortal copy fetches it once, where SvOK() and SvPV() would each FETCH.*/
+	if (val && SvGMAGICAL(val)) val = sv_mortalcopy(val);
 	if (!val || !SvOK(val)) return; // Skip null pointers or undef (non-OK) values
 	STRLEN len;
 	I32 klen;
@@ -2272,6 +2275,45 @@ static NV fisher_rxc_pvalue(pTHX_ const long *restrict cells, unsigned nrow, uns
 	return p;
 }
 
+/*One cell of a hash that may be tied: the value stored under key, or NULL if the
+key is absent. group_by, chisq_test and its 'p' read their cells with it.
+
+For a plain hash this is hv_fetch_ent()'s HeVAL. A tied hash's fetch always
+returns an entry -- the same static one on every call, so a second fetch
+overwrites the first -- holding a placeholder that FETCHes on every read, so
+existence is asked separately and the value is copied out once into a mortal
+with no magic.*/
+static SV *hv_cell(pTHX_ HV *hv, SV *key) {
+	if (!SvRMAGICAL(hv)) {
+		HE *he = hv_fetch_ent(hv, key, 0, 0);
+		return he ? HeVAL(he) : NULL;
+	}
+	if (!hv_exists_ent(hv, key, 0)) return NULL;
+	HE *he = hv_fetch_ent(hv, key, 0, 0);
+	return he ? sv_mortalcopy(HeVAL(he)) : NULL;
+}
+/*ljoin's and add_data's store of a source value into a target row; val is
+borrowed.
+
+Between plain hashes the target shares the source's SV, as it always has. A
+value read from a tied source (src_tied) is a placeholder whose element magic
+would tie it back to that source, so it is copied, which runs its FETCH. A
+tied target's hv_store_ent() only attaches element magic and returns NULL, so
+it is given its own copy and SvSETMAGIC() runs the STORE (perlguts,
+"Understanding the Magic of Tied Hashes and Arrays"). The copy is mortal so
+that a dying FETCH or STORE frees it; a store that took it gets a reference of
+its own.*/
+static void jd_store(pTHX_ HV *dst, SV *key, SV *val, bool src_tied) {
+	if (!src_tied && !SvRMAGICAL(dst)) {
+		(void)hv_store_ent(dst, key, SvREFCNT_inc(val), 0);
+		return;
+	}
+	SV *copy = sv_2mortal(newSVsv(val));
+	HE *he = hv_store_ent(dst, key, copy, 0);
+	if (SvRMAGICAL(dst)) SvSETMAGIC(copy);
+	if (he) SvREFCNT_inc_simple_void_NN(copy);
+}
+
 // qsort comparator: order (key,value) pairs by their string key
 typedef struct { const char *k; SV *v; } ft_kv;
 static int ft_kv_cmp(const void *a, const void *b) {
@@ -2280,9 +2322,10 @@ static int ft_kv_cmp(const void *a, const void *b) {
 
 // small helper: fetch a nonnegative integer cell from an SV, with validation
 static long ft_cell(pTHX_ SV *sv, const char *what) {
+	if (sv) SvGETMAGIC(sv);	//once: a tied cell is a placeholder until fetched, and SvIV() would FETCH again
 	if (!sv || !SvOK(sv)) croak("fisher_test: %s is undef", what);
 	if (!looks_like_number(sv)) croak("fisher_test: %s is not a number", what);
-	IV v = SvIV(sv);
+	IV v = SvIV_nomg(sv);
 	if (v < 0) croak("fisher_test: %s must be nonnegative (got %" IVdf ")", what, v);
 	return (long)v;
 }
@@ -2315,9 +2358,10 @@ static SV *ct_av_get(pTHX_ AV *av, SSize_t i) {
  cannot drift apart.  Counts are read as NV, not IV, because R accepts
  non-integer weights here too.*/
 static NV ct_cell(pTHX_ SV *sv, const char *what) {
+	if (sv) SvGETMAGIC(sv);	//once: a tied cell is a placeholder until fetched, and SvNV() would FETCH again
 	if (!sv || !SvOK(sv)) croak("chisq_test: %s is undef", what);
 	if (!looks_like_number(sv)) croak("chisq_test: %s is not a number", what);
-	NV v = SvNV(sv);
+	NV v = SvNV_nomg(sv);
 	if (!nv_isfinite(v) || v < 0.0)
 		croak("chisq_test: all entries of 'x' must be nonnegative and finite (%s)", what);
 	return v;
@@ -2325,9 +2369,10 @@ static NV ct_cell(pTHX_ SV *sv, const char *what) {
 
 // chisq_test 'p' reader: a probability, so nonnegative and finite (R: "probabilities must be non-negative.")
 static NV ct_prob(pTHX_ SV *sv, const char *what) {
+	if (sv) SvGETMAGIC(sv);	//as ct_cell()
 	if (!sv || !SvOK(sv)) croak("chisq_test: %s is undef", what);
 	if (!looks_like_number(sv)) croak("chisq_test: %s is not a number", what);
-	NV v = SvNV(sv);
+	NV v = SvNV_nomg(sv);
 	if (!nv_isfinite(v) || v < 0.0) croak("chisq_test: probabilities must be non-negative");
 	return v;
 }
@@ -2380,12 +2425,14 @@ static NV get_data_value(pTHX_ HV *data_hoa, HV **row_hashes, unsigned int i, co
 	SV **val = NULL;
 	if (row_hashes) {
 		val = hv_fetch(row_hashes[i], var, strlen(var), 0);
+		if (val) SvGETMAGIC(*val);	//a tied hash's fetch is a placeholder until this runs
 		if (val && SvROK(*val) && SvTYPE(SvRV(*val)) == SVt_PVAV) {
 			AV*av = (AV*)SvRV(*val);
 			val = av_fetch(av, 0, 0);
 		}
 	} else if (data_hoa) {
 		SV**col = hv_fetch(data_hoa, var, strlen(var), 0);
+		if (col) SvGETMAGIC(*col);
 		if (col && SvROK(*col) && SvTYPE(SvRV(*col)) == SVt_PVAV) {
 			AV*av = (AV*)SvRV(*col);
 			val = av_fetch(av, i, 0);
@@ -2517,12 +2564,146 @@ static SV *he_val(pTHX_ HV *hv, HE *he) {
 	SvGETMAGIC(v);
 	return v;
 }
+/*looks_like_number() on a value whose get magic has already run.
+
+On the older perls a magical SV's string is private after mg_get(), and
+looks_like_number() reads a private-only string through SvPV_const(), which
+runs the get magic -- a tied cell's FETCH -- a second time: col2col() fetched
+every string cell of a tied column twice on 5.10.1 and 5.12.5, though not on
+5.16.3. A copy without the magic is tested instead.*/
+static I32 sv_lln_nomg(pTHX_ SV *sv) {	// no restrict: perl-managed
+	if (!SvGMAGICAL(sv)) return looks_like_number(sv);
+	SV *tmp = sv_newmortal();
+	sv_setsv_nomg(tmp, sv);
+	return looks_like_number(tmp);
+}
 static size_t hv_nkeys(pTHX_ HV *hv) {
 	if (!HV_IS_TIED(hv)) return (size_t)HvUSEDKEYS(hv);
 	size_t n = 0;	//a tied hash's FIRSTKEY/NEXTKEY restart on any walk, so nothing to keep
 	hv_iterinit(hv);
 	while (hv_iternext(hv)) n++;
 	return n;
+}
+/*A plain, mortal copy of a tied hash or array c: each value copied by
+newSVsv(), which runs its FETCH once. A blessed container's copy keeps the
+class.*/
+static SV *untie_copy(pTHX_ SV *c) {	// no restrict: perl-managed
+	SV *dst;
+	if (SvTYPE(c) == SVt_PVAV) {
+		AV *src = (AV *)c;
+		AV *d = (AV *)sv_2mortal((SV *)newAV());
+		const SSize_t n = av_len(src) + 1;
+		if (n > 0) av_extend(d, n - 1);
+		for (SSize_t i = 0; i < n; i++) {
+			SV **p = av_fetch(src, i, 0);
+			av_push(d, p ? newSVsv(*p) : newSV(0));
+		}
+		dst = (SV *)d;
+	} else {
+		HV *src = (HV *)c;
+		HV *d = (HV *)sv_2mortal((SV *)newHV());
+		hv_iterinit(src);	//a tied walk restarts FIRSTKEY anyway: nothing to keep (see hv_nkeys)
+		for (HE *e; (e = hv_iternext(src)) != NULL; )
+			(void)hv_store_ent(d, hv_iterkeysv(e), newSVsv(hv_iterval(src, e)), 0);
+		dst = (SV *)d;
+	}
+	if (SvOBJECT(c)) {	//sv_bless() wants a reference
+		SV *rv = sv_2mortal(newRV_inc(dst));
+		(void)sv_bless(rv, SvSTASH(c));
+	}
+	return dst;
+}
+/*A frame that may be tied, as one that is not.
+
+Every pass a function makes over a tied frame -- a shape probe, a key count, a
+key union, the read itself -- FETCHes its values again, and a function that
+reads a tied column once to match on it and again to copy it out FETCHes every
+cell twice. The answers were right, only slower.
+
+When ref is a reference to a tied hash or array, this hands back a mortal
+reference to a plain copy of it, so each of its values is FETCHed once, here.
+With UNTIE_COLS a hash frame's tied columns are copied as well, and with
+UNTIE_ROWS any frame's tied rows; a function asks for those only where it
+builds its result afresh, because a copied row is no longer the row a result
+can share with its input. Anything else -- a plain frame with nothing tied in
+it above all -- comes back as it is. A plain value the copy holds is the
+caller's own SV, shared, so the copy changes nothing a result shares.
+
+A scan over a plain frame's values is the only cost to untied input, and it is
+only made with a flag set, stopping at the first value of a kind the flags do
+not cover (a HoH's first row, when only columns are asked for). On 200000-row
+plain frames, merge, lm, filter and drop_duplicates timed the same with the
+scan and without it, to within the 10% that runs of one build vary by.*/
+#define UNTIE_COLS 1	//copy a hash frame's tied array values (HoA columns)
+#define UNTIE_ROWS 2	//copy a frame's tied rows (AoH, HoH and AoA rows)
+static SV *frame_untied(pTHX_ SV *ref, unsigned short int flags) {
+	if (!ref || !SvROK(ref)) return ref;
+	SV *f = SvRV(ref);
+	if (SvTYPE(f) != SVt_PVHV && SvTYPE(f) != SVt_PVAV) return ref;
+	bool copied = FALSE;	//f is this function's own copy, free to be written
+	if (SvRMAGICAL(f) && mg_find(f, PERL_MAGIC_tied)) {
+		f = untie_copy(aTHX_ f);
+		ref = sv_2mortal(newRV_inc(f));
+		copied = TRUE;
+	}
+	if (!flags) return ref;
+	if (SvTYPE(f) == SVt_PVAV) {
+		if (!(flags & UNTIE_ROWS)) return ref;
+		AV *av = (AV *)f;
+		for (SSize_t i = 0; i <= AvFILLp(av); i++) {
+			SV *v = AvARRAY(av)[i];
+			if (!v || !SvROK(v)) continue;
+			SV *row = SvRV(v);
+			if ((SvTYPE(row) != SVt_PVHV && SvTYPE(row) != SVt_PVAV)
+			    || !SvRMAGICAL(row) || !mg_find(row, PERL_MAGIC_tied)) continue;
+			if (!copied) {	//shares every value; only the tied rows are replaced below
+				AV *d = (AV *)sv_2mortal((SV *)newAV());
+				av_extend(d, AvFILLp(av));
+				for (SSize_t k = 0; k <= AvFILLp(av); k++) {
+					SV *e = AvARRAY(av)[k];
+					if (e) av_store(d, k, SvREFCNT_inc_simple_NN(e));
+				}
+				av = d;
+				ref = sv_2mortal(newRV_inc((SV *)d));
+				copied = TRUE;
+			}
+			av_store(av, i, newRV_inc(untie_copy(aTHX_ row)));
+		}
+		return ref;
+	}
+	HV *hv = (HV *)f;
+	AV *keys = NULL;	//the keys whose value is replaced, collected first: storing mid-walk is not safe
+	ITER_KEEP_BEGIN(hv);
+	hv_iterinit(hv);
+	for (HE *e; (e = hv_iternext(hv)) != NULL; ) {
+		SV *v = HeVAL(e);	//f is plain here: the copy, or the caller's untied frame
+		if (!v || !SvROK(v)) continue;
+		const svtype t = SvTYPE(SvRV(v));
+		const unsigned short int want = t == SVt_PVAV ? UNTIE_COLS
+		                              : t == SVt_PVHV ? UNTIE_ROWS : 0;
+		if (!(flags & want)) break;	//a frame of a kind not asked for: nothing below to copy
+		if (!SvRMAGICAL(SvRV(v)) || !mg_find(SvRV(v), PERL_MAGIC_tied)) continue;
+		if (!keys) keys = (AV *)sv_2mortal((SV *)newAV());
+		av_push(keys, newSVsv(hv_iterkeysv(e)));
+	}
+	ITER_KEEP_END;
+	if (!keys) return ref;
+	if (!copied) {
+		HV *d = (HV *)sv_2mortal((SV *)newHV());
+		ITER_KEEP_BEGIN(hv);
+		hv_iterinit(hv);
+		for (HE *e; (e = hv_iternext(hv)) != NULL; )
+			(void)hv_store_ent(d, hv_iterkeysv(e), SvREFCNT_inc_simple_NN(HeVAL(e)), 0);
+		ITER_KEEP_END;
+		hv = d;
+		ref = sv_2mortal(newRV_inc((SV *)d));
+	}
+	for (SSize_t i = 0; i <= AvFILLp(keys); i++) {
+		HE *he = hv_fetch_ent(hv, AvARRAY(keys)[i], 0, 0);
+		SV *c = untie_copy(aTHX_ SvRV(HeVAL(he)));
+		(void)hv_store_ent(hv, AvARRAY(keys)[i], newRV_inc(c), 0);
+	}
+	return ref;
 }
 /*One prcomp() cell as a finite number, or FALSE for a missing, undef,
 non-numeric, NaN or infinite one -- any of which drops the row, as R's
@@ -2533,11 +2714,23 @@ without a word.*/
 static bool pc_num(pTHX_ SV *cell, NV *restrict out) {
 	if (!cell) return FALSE;	// no restrict on cell: perl-managed, a proxy for a tied element
 	SvGETMAGIC(cell);
-	if (!SvOK(cell) || !looks_like_number(cell)) return FALSE;
+	if (!SvOK(cell) || !sv_lln_nomg(aTHX_ cell)) return FALSE;
 	const NV v = SvNV_nomg(cell);
 	if (!nv_isfinite(v)) return FALSE;
 	*out = v;
 	return TRUE;
+}
+/*A HoH row of vals()/avals(), with the key that orders it.*/
+typedef struct {
+	SV *k;	//the row's key, a mortal copy
+	SV *r;	//the row's value
+} vk_pair;
+/*Perl string order of the keys. qsort() hands a comparator no context, and
+sv_cmp() needs one: dTHX is a no-op on an unthreaded perl and one lookup per
+comparison on a threaded one.*/
+static int vk_pair_cmp(const void *a, const void *b) {
+	dTHX;
+	return sv_cmp(((const vk_pair *)a)->k, ((const vk_pair *)b)->k);
 }
 
 /*Every available column, for the '.' operator's expansion -- in SORTED order.
@@ -2667,12 +2860,14 @@ static bool is_column_categorical(pTHX_ HV *data_hoa, HV **row_hashes, size_t n,
 		SV **val = NULL;
 		if (row_hashes) {
 			val = hv_fetch(row_hashes[i], var, strlen(var), 0);
+			if (val) SvGETMAGIC(*val);
 			if (val && SvROK(*val) && SvTYPE(SvRV(*val)) == SVt_PVAV) {
 				 AV*av = (AV*)SvRV(*val);
 				 val = av_fetch(av, 0, 0);
 			}
 		} else if (data_hoa) {
 			SV **col = hv_fetch(data_hoa, var, strlen(var), 0);
+			if (col) SvGETMAGIC(*col);
 			if (col && SvROK(*col) && SvTYPE(SvRV(*col)) == SVt_PVAV) {
 				 AV*av = (AV*)SvRV(*col);
 				 val = av_fetch(av, i, 0);
@@ -2691,12 +2886,14 @@ static char* get_data_string_alloc(pTHX_ HV *data_hoa, HV **row_hashes, size_t i
 	SV **val = NULL;
 	if (row_hashes) {
 		val = hv_fetch(row_hashes[i], var, strlen(var), 0);
+		if (val) SvGETMAGIC(*val);
 		if (val && SvROK(*val) && SvTYPE(SvRV(*val)) == SVt_PVAV) {
 			AV*av = (AV*)SvRV(*val);
 			val = av_fetch(av, 0, 0);
 		}
 	} else if (data_hoa) {
 		SV **col = hv_fetch(data_hoa, var, strlen(var), 0);
+		if (col) SvGETMAGIC(*col);
 		if (col && SvROK(*col) && SvTYPE(SvRV(*col)) == SVt_PVAV) {
 			AV*av = (AV*)SvRV(*col);
 			val = av_fetch(av, i, 0);
@@ -3357,38 +3554,62 @@ static void pa_kernel(const NV *p, NV *adj, size_t n, const char *meth) {
 	Safefree(arr);
 }
 
-/*Order hash entries by key, so that tied p-values break the same way on
-every run instead of following hash iteration order.*/
-static int pa_cmp_he(const void *a, const void *b) {
-	HE *const ha = *(HE * const *)a;
-	HE *const hb = *(HE * const *)b;
-	STRLEN la, lb;
-	const char *ka, *kb;
-/*Read the key bytes straight out of the entry. HePV would do the same,
-except for an SV key, where it goes through SvPV -- and SvPV wants the
-interpreter context, which qsort has no way to hand a comparator. On a
-threaded or MULTIPLICITY perl that is a compile error, so take the SV
-key branch ourselves and pay for a dTHX only there.*/
-	if (HeKLEN(ha) == HEf_SVKEY || HeKLEN(hb) == HEf_SVKEY) {
-		dTHX;
-		ka = HePV(ha, la);
-		kb = HePV(hb, lb);
-	} else {
-		ka = HeKEY(ha);  la = (STRLEN)HeKLEN(ha);
-		kb = HeKEY(hb);  lb = (STRLEN)HeKLEN(hb);
-	}
-	STRLEN m = la < lb ? la : lb;
-	int c = m ? memcmp(ka, kb, m) : 0;
-	if (c) return c;
-	return (la > lb) - (la < lb);
+/*Run a tied hash's walk to its end before croaking out of the middle of it:
+perl before 5.18 leaks the entry a tied iterator holds when the next
+hv_iterinit() restarts a walk that was cut short (on 5.16.3 a croak from a
+tied walk in lm() or oneway_test() leaked one key SV per call). A plain
+hash needs nothing, and ITER_KEEP_END puts its iterator back. Anything the
+croak message quotes from the entry -- its key above all -- must be copied
+out before this is called, since the walk replaces it.*/
+static void hv_walk_out(pTHX_ HV *hv) {
+	if (HV_IS_TIED(hv)) while (hv_iternext(hv)) {}
 }
 
-static SSize_t pa_sorted_keys(pTHX_ HV *hv, HE **out) {
+/*One hash entry, taken out of the hash. Keeping the HE itself is not enough
+for a tied hash: its iterator hands back one entry, refilled at every step,
+whose value is never filled in at all.*/
+typedef struct {
+	const char *kp;	//key bytes: in the hash's own key for a plain hash, in a mortal copy for a tied one
+	STRLEN kl;
+	bool utf8;
+	SV *val;	//the value, its get magic run
+} PaEnt;
+
+/*Order entries by key, so that tied p-values break the same way on every run
+instead of following hash iteration order. The key bytes are already out of
+the entry, so the comparator needs no interpreter context, which qsort has
+no way to hand it.*/
+static int pa_cmp_ent(const void *a, const void *b) {
+	const PaEnt *const ea = (const PaEnt *)a;
+	const PaEnt *const eb = (const PaEnt *)b;
+	STRLEN m = ea->kl < eb->kl ? ea->kl : eb->kl;
+	int c = m ? memcmp(ea->kp, eb->kp, m) : 0;
+	if (c) return c;
+	return (ea->kl > eb->kl) - (ea->kl < eb->kl);
+}
+
+/*hv's entries into out[], sorted by key; returns how many. cap is out[]'s
+size: a tied hash can yield more keys than it was counted with, and the walk
+runs to its end regardless, which perl before 5.18 needs of a tied one.*/
+static SSize_t pa_sorted_keys(pTHX_ HV *hv, PaEnt *out, SSize_t cap) {
 	SSize_t k = 0;
 	HE *e;
+	const bool tied = cBOOL(HV_IS_TIED(hv));
 	ITER_KEEP_BEGIN(hv);
 	hv_iterinit(hv);
-	while ((e = hv_iternext(hv))) out[k++] = e;
+	while ((e = hv_iternext(hv))) {
+		if (k == cap) continue;
+		if (tied) {	//the iterator replaces its key at every step: copy it into a mortal
+			SV *ks = sv_mortalcopy(hv_iterkeysv(e));
+			out[k].kp = SvPV(ks, out[k].kl);
+			out[k].utf8 = cBOOL(SvUTF8(ks));
+		} else {
+			out[k].kp = HePV(e, out[k].kl);
+			out[k].utf8 = cBOOL(HeUTF8(e));
+		}
+		out[k].val = he_val(aTHX_ hv, e);
+		k++;
+	}
 	ITER_KEEP_END;
 	/*`out` is NULL when the caller found no keys to size it with -- p_adjust
 	only allocates its buffers when the widest row hash is non-empty, so
@@ -3398,7 +3619,7 @@ static SSize_t pa_sorted_keys(pTHX_ HV *hv, HE **out) {
 	compiler is entitled to infer non-nullness and drop a later check.  The
 	guard is k > 1 rather than k > 0 because a single element is already
 	sorted.*/
-	if (k > 1) qsort(out, (size_t)k, sizeof(HE*), pa_cmp_he);
+	if (k > 1) qsort(out, (size_t)k, sizeof(PaEnt), pa_cmp_ent);
 	return k;
 }
 
@@ -8741,8 +8962,10 @@ static void jacobi_eigen(NV *restrict A, size_t n, NV *restrict d, NV *restrict 
 
 // --- pull a numeric value out of an SV* slot
 static int c2c_num(pTHX_ SV **ep, NV *out) {
-	if (ep && *ep && SvOK(*ep) && looks_like_number(*ep)) {
-		*out = SvNV(*ep);
+	if (!ep || !*ep) return 0;
+	SvGETMAGIC(*ep);	// a tied row's value, or a tied column's cell, has none until this
+	if (SvOK(*ep) && sv_lln_nomg(aTHX_ *ep)) {
+		*out = SvNV_nomg(*ep);
 		return 1;
 	}
 	return 0;
@@ -11174,6 +11397,11 @@ static size_t lm_read_rows(pTHX_ SV *data_sv, const char *fname,
                            HV  **data_hoa_out,
                            HV ***row_hashes_out,
                            char ***row_names_out) {
+	/*A tied frame's column was FETCHed again for every row the design matrix
+	read, and a tied row's first cell once for the shape and again for the
+	matrix. Nothing a fit returns holds a row. The copy is mortal, which
+	outlives every caller's use of the views.*/
+	data_sv = frame_untied(aTHX_ data_sv, UNTIE_ROWS);
 	SV  *ref        = SvRV(data_sv);
 	HV  *data_hoa   = NULL,  **row_hashes = NULL;
 	char **row_names = NULL;
@@ -11187,11 +11415,19 @@ static size_t lm_read_rows(pTHX_ SV *data_sv, const char *fname,
 	if (SvTYPE(ref) == SVt_PVHV) {
 		HV *hv = (HV*)ref;
 		SV *val;
+		const bool tied = cBOOL(HV_IS_TIED(hv));	//a tied hash's hv_iterinit() reads 0 whatever it holds
 		ITER_KEEP_BEGIN(hv);
-		if (hv_iterinit(hv) == 0) { Safefree(fbuf); croak("%s: Data hash is empty", fname); }
+		if (hv_iterinit(hv) == 0 && !tied) { Safefree(fbuf); croak("%s: Data hash is empty", fname); }
 		entry = hv_iternext(hv);
-		if (!entry) { ITER_KEEP_END; return 0; }	//the early return closes the walk's scope too
-		val = hv_iterval(hv, entry);
+		if (!entry) {
+			if (tied) { Safefree(fbuf); croak("%s: Data hash is empty", fname); }
+			ITER_KEEP_END; return 0;	//the early return closes the walk's scope too
+		}
+		val = he_val(aTHX_ hv, entry);
+	/*Finish a tied walk rather than let the next one restart it: perl before
+	5.18 leaks the entry a tied iterator holds when hv_iterinit() cuts its walk
+	short. val is a mortal, so it outlives the walk.*/
+		if (tied) while (hv_iternext(hv)) {}
 		ITER_KEEP_END;
 		if (SvROK(val) && SvTYPE(SvRV(val)) == SVt_PVAV) {
 			AV *rn_av = NULL;
@@ -11200,6 +11436,7 @@ static size_t lm_read_rows(pTHX_ SV *data_sv, const char *fname,
 			for (k = 0; k < LM_N_ROW_NAME_KEYS; k++) {
 				SV **rn = hv_fetch(hv, lm_row_name_keys[k],
 				                            (I32)strlen(lm_row_name_keys[k]), 0);
+				if (rn && *rn) SvGETMAGIC(*rn);
 				if (rn && *rn && SvROK(*rn) && SvTYPE(SvRV(*rn)) == SVt_PVAV) {
 					rn_av = (AV*)SvRV(*rn);
 					break;
@@ -11225,15 +11462,17 @@ static size_t lm_read_rows(pTHX_ SV *data_sv, const char *fname,
 				ITER_KEEP_BEGIN(hv);
 				hv_iterinit(hv);
 				while ((ce = hv_iternext(hv))) {
-					SV *cv = HeVAL(ce);
+					SV *cv = he_val(aTHX_ hv, ce);
 					if (!cv || !SvROK(cv) || SvTYPE(SvRV(cv)) != SVt_PVAV) continue;
 					if (rn_av && (AV*)SvRV(cv) == rn_av) continue;
 					size_t len = (size_t)(av_len((AV*)SvRV(cv)) + 1);
 					if (len != n) {
+						SV *ks = sv_mortalcopy(hv_iterkeysv(ce));
+						hv_walk_out(aTHX_ hv);
 						Safefree(fbuf);
 						croak("%s: HoA columns have unequal lengths "
 						      "(column '%s' has %" UVuf ", expected %" UVuf ")",
-						      fname, HePV(ce, PL_na), (UV)len, (UV)n);
+						      fname, SvPV_nolen(ks), (UV)len, (UV)n);
 					}
 				}
 				ITER_KEEP_END;
@@ -11251,15 +11490,18 @@ static size_t lm_read_rows(pTHX_ SV *data_sv, const char *fname,
 			}
 		} else if (SvROK(val) && SvTYPE(SvRV(val)) == SVt_PVHV) {
 			//HoH: the outer keys already name the rows.
-			n = (size_t)HvUSEDKEYS(hv);
+			n = hv_nkeys(aTHX_ hv);
 			if (want_names) Newx(row_names, n ? n : 1, char*);
 			Newx(row_hashes, n ? n : 1, HV*);
 			ITER_KEEP_BEGIN(hv);
 			hv_iterinit(hv);
 			i = 0;
 			while ((entry = hv_iternext(hv))) {
-				SV *rval = hv_iterval(hv, entry);
+				SV *rval;
+				if (i == n) continue;	//a tied hash can hand back more keys than it counted: the walk still runs out
+				rval = he_val(aTHX_ hv, entry);
 				if (!SvROK(rval) || SvTYPE(SvRV(rval)) != SVt_PVHV) {
+					hv_walk_out(aTHX_ hv);
 					if (want_names) for (k = 0; k < i; k++) Safefree(row_names[k]);
 					Safefree(row_names); Safefree(row_hashes); Safefree(fbuf);
 					croak("%s: Hash values must all be HashRefs (HoH)", fname);
@@ -11269,6 +11511,7 @@ static size_t lm_read_rows(pTHX_ SV *data_sv, const char *fname,
 				i++;
 			}
 			ITER_KEEP_END;
+			n = i;	//or fewer: no slot past i was filled
 		} else { Safefree(fbuf); croak("%s: Hash values must be ArrayRefs (HoA) or HashRefs (HoH)", fname); }
 	} else if (SvTYPE(ref) == SVt_PVAV) {
 		AV *av = (AV*)ref;
@@ -11290,6 +11533,7 @@ static size_t lm_read_rows(pTHX_ SV *data_sv, const char *fname,
 			for (k = 0; k < LM_N_ROW_NAME_KEYS; k++) {
 				nm = hv_fetch(rh, lm_row_name_keys[k],
 				              (I32)strlen(lm_row_name_keys[k]), 0);
+				if (nm && *nm) SvGETMAGIC(*nm);	//a tied row
 				if (nm && *nm && SvOK(*nm)) break;
 				nm = NULL;
 			}
@@ -13908,11 +14152,15 @@ LIKER_DEFINE_SORT(rank_pair, rank_pair_rnd,  RANK_PAIR_LESS_RND)
  absent one becomes a fresh mutable undef.  hash=0 lets hv normalise utf8.*/
 static HV *row_select(pTHX_ HV *src, SV **keys, SSize_t nkeys) {
 	HV *out = newHV();
+	/*A tied row has no cell SV to share: what hv_fetch_ent() hands back is a
+	mortal placeholder that only FETCHes when read, so its cells are copied.*/
+	const bool tied = src && HV_IS_TIED(src);
 	if (nkeys > 0) hv_ksplit(out, (IV)nkeys);
 	for (SSize_t j = 0; j < nkeys; j++) {
 		HE *e = src ? hv_fetch_ent(src, keys[j], 0, 0) : NULL;
 		SV *val;
-		if (e && HeVAL(e)) { val = HeVAL(e); SvREFCNT_inc_simple_void(val); }
+		if (e && HeVAL(e) && tied) val = newSVsv(HeVAL(e));	// runs the FETCH
+		else if (e && HeVAL(e)) { val = HeVAL(e); SvREFCNT_inc_simple_void(val); }
 		else               { val = newSV(0); }                 // absent -> undef
 		(void)hv_store_ent(out, keys[j], val, 0);
 	}
@@ -13924,6 +14172,9 @@ static HV *row_select(pTHX_ HV *src, SV **keys, SSize_t nkeys) {
 static HV *row_drop(pTHX_ HV *src, HV *drop_hv) {
 	HV *out = newHV();
 	if (!src) return out;
+	/*a tied row: HeVAL() is never filled in, its cells are copied rather than
+	shared (see row_select), and HeHASH() is no hash, so 0 lets hv_store hash.*/
+	const bool tied = cBOOL(HV_IS_TIED(src));
 	ITER_KEEP_BEGIN(src);
 	hv_iterinit(src);
 	HE *he;
@@ -13931,8 +14182,8 @@ static HV *row_drop(pTHX_ HV *src, HV *drop_hv) {
 		STRLEN kl; char *kp = HePV(he, kl);
 		I32 sk = HeUTF8(he) ? -(I32)kl : (I32)kl;
 		if (hv_exists(drop_hv, kp, sk)) continue;
-		SV *val = HeVAL(he); SvREFCNT_inc_simple_void(val);
-		(void)hv_store(out, kp, sk, val, HeHASH(he));
+		SV *val = tied ? newSVsv(he_val(aTHX_ src, he)) : SvREFCNT_inc_simple_NN(HeVAL(he));
+		(void)hv_store(out, kp, sk, val, tied ? 0 : HeHASH(he));
 	}
 	ITER_KEEP_END;
 	return out;
@@ -13943,16 +14194,17 @@ static HV *row_drop(pTHX_ HV *src, HV *drop_hv) {
 static HV *row_rename(pTHX_ HV *src, HV *map_hv) {
 	HV *out = newHV();
 	if (!src) return out;
+	const bool tied = cBOOL(HV_IS_TIED(src));	// as in row_drop
 	ITER_KEEP_BEGIN(src);
 	hv_iterinit(src);
 	HE *he;
 	while ((he = hv_iternext(src))) {
 		STRLEN kl; char *kp = HePV(he, kl);
 		I32 sk = HeUTF8(he) ? -(I32)kl : (I32)kl;
-		SV *val = HeVAL(he); SvREFCNT_inc_simple_void(val);
+		SV *val = tied ? newSVsv(he_val(aTHX_ src, he)) : SvREFCNT_inc_simple_NN(HeVAL(he));
 		SV **mp = hv_fetch(map_hv, kp, sk, 0);
 		if (mp && *mp) (void)hv_store_ent(out, *mp, val, 0);
-		else           (void)hv_store(out, kp, sk, val, HeHASH(he));
+		else           (void)hv_store(out, kp, sk, val, tied ? 0 : HeHASH(he));
 	}
 	ITER_KEEP_END;
 	return out;
@@ -14007,6 +14259,15 @@ typedef struct {
 	SV *name; // !hoa
 } mg_col;
 
+//A HoH row with its name, for putting a HoH frame's rows in row-name order.
+typedef struct {
+	cs_key k;
+	SV *row;	// the row reference, owned by the frame's rows AV
+} mg_hoh_row;
+static int mg_hoh_row_cmp(const void *pa, const void *pb) {
+	return cs_key_cmp(&((const mg_hoh_row *)pa)->k, &((const mg_hoh_row *)pb)->k);
+}
+
 //Note a column name the first time it is seen.
 static void mg_saw(pTHX_ mg_frame *f, SV *name) {
 	if (hv_exists_ent(f->seen, name, 0)) return;
@@ -14060,25 +14321,56 @@ mg_prep(pTHX_ SV *frame, const char *side, mg_frame *f) {
 	hv_iterinit(hv);
 	HE *e0 = hv_iternext(hv);
 	if (!e0) { ITER_KEEP_END; return; }		//empty hash -> empty frame; the return closes the walk's scope too
-	SV *v0 = HeVAL(e0);
+	SV *v0 = he_val(aTHX_ hv, e0);	//a tied hash's is a mortal, so it outlives the scope below
+	const bool tied = cBOOL(HV_IS_TIED(hv));
+	if (tied) while (hv_iternext(hv)) {}	//finish a tied walk rather than restart it: see cfilter
 	ITER_KEEP_END;
 	if (SvROK(v0) && SvTYPE(SvRV(v0)) == SVt_PVHV) {	//HoH: values are rows
+		AV *names = (AV *)sv_2mortal((SV *)newAV());	//row names, aligned with f->rows
 		HE *e;
 		ITER_KEEP_BEGIN(hv);
 		hv_iterinit(hv);
 		while ((e = hv_iternext(hv))) {
-			SV *v = HeVAL(e);
+			SV *v = he_val(aTHX_ hv, e);
 			if (!SvROK(v) || SvTYPE(SvRV(v)) != SVt_PVHV)
 				croak("merge: %s frame (HoH) value for row '%s' is not a hash-ref",
 				      side, HePV(e, PL_na));
-			av_push(f->rows, SvREFCNT_inc_simple_NN(v));
-			ITER_KEEP_BEGIN(SvRV(v));
-			HE *re; hv_iterinit((HV *)SvRV(v));
-			while ((re = hv_iternext((HV *)SvRV(v)))) mg_saw(aTHX_ f, hv_iterkeysv(re));
-			ITER_KEEP_END;
+			/*A tied frame's value is a mortal placeholder that would FETCH again
+			on each read, so the row is held by a plain reference of its own.*/
+			av_push(f->rows, tied ? newRV_inc(SvRV(v)) : SvREFCNT_inc_simple_NN(v));
+			SV *name = hv_iterkeysv(e);	//a mortal copy, so a tied iterator's next step cannot pull it away
+			av_push(names, SvREFCNT_inc_simple_NN(name));	//not inline: the macro names its argument twice
 		}
 		ITER_KEEP_END;
 		f->nrows = av_len(f->rows) + 1;
+		/*The rows are taken in row-name order, bytewise as csort's HoH fold
+		orders them, not in hash order. A HoH has no row order of its own, and
+		hash order is per process and per hash, so the same merge came back in a
+		different order from run to run -- and from a tied copy of the same
+		frame, which iterates its own storage.*/
+		if (f->nrows > 1) {
+			const size_t n = (size_t)f->nrows;
+			mg_hoh_row *o;
+			Newx(o, n, mg_hoh_row);
+			SAVEFREEPV(o);
+			SV **ka = AvARRAY(names), **ra = AvARRAY(f->rows);
+			for (size_t i = 0; i < n; i++) {
+				o[i].k.sv  = ka[i];
+				o[i].k.p   = SvPV_const(ka[i], o[i].k.len);
+				o[i].k.u8  = cBOOL(SvUTF8(ka[i]));
+				o[i].row   = ra[i];
+			}
+			qsort(o, n, sizeof(mg_hoh_row), mg_hoh_row_cmp);
+			for (size_t i = 0; i < n; i++) ra[i] = o[i].row;	//a permutation: each row is still owned once
+		}
+		//the column universe, in first-seen order over the sorted rows
+		for (SSize_t i = 0; i < f->nrows; i++) {
+			HV *rh = (HV *)SvRV(AvARRAY(f->rows)[i]);
+			ITER_KEEP_BEGIN(rh);
+			HE *re; hv_iterinit(rh);
+			while ((re = hv_iternext(rh))) mg_saw(aTHX_ f, hv_iterkeysv(re));
+			ITER_KEEP_END;
+		}
 		return;
 	}
 	if (!(SvROK(v0) && SvTYPE(SvRV(v0)) == SVt_PVAV))
@@ -14093,7 +14385,7 @@ mg_prep(pTHX_ SV *frame, const char *side, mg_frame *f) {
 	ITER_KEEP_BEGIN(hv);
 	hv_iterinit(hv);
 	while ((e = hv_iternext(hv))) {
-		SV *v = HeVAL(e);
+		SV *v = he_val(aTHX_ hv, e);
 		if (!SvROK(v) || SvTYPE(SvRV(v)) != SVt_PVAV)
 			croak("merge: %s frame (HoA) column '%s' is not an array-ref",
 			      side, HePV(e, PL_na));
@@ -14121,8 +14413,13 @@ mg_resolve(pTHX_ const mg_frame *f, SV *name, mg_col *c) {
 	c->name = mg_shared(aTHX_ name);
 	if (!f->hoa) return;
 	HE *e = hv_fetch_ent(f->cols, name, 0, 0);
-	if (e && SvROK(HeVAL(e)) && SvTYPE(SvRV(HeVAL(e))) == SVt_PVAV)
-		c->av = (AV *)SvRV(HeVAL(e));
+	if (!e) return;
+	/*A tied frame's value is a placeholder until fetched; it is a mortal, which
+	keeps the column alive for the rest of the join.*/
+	SV *v = HeVAL(e);
+	SvGETMAGIC(v);
+	if (SvROK(v) && SvTYPE(SvRV(v)) == SVt_PVAV)
+		c->av = (AV *)SvRV(v);
 }
 
 /*The cell at (row, column), or NULL when the frame has none there.
@@ -14172,7 +14469,8 @@ mg_shape(pTHX_ SV *frame) {
 	hv_iterinit(hv);
 	HE *e = hv_iternext(hv);
 	if (!e) { ITER_KEEP_END; return 1; }	//the early return closes the walk's scope too
-	SV *v = HeVAL(e);
+	SV *v = he_val(aTHX_ hv, e);	//a tied hash's is a mortal, so it outlives the scope below
+	if (HV_IS_TIED(hv)) while (hv_iternext(hv)) {}	//finish a tied walk rather than restart it: see cfilter
 	ITER_KEEP_END;
 	if (SvROK(v) && SvTYPE(SvRV(v)) == SVt_PVHV) return 2;
 	return 1;
@@ -17265,7 +17563,10 @@ ag_at(pTHX_ ag_set *restrict s, SV *row, SSize_t r, SSize_t j) {
 		HE *he = hv_fetch_ent((HV *)row, s->name[j], 0, 0);
 		if (he) {
 			v = HeVAL(he);
-			s->seen[j] = TRUE;            //an existing key is seen even when undef
+	/*an existing key is seen even when undef.  A tied row hands back an
+	entry for any key, so for one of those it takes an EXISTS to say so.*/
+			if (!s->seen[j] && (!SvRMAGICAL(row) || hv_exists_ent((HV *)row, s->name[j], 0)))
+				s->seen[j] = TRUE;
 		}
 		return v;
 	} else {
@@ -17338,6 +17639,7 @@ static void ag_set_init(pTHX_ ag_set *restrict s, short int shape, AV *ids,
 		for (SSize_t j = 0; j < s->n; j++) {
 			HE *ce = hv_fetch_ent(hoa, AvARRAY(ids)[j], 0, 0);
 			SV *cv = ce ? HeVAL(ce) : NULL;
+			if (cv) SvGETMAGIC(cv);	// a tied frame's value is only fetched here
 			s->col[j] = (cv && SvROK(cv) && SvTYPE(SvRV(cv)) == SVt_PVAV)
 			          ? (AV *)SvRV(cv) : NULL;
 		}
@@ -17412,12 +17714,12 @@ SV *_cols_select(df, shape, spec)
 			hv_iterinit(src); HE *he;
 			while ((he = hv_iternext(src))) {
 				STRLEN kl; char *kp = HePV(he, kl); I32 sk = HeUTF8(he) ? -(I32)kl : (I32)kl;
-				SV *rv = HeVAL(he); HV *inner;
+				SV *rv = he_val(aTHX_ src, he); HV *inner;	//HeVAL() is never filled in for a tied frame
 				if (rv && SvROK(rv) && SvTYPE(SvRV(rv)) == SVt_PVHV)
 					inner = row_select(aTHX_ (HV *)SvRV(rv), keys, n);
 				else
 					inner = row_select(aTHX_ NULL, keys, n);
-				(void)hv_store(out, kp, sk, newRV_noinc((SV *)inner), HeHASH(he));
+				(void)hv_store(out, kp, sk, newRV_noinc((SV *)inner), SvRMAGICAL(src) ? 0 : HeHASH(he));	//a tied entry's HeHASH() is no hash
 			}
 			ITER_KEEP_END;
 			retval = sv_2mortal(newRV_noinc((SV *)out));
@@ -17458,12 +17760,12 @@ _cols_drop(df, shape, dropset)
 		hv_iterinit(src); HE *he;
 		while ((he = hv_iternext(src))) {
 			STRLEN kl; char *kp = HePV(he, kl); I32 sk = HeUTF8(he) ? -(I32)kl : (I32)kl;
-			SV *rv = HeVAL(he); HV *inner;
+			SV *rv = he_val(aTHX_ src, he); HV *inner;	//HeVAL() is never filled in for a tied frame
 			if (rv && SvROK(rv) && SvTYPE(SvRV(rv)) == SVt_PVHV)
 				inner = row_drop(aTHX_ (HV *)SvRV(rv), drop_hv);
 			else
 				inner = row_drop(aTHX_ NULL, drop_hv);
-			(void)hv_store(out, kp, sk, newRV_noinc((SV *)inner), HeHASH(he));
+			(void)hv_store(out, kp, sk, newRV_noinc((SV *)inner), SvRMAGICAL(src) ? 0 : HeHASH(he));	//a tied entry's HeHASH() is no hash
 		}
 		ITER_KEEP_END;
 		retval = sv_2mortal(newRV_noinc((SV *)out));
@@ -17502,12 +17804,12 @@ _cols_rename(df, shape, map)
 		hv_iterinit(src); HE *he;
 		while ((he = hv_iternext(src))) {
 			STRLEN kl; char *kp = HePV(he, kl); I32 sk = HeUTF8(he) ? -(I32)kl : (I32)kl;
-			SV *rv = HeVAL(he); HV *inner;
+			SV *rv = he_val(aTHX_ src, he); HV *inner;	//HeVAL() is never filled in for a tied frame
 			if (rv && SvROK(rv) && SvTYPE(SvRV(rv)) == SVt_PVHV)
 				inner = row_rename(aTHX_ (HV *)SvRV(rv), map_hv);
 			else
 				inner = row_rename(aTHX_ NULL, map_hv);
-			(void)hv_store(out, kp, sk, newRV_noinc((SV *)inner), HeHASH(he));
+			(void)hv_store(out, kp, sk, newRV_noinc((SV *)inner), SvRMAGICAL(src) ? 0 : HeHASH(he));	//a tied entry's HeHASH() is no hash
 		}
 		ITER_KEEP_END;
 		retval = sv_2mortal(newRV_noinc((SV *)out));
@@ -17540,6 +17842,7 @@ _aoh_key_union(df)
 		if (!rv) continue;
 		HV *row = (HV *)SvRV(rv);
 		if (SvOBJECT((SV *)row)) continue;
+		const bool tied = cBOOL(HV_IS_TIED(row));	// a tied entry's HeHASH() is no hash
 		ITER_KEEP_BEGIN(row);
 		HE *he; hv_iterinit(row);
 		while ((he = hv_iternext(row))) {
@@ -17547,7 +17850,7 @@ _aoh_key_union(df)
 			const bool u8 = cBOOL(HeUTF8(he));
 			const IV before = (IV)HvUSEDKEYS(seen);   //STRLEN on new perls, I32 on 5.10
 			(void)hv_store(seen, kp, u8 ? -(I32)kl : (I32)kl,
-			               SvREFCNT_inc_simple_NN(&PL_sv_yes), u8 ? 0 : HeHASH(he));
+			               SvREFCNT_inc_simple_NN(&PL_sv_yes), (u8 || tied) ? 0 : HeHASH(he));
 			if ((IV)HvUSEDKEYS(seen) != before) //first sighting of this name
 				av_push(out, newSVpvn_flags(kp, kl, u8 ? SVf_UTF8 : 0));
 		}
@@ -17588,6 +17891,9 @@ _drop_dups_core(df, shape, subset, keep)
 	SSize_t *surv; dd_ctx *T;
   CODE:
 {
+	/*a tied column's cells were FETCHed once for the key and again for the
+	result, which copies them anyway*/
+	df = frame_untied(aTHX_ df, UNTIE_COLS);
 	sub_av = (AV *)SvRV(subset);
 	ns = av_len(sub_av) + 1;
 	ENTER;                          //everything below is freed on croak too
@@ -17634,7 +17940,7 @@ _drop_dups_core(df, shape, subset, keep)
 		ITER_KEEP_BEGIN(src);
 		HE *he; hv_iterinit(src);
 		while ((he = hv_iternext(src))) { // R = longest column
-			SV *v = HeVAL(he);
+			SV *v = he_val(aTHX_ src, he);
 			if (SvROK(v) && SvTYPE(SvRV(v)) == SVt_PVAV) {
 				SSize_t l = av_len((AV *)SvRV(v)) + 1;
 				if (l > R) R = l;
@@ -17645,8 +17951,10 @@ _drop_dups_core(df, shape, subset, keep)
 		Newx(T->cols, ns > 0 ? ns : 1, AV *);
 		for (j = 0; j < ns; j++) {
 			HE *ce = hv_fetch_ent(src, AvARRAY(sub_av)[j], 0, 0);
-			T->cols[j] = (ce && SvROK(HeVAL(ce)) && SvTYPE(SvRV(HeVAL(ce))) == SVt_PVAV)
-			        ? (AV *)SvRV(HeVAL(ce)) : NULL;
+			SV *cv = ce ? HeVAL(ce) : NULL;
+			if (cv) SvGETMAGIC(cv);	// a tied frame's value is only fetched here
+			T->cols[j] = (cv && SvROK(cv) && SvTYPE(SvRV(cv)) == SVt_PVAV)
+			        ? (AV *)SvRV(cv) : NULL;
 		}
 		for (SSize_t r = 0; r < R; r++) {
 			i = keep == -1 ? R - 1 - r : r;
@@ -17680,10 +17988,11 @@ _drop_dups_core(df, shape, subset, keep)
 	if (shape == 4) { // HoA
 		HV *src = (HV *)SvRV(df);
 		HV *out = newHV();
+		const bool ftied = cBOOL(HV_IS_TIED(src));	// a tied entry's HeHASH() is no hash
 		ITER_KEEP_BEGIN(src);
 		HE *he; hv_iterinit(src);
 		while ((he = hv_iternext(src))) {
-			SV *v = HeVAL(he);
+			SV *v = he_val(aTHX_ src, he);
 			AV *col = (SvROK(v) && SvTYPE(SvRV(v)) == SVt_PVAV) ? (AV *)SvRV(v) : NULL;
 	/*A tied column has no cell SVs to share: what av_at() hands back
 	is the mortal PVLV the tie fetches through, so those columns are
@@ -17709,7 +18018,7 @@ _drop_dups_core(df, shape, subset, keep)
 				}
 			}
 			STRLEN kl; char *kp = HePV(he, kl); I32 sk = HeUTF8(he) ? -(I32)kl : (I32)kl;
-			(void)hv_store(out, kp, sk, newRV_noinc((SV *)nc), HeHASH(he));
+			(void)hv_store(out, kp, sk, newRV_noinc((SV *)nc), ftied ? 0 : HeHASH(he));
 		}
 		ITER_KEEP_END;
 		retval = sv_2mortal(newRV_noinc((SV *)out));
@@ -17756,6 +18065,7 @@ _agg_split(df, shape, by, cols, how)
 	SV *retval;
   CODE:
 {
+	df = frame_untied(aTHX_ df, UNTIE_COLS);	//a tied by column's cells were FETCHed once per use
 	AV *how_av = (AV *)SvRV(how);
 	ag_set B, C;
 	dd_ctx *T;
@@ -17785,7 +18095,7 @@ _agg_split(df, shape, by, cols, how)
 		ITER_KEEP_BEGIN(hoa);
 		HE *he; hv_iterinit(hoa);
 		while ((he = hv_iternext(hoa))) { //R = longest column
-			SV *v = HeVAL(he);
+			SV *v = he_val(aTHX_ hoa, he);
 			if (SvROK(v) && SvTYPE(SvRV(v)) == SVt_PVAV) {
 				SSize_t l = av_len((AV *)SvRV(v)) + 1;
 				if (l > R) R = l;
@@ -18501,7 +18811,7 @@ PPCODE:
 		      "  (optional 4th arg names the row-name column when sorting a "
 		      "HoH; default 'row.name')");
 
-	data   = ST(0);
+	data   = frame_untied(aTHX_ ST(0), 0);	//a tied frame's values were FETCHed once per pass over it
 	by     = ST(1);
 	output = (items >= 3) ? ST(2) : &PL_sv_undef;
 	if (items >= 4 && SvOK(ST(3)))
@@ -18546,11 +18856,15 @@ PPCODE:
 		if (!he) {
 			in_shape = CS_HOA;	//empty hash defaults to HoA path
 		} else {
-			SV *val = HeVAL(he);
+			SV *val = he_val(aTHX_ src_hv, he);
 			if (SvROK(val) && SvTYPE(SvRV(val)) == SVt_PVHV)
 				is_hoh = 1;
 			else
 				in_shape = CS_HOA;
+			/*finish a tied walk rather than restart it: perl before 5.18 leaks
+			the entry a tied iterator holds when hv_iterinit() cuts one short.*/
+			if (HV_IS_TIED(src_hv))
+				while (hv_iternext(src_hv)) {}
 		}
 		ITER_KEEP_END;
 	} else {
@@ -18563,8 +18877,10 @@ PPCODE:
 		but resets the iterator: it counts the placeholders a delete leaves in a
 		restricted hash, so it only sizes the buffer, and n is what the walk saw.
 		Sizing the loops by it read unset slots and segfaulted on a locked hash
-		with a deleted key.*/
-		const size_t cap = (size_t)HvTOTALKEYS(src_hv);
+		with a deleted key. A tied hash keeps no count at all, so it is walked
+		for one.*/
+		const bool tied = cBOOL(HV_IS_TIED(src_hv));
+		const size_t cap = tied ? hv_nkeys(aTHX_ src_hv) : (size_t)HvTOTALKEYS(src_hv);
 		src_av = newAV();
 		sv_2mortal((SV *)src_av); // cleanup on LEAVE */
 		n = 0;
@@ -18576,7 +18892,8 @@ PPCODE:
 			HE *he;
 			ITER_KEEP_BEGIN(src_hv);
 			hv_iterinit(src_hv);
-			while (i < cap && (he = hv_iternext(src_hv))) {
+			while ((he = hv_iternext(src_hv))) {
+				if (i == cap) continue;	//keys past the sized buffer are dropped, but a tied walk still runs to its end
 				SV *k = hv_iterkeysv(he);
 				keys[i].sv = k;
 				keys[i].p  = SvPV_const(k, keys[i].len);
@@ -18598,17 +18915,23 @@ PPCODE:
 				HE *entry = hv_fetch_ent(src_hv, keys[i].sv, 0, 0);
 				if (!entry) continue;
 				SV *val = HeVAL(entry);
+				if (val) SvGETMAGIC(val);	//a tied frame's value is a placeholder until fetched
 				if (!val || !SvROK(val) || SvTYPE(SvRV(val)) != SVt_PVHV)
 					croak("csort: HoH row '%s' is not a hash-ref",
 					      SvPV_nolen(keys[i].sv));
 
 				HV *orig = (HV *)SvRV(val);
 				HV *rowh = newHV();
+				av_push(src_av, newRV_noinc((SV *)rowh));	//owned before it is filled, so a FETCH that dies frees it
+				/*A tied row's values are copied: what its iterator hands back is a
+				placeholder that would FETCH again on every read, not the cell. The
+				copy is a mortal until stored, for the same reason.*/
+				const bool tied_row = cBOOL(HV_IS_TIED(orig));
 				ITER_KEEP_BEGIN(orig);
 				hv_iterinit(orig);
 				HE *cell;
 				while ((cell = hv_iternext(orig))) {
-					SV *cv = HeVAL(cell);
+					SV *cv = tied_row ? sv_mortalcopy(hv_iterval(orig, cell)) : HeVAL(cell);
 					(void)hv_store_ent(rowh, hv_iterkeysv(cell),
 					        cv ? SvREFCNT_inc_simple_NN(cv) : newSV(0), 0);
 				}
@@ -18616,7 +18939,6 @@ PPCODE:
 // the outer hash key is the authoritative row name */
 				(void)hv_store(rowh, rowname_col, (I32)rowname_len,
 				               newSVsv(keys[i].sv), 0);
-				av_push(src_av, newRV_noinc((SV *)rowh));
 			}
 			n = av_len(src_av) + 1;	//the rows actually built, which every later loop indexes
 		}
@@ -18647,7 +18969,7 @@ PPCODE:
 		ITER_KEEP_BEGIN(src_hv);
 		hv_iterinit(src_hv);
 		while ((he = hv_iternext(src_hv))) {
-			SV *cv = HeVAL(he);
+			SV *cv = he_val(aTHX_ src_hv, he);
 			if (!cv || !SvROK(cv) || SvTYPE(SvRV(cv)) != SVt_PVAV)
 				croak("csort: HoA value for column '%s' is not an "
 				      "array-ref", HePV(he, PL_na));
@@ -18669,10 +18991,18 @@ PPCODE:
 			ITER_KEEP_BEGIN(src_hv);
 			hv_iterinit(src_hv);
 			while ((he = hv_iternext(src_hv))) {
+				if (c == ncols) continue;	//a tied hash that grew since the count: run its walk out
+				/*Re-checked: a tied hash FETCHes again here, and the mortal it
+				hands back is what keeps the column alive until the sort is done.*/
+				SV *cv = he_val(aTHX_ src_hv, he);
+				if (!cv || !SvROK(cv) || SvTYPE(SvRV(cv)) != SVt_PVAV)
+					croak("csort: HoA value for column '%s' is not an "
+					      "array-ref", HePV(he, PL_na));
 				colkeys[c] = sv_2mortal(newSVsv(hv_iterkeysv(he)));
-				colavs[c]  = (AV *)SvRV(HeVAL(he));
+				colavs[c]  = (AV *)SvRV(cv);
 				c++;
 			}
+			ncols = c;	//a tied hash may also have shrunk
 			ITER_KEEP_END;
 		}
 	}
@@ -18760,6 +19090,9 @@ PPCODE:
 						                   colname, collen, 0);
 						if (cp && *cp) { cell = *cp; found = 1; }
 					}
+					/*A tied row hands back a placeholder: fetch it once into a plain
+					mortal, rather than test it unfetched or FETCH per comparison.*/
+					if (cell && SvGMAGICAL(cell)) cell = sv_mortalcopy(cell);
 					if (cell && SvOK(cell) && !looks_like_number(cell))
 						numeric = 0;
 					vals[i] = cell;
@@ -18780,11 +19113,13 @@ PPCODE:
 				}
 			} else {
 				SV **colp = hv_fetch(src_hv, colname, collen, 0);
-				if (!(colp && *colp && SvROK(*colp)
-				        && SvTYPE(SvRV(*colp)) == SVt_PVAV))
+				SV *colsv = colp ? *colp : NULL;
+				if (colsv) SvGETMAGIC(colsv);	//a tied frame's value is a placeholder until fetched
+				if (!(colsv && SvROK(colsv)
+				        && SvTYPE(SvRV(colsv)) == SVt_PVAV))
 					croak("csort: column '%s' not found in HoA", colname);
 				found = 1;
-				AV *col = (AV *)SvRV(*colp);
+				AV *col = (AV *)SvRV(colsv);
 				for (size_t i = 0; i < (size_t)n; i++) {
 					SV **cp = av_fetch(col, (SSize_t)i, 0);
 					SV *cell = (cp && *cp) ? *cp : NULL;
@@ -18877,6 +19212,7 @@ the predicate -- frees it instead of leaking a copy of the table.*/
 		if (against_sv && (!SvOK(against_sv) || SvROK(against_sv))) croak("cfilter: against must be a column name (string)");
 		// 1. detect the data shape.
 		if (!SvROK(data)) croak("cfilter: data must be a reference");
+		data = frame_untied(aTHX_ data, 0);	//a tied frame's columns were FETCHed once per pass over it
 		SV *rv = SvRV(data);
 		/* this scope lasts until the result is built: its LEAVE is what puts back
 		 the iterator of a hash the caller passed in (see iter_keep).*/
@@ -19112,6 +19448,7 @@ SV *hoh2hoa(data, ...)
 			}
 			else croak("hoh2hoa: unknown option '%s'", oname);
 		}
+		data = frame_untied(aTHX_ data, 0);	//a tied frame's rows were FETCHed once per pass over it
 		// 1. the input must be a hash ref (a hash of hashes).
 		if (!SvROK(data) || SvTYPE(SvRV(data)) != SVt_PVHV) croak("hoh2hoa: data must be a hash ref (hash of hashes)");
 		HV *in_hv = (HV*)SvRV(data);
@@ -19129,6 +19466,7 @@ SV *hoh2hoa(data, ...)
 			hv_iterinit(in_hv);
 			while ((e = hv_iternext(in_hv))) {
 				SV *rv = hv_iterval(in_hv, e);
+				SvGETMAGIC(rv);	// a tied frame's value is only fetched here
 				if (!SvROK(rv) || SvTYPE(SvRV(rv)) != SVt_PVHV) croak("hoh2hoa: every value must be a hash ref (hash of hashes)");
 				av_push(rows_av, newSVsv(hv_iterkeysv(e)));
 			}
@@ -19143,7 +19481,9 @@ SV *hoh2hoa(data, ...)
 			ITER_KEEP_BEGIN(in_hv);
 			hv_iterinit(in_hv);
 			while ((e = hv_iternext(in_hv))) {
-				HV *row = (HV*)SvRV(hv_iterval(in_hv, e));
+				SV *rv = hv_iterval(in_hv, e);
+				SvGETMAGIC(rv);	// checked to be a hash ref in step 3
+				HV *row = (HV*)SvRV(rv);
 				HE *ie;
 				ITER_KEEP_BEGIN(row);
 				hv_iterinit(row);
@@ -19165,11 +19505,17 @@ SV *hoh2hoa(data, ...)
 		for (SSize_t r = 0; r < nrows; r++) {
 			SV *rk = *av_fetch(rows_av, r, 0);
 			HE *rhe = hv_fetch_ent(in_hv, rk, 0, 0);
-			HV *row = (HV*)SvRV(HeVAL(rhe));
+			SV *rrv = rhe ? HeVAL(rhe) : NULL;
+			if (rrv) SvGETMAGIC(rrv);	// a tied frame's value is only fetched here
+			/*step 3 saw a hash ref here, but a tied frame is read again through
+			FETCH, which nothing obliges to give the same answer twice*/
+			if (!rrv || !SvROK(rrv) || SvTYPE(SvRV(rrv)) != SVt_PVHV) croak("hoh2hoa: every value must be a hash ref (hash of hashes)");
+			HV *row = (HV*)SvRV(rrv);
 			for (SSize_t c = 0; c < ncols; c++) {
 				SV *ck = *av_fetch(cols_av, c, 0);
 				HE *che = hv_fetch_ent(row, ck, 0, 0);
 				SV *src = che ? HeVAL(che) : NULL;
+				if (src) SvGETMAGIC(src);	// a tied row's value is only fetched here
 				SV *cell = (src && SvOK(src)) ? newSVsv(src) : (fill ? newSVsv(fill) : newSV(0));
 				HE *colhe = hv_fetch_ent(out_hv, ck, 0, 0);
 				av_push((AV*)SvRV(HeVAL(colhe)), cell);
@@ -19214,6 +19560,9 @@ PPCODE:
 	}
 	if (!df || !SvROK(df))
 		croak("filter: first argument must be a data frame (AoH, HoA, or HoH reference)");
+	/*a tied frame's values were FETCHed once per pass, and a tied column's cells
+	once by the predicate and again for the result, which copies them anyway*/
+	df = frame_untied(aTHX_ df, UNTIE_COLS);
 	/*The predicate is a CODE ref, or a col() object carrying a CODE ref in
 	its {code} field; either way we end up calling a single CV per row --
 	unless the col() object also carries a {plan}, which is the same test as
@@ -19637,7 +19986,7 @@ one.*/
 			while ((he = hv_iternext(oh))) {
 				STRLEN ol;
 				const char *oname = HePV(he, ol);
-				SV *oval = HeVAL(he);
+				SV *oval = he_val(aTHX_ oh, he);
 				C2C_DECODE_OPT(oname, ol, oval);
 			}
 			ITER_KEEP_END;
@@ -19667,6 +20016,7 @@ one.*/
 		} else croak("col2col: command must be a CODE ref or a function name");
 		// 2. detect the data shape and build per-column value/defined tables.
 		if (!SvROK(data)) croak("col2col: data must be a reference");
+		data = frame_untied(aTHX_ data, 0);	//the first value was FETCHed for the shape and again for its cells
 		{
 			SV *rv = SvRV(data);
 			short int kind;
@@ -19678,6 +20028,12 @@ one.*/
 				HE *e = hv_iternext(h);
 				if (!e) croak("col2col: empty data hash");
 				SV *first = hv_iterval(h, e);
+				SvGETMAGIC(first);	// a tied hash's value is only fetched here
+				/*finish a tied walk rather than restart it below: perl before 5.18
+				leaks the entry a tied iterator holds when hv_iterinit() cuts one
+				short (see cfilter)*/
+				if (HV_IS_TIED(h))
+					while (hv_iternext(h)) {}
 				ITER_KEEP_END;
 				if (SvROK(first) && SvTYPE(SvRV(first)) == SVt_PVAV) kind = 0;
 				else if (SvROK(first) && SvTYPE(SvRV(first)) == SVt_PVHV) kind = 2;
@@ -19695,6 +20051,7 @@ one.*/
 				hv_iterinit(h);
 				while ((e = hv_iternext(h))) {
 					SV *val = hv_iterval(h, e);
+					SvGETMAGIC(val);	// a tied frame's value is only fetched here
 					if (!SvROK(val) || SvTYPE(SvRV(val)) != SVt_PVAV) continue;
 					av_push(names_av, newSVsv(hv_iterkeysv(e)));
 					AV *a = (AV*)SvRV(val);
@@ -19725,19 +20082,21 @@ one.*/
 					SAVEFREEPV(row_hv);
 					for (size_t r = 0; r < nrows; r++) {
 						SV **ep = av_fetch(a, (SSize_t)r, 0);
+						if (ep && *ep) SvGETMAGIC(*ep);	// a tied frame's row is a placeholder until fetched
 						if (ep && *ep && SvROK(*ep) && SvTYPE(SvRV(*ep)) == SVt_PVHV) row_hv[r] = (HV*)SvRV(*ep);
 					}
 				} else {
 					HV *h = (HV*)rv;
 					HE *e;
 					size_t r = 0;
-					nrows = (size_t)HvKEYS(h);
+					nrows = hv_nkeys(aTHX_ h);	//HvKEYS is 0 for a tied hash
 					Newxz(row_hv, nrows ? nrows : 1, HV*);
 					SAVEFREEPV(row_hv);	//before ITER_KEEP_BEGIN, so its LEAVE does not free it
 					ITER_KEEP_BEGIN(h);
 					hv_iterinit(h);
 					while ((e = hv_iternext(h)) && r < nrows) {
 						SV *val = hv_iterval(h, e);
+						SvGETMAGIC(val);	// a tied frame's value is only fetched here
 						if (SvROK(val) && SvTYPE(SvRV(val)) == SVt_PVHV) row_hv[r] = (HV*)SvRV(val);
 						r++;
 					}
@@ -19885,6 +20244,7 @@ SV *oneway_test(data_ref, ...)
 		char        *lhs = NULL, *rhs = NULL;
 		NV          *flat   = NULL;
 		size_t      *sizes  = NULL;
+		AV         **gav    = NULL;	//MODE 1: each group's array, so the second pass need not walk the hash again
 		char       **gnames = NULL;
 		NV          *gmeans = NULL;
 		size_t       k = 0;
@@ -19966,23 +20326,30 @@ SV *oneway_test(data_ref, ...)
 					formula_str);
 			factor_name = rhs; //freed after output
 
+	/*Each fetch is taken out of its SV** at once: a tied hash hands back a
+	pointer into one shared entry, which the next fetch overwrites, and a
+	placeholder that holds nothing until its get magic runs.*/
 			SV **resp_svp = hv_fetch(in_hv, lhs, (I32)strlen(lhs), 0);
-			if (!resp_svp || !*resp_svp || !SvROK(*resp_svp)
-					|| SvTYPE(SvRV(*resp_svp)) != SVt_PVAV) {
+			SV  *resp_sv  = resp_svp ? *resp_svp : NULL;
+			if (resp_sv) SvGETMAGIC(resp_sv);
+			if (!resp_sv || !SvROK(resp_sv)
+					|| SvTYPE(SvRV(resp_sv)) != SVt_PVAV) {
 				snprintf(errbuf, sizeof errbuf,
 					"formula LHS '%s' not found as an array ref in the hash", lhs);
 				goto fail; //was leaking lhs/rhs
 			}
 			SV **fact_svp = hv_fetch(in_hv, rhs, (I32)strlen(rhs), 0);
-			if (!fact_svp || !*fact_svp || !SvROK(*fact_svp)
-					|| SvTYPE(SvRV(*fact_svp)) != SVt_PVAV) {
+			SV  *fact_sv  = fact_svp ? *fact_svp : NULL;
+			if (fact_sv) SvGETMAGIC(fact_sv);
+			if (!fact_sv || !SvROK(fact_sv)
+					|| SvTYPE(SvRV(fact_sv)) != SVt_PVAV) {
 				snprintf(errbuf, sizeof errbuf,
 					"formula RHS '%s' not found as an array ref in the hash", rhs);
 				goto fail;                              //was leaking lhs/rhs
 			}
 
-			AV *resp_av  = (AV *)SvRV(*resp_svp);
-			AV *label_av = (AV *)SvRV(*fact_svp);
+			AV *resp_av  = (AV *)SvRV(resp_sv);
+			AV *label_av = (AV *)SvRV(fact_sv);
 			IV  n = av_len(resp_av) + 1;
 			Newx(flat,  (size_t)(n > 0 ? n : 0), NV);
 			Newx(sizes, (size_t)(n > 0 ? n : 0), size_t); //k <= n upper bound
@@ -19995,21 +20362,25 @@ SV *oneway_test(data_ref, ...)
 		}
 		else {
 			//MODE 1: hash of groups { label => \@obs, ... }
-			k = (size_t)HvUSEDKEYS(in_hv); //robust count, not iterinit's
+			k = hv_nkeys(aTHX_ in_hv); //robust count, not iterinit's (which reads 0 for a tied hash)
 			if (k < 2)
 				croak("oneway_test: need at least 2 groups, got %" UVuf, (UV)k);
 
 			Newx(sizes,   k, size_t);
 			Newxz(gnames, k, char *);
+			Newx(gav,     k, AV *);
 
 			//first pass: validate, sizes, total_n, key strings
+			size_t ng = 0;	//groups read: a tied hash can yield fewer or more keys than it counted
 			ITER_KEEP_BEGIN(in_hv);
 			hv_iterinit(in_hv);
 			for (size_t g = 0; (he = hv_iternext(in_hv)) != NULL; g++) {
-				SV *val = HeVAL(he);
+				if (g >= k) continue;	//the walk still runs to its end, which a tied one needs before 5.18
+				SV *val = he_val(aTHX_ in_hv, he);
 				if (!SvROK(val) || SvTYPE(SvRV(val)) != SVt_PVAV) {
 					snprintf(errbuf, sizeof errbuf,
 						"value for group '%s' is not an array ref", HePV(he, PL_na));
+					hv_walk_out(aTHX_ in_hv);
 					ITER_KEEP_END;	// goto leaves the ITER_KEEP scope
 					goto fail;
 				}
@@ -20017,6 +20388,7 @@ SV *oneway_test(data_ref, ...)
 				if (len < 2) {
 					snprintf(errbuf, sizeof errbuf,
 						"group '%s' has fewer than 2 observations", HePV(he, PL_na));
+					hv_walk_out(aTHX_ in_hv);
 					ITER_KEEP_END;	// goto leaves the ITER_KEEP scope
 					goto fail;
 				}
@@ -20025,29 +20397,33 @@ SV *oneway_test(data_ref, ...)
 				STRLEN klen;
 				const char *kstr = HePV(he, klen);
 				gnames[g] = savepvn(kstr, klen); //keeps embedded NULs
+				gav[g] = (AV *)SvRV(val);	//val is a mortal for a tied hash, so the array outlives the walk
+				ng = g + 1;
 			}
 			ITER_KEEP_END;
-			//second pass: fill flat in the same iteration order, validating
+			k = ng;
+			if (k < 2) {	//only a tied hash that counted more keys than it walked gets here
+				my_snprintf(errbuf, sizeof errbuf, "need at least 2 groups, got %" UVuf, (UV)k);
+				goto fail;
+			}
+			//second pass: fill flat in the first pass's order, validating
 			Newx(flat, (size_t)total_n, NV);
 			size_t offset = 0;
-			ITER_KEEP_BEGIN(in_hv);
-			hv_iterinit(in_hv);
-			while ((he = hv_iternext(in_hv)) != NULL) {
-				AV *av  = (AV *)SvRV(HeVAL(he));
-				IV  len = av_len(av) + 1;
+			for (size_t g = 0; g < k; g++) {
+				AV *av  = gav[g];
+				IV  len = (IV)sizes[g];	//the length the first pass sized flat by
 				for (IV i = 0; i < len; i++) {
 					SV **svp = av_fetch(av, i, 0);
 					if (!svp || !*svp || !SvOK(*svp) || !looks_like_number(*svp)) {
 						snprintf(errbuf, sizeof errbuf,
 							"group '%s', observation %ld is undefined or non-numeric",
-							HePV(he, PL_na), (long)i);
-						ITER_KEEP_END;	// goto leaves the ITER_KEEP scope
+							gnames[g], (long)i);
 						goto fail;
 					}
 					flat[offset++] = SvNV(*svp);
 				}
 			}
-			ITER_KEEP_END;
+			Safefree(gav); gav = NULL;
 		}
 		// per-group means from flat (computed before the arithmetic)
 		Newx(gmeans, k, NV);
@@ -20107,6 +20483,7 @@ SV *oneway_test(data_ref, ...)
 		//single cleanup point for every error after an allocation
 		if (flat)   Safefree(flat);
 		if (sizes)  Safefree(sizes);
+		if (gav)    Safefree(gav);
 		if (gnames) {
 			for (size_t g = 0; g < k; g++) if (gnames[g]) Safefree(gnames[g]);
 			Safefree(gnames);
@@ -21026,6 +21403,7 @@ CODE:
 	if (!SvROK(data_ref)) {// 1. Input Validation & Data Matrix Construction
 		croak("Input must be a reference");
 	}
+	data_ref = frame_untied(aTHX_ data_ref, 0);	//the first row was FETCHed for the shape and again for its cells
 	svtype input_type = SvTYPE(SvRV(data_ref));
 	if (input_type != SVt_PVAV && input_type != SVt_PVHV) {
 		croak("Input must be an array reference or a hash reference");
@@ -21077,7 +21455,6 @@ CODE:
 		}
 	} else {
 		HV *obs_hv = (HV *)SvRV(data_ref);
-		if (HvUSEDKEYS(obs_hv) == 0) croak("Empty data structure");
 		row_keys = (AV *)sv_2mortal((SV *)newAV());
 		col_keys = (AV *)sv_2mortal((SV *)newAV());
 /* Keys are laid out in sorted order, as fisher_test does, so the table --
@@ -21093,9 +21470,14 @@ CODE:
 			r++;
 		}
 		ITER_KEEP_END;
+		if (r == 0) croak("Empty data structure");	//counted by the walk: HvUSEDKEYS reads 0 for a tied hash
 		sortsv(AvARRAY(row_keys), (size_t)r, Perl_sv_cmp);
+/*Every value fetched from here on gets its get magic run before it is looked
+at: from a tied hash (the frame, a row, or 'p') hv_fetch_ent() hands back a
+placeholder that is not yet a reference or a number.*/
 		HE *first_he = hv_fetch_ent(obs_hv, *av_fetch(row_keys, 0, 0), 0, 0);
 		SV *first_val = first_he ? HeVAL(first_he) : NULL;
+		if (first_val) SvGETMAGIC(first_val);
 
 		if (first_val && SvROK(first_val) && SvTYPE(SvRV(first_val)) == SVt_PVHV) {
 			is_2d = 1;
@@ -21120,19 +21502,21 @@ CODE:
 				SV **row_key_sv = av_fetch(row_keys, i, 0);
 				HE *inner_he = hv_fetch_ent(obs_hv, *row_key_sv, 0, 0);
 				SV *inner_sv = inner_he ? HeVAL(inner_he) : NULL;
+				if (inner_sv) SvGETMAGIC(inner_sv);
 				if (!inner_sv || !SvROK(inner_sv) || SvTYPE(SvRV(inner_sv)) != SVt_PVHV)
 					croak("chisq_test: row '%s' is not a hash reference", SvPV_nolen(*row_key_sv));
 				HV *inner_hv = (HV *)SvRV(inner_sv);
-				if ((unsigned int)HvUSEDKEYS(inner_hv) != c)
-					croak("chisq_test: every row must have the same %u column key(s); row '%s' has %u",
-						c, SvPV_nolen(*row_key_sv), (unsigned int)HvUSEDKEYS(inner_hv));
+				const size_t inner_n = hv_nkeys(aTHX_ inner_hv);
+				if (inner_n != c)
+					croak("chisq_test: every row must have the same %u column key(s); row '%s' has %" UVuf,
+						c, SvPV_nolen(*row_key_sv), (UV)inner_n);
 				for (unsigned int j = 0; j < c; j++) {
 					SV **col_key_sv = av_fetch(col_keys, j, 0);
-					HE *val_he = hv_fetch_ent(inner_hv, *col_key_sv, 0, 0);
-					if (!val_he)
+					SV *cell = hv_cell(aTHX_ inner_hv, *col_key_sv);
+					if (!cell)
 						croak("chisq_test: row '%s' has no column '%s'",
 							SvPV_nolen(*row_key_sv), SvPV_nolen(*col_key_sv));
-					obs[i * c + j] = ct_cell(aTHX_ HeVAL(val_he),
+					obs[i * c + j] = ct_cell(aTHX_ cell,
 						SvPV_nolen(sv_2mortal(newSVpvf("cell {%s}{%s}",
 							SvPV_nolen(*row_key_sv), SvPV_nolen(*col_key_sv)))));
 				}
@@ -21145,8 +21529,7 @@ CODE:
 			SAVEFREEPV(obs);
 			for (unsigned int j = 0; j < c; j++) {
 				SV **col_key_sv = av_fetch(col_keys, j, 0);
-				HE *val_he = hv_fetch_ent(obs_hv, *col_key_sv, 0, 0);
-				obs[j] = ct_cell(aTHX_ val_he ? HeVAL(val_he) : NULL,
+				obs[j] = ct_cell(aTHX_ hv_cell(aTHX_ obs_hv, *col_key_sv),
 					SvPV_nolen(sv_2mortal(newSVpvf("element {%s}", SvPV_nolen(*col_key_sv)))));
 			}
 		}
@@ -21190,13 +21573,13 @@ CODE:
 			// for a collapsed 1 x k or k x 1 hash the cells are named by whichever axis is not 1
 			AV *key_av = (is_2d && c == 1) ? row_keys : col_keys;
 			HV *p_hv = (HV *)SvRV(p_sv);
-			if ((unsigned int)HvUSEDKEYS(p_hv) != k)
+			if (hv_nkeys(aTHX_ p_hv) != k)
 				croak("chisq_test: 'x' and 'p' must have the same number of elements");
 			for (unsigned int j = 0; j < k; j++) {
 				SV **key_sv = av_fetch(key_av, j, 0);
-				HE *p_he = hv_fetch_ent(p_hv, *key_sv, 0, 0);
-				if (!p_he) croak("chisq_test: 'p' has no entry for '%s'", SvPV_nolen(*key_sv));
-				probs[j] = ct_prob(aTHX_ HeVAL(p_he),
+				SV *pv = hv_cell(aTHX_ p_hv, *key_sv);
+				if (!pv) croak("chisq_test: 'p' has no entry for '%s'", SvPV_nolen(*key_sv));
+				probs[j] = ct_prob(aTHX_ pv,
 					SvPV_nolen(sv_2mortal(newSVpvf("p{%s}", SvPV_nolen(*key_sv)))));
 			}
 		} else {
@@ -21470,6 +21853,7 @@ PPCODE:
 	if (!data_sv || !SvROK(data_sv)) {
 		croak("write_table: 'data' must be a HASH or ARRAY reference\n");
 	}
+	data_sv = frame_untied(aTHX_ data_sv, 0);	//a tied frame's values were FETCHed once per pass over it
 	SV *data_ref = SvRV(data_sv);
 	if (SvTYPE(data_ref) != SVt_PVHV && SvTYPE(data_ref) != SVt_PVAV) {
 		croak("write_table: 'data' must be a HASH or ARRAY reference\n");
@@ -22805,6 +23189,7 @@ SV *predict(...)
 		model = (HV*)SvRV(model_sv);
 
 		svp = hv_fetch(model, "family", 6, 0);
+		if (svp && *svp) SvGETMAGIC(*svp);	//the model hash may be tied
 		if (svp && *svp && SvOK(*svp)) {
 			const char *fam = SvPV_nolen(*svp);
 			is_binomial = strEQ(fam, "binomial");
@@ -22823,6 +23208,7 @@ SV *predict(...)
 				      "cannot be evaluated on new data; give it as a column name "
 				      "or an offset() term instead");
 			svp = hv_fetch(model, "offset.terms", 12, 0);
+			if (svp && *svp) SvGETMAGIC(*svp);
 			if (svp && *svp && SvROK(*svp) && SvTYPE(SvRV(*svp)) == SVt_PVAV)
 				off_av = (AV*)SvRV(*svp);
 		}
@@ -22830,19 +23216,23 @@ SV *predict(...)
 		if (!newdata_sv || !SvOK(newdata_sv)) {
 			//no newdata -> hand back the stored fitted values unchanged
 			svp = hv_fetch(model, "fitted.values", 13, 0);
+			if (svp && *svp) SvGETMAGIC(*svp);
 			if (!svp || !*svp || !SvROK(*svp))
 				croak("predict: no newdata given and model has no 'fitted.values'");
 			RETVAL = newRV_inc(SvRV(*svp));
 		} else {
 			if (!SvROK(newdata_sv))
 				croak("predict: newdata must be a HoA/HoH/AoH or a flat hashref");
+			newdata_sv = frame_untied(aTHX_ newdata_sv, 0);	//a tied frame's columns were FETCHed once per pass over it
 
 			svp = hv_fetch(model, "coefficients", 12, 0);
+			if (svp && *svp) SvGETMAGIC(*svp);
 			if (!svp || !*svp || !SvROK(*svp) || SvTYPE(SvRV(*svp)) != SVt_PVHV)
 				croak("predict: model has no 'coefficients' hashref");
 			coef_hv = (HV*)SvRV(*svp);
 
 			svp = hv_fetch(model, "xlevels", 7, 0);
+			if (svp && *svp) SvGETMAGIC(*svp);
 			if (svp && *svp && SvROK(*svp) && SvTYPE(SvRV(*svp)) == SVt_PVHV)
 				xlevels_hv = (HV*)SvRV(*svp);
 
@@ -22854,11 +23244,14 @@ SV *predict(...)
 				HV *hv = (HV*)ref;
 				HE *e;
 				SV *v0;
+				const bool tied = cBOOL(HV_IS_TIED(hv));	//a tied hash's hv_iterinit() reads 0 whatever it holds
 				ITER_KEEP_BEGIN(hv);
-				if (hv_iterinit(hv) == 0)
+				if (hv_iterinit(hv) == 0 && !tied)
 					croak("predict: newdata hash is empty");
 				e  = hv_iternext(hv);
-				v0 = HeVAL(e);
+				if (!e) croak("predict: newdata hash is empty");
+				v0 = he_val(aTHX_ hv, e);
+				if (tied) while (hv_iternext(hv)) {}	//finish the walk: perl before 5.18 leaks a tied one cut short; v0 is a mortal
 				ITER_KEEP_END;
 				if (SvROK(v0) && SvTYPE(SvRV(v0)) == SVt_PVAV) { //HoA
 					static const char *const rn_keys[] =
@@ -22869,6 +23262,7 @@ SV *predict(...)
 					Newx(row_names, n ? n : 1, char*); SAVEFREEPV(row_names);
 					for (kk = 0; kk < sizeof rn_keys / sizeof rn_keys[0]; kk++) {
 						SV **rn = hv_fetch(hv, rn_keys[kk], (I32)strlen(rn_keys[kk]), 0);
+						if (rn && *rn) SvGETMAGIC(*rn);
 						if (rn && *rn && SvROK(*rn) && SvTYPE(SvRV(*rn)) == SVt_PVAV) {
 							rn_av = (AV*)SvRV(*rn); break;
 						}
@@ -22885,7 +23279,7 @@ SV *predict(...)
 						SAVEFREEPV(row_names[i]);
 					}
 				} else if (SvROK(v0) && SvTYPE(SvRV(v0)) == SVt_PVHV) { //HoH
-					n = (size_t)HvUSEDKEYS(hv);
+					n = hv_nkeys(aTHX_ hv);
 					Newx(row_names,  n ? n : 1, char*); SAVEFREEPV(row_names);
 					Newx(row_hashes, n ? n : 1, HV*);   SAVEFREEPV(row_hashes);
 					ITER_KEEP_BEGIN(hv);
@@ -22893,13 +23287,18 @@ SV *predict(...)
 					i = 0;
 					/*Every row is checked, not just the one that decided the shape: a
 					plain value among the rows was dereferenced as a hash and crashed.
-					i < n bounds the walk to the buffers, which a tied hash (whose
-					HvUSEDKEYS is 0) would otherwise overrun.*/
-					while (i < n && (e = hv_iternext(hv))) {
-						SV *rv = HeVAL(e);
+					i < n bounds the rows to the buffers, in case a tied hash hands back
+					more keys than hv_nkeys() counted; the walk itself still runs to
+					its end, which perl before 5.18 needs of a tied one.*/
+					while ((e = hv_iternext(hv))) {
+						SV *rv;
+						if (i == n) continue;
+						rv = he_val(aTHX_ hv, e);
 						if (!rv || !SvROK(rv) || SvTYPE(SvRV(rv)) != SVt_PVHV) {
+							SV *ks = sv_mortalcopy(hv_iterkeysv(e));
+							hv_walk_out(aTHX_ hv);
 							for (size_t r = 0; r < i; r++) Safefree(row_names[r]);	//not yet on the save stack
-							croak("predict: newdata HoH value for row '%s' is not a hash-ref", HePV(e, PL_na));
+							croak("predict: newdata HoH value for row '%s' is not a hash-ref", SvPV_nolen(ks));
 						}
 						row_names[i]  = rowname_dup(aTHX_ hv_iterkeysv(e));
 						row_hashes[i] = (HV*)SvRV(rv);
@@ -22932,6 +23331,7 @@ SV *predict(...)
 					row_hashes[i] = rh;
 					for (kk = 0; kk < sizeof rn_keys / sizeof rn_keys[0]; kk++) {
 						nm = hv_fetch(rh, rn_keys[kk], (I32)strlen(rn_keys[kk]), 0);
+						if (nm && *nm) SvGETMAGIC(*nm);	//a tied row
 						if (nm && *nm && SvOK(*nm)) break;
 						nm = NULL;
 					}
@@ -22948,8 +23348,8 @@ SV *predict(...)
 				croak("predict: newdata must be a HoA/HoH/AoH or a flat hashref");
 			}
 			// factor bases from xlevels, plus the dummy-name set
-			if (xlevels_hv && HvUSEDKEYS(xlevels_hv) > 0) {
-				nbase = (size_t)HvUSEDKEYS(xlevels_hv);
+			if (xlevels_hv && (nbase = hv_nkeys(aTHX_ xlevels_hv)) > 0) {
+				const bool xtied = cBOOL(HV_IS_TIED(xlevels_hv));
 				Newx(fbase, nbase, const char*); SAVEFREEPV(fbase);
 				Newx(flev,  nbase, AV*);         SAVEFREEPV(flev);
 				dummy_hv = newHV(); SAVEFREESV((SV*)dummy_hv);
@@ -22958,9 +23358,15 @@ SV *predict(...)
 				kk = 0;
 				while ((he = hv_iternext(xlevels_hv))) {
 					I32 blen;
-					SV *lv = HeVAL(he);
+					SV *lv;
+					if (kk == nbase) continue;	//a tied hash may yield more keys than it counted; the walk runs out regardless
+					lv = he_val(aTHX_ xlevels_hv, he);
 					if (!SvROK(lv) || SvTYPE(SvRV(lv)) != SVt_PVAV) continue;
-					fbase[kk] = hv_iterkey(he, &blen);          //borrowed
+	/*Borrowed from the entry -- except that a tied iterator replaces its key
+	at every step, so a tied hash's key is copied into a mortal, which lasts
+	until this function's FREETMPS.*/
+					fbase[kk] = xtied ? SvPV_nolen(sv_mortalcopy(hv_iterkeysv(he)))
+					                  : hv_iterkey(he, &blen);
 					flev[kk]  = (AV*)SvRV(lv);
 					{
 						size_t blen2 = strlen(fbase[kk]);
@@ -22996,7 +23402,8 @@ SV *predict(...)
 			}
 			// cache coef terms; route factor-bearing interactions aside
 			{
-				I32 nk = (I32)HvUSEDKEYS(coef_hv);
+				const size_t nk = hv_nkeys(aTHX_ coef_hv);
+				const bool ctied = cBOOL(HV_IS_TIED(coef_hv));
 				Newx(cterm, nk ? nk : 1, const char*); SAVEFREEPV(cterm);
 				Newx(cbeta, nk ? nk : 1, NV);          SAVEFREEPV(cbeta);
 				Newx(icopy, nk ? nk : 1, char*);       SAVEFREEPV(icopy);
@@ -23006,8 +23413,14 @@ SV *predict(...)
 				ncoef = 0;
 				while ((he = hv_iternext(coef_hv))) {
 					I32 klen;
-					const char *t = hv_iterkey(he, &klen);
-					NV b = SvNV(HeVAL(he));
+					const char *t;
+					if (ncoef + nint == nk) continue;	//a tied hash may yield more keys than it counted
+					if (ctied) {	//its iterator replaces the key at every step: keep a mortal copy, as for xlevels
+						STRLEN kl;
+						t = SvPV(sv_mortalcopy(hv_iterkeysv(he)), kl);
+						klen = (I32)kl;
+					} else t = hv_iterkey(he, &klen);
+					NV b = SvNV(he_val(aTHX_ coef_hv, he));
 					if (nv_isnan(b)) continue; //aliased -> drop
 					if (dummy_hv && hv_exists(dummy_hv, t, klen)) continue;  //main-effect factor
 
@@ -23139,8 +23552,12 @@ SV *predict(...)
 					snprintf(scratch, scratch_cap, "%s%s", fbase[kk], raw);
 					svp = hv_fetch(coef_hv, scratch, (I32)strlen(scratch), 0);
 					if (svp && *svp) {
-						NV b = SvNV(*svp);
-						if (!nv_isnan(b)) eta += b;
+						SV *bsv = *svp;
+						SvGETMAGIC(bsv);	//a tied coefficient hash answers a missing key with an undef placeholder, not NULL
+						if (SvOK(bsv)) {
+							NV b = SvNV_nomg(bsv);
+							if (!nv_isnan(b)) eta += b;
+						}
 					}
 				}
 	//non-factor terms via the same engine used at fit time
@@ -29100,6 +29517,7 @@ void p_adjust(...)
 		}
 		//Which of the five shapes is this?
 		enum { PA_FLAT, PA_AOA, PA_AOH, PA_HOA, PA_HOH } kind = PA_FLAT;
+		p_sv = frame_untied(aTHX_ p_sv, 0);	//a tied frame's columns were FETCHed once per pass over it
 		SV *ref = SvROK(p_sv) ? SvRV(p_sv) : NULL;
 		if (!ref || (SvTYPE(ref) != SVt_PVAV && SvTYPE(ref) != SVt_PVHV))
 			croak("p_adjust: first argument must be an ARRAY reference of p-values, "
@@ -29123,14 +29541,21 @@ void p_adjust(...)
 			ITER_KEEP_BEGIN(hv);
 			hv_iterinit(hv);
 			while ((e = hv_iternext(hv))) {
-				SV *v = HeVAL(e);
+				SV *v = he_val(aTHX_ hv, e);
 				if (!v || !SvOK(v)) continue;
 				if (SvROK(v) && SvTYPE(SvRV(v)) == SVt_PVAV)      kind = PA_HOA;
 				else if (SvROK(v) && SvTYPE(SvRV(v)) == SVt_PVHV) kind = PA_HOH;
-				else croak("p_adjust: a HASH reference must hold ARRAY references "
-				           "(HoA) or HASH references (HoH)");
+				else {
+					hv_walk_out(aTHX_ hv);
+					croak("p_adjust: a HASH reference must hold ARRAY references "
+					      "(HoA) or HASH references (HoH)");
+				}
 				break;
 			}
+			/*Finish a tied walk rather than let the next one restart it: perl
+			before 5.18 leaks the entry a tied iterator holds when hv_iterinit()
+			cuts its walk short.*/
+			if (e && HV_IS_TIED(hv)) while (hv_iternext(hv)) {}
 			ITER_KEEP_END;
 		}
 
@@ -29187,37 +29612,51 @@ void p_adjust(...)
 					croak("p_adjust: row %" IVdf " of the AoH is not a HASH reference",
 					      (IV)i);
 				HV *row = (HV*)SvRV(*rs);
-				SSize_t hk = (SSize_t)HvUSEDKEYS(row);
-				if (hk > maxk) maxk = hk;
+				SSize_t hk = 0;	//counted on the walk: HvUSEDKEYS reads 0 for a tied row
 				HE *e;
 				ITER_KEEP_BEGIN(row);
 				hv_iterinit(row);
 				while ((e = hv_iternext(row))) {
 					STRLEN kl;
 					const char *kp = HePV(e, kl);
+					hk++;
 					if (!pa_mark(aTHX_ want, kp, kl, HeUTF8(e))) continue;
-					pa_check(aTHX_ HeVAL(e), kp, 0);
+					SV *cell = he_val(aTHX_ row, e);
+					if (cell && SvOK(cell) && !looks_like_number(cell)) {	//pa_check() croaks: finish the walk first
+						SV *ks = sv_mortalcopy(hv_iterkeysv(e));
+						hv_walk_out(aTHX_ row);
+						pa_check(aTHX_ cell, SvPV_nolen(ks), 0);
+					}
 					n++;
 				}
 				ITER_KEEP_END;
+				if (hk > maxk) maxk = hk;
 			}
 		} else if (kind == PA_HOA) {
 			HV *hv = (HV*)ref;
 			HE *e;
-			nouter = (SSize_t)HvUSEDKEYS(hv);
 			ITER_KEEP_BEGIN(hv);
 			hv_iterinit(hv);
 			while ((e = hv_iternext(hv))) {
 				STRLEN kl;
 				const char *kp = HePV(e, kl);
-				SV *cv = HeVAL(e);
-				if (!cv || !SvROK(cv) || SvTYPE(SvRV(cv)) != SVt_PVAV)
-					croak("p_adjust: column '%s' of the HoA is not an ARRAY reference", kp);
+				SV *cv = he_val(aTHX_ hv, e);
+				nouter++;	//counted on the walk: HvUSEDKEYS reads 0 for a tied hash
+				if (!cv || !SvROK(cv) || SvTYPE(SvRV(cv)) != SVt_PVAV) {
+					SV *ks = sv_mortalcopy(hv_iterkeysv(e));
+					hv_walk_out(aTHX_ hv);
+					croak("p_adjust: column '%s' of the HoA is not an ARRAY reference", SvPV_nolen(ks));
+				}
 				if (!pa_mark(aTHX_ want, kp, kl, HeUTF8(e))) continue;
 				AV *cav = (AV*)SvRV(cv);
 				for (SSize_t i = 0; i <= av_len(cav); i++) {
 					SV **c = av_fetch(cav, i, 0);
-					pa_check(aTHX_ c ? *c : NULL, kp, 0);
+					SV *cell = c ? *c : NULL;
+					if (cell && SvOK(cell) && !looks_like_number(cell)) {	//pa_check() croaks: finish the walk first
+						SV *ks = sv_mortalcopy(hv_iterkeysv(e));
+						hv_walk_out(aTHX_ hv);
+						pa_check(aTHX_ cell, SvPV_nolen(ks), 0);
+					}
 					n++;
 				}
 			}
@@ -29225,28 +29664,38 @@ void p_adjust(...)
 		} else {                                                   //PA_HOH
 			HV *hv = (HV*)ref;
 			HE *e;
-			nouter = (SSize_t)HvUSEDKEYS(hv);
 			ITER_KEEP_BEGIN(hv);
 			hv_iterinit(hv);
 			while ((e = hv_iternext(hv))) {
-				SV *rv = HeVAL(e);
-				if (!rv || !SvROK(rv) || SvTYPE(SvRV(rv)) != SVt_PVHV)
+				SV *rv = he_val(aTHX_ hv, e);
+				if (!rv || !SvROK(rv) || SvTYPE(SvRV(rv)) != SVt_PVHV) {
+					SV *ks = sv_mortalcopy(hv_iterkeysv(e));
+					hv_walk_out(aTHX_ hv);
 					croak("p_adjust: row '%s' of the HoH is not a HASH reference",
-					      HePV(e, PL_na));
+					      SvPV_nolen(ks));
+				}
+				nouter++;	//counted on the walk: HvUSEDKEYS reads 0 for a tied hash or row
 				HV *row = (HV*)SvRV(rv);
-				SSize_t hk = (SSize_t)HvUSEDKEYS(row);
-				if (hk > maxk) maxk = hk;
+				SSize_t hk = 0;
 				HE *f;
 				ITER_KEEP_BEGIN(row);
 				hv_iterinit(row);
 				while ((f = hv_iternext(row))) {
 					STRLEN kl;
 					const char *kp = HePV(f, kl);
+					hk++;
 					if (!pa_mark(aTHX_ want, kp, kl, HeUTF8(f))) continue;
-					pa_check(aTHX_ HeVAL(f), kp, 0);
+					SV *cell = he_val(aTHX_ row, f);
+					if (cell && SvOK(cell) && !looks_like_number(cell)) {	//pa_check() croaks: finish both walks first
+						SV *ks = sv_mortalcopy(hv_iterkeysv(f));
+						hv_walk_out(aTHX_ row);
+						hv_walk_out(aTHX_ hv);
+						pa_check(aTHX_ cell, SvPV_nolen(ks), 0);
+					}
 					n++;
 				}
 				ITER_KEEP_END;
+				if (hk > maxk) maxk = hk;
 			}
 			ITER_KEEP_END;
 		}
@@ -29261,10 +29710,10 @@ void p_adjust(...)
 		//---- second pass: rebuild the frame, reserving a slot per p-value
 		NV *pv     = NULL, *adj    = NULL;
 		SV **slots = NULL;
-		HE **kbuf  = NULL, **obuf  = NULL;
+		PaEnt *kbuf = NULL, *obuf  = NULL;
 		if (n) { Newx(pv, n, NV); Newx(adj, n, NV); Newx(slots, n, SV*); }
-		if (maxk)   Newx(kbuf, maxk,   HE*);
-		if (nouter) Newx(obuf, nouter, HE*);
+		if (maxk)   Newx(kbuf, maxk,   PaEnt);
+		if (nouter) Newx(obuf, nouter, PaEnt);
 		size_t k = 0;
 		SV *out_sv;
 		if (kind == PA_AOA) {
@@ -29300,28 +29749,24 @@ void p_adjust(...)
 				HV *row = (HV*)SvRV(*av_fetch(in, i, 0));
 				HV *rout = newHV();
 				av_push(out, newRV_noinc((SV*)rout));
-				SSize_t nk = pa_sorted_keys(aTHX_ row, kbuf);
+				SSize_t nk = pa_sorted_keys(aTHX_ row, kbuf, maxk);
 				for (SSize_t j = 0; j < nk; j++) {
-					HE *e = kbuf[j];
-					STRLEN kl;
-					const char *kp = HePV(e, kl);
-					I32 sk = HeUTF8(e) ? -(I32)kl : (I32)kl;
-					int sel = !want || hv_fetch(want, kp, sk, 0) != NULL;
-					(void)hv_store(rout, kp, sk, sel
-						? pa_place(aTHX_ HeVAL(e), pv, slots, &k, n)
-						: pa_copy(aTHX_ HeVAL(e)), 0);
+					const PaEnt *e = &kbuf[j];
+					I32 sk = e->utf8 ? -(I32)e->kl : (I32)e->kl;
+					int sel = !want || hv_fetch(want, e->kp, sk, 0) != NULL;
+					(void)hv_store(rout, e->kp, sk, sel
+						? pa_place(aTHX_ e->val, pv, slots, &k, n)
+						: pa_copy(aTHX_ e->val), 0);
 				}
 			}
 		} else if (kind == PA_HOA) {
 			HV *in = (HV*)ref, *out = newHV();
 			out_sv = sv_2mortal(newRV_noinc((SV*)out));
-			SSize_t nk = pa_sorted_keys(aTHX_ in, obuf);
+			SSize_t nk = pa_sorted_keys(aTHX_ in, obuf, nouter);
 			for (SSize_t ci = 0; ci < nk; ci++) {
-				HE *e = obuf[ci];
-				STRLEN kl;
-				const char *kp = HePV(e, kl);
-				I32 sk = HeUTF8(e) ? -(I32)kl : (I32)kl;
-				AV *cin = (AV*)SvRV(HeVAL(e));
+				const char *kp = obuf[ci].kp;
+				I32 sk = obuf[ci].utf8 ? -(I32)obuf[ci].kl : (I32)obuf[ci].kl;
+				AV *cin = (AV*)SvRV(obuf[ci].val);
 				AV *cout = newAV();
 				(void)hv_store(out, kp, sk, newRV_noinc((SV*)cout), 0);
 				SSize_t nrw = av_len(cin) + 1;
@@ -29337,25 +29782,21 @@ void p_adjust(...)
 		} else {                                                   //PA_HOH
 			HV *in = (HV*)ref, *out = newHV();
 			out_sv = sv_2mortal(newRV_noinc((SV*)out));
-			SSize_t nr = pa_sorted_keys(aTHX_ in, obuf);
+			SSize_t nr = pa_sorted_keys(aTHX_ in, obuf, nouter);
 			for (SSize_t ri = 0; ri < nr; ri++) {
-				HE *re = obuf[ri];
-				STRLEN rl;
-				const char *rp = HePV(re, rl);
-				HV *row = (HV*)SvRV(HeVAL(re));
+				const PaEnt *re = &obuf[ri];
+				HV *row = (HV*)SvRV(re->val);
 				HV *rout = newHV();
-				(void)hv_store(out, rp, HeUTF8(re) ? -(I32)rl : (I32)rl,
+				(void)hv_store(out, re->kp, re->utf8 ? -(I32)re->kl : (I32)re->kl,
 				               newRV_noinc((SV*)rout), 0);
-				SSize_t nk = pa_sorted_keys(aTHX_ row, kbuf);
+				SSize_t nk = pa_sorted_keys(aTHX_ row, kbuf, maxk);
 				for (SSize_t j = 0; j < nk; j++) {
-					HE *e = kbuf[j];
-					STRLEN kl;
-					const char *kp = HePV(e, kl);
-					I32 sk = HeUTF8(e) ? -(I32)kl : (I32)kl;
-					int sel = !want || hv_fetch(want, kp, sk, 0) != NULL;
-					(void)hv_store(rout, kp, sk, sel
-						? pa_place(aTHX_ HeVAL(e), pv, slots, &k, n)
-						: pa_copy(aTHX_ HeVAL(e)), 0);
+					const PaEnt *e = &kbuf[j];
+					I32 sk = e->utf8 ? -(I32)e->kl : (I32)e->kl;
+					int sel = !want || hv_fetch(want, e->kp, sk, 0) != NULL;
+					(void)hv_store(rout, e->kp, sk, sel
+						? pa_place(aTHX_ e->val, pv, slots, &k, n)
+						: pa_copy(aTHX_ e->val), 0);
 				}
 			}
 		}
@@ -30516,6 +30957,7 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 			SV *gname = AvARRAY(gkeys)[gi];
 			HE *ge = hv_fetch_ent(input_hv, gname, 0, 0);
 			SV *arr_ref = ge ? HeVAL(ge) : &PL_sv_undef;
+			SvGETMAGIC(arr_ref);	//a tied hash's fetch is a placeholder until this runs
 			AV *arr;
 			if (!SvROK(arr_ref) || SvTYPE(SvRV(arr_ref)) != SVt_PVAV)
 				croak("aov: Hash values must be ArrayRefs when no formula is provided");
@@ -30712,7 +31154,7 @@ CODE:
 		Perl's hash randomization.  Every row must expose that same column
 		key set.*/
 		HV *outer = (HV *)deref;
-		nrow = (int)HvUSEDKEYS(outer);
+		nrow = (unsigned)hv_nkeys(aTHX_ outer);	//not HvUSEDKEYS: it reads 0 for a tied hash
 		if (nrow < 2) croak("Outer hash must have at least 2 keys");
 	/*rows and cols join cells on the save stack: ft_cell() croaks from inside
 	the fill loop below, where both are live, and the explicit frees could
@@ -30720,29 +31162,40 @@ CODE:
 		ft_kv *rows = NULL; Newx(rows, nrow, ft_kv); SAVEFREEPV(rows);
 		ITER_KEEP_BEGIN(outer);
 		hv_iterinit(outer);
-		for (unsigned int i = 0; i < nrow; i++) {
-			HE *e = hv_iternext(outer);
-			rows[i].k = SvPV_nolen(hv_iterkeysv(e));
-			rows[i].v = hv_iterval(outer, e);
+/*Bounded by rows[] but run to the end, so a tied walk is finished rather than
+restarted (see cfilter). The keys are mortal copies, which a tied iterator's
+next step cannot free; he_val() runs a tied row's get magic.*/
+		unsigned int nseen = 0;	//read after the loop: a tied hash may hand back fewer than it counted
+		for (HE *e; (e = hv_iternext(outer)) != NULL; ) {
+			if (nseen == nrow) continue;
+			rows[nseen].k = SvPV_nolen(hv_iterkeysv(e));
+			rows[nseen].v = he_val(aTHX_ outer, e);
+			nseen++;
 		}
 		ITER_KEEP_END;
+		if (nseen < 2) croak("Outer hash must have at least 2 keys");
+		nrow = nseen;
 		qsort(rows, nrow, sizeof(ft_kv), ft_kv_cmp);
 
 		if (!SvROK(rows[0].v) || SvTYPE(SvRV(rows[0].v)) != SVt_PVHV) {
 			croak("Inner elements must be hash refs");
 		}
 		HV *first = (HV *)SvRV(rows[0].v);
-		ncol = (int)HvUSEDKEYS(first);
+		ncol = (unsigned)hv_nkeys(aTHX_ first);
 		if (ncol < 2) croak("Inner hashes must have at least 2 keys");
 		ft_kv *cols = NULL; Newx(cols, ncol, ft_kv); SAVEFREEPV(cols);
 		ITER_KEEP_BEGIN(first);
 		hv_iterinit(first);
-		for (unsigned int j = 0; j < ncol; j++) {
-			HE *e = hv_iternext(first);
-			cols[j].k = SvPV_nolen(hv_iterkeysv(e));
-			cols[j].v = NULL;
+		nseen = 0;	//as for rows: bounded by cols[], run to the end
+		for (HE *e; (e = hv_iternext(first)) != NULL; ) {
+			if (nseen == ncol) continue;
+			cols[nseen].k = SvPV_nolen(hv_iterkeysv(e));
+			cols[nseen].v = NULL;
+			nseen++;
 		}
 		ITER_KEEP_END;
+		if (nseen < 2) croak("Inner hashes must have at least 2 keys");
+		ncol = nseen;
 		qsort(cols, ncol, sizeof(ft_kv), ft_kv_cmp);
 
 		Newx(cells, (size_t)nrow * ncol, long); SAVEFREEPV(cells);	//see the AoA branch
@@ -30750,11 +31203,14 @@ CODE:
 			if (!SvROK(rows[rr].v) || SvTYPE(SvRV(rows[rr].v)) != SVt_PVHV)
 				croak("Inner elements must be hash refs");
 			HV *in = (HV *)SvRV(rows[rr].v);
-			if ((IV)HvUSEDKEYS(in) != (IV)ncol) {
+			if (hv_nkeys(aTHX_ in) != (size_t)ncol) {
 				croak("All rows must have the same %d column keys", ncol);
 			}
 			for (unsigned int cc = 0; cc < ncol; cc++) {
-				SV **vp = hv_fetch(in, cols[cc].k, (I32)strlen(cols[cc].k), 0);
+				const I32 klen = (I32)strlen(cols[cc].k);
+				//a tied row's fetch always returns an entry, so whether the key is there is asked first
+				SV **vp = (SvRMAGICAL(in) && !hv_exists(in, cols[cc].k, klen))
+				        ? NULL : hv_fetch(in, cols[cc].k, klen, 0);
 				if (!vp) {
 	/*Capture the key pointers (they point into still-live mortal SV
 	buffers, not into rows/cols) before freeing the arrays --
@@ -30764,7 +31220,7 @@ CODE:
 					const char *ck = cols[cc].k;
 					croak("Row '%s' is missing column key '%s'", rk, ck);
 				}
-				cells[rr * ncol + cc] = ft_cell(aTHX_ *vp, "hash cell");
+				cells[rr * ncol + cc] = ft_cell(aTHX_ *vp, "hash cell");	//ft_cell() runs a tied value's FETCH
 			}
 		}
 	} else {
@@ -31028,17 +31484,20 @@ CODE:
 	if (h_sv) {
 		if (!SvROK(h_sv) || SvTYPE(SvRV(h_sv)) != SVt_PVHV)
 			croak("kruskal_test: 'h' must be a HASH reference");
+		h_sv = frame_untied(aTHX_ h_sv, 0);	//a tied hash's groups were FETCHed once per pass over it
 		HV *h_hv = (HV*)SvRV(h_sv);
 		// First pass – validate values and tally total elements
 		size_t total = 0;
+		size_t num_keys = 0;	//counted here: a tied hash's HvKEYS is 0
 		ITER_KEEP_BEGIN(h_hv);
 		hv_iterinit(h_hv);
 		HE *he;
 		while ((he = hv_iternext(h_hv))) {
-			SV *val = HeVAL(he);
+			SV *val = he_val(aTHX_ h_hv, he);
 			if (!SvROK(val) || SvTYPE(SvRV(val)) != SVt_PVAV)
 				croak("kruskal_test: every value in 'h' must be an ARRAY reference");
 			total += (size_t)(av_len((AV*)SvRV(val)) + 1);
+			num_keys++;
 		}
 		ITER_KEEP_END;
 		/*No early "not enough observations" here: R filters each group, refuses
@@ -31048,7 +31507,6 @@ CODE:
 		allocation is not worth relying on.*/
 		Newx(obs, total ? total : 1, KWObs);
 		SAVEFREEPV(obs);
-		size_t num_keys = HvKEYS(h_hv);
 		gn_sv = sv_2mortal(newSV((num_keys ? num_keys : 1) * sizeof(GroupLabel)));
 		group_names = (GroupLabel*)SvPVX(gn_sv);
 		Zero(group_names, num_keys ? num_keys : 1, GroupLabel);
@@ -31056,7 +31514,14 @@ CODE:
 		size_t group_id = 0;
 		ITER_KEEP_BEGIN(h_hv);
 		hv_iterinit(h_hv);
-		while (group_id < num_keys && (he = hv_iternext(h_hv))) {	//bounded by the buffers, as a tied hash's HvKEYS is 0
+		while ((he = hv_iternext(h_hv))) {
+			/*Bounded by the buffers the first pass sized, but a tied walk is run
+			out rather than cut short (see cfilter).*/
+			if (group_id == num_keys) continue;
+			/*Re-checked: a tied hash FETCHes again, and need not answer the same.*/
+			SV *val = he_val(aTHX_ h_hv, he);
+			if (!SvROK(val) || SvTYPE(SvRV(val)) != SVt_PVAV)
+				croak("kruskal_test: every value in 'h' must be an ARRAY reference");
 			STRLEN klen;
 			/*No restrict: HePV() hands back the hash entry's own key buffer,
 			which may be a shared hash key perl also reaches elsewhere.*/
@@ -31065,7 +31530,7 @@ CODE:
 			av_push(names_av, label);
 			group_names[group_id].name = SvPVX(label);
 			group_names[group_id].klen = HeUTF8(he) ? -(I32)klen : (I32)klen;
-			AV *av  = (AV*)SvRV(HeVAL(he));
+			AV *av  = (AV*)SvRV(val);
 			size_t n_g = (size_t)(av_len(av) + 1);
 			size_t n_valid_g = 0;
 			for (size_t i = 0; i < n_g; i++) {
@@ -31437,10 +31902,10 @@ CODE:
 	array branch padded the result with undef, so sample([1,2,3], 10) came
 	back as three values and seven undefs that no caller could tell from
 	real data.*/
-		//hv_iterinit() is only counting here, but it resets the caller's iterator all the same
+		//hv_nkeys() walks a tied hash to count it, which resets the caller's iterator
 		if (SvTYPE(rv) == SVt_PVHV) ITER_KEEP_BEGIN(rv);
 		size_t have = (SvTYPE(rv) == SVt_PVHV)
-		            ? (size_t)hv_iterinit((HV *)rv)
+		            ? hv_nkeys(aTHX_ (HV *)rv)
 		            : (size_t)(av_top_index((AV *)rv) + 1);
 		if (SvTYPE(rv) == SVt_PVHV) ITER_KEEP_END;
 		if (n > have)
@@ -31448,53 +31913,93 @@ CODE:
 			      "of %" UVuf, (UV)n, (UV)have);
 		if (SvTYPE(rv) == SVt_PVHV) {// HASH REFERENCE
 			HV *hv    = (HV *)rv;
-			ITER_KEEP_BEGIN(hv);
-			unsigned count = hv_iterinit(hv);
-			unsigned limit = (unsigned)n;
-			HV *ret_hv = newHV();
-			if (count > 0 && limit > 0) {
-				HE **entries;
-				HE  *entry;
-				unsigned i = 0;
-				Newx(entries, count, HE *);
-				while ((entry = hv_iternext(hv))) // Collect all HE pointers in one pass
-				 entries[i++] = entry;
-
-				for (i = 0; i < limit; i++) {//Partial Fisher-Yates (only 'limit' passes)
-				 I32 j    = i + (I32)(Drand01() * (count - i));
-				 HE *tmp  = entries[i];
-				 entries[i] = entries[j];
-				 entries[j] = tmp;
+			//mortal until the end: a tied hash's FETCH below can die
+			HV *ret_hv = (HV *)sv_2mortal((SV *)newHV());
+			if (HV_IS_TIED(hv)) {
+/*A tied iterator reuses one entry for every key, its HeVAL() is never filled
+in, and HeHASH() is not a hash, so the HE-pointer shuffle below cannot work
+on it. The keys are copied out instead, the walk runs to the end (see
+cfilter), and only the drawn keys are fetched. Their values are copied:
+the fetched SV still carries the tied hash's element magic.*/
+				AV *keys = (AV *)sv_2mortal((SV *)newAV());
+				hv_iterinit(hv);
+				for (HE *e; (e = hv_iternext(hv)) != NULL; )
+					av_push(keys, newSVsv(hv_iterkeysv(e)));
+				const size_t count = (size_t)(av_top_index(keys) + 1);
+				const size_t limit = n < count ? n : count;
+				SV **ka = AvARRAY(keys);
+				for (size_t i = 0; i < limit; i++) {// the same partial Fisher-Yates as below
+					size_t j = i + (size_t)(Drand01() * (count - i));
+					SV *tmp = ka[i];
+					ka[i] = ka[j];
+					ka[j] = tmp;
 				}
-	//Pre-size result hash to avoid rehashing during population
 				hv_ksplit(ret_hv, limit);
-				for (i = 0; i < limit; i++) {
-				 HEK *hek = HeKEY_hek(entries[i]);
- /*hv_store() with a precomputed hash skips the hash
- computation entirely.  Negative klen signals UTF-8.*/
-				 (void)hv_store(
-					 ret_hv,
-					 HEK_KEY(hek),
-					 HEK_UTF8(hek) ? -(I32)HEK_LEN(hek) : (I32)HEK_LEN(hek),
-					 SvREFCNT_inc(HeVAL(entries[i])),  //HeVAL: direct macro, no call
-					 HeHASH(entries[i])                //reuse precomputed hash
-				 );
+				for (size_t i = 0; i < limit; i++) {
+					HE *fe = hv_fetch_ent(hv, ka[i], 0, 0);
+					SV *v = fe ? HeVAL(fe) : NULL;
+					(void)hv_store_ent(ret_hv, ka[i], v ? newSVsv(v) : newSV(0), 0);	//newSVsv() runs the FETCH, once
 				}
-				Safefree(entries);
+				ret = newRV_inc((SV *)ret_hv);
+			} else {
+				ITER_KEEP_BEGIN(hv);
+				unsigned count = hv_iterinit(hv);
+				unsigned limit = (unsigned)n;
+				if (count > 0 && limit > 0) {
+					HE **entries;
+					HE  *entry;
+					unsigned i = 0;
+					Newx(entries, count, HE *);
+					while ((entry = hv_iternext(hv))) // Collect all HE pointers in one pass
+					 entries[i++] = entry;
+					/*hv_iterinit()'s count includes the placeholders a delete leaves in
+					a restricted hash, which the walk skips: shuffling over it drew unset
+					slots and segfaulted on a locked hash with a deleted key.*/
+					count = i;
+
+					for (i = 0; i < limit; i++) {//Partial Fisher-Yates (only 'limit' passes)
+					 I32 j    = i + (I32)(Drand01() * (count - i));
+					 HE *tmp  = entries[i];
+					 entries[i] = entries[j];
+					 entries[j] = tmp;
+					}
+		//Pre-size result hash to avoid rehashing during population
+					hv_ksplit(ret_hv, limit);
+					for (i = 0; i < limit; i++) {
+					 HEK *hek = HeKEY_hek(entries[i]);
+	 /*hv_store() with a precomputed hash skips the hash
+	 computation entirely.  Negative klen signals UTF-8.*/
+					 (void)hv_store(
+						 ret_hv,
+						 HEK_KEY(hek),
+						 HEK_UTF8(hek) ? -(I32)HEK_LEN(hek) : (I32)HEK_LEN(hek),
+						 SvREFCNT_inc(HeVAL(entries[i])),  //HeVAL: direct macro, no call
+						 HeHASH(entries[i])                //reuse precomputed hash
+					 );
+					}
+					Safefree(entries);
+				}
+				ITER_KEEP_END;
+				ret = newRV_inc((SV *)ret_hv);
 			}
-			ITER_KEEP_END;
-			ret = newRV_noinc((SV *)ret_hv);
 		} else {// ARRAY REFERENCE
 			AV    *av    = (AV *)rv;
 			size_t count = av_top_index(av) + 1;  //signed; 0 for empty AV
-			AV    *ret_av = newAV();
+			//mortal until the end: a tied array's FETCH below can die
+			AV    *ret_av = (AV *)sv_2mortal((SV *)newAV());
 			if (n > 0)//Pre-allocate the result array to avoid incremental reallocs
 				 av_extend(ret_av, n - 1);
 			if (n > 0) {
-				 SV    **src = AvARRAY(av); //direct pointer into AV's C array
+/*A tied array keeps nothing in AvARRAY(), which is NULL on one that has never
+held a real element: it is read through av_fetch(), and each drawn element is
+copied, which runs its FETCH once and leaves the tied array's element magic
+behind.*/
+				 const bool tied = cBOOL(SvRMAGICAL(av));
+				 SV **src = tied ? NULL : AvARRAY(av); //direct pointer into AV's C array
 				 size_t *restrict idx;
 				 //Shuffle indices rather than SV** to keep the original AV intact
 				 Newx(idx, count, size_t);
+				 SAVEFREEPV(idx);
 				 for (size_t i = 0; i < count; i++)
 					 idx[i] = i;
 				 for (size_t i = 0; i < n; i++) { // Partial Fisher-Yates on the index array
@@ -31504,17 +32009,21 @@ CODE:
 					 idx[j]  = tmp;
 				 }
 				 for (size_t i = 0; i < n; i++) {
-					 SV *sv = src[idx[i]];   //AvARRAY direct access — no av_fetch call
 					 SV *push_sv;
-					 if (sv && sv != &PL_sv_undef)
-						 push_sv = SvREFCNT_inc(sv);
-					 else
-						 push_sv = newSV(0);
+					 if (tied) {
+						 SV **p = av_fetch(av, (SSize_t)idx[i], 0);
+						 push_sv = p ? newSVsv(*p) : newSV(0);
+					 } else {
+						 SV *sv = src[idx[i]];   //AvARRAY direct access — no av_fetch call
+						 if (sv && sv != &PL_sv_undef)
+							 push_sv = SvREFCNT_inc(sv);
+						 else
+							 push_sv = newSV(0);
+					 }
 					 av_push(ret_av, push_sv);
 				 }
-				 Safefree(idx);
 			}
-			ret = newRV_noinc((SV *)ret_av);
+			ret = newRV_inc((SV *)ret_av);
 		}
 	}
 	RETVAL = ret;
@@ -31577,7 +32086,10 @@ PPCODE:
 	if ((items - 2) & 1)
 		croak("merge: options after the two frames must be name => value pairs");
 
-	SV *left  = ST(0), *right = ST(1);
+	/*merge builds every output row afresh, so tied rows and columns are copied
+	too: a key cell is read once to match on and again to copy it out*/
+	SV *left  = frame_untied(aTHX_ ST(0), UNTIE_COLS | UNTIE_ROWS);
+	SV *right = frame_untied(aTHX_ ST(1), UNTIE_COLS | UNTIE_ROWS);
 	SV *how_sv = NULL, *on_sv = NULL, *lon_sv = NULL, *ron_sv = NULL;
 	SV *suf_sv = NULL, *out_sv = NULL;
 	for (Stack_off_t oi = 2; oi < items; oi += 2) {
@@ -31890,23 +32402,25 @@ CODE:
 	hv_iterinit(h_hv);
 	while ((h_entry = hv_iternext(h_hv))) {
 		SV *row_key_sv = hv_iterkeysv(h_entry);
-		SV *h_row_sv   = hv_iterval(h_hv, h_entry);
+		SV *h_row_sv   = he_val(aTHX_ h_hv, h_entry);	//HeVAL() is never filled in for a tied hash
 		// 3. Check if this row key exists in the secondary hash ($i)
 		HE *i_fetch_he = hv_fetch_ent(i_hv, row_key_sv, 0, 0);
 		if (i_fetch_he) {
 			SV *i_row_sv = HeVAL(i_fetch_he);
+			SvGETMAGIC(i_row_sv);	//a tied hash's fetch is a placeholder until then
 			// 4. Ensure $h->{row} is a Hash and $i->{row} is a valid reference
 			if (SvROK(h_row_sv) && SvTYPE(SvRV(h_row_sv)) == SVt_PVHV && SvROK(i_row_sv)) {
 				HV *h_row_hv = (HV *)SvRV(h_row_sv);
 				if (SvTYPE(SvRV(i_row_sv)) == SVt_PVHV) {//Case A: $i->{row} is a Hash Reference
 					HV *i_row_hv = (HV *)SvRV(i_row_sv);
+					const bool src_tied = cBOOL(SvRMAGICAL(i_row_hv));	//its values are copied: see jd_store
 					HE *i_entry;
 					ITER_KEEP_BEGIN(i_row_hv);
 					hv_iterinit(i_row_hv);
 					while ((i_entry = hv_iternext(i_row_hv))) {
 						SV *col_key_sv = hv_iterkeysv(i_entry);
 						SV *col_val    = hv_iterval(i_row_hv, i_entry);
-						hv_store_ent(h_row_hv, col_key_sv, SvREFCNT_inc(col_val), 0);
+						jd_store(aTHX_ h_row_hv, col_key_sv, col_val, src_tied);
 					}
 					ITER_KEEP_END;
 				} else if (SvTYPE(SvRV(i_row_sv)) == SVt_PVAV) {
@@ -31919,7 +32433,7 @@ CODE:
 						SV **key_svp = av_fetch(i_row_av, idx, 0);
 						SV **val_svp = av_fetch(i_row_av, idx + 1, 0);
 						if (key_svp && val_svp) {// Ensure both the key and value exist in the array
-							hv_store_ent(h_row_hv, *key_svp, SvREFCNT_inc(*val_svp), 0);
+							jd_store(aTHX_ h_row_hv, *key_svp, *val_svp, FALSE);
 						}
 					}
 				}
@@ -31948,7 +32462,19 @@ CODE:
 	// Probe h_ref for inner structure
 	if (target_root_mode == 1) {
 		HV *h_hv = (HV *)SvRV(h_ref);
-		if (HvKEYS(h_hv) > 0) {
+		if (HV_IS_TIED(h_hv)) {// no buckets to scan: walk it, to the end (see cfilter)
+			ITER_KEEP_BEGIN(h_hv);
+			hv_iterinit(h_hv);
+			for (HE *e; (e = hv_iternext(h_hv)) != NULL; ) {
+				if (target_inner_mode != 0) continue;
+				SV *val = he_val(aTHX_ h_hv, e);
+				if (SvROK(val)) {
+					if (SvTYPE(SvRV(val)) == SVt_PVHV) target_inner_mode = 1;
+					else if (SvTYPE(SvRV(val)) == SVt_PVAV) target_inner_mode = 2;
+				}
+			}
+			ITER_KEEP_END;
+		} else if (HvKEYS(h_hv) > 0) {
 			HE **probe_array = HvARRAY(h_hv);
 			STRLEN probe_max = HvMAX(h_hv);
 			for (STRLEN p_idx = 0; p_idx <= probe_max && target_inner_mode == 0; p_idx++) {
@@ -31976,7 +32502,19 @@ CODE:
 	if (target_inner_mode == 0) {
 		if (i_root_mode == 1) {
 			HV *i_hv = (HV *)SvRV(i_ref);
-			if (HvKEYS(i_hv) > 0) {
+			if (HV_IS_TIED(i_hv)) {// as for h_ref above
+				ITER_KEEP_BEGIN(i_hv);
+				hv_iterinit(i_hv);
+				for (HE *e; (e = hv_iternext(i_hv)) != NULL; ) {
+					if (target_inner_mode != 0) continue;
+					SV *val = he_val(aTHX_ i_hv, e);
+					if (SvROK(val)) {
+						if (SvTYPE(SvRV(val)) == SVt_PVHV) target_inner_mode = 1;
+						else if (SvTYPE(SvRV(val)) == SVt_PVAV) target_inner_mode = 2;
+					}
+				}
+				ITER_KEEP_END;
+			} else if (HvKEYS(i_hv) > 0) {
 				HE **probe_array = HvARRAY(i_hv);
 				STRLEN probe_max = HvMAX(i_hv);
 				for (STRLEN p_idx = 0; p_idx <= probe_max && target_inner_mode == 0; p_idx++) {
@@ -32022,7 +32560,7 @@ CODE:
 			HE *i_entry = hv_iternext(i_hv);
 			if (!i_entry) break;
 			row_key_sv = hv_iterkeysv(i_entry);
-			i_row_sv   = hv_iterval(i_hv, i_entry);
+			i_row_sv   = he_val(aTHX_ i_hv, i_entry);	//HeVAL() is never filled in for a tied hash
 			// Prep integer index in case target is an Array (Suppress warnings for non-numeric string keys)
 			current_idx = looks_like_number(row_key_sv) ? SvIV(row_key_sv) : -1; 
 		} else {
@@ -32040,7 +32578,10 @@ CODE:
 			AV *h_row_av   = NULL;
 			if (target_root_mode == 1) {// 3. Fetch from $h
 				HE *h_fetch_he = hv_fetch_ent((HV *)SvRV(h_ref), row_key_sv, 0, 0);
-				if (h_fetch_he) h_row_sv = HeVAL(h_fetch_he);
+				if (h_fetch_he) {
+					h_row_sv = HeVAL(h_fetch_he);
+					SvGETMAGIC(h_row_sv);	//a tied hash's fetch is a placeholder until then
+				}
 			} else {
 				if (current_idx >= 0) {
 					SV **h_fetch_svp = av_fetch((AV *)SvRV(h_ref), current_idx, 0);
@@ -32056,32 +32597,35 @@ CODE:
 			}
 			// 4. Row DOES NOT exist (or is incompatible type): Create it matching target_inner_mode
 			if (!h_row_hv && !h_row_av) {
+/*The new row's RV is mortal, and each store takes its own reference: a tied
+$h stores a copy of it (see jd_store), which leaves the row reachable only
+through that copy.*/
 				if (target_inner_mode == 2) {
 					h_row_av = newAV();
-					h_row_sv = newRV_noinc((SV *)h_row_av);
+					h_row_sv = sv_2mortal(newRV_noinc((SV *)h_row_av));
 				} else {
 					h_row_hv = newHV();
-					h_row_sv = newRV_noinc((SV *)h_row_hv);
+					h_row_sv = sv_2mortal(newRV_noinc((SV *)h_row_hv));
 				}
 				if (target_root_mode == 1) {
-					hv_store_ent((HV *)SvRV(h_ref), row_key_sv, h_row_sv, 0);
+					jd_store(aTHX_ (HV *)SvRV(h_ref), row_key_sv, h_row_sv, FALSE);
 				} else {
-					if (current_idx >= 0) {
-						av_store((AV *)SvRV(h_ref), current_idx, h_row_sv);
-					}
+					if (current_idx >= 0 && !av_store((AV *)SvRV(h_ref), current_idx, SvREFCNT_inc_simple_NN(h_row_sv)))
+						SvREFCNT_dec(h_row_sv);
 				}
 			}
 			// 5. Merge data across potentially mismatched inner structures
 			if (h_row_hv) {
 				if (SvTYPE(SvRV(i_row_sv)) == SVt_PVHV) {// Hash into Hash (Direct copy)
 					HV *i_inner_hv = (HV *)SvRV(i_row_sv);
+					const bool src_tied = cBOOL(SvRMAGICAL(i_inner_hv));	//its values are copied: see jd_store
 					HE *i_inner_entry;
 					ITER_KEEP_BEGIN(i_inner_hv);
 					hv_iterinit(i_inner_hv);
 					while ((i_inner_entry = hv_iternext(i_inner_hv))) {
 						SV *col_key_sv = hv_iterkeysv(i_inner_entry);
 						SV *col_val    = hv_iterval(i_inner_hv, i_inner_entry);
-						hv_store_ent(h_row_hv, col_key_sv, SvREFCNT_inc(col_val), 0);
+						jd_store(aTHX_ h_row_hv, col_key_sv, col_val, src_tied);
 					}
 					ITER_KEEP_END;
 				} else if (SvTYPE(SvRV(i_row_sv)) == SVt_PVAV) {// Array into Hash (Read pairs)
@@ -32092,7 +32636,7 @@ CODE:
 						SV **val_svp = av_fetch(i_inner_av, idx + 1, 0);
 						if (key_svp && *key_svp && val_svp) {
 							SV *val_to_store = *val_svp ? *val_svp : &PL_sv_undef;
-							hv_store_ent(h_row_hv, *key_svp, SvREFCNT_inc(val_to_store), 0);
+							jd_store(aTHX_ h_row_hv, *key_svp, val_to_store, FALSE);
 						}
 					}
 				}
@@ -32114,6 +32658,8 @@ CODE:
 				} else if (SvTYPE(SvRV(i_row_sv)) == SVt_PVHV) {
 					// Hash into Array (Flatten and push pairs with non-null pointer assurance)
 					HV *i_inner_hv = (HV *)SvRV(i_row_sv);
+					//a tied row's value is a placeholder that would FETCH from it later: copy it
+					const bool src_tied = cBOOL(SvRMAGICAL(i_inner_hv));
 					HE *i_inner_entry;
 					ITER_KEEP_BEGIN(i_inner_hv);
 					hv_iterinit(i_inner_hv);
@@ -32122,7 +32668,7 @@ CODE:
 						SV *col_val    = hv_iterval(i_inner_hv, i_inner_entry);
 						if (col_key_sv && col_val) {
 							SV *sv_key_inc = SvREFCNT_inc(col_key_sv);
-							SV *sv_val_inc = SvREFCNT_inc(col_val);
+							SV *sv_val_inc = src_tied ? newSVsv(col_val) : SvREFCNT_inc(col_val);
 							if (sv_key_inc && sv_val_inc) {
 								av_push(h_row_av, sv_key_inc);
 								av_push(h_row_av, sv_val_inc);
@@ -32152,7 +32698,9 @@ CODE:
 	}
 	// 2. Allocate memory only after we know we are proceeding
 	fast_nv = nk_fast_nv_ok(aTHX);   // asked once, used for every cell below
-	counts_hv = newHV();
+	/*Mortal, so every croak below -- and a FETCH or an overloaded stringification
+	that dies inside increment_count() -- frees it.*/
+	counts_hv = (HV*)sv_2mortal((SV*)newHV());
 	// CASE 1: Flattened Array (or single scalar)
 	if (!SvROK(arg1)) {
 	  for (Stack_off_t i = 0; i < items; i++) {
@@ -32173,7 +32721,6 @@ CODE:
 					if (!elemp) continue;
 					SV*elem = *elemp;
 					if (!SvROK(elem)) {
-						SvREFCNT_dec((SV*)counts_hv);
 						croak("value_counts: array element %u is not a reference; a HASH ref (Array of Hashes) or ARRAY ref (Array of Arrays) is required when a key/index is given", i);
 					}
 					SV*inner_rv = SvRV(elem);
@@ -32183,7 +32730,6 @@ CODE:
 						if (valp) increment_count(aTHX_ counts_hv, *valp, fast_nv);// missing key -> skip row
 					} else if (SvTYPE(inner_rv) == SVt_PVAV) {// Array of Arrays: extract column by index
 						if (!looks_like_number(arg2)) {
-							SvREFCNT_dec((SV*)counts_hv);
 							croak("value_counts: array element %u is an ARRAY ref but index '%s' is not numeric", i, key);
 						}
 						AV*inner_av = (AV*)inner_rv;
@@ -32191,7 +32737,6 @@ CODE:
 						SV**valp = av_fetch(inner_av, idx, 0);
 						if (valp) increment_count(aTHX_ counts_hv, *valp, fast_nv);
 					} else {
-						SvREFCNT_dec((SV*)counts_hv);
 						croak("value_counts: unsupported nested reference type in array element %u", i);
 					}
 				}
@@ -32210,8 +32755,10 @@ CODE:
 				const char*key = SvPV(arg2, klen);
 				// DataFrame-style Column-Oriented data check
 				SV**col_svp = hv_fetch(hv, key, klen, 0);
-				if (col_svp && SvROK(*col_svp) && SvTYPE(SvRV(*col_svp)) == SVt_PVAV) {
-					AV*av = (AV*)SvRV(*col_svp);
+				SV*col_sv = col_svp ? *col_svp : NULL;
+				if (col_sv) SvGETMAGIC(col_sv);	//a tied frame's value is a placeholder until fetched
+				if (col_sv && SvROK(col_sv) && SvTYPE(SvRV(col_sv)) == SVt_PVAV) {
+					AV*av = (AV*)SvRV(col_sv);
 					size_t len = av_len(av) + 1;
 					for (size_t i = 0; i < len; i++) {
 						SV**valp = av_fetch(av, i, 0);
@@ -32222,7 +32769,7 @@ CODE:
 					ITER_KEEP_BEGIN(hv);
 					hv_iterinit(hv);
 					while ((he = hv_iternext(hv))) {
-						SV*inner_sv = HeVAL(he);
+						SV*inner_sv = he_val(aTHX_ hv, he);
 						if (SvROK(inner_sv)) {
 							 SV*inner_rv = SvRV(inner_sv);
 							 if (SvTYPE(inner_rv) == SVt_PVHV) {// CASE 5: Hash of Hashes
@@ -32246,7 +32793,7 @@ CODE:
 				ITER_KEEP_BEGIN(hv);
 				hv_iterinit(hv);
 				while ((he = hv_iternext(hv))) {
-					SV*val = HeVAL(he);
+					SV*val = he_val(aTHX_ hv, he);
 					if (SvROK(val)) {// SAFETY CHECK
 						SV*inner_rv = SvRV(val);
 						// If it's a Hash of Arrays, count ALL elements in the inner arrays
@@ -32264,12 +32811,11 @@ CODE:
 							ITER_KEEP_BEGIN(inner_hv);
 							hv_iterinit(inner_hv);
 							while ((inner_he = hv_iternext(inner_hv))) {
-								SV*inner_val = HeVAL(inner_he);
+								SV*inner_val = he_val(aTHX_ inner_hv, inner_he);
 								increment_count(aTHX_ counts_hv, inner_val, fast_nv);
 							}
 							ITER_KEEP_END;
 						} else { //Unrecognized nested reference type
-							SvREFCNT_dec((SV*)counts_hv);
 							croak("value_counts: Unsupported nested reference type.");
 						}
 					} else {//Simple scalar value
@@ -32278,12 +32824,11 @@ CODE:
 				}
 				ITER_KEEP_END;
 			}
-		} else {// Safely decrement the reference count of our hash before dying to prevent a leak
-			SvREFCNT_dec((SV*)counts_hv);
+		} else {
 			croak("value_counts: Unsupported reference type.");
 		}
 	}
-	RETVAL = newRV_noinc((SV*)counts_hv);
+	RETVAL = newRV_inc((SV*)counts_hv);
 OUTPUT:
 	RETVAL
 
@@ -32293,8 +32838,12 @@ OUTPUT:
  SV *_ef_arg = (val_sv) ? (val_sv) : &PL_sv_undef; \
  ENTER;                                               \
  SAVETMPS;                                            \
+ /*$_ holds a reference for the call, released by this LEAVE: outside \
+ PERL_CORE, SAVE_DEFSV and DEFSV_set touch no refcount, so the bare inc \
+ that stood here was never undone and leaked every filtered value.*/ \
+ SvREFCNT_inc_simple_void_NN(_ef_arg);                \
+ SAVEFREESV(_ef_arg);                                 \
  SAVE_DEFSV;                                          \
- SvREFCNT_inc(_ef_arg); /* Prevent LEAVE from stealing the refcount */ \
  DEFSV_set(_ef_arg);                                  \
  PUSHMARK(SP);                                        \
  XPUSHs(_ef_arg);                                     \
@@ -32322,11 +32871,14 @@ OUTPUT:
   hv_iterinit(_filter_hv);                                                \
   while ((f_he = hv_iternext(_filter_hv))) {                              \
    SV *f_col = hv_iterkeysv(f_he);                               \
-   SV *f_sub = hv_iterval(_filter_hv, f_he);                     \
+   SV *f_sub = he_val(aTHX_ _filter_hv, f_he);                   \
    bool keep;                                                             \
    body;                                                                  \
    if (!keep) { pass_filter = 0; break; }                                 \
   }                                                                       \
+  /*a tied walk cut short is finished, not restarted (see cfilter)*/      \
+  if (!pass_filter && HV_IS_TIED(_filter_hv))                             \
+   while (hv_iternext(_filter_hv)) {}                                     \
   ITER_KEEP_END;                                                          \
  }                                                                        \
 } while (0)
@@ -32369,6 +32921,7 @@ CODE:
 	if (!SvROK(data_ref)) {
 	croak("First argument to group_by must be a reference (Array of Hashes, Hash of Arrays, or Hash of Hashes)");
 	}
+	data_ref = frame_untied(aTHX_ data_ref, 0);	//a tied frame's rows were FETCHed once per pass
 /*Optional filters are every argument from ST(3) onward. Each must be a
 hashref of { column => sub }; all of them are ANDed together. The
 FOR_EACH_FILTER macro walks the arg stack directly (rather than collecting
@@ -32409,16 +32962,13 @@ loop breaks as soon as any sub returns false. Non-hashref args are skipped.*/
 			SV **row_svp = av_fetch(data_av, i, 0);
 			if (row_svp && SvROK(*row_svp) && SvTYPE(SvRV(*row_svp)) == SVt_PVHV) {
 				HV *row_hv = (HV *)SvRV(*row_svp);
-				HE *group_he = hv_fetch_ent(row_hv, group_key_sv, 0, 0);
-				HE *target_he = hv_fetch_ent(row_hv, target_key_sv, 0, 0);
-				if (group_he) {
-					SV *group_val = HeVAL(group_he);
-					SV *target_val = target_he ? HeVAL(target_he) : NULL;
+				SV *group_val = hv_cell(aTHX_ row_hv, group_key_sv);
+				if (group_val) {
+					SV *target_val = hv_cell(aTHX_ row_hv, target_key_sv);
 					if (target_val && SvOK(target_val)) {
 						bool pass_filter = 1;
 						FOR_EACH_FILTER({
-							HE *val_he = hv_fetch_ent(row_hv, f_col, 0, 0);
-							SV *val_sv = val_he ? HeVAL(val_he) : NULL;
+							SV *val_sv = hv_cell(aTHX_ row_hv, f_col);
 							EVAL_FILTER(f_sub, val_sv, keep);
 						});
 						if (pass_filter) {
@@ -32448,25 +32998,27 @@ loop breaks as soon as any sub returns false. Non-hashref args are skipped.*/
 			ITER_KEEP_BEGIN(data_hv);
 			hv_iterinit(data_hv);
 			while ((ce = hv_iternext(data_hv))) {
-				SV *cv = hv_iterval(data_hv, ce);
+				SV *cv = he_val(aTHX_ data_hv, ce);
 				if (SvROK(cv)) {
 					U32 ct = SvTYPE(SvRV(cv));
 					if (ct == SVt_PVHV) { is_hoa = 0; break; }
 					if (ct == SVt_PVAV) { is_hoa = 1; break; }
 				}
 			}
+			if (ce && HV_IS_TIED(data_hv))	//finish a tied walk cut short (see cfilter)
+				while (hv_iternext(data_hv)) {}
 			ITER_KEEP_END;
 		}
 		if (is_hoa) {
-			HE *group_he  = hv_fetch_ent(data_hv, group_key_sv, 0, 0);
-			HE *target_he = hv_fetch_ent(data_hv, target_key_sv, 0, 0);
-			if (!group_he  || !SvROK(HeVAL(group_he))  || SvTYPE(SvRV(HeVAL(group_he)))  != SVt_PVAV)
+			SV *group_col  = hv_cell(aTHX_ data_hv, group_key_sv);
+			SV *target_col = hv_cell(aTHX_ data_hv, target_key_sv);
+			if (!group_col  || !SvROK(group_col)  || SvTYPE(SvRV(group_col))  != SVt_PVAV)
 				GROUP_BY_NO_COL(group_key_sv);
-			if (!target_he || !SvROK(HeVAL(target_he)) || SvTYPE(SvRV(HeVAL(target_he))) != SVt_PVAV)
+			if (!target_col || !SvROK(target_col) || SvTYPE(SvRV(target_col)) != SVt_PVAV)
 				GROUP_BY_NO_COL(target_key_sv);
 			FOR_EACH_FILTER_COL(fc, { if (!hv_exists_ent(data_hv, fc, 0)) GROUP_BY_NO_COL(fc); });
-			AV *group_av = (AV *)SvRV(HeVAL(group_he));
-			AV *target_av = (AV *)SvRV(HeVAL(target_he));
+			AV *group_av = (AV *)SvRV(group_col);
+			AV *target_av = (AV *)SvRV(target_col);
 			SSize_t g_len = av_len(group_av) + 1;
 			SSize_t t_len = av_len(target_av) + 1;
 			SSize_t len = g_len < t_len ? g_len : t_len;
@@ -32480,9 +33032,9 @@ loop breaks as soon as any sub returns false. Non-hashref args are skipped.*/
 						bool pass_filter = 1;
 						FOR_EACH_FILTER({
 							SV *val_sv = NULL;
-							HE *arr_he = hv_fetch_ent(data_hv, f_col, 0, 0);
-							if (arr_he && SvROK(HeVAL(arr_he)) && SvTYPE(SvRV(HeVAL(arr_he))) == SVt_PVAV) {
-								AV *col_av = (AV *)SvRV(HeVAL(arr_he));
+							SV *arr_sv = hv_cell(aTHX_ data_hv, f_col);
+							if (arr_sv && SvROK(arr_sv) && SvTYPE(SvRV(arr_sv)) == SVt_PVAV) {
+								AV *col_av = (AV *)SvRV(arr_sv);
 								SV **val_svp = av_fetch(col_av, i, 0);
 								if (val_svp) val_sv = *val_svp;
 							}
@@ -32508,7 +33060,7 @@ loop breaks as soon as any sub returns false. Non-hashref args are skipped.*/
 			ITER_KEEP_BEGIN(data_hv);
 			hv_iterinit(data_hv);
 			while ((ve = hv_iternext(data_hv))) {
-				SV *rv = hv_iterval(data_hv, ve);
+				SV *rv = he_val(aTHX_ data_hv, ve);
 				if (SvROK(rv) && SvTYPE(SvRV(rv)) == SVt_PVHV) {
 					HV *ih = (HV *)SvRV(rv);
 					if (hv_exists_ent(ih, group_key_sv, 0))  group_found = 1;
@@ -32524,10 +33076,12 @@ loop breaks as soon as any sub returns false. Non-hashref args are skipped.*/
 				ITER_KEEP_BEGIN(data_hv);
 				hv_iterinit(data_hv);
 				while ((ve2 = hv_iternext(data_hv))) {
-					SV *rv2 = hv_iterval(data_hv, ve2);
+					SV *rv2 = he_val(aTHX_ data_hv, ve2);
 					if (SvROK(rv2) && SvTYPE(SvRV(rv2)) == SVt_PVHV
 						&& hv_exists_ent((HV *)SvRV(rv2), fc, 0)) { found = 1; break; }
 				}
+				if (found && HV_IS_TIED(data_hv))	//finish a tied walk cut short (see cfilter)
+					while (hv_iternext(data_hv)) {}
 				ITER_KEEP_END;
 				if (!found) GROUP_BY_NO_COL(fc);
 			});
@@ -32535,19 +33089,16 @@ loop breaks as soon as any sub returns false. Non-hashref args are skipped.*/
 			ITER_KEEP_BEGIN(data_hv);
 			hv_iterinit(data_hv);
 			while ((row_he = hv_iternext(data_hv))) {
-				SV *row_val = hv_iterval(data_hv, row_he);
+				SV *row_val = he_val(aTHX_ data_hv, row_he);
 				if (SvROK(row_val) && SvTYPE(SvRV(row_val)) == SVt_PVHV) {
 					HV *inner_hv = (HV *)SvRV(row_val);
-					HE *inner_group_he = hv_fetch_ent(inner_hv, group_key_sv, 0, 0);
-					HE *inner_target_he = hv_fetch_ent(inner_hv, target_key_sv, 0, 0);
-					if (inner_group_he) {
-						SV *g_val = HeVAL(inner_group_he);
-						SV *t_val = inner_target_he ? HeVAL(inner_target_he) : NULL;
+					SV *g_val = hv_cell(aTHX_ inner_hv, group_key_sv);
+					if (g_val) {
+						SV *t_val = hv_cell(aTHX_ inner_hv, target_key_sv);
 						if (t_val && SvOK(t_val)) {
 							bool pass_filter = 1;
 							FOR_EACH_FILTER({
-								HE *val_he = hv_fetch_ent(inner_hv, f_col, 0, 0);
-								SV *val_sv = val_he ? HeVAL(val_he) : NULL;
+								SV *val_sv = hv_cell(aTHX_ inner_hv, f_col);
 								EVAL_FILTER(f_sub, val_sv, keep);
 							});
 							if (pass_filter) {
@@ -32606,6 +33157,7 @@ CODE:
 	}
 	if (!x_sv || !SvROK(x_sv))
 	  croak("prcomp: 'x' is a required argument and must be a reference");
+	x_sv = frame_untied(aTHX_ x_sv, 0);	//a tied frame's columns were FETCHed once per pass over it
 	// 3. Detect Data Structure (AoA, AoH, HoA, HoH)
 	bool is_aoa = 0, is_aoh = 0, is_hoa = 0, is_hoh = 0;
 	size_t n_raw = 0, p = 0;
@@ -32647,7 +33199,10 @@ CODE:
 				if (HV_IS_TIED(hv)) while (hv_iternext(hv)) {}	// finish the tied walk: see hv_nkeys()
 			} else if (SvROK(val) && SvTYPE(SvRV(val)) == SVt_PVHV) {
 				is_hoh = 1;
-				n_raw = hv_nkeys(aTHX_ hv);
+				if (HV_IS_TIED(hv)) {// counted by running the walk out: hv_nkeys() would restart it, which leaks before 5.18
+					n_raw = 1;
+					while (hv_iternext(hv)) n_raw++;
+				} else n_raw = (size_t)HvUSEDKEYS(hv);
 			} else croak("prcomp: Hash reference must contain ArrayRefs (HoA) or HashRefs (HoH)");
 		}
 		ITER_KEEP_END;
@@ -33159,13 +33714,13 @@ SV *hoa2aoh(hoa)
 		SV **kv;	// per-column key SVs (mortal)
 		AV **cv;	// per-column array bodies (borrowed)
 		SSize_t n, i;
-		U32 ncols, ci;
+		size_t ncols, ci;
 	CODE:
 	{
 		if (!SvROK(hoa) || SvTYPE(SvRV(hoa)) != SVt_PVHV)
 			croak("hoa2aoh: argument must be a hash-of-arrays (hashref)");
 		in = (HV *)SvRV(hoa);
-		ncols = (U32)HvUSEDKEYS(in);
+		ncols = hv_nkeys(aTHX_ in);	//HvUSEDKEYS is 0 for a tied hash
 		// SAVEFREEPV makes these scratch arrays croak-safe
 		ENTER;
 		SAVETMPS;
@@ -33178,8 +33733,11 @@ SV *hoa2aoh(hoa)
 		ci = 0;
 		ITER_KEEP_BEGIN(in);
 		hv_iterinit(in);
-		while ((he = hv_iternext(in))) {
-			SV *val = HeVAL(he);
+		/*bounded by ncols, the size of kv/cv: a tied hash is walked twice, and
+		nothing obliges its NEXTKEY to give as many keys the second time.  This
+		order, so the hv_iternext() that ends the walk is still made.*/
+		while ((he = hv_iternext(in)) && ci < ncols) {
+			SV *val = he_val(aTHX_ in, he);
 			SSize_t len;
 			if (!val || !SvROK(val) || SvTYPE(SvRV(val)) != SVt_PVAV)
 				croak("hoa2aoh: column '%s' is not an arrayref",
@@ -33262,12 +33820,14 @@ SV *hoa2hoh(hoa, key)
 			croak("hoa2hoh: first argument must be a hash-of-arrays (hashref)");
 		if (!SvOK(key))
 			croak("hoa2hoh: key column name is undefined");
+		hoa = frame_untied(aTHX_ hoa, 0);	//the key column was FETCHed twice
 		in    = (HV *)SvRV(hoa);
-		ncols = (size_t)HvUSEDKEYS(in);
+		ncols = hv_nkeys(aTHX_ in);	//HvUSEDKEYS is 0 for a tied hash
 		//the key column must exist and be an arrayref
 		{
 			HE *khe  = hv_fetch_ent(in, key, 0, 0);
 			SV *kval = khe ? HeVAL(khe) : NULL;
+			if (kval) SvGETMAGIC(kval);	// a tied frame's value is only fetched here
 			if (!khe || !kval || !SvROK(kval) || SvTYPE(SvRV(kval)) != SVt_PVAV)
 				croak("hoa2hoh: key column '%s' is not present as an arrayref",
 					SvPV_nolen(key));
@@ -33285,8 +33845,11 @@ SV *hoa2hoh(hoa, key)
 		ci = 0;
 		ITER_KEEP_BEGIN(in);
 		hv_iterinit(in);
-		while ((he = hv_iternext(in))) {
-			SV *val = HeVAL(he);
+		/*bounded by ncols, the size of kv/cv: a tied hash is walked twice, and
+		nothing obliges its NEXTKEY to give as many keys the second time.  This
+		order, so the hv_iternext() that ends the walk is still made.*/
+		while ((he = hv_iternext(in)) && ci < ncols) {
+			SV *val = he_val(aTHX_ in, he);
 			size_t len;
 			if (!val || !SvROK(val) || SvTYPE(SvRV(val)) != SVt_PVAV)
 				croak("hoa2hoh: column '%s' is not an arrayref",
@@ -33331,6 +33894,7 @@ void vals(data, colname_sv)
 	SV *colname_sv
 PREINIT:
 	bool is_aoh = 0, is_hoh = 0;
+	bool is_empty = 1;	//the hash has no keys: decided by the first walk, as a tied hash's counts read 0
 	const char *colname = NULL;
 	STRLEN collen = 0;
 	AV *src_av = NULL, *out_av = NULL;
@@ -33343,6 +33907,7 @@ PPCODE:
 	colname = SvPV(colname_sv, collen);		//kept for the error message
 	if (!SvROK(data))
 		croak("vals: first argument must be an array-ref (AoH) or hash-ref (HoA, HoH)");
+	data = frame_untied(aTHX_ data, 0);	//the first value was FETCHed for the shape and again for its cells
 // classify $data: AoH (arrayref) vs HoA/HoH (hashref)
 	if (SvTYPE(SvRV(data)) == SVt_PVAV) {
 		is_aoh = 1;
@@ -33354,11 +33919,14 @@ PPCODE:
 		hv_iterinit(src_hv);
 		HE *he = hv_iternext(src_hv);
 		if (he) {
-			SV *val = HeVAL(he);
+			is_empty = 0;
+			SV *val = he_val(aTHX_ src_hv, he);	//HeVAL() is never filled in for a tied hash
 			if (val && SvROK(val) && SvTYPE(SvRV(val)) == SVt_PVHV)
 				is_hoh = 1;			//a hash whose values are hashes => HoH
 			//else leave is_aoh/is_hoh = 0 => HoA path below
 		}
+		if (he && HV_IS_TIED(src_hv))	//finish a tied walk rather than restart it (see cfilter)
+			while (hv_iternext(src_hv)) {}
 		ITER_KEEP_END;
 	} else {// empty hash: is_aoh = is_hoh = 0 => HoA path yields []
 		croak("vals: first argument must be an array-ref (AoH) or hash-ref (HoA, HoH)");
@@ -33371,6 +33939,7 @@ PPCODE:
 		for (SSize_t i = 0; i < n; i++) {
 			SV **rp  = av_fetch(src_av, i, 0);
 			SV *row = (rp && *rp) ? *rp : &PL_sv_undef;
+			SvGETMAGIC(row);	//a tied frame's row is a placeholder until fetched
 // a row must be a hash-ref, else fail here with the index rather than returning undef and letting the caller die vaguely
 			if (!SvOK(row))
 				croak("vals: AoH row %" IVdf " is undef (expected a hash-ref)", (IV)i);
@@ -33385,39 +33954,31 @@ PPCODE:
 		}
 	} else if (is_hoh) { // HoH
 		ITER_KEEP_BEGIN(src_hv);
-		n = hv_iterinit(src_hv);
+		n = (SSize_t)hv_nkeys(aTHX_ src_hv);
+		hv_iterinit(src_hv);
 		if (n > 0) {
 			av_extend(out_av, n - 1);
 			ENTER;
-			SV **keys; SV **rows;
-			Newx(keys, n, SV *);  SAVEFREEPV(keys);
-			Newx(rows, n, SV *);  SAVEFREEPV(rows);
+			vk_pair *kr;
+			Newx(kr, n, vk_pair);  SAVEFREEPV(kr);
 			SSize_t cnt = 0;
 			HE *he;
-			while ((he = hv_iternext(src_hv)) && cnt < n) {
-				keys[cnt] = hv_iterkeysv(he);	//mortal copy of the key
-				rows[cnt] = HeVAL(he);
+			while ((he = hv_iternext(src_hv))) {// bounded by the buffers, but run to the end for a tied walk
+				if (cnt == n) continue;
+				kr[cnt].k = hv_iterkeysv(he);	//mortal copy of the key
+				kr[cnt].r = he_val(aTHX_ src_hv, he);	//a tied row's is a mortal, alive until the result is built
 				cnt++;
 			}
-	/*stable insertion sort by key (sv_cmp = Perl string order, UTF-8 aware),
-	carrying the matching row value alongside each key*/
-			for (SSize_t i = 1; i < cnt; i++) {
-				SV *k = keys[i], *r = rows[i];
-				SSize_t j = i - 1;
-				while (j >= 0 && sv_cmp(keys[j], k) > 0) {
-					keys[j + 1] = keys[j];
-					rows[j + 1] = rows[j];
-					j--;
-				}
-				keys[j + 1] = k;
-				rows[j + 1] = r;
-			}
+	/*rows in key order (sv_cmp = Perl string order, UTF-8 aware). This was an
+	insertion sort, quadratic in the row count: 0.70 s at 20000 rows, 5.25 s at
+	50000. The keys are a hash's, so distinct, and stability never mattered.*/
+			if (cnt > 1) qsort(kr, (size_t)cnt, sizeof(vk_pair), vk_pair_cmp);
 			for (SSize_t i = 0; i < cnt; i++) {
-				SV *row_sv = rows[i];
+				SV *row_sv = kr[i].r;
 				// strict: name the offending key instead of silently emitting undef
 				if (!row_sv || !SvROK(row_sv) || SvTYPE(SvRV(row_sv)) != SVt_PVHV)
 					croak("vals: HoH value for key '%s' is not a hash-ref",
-						SvPV_nolen(keys[i]));
+						SvPV_nolen(kr[i].k));
 				HE *ent = hv_fetch_ent((HV *)SvRV(row_sv), colname_sv, 0, 0);
 				SV *cell = (ent && HeVAL(ent)) ? HeVAL(ent) : &PL_sv_undef;
 				av_push(out_av, newSVsv(cell));
@@ -33427,14 +33988,23 @@ PPCODE:
 		ITER_KEEP_END;
 	} else { // HoA
 		ITER_KEEP_BEGIN(src_hv);
-		if (hv_iterinit(src_hv) > 0) { //non-empty hash
+		if (!is_empty) {
 			HE *colent = hv_fetch_ent(src_hv, colname_sv, 0, 0);
 			SV *cv = colent ? HeVAL(colent) : NULL;
+			if (cv) SvGETMAGIC(cv);	//a tied frame's column is a placeholder until fetched
 			if (!cv || !SvROK(cv) || SvTYPE(SvRV(cv)) != SVt_PVAV)
 				croak("vals: column '%s' not found or is not an array-ref", colname);
 			AV *col_av = (AV *)SvRV(cv);
 			n = av_len(col_av) + 1;
-			if (n > 0) {
+			if (n > 0 && SvRMAGICAL(col_av)) {
+	/*a tied column keeps nothing in AvARRAY: each cell is fetched, and
+	newSVsv() runs its FETCH, once*/
+				av_extend(out_av, n - 1);
+				for (SSize_t i = 0; i < n; i++) {
+					SV **cp = av_fetch(col_av, i, 0);
+					av_push(out_av, newSVsv(cp ? *cp : &PL_sv_undef));
+				}
+			} else if (n > 0) {
 	/*the length is known, so the result is sized once and filled
 	straight through AvARRAY rather than pushed a cell at a time*/
 				av_extend(out_av, n - 1);
@@ -33460,6 +34030,7 @@ void avals(data, colname_sv)
 	SV *colname_sv
 PREINIT:
 	bool is_aoh = 0, is_hoh = 0;
+	bool is_empty = 1;	//the hash has no keys: decided by the first walk, as a tied hash's counts read 0
 	const char *colname = NULL;
 	STRLEN collen = 0;
 	AV *src_av = NULL, *out_av = NULL;;
@@ -33480,6 +34051,7 @@ PPCODE:
 	colname = SvPV(colname_sv, collen);		//kept for the error message
 	if (!SvROK(data))
 		croak("avals: first argument must be an array-ref (AoH) or hash-ref (HoA, HoH)");
+	data = frame_untied(aTHX_ data, 0);	//the first value was FETCHed for the shape and again for its cells
 // classify $data: AoH (arrayref) vs HoA/HoH (hashref)
 	if (SvTYPE(SvRV(data)) == SVt_PVAV) {
 		is_aoh = 1;
@@ -33491,12 +34063,15 @@ PPCODE:
 		hv_iterinit(src_hv);
 		HE *he = hv_iternext(src_hv);
 		if (he) {
-			SV *val = HeVAL(he);
+			is_empty = 0;
+			SV *val = he_val(aTHX_ src_hv, he);	//HeVAL() is never filled in for a tied hash
 			if (val && SvROK(val) && SvTYPE(SvRV(val)) == SVt_PVHV)
 				is_hoh = 1;			//a hash whose values are hashes => HoH
 
 			//else leave is_aoh/is_hoh FALSE => HoA path below
 		}
+		if (he && HV_IS_TIED(src_hv))	//finish a tied walk rather than restart it (see cfilter)
+			while (hv_iternext(src_hv)) {}
 		ITER_KEEP_END;
 		// empty hash: is_aoh = is_hoh = FALSE => HoA path yields an empty list
 	} else {
@@ -33510,6 +34085,7 @@ PPCODE:
 		for (SSize_t i = 0; i < n; i++) {
 			SV **rp  = av_fetch(src_av, i, 0);
 			SV *row = (rp && *rp) ? *rp : &PL_sv_undef;
+			SvGETMAGIC(row);	//a tied frame's row is a placeholder until fetched
 // a row must be a hash-ref, else fail here with the index rather than returning undef and letting the caller die vaguely
 			if (!SvOK(row))
 				croak("avals: AoH row %" IVdf " is undef (expected a hash-ref)", (IV)i);
@@ -33524,39 +34100,31 @@ PPCODE:
 		}
 	} else if (is_hoh) { // HoH
 		ITER_KEEP_BEGIN(src_hv);
-		n = hv_iterinit(src_hv);
+		n = (SSize_t)hv_nkeys(aTHX_ src_hv);
+		hv_iterinit(src_hv);
 		if (n > 0) {
 			av_extend(out_av, n - 1);
 			ENTER;
-			SV **restrict keys; SV **restrict rows;
-			Newx(keys, n, SV *);  SAVEFREEPV(keys);
-			Newx(rows, n, SV *);  SAVEFREEPV(rows);
+			vk_pair *kr;
+			Newx(kr, n, vk_pair);  SAVEFREEPV(kr);
 			SSize_t cnt = 0;
 			HE *he;
-			while ((he = hv_iternext(src_hv)) && cnt < n) {
-				keys[cnt] = hv_iterkeysv(he);	//mortal copy of the key
-				rows[cnt] = HeVAL(he);
+			while ((he = hv_iternext(src_hv))) {// bounded by the buffers, but run to the end for a tied walk
+				if (cnt == n) continue;
+				kr[cnt].k = hv_iterkeysv(he);	//mortal copy of the key
+				kr[cnt].r = he_val(aTHX_ src_hv, he);	//a tied row's is a mortal, alive until the result is built
 				cnt++;
 			}
-	/*stable insertion sort by key (sv_cmp = Perl string order, UTF-8 aware),
-	carrying the matching row value alongside each key*/
-			for (SSize_t i = 1; i < cnt; i++) {
-				SV *k = keys[i], *r = rows[i];
-				SSize_t j = i - 1;
-				while (j >= 0 && sv_cmp(keys[j], k) > 0) {
-					keys[j + 1] = keys[j];
-					rows[j + 1] = rows[j];
-					j--;
-				}
-				keys[j + 1] = k;
-				rows[j + 1] = r;
-			}
+	/*rows in key order (sv_cmp = Perl string order, UTF-8 aware). This was an
+	insertion sort, quadratic in the row count: 0.70 s at 20000 rows, 5.25 s at
+	50000. The keys are a hash's, so distinct, and stability never mattered.*/
+			if (cnt > 1) qsort(kr, (size_t)cnt, sizeof(vk_pair), vk_pair_cmp);
 			for (SSize_t i = 0; i < cnt; i++) {
-				SV *row_sv = rows[i];
+				SV *row_sv = kr[i].r;
 	// strict: name the offending key instead of silently emitting undef
 				if (!row_sv || !SvROK(row_sv) || SvTYPE(SvRV(row_sv)) != SVt_PVHV)
 					croak("avals: HoH value for key '%s' is not a hash-ref",
-						SvPV_nolen(keys[i]));
+						SvPV_nolen(kr[i].k));
 				HE *ent = hv_fetch_ent((HV *)SvRV(row_sv), colname_sv, 0, 0);
 				SV *cell = (ent && HeVAL(ent)) ? HeVAL(ent) : &PL_sv_undef;
 				av_push(out_av, newSVsv(cell));
@@ -33566,14 +34134,23 @@ PPCODE:
 		ITER_KEEP_END;
 	} else { // HoA
 		ITER_KEEP_BEGIN(src_hv);
-		if (hv_iterinit(src_hv) > 0) {	//non-empty hash
+		if (!is_empty) {
 			HE *colent = hv_fetch_ent(src_hv, colname_sv, 0, 0);
 			SV *cv = colent ? HeVAL(colent) : NULL;
+			if (cv) SvGETMAGIC(cv);	//a tied frame's column is a placeholder until fetched
 			if (!cv || !SvROK(cv) || SvTYPE(SvRV(cv)) != SVt_PVAV)
 				croak("avals: column '%s' not found or is not an array-ref", colname);
 			AV *col_av = (AV *)SvRV(cv);
 			n = av_len(col_av) + 1;
-			if (n > 0) {
+			if (n > 0 && SvRMAGICAL(col_av)) {
+	/*a tied column keeps nothing in AvARRAY: each cell is fetched, and
+	newSVsv() runs its FETCH, once*/
+				av_extend(out_av, n - 1);
+				for (SSize_t i = 0; i < n; i++) {
+					SV **cp = av_fetch(col_av, i, 0);
+					av_push(out_av, newSVsv(cp ? *cp : &PL_sv_undef));
+				}
+			} else if (n > 0) {
 	/*the length is known, so the result is sized once and filled
 	straight through AvARRAY rather than pushed a cell at a time*/
 				av_extend(out_av, n - 1);

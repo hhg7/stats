@@ -62,11 +62,12 @@
 #     the shape came from the first row hv_iternext() reached and every other
 #     value was dereferenced as an HV, so the crash moved with hash order.
 #
-# 12. csort() and prcomp() segfaulted on a restricted (Hash::Util::lock_keys)
+# 12. csort(), prcomp() and sample() segfaulted on a restricted (Hash::Util::lock_keys)
 #     hash with a deleted key. Both sized their key buffers by hv_iterinit()'s
 #     count, which includes the placeholder a delete leaves behind, so the
 #     walk filled one slot fewer than the loops after it read -- a sort over
-#     an uninitialised pointer.
+#     an uninitialised pointer. sample() shuffled over the same count and drew
+#     unset slots.
 #
 # Provenance for every R behaviour quoted here: R 4.6.1 (2026-06-24).
 #   * cor.test(c(1,1,1,1), c(1,2,3,4), method = m) for m in
@@ -426,6 +427,10 @@ sub child_result {
 	              . q{ lock_keys(%h, qw(a b c d)); delete $h{c}; my $p = prcomp(\%h);}
 	              . q{ die "wrong columns" unless join(",", @{ $p->{varnames} }) eq "a,b"}), 'ok',
 	   'prcomp: a locked HoA with a deleted key uses the columns that are there');
+	is(child_result(q{use Hash::Util "lock_keys"; my %h = (a => 1, b => 2, c => 3, d => 4);}
+	              . q{ lock_keys(%h, qw(a b c d e f)); delete $h{c};}
+	              . q{ for (1 .. 50) { my $r = sample(\%h, 3); die "wrong keys" if keys %$r != 3 || exists $r->{c} }}), 'ok',
+	   'sample: a locked hash with a deleted key draws only keys that are there');
 }
 
 done_testing();

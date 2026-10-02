@@ -34,10 +34,21 @@
 # and t/drop_duplicates.t already do; what has to be pinned here is that the two
 # routes agree.
 #
-# Not covered, because it is not supported: a tied *frame* hash (the outer hash
-# of a HoA or HoH).  All three read its shape and its columns through
-# HeVAL(hv_iternext(...)), which for a tied hash is not the value.  A tied
-# column, a tied row array and a tied row hash are what this file is about.
+# 0.3213 added four more, each of which read a tied array's AvARRAY() or
+# tested a fetched row before its get magic had run:
+#
+#   * sample() on a tied array segfaulted: AvARRAY() is a null pointer there.
+#   * vals() and avals() on a HoA with a tied column returned one undef per
+#     row, and on a tied AoH croaked "AoH row 0 is undef".
+#   * col2col() on a tied AoH croaked "no usable columns found".
+#   * chisq_test() and fisher_test() read an AoA's tied row, and chisq_test()
+#     a tied vector, before its get magic had run, and croaked "cell [0][0] is
+#     undef" (fisher_test: "array cell is undef").
+#
+# Not covered here: a tied *frame* hash (the outer hash of a HoA or HoH), which
+# t/tied.hashes.t covers, and how many FETCHes any of this costs, which
+# t/tied.fetch.once.t does.  A tied column, a tied row array and a tied row hash
+# are what this file is about.
 #
 # Tie::StdArray and Tie::StdHash are core (Tie::Array, Tie::Hash) and have been
 # since well before 5.10, so nothing here is skippable.
@@ -46,7 +57,7 @@ require 5.010;
 use strict;
 use warnings FATAL => 'all';
 use Test::More;
-use Stats::LikeR qw(merge filter col drop_duplicates);
+use Stats::LikeR qw(merge filter col drop_duplicates sample vals avals col2col chisq_test fisher_test);
 
 # Imported at compile time so the (&;$) prototype is in scope for the block
 # call at the end, as t/merge.t does.  Absent module -> that one test is
@@ -339,6 +350,58 @@ for my $how (qw(inner left right outer)) {
 	}
 }
 
+# sample(): the same draws from a tied array as from a plain one, given the
+# same seed -- both shuffle the same index array with the same Drand01() calls
+{
+	my @pop = ( 10 .. 29 );
+	my $tp  = ta( \@pop );
+	for my $n ( 0, 1, 7, 20 ) {
+		srand(20261002);
+		my $want = sample( [@pop], $n );
+		srand(20261002);
+		my $got = sample( $tp, $n );
+		is_deeply $got, $want, "sample: $n from a tied array, as from a plain one";
+	}
+	my $r = sample( $tp, 20 );
+	is_deeply [ sort { $a <=> $b } @$r ], [@pop], 'sample: a full draw from a tied array is a permutation of it';
+	ok !tied( @$r ), 'sample: the result is a plain array, not tied';
+	eval { sample( $tp, 21 ) };
+	like $@, qr/cannot take a sample of 21 from a population of 20/, 'sample: a tied array still refuses more than it holds';
+}
+
+# vals(), avals(): a tied column of a HoA, and a tied AoH frame
+{
+	is_deeply vals( $tied, 'x' ), vals( $plain, 'x' ), 'vals: a tied HoA column';
+	is_deeply [ avals( $tied, 'x' ) ], [ avals( $plain, 'x' ) ], 'avals: a tied HoA column';
+	is_deeply vals( $tied, 'cat' ), [@cat], 'vals: a tied column with an undef cell';
+	my @aoh = map { +{ id => $id[$_], x => $x[$_] } } 0 .. $#id;
+	my $taoh = ta( \@aoh );
+	is_deeply vals( $taoh, 'x' ), [@x], 'vals: a tied AoH frame';
+	is_deeply [ avals( $taoh, 'x' ) ], [@x], 'avals: a tied AoH frame';
+	is_deeply vals( [ map { th($_) } @aoh ], 'x' ), [@x], 'vals: an AoH of tied rows';
+	my $cp = vals( $tied, 'x' );
+	$cp->[0] = 'touched';
+	is $tied->{x}[0], $x[0], 'vals: the result is a copy of a tied column, not an alias to it';
+}
+
+# col2col(): a tied AoH frame, a tied AoH frame of tied rows, and tied columns
+{
+	my @aoh = map { +{ id => $id[$_], x => $x[$_] } } 0 .. $#id;
+	my $want = col2col( \@aoh, 'cor', [ 'id', 'x' ] );
+	is_deeply col2col( ta( \@aoh ), 'cor', [ 'id', 'x' ] ), $want, 'col2col: a tied AoH frame';
+	is_deeply col2col( ta( [ map { th($_) } @aoh ] ), 'cor', [ 'id', 'x' ] ), $want, 'col2col: a tied AoH frame of tied rows';
+	is_deeply col2col( { id => ta( \@id ), x => ta( \@x ) }, 'cor', [ 'id', 'x' ] ), $want, 'col2col: tied HoA columns';
+}
+
+# chisq_test(), fisher_test(): an AoA of tied rows, and a tied vector
+{
+	my @t = ( [ 10, 20 ], [ 30, 15 ] );
+	my $tt = [ map { ta($_) } @t ];
+	is_deeply chisq_test($tt), chisq_test( [@t] ), 'chisq_test: an AoA of tied rows';
+	is_deeply fisher_test($tt), fisher_test( [@t] ), 'fisher_test: an AoA of tied rows';
+	is_deeply chisq_test( ta( [ 10, 20, 30 ] ) ), chisq_test( [ 10, 20, 30 ] ), 'chisq_test: a tied vector';
+}
+
 # The input must come back untouched: FETCH is allowed, STORE is not.
 {
 	is_deeply [ @{ $tied->{id} } ],  [@id],  'tied id column unchanged by the calls above';
@@ -360,6 +423,11 @@ SKIP: {
 		filter($tied, sub { $_->{x} > 0 });
 		merge($tied, $rtied, how => $_, on => 'id') for qw(inner left right outer);
 		merge($tied, $rtied, how => 'cross');
+		sample(ta([1 .. 5]), 3);
+		vals($tied, 'x');
+		avals($tied, 'x');
+		vals(ta([ { x => 1 }, { x => 2 } ]), 'x');
+		col2col(ta([ { a => 1, b => 2 }, { a => 2, b => 1 }, { a => 3, b => 5 } ]), 'cor', [ 'a', 'b' ]);
 	} 'no leaks over the tied paths';
 }
 

@@ -499,10 +499,11 @@ Revision history for Stats-LikeR
    by its buffers, which a tied hash (reporting no keys) would have
    overrun.
 
- - csort() and prcomp() segfaulted on a locked hash (Hash::Util) with a
-   deleted key. Both sized their key buffers by a count that includes the
-   placeholder a delete leaves behind, so the walk filled one slot fewer
-   than the loops after it read. Both now use the count the walk saw.
+ - csort(), prcomp() and sample() segfaulted on a locked hash
+   (Hash::Util) with a deleted key. Each sized its work by a count that
+   includes the placeholder a delete leaves behind, so the walk filled one
+   slot fewer than the loops after it read. Each now uses the count the
+   walk saw.
 
  [csort(): HoH input is no longer quadratic]
 
@@ -521,6 +522,89 @@ Revision history for Stats-LikeR
    prcomp freed by hand only on its own croaks. All four now leave their
    tables to perl -- mortal, or on the save stack -- so nothing leaks
    however the call ends. t/croak.leaks.t covers each.
+
+ [Tied hashes]
+
+ - A tied hash -- the frame itself, a row of a HoH or AoH, or another hash
+   argument -- keeps nothing where the XS looked: an iterated entry has no
+   value until it is fetched, a fetched value is a placeholder until its
+   get magic runs, two fetches share one entry, and every key count reads
+   0. csort, value_counts, kruskal_test, merge, agg and drop_duplicates
+   segfaulted on one; lm, glm, predict, aov, oneway_test, p_adjust,
+   chisq_test, fisher_test, sample, group_by, col2col, hoa2aoh, hoa2hoh,
+   hoh2hoa and the HoH paths of select_cols, drop_cols and rename_cols
+   refused it as empty or malformed; vals and avals returned an empty list
+   without a word, and ljoin and add_data joined nothing from it or into
+   it. Each now gives the answer it gives for the same data untied, which
+   t/tied.hashes.t checks for every one of them.
+
+ - merge() takes a HoH frame's rows in row-name order rather than hash
+   order, so the same merge gives the same rows in the same order on every
+   run, and the same as a tied copy of the frame. Hash order differs
+   between runs, so nothing could have depended on it; on 200000 rows the
+   sorted merge also ran faster (0.18 s against 0.36 s).
+
+ - group_by()'s filter left an extra reference on every filtered value,
+   plain data included, so those values could never be freed.
+   value_counts() leaked its result when reading a value died.
+
+ - chisq_test() and fisher_test() reported a key missing from a tied row,
+   or from a tied 'p', as an undef cell ("cell {r2}{b} is undef"), because
+   a tied hash's fetch hands back an entry whether or not the key is
+   there. They now ask first and say the key is missing, as they do for a
+   plain hash.
+
+ - A tied value was FETCHed more than once per call by most of the frame
+   functions: every pass over a tied frame (the shape probe, a key count, a
+   key union, the read itself) fetched each row or column again, and a
+   tied column read once to match or test on and again to copy out had
+   every cell fetched twice. lm() and glm() fetched a tied frame's column
+   once per row of the fit; select_cols, drop_cols, rename_cols, hoh2hoa
+   and group_by fetched each row of a tied HoH three times. The answers
+   were right, but a tie whose FETCH does real work paid for each one. A
+   function that reads a tied frame now takes a plain copy of it first, one
+   FETCH per value, and works on that; where it builds its result afresh it
+   copies the frame's tied rows or columns too. Nothing is copied for a
+   frame with nothing tied in it. rename_cols() in void context still
+   renames the tied frame itself. t/tied.fetch.once.t counts the FETCHes of
+   50 calls.
+
+ [Tied arrays]
+
+ - sample() on a tied array segfaulted: it read AvARRAY(), which a tied
+   array leaves empty. It now fetches each drawn element, and with the
+   same seed draws what it draws from a plain copy of the array.
+
+ - vals() and avals() returned one undef per row for a tied HoA column,
+   and croaked "AoH row 0 is undef" on a tied AoH. col2col() croaked "no
+   usable columns found" on a tied AoH. chisq_test() and fisher_test()
+   croaked "cell [0][0] is undef" on an AoA whose rows are tied, and
+   chisq_test() on a tied vector. Each read a tied array's storage
+   directly, or tested a fetched value before its get magic had run; each
+   now gives the untied answer, which t/tied.frames.t checks.
+
+ [vals(), avals(): HoH input is no longer quadratic]
+
+ - The row keys of a HoH were put in order with an insertion sort: 5.25 s
+   for 50000 rows. It is now qsort() with the same sv_cmp() order, 0.05 s
+   for vals and avals together, and the output is unchanged.
+
+ [prcomp(): column names and tied input]
+
+ - Column names were copied as C strings and looked up again by their
+   strlen(), which lost a UTF-8 name's flag and cut a name at an embedded
+   NUL. A HoA with a column named "\x{263a}" croaked "cannot be looked up
+   by name", an AoH or HoH with one read every cell as missing and croaked
+   "0 valid observations", and varnames came back without the flag. The
+   names are now the keys themselves, as SVs, and come back intact; a name
+   holding a NUL, which used to croak, now simply works. Their order is
+   sv_cmp(), which get_all_columns() already uses, and is unchanged for
+   ASCII names (checked against 0.3212 to 15 digits).
+
+ - A tied frame hash read as empty, and a tied row, row hash or column
+   cell was tested before its value was fetched, so it read as undef and
+   the row was dropped without a word: an AoA with one tied row of four
+   was decomposed on three. Every shape now gives the untied answer.
 
  [filter(): tied frames]
 

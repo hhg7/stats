@@ -128,7 +128,34 @@ same( 'chisq_test',            sub { chisq_test( $_[0] ) }, \%counts, [ 'tied', 
 same( 'fisher_test',           sub { fisher_test( $_[0] ) }, \%ft, [ 'tied', tied_copy( \%ft ) ], [ 'tied, tied rows', tied_deep( \%ft ) ] );
 same( 'sample (count)',        sub { scalar keys %{ sample( $_[0], 2 ) } }, \%groups, [ 'tied', tied_copy( \%groups ) ] );
 same( 'group_by HoA',          sub { group_by( $_[0], 'x', 'g' ) }, \%hoa, @A );
-same( 'group_by HoH',          sub { group_by( $_[0], 'x', 'g' ) }, \%hoh, @H );
+# a HoH has no row order, so group_by gives each group's values in hash order
+# (it differs between runs on plain data too): compare them sorted
+same( 'group_by HoH',          sub { my $r = group_by( $_[0], 'x', 'g' ); +{ map { ( $_ => [ sort { $a <=> $b } @{ $r->{$_} } ] ) } keys %$r } }, \%hoh, @H );
+
+# a key a row does not have is reported as missing, not as an undef cell: a
+# tied row's fetch hands back an entry whether or not the key is there, so up
+# to 0.3212 both said "is undef" for a tied row (0.3213 asks EXISTS first)
+{
+	my %short = ( 'r1' => { 'a' => 10, 'b' => 20 }, 'r2' => { 'a' => 30, 'c' => 5 } );
+	my %undef = ( 'r1' => { 'a' => 10, 'b' => 20 }, 'r2' => { 'a' => 30, 'b' => undef } );
+	for my $t ( [ 'plain', \%short, \%undef ], [ 'tied', tied_copy( \%short ), tied_copy( \%undef ) ],
+	            [ 'tied rows', tied_deep( \%short ), tied_deep( \%undef ) ] ) {
+		my ( $label, $s, $u ) = @$t;
+		eval { chisq_test($s) };
+		like( $@, qr/^chisq_test: row 'r2' has no column 'b'/, "chisq_test: a missing key is missing ($label)" );
+		eval { chisq_test($u) };
+		like( $@, qr/^chisq_test: cell \{r2\}\{b\} is undef/, "chisq_test: an undef cell is undef ($label)" );
+		eval { fisher_test($s) };
+		like( $@, qr/^Row 'r2' is missing column key 'b'/, "fisher_test: a missing key is missing ($label)" );
+		eval { fisher_test($u) };
+		like( $@, qr/^fisher_test: hash cell is undef/, "fisher_test: an undef cell is undef ($label)" );
+	}
+	my %p = ( 'a' => 0.5, 'c' => 0.5 );
+	for my $t ( [ 'plain', \%p ], [ 'tied', tied_copy( \%p ) ] ) {
+		eval { chisq_test( { 'a' => 10, 'b' => 20 }, 'p' => $t->[1] ) };
+		like( $@, qr/^chisq_test: 'p' has no entry for 'b'/, "chisq_test: a key 'p' does not have is missing ($t->[0])" );
+	}
+}
 
 # already right; pinned so they stay so
 same( 'filter HoA',            sub { filter( $_[0], col('x') > 2 ) }, \%hoa, @A );
@@ -138,6 +165,25 @@ same( 'transpose',             sub { transpose( $_[0] ) }, \%hoh, @H );
 same( 'vals HoA',              sub { vals( $_[0], 'x' ) }, \%hoa, @A );
 same( 'vals HoH',              sub { [ sort { $a <=> $b } @{ vals( $_[0], 'x' ) } ] }, \%hoh, @H );
 same( 'select_cols HoA',       sub { select_cols( $_[0], 'x' ) }, \%hoa, @A );
+same( 'select_cols HoH',       sub { select_cols( $_[0], 'x' ) }, \%hoh, @H );
+same( 'drop_cols HoH',         sub { drop_cols( $_[0], 'x' ) }, \%hoh, @H );
+same( 'rename_cols HoH',       sub { rename_cols( $_[0], 'x' => 'xx' ) }, \%hoh, @H );
+same( 'avals HoA',             sub { [ avals( $_[0], 'x' ) ] }, \%hoa, @A );
+same( 'avals HoH',             sub { [ sort { $a <=> $b } avals( $_[0], 'x' ) ] }, \%hoh, @H );
+# ljoin and add_data write into their first argument: each call gets a fresh
+# copy of it, and what is compared is that copy afterwards
+{
+	my %more = ( 'r1' => { 'new' => 1 }, 'r2' => { 'new' => 2, 'x' => 9 } );
+	my $fresh = sub { +{ map { ( $_ => { %{ $hoh{$_} } } ) } keys %hoh } };
+	same( 'ljoin (tied second table)', sub { my $h = $fresh->(); ljoin( $h, $_[0] ); $h }, \%more,
+		[ 'tied', tied_copy( \%more ) ], [ 'tied, tied rows', tied_deep( \%more ) ] );
+	same( 'add_data (tied second table)', sub { my $h = $fresh->(); add_data( $h, $_[0] ); $h }, \%more,
+		[ 'tied', tied_copy( \%more ) ], [ 'tied, tied rows', tied_deep( \%more ) ] );
+	same( 'ljoin (tied first table)', sub { my $h = $_[0]; ljoin( $h, \%more ); +{ map { ( $_ => { %{ $h->{$_} } } ) } keys %$h } },
+		$fresh->(), [ 'tied', tied_copy( $fresh->() ) ], [ 'tied, tied rows', tied_deep( $fresh->() ) ] );
+	same( 'add_data (tied first table)', sub { my $h = $_[0]; add_data( $h, \%more ); +{ map { ( $_ => { %{ $h->{$_} } } ) } keys %$h } },
+		$fresh->(), [ 'tied', tied_copy( $fresh->() ) ], [ 'tied, tied rows', tied_deep( $fresh->() ) ] );
+}
 {
 	my $n = 0;
 	my $wt = sub {
