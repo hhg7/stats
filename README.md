@@ -907,13 +907,14 @@ Add new columns to a data frame, computed from the columns already there — or 
 It changes `$df` in place and also returns it (handy for chaining).
 
 ### Coderef values
-A coderef is classified by what it returns in list context:
+A coderef is called in list context, on every row, and is classified by what it returns for the first row:
 
 - **One scalar → per-row.** The sub is called once per row and that scalar is the cell.
   - `$_` (and `$_[0]`) is the current row as a hashref, so you read other columns with `$_->{colname}`.
   - `$_[1]` is the row's index (0-based).
   - `$_[2]` is the row key — **HoH only**.
   - A single arrayref return is stored *as the cell*, so `sub { [split /,/, $_->{tags}] }` gives an arrayref-valued column.
+  - List context holds for every row, not just the first: `sub { $_->{id} =~ /(\d+)/ }` stores the captured digits in each row, and a match that fails returns the empty list, so its cell is `undef`. A later row that returns more than one value dies.
 - **A list of more than one value → whole column.** The list becomes the entire column, distributed positionally. This is the natural fit for column functions like `rank`:
 
         assign($df, 'ΔG rank' => sub { rank( vals($df, 'dG_kcal_mol') ) });
@@ -932,7 +933,7 @@ A plain coderef stores its **return value**, so an in-place transform of an exis
     # awkward: copy to $v, edit $v, return $v
     assign($df, 'Res.' => sub { (my $v = $_->{'Res.'}) =~ s/^[A-Z]://; $v });
 
-`map_cell { ... }` removes the ceremony. Inside the block, **`$_` is the named column's current cell** (not the whole row), the block's return value is **ignored**, and the modified `$_` is stored back:
+`map_cell { ... }` removes the ceremony. Inside the block, **`$_` is the named column's current cell** (not the whole row), the block's return value is **ignored**, and the modified `$_` is stored back -- for a HoA, `$_` aliases the cell itself, so the edit is made where the cell lies:
 
     use Stats::LikeR;   # exports map_cell alongside assign
 
@@ -951,6 +952,8 @@ Notes:
 ### Ordering and length
 - **AoH** distributes by array order; **HoH** by **sorted key order** — so any list you compute or hand in must be in `sort keys %$df` order.
 - Whole-column and arrayref values must have exactly one entry per row; a length mismatch dies.
+- A **HoA** may also hold plain scalar (or `undef`) entries; each row view carries them through unchanged. An empty hash is an empty HoA, and its first arrayref value sets the row count, so `assign({}, x => [1, 2, 3], y => sub { $_->{x} * 2 })` builds a frame from nothing.
+- Rows, value types, arrayref lengths and `map_cell` targets are all checked before anything is written, so a call that dies on one of those leaves `$df` as it found it. A coderef that dies part-way through does not roll back the rows already written.
 
 ### Example
 
@@ -972,6 +975,11 @@ Notes:
         );
 
 - **Same recipe, all shapes.** The same per-row `sub { $_->{weight} / ... }` works for AoH, HoA, and HoH; you always read the row through `$_`.
+- **`$_` is the real row, in every shape.** For an AoH or HoH it is the row hash itself. For a HoA it is a view: one hash for the whole call, whose values *are* the frame's cells for the current row, not copies of them. Either way, a write through `$_->{col}` changes the frame:
+
+        assign($hoa, z => sub { $_->{x} *= 10; $_->{x} + 1 });   # x is now 10 times bigger too
+
+  For a HoA, that one view is re-pointed at each row in turn. A key the block adds to it is gone on the next row and never reaches the frame; a key it deletes comes back, and the column stays. Writing to a cell past the end of a short column is dropped rather than growing the column. A block that *keeps* `$_` (pushes it somewhere, or returns it) keeps that one view, which shows whichever row was visited last. A tied HoA, or one with a tied column, is the exception: its view is a fresh hash of copies on every row.
 - **It modifies your data frame.** If you need to keep the original, pass a copy: `assign(clone($df), ...)`.
 - Reusing a column name **overwrites** that column.
 

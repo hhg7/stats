@@ -1386,7 +1386,7 @@ It changes C<$df> in place and also returns it (handy for chaining).
 
 =head3 Coderef values
 
-A coderef is classified by what it returns in list context:
+A coderef is called in list context, on every row, and is classified by what it returns for the first row:
 
 =over
 
@@ -1401,6 +1401,8 @@ A coderef is classified by what it returns in list context:
 =item * C<$_[2]> is the row key — B<HoH only>.
 
 =item * A single arrayref return is stored I<as the cell>, so C<< sub { [split /,/, $_-E<gt>{tags}] } >> gives an arrayref-valued column.
+
+=item * List context holds for every row, not just the first: C<< sub { $_-E<gt>{id} =~ /(\d+)/ } >> stores the captured digits in each row, and a match that fails returns the empty list, so its cell is C<undef>. A later row that returns more than one value dies.
 
 =back
 
@@ -1426,7 +1428,7 @@ A plain coderef stores its B<return value>, so an in-place transform of an exist
  # awkward: copy to $v, edit $v, return $v
  assign($df, 'Res.' => sub { (my $v = $_->{'Res.'}) =~ s/^[A-Z]://; $v });
 
-C<map_cell { ... }> removes the ceremony. Inside the block, B<< C<$_> is the named column's current cell >> (not the whole row), the block's return value is B<ignored>, and the modified C<$_> is stored back:
+C<map_cell { ... }> removes the ceremony. Inside the block, B<< C<$_> is the named column's current cell >> (not the whole row), the block's return value is B<ignored>, and the modified C<$_> is stored back -- for a HoA, C<$_> aliases the cell itself, so the edit is made where the cell lies:
 
  use Stats::LikeR;   # exports map_cell alongside assign
 
@@ -1449,6 +1451,10 @@ Notes:
 =item * B<AoH> distributes by array order; B<HoH> by B<sorted key order> — so any list you compute or hand in must be in C<sort keys %$df> order.
 
 =item * Whole-column and arrayref values must have exactly one entry per row; a length mismatch dies.
+
+=item * A B<HoA> may also hold plain scalar (or C<undef>) entries; each row view carries them through unchanged. An empty hash is an empty HoA, and its first arrayref value sets the row count, so C<< assign({}, x =E<gt> [1, 2, 3], y =E<gt> sub { $_-E<gt>{x} * 2 }) >> builds a frame from nothing.
+
+=item * Rows, value types, arrayref lengths and C<map_cell> targets are all checked before anything is written, so a call that dies on one of those leaves C<$df> as it found it. A coderef that dies part-way through does not roll back the rows already written.
 
 =back
 
@@ -1480,11 +1486,15 @@ Notes:
 
 =item * B<Same recipe, all shapes.> The same per-row C<< sub { $_-E<gt>{weight} / ... } >> works for AoH, HoA, and HoH; you always read the row through C<$_>.
 
-=item * B<It modifies your data frame.> If you need to keep the original, pass a copy: C<assign(clone($df), ...)>.
-
-=item * Reusing a column name B<overwrites> that column.
+=item * B<< C<$_> is the real row, in every shape. >> For an AoH or HoH it is the row hash itself. For a HoA it is a view: one hash for the whole call, whose values I<are> the frame's cells for the current row, not copies of them. Either way, a write through C<< $_-E<gt>{col} >> changes the frame:
 
 =back
+
+ assign($hoa, z => sub { $_->{x} *= 10; $_->{x} + 1 });   # x is now 10 times bigger too
+
+  For a HoA, that one view is re-pointed at each row in turn. A key the block adds to it is gone on the next row and never reaches the frame; a key it deletes comes back, and the column stays. Writing to a cell past the end of a short column is dropped rather than growing the column. A block that I<keeps> C<$_> (pushes it somewhere, or returns it) keeps that one view, which shows whichever row was visited last. A tied HoA, or one with a tied column, is the exception: its view is a fresh hash of copies on every row.
+- B<It modifies your data frame.> If you need to keep the original, pass a copy: C<assign(clone($df), ...)>.
+- Reusing a column name B<overwrites> that column.
 
 =head2 auc
 

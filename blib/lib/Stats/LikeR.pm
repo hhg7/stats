@@ -83,6 +83,7 @@ my %HELP_ALIAS = (
 	bw_bcv            => 'density',
 	bw_sj             => 'density',
 	map_cell          => 'assign',
+	_hoa_assign       => 'assign',
 	col               => 'filter',
 	_rename_inplace   => 'rename_cols',
 	_cols_select      => 'select_cols',
@@ -1484,7 +1485,8 @@ sub _df_shape {
 # Add (or overwrite) columns derived from existing ones, dplyr-mutate style.
 # Each coderef is called once per row with the row as $_ (a hashref) and also
 # as $_[0]; $_[1] is the 0-based row index. For HoH inputs, $_[2] is the row key.
-# It returns the new cell value.
+# It is called in list context on every row and returns the new cell value; a
+# list of more than one value from row 0 is the whole column instead.
 #
 # Works on all three data-frame shapes:
 #   AoH  [ {weight=>70, height=>1.8}, ... ]        (arrayref of row hashrefs)
@@ -1534,239 +1536,267 @@ sub assign {
 	die "$current_sub: expected an even list of (name => value) pairs" if @_ % 2;
 
 	my $r = ref $df;
+	my $shape;                                      # 'AoH', 'HoA' or 'HoH'
+	if ($r eq 'ARRAY') {
+		$shape = 'AoH';
+	} elsif ($r eq 'HASH') {
+		# Every value is looked at, not just the first one values() yields: a
+		# HoA may carry scalar (or undef) entries, which the row view passes
+		# through unchanged, and deciding on whichever value came first made the
+		# same frame work or die from one run to the next with hash order.
+		#
+		# For a HoH the same pass is the row check: every value has to be a
+		# hash, and counting them here saves a second pass over the rows, which
+		# on 200000 rows cost 0.039s -- a fifth of the whole call.
+		# A statement-modifier count runs in 0.013s on 200000 rows, against 0.019s
+		# for the same test written as a loop with if/elsif.
+		my %kind;                                   # ref() of each value => how many
+		$kind{ ref $_ }++ for values %$df;
+		my $saw_arr = $kind{ARRAY} || 0;
+		my $n_hash  = $kind{HASH}  || 0;
+		die "$current_sub: hashref mixes array and hash values (ambiguous HoA/HoH)"
+			if $saw_arr and $n_hash;
+		die "$current_sub: hashref holds no ARRAY (HoA) or HASH (HoH) values"
+			if %$df and not $saw_arr and not $n_hash;
+		$shape = $n_hash ? 'HoH' : 'HoA';        # empty hash -> HoA
+		if ($n_hash and @_ and $n_hash != keys %$df) {
+			# Name the first bad row in visiting (sorted) order, as the row loops would.
+			for my $k (sort keys %$df) {
+				die "$current_sub: row '$k' is not a hashref" unless ref $df->{$k} eq 'HASH';
+			}
+		}
+	} else {
+		die "$current_sub: data frame must be an arrayref (AoH) or hashref (HoA/HoH)";
+	}
 
-	# Each value is CODE (per-row scalar OR whole-column list) or ARRAY (ready column).
-	# CODE is probed once in list context: >1 return value => whole column.
+	# Row count. For a HoA it is the longest column; with no column at all yet
+	# (an empty hash) it is undef until the first arrayref value fixes it.
+	my (@rk, $n);                                   # @rk: HoH row keys, in visiting order
+	if ($shape eq 'AoH') {
+		$n = @$df;
+	} elsif ($shape eq 'HoH') {
+		@rk = sort keys %$df;
+		$n  = @rk;
+	} else {
+		for my $v (values %$df) {
+			next unless ref $v eq 'ARRAY';
+			$n = @$v if not defined $n or @$v > $n;
+		}
+	}
 
-	if ($r eq 'ARRAY') {                            # ----- AoH -----
-		my $n = @$df;
+	# Everything that can be checked before the first cell is written is checked
+	# here, so that a bad row or a bad third pair cannot leave the first two
+	# applied and the frame half-modified.
+	my %hoa_col;                                    # HoA: columns that exist by each pair
+	if ($shape eq 'HoA') {
+		$hoa_col{$_} = 1 for grep { ref $df->{$_} eq 'ARRAY' } keys %$df;
+	}
+	for (my $p = 0; $p < @_; $p += 2) {
+		my ($name, $spec) = @_[$p, $p + 1];
+		my $sref = ref $spec;
+		if ($sref eq 'Stats::LikeR::map_cell') {
+			die "$current_sub: map_cell target column '$name' must already exist as an ARRAY ref\n"
+				if $shape eq 'HoA' and not $hoa_col{$name};
+			next;
+		}
+		die "$current_sub: value for '$name' must be a CODE or ARRAY ref"
+			unless $sref eq 'CODE' or $sref eq 'ARRAY';
+		if ($sref eq 'ARRAY') {
+			$n = @$spec unless defined $n;
+			die "$current_sub: column '$name' has " . @$spec . " values but data frame has $n rows"
+				unless @$spec == $n;
+		}
+		$n = 0 unless defined $n;                    # a coderef on a column-less HoA sees no rows
+		$hoa_col{$name} = 1;
+	}
+	$n = 0 unless defined $n;
+	if ($shape ne 'HoA' and @_) {
+		# A HoH's rows were checked by the shape scan above.
+		if ($shape eq 'AoH') {
+			for my $i (0 .. $n - 1) {
+				die "$current_sub: row $i is not a hashref" unless ref $df->[$i] eq 'HASH';
+			}
+		}
+	}
+
+	# One save of $_ for the whole call; each row below only stores into it.
+	# Assigning to the localized $_ copies the row reference, so a block that
+	# writes to $_ changes nothing in $df.
+	local $_;
+
+	# A coderef is called in list context for every row, row 0 included. Row 0
+	# used to be called in list context (to tell a whole-column return from a
+	# per-row one) and every later row in scalar context, so any expression that
+	# answers differently in the two -- a match with captures, a bare match, an
+	# array -- gave row 0 one kind of value and the rest another:
+	# sub { $_->{s} =~ /(\d+)/ } stored the digits in row 0 and 1 everywhere else.
+	#
+	# The store is a list assignment, (($cell) = $spec->(...)), whose value in
+	# scalar context is how many values the call returned. That keeps list
+	# context for the price of one comparison: on 200000 rows it ran 7% behind
+	# the old scalar-context store, which hoisting `local $_` out of the row
+	# loop (8%) more than pays for.
+	my $too_many = sub {
+		my ($name, $got, $i) = @_;
+		die "$current_sub: '$name' returned $got values for row $i; a per-row coderef "
+		  . "must return one value per row (a whole-column list is told apart on row 0)";
+	};
+
+	if ($shape ne 'HoA') {                          # ----- AoH / HoH -----
+		my $is_hoh = $shape eq 'HoH';
 		while (@_) {
 			my ($name, $spec) = (shift, shift);
 			my $sref = ref $spec;
 			if ($sref eq 'Stats::LikeR::map_cell') {   # in-place per-cell edit; $_ = current cell
 				my $code = $spec->{code};
 				for my $i (0 .. $n - 1) {
-					my $row = $df->[$i];
-					die "$current_sub: row $i is not a hashref" unless ref $row eq 'HASH';
-					local $_ = $row->{$name};
+					my $row = $is_hoh ? $df->{ $rk[$i] } : $df->[$i];
+					$_ = $row->{$name};
 					next unless defined $_;   # undef cells pass through untouched (undef in -> undef out)
-					$code->($row, $i);
+					$is_hoh ? $code->($row, $i, $rk[$i]) : $code->($row, $i);
 					$row->{$name} = $_;
 				}
 				next;
 			}
-			die "$current_sub: value for '$name' must be a CODE or ARRAY ref"
-				unless $sref eq 'CODE' or $sref eq 'ARRAY';
-
 			if ($sref eq 'ARRAY') {                 # ready-made column
-				die "$current_sub: column '$name' has " . @$spec . " values but data frame has $n rows"
-					unless @$spec == $n;
-				for my $i (0 .. $n - 1) {
-					die "$current_sub: row $i is not a hashref" unless ref $df->[$i] eq 'HASH';
-					$df->[$i]{$name} = $spec->[$i];
-				}
+				if ($is_hoh) { $df->{ $rk[$_] }{$name} = $spec->[$_] for 0 .. $n - 1 }
+				else         { $df->[$_]{$name}        = $spec->[$_] for 0 .. $n - 1 }
 				next;
 			}
+			next unless $n;                         # empty frame: nothing to compute
 
-			next unless $n;                         # empty AoH: nothing to compute
-
-			my $row0 = $df->[0];
-			die "$current_sub: row 0 is not a hashref" unless ref $row0 eq 'HASH';
-			my @out;
-			{
-				local $_ = $row0;
-				@out = $spec->($row0, 0);
-			}
+			my $row0 = $is_hoh ? $df->{ $rk[0] } : $df->[0];
+			$_ = $row0;
+			my @out = $is_hoh ? $spec->($row0, 0, $rk[0]) : $spec->($row0, 0);
 			if (@out > 1) {                         # whole-column list (e.g. rank())
 				die "$current_sub: column '$name' produced " . @out . " values but data frame has $n rows"
 					unless @out == $n;
-				for my $i (0 .. $n - 1) {
-					die "$current_sub: row $i is not a hashref" unless ref $df->[$i] eq 'HASH';
-					$df->[$i]{$name} = $out[$i];
-				}
+				if ($is_hoh) { $df->{ $rk[$_] }{$name} = $out[$_] for 0 .. $n - 1 }
+				else         { $df->[$_]{$name}        = $out[$_] for 0 .. $n - 1 }
 				next;
 			}
 			$row0->{$name} = $out[0];               # per-row: row 0 already computed
-			for my $i (1 .. $n - 1) {
-				my $row = $df->[$i];
-				die "$current_sub: row $i is not a hashref" unless ref $row eq 'HASH';
-				local $_ = $row;
-				$row->{$name} = $spec->($row, $i);
+			# Two copies of the loop so the hot path does not test $is_hoh per row.
+			if ($is_hoh) {
+				for my $i (1 .. $n - 1) {
+					my $row = $df->{ $rk[$i] };
+					$_ = $row;
+					my $got = (($row->{$name}) = $spec->($row, $i, $rk[$i]));
+					$too_many->($name, $got, $i) if $got > 1;
+				}
+			} else {
+				for my $i (1 .. $n - 1) {
+					my $row = $df->[$i];
+					$_ = $row;
+					my $got = (($row->{$name}) = $spec->($row, $i));
+					$too_many->($name, $got, $i) if $got > 1;
+				}
 			}
 		}
 		return $df;
 	}
 
-	if ($r eq 'HASH') {
-		my $is_hoh = 0;
-		for my $v (values %$df) {
-			my $ref = ref $v;
-			if    ($ref eq 'HASH')  { $is_hoh = 1; last }
-			elsif ($ref eq 'ARRAY') { $is_hoh = 0; last }
-			else { die "$current_sub: value is a \"$ref\" which is neither a HASH nor an ARRAY" }
+	# ----- HoA -----
+	# The block sees each row as a hash built from the columns. Array columns
+	# supply cell $i; any other value (a scalar, undef) is passed through as is.
+	#
+	# _hoa_assign (LikeR.xs) runs the loop with one view whose values alias the
+	# frame's cells, so a write through $_->{col} lands in the frame, as it does
+	# for an AoH or HoH. A tied frame or column keeps the perl loop below, which
+	# hands the block copies: aliasing a tied element would alias the proxy SV
+	# FETCH returns, not the element.
+	my $tied = tied(%$df)
+		|| grep { ref $df->{$_} eq 'ARRAY' and tied @{ $df->{$_} } } keys %$df;
+	my $snapshot = sub {
+		my (@akeys, @acols, @skeys, @svals);
+		for my $k (keys %$df) {
+			my $c = $df->{$k};
+			if (ref $c eq 'ARRAY') { push @akeys, $k; push @acols, $c }
+			else                   { push @skeys, $k; push @svals, $c }
+		}
+		return (\@akeys, \@acols, \@skeys, \@svals);
+	};
+	while (@_) {
+		my ($name, $spec) = (shift, shift);
+		my $sref = ref $spec;
+		if ($sref eq 'ARRAY') {
+			$df->{$name} = [ @$spec ];   # copied, so the caller's array stays theirs
+			next;
+		}
+		if (not $n and $sref eq 'CODE') { $df->{$name} = []; next }
+
+		if (not $tied) {
+			if ($sref eq 'Stats::LikeR::map_cell') {
+				_hoa_assign($df, $name, $spec->{code}, $n, 1);
+				next;
+			}
+			my ($whole, $col) = _hoa_assign($df, $name, $spec, $n, 0);
+			die "$current_sub: column '$name' produced " . @$col . " values but data frame has $n rows"
+				if $whole and @$col != $n;
+			$df->{$name} = $col;
+			next;
 		}
 
-		if ($is_hoh) {                              # ----- HoH -----
-			my @rk = sort keys %$df;
-			my $n  = @rk;
-			while (@_) {
-				my ($name, $spec) = (shift, shift);
-				my $sref = ref $spec;
-				if ($sref eq 'Stats::LikeR::map_cell') {   # in-place per-cell edit; $_ = current cell
-					my $code = $spec->{code};
-					for my $i (0 .. $n - 1) {
-						my $row = $df->{ $rk[$i] };
-						die "$current_sub: row '$rk[$i]' is not a hashref" unless ref $row eq 'HASH';
-						local $_ = $row->{$name};
-						next unless defined $_;   # undef cells pass through untouched (undef in -> undef out)
-						$code->($row, $i, $rk[$i]);
-						$row->{$name} = $_;
-					}
-					next;
-				}
-				die "$current_sub: value for '$name' must be a CODE or ARRAY ref"
-					unless $sref eq 'CODE' or $sref eq 'ARRAY';
-
-				if ($sref eq 'ARRAY') {
-					die "$current_sub: column '$name' has " . @$spec . " values but data frame has $n rows"
-						unless @$spec == $n;
-					for my $i (0 .. $n - 1) {
-						my $row = $df->{ $rk[$i] };
-						die "$current_sub: row '$rk[$i]' is not a hashref" unless ref $row eq 'HASH';
-						$row->{$name} = $spec->[$i];
-					}
-					next;
-				}
-
-				next unless $n;
-
-				my $row0 = $df->{ $rk[0] };
-				die "$current_sub: row '$rk[0]' is not a hashref" unless ref $row0 eq 'HASH';
-				my @out;
-				{
-					local $_ = $row0;
-					@out = $spec->($row0, 0, $rk[0]);
-				}
-				if (@out > 1) {
-					die "$current_sub: column '$name' produced " . @out . " values but data frame has $n rows"
-						unless @out == $n;
-					for my $i (0 .. $n - 1) {
-						my $row = $df->{ $rk[$i] };
-						die "$current_sub: row '$rk[$i]' is not a hashref" unless ref $row eq 'HASH';
-						$row->{$name} = $out[$i];
-					}
-					next;
-				}
-				$row0->{$name} = $out[0];
-				for my $i (1 .. $n - 1) {
-					my $row = $df->{ $rk[$i] };
-					die "$current_sub: row '$rk[$i]' is not a hashref" unless ref $row eq 'HASH';
-					local $_ = $row;
-					$row->{$name} = $spec->($row, $i, $rk[$i]);
-				}
+		# The perl loop, for a tied frame only (see $tied above).
+		my ($akeys, $acols, $skeys, $svals) = $snapshot->();
+		if ($sref eq 'Stats::LikeR::map_cell') {   # in-place per-cell edit; $_ = current cell
+			my $code = $spec->{code};
+			my $tgt  = $df->{$name};
+			# One row view, refilled per row, and only for the rows the block
+			# will actually see.
+			#
+			# Assembling it was the whole cost of the call: on a 64-column frame
+			# of 20000 rows, a target column that is entirely undef -- so the
+			# block never runs once -- still took 0.161s of the 0.165s a full
+			# pass took, every bit of it spent building views that were then
+			# thrown away unread, because the "is this cell undef" test sat after
+			# the build instead of before it.
+			#
+			# The key set is the same for every row, so the hash is refilled
+			# rather than reallocated. The block therefore sees one hash for the
+			# whole pass instead of a fresh one per row, which is the shape the
+			# other two frame layouts already have: the AoH and HoH branches above
+			# hand the block the row hash itself, not a copy of it.
+			my %view;
+			for my $i (0 .. $n - 1) {
+				$_ = $tgt->[$i];
+				next unless defined $_;   # undef cells pass through untouched (undef in -> undef out)
+				@view{@$akeys} = map { $_->[$i] } @$acols;
+				@view{@$skeys} = @$svals;
+				$code->(\%view, $i);
+				$tgt->[$i] = $_;
 			}
-			return $df;
+			next;
 		}
-		else {                                      # ----- HoA -----
-			my $n = 0;
-			for my $v (values %$df) {
-				$n = @$v if ref $v eq 'ARRAY' and @$v > $n;
-			}
-			while (@_) {
-				my ($name, $spec) = (shift, shift);
-				my $sref = ref $spec;
-				if ($sref eq 'Stats::LikeR::map_cell') {   # in-place per-cell edit; $_ = current cell
-					my $code = $spec->{code};
-					my $tgt  = $df->{$name};
-					die "$current_sub: map_cell target column '$name' must already exist as an ARRAY ref\n"
-						unless ref $tgt eq 'ARRAY';
-					my @keys = keys %$df;
-					my @col  = map { my $c = $df->{$_}; ref $c eq 'ARRAY' ? $c : undef } @keys;
-					# One row view, refilled per row, and only for the rows the
-					# block will actually see.
-					#
-					# Assembling it was the whole cost of the call: on a
-					# 64-column frame of 20000 rows, a target column that is
-					# entirely undef -- so the block never runs once -- still
-					# took 0.161s of the 0.165s a full pass took, every bit of
-					# it spent building views that were then thrown away
-					# unread, because the "is this cell undef" test sat after
-					# the build instead of before it.
-					#
-					# The key set is the same for every row, so the hash is
-					# refilled rather than reallocated. The block therefore
-					# sees one hash for the whole pass instead of a fresh one
-					# per row, which is the shape the other two frame layouts
-					# already have: the AoH and HoH branches above hand the
-					# block the row hash itself, not a copy of it.
-					my %view;
-					for my $i (0 .. $n - 1) {
-						local $_ = $tgt->[$i];
-						next unless defined $_;   # undef cells pass through untouched (undef in -> undef out)
-						for my $k (0 .. $#keys) {
-							$view{ $keys[$k] } = defined $col[$k] ? $col[$k][$i]
-							                                     : $df->{ $keys[$k] };
-						}
-						$code->(\%view, $i);
-						$tgt->[$i] = $_;
-					}
-					next;
-				}
-				die "$current_sub: value for '$name' must be a CODE or ARRAY ref"
-					unless $sref eq 'CODE' or $sref eq 'ARRAY';
 
-				if ($sref eq 'ARRAY') {
-					die "$current_sub: column '$name' has " . @$spec . " values but data frame has $n rows"
-						unless @$spec == $n;
-					$df->{$name} = [ @$spec ];
-					next;
-				}
-
-				if (not $n) { $df->{$name} = []; next }
-
-				# snapshot current columns once (refs, not data)
-				my @keys = keys %$df;
-				my @col  = map { my $c = $df->{$_}; ref $c eq 'ARRAY' ? $c : undef } @keys;
-				# One hash slice rather than a keyed store per column: the view
-				# still has to be a fresh hash every row (the block may keep
-				# it, unlike the map_cell path above, which documents that it
-				# may not), but filling it need not be a loop of single-key
-				# assignments.
-				my $view_for = sub {
-					my $i = shift;
-					my %view;
-					@view{ @keys } =
-						map { defined $col[$_] ? $col[$_][$i] : $df->{ $keys[$_] } }
-						0 .. $#keys;
-					return \%view;
-				};
-
-				my $v0 = $view_for->(0);
-				my @out;
-				{
-					local $_ = $v0;
-					@out = $spec->($v0, 0);
-				}
-				if (@out > 1) {                     # whole-column list
-					die "$current_sub: column '$name' produced " . @out . " values but data frame has $n rows"
-						unless @out == $n;
-					$df->{$name} = [ @out ];
-					next;
-				}
-				my @new;
-				$#new = $n - 1;                     # preallocate
-				$new[0] = $out[0];
-				for (my $i = 1; $i < $n; $i++) {
-					my $view = $view_for->($i);
-					local $_ = $view;
-					$new[$i] = $spec->($view, $i);
-				}
-				$df->{$name} = \@new;
-			}
-			return $df;
+		# Unlike the map_cell view above, this one is a fresh hash every row:
+		# a plain coderef may keep the hash it is given (return it, push it
+		# somewhere), and a reused one would then change under it.
+		my %v0;
+		@v0{@$akeys} = map { $_->[0] } @$acols;
+		@v0{@$skeys} = @$svals;
+		$_ = \%v0;
+		my @out = $spec->(\%v0, 0);
+		if (@out > 1) {                     # whole-column list
+			die "$current_sub: column '$name' produced " . @out . " values but data frame has $n rows"
+				unless @out == $n;
+			$df->{$name} = \@out;           # @out is this pair's own array: no second copy
+			next;
 		}
+		my @new;
+		$#new = $n - 1;                     # preallocate
+		$new[0] = $out[0];
+		for my $i (1 .. $n - 1) {
+			my %view;
+			@view{@$akeys} = map { $_->[$i] } @$acols;
+			@view{@$skeys} = @$svals;
+			$_ = \%view;
+			my $got = (($new[$i]) = $spec->(\%view, $i));
+			$too_many->($name, $got, $i) if $got > 1;
+		}
+		$df->{$name} = \@new;
 	}
-	die "$current_sub: data frame must be an arrayref (AoH) or hashref (HoA/HoH)";
+	return $df;
 }
 
 sub chunk {
@@ -6686,6 +6716,23 @@ returns
      }
  }
 
+Each term's C<Sum Sq> is what it adds to the terms before it in the formula,
+not what it would explain alone. When the regressors are correlated, as in
+C<anova.lm>'s own example on R's C<LifeCycleSavings>, reversing the formula
+moves sum of squares from one term to another and changes their p-values. The
+total of the terms and the C<Residuals> row do not move. In a balanced design
+such as C<warpbreaks> the terms are orthogonal, so the order changes nothing.
+
+
+
+=begin html
+
+<p><img src="https://raw.githubusercontent.com/hhg7/stats/main/img/anova.order.png" alt="anova term order: the Sum Sq of sr ~ pop15 + pop75 + dpi + ddpi and of the reversed formula as stacked bars that differ term by term but share one total and one Residuals, beside breaks ~ wool + tension and tension + wool, which are identical" width="100%" /></p>
+
+=end html
+
+
+
 Two-way (and higher) models use the C<*> operator, which implicitly evaluates
 the main effects alongside the interaction (C<a * b> expands to C<a + b + a:b>;
 C<a * b * c> to the full factorial C<a + b + c + a:b + a:c + b:c + a:b:c>):
@@ -6729,6 +6776,21 @@ square is 0. Every model is fitted on the same rows: those complete for all of
 them. As R's C<anova.lmlist> does, a model whose response differs from the
 first model's is dropped with a warning, and if only one model is left, its
 single-model table is returned.
+
+Below, C<warpbreaks> is fitted as four nested formulas, each adding one term.
+Each row's C<Sum of Sq> is the drop in C<RSS> from the row before it. Because
+every C<F> is taken over the largest model's residual mean square, the chain
+gives the same F values as the single-model table of the largest formula.
+
+
+
+=begin html
+
+<p><img src="https://raw.githubusercontent.com/hhg7/stats/main/img/anova.compare.png" alt="anova of nested formulas on warpbreaks: the RSS of breaks ~ 1, + wool, + tension and + wool:tension as bars, each drop labelled as that row's Sum of Sq and Df, and each drop per Df over the largest model's RSS / Res.Df giving an F equal to the one-model anova table's" width="100%" /></p>
+
+=end html
+
+
 
 Given two or more B<fitted models> instead -- C<lm> or C<glm> fits (or
 C<negbin> C<glm> fits) of the same response on the same rows -- C<anova> compares
@@ -7162,6 +7224,28 @@ which returns
     }
  }
 
+With one factor, the table is built like this. The factor's C<Sum Sq> is how
+far its group means lie from the grand mean, and the C<Residuals> C<Sum Sq> is
+how far the observations lie from their own group's mean, each squared and
+summed. Each is divided by its C<Df> to
+give its C<Mean Sq>. C<F value> is the term's C<Mean Sq> over the residual one,
+and C<< Pr(E<gt>F) >> is the area of the F distribution on those two C<Df> beyond it.
+Below, R's C<PlantGrowth> is given as a named list of three groups, which C<aov>
+stacks into C<Value ~ Group>. The vertical lines on the left are the two kinds
+of deviation: blue for each group's mean from the grand mean, grey for each
+observation from its group's mean. The right-hand panel magnifies the tail
+that C<< Pr(E<gt>F) >> measures, which is too thin to see at full scale.
+
+
+
+=begin html
+
+<p><img src="https://raw.githubusercontent.com/hhg7/stats/main/img/aov.what.png" alt="aov on PlantGrowth: the stacked observations with their group means and the grand mean, the Sum Sq split into Group and Residuals and divided by Df into Mean Sq and F, and Pr(&gt;F) as the tail of F(2, 27) beyond F = 4.846, also shown magnified" width="100%" /></p>
+
+=end html
+
+
+
 You can also perform Two-Way ANOVA with categorical interactions using the C<*> operator. The parser will implicitly evaluate the main effects alongside the interaction:
 
  my $res_2way = aov($data_2way, 'len ~ supp * dose');
@@ -7295,6 +7379,39 @@ The function returns a single C<HashRef> containing the evaluated statistical re
 
 
 
+The coefficients are steps away from one reference cell, which is the first
+level of each factor in C<xlevels>. Because the levels are sorted, R's
+C<warpbreaks> under C<breaks ~ wool * tension> has tension C<H> as its reference,
+not C<L>. C<Intercept> is that cell's mean. Every other cell adds a main effect
+for each of its non-reference levels and an interaction for each
+non-reference pair, and the sum is the cell's fitted value. In a full
+factorial such as this one, that fitted value is the cell mean.
+
+
+
+=begin html
+
+<p><img src="https://raw.githubusercontent.com/hhg7/stats/main/img/aov.coefficients.png" alt="aov coefficients on warpbreaks: for each of the six wool-by-tension cells, a staircase of Intercept, tension, wool and interaction coefficients that ends on that cell's fitted value" width="100%" /></p>
+
+=end html
+
+
+
+C<group.stats> is something else again. It holds each factor's own means, each
+averaged over the other factors, so the cell means above are not among them.
+The table has one row per term in R's order, followed by C<Residuals>, which
+has no F test of its own.
+
+
+
+=begin html
+
+<p><img src="https://raw.githubusercontent.com/hhg7/stats/main/img/aov.outputs.png" alt="aov group.stats and table on warpbreaks: the marginal mean and size of each wool and tension level against the grand mean, and the Sum Sq, Df, Mean Sq, F value and Pr(&gt;F) of wool, tension, wool:tension and Residuals" width="100%" /></p>
+
+=end html
+
+
+
 =head3 omitting formula
 
 In the case of an omitted formula, stacking is done:
@@ -7355,7 +7472,7 @@ It changes C<$df> in place and also returns it (handy for chaining).
 
 =head3 Coderef values
 
-A coderef is classified by what it returns in list context:
+A coderef is called in list context, on every row, and is classified by what it returns for the first row:
 
 =over
 
@@ -7370,6 +7487,8 @@ A coderef is classified by what it returns in list context:
 =item * C<$_[2]> is the row key — B<HoH only>.
 
 =item * A single arrayref return is stored I<as the cell>, so C<< sub { [split /,/, $_-E<gt>{tags}] } >> gives an arrayref-valued column.
+
+=item * List context holds for every row, not just the first: C<< sub { $_-E<gt>{id} =~ /(\d+)/ } >> stores the captured digits in each row, and a match that fails returns the empty list, so its cell is C<undef>. A later row that returns more than one value dies.
 
 =back
 
@@ -7395,7 +7514,7 @@ A plain coderef stores its B<return value>, so an in-place transform of an exist
  # awkward: copy to $v, edit $v, return $v
  assign($df, 'Res.' => sub { (my $v = $_->{'Res.'}) =~ s/^[A-Z]://; $v });
 
-C<map_cell { ... }> removes the ceremony. Inside the block, B<< C<$_> is the named column's current cell >> (not the whole row), the block's return value is B<ignored>, and the modified C<$_> is stored back:
+C<map_cell { ... }> removes the ceremony. Inside the block, B<< C<$_> is the named column's current cell >> (not the whole row), the block's return value is B<ignored>, and the modified C<$_> is stored back -- for a HoA, C<$_> aliases the cell itself, so the edit is made where the cell lies:
 
  use Stats::LikeR;   # exports map_cell alongside assign
 
@@ -7418,6 +7537,10 @@ Notes:
 =item * B<AoH> distributes by array order; B<HoH> by B<sorted key order> — so any list you compute or hand in must be in C<sort keys %$df> order.
 
 =item * Whole-column and arrayref values must have exactly one entry per row; a length mismatch dies.
+
+=item * A B<HoA> may also hold plain scalar (or C<undef>) entries; each row view carries them through unchanged. An empty hash is an empty HoA, and its first arrayref value sets the row count, so C<< assign({}, x =E<gt> [1, 2, 3], y =E<gt> sub { $_-E<gt>{x} * 2 }) >> builds a frame from nothing.
+
+=item * Rows, value types, arrayref lengths and C<map_cell> targets are all checked before anything is written, so a call that dies on one of those leaves C<$df> as it found it. A coderef that dies part-way through does not roll back the rows already written.
 
 =back
 
@@ -7449,11 +7572,15 @@ Notes:
 
 =item * B<Same recipe, all shapes.> The same per-row C<< sub { $_-E<gt>{weight} / ... } >> works for AoH, HoA, and HoH; you always read the row through C<$_>.
 
-=item * B<It modifies your data frame.> If you need to keep the original, pass a copy: C<assign(clone($df), ...)>.
-
-=item * Reusing a column name B<overwrites> that column.
+=item * B<< C<$_> is the real row, in every shape. >> For an AoH or HoH it is the row hash itself. For a HoA it is a view: one hash for the whole call, whose values I<are> the frame's cells for the current row, not copies of them. Either way, a write through C<< $_-E<gt>{col} >> changes the frame:
 
 =back
+
+ assign($hoa, z => sub { $_->{x} *= 10; $_->{x} + 1 });   # x is now 10 times bigger too
+
+  For a HoA, that one view is re-pointed at each row in turn. A key the block adds to it is gone on the next row and never reaches the frame; a key it deletes comes back, and the column stays. Writing to a cell past the end of a short column is dropped rather than growing the column. A block that I<keeps> C<$_> (pushes it somewhere, or returns it) keeps that one view, which shows whichever row was visited last. A tied HoA, or one with a tied column, is the exception: its view is a fresh hash of copies on every row.
+- B<It modifies your data frame.> If you need to keep the original, pass a copy: C<assign(clone($df), ...)>.
+- Reusing a column name B<overwrites> that column.
 
 =head2 auc
 

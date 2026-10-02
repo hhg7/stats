@@ -537,6 +537,13 @@ returns
 \& }
 .Ve
 .PP
+Each term\*(Aqs \f(CW\*(C`Sum Sq\*(C'\fR is what it adds to the terms before it in the formula,
+not what it would explain alone. When the regressors are correlated, as in
+\&\f(CW\*(C`anova.lm\*(C'\fR\*(Aqs own example on R\*(Aqs \f(CW\*(C`LifeCycleSavings\*(C'\fR, reversing the formula
+moves sum of squares from one term to another and changes their p\-values. The
+total of the terms and the \f(CW\*(C`Residuals\*(C'\fR row do not move. In a balanced design
+such as \f(CW\*(C`warpbreaks\*(C'\fR the terms are orthogonal, so the order changes nothing.
+.PP
 Two\-way (and higher) models use the \f(CW\*(C`*\*(C'\fR operator, which implicitly evaluates
 the main effects alongside the interaction (\f(CW\*(C`a * b\*(C'\fR expands to \f(CW\*(C`a + b + a:b\*(C'\fR;
 \&\f(CW\*(C`a * b * c\*(C'\fR to the full factorial \f(CW\*(C`a + b + c + a:b + a:c + b:c + a:b:c\*(C'\fR):
@@ -584,6 +591,11 @@ square is 0. Every model is fitted on the same rows: those complete for all of
 them. As R\*(Aqs \f(CW\*(C`anova.lmlist\*(C'\fR does, a model whose response differs from the
 first model\*(Aqs is dropped with a warning, and if only one model is left, its
 single\-model table is returned.
+.PP
+Below, \f(CW\*(C`warpbreaks\*(C'\fR is fitted as four nested formulas, each adding one term.
+Each row\*(Aqs \f(CW\*(C`Sum of Sq\*(C'\fR is the drop in \f(CW\*(C`RSS\*(C'\fR from the row before it. Because
+every \f(CW\*(C`F\*(C'\fR is taken over the largest model\*(Aqs residual mean square, the chain
+gives the same F values as the single\-model table of the largest formula.
 .PP
 Given two or more \fBfitted models\fR instead \-\- \f(CW\*(C`lm\*(C'\fR or \f(CW\*(C`glm\*(C'\fR fits (or
 \&\f(CW\*(C`negbin\*(C'\fR \f(CW\*(C`glm\*(C'\fR fits) of the same response on the same rows \-\- \f(CW\*(C`anova\*(C'\fR compares
@@ -886,6 +898,18 @@ which returns
 \& }
 .Ve
 .PP
+With one factor, the table is built like this. The factor\*(Aqs \f(CW\*(C`Sum Sq\*(C'\fR is how
+far its group means lie from the grand mean, and the \f(CW\*(C`Residuals\*(C'\fR \f(CW\*(C`Sum Sq\*(C'\fR is
+how far the observations lie from their own group\*(Aqs mean, each squared and
+summed. Each is divided by its \f(CW\*(C`Df\*(C'\fR to
+give its \f(CW\*(C`Mean Sq\*(C'\fR. \f(CW\*(C`F value\*(C'\fR is the term\*(Aqs \f(CW\*(C`Mean Sq\*(C'\fR over the residual one,
+and \f(CWPr(>F)\fR is the area of the F distribution on those two \f(CW\*(C`Df\*(C'\fR beyond it.
+Below, R\*(Aqs \f(CW\*(C`PlantGrowth\*(C'\fR is given as a named list of three groups, which \f(CW\*(C`aov\*(C'\fR
+stacks into \f(CW\*(C`Value ~ Group\*(C'\fR. The vertical lines on the left are the two kinds
+of deviation: blue for each group\*(Aqs mean from the grand mean, grey for each
+observation from its group\*(Aqs mean. The right\-hand panel magnifies the tail
+that \f(CWPr(>F)\fR measures, which is too thin to see at full scale.
+.PP
 You can also perform Two\-Way ANOVA with categorical interactions using the \f(CW\*(C`*\*(C'\fR operator. The parser will implicitly evaluate the main effects alongside the interaction:
 .PP
 .Vb 1
@@ -922,6 +946,19 @@ instead of a flat \f(CW0\fR; see "F and z tail p\-values".
 .IX Subsection "Output Variables"
 .PP
 The function returns a single \f(CW\*(C`HashRef\*(C'\fR containing the evaluated statistical results. Because the keys map dynamically to the terms parsed from your formula, the structure will vary based on your inputs.
+.PP
+The coefficients are steps away from one reference cell, which is the first
+level of each factor in \f(CW\*(C`xlevels\*(C'\fR. Because the levels are sorted, R\*(Aqs
+\&\f(CW\*(C`warpbreaks\*(C'\fR under \f(CW\*(C`breaks ~ wool * tension\*(C'\fR has tension \f(CW\*(C`H\*(C'\fR as its reference,
+not \f(CW\*(C`L\*(C'\fR. \f(CW\*(C`Intercept\*(C'\fR is that cell\*(Aqs mean. Every other cell adds a main effect
+for each of its non\-reference levels and an interaction for each
+non\-reference pair, and the sum is the cell\*(Aqs fitted value. In a full
+factorial such as this one, that fitted value is the cell mean.
+.PP
+\&\f(CW\*(C`group.stats\*(C'\fR is something else again. It holds each factor\*(Aqs own means, each
+averaged over the other factors, so the cell means above are not among them.
+The table has one row per term in R\*(Aqs order, followed by \f(CW\*(C`Residuals\*(C'\fR, which
+has no F test of its own.
 .PP
 \fIomitting formula\fR
 .IX Subsection "omitting formula"
@@ -987,7 +1024,7 @@ It changes \f(CW$df\fR in place and also returns it (handy for chaining).
 \fICoderef values\fR
 .IX Subsection "Coderef values"
 .PP
-A coderef is classified by what it returns in list context:
+A coderef is called in list context, on every row, and is classified by what it returns for the first row:
 .IP \(bu 4
 \&\fBOne scalar → per\-row.\fR The sub is called once per row and that scalar is the cell.
 .RS 4
@@ -999,6 +1036,8 @@ A coderef is classified by what it returns in list context:
 \&\f(CW$_[2]\fR is the row key — \fBHoH only\fR.
 .IP \(bu 4
 A single arrayref return is stored \fIas the cell\fR, so \f(CW\*(C`sub { [split /,/, $_\->{tags}] }\*(C'\fR gives an arrayref\-valued column.
+.IP \(bu 4
+List context holds for every row, not just the first: \f(CW\*(C`sub { $_\->{id} =~ /(\ed+)/ }\*(C'\fR stores the captured digits in each row, and a match that fails returns the empty list, so its cell is \f(CW\*(C`undef\*(C'\fR. A later row that returns more than one value dies.
 .RE
 .RS 4
 .RE
@@ -1031,7 +1070,7 @@ A plain coderef stores its \fBreturn value\fR, so an in\-place transform of an e
 \& assign($df, \*(AqRes.\*(Aq => sub { (my $v = $_\->{\*(AqRes.\*(Aq}) =~ s/^[A\-Z]://; $v });
 .Ve
 .PP
-\&\f(CW\*(C`map_cell { ... }\*(C'\fR removes the ceremony. Inside the block, \fR\f(CB$_\fR\fB is the named column\*(Aqs current cell\fR (not the whole row), the block\*(Aqs return value is \fBignored\fR, and the modified \f(CW$_\fR is stored back:
+\&\f(CW\*(C`map_cell { ... }\*(C'\fR removes the ceremony. Inside the block, \fR\f(CB$_\fR\fB is the named column\*(Aqs current cell\fR (not the whole row), the block\*(Aqs return value is \fBignored\fR, and the modified \f(CW$_\fR is stored back \-\- for a HoA, \f(CW$_\fR aliases the cell itself, so the edit is made where the cell lies:
 .PP
 .Vb 1
 \& use Stats::LikeR;   # exports map_cell alongside assign
@@ -1057,6 +1096,10 @@ Notes:
 \&\fBAoH\fR distributes by array order; \fBHoH\fR by \fBsorted key order\fR — so any list you compute or hand in must be in \f(CW\*(C`sort keys %$df\*(C'\fR order.
 .IP \(bu 4
 Whole\-column and arrayref values must have exactly one entry per row; a length mismatch dies.
+.IP \(bu 4
+A \fBHoA\fR may also hold plain scalar (or \f(CW\*(C`undef\*(C'\fR) entries; each row view carries them through unchanged. An empty hash is an empty HoA, and its first arrayref value sets the row count, so \f(CW\*(C`assign({}, x => [1, 2, 3], y => sub { $_\->{x} * 2 })\*(C'\fR builds a frame from nothing.
+.IP \(bu 4
+Rows, value types, arrayref lengths and \f(CW\*(C`map_cell\*(C'\fR targets are all checked before anything is written, so a call that dies on one of those leaves \f(CW$df\fR as it found it. A coderef that dies part\-way through does not roll back the rows already written.
 .PP
 \fIExample\fR
 .IX Subsection "Example"
@@ -1086,9 +1129,15 @@ Whole\-column and arrayref values must have exactly one entry per row; a length 
 .IP \(bu 4
 \&\fBSame recipe, all shapes.\fR The same per\-row \f(CW\*(C`sub { $_\->{weight} / ... }\*(C'\fR works for AoH, HoA, and HoH; you always read the row through \f(CW$_\fR.
 .IP \(bu 4
-\&\fBIt modifies your data frame.\fR If you need to keep the original, pass a copy: \f(CW\*(C`assign(clone($df), ...)\*(C'\fR.
-.IP \(bu 4
-Reusing a column name \fBoverwrites\fR that column.
+\&\fR\f(CB$_\fR\fB is the real row, in every shape.\fR For an AoH or HoH it is the row hash itself. For a HoA it is a view: one hash for the whole call, whose values \fIare\fR the frame\*(Aqs cells for the current row, not copies of them. Either way, a write through \f(CW\*(C`$_\->{col}\*(C'\fR changes the frame:
+.PP
+.Vb 1
+\& assign($hoa, z => sub { $_\->{x} *= 10; $_\->{x} + 1 });   # x is now 10 times bigger too
+\&
+\&  For a HoA, that one view is re\-pointed at each row in turn. A key the block adds to it is gone on the next row and never reaches the frame; a key it deletes comes back, and the column stays. Writing to a cell past the end of a short column is dropped rather than growing the column. A block that I<keeps> C<$_> (pushes it somewhere, or returns it) keeps that one view, which shows whichever row was visited last. A tied HoA, or one with a tied column, is the exception: its view is a fresh hash of copies on every row.
+\&\- B<It modifies your data frame.> If you need to keep the original, pass a copy: C<assign(clone($df), ...)>.
+\&\- Reusing a column name B<overwrites> that column.
+.Ve
 .SS auc
 .IX Subsection "auc"
 The area under the ROC curve (the c\-statistic) for scores and 0/1 labels: the

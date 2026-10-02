@@ -8671,6 +8671,174 @@ static bool filt_call(pTHX_ SV *code, SV *row_rv, SV *id) {
 	return keep;
 }
 
+/*assign() on a HoA: the row loop, with a row view that aliases the frame.
+
+The view is one hash for the whole pass whose values are the frame's own cell
+SVs, not copies: each row re-points the entries at that row's cells. Building a
+fresh hash of copied cells per row was 73% of a HoA assign() in perl (0.249s of
+0.339s on 200000 rows x 16 columns), and doing the same in C would have saved
+only a quarter of it -- hoa2aoh(), which builds exactly those hashes, took 0.186s
+including the free -- because the cost is the allocations and the copies, not
+perl's op dispatch. Aliasing also makes a HoA behave like an AoH or HoH, where
+the block is handed the real row: a write through $_->{col} reaches the frame.
+
+A missing cell (past the end of a short column, a hole) is a fresh undef that
+belongs to the view alone, so writing to it is dropped rather than growing the
+column. A non-array entry of the frame is aliased the same way on every row.*/
+typedef struct {
+	size_t nkeys;
+	SV **key;	// the frame's key SVs (shared HEKs, so they carry their hash)
+	U32 *hash;	// each key's precomputed hash
+	AV **col;	// the column, held for the pass; NULL for a non-array entry
+	SV **val;	// the non-array entry itself, held; NULL for a column
+} hoa_view;
+
+/*Point every view entry at row i's cell. `view` has no restrict: it is a perl
+hash the block can reach and modify, through $_ or a reference it kept.*/
+static void hoa_view_fill(pTHX_ HV *view, const hoa_view *restrict v, SSize_t i) {
+	/*A block that added or deleted keys leaves the view a different size; start
+	it over, so that a key it added does not appear in the next row's view.*/
+	if ((size_t)HvUSEDKEYS(view) != v->nkeys)
+		hv_clear(view);
+	for (size_t k = 0; k < v->nkeys; k++) {
+		SV *cell;
+		if (v->col[k]) {
+			SV **cp = av_fetch(v->col[k], i, 0);
+			/*&PL_sv_undef is read-only; aliasing it would make a write die*/
+			cell = (cp && *cp && *cp != &PL_sv_undef) ? SvREFCNT_inc_simple_NN(*cp) : newSV(0);
+		} else
+			cell = SvREFCNT_inc_simple_NN(v->val[k]);
+		HE *he = hv_fetch_ent(view, v->key[k], 1, v->hash[k]);	//lvalue: re-creates a key the block deleted
+		SV *old = HeVAL(he);
+		HeVAL(he) = cell;
+		SvREFCNT_dec(old);
+	}
+}
+
+/*Run assign()'s coderef over rows 0 .. n-1 of the HoA `in`.
+
+target == NULL: a plain coderef. Its results are copied into `out`, one per
+row, and the return is TRUE when row 0 returned more than one value -- a
+whole-column list, which is then the whole of `out` and the loop stops there.
+Every row is called in list context, so a later row returning a list croaks.
+
+target != NULL: map_cell on that column. $_ aliases the cell, so s/// edits it
+where it lies; a defined cell that is read-only (a constant, or a shared-key
+scalar on an older perl) is edited as a copy and the copy is stored back. An
+undef or missing cell is skipped. `out` is unused.*/
+static bool hoa_assign_loop(pTHX_ HV *in, SV *code, SV *name, size_t n,
+		AV *target, AV *out) {
+	/*no restrict on in/target/out: all three are perl data the block can reach*/
+	dSP;
+	bool whole = FALSE;
+	ENTER;
+	SAVETMPS;
+	hoa_view v;
+	v.nkeys = (size_t)HvUSEDKEYS(in);
+	const size_t cap = v.nkeys ? v.nkeys : 1;	//Newx of 0 is not portable
+	Newx(v.key, cap, SV *);  SAVEFREEPV(v.key);
+	Newx(v.hash, cap, U32);  SAVEFREEPV(v.hash);
+	Newx(v.col, cap, AV *);  SAVEFREEPV(v.col);
+	Newx(v.val, cap, SV *);  SAVEFREEPV(v.val);
+	{
+		size_t k = 0;	//read after the loop: the number of keys actually seen
+		HE *he;
+		hv_iterinit(in);
+		while ((he = hv_iternext(in)) && k < cap) {
+			SV *val = HeVAL(he);
+			v.key[k]  = hv_iterkeysv(he);	//mortal; lives until our FREETMPS
+			v.hash[k] = HeHASH(he);
+			/*Each column and entry is held for the pass, so a block that replaces
+			$df->{col} or deletes it cannot free what the view is reading.*/
+			if (SvROK(val) && SvTYPE(SvRV(val)) == SVt_PVAV) {
+				v.col[k] = (AV *)SvREFCNT_inc_simple_NN(SvRV(val));
+				SAVEFREESV((SV *)v.col[k]);
+				v.val[k] = NULL;
+			} else {
+				v.col[k] = NULL;
+				v.val[k] = SvREFCNT_inc_simple_NN(val);
+				SAVEFREESV(v.val[k]);
+			}
+			k++;
+		}
+		v.nkeys = k;
+	}
+	if (target) {
+		SvREFCNT_inc_simple_void_NN((SV *)target);
+		SAVEFREESV((SV *)target);
+	} else if (n > 0)
+		av_extend(out, (SSize_t)(n - 1));
+	/*The view lives for the pass; a reference the block kept keeps it alive after.*/
+	HV *view = newHV();
+	SAVEFREESV((SV *)view);
+	SAVE_DEFSV;	//$_ is restored once, on the way out
+	for (size_t i = 0; i < n; i++) {
+		SV *cell = NULL;
+		bool copied = FALSE;
+		if (target) {
+			SV **cp = av_fetch(target, (SSize_t)i, 0);
+			if (!cp || !*cp || !SvOK(*cp))
+				continue;	//undef in -> undef out; the block never runs
+			cell = *cp;
+		}
+		hoa_view_fill(aTHX_ view, &v, (SSize_t)i);
+		ENTER;
+		SAVETMPS;
+		SV *arg = sv_2mortal(newRV_inc((SV *)view));	//$_[0]; its own SV, so `$_ = ...` cannot reach it
+		if (target) {
+			/*Held for the call, so a block that empties the column cannot free $_.*/
+			sv_2mortal(SvREFCNT_inc_simple_NN(cell));
+			if (SvREADONLY(cell)) {
+				cell = newSVsv(cell);
+				SAVEFREESV(cell);
+				copied = TRUE;
+			}
+			DEFSV_set(cell);
+		} else {
+			/*Freed by the scope rather than made mortal: a mortal carries SvTEMP,
+			and `$_ = ...` on one warns "Useless assignment to a temporary",
+			which under `use warnings FATAL => 'all'` kills the caller.*/
+			SV *def = newRV_inc((SV *)view);
+			SAVEFREESV(def);
+			DEFSV_set(def);
+		}
+		PUSHMARK(SP);
+		EXTEND(SP, 2);
+		PUSHs(arg);
+		PUSHs(sv_2mortal(newSVuv((UV)i)));
+		PUTBACK;
+		if (target) {
+			(void)call_sv(code, G_DISCARD);
+			SPAGAIN;
+			if (copied)
+				av_store(target, (SSize_t)i, newSVsv(cell));
+		} else {
+			const I32 count = call_sv(code, G_ARRAY);
+			SPAGAIN;
+			if (i == 0 && count > 1) {	//whole-column list: it is all of `out`
+				av_extend(out, (SSize_t)count - 1);
+				for (I32 j = 0; j < count; j++)
+					av_store(out, (SSize_t)j, newSVsv(*(SP - count + 1 + j)));
+				SP -= count;
+				whole = TRUE;
+			} else if (count > 1) {
+				croak("assign: '%" SVf "' returned %" IVdf " values for row %" UVuf "; a per-row coderef "
+					"must return one value per row (a whole-column list is told apart on row 0)",
+					SVfARG(name), (IV)count, (UV)i);
+			} else
+				av_store(out, (SSize_t)i, count ? newSVsv(POPs) : newSV(0));
+		}
+		PUTBACK;
+		FREETMPS;
+		LEAVE;
+		if (whole)
+			break;
+	}
+	FREETMPS;
+	LEAVE;
+	return whole;
+}
+
 /*Perl's own "give me an IV if this value really is one" test, which decides
 whether a comparison can be done in integers.  It arrived in 5.13.2 and is
 core-only -- ppport lists it Viu and does not backport it -- so the 5.10 and
@@ -32602,6 +32770,40 @@ SV *hoa2aoh(hoa)
 	}
 	OUTPUT:
 		RETVAL
+
+void
+_hoa_assign(df, name, code, n, cell_sv)
+	SV *df
+	SV *name
+	SV *code
+	UV n
+	SV *cell_sv
+	PPCODE:
+	{
+		/*assign()'s HoA row loop; see hoa_assign_loop(). The perl side has
+		already checked the shape, the pair and the row count, and keeps its own
+		loop for a tied frame. cell false: returns (whole, \@column), whole true
+		when row 0 returned the whole column. cell true: map_cell on column
+		`name`; returns nothing.*/
+		const bool cell = SvTRUE(cell_sv);
+		if (!SvROK(df) || SvTYPE(SvRV(df)) != SVt_PVHV)
+			croak("_hoa_assign: data frame must be a hashref");
+		HV *in = (HV *)SvRV(df);
+		if (cell) {
+			HE *he = hv_fetch_ent(in, name, 0, 0);
+			SV *t = he ? HeVAL(he) : NULL;
+			if (!t || !SvROK(t) || SvTYPE(SvRV(t)) != SVt_PVAV)
+				croak("_hoa_assign: map_cell target column '%" SVf "' must be an ARRAY ref", SVfARG(name));
+			(void)hoa_assign_loop(aTHX_ in, code, name, (size_t)n, (AV *)SvRV(t), NULL);
+			XSRETURN_EMPTY;
+		}
+		AV *out = (AV *)sv_2mortal((SV *)newAV());	//mortal until handed back, so a die in the block frees it
+		const bool whole = hoa_assign_loop(aTHX_ in, code, name, (size_t)n, NULL, out);
+		EXTEND(SP, 2);
+		mPUSHi(whole ? 1 : 0);
+		PUSHs(sv_2mortal(newRV_inc((SV *)out)));
+		XSRETURN(2);
+	}
 
 SV *hoa2hoh(hoa, key)
 	SV *hoa

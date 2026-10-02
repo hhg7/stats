@@ -630,6 +630,23 @@ returns
      }
  }
 
+Each term's C<Sum Sq> is what it adds to the terms before it in the formula,
+not what it would explain alone. When the regressors are correlated, as in
+C<anova.lm>'s own example on R's C<LifeCycleSavings>, reversing the formula
+moves sum of squares from one term to another and changes their p-values. The
+total of the terms and the C<Residuals> row do not move. In a balanced design
+such as C<warpbreaks> the terms are orthogonal, so the order changes nothing.
+
+
+
+=begin html
+
+<p><img src="https://raw.githubusercontent.com/hhg7/stats/main/img/anova.order.png" alt="anova term order: the Sum Sq of sr ~ pop15 + pop75 + dpi + ddpi and of the reversed formula as stacked bars that differ term by term but share one total and one Residuals, beside breaks ~ wool + tension and tension + wool, which are identical" width="100%" /></p>
+
+=end html
+
+
+
 Two-way (and higher) models use the C<*> operator, which implicitly evaluates
 the main effects alongside the interaction (C<a * b> expands to C<a + b + a:b>;
 C<a * b * c> to the full factorial C<a + b + c + a:b + a:c + b:c + a:b:c>):
@@ -673,6 +690,21 @@ square is 0. Every model is fitted on the same rows: those complete for all of
 them. As R's C<anova.lmlist> does, a model whose response differs from the
 first model's is dropped with a warning, and if only one model is left, its
 single-model table is returned.
+
+Below, C<warpbreaks> is fitted as four nested formulas, each adding one term.
+Each row's C<Sum of Sq> is the drop in C<RSS> from the row before it. Because
+every C<F> is taken over the largest model's residual mean square, the chain
+gives the same F values as the single-model table of the largest formula.
+
+
+
+=begin html
+
+<p><img src="https://raw.githubusercontent.com/hhg7/stats/main/img/anova.compare.png" alt="anova of nested formulas on warpbreaks: the RSS of breaks ~ 1, + wool, + tension and + wool:tension as bars, each drop labelled as that row's Sum of Sq and Df, and each drop per Df over the largest model's RSS / Res.Df giving an F equal to the one-model anova table's" width="100%" /></p>
+
+=end html
+
+
 
 Given two or more B<fitted models> instead -- C<lm> or C<glm> fits (or
 C<negbin> C<glm> fits) of the same response on the same rows -- C<anova> compares
@@ -1106,6 +1138,28 @@ which returns
     }
  }
 
+With one factor, the table is built like this. The factor's C<Sum Sq> is how
+far its group means lie from the grand mean, and the C<Residuals> C<Sum Sq> is
+how far the observations lie from their own group's mean, each squared and
+summed. Each is divided by its C<Df> to
+give its C<Mean Sq>. C<F value> is the term's C<Mean Sq> over the residual one,
+and C<< Pr(E<gt>F) >> is the area of the F distribution on those two C<Df> beyond it.
+Below, R's C<PlantGrowth> is given as a named list of three groups, which C<aov>
+stacks into C<Value ~ Group>. The vertical lines on the left are the two kinds
+of deviation: blue for each group's mean from the grand mean, grey for each
+observation from its group's mean. The right-hand panel magnifies the tail
+that C<< Pr(E<gt>F) >> measures, which is too thin to see at full scale.
+
+
+
+=begin html
+
+<p><img src="https://raw.githubusercontent.com/hhg7/stats/main/img/aov.what.png" alt="aov on PlantGrowth: the stacked observations with their group means and the grand mean, the Sum Sq split into Group and Residuals and divided by Df into Mean Sq and F, and Pr(&gt;F) as the tail of F(2, 27) beyond F = 4.846, also shown magnified" width="100%" /></p>
+
+=end html
+
+
+
 You can also perform Two-Way ANOVA with categorical interactions using the C<*> operator. The parser will implicitly evaluate the main effects alongside the interaction:
 
  my $res_2way = aov($data_2way, 'len ~ supp * dose');
@@ -1239,6 +1293,39 @@ The function returns a single C<HashRef> containing the evaluated statistical re
 
 
 
+The coefficients are steps away from one reference cell, which is the first
+level of each factor in C<xlevels>. Because the levels are sorted, R's
+C<warpbreaks> under C<breaks ~ wool * tension> has tension C<H> as its reference,
+not C<L>. C<Intercept> is that cell's mean. Every other cell adds a main effect
+for each of its non-reference levels and an interaction for each
+non-reference pair, and the sum is the cell's fitted value. In a full
+factorial such as this one, that fitted value is the cell mean.
+
+
+
+=begin html
+
+<p><img src="https://raw.githubusercontent.com/hhg7/stats/main/img/aov.coefficients.png" alt="aov coefficients on warpbreaks: for each of the six wool-by-tension cells, a staircase of Intercept, tension, wool and interaction coefficients that ends on that cell's fitted value" width="100%" /></p>
+
+=end html
+
+
+
+C<group.stats> is something else again. It holds each factor's own means, each
+averaged over the other factors, so the cell means above are not among them.
+The table has one row per term in R's order, followed by C<Residuals>, which
+has no F test of its own.
+
+
+
+=begin html
+
+<p><img src="https://raw.githubusercontent.com/hhg7/stats/main/img/aov.outputs.png" alt="aov group.stats and table on warpbreaks: the marginal mean and size of each wool and tension level against the grand mean, and the Sum Sq, Df, Mean Sq, F value and Pr(&gt;F) of wool, tension, wool:tension and Residuals" width="100%" /></p>
+
+=end html
+
+
+
 =head3 omitting formula
 
 In the case of an omitted formula, stacking is done:
@@ -1299,7 +1386,7 @@ It changes C<$df> in place and also returns it (handy for chaining).
 
 =head3 Coderef values
 
-A coderef is classified by what it returns in list context:
+A coderef is called in list context, on every row, and is classified by what it returns for the first row:
 
 =over
 
@@ -1314,6 +1401,8 @@ A coderef is classified by what it returns in list context:
 =item * C<$_[2]> is the row key — B<HoH only>.
 
 =item * A single arrayref return is stored I<as the cell>, so C<< sub { [split /,/, $_-E<gt>{tags}] } >> gives an arrayref-valued column.
+
+=item * List context holds for every row, not just the first: C<< sub { $_-E<gt>{id} =~ /(\d+)/ } >> stores the captured digits in each row, and a match that fails returns the empty list, so its cell is C<undef>. A later row that returns more than one value dies.
 
 =back
 
@@ -1339,7 +1428,7 @@ A plain coderef stores its B<return value>, so an in-place transform of an exist
  # awkward: copy to $v, edit $v, return $v
  assign($df, 'Res.' => sub { (my $v = $_->{'Res.'}) =~ s/^[A-Z]://; $v });
 
-C<map_cell { ... }> removes the ceremony. Inside the block, B<< C<$_> is the named column's current cell >> (not the whole row), the block's return value is B<ignored>, and the modified C<$_> is stored back:
+C<map_cell { ... }> removes the ceremony. Inside the block, B<< C<$_> is the named column's current cell >> (not the whole row), the block's return value is B<ignored>, and the modified C<$_> is stored back -- for a HoA, C<$_> aliases the cell itself, so the edit is made where the cell lies:
 
  use Stats::LikeR;   # exports map_cell alongside assign
 
@@ -1362,6 +1451,10 @@ Notes:
 =item * B<AoH> distributes by array order; B<HoH> by B<sorted key order> — so any list you compute or hand in must be in C<sort keys %$df> order.
 
 =item * Whole-column and arrayref values must have exactly one entry per row; a length mismatch dies.
+
+=item * A B<HoA> may also hold plain scalar (or C<undef>) entries; each row view carries them through unchanged. An empty hash is an empty HoA, and its first arrayref value sets the row count, so C<< assign({}, x =E<gt> [1, 2, 3], y =E<gt> sub { $_-E<gt>{x} * 2 }) >> builds a frame from nothing.
+
+=item * Rows, value types, arrayref lengths and C<map_cell> targets are all checked before anything is written, so a call that dies on one of those leaves C<$df> as it found it. A coderef that dies part-way through does not roll back the rows already written.
 
 =back
 
@@ -1393,11 +1486,15 @@ Notes:
 
 =item * B<Same recipe, all shapes.> The same per-row C<< sub { $_-E<gt>{weight} / ... } >> works for AoH, HoA, and HoH; you always read the row through C<$_>.
 
-=item * B<It modifies your data frame.> If you need to keep the original, pass a copy: C<assign(clone($df), ...)>.
-
-=item * Reusing a column name B<overwrites> that column.
+=item * B<< C<$_> is the real row, in every shape. >> For an AoH or HoH it is the row hash itself. For a HoA it is a view: one hash for the whole call, whose values I<are> the frame's cells for the current row, not copies of them. Either way, a write through C<< $_-E<gt>{col} >> changes the frame:
 
 =back
+
+ assign($hoa, z => sub { $_->{x} *= 10; $_->{x} + 1 });   # x is now 10 times bigger too
+
+  For a HoA, that one view is re-pointed at each row in turn. A key the block adds to it is gone on the next row and never reaches the frame; a key it deletes comes back, and the column stays. Writing to a cell past the end of a short column is dropped rather than growing the column. A block that I<keeps> C<$_> (pushes it somewhere, or returns it) keeps that one view, which shows whichever row was visited last. A tied HoA, or one with a tied column, is the exception: its view is a fresh hash of copies on every row.
+- B<It modifies your data frame.> If you need to keep the original, pass a copy: C<assign(clone($df), ...)>.
+- Reusing a column name B<overwrites> that column.
 
 =head2 auc
 

@@ -2,6 +2,45 @@ Revision history for Stats-LikeR
 
 0.3213 2026-10-01 CDT
 
+ [assign(): consistent context, shape detection, no half-applied calls]
+
+ - A per-row coderef was called in list context for the first row, to
+   tell a whole-column return apart, and in scalar context for every other
+   row, so anything that answers differently in the two gave the first row
+   a different kind of value: sub { $_->{s} =~ /(\d+)/ } stored the digits
+   in row 0 and 1 in every other row, and a failed match was undef in row
+   0 and '' elsewhere. Every row is now called in list context; a later
+   row that returns more than one value dies instead of storing a count.
+
+ - A hash frame was classified as HoA or HoH by whichever value values()
+   returned first, so a HoA holding a scalar or undef entry worked or died
+   from one run to the next with hash order (167 of 200 runs died on a
+   frame with five such entries). Every value is now looked at; a hash of
+   both arrays and hashes, or of plain scalars only, dies with a message
+   that says so.
+
+ - Rows, value types, arrayref lengths and map_cell targets are all
+   checked before the first write, so a bad last row or a bad later pair
+   no longer leaves the earlier rows or pairs applied.
+
+ - An empty hash takes its row count from its first arrayref value, so
+   assign({}, x => [1, 2, 3]) makes a column where it used to die.
+
+ - On a HoA the row loop is now C (_hoa_assign), and the row view
+   aliases the frame: one hash for the whole call, whose values are the
+   current row's own cells rather than copies. A write through $_->{col}
+   therefore reaches the frame, as it always has for an AoH or HoH, and
+   map_cell's $_ is the cell itself. Building a fresh hash of copies per
+   row was 73% of the call, and C alone would have cut that by only a
+   quarter. A per-row coderef on 200000 rows x 16 columns went from 0.41s
+   to 0.062s, and on 1000000 x 64 from 6.6s to 0.94s; map_cell from 0.23s
+   to 0.055s and from 4.1s to 0.93s. A key the block adds to the view is
+   gone on the next row, and a block that keeps $_ keeps that one view. A
+   tied frame or column keeps the perl loop and its copies.
+
+ - A whole-column result on a HoA is installed without a second copy of
+   the list, which takes 1.5 MB off the call's peak on 200000 rows.
+
  [read_table(): a comment as wide as the header]
 
  - A leading comment that split into as many fields as the next line was
