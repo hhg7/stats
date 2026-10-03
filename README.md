@@ -5791,19 +5791,20 @@ minimal example:
 | -------- | ------- | ------- |
 |`comment` | Comment marker, by default `#` (`##` for a VCF); lines beginning with it are skipped. It may be more than one character | `comment => '%'` |
 |`output.type`| data type for output: array of hash (the default; hash of hash for a VCF), array of array, hash of array, or hash of hash | `'output.type' => 'aoh'`|
-|`filter`| Only take in rows matching a filter | `filter => { Sex => sub {$_ eq 'f'} }`|
-|`row.names` | include row names in retrieved data; off by default | |
+|`filter`| Only take in rows matching a filter; see below for how a key picks its column | `filter => { Sex => sub {$_ eq 'f'} }`|
+|`row.names` | `hoh` only: the column whose values key the rows (default: the first column). An error with any other `output.type`, where the column is read as an ordinary one | `'row.names' => 'id'` |
 |`auto.row.names` | read R's default `write.table` output, where the header is one field short of every data row because R writes no label for the row-names column: the leading field of each row becomes a row-names column. `1` names it `row_name`, a string names it whatever you pass. Off by default, so a genuinely ragged file is still an error | `'auto.row.names' => 1` |
 |`sep` | field separator: a literal string, or a `qr//` regex (see below); synonym with `delim`| `sep => "\t"`, `sep => qr/\s+/` |
 | `delim`| field separator: a literal string, or a `qr//` regex; synonym with `sep`| `delim => "\t"` |
 | `header` | `1` (the default): the first line holds the column names. `0`, or perl's false `''`: the first line is data, as R's `header = FALSE` and pandas' `header=None` | `header => 0` |
 | `col.names` | an array reference of column names. With `header => 0` it names the columns, which are otherwise `V1`, `V2`, … as in R; with a header it replaces the header's names | `'col.names' => ['id', 'name']` |
 | `quote` | `'"'` (the default): a double quote starts a quoted field. `''`: quotes are ordinary text, as R's `quote = ""` and pandas' `quoting=csv.QUOTE_NONE` | `quote => ''` |
-| `sheet`| which worksheet to read from an `.xlsx` file: a 1-based index or a sheet name (default: first sheet). Ignored for text files | `sheet => 'Sheet2'` |
+| `sheet`| which worksheet to read from an `.xlsx` file: a sheet name, or a 1-based index when no sheet has that name (default: first sheet). An error for any other file | `sheet => 'Sheet2'` |
 | `na.strings` | field texts that mean "missing"; a string or an array reference of strings, mapped to `undef`. Off by default | `'na.strings' => 'NA'` |
 | `na_values` | pandas' spelling of `na.strings` | `na_values => ['NA', 'N/A']` |
 | `undef.val` | `write_table`'s spelling of `na.strings`, so a round trip can use one name on both halves | `'undef.val' => 'NA'` |
 | `explode` | VCF only. `1` (the default): split each sample column into one column per `FORMAT` key, and return a hoh keyed by `CHROM:POS:REF:ALT`; `0`: the file's own columns. See [VCF files](#vcf-files) | `explode => 0` |
+| `colClasses` | R's: store the columns you name as numbers rather than text, which takes about a third of the memory. A hash by column name, a list by position, or one class for every column. See [numeric columns](#numeric-columns-colclasses) | `colClasses => { age => 'integer', bmi => 'numeric' }` |
 output types can be AOH (aoh), AOA (aoa), HOA (hoa), HOH (hoh)
 
     read_table($filename, 'output.type' => 'aoh');
@@ -5823,12 +5824,42 @@ and, like Text::CSV_XS, filters can be applied in order to save RAM on big files
         },
         'output.type' => 'aoh'
     );
+
+A key of `filter` picks its column this way:
+
+  - `0` is the whole row: `$_` is the array of the row's fields.
+  - A column's name is that column. When the header repeats a name, it is the
+    last column with it, the one whose value the row keeps.
+  - Any other number is a field, counting from 1, as in Text::CSV_XS. A name
+    is tried first, so a column called `2021` is filtered on as
+    `filter => { 2021 => ... }` whatever its position.
+  - Two keys for the same column, such as `1` and its name, both run, in the
+    order of their keys sorted as strings. A row is kept only if every filter
+    returns true.
+
+Each filter is also passed the row's fields and a hash of the row by name, as
+`$_[0]` and `$_[1]`, and a change it makes to `$_` is written back into the
+row. Inside a filter `%_` is that same hash.
+
+The filters are called from the parser itself, so a filtered read costs little
+more than the filter calls: a 300,000-row, 5-column CSV read as an array of
+hashes takes about 0.25 s with one filter and 0.13 s with none. Up to 0.3212
+the same filtered read took 0.63 s.
 the default delimiter is `,`
 Suffixes `.csv`, `.tsv` and `.vcf` are automatically detected from file names, but if specified, are overridden by `delim` and/or `sep`. `sep` is given priority. A `.vcf` also changes the default `comment`; see [VCF files](#vcf-files).
 
 A UTF-8 byte-order mark at the start of a text file, which Excel's "CSV UTF-8"
 export writes, is dropped rather than read as part of the first column's name,
-as pandas' `read_csv` drops it. Lines always end at a newline whatever `$/` is
+as pandas' `read_csv` drops it.
+
+A file is read as bytes and its fields come back as bytes; nothing is decoded.
+Text you pass in to be compared with a field — a `sep`, a `comment` marker, an
+`na.strings` token, a `filter` key, `row.names` or a `sheet` name — is
+compared as UTF-8 bytes when perl holds it as characters, as it does under
+`use utf8` or for a string you have decoded. So `'na.strings' => '—'` under
+`use utf8` matches an em dash in a UTF-8 file. A `qr//` separator holding such
+characters matches each line as UTF-8 instead, and a line that is not valid
+UTF-8 is then an error rather than misread. Lines always end at a newline whatever `$/` is
 set to, so a `local $/;` in the calling code does not change what is read.
 Lines may end in LF or CRLF, and a file whose lines end in a bare CR, as
 classic Mac OS wrote them, is read as R and pandas read it. The start of the
@@ -5945,8 +5976,10 @@ option to set:
     checksum, or anything but NUL padding after the last member dies naming
     the file.
   - Both need only core modules (`Compress::Raw::Zlib` and
-    `Compress::Raw::Bzip2`). xz, zstd and `.zip` are not read (an `.xlsx`,
-    which is a zip archive, is).
+    `Compress::Raw::Bzip2`). xz, LZMA, zstd and lzop files are recognised by
+    their first bytes, as R recognises them, and refused with a message that
+    names the format, rather than read as text. `.zip` is not read either (an
+    `.xlsx`, which is a zip archive, is).
   - [`write_table`](#write_table) writes `.gz` and `.bz2` files that read
     back through this.
 
@@ -6008,6 +6041,41 @@ skipped, but the first column is `#CHROM` and nothing is split.
 The split is done in C. On a 3,499,678-record single-sample GATK `.vcf.gz`,
 the exploded hoh takes 11.7 s, against 9.1 s for the file's own columns as a
 hoh, and an exploded aoa 8.4 s, against 7.0 s for the plain one.
+
+### numeric columns (`colClasses`)
+Every field is read as text unless you say otherwise. On a 64-bit perl a
+short number held as text costs about 70 bytes, and held as a number about
+24. `colClasses` takes R's
+spelling and R's meaning: name the columns that are numbers, and they are
+stored as numbers as the file is read.
+
+    my $d = read_table('cohort.csv', colClasses => { age => 'integer', bmi => 'numeric' });
+    my $d = read_table('cohort.csv', colClasses => [ 'character', 'integer', 'numeric' ]);
+    my $d = read_table('counts.tsv', colClasses => 'integer');
+
+| class | stored as | accepts |
+| --- | --- | --- |
+| `numeric` (also `double`, `real`) | a floating-point number | a decimal number with an optional sign and exponent, or `Inf`, `Infinity` or `NaN` in any case, with blanks either side allowed |
+| `integer` | an integer | an optional sign and digits, a leading blank allowed and nothing after them, within perl's integer range |
+| `character`, or `undef` | the text | anything (the default) |
+
+- A hash names columns; one the file does not have is warned about, as R
+  warns about it, and otherwise ignored. A list goes by position and is
+  recycled when it is short, as R recycles it; a single class applies to every
+  column. In a hoh the row-name column counts, and a declared one keys each row
+  by its number, so `004` becomes the row named `4`.
+- An empty field and an `na.strings` token are `undef` in any column. `NA` is
+  missing only when `na.strings` names it.
+- A field that is not a number of the kind declared is an error naming the
+  column, the data row and the text, rather than a silent `0` or `undef`.
+- A `filter` still sees each field's text; the rows it keeps are converted.
+- Where it differs from R: an integer may be anything that fits perl's integer
+  (64 bits on most perls), where R's stops at 2147483647; a hexadecimal
+  number such as `0x1A` is refused, where R reads it; and an exponent must
+  have digits, where R reads `1e` as `1`.
+
+On a 300,000-row CSV with three of its five columns declared, the table took
+74 MB instead of 116 MB, and the read 0.095 s instead of 0.086 s.
 
 ### missing values (`na.strings` / `na_values` / `undef.val`)
 An empty field is always read as `undef`. Any *other* text that a file uses to
@@ -6125,6 +6193,10 @@ work exactly as they do for text files:
     my $data = read_table('samples.xlsx', sheet => 'Results');   # by name
     my $data = read_table('samples.xlsx', sheet => 2);           # 1-based index
 
+A `sheet` is looked up as a name first and as a number only when no sheet has
+that name. So in a workbook whose sheets are `2024` and `2023`,
+`sheet => 2023` is the sheet named `2023`, and `sheet => 2` is the second.
+
 **Multiple worksheets.** If the workbook has more than one worksheet and no
 `sheet` is given, `read_table` returns a **hashref keyed by worksheet name**,
 each value being that sheet parsed just as a single table would be (honouring
@@ -6139,13 +6211,16 @@ returns that one table directly (not wrapped in a hash).
 Limitations: dates and times are returned as their raw Excel serial numbers
 (cell number formats are not applied); shared-string rich-text runs are
 concatenated into a single value; a cell that has formatting but no value is a
-blank, and blanks past a row's last value do not add columns (readxl and pandas
-leave them out too); and two things the format does not allow are
+blank, whether it is written `<c s="2"/>`, `<c s="2"></c>` or with an empty
+`<v></v>`, and blanks past a row's last value do not add columns (readxl and
+pandas leave them out too); and two things the format does not allow are
 read as if they were not there — a cell reference past `XFD`, the last of the
 16,384 columns a worksheet has, places the cell in the next column instead, and
 a numeric character reference above `&#x7FFFFFFF;` is left in the text rather
 than decoded. The `sep`, `delim`, and `comment` options do not
-apply to `.xlsx` files. Tested in `t/read_table.xlsx.t` and
+apply to `.xlsx` files, so a cell such as `#id` is read as it is. A workbook
+whose elements carry a namespace prefix (`<x:row>`, as the Open XML SDK writes
+them) is read like any other. Tested in `t/read_table.xlsx.t` and
 `t/read_table.xlsx.parser.t`.
 
 ## rename_cols

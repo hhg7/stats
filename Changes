@@ -120,6 +120,55 @@ Revision history for Stats-LikeR
    0.178 s, aoh 0.179 s to 0.165 s, and a 300,000-row hoh 0.357 s to
    0.339 s.
 
+ [read_table(): fixes from a review]
+
+ - VCF explode aborted ("realloc(): invalid pointer") when two output
+   columns had one name and the shape was hoa: a sample name repeated in
+   the header, as merged files have, or sample "X" with key "Y.Z" beside
+   sample "X.Y" with key "Z". The second column's array replaced the first's
+   while rows were still pushed into the first. An aoh or hoh kept the later
+   column without a word. Every shape but aoa now keeps the later column
+   and warns as the plain read does about a repeated name.
+
+ - A commented-out header ("# id,val") was cut by a perl split(), which
+   ignored quoting and cut before the marker came off: '# "x,y",z' gave
+   three names and "#<TAB>a<TAB>b" gave ('', 'a', 'b'). The widths then
+   failed to match the data, so the first data row became the header and
+   was lost, silently. The line is now cut by the parser itself.
+
+ - In an .xlsx, a first cell starting with '#' was taken for a commented-out
+   header, though 'comment' does not apply to an .xlsx: a column "#id" with
+   values "#a1" came back as [], and "# of items" lost its "# ".
+
+ - A filter field named by two keys, its number and its name, ran only one
+   of the two, and which one followed hash order, so the rows kept changed
+   between runs. Both now run, in key order. A key that is a column's name
+   is that column before it is a field number, so a column named "2021" can
+   be filtered on; 0 is still the whole row. Under a repeated column name,
+   a filter on an earlier field now sees that field's own value, and its
+   write-back no longer replaces the value the row keeps for the name.
+
+ - 'sheet' takes a name before an index. Of sheets "2024" and "2023",
+   neither could be asked for by the name the whole-book read returns it
+   under, and with sheets "2" and "1", sheet => '1' returned "2".
+
+ - An .xlsx whose elements carry a namespace prefix (<x:row>, as the Open
+   XML SDK writes them) read as [] without a warning; it is now read. A
+   cell written open and empty (<c s="2"></c>, <c><v></v></c>) past a
+   row's last value no longer adds an unnamed column, as the self-closing
+   <c s="2"/> already did not.
+
+ - Text passed in as characters, under `use utf8` or decoded, is compared
+   with the file as UTF-8 bytes. A qr// sep holding a character past 0xFF
+   never matched, nor did such an na.strings token, filter key, row.names
+   or sheet name, while a literal sep did. A UTF-8 qr// sep now matches
+   each line as UTF-8 and refuses a line that is not.
+
+ - row.names with an aoh or hoa, and sheet on anything but an .xlsx, were
+   ignored; both are now errors, as row.names with an aoa already was. An
+   xz, LZMA, zstd or lzop file is refused by name, from R's magic numbers,
+   where it was read as text and reported as an alignment error.
+
  [t_test(): tied input]
 
  - A sample's length came from av_len(), which is FETCHSIZE on a tied
@@ -678,6 +727,78 @@ Revision history for Stats-LikeR
  - The documentation said the predicate is given only the defined cells.
    By default it is given every cell, undef included; na => 'omit' and
    against are what drop them, and both are now documented.
+
+ [Strings outside ASCII: one string, one key]
+
+ - Several functions used a string as a hash key, or compared two, by its
+   bytes alone and dropped its UTF-8 flag, so the two spellings perl has
+   for one string ("caf\xe9" and its upgraded copy) were two keys, two
+   strings with one spelling ("caf\xc3\xa9" and the upgraded "caf\xe9")
+   were one, and a name outside Latin-1 was looked up by its bytes and not
+   found. Each now keys a string as a perl hash would, and
+   t/utf8.keys.regressions.t has a case for every one.
+
+ - filter() named a HoA column it built after its name's bytes and, looking
+   the cells up by those bytes too, filled it with undef: AoH, HoH and HoA
+   into HoA and HoA into AoH, with a code block or a col() expression. A
+   HoH's row keys lost the flag the same way.
+
+ - csort() said "column not found" for a column named outside ASCII, in an
+   AoH or a HoA, and value_counts() counted nothing for one.
+
+ - merge() would not join the two spellings of one key and did join two
+   keys with one spelling; drop_duplicates() and mode() erred the same
+   ways. group_by(), agg() and uniq() were already right, and merge() and
+   drop_duplicates() now share their code.
+
+ - survfit() and logrank_test() split a group label by spelling and
+   returned one outside Latin-1, as a stratum name and in 'groups', as its
+   bytes. A label also ended at its first NUL. coxph() split a strata =>
+   \@labels level by spelling.
+
+ - csort() rethrew a comparator's die as a string, so an exception object
+   came back as "HASH(0x...) at ..." and a UTF-8 message as its bytes. $@
+   itself is now rethrown. col2col() kept the flag off a callback's error.
+
+ [read_table(): filters run in the parser]
+
+ - A filter kept every row of a read in read_table's perl closure, which
+   built each row's hash and called the subs from there. The parser now
+   calls them itself, with the same $_, %_, arguments and write-back. On a
+   300,000 x 5 CSV a filtered read took 0.58 s to 1.07 s, by shape and
+   filter, and takes 0.23 s to 0.37 s; 0.08 s to 0.18 s unfiltered.
+   t/read_table.filter.t reads every case both ways and requires the same
+   result, the same values seen by each filter and the same warnings.
+
+ - A filter that is not a code reference is refused before the file is
+   read, where it died on the first row that reached it.
+
+ [read_table(): colClasses]
+
+ - New option, R's colClasses: 'numeric' (or 'double', 'real') stores a
+   column as numbers, 'integer' as integers, and 'character' or undef as
+   read, given as a hash by name, a list by position (recycled when short)
+   or one class for all. A field that is not a number of the kind declared
+   is an error naming the column, the row and the text. What is accepted is
+   what R's scan() accepts, except that an integer may be any IV, hex is
+   refused and an exponent needs digits. On that CSV with three of five
+   columns declared, a hoa took 74 MB instead of 116 MB, and the read
+   0.095 s instead of 0.086 s. The cases are R's PR#16478 and reg-IO2.R
+   and pandas 3.0.4's test_dtypes_basic.py.
+
+ [merge(): a hole in suffixes]
+
+ - suffixes => \@s segfaulted when @s had a hole (my @s; $s[1] = '.y').
+   A hole is now the undef it prints as, as an undef element already was.
+
+ [xs.check.pl]
+
+ - Its output is one line per finding, and it exits 1 while any remain;
+   each finding used to be a five-line stack trace, 196 of them in 1177
+   lines. XS::Check's type checks read one declaration per variable name
+   for the whole file, so 41 of its 43 were about another function's
+   variable; xs.check.pl now checks the declaration in scope. SvPV() calls
+   whose encoding has been checked are listed in it, with the reason.
 
 0.3212 2026-09-28 CDT
 

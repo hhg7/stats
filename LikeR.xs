@@ -1255,7 +1255,7 @@ platform that has the drand48_r() this block needs.*/
 #define AUTO_SEED_PRNG() \
 	do { \
 		if (!PL_srand_called) { \
-			(void)seedDrand01((Rand_seed_t)Perl_seed(aTHX)); \
+			(void)seedDrand01((Rand_seed_t)seed()); \
 			PL_srand_called = 1; \
 		} \
 	} while (0)
@@ -2505,8 +2505,8 @@ static void S_iter_restore(pTHX_ void *p) {
 	}
 	hv_iterinit(hv);	// frees an entry the walk left lazily deleted, and creates the aux struct
 	if (present) {
-		Perl_hv_riter_set(aTHX_ hv, s->riter);
-		Perl_hv_eiter_set(aTHX_ hv, s->eiter);
+		HvRITER_set(hv, s->riter);
+		HvEITER_set(hv, s->eiter);
 		if (s->lazydel) HvLAZYDEL_on(hv);
 #ifdef PERL_HASH_RANDOMIZE_KEYS
 		if (ITER_HASAUX(hv)) HvAUX(hv)->xhv_last_rand = s->last_rand;
@@ -5601,8 +5601,8 @@ static const char *tex_greek_macro(UV cp) {
 	}
 }
 
-/*Escape one cell into 'out' (reset first): the LaTeX-active characters
-# _ % & gain a leading backslash and '>' becomes \textgreater. When the
+/*Escape one cell into 'out' (reset first): the LaTeX-active characters #
+_ % & gain a leading backslash and '>' becomes \textgreater. When the
 source SV is UTF-8, Greek letters are turned into their textgreek macros
 (e.g. U+0394 Greek Delta -> \textDelta{}; the trailing {} keeps a following letter
 from being swallowed into the control word). With do_format set, a numeric
@@ -7061,9 +7061,10 @@ static bool glm_var_label(pTHX_ const GlmVarSpec *restrict s, HV *data_hoa, HV *
 		const char *lab;
 		if (!sv || !SvOK(sv)) return 0;
 		lab = SvPV(sv, l);
-		hit = hv_fetch(map, lab, (I32)l, 0);
+		const I32 sk = SvUTF8(sv) ? -(I32)l : (I32)l;	//equal labels are one level whatever their encoding
+		hit = hv_fetch(map, lab, sk, 0);
 		if (hit) *idx = (size_t)SvUV(*hit);
-		else { *idx = *count; hv_store(map, lab, (I32)l, newSVuv((UV)*count), 0); (*count)++; }
+		else { *idx = *count; hv_store(map, lab, sk, newSVuv((UV)*count), 0); (*count)++; }
 		return 1;
 	}
 	return 0;
@@ -9559,8 +9560,8 @@ typedef struct {
 	SV *rv;    // our reference to hv; NULL once handed away
 	SV **slot; // the cell SV of each column, in `names` order
 	U32 n;
-	char **names;
-	STRLEN *nlens;
+	const char **names;
+	I32 *klens;	// hv_store() lengths: negative marks a UTF-8 name
 } flt_rowbuf;
 
 static void flt_rb_new(pTHX_ flt_rowbuf *rb) {
@@ -9568,7 +9569,7 @@ static void flt_rb_new(pTHX_ flt_rowbuf *rb) {
 	hv_ksplit(rb->hv, rb->n ? rb->n : 1);
 	rb->rv = newRV_noinc((SV *)rb->hv);
 	for (U32 c = 0; c < rb->n; c++) {
-		SV **sp = hv_store(rb->hv, rb->names[c], rb->nlens[c], newSV(0), 0);
+		SV **sp = hv_store(rb->hv, rb->names[c], rb->klens[c], newSV(0), 0);
 		rb->slot[c] = *sp;
 	}
 }
@@ -9590,13 +9591,18 @@ static void flt_rb_free(pTHX_ void *p) {
 }
 
 /*register column NAME in (reg,order) the first time it is seen, creating its
-output array in OUT; used to build HoA output from AoH/HoH input.*/
+output array in OUT; used to build HoA output from AoH/HoH input.  klen is an
+hv_store() length, negative for a UTF-8 name: up to 0.3212 it was the byte
+count alone, so a column named "\x{436}" came out of filter() named by its two
+bytes and, looked up by those, read undef in every row.*/
 static void
-flt_reg_col(pTHX_ HV *reg, AV *order, HV *out, const char *name, STRLEN nlen){
-	if (!hv_exists(reg, name, nlen)) {
-		hv_store(reg, name, nlen, newSViv(1), 0);
-		hv_store(out, name, nlen, newRV_noinc((SV*)newAV()), 0);
-		av_push(order, newSVpvn(name, nlen));
+flt_reg_col(pTHX_ HV *reg, AV *order, HV *out, const char *name, I32 klen){
+	if (!hv_exists(reg, name, klen)) {
+		hv_store(reg, name, klen, newSViv(1), 0);
+		hv_store(out, name, klen, newRV_noinc((SV*)newAV()), 0);
+		SV *nm = newSVpvn(name, (STRLEN)(klen < 0 ? -klen : klen));
+		if (klen < 0) SvUTF8_on(nm);
+		av_push(order, nm);
 	}
 }
 
@@ -9737,18 +9743,32 @@ why one at the very start of a line is no separator, as in split(); an empty
 match further on is still found, and the caller refuses it if it is taken as a
 separator.
 
-line_sv is only the SV the engine is told the string belongs to: it is never
-UTF-8 here and nothing asks for $&, so the buffer is matched in place (nosave)
-and no copy of the line is made.  line is not restrict: it points into
-line_sv's buffer, which the engine is handed as well.*/
+line_sv is only the SV the engine is told the string belongs to, and nothing
+asks for $&, so the buffer is matched in place (nosave) and no copy of the line
+is made.  line is not restrict: it points into line_sv's buffer, which the
+engine is handed as well.
+
+utf8 is TRUE for a pattern perl holds as UTF-8 -- one with a character past
+0xFF in it, or any non-ASCII one written under `use utf8`.  The line's bytes
+are then shown to the engine as UTF-8 for the length of the match, by flagging
+line_sv, which is how qr/\x{2014}/ meets the three bytes an em dash is in a
+UTF-8 file.  Matched against the line as bytes, as it was up to 0.3213, such a
+pattern could never match at all, while the same separator given as a string
+did.  The offsets the engine hands back are byte offsets either way.  The
+caller has checked that the line is valid UTF-8 before this is reached with
+utf8 set, since the engine assumes it.*/
 static bool S_csv_rx_find(pTHX_ REGEXP *restrict rx, SV *line_sv, char *line,
-	size_t from, size_t len, size_t *restrict ms, size_t *restrict me)
+	size_t from, size_t len, size_t *restrict ms, size_t *restrict me, bool utf8)
 {
-	if (!pregexec(rx, line + from, line + len, line, 1, line_sv, 1))
-		return 0;
+	bool hit;
+	if (utf8) SvUTF8_on(line_sv);
+	hit = cBOOL(pregexec(rx, line + from, line + len, line, 1, line_sv, 1));
+	if (utf8) SvUTF8_off(line_sv);
+	if (!hit)
+		return FALSE;
 	*ms = CSV_RX_START(rx);
 	*me = CSV_RX_END(rx);
-	return 1;
+	return TRUE;
 }
 
 /*What went wrong with a quote, for read_table's messages.
@@ -9779,8 +9799,8 @@ static SV *S_quote_note(pTHX_ size_t q_line, bool mid, size_t to){
 static bool S_blank_run(const char *restrict s, size_t n){
 	for (size_t k = 0; k < n; k++)
 		if (s[k] != ' ' && s[k] != '\t')
-			return 0;
-	return 1;
+			return FALSE;
+	return TRUE;
 }
 
 /*av_push() without the call, for the parser's own arrays.
@@ -9815,14 +9835,14 @@ has 'run' appended and is copied out.  The first route saves a sv_catpvn()
 and a second memcpy() per cell; with the shared keys in S_plan_init() it took
 an aoh read of a 300,000 x 5 CSV from 0.120 s to 0.096 s.
 
-undef_empty is csv_plan's 'active': once S_fast_row() is building the rows, an
-empty field is pushed as the bodyless undef it is going to become, instead of
-as an empty string that S_fast_row() would free and replace.  On a 300,000 x 10
+undef_empty is csv_plan's 'undef_empty': once S_fast_row() is building the
+rows, an empty field is pushed as the bodyless undef it is going to become,
+instead of as an empty string that S_fast_row() would free and replace.  On a 300,000 x 10
 CSV with nine cells in ten empty that took an aoh read from 0.185 s to 0.106 s,
 a hoa from 0.164 s to 0.097 s and an aoa from 0.152 s to 0.073 s (best of nine
 runs each), and a file with no empty cell by no more than 1 ms.  Before then
-the row goes to a perl callback -- the header, or a filter -- which has always
-been handed '' for an empty field.
+the row goes to the perl callback, and with a filter it goes to S_filter_row():
+a filter has always been handed '' for an empty field.
 
 restrict holds: 'run' points into the line buffer or at a literal, never into
 the accumulator.*/
@@ -9883,11 +9903,10 @@ caller asked for is now built here, from the fields the parser already has.
 the closure and takes 0.20 s here.
 
 The closure is still what reads the header -- it has to be, since the header
-is where every message read_table can produce comes from -- and it is still
-the only path when there is a 'filter', which is perl by definition.
-read_table passes a plan hash only when there is none; the parser looks at it
-after each callback returns, and once the callback has filled it in, takes
-over.
+is where every message read_table can produce comes from.  The parser looks at
+the plan hash after each callback returns, and once the callback has filled it
+in, takes over.  A 'filter' kept every row in the closure up to 0.3212; its
+subs are now called from here, by S_filter_row().
 
 The plan's keys, all set by read_table's install_plan():
 
@@ -9908,6 +9927,13 @@ The plan's keys, all set by read_table's install_plan():
   rn     mode 2 only: the index into keys of the row.names column
   na     the na.strings set, or undef when there is none
   file   for the alignment message
+  flt_fld, flt_sub
+         optional, and given together: the filters, in the order read_table
+         runs them, as each one's field (0 = the whole row, else the field's
+         index + 1, as %mapped_filters keys them) and its CODE reference
+  cls, hdr
+         optional, and given together: colClasses, one code per field (see
+         S_class_value()), and the header's names, for its messages
 
 span_line, span_to and span_mid are not plan keys: _parse_csv_file() sets them
 before each row it hands on, and they stay 0 for an .xlsx.
@@ -9933,9 +9959,18 @@ typedef struct {
 	SV    *dup_first;	//mode 2: that row's name, OWNED; NULL = none yet
 	size_t span_line;	//0 = the row is on one line; else where the quote that ran it across lines opened
 	size_t span_to;	//the line that field ran on to, 0 = the end of the file
+	SV    **flt;	//the filter subs, in the order they run; borrowed from the plan hash
+	size_t *flt_fld;	//each one's field: 0 = the whole row, else the field's index + 1
+	size_t  nflt;	//0 = no filter, and S_fast_row() moves the cells as they are
+	SSize_t *fj;	//filter path, per field: its output column; -1 = a later field repeats its name
+	GP     *def_gp;	//filter path: *_'s GP when %_ was aliased, see S_flt_restore_defhv()
+	unsigned char *cls;	//colClasses, per field: 0 = as read, 1 = numeric, 2 = integer; NULL = none
+	SV    **fname;	//with cls: each field's header name, borrowed from the plan's 'hdr'
+	HV     *def_hv;	//and the %_ it held then, OWNED until put back; NULL = none
 	short int mode;	// 0 = aoh, 1 = hoa, 2 = hoh, 3 = aoa
 	bool span_mid;	//that quote came after text in its field
 	bool active;	//has the callback filled the plan in yet
+	bool undef_empty;	//active and no filter: an empty field is made undef as it is cut
 } csv_plan;
 
 /*One required plan key, or a croak.  install_plan() is the only thing that
@@ -10046,10 +10081,35 @@ static void S_plan_init(pTHX_ csv_plan *restrict p, HV *restrict h){
 		p->out  = S_plan_plain_av(aTHX_ (AV*)S_plan_ref(aTHX_ h, "out", SVt_PVAV), "'out'");
 	if (av_len(idx) != av_len(keys))
 		croak("_parse_csv_file: plan 'idx' and 'keys' are different lengths");
+	{
+		SV **fe = hv_fetchs(h, "flt_fld", 0), **se = hv_fetchs(h, "flt_sub", 0);
+		if (fe || se) {
+			AV *ff = (AV*)S_plan_ref(aTHX_ h, "flt_fld", SVt_PVAV);
+			AV *fs = (AV*)S_plan_ref(aTHX_ h, "flt_sub", SVt_PVAV);
+			if (av_len(ff) != av_len(fs))
+				croak("_parse_csv_file: plan 'flt_fld' and 'flt_sub' are different lengths");
+			p->nflt = (size_t)(av_len(ff) + 1);
+			Newx(p->flt, p->nflt ? p->nflt : 1, SV*);
+			Newx(p->flt_fld, p->nflt ? p->nflt : 1, size_t);
+			for (size_t k = 0; k < p->nflt; k++) {
+				SV **fv = av_fetch(ff, (SSize_t)k, 0), **sv = av_fetch(fs, (SSize_t)k, 0);
+				const IV f = (fv && *fv) ? SvIV(*fv) : -1;
+				if (f < 0 || (UV)f > (UV)p->ncol)
+					croak("_parse_csv_file: plan 'flt_fld' entry %" UVuf " is not 0 or a "
+					      "field of a %" UVuf "-column row", (UV)k, (UV)p->ncol);
+				if (!sv || !*sv || !SvROK(*sv) || SvTYPE(SvRV(*sv)) != SVt_PVCV)
+					croak("_parse_csv_file: plan 'flt_sub' entry %" UVuf " is not a CODE "
+					      "reference", (UV)k);
+				p->flt_fld[k] = (size_t)f;
+				p->flt[k]     = *sv;
+			}
+		}
+	}
 
 	p->nout = (size_t)(av_len(keys) + 1);
 	Newx(p->idx, p->nout ? p->nout : 1, size_t);
-	if (p->mode == 0 || p->mode == 2)	//zeroed, so S_plan_free() can tell how far this got
+	//every mode builds %line_hash when there is a filter
+	if (p->mode == 0 || p->mode == 2 || p->nflt)	//zeroed, so S_plan_free() can tell how far this got
 		Newxz(p->keys, p->nout ? p->nout : 1, SV*);
 	for (size_t j = 0; j < p->nout; j++) {
 		SV **ie = av_fetch(idx,  (SSize_t)j, 0);
@@ -10084,7 +10144,34 @@ static void S_plan_init(pTHX_ csv_plan *restrict p, HV *restrict h){
 			croak("_parse_csv_file: plan 'rn' %" UVuf " is not one of the %"
 			      UVuf " output columns", (UV)p->rn, (UV)p->nout);
 	}
-	p->active = 1;
+	{
+		SV **ce = hv_fetchs(h, "cls", 0);
+		if (ce && *ce && SvOK(*ce)) {
+			AV *ca = (AV*)S_plan_ref(aTHX_ h, "cls", SVt_PVAV);
+			AV *ha = (AV*)S_plan_ref(aTHX_ h, "hdr", SVt_PVAV);
+			if ((size_t)(av_len(ca) + 1) != p->ncol || (size_t)(av_len(ha) + 1) != p->ncol)
+				croak("_parse_csv_file: plan 'cls' and 'hdr' must have one entry per field");
+			Newx(p->cls, p->ncol ? p->ncol : 1, unsigned char);
+			Newx(p->fname, p->ncol ? p->ncol : 1, SV*);
+			for (size_t f = 0; f < p->ncol; f++) {
+				SV **c = av_fetch(ca, (SSize_t)f, 0), **n = av_fetch(ha, (SSize_t)f, 0);
+				const IV code = (c && *c) ? SvIV(*c) : -1;
+				if (code < 0 || code > 2 || !n || !*n)
+					croak("_parse_csv_file: plan 'cls' entry %" UVuf " is not 0, 1 or 2", (UV)f);
+				p->cls[f]   = (unsigned char)code;
+				p->fname[f] = *n;
+			}
+		}
+	}
+	if (p->nflt) {
+		Newx(p->fj, p->ncol ? p->ncol : 1, SSize_t);
+		for (size_t f = 0; f < p->ncol; f++)
+			p->fj[f] = -1;
+		for (size_t j = 0; j < p->nout; j++)
+			p->fj[p->idx[j]] = (SSize_t)j;
+	}
+	p->active = TRUE;
+	p->undef_empty = p->nflt == 0;
 }
 
 /*Save-stack destructor for the plan.  The struct is on the heap rather than
@@ -10101,7 +10188,8 @@ static void S_plan_free(pTHX_ void *v){
 	SvREFCNT_dec((SV*)p->row);
 	SvREFCNT_dec(p->dup_first);
 	Safefree(p->idx);	Safefree(p->keys);	Safefree(p->cols);	Safefree(p->na_s);
-	Safefree(p->na_len);	Safefree(p);
+	Safefree(p->na_len);	Safefree(p->flt);	Safefree(p->flt_fld);	Safefree(p->fj);
+	Safefree(p->cls);	Safefree(p->fname);	Safefree(p);
 }
 
 /*What S_fast_row() counted rather than warned about, handed back to read_table
@@ -10114,6 +10202,164 @@ static void S_plan_report(pTHX_ const csv_plan *restrict p, HV *restrict h){
 	(void)hv_stores(h, "dup_n",     newSVuv((UV)p->n_dup));
 	(void)hv_stores(h, "dup_row",   newSVuv((UV)p->dup_row));
 	(void)hv_stores(h, "dup_first", newSVsv(p->dup_first));
+}
+
+/*read_table's colClasses: a field's text as the number its column was declared
+to be.
+
+code 1 is R's "numeric" (and "double", "real"): an NV.  code 2 is "integer":
+an IV.  code 0, "character", is never asked about.  Returns the new SV, or
+sets *bad and returns NULL when the text is not one.  A missing value never
+gets here: an empty field and an na.strings token are undef before it would.
+
+The text accepted is what R's scan() accepts for the class (src/main/scan.c,
+extractItem(), R 4.6.1), because the option is R's:
+
+  numeric  R_strtod4() with NA off (src/main/util.c R_strtod5()): blanks, an
+           optional sign, then "NaN", "Infinity" or "Inf" in any case, or a
+           decimal number; then nothing but blanks.  The number's value is
+           Atof()'s, the one perl gives `0 + $text`, so a column read this way
+           holds what converting it in perl would.
+  integer  strtol(..., 10) with nothing after it (Strtoi()): blanks, an
+           optional sign and digits, and no blank after them.
+
+"NA" is not special to either: scan() is called with NA off, and an "NA" is
+missing only through na.strings, which read_table maps to undef before this.
+Where this departs from R, deliberately: an integer is any IV, not R's 32-bit
+int; a hexadecimal number ("0x1A") is refused, where R reads it; and an
+exponent must have digits, where R reads "1e" as 1.  t/read_table.colClasses.t
+records each.
+
+S_class_value() below takes a value as an SV instead: a value a filter wrote
+back may already be a number, and is taken as one if it is the kind asked for;
+a reference is never a number; and an undef is NULL, nothing to convert.*/
+static SV *S_class_text(pTHX_ const char *s, STRLEN n, unsigned char code, bool *restrict bad){	//s: may be a PV perl shares
+	const char *const e = s + n;
+	const char *q = s;
+	bool neg = FALSE;
+	while (q < e && isSPACE(*q)) q++;
+	if (q < e && (*q == '+' || *q == '-')) {
+		neg = *q == '-';
+		q++;
+	}
+	if (code == 2) {	//strtol: digits, then the end
+		UV u = 0;
+		const UV lim = neg ? (UV)IV_MAX + 1 : (UV)IV_MAX;
+		const char *d = q;
+		for (; q < e && *q >= '0' && *q <= '9'; q++) {
+			const unsigned short dig = (unsigned short)(*q - '0');
+			if (u > (lim - dig) / 10) {
+				*bad = TRUE;
+				return NULL;
+			}
+			u = u * 10 + dig;
+		}
+		if (q == d || q != e) {
+			*bad = TRUE;
+			return NULL;
+		}
+		return newSViv(neg ? (u == (UV)IV_MAX + 1 ? IV_MIN : -(IV)u) : (IV)u);
+	}
+	{	//R_strtod: the specials, case-folded as strncasecmp() folds them
+		static const char *const word[] = { "nan", "infinity", "inf" };	//"infinity" before "inf", as R tries them
+		for (unsigned short w = 0; w < 3; w++) {
+			const size_t wl = strlen(word[w]);
+			size_t k = 0;
+			if ((size_t)(e - q) < wl)
+				continue;
+			while (k < wl && toLOWER(q[k]) == word[w][k]) k++;
+			if (k == wl) {
+				const char *t = q + wl;
+				while (t < e && isSPACE(*t)) t++;
+				if (t != e) {
+					*bad = TRUE;
+					return NULL;
+				}
+				return newSVnv(w == 0 ? NV_NAN : neg ? -NV_INF : NV_INF);
+			}
+		}
+	}
+	{	//digits [. digits] [e [sign] digits], at least one digit before the e
+		const char *t = q;
+		size_t nd = 0;
+		for (; t < e && *t >= '0' && *t <= '9'; t++) nd++;
+		if (t < e && *t == '.')
+			for (t++; t < e && *t >= '0' && *t <= '9'; t++) nd++;
+		if (nd && t < e && (*t == 'e' || *t == 'E')) {
+			const char *x = t + 1;
+			if (x < e && (*x == '+' || *x == '-')) x++;
+			if (x < e && *x >= '0' && *x <= '9') {
+				while (x < e && *x >= '0' && *x <= '9') x++;
+				t = x;
+			} else
+				nd = 0;	//R reads "1e" as 1; this refuses it
+		}
+		while (t < e && isSPACE(*t)) t++;
+		if (!nd || t != e) {
+			*bad = TRUE;
+			return NULL;
+		}
+		{
+			/*Atof() stops at the first byte that is not part of the number,
+			which the scan above has shown is a blank or the end; the buffer
+			is a PV's, so it is NUL-terminated.*/
+			const NV x = Atof(q);
+			return newSVnv(neg ? -x : x);
+		}
+	}
+}
+
+/*S_class_text() for a value as an SV.*/
+static SV *S_class_value(pTHX_ SV *v, unsigned char code, bool *restrict bad){	//v: perl's, may be magical
+	STRLEN n;
+	const char *s;
+	if (!v || !SvOK(v))
+		return NULL;
+	if (SvROK(v)) {
+		*bad = TRUE;
+		return NULL;
+	}
+	if (!SvPOK(v) && (SvIOK(v) || SvNOK(v))) {	//written back as a number
+		if (code == 1)
+			return newSVnv(SvNV_nomg(v));
+		if (SvIOK(v) && !(SvIsUV(v) && SvUVX(v) > (UV)IV_MAX))
+			return newSViv(SvIVX(v));
+		if (!SvIOK(v)) {
+			const NV x = SvNVX(v);
+			if (x == nv_floor(x) && x >= (NV)IV_MIN && x < -(NV)IV_MIN)	//-(NV)IV_MIN is IV_MAX + 1 exactly; (NV)IV_MAX can round up to it
+				return newSViv((IV)x);
+		}
+		*bad = TRUE;
+		return NULL;
+	}
+	s = SvPV_nomg_const(v, n);
+	return S_class_text(aTHX_ s, n, code, bad);
+}
+
+/*The colClasses failure, in read_table's words.*/
+static void S_class_croak(pTHX_ const char *file, UV row, SV *name, UV field,
+	unsigned char code, SV *v){	//name, v: perl's
+	croak("read_table: colClasses makes column '%" SVf "' (field %" UVuf ") %s, "
+	      "but data row %" UVuf " of %s has '%" SVf "' there\n",
+	      SVfARG(name), field, code == 1 ? "numeric" : "integer", row, file, SVfARG(v));
+}
+
+/*Convert *slot in place when field f has a class: the new SV replaces the old,
+which is released.  The slot owns its SV throughout, so a croak leaves it to
+whatever owns the slot -- the row buffer, or a %line_hash entry.*/
+static void S_cell_class_in(pTHX_ const csv_plan *restrict p, size_t f, SV **slot){	//slot: in perl's AV or HV
+	SV *nv;
+	bool bad = FALSE;
+	if (!p->cls || f >= p->ncol || !p->cls[f])
+		return;
+	nv = S_class_value(aTHX_ *slot, p->cls[f], &bad);
+	if (bad)
+		S_class_croak(aTHX_ p->file, (UV)p->row_n, p->fname[f], (UV)(f + 1), p->cls[f], *slot);
+	if (nv) {
+		SV *old = *slot;
+		*slot = nv;
+		SvREFCNT_dec(old);
+	}
 }
 
 /*An empty field, and a field listed in na.strings, become undef, which is the
@@ -10130,14 +10376,14 @@ inline because as a call it cost that read 4% with no na.strings given.
 S_plan_na() says when the hash is used instead.*/
 PERL_STATIC_INLINE bool S_cell_is_na(pTHX_ const csv_plan *restrict p, SV *restrict v){
 	if (!SvPOK(v) || SvCUR(v) == 0)
-		return 1;
+		return TRUE;
 	if (p->na_len) {
 		const STRLEN n = SvCUR(v);
 		const char *const s = SvPVX_const(v);
 		for (size_t k = 0; k < p->n_na; k++)
 			if (p->na_len[k] == n && memcmp(p->na_s[k], s, n) == 0)
-				return 1;
-		return 0;
+				return TRUE;
+		return FALSE;
 	}
 	return p->na && hv_exists_ent(p->na, v, 0);
 }
@@ -10155,6 +10401,64 @@ PERL_STATIC_INLINE SV *S_cell_value(pTHX_ const csv_plan *restrict p, SV *restri
 		return newSV(0);
 	}
 	return v;
+}
+
+/*S_cell_is_na() for a value still in its text, before it has an SV: a VCF
+sample's, or a field S_push_cell() is converting.  Empty, or one of the
+na.strings.*/
+PERL_STATIC_INLINE bool S_bytes_is_na(pTHX_ const csv_plan *restrict p,
+	const char *restrict s, STRLEN n){
+	if (n == 0)
+		return TRUE;
+	if (p->na_len) {
+		for (size_t k = 0; k < p->n_na; k++)
+			if (p->na_len[k] == n && memcmp(p->na_s[k], s, n) == 0)
+				return TRUE;
+		return FALSE;
+	}
+	return p->na && hv_exists(p->na, s, (I32)n);
+}
+
+/*Field f's cell as it is stored, in place: S_cell_value(), then colClasses.  A
+cell S_push_cell() has already converted -- a number, or the undef of a
+missing value, so not a PV -- is stored as it is.*/
+PERL_STATIC_INLINE void S_cell_store_in(pTHX_ const csv_plan *restrict p, size_t f, SV **slot){	//slot: in perl's AV
+	if (p->cls && f < p->ncol && p->cls[f] && *slot && !SvPOK(*slot))
+		return;
+	*slot = S_cell_value(aTHX_ p, *slot);
+	S_cell_class_in(aTHX_ p, f, slot);
+}
+
+/*S_push_field(), but a field whose column colClasses declares is made the
+number straight from the parser's text, with no PV made and freed for it:
+that took a hoa read of a 300,000 x 5 CSV with three declared columns from
+0.118 s to 0.095 s, against 0.086 s with none declared (best of three).  Only on the fast path without a filter (undef_empty), since a
+filter, and the perl callback, are handed the text.  The row number in a
+croak is the one S_fast_row() is about to give this row.*/
+static void S_push_cell(pTHX_ csv_plan *restrict p, SV *restrict field,
+	const char *restrict run, size_t n){
+	const size_t f = (size_t)(AvFILLp(p->row) + 1);
+	if (p->undef_empty && p->cls && f < p->ncol && p->cls[f]) {
+		const char *s = run;
+		STRLEN len = n;
+		SV *v;
+		bool bad = FALSE;
+		if (SvCUR(field)) {	//assembled: the accumulator holds it
+			if (n) sv_catpvn(field, run, n);
+			s   = SvPVX_const(field);
+			len = SvCUR(field);
+		}
+		if (S_bytes_is_na(aTHX_ p, s, len))
+			v = newSV(0);
+		else if (!(v = S_class_text(aTHX_ s, len, p->cls[f], &bad)))
+			S_class_croak(aTHX_ p->file, (UV)(p->row_n + 1), p->fname[f], (UV)(f + 1),
+			              p->cls[f], sv_2mortal(newSVpvn(s, len)));
+		S_av_push_own(aTHX_ p->row, v);
+		if (SvCUR(field))
+			sv_setpvs(field, "");
+		return;
+	}
+	S_push_field(aTHX_ p->row, field, run, n, p->undef_empty);
 }
 
 /*One data row, straight from the parser's field list into the output shape.
@@ -10180,6 +10484,35 @@ warnings for a 300,000-row file of random names.
 
 restrict holds on both: *rowp is the parser's own buffer, never one of the
 arrays the plan points at, and the plan is not reachable from it.*/
+static void S_filter_row(pTHX_ csv_plan *p, AV **rowp);
+
+/*mode 2: the row hash a row named rn goes into -- the one already under that
+name, counted as a repeat for S_plan_report(), or a new one.  One lookup, which
+creates the entry when the name is new: a fetch and then a store hashed every
+row name twice.  A new entry's value is a fresh undef the hash owns, replaced
+here by the row's reference.  It is not set through a mortal (sv_setsv() from
+sv_2mortal(newRV_noinc())), because nothing frees temporaries between rows on
+this path, and every row's would wait for the parse to end.  rn is not
+restrict: it may be a cell of the row, or a value of a filter's %line_hash.*/
+static HV *S_hoh_row(pTHX_ csv_plan *restrict p, SV *rn){
+	HE *he = hv_fetch_ent(p->hout, rn, 1, 0);
+	HV *h;
+	if (SvROK(HeVAL(he)) && SvTYPE(SvRV(HeVAL(he))) == SVt_PVHV) {
+		h = (HV*)SvRV(HeVAL(he));
+		p->n_dup++;
+		if (!p->dup_first) {
+			p->dup_first = newSVsv(rn);
+			p->dup_row   = p->row_n;
+		}
+	} else {
+		h = newHV();
+		if (p->nout > 1) hv_ksplit(h, (IV)(p->nout - 1));
+		SvREFCNT_dec(HeVAL(he));
+		HeVAL(he) = newRV_noinc((SV*)h);
+	}
+	return h;
+}
+
 static void S_fast_row(pTHX_ csv_plan *restrict p, AV **restrict rowp){
 	AV *const row = *rowp;
 	const size_t w = (size_t)(AvFILLp(row) + 1);
@@ -10194,11 +10527,15 @@ static void S_fast_row(pTHX_ csv_plan *restrict p, AV **restrict rowp){
 		      p->file, (UV)(p->row_n + 1), (UV)w, (UV)p->ncol);
 	}
 	p->row_n++;
+	if (p->nflt) {
+		S_filter_row(aTHX_ p, rowp);
+		return;
+	}
 	ary = AvARRAY(row);
 	if (p->mode == 3) {	//aoa: the row buffer itself becomes the output row
 		AV *fresh;
 		for (size_t j = 0; j < w; j++)
-			ary[j] = S_cell_value(aTHX_ p, ary[j]);
+			S_cell_store_in(aTHX_ p, j, &ary[j]);
 		fresh = newAV();
 		av_extend(fresh, w ? (SSize_t)w - 1 : 0);
 		*rowp = fresh;
@@ -10206,40 +10543,25 @@ static void S_fast_row(pTHX_ csv_plan *restrict p, AV **restrict rowp){
 		return;
 	}
 	if (p->mode == 2) {
-		HE *he;
+		/*stored in place, so a declared row name keys the row as its number;
+		the row still owns it, and the loop below frees it*/
+		S_cell_store_in(aTHX_ p, p->idx[p->rn], &ary[p->idx[p->rn]]);
 		rn = ary[p->idx[p->rn]];
-		if (!rn || S_cell_is_na(aTHX_ p, rn))
+		if (!SvOK(rn))
 			croak("read_table: undefined row name (column '%" SVf "') in %s data row %" UVuf "\n",
 			      SVfARG(p->keys[p->rn]), p->file, (UV)p->row_n);
-/*One lookup, which creates the entry when the name is new: a fetch and then a
-store hashed every row name twice.  A new entry's value is a fresh undef the
-hash owns, replaced here by the row's reference.  It is not set through a mortal
-(sv_setsv() from sv_2mortal(newRV_noinc())), because nothing frees temporaries
-between rows on this path, and every row's would wait for the parse to end.*/
-		he = hv_fetch_ent(p->hout, rn, 1, 0);
-		if (SvROK(HeVAL(he)) && SvTYPE(SvRV(HeVAL(he))) == SVt_PVHV) {
-			h = (HV*)SvRV(HeVAL(he));
-			p->n_dup++;
-			if (!p->dup_first) {
-				p->dup_first = newSVsv(rn);
-				p->dup_row   = p->row_n;
-			}
-		} else {
-			h = newHV();
-			if (p->nout > 1) hv_ksplit(h, (IV)(p->nout - 1));
-			SvREFCNT_dec(HeVAL(he));
-			HeVAL(he) = newRV_noinc((SV*)h);
-		}
+		h = S_hoh_row(aTHX_ p, rn);
 	} else if (p->mode == 0) {
 		h = newHV();
 		hv_ksplit(h, (IV)p->nout);	//no rehash while the row is filled
 	}
 	for (size_t j = 0; j < p->nout; j++) {
 		SV *v;
+		const size_t f = p->idx[j];
 		if (p->mode == 2 && j == p->rn) continue;	//left for the loop below
-		v = ary[p->idx[j]];
-		ary[p->idx[j]] = NULL;	//ownership leaves the row here, before v can be freed
-		v = S_cell_value(aTHX_ p, v);
+		S_cell_store_in(aTHX_ p, f, &ary[f]);	//in the row, which owns it if this croaks
+		v = ary[f];
+		ary[f] = NULL;	//ownership leaves the row here
 		if (p->mode == 1) {
 			S_av_push_own(aTHX_ p->cols[j], v);
 		} else if (!hv_store_ent(h, p->keys[j], v, 0)) {
@@ -10253,6 +10575,259 @@ between rows on this path, and every row's would wait for the parse to end.*/
 		ary[j] = NULL;
 	}
 	AvFILLp(row) = -1;
+}
+
+/*What a value is in read_table's %line_hash: undef when it is missing, empty
+or one of the na.strings, and otherwise a copy -- the rule the perl row closure
+builds the hash by and applies to a value a filter writes back.  A written-back
+value can be anything, a number or a reference, so short of a plain byte
+string it is stringified to be tested, as the closure's `$_ eq ''` and
+`$na_string{$_}` do.  v is not restrict: it may be $_ or a cell of the row.*/
+static SV *S_flt_value(pTHX_ const csv_plan *restrict p, SV *v){
+	if (!v || !SvOK(v))
+		return newSV(0);
+	if (SvPOK(v) && !SvUTF8(v) && !SvMAGICAL(v)) {	//a cell as the parser cut it
+		if (S_cell_is_na(aTHX_ p, v))
+			return newSV(0);
+	} else {
+		STRLEN n;
+		(void)SvPV_const(v, n);
+		if (n == 0 || (p->na && hv_exists_ent(p->na, v, 0)))
+			return newSV(0);
+	}
+	return newSVsv(v);
+}
+
+/*Whether a and b are the same plain string, flags apart: both defined, not
+references, no magic, the same bytes and the same UTF-8 flag.  NULL is never
+the same as anything.*/
+PERL_STATIC_INLINE bool S_same_pv(SV *a, SV *b){	//not restrict: may be one SV
+	if (!a || !b || !SvPOK(a) || !SvPOK(b) || SvROK(a) || SvROK(b)
+	    || SvMAGICAL(a) || SvMAGICAL(b) || cBOOL(SvUTF8(a)) != cBOOL(SvUTF8(b)))
+		return FALSE;
+	return SvCUR(a) == SvCUR(b) && memEQ(SvPVX_const(a), SvPVX_const(b), SvCUR(a));
+}
+
+/*A %line_hash value to store in the output: the value itself when nothing but
+%line_hash holds it and %line_hash is about to be freed (sole), else a copy, as
+the closure's `push @{...}, $line_hash{$_}` and `$row->{$col} = ...` made.
+NULL, a key a filter deleted, is undef.*/
+PERL_STATIC_INLINE SV *S_flt_take(pTHX_ SV *v, bool sole){	//v: a value of perl's hash
+	if (!v)
+		return newSV(0);
+	if (sole && SvREFCNT(v) == 1 && !SvMAGICAL(v))
+		return SvREFCNT_inc_simple_NN(v);
+	return newSVsv(v);
+}
+
+/*Put %_ back after S_filter_row() aliased it.  That is all of the closure's
+`local *_ = \%line_hash` that a filter can tell apart, and it costs a save-stack
+entry where save_gp(PL_defgv, 1) -- which is what local *_ is -- allocated and
+freed a GP per row: a tenth of a filtered read (0.255 s against 0.230 s, a
+300,000 x 5 CSV as an aoh).  $_ is localised per call with save_scalar(), and
+@_ inside a sub is the sub's own, so neither needs the rest of the glob.
+
+A plain SAVEGENERICSV(GvHV(PL_defgv)) would remember the slot's address, and a
+filter that gave *_ a new GP (*_ = *other) would have it written into after
+that GP was freed.  So the GP is remembered and checked: if it is not the one
+%_ was aliased in, the new *_ is left as the filter made it and only the old
+%_ is released.  The plan holds the saved pointers, since a row's filters do
+not nest within one parse; a filter that calls read_table has a plan of its
+own.*/
+static void S_flt_restore_defhv(pTHX_ void *v){
+	csv_plan *p = (csv_plan*)v;
+	HV *const saved = p->def_hv;
+	p->def_hv = NULL;
+	if (GvGP(PL_defgv) == p->def_gp) {
+		HV *const cur = GvHV(PL_defgv);
+		GvHV(PL_defgv) = saved;
+		SvREFCNT_dec((SV*)cur);
+	} else
+		SvREFCNT_dec((SV*)saved);
+}
+
+/*read_table's filter, called from here rather than from its perl row closure.
+
+Up to 0.3212 a filter kept the whole read in that closure, and a filtered read
+of a 300,000 x 5 CSV took 0.58 s to 1.07 s, by shape and filter, against 0.08 s
+to 0.18 s unfiltered.  This does what the closure does, step for step, for
+every row after the one that fixed the header:
+
+  %line_hash  the row by name, a repeated name's value from its last field, an
+              empty field or an na.strings token undef (S_flt_value())
+  then each filter, in plan order:
+    local *_ = \%line_hash; local $_ = the field's %line_hash value -- or the
+    field's own value, made the same way, for one whose name a later field
+    repeats -- or for field 0, the row; then
+    $sub->(\@row, \%line_hash) in scalar context, a false answer dropping the
+    row; then $row[$fld - 1] = $_, and into %line_hash too when the field is
+    the one its name resolves to
+  and the row is stored from %line_hash, or for an aoa from the row.
+
+The row is the parser's own buffer, an empty field '' in it (undef_empty is off
+with a filter): what the closure has always been handed as $_[0].  Whatever a
+filter keeps -- the row, %line_hash, one of its values -- it keeps as the
+closure would have left it: a buffer something else still holds is let go of
+rather than reused, and a value is copied rather than shared unless nothing
+else has it.  %_ is aliased for each row, as the closure did, rather than once
+for the parse, so code that runs between rows -- a __WARN__ handler -- sees
+the caller's $_ and %_ (S_flt_restore_defhv()).
+
+Not restrict: the row, %line_hash and their values are reachable from perl
+code this calls.*/
+static void S_filter_row(pTHX_ csv_plan *p, AV **rowp){
+	AV *const row = *rowp;
+	bool keep = TRUE;
+	dSP;
+	ENTER;
+	SAVETMPS;
+	{
+		HV *const h = newHV();
+		SV *const href   = sv_2mortal(newRV_noinc((SV*)h));
+		SV *const rowref = sv_2mortal(newRV_inc((SV*)row));
+		hv_ksplit(h, (IV)p->nout);
+		for (size_t j = 0; j < p->nout; j++) {
+			SV *v = S_flt_value(aTHX_ p, AvARRAY(row)[p->idx[j]]);
+			if (!hv_store_ent(h, p->keys[j], v, 0))
+				SvREFCNT_dec(v);
+		}
+		ENTER;
+		p->def_gp = GvGP(PL_defgv);	//local *_ = \%line_hash, as far as a filter can tell
+		p->def_hv = GvHV(PL_defgv);
+		GvHV(PL_defgv) = (HV*)SvREFCNT_inc_simple_NN((SV*)h);
+		SAVEDESTRUCTOR_X(S_flt_restore_defhv, p);
+		for (size_t k = 0; k < p->nflt && keep; k++) {
+			const size_t fld = p->flt_fld[k];
+			const SSize_t fj = fld ? p->fj[fld - 1] : -1;	//-1: not in %line_hash under its name
+			ENTER;
+			{
+				SV *const dsv = save_scalar(PL_defgv);	//local $_
+				if (fld == 0)
+					sv_setsv(dsv, rowref);
+				else if (fj >= 0) {
+					HE *he = hv_fetch_ent(h, p->keys[fj], 0, 0);
+					if (he)
+						sv_setsv(dsv, HeVAL(he));
+				} else {	//re-fetched: an earlier filter may have changed the row
+					SV **c = av_fetch(row, (SSize_t)(fld - 1), 0);
+					SV *v = S_flt_value(aTHX_ p, c ? *c : NULL);
+					sv_setsv(dsv, v);
+					SvREFCNT_dec(v);
+				}
+			}
+			PUSHMARK(SP);
+			XPUSHs(rowref);
+			XPUSHs(href);
+			PUTBACK;
+			{
+				const I32 n = call_sv(p->flt[k], G_SCALAR);	//may die: everything is mortal or the plan's
+				SPAGAIN;
+				if (n < 1 || !SvTRUE(POPs))
+					keep = FALSE;
+				PUTBACK;
+			}
+			if (keep && fld) {	//write $_ back
+				SV *const cur = GvSVn(PL_defgv);
+				SV **c = av_fetch(row, (SSize_t)(fld - 1), 1);
+				HE *he = fj >= 0 ? hv_fetch_ent(h, p->keys[fj], 0, 0) : NULL;
+/*Not when $_ still holds what both the cell and %line_hash hold: then the two
+stores change nothing a filter or the caller can read, and skipping them saves
+two copies per kept row and filter -- and the numeric flags a test such as
+`$_ > 40` caches on $_, which a copy would carry into the stored cell and
+upgrade it to a bigger SV.  An empty cell is '' in the row and undef in
+%line_hash, so it is never skipped: the closure's store makes the cell undef.*/
+				const bool same = c && S_same_pv(cur, *c)
+					&& (fj < 0 || (he && S_same_pv(cur, HeVAL(he))));
+				if (c && !same) {
+					sv_setsv(*c, cur);
+					SvSETMAGIC(*c);
+				}
+				if (fj >= 0 && !same) {
+					SV *v = S_flt_value(aTHX_ p, cur);
+					if (!hv_store_ent(h, p->keys[fj], v, 0))
+						SvREFCNT_dec(v);
+				}
+			}
+			LEAVE;
+		}
+		LEAVE;	//*_ back, and with it %_'s reference to h
+		if (keep && p->cls && p->mode != 3)	//colClasses, on %line_hash itself, as the closure does it
+			for (size_t j = 0; j < p->nout; j++) {
+				HE *he = p->cls[p->idx[j]] ? hv_fetch_ent(h, p->keys[j], 0, 0) : NULL;
+				if (he)
+					S_cell_class_in(aTHX_ p, p->idx[j], &HeVAL(he));
+			}
+		if (keep) {
+			/*1 and 2 are the references this function holds, href and the
+			buffer's own plus rowref; anything above that, a filter kept*/
+			const bool h_sole = SvREFCNT((SV*)h) == 1 && !SvMAGICAL((SV*)h);
+			if (p->mode == 0) {
+				S_av_push_own(aTHX_ p->out, newRV_inc((SV*)h));
+			} else if (p->mode == 1) {
+				for (size_t j = 0; j < p->nout; j++) {
+					HE *he = hv_fetch_ent(h, p->keys[j], 0, 0);
+					S_av_push_own(aTHX_ p->cols[j], S_flt_take(aTHX_ he ? HeVAL(he) : NULL, h_sole));
+				}
+			} else if (p->mode == 2) {
+				HE *he = hv_fetch_ent(h, p->keys[p->rn], 0, 0);
+				HV *hr;
+				if (!he || !SvOK(HeVAL(he)))
+					croak("read_table: undefined row name (column '%" SVf "') in %s data row %" UVuf "\n",
+					      SVfARG(p->keys[p->rn]), p->file, (UV)p->row_n);
+				hr = S_hoh_row(aTHX_ p, HeVAL(he));
+				for (size_t j = 0; j < p->nout; j++) {
+					SV *v;
+					if (j == p->rn) continue;
+					he = hv_fetch_ent(h, p->keys[j], 0, 0);
+					v  = S_flt_take(aTHX_ he ? HeVAL(he) : NULL, h_sole);
+					if (!hv_store_ent(hr, p->keys[j], v, 0))
+						SvREFCNT_dec(v);
+				}
+			} else if (SvREFCNT((SV*)row) == 2 && !SvMAGICAL((SV*)row) && !SvREADONLY((SV*)row)) {
+				/*aoa, and nothing else has the row: it becomes the output row,
+				as S_fast_row() hands it over*/
+				AV *fresh;	//made once the loop below, which can croak, is past
+				SV **ary = AvARRAY(row);
+				for (SSize_t i = 0; i <= AvFILLp(row); i++) {
+					SV *c = ary[i];
+					if (c && SvREFCNT(c) == 1 && SvPOK(c) && !SvUTF8(c) && !SvMAGICAL(c))
+						ary[i] = S_cell_value(aTHX_ p, c);	//a cell as cut: kept, or freed for undef
+					else {
+						ary[i] = S_flt_value(aTHX_ p, c);
+						SvREFCNT_dec(c);
+					}
+					S_cell_class_in(aTHX_ p, (size_t)i, &ary[i]);
+				}
+				fresh = newAV();
+				av_extend(fresh, p->ncol ? (SSize_t)p->ncol - 1 : 0);
+				*rowp = fresh;
+				S_av_push_own(aTHX_ p->out, newRV_noinc((SV*)row));	//takes the buffer's reference
+			} else {
+				AV *o = newAV();
+				SV *oref = sv_2mortal(newRV_noinc((SV*)o));	//o is freed if a colClasses croak comes first
+				const SSize_t n = av_len(row) + 1;
+				if (n) av_extend(o, n - 1);
+				for (SSize_t i = 0; i < n; i++) {
+					SV **c = av_fetch(row, i, 0);
+					av_push(o, S_flt_value(aTHX_ p, c ? *c : NULL));
+					S_cell_class_in(aTHX_ p, (size_t)i, &AvARRAY(o)[i]);
+				}
+				S_av_push_own(aTHX_ p->out, SvREFCNT_inc_simple_NN(oref));
+			}
+		}
+		if (*rowp == row) {	//not handed over: reuse the buffer, unless a filter kept it
+			if (SvREFCNT((SV*)row) == 2 && !SvMAGICAL((SV*)row) && !SvREADONLY((SV*)row))
+				av_clear(row);
+			else {
+				AV *fresh = newAV();
+				av_extend(fresh, p->ncol ? (SSize_t)p->ncol - 1 : 0);
+				*rowp = fresh;
+				SvREFCNT_dec((SV*)row);	//the buffer's reference; rowref's goes below
+			}
+		}
+	}
+	FREETMPS;
+	LEAVE;
 }
 
 /*read_table's explode => 1 for a VCF: every sample column split on ':' into
@@ -10335,20 +10910,6 @@ static void S_vcf_ex_free(pTHX_ void *v)
 	Safefree(x);
 }
 
-/*S_cell_is_na() for a value still in the sample's text, before it has an SV:
-empty, or one of the na.strings.*/
-PERL_STATIC_INLINE bool S_bytes_is_na(pTHX_ const csv_plan *restrict p,
-	const char *restrict s, STRLEN n){
-	if (n == 0)
-		return 1;
-	if (p->na_len) {
-		for (size_t k = 0; k < p->n_na; k++)
-			if (p->na_len[k] == n && memcmp(p->na_s[k], s, n) == 0)
-				return 1;
-		return 0;
-	}
-	return p->na && hv_exists(p->na, s, (I32)n);
-}
 
 /*The FORMAT entry for this row's FORMAT field, or NULL when it has none (undef
 or "."), adding it -- and any key not seen before -- when add is set.  *last is
@@ -10387,7 +10948,7 @@ static vcf_fmt *S_vcf_format(pTHX_ vcf_ex *restrict x, SV *fsv, vcf_fmt **restri
 	Newx(f->pos, f->npos, size_t);
 	x->nfmt++;	//counted now, so S_vcf_ex_free() releases s and pos past a croak below
 	{
-		size_t i = 0;	//which key of this FORMAT; read after the loop for none
+		size_t i = 0;	//which key of this FORMAT; advanced by the loop below, which counts bytes
 		const char *k = s;
 		for (const char *p = s; p <= s + len; p++) {
 			if (p < s + len && *p != ':')
@@ -10432,11 +10993,11 @@ row is released once it has been built from.  raw is not restrict: it is
 read_table's own array, perl-managed.*/
 static SV *S_vcf_explode(pTHX_ AV *raw, short int mode, SV *rn, const char *file, HV *na){
 	vcf_ex *x;
-	SV **hdr;
-	SV *ret;
+	SV **hdr, *ret;
 	AV *aout = NULL;	//modes 0 and 3
 	HV *hout = NULL;	//modes 1 and 2
 	AV **cols = NULL;	//mode 1: each column's array, borrowed from hout
+	bool *restrict shadow = NULL;	//per output column: TRUE = a later column has its name
 	vcf_fmt *last = NULL;
 	size_t hw, nf, nsample, nkeys, nrow, n_dup = 0, dup_row = 0;
 	SSize_t rn_c = -1;	//mode 2: the row.names column; -1 = CHROM:POS:REF:ALT
@@ -10498,6 +11059,53 @@ static SV *S_vcf_explode(pTHX_ AV *raw, short int mode, SV *rn, const char *file
 			x->col[nf + j * nkeys + k] = newSVpvn_share(s, SvUTF8(nm) ? -(I32)l : (I32)l, 0);
 			SvREFCNT_dec(nm);
 		}
+/*Two output columns can share a name: a sample name repeated in the header,
+which merged files have, or a collision such as sample "X" with key "Y.Z"
+against sample "X.Y" with key "Z".  The later column wins, as a repeated name
+does in read_table's plain read, and is warned about in the same words, which
+the plain read cannot do here since it is read as an aoa.  An aoa keeps every
+column, so it neither drops nor warns.  Up to 0.3213 a hoa stored the second
+column's array over the first's while still pushing into the first, which was
+freed: "realloc(): invalid pointer", and an abort.*/
+	Newxz(shadow, x->ncol ? x->ncol : 1, bool);
+	SAVEFREEPV(shadow);
+	if (mode != 3) {
+		HV *at = (HV*)sv_2mortal((SV*)newHV());	//name -> AV of its 0-based columns, plain AVs made here, so read through AvARRAY()
+		SV *msg = NULL;	//the warning, built while there are repeats to name
+		for (size_t c = 0; c < x->ncol; c++) {
+			HE *he = hv_fetch_ent(at, x->col[c], 1, 0);
+			if (!SvROK(HeVAL(he))) {	//a new name: its value is the fresh undef hv_fetch_ent() made
+				SvREFCNT_dec(HeVAL(he));
+				HeVAL(he) = newRV_noinc((SV*)newAV());
+			}
+			av_push((AV*)SvRV(HeVAL(he)), newSVuv((UV)c));
+		}
+		for (size_t c = 0; c < x->ncol; c++) {
+			HE *he = hv_fetch_ent(at, x->col[c], 0, 0);
+			AV *pos = (AV*)SvRV(HeVAL(he));
+			const size_t n = (size_t)(av_len(pos) + 1);
+			if (n < 2)
+				continue;
+			if ((size_t)SvUV(AvARRAY(pos)[n - 1]) != c)
+				shadow[c] = TRUE;
+			if ((size_t)SvUV(AvARRAY(pos)[0]) != c)
+				continue;	//named once, at its first column
+			if (!msg)
+				msg = sv_2mortal(newSVpvf("read_table: duplicate column name(s) in %s "
+					"(later values win): ", file));
+			else
+				sv_catpvs(msg, "; ");
+/*12 positions, as read_table's own warning lists, 1-based as a spreadsheet
+counts them; the count says how many there are past that.*/
+			sv_catpvf(msg, "'%" SVf "' x %" UVuf " (fields ", SVfARG(x->col[c]), (UV)n);
+			for (size_t q = 0; q < n && q < 12; q++)
+				sv_catpvf(msg, "%s%" UVuf, q ? ", " : "",
+				          (UV)SvUV(AvARRAY(pos)[q]) + 1);
+			sv_catpv(msg, n > 12 ? ", ...)" : ")");
+		}
+		if (msg)
+			warn("%" SVf "\n", SVfARG(msg));
+	}
 
 	if (mode == 0 || mode == 3) {
 		aout = newAV();
@@ -10518,6 +11126,10 @@ static SV *S_vcf_explode(pTHX_ AV *raw, short int mode, SV *rn, const char *file
 		Newx(cols, x->ncol ? x->ncol : 1, AV*);
 		SAVEFREEPV(cols);
 		for (size_t c = 0; c < x->ncol; c++) {
+			if (shadow[c]) {	//its values are dropped in pass 2
+				cols[c] = NULL;
+				continue;
+			}
 			cols[c] = newAV();
 			av_extend(cols[c], (SSize_t)nrow - 1);
 			(void)hv_store_ent(hout, x->col[c], newRV_noinc((SV*)cols[c]), 0);
@@ -10525,11 +11137,9 @@ static SV *S_vcf_explode(pTHX_ AV *raw, short int mode, SV *rn, const char *file
 	}
 	if (mode == 2) {
 		if (rn && SvOK(rn)) {
-			for (size_t c = 0; c < x->ncol; c++)
-				if (sv_eq(x->col[c], rn)) {
+			for (size_t c = 0; c < x->ncol; c++)	//the last column of the name, which wins
+				if (sv_eq(x->col[c], rn))
 					rn_c = (SSize_t)c;
-					break;
-				}
 			if (rn_c < 0)
 				croak("\"%" SVf "\" isn't in the header of %s\n", SVfARG(rn), file);
 		} else if (nf < 5)
@@ -10596,13 +11206,15 @@ static SV *S_vcf_explode(pTHX_ AV *raw, short int mode, SV *rn, const char *file
 			S_av_push_own(aTHX_ aout, newRV_noinc((SV*)r));
 		} else if (mode == 1) {
 			for (size_t c = 0; c < x->ncol; c++) {
-				S_av_push_own(aTHX_ cols[c], x->slot[c]);
+				if (cols[c])
+					S_av_push_own(aTHX_ cols[c], x->slot[c]);
+				else
+					SvREFCNT_dec(x->slot[c]);
 				x->slot[c] = NULL;
 			}
 		} else {
 			HV *h;
-			SV *rv;
-			SV *key = NULL;	//mode 2: the row's name, x->slot[rn_c] or x->name
+			SV *rv, *key = NULL;	//mode 2: the row's name, x->slot[rn_c] or x->name
 			if (mode == 2) {	//named before the cells move into the row's hash
 				if (rn_c >= 0) {
 					key = x->slot[rn_c];
@@ -10625,6 +11237,11 @@ static SV *S_vcf_explode(pTHX_ AV *raw, short int mode, SV *rn, const char *file
 			for (size_t c = 0; c < x->ncol; c++) {
 				if ((SSize_t)c == rn_c)	//the row's name, not one of its values
 					continue;
+				if (shadow[c]) {	//a later column has the name: dropped
+					SvREFCNT_dec(x->slot[c]);
+					x->slot[c] = NULL;
+					continue;
+				}
 				if (!hv_store_ent(h, x->col[c], x->slot[c], 0))
 					SvREFCNT_dec(x->slot[c]);
 				x->slot[c] = NULL;
@@ -10716,6 +11333,80 @@ static const char *xlsx_find(const char *restrict p, const char *restrict end,
 	return NULL;
 }
 
+/*The namespace prefix the part's elements carry, with its colon -- "x:" for
+<x:worksheet xmlns:x="...">, and *plen = 0 for none.  Excel, LibreOffice and
+openpyxl make SpreadsheetML the default namespace and write bare <row> and <c>;
+the Open XML SDK binds it to a prefix instead, and every element of the part
+then carries it.  Up to 0.3213 such a sheet matched no <row> and read as an
+empty table without a word, where openpyxl and readxl read it.
+
+The root element's prefix is taken for the whole part.  XML would allow the
+one namespace to be bound to two prefixes in one part, but nothing writes a
+workbook that way.  The declaration and any comment or DOCTYPE before the root
+are stepped over.*/
+static const char *xlsx_ns_prefix(const char *restrict xml, const char *restrict end,
+	STRLEN *restrict plen){
+	const char *p = xml;
+	*plen = 0;
+	while (p < end) {
+		const char *lt = (const char*)memchr(p, '<', (size_t)(end - p));
+		const char *n;	//read after the loop: where the root element's name stopped
+		if (!lt || lt + 1 >= end) break;
+		p = lt + 1;
+		if (*p == '?' || *p == '!') continue;
+		for (n = p; n < end && *n != ':' && *n != '>' && *n != '/' && !xlsx_is_ws(*n); n++)
+			;
+		if (n < end && *n == ':')
+			*plen = (STRLEN)(n + 1 - p);
+		return p;
+	}
+	return xml;
+}
+
+/*TRUE when the element name starting at p -- just past a '<', or past the '/'
+of an end tag -- is pfx followed by name, and ends there.
+
+It runs at every tag of the part, often twice, so it is inline and compares a
+byte at a time: the names are one to three bytes long, and as a call doing two
+memcmp()s it took a 20,000 x 50 workbook's read from 0.236 s to 0.274 s.*/
+PERL_STATIC_INLINE bool xlsx_is_name(const char *restrict p, const char *restrict end,
+	const char *restrict pfx, STRLEN plen, const char *restrict name, STRLEN nlen){
+	if ((size_t)(end - p) <= plen + nlen)
+		return FALSE;
+	for (STRLEN k = 0; k < plen; k++)
+		if (p[k] != pfx[k])
+			return FALSE;
+	p += plen;
+	for (STRLEN k = 0; k < nlen; k++)
+		if (p[k] != name[k])
+			return FALSE;
+	return p[nlen] == '>' || p[nlen] == '/' || xlsx_is_ws(p[nlen]);
+}
+
+/*The '<' of the first end tag </pfx name> at or after p, with *after just past
+its '>', or NULL when there is none.  Blanks before the '>' are allowed, as XML
+allows them.*/
+static const char *xlsx_find_end(const char *restrict p, const char *restrict end,
+	const char *restrict pfx, STRLEN plen, const char *restrict name, STRLEN nlen,
+	const char **restrict after){
+	while (p < end) {
+		const char *lt = (const char*)memchr(p, '<', (size_t)(end - p));
+		const char *q;
+		if (!lt) return NULL;
+		q = lt + 1;
+		if (q < end && *q == '/' && xlsx_is_name(q + 1, end, pfx, plen, name, nlen)) {
+			q += 1 + plen + nlen;
+			while (q < end && xlsx_is_ws(*q)) q++;
+			if (q < end && *q == '>') {
+				*after = q + 1;
+				return lt;
+			}
+		}
+		p = lt + 1;
+	}
+	return NULL;
+}
+
 /*Advance past the rest of a start tag, from the first character after the
 element name to just past its '>'.  An attribute value may legally contain '>'
 -- XML requires only '<' and '&' to be escaped there -- so the scan tracks the
@@ -10725,11 +11416,10 @@ closed itself with "/>".  An unterminated tag returns end, which ends the
 parse.*/
 static const char *xlsx_tag_end(const char *restrict p, const char *restrict end,
 	const char **restrict attrs, STRLEN *restrict attrs_len,
-	bool *restrict self_close)
-{
+	bool *restrict self_close){
 	const char *a = p;
 	char q = 0;	// 0 = not inside an attribute value, else the opening quote
-	*self_close = 0;
+	*self_close = FALSE;
 	while (p < end) {
 		const char c = *p;
 		if (q) {
@@ -10739,7 +11429,7 @@ static const char *xlsx_tag_end(const char *restrict p, const char *restrict end
 		} else if (c == '>') {
 			*attrs     = a;
 			*attrs_len = (STRLEN)(p - a);
-			if (p > a && p[-1] == '/') { *self_close = 1; (*attrs_len)--; }
+			if (p > a && p[-1] == '/') { *self_close = TRUE; (*attrs_len)--; }
 			return p + 1;
 		}
 		p++;
@@ -10801,7 +11491,7 @@ the next column, which is also what a cell with no r= at all gets.*/
 
 static size_t xlsx_ref_col(const char *restrict r, STRLEN len){
 	size_t idx = 0;
-	STRLEN i;
+	STRLEN i;	//read after the loop: how many letters there were
 	for (i = 0; i < len; i++) {
 		const unsigned char c = (unsigned char)r[i];
 		size_t d;
@@ -10864,7 +11554,7 @@ global substitutions did with it.*/
 		else if (elen == 4 && memcmp(ent, "apos", 4) == 0) sv_catpvn(out, "'",  1);
 		else if (elen >= 2 && ent[0] == '#') {
 			UV   cp = 0;
-			bool ok = 1;
+			bool ok = TRUE;
 			STRLEN k;	//read after the loop: where the digits stopped
 			const bool hex = (ent[1] == 'x' || ent[1] == 'X');
 			const STRLEN first = hex ? 2 : 1;
@@ -10874,7 +11564,7 @@ global substitutions did with it.*/
 				if      (c >= '0' && c <= '9') d = (UV)(c - '0');
 				else if (hex && c >= 'a' && c <= 'f') d = (UV)(c - 'a' + 10);
 				else if (hex && c >= 'A' && c <= 'F') d = (UV)(c - 'A' + 10);
-				else { ok = 0; break; }
+				else { ok = FALSE; break; }
 /*Stop before the multiply can wrap.  0x7FFFFFFF is perl's own ceiling for
 chr(), and it fits a UV on a 32-bit build as well as a 64-bit one; past it the
 reference is left in the text verbatim, which is the only answer that is the
@@ -10883,10 +11573,10 @@ unguarded, and that was not: "&#999999999999;" came back as thirteen bytes of
 perl's extended UTF-8 on an ivsize=8 build and died outright on 5.44.0-i686
 with "Use of code point 0xFFFFFFFF is not allowed".  XML 1.0 does not allow a
 character reference above #x10FFFF at all, so nothing legal is lost.*/
-				if (cp > (UV)0x7FFFFFFF / (hex ? 16 : 10)) { ok = 0; break; }
+				if (cp > (UV)0x7FFFFFFF / (hex ? 16 : 10)) { ok = FALSE; break; }
 				cp = cp * (hex ? 16 : 10) + d;
 			}
-			if (k == first) ok = 0;	//"&#;" or "&#x;"
+			if (k == first) ok = FALSE;	//"&#;" or "&#x;"
 			if (ok) {
 				char buf[UTF8_MAXBYTES + 1];
 				U8 *e = uvchr_to_utf8((U8*)buf, cp);
@@ -10901,35 +11591,31 @@ character reference above #x10FFFF at all, so nothing legal is lost.*/
 	}
 }
 
-/*The text of the first <open> child at or after p, with *len_out its length and
-*after the position to resume scanning from; NULL when there is none.  'close'
-is the matching end tag ("</t>") passed in whole so that this does not have to
-build it.  A self-closing <t/> yields an empty text, and an unclosed one runs to
-the end of the span, which is the only thing left to do with it.
+/*The text of the first <pfx name> child at or after p, with *len_out its length
+and *after the position to resume scanning from; NULL when there is none.  pfx
+is the part's namespace prefix, from xlsx_ns_prefix().  A self-closing <t/>
+yields an empty text, and an unclosed one runs to the end of the span, which is
+the only thing left to do with it.
 
 <v> and <t> never nest inside themselves, so the first end tag found is the
 right one.*/
 static const char *xlsx_child(const char *restrict p, const char *restrict end,
-	const char *restrict open, size_t olen, const char *restrict close, size_t clen,
+	const char *restrict pfx, STRLEN plen, const char *restrict name, STRLEN nlen,
 	STRLEN *restrict len_out, const char **restrict after){
 	while (p < end) {
 		const char *lt = (const char*)memchr(p, '<', (size_t)(end - p));
-		const char *a, *txt, *ce;
+		const char *a, *txt, *ce, *ce_after;
 		STRLEN alen;
 		bool self;
 		if (!lt) return NULL;
 		p = lt + 1;
-		if ((size_t)(end - p) <= olen || memcmp(p, open, olen) != 0) continue;
-		{
-			const char c = p[olen];
-			if (c != '>' && c != '/' && !xlsx_is_ws(c)) continue;
-		}
-		p = xlsx_tag_end(p + olen, end, &a, &alen, &self);
+		if (!xlsx_is_name(p, end, pfx, plen, name, nlen)) continue;
+		p = xlsx_tag_end(p + plen + nlen, end, &a, &alen, &self);
 		if (self) { *len_out = 0; *after = p; return p; }
 		txt = p;
-		ce  = xlsx_find(p, end, close, clen);
+		ce  = xlsx_find_end(p, end, pfx, plen, name, nlen, &ce_after);
 		*len_out = (STRLEN)((ce ? ce : end) - txt);
-		*after   = ce ? ce + clen : end;
+		*after   = ce ? ce_after : end;
 		return txt;
 	}
 	return NULL;
@@ -10949,20 +11635,23 @@ can be a cell this parser stored, so testing for both is the whole of it.*/
 /*The state one worksheet parse carries between its two passes and across the
 callback that reads the header.  Nothing in here is owned except 'row'.
 
-'maxc' and 'next' differ only for a self-closing <c r="Z5" s="3"/>, which is
-how a writer records a cell that has formatting and no value.  Such a cell
-still takes a position -- 'next' is where a following cell with no usable r=
-goes -- but it does not widen the row, or the sheet: a column Excel has shaded
-to the bottom of the page is otherwise one more unnamed column in every row,
-and a duplicate-name warning about the empty header.  readxl and pandas'
-openpyxl reader both leave such trailing cells out of the table as well.*/
+'maxc' and 'next' differ only for a cell with no value: a self-closing
+<c r="Z5" s="3"/>, which is how a writer records a cell that has formatting and
+nothing else, or one written open and empty, <c r="Z5" s="3"></c> or
+<c r="Z5"><v></v></c>.  Such a cell still takes a position -- 'next' is where a
+following cell with no usable r= goes -- but it does not widen the row, or the
+sheet: a column Excel has shaded to the bottom of the page is otherwise one
+more unnamed column in every row, and a duplicate-name warning about the empty
+header.  readxl and pandas' openpyxl reader both leave such trailing cells out
+of the table as well.  Up to 0.3213 only the self-closing form was left out.*/
 typedef struct {
-	const char *xml;
-	const char *end;
-	SV        **sst;	//shared strings, borrowed from the perl array
+	const char *xml, *end;
+	const char *pfx;	//the part's namespace prefix, borrowed from xml; see xlsx_ns_prefix()
+	STRLEN plen;	//its length, 0 = none
+	SV **sst;	//shared strings, borrowed from the perl array
 	size_t nsst, width; //pass 2: the width every emitted row is padded to
 	size_t gmax;	//pass 1: one past the widest column index in the sheet
-	size_t maxc;	//one past the widest column holding a <c> with a body, this row
+	size_t maxc;	//one past the widest column holding a cell with a value, this row
 	size_t next;	//one past the widest column any <c> names, this row
 	AV       *row;	//pass 2's row buffer, reused between rows
 	csv_plan *plan;
@@ -10973,21 +11662,19 @@ typedef struct {
 
 /*Hand one finished row on: to the plan's fast path once read_table has filled
 the plan in, and to the perl callback until then (which is how the header gets
-read, and the only path when a filter or a 'hoh' shape needs per-row perl).
+read).
 
 The row is padded to the sheet's width, because a caller reads by index.  Its
-gaps are filled with empty strings for the perl callback, which has always been
-handed '' there, and with undef for S_fast_row(), which is what it makes of
-them.  A row with nothing but empty cells is dropped, as _parse_csv_file()
+gaps are filled with empty strings for the perl callback and a filter, which
+have always been handed '' there, and otherwise with undef for S_fast_row(),
+which is what it makes of them.  A row with nothing but empty cells is dropped, as _parse_csv_file()
 drops a blank line.
 
 Ownership on the callback path matches S_emit_row(): the AV's single reference
 becomes a mortal RV before the call, so a die inside the callback releases it on
 the unwind, and w->row is cleared first so the unwind cannot reach it twice.*/
-static void xlsx_ws_row_end(pTHX_ xlsx_ws *restrict w, bool measure)
-{
+static void xlsx_ws_row_end(pTHX_ xlsx_ws *restrict w, bool measure){
 	SV **ary;
-
 	w->next = 0;
 	if (measure) {
 		if (w->maxc > w->gmax) w->gmax = w->maxc;
@@ -11017,9 +11704,9 @@ branch av_extend() took.*/
 	ary = AvARRAY(w->row);
 	for (size_t j = 0; j < w->width; j++)	//undef on the fast path, as S_push_field() does
 		if (XLSX_IS_HOLE(ary[j]))
-			ary[j] = w->plan->active ? newSV(0) : newSVpvs("");
+			ary[j] = w->plan->undef_empty ? newSV(0) : newSVpvs("");
 	w->maxc = 0;
-	w->any  = 0;
+	w->any  = FALSE;
 	if (w->plan->active) {
 /*S_fast_row() leaves the row where it is when it croaks, so S_xlsx_ws_free()
 releases it, and whatever cells it still holds, on the unwind.*/
@@ -11049,117 +11736,30 @@ looked at once per row until it does -- twice in practice -- and never again.*/
 	}
 }
 
-/*One pass over the worksheet XML.  measure = TRUE finds every cell but builds
-none of them, which is how the width each row will be padded to is known before
-the first row is built; measure = FALSE builds the cells and emits the rows
-through xlsx_ws_row_end().*/
-static void xlsx_ws_scan(pTHX_ xlsx_ws *restrict w, bool measure)
-{
-	const char *p = w->xml;
-	const char *const end = w->end;
-
-	w->maxc   = 0;
-	w->next   = 0;
-	w->any    = 0;
-	w->in_row = 0;
-	while (p < end) {
-		const char *lt = (const char*)memchr(p, '<', (size_t)(end - p));
-		const char *a;
-		STRLEN alen;
-		bool self;
-		if (!lt) break;
-		p = lt + 1;
-		if (p >= end) break;
-		if (*p == '/') {
-/*Only </row> matters; every other end tag falls through to the next '<'.*/
-			if ((size_t)(end - p) >= 5 && memcmp(p, "/row>", 5) == 0) {
-				if (w->in_row) {
-					xlsx_ws_row_end(aTHX_ w, measure);
-					w->in_row = 0;
-				}
-				p += 5;
-			}
-			continue;
+/*The value of one cell, whose start tag's attributes are [a, a + alen) and whose
+body is [body, body + blen), as a new SV.*/
+static SV *xlsx_cell_value(pTHX_ const xlsx_ws *restrict w, const char *restrict a,
+	STRLEN alen, const char *restrict body, STRLEN blen){
+	const char *tv, *txt, *after;
+	STRLEN tvlen, tlen;
+	short int t = 0;	// 0 = literal <v>, 1 = shared string, 2 = inline
+	tv = xlsx_attr(a, alen, "t", 1, &tvlen);
+	if (tv && tvlen == 1 && tv[0] == 's') t = 1;
+	else if (tv && tvlen == 9 && memcmp(tv, "inlineStr", 9) == 0) t = 2;
+	if (t == 2) {
+		const char *q = body;
+		SV *v = newSVpvs("");
+		while ((txt = xlsx_child(q, body + blen, w->pfx, w->plen, "t", 1,
+		                         &tlen, &after)) != NULL) {
+			xlsx_xml_uncat(aTHX_ v, txt, tlen);
+			q = after;
 		}
-		if ((size_t)(end - p) > 3 && memcmp(p, "row", 3) == 0
-		    && (p[3] == '>' || p[3] == '/' || xlsx_is_ws(p[3]))) {
-/*A <row> that opens while one is already open cannot happen in valid XML, but
-closing the old one first is the only sane reading of it if it does.*/
-			if (w->in_row) xlsx_ws_row_end(aTHX_ w, measure);
-			p = xlsx_tag_end(p + 3, end, &a, &alen, &self);
-			w->in_row = 1;
-			if (self) {	//<row r="7"/>: an empty row, and so dropped
-				xlsx_ws_row_end(aTHX_ w, measure);
-				w->in_row = 0;
-			}
-			continue;
-		}
-		if (!((size_t)(end - p) > 1 && *p == 'c'
-		      && (p[1] == '>' || p[1] == '/' || xlsx_is_ws(p[1]))))
-			continue;	//<cols>, <col>, <conditionalFormatting>, ...
-		{
-			const char *rv;
-			STRLEN rvlen;
-			size_t ci;
-			p = xlsx_tag_end(p + 1, end, &a, &alen, &self);
-			if (!w->in_row) continue;	//a <c> outside <sheetData>
-			rv = xlsx_attr(a, alen, "r", 1, &rvlen);
-			ci = rv ? xlsx_ref_col(rv, rvlen) : (size_t)-1;
-			if (ci == (size_t)-1) ci = w->next;	//no usable r=: the next column
-/*...and the next-column counter needs XLSX_MAX_COL as much as a reference does,
-because it is where every unreadable reference ends up.  Without it the ceiling
-xlsx_ref_col() puts on "ZZZZZ1" buys nothing: a row of 20,000 of them answered
-"not a reference" 20,000 times and got 20,000 columns, and since every row in
-the sheet is padded to the widest one, a 54 KB file came back as 264 MB of
-empty strings -- 804 MB at 60,000 cells, growing with no bound but the input.
-Past the ceiling the cells pile up in the last column, last one winning, which
-is what a repeated r= in one row already did.  Both passes run this line, so
-they go on agreeing about the width.*/
-			if (ci >= XLSX_MAX_COL) ci = XLSX_MAX_COL - 1;
-			if (ci + 1 > w->next) w->next = ci + 1;
-/*A self-closing cell has no value to store and, see xlsx_ws, no say in the
-width.  Both passes stop here for it, so they agree about both.  Not storing it
-also means one no longer overwrites an earlier cell in the same column -- which
-only a malformed row with a repeated r= can have.*/
-			if (self) continue;
-			if (ci + 1 > w->maxc) w->maxc = ci + 1;
-			{
-				const char *body = p;
-				const char *tv, *txt;
-				STRLEN blen, tvlen, tlen;
-				SV *v;
-				short int t = 0;	// 0 = literal <v>, 1 = shared string, 2 = inline
-/*Skip to past </c> on BOTH passes, even though pass 1 wants nothing out of the
-body.  It is not an optimisation to leave it out: on malformed input -- a cell
-whose </c> is missing -- the search runs on to the next cell's, and a pass that
-skips then sees fewer cells than one that does not.  The width would come from
-one reading of the file and the rows from another, and a row would be built to
-the wrong length.  The scan is the same scan or it is not the same file.*/
-				{
-					const char *ce = xlsx_find(p, end, "</c>", 4);
-					blen = (STRLEN)((ce ? ce : end) - body);
-					p    = ce ? ce + 4 : end;
-				}
-				if (measure) continue;
-				tv = xlsx_attr(a, alen, "t", 1, &tvlen);
-				if (tv && tvlen == 1 && tv[0] == 's') t = 1;
-				else if (tv && tvlen == 9 && memcmp(tv, "inlineStr", 9) == 0) t = 2;
-				if (t == 2) {
-					const char *q = body;
-					const char *after;
-					v = newSVpvs("");
-					while ((txt = xlsx_child(q, body + blen, "t", 1, "</t>", 4,
-					                         &tlen, &after)) != NULL) {
-						xlsx_xml_uncat(aTHX_ v, txt, tlen);
-						q = after;
-					}
-				} else {
-					const char *after;
-					txt = xlsx_child(body, body + blen, "v", 1, "</v>", 4,
-					                 &tlen, &after);
-					if (!txt) {
-						v = newSVpvs("");
-					} else if (t == 1) {
+		return v;
+	}
+	txt = xlsx_child(body, body + blen, w->pfx, w->plen, "v", 1, &tlen, &after);
+	if (!txt)
+		return newSVpvs("");
+	if (t == 1) {
 /*A shared-string cell's <v> is an index into sharedStrings.xml.  Anything else
 in there -- and an index past the end of the table -- reads as an empty cell,
 which is what the perl parser's /^\d+\z/ test and its // '' did with it.
@@ -11180,33 +11780,192 @@ so on 5.10 and 5.12 this is an ordinary copy again.  Sharing also stops at 256
 cells per string, which is where the one-byte COW refcount saturates and perl
 falls back to copying; a table of many distinct strings -- 117,870 of them for
 688,268 string cells in the workbook above -- stays well inside that.*/
-						size_t ix = 0;
-						bool ok = tlen > 0;
-						for (STRLEN k = 0; k < tlen; k++) {
-							if (txt[k] < '0' || txt[k] > '9') { ok = 0; break; }
-							if (ix > ((size_t)-1 - 9) / 10) { ok = 0; break; }
-							ix = ix * 10 + (size_t)(txt[k] - '0');
-						}
-						if (ok && ix < w->nsst && w->sst[ix] && SvPOK(w->sst[ix])) {
-							v = newSV(0);
-							sv_setsv_flags(v, w->sst[ix],
-							               SV_COW_SHARED_HASH_KEYS);
-						} else {
-							v = newSVpvs("");
-						}
-					} else if (memchr(txt, '&', tlen)) {
-						v = newSVpvs("");
-						xlsx_xml_uncat(aTHX_ v, txt, tlen);
-					} else {
-						v = newSVpvn(txt, tlen);	//the common case: no entities
-					}
+		size_t ix = 0;
+		bool ok = tlen > 0;
+		for (STRLEN k = 0; k < tlen; k++) {
+			if (txt[k] < '0' || txt[k] > '9') { ok = FALSE; break; }
+			if (ix > ((size_t)-1 - 9) / 10) { ok = FALSE; break; }
+			ix = ix * 10 + (size_t)(txt[k] - '0');
+		}
+		if (ok && ix < w->nsst && w->sst[ix] && SvPOK(w->sst[ix])) {
+			SV *v = newSV(0);
+			sv_setsv_flags(v, w->sst[ix], SV_COW_SHARED_HASH_KEYS);
+			return v;
+		}
+		return newSVpvs("");
+	}
+	if (memchr(txt, '&', tlen)) {
+		SV *v = newSVpvs("");
+		xlsx_xml_uncat(aTHX_ v, txt, tlen);
+		return v;
+	}
+	return newSVpvn(txt, tlen);	//the common case: no entities
+}
+
+/*Pass 1's answer to whether a cell has a value, made without building it, and
+TRUE exactly when xlsx_cell_value() would build a non-empty SV, by the same
+reading of the same elements.  The two must agree, or not in the direction
+that loses data: pass 2 drops a cell past the width pass 1 found.
+
+The first test is the cheap one.  Every value is the text of a <v> or <t>, after
+that element's '>', so a body with no '>' followed by anything but '<' has none.
+Only a body that has text is looked at as pass 2 would.  An inline run with any
+text decodes to at least one byte -- an entity this does not know is copied
+whole, a numeric one is one character or more -- and so does a literal <v>.*/
+static bool xlsx_cell_has_value(const xlsx_ws *restrict w, const char *restrict a,
+	STRLEN alen, const char *restrict body, STRLEN blen){
+	const char *tv, *txt, *after;
+	STRLEN tvlen, tlen;
+	bool text = FALSE;
+	for (const char *p = body; p < body + blen; ) {
+		const char *gt = (const char*)memchr(p, '>', (size_t)(body + blen - p));
+		if (!gt || gt + 1 >= body + blen)
+			break;
+		if (gt[1] != '<') {
+			text = TRUE;
+			break;
+		}
+		p = gt + 1;
+	}
+	if (!text)
+		return FALSE;
+	tv = xlsx_attr(a, alen, "t", 1, &tvlen);
+	if (tv && tvlen == 9 && memcmp(tv, "inlineStr", 9) == 0) {
+		const char *q = body;
+		while ((txt = xlsx_child(q, body + blen, w->pfx, w->plen, "t", 1,
+		                         &tlen, &after)) != NULL) {
+			if (tlen)
+				return TRUE;
+			q = after;
+		}
+		return FALSE;
+	}
+	txt = xlsx_child(body, body + blen, w->pfx, w->plen, "v", 1, &tlen, &after);
+	if (!txt || !tlen)
+		return FALSE;
+	if (tv && tvlen == 1 && tv[0] == 's') {	//xlsx_cell_value()'s index rule
+		size_t ix = 0;
+		for (STRLEN k = 0; k < tlen; k++) {
+			if (txt[k] < '0' || txt[k] > '9') return FALSE;
+			if (ix > ((size_t)-1 - 9) / 10) return FALSE;
+			ix = ix * 10 + (size_t)(txt[k] - '0');
+		}
+		return ix < w->nsst && w->sst[ix] && SvPOK(w->sst[ix]) && SvCUR(w->sst[ix]) > 0;
+	}
+	return TRUE;
+}
+
+/*One pass over the worksheet XML.  measure = TRUE finds every cell but builds
+none of them, which is how the width each row will be padded to is known before
+the first row is built; measure = FALSE builds the cells and emits the rows
+through xlsx_ws_row_end().*/
+static void xlsx_ws_scan(pTHX_ xlsx_ws *restrict w, bool measure){
+	const char *p = w->xml;
+	const char *const end = w->end;
+	const char *const pfx = w->pfx;
+	const STRLEN plen = w->plen;
+
+	w->maxc   = 0;
+	w->next   = 0;
+	w->any    = FALSE;
+	w->in_row = FALSE;
+	while (p < end) {
+		const char *lt = (const char*)memchr(p, '<', (size_t)(end - p));
+		const char *a;
+		STRLEN alen;
+		bool self;
+		if (!lt) break;
+		p = lt + 1;
+		if (p >= end) break;
+		if (*p == '/') {
+/*Only </row> matters; every other end tag falls through to the next '<'.*/
+			if (xlsx_is_name(p + 1, end, pfx, plen, "row", 3)) {
+				if (w->in_row) {
+					xlsx_ws_row_end(aTHX_ w, measure);
+					w->in_row = FALSE;
 				}
+				p += 1 + plen + 3;
+			}
+			continue;
+		}
+		if (xlsx_is_name(p, end, pfx, plen, "row", 3)) {
+/*A <row> that opens while one is already open cannot happen in valid XML, but
+closing the old one first is the only sane reading of it if it does.*/
+			if (w->in_row) xlsx_ws_row_end(aTHX_ w, measure);
+			p = xlsx_tag_end(p + plen + 3, end, &a, &alen, &self);
+			w->in_row = TRUE;
+			if (self) {	//<row r="7"/>: an empty row, and so dropped
+				xlsx_ws_row_end(aTHX_ w, measure);
+				w->in_row = FALSE;
+			}
+			continue;
+		}
+		if (!xlsx_is_name(p, end, pfx, plen, "c", 1))
+			continue;	//<cols>, <col>, <conditionalFormatting>, ...
+		{
+			const char *rv;
+			STRLEN rvlen;
+			size_t ci;
+			p = xlsx_tag_end(p + plen + 1, end, &a, &alen, &self);
+			if (!w->in_row) continue;	//a <c> outside <sheetData>
+			rv = xlsx_attr(a, alen, "r", 1, &rvlen);
+			ci = rv ? xlsx_ref_col(rv, rvlen) : (size_t)-1;
+			if (ci == (size_t)-1) ci = w->next;	//no usable r=: the next column
+/*...and the next-column counter needs XLSX_MAX_COL as much as a reference does,
+because it is where every unreadable reference ends up.  Without it the ceiling
+xlsx_ref_col() puts on "ZZZZZ1" buys nothing: a row of 20,000 of them answered
+"not a reference" 20,000 times and got 20,000 columns, and since every row in
+the sheet is padded to the widest one, a 54 KB file came back as 264 MB of
+empty strings -- 804 MB at 60,000 cells, growing with no bound but the input.
+Past the ceiling the cells pile up in the last column, last one winning, which
+is what a repeated r= in one row already did.  Both passes run this line, so
+they go on agreeing about the width.*/
+			if (ci >= XLSX_MAX_COL) ci = XLSX_MAX_COL - 1;
+			if (ci + 1 > w->next) w->next = ci + 1;
+/*A self-closing cell has no value to store and, see xlsx_ws, no say in the
+width.  Both passes stop here for it, so they agree about both.  Not storing it
+also means one no longer overwrites an earlier cell in the same column -- which
+only a malformed row with a repeated r= can have.*/
+			if (self) continue;
+			{
+				const char *body = p;
+				STRLEN blen;
+				SV *v;
+/*Skip to past </c> on BOTH passes, even though pass 1 wants nothing out of the
+body but whether it holds a value.  It is not an optimisation to leave it out:
+on malformed input -- a cell whose </c> is missing -- the search runs on to the
+next cell's, and a pass that skips then sees fewer cells than one that does
+not.  The width would come from one reading of the file and the rows from
+another, and a row would be built to the wrong length.  The scan is the same
+scan or it is not the same file.*/
+				{
+					const char *after;
+					const char *ce = xlsx_find_end(p, end, pfx, plen, "c", 1, &after);
+					blen = (STRLEN)((ce ? ce : end) - body);
+					p    = ce ? after : end;
+				}
+				if (measure) {
+/*Only a cell that would widen the sheet is looked at: past the widest valued
+column of this row and of every row before it.  Below that the answer cannot
+change the width, and once the first rows have set it, that is nearly every
+cell.  Asking of every cell cost a 20,000 x 50 workbook 0.236 s to 0.264 s.*/
+					if (ci + 1 > w->maxc && ci + 1 > w->gmax
+					    && xlsx_cell_has_value(w, a, alen, body, blen))
+						w->maxc = ci + 1;
+					continue;
+				}
+/*Pass 1 widened the sheet for every cell with a value, so only an empty one can
+lie past the width; it is dropped, as a self-closing one is, rather than
+stored past the end of a row that is meant to be 'width' long.*/
+				if (ci >= w->width)
+					continue;
+				v = xlsx_cell_value(aTHX_ w, a, alen, body, blen);
 /*av_store() releases whatever was in the slot, which is what makes a repeated
 r= in one row -- only malformed input produces one -- keep the last cell rather
 than leak the first.  Do not drop the old value here as well: that is a double
 free, and it is exactly what a mutation fuzz of the worksheet XML found.*/
 				av_store(w->row, (SSize_t)ci, v);
-				if (SvCUR(v)) w->any = 1;
+				if (SvCUR(v)) w->any = TRUE;
 			}
 		}
 	}
@@ -11236,33 +11995,32 @@ and a sub call per run.
 <t> elements inside a phonetic-guide <rPh> are picked up along with the real
 runs, as they were by the perl version; a furigana annotation is the only thing
 that puts one there and no writer this reads emits them.*/
-static AV *xlsx_sst_parse(pTHX_ const char *restrict xml, STRLEN xlen)
-{
+static AV *xlsx_sst_parse(pTHX_ const char *restrict xml, STRLEN xlen){
 	AV *sst = newAV();
 	const char *p = xml;
 	const char *const end = xml + xlen;
-
+	STRLEN plen;
+	const char *const pfx = xlsx_ns_prefix(xml, end, &plen);	//as a worksheet's, see there
 	while (p < end) {
 		const char *lt = (const char*)memchr(p, '<', (size_t)(end - p));
-		const char *a, *si_end, *body, *txt, *after;
+		const char *a, *si_end, *si_after, *body, *txt, *after;
 		STRLEN alen, tlen;
 		bool self;
 		SV *v;
 		if (!lt) break;
 		p = lt + 1;
-		if (!((size_t)(end - p) > 2 && p[0] == 's' && p[1] == 'i'
-		      && (p[2] == '>' || p[2] == '/' || xlsx_is_ws(p[2]))))
+		if (!xlsx_is_name(p, end, pfx, plen, "si", 2))
 			continue;
-		p = xlsx_tag_end(p + 2, end, &a, &alen, &self);
+		p = xlsx_tag_end(p + plen + 2, end, &a, &alen, &self);
 		if (self) { av_push(sst, newSVpvs("")); continue; }
 		body   = p;
-		si_end = xlsx_find(p, end, "</si>", 5);
-		p      = si_end ? si_end + 5 : end;
+		si_end = xlsx_find_end(p, end, pfx, plen, "si", 2, &si_after);
+		p      = si_end ? si_after : end;
 		v      = newSVpvs("");
 		{
 			const char *q = body;
 			const char *const b_end = si_end ? si_end : end;
-			while ((txt = xlsx_child(q, b_end, "t", 1, "</t>", 4,
+			while ((txt = xlsx_child(q, b_end, pfx, plen, "t", 1,
 			                         &tlen, &after)) != NULL) {
 				if (memchr(txt, '&', tlen)) xlsx_xml_uncat(aTHX_ v, txt, tlen);
 				else                        sv_catpvn(v, txt, tlen);
@@ -11378,11 +12136,8 @@ from rowname_dup(), and is stored as a key with ROWNAME_KLEN(). Croaks -- with f
 the message prefix, and after freeing whatever it had allocated -- on a shape
 neither function can read. Callers run lm_formula_split() first and pass its
 buffer as fbuf so that those croaks release it too.*/
-static size_t lm_read_rows(pTHX_ SV *data_sv, const char *fname,
-                           char *fbuf,
-                           HV  **data_hoa_out,
-                           HV ***row_hashes_out,
-                           char ***row_names_out) {
+static size_t lm_read_rows(pTHX_ SV *data_sv, const char *fname, char *fbuf,
+	HV  **data_hoa_out, HV ***row_hashes_out, char ***row_names_out) {
 	/*A tied frame's column was FETCHed again for every row the design matrix
 	read, and a tied row's first cell once for the shape and again for the
 	matrix. A tied column was worse: the design reads its cells without get
@@ -11751,25 +12506,23 @@ static void mf_rows(pTHX_ const char *restrict fname, SV *data_sv, MfRows *restr
 
 //One formula's design over an MfRows.
 typedef struct {
-	char       *lhs;           //the response expression; "" when there is none
-	char      **off;           //offset() expressions
+	char       *lhs; //the response expression; "" when there is none
+	char      **off; //offset() expressions
 	size_t      noff;
 	bool        has_intercept; //as the formula states it
 	LmDesign   *design;
-	size_t      col0;          //1 when the Intercept column is left out
-	size_t      p;             //design columns used
-	NV         *rowbuf;        //design->ncol scratch for mf_row()
+	size_t      col0;    //1 when the Intercept column is left out
+	size_t      p;       //design columns used
+	NV         *rowbuf;  //design->ncol scratch for mf_row()
 } MfPart;
 
 /*Build one formula's design.  drop_intercept builds it with an intercept --
 so that factors get the reference coding they would have beside one -- and
 then leaves the Intercept column out, which is what coxph() and absorbed
 factors need.*/
-static void mf_part(pTHX_ const char *restrict fname, const char *restrict formula, const MfRows *restrict r,
-                    bool drop_intercept, HV *xlevels_hv, MfPart *restrict m) {
-	char *f_cpy, *lhs, *rhs;
+static void mf_part(pTHX_ const char *restrict fname, const char *restrict formula, const MfRows *restrict r, bool drop_intercept, HV *xlevels_hv, MfPart *restrict m) {
+	char *f_cpy, *lhs, *rhs, **terms = NULL, **uniq = NULL;
 	bool hi = 1;
-	char **terms = NULL, **uniq = NULL;
 	unsigned nt = 0, nu = 0, i;
 	f_cpy = lm_formula_split(aTHX_ formula, fname, &lhs, &rhs, &hi);
 	SAVEFREEPV(f_cpy);
@@ -11899,11 +12652,10 @@ them.*/
 #define ZT_LOGIT     4   //zero hurdle only: binomial with a logit link
 
 typedef struct {
-	size_t      n, k;     //observations, columns of X
-	const NV   *X, *y, *off, *w;
-	const NV   *z;        //NULL: truncated count (all y >= 1); else the zero hurdle's 0/1
-	short int   dist;     //ZT_POISSON .. ZT_LOGIT
-	NV          theta;    //ZT_GEOMETRIC and ZT_NBFIXED
+	size_t n, k; //observations, columns of X
+	const NV *X, *y, *off, *w, *z; //NULL: truncated count (all y >= 1); else the zero hurdle's 0/1
+	short int dist;  //ZT_POISSON .. ZT_LOGIT
+	NV        theta; //ZT_GEOMETRIC and ZT_NBFIXED
 } ZtModel;
 
 /*lgamma(y + th) - lgamma(th), psi(y + th) - psi(th) and psi'(y + th) - psi'(th)
@@ -11942,8 +12694,7 @@ static NV zt_eval(const ZtModel *restrict m, const NV *restrict par, NV *restric
 		NV r, le, lee, lt = 0.0, ltt = 0.0, let_ = 0.0;
 		for (a = 0; a < k; a++) eta += x[a] * par[a];
 		mu = nv_exp(eta);
-		if (m->z) {
-			/*zero hurdle: only B's derivatives are needed*/
+		if (m->z) { //zero hurdle: only B's derivatives are needed
 			NV zi = m->z[i], c1;
 			if (m->dist == ZT_LOGIT) {
 				NV pz = 1.0 / (1.0 + nv_exp(-eta));
@@ -12079,7 +12830,7 @@ static bool zt_fit(const ZtModel *restrict m, NV *restrict par, NV *restrict cov
 	Newx(step, np ? np : 1, NV); Newx(trial, np ? np : 1, NV);
 	Newx(A, np ? np * np : 1, NV); Newx(gs, np ? np : 1, NV);
 	Newx(idx, np ? np : 1, size_t);
-	/*identifiability from the design alone*/
+	//identifiability from the design alone
 	for (a = 0; a < k * k; a++) A[a] = 0.0;
 	for (size_t i = 0; i < m->n; i++) {
 		const NV *x = m->X + i * k;
@@ -12108,7 +12859,7 @@ static bool zt_fit(const ZtModel *restrict m, NV *restrict par, NV *restrict cov
 			lambda = (lambda == 0.0) ? 1e-4 : lambda * 10.0;
 			damped = 1;
 		}
-		/*forward and back substitution: L L' s = g*/
+		//forward and back substitution: L L' s = g
 		for (a = 0; a < q; a++) {
 			NV s = g[idx[a]];
 			for (b = 0; b < a; b++) s -= A[a * q + b] * gs[b];
@@ -12140,7 +12891,7 @@ static bool zt_fit(const ZtModel *restrict m, NV *restrict par, NV *restrict cov
 			}
 		}
 	}
-	/*The covariance at the estimate itself, not at the step before it.*/
+	//The covariance at the estimate itself, not at the step before it
 	for (a = 0; a < np * np; a++) cov[a] = -H[a];
 	for (a = 0; a < np; a++)
 		if (aliased[a])
@@ -12161,8 +12912,7 @@ static bool zt_fit(const ZtModel *restrict m, NV *restrict par, NV *restrict cov
 interval -- plus the coefficient and vcov hashes, for coefficients whose
 covariance is cov (np x np; the first k entries are reported).*/
 static void zt_tables(pTHX_ const MfPart *restrict mp, size_t k, size_t np, const NV *restrict par,
-                      const NV *restrict cov, const bool *restrict aliased, NV zcrit,
-                      HV *coef_hv, HV *summ_hv, HV *vcov_hv) {
+  const NV *restrict cov, const bool *restrict aliased, NV zcrit, HV *coef_hv, HV *summ_hv, HV *vcov_hv) {
 	for (size_t j = 0; j < k; j++) {
 		const char *nm = mf_colname(mp, j);
 		HV *row = newHV();
@@ -12226,29 +12976,28 @@ may be negated freely; the search is unconstrained, and each column is
 turned to a non-negative diagonal at the end, which is lme4's convention.*/
 
 typedef struct {
-	size_t q;          //columns of the term's random design
-	size_t off;        //first theta entry
-	bool diag;         //`||`: T is diagonal
+	size_t q;   //columns of the term's random design
+	size_t off; //1st theta entry
+	bool diag;  //`||`: T is diagonal
 } LmmTerm;
 
 typedef struct {
-	size_t    size;    //random effects in this block of M
-	size_t    nsub;    //sub-blocks: one (term, level) each
-	size_t   *sub_off; //sub-block start within the block
-	size_t   *sub_term;
-	NV       *ZtZ;     //size x size
-	NV       *ZtX;     //size x p
-	NV       *Zty;     //size
+	size_t size; //random effects in this block of M
+	size_t nsub; //sub-blocks: one (term, level) each
+	size_t *sub_off; //sub-block start within the block
+	size_t *sub_term;
+	NV     *ZtZ; //size x size
+	NV     *ZtX; //size x p
+	NV     *Zty; //size
 } LmmBlock;
 
 typedef struct {
-	size_t    n, p, nterm, nblock, ntheta;
+	size_t n, p, nterm, nblock, ntheta;
 	LmmTerm  *term;
 	LmmBlock *block;
 	const NV *X, *y;
 	bool      reml;
-	/*scratch, sized for the largest block*/
-	NV *M, *B, *c, *T, *tmp;
+	NV *M, *B, *c, *T, *tmp;//scratch, sized for the largest block
 } LmmModel;
 
 //T_k from theta, as a q x q lower-triangular row-major matrix.
@@ -12334,8 +13083,7 @@ static void lmm_lambda_right(const LmmModel *m, const LmmBlock *b, const NV *the
 beta, r2 and ldL2 (log|M|).  With u not NULL, also the conditional modes
 u = M^-1 d (all blocks, concatenated) for the random effects b = Lambda u.
 Returns FALSE when a factorisation fails.*/
-static bool lmm_eval(LmmModel *restrict m, const NV *restrict theta, NV *restrict XtVX, NV *restrict Xty_adj, NV *restrict beta,
-                     bool *restrict aliased, NV *restrict r2, NV *restrict ldL2, NV *restrict u) {
+static bool lmm_eval(LmmModel *restrict m, const NV *restrict theta, NV *restrict XtVX, NV *restrict Xty_adj, NV *restrict beta, bool *restrict aliased, NV *restrict r2, NV *restrict ldL2, NV *restrict u) {
 	const size_t p = m->p;
 	size_t i, j, l, ucur = 0;
 	NV *XtX, *Xty;
@@ -12387,7 +13135,7 @@ static bool lmm_eval(LmmModel *restrict m, const NV *restrict theta, NV *restric
 			Safefree(MB);
 		}
 	}
-	/*beta*/
+	//beta
 	{
 		NV *inv;
 		Newx(inv, p ? p * p : 1, NV);
@@ -12401,7 +13149,7 @@ static bool lmm_eval(LmmModel *restrict m, const NV *restrict theta, NV *restric
 		}
 		Safefree(inv);
 	}
-	/*r^2 = |e|^2 - d' M^-1 d, e = y - X beta, d = Lambda' Z' e*/
+	//r^2 = |e|^2 - d' M^-1 d, e = y - X beta, d = Lambda' Z' e
 	{
 		NV ee = 0.0, dd = 0.0;
 		for (i = 0; i < m->n; i++) {
@@ -12413,7 +13161,7 @@ static bool lmm_eval(LmmModel *restrict m, const NV *restrict theta, NV *restric
 			LmmBlock *b = &m->block[bi];
 			size_t s = b->size;
 			NV *M = m->M, *d = m->c, *dsol;
-			/*refactor: the first pass reused the scratch*/
+			//refactor: the first pass reused the scratch
 			memcpy(M, b->ZtZ, s * s * sizeof(NV));
 			lmm_lambda_t_left(m, b, theta, M, s, m->T, m->tmp);
 			lmm_lambda_right(m, b, theta, M, s, s, m->T, m->tmp);
@@ -12689,8 +13437,8 @@ typedef struct {
 typedef struct {
 	SV **rows;	// row ref per index (RV to HV)
 	CV  *cv;	// the comparator
-	SV  *a_sv;		// scalar currently aliased to package $a
-	SV  *b_sv;		// scalar currently aliased to package $b
+	SV  *a_sv;	// scalar currently aliased to package $a
+	SV  *b_sv;	// scalar currently aliased to package $b
 } cs_code_ctx;
 
 /*A HoH row name for csort's fold, with its bytes read once rather than on every
@@ -12760,12 +13508,9 @@ static int cs_code_cmp(pTHX_ void *vctx, size_t i, size_t j) {
 }
 
 //Stable bottom merge for the index permutation.
-static void cs_merge(pTHX_ size_t *restrict idx, size_t *restrict tmp,
-					 size_t lo, size_t mid, size_t hi,
-					 cs_cmp_fn cmp, void *ctx) {
+static void cs_merge(pTHX_ size_t *restrict idx, size_t *restrict tmp, size_t lo, size_t mid, size_t hi, cs_cmp_fn cmp, void *ctx) {
 	size_t i = lo, j = mid, k = lo;
-	while (i < mid && j < hi) {
-		//`<= 0` keeps equal elements in original order => stable
+	while (i < mid && j < hi) {//`<= 0` keeps equal elements in original order => stable
 		if (cmp(aTHX_ ctx, idx[i], idx[j]) <= 0) tmp[k++] = idx[i++];
 		else                                     tmp[k++] = idx[j++];
 	}
@@ -12774,8 +13519,7 @@ static void cs_merge(pTHX_ size_t *restrict idx, size_t *restrict tmp,
 	for (size_t t = lo; t < hi; t++) idx[t] = tmp[t];
 }
 
-static void cs_msort(pTHX_ size_t *restrict idx, size_t *restrict tmp,
-					 size_t lo, size_t hi, cs_cmp_fn cmp, void *ctx) {
+static void cs_msort(pTHX_ size_t *restrict idx, size_t *restrict tmp, size_t lo, size_t hi, cs_cmp_fn cmp, void *ctx) {
 	if (hi - lo < 2) return;
 	size_t mid = lo + (hi - lo) / 2;
 	cs_msort(aTHX_ idx, tmp, lo, mid, cmp, ctx);
@@ -12795,7 +13539,6 @@ static void cs_bind_ab(pTHX_ CV *cv, SV **a_out, SV **b_out) {
 	const char *pkg = stash ? HvNAME(stash) : NULL;
 	if (!pkg) pkg = "main";
 	STRLEN plen = strlen(pkg);
-
 	//build "<pkg>::a" / "<pkg>::b" so the GVs land in the right stash
 	char *buf;
 	Newx(buf, plen + 4, char);
@@ -12881,9 +13624,11 @@ static bool cs_row_touches_undef(pTHX_ cs_code_ctx *c, size_t i) {
 			undef = 1;
 			sv_setsv(ERRSV, &PL_sv_no);	//clear $@
 		} else {/*a genuine error from the comparator: propagate it verbatim.
-			croak reads the string now; the die unwinds the save stack,
-			which restores PL_warnhook for us.*/
-			croak("%s", em);
+			croak(NULL) rethrows $@ itself; the die unwinds the save stack,
+			which restores PL_warnhook for us.  Up to 0.3212 this was
+			croak("%s", em), which turned an exception object into the
+			string "HASH(0x...) at ..." and a UTF-8 message into its bytes.*/
+			croak(NULL);
 		}
 	}
 	FREETMPS;
@@ -12891,10 +13636,7 @@ static bool cs_row_touches_undef(pTHX_ cs_code_ctx *c, size_t i) {
 	return undef;
 }
 
-static SV *cs_materialize(pTHX_ cs_shape out_shape, cs_shape in_shape,
-                          AV *src_av,
-                          SV **colkeys, AV **colavs,
-                          size_t ncols, size_t *idx, size_t n) {
+static SV *cs_materialize(pTHX_ cs_shape out_shape, cs_shape in_shape, AV *src_av, SV **colkeys, AV **colavs, size_t ncols, size_t *idx, size_t n) {
 	if (out_shape == CS_AOA) {//output: AoA
 		AV *out = newAV();
 		if (n) av_extend(out, (SSize_t)n - 1);
@@ -12967,7 +13709,7 @@ static SV *cs_materialize(pTHX_ cs_shape out_shape, cs_shape in_shape,
 		SV **korder;
 		Newx(korder, (size_t)(nk > 0 ? nk : 1), SV *);
 		SAVEFREEPV(korder);
-		for (SSize_t c = 0; c < nk; c++) korder[c] = *av_fetch(keylist, c, 0);
+		for (SSize_t c = 0; c < nk; c++) korder[c] = AvARRAY(keylist)[c];	//av_push()ed above: no holes
 		for (SSize_t a = 1; a < nk; a++) {
 			SV *key = korder[a];
 			STRLEN al; const char *ap = SvPV_const(key, al);
@@ -13003,7 +13745,6 @@ static SV *cs_materialize(pTHX_ cs_shape out_shape, cs_shape in_shape,
 	if (out_shape == CS_AOH) {//output: AoH
 		AV *out = newAV();
 		if (n) av_extend(out, (SSize_t)n - 1);
-
 		if (in_shape == CS_AOH) {// AoH -> AoH: reorder, sharing the original row hashrefs */
 			for (size_t k = 0; k < n; k++) {
 				SV **rp = av_fetch(src_av, (SSize_t)idx[k], 0);
@@ -13121,7 +13862,7 @@ static SV *cs_materialize(pTHX_ cs_shape out_shape, cs_shape in_shape,
 		Newx(korder2, nk > 0 ? (size_t)nk : 1, SV *);
 		SAVEFREEPV(korder2);
 		for (SSize_t c = 0; c < nk; c++) {
-			korder2[c] = *av_fetch(keylist, c, 0);
+			korder2[c] = AvARRAY(keylist)[c];	//av_push()ed above: no holes
 			cols[c] = newAV();
 			if (n) av_extend(cols[c], (SSize_t)n - 1);
 			hv_store_ent(out, korder2[c], newRV_noinc((SV *)cols[c]), 0);
@@ -13468,8 +14209,7 @@ static NV st_ptukey(NV q, NV rr, NV cc, NV df){
 #undef TK_IHALFQ
 }
 
-static NV st_qinv(NV p, NV c, NV v)
-{
+static NV st_qinv(NV p, NV c, NV v){
 	const double p0 = 0.322232421088,    q0 = 0.993484626060e-01;
 	const double p1 = -1.0,              q1 = 0.588581570495;
 	const double p2 = -0.342242088547,   q2 = 0.531103462366;
@@ -13489,8 +14229,7 @@ static NV st_qinv(NV p, NV c, NV v)
 	return t * (qq * nv_log(c - 1.0) + c5);
 }
 
-static NV st_qtukey(NV p, NV rr, NV cc, NV df)
-{
+static NV st_qtukey(NV p, NV rr, NV cc, NV df){
 	const double eps = 0.0001;
 	double ans = 0.0, valx0, valx1, x0, x1, xabs;
 
@@ -13555,7 +14294,7 @@ static int set_equivalent(pTHX_ SV **args, size_t nrefs, const char *name) {
 			croak("%s: argument index %" UVuf " of %" UVuf " total (max index %" UVuf ") is not an array reference", name, (UV)i, (UV)nrefs, (UV)(nrefs - 1));
 		av   = (AV*)SvRV(args[i]);
 		len  = (size_t)(av_len(av) + 1);
-		seen = (HV*)sv_2mortal((SV*)newHV());   //per-ref dedup
+		seen = (HV*)sv_2mortal((SV*)newHV()); //per-ref dedup
 		for (size_t j = 0; j < len; j++) {
 			SV **tv = av_fetch(av, j, 0);
 			STRLEN klen; const char *key; I32 hklen;
@@ -13563,12 +14302,12 @@ static int set_equivalent(pTHX_ SV **args, size_t nrefs, const char *name) {
 				croak("%s: undefined value at array ref index %" UVuf " (argument %" UVuf ")", name, (UV)j, (UV)i);
 			key   = SvPV(*tv, klen);
 			hklen = SvUTF8(*tv) ? -(I32)klen : (I32)klen;
-			if (hv_exists(seen, key, hklen)) continue;   //already counted for this ref
+			if (hv_exists(seen, key, hklen)) continue; //already counted for this ref
 			(void)hv_store(seen, key, hklen, &PL_sv_undef, 0);
-			if (!hv_exists(ref, key, hklen)) return 0;   //value absent from first ref
+			if (!hv_exists(ref, key, hklen)) return 0; //value absent from first ref
 			matched++;
 		}
-		if (matched != ref_size) return 0;              //first ref has a value this ref lacks
+		if (matched != ref_size) return 0; //first ref has a value this ref lacks
 	}
 	return 1;
 }
@@ -13583,8 +14322,7 @@ intersection/Lonly, or the LAST (1) for Ronly. With want_all == 0 that makes
 Lonly "only in the first array" and Ronly "only in the last array", so the
 two-array Ronly(a,b) still equals Lonly(b,a). Every emitted value is present
 in the chosen array, so drawing candidates from it is correct for all three.*/
-static SV** set_multiplicity(pTHX_ SV **sp, SV **args, size_t nrefs,
-                             bool want_all, bool from_last, const char *name, int gimme) {
+static SV** set_multiplicity(pTHX_ SV **sp, SV **args, size_t nrefs, bool want_all, bool from_last, const char *name, int gimme) {
 	HV *count = (HV*)sv_2mortal((SV*)newHV());
 	AV *order = (AV*)sv_2mortal((SV*)newAV());
 	size_t n = 0, olen;
@@ -13908,9 +14646,7 @@ AS 274's sing(). Its row of the triangle, weighted by its own d, is rotated
 into the columns after it -- which is how a later column comes to be tested
 on what the earlier non-aliased columns leave of it -- and if it is the last
 column its share goes to the residual. Returns the rank.*/
-static size_t anova_sing(size_t p, NV *restrict x, NV *restrict d, NV *restrict rbar,
-		NV *restrict thetab, const NV *restrict colss, bool *restrict aliased,
-		NV *restrict sserr) {
+static size_t anova_sing(size_t p, NV *restrict x, NV *restrict d, NV *restrict rbar, NV *restrict thetab, const NV *restrict colss, bool *restrict aliased, NV *restrict sserr) {
 	size_t pos = 0, rank = 0;
 	for (size_t j = 0; j < p; j++) {
 		const size_t len = p - j - 1;
@@ -13935,10 +14671,9 @@ lm_design_build().*/
 static void anova_model_build(pTHX_ const char *restrict fname, const char *restrict f,
 		HV *hoa, HV **rows, size_t n, HV *xlevels_hv, const char *restrict as_factor,
 		AnModel *restrict m) {
-	char *f_cpy, *lhs, *rhs;
-	char **terms = NULL, **uniq = NULL;
+	char *f_cpy, *lhs, *rhs, **terms = NULL, **uniq = NULL;
 	unsigned nt = 0, nu = 0;
-	bool hi = TRUE;
+	bool hi = 1;
 	size_t p;
 	f_cpy = lm_formula_split(aTHX_ f, fname, &lhs, &rhs, &hi);
 	SAVEFREEPV(f_cpy);
@@ -14569,13 +15304,58 @@ dd_put(pTHX_ dd_ctx *T, const char *p, STRLEN l) {
 	T->len = (size_t)(w - T->buf);
 }
 
+/*Whether any byte is outside ASCII, which is what decides whether a UTF-8
+string has to be downgraded before it is keyed.*/
+PERL_STATIC_INLINE bool pv_high_byte(const char *p, STRLEN n) {
+	while (n--) if ((U8)*p++ & 0x80) return 1;
+	return 0;
+}
+
+/*Append a string cell to the key under construction, in the form a perl hash
+key would take: a UTF-8 string is downgraded when every code point is below
+256 and marked when one is not, so "\x{e9}" and "\xe9" are one key while
+"\x{263A}" stays apart from the three bytes "\xe2\x98\xba" -- which is `eq`.
+p/l are the cell's buffer and `utf8` its SvUTF8, read after the SvPV that
+produced p.  p must not point into T->buf.
+
+The ordinary form is dd_put()'s, opened by a 'u' when the cell is UTF-8: no
+other cell opens with one (those open with a digit, or with '~' for undef).
+`bare` is mg_key()'s one-column form, with no length prefix; a bare key can
+begin with any byte at all, so it is opened by a 0 or 1 byte instead.
+
+Up to 0.3212 only ag_cell() did this; dd_cell() and mg_key() keyed the buffer
+as stored, so drop_duplicates() kept "\xe9" and its UTF-8 spelling as two rows
+and merge() did not join them, while it did join the two bytes "\xc3\xa9" to
+the UTF-8 "\x{e9}".*/
+static void
+dd_put_str(pTHX_ dd_ctx *T, const char *p, STRLEN l, bool utf8, bool bare) {
+	U8 *b = NULL;	// a downgraded copy, freed below
+	if (utf8 && pv_high_byte(p, l)) {
+		STRLEN bl = l;
+		bool wide = TRUE;
+		U8 *d = bytes_from_utf8((const U8 *)p, &bl, &wide);
+		if (!wide) { b = d; p = (const char *)d; l = bl; utf8 = FALSE; }
+		//when wide, bytes_from_utf8() hands back p itself and allocates nothing
+	} else utf8 = FALSE;	//pure ASCII is already its own downgrade
+	if (bare) {
+		dd_reserve(aTHX_ T, l + 1);
+		T->buf[T->len++] = (char)utf8;
+		if (l) memcpy(T->buf + T->len, p, l);
+		T->len += l;
+	} else {
+		if (utf8) { dd_reserve(aTHX_ T, 1); T->buf[T->len++] = 'u'; }
+		dd_put(aTHX_ T, p, l);
+	}
+	Safefree(b);
+}
 
 /*append one cell's canonical form to the key under construction.
 
 SvGETMAGIC first: a tied array's element and a tied hash's value both arrive
 here as an SV that has no value until mg_get() has run on it, and testing
 SvOK() before that reported every cell of every tied frame as undef -- which,
-undef having its own sentinel, made every row of such a frame the same row.*/
+undef having its own sentinel, made every row of such a frame the same row.
+The SvPV after it is SvPV_nomg so that the cell is FETCHed once, not twice.*/
 PERL_STATIC_INLINE void
 dd_cell(pTHX_ dd_ctx *T, SV *c) {
 	if (c) SvGETMAGIC(c);
@@ -14583,8 +15363,11 @@ dd_cell(pTHX_ dd_ctx *T, SV *c) {
 		STRLEN l;
 		char numbuf[NK_NUMBUF];
 		const char *p = nk_num_pv(c, numbuf, &l, T->fast_nv);
-		if (!p) p = SvPV(c, l);       //before dd_reserve: may croak
-		dd_put(aTHX_ T, p, l);
+		if (p) dd_put(aTHX_ T, p, l);
+		else {
+			p = SvPV_nomg(c, l);       //before dd_reserve: may croak
+			dd_put_str(aTHX_ T, p, l, cBOOL(SvUTF8(c)), FALSE);
+		}
 	} else {
 		dd_reserve(aTHX_ T, 2);                      //undef sentinel
 		T->buf[T->len++] = '~';
@@ -14722,8 +15505,9 @@ static SSize_t dd_find(dd_ctx *T, size_t start) {
 /*The join key of row `i` of frame `f`, appended to the arena at `start`.  The
 canonical, length-prefixed form dd_cell() builds, so drop_duplicates() and
 merge() agree on when two rows carry the same key -- except that a one-column
-join writes the cell's bytes bare, there being nothing for a length prefix to
-disambiguate when the key has only one field.  That is worth doing because it
+join writes the cell's bytes bare, behind one byte that says whether they are
+UTF-8, there being nothing for a length prefix to disambiguate when the key
+has only one field.  That is worth doing because it
 is the common case and the prefix and its two separators are, on an integer
 id, about as many bytes again to hash and to compare.
 
@@ -14747,13 +15531,13 @@ mg_key(pTHX_ dd_ctx *T, const mg_frame *f, const mg_col *keys,
 		if (!SvOK(cell)) { T->len = start; return 0; }
 		STRLEN l;
 		char numbuf[NK_NUMBUF];
+		bool utf8 = FALSE;	//a rendered number is ASCII
 		const char *p = nk_num_pv(cell, numbuf, &l, T->fast_nv);
-		if (!p) p = SvPV(cell, l);      //before dd_reserve: may croak
-		if (nkeys == 1) {
-			dd_reserve(aTHX_ T, l);
-			if (l) memcpy(T->buf + T->len, p, l);
-			T->len += l;
-		} else dd_put(aTHX_ T, p, l);
+		if (!p) {
+			p = SvPV_nomg(cell, l);      //before dd_reserve: may croak
+			utf8 = cBOOL(SvUTF8(cell));
+		}
+		dd_put_str(aTHX_ T, p, l, utf8, nkeys == 1);
 	}
 	return 1;
 }
@@ -16031,7 +16815,12 @@ static void cox_robust(pTHX_ const CoxData *restrict d, CoxWork *w, const NV *et
 /*Read parallel time/status(/group) arrays into a SurvObs array.  Group index
 is assigned by first appearance of each label string; the labels are pushed
 (as SVs) into *labels_out in that order.  gav == NULL => one group "".
-status is 1 (event) when the value is non-zero, else 0 (censored).*/
+status is 1 (event) when the value is non-zero, else 0 (censored).
+
+Labels are told apart through a hash keyed with their UTF-8 flag, as `eq`
+would.  Up to 0.3212 they were compared with strEQ() on their bytes and
+pushed with newSVpv(), so a label stopped at its first NUL and a UTF-8 one
+came back as its bytes: group => ["\x{436}"] gave a stratum named "\xd0\xb6".*/
 static SurvObs* srv_read(pTHX_ AV *tav, AV *sav, AV *gav,
                          size_t *N_out, AV *labels, const char *who) {
 	SSize_t N = av_len(tav) + 1;
@@ -16042,6 +16831,7 @@ static SurvObs* srv_read(pTHX_ AV *tav, AV *sav, AV *gav,
 	undef or a non-number, and the explicit Safefree() below could only cover
 	the one check that was already there.*/
 	SurvObs *o; Newx(o, N, SurvObs); SAVEFREEPV(o);
+	HV *seen = gav ? (HV *)sv_2mortal((SV *)newHV()) : NULL;	//label -> group index
 	for (SSize_t i = 0; i < N; i++) {
 	/*A missing time used to become NaN here, and NaN does not fail the `t < 0`
 	test below -- every comparison against one is false -- so it reached the
@@ -16054,12 +16844,18 @@ static SurvObs* srv_read(pTHX_ AV *tav, AV *sav, AV *gav,
 		int g = 0;
 		if (gav) {
 			SV **gp = av_fetch(gav, i, 0);
-			const char *lab = (gp && *gp) ? SvPV_nolen(*gp) : "";
-			SSize_t G = av_len(labels) + 1, found = -1;
-			for (SSize_t k = 0; k < G; k++)
-				if (strEQ(SvPV_nolen(*av_fetch(labels, k, 0)), lab)) { found = k; break; }
-			if (found < 0) { found = G; av_push(labels, newSVpv(lab, 0)); }
-			g = (int)found;
+			STRLEN l = 0;
+			const char *lab = (gp && *gp) ? SvPV(*gp, l) : "";
+			const I32 sk = (gp && *gp && SvUTF8(*gp)) ? -(I32)l : (I32)l;
+			SV **hit = hv_fetch(seen, lab, sk, 0);
+			if (hit) g = (int)SvIV(*hit);
+			else {
+				g = (int)(av_len(labels) + 1);
+				SV *ls = newSVpvn(lab, l);
+				if (sk < 0) SvUTF8_on(ls);
+				av_push(labels, ls);
+				(void)hv_store(seen, lab, sk, newSViv(g), 0);
+			}
 		}
 		o[i].grp = g;
 	}
@@ -17077,13 +17873,6 @@ to compare the way `eq` and List::Util::uniq do, where both print "0.3" and
 collapse. Keeping that promise is what the rendering pass is for, and it is
 the whole of the remaining distance to R.*/
 
-/*Whether any byte is outside ASCII, which is what decides whether a UTF-8 key
-has to be downgraded below.*/
-PERL_STATIC_INLINE bool uniq_high_byte(const char *p, STRLEN n) {
-	while (n--) if ((U8)*p++ & 0x80) return 1;
-	return 0;
-}
-
 /*Fold one value into the table, and copy it into `out` the first time its key
 is seen.  `out` is NULL in scalar context, where only T->ng is wanted.
 
@@ -17105,7 +17894,7 @@ uniq_take(pTHX_ dd_ctx *T, SV *sv, AV *out, SV *scratch,
 	if (!key) {                             //not a bare number: perl renders it
 		key  = SvPV(sv, klen);
 		if (SvUTF8(sv)) {
-			if (!uniq_high_byte(key, klen)) {
+			if (!pv_high_byte(key, klen)) {
 				utf8 = 0;           //pure ASCII is already its own downgrade
 			} else {
 				sv_setsv(scratch, sv);
@@ -17521,11 +18310,10 @@ is what this is.
 The key is dd_ctx's canonical form -- length-prefixed cells and an undef
 sentinel -- so two tuples can no longer collide the way the perl key did, where
 "\x1e" was a bare separator and ("p\x1evq", "r") and ("p", "q\x1evr") built the
-same string.  ag_cell() differs from dd_cell() in one respect: a UTF-8 cell is
-downgraded when it can be, and marked when it cannot, so "\x{e9}" and its
-UTF-8 spelling are one group and "\x{263A}" stays apart from the three bytes
-"\xe2\x98\xba".  That is what the perl hash key did, which is the behaviour the
-groups had before this.
+same string.  A UTF-8 cell is downgraded when it can be, and marked when it
+cannot (dd_put_str), so "\x{e9}" and its UTF-8 spelling are one group and
+"\x{263A}" stays apart from the three bytes "\xe2\x98\xba".  That is what the
+perl hash key did, which is the behaviour the groups had before this.
 
 A non-string cell is rendered through a scratch copy, so keying on a numeric
 column never caches a PV on the caller's SV (perl's own "v$v" did).*/
@@ -17584,19 +18372,7 @@ static void ag_cell(pTHX_ dd_ctx *T, SV *c, SV *scratch) {
 		c = scratch;
 	}
 	p = SvPV_nomg(c, l);              //magic already run; before dd_reserve: may croak
-	if (SvUTF8(c)) {
-		STRLEN bl = l;
-		bool wide = TRUE;
-		U8 *b = bytes_from_utf8((const U8 *)p, &bl, &wide);
-		if (!wide) {                  //Latin-1 after all: key it as bytes
-			dd_put(aTHX_ T, (const char *)b, bl);
-			Safefree(b);
-			return;
-		}
-		dd_reserve(aTHX_ T, 1);       //'u' opens no other cell: those open with
-		T->buf[T->len++] = 'u';       //a digit, or with '~' for undef
-	}
-	dd_put(aTHX_ T, p, l);
+	dd_put_str(aTHX_ T, p, l, cBOOL(SvUTF8(c)), FALSE);
 }
 
 /*Whether cell v may go into a group's array as the caller's own SV.  Only a
@@ -17720,7 +18496,7 @@ SV *_cols_select(df, shape, spec)
   OUTPUT:
 	RETVAL
 
-# shape: 1 = AoH, 2 = HoH. dropset: hashref whose keys are the columns to remove
+ # shape: 1 = AoH, 2 = HoH. dropset: hashref whose keys are the columns to remove
 SV *
 _cols_drop(df, shape, dropset)
 	SV *df
@@ -17764,7 +18540,7 @@ _cols_drop(df, shape, dropset)
   OUTPUT:
 	RETVAL
 
-# shape: 1 = AoH, 2 = HoH. map: hashref old-name => new-name
+ # shape: 1 = AoH, 2 = HoH. map: hashref old-name => new-name
 SV *
 _cols_rename(df, shape, map)
 	SV *df
@@ -17808,13 +18584,13 @@ _cols_rename(df, shape, map)
   OUTPUT:
 	RETVAL
 
-# Union of the column names over an AoH's rows, in first-seen order.  Same scan
-# as _present_keys, but the Perl loop it replaces walked every key of every row
-# through the interpreter and cost more than the de-duplication itself on a
-# large frame.  As in _present_keys, a row that is not a plain (unblessed) hash
-# ref contributes nothing.  The HeHASH of a key is reused so no key is hashed
-# twice -- except for a UTF-8 key, where hv_store may canonicalise the bytes
-# first and the stored hash would then be the wrong one.
+ # Union of the column names over an AoH's rows, in first-seen order.  Same scan
+ # as _present_keys, but the Perl loop it replaces walked every key of every row
+ # through the interpreter and cost more than the de-duplication itself on a
+ # large frame.  As in _present_keys, a row that is not a plain (unblessed) hash
+ # ref contributes nothing.  The HeHASH of a key is reused so no key is hashed
+ # twice -- except for a UTF-8 key, where hv_store may canonicalise the bytes
+ # first and the stored hash would then be the wrong one.
 SV *
 _aoh_key_union(df)
 	SV *df
@@ -17850,25 +18626,25 @@ _aoh_key_union(df)
   OUTPUT:
 	RETVAL
 
-# Row-level de-duplication core for drop_duplicates().  The Perl wrapper
-# validates the frame, rejects HoH, and resolves `subset` into an ordered
-# list of column identifiers (integer positions for AoA, names for AoH/HoA).
-#   shape: 1 = AoH, 3 = AoA, 4 = HoA
-#   subset: arrayref of the columns whose cells define a row's identity
-#   keep:  1 = first occurrence, -1 = last occurrence, 0 = drop every dup
-# survivors are shared, not deep-copied: AoA/AoH reuse the original row refs
-# (like dropna), HoA builds new column arrays over the same cell SVs.
-#
-# One pass over the rows interns each row key (see dd_intern) and that is all
-# the bookkeeping any of the three `keep` modes needs, because groups are
-# created in row order: T.first[] -- the row that first showed each distinct
-# key -- therefore comes out already sorted, and IS the survivor list.
-#   keep ==  1  every T.first[g], as is
-#   keep == -1  the rows are walked backwards, so T.first[g] is each key's LAST
-#               occurrence and the list only has to be reversed
-#   keep ==  0  the groups seen exactly once, filtered in place
-# So nothing is allocated per input row: the pass costs one copy of each
-# distinct key plus a handful of words per distinct row.
+ # Row-level de-duplication core for drop_duplicates().  The Perl wrapper
+ # validates the frame, rejects HoH, and resolves `subset` into an ordered
+ # list of column identifiers (integer positions for AoA, names for AoH/HoA).
+ #   shape: 1 = AoH, 3 = AoA, 4 = HoA
+ #   subset: arrayref of the columns whose cells define a row's identity
+ #   keep:  1 = first occurrence, -1 = last occurrence, 0 = drop every dup
+ # survivors are shared, not deep-copied: AoA/AoH reuse the original row refs
+ # (like dropna), HoA builds new column arrays over the same cell SVs.
+ #
+ # One pass over the rows interns each row key (see dd_intern) and that is all
+ # the bookkeeping any of the three `keep` modes needs, because groups are
+ # created in row order: T.first[] -- the row that first showed each distinct
+ # key -- therefore comes out already sorted, and IS the survivor list.
+ #   keep ==  1  every T.first[g], as is
+ #   keep == -1  the rows are walked backwards, so T.first[g] is each key's LAST
+ #               occurrence and the list only has to be reversed
+ #   keep ==  0  the groups seen exactly once, filtered in place
+ # So nothing is allocated per input row: the pass costs one copy of each
+ # distinct key plus a handful of words per distinct row.
 SV *
 _drop_dups_core(df, shape, subset, keep)
 	SV *df
@@ -18034,15 +18810,15 @@ _drop_dups_core(df, shape, subset, keep)
   OUTPUT:
 	RETVAL
 
-# agg()'s split -- see ag_set above.  shape: 3 = AoA, 1 = AoH (a HoH is passed
-# as its rows, in key order), 4 = HoA.  by, cols: arrayrefs of column ids,
-# positions for AoA.  how: one mode per cols entry --
-#   0 = copy every cell, undef included (a coderef will see the column)
-#   1 = copy the defined cells only (mode/nunique stringify what they read)
-#   2 = share a plain-number cell, copy any other, defined cells only
-# Returns [ \@groups, \@seen ]: groups in first-seen order, each
-# [ \@by_values, \@n_undef, \@cells_0, .. \@cells_k ], and seen one boolean per
-# by column followed by one per cols entry.  Undef rows are skipped.
+ # agg()'s split -- see ag_set above.  shape: 3 = AoA, 1 = AoH (a HoH is passed
+ # as its rows, in key order), 4 = HoA.  by, cols: arrayrefs of column ids,
+ # positions for AoA.  how: one mode per cols entry --
+ #   0 = copy every cell, undef included (a coderef will see the column)
+ #   1 = copy the defined cells only (mode/nunique stringify what they read)
+ #   2 = share a plain-number cell, copy any other, defined cells only
+ # Returns [ \@groups, \@seen ]: groups in first-seen order, each
+ # [ \@by_values, \@n_undef, \@cells_0, .. \@cells_k ], and seen one boolean per
+ # by column followed by one per cols entry.  Undef rows are skipped.
 SV *
 _agg_split(df, shape, by, cols, how)
 	SV *df
@@ -18777,9 +19553,10 @@ PREINIT:
 	bool is_hoh = 0, is_code = 0;
 	const char *colname = NULL;
 	STRLEN collen = 0;
+	I32 colklen = 0;	// hv_fetch() length of colname: negative marks it UTF-8
 	IV aoa_col = 0;				// AoA: parsed non-negative column index
 	const char *rowname_col = NULL;	// HoH: row-name column name
-	STRLEN rowname_len = 0;
+	I32 rowname_klen = 0;	// hv_store() length of rowname_col, negative for UTF-8
 	CV *cmp_cv = NULL;
 	AV *src_av = NULL;	// AoH / AoA input
 	HV *src_hv = NULL;	// HoA / HoH input
@@ -18803,11 +19580,13 @@ PPCODE:
 	data   = frame_untied(aTHX_ ST(0), 0);	//a tied frame's values were FETCHed once per pass over it
 	by     = ST(1);
 	output = (items >= 3) ? ST(2) : &PL_sv_undef;
-	if (items >= 4 && SvOK(ST(3)))
-		rowname_col = SvPV(ST(3), rowname_len);
-	else {
+	if (items >= 4 && SvOK(ST(3))) {
+		STRLEN l;
+		rowname_col = SvPV(ST(3), l);
+		rowname_klen = SvUTF8(ST(3)) ? -(I32)l : (I32)l;
+	} else {
 		rowname_col = "row.name";
-		rowname_len = 8;
+		rowname_klen = 8;
 	}
 	ENTER;    // scope for SAVEFREEPV / SAVESPTR cleanups
 	SAVETMPS; // reap transient synthesized rows and mortals here
@@ -18818,6 +19597,9 @@ PPCODE:
 	} else if (SvOK(by) && !SvROK(by)) {
 		is_code = 0;
 		colname = SvPV(by, collen);
+		/*the flag rides along: a name outside ASCII, looked up by its bytes
+		alone, was "not found" in every frame up to 0.3212*/
+		colklen = SvUTF8(by) ? -(I32)collen : (I32)collen;
 	} else {
 		croak("csort: second argument must be a column name (e.g. 'No.'), an "
 		      "integer column index for an AoA, or a comparator code-ref "
@@ -18926,7 +19708,7 @@ PPCODE:
 				}
 				ITER_KEEP_END;
 // the outer hash key is the authoritative row name */
-				(void)hv_store(rowh, rowname_col, (I32)rowname_len,
+				(void)hv_store(rowh, rowname_col, rowname_klen,
 				               newSVsv(keys[i].sv), 0);
 			}
 			n = av_len(src_av) + 1;	//the rows actually built, which every later loop indexes
@@ -19076,7 +19858,7 @@ PPCODE:
 					if (rp && *rp && SvROK(*rp)
 					        && SvTYPE(SvRV(*rp)) == SVt_PVHV) {
 						SV **cp = hv_fetch((HV *)SvRV(*rp),
-						                   colname, collen, 0);
+						                   colname, colklen, 0);
 						if (cp && *cp) { cell = *cp; found = 1; }
 					}
 					/*A tied row hands back a placeholder: fetch it once into a plain
@@ -19101,7 +19883,7 @@ PPCODE:
 					vals[i] = cell;
 				}
 			} else {
-				SV **colp = hv_fetch(src_hv, colname, collen, 0);
+				SV **colp = hv_fetch(src_hv, colname, colklen, 0);
 				SV *colsv = colp ? *colp : NULL;
 				if (colsv) SvGETMAGIC(colsv);	//a tied frame's value is a placeholder until fetched
 				if (!(colsv && SvROK(colsv)
@@ -19305,8 +20087,9 @@ the predicate -- frees it instead of leaking a copy of the table.*/
 			for (SSize_t c = 0; c < nc; c++) {
 				SV *ck = AvARRAY(colnames)[c];
 				STRLEN len;
-				char *s = SvPV(ck, len);
-				bool match = cBOOL(pregexec(rx, s, s + len, s, 0, ck, 1));
+				const char *s = SvPV(ck, len);
+				//pregexec() predates const; it does not write the string
+				bool match = cBOOL(pregexec(rx, (char *)s, (char *)s + len, (char *)s, 0, ck, 1));
 				if (removing ? !match : match) (void)hv_store_ent(keepset, ck, SvREFCNT_inc_simple_NN(&PL_sv_yes), 0);
 			}
 		} else {
@@ -19492,7 +20275,7 @@ SV *hoh2hoa(data, ...)
 		/* 5. walk the rows in sorted order; for every column push the cell (a copy)
 		    or the fill value, so each column ends up exactly nrows long.*/
 		for (SSize_t r = 0; r < nrows; r++) {
-			SV *rk = *av_fetch(rows_av, r, 0);
+			SV *rk = AvARRAY(rows_av)[r];	//rows_av, cols_av: av_push()ed above, no holes
 			HE *rhe = hv_fetch_ent(in_hv, rk, 0, 0);
 			SV *rrv = rhe ? HeVAL(rhe) : NULL;
 			if (rrv) SvGETMAGIC(rrv);	// a tied frame's value is only fetched here
@@ -19501,7 +20284,7 @@ SV *hoh2hoa(data, ...)
 			if (!rrv || !SvROK(rrv) || SvTYPE(SvRV(rrv)) != SVt_PVHV) croak("hoh2hoa: every value must be a hash ref (hash of hashes)");
 			HV *row = (HV*)SvRV(rrv);
 			for (SSize_t c = 0; c < ncols; c++) {
-				SV *ck = *av_fetch(cols_av, c, 0);
+				SV *ck = AvARRAY(cols_av)[c];
 				HE *che = hv_fetch_ent(row, ck, 0, 0);
 				SV *src = che ? HeVAL(che) : NULL;
 				if (src) SvGETMAGIC(src);	// a tied row's value is only fetched here
@@ -19514,7 +20297,7 @@ SV *hoh2hoa(data, ...)
 		if (rn_sv) {
 			if (hv_exists_ent(out_hv, rn_sv, 0)) croak("hoh2hoa: row.names column '%s' collides with an existing column", SvPV_nolen(rn_sv));
 			AV *rn_av = newAV();
-			for (SSize_t r = 0; r < nrows; r++) av_push(rn_av, newSVsv(*av_fetch(rows_av, r, 0)));
+			for (SSize_t r = 0; r < nrows; r++) av_push(rn_av, newSVsv(AvARRAY(rows_av)[r]));
 			(void)hv_store_ent(out_hv, rn_sv, newRV_noinc((SV*)rn_av), 0);
 		}
 		RETVAL = newRV_inc((SV*)out_hv);	// out_hv is mortal: this reference is what keeps it
@@ -19640,7 +20423,7 @@ PPCODE:
 				hv_iterinit(rh); HE *e;
 				while ((e = hv_iternext(rh))) {
 					STRLEN kl; char *k = HePV(e, kl);
-					flt_reg_col(aTHX_ reg, order, out, k, kl);
+					flt_reg_col(aTHX_ reg, order, out, k, HeUTF8(e) ? -(I32)kl : (I32)kl);
 				}
 				ITER_KEEP_END;
 			}
@@ -19668,16 +20451,18 @@ PPCODE:
 			SSize_t ncn = av_len(order) + 1, j;
 			SSize_t *idx = flt_kept_index(aTHX_ keep, n, kept);
 			for (j = 0; j < ncn; j++) {
-				SV **np = av_fetch(order, j, 0);
-				STRLEN kl; char *k = SvPV(*np, kl);
-				AV *o = (AV*)SvRV(*hv_fetch(out, k, kl, 0));
+				SV *nm = AvARRAY(order)[j];	//our own AV: dense, no magic
+				STRLEN kl; const char *k = SvPV_const(nm, kl);
+				const I32 sk = SvUTF8(nm) ? -(I32)kl : (I32)kl;
+				SV **op = hv_fetch(out, k, sk, 0);	//never NULL: flt_reg_col() stored it with the name
+				AV *o = (AV*)SvRV(*op);
 				if (!kept) continue;
 				av_extend(o, kept - 1);
 				SV **d = AvARRAY(o);
 				for (SSize_t t = 0; t < kept; t++) {
 					SV *rv = av_row_at(aTHX_ inav, idx[t]);
 					HV *rh = rv ? (HV*)SvRV(rv) : NULL;
-					SV **cp = rh ? hv_fetch(rh, k, kl, 0) : NULL;
+					SV **cp = rh ? hv_fetch(rh, k, sk, 0) : NULL;
 					d[t] = newSVsv((cp && *cp) ? *cp : &PL_sv_undef);
 				}
 				FLT_AV_FILLED(o, kept);
@@ -19692,10 +20477,10 @@ PPCODE:
 		hv_iterinit(inhv);
 		while (hv_iternext(inhv)) ncols++;
 		ITER_KEEP_END;
-		char   **names = (char**)safemalloc((ncols?ncols:1) * sizeof(char*));
-		STRLEN  *nlens = (STRLEN*)safemalloc((ncols?ncols:1) * sizeof(STRLEN));
+		const char **names = (const char**)safemalloc((ncols?ncols:1) * sizeof(char*));
+		I32     *klens = (I32*)safemalloc((ncols?ncols:1) * sizeof(I32));	//hv_store() lengths, negative for UTF-8
 		AV     **cols  = (AV**)safemalloc((ncols?ncols:1) * sizeof(AV*));
-		SAVEFREEPV(names); SAVEFREEPV(nlens); SAVEFREEPV(cols);
+		SAVEFREEPV(names); SAVEFREEPV(klens); SAVEFREEPV(cols);
 		/*The tables are SAVEFREEPV()d for the whole call and must outlive the walk's
 ITER_KEEP_END, so the count is read in one scope and the walk runs in a second.*/
 		ITER_KEEP_BEGIN(inhv);
@@ -19706,13 +20491,14 @@ ITER_KEEP_END, so the count is read in one scope and the walk runs in a second.*
 			SvGETMAGIC(v);
 			/*the name from a mortal copy of the key: a tied iterator replaces
 			its key SV at every step, so HePV() would dangle by the next one.*/
-			STRLEN kl; char *k = SvPV(hv_iterkeysv(e), kl);
+			SV *ks = hv_iterkeysv(e);
+			STRLEN kl; const char *k = SvPV(ks, kl);
 			if (!SvROK(v) || SvTYPE(SvRV(v)) != SVt_PVAV)
 				croak("filter: HoA column '%s' is not an ARRAY reference", k);
 			AV *a = (AV*)SvRV(v);
 			SSize_t len = av_len(a) + 1;
 			if (len > maxrows) maxrows = len;
-			names[c] = k; nlens[c] = kl; cols[c] = a; c++;
+			names[c] = k; klens[c] = SvUTF8(ks) ? -(I32)kl : (I32)kl; cols[c] = a; c++;
 		}
 		ITER_KEEP_END;
 		if (prog) flt_bind_hoa(aTHX_ prog, inhv);
@@ -19723,7 +20509,7 @@ ITER_KEEP_END, so the count is read in one scope and the walk runs in a second.*
 			rb = (flt_rowbuf*)safemalloc(sizeof(flt_rowbuf));
 			SAVEFREEPV(rb);
 			Zero(rb, 1, flt_rowbuf);
-			rb->n = c; rb->names = names; rb->nlens = nlens;
+			rb->n = c; rb->names = names; rb->klens = klens;
 			rb->slot = (SV**)safemalloc((c?c:1) * sizeof(SV*));
 			SAVEFREEPV(rb->slot);
 			SAVEDESTRUCTOR_X(flt_rb_free, rb);
@@ -19751,7 +20537,7 @@ ITER_KEEP_END, so the count is read in one scope and the walk runs in a second.*
 			HV *out = (HV*)sv_2mortal((SV*)newHV());
 			for (U32 cc = 0; cc < c; cc++) {
 				AV *o = newAV();
-				hv_store(out, names[cc], nlens[cc], newRV_noinc((SV*)o), 0);
+				hv_store(out, names[cc], klens[cc], newRV_noinc((SV*)o), 0);
 				if (!kept) continue;
 				av_extend(o, kept - 1);
 				SV **d = AvARRAY(o);
@@ -19800,7 +20586,7 @@ ITER_KEEP_END, so the count is read in one scope and the walk runs in a second.*
 						hv_ksplit(rowh, c ? c : 1);
 						for (U32 cc = 0; cc < c; cc++) {
 							SV **vp = av_fetch(cols[cc], i, 0);
-							hv_store(rowh, names[cc], nlens[cc],
+							hv_store(rowh, names[cc], klens[cc],
 							         newSVsv((vp && *vp) ? *vp : &PL_sv_undef), 0);
 						}
 						d[t++] = newRV_noinc((SV*)rowh);
@@ -19844,7 +20630,7 @@ ITER_KEEP_END, so the count is read in one scope and the walk runs in a second.*
 				hv_iterinit(rh); HE *ie;	//columns come from every row ...
 				while ((ie = hv_iternext(rh))) {
 					STRLEN il; char *ik = HePV(ie, il);
-					flt_reg_col(aTHX_ reg, order, out, ik, il);
+					flt_reg_col(aTHX_ reg, order, out, ik, HeUTF8(ie) ? -(I32)il : (I32)il);
 				}
 				ITER_KEEP_END;
 				if (prog ? flt_row_hv(aTHX_ prog, rh)		//... values only from the kept ones
@@ -19855,15 +20641,17 @@ ITER_KEEP_END, so the count is read in one scope and the walk runs in a second.*
 			SSize_t ncn = av_len(order) + 1, j;
 			SSize_t kept = av_len(rows) + 1;
 			for (j = 0; j < ncn; j++) {
-				SV **np = av_fetch(order, j, 0);
-				STRLEN kl; char *k = SvPV(*np, kl);
-				AV *o = (AV*)SvRV(*hv_fetch(out, k, kl, 0));
+				SV *nm = AvARRAY(order)[j];	//our own AV: dense, no magic
+				STRLEN kl; const char *k = SvPV_const(nm, kl);
+				const I32 sk = SvUTF8(nm) ? -(I32)kl : (I32)kl;
+				SV **op = hv_fetch(out, k, sk, 0);	//never NULL: flt_reg_col() stored it with the name
+				AV *o = (AV*)SvRV(*op);
 				if (!kept) continue;
 				av_extend(o, kept - 1);
 				SV **d = AvARRAY(o);
 				for (SSize_t t = 0; t < kept; t++) {
 					HV *rh = (HV*)SvRV(AvARRAY(rows)[t]);
-					SV **cp = hv_fetch(rh, k, kl, 0);
+					SV **cp = hv_fetch(rh, k, sk, 0);
 					d[t] = newSVsv((cp && *cp) ? *cp : &PL_sv_undef);
 				}
 				FLT_AV_FILLED(o, kept);
@@ -19883,7 +20671,7 @@ ITER_KEEP_END, so the count is read in one scope and the walk runs in a second.*
 					croak("filter: HoH row '%s' is not a HASH reference", k);
 				if (!(prog ? flt_row_hv(aTHX_ prog, (HV*)SvRV(v))
 				           : filt_call(aTHX_ code, v, hv_iterkeysv(e)))) continue;
-				if (outh) hv_store(outh, k, kl, SvREFCNT_inc_simple_NN(v), 0);
+				if (outh) hv_store(outh, k, HeUTF8(e) ? -(I32)kl : (I32)kl, SvREFCNT_inc_simple_NN(v), 0);
 				else      av_push(outa, SvREFCNT_inc_simple_NN(v));
 			}
 			ITER_KEEP_END;
@@ -20109,7 +20897,7 @@ one.*/
 				Newxz(col_val, ncols ? ncols : 1, NV*); SAVEFREEPV(col_val);
 				Newxz(col_def, ncols ? ncols : 1, char*); SAVEFREEPV(col_def);
 				for (size_t cc = 0; cc < ncols; cc++) {
-					SV *knm = *av_fetch(names_av, (SSize_t)cc, 0);	// keep the SV so UTF-8 keys match
+					SV *knm = AvARRAY(names_av)[cc];	// keep the SV so UTF-8 keys match
 					Newxz(col_val[cc], nrows ? nrows : 1, NV);  SAVEFREEPV(col_val[cc]);
 					Newxz(col_def[cc], nrows ? nrows : 1, char); SAVEFREEPV(col_def[cc]);
 					for (size_t r = 0; r < nrows; r++) {
@@ -20129,7 +20917,7 @@ one.*/
      so the UTF-8 flag rides along and non-ASCII names round-trip.*/
 		Newx(col_names, ncols, SV*); SAVEFREEPV(col_names);
 		for (size_t cc = 0; cc < ncols; cc++) {
-			col_names[cc] = *av_fetch(names_av, (SSize_t)cc, 0);
+			col_names[cc] = AvARRAY(names_av)[cc];	//av_push()ed above: no holes
 		}
 /* 3b. decide which columns may be col_a (the outer/"from" side). With no
       restriction every column qualifies; a name or list narrows it.*/
@@ -20202,6 +20990,7 @@ one.*/
 						STRLEN ll = 0;	// length of the first line only
 						while (ll < el && ep[ll] != '\n' && ep[ll] != '\r') ll++;
 						res = newSVpvn(ep, ll);
+						if (SvUTF8(ERRSV)) SvUTF8_on(res);	//a line break is ASCII: the cut is on a character boundary
 						if (n > 0) (void)POPs;	// discard the undef G_SCALAR leaves
 					} else {
 						res = (n > 0) ? newSVsv(POPs) : newSV(0);
@@ -20297,7 +21086,8 @@ SV *oneway_test(data_ref, ...)
 			Newx(flat, (size_t)total_n, NV);
 			size_t offset = 0;
 			for (size_t g = 0; g < k; g++) {
-				AV *av = (AV *)SvRV(*av_fetch(in_av, (I32)g, 0));
+				SV **val = av_fetch(in_av, (SSize_t)g, 0);
+				AV *av = (AV *)SvRV(*val);	//the first pass checked it: an ARRAY ref, not a hole
 				IV len = av_len(av) + 1;
 				for (IV i = 0; i < len; i++) {
 					SV **svp = av_fetch(av, i, 0);
@@ -21467,7 +22257,7 @@ CODE:
 /*Every value fetched from here on gets its get magic run before it is looked
 at: from a tied hash (the frame, a row, or 'p') hv_fetch_ent() hands back a
 placeholder that is not yet a reference or a number.*/
-		HE *first_he = hv_fetch_ent(obs_hv, *av_fetch(row_keys, 0, 0), 0, 0);
+		HE *first_he = hv_fetch_ent(obs_hv, AvARRAY(row_keys)[0], 0, 0);	//row_keys, col_keys: av_push()ed here, no holes
 		SV *first_val = first_he ? HeVAL(first_he) : NULL;
 		if (first_val) SvGETMAGIC(first_val);
 
@@ -21675,12 +22465,12 @@ placeholder that is not yet a reference or a number.*/
 			for (unsigned i = 0; i < r; i++) {
 				HV *exp_row = newHV();
 				for (unsigned j = 0; j < c; j++)
-					hv_store_ent(exp_row, *av_fetch(col_keys, j, 0), newSVnv(expect[i * c + j]), 0);
-				hv_store_ent(expected_hv, *av_fetch(row_keys, i, 0), newRV_noinc((SV *)exp_row), 0);
+					hv_store_ent(exp_row, AvARRAY(col_keys)[j], newSVnv(expect[i * c + j]), 0);
+				hv_store_ent(expected_hv, AvARRAY(row_keys)[i], newRV_noinc((SV *)exp_row), 0);
 			}
 		} else {
 			for (unsigned j = 0; j < c; j++)
-				hv_store_ent(expected_hv, *av_fetch(col_keys, j, 0), newSVnv(expect[j]), 0);
+				hv_store_ent(expected_hv, AvARRAY(col_keys)[j], newSVnv(expect[j]), 0);
 		}
 		expected_ref = newRV_noinc((SV *)expected_hv);
 	}
@@ -22229,7 +23019,7 @@ PPCODE:
 		for (size_t i = 0; i < num_rows; i++) {
 			ENTER; SAVETMPS;	// a tied row's proxies, freed a row at a time
 			R.n = 0;
-			SV *row_key_sv = *av_fetch(rows_av, (SSize_t)i, 0);
+			SV *row_key_sv = AvARRAY(rows_av)[i];	//av_push()ed by the HoH scan: no holes
 			if (inc_rownames) {
 				STRLEN key_len;
 				const char *ks = SvPV(row_key_sv, key_len);
@@ -22598,22 +23388,23 @@ PREINIT:
 	SV *rs_nl = NULL;
 	HV *plan_hv = NULL;
 	csv_plan *plan = NULL;
-	bool in_quotes = FALSE, post_quote = FALSE, use_cb = 0;
-	bool first_line = 1;	//a byte-order mark can only be on the first line
+	bool in_quotes = FALSE, post_quote = FALSE, use_cb = FALSE;
+	bool first_line = TRUE;	//a byte-order mark can only be on the first line
 	size_t sep_len, comment_len;
 	size_t lineno = 0;	//physical lines read so far, for the messages
 	size_t q_line = 0;	//the line the open quoted field began on
-	bool q_mid = 0;	//that quote came after text in its field
+	bool q_mid = FALSE;	//that quote came after text in its field
 	size_t span_line = 0;	//0 = the row so far is on one line; else q_line of the quote that ran it across
-	bool span_mid = 0;	//q_mid of that quote
-	bool warned_mid = 0;	//the mid-field warning is given once per file
+	bool span_mid = FALSE;	//q_mid of that quote
+	bool warned_mid = FALSE;	//the mid-field warning is given once per file
 	char sep0 = 0;
 	unsigned char stop_at[256];	//1 = a byte the literal scan has to stop at
 	REGEXP *rx = NULL;	//a qr// sep; NULL = sep_str is the literal separator
+	bool rx_utf8 = FALSE;	//rx is a UTF-8 pattern: lines are matched as UTF-8, see S_csv_rx_find()
 CODE:
 	if (SvOK(callback)) {
 		if (SvROK(callback) && SvTYPE(SvRV(callback)) == SVt_PVCV)
-			use_cb = 1;
+			use_cb = TRUE;
 		else
 			croak("_parse_csv_file: callback must be a CODE reference");
 	}
@@ -22636,6 +23427,7 @@ as pandas reads sep=r"\s+": leading and trailing whitespace make no field.*/
 		rx = SvRX(sep_rx);
 		if (!rx)
 			croak("_parse_csv_file: sep_rx must be a qr// regex");
+		rx_utf8 = cBOOL(RX_UTF8(rx));
 	}
 	sep_len = (sep_str && !rx) ? strlen(sep_str) : 0;
 	comment_len = comment_str ? strlen(comment_str) : 0;
@@ -22705,9 +23497,9 @@ rows came back as one long header and the table as [].*/
 		lineno++;
 		line = SvPVX(line_sv);
 		len  = SvCUR(line_sv);
-		bool had_nl = 0;	//only the file's last line can lack its line end
+		bool had_nl = FALSE;	//only the file's last line can lack its line end
 		if (len && line[len-1] == (cr_eol ? '\r' : '\n')) {
-			had_nl = 1;
+			had_nl = TRUE;
 			len--;
 			if (!cr_eol && len && line[len-1] == '\r')
 				len--;
@@ -22717,16 +23509,23 @@ export writes one, and without this the first column came back named
 "\xEF\xBB\xBFid".  pandas drops it too (tests/io/parser/test_encoding.py,
 test_utf8_bom), so a BOM-only first line is a blank line.*/
 		if (first_line) {
-			first_line = 0;
+			first_line = FALSE;
 			if (len >= 3 && memcmp(line, "\xEF\xBB\xBF", 3) == 0) {
 				line += 3;
 				len  -= 3;
 			}
 		}
+/*A UTF-8 sep pattern reads the line as UTF-8, and the regex engine does not
+check what it is told is UTF-8: bytes that are not would be read past or
+misread, so such a line is refused here rather than matched.*/
+		if (rx_utf8 && !is_utf8_string((const U8*)line, (STRLEN)len))
+			croak("read_table: the sep regex %" SVf " holds characters beyond "
+			      "ASCII, so each line is matched as UTF-8, and line %" UVuf
+			      " of %s is not valid UTF-8\n", SVfARG(sep_rx), (UV)lineno, file);
 		size_t i0 = 0;	//where the line's first field starts
-		bool trail = 0;	//read after the loop: the line ended on a separator
+		bool trail = FALSE;	//read after the loop: the line ended on a separator
 		size_t stop = 0;	//regex sep: the next '"' or CR at or after i
-		bool have_stop = 0;	//stop has been looked for on this line
+		bool have_stop = FALSE;	//stop has been looked for on this line
 		if (!in_quotes) {
 			size_t k = 0;
 			while (k < len && (line[k] == ' ' || line[k] == '\t'))
@@ -22738,7 +23537,7 @@ up to 0.320 it was dropped.  qr/\s+/ is exempt, since leading and trailing
 whitespace there make no field at all.*/
 			if (k == len && !sep_ws && len) {
 				size_t ms, me;
-				if (rx ? (S_csv_rx_find(aTHX_ rx, line_sv, line, 0, len, &ms, &me) && me > ms)
+				if (rx ? (S_csv_rx_find(aTHX_ rx, line_sv, line, 0, len, &ms, &me, rx_utf8) && me > ms)
 				       : (sep_len && xlsx_find(line, line + len, sep_str, sep_len)))
 					k = 0;	//not blank: read it as a row
 			}
@@ -22779,11 +23578,11 @@ is the \s of a byte string on the running perl.*/
 					sv_catpvn(field, "\"", 1);
 					i += 2;
 				} else {
-					in_quotes = 0;
-					post_quote = 1;
+					in_quotes = FALSE;
+					post_quote = TRUE;
 					i += 1;
 				}
-				trail = 0;
+				trail = FALSE;
 			} else if (rx) {
 /*The same three outcomes as the literal scan below -- a separator, a '"' or
 CR, the end of the line -- but with the separator found by the regex engine,
@@ -22797,28 +23596,28 @@ the search resumes after it.*/
 					while (stop < len
 							&& !((line[stop] == '"' && quote) || line[stop] == '\r'))
 						stop++;
-					have_stop = 1;
+					have_stop = TRUE;
 				}
-				hit = S_csv_rx_find(aTHX_ rx, line_sv, line, i, len, &ms, &me);
+				hit = S_csv_rx_find(aTHX_ rx, line_sv, line, i, len, &ms, &me, rx_utf8);
 				if (hit && (ms < stop || stop == len)) {	//stop == len: an empty match at the very end counts too
 					if (ms == me)	//it would cut between every character from here on
 						croak("read_table: the sep regex %" SVf " matched an empty "
 						      "string at %s line %" UVuf "; it must match at least "
 						      "one character\n", SVfARG(sep_rx), file, (UV)lineno);
-					S_push_field(aTHX_ plan->row, field, line + i, ms - i, plan->active);
-					post_quote = 0;
+					S_push_cell(aTHX_ plan, field, line + i, ms - i);
+					post_quote = FALSE;
 					i     = me;
 					trail = (i == len);
 				} else if (stop < len) {
 					if (stop > i)
 						sv_catpvn(field, line + i, stop - i);
 					if (line[stop] == '"' && !post_quote) {
-						in_quotes = 1;
+						in_quotes = TRUE;
 						q_line    = lineno;
 						q_mid     = !S_blank_run(SvPVX(field), SvCUR(field));
 					}
 					i     = stop + 1;	//a quote after a closing quote, or a stray CR, is dropped
-					trail = 0;
+					trail = FALSE;
 				} else {
 					tail     = line + i;	//the line's last field, pushed below
 					tail_len = len - i;
@@ -22845,14 +23644,14 @@ the search resumes after it.*/
 					if (i > start)
 						sv_catpvn(field, line + start, i - start);
 					if (line[i] == '"' && !post_quote) {
-						in_quotes = 1;
+						in_quotes = TRUE;
 						q_line    = lineno;
 						q_mid     = !S_blank_run(SvPVX(field), SvCUR(field));
 					}
 					i++;	//a quote after a closing quote, or a stray CR, is dropped
 				} else {
-					S_push_field(aTHX_ plan->row, field, line + start, i - start, plan->active);
-					post_quote = 0;
+					S_push_cell(aTHX_ plan, field, line + start, i - start);
+					post_quote = FALSE;
 					i += sep_len;
 				}
 			}
@@ -22865,9 +23664,9 @@ the search resumes after it.*/
 				span_mid  = q_mid;
 			}
 		} else {
-			post_quote = 0;
+			post_quote = FALSE;
 			if (!(sep_ws && trail))	//trailing whitespace is not a separator either
-				S_push_field(aTHX_ plan->row, field, tail, tail_len, plan->active);
+				S_push_cell(aTHX_ plan, field, tail, tail_len);
 			if (plan->active) {
 				plan->span_line = span_line;
 				plan->span_mid  = span_mid;
@@ -22889,7 +23688,7 @@ open a quote there all the same (R 4.6.1's tests/reg-tests-1d.R pins '="Total'
 opening one), where pandas would keep it as text.  A row that it misaligned has
 already died above with the same words, so this is for the row it did not.*/
 			if (span_line && span_mid && !warned_mid) {
-				warned_mid = 1;
+				warned_mid = TRUE;
 				warn("read_table: %s: %" SVf "\n", file,
 				     SVfARG(S_quote_note(aTHX_ span_line, TRUE, lineno)));
 			}
@@ -22908,7 +23707,7 @@ cell.*/
 	if (in_quotes) {
 		warn("read_table: end of file inside a quoted field in %s: %" SVf "\n",
 		     file, SVfARG(S_quote_note(aTHX_ q_line, q_mid, 0)));
-		S_push_field(aTHX_ plan->row, field, "", 0, plan->active);
+		S_push_cell(aTHX_ plan, field, "", 0);
 		if (plan->active) {
 			plan->span_line = q_line;
 			plan->span_mid  = q_mid;
@@ -22944,6 +23743,25 @@ only spelling perl's default typemap has.  0 = aoh, 1 = hoa, 2 = hoh, 3 = aoa.*/
 OUTPUT:
 	RETVAL
 
+ # read_table's colClasses, for the rows its perl closure stores: the same
+ # S_class_value() the parser uses, so the two cannot drift apart.  code is 1
+ # (numeric) or 2 (integer); row, name and field are for the message.  Returns
+ # the converted value, or a copy of v when there is nothing to convert.
+SV* _cell_class(SV* v, IV code, SV* file, UV row, SV* name, UV field)
+PREINIT:
+	bool bad = FALSE;
+	SV *nv;
+CODE:
+	if (code < 1 || code > 2)
+		croak("_cell_class: code %" IVdf " is not 1 (numeric) or 2 (integer)", code);
+	SvGETMAGIC(v);
+	nv = S_class_value(aTHX_ v, (unsigned char)code, &bad);
+	if (bad)
+		S_class_croak(aTHX_ SvPV_nolen(file), row, name, field, (unsigned char)code, v);
+	RETVAL = nv ? nv : newSVsv(v);
+OUTPUT:
+	RETVAL
+
 SV* _parse_xlsx_sheet_xs(SV* xml_sv, SV* sst_sv, SV* callback, SV* plan_sv = &PL_sv_undef)
 PREINIT:
 	xlsx_ws  *w    = NULL;
@@ -22975,6 +23793,7 @@ S_fast_row() builds the rows.  See xlsx_ws_scan() above for the parser itself.*/
 	}
 	w->xml      = xml;
 	w->end      = xml + xlen;
+	w->pfx      = xlsx_ns_prefix(xml, w->end, &w->plen);
 /*Borrowed for the length of the parse.  Nothing on the callback's side touches
 the shared-string table -- read_table holds it only to pass it here -- so the
 array cannot be reallocated under this pointer.*/
@@ -27090,9 +27909,11 @@ void mode(...)
 	HE *he;
 	PPCODE:
 	args_get_magic(aTHX_ ax, items);	//before any SvOK() or SvROK() reads an argument
-	//counts:    string(value) -> occurrence count
-
-	//originals: string(value) -> SV* first-seen original
+	/*counts:    string(value) -> occurrence count
+	originals: string(value) -> SV* first-seen original
+	Both are keyed with the value's UTF-8 flag (a negative length), as a perl
+	hash key would be: by its bytes alone, "\xe9" and its UTF-8 spelling were
+	counted apart, and the two bytes "\xc3\xa9" together with "\x{e9}".*/
 	counts    = (HV *)sv_2mortal((SV *)newHV());
 	originals = (HV *)sv_2mortal((SV *)newHV());
 
@@ -27110,13 +27931,14 @@ void mode(...)
 					STRLEN klen;
 					tv = sv_fetched(aTHX_ tv);
 					const char *key = SvPV(tv, klen);
-					SV **slot = hv_fetch(counts, key, klen, 1);
+					const I32 sk = SvUTF8(tv) ? -(I32)klen : (I32)klen;
+					SV **slot = hv_fetch(counts, key, sk, 1);
 					if (!slot) croak("mode: internal hash error");
 					size_t cnt = SvOK(*slot) ? SvIV(*slot) + 1 : 1;
 					sv_setiv(*slot, cnt);
 					if (cnt > max_count) max_count = cnt;
 					if (cnt == 1)
-						 hv_store(originals, key, klen, newSVsv(tv), 0);
+						 hv_store(originals, key, sk, newSVsv(tv), 0);
 					arg_count++;
 				} else {
 					croak("mode: undefined value at array ref index %" UVuf " (argument %" UVuf ")", (UV)j, (UV)i);
@@ -27125,13 +27947,14 @@ void mode(...)
 		} else if (SvOK(arg)) {
 			STRLEN klen;
 			const char *key = SvPV(arg, klen);
-			SV **slot = hv_fetch(counts, key, klen, 1);
+			const I32 sk = SvUTF8(arg) ? -(I32)klen : (I32)klen;
+			SV **slot = hv_fetch(counts, key, sk, 1);
 			if (!slot) croak("mode: internal hash error");
 			size_t cnt = SvOK(*slot) ? SvIV(*slot) + 1 : 1;
 			sv_setiv(*slot, cnt);
 			if (cnt > max_count) max_count = cnt;
 			if (cnt == 1)
-			  hv_store(originals, key, klen, newSVsv(arg), 0);
+			  hv_store(originals, key, sk, newSVsv(arg), 0);
 			arg_count++;
 		} else {
 			croak("mode: undefined value at argument index %" UVuf, (UV)i);
@@ -27146,8 +27969,8 @@ void mode(...)
 		if ((size_t)SvIV(hv_iterval(counts, he)) == max_count) {
 			STRLEN klen;
 			const char *key = HePV(he, klen);
-			SV **orig = hv_fetch(originals, key, klen, 0);
-			mXPUSHs(orig ? newSVsv(*orig) : newSVpvn(key, klen));
+			SV **orig = hv_fetch(originals, key, HeUTF8(he) ? -(I32)klen : (I32)klen, 0);
+			mXPUSHs(orig ? newSVsv(*orig) : newSVsv(hv_iterkeysv(he)));
 		}
 	}
 
@@ -28861,9 +29684,8 @@ PPCODE:
 		hv_stores(st, "n",        newSViv((IV)ng));
 		hv_stores(st, "events",   newSViv((IV)total_events));
 		hv_stores(st, "median",   nv_isnan(median) ? newSV(0) : newSVnv(median));
-		SV *key = *av_fetch(labels, g, 0);
-		STRLEN klen; const char *kp = SvPV(key, klen);
-		hv_store(strata, kp, klen, newRV_noinc((SV *)st), 0);
+		//labels is srv_read()'s own AV, dense; _ent keeps a UTF-8 label's flag
+		(void)hv_store_ent(strata, AvARRAY(labels)[g], newRV_noinc((SV *)st), 0);
 	}
 	//o is on the save stack, put there by srv_read()
 
@@ -29714,7 +30536,8 @@ void p_adjust(...)
 			SSize_t nr = av_len(in) + 1;
 			if (nr > 0) av_extend(out, nr - 1);
 			for (SSize_t i = 0; i < nr; i++) {
-				AV *row = (AV*)SvRV(*av_fetch(in, i, 0));
+				SV **rs = av_fetch(in, i, 0);
+				AV *row = (AV*)SvRV(*rs);	//the first pass croaked on a hole or a non-ARRAY row
 				AV *rout = newAV();
 				av_push(out, newRV_noinc((SV*)rout));
 				SSize_t nc = av_len(row) + 1;
@@ -29738,7 +30561,8 @@ void p_adjust(...)
 			SSize_t nr = av_len(in) + 1;
 			if (nr > 0) av_extend(out, nr - 1);
 			for (SSize_t i = 0; i < nr; i++) {
-				HV *row = (HV*)SvRV(*av_fetch(in, i, 0));
+				SV **rs = av_fetch(in, i, 0);
+				HV *row = (HV*)SvRV(*rs);	//the first pass croaked on a hole or a non-HASH row
 				HV *rout = newHV();
 				av_push(out, newRV_noinc((SV*)rout));
 				SSize_t nk = pa_sorted_keys(aTHX_ row, kbuf, maxk);
@@ -31883,7 +32707,7 @@ PREINIT:
 	size_t n = 1;
 CODE:
 	if (!PL_srand_called) {
-	  (void)seedDrand01((Rand_seed_t)Perl_seed(aTHX));
+	  (void)seedDrand01((Rand_seed_t)seed());
 	  PL_srand_called = 1;
 	}
 	/*n used to arrive as a bare IV, so a reference in that slot became its
@@ -32131,8 +32955,11 @@ PPCODE:
 		    || av_len((AV *)SvRV(suf_sv)) != 1)
 			croak("merge: suffixes must be a two-element array-ref, e.g. ['.x','.y']");
 		AV *sa = (AV *)SvRV(suf_sv);
-		suf0 = *av_fetch(sa, 0, 0);
-		suf1 = *av_fetch(sa, 1, 0);
+		/*A hole (my @s; $s[1] = '.y') is the undef it prints as; it used to be
+		dereferenced as it came, and merge() died with SIGSEGV.*/
+		SV **s0 = av_fetch(sa, 0, 0), **s1 = av_fetch(sa, 1, 0);
+		suf0 = s0 ? *s0 : &PL_sv_undef;
+		suf1 = s1 ? *s1 : &PL_sv_undef;
 	} else {
 		suf0 = sv_2mortal(newSVpvs(".x"));
 		suf1 = sv_2mortal(newSVpvs(".y"));
@@ -32175,7 +33002,7 @@ PPCODE:
 		SAVEFREEPV(names);
 		SSize_t cnt = 0;
 		for (SSize_t i = 0; i < na; i++) {
-			SV *kn = *av_fetch(Lall, i, 0);
+			SV *kn = AvARRAY(Lall)[i];	//every name list in merge() is av_push()ed here: no holes
 			if (hv_exists_ent(Rseen, kn, 0)) names[cnt++] = kn;
 		}
 		if (cnt == 0)
@@ -32201,12 +33028,12 @@ PPCODE:
 	SSize_t nkeys = av_len(lkeys) + 1;
 	//validate that the named keys exist in each frame
 	for (SSize_t j = 0; j < nkeys; j++) {
-		SV *kn = *av_fetch(lkeys, j, 0);
+		SV *kn = AvARRAY(lkeys)[j];
 		if (!hv_exists_ent(Lseen, kn, 0))
 			croak("merge: left frame has no join column '%s'", SvPV_nolen(kn));
 	}
 	for (SSize_t j = 0; j < nkeys; j++) {
-		SV *kn = *av_fetch(rkeys, j, 0);
+		SV *kn = AvARRAY(rkeys)[j];
 		if (!hv_exists_ent(Rseen, kn, 0))
 			croak("merge: right frame has no join column '%s'", SvPV_nolen(kn));
 	}
@@ -32214,14 +33041,14 @@ PPCODE:
 	HV *lkset = (HV *)sv_2mortal((SV *)newHV());
 	HV *rkset = (HV *)sv_2mortal((SV *)newHV());
 	for (SSize_t j = 0; j < nkeys; j++) {
-		(void)hv_store_ent(lkset, *av_fetch(lkeys, j, 0), newSViv(1), 0);
-		(void)hv_store_ent(rkset, *av_fetch(rkeys, j, 0), newSViv(1), 0);
+		(void)hv_store_ent(lkset, AvARRAY(lkeys)[j], newSViv(1), 0);
+		(void)hv_store_ent(rkset, AvARRAY(rkeys)[j], newSViv(1), 0);
 	}
 	//non-key data columns for each side, plus name-membership sets
 	AV *lc_src = (AV *)sv_2mortal((SV *)newAV());
 	HV *lc_set = (HV *)sv_2mortal((SV *)newHV());
 	for (SSize_t i = 0, n = av_len(Lall) + 1; i < n; i++) {
-		SV *kn = *av_fetch(Lall, i, 0);
+		SV *kn = AvARRAY(Lall)[i];
 		if (hv_exists_ent(lkset, kn, 0)) continue;
 		av_push(lc_src, newSVsv(kn));
 		(void)hv_store_ent(lc_set, kn, newSViv(1), 0);
@@ -32229,7 +33056,7 @@ PPCODE:
 	AV *rc_src = (AV *)sv_2mortal((SV *)newAV());
 	HV *rc_set = (HV *)sv_2mortal((SV *)newHV());
 	for (SSize_t i = 0, n = av_len(Rall) + 1; i < n; i++) {
-		SV *kn = *av_fetch(Rall, i, 0);
+		SV *kn = AvARRAY(Rall)[i];
 		if (hv_exists_ent(rkset, kn, 0)) continue;
 		av_push(rc_src, newSVsv(kn));
 		(void)hv_store_ent(rc_set, kn, newSViv(1), 0);
@@ -32242,13 +33069,13 @@ PPCODE:
 	AV *rc_out = (AV *)sv_2mortal((SV *)newAV());
 	HV *uni = (HV *)sv_2mortal((SV *)newHV());
 	for (SSize_t j = 0; j < nkeys; j++) {
-		SV *kn = *av_fetch(lkeys, j, 0);
+		SV *kn = AvARRAY(lkeys)[j];
 		if (hv_exists_ent(uni, kn, 0))
 			croak("merge: duplicate join column '%s'", SvPV_nolen(kn));
 		(void)hv_store_ent(uni, kn, newSViv(1), 0);
 	}
 	for (SSize_t c = 0; c < nlc; c++) {
-		SV *kn = *av_fetch(lc_src, c, 0);
+		SV *kn = AvARRAY(lc_src)[c];
 		SV *outn;
 		if (hv_exists_ent(rc_set, kn, 0)) {
 			outn = newSVsv(kn); sv_catsv(outn, suf0);
@@ -32260,7 +33087,7 @@ PPCODE:
 		av_push(lc_out, outn);
 	}
 	for (SSize_t c = 0; c < nrc; c++) {
-		SV *kn = *av_fetch(rc_src, c, 0);
+		SV *kn = AvARRAY(rc_src)[c];
 		SV *outn;
 	/*lkset as well as lc_set: the output key column carries the left
 	key's name, so under left.on/right.on a right-hand data column can
@@ -32292,17 +33119,17 @@ PPCODE:
 	{
 		SSize_t o = 0;
 		for (SSize_t j = 0; j < nkeys; j++, o++) {
-			mg_resolve(aTHX_ &Lf, *av_fetch(lkeys, j, 0), &lk[j]);
-			mg_resolve(aTHX_ &Rf, *av_fetch(rkeys, j, 0), &rk[j]);
-			oname[o] = mg_shared(aTHX_ *av_fetch(lkeys, j, 0));	//keys keep the left name
+			mg_resolve(aTHX_ &Lf, AvARRAY(lkeys)[j], &lk[j]);
+			mg_resolve(aTHX_ &Rf, AvARRAY(rkeys)[j], &rk[j]);
+			oname[o] = mg_shared(aTHX_ AvARRAY(lkeys)[j]);	//keys keep the left name
 		}
 		for (SSize_t c = 0; c < nlc; c++, o++) {
-			mg_resolve(aTHX_ &Lf, *av_fetch(lc_src, c, 0), &lc[c]);
-			oname[o] = mg_shared(aTHX_ *av_fetch(lc_out, c, 0));
+			mg_resolve(aTHX_ &Lf, AvARRAY(lc_src)[c], &lc[c]);
+			oname[o] = mg_shared(aTHX_ AvARRAY(lc_out)[c]);
 		}
 		for (SSize_t c = 0; c < nrc; c++, o++) {
-			mg_resolve(aTHX_ &Rf, *av_fetch(rc_src, c, 0), &rc[c]);
-			oname[o] = mg_shared(aTHX_ *av_fetch(rc_out, c, 0));
+			mg_resolve(aTHX_ &Rf, AvARRAY(rc_src)[c], &rc[c]);
+			oname[o] = mg_shared(aTHX_ AvARRAY(rc_out)[c]);
 		}
 	}
 	// the join itself: probe into a pair list, then build the result
@@ -32716,6 +33543,8 @@ CODE:
 				SV*arg2 = ST(1);
 				STRLEN klen;
 				const char*key = SvPV(arg2, klen);
+				//negative for a UTF-8 name, which by its bytes alone matched no row
+				const I32 sk = SvUTF8(arg2) ? -(I32)klen : (I32)klen;
 				for (unsigned i = 0; i < len; i++) {
 					SV**elemp = av_fetch(av, i, 0);
 					if (!elemp) continue;
@@ -32726,7 +33555,7 @@ CODE:
 					SV*inner_rv = SvRV(elem);
 					if (SvTYPE(inner_rv) == SVt_PVHV) {// Array of Hashes: extract column by key
 						HV*inner_hv = (HV*)inner_rv;
-						SV**valp = hv_fetch(inner_hv, key, klen, 0);
+						SV**valp = hv_fetch(inner_hv, key, sk, 0);
 						if (valp) increment_count(aTHX_ counts_hv, *valp, fast_nv);// missing key -> skip row
 					} else if (SvTYPE(inner_rv) == SVt_PVAV) {// Array of Arrays: extract column by index
 						if (!looks_like_number(arg2)) {
@@ -32753,8 +33582,10 @@ CODE:
 				SV*arg2 = ST(1);
 				STRLEN klen;
 				const char*key = SvPV(arg2, klen);
+				//negative for a UTF-8 name, which by its bytes alone matched no column
+				const I32 sk = SvUTF8(arg2) ? -(I32)klen : (I32)klen;
 				// DataFrame-style Column-Oriented data check
-				SV**col_svp = hv_fetch(hv, key, klen, 0);
+				SV**col_svp = hv_fetch(hv, key, sk, 0);
 				SV*col_sv = col_svp ? *col_svp : NULL;
 				if (col_sv) SvGETMAGIC(col_sv);	//a tied frame's value is a placeholder until fetched
 				if (col_sv && SvROK(col_sv) && SvTYPE(SvRV(col_sv)) == SVt_PVAV) {
@@ -32774,7 +33605,7 @@ CODE:
 							 SV*inner_rv = SvRV(inner_sv);
 							 if (SvTYPE(inner_rv) == SVt_PVHV) {// CASE 5: Hash of Hashes
 								 HV*inner_hv = (HV*)inner_rv;
-								 SV**valp = hv_fetch(inner_hv, key, klen, 0);
+								 SV**valp = hv_fetch(inner_hv, key, sk, 0);
 								 if (valp) increment_count(aTHX_ counts_hv, *valp, fast_nv);
 							 } else if (SvTYPE(inner_rv) == SVt_PVAV) {// CASE 4: Hash of Arrays (Row-Oriented)
 								if (looks_like_number(arg2)) {
@@ -34432,9 +35263,9 @@ CODE:
 OUTPUT:
 	RETVAL
 
-# The rest of the R distribution family.  Every one is the same six lines over a
-# different dist_spec; the numerics, the tail rules and the log.p caveat are all
-# documented at the dist_spec block above.
+ # The rest of the R distribution family.  Every one is the same six lines over a
+ # different dist_spec; the numerics, the tail rules and the log.p caveat are all
+ # documented at the dist_spec block above.
 
 SV* qnorm(...)
 CODE:
@@ -34532,10 +35363,10 @@ CODE:
 OUTPUT:
 	RETVAL
 
-# Private numeric helpers.  These replace pure-Perl ports that used to live in
-# LikeR.pm (_lgamma/_igamc/_pchisq_upper); igamc() here is the one authoritative
-# implementation, so the Perl and C copies can no longer drift apart.  Not
-# exported -- callers inside Stats::LikeR use them unqualified.
+ # Private numeric helpers.  These replace pure-Perl ports that used to live in
+ # LikeR.pm (_lgamma/_igamc/_pchisq_upper); igamc() here is the one authoritative
+ # implementation, so the Perl and C copies can no longer drift apart.  Not
+ # exported -- callers inside Stats::LikeR use them unqualified.
 
 NV _igamc(a, x)
 	NV a
@@ -34545,12 +35376,12 @@ CODE:
 OUTPUT:
 	RETVAL
 
-# The regularized LOWER incomplete gamma P(a, x), which igam() has always
-# computed directly.  _qgamma() in LikeR.pm used to invert `1 - _igamc(a, x)`
-# instead, and that subtraction is exactly the cancellation igam() exists to
-# avoid: below a lower tail of about 1e-16 the difference is a multiple of
-# NV_EPSILON and nothing else, so age_standardize()'s gamma-method confidence
-# limit stopped resolving at a high conf.level.  Private, like _igamc.
+ # The regularized LOWER incomplete gamma P(a, x), which igam() has always
+ # computed directly.  _qgamma() in LikeR.pm used to invert `1 - _igamc(a, x)`
+ # instead, and that subtraction is exactly the cancellation igam() exists to
+ # avoid: below a lower tail of about 1e-16 the difference is a multiple of
+ # NV_EPSILON and nothing else, so age_standardize()'s gamma-method confidence
+ # limit stopped resolving at a high conf.level.  Private, like _igamc.
 NV _pgamma_lower(a, x)
 	NV a
 	NV x
@@ -34559,9 +35390,9 @@ CODE:
 OUTPUT:
 	RETVAL
 
-# Upper-tail chi-square p-value P(X > stat) on df degrees of freedom.  df is
-# taken as an NV (not get_p_value's int) so a fractional df is not truncated,
-# matching what the Perl version computed as _igamc($df/2, $stat/2).
+ # Upper-tail chi-square p-value P(X > stat) on df degrees of freedom.  df is
+ # taken as an NV (not get_p_value's int) so a fractional df is not truncated,
+ # matching what the Perl version computed as _igamc($df/2, $stat/2).
 NV _pchisq_upper(stat, df)
 	NV stat
 	NV df
@@ -34571,8 +35402,8 @@ OUTPUT:
 	RETVAL
 
 
-# density() -- R's stats::density.default(), kernel density estimation.  See
-# the block comment above the dens_* helpers for what each piece is a port of.
+ # density() -- R's stats::density.default(), kernel density estimation.  See
+ # the block comment above the dens_* helpers for what each piece is a port of.
 
 SV* density(...)
 	CODE:
@@ -34891,7 +35722,7 @@ SV* density(...)
 	OUTPUT:
 		RETVAL
 
-# bw_nrd0() -- R's bw.nrd0(), Silverman's rule of thumb and density()'s default.
+ # bw_nrd0() -- R's bw.nrd0(), Silverman's rule of thumb and density()'s default.
 
 NV bw_nrd0(...)
 	CODE:
@@ -34912,7 +35743,7 @@ NV bw_nrd0(...)
 	OUTPUT:
 		RETVAL
 
-# bw_nrd() -- R's bw.nrd(), Scott's variant of the same rule.
+ # bw_nrd() -- R's bw.nrd(), Scott's variant of the same rule.
 
 NV bw_nrd(...)
 	CODE:
@@ -34933,7 +35764,7 @@ NV bw_nrd(...)
 	OUTPUT:
 		RETVAL
 
-# bw_ucv() -- R's bw.ucv(), unbiased (least-squares) cross-validation.
+ # bw_ucv() -- R's bw.ucv(), unbiased (least-squares) cross-validation.
 
 NV bw_ucv(...)
 	CODE:
@@ -34958,7 +35789,7 @@ NV bw_ucv(...)
 	OUTPUT:
 		RETVAL
 
-# bw_bcv() -- R's bw.bcv(), biased cross-validation.
+ # bw_bcv() -- R's bw.bcv(), biased cross-validation.
 
 NV bw_bcv(...)
 	CODE:
@@ -34982,9 +35813,9 @@ NV bw_bcv(...)
 	OUTPUT:
 		RETVAL
 
-# bw_sj() -- R's bw.SJ(), the Sheather & Jones (1991) selector.  method => 'ste'
-# (solve-the-equation, the default, and what bw => 'SJ' means) or 'dpi'
-# (direct plug-in, i.e. bw => 'sj-dpi').
+ # bw_sj() -- R's bw.SJ(), the Sheather & Jones (1991) selector.  method => 'ste'
+ # (solve-the-equation, the default, and what bw => 'SJ' means) or 'dpi'
+ # (direct plug-in, i.e. bw => 'sj-dpi').
 
 NV bw_sj(...)
 	CODE:

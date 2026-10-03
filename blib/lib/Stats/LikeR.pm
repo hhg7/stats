@@ -2896,11 +2896,16 @@ sub _xlsx_shared_strings {
 # { name => $sheet_name, path => 'xl/worksheets/sheetN.xml' } hashrefs. The path
 # is resolved through workbook.xml.rels; a sheet with no resolvable relationship
 # (or a workbook with no metadata at all) falls back to a positional sheetN.xml.
+#
+# An element may carry a namespace prefix -- <x:sheet>, as the Open XML SDK
+# writes them -- and the relationship id is matched by its local name, since
+# the prefix bound to the relationships namespace is the writer's choice. See
+# xlsx_ns_prefix() in LikeR.xs for the worksheet side of the same thing.
 sub _xlsx_sheets {
 	my ($file) = @_;
 	my %target;
 	if (defined(my $rels = _unzip_member($file, 'xl/_rels/workbook.xml.rels'))) {
-		while ($$rels =~ m{<Relationship\b([^>]*?)/?>}gs) {
+		while ($$rels =~ m{<(?:[\w.-]+:)?Relationship\b([^>]*?)/?>}gs) {
 			my $a = $1;
 			my ($id) = $a =~ /\bId="([^"]*)"/;
 			my ($tg) = $a =~ /\bTarget="([^"]*)"/;
@@ -2909,10 +2914,10 @@ sub _xlsx_sheets {
 	}
 	my @sheets;
 	if (defined(my $wb = _unzip_member($file, 'xl/workbook.xml'))) {
-		while ($$wb =~ m{<sheet\b([^>]*?)/?>}gs) {
+		while ($$wb =~ m{<(?:[\w.-]+:)?sheet\b([^>]*?)/?>}gs) {
 			my $a = $1;
-			my ($name) = $a =~ /\bname="([^"]*)"/;
-			my ($rid)  = $a =~ /\br:id="([^"]*)"/;
+			my ($name) = $a =~ /(?:\A|\s)name="([^"]*)"/;
+			my ($rid)  = $a =~ /(?:\A|\s)[\w.-]+:id="([^"]*)"/;
 			my $path;
 			if (defined $rid && defined $target{$rid}) {
 				(my $tg = $target{$rid}) =~ s{^/}{};	# strip absolute-package "/"
@@ -2931,22 +2936,29 @@ sub _xlsx_sheets {
 	return \@sheets;
 }
 
-# Resolve a 'sheet' argument (undef -> first; a 1-based index; or a name) to one
+# Resolve a 'sheet' argument (undef -> first; a name; or a 1-based index) to one
 # of the hashrefs from _xlsx_sheets, dying with a clear message on a bad request.
+#
+# A name is tried first. A workbook read whole comes back keyed by sheet name,
+# and up to 0.3213 any all-digit 'sheet' was an index, so of sheets "2024" and
+# "2023" neither key could be asked for again ("sheet index 2023 is out of
+# range"), and with sheets "2" and "1", sheet => '1' quietly returned "2". The
+# name is compared as bytes (see _as_bytes), which is how it was read.
 sub _xlsx_choose_sheet {
 	my ($file, $sheets, $sheet) = @_;
 	return $sheets->[0] unless defined $sheet;
-	if ($sheet =~ /^\d+\z/) {
-		die "read_table: sheet index $sheet is out of range (1..${\ scalar @$sheets}) in $file\n"
-			if $sheet < 1 || $sheet > @$sheets;
-		return $sheets->[$sheet - 1];
+	my $want = _as_bytes($sheet);
+	my ($chosen) = grep { defined $_->{name} && $_->{name} eq $want } @$sheets;
+	return $chosen if $chosen;
+	if ($want =~ /\A[0-9]+\z/) {
+		die "read_table: sheet index $want is out of range (1..${\ scalar @$sheets}), "
+		  . "and no sheet is named '$want', in $file\n"
+			if $want < 1 || $want > @$sheets;
+		return $sheets->[$want - 1];
 	}
-	my ($chosen) = grep { defined $_->{name} && $_->{name} eq $sheet } @$sheets;
-	die "read_table: sheet '$sheet' not found in $file (have: "
+	die "read_table: sheet '$want' not found in $file (have: "
 		. join(', ', map { defined $_->{name} ? "'$_->{name}'" : '?' } @$sheets)
-		. ")\n"
-		unless $chosen;
-	return $chosen;
+		. ")\n";
 }
 
 # Parse one worksheet, invoking $callback->(\@fields) once per non-empty row
@@ -2980,37 +2992,6 @@ sub _sep_re_is_ws {
 	return defined $pat && $pat eq '\s+';
 }
 
-# Cut one line on a sep regex with no quote handling, as split() would but
-# with capture groups in the pattern left out of the fields. read_table uses
-# it only for a commented-out header, which the parser has already dropped as
-# a comment; every other line is cut in C by _parse_csv_file(). The pattern is
-# matched as it was written rather than wrapped in a capture of its own, which
-# would renumber its groups and turn a \1 in it into a reference to the whole
-# separator. An empty match where a field starts -- the start of the line, or
-# right after a separator -- is passed over, as split() and the C parser pass
-# it over; any other returns an empty list. With $ws (see _sep_re_is_ws),
-# leading and trailing whitespace make no field.
-sub _sep_re_cut {
-	my ($str, $sep, $ws) = @_;
-	$str =~ s/\A\s+// if $ws;
-	my @f;
-	my $from = 0;	# where the field being cut starts
-	pos($str) = 0;
-	while ($str =~ /$sep/g) {
-		my ($s, $e) = ($-[0], $+[0]);
-		if ($s == $e) {
-			return if $s > $from;
-			pos($str) = $s + 1;	# empty where a field starts: not a cut
-			next;
-		}
-		push @f, substr $str, $from, $s - $from;
-		$from = $e;
-	}
-	push @f, substr $str, $from;
-	pop @f if $ws && @f > 1 && $f[-1] eq '';
-	return @f;
-}
-
 # Compressed input for read_table
 #
 # A gzip or bzip2 file is recognised by its first bytes, not its name, the way
@@ -3032,6 +3013,18 @@ sub _sep_re_cut {
 #          text file that began "BZh" was taken for bzip2.
 # Neither is how text begins: 0x1f is a control character, 0x8b is not ASCII
 # and cannot start a UTF-8 sequence, and the bzip2 test runs to ten bytes.
+#
+# The same function also recognises four formats this module cannot inflate,
+# and they are sniffed only so that read_table can say so: up to 0.3213 an
+# .xz file was parsed as text and reported as "Alignment error on x.csv.xz data
+# row 2", which sent the reader looking for a ragged row. Their magic numbers
+# are comp_type_from_memory()'s as well:
+#   xz     fd "7zXZ"           (the .xz container)
+#   lzma   ff "LZMA", or 5d 00 00 80 00  (the two legacy LZMA headers)
+#   zstd   28 b5 2f fd         (RFC 8878 section 3.1.1's Magic_Number)
+#   lzop   89 "LZO"
+# Each begins with a byte that no text file does, or, for the 5d header, holds
+# NUL bytes, which no text file does either.
 sub _sniff_compression {
 	my ($file) = @_;
 	open my $fh, '<', $file or return '';	# read_table's own open reports it
@@ -3042,6 +3035,10 @@ sub _sniff_compression {
 	return 'gzip' if $head =~ /\A\x1f\x8b/;
 	return 'bzip2'
 		if $head =~ /\ABZh[1-9](?:\x31\x41\x59\x26\x53\x59|\x17\x72\x45\x38\x50\x90)/;
+	return 'xz'   if $head =~ /\A\xFD7zXZ/;
+	return 'lzma' if $head =~ /\A(?:\xFFLZMA|\x5D\x00\x00\x80\x00)/;
+	return 'zstd' if $head =~ /\A\x28\xB5\x2F\xFD/;
+	return 'lzop' if $head =~ /\A\x89LZO/;
 	return '';
 }
 
@@ -3106,6 +3103,21 @@ sub _open_decompressed {
 	return $fh;
 }
 
+# A copy of $s as the bytes read_table compares it with. Every field comes
+# back from the file as the bytes it holds -- UTF-8 ones for an .xlsx and for
+# any CSV written as UTF-8 -- and a literal sep or comment marker already meets
+# them that way, since the parser takes its bytes from SvPV. A name or token
+# the caller holds as characters (under `use utf8`, or decoded from anywhere)
+# is encoded the same way here before it is compared with a field. Up to
+# 0.3213 na.strings => "\x{2014}", sheet => "Donn\x{e9}es" and a filter or
+# row.names key of the same kind never matched what the file plainly held. A
+# string perl holds as bytes is returned as it is.
+sub _as_bytes {
+	my ($s) = @_;
+	utf8::encode($s) if defined $s && utf8::is_utf8($s);
+	return $s;
+}
+
 sub read_table {
 	my $file = shift;
 	die "read_table: \"$file\" is not a file\n"   unless -f $file;
@@ -3134,6 +3146,9 @@ sub read_table {
 
 	my $is_xlsx = $file =~ /\.xlsx\z/i;
 	my $codec   = $is_xlsx ? '' : _sniff_compression($file);
+	die "read_table: \"$file\" is $codec-compressed, which read_table cannot "
+	  . "decompress; decompress it first, or recompress it with gzip or bzip2\n"
+		if $codec =~ /\A(?:xz|lzma|zstd|lzop)\z/;
 	my $cr_eol  = $is_xlsx ? 0  : _eol_is_cr($file, $codec);	# lines end in a bare CR
 	my $eol     = $cr_eol ? "\r" : "\n";
 	# The extension only picks the default sep, and a compressed file's is
@@ -3154,11 +3169,14 @@ sub read_table {
 	my %allowed_args = map { $_ => 1 } (
 		'comment', 'output.type', 'filter', 'row.names', 'sep',
 		'auto.row.names', 'sheet', 'na.strings', 'header', 'col.names', 'quote',
-		'explode',
+		'explode', 'colClasses',
 		# private, undocumented: the multi-sheet expansion passes an already
 		# parsed worksheet list / shared-string table to each per-sheet recursion
 		# so a big sharedStrings.xml is not re-decompressed once per worksheet.
-		'_xlsx_sheets', '_sst',
+		'_xlsx_sheets', '_sst', '_sheet_ix',
+		# private, for t/read_table.filter.t: keep every row in the perl
+		# closure, which is the reference the parser's filter path is held to
+		'_closure',
 	);
 	my @undef_args = sort grep { !$allowed_args{$_} } keys %args;
 	if (@undef_args) {
@@ -3182,11 +3200,20 @@ sub read_table {
 	my $otype = $args{'output.type'} // ($explode ? 'hoh' : 'aoh');
 	die "read_table: output.type \"$otype\" isn't allowed (aoa, aoh, hoa, hoh)\n"
 		unless $otype =~ m/^(?:aoa|aoh|hoa|hoh)$/;
-	# An aoa is positional: its first row is the header and nothing labels a
-	# row, so a row.names column would only be a column like any other.
-	die "read_table: 'row.names' has no meaning for output.type \"aoa\"; "
+	# Only a hoh is keyed by a column. An aoa is positional, and an aoh or hoa
+	# keeps every column as data, so a row.names column would only be a column
+	# like any other. Up to 0.3213 an aoh or hoa checked the name against the
+	# header and then ignored it, which read as though it had done something.
+	die "read_table: 'row.names' has no meaning for output.type \"$otype\"; "
 	  . "the row names column is read as an ordinary column\n"
-		if $otype eq 'aoa' && defined $args{'row.names'};
+		if $otype ne 'hoh' && defined $args{'row.names'};
+	# compared with the header's bytes, both here and in _vcf_explode()
+	$args{'row.names'} = _as_bytes($args{'row.names'}) if defined $args{'row.names'};
+	# 'sheet' picks a worksheet, which only an .xlsx has; it was ignored on
+	# any other file up to 0.3213, as 'explode' is refused on a non-VCF.
+	die "read_table: 'sheet' applies only to an .xlsx, and \"$file\" is not "
+	  . "named as one\n"
+		if defined $args{sheet} && !$is_xlsx;
 	# A qr// separator is found by perl's regex engine; any other sep is
 	# a literal string, as it has always been. A regex is not looked at for an
 	# .xlsx, where a literal sep is not either.
@@ -3242,7 +3269,7 @@ sub read_table {
 		my %raw_args = (%input_args, explode => 0, 'output.type' => 'aoa');
 		delete $raw_args{'row.names'};
 		my $raw = read_table($file, %raw_args);
-		my %na = map { $_ => 1 } !defined $args{'na.strings'} ? ()
+		my %na = map { _as_bytes($_) => 1 } !defined $args{'na.strings'} ? ()
 			: ref $args{'na.strings'} ? @{ $args{'na.strings'} }
 			: ($args{'na.strings'});
 		# _vcf_explode() in LikeR.xs; its comment says what the columns are
@@ -3264,7 +3291,8 @@ sub read_table {
 		# Reuse a caller-supplied worksheet list (from the multi-sheet expansion
 		# below) rather than re-parsing workbook.xml + its rels for every sheet.
 		$xlsx_sheets = $args{_xlsx_sheets} // _xlsx_sheets($file);
-		if (!defined $args{sheet} && @$xlsx_sheets > 1) {
+		if (!defined $args{sheet} && !defined $args{_sheet_ix}
+				&& @$xlsx_sheets > 1) {
 			# Decompress + parse the shared-string table once for the whole
 			# workbook and hand it to each per-sheet read, instead of every
 			# recursion re-reading (a potentially large) sharedStrings.xml.
@@ -3273,8 +3301,10 @@ sub read_table {
 			for my $i (0 .. $#$xlsx_sheets) {
 				my $name = $xlsx_sheets->[$i]{name};
 				$name = 'Sheet' . ($i + 1) unless defined $name;
+				# by position, privately: 'sheet' takes a name before a
+				# number, so sheets named "2" and "1" would swap places
 				$book{$name} = read_table($file, %input_args,
-					sheet        => $i + 1,
+					_sheet_ix    => $i,
 					_xlsx_sheets => $xlsx_sheets,
 					_sst         => $sst);
 			}
@@ -3300,6 +3330,42 @@ sub read_table {
 	} elsif (defined $filter && ref($filter) ne 'HASH') {
 		die "'filter' must be a CODE or HASH reference\n";
 	}
+	# The parser calls the subs itself (see $plan below), and it takes a code
+	# reference only. Asked up front, so a bad one is not first noticed on
+	# whichever row reaches it.
+	for my $k (sort keys %{ $filter || {} }) {
+		die "read_table: filter '$k' must be a CODE reference\n"
+			unless (reftype($filter->{$k}) // '') eq 'CODE';
+	}
+
+# colClasses, R's: a column declared numeric or integer is stored as an NV or
+# an IV rather than as its text. On a 300,000 x 5 CSV with three of its five
+# columns declared, a hoa took 74 MB instead of 116 MB on perl 5.44.0, about
+# 47 bytes less for each of the 900,000 cells converted. R's spellings:
+# one class for every column, a list by position (recycled when short, as R
+# recycles it), or a hash by name, where a name that is no column is warned
+# about, in R's words, and otherwise ignored. undef (R's NA) and 'character'
+# leave a column as read. Each name is checked here, before the file is
+# opened; which field gets which class waits for the header.
+#   %cls_code: 1 = numeric (an NV), 2 = integer (an IV), 0 = as read
+	my %cls_code = (numeric => 1, double => 1, real => 1, integer => 2, character => 0);
+	my $cls_arg = $args{colClasses};
+	my $cls_of = sub {
+		my ($c) = @_;
+		return 0 unless defined $c;
+		die "read_table: colClasses '$c' is not one read_table reads: it takes "
+		  . "'numeric' (or 'double' or 'real'), 'integer', 'character' or undef\n"
+			unless exists $cls_code{$c};
+		return $cls_code{$c};
+	};
+	if (defined $cls_arg) {
+		my $r = ref $cls_arg;
+		die "read_table: 'colClasses' must be a string, an ARRAY reference or a "
+		  . "HASH reference\n" if $r && $r ne 'ARRAY' && $r ne 'HASH';
+		$cls_of->($_) for $r eq 'ARRAY' ? @$cls_arg : $r eq 'HASH' ? values %$cls_arg : $cls_arg;
+		die "read_table: 'colClasses' is an empty list\n" if $r eq 'ARRAY' && !@$cls_arg;
+	}
+	my @cls;	# per field of @header, once it is fixed: a %cls_code value
 
 # na.strings / na_values / undef.val -- field texts that mean "missing", mapped
 # to undef exactly as an empty field already is. Every spelling has been folded
@@ -3327,12 +3393,13 @@ sub read_table {
 		for my $s (@ns) {
 			die "read_table: 'na.strings' may not contain an undefined value\n"
 				unless defined $s;
-			$na_string{$s} = 1;
+			$na_string{ _as_bytes($s) } = 1;
 		}
 	}
 	my $has_na = %na_string ? 1 : 0;   # skip the hash lookup in the common case
 
-	my (@data, %data, @header, @uniq_header, @hoa_cols,
+	# @field_wins: per field, TRUE when it is the last to carry its name
+	my (@data, %data, @header, @uniq_header, @hoa_cols, @field_wins,
 	    %mapped_filters, @sorted_filter_flds, %seen_rownames);
 	my ($data_row, $header_seen, $header_done, $provisional_hdr) = (0, 0, 0, 0);
 	# hoh: rows whose name an earlier row already had, and the first of them as
@@ -3345,11 +3412,14 @@ sub read_table {
 # read_table's wall clock -- on a 300,000 x 5 CSV, 0.42 s of 0.53 s -- doing in
 # perl what C can do from the fields it has already cut.
 #
-# Only a read with no 'filter' can go this way, since a filter is perl by
-# definition; one keeps streaming through $on_line. $plan stays undef then,
-# and that is how the parser knows not to look for one. 'hoh' went through the
-# closure too until 0.319, which on a 300,000 x 5 CSV cost 0.91 s; it now
-# takes 0.20 s. An .xlsx goes through a different parser (_parse_xlsx_sheet_xs)
+# A 'filter' goes this way too: its subs are handed over in the plan and the
+# parser calls them, with the same $_, %_ and arguments the closure below
+# gives them (S_filter_row() in LikeR.xs). Up to 0.3212 a filter kept every row
+# in the closure, and a filtered read of a 300,000 x 5 CSV took 0.58 s to
+# 1.07 s against 0.08 s to 0.18 s unfiltered. The closure still applies them to
+# any data row it handles itself, before the plan is installed. 'hoh' went
+# through the closure too until 0.319, which on a 300,000 x 5 CSV cost 0.91 s;
+# it now takes 0.20 s. An .xlsx goes through a different parser (_parse_xlsx_sheet_xs)
 # but the same plan: both hand a finished row to the same S_fast_row().
 # A qr// sep goes this way too: _parse_csv_file() matches it with perl's regex
 # engine, from C, so only how a separator is found changes.
@@ -3357,7 +3427,7 @@ sub read_table {
 # See csv_plan in LikeR.xs for what each key means. install_plan() runs exactly
 # once, from wherever $header_done is first set, and writes 'out' last because
 # that is the key the parser tests for.
-	my $plan = !$filter ? {} : undef;
+	my $plan = $args{_closure} ? undef : {};
 	my $install_plan = sub {
 		return if !$plan || %$plan;
 		# A repeated column name resolves to its LAST field, which is what
@@ -3369,6 +3439,17 @@ sub read_table {
 		$plan->{ncol} = scalar @header;
 		$plan->{file} = $file;
 		$plan->{na}   = $has_na ? \%na_string : undef;
+		if (@cls) {
+			$plan->{cls} = [ @cls ];
+			$plan->{hdr} = [ @header ];
+		}
+		# in the order the closure below runs them
+		for my $fld (@sorted_filter_flds) {
+			for my $sub (@{ $mapped_filters{$fld} }) {
+				push @{ $plan->{flt_fld} }, $fld;
+				push @{ $plan->{flt_sub} }, $sub;
+			}
+		}
 		# a reference, not a copy: the parser reads it when it picks the plan
 		# up, by which time $on_line may have emitted a data row of its own.
 		$plan->{row}  = \$data_row;
@@ -3448,34 +3529,72 @@ sub read_table {
 				&& !grep { $_ eq $args{'row.names'} } @header) {
 			die "\"$args{'row.names'}\" isn't in the header of $file\n";
 		}
+		# A repeated name resolves to its last field, which is the one
+		# %line_hash keeps, so only that field's filter writes $_ back into it.
+		my %last_field;
+		$last_field{ $header[$_] } = $_ for 0 .. $#header;
+		@field_wins = map { $last_field{ $header[$_] } == $_ } 0 .. $#header;
 		if ($filter) {
+			# Each key is resolved to a field before any filter runs: '0' to
+			# the whole row; a column's name to the last field carrying it;
+			# and any other number to that field, counting from 1. A name
+			# comes before a number, so a column named "2021" can be filtered
+			# on -- up to 0.3213 that key was a field number and died as out
+			# of range. A field named by two keys (1 and its name, say) runs
+			# both, in key order; one used to replace the other, and which
+			# depended on hash order, so the rows kept changed between runs.
 			%mapped_filters = ();
-			for my $k (keys %$filter) {
-				if ($k =~ /^\d+$/) {
-					die "read_table: numeric filter key $k exceeds the "
-					  . scalar(@header) . " columns of $file\n"
-						if $k > @header;
-					$mapped_filters{$k} = $filter->{$k};
+			for my $k (sort keys %$filter) {
+				my $fld;
+				if ($k eq '0') {
+					$fld = 0;
 				} else {
-					my ($idx) = grep { $header[$_] eq $k } 0 .. $#header;
+					my $kb = _as_bytes($k);
+					my $idx = $last_field{$kb};
 					if (!defined $idx && length( $args{comment} // '' )) {
 						# A commented-out header has its marker (and any
 						# following whitespace) stripped from the first
 						# column, so a key written as it appears in the file
 						# (e.g. "# PDB") won't match the clean name ("PDB").
 						# Normalize the key the same way and retry.
-						(my $nk = $k) =~ s/^\s*\Q$args{comment}\E\s*//;
-						($idx) = grep { $header[$_] eq $nk } 0 .. $#header;
+						(my $nk = $kb) =~ s/^\s*\Q$args{comment}\E\s*//;
+						$idx = $last_field{$nk};
 					}
-					unless (defined $idx) {
+					if (defined $idx) {
+						$fld = $idx + 1;
+					} elsif ($k =~ /\A[0-9]+\z/) {
+						die "read_table: numeric filter key $k exceeds the "
+						  . scalar(@header) . " columns of $file, and no column "
+						  . "is named '$k'\n"
+							if $k > @header;
+						$fld = $k + 0;
+					} else {
 						die "read_table: Filter column '$k' not found in the "
 						  . "header of $file; header is: "
 						  . join( ', ', map { "'$_'" } @header ) . "\n";
 					}
-					$mapped_filters{ $idx + 1 } = $filter->{$k};
 				}
+				push @{ $mapped_filters{$fld} }, $filter->{$k};
 			}
 			@sorted_filter_flds = sort { $a <=> $b } keys %mapped_filters;
+		}
+		if (defined $cls_arg) {
+			my $r = ref $cls_arg;
+			if ($r eq 'HASH') {
+				my %by = map { _as_bytes($_) => $cls_of->( $cls_arg->{$_} ) } keys %$cls_arg;
+				@cls = map { $by{$_} // 0 } @header;
+				my %have = map { $_ => 1 } @header;
+				warn "read_table: not all columns named in 'colClasses' exist\n"
+					if grep { !$have{$_} } keys %by;
+			} elsif ($r eq 'ARRAY') {
+				die "read_table: 'colClasses' has " . scalar(@$cls_arg) . " entries "
+				  . "for the " . scalar(@header) . " columns of $file\n"
+					if @$cls_arg > @header;
+				@cls = map { $cls_of->( $cls_arg->[ $_ % @$cls_arg ] ) } 0 .. $#header;
+			} else {
+				@cls = ( $cls_of->($cls_arg) ) x @header;
+			}
+			@cls = () unless grep { $_ } @cls;
 		}
 		# The column arrays are made once and held, so neither the fast path
 		# nor the row loop below has to fetch them out of %data (and
@@ -3507,15 +3626,32 @@ sub read_table {
 		$first =~ s/\A\xEF\xBB\xBF// if defined $first;
 		if (defined $first && $first =~ /^\Q$args{comment}\E\s/) {
 			if ($cr_eol) { $first =~ s/\r\z// } else { $first =~ s/\r?\n\z// }
+			# The marker and the blanks after it come off before the cut, so
+			# that neither can become a field: a tab after "#" in a
+			# tab-separated file made an empty first column of "#\tid\tval",
+			# whose three names then failed to match two-field data rows.
+			(my $body = $first) =~ s/^\Q$args{comment}\E\s*//;
+			# The rest is cut by _parse_csv_file() itself, through an in-memory
+			# handle, so it is split by exactly the rules the data will be:
+			# up to 0.3213 a perl split() ignored quoting, and # "x,y",z came
+			# out as three names. Both mismatches promoted the first data row
+			# to the header without a word. Quoting is left off for a comment
+			# with an odd number of '"', which no one-line row of quoted
+			# fields has, so that prose like 5'10" is not taken for a quoted
+			# field running to the end of the file; and a sep regex that
+			# croaks on this line leaves it as no candidate at all, since the
+			# parser drops it as a comment and would never have seen it.
 			my @cols;
-			if ($sep_re) {
-				# The marker and the blanks after it come off before the cut,
-				# since qr/\s+/ would otherwise make the marker a field.
-				(my $body = $first) =~ s/^\Q$args{comment}\E\s*//;
-				@cols = _sep_re_cut($body, $sep_re, _sep_re_is_ws($sep_re));
-			} else {
-				@cols = split /\Q$args{sep}\E/, $first, -1;
-				$cols[0] =~ s/^\Q$args{comment}\E\s*//;
+			if (length $body) {
+				my $q = $quote && !(($body =~ tr/"//) % 2);
+				my $rows = eval {
+					open my $mfh, '<', \$body
+						or die "read_table: could not read the commented-out header\n";
+					_parse_csv_file($file, $sep_re ? '' : $args{sep}, '', undef,
+						undef, $q, 0, $sep_re,
+						$sep_re && _sep_re_is_ws($sep_re) ? 1 : 0, $mfh, 0);
+				};
+				@cols = @{ $rows->[0] } if $rows && @$rows;
 			}
 			if (@cols >= 2) {
 				@header          = @cols;
@@ -3558,7 +3694,11 @@ sub read_table {
 		# column called "fileformat=VCFv4.2" and the "#CHROM" line an
 		# alignment error. Only while no real header has been taken: after
 		# that, such a line is data, as it has always been.
-		if ((!$header_seen || $provisional_hdr) && length( $args{comment} // '' )
+		# Not in an .xlsx, where 'comment' has never applied: a first cell
+		# such as "#id" or "# of items" is a cell, and treating it as a
+		# commented-out header lost "#a1"-style data rows wholesale up to 0.3213.
+		if ((!$header_seen || $provisional_hdr) && !$is_xlsx
+				&& length( $args{comment} // '' )
 				&& @$line_ref && defined $line_ref->[0]
 				&& index($line_ref->[0], $args{comment}) == 0) {
 			@header = @$line_ref;
@@ -3651,23 +3791,45 @@ sub read_table {
 # APPLY FILTERS
 		if (@sorted_filter_flds) {
 			local *_ = \%line_hash;
-			my $skip = 0;
 			foreach my $fld (@sorted_filter_flds) {
-				local $_ = $fld == 0 ? $line_ref : $line_hash{ $header[ $fld - 1 ] };
-				if ( !$mapped_filters{$fld}->( $line_ref, \%line_hash ) ) {
-					$skip = 1;
-					last;
-				}
-				if ( $fld > 0 ) {	# write back any mutation made to $_
+				for my $sub (@{ $mapped_filters{$fld} }) {
+					# The field's value as %line_hash holds it, which is what
+					# an earlier filter may have changed -- except for a field
+					# whose name a later field repeats, whose own value is not
+					# in %line_hash at all; that one is read from the row by
+					# the rule %line_hash is built by.
+					local $_ = $fld == 0 ? $line_ref
+						: $field_wins[ $fld - 1 ] ? $line_hash{ $header[ $fld - 1 ] }
+						: do {
+							my $v = $line_ref->[ $fld - 1 ];
+							( !defined($v) || $v eq ''
+							  || ( $has_na && $na_string{$v} ) ) ? undef : $v
+						};
+					return if !$sub->( $line_ref, \%line_hash );
+					next if $fld == 0;
+					# write back any mutation made to $_
 					$line_ref->[ $fld - 1 ] = $_;
 					# na.strings applies to a written-back value too, so the
 					# empty-string rule and the NA rule stay the same rule.
+					# A field whose name a later field repeats is not the one
+					# %line_hash holds, so it does not overwrite it.
 					$line_hash{ $header[ $fld - 1 ] }
 						= ( !defined($_) || $_ eq ''
-						    || ( $has_na && $na_string{$_} ) ) ? undef : $_;
+						    || ( $has_na && $na_string{$_} ) ) ? undef : $_
+						if $field_wins[ $fld - 1 ];
 				}
 			}
-			return if $skip;
+		}
+# colClasses, after the filters and on %line_hash itself, as the parser does it
+# (S_filter_row() in LikeR.xs); a key a filter deleted stays deleted. An aoa's
+# fields are converted as they are copied, below.
+		if (@cls && $otype ne 'aoa') {
+			for my $f (grep { $cls[$_] && $field_wins[$_] } 0 .. $#header) {
+				my $name = $header[$f];
+				$line_hash{$name} = _cell_class($line_hash{$name}, $cls[$f],
+					$file, $data_row, $name, $f + 1)
+					if exists $line_hash{$name};
+			}
 		}
 # Populate requested data structure
 		if ($otype eq 'aoh') {
@@ -3676,9 +3838,12 @@ sub read_table {
 			# from the fields rather than %line_hash, so a repeated name keeps
 			# every one of its fields, as the fast path's mode 3 does
 			push @data, [ map {
-				( !defined($_) || $_ eq '' || ( $has_na && $na_string{$_} ) )
-					? undef : $_
-			} @$line_ref ];
+				my $v = $line_ref->[$_];
+				$v = undef if !defined($v) || $v eq '' || ( $has_na && $na_string{$v} );
+				( defined $v && @cls && $cls[$_] )
+					? _cell_class($v, $cls[$_], $file, $data_row, $header[$_], $_ + 1)
+					: $v
+			} 0 .. $#$line_ref ];
 		} elsif ($otype eq 'hoa') {
 			my $c = 0;
 			push @{ $hoa_cols[ $c++ ] }, $line_hash{$_} for @uniq_header;
@@ -3702,8 +3867,11 @@ sub read_table {
 		}
 	};
 	if ($is_xlsx) {
+		# the sheet first, so a bad 'sheet' is refused before the whole
+		# shared-string table has been inflated and parsed for nothing
+		my $chosen = defined $args{_sheet_ix} ? $xlsx_sheets->[ $args{_sheet_ix} ]
+		           : _xlsx_choose_sheet($file, $xlsx_sheets, $args{sheet});
 		my $sst    = $args{_sst} // _xlsx_shared_strings($file);
-		my $chosen = _xlsx_choose_sheet($file, $xlsx_sheets, $args{sheet});
 		_parse_xlsx_sheet($file, $sst, $chosen->{path}, $on_line, $plan);
 	} else {
 		my $fh = $codec ? _open_decompressed($file, $codec) : undef;
@@ -14841,13 +15009,13 @@ minimal example:
 </tr>
 <tr>
   <td><code>filter</code></td>
-  <td>Only take in rows matching a filter</td>
+  <td>Only take in rows matching a filter; see below for how a key picks its column</td>
   <td><code>filter =&gt; { Sex =&gt; sub {$_ eq 'f'} }</code></td>
 </tr>
 <tr>
   <td><code>row.names</code></td>
-  <td>include row names in retrieved data; off by default</td>
-  <td></td>
+  <td><code>hoh</code> only: the column whose values key the rows (default: the first column). An error with any other <code>output.type</code>, where the column is read as an ordinary one</td>
+  <td><code>'row.names' =&gt; 'id'</code></td>
 </tr>
 <tr>
   <td><code>auto.row.names</code></td>
@@ -14881,7 +15049,7 @@ minimal example:
 </tr>
 <tr>
   <td><code>sheet</code></td>
-  <td>which worksheet to read from an <code>.xlsx</code> file: a 1-based index or a sheet name (default: first sheet). Ignored for text files</td>
+  <td>which worksheet to read from an <code>.xlsx</code> file: a sheet name, or a 1-based index when no sheet has that name (default: first sheet). An error for any other file</td>
   <td><code>sheet =&gt; 'Sheet2'</code></td>
 </tr>
 <tr>
@@ -14903,6 +15071,11 @@ minimal example:
   <td><code>explode</code></td>
   <td>VCF only. <code>1</code> (the default): split each sample column into one column per <code>FORMAT</code> key, and return a hoh keyed by <code>CHROM:POS:REF:ALT</code>; <code>0</code>: the file's own columns. See [VCF files](#vcf-files)</td>
   <td><code>explode =&gt; 0</code></td>
+</tr>
+<tr>
+  <td><code>colClasses</code></td>
+  <td>R's: store the columns you name as numbers rather than text, which takes about a third of the memory. A hash by column name, a list by position, or one class for every column. See [numeric columns](#numeric-columns-colclasses)</td>
+  <td><code>colClasses =&gt; { age =&gt; 'integer', bmi =&gt; 'numeric' }</code></td>
 </tr>
 </tbody>
 </table>
@@ -14932,12 +15105,48 @@ and, like Text::CSV_XS, filters can be applied in order to save RAM on big files
      'output.type' => 'aoh'
  );
 
+A key of C<filter> picks its column this way:
+
+=over
+
+=item * C<0> is the whole row: C<$_> is the array of the row's fields.
+
+=item * A column's name is that column. When the header repeats a name, it is the
+last column with it, the one whose value the row keeps.
+
+=item * Any other number is a field, counting from 1, as in Text::CSV_XS. A name
+is tried first, so a column called C<2021> is filtered on as
+C<< filter =E<gt> { 2021 =E<gt> ... } >> whatever its position.
+
+=item * Two keys for the same column, such as C<1> and its name, both run, in the
+order of their keys sorted as strings. A row is kept only if every filter
+returns true.
+
+=back
+
+Each filter is also passed the row's fields and a hash of the row by name, as
+C<$_[0]> and C<$_[1]>, and a change it makes to C<$_> is written back into the
+row. Inside a filter C<%_> is that same hash.
+
+The filters are called from the parser itself, so a filtered read costs little
+more than the filter calls: a 300,000-row, 5-column CSV read as an array of
+hashes takes about 0.25 s with one filter and 0.13 s with none. Up to 0.3212
+the same filtered read took 0.63 s.
 the default delimiter is C<,>
 Suffixes C<.csv>, C<.tsv> and C<.vcf> are automatically detected from file names, but if specified, are overridden by C<delim> and/or C<sep>. C<sep> is given priority. A C<.vcf> also changes the default C<comment>; see L</"VCF files">.
 
 A UTF-8 byte-order mark at the start of a text file, which Excel's "CSV UTF-8"
 export writes, is dropped rather than read as part of the first column's name,
-as pandas' C<read_csv> drops it. Lines always end at a newline whatever C<$/> is
+as pandas' C<read_csv> drops it.
+
+A file is read as bytes and its fields come back as bytes; nothing is decoded.
+Text you pass in to be compared with a field — a C<sep>, a C<comment> marker, an
+C<na.strings> token, a C<filter> key, C<row.names> or a C<sheet> name — is
+compared as UTF-8 bytes when perl holds it as characters, as it does under
+C<use utf8> or for a string you have decoded. So C<< 'na.strings' =E<gt> '—' >> under
+C<use utf8> matches an em dash in a UTF-8 file. A C<qr//> separator holding such
+characters matches each line as UTF-8 instead, and a line that is not valid
+UTF-8 is then an error rather than misread. Lines always end at a newline whatever C<$/> is
 set to, so a C<local $/;> in the calling code does not change what is read.
 Lines may end in LF or CRLF, and a file whose lines end in a bare CR, as
 classic Mac OS wrote them, is read as R and pandas read it. The start of the
@@ -15082,8 +15291,10 @@ checksum, or anything but NUL padding after the last member dies naming
 the file.
 
 =item * Both need only core modules (C<Compress::Raw::Zlib> and
-C<Compress::Raw::Bzip2>). xz, zstd and C<.zip> are not read (an C<.xlsx>,
-which is a zip archive, is).
+C<Compress::Raw::Bzip2>). xz, LZMA, zstd and lzop files are recognised by
+their first bytes, as R recognises them, and refused with a message that
+names the format, rather than read as text. C<.zip> is not read either (an
+C<.xlsx>, which is a zip archive, is).
 
 =item * L<C<write_table>|/"write_table"> writes C<.gz> and C<.bz2> files that read
 back through this.
@@ -15160,6 +15371,79 @@ skipped, but the first column is C<#CHROM> and nothing is split.
 The split is done in C. On a 3,499,678-record single-sample GATK C<.vcf.gz>,
 the exploded hoh takes 11.7 s, against 9.1 s for the file's own columns as a
 hoh, and an exploded aoa 8.4 s, against 7.0 s for the plain one.
+
+=head3 numeric columns (C<colClasses>)
+
+Every field is read as text unless you say otherwise. On a 64-bit perl a
+short number held as text costs about 70 bytes, and held as a number about
+24. C<colClasses> takes R's
+spelling and R's meaning: name the columns that are numbers, and they are
+stored as numbers as the file is read.
+
+ my $d = read_table('cohort.csv', colClasses => { age => 'integer', bmi => 'numeric' });
+ my $d = read_table('cohort.csv', colClasses => [ 'character', 'integer', 'numeric' ]);
+ my $d = read_table('counts.tsv', colClasses => 'integer');
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>class</th>
+  <th>stored as</th>
+  <th>accepts</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>numeric</code> (also <code>double</code>, <code>real</code>)</td>
+  <td>a floating-point number</td>
+  <td>a decimal number with an optional sign and exponent, or <code>Inf</code>, <code>Infinity</code> or <code>NaN</code> in any case, with blanks either side allowed</td>
+</tr>
+<tr>
+  <td><code>integer</code></td>
+  <td>an integer</td>
+  <td>an optional sign and digits, a leading blank allowed and nothing after them, within perl's integer range</td>
+</tr>
+<tr>
+  <td><code>character</code>, or <code>undef</code></td>
+  <td>the text</td>
+  <td>anything (the default)</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+=over
+
+=item * A hash names columns; one the file does not have is warned about, as R
+warns about it, and otherwise ignored. A list goes by position and is
+recycled when it is short, as R recycles it; a single class applies to every
+column. In a hoh the row-name column counts, and a declared one keys each row
+by its number, so C<004> becomes the row named C<4>.
+
+=item * An empty field and an C<na.strings> token are C<undef> in any column. C<NA> is
+missing only when C<na.strings> names it.
+
+=item * A field that is not a number of the kind declared is an error naming the
+column, the data row and the text, rather than a silent C<0> or C<undef>.
+
+=item * A C<filter> still sees each field's text; the rows it keeps are converted.
+
+=item * Where it differs from R: an integer may be anything that fits perl's integer
+(64 bits on most perls), where R's stops at 2147483647; a hexadecimal
+number such as C<0x1A> is refused, where R reads it; and an exponent must
+have digits, where R reads C<1e> as C<1>.
+
+=back
+
+On a 300,000-row CSV with three of its five columns declared, the table took
+74 MB instead of 116 MB, and the read 0.095 s instead of 0.086 s.
 
 =head3 missing values (C<na.strings> / C<na_values> / C<undef.val>)
 
@@ -15319,6 +15603,10 @@ work exactly as they do for text files:
  my $data = read_table('samples.xlsx', sheet => 'Results');   # by name
  my $data = read_table('samples.xlsx', sheet => 2);           # 1-based index
 
+A C<sheet> is looked up as a name first and as a number only when no sheet has
+that name. So in a workbook whose sheets are C<2024> and C<2023>,
+C<< sheet =E<gt> 2023 >> is the sheet named C<2023>, and C<< sheet =E<gt> 2 >> is the second.
+
 B<Multiple worksheets.> If the workbook has more than one worksheet and no
 C<sheet> is given, C<read_table> returns a B<hashref keyed by worksheet name>,
 each value being that sheet parsed just as a single table would be (honouring
@@ -15333,13 +15621,16 @@ returns that one table directly (not wrapped in a hash).
 Limitations: dates and times are returned as their raw Excel serial numbers
 (cell number formats are not applied); shared-string rich-text runs are
 concatenated into a single value; a cell that has formatting but no value is a
-blank, and blanks past a row's last value do not add columns (readxl and pandas
-leave them out too); and two things the format does not allow are
+blank, whether it is written C<< E<lt>c s="2"/E<gt> >>, C<< E<lt>c s="2"E<gt>E<lt>/cE<gt> >> or with an empty
+C<< E<lt>vE<gt>E<lt>/vE<gt> >>, and blanks past a row's last value do not add columns (readxl and
+pandas leave them out too); and two things the format does not allow are
 read as if they were not there — a cell reference past C<XFD>, the last of the
 16,384 columns a worksheet has, places the cell in the next column instead, and
 a numeric character reference above C<&#x7FFFFFFF;> is left in the text rather
 than decoded. The C<sep>, C<delim>, and C<comment> options do not
-apply to C<.xlsx> files. Tested in C<t/read_table.xlsx.t> and
+apply to C<.xlsx> files, so a cell such as C<#id> is read as it is. A workbook
+whose elements carry a namespace prefix (C<< E<lt>x:rowE<gt> >>, as the Open XML SDK writes
+them) is read like any other. Tested in C<t/read_table.xlsx.t> and
 C<t/read_table.xlsx.parser.t>.
 
 =head2 rename_cols
@@ -16715,9 +17006,9 @@ C<vals> accepts all three data-frame shapes and always returns a new arrayref of
 
 =item * B<The result is a copy.> Every value is duplicated, so mutating the returned array never touches C<$df>, and C<undef> slots are ordinary writable scalars.
 
-=item * B<< A missing cell is C<undef>. >> For AoH and HoH, a row that lacks the column (or isn't a hashref) yields C<undef> for that row.
+=item * B<< A missing cell is C<undef>. >> For AoH and HoH, a row that lacks the column yields C<undef> for that row, as long as at least one row has it. A row that isn't a hashref dies, naming the row.
 
-=item * B<An absent column is strict only for HoA.> Because a HoA column I<is> the structure, asking for a column the hash doesn't have dies. For AoH/HoH the column is per-row, so an entirely-absent column simply yields all-C<undef> (it is not an error). This asymmetry is deliberate; pass the column name carefully for AoH/HoH, since a typo returns C<undef>s rather than dying.
+=item * B<An absent column dies, in every shape.> When no row of an AoH or HoH has the column, or a HoA has no such key, C<vals> dies with C<vals: no column named "Method"> (and C<avals> with C<avals: no column named "Method">) instead of returning a column of C<undef>s, which almost always meant a misspelt name. A column that exists but holds only C<undef> is not absent, and neither is a HoA column whose value is not an arrayref, which dies with its own message.
 
 =item * B<< Empty frames return C<[]> >> -- an empty AoH or an empty hash both give a clean empty arrayref.
 

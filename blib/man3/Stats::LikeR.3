@@ -58,7 +58,7 @@
 .\" ========================================================================
 .\"
 .IX Title "Stats::LikeR 3"
-.TH Stats::LikeR 3 2026-10-02 "perl v5.44.0" "User Contributed Perl Documentation"
+.TH Stats::LikeR 3 2026-10-03 "perl v5.44.0" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -6301,12 +6301,44 @@ and, like Text::CSV_XS, filters can be applied in order to save RAM on big files
 \& );
 .Ve
 .PP
+A key of \f(CW\*(C`filter\*(C'\fR picks its column this way:
+.IP \(bu 4
+\&\f(CW0\fR is the whole row: \f(CW$_\fR is the array of the row\*(Aqs fields.
+.IP \(bu 4
+A column\*(Aqs name is that column. When the header repeats a name, it is the
+last column with it, the one whose value the row keeps.
+.IP \(bu 4
+Any other number is a field, counting from 1, as in Text::CSV_XS. A name
+is tried first, so a column called \f(CW2021\fR is filtered on as
+\&\f(CW\*(C`filter => { 2021 => ... }\*(C'\fR whatever its position.
+.IP \(bu 4
+Two keys for the same column, such as \f(CW1\fR and its name, both run, in the
+order of their keys sorted as strings. A row is kept only if every filter
+returns true.
+.PP
+Each filter is also passed the row\*(Aqs fields and a hash of the row by name, as
+\&\f(CW$_[0]\fR and \f(CW$_[1]\fR, and a change it makes to \f(CW$_\fR is written back into the
+row. Inside a filter \f(CW%_\fR is that same hash.
+.PP
+The filters are called from the parser itself, so a filtered read costs little
+more than the filter calls: a 300,000\-row, 5\-column CSV read as an array of
+hashes takes about 0.25 s with one filter and 0.13 s with none. Up to 0.3212
+the same filtered read took 0.63 s.
 the default delimiter is \f(CW\*(C`,\*(C'\fR
 Suffixes \f(CW\*(C`.csv\*(C'\fR, \f(CW\*(C`.tsv\*(C'\fR and \f(CW\*(C`.vcf\*(C'\fR are automatically detected from file names, but if specified, are overridden by \f(CW\*(C`delim\*(C'\fR and/or \f(CW\*(C`sep\*(C'\fR. \f(CW\*(C`sep\*(C'\fR is given priority. A \f(CW\*(C`.vcf\*(C'\fR also changes the default \f(CW\*(C`comment\*(C'\fR; see "VCF files".
 .PP
 A UTF\-8 byte\-order mark at the start of a text file, which Excel\*(Aqs "CSV UTF\-8"
 export writes, is dropped rather than read as part of the first column\*(Aqs name,
-as pandas\*(Aq \f(CW\*(C`read_csv\*(C'\fR drops it. Lines always end at a newline whatever \f(CW$/\fR is
+as pandas\*(Aq \f(CW\*(C`read_csv\*(C'\fR drops it.
+.PP
+A file is read as bytes and its fields come back as bytes; nothing is decoded.
+Text you pass in to be compared with a field — a \f(CW\*(C`sep\*(C'\fR, a \f(CW\*(C`comment\*(C'\fR marker, an
+\&\f(CW\*(C`na.strings\*(C'\fR token, a \f(CW\*(C`filter\*(C'\fR key, \f(CW\*(C`row.names\*(C'\fR or a \f(CW\*(C`sheet\*(C'\fR name — is
+compared as UTF\-8 bytes when perl holds it as characters, as it does under
+\&\f(CW\*(C`use utf8\*(C'\fR or for a string you have decoded. So \f(CW\*(Aqna.strings\*(Aq => \*(Aq—\*(Aq\fR under
+\&\f(CW\*(C`use utf8\*(C'\fR matches an em dash in a UTF\-8 file. A \f(CW\*(C`qr//\*(C'\fR separator holding such
+characters matches each line as UTF\-8 instead, and a line that is not valid
+UTF\-8 is then an error rather than misread. Lines always end at a newline whatever \f(CW$/\fR is
 set to, so a \f(CW\*(C`local $/;\*(C'\fR in the calling code does not change what is read.
 Lines may end in LF or CRLF, and a file whose lines end in a bare CR, as
 classic Mac OS wrote them, is read as R and pandas read it. The start of the
@@ -6452,8 +6484,10 @@ checksum, or anything but NUL padding after the last member dies naming
 the file.
 .IP \(bu 4
 Both need only core modules (\f(CW\*(C`Compress::Raw::Zlib\*(C'\fR and
-\&\f(CW\*(C`Compress::Raw::Bzip2\*(C'\fR). xz, zstd and \f(CW\*(C`.zip\*(C'\fR are not read (an \f(CW\*(C`.xlsx\*(C'\fR,
-which is a zip archive, is).
+\&\f(CW\*(C`Compress::Raw::Bzip2\*(C'\fR). xz, LZMA, zstd and lzop files are recognised by
+their first bytes, as R recognises them, and refused with a message that
+names the format, rather than read as text. \f(CW\*(C`.zip\*(C'\fR is not read either (an
+\&\f(CW\*(C`.xlsx\*(C'\fR, which is a zip archive, is).
 .IP \(bu 4
 \&\f(CW\*(C`write_table\*(C'\fR writes \f(CW\*(C`.gz\*(C'\fR and \f(CW\*(C`.bz2\*(C'\fR files that read
 back through this.
@@ -6527,6 +6561,43 @@ skipped, but the first column is \f(CW\*(C`#CHROM\*(C'\fR and nothing is split.
 The split is done in C. On a 3,499,678\-record single\-sample GATK \f(CW\*(C`.vcf.gz\*(C'\fR,
 the exploded hoh takes 11.7 s, against 9.1 s for the file\*(Aqs own columns as a
 hoh, and an exploded aoa 8.4 s, against 7.0 s for the plain one.
+.PP
+\fInumeric columns (\fR\f(CI\*(C`colClasses\*(C'\fR\fI)\fR
+.IX Subsection "numeric columns (colClasses)"
+.PP
+Every field is read as text unless you say otherwise. On a 64\-bit perl a
+short number held as text costs about 70 bytes, and held as a number about
+24. \f(CW\*(C`colClasses\*(C'\fR takes R\*(Aqs
+spelling and R\*(Aqs meaning: name the columns that are numbers, and they are
+stored as numbers as the file is read.
+.PP
+.Vb 3
+\& my $d = read_table(\*(Aqcohort.csv\*(Aq, colClasses => { age => \*(Aqinteger\*(Aq, bmi => \*(Aqnumeric\*(Aq });
+\& my $d = read_table(\*(Aqcohort.csv\*(Aq, colClasses => [ \*(Aqcharacter\*(Aq, \*(Aqinteger\*(Aq, \*(Aqnumeric\*(Aq ]);
+\& my $d = read_table(\*(Aqcounts.tsv\*(Aq, colClasses => \*(Aqinteger\*(Aq);
+.Ve
+.IP \(bu 4
+A hash names columns; one the file does not have is warned about, as R
+warns about it, and otherwise ignored. A list goes by position and is
+recycled when it is short, as R recycles it; a single class applies to every
+column. In a hoh the row\-name column counts, and a declared one keys each row
+by its number, so \f(CW004\fR becomes the row named \f(CW4\fR.
+.IP \(bu 4
+An empty field and an \f(CW\*(C`na.strings\*(C'\fR token are \f(CW\*(C`undef\*(C'\fR in any column. \f(CW\*(C`NA\*(C'\fR is
+missing only when \f(CW\*(C`na.strings\*(C'\fR names it.
+.IP \(bu 4
+A field that is not a number of the kind declared is an error naming the
+column, the data row and the text, rather than a silent \f(CW0\fR or \f(CW\*(C`undef\*(C'\fR.
+.IP \(bu 4
+A \f(CW\*(C`filter\*(C'\fR still sees each field\*(Aqs text; the rows it keeps are converted.
+.IP \(bu 4
+Where it differs from R: an integer may be anything that fits perl\*(Aqs integer
+(64 bits on most perls), where R\*(Aqs stops at 2147483647; a hexadecimal
+number such as \f(CW0x1A\fR is refused, where R reads it; and an exponent must
+have digits, where R reads \f(CW\*(C`1e\*(C'\fR as \f(CW1\fR.
+.PP
+On a 300,000\-row CSV with three of its five columns declared, the table took
+74 MB instead of 116 MB, and the read 0.095 s instead of 0.086 s.
 .PP
 \fImissing values (\fR\f(CI\*(C`na.strings\*(C'\fR\fI / \fR\f(CI\*(C`na_values\*(C'\fR\fI / \fR\f(CI\*(C`undef.val\*(C'\fR\fI)\fR
 .IX Subsection "missing values (na.strings / na_values / undef.val)"
@@ -6666,6 +6737,10 @@ work exactly as they do for text files:
 \& my $data = read_table(\*(Aqsamples.xlsx\*(Aq, sheet => 2);           # 1\-based index
 .Ve
 .PP
+A \f(CW\*(C`sheet\*(C'\fR is looked up as a name first and as a number only when no sheet has
+that name. So in a workbook whose sheets are \f(CW2024\fR and \f(CW2023\fR,
+\&\f(CW\*(C`sheet => 2023\*(C'\fR is the sheet named \f(CW2023\fR, and \f(CW\*(C`sheet => 2\*(C'\fR is the second.
+.PP
 \&\fBMultiple worksheets.\fR If the workbook has more than one worksheet and no
 \&\f(CW\*(C`sheet\*(C'\fR is given, \f(CW\*(C`read_table\*(C'\fR returns a \fBhashref keyed by worksheet name\fR,
 each value being that sheet parsed just as a single table would be (honouring
@@ -6682,13 +6757,16 @@ returns that one table directly (not wrapped in a hash).
 Limitations: dates and times are returned as their raw Excel serial numbers
 (cell number formats are not applied); shared\-string rich\-text runs are
 concatenated into a single value; a cell that has formatting but no value is a
-blank, and blanks past a row\*(Aqs last value do not add columns (readxl and pandas
-leave them out too); and two things the format does not allow are
+blank, whether it is written \f(CW\*(C`<c s="2"/>\*(C'\fR, \f(CW\*(C`<c s="2"></c>\*(C'\fR or with an empty
+\&\f(CW\*(C`<v></v>\*(C'\fR, and blanks past a row\*(Aqs last value do not add columns (readxl and
+pandas leave them out too); and two things the format does not allow are
 read as if they were not there — a cell reference past \f(CW\*(C`XFD\*(C'\fR, the last of the
 16,384 columns a worksheet has, places the cell in the next column instead, and
 a numeric character reference above \f(CW\*(C`&#x7FFFFFFF;\*(C'\fR is left in the text rather
 than decoded. The \f(CW\*(C`sep\*(C'\fR, \f(CW\*(C`delim\*(C'\fR, and \f(CW\*(C`comment\*(C'\fR options do not
-apply to \f(CW\*(C`.xlsx\*(C'\fR files. Tested in \f(CW\*(C`t/read_table.xlsx.t\*(C'\fR and
+apply to \f(CW\*(C`.xlsx\*(C'\fR files, so a cell such as \f(CW\*(C`#id\*(C'\fR is read as it is. A workbook
+whose elements carry a namespace prefix (\f(CW\*(C`<x:row>\*(C'\fR, as the Open XML SDK writes
+them) is read like any other. Tested in \f(CW\*(C`t/read_table.xlsx.t\*(C'\fR and
 \&\f(CW\*(C`t/read_table.xlsx.parser.t\*(C'\fR.
 .SS rename_cols
 .IX Subsection "rename_cols"
@@ -7743,9 +7821,9 @@ Extract a single column from a data frame as a flat array reference, similar to 
 .IP \(bu 4
 \&\fBThe result is a copy.\fR Every value is duplicated, so mutating the returned array never touches \f(CW$df\fR, and \f(CW\*(C`undef\*(C'\fR slots are ordinary writable scalars.
 .IP \(bu 4
-\&\fBA missing cell is \fR\f(CB\*(C`undef\*(C'\fR\fB.\fR For AoH and HoH, a row that lacks the column (or isn\*(Aqt a hashref) yields \f(CW\*(C`undef\*(C'\fR for that row.
+\&\fBA missing cell is \fR\f(CB\*(C`undef\*(C'\fR\fB.\fR For AoH and HoH, a row that lacks the column yields \f(CW\*(C`undef\*(C'\fR for that row, as long as at least one row has it. A row that isn\*(Aqt a hashref dies, naming the row.
 .IP \(bu 4
-\&\fBAn absent column is strict only for HoA.\fR Because a HoA column \fIis\fR the structure, asking for a column the hash doesn\*(Aqt have dies. For AoH/HoH the column is per\-row, so an entirely\-absent column simply yields all\-\f(CW\*(C`undef\*(C'\fR (it is not an error). This asymmetry is deliberate; pass the column name carefully for AoH/HoH, since a typo returns \f(CW\*(C`undef\*(C'\fRs rather than dying.
+\&\fBAn absent column dies, in every shape.\fR When no row of an AoH or HoH has the column, or a HoA has no such key, \f(CW\*(C`vals\*(C'\fR dies with \f(CW\*(C`vals: no column named "Method"\*(C'\fR (and \f(CW\*(C`avals\*(C'\fR with \f(CW\*(C`avals: no column named "Method"\*(C'\fR) instead of returning a column of \f(CW\*(C`undef\*(C'\fRs, which almost always meant a misspelt name. A column that exists but holds only \f(CW\*(C`undef\*(C'\fR is not absent, and neither is a HoA column whose value is not an arrayref, which dies with its own message.
 .IP \(bu 4
 \&\fBEmpty frames return \fR\f(CB\*(C`[]\*(C'\fR \-\- an empty AoH or an empty hash both give a clean empty arrayref.
 .IP \(bu 4

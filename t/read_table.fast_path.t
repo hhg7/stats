@@ -107,9 +107,9 @@ my @cases = (
 	[ 'auto.row.names, commented header', $f{autocmt}, [ 'auto.row.names' => 1 ] ],
 	[ 'na.strings, 8 strings',   $f{empty},   [ 'na.strings' => \@na8 ] ],
 	[ 'na.strings, 9 strings',   $f{empty},   [ 'na.strings' => \@na9 ] ],
-	# a character key that perl stores downgraded matches the Latin-1 byte; one
-	# it keeps in UTF-8 form matches no byte string, the euro sign's bytes
-	# included -- as the perl path's hash lookup has always done
+	# a character key that perl holds as bytes matches the Latin-1 byte; one it
+	# holds in UTF-8 form is encoded to UTF-8 bytes, so the euro sign matches its
+	# three bytes in the file (up to 0.3213 it matched nothing, on both paths)
 	[ 'na.strings, character keys', $f{bytes}, [ 'na.strings' => [ "\x{e9}", "\x{20ac}" ] ] ],
 	[ 'na.strings, byte keys',   $f{bytes},   [ 'na.strings' => [ "\xe2\x82\xac", 'NA' ] ] ],
 );
@@ -260,8 +260,8 @@ for my $otype (qw(aoa aoh hoa hoh)) {
 	is_deeply $r->[0], [ [qw(a b)], [1, undef], [undef, 2], [undef, undef], [undef, 'x'] ],
 		'na.strings, 8 strings: the scan finds NA, and x is not one of them';
 	$r = read_all($f{bytes}, 'output.type' => 'aoa', 'na.strings' => [ "\x{e9}", "\x{20ac}" ]);
-	is_deeply $r->[0], [ [qw(a b)], [undef, 1], ["\xe2\x82\xac", 2], ['x', 3], ['NA', 4] ],
-		'na.strings, character keys: e-acute matches its byte, the euro sign nothing';
+	is_deeply $r->[0], [ [qw(a b)], [undef, 1], [undef, 2], ['x', 3], ['NA', 4] ],
+		'na.strings, character keys: e-acute matches its byte, the euro sign its UTF-8 bytes';
 	$r = read_all($f{bytes}, 'output.type' => 'aoa', 'na.strings' => [ "\xe2\x82\xac", 'NA' ]);
 	is_deeply $r->[0], [ [qw(a b)], ["\xe9", 1], [undef, 2], ['x', 3], [undef, 4] ],
 		'na.strings, byte keys: the euro sign\'s bytes match their own cell';

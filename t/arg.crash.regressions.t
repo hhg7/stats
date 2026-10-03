@@ -69,6 +69,11 @@
 #     an uninitialised pointer. sample() shuffled over the same count and drew
 #     unset slots.
 #
+# 13. merge() segfaulted on a suffixes array with a hole in it
+#     (my @s; $s[1] = '.y'): the two elements were dereferenced straight out
+#     of av_fetch(), which returns NULL for a hole.  A hole is now the undef it
+#     prints as, as an explicit undef element already was.
+#
 # Provenance for every R behaviour quoted here: R 4.6.1 (2026-06-24).
 #   * cor.test(c(1,1,1,1), c(1,2,3,4), method = m) for m in
 #     pearson / kendall / spearman -> estimate NA, statistic NA, p-value NA;
@@ -431,6 +436,14 @@ sub child_result {
 	              . q{ lock_keys(%h, qw(a b c d e f)); delete $h{c};}
 	              . q{ for (1 .. 50) { my $r = sample(\%h, 3); die "wrong keys" if keys %$r != 3 || exists $r->{c} }}), 'ok',
 	   'sample: a locked hash with a deleted key draws only keys that are there');
+}
+
+# --- 13. merge: a hole in suffixes -----------------------------------------
+{
+	is(child_result(q{my @s; $s[1] = ".y";}
+	              . q{ my $r = merge([{ k => 1, v => 1 }], [{ k => 1, v => 2 }], on => "k", suffixes => \@s);}
+	              . q{ die "wrong columns" unless join(",", sort keys %{ $r->[0] }) eq "k,v,v.y"}), 'ok',
+	   'merge: a hole in suffixes reads as undef, not a SIGSEGV');
 }
 
 done_testing();

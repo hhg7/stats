@@ -8741,13 +8741,13 @@ minimal example:
 </tr>
 <tr>
   <td><code>filter</code></td>
-  <td>Only take in rows matching a filter</td>
+  <td>Only take in rows matching a filter; see below for how a key picks its column</td>
   <td><code>filter =&gt; { Sex =&gt; sub {$_ eq 'f'} }</code></td>
 </tr>
 <tr>
   <td><code>row.names</code></td>
-  <td>include row names in retrieved data; off by default</td>
-  <td></td>
+  <td><code>hoh</code> only: the column whose values key the rows (default: the first column). An error with any other <code>output.type</code>, where the column is read as an ordinary one</td>
+  <td><code>'row.names' =&gt; 'id'</code></td>
 </tr>
 <tr>
   <td><code>auto.row.names</code></td>
@@ -8781,7 +8781,7 @@ minimal example:
 </tr>
 <tr>
   <td><code>sheet</code></td>
-  <td>which worksheet to read from an <code>.xlsx</code> file: a 1-based index or a sheet name (default: first sheet). Ignored for text files</td>
+  <td>which worksheet to read from an <code>.xlsx</code> file: a sheet name, or a 1-based index when no sheet has that name (default: first sheet). An error for any other file</td>
   <td><code>sheet =&gt; 'Sheet2'</code></td>
 </tr>
 <tr>
@@ -8803,6 +8803,11 @@ minimal example:
   <td><code>explode</code></td>
   <td>VCF only. <code>1</code> (the default): split each sample column into one column per <code>FORMAT</code> key, and return a hoh keyed by <code>CHROM:POS:REF:ALT</code>; <code>0</code>: the file's own columns. See [VCF files](#vcf-files)</td>
   <td><code>explode =&gt; 0</code></td>
+</tr>
+<tr>
+  <td><code>colClasses</code></td>
+  <td>R's: store the columns you name as numbers rather than text, which takes about a third of the memory. A hash by column name, a list by position, or one class for every column. See [numeric columns](#numeric-columns-colclasses)</td>
+  <td><code>colClasses =&gt; { age =&gt; 'integer', bmi =&gt; 'numeric' }</code></td>
 </tr>
 </tbody>
 </table>
@@ -8832,12 +8837,48 @@ and, like Text::CSV_XS, filters can be applied in order to save RAM on big files
      'output.type' => 'aoh'
  );
 
+A key of C<filter> picks its column this way:
+
+=over
+
+=item * C<0> is the whole row: C<$_> is the array of the row's fields.
+
+=item * A column's name is that column. When the header repeats a name, it is the
+last column with it, the one whose value the row keeps.
+
+=item * Any other number is a field, counting from 1, as in Text::CSV_XS. A name
+is tried first, so a column called C<2021> is filtered on as
+C<< filter =E<gt> { 2021 =E<gt> ... } >> whatever its position.
+
+=item * Two keys for the same column, such as C<1> and its name, both run, in the
+order of their keys sorted as strings. A row is kept only if every filter
+returns true.
+
+=back
+
+Each filter is also passed the row's fields and a hash of the row by name, as
+C<$_[0]> and C<$_[1]>, and a change it makes to C<$_> is written back into the
+row. Inside a filter C<%_> is that same hash.
+
+The filters are called from the parser itself, so a filtered read costs little
+more than the filter calls: a 300,000-row, 5-column CSV read as an array of
+hashes takes about 0.25 s with one filter and 0.13 s with none. Up to 0.3212
+the same filtered read took 0.63 s.
 the default delimiter is C<,>
 Suffixes C<.csv>, C<.tsv> and C<.vcf> are automatically detected from file names, but if specified, are overridden by C<delim> and/or C<sep>. C<sep> is given priority. A C<.vcf> also changes the default C<comment>; see L</"VCF files">.
 
 A UTF-8 byte-order mark at the start of a text file, which Excel's "CSV UTF-8"
 export writes, is dropped rather than read as part of the first column's name,
-as pandas' C<read_csv> drops it. Lines always end at a newline whatever C<$/> is
+as pandas' C<read_csv> drops it.
+
+A file is read as bytes and its fields come back as bytes; nothing is decoded.
+Text you pass in to be compared with a field — a C<sep>, a C<comment> marker, an
+C<na.strings> token, a C<filter> key, C<row.names> or a C<sheet> name — is
+compared as UTF-8 bytes when perl holds it as characters, as it does under
+C<use utf8> or for a string you have decoded. So C<< 'na.strings' =E<gt> '—' >> under
+C<use utf8> matches an em dash in a UTF-8 file. A C<qr//> separator holding such
+characters matches each line as UTF-8 instead, and a line that is not valid
+UTF-8 is then an error rather than misread. Lines always end at a newline whatever C<$/> is
 set to, so a C<local $/;> in the calling code does not change what is read.
 Lines may end in LF or CRLF, and a file whose lines end in a bare CR, as
 classic Mac OS wrote them, is read as R and pandas read it. The start of the
@@ -8982,8 +9023,10 @@ checksum, or anything but NUL padding after the last member dies naming
 the file.
 
 =item * Both need only core modules (C<Compress::Raw::Zlib> and
-C<Compress::Raw::Bzip2>). xz, zstd and C<.zip> are not read (an C<.xlsx>,
-which is a zip archive, is).
+C<Compress::Raw::Bzip2>). xz, LZMA, zstd and lzop files are recognised by
+their first bytes, as R recognises them, and refused with a message that
+names the format, rather than read as text. C<.zip> is not read either (an
+C<.xlsx>, which is a zip archive, is).
 
 =item * L<C<write_table>|/"write_table"> writes C<.gz> and C<.bz2> files that read
 back through this.
@@ -9060,6 +9103,79 @@ skipped, but the first column is C<#CHROM> and nothing is split.
 The split is done in C. On a 3,499,678-record single-sample GATK C<.vcf.gz>,
 the exploded hoh takes 11.7 s, against 9.1 s for the file's own columns as a
 hoh, and an exploded aoa 8.4 s, against 7.0 s for the plain one.
+
+=head3 numeric columns (C<colClasses>)
+
+Every field is read as text unless you say otherwise. On a 64-bit perl a
+short number held as text costs about 70 bytes, and held as a number about
+24. C<colClasses> takes R's
+spelling and R's meaning: name the columns that are numbers, and they are
+stored as numbers as the file is read.
+
+ my $d = read_table('cohort.csv', colClasses => { age => 'integer', bmi => 'numeric' });
+ my $d = read_table('cohort.csv', colClasses => [ 'character', 'integer', 'numeric' ]);
+ my $d = read_table('counts.tsv', colClasses => 'integer');
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>class</th>
+  <th>stored as</th>
+  <th>accepts</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>numeric</code> (also <code>double</code>, <code>real</code>)</td>
+  <td>a floating-point number</td>
+  <td>a decimal number with an optional sign and exponent, or <code>Inf</code>, <code>Infinity</code> or <code>NaN</code> in any case, with blanks either side allowed</td>
+</tr>
+<tr>
+  <td><code>integer</code></td>
+  <td>an integer</td>
+  <td>an optional sign and digits, a leading blank allowed and nothing after them, within perl's integer range</td>
+</tr>
+<tr>
+  <td><code>character</code>, or <code>undef</code></td>
+  <td>the text</td>
+  <td>anything (the default)</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+=over
+
+=item * A hash names columns; one the file does not have is warned about, as R
+warns about it, and otherwise ignored. A list goes by position and is
+recycled when it is short, as R recycles it; a single class applies to every
+column. In a hoh the row-name column counts, and a declared one keys each row
+by its number, so C<004> becomes the row named C<4>.
+
+=item * An empty field and an C<na.strings> token are C<undef> in any column. C<NA> is
+missing only when C<na.strings> names it.
+
+=item * A field that is not a number of the kind declared is an error naming the
+column, the data row and the text, rather than a silent C<0> or C<undef>.
+
+=item * A C<filter> still sees each field's text; the rows it keeps are converted.
+
+=item * Where it differs from R: an integer may be anything that fits perl's integer
+(64 bits on most perls), where R's stops at 2147483647; a hexadecimal
+number such as C<0x1A> is refused, where R reads it; and an exponent must
+have digits, where R reads C<1e> as C<1>.
+
+=back
+
+On a 300,000-row CSV with three of its five columns declared, the table took
+74 MB instead of 116 MB, and the read 0.095 s instead of 0.086 s.
 
 =head3 missing values (C<na.strings> / C<na_values> / C<undef.val>)
 
@@ -9219,6 +9335,10 @@ work exactly as they do for text files:
  my $data = read_table('samples.xlsx', sheet => 'Results');   # by name
  my $data = read_table('samples.xlsx', sheet => 2);           # 1-based index
 
+A C<sheet> is looked up as a name first and as a number only when no sheet has
+that name. So in a workbook whose sheets are C<2024> and C<2023>,
+C<< sheet =E<gt> 2023 >> is the sheet named C<2023>, and C<< sheet =E<gt> 2 >> is the second.
+
 B<Multiple worksheets.> If the workbook has more than one worksheet and no
 C<sheet> is given, C<read_table> returns a B<hashref keyed by worksheet name>,
 each value being that sheet parsed just as a single table would be (honouring
@@ -9233,13 +9353,16 @@ returns that one table directly (not wrapped in a hash).
 Limitations: dates and times are returned as their raw Excel serial numbers
 (cell number formats are not applied); shared-string rich-text runs are
 concatenated into a single value; a cell that has formatting but no value is a
-blank, and blanks past a row's last value do not add columns (readxl and pandas
-leave them out too); and two things the format does not allow are
+blank, whether it is written C<< E<lt>c s="2"/E<gt> >>, C<< E<lt>c s="2"E<gt>E<lt>/cE<gt> >> or with an empty
+C<< E<lt>vE<gt>E<lt>/vE<gt> >>, and blanks past a row's last value do not add columns (readxl and
+pandas leave them out too); and two things the format does not allow are
 read as if they were not there — a cell reference past C<XFD>, the last of the
 16,384 columns a worksheet has, places the cell in the next column instead, and
 a numeric character reference above C<&#x7FFFFFFF;> is left in the text rather
 than decoded. The C<sep>, C<delim>, and C<comment> options do not
-apply to C<.xlsx> files. Tested in C<t/read_table.xlsx.t> and
+apply to C<.xlsx> files, so a cell such as C<#id> is read as it is. A workbook
+whose elements carry a namespace prefix (C<< E<lt>x:rowE<gt> >>, as the Open XML SDK writes
+them) is read like any other. Tested in C<t/read_table.xlsx.t> and
 C<t/read_table.xlsx.parser.t>.
 
 =head2 rename_cols
@@ -10615,9 +10738,9 @@ C<vals> accepts all three data-frame shapes and always returns a new arrayref of
 
 =item * B<The result is a copy.> Every value is duplicated, so mutating the returned array never touches C<$df>, and C<undef> slots are ordinary writable scalars.
 
-=item * B<< A missing cell is C<undef>. >> For AoH and HoH, a row that lacks the column (or isn't a hashref) yields C<undef> for that row.
+=item * B<< A missing cell is C<undef>. >> For AoH and HoH, a row that lacks the column yields C<undef> for that row, as long as at least one row has it. A row that isn't a hashref dies, naming the row.
 
-=item * B<An absent column is strict only for HoA.> Because a HoA column I<is> the structure, asking for a column the hash doesn't have dies. For AoH/HoH the column is per-row, so an entirely-absent column simply yields all-C<undef> (it is not an error). This asymmetry is deliberate; pass the column name carefully for AoH/HoH, since a typo returns C<undef>s rather than dying.
+=item * B<An absent column dies, in every shape.> When no row of an AoH or HoH has the column, or a HoA has no such key, C<vals> dies with C<vals: no column named "Method"> (and C<avals> with C<avals: no column named "Method">) instead of returning a column of C<undef>s, which almost always meant a misspelt name. A column that exists but holds only C<undef> is not absent, and neither is a HoA column whose value is not an arrayref, which dies with its own message.
 
 =item * B<< Empty frames return C<[]> >> -- an empty AoH or an empty hash both give a clean empty arrayref.
 
