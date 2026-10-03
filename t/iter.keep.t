@@ -92,7 +92,7 @@ my $counts = { map { my $r = $_; ( "row$r" => { map { ( "c$_" => 10 * $r + $_ ) 
 		resumes_ok( "col2col HoH ($what)", $h, sub { col2col( $hoh, 'sum', [ 'x1', 'x2' ] ) } );
 		resumes_ok( "lm HoH ($what)", $h, sub { lm( 'formula' => 'x1 ~ x2', 'data' => $hoh ) } );
 		resumes_ok( "merge HoH ($what)", $h, sub { merge( $hoh, $hoh, 'on' => 'id' ) } );
-		resumes_ok( "write_table HoH ($what)", $h, sub { write_table( $hoh, File::Spec->catfile( $dir, 'hoh.tsv' ), 'quiet' => 1, 'row.names' => 'row' ) } );
+		resumes_ok( "write_table HoH ($what)", $h, sub { write_table( $hoh, File::Spec->catfile( $dir, 'hoh.tsv' ), 'quiet' => 1, 'row_names' => 'row' ) } );
 	}
 }
 # the rows of an AoH

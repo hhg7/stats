@@ -398,7 +398,7 @@ sub mk {
 	# empty array per column, which is what it did before the parser moved into
 	# XS. (A header-only CSV does keep the columns; the two have never agreed,
 	# and making them agree is a change to read_table, not to this parser.)
-	is_deeply( read_table($hdr, 'output.type' => 'hoa'), {},
+	is_deeply( read_table($hdr, 'output_type' => 'hoa'), {},
 		'a header with no data rows is an empty hash as a hoa' );
 }
 
@@ -436,22 +436,22 @@ sub mk {
 		[ { name => 'alpha', n => '1', tag => undef },
 		  { name => 'beta',  n => '2', tag => 'alpha' } ],
 		'aoh through the XS fast path' );
-	is_deeply( read_table($f, 'output.type' => 'hoa'),
+	is_deeply( read_table($f, 'output_type' => 'hoa'),
 		{ name => ['alpha','beta'], n => ['1','2'], tag => [undef,'alpha'] },
 		'hoa through the XS fast path' );
 	is_deeply( read_table($f, filter => { 0 => sub { 1 } }), $aoh,
 		'a filter keeps every row through the perl callback path' );
 	my $hoh = { alpha => { n => '1', tag => undef },
 	            beta  => { n => '2', tag => 'alpha' } };
-	is_deeply( read_table($f, 'output.type' => 'hoh', 'row.names' => 'name'),
+	is_deeply( read_table($f, 'output_type' => 'hoh', 'row_names' => 'name'),
 		$hoh, 'hoh through the XS fast path' );
-	is_deeply( read_table($f, 'output.type' => 'hoh', 'row.names' => 'name',
+	is_deeply( read_table($f, 'output_type' => 'hoh', 'row_names' => 'name',
 			filter => { 0 => sub { 1 } }),
 		$hoh, 'hoh through the perl callback path' );
-	is_deeply( read_table($f, 'na.strings' => 'alpha'),
+	is_deeply( read_table($f, 'na_strings' => 'alpha'),
 		[ { name => undef, n => '1', tag => undef },
 		  { name => 'beta', n => '2', tag => undef } ],
-		'na.strings is applied by the fast path too' );
+		'na_strings is applied by the fast path too' );
 }
 
 # A gap in a row is undef once the fast path builds the rows -- made as undef
@@ -462,10 +462,10 @@ sub mk {
 	         . '<row r="2"><c r="A2"><v>1</v></c><c r="C2"><v>3</v></c></row>'
 	         . '<row r="3"><c r="B3"><v>5</v></c></row>',
 	           '<si><t>a</t></si><si><t>b</t></si><si><t>c</t></si>');
-	is_deeply( read_table($f, 'output.type' => 'aoa'),
+	is_deeply( read_table($f, 'output_type' => 'aoa'),
 		[ [qw(a b c)], [1, undef, 3], [undef, 5, undef] ],
 		'a gap is undef in an aoa' );
-	is_deeply( read_table($f, 'output.type' => 'hoa'),
+	is_deeply( read_table($f, 'output_type' => 'hoa'),
 		{ a => [1, undef], b => [undef, 5], c => [3, undef] },
 		'a gap is undef in a hoa' );
 	my @seen;
@@ -529,10 +529,10 @@ sub inline_rows {
 	is_deeply( read_table($plain), $want, 'the unprefixed workbook, for comparison' );
 	is_deeply( read_table($pref),  $want, 'a workbook whose elements carry a namespace prefix' );
 	for my $otype (qw(aoa hoa)) {
-		is_deeply( read_table($pref, 'output.type' => $otype),
-			read_table($plain, 'output.type' => $otype), "... and as $otype" );
+		is_deeply( read_table($pref, 'output_type' => $otype),
+			read_table($plain, 'output_type' => $otype), "... and as $otype" );
 	}
-	is_deeply( read_table($pref, 'output.type' => 'hoh', 'row.names' => 'b'),
+	is_deeply( read_table($pref, 'output_type' => 'hoh', 'row_names' => 'b'),
 		{ rich => { a => '1.5' }, 'x & y' => { a => undef } }, '... and as hoh' );
 	is_deeply( read_table($pref, filter => { 0 => sub { 1 } }), $want, '... and through the callback path' );
 	is_deeply( Stats::LikeR::_xlsx_sheets($pref),
@@ -555,7 +555,7 @@ sub inline_rows {
 	           '<si><t></t></si>');
 	is_deeply( read_table($f), [ { a => 1 }, { a => 2 } ],
 		'empty open cells past the last value add no column' );
-	is_deeply( read_table($f, 'output.type' => 'aoa'), [ ['a'], [1], [2] ],
+	is_deeply( read_table($f, 'output_type' => 'aoa'), [ ['a'], [1], [2] ],
 		'... as an aoa' );
 	is_deeply( read_table($f, filter => { 0 => sub { 1 } }), [ { a => 1 }, { a => 2 } ],
 		'... and through the callback path' );
@@ -658,11 +658,11 @@ SKIP: {
 	# The filter is a plain sub, and no qr// is evaluated inside these blocks:
 	# 5.10.0's pp_qr() leaks an SV every time one is, and CPAN smokers run it.
 	no_leaks_ok { read_table($f) }                               'no leaks: aoh fast path';
-	no_leaks_ok { read_table($f, 'output.type' => 'hoa') }       'no leaks: hoa fast path';
+	no_leaks_ok { read_table($f, 'output_type' => 'hoa') }       'no leaks: hoa fast path';
 	no_leaks_ok { read_table($f, filter => { 0 => sub { 1 } }) } 'no leaks: callback path';
 	no_leaks_ok { read_table($dup) }                             'no leaks: repeated column reference';
-	no_leaks_ok { read_table($f, 'output.type' => 'hoh') }       'no leaks: hoh fast path';
-	no_leaks_ok { read_table($f, 'output.type' => 'aoa') }       'no leaks: aoa fast path, gaps included';
+	no_leaks_ok { read_table($f, 'output_type' => 'hoh') }       'no leaks: hoh fast path';
+	no_leaks_ok { read_table($f, 'output_type' => 'aoa') }       'no leaks: aoa fast path, gaps included';
 }
 
 done_testing;

@@ -74,7 +74,7 @@ my %want = (
 	s  => [ ['a', 'PV'], ['b', 'PV'], [undef, 'undef'], ['q,r', 'PV'] ],
 );
 for my $shape (qw(aoh hoa hoh aoa)) {
-	my $g = both($csv, 'output.type' => $shape, colClasses => { id => 'integer', x => 'numeric', n => 'integer' });
+	my $g = both($csv, 'output_type' => $shape, colClasses => { id => 'integer', x => 'numeric', n => 'integer' });
 	same($g, $shape);
 	my $r = $g->{parser}{r};
 	for my $c (qw(id x n s)) {
@@ -154,7 +154,7 @@ for my $shape (qw(aoh hoa hoh aoa)) {
 	}
 	my ($max, $min) = $Config{ivsize} >= 8
 		? ('9223372036854775807', '-9223372036854775808') : ('2147483647', '-2147483648');
-	my $r = read_table(fixture("x\n$max\n$min\n"), 'output.type' => 'hoa', colClasses => 'integer');
+	my $r = read_table(fixture("x\n$max\n$min\n"), 'output_type' => 'hoa', colClasses => 'integer');
 	is_deeply([ map { "$_" } @{ $r->{x} } ], [$max, $min], "integer: IV_MAX and IV_MIN ($Config{ivsize}-byte IV)");
 	(my $over = $max) =~ s/7$/8/;
 	eval { read_table(fixture("x\n$over\n"), colClasses => 'integer') };
@@ -167,10 +167,10 @@ for my $shape (qw(aoh hoa hoh aoa)) {
 # --- missing values ---------------------------------------------------------------
 {
 	my $f = fixture("x,y\n,NA\nNA,\n.,1\n");
-	my $g = both($f, 'na.strings' => ['NA', '.'], colClasses => 'integer', 'output.type' => 'hoa');
-	same($g, 'na.strings');
+	my $g = both($f, 'na_strings' => ['NA', '.'], colClasses => 'integer', 'output_type' => 'hoa');
+	same($g, 'na_strings');
 	is_deeply($g->{parser}{r}, { x => [undef, undef, undef], y => [undef, undef, 1] },
-	          'an empty field and an na.strings token are undef in a declared column');
+	          'an empty field and an na_strings token are undef in a declared column');
 }
 
 # --- the row the error is on, across quoted and multi-line fields -------------------
@@ -200,7 +200,7 @@ for my $shape (qw(aoh hoa hoh aoa)) {
 	like($g->{parser}{err}, qr/^read_table: colClasses makes column 'v' \(field 2\) numeric, but data row 2 of \S+ has 'none' there$/,
 	     'text a filter writes back into a declared column is refused like text read');
 	for my $shape (qw(hoa hoh aoa)) {
-		$g = both($f, 'output.type' => $shape, colClasses => 'integer', filter => { 0 => sub { 1 } });
+		$g = both($f, 'output_type' => $shape, colClasses => 'integer', filter => { 0 => sub { 1 } });
 		same($g, "filter, $shape");
 	}
 }
@@ -214,10 +214,10 @@ for my $shape (qw(aoh hoa hoh aoa)) {
 		write_table([ { k => 'a', v => '1.25' }, { k => 'b', v => '' }, { k => 'c', v => '-3' } ], $x);
 	}
 	for my $shape (qw(aoh hoa hoh aoa)) {
-		my $g = both($x, 'output.type' => $shape, colClasses => { v => 'numeric' });
+		my $g = both($x, 'output_type' => $shape, colClasses => { v => 'numeric' });
 		same($g, "xlsx $shape");
 	}
-	is_deeply(typed(read_table($x, 'output.type' => 'hoa', colClasses => { v => 'numeric' })->{v}),
+	is_deeply(typed(read_table($x, 'output_type' => 'hoa', colClasses => { v => 'numeric' })->{v}),
 	          [ [1.25, 'NV'], [undef, 'undef'], [-3, 'NV'] ], 'xlsx: a declared column is converted');
 }
 
@@ -228,9 +228,9 @@ SKIP: {
 	my $bad = fixture("a,b\n1,2\n3,x\n");
 	for my $shape (qw(aoh hoa hoh aoa)) {
 		Test::LeakTrace::no_leaks_ok(sub {
-			read_table($csv, 'output.type' => $shape, colClasses => { id => 'integer', x => 'numeric' });
-			eval { read_table($bad, 'output.type' => $shape, colClasses => 'integer') };
-			eval { read_table($bad, 'output.type' => $shape, colClasses => 'integer', filter => { a => sub { 1 } }) };
+			read_table($csv, 'output_type' => $shape, colClasses => { id => 'integer', x => 'numeric' });
+			eval { read_table($bad, 'output_type' => $shape, colClasses => 'integer') };
+			eval { read_table($bad, 'output_type' => $shape, colClasses => 'integer', filter => { a => sub { 1 } }) };
 		}, "$shape: a read with colClasses, and one that croaks on a bad cell, leak nothing");
 	}
 }

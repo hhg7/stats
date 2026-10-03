@@ -2,6 +2,33 @@ Revision history for Stats-LikeR
 
 0.3213 2026-10-01 CDT
 
+ [Every name is spelled with _ instead of .]
+
+ - Every option name and result key that followed R in spelling itself
+   with a dot now uses an underscore: p_value, conf_int, conf_level,
+   statistic_name, null_value, fitted_values, df_residual, r_squared,
+   row_names, col_names, output_type, na_strings, undef_val, Res_Df,
+   CI_lower, SE_theta and the rest, 112 names in all. Perl parses
+   $r->{p.value} as "p" . "value", so every dotted key had to be quoted;
+   $r->{p_value} needs no quotes.
+
+ - The dotted spellings are gone rather than kept as aliases: conf.level,
+   output.type, row.names and the rest are now refused as unknown
+   arguments, where many functions used to accept both. density()'s
+   give.Rkern becomes give_rkern, the underscore spelling it already took.
+
+ - rank(), cohen_d(), age_standardize() and TukeyHSD() never checked their
+   option names, so an old dotted name would have been ignored without a
+   word, and rank() would have ranked 'ties.method' as data. All four now
+   refuse names they do not know.
+
+ - Only names change. Option values keep R's spelling (alternative =>
+   'two.sided', type => 'one.sample', family => 'negative.binomial'), and
+   so do names built from the data: merge()'s default suffixes .x and .y,
+   pivot_table()'s sep, the .1 and .2 that make a repeated name unique,
+   read_table()'s exploded VCF columns such as NA00001.GT, and R's table
+   headers Std. Error and Resid. Df.
+
  [assign(): consistent context, shape detection, no half-applied calls]
 
  - A per-row coderef was called in list context for the first row, to
@@ -58,7 +85,7 @@ Revision history for Stats-LikeR
    as the first data row, with no warning: "# written by foo, v2" before
    "id,val" named the columns "written by foo" and " v2". A commented line
    is now the header only when the line after it looks like data -- a
-   number or an na.strings token in one of its fields, or nothing but
+   number or an na_strings token in one of its fields, or nothing but
    empty fields; otherwise it is a comment, as in R and pandas. Over rows
    of text alone a commented-out header cannot be told from a comment, and
    the first row is read as the header.
@@ -86,8 +113,8 @@ Revision history for Stats-LikeR
    key, named "<sample>.<key>", and the records come back as a hoh keyed by
    CHROM:POS:REF:ALT. FORMAT may change from record to record, so the keys
    are those of every record read; a key a record lacks, or a value a
-   sample drops off the end, is undef. Values stay text. 'output.type' still
-   gives the other shapes, 'row.names' another key, and the new explode => 0
+   sample drops off the end, is undef. Values stay text. 'output_type' still
+   gives the other shapes, 'row_names' another key, and the new explode => 0
    the file's own columns. A filter sees the file's own columns, since it
    runs while the file is read. The cases are bcftools 1.21's test VCFs,
    with each value as bcftools query prints it. The split is done in C: on
@@ -160,12 +187,12 @@ Revision history for Stats-LikeR
 
  - Text passed in as characters, under `use utf8` or decoded, is compared
    with the file as UTF-8 bytes. A qr// sep holding a character past 0xFF
-   never matched, nor did such an na.strings token, filter key, row.names
+   never matched, nor did such an na_strings token, filter key, row_names
    or sheet name, while a literal sep did. A UTF-8 qr// sep now matches
    each line as UTF-8 and refuses a line that is not.
 
- - row.names with an aoh or hoa, and sheet on anything but an .xlsx, were
-   ignored; both are now errors, as row.names with an aoa already was. An
+ - row_names with an aoh or hoa, and sheet on anything but an .xlsx, were
+   ignored; both are now errors, as row_names with an aoa already was. An
    xz, LZMA, zstd or lzop file is refused by name, from R's magic numbers,
    where it was read as text and reported as an alignment error.
 
@@ -271,7 +298,7 @@ Revision history for Stats-LikeR
    tests: the examples of ?t.test, ?sleep, ?ks.test (drawn under R CMD
    check's set.seed(1)), ?array2DF and ?pairwise.t.test, R-intro, the
    tcltk demo, and reg-tests-1a, -1e and -2. Each is crossed over every
-   alternative, var_equal, mu and conf.level, and the examples are also
+   alternative, var_equal, mu and conf_level, and the examples are also
    checked against R's pinned .Rout.save output at the digits R printed.
    PR#18901's stopifnot() is reproduced in full, where the test had only
    checked that the call did not crash.
@@ -309,15 +336,6 @@ Revision history for Stats-LikeR
    at t = 6 gave a median of 5 where R gives 5.5. It now follows R's rule,
    to R's tolerance of 2^-26 for "is 0.5".
 
- [Documentation: dotted result keys]
-
- - The examples read result fields as $r->{p.value}, which perl parses as
-   "p" . "value": it does not compile under use strict, and without it
-   looks up "pvalue" and returns undef. Every dotted key in the examples
-   is now quoted -- 'p.value', 'odds.ratio', 'exp.coef', 'auc.ci' and the
-   rest. dunn_test()'s example also read $c->{p_adjust}, a key that does
-   not exist; the adjusted p-value is $c->{'p.adjust'}.
-
  [Tests: survival]
 
  - t/survival.R.t pins logrank_test() and survfit() to R 4.6.1 with
@@ -352,7 +370,7 @@ Revision history for Stats-LikeR
    on one column were both "fn", so only the second survived. A `by`
    column now aggregates to "<col>_<func>", several coderefs are fn1,
    fn2, .., and any name still generated twice dies, except under
-   output.type aoa, whose columns are positional.
+   output_type aoa, whose columns are positional.
 
  - Groups sorted wrong whenever any key was undef or any `by` column held
    strings: one numeric-or-string decision covered every key column, and
@@ -493,12 +511,12 @@ Revision history for Stats-LikeR
    where they used to be 0 and NaN. Two complete rows are enough, as in
    R; "0 degrees of freedom" used to stop any fit with no residual df.
 
- - fitted.values include the offsets, as R's do, and are keyed by a
-   row.names column when there is one, as lm()'s are.
+ - fitted_values include the offsets, as R's do, and are keyed by a
+   row_names column when there is one, as lm()'s are.
 
- [aov(): group.stats]
+ [aov(): group_stats]
 
- - With a formula, group.stats held the mean and count of every column of
+ - With a formula, group_stats held the mean and count of every column of
    the data, over every row: the response's overall mean, and NaN for each
    factor. It now holds the response's mean and count in each level of
    each factor of the model, over the rows fitted. With one factor it is
@@ -510,7 +528,7 @@ Revision history for Stats-LikeR
 
  - The design was held twice, n by p each, and every level of every
    factor in every row was a string copy. The fit now keeps a p-by-p
-   triangle and re-reads the rows for fitted.values. y ~ g*h + x over 1e5
+   triangle and re-reads the rows for fitted_values. y ~ g*h + x over 1e5
    rows with a 50-level g went from 40.9 s and 367 MB to 1.8 s and 52 MB;
    anova() takes 1.6 s.
 
@@ -525,7 +543,7 @@ Revision history for Stats-LikeR
  [Tests: aov()]
 
  - t/aov.R.t pins aov()'s table, coefficients, fitted values and
-   group.stats to R 4.6.1: aov.Rd's npk models, warpbreaks.Rd,
+   group_stats to R 4.6.1: aov.Rd's npk models, warpbreaks.Rd,
    reg-tests-1b's warpbreaks with NA rows, reg-tests-3's oats (PR#7829),
    ToothGrowth with a slope per supplement and with an offset,
    reg-tests-2's PR#16437 with and without an intercept, and PlantGrowth
@@ -575,7 +593,7 @@ Revision history for Stats-LikeR
  [Leaks on croak]
 
  - hoh2hoa leaked its result and scratch tables on a non-hash row or a
-   row.names collision; kruskal_test leaked its observations and labels
+   row_names collision; kruskal_test leaked its observations and labels
    when reading a label died (38 KB over 200 calls under valgrind);
    col2col leaked its row table when a tied row could not be walked; and
    prcomp freed by hand only on its own croaks. All four now leave their

@@ -154,7 +154,7 @@ Not a general-purpose rounding barrier: it costs a store and a load, so it does
 not belong in an accumulation loop. The last-ulp drift that excess precision
 causes there is what the build flag is for.*/
 static NV nv_narrow(NV x) { volatile NV t = x; return t; }
-/*0.95 -- the default conf.level everywhere in this file -- at the build's own
+/*0.95 -- the default conf_level everywhere in this file -- at the build's own
 NV width.
 
 `NV conf_level = 0.95;` does not do that. 0.95 is a C literal of type double,
@@ -2969,7 +2969,7 @@ typedef struct {
 	char       **var;  //every distinct variable named by any term
 	char       **raw;  //scratch: this row's raw level per factor
 	char       **term; //term labels in column order (by degree), as R spells them
-	size_t      *lev;  //nfactor: this row's level index per factor, filled by lm_design_row() only when a caller allocates it (aov()'s group.stats); NULL otherwise
+	size_t      *lev;  //nfactor: this row's level index per factor, filled by lm_design_row() only when a caller allocates it (aov()'s group_stats); NULL otherwise
 } LmDesign;
 
 static void lm_design_free(pTHX_ LmDesign *d) {
@@ -4938,8 +4938,8 @@ formed cleanly, so inverting min(p, 1-p) and negating removes the effect
 entirely -- which is how R's qnorm is written, for this reason.
 
 Measured against mpmath at 60 digits, at the p the C expression
-1 - (1 - conf.level)/2 actually forms: unreflected, the error grows with the
-confidence level, 0.4 ulp at conf.level = 0.95 but 3 ulp at 0.99, 37 ulp at
+1 - (1 - conf_level)/2 actually forms: unreflected, the error grows with the
+confidence level, 0.4 ulp at conf_level = 0.95 but 3 ulp at 0.99, 37 ulp at
 0.999 and 254 ulp at 0.9999. Reflected it is under half an ulp at every one of
 them, and 9.3e-18 at p = 1 - 2^-16 where unreflected costs 5.8e-14.
 
@@ -5221,7 +5221,7 @@ This asks about bytes, not characters, so it reads the buffer as stored with
 plain SvPV (xs.check.pl flags it for that; the ambiguity is deliberate). Every
 byte of a UTF-8 multibyte sequence is >= 0x80, so a character outside ASCII is
 a non-digit in either encoding. SvPVbyte was what this used, and it croaked
-"Wide character" on any non-Latin-1 row.names or tex.longtable.head, and
+"Wide character" on any non-Latin-1 row_names or tex_longtable_head, and
 downgraded the caller's SV in place. isdigit() is avoided because a byte >=
 0x80 in a signed char is a negative argument, which is undefined behaviour.*/
 static bool contains_nondigit(pTHX_ SV *sv) {
@@ -5357,7 +5357,7 @@ static void wt_row_init(pTHX_ WtRow *restrict R, size_t width) {
 	R->n = 0;
 }
 
-/*A field that is already text: a row label, or undef.val.*/
+/*A field that is already text: a row label, or undef_val.*/
 static void wt_field(WtRow *restrict R, const char *s, STRLEN len) {
 	R->f[R->n] = s;
 	R->len[R->n] = len;
@@ -5466,9 +5466,9 @@ static void wt_close_on_unwind(pTHX_ void *slot) {
 	if (*fhp) { PerlIO_close(*fhp); *fhp = NULL; }
 }
 
-/*Take the header names from an explicit col.names argument.
+/*Take the header names from an explicit col_names argument.
 
-write_table() offers col.names on every shape it accepts and reads it the
+write_table() offers col_names on every shape it accepts and reads it the
 same way for each, so the five branches share this rather than carrying a
 copy apiece. The argument has already been checked for ARRAY-ness at the top
 of the XSUB; an element that is undef is skipped, not emitted as an empty
@@ -5485,7 +5485,7 @@ static void wt_headers_given(pTHX_ AV *headers_av, SV *col_names_sv) {
 	}
 }
 
-/*Does col.names name at least one column?  Only an undef element does not.*/
+/*Does col_names name at least one column?  Only an undef element does not.*/
 static bool wt_col_names_any(pTHX_ SV *col_names_sv) {
 	AV *c_av = (AV*)SvRV(col_names_sv);
 	for (SSize_t i = 0; i <= av_len(c_av); i++) {
@@ -5743,7 +5743,7 @@ static SV *xlsx_written_by(pTHX) {
 }
 
 /*Emit one header record -- bold cells joined by " & ", no row terminator.
-Factored out because 'tex.longtable.head' writes the same record twice
+Factored out because 'tex_longtable_head' writes the same record twice
 (\endfirsthead and \endhead), and the two must never drift apart.*/
 static void tex_put_header_row(pTHX_ PerlIO *fh, AV *header, size_t ncols, SV *scratch){
 	for (size_t j = 0; j < ncols; j++) {
@@ -5801,7 +5801,7 @@ static void write_tex_tabular(pTHX_ AV *rows, const char *file,
 			TEX_PUTS(fh, "% "); PerlIO_write(fh, cs, l); PerlIO_putc(fh, '\n');
 		}
 	}
-/* With 'tex.longtable' the caller writes the surrounding
+/* With 'tex_longtable' the caller writes the surrounding
  \begin{longtable}{...} ... \end{longtable} (and any \caption / \label)
  and \input{}s this file, so emit only the body: a top rule, the header,
  the data rows, a bottom rule -- no \begin{tabular}/\end{tabular}. The real
@@ -5810,7 +5810,7 @@ static void write_tex_tabular(pTHX_ AV *rows, const char *file,
 	if (longtable) {
 /* Copy-paste hint for the wrapper the caller must supply, e.g.
    % \begin{longtable}{ccc}
- one 'tex.col.align' char per column. It is a comment, so it never affects
+ one 'tex_col_align' char per column. It is a comment, so it never affects
  typesetting -- the caller still writes the real \begin{longtable}{...}.*/
 		TEX_PUTS(fh, "% \\begin{longtable}{");
 		for (size_t i = 0; i < ncols; i++)
@@ -5825,11 +5825,11 @@ static void write_tex_tabular(pTHX_ AV *rows, const char *file,
 		TEX_PUTS(fh, "} \\hline\n");
 	}
 	if (size && *size) { PerlIO_write(fh, size, strlen(size)); PerlIO_putc(fh, '\n'); }
-/* 'tex.longtable.head': emit the header inside longtable's repeat machinery
+/* 'tex_longtable_head': emit the header inside longtable's repeat machinery
  instead of as a plain first row. Without it the header is an ordinary body
  row, so the header frozen at the top of every page is whichever one the
  caller hand-wrote into \endfirsthead / \endhead -- which silently stops
- matching 'col.names' the moment the column order changes, and leaves the
+ matching 'col_names' the moment the column order changes, and leaves the
  generated header showing up a second time as the first body row.*/
 	const bool lt_head = longtable && longtable_head && SvTRUE(longtable_head);
 	if (header) {
@@ -5843,7 +5843,7 @@ static void write_tex_tabular(pTHX_ AV *rows, const char *file,
 	 lookahead sees it and it is legal.*/
 			tex_put_header_row(aTHX_ fh, header, ncols, scratch);
 			TEX_PUTS(fh, " \\\\ \\hline\n\\endfirsthead\n");
-	/* A non-numeric 'tex.longtable.head' is the caption for every page after
+	/* A non-numeric 'tex_longtable_head' is the caption for every page after
 	 the first, written verbatim so LaTeX macros survive. The empty optional
 	 argument keeps the continuation out of the List of Tables.*/
 			if (contains_nondigit(aTHX_ longtable_head)) {
@@ -5865,7 +5865,7 @@ static void write_tex_tabular(pTHX_ AV *rows, const char *file,
 	}
 	const size_t nrows = av_len(rows) + 1;
 	for (size_t i = 1; i < nrows; i++) {
-		ENTER; SAVETMPS;	// tex.format's copy of each numeric cell, freed a row at a time
+		ENTER; SAVETMPS;	// tex_format's copy of each numeric cell, freed a row at a time
 		SV **rp = av_fetch(rows, i, 0);
 		AV *row = (rp && *rp && SvROK(*rp)) ? (AV*)SvRV(*rp) : NULL;
 		const size_t rc = row ? (size_t)(av_len(row) + 1) : 0;
@@ -6220,7 +6220,7 @@ static void wt_xlsx_begin(pTHX_ WtXlsx *restrict X, PerlIO **slot, const char *f
 
 /*One record as a worksheet <row>.  A numeric-looking cell is written as a
 number and every other non-empty one as an inline string; an empty one (an
-undef too, with the default undef.val) is left out.  The text is UTF-8 as it
+undef too, with the default undef_val) is left out.  The text is UTF-8 as it
 stands when it is valid UTF-8, and read as Latin-1 when it is not -- the same
 reading the LaTeX path gives it.*/
 static void wt_xlsx_row(pTHX_ WtXlsx *restrict X, const char *const *restrict fields,
@@ -7978,14 +7978,14 @@ static NV wilcox_edge_two(NV z, NV m, NV n, unsigned short k, bool lower) {
    a trial location shift, which is what the asymptotic interval roots on. */
 typedef struct {
 	const NV *xs; // x, ascending
-	const NV *ys; // y, put through digits.rank and then ascending; NULL for one sample
+	const NV *ys; // y, put through digits_rank and then ascending; NULL for one sample
 	size_t n_x, n_y;
 	NV digits_rank, zq; // zq: the quantile the root is sought against
 	short int alt; // 0 = two.sided, 1 = less, 2 = greater
 	bool correct, tied; // tied: set once the variance came out zero
 } WilcoxCiCtx;
 
-/*The value an observation is ranked by: digits.rank's signif(), when it is set.*/
+/*The value an observation is ranked by: digits_rank's signif(), when it is set.*/
 static NV wilcox_ci_key(NV v, bool round, NV digits) {
 	return round ? nv_signif(v, digits) : v;
 }
@@ -9924,8 +9924,8 @@ The plan's keys, all set by read_table's install_plan():
          one hash per row, keyed by the row's own name; 3 = aoa, one array
          per row holding every field in file order, so keys and idx are
          validated but not used and a repeated name keeps all its fields
-  rn     mode 2 only: the index into keys of the row.names column
-  na     the na.strings set, or undef when there is none
+  rn     mode 2 only: the index into keys of the row_names column
+  na     the na_strings set, or undef when there is none
   file   for the alignment message
   flt_fld, flt_sub
          optional, and given together: the filters, in the order read_table
@@ -9946,7 +9946,7 @@ typedef struct {
 	SV    **keys;	//modes 0 and 2; OWNED shared-hash-key copies, see S_plan_init()
 	AV    **cols;	//mode 1 only; borrowed from the plan hash
 	size_t *idx;	//validated against ncol in S_plan_init()
-	HV     *na;	//NULL when no na.strings were given
+	HV     *na;	//NULL when no na_strings were given
 	const char **na_s;	//na's keys, borrowed, when there are few enough; see S_plan_na()
 	STRLEN *na_len;	//their lengths; NULL = look cells up in na instead
 	size_t  n_na;
@@ -9992,7 +9992,7 @@ static SV *S_plan_ref(pTHX_ HV *restrict h, const char *restrict k, svtype t){
 	return SvRV(sv);
 }
 
-/*Copy the na.strings hash's keys out for S_cell_is_na()'s linear scan.
+/*Copy the na_strings hash's keys out for S_cell_is_na()'s linear scan.
 
 The pointers are into the hash's own keys, which stay put: the hash is
 read_table's %na_string, which nothing writes to during the parse.  A key perl
@@ -10210,7 +10210,7 @@ to be.
 code 1 is R's "numeric" (and "double", "real"): an NV.  code 2 is "integer":
 an IV.  code 0, "character", is never asked about.  Returns the new SV, or
 sets *bad and returns NULL when the text is not one.  A missing value never
-gets here: an empty field and an na.strings token are undef before it would.
+gets here: an empty field and an na_strings token are undef before it would.
 
 The text accepted is what R's scan() accepts for the class (src/main/scan.c,
 extractItem(), R 4.6.1), because the option is R's:
@@ -10224,7 +10224,7 @@ extractItem(), R 4.6.1), because the option is R's:
            optional sign and digits, and no blank after them.
 
 "NA" is not special to either: scan() is called with NA off, and an "NA" is
-missing only through na.strings, which read_table maps to undef before this.
+missing only through na_strings, which read_table maps to undef before this.
 Where this departs from R, deliberately: an integer is any IV, not R's 32-bit
 int; a hexadecimal number ("0x1A") is refused, where R reads it; and an
 exponent must have digits, where R reads "1e" as 1.  t/read_table.colClasses.t
@@ -10362,17 +10362,17 @@ static void S_cell_class_in(pTHX_ const csv_plan *restrict p, size_t f, SV **slo
 	}
 }
 
-/*An empty field, and a field listed in na.strings, become undef, which is the
+/*An empty field, and a field listed in na_strings, become undef, which is the
 same rule the perl path applies and the same one that has always made an empty
 cell undef rather than "".  A cell is either a PV or, once S_push_field() is
 making them for the fast path, an empty field already undef; so !SvPOK() and
 SvCUR() are the whole of the "is it empty" test.
 
-The na.strings test is a length check and a memcmp() over a few borrowed keys
+The na_strings test is a length check and a memcmp() over a few borrowed keys
 rather than hv_exists_ent(), which hashed every non-empty cell.  With
 ['NA', '.', 'NaN'], an aoa read of a 300,000 x 10 CSV of 1s went from 0.155 s to
-0.134 s, against 0.123 s with no na.strings at all (best of nine).  It is
-inline because as a call it cost that read 4% with no na.strings given.
+0.134 s, against 0.123 s with no na_strings at all (best of nine).  It is
+inline because as a call it cost that read 4% with no na_strings given.
 S_plan_na() says when the hash is used instead.*/
 PERL_STATIC_INLINE bool S_cell_is_na(pTHX_ const csv_plan *restrict p, SV *restrict v){
 	if (!SvPOK(v) || SvCUR(v) == 0)
@@ -10389,7 +10389,7 @@ PERL_STATIC_INLINE bool S_cell_is_na(pTHX_ const csv_plan *restrict p, SV *restr
 }
 
 /*What a cell is stored as: itself, or a fresh bodyless undef in place of an
-empty or na.strings one, which is released.  v may be NULL -- a hole in an
+empty or na_strings one, which is released.  v may be NULL -- a hole in an
 .xlsx row buffer -- and is then just the undef.*/
 PERL_STATIC_INLINE SV *S_cell_value(pTHX_ const csv_plan *restrict p, SV *restrict v){
 	if (!v)
@@ -10405,7 +10405,7 @@ PERL_STATIC_INLINE SV *S_cell_value(pTHX_ const csv_plan *restrict p, SV *restri
 
 /*S_cell_is_na() for a value still in its text, before it has an SV: a VCF
 sample's, or a field S_push_cell() is converting.  Empty, or one of the
-na.strings.*/
+na_strings.*/
 PERL_STATIC_INLINE bool S_bytes_is_na(pTHX_ const csv_plan *restrict p,
 	const char *restrict s, STRLEN n){
 	if (n == 0)
@@ -10469,7 +10469,7 @@ than a newSVsv() of every cell.  The AV is then reset to empty and reused for
 the next row -- except by an aoa, whose output row is the AV itself: the row
 buffer is handed over whole and *rowp gets a fresh one, which saves a second
 array and a copy of every cell pointer into it.  Any field no output column asked for -- which happens only when
-the header repeats a name -- is released here instead, and so is the row.names
+the header repeats a name -- is released here instead, and so is the row_names
 field of a hoh, which becomes the row's key rather than one of its values.
 
 This never frees the row, even when it croaks: the caller's save stack owns
@@ -10578,7 +10578,7 @@ static void S_fast_row(pTHX_ csv_plan *restrict p, AV **restrict rowp){
 }
 
 /*What a value is in read_table's %line_hash: undef when it is missing, empty
-or one of the na.strings, and otherwise a copy -- the rule the perl row closure
+or one of the na_strings, and otherwise a copy -- the rule the perl row closure
 builds the hash by and applies to a value a filter writes back.  A written-back
 value can be anything, a number or a reference, so short of a plain byte
 string it is stringified to be tested, as the closure's `$_ eq ''` and
@@ -10654,7 +10654,7 @@ to 0.18 s unfiltered.  This does what the closure does, step for step, for
 every row after the one that fixed the header:
 
   %line_hash  the row by name, a repeated name's value from its last field, an
-              empty field or an na.strings token undef (S_flt_value())
+              empty field or an na_strings token undef (S_flt_value())
   then each filter, in plan order:
     local *_ = \%line_hash; local $_ = the field's %line_hash value -- or the
     field's own value, made the same way, for one whose name a later field
@@ -10854,7 +10854,7 @@ dropped, so a sample can have fewer values than FORMAT has keys, never more.
 FORMAT may differ from row to row, so the columns are the union of the keys of
 every row read, in the order each first appears (GT, which the spec puts
 first, comes first), named "<sample>.<key>".  A key a row's FORMAT lacks, a
-value a sample dropped, an empty value and an na.strings token are undef, the
+value a sample dropped, an empty value and an na_strings token are undef, the
 same rule a field is read by.  FORMAT and the unsplit sample columns are not
 returned; a FORMAT column with no samples after it is kept, having nothing to
 be split into.
@@ -10865,7 +10865,7 @@ only the first time it is seen (a file has few: 2 in the 3,499,678 rows above).
 The second builds each output row, and releases the raw row behind it, so the
 aoa is never held twice over.
 
-A hoh is keyed by CHROM:POS:REF:ALT unless row.names names a column; ID would
+A hoh is keyed by CHROM:POS:REF:ALT unless row_names names a column; ID would
 not do as the default, being "." on most rows of most files.*/
 
 typedef struct {
@@ -11007,7 +11007,7 @@ static SV *S_vcf_explode(pTHX_ AV *raw, short int mode, SV *rn, const char *file
 	bool *restrict shadow = NULL;	//per output column: TRUE = a later column has its name
 	vcf_fmt *last = NULL;
 	size_t hw, nf, nsample, nkeys, nrow, n_dup = 0, dup_row = 0;
-	SSize_t rn_c = -1;	//mode 2: the row.names column; -1 = CHROM:POS:REF:ALT
+	SSize_t rn_c = -1;	//mode 2: the row_names column; -1 = CHROM:POS:REF:ALT
 	const bool plain = !SvMAGICAL((SV*)raw) && !SvREADONLY((SV*)raw);
 	bool keep_fmt;	//a FORMAT column with no samples is returned as it is
 
@@ -11151,7 +11151,7 @@ counts them; the count says how many there are past that.*/
 				croak("\"%" SVf "\" isn't in the header of %s\n", SVfARG(rn), file);
 		} else if (nf < 5)
 			croak("read_table: %s has fewer than the 5 columns (CHROM POS ID REF "
-			      "ALT) that key a VCF's rows; pass 'row.names'\n", file);
+			      "ALT) that key a VCF's rows; pass 'row_names'\n", file);
 		if (x->ncol > 1)
 			hv_ksplit(hout, (IV)nrow);
 	}
@@ -12092,7 +12092,7 @@ Formula and data-shape handling shared by lm() and glm().
 The two functions differ only in what they do with the design matrix once it
 exists, so everything up to that point is here: how a data argument is read,
 how its rows are named, and how a formula string becomes a term list. Keeping
-one copy is what makes a fit's fitted.values, residuals and deviance.resid
+one copy is what makes a fit's fitted_values, residuals and deviance_resid
 key on the same names whichever function produced them.
 */
 
@@ -12101,7 +12101,7 @@ of these among its keys -- or an AoH whose rows carry one -- names its rows
 with that column instead of 1..n, and '.' leaves the column out of the
 predictors, since a row label is not a variable.*/
 static const char *const lm_row_name_keys[] =
-	{ "row.names", "_row", "rownames", ".rownames" };
+	{ "row_names", "_row", "rownames", ".rownames" };
 #define LM_N_ROW_NAME_KEYS (sizeof lm_row_name_keys / sizeof lm_row_name_keys[0])
 
 static bool lm_is_row_name_key(const char *k, STRLEN len) {
@@ -12113,7 +12113,7 @@ static bool lm_is_row_name_key(const char *k, STRLEN len) {
 
 /*A row name, copied out of the caller's data as UTF-8 bytes.
 
-Row names come back as the keys of fitted.values, residuals and predict()'s
+Row names come back as the keys of fitted_values, residuals and predict()'s
 result, and a char * has no room for the UTF-8 flag, so up to 0.3211 a key such
 as "\x{65e5}\x{672c}" was stored as its six bytes and the caller's own key did
 not find it. Holding every name as UTF-8 needs no flag: ROWNAME_KLEN() stores
@@ -12936,8 +12936,8 @@ static void zt_tables(pTHX_ const MfPart *restrict mp, size_t k, size_t np, cons
 			hv_store(row, "Std. Error", 10, newSVnv(se), 0);
 			hv_store(row, "z value", 7, newSVnv(z), 0);
 			hv_store(row, "Pr(>|z|)", 8, newSVnv(2.0 * approx_pnorm(-nv_fabs(z))), 0);
-			hv_store(row, "CI.lower", 8, newSVnv(par[j] - zcrit * se), 0);
-			hv_store(row, "CI.upper", 8, newSVnv(par[j] + zcrit * se), 0);
+			hv_store(row, "CI_lower", 8, newSVnv(par[j] - zcrit * se), 0);
+			hv_store(row, "CI_upper", 8, newSVnv(par[j] + zcrit * se), 0);
 			for (size_t l = 0; l < k; l++) {
 				const char *n2 = mf_colname(mp, l);
 				if (aliased[l]) continue;
@@ -14553,8 +14553,8 @@ na.omit).
 anova(\%data, 'y ~ a', 'y ~ a + b', ...) fits every model and returns an
 ArrayRef with one HashRef per model, in the order supplied, mirroring R's
 anova.lmlist() table (columns Res.Df, RSS, Df, Sum of Sq, F, Pr(>F)):
-    [ { "Res.Df", "RSS", formula },
-      { "Res.Df", "RSS", "Df", "Sum of Sq", "F", "Pr(>F)", formula }, ... ]
+    [ { "Res_Df", "RSS", formula },
+      { "Res_Df", "RSS", "Df", "Sum of Sq", "F", "Pr(>F)", formula }, ... ]
 Df and "Sum of Sq" are the drops in residual df and RSS from the previous row.
 F follows stat.anova() (R 4.6.1, src/library/stats/R/anova.R): ("Sum of
 Sq"/Df) / scale, with scale the residual mean square of the model with the
@@ -14807,7 +14807,7 @@ static void anova_term_table(pTHX_ const AnModel *restrict m, size_t n_used, HV 
 typedef struct {
 	NV val; // numeric value
 	IV idx; // 0-based index among non-NA elements
-	NV rnd; // random tie-break key (ties.method => 'random')
+	NV rnd; // random tie-break key (ties_method => 'random')
 } rank_pair;
 
 /*Three orderings of rank_pair, each generated as an inlined sort rather than
@@ -14843,7 +14843,7 @@ LIKER_DEFINE_SORT(rank_pair, rank_pair_asc,  RANK_PAIR_LESS_IDX_ASC)
 LIKER_DEFINE_SORT(rank_pair, rank_pair_desc, RANK_PAIR_LESS_IDX_DESC)
 LIKER_DEFINE_SORT(rank_pair, rank_pair_rnd,  RANK_PAIR_LESS_RND)
 
-// ties.method codes
+// ties_method codes
 #define RANK_AVERAGE 0
 #define RANK_FIRST   1
 #define RANK_LAST    2
@@ -14851,7 +14851,7 @@ LIKER_DEFINE_SORT(rank_pair, rank_pair_rnd,  RANK_PAIR_LESS_RND)
 #define RANK_MAX     4
 #define RANK_MIN     5
 
-// na.last codes
+// na_last codes
 #define NALAST_TRUE  0  // NAs get the highest ranks (default)
 #define NALAST_FALSE 1  // NAs get the lowest ranks
 #define NALAST_KEEP  2  // NAs stay undef, in place
@@ -17300,7 +17300,7 @@ static void dens_kernel_grid(short int kernel, NV bw, NV span, size_t n,
 	}
 }
 
-/*give.Rkern = TRUE: sigma(K) * R(K), the scale invariant canonical bandwidth.*/
+/*give_rkern = TRUE: sigma(K) * R(K), the scale invariant canonical bandwidth.*/
 static NV dens_rkern(short int kernel)
 {
 	const NV pi = DENS_PI;
@@ -17940,7 +17940,7 @@ Two rules are followed throughout, and both are about the tail nobody watches:
 - p outside [0, 1], a non-positive df, and a NaN anywhere all return NaN
   rather than a plausible number, as R does.
 
-log.p is honest in one direction only, and the docs say so. For the q*
+log_p is honest in one direction only, and the docs say so. For the q*
 functions the argument is a log probability and exp() of it is exact enough to
 reach quantiles the linear scale cannot name. For the p* functions the answer
 is log() of the probability already computed, so a tail that underflowed to 0
@@ -18145,7 +18145,7 @@ static NV d_qf(NV p, const NV *par, bool lower, bool give_log) {
 
 var_test used to reach a private qf_bisection() instead, which bracketed by
 doubling from 1 and stopped on an ABSOLUTE `high - low < 1e-12`.  An absolute
-stop is an absolute error in a quantity that is not: at conf.level = 0.999999
+stop is an absolute error in a quantity that is not: at conf_level = 0.999999
 on nine and nine degrees of freedom the divisor qf(5e-07, 9, 9) is about 0.016,
 so 1e-12 there is 6e-11 relative, and the interval came out
 [16085387951.278957, 62168223924585.172] against R's
@@ -18215,8 +18215,8 @@ static void dist_parse(pTHX_ const dist_spec *spec, SV **st,
 			key = SvPV_nolen(st[i]);
 			for (unsigned short j = 0; j < spec->npar; j++)
 				if (strEQ(key, spec->par_name[j])) is_name = 1;
-			if (strEQ(key, "lower") || strEQ(key, "lower.tail")
-			 || strEQ(key, "log")   || strEQ(key, "log.p")) is_name = 1;
+			if (strEQ(key, "lower") || strEQ(key, "lower_tail")
+			 || strEQ(key, "log")   || strEQ(key, "log_p")) is_name = 1;
 			if (!is_name) {
 				par[filled]  = SvNV(st[i]);
 				seen[filled] = 1;
@@ -18229,9 +18229,9 @@ static void dist_parse(pTHX_ const dist_spec *spec, SV **st,
 			croak("%s: '%s' was given with no value", spec->name,
 			      SvOK(st[i]) ? SvPV_nolen(st[i]) : "(undef)");
 		key = SvPV_nolen(st[i]);
-		if      (strEQ(key, "lower") || strEQ(key, "lower.tail"))
+		if      (strEQ(key, "lower") || strEQ(key, "lower_tail"))
 			*lower = SvTRUE(st[i + 1]) ? TRUE : FALSE;
-		else if (strEQ(key, "log") || strEQ(key, "log.p"))
+		else if (strEQ(key, "log") || strEQ(key, "log_p"))
 			*give_log = SvTRUE(st[i + 1]) ? TRUE : FALSE;
 		else {
 			bool matched = 0;
@@ -19078,7 +19078,7 @@ void anova(...)
 			for (size_t k = 0; k < nkeep; k++) {
 				HV *row = newHV();
 				av_push(table, newRV_noinc((SV*)row));
-				(void)hv_store(row, "Res.Df", 6, newSViv(resdf[k]), 0);
+				(void)hv_store(row, "Res_Df", 6, newSViv(resdf[k]), 0);
 				(void)hv_store(row, "RSS", 3, newSVnv(mods[k].sserr), 0);
 				(void)hv_store(row, "formula", 7, newSVpv(mods[k].label, 0), 0);
 				if (k == 0) continue;
@@ -19120,11 +19120,17 @@ void rank(...)
 			if (SvOK(a) && !SvROK(a) && SvPOK(a)) {
 				STRLEN klen;
 				const char *k = SvPV_const(a, klen);
-				if ((klen == 11 && strEQ(k, "ties.method")) ||
-				    (klen == 7  && strEQ(k, "na.last"))) {
+				if ((klen == 11 && strEQ(k, "ties_method")) ||
+				    (klen == 7  && strEQ(k, "na_last"))) {
 					opt_start = i;
 					break;
 				}
+				/*The dotted spellings were dropped in 0.3213. Options share the
+				list with the data here, so an old 'ties.method' would otherwise
+				be ranked as a value rather than refused.*/
+				if ((klen == 11 && strEQ(k, "ties.method")) ||
+				    (klen == 7  && strEQ(k, "na.last")))
+					croak("rank: unknown option '%s' (ties_method, na_last)", k);
 			}
 		}
 
@@ -19135,9 +19141,9 @@ void rank(...)
 			STRLEN klen, vlen;
 			const char *k = SvPV_const(ST(i), klen);
 			SV *vsv = ST(i + 1);
-			if (strEQ(k, "ties.method")) {
+			if (strEQ(k, "ties_method")) {
 				if (!SvOK(vsv))
-					croak("rank: ties.method cannot be undef");
+					croak("rank: ties_method cannot be undef");
 				const char *v = SvPV_const(vsv, vlen);
 				if      (strEQ(v, "average")) ties = RANK_AVERAGE;
 				else if (strEQ(v, "first"))   ties = RANK_FIRST;
@@ -19145,9 +19151,9 @@ void rank(...)
 				else if (strEQ(v, "random"))  ties = RANK_RANDOM;
 				else if (strEQ(v, "max"))     ties = RANK_MAX;
 				else if (strEQ(v, "min"))     ties = RANK_MIN;
-				else croak("rank: unknown ties.method '%s' "
+				else croak("rank: unknown ties_method '%s' "
 				           "(average, first, last, random, max, min)", v);
-			} else if (strEQ(k, "na.last")) {
+			} else if (strEQ(k, "na_last")) {
 				if (!SvOK(vsv)) {
 					nalast = NALAST_DROP;             // undef => R's NA
 				} else {
@@ -19158,11 +19164,11 @@ void rank(...)
 					     ||  strEQ(v, "F")     || strEQ(v, "0"))     nalast = NALAST_FALSE;
 					else if (strEQ(v, "true")  || strEQ(v, "TRUE")
 					     ||  strEQ(v, "T")     || strEQ(v, "1"))     nalast = NALAST_TRUE;
-					else croak("rank: unknown na.last '%s' "
+					else croak("rank: unknown na_last '%s' "
 					           "(true, false, keep, na)", v);
 				}
 			} else {
-				croak("rank: unknown option '%s' (ties.method, na.last)", k);
+				croak("rank: unknown option '%s' (ties_method, na_last)", k);
 			}
 		}
 
@@ -19258,7 +19264,7 @@ void rank(...)
 		}
 		Safefree(pairs); pairs = NULL;
 
-		// emit results in original order, per na.last
+		// emit results in original order, per na_last
 		size_t nna = N - n;                          // number of NAs
 		size_t M   = (nalast == NALAST_DROP) ? n : N;
 		EXTEND(SP, (SSize_t)M);
@@ -19314,9 +19320,7 @@ CODE:
 		SV *val = ST(i + 1);
 		if      (strEQ(key, "nranges"))    nranges    = SvNV(val);
 		else if (strEQ(key, "lower_tail")) lower_tail = SvTRUE(val) ? TRUE : FALSE;
-		else if (strEQ(key, "lower.tail")) lower_tail = SvTRUE(val) ? TRUE : FALSE;
 		else if (strEQ(key, "log_p"))      log_p      = SvTRUE(val) ? TRUE : FALSE;
-		else if (strEQ(key, "log.p"))      log_p      = SvTRUE(val) ? TRUE : FALSE;
 		else croak("ptukey: unknown argument '%s'", key);
 	}
 	NV pr = st_ptukey(q, nranges, nmeans, df);
@@ -19343,9 +19347,7 @@ CODE:
 		SV *val = ST(i + 1);
 		if      (strEQ(key, "nranges"))    nranges    = SvNV(val);
 		else if (strEQ(key, "lower_tail")) lower_tail = SvTRUE(val) ? TRUE : FALSE;
-		else if (strEQ(key, "lower.tail")) lower_tail = SvTRUE(val) ? TRUE : FALSE;
 		else if (strEQ(key, "log_p"))      log_p      = SvTRUE(val) ? TRUE : FALSE;
-		else if (strEQ(key, "log.p"))      log_p      = SvTRUE(val) ? TRUE : FALSE;
 		else croak("qtukey: unknown argument '%s'", key);
 	}
 	if (log_p)       p = nv_exp(p);
@@ -19472,7 +19474,7 @@ CODE:
 			p = SvNV(val);
 			if (!(p >= 0.0 && p <= 1.0))
 				croak("binom_test: p must be between 0 and 1");
-		} else if (strEQ(key, "conf_level") || strEQ(key, "conf.level")) {
+		} else if (strEQ(key, "conf_level")) {
 			conf_level = SvNV(val);
 			if (!(conf_level > 0.0 && conf_level < 1.0))
 				croak("binom_test: conf_level must be between 0 and 1");
@@ -19538,13 +19540,13 @@ CODE:
 	hv_stores(ret, "statistic",   newSViv(x));             //number of successes
 	hv_stores(ret, "parameter",   newSViv(n));             //number of trials
 	hv_stores(ret, "estimate",    newSVnv((NV)x / (NV)n)); //probability of success
-	hv_stores(ret, "null.value",  newSVnv(p));
-	hv_stores(ret, "p.value",     newSVnv(PVAL));
-	hv_stores(ret, "conf.level",  newSVnv(conf_level));
+	hv_stores(ret, "null_value",  newSVnv(p));
+	hv_stores(ret, "p_value",     newSVnv(PVAL));
+	hv_stores(ret, "conf_level",  newSVnv(conf_level));
 	AV *ci = newAV();
 	av_push(ci, newSVnv(ci_lo));
 	av_push(ci, newSVnv(ci_hi));
-	hv_stores(ret, "conf.int",    newRV_noinc((SV *)ci));
+	hv_stores(ret, "conf_int",    newRV_noinc((SV *)ci));
 	RETVAL = newRV_noinc((SV *)ret);
 }
 OUTPUT:
@@ -19582,7 +19584,7 @@ PPCODE:
 		      "   or  csort($df, sub { $b->{'No.'} <=> $a->{'No.'} }, 'hoa')\n"
 		      "   or  csort($aoa, 0, 'aoa')   # array-of-arrays, integer column\n"
 		      "  (optional 4th arg names the row-name column when sorting a "
-		      "HoH; default 'row.name')");
+		      "HoH; default 'row_name')");
 
 	data   = frame_untied(aTHX_ ST(0), 0);	//a tied frame's values were FETCHed once per pass over it
 	by     = ST(1);
@@ -19592,7 +19594,7 @@ PPCODE:
 		rowname_col = SvPV(ST(3), l);
 		rowname_klen = SvUTF8(ST(3)) ? -(I32)l : (I32)l;
 	} else {
-		rowname_col = "row.name";
+		rowname_col = "row_name";
 		rowname_klen = 8;
 	}
 	ENTER;    // scope for SAVEFREEPV / SAVESPTR cleanups
@@ -20210,8 +20212,8 @@ SV *hoh2hoa(data, ...)
 	CODE:
 	{
 		/* 0. parse trailing name => value options (done before any allocation so
-		    option/usage errors can't leak). undef.val sets the fill for a
-		    missing key or an undef cell (default: undef). row.names, if given,
+		    option/usage errors can't leak). undef_val sets the fill for a
+		    missing key or an undef cell (default: undef). row_names, if given,
 		    adds a column of that name holding the sorted row labels.*/
 		SV *fill = NULL;   // NULL => fill gaps with undef
 		SV *rn_sv = NULL;  // NULL => do not emit a row-names column
@@ -20220,10 +20222,10 @@ SV *hoh2hoa(data, ...)
 			STRLEN ol;
 			const char *oname = SvPV(ST(oi), ol);
 			SV *oval = ST(oi + 1);
-			if (ol == 9 && memEQ(oname, "undef.val", 9)) fill = SvOK(oval) ? oval : NULL;
-			else if (ol == 9 && memEQ(oname, "row.names", 9)) {
+			if (ol == 9 && memEQ(oname, "undef_val", 9)) fill = SvOK(oval) ? oval : NULL;
+			else if (ol == 9 && memEQ(oname, "row_names", 9)) {
 				if (SvOK(oval) && !SvROK(oval)) rn_sv = oval;
-				else croak("hoh2hoa: row.names must be a column name (string)");
+				else croak("hoh2hoa: row_names must be a column name (string)");
 			}
 			else croak("hoh2hoa: unknown option '%s'", oname);
 		}
@@ -20233,7 +20235,7 @@ SV *hoh2hoa(data, ...)
 		HV *in_hv = (HV*)SvRV(data);
 		/* 2. these cross the section boundaries (gather -> build). All are mortal,
 		    so every croak below frees them: as plain newHV()s, a non-hash row or a
-		    row.names collision leaked all four.*/
+		    row_names collision leaked all four.*/
 		HV *out_hv = (HV*)sv_2mortal((SV*)newHV());    // the result: column name -> array ref
 		AV *rows_av = (AV*)sv_2mortal((SV*)newAV());   // outer keys, sorted into the row order
 		AV *cols_av = (AV*)sv_2mortal((SV*)newAV());   // union of inner keys (column names)
@@ -20302,7 +20304,7 @@ SV *hoh2hoa(data, ...)
 		}
 		// 6. optional row-names column: the sorted labels under the requested name.
 		if (rn_sv) {
-			if (hv_exists_ent(out_hv, rn_sv, 0)) croak("hoh2hoa: row.names column '%s' collides with an existing column", SvPV_nolen(rn_sv));
+			if (hv_exists_ent(out_hv, rn_sv, 0)) croak("hoh2hoa: row_names column '%s' collides with an existing column", SvPV_nolen(rn_sv));
 			AV *rn_av = newAV();
 			for (SSize_t r = 0; r < nrows; r++) av_push(rn_av, newSVsv(AvARRAY(rows_av)[r]));
 			(void)hv_store_ent(out_hv, rn_sv, newRV_noinc((SV*)rn_av), 0);
@@ -20317,7 +20319,7 @@ void filter(...)
 PPCODE:
 {
 	if (items < 2)
-		croak("Usage: filter($df, $code [, 'output.type' => 'aoh'|'hoa'])");
+		croak("Usage: filter($df, $code [, 'output_type' => 'aoh'|'hoa'])");
 	SV *df      = ST(0);
 	SV *predarg = ST(1);
 	const char *otype = NULL;
@@ -20325,17 +20327,17 @@ PPCODE:
 		otype = SvPV_nolen(ST(2));
 	} else if (items == 4) {
 		const char *key = SvPV_nolen(ST(2));
-		if (strNE(key, "output.type") && strNE(key, "out") && strNE(key, "output_type"))
-			croak("filter: unknown option '%s' (expected 'output.type')", key);
+		if (strNE(key, "output_type") && strNE(key, "out"))
+			croak("filter: unknown option '%s' (expected 'output_type')", key);
 		otype = SvPV_nolen(ST(3));
 	} else if (items > 4) {
-		croak("Usage: filter($df, $code [, 'output.type' => 'aoh'|'hoa'])");
+		croak("Usage: filter($df, $code [, 'output_type' => 'aoh'|'hoa'])");
 	}
 	int want = 0; // 0 = preserve input shape
 	if (otype) {
 		if      (strEQ(otype, "aoh")) want = FLT_AOH;
 		else if (strEQ(otype, "hoa")) want = FLT_HOA;
-		else croak("filter: output.type must be 'aoh' or 'hoa' (got '%s')", otype);
+		else croak("filter: output_type must be 'aoh' or 'hoa' (got '%s')", otype);
 	}
 	if (!df || !SvROK(df))
 		croak("filter: first argument must be a data frame (AoH, HoA, or HoH reference)");
@@ -20716,17 +20718,17 @@ SV *col2col(data, cmd, cols = &PL_sv_undef, ...)
 /*The column tables all go on the save stack as they are allocated, rather
 than being freed by hand at each croak.  There are sixteen croaks in this
 function, and one unwind path that no hand-written free list can cover: with
-skip.errors turned off, a caller's block that dies propagates out of
+skip_errors turned off, a caller's block that dies propagates out of
 c2c_call() from the middle of section 4, past every Safefree() written below
 it.  That path leaked the whole column set -- ncols * nrows NVs plus as many
 flags, 3.7 KB on a 6-column, 50-row frame and tens of megabytes on a real
 one.*/
 		short int na_mode = 0;	// 0 = pairwise, 1 = omit, 2 = keep; see section 0
-		bool skip_errors = 1;	// skip.errors (default true): trap a croaking block, store its message
+		bool skip_errors = 1;	// skip_errors (default true): trap a croaking block, store its message
 /* 0. options. They may be given either as trailing name => value pairs
   (after the positional cols), or - so no placeholder is needed when
   there is no column restriction - as a single hash ref in cols's
-  place, e.g. col2col($data, 'cor', { 'skip.errors' => 1 }).
+  place, e.g. col2col($data, 'cor', { 'skip_errors' => 1 }).
   `na` controls how undef is handled when one column is paired with
   another:
     'pairwise' (default) - a row counts for the (a,b) pair only if
@@ -20737,9 +20739,10 @@ one.*/
         tests (t_test, kruskal_test) want: a gap in one column must not
         throw away a good value in the other.
     'keep'   - every row passes through and undef reaches the block.
-  rm.undef / rm.na (bool) remain as aliases: true => 'pairwise' (the
-  old default), false => 'keep'.
-  skip.errors (bool, default true): a block that croaks for a pair
+  rm_undef / rm_na (bool) remain as aliases: true => 'pairwise' (the
+  old default), false => 'keep'. Their dotted spellings, rm.undef and
+  rm.na, are refused as unknown options.
+  skip_errors (bool, default true): a block that croaks for a pair
   does not abort col2col; instead the first line of its error message
   is stored as that cell's value, so the result shows which
   (outer => inner) pair failed and why. Set it false to make a croak
@@ -20754,9 +20757,9 @@ one.*/
 			else if (vl_ == 4 && memEQ(nv_, "keep", 4)) na_mode = 2; \
 			else croak("col2col: na must be 'pairwise', 'omit' or 'keep'"); \
 			na_set = 1; \
-		} else if (((OL) == 8 && memEQ((ONAME), "rm.undef", 8)) || ((OL) == 5 && memEQ((ONAME), "rm.na", 5))) { \
+		} else if (((OL) == 8 && memEQ((ONAME), "rm_undef", 8)) || ((OL) == 5 && memEQ((ONAME), "rm_na", 5))) { \
 			na_mode = cBOOL(SvTRUE((OVAL))) ? 0 : 2; rm_set = 1; \
-		} else if ((OL) == 11 && memEQ((ONAME), "skip.errors", 11)) { \
+		} else if ((OL) == 11 && memEQ((ONAME), "skip_errors", 11)) { \
 			skip_errors = cBOOL(SvTRUE((OVAL))); \
 		} else croak("col2col: unknown option '%s'", (ONAME)); \
 		} while (0)
@@ -20784,7 +20787,7 @@ one.*/
 				C2C_DECODE_OPT(oname, ol, oval);
 			}
 		}
-		if (na_set && rm_set) croak("col2col: give na or rm.undef, not both");
+		if (na_set && rm_set) croak("col2col: give na or rm_undef, not both");
 #undef C2C_DECODE_OPT
 		/* 1. resolve the command: a CODE block or a function name. Either way
 		    we end up with the CV to call as $cv->($col_a, $col_b).*/
@@ -20980,7 +20983,7 @@ one.*/
 				} else if (!skip_errors) {
 					res = c2c_call(aTHX_ cv_sv, rv1, rv2);	// a croak here propagates
 				} else {
-					/* skip.errors: run the block under eval; on a croak keep the
+					/* skip_errors: run the block under eval; on a croak keep the
 					 first line of its message as this cell so the caller sees
 					 which pair failed and why instead of the whole call dying.*/
 					dSP;
@@ -21043,7 +21046,7 @@ SV *oneway_test(data_ref, ...)
 		for (I32 ai = 1; ai + 1 < items; ai += 2) {
 			const char *key = SvPV_nolen(ST(ai));
 			SV         *val = ST(ai + 1);
-			if (strEQ(key, "var_equal") || strEQ(key, "var.equal"))
+			if (strEQ(key, "var_equal"))
 				var_equal = SvTRUE(val) ? 1 : 0;
 			else if (strEQ(key, "formula"))
 				formula_str = SvPV_nolen(val);
@@ -21256,7 +21259,7 @@ SV *oneway_test(data_ref, ...)
 			}
 			hv_stores(gs_hv, "mean", newRV_noinc((SV *)mean_hv));
 			hv_stores(gs_hv, "size", newRV_noinc((SV *)size_hv));
-			hv_stores(ret_hv, "group.stats", newRV_noinc((SV *)gs_hv));
+			hv_stores(ret_hv, "group_stats", newRV_noinc((SV *)gs_hv));
 		}
 		// normal cleanup
 		Safefree(gmeans);	Safefree(sizes);
@@ -21510,7 +21513,7 @@ CODE:
 
 	HV *res = newHV();
 	hv_stores(res, "statistic",   newSVnv(statistic));
-	hv_stores(res, "p.value",     newSVnv(p_value));
+	hv_stores(res, "p_value",     newSVnv(p_value));
 	hv_stores(res, "method",      newSVpv(method_desc, 0));
 	hv_stores(res, "alternative", newSVpv(alternative, 0));
 	RETVAL = newRV_noinc((SV *)res);
@@ -21566,13 +21569,13 @@ CODE:
 			else exact = SvTRUE(val) ? 1 : 0;
 		}
 		else if (strEQ(key, "alternative")) alt_str = SvPV_nolen(val);
-		else if (strEQ(key, "conf.int") || strEQ(key, "conf_int"))
+		else if (strEQ(key, "conf_int"))
 			want_cint = SvTRUE(val) ? TRUE : FALSE;
-		else if (strEQ(key, "conf.level") || strEQ(key, "conf_level"))
+		else if (strEQ(key, "conf_level"))
 			conf_level = SvNV(val);
-		else if (strEQ(key, "digits.rank") || strEQ(key, "digits_rank"))
+		else if (strEQ(key, "digits_rank"))
 			digits_rank = SvOK(val) ? SvNV(val) : NV_INF;
-		else if (strEQ(key, "tol.root") || strEQ(key, "tol_root"))
+		else if (strEQ(key, "tol_root"))
 			tol_root = SvNV(val);
 		else if (strEQ(key, "edgeworth")) {
 			IV e = SvIV(val);
@@ -21600,8 +21603,8 @@ CODE:
 	  every difference into NaN or +/-Inf and quietly poisons the ranking. */
 	if (!nv_isfinite(mu)) croak("wilcox_test: 'mu' must be a finite number");
 	if (want_cint && !(nv_isfinite(conf_level) && conf_level > 0.0 && conf_level < 1.0))
-		croak("wilcox_test: 'conf.level' must be a single number between 0 and 1");
-	if (!(tol_root > 0.0)) croak("wilcox_test: 'tol.root' must be positive");
+		croak("wilcox_test: 'conf_level' must be a single number between 0 and 1");
+	if (!(tol_root > 0.0)) croak("wilcox_test: 'tol_root' must be positive");
 
 	AV *x_av = (AV *)SvRV(x_sv);
 	AV *y_av = y_sv ? (AV *)SvRV(y_sv) : NULL;
@@ -21759,7 +21762,7 @@ CODE:
 	/* R's sort() drops NA, and a difference of two like-signed infinities is
 	  NaN, so it is left out of the estimate and the scan alike, and nd counts
 	  the rest.  Kept, it had no place in any ordering: wilcox_test(c(1, 2, Inf,
-	  4), c(0.5, Inf, 3), conf.int = TRUE) estimated Inf where R says 0.5.  Two
+	  4), c(0.5, Inf, 3), conf_int = TRUE) estimated Inf where R says 0.5.  Two
 	  equal infinities are a tie, so only the tie branch below can lose any. */
 				for (size_t i = 0; i < n_x; i++)
 					for (size_t j = 0; j < n_y; j++) {
@@ -21868,7 +21871,7 @@ CODE:
 	/* An infinite observation makes the bracket infinite, and there is no root
 	  to seek on one: R's uniroot() stops with "invalid 'xmin' value".  The
 	  one-sample interval below gets R's own answer for it, a NaN interval at
-	  conf.level 0, and this now gives the same with a warning, where the ranks
+	  conf_level 0, and this now gives the same with a warning, where the ranks
 	  of x - Inf used to be read as though they meant something. */
 				const bool infinite = !nv_isfinite(mumin) || !nv_isfinite(mumax);
 				NV w_lo = infinite ? NV_NAN : wilcox_ci_W(mumin, &C);
@@ -22120,7 +22123,7 @@ CODE:
 					}
 					if (alpha >= 1.0 || alpha0 < alpha * 0.75) {
 						achieved_level = 1.0 - (alpha < 1.0 ? alpha : 1.0);
-						warn("wilcox_test: requested conf.level not achievable");
+						warn("wilcox_test: requested conf_level not achievable");
 					}
 					if (alpha < 1.0) {
 						NV a = (alt == 0) ? alpha / 2.0 : alpha;
@@ -22146,19 +22149,19 @@ CODE:
 	if (p_value > 1.0) p_value = 1.0;
 	HV *res = newHV();
 	hv_stores(res, "statistic",      newSVnv(statistic));
-	hv_stores(res, "statistic.name", newSVpv(stat_name, 0));
-	hv_stores(res, "p.value",        newSVnv(p_value));
+	hv_stores(res, "statistic_name", newSVpv(stat_name, 0));
+	hv_stores(res, "p_value",        newSVnv(p_value));
 	hv_stores(res, "method",         newSVpv(method_desc, 0));
 	hv_stores(res, "alternative",    newSVpv(alt_str, 0));
-	hv_stores(res, "null.value",     newSVnv(mu));
-	hv_stores(res, "null.value.name",
+	hv_stores(res, "null_value",     newSVnv(mu));
+	hv_stores(res, "null_value_name",
 	          newSVpv((paired || yv) ? "location shift" : "location", 0));
 	if (have_cint) {
 		AV *ci = newAV();
 		av_push(ci, newSVnv(ci_lo));
 		av_push(ci, newSVnv(ci_hi));
-		hv_stores(res, "conf.int",   newRV_noinc((SV *)ci));
-		hv_stores(res, "conf.level", newSVnv(achieved_level));
+		hv_stores(res, "conf_int",   newRV_noinc((SV *)ci));
+		hv_stores(res, "conf_level", newSVnv(achieved_level));
 		hv_stores(res, "estimate",   newSVnv(estimate));
 	}
 	RETVAL = newRV_noinc((SV *)res);
@@ -22185,7 +22188,7 @@ CODE:
 		SV *val = ST(i + 1);
 		if (strEQ(key, "correct")) correct = SvTRUE(val) ? TRUE : FALSE;
 		else if (strEQ(key, "p")) p_sv = SvOK(val) ? val : NULL;
-		else if (strEQ(key, "rescale.p") || strEQ(key, "rescale_p")) rescale_p = SvTRUE(val) ? TRUE : FALSE;
+		else if (strEQ(key, "rescale_p")) rescale_p = SvTRUE(val) ? TRUE : FALSE;
 		else croak("chisq_test: unknown argument '%s'", key);
 	}
 
@@ -22491,13 +22494,13 @@ placeholder that is not yet a reference or a number.*/
 	HV*parameter_hv = newHV();
 	hv_store(parameter_hv, "df", 2, newSViv(df), 0);
 	hv_store(results, "parameter", 9, newRV_noinc((SV*)parameter_hv), 0);
-	hv_store(results, "p.value", 7, newSVnv(p_val), 0);
+	hv_store(results, "p_value", 7, newSVnv(p_val), 0);
 	hv_store(results, "expected", 8, expected_ref, 0);
 	hv_store(results, "observed", 8, SvREFCNT_inc(data_ref), 0);
 	if (input_type == SVt_PVAV) {
-		hv_store(results, "data.name", 9, newSVpv("Perl ArrayRef", 0), 0);
+		hv_store(results, "data_name", 9, newSVpv("Perl ArrayRef", 0), 0);
 	} else {
-		hv_store(results, "data.name", 9, newSVpv("Perl HashRef", 0), 0);
+		hv_store(results, "data_name", 9, newSVpv("Perl HashRef", 0), 0);
 	}
 	if (!gof) {
 		if (yates) {
@@ -22536,16 +22539,16 @@ PPCODE:
 		SV *cand = ST(arg_idx);
 		if (SvOK(cand) && !SvROK(cand)) {
 			const char *k = SvPV_nolen(cand);
-			if (!(strEQ(k, "data") || strEQ(k, "file") || strEQ(k, "col.names") ||
-				  strEQ(k, "row.names") || strEQ(k, "sep") || strEQ(k, "delim") ||
-				  strEQ(k, "undef.val") || strEQ(k, "tex") ||
-				  strEQ(k, "tex.col.align") || strEQ(k, "tex.size") ||
-				  strEQ(k, "tex.comment") || strEQ(k, "tex.bold.1st.col") ||
-				  strEQ(k, "tex.format") || strEQ(k, "tex.longtable") ||
-				  strEQ(k, "tex.longtable.head") ||
-				  strEQ(k, "xlsx") || strEQ(k, "xlsx.sheet") ||
-				  strEQ(k, "xlsx.comment") || strEQ(k, "xlsx.freeze.rows") ||
-				  strEQ(k, "xlsx.freeze.cols") || strEQ(k, "quiet"))) {
+			if (!(strEQ(k, "data") || strEQ(k, "file") || strEQ(k, "col_names") ||
+				  strEQ(k, "row_names") || strEQ(k, "sep") || strEQ(k, "delim") ||
+				  strEQ(k, "undef_val") || strEQ(k, "tex") ||
+				  strEQ(k, "tex_col_align") || strEQ(k, "tex_size") ||
+				  strEQ(k, "tex_comment") || strEQ(k, "tex_bold_1st_col") ||
+				  strEQ(k, "tex_format") || strEQ(k, "tex_longtable") ||
+				  strEQ(k, "tex_longtable_head") ||
+				  strEQ(k, "xlsx") || strEQ(k, "xlsx_sheet") ||
+				  strEQ(k, "xlsx_comment") || strEQ(k, "xlsx_freeze_rows") ||
+				  strEQ(k, "xlsx_freeze_cols") || strEQ(k, "quiet"))) {
 				file_sv = cand;
 				arg_idx++;
 			}
@@ -22556,7 +22559,7 @@ PPCODE:
 /* default undef cells to a true empty value ("") instead of NULL.
   With print_string_row emitting zero-length fields bare (no quotes), an
   undef cell now prints as nothing at all: a,,c -- not a,'',c or a,"",c.
-  'undef.val' => 'NA' (etc.) still overrides this.*/
+  'undef_val' => 'NA' (etc.) still overrides this.*/
 	const char *undef_val = "";
 	STRLEN undef_len = 0;
 	SV *row_names_sv = NULL; // NULL = not given: on for a HoH, off for every other shape
@@ -22573,7 +22576,7 @@ PPCODE:
 	bool tex_longtable = 0; // body only, for \input into a longtable
 /* Generate longtable's own repeat-header machinery (\endfirsthead / \endhead /
   \endfoot) instead of a plain header row. A non-numeric value is the caption
-  used on continuation pages. Implies tex.longtable.*/
+  used on continuation pages. Implies tex_longtable.*/
 	SV *tex_longtable_head = NULL;
 	/* .xlsx (Excel) output, dependency-free. xlsx_opt is tri-state like tex_opt:
 	 -1 = auto-detect from a ".xlsx" file name, 0 = off, 1 = on.*/
@@ -22599,41 +22602,41 @@ PPCODE:
 		const char *key = SvPV_nolen(ST(arg_idx));
 		SV *val = ST(arg_idx + 1);
 		if (strEQ(key, "data")) data_sv = val;
-		else if (strEQ(key, "col.names")) col_names_sv = val;
+		else if (strEQ(key, "col_names")) col_names_sv = val;
 		else if (strEQ(key, "file")) file_sv = val;
-		else if (strEQ(key, "row.names")) row_names_sv = val;
+		else if (strEQ(key, "row_names")) row_names_sv = val;
 		// Check for either "sep" or "delim" and mark as explicitly provided
 		else if (strEQ(key, "sep") || strEQ(key, "delim")) {
 			sep = SvPV_nolen(val);
 			explicit_sep = 1;
 		}
-		else if (strEQ(key, "undef.val")) {
+		else if (strEQ(key, "undef_val")) {
 			if (SvOK(val)) undef_val = SvPV(val, undef_len);
 			else { undef_val = ""; undef_len = 0; }
 		}
 		else if (strEQ(key, "tex"))              tex_opt     = SvTRUE(val) ? 1 : 0;
-		else if (strEQ(key, "tex.col.align"))  { if (SvOK(val)) tex_align = SvPV_nolen(val); }
-		else if (strEQ(key, "tex.size"))         tex_size    = SvOK(val) ? SvPV_nolen(val) : NULL;
-		else if (strEQ(key, "tex.comment"))      tex_comment = SvOK(val) ? val : NULL;
-		else if (strEQ(key, "tex.bold.1st.col")) tex_bold1   = SvTRUE(val) ? 1 : 0;
-		else if (strEQ(key, "tex.format"))       tex_format  = SvTRUE(val) ? 1 : 0;
-		else if (strEQ(key, "tex.longtable"))    tex_longtable = SvTRUE(val) ? 1 : 0;
-		else if (strEQ(key, "tex.longtable.head")) tex_longtable_head = SvOK(val) ? val : NULL;
+		else if (strEQ(key, "tex_col_align"))  { if (SvOK(val)) tex_align = SvPV_nolen(val); }
+		else if (strEQ(key, "tex_size"))         tex_size    = SvOK(val) ? SvPV_nolen(val) : NULL;
+		else if (strEQ(key, "tex_comment"))      tex_comment = SvOK(val) ? val : NULL;
+		else if (strEQ(key, "tex_bold_1st_col")) tex_bold1   = SvTRUE(val) ? 1 : 0;
+		else if (strEQ(key, "tex_format"))       tex_format  = SvTRUE(val) ? 1 : 0;
+		else if (strEQ(key, "tex_longtable"))    tex_longtable = SvTRUE(val) ? 1 : 0;
+		else if (strEQ(key, "tex_longtable_head")) tex_longtable_head = SvOK(val) ? val : NULL;
 		else if (strEQ(key, "xlsx"))             xlsx_opt    = SvTRUE(val) ? 1 : 0;
-		else if (strEQ(key, "xlsx.sheet"))     { if (SvOK(val)) xlsx_sheet_sv = val; }
-		else if (strEQ(key, "xlsx.comment"))     xlsx_comment = SvOK(val) ? val : NULL;
-		else if (strEQ(key, "xlsx.freeze.rows")) {
+		else if (strEQ(key, "xlsx_sheet"))     { if (SvOK(val)) xlsx_sheet_sv = val; }
+		else if (strEQ(key, "xlsx_comment"))     xlsx_comment = SvOK(val) ? val : NULL;
+		else if (strEQ(key, "xlsx_freeze_rows")) {
 			if (SvOK(val)) {
 				xlsx_freeze_rows = SvIV(val);
 				if (xlsx_freeze_rows < 0)
-					croak("write_table: 'xlsx.freeze.rows' must be a non-negative integer\n");
+					croak("write_table: 'xlsx_freeze_rows' must be a non-negative integer\n");
 			}
 		}
-		else if (strEQ(key, "xlsx.freeze.cols")) {
+		else if (strEQ(key, "xlsx_freeze_cols")) {
 			if (SvOK(val)) {
 				xlsx_freeze_cols = SvIV(val);
 				if (xlsx_freeze_cols < 0)
-					croak("write_table: 'xlsx.freeze.cols' must be a non-negative integer\n");
+					croak("write_table: 'xlsx_freeze_cols' must be a non-negative integer\n");
 			}
 		}
 		else if (strEQ(key, "quiet"))            quiet = SvTRUE(val) ? 1 : 0;
@@ -22682,9 +22685,9 @@ PPCODE:
 		tex = tex_opt ? 1 : 0;
 	}
 /* Requesting a longtable body is a LaTeX request; force 'tex' on even for
-  a non-".tex" file name or tex => 0. (tex.longtable only affects the
+  a non-".tex" file name or tex => 0. (tex_longtable only affects the
   LaTeX renderer, so without this it would be silently ignored.)
-  'tex.longtable.head' only has meaning inside a longtable body, so asking for
+  'tex_longtable_head' only has meaning inside a longtable body, so asking for
   it is asking for one.*/
 	if (tex_longtable_head && SvTRUE(tex_longtable_head)) tex_longtable = 1;
 	if (tex_longtable) tex = 1;
@@ -22719,7 +22722,7 @@ PPCODE:
 	}
 	if (col_names_sv && SvOK(col_names_sv)) {
 		if (!SvROK(col_names_sv) || SvTYPE(SvRV(col_names_sv)) != SVt_PVAV) {
-			croak("write_table: 'col.names' must be an ARRAY reference\n");
+			croak("write_table: 'col_names' must be an ARRAY reference\n");
 		}
 	}
 	const STRLEN sep_len = strlen(sep);
@@ -22736,21 +22739,21 @@ PPCODE:
 		sheet_name = sv_2mortal(xlsx_sheet_sv ? newSVsv(xlsx_sheet_sv) : newSVpvs("Sheet1"));
 		STRLEN snl;
 		const char *sn = SvPVutf8(sheet_name, snl);
-		if (snl == 0) croak("write_table: 'xlsx.sheet' must have at least one character\n");
+		if (snl == 0) croak("write_table: 'xlsx_sheet' must have at least one character\n");
 		for (STRLEN i = 0; i < snl; i++)
 			if (sn[i] && strchr("\\*?:/[]", sn[i]))
-				croak("write_table: 'xlsx.sheet' may not contain '%c'\n", sn[i]);
+				croak("write_table: 'xlsx_sheet' may not contain '%c'\n", sn[i]);
 		if (utf8_length((const U8*)sn, (const U8*)sn + snl) > 31) sheet_long = TRUE;
 	}
 	bool is_hoh = 0, is_hoa = 0, is_aoh = 0, is_flat_hash = 0, is_aoa = 0;
 /* {} or []: no rows, so no shape to find either.  It used to return before a
   file was opened, writing nothing and saying nothing, so a script that went on
   to read the file found it missing.  It is now a table with no rows: its header
-  is whatever col.names and row.names give, as pandas writes ",A\n" for
+  is whatever col_names and row_names give, as pandas writes ",A\n" for
   DataFrame({"A": []}).to_csv() (tests/io/formats/test_to_csv.py,
   test_empty_dataframe), and a lone empty record for no columns at all. */
 	bool is_empty = 0;
-	bool rn_named = 0; // HoH only: row.names is a name for the key column, not a flag
+	bool rn_named = 0; // HoH only: row_names is a name for the key column, not a flag
 	AV *rows_av = NULL; // HoH: its row keys, mortal
 /* Validate Input Structures & Homogeneity.  A value is read through wt_got(),
   which runs its get magic: hv_iterval() and av_fetch() hand back a proxy with no
@@ -22798,8 +22801,8 @@ PPCODE:
 			}
 			ITER_KEEP_END;
 			if (is_hoh) { // Rows are only explicitly pre-gathered for HOH
-/* A non-numeric row.names names the key column. It is refused when that name
-  is also a column being written -- in col.names if that was given, otherwise
+/* A non-numeric row_names names the key column. It is refused when that name
+  is also a column being written -- in col_names if that was given, otherwise
   a key of any inner hash -- since the file would then hold two columns of
   that name, which read_table() cannot tell apart. Checked here, before the
   output file is opened, so a refused call leaves an existing file intact.*/
@@ -22821,7 +22824,7 @@ PPCODE:
 						ITER_KEEP_END;
 					}
 					if (clash)
-						croak("write_table: row.names '%" SVf "' collides with an existing column\n", SVfARG(row_names_sv));
+						croak("write_table: row_names '%" SVf "' collides with an existing column\n", SVfARG(row_names_sv));
 				}
 /* hv_iterkeysv() makes a mortal copy of each key, which nothing frees until the
   call returns; the scope frees each one as soon as it is copied. */
@@ -22877,12 +22880,12 @@ PPCODE:
 			}
 		}
 	}
-/* A HoA takes its columns and its row count from the arrays col.names names,
-  so a col.names naming none leaves it with neither.  That is refused here,
+/* A HoA takes its columns and its row count from the arrays col_names names,
+  so a col_names naming none leaves it with neither.  That is refused here,
   before the output file is opened: it used to be refused after, which had
   already emptied any existing file of that name. */
 	if (is_hoa && col_names_sv && SvOK(col_names_sv) && !wt_col_names_any(aTHX_ col_names_sv))
-		croak("write_table: Could not get headers: 'col.names' names no column\n");
+		croak("write_table: Could not get headers: 'col_names' names no column\n");
 /* The one output handle write_table() holds open at a time -- the delimited
   file, or the .xlsx archive -- lives in *fhp, which the save stack closes if
   anything below croaks.  Everything else below is mortal or on the save stack
@@ -22903,7 +22906,7 @@ PPCODE:
 	PerlIO *fh = NULL;	// delimited output
 	if (xlsx) {
 /* The provenance line goes into the workbook's document "comments" property
-  (dc:description), with any user-supplied xlsx.comment line(s) appended after it.*/
+  (dc:description), with any user-supplied xlsx_comment line(s) appended after it.*/
 		SV *prov = xlsx_written_by(aTHX);
 		if (xlsx_comment && SvOK(xlsx_comment)) {
 			if (SvROK(xlsx_comment) && SvTYPE(SvRV(xlsx_comment)) == SVt_PVAV) {
@@ -22956,21 +22959,21 @@ PPCODE:
 				file, SVfARG(err));
 	}
 	AV *headers_av = (AV*)sv_2mortal((SV*)newAV());
-/* row.names is off unless asked for, in every format -- delimited, LaTeX and
+/* row_names is off unless asked for, in every format -- delimited, LaTeX and
   .xlsx alike -- for every shape but a HoH. R's write.table() defaults it on,
   and this used to follow suit, but a label column nobody asked for is the
   wrong default here: the common case is a frame whose rows are already
   identified by one of its own columns, and the leading empty header cell it
-  produces (",gene,n") is a well known nuisance to read back. row.names => 1
-  opts in and gives the old behaviour; row.names => 'col' uses that column's
+  produces (",gene,n") is a well known nuisance to read back. row_names => 1
+  opts in and gives the old behaviour; row_names => 'col' uses that column's
   values as the labels, and names the label column 'col'.
   A HoH is the exception, and defaults it on: its outer keys are the only place
   the row identifiers exist, not a 1..n index, so leaving them out silently
   discards a column of data (an NCBI taxid-keyed HoH came out with no taxids).
-  There row.names => 'name' writes 'name' as the label column's header instead
-  of an empty cell, and row.names => 0 still turns the keys off.*/
+  There row_names => 'name' writes 'name' as the label column's header instead
+  of an empty cell, and row_names => 0 still turns the keys off.*/
 	bool inc_rownames = row_names_sv ? (SvTRUE(row_names_sv) ? TRUE : FALSE) : is_hoh;
-/* A HoA's or AoH's row.names => 'col' takes the labels from column 'col', and
+/* A HoA's or AoH's row_names => 'col' takes the labels from column 'col', and
   the label column is headed 'col': the header cell used to be left empty, so
   the column's name was lost and read_table() read it back as row_name.  pandas
   writes an index's name over it the same way ("x,data\n1.0,1\n",
@@ -23109,7 +23112,7 @@ PPCODE:
   HoA that was 4 million hash lookups, and the table went from 0.209s to 0.155s
   without them.  The row count is the longest of the arrays actually written --
   those columns and the label column -- where it used to be the longest in the
-  hash, so a col.names leaving out a longer array wrote rows of nothing but
+  hash, so a col_names leaving out a longer array wrote rows of nothing but
   separators after the data ran out. */
 		AV **col_avs;
 		Newx(col_avs, num_headers ? num_headers : 1, AV *);
@@ -23124,7 +23127,7 @@ PPCODE:
 			const size_t len = col_avs[j] ? (size_t)(av_len(col_avs[j]) + 1) : 0;
 			if (len > max_rows) max_rows = len;
 		}
-		AV *rn_av = NULL;	// the label column's array, when row.names names one
+		AV *rn_av = NULL;	// the label column's array, when row_names names one
 		if (rownames_col) {
 			HE *rn_he = hv_fetch_ent(data_hv, row_names_sv, 0, 0);
 			SV *rn_sv = rn_he ? wt_got(aTHX_ HeVAL(rn_he)) : NULL;
@@ -23233,7 +23236,7 @@ PPCODE:
 		AV *data_av = (AV*)data_ref;
 		SSize_t last = av_len(data_av);   // index of last element
 		SSize_t data_start = 0;            // first data-row index
-/* Headers: explicit col.names, else the first inner array (which is
+/* Headers: explicit col_names, else the first inner array (which is
   then consumed as the header rather than emitted as data).*/
 		if (col_names_sv && SvOK(col_names_sv)) {
 			wt_headers_given(aTHX_ headers_av, col_names_sv);
@@ -23359,16 +23362,16 @@ PPCODE:
 /* An empty header cell is warned about, because the file then gives that column
   no name to address it by, and every reader invents one: read_table() says
   row_name, pandas "Unnamed: 0". For a HoH the empty cell is the key column's,
-  and row.names => 'name' names it, so the warning says so. Every other shape
-  writes its label cell empty only when row.names => 1 asked for it -- R's own
+  and row_names => 'name' names it, so the warning says so. Every other shape
+  writes its label cell empty only when row_names => 1 asked for it -- R's own
   layout -- and nothing can name it, so warning there could not be silenced.
   The warnings come last, after every buffer and handle above is released,
   because a __WARN__ handler may die. 'quiet' does not silence them: it is the
   opt-out for the confirmation line, and this is a problem with the data.*/
 	if (is_hoh && inc_rownames && !rn_named)
 		warn("write_table: the row-name column (column 1) of '%s' has no name in "
-			"the header; name it with row.names => 'name', or drop it with "
-			"row.names => 0\n", file);
+			"the header; name it with row_names => 'name', or drop it with "
+			"row_names => 0\n", file);
 	if (n_unnamed)
 		warn("write_table: %" UVuf " column%s of '%s' ha%s no name in the header "
 			"(the first is column %" UVuf ")\n", (UV)n_unnamed,
@@ -23381,7 +23384,7 @@ PPCODE:
 			n_long == 1 ? "" : "s", file, n_long == 1 ? "s" : "ve",
 			(UV)header_width, (UV)first_long, (UV)first_long_width);
 	if (sheet_long)
-		warn("write_table: 'xlsx.sheet' is more than 31 characters, which some "
+		warn("write_table: 'xlsx_sheet' is more than 31 characters, which some "
 			"applications, Excel among them, cannot read\n");
 	XSRETURN_EMPTY;
 }
@@ -24021,11 +24024,11 @@ SV *predict(...)
 			if (hv_exists(model, "absorb", 6))
 				croak("predict: the model absorbed fixed effects, whose values are "
 				      "not estimated, so it cannot predict on new data");
-			if (hv_exists(model, "offset.array", 12))
+			if (hv_exists(model, "offset_array", 12))
 				croak("predict: the model's offset was given as an array, which "
 				      "cannot be evaluated on new data; give it as a column name "
 				      "or an offset() term instead");
-			svp = hv_fetch(model, "offset.terms", 12, 0);
+			svp = hv_fetch(model, "offset_terms", 12, 0);
 			if (svp && *svp) SvGETMAGIC(*svp);
 			if (svp && *svp && SvROK(*svp) && SvTYPE(SvRV(*svp)) == SVt_PVAV)
 				off_av = (AV*)SvRV(*svp);
@@ -24033,10 +24036,10 @@ SV *predict(...)
 
 		if (!newdata_sv || !SvOK(newdata_sv)) {
 			//no newdata -> hand back the stored fitted values unchanged
-			svp = hv_fetch(model, "fitted.values", 13, 0);
+			svp = hv_fetch(model, "fitted_values", 13, 0);
 			if (svp && *svp) SvGETMAGIC(*svp);
 			if (!svp || !*svp || !SvROK(*svp))
-				croak("predict: no newdata given and model has no 'fitted.values'");
+				croak("predict: no newdata given and model has no 'fitted_values'");
 			RETVAL = newRV_inc(SvRV(*svp));
 		} else {
 			if (!SvROK(newdata_sv))
@@ -24073,7 +24076,7 @@ SV *predict(...)
 				ITER_KEEP_END;
 				if (SvROK(v0) && SvTYPE(SvRV(v0)) == SVt_PVAV) { //HoA
 					static const char *const rn_keys[] =
-						{ "row.names", "_row", "rownames", ".rownames" };
+						{ "row_names", "_row", "rownames", ".rownames" };
 					AV *rn_av = NULL;
 					data_hoa = hv;
 					n = (size_t)(av_len((AV*)SvRV(v0)) + 1);
@@ -24134,7 +24137,7 @@ SV *predict(...)
 				}
 			} else if (SvTYPE(ref) == SVt_PVAV) { //AoH
 				static const char *const rn_keys[] =
-					{ "row.names", "_row", "rownames", ".rownames" };
+					{ "row_names", "_row", "rownames", ".rownames" };
 				AV *av = (AV*)ref;
 				n = (size_t)(av_len(av) + 1);
 				Newx(row_names,  n ? n : 1, char*); SAVEFREEPV(row_names);
@@ -24474,11 +24477,11 @@ SV *glm(...)
 	  else if (strEQ(key, "data"))    data_sv = val;
 	  else if (strEQ(key, "family"))  family_str = SvPV_nolen(val);
 	  else if (strEQ(key, "theta"))   { theta = SvNV(val); theta_given = 1; }
-	  else if (strEQ(key, "conf.level") || strEQ(key, "conf_level")) conf_level = SvNV(val);
+	  else if (strEQ(key, "conf_level")) conf_level = SvNV(val);
 	  else if (strEQ(key, "offset"))  offset_sv = val;
 	  else if (strEQ(key, "weights")) weights_sv = val;
 	  else if (strEQ(key, "cluster")) cluster_sv = val;
-	  else if (strEQ(key, "vcov") || strEQ(key, "vcov_type") || strEQ(key, "vcov.type"))
+	  else if (strEQ(key, "vcov") || strEQ(key, "vcov_type"))
 		vcov_str = SvOK(val) ? SvPV_nolen(val) : NULL;
 	  else if (strEQ(key, "absorb"))  absorb_sv = val;
 	  else if (strEQ(key, "maxit")) {
@@ -24494,7 +24497,7 @@ SV *glm(...)
 	}
 	if (!formula) croak("glm: formula is required");
 	if (!data_sv || !SvROK(data_sv)) croak("glm: data is required and must be a reference");
-	if (!(conf_level > 0.0 && conf_level < 1.0)) croak("glm: conf.level must be between 0 and 1");
+	if (!(conf_level > 0.0 && conf_level < 1.0)) croak("glm: conf_level must be between 0 and 1");
 
 	if      (strEQ(family_str, "gaussian")) fam = GLM_GAUSSIAN;
 	else if (strEQ(family_str, "binomial")) fam = GLM_BINOMIAL;
@@ -25098,7 +25101,7 @@ SV *glm(...)
 	the non-gaussian families, exponentiated coefficients: odds ratios
 	(binomial), rate/incidence-rate ratios (poisson/negbin).  A robust vcov
 	reports z for every family, which is what lmtest::coeftest() does for a
-	glm object (its df defaults to Inf) -- a t on df.residual belongs to the
+	glm object (its df defaults to Inf) -- a t on df_residual belongs to the
 	model-based gaussian summary only.*/
 			use_z = (fam != GLM_GAUSSIAN) || vtype >= 0;
 			zcrit = std_qnorm(1.0 - (1.0 - conf_level) / 2.0);
@@ -25114,8 +25117,8 @@ SV *glm(...)
 					hv_store(row_hv, "Std. Error", 10, newSVpv("NaN", 0), 0);
 					hv_store(row_hv, use_z ? "z value" : "t value", 7, newSVpv("NaN", 0), 0);
 					hv_store(row_hv, use_z ? "Pr(>|z|)" : "Pr(>|t|)", 8, newSVpv("NaN", 0), 0);
-					hv_store(row_hv, "CI.lower", 8, newSVpv("NaN", 0), 0);
-					hv_store(row_hv, "CI.upper", 8, newSVpv("NaN", 0), 0);
+					hv_store(row_hv, "CI_lower", 8, newSVpv("NaN", 0), 0);
+					hv_store(row_hv, "CI_upper", 8, newSVpv("NaN", 0), 0);
 				} else {
 					NV se = nv_sqrt(V[j * p + j]);
 					NV val_stat = beta[j] / se;
@@ -25134,8 +25137,8 @@ SV *glm(...)
 					hv_store(row_hv, "Std. Error", 10, newSVnv(se), 0);
 					hv_store(row_hv, use_z ? "z value" : "t value", 7, newSVnv(val_stat), 0);
 					hv_store(row_hv, use_z ? "Pr(>|z|)" : "Pr(>|t|)", 8, newSVnv(p_val), 0);
-					hv_store(row_hv, "CI.lower", 8, newSVnv(ci_lo), 0);
-					hv_store(row_hv, "CI.upper", 8, newSVnv(ci_hi), 0);
+					hv_store(row_hv, "CI_lower", 8, newSVnv(ci_lo), 0);
+					hv_store(row_hv, "CI_upper", 8, newSVnv(ci_hi), 0);
 					av_push(ci_av, newSVnv(ci_lo)); av_push(ci_av, newSVnv(ci_hi));
 					hv_store(conf_hv, cname, (I32)strlen(cname), newRV_noinc((SV*)ci_av), 0);
 					for (size_t l = 0; l < p; l++) {
@@ -25147,8 +25150,8 @@ SV *glm(...)
 					if (exp_hv) {
 						HV *e = newHV();
 						hv_store(e, "estimate",  8, newSVnv(nv_exp(beta[j])), 0);
-						hv_store(e, "conf.low",  8, newSVnv(nv_exp(ci_lo)), 0);
-						hv_store(e, "conf.high", 9, newSVnv(nv_exp(ci_hi)), 0);
+						hv_store(e, "conf_low",  8, newSVnv(nv_exp(ci_lo)), 0);
+						hv_store(e, "conf_high", 9, newSVnv(nv_exp(ci_hi)), 0);
 						hv_store(exp_hv, cname, (I32)strlen(cname), newRV_noinc((SV*)e), 0);
 					}
 				}
@@ -25163,38 +25166,38 @@ SV *glm(...)
 			         newSVnv((NV)(rank_total + ((fam == GLM_GAUSSIAN || (fam == GLM_NEGBIN && !theta_given)) ? 1 : 0))
 			                 - aic / 2.0), 0);
 			hv_store(res_hv, "coefficients",  12, newRV_noinc((SV*)coef_hv), 0);
-			hv_store(res_hv, "conf.int",       8, newRV_noinc((SV*)conf_hv), 0);
-			hv_store(res_hv, "conf.level",    10, newSVnv(conf_level), 0);
+			hv_store(res_hv, "conf_int",       8, newRV_noinc((SV*)conf_hv), 0);
+			hv_store(res_hv, "conf_level",    10, newSVnv(conf_level), 0);
 			if (exp_hv) hv_store(res_hv, "exp", 3, newRV_noinc((SV*)exp_hv), 0);
 			if (fam == GLM_NEGBIN) {
 				hv_store(res_hv, "theta", 5, newSVnv(theta), 0);
 				hv_store(res_hv, "twologlik", 9, newSVnv(twologlik), 0);
-				if (!theta_given) hv_store(res_hv, "SE.theta", 8, newSVnv(se_theta), 0);
+				if (!theta_given) hv_store(res_hv, "SE_theta", 8, newSVnv(se_theta), 0);
 			}
 			hv_store(res_hv, "converged",      9, newSVuv(g.converged ? 1 : 0), 0);
 			hv_store(res_hv, "boundary",       8, newSVuv(g.boundary ? 1 : 0), 0);
 			hv_store(res_hv, "deviance",       8, newSVnv(deviance), 0);
-			hv_store(res_hv, "deviance.resid", 14, newRV_noinc((SV*)resid_hv), 0);
-			hv_store(res_hv, "df.null",        7, newSVuv((UV)(n_ok - (intercept_model ? 1 : 0))), 0);
-			hv_store(res_hv, "df.residual",   11, newSViv(df_res), 0);
+			hv_store(res_hv, "deviance_resid", 14, newRV_noinc((SV*)resid_hv), 0);
+			hv_store(res_hv, "df_null",        7, newSVuv((UV)(n_ok - (intercept_model ? 1 : 0))), 0);
+			hv_store(res_hv, "df_residual",   11, newSViv(df_res), 0);
 			hv_store(res_hv, "dispersion",    10, newSVnv(dispersion), 0);
 			hv_store(res_hv, "family",         6, newSVpv(family_str, 0), 0);
-			hv_store(res_hv, "fitted.values", 13, newRV_noinc((SV*)fitted_hv), 0);
+			hv_store(res_hv, "fitted_values", 13, newRV_noinc((SV*)fitted_hv), 0);
 			hv_store(res_hv, "iter",           4, newSVuv(g.iter), 0);
 			hv_store(res_hv, "nobs",           4, newSVuv((UV)n_ok), 0);
-			hv_store(res_hv, "null.deviance", 13, newSVnv(null_dev), 0);
+			hv_store(res_hv, "null_deviance", 13, newSVnv(null_dev), 0);
 			hv_store(res_hv, "rank",           4, newSVuv((UV)rank_total), 0);
 			hv_store(res_hv, "summary",        7, newRV_noinc((SV*)summary_hv), 0);
 			hv_store(res_hv, "terms",          5, newRV_noinc((SV*)terms_av), 0);
 			hv_store(res_hv, "vcov",           4, newRV_noinc((SV*)vcov_hv), 0);
-			hv_store(res_hv, "vcov.type",      9,
+			hv_store(res_hv, "vcov_type",      9,
 			         newSVpv(vtype < 0 ? "model" : vtype == 0 ? "HC0" : vtype == 1 ? "HC1"
 			                 : vtype == 2 ? "HC2" : "HC3", 0), 0);
-			if (ncl == 1) hv_store(res_hv, "n.clusters", 10, newSVuv((UV)Gv[0]), 0);
+			if (ncl == 1) hv_store(res_hv, "n_clusters", 10, newSVuv((UV)Gv[0]), 0);
 			else if (ncl > 1) {
 				AV *nc = newAV();
 				for (unsigned short c = 0; c < ncl; c++) av_push(nc, newSVuv((UV)Gv[c]));
-				hv_store(res_hv, "n.clusters", 10, newRV_noinc((SV*)nc), 0);
+				hv_store(res_hv, "n_clusters", 10, newRV_noinc((SV*)nc), 0);
 			}
 			hv_store(res_hv, "xlevels",       7, newRV_inc((SV*)xlevels_hv), 0);
 			if (nfe) {
@@ -25202,7 +25205,7 @@ SV *glm(...)
 				for (unsigned short k = 0; k < nfe; k++)
 					hv_store(ab, fe_names[k], (I32)strlen(fe_names[k]), newSVuv((UV)NG[k]), 0);
 				hv_store(res_hv, "absorb",     6, newRV_noinc((SV*)ab), 0);
-				hv_store(res_hv, "fe.removed", 10, newSVuv((UV)fe_removed), 0);
+				hv_store(res_hv, "fe_removed", 10, newSVuv((UV)fe_removed), 0);
 			}
 			/*What predict() needs to rebuild the offset on new data: the
 			formula's offset() expressions and a named offset column.  An
@@ -25212,8 +25215,8 @@ SV *glm(...)
 				AV *oa = newAV();
 				for (i = 0; i < noff; i++) av_push(oa, newSVpv(off_terms[i], 0));
 				if (off_spec.col) av_push(oa, newSVpv(off_spec.col, 0));
-				hv_store(res_hv, "offset.terms", 12, newRV_noinc((SV*)oa), 0);
-				if (off_spec.av) hv_store(res_hv, "offset.array", 12, newSVuv(1), 0);
+				hv_store(res_hv, "offset_terms", 12, newRV_noinc((SV*)oa), 0);
+				if (off_spec.av) hv_store(res_hv, "offset_array", 12, newSVuv(1), 0);
 			}
 		}
 	}
@@ -25253,11 +25256,11 @@ SV *zerotrunc(...)
 		else if (strEQ(key, "theta"))   { theta = SvNV(val); theta_given = 1; }
 		else if (strEQ(key, "offset"))  offset_sv = val;
 		else if (strEQ(key, "weights")) weights_sv = val;
-		else if (strEQ(key, "conf.level") || strEQ(key, "conf_level")) conf_level = SvNV(val);
+		else if (strEQ(key, "conf_level")) conf_level = SvNV(val);
 		else croak("zerotrunc: unknown argument '%s'", key);
 	}
 	if (!formula) croak("zerotrunc: formula is required");
-	if (!(conf_level > 0.0 && conf_level < 1.0)) croak("zerotrunc: conf.level must be between 0 and 1");
+	if (!(conf_level > 0.0 && conf_level < 1.0)) croak("zerotrunc: conf_level must be between 0 and 1");
 	Zero(&zm, 1, ZtModel);
 	if      (strEQ(dist_str, "poisson"))   zm.dist = ZT_POISSON;
 	else if (strEQ(dist_str, "negbin"))    zm.dist = ZT_NEGBIN;
@@ -25339,7 +25342,7 @@ SV *zerotrunc(...)
 	hv_store(res, "coefficients", 12, newRV_noinc((SV *)coef_hv), 0);
 	hv_store(res, "summary", 7, newRV_noinc((SV *)summ_hv), 0);
 	hv_store(res, "vcov", 4, newRV_noinc((SV *)vcov_hv), 0);
-	hv_store(res, "fitted.values", 13, newRV_noinc((SV *)fit_hv), 0);
+	hv_store(res, "fitted_values", 13, newRV_noinc((SV *)fit_hv), 0);
 	hv_store(res, "residuals", 9, newRV_noinc((SV *)resid_hv), 0);
 	zt_tables(aTHX_ &P, P.p, np, par, cov, aliased, std_qnorm(1.0 - (1.0 - conf_level) / 2.0),
 	          coef_hv, summ_hv, vcov_hv);
@@ -25359,19 +25362,19 @@ SV *zerotrunc(...)
 		hv_store(res, "loglik", 6, newSVnv(ll), 0);
 		hv_store(res, "aic", 3, newSVnv(-2.0 * ll + 2.0 * (NV)rank), 0);
 		hv_store(res, "nobs", 4, newSVuv((UV)n_ok), 0);
-		hv_store(res, "df.residual", 11, newSViv((IV)n_ok - (IV)rank), 0);
-		hv_store(res, "df.null", 7, newSViv((IV)n_ok - 1 - (zm.dist == ZT_NEGBIN ? 1 : 0)), 0);
+		hv_store(res, "df_residual", 11, newSViv((IV)n_ok - (IV)rank), 0);
+		hv_store(res, "df_null", 7, newSViv((IV)n_ok - 1 - (zm.dist == ZT_NEGBIN ? 1 : 0)), 0);
 	}
 	if (zm.dist == ZT_NEGBIN) {
 		hv_store(res, "theta", 5, newSVnv(nv_exp(par[P.p])), 0);
-		hv_store(res, "SE.logtheta", 11, newSVnv(nv_sqrt(cov[P.p * np + P.p])), 0);
+		hv_store(res, "SE_logtheta", 11, newSVnv(nv_sqrt(cov[P.p * np + P.p])), 0);
 	} else if (zm.dist != ZT_POISSON) {
 		hv_store(res, "theta", 5, newSVnv(zm.theta), 0);
 	}
 	hv_store(res, "dist", 4, newSVpv(zm.dist == ZT_POISSON ? "poisson" : zm.dist == ZT_GEOMETRIC ? "geometric" : "negbin", 0), 0);
 	hv_store(res, "converged", 9, newSVuv(conv ? 1 : 0), 0);
 	hv_store(res, "iter", 4, newSVuv(iter), 0);
-	hv_store(res, "conf.level", 10, newSVnv(conf_level), 0);
+	hv_store(res, "conf_level", 10, newSVnv(conf_level), 0);
 	hv_store(res, "xlevels", 7, newRV_inc((SV *)xlev), 0);
 	RETVAL = newRV_inc((SV *)res);
 	}
@@ -25400,7 +25403,7 @@ SV *hurdle(...)
 	char **names;
 	size_t i, j, n = 0, npos = 0, n_ok = 0;
 	ZtModel zm;
-	short int zdist;   //the zero hurdle's ZT_* code; ZT_LOGIT for zero.dist = "binomial"
+	short int zdist;   //the zero hurdle's ZT_* code; ZT_LOGIT for zero_dist = "binomial"
 	HV *res, *xlev;
 
 	if (items % 2 != 0) croak("Usage: hurdle(formula => 'y ~ x | z', data => \\%%d, dist => 'negbin')");
@@ -25410,15 +25413,15 @@ SV *hurdle(...)
 		if      (strEQ(key, "formula")) formula = SvPV_nolen(val);
 		else if (strEQ(key, "data"))    data_sv = val;
 		else if (strEQ(key, "dist"))    dist_str = SvPV_nolen(val);
-		else if (strEQ(key, "zero.dist") || strEQ(key, "zero_dist")) zdist_str = SvPV_nolen(val);
+		else if (strEQ(key, "zero_dist")) zdist_str = SvPV_nolen(val);
 		else if (strEQ(key, "link"))    link_str = SvPV_nolen(val);
 		else if (strEQ(key, "offset"))  offset_sv = val;
 		else if (strEQ(key, "weights")) weights_sv = val;
-		else if (strEQ(key, "conf.level") || strEQ(key, "conf_level")) conf_level = SvNV(val);
+		else if (strEQ(key, "conf_level")) conf_level = SvNV(val);
 		else croak("hurdle: unknown argument '%s'", key);
 	}
 	if (!formula) croak("hurdle: formula is required");
-	if (!(conf_level > 0.0 && conf_level < 1.0)) croak("hurdle: conf.level must be between 0 and 1");
+	if (!(conf_level > 0.0 && conf_level < 1.0)) croak("hurdle: conf_level must be between 0 and 1");
 	Zero(&zm, 1, ZtModel);
 	if      (strEQ(dist_str, "poisson"))   zm.dist = ZT_POISSON;
 	else if (strEQ(dist_str, "negbin"))    zm.dist = ZT_NEGBIN;
@@ -25428,7 +25431,7 @@ SV *hurdle(...)
 	else if (strEQ(zdist_str, "poisson"))   zdist = ZT_POISSON;
 	else if (strEQ(zdist_str, "negbin"))    zdist = ZT_NEGBIN;
 	else if (strEQ(zdist_str, "geometric")) zdist = ZT_GEOMETRIC;
-	else croak("hurdle: zero.dist must be 'binomial', 'poisson', 'negbin' or 'geometric'");
+	else croak("hurdle: zero_dist must be 'binomial', 'poisson', 'negbin' or 'geometric'");
 	if (zdist == ZT_LOGIT && strNE(link_str, "logit"))
 		croak("hurdle: only link = 'logit' is implemented for the binomial zero hurdle");
 	zcrit = std_qnorm(1.0 - (1.0 - conf_level) / 2.0);
@@ -25526,8 +25529,8 @@ SV *hurdle(...)
 		llz = zt_eval(&zz, zpar, NULL, NULL, pnz);
 		zt_tables(aTHX_ &Pz, pz, npz, zpar, zcov, zal, zcrit, coef_z, summ_z, vcov_z);
 		if (zdist == ZT_NEGBIN) {
-			hv_store(res, "theta.zero", 10, newSVnv(nv_exp(zpar[pz])), 0);
-			hv_store(res, "SE.logtheta.zero", 16, newSVnv(nv_sqrt(zcov[pz * npz + pz])), 0);
+			hv_store(res, "theta_zero", 10, newSVnv(nv_exp(zpar[pz])), 0);
+			hv_store(res, "SE_logtheta_zero", 16, newSVnv(nv_sqrt(zcov[pz * npz + pz])), 0);
 		}
 
 		/*Count part on the positive counts.*/
@@ -25593,24 +25596,24 @@ SV *hurdle(...)
 				hv_store(fit_hv, names[i], ROWNAME_KLEN(names[i]),
 				         newSVnv(pz_i * nv_exp(eta - nv_log1mexp(B))), 0);
 			}
-			hv_store(res, "fitted.values", 13, newRV_noinc((SV *)fit_hv), 0);
+			hv_store(res, "fitted_values", 13, newRV_noinc((SV *)fit_hv), 0);
 			{
 				size_t rank = 0;
 				for (j = 0; j < np; j++) if (!cal[j]) rank++;
 				for (j = 0; j < npz; j++) if (!zal[j]) rank++;
 				hv_store(res, "loglik", 6, newSVnv(llz + llc), 0);
-				hv_store(res, "loglik.zero", 11, newSVnv(llz), 0);
-				hv_store(res, "loglik.count", 12, newSVnv(llc), 0);
+				hv_store(res, "loglik_zero", 11, newSVnv(llz), 0);
+				hv_store(res, "loglik_count", 12, newSVnv(llc), 0);
 				hv_store(res, "aic", 3, newSVnv(-2.0 * (llz + llc) + 2.0 * (NV)rank), 0);
-				hv_store(res, "df.residual", 11, newSViv((IV)n_ok - (IV)rank), 0);
+				hv_store(res, "df_residual", 11, newSViv((IV)n_ok - (IV)rank), 0);
 			}
 			if (zm.dist == ZT_NEGBIN) {
 				hv_store(res, "theta", 5, newSVnv(nv_exp(par[pc])), 0);
-				hv_store(res, "SE.logtheta", 11, newSVnv(nv_sqrt(cov[pc * np + pc])), 0);
+				hv_store(res, "SE_logtheta", 11, newSVnv(nv_sqrt(cov[pc * np + pc])), 0);
 			}
 			hv_store(res, "converged", 9, newSVuv((convc && convz) ? 1 : 0), 0);
 			hv_store(res, "iter", 4, newSVuv(iter), 0);
-			hv_store(res, "iter.zero", 9, newSVuv(iterz), 0);
+			hv_store(res, "iter_zero", 9, newSVuv(iterz), 0);
 			{
 				AV *tc = newAV(), *tz = newAV();
 				HV *t = newHV();
@@ -25624,9 +25627,9 @@ SV *hurdle(...)
 	}
 	hv_store(res, "nobs", 4, newSVuv((UV)n_ok), 0);
 	hv_store(res, "dist", 4, newSVpv(zm.dist == ZT_POISSON ? "poisson" : zm.dist == ZT_GEOMETRIC ? "geometric" : "negbin", 0), 0);
-	hv_store(res, "zero.dist", 9, newSVpv(zdist_str, 0), 0);
+	hv_store(res, "zero_dist", 9, newSVpv(zdist_str, 0), 0);
 	if (zdist == ZT_LOGIT) hv_store(res, "link", 4, newSVpv("logit", 0), 0);
-	hv_store(res, "conf.level", 10, newSVnv(conf_level), 0);
+	hv_store(res, "conf_level", 10, newSVnv(conf_level), 0);
 	hv_store(res, "xlevels", 7, newRV_inc((SV *)xlev), 0);
 	RETVAL = newRV_inc((SV *)res);
 	}
@@ -25679,11 +25682,11 @@ SV *svyglm(...)
 		else if (strEQ(k, "fpc"))     fpc_sv = v;
 		else if (strEQ(k, "offset"))  offset_sv = v;
 		else if (strEQ(k, "nest"))    nest = SvTRUE(v) ? TRUE : FALSE;
-		else if (strEQ(k, "conf.level") || strEQ(k, "conf_level")) conf_level = SvNV(v);
+		else if (strEQ(k, "conf_level")) conf_level = SvNV(v);
 		else croak("svyglm: unknown argument '%s'", k);
 	}
 	if (!formula) croak("svyglm: formula is required");
-	if (!(conf_level > 0.0 && conf_level < 1.0)) croak("svyglm: conf.level must be between 0 and 1");
+	if (!(conf_level > 0.0 && conf_level < 1.0)) croak("svyglm: conf_level must be between 0 and 1");
 	/*quasibinomial and quasipoisson are what survey recommends, to avoid
 	glm()'s warning about non-integer successes; the point estimates and the
 	design-based variance are the same as binomial's and poisson's, since no
@@ -25928,8 +25931,8 @@ SV *svyglm(...)
 			hv_store(res, "coefficients", 12, newRV_noinc((SV *)coef), 0);
 			hv_store(res, "summary", 7, newRV_noinc((SV *)summ), 0);
 			hv_store(res, "vcov", 4, newRV_noinc((SV *)vcov), 0);
-			hv_store(res, "conf.int", 8, newRV_noinc((SV *)conf), 0);
-			hv_store(res, "fitted.values", 13, newRV_noinc((SV *)fitv), 0);
+			hv_store(res, "conf_int", 8, newRV_noinc((SV *)conf), 0);
+			hv_store(res, "fitted_values", 13, newRV_noinc((SV *)fitv), 0);
 			hv_store(res, "terms", 5, newRV_noinc((SV *)terms), 0);
 		}
 		{
@@ -25964,16 +25967,16 @@ SV *svyglm(...)
 			hv_store(res, "dispersion", 10, newSVnv(v), 0);
 		}
 		hv_store(res, "deviance", 8, newSVnv(g.dev), 0);
-		hv_store(res, "df.residual", 11, newSViv(df_r), 0);
+		hv_store(res, "df_residual", 11, newSViv(df_r), 0);
 		hv_store(res, "degf", 4, newSViv((IV)degf_psu - (IV)degf_str), 0);
 		hv_store(res, "rank", 4, newSVuv((UV)rank), 0);
 		hv_store(res, "nobs", 4, newSVuv((UV)n), 0);
-		hv_store(res, "n.psu", 5, newSVuv((UV)npsu), 0);
-		hv_store(res, "n.strata", 8, newSVuv((UV)H), 0);
+		hv_store(res, "n_psu", 5, newSVuv((UV)npsu), 0);
+		hv_store(res, "n_strata", 8, newSVuv((UV)H), 0);
 		hv_store(res, "converged", 9, newSVuv(g.converged ? 1 : 0), 0);
 		hv_store(res, "iter", 4, newSVuv(g.iter), 0);
 		hv_store(res, "family", 6, newSVpv(family_str, 0), 0);
-		hv_store(res, "conf.level", 10, newSVnv(conf_level), 0);
+		hv_store(res, "conf_level", 10, newSVnv(conf_level), 0);
 	}
 	RETVAL = newRV_inc((SV *)res);
 	}
@@ -26015,12 +26018,12 @@ SV *ivreg(...)
 		else if (strEQ(k, "data"))    data_sv = v;
 		else if (strEQ(k, "weights")) w_sv = v;
 		else if (strEQ(k, "cluster")) cluster_sv = v;
-		else if (strEQ(k, "vcov") || strEQ(k, "vcov_type") || strEQ(k, "vcov.type")) vcov_str = SvOK(v) ? SvPV_nolen(v) : NULL;
-		else if (strEQ(k, "conf.level") || strEQ(k, "conf_level")) conf_level = SvNV(v);
+		else if (strEQ(k, "vcov") || strEQ(k, "vcov_type")) vcov_str = SvOK(v) ? SvPV_nolen(v) : NULL;
+		else if (strEQ(k, "conf_level")) conf_level = SvNV(v);
 		else croak("ivreg: unknown argument '%s'", k);
 	}
 	if (!formula) croak("ivreg: formula is required");
-	if (!(conf_level > 0.0 && conf_level < 1.0)) croak("ivreg: conf.level must be between 0 and 1");
+	if (!(conf_level > 0.0 && conf_level < 1.0)) croak("ivreg: conf_level must be between 0 and 1");
 	if (vcov_str) {
 		if      (strEQ(vcov_str, "HC0") || strEQ(vcov_str, "HC")) vtype = 0;
 		else if (strEQ(vcov_str, "HC1")) vtype = 1;
@@ -26229,22 +26232,22 @@ SV *ivreg(...)
 			hv_store(res, "coefficients", 12, newRV_noinc((SV *)coef), 0);
 			hv_store(res, "summary", 7, newRV_noinc((SV *)summ), 0);
 			hv_store(res, "vcov", 4, newRV_noinc((SV *)vcov), 0);
-			hv_store(res, "conf.int", 8, newRV_noinc((SV *)conf), 0);
-			hv_store(res, "fitted.values", 13, newRV_noinc((SV *)fitv), 0);
+			hv_store(res, "conf_int", 8, newRV_noinc((SV *)conf), 0);
+			hv_store(res, "fitted_values", 13, newRV_noinc((SV *)fitv), 0);
 			hv_store(res, "residuals", 9, newRV_noinc((SV *)resv), 0);
 			hv_store(res, "terms", 5, newRV_noinc((SV *)terms), 0);
 			hv_store(res, "endogenous", 10, newRV_noinc((SV *)endo_av), 0);
 			hv_store(res, "instruments", 11, newRV_noinc((SV *)inst_av), 0);
 			hv_store(res, "sigma", 5, newSVnv(sigma), 0);
 			hv_store(res, "rss", 3, newSVnv(rss), 0);
-			hv_store(res, "df.residual", 11, newSViv(df_res), 0);
+			hv_store(res, "df_residual", 11, newSViv(df_res), 0);
 			hv_store(res, "rank", 4, newSVuv(second.rank), 0);
 			hv_store(res, "nobs", 4, newSVuv((UV)n), 0);
-			hv_store(res, "r.squared", 9, newSVnv(r2), 0);
-			hv_store(res, "adj.r.squared", 13, newSVnv(adj), 0);
-			hv_store(res, "vcov.type", 9, newSVpv(vtype < 0 ? "model" : vtype == 0 ? "HC0" : "HC1", 0), 0);
-			if (ncl) hv_store(res, "n.clusters", 10, newSVuv((UV)Gv[0]), 0);
-			hv_store(res, "conf.level", 10, newSVnv(conf_level), 0);
+			hv_store(res, "r_squared", 9, newSVnv(r2), 0);
+			hv_store(res, "adj_r_squared", 13, newSVnv(adj), 0);
+			hv_store(res, "vcov_type", 9, newSVpv(vtype < 0 ? "model" : vtype == 0 ? "HC0" : "HC1", 0), 0);
+			if (ncl) hv_store(res, "n_clusters", 10, newSVuv((UV)Gv[0]), 0);
+			hv_store(res, "conf_level", 10, newSVnv(conf_level), 0);
 			/*Wald test of every coefficient but the intercept, on the reported
 			vcov: summary.ivreg()'s car::linearHypothesis()*/
 			{
@@ -26268,7 +26271,7 @@ SV *ivreg(...)
 				hv_stores(t, "statistic", newSVnv(stat));
 				hv_stores(t, "df1", newSVuv((UV)q));
 				hv_stores(t, "df2", newSViv(df_res));
-				hv_stores(t, "p.value", newSVnv(pf_upper(stat, (NV)q, (NV)df_res)));
+				hv_stores(t, "p_value", newSVnv(pf_upper(stat, (NV)q, (NV)df_res)));
 				hv_store(res, "waldtest", 8, newRV_noinc((SV *)t), 0);
 			}
 		}
@@ -26302,7 +26305,7 @@ SV *ivreg(...)
 					hv_stores(t, "df1", newSViv(df1));
 					hv_stores(t, "df2", newSViv(df2));
 					hv_stores(t, "statistic", newSVnv(stat));
-					hv_stores(t, "p.value", newSVnv(pf_upper(stat, (NV)df1, (NV)df2)));
+					hv_stores(t, "p_value", newSVnv(pf_upper(stat, (NV)df1, (NV)df2)));
 					hv_store(weak, mf_colname(&PX, j), (I32)strlen(mf_colname(&PX, j)), newRV_noinc((SV *)t), 0);
 					for (i = 0; i < n; i++) xfit[i * nendo + e] = a1.fit[i];
 					e++;
@@ -26333,8 +26336,8 @@ SV *ivreg(...)
 				hv_stores(t, "df1", newSViv(df1));
 				hv_stores(t, "df2", newSViv(df2));
 				hv_stores(t, "statistic", newSVnv(stat));
-				hv_stores(t, "p.value", newSVnv(pf_upper(stat, (NV)df1, (NV)df2)));
-				hv_store(diag, "wu.hausman", 10, newRV_noinc((SV *)t), 0);
+				hv_stores(t, "p_value", newSVnv(pf_upper(stat, (NV)df1, (NV)df2)));
+				hv_store(diag, "wu_hausman", 10, newRV_noinc((SV *)t), 0);
 			}
 			/*Sargan: n times the (centred) R^2 of the structural residuals
 			on the instruments*/
@@ -26351,7 +26354,7 @@ SV *ivreg(...)
 				stat = (NV)n * (1.0 - s.rss / rssr);
 				hv_stores(t, "df", newSVuv((UV)(ninst - nendo)));
 				hv_stores(t, "statistic", newSVnv(stat));
-				hv_stores(t, "p.value", newSVnv(get_p_value(stat, (int)(ninst - nendo))));
+				hv_stores(t, "p_value", newSVnv(get_p_value(stat, (int)(ninst - nendo))));
 				hv_store(diag, "sargan", 6, newRV_noinc((SV *)t), 0);
 			}
 		}
@@ -26390,11 +26393,11 @@ SV *lmer(...)
 		if      (strEQ(k, "formula")) formula = SvPV_nolen(v);
 		else if (strEQ(k, "data"))    data_sv = v;
 		else if (strEQ(k, "REML") || strEQ(k, "reml")) reml = SvTRUE(v) ? TRUE : FALSE;
-		else if (strEQ(k, "conf.level") || strEQ(k, "conf_level")) conf_level = SvNV(v);
+		else if (strEQ(k, "conf_level")) conf_level = SvNV(v);
 		else croak("lmer: unknown argument '%s'", k);
 	}
 	if (!formula) croak("lmer: formula is required");
-	if (!(conf_level > 0.0 && conf_level < 1.0)) croak("lmer: conf.level must be between 0 and 1");
+	if (!(conf_level > 0.0 && conf_level < 1.0)) croak("lmer: conf_level must be between 0 and 1");
 
 	/*Split the right-hand side into its top-level terms and take out the
 	parenthesised ones with a bar in them.*/
@@ -26754,7 +26757,7 @@ SV *lmer(...)
 				hv_store(res, "coefficients", 12, newRV_noinc((SV *)coef), 0);
 				hv_store(res, "summary", 7, newRV_noinc((SV *)summ), 0);
 				hv_store(res, "vcov", 4, newRV_noinc((SV *)vcov), 0);
-				hv_store(res, "conf.int", 8, newRV_noinc((SV *)conf), 0);
+				hv_store(res, "conf_int", 8, newRV_noinc((SV *)conf), 0);
 				hv_store(res, "terms", 5, newRV_noinc((SV *)terms_av), 0);
 			}
 			/*variance components, lme4's VarCorr(): sigma^2 T_k T_k'*/
@@ -26839,7 +26842,7 @@ SV *lmer(...)
 					}
 					hv_store(fit, names[i], ROWNAME_KLEN(names[i]), newSVnv(f), 0);
 				}
-				hv_store(res, "fitted.values", 13, newRV_noinc((SV *)fit), 0);
+				hv_store(res, "fitted_values", 13, newRV_noinc((SV *)fit), 0);
 			}
 			{
 				NV ll = -crit / 2.0;
@@ -26852,7 +26855,7 @@ SV *lmer(...)
 				hv_store(res, "nobs", 4, newSVuv((UV)n), 0);
 				hv_store(res, "converged", 9, newSVuv(conv ? 1 : 0), 0);
 				hv_store(res, "reml", 4, newSVuv(reml ? 1 : 0), 0);
-				hv_store(res, "conf.level", 10, newSVnv(conf_level), 0);
+				hv_store(res, "conf_level", 10, newSVnv(conf_level), 0);
 				{
 					/*a variance component on its boundary: lme4's "singular fit"*/
 					bool sing = 0;
@@ -26891,7 +26894,7 @@ CODE:
 	  if      (strEQ(key, "alternative")) alternative = SvPV_nolen(val);
 	  else if (strEQ(key, "method"))      method = SvPV_nolen(val);
 	  else if (strEQ(key, "exact"))       exact_sv = val;
-	  else if (strEQ(key, "conf.level") || strEQ(key, "conf_level")) conf_level = SvNV(val);
+	  else if (strEQ(key, "conf_level")) conf_level = SvNV(val);
 	  else if (strEQ(key, "continuity"))  continuity = SvTRUE(val);
 	  else croak("cor_test: unknown argument '%s'", key);
 	}
@@ -27188,7 +27191,7 @@ spearman_done:	//the degenerate spearman case jumps here with its ranks freed
 	Safefree(x);	Safefree(y);
 	rhv = newHV();
 	hv_stores(rhv, "estimate",    newSVnv(estimate));
-	hv_stores(rhv, "p.value",     newSVnv(p_value));
+	hv_stores(rhv, "p_value",     newSVnv(p_value));
 	hv_stores(rhv, "statistic",   newSVnv(statistic));
 	hv_stores(rhv, "method",      newSVpv(method, 0));
 	hv_stores(rhv, "alternative", newSVpv(alternative, 0));
@@ -27202,7 +27205,7 @@ spearman_done:	//the degenerate spearman case jumps here with its ranks freed
 		  AV *ci_av = newAV();
 		  av_push(ci_av, newSVnv(ci_lower));
 		  av_push(ci_av, newSVnv(ci_upper));
-		  hv_stores(rhv, "conf.int", newRV_noinc((SV*)ci_av));
+		  hv_stores(rhv, "conf_int", newRV_noinc((SV*)ci_av));
 	  }
 	}
 	RETVAL = newRV_noinc((SV*)rhv);
@@ -27354,7 +27357,7 @@ PPCODE:
 	ret_hash = newHV();
 	hv_stores(ret_hash, "statistic", newSVnv(w));
 	hv_stores(ret_hash, "W",         newSVnv(w));
-	hv_stores(ret_hash, "p.value",   newSVnv(p_val));
+	hv_stores(ret_hash, "p_value",   newSVnv(p_val));
 	EXTEND(SP, 1);
 	PUSHs(sv_2mortal(newRV_noinc((SV *)ret_hash)));
 
@@ -28320,14 +28323,13 @@ SV* t_test(...)
 			else if (strEQ(key, "y"))           y_sv        = val;
 			else if (strEQ(key, "mu"))          mu          = t_test_num(aTHX_ val, "mu");
 			else if (strEQ(key, "paired"))      paired      = SvTRUE(val);
-			/*Both spellings of the two dotted R names, as every sibling here
-			already accepts (var_test, wilcox_test, prop_test, glm, ...).
-			t_test took only the underscored form, so the 'conf.level' its own
-			documentation lists -- and the 'var.equal' R spells it with -- were
-			a croak rather than an argument.*/
-			else if (strEQ(key, "var_equal") || strEQ(key, "var.equal"))
+			/*Only the underscored names, as in every sibling here (var_test,
+			wilcox_test, prop_test, glm, ...). The dotted 'conf.level' and
+			'var.equal' R spells them with were dropped in 0.3213 and are
+			refused as unknown arguments.*/
+			else if (strEQ(key, "var_equal"))
 				var_equal = SvTRUE(val);
-			else if (strEQ(key, "conf_level") || strEQ(key, "conf.level"))
+			else if (strEQ(key, "conf_level"))
 				conf_level = t_test_num(aTHX_ val, "conf_level");
 			else if (strEQ(key, "alternative")) alternative = SvPV_nolen(val);
 			else croak("t_test: unknown argument '%s'", key);
@@ -28500,8 +28502,8 @@ SV* t_test(...)
 				hv_store(results, "estimate", 8, newSVnv(cint_est), 0);
 				break;
 			case EST_BOTH:
-				hv_store(results, "estimate.x", 10, newSVnv(mean_x), 0);
-				hv_store(results, "estimate.y", 10, newSVnv(mean_y), 0);
+				hv_store(results, "estimate_x", 10, newSVnv(mean_x), 0);
+				hv_store(results, "estimate_y", 10, newSVnv(mean_y), 0);
 				break;
 			default:
 				hv_store(results, "estimate", 8, newSVnv(mean_x), 0);
@@ -28525,8 +28527,8 @@ SV* t_test(...)
 		av_push(conf_int, newSVnv(ci_upper));
 		hv_store(results, "statistic", 9, newSVnv(t_stat), 0);
 		hv_store(results, "df",        2, newSVnv(df),     0);
-		hv_store(results, "p.value",   7, newSVnv(p_val),  0);
-		hv_store(results, "conf.int",  8, newRV_noinc((SV*)conf_int), 0);
+		hv_store(results, "p_value",   7, newSVnv(p_val),  0);
+		hv_store(results, "conf_int",  8, newRV_noinc((SV*)conf_int), 0);
 		hv_store(results, "stderr",    6, newSVnv(std_err), 0);	//R's component since 3.6.0
 		RETVAL = newRV_noinc((SV*)results);
 	}
@@ -28542,7 +28544,7 @@ PPCODE:
 	for one proportion and a Wald CI for a difference of two).*/
 	if (items < 2)
 		croak("Usage: prop_test(\\@successes, \\@trials, p => ..., "
-		      "alternative => 'two.sided', conf.level => 0.95, correct => 1)\n"
+		      "alternative => 'two.sided', conf_level => 0.95, correct => 1)\n"
 		      "   or prop_test($x, $n, ...) for a single sample");
 	const char *alt = "two.sided";
 	NV conf_level = NV_CONF_95;
@@ -28552,12 +28554,12 @@ PPCODE:
 		const char *key = SvPV_nolen(ST(i)); SV *v = ST(i + 1);
 		if      (strEQ(key, "p"))            p_sv = v;
 		else if (strEQ(key, "alternative"))  alt = SvPV_nolen(v);
-		else if (strEQ(key, "conf_level") || strEQ(key, "conf.level")) conf_level = SvNV(v);
+		else if (strEQ(key, "conf_level")) conf_level = SvNV(v);
 		else if (strEQ(key, "correct"))      correct = SvTRUE(v) ? 1 : 0;
 		else croak("prop_test: unknown argument '%s'", key);
 	}
 	if (!(conf_level > 0.0 && conf_level < 1.0))
-		croak("prop_test: conf.level must be between 0 and 1");
+		croak("prop_test: conf_level must be between 0 and 1");
 	if (strNE(alt, "two.sided") && strNE(alt, "less") && strNE(alt, "greater"))
 		croak("prop_test: alternative must be 'two.sided', 'less' or 'greater'");
 
@@ -28677,9 +28679,9 @@ PPCODE:
 	HV *ret = newHV();
 	hv_stores(ret, "statistic",   newSVnv(stat));
 	hv_stores(ret, "parameter",   newSViv(df));
-	hv_stores(ret, "p.value",     newSVnv(p_value));
+	hv_stores(ret, "p_value",     newSVnv(p_value));
 	hv_stores(ret, "alternative", newSVpv(alt, 0));
-	hv_stores(ret, "conf.level",  newSVnv(conf_level));
+	hv_stores(ret, "conf_level",  newSVnv(conf_level));
 	{
 		char method[96];
 		if (k == 1) snprintf(method, sizeof method, "1-sample proportions test %s continuity correction", YATES > 0.0 ? "with" : "without");
@@ -28694,7 +28696,7 @@ PPCODE:
 	}
 	if (have_ci) {
 		AV *ci = newAV(); av_push(ci, newSVnv(ci_lo)); av_push(ci, newSVnv(ci_hi));
-		hv_stores(ret, "conf.int", newRV_noinc((SV*)ci));
+		hv_stores(ret, "conf_int", newRV_noinc((SV*)ci));
 	}
 	Safefree(x); Safefree(nn); Safefree(pnull); Safefree(est);
 	ST(0) = sv_2mortal(newRV_noinc((SV *)ret));
@@ -28799,7 +28801,7 @@ PPCODE:
 			p_value = 2.0 * s; if (p_value > 1.0) p_value = 1.0;
 		}
 		hv_stores(ret, "statistic",   newSVnv(b));
-		hv_stores(ret, "p.value",     newSVnv(p_value));
+		hv_stores(ret, "p_value",     newSVnv(p_value));
 		hv_stores(ret, "method",      newSVpv("McNemar's test (exact binomial)", 0));
 	} else {
 		bool use_cc = 0;
@@ -28821,7 +28823,7 @@ PPCODE:
 		NV p_value = get_p_value(stat, df);
 		hv_stores(ret, "statistic", newSVnv(stat));
 		hv_stores(ret, "parameter", newSViv(df));
-		hv_stores(ret, "p.value",   newSVnv(p_value));
+		hv_stores(ret, "p_value",   newSVnv(p_value));
 		hv_stores(ret, "method",    newSVpv(use_cc ?
 			"McNemar's Chi-squared test with continuity correction" :
 			"McNemar's Chi-squared test", 0));
@@ -28946,8 +28948,8 @@ PPCODE:
 		hv_stores(h, "group1",     newSVpv(lev[gi_[t]], 0));
 		hv_stores(h, "group2",     newSVpv(lev[gj_[t]], 0));
 		hv_stores(h, "Z",          newSVnv(z[t]));
-		hv_stores(h, "p.value",    newSVnv(praw[t]));
-		hv_stores(h, "p.adjust",   newSVnv(padj[t]));
+		hv_stores(h, "p_value",    newSVnv(praw[t]));
+		hv_stores(h, "p_adjust",   newSVnv(padj[t]));
 		av_push(out, newRV_noinc((SV*)h));
 	}
 
@@ -29034,7 +29036,7 @@ PPCODE:
 	HV *ret = newHV();
 	hv_stores(ret, "statistic", newSVnv(stat));
 	hv_stores(ret, "parameter", newSViv(df));
-	hv_stores(ret, "p.value",   newSVnv(p_value));
+	hv_stores(ret, "p_value",   newSVnv(p_value));
 	hv_stores(ret, "n",         newSViv((int)n));
 	hv_stores(ret, "method",    newSVpv("Friedman rank sum test", 0));
 	ST(0) = sv_2mortal(newRV_noinc((SV *)ret));
@@ -29062,7 +29064,7 @@ PPCODE:
 	}
 	for (int i = opt_start; i + 1 < items; i += 2) {
 		const char *k = SvPV_nolen(ST(i)); SV *v = ST(i + 1);
-		if      (strEQ(k, "conf_level") || strEQ(k, "conf.level")) conf_level = SvNV(v);
+		if      (strEQ(k, "conf_level")) conf_level = SvNV(v);
 		else if (strEQ(k, "correct"))                              correct = SvTRUE(v) ? 1 : 0;
 		else croak("epi_2x2: unknown argument '%s'", k);
 	}
@@ -29094,20 +29096,20 @@ PPCODE:
 
 	HV *ret = newHV();
 	hv_stores(ret, "method",         newSVpv("2x2 epidemiological measures (Wald)", 0));
-	hv_stores(ret, "conf.level",     newSVnv(conf_level));
+	hv_stores(ret, "conf_level",     newSVnv(conf_level));
 	hv_stores(ret, "correction",     newSViv(corrected));
-	hv_stores(ret, "odds.ratio",     newSVnv(or_));
-	hv_stores(ret, "risk.ratio",     newSVnv(rr));
-	hv_stores(ret, "risk.diff",      newSVnv(rd));
-	hv_stores(ret, "risk.exposed",   newSVnv(p1));
-	hv_stores(ret, "risk.unexposed", newSVnv(p0));
+	hv_stores(ret, "odds_ratio",     newSVnv(or_));
+	hv_stores(ret, "risk_ratio",     newSVnv(rr));
+	hv_stores(ret, "risk_diff",      newSVnv(rd));
+	hv_stores(ret, "risk_exposed",   newSVnv(p1));
+	hv_stores(ret, "risk_unexposed", newSVnv(p0));
 	hv_stores(ret, "nnt",            newSVnv(1.0 / nv_fabs(rd)));
 #define EPI_CI(name, lo, hi) do { AV *ci = newAV(); \
 	av_push(ci, newSVnv(lo)); av_push(ci, newSVnv(hi)); \
 	hv_stores(ret, name, newRV_noinc((SV *)ci)); } while (0)
-	EPI_CI("odds.ratio.ci", or_lo, or_hi);
-	EPI_CI("risk.ratio.ci", rr_lo, rr_hi);
-	EPI_CI("risk.diff.ci",  rd_lo, rd_hi);
+	EPI_CI("odds_ratio_ci", or_lo, or_hi);
+	EPI_CI("risk_ratio_ci", rr_lo, rr_hi);
+	EPI_CI("risk_diff_ci",  rd_lo, rd_hi);
 #undef EPI_CI
 	ST(0) = sv_2mortal(newRV_noinc((SV *)ret));
 	XSRETURN(1);
@@ -29125,7 +29127,7 @@ PPCODE:
 	NV conf_level = NV_CONF_95; int correct = 1;
 	for (int i = 1; i + 1 < items; i += 2) {
 		const char *k = SvPV_nolen(ST(i)); SV *v = ST(i + 1);
-		if      (strEQ(k, "conf_level") || strEQ(k, "conf.level")) conf_level = SvNV(v);
+		if      (strEQ(k, "conf_level")) conf_level = SvNV(v);
 		else if (strEQ(k, "correct"))                              correct = SvTRUE(v) ? 1 : 0;
 		else croak("cmh_test: unknown argument '%s'", k);
 	}
@@ -29170,13 +29172,13 @@ PPCODE:
 		: "Mantel-Haenszel chi-squared test", 0));
 	hv_stores(ret, "statistic",  newSVnv(chi));
 	hv_stores(ret, "parameter",  newSViv(1));       //degrees of freedom
-	hv_stores(ret, "p.value",    newSVnv(pval));
+	hv_stores(ret, "p_value",    newSVnv(pval));
 	hv_stores(ret, "estimate",   newSVnv(or_mh));   //common odds ratio
-	hv_stores(ret, "conf.level", newSVnv(conf_level));
+	hv_stores(ret, "conf_level", newSVnv(conf_level));
 	hv_stores(ret, "correction", newSViv(correct));
 	hv_stores(ret, "k",          newSViv((IV)K));
 	AV *ci = newAV(); av_push(ci, newSVnv(or_lo)); av_push(ci, newSVnv(or_hi));
-	hv_stores(ret, "conf.int", newRV_noinc((SV *)ci));
+	hv_stores(ret, "conf_int", newRV_noinc((SV *)ci));
 	ST(0) = sv_2mortal(newRV_noinc((SV *)ret));
 	XSRETURN(1);
 }
@@ -29318,7 +29320,7 @@ PPCODE:
 	for (int i = 2; i + 1 < items; i += 2) {
 		const char *k = SvPV_nolen(ST(i)); SV *v = ST(i + 1);
 		if      (strEQ(k, "positive"))  positive = SvPV_nolen(v);
-		else if (strEQ(k, "conf_level") || strEQ(k, "conf.level")) conf_level = SvNV(v);
+		else if (strEQ(k, "conf_level")) conf_level = SvNV(v);
 		else if (strEQ(k, "direction")) { const char *d = SvPV_nolen(v); lower_pos = (d[0] == '<'); }
 		else croak("roc: unknown argument '%s'", k);
 	}
@@ -29376,12 +29378,12 @@ PPCODE:
 
 	HV *ret = newHV();
 	hv_stores(ret, "auc",        newSVnv(auc_val));
-	hv_stores(ret, "auc.se",     newSVnv(se));
+	hv_stores(ret, "auc_se",     newSVnv(se));
 	{ AV *ci = newAV(); av_push(ci, newSVnv(lo)); av_push(ci, newSVnv(hi));
-	  hv_stores(ret, "auc.ci", newRV_noinc((SV *)ci)); }
-	hv_stores(ret, "conf.level", newSVnv(conf_level));
-	hv_stores(ret, "n.pos",      newSViv((IV)m));
-	hv_stores(ret, "n.neg",      newSViv((IV)n));
+	  hv_stores(ret, "auc_ci", newRV_noinc((SV *)ci)); }
+	hv_stores(ret, "conf_level", newSVnv(conf_level));
+	hv_stores(ret, "n_pos",      newSViv((IV)m));
+	hv_stores(ret, "n_neg",      newSViv((IV)n));
 	hv_stores(ret, "n",          newSViv((IV)N));
 	hv_stores(ret, "direction",  newSVpv(lower_pos ? "<" : ">", 1));
 	hv_stores(ret, "youden",     newRV_noinc((SV *)youden));
@@ -29551,11 +29553,11 @@ PPCODE:
 	hv_stores(ret, "bedroc",     newSVnv(bedroc));
 	hv_stores(ret, "alpha",      newSVnv(alpha));
 	hv_stores(ret, "rie",        newSVnv(rie));
-	hv_stores(ret, "rie.min",    newSVnv(rie_min));
-	hv_stores(ret, "rie.max",    newSVnv(rie_max));
+	hv_stores(ret, "rie_min",    newSVnv(rie_min));
+	hv_stores(ret, "rie_max",    newSVnv(rie_max));
 	hv_stores(ret, "n",          newSViv((IV)N));
-	hv_stores(ret, "n.active",   newSViv((IV)m));
-	hv_stores(ret, "n.inactive", newSViv((IV)n));
+	hv_stores(ret, "n_active",   newSViv((IV)m));
+	hv_stores(ret, "n_inactive", newSViv((IV)n));
 	hv_stores(ret, "ra",         newSVnv(ra));
 	hv_stores(ret, "direction",  newSVpv(lower_pos ? "<" : ">", 1));
 	hv_stores(ret, "method",     newSVpv("BEDROC (Truchon-Bayly early recognition)", 0));
@@ -29568,10 +29570,10 @@ PPCODE:
 		NV expected = ra * (NV)n_top;
 		HV *enr = newHV();
 		hv_stores(enr, "fraction",         newSVnv(top));
-		hv_stores(enr, "n.top",            newSViv((IV)n_top));
-		hv_stores(enr, "active.count",     newSViv((IV)hits));
+		hv_stores(enr, "n_top",            newSViv((IV)n_top));
+		hv_stores(enr, "active_count",     newSViv((IV)hits));
 		hv_stores(enr, "expected",         newSVnv(expected));
-		hv_stores(enr, "enrichment.factor",
+		hv_stores(enr, "enrichment_factor",
 		          newSVnv((expected > 0.0) ? ((NV)hits / (NV)n_top) / ra : NAN));
 		hv_stores(ret, "enrichment", newRV_noinc((SV *)enr));
 	}
@@ -29594,7 +29596,7 @@ PPCODE:
 			if (!SvROK(v) || SvTYPE(SvRV(v)) != SVt_PVAV) croak("survfit: group must be an array ref");
 			gav = (AV *)SvRV(v);
 		}
-		else if (strEQ(k, "conf_level") || strEQ(k, "conf.level")) conf_level = SvNV(v);
+		else if (strEQ(k, "conf_level")) conf_level = SvNV(v);
 		else croak("survfit: unknown argument '%s'", k);
 	}
 	if (!(conf_level > 0.0 && conf_level < 1.0)) croak("survfit: conf_level must be between 0 and 1");
@@ -29681,11 +29683,11 @@ PPCODE:
 		}
 		HV *st = newHV();
 		hv_stores(st, "time",     newRV_noinc((SV *)t_av));
-		hv_stores(st, "n.risk",   newRV_noinc((SV *)nr_av));
-		hv_stores(st, "n.event",  newRV_noinc((SV *)ne_av));
-		hv_stores(st, "n.censor", newRV_noinc((SV *)nc_av));
+		hv_stores(st, "n_risk",   newRV_noinc((SV *)nr_av));
+		hv_stores(st, "n_event",  newRV_noinc((SV *)ne_av));
+		hv_stores(st, "n_censor", newRV_noinc((SV *)nc_av));
 		hv_stores(st, "surv",     newRV_noinc((SV *)s_av));
-		hv_stores(st, "std.err",  newRV_noinc((SV *)se_av));
+		hv_stores(st, "std_err",  newRV_noinc((SV *)se_av));
 		hv_stores(st, "lower",    newRV_noinc((SV *)lo_av));
 		hv_stores(st, "upper",    newRV_noinc((SV *)hi_av));
 		hv_stores(st, "n",        newSViv((IV)ng));
@@ -29699,7 +29701,7 @@ PPCODE:
 	HV *ret = newHV();
 	hv_stores(ret, "strata",     newRV_noinc((SV *)strata));
 	hv_stores(ret, "groups",     newRV_inc((SV *)labels));
-	hv_stores(ret, "conf.level", newSVnv(conf_level));
+	hv_stores(ret, "conf_level", newSVnv(conf_level));
 	hv_stores(ret, "method",     newSVpv("Kaplan-Meier survival estimate", 0));
 	ST(0) = sv_2mortal(newRV_noinc((SV *)ret));
 	XSRETURN(1);
@@ -29808,7 +29810,7 @@ PPCODE:
 	HV *ret = newHV();
 	hv_stores(ret, "statistic", newSVnv(chi));
 	hv_stores(ret, "parameter", newSViv(m));
-	hv_stores(ret, "p.value",   newSVnv(pval));
+	hv_stores(ret, "p_value",   newSVnv(pval));
 	AV *obs = newAV(), *exp_av = newAV();
 	for (SSize_t k = 0; k < G; k++) { av_push(obs, newSVnv(O[k])); av_push(exp_av, newSVnv(E[k])); }
 	hv_stores(ret, "observed",  newRV_noinc((SV *)obs));
@@ -29859,14 +29861,14 @@ PPCODE:
 	if ((items - first_opt) % 2 != 0) croak("coxph: options must be name => value pairs");
 	for (Stack_off_t a = first_opt; a + 1 < items; a += 2) {
 		const char *k = SvPV_nolen(ST(a)); SV *v = ST(a + 1);
-		if      (strEQ(k, "conf_level") || strEQ(k, "conf.level")) conf_level = SvNV(v);
+		if      (strEQ(k, "conf_level")) conf_level = SvNV(v);
 		else if (strEQ(k, "ties")) {
 			const char *t = SvPV_nolen(v);
 			if (strEQ(t, "breslow")) breslow = 1;
 			else if (strEQ(t, "efron")) breslow = 0;
 			else croak("coxph: ties must be 'efron' or 'breslow'");
 		}
-		else if (strEQ(k, "maxit") || strEQ(k, "iter.max")) {
+		else if (strEQ(k, "maxit") || strEQ(k, "iter_max")) {
 			NV m = SvNV(v);
 			if (!(m >= 0.0 && m <= 1e6)) croak("coxph: maxit must be between 0 and 1e6");
 			maxit = (unsigned)m;
@@ -30187,8 +30189,8 @@ PPCODE:
 				HV *t = newHV();
 				hv_stores(t, "statistic", newSVnv(rs));
 				hv_stores(t, "df", newSVuv((UV)rank));
-				hv_stores(t, "p.value", newSVnv(get_p_value(rs, (int)rank)));
-				hv_stores(ret, "robust.score.test", newRV_noinc((SV *)t));
+				hv_stores(t, "p_value", newSVnv(get_p_value(rs, (int)rank)));
+				hv_stores(ret, "robust_score_test", newRV_noinc((SV *)t));
 			}
 			nse = newAV();
 		}
@@ -30241,44 +30243,44 @@ PPCODE:
 				HV *t = newHV();
 				hv_stores(t, "statistic", newSVnv(wald));
 				hv_stores(t, "df", newSVuv((UV)rank));
-				hv_stores(t, "p.value", newSVnv(get_p_value(wald, (int)rank)));
-				hv_stores(ret, "wald.test", newRV_noinc((SV *)t));
+				hv_stores(t, "p_value", newSVnv(get_p_value(wald, (int)rank)));
+				hv_stores(ret, "wald_test", newRV_noinc((SV *)t));
 			}
 			{
 				HV *t = newHV();
 				hv_stores(t, "statistic", newSVnv(sctest));
 				hv_stores(t, "df", newSVuv((UV)rank));
-				hv_stores(t, "p.value", newSVnv(get_p_value(sctest, (int)rank)));
-				hv_stores(ret, "score.test", newRV_noinc((SV *)t));
+				hv_stores(t, "p_value", newSVnv(get_p_value(sctest, (int)rank)));
+				hv_stores(ret, "score_test", newRV_noinc((SV *)t));
 			}
 			hv_stores(ret, "var", newRV_noinc((SV *)var_av));
 			hv_stores(ret, "vcov", newRV_noinc((SV *)vcov_hv));
-			if (nvar_av) hv_stores(ret, "naive.var", newRV_noinc((SV *)nvar_av));
+			if (nvar_av) hv_stores(ret, "naive_var", newRV_noinc((SV *)nvar_av));
 		}
 		{
 			NV lr = 2.0 * (ll - ll0);
 			hv_stores(ret, "coef",        newRV_noinc((SV *)coef));
 			hv_stores(ret, "coefficients", newRV_noinc((SV *)coef_hv));
-			hv_stores(ret, "exp.coef",    newRV_noinc((SV *)hr));
+			hv_stores(ret, "exp_coef",    newRV_noinc((SV *)hr));
 			hv_stores(ret, "se",          newRV_noinc((SV *)se));
-			if (nse) hv_stores(ret, "naive.se", newRV_noinc((SV *)nse));
+			if (nse) hv_stores(ret, "naive_se", newRV_noinc((SV *)nse));
 			hv_stores(ret, "z",           newRV_noinc((SV *)zv));
-			hv_stores(ret, "p.value",     newRV_noinc((SV *)pv));
-			hv_stores(ret, "conf.int",    newRV_noinc((SV *)ci));
+			hv_stores(ret, "p_value",     newRV_noinc((SV *)pv));
+			hv_stores(ret, "conf_int",    newRV_noinc((SV *)ci));
 			hv_stores(ret, "names",       newRV_noinc((SV *)nm));
 			hv_stores(ret, "loglik",      newSVnv(ll));
-			hv_stores(ret, "loglik.null", newSVnv(ll0));
-			hv_stores(ret, "lr.stat",     newSVnv(lr));
-			hv_stores(ret, "lr.df",       newSVuv((UV)rank));
-			hv_stores(ret, "lr.p.value",  newSVnv(get_p_value(lr, (int)rank)));
+			hv_stores(ret, "loglik_null", newSVnv(ll0));
+			hv_stores(ret, "lr_stat",     newSVnv(lr));
+			hv_stores(ret, "lr_df",       newSVuv((UV)rank));
+			hv_stores(ret, "lr_p_value",  newSVnv(get_p_value(lr, (int)rank)));
 			hv_stores(ret, "n",           newSVuv((UV)n));
 			hv_stores(ret, "nevent",      newSVuv((UV)nevent));
 			hv_stores(ret, "iterations",  newSVuv(iter));
 			hv_stores(ret, "converged",   newSVuv(conv ? 1 : 0));
-			hv_stores(ret, "conf.level",  newSVnv(conf_level));
+			hv_stores(ret, "conf_level",  newSVnv(conf_level));
 			hv_stores(ret, "ties",        newSVpv(breslow ? "breslow" : "efron", 0));
 			hv_stores(ret, "robust",      newSVuv(robust ? 1 : 0));
-			if (CL) hv_stores(ret, "n.clusters", newSVuv((UV)G));
+			if (CL) hv_stores(ret, "n_clusters", newSVuv((UV)G));
 			if (av_len(stlab) >= 0) hv_stores(ret, "strata", newRV_inc((SV *)stlab));
 			hv_stores(ret, "method",      newSVpv("Cox proportional hazards model", 0));
 		}
@@ -31420,15 +31422,15 @@ SV *lm(...)
 			hv_store(summary_hv, cname, strlen(cname), newRV_noinc((SV*)row_hv), 0);
 		}
 		hv_store(res_hv, "coefficients",  12, newRV_noinc((SV*)coef_hv),   0);
-		hv_store(res_hv, "fitted.values", 13, newRV_noinc((SV*)fitted_hv), 0);
+		hv_store(res_hv, "fitted_values", 13, newRV_noinc((SV*)fitted_hv), 0);
 		hv_store(res_hv, "residuals",      9, newRV_noinc((SV*)resid_hv),  0);
-		hv_store(res_hv, "df.residual",   11, newSVuv((UV)df_res),         0);
+		hv_store(res_hv, "df_residual",   11, newSVuv((UV)df_res),         0);
 		hv_store(res_hv, "rank",           4, newSVuv((UV)final_rank),     0);
 		hv_store(res_hv, "rss",            3, newSVnv(rss),                0);
 		hv_store(res_hv, "summary",        7, newRV_noinc((SV*)summary_hv),0);
 		hv_store(res_hv, "terms",          5, newRV_noinc((SV*)terms_av),  0);
-		hv_store(res_hv, "r.squared",      9, newSVnv(r_squared),          0);
-		hv_store(res_hv, "adj.r.squared", 13, newSVnv(adj_r_squared),      0);
+		hv_store(res_hv, "r_squared",      9, newSVnv(r_squared),          0);
+		hv_store(res_hv, "adj_r_squared", 13, newSVnv(adj_r_squared),      0);
 		hv_store(res_hv, "xlevels",       7, newRV_inc((SV*)xlevels_hv), 0);
 		if (!nv_isnan(f_stat)) {
 			AV *fstat_av = newAV();
@@ -31436,7 +31438,7 @@ SV *lm(...)
 			av_push(fstat_av, newSVuv((UV)numdf));
 			av_push(fstat_av, newSVuv((UV)df_res));
 			hv_store(res_hv, "fstatistic", 10, newRV_noinc((SV*)fstat_av), 0);
-			hv_store(res_hv, "f.pvalue",    8, newSVnv(f_pvalue),          0);
+			hv_store(res_hv, "f_pvalue",    8, newSVnv(f_pvalue),          0);
 		}
 		RETVAL = newRV_noinc((SV*)res_hv);
 	}
@@ -31713,7 +31715,7 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 	CODE:
 	{
 	/*aov(): R's aov() on one stratum -- the sequential (Type I) table, plus
-	coefficients, fitted.values, xlevels and group.stats.
+	coefficients, fitted_values, xlevels and group_stats.
 
 	The model is anova()'s: lm_formula_split(), lm_formula_terms() and
 	lm_design_build() read the formula and build the design, and Gentleman's
@@ -31765,7 +31767,7 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 		input_hv = (HV*)SvRV(data_sv);
 	/*Mortal before it is filled, so the croak below frees it. Sorted order
 	because hash order changes from run to run, and with it the row names
-	fitted.values is keyed by.*/
+	fitted_values is keyed by.*/
 		stacked_hv = (HV*)sv_2mortal((SV*)newHV());
 		val_av = newAV(); grp_av = newAV();
 		(void)hv_stores(stacked_hv, "Value", newRV_noinc((SV*)val_av));
@@ -31836,7 +31838,7 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 		RETVAL = newRV_noinc((SV*)ret_hash);
 		sv_2mortal(RETVAL);   //until the LEAVE: nothing below croaks, but a croak must not leak it
 		anova_term_table(aTHX_ &m, n_used, ret_hash);
-	/*group.stats: the response's mean and count in each level of each factor,
+	/*group_stats: the response's mean and count in each level of each factor,
 	over the rows the model was fitted on. A model with one factor -- the
 	stacked form's Group, or y ~ g -- keys mean and size by level, the shape
 	oneway_test() returns; with several, by factor and then level. A stacked
@@ -31844,7 +31846,7 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 	with no factor has no groups, and both hashes are empty.*/
 		{
 			HV *gs_hv = newHV(), *mean_hv = newHV(), *size_hv = newHV();
-			(void)hv_stores(ret_hash, "group.stats", newRV_noinc((SV*)gs_hv));
+			(void)hv_stores(ret_hash, "group_stats", newRV_noinc((SV*)gs_hv));
 			(void)hv_stores(gs_hv, "mean", newRV_noinc((SV*)mean_hv));
 			(void)hv_stores(gs_hv, "size", newRV_noinc((SV*)size_hv));
 			for (unsigned f = 0; f < ds->nfactor; f++) {
@@ -31885,11 +31887,11 @@ SV* aov(data_sv, formula_sv = &PL_sv_undef)
 	{
 		HV *coef_hv = newHV(), *fitted_hv = newHV();
 		(void)hv_stores(ret_hash, "coefficients", newRV_noinc((SV*)coef_hv));
-		(void)hv_stores(ret_hash, "fitted.values", newRV_noinc((SV*)fitted_hv));
+		(void)hv_stores(ret_hash, "fitted_values", newRV_noinc((SV*)fitted_hv));
 		for (size_t j = 0; j < m.p; j++)
 			(void)hv_store(coef_hv, m.design->col[j].name, (I32)strlen(m.design->col[j].name),
 			               newSVnv(m.aliased[j] ? NV_NAN : beta[j]), 0);
-	/*Pass 2: fitted.values, offsets included as R includes them, keyed by row
+	/*Pass 2: fitted_values, offsets included as R includes them, keyed by row
 	name. The rows are re-read rather than kept, so the fit holds nothing n by p.*/
 		for (size_t i = 0; i < rows.n; i++) {
 			const NV y = evaluate_term(aTHX_ rows.data_hoa, rows.row_hashes, (unsigned)i, m.lhs);
@@ -31923,7 +31925,7 @@ CODE:
 		if (i + 1 >= items) croak("fisher_test: odd number of named arguments");
 		const char *key = SvPV_nolen(ST(i));
 		SV *val = ST(i + 1);
-		if (strEQ(key, "conf_level") || strEQ(key, "conf.level")) {
+		if (strEQ(key, "conf_level")) {
 			conf_level = SvNV(val);
 			if (!(conf_level > 0 && conf_level < 1))
 				 croak("fisher_test: conf_level must be between 0 and 1");
@@ -32060,7 +32062,7 @@ next step cannot free; he_val() runs a tied row's get magic.*/
 	if (total == 0) croak("fisher_test: table is all zeros");
 	HV *ret = newHV();
 	hv_stores(ret, "method", newSVpv("Fisher's Exact Test for Count Data", 0));
-	hv_stores(ret, "conf.level", newSVnv(conf_level));
+	hv_stores(ret, "conf_level", newSVnv(conf_level));
 	if (nrow == 2 && ncol == 2) {// 2x2: full exact test with the conditional MLE odds ratio and CI
 	  long a = cells[0], b = cells[1], c = cells[2], d = cells[3];
 	  NV p_val = exact_p_value(a, b, c, d, alternative);
@@ -32070,18 +32072,18 @@ next step cannot free; he_val() runs a tied row's get magic.*/
 	  AV *ci = newAV();
 	  av_push(ci, newSVnv(ci_low));
 	  av_push(ci, newSVnv(ci_high));
-	  hv_stores(ret, "conf.int", newRV_noinc((SV *)ci));
+	  hv_stores(ret, "conf_int", newRV_noinc((SV *)ci));
 	  HV *est = newHV();
 	  hv_stores(est, "odds ratio", newSVnv(mle_or));
 	  hv_stores(ret, "estimate", newRV_noinc((SV *)est));
-	  hv_stores(ret, "p.value", newSVnv(p_val));
+	  hv_stores(ret, "p_value", newSVnv(p_val));
 	} else { //R x C: only the two-sided p-value is defined (no odds ratio / CI)
 	  NV p_val = fisher_rxc_pvalue(aTHX_ cells, nrow, ncol);
 	  if (p_val < 0) {
 		   croak("fisher_test: %dx%d table is too large for exact enumeration", nrow, ncol);
 	  }
 	  hv_stores(ret, "alternative", newSVpv("two.sided", 0));
-	  hv_stores(ret, "p.value", newSVnv(p_val));
+	  hv_stores(ret, "p_value", newSVnv(p_val));
 	}
 	RETVAL = newRV_noinc((SV *)ret);
 }
@@ -32114,7 +32116,7 @@ CODE:
 	  if      (strEQ(key, "n"))           sv_n = val;
 	  else if (strEQ(key, "delta"))       sv_delta = val;
 	  else if (strEQ(key, "sd"))          sv_sd = val;
-	  else if (strEQ(key, "sig.level") || strEQ(key, "sig_level")) sv_sig_level = val;
+	  else if (strEQ(key, "sig_level")) sv_sig_level = val;
 	  else if (strEQ(key, "power"))       sv_power = val;
 	  else if (strEQ(key, "type"))        type = SvPV_nolen(val);
 	  else if (strEQ(key, "alternative")) alternative = SvPV_nolen(val);
@@ -32238,7 +32240,7 @@ CODE:
 	hv_stores(ret, "n", newSVnv(n));
 	hv_stores(ret, "delta", newSVnv(delta));
 	hv_stores(ret, "sd", newSVnv(sd));
-	hv_stores(ret, "sig.level", newSVnv(sig_level));
+	hv_stores(ret, "sig_level", newSVnv(sig_level));
 	hv_stores(ret, "power", newSVnv(power));
 	hv_stores(ret, "alternative", newSVpv(alternative, 0));
 	const char*m_str = (tsample == 1) ? (strEQ(type, "paired") ? "Paired t test power calculation" : "One-sample t test power calculation") : "Two-sample t test power calculation";
@@ -32540,7 +32542,7 @@ CODE:
 	HV *res = newHV();
 	hv_stores(res, "statistic", newSVnv(stat));
 	hv_stores(res, "parameter", newSViv(df));
-	hv_stores(res, "p.value",   newSVnv(p_val));
+	hv_stores(res, "p_value",   newSVnv(p_val));
 	hv_stores(res, "method",    newSVpv("Kruskal-Wallis rank sum test", 0));
 	// 10. Build the group_stats hash
 	HV *group_stats = newHV(), *stats_mean  = newHV(), *stats_size  = newHV();
@@ -32558,7 +32560,7 @@ CODE:
 	// Embed the nested hashes
 	hv_stores(group_stats, "mean", newRV_noinc((SV*)stats_mean));
 	hv_stores(group_stats, "size", newRV_noinc((SV*)stats_size));
-	hv_stores(res, "group.stats",  newRV_noinc((SV*)group_stats));
+	hv_stores(res, "group_stats",  newRV_noinc((SV*)group_stats));
 	// Memory Cleanup
 	Safefree(group_rank_sums); Safefree(group_val_sums); Safefree(group_counts);
 
@@ -32596,7 +32598,7 @@ CODE:
 	  if      (strEQ(key, "x"))           x_sv  = val;
 	  else if (strEQ(key, "y"))           y_sv  = val;
 	  else if (strEQ(key, "ratio"))       ratio = SvNV(val);
-	  else if (strEQ(key, "conf_level") || strEQ(key, "conf.level")) conf_level = SvNV(val);
+	  else if (strEQ(key, "conf_level")) conf_level = SvNV(val);
 	  else if (strEQ(key, "alternative")) alternative = SvPV_nolen(val);
 	  else croak("var_test: unknown argument '%s'", key);
 	}
@@ -32609,7 +32611,7 @@ CODE:
 	if (ratio <= 0.0 || !nv_isfinite(ratio)) 
 	  croak("var_test: 'ratio' must be a single positive number");
 	if (conf_level <= 0.0 || conf_level >= 1.0 || !nv_isfinite(conf_level))
-	  croak("var_test: 'conf.level' must be a single number between 0 and 1");
+	  croak("var_test: 'conf_level' must be a single number between 0 and 1");
 	AV* x_av = (AV*)SvRV(x_sv);
 	AV* y_av = (AV*)SvRV(y_sv);
 	size_t nx_raw = av_len(x_av) + 1, ny_raw = av_len(y_av) + 1;
@@ -32692,13 +32694,13 @@ CODE:
 	av_push(param_av, newSVnv(df_x));
 	av_push(param_av, newSVnv(df_y));
 	hv_store(results, "parameter", 9, newRV_noinc((SV*)param_av), 0);
-	hv_store(results, "p.value", 7, newSVnv(p_val), 0);
+	hv_store(results, "p_value", 7, newSVnv(p_val), 0);
 	AV* conf_int = newAV();
 	av_push(conf_int, newSVnv(ci_lower));
 	av_push(conf_int, newSVnv(ci_upper));
-	hv_store(results, "conf.int", 8, newRV_noinc((SV*)conf_int), 0);
+	hv_store(results, "conf_int", 8, newRV_noinc((SV*)conf_int), 0);
 	hv_store(results, "estimate", 8, newSVnv(estimate), 0);
-	hv_store(results, "null.value", 10, newSVnv(ratio), 0);
+	hv_store(results, "null_value", 10, newSVnv(ratio), 0);
 	hv_store(results, "alternative", 11, newSVpv(alternative, 0), 0);
 	hv_store(results, "method", 6, newSVpv("F test to compare two variances", 0), 0);
 	RETVAL = newRV_noinc((SV*)results);
@@ -32912,8 +32914,8 @@ PPCODE:
 	if (items < 2)
 		croak("Usage: merge($left, $right, how => 'inner'|'left'|'right'|"
 		      "'outer'|'cross', on => 'col' | ['c1','c2'] "
-		      "[, 'left.on' => .., 'right.on' => ..] "
-		      "[, suffixes => ['.x','.y']] [, 'output.type' => 'aoh'|'hoa'])");
+		      "[, 'left_on' => .., 'right_on' => ..] "
+		      "[, suffixes => ['.x','.y']] [, 'output_type' => 'aoh'|'hoa'])");
 	if ((items - 2) & 1)
 		croak("merge: options after the two frames must be name => value pairs");
 
@@ -32929,13 +32931,10 @@ PPCODE:
 		SV *ov = ST(oi + 1);
 		if      (strEQ(on, "how"))                              how_sv = ov;
 		else if (strEQ(on, "on") || strEQ(on, "by"))            on_sv  = ov;
-		else if (strEQ(on, "left.on")  || strEQ(on, "left_on")
-		      || strEQ(on, "by.x"))                             lon_sv = ov;
-		else if (strEQ(on, "right.on") || strEQ(on, "right_on")
-		      || strEQ(on, "by.y"))                             ron_sv = ov;
+		else if (strEQ(on, "left_on") || strEQ(on, "by_x"))     lon_sv = ov;
+		else if (strEQ(on, "right_on") || strEQ(on, "by_y"))    ron_sv = ov;
 		else if (strEQ(on, "suffixes"))                         suf_sv = ov;
-		else if (strEQ(on, "output.type") || strEQ(on, "output_type")
-		      || strEQ(on, "out"))                              out_sv = ov;
+		else if (strEQ(on, "output_type") || strEQ(on, "out")) out_sv = ov;
 		else croak("merge: unknown option '%s'", on);
 	}
 	int how = MG_INNER;
@@ -32950,9 +32949,9 @@ PPCODE:
 		           "'cross' (got '%s')", h);
 	}
 	if (on_sv && (lon_sv || ron_sv))
-		croak("merge: give either 'on'/'by' or 'left.on'/'right.on', not both");
+		croak("merge: give either 'on'/'by' or 'left_on'/'right_on', not both");
 	if ((lon_sv && !ron_sv) || (ron_sv && !lon_sv))
-		croak("merge: 'left.on' and 'right.on' must be given together");
+		croak("merge: 'left_on' and 'right_on' must be given together");
 	if (how == MG_CROSS && (on_sv || lon_sv || ron_sv))
 		croak("merge: a cross join takes no join keys");
 	ENTER; SAVETMPS;
@@ -32978,7 +32977,7 @@ PPCODE:
 		const char *os = SvPV_nolen(out_sv);
 		if      (strEQ(os, "aoh")) out_hoa = 0;
 		else if (strEQ(os, "hoa")) out_hoa = 1;
-		else croak("merge: output.type must be 'aoh' or 'hoa' (got '%s')", os);
+		else croak("merge: output_type must be 'aoh' or 'hoa' (got '%s')", os);
 	}
 	mg_frame Lf, Rf;
 	mg_prep(aTHX_ left,  "left",  &Lf);
@@ -32996,7 +32995,7 @@ PPCODE:
 		lkeys = mg_names(aTHX_ lon_sv);
 		rkeys = mg_names(aTHX_ ron_sv);
 		if (av_len(lkeys) != av_len(rkeys))
-			croak("merge: 'left.on' and 'right.on' must name the same number of columns");
+			croak("merge: 'left_on' and 'right_on' must name the same number of columns");
 	} else if (on_sv) {
 		lkeys = mg_names(aTHX_ on_sv);
 		rkeys = lkeys;
@@ -33014,7 +33013,7 @@ PPCODE:
 		}
 		if (cnt == 0)
 			croak("merge: no common columns to join on; pass 'on' or "
-			      "'left.on'/'right.on'");
+			      "'left_on'/'right_on'");
 		for (SSize_t a = 1; a < cnt; a++) {
 			SV *cur = names[a];
 			STRLEN al; const char *ap = SvPV_const(cur, al);
@@ -33097,7 +33096,7 @@ PPCODE:
 		SV *kn = AvARRAY(rc_src)[c];
 		SV *outn;
 	/*lkset as well as lc_set: the output key column carries the left
-	key's name, so under left.on/right.on a right-hand data column can
+	key's name, so under left_on/right_on a right-hand data column can
 	be named after it and would otherwise collide with it rather than
 	with a left data column.  R suffixes that column too -- merge.Rd's
 	no.dups, TRUE since R 3.5.0, "if a by.x column name matches one of
@@ -35239,8 +35238,8 @@ CODE:
 		SV *val = ST(i + 1);
 		if      (strEQ(key, "mean"))                              mean       = SvNV(val);
 		else if (strEQ(key, "sd"))                                sd         = SvNV(val);
-		else if (strEQ(key, "lower") || strEQ(key, "lower.tail")) lower_tail = SvTRUE(val) ? 1 : 0;
-		else if (strEQ(key, "log")   || strEQ(key, "log.p"))      give_log   = SvTRUE(val) ? 1 : 0;
+		else if (strEQ(key, "lower") || strEQ(key, "lower_tail")) lower_tail = SvTRUE(val) ? 1 : 0;
+		else if (strEQ(key, "log")   || strEQ(key, "log_p"))      give_log   = SvTRUE(val) ? 1 : 0;
 		else croak("pnorm: unknown argument '%s'", key);
 	}
 	if (sd < 0.0)
@@ -35271,7 +35270,7 @@ OUTPUT:
 	RETVAL
 
  # The rest of the R distribution family.  Every one is the same six lines over a
- # different dist_spec; the numerics, the tail rules and the log.p caveat are all
+ # different dist_spec; the numerics, the tail rules and the log_p caveat are all
  # documented at the dist_spec block above.
 
 SV* qnorm(...)
@@ -35388,7 +35387,7 @@ OUTPUT:
  # instead, and that subtraction is exactly the cancellation igam() exists to
  # avoid: below a lower tail of about 1e-16 the difference is a multiple of
  # NV_EPSILON and nothing else, so age_standardize()'s gamma-method confidence
- # limit stopped resolving at a high conf.level.  Private, like _igamc.
+ # limit stopped resolving at a high conf_level.  Private, like _igamc.
 NV _pgamma_lower(a, x)
 	NV a
 	NV x
@@ -35471,15 +35470,15 @@ SV* density(...)
 					      "\"epanechnikov\", \"rectangular\", \"triangular\", "
 					      "\"biweight\", \"cosine\", \"optcosine\"");
 			}
-			else if (strEQ(key, "give_rkern") || strEQ(key, "give.Rkern"))
+			else if (strEQ(key, "give_rkern"))
 				give_rkern = SvTRUE(val) ? TRUE : FALSE;
 			else if (strEQ(key, "subdensity"))
 				subdensity = SvTRUE(val) ? TRUE : FALSE;
 			else if (strEQ(key, "warn_wbw") || strEQ(key, "warnWbw"))
 				warnw = SvTRUE(val) ? 1 : 0;
-			else if (strEQ(key, "old_coords") || strEQ(key, "old.coords"))
+			else if (strEQ(key, "old_coords"))
 				old_coords = SvTRUE(val) ? TRUE : FALSE;
-			else if (strEQ(key, "na_rm") || strEQ(key, "na.rm"))
+			else if (strEQ(key, "na_rm"))
 				na_rm = SvTRUE(val) ? TRUE : FALSE;
 			else croak("density: unknown argument '%s'", key);
 		}
@@ -35487,7 +35486,7 @@ SV* density(...)
 		if (window >= 0 && kernel < 0) kernel = window;
 		if (kernel < 0) kernel = DENS_K_GAUSSIAN;
 		if (give_rkern) {
-			//give.Rkern = TRUE returns R(K) and no density at all, as in R
+			//give_rkern = TRUE returns R(K) and no density at all, as in R
 			RETVAL = newSVnv(dens_rkern(kernel));
 		} else {
 		NV *xall = NULL, *wall = NULL, *xv = NULL, *wv = NULL;
@@ -35708,8 +35707,8 @@ SV* density(...)
 			hv_stores(res, "bw",         newSVnv(bw));
 			hv_stores(res, "n",          newSVuv((UV)N));
 			hv_stores(res, "kernel",     newSVpv(dens_kernel_name[kernel], 0));
-			hv_stores(res, "old.coords", newSViv(old_coords ? 1 : 0));
-			hv_stores(res, "has.na",     newSViv(0));
+			hv_stores(res, "old_coords", newSViv(old_coords ? 1 : 0));
+			hv_stores(res, "has_na",     newSViv(0));
 		}
 
 		dens_cleanup:

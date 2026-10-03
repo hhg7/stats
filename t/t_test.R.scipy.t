@@ -78,7 +78,7 @@ use Stats::LikeR 't_test';
 #                                    obtained from R
 #
 # Every documented case is then crossed over the whole argument space --
-# alternative x var_equal x mu x conf.level x paired -- because a reference case
+# alternative x var_equal x mu x conf_level x paired -- because a reference case
 # exercised only at its defaults pins one code path out of dozens.  That is what
 # takes two dozen upstream cases to the 273 comparisons in the table.
 #
@@ -87,8 +87,9 @@ use Stats::LikeR 't_test';
 # t_test() accepted only the underscored 'conf_level' and 'var_equal', so the
 # 'conf.level' its own documentation lists -- and the 'var.equal' R spells it
 # with -- were a croak rather than an argument, even though every sibling in the
-# module (var_test, wilcox_test, prop_test, glm, ...) already took both.  Fixed
-# in LikeR.xs; the section near the end keeps both spellings tested.
+# module (var_test, wilcox_test, prop_test, glm, ...) already took both.  That
+# was fixed in LikeR.xs; since 0.3213 every field is underscored and the dotted
+# spellings are refused everywhere, which the section near the end tests.
 #
 # TOLERANCES
 # ----------
@@ -98,9 +99,9 @@ use Stats::LikeR 't_test';
 #
 #                    double     long double / __float128
 #   statistic        1.01e-13   1.85e-12
-#   p.value          7.94e-13   2.06e-12
+#   p_value          7.94e-13   2.06e-12
 #   estimate         4.55e-15   2.08e-12
-#   conf.int         2.34e-13   1.55e-12
+#   conf_int         2.34e-13   1.55e-12
 #   df               5.97e-16   3.14e-14
 #
 # The double column's worst statistic and p-value are R's error, not this
@@ -328,7 +329,7 @@ sub options_from {
 	my %opt;
 	for my $p (@part) {
 		if    ($p =~ /\Amu=(\S+)\z/) { $opt{mu}           = $1 + 0 }
-		elsif ($p =~ /\Acl=(\S+)\z/) { $opt{'conf.level'} = $1 + 0 }
+		elsif ($p =~ /\Acl=(\S+)\z/) { $opt{'conf_level'} = $1 + 0 }
 		elsif ($p =~ /\Ave=(\d)\z/)  { $opt{var_equal}    = $1 + 0 }
 		elsif ($p =~ /\Ap=(\d)\z/)   { $opt{paired}       = $1 + 0 }
 		else                         { $opt{alternative}  = $p }
@@ -345,15 +346,15 @@ sub run_r_case {
 	if ($@) { fail("R $label: t_test died: $@"); return }
 
 	my ($stat, $param, $pval, $est, $lo, $hi) = @$exp;
-	for my $f (['statistic', $stat], ['df', $param], ['p.value', $pval]) {
+	for my $f (['statistic', $stat], ['df', $param], ['p_value', $pval]) {
 		my (undef, $e) = close_to($r->{ $f->[0] }, $f->[1], "R $label: $f->[0]", $TOL_R);
 		note_worst($f->[0], $e);
 	}
 	# One-sample and paired tests return a single 'estimate'; the two-sample
-	# test returns 'estimate.x' and 'estimate.y', matching R's own
+	# test returns 'estimate_x' and 'estimate_y', matching R's own
 	# names(estimate) for that case ("mean of x", "mean of y").
 	my @est_exp = split /,/, $est;
-	my @est_got = @est_exp > 1 ? ($r->{'estimate.x'}, $r->{'estimate.y'})
+	my @est_got = @est_exp > 1 ? ($r->{'estimate_x'}, $r->{'estimate_y'})
 	                           : ($r->{estimate});
 	is(scalar(grep { defined } @est_got), scalar @est_exp, "R $label: estimate count");
 	for my $i (0 .. $#est_exp) {
@@ -362,12 +363,12 @@ sub run_r_case {
 		note_worst('estimate', $e);
 	}
 	return if $lo eq '-';
-	my $ci = $r->{'conf.int'};
-	ok(ref $ci eq 'ARRAY', "R $label: conf.int present") or return;
+	my $ci = $r->{'conf_int'};
+	ok(ref $ci eq 'ARRAY', "R $label: conf_int present") or return;
 	for my $i (0, 1) {
 		my (undef, $e) = close_to($ci->[$i], ($i ? $hi : $lo),
-			"R $label: conf.int[$i]", $TOL_R);
-		note_worst('conf.int', $e);
+			"R $label: conf_int[$i]", $TOL_R);
+		note_worst('conf_int', $e);
 	}
 }
 
@@ -384,10 +385,10 @@ sub run_scipy_case {
 	close_to($r->{statistic}, $stat, "scipy $what: statistic", $TOL_SCIPY);
 	close_to($r->{df},        $df,   "scipy $what: df",        $TOL_SCIPY)
 		unless $df eq '-';
-	close_to($r->{'p.value'}, $p,    "scipy $what: p.value",   $TOL_SCIPY);
+	close_to($r->{'p_value'}, $p,    "scipy $what: p_value",   $TOL_SCIPY);
 	return if !defined $lo || $lo eq '-';
-	close_to($r->{'conf.int'}[0], $lo, "scipy $what: conf.int lo", $TOL_SCIPY);
-	close_to($r->{'conf.int'}[1], $hi, "scipy $what: conf.int hi", $TOL_SCIPY);
+	close_to($r->{'conf_int'}[0], $lo, "scipy $what: conf_int lo", $TOL_SCIPY);
+	close_to($r->{'conf_int'}[1], $hi, "scipy $what: conf_int hi", $TOL_SCIPY);
 }
 
 my ($rows_R, $rows_scipy, $section) = (0, 0, 'R');
@@ -453,13 +454,13 @@ cmp_ok($rows_scipy, '>',   8, "SciPy reference cases exercised ($rows_scipy)");
 	my $tt2N = t_test(\@x, \@yN);
 	for my $c (['tt1', $tt1], ['tt2.', $tt2], ['tt2N', $tt2N]) {
 		my ($name, $t) = @$c;
-		ok($isnan->($t->{'p.value'}), "PR#18901 $name: p.value is NA");
-		ok($isnan->($t->{'conf.int'}[0]) && $isnan->($t->{'conf.int'}[1]),
-			"PR#18901 $name: conf.int is NA");
+		ok($isnan->($t->{'p_value'}), "PR#18901 $name: p_value is NA");
+		ok($isnan->($t->{'conf_int'}[0]) && $isnan->($t->{'conf_int'}[1]),
+			"PR#18901 $name: conf_int is NA");
 	}
 	is($tt1->{estimate},     $INF,  'PR#18901 tt1: estimate is Inf');
-	is($tt2N->{'estimate.x'}, $INF,  'PR#18901 tt2N: estimate.x is Inf');
-	is($tt2N->{'estimate.y'}, -$INF, 'PR#18901 tt2N: estimate.y is -Inf');
+	is($tt2N->{'estimate_x'}, $INF,  'PR#18901 tt2N: estimate_x is Inf');
+	is($tt2N->{'estimate_y'}, -$INF, 'PR#18901 tt2N: estimate_y is -Inf');
 }
 
 #
@@ -492,7 +493,7 @@ sub rounds_to {
 {
 	require POSIX;
 	my @pinned = (
-		# name, t_test arguments, statistic, df, p.value, ci lo, ci hi
+		# name, t_test arguments, statistic, df, p_value, ci lo, ci hi
 		['R-intro t.test(A, B)', [\@MICHELSON_A, \@MICHELSON_B],
 			'3.25', '12', '0.0069', '0.013855', '0.070183'],
 		['R-intro t.test(A, B, var.equal=TRUE)', [\@MICHELSON_A, \@MICHELSON_B, var_equal => 1],
@@ -515,32 +516,30 @@ sub rounds_to {
 	for my $c (@pinned) {
 		my ($name, $args, @want) = @$c;
 		my $r = t_test(@$args);
-		my @got = (@$r{qw(statistic df p.value)}, @{ $r->{'conf.int'} });
-		my @what = ('statistic', 'df', 'p.value', 'conf.int[0]', 'conf.int[1]');
+		my @got = (@$r{qw(statistic df p_value)}, @{ $r->{'conf_int'} });
+		my @what = ('statistic', 'df', 'p_value', 'conf_int[0]', 'conf_int[1]');
 		rounds_to($got[$_], $want[$_], "Rout.save $name: $what[$_]") for 0 .. 4;
 	}
 }
 
 #
-# Both spellings of the two dotted R argument names.  'conf.level' is what this
-# function's own documentation lists and was a croak until the fix noted above;
-# 'var.equal' is R's spelling, which every sibling already accepted.
+# R's two dotted argument names, conf.level and var.equal, are spelled
+# conf_level and var_equal here, as every field of this module is since
+# 0.3213.  The dotted spellings are refused, not silently ignored.
 #
 {
-	my $u = t_test([1 .. 10], [7 .. 20], conf_level => 0.99, var_equal => 1);
-	my $d = t_test([1 .. 10], [7 .. 20], 'conf.level' => 0.99, 'var.equal' => 1);
-	is($d->{'p.value'},     $u->{'p.value'},     "'var.equal' == 'var_equal'");
-	is($d->{'conf.int'}[0], $u->{'conf.int'}[0], "'conf.level' == 'conf_level' (lower)");
-	is($d->{'conf.int'}[1], $u->{'conf.int'}[1], "'conf.level' == 'conf_level' (upper)");
+	for my $dotted ('conf.level', 'var.equal') {
+		ok(!eval { t_test([1 .. 10], [7 .. 20], $dotted => 1); 1 }
+			&& $@ =~ /unknown argument '\Q$dotted\E'/, "the dotted '$dotted' is refused");
+	}
 
 	# The level must actually be used, so that accepting the argument cannot be
-	# mistaken for ignoring it -- which is the other way the croak could have
-	# been made to go away.
-	my $narrow = t_test([1 .. 10], [7 .. 20], 'conf.level' => 0.90);
-	my $wide   = t_test([1 .. 10], [7 .. 20], 'conf.level' => 0.999);
-	cmp_ok($wide->{'conf.int'}[0], '<', $narrow->{'conf.int'}[0],
-		'a higher conf.level really widens the interval');
-	cmp_ok($wide->{'conf.int'}[1], '>', $narrow->{'conf.int'}[1],
+	# mistaken for ignoring it.
+	my $narrow = t_test([1 .. 10], [7 .. 20], 'conf_level' => 0.90);
+	my $wide   = t_test([1 .. 10], [7 .. 20], 'conf_level' => 0.999);
+	cmp_ok($wide->{'conf_int'}[0], '<', $narrow->{'conf_int'}[0],
+		'a higher conf_level really widens the interval');
+	cmp_ok($wide->{'conf_int'}[1], '>', $narrow->{'conf_int'}[1],
 		'...on both sides');
 }
 
@@ -553,8 +552,8 @@ sub rounds_to {
 	my $a = t_test([1, 2, 3], mu => 0, alternative => 'two.sided');
 	my $b = t_test([1, 2, 3], mu => 0, alternative => 'two-sided');
 	my $c = t_test([1, 2, 3], mu => 0, alternative => 'two_sided');
-	is($a->{'p.value'}, $b->{'p.value'}, "SciPy's 'two-sided' spelling agrees");
-	is($a->{'p.value'}, $c->{'p.value'}, "the 'two_sided' spelling agrees");
+	is($a->{'p_value'}, $b->{'p_value'}, "SciPy's 'two-sided' spelling agrees");
+	is($a->{'p_value'}, $c->{'p_value'}, "the 'two_sided' spelling agrees");
 }
 
 diag(sprintf 'worst relative error vs R: %s',

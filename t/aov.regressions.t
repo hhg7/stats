@@ -40,7 +40,7 @@
 #   ragged HoA        the row count came from whichever column hv_iternext()
 #                     returned first, so which rows were fitted moved with hash
 #                     order from run to run.
-#   group.stats       same, for the per-column summary, and reached by the
+#   group_stats       same, for the per-column summary, and reached by the
 #                     documented no-formula (R stack()) form, whose columns are
 #                     unequal by definition.
 #   '.' order         `.` expanded in hash order, and a sequential (Type I) sum
@@ -144,7 +144,7 @@ sub near {
 	   "'.' over $ncol long column names keeps every predictor");
 	near($dot->{Residuals}{'Sum Sq'}, $full->{Residuals}{'Sum Sq'},
 	     "'.' over $ncol long column names fits the same model");
-	is(scalar(grep { !/\A(?:Residuals|coefficients|family|fitted\.values|group\.stats|xlevels)\z/ }
+	is(scalar(grep { !/\A(?:Residuals|coefficients|family|fitted_values|group_stats|xlevels)\z/ }
 	          keys %$dot),
 	   $ncol, "'.' produced all $ncol terms");
 	DOT_DONE:
@@ -207,7 +207,7 @@ sub near {
 	like($@, qr/unequal lengths/, 'ragged HoA: croaks, naming the column');
 }
 
-# ----------------------------------- group.stats over unequal-length groups
+# ----------------------------------- group_stats over unequal-length groups
 #
 # The documented no-formula form is R's stack(), so its groups are unequal by
 # construction.  Each column must be summarised over its own length, the same
@@ -219,15 +219,15 @@ sub near {
 		for my $k ($rep % 2 ? qw(short long) : qw(long short)) {
 			$d{$k} = $k eq 'short' ? [ 1, 2, 3 ] : [ 1 .. 20 ];
 		}
-		my $gs = (eval { aov(\%d) } || { 'group.stats' => {} })->{'group.stats'};
+		my $gs = (eval { aov(\%d) } || { 'group_stats' => {} })->{'group_stats'};
 		$sig{ join '|', map { defined $gs->{size}{$_}
 		                      ? sprintf('%d/%.15g', $gs->{size}{$_}, $gs->{mean}{$_})
 		                      : 'undef' } qw(short long) }++;
 	}
-	is(scalar keys %sig, 1, 'group.stats: one answer over 12 runs')
+	is(scalar keys %sig, 1, 'group_stats: one answer over 12 runs')
 		or diag('answers seen: ', join ' ; ', sort keys %sig);
 	is((keys %sig)[0], '3/2|20/10.5',
-	   'group.stats: each column summarised over its own length');
+	   'group_stats: each column summarised over its own length');
 }
 
 # ------------------------------------------------- rank test is scale free

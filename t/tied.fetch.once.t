@@ -138,7 +138,7 @@ my @cases = (
 	[ 'prcomp HoA',          sub { prcomp( th( { 'x' => ta( @{ $hoa{'x'} } ), 'y' => ta( @{ $hoa{'y'} } ) } ) ) } ],
 	[ 'ljoin',               sub { my $h = { map { ( $_ => { %{ $hoh{$_} } } ) } keys %hoh }; ljoin( $h, th( { 'r1' => th( { 'new' => 1 } ) } ) ); $h } ],
 	[ 'add_data',            sub { my $h = { map { ( $_ => { %{ $hoh{$_} } } ) } keys %hoh }; add_data( $h, th( { 'r1' => th( { 'new' => 1 } ) } ) ); $h } ],
-	[ 'write_table HoA',     sub { write_table( t_hoa(), File::Spec->catfile( $dir, 'wt' . $wt++ . '.tsv' ), 'quiet' => 1, 'row.names' => 0 ); 1 } ],
+	[ 'write_table HoA',     sub { write_table( t_hoa(), File::Spec->catfile( $dir, 'wt' . $wt++ . '.tsv' ), 'quiet' => 1, 'row_names' => 0 ); 1 } ],
 );
 for my $c (@cases) {
 	my ( $name, $call ) = @$c;

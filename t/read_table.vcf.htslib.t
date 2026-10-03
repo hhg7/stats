@@ -343,40 +343,40 @@ for my $name (sort keys %fixture) {
 	(my $stem = $name) =~ s/\.vcf\z//;
 	my $f = fixture($name, $fx->{vcf});
 
-	is_deeply read_plain($f, 'output.type' => 'aoa'), $aoa, "$name: aoa";
+	is_deeply read_plain($f, 'output_type' => 'aoa'), $aoa, "$name: aoa";
 	is_deeply read_plain($f), $aoh, "$name: aoh, the default with explode => 0";
-	is_deeply read_plain($f, 'output.type' => 'hoa'), $hoa, "$name: hoa";
+	is_deeply read_plain($f, 'output_type' => 'hoa'), $hoa, "$name: hoa";
 	is_deeply read_plain($f, filter => sub { 1 }), $aoh,
 		"$name: aoh through the filter closure";
-	is_deeply read_plain($f, 'output.type' => 'aoa', filter => sub { 1 }), $aoa,
+	is_deeply read_plain($f, 'output_type' => 'aoa', filter => sub { 1 }), $aoa,
 		"$name: aoa through the filter closure";
 	# what read.vcf.pl passed, and the marker R and pandas would use
-	is_deeply read_plain($f, comment => '##', sep => "\t", 'output.type' => 'aoa'),
+	is_deeply read_plain($f, comment => '##', sep => "\t", 'output_type' => 'aoa'),
 		$aoa, "$name: comment => '##', sep => \"\\t\" given explicitly";
-	is_deeply read_plain($f, comment => '#', 'output.type' => 'aoa'), $aoa,
+	is_deeply read_plain($f, comment => '#', 'output_type' => 'aoa'), $aoa,
 		"$name: comment => '#'";
 	# the name decides, whatever its case and however it is compressed
-	is_deeply read_plain(fixture("$stem.VCF", $fx->{vcf}), 'output.type' => 'aoa'),
+	is_deeply read_plain(fixture("$stem.VCF", $fx->{vcf}), 'output_type' => 'aoa'),
 		$aoa, "$name: as .VCF";
-	is_deeply read_plain(fixture("$name.gz", gz($fx->{vcf})), 'output.type' => 'aoa'),
+	is_deeply read_plain(fixture("$name.gz", gz($fx->{vcf})), 'output_type' => 'aoa'),
 		$aoa, "$name: gzipped, as .vcf.gz";
 	is_deeply read_plain(fixture("$name.bgz", gz($fx->{vcf}) . $bgzf_eof),
-			'output.type' => 'aoa'),
+			'output_type' => 'aoa'),
 		$aoa, "$name: bgzipped, as .vcf.bgz";
 	# Under another name it is an ordinary file: "##" lines are comments if
 	# asked for, and "#CHROM" keeps its "#", as R's read.table(comment.char =
 	# "") would keep it.
 	my $as_tsv = [ [ "#$hdr[0]", @hdr[ 1 .. $#hdr ] ], @$aoa[ 1 .. $#$aoa ] ];
 	is_deeply read_plain(fixture("$stem.tsv", $fx->{vcf}), comment => '##',
-			'output.type' => 'aoa'),
+			'output_type' => 'aoa'),
 		$as_tsv, "$name: as .tsv with comment => '##', \"#CHROM\" keeps its \"#\"";
 	# header => 0: the "#CHROM" line is the first row, as written
-	is_deeply read_plain($f, header => 0, 'output.type' => 'aoa'),
+	is_deeply read_plain($f, header => 0, 'output_type' => 'aoa'),
 		[ [ map { "V$_" } 1 .. @hdr ], @$as_tsv ],
 		"$name: header => 0 reads the \"#CHROM\" line as data";
 	my @cn = map { "c$_" } 1 .. @hdr;
-	is_deeply read_plain($f, 'col.names' => \@cn, 'output.type' => 'aoa'),
-		[ \@cn, @$aoa[ 1 .. $#$aoa ] ], "$name: col.names renames the columns";
+	is_deeply read_plain($f, 'col_names' => \@cn, 'output_type' => 'aoa'),
+		[ \@cn, @$aoa[ 1 .. $#$aoa ] ], "$name: col_names renames the columns";
 }
 
 # a hoh, by a column whose values are unique, and by the default (CHROM)
@@ -388,13 +388,13 @@ for my $name (sort keys %fixture) {
 	for my $r (@{ $fx->{rows} }) {
 		$want{ $r->[2] } = { map { $hdr[$_] => $r->[$_] } grep { $_ != 2 } 0 .. $#hdr };
 	}
-	is_deeply read_plain($f, 'output.type' => 'hoh', 'row.names' => 'ID'), \%want,
+	is_deeply read_plain($f, 'output_type' => 'hoh', 'row_names' => 'ID'), \%want,
 		'test-vcf-hdr-in.vcf: hoh by ID';
 	$fx = $fixture{'formatmissing.vcf'};
 	$f  = fixture('hoh1.vcf', $fx->{vcf});
 	@hdr = @{ $fx->{header} };
 	my $r = $fx->{rows}[0];
-	is_deeply read_plain($f, 'output.type' => 'hoh'),
+	is_deeply read_plain($f, 'output_type' => 'hoh'),
 		{ $r->[0] => { map { $hdr[$_] => $r->[$_] } 1 .. $#hdr } },
 		'formatmissing.vcf: hoh by CHROM, the first column, by default';
 }

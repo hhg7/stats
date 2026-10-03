@@ -188,7 +188,7 @@ same( 'avals HoH',             sub { [ sort { $a <=> $b } avals( $_[0], 'x' ) ] 
 	my $n = 0;
 	my $wt = sub {
 		my $f = File::Spec->catfile( $dir, 'wt' . $n++ . '.tsv' );
-		write_table( $_[0], $f, 'quiet' => 1, 'row.names' => 0 );
+		write_table( $_[0], $f, 'quiet' => 1, 'row_names' => 0 );
 		open my $fh, '<', $f or die "$f: $!";
 		local $/;
 		my $c = <$fh>;

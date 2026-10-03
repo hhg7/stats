@@ -53,21 +53,20 @@ require 5.010;
 use strict;
 use warnings FATAL => 'all';
 use Test::More;
-use Stats::LikeR qw(csort value_counts mode merge drop_duplicates filter col
-                    survfit logrank_test coxph col2col);
+use Stats::LikeR;
 
-my $zhe   = "\x{436}";                  # a name outside Latin-1
-my $bytes = "caf\xe9";                  # Latin-1, stored as one byte per char
+my $zhe   = "\x{436}"; # a name outside Latin-1
+my $bytes = "caf\xe9"; # Latin-1, stored as one byte per char
 my $upgr  = "caf\xe9"; utf8::upgrade($upgr);	# the same string, stored as UTF-8
-my $five  = "caf\xc3\xa9";              # a different string: upgr's bytes, no flag
+my $five  = "caf\xc3\xa9"; # a different string: upgr's bytes, no flag
 my $smile = "\x{263A}";
-my $three = "\xe2\x98\xba";             # smile's bytes, as three characters
+my $three = "\xe2\x98\xba"; # smile's bytes, as three characters
 
 ok($bytes eq $upgr && $five ne $upgr && $smile ne $three
    && utf8::is_utf8($upgr) && !utf8::is_utf8($bytes),
    'the fixtures are what they say: two spellings of one string, and two strings with one spelling');
 
-# --- 1. csort ---------------------------------------------------------------
+#  1. csort 
 {
 	my $r = csort([{ $zhe => 2 }, { $zhe => 1 }, { $zhe => 3 }], $zhe);
 	is_deeply([ map { $_->{$zhe} } @$r ], [1, 2, 3], 'csort: AoH by a column named outside Latin-1');
@@ -79,7 +78,7 @@ ok($bytes eq $upgr && $five ne $upgr && $smile ne $three
 	is_deeply([ map { $_->{$bytes} } @$r ], [1, 2], 'csort: a column found by the other spelling of its name');
 }
 
-# --- 2. value_counts by column ------------------------------------------------
+#  2. value_counts by column 
 {
 	is_deeply(value_counts([{ $zhe => 'a' }, { $zhe => 'a' }, { $zhe => 'b' }], $zhe),
 	          { a => 2, b => 1 }, 'value_counts: AoH column named outside Latin-1');
@@ -89,7 +88,7 @@ ok($bytes eq $upgr && $five ne $upgr && $smile ne $three
 	          { a => 1, b => 1 }, 'value_counts: HoH column named outside Latin-1');
 }
 
-# --- 3. mode ------------------------------------------------------------------
+#  3. mode 
 {
 	my @m = mode($bytes, $upgr, 'a');
 	is(scalar @m, 1, 'mode: two spellings of one string are one value');
@@ -102,7 +101,7 @@ ok($bytes eq $upgr && $five ne $upgr && $smile ne $three
 	ok(@m == 1 && $m[0] eq $zhe, 'mode: a value outside Latin-1 comes back as itself');
 }
 
-# --- 4. merge and drop_duplicates --------------------------------------------
+#  4. merge and drop_duplicates 
 {
 	my $join = sub {
 		my ($l, $r, @on) = @_;
@@ -129,7 +128,7 @@ ok($bytes eq $upgr && $five ne $upgr && $smile ne $three
 	   'drop_duplicates: HoA, both rules at once');
 }
 
-# --- 5. filter, every shape conversion through a HoA ------------------------
+#  5. filter, every shape conversion through a HoA 
 {
 	my %in = (
 		aoh => sub { [{ $zhe => 1, e => 2 }, { $zhe => 3, e => 4 }] },
@@ -139,7 +138,7 @@ ok($bytes eq $upgr && $five ne $upgr && $smile ne $three
 	for my $shape (qw(aoh hoh hoa)) {
 		for my $out (qw(aoh hoa)) {
 			for my $p ([block => sub { 1 }], [compiled => col($zhe) > 0]) {
-				my $r = filter($in{$shape}->(), $p->[1], 'output.type' => $out);
+				my $r = filter($in{$shape}->(), $p->[1], 'output_type' => $out);
 				my $name = "filter: $shape -> $out, $p->[0], a column named outside Latin-1";
 				if ($out eq 'hoa') {
 					is_deeply({ map { $_ => [ sort @{ $r->{$_} } ] } keys %$r },
@@ -154,7 +153,7 @@ ok($bytes eq $upgr && $five ne $upgr && $smile ne $three
 	is_deeply([ keys %$r ], [$zhe], 'filter: HoH -> HoH keeps a row key outside Latin-1');
 }
 
-# --- 6. survfit and logrank_test group labels ------------------------------
+#  6. survfit and logrank_test group labels 
 {
 	my @time = (1, 2, 3, 4, 5, 6);
 	my @status = (1, 1, 0, 1, 1, 0);
@@ -169,7 +168,7 @@ ok($bytes eq $upgr && $five ne $upgr && $smile ne $three
 	is_deeply($lr->{groups}, [$zhe, 'b'], 'logrank_test: a group named outside Latin-1');
 }
 
-# --- 7. coxph strata ------------------------------------------------------------
+#  7. coxph strata 
 {
 	my @time   = (5, 8, 3, 9, 12, 4, 7, 10);
 	my @status = (1, 1, 0, 1, 1, 1, 0, 1);
@@ -182,7 +181,7 @@ ok($bytes eq $upgr && $five ne $upgr && $smile ne $three
 	   'coxph: two spellings of one strata label are one stratum');
 }
 
-# --- 8. csort rethrows the comparator's own $@ ------------------------------
+#  8. csort rethrows the comparator's own $@ 
 {
 	my @rows = ({ a => 1 }, { a => 2 }, { a => 3 });
 	eval { csort(\@rows, sub { die "$zhe bad\n" }) };
@@ -191,7 +190,7 @@ ok($bytes eq $upgr && $five ne $upgr && $smile ne $three
 	is_deeply($@, { code => 7 }, 'csort: a comparator\'s exception object comes back as itself');
 }
 
-# --- 9. col2col error cells ------------------------------------------------------
+#  9. col2col error cells 
 {
 	my $r = col2col({ x => [1, 2, 3], y => [2, 3, 4] }, sub { die "$zhe no\nsecond line\n" });
 	is($r->{x}{y}, "$zhe no", 'col2col: an error cell keeps a UTF-8 message\'s characters');

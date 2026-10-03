@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 # aov() against R 4.6.1's aov(): the Type I table, the coefficients, the fitted
-# values, and group.stats.
+# values, and group_stats.
 #
 # PROVENANCE
 #
@@ -18,7 +18,7 @@
 #               responses set to NA, breaks ~ wool + tension.  See %DIVERGE.
 #   oats        tests/reg-tests-3.R:40 (PR#7829): MASS's oats[-1,],
 #               Y ~ B + V + N + V:N, its row names "2".."72" passed in a
-#               row.names column.
+#               row_names column.
 #   tg_slope    ToothGrowth (src/library/datasets/man/ToothGrowth.Rd), dose
 #               numeric: len ~ supp + supp:dose, a slope per supplement.
 #   tg_off      len ~ supp + offset(dose); R's fitted values include the offset.
@@ -46,11 +46,11 @@
 # from the rows the model keeps.  R's lm() builds its model frame with
 # drop.unused.levels = TRUE, so in br, where every "M" row loses its response,
 # R has no level M, and here M is an aliased column (coefficient NaN), is in
-# xlevels, and is in group.stats with size 0 and a NaN mean.  The table is the
+# xlevels, and is in group_stats with size 0 and a NaN mean.  The table is the
 # same.  This is lm_design_build()'s, shared with lm(), glm() and anova(), and
 # is pinned so that changing it is a deliberate act.
 #
-# group.stats is tapply(y, f, mean) and table(f) for each factor of the model,
+# group_stats is tapply(y, f, mean) and table(f) for each factor of the model,
 # over the rows fitted: keyed by level when the model has one factor, by factor
 # and then level when it has several.
 #
@@ -94,7 +94,7 @@ my %DATA = (
     'V' => ['Victory', 'Victory', 'Victory', 'Golden.rain', 'Golden.rain', 'Golden.rain', 'Golden.rain', 'Marvellous', 'Marvellous', 'Marvellous', 'Marvellous', 'Victory', 'Victory', 'Victory', 'Victory', 'Golden.rain', 'Golden.rain', 'Golden.rain', 'Golden.rain', 'Marvellous', 'Marvellous', 'Marvellous', 'Marvellous', 'Victory', 'Victory', 'Victory', 'Victory', 'Golden.rain', 'Golden.rain', 'Golden.rain', 'Golden.rain', 'Marvellous', 'Marvellous', 'Marvellous', 'Marvellous', 'Victory', 'Victory', 'Victory', 'Victory', 'Golden.rain', 'Golden.rain', 'Golden.rain', 'Golden.rain', 'Marvellous', 'Marvellous', 'Marvellous', 'Marvellous', 'Victory', 'Victory', 'Victory', 'Victory', 'Golden.rain', 'Golden.rain', 'Golden.rain', 'Golden.rain', 'Marvellous', 'Marvellous', 'Marvellous', 'Marvellous', 'Victory', 'Victory', 'Victory', 'Victory', 'Golden.rain', 'Golden.rain', 'Golden.rain', 'Golden.rain', 'Marvellous', 'Marvellous', 'Marvellous', 'Marvellous'],
     'N' => ['0.2cwt', '0.4cwt', '0.6cwt', '0.0cwt', '0.2cwt', '0.4cwt', '0.6cwt', '0.0cwt', '0.2cwt', '0.4cwt', '0.6cwt', '0.0cwt', '0.2cwt', '0.4cwt', '0.6cwt', '0.0cwt', '0.2cwt', '0.4cwt', '0.6cwt', '0.0cwt', '0.2cwt', '0.4cwt', '0.6cwt', '0.0cwt', '0.2cwt', '0.4cwt', '0.6cwt', '0.0cwt', '0.2cwt', '0.4cwt', '0.6cwt', '0.0cwt', '0.2cwt', '0.4cwt', '0.6cwt', '0.0cwt', '0.2cwt', '0.4cwt', '0.6cwt', '0.0cwt', '0.2cwt', '0.4cwt', '0.6cwt', '0.0cwt', '0.2cwt', '0.4cwt', '0.6cwt', '0.0cwt', '0.2cwt', '0.4cwt', '0.6cwt', '0.0cwt', '0.2cwt', '0.4cwt', '0.6cwt', '0.0cwt', '0.2cwt', '0.4cwt', '0.6cwt', '0.0cwt', '0.2cwt', '0.4cwt', '0.6cwt', '0.0cwt', '0.2cwt', '0.4cwt', '0.6cwt', '0.0cwt', '0.2cwt', '0.4cwt', '0.6cwt'],
     'Y' => [130, 157, 174, 117, 114, 161, 141, 105, 140, 118, 156, 61, 91, 97, 100, 70, 108, 126, 149, 96, 124, 121, 144, 68, 64, 112, 86, 60, 102, 89, 96, 89, 129, 132, 124, 74, 89, 81, 122, 64, 103, 132, 133, 70, 89, 104, 117, 62, 90, 100, 116, 80, 82, 94, 126, 63, 70, 109, 99, 53, 74, 118, 113, 89, 82, 86, 104, 97, 99, 119, 121],
-    'row.names' => ['2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15', '16', '17', '18', '19', '20', '21', '22', '23', '24', '25', '26', '27', '28', '29', '30', '31', '32', '33', '34', '35', '36', '37', '38', '39', '40', '41', '42', '43', '44', '45', '46', '47', '48', '49', '50', '51', '52', '53', '54', '55', '56', '57', '58', '59', '60', '61', '62', '63', '64', '65', '66', '67', '68', '69', '70', '71', '72'],
+    'row_names' => ['2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15', '16', '17', '18', '19', '20', '21', '22', '23', '24', '25', '26', '27', '28', '29', '30', '31', '32', '33', '34', '35', '36', '37', '38', '39', '40', '41', '42', '43', '44', '45', '46', '47', '48', '49', '50', '51', '52', '53', '54', '55', '56', '57', '58', '59', '60', '61', '62', '63', '64', '65', '66', '67', '68', '69', '70', '71', '72'],
   },
   tg => {
     'len' => [4.2, 11.5, 7.3, 5.8, 6.4, 10, 11.2, 11.2, 5.2, 7, 16.5, 16.5, 15.2, 17.3, 22.5, 17.3, 13.6, 14.5, 18.8, 15.5, 23.6, 18.5, 33.9, 25.5, 26.4, 32.5, 26.7, 21.5, 23.3, 29.5, 15.2, 21.5, 17.6, 9.7, 14.5, 10, 8.2, 9.4, 16.5, 9.7, 19.7, 23.3, 23.6, 26.4, 20, 25.2, 25.8, 21.2, 14.5, 27.3, 25.5, 26.4, 22.4, 24.5, 24.8, 30.9, 26.4, 27.3, 29.4, 23],
@@ -336,9 +336,9 @@ for my $key (sort keys %EXPECT) {
 	}
 	for my $f (sort keys %{ $dv->{level} }) {
 		for my $l (@{ $dv->{level}{$f} }) {
-			my $gs = $r->{'group.stats'};
+			my $gs = $r->{'group_stats'};
 			my ($gm, $gn) = keys %{ $e->{gs} } == 1 ? ($gs->{mean}, $gs->{size}) : ($gs->{mean}{$f}, $gs->{size}{$f});
-			ok(is_nan(delete $gm->{$l}) && delete $gn->{$l} eq '0', "$key group.stats $f=$l: size 0, a level R drops");
+			ok(is_nan(delete $gm->{$l}) && delete $gn->{$l} eq '0', "$key group_stats $f=$l: size 0, a level R drops");
 			ok((grep { $_ eq $l } @{ $r->{xlevels}{$f} }), "$key xlevels $f: keeps $l");
 		}
 	}
@@ -349,29 +349,29 @@ for my $key (sort keys %EXPECT) {
 	}
 
 	# fitted values, keyed by R's row names
-	is_deeply([sort keys %{ $r->{'fitted.values'} }], [sort keys %{ $e->{fitted} }], "$key: fitted row names");
+	is_deeply([sort keys %{ $r->{'fitted_values'} }], [sort keys %{ $e->{fitted} }], "$key: fitted row names");
 	my $fw = 0;
 	for my $i (keys %{ $e->{fitted} }) {
-		my ($g, $x) = ($r->{'fitted.values'}{$i}, $e->{fitted}{$i});
+		my ($g, $x) = ($r->{'fitted_values'}{$i}, $e->{fitted}{$i});
 		my $rel = defined $g ? abs($g - $x) / (abs($x) > 1 ? abs($x) : 1) : 9**9**9;
 		$fw = $rel if $rel > $fw;
 	}
 	($worst, $worst_at) = ($fw, "$key fitted") if $fw > $worst;
 	ok($fw <= 1e-9, "$key: every fitted value") or diag("worst relative $fw");
 
-	# group.stats
+	# group_stats
 	my @f = sort keys %{ $e->{gs} };
-	my $gs = $r->{'group.stats'};
+	my $gs = $r->{'group_stats'};
 	for my $f (@f) {
 		my ($gm, $gn) = @f == 1 ? ($gs->{mean}, $gs->{size}) : ($gs->{mean}{$f}, $gs->{size}{$f});
-		is_deeply($gn, $e->{gs}{$f}{size}, "$key group.stats size of $f");
+		is_deeply($gn, $e->{gs}{$f}{size}, "$key group_stats size of $f");
 		for my $l (sort keys %{ $e->{gs}{$f}{mean} }) {
-			if (defined $e->{gs}{$f}{mean}{$l}) { near($gm->{$l}, $e->{gs}{$f}{mean}{$l}, "$key group.stats mean $f=$l", 1) }
-			else { ok(is_nan($gm->{$l}), "$key group.stats mean $f=$l: NaN, an empty level") }
+			if (defined $e->{gs}{$f}{mean}{$l}) { near($gm->{$l}, $e->{gs}{$f}{mean}{$l}, "$key group_stats mean $f=$l", 1) }
+			else { ok(is_nan($gm->{$l}), "$key group_stats mean $f=$l: NaN, an empty level") }
 		}
 	}
 	is_deeply([sort keys %{ $gs->{mean} }], [@f == 1 ? sort keys %{ $e->{gs}{$f[0]}{mean} } : @f],
-	          "$key group.stats: " . (@f == 1 ? 'keyed by level' : 'keyed by factor'));
+	          "$key group_stats: " . (@f == 1 ? 'keyed by level' : 'keyed by factor'));
 }
 
 # The stacked form and the same data written out long with a formula are one model.

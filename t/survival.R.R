@@ -77,9 +77,9 @@ for (nm in names(km)) {
   for (g in sort(unique(d$x))) {
     s <- survfit(Surv(time, status) ~ 1, d[d$x == g, ])
     med <- summary(s)$table["median"]
-    cat(sprintf("\t\t\t'%s' => {\n\t\t\t\ttime => %s,\n\t\t\t\t'n.risk' => %s,\n\t\t\t\t'n.event' => %s,\n\t\t\t\t'n.censor' => %s,\n",
+    cat(sprintf("\t\t\t'%s' => {\n\t\t\t\ttime => %s,\n\t\t\t\t'n_risk' => %s,\n\t\t\t\t'n_event' => %s,\n\t\t\t\t'n_censor' => %s,\n",
                 g, num(s$time), num(s$n.risk), num(s$n.event), num(s$n.censor)))
-    cat(sprintf("\t\t\t\tsurv => %s,\n\t\t\t\t'std.err' => %s,\n\t\t\t\tlower => %s,\n\t\t\t\tupper => %s,\n",
+    cat(sprintf("\t\t\t\tsurv => %s,\n\t\t\t\t'std_err' => %s,\n\t\t\t\tlower => %s,\n\t\t\t\tupper => %s,\n",
                 num(s$surv), num(s$std.err * s$surv), num(s$lower), num(s$upper)))
     cat(sprintf("\t\t\t\tmedian => %s,\n\t\t\t},\n",
                 ifelse(is.na(med), "undef", sprintf("%.17g", med))))

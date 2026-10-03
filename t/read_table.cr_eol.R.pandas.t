@@ -105,7 +105,7 @@ for my $c (@pandas) {
 	my $cr   = fixture($text);
 	(my $crlf_text = $text) =~ s/\r/\r\n/g;
 	my $crlf = fixture($crlf_text);
-	my @o = (@$opt, 'output.type' => 'aoa');
+	my @o = (@$opt, 'output_type' => 'aoa');
 	if ($want) {
 		is_deeply read_table($cr, @o), $want, "$label: as pandas reads it";
 		is_deeply read_table($crlf, @o), $want, "$label: and its CRLF twin";
@@ -119,7 +119,7 @@ for my $c (@pandas) {
 
 # --- R's case ---------------------------------------------------------------
 
-is_deeply read_table(fixture("aaa\rbbb\rccc"), header => 0, 'output.type' => 'hoa'),
+is_deeply read_table(fixture("aaa\rbbb\rccc"), header => 0, 'output_type' => 'hoa'),
 	{ V1 => [qw(aaa bbb ccc)] }, 'R PR#2469: three CR-terminated lines';
 
 # --- the rest of read_table's surface --------------------------------------
@@ -127,12 +127,12 @@ is_deeply read_table(fixture("aaa\rbbb\rccc"), header => 0, 'output.type' => 'ho
 is_deeply read_table(fixture("id,v\r1,2\r3,4\r")),
 	[ { id => 1, v => 2 }, { id => 3, v => 4 } ], 'a final CR ends the last line';
 for my $o (qw(aoh hoa hoh)) {
-	my $want = read_table(fixture("id,v\n1,2\n3,4\n"), 'output.type' => $o);
-	is_deeply read_table(fixture("id,v\r1,2\r3,4\r"), 'output.type' => $o), $want,
-		"output.type $o reads a CR file as its LF twin";
-	is_deeply read_table(fixture("id,v\r1,2\r3,4\r"), 'output.type' => $o,
+	my $want = read_table(fixture("id,v\n1,2\n3,4\n"), 'output_type' => $o);
+	is_deeply read_table(fixture("id,v\r1,2\r3,4\r"), 'output_type' => $o), $want,
+		"output_type $o reads a CR file as its LF twin";
+	is_deeply read_table(fixture("id,v\r1,2\r3,4\r"), 'output_type' => $o,
 			filter => sub { 1 }), $want,
-		"output.type $o, through the filter path";
+		"output_type $o, through the filter path";
 }
 is_deeply read_table(fixture("a\tb\r1\t2\r"), sep => "\t"), [ { a => 1, b => 2 } ],
 	'a tab-separated CR file';
@@ -149,8 +149,8 @@ is_deeply read_table(fixture("\xEF\xBB\xBFid,v\r1,2\r")), [ { id => 1, v => 2 } 
 is_deeply read_table(fixture(qq{id,v\r1,"x\ry"\r2,z\r})),
 	[ { id => 1, v => "x\ny" }, { id => 2, v => 'z' } ],
 	'a quoted field that runs over a line end';
-is_deeply read_table(fixture("id,v\r1,NA\r"), 'na.strings' => 'NA'),
-	[ { id => 1, v => undef } ], 'na.strings';
+is_deeply read_table(fixture("id,v\r1,NA\r"), 'na_strings' => 'NA'),
+	[ { id => 1, v => undef } ], 'na_strings';
 
 SKIP: {
 	skip 'IO::Compress::Gzip is not installed', 1

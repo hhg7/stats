@@ -120,7 +120,7 @@ fit_out("br", "br", "breaks ~ wool + tension",
 oa <- oats[-1, ]
 oa$B <- as.character(oa$B); oa$V <- as.character(oa$V); oa$N <- as.character(oa$N)
 oa_out <- oa
-oa_out[["row.names"]] <- rownames(oa)
+oa_out[["row_names"]] <- rownames(oa)
 data_out("oats", oa_out)
 fit_out("oats", "oats", "Y ~ B + V + N + V:N",
         aov(Y ~ B + V + N + V:N, oa), "Y", c("B", "V", "N"))

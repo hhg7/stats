@@ -364,7 +364,7 @@ sub child_result {
 		for my $alt (qw(two.sided less greater)) {
 			my $r = cor_test([1,1,1,1], [1,2,3,4],
 			                 method => $method, alternative => $alt);
-			for my $f (qw(estimate statistic), 'p.value') {
+			for my $f (qw(estimate statistic), 'p_value') {
 				ok($r->{$f} != $r->{$f},
 				   "cor_test $method/$alt: $f is NaN, as R reports NA");
 			}
@@ -372,8 +372,8 @@ sub child_result {
 	}
 	my $p = cor_test([1,1,1,1], [1,2,3,4]);
 	is($p->{parameter}, 2, 'cor_test pearson: df is still 2, as R reports');
-	ok($p->{'conf.int'}[0] != $p->{'conf.int'}[0]
-	   && $p->{'conf.int'}[1] != $p->{'conf.int'}[1],
+	ok($p->{'conf_int'}[0] != $p->{'conf_int'}[0]
+	   && $p->{'conf_int'}[1] != $p->{'conf_int'}[1],
 	   'cor_test pearson: the interval is NaN too');
 	# Either column, or both.
 	for my $case ([[1,2,3,4], [5,5,5,5]], [[2,2,2,2], [5,5,5,5]]) {

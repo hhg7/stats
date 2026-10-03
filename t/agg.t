@@ -99,7 +99,7 @@ my $AoA = [
 {
 	for my $case ([ 'HoA', $HoA, 'sex', 'wt' ], [ 'HoH', $HoH, 'sex', 'wt' ], [ 'AoA', $AoA, 0, 1 ]) {
 		my ($name, $df, $bycol, $wtcol) = @$case;
-		my $g = agg($df, by => $bycol, agg => { $wtcol => 'mean' }, 'output.type' => 'aoh');
+		my $g = agg($df, by => $bycol, agg => { $wtcol => 'mean' }, 'output_type' => 'aoh');
 		my %by = map { $_->{$bycol} => $_->{$wtcol} } @$g;
 		is_approx($by{F}, 57.5, "$name: F mean wt");
 		is_approx($by{M}, 75,   "$name: M mean wt");
@@ -111,22 +111,22 @@ my $AoA = [
 		'default output: AoA in -> arrayref out');
 }
 
-# output.type overrides
+# output_type overrides
 {
-	my $hoh = agg($HoA, by => 'sex', agg => { wt => 'mean' }, 'output.type' => 'hoh');
+	my $hoh = agg($HoA, by => 'sex', agg => { wt => 'mean' }, 'output_type' => 'hoh');
 	is_approx($hoh->{F}{wt}, 57.5, 'output hoh: keyed by group value');
 	is($hoh->{M}{sex}, 'M', 'output hoh: retains grouping column');
 
-	my $hoa = agg($AoH, by => 'sex', agg => { wt => 'mean' }, 'output.type' => 'hoa');
+	my $hoa = agg($AoH, by => 'sex', agg => { wt => 'mean' }, 'output_type' => 'hoa');
 	is(ref $hoa, 'HASH', 'output hoa: is a hashref');
 	is_approx($hoa->{wt}[0], 57.5, 'output hoa: column-major values');
 
-	my $aoa = agg($AoH, by => 'sex', agg => { wt => [ 'mean', 'max' ] }, 'output.type' => 'aoa');
+	my $aoa = agg($AoH, by => 'sex', agg => { wt => [ 'mean', 'max' ] }, 'output_type' => 'aoa');
 	is_approx($aoa->[1][1], 75, 'output aoa: positional mean for M');
 	is_approx($aoa->[1][2], 80, 'output aoa: positional max for M');
 
-	throws_ok { agg($AoH, agg => { wt => 'mean' }, 'output.type' => 'bogus') }
-		qr/output\.type 'bogus' isn't allowed/, 'output.type validated';
+	throws_ok { agg($AoH, agg => { wt => 'mean' }, 'output_type' => 'bogus') }
+		qr/output_type 'bogus' isn't allowed/, 'output_type validated';
 }
 
 # named aggregators, exercised on one column
@@ -216,7 +216,7 @@ my $AoA = [
 	is(scalar @$aoh, 3, 'multi-key: three groups');
 	my %by = map {; ( "$_->{a}.$_->{b}" => $_->{v} ) } @$aoh;
 	is($by{'1.x'}, 30, 'multi-key: 1/x summed');
-	my $hoh = agg($df, by => [ 'a', 'b' ], agg => { v => 'sum' }, 'output.type' => 'hoh');
+	my $hoh = agg($df, by => [ 'a', 'b' ], agg => { v => 'sum' }, 'output_type' => 'hoh');
 	is_approx($hoh->{'1.x'}{v}, 30, 'multi-key hoh: label joined with dot');
 	ok(exists $hoh->{'2.y'}, 'multi-key hoh: all labels present');
 }
@@ -241,7 +241,7 @@ throws_ok { agg($AoH, agg => { wt => 'mean' }, 'extra') }
 # the row: { a => sub { grep .. } } put b's sum into a.
 {
 	my $df = [ { g => 1, a => 1, b => 2 } ];
-	is_deeply(agg($df, by => 'g', agg => { a => sub { return }, b => 'sum' }, 'output.type' => 'aoa'),
+	is_deeply(agg($df, by => 'g', agg => { a => sub { return }, b => 'sum' }, 'output_type' => 'aoa'),
 		[ [ 1, undef, 2 ] ], 'coderef returning () yields undef, b stays in place');
 	is_deeply(agg($df, by => 'g', agg => { a => sub { (7, 8) }, b => 'sum' }),
 		[ { g => 1, a => 8, b => 2 } ], 'coderef returning a list yields its last value');
@@ -255,14 +255,14 @@ throws_ok { agg($AoH, agg => { wt => 'mean' }, 'extra') }
 	is_deeply(agg($df, by => 'g', agg => { g => 'count' }),
 		[ { g => 'a', g_count => 2 }, { g => 'b', g_count => 1 } ],
 		'aggregating a by column names it <col>_<func>, keeping the key');
-	is_deeply(agg($df, by => 'g', agg => { g => 'count' }, 'output.type' => 'hoa'),
+	is_deeply(agg($df, by => 'g', agg => { g => 'count' }, 'output_type' => 'hoa'),
 		{ g => [ 'a', 'b' ], g_count => [ 2, 1 ] }, '... and hoa columns stay aligned');
 	is_deeply(agg([ { v => 1 }, { v => 3 } ], agg => { v => [ sub { 'A' }, sub { 'B' } ] }),
 		[ { v_fn1 => 'A', v_fn2 => 'B' } ], 'two coderefs are fn1 and fn2');
 	is_deeply(agg([ { v => 1 }, { v => 3 } ], agg => { v => [ 'sum', sub { 'B' } ] }),
 		[ { v_sum => 4, v_fn => 'B' } ], 'one coderef among names is fn');
 	throws_ok { agg([ { v => 1, v_sum => 5 } ], agg => { v => [ 'sum', 'mean' ], v_sum => 'max' },
-	                'output.type' => 'hoa') }
+	                'output_type' => 'hoa') }
 		qr/output column name\(s\) generated twice: v_sum/, 'a generated name colliding with a column dies';
 	throws_ok { agg([ { v => 1 } ], agg => { v => [ 'mean', 'mean' ] }) }
 		qr/generated twice: v_mean/, 'the same reducer twice dies for named output';
@@ -276,15 +276,15 @@ throws_ok { agg($AoH, agg => { wt => 'mean' }, 'extra') }
 # NaN key died inside sort under FATAL warnings.
 {
 	my $ord = sub { [ map { $_->[0] } @{ agg([ map { { g => $_, v => 1 } } @_ ], by => 'g',
-	                                         agg => { v => 'n' }, 'output.type' => 'aoa') } ] };
+	                                         agg => { v => 'n' }, 'output_type' => 'aoa') } ] };
 	is_deeply($ord->(10, 9, 2, undef), [ 2, 9, 10, undef ], 'undef key sorts last; numbers numerically');
 	is_deeply($ord->('b', undef, 'a'), [ 'a', 'b', undef ], 'undef sorts last among strings too');
 	is_deeply($ord->('nan', 1, 2, undef), [ 1, 2, 'nan', undef ], 'NaN after numbers, before undef');
 	my $two = agg([ map { { s => 'a', g => $_, v => 1 } } 10, 9, 2 ], by => [ 's', 'g' ],
-	              agg => { v => 'n' }, 'output.type' => 'aoa');
+	              agg => { v => 'n' }, 'output_type' => 'aoa');
 	is_deeply([ map { $_->[1] } @$two ], [ 2, 9, 10 ], 'a numeric column sorts numerically beside a string one');
 	my $mix = agg([ map { { a => $_->[0], b => $_->[1], v => 1 } } [ 2, 'x' ], [ 10, 'x' ], [ 1, undef ] ],
-	              by => [ 'a', 'b' ], agg => { v => 'n' }, 'output.type' => 'aoa');
+	              by => [ 'a', 'b' ], agg => { v => 'n' }, 'output_type' => 'aoa');
 	is_deeply([ map { $_->[0] } @$mix ], [ 1, 2, 10 ], 'an undef in another key column changes nothing');
 }
 
@@ -407,10 +407,10 @@ throws_ok { agg($AoH, agg => { wt => 'mean' }, 'extra') }
 	my %hoh = map { (sprintf('r%05d', $_) => $aoh[$_]) } 0 .. $#aoh;
 	my @aoa = map { [ @{$_}{@cols} ] } @aoh;
 	my $spec = { v => [ 'count', 'n', 'sum' ] };
-	is_deeply(agg(\@aoh, by => [ 'k', 'h' ], agg => $spec, 'output.type' => 'aoa'), \@want,
+	is_deeply(agg(\@aoh, by => [ 'k', 'h' ], agg => $spec, 'output_type' => 'aoa'), \@want,
 		'AoH: 4000 rows in ~1200 groups match a plain-perl split');
-	is_deeply(agg(\%hoa, by => [ 'k', 'h' ], agg => $spec, 'output.type' => 'aoa'), \@want, 'HoA: likewise');
-	is_deeply(agg(\%hoh, by => [ 'k', 'h' ], agg => $spec, 'output.type' => 'aoa'), \@want, 'HoH: likewise');
+	is_deeply(agg(\%hoa, by => [ 'k', 'h' ], agg => $spec, 'output_type' => 'aoa'), \@want, 'HoA: likewise');
+	is_deeply(agg(\%hoh, by => [ 'k', 'h' ], agg => $spec, 'output_type' => 'aoa'), \@want, 'HoH: likewise');
 	is_deeply(agg(\@aoa, by => [ 0, 1 ], agg => { 2 => $spec->{v} }), \@want, 'AoA: likewise');
 }
 
@@ -419,7 +419,7 @@ no_leaks_ok {
 	agg($AoH, by => 'sex', agg => { wt => [ 'mean', 'sd' ], age => 'count' });
 } 'agg(): AoH grouped no leaks' unless $INC{'Devel/Cover.pm'};
 no_leaks_ok {
-	agg($HoA, by => 'sex', agg => { wt => 'mean' }, 'output.type' => 'hoh');
+	agg($HoA, by => 'sex', agg => { wt => 'mean' }, 'output_type' => 'hoh');
 } 'agg(): HoA -> hoh no leaks' unless $INC{'Devel/Cover.pm'};
 no_leaks_ok {
 	agg($HoH, by => 'sex', agg => { wt => 'sum' });
@@ -432,7 +432,7 @@ no_leaks_ok {
 } 'agg(): coderef no leaks' unless $INC{'Devel/Cover.pm'};
 no_leaks_ok {
 	agg($AoH, by => 'sex', agg => { wt => [ 'mode', 'nunique', 'first' ], age => [ 'min', 'n' ] },
-	    skipna => 0, 'output.type' => 'hoa');
+	    skipna => 0, 'output_type' => 'hoa');
 } 'agg(): copied and shared cells, skipna=0, no leaks' unless $INC{'Devel/Cover.pm'};
 no_leaks_ok {
 	eval { agg([ { g => 'F', v => 'abc' }, { g => 'M', v => 1 } ], by => 'g', agg => { v => 'mean' }) };

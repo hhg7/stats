@@ -29,7 +29,7 @@
 # (overloading, a tied hash's FIRSTKEY) or one written after the hand-made
 # frees. Each now puts its tables on the save stack or makes them mortal:
 #
-#        hoh2hoa      non-hash row, row.names collision: the result hash,
+#        hoh2hoa      non-hash row, row_names collision: the result hash,
 #                     both key arrays and the union hash
 #        kruskal_test a label whose stringification dies: obs, the label
 #                     table, every label and the label-to-id hash
@@ -168,9 +168,9 @@ my @cases = (
     [ 'hoh2hoa non-hash row',
         sub { Stats::LikeR::hoh2hoa( { a => { x => 1 }, b => 5 } ) },
         qr/hoh2hoa: every value must be a hash ref/ ],
-    [ 'hoh2hoa row.names collision',
-        sub { Stats::LikeR::hoh2hoa( { a => { x => 1 } }, 'row.names' => 'x' ) },
-        qr/hoh2hoa: row.names column 'x' collides/ ],
+    [ 'hoh2hoa row_names collision',
+        sub { Stats::LikeR::hoh2hoa( { a => { x => 1 } }, 'row_names' => 'x' ) },
+        qr/hoh2hoa: row_names column 'x' collides/ ],
     [ 'kruskal_test label dies mid-scan',
         sub { Stats::LikeR::kruskal_test( x => [ 1, 2, 3, 4 ], g => \@kw_g ) },
         qr/label refused/ ],
@@ -214,13 +214,13 @@ for my $c (@cases) {
 #    breaking every function outright.
 {
     my $e = Stats::LikeR::epi_2x2( [ 10, 20, 30, 40 ] );
-    ok( abs( $e->{'odds.ratio'} - ( 10 * 40 ) / ( 20 * 30 ) ) < 1e-12, 'epi_2x2 still correct' );
+    ok( abs( $e->{'odds_ratio'} - ( 10 * 40 ) / ( 20 * 30 ) ) < 1e-12, 'epi_2x2 still correct' );
 
     my $f = Stats::LikeR::fisher_test( [ [ 1, 2 ], [ 3, 4 ] ] );
-    ok( defined $f->{'p.value'}, 'fisher_test still returns a p-value' );
+    ok( defined $f->{'p_value'}, 'fisher_test still returns a p-value' );
 
     my $b = Stats::LikeR::binom_test( [ 3, 7 ] );
-    ok( defined $b->{'p.value'}, 'binom_test still returns a p-value' );
+    ok( defined $b->{'p_value'}, 'binom_test still returns a p-value' );
 
     my $d = Stats::LikeR::dunn_test( \@dunn_x, \@dunn_g, method => 'holm' );
     ok( ref $d eq 'ARRAY' && @$d == 10, 'dunn_test still returns 10 pairwise rows' );
@@ -244,14 +244,14 @@ for my $c (@cases) {
 
     ok( ref Stats::LikeR::survfit( \@tm, \@st ), 'survfit still returns a fit' );
     ok( defined Stats::LikeR::logrank_test( \@tm, \@st,
-            [ map { $_ % 2 ? 'a' : 'b' } 1 .. 16 ] )->{'p.value'},
+            [ map { $_ % 2 ? 'a' : 'b' } 1 .. 16 ] )->{'p_value'},
         'logrank_test still returns a p-value' );
 
     is_deeply( Stats::LikeR::hoh2hoa( { a => { x => 1 }, b => { x => 2 } } ), { x => [ 1, 2 ] },
         'hoh2hoa still converts' );
-    ok( defined Stats::LikeR::kruskal_test( h => { a => [ 1, 2, 5 ], b => [ 3, 4, 6 ] } )->{'p.value'},
+    ok( defined Stats::LikeR::kruskal_test( h => { a => [ 1, 2, 5 ], b => [ 3, 4, 6 ] } )->{'p_value'},
         'kruskal_test (h) still returns a p-value' );
-    ok( defined Stats::LikeR::kruskal_test( x => [ 1, 2, 5, 3, 4, 6 ], g => [qw(a a a b b b)] )->{'p.value'},
+    ok( defined Stats::LikeR::kruskal_test( x => [ 1, 2, 5, 3, 4, 6 ], g => [qw(a a a b b b)] )->{'p_value'},
         'kruskal_test (x, g) still returns a p-value' );
     is_deeply( Stats::LikeR::prcomp( [ { A => 2, B => 4 }, { A => 4, B => 2 }, { A => 6, B => 6 } ] )->{varnames},
         [ 'A', 'B' ], 'prcomp still names its columns' );

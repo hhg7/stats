@@ -204,7 +204,7 @@ my $tied  = { id => ta(\@id), x => ta(\@x), cat => ta(\@cat) };
 # filter()
 for my $out (undef, 'hoa', 'aoh') {
 	my $label = defined $out ? $out : 'default';
-	my @opt = defined $out ? ('output.type' => $out) : ();
+	my @opt = defined $out ? ('output_type' => $out) : ();
 
 	agree( filter($tied, col('x') > 0,      @opt),
 	       filter($plain, col('x') > 0,     @opt), "filter col() numeric, $label" );
@@ -233,8 +233,8 @@ for my $out (undef, 'hoa', 'aoh') {
 	my $taoh = ta([ map { th($_) } @rows ]);
 	agree( filter($taoh, col('x') > 0), filter($paoh, col('x') > 0),
 	       'filter over a tied AoH of tied row hashes' );
-	agree( filter($taoh, col('x') > 0, 'output.type' => 'hoa'),
-	       filter($paoh, col('x') > 0, 'output.type' => 'hoa'),
+	agree( filter($taoh, col('x') > 0, 'output_type' => 'hoa'),
+	       filter($paoh, col('x') > 0, 'output_type' => 'hoa'),
 	       'filter tied AoH -> HoA' );
 }
 
@@ -261,14 +261,14 @@ my $rtied  = { id => ta(\@rid), w => ta(\@w) };
 # is right-only and id 3/5 are left-only, so every outer branch is reached.
 for my $how (qw(inner left right outer)) {
 	for my $out (qw(aoh hoa)) {
-		agree( merge($tied,  $rtied,  how => $how, on => 'id', 'output.type' => $out),
-		       merge($plain, $rplain, how => $how, on => 'id', 'output.type' => $out),
+		agree( merge($tied,  $rtied,  how => $how, on => 'id', 'output_type' => $out),
+		       merge($plain, $rplain, how => $how, on => 'id', 'output_type' => $out),
 		       "merge $how, tied both sides, $out out" );
-		agree( merge($tied,  $rplain, how => $how, on => 'id', 'output.type' => $out),
-		       merge($plain, $rplain, how => $how, on => 'id', 'output.type' => $out),
+		agree( merge($tied,  $rplain, how => $how, on => 'id', 'output_type' => $out),
+		       merge($plain, $rplain, how => $how, on => 'id', 'output_type' => $out),
 		       "merge $how, tied left only, $out out" );
-		agree( merge($plain, $rtied,  how => $how, on => 'id', 'output.type' => $out),
-		       merge($plain, $rplain, how => $how, on => 'id', 'output.type' => $out),
+		agree( merge($plain, $rtied,  how => $how, on => 'id', 'output_type' => $out),
+		       merge($plain, $rplain, how => $how, on => 'id', 'output_type' => $out),
 		       "merge $how, tied right only, $out out" );
 	}
 }
@@ -303,11 +303,11 @@ for my $how (qw(inner left right outer)) {
 	}
 }
 
-# left.on / right.on, and a cross join, which takes no key at all.
+# left_on / right_on, and a cross join, which takes no key at all.
 {
-	agree( merge($tied, $rtied,  how => 'left', 'left.on' => 'id', 'right.on' => 'id'),
-	       merge($plain, $rplain, how => 'left', 'left.on' => 'id', 'right.on' => 'id'),
-	       'merge left.on/right.on over tied frames' );
+	agree( merge($tied, $rtied,  how => 'left', 'left_on' => 'id', 'right_on' => 'id'),
+	       merge($plain, $rplain, how => 'left', 'left_on' => 'id', 'right_on' => 'id'),
+	       'merge left_on/right_on over tied frames' );
 	agree( merge($tied,  $rtied,  how => 'cross'),
 	       merge($plain, $rplain, how => 'cross'),
 	       'cross join over tied frames' );
@@ -554,7 +554,7 @@ SKIP: {
 		drop_duplicates(ta([ { k => 'a' }, { k => 'a' } ]));
 		drop_duplicates(ta([ ['a'], ['a'] ]));
 		filter($tied, col('x') > 0);
-		filter($tied, col('x') > 0, 'output.type' => 'aoh');
+		filter($tied, col('x') > 0, 'output_type' => 'aoh');
 		filter($tied, sub { $_->{x} > 0 });
 		merge($tied, $rtied, how => $_, on => 'id') for qw(inner left right outer);
 		merge($tied, $rtied, how => 'cross');

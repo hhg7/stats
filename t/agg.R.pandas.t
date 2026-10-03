@@ -171,7 +171,7 @@ my @R_CASES = (
 		],
 	},
 	{
-		name   => 'aggregate.Rd: testDF by by1 x by2, NA as a level, mean, na.rm (skipna => 1)',
+		name   => 'aggregate.Rd: testDF by by1 x by2, NA as a level, mean, na_rm (skipna => 1)',
 		cols   => [ 'by1', 'by2', 'v1', 'v2' ],
 		data   => {
 			'by1' => [ 'red', 'blue', '1', '2', undef, 'big', '1', '2', 'red', '1', undef, '12' ],
@@ -254,7 +254,7 @@ my @R_CASES = (
 		],
 	},
 	{
-		name   => 'aggregate.Rd: cbind(Ozone, Temp) ~ Month (airquality), na.action = na.pass, no na.rm (skipna => 0)',
+		name   => 'aggregate.Rd: cbind(Ozone, Temp) ~ Month (airquality), na.action = na.pass, no na_rm (skipna => 0)',
 		cols   => [ 'Month', 'Ozone', 'Temp' ],
 		data   => {
 			'Month' => [ 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9 ],
@@ -1150,7 +1150,7 @@ sub run_case {
 		}
 		my $what = "$ref $case->{name} [$sh]";
 		my $got = agg($df, by => (@by ? \@by : undef), agg => \%spec,
-		              skipna => $case->{skipna}, 'output.type' => 'aoh');
+		              skipna => $case->{skipna}, 'output_type' => 'aoh');
 		my %got = map { (tkey(@{$_}{@by}) => $_) } @$got;
 		is(scalar @$got, scalar @{ $case->{groups} }, "$what: group count");
 		if ($case->{ordered}) {
@@ -1179,7 +1179,7 @@ diag(sprintf 'worst relative difference: %.3g', $worst) if $ENV{TEST_VERBOSE};
 {
 	my ($case) = grep { $_->{name} =~ /PR#17283/ } @R_CASES;
 	my $got = agg($case->{data}, by => [qw(Region Cold)], agg => { Population => 'mean' },
-	              'output.type' => 'aoh', sort => 0);
+	              'output_type' => 'aoh', sort => 0);
 	my @pop = map { $_->{Population} } sort {
 		# R's order: Cold varies slowest, Region fastest, both in level order
 		my %lev = (Northeast => 0, South => 1, 'North Central' => 2, West => 3);
@@ -1210,19 +1210,19 @@ throws_ok { agg({ A => [0, 0, 1, 1], B => [1, 2, 3, 4] }, by => 'A',
 	# group whose key is missing.  agg() keeps it, as the frozen dropna=False /
 	# exclude = "" answers above show; here is the group they would drop.
 	my ($case) = grep { $_->{name} =~ /test_with_na_groups/ } @PANDAS_CASES;
-	my $got = agg($case->{data}, by => 'label', agg => { v => 'n' }, 'output.type' => 'aoh');
+	my $got = agg($case->{data}, by => 'label', agg => { v => 'n' }, 'output_type' => 'aoh');
 	is_deeply($got->[-1], { label => undef, v => 4 },
 		'divergence: an undef key is a group, sorted last (pandas dropna=True drops it)');
 
 	# GH#6212's by1 mixes numbers and strings.  pandas sorts the numbers first;
 	# agg() compares a column that is not all numbers as strings throughout.
 	($case) = grep { $_->{name} =~ /GH#6212/ } @PANDAS_CASES;
-	$got = agg($case->{data}, by => [qw(by1 by2)], agg => { v1 => 'mean' }, 'output.type' => 'aoa');
+	$got = agg($case->{data}, by => [qw(by1 by2)], agg => { v1 => 'mean' }, 'output_type' => 'aoa');
 	is_deeply([ map { $_->[0] } @$got ],
 		[ 1, 1, 12, 2, 2, 'big', 'blue', 'red', 'red', undef ],
 		'divergence: a mixed key column sorts as strings (pandas puts 2 before 12)');
 
-	# GH#28426 again: under output.type aoa the columns are positional, so a
+	# GH#28426 again: under output_type aoa the columns are positional, so a
 	# repeated reducer names nothing twice and is allowed
 	$got = agg([ [0, 1], [0, 2], [1, 3], [1, 4] ], by => 0, agg => { 1 => [ 'min', 'min' ] });
 	is_deeply($got, [ [0, 1, 1], [1, 3, 3] ],
@@ -1238,7 +1238,7 @@ throws_ok { agg({ A => [0, 0, 1, 1], B => [1, 2, 3, 4] }, by => 'A',
 	# test_reductions.py test_nunique with dropna=False counts None as a value;
 	# agg()'s nunique counts defined cells only, which is dropna=True
 	($case) = grep { $_->{name} =~ /test_nunique \(x replaced/ } @PANDAS_CASES;
-	$got = agg($case->{data}, by => 'A', agg => { B => 'nunique' }, 'output.type' => 'aoh');
+	$got = agg($case->{data}, by => 'A', agg => { B => 'nunique' }, 'output_type' => 'aoh');
 	is($got->[1]{B}, 1, 'divergence: nunique ignores undef (pandas dropna=False gives 2 for b)');
 }
 

@@ -70,32 +70,32 @@ my $vcf_head = "##fileformat=VCFv4.2\n"
 		{ %fixed, POS => 10, ALT => 'C', 'S1.GT' => '1/1', 'S1.DP' => 7 },
 		{ %fixed, POS => 20, ALT => 'G', 'S1.GT' => '0/1', 'S1.DP' => 4 },
 	);
-	my ($r, @w) = warned(sub { read_table($f, 'output.type' => 'hoa') });
+	my ($r, @w) = warned(sub { read_table($f, 'output_type' => 'hoa') });
 	is_deeply $r, { map { my $k = $_; ($k => [ map { $_->{$k} } @rows ]) } keys %{ $rows[0] } },
 		'repeated sample name, hoa: the later column, and no crash';
 	is_deeply \@w, [$warn], '... warned about once, in the plain read\'s words';
-	($r, @w) = warned(sub { read_table($f, 'output.type' => 'aoh') });
+	($r, @w) = warned(sub { read_table($f, 'output_type' => 'aoh') });
 	is_deeply $r, \@rows, 'repeated sample name, aoh: the later column';
 	is_deeply \@w, [$warn], '... and warned about';
 	($r, @w) = warned(sub { read_table($f) });
 	is_deeply $r, { '1:10:A:C' => $rows[0], '1:20:A:G' => $rows[1] },
 		'repeated sample name, hoh (the default): the later column';
 	is_deeply \@w, [$warn], '... and warned about';
-	($r, @w) = warned(sub { read_table($f, 'output.type' => 'aoa') });
+	($r, @w) = warned(sub { read_table($f, 'output_type' => 'aoa') });
 	is_deeply $r, [ [qw(CHROM POS ID REF ALT QUAL FILTER INFO S1.GT S1.DP S1.GT S1.DP)],
 		[1, 10, '.', 'A', 'C', '.', '.', '.', '0/1', 5, '1/1', 7],
 		[1, 20, '.', 'A', 'G', '.', '.', '.', '0/0', 3, '0/1', 4] ],
 		'repeated sample name, aoa: every column kept, as an aoa keeps a repeated name';
 	is_deeply \@w, [], '... with no warning';
-	# row.names naming a repeated column keys by the later one, and neither
+	# row_names naming a repeated column keys by the later one, and neither
 	# column is left among the row's values
-	($r, @w) = warned(sub { read_table($f, 'row.names' => 'S1.DP') });
+	($r, @w) = warned(sub { read_table($f, 'row_names' => 'S1.DP') });
 	my %by_dp = map { my %h = %$_; my $k = delete $h{'S1.DP'}; ($k => \%h) } @rows;
-	is_deeply $r, \%by_dp, 'row.names on a repeated column keys by its later field';
+	is_deeply $r, \%by_dp, 'row_names on a repeated column keys by its later field';
 
 	my $g = fixture('collide.vcf', "$vcf_head\tX\tX.Y\n"
 		. "1\t10\t.\tA\tC\t.\t.\t.\tZ:Y.Z\tp:q\tr:s\n");
-	($r, @w) = warned(sub { read_table($g, 'output.type' => 'hoa') });
+	($r, @w) = warned(sub { read_table($g, 'output_type' => 'hoa') });
 	is_deeply [ @$r{qw(X.Z X.Y.Z X.Y.Y.Z)} ], [ ['p'], ['r'], ['s'] ],
 		'a sample and key that collide with another sample\'s: the later column';
 	is_deeply \@w, ["read_table: duplicate column name(s) in $g (later values win): "
@@ -116,7 +116,7 @@ my $vcf_head = "##fileformat=VCFv4.2\n"
 		'a tab after the marker of a tab-separated commented-out header';
 	is_deeply read_table($f, sep => qr/\t/), [ { a => 1, b => 2 }, { a => 3, b => 4 } ],
 		'... and with the tab given as a regex';
-	is_deeply read_table($f, 'output.type' => 'aoa'), [ [qw(a b)], [1, 2], [3, 4] ],
+	is_deeply read_table($f, 'output_type' => 'aoa'), [ [qw(a b)], [1, 2], [3, 4] ],
 		'... and as an aoa';
 	# A comment holding an odd number of '"' is cut with quoting off, as no
 	# one-line row of quoted fields has one: it is prose, and still a comment.
@@ -173,7 +173,7 @@ my $vcf_head = "##fileformat=VCFv4.2\n"
 	my ($r) = warned(sub { read_table($f, filter => { 1 => sub { push @saw, $_; $_ = 'X'; 1 } }) });
 	is_deeply \@saw, [1], 'a filter on the first of a repeated name sees that field\'s own value';
 	is_deeply $r, [ { a => 3, b => 2 } ], '... and its write-back does not override the later field';
-	($r) = warned(sub { read_table($f, 'output.type' => 'aoa',
+	($r) = warned(sub { read_table($f, 'output_type' => 'aoa',
 		filter => { 1 => sub { $_ = 'X'; 1 } }) });
 	is_deeply $r, [ [qw(a b a)], ['X', 2, 3] ], '... while an aoa keeps it, in its own field';
 	@saw = ();
@@ -184,7 +184,7 @@ my $vcf_head = "##fileformat=VCFv4.2\n"
 # Text the caller holds as characters is compared as UTF-8 bytes, which is how
 # every field is read. A literal sep or comment already was (the parser takes
 # its bytes), but a qr// sep with a character past 0xFF never matched, and
-# neither did such an na.strings token, filter key or row.names.
+# neither did such an na_strings token, filter key or row_names.
 {
 	my $dash = "\x{2014}";	# EM DASH, held in UTF-8 form
 	my $f = fixture('dash.txt', "a\xe2\x80\x94b\n1\xe2\x80\x942\n\xe2\x80\x943\n");
@@ -196,17 +196,17 @@ my $vcf_head = "##fileformat=VCFv4.2\n"
 	is_deeply read_table($runs, sep => qr/$dash+/), [ { a => 1, b => 2 } ],
 		'... quantified as a character, not as its last byte';
 	my $g = fixture('na.csv', "a,b\n\xe2\x80\x94,2\n1,\xe2\x80\x94\n");
-	is_deeply read_table($g, 'na.strings' => $dash), [ { a => undef, b => 2 }, { a => 1, b => undef } ],
-		'an na.strings token held as characters';
-	is_deeply read_table($g, 'na.strings' => $dash, filter => { 0 => sub { 1 } }),
+	is_deeply read_table($g, 'na_strings' => $dash), [ { a => undef, b => 2 }, { a => 1, b => undef } ],
+		'an na_strings token held as characters';
+	is_deeply read_table($g, 'na_strings' => $dash, filter => { 0 => sub { 1 } }),
 		[ { a => undef, b => 2 }, { a => 1, b => undef } ], '... and through the callback path';
 	my $h = fixture('names.csv', "Donn\xc3\xa9es,n\nx,1\ny,2\n");
 	my $name = "Donn\x{e9}es";
 	utf8::upgrade($name);	# held in UTF-8 form, as under `use utf8`
 	is_deeply read_table($h, filter => { $name => sub { $_ eq 'y' } }),
 		[ { "Donn\xc3\xa9es" => 'y', n => 2 } ], 'a filter key held as characters';
-	is_deeply read_table($h, 'output.type' => 'hoh', 'row.names' => $name),
-		{ x => { n => 1 }, y => { n => 2 } }, 'a row.names held as characters';
+	is_deeply read_table($h, 'output_type' => 'hoh', 'row_names' => $name),
+		{ x => { n => 1 }, y => { n => 2 } }, 'a row_names held as characters';
 	# The engine is told the line is UTF-8 only once it has been checked to be.
 	my $bad = fixture('latin1.txt', "a\xe2\x80\x94b\n\xe9\xe2\x80\x942\n");
 	throws_ok { read_table($bad, sep => qr/$dash/) }
@@ -217,18 +217,18 @@ my $vcf_head = "##fileformat=VCFv4.2\n"
 	is_deeply read_table($l1, sep => qr/\xa7/), [ { a => 1, b => 2 } ], 'a byte pattern on a Latin-1 file';
 }
 
-# Options that have no meaning for what was asked are refused, as row.names on
+# Options that have no meaning for what was asked are refused, as row_names on
 # an aoa and explode on a non-VCF already were. Up to 0.3213 they were ignored.
 {
 	my $f = fixture('opts.csv', "id,v\n1,2\n");
 	for my $otype (qw(aoh hoa)) {
-		throws_ok { read_table($f, 'output.type' => $otype, 'row.names' => 'id') }
-			qr/^read_table: 'row\.names' has no meaning for output\.type "$otype"; the row names column is read as an ordinary column$/,
-			"row.names with output.type $otype";
+		throws_ok { read_table($f, 'output_type' => $otype, 'row_names' => 'id') }
+			qr/^read_table: 'row_names' has no meaning for output_type "$otype"; the row names column is read as an ordinary column$/,
+			"row_names with output_type $otype";
 	}
 	my $v = fixture('opts.vcf', "$vcf_head\tS\n1\t5\t.\tA\tC\t.\t.\t.\tGT\t0/1\n");
-	throws_ok { read_table($v, 'output.type' => 'aoh', 'row.names' => 'nope') }
-		qr/^read_table: 'row\.names' has no meaning for output\.type "aoh"/,
+	throws_ok { read_table($v, 'output_type' => 'aoh', 'row_names' => 'nope') }
+		qr/^read_table: 'row_names' has no meaning for output_type "aoh"/,
 		'... on an exploded VCF as well';
 	throws_ok { read_table($f, sheet => 2) }
 		qr/^read_table: 'sheet' applies only to an \.xlsx, and "\Q$f\E" is not named as one$/,
@@ -269,7 +269,7 @@ SKIP: {
 	my $re = qr/\x{2014}/;
 	local $SIG{__WARN__} = sub { };	# the repeated-name warnings
 	for my $otype (qw(hoa aoh hoh)) {
-		no_leaks_ok { read_table($f, 'output.type' => $otype) }
+		no_leaks_ok { read_table($f, 'output_type' => $otype) }
 			"no leaks: explode with a repeated column name, $otype";
 	}
 	no_leaks_ok { read_table($q) } 'no leaks: a commented-out header cut by the parser';

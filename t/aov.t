@@ -69,18 +69,18 @@ my %oneway = (
 	is_approx($r->{coefficients}{gB},         3, 'gB = mean(B)-mean(A)');
 	is_approx($r->{coefficients}{gC},         6, 'gC = mean(C)-mean(A)');
 
-	is(ref $r->{'fitted.values'}, 'HASH', 'fitted.values is a hashref');
-	is(scalar keys %{$r->{'fitted.values'}}, 9, 'fitted.values has one entry per obs');
-	is_approx($r->{'fitted.values'}{1}, 2, 'fitted[1] = group A mean');
-	is_approx($r->{'fitted.values'}{4}, 5, 'fitted[4] = group B mean');
-	is_approx($r->{'fitted.values'}{7}, 8, 'fitted[7] = group C mean');
+	is(ref $r->{'fitted_values'}, 'HASH', 'fitted_values is a hashref');
+	is(scalar keys %{$r->{'fitted_values'}}, 9, 'fitted_values has one entry per obs');
+	is_approx($r->{'fitted_values'}{1}, 2, 'fitted[1] = group A mean');
+	is_approx($r->{'fitted_values'}{4}, 5, 'fitted[4] = group B mean');
+	is_approx($r->{'fitted_values'}{7}, 8, 'fitted[7] = group C mean');
 
 	is(ref $r->{xlevels}, 'HASH', 'xlevels is a hashref');
 	is_deeply($r->{xlevels}{g}, [qw(A B C)], 'xlevels{g} sorted, reference first');
 
-	is(ref $r->{'group.stats'}, 'HASH', 'group_stats present');
-	is_deeply($r->{'group.stats'}{mean}, { A => 2, B => 5, C => 8 }, 'group_stats: the response mean in each level of g');
-	is_deeply($r->{'group.stats'}{size}, { A => 3, B => 3, C => 3 }, 'group_stats: rows fitted in each level of g');
+	is(ref $r->{'group_stats'}, 'HASH', 'group_stats present');
+	is_deeply($r->{'group_stats'}{mean}, { A => 2, B => 5, C => 8 }, 'group_stats: the response mean in each level of g');
+	is_deeply($r->{'group_stats'}{size}, { A => 3, B => 3, C => 3 }, 'group_stats: rows fitted in each level of g');
 }
 
 # same data via HoH and AoH -> identical table & coefficients
@@ -116,8 +116,8 @@ my %oneway = (
 	my $r = aov(\%d, 'y~x');
 	is_approx($r->{coefficients}{Intercept}, 1, 'reg Intercept');
 	is_approx($r->{coefficients}{x},         2, 'reg slope x');
-	is_approx($r->{'fitted.values'}{1}, 1, 'reg fitted[1]');
-	is_approx($r->{'fitted.values'}{3}, 5, 'reg fitted[3]');
+	is_approx($r->{'fitted_values'}{1}, 1, 'reg fitted[1]');
+	is_approx($r->{'fitted_values'}{3}, 5, 'reg fitted[3]');
 	is($r->{x}{Df}, 1, 'reg x Df = 1');
 }
 
@@ -137,7 +137,7 @@ my %oneway = (
 	my $r = aov(\%d, 'y~x-1');
 	ok(!exists $r->{coefficients}{Intercept}, 'no-intercept: Intercept absent');
 	is_approx($r->{coefficients}{x}, 2, 'no-intercept: slope x');
-	is_approx($r->{'fitted.values'}{2}, 4, 'no-intercept: fitted[2]');
+	is_approx($r->{'fitted_values'}{2}, 4, 'no-intercept: fitted[2]');
 }
 
 # two-way with interaction  y ~ A*B (balanced, zero residual)
@@ -172,7 +172,7 @@ my %twoway = (
 {
 	my %d = (y => [1, 2, $nan, 4], g => [qw(A A B B)]);
 	my $r = aov(\%d, 'y~g');
-	is(scalar keys %{$r->{'fitted.values'}}, 3, 'NaN row dropped -> 3 fitted values');
+	is(scalar keys %{$r->{'fitted_values'}}, 3, 'NaN row dropped -> 3 fitted values');
 	is($r->{Residuals}{Df}, 1, 'NaN: Residuals Df = 1');
 	is_approx($r->{coefficients}{Intercept}, 1.5, 'NaN: Intercept = mean(A)');
 	is_approx($r->{coefficients}{gB},        2.5, 'NaN: gB = 4 - 1.5');

@@ -89,7 +89,7 @@ sub kind {
 	# because the header is one name short.  read_table has no complex or
 	# logical class, so those two columns are read as they are; R's default
 	# na.strings = "NA" is spelled out.
-	my $r = read_table($foo7, sep => ' ', 'auto.row.names' => 1, 'na.strings' => 'NA',
+	my $r = read_table($foo7, sep => ' ', 'auto_row_names' => 1, 'na_strings' => 'NA',
 		colClasses => ['character', 'numeric', 'numeric', undef, 'integer', undef, 'character']);
 	# reg-IO2.Rout.save lines 137-140:
 	#      A   B      C  D     E    F
@@ -111,7 +111,7 @@ sub kind {
 # --- pandas test_dtype_per_column ----------------------------------------------------
 {
 	my $f = fixture("one,two\n1,2.5\n2,3.5\n3,4.5\n4,5.5");
-	my $r = read_table($f, 'output.type' => 'hoa', colClasses => { one => 'numeric', two => 'character' });
+	my $r = read_table($f, 'output_type' => 'hoa', colClasses => { one => 'numeric', two => 'character' });
 	is_deeply($r, { one => [1, 2, 3, 4], two => ['2.5', '3.5', '4.5', '5.5'] }, 'pandas dtype_per_column');
 	is_deeply([ map { kind(\$_) } @{ $r->{one} } ], [('NV') x 4], 'pandas dtype_per_column: one is float64');
 	is_deeply([ map { kind(\$_) } @{ $r->{two} } ], [('PV') x 4], 'pandas dtype_per_column: two is str');
@@ -122,7 +122,7 @@ sub kind {
 
 # --- pandas test_numeric_dtype -------------------------------------------------------
 for my $cls (qw(numeric integer)) {
-	my $r = read_table(fixture("0\n1"), header => 0, 'output.type' => 'hoa', colClasses => $cls);
+	my $r = read_table(fixture("0\n1"), header => 0, 'output_type' => 'hoa', colClasses => $cls);
 	is_deeply($r->{V1}, [0, 1], "pandas numeric_dtype ($cls)");
 	is_deeply([ map { kind(\$_) } @{ $r->{V1} } ], [ ($cls eq 'numeric' ? 'NV' : 'IV') x 2 ],
 	          "pandas numeric_dtype ($cls): stored as that kind");
@@ -133,14 +133,14 @@ for my $cls (qw(numeric integer)) {
 	my $f = fixture("id\tnum\t\n1\t1.2 \t\n1\t 2.1\t\n2\t 1\t\n2\t 1.2 \t\n", '.tsv');
 	# dtype={1: np.float64} is by position; a short list is recycled, as R
 	# recycles colClasses, so [undef, 'numeric'] declares the second column only
-	my $r = read_table($f, 'output.type' => 'hoa', colClasses => [undef, 'numeric']);
+	my $r = read_table($f, 'output_type' => 'hoa', colClasses => [undef, 'numeric']);
 	is_deeply($r->{num}, [1.2, 2.1, 1.0, 1.2], 'pandas skip_whitespace: blanks around a float');
 	is_deeply($r->{id}, ['1', '1', '2', '2'], 'pandas skip_whitespace: id as read');
 }
 
 # --- pandas test_nullable_int_dtype ----------------------------------------------------
 {
-	my $r = read_table(fixture("a,b,c\n,3,5\n1,,6\n2,4,"), 'output.type' => 'hoa', colClasses => 'integer');
+	my $r = read_table(fixture("a,b,c\n,3,5\n1,,6\n2,4,"), 'output_type' => 'hoa', colClasses => 'integer');
 	is_deeply($r, { a => [undef, 1, 2], b => [3, undef, 4], c => [5, 6, undef] }, 'pandas nullable_int_dtype');
 	is_deeply([ map { kind(\$_) } @{ $r->{a} } ], ['undef', 'IV', 'IV'], 'pandas nullable_int_dtype: IVs and undef');
 	# test_raise_on_passed_int_dtype_with_nas raises "Integer column has NA
@@ -152,7 +152,7 @@ for my $cls (qw(numeric integer)) {
 {
 	my $f = fixture("a,b\n1,1\n,1\n1582218195625938945,1\n");
 	if ($Config{ivsize} >= 8) {
-		my $r = read_table($f, 'output.type' => 'hoa', colClasses => { a => 'integer' });
+		my $r = read_table($f, 'output_type' => 'hoa', colClasses => { a => 'integer' });
 		is_deeply($r->{a}, [1, undef, '1582218195625938945'], 'pandas ea_int_avoid_overflow: exact');
 		is(kind(\$r->{a}[2]), 'IV', 'pandas ea_int_avoid_overflow: an IV, not an NV that rounds');
 	} else {	# a 32-bit IV cannot hold it, and that is said, not rounded
@@ -184,7 +184,7 @@ for my $cls (qw(numeric integer)) {
 	eval { read_table(fixture("x\n5 \n"), colClasses => 'integer') };
 	like($@, qr/has '5 ' there/, 'as R: an integer may not have a trailing one');
 	eval { read_table(fixture("x\nNA\n"), colClasses => 'numeric') };
-	like($@, qr/has 'NA' there/, 'as R: "NA" is missing only through na.strings (scan() is called with NA off)');
+	like($@, qr/has 'NA' there/, 'as R: "NA" is missing only through na_strings (scan() is called with NA off)');
 }
 
 done_testing();

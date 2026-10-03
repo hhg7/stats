@@ -64,11 +64,11 @@ use Stats::LikeR 't_test';
 #                          double     long double / __float128
 #   tail rows  statistic   1.6e-16    1.2e-16
 #              df          2.2e-16    6.7e-17
-#              p.value     1.14e-13   1.38e-14   (the Welch rows)
+#              p_value     1.14e-13   1.38e-14   (the Welch rows)
 #   sleep rows             2.6e-15
 #   exact rows statistic   2.5e-16
 #              stderr      1.9e-16
-#              p.value     1.5e-15
+#              p_value     1.5e-15
 #
 # The Welch tail p-values are the large ones because p ~ |t|^-df there: the
 # relative error of p is ln|t| times the absolute error of df, and ln(2^500) is
@@ -110,9 +110,9 @@ sub cmp_r {
 	my $name = defined $tag ? "$label ($tag)" : $label;
 	rel_ok($r->{statistic},      $exp->[0], "$name: statistic");
 	rel_ok($r->{df},             $exp->[1], "$name: df");
-	rel_ok($r->{'p.value'},      $exp->[2], "$name: p.value");
-	rel_ok($r->{'conf.int'}[0],  $exp->[3], "$name: conf.int[0]");
-	rel_ok($r->{'conf.int'}[1],  $exp->[4], "$name: conf.int[1]");
+	rel_ok($r->{'p_value'},      $exp->[2], "$name: p_value");
+	rel_ok($r->{'conf_int'}[0],  $exp->[3], "$name: conf_int[0]");
+	rel_ok($r->{'conf_int'}[1],  $exp->[4], "$name: conf_int[1]");
 }
 
 my @ALT = qw(two.sided less greater);
@@ -134,8 +134,8 @@ for my $alt (@ALT) {
 	cmp_r("tiny|$alt", t_test([2**-532, 2**-531], mu => 1, alternative => $alt));
 }
 # the cliff itself: every p-value of a two-sided df-1 test is positive
-ok(t_test([1, 2], mu => 2**1000)->{'p.value'} > 0,
-	'df 1, |t| = 2^1001: p.value is not 0');
+ok(t_test([1, 2], mu => 2**1000)->{'p_value'} > 0,
+	'df 1, |t| = 2^1001: p_value is not 0');
 
 # t.test.Rd's sleep data, as plain arrays and then through every kind of magic
 my @S1 = (0.7, -1.6, -0.2, -1.2, -0.1, 3.4, 3.7, 0.8, 0, 2);
@@ -220,8 +220,8 @@ for my $df (1 .. 10) {
 	my @x = (1 .. $df + 1);
 	my $worst = 0;
 	for my $mu ((map { 1 + $df / 2 + $_ / 4 } -160 .. 160), $INF, -$INF) {
-		my $lt = t_test(\@x, mu => $mu, alternative => 'less')->{'p.value'};
-		my $gt = t_test(\@x, mu => $mu, alternative => 'greater')->{'p.value'};
+		my $lt = t_test(\@x, mu => $mu, alternative => 'less')->{'p_value'};
+		my $gt = t_test(\@x, mu => $mu, alternative => 'greater')->{'p_value'};
 		my $err = abs($lt + $gt - 1);
 		$worst = $err if $err > $worst;
 	}
@@ -254,7 +254,7 @@ my @ILL_Y = map { 2**33 + $_ * 2**-13 } 3, 7, 8, 12, 13;
 my @BIG_X = (2**511, -2**511, 2**509);
 my @BIG_Y = (2**512, -2**509, 2**510);
 my @EXACT = (
-	# name, call, statistic, df, p.value, stderr
+	# name, call, statistic, df, p_value, stderr
 	['ill 1s', sub { t_test(\@ILL_X, mu => 2**33) },
 		3.0301037378974968298, 6, 0.023094835525958571617, 0.00017840877573036186901],
 	['ill Welch', sub { t_test(\@ILL_X, \@ILL_Y) },
@@ -272,7 +272,7 @@ my @EXACT = (
 for my $c (@EXACT) {
 	my ($name, $call, @want) = @$c;
 	my $r = $call->();
-	my @what = qw(statistic df p.value stderr);
+	my @what = qw(statistic df p_value stderr);
 	rel_ok($r->{ $what[$_] }, $want[$_], "exact $name: $what[$_]") for 0 .. 3;
 }
 

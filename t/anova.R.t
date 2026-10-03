@@ -105,7 +105,7 @@ my %EXPECT = (
     'Residuals' => [45, 650.7129981676326, 14.460288848169613, undef, undef],
   } },
   lcs_chain => { cmp => {
-    'Res.Df' => [49, 48, 47, 46, 45],
+    'Res_Df' => [49, 48, 47, 46, 45],
     'RSS' => [983.62825, 779.5106846253956, 726.1679749519313, 713.7670287603918, 650.7129981676327],
     'Df' => [undef, 1, 1, 1, 1],
     'Sum of Sq' => [undef, 204.1175653746044, 53.34270967346424, 12.40094619153956, 63.05403059275909],
@@ -113,7 +113,7 @@ my %EXPECT = (
     'Pr(>F)' => [undef, 0.0004921954681666046, 0.06112545983034587, 0.35935508477849776, 0.04247113872491377],
   } },
   lcs_unconventional => { cmp => {
-    'Res.Df' => [45, 47, 49],
+    'Res_Df' => [45, 47, 49],
     'RSS' => [650.7129981676327, 726.1679749519313, 983.62825],
     'Df' => [undef, -2, -2],
     'Sum of Sq' => [undef, -75.45497678429865, -257.46027504806864],
@@ -121,7 +121,7 @@ my %EXPECT = (
     'Pr(>F)' => [undef, 0.0847088477965798, 0.0005526716859402219],
   } },
   lcs_negF => { cmp => {
-    'Res.Df' => [48, 47],
+    'Res_Df' => [48, 47],
     'RSS' => [779.5106846253956, 824.7180519360634],
     'Df' => [undef, 1],
     'Sum of Sq' => [undef, -45.20736731066779],
@@ -174,7 +174,7 @@ my %EXPECT = (
     'Residuals' => [59, 1962.485119047619, 33.2624596448749, undef, undef],
   } },
   pr8049 => { cmp => {
-    'Res.Df' => [9, 8],
+    'Res_Df' => [9, 8],
     'RSS' => [75.22133832133488, 7.955032927650803],
     'Df' => [undef, 1],
     'Sum of Sq' => [undef, 67.26630539368408],
@@ -245,10 +245,10 @@ sub check_one {
 }
 sub check_cmp {
 	my ($key, $got, $exp) = @_;
-	my $nrow = @{ $exp->{'Res.Df'} };
+	my $nrow = @{ $exp->{'Res_Df'} };
 	is(scalar @$got, $nrow, "$key: $nrow rows");
 	for my $r (0 .. $nrow - 1) {
-		is($got->[$r]{'Res.Df'}, $exp->{'Res.Df'}[$r], "$key row $r Res.Df");
+		is($got->[$r]{'Res_Df'}, $exp->{'Res_Df'}[$r], "$key row $r Res_Df");
 		near($got->[$r]{RSS}, $exp->{RSS}[$r], "$key row $r RSS");
 		if (defined $exp->{Df}[$r]) { is($got->[$r]{Df}, $exp->{Df}[$r], "$key row $r Df") }
 		else { ok(!exists $got->[$r]{Df}, "$key row $r: no Df") }
@@ -270,7 +270,7 @@ for my $key (sort keys %CMP) {
 	my @ROUT = ([45, 650.71], [47, 726.17, -2, -75.455, 2.6090, 0.0847088],
 	            [49, 983.63, -2, -257.460, 8.9023, 0.0005527]);
 	my $t = anova($DATA{lcs}, @{ $CMP{lcs_unconventional} }[1 .. 3]);
-	my @k = ('Res.Df', 'RSS', 'Df', 'Sum of Sq', 'F', 'Pr(>F)');
+	my @k = ('Res_Df', 'RSS', 'Df', 'Sum of Sq', 'F', 'Pr(>F)');
 	for my $i (0 .. $#ROUT) {
 		for my $j (0 .. $#{ $ROUT[$i] }) {
 			my $v = $ROUT[$i][$j];

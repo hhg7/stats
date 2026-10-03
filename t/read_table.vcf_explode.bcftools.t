@@ -733,41 +733,41 @@ for my $name (sort keys %fixture) {
 	my $f = fixture($name, $fx->{vcf});
 
 	is_deeply read_table($f), $hoh, "$name: a hoh by CHROM:POS:REF:ALT, the default";
-	is_deeply read_table($f, 'output.type' => 'hoh'), $hoh, "$name: hoh, asked for";
-	is_deeply read_table($f, 'output.type' => 'aoa'), $aoa, "$name: aoa";
-	is_deeply read_table($f, 'output.type' => 'aoh'), $aoh, "$name: aoh";
-	is_deeply read_table($f, 'output.type' => 'hoa'), $hoa, "$name: hoa";
-	is_deeply read_table($f, explode => 1, 'output.type' => 'aoa'), $aoa,
+	is_deeply read_table($f, 'output_type' => 'hoh'), $hoh, "$name: hoh, asked for";
+	is_deeply read_table($f, 'output_type' => 'aoa'), $aoa, "$name: aoa";
+	is_deeply read_table($f, 'output_type' => 'aoh'), $aoh, "$name: aoh";
+	is_deeply read_table($f, 'output_type' => 'hoa'), $hoa, "$name: hoa";
+	is_deeply read_table($f, explode => 1, 'output_type' => 'aoa'), $aoa,
 		"$name: explode => 1, given";
-	is_deeply read_table($f, 'output.type' => 'aoa', filter => sub { 1 }), $aoa,
+	is_deeply read_table($f, 'output_type' => 'aoa', filter => sub { 1 }), $aoa,
 		"$name: aoa through a filter that keeps every row";
-	is_deeply read_table($f, comment => '#', 'output.type' => 'aoa'), $aoa,
+	is_deeply read_table($f, comment => '#', 'output_type' => 'aoa'), $aoa,
 		"$name: comment => '#'";
-	is_deeply read_table(fixture("$name.gz", gz($fx->{vcf})), 'output.type' => 'aoa'),
+	is_deeply read_table(fixture("$name.gz", gz($fx->{vcf})), 'output_type' => 'aoa'),
 		$aoa, "$name: gzipped";
-	# row.names by a column whose values are unique in every fixture
+	# row_names by a column whose values are unique in every fixture
 	my (undef, undef, $by_pos) = shapes($aoa, 'POS');
-	is_deeply read_table($f, 'row.names' => 'POS'), $by_pos, "$name: hoh by POS";
+	is_deeply read_table($f, 'row_names' => 'POS'), $by_pos, "$name: hoh by POS";
 	# an exploded column can name the rows too
 	my $col = $aoa->[0][8];
 	my @vals = grep { defined } map { $_->[8] } @$aoa[ 1 .. $#$aoa ];
 	my %u = map { $_ => 1 } @vals;
 	if (@vals == $#$aoa && keys %u == @vals) {
 		my (undef, undef, $by_col) = shapes($aoa, $col);
-		is_deeply read_table($f, 'row.names' => $col), $by_col,
+		is_deeply read_table($f, 'row_names' => $col), $by_col,
 			"$name: hoh by an exploded column, $col";
 	}
-	# na.strings reaches the split values as well as the fields
+	# na_strings reaches the split values as well as the fields
 	my $na_aoa = [ $aoa->[0], map { [ map { defined && $_ eq '.' ? undef : $_ } @$_ ] }
 		@$aoa[ 1 .. $#$aoa ] ];
-	is_deeply read_table($f, 'na.strings' => '.', 'output.type' => 'aoa'), $na_aoa,
-		"$name: na.strings => '.' maps fields and split values";
+	is_deeply read_table($f, 'na_strings' => '.', 'output_type' => 'aoa'), $na_aoa,
+		"$name: na_strings => '.' maps fields and split values";
 	# explode => 0 is the file's own columns
 	my ($hline) = $fx->{vcf} =~ /^#(CHROM\t[^\n]*)/m;
-	is_deeply read_table($f, explode => 0, 'output.type' => 'aoa')->[0],
+	is_deeply read_table($f, explode => 0, 'output_type' => 'aoa')->[0],
 		[ split /\t/, $hline, -1 ], "$name: explode => 0 keeps FORMAT and the samples whole";
 	# header => 0 has no FORMAT column to split by, and reads the file plain
-	my $plain = read_table($f, header => 0, 'output.type' => 'aoa');
+	my $plain = read_table($f, header => 0, 'output_type' => 'aoa');
 	is $plain->[1][0], '#CHROM', "$name: header => 0 is not exploded";
 }
 
@@ -781,10 +781,10 @@ my $f   = fixture('ex2.vcf', $ex2);
 	my $all  = $fixture{'ex2.vcf'}{want};
 	my @keep = grep { $all->[0][$_] !~ /\.CNL\z/ } 0 .. $#{ $all->[0] };
 	my $want = [ map { [ @$_[@keep] ] } grep { $_ == $all->[0] || $_->[1] == 17330 } @$all ];
-	is_deeply read_table($f, 'output.type' => 'aoa',
+	is_deeply read_table($f, 'output_type' => 'aoa',
 			filter => { FORMAT => sub { $_ eq 'GT:GQ:DP:HQ' }, POS => sub { $_ < 1e6 } }),
 		$want, 'a filter sees FORMAT, a column the exploded table does not have';
-	is_deeply read_table($f, 'output.type' => 'aoa',
+	is_deeply read_table($f, 'output_type' => 'aoa',
 			filter => { NA00001 => sub { /^0\|0:49/ } }),
 		$want, 'and a sample column unsplit';
 	my ($err) = outcome(sub { read_table($f, filter => { 'NA00001.GT' => sub { 1 } }) });
@@ -792,18 +792,18 @@ my $f   = fixture('ex2.vcf', $ex2);
 		'an exploded name is not a column a filter can see';
 }
 
-# col.names renames the file's columns before the split, so a renamed sample
+# col_names renames the file's columns before the split, so a renamed sample
 # names its exploded columns
 {
 	my @cn = (qw(chr pos id ref alt qual filter info format), qw(s1 s2 s3));
-	my $got = read_table($f, 'col.names' => \@cn, 'output.type' => 'aoa');
+	my $got = read_table($f, 'col_names' => \@cn, 'output_type' => 'aoa');
 	is_deeply $got->[0],
 		[ qw(chr pos id ref alt qual filter info),
 		  map { my $s = $_; map { "$s.$_" } qw(GT GQ DP HQ CNL) } qw(s1 s2 s3) ],
-		'col.names: the renamed samples name the exploded columns';
-	is_deeply [ sort keys %{ read_table($f, 'col.names' => \@cn) } ],
+		'col_names: the renamed samples name the exploded columns';
+	is_deeply [ sort keys %{ read_table($f, 'col_names' => \@cn) } ],
 		[ sort map { join ':', @$_[ 0, 1, 3, 4 ] } @$got[ 1 .. $#$got ] ],
-		'col.names: the hoh is still keyed by the CHROM:POS:REF:ALT columns';
+		'col_names: the hoh is still keyed by the CHROM:POS:REF:ALT columns';
 }
 
 # a VCF with no samples is its eight fixed columns; one with FORMAT and no
@@ -818,15 +818,15 @@ my $f   = fixture('ex2.vcf', $ex2);
 		'sites only: the fixed columns, keyed by CHROM:POS:REF:ALT';
 	(my $fmt_only = $sites) =~ s/\tINFO\n/\tINFO\tFORMAT\n/;
 	$fmt_only =~ s/\tDP=3\n/\tDP=3\tGT\n/;
-	is_deeply read_table(fixture('fmt.vcf', $fmt_only), 'output.type' => 'aoa'),
+	is_deeply read_table(fixture('fmt.vcf', $fmt_only), 'output_type' => 'aoa'),
 		[ [qw(CHROM POS ID REF ALT QUAL FILTER INFO FORMAT)],
 		  [ 1, 10, '.', 'A', 'G', 5, 'PASS', 'DP=3', 'GT' ] ],
 		'FORMAT and no samples: FORMAT is kept';
 	my $empty = "##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tS1\n";
 	my $e = fixture('empty.vcf', $empty);
 	is_deeply read_table($e), {}, 'a header and no records: an empty hoh';
-	is_deeply read_table($e, 'output.type' => 'hoa'), {}, 'and an empty hoa';
-	is_deeply read_table($e, 'output.type' => 'aoa'),
+	is_deeply read_table($e, 'output_type' => 'hoa'), {}, 'and an empty hoa';
+	is_deeply read_table($e, 'output_type' => 'aoa'),
 		[ [qw(CHROM POS ID REF ALT QUAL FILTER INFO)] ],
 		'and an aoa of the fixed columns: no record gave a FORMAT key';
 }
@@ -858,15 +858,15 @@ my $f   = fixture('ex2.vcf', $ex2);
 	is $err, "read_table: 'explode' must be 0 or 1\n", 'explode => 2';
 	($err) = outcome(sub { read_table($f, explode => undef) });
 	is $err, "read_table: 'explode' must be 0 or 1\n", 'explode => undef';
-	($err) = outcome(sub { read_table($f, 'row.names' => 'NA00001') });
+	($err) = outcome(sub { read_table($f, 'row_names' => 'NA00001') });
 	is $err, "\"NA00001\" isn't in the header of $f\n",
-		'row.names naming a sample column, which the exploded table has not got';
-	($err) = outcome(sub { read_table($f, 'row.names' => 'QUAL', 'na.strings' => '.') });
+		'row_names naming a sample column, which the exploded table has not got';
+	($err) = outcome(sub { read_table($f, 'row_names' => 'QUAL', 'na_strings' => '.') });
 	is $err, "read_table: undefined row name (column 'QUAL') in $f data row 2\n",
-		'a row name made undef by na.strings';
-	($err) = outcome(sub { read_table($f, 'output.type' => 'aoa', 'row.names' => 'POS') });
-	like $err, qr/^read_table: 'row\.names' has no meaning for output\.type "aoa"/,
-		'row.names with an aoa';
+		'a row name made undef by na_strings';
+	($err) = outcome(sub { read_table($f, 'output_type' => 'aoa', 'row_names' => 'POS') });
+	like $err, qr/^read_table: 'row_names' has no meaning for output_type "aoa"/,
+		'row_names with an aoa';
 	(my $long = $ex2) =~ s/\t0\|0:48:1:25,30:10,20\t/\t0|0:48:1:25,30:10,20:9\t/;
 	my $g = fixture('long.vcf', $long);
 	($err) = outcome(sub { read_table($g) });
@@ -876,15 +876,15 @@ my $f   = fixture('ex2.vcf', $ex2);
 	$g = fixture('short.vcf', $short);
 	($err) = outcome(sub { read_table($g) });
 	is $err, "read_table: $g has fewer than the 5 columns (CHROM POS ID REF ALT) "
-		. "that key a VCF's rows; pass 'row.names'\n", 'too few columns to key a hoh';
-	is_deeply read_table($g, 'row.names' => 'POS'),
-		{ 10 => { CHROM => 1, ID => '.', REF => 'A' } }, 'unless row.names is given';
+		. "that key a VCF's rows; pass 'row_names'\n", 'too few columns to key a hoh';
+	is_deeply read_table($g, 'row_names' => 'POS'),
+		{ 10 => { CHROM => 1, ID => '.', REF => 'A' } }, 'unless row_names is given';
 }
 
 if ($HAVE_LEAKTRACE && !$INC{'Devel/Cover.pm'}) {
 	no_leaks_ok { read_table($f) } 'no leaks exploding a VCF into a hoh';
-	no_leaks_ok { read_table($f, 'output.type' => 'aoa', 'na.strings' => '.') }
-		'no leaks exploding into an aoa with na.strings';
+	no_leaks_ok { read_table($f, 'output_type' => 'aoa', 'na_strings' => '.') }
+		'no leaks exploding into an aoa with na_strings';
 }
 
 done_testing;
