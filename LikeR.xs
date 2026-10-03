@@ -10722,7 +10722,14 @@ static void S_filter_row(pTHX_ csv_plan *p, AV **rowp){
 			{
 				const I32 n = call_sv(p->flt[k], G_SCALAR);	//may die: everything is mortal or the plan's
 				SPAGAIN;
-				if (n < 1 || !SvTRUE(POPs))
+				/*popped into a variable first: before 5.18 SvTRUE() is a macro
+				that reads its argument more than once, and SvTRUE(POPs) popped
+				the stack two or three times -- wrong rows kept, then SIGSEGV*/
+				if (n >= 1) {
+					SV *const res = POPs;
+					if (!SvTRUE(res))
+						keep = FALSE;
+				} else
 					keep = FALSE;
 				PUTBACK;
 			}
