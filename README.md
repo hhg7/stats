@@ -2293,9 +2293,9 @@ The optional third argument picks the returned shape, one of `'aoh'`,
 `'hoa'`, or `'aoa'` (case-insensitive). It defaults to the input shape
 (HoH defaults to AoH). Any shape can be converted to any other:
 
-    csort($aoa, 0)               # AoA -> AoA (default)
-    csort($aoa, 0, 'hoa')        # AoA -> HoA
-    csort($aoh, 'No.', 'aoa')    # AoH -> AoA
+    csort($aoa, 0)            # AoA -> AoA (default)
+    csort($aoa, 0, 'hoa')     # AoA -> HoA
+    csort($aoh, 'No.', 'aoa') # AoH -> AoA
 
 When the target is AoH or HoA, an AoA's columns are keyed by their
 stringified index (`'0'`, `'1'`, ...). When the target is AoA, the
