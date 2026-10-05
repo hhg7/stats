@@ -3463,7 +3463,24 @@ errors are right as they stand.
 
 ## group_by
 
-Take a hash of arrays, hash of hashes, or array of hashes, and group a column by another column.
+    group_by($data, $value_column, $group_column, @filters)
+
+Split the values of one column by the levels of another, as R's `split(x, f)`
+does. **The column of values comes first and the grouping column second** --
+the reverse of dplyr's `group_by(df, g)` or pandas' `df.groupby('g')`, which
+take only the grouping column. `group_by($mtcars, 'mpg', 'cyl')` is "mpg,
+split by cyl", and returns a hash of arrays keyed by the levels of `cyl`:
+
+    {
+        4   [ 22.8, 24.4, 22.8, ... ],   # the 11 four-cylinder cars' mpg
+        6   [ 21,   21,   21.4, ... ],   # 7
+        8   [ 18.7, 14.3, 16.4, ... ]    # 14
+    }
+
+That is the shape `aov` stacks when it is given no formula, so `aov($gb)` runs
+a one-way ANOVA of the values across the groups.
+
+The data may be an array of hashes, a hash of hashes, or a hash of arrays:
 
     my $aoh_data = [
         { 'Gender' => 'Male',   'Testosterone, total (nmol/L)' => 20.5 },
@@ -3472,40 +3489,52 @@ Take a hash of arrays, hash of hashes, or array of hashes, and group a column by
         { 'Gender' => 'Female' } # Intentional missing target value
     ];
 
-as well as
-
-    $hoh_data = {
+    my $hoh_data = {
         'Patient_A' => { 'Gender' => 'Male',   'Testosterone, total (nmol/L)' => 20.5 },
         'Patient_B' => { 'Gender' => 'Female', 'Testosterone, total (nmol/L)' => 1.8 },
         'Patient_C' => { 'Gender' => 'Male',   'Testosterone, total (nmol/L)' => 18.2 },
         'Patient_D' => { 'Gender' => 'Female' }, # Intentional missing target value
         'Patient_E' => { 'Gender' => 'Female', 'Testosterone, total (nmol/L)' => undef } # Explicit undef
-        };
-
-and
+    };
 
     my $hoa_data = {
         'Gender'                       => ['Male', 'Female', 'Male', 'Female'],
         'Testosterone, total (nmol/L)' => [22.1,   2.5,      19.4,   undef   ]
     };
 
-then run the function thus:
+Each is called the same way:
 
-    group_by( $hoa_data, 'Testosterone, total (nmol/L)', 'Gender');
+    group_by($aoh_data, 'Testosterone, total (nmol/L)', 'Gender');
 
-The output can be thought of like a hash, with the first string broken down by the second.
-
-all become hash of arrays:
+and each returns a hash of arrays. A row whose value is missing or `undef` is
+left out, so the second Female row contributes nothing. `$aoh_data` gives
 
     {
         Female   [
             [0] 1.8
         ],
         Male     [
-            [0] 18.2,
-            [1] 20.5
+            [0] 20.5,
+            [1] 18.2
         ]
     }
+
+and `$hoa_data` gives
+
+    {
+        Female   [
+            [0] 2.5
+        ],
+        Male     [
+            [0] 22.1,
+            [1] 19.4
+        ]
+    }
+
+The values are not sorted. From an array of hashes or a hash of arrays they
+come in row order; from a hash of hashes they come in Perl's hash order, which
+differs from run to run, so `$hoh_data` gives `Male` as either `[20.5, 18.2]`
+or `[18.2, 20.5]`. Sort them, or use an array of hashes, if the order matters.
 
 A column that is present in some rows but missing in others is fine (those rows
 are simply skipped), but naming a target, group, or filter column that is absent
