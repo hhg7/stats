@@ -58,7 +58,7 @@
 .\" ========================================================================
 .\"
 .IX Title "read.me 3"
-.TH read.me 3 2026-10-03 "perl v5.44.0" "User Contributed Perl Documentation"
+.TH read.me 3 2026-10-05 "perl v5.44.0" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -2609,9 +2609,9 @@ The optional third argument picks the returned shape, one of \f(CW\*(Aqaoh\*(Aq\
 (HoH defaults to AoH). Any shape can be converted to any other:
 .PP
 .Vb 3
-\& csort($aoa, 0)               # AoA \-> AoA (default)
-\& csort($aoa, 0, \*(Aqhoa\*(Aq)        # AoA \-> HoA
-\& csort($aoh, \*(AqNo.\*(Aq, \*(Aqaoa\*(Aq)    # AoH \-> AoA
+\& csort($aoa, 0)            # AoA \-> AoA (default)
+\& csort($aoa, 0, \*(Aqhoa\*(Aq)     # AoA \-> HoA
+\& csort($aoh, \*(AqNo.\*(Aq, \*(Aqaoa\*(Aq) # AoH \-> AoA
 .Ve
 .PP
 When the target is AoH or HoA, an AoA\*(Aqs columns are keyed by their
@@ -3814,7 +3814,28 @@ errors are right as they stand.
 .IX Subsection "Output variables"
 .SS group_by
 .IX Subsection "group_by"
-Take a hash of arrays, hash of hashes, or array of hashes, and group a column by another column.
+.Vb 1
+\& group_by($data, $value_column, $group_column, @filters)
+.Ve
+.PP
+Split the values of one column by the levels of another, as R\*(Aqs \f(CW\*(C`split(x, f)\*(C'\fR
+does. \fBThe column of values comes first and the grouping column second\fR \-\-
+the reverse of dplyr\*(Aqs \f(CW\*(C`group_by(df, g)\*(C'\fR or pandas\*(Aq \f(CW\*(C`df.groupby(\*(Aqg\*(Aq)\*(C'\fR, which
+take only the grouping column. \f(CW\*(C`group_by($mtcars, \*(Aqmpg\*(Aq, \*(Aqcyl\*(Aq)\*(C'\fR is "mpg,
+split by cyl", and returns a hash of arrays keyed by the levels of \f(CW\*(C`cyl\*(C'\fR:
+.PP
+.Vb 5
+\& {
+\&     4   [ 22.8, 24.4, 22.8, ... ],   # the 11 four\-cylinder cars\*(Aq mpg
+\&     6   [ 21,   21,   21.4, ... ],   # 7
+\&     8   [ 18.7, 14.3, 16.4, ... ]    # 14
+\& }
+.Ve
+.PP
+That is the shape \f(CW\*(C`aov\*(C'\fR stacks when it is given no formula, so \f(CWaov($gb)\fR runs
+a one\-way ANOVA of the values across the groups.
+.PP
+The data may be an array of hashes, a hash of hashes, or a hash of arrays:
 .PP
 .Vb 6
 \& my $aoh_data = [
@@ -3823,38 +3844,29 @@ Take a hash of arrays, hash of hashes, or array of hashes, and group a column by
 \&     { \*(AqGender\*(Aq => \*(AqMale\*(Aq,   \*(AqTestosterone, total (nmol/L)\*(Aq => 18.2 },
 \&     { \*(AqGender\*(Aq => \*(AqFemale\*(Aq } # Intentional missing target value
 \& ];
-.Ve
-.PP
-as well as
-.PP
-.Vb 7
-\& $hoh_data = {
+\&
+\& my $hoh_data = {
 \&     \*(AqPatient_A\*(Aq => { \*(AqGender\*(Aq => \*(AqMale\*(Aq,   \*(AqTestosterone, total (nmol/L)\*(Aq => 20.5 },
 \&     \*(AqPatient_B\*(Aq => { \*(AqGender\*(Aq => \*(AqFemale\*(Aq, \*(AqTestosterone, total (nmol/L)\*(Aq => 1.8 },
 \&     \*(AqPatient_C\*(Aq => { \*(AqGender\*(Aq => \*(AqMale\*(Aq,   \*(AqTestosterone, total (nmol/L)\*(Aq => 18.2 },
 \&     \*(AqPatient_D\*(Aq => { \*(AqGender\*(Aq => \*(AqFemale\*(Aq }, # Intentional missing target value
 \&     \*(AqPatient_E\*(Aq => { \*(AqGender\*(Aq => \*(AqFemale\*(Aq, \*(AqTestosterone, total (nmol/L)\*(Aq => undef } # Explicit undef
-\&     };
-.Ve
-.PP
-and
-.PP
-.Vb 4
+\& };
+\&
 \& my $hoa_data = {
 \&     \*(AqGender\*(Aq                       => [\*(AqMale\*(Aq, \*(AqFemale\*(Aq, \*(AqMale\*(Aq, \*(AqFemale\*(Aq],
 \&     \*(AqTestosterone, total (nmol/L)\*(Aq => [22.1,   2.5,      19.4,   undef   ]
 \& };
 .Ve
 .PP
-then run the function thus:
+Each is called the same way:
 .PP
 .Vb 1
-\& group_by( $hoa_data, \*(AqTestosterone, total (nmol/L)\*(Aq, \*(AqGender\*(Aq);
+\& group_by($aoh_data, \*(AqTestosterone, total (nmol/L)\*(Aq, \*(AqGender\*(Aq);
 .Ve
 .PP
-The output can be thought of like a hash, with the first string broken down by the second.
-.PP
-all become hash of arrays:
+and each returns a hash of arrays. A row whose value is missing or \f(CW\*(C`undef\*(C'\fR is
+left out, so the second Female row contributes nothing. \f(CW$aoh_data\fR gives
 .PP
 .Vb 9
 \& {
@@ -3862,11 +3874,30 @@ all become hash of arrays:
 \&         [0] 1.8
 \&     ],
 \&     Male     [
-\&         [0] 18.2,
-\&         [1] 20.5
+\&         [0] 20.5,
+\&         [1] 18.2
 \&     ]
 \& }
 .Ve
+.PP
+and \f(CW$hoa_data\fR gives
+.PP
+.Vb 9
+\& {
+\&     Female   [
+\&         [0] 2.5
+\&     ],
+\&     Male     [
+\&         [0] 22.1,
+\&         [1] 19.4
+\&     ]
+\& }
+.Ve
+.PP
+The values are not sorted. From an array of hashes or a hash of arrays they
+come in row order; from a hash of hashes they come in Perl\*(Aqs hash order, which
+differs from run to run, so \f(CW$hoh_data\fR gives \f(CW\*(C`Male\*(C'\fR as either \f(CW\*(C`[20.5, 18.2]\*(C'\fR
+or \f(CW\*(C`[18.2, 20.5]\*(C'\fR. Sort them, or use an array of hashes, if the order matters.
 .PP
 A column that is present in some rows but missing in others is fine (those rows
 are simply skipped), but naming a target, group, or filter column that is absent
@@ -6392,6 +6423,16 @@ In a whitespace\-delimited file, a comment line with as many words as the data
 has columns can be taken for a commented\-out header, since that is how one
 is recognised; see \fIcommented\-out headers\fR below for when it is.
 .IP \(bu 4
+A pattern under Unicode rules \-\- \f(CW\*(C`/u\*(C'\fR, which \f(CW\*(C`use v5.12\*(C'\fR or later puts on
+every \f(CW\*(C`qr//\*(C'\fR, or one using \f(CW\*(C`\ep{...}\*(C'\fR \-\- and one under \f(CW\*(C`/a\*(C'\fR reads characters:
+a line that is valid UTF\-8 is matched as UTF\-8, so \f(CW\*(C`qr/\es+/u\*(C'\fR splits on a
+U+00A0 or U+2003 between fields and never inside a character such as \f(CW\*(C`à\*(C'\fR.
+A line that is not valid UTF\-8 is matched as bytes. The fields are the file\*(Aqs
+bytes either way. A pattern under the default rules is matched as bytes, so
+\&\f(CW\*(C`qr/\exe2\ex80\ex94/\*(C'\fR finds an em dash\*(Aqs three bytes; write \f(CW\*(C`\eh\*(C'\fR or \f(CW\*(C`\ep{...}\*(C'\fR
+in such a pattern with \f(CW\*(C`/u\*(C'\fR to have it read characters. Plain \f(CW\*(C`qr/\es+/\*(C'\fR
+splits on ASCII blanks only, as R\*(Aqs \f(CW\*(C`sep = ""\*(C'\fR and pandas\*(Aq \f(CW\*(C`sep=r"\es+"\*(C'\fR do.
+.IP \(bu 4
 An \f(CW\*(C`.xlsx\*(C'\fR file ignores \f(CW\*(C`sep\*(C'\fR and \f(CW\*(C`quote\*(C'\fR, whether a string or a pattern.
 .IP \(bu 4
 The separators are found by perl\*(Aqs regex engine, called from the same C
@@ -6717,6 +6758,11 @@ comment marker \fIafter\fR the header, if the marker hugs its text (\f(CW\*(C`#3
 data row, while one with a blank after the marker (\f(CW\*(C`# note\*(C'\fR) is a comment
 wherever it is.
 .PP
+A marker inside quotes is text, as R\*(Aqs \f(CW\*(C`read.table\*(C'\fR reads it: a header written
+\&\f(CW\*(C`"#a",b\*(C'\fR has the columns \f(CW\*(C`#a\*(C'\fR and \f(CW\*(C`b\*(C'\fR, and a quoted \f(CW"#x"\fR or \f(CW"# x"\fR is a
+field like any other, never a comment. \f(CW\*(C`write_table\*(C'\fR quotes a first field that
+starts with \f(CW\*(C`#\*(C'\fR for this reason, so that it reads back as written.
+.PP
 You may name a commented\-out header\*(Aqs column in a \f(CW\*(C`filter\*(C'\fR either
 as it appears in the file or by its clean name:
 .PP
@@ -6727,7 +6773,9 @@ as it appears in the file or by its clean name:
 \fIExcel (.xlsx) files\fR
 .IX Subsection "Excel (.xlsx) files"
 .PP
-A file whose name ends in \f(CW\*(C`.xlsx\*(C'\fR is read directly, with \fBno extra
+A file whose name ends in \f(CW\*(C`.xlsx\*(C'\fR — or \f(CW\*(C`.xlsm\*(C'\fR, \f(CW\*(C`.xltx\*(C'\fR or \f(CW\*(C`.xltm\*(C'\fR, the
+macro\-enabled and template workbooks, which hold their sheets the same way —
+is read directly, with \fBno extra
 dependencies\fR — the core \f(CW\*(C`IO::Uncompress::Unzip\*(C'\fR module pulls the parts out of
 the (zipped) workbook and the worksheet XML is parsed in XS, through the same
 fast path a delimited file takes: \f(CW\*(C`read_table\*(C'\fR reads the header in Perl and the
@@ -6755,22 +6803,38 @@ each value being that sheet parsed just as a single table would be (honouring
 .Ve
 .PP
 A workbook with a single worksheet, or a call that names a \f(CW\*(C`sheet\*(C'\fR explicitly,
-returns that one table directly (not wrapped in a hash).
+returns that one table directly (not wrapped in a hash). A worksheet with no
+name is keyed \f(CW\*(C`SheetN\*(C'\fR, \f(CW\*(C`N\*(C'\fR its position, or the next number no other sheet is
+named with, so it never replaces a sheet that really has that name.
+.PP
+The XML is read as an XML parser would read it: comments are skipped (a
+commented\-out row is not data), a CDATA section is its literal text, and a
+line end written as CR LF or a lone CR is LF, while one written as \f(CW\*(C`&#13;\*(C'\fR
+stays a CR. Rich\-text runs are concatenated into a single value, and the
+phonetic guide (\f(CW\*(C`<rPh>\*(C'\fR, the furigana Japanese Excel records for text typed
+through the input method) is left out of it, as openpyxl leaves it out. The
+shared\-string table is found through the workbook\*(Aqs relationships, so it is
+read whatever the writer named it. Excel\*(Aqs own escape for a character XML
+cannot hold, \f(CW\*(C`_x\*(C'\fR and four hex digits and \f(CW\*(C`_\*(C'\fR (\f(CW\*(C`_x0000_\*(C'\fR for NUL, \f(CW\*(C`_x005F_\*(C'\fR
+for a literal underscore), is decoded in string cells as Excel and LibreOffice
+decode it, so a control character that \f(CW\*(C`write_table\*(C'\fR wrote reads back as
+itself; a formula\*(Aqs cached result is left as written.
 .PP
 Limitations: dates and times are returned as their raw Excel serial numbers
-(cell number formats are not applied); shared\-string rich\-text runs are
-concatenated into a single value; a cell that has formatting but no value is a
+(cell number formats are not applied); a cell that has formatting but no value is a
 blank, whether it is written \f(CW\*(C`<c s="2"/>\*(C'\fR, \f(CW\*(C`<c s="2"></c>\*(C'\fR or with an empty
 \&\f(CW\*(C`<v></v>\*(C'\fR, and blanks past a row\*(Aqs last value do not add columns (readxl and
 pandas leave them out too); and two things the format does not allow are
 read as if they were not there — a cell reference past \f(CW\*(C`XFD\*(C'\fR, the last of the
 16,384 columns a worksheet has, places the cell in the next column instead, and
-a numeric character reference above \f(CW\*(C`&#x7FFFFFFF;\*(C'\fR is left in the text rather
-than decoded. The \f(CW\*(C`sep\*(C'\fR, \f(CW\*(C`delim\*(C'\fR, and \f(CW\*(C`comment\*(C'\fR options do not
+a numeric character reference to something XML does not allow as a character
+— \f(CW\*(C`&#0;\*(C'\fR and the other control characters but tab, LF and CR, a UTF\-16
+surrogate, \f(CW\*(C`&#xFFFE;\*(C'\fR, \f(CW\*(C`&#xFFFF;\*(C'\fR, or anything past \f(CW\*(C`&#x10FFFF;\*(C'\fR — is left in
+the text rather than decoded. The \f(CW\*(C`sep\*(C'\fR, \f(CW\*(C`delim\*(C'\fR, and \f(CW\*(C`comment\*(C'\fR options do not
 apply to \f(CW\*(C`.xlsx\*(C'\fR files, so a cell such as \f(CW\*(C`#id\*(C'\fR is read as it is. A workbook
 whose elements carry a namespace prefix (\f(CW\*(C`<x:row>\*(C'\fR, as the Open XML SDK writes
-them) is read like any other. Tested in \f(CW\*(C`t/read_table.xlsx.t\*(C'\fR and
-\&\f(CW\*(C`t/read_table.xlsx.parser.t\*(C'\fR.
+them) is read like any other. Tested in \f(CW\*(C`t/read_table.xlsx.t\*(C'\fR,
+\&\f(CW\*(C`t/read_table.xlsx.parser.t\*(C'\fR and \f(CW\*(C`t/read_table.xlsx.xml.t\*(C'\fR.
 .SS rename_cols
 .IX Subsection "rename_cols"
 .Vb 2
@@ -8210,13 +8274,21 @@ For a hash of arrays or an array of hashes, \f(CW\*(C`row_names => \*(Aqcol\*(Aq
 \& write_table(\e%hoa, \*(Aqout.csv\*(Aq, \*(Aqrow_names\*(Aq => \*(Aqgene\*(Aq);   # gene,score / TP53,0.9 / ...
 .Ve
 .PP
+A hash of arrays without a column \f(CW\*(C`col\*(C'\fR is an error. An array of hashes may lack it in some rows: those rows are labelled with \f(CW\*(C`undef_val\*(C'\fR, and one warning gives their count.
+.PP
+An array of arrays and a flat hash have no named column to take labels from, so for them \f(CW\*(C`row_names => \*(Aqname\*(Aq\*(C'\fR heads their \f(CW\*(C`1..n\*(C'\fR label column \f(CW\*(C`name\*(C'\fR, as it heads a HoH\*(Aqs key column. As for a HoH, a name that is already a column\*(Aqs is an error.
+.PP
 A hash of arrays has as many rows as the longest of the arrays it writes; an array that \f(CW\*(C`col_names\*(C'\fR leaves out does not add rows.
 .PP
 An empty \f(CW\*(C`{}\*(C'\fR or \f(CW\*(C`[]\*(C'\fR is a table with no rows, and is written as one: the header \f(CW\*(C`col_names\*(C'\fR and \f(CW\*(C`row_names\*(C'\fR give, if any, and otherwise a single empty record. \f(CW\*(C`write_table([], \*(Aqout.csv\*(Aq, \*(Aqcol_names\*(Aq => [\*(AqA\*(Aq], \*(Aqrow_names\*(Aq => 1)\*(C'\fR writes \f(CW\*(C`,A\*(C'\fR, as pandas writes \f(CW\*(C`DataFrame({"A": []}).to_csv()\*(C'\fR.
 .PP
-Every cell of delimited output is written whole, including one holding a NUL byte, and a cell of a tied hash or array (such as \f(CW\*(C`Tie::IxHash\*(C'\fR) is read through its \f(CW\*(C`FETCH\*(C'\fR. A number is formatted the way perl formats it, but in a copy, so writing a table does not add a string buffer to every numeric scalar in it.
+Every cell of delimited output is written whole, including one holding a NUL byte, and a cell of a tied hash or array (such as \f(CW\*(C`Tie::IxHash\*(C'\fR) is read through its \f(CW\*(C`FETCH\*(C'\fR. A number is formatted the way perl formats it, but in a copy, so writing a table does not add a string buffer to every numeric scalar in it. Nor does finding an AoH\*(Aqs or a HoH\*(Aqs columns leave an iterator on every row hash, as walking them with \f(CW\*(C`keys\*(C'\fR would. A row that is a restricted hash (\f(CW\*(C`Hash::Util::lock_keys\*(C'\fR) may lack some of the columns; those cells are written empty, where they used to die with \fIAttempt to access disallowed key\fR.
 .PP
-\&\f(CW\*(C`write_table\*(C'\fR determines comma and tab\-separated delimiters from the filename, but will override if \f(CW\*(C`sep\*(C'\fR or \f(CW\*(C`delim\*(C'\fR are explicitly set.
+A field is quoted when it holds a quote (which is doubled), a line break or the separator, as Python\*(Aqs \f(CW\*(C`csv.writer\*(C'\fR quotes, and in two more places where \f(CW\*(C`read_table\*(C'\fR would otherwise not see the record at all. A record of a single field that is empty, \f(CW\*(C`undef\*(C'\fR or nothing but spaces and tabs is written quoted, \f(CW""\fR or \f(CW"  "\fR, because a blank line is skipped on reading; \f(CW\*(C`csv.writer\*(C'\fR writes \f(CW\*(C`[\*(Aq\*(Aq]\*(C'\fR and \f(CW\*(C`[None]\*(C'\fR the same way. The first field of a record is quoted when it starts with \f(CW\*(C`#\*(C'\fR, \f(CW\*(C`read_table\*(C'\fR\*(Aqs default comment character.
+.PP
+A reference anywhere in the table is an error, in a header cell (\f(CW\*(C`col_names\*(C'\fR, or an AoA\*(Aqs first row) as in a data cell. For an AoA, an \f(CW\*(C`undef\*(C'\fR in \f(CW\*(C`col_names\*(C'\fR is an empty header cell in its place, since an AoA\*(Aqs columns are positional; for every other shape, which looks its columns up by name, it is skipped.
+.PP
+\&\f(CW\*(C`write_table\*(C'\fR determines comma and tab\-separated delimiters from the filename, but will override if \f(CW\*(C`sep\*(C'\fR or \f(CW\*(C`delim\*(C'\fR are explicitly set. A separator may be more than one character, but not empty, and may not contain a NUL, a quote, a CR or a LF: a file written with one of those could not be split into its fields again. A file name containing a NUL is an error too, as it is to perl\*(Aqs \f(CW\*(C`open\*(C'\fR.
 Args can also be accepted:
 .PP
 .Vb 1
@@ -8284,7 +8356,7 @@ The colour is unconditional; it is not suppressed when standard output is a pipe
 \& write_table(\e@data_aoh, $tmp_file, \*(Aqtex\*(Aq => 1);  # force LaTeX for any name
 .Ve
 .PP
-The file begins with a \f(CW\*(C`%written by <cwd>/<script>\*(C'\fR provenance comment (the working directory and script name). The header row is bold and the table is ruled with \f(CW\*(C`\ehline\*(C'\fR. As with every other format, \f(CW\*(C`row_names\*(C'\fR is \fBoff\fR unless you ask for it, except for a HoH: pass \f(CW\*(C`row_names => 1\*(C'\fR to prepend a label column of 1\-based indices. A HoH writes its outer keys as that column by default, and \f(CW\*(C`row_names => 0\*(C'\fR drops them. Cell text is LaTeX\-escaped: \f(CW\*(C`#\*(C'\fR, \f(CW\*(C`_\*(C'\fR, \f(CW\*(C`%\*(C'\fR, and \f(CW\*(C`&\*(C'\fR are backslash\-escaped, \f(CW\*(C`>\*(C'\fR becomes \f(CW\*(C`\etextgreater{}\*(C'\fR, and a cell consisting solely of \f(CW\*(C`\eincludesvg{...svg}\*(C'\fR is passed through untouched. A table with no columns at all is an error, since LaTeX rejects one, and it is refused before the file is opened. The \f(CW\*(C`tex_*\*(C'\fR options tune the output:
+The file begins with a \f(CW\*(C`%written by <cwd>/<script>\*(C'\fR provenance comment (the working directory and script name). The header row is bold and the table is ruled with \f(CW\*(C`\ehline\*(C'\fR. As with every other format, \f(CW\*(C`row_names\*(C'\fR is \fBoff\fR unless you ask for it, except for a HoH: pass \f(CW\*(C`row_names => 1\*(C'\fR to prepend a label column of 1\-based indices. A HoH writes its outer keys as that column by default, and \f(CW\*(C`row_names => 0\*(C'\fR drops them. Cell text is LaTeX\-escaped: \f(CW\*(C`#\*(C'\fR, \f(CW\*(C`_\*(C'\fR, \f(CW\*(C`%\*(C'\fR, and \f(CW\*(C`&\*(C'\fR are backslash\-escaped, \f(CW\*(C`<\*(C'\fR and \f(CW\*(C`>\*(C'\fR become \f(CW\*(C`\etextless{}\*(C'\fR and \f(CW\*(C`\etextgreater{}\*(C'\fR (in LaTeX\*(Aqs default font encoding a bare \f(CW\*(C`<\*(C'\fR prints as \f(CW\*(C`¡\*(C'\fR; inside \f(CW\*(C`$...$\*(C'\fR the two macros still print, with a LaTeX warning), and a cell consisting solely of \f(CW\*(C`\eincludesvg{...svg}\*(C'\fR is passed through untouched. The other LaTeX specials — \f(CW\*(C`\e\*(C'\fR, \f(CW\*(C`$\*(C'\fR, \f(CW\*(C`{\*(C'\fR, \f(CW\*(C`}\*(C'\fR, \f(CW\*(C`^\*(C'\fR and \f(CW\*(C`~\*(C'\fR — are left alone on purpose, so that a cell can hold LaTeX of its own: inline math such as \f(CW\*(C`$p^2$\*(C'\fR, or a macro such as \f(CW\*(C`\etextit{x}\*(C'\fR. A cell that means one of them literally writes it escaped (\f(CW\*(C`\e$\*(C'\fR, \f(CW\*(C`\e{\*(C'\fR, \f(CW\*(C`\etextasciicircum{}\*(C'\fR). A table with no columns at all is an error, since LaTeX rejects one, and it is refused before the file is opened. The \f(CW\*(C`tex_*\*(C'\fR options tune the output:
 .PP
 .Vb 7
 \& write_table(\e@rows, \*(Aqtable.tex\*(Aq,
@@ -8365,10 +8437,33 @@ writer, so it works for every shape above:
 \& write_table(\e%data_hoa, $tmp_file, \*(Aqxlsx\*(Aq => 1);  # force Excel for any name
 .Ve
 .PP
-A numeric\-looking cell is written as a number; every other non\-empty cell as an
-inline string (\f(CW\*(C`undef\*(C'\fR/empty cells are omitted). The result reads straight back
-with \f(CW\*(C`read_table\*(C'\fR. XML cannot hold a NUL or most other control
-characters, so those are dropped from a cell\*(Aqs text.
+A number is written as a number cell, and every other non\-empty cell as an
+inline string (\f(CW\*(C`undef\*(C'\fR/empty cells are omitted). A value perl holds as a number
+is a number cell, unless it is infinite or \f(CW\*(C`NaN\*(C'\fR, which are written as text. A
+string is a number cell only when Excel would show it as it stands: a plain
+decimal (an optional \f(CW\*(C`\-\*(C'\fR, digits with at most one \f(CW\*(C`.\*(C'\fR, an optional exponent),
+with no leading zeros but the one in \f(CW0\fR or \f(CW0.5\fR, at most 15 significant
+digits, and a magnitude Excel holds (up to \f(CW9.99999999999999E+307\fR). So \f(CW007\fR,
+\&\f(CW+5\fR and a 20\-digit accession number stay text, where Excel used to show them
+as \f(CW7\fR, \f(CW5\fR and \f(CW1.23457E+19\fR; pandas likewise writes a \f(CW\*(C`str\*(C'\fR as a string. The
+result reads straight back with \f(CW\*(C`read_table\*(C'\fR.
+.PP
+XML 1.0 cannot hold a NUL, most other control characters, the noncharacters
+U+FFFE and U+FFFF, or a surrogate, and a workbook holding one is refused by its
+readers. In a cell each is written as Excel\*(Aqs own escape, \f(CW\*(C`_xHHHH_\*(C'\fR (\f(CW\*(C`\er\*(C'\fR is
+\&\f(CW\*(C`_x000D_\*(C'\fR), which Excel and LibreOffice turn back into the character, as
+XlsxWriter does. A literal \f(CW\*(C`_x0041_\*(C'\fR in a cell is written \f(CW\*(C`_x005F_x0041_\*(C'\fR so
+that it is not mistaken for one, and so is every other underscore that would
+open an escape, overlapping ones included, so that a reader decoding left to
+right gets back exactly the text written.
+In the sheet name and \f(CW\*(C`xlsx_comment\*(C'\fR such characters are dropped. A code point
+above U+10FFFF, which no Unicode encoding has, is an error.
+.PP
+Excel\*(Aqs limits are enforced rather than written past: a worksheet holds 1048576
+rows (header included) and 16384 columns, and a cell 32767 characters, the
+checks XlsxWriter and pandas (\fIThis sheet is too large!\fR) make. A table that is
+too long is refused before the file is opened, except a hash of arrays, whose
+length is only known as its rows are written.
 .PP
 The worksheet is streamed to the file as the rows are formatted, so writing a
 workbook takes little memory beyond the data itself: a 200000 x 20 array of
@@ -8394,7 +8489,7 @@ one longer than 31 characters draws a warning, since Excel cannot read it:
 \& );
 .Ve
 .PP
-\&\f(CW\*(C`xlsx_freeze_rows\*(C'\fR and \f(CW\*(C`xlsx_freeze_cols\*(C'\fR freeze that many leading rows/columns in place (Excel\*(Aqs \fIfreeze panes\fR), so they stay visible while scrolling — most often used to pin the header row:
+\&\f(CW\*(C`xlsx_freeze_rows\*(C'\fR and \f(CW\*(C`xlsx_freeze_cols\*(C'\fR freeze that many leading rows/columns in place (Excel\*(Aqs \fIfreeze panes\fR), so they stay visible while scrolling — most often used to pin the header row. They go up to 1048575 and 16383, one short of the sheet\*(Aqs limits:
 .PP
 .Vb 2
 \& write_table(\e@rows, \*(Aqreport.xlsx\*(Aq, \*(Aqxlsx_freeze_rows\*(Aq => 1);                        # pin the header row

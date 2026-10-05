@@ -81,6 +81,7 @@ my %svpv_audited = (
 	'script = SvPV(rs, sl);'                           => '$FindBin::RealScript: a path, the OS\'s bytes',
 	'STRLEN l0; const char *s0 = SvPV(dollar0, l0);'   => '$0: a path, the OS\'s bytes',
 	'STRLEN pl; const char *ps = SvPV(prov, pl);'      => 'the banner built from the two paths above',
+	'const char *file = SvPV(file_sv, file_len);'     => 'write_table(): the output path, the OS\'s bytes, opened as such',
 	'STRLEN clen; const char *cdata = SvPV(content, clen);' => 'xlsx XML this module assembled from upgraded cells and SvPVutf8 names: UTF-8 throughout',
 	'STRLEN tll; const char *tls = SvPV(tl, tll);'     => 'a cell reference such as "C2": ASCII',
 	'lab = SvPV(sv, l);'                               => 'glm_var_label(): the hash length after it carries SvUTF8',

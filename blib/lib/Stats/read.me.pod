@@ -3212,9 +3212,9 @@ The optional third argument picks the returned shape, one of C<'aoh'>,
 C<'hoa'>, or C<'aoa'> (case-insensitive). It defaults to the input shape
 (HoH defaults to AoH). Any shape can be converted to any other:
 
- csort($aoa, 0)               # AoA -> AoA (default)
- csort($aoa, 0, 'hoa')        # AoA -> HoA
- csort($aoh, 'No.', 'aoa')    # AoH -> AoA
+ csort($aoa, 0)            # AoA -> AoA (default)
+ csort($aoa, 0, 'hoa')     # AoA -> HoA
+ csort($aoh, 'No.', 'aoa') # AoH -> AoA
 
 When the target is AoH or HoA, an AoA's columns are keyed by their
 stringified index (C<'0'>, C<'1'>, ...). When the target is AoA, the
@@ -5187,7 +5187,24 @@ errors are right as they stand.
 
 =head2 group_by
 
-Take a hash of arrays, hash of hashes, or array of hashes, and group a column by another column.
+ group_by($data, $value_column, $group_column, @filters)
+
+Split the values of one column by the levels of another, as R's C<split(x, f)>
+does. B<The column of values comes first and the grouping column second> --
+the reverse of dplyr's C<group_by(df, g)> or pandas' C<df.groupby('g')>, which
+take only the grouping column. C<group_by($mtcars, 'mpg', 'cyl')> is "mpg,
+split by cyl", and returns a hash of arrays keyed by the levels of C<cyl>:
+
+ {
+     4   [ 22.8, 24.4, 22.8, ... ],   # the 11 four-cylinder cars' mpg
+     6   [ 21,   21,   21.4, ... ],   # 7
+     8   [ 18.7, 14.3, 16.4, ... ]    # 14
+ }
+
+That is the shape C<aov> stacks when it is given no formula, so C<aov($gb)> runs
+a one-way ANOVA of the values across the groups.
+
+The data may be an array of hashes, a hash of hashes, or a hash of arrays:
 
  my $aoh_data = [
      { 'Gender' => 'Male',   'Testosterone, total (nmol/L)' => 20.5 },
@@ -5196,40 +5213,52 @@ Take a hash of arrays, hash of hashes, or array of hashes, and group a column by
      { 'Gender' => 'Female' } # Intentional missing target value
  ];
 
-as well as
-
- $hoh_data = {
+ my $hoh_data = {
      'Patient_A' => { 'Gender' => 'Male',   'Testosterone, total (nmol/L)' => 20.5 },
      'Patient_B' => { 'Gender' => 'Female', 'Testosterone, total (nmol/L)' => 1.8 },
      'Patient_C' => { 'Gender' => 'Male',   'Testosterone, total (nmol/L)' => 18.2 },
      'Patient_D' => { 'Gender' => 'Female' }, # Intentional missing target value
      'Patient_E' => { 'Gender' => 'Female', 'Testosterone, total (nmol/L)' => undef } # Explicit undef
-     };
-
-and
+ };
 
  my $hoa_data = {
      'Gender'                       => ['Male', 'Female', 'Male', 'Female'],
      'Testosterone, total (nmol/L)' => [22.1,   2.5,      19.4,   undef   ]
  };
 
-then run the function thus:
+Each is called the same way:
 
- group_by( $hoa_data, 'Testosterone, total (nmol/L)', 'Gender');
+ group_by($aoh_data, 'Testosterone, total (nmol/L)', 'Gender');
 
-The output can be thought of like a hash, with the first string broken down by the second.
-
-all become hash of arrays:
+and each returns a hash of arrays. A row whose value is missing or C<undef> is
+left out, so the second Female row contributes nothing. C<$aoh_data> gives
 
  {
      Female   [
          [0] 1.8
      ],
      Male     [
-         [0] 18.2,
-         [1] 20.5
+         [0] 20.5,
+         [1] 18.2
      ]
  }
+
+and C<$hoa_data> gives
+
+ {
+     Female   [
+         [0] 2.5
+     ],
+     Male     [
+         [0] 22.1,
+         [1] 19.4
+     ]
+ }
+
+The values are not sorted. From an array of hashes or a hash of arrays they
+come in row order; from a hash of hashes they come in Perl's hash order, which
+differs from run to run, so C<$hoh_data> gives C<Male> as either C<[20.5, 18.2]>
+or C<[18.2, 20.5]>. Sort them, or use an array of hashes, if the order matters.
 
 A column that is present in some rows but missing in others is fine (those rows
 are simply skipped), but naming a target, group, or filter column that is absent
@@ -8931,6 +8960,16 @@ since it would cut between every character.
 has columns can be taken for a commented-out header, since that is how one
 is recognised; see I<commented-out headers> below for when it is.
 
+=item * A pattern under Unicode rules -- C</u>, which C<use v5.12> or later puts on
+every C<qr//>, or one using C<\p{...}> -- and one under C</a> reads characters:
+a line that is valid UTF-8 is matched as UTF-8, so C<qr/\s+/u> splits on a
+U+00A0 or U+2003 between fields and never inside a character such as C<à>.
+A line that is not valid UTF-8 is matched as bytes. The fields are the file's
+bytes either way. A pattern under the default rules is matched as bytes, so
+C<qr/\xe2\x80\x94/> finds an em dash's three bytes; write C<\h> or C<\p{...}>
+in such a pattern with C</u> to have it read characters. Plain C<qr/\s+/>
+splits on ASCII blanks only, as R's C<sep = ""> and pandas' C<sep=r"\s+"> do.
+
 =item * An C<.xlsx> file ignores C<sep> and C<quote>, whether a string or a pattern.
 
 =item * The separators are found by perl's regex engine, called from the same C
@@ -9320,6 +9359,11 @@ comment marker I<after> the header, if the marker hugs its text (C<#3,4>), is a
 data row, while one with a blank after the marker (C<# note>) is a comment
 wherever it is.
 
+A marker inside quotes is text, as R's C<read.table> reads it: a header written
+C<"#a",b> has the columns C<#a> and C<b>, and a quoted C<"#x"> or C<"# x"> is a
+field like any other, never a comment. C<write_table> quotes a first field that
+starts with C<#> for this reason, so that it reads back as written.
+
 You may name a commented-out header's column in a C<filter> either
 as it appears in the file or by its clean name:
 
@@ -9327,7 +9371,9 @@ as it appears in the file or by its clean name:
 
 =head3 Excel (.xlsx) files
 
-A file whose name ends in C<.xlsx> is read directly, with B<no extra
+A file whose name ends in C<.xlsx> — or C<.xlsm>, C<.xltx> or C<.xltm>, the
+macro-enabled and template workbooks, which hold their sheets the same way —
+is read directly, with B<no extra
 dependencies> — the core C<IO::Uncompress::Unzip> module pulls the parts out of
 the (zipped) workbook and the worksheet XML is parsed in XS, through the same
 fast path a delimited file takes: C<read_table> reads the header in Perl and the
@@ -9351,22 +9397,38 @@ C<output_type>, C<filter>, etc.):
  my $rows = $book->{Results};
 
 A workbook with a single worksheet, or a call that names a C<sheet> explicitly,
-returns that one table directly (not wrapped in a hash).
+returns that one table directly (not wrapped in a hash). A worksheet with no
+name is keyed C<SheetN>, C<N> its position, or the next number no other sheet is
+named with, so it never replaces a sheet that really has that name.
+
+The XML is read as an XML parser would read it: comments are skipped (a
+commented-out row is not data), a CDATA section is its literal text, and a
+line end written as CR LF or a lone CR is LF, while one written as C<&#13;>
+stays a CR. Rich-text runs are concatenated into a single value, and the
+phonetic guide (C<< E<lt>rPhE<gt> >>, the furigana Japanese Excel records for text typed
+through the input method) is left out of it, as openpyxl leaves it out. The
+shared-string table is found through the workbook's relationships, so it is
+read whatever the writer named it. Excel's own escape for a character XML
+cannot hold, C<_x> and four hex digits and C<_> (C<_x0000_> for NUL, C<_x005F_>
+for a literal underscore), is decoded in string cells as Excel and LibreOffice
+decode it, so a control character that C<write_table> wrote reads back as
+itself; a formula's cached result is left as written.
 
 Limitations: dates and times are returned as their raw Excel serial numbers
-(cell number formats are not applied); shared-string rich-text runs are
-concatenated into a single value; a cell that has formatting but no value is a
+(cell number formats are not applied); a cell that has formatting but no value is a
 blank, whether it is written C<< E<lt>c s="2"/E<gt> >>, C<< E<lt>c s="2"E<gt>E<lt>/cE<gt> >> or with an empty
 C<< E<lt>vE<gt>E<lt>/vE<gt> >>, and blanks past a row's last value do not add columns (readxl and
 pandas leave them out too); and two things the format does not allow are
 read as if they were not there — a cell reference past C<XFD>, the last of the
 16,384 columns a worksheet has, places the cell in the next column instead, and
-a numeric character reference above C<&#x7FFFFFFF;> is left in the text rather
-than decoded. The C<sep>, C<delim>, and C<comment> options do not
+a numeric character reference to something XML does not allow as a character
+— C<&#0;> and the other control characters but tab, LF and CR, a UTF-16
+surrogate, C<&#xFFFE;>, C<&#xFFFF;>, or anything past C<&#x10FFFF;> — is left in
+the text rather than decoded. The C<sep>, C<delim>, and C<comment> options do not
 apply to C<.xlsx> files, so a cell such as C<#id> is read as it is. A workbook
 whose elements carry a namespace prefix (C<< E<lt>x:rowE<gt> >>, as the Open XML SDK writes
-them) is read like any other. Tested in C<t/read_table.xlsx.t> and
-C<t/read_table.xlsx.parser.t>.
+them) is read like any other. Tested in C<t/read_table.xlsx.t>,
+C<t/read_table.xlsx.parser.t> and C<t/read_table.xlsx.xml.t>.
 
 =head2 rename_cols
 
@@ -11356,13 +11418,21 @@ For a hash of arrays or an array of hashes, C<< row_names =E<gt> 'col' >> takes 
 
  write_table(\%hoa, 'out.csv', 'row_names' => 'gene');   # gene,score / TP53,0.9 / ...
 
+A hash of arrays without a column C<col> is an error. An array of hashes may lack it in some rows: those rows are labelled with C<undef_val>, and one warning gives their count.
+
+An array of arrays and a flat hash have no named column to take labels from, so for them C<< row_names =E<gt> 'name' >> heads their C<1..n> label column C<name>, as it heads a HoH's key column. As for a HoH, a name that is already a column's is an error.
+
 A hash of arrays has as many rows as the longest of the arrays it writes; an array that C<col_names> leaves out does not add rows.
 
 An empty C<{}> or C<[]> is a table with no rows, and is written as one: the header C<col_names> and C<row_names> give, if any, and otherwise a single empty record. C<< write_table([], 'out.csv', 'col_names' =E<gt> ['A'], 'row_names' =E<gt> 1) >> writes C<,A>, as pandas writes C<DataFrame({"A": []}).to_csv()>.
 
-Every cell of delimited output is written whole, including one holding a NUL byte, and a cell of a tied hash or array (such as C<Tie::IxHash>) is read through its C<FETCH>. A number is formatted the way perl formats it, but in a copy, so writing a table does not add a string buffer to every numeric scalar in it.
+Every cell of delimited output is written whole, including one holding a NUL byte, and a cell of a tied hash or array (such as C<Tie::IxHash>) is read through its C<FETCH>. A number is formatted the way perl formats it, but in a copy, so writing a table does not add a string buffer to every numeric scalar in it. Nor does finding an AoH's or a HoH's columns leave an iterator on every row hash, as walking them with C<keys> would. A row that is a restricted hash (C<Hash::Util::lock_keys>) may lack some of the columns; those cells are written empty, where they used to die with I<Attempt to access disallowed key>.
 
-C<write_table> determines comma and tab-separated delimiters from the filename, but will override if C<sep> or C<delim> are explicitly set.
+A field is quoted when it holds a quote (which is doubled), a line break or the separator, as Python's C<csv.writer> quotes, and in two more places where C<read_table> would otherwise not see the record at all. A record of a single field that is empty, C<undef> or nothing but spaces and tabs is written quoted, C<""> or C<"  ">, because a blank line is skipped on reading; C<csv.writer> writes C<['']> and C<[None]> the same way. The first field of a record is quoted when it starts with C<#>, C<read_table>'s default comment character.
+
+A reference anywhere in the table is an error, in a header cell (C<col_names>, or an AoA's first row) as in a data cell. For an AoA, an C<undef> in C<col_names> is an empty header cell in its place, since an AoA's columns are positional; for every other shape, which looks its columns up by name, it is skipped.
+
+C<write_table> determines comma and tab-separated delimiters from the filename, but will override if C<sep> or C<delim> are explicitly set. A separator may be more than one character, but not empty, and may not contain a NUL, a quote, a CR or a LF: a file written with one of those could not be split into its fields again. A file name containing a NUL is an error too, as it is to perl's C<open>.
 Args can also be accepted:
 
  write_table( 'data' => \%flat, 'file' => $f );
@@ -11421,7 +11491,7 @@ C<write_table> can write the output file as a LaTeX C<tabular> instead of a deli
  write_table(\@data_aoh, 'table.tex');            # .tex name selects LaTeX
  write_table(\@data_aoh, $tmp_file, 'tex' => 1);  # force LaTeX for any name
 
-The file begins with a C<< %written by E<lt>cwdE<gt>/E<lt>scriptE<gt> >> provenance comment (the working directory and script name). The header row is bold and the table is ruled with C<\hline>. As with every other format, C<row_names> is B<off> unless you ask for it, except for a HoH: pass C<< row_names =E<gt> 1 >> to prepend a label column of 1-based indices. A HoH writes its outer keys as that column by default, and C<< row_names =E<gt> 0 >> drops them. Cell text is LaTeX-escaped: C<#>, C<_>, C<%>, and C<&> are backslash-escaped, C<< E<gt> >> becomes C<\textgreater{}>, and a cell consisting solely of C<\includesvg{...svg}> is passed through untouched. A table with no columns at all is an error, since LaTeX rejects one, and it is refused before the file is opened. The C<tex_*> options tune the output:
+The file begins with a C<< %written by E<lt>cwdE<gt>/E<lt>scriptE<gt> >> provenance comment (the working directory and script name). The header row is bold and the table is ruled with C<\hline>. As with every other format, C<row_names> is B<off> unless you ask for it, except for a HoH: pass C<< row_names =E<gt> 1 >> to prepend a label column of 1-based indices. A HoH writes its outer keys as that column by default, and C<< row_names =E<gt> 0 >> drops them. Cell text is LaTeX-escaped: C<#>, C<_>, C<%>, and C<&> are backslash-escaped, C<< E<lt> >> and C<< E<gt> >> become C<\textless{}> and C<\textgreater{}> (in LaTeX's default font encoding a bare C<< E<lt> >> prints as C<¡>; inside C<$...$> the two macros still print, with a LaTeX warning), and a cell consisting solely of C<\includesvg{...svg}> is passed through untouched. The other LaTeX specials — C<\>, C<$>, C<{>, C<}>, C<^> and C<~> — are left alone on purpose, so that a cell can hold LaTeX of its own: inline math such as C<$p^2$>, or a macro such as C<\textit{x}>. A cell that means one of them literally writes it escaped (C<\$>, C<\{>, C<\textasciicircum{}>). A table with no columns at all is an error, since LaTeX rejects one, and it is refused before the file is opened. The C<tex_*> options tune the output:
 
  write_table(\@rows, 'table.tex',
      'tex_col_align'    => 'l',                   # 'c' (default), 'l', or 'r'
@@ -11487,10 +11557,33 @@ writer, so it works for every shape above:
  write_table(\@data_aoh, 'table.xlsx');            # .xlsx name selects Excel
  write_table(\%data_hoa, $tmp_file, 'xlsx' => 1);  # force Excel for any name
 
-A numeric-looking cell is written as a number; every other non-empty cell as an
-inline string (C<undef>/empty cells are omitted). The result reads straight back
-with L<C<read_table>|/"read_table">. XML cannot hold a NUL or most other control
-characters, so those are dropped from a cell's text.
+A number is written as a number cell, and every other non-empty cell as an
+inline string (C<undef>/empty cells are omitted). A value perl holds as a number
+is a number cell, unless it is infinite or C<NaN>, which are written as text. A
+string is a number cell only when Excel would show it as it stands: a plain
+decimal (an optional C<->, digits with at most one C<.>, an optional exponent),
+with no leading zeros but the one in C<0> or C<0.5>, at most 15 significant
+digits, and a magnitude Excel holds (up to C<9.99999999999999E+307>). So C<007>,
+C<+5> and a 20-digit accession number stay text, where Excel used to show them
+as C<7>, C<5> and C<1.23457E+19>; pandas likewise writes a C<str> as a string. The
+result reads straight back with L<C<read_table>|/"read_table">.
+
+XML 1.0 cannot hold a NUL, most other control characters, the noncharacters
+U+FFFE and U+FFFF, or a surrogate, and a workbook holding one is refused by its
+readers. In a cell each is written as Excel's own escape, C<_xHHHH_> (C<\r> is
+C<_x000D_>), which Excel and LibreOffice turn back into the character, as
+XlsxWriter does. A literal C<_x0041_> in a cell is written C<_x005F_x0041_> so
+that it is not mistaken for one, and so is every other underscore that would
+open an escape, overlapping ones included, so that a reader decoding left to
+right gets back exactly the text written.
+In the sheet name and C<xlsx_comment> such characters are dropped. A code point
+above U+10FFFF, which no Unicode encoding has, is an error.
+
+Excel's limits are enforced rather than written past: a worksheet holds 1048576
+rows (header included) and 16384 columns, and a cell 32767 characters, the
+checks XlsxWriter and pandas (I<This sheet is too large!>) make. A table that is
+too long is refused before the file is opened, except a hash of arrays, whose
+length is only known as its rows are written.
 
 The worksheet is streamed to the file as the rows are formatted, so writing a
 workbook takes little memory beyond the data itself: a 200000 x 20 array of
@@ -11514,7 +11607,7 @@ one longer than 31 characters draws a warning, since Excel cannot read it:
      'xlsx_comment' => 'batch 9',
  );
 
-C<xlsx_freeze_rows> and C<xlsx_freeze_cols> freeze that many leading rows/columns in place (Excel's I<freeze panes>), so they stay visible while scrolling — most often used to pin the header row:
+C<xlsx_freeze_rows> and C<xlsx_freeze_cols> freeze that many leading rows/columns in place (Excel's I<freeze panes>), so they stay visible while scrolling — most often used to pin the header row. They go up to 1048575 and 16383, one short of the sheet's limits:
 
  write_table(\@rows, 'report.xlsx', 'xlsx_freeze_rows' => 1);                        # pin the header row
  write_table(\@rows, 'report.xlsx', 'xlsx_freeze_rows' => 1, 'xlsx_freeze_cols' => 2); # pin header + first two columns
@@ -11555,13 +11648,13 @@ C<read_table>.
   <td><code>sep</code> / <code>delim</code></td>
   <td>from extension (<code>,</code> for <code>.csv</code>, tab for <code>.tsv</code>), else <code>,</code></td>
   <td>delimited</td>
-  <td>field separator; the two are aliases</td>
+  <td>field separator; the two are aliases. Not empty, and no NUL, quote, CR or LF</td>
 </tr>
 <tr>
   <td><code>row_names</code></td>
   <td><code>0</code> (off); <code>1</code> (on) for a HoH</td>
   <td>both</td>
-  <td>true prepends a label column (numeric 1-based index, or the outer key for a HoH); <code>0</code> omits it. Off by default in <b>every</b> format — delimited, LaTeX and <code>.xlsx</code> alike — for every shape but a HoH. (R's <code>write.table</code> defaults it on and this once followed suit for LaTeX; it no longer does.) A HoH defaults it on, because its outer keys are the row identifiers and exist nowhere else. For a HoA/AoH a non-numeric <i>column name</i> uses that column's values as the labels and drops it from the body. For a HoH a non-numeric string <i>names</i> the key column, so <code>row_names =&gt; 'taxid'</code> heads it <code>taxid</code> instead of leaving the header cell empty; it dies if that name is also a column being written</td>
+  <td>true prepends a label column (numeric 1-based index, or the outer key for a HoH); <code>0</code> omits it. Off by default in <b>every</b> format — delimited, LaTeX and <code>.xlsx</code> alike — for every shape but a HoH. (R's <code>write.table</code> defaults it on and this once followed suit for LaTeX; it no longer does.) A HoH defaults it on, because its outer keys are the row identifiers and exist nowhere else. For a HoA/AoH a non-numeric <i>column name</i> uses that column's values as the labels and drops it from the body; a HoA without that column dies, and AoH rows without it are labelled <code>undef_val</code>, with a warning. For a HoH, an AoA or a flat hash a non-numeric string <i>names</i> the label column (the outer keys, or <code>1..n</code>), so <code>row_names =&gt; 'taxid'</code> heads it <code>taxid</code> instead of leaving the header cell empty; it dies if that name is also a column being written. A reference dies</td>
 </tr>
 <tr>
   <td><code>col_names</code></td>
@@ -11609,7 +11702,7 @@ C<read_table>.
   <td><code>tex_comment</code></td>
   <td><i>(none)</i></td>
   <td>LaTeX</td>
-  <td><code>%</code> comment line(s) at the top of the LaTeX file: a string, or an array ref of strings</td>
+  <td><code>%</code> comment line(s) at the top of the LaTeX file: a string (an object is stringified), or an array ref of strings. Every line of each is a comment: a line break inside one opens a new <code>% </code> line</td>
 </tr>
 <tr>
   <td><code>tex_longtable</code></td>
@@ -11639,19 +11732,19 @@ C<read_table>.
   <td><code>xlsx_comment</code></td>
   <td><i>(none)</i></td>
   <td>Excel</td>
-  <td>extra line(s) appended after the provenance in the workbook's document <i>comments</i> property (<code>dc:description</code>): a string, or an array ref of strings</td>
+  <td>extra line(s) appended after the provenance in the workbook's document <i>comments</i> property (<code>dc:description</code>): a string (an object is stringified), or an array ref of strings</td>
 </tr>
 <tr>
   <td><code>xlsx_freeze_rows</code></td>
   <td><code>0</code> (none)</td>
   <td>Excel</td>
-  <td>number of leading rows to freeze in place (freeze panes), e.g. <code>1</code> to pin the header row</td>
+  <td>number of leading rows to freeze in place (freeze panes), e.g. <code>1</code> to pin the header row; at most 1048575</td>
 </tr>
 <tr>
   <td><code>xlsx_freeze_cols</code></td>
   <td><code>0</code> (none)</td>
   <td>Excel</td>
-  <td>number of leading columns to freeze in place (freeze panes)</td>
+  <td>number of leading columns to freeze in place (freeze panes); at most 16383</td>
 </tr>
 </tbody>
 </table>
