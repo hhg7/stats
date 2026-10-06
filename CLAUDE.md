@@ -256,8 +256,10 @@ hold for every installed perl, all three NV widths, Windows, and perl 5.10.
 at minimum the affected versions with `-p`) for anything touching `LikeR.xs`.
 The local matrix under `/home/con/perl5/perlbrew/perls/`, by `$Config{nvtype}`:
 
-- `perl-5.44.0` (default), `perl-5.42.3`, `perl-5.10.1` — `double`, NVgf `"g"`.
-  `perl-5.42.3` is the only threaded one of the three (`useithreads`).
+- `perl-5.44.0` (default), `perl-5.42.3`, `perl-5.32.1`, `perl-5.10.1` —
+  `double`, NVgf `"g"`. `perl-5.42.3` is the only threaded one of the four
+  (`useithreads`). `perl-5.32.1` is there for its release, not its
+  configuration; see "A perl's own bugs show only on that perl" below.
 - `perl-5.12.5` — `long double`, NVgf `"Lg"` (archname `x86_64-linux-ld`)
 - `5.44.0-quadmath` — `__float128`, NVgf `"Qg"`
 - `5.44.0-i686` — `double`, but a 32-bit build: `ivsize=4`, so `IV_MAX` is
@@ -271,6 +273,30 @@ All three NV widths can be compile-checked without reconfiguring the tree
 (which would clobber the current `Makefile`) by generating the `.c` and
 compiling it against each perl's `CORE` directly. Do that as the fast check;
 it is not a substitute for actually running the suite.
+
+### A perl's own bugs show only on that perl
+
+Varying the NV width, the IV width and threading catches bugs in this module.
+It cannot catch a bug in a perl release's own internals, which shows only on
+that release, and until 0.3215 the matrix jumped from 5.16.3 to 5.42.3.
+0.3214 failed 14 leak subtests on a 5.32.1 smoker: 5.32's regcomp leaks the
+`\s` and `\w` inversion lists of every pattern it compiles at run time, and
+`_xml_attr()` and `_xml_start_tags()` interpolated a name into their pattern,
+so they recompiled on every call. Every other perl here frees those lists.
+Installing `perl-5.32.1` reproduced all 14, by test number, and each pattern is
+now compiled once per name and kept.
+
+Two consequences:
+
+- In a function a leak test covers, do not interpolate a variable into a
+  match that runs more than once per name. Compile it once into a `qr//`
+  kept in a lexical cache, and evaluate that `qr//` only on a cache miss, so
+  the 5.10.0 `pp_qr()` leak below stays out of the warmed check as well.
+- `./test.all.perls.pl` (with `--list`, and after a full run) names every
+  stable series from 5.10 to the newest installed perl that has no perl in
+  the matrix. When a smoker fails on one of those series, install that
+  series' last release under perlbrew, run `--deps` once, and reproduce
+  there before changing anything.
 
 ### The IV is not always 64 bits
 

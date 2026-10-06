@@ -137,7 +137,8 @@ options:
                        "perl-5.10.1" or an exact directory name such as
                        "5.44.0-quadmath".  default: every installed perl
   -l, --list           list the perls that would be tested, in run order, with
-                       each one's NV width and threading, then exit
+                       each one's NV width and threading, and name the stable
+                       perl series none of them comes from, then exit
       --no-install     skip "make install" (build + test only)
       --no-clean       skip "make clean" before each version
       --deps           cpanm any missing PREREQ_PM for that perl first
@@ -228,14 +229,16 @@ sub facts {
 	my $version = tgt_perl(shift);   # a variant is the same interpreter
 	return $facts{$version} if $facts{$version};
 	my $perl = File::Spec->catfile($perls_dir, $version, 'bin', 'perl');
-	my %f = (nv => '?', iv => 0, threads => 0, known => 0);
+	# series: the minor version (32 for 5.32.1), from $] rather than from the
+	# directory name for the same reason; 0 = unknown.
+	my %f = (nv => '?', iv => 0, threads => 0, known => 0, series => 0);
 	if (open my $fh, '-|', $perl, '-MConfig', '-e',
 			'print "$Config{nvtype}\t", ($Config{useithreads} ? 1 : 0),'
-			. '"\t$Config{ivsize}"') {
+			. '"\t$Config{ivsize}\t$]"') {
 		my $line = <$fh>;
 		close $fh;
-		if (defined $line && $line =~ /^(\S[^\t]*)\t([01])\t(\d+)/) {
-			%f = (nv => $1, threads => $2, iv => $3, known => 1);
+		if (defined $line && $line =~ /^(\S[^\t]*)\t([01])\t(\d+)\t5\.(\d{3})/) {
+			%f = (nv => $1, threads => $2, iv => $3, known => 1, series => 0 + $4);
 		}
 	}
 	$f{quadmath} = $f{nv} eq '__float128';
@@ -350,10 +353,38 @@ if ($x87) {
 
 @targets = order_targets(@targets);
 
+# The perl releases this matrix goes without.  Varying the NV and IV widths
+# catches bugs in this module; it cannot catch a bug in one perl's own
+# internals, which shows only on that perl.  0.3214 reached CPAN failing 14
+# leak subtests on a 5.32.1 smoker: 5.32's regcomp leaks the \s and \w
+# inversion lists of every pattern it compiles, _xml_attr() recompiled one per
+# call, and the matrix then jumped from 5.16.3 to 5.42.3.  Installing 5.32.1
+# reproduced all 14, by test number.  So every stable series (even minor) from
+# 5.10 to the newest installed perl that has no perl here is named, each one a
+# release whose own bugs nothing local can see.  Printed by --list and after a
+# full run, not after a -p run, which is deliberately partial.
+sub series_note {
+	my %have = map { facts($_)->{series} => 1 } @installed;
+	my ($newest) = sort { $b <=> $a } keys %have;
+	my @gap = grep { !$have{$_} } map { 2 * $_ } 5 .. ($newest || 0) / 2;
+	return '' unless @gap;
+	my $list = join ' ', map { "5.$_" } @gap;
+	return <<"END";
+-- no perl from these stable series, whose own bugs cannot show here:
+     $list
+   CPAN smokers run them.  To add one, install that series' last release, as
+   `perlbrew available --all` lists it (5.30's is 5.30.3, for instance):
+     perlbrew install perl-5.SERIES.LAST -j 8 --notest
+   Then --deps once, for Test::Exception and Test::LeakTrace.  It is picked up
+   automatically after that.
+END
+}
+
 if ($list) {
 	printf "%-20s %-16s %s\n", $_,
 		nv_label(facts($_)) . (tgt_variant($_) ? ' +' . tgt_variant($_) : ''),
 		File::Spec->catfile($perls_dir, tgt_perl($_), 'bin', 'perl') for @targets;
+	print series_note() unless @only;
 	exit 0;
 }
 
@@ -811,6 +842,8 @@ printf "%d/%d perl(s) passed%s in %.1fs.  Logs in %s\n",
 # NV-width checks assume they know what state the tree is in.
 print "-- built in private trees; this directory is untouched (-P 1 to build here)\n"
 	if $in_parallel;
+
+print series_note() unless @only;
 
 # The width this matrix went without until 0.315.  A perl with a 64-bit IV
 # cannot see a cast that is in range for an NV and out of range for an IV,
