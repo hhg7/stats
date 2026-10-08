@@ -21703,10 +21703,9 @@ SV *oneway_test(data_ref, ...)
 		const char  *formula_str = NULL;
 		const char  *factor_name = "Group";
 		char        *lhs = NULL, *rhs = NULL, **gnames = NULL, errbuf[512];;
-		NV          *flat   = NULL;
+		NV          *flat   = NULL, *gmeans = NULL;
 		size_t      *sizes  = NULL;
 		AV         **gav    = NULL;	//MODE 1: each group's array, so the second pass need not walk the hash again
-		NV          *gmeans = NULL;
 		size_t       k = 0;
 		IV           total_n = 0;
 		OneWayResult res;
@@ -21721,7 +21720,6 @@ SV *oneway_test(data_ref, ...)
 			else if (strEQ(key, "formula"))
 				formula_str = SvPV_nolen(val);
 		}
-
 		// validate data_ref: must be an ARRAY or HASH reference
 		if (!SvROK(data_ref))
 			croak("oneway_test: first argument must be a hash or array reference");
@@ -21733,15 +21731,15 @@ SV *oneway_test(data_ref, ...)
 		else if (SvTYPE(rv) == SVt_PVAV) in_av = (AV *)rv;
 		else croak("oneway_test: first argument must be a hash or array reference");
 
-		if (in_av) {//---- MODE 3: array of arrays (AoA) ----
+		if (in_av) {// MODE 3: array of arrays (AoA)
 			if (formula_str != NULL)
 				croak("oneway_test: formula mode is not supported with an array of arrays");
 
-			k = (size_t)(av_len(in_av) + 1);          //+1 inside the signed math
+			k = (size_t)(av_len(in_av) + 1); //+1 inside the signed math
 			if (k < 2)
 				croak("oneway_test: need at least 2 groups, got %" UVuf, (UV)k);
 			Newx(sizes,   k, size_t);
-			Newxz(gnames, k, char *);                  //zeroed: safe to free on error
+			Newxz(gnames, k, char *); //zeroed: safe to free on error
 			//first pass: validate, sizes, total_n, synthesised names
 			for (size_t g = 0; g < k; g++) {
 				SV **val = av_fetch(in_av, (I32)g, 0);
@@ -21759,7 +21757,7 @@ SV *oneway_test(data_ref, ...)
 				char buf[64];
 				//a group LABEL that is returned to the caller, not a message
 				my_snprintf(buf, sizeof buf, "Index %" UVuf, (UV)g);
-				gnames[g] = savepv(buf);               //perl-managed copy
+				gnames[g] = savepv(buf); //perl-managed copy
 			}
 
 			//second pass: fill flat, validating each cell
@@ -21807,7 +21805,7 @@ SV *oneway_test(data_ref, ...)
 					|| SvTYPE(SvRV(fact_sv)) != SVt_PVAV) {
 				snprintf(errbuf, sizeof errbuf,
 					"formula RHS '%s' not found as an array ref in the hash", rhs);
-				goto fail;                              //was leaking lhs/rhs
+				goto fail; //was leaking lhs/rhs
 			}
 
 			AV *resp_av  = (AV *)SvRV(resp_sv);
@@ -21821,9 +21819,7 @@ SV *oneway_test(data_ref, ...)
 				goto fail; //errbuf already set; fail frees all
 
 			for (size_t g = 0; g < k; g++) total_n += (IV)sizes[g];
-		}
-		else {
-			//MODE 1: hash of groups { label => \@obs, ... }
+		} else {//MODE 1: hash of groups { label => \@obs, ... }
 			k = hv_nkeys(aTHX_ in_hv); //robust count, not iterinit's (which reads 0 for a tied hash)
 			if (k < 2)
 				croak("oneway_test: need at least 2 groups, got %" UVuf, (UV)k);
@@ -21831,8 +21827,7 @@ SV *oneway_test(data_ref, ...)
 			Newx(sizes,   k, size_t);
 			Newxz(gnames, k, char *);
 			Newx(gav,     k, AV *);
-
-			//first pass: validate, sizes, total_n, key strings
+			//1st pass: validate, sizes, total_n, key strings
 			size_t ng = 0;	//groups read: a tied hash can yield fewer or more keys than it counted
 			ITER_KEEP_BEGIN(in_hv);
 			hv_iterinit(in_hv);
@@ -22047,7 +22042,7 @@ CODE:
 	NV statistic = 0.0, p_value = 0.0;
 	const char *method_desc = "";
 
-	// TWO SAMPLE
+	// 2 SAMPLE
 	if (y_sv && SvROK(y_sv) && SvTYPE(SvRV(y_sv)) == SVt_PVAV) {
 	  AV *y_av = (AV *)SvRV(y_sv);
 	  size_t ny = (size_t)(av_len(y_av) + 1);
@@ -22341,7 +22336,7 @@ CODE:
 	D.d = NULL; D.total = 0.0; D.len = 0; D.base = 0; D.scale = 1; D.symmetric = 0;
 
 	if (yv) {
-/* TWO SAMPLE (Wilcoxon rank sum / Mann-Whitney) */
+// 2 SAMPLE (Wilcoxon rank sum / Mann-Whitney)
 		size_t total_n = n_x + n_y;
 		RankInfo *ri;
 		Newx(ri, total_n, RankInfo);
@@ -22849,9 +22844,8 @@ CODE:
   'p' supplies the null probabilities of the goodness-of-fit test -- without
   it the test is against a uniform distribution, which is what "Chi-squared
   test for given probabilities" has always meant here.*/
-	bool correct   = 1;
-	SV  *p_sv      = NULL;
-	bool rescale_p = 0;
+	bool correct = 1, rescale_p = 0;;
+	SV  *p_sv    = NULL;
 	for (Stack_off_t i = 1; i < items; i += 2) {
 		if (i + 1 >= items) croak("chisq_test: odd number of named arguments");
 		const char *key = SvPV_nolen(ST(i));
@@ -23191,8 +23185,7 @@ PROTOTYPES: ENABLE
 void write_table(...)
 PPCODE:
 {
-	SV *data_sv = NULL;
-	SV *file_sv = NULL;
+	SV *data_sv = NULL, *file_sv = NULL;
 	Stack_off_t arg_idx = 0;
 	// Mimic the Perl shift logic
 	if (arg_idx < items && SvROK(ST(arg_idx))) {
@@ -35735,7 +35728,7 @@ void avals(data, colname_sv)
 PREINIT:
 	bool is_aoh = 0, is_hoh = 0;
 	bool is_empty = 1;	//the hash has no keys: decided by the first walk, as a tied hash's counts read 0
-	bool found = FALSE;	//some row (AoH/HoH) or the frame (HoA) has the column; a frame with rows and no such column dies
+	bool found = 0;	//some row (AoH/HoH) or the frame (HoA) has the column; a frame with rows and no such column dies
 	AV *src_av = NULL, *out_av = NULL;;
 	HV *src_hv = NULL;
 	SSize_t n = 0, nret = 0;
@@ -36270,8 +36263,7 @@ SV* density(...)
 	{
 		SV *x_sv = NULL, *w_sv = NULL, *bw_sv = NULL, *width_sv = NULL;
 		NV adjust = 1.0, cut = 3.0, ext = 4.0, from = 0.0, to = 0.0;
-		bool have_from = 0, have_to = 0;
-		bool give_rkern = 0, subdensity = 0, na_rm = 0, old_coords = 0;
+		bool have_from = 0, have_to = 0, give_rkern = 0, subdensity = 0, na_rm = 0, old_coords = 0;
 		//-1 = R's default, which is var(weights) > 0; 0/1 = the caller said so
 		short int warnw = -1, kernel = -1, window = -1; //-1 = not given
 		IV n_arg = 512;
