@@ -715,7 +715,7 @@ PERL_STATIC_INLINE bool sv_is_numeric_arg(pTHX_ SV *sv)
 	returns its address, so a stray arrayref among the values folded a pointer
 	into the sum.*/
 	if (looks_like_number(sv)) return 1;
-	return (SvROK(sv) && SvAMAGIC(sv)) ? TRUE : FALSE;
+	return (SvROK(sv) && SvAMAGIC(sv)) ? 1 : 0;
 }
 
 /*The value an SV's get magic has already produced, without running it again.
@@ -2642,7 +2642,7 @@ static SV *frame_untied(pTHX_ SV *ref, unsigned short flags) {
 	if (!ref || !SvROK(ref)) return ref;
 	SV *f = SvRV(ref);
 	if (SvTYPE(f) != SVt_PVHV && SvTYPE(f) != SVt_PVAV) return ref;
-	bool copied = FALSE;	//f is this function's own copy, free to be written
+	bool copied = 0;	//f is this function's own copy, free to be written
 	if (SvRMAGICAL(f) && mg_find(f, PERL_MAGIC_tied)) {
 		f = untie_copy(aTHX_ f);
 		ref = sv_2mortal(newRV_inc(f));
@@ -5297,7 +5297,7 @@ static bool wt_needs_quotes(const char *restrict f, STRLEN len, size_t i, size_t
 	if (n == 1) {
 		bool blank = 1;
 		for (STRLEN k = 0; k < len && blank; k++)
-			if (f[k] != ' ' && f[k] != '\t') blank = FALSE;
+			if (f[k] != ' ' && f[k] != '\t') blank = 0;
 		if (blank) return TRUE;
 	}
 	if (i == 0 && len && f[0] == '#') return TRUE;
@@ -5387,7 +5387,7 @@ static void wt_row_init(pTHX_ WtRow *restrict R, size_t width) {
 static void wt_field(WtRow *restrict R, const char *s, STRLEN len) {
 	R->f[R->n] = s;
 	R->len[R->n] = len;
-	R->num[R->n] = FALSE;
+	R->num[R->n] = 0;
 	R->n++;
 }
 
@@ -5416,7 +5416,7 @@ static void wt_cell(pTHX_ WtRow *restrict R, SV *cell, const char *undef_val, ST
 	if (SvROK(cell)) croak("write_table: Cannot write nested reference types to table\n");
 	const size_t i = R->n++;
 	if (SvPOK(cell)) {
-		R->num[i] = FALSE;
+		R->num[i] = 0;
 		R->f[i] = SvPV_nomg(cell, R->len[i]);
 		return;
 	}
@@ -5593,7 +5593,7 @@ static void wt_collect_keys(pTHX_ HV *col_map, HV *hv) {
 	if (!arr) return;
 	bool keep_hash = 1;	// FALSE when the stored hashes are not col_map's
 #ifdef HvREHASH
-	if (HvREHASH(hv)) keep_hash = FALSE;
+	if (HvREHASH(hv)) keep_hash = 0;
 #endif
 	for (size_t b = 0; b <= (size_t)HvMAX(hv); b++) {
 		for (HE *he = arr[b]; he; he = HeNEXT(he)) {
@@ -5770,7 +5770,7 @@ static void tex_escape_sv(pTHX_ SV *out, const char *s, STRLEN len,
 		const U8 c = (U8)s[i];
 		STRLEN clen = 1;	// bytes of the character at i
 		const char *rep;
-		bool greek = FALSE;
+		bool greek = 0;
 		if (c < 0x80) rep = tex_ascii_rep((char)c);
 		else if (is_utf8) {
 /* A multi-byte character is decoded so a Greek letter can be remapped.
@@ -5899,7 +5899,7 @@ end-of-line character, so even where it does not end the input line it ends
 what TeX reads of it.  A break at the very end of s opens no further line.*/
 static void tex_put_comment(pTHX_ PerlIO *fh, const char *lead, const char *s, STRLEN len) {
 	PerlIO_write(fh, lead, strlen(lead));
-	bool at_eol = FALSE;	// the last byte written ended a line
+	bool at_eol = 0;	// the last byte written ended a line
 	STRLEN start = 0;	// the first byte of s not yet written
 	for (STRLEN i = 0; i < len; i++) {
 		if (s[i] != '\n' && s[i] != '\r') continue;
@@ -5908,7 +5908,7 @@ static void tex_put_comment(pTHX_ PerlIO *fh, const char *lead, const char *s, S
 		PerlIO_putc(fh, '\n');
 		at_eol = 1;
 		start = i + 1;
-		if (start < len) { TEX_PUTS(fh, "% "); at_eol = FALSE; }
+		if (start < len) { TEX_PUTS(fh, "% "); at_eol = 0; }
 	}
 	if (len > start) PerlIO_write(fh, s + start, len - start);
 	if (!at_eol) PerlIO_putc(fh, '\n');
@@ -6330,7 +6330,7 @@ static bool xlsx_number_text(const char *restrict s, STRLEN l, bool held) {
 	IV exp10 = 0;	// the exponent written, saturated well past any double's
 	if (i < l && (s[i] == 'e' || s[i] == 'E')) {
 		i++;
-		bool neg = FALSE;
+		bool neg = 0;
 		if (i < l && (s[i] == '+' || s[i] == '-')) neg = s[i++] == '-';
 		const STRLEN exp_at = i;
 		while (i < l && isDIGIT(s[i])) {
@@ -9476,7 +9476,7 @@ static bool hoa_assign_loop(pTHX_ HV *in, SV *code, SV *name, size_t n,
 		AV *target, AV *out) {
 	/*no restrict on in/target/out: all three are perl data the block can reach*/
 	dSP;
-	bool whole = FALSE;
+	bool whole = 0;
 	ENTER;
 	SAVETMPS;
 	hoa_view v;
@@ -9525,7 +9525,7 @@ static bool hoa_assign_loop(pTHX_ HV *in, SV *code, SV *name, size_t n,
 	SAVE_DEFSV;	//$_ is restored once, on the way out
 	for (size_t i = 0; i < n; i++) {
 		SV *cell = NULL;
-		bool copied = FALSE;
+		bool copied = 0;
 		if (target) {
 			SV **cp = av_fetch(target, (SSize_t)i, 0);
 			if (!cp || !*cp || !SvOK(*cp))
@@ -10642,7 +10642,7 @@ a reference is never a number; and an undef is NULL, nothing to convert.*/
 static SV *S_class_text(pTHX_ const char *s, STRLEN n, unsigned char code, bool *restrict bad){	//s: may be a PV perl shares
 	const char *const e = s + n;
 	const char *q = s;
-	bool neg = FALSE;
+	bool neg = 0;
 	while (q < e && isSPACE(*q)) q++;
 	if (q < e && (*q == '+' || *q == '-')) {
 		neg = *q == '-';
@@ -10771,7 +10771,7 @@ which is released.  The slot owns its SV throughout, so a croak leaves it to
 whatever owns the slot -- the row buffer, or a %line_hash entry.*/
 static void S_cell_class_in(pTHX_ const csv_plan *restrict p, size_t f, SV **slot){	//slot: in perl's AV or HV
 	SV *nv;
-	bool bad = FALSE;
+	bool bad = 0;
 	if (!p->cls || f >= p->ncol || !p->cls[f])
 		return;
 	nv = S_class_value(aTHX_ *slot, p->cls[f], &bad);
@@ -10908,7 +10908,7 @@ static void S_push_cell(pTHX_ csv_plan *restrict p, SV *restrict field,
 	else {
 		const size_t f = (size_t)(AvFILLp(p->row) + 1);
 		if (p->cls && f < p->ncol && p->cls[f]) {
-			bool bad = FALSE;
+			bool bad = 0;
 			if (!(v = S_class_text(aTHX_ s, len, p->cls[f], &bad)))
 				S_class_croak(aTHX_ p->file, (UV)(p->row_n + 1), p->fname[f], (UV)(f + 1),
 				              p->cls[f], sv_2mortal(newSVpvn(s, len)));
@@ -11194,9 +11194,9 @@ static void S_filter_row(pTHX_ csv_plan *p, AV **rowp){
 				if (n >= 1) {
 					SV *const res = POPs;
 					if (!SvTRUE(res))
-						keep = FALSE;
+						keep = 0;
 				} else
-					keep = FALSE;
+					keep = 0;
 				PUTBACK;
 			}
 			if (keep && fld) {	//write $_ back
@@ -11920,7 +11920,7 @@ static const char *xlsx_tag_end(const char *restrict p, const char *restrict end
 	bool *restrict self_close){
 	const char *a = p;
 	char q = 0;	// 0 = not inside an attribute value, else the opening quote
-	*self_close = FALSE;
+	*self_close = 0;
 	while (p < end) {
 		const char c = *p;
 		if (q) {
@@ -12095,7 +12095,7 @@ global substitutions did with it.*/
 				if      (c >= '0' && c <= '9') d = (UV)(c - '0');
 				else if (hex && c >= 'a' && c <= 'f') d = (UV)(c - 'a' + 10);
 				else if (hex && c >= 'A' && c <= 'F') d = (UV)(c - 'A' + 10);
-				else { ok = FALSE; break; }
+				else { ok = 0; break; }
 				cp = cp * (hex ? 16 : 10) + d;
 /*Stop as soon as the number is past U+10FFFF, the last code point XML allows,
 which also keeps the multiply from wrapping: cp is at most 0x10FFFF going into
@@ -12105,9 +12105,9 @@ perl's extended UTF-8 on an ivsize=8 build and died outright on 5.44.0-i686
 with "Use of code point 0xFFFFFFFF is not allowed".  Up to 0.3213 this stopped
 at chr()'s own ceiling of 0x7FFFFFFF instead, and a reference between the two
 came back as four to six bytes that are not UTF-8.*/
-				if (cp > 0x10FFFF) { ok = FALSE; break; }
+				if (cp > 0x10FFFF) { ok = 0; break; }
 			}
-			if (k == first || !XLSX_IS_XML_CHAR(cp)) ok = FALSE;	//"&#;", "&#x;", or not a Char
+			if (k == first || !XLSX_IS_XML_CHAR(cp)) ok = 0;	//"&#;", "&#x;", or not a Char
 			if (ok) {
 				char buf[UTF8_MAXBYTES + 1];
 /*UNICODE_ALLOW_ANY, not the 0 that plain uvchr_to_utf8() passes: before 5.14, 0
@@ -12470,7 +12470,7 @@ branch av_extend() took.*/
 		if (XLSX_IS_HOLE(ary[j]))
 			ary[j] = w->plan->undef_empty ? newSV(0) : newSVpvs("");
 	w->maxc = 0;
-	w->any  = FALSE;
+	w->any  = 0;
 	if (w->plan->active) {
 /*S_fast_row() leaves the row where it is when it croaks, so S_xlsx_ws_free()
 releases it, and whatever cells it still holds, on the unwind.*/
@@ -12545,8 +12545,8 @@ handed straight to perl, which unshares it on the first write.*/
 		size_t ix = 0;
 		bool ok = tlen > 0;
 		for (STRLEN k = 0; k < tlen; k++) {
-			if (txt[k] < '0' || txt[k] > '9') { ok = FALSE; break; }
-			if (ix > ((size_t)-1 - 9) / 10) { ok = FALSE; break; }
+			if (txt[k] < '0' || txt[k] > '9') { ok = 0; break; }
+			if (ix > ((size_t)-1 - 9) / 10) { ok = 0; break; }
 			ix = ix * 10 + (size_t)(txt[k] - '0');
 		}
 		if (ok && ix < w->nsst && w->sst[ix] && SvPOK(w->sst[ix])) {
@@ -12582,7 +12582,7 @@ static bool xlsx_cell_has_value(const xlsx_ws *restrict w, const char *restrict 
 	STRLEN alen, const char *restrict body, STRLEN blen){
 	const char *tv, *txt, *after;
 	STRLEN tvlen, tlen;
-	bool text = FALSE;
+	bool text = 0;
 	for (const char *p = body; p < body + blen; ) {
 		const char *gt = (const char*)memchr(p, '>', (size_t)(body + blen - p));
 		if (!gt || gt + 1 >= body + blen)
@@ -12632,8 +12632,8 @@ static void xlsx_ws_scan(pTHX_ xlsx_ws *restrict w, bool measure){
 
 	w->maxc   = 0;
 	w->next   = 0;
-	w->any    = FALSE;
-	w->in_row = FALSE;
+	w->any    = 0;
+	w->in_row = 0;
 	while (p < end) {
 		const char *lt = (const char*)memchr(p, '<', (size_t)(end - p));
 		const char *a;
@@ -12651,7 +12651,7 @@ static void xlsx_ws_scan(pTHX_ xlsx_ws *restrict w, bool measure){
 			if (xlsx_is_name(p + 1, end, pfx, plen, "row", 3)) {
 				if (w->in_row) {
 					xlsx_ws_row_end(aTHX_ w, measure);
-					w->in_row = FALSE;
+					w->in_row = 0;
 				}
 				p += 1 + plen + 3;
 			}
@@ -12665,7 +12665,7 @@ closing the old one first is the only sane reading of it if it does.*/
 			w->in_row = 1;
 			if (self) {	//<row r="7"/>: an empty row, and so dropped
 				xlsx_ws_row_end(aTHX_ w, measure);
-				w->in_row = FALSE;
+				w->in_row = 0;
 			}
 			continue;
 		}
@@ -16114,9 +16114,9 @@ dd_put_str(pTHX_ dd_ctx *T, const char *p, STRLEN l, bool utf8, bool bare) {
 		STRLEN bl = l;
 		bool wide = 1;
 		U8 *d = bytes_from_utf8((const U8 *)p, &bl, &wide);
-		if (!wide) { b = d; p = (const char *)d; l = bl; utf8 = FALSE; }
+		if (!wide) { b = d; p = (const char *)d; l = bl; utf8 = 0; }
 		//when wide, bytes_from_utf8() hands back p itself and allocates nothing
-	} else utf8 = FALSE;	//pure ASCII is already its own downgrade
+	} else utf8 = 0;	//pure ASCII is already its own downgrade
 	if (bare) {
 		dd_reserve(aTHX_ T, l + 1);
 		T->buf[T->len++] = (char)utf8;
@@ -16311,7 +16311,7 @@ mg_key(pTHX_ dd_ctx *T, const mg_frame *f, const mg_col *keys,
 		if (!SvOK(cell)) { T->len = start; return 0; }
 		STRLEN l;
 		char numbuf[NK_NUMBUF];
-		bool utf8 = FALSE;	//a rendered number is ASCII
+		bool utf8 = 0;	//a rendered number is ASCII
 		const char *p = nk_num_pv(cell, numbuf, &l, T->fast_nv);
 		if (!p) {
 			p = SvPV_nomg(cell, l); //before dd_reserve: may croak
@@ -17713,7 +17713,7 @@ static void moment_push(moment_acc *a, NV x) {
 
 static void moment_av(pTHX_ AV *av, size_t argi, const char *fname, moment_acc *acc) {
 	const size_t len = av_len(av) + 1;
-	const bool tied = SvRMAGICAL((SV*)av) ? TRUE : FALSE; // cells not in AvARRAY at all
+	const bool tied = SvRMAGICAL((SV*)av) ? 1 : 0; // cells not in AvARRAY at all
 	/*A plain number is read straight out of AvARRAY; anything else -- a hole,
 	a tied array's cell, a magical or overloaded element -- goes through
 	av_slow_at(), which runs the element's get magic before SvOK() is asked.
@@ -18932,9 +18932,9 @@ static void dist_parse(pTHX_ const dist_spec *spec, SV **st, Stack_off_t items, 
 			      SvOK(st[i]) ? SvPV_nolen(st[i]) : "(undef)");
 		key = SvPV_nolen(st[i]);
 		if      (strEQ(key, "lower") || strEQ(key, "lower_tail"))
-			*lower = SvTRUE(st[i + 1]) ? TRUE : FALSE;
+			*lower = SvTRUE(st[i + 1]) ? 1 : 0;
 		else if (strEQ(key, "log") || strEQ(key, "log_p"))
-			*give_log = SvTRUE(st[i + 1]) ? TRUE : FALSE;
+			*give_log = SvTRUE(st[i + 1]) ? 1 : 0;
 		else {
 			bool matched = 0;
 			for (unsigned short j = 0; j < spec->npar; j++) {
@@ -19727,7 +19727,7 @@ void anova(...)
 	kept.*/
 		for (size_t i = 0; i < n; i++) {
 			const NV y = evaluate_term(aTHX_ hoa, rows, (unsigned)i, mods[0].lhs);
-			bool ok = nv_isfinite(y) ? TRUE : FALSE;
+			bool ok = nv_isfinite(y) ? 1 : 0;
 			for (size_t k = 0; ok && k < nkeep; k++)
 				ok = anova_row(aTHX_ &mods[k], hoa, rows, i, y);
 			if (!ok) continue;
@@ -19994,8 +19994,8 @@ CODE:
 		const char *key = SvPV_nolen(ST(i));
 		SV *val = ST(i + 1);
 		if      (strEQ(key, "nranges"))    nranges    = SvNV(val);
-		else if (strEQ(key, "lower_tail")) lower_tail = SvTRUE(val) ? TRUE : FALSE;
-		else if (strEQ(key, "log_p"))      log_p      = SvTRUE(val) ? TRUE : FALSE;
+		else if (strEQ(key, "lower_tail")) lower_tail = SvTRUE(val) ? 1 : 0;
+		else if (strEQ(key, "log_p"))      log_p      = SvTRUE(val) ? 1 : 0;
 		else croak("ptukey: unknown argument '%s'", key);
 	}
 	NV pr = st_ptukey(q, nranges, nmeans, df);
@@ -20021,8 +20021,8 @@ CODE:
 		const char *key = SvPV_nolen(ST(i));
 		SV *val = ST(i + 1);
 		if      (strEQ(key, "nranges"))    nranges    = SvNV(val);
-		else if (strEQ(key, "lower_tail")) lower_tail = SvTRUE(val) ? TRUE : FALSE;
-		else if (strEQ(key, "log_p"))      log_p      = SvTRUE(val) ? TRUE : FALSE;
+		else if (strEQ(key, "lower_tail")) lower_tail = SvTRUE(val) ? 1 : 0;
+		else if (strEQ(key, "log_p"))      log_p      = SvTRUE(val) ? 1 : 0;
 		else croak("qtukey: unknown argument '%s'", key);
 	}
 	if (log_p)       p = nv_exp(p);
@@ -20633,7 +20633,7 @@ the predicate -- frees it instead of leaking a copy of the table.*/
 		SV *sel = removing ? remove_sv : keep_sv;
 		/* classify the selector: array ref of names, a qr// name pattern, or a
 		 value predicate.*/
-		bool by_name = FALSE, by_regex = FALSE;
+		bool by_name = FALSE, by_regex = 0;
 		SV *cv_sv = NULL;
 		if (SvROK(sel) && SvTYPE(SvRV(sel)) == SVt_PVAV) by_name = 1;
 		else if (SvRXOK(sel)) by_regex = 1;
@@ -20652,12 +20652,12 @@ the predicate -- frees it instead of leaking a copy of the table.*/
 		else croak("cfilter: keep/remove must be an array ref of column names, a qr// regex, or a code ref / function name");
 		bool predicate = !by_name && !by_regex;
 		// decode the undef policy (predicate only).
-		bool na_omit = FALSE;
+		bool na_omit = 0;
 		if (na_sv && SvOK(na_sv)) {
 			STRLEN nl;
 			const char *nv = SvPV(na_sv, nl);
 			if (nl == 4 && memEQ(nv, "omit", 4)) na_omit = 1;
-			else if (nl == 4 && memEQ(nv, "keep", 4)) na_omit = FALSE;
+			else if (nl == 4 && memEQ(nv, "keep", 4)) na_omit = 0;
 			else croak("cfilter: na must be 'keep' or 'omit'");
 		}
 		if (!predicate && (na_sv || against_sv)) croak("cfilter: na/against only apply to a predicate selector");
@@ -22226,8 +22226,8 @@ CODE:
 		SV *val = ST(arg_idx + 1);
 		if      (strEQ(key, "x"))           x_sv = val;
 		else if (strEQ(key, "y"))           y_sv = val;
-		else if (strEQ(key, "paired"))      paired = SvTRUE(val) ? TRUE : FALSE;
-		else if (strEQ(key, "correct"))     correct = SvTRUE(val) ? TRUE : FALSE;
+		else if (strEQ(key, "paired"))      paired = SvTRUE(val) ? 1 : 0;
+		else if (strEQ(key, "correct"))     correct = SvTRUE(val) ? 1 : 0;
 		else if (strEQ(key, "mu"))          mu = SvNV(val);
 		else if (strEQ(key, "exact")) {
 			if (!SvOK(val)) exact = -1;
@@ -22235,7 +22235,7 @@ CODE:
 		}
 		else if (strEQ(key, "alternative")) alt_str = SvPV_nolen(val);
 		else if (strEQ(key, "conf_int"))
-			want_cint = SvTRUE(val) ? TRUE : FALSE;
+			want_cint = SvTRUE(val) ? 1 : 0;
 		else if (strEQ(key, "conf_level"))
 			conf_level = SvNV(val);
 		else if (strEQ(key, "digits_rank"))
@@ -22850,9 +22850,9 @@ CODE:
 		if (i + 1 >= items) croak("chisq_test: odd number of named arguments");
 		const char *key = SvPV_nolen(ST(i));
 		SV *val = ST(i + 1);
-		if (strEQ(key, "correct")) correct = SvTRUE(val) ? TRUE : FALSE;
+		if (strEQ(key, "correct")) correct = SvTRUE(val) ? 1 : 0;
 		else if (strEQ(key, "p")) p_sv = SvOK(val) ? val : NULL;
-		else if (strEQ(key, "rescale_p")) rescale_p = SvTRUE(val) ? TRUE : FALSE;
+		else if (strEQ(key, "rescale_p")) rescale_p = SvTRUE(val) ? 1 : 0;
 		else croak("chisq_test: unknown argument '%s'", key);
 	}
 
@@ -23607,7 +23607,7 @@ PPCODE:
   AoA's header row or the flat hash's keys -- since read_table() could not
   tell the two apart. */
 	if ((is_aoa || is_flat_hash) && rn_name) {
-		bool clash = FALSE;
+		bool clash = 0;
 		AV *names = NULL;	// the header row the name is compared with; NULL for a flat hash's keys
 		if (col_names_sv && SvOK(col_names_sv)) names = (AV*)SvRV(col_names_sv);
 		else if (is_aoa) {	// row 0 was checked to be an ARRAY reference above
@@ -24153,22 +24153,22 @@ PREINIT:
 	SV *rs_nl = NULL;
 	HV *plan_hv = NULL;
 	csv_plan *plan = NULL;
-	bool in_quotes = FALSE, post_quote = FALSE, use_cb = FALSE;
+	bool in_quotes = FALSE, post_quote = FALSE, use_cb = 0;
 	bool first_line = 1;	//a byte-order mark can only be on the first line
 	size_t sep_len, comment_len;
 	size_t lineno = 0;	//physical lines read so far, for the messages
 	size_t q_line = 0;	//the line the open quoted field began on
-	bool q_mid = FALSE;	//that quote came after text in its field
+	bool q_mid = 0;	//that quote came after text in its field
 	size_t span_line = 0;	//0 = the row so far is on one line; else q_line of the quote that ran it across
-	bool span_mid = FALSE;	//q_mid of that quote
-	bool warned_mid = FALSE;	//the mid-field warning is given once per file
-	bool first_q = FALSE;	//the row's first field opened with a '"' at its start; see S_emit_row()
+	bool span_mid = 0;	//q_mid of that quote
+	bool warned_mid = 0;	//the mid-field warning is given once per file
+	bool first_q = 0;	//the row's first field opened with a '"' at its start; see S_emit_row()
 	char sep0 = 0;
 	unsigned char stop_at[256];	//1 = a byte the literal scan has to stop at
 	REGEXP *rx = NULL;	//a qr// sep; NULL = sep_str is the literal separator
-	bool rx_utf8 = FALSE;	//rx is a UTF-8 pattern: lines are matched as UTF-8, see S_csv_rx_find()
-	bool ws_c = FALSE;	//sep_ws, with the separator found in C rather than by rx; see S_rx_space_is_isspace()
-	bool rx_chars = FALSE;	//rx is not UTF-8 but reads characters: a valid UTF-8 line is matched as UTF-8; see S_rx_reads_chars()
+	bool rx_utf8 = 0;	//rx is a UTF-8 pattern: lines are matched as UTF-8, see S_csv_rx_find()
+	bool ws_c = 0;	//sep_ws, with the separator found in C rather than by rx; see S_rx_space_is_isspace()
+	bool rx_chars = 0;	//rx is not UTF-8 but reads characters: a valid UTF-8 line is matched as UTF-8; see S_rx_reads_chars()
 CODE:
 	if (SvOK(callback)) {
 		if (SvROK(callback) && SvTYPE(SvRV(callback)) == SVt_PVCV)
@@ -24271,7 +24271,7 @@ rows came back as one long header and the table as [].*/
 		lineno++;
 		line = SvPVX(line_sv);
 		len  = SvCUR(line_sv);
-		bool had_nl = FALSE;	//only the file's last line can lack its line end
+		bool had_nl = 0;	//only the file's last line can lack its line end
 		if (len && line[len-1] == (cr_eol ? '\r' : '\n')) {
 			had_nl = 1;
 			len--;
@@ -24283,7 +24283,7 @@ export writes one, and without this the first column came back named
 "\xEF\xBB\xBFid".  pandas drops it too (tests/io/parser/test_encoding.py,
 test_utf8_bom), so a BOM-only first line is a blank line.*/
 		if (first_line) {
-			first_line = FALSE;
+			first_line = 0;
 			if (len >= 3 && memcmp(line, "\xEF\xBB\xBF", 3) == 0) {
 				line += 3;
 				len  -= 3;
@@ -24312,9 +24312,9 @@ the cells are the line's own bytes, as every cell is.*/
 			line_utf8 = h < len && is_utf8_string((const U8*)line + h, (STRLEN)(len - h));
 		}
 		size_t i0 = 0;	//where the line's first field starts
-		bool trail = FALSE;	//read after the loop: the line ended on a separator
+		bool trail = 0;	//read after the loop: the line ended on a separator
 		size_t stop = 0;	//regex sep: the next '"' or CR at or after i
-		bool have_stop = FALSE;	//stop has been looked for on this line
+		bool have_stop = 0;	//stop has been looked for on this line
 		if (!in_quotes) {
 			size_t k = 0;
 			while (k < len && (line[k] == ' ' || line[k] == '\t'))
@@ -24379,11 +24379,11 @@ line cost an ASCII file read with qr/\s+/u 4%.*/
 					sv_catpvn(field, "\"", 1);
 					i += 2;
 				} else {
-					in_quotes = FALSE;
+					in_quotes = 0;
 					post_quote = 1;
 					i += 1;
 				}
-				trail = FALSE;
+				trail = 0;
 			} else if (ws_c) {
 /*qr/\s+/ without the regex engine.  The outcomes are the regex branch's below,
 in its order: the first blank at or after i is where a separator starts unless
@@ -24413,13 +24413,13 @@ each).  t/read_table.ws_sep.t pins it to the regex branch's answers.*/
 							first_q = 1;
 					}
 					i     = j + 1;	//a quote after a closing quote, or a stray CR, is dropped
-					trail = FALSE;
+					trail = 0;
 				} else {
 					size_t me = j + 1;	//one past the run of blanks
 					while (me < len && CSV_RX_SPACE((U8)line[me]))
 						me++;
 					S_push_cell(aTHX_ plan, field, line + i, j - i);
-					post_quote = FALSE;
+					post_quote = 0;
 					i     = me;
 					trail = (i == len);
 				}
@@ -24445,7 +24445,7 @@ the search resumes after it.*/
 						      "string at %s line %" UVuf "; it must match at least "
 						      "one character\n", SVfARG(sep_rx), file, (UV)lineno);
 					S_push_cell(aTHX_ plan, field, line + i, ms - i);
-					post_quote = FALSE;
+					post_quote = 0;
 					i     = me;
 					trail = (i == len);
 				} else if (stop < len) {
@@ -24459,7 +24459,7 @@ the search resumes after it.*/
 							first_q = 1;
 					}
 					i     = stop + 1;	//a quote after a closing quote, or a stray CR, is dropped
-					trail = FALSE;
+					trail = 0;
 				} else {
 					tail     = line + i;	//the line's last field, pushed below
 					tail_len = len - i;
@@ -24495,7 +24495,7 @@ the search resumes after it.*/
 					i++;	//a quote after a closing quote, or a stray CR, is dropped
 				} else {
 					S_push_cell(aTHX_ plan, field, line + start, i - start);
-					post_quote = FALSE;
+					post_quote = 0;
 					i += sep_len;
 				}
 			}
@@ -24508,7 +24508,7 @@ the search resumes after it.*/
 				span_mid  = q_mid;
 			}
 		} else {
-			post_quote = FALSE;
+			post_quote = 0;
 			if (!(sep_ws && trail))	//trailing whitespace is not a separator either
 				S_push_cell(aTHX_ plan, field, tail, tail_len);
 			if (plan->active) {
@@ -24539,7 +24539,7 @@ already died above with the same words, so this is for the row it did not.*/
 				     SVfARG(S_quote_note(aTHX_ span_line, TRUE, lineno)));
 			}
 			span_line = 0;
-			first_q   = FALSE;
+			first_q   = 0;
 		}
 	}
 /*sv_gets() answers NULL for a read error as well as for end of file, so without
@@ -24606,7 +24606,7 @@ OUTPUT:
  # the converted value, or a copy of v when there is nothing to convert.
 SV* _cell_class(SV* v, IV code, SV* file, UV row, SV* name, UV field)
 PREINIT:
-	bool bad = FALSE;
+	bool bad = 0;
 	SV *nv;
 CODE:
 	if (code < 1 || code > 2)
@@ -26528,7 +26528,7 @@ SV *svyglm(...)
 		else if (strEQ(k, "cluster") || strEQ(k, "ids") || strEQ(k, "id") || strEQ(k, "psu")) psu_sv = v;
 		else if (strEQ(k, "fpc"))     fpc_sv = v;
 		else if (strEQ(k, "offset"))  offset_sv = v;
-		else if (strEQ(k, "nest"))    nest = SvTRUE(v) ? TRUE : FALSE;
+		else if (strEQ(k, "nest"))    nest = SvTRUE(v) ? 1 : 0;
 		else if (strEQ(k, "conf_level")) conf_level = SvNV(v);
 		else croak("svyglm: unknown argument '%s'", k);
 	}
@@ -27239,7 +27239,7 @@ SV *lmer(...)
 		const char *k = SvPV_nolen(ST(a)); SV *v = ST(a + 1);
 		if      (strEQ(k, "formula")) formula = SvPV_nolen(v);
 		else if (strEQ(k, "data"))    data_sv = v;
-		else if (strEQ(k, "REML") || strEQ(k, "reml")) reml = SvTRUE(v) ? TRUE : FALSE;
+		else if (strEQ(k, "REML") || strEQ(k, "reml")) reml = SvTRUE(v) ? 1 : 0;
 		else if (strEQ(k, "conf_level")) conf_level = SvNV(v);
 		else croak("lmer: unknown argument '%s'", k);
 	}
@@ -27988,7 +27988,7 @@ CODE:
 	  if (!exact_sv || !SvOK(exact_sv))
 		  do_exact = 1;
 	  else
-		  do_exact = SvTRUE(exact_sv) ? TRUE : FALSE;
+		  do_exact = SvTRUE(exact_sv) ? 1 : 0;
 	  if (do_exact && has_ties) do_exact = 0;
 	  /*1290 is R's bound, and it is about overflow rather than cost: n^3 - n
 	  is formed as an integer there and 1291^3 passes 2^31.*/
@@ -30732,7 +30732,7 @@ PPCODE:
 		else if (strEQ(k, "cluster")) cluster_sv = v;
 		else if (strEQ(k, "weights")) weights_sv = v;
 		else if (strEQ(k, "offset"))  offset_sv = v;
-		else if (strEQ(k, "robust"))  { robust = SvTRUE(v) ? TRUE : FALSE; robust_given = 1; }
+		else if (strEQ(k, "robust"))  { robust = SvTRUE(v) ? 1 : 0; robust_given = 1; }
 		else croak("coxph: unknown argument '%s'", k);
 	}
 	if (!(conf_level > 0.0 && conf_level < 1.0)) croak("coxph: conf_level must be between 0 and 1");
@@ -31516,7 +31516,7 @@ NV median(...)
 		   if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
 			   AV* av = (AV*)SvRV(arg);
 			   size_t len = av_len(av) + 1;
-			   const bool tied = SvRMAGICAL((SV*)av) ? TRUE : FALSE; // cells not in AvARRAY at all
+			   const bool tied = SvRMAGICAL((SV*)av) ? 1 : 0; // cells not in AvARRAY at all
 			   /*A plain number is read straight out of AvARRAY; anything
 			   else goes through av_slow_at(), which runs the element's get
 			   magic before SvOK() is asked. A tied array's AvARRAY is NULL
@@ -35583,7 +35583,7 @@ void vals(data, colname_sv)
 PREINIT:
 	bool is_aoh = 0, is_hoh = 0;
 	bool is_empty = 1;	//the hash has no keys: decided by the first walk, as a tied hash's counts read 0
-	bool found = FALSE;	//some row (AoH/HoH) or the frame (HoA) has the column; a frame with rows and no such column dies
+	bool found = 0;	//some row (AoH/HoH) or the frame (HoA) has the column; a frame with rows and no such column dies
 	AV *src_av = NULL, *out_av = NULL;
 	HV *src_hv = NULL;
 	SSize_t n = 0;
@@ -36317,15 +36317,15 @@ SV* density(...)
 					      "\"biweight\", \"cosine\", \"optcosine\"");
 			}
 			else if (strEQ(key, "give_rkern"))
-				give_rkern = SvTRUE(val) ? TRUE : FALSE;
+				give_rkern = SvTRUE(val) ? 1 : 0;
 			else if (strEQ(key, "subdensity"))
-				subdensity = SvTRUE(val) ? TRUE : FALSE;
+				subdensity = SvTRUE(val) ? 1 : 0;
 			else if (strEQ(key, "warn_wbw") || strEQ(key, "warnWbw"))
 				warnw = SvTRUE(val) ? 1 : 0;
 			else if (strEQ(key, "old_coords"))
-				old_coords = SvTRUE(val) ? TRUE : FALSE;
+				old_coords = SvTRUE(val) ? 1 : 0;
 			else if (strEQ(key, "na_rm"))
-				na_rm = SvTRUE(val) ? TRUE : FALSE;
+				na_rm = SvTRUE(val) ? 1 : 0;
 			else croak("density: unknown argument '%s'", key);
 		}
 	//R: if(!missing(window) && missing(kernel)) kernel <- window
@@ -36367,7 +36367,7 @@ SV* density(...)
 					goto dens_cleanup;
 				}
 				xall[i] = SvNV(*el);
-				isna[i] = nv_isnan(xall[i]) ? TRUE : FALSE;
+				isna[i] = nv_isnan(xall[i]) ? 1 : 0;
 				if (isna[i]) nna++;
 			}
 		}
@@ -36401,7 +36401,7 @@ SV* density(...)
 			if (nna && has_wts) {
 				NV s = 0.0;
 				for (size_t i = 0; i < N0; i++) s += wall[i];
-				trueD = (nv_fabs(1.0 - s) <= DENS_ALL_EQ_TOL) ? TRUE : FALSE;
+				trueD = (nv_fabs(1.0 - s) <= DENS_ALL_EQ_TOL) ? 1 : 0;
 			}
 			size_t k = 0;
 			for (size_t i = 0; i < N0; i++) {
@@ -36477,8 +36477,8 @@ SV* density(...)
 			}
 			if (has_wts) {
 				bool w_varies;
-				if (warnw >= 0) w_varies = warnw ? TRUE : FALSE;
-				else w_varies = (nx > 1 && dens_var(wf, nx) > 0.0) ? TRUE : FALSE;
+				if (warnw >= 0) w_varies = warnw ? 1 : 0;
+				else w_varies = (nx > 1 && dens_var(wf, nx) > 0.0) ? 1 : 0;
 				if (w_varies) warn("density: selecting bandwidth *not* using 'weights'");
 			}
 			Newx(xs, nx, NV);
