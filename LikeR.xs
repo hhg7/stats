@@ -14599,7 +14599,7 @@ static SV *cs_materialize(pTHX_ cs_shape out_shape, cs_shape in_shape, AV *src_a
 	turned inside out.  Row-outer costs one fetch of each row.
 
 	The columns are allocated first, at their final length, so nothing is
-	grown; AvFILLp is advanced behind each store, as filter() and mg_column()
+	grown; AvFILLp is advanced behind each store, as filter() and mg_build()
 	do, so a croak out of an overloaded stringification frees what has been
 	written rather than leaking it.*/
 	{
@@ -15731,6 +15731,26 @@ static void mg_saw(pTHX_ mg_frame *f, SV *name) {
 	av_push(f->names, newSVsv(name));
 }
 
+/*mg_saw() for a row hash's entry, asking about the HEK's own bytes first.
+
+hv_iterkeysv() makes a mortal SV of the key, and nothing between here and the
+end of merge() frees a mortal, so calling it for every cell of a row frame
+held one SV per input cell until the join was over.  Joining a 200,000-row,
+22-column AoH to a 2-column one on `id` peaked at +594 MB with them and
++384 MB without (+414 and +205 MB for HoA output), and ran 20% faster.  A name
+already seen -- every cell but the first of each column -- now costs a lookup
+and no allocation.  The UTF-8 flag rides in the length's sign, so the lookup
+canonicalises the key exactly as hv_exists_ent() would; a key held as an SV
+(HEf_SVKEY, a tied hash's) goes the long way.*/
+PERL_STATIC_INLINE void mg_saw_he(pTHX_ mg_frame *f, HE *e) {
+	if (HeKLEN(e) != HEf_SVKEY) {
+		const HEK *k = HeKEY_hek(e);
+		const I32 kl = HEK_UTF8(k) ? -(I32)HEK_LEN(k) : (I32)HEK_LEN(k);
+		if (hv_exists(f->seen, HEK_KEY(k), kl)) return;
+	}
+	mg_saw(aTHX_ f, hv_iterkeysv(e));
+}
+
 /*Validate a frame and describe it in *f.  Nothing is copied: an AoH/HoH
 lends its rows, a HoA its columns.*/
 static void
@@ -15764,7 +15784,7 @@ mg_prep(pTHX_ SV *frame, const char *side, mg_frame *f) {
 			av_push(f->rows, av_row_keep(aTHX_ r));
 			ITER_KEEP_BEGIN(SvRV(r));
 			HE *e; hv_iterinit((HV *)SvRV(r));
-			while ((e = hv_iternext((HV *)SvRV(r)))) mg_saw(aTHX_ f, hv_iterkeysv(e));
+			while ((e = hv_iternext((HV *)SvRV(r)))) mg_saw_he(aTHX_ f, e);
 			ITER_KEEP_END;
 		}
 		f->nrows = av_len(f->rows) + 1;
@@ -15824,7 +15844,7 @@ mg_prep(pTHX_ SV *frame, const char *side, mg_frame *f) {
 			HV *rh = (HV *)SvRV(AvARRAY(f->rows)[i]);
 			ITER_KEEP_BEGIN(rh);
 			HE *re; hv_iterinit(rh);
-			while ((re = hv_iternext(rh))) mg_saw(aTHX_ f, hv_iterkeysv(re));
+			while ((re = hv_iternext(rh))) mg_saw_he(aTHX_ f, re);
 			ITER_KEEP_END;
 		}
 		return;
@@ -16302,98 +16322,116 @@ mg_pair(pTHX_ mg_pairs *P, SSize_t li, SSize_t ri) {
 	P->n++;
 }
 
-/*One output column, `np` cells long, taken from column `c` of frame `f` at row
-`rows[t]` (-1 where the join had no row on that side).  A join key falls back
-to the other side wherever this one has nothing, which is the coalesce both R
-and pandas do; `af`/`ac`/`arows` describe that other side and are NULL for a
-data column, which has none.
-
-AvARRAY is filled directly and AvFILLp advanced behind it, the way filter()
-builds its columns: the length is known before the first cell, so the array is
-never grown and nothing is ever copied into a bigger one.  Nothing in the loop
-can move it -- the array is not reachable from perl yet and av_extend() is not
-called again -- while mg_cell() re-derives the *source* pointer per cell,
-which copying a cell can invalidate.  Advancing AvFILLp per cell rather than
-once at the end is what makes the array own the cells already written, so a
-croak out of an overloaded stringification frees them with it.*/
-static AV *
-mg_column(pTHX_ SSize_t np, const mg_frame *f, const mg_col *c, const SSize_t *rows, const mg_frame *af, const mg_col *ac, const SSize_t *arows) {
-	AV *o = (AV *)sv_2mortal((SV *)newAV());
-	if (np <= 0) return o;
-	av_extend(o, np - 1);
-	SV **d = AvARRAY(o);
-	for (SSize_t t = 0; t < np; t++) {
-		const SSize_t r = rows[t];
-		SV *v = (r >= 0) ? mg_cell(aTHX_ f, c, r) : NULL;
-		if (af) {			//a join key: SvOK() decides, so run get magic
-			if (v) SvGETMAGIC(v);
-			if (!v || !SvOK(v)) {
-				const SSize_t ar = arows[t];
-				SV *w = (ar >= 0) ? mg_cell(aTHX_ af, ac, ar) : NULL;
-				if (w) v = w;
-			}
-		}
-		d[t] = v ? flt_cell_copy(aTHX_ v) : newSV(0);
-		AvFILLp(o) = t;
+/*The cell join key `k` takes in output row (li, ri): the left frame's, or the
+right frame's wherever the left has nothing -- the coalesce both R and pandas
+do.  -1 on either side is the half an outer join found nothing for.*/
+PERL_STATIC_INLINE SV *
+mg_key_cell(pTHX_ const mg_join *J, SSize_t k, SSize_t li, SSize_t ri) {
+	SV *v = (li >= 0) ? mg_cell(aTHX_ J->L, &J->lk[k], li) : NULL;
+	if (v) SvGETMAGIC(v);	//SvOK() decides, so run get magic
+	if ((!v || !SvOK(v)) && ri >= 0) {
+		SV *w = mg_cell(aTHX_ J->R, &J->rk[k], ri);
+		if (w) v = w;
 	}
-	return o;
+	return v;
 }
+
+/*A fresh copy of `v`, or undef when it is NULL.*/
+PERL_STATIC_INLINE SV *mg_out_sv(pTHX_ SV *v) {
+	return v ? flt_cell_copy(aTHX_ v) : newSV(0);
+}
+
+/*HoA output is filled column by column within blocks of MG_BLOCK output rows.
+
+Column by column over the whole result, which is what merge() did up to
+0.3215, walks every input row hash of a row frame once per output column, and
+at 200,000 rows those no longer fit in cache.  Row by row instead interleaves
+the output columns' SVs in memory, which costs a HoA input -- read column by
+column, it is streamed -- and leaves the result's own columns scattered for
+whatever scans them next.  Blocks keep both: the rows of a block are still in
+cache when the next column reads them, and each output column is laid out in
+runs of MG_BLOCK.  Joining a 200,000-row, 22-column frame to a 2-column one on
+`id`, HoA output, best of 5 (runs of one build vary by about 15%):
+
+	                     AoH in     HoA in
+	whole columns        0.48 s     0.050 s
+	row by row           0.30 s     0.100 s
+	blocks of 256        0.29 s     0.057 s
+	blocks of 1024       0.30 s     0.053 s
+	blocks of 8192       0.34 s     0.052 s
+
+1024 is the smallest block at which the HoA input is back to whole-column
+speed, and the AoH input loses nothing to row-by-row filling.*/
+#define MG_BLOCK 1024
 
 /*The result, in whichever shape merge() was asked for.  Returns a new
 reference to a mortal container, so a croak part-way through -- tied cell,
-overloaded stringification -- takes the whole half-built frame with it.*/
+overloaded stringification -- takes the whole half-built frame with it.
+
+Every array is allocated at its final length before the first cell, the
+output row count being exact once the probe has finished, so nothing is ever
+grown or copied into a bigger block.  Nothing in the loops can move AvARRAY:
+the containers are not reachable from perl yet and av_extend() is not called
+again, while mg_cell() re-derives the *source* pointer per cell, which copying
+a cell can invalidate.  AvFILLp is advanced behind each store, so an array
+owns every cell written so far and a croak frees them with it.*/
 static SV *
 mg_build(pTHX_ const mg_join *J, const mg_pairs *P) {
 	const SSize_t np = P->n;
 	const SSize_t nu = J->nkeys + J->nlc + J->nrc;
+	const SSize_t *restrict pl = P->pl, *restrict pr = P->pr;
 	if (J->out_hoa) {
 		HV *out = (HV *)sv_2mortal((SV *)newHV());
 		hv_ksplit(out, (STRLEN)(nu > 0 ? nu : 1));
-		SSize_t o = 0;
-		for (SSize_t k = 0; k < J->nkeys; k++, o++)
-			(void)hv_store_ent(out, J->oname[o], newRV_inc((SV *)
-			    mg_column(aTHX_ np, J->L, &J->lk[k], P->pl,
-			                        J->R, &J->rk[k], P->pr)), 0);
-		for (SSize_t c = 0; c < J->nlc; c++, o++)
-			(void)hv_store_ent(out, J->oname[o], newRV_inc((SV *)
-			    mg_column(aTHX_ np, J->L, &J->lc[c], P->pl, NULL, NULL, NULL)), 0);
-		for (SSize_t c = 0; c < J->nrc; c++, o++)
-			(void)hv_store_ent(out, J->oname[o], newRV_inc((SV *)
-			    mg_column(aTHX_ np, J->R, &J->rc[c], P->pr, NULL, NULL, NULL)), 0);
+		AV **cols;	//nu columns in oname order, each owned by out
+		Newx(cols, (size_t)(nu > 0 ? nu : 1), AV *);
+		SAVEFREEPV(cols);
+		for (SSize_t o = 0; o < nu; o++) {
+			AV *c = newAV();
+			(void)hv_store_ent(out, J->oname[o], newRV_noinc((SV *)c), 0);	//uni in merge() keeps the names distinct
+			if (np > 0) av_extend(c, np - 1);
+			cols[o] = c;
+		}
+		for (SSize_t t0 = 0; t0 < np; t0 += MG_BLOCK) {
+			const SSize_t t1 = (np - t0 > MG_BLOCK) ? t0 + MG_BLOCK : np;
+			SSize_t o = 0;
+			for (SSize_t k = 0; k < J->nkeys; k++, o++)
+				for (SSize_t t = t0; t < t1; t++) {
+					AvARRAY(cols[o])[t] = mg_out_sv(aTHX_ mg_key_cell(aTHX_ J, k, pl[t], pr[t]));
+					AvFILLp(cols[o]) = t;
+				}
+			for (SSize_t c = 0; c < J->nlc; c++, o++)
+				for (SSize_t t = t0; t < t1; t++) {
+					AvARRAY(cols[o])[t] = mg_out_sv(aTHX_
+					    (pl[t] >= 0) ? mg_cell(aTHX_ J->L, &J->lc[c], pl[t]) : NULL);
+					AvFILLp(cols[o]) = t;
+				}
+			for (SSize_t c = 0; c < J->nrc; c++, o++)
+				for (SSize_t t = t0; t < t1; t++) {
+					AvARRAY(cols[o])[t] = mg_out_sv(aTHX_
+					    (pr[t] >= 0) ? mg_cell(aTHX_ J->R, &J->rc[c], pr[t]) : NULL);
+					AvFILLp(cols[o]) = t;
+				}
+		}
 		return newRV_inc((SV *)out);
 	}
 	AV *rows = (AV *)sv_2mortal((SV *)newAV());
-	if (np > 0) {
-		av_extend(rows, np - 1);
-		SV **d = AvARRAY(rows);
-		for (SSize_t t = 0; t < np; t++) {
-			const SSize_t li = P->pl[t], ri = P->pr[t];
-			HV *row = newHV();
-			hv_ksplit(row, (STRLEN)(nu > 0 ? nu : 1));	//no rehash mid-row
-			d[t] = newRV_noinc((SV *)row);
-			AvFILLp(rows) = t;	//owned from here, so a croak below frees it
-			SSize_t o = 0;
-			for (SSize_t k = 0; k < J->nkeys; k++, o++) {
-				SV *v = (li >= 0) ? mg_cell(aTHX_ J->L, &J->lk[k], li) : NULL;
-				if (v) SvGETMAGIC(v);	//SvOK() decides: see mg_column
-				if ((!v || !SvOK(v)) && ri >= 0) {
-					SV *w = mg_cell(aTHX_ J->R, &J->rk[k], ri);
-					if (w) v = w;
-				}
-				(void)hv_store_ent(row, J->oname[o],
-				                   v ? flt_cell_copy(aTHX_ v) : newSV(0), 0);
-			}
-			for (SSize_t c = 0; c < J->nlc; c++, o++) {
-				SV *v = (li >= 0) ? mg_cell(aTHX_ J->L, &J->lc[c], li) : NULL;
-				(void)hv_store_ent(row, J->oname[o],
-				                   v ? flt_cell_copy(aTHX_ v) : newSV(0), 0);
-			}
-			for (SSize_t c = 0; c < J->nrc; c++, o++) {
-				SV *v = (ri >= 0) ? mg_cell(aTHX_ J->R, &J->rc[c], ri) : NULL;
-				(void)hv_store_ent(row, J->oname[o],
-				                   v ? flt_cell_copy(aTHX_ v) : newSV(0), 0);
-			}
-		}
+	if (np > 0) av_extend(rows, np - 1);
+	for (SSize_t t = 0; t < np; t++) {
+		const SSize_t li = pl[t], ri = pr[t];
+		HV *row = newHV();
+		hv_ksplit(row, (STRLEN)(nu > 0 ? nu : 1));	//no rehash mid-row
+		AvARRAY(rows)[t] = newRV_noinc((SV *)row);
+		AvFILLp(rows) = t;	//owned from here, so a croak below frees it
+		SSize_t o = 0;
+		for (SSize_t k = 0; k < J->nkeys; k++, o++)
+			(void)hv_store_ent(row, J->oname[o], mg_out_sv(aTHX_ mg_key_cell(aTHX_ J, k, li, ri)), 0);
+		for (SSize_t c = 0; c < J->nlc; c++, o++)
+			(void)hv_store_ent(row, J->oname[o], mg_out_sv(aTHX_
+			    (li >= 0) ? mg_cell(aTHX_ J->L, &J->lc[c], li) : NULL), 0);
+		for (SSize_t c = 0; c < J->nrc; c++, o++)
+			(void)hv_store_ent(row, J->oname[o], mg_out_sv(aTHX_
+			    (ri >= 0) ? mg_cell(aTHX_ J->R, &J->rc[c], ri) : NULL), 0);
 	}
 	return newRV_inc((SV *)rows);
 }
@@ -33877,19 +33915,17 @@ PPCODE:
 	}
 	for (SSize_t c = 0; c < nlc; c++) {
 		SV *kn = AvARRAY(lc_src)[c];
-		SV *outn;
-		if (hv_exists_ent(rc_set, kn, 0)) {
-			outn = newSVsv(kn); sv_catsv(outn, suf0);
-		} else outn = newSVsv(kn);
+		SV *outn = sv_2mortal(newSVsv(kn));	//mortal until pushed: the croak below must not leak it
+		if (hv_exists_ent(rc_set, kn, 0)) sv_catsv(outn, suf0);
 		if (hv_exists_ent(uni, outn, 0))
 			croak("merge: output column '%s' collides; adjust 'suffixes'",
 			      SvPV_nolen(outn));
 		(void)hv_store_ent(uni, outn, newSViv(1), 0);
-		av_push(lc_out, outn);
+		av_push(lc_out, SvREFCNT_inc_simple_NN(outn));
 	}
 	for (SSize_t c = 0; c < nrc; c++) {
 		SV *kn = AvARRAY(rc_src)[c];
-		SV *outn;
+		SV *outn = sv_2mortal(newSVsv(kn));	//as for the left columns above
 	/*lkset as well as lc_set: the output key column carries the left
 	key's name, so under left_on/right_on a right-hand data column can
 	be named after it and would otherwise collide with it rather than
@@ -33899,14 +33935,13 @@ PPCODE:
 	tests/reg-tests-1d.R's parents/children join, which produced a
 	duplicated `name` column in R <= 3.4.x.  With `on` this cannot
 	fire: a right column named after a key is a key.*/
-		if (hv_exists_ent(lc_set, kn, 0) || hv_exists_ent(lkset, kn, 0)) {
-			outn = newSVsv(kn); sv_catsv(outn, suf1);
-		} else outn = newSVsv(kn);
+		if (hv_exists_ent(lc_set, kn, 0) || hv_exists_ent(lkset, kn, 0))
+			sv_catsv(outn, suf1);
 		if (hv_exists_ent(uni, outn, 0))
 			croak("merge: output column '%s' collides; adjust 'suffixes'",
 			      SvPV_nolen(outn));
 		(void)hv_store_ent(uni, outn, newSViv(1), 0);
-		av_push(rc_out, outn);
+		av_push(rc_out, SvREFCNT_inc_simple_NN(outn));
 	}
 	// resolve every column that will be read, once for the whole join
 	SSize_t nu = nkeys + nlc + nrc;
@@ -35264,7 +35299,7 @@ CODE:
 	The columns are allocated at their final length first, so nothing
 	is grown or copied, and their blocks are zeroed with AvFILLp set
 	to the last row up front instead of being advanced behind each
-	store the way filter() and mg_column() do it.  That is one store
+	store the way filter() and mg_build() do it.  That is one store
 	per cell rather than two, and it is still croak-safe: a ragged row
 	or an overloaded get magic can throw part-way through, and every
 	slot not yet written is a NULL that av_undef()'s SvREFCNT_dec()
