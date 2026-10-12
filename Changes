@@ -1,5 +1,83 @@
 Revision history for Stats-LikeR
 
+0.3217 2026-10-12 CDT (Claude Opus 5.5 helped)
+
+ [cor()]
+
+ - Spearman and Kendall correlations with a missing value now return NaN,
+   as R's cor() does at its default use = "everything". They used to rank
+   or count the NaN like any other value and return a finite, meaningless
+   answer: cor([1,2,undef,4,5,6], [2,1,4,3,6,5], 'spearman') was 0.82857,
+   which is neither R's NA nor the complete-case 0.8, and 'kendall' was
+   0.6. Pearson already returned NaN. The same holds for every entry of a
+   correlation matrix that involves a column with a missing value.
+
+ - A y that is neither an array reference nor undef now croaks. It used to
+   be taken for "no y", so cor(\@x, 'spearman'), with the method in y's
+   place, returned 1. The method is the third argument: cor(\@x, undef,
+   'spearman').
+
+ - A matrix x with a y that is not a matrix now croaks. cor($X, \@v) and
+   cor($X, []) both used to drop y without a word and return cor($X). R
+   answers the first with a p x 1 matrix; this refuses rather than guess.
+
+ - A one-row matrix is now told it needs at least 2 observations. It used
+   to be told that its column 0 had zero variance.
+
+ - Pearson no longer overflows or underflows on data far from 1 on a double
+   perl. 1e90 * c(0,0,0,1,1,1,1) against 1e90 * 0:6 returned 0 where R and
+   SciPy give 0.8660254037844386, and SciPy's very-small-input case (y
+   down to 2e-245) returned NaN where they give 0.727293054075045. A
+   column whose sum of squares overflows or loses bits to underflow is now
+   divided by its largest deviation first, which leaves r unchanged, and
+   the denominator takes each root separately when their product would
+   leave the range. Ordinary data never reaches either branch and gives the
+   same bits.
+   SciPy's extremely-large case now gives its 0.351312332103289, where R's
+   own cor() gives NA.
+
+ - t/cor.R.scipy.t cross-checks cor() against R 4.6.1's regression tests
+   and cor.Rd examples and SciPy's TestPearsonr, TestCorrSpearmanr,
+   TestKendallTau and TestSpearmanRho: 1430 checks, covering every method
+   in vector, matrix and cross-matrix form, missing values, ties, and a
+   200,000-pair Kendall case whose pair count passes 2**32. It is what
+   found the overflow above.
+
+ [cor_test()]
+
+ - The documented call form cor_test(x => \@x, y => \@y, ...) now works.
+   Only cor_test(\@x, \@y, ...) was parsed, so the named form croaked
+   "unknown argument 'y'". Both are accepted and give the same result;
+   t/cor_test.call_forms.t checks them against each other under every
+   method and alternative.
+
+ - The documentation now says how missing values, the y argument and the
+   cases that differ from R on purpose behave.
+
+ [cor(), cov() and cor_test(): speed and memory]
+
+ - A correlation matrix is faster: 2.8 to 5.4 times, measured on
+   perl-5.44.0. Pearson centred both columns of every pair afresh, so each
+   column was centred once per partner; each column is now centred once
+   and a pair costs a single pass, four pairs to a sweep. Kendall sorted
+   every pair by both columns; each column is now sorted once and only its
+   runs of ties are re-sorted per partner. A 2000 x 400 matrix went from
+   0.24 s to 0.047 s for Pearson and from 0.28 s to 0.075 s for Spearman;
+   a 1000 x 60 Kendall matrix went from 0.21 s to 0.075 s, and a 2000-row
+   Pearson cross-correlation of 200 columns against 200 went from 0.12 s
+   to 0.023 s. Every entry is bit-for-bit what it was.
+
+ - Kendall's tau is 1.6 times faster and needs half the scratch memory.
+   The y tie counts now come from the merge sort's own output instead of a
+   separate sort of y, the merge no longer copies its result back at every
+   level, and its scratch is carved out of the pair array once the x
+   values are spent. At n = 1e6, cor(), cov() and cor_test() with method
+   'kendall' each went from 0.26 s to 0.17 s, and peak memory above the
+   input from 46.6 MB to 31.2 MB.
+
+ - A Spearman correlation of two vectors ranks them in place, which cut
+   peak memory above the input from 46.5 MB to 31.3 MB at n = 1e6.
+
 0.3216 2026-10-09 CDT (Claude Opus 5.5 helped)
 
  [merge()]

@@ -58,7 +58,7 @@
 .\" ========================================================================
 .\"
 .IX Title "Stats::LikeR 3"
-.TH Stats::LikeR 3 2026-10-09 "perl v5.44.0" "User Contributed Perl Documentation"
+.TH Stats::LikeR 3 2026-10-12 "perl v5.44.0" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -2315,6 +2315,28 @@ that is, \f(CW\*(C`pearson\*(C'\fR is the default and will be used if \f(CW$meth
 Just like R, \f(CW\*(C`pearson\*(C'\fR, \f(CW\*(C`spearman\*(C'\fR, and \f(CW\*(C`kendall\*(C'\fR are available
 .PP
 If you provide an array of arrays (a matrix), \f(CW\*(C`cor\*(C'\fR will compute the correlation matrix automatically.
+.PP
+.Vb 4
+\& my $r  = cor(\e@x, \e@y, \*(Aqspearman\*(Aq);       # a number
+\& my $R  = cor(\e@rows);                     # p x p matrix, AoA of rows
+\& my $Rs = cor(\e@rows, undef, \*(Aqkendall\*(Aq);   # leave y out with undef
+\& my $C  = cor(\e@xrows, \e@yrows);           # p x q cross\-correlation
+.Ve
+.PP
+To pass a method without a \f(CW\*(C`y\*(C'\fR, leave \f(CW\*(C`y\*(C'\fR as \f(CW\*(C`undef\*(C'\fR: \f(CW\*(C`cor(\e@x, \*(Aqspearman\*(Aq)\*(C'\fR
+croaks rather than reading the method as \f(CW\*(C`y\*(C'\fR. When \f(CW\*(C`x\*(C'\fR is a matrix, \f(CW\*(C`y\*(C'\fR must be
+a matrix with the same number of rows, or \f(CW\*(C`undef\*(C'\fR; a flat \f(CW\*(C`y\*(C'\fR beside a matrix
+\&\f(CW\*(C`x\*(C'\fR croaks (R would return a p x 1 matrix).
+.PP
+Missing values follow R\*(Aqs default, \f(CW\*(C`use = "everything"\*(C'\fR: an \f(CW\*(C`undef\*(C'\fR or
+non\-numeric cell makes every correlation it takes part in \f(CW\*(C`NaN\*(C'\fR, under all three
+methods. Use \f(CW\*(C`cor_test\*(C'\fR, or drop the incomplete pairs yourself, to get the
+complete\-case answer. A matrix\*(Aqs diagonal is 1 even for a column that holds a
+missing value, as in R.
+.PP
+Two cases differ from R on purpose. A column with no variance croaks (R
+returns \f(CW\*(C`NA\*(C'\fR with a warning), as does a matrix with fewer than two rows; and
+\&\f(CWcor(\e@x)\fR on a single vector returns 1, where R requires a \f(CW\*(C`y\*(C'\fR.
 .SS cor_test
 .IX Subsection "cor_test"
 .Vb 7
@@ -2326,6 +2348,9 @@ If you provide an array of arrays (a matrix), \f(CW\*(C`cor\*(C'\fR will compute
 \&         continuity  => 1
 \&     );
 .Ve
+.PP
+or, with \f(CW\*(C`x\*(C'\fR and \f(CW\*(C`y\*(C'\fR first and unnamed, \f(CW\*(C`cor_test($x, $y, method => \*(Aqkendall\*(Aq)\*(C'\fR.
+The two forms are the same call; before 0.3217 only the second was accepted.
 .PP
 \&\f(CW\*(C`cor_test\*(C'\fR safely handles \f(CW\*(C`undef\*(C'\fR (or \f(CW\*(C`NA\*(C'\fR) values seamlessly by computing over pairwise complete observations.
 .PP

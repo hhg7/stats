@@ -2015,6 +2015,26 @@ Just like R, `pearson`, `spearman`, and `kendall` are available
 
 If you provide an array of arrays (a matrix), `cor` will compute the correlation matrix automatically. 
 
+    my $r  = cor(\@x, \@y, 'spearman');       # a number
+    my $R  = cor(\@rows);                     # p x p matrix, AoA of rows
+    my $Rs = cor(\@rows, undef, 'kendall');   # leave y out with undef
+    my $C  = cor(\@xrows, \@yrows);           # p x q cross-correlation
+
+To pass a method without a `y`, leave `y` as `undef`: `cor(\@x, 'spearman')`
+croaks rather than reading the method as `y`. When `x` is a matrix, `y` must be
+a matrix with the same number of rows, or `undef`; a flat `y` beside a matrix
+`x` croaks (R would return a p x 1 matrix).
+
+Missing values follow R's default, `use = "everything"`: an `undef` or
+non-numeric cell makes every correlation it takes part in `NaN`, under all three
+methods. Use `cor_test`, or drop the incomplete pairs yourself, to get the
+complete-case answer. A matrix's diagonal is 1 even for a column that holds a
+missing value, as in R.
+
+Two cases differ from R on purpose. A column with no variance croaks (R
+returns `NA` with a warning), as does a matrix with fewer than two rows; and
+`cor(\@x)` on a single vector returns 1, where R requires a `y`.
+
 ## cor_test
 
     my $result = cor_test(
@@ -2024,6 +2044,9 @@ If you provide an array of arrays (a matrix), `cor` will compute the correlation
     		method      => 'pearson',
     		continuity  => 1
     	);
+
+or, with `x` and `y` first and unnamed, `cor_test($x, $y, method => 'kendall')`.
+The two forms are the same call; before 0.3217 only the second was accepted.
 
 `cor_test` safely handles `undef` (or `NA`) values seamlessly by computing over pairwise complete observations. 
 

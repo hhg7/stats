@@ -3640,12 +3640,36 @@ whole number, so y = (1,1,1,2,2,2,3,3,3,4,4,4) ranks as 2,2,2,5,5,5,8,8,8,
 cor_test(method => 'spearman') did through 0.311, which sent tied data of odd
 group size to the exact branch R reserves for tie-free data.  Pass NULL when
 the caller does not care.*/
+static void rank_sorted_items(const RankItem *restrict ri, NV *restrict out, size_t n, bool *restrict has_ties);
 static void rank_data_ties(const NV *restrict in, NV *restrict out, size_t n, bool *restrict has_ties) {
 	RankItem *ri;
 	Newx(ri, n, RankItem);
 	for (size_t i = 0; i < n; i++) { ri[i].val = in[i]; ri[i].idx = i; }
 	rankitem_sort(ri, n);
+	rank_sorted_items(ri, out, n, has_ties);
+	Safefree(ri);
+}
 
+/*Replace a[0..n-1] with its own average ranks.
+
+For a caller that owns the column and has no further use for the values: once
+they are copied into the RankItem array, a[] is free to take the ranks, so no
+second n-element buffer is needed.  cor() ranks this way -- the vector branch
+used to hold x, y, both rank vectors and the sort array at once, 48 bytes per
+observation on a double build, and now holds 32.  Measured on perl-5.44.0 at
+n = 1e6, peak RSS above the input went from 46.5 MB to 31.3 MB.*/
+static void rank_inplace(NV *restrict a, size_t n) {
+	RankItem *ri;
+	Newx(ri, n, RankItem);
+	for (size_t i = 0; i < n; i++) { ri[i].val = a[i]; ri[i].idx = i; }
+	rankitem_sort(ri, n);
+	rank_sorted_items(ri, a, n, NULL);
+	Safefree(ri);
+}
+
+/*The tie walk shared by the two above: ri[] is sorted by value, and each
+tie group's members get the average of the 1-based ranks it spans.*/
+static void rank_sorted_items(const RankItem *restrict ri, NV *restrict out, size_t n, bool *restrict has_ties) {
 	if (has_ties) *has_ties = 0;
 	size_t i = 0;
 	while (i < n) {
@@ -3658,18 +3682,96 @@ static void rank_data_ties(const NV *restrict in, NV *restrict out, size_t n, bo
 		for (size_t k = i; k <= j; k++) out[ri[k].idx] = avg;
 		i = j + 1;
 	}
-	Safefree(ri);
 }
 
 static void rank_data(const NV *restrict in, NV *restrict out, size_t n) {
 	rank_data_ties(in, out, n, NULL);
 }
 
-/*Pearson product-moment r between two n-element arrays.
-Returns NAN when either variable has zero variance (matches R).*/
-/*Pearson correlation, two-pass about the sample means.
+/*Below this, a centred sum of squares may have been built from squares that
+fell into the subnormal range and lost bits on the way.  At or above it, any
+square that went subnormal is under q * NV_EPSILON, and the absolute error it
+carries (at most NV_MIN * NV_EPSILON) is under q * NV_EPSILON^2 -- beneath the
+sum's own rounding.  About 1e-292 on a double build.*/
+#define COR_TINY (NV_MIN / NV_EPSILON)
 
-The one-pass form this replaces -- (n*sxy - sx*sy) / sqrt((n*sx2 - sx^2) *
+/*Centre a[0..n-1] about its mean, in place.
+
+Pearson's r is the sum of the products of two centred columns over the root of
+the product of their sums of squares.  Every term that belongs to one column
+alone comes out of here, once: *cs is the sum of the centred values (the
+compensation term, zero but for rounding) and *vv the corrected sum of
+squares.  cor_from_centred() finishes a pair from those and the one pass that
+needs both columns.  pearson_corr() below is that for two vectors; cor()'s
+matrix branch centres each column once rather than once per partner, which
+left it a single pass per pair instead of two over two columns.
+
+A column whose squares overflow, or underflow far enough to lose bits (see
+COR_TINY), is divided through by its largest absolute deviation and summed
+again.  r does not change when one column is scaled, so this costs the answer
+nothing, and it is never reached by data within a few hundred orders of
+magnitude of 1, so ordinary columns keep the exact bits they had.  Before it,
+on a double build, 1e90 * c(0,0,0,1,1,1,1) against 1e90 * 0:6 came back 0
+where R and SciPy say 0.8660254037844386, and SciPy's
+test_very_small_input_values (y down to 2e-245) came back NaN rather than
+0.7272930540750450.  R gets those two right by summing in long double; this is
+SciPy's remedy for the same problem, applied only where it is needed.
+
+A NaN anywhere makes the whole column NaN, which cor_from_centred() turns into
+a NaN r, as R's cor() does at use = "everything".*/
+static void cor_centre(NV *restrict a, size_t n, NV *restrict cs, NV *restrict vv) {
+	NV s = 0;
+	for (size_t i = 0; i < n; i++) s += a[i];
+	const NV m = s / n;
+	NV c = 0, q = 0;
+	for (size_t i = 0; i < n; i++) {
+		const NV d = a[i] - m;
+		a[i] = d;
+		c += d;
+		q += d * d;
+	}
+	if (nv_isinf(q) || q < COR_TINY) {
+		NV amax = 0;
+		for (size_t i = 0; i < n; i++) {
+			const NV ad = nv_fabs(a[i]);
+			if (ad > amax) amax = ad;
+		}
+		//amax is 0 on a constant column, and infinite when x - m itself overflowed
+		if (amax > 0 && nv_isfinite(amax)) {
+			c = 0; q = 0;
+			for (size_t i = 0; i < n; i++) {
+				const NV d = a[i] / amax;
+				a[i] = d;
+				c += d;
+				q += d * d;
+			}
+		}
+	}
+	*cs = c;
+	*vv = q - c * c / n;
+}
+
+/*r from a pair's sum of centred products and each column's cor_centre() terms.
+
+The vxx > 0 test is there because rounding can leave a centred sum of squares
+a hair below zero on a constant column, and sqrt() of that would be NaN where
+the honest answer is "no variance to correlate".  The root is taken of the
+product when the product is a normal number, which is every ordinary case, and
+of each factor separately when the product would overflow or underflow: a
+column held at 1e200 and one held at 1e-200 both have representable sums of
+squares, but not a representable product of them.*/
+static NV cor_from_centred(NV sxy, NV cx, NV vxx, NV cy, NV vyy, size_t n) {
+	const NV vxy = sxy - cx * cy / n;
+	if (!(vxx > 0.0 && vyy > 0.0)) return NV_NAN;
+	const NV p = vxx * vyy;
+	const NV den = (p >= NV_MIN && p <= NV_MAX) ? nv_sqrt(p) : nv_sqrt(vxx) * nv_sqrt(vyy);
+	if (den == 0.0) return NV_NAN;
+	return vxy / den;
+}
+
+/*Pearson correlation of two vectors, two-pass about the sample means.
+
+The one-pass form this replaced -- (n*sxy - sx*sy) / sqrt((n*sx2 - sx^2) *
 (n*sy2 - sy^2)) -- subtracts two nearly equal large numbers in each of its
 three terms, so it loses a digit of the answer for every digit by which the
 mean exceeds the spread.  On a column with mean 1e9 and spread 0.05 it does
@@ -3682,32 +3784,16 @@ centred squares, never the raw cross-products -- and the trailing correction
 terms are the same compensated two-pass identity nv_cov2() uses, with the
 common 1/(n-1) cancelling between numerator and denominator.
 
-No restrict: the matrix branch of cor() calls this once per column pair, and
-while it never passes the same column twice (the diagonal is short-circuited
-to 1.0), the contract is not worth pinning on that.*/
-static NV pearson_corr(const NV *x, const NV *y, size_t n) {
-	NV sx = 0, sy = 0;
-	for (size_t i = 0; i < n; i++) { sx += x[i]; sy += y[i]; }
-	{
-		const NV mx = sx / n, my = sy / n;
-		NV cx = 0, cy = 0, sxx = 0, syy = 0, sxy = 0;
-		for (size_t i = 0; i < n; i++) {
-			const NV dx = x[i] - mx, dy = y[i] - my;
-			cx  += dx;      cy  += dy;
-			sxx += dx * dx; syy += dy * dy; sxy += dx * dy;
-		}
-		{
-			const NV vxx = sxx - cx * cx / n;
-			const NV vyy = syy - cy * cy / n;
-			const NV vxy = sxy - cx * cy / n;
-	/*Rounding can leave a centred sum of squares a hair below zero on
-	a constant column; sqrt() of that would be NaN where the honest
-	answer is "no variance to correlate".*/
-			const NV den = (vxx > 0.0 && vyy > 0.0) ? nv_sqrt(vxx * vyy) : 0.0;
-			if (den == 0.0) return NV_NAN;
-			return vxy / den;
-		}
-	}
+x and y are centred in place, so they are the caller's scratch.  Each sum is
+taken in row order, as cor()'s matrix branch takes it, so a matrix entry is
+bit-for-bit what cor() gives the same two columns as vectors.*/
+static NV pearson_corr(NV *restrict x, NV *restrict y, size_t n) {
+	NV cx, vxx, cy, vyy;
+	cor_centre(x, n, &cx, &vxx);
+	cor_centre(y, n, &cy, &vyy);
+	NV sxy = 0;
+	for (size_t i = 0; i < n; i++) sxy += x[i] * y[i];
+	return cor_from_centred(sxy, cx, vxx, cy, vyy, n);
 }
 
 /*Sample covariance of two equal-length NV columns, two-pass.
@@ -3724,7 +3810,7 @@ the extra pass.
 n >= 2 is the caller's to guarantee; cov() returns NaN below that before
 reaching here.
 
-No restrict, as in pearson_corr() above: nothing here is stored through, so
+No restrict: nothing here is stored through, so
 there is nothing for it to disambiguate, and cov(x, x) -- the variance -- is a
 call a caller may legitimately make.*/
 static NV nv_cov2(const NV *x, const NV *y, size_t n) {
@@ -3752,24 +3838,54 @@ single walk of the sorted array.*/
 	|| ((a).xv == (b).xv && (a).yv < (b).yv))
 LIKER_DEFINE_SORT(KPair, kpair, KPAIR_LESS)
 
-/*Count pairs i<j with a[i] > a[j] (strict) while merge-sorting a[] ascending
-into itself via scratch tmp[].  Equal elements are not inversions.*/
-static uint64_t nv_merge_count(NV *restrict a, NV *restrict tmp, size_t lo, size_t hi) {
-	if (hi - lo < 2) return 0;
-	size_t mid = lo + (hi - lo) / 2;
-	uint64_t inv = nv_merge_count(a, tmp, lo, mid) + nv_merge_count(a, tmp, mid, hi);
+/*Kendall scratch is carved out of the KPair array once its x values are spent
+(kendall_count_sorted()), which needs a KPair to be exactly two NVs with no
+padding.  Two members of one type leave a compiler no reason to pad, but this
+makes the assumption a build failure rather than a buffer overrun.*/
+typedef char kpair_is_two_nvs[sizeof(KPair) == 2 * sizeof(NV) ? 1 : -1];
+
+/*Runs this short are insertion-sorted, counting one inversion per shift,
+rather than split further.  Measured on perl-5.44.0 as the whole of
+cor(\@x, \@y, 'kendall') at n = 1e6 random doubles, best of five fresh
+processes: splitting down to single elements took 176 ms, a cutoff of 8 took
+166 ms, 16 took 164 ms and 32 took 165 ms.  The (x, y) sort is most of that
+call, so the spread is the merge's alone.*/
+#define KMERGE_ISORT 16
+
+/*Count pairs i<j with a[i] > a[j] (strict) while sorting a[lo..hi) ascending.
+Equal elements are not inversions.
+
+b[lo..hi) must hold the same values as a[lo..hi) on entry, and is scratch on
+return.  Each level sorts its two halves into b, using a as their scratch, and
+merges them into a, so the two buffers trade places on the way down and no
+level copies its result back.  The version this replaces merged into a
+scratch array and then copied the range back at every level, which was half
+the memory traffic of the count.
+
+No restrict: the recursive calls pass a and b to each other's parameters.*/
+static uint64_t nv_merge_count(NV *a, NV *b, size_t lo, size_t hi) {
+	if (hi - lo <= KMERGE_ISORT) {
+		uint64_t inv = 0;
+		for (size_t i = lo + 1; i < hi; i++) {
+			const NV v = a[i];
+			size_t j = i;
+			while (j > lo && a[j - 1] > v) { a[j] = a[j - 1]; j--; inv++; }
+			a[j] = v;
+		}
+		return inv;
+	}
+	const size_t mid = lo + (hi - lo) / 2;
+	uint64_t inv = nv_merge_count(b, a, lo, mid) + nv_merge_count(b, a, mid, hi);
 	size_t i = lo, j = mid, k = lo;
 	while (i < mid && j < hi) {
-		if (a[i] <= a[j]) tmp[k++] = a[i++];
-		else { tmp[k++] = a[j++]; inv += (uint64_t)(mid - i); }
+		if (b[i] <= b[j]) a[k++] = b[i++];
+		else { a[k++] = b[j++]; inv += (uint64_t)(mid - i); }
 	}
-	while (i < mid) tmp[k++] = a[i++];
-	while (j < hi)  tmp[k++] = a[j++];
-	for (size_t t = lo; t < hi; t++) a[t] = tmp[t];
+	while (i < mid) a[k++] = b[i++];
+	while (j < hi)  a[k++] = b[j++];
 	return inv;
 }
 
-static void nv_sort(NV *a, size_t n);	//defined below, with nv_select()
 
 /*Everything a Kendall computation needs, from one pass over the data.
 
@@ -3804,18 +3920,23 @@ static void kendall_tie_group(uint64_t t, uint64_t *restrict pairs, NV *restrict
 	*s2 += tv * (tv - 1.0) * (tv - 2.0);
 }
 
-/*Knight's O(n log n) counts: sort by (x, y), tally the tie corrections in that
-order, then count discordant pairs as y-inversions with a merge sort.  Was an
-O(n^2) double loop in cor_test() until 0.312; at n = 64000 that loop took 14.7 s
-against 0.0135 s here, and the gap is quadratic in n.*/
-static void kendall_count_pairs(const NV *x, const NV *y, size_t n, kendall_counts *restrict K) {
+/*Knight's O(n log n) counts from pairs already sorted by (x, y): tally the tie
+corrections in that order, then count discordant pairs as y-inversions with a
+merge sort.  Was an O(n^2) double loop in cor_test() until 0.312; at n = 64000
+that loop took 14.7 s against 0.0135 s here, and the gap is quadratic in n.
+
+p[] is consumed.  Once the x walk is done only the y values are wanted, so
+they are packed into the front half of p's own memory and the back half is
+the merge's scratch: writing NV k lands in p[k/2], which the loop has already
+read.  The y ties then come from the merge's own output, which is y sorted, so
+they no longer need a copy of y and a sort of their own.  Together that took a
+Kendall correlation from four NVs of scratch per observation to two, and from
+three sorts to two.  The tie moments are summed in the same order as before --
+groups of x ascending, then groups of y ascending -- so they are unchanged to
+the last bit.*/
+static void kendall_count_sorted(KPair *restrict p, size_t n, kendall_counts *restrict K) {
 	Zero(K, 1, kendall_counts);
 	K->tot = (uint64_t)n * (n - 1) / 2;
-	KPair *restrict p;
-	Newx(p, n, KPair);
-	for (size_t i = 0; i < n; i++) { p[i].xv = x[i]; p[i].yv = y[i]; }
-	kpair_sort(p, n);
-
 	//xtie: pairs of equal x; ntie: pairs of equal (x,y) — both from p[].
 	size_t i = 0;
 	while (i < n) {
@@ -3832,26 +3953,28 @@ static void kendall_count_pairs(const NV *x, const NV *y, size_t n, kendall_coun
 		}
 		i = j + 1;
 	}
-	//ytie: pairs of equal y over all data — from a separate y sort.
-	NV *restrict ys;
-	Newx(ys, n, NV);
-	for (size_t k = 0; k < n; k++) ys[k] = y[k];
-	nv_sort(ys, n);
+	//D: discordant pairs = y-inversions in (x,y)-sorted order.
+	NV *yv = (NV *)p;	//no restrict: it is p's memory, read through p in the packing loop
+	for (size_t k = 0; k < n; k++) yv[k] = p[k].yv;
+	Copy(yv, yv + n, n, NV);
+	K->dis = nv_merge_count(yv, yv + n, 0, n);
+	//ytie: pairs of equal y over all data -- yv is sorted now.
 	i = 0;
 	while (i < n) {
 		size_t j = i;
-		while (j + 1 < n && ys[j + 1] == ys[i]) j++;
+		while (j + 1 < n && yv[j + 1] == yv[i]) j++;
 		kendall_tie_group((uint64_t)(j - i + 1), &K->ytie, &K->vu, &K->t2, &K->w2);
 		i = j + 1;
 	}
-	Safefree(ys);
-	//D: discordant pairs = y-inversions in (x,y)-sorted order.
-	NV *restrict yv, *restrict tmp;
-	Newx(yv, n, NV);
-	Newx(tmp, n, NV);
-	for (size_t k = 0; k < n; k++) yv[k] = p[k].yv;
-	K->dis = nv_merge_count(yv, tmp, 0, n);
-	Safefree(yv); Safefree(tmp); Safefree(p);
+}
+
+static void kendall_count_pairs(const NV *x, const NV *y, size_t n, kendall_counts *restrict K) {
+	KPair *restrict p;
+	Newx(p, n, KPair);
+	for (size_t i = 0; i < n; i++) { p[i].xv = x[i]; p[i].yv = y[i]; }
+	kpair_sort(p, n);
+	kendall_count_sorted(p, n, K);
+	Safefree(p);
 }
 
 //C - D, the Kendall score, from counts already taken.
@@ -3874,13 +3997,38 @@ tie counts it returns, the identity
   C − D = tot − xtie − ytie + ntie − 2·D
 
 recovers the exact same tau-b as the former O(n²) double loop.*/
+static NV kendall_tau_from_counts(const kendall_counts *restrict K) {
+	const NV denom = nv_sqrt(((NV)K->tot - (NV)K->xtie) * ((NV)K->tot - (NV)K->ytie));
+	if (denom == 0.0) return NV_NAN;
+	return kendall_score(K) / denom;
+}
 static NV kendall_tau_b(const NV *x, const NV *y, size_t n) {
-	if (n < 2) return NAN;
+	if (n < 2) return NV_NAN;
 	kendall_counts K;
 	kendall_count_pairs(x, y, n, &K);
-	NV denom = nv_sqrt(((NV)K.tot - (NV)K.xtie) * ((NV)K.tot - (NV)K.ytie));
-	if (denom == 0.0) return NAN;
-	return kendall_score(&K) / denom;
+	return kendall_tau_from_counts(&K);
+}
+
+/*tau-b of one column against another, given the first already sorted.
+
+cor()'s matrix branch sorts each x column once, as RankItems, and comes here
+for every column it is paired with: only the runs of equal x then need sorting
+by y, and on continuous data every run is a single element.  The full
+(x, y) sort kendall_tau_b() does per pair is the larger of its two sorts, so
+this is most of a pair's cost removed.  The counts are the ones
+kendall_count_pairs() would take -- the pairs end up in the same (x, y) order
+-- so the answer is too.  p[] is scratch for n pairs.*/
+static NV kendall_tau_sorted_x(const RankItem *restrict ri, const NV *restrict y, size_t n, KPair *restrict p) {
+	for (size_t k = 0; k < n; k++) { p[k].xv = ri[k].val; p[k].yv = y[ri[k].idx]; }
+	for (size_t a = 0; a < n; ) {
+		size_t b = a + 1;
+		while (b < n && p[b].xv == p[a].xv) b++;
+		if (b - a > 1) kpair_sort(p + a, b - a);
+		a = b;
+	}
+	kendall_counts K;
+	kendall_count_sorted(p, n, &K);
+	return kendall_tau_from_counts(&K);
 }
 
 /*Correlation method, resolved from the caller's string once rather than
@@ -3889,29 +4037,35 @@ re-compared at every column pair.  Same encoding as cov()'s own `meth`.*/
 #define COR_SPEARMAN 1
 #define COR_KENDALL  2
 
-/*Single dispatch: correlation of two columns under an already-resolved method.
+/*Correlation of one pair of columns, for cor()'s vector branch.
 
-Spearman is Pearson on the ranks, and for a matrix the ranks are the caller's
-to supply: cor()'s matrix branch ranks each column once through
-rank_cols_inplace() below and then asks for COR_PEARSON.  Ranking here instead
-ranks every column once per pair it takes part in -- p(p-1) rankings over a
-p-column matrix, where p of them answer the whole question.  Measured on 500
-rows: cor(X, 'spearman') took 296 ms at p = 160 against 14 ms for the same
-answer with the ranking hoisted.  The vector branch has exactly one pair, so
-it still passes COR_SPEARMAN and lets this rank into scratch of its own.*/
-static NV compute_cor_code(const NV *x, const NV *y, size_t n, short int meth) {
-	if (meth == COR_SPEARMAN) {
-		NV *rx, *ry;
-		Newx(rx, n, NV); Newx(ry, n, NV);
-		rank_data(x, rx, n);
-		rank_data(y, ry, n);
-		NV r = pearson_corr(rx, ry, n);
-		Safefree(rx); Safefree(ry);
-		return r;
-	}
+x and y are the caller's own scratch, and Spearman ranks them in place: the
+values are not wanted afterwards, and ranking into fresh buffers held both the
+values and the ranks at once.  The matrix branch does not come here; it takes
+each column's share of the work once rather than once per pair -- see
+rank_cols_inplace(), cor_centre() and kendall_tau_sorted_x().
+
+An incomplete pair makes the answer NaN under every method, as R's cor() does
+at its default use = "everything".  Pearson gets that for free, because the NaN
+reaches its sums; ranking and pair-counting do not, because the sort leaves a
+NaN wherever its comparisons happen to put it and then ranks or counts it like
+any other value.  Before this check, cor([1,2,undef,4,5,6], [2,1,4,3,6,5],
+'spearman') came back 0.82857 -- not R's NA, and not the complete-case 0.8
+either -- and 'kendall' 0.6.*/
+static bool nv_any_nan(const NV *restrict a, size_t n) {
+	for (size_t i = 0; i < n; i++)
+		if (nv_isnan(a[i])) return TRUE;
+	return FALSE;
+}
+static NV compute_cor_code(NV *restrict x, NV *restrict y, size_t n, short int meth) {
+	if (meth != COR_PEARSON && (nv_any_nan(x, n) || nv_any_nan(y, n)))
+		return NV_NAN;
 	if (meth == COR_KENDALL)
 		return kendall_tau_b(x, y, n);
-	//default: pearson
+	if (meth == COR_SPEARMAN) {
+		rank_inplace(x, n);
+		rank_inplace(y, n);
+	}
 	return pearson_corr(x, y, n);
 }
 
@@ -3919,30 +4073,59 @@ static NV compute_cor_code(const NV *x, const NV *y, size_t n, short int meth) {
 
 The answer this gives cor() is the one it had before, not an approximation of
 it: a column's ranks do not depend on the column it is being correlated
-against.  cor() does no pairwise deletion -- pearson_corr() propagates NaN and
-cor() hands the NaN back -- so nothing about the partner column ever reached
-rank_data(), and rank_data() is deterministic, so ranking column j once
-produces the bytes it produced on each of the p-1 pairs that used to rank it
-again.  That holds for a column carrying NaN too: rank_data() sorts through
-RANKITEM_LESS, which is false in both directions against a NaN, so the NaN
-lands somewhere the sort decides and every element still comes back with a
-rank -- arbitrary, but the same arbitrary value every time, and the same one
-the per-pair ranking produced.
+against.  cor() does no pairwise deletion, so nothing about the partner column
+ever reached the ranking, and the ranking is deterministic, so ranking column
+j once produces the bytes it produced on each of the p-1 pairs that used to
+rank it again.  Measured on 500 rows: cor(X, 'spearman') took 296 ms at
+p = 160 ranking per pair, against 14 ms for the same answer ranked once.
 
-rank_data() requires a destination separate from its source, so one scratch
-column is reused for all of them rather than allocating a second full matrix.
+A column carrying a NaN is left as it is, NaN and all, rather than ranked:
+ranking would give the NaN a rank like any other value (see
+compute_cor_code()), and the NaN left in place is what makes the Pearson step
+answer NaN for every pair it is in, as R's cor() does.
 
 No restrict on cols[]: cor()'s symmetric branch aliases col_y to col_x, and
 although that case calls this once for the pair of them, the contract is not
 worth pinning on the caller getting that right.*/
 static void rank_cols_inplace(NV *const *cols, size_t ncols, size_t nrows) {
-	NV *restrict scratch;
-	Newx(scratch, nrows, NV);
-	for (size_t j = 0; j < ncols; j++) {
-		rank_data(cols[j], scratch, nrows);
-		Copy(scratch, cols[j], nrows, NV);
+	for (size_t j = 0; j < ncols; j++)
+		if (!nv_any_nan(cols[j], nrows)) rank_inplace(cols[j], nrows);
+}
+
+/*Pearson r of centred column a against centred columns b[j0..m-1], into
+out[j0..m-1].  ca/va and cb[]/vb[] are cor_centre()'s terms.
+
+Four columns are taken per sweep of a: each of the four sums is its own
+accumulator and still adds its products in row order, so every r is the one
+a single sweep would give, but a is read once per four pairs and the four
+additions do not wait on each other.  Measured on perl-5.44.0 as the whole of
+cor() on a 2000 x 400 matrix, best of three fresh processes: 92 ms one pair at
+a time, 46 ms four at a time.
+
+No restrict on b[]: in the symmetric case it is the same table as the one a
+was taken from.*/
+static void cor_row_pearson(const NV *restrict a, NV ca, NV va, NV *const *b,
+	const NV *cb, const NV *vb, size_t j0, size_t m, size_t n, NV *restrict out)
+{
+	size_t j = j0;
+	for (; j + 4 <= m; j += 4) {
+		const NV *b0 = b[j], *b1 = b[j + 1], *b2 = b[j + 2], *b3 = b[j + 3];
+		NV s0 = 0, s1 = 0, s2 = 0, s3 = 0;
+		for (size_t i = 0; i < n; i++) {
+			const NV v = a[i];
+			s0 += v * b0[i]; s1 += v * b1[i]; s2 += v * b2[i]; s3 += v * b3[i];
+		}
+		out[j]     = cor_from_centred(s0, ca, va, cb[j],     vb[j],     n);
+		out[j + 1] = cor_from_centred(s1, ca, va, cb[j + 1], vb[j + 1], n);
+		out[j + 2] = cor_from_centred(s2, ca, va, cb[j + 2], vb[j + 2], n);
+		out[j + 3] = cor_from_centred(s3, ca, va, cb[j + 3], vb[j + 3], n);
 	}
-	Safefree(scratch);
+	for (; j < m; j++) {
+		const NV *bj = b[j];
+		NV s = 0;
+		for (size_t i = 0; i < n; i++) s += a[i] * bj[i];
+		out[j] = cor_from_centred(s, ca, va, cb[j], vb[j], n);
+	}
 }
 /*TRUE when every non-NaN value in a[0..n-1] is the same value -- the zero
 variance cor() refuses, because r is 0/0 there.  A column that is entirely
@@ -3977,7 +4160,7 @@ because the alternative walks the perl structure again per column.
 av_extract_or_nan() does the reading, so a row shorter than ncols, a hole, an
 undef, a non-numeric cell and a tied array all behave here exactly as they do
 in cor()'s vector branch -- the short row's missing cells become NaN below.
-Note that cor() does *not* drop those pairs: pearson_corr() sums straight
+Note that cor() does *not* drop those pairs: cor_centre() sums straight
 through a NaN, so an incomplete pair makes the whole entry NaN, which is what
 R's cor() does at its default use = "everything".  cov() and cor_test() are
 the ones that compact to the pairwise-complete observations first.
@@ -27708,19 +27891,28 @@ SV *lmer(...)
 SV* cor_test(...)
 CODE:
 {
-	if (items < 2 || items % 2 != 0)
-		croak("Usage: cor_test(\\@x, \\@y, method => 'pearson', ...)");
-	SV *x_ref = ST(0), *y_ref = ST(1);
+	/*Two call forms: cor_test(\@x, \@y, key => value, ...), and the all-named
+	cor_test(x => \@x, y => \@y, key => value, ...) that the documentation
+	shows.  Only the first used to be parsed, so the documented form read the
+	string 'x' as x and then croaked "unknown argument 'y'".  A first argument
+	that is a reference, or undef, is positional x; anything else is a key.*/
+	const bool positional = items >= 1 && (SvROK(ST(0)) || !SvOK(ST(0)));
+	const Stack_off_t first = positional ? 2 : 0;	//where the key/value pairs start
+	if (items < first || (items - first) % 2 != 0)
+		croak("Usage: cor_test(\\@x, \\@y, method => 'pearson', ...) "
+			"or cor_test(x => \\@x, y => \\@y, ...)");
+	SV *x_ref = positional ? ST(0) : NULL, *y_ref = positional ? ST(1) : NULL;
 	const char *alternative = "two.sided";
 	const char *method = "pearson";
 	SV *exact_sv = NULL;
 	NV conf_level = NV_CONF_95;
 	bool continuity = 0;
-	//Parse named arguments from the flat stack starting at index 2
-	for (Stack_off_t i = 2; i < items; i += 2) {
+	for (Stack_off_t i = first; i < items; i += 2) {
 		const char *key = SvPV_nolen(ST(i));
 		SV *val = ST(i + 1);
-		if      (strEQ(key, "alternative")) alternative = SvPV_nolen(val);
+		if      (!positional && strEQ(key, "x")) x_ref = val;
+		else if (!positional && strEQ(key, "y")) y_ref = val;
+		else if (strEQ(key, "alternative")) alternative = SvPV_nolen(val);
 		else if (strEQ(key, "method"))      method = SvPV_nolen(val);
 		else if (strEQ(key, "exact"))       exact_sv = val;
 		else if (strEQ(key, "conf_level")) conf_level = SvNV(val);
@@ -27734,6 +27926,8 @@ CODE:
 	bool is_kendall  = (strcmp(method, "kendall")  == 0);
 	bool is_spearman = (strcmp(method, "spearman") == 0);
 	HV *rhv;
+	if (!x_ref || !y_ref)
+		croak("cor_test: both x and y are required");
 	if (!SvOK(x_ref) || !SvROK(x_ref) || SvTYPE(SvRV(x_ref)) != SVt_PVAV ||
 		!SvOK(y_ref) || !SvROK(y_ref) || SvTYPE(SvRV(y_ref)) != SVt_PVAV) {
 		croak("cor_test: x and y must be array references");
@@ -31599,9 +31793,17 @@ SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 			x_is_matrix = 1;
 	}
 
-	// detect y
-	bool has_y = (SvOK(y_sv) && SvROK(y_sv) &&
-				   SvTYPE(SvRV(y_sv)) == SVt_PVAV);
+	/*undef is the only way to leave y out.  Anything else that is not an array
+	ref used to be taken for "no y" as well, so cor(\@x, 'spearman') -- the
+	method in y's slot -- returned 1 rather than complaining.*/
+	if (SvOK(y_sv) && (!SvROK(y_sv) || SvTYPE(SvRV(y_sv)) != SVt_PVAV))
+		croak("cor: y must be an ARRAY reference or undef "
+			"(the method is the third argument: cor(x, undef, 'spearman'))");
+	/*cBOOL: SvOK() is a flag mask, and on older perls bool is a char (5.12.5's
+	handy.h has "#define bool char"), so a bare assignment kept the low byte --
+	0 for an array ref, whose SVf_ROK is 0x800.  Every two-argument cor() then
+	returned 1 on 5.10.1 and 5.12.5.*/
+	const bool has_y = cBOOL(SvOK(y_sv));
 
 	AV*y_av = has_y ? (AV*)SvRV(y_sv) : NULL;
 	size_t ny = has_y ? av_len(y_av) + 1 : 0;
@@ -31650,12 +31852,22 @@ SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 		if (!x_is_matrix)// resolve x matrix dimensions
 			croak("cor: x must be a matrix (array ref of array refs) "
 				   "when y is a matrix");
+		/*A y that is not a matrix used to be dropped without a word, so
+		cor(X, \@v) and cor(X, []) both returned cor(X).  R answers the first
+		with a p x 1 matrix; this refuses it rather than guess.*/
+		if (has_y && !y_is_matrix)
+			croak("cor: y must be a matrix (array ref of array refs) "
+				   "when x is a matrix");
 		SV**xr0 = av_fetch(x_av, 0, 0);
 		if (!xr0 || !SvROK(*xr0) || SvTYPE(SvRV(*xr0)) != SVt_PVAV)
 			croak("cor: each row of x must be an ARRAY reference");
 		size_t ncols_x = av_len((AV*)SvRV(*xr0)) + 1;
 		if (ncols_x == 0) croak("cor: x matrix has zero columns");
 		size_t nrows   = nx; //observations
+		/*Before the zero-variance checks below, which a single row always
+		fails: a one-row matrix used to be told its column 0 had no variance.*/
+		if (nrows < 2)
+			croak("cor: need at least 2 observations (got %" UVuf ")", (UV)nrows);
 		size_t ncols_y = 0;
 		/*Everything a croak below this point has to hand back, in one place.
 		All of it is NULL until it is fully built -- a col_* table is only
@@ -31742,10 +31954,6 @@ SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 			col_y    = col_x;
 			symmetric = 1;
 		}
-		if (nrows < 2) {
-			COR_MAT_FREE;
-			croak("cor: need at least 2 observations (got %" UVuf ")", (UV)nrows);
-		}
 		/*The rows themselves are not read again: every value is in col_x /
 		col_y from here on.*/
 		Safefree(rowbuf); rowbuf = NULL;
@@ -31761,7 +31969,42 @@ SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 			if (!symmetric) rank_cols_inplace(col_y, ncols_y, nrows);
 			pair_meth = COR_PEARSON;
 		}
-		// -- build cache for symmetric case: compute upper triangle, store results, mirror to lower triangle
+		/*Each column's own share of the work, done once.  Pearson centres
+		every column (cor_centre()); Kendall instead needs to know which
+		columns hold a NaN, since its pair counts would not see one.  Each
+		table is ncols long; in the symmetric case the y tables are the x
+		ones, as the columns are.*/
+		NV *cs_x = NULL, *vv_x = NULL, *cs_y = NULL, *vv_y = NULL;
+		bool *nan_x = NULL, *nan_y = NULL;
+		if (pair_meth == COR_KENDALL) {
+			Newx(nan_x, ncols_x, bool);
+			for (size_t j = 0; j < ncols_x; j++) nan_x[j] = nv_any_nan(col_x[j], nrows);
+			nan_y = nan_x;
+			if (!symmetric) {
+				Newx(nan_y, ncols_y, bool);
+				for (size_t j = 0; j < ncols_y; j++) nan_y[j] = nv_any_nan(col_y[j], nrows);
+			}
+		} else {
+			Newx(cs_x, ncols_x, NV);
+			Newx(vv_x, ncols_x, NV);
+			for (size_t j = 0; j < ncols_x; j++) cor_centre(col_x[j], nrows, &cs_x[j], &vv_x[j]);
+			cs_y = cs_x; vv_y = vv_x;
+			if (!symmetric) {
+				Newx(cs_y, ncols_y, NV);
+				Newx(vv_y, ncols_y, NV);
+				for (size_t j = 0; j < ncols_y; j++) cor_centre(col_y[j], nrows, &cs_y[j], &vv_y[j]);
+			}
+		}
+		/*Kendall's scratch: column i sorted with its row indices, and the
+		pairs kendall_tau_sorted_x() builds against it.*/
+		RankItem *ri = NULL;
+		KPair *kp = NULL;
+		if (pair_meth == COR_KENDALL) {
+			Newx(ri, nrows, RankItem);
+			Newx(kp, nrows, KPair);
+		}
+		NV *rrow;	//row i of the answer, columns j0 .. ncols_y-1
+		Newx(rrow, ncols_y, NV);
 		AV*result_av = newAV();
 		av_extend(result_av, ncols_x - 1);
 		// Allocate per-row AVs up front so we can fill them in order
@@ -31771,26 +32014,38 @@ SV* cor(SV* x_sv, SV* y_sv = &PL_sv_undef, const char* method = "pearson")
 			rows_out[i] = newAV();
 			av_extend(rows_out[i], ncols_y - 1);
 		}
-		if (symmetric) {
-	/*Upper triangle computed, both triangles stored as we go.  There used to
-	be an ncols_x * ncols_x NV scratch matrix here, filled and then copied
-	cell by cell into the SVs and freed; since each r is wanted at exactly
-	(i,j) and (j,i), storing it at both on the spot needs no matrix at all.
-	It was 2.8 MB of a 15 MB peak on a 600-column frame, plus ncols_x
-	allocations.*/
-			for (size_t i = 0; i < ncols_x; i++) {
-				av_store(rows_out[i], i, newSVnv(1.0));	// diagonal
-				for (size_t j = i + 1; j < ncols_x; j++) {
-					NV r = compute_cor_code(col_x[i], col_x[j], nrows, pair_meth);
-					av_store(rows_out[i], j, newSVnv(r));
-					av_store(rows_out[j], i, newSVnv(r));	// symmetry
+	/*Symmetric: the upper triangle is computed and both triangles are stored
+	as it goes.  There used to be an ncols_x * ncols_x NV scratch matrix here,
+	filled and then copied cell by cell into the SVs and freed; since each r is
+	wanted at exactly (i,j) and (j,i), storing it at both on the spot needs only
+	the one row.  It was 2.8 MB of a 15 MB peak on a 600-column frame, plus
+	ncols_x allocations.  Cross-correlation: every (i,j) pair is independent.*/
+		for (size_t i = 0; i < ncols_x; i++) {
+			const size_t j0 = symmetric ? i + 1 : 0;
+			if (pair_meth == COR_KENDALL) {
+				if (nan_x[i]) {
+					for (size_t j = j0; j < ncols_y; j++) rrow[j] = NV_NAN;
+				} else {
+					const NV *restrict a = col_x[i];
+					for (size_t k = 0; k < nrows; k++) { ri[k].val = a[k]; ri[k].idx = k; }
+					rankitem_sort(ri, nrows);
+					for (size_t j = j0; j < ncols_y; j++)
+						rrow[j] = nan_y[j] ? NV_NAN : kendall_tau_sorted_x(ri, col_y[j], nrows, kp);
 				}
+			} else
+				cor_row_pearson(col_x[i], cs_x[i], vv_x[i], col_y, cs_y, vv_y, j0, ncols_y, nrows, rrow);
+			if (symmetric) av_store(rows_out[i], i, newSVnv(1.0));	// diagonal
+			for (size_t j = j0; j < ncols_y; j++) {
+				av_store(rows_out[i], j, newSVnv(rrow[j]));
+				if (symmetric) av_store(rows_out[j], i, newSVnv(rrow[j]));
 			}
-		} else {// cross-correlation: every (i,j) pair is independent
-			for (size_t i = 0; i < ncols_x; i++)
-				for (size_t j = 0; j < ncols_y; j++)
-					av_store(rows_out[i], j, newSVnv(compute_cor_code(col_x[i], col_y[j], nrows, pair_meth)));
 		}
+		Safefree(rrow); Safefree(ri); Safefree(kp);
+		if (!symmetric) {
+			if (nan_x) Safefree(nan_y);
+			if (cs_x) { Safefree(cs_y); Safefree(vv_y); }
+		}
+		Safefree(nan_x); Safefree(cs_x); Safefree(vv_x);
 		// push row AVs into result
 		for (size_t i = 0; i < ncols_x; i++)
 			av_store(result_av, i, newRV_noinc((SV*)rows_out[i]));

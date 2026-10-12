@@ -2823,6 +2823,26 @@ Just like R, C<pearson>, C<spearman>, and C<kendall> are available
 
 If you provide an array of arrays (a matrix), C<cor> will compute the correlation matrix automatically. 
 
+ my $r  = cor(\@x, \@y, 'spearman');       # a number
+ my $R  = cor(\@rows);                     # p x p matrix, AoA of rows
+ my $Rs = cor(\@rows, undef, 'kendall');   # leave y out with undef
+ my $C  = cor(\@xrows, \@yrows);           # p x q cross-correlation
+
+To pass a method without a C<y>, leave C<y> as C<undef>: C<cor(\@x, 'spearman')>
+croaks rather than reading the method as C<y>. When C<x> is a matrix, C<y> must be
+a matrix with the same number of rows, or C<undef>; a flat C<y> beside a matrix
+C<x> croaks (R would return a p x 1 matrix).
+
+Missing values follow R's default, C<use = "everything">: an C<undef> or
+non-numeric cell makes every correlation it takes part in C<NaN>, under all three
+methods. Use C<cor_test>, or drop the incomplete pairs yourself, to get the
+complete-case answer. A matrix's diagonal is 1 even for a column that holds a
+missing value, as in R.
+
+Two cases differ from R on purpose. A column with no variance croaks (R
+returns C<NA> with a warning), as does a matrix with fewer than two rows; and
+C<cor(\@x)> on a single vector returns 1, where R requires a C<y>.
+
 =head2 cor_test
 
  my $result = cor_test(
@@ -2832,6 +2852,9 @@ If you provide an array of arrays (a matrix), C<cor> will compute the correlatio
          method      => 'pearson',
          continuity  => 1
      );
+
+or, with C<x> and C<y> first and unnamed, C<< cor_test($x, $y, method =E<gt> 'kendall') >>.
+The two forms are the same call; before 0.3217 only the second was accepted.
 
 C<cor_test> safely handles C<undef> (or C<NA>) values seamlessly by computing over pairwise complete observations. 
 
