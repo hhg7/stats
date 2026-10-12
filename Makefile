@@ -178,8 +178,7 @@ O_FILES  = LikeR.o \
 	write_table.section.o
 H_FILES  = ppport.h
 MAN1PODS = 
-MAN3PODS = lib/Stats/LikeR.pm \
-	read.me.pod
+MAN3PODS = lib/Stats/LikeR.pm
 
 # Where to build things
 INST_LIBDIR      = $(INST_LIB)/Stats
@@ -198,8 +197,7 @@ PERL_ARCHIVE       =
 PERL_ARCHIVE_AFTER = 
 
 
-TO_INST_PM = lib/Stats/LikeR.pm \
-	read.me.pod
+TO_INST_PM = lib/Stats/LikeR.pm
 PERL_ARCHLIBDEP = /home/con/perl5/perlbrew/perls/perl-5.44.0/lib/5.44.0/x86_64-linux
 PERL_INCDEP = /home/con/perl5/perlbrew/perls/perl-5.44.0/lib/5.44.0/x86_64-linux/CORE
 
@@ -523,11 +521,9 @@ POD2MAN = $(POD2MAN_EXE)
 
 
 manifypods : pure_all config  \
-	lib/Stats/LikeR.pm \
-	read.me.pod
+	lib/Stats/LikeR.pm
 	$(NOECHO) $(POD2MAN) --section=$(MAN3SECTION) --perm_rw=$(PERM_RW) -u \
-	  lib/Stats/LikeR.pm $(INST_MAN3DIR)/Stats::LikeR.$(MAN3EXT) \
-	  read.me.pod $(INST_MAN3DIR)/Stats::read.me.$(MAN3EXT) 
+	  lib/Stats/LikeR.pm $(INST_MAN3DIR)/Stats::LikeR.$(MAN3EXT) 
 
 
 
@@ -1114,8 +1110,7 @@ pm_to_blib : $(FIRST_MAKEFILE) $(TO_INST_PM)
 	  -e '@parts=splice @ARGV,0,$$i+1;' \
 	  -e 'pop @parts; $$filter=join q{ }, map qq{"$$_"}, @parts;' \
 	  -e 'pm_to_blib({@ARGV}, '\''$(INST_LIB)/auto'\'', $$filter, '\''$(PERM_DIR)'\'')' -- $(PM_FILTER) -- \
-	  'lib/Stats/LikeR.pm' 'blib/lib/Stats/LikeR.pm' \
-	  'read.me.pod' '$(INST_LIB)/Stats/read.me.pod' 
+	  'lib/Stats/LikeR.pm' 'blib/lib/Stats/LikeR.pm' 
 	$(NOECHO) $(TOUCH) pm_to_blib
 
 

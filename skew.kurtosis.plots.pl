@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 # Draws the figures that illustrate skew() and kurtosis() in README.md (and
-# therefore in read.me.pod and lib/Stats/LikeR.pm).  Author-only: it is not
-# shipped, and it needs Matplotlib::Simple, python3 and matplotlib.
+# therefore in lib/Stats/LikeR.pm).  Author-only: it is not shipped, and it
+# needs Matplotlib::Simple, python3 and matplotlib.
 #
 #   perl -Iblib/lib -Iblib/arch skew.kurtosis.plots.pl
 #

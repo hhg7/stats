@@ -542,11 +542,6 @@ $pod = balance_pod_over_back($pod);
 my @pod = split /\n/, $pod;
 unshift @pod, "=encoding utf8\n";
 
-say 'Writing read.me.pod from README.md, which must be copied into lib/Stats/LikeR.pm';
-open my $fh, '>', 'read.me.pod';
-say $fh join ("\n", @pod);
-close $fh;
-
 my $lib = file2string('lib/Stats/LikeR.pm');
 my @lib = split /\n/, $lib;
 my @marks = grep { $lib[$_] eq '1;' } 0 .. $#lib;

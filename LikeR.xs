@@ -356,11 +356,46 @@ PERL_STATIC_INLINE bool sv_plain_nv(SV *sv, NV *out){
 }
 /*Running count, total and range of a numeric column, for the scans below.*/
 typedef struct {
-	NV sum; // total of every value folded in so far
+	NV sum; // total of every value folded in so far, less the rounding error in comp
 	NV min; // both undefined while count == 0
 	NV max;
 	size_t count;
+	NV comp; // the rounding error the additions to sum have dropped; see nv_two_sum()
 } NvAcc;
+
+/*Fold v into the compensated sum (*s, *c): Knuth's TwoSum recovers exactly what
+the addition s + v rounds away, and *c accumulates it.  The total is then
+nv_acc_total(), not *s.
+
+This is how sum(), mean(), sd() and var() keep the precision R gets from
+accumulating in long double (R 4.6.1, src/main/summary.c rsum() and
+src/library/stats/src/cov.c MEAN): mean([1e16, 1, -1e16, 1]) is 0.5 in R
+and was 0 here, because 1e16 + 1 rounds back to 1e16 in a double.  A
+compensated NV does better than R's long double on an NV that is already long
+double or __float128, and is the same code on every width -- including the
+platforms where long double is double, or is a software quad.
+
+No branch, so the four-lane scan keeps its four independent chains.  It is
+not free: TwoSum is six additions where a plain sum is one, and measured on
+perl-5.44.0 -O2, one pinned core, best of 15, sum() and mean() went from 0.68
+to 1.2 ns/element on 1e4 NVs and from 0.93 to 1.4 on 1e6, and var() from 1.55
+to 1.84 and 2.14 to 2.88.
+
+An infinite v makes the error term NaN (Inf - Inf), so nv_acc_total() ignores
+comp once the sum is not finite.*/
+PERL_STATIC_INLINE void nv_two_sum(NV *restrict s, NV *restrict c, NV v){
+	const NV t  = *s + v;
+	const NV bp = t - *s;
+	*c += (*s - (t - bp)) + (v - bp);
+	*s = t;
+}
+PERL_STATIC_INLINE void nv_acc_add(NvAcc *restrict acc, NV v){
+	nv_two_sum(&acc->sum, &acc->comp, v);
+	acc->count++;
+}
+PERL_STATIC_INLINE NV nv_acc_total(const NvAcc *restrict acc){
+	return nv_isfinite(acc->sum) ? acc->sum + acc->comp : acc->sum;
+}
 /*The four scans share a contract. Each folds the run of plain numeric scalars
 starting at av[*jp] into its accumulators, stops at the first element
 sv_plain_nv() will not take (a hole, a reference, anything magical or
@@ -481,10 +516,11 @@ second set of chains for nothing.
 
 Four lanes make av_scan_sum() -- the first pass of sum(), mean(), sd() and
 var() -- add in a different order from the one the elements come in: lane k
-holds every fourth element from its start, and the lanes are added pairwise at
-the end. The total can therefore differ in the last bits from a left-to-right
-sum, as NumPy's pairwise sum does; its worst-case error bound is smaller, since
-each partial sum is a quarter as long. For min() and max() the order changes
+holds every fourth element from its start, and the lanes are folded together at
+the end. Each lane carries the rounding error of its own additions (see
+nv_two_sum()), and the fold carries the error of folding, so the total is
+within an ulp or two of the exact sum whatever the order; up to 0.3217 the lanes
+were plain sums, and the order showed in the last bits. For min() and max() the order changes
 nothing: the only equal values that differ are -0 and +0, and nv_max_step() and
 nv_min_step() choose between those by sign, not by position.
 
@@ -494,6 +530,7 @@ loop, which folds up to it and stops there.*/
 static LIKER_NOINLINE void av_scan_sum(AV *av, SSize_t *jp, SSize_t len, NvAcc *acc){
 	SV **el = AvARRAY(av);
 	NV s0 = acc->sum, s1 = 0.0, s2 = 0.0, s3 = 0.0;
+	NV c0 = acc->comp, c1 = 0.0, c2 = 0.0, c3 = 0.0;	//each lane's compensation; see nv_two_sum()
 	const SSize_t start = *jp;
 	SSize_t j = start;	//read after both loops: where the scan stopped
 	for (; j + 4 <= len; j += 4) {
@@ -501,17 +538,22 @@ static LIKER_NOINLINE void av_scan_sum(AV *av, SSize_t *jp, SSize_t len, NvAcc *
 		if (!el[j] || !el[j + 1] || !el[j + 2] || !el[j + 3]
 		 || !sv_plain_nv(el[j], &a)     || !sv_plain_nv(el[j + 1], &b)
 		 || !sv_plain_nv(el[j + 2], &c) || !sv_plain_nv(el[j + 3], &d)) break;
-		s0 += a;
-		s1 += b;
-		s2 += c;
-		s3 += d;
+		nv_two_sum(&s0, &c0, a);
+		nv_two_sum(&s1, &c1, b);
+		nv_two_sum(&s2, &c2, c);
+		nv_two_sum(&s3, &c3, d);
 	}
 	for (; j < len; j++) {
 		NV v;
 		if (!el[j] || !sv_plain_nv(el[j], &v)) break;
-		s0 += v;
+		nv_two_sum(&s0, &c0, v);
 	}
-	acc->sum = (s0 + s1) + (s2 + s3);
+	//the lanes are folded with the same compensation, so the order costs nothing
+	nv_two_sum(&s0, &c0, s1);
+	nv_two_sum(&s0, &c0, s2);
+	nv_two_sum(&s0, &c0, s3);
+	acc->sum  = s0;
+	acc->comp = (c0 + c1) + (c2 + c3);
 	acc->count += (size_t)(j - start);
 	*jp = j;
 }
@@ -758,6 +800,72 @@ static void args_get_magic(pTHX_ Stack_off_t ax, Stack_off_t items){
 	}
 }
 
+/*The mean of the arguments that sum(), mean(), sd() and var() have just
+totalled into acc.
+
+When the total overflowed although no value was infinite -- mean([1e308,
+1e308]) -- the arguments are read once more and each divided by n before it
+is added, which is what R's long double accumulator spares it from doing: R
+gives 1e308 and this gave Inf, and var() and sd() then took every deviation
+from an infinite mean and returned NaN where R gives 0.  An infinite value
+among them stays infinite in the second pass too, so the answer is still Inf
+when it should be.  A tied array is FETCHed again for that pass; nothing else
+reaches it.*/
+static NV args_mean_of(pTHX_ Stack_off_t ax, Stack_off_t items, const char *fname, const NvAcc *restrict acc){
+	const NV n = (NV)acc->count, total = nv_acc_total(acc);
+	if (!nv_isinf(total)) return total / n;
+	NvAcc sc = { 0.0, 0.0, 0.0, 0, 0.0 };
+	for (Stack_off_t i = 0; i < items; i++) {
+		SV *arg = ST(i);
+		if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
+			AV *av = (AV *)SvRV(arg);
+			const SSize_t len = av_len(av) + 1;
+			for (SSize_t j = 0; j < len; j++) {
+				SV *tv = av_slow_at(aTHX_ av, j);
+				if (tv) nv_acc_add(&sc, nv_arg_at(aTHX_ tv, fname, (UV)j, (UV)i) / n);
+			}
+		} else if (SvOK(arg)) nv_acc_add(&sc, nv_arg(aTHX_ arg, fname, (UV)i) / n);
+	}
+	return nv_acc_total(&sc);
+}
+
+/*The sample variance from the second pass of var() and sd(): m2 is the sum of
+the squared deviations about the first-pass mean and comp the sum of the
+deviations themselves, so m2 - comp^2/n is the sum of squares about the
+refined mean (see var()).
+
+comp * (comp / n) rather than comp * comp / n: by Cauchy-Schwarz comp^2/n <= m2,
+so the product formed this way cannot overflow while m2 is finite.  When m2
+itself is not finite, it is the answer: comp^2 overflowed alongside it and
+Inf - Inf made var([1e200, -1e200, 3e199]) NaN, where R gives Inf.*/
+PERL_STATIC_INLINE NV var_from_dev(NV m2, NV comp, size_t count){
+	if (!nv_isfinite(m2)) return m2;
+	const NV n = (NV)count;
+	return (m2 - comp * (comp / n)) / (n - 1.0);
+}
+
+/*One value for mode(): count it in its slot, opening a slot (and keeping the
+value as first seen) the first time its string is met.*/
+static void mode_take(pTHX_ HV *slot_of, AV *orig, AV *cnt, SV *sv, size_t *max_count){	// no restrict: perl-managed
+	STRLEN klen;
+	const char *key = SvPV(sv, klen);
+	const I32 sk = SvUTF8(sv) ? -(I32)klen : (I32)klen;
+	SV **slot = hv_fetch(slot_of, key, sk, 1);
+	if (!slot) croak("mode: internal hash error");
+	size_t c;
+	if (SvOK(*slot)) {
+		SV *csv = AvARRAY(cnt)[SvUV(*slot)];
+		c = (size_t)SvUV(csv) + 1;
+		sv_setuv(csv, (UV)c);
+	} else {
+		sv_setuv(*slot, (UV)(av_len(cnt) + 1));
+		av_push(orig, newSVsv(sv));
+		av_push(cnt, newSVuv(1));
+		c = 1;
+	}
+	if (c > *max_count) *max_count = c;
+}
+
 /*A size argument -- a row count, a bin count, a number of draws -- validated
 before anything divides by it or allocates it.
 
@@ -780,7 +888,13 @@ optional and 0 means "not given", 1 where it is not.  SV_COUNT_MAX is a sanity
 bound rather than a capacity one: 2^48 elements is 4 PB even at one byte each,
 so nothing below it is a real limit, and refusing what is above it is what
 turns an OOM abort back into a croak.  It is compared in NV, so it stays well
-inside the 53-bit integer range every NV represents exactly.*/
+inside the 53-bit integer range every NV represents exactly.
+
+The bound is also SIZE_MAX where size_t is narrower than that.  On a 32-bit
+build (5.44.0-i686) a count between 2^32 and 2^48 passed the test above and
+then wrapped in the cast: rnorm(n => 2**32 + 2) returned 2 values, rbinom()
+drew as if size were 5 when given 2**32 + 5, and sample() answered 2**32 + 1
+with a single element instead of croaking.*/
 #define SV_COUNT_MAX ((NV)281474976710656.0)   // 2^48
 PERL_STATIC_INLINE size_t sv_count_arg(pTHX_ SV *sv, const char *fname, const char *what, UV min){
 	if (!sv || !SvOK(sv))
@@ -793,7 +907,7 @@ PERL_STATIC_INLINE size_t sv_count_arg(pTHX_ SV *sv, const char *fname, const ch
 	if (v < (NV)min)
 		croak_nv("%s: %s must be an integer >= %" UVuf ", not %" NVgf,
 		         fname, what, min, v);
-	if (v > SV_COUNT_MAX)
+	if (v > SV_COUNT_MAX || v >= (NV)SIZE_MAX + 1.0)
 		croak_nv("%s: %s is too large: %" NVgf, fname, what, v);
 	return (size_t)v;   // truncates toward zero, as R's as.integer() does
 }
@@ -1227,6 +1341,66 @@ platform that has the drand48_r() this block needs.*/
 			PL_srand_called = 1; \
 		} \
 	} while (0)
+
+/*The first n steps of a Fisher-Yates shuffle of 0 .. count-1, written to
+out[0 .. n-1] -- sample()'s draw without replacement.
+
+Up to 0.3217 the whole index array was allocated and initialised whatever n
+was: 100 calls of sample(\@a, 1) on 5e6 elements took 1.18 s and allocated 40
+MB each.  Only the positions the shuffle has swapped differ from the identity,
+and n steps swap at most 2n of them, so when n is small against count they
+are kept in an open-addressed table of (position, value) instead, and an
+absent position holds its own index.  It is the same shuffle, step for step
+and draw for draw, so a seed gives the same sample either way.
+
+The table is used below count/4 draws, where it is a fraction of the array's
+size; above that the array is cheaper to walk than the table is to probe.  Its
+capacity is a power of two at least 4n, so it stays under half full.
+
+It sits below the reentrant drand48 block above on purpose: a Drand01() above
+it reads libc's process-global state on a threaded perl before 5.20, not the
+state srand() seeds, which is how 5.16.3-thr-ld's sample() first ignored
+srand($seed) here.*/
+#define SAMPLE_EMPTY SIZE_MAX	//an unused slot: every position is below an AV's length, which is below SIZE_MAX
+static void sample_draw(pTHX_ size_t count, size_t n, size_t *restrict out){
+	if (n == 0) return;
+	if (n >= count / 4) {
+		size_t *idx;
+		Newx(idx, count, size_t);
+		SAVEFREEPV(idx);
+		for (size_t i = 0; i < count; i++) idx[i] = i;
+		for (size_t i = 0; i < n; i++) {
+			size_t j   = i + (size_t)(Drand01() * (count - i));
+			size_t tmp = idx[i];
+			idx[i]  = idx[j];
+			idx[j]  = tmp;
+			out[i] = idx[i];
+		}
+		return;
+	}
+	size_t cap = 16;
+	while (cap < 4 * n) cap <<= 1;
+	size_t *key, *val;	//the table: a swapped position, and what it now holds
+	Newx(key, cap, size_t); SAVEFREEPV(key);
+	Newx(val, cap, size_t); SAVEFREEPV(val);
+	for (size_t k = 0; k < cap; k++) key[k] = SAMPLE_EMPTY;
+	const size_t mask = cap - 1;
+	for (size_t i = 0; i < n; i++) {
+		size_t j = i + (size_t)(Drand01() * (count - i));
+		/*The slot of position i and of position j, found or claimed.  A
+		Fibonacci hash spreads consecutive positions, which is what i is.*/
+		size_t si = (size_t)(((uint64_t)i * UINT64_C(0x9E3779B97F4A7C15)) >> 32) & mask;
+		while (key[si] != SAMPLE_EMPTY && key[si] != i) si = (si + 1) & mask;
+		if (key[si] == SAMPLE_EMPTY) { key[si] = i; val[si] = i; }
+		size_t sj = (size_t)(((uint64_t)j * UINT64_C(0x9E3779B97F4A7C15)) >> 32) & mask;
+		while (key[sj] != SAMPLE_EMPTY && key[sj] != j) sj = (sj + 1) & mask;
+		if (key[sj] == SAMPLE_EMPTY) { key[sj] = j; val[sj] = j; }
+		const size_t tmp = val[si];
+		val[si] = val[sj];
+		val[sj] = tmp;
+		out[i] = val[si];
+	}
+}
 
 // Helpers for Random Number Generation
 #ifndef M_PI
@@ -2254,19 +2428,17 @@ static SV *hv_cell(pTHX_ HV *hv, SV *key) {
 /*ljoin's and add_data's store of a source value into a target row; val is
 borrowed.
 
-Between plain hashes the target shares the source's SV, as it always has. A
-value read from a tied source (src_tied) is a placeholder whose element magic
-would tie it back to that source, so it is copied, which runs its FETCH. A
-tied target's hv_store_ent() only attaches element magic and returns NULL, so
-it is given its own copy and SvSETMAGIC() runs the STORE (perlguts,
-"Understanding the Magic of Tied Hashes and Arrays"). The copy is mortal so
-that a dying FETCH or STORE frees it; a store that took it gets a reference of
-its own.*/
-static void jd_store(pTHX_ HV *dst, SV *key, SV *val, bool src_tied) {
-	if (!src_tied && !SvRMAGICAL(dst)) {
-		(void)hv_store_ent(dst, key, SvREFCNT_inc(val), 0);
-		return;
-	}
+The target gets a copy, as `$h{$r}{$c} = $i{$r}{$c}` would give it.  Up to
+0.3217 two plain hashes shared the source's SV, so after ljoin(\%h, \%i) a
+write to $h{r1}{b} changed $i{r1}{b} too, which nothing in README said.  A
+reference is copied as a reference: the thing it points at is still shared,
+as with assignment.  A value read from a tied source is a placeholder whose
+element magic would tie it back to that source, and copying it runs its
+FETCH. A tied target's hv_store_ent() only attaches element magic
+and returns NULL, so SvSETMAGIC() runs the STORE (perlguts, "Understanding the
+Magic of Tied Hashes and Arrays"). The copy is mortal so that a dying FETCH or
+STORE frees it; a store that took it gets a reference of its own.*/
+static void jd_store(pTHX_ HV *dst, SV *key, SV *val) {
 	SV *copy = sv_2mortal(newSVsv(val));
 	HE *he = hv_store_ent(dst, key, copy, 0);
 	if (SvRMAGICAL(dst)) SvSETMAGIC(copy);
@@ -3626,9 +3798,8 @@ LIKER_DEFINE_SORT(RankItem, rankitem, RANKITEM_LESS)
 in[] is not modified.
 
 restrict on both: every caller ranks one buffer into a second, freshly
-allocated one -- compute_cor() and cov()'s spearman branches, roc_delong()'s
-three midrank calls, cor_test(), dunn_test(), and friedman_test()'s per-row
-rank.*/
+allocated one -- compute_cor() and cov()'s spearman branches, cor_test(),
+dunn_test(), and friedman_test()'s per-row rank.*/
 /*Average ranks of in[0..n-1], and whether any value repeated.
 
 `has_ties` is R's TIES -- length(unique(x)) < n (cor.test.R) -- and is set here
@@ -4900,12 +5071,24 @@ static void nv_pretty_plan(NV lo, NV up, int *restrict ndiv, int min_n, NV *rest
 
 /*seq.int(l, u, length.out = n + 1), which puts both ends in exactly and spaces
 the rest, followed by pretty.default()'s zap of anything the spacing left
-within 1e-14 of zero.*/
+within 1e-14 of zero.
+
+When u - l overflows, both are finite and the step is not, so the step is
+u/n - l/n and the interior points are built a quarter-scale and multiplied back
+by 4: R 4.6.1's do_seq() (src/main/seq.c) does exactly this, and
+pretty.default()'s zap measures its delta as diff(range(l, u)/n) for the same
+reason.  Up to 0.3217 the step was Inf and hist([1.7e308, -1.7e308], breaks =>
+4) gave the breaks 0, Inf, 0 where R gives -1.7e308, 0, 1.7e308.*/
 static void nv_pretty_fill(NV l, NV u, int n, NV *restrict out){
 	if (n <= 0) { out[0] = l; return; }
-	const NV by = (u - l) / (NV)n;
+	const NV del = u - l;
+	const bool finite_del = nv_isfinite(del);
+	const NV by = finite_del ? del / (NV)n : u / (NV)n - l / (NV)n;
 	out[0] = l;
-	for (int i = 1; i < n; i++) out[i] = l + (NV)i * by;
+	if (finite_del)
+		for (int i = 1; i < n; i++) out[i] = l + (NV)i * by;
+	else
+		for (int i = 1; i < n; i++) out[i] = 4.0 * (l / 4.0 + (NV)i * (by / 4.0));
 	out[n] = u;
 	for (int i = 0; i <= n; i++)
 		if (nv_fabs(out[i]) < 1e-14 * by) out[i] = 0.0;
@@ -4967,6 +5150,13 @@ static void compute_hist_logic(const NV *restrict x, size_t n,
 	for (size_t i = 0; i < n_bins; i++) {
 		h[i] = breaks[i + 1] - breaks[i];
 		mids[i] = (breaks[i] + breaks[i + 1]) / 2.0;
+		/*Two finite breaks whose sum overflows -- a range past 1.7e308 --
+		have a finite midpoint, and halving each first finds it.  R's
+		0.5 * (a + b) gives -Inf there; this departs from it on purpose,
+		because the midpoint exists, and because an x87 build, which adds in
+		extended precision, never overflowed in the first place.*/
+		if (nv_isinf(mids[i]) && nv_isfinite(breaks[i]) && nv_isfinite(breaks[i + 1]))
+			mids[i] = breaks[i] / 2.0 + breaks[i + 1] / 2.0;
 	}
 	if (nB > 5) {
 		NV *hs;
@@ -4998,7 +5188,14 @@ static void compute_hist_logic(const NV *restrict x, size_t n,
 static NV approx_pnorm(NV x) {// Standard Normal CDF approximation
 	// Nothing erfc() returns this far out is a number: see PNORM_LOWER_ZERO
 	if (x <= PNORM_LOWER_ZERO) return 0.0;
-	return 0.5 * nv_erfc(-x * 0.70710678118654752440); // 0.707... = 1/sqrt(2)
+	/*1/sqrt(2) as nv_sqrt(0.5), which is correctly rounded at the NV's own
+	width, and not as the literal 0.70710678118654752440, which C reads as a
+	double.  On a long-double or __float128 build that literal is ~1e-17 off,
+	and erfc() far out multiplies its argument's relative error by about 2x^2:
+	dunn_test()'s p of 2.5e-34 at |z| = 12.2 was 8.7e-15 off mpmath on
+	perl-5.12.5 (long double), against 1.8e-15 on a double perl.  On a double
+	build the two are the same double.*/
+	return 0.5 * nv_erfc(-x * nv_sqrt((NV)0.5));
 }
 #ifndef M_SQRT1_2
 #define M_SQRT1_2 0.70710678118654752440
@@ -5261,11 +5458,17 @@ static NV kendall_exact_pvalue(size_t n, NV s_obs, const char *alt) {
 }
 // F-distribution Cumulative Distribution Function P(F <= f)
 static NV pf(NV f, NV df1, NV df2) {
+	if (nv_isnan(f) || nv_isnan(df1) || nv_isnan(df2)) return NV_NAN;   //NaN in, NaN out
 	if (f <= 0.0) return 0.0;
+	/*The mirror of pf_upper()'s guards.  pf(Inf, ...) was NaN (Inf/Inf inside
+	the ratio below), so var_test() with zero variance in y and alternative =>
+	'less' reported p NaN where R gives 1.*/
+	if (nv_isinf(f)) return 1.0;
 	/*df2/denom is the exact 1 - x; see incbeta_xy().  Without it the lower
 	tail loses digits from the other end, where it is the one near 1:
 	pf(1e12, 1, 1) was 7e-12 relative off mpmath, now 1 ulp.*/
 	NV denom = df1 * f + df2;
+	if (nv_isinf(denom)) return 1.0; //the upper tail underflows anyway
 	return incbeta_xy(df1 / 2.0, df2 / 2.0, (df1 * f) / denom, df2 / denom);
 }
 
@@ -15471,6 +15674,23 @@ static NV st_qtukey(NV p, NV rr, NV cc, NV df){
 updated stack pointer, so callers use:  sp = helper(aTHX_ sp, ...);
 XPUSHs/EXTEND operate on the local `sp`, hence the in/out pointer.*/
 
+/*Element j of a set operation's array argument, with its get magic run
+once, or a croak naming it when it is missing or undef.  The SvOK() on what
+av_fetch() returned, which this replaces, came before the magic: every element
+of a tied array read as undef, so get_union(\@tied) and the rest croaked
+"undefined value at array ref index 0".  *klen and *hklen describe the key,
+*hklen negative for a UTF-8 one, as hv_fetch() wants it.*/
+static const char *set_key_at(pTHX_ AV *av, size_t j, const char *name, size_t argi, SV **out, STRLEN *klen, I32 *hklen){	// no restrict: perl-managed
+	SV *tv = av_slow_at(aTHX_ av, (SSize_t)j);
+	if (!tv)
+		croak("%s: undefined value at array ref index %" UVuf " (argument %" UVuf ")", name, (UV)j, (UV)argi);
+	tv = sv_fetched(aTHX_ tv);
+	const char *key = SvPV(tv, *klen);
+	*hklen = SvUTF8(tv) ? -(I32)*klen : (I32)*klen;
+	if (out) *out = tv;
+	return key;
+}
+
 /*Backs is_equivalent(). Returns 1 iff all `nrefs` array refs share one
 distinct-value set (multiplicity/order ignored), matching List::Compare's
 is_LequivalentR() generalised to N lists; else 0. Equivalence is transitive,
@@ -15489,12 +15709,8 @@ static int set_equivalent(pTHX_ SV **args, size_t nrefs, const char *name) {
 	av  = (AV*)SvRV(args[0]);
 	len = (size_t)(av_len(av) + 1);
 	for (size_t j = 0; j < len; j++) {
-		SV **tv = av_fetch(av, j, 0);
-		STRLEN klen; const char *key; I32 hklen;
-		if (!(tv && SvOK(*tv)))
-			croak("%s: undefined value at array ref index %" UVuf " (argument 0)", name, (UV)j);
-		key   = SvPV(*tv, klen);
-		hklen = SvUTF8(*tv) ? -(I32)klen : (I32)klen;
+		STRLEN klen; I32 hklen;
+		const char *key = set_key_at(aTHX_ av, j, name, 0, NULL, &klen, &hklen);
 		(void)hv_store(ref, key, hklen, &PL_sv_undef, 0);
 	}
 	ref_size = (IV)HvUSEDKEYS(ref);
@@ -15506,12 +15722,8 @@ static int set_equivalent(pTHX_ SV **args, size_t nrefs, const char *name) {
 		len  = (size_t)(av_len(av) + 1);
 		seen = (HV*)sv_2mortal((SV*)newHV()); //per-ref dedup
 		for (size_t j = 0; j < len; j++) {
-			SV **tv = av_fetch(av, j, 0);
-			STRLEN klen; const char *key; I32 hklen;
-			if (!(tv && SvOK(*tv)))
-				croak("%s: undefined value at array ref index %" UVuf " (argument %" UVuf ")", name, (UV)j, (UV)i);
-			key   = SvPV(*tv, klen);
-			hklen = SvUTF8(*tv) ? -(I32)klen : (I32)klen;
+			STRLEN klen; I32 hklen;
+			const char *key = set_key_at(aTHX_ av, j, name, i, NULL, &klen, &hklen);
 			if (hv_exists(seen, key, hklen)) continue; //already counted for this ref
 			(void)hv_store(seen, key, hklen, &PL_sv_undef, 0);
 			if (!hv_exists(ref, key, hklen)) return 0; //value absent from first ref
@@ -15521,58 +15733,76 @@ static int set_equivalent(pTHX_ SV **args, size_t nrefs, const char *name) {
 	}
 	return 1;
 }
-/*Backs intersection(), Lonly() and Ronly(). For every distinct value it counts
-how many of the input arrays contain it (per-array dedup via `loc`), building
-the candidate list `order` from one chosen array in first-appearance order,
-then emits the candidates whose count matches the wanted multiplicity:
+/*Backs intersection(), Lonly() and Ronly(). It counts, for every distinct
+value of one chosen array, how many of the input arrays contain it, then emits
+the candidates whose count matches the wanted multiplicity:
   want_all != 0 -> count == nrefs (in every array: intersection)
   want_all == 0 -> count == 1     (in the chosen array and no other)
 `from_last` picks which array supplies the candidates: the FIRST (0) for
 intersection/Lonly, or the LAST (1) for Ronly. With want_all == 0 that makes
 Lonly "only in the first array" and Ronly "only in the last array", so the
 two-array Ronly(a,b) still equals Lonly(b,a). Every emitted value is present
-in the chosen array, so drawing candidates from it is correct for all three.*/
+in the chosen array, so drawing candidates from it is correct for all three.
+
+The chosen array is read first, and only its values get a slot: `slot` maps
+each to its index in `order` (the candidates, first appearance first), and
+cnt[] and last[] hold, per candidate, how many arrays contain it and the last
+array that counted it -- which is the per-array dedup.  The other arrays then
+only look their values up.  This used to keep a count for every value of every
+array, the ones the chosen array lacks included, plus a dedup hash per array.
+
+A candidate is copied once, into `order`, and the result is those copies:
+they are private to this call, so handing them out costs nothing more.  They
+used to be copied a second time onto the stack.*/
 static SV** set_multiplicity(pTHX_ SV **sp, SV **args, size_t nrefs, bool want_all, bool from_last, const char *name, int gimme) {
-	HV *count = (HV*)sv_2mortal((SV*)newHV());
+	HV *slot = (HV*)sv_2mortal((SV*)newHV());
 	AV *order = (AV*)sv_2mortal((SV*)newAV());
-	size_t n = 0, olen;
-	IV want = want_all ? (IV)nrefs : 1;
-	for (size_t i = 0; i < nrefs; i++) {
-		SV *arg = args[i];
-		HV *loc; AV *av; size_t len;
-		if (!(SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV))
+	const size_t want = want_all ? nrefs : 1;
+	const size_t chosen = from_last ? nrefs - 1 : 0;
+	for (size_t i = 0; i < nrefs; i++)	//every argument is checked before any is read
+		if (!(SvROK(args[i]) && SvTYPE(SvRV(args[i])) == SVt_PVAV))
 			croak("%s: argument index %" UVuf " of %" UVuf " total (max index %" UVuf ") is not an array reference", name, (UV)i, (UV)nrefs, (UV)(nrefs - 1));
-		av  = (AV*)SvRV(arg);
-		len = (size_t)(av_len(av) + 1);
-		loc = (HV*)sv_2mortal((SV*)newHV());   //per-ref dedup
+	{
+		AV *av = (AV*)SvRV(args[chosen]);
+		const size_t len = (size_t)(av_len(av) + 1);
 		for (size_t j = 0; j < len; j++) {
-			SV **tv = av_fetch(av, j, 0);
-			STRLEN klen; const char *key; I32 hklen; SV **cv;
-			if (!(tv && SvOK(*tv)))
-				croak("%s: undefined value at array ref index %" UVuf " (argument %" UVuf ")", name, (UV)j, (UV)i);
-			key   = SvPV(*tv, klen);
-			hklen = SvUTF8(*tv) ? -(I32)klen : (I32)klen;
-			if (hv_exists(loc, key, hklen)) continue;   //already counted for this ref
-			(void)hv_store(loc, key, hklen, &PL_sv_undef, 0);
-			cv = hv_fetch(count, key, hklen, 1);
-			if (cv && *cv) sv_setiv(*cv, SvOK(*cv) ? SvIV(*cv) + 1 : 1);
-			if (i == (from_last ? nrefs - 1 : 0))       //candidates: chosen ref only
-				av_push(order, newSVsv(*tv));
+			STRLEN klen; I32 hklen; SV *v;
+			const char *key = set_key_at(aTHX_ av, j, name, chosen, &v, &klen, &hklen);
+			SV **sl = hv_fetch(slot, key, hklen, 1);
+			if (!sl) croak("%s: internal hash error", name);
+			if (SvOK(*sl)) continue;	//a repeat within the chosen array
+			sv_setuv(*sl, (UV)(av_len(order) + 1));
+			av_push(order, newSVsv(v));
 		}
 	}
-	olen = (size_t)(av_len(order) + 1);
-	for (size_t oi = 0; oi < olen; oi++) {
-		SV **e = av_fetch(order, oi, 0);
-		STRLEN klen; const char *key; I32 hklen; SV **cv;
-		if (!(e && *e)) continue;
-		key   = SvPV(*e, klen);
-		hklen = SvUTF8(*e) ? -(I32)klen : (I32)klen;
-		cv    = hv_fetch(count, key, hklen, 0);
-		if (cv && *cv && SvIV(*cv) == want) {
-			if (gimme != G_SCALAR) XPUSHs(sv_2mortal(newSVsv(*e)));
-			n++;
+	const size_t ncand = (size_t)(av_len(order) + 1);
+	size_t *cnt, *last;	//per candidate: arrays containing it, and the last one that counted it
+	ENTER;	//its LEAVE frees cnt and last, as a croak's unwinding does
+	Newx(cnt, ncand ? ncand : 1, size_t);  SAVEFREEPV(cnt);
+	Newx(last, ncand ? ncand : 1, size_t); SAVEFREEPV(last);
+	for (size_t k = 0; k < ncand; k++) { cnt[k] = 1; last[k] = chosen; }
+	for (size_t i = 0; i < nrefs; i++) {
+		if (i == chosen) continue;
+		AV *av = (AV*)SvRV(args[i]);
+		const size_t len = (size_t)(av_len(av) + 1);
+		for (size_t j = 0; j < len; j++) {
+			STRLEN klen; I32 hklen;
+			const char *key = set_key_at(aTHX_ av, j, name, i, NULL, &klen, &hklen);
+			SV **sl = hv_fetch(slot, key, hklen, 0);
+			if (!sl) continue;	//not a candidate
+			const size_t k = (size_t)SvUV(*sl);
+			if (last[k] == i) continue;	//already counted for this array
+			last[k] = i;
+			cnt[k]++;
 		}
 	}
+	size_t n = 0;
+	for (size_t k = 0; k < ncand; k++) {
+		if (cnt[k] != want) continue;
+		if (gimme != G_SCALAR) XPUSHs(sv_2mortal(SvREFCNT_inc_simple_NN(AvARRAY(order)[k])));
+		n++;
+	}
+	LEAVE;
 	if (gimme == G_SCALAR) XPUSHs(sv_2mortal(newSVuv(n)));
 	return sp;
 }
@@ -17421,6 +17651,55 @@ static void ip_fill_column(pTHX_ AV *vals, AV *xav, const char *method,
 	}
 }
 
+/*The checks every 2x2 cell count gets, from either call form.  NaN and Inf used
+to pass both: epi_2x2([Inf,1,2,3]) returned an odds ratio of Inf with the
+interval [Inf, Inf], and a NaN cell in cmh_test() made every output NaN where
+R's mantelhaen.test() stops with "NAs are not allowed".*/
+static void epi_check_cells(pTHX_ const char *who, NV a, NV b, NV c, NV d) {
+	if (nv_isnan(a) || nv_isnan(b) || nv_isnan(c) || nv_isnan(d))
+		croak("%s: cell counts must not be NaN", who);
+	if (nv_isinf(a) || nv_isinf(b) || nv_isinf(c) || nv_isinf(d))
+		croak("%s: cell counts must be finite", who);
+	if (a < 0 || b < 0 || c < 0 || d < 0)
+		croak("%s: cell counts must be non-negative", who);
+}
+
+/*prop_test()'s x, n or p: a scalar or an array ref, read into a buffer of
+*len NVs that is SAVEFREEPV()d, so the caller brackets it with ENTER/LEAVE.  A
+missing value -- a hole, an undef, a NaN -- comes back as NaN for the caller to
+drop; anything else that is not a number croaks.*/
+static NV *prop_read_vec(pTHX_ SV *sv, size_t *len, const char *what) {
+	NV *out;
+	if (SvROK(sv) && SvTYPE(SvRV(sv)) == SVt_PVAV) {
+		AV *av = (AV *)SvRV(sv);
+		const size_t n = (size_t)(av_len(av) + 1);
+		Newx(out, n ? n : 1, NV);
+		SAVEFREEPV(out);
+		for (size_t i = 0; i < n; i++) {
+			SV *e = av_slow_at(aTHX_ av, (SSize_t)i);
+			if (!e) { out[i] = NV_NAN; continue; }
+			e = sv_fetched(aTHX_ e);
+			if (!sv_is_numeric_arg(aTHX_ e))
+				croak("prop_test: '%s' at index %" UVuf " is not a number", what, (UV)i);
+			out[i] = SvNV(e);
+		}
+		*len = n;
+		return out;
+	}
+	Newx(out, 1, NV);
+	SAVEFREEPV(out);
+	SvGETMAGIC(sv);
+	if (!SvOK(sv)) out[0] = NV_NAN;
+	else {
+		sv = sv_fetched(aTHX_ sv);
+		if (!sv_is_numeric_arg(aTHX_ sv))
+			croak("prop_test: '%s' is not a number", what);
+		out[0] = SvNV(sv);
+	}
+	*len = 1;
+	return out;
+}
+
 /*epidemiology: parse a 2x2 table from an array ref
 Accepts a flat [a,b,c,d] or a nested [[a,b],[c,d]].  Layout convention
 (rows = exposure/treatment, columns = outcome):
@@ -17449,8 +17728,7 @@ static void epi_read_2x2(pTHX_ SV *sv, const char *who, NV *a, NV *b, NV *c, NV 
 	} else {
 		croak("%s: expected 4 cells (a,b,c,d) or 2 rows of 2 cells", who);
 	}
-	if (*a < 0 || *b < 0 || *c < 0 || *d < 0)
-		croak("%s: cell counts must be non-negative", who);
+	epi_check_cells(aTHX_ who, *a, *b, *c, *d);
 }
 
 // ROC / AUC
@@ -17462,66 +17740,184 @@ static int rocpt_cmp_desc(const void *a, const void *b) {
 	return 0;
 }
 
-/*(value, original-index) pair, sorted ascending by value.  Used by bedroc's
-active_frac mode to pick exactly ceil(frac*N) items from the low or high
-tail of the second array as the actives (matching an argsort selection).*/
+/*(value, original-index) pair, sorted ascending by value.  Used by the
+active_frac mode of auroc() and bedroc() to pick exactly ceil(frac*N) items
+from the low or high tail of the truth array as the actives (matching an
+argsort selection).*/
 typedef struct { NV v; size_t i; } NVIdx;
 static int nvidx_cmp_asc(const void *a, const void *b) {
-	NV x = ((const NVIdx *)a)->v, y = ((const NVIdx *)b)->v;
-	return (x > y) - (x < y);
+	const NVIdx *pa = (const NVIdx *)a, *pb = (const NVIdx *)b;
+	const int c = (pa->v > pb->v) - (pa->v < pb->v);
+	/*Ties go by index, so which of several equal values falls inside the
+	fraction does not depend on the platform's qsort().*/
+	return c ? c : (pa->i > pb->i) - (pa->i < pb->i);
 }
 
-/*Split parallel score/label arrays into the positive and negative score
-vectors.  A label counts as positive when its string form equals `positive`.
-With lower_pos set, the score sign is flipped (lower marker => more positive).
-Allocates pos/neg via Newx; the caller frees them.  Croaks on a bad shape.*/
-static void roc_split(pTHX_ AV *sav, AV *lav, const char *positive, bool lower_pos, NV **pos, size_t *m, NV **neg, size_t *n, const char *who) {
-	SSize_t N = av_len(sav) + 1;
+/*The `direction` option of auc(), auroc() and roc(): TRUE when a lower score is
+the more positive.  Anything but '>' or '<' used to be read as '>' without a
+word, since only the first character was looked at.*/
+static bool roc_direction(pTHX_ SV *v, const char *who) {
+	const char *d = SvPV_nolen(v);
+	if (strEQ(d, ">")) return FALSE;
+	if (strEQ(d, "<")) return TRUE;
+	croak("%s: direction must be '>' or '<', not '%s'", who, d);
+	return FALSE;	//not reached
+}
+
+/*The score at index i, into *out, or FALSE when it is missing.
+
+A hole, an undef and a NaN are each R's NA, and pROC's roc() drops such a case
+along with its label (na.rm = TRUE, its default).  Up to 0.3217 a NaN was
+kept: every comparison against it is false, so roc()'s threshold sweep stood
+still on it and pushed a fresh curve point on every pass until memory ran out,
+bedroc() spun forever on the same test, and auc() returned whatever the sort
+happened to make of it.  An undef was read as 0.
+
+A value that is not a number croaks: SvNV() turned it into 0, and under
+FATAL warnings died past the caller's buffers.*/
+static bool roc_score_at(pTHX_ AV *av, SSize_t i, const char *who, NV *out) {
+	SV *sv = av_slow_at(aTHX_ av, i);	//runs get magic once; NULL for a hole or undef
+	if (!sv) return FALSE;
+	sv = sv_fetched(aTHX_ sv);
+	if (!sv_is_numeric_arg(aTHX_ sv))
+		croak("%s: score at index %" IVdf " is not a number", who, (IV)i);
+	const NV s = SvNV(sv);
+	if (nv_isnan(s)) return FALSE;
+	*out = s;
+	return TRUE;
+}
+
+/*Whether the label at index i is the positive class: 1 when it is, 0 when it
+is not, -1 when it is missing (a hole or undef, which used to count as
+negative).  A label is positive when it is `eq` to `positive`.
+
+A plain integer or double is rendered into a scratch buffer by nk_num_pv()
+instead of through SvPV(), which caches a string on the caller's own SV: a
+column of 0/1 labels grew by a string per cell, for good, on every call.  Such
+a rendering is ASCII, so comparing its bytes with pbytes, which hold
+`positive` in UTF-8 when it is flagged so, is what `eq` would decide.  Any
+other label goes through sv_eq(), which reconciles a UTF-8 string with a byte
+string the way `eq` does; the strEQ() of two SvPV()s this replaces called
+"\x{e9}" and its utf8::upgrade()d copy different labels.*/
+static short int roc_label_at(pTHX_ AV *av, SSize_t i, SV *positive, const char *pbytes, STRLEN plen, bool fast_nv) {	// no restrict: perl-managed
+	SV *sv = av_slow_at(aTHX_ av, i);
+	if (!sv) return -1;
+	sv = sv_fetched(aTHX_ sv);	//so sv_eq() below does not FETCH a tied cell again
+	char numbuf[NK_NUMBUF];
+	STRLEN len;
+	const char *str = nk_num_pv(sv, numbuf, &len, fast_nv);
+	if (str) return (len == plen && memcmp(str, pbytes, plen) == 0) ? 1 : 0;
+	return sv_eq(sv, positive) ? 1 : 0;
+}
+
+/*Descending by score: the order roc()'s sweep walks the thresholds in.  No
+NaN reaches the sort -- roc_score_at() drops it -- so this is a strict weak
+ordering.*/
+#define ROCPT_LESS(a, b) ((a).score > (b).score)
+LIKER_DEFINE_SORT(ROCPt, rocpt_desc, ROCPT_LESS)
+
+/*Read parallel score and label arrays into one ROCPt per complete case,
+sorted by descending score, with the sign of every score flipped when
+lower_pos is set.  The cases with a missing score or label are dropped, and
+*m and *n count the positives and negatives that remain.
+
+The array is SAVEFREEPV()d, so the caller brackets the call with ENTER/LEAVE
+and never frees it: a croak here or in the caller -- a score that is not a
+number, an overloaded label whose stringification dies -- then gives it back
+too.  This replaces roc_split(), whose two Newx() buffers leaked on any such
+croak.*/
+static ROCPt *roc_read(pTHX_ AV *sav, AV *lav, SV *positive, bool lower_pos, size_t *m, size_t *n, const char *who) {
+	const SSize_t N = av_len(sav) + 1;
 	if (N != av_len(lav) + 1)
 		croak("%s: scores and labels must be the same length", who);
 	if (N < 1) croak("%s: need at least one observation", who);
-	NV *P; Newx(P, N, NV);
-	NV *Q; Newx(Q, N, NV);
-	size_t mm = 0, nn = 0;
+	ROCPt *pts;
+	Newx(pts, N, ROCPt);
+	SAVEFREEPV(pts);
+	const bool fast_nv = nk_fast_nv_ok(aTHX);
+	/*positive's bytes for roc_label_at()'s fast path: UTF-8 when the SV is
+	flagged, since a number's rendering is ASCII and both forms agree there.
+	sv_mortalcopy() so the caller's SV is not given a cached string.*/
+	SV *pcopy = sv_mortalcopy(positive);
+	STRLEN plen;
+	const char *pbytes = SvUTF8(pcopy) ? SvPVutf8(pcopy, plen) : SvPVbyte(pcopy, plen);
+	size_t k = 0, mm = 0;	//cases kept, and the positives among them
 	for (SSize_t i = 0; i < N; i++) {
-		SV **sp = av_fetch(sav, i, 0), **lp = av_fetch(lav, i, 0);
-		NV s = (sp && *sp) ? SvNV(*sp) : NAN;
-		if (lower_pos) s = -s;
-		bool ispos = (lp && *lp) ? strEQ(SvPV_nolen(*lp), positive) : 0;
-		if (ispos) P[mm++] = s; else Q[nn++] = s;
+		NV s;
+		if (!roc_score_at(aTHX_ sav, i, who, &s)) continue;
+		const short int lab = roc_label_at(aTHX_ lav, i, pcopy, pbytes, plen, fast_nv);
+		if (lab < 0) continue;
+		pts[k].score = lower_pos ? -s : s;
+		pts[k].lab   = lab;
+		mm += (size_t)lab;
+		k++;
 	}
-	if (mm == 0 || nn == 0) {
-		Safefree(P); Safefree(Q);
-		croak("%s: need both positive and negative labels (positive='%s')", who, positive);
-	}
-	*pos = P; *m = mm; *neg = Q; *n = nn;
+	if (mm == 0 || mm == k)
+		croak("%s: need both positive and negative labels (positive='%" SVf "') "
+		      "among the cases with a score and a label", who, SVfARG(pcopy));
+	rocpt_desc_sort(pts, k);
+	*m = mm; *n = k - mm;
+	return pts;
 }
 
-/*DeLong AUC (c-statistic) and its standard error for one ROC curve.  Higher
-score = more positive.  Midranks make ties exact; AUC equals the
-Mann-Whitney concordance probability.*/
-static void roc_delong(pTHX_ const NV *pos, size_t m, const NV *neg, size_t n, NV *auc_out, NV *se_out) {
-	size_t N = m + n;
-	NV *comb, *TX, *TY, *TZ, *V10, *V01;
-	Newx(comb, N, NV); Newx(TX, m, NV); Newx(TY, n, NV);
-	Newx(TZ, N, NV);   Newx(V10, m, NV); Newx(V01, n, NV);
-	for (size_t i = 0; i < m; i++) comb[i]     = pos[i];
-	for (size_t j = 0; j < n; j++) comb[m + j] = neg[j];
-	rank_data(pos,  TX, m); //midranks within positives
-	rank_data(neg,  TY, n); //midranks within negatives
-	rank_data(comb, TZ, N); //midranks in the combined sample
-	NV auc = 0.0;
-	for (size_t i = 0; i < m; i++) { V10[i] = (TZ[i] - TX[i]) / (NV)n; auc += V10[i]; }
-	auc /= (NV)m;
-	for (size_t j = 0; j < n; j++)   V01[j] = 1.0 - (TZ[m + j] - TY[j]) / (NV)m;
-	NV s10 = 0.0, s01 = 0.0;
-	for (size_t i = 0; i < m; i++) { NV dz = V10[i] - auc; s10 += dz * dz; }
-	for (size_t j = 0; j < n; j++) { NV dz = V01[j] - auc; s01 += dz * dz; }
-	s10 = (m > 1) ? s10 / (NV)(m - 1) : 0.0;
-	s01 = (n > 1) ? s01 / (NV)(n - 1) : 0.0;
+/*DeLong AUC (the c-statistic) and its standard error, from the m + n cases of
+roc_read() -- sorted by descending score.  se may be NULL when only the AUC is
+wanted; *groups, when not NULL, gets the number of distinct scores.
+
+DeLong's placement values are per tie group, so one walk over the sorted cases
+gives them all.  A case in a group holding p_g positives and q_g negatives,
+with P_above positives scored higher and Q_below negatives scored lower, has
+
+  V10 = (Q_below + q_g / 2) / n     for a positive (the share of negatives it beats)
+  V01 = (P_above + p_g / 2) / m     for a negative (the share of positives beating it)
+
+which is what the midrank form (TZ - TX) / n and 1 - (TZ - TY) / m works out
+to.  The AUC is the mean of V10, and the variance is var(V10)/m + var(V01)/n,
+as in pROC's delongPlacements() and ci.auc(method = "delong").
+
+This replaces three rank_data() sorts and six scratch arrays (two of them N
+long) with the one sort roc_read() has already done.  The AUC's numerator is
+a sum of whole and half counts, so it is exact while m * n stays under 2^53
+and the AUC is rounded once.
+
+With fewer than two cases in either class one of those variances has a single
+term and is undefined; pROC's var() is NA there, and so is this.  It used to
+be 0, which made the confidence interval collapse onto the AUC.*/
+static void roc_auc_delong(const ROCPt *restrict pts, size_t m, size_t n, NV *restrict auc_out, NV *restrict se_out, size_t *restrict groups) {
+	const size_t N = m + n;
+	NV num = 0.0;	//sum over positives of n * V10
+	size_t ng = 0, qa = 0;	//tie groups seen, negatives above the current group
+	for (size_t i = 0; i < N; ) {
+		const NV s = pts[i].score;
+		size_t j = i, pg = 0;
+		while (j < N && pts[j].score == s) { pg += (size_t)pts[j].lab; j++; }
+		const size_t qg = (j - i) - pg;
+		num += (NV)pg * ((NV)(n - qa - qg) + 0.5 * (NV)qg);
+		qa += qg;
+		ng++;
+		i = j;
+	}
+	const NV auc = num / ((NV)m * (NV)n);
 	*auc_out = auc;
-	*se_out  = nv_sqrt(s10 / (NV)m + s01 / (NV)n);
-	Safefree(comb); Safefree(TX); Safefree(TY); Safefree(TZ); Safefree(V10); Safefree(V01);
+	if (groups) *groups = ng;
+	if (!se_out) return;
+	if (m < 2 || n < 2) { *se_out = NV_NAN; return; }
+	NV s10 = 0.0, s01 = 0.0;
+	size_t pa = 0;	//positives above the current group
+	qa = 0;
+	for (size_t i = 0; i < N; ) {
+		const NV s = pts[i].score;
+		size_t j = i, pg = 0;
+		while (j < N && pts[j].score == s) { pg += (size_t)pts[j].lab; j++; }
+		const size_t qg = (j - i) - pg;
+		const NV d10 = ((NV)(n - qa - qg) + 0.5 * (NV)qg) / (NV)n - auc;
+		const NV d01 = ((NV)pa + 0.5 * (NV)pg) / (NV)m - auc;
+		s10 += (NV)pg * d10 * d10;
+		s01 += (NV)qg * d01 * d01;
+		pa += pg; qa += qg;
+		i = j;
+	}
+	*se_out = nv_sqrt(s10 / ((NV)(m - 1) * (NV)m) + s01 / ((NV)(n - 1) * (NV)n));
 }
 
 // survival analysis
@@ -18090,9 +18486,9 @@ here first, which is where cov() puts the same question ("resolve it to a
 number here rather than re-running strcmp() at each branch") and where
 p_adjust() puts it too.
 
-Keep this list and dunn_padjust()'s dispatch in step; the croak at the end of
-that chain is now unreachable from dunn_test() and is left as a guard for any
-future caller that does not ask first*/
+Keep this list and dunn_padjust()'s dispatch in step; dunn_padjust() asks it
+again itself, before it allocates, as a guard for any future caller that does
+not ask first*/
 static bool dunn_meth_known(const char *m) {
 	return strEQ(m, "none") || strEQ(m, "bonferroni") || strEQ(m, "sidak")
 	    || strEQ(m, "holm") || strEQ(m, "hs")         || strEQ(m, "bh")
@@ -18100,38 +18496,54 @@ static bool dunn_meth_known(const char *m) {
 }
 
 /*Adjust m raw p-values (writes adj[]) for a family of methods, matching R's
-p.adjust / the dunn.test package.  Used by dunn_test.*/
-static void dunn_padjust(const NV *p, size_t m, const char *meth, NV *adj) {
-	size_t *ord = NULL; Newx(ord, m, size_t);   //indices of p sorted ascending
-	for (size_t i = 0; i < m; i++) ord[i] = i;
-	for (size_t a = 0; a + 1 < m; a++) //small m; simple insertion sort
-		for (size_t b = a + 1; b < m; b++)
-			if (p[ord[b]] < p[ord[a]]) { size_t t = ord[a]; ord[a] = ord[b]; ord[b] = t; }
+p.adjust / the dunn.test package.  Used by dunn_test.
+
+A NaN p-value is R's NA, and p.adjust() handles it the way this does: the NaN
+stays NaN, and the rest are adjusted as a family of the mf that are not NaN.
+Up to 0.3217 a NaN went into the family -- as 0 under holm and hs, since
+`NaN > cummax` is false and the running maximum carried on from 0, and as 1
+under bonferroni and bh -- so dunn_test() on constant data reported an
+adjusted p of 0 for every pair.
+
+The order is a qsort() of (p, index) pairs, ties by index as R's order()
+breaks them.  It was a selection sort, O(m^2) in the m = k(k-1)/2 pairs and so
+O(k^4) in the groups: 3.16 s at k = 400.
+
+ord is SAVEFREEPV()d, so the caller is inside ENTER/LEAVE.*/
+static void dunn_padjust(pTHX_ const NV *restrict p, size_t m, const char *restrict meth, NV *restrict adj) {
+	if (!dunn_meth_known(meth))	//before the allocation, so the croak leaks nothing
+		croak("dunn_test: unknown method '%s' (none, bonferroni, sidak, holm, hs, bh, by)", meth);
+	NVIdx *ord;	//the non-NaN p-values with their indices, sorted ascending
+	Newx(ord, m ? m : 1, NVIdx);
+	SAVEFREEPV(ord);
+	size_t mf = 0;	//p-values that are not NaN: the family's size
+	for (size_t i = 0; i < m; i++) {
+		if (nv_isnan(p[i])) { adj[i] = NV_NAN; continue; }
+		ord[mf].v = p[i]; ord[mf].i = i; mf++;
+	}
+	qsort(ord, mf, sizeof(NVIdx), nvidx_cmp_asc);
+	const NV M = (NV)mf;
 
 	if (strEQ(meth, "none")) {
-		for (size_t i = 0; i < m; i++) adj[i] = p[i];
+		for (size_t i = 0; i < mf; i++) adj[ord[i].i] = ord[i].v;
 	} else if (strEQ(meth, "bonferroni")) {
-		for (size_t i = 0; i < m; i++) { NV v = p[i] * m; adj[i] = v < 1.0 ? v : 1.0; }
+		for (size_t i = 0; i < mf; i++) { NV v = ord[i].v * M; adj[ord[i].i] = v < 1.0 ? v : 1.0; }
 	} else if (strEQ(meth, "sidak")) {
-		for (size_t i = 0; i < m; i++) { NV v = 1.0 - nv_pow(1.0 - p[i], (NV)m); adj[i] = v < 1.0 ? v : 1.0; }
+		for (size_t i = 0; i < mf; i++) { NV v = 1.0 - nv_pow(1.0 - ord[i].v, M); adj[ord[i].i] = v < 1.0 ? v : 1.0; }
 	} else if (strEQ(meth, "holm")) {
 		NV cummax = 0.0;
-		for (size_t i = 0; i < m; i++) { NV v = p[ord[i]] * (m - i); if (v > cummax) cummax = v; adj[ord[i]] = cummax < 1.0 ? cummax : 1.0; }
+		for (size_t i = 0; i < mf; i++) { NV v = ord[i].v * (NV)(mf - i); if (v > cummax) cummax = v; adj[ord[i].i] = cummax < 1.0 ? cummax : 1.0; }
 	} else if (strEQ(meth, "hs")) {   //Holm-Sidak
 		NV cummax = 0.0;
-		for (size_t i = 0; i < m; i++) { NV v = 1.0 - nv_pow(1.0 - p[ord[i]], (NV)(m - i)); if (v > cummax) cummax = v; adj[ord[i]] = cummax < 1.0 ? cummax : 1.0; }
+		for (size_t i = 0; i < mf; i++) { NV v = 1.0 - nv_pow(1.0 - ord[i].v, (NV)(mf - i)); if (v > cummax) cummax = v; adj[ord[i].i] = cummax < 1.0 ? cummax : 1.0; }
 	} else if (strEQ(meth, "bh")) {
 		NV cummin = 1.0;
-		for (SSize_t i = (SSize_t)m - 1; i >= 0; i--) { NV v = p[ord[i]] * m / (i + 1.0); if (v < cummin) cummin = v; adj[ord[i]] = cummin < 1.0 ? cummin : 1.0; }
-	} else if (strEQ(meth, "by")) {
-		NV q = 0.0; for (size_t i = 1; i <= m; i++) q += 1.0 / i;
+		for (size_t i = mf; i-- > 0; ) { NV v = ord[i].v * M / ((NV)i + 1.0); if (v < cummin) cummin = v; adj[ord[i].i] = cummin < 1.0 ? cummin : 1.0; }
+	} else { // by
+		NV q = 0.0; for (size_t i = 1; i <= mf; i++) q += 1.0 / (NV)i;
 		NV cummin = 1.0;
-		for (SSize_t i = (SSize_t)m - 1; i >= 0; i--) { NV v = p[ord[i]] * m / (i + 1.0) * q; if (v < cummin) cummin = v; adj[ord[i]] = cummin < 1.0 ? cummin : 1.0; }
-	} else {
-		Safefree(ord);
-		croak("dunn_test: unknown method '%s' (none, bonferroni, sidak, holm, hs, bh, by)", meth);
+		for (size_t i = mf; i-- > 0; ) { NV v = ord[i].v * M / ((NV)i + 1.0) * q; if (v < cummin) cummin = v; adj[ord[i].i] = cummin < 1.0 ? cummin : 1.0; }
 	}
-	Safefree(ord);
 }
 
 /*shared machinery for skew() and kurtosis()
@@ -18837,10 +19249,12 @@ static const char *dens_bw_sj(pTHX_ const NV *x, const NV *xs, size_t n, size_t 
 		Safefree(P.cnt);
 		return NULL;
 	}
-	/*Both bounds defaulted is what lets bw.SJ widen its search interval; if
-	the caller pinned either one, a bracket that does not straddle the root is
-	an error rather than something to grow out of.*/
-	bool bnd_miss = (!have_lower && !have_upper);
+	/*Either bound defaulted is what lets bw.SJ widen its search interval --
+	R's bnd.Miss is missing(lower) || missing(upper) -- and only with both
+	pinned is a bracket that does not straddle the root an error.  This used to
+	need both defaulted, so bw_sj(\@x, upper => 0.05) croaked "no solution"
+	where R's bw.SJ(x, upper = 0.05) widens the interval and answers.*/
+	bool bnd_miss = (!have_lower || !have_upper);
 	NV hmax = 1.144 * scale * nv_pow((NV)n, (NV)-1.0 / 5.0);
 	if (!have_lower) lower = 0.1 * hmax;
 	if (!have_upper) upper = hmax;
@@ -18931,8 +19345,14 @@ static const char *dens_bw_rule(pTHX_ short int rule, const NV *x, const NV *xs,
 want a plain numeric x, so a non-number here is an error rather than something
 to drop quietly: bw.SJ(c(NA,2,3)) is an error in R too (PR#16024), and silently
 dropping it would answer a different question from the one asked.  Returns the
-values in the caller's order through *x_out and sorted through *xs_out; the
-caller frees both.*/
+values in the caller's order through *x_out and sorted through *xs_out.
+
+Both are SAVEFREEPV()d, so the caller brackets the call with ENTER/LEAVE and
+never frees them: a croak, or bw_ucv()'s warning under a $SIG{__WARN__} that
+dies, then gives them back too.  Each element is read through av_slow_at(),
+which runs its get magic before SvOK() is asked; av_fetch() and SvOK() on a
+tied array saw every element as undef, so bw_nrd0(\@tied) croaked that x had
+missing values.*/
 static void dens_read_x(pTHX_ SV *sv, const char *fname,
                         NV **x_out, NV **xs_out,
                         size_t *n_out)
@@ -18944,30 +19364,26 @@ static void dens_read_x(pTHX_ SV *sv, const char *fname,
 	if (n < 2) croak("%s: need at least 2 data points", fname);
 	NV *x, *xs;
 	Newx(x, n, NV);
+	SAVEFREEPV(x);
 	for (size_t i = 0; i < n; i++) {
-		SV **el = av_fetch(av, i, 0);
-		if (!el || !*el || !SvOK(*el) ||
-		    !(SvNIOK(*el) || looks_like_number(*el))) {
-			Safefree(x);
+		SV *el = av_slow_at(aTHX_ av, (SSize_t)i);
+		if (el) el = sv_fetched(aTHX_ el);
+		if (!el || !(SvNIOK(el) || sv_is_numeric_arg(aTHX_ el)))
 			croak("%s: 'x' must be numeric and free of missing values", fname);
-		}
-		x[i] = SvNV(*el);
+		x[i] = SvNV(el);
 		/*NaN and +-Inf are refused here rather than in the estimator, for two
 		reasons.  bw_ucv(), bw_bcv() and bw_sj() reject them a layer down, in
 		dens_pair_cnts(), while bw_nrd0() and bw_nrd() had no such check and
 		returned a number: bw_nrd0() of 1..50 with two NaNs in it answered
 		7.5250570111922, computed from a variance and an interquartile range
 		that are both NaN, via a min() that a NaN silently loses.  And the sort
-		below cannot order a NaN -- every comparison against one is false, which
-		makes cmp_nv3() an inconsistent comparator and the qsort() call
-		undefined behaviour, whatever this platform's qsort happens to do with
-		it.*/
-		if (!nv_isfinite(x[i])) {
-			Safefree(x);
+		below cannot order a NaN -- every comparison against one is false, so
+		no ordering it produces means anything.*/
+		if (!nv_isfinite(x[i]))
 			croak("%s: non-finite x in bandwidth calculation", fname);
-		}
 	}
 	Newx(xs, n, NV);
+	SAVEFREEPV(xs);
 	Copy(x, xs, n, NV);
 	nv_sort(xs, n);		//inlined comparison; see LIKER_DEFINE_SORT
 	*x_out = x; *xs_out = xs; *n_out = n;
@@ -28631,7 +29047,7 @@ PPCODE:
 NV min(...)
 	PROTOTYPE: @
 	INIT:
-		NvAcc acc = { 0.0, 0.0, 0.0, 0 };
+		NvAcc acc = { 0.0, 0.0, 0.0, 0, 0.0 };
 	CODE:
 		args_get_magic(aTHX_ ax, items);	//before any SvOK() or SvROK() reads an argument
 		/*Stack_off_t, not a short: `items` is the whole flattened argument
@@ -28669,7 +29085,7 @@ NV min(...)
 NV max(...)
 	PROTOTYPE: @
 	INIT:
-		NvAcc acc = { 0.0, 0.0, 0.0, 0 };
+		NvAcc acc = { 0.0, 0.0, 0.0, 0, 0.0 };
 	CODE:
 		args_get_magic(aTHX_ ax, items);	//before any SvOK() or SvROK() reads an argument
 		for (Stack_off_t i = 0; i < items; i++) {
@@ -28759,24 +29175,23 @@ CODE:
 		NV nv = SvNV(n_sv);
 		if (nv_isnan(nv) || nv < 0.0)
 			croak_nv("runif: 'n' must be a non-negative integer, not %" NVgf, nv);
-		if (nv > (NV)IV_MAX)
-			croak_nv("runif: 'n' is too large: %" NVgf, nv);
-		n = (size_t)nv;	// truncates toward zero, as R does
+		n = sv_count_arg(aTHX_ n_sv, "runif", "n", 0);	//truncates toward zero, as R does; caps at SIZE_MAX
 	}
 	// Ensure PRNG is seeded
 	AUTO_SEED_PRNG();
+	/*R's runif() is NaN, with a warning, for an infinite bound as well as for an
+	inverted range (nmath/runif.c: !R_FINITE(a) || !R_FINITE(b) || b < a).
+	runif(n, 0, Inf) used to return Inf, min + Inf * u, and a NaN bound
+	already gave NaN.  No uniform is drawn for such a call, as in R.*/
+	const bool na = !nv_isfinite(min) || !nv_isfinite(max) || max < min;
+	if (na && n > 0) warn("runif: NAs produced");	//before the array exists, so a dying handler leaks nothing
 	AV *results = newAV();
 	if (n > 0) {
 		av_extend(results, n - 1);
 	}
 	const NV range = max - min;
 	for (size_t j = 0; j < n; j++) {
-		NV r;
-		if (max < min) {
-			r = NAN; // R behavior for inverted ranges
-		} else {
-			r = min + range * Drand01();
-		}
+		const NV r = na ? NV_NAN : min + range * Drand01();
 		av_push(results, newSVnv(r));
 	}
 	RETVAL = newRV_noinc((SV*)results);
@@ -28791,27 +29206,51 @@ SV* rbinom(...)
 	AUTO_SEED_PRNG();
 	if (items % 2 != 0)
 		croak("Usage: rbinom(n => 10, size => 100, prob => 0.5)");
+	args_get_magic(aTHX_ ax, items);
 	//Parse named arguments
 	size_t n = 0, size = 0;
 	NV prob = 0.5;
-	bool size_set = 0, prob_set = 0;
-
-	for (unsigned short i = 0; i < items; i += 2) {
+	bool n_set = FALSE, size_set = FALSE, prob_set = FALSE;
+	bool na = FALSE;	//a fractional size or a NaN prob: R's rbinom() gives NA for every draw
+	/*Stack_off_t, the type of `items`: an unsigned short wrapped past 65535
+	arguments and the loop never ended.*/
+	for (Stack_off_t i = 0; i < items; i += 2) {
 		const char* key = SvPV_nolen(ST(i));
 		SV* val = ST(i + 1);
-
-		if      (strEQ(key, "n"))      n    = sv_count_arg(aTHX_ val, "rbinom", "n", 0);
-		else if (strEQ(key, "size")) { size = sv_count_arg(aTHX_ val, "rbinom", "size", 0); size_set = 1; }
-		else if (strEQ(key, "prob")) { prob = SvNV(val); prob_set = 1; }
+		if (strEQ(key, "n")) {
+			n = sv_count_arg(aTHX_ val, "rbinom", "n", 0);
+			n_set = TRUE;
+		} else if (strEQ(key, "size")) {
+			size = sv_count_arg(aTHX_ val, "rbinom", "size", 0);
+			/*sv_count_arg() truncates, so 2.5 drew from size 2.  R's rbinom()
+			refuses a size that is not a whole number with NA.*/
+			if (SvNV(val) != (NV)size) na = TRUE;
+			size_set = TRUE;
+		} else if (strEQ(key, "prob")) {
+			/*SvNV() read 'abc' as 0, so rbinom(prob => 'abc') returned zeros.
+			NaN passes `prob < 0 || prob > 1`, and binom_draw() then never
+			returned; R answers it with NA.*/
+			if (!SvOK(val) || !sv_is_numeric_arg(aTHX_ val))
+				croak("rbinom: prob must be a number (got '%s')", SvOK(val) ? SvPV_nolen(val) : "undef");
+			prob = SvNV(val);
+			if (nv_isnan(prob)) na = TRUE;
+			prob_set = TRUE;
+		}
 		else croak("rbinom: unknown argument '%s'", key);
 	}
 
-	// R requires size and prob to be explicitly passed in rbinom
+	// R requires n, size and prob to be explicitly passed in rbinom
+	if (!n_set) croak("rbinom: 'n' is a required argument");
 	if (!size_set || !prob_set) croak("rbinom: 'size' and 'prob' are required arguments");
 	if (prob < 0.0 || prob > 1.0) croak("rbinom: prob must be between 0 and 1");
 
+	//Before the array exists, so a $SIG{__WARN__} that dies leaks nothing
+	if (n > 0 && na) warn("rbinom: NAs produced");	//R's warning for the same call
 	AV *result_av = newAV();
-	if (n > 0) {
+	if (n > 0 && na) {
+		av_extend(result_av, n - 1);
+		for (size_t i = 0; i < n; i++) av_store(result_av, (SSize_t)i, newSVnv(NV_NAN));
+	} else if (n > 0) {
 		/*The setup depends only on size and prob, which every variate of this
 		call shares, so it is done once here rather than once per variate --
 		which is what R's static cache is for and what this replaces.*/
@@ -28866,7 +29305,7 @@ SV* hist(SV* x_sv, ...)
 				breaks_sv = ST(1);
 			} else if (items > 2) {
 // Support named parameters even if mixed with positional arguments
-				for (unsigned short i = 1; i < items - 1; i++) {
+				for (Stack_off_t i = 1; i < items - 1; i++) {	//items' own type: an unsigned short wrapped past 65535 and never ended
 					// Make sure the SV holds a string before doing string comparison
 					if (SvPOK(ST(i)) && strEQ(SvPV_nolen(ST(i)), "breaks")) {
 						breaks_sv = ST(i+1);
@@ -28888,9 +29327,15 @@ SV* hist(SV* x_sv, ...)
 			}
 		}
 
-		// 3. Extract Data & Find Range
+		/* 3. Extract Data & Find Range
+
+		Every buffer is SAVEFREEPV()d inside ENTER/LEAVE, so an element whose
+		numeric overload dies gives it back: 50 such croaks on 1e6 elements
+		used to grow RSS by 422 MB.*/
+		ENTER;
 		NV *x;
 		Newx(x, n_raw, NV);
+		SAVEFREEPV(x);
 		size_t n = 0;
 	/*NV_MAX, not DBL_MAX: on a long-double or __float128 build every value
 	above DBL_MAX fails `val < min_val` and leaves min_val at 1.8e308, so
@@ -28899,23 +29344,22 @@ SV* hist(SV* x_sv, ...)
 		NV min_val = NV_MAX, max_val = -NV_MAX;
 
 		for (size_t i = 0; i < n_raw; i++) {
-			SV**tv = av_fetch(x_av, i, 0);
-			if (tv && SvOK(*tv)) {
-				if (!sv_is_numeric_arg(aTHX_ *tv)) {
-					Safefree(x);
-					croak("hist: non-numeric value at index %" UVuf, (UV)i);
-				}
-				NV val = SvNV(*tv);
-				if (!nv_isfinite(val)) continue;   //R: x <- x[is.finite(x)]
-				x[n++] = val;
-				if (val < min_val) min_val = val;
-				if (val > max_val) max_val = val;
-			}
+			/*av_slow_at(), not av_fetch() and SvOK(): a tied array's element
+			has no value until its get magic runs, so every one read as undef
+			and hist(\@tied) croaked that there was no numeric data.*/
+			SV *tv = av_slow_at(aTHX_ x_av, (SSize_t)i);
+			if (!tv) continue;
+			tv = sv_fetched(aTHX_ tv);
+			if (!sv_is_numeric_arg(aTHX_ tv))
+				croak("hist: non-numeric value at index %" UVuf, (UV)i);
+			NV val = SvNV(tv);
+			if (!nv_isfinite(val)) continue;   //R: x <- x[is.finite(x)]
+			x[n++] = val;
+			if (val < min_val) min_val = val;
+			if (val > max_val) max_val = val;
 		}
-		if (n == 0) {
-			Safefree(x);
+		if (n == 0)
 			croak("hist: input contains no valid numeric data");
-		}
 		// 4. Bin count, where the caller left it to Sturges
 		if (n_bins == 0) n_bins = calculate_sturges_bins(n);
 /* 5. Breakpoints, R's way.
@@ -28941,6 +29385,7 @@ SV* hist(SV* x_sv, ...)
 		Newx(mids,    n_bins,     NV);
 		Newx(density, n_bins,     NV);
 		Newx(counts,  n_bins,     size_t);
+		SAVEFREEPV(breaks); SAVEFREEPV(mids); SAVEFREEPV(density); SAVEFREEPV(counts);
 		nv_pretty_fill(pretty_lo, pretty_up, pretty_n, breaks);
 		// 7. Compute Statistics
 		compute_hist_logic(x, n, breaks, n_bins, counts, mids, density,
@@ -28963,9 +29408,7 @@ SV* hist(SV* x_sv, ...)
 		hv_stores(res_hv, "counts",  newRV_noinc((SV*)av_counts));
 		hv_stores(res_hv, "mids",    newRV_noinc((SV*)av_mids));
 		hv_stores(res_hv, "density", newRV_noinc((SV*)av_density));
-		// Clean
-		Safefree(x); Safefree(breaks); Safefree(mids);
-		Safefree(density); Safefree(counts);
+		LEAVE;	//frees x, breaks, mids, density and counts
 		RETVAL = newRV_noinc((SV*)res_hv);
 	}
 	OUTPUT:
@@ -29147,7 +29590,7 @@ SV* quantile(...)
 NV mean(...)
 	PROTOTYPE: @
 	INIT:
-		NvAcc acc = { 0.0, 0.0, 0.0, 0 };
+		NvAcc acc = { 0.0, 0.0, 0.0, 0, 0.0 };
 	CODE:
 		args_get_magic(aTHX_ ax, items);	//before any SvOK() or SvROK() reads an argument
 		for (Stack_off_t i = 0; i < items; i++) {
@@ -29159,40 +29602,44 @@ NV mean(...)
 				for (; j < len; j++) {
 					SV* tv = av_slow_at(aTHX_ av, j);
 					if (tv) {
-						acc.sum += nv_arg_at(aTHX_ tv, "mean", (UV)j, (UV)i);
-						acc.count++;
+						nv_acc_add(&acc, nv_arg_at(aTHX_ tv, "mean", (UV)j, (UV)i));
 					} else {
 						croak("mean: undefined value at array ref index %" UVuf " (argument %" UVuf ")", (UV)j, (UV)i);
 					}
 				}
 			} else if (SvOK(arg)) {
-				acc.sum += nv_arg(aTHX_ arg, "mean", (UV)i);
-				acc.count++;
+				nv_acc_add(&acc, nv_arg(aTHX_ arg, "mean", (UV)i));
 			} else {
 				croak("mean: undefined value at argument index %" UVuf, (UV)i);
 			}
 		}
 		if (acc.count == 0) croak("mean needs >= 1 element");
-		RETVAL = acc.sum / acc.count;
+		RETVAL = args_mean_of(aTHX_ ax, items, "mean", &acc);
 	OUTPUT:
 		RETVAL
 
 void mode(...)
 	PROTOTYPE: @
 	PREINIT:
-	HV *counts;
-	HV *originals;
+	HV *slot_of;
+	AV *orig, *cnt;
 	size_t max_count = 0, arg_count = 0;
-	HE *he;
 	PPCODE:
 	args_get_magic(aTHX_ ax, items);	//before any SvOK() or SvROK() reads an argument
-	/*counts:    string(value) -> occurrence count
-	originals: string(value) -> SV* first-seen original
-	Both are keyed with the value's UTF-8 flag (a negative length), as a perl
-	hash key would be: by its bytes alone, "\xe9" and its UTF-8 spelling were
-	counted apart, and the two bytes "\xc3\xa9" together with "\x{e9}".*/
-	counts    = (HV *)sv_2mortal((SV *)newHV());
-	originals = (HV *)sv_2mortal((SV *)newHV());
+	/*slot_of: string(value) -> its slot, in first-seen order
+	orig:    slot -> the first-seen original
+	cnt:     slot -> occurrence count
+	The keys carry the value's UTF-8 flag (a negative length), as a perl hash
+	key would: by its bytes alone, "\xe9" and its UTF-8 spelling were counted
+	apart, and the two bytes "\xc3\xa9" together with "\x{e9}".
+
+	Ties come back in the order their values were first seen.  They used to
+	come back in the order a hash iterates, which PERL_HASH_SEED changes from
+	run to run: mode('a','a','c','c','z') gave (c, a) on four seeds in six,
+	where README promises (a, c).*/
+	slot_of = (HV *)sv_2mortal((SV *)newHV());
+	orig    = (AV *)sv_2mortal((SV *)newAV());
+	cnt     = (AV *)sv_2mortal((SV *)newAV());
 
 	for (Stack_off_t i = 0; i < items; i++) {
 		SV *arg = ST(i);
@@ -29204,34 +29651,13 @@ void mode(...)
 				magic has not run calls a tied element undef. sv_fetched()
 				then keeps SvPV() and newSVsv() from running FETCH twice more.*/
 				SV *tv = av_slow_at(aTHX_ av, j);
-				if (tv) {
-					STRLEN klen;
-					tv = sv_fetched(aTHX_ tv);
-					const char *key = SvPV(tv, klen);
-					const I32 sk = SvUTF8(tv) ? -(I32)klen : (I32)klen;
-					SV **slot = hv_fetch(counts, key, sk, 1);
-					if (!slot) croak("mode: internal hash error");
-					size_t cnt = SvOK(*slot) ? SvIV(*slot) + 1 : 1;
-					sv_setiv(*slot, cnt);
-					if (cnt > max_count) max_count = cnt;
-					if (cnt == 1)
-						hv_store(originals, key, sk, newSVsv(tv), 0);
-					arg_count++;
-				} else {
+				if (!tv)
 					croak("mode: undefined value at array ref index %" UVuf " (argument %" UVuf ")", (UV)j, (UV)i);
-				}
+				mode_take(aTHX_ slot_of, orig, cnt, sv_fetched(aTHX_ tv), &max_count);
+				arg_count++;
 			}
 		} else if (SvOK(arg)) {
-			STRLEN klen;
-			const char *key = SvPV(arg, klen);
-			const I32 sk = SvUTF8(arg) ? -(I32)klen : (I32)klen;
-			SV **slot = hv_fetch(counts, key, sk, 1);
-			if (!slot) croak("mode: internal hash error");
-			size_t cnt = SvOK(*slot) ? SvIV(*slot) + 1 : 1;
-			sv_setiv(*slot, cnt);
-			if (cnt > max_count) max_count = cnt;
-			if (cnt == 1)
-				hv_store(originals, key, sk, newSVsv(arg), 0);
+			mode_take(aTHX_ slot_of, orig, cnt, arg, &max_count);
 			arg_count++;
 		} else {
 			croak("mode: undefined value at argument index %" UVuf, (UV)i);
@@ -29241,20 +29667,17 @@ void mode(...)
 	if (arg_count == 0)
 		croak("mode needs >= 1 element");
 
-	hv_iterinit(counts);
-	while ((he = hv_iternext(counts))) {
-		if ((size_t)SvIV(hv_iterval(counts, he)) == max_count) {
-			STRLEN klen;
-			const char *key = HePV(he, klen);
-			SV **orig = hv_fetch(originals, key, HeUTF8(he) ? -(I32)klen : (I32)klen, 0);
-			mXPUSHs(orig ? newSVsv(*orig) : newSVsv(hv_iterkeysv(he)));
-		}
+	{
+		const SSize_t nslot = av_len(cnt) + 1;
+		for (SSize_t k = 0; k < nslot; k++)
+			if ((size_t)SvUV(AvARRAY(cnt)[k]) == max_count)
+				mXPUSHs(newSVsv(AvARRAY(orig)[k]));
 	}
 
 NV sum(...)
 	PROTOTYPE: @
 	INIT:
-		NvAcc acc = { 0.0, 0.0, 0.0, 0 };
+		NvAcc acc = { 0.0, 0.0, 0.0, 0, 0.0 };
 	CODE:
 		args_get_magic(aTHX_ ax, items);	//before any SvOK() or SvROK() reads an argument
 		for (Stack_off_t i = 0; i < items; i++) {
@@ -29266,28 +29689,26 @@ NV sum(...)
 				for (; j < len; j++) {
 					SV* tv = av_slow_at(aTHX_ av, j);
 					if (tv) {
-						acc.sum += nv_arg_at(aTHX_ tv, "sum", (UV)j, (UV)i);
-						acc.count++;
+						nv_acc_add(&acc, nv_arg_at(aTHX_ tv, "sum", (UV)j, (UV)i));
 					} else {
 						croak("sum: undefined value at array ref index %" UVuf " (argument %" UVuf ")", (UV)j, (UV)i);
 					}
 				}
 			} else if (SvOK(arg)) {
-				acc.sum += nv_arg(aTHX_ arg, "sum", (UV)i);
-				acc.count++;
+				nv_acc_add(&acc, nv_arg(aTHX_ arg, "sum", (UV)i));
 			} else {
 				croak("sum: undefined value at argument index %" UVuf, (UV)i);
 			}
 		}
 		if (acc.count == 0) croak("sum needs >= 1 element");
-		RETVAL = acc.sum;
+		RETVAL = nv_acc_total(&acc);
 	OUTPUT:
 		RETVAL
 
 NV sd(...)
 	PROTOTYPE: @
 	INIT:
-		NvAcc acc = { 0.0, 0.0, 0.0, 0 };
+		NvAcc acc = { 0.0, 0.0, 0.0, 0, 0.0 };
 		NV mean, m2 = 0.0, comp = 0.0;
 	CODE:
 		args_get_magic(aTHX_ ax, items);	//before any SvOK() or SvROK() reads an argument
@@ -29318,21 +29739,19 @@ NV sd(...)
 				for (; j < len; j++) {
 					SV* tv = av_slow_at(aTHX_ av, j);
 					if (tv) {
-						acc.sum += nv_arg_at(aTHX_ tv, "sd", (UV)j, (UV)i);
-						acc.count++;
+						nv_acc_add(&acc, nv_arg_at(aTHX_ tv, "sd", (UV)j, (UV)i));
 					} else {
 						croak("sd: undefined value at array ref index %" UVuf " (argument %" UVuf ")", (UV)j, (UV)i);
 					}
 				}
 			} else if (SvOK(arg)) {
-				acc.sum += nv_arg(aTHX_ arg, "sd", (UV)i);
-				acc.count++;
+				nv_acc_add(&acc, nv_arg(aTHX_ arg, "sd", (UV)i));
 			} else {
 				croak("sd: undefined value at argument index %" UVuf, (UV)i);
 			}
 		}
 		if (acc.count < 2) croak("sd needs >= 2 elements");
-		mean = acc.sum / acc.count;
+		mean = args_mean_of(aTHX_ ax, items, "sd", &acc);
 		for (Stack_off_t i = 0; i < items; i++) {	//pass 2: the deviations
 			SV* arg = ST(i);
 			if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
@@ -29357,7 +29776,7 @@ NV sd(...)
 				croak("sd: undefined value at argument index %" UVuf, (UV)i);
 			}
 		}
-		RETVAL = nv_sqrt((m2 - comp * comp / acc.count) / (acc.count - 1));
+		RETVAL = nv_sqrt(var_from_dev(m2, comp, acc.count));
 	OUTPUT:
 		RETVAL
 
@@ -29425,7 +29844,7 @@ void uniq(...)
 NV var(...)
 	PROTOTYPE: @
 	INIT:
-		NvAcc acc = { 0.0, 0.0, 0.0, 0 };
+		NvAcc acc = { 0.0, 0.0, 0.0, 0, 0.0 };
 		NV mean, m2 = 0.0, comp = 0.0;
 	CODE:
 		args_get_magic(aTHX_ ax, items);	//before any SvOK() or SvROK() reads an argument
@@ -29456,21 +29875,19 @@ NV var(...)
 				for (; j < len; j++) {
 					SV* tv = av_slow_at(aTHX_ av, j);
 					if (tv) {
-						acc.sum += nv_arg_at(aTHX_ tv, "var", (UV)j, (UV)i);
-						acc.count++;
+						nv_acc_add(&acc, nv_arg_at(aTHX_ tv, "var", (UV)j, (UV)i));
 					} else {
 						croak("var: undefined value at array ref index %" UVuf " (argument %" UVuf ")", (UV)j, (UV)i);
 					}
 				}
 			} else if (SvOK(arg)) {
-				acc.sum += nv_arg(aTHX_ arg, "var", (UV)i);
-				acc.count++;
+				nv_acc_add(&acc, nv_arg(aTHX_ arg, "var", (UV)i));
 			} else {
 				croak("var: undefined value at argument index %" UVuf, (UV)i);
 			}
 		}
 		if (acc.count < 2) croak("var needs >= 2 elements");
-		mean = acc.sum / acc.count;
+		mean = args_mean_of(aTHX_ ax, items, "var", &acc);
 		for (Stack_off_t i = 0; i < items; i++) {	//pass 2: the deviations
 			SV* arg = ST(i);
 			if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
@@ -29495,7 +29912,7 @@ NV var(...)
 				croak("var: undefined value at argument index %" UVuf, (UV)i);
 			}
 		}
-		RETVAL = (m2 - comp * comp / acc.count) / (acc.count - 1);
+		RETVAL = var_from_dev(m2, comp, acc.count);
 	OUTPUT:
 		RETVAL
 
@@ -29516,13 +29933,19 @@ NV skew(...)
 		{
 			const NV n  = (NV)acc.n;
 			const NV m2 = acc.m2 / n;
-			if (!(m2 > 0.0))
-				croak("skew: zero variance (all %" UVuf " values are equal), "
-				      "so skewness is undefined", (UV)acc.n);
-			const NV g1 = (acc.m3 / n) / nv_pow(m2, 1.5);
-			RETVAL = type == 1 ? g1
-			       : type == 2 ? g1 * nv_sqrt(n * (n - 1.0)) / (n - 2.0)
-			       :             g1 * nv_pow((n - 1.0) / n, 1.5);
+			/*A NaN or an infinite value leaves m2 NaN, and the answer is NaN, as
+			every other reduction here gives for such input.  It used to fail
+			the test below and croak that all the values were equal.*/
+			if (nv_isnan(m2)) RETVAL = NV_NAN;
+			else {
+				if (!(m2 > 0.0))
+					croak("skew: zero variance (all %" UVuf " values are equal), "
+					      "so skewness is undefined", (UV)acc.n);
+				const NV g1 = (acc.m3 / n) / nv_pow(m2, 1.5);
+				RETVAL = type == 1 ? g1
+				       : type == 2 ? g1 * nv_sqrt(n * (n - 1.0)) / (n - 2.0)
+				       :             g1 * nv_pow((n - 1.0) / n, 1.5);
+			}
 		}
 	OUTPUT:
 		RETVAL
@@ -29545,14 +29968,17 @@ NV kurtosis(...)
 		{
 			const NV n  = (NV)acc.n;
 			const NV m2 = acc.m2 / n;
-			if (!(m2 > 0.0))
-				croak("kurtosis: zero variance (all %" UVuf " values are "
-				      "equal), so kurtosis is undefined", (UV)acc.n);
-			const NV r  = (acc.m4 / n) / (m2 * m2);   //4th standardised moment
-			RETVAL = type == 1 ? r - 3.0
-			       : type == 2 ? ((n + 1.0) * (r - 3.0) + 6.0) * (n - 1.0)
-			                     / ((n - 2.0) * (n - 3.0))
-			       :             r * nv_pow(1.0 - 1.0 / n, 2.0) - 3.0;
+			if (nv_isnan(m2)) RETVAL = NV_NAN;	//a NaN or Inf in the data; see skew()
+			else {
+				if (!(m2 > 0.0))
+					croak("kurtosis: zero variance (all %" UVuf " values are "
+					      "equal), so kurtosis is undefined", (UV)acc.n);
+				const NV r  = (acc.m4 / n) / (m2 * m2);   //4th standardised moment
+				RETVAL = type == 1 ? r - 3.0
+				       : type == 2 ? ((n + 1.0) * (r - 3.0) + 6.0) * (n - 1.0)
+				                     / ((n - 2.0) * (n - 3.0))
+				       :             r * nv_pow(1.0 - 1.0 / n, 2.0) - 3.0;
+			}
 		}
 	OUTPUT:
 		RETVAL
@@ -29813,11 +30239,12 @@ PPCODE:
 		croak("Usage: prop_test(\\@successes, \\@trials, p => ..., "
 		      "alternative => 'two.sided', conf_level => 0.95, correct => 1)\n"
 		      "   or prop_test($x, $n, ...) for a single sample");
+	if (items % 2) croak("prop_test: options must be key => value pairs");	//a dangling key used to be ignored
 	const char *alt = "two.sided";
 	NV conf_level = NV_CONF_95;
 	bool correct = 1;
 	SV *p_sv = NULL;
-	for (int i = 2; i + 1 < items; i += 2) {
+	for (Stack_off_t i = 2; i < items; i += 2) {
 		const char *key = SvPV_nolen(ST(i)); SV *v = ST(i + 1);
 		if      (strEQ(key, "p"))            p_sv = v;
 		else if (strEQ(key, "alternative"))  alt = SvPV_nolen(v);
@@ -29830,43 +30257,57 @@ PPCODE:
 	if (strNE(alt, "two.sided") && strNE(alt, "less") && strNE(alt, "greater"))
 		croak("prop_test: alternative must be 'two.sided', 'less' or 'greater'");
 
-	//read x (successes) and n (trials): each a scalar or an array ref
-	NV *x = NULL, *nn = NULL, *pnull = NULL;
-	size_t k = 0;
-	{
-		SV *xsv = ST(0), *nsv = ST(1);
-		if (SvROK(xsv) && SvTYPE(SvRV(xsv)) == SVt_PVAV) {
-			AV *av = (AV*)SvRV(xsv); k = (size_t)(av_len(av) + 1);
-			if (k == 0) croak("prop_test: 'x' is empty");
-			Newx(x, k, NV);
-			for (size_t i = 0; i < k; i++) { SV **e = av_fetch(av, i, 0); x[i] = (e && *e) ? SvNV(*e) : NAN; }
-		} else { k = 1; Newx(x, 1, NV); x[0] = SvNV(xsv); }
-		size_t kn;
-		if (SvROK(nsv) && SvTYPE(SvRV(nsv)) == SVt_PVAV) {
-			AV *av = (AV*)SvRV(nsv); kn = (size_t)(av_len(av) + 1);
-			Newx(nn, kn, NV);
-			for (size_t i = 0; i < kn; i++) { SV **e = av_fetch(av, i, 0); nn[i] = (e && *e) ? SvNV(*e) : NAN; }
-		} else { kn = 1; Newx(nn, 1, NV); nn[0] = SvNV(nsv); }
-		if (kn != k) { Safefree(x); Safefree(nn); croak("prop_test: 'x' and 'n' must have the same length"); }
+	/*x (successes) and n (trials), each a scalar or an array ref, with NaN
+	for a missing value.  The cases where either is missing are then dropped,
+	as R's complete.cases(x, n) drops them, and p loses the same positions.
+	An undef used to be read as 0 and a hole as NaN.
+
+	Every buffer is SAVEFREEPV()d inside ENTER/LEAVE: they used to leak on any
+	croak below and on a $SIG{__WARN__} that dies at the chi-square warning,
+	84 to 166 MB over 50 calls at 1e5 groups.*/
+	ENTER;
+	size_t l, kn;	//as read, before incomplete cases are dropped
+	NV *x  = prop_read_vec(aTHX_ ST(0), &l,  "x");
+	NV *nn = prop_read_vec(aTHX_ ST(1), &kn, "n");
+	if (l == 0) croak("prop_test: 'x' is empty");
+	if (kn != l) croak("prop_test: 'x' and 'n' must have the same length");
+	bool p_given = (p_sv && SvOK(p_sv));
+	NV *pgiven = NULL;	//the p array as given, when one is
+	if (p_given && SvROK(p_sv) && SvTYPE(SvRV(p_sv)) == SVt_PVAV) {
+		size_t lp;
+		pgiven = prop_read_vec(aTHX_ p_sv, &lp, "p");
+		if (lp != l) croak("prop_test: 'p' must have the same length as 'x'");
 	}
+	NV *pnull;
+	Newx(pnull, l, NV);
+	SAVEFREEPV(pnull);
+	size_t k = 0;	//complete cases
+	for (size_t i = 0; i < l; i++) {
+		if (nv_isnan(x[i]) || nv_isnan(nn[i])) continue;
+		x[k] = x[i]; nn[k] = nn[i];
+		if (pgiven) pnull[k] = pgiven[i];
+		k++;
+	}
+	if (k == 0) croak("prop_test: not enough data");
 	for (size_t i = 0; i < k; i++) {
-		if (nn[i] <= 0)          { Safefree(x); Safefree(nn); croak("prop_test: elements of 'n' must be positive"); }
-		if (x[i] < 0)            { Safefree(x); Safefree(nn); croak("prop_test: elements of 'x' must be nonnegative"); }
-		if (x[i] > nn[i])        { Safefree(x); Safefree(nn); croak("prop_test: elements of 'x' must not exceed 'n'"); }
+		if (nn[i] <= 0) croak("prop_test: elements of 'n' must be positive");
+		if (x[i] < 0)   croak("prop_test: elements of 'x' must be nonnegative");
+		if (x[i] > nn[i]) croak("prop_test: elements of 'x' must not exceed 'n'");
 	}
 
 	//null probabilities and degrees of freedom
 	bool p_is_null;   //true => testing equality (pooled p, df = k-1)
-	Newx(pnull, k, NV);
-	if (p_sv && SvOK(p_sv)) {
+	if (p_given) {
 		p_is_null = 0;
-		if (SvROK(p_sv) && SvTYPE(SvRV(p_sv)) == SVt_PVAV) {
-			AV *av = (AV*)SvRV(p_sv);
-			if ((size_t)(av_len(av) + 1) != k) { Safefree(x); Safefree(nn); Safefree(pnull); croak("prop_test: 'p' must have the same length as 'x'"); }
-			for (size_t i = 0; i < k; i++) { SV **e = av_fetch(av, i, 0); pnull[i] = (e && *e) ? SvNV(*e) : NAN; }
-		} else { NV pv = SvNV(p_sv); for (size_t i = 0; i < k; i++) pnull[i] = pv; }
+		if (!pgiven) {
+			SV *pv_sv = sv_fetched(aTHX_ p_sv);
+			if (!sv_is_numeric_arg(aTHX_ pv_sv))
+				croak("prop_test: 'p' must be a number");
+			NV pv = SvNV(pv_sv);
+			for (size_t i = 0; i < k; i++) pnull[i] = pv;
+		}
 		for (size_t i = 0; i < k; i++)
-			if (!(pnull[i] > 0.0 && pnull[i] < 1.0)) { Safefree(x); Safefree(nn); Safefree(pnull); croak("prop_test: elements of 'p' must be in (0,1)"); }
+			if (!(pnull[i] > 0.0 && pnull[i] < 1.0)) croak("prop_test: elements of 'p' must be in (0,1)");
 	} else if (k == 1) {
 		p_is_null = 0; pnull[0] = 0.5;   //one-sample default target
 	} else {
@@ -29878,13 +30319,13 @@ PPCODE:
 	}
 	/*R forces a two-sided test whenever a one-sided one is not meaningful:
 	more than two groups, or exactly two groups tested against given p.*/
-	bool p_given = (p_sv && SvOK(p_sv));
 	if (k > 2 || (k == 2 && p_given)) alt = "two.sided";
 
 	NV YATES = (correct && k <= 2) ? 0.5 : 0.0;
 
 	// estimates
 	NV *est = NULL; Newx(est, k, NV);
+	SAVEFREEPV(est);
 	for (size_t i = 0; i < k; i++) est[i] = x[i] / nn[i];
 
 	NV ci_lo = NAN, ci_hi = NAN; bool have_ci = 0;
@@ -29933,7 +30374,10 @@ PPCODE:
 	} else {
 		NV z = (k == 1) ? ((est[0] > pnull[0]) - (est[0] < pnull[0])) * nv_sqrt(stat)
 		                : ((delta > 0.0) - (delta < 0.0)) * nv_sqrt(stat);
-		p_value = strEQ(alt, "less") ? approx_pnorm(z) : 1.0 - approx_pnorm(z);
+		/*pnorm(z, lower.tail = FALSE) is pnorm(-z), taken that way: 1 -
+		pnorm(z) cancels, so prop_test(999, 1000, alternative => 'greater')
+		gave 0 where R gives 1.8e-218.*/
+		p_value = strEQ(alt, "less") ? approx_pnorm(z) : approx_pnorm(-z);
 	}
 
 	// Chi-square approximation warning, as in R
@@ -29965,7 +30409,7 @@ PPCODE:
 		AV *ci = newAV(); av_push(ci, newSVnv(ci_lo)); av_push(ci, newSVnv(ci_hi));
 		hv_stores(ret, "conf_int", newRV_noinc((SV*)ci));
 	}
-	Safefree(x); Safefree(nn); Safefree(pnull); Safefree(est);
+	LEAVE;	//frees x, nn, pnull, est and the p array
 	ST(0) = sv_2mortal(newRV_noinc((SV *)ret));
 	XSRETURN(1);
 }
@@ -29987,25 +30431,38 @@ PPCODE:
 	bool is_matrix = 0;
 	if (SvROK(ST(0)) && SvTYPE(SvRV(ST(0))) == SVt_PVAV
 		&& av_len((AV*)SvRV(ST(0))) >= 0) {
-		SV **e0 = av_fetch((AV*)SvRV(ST(0)), 0, 0);
-		is_matrix = e0 && *e0 && SvROK(*e0) && SvTYPE(SvRV(*e0)) == SVt_PVAV;
+		SV *e0 = av_slow_at(aTHX_ (AV*)SvRV(ST(0)), 0);
+		is_matrix = e0 && SvROK(e0) && SvTYPE(SvRV(e0)) == SVt_PVAV;
 	}
 
+	/*The table is SAVEFREEPV()d inside ENTER/LEAVE.  It used to be freed by
+	hand on the croaks written here and leaked on every other: SvNV() warning
+	on a non-numeric cell under FATAL warnings, or a label whose overloaded
+	stringification dies -- 1.4 GB over 2000 calls of a 300 x 300 table.*/
+	ENTER;
 	if (is_matrix) {
 		AV *m = (AV*)SvRV(ST(0));
 		r = (size_t)(av_len(m) + 1);
 		if (r < 2) croak("mcnemar_test: matrix must have at least two rows");
 		Newxz(tab, r * r, NV);
+		SAVEFREEPV(tab);
 		for (size_t i = 0; i < r; i++) {
-			SV **row = av_fetch(m, i, 0);
-			if (!row || !*row || !SvROK(*row) || SvTYPE(SvRV(*row)) != SVt_PVAV)
-				{ Safefree(tab); croak("mcnemar_test: row %" UVuf " is not an array ref", (UV)i); }
-			AV *rv = (AV*)SvRV(*row);
-			if ((size_t)(av_len(rv) + 1) != r) { Safefree(tab); croak("mcnemar_test: matrix must be square"); }
+			SV *row = av_slow_at(aTHX_ m, (SSize_t)i);
+			if (!row || !SvROK(row) || SvTYPE(SvRV(row)) != SVt_PVAV)
+				croak("mcnemar_test: row %" UVuf " is not an array ref", (UV)i);
+			AV *rv = (AV*)SvRV(row);
+			if ((size_t)(av_len(rv) + 1) != r) croak("mcnemar_test: matrix must be square");
 			for (size_t j = 0; j < r; j++) {
-				SV **c = av_fetch(rv, j, 0);
-				NV v = (c && *c) ? SvNV(*c) : 0.0;
-				if (v < 0 || nv_isnan(v)) { Safefree(tab); croak("mcnemar_test: entries must be nonnegative and finite"); }
+				/*A missing or non-numeric cell used to be read as 0, and Inf
+				passed although the message below says "finite".  R's
+				mcnemar.test() refuses NA with that message.*/
+				SV *c = av_slow_at(aTHX_ rv, (SSize_t)j);
+				if (c) c = sv_fetched(aTHX_ c);
+				if (!c || !sv_is_numeric_arg(aTHX_ c))
+					croak("mcnemar_test: entries must be nonnegative and finite");
+				NV v = SvNV(c);
+				if (v < 0 || !nv_isfinite(v))
+					croak("mcnemar_test: entries must be nonnegative and finite");
 				tab[i * r + j] = v;
 			}
 		}
@@ -30017,48 +30474,72 @@ PPCODE:
 		AV *xa = (AV*)SvRV(ST(0)), *ya = (AV*)SvRV(ST(1));
 		size_t n = (size_t)(av_len(xa) + 1);
 		if ((size_t)(av_len(ya) + 1) != n) croak("mcnemar_test: 'x' and 'y' must have the same length");
-		//collect sorted unique levels across both vectors
-		char **lev = NULL; size_t nlev = 0, cap = 8; Newx(lev, cap, char*);
-		for (size_t src = 0; src < 2; src++) {
-			AV *a = src ? ya : xa;
-			for (size_t i = 0; i < n; i++) {
-				SV **e = av_fetch(a, i, 0);
-				if (!e || !*e || !SvOK(*e)) continue;
-				STRLEN l; const char *s = SvPV(*e, l);
-				bool found = 0;
-				for (size_t k = 0; k < nlev; k++) if (strEQ(lev[k], s)) { found = 1; break; }
-				if (!found) { if (nlev >= cap) { cap *= 2; Renew(lev, cap, char*); } lev[nlev++] = savepvn(s, l); }
-			}
-		}
-		//sort levels lexically for a deterministic table order
-		for (size_t a = 0; a + 1 < nlev; a++) for (size_t b = a + 1; b < nlev; b++)
-			if (strcmp(lev[a], lev[b]) > 0) { char *t = lev[a]; lev[a] = lev[b]; lev[b] = t; }
-		r = nlev;
-		if (r < 2) { for (size_t k = 0; k < nlev; k++) Safefree(lev[k]); Safefree(lev); croak("mcnemar_test: need at least two levels"); }
-		Newxz(tab, r * r, NV);
+		/*Levels come from the complete pairs only, as R's complete.cases()
+		runs before its factor().  They used to be collected from every value
+		first, so a level seen only in a dropped pair added an empty row and
+		column: x = qw(a b a b a b a a c) against y with its last value undef
+		gave df 3 and p 0.9536 where R gives df 1 and p 1.
+
+		A level's index is its first appearance, through a mortal hash keyed
+		the way `eq` compares.  The order of the levels does not matter --
+		permuting rows and columns together leaves every term of the
+		statistic where it was -- so the lexical sort that used to run here
+		bought nothing.*/
+		HV *lev = (HV *)sv_2mortal((SV *)newHV());
+		size_t *pair;	//x's level, then y's, for each complete pair
+		Newx(pair, 2 * (n ? n : 1), size_t);
+		SAVEFREEPV(pair);
+		size_t np = 0;	//complete pairs
+		/*Each label is copied into this one scratch SV and stringified there,
+		so an overloaded or numeric label is stringified once and the caller's
+		SV is not given a cached PV.  hv_store_ent() copies the key's bytes, so
+		reusing it is safe, and a million pairs cost one SV rather than two
+		million mortals.*/
+		SV *key = sv_newmortal();
 		for (size_t i = 0; i < n; i++) {
-			SV **ex = av_fetch(xa, i, 0), **ey = av_fetch(ya, i, 0);
-			if (!ex || !*ex || !SvOK(*ex) || !ey || !*ey || !SvOK(*ey)) continue;
-			STRLEN lx, ly; const char *sx = SvPV(*ex, lx), *sy = SvPV(*ey, ly);
-			size_t ix = 0, iy = 0;
-			for (size_t k = 0; k < r; k++) { if (strEQ(lev[k], sx)) ix = k; if (strEQ(lev[k], sy)) iy = k; }
-			tab[ix * r + iy] += 1.0;
+			SV *ex = av_slow_at(aTHX_ xa, (SSize_t)i), *ey = av_slow_at(aTHX_ ya, (SSize_t)i);
+			if (!ex || !ey) continue;
+			SV *both[2];
+			both[0] = sv_fetched(aTHX_ ex);
+			both[1] = sv_fetched(aTHX_ ey);
+			for (unsigned short s2 = 0; s2 < 2; s2++) {
+				sv_setsv(key, both[s2]);
+				(void)SvPV_force_nolen(key);
+				HE *he = hv_fetch_ent(lev, key, 0, 0);
+				size_t idx;
+				if (he) idx = (size_t)SvUV(HeVAL(he));
+				else {
+					idx = (size_t)HvUSEDKEYS(lev);
+					(void)hv_store_ent(lev, key, newSVuv((UV)idx), 0);
+				}
+				pair[2 * np + s2] = idx;
+			}
+			np++;
 		}
-		for (size_t k = 0; k < nlev; k++) Safefree(lev[k]);
-		Safefree(lev);
+		r = (size_t)HvUSEDKEYS(lev);
+		if (r < 2) croak("mcnemar_test: need at least two levels");
+		Newxz(tab, r * r, NV);
+		SAVEFREEPV(tab);
+		for (size_t i = 0; i < np; i++) tab[pair[2 * i] * r + pair[2 * i + 1]] += 1.0;
 		opt_start = 2;
 	}
-	for (int i = opt_start; i + 1 < items; i += 2) {
+	if ((items - opt_start) % 2) croak("mcnemar_test: options must be key => value pairs");
+	for (Stack_off_t i = opt_start; i < items; i += 2) {
 		const char *k = SvPV_nolen(ST(i)); SV *v = ST(i + 1);
 		if      (strEQ(k, "correct")) correct = SvTRUE(v) ? 1 : 0;
 		else if (strEQ(k, "exact"))   exact   = SvTRUE(v) ? 1 : 0;
-		else { Safefree(tab); croak("mcnemar_test: unknown argument '%s'", k); }
+		else croak("mcnemar_test: unknown argument '%s'", k);
 	}
-	if (exact && r != 2) { Safefree(tab); croak("mcnemar_test: exact test requires a 2x2 table"); }
+	if (exact && r != 2) croak("mcnemar_test: exact test requires a 2x2 table");
 
 	HV *ret = newHV();
+	sv_2mortal((SV *)ret);	//until it is returned, so no croak below can leak it
 	if (exact) {// two-sided exact binomial test of the discordant pairs, b ~ Bin(b+c, 0.5)
 		NV b = tab[0 * 2 + 1], c = tab[1 * 2 + 0];
+		/*The (long) casts below used to truncate a fractional count, so
+		[[1,2.5],[3.7,4]] returned p 0.5985.  A binomial count is whole.*/
+		if (b != nv_floor(b) || c != nv_floor(c))
+			croak("mcnemar_test: the exact test needs whole-number counts in the discordant cells");
 		NV nn = b + c, m = (b < c) ? b : c;
 		NV p_value;
 		if (nn == 0.0) p_value = 1.0;
@@ -30077,12 +30558,14 @@ PPCODE:
 				for (size_t j = 0; j < r; j++)
 					if (tab[i * r + j] != tab[j * r + i]) { use_cc = 1; break; }
 		}
+		/*An empty discordant pair is 0/0, which R does not skip:
+		mcnemar.test(matrix(c(5,0,0,5), 2)) is NaN with p NaN.  It used to
+		be skipped, which made that table a statistic of 0 and p 1.*/
 		NV stat = 0.0;
 		for (size_t i = 0; i < r; i++)
 			for (size_t j = i + 1; j < r; j++) {
 				NV diff = tab[i * r + j] - tab[j * r + i];
 				NV sum  = tab[i * r + j] + tab[j * r + i];
-				if (sum <= 0.0) continue;
 				NV num = use_cc ? (nv_fabs(diff) - 1.0) : diff;
 				stat += num * num / sum;
 			}
@@ -30095,8 +30578,8 @@ PPCODE:
 			"McNemar's Chi-squared test with continuity correction" :
 			"McNemar's Chi-squared test", 0));
 	}
-	Safefree(tab);
-	ST(0) = sv_2mortal(newRV_noinc((SV *)ret));
+	LEAVE;	//frees the table
+	ST(0) = sv_2mortal(newRV_inc((SV *)ret));
 	XSRETURN(1);
 }
 
@@ -30111,7 +30594,8 @@ PPCODE:
 		|| SvTYPE(SvRV(ST(0))) != SVt_PVAV || SvTYPE(SvRV(ST(1))) != SVt_PVAV)
 		croak("Usage: dunn_test(\\@values, \\@groups, method => 'holm')");
 	const char *method = "holm";
-	for (int i = 2; i + 1 < items; i += 2) {
+	if (items % 2) croak("dunn_test: options must be key => value pairs");
+	for (Stack_off_t i = 2; i < items; i += 2) {
 		const char *key = SvPV_nolen(ST(i)); SV *v = ST(i + 1);
 		if (strEQ(key, "method")) method = SvPV_nolen(v);
 		else croak("dunn_test: unknown argument '%s'", key);
@@ -30133,44 +30617,73 @@ PPCODE:
 	size_t raw = (size_t)(av_len(xa) + 1);
 	if ((size_t)(av_len(ga) + 1) != raw) croak("dunn_test: values and groups must have the same length");
 
+	/*Every buffer is SAVEFREEPV()d and every label lives in a mortal, so a
+	croak -- an overloaded label whose stringification dies, say -- frees the
+	lot.  Each label used to be savepvn()d into a buffer freed by hand at the
+	end, which such a croak skipped: about 23 MB over 100 calls.*/
+	ENTER;
 	//gather complete (value, group) pairs
-	NV *x = NULL; char **glab = NULL;
-	Newx(x, raw, NV); Newx(glab, raw, char*);
+	NV *x = NULL; size_t *gid = NULL;	//gid: the group's index in first-seen order, then sorted
+	Newx(x, raw ? raw : 1, NV);     SAVEFREEPV(x);
+	Newx(gid, raw ? raw : 1, size_t); SAVEFREEPV(gid);
+	/*Each label maps to its index through a mortal hash keyed as `eq`
+	compares, which replaces an O(N k) strEQ() scan per observation.  The
+	label is copied into one scratch SV and stringified there, so an
+	overloaded label is stringified once and the caller's SV is left alone.*/
+	HV *seen = (HV *)sv_2mortal((SV *)newHV());
+	AV *levs = (AV *)sv_2mortal((SV *)newAV());	//each level once, in first-seen order
+	SV *key = sv_newmortal();
 	size_t N = 0;
 	for (size_t i = 0; i < raw; i++) {
-		SV **xv = av_fetch(xa, i, 0), **gv = av_fetch(ga, i, 0);
-		if (!xv || !*xv || !SvOK(*xv) || !looks_like_number(*xv)) continue;
-		if (!gv || !*gv || !SvOK(*gv)) continue;
-		NV val = SvNV(*xv); if (nv_isnan(val)) continue;
-		STRLEN l; const char *s = SvPV(*gv, l);
-		x[N] = val; glab[N] = savepvn(s, l); N++;
+		SV *xv = av_slow_at(aTHX_ xa, (SSize_t)i);	//runs get magic, so a tied array is read
+		if (!xv) continue;
+		xv = sv_fetched(aTHX_ xv);
+		if (!looks_like_number(xv)) continue;
+		SV *gv = av_slow_at(aTHX_ ga, (SSize_t)i);
+		if (!gv) continue;
+		NV val = SvNV(xv); if (nv_isnan(val)) continue;
+		sv_setsv(key, sv_fetched(aTHX_ gv));
+		(void)SvPV_force_nolen(key);
+		HE *he = hv_fetch_ent(seen, key, 0, 0);
+		size_t g;
+		if (he) g = (size_t)SvUV(HeVAL(he));
+		else {
+			g = (size_t)(av_len(levs) + 1);
+			(void)hv_store_ent(seen, key, newSVuv((UV)g), 0);
+			av_push(levs, newSVsv(key));
+		}
+		x[N] = val; gid[N] = g; N++;
 	}
-	if (N < 3) { for (size_t i = 0; i < N; i++) Safefree(glab[i]); Safefree(x); Safefree(glab); croak("dunn_test: not enough complete observations"); }
-	// sorted unique group levels
-	char **lev = NULL; size_t k = 0, cap = 8; Newx(lev, cap, char*);
-	for (size_t i = 0; i < N; i++) {
-		bool found = 0;
-		for (size_t j = 0; j < k; j++) if (strEQ(lev[j], glab[i])) { found = 1; break; }
-		if (!found) { if (k >= cap) { cap *= 2; Renew(lev, cap, char*); } lev[k++] = savepv(glab[i]); }
+	if (N < 3) croak("dunn_test: not enough complete observations");
+	const size_t k = (size_t)(av_len(levs) + 1);
+	if (k < 2) croak("dunn_test: need at least two groups");
+	/*Sorted levels, for a deterministic order of comparisons.  sortsv() with
+	sv_cmp() is the string order perl's own sort gives.*/
+	SV **lev;	//the level SVs, sorted
+	Newx(lev, k, SV *); SAVEFREEPV(lev);
+	Copy(AvARRAY(levs), lev, k, SV *);
+	sortsv(lev, k, Perl_sv_cmp);
+	{
+		size_t *remap;	//first-seen index -> sorted index
+		Newx(remap, k, size_t); SAVEFREEPV(remap);
+		for (size_t j = 0; j < k; j++) {
+			HE *he = hv_fetch_ent(seen, lev[j], 0, 0);
+			remap[SvUV(HeVAL(he))] = j;
+		}
+		for (size_t i = 0; i < N; i++) gid[i] = remap[gid[i]];
 	}
-	for (size_t a = 0; a + 1 < k; a++) for (size_t b = a + 1; b < k; b++)
-		if (strcmp(lev[a], lev[b]) > 0) { char *t = lev[a]; lev[a] = lev[b]; lev[b] = t; }
-	if (k < 2) { for (size_t i = 0; i < N; i++) Safefree(glab[i]); for (size_t j = 0; j < k; j++) Safefree(lev[j]); Safefree(x); Safefree(glab); Safefree(lev); croak("dunn_test: need at least two groups"); }
 
 	//ranks over all observations (tie-averaged)
-	NV *r = NULL; Newx(r, N, NV);
+	NV *r = NULL; Newx(r, N, NV); SAVEFREEPV(r);
 	rank_data(x, r, N);
 
 	//per-group rank sums and sizes
 	NV *rsum = NULL; size_t *ns = NULL;
-	Newxz(rsum, k, NV); Newxz(ns, k, size_t);
-	for (size_t i = 0; i < N; i++) {
-		size_t gi = 0;
-		for (size_t j = 0; j < k; j++) if (strEQ(lev[j], glab[i])) { gi = j; break; }
-		rsum[gi] += r[i]; ns[gi]++;
-	}
+	Newxz(rsum, k, NV);   SAVEFREEPV(rsum);
+	Newxz(ns, k, size_t); SAVEFREEPV(ns);
+	for (size_t i = 0; i < N; i++) { rsum[gid[i]] += r[i]; ns[gid[i]]++; }
 	//tie correction: sum over distinct values of (t^3 - t)
-	NV *xs = NULL; Newx(xs, N, NV);
+	NV *xs = NULL; Newx(xs, N, NV); SAVEFREEPV(xs);
 	memcpy(xs, x, N * sizeof(NV));
 	nv_sort(xs, N);		//inlined comparison; see LIKER_DEFINE_SORT
 	NV tsum = 0.0;
@@ -30184,14 +30697,16 @@ PPCODE:
 			a = b + 1;
 		}
 	}
-	Safefree(xs);
 	NV Nf = (NV)N;
 	NV sigma_base = (Nf * (Nf + 1.0)) / 12.0 - tsum / (12.0 * (Nf - 1.0));
 	size_t m = k * (k - 1) / 2;
 	NV *z = NULL, *praw = NULL, *padj = NULL;
-	Newx(z, m, NV); Newx(praw, m, NV); Newx(padj, m, NV);
+	Newx(z, m, NV);    SAVEFREEPV(z);
+	Newx(praw, m, NV); SAVEFREEPV(praw);
+	Newx(padj, m, NV); SAVEFREEPV(padj);
 	size_t *gi_ = NULL, *gj_ = NULL;
-	Newx(gi_, m, size_t); Newx(gj_, m, size_t);
+	Newx(gi_, m, size_t); SAVEFREEPV(gi_);
+	Newx(gj_, m, size_t); SAVEFREEPV(gj_);
 	size_t c = 0;
 	for (size_t i = 0; i < k; i++)
 		for (size_t j = i + 1; j < k; j++) {
@@ -30199,33 +30714,32 @@ PPCODE:
 			NV se = nv_sqrt(sigma_base * (1.0 / ns[i] + 1.0 / ns[j]));
 			NV zz = (rbar_i - rbar_j) / se;
 			z[c] = zz;
-			praw[c] = 2.0 * (1.0 - approx_pnorm(nv_fabs(zz)));
+			/*pnorm(-|z|), not 1 - pnorm(|z|), which cancels: values 1..200
+			in two groups of 100 (Z = -12.2) gave p 0 where R gives 2.5e-34,
+			and the relative error was 6e-11 by Z = 5.4.*/
+			praw[c] = 2.0 * approx_pnorm(-nv_fabs(zz));
 			if (praw[c] > 1.0) praw[c] = 1.0;
 			gi_[c] = i; gj_[c] = j;
 			c++;
 		}
-	dunn_padjust(praw, m, meth, padj);
+	dunn_padjust(aTHX_ praw, m, meth, padj);
 
 	AV *out = newAV();
+	sv_2mortal((SV *)out);	//until it is returned, so no croak below can leak it
 	for (size_t t = 0; t < m; t++) {
 		HV *h = newHV();
-		char comp[256];
-		snprintf(comp, sizeof comp, "%s - %s", lev[gi_[t]], lev[gj_[t]]);
-		hv_stores(h, "comparison", newSVpv(comp, 0));
-		hv_stores(h, "group1",     newSVpv(lev[gi_[t]], 0));
-		hv_stores(h, "group2",     newSVpv(lev[gj_[t]], 0));
+		av_push(out, newRV_noinc((SV*)h));
+		/*An SV, not a char[256], which truncated two 200-character labels'
+		comparison at 255 bytes, and dropped a label's UTF-8 flag.*/
+		hv_stores(h, "comparison", newSVpvf("%" SVf " - %" SVf, SVfARG(lev[gi_[t]]), SVfARG(lev[gj_[t]])));
+		hv_stores(h, "group1",     newSVsv(lev[gi_[t]]));
+		hv_stores(h, "group2",     newSVsv(lev[gj_[t]]));
 		hv_stores(h, "Z",          newSVnv(z[t]));
 		hv_stores(h, "p_value",    newSVnv(praw[t]));
 		hv_stores(h, "p_adjust",   newSVnv(padj[t]));
-		av_push(out, newRV_noinc((SV*)h));
 	}
-
-	for (size_t i = 0; i < N; i++) Safefree(glab[i]);
-	for (size_t j = 0; j < k; j++) Safefree(lev[j]);
-	Safefree(x); Safefree(glab); Safefree(lev); Safefree(r);
-	Safefree(rsum); Safefree(ns); Safefree(z); Safefree(praw); Safefree(padj);
-	Safefree(gi_); Safefree(gj_);
-	ST(0) = sv_2mortal(newRV_noinc((SV*)out));
+	LEAVE;
+	ST(0) = sv_2mortal(newRV_inc((SV*)out));
 	XSRETURN(1);
 }
 
@@ -30289,7 +30803,11 @@ PPCODE:
 		n++;
 	}
 	Safefree(rowbuf); Safefree(ranks); Safefree(sorted);
+	/*R 4.6.1's friedman.test() errors on a single complete block -- the row
+	subset drops the matrix to a vector, and apply() stops with "dim(X) must
+	have a positive length".  It used to return a statistic here.*/
 	if (n < 1) { Safefree(colsum); croak("friedman_test: no complete blocks"); }
+	if (n < 2) { Safefree(colsum); croak("friedman_test: not enough blocks (1 complete block; need at least 2)"); }
 
 	NV nf = (NV)n, kf = (NV)k;
 	NV ssq = 0.0, target = nf * (kf + 1.0) / 2.0;
@@ -30324,9 +30842,22 @@ PPCODE:
 	} else {
 		if (items < 4)
 			croak("epi_2x2: need 4 cell counts a,b,c,d (or a single 2x2 array ref)");
-		a = SvNV(ST(0)); b = SvNV(ST(1)); c = SvNV(ST(2)); d = SvNV(ST(3));
-		if (a < 0 || b < 0 || c < 0 || d < 0)
-			croak("epi_2x2: cell counts must be non-negative");
+		/*The same reading the array-ref form gives each cell.  A bare SvNV()
+		read epi_2x2("abc",1,2,3)'s first cell as 0, where [ "abc",1,2,3 ]
+		croaked.*/
+		NV cell[4];
+		for (unsigned short i = 0; i < 4; i++) {
+			SV *sv = ST(i);
+			SvGETMAGIC(sv);
+			if (!SvOK(sv))
+				croak("epi_2x2: cell at index %u is undef", (unsigned)i);
+			sv = sv_fetched(aTHX_ sv);
+			if (!sv_is_numeric_arg(aTHX_ sv))
+				croak("epi_2x2: cell at index %u is not a number", (unsigned)i);
+			cell[i] = SvNV(sv);
+		}
+		a = cell[0]; b = cell[1]; c = cell[2]; d = cell[3];
+		epi_check_cells(aTHX_ "epi_2x2", a, b, c, d);
 		opt_start = 4;
 	}
 	for (int i = opt_start; i + 1 < items; i += 2) {
@@ -30421,12 +30952,22 @@ PPCODE:
 		vRS += Pk * Sk + Qk * Rk;
 		vS  += Qk * Sk;
 	}
-	NV diff = nv_fabs(sum_a - E) - (correct ? 0.5 : 0.0);
-	if (diff < 0) diff = 0;
-	NV chi  = (V > 0) ? (diff * diff) / V : 0.0;
-	NV pval = get_p_value(chi, 1);
+	/*R's mantelhaen.test() applies Yates' 0.5 only when |DELTA| >= .5.  It
+	used to be subtracted always and the result clamped at 0, so
+	cmh_test([[2,3,3,4],[3,2,2,3]]), with |DELTA| = 0.37, gave a statistic of
+	0 and p 1 where R gives 0.11828 and 0.73091.
 
-	NV or_mh    = (sumS > 0) ? sumR / sumS : NAN;
+	V = 0 and sumS = 0 are left to IEEE arithmetic, as R leaves them: DELTA^2 /
+	V is NaN for 0/0 and Inf otherwise, and the odds ratio is Inf when only the
+	off-diagonal sum is 0.  Both used to be replaced by a finite answer -- a
+	statistic of 0 and p 1, an estimate of NaN.*/
+	const NV delta = sum_a - E;
+	const bool yates = correct && nv_fabs(delta) >= 0.5;
+	const NV diff = nv_fabs(delta) - (yates ? 0.5 : 0.0);
+	NV chi  = (diff * diff) / V;
+	NV pval = get_p_value(chi, 1);	//NaN in, NaN out
+
+	NV or_mh    = sumR / sumS;
 	NV var_lnor = vR / (2.0 * sumR * sumR)
 	            + vRS / (2.0 * sumR * sumS)
 	            + vS / (2.0 * sumS * sumS);
@@ -30434,9 +30975,9 @@ PPCODE:
 	NV or_lo = or_mh * nv_exp(-z * nv_sqrt(var_lnor)), or_hi = or_mh * nv_exp(z * nv_sqrt(var_lnor));
 
 	HV *ret = newHV();
-	hv_stores(ret, "method", newSVpv(correct
+	hv_stores(ret, "method", newSVpv(yates	//R's wording, which reports whether the 0.5 was applied
 		? "Mantel-Haenszel chi-squared test with continuity correction"
-		: "Mantel-Haenszel chi-squared test", 0));
+		: "Mantel-Haenszel chi-squared test without continuity correction", 0));
 	hv_stores(ret, "statistic",  newSVnv(chi));
 	hv_stores(ret, "parameter",  newSViv(1));       //degrees of freedom
 	hv_stores(ret, "p_value",    newSVnv(pval));
@@ -30456,19 +30997,21 @@ CODE:
 	if (items < 2 || !SvROK(ST(0)) || SvTYPE(SvRV(ST(0))) != SVt_PVAV
 	              || !SvROK(ST(1)) || SvTYPE(SvRV(ST(1))) != SVt_PVAV)
 		croak("Usage: auc(\\@scores, \\@labels, positive => 1, direction => '>')");
-	const char *positive = "1"; bool lower_pos = 0;
-	for (int i = 2; i + 1 < items; i += 2) {
+	if (items % 2) croak("auc: options must be key => value pairs");
+	SV *positive = NULL; bool lower_pos = FALSE;	//NULL: the default, "1"
+	for (Stack_off_t i = 2; i < items; i += 2) {
 		const char *k = SvPV_nolen(ST(i)); SV *v = ST(i + 1);
-		if      (strEQ(k, "positive"))  positive = SvPV_nolen(v);
-		else if (strEQ(k, "direction")) { const char *d = SvPV_nolen(v); lower_pos = (d[0] == '<'); }
+		if      (strEQ(k, "positive"))  positive = v;
+		else if (strEQ(k, "direction")) lower_pos = roc_direction(aTHX_ v, "auc");
 		else croak("auc: unknown argument '%s'", k);
 	}
-	NV *pos, *neg; size_t m, n;
-	roc_split(aTHX_ (AV *)SvRV(ST(0)), (AV *)SvRV(ST(1)), positive, lower_pos,
-	          &pos, &m, &neg, &n, "auc");
-	NV a, se; roc_delong(aTHX_ pos, m, neg, n, &a, &se);
-	Safefree(pos); Safefree(neg);
-	RETVAL = a;
+	ENTER;	//its LEAVE frees roc_read()'s array; a croak's unwinding frees it too
+	size_t m, n;
+	const ROCPt *pts = roc_read(aTHX_ (AV *)SvRV(ST(0)), (AV *)SvRV(ST(1)),
+	                            positive ? positive : sv_2mortal(newSVpvs("1")),
+	                            lower_pos, &m, &n, "auc");
+	roc_auc_delong(pts, m, n, &RETVAL, NULL, NULL);
+	LEAVE;
 }
 OUTPUT:
 	RETVAL
@@ -30495,15 +31038,16 @@ CODE:
 		croak("Usage: auroc(\\@y_true, \\@y_score, positive => 1, "
 		      "direction => '>', cutoff => x, active_frac => 0.1, "
 		      "active_side => 'high')");
-	const char *positive = "1"; bool lower_pos = 0;
-	bool have_cutoff = 0, have_frac = 0; NV cutoff = 0.0, active_frac = 0.0;
-	bool frac_low = 0;
-	for (int i = 2; i + 1 < items; i += 2) {
+	if (items % 2) croak("auroc: options must be key => value pairs");
+	SV *positive = NULL; bool lower_pos = FALSE;	//NULL: the default, "1"
+	bool have_cutoff = FALSE, have_frac = FALSE; NV cutoff = 0.0, active_frac = 0.0;
+	bool frac_low = FALSE;
+	for (Stack_off_t i = 2; i < items; i += 2) {
 		const char *k = SvPV_nolen(ST(i)); SV *v = ST(i + 1);
-		if      (strEQ(k, "positive"))  positive = SvPV_nolen(v);
-		else if (strEQ(k, "direction")) { const char *d = SvPV_nolen(v); lower_pos = (d[0] == '<'); }
-		else if (strEQ(k, "cutoff"))    { have_cutoff = 1; cutoff = SvNV(v); }
-		else if (strEQ(k, "active_frac") || strEQ(k, "active")) { have_frac = 1; active_frac = SvNV(v); }
+		if      (strEQ(k, "positive"))  positive = v;
+		else if (strEQ(k, "direction")) lower_pos = roc_direction(aTHX_ v, "auroc");
+		else if (strEQ(k, "cutoff"))    { have_cutoff = TRUE; cutoff = SvNV(v); }
+		else if (strEQ(k, "active_frac") || strEQ(k, "active")) { have_frac = TRUE; active_frac = SvNV(v); }
 		else if (strEQ(k, "active_side")) {
 			const char *sd = SvPV_nolen(v); // 'low'/'bottom' vs 'high'/'top'
 			frac_low = (sd[0] == 'l' || sd[0] == 'L' || sd[0] == 'b' || sd[0] == 'B');
@@ -30517,61 +31061,71 @@ CODE:
 
 	AV *lav = (AV *)SvRV(ST(0));   //y_true  (labels first, like sklearn)
 	AV *sav = (AV *)SvRV(ST(1));   //y_score
-
+	ENTER;	//its LEAVE frees every SAVEFREEPV()d buffer below; a croak's unwinding frees them too
+	size_t m, n;
+	const ROCPt *pts;
 	if (have_cutoff || have_frac) {
-		/*Binarize a continuous truth column, then DeLong on the pos/neg
-		score vectors -- same shape as bedroc's cutoff/active_frac.*/
-		SSize_t Ns = av_len(sav) + 1;
+		/*Binarize a continuous truth column, then DeLong on the result.
+
+		Only the complete cases -- a score and a truth value, neither of them
+		NaN -- are binarized and ranked, so active_frac takes its fraction of
+		those.  A NaN truth value used to reach the qsort() below, which cannot
+		order one, and active_frac then picked an arbitrary set of actives;
+		under cutoff it silently counted as inactive.*/
+		const SSize_t Ns = av_len(sav) + 1;
 		if (Ns != av_len(lav) + 1)
 			croak("auroc: y_true and y_score must be the same length");
 		if (Ns < 1) croak("auroc: need at least one observation");
-		size_t N = (size_t)Ns;
-		int *act; Newxz(act, N, int);
+		ROCPt *pp;
+		Newx(pp, Ns, ROCPt);
+		SAVEFREEPV(pp);
+		NVIdx *tv;	//each complete case's truth value, and its index in pp[]
+		Newx(tv, Ns, NVIdx);
+		SAVEFREEPV(tv);
+		size_t k = 0;	//complete cases
+		for (SSize_t i = 0; i < Ns; i++) {
+			NV s;
+			if (!roc_score_at(aTHX_ sav, i, "auroc", &s)) continue;
+			SV *t = av_slow_at(aTHX_ lav, i);
+			if (!t) continue;
+			t = sv_fetched(aTHX_ t);
+			if (!sv_is_numeric_arg(aTHX_ t))
+				croak("auroc: y_true at index %" IVdf " is not a number", (IV)i);
+			const NV y = SvNV(t);
+			if (nv_isnan(y)) continue;
+			tv[k].v = y; tv[k].i = k;
+			pp[k].score = lower_pos ? -s : s;
+			pp[k].lab = 0;
+			k++;
+		}
 		if (have_frac) {
-			size_t n_a = (size_t)nv_ceil(nv_narrow(active_frac * (NV)N));
+			/*Exactly ceil(active_frac * k) actives from one tail, clamped to
+			[1, k - 1] so both classes exist.*/
+			size_t n_a = (size_t)nv_ceil(nv_narrow(active_frac * (NV)k));
 			if (n_a < 1) n_a = 1;
-			if (N >= 2 && n_a > N - 1) n_a = N - 1;
-			NVIdx *tmp; Newx(tmp, N, NVIdx);
-			for (size_t i = 0; i < N; i++) {
-				SV **lp = av_fetch(lav, i, 0);
-				tmp[i].v = (lp && *lp) ? SvNV(*lp) : NAN; tmp[i].i = i;
-			}
-			qsort(tmp, N, sizeof(NVIdx), nvidx_cmp_asc);
-			if (frac_low) for (size_t k = 0; k < n_a; k++) act[tmp[k].i] = 1;
-			else          for (size_t k = N - n_a; k < N; k++) act[tmp[k].i] = 1;
-			Safefree(tmp);
+			if (k >= 2 && n_a > k - 1) n_a = k - 1;
+			if (n_a > k) n_a = k;
+			qsort(tv, k, sizeof(NVIdx), nvidx_cmp_asc);
+			if (frac_low) for (size_t j = 0; j < n_a; j++)     pp[tv[j].i].lab = 1;
+			else          for (size_t j = k - n_a; j < k; j++) pp[tv[j].i].lab = 1;
 		} else {
-			for (size_t i = 0; i < N; i++) {
-				SV **lp = av_fetch(lav, i, 0);
-				act[i] = (((lp && *lp) ? SvNV(*lp) : NAN) >= cutoff);
-			}
+			for (size_t j = 0; j < k; j++) pp[j].lab = (tv[j].v >= cutoff) ? 1 : 0;
 		}
-		NV *P; Newx(P, N, NV); NV *Q; Newx(Q, N, NV);
-		size_t m = 0, n = 0;
-		for (size_t i = 0; i < N; i++) {
-			SV **sp = av_fetch(sav, i, 0);
-			NV s = (sp && *sp) ? SvNV(*sp) : NAN;
-			if (lower_pos) s = -s;
-			if (act[i]) P[m++] = s; else Q[n++] = s;
-		}
-		Safefree(act);
-		if (m == 0 || n == 0) {
-			Safefree(P); Safefree(Q);
+		m = 0;
+		for (size_t j = 0; j < k; j++) m += (size_t)pp[j].lab;
+		n = k - m;
+		if (m == 0 || n == 0)
 			croak("auroc: need both positive and negative labels%s",
 			      have_cutoff ? " (check cutoff)" : "");
-		}
-		NV a, se; roc_delong(aTHX_ P, m, Q, n, &a, &se);
-		Safefree(P); Safefree(Q);
-		RETVAL = a;
+		rocpt_desc_sort(pp, k);
+		pts = pp;
 	} else {
-		/*Pre-built 0/1 (or string) labels: roc_split does the parallel-array
-		walk; note swapped args so labels are ST(0), scores ST(1).*/
-		NV *pos, *neg; size_t m, n;
-		roc_split(aTHX_ sav, lav, positive, lower_pos, &pos, &m, &neg, &n, "auroc");
-		NV a, se; roc_delong(aTHX_ pos, m, neg, n, &a, &se);
-		Safefree(pos); Safefree(neg);
-		RETVAL = a;
+		//Pre-built 0/1 (or string) labels; note the swapped arguments.
+		pts = roc_read(aTHX_ sav, lav, positive ? positive : sv_2mortal(newSVpvs("1")),
+		               lower_pos, &m, &n, "auroc");
 	}
+	roc_auc_delong(pts, m, n, &RETVAL, NULL, NULL);
+	LEAVE;
 }
 OUTPUT:
 	RETVAL
@@ -30583,59 +31137,66 @@ PPCODE:
 	              || !SvROK(ST(1)) || SvTYPE(SvRV(ST(1))) != SVt_PVAV)
 		croak("Usage: roc(\\@scores, \\@labels, positive => 1, "
 		      "conf_level => 0.95, direction => '>')");
-	const char *positive = "1"; NV conf_level = NV_CONF_95; bool lower_pos = 0;
-	for (int i = 2; i + 1 < items; i += 2) {
+	if (items % 2) croak("roc: options must be key => value pairs");
+	SV *positive = NULL;	//NULL: the default, "1"
+	NV conf_level = NV_CONF_95; bool lower_pos = FALSE;
+	for (Stack_off_t i = 2; i < items; i += 2) {
 		const char *k = SvPV_nolen(ST(i)); SV *v = ST(i + 1);
-		if      (strEQ(k, "positive"))  positive = SvPV_nolen(v);
+		if      (strEQ(k, "positive"))   positive = v;
 		else if (strEQ(k, "conf_level")) conf_level = SvNV(v);
-		else if (strEQ(k, "direction")) { const char *d = SvPV_nolen(v); lower_pos = (d[0] == '<'); }
+		else if (strEQ(k, "direction"))  lower_pos = roc_direction(aTHX_ v, "roc");
 		else croak("roc: unknown argument '%s'", k);
 	}
 	if (!(conf_level > 0.0 && conf_level < 1.0))
 		croak("roc: conf_level must be between 0 and 1");
 
-	NV *pos, *neg; size_t m, n;
-	roc_split(aTHX_ (AV *)SvRV(ST(0)), (AV *)SvRV(ST(1)), positive, lower_pos,
-	          &pos, &m, &neg, &n, "roc");
-	NV auc_val, se; roc_delong(aTHX_ pos, m, neg, n, &auc_val, &se);
-	NV z  = std_qnorm(1.0 - (1.0 - conf_level) / 2.0);
-	NV lo = auc_val - z * se, hi = auc_val + z * se;
-	if (lo < 0.0) lo = 0.0; if (hi > 1.0) hi = 1.0;
+	ENTER;	//its LEAVE frees roc_read()'s array; a croak's unwinding frees it too
+	size_t m, n, ngroups;
+	const ROCPt *pts = roc_read(aTHX_ (AV *)SvRV(ST(0)), (AV *)SvRV(ST(1)),
+	                            positive ? positive : sv_2mortal(newSVpvs("1")),
+	                            lower_pos, &m, &n, "roc");
+	NV auc_val, se;
+	roc_auc_delong(pts, m, n, &auc_val, &se, &ngroups);
+	const NV z  = std_qnorm(1.0 - (1.0 - conf_level) / 2.0);
+	NV lo = auc_val - z * se, hi = auc_val + z * se;	//NaN, and left so, when se is
+	if (lo < 0.0) lo = 0.0;
+	if (hi > 1.0) hi = 1.0;
 
-	// Curve + Youden by sweeping thresholds high -> low over all points
-	size_t N = m + n;
-	ROCPt *pts; Newx(pts, N, ROCPt);
-	for (size_t i = 0; i < m; i++) { pts[i].score     = pos[i]; pts[i].lab     = 1; }
-	for (size_t j = 0; j < n; j++) { pts[m + j].score = neg[j]; pts[m + j].lab = 0; }
-	Safefree(pos); Safefree(neg);
-	qsort(pts, N, sizeof(ROCPt), rocpt_cmp_desc);
-
+	/*The curve: one operating point per distinct score, walked from the most
+	positive down, each calling a case positive when it scores at least as
+	positive as the threshold -- score >= threshold for '>', score <=
+	threshold for '<'.  roc_read() flipped the sign of every score for '<';
+	sgn flips it back, so the thresholds are on the caller's scale.  Up to
+	0.3217 they were reported flipped: roc([4,3,2,1], [0,0,1,1], direction =>
+	'<') put the Youden cut at -2.*/
+	const NV sgn = lower_pos ? -1.0 : 1.0;
+	const size_t N = m + n;
 	AV *curve = newAV();
-	{ //leading operating point: threshold = +inf, nothing called positive
+	av_extend(curve, (SSize_t)ngroups);	//the leading point plus one per group
+	{ //leading operating point: nothing called positive
 		HV *p0 = newHV();
-		hv_stores(p0, "threshold",   newSVnv(INFINITY));
+		hv_stores(p0, "threshold",   newSVnv(sgn * NV_INF));
 		hv_stores(p0, "sensitivity", newSVnv(0.0));
 		hv_stores(p0, "specificity", newSVnv(1.0));
 		av_push(curve, newRV_noinc((SV *)p0));
 	}
-	NV TP = 0.0, FP = 0.0, P = (NV)m, Nn = (NV)n;
-	NV best_j = -2.0, best_thr = 0.0, best_sens = 0.0, best_spec = 0.0;
-	size_t i = 0;
-	while (i < N) {
-		NV thr = pts[i].score;
+	size_t TP = 0, FP = 0;
+	NV best_j = -2.0, best_thr = 0.0, best_sens = 0.0, best_spec = 0.0;	//-2: below any J
+	for (size_t i = 0; i < N; ) {
+		const NV thr = pts[i].score;
 		size_t j = i;
-		while (j < N && pts[j].score == thr) { if (pts[j].lab) TP += 1.0; else FP += 1.0; j++; }
-		NV sens = TP / P, spec = (Nn - FP) / Nn;
+		while (j < N && pts[j].score == thr) { if (pts[j].lab) TP++; else FP++; j++; }
+		const NV sens = (NV)TP / (NV)m, spec = (NV)(n - FP) / (NV)n;
 		HV *pt = newHV();
-		hv_stores(pt, "threshold",   newSVnv(thr));
+		hv_stores(pt, "threshold",   newSVnv(sgn * thr));
 		hv_stores(pt, "sensitivity", newSVnv(sens));
 		hv_stores(pt, "specificity", newSVnv(spec));
 		av_push(curve, newRV_noinc((SV *)pt));
-		NV jstat = sens + spec - 1.0;
-		if (jstat > best_j) { best_j = jstat; best_thr = thr; best_sens = sens; best_spec = spec; }
+		const NV jstat = sens + spec - 1.0;
+		if (jstat > best_j) { best_j = jstat; best_thr = sgn * thr; best_sens = sens; best_spec = spec; }
 		i = j;
 	}
-	Safefree(pts);
+	LEAVE;
 
 	HV *youden = newHV();
 	hv_stores(youden, "threshold",   newSVnv(best_thr));
@@ -30649,13 +31210,13 @@ PPCODE:
 	{ AV *ci = newAV(); av_push(ci, newSVnv(lo)); av_push(ci, newSVnv(hi));
 		hv_stores(ret, "auc_ci", newRV_noinc((SV *)ci)); }
 	hv_stores(ret, "conf_level", newSVnv(conf_level));
-	hv_stores(ret, "n_pos",      newSViv((IV)m));
-	hv_stores(ret, "n_neg",      newSViv((IV)n));
-	hv_stores(ret, "n",          newSViv((IV)N));
-	hv_stores(ret, "direction",  newSVpv(lower_pos ? "<" : ">", 1));
+	hv_stores(ret, "n_pos",      newSVuv((UV)m));
+	hv_stores(ret, "n_neg",      newSVuv((UV)n));
+	hv_stores(ret, "n",          newSVuv((UV)N));
+	hv_stores(ret, "direction",  newSVpvn(lower_pos ? "<" : ">", 1));
 	hv_stores(ret, "youden",     newRV_noinc((SV *)youden));
 	hv_stores(ret, "curve",      newRV_noinc((SV *)curve));
-	hv_stores(ret, "method",     newSVpv("ROC curve with DeLong AUC", 0));
+	hv_stores(ret, "method",     newSVpvs("ROC curve with DeLong AUC"));
 	ST(0) = sv_2mortal(newRV_noinc((SV *)ret));
 	XSRETURN(1);
 }
@@ -30718,25 +31279,26 @@ PPCODE:
 		croak("Usage: bedroc(\\@scores, \\@labels, alpha => 20, "
 		      "positive => 1, cutoff => x, active_frac => 0.1, "
 		      "active_side => 'high', direction => '>', top => 0.05)");
-	NV alpha = 20.0; const char *positive = "1"; bool lower_pos = 0;
-	bool have_cutoff = 0, have_top = 0, have_frac = 0;
+	if (items % 2) croak("bedroc: options must be key => value pairs");	//a dangling key used to be ignored
+	NV alpha = 20.0; SV *positive = NULL; bool lower_pos = FALSE;	//positive NULL: the default, "1"
+	bool have_cutoff = FALSE, have_top = FALSE, have_frac = FALSE;
 	NV cutoff = 0.0, top = 0.0, active_frac = 0.0;
-	bool frac_low = 0;
-	for (int i = 2; i + 1 < items; i += 2) {
+	bool frac_low = FALSE;
+	for (Stack_off_t i = 2; i < items; i += 2) {
 		const char *k = SvPV_nolen(ST(i)); SV *v = ST(i + 1);
 		if      (strEQ(k, "alpha"))     alpha = SvNV(v);
-		else if (strEQ(k, "positive"))  positive = SvPV_nolen(v);
-		else if (strEQ(k, "cutoff"))    { have_cutoff = 1; cutoff = SvNV(v); }
-		else if (strEQ(k, "top") || strEQ(k, "fraction")) { have_top = 1; top = SvNV(v); }
-		else if (strEQ(k, "active_frac") || strEQ(k, "active")) { have_frac = 1; active_frac = SvNV(v); }
+		else if (strEQ(k, "positive"))  positive = v;
+		else if (strEQ(k, "cutoff"))    { have_cutoff = TRUE; cutoff = SvNV(v); }
+		else if (strEQ(k, "top") || strEQ(k, "fraction")) { have_top = TRUE; top = SvNV(v); }
+		else if (strEQ(k, "active_frac") || strEQ(k, "active")) { have_frac = TRUE; active_frac = SvNV(v); }
 		else if (strEQ(k, "active_side")) {
 			const char *sd = SvPV_nolen(v);           //'low'/'bottom' vs 'high'/'top'
 			frac_low = (sd[0] == 'l' || sd[0] == 'L' || sd[0] == 'b' || sd[0] == 'B');
 		}
-		else if (strEQ(k, "direction")) { const char *d = SvPV_nolen(v); lower_pos = (d[0] == '<'); }
+		else if (strEQ(k, "direction")) lower_pos = roc_direction(aTHX_ v, "bedroc");
 		else croak("bedroc: unknown argument '%s'", k);
 	}
-	if (!(alpha > 0.0)) croak("bedroc: alpha must be > 0");
+	if (!(alpha > 0.0) || nv_isinf(alpha)) croak("bedroc: alpha must be > 0 and finite");
 	if (have_top && !(top > 0.0 && top <= 1.0))
 		croak("bedroc: top must be between 0 and 1");
 	if (have_frac && have_cutoff)
@@ -30745,108 +31307,177 @@ PPCODE:
 		croak("bedroc: active_frac must be strictly between 0 and 1");
 
 	AV *sav = (AV *)SvRV(ST(0)), *lav = (AV *)SvRV(ST(1));
-	SSize_t Ns = av_len(sav) + 1;
-	if (Ns != av_len(lav) + 1)
-		croak("bedroc: scores and labels must be the same length");
-	if (Ns < 1) croak("bedroc: need at least one observation");
-	size_t N = (size_t)Ns;
-
-	/*active_frac mode: binarize the second array by taking exactly
-	ceil(active_frac*N) items from one tail (default the HIGH end, like
-	cutoff; active_side => 'low' takes the low end).  n_a is clamped to
-	[1, N-1] so both classes always exist — no "need both labels" death.*/
-	int *act_by_frac = NULL;
-	if (have_frac) {
-		size_t n_a = (size_t)nv_ceil(nv_narrow(active_frac * (NV)N));
-		if (n_a < 1) n_a = 1;
-		if (N >= 2 && n_a > N - 1) n_a = N - 1;
-		NVIdx *tmp; Newx(tmp, N, NVIdx);
-		for (size_t i = 0; i < N; i++) {
-			SV **lp = av_fetch(lav, i, 0);
-			tmp[i].v = (lp && *lp) ? SvNV(*lp) : NAN;
-			tmp[i].i = i;
+	ENTER;	//its LEAVE frees every SAVEFREEPV()d buffer below; a croak's unwinding frees them too
+	size_t m, n;	//actives and inactives among the complete cases
+	ROCPt *pts;
+	if (have_cutoff || have_frac) {
+		/*Binarize a continuous truth column, as auroc() does: only the complete
+		cases -- a score and a truth value, neither of them NaN -- are
+		binarized and ranked, so active_frac takes its fraction of those.  A
+		NaN truth value used to reach qsort(), which cannot order one (300
+		shuffles of one input gave 45 different answers), and under cutoff it
+		counted as inactive.*/
+		const SSize_t Ns = av_len(sav) + 1;
+		if (Ns != av_len(lav) + 1)
+			croak("bedroc: scores and labels must be the same length");
+		if (Ns < 1) croak("bedroc: need at least one observation");
+		Newx(pts, Ns, ROCPt);
+		SAVEFREEPV(pts);
+		NVIdx *tv;	//each complete case's truth value, and its index in pts[]
+		Newx(tv, Ns, NVIdx);
+		SAVEFREEPV(tv);
+		size_t k = 0;	//complete cases
+		for (SSize_t i = 0; i < Ns; i++) {
+			NV s;
+			if (!roc_score_at(aTHX_ sav, i, "bedroc", &s)) continue;
+			SV *t = av_slow_at(aTHX_ lav, i);
+			if (!t) continue;
+			t = sv_fetched(aTHX_ t);
+			if (!sv_is_numeric_arg(aTHX_ t))
+				croak("bedroc: label at index %" IVdf " is not a number", (IV)i);
+			const NV y = SvNV(t);
+			if (nv_isnan(y)) continue;
+			tv[k].v = y; tv[k].i = k;
+			pts[k].score = lower_pos ? -s : s;
+			pts[k].lab = 0;
+			k++;
 		}
-		qsort(tmp, N, sizeof(NVIdx), nvidx_cmp_asc);
-		Newxz(act_by_frac, N, int);
-		if (frac_low) for (size_t k = 0; k < n_a; k++) act_by_frac[tmp[k].i] = 1;
-		else          for (size_t k = N - n_a; k < N; k++) act_by_frac[tmp[k].i] = 1;
-		Safefree(tmp);
+		if (have_frac) {
+			/*Exactly ceil(active_frac * k) actives from one tail, clamped to
+			[1, k - 1] so both classes exist.*/
+			size_t n_a = (size_t)nv_ceil(nv_narrow(active_frac * (NV)k));
+			if (n_a < 1) n_a = 1;
+			if (k >= 2 && n_a > k - 1) n_a = k - 1;
+			if (n_a > k) n_a = k;
+			qsort(tv, k, sizeof(NVIdx), nvidx_cmp_asc);
+			if (frac_low) for (size_t j = 0; j < n_a; j++)     pts[tv[j].i].lab = 1;
+			else          for (size_t j = k - n_a; j < k; j++) pts[tv[j].i].lab = 1;
+		} else {
+			for (size_t j = 0; j < k; j++) pts[j].lab = (tv[j].v >= cutoff) ? 1 : 0;
+		}
+		m = 0;
+		for (size_t j = 0; j < k; j++) m += (size_t)pts[j].lab;
+		n = k - m;
+		if (m == 0 || n == 0)
+			croak("bedroc: need both active and inactive labels%s",
+			      have_cutoff ? " (check cutoff)" : "");
+		rocpt_desc_sort(pts, k);
+	} else {
+		/*roc_read() drops a case whose score is undef or NaN, or whose label is
+		undef, and compares a label with `positive` as `eq` does.  Up to 0.3217
+		a NaN score hung the tie-group walk below (no score equals NaN, so it
+		never advanced), an undef score was read as 0 and an undef label as
+		inactive, and labels were compared byte for byte.*/
+		pts = roc_read(aTHX_ sav, lav, positive ? positive : sv_2mortal(newSVpvs("1")),
+		               lower_pos, &m, &n, "bedroc");
 	}
+	const size_t N = m + n;
 
-	ROCPt *pts; Newx(pts, N, ROCPt);
-	size_t m = 0;                            // actives
-	for (size_t i = 0; i < N; i++) {
-		SV **sp = av_fetch(sav, i, 0), **lp = av_fetch(lav, i, 0);
-		NV s = (sp && *sp) ? SvNV(*sp) : NAN;
-		if (lower_pos) s = -s;
-		bool active = act_by_frac ? act_by_frac[i]
-			: have_cutoff
-			? (((lp && *lp) ? SvNV(*lp) : NAN) >= cutoff)
-			: ((lp && *lp) ? strEQ(SvPV_nolen(*lp), positive) : 0);
-		pts[i].score = s; pts[i].lab = active ? 1 : 0;
-		if (active) m++;
-	}
-	Safefree(act_by_frac);
-	size_t n = N - m;                        // inactives
-	if (m == 0 || n == 0) {
-		Safefree(pts);
-		croak("bedroc: need both active and inactive labels%s",
-		      have_cutoff ? " (check cutoff)" : "");
-	}
-
-	qsort(pts, N, sizeof(ROCPt), rocpt_cmp_desc);
-// sum over actives of exp(-alpha * midrank / N), 1-based ranks, best = 1 */
-	NV sum = 0.0;
+	/*Truchon & Bayly (2007) eq. 36 is
+	
+	  BEDROC = RIE * ra sinh(a/2) / (cosh(a/2) - cosh(a/2 - a ra))
+	         + 1 / (1 - exp(a (1 - ra)))
+	
+	with RIE = sum_i exp(-a r_i / N) / (ra (1 - exp(-a)) / (exp(a / N) - 1)),
+	r_i the 1-based midrank of active i.  Evaluated as written it fails both
+	ways: the cosh difference and 1 - exp() cancel as a -> 0, the two terms are
+	each of order 1/a and cancel against each other, and sinh, cosh and exp(a
+	(1 - ra)) overflow for large a.  Up to 0.3217 scores 6..1 with labels
+	[1,0,1,0,0,0] gave 1200.75 at a = 1e-6, Inf at 1e-8 and NaN at 1500, where
+	the exact value is 0.875, 0.875 and 1.
+	
+	The algebra below is exact, not an approximation.  With u = a/N, E() =
+	expm1(), q = 1 - ra, and rho_k the midrank of the k-th best active
+	(k = 0..m-1), the cosh difference is 2 sinh(a q / 2) sinh(a ra / 2), and
+	writing BEDROC as 1 minus its shortfall from the ideal ranking (actives at
+	ranks 1..m, where it is exactly 1) gives
+	
+	  BEDROC = 1 + E(-u) D / (E(-a q) E(-a ra)),
+	  D = sum_k (exp(-u k) - exp(-u (rho_k - 1)))
+	
+	Each term of D is taken in the form whose exponentials cannot overflow --
+	-exp(-u k) E(-u d) for d = rho_k - 1 - k >= 0, exp(-u (rho_k - 1)) E(u d)
+	for d < 0, which a tie among actives can give -- and as a -> 0 the ratio
+	tends to sum(d) / (m n), the AUC-like limit, with no cancellation.  RIE,
+	rie_max and rie_min likewise become
+	
+	  RIE     = E(-u) sum_i exp(-u (r_i - 1)) / (ra E(-a))
+	  rie_max = E(-a ra) / (ra E(-a))
+	  rie_min = exp(-a q) E(-a ra) / (ra E(-a))
+	
+	t/bedroc.mpmath.t checks all four against mpmath at 60 digits from a =
+	1e-8 to 1e4.*/
+	const NV u = alpha / (NV)N;
+	NV S1 = 0.0;	//sum over actives of exp(-u (r_i - 1))
+	NV D  = 0.0;	//shortfall from the ideal ranking; see above
+	size_t ka = 0;	//actives passed so far: k in the formula
 	for (size_t i = 0; i < N; ) {
-		size_t j = i;
-		while (j < N && pts[j].score == pts[i].score) j++;
-		NV midrank = ((NV)(i + 1) + (NV)j) / 2.0; // avg of positions i+1..j
-		NV w = nv_exp(-alpha * midrank / (NV)N);
-		for (size_t k = i; k < j; k++) if (pts[k].lab) sum += w;
+		size_t j = i, aj = 0;	//aj: actives in the tie group
+		while (j < N && pts[j].score == pts[i].score) { aj += (size_t)pts[j].lab; j++; }
+		const NV rm1 = ((NV)i + (NV)(j - 1)) / 2.0;	//midrank - 1 of positions i+1..j
+		const NV w = nv_exp(-u * rm1);
+		S1 += (NV)aj * w;
+		for (size_t t = 0; t < aj; t++, ka++) {
+			const NV d = rm1 - (NV)ka;
+			D += (d >= 0.0) ? -nv_exp(-u * (NV)ka) * nv_expm1(-u * d)
+			                : w * nv_expm1(u * d);
+		}
 		i = j;
 	}
 
-	NV ra   = (NV)m / (NV)N;
-	NV rand_ = ra * (1.0 - nv_exp(-alpha)) / (nv_exp(alpha / (NV)N) - 1.0);
-	NV rie   = sum / rand_;
-	NV f1    = ra * nv_sinh(alpha / 2.0)
-	         / (nv_cosh(alpha / 2.0) - nv_cosh(alpha / 2.0 - alpha * ra));
-	NV f2    = 1.0 / (1.0 - nv_exp(alpha * (1.0 - ra)));
-	NV bedroc   = rie * f1 + f2;
-	NV rie_max  = (1.0 - nv_exp(-alpha * ra)) / (ra * (1.0 - nv_exp(-alpha)));
-	NV rie_min  = (1.0 - nv_exp( alpha * ra)) / (ra * (1.0 - nv_exp( alpha)));
+	const NV ra = (NV)m / (NV)N, qa = (NV)n / (NV)N;
+	const NV em_a  = nv_expm1(-alpha);
+	const NV em_ra = nv_expm1(-alpha * ra);
+	const NV em_qa = nv_expm1(-alpha * qa);
+	const NV em_u  = nv_expm1(-u);
+	NV bedroc  = 1.0 + em_u * D / (em_qa * em_ra);
+	NV rie     = em_u * S1 / (ra * em_a);
+	NV rie_max = em_ra / (ra * em_a);
+	NV rie_min = nv_exp(-alpha * qa) * em_ra / (ra * em_a);
 
 	HV *ret = newHV();
+	sv_2mortal((SV *)ret);	//so a croak below cannot leak it
 	hv_stores(ret, "bedroc",     newSVnv(bedroc));
 	hv_stores(ret, "alpha",      newSVnv(alpha));
 	hv_stores(ret, "rie",        newSVnv(rie));
 	hv_stores(ret, "rie_min",    newSVnv(rie_min));
 	hv_stores(ret, "rie_max",    newSVnv(rie_max));
-	hv_stores(ret, "n",          newSViv((IV)N));
-	hv_stores(ret, "n_active",   newSViv((IV)m));
-	hv_stores(ret, "n_inactive", newSViv((IV)n));
+	hv_stores(ret, "n",          newSVuv((UV)N));
+	hv_stores(ret, "n_active",   newSVuv((UV)m));
+	hv_stores(ret, "n_inactive", newSVuv((UV)n));
 	hv_stores(ret, "ra",         newSVnv(ra));
-	hv_stores(ret, "direction",  newSVpv(lower_pos ? "<" : ">", 1));
-	hv_stores(ret, "method",     newSVpv("BEDROC (Truchon-Bayly early recognition)", 0));
+	hv_stores(ret, "direction",  newSVpvn(lower_pos ? "<" : ">", 1));
+	hv_stores(ret, "method",     newSVpvs("BEDROC (Truchon-Bayly early recognition)"));
 
 	if (have_top) {//enrichment in the top fraction: EF = (hits/n_top) / R_a
 		size_t n_top = (size_t)nv_ceil(nv_narrow(top * (NV)N));
-		if (n_top < 1) n_top = 1; if (n_top > N) n_top = N;
-		size_t hits = 0;
-		for (size_t i = 0; i < n_top; i++) if (pts[i].lab) hits++;
+		if (n_top < 1) n_top = 1;
+		if (n_top > N) n_top = N;
+		/*A tie group that straddles the cut contributes its actives in
+		proportion to how much of it lies inside, which is the expected hit
+		count over every order of the tied cases.  Counting whichever cases
+		the sort happened to put first made the answer depend on input order:
+		bedroc([5,5,5,5], [1,0,0,0], top => 0.25) found one hit and labels
+		[0,0,0,1] none.  Both are now 0.25.*/
+		NV hits = 0.0;
+		for (size_t i = 0; i < n_top; ) {
+			size_t j = i, aj = 0;
+			while (j < N && pts[j].score == pts[i].score) { aj += (size_t)pts[j].lab; j++; }
+			if (j <= n_top) hits += (NV)aj;
+			else            hits += (NV)aj * (NV)(n_top - i) / (NV)(j - i);
+			i = j;
+		}
 		NV expected = ra * (NV)n_top;
 		HV *enr = newHV();
-		hv_stores(enr, "fraction",         newSVnv(top));
-		hv_stores(enr, "n_top",            newSViv((IV)n_top));
-		hv_stores(enr, "active_count",     newSViv((IV)hits));
-		hv_stores(enr, "expected",         newSVnv(expected));
-		hv_stores(enr, "enrichment_factor",
-		          newSVnv((expected > 0.0) ? ((NV)hits / (NV)n_top) / ra : NAN));
 		hv_stores(ret, "enrichment", newRV_noinc((SV *)enr));
+		hv_stores(enr, "fraction",         newSVnv(top));
+		hv_stores(enr, "n_top",            newSVuv((UV)n_top));
+		hv_stores(enr, "active_count",     newSVnv(hits));
+		hv_stores(enr, "expected",         newSVnv(expected));
+		hv_stores(enr, "enrichment_factor", newSVnv((hits / (NV)n_top) / ra));
 	}
-
-	Safefree(pts);
-	ST(0) = sv_2mortal(newRV_noinc((SV *)ret));
+	LEAVE;
+	ST(0) = sv_2mortal(newRV_inc((SV *)ret));
 	XSRETURN(1);
 }
 
@@ -31927,10 +32558,15 @@ NV median(...)
 		}
 		if (total_count == 0) croak("median needs >= 1 element");
 
+		/*A heap buffer is SAVEFREEPV()d inside ENTER/LEAVE, so the croak of an
+		element that is not a number gives it back.  It used to be freed by
+		hand before this function's own croaks only, so nv_arg_at()'s leaked
+		it: median([1..100000, 'abc']) lost 800 kB a call.*/
+		ENTER;
 		nums = (total_count <= sizeof(stackbuf) / sizeof(stackbuf[0])) ? stackbuf : NULL;
-		if (!nums) Newx(nums, total_count, NV);
+		if (!nums) { Newx(nums, total_count, NV); SAVEFREEPV(nums); }
 
-		//Populate the C array — free the buffer before any croak
+		//Populate the C array
 		for (Stack_off_t i = 0; i < items; i++) {
 			SV* arg = ST(i);
 			if (SvROK(arg) && SvTYPE(SvRV(arg)) == SVt_PVAV) {
@@ -31960,7 +32596,6 @@ NV median(...)
 					if (tv) {
 						nums[k++] = nv_arg_at(aTHX_ tv, "median", (UV)j, (UV)i);
 					} else {
-						if (nums != stackbuf) Safefree(nums);
 						/*UVuf, not %zu: croak() runs perl's own formatter, which does not
 						understand the C99 z modifier and prints it literally on older
 						perls (5.10 and 5.12 both do)*/
@@ -31970,7 +32605,6 @@ NV median(...)
 			} else if (SvOK(arg)) {
 				nums[k++] = nv_arg(aTHX_ arg, "median", (UV)i);
 			} else {
-				if (nums != stackbuf) Safefree(nums);
 				croak("median: undefined value at argument index %" UVuf, (UV)i);
 			}
 		}
@@ -31994,9 +32628,15 @@ NV median(...)
 			NV lower = nums[0];
 			for (size_t i = 1; i < up; i++) if (nums[i] > lower) lower = nums[i];
 			median_val = (lower + nums[up]) / 2.0;
+			/*Two finite values whose sum overflows: median([1e308, 1e308])
+			was Inf, where R's median(), which takes the mean of the pair in
+			long double, gives 1e308.  Halving each first cannot overflow,
+			and is kept off the common path because it rounds twice.*/
+			if (nv_isinf(median_val) && nv_isfinite(lower) && nv_isfinite(nums[up]))
+				median_val = lower / 2.0 + nums[up] / 2.0;
 		}
   median_done:
-		if (nums != stackbuf) Safefree(nums);
+		LEAVE;	//frees a heap buffer
 		RETVAL = median_val;
 	OUTPUT:
 		RETVAL
@@ -32554,6 +33194,28 @@ CODE:
 	if (nrow == 0 || ncol == 0) {
 	croak("Dimensions must be greater than 0");
 	}
+	/*sv_count_arg() bounds each dimension by SV_COUNT_MAX, but not their
+	product, which could wrap a size_t: nrow * ncol is checked here, by
+	division so that the check cannot itself overflow.
+
+	A product that is in range can still be more than this machine will
+	give, and perl's own allocator answers that with "Out of memory!" and an
+	exit that eval cannot catch -- eval { matrix([1], 1, 1e11) } took the
+	interpreter down.  So the memory the cells need at the very least, a
+	pointer and an SV head and an NV each, is asked of the C library's
+	malloc() once and handed straight back.  That is a deliberate departure
+	from Newx(): Newx() would abort on the failure that this exists to turn
+	into a croak.  On a system that overcommits without limit the probe
+	succeeds and proves nothing, which is no worse than before.*/
+	{
+		const size_t per_cell = sizeof(SV *) + sizeof(SV) + sizeof(NV);
+		if (nrow > (size_t)SV_COUNT_MAX / ncol || nrow * ncol > SIZE_MAX / per_cell)
+			croak("matrix: %" UVuf " x %" UVuf " is too many cells", (UV)nrow, (UV)ncol);
+		void *probe = malloc(nrow * ncol * per_cell);
+		if (!probe)
+			croak("matrix: cannot allocate a %" UVuf " x %" UVuf " matrix", (UV)nrow, (UV)ncol);
+		free(probe);
+	}
 	// Create the matrix (Array of Arrays)
 	AV*result_av = newAV();
 	av_extend(result_av, nrow - 1);
@@ -32989,31 +33651,60 @@ SV* rnorm(...)
 	{
 		// Auto-seed the PRNG if the Perl script hasn't done so yet
 		AUTO_SEED_PRNG();
+		args_get_magic(aTHX_ ax, items);	//before any SvPOK() or SvOK() reads an argument
 		size_t n = 0;
 		NV mean = 0.0, sd = 1.0;
-		int arg_start = 0;
-		// Check if the first argument is a simple integer (rnorm(33))
-		if (items > 0 && SvIOK(ST(0)) && (items == 1 || items % 2 != 0)) {
-			n = sv_count_arg(aTHX_ ST(0), "rnorm", "n", 0);
-			arg_start = 1; // Start parsing named arguments from the second element
+		SV *n_sv = NULL;
+		bool mean_set = FALSE, sd_set = FALSE;
+		/*runif()'s parser: a string that is not a number is a key, and anything
+		else is positional, in R's order n, mean, sd.  This used to accept a
+		positional n only when SvIOK() said it was an integer, so rnorm(1e3),
+		rnorm("5") and rnorm(2.5*2) croaked with the usage message, and R's own
+		rnorm(10, 0, 1) croaked "unknown argument '0'".  A mean or sd that is
+		not a number used to be read as 0.*/
+		if (items == 0)
+			croak("Usage: rnorm(n), rnorm(n => 10, mean => 0, sd => 1), or rnorm(10, 0, 1)");
+		for (Stack_off_t i = 0; i < items; ) {
+			if (SvPOK(ST(i)) && !looks_like_number(ST(i))) {
+				const char *key = SvPV_nolen(ST(i));
+				const bool is_n = strEQ(key, "n"), is_mean = strEQ(key, "mean"), is_sd = strEQ(key, "sd");
+				if (!is_n && !is_mean && !is_sd)
+					croak("rnorm: unknown argument '%s'", key);
+				if (i + 1 >= items)
+					croak("rnorm: odd number of named arguments ('%s' has no value)", key);
+				SV *val = ST(i + 1);
+				if (is_n) n_sv = val;
+				else {
+					if (!SvOK(val) || !sv_is_numeric_arg(aTHX_ val))
+						croak("rnorm: '%s' must be a number", key);
+					if (is_mean) { mean = SvNV(val); mean_set = TRUE; }
+					else         { sd   = SvNV(val); sd_set   = TRUE; }
+				}
+				i += 2;
+				continue;
+			}
+			if (!SvOK(ST(i)) || !sv_is_numeric_arg(aTHX_ ST(i)))
+				croak("rnorm: argument %d is not a number", (int)i + 1);
+			if      (!n_sv)     n_sv = ST(i);
+			else if (!mean_set) { mean = SvNV(ST(i)); mean_set = TRUE; }
+			else if (!sd_set)   { sd   = SvNV(ST(i)); sd_set   = TRUE; }
+			else croak("rnorm: too many arguments (expected n, mean, sd)");
+			i++;
 		}
-		// Parse remaining named arguments from the flat stack
-		if ((items - arg_start) % 2 != 0) {
-			croak("Usage: rnorm(n), rnorm(n => 10, mean => 0, sd => 1), or rnorm(33, mean => 0)");
-		}
-
-		for (int i = arg_start; i < items; i += 2) {
-			const char* key = SvPV_nolen(ST(i));
-			SV* val = ST(i + 1);
-
-			if      (strEQ(key, "n"))    n    = sv_count_arg(aTHX_ val, "rnorm", "n", 0);
-			else if (strEQ(key, "mean")) mean = SvNV(val);
-			else if (strEQ(key, "sd"))   sd   = SvNV(val);
-			else croak("rnorm: unknown argument '%s'", key);
-		}
+		if (!n_sv) croak("rnorm: 'n' is a required argument");
+		n = sv_count_arg(aTHX_ n_sv, "rnorm", "n", 0);
 		if (sd < 0.0) croak("rnorm: standard deviation must be non-negative");
+		/*R's rnorm() (nmath/rnorm.c) is NaN, with a warning, when mu is NaN or
+		sigma is not finite, and is mu itself when sigma is 0 or mu infinite.
+		sd => Inf used to give +-Inf.*/
+		const bool na = nv_isnan(mean) || !nv_isfinite(sd) || nv_isnan(sd);
+		const bool flat = !na && (sd == 0.0 || nv_isinf(mean));	//every draw is mean
+		if (na && n > 0) warn("rnorm: NAs produced");	//before the array exists
 		AV *result_av = newAV();
-		if (n > 0) {
+		if (n > 0 && (na || flat)) {
+			av_extend(result_av, n - 1);
+			for (size_t i = 0; i < n; i++) av_store(result_av, (SSize_t)i, newSVnv(na ? NV_NAN : mean));
+		} else if (n > 0) {
 			av_extend(result_av, n - 1);
 			// Generate random normals using the Box-Muller transform
 			for (size_t i = 0; i < n; ) {
@@ -33437,7 +34128,7 @@ CODE:
 	NV tol = 1e-12;
 
 	if (items % 2 != 0) croak("Usage: power_t_test(n => 30, delta => 0.5, sd => 1.0, ...)");
-	for (unsigned short i = 0; i < items; i += 2) {
+	for (Stack_off_t i = 0; i < items; i += 2) {	//items' own type: an unsigned short wraps past 65535
 		const char*key = SvPV_nolen(ST(i));
 		SV* val = ST(i+1);
 
@@ -33515,6 +34206,14 @@ CODE:
 	else croak("power_t_test: 'alternative' must be 'two.sided', 'one.sided', 'greater', or 'less', not '%s'", alternative);
 
 	if (tside == 2 && !is_null_delta) delta = nv_fabs(delta);
+	/*'less' is H1: mu < 0, whose power at delta is the 'greater' power at
+	-delta: P(T < -t_crit) with noncentrality delta is P(T > t_crit) with
+	-delta.  So the sign of delta is flipped on the way in and back on the way
+	out, and a solved-for delta comes back negative.  'less' used to be read
+	as 'greater' outright: power_t_test(n => 20, delta => 1, alternative =>
+	'less') gave 0.9279 where H1: mu < 0 has a power of about 1e-6.*/
+	const bool less = strEQ(alternative, "less");
+	if (less && !is_null_delta) delta = -delta;
 
 	ptt_ctx c;
 	c.n = n; c.delta = delta; c.sd = sd; c.sig_level = sig_level;
@@ -33564,6 +34263,7 @@ CODE:
 			  "(n = %" NVgf ", delta = %" NVgf ", sd = %" NVgf ")",
 			  power, n, delta, sd);
 	}
+	if (less) delta = -delta;	//back to the caller's sign
 	HV*ret = newHV();
 	hv_stores(ret, "n", newSVnv(n));
 	hv_stores(ret, "delta", newSVnv(delta));
@@ -33940,16 +34640,25 @@ CODE:
 		croak("var_test: 'ratio' must be a single positive number");
 	if (conf_level <= 0.0 || conf_level >= 1.0 || !nv_isfinite(conf_level))
 		croak("var_test: 'conf_level' must be a single number between 0 and 1");
+	/*R's match.arg() refuses anything else.  'bogus' used to run a two-sided
+	test and echo 'bogus' back as the alternative.*/
+	if (strNE(alternative, "two.sided") && strNE(alternative, "less") && strNE(alternative, "greater"))
+		croak("var_test: 'alternative' must be 'two.sided', 'less' or 'greater', not '%s'", alternative);
 	AV* x_av = (AV*)SvRV(x_sv);
 	AV* y_av = (AV*)SvRV(y_sv);
 	size_t nx_raw = av_len(x_av) + 1, ny_raw = av_len(y_av) + 1;
-	// Computation via Welford's Algorithm (ignoring NaNs)
+	/*Computation via Welford's Algorithm, over the finite values (R's
+	x[is.finite(x)]).  Each element is read through av_slow_at(), which runs
+	its get magic before SvOK() is asked: av_fetch() and SvOK() saw every
+	element of a tied array as undef, so var_test(\@tied, ...) croaked "not
+	enough 'x' observations".*/
 	NV mean_x = 0.0, M2_x = 0.0;
 	size_t nx = 0;
 	for (size_t i = 0; i < nx_raw; i++) {
-		SV** tv = av_fetch(x_av, i, 0);
-		if (tv && SvOK(*tv) && looks_like_number(*tv)) {
-			NV val = SvNV(*tv);
+		SV *tv = av_slow_at(aTHX_ x_av, (SSize_t)i);
+		if (tv) tv = sv_fetched(aTHX_ tv);
+		if (tv && looks_like_number(tv)) {
+			NV val = SvNV(tv);
 			if (!nv_isnan(val) && nv_isfinite(val)) {
 				nx++;
 				NV delta = val - mean_x;
@@ -33961,9 +34670,10 @@ CODE:
 	NV mean_y = 0.0, M2_y = 0.0;
 	size_t ny = 0;
 	for (size_t i = 0; i < ny_raw; i++) {
-		SV** tv = av_fetch(y_av, i, 0);
-		if (tv && SvOK(*tv) && looks_like_number(*tv)) {
-			NV val = SvNV(*tv);
+		SV *tv = av_slow_at(aTHX_ y_av, (SSize_t)i);
+		if (tv) tv = sv_fetched(aTHX_ tv);
+		if (tv && looks_like_number(tv)) {
+			NV val = SvNV(tv);
 			if (!nv_isnan(val) && nv_isfinite(val)) {
 				ny++;
 				NV delta = val - mean_y;
@@ -33978,7 +34688,9 @@ CODE:
 	NV df_y = (NV)(ny - 1);
 	NV var_x = M2_x / df_x;
 	NV var_y = M2_y / df_y;
-	if (var_y == 0.0) croak("var_test: variance of 'y' is zero (cannot divide by zero)");
+	/*A zero variance in y is not an error in R: the estimate is Inf (or NaN
+	when x's is zero too), and R carries it through -- F = Inf, p = 0 and the
+	interval [Inf, Inf], or NaN throughout.  This used to croak.*/
 	// Statistics Math
 	NV estimate = var_x / var_y;
 	NV statistic = estimate / ratio;
@@ -33999,7 +34711,7 @@ CODE:
 	going.  So var_test's p-value is now more accurate than R's in the tail,
 	deliberately and for the documented reason.*/
 	NV p_val;
-	NV ci_lower = 0.0, ci_upper = INFINITY;
+	NV ci_lower = 0.0, ci_upper = NV_INF;
 	if (strcmp(alternative, "less") == 0) {
 		p_val = pf(statistic, df_x, df_y);
 		ci_upper = estimate / qf_lower(1.0 - conf_level, df_x, df_y);
@@ -34134,7 +34846,7 @@ the fetched SV still carries the tied hash's element magic.*/
 						 ret_hv,
 						 HEK_KEY(hek),
 						 HEK_UTF8(hek) ? -(I32)HEK_LEN(hek) : (I32)HEK_LEN(hek),
-						 SvREFCNT_inc(HeVAL(entries[i])),  //HeVAL: direct macro, no call
+						 flt_cell_copy(aTHX_ HeVAL(entries[i])),  //a copy, as the tied path makes
 						 HeHASH(entries[i])                //reuse precomputed hash
 						);
 					}
@@ -34157,29 +34869,21 @@ copied, which runs its FETCH once and leaves the tied array's element magic
 behind.*/
 				const bool tied = cBOOL(SvRMAGICAL(av));
 				SV **src = tied ? NULL : AvARRAY(av); //direct pointer into AV's C array
-				size_t *restrict idx;
-				//Shuffle indices rather than SV** to keep the original AV intact
-				Newx(idx, count, size_t);
+				size_t *restrict idx;	//the drawn indices, in draw order
+				Newx(idx, n, size_t);
 				SAVEFREEPV(idx);
-				for (size_t i = 0; i < count; i++)
-					idx[i] = i;
-				for (size_t i = 0; i < n; i++) { // Partial Fisher-Yates on the index array
-					size_t j   = i + (size_t)(Drand01() * (count - i));
-					size_t tmp = idx[i];
-					idx[i]  = idx[j];
-					idx[j]  = tmp;
-				}
+				sample_draw(aTHX_ count, n, idx);
 				for (size_t i = 0; i < n; i++) {
 					SV *push_sv;
 					if (tied) {
 						SV **p = av_fetch(av, (SSize_t)idx[i], 0);
 						push_sv = p ? newSVsv(*p) : newSV(0);
 					} else {
+						/*A copy.  The caller's own SV used to be pushed, so
+						$_ += 1000 for @{ sample(\@a, 3) } changed @a -- while
+						the tied path above already copied.*/
 						SV *sv = src[idx[i]];   //AvARRAY direct access — no av_fetch call
-						if (sv && sv != &PL_sv_undef)
-							push_sv = SvREFCNT_inc(sv);
-						else
-							push_sv = newSV(0);
+						push_sv = (sv && sv != &PL_sv_undef) ? flt_cell_copy(aTHX_ sv) : newSV(0);
 					}
 					av_push(ret_av, push_sv);
 				}
@@ -34571,14 +35275,13 @@ CODE:
 				HV *h_row_hv = (HV *)SvRV(h_row_sv);
 				if (SvTYPE(SvRV(i_row_sv)) == SVt_PVHV) {//Case A: $i->{row} is a Hash Reference
 					HV *i_row_hv = (HV *)SvRV(i_row_sv);
-					const bool src_tied = cBOOL(SvRMAGICAL(i_row_hv));	//its values are copied: see jd_store
 					HE *i_entry;
 					ITER_KEEP_BEGIN(i_row_hv);
 					hv_iterinit(i_row_hv);
 					while ((i_entry = hv_iternext(i_row_hv))) {
 						SV *col_key_sv = hv_iterkeysv(i_entry);
 						SV *col_val    = hv_iterval(i_row_hv, i_entry);
-						jd_store(aTHX_ h_row_hv, col_key_sv, col_val, src_tied);
+						jd_store(aTHX_ h_row_hv, col_key_sv, col_val);
 					}
 					ITER_KEEP_END;
 				} else if (SvTYPE(SvRV(i_row_sv)) == SVt_PVAV) {
@@ -34591,7 +35294,7 @@ CODE:
 						SV **key_svp = av_fetch(i_row_av, idx, 0);
 						SV **val_svp = av_fetch(i_row_av, idx + 1, 0);
 						if (key_svp && val_svp) {// Ensure both the key and value exist in the array
-							jd_store(aTHX_ h_row_hv, *key_svp, *val_svp, FALSE);
+							jd_store(aTHX_ h_row_hv, *key_svp, *val_svp);
 						}
 					}
 				}
@@ -34766,7 +35469,7 @@ through that copy.*/
 					h_row_sv = sv_2mortal(newRV_noinc((SV *)h_row_hv));
 				}
 				if (target_root_mode == 1) {
-					jd_store(aTHX_ (HV *)SvRV(h_ref), row_key_sv, h_row_sv, FALSE);
+					jd_store(aTHX_ (HV *)SvRV(h_ref), row_key_sv, h_row_sv);
 				} else {
 					if (current_idx >= 0 && !av_store((AV *)SvRV(h_ref), current_idx, SvREFCNT_inc_simple_NN(h_row_sv)))
 						SvREFCNT_dec(h_row_sv);
@@ -34776,14 +35479,13 @@ through that copy.*/
 			if (h_row_hv) {
 				if (SvTYPE(SvRV(i_row_sv)) == SVt_PVHV) {// Hash into Hash (Direct copy)
 					HV *i_inner_hv = (HV *)SvRV(i_row_sv);
-					const bool src_tied = cBOOL(SvRMAGICAL(i_inner_hv));	//its values are copied: see jd_store
 					HE *i_inner_entry;
 					ITER_KEEP_BEGIN(i_inner_hv);
 					hv_iterinit(i_inner_hv);
 					while ((i_inner_entry = hv_iternext(i_inner_hv))) {
 						SV *col_key_sv = hv_iterkeysv(i_inner_entry);
 						SV *col_val    = hv_iterval(i_inner_hv, i_inner_entry);
-						jd_store(aTHX_ h_row_hv, col_key_sv, col_val, src_tied);
+						jd_store(aTHX_ h_row_hv, col_key_sv, col_val);
 					}
 					ITER_KEEP_END;
 				} else if (SvTYPE(SvRV(i_row_sv)) == SVt_PVAV) {// Array into Hash (Read pairs)
@@ -34794,7 +35496,7 @@ through that copy.*/
 						SV **val_svp = av_fetch(i_inner_av, idx + 1, 0);
 						if (key_svp && *key_svp && val_svp) {
 							SV *val_to_store = *val_svp ? *val_svp : &PL_sv_undef;
-							jd_store(aTHX_ h_row_hv, *key_svp, val_to_store, FALSE);
+							jd_store(aTHX_ h_row_hv, *key_svp, val_to_store);
 						}
 					}
 				}
@@ -34806,18 +35508,13 @@ through that copy.*/
 					for (SSize_t idx = 0; idx <= inner_top_idx; ++idx) {
 						SV **val_svp = av_fetch(i_inner_av, idx, 0);
 						if (val_svp) {
-							SV *val_to_push = *val_svp ? *val_svp : &PL_sv_undef;
-							SV *sv_inc = SvREFCNT_inc(val_to_push);
-							if (sv_inc) {
-								av_push(h_row_av, sv_inc);
-							}
+							//a copy, as jd_store() makes one
+							av_push(h_row_av, newSVsv(*val_svp ? *val_svp : &PL_sv_undef));
 						}
 					}
 				} else if (SvTYPE(SvRV(i_row_sv)) == SVt_PVHV) {
 					// Hash into Array (Flatten and push pairs with non-null pointer assurance)
 					HV *i_inner_hv = (HV *)SvRV(i_row_sv);
-					//a tied row's value is a placeholder that would FETCH from it later: copy it
-					const bool src_tied = cBOOL(SvRMAGICAL(i_inner_hv));
 					HE *i_inner_entry;
 					ITER_KEEP_BEGIN(i_inner_hv);
 					hv_iterinit(i_inner_hv);
@@ -34826,7 +35523,7 @@ through that copy.*/
 						SV *col_val    = hv_iterval(i_inner_hv, i_inner_entry);
 						if (col_key_sv && col_val) {
 							SV *sv_key_inc = SvREFCNT_inc(col_key_sv);
-							SV *sv_val_inc = src_tied ? newSVsv(col_val) : SvREFCNT_inc(col_val);
+							SV *sv_val_inc = newSVsv(col_val);	//a copy, as jd_store() makes one
 							if (sv_key_inc && sv_val_inc) {
 								av_push(h_row_av, sv_key_inc);
 								av_push(h_row_av, sv_val_inc);
@@ -34850,8 +35547,9 @@ CODE:
 	if (items == 0) {
 		croak("value_counts: no data provided. At least one argument is required.");
 	}
+	args_get_magic(aTHX_ ax, items);	//before SvOK() or SvROK() reads an argument
 	arg1 = ST(0);
-	if (!SvOK(arg1)) {
+	if (items == 1 && !SvOK(arg1)) {	//nothing at all to count
 		croak("First argument to value_counts is NOT defined");
 	}
 	// 2. Allocate memory only after we know we are proceeding
@@ -34859,7 +35557,9 @@ CODE:
 	/*Mortal, so every croak below -- and a FETCH or an overloaded stringification
 	that dies inside increment_count() -- frees it.*/
 	counts_hv = (HV*)sv_2mortal((SV*)newHV());
-	// CASE 1: Flattened Array (or single scalar)
+	/*CASE 1: Flattened Array (or single scalar).  An undef is skipped here
+	as everywhere else; value_counts(undef, "a") used to croak that its first
+	argument was not defined, while value_counts("a", undef) returned {a => 1}.*/
 	if (!SvROK(arg1)) {
 		for (Stack_off_t i = 0; i < items; i++) {
 			increment_count(aTHX_ counts_hv, ST(i), fast_nv);
@@ -34876,12 +35576,15 @@ CODE:
 				const char*key = SvPV(arg2, klen);
 				//negative for a UTF-8 name, which by its bytes alone matched no row
 				const I32 sk = SvUTF8(arg2) ? -(I32)klen : (I32)klen;
-				for (unsigned i = 0; i < len; i++) {
-					SV**elemp = av_fetch(av, i, 0);
-					if (!elemp) continue;
-					SV*elem = *elemp;
+				/*size_t, not unsigned, which would wrap past 2^32 rows.  The
+				row is read through av_slow_at(), which runs its get magic:
+				av_fetch() and SvROK() saw each row of a tied array as a
+				non-reference and croaked.  A hole or undef row is skipped.*/
+				for (size_t i = 0; i < len; i++) {
+					SV *elem = av_slow_at(aTHX_ av, (SSize_t)i);
+					if (!elem) continue;
 					if (!SvROK(elem)) {
-						croak("value_counts: array element %u is not a reference; a HASH ref (Array of Hashes) or ARRAY ref (Array of Arrays) is required when a key/index is given", i);
+						croak("value_counts: array element %" UVuf " is not a reference; a HASH ref (Array of Hashes) or ARRAY ref (Array of Arrays) is required when a key/index is given", (UV)i);
 					}
 					SV*inner_rv = SvRV(elem);
 					if (SvTYPE(inner_rv) == SVt_PVHV) {// Array of Hashes: extract column by key
@@ -34890,19 +35593,19 @@ CODE:
 						if (valp) increment_count(aTHX_ counts_hv, *valp, fast_nv);// missing key -> skip row
 					} else if (SvTYPE(inner_rv) == SVt_PVAV) {// Array of Arrays: extract column by index
 						if (!looks_like_number(arg2)) {
-							croak("value_counts: array element %u is an ARRAY ref but index '%s' is not numeric", i, key);
+							croak("value_counts: array element %" UVuf " is an ARRAY ref but index '%s' is not numeric", (UV)i, key);
 						}
 						AV*inner_av = (AV*)inner_rv;
 						SSize_t idx = SvIV(arg2);
 						SV**valp = av_fetch(inner_av, idx, 0);
 						if (valp) increment_count(aTHX_ counts_hv, *valp, fast_nv);
 					} else {
-						croak("value_counts: unsupported nested reference type in array element %u", i);
+						croak("value_counts: unsupported nested reference type in array element %" UVuf, (UV)i);
 					}
 				}
 			} else {
 				// CASE 2a: Flattened/simple array (one value per element)
-				for (unsigned i = 0; i < len; i++) {
+				for (size_t i = 0; i < len; i++) {	//size_t: an unsigned wrapped past 2^32
 					SV**valp = av_fetch(av, i, 0);
 					if (valp) increment_count(aTHX_ counts_hv, *valp, fast_nv);
 				}
@@ -35683,6 +36386,7 @@ CODE:
 		//keeps its keys behind FIRSTKEY/NEXTKEY and so just skips the pre-size
 		const IV nrows  = (IV)HvUSEDKEYS(in_hv);
 		HE      *he_row;
+		bool     first_row = TRUE;	//the columns this row opens are the ones pre-sized; see below
 		retval_sv = sv_2mortal(newRV_noinc((SV *)out_hv));
 		ITER_KEEP_BEGIN(in_hv);
 		hv_iterinit(in_hv);
@@ -35739,25 +36443,39 @@ CODE:
 				} else {
 					SV *inner_ref;
 					out_inner_hv = newHV();
-					/*Sized for the whole input up front: this column will end up
-					holding one key per input row, and letting it split its way
-					there rehashes everything already in it once per doubling.
-					On a 3000x100 frame that one call is most of the hash
-					branch's time -- 33.8 ms without it against 20.2 ms with.*/
-					if (nrows > 0) hv_ksplit(out_inner_hv, nrows);
+					/*Sized for the whole input up front: a column of a dense
+					frame ends up holding one key per input row, and letting it
+					split its way there rehashes everything already in it once
+					per doubling.  On a 3000x100 frame that one call is most of
+					the hash branch's time -- 33.8 ms without it against 20.2 ms
+					with.
+
+					Only the columns the first row opens, though.  Pre-sizing
+					every column made sparse input quadratic: a diagonal HoH
+					took 57.7 MB at n = 2000 and 242 MB at n = 5000, against
+					0.5 and 1.3 MB for a pure-Perl loop.  A dense frame's
+					columns all appear in its first row; a sparse one's mostly
+					do not, and those grow as they fill.*/
+					if (first_row && nrows > 0) hv_ksplit(out_inner_hv, nrows);
 					inner_ref = newRV_noinc((SV *)out_inner_hv);
 					if (!hv_store(out_hv, ckey, cklen, inner_ref, chash)) {
 						SvREFCNT_dec(inner_ref);
 						croak("Stats::LikeR::transpose: Failed to allocate inner hash");
 					}
 				}
-				SvREFCNT_inc_simple_void(val);
-				if (!hv_store(out_inner_hv, rkey, rklen, val, rhash)) {
-					SvREFCNT_dec(val);
+				/*A copy, as README promises ("the input is never
+				modified"): storing the caller's own SV made
+				transpose($m)->{x}{a} = 99 write through to $m, and on a
+				tied row to the tie.  Its get magic has run, so the copy
+				does not FETCH again.*/
+				SV *cp = SvGMAGICAL(val) ? cf_dup(aTHX_ val) : flt_cell_copy(aTHX_ val);
+				if (!hv_store(out_inner_hv, rkey, rklen, cp, rhash)) {
+					SvREFCNT_dec(cp);
 					croak("Stats::LikeR::transpose: Failed to store transposed value");
 				}
 			}
 			ITER_KEEP_END;
+			first_row = FALSE;
 		}
 		ITER_KEEP_END;
 	} else if (ref_type == SVt_PVAV) { // Array-of-Arrays
@@ -35845,8 +36563,8 @@ CODE:
 				rb = SvRMAGICAL(in_row_av) ? NULL : AvARRAY(in_row_av);
 				for (j = 0; j < ncols; j++) {
 					SV *val = rb ? rb[j] : av_at(aTHX_ in_row_av, (SSize_t)j);
-					if (!val) val = &PL_sv_undef;
-					else if (SvGMAGICAL(val)) {
+					if (!val) { body[j][i] = newSV(0); continue; }	//a hole: a fresh undef, not the read-only &PL_sv_undef
+					if (SvGMAGICAL(val)) {
 						mg_get(val);
 						/*The one thing in this loop that runs perl, and perl
 						can push to the very row being read, which reallocs
@@ -35856,8 +36574,9 @@ CODE:
 						guarded reader, which reads it as holes.*/
 						if (rb) rb = AvARRAY(in_row_av);
 					}
-					SvREFCNT_inc_simple_void(val);
-					body[j][i] = val;
+					/*A copy; see the hash branch.  The cell's get magic has
+					run above, so cf_dup() copies what it fetched.*/
+					body[j][i] = SvGMAGICAL(val) ? cf_dup(aTHX_ val) : flt_cell_copy(aTHX_ val);
 				}
 			}
 			LEAVE;
@@ -36497,31 +37216,27 @@ void get_union(...)
 			av = (AV*)SvRV(arg);
 			len = (size_t)(av_len(av) + 1);
 			for (size_t j = 0; j < len; j++) {
-				SV**tv = av_fetch(av, j, 0);
 				STRLEN klen;
-				const char*key;
 				I32 hklen;
-				if (!(tv && SvOK(*tv)))
-					croak("union: undefined value at array ref index %" UVuf " (argument %" UVuf ")", (UV)j, (UV)i);
-				key = SvPV(*tv, klen);
-				hklen = SvUTF8(*tv) ? -(I32)klen : (I32)klen;
+				SV *v;
+				const char *key = set_key_at(aTHX_ av, j, "union", i, &v, &klen, &hklen);
 				if (hv_exists(seen, key, hklen))
 					continue;
 				(void)hv_store(seen, key, hklen, &PL_sv_undef, 0);
 				n++;
 				if (gimme != G_SCALAR)
-					av_push(order, newSVsv(*tv));
+					av_push(order, newSVsv(v));
 			}
 		}
 		if (gimme == G_SCALAR) {
 			XPUSHs(sv_2mortal(newSVuv(n)));
 		} else {
+			/*The copies in `order` are private to this call, so they are
+			handed out as they are rather than copied a second time.*/
 			olen = (size_t)(av_len(order) + 1);
-			for (oi = 0; oi < olen; oi++) {
-				SV**e = av_fetch(order, oi, 0);
-				if (e && *e)
-					XPUSHs(sv_2mortal(newSVsv(*e)));
-			}
+			EXTEND(SP, (SSize_t)olen);
+			for (oi = 0; oi < olen; oi++)
+				PUSHs(sv_2mortal(SvREFCNT_inc_simple_NN(AvARRAY(order)[oi])));
 		}
 
 void Lonly(...)
@@ -36827,22 +37542,31 @@ SV* density(...)
 			croak("density: 'x' is required and must be an array reference");
 		if (n_arg < 1) croak("density: 'n' must be at least 1");
 		if (n_arg > (IV)1 << 26) croak("density: 'n' is too large");
+	/*Every buffer is SAVEFREEPV()d inside ENTER/LEAVE.  They used to be freed
+	at dens_cleanup, which the two warn()s below skip when $SIG{__WARN__}
+	dies, as does an element whose numeric overload dies: about 957 kB a call
+	at 20000 points.*/
+		ENTER;
+	/*Elements are read through av_slow_at(), which runs get magic before
+	SvOK() is asked: av_fetch() and SvOK() saw every element of a tied array
+	as undef, so density(\@tied) croaked that 'x' had missing values.*/
 		{
 			AV *xav = (AV *)SvRV(x_sv);
 			N0 = (size_t)(av_len(xav) + 1);
-			Newx(xall, N0 ? N0 : 1, NV);
-			Newx(isna, N0 ? N0 : 1, bool);
+			Newx(xall, N0 ? N0 : 1, NV); SAVEFREEPV(xall);
+			Newx(isna, N0 ? N0 : 1, bool); SAVEFREEPV(isna);
 			for (size_t i = 0; i < N0; i++) {
-				SV **el = av_fetch(xav, i, 0);
-				if (!el || !*el || !SvOK(*el)) {
+				SV *el = av_slow_at(aTHX_ xav, (SSize_t)i);
+				if (!el) {
 					xall[i] = 0.0; isna[i] = 1; nna++;
 					continue;
 				}
-				if (!(SvNIOK(*el) || looks_like_number(*el))) {
+				el = sv_fetched(aTHX_ el);
+				if (!(SvNIOK(el) || sv_is_numeric_arg(aTHX_ el))) {
 					err = "argument 'x' must be numeric";
 					goto dens_cleanup;
 				}
-				xall[i] = SvNV(*el);
+				xall[i] = SvNV(el);
 				isna[i] = nv_isnan(xall[i]) ? 1 : 0;
 				if (isna[i]) nna++;
 			}
@@ -36858,10 +37582,19 @@ SV* density(...)
 				err = "'x' and 'weights' have unequal length";
 				goto dens_cleanup;
 			}
-			Newx(wall, N0 ? N0 : 1, NV);
+			Newx(wall, N0 ? N0 : 1, NV); SAVEFREEPV(wall);
 			for (size_t i = 0; i < N0; i++) {
-				SV **el = av_fetch(wav, i, 0);
-				wall[i] = (el && *el && SvOK(*el)) ? SvNV(*el) : NV_NAN;
+				/*A missing weight is NA, which the finiteness check below
+				refuses; a weight that is not a number used to be read as 0
+				without a word.*/
+				SV *el = av_slow_at(aTHX_ wav, (SSize_t)i);
+				if (!el) { wall[i] = NV_NAN; continue; }
+				el = sv_fetched(aTHX_ el);
+				if (!(SvNIOK(el) || sv_is_numeric_arg(aTHX_ el))) {
+					err = "'weights' must be numeric";
+					goto dens_cleanup;
+				}
+				wall[i] = SvNV(el);
 			}
 		}
 		if (nna && !na_rm) {
@@ -36870,8 +37603,15 @@ SV* density(...)
 		}
 	//Drop the NAs, keeping weights summing to one still summing to one.
 		N = N0 - nna;
-		Newx(xv, N ? N : 1, NV);
-		if (has_wts) Newx(wv, N ? N : 1, NV);
+	/*Nothing left is R's totMass = 0/0, a NaN that the pmax(0, .) below used
+	to turn into a density of zeros; R stops in approx() with "need at least
+	two non-NA values to interpolate".*/
+		if (N == 0) {
+			err = "'x' has no non-missing values";
+			goto dens_cleanup;
+		}
+		Newx(xv, N, NV); SAVEFREEPV(xv);
+		if (has_wts) { Newx(wv, N, NV); SAVEFREEPV(wv); }
 		{
 			bool trueD = 0;
 			if (nna && has_wts) {
@@ -36895,8 +37635,8 @@ SV* density(...)
 	//Infinite observations are point masses outside the grid: they leave
 	//the estimate a sub-density on (-Inf, Inf) rather than being dropped.
 		for (size_t i = 0; i < N; i++) if (nv_isfinite(xv[i])) nx++;
-		Newx(xf, nx ? nx : 1, NV);
-		Newx(wf, nx ? nx : 1, NV);
+		Newx(xf, nx ? nx : 1, NV); SAVEFREEPV(xf);
+		Newx(wf, nx ? nx : 1, NV); SAVEFREEPV(wf);
 		{
 			size_t k = 0;
 			for (size_t i = 0; i < N; i++) if (nv_isfinite(xv[i])) xf[k++] = xv[i];
@@ -36957,7 +37697,7 @@ SV* density(...)
 				else w_varies = (nx > 1 && dens_var(wf, nx) > 0.0) ? 1 : 0;
 				if (w_varies) warn("density: selecting bandwidth *not* using 'weights'");
 			}
-			Newx(xs, nx, NV);
+			Newx(xs, nx, NV); SAVEFREEPV(xs);
 			Copy(xf, xs, nx, NV);
 			nv_sort(xs, nx);	//inlined comparison; see LIKER_DEFINE_SORT
 			err = dens_bw_rule(aTHX_ bw_rule, xf, xs, nx, nb,
@@ -36979,11 +37719,11 @@ SV* density(...)
 		if (!nv_isfinite(from)) { err = "non-finite 'from'"; goto dens_cleanup; }
 		if (!nv_isfinite(to))   { err = "non-finite 'to'";   goto dens_cleanup; }
 		m = 2 * n;
-		Newx(yre, m, NV);  Newxz(yim, m, NV);
-		Newx(kre, m, NV);  Newxz(kim, m, NV);
-		Newx(twr, m / 2, NV); Newx(twi, m / 2, NV);
-		Newx(xords, n, NV);
-		Newx(xout, n_user, NV);
+		Newx(yre, m, NV);  SAVEFREEPV(yre); Newxz(yim, m, NV); SAVEFREEPV(yim);
+		Newx(kre, m, NV);  SAVEFREEPV(kre); Newxz(kim, m, NV); SAVEFREEPV(kim);
+		Newx(twr, m / 2, NV); SAVEFREEPV(twr); Newx(twi, m / 2, NV); SAVEFREEPV(twi);
+		Newx(xords, n, NV); SAVEFREEPV(xords);
+		Newx(xout, n_user, NV); SAVEFREEPV(xout);
 		{
 			NV lo = from - ext * bw, up = to + ext * bw;
 			NV mult = old_coords ? 2.0 : (NV)(2 * n - 1) / (NV)(n - 1);
@@ -37034,12 +37774,7 @@ SV* density(...)
 		}
 
 		dens_cleanup:
-		Safefree(xall); Safefree(wall); Safefree(isna);
-		Safefree(xv);   Safefree(wv);
-		Safefree(xf);   Safefree(wf);   Safefree(xs);
-		Safefree(yre);  Safefree(yim);  Safefree(kre); Safefree(kim);
-		Safefree(twr);  Safefree(twi);
-		Safefree(xords); Safefree(xout);
+		LEAVE;	//frees every buffer above
 		if (err) {
 			my_snprintf(errbuf, sizeof(errbuf), "density: %s", err);
 			croak("%s", errbuf);
@@ -37063,9 +37798,10 @@ NV bw_nrd0(...)
 		if (ai < items && SvROK(ST(ai)) && SvTYPE(SvRV(ST(ai))) == SVt_PVAV) x_sv = ST(ai++);
 		for (Stack_off_t i = ai; i + 1 < items; i += 2)
 			if (strEQ(SvPV_nolen(ST(i)), "x")) x_sv = ST(i + 1);
+		ENTER;	//its LEAVE frees dens_read_x()'s buffers
 		dens_read_x(aTHX_ x_sv, "bw_nrd0", &x, &xs, &n);
 		err = dens_bw_nrd0(xs, n, x[0], &RETVAL);
-		Safefree(x); Safefree(xs);
+		LEAVE;
 		if (err) croak("bw_nrd0: %s", err);
 	}
 	OUTPUT:
@@ -37084,9 +37820,10 @@ NV bw_nrd(...)
 		if (ai < items && SvROK(ST(ai)) && SvTYPE(SvRV(ST(ai))) == SVt_PVAV) x_sv = ST(ai++);
 		for (Stack_off_t i = ai; i + 1 < items; i += 2)
 			if (strEQ(SvPV_nolen(ST(i)), "x")) x_sv = ST(i + 1);
+		ENTER;	//its LEAVE frees dens_read_x()'s buffers
 		dens_read_x(aTHX_ x_sv, "bw_nrd", &x, &xs, &n);
 		err = dens_bw_nrd(xs, n, &RETVAL);
-		Safefree(x); Safefree(xs);
+		LEAVE;
 		if (err) croak("bw_nrd: %s", err);
 	}
 	OUTPUT:
@@ -37107,11 +37844,12 @@ NV bw_ucv(...)
 		for (Stack_off_t i = ai; i + 1 < items; i += 2)
 			if (strEQ(SvPV_nolen(ST(i)), "x")) x_sv = ST(i + 1);
 		dens_bw_parse(aTHX_ &ST(0), ai, items, "bw_ucv", FALSE, &o);
+		ENTER;	//its LEAVE frees dens_read_x()'s buffers
 		dens_read_x(aTHX_ x_sv, "bw_ucv", &x, &xs, &n);
 		err = dens_bw_cv(aTHX_ x, xs, n, o.nb, FALSE,
 		                 o.have_lower, o.lower, o.have_upper, o.upper,
 		                 o.have_tol, o.tol, &RETVAL);
-		Safefree(x); Safefree(xs);
+		LEAVE;
 		if (err) croak("bw_ucv: %s", err);
 	}
 	OUTPUT:
@@ -37132,10 +37870,11 @@ NV bw_bcv(...)
 		for (Stack_off_t i = ai; i + 1 < items; i += 2)
 			if (strEQ(SvPV_nolen(ST(i)), "x")) x_sv = ST(i + 1);
 		dens_bw_parse(aTHX_ &ST(0), ai, items, "bw_bcv", FALSE, &o);
+		ENTER;	//its LEAVE frees dens_read_x()'s buffers
 		dens_read_x(aTHX_ x_sv, "bw_bcv", &x, &xs, &n);
 		err = dens_bw_cv(aTHX_ x, xs, n, o.nb, TRUE, o.have_lower, o.lower, o.have_upper, o.upper,
 		          o.have_tol, o.tol, &RETVAL);
-		Safefree(x); Safefree(xs);
+		LEAVE;
 		if (err) croak("bw_bcv: %s", err);
 	}
 	OUTPUT:
@@ -37158,10 +37897,11 @@ NV bw_sj(...)
 		for (Stack_off_t i = ai; i + 1 < items; i += 2)
 			if (strEQ(SvPV_nolen(ST(i)), "x")) x_sv = ST(i + 1);
 		dens_bw_parse(aTHX_ &ST(0), ai, items, "bw_sj", TRUE, &o);
+		ENTER;	//its LEAVE frees dens_read_x()'s buffers
 		dens_read_x(aTHX_ x_sv, "bw_sj", &x, &xs, &n);
 		err = dens_bw_sj(aTHX_ x, xs, n, o.nb, o.ste, o.have_lower, o.lower, o.have_upper, o.upper,
 		         o.have_tol, o.tol, &RETVAL);
-		Safefree(x); Safefree(xs);
+		LEAVE;
 		if (err) croak("bw_sj: %s", err);
 	}
 	OUTPUT:

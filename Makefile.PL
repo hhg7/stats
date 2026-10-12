@@ -115,8 +115,7 @@ if ($Config{nvtype} eq 'long double') {
 # either. libscan is the documented hook for rejecting a file the scan picked up:
 # only root-level *.pl are dropped, and anything with a directory in its path
 # falls through to the default, which keeps its README.pod and version-control
-# filtering. read.me.pod is deliberately left alone -- it is documentation, not a
-# script.
+# filtering.
 {
     package MY;
     sub libscan {

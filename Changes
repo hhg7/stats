@@ -141,6 +141,280 @@ Revision history for Stats-LikeR
    input for a 1e6-row AoH went from 35.3 MB to 16.3 MB, and for a HoH
    from 66.1 MB to 31.5 MB.
 
+ [roc(), auc() and auroc()]
+
+ - A NaN score no longer hangs roc(). Every comparison against a NaN is
+   false, so the threshold sweep stood still on one and pushed a new curve
+   point on every pass until memory ran out: roc([1,"nan",3,4],[0,0,1,1])
+   never returned. auc() and auroc() returned whatever the sort made of the
+   NaN, so the same cases in a different order gave 0, 0.333 or 0.667. A
+   missing score (undef, NaN or a hole) or a missing label (undef or a
+   hole) now drops its case, as pROC's roc() does with na.rm = TRUE, its
+   default. An undef score used to be read as 0 and an undef label as a
+   negative. n, n_pos and n_neg count the cases that were used.
+
+ - roc() with direction => '<' reports its thresholds on the scores' own
+   scale. They were reported negated: roc([4,3,2,1], [0,0,1,1], direction
+   => '<') put the Youden cut at -2 rather than 2, and its curve ran from
+   +Inf down through -1 .. -4. The curve now runs from -Inf up through the
+   scores, and a case is called positive when its score is at or below the
+   threshold.
+
+ - auc_se and auc_ci are NaN when either class has a single case, as
+   pROC's var() and ci.auc() are NA. The DeLong variance is undefined there,
+   and they used to be 0 and an interval collapsed onto the AUC.
+
+ - A score that is not a number croaks, naming its index, as does a truth
+   value that is not a number in auroc()'s cutoff and active_frac modes.
+   Both used to be read as 0. A direction other than '>' or '<', and a
+   trailing key with no value, croak too; only the first character of
+   direction was read, and a dangling key was ignored.
+
+ - auroc()'s cutoff and active_frac modes drop a case whose truth value is
+   NaN. active_frac handed it to qsort(), which cannot order a NaN, so the
+   set of actives it chose depended on where the NaN sat in the input.
+   Equal truth values at the edge of the fraction are now taken in input
+   order on every platform.
+
+ - A label is positive when it is eq to positive. A label and positive
+   holding the same character, one as UTF-8 and the other as bytes, used
+   to be compared byte for byte and count as different.
+
+ - Nothing is leaked when a call dies part way: the buffers are released
+   on the save stack. A label whose string overload died used to leak 1.5
+   MB per call on 200,000 cases.
+
+ - roc() is about 5 times faster and auc() about 3 times faster, and both
+   use about a sixth of the memory: on 2,000,000 cases on perl-5.44.0, roc()
+   went from 0.69 s to 0.13 s and auc() from 0.39 s to 0.12 s, and the peak
+   above the input from 203 MB to 31 MB for each. The cases are sorted once
+   and the AUC and the DeLong placement values come from one walk over the
+   tie groups, where three rank sorts and six scratch arrays were used
+   before. 0/1 labels are no longer stringified in place, which left a
+   cached string on every label of the caller's array. The AUC is now the
+   exact count ratio rounded once; it used to differ from that in the 13th
+   digit at this size.
+
+ - t/roc.R.t checks all three against pROC 1.19.0.1 on pROC's own aSAH data
+   (its test-auc.R, test-var.R, test-ci.auc.R and test-roc.R values, and
+   every point of each curve) and against scikit-learn 1.9.1's
+   test_roc_curve_toydata. t/roc.R.R regenerates its reference block.
+
+ [bedroc()]
+
+ - A NaN score no longer hangs bedroc(): its tie-group walk stood still on
+   one, as roc()'s did. A missing score or label now drops its case, as in
+   roc(); an undef score used to be read as 0 and an undef label as
+   inactive. Labels compare with positive as eq does, and a direction other
+   than '>' or '<', or a dangling key, croaks.
+
+ - Under cutoff and active_frac, a NaN truth value drops its case. It used
+   to reach qsort(), which cannot order a NaN: over 300 shuffles of one
+   9-row input, active_frac gave 45 different answers. Under cutoff it
+   counted as inactive.
+
+ - The score is right for every alpha. Truchon & Bayly's eq. 36 cancels as
+   alpha shrinks and overflows as it grows, so on scores 6..1 with labels
+   [1,0,1,0,0,0] it gave 1200.75 at alpha = 1e-6, Inf at 1e-8 and NaN at
+   1500, where the exact values are 0.875, 0.875 and 1. It is now evaluated
+   in an algebraically equal form, written as one minus the shortfall from
+   the ideal ranking, that does neither; rie, rie_min and rie_max likewise.
+   t/bedroc.mpmath.t checks all four against the paper's formula in mpmath
+   at 60 digits from alpha = 1e-8 to 1500, with a worst error of one ulp.
+
+ - top => enrichment no longer depends on the input order of tied scores.
+   A tie group that straddles the cut counts its actives in proportion to
+   how much of it is inside, so bedroc([5,5,5,5], [1,0,0,0], top => 0.25)
+   and the same with labels [0,0,0,1] both report 0.25, where they were 1
+   and 0. active_count can therefore be fractional.
+
+ [rbinom(), rnorm(), runif()]
+
+ - rbinom(prob => 'nan') no longer hangs; like R it returns NaN for every
+   draw, with the warning "NAs produced", as it does for a size that is not
+   a whole number (2.5 used to draw from size 2). A prob that is not a
+   number croaks, where it was read as 0, and n is required, where omitting
+   it returned [].
+
+ - rnorm() takes its arguments as runif() does: rnorm(1e3), rnorm("5") and
+   R's own rnorm(10, 0, 1) used to croak, because a positional n had to
+   test as an integer. A mean or sd that is not a number croaks.
+
+ - rnorm(sd => Inf) and runif(n, 0, Inf) are NaN with a warning, as in R;
+   they were +-Inf and Inf. rnorm() with sd => 0 or an infinite mean
+   returns the mean, as R does.
+
+ - rbinom() and hist() no longer hang when given more than 65535
+   arguments: their argument loops counted in an unsigned short.
+
+ [mean(), sum(), median(), var(), sd()]
+
+ - The sum behind sum(), mean(), var() and sd() is compensated (TwoSum),
+   which is what R gets from accumulating in long double:
+   mean([1e16, 1, -1e16, 1]) is 0.5 and sum() of it 2, where both used to be
+   0. It costs about 0.5 ns per element: on perl-5.44.0, one pinned core,
+   sum() of 1e6 NVs went from 0.93 to 1.40 ns per element.
+
+ - A sum that overflows although no value is infinite is taken again with
+   each value scaled by 1/n, so mean([1e308, 1e308]) is 1e308 and var() and
+   sd() of it 0, as in R; they were Inf, NaN and NaN. median() halves the
+   middle pair before adding it when the sum would overflow.
+
+ - var() of values whose squared deviations overflow is Inf, as in R:
+   var([1e200, -1e200, 3e199]) was NaN, from Inf - Inf.
+
+ [cmh_test(), mcnemar_test(), prop_test(), epi_2x2(), friedman_test()]
+
+ - cmh_test() applies the 0.5 continuity correction only when the observed
+   count is at least 0.5 from its expectation, as mantelhaen.test() does,
+   and its method says "with" or "without" accordingly.
+   cmh_test([[2,3,3,4],[3,2,2,3]]) gave 0 and p 1 where R gives 0.1183 and
+   0.7309. A stratum set with no variance is NaN, not 0 and p 1; one with no
+   off-diagonal counts has a common odds ratio of Inf, not NaN. A NaN or
+   infinite cell croaks, in epi_2x2() too, whose scalar form also croaks on
+   a cell that is not a number where it used to read it as 0.
+
+ - mcnemar_test()'s paired form takes its levels from the complete pairs
+   only, so a level seen just in a dropped pair no longer enlarges the
+   table: one such case gave df 3 and p 0.9536 where R gives df 1 and p 1.
+   An empty discordant pair is NaN, as in R, where it was skipped. Inf,
+   undef and non-numeric cells croak, where Inf passed and the others were
+   read as 0, and the exact test croaks on a fractional count rather than
+   truncating it.
+
+ - prop_test()'s one-sided 'greater' p-value is pnorm(-z), not 1 -
+   pnorm(z), which cancelled: prop_test(999, 1000, alternative =>
+   'greater') was 0 where R gives 1.8e-218. A group with a missing count is
+   dropped, as R drops it; an undef was read as 0. A dangling key croaks.
+
+ - friedman_test() croaks when only one complete block remains, as R does.
+
+ [dunn_test()]
+
+ - The p-value is 2 * pnorm(-|z|), where 2 * (1 - pnorm(|z|)) cancelled:
+   values 1..200 in two groups of 100 gave p 0 where R gives 2.5e-34.
+
+ - A NaN p-value adjusts to NaN, and the others are adjusted as a family of
+   the rest, as p.adjust() treats NA. It used to become 0 under holm and hs,
+   which reads as strongly significant, and 1 under bonferroni and bh.
+
+ - The adjustment sorts with qsort() rather than a selection sort that was
+   O(k^4) in the number of groups (3.16 s at k = 400), and labels are looked
+   up through a hash rather than a scan per observation.
+
+ - The comparison string is no longer truncated at 255 bytes, and group
+   names keep their UTF-8 flag.
+
+ [Normal tail p-values on long-double and quadmath perls]
+
+ - The normal tail behind dunn_test(), prop_test() and the other z-based
+   p-values multiplied by 1/sqrt(2) written as a C literal, which is a
+   double, so on a wider NV it was ~1e-17 off; erfc() far out magnifies
+   that, and dunn_test()'s p of 2.5e-34 was 8.7e-15 off mpmath on a long
+   double perl against 1.8e-15 on a double one. It is now sqrt(0.5) at the
+   NV's own width; a double build gets the same bits as before.
+
+ [power_t_test()]
+
+ - alternative => 'less' is the test against delta < 0. It was computed as
+   'greater', so n => 20, delta => 1 gave a power of 0.9279 where it is
+   about 1e-6; a delta solved for under 'less' now comes back negative.
+
+ [var_test()]
+
+ - A zero variance in y no longer croaks: as in R, F is Inf, p is 0 (1 for
+   'less') and the interval [Inf, Inf], or NaN throughout when both
+   variances are zero. An alternative other than 'two.sided', 'less' or
+   'greater' croaks; 'bogus' used to run a two-sided test. README now
+   documents the options and every returned field.
+
+ [hist(), density() and the bandwidth selectors]
+
+ - hist() builds its breaks as R's seq.int() does when the range is wider
+   than the largest double: hist([1.7e308, -1.7e308], breaks => 4) gave
+   breaks 0, Inf, 0 where R gives -1.7e308, 0, 1.7e308. t/hist.R.t now
+   includes reg-tests-1d.R's pretty() overflow data. On such a range mids
+   are the finite midpoints, where R's 0.5 * (a + b) gives -Inf or Inf; an
+   x87 build, adding in extended precision, already gave them.
+
+ - density() croaks on an x with no values, where it returned zeros, and on
+   a weight that is not a number, which it read as 0.
+
+ - bw_sj() widens its search interval whenever either bound is left to its
+   default, as R's bw.SJ does; given only one bound it croaked "no solution
+   in the specified range of bandwidths".
+
+ [mode(), skew(), kurtosis(), value_counts()]
+
+ - mode() returns tied values in the order they were first seen. They came
+   back in hash order, which changed with PERL_HASH_SEED.
+
+ - skew() and kurtosis() return NaN for a NaN or infinite value, as every
+   other reduction does, where they croaked about zero variance.
+
+ - value_counts(undef, 'a') counts 'a', as value_counts('a', undef) did; an
+   undef first argument croaked unless it was the only one.
+
+ [Tied arrays]
+
+ - hist(), density(), the five bw_* selectors, var_test(), get_union(),
+   intersection(), Lonly(), Ronly(), is_equivalent() and value_counts() on
+   a tied array of hashes now read a tied array. Each tested SvOK() or
+   SvROK() before the element's get magic had run, so every element read as
+   undef and they croaked.
+
+ [Copies, not the caller's own values]
+
+ - transpose(), sample(), ljoin() and add_data() put copies of the input's
+   values in their results. Each stored the caller's own scalars, so
+   writing to the result changed the input: transpose($m)->[0][1] = 99
+   changed $m, although README says the input is never modified. A
+   reference is copied as a reference. transpose() also stores a writable
+   undef for a hole, where it stored the read-only PL_sv_undef. Copying
+   costs transpose() of a dense 3000 x 100 hash of hashes about 4 ms (18 to
+   22 ms).
+
+ [Memory and speed]
+
+ - transpose() pre-sizes only the columns its first row opens. It
+   pre-sized every column for every row, so a sparse hash of hashes took
+   quadratic memory: a 5000-row diagonal peaked at 237 MB and now at 1.8 MB.
+
+ - sample() costs time and memory in proportion to n. It allocated the
+   population's whole index array even for n = 1, 40 MB and 11.5 ms a call
+   on 5e6 elements, and now keeps the swaps of a small sample in a table;
+   the shuffle, and so a seed's sample, is unchanged.
+
+ - intersection(), Lonly() and Ronly() count only the values of the array
+   the result is drawn from, and get_union() and they copy each result
+   value once rather than twice.
+
+ [Sizes on 32-bit perls, and matrix()]
+
+ - A count argument -- n, size, nrow, breaks -- above SIZE_MAX croaks. On a
+   32-bit size_t it wrapped: rnorm(n => 2**32 + 2) returned 2 values.
+
+ - matrix() refuses a product of dimensions above 2^48, which could wrap,
+   and croaks when the C library will not allocate the cells, where eval {
+   matrix([1], 1, 1e11) } took perl down with "Out of memory!".
+
+ [Leaks when a call dies part way]
+
+ - prop_test(), mcnemar_test(), dunn_test(), median() past 256 values,
+   hist(), density(), bw_ucv(), bw_bcv() and bedroc() release their
+   buffers on the save stack. A croak from perl code they call -- an
+   overload or a tie that dies, or a $SIG{__WARN__} that dies on their
+   warning -- used to leak them: over 40 such calls on the 0.3217 before
+   this, 13 to 38 MB each for all but bw_ucv() (1.3 MB). t/croak.leaks.t
+   carries a case for each.
+
+ [Tests]
+
+ - t/audit.2026-10-12.regressions.t covers each of the above that is not
+   compared against R or mpmath elsewhere, and
+   t/friedman_mcnemar_prop_cmh.R.t gains R 4.6.1 rows for the cmh_test(),
+   mcnemar_test() and prop_test() cases.
+
 0.3216 2026-10-09 CDT (Claude Opus 5.5 helped)
 
  [merge()]
