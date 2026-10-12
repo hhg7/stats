@@ -1,11 +1,10 @@
 #!/usr/bin/env perl
 
-use 5.042.2;
+use 5.044;
 no source::encoding;
 use warnings FATAL => 'all';
 use autodie ':default';
-use DDP {output => 'STDOUT', array_max => 10, show_memsize => 1};
-use Devel::Confess 'color';
+use Util;
 use Stats::LikeR;
 
 my $x_na = [1, 2,     3, undef,  5, 5, 6,     undef,7];
@@ -16,7 +15,7 @@ my $x1 = [ 1, 2, 3, 4 ];
 my $y1 = [ 2, 4, 6, 8 ];
 my $res_perfect = cor($x1, $y1, 'pearson');
 p $res_perfect;
-$r = cor([1,1],[1,1]);
-p $r;
-=my $res = cor_test([1,2,3], [1,3,2], method => 'pearson');
-p $res;
+#$r = cor([1,1],[1,1]);
+#p $r;
+my @rows = ([170,65,30], [165,59,25], [180,80,35], [175,72,28], [160,55,40], [172,70,30]);
+my $R = cor(\@rows, undef, 'spearman');   # columns: height, weight, age
