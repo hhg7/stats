@@ -116,6 +116,14 @@ Revision history for Stats-LikeR
  - A string comparison FETCHes a tied cell once, not twice, on perl 5.14
    and later.
 
+ - A cell that is an object with overloaded operators, such as a
+   Math::BigInt, is compared by its own class, as a sub predicate compares
+   it. The compiled col() test took it for a non-number, so col('x') > 2
+   dropped a Math::BigInt 5 that the same test written as a sub kept, and
+   a string comparison used its stringification instead of its cmp. Such
+   a row is now handed to the predicate's Perl closure; the others stay in
+   C, and a frame with no such cells runs exactly as fast as before.
+
  [filter(): speed and memory]
 
  - Converting an AoH or HoH to a HoA no longer gives every row of the

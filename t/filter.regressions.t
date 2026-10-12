@@ -20,6 +20,10 @@
 # - Integer literals and cells compare exactly when either is a UV.
 # - A tied cell is FETCHed once by a string comparison (perl 5.14 and later;
 #   5.10 and 5.12 have no sv_eq_flags() and FETCH it twice).
+# - A cell that is an object with overloaded operators is compared by its
+#   class, as the closure compares it: the compiled test hands that row to the
+#   closure.  It used to take the object for a non-number (and compare a
+#   string op on its stringification), so the two paths disagreed.
 require 5.010;
 use strict;
 use warnings FATAL => 'all';
@@ -258,6 +262,67 @@ sub frames {	# the same 3-row frame in each shape
 	}
 }
 
+# --- cells that are objects with overloaded operators ------------------------
+{
+	# Rev compares in reverse: its <=> and cmp disagree with its own 0+ and "",
+	# so a test that numified or stringified it would get the opposite answer.
+	package Rev;
+	use overload
+		'<=>' => sub { my ($s, $o, $sw) = @_; my $r = (ref $o ? $$o : $o) <=> $$s; $sw ? -$r : $r },
+		'cmp' => sub { my ($s, $o, $sw) = @_; my $r = (ref $o ? $$o : $o) cmp $$s; $sw ? -$r : $r },
+		'0+'  => sub { ${ $_[0] } },
+		'""'  => sub { '' . ${ $_[0] } },
+		fallback => 1;
+	sub new { my ($c, $v) = @_; bless \$v, $c }
+	package main;
+
+	# by hand: Rev(5) > 2 is 2 <=> 5, false; Rev(1) > 2 is 2 <=> 1, true.
+	# Rev('b') lt 'c' is 'c' cmp 'b', false; Rev('d') lt 'c' is true.
+	my %c = (
+		x => [ Rev->new(5), Rev->new(1), 7, undef, 0 ],
+		s => [ Rev->new('b'), Rev->new('d'), 'a', 'z', 'b' ],
+		n => [ 1 .. 5 ],
+	);
+	my $hoa = { map { ($_ => [ @{ $c{$_} } ]) } keys %c };
+	my $aoh = [ map { my $i = $_; +{ map { ($_ => $c{$_}[$i]) } keys %c } } 0 .. 4 ];
+	my $hoh = { map { ("r$_" => $aoh->[$_]) } 0 .. 4 };
+	my @cases = (	# [ name, predicate, the n of the rows it keeps ]
+		[ 'num >',         col('x') > 2,                          [ 2, 3 ] ],
+		[ 'num swapped',   2 < col('x'),                          [ 2, 3 ] ],
+		[ 'num ==',        col('x') == 5,                         [ 1 ] ],
+		[ 'not',           !(col('x') > 2),                       [ 1, 4, 5 ] ],
+		[ 'str lt',        col('s') lt 'c',                       [ 2, 3, 5 ] ],
+		[ 'str eq',        col('s') eq 'b',                       [ 1, 5 ] ],
+		[ 'and, plain col', (col('x') > 2) & (col('n') > 2),      [ 3 ] ],
+		[ 'or, two objects', (col('x') > 2) | (col('s') lt 'c'),  [ 2, 3, 5 ] ],
+	);
+	for my $cs (@cases) {
+		my ($name, $p, $want) = @$cs;
+		is_deeply(filter($hoa, $p)->{n}, $want, "object cells, $name: HoA");
+		is_deeply([ map { $_->{n} } @{ filter($hoa, $p, 'output_type' => 'aoh') } ], $want, "object cells, $name: HoA -> aoh");
+		is_deeply([ map { $_->{n} } @{ filter($aoh, $p) } ], $want, "object cells, $name: AoH");
+		is_deeply(filter($aoh, $p, 'output_type' => 'hoa')->{n}, $want, "object cells, $name: AoH -> hoa");
+		is_deeply([ sort { $a <=> $b } map { $_->{n} } values %{ filter($hoh, $p) } ], $want, "object cells, $name: HoH");
+		is_deeply([ sort { $a <=> $b } @{ filter($hoh, $p, 'output_type' => 'hoa')->{n} } ], $want, "object cells, $name: HoH -> hoa");
+		is_deeply(filter($hoa, noplan($p))->{n}, $want, "object cells, $name: the closure agrees");
+	}
+	# only the rows holding an object go to the closure
+	my $calls = 0;
+	my $p = col('x') > 2;
+	my $orig = $p->{code};
+	my $spy = bless { code => sub { $calls++; $orig->(@_) }, plan => $p->{plan}, cols => $p->{cols} }, 'Stats::LikeR::col';
+	filter($hoa, $spy);
+	is($calls, 2, 'the closure is asked about the two object rows only');
+	$calls = 0;
+	filter({ x => [ 1 .. 1000 ] }, $spy);
+	is($calls, 0, 'and never about a frame of plain numbers');
+	# Math::BigInt, the case that found this
+	require Math::BigInt;
+	my $big = { x => [ Math::BigInt->new(5), Math::BigInt->new(1) ], n => [ 1, 2 ] };
+	is_deeply(filter($big, col('x') > 2)->{n}, [ 1 ], 'Math::BigInt 5 > 2 is kept');
+	is_deeply(filter($big, col('x') == 1)->{n}, [ 2 ], 'Math::BigInt 1 == 1 is kept');
+}
+
 # --- memory -------------------------------------------------------------------
 unless ($INC{'Devel/Cover.pm'}) {
 	my $LA	= [ { x => 1, y => 'p' }, { x => 2, y => 'q' } ];
@@ -276,6 +341,14 @@ unless ($INC{'Devel/Cover.pm'}) {
 	no_leaks_ok { filter($LH,  sub { 1 }, 'output_type' => 'hoa') }	'no leak: HoH -> hoa kept rows';
 	no_leaks_ok { my $h = { a => { x => 1 }, b => { x => 2 } }; filter($h, sub { delete $h->{ $_[1] }; 1 }) }	'no leak: HoH row deleted by the predicate';
 	no_leaks_ok { eval { filter($LH, sub { die "x\n" }) } }	'no leak: HoH, dying predicate';
+	my $LO	= { x => [ Rev->new(5), 3, Rev->new(1) ], s => [ 'a', Rev->new('b'), 'c' ] };
+	my $LOA = [ map { +{ x => $LO->{x}[$_], s => $LO->{s}[$_] } } 0 .. 2 ];
+	no_leaks_ok { filter($LO,  (col('x') > 2) | (col('s') lt 'c')) }	'no leak: object cells, HoA';
+	no_leaks_ok { filter($LO,  col('x') > 2, 'output_type' => 'aoh') }	'no leak: object cells, HoA -> aoh';
+	no_leaks_ok { filter($LOA, col('x') > 2) }							'no leak: object cells, AoH';
+	no_leaks_ok { filter({ map { ("r$_" => $LOA->[$_]) } 0 .. 2 }, col('x') > 2, 'output_type' => 'hoa') }	'no leak: object cells, HoH -> hoa';
+	my $die = bless { code => sub { die "x\n" }, plan => (col('x') > 2)->{plan}, cols => ['x'] }, 'Stats::LikeR::col';
+	no_leaks_ok { eval { filter($LO, $die) } }							'no leak: object cells, dying closure';
 }
 
 done_testing;

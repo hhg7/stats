@@ -9793,6 +9793,7 @@ typedef struct {
 	AV **cav;	// HoA only: that column's array, or NULL when absent
 	SV **cells;	// scratch: the current row's cell for each column
 	size_t nslots;
+	bool declined;	// the current row met a cell only perl can compare: see flt_declines()
 } flt_prog;
 
 static SV *flt_pe(pTHX_ AV *a, SSize_t i) {	//plan element or NULL
@@ -9917,10 +9918,25 @@ PERL_STATIC_INLINE int flt_icmp(IV a, bool a_uv, IV b, bool b_uv) {
 	return (x < y) ? -1 : (x > y);
 }
 
+/*A cell the compiled test cannot answer for: a reference to an object whose
+class overloads operators, a Math::BigInt or Math::BigFloat above all.  The
+closure compares one with the class's own > or eq, exactly; C would have
+taken it for a non-number, or compared its stringification, so up to 0.3216
+col('x') > 2 dropped a Math::BigInt 5 that the same predicate as a sub kept.
+Such a cell marks the row declined, and filter() asks the closure about that
+row instead -- only that row, so a frame of plain numbers never pays for it.
+Called after the cell's get magic has run.*/
+PERL_STATIC_INLINE bool flt_declines(pTHX_ flt_prog *pg, SV *cell) {
+	PERL_UNUSED_CONTEXT;
+	if (!SvAMAGIC(cell)) return FALSE;
+	pg->declined = TRUE;
+	return TRUE;
+}
+
 /*One numeric comparison.  Same rules as the perl closure: a missing, undef or
 non-numeric cell never matches, and the comparison itself is perl's (integer
 when both sides are integers, otherwise floating point).*/
-static bool flt_num(pTHX_ SV *cell, const flt_node *nd) {
+static bool flt_num(pTHX_ flt_prog *pg, SV *cell, const flt_node *nd) {
 	if (!cell) return 0;
 	/*Read the cell where it can be read, and only convert it where it must
 	be.  A cell that is already a number answers from SvNVX/SvIVX; caching a
@@ -9935,6 +9951,7 @@ static bool flt_num(pTHX_ SV *cell, const flt_node *nd) {
 	const U32 f = SvFLAGS(cell);
 	if ((f & (SVs_GMG|SVf_ROK|SVf_POK)) || !(f & (SVf_IOK|SVf_NOK))) {
 		SvGETMAGIC(cell);
+		if (flt_declines(aTHX_ pg, cell)) return 0;
 		if (!SvOK(cell) || !looks_like_number(cell)) return 0;
 		if (!SvIOK(cell) && !SvNOK(cell)) SvIV_please_nomg(cell);
 	}
@@ -9975,9 +9992,10 @@ the double FETCH.*/
 #endif
 
 //One string comparison; an undef or missing cell never matches.
-static bool flt_str(pTHX_ SV *cell, const flt_node *nd) {
+static bool flt_str(pTHX_ flt_prog *pg, SV *cell, const flt_node *nd) {
 	if (!cell) return 0;
 	SvGETMAGIC(cell);
+	if (flt_declines(aTHX_ pg, cell)) return 0;
 	if (!SvOK(cell)) return 0;
 	if (nd->op == FLTC_EQ || nd->op == FLTC_NE) {
 		const bool e = cBOOL(flt_sv_eq_nomg(cell, nd->val));
@@ -9993,23 +10011,31 @@ static bool flt_str(pTHX_ SV *cell, const flt_node *nd) {
 	}
 }
 
-static bool flt_eval(pTHX_ const flt_prog *pg, const flt_node *nd) {
+static bool flt_eval(pTHX_ flt_prog *pg, const flt_node *nd) {
 	switch (nd->kind) {
 		case FLTP_AND: return flt_eval(aTHX_ pg, nd->l) && flt_eval(aTHX_ pg, nd->r);
 		case FLTP_OR:  return flt_eval(aTHX_ pg, nd->l) || flt_eval(aTHX_ pg, nd->r);
 		case FLTP_NOT: return !flt_eval(aTHX_ pg, nd->l);
-		case FLTP_NUM: return flt_num(aTHX_ pg->cells[nd->slot], nd);
-		default:	   return flt_str(aTHX_ pg->cells[nd->slot], nd);
+		case FLTP_NUM: return flt_num(aTHX_ pg, pg->cells[nd->slot], nd);
+		default:	   return flt_str(aTHX_ pg, pg->cells[nd->slot], nd);
 	}
 }
 
-//Test one row given as a hash (AoH, HoH).
-static bool flt_row_hv(pTHX_ flt_prog *pg, HV *row) {
+/*The root's answer for the cells now in pg->cells: 1 keep, 0 drop, -1 the
+row is the closure's to decide (flt_declines()).*/
+PERL_STATIC_INLINE short int flt_answer(pTHX_ flt_prog *pg) {
+	pg->declined = FALSE;
+	const bool k = flt_eval(aTHX_ pg, &pg->nodes[0]);
+	return pg->declined ? -1 : (k ? 1 : 0);
+}
+
+//Test one row given as a hash (AoH, HoH): 1 keep, 0 drop, -1 ask the closure.
+static short int flt_row_hv(pTHX_ flt_prog *pg, HV *row) {
 	for (size_t s = 0; s < pg->nslots; s++) {
 		HE *e = hv_fetch_ent(row, pg->names[s], 0, 0);
 		pg->cells[s] = e ? HeVAL(e) : NULL;
 	}
-	return flt_eval(aTHX_ pg, &pg->nodes[0]);
+	return flt_answer(aTHX_ pg);
 }
 
 /*Test row I of a HoA, whose columns were bound once by flt_bind_hoa.
@@ -10018,8 +10044,9 @@ A tied column has to go through av_fetch: its cells do not exist until FETCH
 has run, and AvARRAY() on one reads the wrong block entirely -- which up to
 0.301 made filter() on a tied HoA column return an empty frame rather than
 say anything.  nslots is the number of distinct columns the predicate names,
-so the test costs one perfectly-predicted branch per predicate per row.*/
-static bool flt_row_hoa(pTHX_ flt_prog *pg, SSize_t i) {
+so the test costs one perfectly-predicted branch per predicate per row.
+Answers as flt_row_hv() does.*/
+static short int flt_row_hoa(pTHX_ flt_prog *pg, SSize_t i) {
 	for (size_t s = 0; s < pg->nslots; s++) {
 		AV *av = pg->cav[s];
 		if (av && SvRMAGICAL(av)) {
@@ -10029,7 +10056,7 @@ static bool flt_row_hoa(pTHX_ flt_prog *pg, SSize_t i) {
 			pg->cells[s] = (av && i <= AvFILLp(av)) ? AvARRAY(av)[i] : NULL;
 		}
 	}
-	return flt_eval(aTHX_ pg, &pg->nodes[0]);
+	return flt_answer(aTHX_ pg);
 }
 
 //Resolve every column the predicate names against a HoA frame, once.
@@ -10177,6 +10204,36 @@ static void flt_rb_release(pTHX_ flt_rowbuf *rb) {
 on its way out instead of leaking it.*/
 static void flt_rb_free(pTHX_ void *p) {
 	flt_rb_release(aTHX_ (flt_rowbuf *)p);
+}
+
+/*A row buffer over the n columns `names`, freed by the caller's scope.  The
+closure path makes one up front; the compiled path only when a row first
+declines (flt_declines()), which on most frames is never.*/
+static flt_rowbuf *flt_rb_setup(pTHX_ SV **names, U32 n) {
+	flt_rowbuf *rb;
+	Newxz(rb, 1, flt_rowbuf);
+	SAVEFREEPV(rb);
+	const U32 cap = n ? n : 1;	//Newx of 0 is not portable
+	rb->n = n; rb->names = names;
+	Newx(rb->slot, cap, SV *);  SAVEFREEPV(rb->slot);
+	Newx(rb->hek,  cap, HEK *); SAVEFREEPV(rb->hek);
+	Newx(rb->hash, cap, U32);   SAVEFREEPV(rb->hash);
+	SAVEDESTRUCTOR_X(flt_rb_free, rb);	//after the arrays: the save stack unwinds it first
+	flt_rb_new(aTHX_ rb);
+	return rb;
+}
+
+/*Ask the predicate's closure about HoA row i, through the row buffer, and get
+the buffer ready for the next row.  `cols` has the buffer's n columns, in
+its `names` order; not restrict, since the closure can reach them.*/
+static bool flt_hoa_call(pTHX_ flt_rowbuf *rb, AV **cols, SV *code, SSize_t i) {
+	for (U32 c = 0; c < rb->n; c++) {
+		SV *vp = av_at(aTHX_ cols[c], i);
+		sv_setsv(rb->slot[c], vp ? vp : &PL_sv_undef);
+	}
+	const bool k = filt_call(aTHX_ code, rb->hv, NULL, i, NULL);
+	if (!flt_rb_reusable(aTHX_ rb)) { flt_rb_release(aTHX_ rb); flt_rb_new(aTHX_ rb); }
+	return k;
 }
 
 /*HeHASH(e) when another hash can be handed it, else 0 to have it computed.
@@ -21417,7 +21474,8 @@ PPCODE:
 	/*The predicate is a CODE ref, or a col() object carrying a CODE ref in
 	its {code} field; either way we end up calling a single CV per row --
 	unless the col() object also carries a {plan}, which is the same test as
-	data and runs in C without touching perl at all.  Its {cols} names the
+	data and runs in C, calling the CV only for a row that holds an object
+	with overloaded operators.  Its {cols} names the
 	columns it reads, which must all be in the frame.*/
 	SV *code = NULL, *plan = NULL, *cols = NULL;
 	if (predarg && SvROK(predarg) && SvTYPE(SvRV(predarg)) == SVt_PVCV) {
@@ -21476,7 +21534,8 @@ PPCODE:
 	ENTER; SAVETMPS;
 	flt_check_cols(aTHX_ cols, inhv, inav, in_shape == FLT_HOA);
 	/*A col() expression that describes itself is run in C; anything else
-	(a plain sub, a ->match regex) goes through filt_call as before.*/
+	(a plain sub, a ->match regex) goes through filt_call as before, and so
+	does any row the C test declines (flt_declines()).*/
 	flt_prog prog_buf;
 	flt_prog *prog = (plan && flt_compile(aTHX_ &prog_buf, plan)) ? &prog_buf : NULL;
 	if (in_shape == FLT_AOH) {
@@ -21501,9 +21560,9 @@ PPCODE:
 				croak("filter: AoH element %" IVdf " is not a HASH reference", (IV)i);
 			HV *rh = (HV*)SvRV(rv);
 			if (order) flt_reg_row(aTHX_ rh, out, order);
-			const char k = (prog ? flt_row_hv(aTHX_ prog, rh)
-			                     : filt_call(aTHX_ code, rh, NULL, i, NULL)) ? 1 : 0;
-			keep[i] = k; kept += k;
+			short int k = prog ? flt_row_hv(aTHX_ prog, rh) : -1;	// 1 keep, 0 drop, -1 ask the closure
+			if (k < 0) k = filt_call(aTHX_ code, rh, NULL, i, NULL);
+			keep[i] = k ? 1 : 0; kept += k ? 1 : 0;
 		}
 		if (out_shape == FLT_AOH) {
 			AV *outa = (AV*)sv_2mortal((SV*)newAV());
@@ -21565,37 +21624,18 @@ ITER_KEEP_END, so the count is read in one scope and the walk runs in a second.*
 		}
 		if (prog) flt_bind_hoa(aTHX_ prog, inhv);
 		/*The closure path needs a row hash; the compiled path reads the
-		columns straight out of the frame and never builds one.*/
-		flt_rowbuf *rb = NULL;
-		if (!prog) {
-			rb = (flt_rowbuf*)safemalloc(sizeof(flt_rowbuf));
-			SAVEFREEPV(rb);
-			Zero(rb, 1, flt_rowbuf);
-			rb->n = c; rb->names = names;
-			rb->slot = (SV**)safemalloc((c?c:1) * sizeof(SV*));
-			SAVEFREEPV(rb->slot);
-			rb->hek  = (HEK**)safemalloc((c?c:1) * sizeof(HEK*));
-			SAVEFREEPV(rb->hek);
-			rb->hash = (U32*)safemalloc((c?c:1) * sizeof(U32));
-			SAVEFREEPV(rb->hash);
-			SAVEDESTRUCTOR_X(flt_rb_free, rb);
-			flt_rb_new(aTHX_ rb);
-		}
+		columns straight out of the frame, and builds one only for a row it
+		declines.*/
+		flt_rowbuf *rb = prog ? NULL : flt_rb_setup(aTHX_ names, c);
 		char *keep = (char*)safemalloc(maxrows ? (size_t)maxrows : 1);
 		SAVEFREEPV(keep);
 		SSize_t kept = 0;
 		if (out_shape == FLT_HOA) {
 			for (SSize_t i = 0; i < maxrows; i++) {
-				bool k;
-				if (prog) {
-					k = flt_row_hoa(aTHX_ prog, i);
-				} else {
-					for (U32 cc = 0; cc < c; cc++) {
-						SV *vp = av_at(aTHX_ cols_av[cc], i);
-						sv_setsv(rb->slot[cc], vp ? vp : &PL_sv_undef);
-					}
-					k = filt_call(aTHX_ code, rb->hv, NULL, i, NULL);
-					if (!flt_rb_reusable(aTHX_ rb)) { flt_rb_release(aTHX_ rb); flt_rb_new(aTHX_ rb); }
+				short int k = prog ? flt_row_hoa(aTHX_ prog, i) : -1;	// 1 keep, 0 drop, -1 ask the closure
+				if (k < 0) {
+					if (!rb) rb = flt_rb_setup(aTHX_ names, c);
+					k = flt_hoa_call(aTHX_ rb, cols_av, code, i);
 				}
 				keep[i] = k ? 1 : 0; kept += k ? 1 : 0;
 			}
@@ -21640,8 +21680,12 @@ ITER_KEEP_END, so the count is read in one scope and the walk runs in a second.*
 			AV *out = (AV*)sv_2mortal((SV*)newAV());
 			if (prog) {
 				for (SSize_t i = 0; i < maxrows; i++) {
-					char k = flt_row_hoa(aTHX_ prog, i) ? 1 : 0;
-					keep[i] = k; kept += k;
+					short int k = flt_row_hoa(aTHX_ prog, i);	// 1 keep, 0 drop, -1 ask the closure
+					if (k < 0) {
+						if (!rb) rb = flt_rb_setup(aTHX_ names, c);
+						k = flt_hoa_call(aTHX_ rb, cols_av, code, i);
+					}
+					keep[i] = k ? 1 : 0; kept += k ? 1 : 0;
 				}
 				if (kept) {
 					av_extend(out, kept - 1);
@@ -21689,9 +21733,9 @@ ITER_KEEP_END, so the count is read in one scope and the walk runs in a second.*
 					croak("filter: HoH row '%" SVf "' is not a HASH reference", SVfARG(hv_iterkeysv(e)));
 				HV *rh = (HV*)SvRV(v);
 				flt_reg_row(aTHX_ rh, out, order);	//columns come from every row ...
-				if (prog) {	//... values only from the kept ones
-					if (flt_row_hv(aTHX_ prog, rh)) av_push(rows, newRV_inc((SV*)rh));
-				} else {
+				const short int k = prog ? flt_row_hv(aTHX_ prog, rh) : -1;	//... values only from the kept ones: 1 keep, 0 drop, -1 ask the closure
+				if (k > 0) av_push(rows, newRV_inc((SV*)rh));
+				else if (k < 0) {
 					SV *kr = NULL;
 					if (filt_call(aTHX_ code, rh, e, 0, &kr)) av_push(rows, kr);
 				}
@@ -21712,9 +21756,9 @@ ITER_KEEP_END, so the count is read in one scope and the walk runs in a second.*
 					croak("filter: HoH row '%" SVf "' is not a HASH reference", SVfARG(hv_iterkeysv(e)));
 				HV *rh = (HV*)SvRV(v);
 				SV *kr = NULL;	//the result's reference to the row: its own, not the frame's
-				if (prog) {
-					if (flt_row_hv(aTHX_ prog, rh)) kr = newRV_inc((SV*)rh);
-				} else (void)filt_call(aTHX_ code, rh, e, 0, &kr);
+				const short int k = prog ? flt_row_hv(aTHX_ prog, rh) : -1;	// 1 keep, 0 drop, -1 ask the closure
+				if (k > 0) kr = newRV_inc((SV*)rh);
+				else if (k < 0) (void)filt_call(aTHX_ code, rh, e, 0, &kr);
 				if (!kr) continue;
 				if (outh) {
 					STRLEN kl; const char *k = HePV(e, kl);
