@@ -3457,12 +3457,18 @@ Predicates compose with bitwise \f(CW\*(C`&\*(C'\fR (and), \f(CW\*(C`|\*(C'\fR (
 .PP
 Comparison operators bind more tightly than \f(CW\*(C`&\*(C'\fR and \f(CW\*(C`|\*(C'\fR, so \f(CW\*(C`(col(\*(Aqa\*(Aq) > 4) & (col(\*(Aqb\*(Aq) < 2)\*(C'\fR is parsed correctly, but the parentheses are recommended for readability.
 .PP
+Combine with \f(CW\*(C`&\*(C'\fR \f(CW\*(C`|\*(C'\fR \f(CW\*(C`!\*(C'\fR only. \f(CW\*(C`&&\*(C'\fR, \f(CW\*(C`||\*(C'\fR, \f(CW\*(C`and\*(C'\fR and \f(CW\*(C`or\*(C'\fR ask whether their left operand is true, and a predicate has no truth value, so they die; until 0.3217 \f(CW\*(C`col(\*(Aqa\*(Aq) > 4 && col(\*(Aqb\*(Aq) < 2\*(C'\fR quietly meant \f(CW\*(C`col(\*(Aqb\*(Aq) < 2\*(C'\fR. A predicate in any other boolean context (\f(CW\*(C`if (col(\*(Aqa\*(Aq) > 4)\*(C'\fR) dies the same way.
+.PP
+\&\fBEvery column a \fR\f(CBcol()\fR\fB predicate names must be in the frame.\fR \f(CW\*(C`filter\*(C'\fR checks them before it tests a row, and dies with \f(CW\*(C`filter: column \*(Aqagee\*(Aq not found in data\*(C'\fR when one is not, as R\*(Aqs \f(CW\*(C`subset(df, agee > 18)\*(C'\fR does. Until 0.3217 a misspelt column read as \f(CW\*(C`undef\*(C'\fR in every row, so \f(CW\*(C`col(\*(Aqagee\*(Aq) > 18\*(C'\fR kept nothing and \f(CW\*(C`!(col(\*(Aqagee\*(Aq) > 18)\*(C'\fR kept everything, without a word. A HoA has a column when it has the key, even with no rows; an AoH or HoH has it when any row has it, so a column that only some rows carry is fine. An AoH or HoH with no rows names no columns and is not checked. A code reference names no columns either, so \f(CW\*(C`sub { $_\->{agee} > 18 }\*(C'\fR cannot be checked and still reads \f(CW\*(C`undef\*(C'\fR.
+.PP
 A \f(CWcol()\fR expression is also the quick way to say it: \f(CW\*(C`filter\*(C'\fR compiles the whole expression once and tests every row in C, without building a row hash or calling into Perl at all, which on a large frame is several times faster than the equivalent \f(CW\*(C`sub\*(C'\fR. What \f(CWcol()\fR cannot express — a \f(CW\*(C`\->match\*(C'\fR regex, an operand that is an object — is evaluated the same way a \f(CW\*(C`sub\*(C'\fR is, one call per row.
 .PP
 .Vb 1
 \& > Note: C<< col(\*(Aqage\*(Aq) E<gt> 32 >> works because C<col(\*(Aqage\*(Aq)> is an object whose C<< E<gt> >> is overloaded. A B<bare string> cannot do this — C<< \*(Aqage\*(Aq E<gt> 32 >> is computed by Perl to a plain boolean (the string numifies to 0) before C<filter> is ever called, so the column name is lost. Always wrap the column in C<col(...)>.
 \&
 \& > C<col()> addresses B<columns only> — it has no handle on a HoH\*(Aqs row name (the outer key). It also cannot express a regex match: there is no C<=~> operator to overload, so C<col(\*(Aqname\*(Aq) =~ /re/> runs the match immediately on the stringified object and never reaches C<filter>. For either case, use the code\-reference form below.
+\&
+\& > A C<col()> is compared with a B<value>, not with another column: C<< col(\*(AqALT\*(Aq) E<gt> col(\*(AqAST\*(Aq) >> dies (until 0.3217 it kept every row with a numeric C<ALT>). Write it as C<< sub { $_\-E<gt>{ALT} E<gt> $_\-E<gt>{AST} } >>.
 .Ve
 .PP
 \fIThe code\-reference form\fR
@@ -3483,7 +3489,9 @@ Return a true value to keep the row.
 \& filter($df, sub { $_[0]{score} > $_[0]{threshold} });
 .Ve
 .PP
-For a HoA there are no row hashes to hand over, so the sub is given a \f(CW\*(C`{ column => value, ... }\*(C'\fR hash built for it, and the same \f(CW\*(C`$_\->{column}\*(C'\fR syntax works regardless of the input shape. That hash is reused from row to row for as long as the sub only reads it; keeping the row (or a reference to one of its cells), or adding a key to it, makes \f(CW\*(C`filter\*(C'\fR start a fresh one, so a row you hold on to is always yours alone. A \f(CWcol()\fR predicate needs no row hash at all.
+For a HoA there are no row hashes to hand over, so the sub is given a \f(CW\*(C`{ column => value, ... }\*(C'\fR hash built for it, and the same \f(CW\*(C`$_\->{column}\*(C'\fR syntax works regardless of the input shape. That hash is reused from row to row for as long as the sub only reads it; keeping the row (or a reference to one of its cells), or adding, deleting or replacing a key in it, makes \f(CW\*(C`filter\*(C'\fR start a fresh one, so a row you hold on to is always yours alone. A \f(CWcol()\fR predicate needs no row hash at all.
+.PP
+\&\f(CW$_\fR and \f(CW$_[0]\fR are a reference made for the call, so assigning to them (\f(CW\*(C`$_ = undef\*(C'\fR) changes nothing outside the sub. Writing \fIthrough\fR them (\f(CW\*(C`$_\->{x} = 0\*(C'\fR) does reach an AoH\*(Aqs or HoH\*(Aqs row, which is the caller\*(Aqs own hash.
 .PP
 Filtering on the row name (\f(CW$_[1]\fR)
 .IX Subsection "Filtering on the row name ($_[1])"
@@ -3553,13 +3561,13 @@ The two selectable output types are \f(CW\*(Aqaoh\*(Aq\fR and \f(CW\*(Aqhoa\*(Aq
 .IP \(bu 4
 \&\fBThe predicate receives the row identifier as \fR\f(CB$_[1]\fR\fB.\fR For a HoH it is the outer key (the row name); for an AoH or HoA it is the 0\-based row index. In a HoH the row name lives in the \fIkey\fR, not inside each row hash, so \f(CW\*(C`$_\->{row_name}\*(C'\fR is \f(CW\*(C`undef\*(C'\fR — filter on \f(CW$_[1]\fR instead. \f(CWcol()\fR expressions see only columns, never the row key.
 .IP \(bu 4
-\&\fBA missing or \fR\f(CB\*(C`undef\*(C'\fR\fB cell never matches a \fR\f(CBcol()\fR\fB comparison.\fR \f(CW\*(C`col(\*(Aqx\*(Aq) > 0\*(C'\fR silently drops any row whose \f(CW\*(C`x\*(C'\fR is absent or \f(CW\*(C`undef\*(C'\fR; for numeric operators a non\-numeric cell is likewise dropped. With a coderef, \f(CW\*(C`undef\*(C'\fR is whatever your sub makes of it.
+\&\fBA missing or \fR\f(CB\*(C`undef\*(C'\fR\fB cell never matches a \fR\f(CBcol()\fR\fB comparison.\fR \f(CW\*(C`col(\*(Aqx\*(Aq) > 0\*(C'\fR silently drops any row whose \f(CW\*(C`x\*(C'\fR is absent or \f(CW\*(C`undef\*(C'\fR; for numeric operators a non\-numeric cell is likewise dropped. With a coderef, \f(CW\*(C`undef\*(C'\fR is whatever your sub makes of it. A column absent from \fIevery\fR row is a different matter: it dies (see above).
 .IP \(bu 4
-\&\fBRows are shared, not deep\-copied, wherever possible.\fR When an AoH or HoH row is kept (output left as AoH/HoH, or converted to \f(CW\*(C`aoh\*(C'\fR), the returned frame references the \fIsame\fR inner row hashes as the input. Mutating such a row in the result would also change it in the original. HoA inputs and any \f(CW\*(C`hoa\*(C'\fR output build fresh arrays and fresh cell values.
+\&\fBRows are shared, not deep\-copied, wherever possible.\fR When an AoH or HoH row is kept (output left as AoH/HoH, or converted to \f(CW\*(C`aoh\*(C'\fR), the returned frame references the \fIsame\fR inner row hashes as the input. Mutating such a row in the result would also change it in the original. The references to them are the result\*(Aqs own, so replacing a whole row (\f(CW\*(C`$out\->[0] = {...}\*(C'\fR) leaves the input alone; until 0.3217 it replaced the input\*(Aqs row too. HoA inputs and any \f(CW\*(C`hoa\*(C'\fR output build fresh arrays and fresh cell values.
 .IP \(bu 4
 \&\fBKeep\-all / keep\-none are well defined.\fR A predicate true for every row returns the whole frame in the chosen shape; true for none returns an empty frame: \f(CW\*(C`[]\*(C'\fR for \f(CW\*(C`aoh\*(C'\fR, a hash of empty (but present) columns for \f(CW\*(C`hoa\*(C'\fR, and \f(CW\*(C`{}\*(C'\fR for \f(CW\*(C`hoh\*(C'\fR.
 .IP \(bu 4
-\&\fBSupported shapes are AoH, HoA, and HoH.\fR A non\-reference, an AoH element that is not a hash reference, a HoA column that is not an array reference, or a HoH row that is not a hash reference all raise a descriptive error; a bare \f(CWcol(\*(Aqx\*(Aq)\fR with no comparison is also an error. An empty hash \f(CW\*(C`{}\*(C'\fR is treated as an empty frame.
+\&\fBSupported shapes are AoH, HoA, and HoH.\fR A non\-reference, an AoH element that is not a hash reference, a HoA column that is not an array reference, or a HoH row that is not a hash reference all raise a descriptive error; a bare \f(CWcol(\*(Aqx\*(Aq)\fR with no comparison is also an error, as are a \f(CWcol()\fR column that is not in the frame and a \f(CWcol()\fR compared with another \f(CWcol()\fR. An empty hash \f(CW\*(C`{}\*(C'\fR is treated as an empty frame.
 .IP \(bu 4
 \&\fBPerl 5.10 compatible.\fR The \f(CWcol()\fR/operator layer is pure Perl (operator overloading building a per\-row closure); filtering and any reshaping run in XS.
 .PP

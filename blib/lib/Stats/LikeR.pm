@@ -1859,12 +1859,17 @@ sub chunk {
 # filter DSL: col() builds a predicate via overloading (pure Perl)
 # col('name') returns an overloaded object; comparing it (col('age') >= 18) or
 # combining comparisons with & | ! builds a predicate that carries its per-row
-# test in a {code} closure. filter() (XS) unwraps that closure, so col() and a
-# plain coderef share one evaluation path -- no XS evaluator, no Carp.
+# test in a {code} closure, and -- when C can reproduce it exactly -- in a
+# {plan} that filter() (XS) compiles and runs without calling the closure.
 #
 # Rules: numeric ops > < >= <= == != compare as numbers; string ops gt lt ge le
 # eq ne compare as strings; & | ! combine; operands may be in either order; a
 # missing/undef cell (and, for numeric ops, a non-numeric cell) never matches.
+#
+# Every predicate also carries {cols}, the distinct column names it reads, in
+# the order they first appear. filter() checks them against the frame before
+# testing a row, so a misspelt column dies instead of quietly keeping nothing
+# (or, under !, everything).
 sub col { Stats::LikeR::col::_new(@_) }
 {
 	package Stats::LikeR::col;
@@ -1887,13 +1892,35 @@ sub col { Stats::LikeR::col::_new(@_) }
 		'|'	 => sub { _logic($_[0], '|', $_[1]) },
 		'!'	 => sub { _not($_[0]) },
 		'""'   => sub { 'Stats::LikeR::col predicate' },
-		'bool' => sub { 1 },
+		# A predicate has no truth value of its own. Up to 0.3216 this returned
+		# 1, so col('a') > 1 && col('b') > 2 -- && and || test their left
+		# operand for truth -- quietly became just col('b') > 2.
+		'bool' => sub {
+			die "col(): a predicate has no truth value; combine predicates with & | ! "
+			  . "(not && || and or), e.g. (col('x') > 0) & (col('y') < 5)\n";
+		},
 		fallback => 0;
 
 	sub _new {
 		my ($name) = @_;
 		die "col(): expects a single column name\n" if !defined($name) || ref $name;
 		return bless { name => $name }, __PACKAGE__;
+	}
+
+	# The operand of a comparison may not be another column: up to 0.3216
+	# col('x') > col('y') compared every cell with the col object, whose own
+	# overloaded > returned a (true) predicate, and so kept every numeric row.
+	sub _literal {
+		my ($op, $other) = @_;
+		die "col(): '$op' compares a column with a value, not with another column; "
+		  . "use a sub, e.g. sub { \$_->{x} $op \$_->{y} }\n"
+			if blessed($other) && $other->isa(__PACKAGE__);
+	}
+
+	# the distinct names in two {cols} lists, first appearance first
+	sub _cols_union {
+		my %seen;
+		return [ grep { !$seen{$_}++ } map { @{ $_ || [] } } @_ ];
 	}
 
 	my %NUM = (
@@ -1931,13 +1958,14 @@ sub col { Stats::LikeR::col::_new(@_) }
 		my $name = $self->{name};
 		die "col(): the '$op' comparison must start from a bare column, e.g. col('x') $op ...\n"
 			unless defined $name;
+		_literal($op, $other);
 		my $f = $NUM{$op};
 		my $code = $swap
 			? sub { my $c = $_[0]{$name}; (defined($c) && looks_like_number($c)) ? ($f->($other, $c) ? 1 : 0) : 0 }
 			: sub { my $c = $_[0]{$name}; (defined($c) && looks_like_number($c)) ? ($f->($c, $other) ? 1 : 0) : 0 };
 		my $plan = (defined($other) && !ref($other) && looks_like_number($other))
 			? [ $P_NUM, $NUM_ID{$op}, $name, $other, ($swap ? 1 : 0) ] : undef;
-		return bless { code => $code, ($plan ? (plan => $plan) : ()) }, __PACKAGE__;
+		return bless { code => $code, cols => [ $name ], ($plan ? (plan => $plan) : ()) }, __PACKAGE__;
 	}
 
 	# string comparison: undef cells never match
@@ -1946,13 +1974,14 @@ sub col { Stats::LikeR::col::_new(@_) }
 		my $name = $self->{name};
 		die "col(): the '$op' comparison must start from a bare column, e.g. col('x') $op ...\n"
 			unless defined $name;
+		_literal($op, $other);
 		my $f = $STR{$op};
 		my $code = $swap
 			? sub { my $c = $_[0]{$name}; defined($c) ? ($f->($other, $c) ? 1 : 0) : 0 }
 			: sub { my $c = $_[0]{$name}; defined($c) ? ($f->($c, $other) ? 1 : 0) : 0 };
 		my $plan = (defined($other) && !ref($other))
 			? [ $P_STR, $STR_ID{$op}, $name, $other, ($swap ? 1 : 0) ] : undef;
-		return bless { code => $code, ($plan ? (plan => $plan) : ()) }, __PACKAGE__;
+		return bless { code => $code, cols => [ $name ], ($plan ? (plan => $plan) : ()) }, __PACKAGE__;
 	}
 
 	sub _logic {
@@ -1968,7 +1997,8 @@ sub col { Stats::LikeR::col::_new(@_) }
 			: sub { ($lc->($_[0]) || $rc->($_[0])) ? 1 : 0 };
 		my $plan = ($self->{plan} && $other->{plan})
 			? [ ($op eq '&' ? $P_AND : $P_OR), $self->{plan}, $other->{plan} ] : undef;
-		return bless { code => $code, ($plan ? (plan => $plan) : ()) }, __PACKAGE__;
+		return bless { code => $code, cols => _cols_union($self->{cols}, $other->{cols}),
+		               ($plan ? (plan => $plan) : ()) }, __PACKAGE__;
 	}
 
 	sub _not {
@@ -1977,7 +2007,7 @@ sub col { Stats::LikeR::col::_new(@_) }
 		die "col(): the operand of '!' is not a comparison (build it like !(col('x') > 0))\n"
 			unless ref $c eq 'CODE';
 		my $plan = $self->{plan} ? [ $P_NOT, $self->{plan} ] : undef;
-		return bless { code => sub { $c->($_[0]) ? 0 : 1 },
+		return bless { code => sub { $c->($_[0]) ? 0 : 1 }, cols => _cols_union($self->{cols}),
 		               ($plan ? (plan => $plan) : ()) }, __PACKAGE__;
 	}
 
@@ -2000,7 +2030,7 @@ sub col { Stats::LikeR::col::_new(@_) }
 			return 0 unless defined $c;
 			return ( ($c =~ $qr) ? 1 : 0 ) == $want ? 1 : 0;
 		};
-		return bless { code => $code }, __PACKAGE__;
+		return bless { code => $code, cols => [ $name ] }, __PACKAGE__;
 	}
 	sub match   { _match($_[0], $_[1], 1, 'match') }
 	sub nomatch { _match($_[0], $_[1], 0, 'nomatch') }
@@ -10891,11 +10921,17 @@ Predicates compose with bitwise C<&> (and), C<|> (or), and C<!> (not):
 
 Comparison operators bind more tightly than C<&> and C<|>, so C<< (col('a') E<gt> 4) & (col('b') E<lt> 2) >> is parsed correctly, but the parentheses are recommended for readability.
 
+Combine with C<&> C<|> C<!> only. C<&&>, C<||>, C<and> and C<or> ask whether their left operand is true, and a predicate has no truth value, so they die; until 0.3217 C<< col('a') E<gt> 4 && col('b') E<lt> 2 >> quietly meant C<< col('b') E<lt> 2 >>. A predicate in any other boolean context (C<< if (col('a') E<gt> 4) >>) dies the same way.
+
+B<< Every column a C<col()> predicate names must be in the frame. >> C<filter> checks them before it tests a row, and dies with C<filter: column 'agee' not found in data> when one is not, as R's C<< subset(df, agee E<gt> 18) >> does. Until 0.3217 a misspelt column read as C<undef> in every row, so C<< col('agee') E<gt> 18 >> kept nothing and C<< !(col('agee') E<gt> 18) >> kept everything, without a word. A HoA has a column when it has the key, even with no rows; an AoH or HoH has it when any row has it, so a column that only some rows carry is fine. An AoH or HoH with no rows names no columns and is not checked. A code reference names no columns either, so C<< sub { $_-E<gt>{agee} E<gt> 18 } >> cannot be checked and still reads C<undef>.
+
 A C<col()> expression is also the quick way to say it: C<filter> compiles the whole expression once and tests every row in C, without building a row hash or calling into Perl at all, which on a large frame is several times faster than the equivalent C<sub>. What C<col()> cannot express — a C<< -E<gt>match >> regex, an operand that is an object — is evaluated the same way a C<sub> is, one call per row.
 
  > Note: C<< col('age') E<gt> 32 >> works because C<col('age')> is an object whose C<< E<gt> >> is overloaded. A B<bare string> cannot do this — C<< 'age' E<gt> 32 >> is computed by Perl to a plain boolean (the string numifies to 0) before C<filter> is ever called, so the column name is lost. Always wrap the column in C<col(...)>.
 
  > C<col()> addresses B<columns only> — it has no handle on a HoH's row name (the outer key). It also cannot express a regex match: there is no C<=~> operator to overload, so C<col('name') =~ /re/> runs the match immediately on the stringified object and never reaches C<filter>. For either case, use the code-reference form below.
+
+ > A C<col()> is compared with a B<value>, not with another column: C<< col('ALT') E<gt> col('AST') >> dies (until 0.3217 it kept every row with a numeric C<ALT>). Write it as C<< sub { $_-E<gt>{ALT} E<gt> $_-E<gt>{AST} } >>.
 
 =head3 The code-reference form
 
@@ -10916,7 +10952,9 @@ Return a true value to keep the row.
  filter($df, sub { $_->{age} % 2 == 0 });            # things col() has no operator for
  filter($df, sub { $_[0]{score} > $_[0]{threshold} });
 
-For a HoA there are no row hashes to hand over, so the sub is given a C<< { column =E<gt> value, ... } >> hash built for it, and the same C<< $_-E<gt>{column} >> syntax works regardless of the input shape. That hash is reused from row to row for as long as the sub only reads it; keeping the row (or a reference to one of its cells), or adding a key to it, makes C<filter> start a fresh one, so a row you hold on to is always yours alone. A C<col()> predicate needs no row hash at all.
+For a HoA there are no row hashes to hand over, so the sub is given a C<< { column =E<gt> value, ... } >> hash built for it, and the same C<< $_-E<gt>{column} >> syntax works regardless of the input shape. That hash is reused from row to row for as long as the sub only reads it; keeping the row (or a reference to one of its cells), or adding, deleting or replacing a key in it, makes C<filter> start a fresh one, so a row you hold on to is always yours alone. A C<col()> predicate needs no row hash at all.
+
+C<$_> and C<$_[0]> are a reference made for the call, so assigning to them (C<$_ = undef>) changes nothing outside the sub. Writing I<through> them (C<< $_-E<gt>{x} = 0 >>) does reach an AoH's or HoH's row, which is the caller's own hash.
 
 =head4 Filtering on the row name (C<$_[1]>)
 
@@ -10976,13 +11014,13 @@ The two selectable output types are C<'aoh'> and C<'hoa'>. C<'hoh'> is B<not> se
 
 =item * B<< The predicate receives the row identifier as C<$_[1]>. >> For a HoH it is the outer key (the row name); for an AoH or HoA it is the 0-based row index. In a HoH the row name lives in the I<key>, not inside each row hash, so C<< $_-E<gt>{row_name} >> is C<undef> — filter on C<$_[1]> instead. C<col()> expressions see only columns, never the row key.
 
-=item * B<< A missing or C<undef> cell never matches a C<col()> comparison. >> C<< col('x') E<gt> 0 >> silently drops any row whose C<x> is absent or C<undef>; for numeric operators a non-numeric cell is likewise dropped. With a coderef, C<undef> is whatever your sub makes of it.
+=item * B<< A missing or C<undef> cell never matches a C<col()> comparison. >> C<< col('x') E<gt> 0 >> silently drops any row whose C<x> is absent or C<undef>; for numeric operators a non-numeric cell is likewise dropped. With a coderef, C<undef> is whatever your sub makes of it. A column absent from I<every> row is a different matter: it dies (see above).
 
-=item * B<Rows are shared, not deep-copied, wherever possible.> When an AoH or HoH row is kept (output left as AoH/HoH, or converted to C<aoh>), the returned frame references the I<same> inner row hashes as the input. Mutating such a row in the result would also change it in the original. HoA inputs and any C<hoa> output build fresh arrays and fresh cell values.
+=item * B<Rows are shared, not deep-copied, wherever possible.> When an AoH or HoH row is kept (output left as AoH/HoH, or converted to C<aoh>), the returned frame references the I<same> inner row hashes as the input. Mutating such a row in the result would also change it in the original. The references to them are the result's own, so replacing a whole row (C<< $out-E<gt>[0] = {...} >>) leaves the input alone; until 0.3217 it replaced the input's row too. HoA inputs and any C<hoa> output build fresh arrays and fresh cell values.
 
 =item * B<Keep-all / keep-none are well defined.> A predicate true for every row returns the whole frame in the chosen shape; true for none returns an empty frame: C<[]> for C<aoh>, a hash of empty (but present) columns for C<hoa>, and C<{}> for C<hoh>.
 
-=item * B<Supported shapes are AoH, HoA, and HoH.> A non-reference, an AoH element that is not a hash reference, a HoA column that is not an array reference, or a HoH row that is not a hash reference all raise a descriptive error; a bare C<col('x')> with no comparison is also an error. An empty hash C<{}> is treated as an empty frame.
+=item * B<Supported shapes are AoH, HoA, and HoH.> A non-reference, an AoH element that is not a hash reference, a HoA column that is not an array reference, or a HoH row that is not a hash reference all raise a descriptive error; a bare C<col('x')> with no comparison is also an error, as are a C<col()> column that is not in the frame and a C<col()> compared with another C<col()>. An empty hash C<{}> is treated as an empty frame.
 
 =item * B<Perl 5.10 compatible.> The C<col()>/operator layer is pure Perl (operator overloading building a per-row closure); filtering and any reshaping run in XS.
 

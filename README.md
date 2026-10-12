@@ -3107,11 +3107,17 @@ Predicates compose with bitwise `&` (and), `|` (or), and `!` (not):
 
 Comparison operators bind more tightly than `&` and `|`, so `(col('a') > 4) & (col('b') < 2)` is parsed correctly, but the parentheses are recommended for readability.
 
+Combine with `&` `|` `!` only. `&&`, `||`, `and` and `or` ask whether their left operand is true, and a predicate has no truth value, so they die; until 0.3217 `col('a') > 4 && col('b') < 2` quietly meant `col('b') < 2`. A predicate in any other boolean context (`if (col('a') > 4)`) dies the same way.
+
+**Every column a `col()` predicate names must be in the frame.** `filter` checks them before it tests a row, and dies with `filter: column 'agee' not found in data` when one is not, as R's `subset(df, agee > 18)` does. Until 0.3217 a misspelt column read as `undef` in every row, so `col('agee') > 18` kept nothing and `!(col('agee') > 18)` kept everything, without a word. A HoA has a column when it has the key, even with no rows; an AoH or HoH has it when any row has it, so a column that only some rows carry is fine. An AoH or HoH with no rows names no columns and is not checked. A code reference names no columns either, so `sub { $_->{agee} > 18 }` cannot be checked and still reads `undef`.
+
 A `col()` expression is also the quick way to say it: `filter` compiles the whole expression once and tests every row in C, without building a row hash or calling into Perl at all, which on a large frame is several times faster than the equivalent `sub`. What `col()` cannot express — a `->match` regex, an operand that is an object — is evaluated the same way a `sub` is, one call per row.
 
 > Note: `col('age') > 32` works because `col('age')` is an object whose `>` is overloaded. A **bare string** cannot do this — `'age' > 32` is computed by Perl to a plain boolean (the string numifies to 0) before `filter` is ever called, so the column name is lost. Always wrap the column in `col(...)`.
 
 > `col()` addresses **columns only** — it has no handle on a HoH's row name (the outer key). It also cannot express a regex match: there is no `=~` operator to overload, so `col('name') =~ /re/` runs the match immediately on the stringified object and never reaches `filter`. For either case, use the code-reference form below.
+
+> A `col()` is compared with a **value**, not with another column: `col('ALT') > col('AST')` dies (until 0.3217 it kept every row with a numeric `ALT`). Write it as `sub { $_->{ALT} > $_->{AST} }`.
 
 ### The code-reference form
 
@@ -3127,7 +3133,9 @@ Return a true value to keep the row.
     filter($df, sub { $_->{age} % 2 == 0 });            # things col() has no operator for
     filter($df, sub { $_[0]{score} > $_[0]{threshold} });
 
-For a HoA there are no row hashes to hand over, so the sub is given a `{ column => value, ... }` hash built for it, and the same `$_->{column}` syntax works regardless of the input shape. That hash is reused from row to row for as long as the sub only reads it; keeping the row (or a reference to one of its cells), or adding a key to it, makes `filter` start a fresh one, so a row you hold on to is always yours alone. A `col()` predicate needs no row hash at all.
+For a HoA there are no row hashes to hand over, so the sub is given a `{ column => value, ... }` hash built for it, and the same `$_->{column}` syntax works regardless of the input shape. That hash is reused from row to row for as long as the sub only reads it; keeping the row (or a reference to one of its cells), or adding, deleting or replacing a key in it, makes `filter` start a fresh one, so a row you hold on to is always yours alone. A `col()` predicate needs no row hash at all.
+
+`$_` and `$_[0]` are a reference made for the call, so assigning to them (`$_ = undef`) changes nothing outside the sub. Writing *through* them (`$_->{x} = 0`) does reach an AoH's or HoH's row, which is the caller's own hash.
 
 #### Filtering on the row name (`$_[1]`)
 
@@ -3183,10 +3191,10 @@ The two selectable output types are `'aoh'` and `'hoa'`. `'hoh'` is **not** sele
 
 - **The input is never modified.** `filter` builds and returns a new frame; `$df` is left untouched.
 - **The predicate receives the row identifier as `$_[1]`.** For a HoH it is the outer key (the row name); for an AoH or HoA it is the 0-based row index. In a HoH the row name lives in the *key*, not inside each row hash, so `$_->{row_name}` is `undef` — filter on `$_[1]` instead. `col()` expressions see only columns, never the row key.
-- **A missing or `undef` cell never matches a `col()` comparison.** `col('x') > 0` silently drops any row whose `x` is absent or `undef`; for numeric operators a non-numeric cell is likewise dropped. With a coderef, `undef` is whatever your sub makes of it.
-- **Rows are shared, not deep-copied, wherever possible.** When an AoH or HoH row is kept (output left as AoH/HoH, or converted to `aoh`), the returned frame references the *same* inner row hashes as the input. Mutating such a row in the result would also change it in the original. HoA inputs and any `hoa` output build fresh arrays and fresh cell values.
+- **A missing or `undef` cell never matches a `col()` comparison.** `col('x') > 0` silently drops any row whose `x` is absent or `undef`; for numeric operators a non-numeric cell is likewise dropped. With a coderef, `undef` is whatever your sub makes of it. A column absent from *every* row is a different matter: it dies (see above).
+- **Rows are shared, not deep-copied, wherever possible.** When an AoH or HoH row is kept (output left as AoH/HoH, or converted to `aoh`), the returned frame references the *same* inner row hashes as the input. Mutating such a row in the result would also change it in the original. The references to them are the result's own, so replacing a whole row (`$out->[0] = {...}`) leaves the input alone; until 0.3217 it replaced the input's row too. HoA inputs and any `hoa` output build fresh arrays and fresh cell values.
 - **Keep-all / keep-none are well defined.** A predicate true for every row returns the whole frame in the chosen shape; true for none returns an empty frame: `[]` for `aoh`, a hash of empty (but present) columns for `hoa`, and `{}` for `hoh`.
-- **Supported shapes are AoH, HoA, and HoH.** A non-reference, an AoH element that is not a hash reference, a HoA column that is not an array reference, or a HoH row that is not a hash reference all raise a descriptive error; a bare `col('x')` with no comparison is also an error. An empty hash `{}` is treated as an empty frame.
+- **Supported shapes are AoH, HoA, and HoH.** A non-reference, an AoH element that is not a hash reference, a HoA column that is not an array reference, or a HoH row that is not a hash reference all raise a descriptive error; a bare `col('x')` with no comparison is also an error, as are a `col()` column that is not in the frame and a `col()` compared with another `col()`. An empty hash `{}` is treated as an empty frame.
 - **Perl 5.10 compatible.** The `col()`/operator layer is pure Perl (operator overloading building a per-row closure); filtering and any reshaping run in XS.
 
 ### See also

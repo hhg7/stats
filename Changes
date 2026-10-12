@@ -78,6 +78,61 @@ Revision history for Stats-LikeR
  - A Spearman correlation of two vectors ranks them in place, which cut
    peak memory above the input from 46.5 MB to 31.3 MB at n = 1e6.
 
+ [filter()]
+
+ - A col() predicate naming a column the frame does not have now dies,
+   "filter: column 'agee' not found in data", as R's subset() does. It
+   used to read undef in every row, so col('agee') > 18 kept nothing and
+   !(col('agee') > 18) kept everything, without a word. A column only some
+   rows of an AoH or HoH carry is still a column; an AoH or HoH with no
+   rows is not checked. Each predicate records the columns it reads in
+   {cols}. A code reference names none and is not checked.
+
+ - && || and or between col() predicates now die. A predicate's truth
+   value was 1, so col('a') > 4 && col('b') < 2 quietly became
+   col('b') < 2. Combine with & | !.
+
+ - col('x') > col('y') now dies rather than keeping every row with a
+   numeric x: the cell was compared with the col object, whose own
+   overloaded > returned a true predicate. Compare two columns in a sub.
+
+ - The result no longer shares the input's reference SVs, only the rows
+   they point to, so $out->[0] = undef no longer emptied $df->[0], for an
+   AoH and for a HoH.
+
+ - $_ and $_[0] in a predicate are a reference made for the call. They
+   were the frame's own, so $_ = undef in a predicate cleared the caller's
+   AoH row, and on a HoA freed the row buffer and crashed perl.
+
+ - A predicate that deletes its own row from a HoH, or a column from a
+   HoA, no longer crashes perl; and one that deletes a cell of the HoA row
+   buffer, keeps it and stores another under the same name no longer has
+   every later row written into the cell it kept.
+
+ - An integer cell and literal compare exactly when either is a UV:
+   col('x') <= 9223372036854775807 kept a cell of 9223372036854775808,
+   both rounding to 2**63 as doubles.
+
+ - A string comparison FETCHes a tied cell once, not twice, on perl 5.14
+   and later.
+
+ [filter(): speed and memory]
+
+ - Converting an AoH or HoH to a HoA no longer gives every row of the
+   input an iterator. perl allocates one on a hash's first iteration and
+   never frees it, so filtering a 200000-row, two-column AoH to a HoA
+   left it at 70.3 MB where it had been 47.4 MB, and the peak above the
+   input for 1e6 one-column rows was 197 MB. It is 20.5 MB now, and the
+   input is unchanged. The rows are also read once each rather than once
+   per column, and AoH -> HoA runs in about half the time: 119 ms to 59 ms
+   for a col() predicate on 300000 rows of 5 columns, 162 ms to 91 ms for
+   a sub. HoH -> HoA went from 397 ms to 303 ms.
+
+ - A sub predicate's row index or row name ($_[1]) is freed after each
+   row. It used to be held until filter() returned, so the peak above the
+   input for a 1e6-row AoH went from 35.3 MB to 16.3 MB, and for a HoH
+   from 66.1 MB to 31.5 MB.
+
 0.3216 2026-10-09 CDT (Claude Opus 5.5 helped)
 
  [merge()]
