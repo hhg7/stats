@@ -4327,7 +4327,9 @@ lands a rounding error above a breakpoint still counts in the bin below it.
 across seventeen datasets and eight \f(CW\*(C`breaks\*(C'\fR settings in \f(CW\*(C`t/hist.R.t\*(C'\fR,
 including four whose range is wider than the largest double, where the
 breaks are built as R builds them \-\- \f(CW\*(C`hist([1.7e308, \-1.7e308], breaks => 4)\*(C'\fR
-gives \f(CW\*(C`\-1.7e308, 0, 1.7e308\*(C'\fR.
+gives \f(CW\*(C`\-1.7e308, 0, 1.7e308\*(C'\fR. On such a range \f(CW\*(C`mids\*(C'\fR departs from R on purpose:
+R\*(Aqs \f(CW\*(C`0.5 * (a + b)\*(C'\fR overflows to \f(CW\*(C`\-Inf\*(C'\fR or \f(CW\*(C`Inf\*(C'\fR, and \f(CW\*(C`hist\*(C'\fR gives the finite
+midpoint.
 .SS hosmer_lemeshow
 .IX Subsection "hosmer_lemeshow"
 The Hosmer\-Lemeshow goodness\-of\-fit test for a logistic\-regression model. Given

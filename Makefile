@@ -6,7 +6,7 @@
 #
 #       ANY CHANGES MADE HERE WILL BE LOST!
 #
-#   MakeMaker ARGV: ()
+#   MakeMaker ARGV: (q[OPTIMIZE=-O2 -Wall])
 #
 
 #   MakeMaker Parameters:
@@ -178,7 +178,8 @@ O_FILES  = LikeR.o \
 	write_table.section.o
 H_FILES  = ppport.h
 MAN1PODS = 
-MAN3PODS = lib/Stats/LikeR.pm
+MAN3PODS = lib/Stats/LikeR.pm \
+	read.me.pod
 
 # Where to build things
 INST_LIBDIR      = $(INST_LIB)/Stats
@@ -197,7 +198,8 @@ PERL_ARCHIVE       =
 PERL_ARCHIVE_AFTER = 
 
 
-TO_INST_PM = lib/Stats/LikeR.pm
+TO_INST_PM = lib/Stats/LikeR.pm \
+	read.me.pod
 PERL_ARCHLIBDEP = /home/con/perl5/perlbrew/perls/perl-5.44.0/lib/5.44.0/x86_64-linux
 PERL_INCDEP = /home/con/perl5/perlbrew/perls/perl-5.44.0/lib/5.44.0/x86_64-linux/CORE
 
@@ -296,7 +298,7 @@ DISTVNAME = Stats-LikeR-0.3217
 # --- MakeMaker cflags section:
 
 CCFLAGS = -fwrapv -fno-strict-aliasing -pipe -fstack-protector-strong -I/usr/local/include -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64 -std=gnu99 -fexcess-precision=standard
-OPTIMIZE = -O2
+OPTIMIZE = -O2 -Wall
 PERLTYPE = 
 MPOLLUTE = 
 
@@ -521,9 +523,11 @@ POD2MAN = $(POD2MAN_EXE)
 
 
 manifypods : pure_all config  \
-	lib/Stats/LikeR.pm
+	lib/Stats/LikeR.pm \
+	read.me.pod
 	$(NOECHO) $(POD2MAN) --section=$(MAN3SECTION) --perm_rw=$(PERM_RW) -u \
-	  lib/Stats/LikeR.pm $(INST_MAN3DIR)/Stats::LikeR.$(MAN3EXT) 
+	  lib/Stats/LikeR.pm $(INST_MAN3DIR)/Stats::LikeR.$(MAN3EXT) \
+	  read.me.pod $(INST_MAN3DIR)/Stats::read.me.$(MAN3EXT) 
 
 
 
@@ -767,7 +771,7 @@ distdir : create_distdir distmeta
 
 # --- MakeMaker dist_test section:
 disttest : distdir
-	cd $(DISTVNAME) && $(ABSPERLRUN) Makefile.PL 
+	cd $(DISTVNAME) && $(ABSPERLRUN) Makefile.PL "OPTIMIZE=-O2 -Wall"
 	cd $(DISTVNAME) && $(MAKE) $(PASTHRU)
 	cd $(DISTVNAME) && $(MAKE) test $(PASTHRU)
 
@@ -1024,7 +1028,7 @@ $(FIRST_MAKEFILE) : Makefile.PL $(CONFIGDEP)
 	-$(NOECHO) $(RM_F) $(MAKEFILE_OLD)
 	-$(NOECHO) $(MV)   $(FIRST_MAKEFILE) $(MAKEFILE_OLD)
 	- $(MAKE) $(USEMAKEFILE) $(MAKEFILE_OLD) clean $(DEV_NULL)
-	$(PERLRUN) Makefile.PL 
+	$(PERLRUN) Makefile.PL "OPTIMIZE=-O2 -Wall"
 	$(NOECHO) $(ECHO) "==> Your Makefile has been rebuilt. <=="
 	$(NOECHO) $(ECHO) "==> Please rerun the $(MAKE) command.  <=="
 	$(FALSE)
@@ -1046,7 +1050,8 @@ $(MAKE_APERL_FILE) : static $(FIRST_MAKEFILE) pm_to_blib
 	$(NOECHO) $(PERLRUNINST) \
 		Makefile.PL DIR="" \
 		MAKEFILE=$(MAKE_APERL_FILE) LINKTYPE=static \
-		MAKEAPERL=1 NORECURS=1 CCCDLFLAGS=
+		MAKEAPERL=1 NORECURS=1 CCCDLFLAGS= \
+		OPTIMIZE='-O2 -Wall'
 
 
 # --- MakeMaker test section:
@@ -1110,7 +1115,8 @@ pm_to_blib : $(FIRST_MAKEFILE) $(TO_INST_PM)
 	  -e '@parts=splice @ARGV,0,$$i+1;' \
 	  -e 'pop @parts; $$filter=join q{ }, map qq{"$$_"}, @parts;' \
 	  -e 'pm_to_blib({@ARGV}, '\''$(INST_LIB)/auto'\'', $$filter, '\''$(PERM_DIR)'\'')' -- $(PM_FILTER) -- \
-	  'lib/Stats/LikeR.pm' 'blib/lib/Stats/LikeR.pm' 
+	  'lib/Stats/LikeR.pm' 'blib/lib/Stats/LikeR.pm' \
+	  'read.me.pod' '$(INST_LIB)/Stats/read.me.pod' 
 	$(NOECHO) $(TOUCH) pm_to_blib
 
 

@@ -12201,7 +12201,9 @@ C<density> is C<counts / (n × width)> over the unfuzzed breaks. Pinned against 
 across seventeen datasets and eight C<breaks> settings in C<t/hist.R.t>,
 including four whose range is wider than the largest double, where the
 breaks are built as R builds them -- C<< hist([1.7e308, -1.7e308], breaks =E<gt> 4) >>
-gives C<-1.7e308, 0, 1.7e308>.
+gives C<-1.7e308, 0, 1.7e308>. On such a range C<mids> departs from R on purpose:
+R's C<0.5 * (a + b)> overflows to C<-Inf> or C<Inf>, and C<hist> gives the finite
+midpoint.
 
 =head2 hosmer_lemeshow
 
