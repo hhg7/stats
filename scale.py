@@ -94,8 +94,14 @@ if MAX_N:
 # ---------------------------------------------------------------------------
 def build_vector(n):
     rng = np.random.default_rng(42)
+    x = rng.standard_normal(n)
     return {
-        'x': rng.standard_normal(n),
+        'x': x,
+        # The same values as a plain list of Python floats, which is where a
+        # Python program holds numbers before numpy is asked for anything, and
+        # so the counterpart of the Perl array the sum, min and max panels
+        # start from.  Built here, outside the timer, as the Perl array is.
+        'xl': x.tolist(),
         'y': rng.standard_normal(n) * 2 + 5,
         'label': rng.binomial(1, 0.5, n),
         'n': n,
@@ -155,9 +161,18 @@ BUILD = {'vector': build_vector, 'io': build_io, 'frame': build_frame}
 # for the reader.
 BENCHMARKS = [
     # --- reductions over one numeric vector --------------------------------
-    ('vector', 'sum', 'np.sum(x)', lambda d: np.sum(d['x'])),
-    ('vector', 'min', 'np.min(x)', lambda d: np.min(d['x'])),
-    ('vector', 'max', 'np.max(x)', lambda d: np.max(d['x'])),
+    # sum, min and max start from a Python list and pay for building the numpy
+    # array inside the timed call, as Stats::LikeR and List::Util pay for
+    # reading a Perl array: these three panels are where plot.scaling.pl draws
+    # the list-taking Perl calls, and timing np.sum on an array that already
+    # exists would leave the conversion out of Python's line alone.  Every
+    # other numpy panel still starts from the built array.
+    ('vector', 'sum', 'np.sum(np.asarray(xl))',
+     lambda d: np.sum(np.asarray(d['xl']))),
+    ('vector', 'min', 'np.min(np.asarray(xl))',
+     lambda d: np.min(np.asarray(d['xl']))),
+    ('vector', 'max', 'np.max(np.asarray(xl))',
+     lambda d: np.max(np.asarray(d['xl']))),
     ('vector', 'mean', 'np.mean(x)', lambda d: np.mean(d['x'])),
     ('vector', 'median', 'np.median(x)', lambda d: np.median(d['x'])),
     ('vector', 'sd', 'np.std(x, ddof=1)', lambda d: np.std(d['x'], ddof=1)),

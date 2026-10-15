@@ -68,8 +68,9 @@
 # remember.  SCALE_CPU moves it, and has to be given the same value in all
 # three.
 #
-# Beyond Stats::LikeR itself, --data and --measure need only core modules;
-# --plot also needs Matplotlib::Simple.
+# Beyond Stats::LikeR itself, --data and --measure need only core modules, and
+# List::Compare if its line in the sets panels is wanted; --plot also needs
+# Matplotlib::Simple.
 #
 # What is being compared, and what is not:
 #
@@ -81,9 +82,20 @@
 #   * sum, min and max also carry a fourth line, List::Util's, because that is
 #     what a Perl programmer reaches for without Stats::LikeR and is the
 #     baseline the module has to beat on its own side.  Its rows go into
-#     perl_scaling.tsv with "List::Util" in the language column.
-#   * Every row records the version of what produced it -- Stats::LikeR's or
-#     List::Util's $VERSION, Python's platform.python_version(), R's
+#     perl_scaling.tsv with "List::Util" in the language column.  They carry a
+#     fifth as well, Stats::LikeR called on a flat list -- min(@$x) where the
+#     main line is min($x) -- because those three accept either form, and the
+#     list form is the one that compares like for like with List::Util.  Its
+#     rows say "Stats::LikeR (list)" in the language column.
+#   * The set operations -- get_union, intersection, Lonly, Ronly,
+#     is_equivalent -- are drawn in an image of their own, scaling.sets.svg,
+#     against List::Compare's counterparts, for the same reason.  Their rows
+#     say "List::Compare" in the language column, with that distribution's
+#     $VERSION, and the legend carries it.  scale.py and scale.R do not measure
+#     this figure.  List::Compare is the one non-core module --measure uses;
+#     without it the figure has only Stats::LikeR's line.
+#   * Every row records the version of what produced it -- Stats::LikeR's,
+#     List::Util's or List::Compare's $VERSION, Python's platform.python_version(), R's
 #     major.minor -- and the legends carry it, so an image says what was
 #     tested without anyone having to remember when it was drawn.
 #   * The read_table and write_table panels all read the byte-identical files
@@ -110,9 +122,7 @@ use Stats::LikeR;
 # Matplotlib::Simple is loaded by the --plot stage rather than here; see the
 # note beside the require in plot_all().
 
-# ---------------------------------------------------------------------------
 # 0. Stages and settings
-# ---------------------------------------------------------------------------
 my $usage = <<"USAGE";
 usage: perl [-Iblib/arch -Iblib/lib] $0 [--data] [--measure] [--plot]
 
@@ -155,7 +165,6 @@ my $max_n    = $ENV{SCALE_MAX_N} || 0;
 my $target   = defined $ENV{SCALE_TARGET} ? $ENV{SCALE_TARGET} : 0.002;
 my $max_reps = 10_000;
 
-# ---------------------------------------------------------------------------
 # 1. Size ladders
 # ---------------------------------------------------------------------------
 # Half-decade steps, so seven points span three decades and the log-log slope
@@ -184,7 +193,6 @@ if ($max_n) {
 	@frame_n = grep { $_ <= $max_n } @frame_n;
 }
 
-# ---------------------------------------------------------------------------
 # 2. The fixtures
 # ---------------------------------------------------------------------------
 # The three languages must read *byte-identical* files, otherwise the
@@ -391,7 +399,7 @@ sub write_fixtures {
 	foreach my $n (@fixture_n) {
 		my ($num, $csv, $tsv, $xlsx) = fixture_files($n);
 
-		# --- num.<n>.csv: four numeric columns -----------------------------
+		# --- num.<n>.csv: four numeric columns
 		open my $fh, '>', $num or die "cannot write \"$num\": $!\n";
 		print {$fh} "a,b,c,d\n";
 		for my $i (1 .. $n) {
@@ -434,7 +442,6 @@ sub write_fixtures {
 	printf "Fixtures written to %s\n", $dir;
 }
 
-# ---------------------------------------------------------------------------
 # 3. Input builders
 # ---------------------------------------------------------------------------
 # One builder per figure, called once per size.  Whatever it returns is handed
@@ -451,6 +458,23 @@ my %build = (
 			label => rbinom(n => $n, prob => 0.5, size => 1),
 			n     => $n,
 		};
+	},
+	# Two lists of $n integers each: @a drawn from [0, n) and @b from
+	# [n/2, 3n/2).  Each list then holds about 0.63n distinct values, a third
+	# of which the other list shares (6,017 of them at n = 30,000), and the
+	# other 0.37n of its entries repeat a value already in it, which is the
+	# collapsing every one of these functions has to do.  The values are
+	# integers because both libraries compare by string form, and an integer
+	# has only one.  'ra' is @a reversed: an equivalence test on two lists that
+	# differ fails at the first value missing from the other, so is_equivalent
+	# is handed two lists that hold the same set, and has to read both to the
+	# end, as it would to say yes.
+	sets => sub {
+		my ($n) = @_;
+		srand(42);
+		my @a = map { int rand $n } 1 .. $n;
+		my @b = map { int($n / 2) + int rand $n } 1 .. $n;
+		return { a => \@a, b => \@b, ra => [ reverse @a ], n => $n };
 	},
 	io => sub {
 		my ($n) = @_;
@@ -469,7 +493,7 @@ my %build = (
 		# three languages all write out the same table.  hoa is the columnar
 		# shape pandas and R hold natively; aoa is the shape write_table docs
 		# lead with.
-		$f{hoa} = read_table($f{mix_csv}, 'output.type' => 'hoa');
+		$f{hoa} = read_table($f{mix_csv}, 'output_type' => 'hoa');
 		my @cols = qw(id x y cat1 cat2);
 		$f{aoa} = [ \@cols,
 			map { my $i = $_; [ map { $f{hoa}{$_}[$i] } @cols ] }
@@ -507,7 +531,6 @@ my %build = (
 	},
 );
 
-# ---------------------------------------------------------------------------
 # 4. The benchmarks
 # ---------------------------------------------------------------------------
 # figure  which output image the panel belongs to, and which size ladder and
@@ -516,7 +539,7 @@ my %build = (
 # call    what was actually called, recorded in the file for the reader
 # code    the timed body, handed the builder's return value
 # group   whose line it is: 'Stats::LikeR' unless given, which every entry but
-#         the List::Util ones leaves it
+#         the List::Util and 'Stats::LikeR (list)' ones leaves it
 my @benchmarks = (
 	# --- reductions over one numeric vector --------------------------------
 	{ figure => 'vector', name => 'sum',      call => 'sum($x)',
@@ -538,6 +561,19 @@ my @benchmarks = (
 	{ figure => 'vector', name => 'max',      call => 'List::Util::max(@$x)',
 	  group  => 'List::Util',
 	  code => sub { List::Util::max(@{ $_[0]{x} }) } },
+	# Stats::LikeR's sum, min and max also take a flat list, as List::Util's
+	# do, so they are timed that way as well: the gap between this line and
+	# the array-reference one above is what flattening the array onto the
+	# stack costs, and the gap to List::Util's is the reduction alone.
+	{ figure => 'vector', name => 'sum',      call => 'sum(@$x)',
+	  group  => 'Stats::LikeR (list)',
+	  code => sub { sum(@{ $_[0]{x} }) } },
+	{ figure => 'vector', name => 'min',      call => 'min(@$x)',
+	  group  => 'Stats::LikeR (list)',
+	  code => sub { min(@{ $_[0]{x} }) } },
+	{ figure => 'vector', name => 'max',      call => 'max(@$x)',
+	  group  => 'Stats::LikeR (list)',
+	  code => sub { max(@{ $_[0]{x} }) } },
 	{ figure => 'vector', name => 'mean',     call => 'mean($x)',
 	  code => sub { mean($_[0]{x}) } },
 	{ figure => 'vector', name => 'median',   call => 'median($x)',
@@ -573,8 +609,56 @@ my @benchmarks = (
 	{ figure => 'transform', name => 'auc',    call => 'auc($y, $label)',
 	  code => sub { auc($_[0]{y}, $_[0]{label}) } },
 
+	# --- set operations on two lists, against List::Compare -----------------
+	# Each Stats::LikeR function is the one its POD names as the counterpart of
+	# a List::Compare method, and List::Compare is called through its
+	# Functional interface, which computes only the set asked for; the
+	# object interface's constructor works out every set at once, which would
+	# time five jobs in each panel.  '-u' turns off List::Compare's default
+	# sort of the result, which Stats::LikeR does not do -- it returns
+	# first-appearance order, and List::Compare unsorted returns hash order.
+	# Every result is assigned to an array because the timing loop calls in
+	# void context, and Lonly() and its siblings return only a count outside
+	# list context.  Python and R are not measured here, so these panels carry
+	# two lines.
+	{ figure => 'sets', name => 'union',         call => 'get_union($a, $b)',
+	  code => sub { my @r = get_union($_[0]{a}, $_[0]{b}); return \@r } },
+	{ figure => 'sets', name => 'intersection',  call => 'intersection($a, $b)',
+	  code => sub { my @r = intersection($_[0]{a}, $_[0]{b}); return \@r } },
+	{ figure => 'sets', name => 'Lonly',         call => 'Lonly($a, $b)',
+	  code => sub { my @r = Lonly($_[0]{a}, $_[0]{b}); return \@r } },
+	{ figure => 'sets', name => 'Ronly',         call => 'Ronly($a, $b)',
+	  code => sub { my @r = Ronly($_[0]{a}, $_[0]{b}); return \@r } },
+	{ figure => 'sets', name => 'is_equivalent', call => 'is_equivalent($a, reverse $a)',
+	  code => sub { is_equivalent($_[0]{a}, $_[0]{ra}) } },
+	{ figure => 'sets', name => 'union',
+	  call   => "List::Compare::Functional::get_union('-u', [\$a, \$b])",
+	  group  => 'List::Compare',
+	  code   => sub { my @r = List::Compare::Functional::get_union('-u',
+	                      [ $_[0]{a}, $_[0]{b} ]); return \@r } },
+	{ figure => 'sets', name => 'intersection',
+	  call   => "List::Compare::Functional::get_intersection('-u', [\$a, \$b])",
+	  group  => 'List::Compare',
+	  code   => sub { my @r = List::Compare::Functional::get_intersection('-u',
+	                      [ $_[0]{a}, $_[0]{b} ]); return \@r } },
+	{ figure => 'sets', name => 'Lonly',
+	  call   => "List::Compare::Functional::get_unique('-u', [\$a, \$b])",
+	  group  => 'List::Compare',
+	  code   => sub { my @r = List::Compare::Functional::get_unique('-u',
+	                      [ $_[0]{a}, $_[0]{b} ]); return \@r } },
+	{ figure => 'sets', name => 'Ronly',
+	  call   => "List::Compare::Functional::get_complement('-u', [\$a, \$b])",
+	  group  => 'List::Compare',
+	  code   => sub { my @r = List::Compare::Functional::get_complement('-u',
+	                      [ $_[0]{a}, $_[0]{b} ]); return \@r } },
+	{ figure => 'sets', name => 'is_equivalent',
+	  call   => "List::Compare::Functional::is_LequivalentR([\$a, reverse \$a])",
+	  group  => 'List::Compare',
+	  code   => sub { List::Compare::Functional::is_LequivalentR(
+	                      [ $_[0]{a}, $_[0]{ra} ]) } },
+
 	# --- read_table and write_table, over four inputs each -----------------
-	# read_table's default output.type is 'aoh', one hash per row; 'hoa' is the
+	# read_table's default output_type is 'aoh', one hash per row; 'hoa' is the
 	# columnar shape a DataFrame and a data.frame already are.  Both are timed
 	# on the same file so the difference between the two panels is the cost of
 	# the shape and nothing else.
@@ -588,8 +672,8 @@ my @benchmarks = (
 	  call => "read_table('mix.tsv')",
 	  code => sub { read_table($_[0]{mix_tsv}) } },
 	{ figure => 'io', name => 'read_table (csv, hoa)',
-	  call => "read_table('mix.csv', 'output.type' => 'hoa')",
-	  code => sub { read_table($_[0]{mix_csv}, 'output.type' => 'hoa') } },
+	  call => "read_table('mix.csv', 'output_type' => 'hoa')",
+	  code => sub { read_table($_[0]{mix_csv}, 'output_type' => 'hoa') } },
 	# The same table as the three panels above, out of a spreadsheet instead of
 	# a text file, so what this panel shows against them is what the container
 	# costs.  All three languages reach for a different implementation here --
@@ -601,26 +685,26 @@ my @benchmarks = (
 	  call => "read_table('mix.xlsx')",
 	  code => sub { read_table($_[0]{mix_xlsx}) } },
 	{ figure => 'io', name => 'write_table (csv, hoa)',
-	  call => "write_table(\$hoa, file, 'row.names' => 0)",
-	  code => sub { write_table($_[0]{hoa}, $_[0]{out}, 'row.names' => 0) } },
+	  call => "write_table(\$hoa, file, 'row_names' => 0)",
+	  code => sub { write_table($_[0]{hoa}, $_[0]{out}, 'row_names' => 0) } },
 	{ figure => 'io', name => 'write_table (tsv, hoa)',
-	  call => "write_table(\$hoa, file, sep => \"\\t\", 'row.names' => 0)",
+	  call => "write_table(\$hoa, file, sep => \"\\t\", 'row_names' => 0)",
 	  code => sub { write_table($_[0]{hoa}, $_[0]{out}, sep => "\t",
-	                            'row.names' => 0) } },
+	                            'row_names' => 0) } },
 	{ figure => 'io', name => 'write_table (csv, aoa)',
-	  call => "write_table(\$aoa, file, 'row.names' => 0)",
-	  code => sub { write_table($_[0]{aoa}, $_[0]{out}, 'row.names' => 0) } },
+	  call => "write_table(\$aoa, file, 'row_names' => 0)",
+	  code => sub { write_table($_[0]{aoa}, $_[0]{out}, 'row_names' => 0) } },
 	{ figure => 'io', name => 'write_table (csv, row.names)',
-	  call => "write_table(\$hoa, file, 'row.names' => 1)",
-	  code => sub { write_table($_[0]{hoa}, $_[0]{out}, 'row.names' => 1) } },
+	  call => "write_table(\$hoa, file, 'row_names' => 1)",
+	  code => sub { write_table($_[0]{hoa}, $_[0]{out}, 'row_names' => 1) } },
 	# write_table picks the writer off the extension, so this is the same call
 	# as the first write panel with a different file name.  R is absent from
 	# this one: base R cannot write an .xlsx and neither can readxl, which is a
 	# reader by design, so scale.R has nothing idiomatic to offer -- see the
 	# note beside the read panel in that file.
 	{ figure => 'io', name => 'write_table (xlsx, hoa)',
-	  call => "write_table(\$hoa, file.xlsx, 'row.names' => 0)",
-	  code => sub { write_table($_[0]{hoa}, $_[0]{out_xlsx}, 'row.names' => 0) } },
+	  call => "write_table(\$hoa, file.xlsx, 'row_names' => 0)",
+	  code => sub { write_table($_[0]{hoa}, $_[0]{out_xlsx}, 'row_names' => 0) } },
 
 	# --- whole-frame operations --------------------------------------------
 	{ figure => 'frame', name => 'filter', call => 'filter($df, col(\'x\') > 0)',
@@ -657,10 +741,22 @@ my @benchmarks = (
 
 $_->{group} //= 'Stats::LikeR' for @benchmarks;
 
+# List::Compare is not core, unlike everything else --measure needs, so a perl
+# without it measures the rest and says what it left out rather than refusing
+# to start.
+unless (eval { require List::Compare::Functional; 1 }) {
+	@benchmarks = grep { $_->{group} ne 'List::Compare' } @benchmarks;
+	print "List::Compare is not installed, so the sets panels have no "
+	    . "List::Compare line\n" if $do_measure;
+}
+
 # What goes in the version column of each group's rows.
 my %group_version = (
-	'Stats::LikeR' => $Stats::LikeR::VERSION,
-	'List::Util'   => $List::Util::VERSION,
+	'Stats::LikeR'        => $Stats::LikeR::VERSION,
+	'Stats::LikeR (list)' => $Stats::LikeR::VERSION,
+	'List::Util'          => $List::Util::VERSION,
+	# Functional ships in the List::Compare distribution and carries its version
+	'List::Compare'       => $List::Compare::Functional::VERSION,
 );
 
 # How a benchmark is named in the progress report and in the list of the ones
@@ -677,22 +773,22 @@ sub bench_id {
 my %bench_by_name;
 $bench_by_name{ $_->{figure} }{ $_->{group} }{ $_->{name} } = $_ for @benchmarks;
 
-my %ladder = (vector => \@vec_n, transform => \@vec_n,
+my %ladder = (vector => \@vec_n, transform => \@vec_n, sets => \@vec_n,
               io => \@io_n, frame => \@frame_n);
-my %builder_for = (vector => 'vector', transform => 'vector',
+my %builder_for = (vector => 'vector', transform => 'vector', sets => 'sets',
                    io => 'io', frame => 'frame');
 
 # The order the figures are measured in, and the order their images come out in.
-my @figure_order = qw(vector transform io frame);
+my @figure_order = qw(vector transform sets io frame);
 
 my %figure_title = (
 	vector    => 'Reductions over one numeric vector',
 	transform => 'Transforms that return as much as they are given',
+	sets      => 'Set operations on two lists',
 	io        => 'read_table and write_table',
 	frame     => 'Whole-frame operations',
 );
 
-# ---------------------------------------------------------------------------
 # 5. Execution engine
 # ---------------------------------------------------------------------------
 # The CPU the whole stage runs on, fixed before the first measurement.
@@ -1125,7 +1221,7 @@ sub measure_all {
 		  @results ],
 		$perl_tsv,
 		sep         => "\t",
-		'row.names' => 0,
+		'row_names' => 0,
 	);
 	printf "Done. %d measurements written to %s\n", scalar @results, $perl_tsv;
 }
@@ -1216,9 +1312,11 @@ sub fit_slope {
 # 8. The --plot stage
 # ---------------------------------------------------------------------------
 # One image per figure -- scaling.vector.svg, scaling.transform.svg,
-# scaling.io.svg, scaling.frame.svg, all under $svg_dir -- and one panel per function inside it,
-# with Stats::LikeR, Python and R drawn together, and List::Util as well in the
-# three panels it has a counterpart for.  Each legend entry carries the version
+# scaling.sets.svg, scaling.io.svg, scaling.frame.svg, all under $svg_dir -- and
+# one panel per function inside it, with Stats::LikeR, Python and R drawn
+# together, and List::Util and Stats::LikeR's flat-list form as well in the
+# three panels they have a counterpart for.  scaling.sets.svg is Stats::LikeR
+# against List::Compare alone.  Each legend entry carries the version
 # its rows were measured under.
 #
 # The panels are Matplotlib::Simple's "wide" plot type, which is what these
@@ -1263,8 +1361,10 @@ my @sources = (
 
 # Every line a panel can carry, in the order they are named in a title.
 my @groups = (
-	{ group => 'Stats::LikeR', color => 'blue'   },
-	{ group => 'List::Util',   color => 'purple' },
+	{ group => 'Stats::LikeR',        color => 'blue'        },
+	{ group => 'Stats::LikeR (list)', color => 'deepskyblue' },
+	{ group => 'List::Util',          color => 'purple'      },
+	{ group => 'List::Compare',       color => 'darkorange'  },
 	{ group => 'Python',       color => 'green'  },
 	{ group => 'R',            color => 'red'    },
 );
@@ -1394,7 +1494,7 @@ sub draw_figure_set {
 
 			next unless %data;
 			push @plots, {
-				'plot.type' => 'wide',
+				'plot_type' => 'wide',
 				data        => \%data,
 				color       => { map { $_ => $label_color{$_} } keys %data },
 				title       => pyq($fn),
@@ -1433,7 +1533,7 @@ sub draw_figure_set {
 				if $i % $ncols == 0;
 			# One legend is enough for a whole figure, and "wide" draws its own
 			# in every panel it is left on for.
-			$plots[$i]{'show.legend'} = 0 if $i > 0;
+			$plots[$i]{'show_legend'} = 0 if $i > 0;
 		}
 		# The languages are named from the ones this figure actually drew rather
 		# than from @groups, because a .tsv written before the bytes column
@@ -1446,7 +1546,7 @@ sub draw_figure_set {
 
 		my $out = File::Spec->catfile($svg_dir, "scaling.$figure$q->{suffix}.svg");
 		Matplotlib::Simple::plt(
-			'output.file' => $out,
+			'output_file' => $out,
 			ncols         => $ncols,
 			scalex        => 2.4,
 			scaley        => 1.6,
@@ -1481,7 +1581,7 @@ sub plot_all {
 			next;
 		}
 
-		my $tab = read_table($src->{file}, sep => "\t", 'output.type' => 'hoa');
+		my $tab = read_table($src->{file}, sep => "\t", 'output_type' => 'hoa');
 		my $rows = @{ $tab->{function} };
 
 		# A file written before the bytes column existed is still worth drawing:
@@ -1552,12 +1652,12 @@ sub plot_all {
 		  @slope_rows ],
 		'scaling.slopes.tsv',
 		sep         => "\t",
-		'row.names' => 0,
+		'row_names' => 0,
 	);
 
-	printf "%-9s %-30s %-13s %-8s %6s %6s\n",
+	printf "%-9s %-30s %-19s %-8s %6s %6s\n",
 		'figure', 'function', 'language', 'quantity', 'all', 'tail';
-	printf "%-9s %-30s %-13s %-8s %6s %6s\n", @$_[0 .. 3], @$_[5, 6]
+	printf "%-9s %-30s %-19s %-8s %6s %6s\n", @$_[0 .. 3], @$_[5, 6]
 		for @slope_rows;
 }
 
