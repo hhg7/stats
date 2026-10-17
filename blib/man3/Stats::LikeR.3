@@ -668,92 +668,6 @@ other fits identically.
 .PP
 Comparing nested models \-\- \f(CW\*(C`anova(m1, m2)\*(C'\fR in R \-\- is done by giving \f(CW\*(C`anova\*(C'\fR
 two or more formulas, or two or more fitted models; see above.
-.SS aoh2h
-.IX Subsection "aoh2h"
-Fold a two\-column \fBarray\-of\-hashes\fR back down into a plain hash. This is the
-reverse of \f(CW\*(C`h2aoh\*(C'\fR, and the two are exact opposites under their
-defaults.
-.PP
-.Vb 2
-\& my $h = aoh2h($aoh);
-\& my $h = aoh2h($aoh, var_name => \*(Aqgene\*(Aq, value_name => \*(Aqn\*(Aq);
-.Ve
-.PP
-One column supplies the keys, the other the values; every other column in the
-row is ignored. R spells this \f(CWtibble::deframe()\fR; pandas spells it
-\&\f(CW\*(C`df.set_index(\*(Aqk\*(Aq)[\*(Aqv\*(Aq].to_dict()\*(C'\fR.
-.PP
-\fIArguments\fR
-.IX Subsection "Arguments"
-.PP
-\&\f(CW$aoh\fR — an array ref of hash refs. Required. Every row has to be a hash ref
-carrying both named columns. A blessed array or row is fine, and so is a tied
-one.
-.PP
-Everything after it is \f(CW\*(C`name => value\*(C'\fR pairs:
-.PP
-\&\f(CW\*(C`var_name\*(C'\fR and \f(CW\*(C`value_name\*(C'\fR must differ.
-.PP
-\fIReturns\fR
-.IX Subsection "Returns"
-.PP
-A hash ref mapping each row\*(Aqs \f(CW\*(C`var_name\*(C'\fR cell to its \f(CW\*(C`value_name\*(C'\fR cell. An
-empty array ref gives back \f(CW\*(C`{}\*(C'\fR.
-.PP
-A key is the string Perl makes of the key cell, so the number \f(CW2.50\fR becomes
-the key \f(CW2.5\fR. A key cell that holds a reference is an error, because its
-string is the reference\*(Aqs address. An object that overloads its operators is
-keyed by its string form, and a compiled pattern (\f(CW\*(C`qr//\*(C'\fR) by its pattern.
-.PP
-Values are copied across, so a value that is itself a reference is shared with
-the input rather than cloned — the same shallow copy \f(CW\*(C`aoh2hoa\*(C'\fR makes. The input
-is not changed.
-.PP
-\fIExample\fR
-.IX Subsection "Example"
-.PP
-.Vb 6
-\& my $aoh = [
-\&     { gene => \*(AqTP53\*(Aq,  n => 12 },
-\&     { gene => \*(AqBRCA1\*(Aq, n =>  7 },
-\& ];
-\& my $h = aoh2h($aoh, var_name => \*(Aqgene\*(Aq, value_name => \*(Aqn\*(Aq);
-\& # { TP53 => 12, BRCA1 => 7 }
-\&
-\& # keep the last of a repeated key instead of dying
-\& my $last = aoh2h([ { variable => \*(Aqa\*(Aq, value => 1 },
-\&                    { variable => \*(Aqa\*(Aq, value => 9 } ], duplicates => \*(Aqlast\*(Aq);
-\& # { a => 9 }
-.Ve
-.PP
-\fIRound trip\fR
-.IX Subsection "Round trip"
-.PP
-.Vb 1
-\& is_deeply( aoh2h( h2aoh(\e%h) ), \e%h );   # true for any flat hash
-.Ve
-.PP
-The one thing that does not survive the trip is the \fItype\fR of a key: Perl hash
-keys are strings, so a numeric key comes back as the string that prints the
-same way.
-.PP
-\fIErrors\fR
-.IX Subsection "Errors"
-.PP
-\&\f(CW\*(C`aoh2h\*(C'\fR dies when the first argument is undefined or not an array ref, when the
-options are not \f(CW\*(C`name => value\*(C'\fR pairs, when an option name is \f(CW\*(C`undef\*(C'\fR or
-unknown, when \f(CW\*(C`var_name\*(C'\fR equals \f(CW\*(C`value_name\*(C'\fR, when \f(CW\*(C`duplicates\*(C'\fR is not one of
-the three allowed words, when a row is not a hash ref, when a row is missing
-either named column, when a row\*(Aqs key cell is \f(CW\*(C`undef\*(C'\fR or a reference, or —
-under the default \f(CW\*(C`duplicates => \*(Aqdie\*(Aq\*(C'\fR — when two rows share a key. Every
-message about a row names it by index; for a shared key, that is the index of
-the first repeat.
-.PP
-\fISee also\fR
-.IX Subsection "See also"
-.PP
-\&\f(CW\*(C`h2aoh\*(C'\fR is the reverse. "\f(CW\*(C`aoh2hoh\*(C'\fR" also indexes rows by a
-column, but keeps the whole row as the value instead of one cell.
 .SS aoh2hoa
 .IX Subsection "aoh2hoa"
 \&\f(CWaoh2hoa($aoh)\fR — transpose an \fBarray\-of\-hashes\fR (row\-major) into a \fBhash\-of\-arrays\fR (column\-major).
@@ -2958,6 +2872,136 @@ The figures above are drawn by \f(CW\*(C`density.plots.pl\*(C'\fR in the reposit
 same \f(CW\*(C`eruptions\*(C'\fR and \f(CW\*(C`precip\*(C'\fR samples that test file uses. It is an author\-only
 script — it is not installed, and it needs \f(CW\*(C`Matplotlib::Simple\*(C'\fR, \f(CW\*(C`python3\*(C'\fR and
 \&\f(CW\*(C`matplotlib\*(C'\fR — so re\-run it only when a figure needs to change.
+.SS df2h
+.IX Subsection "df2h"
+Fold two columns of a data frame — any of the four shapes — down into a plain
+hash: one column supplies the keys, the other the values, and every other
+column is ignored. This is the reverse of \f(CW\*(C`h2aoh\*(C'\fR, and the two are
+exact opposites under their defaults.
+.PP
+.Vb 2
+\& my $h = df2h($df);
+\& my $h = df2h($df, var_name => \*(Aqgene\*(Aq, value_name => \*(Aqn\*(Aq);
+.Ve
+.PP
+R spells this \f(CWtibble::deframe()\fR; pandas spells it
+\&\f(CW\*(C`df.set_index(\*(Aqk\*(Aq)[\*(Aqv\*(Aq].to_dict()\*(C'\fR.
+.PP
+\&\f(CW\*(C`aoh2h\*(C'\fR is a true synonym (the same subroutine). It was the name up to 0.3218,
+when the function took an array of hashes alone, and it still works; its
+messages now begin \f(CW\*(C`df2h:\*(C'\fR.
+.PP
+\fIArguments\fR
+.IX Subsection "Arguments"
+.PP
+\&\f(CW$df\fR — a data frame. Required. A blessed frame or row is fine, and so is a tied
+one. The shape is read from the frame itself:
+.PP
+An array is an AoA when its first defined element is an array ref, and an AoH
+otherwise. A hash is a HoH when its values are hash refs and a HoA when they are
+array refs; a hash holding both dies, and so does one holding neither, which is
+a flat hash already.
+.PP
+Everything after the frame is \f(CW\*(C`name => value\*(C'\fR pairs:
+.PP
+\&\f(CW\*(C`var_name\*(C'\fR and \f(CW\*(C`value_name\*(C'\fR must differ.
+.PP
+\fIThe shapes\fR
+.IX Subsection "The shapes"
+.IP \(bu 4
+\&\fBAoH\fR — every row has to be a hash ref carrying both named columns.
+.IP \(bu 4
+\&\fBAoA\fR — the two columns are positions. A negative one counts back from the
+end of each row, as \f(CW\*(C`$row\->[\-1]\*(C'\fR does, so \f(CW\*(C`var_name => \-1\*(C'\fR is every row\*(Aqs
+last cell however long the row is. Every row has to be an array ref long
+enough to hold both; a hole inside a row is an \f(CW\*(C`undef\*(C'\fR cell. Should a
+negative and a positive position land on the same cell of some row, that
+row dies rather than map a cell to itself.
+.IP \(bu 4
+\&\fBHoA\fR — both named columns have to be array refs of the same length, and
+row \fIi\fR is element \fIi\fR of each. A hole in a column is an \f(CW\*(C`undef\*(C'\fR cell.
+.IP \(bu 4
+\&\fBHoH\fR — every row has to be a hash ref carrying both named columns. The
+row names are not used. A HoH\*(Aqs rows have no order, so \f(CW\*(C`first\*(C'\fR and \f(CW\*(C`last\*(C'\fR
+would keep whichever row hash order happened to reach first, which changes
+from run to run; \f(CW\*(C`duplicates\*(C'\fR therefore takes \f(CW\*(C`die\*(C'\fR alone for a HoH. When a
+HoH has more than one bad row, the message names the first in sorted
+row\-name order, so it is the same on every run.
+.PP
+\fIReturns\fR
+.IX Subsection "Returns"
+.PP
+A hash ref mapping each row\*(Aqs key cell to its value cell. An empty frame, \f(CW\*(C`[]\*(C'\fR
+or \f(CW\*(C`{}\*(C'\fR, gives back \f(CW\*(C`{}\*(C'\fR.
+.PP
+A key is the string Perl makes of the key cell, so the number \f(CW2.50\fR becomes
+the key \f(CW2.5\fR. A key cell that holds a reference is an error, because its
+string is the reference\*(Aqs address. An object that overloads its operators is
+keyed by its string form, and a compiled pattern (\f(CW\*(C`qr//\*(C'\fR) by its pattern.
+.PP
+Values are copied across, so a value that is itself a reference is shared with
+the input rather than cloned — the same shallow copy \f(CW\*(C`aoh2hoa\*(C'\fR makes. The input
+is not changed.
+.PP
+\fIExample\fR
+.IX Subsection "Example"
+.PP
+.Vb 6
+\& my $aoh = [
+\&     { gene => \*(AqTP53\*(Aq,  n => 12 },
+\&     { gene => \*(AqBRCA1\*(Aq, n =>  7 },
+\& ];
+\& my $h = df2h($aoh, var_name => \*(Aqgene\*(Aq, value_name => \*(Aqn\*(Aq);
+\& # { TP53 => 12, BRCA1 => 7 }
+\&
+\& # the same table as each of the other shapes
+\& df2h({ gene => [ \*(AqTP53\*(Aq, \*(AqBRCA1\*(Aq ], n => [ 12, 7 ] },
+\&      var_name => \*(Aqgene\*(Aq, value_name => \*(Aqn\*(Aq);          # HoA
+\& df2h([ [ \*(AqTP53\*(Aq, 12 ], [ \*(AqBRCA1\*(Aq, 7 ] ]);             # AoA, columns 0 and 1
+\& df2h({ r1 => { gene => \*(AqTP53\*(Aq,  n => 12 },
+\&        r2 => { gene => \*(AqBRCA1\*(Aq, n =>  7 } },
+\&      var_name => \*(Aqgene\*(Aq, value_name => \*(Aqn\*(Aq);          # HoH
+\& # each gives { TP53 => 12, BRCA1 => 7 }
+\&
+\& # keep the last of a repeated key instead of dying
+\& my $last = df2h([ { variable => \*(Aqa\*(Aq, value => 1 },
+\&                   { variable => \*(Aqa\*(Aq, value => 9 } ], duplicates => \*(Aqlast\*(Aq);
+\& # { a => 9 }
+.Ve
+.PP
+\fIRound trip\fR
+.IX Subsection "Round trip"
+.PP
+.Vb 1
+\& is_deeply( df2h( h2aoh(\e%h) ), \e%h );   # true for any flat hash
+.Ve
+.PP
+The one thing that does not survive the trip is the \fItype\fR of a key: Perl hash
+keys are strings, so a numeric key comes back as the string that prints the
+same way.
+.PP
+\fIErrors\fR
+.IX Subsection "Errors"
+.PP
+\&\f(CW\*(C`df2h\*(C'\fR dies when the first argument is undefined or not an array or hash ref,
+when it is a hash that mixes array and hash values or holds neither, when the
+options are not \f(CW\*(C`name => value\*(C'\fR pairs, when an option name is \f(CW\*(C`undef\*(C'\fR or
+unknown, when \f(CW\*(C`var_name\*(C'\fR equals \f(CW\*(C`value_name\*(C'\fR, when an AoA\*(Aqs column is not an
+integer, when \f(CW\*(C`duplicates\*(C'\fR is not one of the three allowed words, or when it is
+\&\f(CW\*(C`first\*(C'\fR or \f(CW\*(C`last\*(C'\fR for a HoH.
+.PP
+It also dies when a row is not the kind of reference its shape needs, when a
+row is missing either column, when a HoA lacks either column, when either is
+not an array ref, or when the two differ in length, when a row\*(Aqs key cell is
+\&\f(CW\*(C`undef\*(C'\fR or a reference, or — under the default \f(CW\*(C`duplicates => \*(Aqdie\*(Aq\*(C'\fR — when two
+rows share a key. Every message about a row names it, by index or, in a HoH, by
+row name; for a shared key, that is the first repeat.
+.PP
+\fISee also\fR
+.IX Subsection "See also"
+.PP
+\&\f(CW\*(C`h2aoh\*(C'\fR is the reverse. "\f(CW\*(C`aoh2hoh\*(C'\fR" also indexes rows by a
+column, but keeps the whole row as the value instead of one cell.
 .SS "Distribution functions"
 .IX Subsection "Distribution functions"
 \&\f(CW\*(C`pnorm\*(C'\fR and \f(CW\*(C`dnorm\*(C'\fR have never had company: there was no way to ask for a
@@ -4172,7 +4216,7 @@ only other option, and it is never what anyone wanted.
 \fISee also\fR
 .IX Subsection "See also"
 .PP
-\&\f(CW\*(C`aoh2h\*(C'\fR is the reverse. \f(CW\*(C`melt\*(C'\fR does the same folding\-out for
+\&\f(CW\*(C`df2h\*(C'\fR is the reverse. \f(CW\*(C`melt\*(C'\fR does the same folding\-out for
 a frame that already has more than two columns.
 .SS hoa2aoh
 .IX Subsection "hoa2aoh"

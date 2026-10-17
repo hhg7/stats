@@ -1,5 +1,52 @@
 Revision history for Stats-LikeR
 
+0.33 2026-10-17 CDT (Claude Opus 5.5 helped)
+
+ [df2h(), which was aoh2h()]
+
+ - aoh2h() is now df2h(), and folds two columns of any of the four data
+   frame shapes into a plain hash, where it took an array of hashes alone.
+   An AoA's columns are integer positions, defaulting to 0 and 1, which is
+   what tibble's deframe() reads; a negative position counts back from the
+   end of each row, as $row->[-1] does. A HoA's two columns must be the
+   same length, and row i is element i of each. A HoH's row names are not
+   used.
+
+ - aoh2h remains, as a second name for the same sub, as rbind is for
+   concat. Every AoH it took before folds the same way, but its messages
+   now begin "df2h:" rather than "aoh2h:". A hash it used to refuse as
+   "not an arrayref of hashrefs" is now read as a HoA or HoH, and a flat
+   hash, the likely mistake, gets a message of its own. h('aoh2h') shows
+   df2h's documentation.
+
+ - duplicates => 'first' and 'last' are refused for a HoH, since its rows
+   have no order and either would keep a different row from run to run.
+   When a HoH has more than one bad row, the message names the first in
+   sorted row-name order. The rows are read in hash order, which needs no
+   sort, and are read again sorted only once that has croaked, so a frame
+   that folds pays nothing for this.
+
+ - A tied frame is copied once before its shape is read, so each row is
+   still FETCHed once. The AoH fold is the 0.3218 XS code unchanged, and
+   keeps its speed and memory figures.
+
+ [Tests]
+
+ - t/df2h.t: 123 tests of the AoA, HoA and HoH paths, the reading of a
+   frame's shape, and every message. Its reference cases are tibble
+   3.3.1's own deframe() tests and pandas 3.0.4's to_dict() tests; where
+   df2h() departs from either, the file's header says how and why. The
+   HoH ordering tests pass under PERL_HASH_SEED 1 to 8. Without the sorted
+   second reading, the repeated-key one would name another row under 15
+   of the seeds 1 to 20.
+
+ - t/aoh2h.regressions.t and t/h2aoh_aoh2h.t expect the "df2h:" prefix,
+   and the two tests that held a blessed hash and an array in an array to
+   be no frame at all now expect each to be read as one.
+
+ - t/help.t checks that df2h has a documentation section of its own, and
+   that h('aoh2h') shows it.
+
 0.3218 2026-10-16 CDT (Claude Opus 5.5 helped)
 
  [read_table()]

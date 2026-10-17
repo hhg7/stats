@@ -3,13 +3,13 @@
 require 5.010001;
 use strict;
 package Stats::LikeR;
-our $VERSION = '0.3218';	# quoted: a bare version ending in 0, such as 0.320, is the number 0.32, which the dist would be named
+our $VERSION = '0.33';	# quoted: a bare version ending in 0, such as 0.320, is the number 0.32, which the dist would be named
 require XSLoader;
 use warnings FATAL => 'all';
 use Exporter 'import';
 use Scalar::Util qw(reftype looks_like_number);
 XSLoader::load('Stats::LikeR', $VERSION);
-our @EXPORT_OK = qw(h add_data age_standardize agg anova aoh2h aoh2hoa aoh2hoh aov assign auc auroc avals bedroc bfill binom_test cfilter chisq_test chunk col col2col colnames concat cmh_test cor cor_test cov csort density bw_nrd0 bw_nrd bw_ucv bw_bcv bw_sj dnorm cohen_d cramers_v eta_squared drop_cols drop_duplicates dropna epi_2x2 ffill fillna filter fisher_test get_union glm group_by h2aoh hoa2aoh hoa2hoh hoh2hoa hist interpolate intersection is_equivalent kruskal_test ks_test kurtosis Lonly ljoin lm map_cell matrix max mean median melt merge min mode ncol nrow oneway_test p_adjust pivot_table pnorm pt qt pchisq qchisq pf qf pbinom qnorm power_t_test predict prop_test mcnemar_test friedman_test dunn_test prcomp ptukey qcut qtukey quantile rank roc Ronly rbind rbinom read_table rename_cols rnorm rownames runif sample scale sd select_cols seq shapiro_test skew smd sum summary survfit logrank_test coxph table_one t_test transpose TukeyHSD uniq vals value_counts var var_test vif hosmer_lemeshow view wilcox_test write_table zerotrunc hurdle svyglm ivreg lmer);
+our @EXPORT_OK = qw(h add_data age_standardize agg anova aoh2h aoh2hoa aoh2hoh aov assign auc auroc avals bedroc bfill binom_test cfilter chisq_test chunk col col2col colnames concat cmh_test cor cor_test cov csort density df2h bw_nrd0 bw_nrd bw_ucv bw_bcv bw_sj dnorm cohen_d cramers_v eta_squared drop_cols drop_duplicates dropna epi_2x2 ffill fillna filter fisher_test get_union glm group_by h2aoh hoa2aoh hoa2hoh hoh2hoa hist interpolate intersection is_equivalent kruskal_test ks_test kurtosis Lonly ljoin lm map_cell matrix max mean median melt merge min mode ncol nrow oneway_test p_adjust pivot_table pnorm pt qt pchisq qchisq pf qf pbinom qnorm power_t_test predict prop_test mcnemar_test friedman_test dunn_test prcomp ptukey qcut qtukey quantile rank roc Ronly rbind rbinom read_table rename_cols rnorm rownames runif sample scale sd select_cols seq shapiro_test skew smd sum summary survfit logrank_test coxph table_one t_test transpose TukeyHSD uniq vals value_counts var var_test vif hosmer_lemeshow view wilcox_test write_table zerotrunc hurdle svyglm ivreg lmer);
 our @EXPORT = @EXPORT_OK;
 
 # File operations: failure reporting
@@ -86,7 +86,8 @@ my %HELP_ALIAS = (
 	_hoa_assign       => 'assign',
 	col               => 'filter',
 	_rename_inplace   => 'rename_cols',
-	_aoh2h            => 'aoh2h',
+	aoh2h             => 'df2h',
+	_df2h             => 'df2h',
 	_cols_select      => 'select_cols',
 	_cols_drop        => 'drop_cols',
 	_cols_rename      => 'rename_cols',
@@ -1079,13 +1080,15 @@ sub aoh2hoh {
 	return \%out;
 }
 
-# h2aoh / aoh2h  --  the flat hash as a two-column frame
+# h2aoh / df2h  --  the flat hash as a two-column frame
 #
 # A plain hash is a two-column table that has been folded shut: every pair is
 # one row, the key in one cell and the value in the other.  value_counts() and
 # table() hand one back, and none of the frame functions will take it, because
-# they all want nested data.  h2aoh unfolds the hash into a real AoH; aoh2h
-# folds an AoH back down.  R spells this pair enframe()/deframe() (tibble);
+# they all want nested data.  h2aoh unfolds the hash into a real AoH; df2h
+# folds any frame back down -- an AoH, and also an AoA, HoA or HoH.  It was
+# aoh2h, for an AoH alone, up to 0.3218, and aoh2h is still a name for it.
+# R spells this pair enframe()/deframe() (tibble);
 # pandas spells it pd.Series(d).rename_axis(..).reset_index(name => ..) and
 # Series.to_dict().
 #
@@ -1093,7 +1096,7 @@ sub aoh2hoh {
 # to name the columns it emits, since the shape they describe is the same.
 #
 # The pair are exact inverses under their defaults, so
-#     is_deeply( aoh2h( h2aoh(\%h) ), \%h )
+#     is_deeply( df2h( h2aoh(\%h) ), \%h )
 # holds for any flat hash whose keys are defined.
 
 # _kv_names($caller, \%arg) -- var_name / value_name, defaulted and checked.
@@ -1173,31 +1176,117 @@ sub h2aoh {
 	return [ map { { $var_name => $_, $value_name => $h->{$_} } } @keys ];
 }
 
-# The rows are read by the XSUB _aoh2h, which also makes every check on them;
-# only the options are read here.
-sub aoh2h {
-	my $aoh = shift;
-	die "aoh2h: first argument is undefined\n" unless defined $aoh;
-	# reftype, not ref: a blessed array of hashes is still one, as aoh2hoa
-	# already took it.  Up to 0.3217 a blessed frame or row was refused.
-	die "aoh2h: first argument must be an arrayref of hashrefs\n"
-		unless (reftype($aoh) || '') eq 'ARRAY';
-	die "aoh2h: arguments after the data frame must be name => value pairs\n"
+# The rows are read by the XSUB _df2h, which also makes every check on them;
+# the shape and the options are read here.
+#
+# aoh2h is the same sub under the name it had up to 0.3218, when it took an AoH
+# alone.  It is a glob alias, as rbind is of concat, so its messages say df2h.
+sub df2h {
+	my $df = shift;
+	die "df2h: first argument is undefined\n" unless defined $df;
+	# reftype, not ref: a blessed frame or row is still one, as aoh2hoa
+	# already took it.  Up to 0.3217 aoh2h refused them.
+	my $type = reftype($df) || '';
+	die "df2h: first argument must be a data frame (AoA, AoH, HoA or HoH)\n"
+		unless $type eq 'ARRAY' || $type eq 'HASH';
+	die "df2h: arguments after the data frame must be name => value pairs\n"
 		if @_ % 2;
-	_opt_names_defined('aoh2h', @_);
+	_opt_names_defined('df2h', @_);
 	my %arg   = @_;
 	my %known = ( var_name => 1, value_name => 1, duplicates => 1 );
 	my @bad   = sort grep { !$known{$_} } keys %arg;
-	die "aoh2h: unknown argument(s): @bad\n" if @bad;
+	die "df2h: unknown argument(s): @bad\n" if @bad;
 
-	my ($var_name, $value_name) = _kv_names('aoh2h', \%arg);
+	# A tied frame is copied once, as _untied() does, so that deciding its
+	# shape here does not FETCH a row the XS then FETCHes again.  _untied()
+	# itself is not used because it asks ref(), which a blessed frame fails.
+	if ($type eq 'ARRAY') { $df = [ @$df ] if tied @$df }
+	else                  { $df = { %$df } if tied %$df }
+
+	# The shape, by _df_shape()'s rules but with reftype().  An array is an
+	# AoA when its first defined element is an array, and is otherwise read as
+	# an AoH, so that the XS names the first row that is not a hash.
+	my $shape;	# 'AoA', 'AoH', 'HoA' or 'HoH'
+	if ($type eq 'ARRAY') {
+		$shape = 'AoH';
+		for my $r (@$df) {
+			next unless defined $r;
+			$shape = 'AoA' if (reftype($r) || '') eq 'ARRAY';
+			last;
+		}
+	} else {
+		return {} unless %$df;	# no rows, whichever of HoA or HoH it is
+		my ($saw_arr, $saw_hash) = (0, 0);
+		for my $v (values %$df) {
+			my $t = reftype($v) || next;
+			$saw_arr  = 1 if $t eq 'ARRAY';
+			$saw_hash = 1 if $t eq 'HASH';
+		}
+		die "df2h: hashref mixes array and hash values (ambiguous HoA/HoH)\n"
+			if $saw_arr && $saw_hash;
+		# most likely df2h's own output, handed back to it
+		die "df2h: first argument is a flat hash, not a data frame: none of "
+		  . "its values is an array or hash ref\n"
+			unless $saw_arr || $saw_hash;
+		$shape = $saw_hash ? 'HoH' : 'HoA';
+	}
+
+	my ($var_name, $value_name);
+	if ($shape eq 'AoA') {
+		# positions, Perl's own negative indexing as in agg(); the bound keeps
+		# the XS's SvIV() from saturating, which a 32-bit IV would at 2**31
+		($var_name, $value_name) = map {
+			my $c = $_;
+			die "df2h: an AoA's columns are integer positions, not '$c'\n"
+				unless $c =~ /\A-?[0-9]+\z/;
+			die "df2h: column position $c is past the end of any array\n"
+				if abs($c) > ~0 >> 1;
+			0 + $c;	# '01' and '-0' are the positions 1 and 0
+		} ( defined $arg{var_name}   ? $arg{var_name}   : 0,
+		    defined $arg{value_name} ? $arg{value_name} : 1 );
+		die "df2h: var_name and value_name must differ\n"
+			if $var_name == $value_name;
+	} else {
+		($var_name, $value_name) = _kv_names('df2h', \%arg);
+	}
+
 	my $dup = defined $arg{duplicates} ? lc $arg{duplicates} : 'die';
-	my %dup_code = ( die => 0, first => 1, last => 2 );	# _aoh2h's `dup`
-	die "aoh2h: duplicates '$dup' isn't allowed (die, first, last)\n"
+	my %dup_code = ( die => 0, first => 1, last => 2 );	# _df2h's `dup`
+	die "df2h: duplicates '$dup' isn't allowed (die, first, last)\n"
 		unless exists $dup_code{$dup};
+	# 'first' and 'last' mean an order, and a HoH has none: they would keep
+	# whichever row hash order reached first, which differs from run to run
+	die "df2h: duplicates '$dup' needs ordered rows, and a HoH's are not; "
+	  . "use 'die', or give an AoH, AoA or HoA\n"
+		if $shape eq 'HoH' && $dup ne 'die';
 
-	return _aoh2h($aoh, $var_name, $value_name, $dup_code{$dup});
+	# _df2h's `shape`: 1 = AoH, 2 = HoH, 3 = AoA, 4 = HoA
+	if ($shape eq 'HoA') {
+		for my $c ($var_name, $value_name) {
+			die "df2h: no '$c' column\n" unless exists $df->{$c};
+			die "df2h: column '$c' is not an arrayref\n"
+				unless (reftype($df->{$c}) || '') eq 'ARRAY';
+		}
+		my ($nk, $nv) = map { scalar @{ $df->{$_} } } $var_name, $value_name;
+		die "df2h: column '$var_name' has length $nk and '$value_name' has "
+		  . "length $nv; the two must be the same length\n" if $nk != $nv;
+		return _df2h([ $df->{$var_name}, $df->{$value_name} ], 4,
+			$var_name, $value_name, $dup_code{$dup}, undef);
+	}
+	if ($shape eq 'HoH') {
+		# Hash order first, which costs no sort.  Should that croak, the rows
+		# are read again in sorted order, the one deterministic order a HoH has,
+		# so that which bad row the message names is the same on every run.
+		my $h;
+		return $h if eval { $h = _df2h($df, 2, $var_name, $value_name, 0, [ keys %$df ]); 1 };
+		my $err = $@;
+		_df2h($df, 2, $var_name, $value_name, 0, [ sort keys %$df ]);
+		die $err;	# reached only if the second reading did not croak
+	}
+	return _df2h($df, $shape eq 'AoA' ? 3 : 1, $var_name, $value_name,
+		$dup_code{$dup}, undef);
 }
+{ no warnings 'once'; *aoh2h = \&df2h; }  # true synonym
 # agg / concat / rbind  --  additions to lib/Stats/LikeR.pm
 # Splice these in after the dropna sub. Also add  agg concat rbind  to
 # @EXPORT_OK. rbind is a true glob-alias synonym for concat.
@@ -7555,116 +7644,6 @@ other fits identically.
 Comparing nested models -- C<anova(m1, m2)> in R -- is done by giving C<anova>
 two or more formulas, or two or more fitted models; see above.
 
-=head2 aoh2h
-
-Fold a two-column B<array-of-hashes> back down into a plain hash. This is the
-reverse of L<C<h2aoh>|/"h2aoh">, and the two are exact opposites under their
-defaults.
-
- my $h = aoh2h($aoh);
- my $h = aoh2h($aoh, var_name => 'gene', value_name => 'n');
-
-One column supplies the keys, the other the values; every other column in the
-row is ignored. R spells this C<tibble::deframe()>; pandas spells it
-C<df.set_index('k')['v'].to_dict()>.
-
-=head3 Arguments
-
-C<$aoh> — an array ref of hash refs. Required. Every row has to be a hash ref
-carrying both named columns. A blessed array or row is fine, and so is a tied
-one.
-
-Everything after it is C<< name =E<gt> value >> pairs:
-
-
-
-=begin html
-
-<table>
-<thead>
-<tr>
-  <th>Option</th>
-  <th>Default</th>
-  <th>Meaning</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-  <td><code>var_name</code></td>
-  <td><code>variable</code></td>
-  <td>The column holding the keys.</td>
-</tr>
-<tr>
-  <td><code>value_name</code></td>
-  <td><code>value</code></td>
-  <td>The column holding the values.</td>
-</tr>
-<tr>
-  <td><code>duplicates</code></td>
-  <td><code>die</code></td>
-  <td>What to do when two rows carry the same key: <code>die</code> is fatal, <code>first</code> keeps the earliest row, <code>last</code> keeps the latest.</td>
-</tr>
-</tbody>
-</table>
-
-=end html
-
-
-
-C<var_name> and C<value_name> must differ.
-
-=head3 Returns
-
-A hash ref mapping each row's C<var_name> cell to its C<value_name> cell. An
-empty array ref gives back C<{}>.
-
-A key is the string Perl makes of the key cell, so the number C<2.50> becomes
-the key C<2.5>. A key cell that holds a reference is an error, because its
-string is the reference's address. An object that overloads its operators is
-keyed by its string form, and a compiled pattern (C<qr//>) by its pattern.
-
-Values are copied across, so a value that is itself a reference is shared with
-the input rather than cloned — the same shallow copy C<aoh2hoa> makes. The input
-is not changed.
-
-=head3 Example
-
- my $aoh = [
-     { gene => 'TP53',  n => 12 },
-     { gene => 'BRCA1', n =>  7 },
- ];
- my $h = aoh2h($aoh, var_name => 'gene', value_name => 'n');
- # { TP53 => 12, BRCA1 => 7 }
-
- # keep the last of a repeated key instead of dying
- my $last = aoh2h([ { variable => 'a', value => 1 },
-                    { variable => 'a', value => 9 } ], duplicates => 'last');
- # { a => 9 }
-
-=head3 Round trip
-
- is_deeply( aoh2h( h2aoh(\%h) ), \%h );   # true for any flat hash
-
-The one thing that does not survive the trip is the I<type> of a key: Perl hash
-keys are strings, so a numeric key comes back as the string that prints the
-same way.
-
-=head3 Errors
-
-C<aoh2h> dies when the first argument is undefined or not an array ref, when the
-options are not C<< name =E<gt> value >> pairs, when an option name is C<undef> or
-unknown, when C<var_name> equals C<value_name>, when C<duplicates> is not one of
-the three allowed words, when a row is not a hash ref, when a row is missing
-either named column, when a row's key cell is C<undef> or a reference, or —
-under the default C<< duplicates =E<gt> 'die' >> — when two rows share a key. Every
-message about a row names it by index; for a shared key, that is the index of
-the first repeat.
-
-=head3 See also
-
-L<C<h2aoh>|/"h2aoh"> is the reverse. L</"C<aoh2hoh>"> also indexes rows by a
-column, but keeps the whole row as the value instead of one cell.
-
 =head2 aoh2hoa
 
 C<aoh2hoa($aoh)> — transpose an B<array-of-hashes> (row-major) into a B<hash-of-arrays> (column-major).
@@ -10346,6 +10325,208 @@ same C<eruptions> and C<precip> samples that test file uses. It is an author-onl
 script — it is not installed, and it needs C<Matplotlib::Simple>, C<python3> and
 C<matplotlib> — so re-run it only when a figure needs to change.
 
+=head2 df2h
+
+Fold two columns of a data frame — any of the four shapes — down into a plain
+hash: one column supplies the keys, the other the values, and every other
+column is ignored. This is the reverse of L<C<h2aoh>|/"h2aoh">, and the two are
+exact opposites under their defaults.
+
+ my $h = df2h($df);
+ my $h = df2h($df, var_name => 'gene', value_name => 'n');
+
+R spells this C<tibble::deframe()>; pandas spells it
+C<df.set_index('k')['v'].to_dict()>.
+
+C<aoh2h> is a true synonym (the same subroutine). It was the name up to 0.3218,
+when the function took an array of hashes alone, and it still works; its
+messages now begin C<df2h:>.
+
+=head3 Arguments
+
+C<$df> — a data frame. Required. A blessed frame or row is fine, and so is a tied
+one. The shape is read from the frame itself:
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>Shape</th>
+  <th>Looks like</th>
+  <th>A row is</th>
+  <th><code>var_name</code> / <code>value_name</code> are</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>AoH</td>
+  <td><code>[ { .. }, { .. } ]</code></td>
+  <td>a hash ref</td>
+  <td>column names</td>
+</tr>
+<tr>
+  <td>AoA</td>
+  <td><code>[ [ .. ], [ .. ] ]</code></td>
+  <td>an array ref</td>
+  <td>integer positions</td>
+</tr>
+<tr>
+  <td>HoA</td>
+  <td><code>{ c =&gt; [ .. ], .. }</code></td>
+  <td>element <i>i</i> of the two columns</td>
+  <td>column names</td>
+</tr>
+<tr>
+  <td>HoH</td>
+  <td><code>{ r =&gt; { .. }, .. }</code></td>
+  <td>a hash ref, named by its key</td>
+  <td>column names</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+An array is an AoA when its first defined element is an array ref, and an AoH
+otherwise. A hash is a HoH when its values are hash refs and a HoA when they are
+array refs; a hash holding both dies, and so does one holding neither, which is
+a flat hash already.
+
+Everything after the frame is C<< name =E<gt> value >> pairs:
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>Option</th>
+  <th>Default</th>
+  <th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>var_name</code></td>
+  <td><code>variable</code>, or <code>0</code> for an AoA</td>
+  <td>The column holding the keys.</td>
+</tr>
+<tr>
+  <td><code>value_name</code></td>
+  <td><code>value</code>, or <code>1</code> for an AoA</td>
+  <td>The column holding the values.</td>
+</tr>
+<tr>
+  <td><code>duplicates</code></td>
+  <td><code>die</code></td>
+  <td>What to do when two rows carry the same key: <code>die</code> is fatal, <code>first</code> keeps the earliest row, <code>last</code> keeps the latest. A HoH takes <code>die</code> only.</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+C<var_name> and C<value_name> must differ.
+
+=head3 The shapes
+
+=over
+
+=item * B<AoH> — every row has to be a hash ref carrying both named columns.
+
+=item * B<AoA> — the two columns are positions. A negative one counts back from the
+end of each row, as C<< $row-E<gt>[-1] >> does, so C<< var_name =E<gt> -1 >> is every row's
+last cell however long the row is. Every row has to be an array ref long
+enough to hold both; a hole inside a row is an C<undef> cell. Should a
+negative and a positive position land on the same cell of some row, that
+row dies rather than map a cell to itself.
+
+=item * B<HoA> — both named columns have to be array refs of the same length, and
+row I<i> is element I<i> of each. A hole in a column is an C<undef> cell.
+
+=item * B<HoH> — every row has to be a hash ref carrying both named columns. The
+row names are not used. A HoH's rows have no order, so C<first> and C<last>
+would keep whichever row hash order happened to reach first, which changes
+from run to run; C<duplicates> therefore takes C<die> alone for a HoH. When a
+HoH has more than one bad row, the message names the first in sorted
+row-name order, so it is the same on every run.
+
+=back
+
+=head3 Returns
+
+A hash ref mapping each row's key cell to its value cell. An empty frame, C<[]>
+or C<{}>, gives back C<{}>.
+
+A key is the string Perl makes of the key cell, so the number C<2.50> becomes
+the key C<2.5>. A key cell that holds a reference is an error, because its
+string is the reference's address. An object that overloads its operators is
+keyed by its string form, and a compiled pattern (C<qr//>) by its pattern.
+
+Values are copied across, so a value that is itself a reference is shared with
+the input rather than cloned — the same shallow copy C<aoh2hoa> makes. The input
+is not changed.
+
+=head3 Example
+
+ my $aoh = [
+     { gene => 'TP53',  n => 12 },
+     { gene => 'BRCA1', n =>  7 },
+ ];
+ my $h = df2h($aoh, var_name => 'gene', value_name => 'n');
+ # { TP53 => 12, BRCA1 => 7 }
+
+ # the same table as each of the other shapes
+ df2h({ gene => [ 'TP53', 'BRCA1' ], n => [ 12, 7 ] },
+      var_name => 'gene', value_name => 'n');          # HoA
+ df2h([ [ 'TP53', 12 ], [ 'BRCA1', 7 ] ]);             # AoA, columns 0 and 1
+ df2h({ r1 => { gene => 'TP53',  n => 12 },
+        r2 => { gene => 'BRCA1', n =>  7 } },
+      var_name => 'gene', value_name => 'n');          # HoH
+ # each gives { TP53 => 12, BRCA1 => 7 }
+
+ # keep the last of a repeated key instead of dying
+ my $last = df2h([ { variable => 'a', value => 1 },
+                   { variable => 'a', value => 9 } ], duplicates => 'last');
+ # { a => 9 }
+
+=head3 Round trip
+
+ is_deeply( df2h( h2aoh(\%h) ), \%h );   # true for any flat hash
+
+The one thing that does not survive the trip is the I<type> of a key: Perl hash
+keys are strings, so a numeric key comes back as the string that prints the
+same way.
+
+=head3 Errors
+
+C<df2h> dies when the first argument is undefined or not an array or hash ref,
+when it is a hash that mixes array and hash values or holds neither, when the
+options are not C<< name =E<gt> value >> pairs, when an option name is C<undef> or
+unknown, when C<var_name> equals C<value_name>, when an AoA's column is not an
+integer, when C<duplicates> is not one of the three allowed words, or when it is
+C<first> or C<last> for a HoH.
+
+It also dies when a row is not the kind of reference its shape needs, when a
+row is missing either column, when a HoA lacks either column, when either is
+not an array ref, or when the two differ in length, when a row's key cell is
+C<undef> or a reference, or — under the default C<< duplicates =E<gt> 'die' >> — when two
+rows share a key. Every message about a row names it, by index or, in a HoH, by
+row name; for a shared key, that is the first repeat.
+
+=head3 See also
+
+L<C<h2aoh>|/"h2aoh"> is the reverse. L</"C<aoh2hoh>"> also indexes rows by a
+column, but keeps the whole row as the value instead of one cell.
+
 =head2 Distribution functions
 
 C<pnorm> and C<dnorm> have never had company: there was no way to ask for a
@@ -12356,7 +12537,7 @@ only other option, and it is never what anyone wanted.
 
 =head3 See also
 
-L<C<aoh2h>|/"aoh2h"> is the reverse. L<C<melt>|/"melt"> does the same folding-out for
+L<C<df2h>|/"df2h"> is the reverse. L<C<melt>|/"melt"> does the same folding-out for
 a frame that already has more than two columns.
 
 =head2 hoa2aoh

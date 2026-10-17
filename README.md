@@ -573,87 +573,6 @@ other fits identically.
 Comparing nested models -- `anova(m1, m2)` in R -- is done by giving `anova`
 two or more formulas, or two or more fitted models; see above.
 
-## aoh2h
-
-Fold a two-column **array-of-hashes** back down into a plain hash. This is the
-reverse of [`h2aoh`](#h2aoh), and the two are exact opposites under their
-defaults.
-
-    my $h = aoh2h($aoh);
-    my $h = aoh2h($aoh, var_name => 'gene', value_name => 'n');
-
-One column supplies the keys, the other the values; every other column in the
-row is ignored. R spells this `tibble::deframe()`; pandas spells it
-`df.set_index('k')['v'].to_dict()`.
-
-### Arguments
-
-`$aoh` — an array ref of hash refs. Required. Every row has to be a hash ref
-carrying both named columns. A blessed array or row is fine, and so is a tied
-one.
-
-Everything after it is `name => value` pairs:
-
-| Option | Default | Meaning |
-| --- | --- | --- |
-| `var_name` | `variable` | The column holding the keys. |
-| `value_name` | `value` | The column holding the values. |
-| `duplicates` | `die` | What to do when two rows carry the same key: `die` is fatal, `first` keeps the earliest row, `last` keeps the latest. |
-
-`var_name` and `value_name` must differ.
-
-### Returns
-
-A hash ref mapping each row's `var_name` cell to its `value_name` cell. An
-empty array ref gives back `{}`.
-
-A key is the string Perl makes of the key cell, so the number `2.50` becomes
-the key `2.5`. A key cell that holds a reference is an error, because its
-string is the reference's address. An object that overloads its operators is
-keyed by its string form, and a compiled pattern (`qr//`) by its pattern.
-
-Values are copied across, so a value that is itself a reference is shared with
-the input rather than cloned — the same shallow copy `aoh2hoa` makes. The input
-is not changed.
-
-### Example
-
-    my $aoh = [
-        { gene => 'TP53',  n => 12 },
-        { gene => 'BRCA1', n =>  7 },
-    ];
-    my $h = aoh2h($aoh, var_name => 'gene', value_name => 'n');
-    # { TP53 => 12, BRCA1 => 7 }
-
-    # keep the last of a repeated key instead of dying
-    my $last = aoh2h([ { variable => 'a', value => 1 },
-                       { variable => 'a', value => 9 } ], duplicates => 'last');
-    # { a => 9 }
-
-### Round trip
-
-    is_deeply( aoh2h( h2aoh(\%h) ), \%h );   # true for any flat hash
-
-The one thing that does not survive the trip is the *type* of a key: Perl hash
-keys are strings, so a numeric key comes back as the string that prints the
-same way.
-
-### Errors
-
-`aoh2h` dies when the first argument is undefined or not an array ref, when the
-options are not `name => value` pairs, when an option name is `undef` or
-unknown, when `var_name` equals `value_name`, when `duplicates` is not one of
-the three allowed words, when a row is not a hash ref, when a row is missing
-either named column, when a row's key cell is `undef` or a reference, or —
-under the default `duplicates => 'die'` — when two rows share a key. Every
-message about a row names it by index; for a shared key, that is the index of
-the first repeat.
-
-### See also
-
-[`h2aoh`](#h2aoh) is the reverse. [`aoh2hoh`](#aoh2hoh) also indexes rows by a
-column, but keeps the whole row as the value instead of one cell.
-
 ## aoh2hoa
 
 `aoh2hoa($aoh)` — transpose an **array-of-hashes** (row-major) into a **hash-of-arrays** (column-major).
@@ -2612,6 +2531,134 @@ same `eruptions` and `precip` samples that test file uses. It is an author-only
 script — it is not installed, and it needs `Matplotlib::Simple`, `python3` and
 `matplotlib` — so re-run it only when a figure needs to change.
 
+## df2h
+
+Fold two columns of a data frame — any of the four shapes — down into a plain
+hash: one column supplies the keys, the other the values, and every other
+column is ignored. This is the reverse of [`h2aoh`](#h2aoh), and the two are
+exact opposites under their defaults.
+
+    my $h = df2h($df);
+    my $h = df2h($df, var_name => 'gene', value_name => 'n');
+
+R spells this `tibble::deframe()`; pandas spells it
+`df.set_index('k')['v'].to_dict()`.
+
+`aoh2h` is a true synonym (the same subroutine). It was the name up to 0.3218,
+when the function took an array of hashes alone, and it still works; its
+messages now begin `df2h:`.
+
+### Arguments
+
+`$df` — a data frame. Required. A blessed frame or row is fine, and so is a tied
+one. The shape is read from the frame itself:
+
+| Shape | Looks like | A row is | `var_name` / `value_name` are |
+| --- | --- | --- | --- |
+| AoH | `[ { .. }, { .. } ]` | a hash ref | column names |
+| AoA | `[ [ .. ], [ .. ] ]` | an array ref | integer positions |
+| HoA | `{ c => [ .. ], .. }` | element *i* of the two columns | column names |
+| HoH | `{ r => { .. }, .. }` | a hash ref, named by its key | column names |
+
+An array is an AoA when its first defined element is an array ref, and an AoH
+otherwise. A hash is a HoH when its values are hash refs and a HoA when they are
+array refs; a hash holding both dies, and so does one holding neither, which is
+a flat hash already.
+
+Everything after the frame is `name => value` pairs:
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `var_name` | `variable`, or `0` for an AoA | The column holding the keys. |
+| `value_name` | `value`, or `1` for an AoA | The column holding the values. |
+| `duplicates` | `die` | What to do when two rows carry the same key: `die` is fatal, `first` keeps the earliest row, `last` keeps the latest. A HoH takes `die` only. |
+
+`var_name` and `value_name` must differ.
+
+### The shapes
+
+- **AoH** — every row has to be a hash ref carrying both named columns.
+- **AoA** — the two columns are positions. A negative one counts back from the
+  end of each row, as `$row->[-1]` does, so `var_name => -1` is every row's
+  last cell however long the row is. Every row has to be an array ref long
+  enough to hold both; a hole inside a row is an `undef` cell. Should a
+  negative and a positive position land on the same cell of some row, that
+  row dies rather than map a cell to itself.
+- **HoA** — both named columns have to be array refs of the same length, and
+  row *i* is element *i* of each. A hole in a column is an `undef` cell.
+- **HoH** — every row has to be a hash ref carrying both named columns. The
+  row names are not used. A HoH's rows have no order, so `first` and `last`
+  would keep whichever row hash order happened to reach first, which changes
+  from run to run; `duplicates` therefore takes `die` alone for a HoH. When a
+  HoH has more than one bad row, the message names the first in sorted
+  row-name order, so it is the same on every run.
+
+### Returns
+
+A hash ref mapping each row's key cell to its value cell. An empty frame, `[]`
+or `{}`, gives back `{}`.
+
+A key is the string Perl makes of the key cell, so the number `2.50` becomes
+the key `2.5`. A key cell that holds a reference is an error, because its
+string is the reference's address. An object that overloads its operators is
+keyed by its string form, and a compiled pattern (`qr//`) by its pattern.
+
+Values are copied across, so a value that is itself a reference is shared with
+the input rather than cloned — the same shallow copy `aoh2hoa` makes. The input
+is not changed.
+
+### Example
+
+    my $aoh = [
+        { gene => 'TP53',  n => 12 },
+        { gene => 'BRCA1', n =>  7 },
+    ];
+    my $h = df2h($aoh, var_name => 'gene', value_name => 'n');
+    # { TP53 => 12, BRCA1 => 7 }
+
+    # the same table as each of the other shapes
+    df2h({ gene => [ 'TP53', 'BRCA1' ], n => [ 12, 7 ] },
+         var_name => 'gene', value_name => 'n');          # HoA
+    df2h([ [ 'TP53', 12 ], [ 'BRCA1', 7 ] ]);             # AoA, columns 0 and 1
+    df2h({ r1 => { gene => 'TP53',  n => 12 },
+           r2 => { gene => 'BRCA1', n =>  7 } },
+         var_name => 'gene', value_name => 'n');          # HoH
+    # each gives { TP53 => 12, BRCA1 => 7 }
+
+    # keep the last of a repeated key instead of dying
+    my $last = df2h([ { variable => 'a', value => 1 },
+                      { variable => 'a', value => 9 } ], duplicates => 'last');
+    # { a => 9 }
+
+### Round trip
+
+    is_deeply( df2h( h2aoh(\%h) ), \%h );   # true for any flat hash
+
+The one thing that does not survive the trip is the *type* of a key: Perl hash
+keys are strings, so a numeric key comes back as the string that prints the
+same way.
+
+### Errors
+
+`df2h` dies when the first argument is undefined or not an array or hash ref,
+when it is a hash that mixes array and hash values or holds neither, when the
+options are not `name => value` pairs, when an option name is `undef` or
+unknown, when `var_name` equals `value_name`, when an AoA's column is not an
+integer, when `duplicates` is not one of the three allowed words, or when it is
+`first` or `last` for a HoH.
+
+It also dies when a row is not the kind of reference its shape needs, when a
+row is missing either column, when a HoA lacks either column, when either is
+not an array ref, or when the two differ in length, when a row's key cell is
+`undef` or a reference, or — under the default `duplicates => 'die'` — when two
+rows share a key. Every message about a row names it, by index or, in a HoH, by
+row name; for a shared key, that is the first repeat.
+
+### See also
+
+[`h2aoh`](#h2aoh) is the reverse. [`aoh2hoh`](#aoh2hoh) also indexes rows by a
+column, but keeps the whole row as the value instead of one cell.
+
 ## Distribution functions
 
 `pnorm` and `dnorm` have never had company: there was no way to ask for a
@@ -3811,7 +3858,7 @@ only other option, and it is never what anyone wanted.
 
 ### See also
 
-[`aoh2h`](#aoh2h) is the reverse. [`melt`](#melt) does the same folding-out for
+[`df2h`](#df2h) is the reverse. [`melt`](#melt) does the same folding-out for
 a frame that already has more than two columns.
 
 ## hoa2aoh

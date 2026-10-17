@@ -10390,15 +10390,45 @@ PERL_STATIC_INLINE SV *flt_cell_copy(pTHX_ SV *s) {
 	return newSVsv(s ? s : &PL_sv_undef);
 }
 
-/*The fold behind aoh2h(), reached through the XSUB _aoh2h. aoh2h() has already
-checked the options: aoh is the frame's array, the two names are defined and
-differ, and dup is one of the three codes at its declaration.
+/*Where df2h_fold() is in the frame, as its messages name it: "index 3", or a
+HoH's "row 'r1'".*/
+static SV *df2h_where(pTHX_ SSize_t i, SV *rname) {
+	if (rname) return sv_2mortal(newSVpvf("row '%" SVf "'", SVfARG(rname)));
+	return sv_2mortal(newSVpvf("index %" IVdf, (IV)i));
+}
 
-Up to 0.3217 this loop was Perl; Changes has the before and after for 0.3218.
-Three choices make the C version faster and smaller, and each is easy to undo
-by accident. Every figure below is one cold call on perl-5.44.0, 1e6 rows of
-three columns, the median of three runs, and the memory is the RSS the result
-adds:
+/*A row without one of the two columns. lab is the column as the other
+messages name it, "'value'" or an AoA's "column 1"; only a name takes the word
+"column" after it.*/
+static void df2h_missing(pTHX_ SSize_t i, SV *rname, SV *lab, bool named) __attribute__noreturn__;
+static void df2h_missing(pTHX_ SSize_t i, SV *rname, SV *lab, bool named) {
+	croak("df2h: %" SVf " has no %" SVf "%s\n", SVfARG(df2h_where(aTHX_ i, rname)), SVfARG(lab),
+	      named ? " column" : "");
+}
+
+/*The fold behind df2h() -- and aoh2h(), the same sub under its old name --
+reached through the XSUB _df2h. df2h() has already decided the shape and checked
+the options: the two names are defined and differ, an AoA's are integer
+positions that fit an IV, a HoA's two columns are arrays of one length, and dup
+is one of the three codes at its declaration, and 'die' for a HoH.
+
+What data is depends on the shape. An AoH's or AoA's is the frame's array of
+rows. A HoA has no rows to fetch: data is an array of its two columns, and row i
+is element i of each. A HoH's is the frame's hash, and order is an array of its
+row names, visited in that order; df2h() hands over keys() for speed and, when
+that croaks, the sorted names, so that which bad row a message names does not
+depend on hash order.
+
+An AoA's positions are resolved row by row, a negative one counting back from
+that row's end as $row->[-1] does. A row too short for either is missing it, as
+a hash row without the name is; a hole inside the row is an undef cell, as is a
+hole in a HoA's column.
+
+Up to 0.3217 the AoH loop was Perl; Changes has the before and after for
+0.3218. Three choices make the C version faster and smaller, and each is easy to
+undo by accident. Every figure below is one cold call on an AoH on perl-5.44.0,
+1e6 rows of three columns, the median of three runs, and the memory is the RSS
+the result adds:
 
  - The result's keys are not shared (HvSHAREKEYS_off). perl normally keeps every
 hash key in its shared string table as well as in the hash, which pays when the
@@ -10429,70 +10459,133 @@ first. Hashing the cell itself would cache a string in the caller's number,
 growing every row of the input, and would run a tied cell's FETCH or an
 object's overloading a second time.
 
-A tied or restricted row asks exists() before it fetches, as the Perl version
-did. A tied hash's fetch never fails, so it cannot tell a missing column from an
-undef one, and a restricted hash croaks in perl's own words on a missing key.
-Such a row's value is fetched only once the row is known to be kept, so FETCH
-runs exactly where it used to. A plain row under 'die' copies its value before
-the repeat is found, so that one store serves as both the lookup and the write.
-Only a tied scalar in a plain row's value cell can see that: one FETCH more, in a
-call that then croaks.*/
-static SV *aoh2h_fold(pTHX_ AV *aoh, SV *var_name, SV *value_name,	// no restrict here or below: all perl-managed
-                      short dup) {	// dup: 0 = die, 1 = first, 2 = last
+A tied or restricted hash row asks exists() before it fetches, as the Perl
+version did. A tied hash's fetch never fails, so it cannot tell a missing column
+from an undef one, and a restricted hash croaks in perl's own words on a missing
+key. Such a row's value is fetched only once the row is known to be kept, so
+FETCH runs exactly where it used to. A plain hash row under 'die' copies its
+value before the repeat is found, so that one store serves as both the lookup
+and the write. Only a tied scalar in a plain row's value cell can see that: one
+FETCH more, in a call that then croaks. An AoA row and a HoA's columns are asked
+for their length instead of exists(), so their value is always fetched after
+the key, and only for a row that is kept unless the row is plain and dup is
+'die'.*/
+static SV *df2h_fold(pTHX_ SV *data, short shape,	// shape: 1 = AoH, 2 = HoH, 3 = AoA, 4 = HoA
+                     SV *var_name, SV *value_name,	// no restrict here or below: all perl-managed
+                     short dup, AV *order) {	// dup: 0 = die, 1 = first, 2 = last; order: a HoH's row names, else NULL
 	HV *out = newHV();
 	SV *rv = sv_2mortal(newRV_noinc((SV *)out));	//mortal first, so a croak below frees the partial hash
-	STRLEN kl, vl;
-	const char *kp = SvPV_const(var_name, kl);
-	const char *vp = SvPV_const(value_name, vl);
-	/*shared-key copies of the two names, so each row lookup reuses their
-	hash; a negative length marks UTF-8, as newSVpvn_share() requires*/
-	SV *kname = sv_2mortal(newSVpvn_share(kp, SvUTF8(var_name) ? -(I32)kl : (I32)kl, 0));
-	SV *vname = sv_2mortal(newSVpvn_share(vp, SvUTF8(value_name) ? -(I32)vl : (I32)vl, 0));
+	const bool named = shape != 3;	//the columns are names, not an AoA's positions
+	SV *kname = NULL, *vname = NULL;	//named: the two names
+	IV kpos = 0, vpos = 0;	//AoA: the two positions as given
+	SV *klab, *vlab;	//the two columns as messages name them
+	if (named) {
+		STRLEN kl, vl;
+		const char *kp = SvPV_const(var_name, kl);
+		const char *vp = SvPV_const(value_name, vl);
+		/*shared-key copies of the two names, so each row lookup reuses their
+		hash; a negative length marks UTF-8, as newSVpvn_share() requires*/
+		kname = sv_2mortal(newSVpvn_share(kp, SvUTF8(var_name) ? -(I32)kl : (I32)kl, 0));
+		vname = sv_2mortal(newSVpvn_share(vp, SvUTF8(value_name) ? -(I32)vl : (I32)vl, 0));
+		klab = sv_2mortal(newSVpvf("'%" SVf "'", SVfARG(kname)));
+		vlab = sv_2mortal(newSVpvf("'%" SVf "'", SVfARG(vname)));
+	} else {
+		kpos = SvIV(var_name);
+		vpos = SvIV(value_name);
+		klab = sv_2mortal(newSVpvf("column %" IVdf, kpos));
+		vlab = sv_2mortal(newSVpvf("column %" IVdf, vpos));
+	}
+	AV *rows = NULL;	//AoH, AoA
+	HV *byname = NULL;	//HoH
+	AV *kcol = NULL, *vcol = NULL;	//HoA
+	SSize_t n;
+	if (shape == 2) {
+		byname = (HV *)SvRV(data);
+		n = av_len(order) + 1;
+	} else if (shape == 4) {
+		AV *cols = (AV *)SvRV(data);
+		kcol = (AV *)SvRV(*av_fetch(cols, 0, 0));	//df2h() built cols, so both slots are filled
+		vcol = (AV *)SvRV(*av_fetch(cols, 1, 0));
+		n = av_len(kcol) + 1;
+	} else {
+		rows = (AV *)SvRV(data);
+		n = av_len(rows) + 1;
+	}
 	SV *kbuf = sv_newmortal();	//a key cell that is not a plain string is stringified here, never in place
-	const SSize_t n = av_len(aoh) + 1;
 	HvSHAREKEYS_off(out);
 	if (dup == 0 && n > 1) hv_ksplit(out, (IV)n);
 	ENTER; SAVETMPS;
 	for (SSize_t i = 0; i < n; i++) {
 		FREETMPS;	//the placeholders a tied frame or row made for the row before
-		SV **rp = av_fetch(aoh, i, 0);
-		SV *r = rp ? *rp : NULL;	//a copy of the pointer: mg_get() may move the array's block, see av_slow_at()
-		if (r) SvGETMAGIC(r);
-		if (!(r && SvROK(r) && SvTYPE(SvRV(r)) == SVt_PVHV))
-			croak("aoh2h: index %" IVdf " is not a hashref\n", (IV)i);
-		HV *row = (HV *)SvRV(r);
-		const bool careful = SvRMAGICAL(row) || SvREADONLY(row);	//tied or restricted: see above
-		SV *k;
-		SV *v = NULL;	//stays NULL on a careful row until the row is known to be kept
-		if (careful) {
-			if (!hv_exists_ent(row, kname, 0))
-				croak("aoh2h: index %" IVdf " has no '%" SVf "' column\n", (IV)i, SVfARG(kname));
-			if (!hv_exists_ent(row, vname, 0))
-				croak("aoh2h: index %" IVdf " has no '%" SVf "' column\n", (IV)i, SVfARG(vname));
-			HE *ke = hv_fetch_ent(row, kname, 0, 0);
-			k = ke ? HeVAL(ke) : &PL_sv_undef;
+		SV *rname = NULL;	//a HoH row's name, for messages
+		SV *k = &PL_sv_undef;
+		SV *v = NULL;	//stays NULL until the value is fetched: see above
+		bool careful;
+		HV *row = NULL;	//AoH, HoH
+		AV *arow = NULL;	//AoA
+		IV vat = 0;	//AoA: the value's position in this row
+		if (shape == 4) {
+			careful = SvRMAGICAL(kcol) || SvRMAGICAL(vcol);
+			SV **kp = av_fetch(kcol, i, 0);
+			if (kp) k = *kp;
 		} else {
-			HE *ke = hv_fetch_ent(row, kname, 0, 0);
-			if (!ke)
-				croak("aoh2h: index %" IVdf " has no '%" SVf "' column\n", (IV)i, SVfARG(kname));
-			HE *ve = hv_fetch_ent(row, vname, 0, 0);
-			if (!ve)
-				croak("aoh2h: index %" IVdf " has no '%" SVf "' column\n", (IV)i, SVfARG(vname));
-			k = HeVAL(ke);
-			v = HeVAL(ve);
+			SV *r;	//a copy of the pointer: mg_get() may move the array's block, see av_slow_at()
+			if (shape == 2) {
+				rname = *av_fetch(order, i, 0);	//df2h() built order, so every slot is filled
+				HE *he = hv_fetch_ent(byname, rname, 0, 0);
+				r = he ? HeVAL(he) : NULL;
+			} else {
+				SV **rp = av_fetch(rows, i, 0);
+				r = rp ? *rp : NULL;
+			}
+			if (r) SvGETMAGIC(r);
+			if (shape == 3) {
+				if (!(r && SvROK(r) && SvTYPE(SvRV(r)) == SVt_PVAV))
+					croak("df2h: %" SVf " is not an arrayref\n", SVfARG(df2h_where(aTHX_ i, rname)));
+				arow = (AV *)SvRV(r);
+				careful = cBOOL(SvRMAGICAL(arow));	//cBOOL: bool is a char on perl 5.10 and 5.12, and the flag is bit 23
+				const IV len = (IV)(av_len(arow) + 1);
+				const IV kat = kpos < 0 ? kpos + len : kpos;
+				vat = vpos < 0 ? vpos + len : vpos;
+				if (kat < 0 || kat >= len) df2h_missing(aTHX_ i, rname, klab, FALSE);
+				if (vat < 0 || vat >= len) df2h_missing(aTHX_ i, rname, vlab, FALSE);
+				if (kat == vat)	//one counted from each end, in a row of just the right length
+					croak("df2h: %" SVf " has %" SVf " and %" SVf " at the same place, so they are one column\n",
+					      SVfARG(df2h_where(aTHX_ i, rname)), SVfARG(klab), SVfARG(vlab));
+				SV **kp = av_fetch(arow, (SSize_t)kat, 0);
+				if (kp) k = *kp;
+			} else {
+				if (!(r && SvROK(r) && SvTYPE(SvRV(r)) == SVt_PVHV))
+					croak("df2h: %" SVf " is not a hashref\n", SVfARG(df2h_where(aTHX_ i, rname)));
+				row = (HV *)SvRV(r);
+				careful = SvRMAGICAL(row) || SvREADONLY(row);	//tied or restricted: see above
+				if (careful) {
+					if (!hv_exists_ent(row, kname, 0)) df2h_missing(aTHX_ i, rname, klab, TRUE);
+					if (!hv_exists_ent(row, vname, 0)) df2h_missing(aTHX_ i, rname, vlab, TRUE);
+					HE *ke = hv_fetch_ent(row, kname, 0, 0);
+					if (ke) k = HeVAL(ke);
+				} else {
+					HE *ke = hv_fetch_ent(row, kname, 0, 0);
+					if (!ke) df2h_missing(aTHX_ i, rname, klab, TRUE);
+					HE *ve = hv_fetch_ent(row, vname, 0, 0);
+					if (!ve) df2h_missing(aTHX_ i, rname, vlab, TRUE);
+					k = HeVAL(ke);
+					v = HeVAL(ve);
+				}
+			}
 		}
 		SvGETMAGIC(k);
 		if (!SvOK(k))
-			croak("aoh2h: index %" IVdf " has an undefined '%" SVf "'; a hash key has to be defined\n",
-			      (IV)i, SVfARG(kname));
+			croak("df2h: %" SVf " has an undefined %" SVf "; a hash key has to be defined\n",
+			      SVfARG(df2h_where(aTHX_ i, rname)), SVfARG(klab));
 		/*An object that overloads its operators stringifies to whatever its
 		class says, and a qr// to its pattern, both of which are keys; any
 		other reference stringifies to its address, which is not. SvRXOK is
 		asked for separately because a Regexp's stringification is perl's own,
 		not overloading, and whether SvAMAGIC is set for one differs by perl.*/
 		if (SvROK(k) && !SvAMAGIC(k) && !SvRXOK(k))
-			croak("aoh2h: index %" IVdf " has a reference in '%" SVf "' (%s); a hash key would be its address, not its contents\n",
-			      (IV)i, SVfARG(kname), sv_reftype(SvRV(k), TRUE));
+			croak("df2h: %" SVf " has a reference in %" SVf " (%s); a hash key would be its address, not its contents\n",
+			      SVfARG(df2h_where(aTHX_ i, rname)), SVfARG(klab), sv_reftype(SvRV(k), TRUE));
 		if (SvGMAGICAL(k) || !SvPOK(k)) {
 			sv_setsv_nomg(kbuf, k);
 			(void)SvPV_force_nomg_nolen(kbuf);
@@ -10500,18 +10593,24 @@ static SV *aoh2h_fold(pTHX_ AV *aoh, SV *var_name, SV *value_name,	// no restric
 		}
 		if ((dup == 1 || (dup == 0 && careful)) && hv_exists_ent(out, k, 0)) {
 			if (dup == 1) continue;	//'first': the earlier row stands
-			croak("aoh2h: duplicate key '%" SVf "' has >= 2 occurrences, the first repeat at index %" IVdf "\n",
-			      SVfARG(k), (IV)i);
+			croak("df2h: duplicate key '%" SVf "' has >= 2 occurrences, the first repeat at %" SVf "\n",
+			      SVfARG(k), SVfARG(df2h_where(aTHX_ i, rname)));
 		}
 		if (!v) {
-			HE *ve = hv_fetch_ent(row, vname, 0, 0);
-			v = ve ? HeVAL(ve) : &PL_sv_undef;
+			SV **vp = NULL;
+			if (shape == 4) vp = av_fetch(vcol, i, 0);
+			else if (shape == 3) vp = av_fetch(arow, (SSize_t)vat, 0);
+			else {
+				HE *ve = hv_fetch_ent(row, vname, 0, 0);
+				if (ve) vp = &HeVAL(ve);
+			}
+			v = vp ? *vp : &PL_sv_undef;
 		}
 		const size_t had = (size_t)HvUSEDKEYS(out);	//a store that adds no key replaced one
 		(void)hv_store_ent(out, k, flt_cell_copy(aTHX_ v), 0);
 		if (dup == 0 && (size_t)HvUSEDKEYS(out) == had)
-			croak("aoh2h: duplicate key '%" SVf "' has >= 2 occurrences, the first repeat at index %" IVdf "\n",
-			      SVfARG(k), (IV)i);
+			croak("df2h: duplicate key '%" SVf "' has >= 2 occurrences, the first repeat at %" SVf "\n",
+			      SVfARG(k), SVfARG(df2h_where(aTHX_ i, rname)));
 	}
 	FREETMPS; LEAVE;
 	return SvREFCNT_inc(rv);
@@ -21226,13 +21325,16 @@ SV *aoh2hoa(data)
 	OUTPUT:
 		RETVAL
 
-SV *_aoh2h(data, var_name, value_name, dup)
+SV *_df2h(data, shape, var_name, value_name, dup, order)
 	SV *data
+	short shape
 	SV *var_name
 	SV *value_name
 	short dup
+	SV *order
 	CODE:
-		RETVAL = aoh2h_fold(aTHX_ (AV *)SvRV(data), var_name, value_name, dup);
+		RETVAL = df2h_fold(aTHX_ data, shape, var_name, value_name, dup,
+		                   SvROK(order) ? (AV *)SvRV(order) : NULL);	//order: a HoH's row names, else undef
 	OUTPUT:
 		RETVAL
 
