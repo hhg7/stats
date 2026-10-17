@@ -33,3 +33,12 @@ documents each one:
 - **`rank()`** compares `Stack_off_t` with `size_t` (`opt_start`) in two
   loops, which `-Wextra` reports under strict C99. The default build flags do
   not.
+- **Formulas** (every function that reads one through `lm_formula_terms()`)
+  have no parentheses: `y ~ (a + b)*c` and `y ~ (a + b + c)^2` die with "0
+  degrees of freedom", as does arithmetic inside a function or `I()`, such as
+  `log(x + 1)` or `I(a - b)`. `car`'s own `vif()` example is
+  `(income + education)*type`, which `t/vif.R.t` has to write out as its
+  expansion. Term removal (`- b`) works since 0.3218.
+- **`vif()`** has only `car::vif()`'s default `type = "terms"`; `type =
+  "predictor"`, which `car` suggests for a model with interactions, is not
+  implemented.

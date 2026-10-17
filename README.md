@@ -1657,13 +1657,31 @@ gives: when every stratum has zero variance the statistic and p-value are
 ## cohen_d
 
 Cohen's *d* effect size for the difference between two independent groups, using
-the pooled standard deviation. It also returns the Hedges' *g* small-sample
-correction and a large-sample (normal-approximation) confidence interval.
-Validated numerically against R.
+the pooled standard deviation, with the Hedges' *g* small-sample correction and
+a confidence interval. Same as `effectsize::cohens_d()` (effectsize 1.0.3), and
+validated against its tests and effsize 0.8.1's.
 
     my $d = cohen_d(\@treatment, \@control);           # or conf_level => 0.90
     printf "d = %.2f (95%% CI %.2f–%.2f), Hedges g = %.2f\n",
         $d->{estimate}, $d->{'conf_int'}[0], $d->{'conf_int'}[1], $d->{hedges_g};
+
+The interval is the exact one under normality, `effectsize`'s default: with
+`t = d / sqrt(1/n1 + 1/n2)` on `n1 + n2 - 2` degrees of freedom, the limits of
+the noncentral *t*'s noncentrality parameter that put `t` at its two
+`(1 - conf_level)/2` points, each scaled back by `sqrt(1/n1 + 1/n2)`.
+`ci_method => 'normal'` gives the large-sample interval `d ± z se` instead,
+which was the default up to 0.3217 and is a little narrow in small samples: on
+mtcars' weight by transmission it is 1.048 to 2.737 where the exact interval is
+1.030 to 2.733.
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `conf_level` | `0.95` | Confidence level of `conf_int`. |
+| `ci_method` | `'nct'` | `'nct'` for the noncentral-*t* interval, `'normal'` for `d ± z se`. |
+
+Hedges' *g* is *d* times `1 - 3/(4 df - 1)`, the approximation `effsize` uses;
+`effectsize` uses the exact gamma-function ratio, which differs from it by 4e-5
+relative at 30 degrees of freedom and by 3e-6 at 100.
 
 Compare with [smd](#smd), which standardizes by the simple (unweighted) average
 of the group variances and is the convention for covariate-balance tables.
@@ -1675,9 +1693,10 @@ of the group variances and is the convention for covariate-balance tables.
 | `estimate` | `Double` | Cohen's *d* (mean₁ − mean₂ over the pooled SD). | `2.3146` |
 | `hedges_g` | `Double` | Hedges' *g* (bias-corrected *d*). | `2.1668` |
 | `pooled_sd` | `Double` | Pooled standard deviation. | `1.2344` |
-| `se` | `Double` | Approximate standard error of *d*. | `0.6907` |
-| `conf_int` | `ArrayRef` | `[lower, upper]` normal-approximation CI for *d*. | `[0.96, 3.67]` |
+| `se` | `Double` | Hedges and Olkin's large-sample standard error of *d*, which `effsize` also reports; only the `'normal'` interval uses it. | `0.6907` |
+| `conf_int` | `ArrayRef` | `[lower, upper]` confidence interval for *d*. | `[0.90, 3.68]` |
 | `conf_level` | `Double` | Confidence level used. | `0.95` |
+| `ci_method` | `String` | `'nct'` or `'normal'`, the interval returned. | `nct` |
 | `n1`, `n2` | `Integer` | Group sizes. | `7`, `7` |
 
 ## col2col
@@ -3527,7 +3546,7 @@ errors are right as they stand.
 
 | Parameter | Type | Default | Description | Example |
 | --- | --- | --- | --- | --- |
-| `formula` | `String` | *None (Required)* | A symbolic description of the model to be fitted. Parsed by the same code as [`lm`](#lm)'s, so it takes the same operators: `+`, `:`, `*`, `^`, `.` for every remaining column, and `-1` / `+0` to remove the intercept. It may also hold `offset()` terms, and factors to absorb after a `\|`. | `'am ~ wt + hp'`, `'y ~ x - 1'`, `'y ~ .'` |
+| `formula` | `String` | *None (Required)* | A symbolic description of the model to be fitted. Parsed by the same code as [`lm`](#lm)'s, so it takes the same operators: `+`, `:`, `*`, `^`, `.` for every remaining column, `- b` to remove a term, and `-1` / `+0` to remove the intercept. It may also hold `offset()` terms, and factors to absorb after a `\|`. | `'am ~ wt + hp'`, `'y ~ x - 1'`, `'y ~ .'` |
 | `data` | `HashRef` or `ArrayRef` | *None (Required)* | The dataset containing the variables used in the formula. Accepts a Hash of Arrays (HoA), a Hash of Hashes (HoH) or an Array of Hashes (AoH). Rows are named as described under [`lm`](#lm). | `\%mtcars`, `[{x => 1, y => 2}, ...]` |
 | `family` | `String` | `'gaussian'` | The error distribution / link function: `'gaussian'` (identity link), `'binomial'` (logit link), `'poisson'` (log link) or `'negbin'` (negative binomial, log link). | `'poisson'` |
 | `theta` | `Number` | *estimated by ML* | Negative-binomial dispersion. When omitted (with `family => 'negbin'`) it is estimated by maximum likelihood as in `MASS::glm.nb`; supply a value to hold it fixed. | `1.7` |
@@ -4599,7 +4618,14 @@ cross-classification.
 
 If your data contains missing numbers (`NA` or `undef`), `lm` handles listwise deletion dynamically to ensure mathematical integrity before fitting. A row whose categorical value is missing is dropped the same way.
 
-Three details differ from R deliberately:
+A term is removed with `-`, as in R: `y ~ x*z - x:z` fits `y ~ x + z`,
+`y ~ . - id` fits every column but `id` (and the response), and `- x*z` takes
+out `x`, `z` and `x:z` together. Removing a term the model does not have
+changes nothing. Only a `-` outside parentheses removes, and a term that is
+itself the name of a column is that column, so a column named `a-b` can still be
+written `y ~ a-b`.
+
+Four details differ from R deliberately:
 
 - Levels are sorted with `strcmp`, i.e. by byte value, which is what
   `patsy`/`pandas` does. R sorts with the collation of the running locale, so a
@@ -4613,6 +4639,11 @@ Three details differ from R deliberately:
 - A categorical column with only one level contributes no column, so
   `y ~ x + g` fits `y ~ x`. R refuses the model outright ("contrasts can be
   applied only to factors with 2 or more levels").
+- An interaction's variables are named in the order they first appear among
+  the terms that remain after removals, where R orders them by the whole
+  formula. So `y ~ x*z*w - x*z`, whose first remaining term is `w`, names its
+  interactions `w:x`, `w:z` and `w:x:z` where R has `x:w`, `z:w` and `x:z:w`.
+  The fit is the same.
 
 the dot operator also works:
 
@@ -6994,10 +7025,16 @@ departure from it.
 
 Standardized mean difference between two continuous groups, standardizing by the
 simple (unweighted) average of the group variances — the convention used for
-covariate-balance diagnostics in "Table 1" (R's `tableone` / `stddiff`). Returns
-the signed value. Validated numerically against R.
+covariate-balance diagnostics in "Table 1". It is `tableone`'s continuous SMD
+(tableone 0.13.2, `StdDiff()`), validated against that package's tests, but
+signed: `tableone` reports the absolute value.
 
     my $balance = smd(\@exposed_age, \@unexposed_age);   # |smd| < 0.1 is well balanced
+
+A column that is one constant in both groups has an SMD of 0, which is how
+`tableone` defines the 0/0, and a column that is constant within each group but
+differs between them is `±Inf`. Values that are `undef` or not numbers are
+dropped; each group needs two that are left.
 
 Unlike [cohen_d](#cohen_d) (which pools by sample size), `smd` weights the two
 group variances equally, so the two diverge when the groups differ in size.
@@ -7800,19 +7837,52 @@ structure types, `n` boundaries, alignment, `NA` rendering, truncation,
 ## vif
 
 Variance inflation factors, the standard multicollinearity diagnostic for a
-regression model. For each predictor, `vif` regresses it on all the other
-predictors and reports `1 / (1 - R²)`; values above ~5–10 flag problematic
-collinearity. The second argument is either a formula string (its right-hand-side
-terms are used) or an array reference of predictor column names. Validated
-numerically against R. Numeric predictors only — categorical predictors would
-need a generalized VIF.
+regression model; values above ~5–10 flag problematic collinearity. Same as
+`car::vif()` (car 3.1-5) at its default `type = "terms"`, and validated against
+it.
 
-    my $v = vif(\%data, [qw(age bmi sbp chol)]);        # or 'y ~ age + bmi + sbp + chol'
+    my $v = vif(\%data, 'sbp ~ age + bmi + chol');      # or [qw(age bmi chol)]
     for my $p (sort { $v->{$b} <=> $v->{$a} } keys %$v) {
         printf "%-6s VIF = %.2f\n", $p, $v->{$p};
     }
 
-Returns a hash of `predictor => VIF`.
+The second argument is a formula, read exactly as [lm](#lm) reads it, or an
+array reference of column names, which is the formula `~ age + bmi + chol`. A
+formula's response is not needed, since a VIF depends only on the predictors,
+but when there is one it takes out the rows where it is missing, as it does
+from the model `car::vif()` is given. So interactions, removed terms, `.` and
+factors are all understood:
+
+    vif(\%data, 'sbp ~ age * bmi + chol');      # terms age, bmi, chol, age:bmi
+    vif(\%data, 'sbp ~ . - id');
+    vif(\%data, [qw(age bmi smoking)]);         # smoking is a factor: a GVIF table
+
+For each term, with `C` the correlation matrix of the design's columns less the
+intercept and `S` the term's own columns,
+
+    GVIF = det(C[S, S]) * det(C[-S, -S]) / det(C)
+
+which for a term with one column is the familiar `1 / (1 - R²)` from
+regressing that column on all the others. This is Fox and Monette's
+generalized VIF, the quantity `car::vif()` computes.
+
+When every term has one column, as numeric main effects and their products do,
+the result is a hash of `term => VIF`. When any term has more, as a factor with
+three or more levels does, each term maps to a hash instead, as `car::vif()`'s
+result becomes a table:
+
+| Key | Description |
+| --- | --- |
+| `GVIF` | The generalized VIF. |
+| `Df` | The term's number of columns. |
+| `GVIF^(1/(2*Df))` | `GVIF` to the power `1/(2 Df)`, comparable across terms of different sizes. |
+
+As in `car::vif()`, a model with an interaction warns that "there are
+higher-order terms (interactions) in this model" (car's `type = "predictor"` is
+not implemented), a model with no intercept warns "No intercept: vifs may not be
+sensible.", and a model with fewer than two terms, or with an aliased column,
+is an error. A formula whose response is a name the data do not have is an
+error too.
 
 ## wilcox_test
 

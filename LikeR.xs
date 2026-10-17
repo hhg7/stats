@@ -9189,10 +9189,15 @@ static NV ptt_f(const ptt_ctx *c, NV x) {
 	}
 }
 
-/*Regula falsi with the Illinois correction. It stays bracketed the way the
-plain bisection this replaces did, but converges superlinearly, so it reaches
-a far tighter answer in fewer evaluations of p_body() -- around a dozen
-against bisection's three dozen.
+/*A function of one variable for illinois_root() to drive to zero; ctx carries
+whatever else it needs.*/
+typedef NV (*root_fn)(const void *ctx, NV x);
+
+/*Regula falsi with the Illinois correction, written for power_t_test() and
+shared with cohen_d()'s noncentral-t interval (nct_limit() below). It stays
+bracketed the way the plain bisection it replaced did, but converges
+superlinearly, so it reaches a far tighter answer in fewer evaluations of
+p_body() -- around a dozen against bisection's three dozen.
 
 `tol` is a *relative* tolerance on the step between successive iterates, not
 on the width of the bracket. Illinois shrinks one side of the bracket much
@@ -9204,32 +9209,31 @@ only four or five good digits.
 Returns NaN when [lo, hi] holds no sign change. Callers croak on that instead
 of handing back a bracket endpoint dressed up as an answer, which is how
 solving for sd used to report a standard deviation of delta * 1e7.*/
-static NV ptt_root(const ptt_ctx *c, NV lo, NV hi, NV tol) {
+static NV illinois_root(root_fn f, const void *ctx, NV lo, NV hi, NV tol) {	//ctx not restrict: it is handed on to f
 	if (!(lo < hi)) return NAN;
-	NV flo = ptt_f(c, lo), fhi = ptt_f(c, hi);
+	NV flo = f(ctx, lo), fhi = f(ctx, hi);
 	if (flo == 0.0) return lo;
 	if (fhi == 0.0) return hi;
 	if (flo != flo || fhi != fhi) return NAN;
 	if ((flo > 0.0) == (fhi > 0.0)) return NAN;
 	NV x = 0.5 * (lo + hi), prev = INFINITY;
-	/*Which endpoint the previous step replaced: -1 for lo, +1 for hi, 0 for
-	neither yet. The Illinois halving below is applied only when the same
-	endpoint is replaced twice running, i.e. when the far side really has gone
-	stale. Halving it on every step -- the way the correction is usually
-	written -- discounts a value that was fresh one iteration ago, and once
-	the iterates start straddling the root (which they do here from about the
+	/*The Illinois halving below is applied only when the same endpoint is
+	replaced twice running, i.e. when the far side really has gone stale.
+	Halving it on every step -- the way the correction is usually written --
+	discounts a value that was fresh one iteration ago, and once the iterates
+	start straddling the root (which they do in power_t_test() from about the
 	fifteenth step) both stored values end up scaled down together and the
 	secant degenerates to bisection: |f| then halves exactly, step after step.
 	Waiting for the second retention holds the p_body() count near two dozen,
 	against roughly fifty for the unconditional halving and sixty for plain
 	bisection, and matches what Brent's method needs on the same brackets.*/
-	int side = 0;
+	short int side = 0; // the endpoint the previous step replaced: -1 = lo, 1 = hi, 0 = neither yet
 	for (unsigned short i = 0; i < 200; i++) {
 		x = hi - fhi * (hi - lo) / (fhi - flo);
 		/*an interpolation that lands on or outside the bracket (which the
 		halved stale value can produce) falls back to the midpoint*/
 		if (!(x > lo && x < hi)) x = 0.5 * (lo + hi);
-		NV fx = ptt_f(c, x);
+		NV fx = f(ctx, x);
 		/*x == prev is the machine-precision floor: the step has stopped
 		changing the iterate at all, so no tol can ask for more.*/
 		if (fx == 0.0 || x == prev || nv_fabs(x - prev) <= tol * nv_fabs(x)) return x;
@@ -9245,6 +9249,61 @@ static NV ptt_root(const ptt_ctx *c, NV lo, NV hi, NV tol) {
 		}
 	}
 	return x;
+}
+
+static NV ptt_fv(const void *restrict c, NV x) { return ptt_f((const ptt_ctx *)c, x); }
+
+static NV ptt_root(const ptt_ctx *c, NV lo, NV hi, NV tol) {
+	return illinois_root(ptt_fv, c, lo, hi, tol);
+}
+
+/*Noncentral-t confidence limits for a noncentrality parameter, behind
+cohen_d()'s default interval.
+
+Given a t statistic on df degrees of freedom, the two-sided limits at
+conf_level are the ncp values that put t at the alpha/2 points of the
+noncentral t, alpha = 1 - conf_level: the lower limit solves
+P(T > t; df, ncp) = alpha/2 and the upper P(T <= t; df, ncp) = alpha/2.
+P(T <= t) falls as ncp rises, so each limit is the one root of a monotone
+function. These are the limits effectsize 1.0.3's .get_ncp_t()
+(R/utils_ci.R) and effsize 0.8.1's compute_ncp() (R/CohenD.R) find over R's
+pt(), the first by optim() and the second by uniroot(). Each limit here is
+taken from its own tail of exact_pnt(), so a small alpha/2 is not formed as
+1 minus something close to 1.*/
+typedef struct { NV t, df, target; bool upper; } nct_ctx;
+
+static NV nct_f(const void *restrict v, NV ncp) {
+	const nct_ctx *restrict c = (const nct_ctx *)v;
+	return exact_pnt(c->t, c->df, ncp, c->upper) - c->target;
+}
+
+/*One limit: upper = TRUE solves the upper-tail equation, which gives the
+lower limit. The search starts at ncp = t and steps away from it, doubling
+the step, until the sign changes; f rises with ncp in the upper tail and
+falls in the lower. 64 doublings reach 2^64, past any ncp an NV t can need.
+
+The tolerance is power_t_test()'s 1e-12, relative, on the iterate. On
+t/cohen_d.R.t's 94 limits that leaves them within 8.4e-13 of mpmath's at 60
+digits, where R's pt() inverted by uniroot() is within 2e-10, and past
+|ncp| = 37.62, where pnt() returns a normal approximation, 1.6e-3.*/
+static NV nct_limit(NV t, NV df, NV target, bool upper) {
+	const nct_ctx c = { t, df, target, upper };
+	NV a = t, fa = nct_f(&c, a);
+	if (fa == 0.0) return a;
+	if (nv_isnan(fa)) return NV_NAN;
+	const NV dir = ((fa > 0.0) == upper) ? -1.0 : 1.0;	//the side of a the root is on
+	NV step = 1.0;
+	for (unsigned short i = 0; i < 64; i++) {
+		const NV b = a + dir * step;
+		const NV fb = nct_f(&c, b);
+		if (fb == 0.0) return b;
+		if (nv_isnan(fb)) return NV_NAN;
+		if ((fb > 0.0) != (fa > 0.0))
+			return dir < 0.0 ? illinois_root(nct_f, &c, b, a, 1e-12)
+			                 : illinois_root(nct_f, &c, a, b, 1e-12);
+		a = b; fa = fb; step *= 2.0;
+	}
+	return NV_NAN;
 }
 
 typedef struct {
@@ -13973,11 +14032,19 @@ static bool lm_same_term(pTHX_ const char *restrict a, const char *restrict b) {
 	return same;
 }
 
+/*Does name label a column of the data?  The columns '.' expands to: a HoA's
+keys, or the first row's keys when the rows are hashes.*/
+static bool lm_names_column(pTHX_ HV *data_hoa, HV **row_hashes, size_t n, const char *name) {
+	HV *src = data_hoa ? data_hoa
+	        : (row_hashes && n > 0 && row_hashes[0]) ? row_hashes[0] : NULL;
+	return src ? cBOOL(hv_exists(src, name, (I32)strlen(name))) : FALSE;
+}
+
 /*Stage two: turn the cleaned right-hand side into the term list the design
 matrix is built from. '.' expands to every column except the response and any
-row-name column; `a*b` expands to its main effects and interactions; repeated
-terms -- a:b and b:a included, see lm_same_term() -- are dropped, as R's
-formula parser drops them.
+row-name column; `a*b` expands to its main effects and interactions; `- b`
+removes b's terms; repeated terms -- a:b and b:a included, see lm_same_term()
+-- are dropped, as R's formula parser drops them.
 
 Needs the data, hence the split from lm_formula_split(): '.' cannot be
 expanded until the columns are known. rhs is consumed in place (lm_tok).
@@ -13985,16 +14052,44 @@ expanded until the columns are known. rhs is consumed in place (lm_tok).
 caller frees the strings and then the arrays.*/
 static void lm_formula_terms(pTHX_ char *rhs, const char *lhs,
    HV *data_hoa, HV **row_hashes, size_t n, bool has_intercept, const char *fname, char ***terms_out, unsigned *num_terms_out, char ***uniq_out, unsigned *num_uniq_out) {
-	char **terms = NULL, **uniq_terms = NULL;
-	unsigned term_cap = 64, num_terms = 0, num_uniq = 0, i, j;
-	char *rhs_expanded = NULL, *chunk, *cursor;
-	size_t rhs_len = 0, rhs_cap = 1;
+	char **terms = NULL, **uniq_terms = NULL, **gone = NULL;
+	unsigned term_cap = 64, gone_cap = 16, num_terms = 0, num_uniq = 0, num_gone = 0;	//the caps are starting sizes: lm_expand_cross() grows both lists
+	char *rhs_expanded = NULL, *rhs_removed = NULL, *chunk, *cursor;
+	size_t rhs_len = 0, rhs_cap = 1, rm_len = 0, rm_cap = 1;
 
 	Newxz(rhs_expanded, 1, char);
+	Newxz(rhs_removed, 1, char);
 	cursor = rhs; //lm_tok(), not strtok(): see lm_tok()
 	chunk = lm_tok(&cursor, '+');
 	while (chunk != NULL) {
-		if (strcmp(chunk, ".") == 0) {
+	/*R's term removal: `a - b` keeps a and takes b's terms out once everything
+	is expanded, so `y ~ x1*x2 - x1:x2` is y ~ x1 + x2 and `y ~ . - x3` is
+	every column but x3.  Through 0.3217 the chunk "x2-x3" was looked up as one
+	column, every row came back missing, and the fit died with "0 degrees of
+	freedom".  Only a '-' outside parentheses is the operator.  A chunk that is
+	itself the name of a column is still that column: `y ~ a-b` fitted a column
+	named a-b before '-' meant anything here, and R would need backticks to
+	say that at all.*/
+		if (strchr(chunk, '-') && !lm_names_column(aTHX_ data_hoa, row_hashes, n, chunk)) {
+			char *part = chunk;   //the segment being scanned: chunk's own term, then each one removed
+			bool head = TRUE;
+			int depth = 0;
+			for (char *q = chunk; ; q++) {
+				if (*q == '(') depth++;
+				else if (*q == ')') depth--;
+				else if (*q == '\0' || (*q == '-' && depth == 0)) {
+					const bool end = (*q == '\0');
+					*q = '\0';
+					if (head) head = FALSE;   //chunk now ends here and is what is kept
+					else if (*part) lm_append(aTHX_ &rhs_removed, &rm_len, &rm_cap, part);
+					if (end) break;
+					part = q + 1;
+				}
+			}
+		}
+		if (*chunk == '\0') {
+			; //a leading "-b": nothing kept
+		} else if (strcmp(chunk, ".") == 0) {
 			AV *cols = get_all_columns(aTHX_ data_hoa, row_hashes, n);
 			for (SSize_t c = 0; c <= av_len(cols); c++) {
 				SV **col_sv = av_fetch(cols, c, 0);
@@ -14012,7 +14107,7 @@ static void lm_formula_terms(pTHX_ char *rhs, const char *lhs,
 		chunk = lm_tok(&cursor, '+');
 	}
 
-	Newx(terms, term_cap, char*); Newx(uniq_terms, term_cap, char*);
+	Newx(terms, term_cap, char*);
 	if (has_intercept) terms[num_terms++] = savepv("Intercept");
 
 	if (rhs_len > 0) {
@@ -14021,20 +14116,40 @@ static void lm_formula_terms(pTHX_ char *rhs, const char *lhs,
 		while (chunk != NULL) {
 			if (num_terms >= term_cap - 3) {
 				term_cap *= 2;
-				Renew(terms, term_cap, char*); Renew(uniq_terms, term_cap, char*);
+				Renew(terms, term_cap, char*);
 			}
 			lm_expand_cross(aTHX_ chunk, fname, &terms, &num_terms, &term_cap);
 			chunk = lm_tok(&cursor, '+');
 		}
 	}
 	Safefree(rhs_expanded);
+	//the removed terms, crossed the same way: `- x1*x2` takes out x1, x2 and x1:x2
+	Newx(gone, gone_cap, char*);
+	if (rm_len > 0) {
+		cursor = rhs_removed;
+		chunk = lm_tok(&cursor, '+');
+		while (chunk != NULL) {
+			lm_expand_cross(aTHX_ chunk, fname, &gone, &num_gone, &gone_cap);
+			chunk = lm_tok(&cursor, '+');
+		}
+	}
+	Safefree(rhs_removed);
 
-	for (i = 0; i < num_terms; i++) {
+	/*Sized now that the count is known.  It used to be allocated beside terms
+	at 64 and grown with it in the loop above, but lm_expand_cross() grows
+	terms by itself, so a cross of seven or more variables -- y ~ a*b*c*d*e*f*g
+	has 128 terms -- wrote past the end of it.*/
+	Newx(uniq_terms, num_terms ? num_terms : 1, char*);
+	for (unsigned i = 0; i < num_terms; i++) {
 		bool found = 0;
-		for (j = 0; j < num_uniq; j++)
-			if (lm_same_term(aTHX_ terms[i], uniq_terms[j])) { found = 1; break; }
+		for (unsigned j = 0; j < num_gone && !found; j++)
+			if (lm_same_term(aTHX_ terms[i], gone[j])) found = 1;
+		for (unsigned j = 0; j < num_uniq && !found; j++)
+			if (lm_same_term(aTHX_ terms[i], uniq_terms[j])) found = 1;
 		if (!found) uniq_terms[num_uniq++] = savepv(terms[i]);
 	}
+	for (unsigned j = 0; j < num_gone; j++) Safefree(gone[j]);
+	Safefree(gone);
 
 	*terms_out    = terms;      *num_terms_out = num_terms;
 	*uniq_out     = uniq_terms; *num_uniq_out  = num_uniq;
@@ -37581,6 +37696,139 @@ NV _pgamma_lower(a, x)
 	NV x
 CODE:
 	RETVAL = igam(a, x);
+OUTPUT:
+	RETVAL
+
+ # The two noncentrality limits behind cohen_d()'s default interval, lower
+ # then upper, for a t statistic on df degrees of freedom; see nct_limit().
+ # Private, like _igamc: cohen_d() validates conf_level before calling it.
+void
+_nct_ncp_ci(t, df, conf_level)
+	NV t
+	NV df
+	NV conf_level
+PPCODE:
+	const NV half_alpha = (1.0 - conf_level) / 2.0;
+	EXTEND(SP, 2);
+	mPUSHn(nct_limit(t, df, half_alpha, TRUE));
+	mPUSHn(nct_limit(t, df, half_alpha, FALSE));
+
+ # vif()'s view of a formula: the design lm() builds from it, reduced to what
+ # car::vif() reads off a fitted model.  The hash it returns holds
+ #   names        the design's columns, less the intercept
+ #   assign       for each of those, the 1-based index of its term in
+ #                term_labels: R's lm()$assign without the intercept's 0
+ #   term_labels  R's attr(terms(fit), "term.labels")
+ #   order        each term's number of variables, 0 for a term that has no
+ #                columns (a factor with one level)
+ #   intercept    1 when the design has an intercept column
+ #   aliased      the names of the columns lm() would report as NaN
+ #   cross        the columns' cross-products, row-major: centred on the
+ #                column means when there is an intercept, raw when not
+ #   n            the number of complete rows they were taken over
+ # A response, when the formula has one, only decides which rows are
+ # complete, as it does in lm().  Private; see vif() in LikeR.pm.
+SV *
+_vif_design(data_sv, formula)
+	SV *data_sv
+	const char *formula
+CODE:
+{
+	MfRows R;
+	MfPart P;
+	HV *xlev = (HV *)sv_2mortal((SV *)newHV());
+	mf_rows(aTHX_ "vif", data_sv, &R);
+	mf_part(aTHX_ "vif", formula, &R, FALSE, xlev, &P);
+	if (P.noff) croak("vif: offset() is not supported");
+	const LmDesign *ds = P.design;   //not restrict: mf_row() writes its raw[] scratch through P.design
+	const size_t pc = ds->ncol;                                    //every column, the intercept's included
+	const size_t c0 = (pc > 0 && ds->col[0].ncomp == 0) ? 1 : 0;  //1 when column 0 is the intercept
+	const size_t q  = pc - c0;
+	const bool has_lhs = P.lhs && *P.lhs;
+	/*Through 0.3217 vif() ignored the response, so a formula naming one the
+	data does not have worked, and t/vif_hoslem.t passed it one.  lm() cannot
+	fit that formula, nor car::vif() be asked about it, and every row would
+	now count as incomplete; say which name is missing instead.  Only a bare
+	name is checked: an expression's columns are evaluate_term()'s business.*/
+	if (has_lhs && !strchr(P.lhs, '(') && !strchr(P.lhs, ':')
+	    && !lm_names_column(aTHX_ R.data_hoa, R.row_hashes, R.n, P.lhs))
+		croak("vif: the response '%s' is not a column of the data; leave it out, "
+		      "as in '~ x1 + x2', to use every row the predictors have", P.lhs);
+	NV *restrict raw, *restrict cross, *restrict mean, *restrict dev, *restrict x;
+	bool *restrict aliased;
+	Newxz(raw, pc ? pc * pc : 1, NV);  SAVEFREEPV(raw);
+	Newxz(cross, q ? q * q : 1, NV);   SAVEFREEPV(cross);
+	Newxz(mean, q ? q : 1, NV);        SAVEFREEPV(mean);
+	Newx(dev, q ? q : 1, NV);          SAVEFREEPV(dev);
+	Newx(x, pc ? pc : 1, NV);          SAVEFREEPV(x);
+	Newx(aliased, pc ? pc : 1, bool);  SAVEFREEPV(aliased);
+	size_t used = 0;
+	for (size_t i = 0; i < R.n; i++) {
+		if (has_lhs) {
+			const NV y = evaluate_term(aTHX_ R.data_hoa, R.row_hashes, (unsigned)i, P.lhs);
+			if (nv_isnan(y)) continue;
+			//lm() refuses such a row rather than fitting it, and so does vif()
+			if (!nv_isfinite(y)) croak("vif: NA/NaN/Inf in 'y' (row '%s')", R.row_names[i]);
+		}
+		if (!mf_row(aTHX_ &P, &R, i, x, NULL)) continue;
+		for (size_t a = 0; a < pc; a++)
+			if (!nv_isfinite(x[a])) croak("vif: NA/NaN/Inf in 'x' (row '%s')", R.row_names[i]);
+		used++;
+		//the raw cross-products, upper triangle, for lm()'s own aliasing test below
+		for (size_t a = 0; a < pc; a++)
+			for (size_t b = a; b < pc; b++) raw[a * pc + b] += x[a] * x[b];
+	/*Co-moments about the running means (Welford), rather than the raw sums
+	less n * mean^2: a column far from zero relative to its spread, a year say,
+	would otherwise lose to cancellation the digits that a VIF is made of.*/
+		if (c0) {
+			for (size_t a = 0; a < q; a++) {
+				dev[a] = x[c0 + a] - mean[a];
+				mean[a] += dev[a] / (NV)used;
+			}
+			for (size_t a = 0; a < q; a++)
+				for (size_t b = a; b < q; b++) cross[a * q + b] += dev[a] * (x[c0 + b] - mean[b]);
+		}
+	}
+	if (used < 2) croak("vif: fewer than two complete rows");
+	for (size_t a = 0; a < pc; a++)
+		for (size_t b = 0; b < a; b++) raw[a * pc + b] = raw[b * pc + a];
+	if (c0) {
+		for (size_t a = 0; a < q; a++)
+			for (size_t b = 0; b < a; b++) cross[a * q + b] = cross[b * q + a];
+	} else if (q) {
+		memcpy(cross, raw, q * q * sizeof(NV));
+	}
+	{
+		HV *res = newHV();
+		AV *names = newAV(), *assign = newAV(), *labels = newAV(), *order = newAV(),
+		   *al = newAV(), *cr = newAV();
+		(void)sweep_matrix_ols(raw, pc, aliased);   //raw is consumed: lm()'s test, on lm()'s matrix
+		for (size_t j = 0; j < q; j++) {
+			const LmCol *col = &ds->col[c0 + j];
+			av_push(names, newSVpv(col->name, 0));
+			av_push(assign, newSVuv((UV)col->term + 1));
+			if (aliased[c0 + j]) av_push(al, newSVpv(col->name, 0));
+		}
+		for (unsigned t = 0; t < ds->nterm; t++) {
+			UV ord = 0;   //0 = the term has no column
+			for (size_t j = c0; j < pc; j++)
+				if (ds->col[j].term == t) { ord = (UV)ds->col[j].ncomp; break; }
+			av_push(labels, newSVpv(ds->term[t], 0));
+			av_push(order, newSVuv(ord));
+		}
+		av_extend(cr, q > 0 ? (SSize_t)(q * q) - 1 : 0);
+		for (size_t k = 0; k < q * q; k++) av_push(cr, newSVnv(cross[k]));
+		(void)hv_stores(res, "names",       newRV_noinc((SV *)names));
+		(void)hv_stores(res, "assign",      newRV_noinc((SV *)assign));
+		(void)hv_stores(res, "term_labels", newRV_noinc((SV *)labels));
+		(void)hv_stores(res, "order",       newRV_noinc((SV *)order));
+		(void)hv_stores(res, "aliased",     newRV_noinc((SV *)al));
+		(void)hv_stores(res, "cross",       newRV_noinc((SV *)cr));
+		(void)hv_stores(res, "intercept",   newSVuv(c0));
+		(void)hv_stores(res, "n",           newSVuv((UV)used));
+		RETVAL = newRV_noinc((SV *)res);
+	}
+}
 OUTPUT:
 	RETVAL
 

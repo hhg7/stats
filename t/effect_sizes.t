@@ -16,11 +16,12 @@ sub is_approx {
 
 # All reference values computed in base R.
 
-# cohen_d (pooled SD, Hedges g, normal-approx CI)
+# cohen_d (pooled SD, Hedges g, and the normal-approximation CI that was the
+# default through 0.3217; t/cohen_d.R.t holds the default noncentral-t one)
 {
 	my @x = (5,6,7,8,9,7,8);
 	my @y = (3,4,5,6,4,5,3);
-	my $d = cohen_d(\@x, \@y);
+	my $d = cohen_d(\@x, \@y, ci_method => 'normal');
 	is_approx($d->{estimate},   2.31455025, 'cohen d');
 	is_approx($d->{pooled_sd},  1.23442680, 'cohen pooled sd');
 	is_approx($d->{hedges_g},   2.16681300, 'hedges g');

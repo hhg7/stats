@@ -1892,15 +1892,28 @@ gives: when every stratum has zero variance the statistic and p\-value are
 .SS cohen_d
 .IX Subsection "cohen_d"
 Cohen\*(Aqs \fId\fR effect size for the difference between two independent groups, using
-the pooled standard deviation. It also returns the Hedges\*(Aq \fIg\fR small\-sample
-correction and a large\-sample (normal\-approximation) confidence interval.
-Validated numerically against R.
+the pooled standard deviation, with the Hedges\*(Aq \fIg\fR small\-sample correction and
+a confidence interval. Same as \f(CWeffectsize::cohens_d()\fR (effectsize 1.0.3), and
+validated against its tests and effsize 0.8.1\*(Aqs.
 .PP
 .Vb 3
 \& my $d = cohen_d(\e@treatment, \e@control);           # or conf_level => 0.90
 \& printf "d = %.2f (95%% CI %.2f–%.2f), Hedges g = %.2f\en",
 \&     $d\->{estimate}, $d\->{\*(Aqconf_int\*(Aq}[0], $d\->{\*(Aqconf_int\*(Aq}[1], $d\->{hedges_g};
 .Ve
+.PP
+The interval is the exact one under normality, \f(CW\*(C`effectsize\*(C'\fR\*(Aqs default: with
+\&\f(CW\*(C`t = d / sqrt(1/n1 + 1/n2)\*(C'\fR on \f(CW\*(C`n1 + n2 \- 2\*(C'\fR degrees of freedom, the limits of
+the noncentral \fIt\fR\*(Aqs noncentrality parameter that put \f(CW\*(C`t\*(C'\fR at its two
+\&\f(CW\*(C`(1 \- conf_level)/2\*(C'\fR points, each scaled back by \f(CW\*(C`sqrt(1/n1 + 1/n2)\*(C'\fR.
+\&\f(CW\*(C`ci_method => \*(Aqnormal\*(Aq\*(C'\fR gives the large\-sample interval \f(CW\*(C`d ± z se\*(C'\fR instead,
+which was the default up to 0.3217 and is a little narrow in small samples: on
+mtcars\*(Aq weight by transmission it is 1.048 to 2.737 where the exact interval is
+1.030 to 2.733.
+.PP
+Hedges\*(Aq \fIg\fR is \fId\fR times \f(CW\*(C`1 \- 3/(4 df \- 1)\*(C'\fR, the approximation \f(CW\*(C`effsize\*(C'\fR uses;
+\&\f(CW\*(C`effectsize\*(C'\fR uses the exact gamma\-function ratio, which differs from it by 4e\-5
+relative at 30 degrees of freedom and by 3e\-6 at 100.
 .PP
 Compare with "smd", which standardizes by the simple (unweighted) average
 of the group variances and is the convention for covariate\-balance tables.
@@ -5013,7 +5026,14 @@ cross\-classification.
 .PP
 If your data contains missing numbers (\f(CW\*(C`NA\*(C'\fR or \f(CW\*(C`undef\*(C'\fR), \f(CW\*(C`lm\*(C'\fR handles listwise deletion dynamically to ensure mathematical integrity before fitting. A row whose categorical value is missing is dropped the same way.
 .PP
-Three details differ from R deliberately:
+A term is removed with \f(CW\*(C`\-\*(C'\fR, as in R: \f(CW\*(C`y ~ x*z \- x:z\*(C'\fR fits \f(CW\*(C`y ~ x + z\*(C'\fR,
+\&\f(CW\*(C`y ~ . \- id\*(C'\fR fits every column but \f(CW\*(C`id\*(C'\fR (and the response), and \f(CW\*(C`\- x*z\*(C'\fR takes
+out \f(CW\*(C`x\*(C'\fR, \f(CW\*(C`z\*(C'\fR and \f(CW\*(C`x:z\*(C'\fR together. Removing a term the model does not have
+changes nothing. Only a \f(CW\*(C`\-\*(C'\fR outside parentheses removes, and a term that is
+itself the name of a column is that column, so a column named \f(CW\*(C`a\-b\*(C'\fR can still be
+written \f(CW\*(C`y ~ a\-b\*(C'\fR.
+.PP
+Four details differ from R deliberately:
 .IP \(bu 4
 Levels are sorted with \f(CW\*(C`strcmp\*(C'\fR, i.e. by byte value, which is what
 \&\f(CW\*(C`patsy\*(C'\fR/\f(CW\*(C`pandas\*(C'\fR does. R sorts with the collation of the running locale, so a
@@ -5029,6 +5049,12 @@ A term crossed with itself keeps the product, so \f(CW\*(C`wt:wt\*(C'\fR is \f(C
 A categorical column with only one level contributes no column, so
 \&\f(CW\*(C`y ~ x + g\*(C'\fR fits \f(CW\*(C`y ~ x\*(C'\fR. R refuses the model outright ("contrasts can be
 applied only to factors with 2 or more levels").
+.IP \(bu 4
+An interaction\*(Aqs variables are named in the order they first appear among
+the terms that remain after removals, where R orders them by the whole
+formula. So \f(CW\*(C`y ~ x*z*w \- x*z\*(C'\fR, whose first remaining term is \f(CW\*(C`w\*(C'\fR, names its
+interactions \f(CW\*(C`w:x\*(C'\fR, \f(CW\*(C`w:z\*(C'\fR and \f(CW\*(C`w:x:z\*(C'\fR where R has \f(CW\*(C`x:w\*(C'\fR, \f(CW\*(C`z:w\*(C'\fR and \f(CW\*(C`x:z:w\*(C'\fR.
+The fit is the same.
 .PP
 the dot operator also works:
 .PP
@@ -7627,12 +7653,18 @@ departure from it.
 .IX Subsection "smd"
 Standardized mean difference between two continuous groups, standardizing by the
 simple (unweighted) average of the group variances — the convention used for
-covariate\-balance diagnostics in "Table 1" (R\*(Aqs \f(CW\*(C`tableone\*(C'\fR / \f(CW\*(C`stddiff\*(C'\fR). Returns
-the signed value. Validated numerically against R.
+covariate\-balance diagnostics in "Table 1". It is \f(CW\*(C`tableone\*(C'\fR\*(Aqs continuous SMD
+(tableone 0.13.2, \f(CWStdDiff()\fR), validated against that package\*(Aqs tests, but
+signed: \f(CW\*(C`tableone\*(C'\fR reports the absolute value.
 .PP
 .Vb 1
 \& my $balance = smd(\e@exposed_age, \e@unexposed_age);   # |smd| < 0.1 is well balanced
 .Ve
+.PP
+A column that is one constant in both groups has an SMD of 0, which is how
+\&\f(CW\*(C`tableone\*(C'\fR defines the 0/0, and a column that is constant within each group but
+differs between them is \f(CW\*(C`±Inf\*(C'\fR. Values that are \f(CW\*(C`undef\*(C'\fR or not numbers are
+dropped; each group needs two that are left.
 .PP
 Unlike "cohen_d" (which pools by sample size), \f(CW\*(C`smd\*(C'\fR weights the two
 group variances equally, so the two diverge when the groups differ in size.
@@ -8432,21 +8464,52 @@ structure types, \f(CW\*(C`n\*(C'\fR boundaries, alignment, \f(CW\*(C`NA\*(C'\fR
 .SS vif
 .IX Subsection "vif"
 Variance inflation factors, the standard multicollinearity diagnostic for a
-regression model. For each predictor, \f(CW\*(C`vif\*(C'\fR regresses it on all the other
-predictors and reports \f(CW\*(C`1 / (1 \- R²)\*(C'\fR; values above ~5–10 flag problematic
-collinearity. The second argument is either a formula string (its right\-hand\-side
-terms are used) or an array reference of predictor column names. Validated
-numerically against R. Numeric predictors only — categorical predictors would
-need a generalized VIF.
+regression model; values above ~5–10 flag problematic collinearity. Same as
+\&\f(CWcar::vif()\fR (car 3.1\-5) at its default \f(CW\*(C`type = "terms"\*(C'\fR, and validated against
+it.
 .PP
 .Vb 4
-\& my $v = vif(\e%data, [qw(age bmi sbp chol)]);        # or \*(Aqy ~ age + bmi + sbp + chol\*(Aq
+\& my $v = vif(\e%data, \*(Aqsbp ~ age + bmi + chol\*(Aq);      # or [qw(age bmi chol)]
 \& for my $p (sort { $v\->{$b} <=> $v\->{$a} } keys %$v) {
 \&     printf "%\-6s VIF = %.2f\en", $p, $v\->{$p};
 \& }
 .Ve
 .PP
-Returns a hash of \f(CW\*(C`predictor => VIF\*(C'\fR.
+The second argument is a formula, read exactly as "lm" reads it, or an
+array reference of column names, which is the formula \f(CW\*(C`~ age + bmi + chol\*(C'\fR. A
+formula\*(Aqs response is not needed, since a VIF depends only on the predictors,
+but when there is one it takes out the rows where it is missing, as it does
+from the model \f(CWcar::vif()\fR is given. So interactions, removed terms, \f(CW\*(C`.\*(C'\fR and
+factors are all understood:
+.PP
+.Vb 3
+\& vif(\e%data, \*(Aqsbp ~ age * bmi + chol\*(Aq);      # terms age, bmi, chol, age:bmi
+\& vif(\e%data, \*(Aqsbp ~ . \- id\*(Aq);
+\& vif(\e%data, [qw(age bmi smoking)]);         # smoking is a factor: a GVIF table
+.Ve
+.PP
+For each term, with \f(CW\*(C`C\*(C'\fR the correlation matrix of the design\*(Aqs columns less the
+intercept and \f(CW\*(C`S\*(C'\fR the term\*(Aqs own columns,
+.PP
+.Vb 1
+\& GVIF = det(C[S, S]) * det(C[\-S, \-S]) / det(C)
+.Ve
+.PP
+which for a term with one column is the familiar \f(CW\*(C`1 / (1 \- R²)\*(C'\fR from
+regressing that column on all the others. This is Fox and Monette\*(Aqs
+generalized VIF, the quantity \f(CWcar::vif()\fR computes.
+.PP
+When every term has one column, as numeric main effects and their products do,
+the result is a hash of \f(CW\*(C`term => VIF\*(C'\fR. When any term has more, as a factor with
+three or more levels does, each term maps to a hash instead, as \f(CWcar::vif()\fR\*(Aqs
+result becomes a table:
+.PP
+As in \f(CWcar::vif()\fR, a model with an interaction warns that "there are
+higher\-order terms (interactions) in this model" (car\*(Aqs \f(CW\*(C`type = "predictor"\*(C'\fR is
+not implemented), a model with no intercept warns "No intercept: vifs may not be
+sensible.", and a model with fewer than two terms, or with an aliased column,
+is an error. A formula whose response is a name the data do not have is an
+error too.
 .SS wilcox_test
 .IX Subsection "wilcox_test"
 .Vb 4

@@ -5733,17 +5733,33 @@ sub _num_pair {
 	return (\@xn, \@yn);
 }
 
-# cohen_d(\@x, \@y, conf_level => 0.95)
+# cohen_d(\@x, \@y, conf_level => 0.95, ci_method => 'nct')
 #
 # Cohen's d for two independent samples using the pooled standard deviation,
-# with the Hedges' g small-sample bias correction and a large-sample
-# (normal-approximation) confidence interval.
+# with the Hedges' g small-sample bias correction.
+#
+# The interval is effectsize 1.0.3's cohens_d() interval by default
+# (R/cohens_d.R): t = d / sqrt(1/n1 + 1/n2) on n1 + n2 - 2 df, the limits of
+# its noncentrality parameter (_nct_ncp_ci(), in the XS), each scaled back by
+# sqrt(1/n1 + 1/n2).  Up to 0.3217 it was d +- z * se, which effectsize's own
+# test of mtcars wt ~ am puts at 1.048 to 2.737 for its 1.030 to 2.732; that
+# interval is still there as ci_method => 'normal'.  se is Hedges and Olkin's
+# large-sample standard error, which effsize 0.8.1's cohen.d() also reports
+# (as sqrt of var); the 'nct' interval does not use it.
+#
+# J is the approximation 1 - 3/(4 df - 1) that effsize 0.8.1 uses, written
+# with df = n1 + n2 - 2.  effectsize 1.0.3 uses the exact gamma ratio; the two
+# differ by 4e-5 relative at df = 30 and by 3e-6 at df = 100.
 sub cohen_d {
 	my ($x, $y, %opt) = @_;
-	my @bad = sort grep { $_ ne 'conf_level' } keys %opt;
+	my @bad = sort grep { $_ ne 'conf_level' && $_ ne 'ci_method' } keys %opt;
 	die "cohen_d: unknown argument(s): @bad\n" if @bad;
 	my $cl = defined $opt{conf_level} ? $opt{conf_level} : 0.95;
-	die "cohen_d: conf_level must be between 0 and 1\n" unless $cl > 0 && $cl < 1;
+	die "cohen_d: conf_level must be between 0 and 1\n"
+		unless looks_like_number($cl) && $cl > 0 && $cl < 1;
+	my $method = defined $opt{ci_method} ? $opt{ci_method} : 'nct';
+	die "cohen_d: ci_method must be 'nct' or 'normal'\n"
+		unless $method eq 'nct' || $method eq 'normal';
 	my ($xn, $yn) = _num_pair($x, $y, 'cohen_d');
 	my ($n1, $n2) = (scalar @$xn, scalar @$yn);
 	my ($m1, $m2) = (mean($xn), mean($yn));
@@ -5753,14 +5769,22 @@ sub cohen_d {
 	my $d  = ($m1 - $m2) / $sp;
 	my $J  = 1 - 3 / (4 * ($n1 + $n2) - 9); # Hedges' correction factor
 	my $se = sqrt(($n1 + $n2) / ($n1 * $n2) + $d * $d / (2 * ($n1 + $n2)));
-	my $z  = qnorm((1 + $cl) / 2);
+	my @ci;
+	if ($method eq 'nct') {
+		my $hn = sqrt(1 / $n1 + 1 / $n2);
+		@ci = map { $_ * $hn } _nct_ncp_ci($d / $hn, $n1 + $n2 - 2, $cl);
+	} else {
+		my $z = qnorm((1 + $cl) / 2);
+		@ci = ($d - $z * $se, $d + $z * $se);
+	}
 	return {
 		estimate     => $d,
 		hedges_g     => $d * $J,
 		pooled_sd    => $sp,
 		se           => $se,
-		'conf_int'   => [ $d - $z * $se, $d + $z * $se ],
+		'conf_int'   => \@ci,
 		'conf_level' => $cl,
+		ci_method    => $method,
 		n1           => $n1,
 		n2           => $n2,
 	};
@@ -5770,14 +5794,26 @@ sub cohen_d {
 #
 # Standardized mean difference for two continuous groups using the simple
 # (unweighted) average of the group variances in the denominator -- the
-# convention used for covariate-balance "Table 1" diagnostics (R's tableone /
-# stddiff).  Returns the signed value.
+# convention used for covariate-balance "Table 1" diagnostics.  It is
+# tableone 0.13.2's StdDiff() (R/modules-smd.R) for one pair of groups, signed
+# where StdDiff() returns abs().
+#
+# A zero denominator is answered as StdDiff() answers it.  A column that is
+# one constant in both groups is 0, which StdDiff() substitutes for 0/0 and
+# smd 0.8.0's tests also expect; a column constant within each group but not
+# between them is +-Inf, StdDiff()'s mean difference over sqrt(0).  Up to
+# 0.3217 both died with "pooled standard deviation is zero", which took a
+# balance table down over one constant covariate.
 sub smd {
 	my ($x, $y) = @_;
 	my ($xn, $yn) = _num_pair($x, $y, 'smd');
+	my $diff  = mean($xn) - mean($yn);
 	my $denom = sqrt((var($xn) + var($yn)) / 2);
-	die "smd: pooled standard deviation is zero\n" if $denom == 0;
-	return (mean($xn) - mean($yn)) / $denom;
+	if ($denom == 0) {
+		return 0 if $diff == 0;
+		return $diff > 0 ? 9**9**9 : -9**9**9;
+	}
+	return $diff / $denom;
 }
 
 # _xtab(\@a, \@b) -> (\@table, \@rowlevels, \@collevels): contingency table
@@ -5929,8 +5965,8 @@ sub eta_squared {
 # living here.  They are now XS (see LikeR.xs), so there is one implementation
 # instead of two that could disagree; _lgamma went away entirely because only
 # _igamc ever called it.  _qnorm went the same way in 0.303: it was Acklam's
-# rational approximation, good to about 1e-9, and cohen_d's interval is now
-# built from the XS qnorm() that every other confidence limit in the
+# rational approximation, good to about 1e-9, and cohen_d's normal interval
+# is now built from the XS qnorm() that every other confidence limit in the
 # distribution uses.
 
 # _quantile7(\@sorted_ascending, $p): R's default (type 7) sample quantile,
@@ -5947,37 +5983,133 @@ sub _quantile7 {
 	return (1 - $h) * $qs + $h * $s->[$lo];
 }
 
+# _chol(\@A) -> \@L: the lower Cholesky factor of a symmetric positive definite
+# matrix given as an array of rows, or undef when it is not positive definite.
+sub _chol {
+	my ($A) = @_;
+	my $n = @$A;
+	my @L = map { [ (0) x $n ] } 1 .. $n;
+	for my $j (0 .. $n - 1) {
+		my $s = $A->[$j][$j];
+		$s -= $L[$j][$_] ** 2 for 0 .. $j - 1;
+		return undef unless $s > 0;
+		my $d = sqrt $s;
+		$L[$j][$j] = $d;
+		for my $i ($j + 1 .. $n - 1) {
+			my $t = $A->[$i][$j];
+			$t -= $L[$i][$_] * $L[$j][$_] for 0 .. $j - 1;
+			$L[$i][$j] = $t / $d;
+		}
+	}
+	return \@L;
+}
+
+# _chol_det(\@A): the determinant of a symmetric positive definite matrix.
+sub _chol_det {
+	my $L = _chol($_[0]) or return 0;
+	my $det = 1;
+	$det *= $L->[$_][$_] ** 2 for 0 .. $#$L;
+	return $det;
+}
+
 # vif($data, $formula_or_predictors)
 #
-# Variance inflation factors for the numeric predictors of a linear model:
-# VIF_j = 1 / (1 - R^2_j), where R^2_j comes from regressing predictor j on all
-# the others.  The second argument is either a formula string (its right-hand
-# side terms are used) or an array reference of predictor column names.  Returns
-# a hash of predictor => VIF.  (Numeric predictors only; categorical predictors
-# would require a generalized VIF.)
+# Variance inflation factors, ported from car 3.1-5's vif.default()
+# (R/vif.R), which vif.lm() hands its default type = "terms" to:
+#
+#   R <- cov2cor(vcov(mod))[-1, -1]       # less the intercept
+#   GVIF_term = det(R[subs, subs]) * det(R[-subs, -subs]) / det(R)
+#
+# with subs the columns of one term, its result a plain VIF per term when
+# every term has 1 df and a GVIF, Df and GVIF^(1/(2*Df)) table when one has
+# more.  The design is the one lm() builds from the formula, read by the XS
+# _vif_design(); only its columns' correlation matters, so R here is the
+# correlation of the design columns rather than of the coefficients.  The two
+# give the same determinant ratio: by Jacobi's identity, det((C^-1)_SS) =
+# det(C_-S-S) / det(C), and the diagonal scaling of cov2cor() cancels.  So
+#
+#   GVIF_term = det(C[S, S]) * det(Cinv[S, S]),   C = cor(X), Cinv = C^-1
+#
+# which for a 1-df term is Cinv's diagonal, the classical 1 / (1 - R^2_j).
+# Without an intercept car uses the uncentred vcov, and C here is the
+# uncentred cross-product matrix scaled to a unit diagonal, by the same
+# identity.
+#
+# Through 0.3217 vif() split the formula's right-hand side on '+' and
+# regressed each piece on the others, so only additive numeric terms worked:
+# y ~ x1*x2 + x3, y ~ x1 + x2 - x3 and y ~ . all died, the first two with
+# lm()'s "0 degrees of freedom" and the last with "need at least two
+# predictors"; a factor was never handled; and a response's missing values
+# did not take its rows out, where car's model has none of them.
 sub vif {
 	my ($data, $spec) = @_;
 	die "vif: first argument must be a data reference\n" unless ref $data;
-	my @preds;
+	my $formula;
 	if (ref $spec eq 'ARRAY') {
-		@preds = @$spec;
-	} elsif (!ref $spec) {
-		my ($rhs) = $spec =~ /~\s*(.*)$/
-			or die "vif: expected a formula string or an array ref of predictors\n";
-		$rhs =~ s/\s+//g;
-		@preds = grep { length && $_ ne '1' && $_ ne '-1' } split /\+/, $rhs;
+		$formula = '~ ' . join(' + ', @$spec);
+	} elsif (defined $spec && !ref $spec && $spec =~ /~/) {
+		$formula = $spec;
 	} else {
 		die "vif: expected a formula string or an array ref of predictors\n";
 	}
-	die "vif: need at least two predictors\n" if @preds < 2;
-	my %out;
-	for my $p (@preds) {
-		my @others = grep { $_ ne $p } @preds;
-		my $m = lm(formula => "$p ~ " . join(' + ', @others), data => $data);
-		my $r2 = $m->{'r_squared'};
-		$out{$p} = ($r2 >= 1) ? 9**9**9 : 1 / (1 - $r2);
+	# the XS croaks from this line, so its messages would name a line of this
+	# file; vif()'s own messages carry no location, and neither do these
+	my $ds = eval { _vif_design($data, $formula) };
+	if (!$ds) {
+		(my $e = $@) =~ s/ at \S+ line \d+\.\n\z/\n/;
+		die $e;
 	}
-	return \%out;
+	die 'vif: there are aliased coefficients in the model (' . join(', ', @{ $ds->{aliased} }) . ")\n"
+		if @{ $ds->{aliased} };
+	# car counts the formula's terms; a factor with one level has no column
+	# here, and lm() leaves it out of the fit, so it is not one of them
+	my @terms = grep { $ds->{order}[$_] } 0 .. $#{ $ds->{term_labels} };
+	die "vif: model contains fewer than 2 terms\n" if @terms < 2;
+	warn "vif: No intercept: vifs may not be sensible.\n" unless $ds->{intercept};
+	warn "vif: there are higher-order terms (interactions) in this model\n"
+		if grep { $ds->{order}[$_] > 1 } @terms;
+	my $q = @{ $ds->{names} };
+	my $x = $ds->{cross};
+	my @sd = map { sqrt $x->[$_ * $q + $_] } 0 .. $q - 1;
+	my @C;
+	for my $i (0 .. $q - 1) {
+		$C[$i][$_] = $x->[$i * $q + $_] / ($sd[$i] * $sd[$_]) for 0 .. $q - 1;
+	}
+	my $L = _chol(\@C) or die "vif: there are aliased coefficients in the model\n";
+	# Cinv = L'^-1 L^-1, from M = L^-1
+	my @M = map { [ (0) x $q ] } 1 .. $q;
+	for my $j (0 .. $q - 1) {
+		$M[$j][$j] = 1 / $L->[$j][$j];
+		for my $i ($j + 1 .. $q - 1) {
+			my $s = 0;
+			$s += $L->[$i][$_] * $M[$_][$j] for $j .. $i - 1;
+			$M[$i][$j] = -$s / $L->[$i][$i];
+		}
+	}
+	my @Cinv;
+	for my $i (0 .. $q - 1) {
+		for my $j ($i .. $q - 1) {
+			my $s = 0;
+			$s += $M[$_][$i] * $M[$_][$j] for $j .. $q - 1;
+			$Cinv[$i][$j] = $Cinv[$j][$i] = $s;
+		}
+	}
+	my (%gvif, %df);
+	for my $t (@terms) {
+		my @S = grep { $ds->{assign}[$_] == $t + 1 } 0 .. $q - 1;
+		my $label = $ds->{term_labels}[$t];
+		$df{$label} = @S;
+		$gvif{$label} = @S == 1
+			? $Cinv[ $S[0] ][ $S[0] ]
+			: _chol_det([ map { my $i = $_; [ @{ $C[$i] }[@S] ] } @S ])
+			* _chol_det([ map { my $i = $_; [ @{ $Cinv[$i] }[@S] ] } @S ]);
+	}
+	return \%gvif unless grep { $_ > 1 } values %df;
+	return { map { $_ => {
+		GVIF              => $gvif{$_},
+		Df                => $df{$_},
+		'GVIF^(1/(2*Df))' => $gvif{$_} ** (1 / (2 * $df{$_})),
+	} } keys %gvif };
 }
 
 # hosmer_lemeshow(\@observed, \@predicted, g => 10)
@@ -8906,13 +9038,56 @@ C<Inf>.
 =head2 cohen_d
 
 Cohen's I<d> effect size for the difference between two independent groups, using
-the pooled standard deviation. It also returns the Hedges' I<g> small-sample
-correction and a large-sample (normal-approximation) confidence interval.
-Validated numerically against R.
+the pooled standard deviation, with the Hedges' I<g> small-sample correction and
+a confidence interval. Same as C<effectsize::cohens_d()> (effectsize 1.0.3), and
+validated against its tests and effsize 0.8.1's.
 
  my $d = cohen_d(\@treatment, \@control);           # or conf_level => 0.90
  printf "d = %.2f (95%% CI %.2f–%.2f), Hedges g = %.2f\n",
      $d->{estimate}, $d->{'conf_int'}[0], $d->{'conf_int'}[1], $d->{hedges_g};
+
+The interval is the exact one under normality, C<effectsize>'s default: with
+C<t = d / sqrt(1/n1 + 1/n2)> on C<n1 + n2 - 2> degrees of freedom, the limits of
+the noncentral I<t>'s noncentrality parameter that put C<t> at its two
+C<(1 - conf_level)/2> points, each scaled back by C<sqrt(1/n1 + 1/n2)>.
+C<< ci_method =E<gt> 'normal' >> gives the large-sample interval C<d ± z se> instead,
+which was the default up to 0.3217 and is a little narrow in small samples: on
+mtcars' weight by transmission it is 1.048 to 2.737 where the exact interval is
+1.030 to 2.733.
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>Option</th>
+  <th>Default</th>
+  <th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>conf_level</code></td>
+  <td><code>0.95</code></td>
+  <td>Confidence level of <code>conf_int</code>.</td>
+</tr>
+<tr>
+  <td><code>ci_method</code></td>
+  <td><code>'nct'</code></td>
+  <td><code>'nct'</code> for the noncentral-<i>t</i> interval, <code>'normal'</code> for <code>d ± z se</code>.</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+Hedges' I<g> is I<d> times C<1 - 3/(4 df - 1)>, the approximation C<effsize> uses;
+C<effectsize> uses the exact gamma-function ratio, which differs from it by 4e-5
+relative at 30 degrees of freedom and by 3e-6 at 100.
 
 Compare with L</"smd">, which standardizes by the simple (unweighted) average
 of the group variances and is the convention for covariate-balance tables.
@@ -8954,20 +9129,26 @@ of the group variances and is the convention for covariate-balance tables.
 <tr>
   <td><code>se</code></td>
   <td><code>Double</code></td>
-  <td>Approximate standard error of <i>d</i>.</td>
+  <td>Hedges and Olkin's large-sample standard error of <i>d</i>, which <code>effsize</code> also reports; only the <code>'normal'</code> interval uses it.</td>
   <td><code>0.6907</code></td>
 </tr>
 <tr>
   <td><code>conf_int</code></td>
   <td><code>ArrayRef</code></td>
-  <td><code>[lower, upper]</code> normal-approximation CI for <i>d</i>.</td>
-  <td><code>[0.96, 3.67]</code></td>
+  <td><code>[lower, upper]</code> confidence interval for <i>d</i>.</td>
+  <td><code>[0.90, 3.68]</code></td>
 </tr>
 <tr>
   <td><code>conf_level</code></td>
   <td><code>Double</code></td>
   <td>Confidence level used.</td>
   <td><code>0.95</code></td>
+</tr>
+<tr>
+  <td><code>ci_method</code></td>
+  <td><code>String</code></td>
+  <td><code>'nct'</code> or <code>'normal'</code>, the interval returned.</td>
+  <td><code>nct</code></td>
 </tr>
 <tr>
   <td><code>n1</code>, <code>n2</code></td>
@@ -11586,7 +11767,7 @@ errors are right as they stand.
   <td><code>formula</code></td>
   <td><code>String</code></td>
   <td><i>None (Required)</i></td>
-  <td>A symbolic description of the model to be fitted. Parsed by the same code as [<code>lm</code>](#lm)'s, so it takes the same operators: <code>+</code>, <code>:</code>, <code>*</code>, <code>^</code>, <code>.</code> for every remaining column, and <code>-1</code> / <code>+0</code> to remove the intercept. It may also hold <code>offset()</code> terms, and factors to absorb after a <code>|</code>.</td>
+  <td>A symbolic description of the model to be fitted. Parsed by the same code as [<code>lm</code>](#lm)'s, so it takes the same operators: <code>+</code>, <code>:</code>, <code>*</code>, <code>^</code>, <code>.</code> for every remaining column, <code>- b</code> to remove a term, and <code>-1</code> / <code>+0</code> to remove the intercept. It may also hold <code>offset()</code> terms, and factors to absorb after a <code>|</code>.</td>
   <td><code>'am ~ wt + hp'</code>, <code>'y ~ x - 1'</code>, <code>'y ~ .'</code></td>
 </tr>
 <tr>
@@ -13343,7 +13524,14 @@ cross-classification.
 
 If your data contains missing numbers (C<NA> or C<undef>), C<lm> handles listwise deletion dynamically to ensure mathematical integrity before fitting. A row whose categorical value is missing is dropped the same way.
 
-Three details differ from R deliberately:
+A term is removed with C<->, as in R: C<y ~ x*z - x:z> fits C<y ~ x + z>,
+C<y ~ . - id> fits every column but C<id> (and the response), and C<- x*z> takes
+out C<x>, C<z> and C<x:z> together. Removing a term the model does not have
+changes nothing. Only a C<-> outside parentheses removes, and a term that is
+itself the name of a column is that column, so a column named C<a-b> can still be
+written C<y ~ a-b>.
+
+Four details differ from R deliberately:
 
 =over
 
@@ -13361,6 +13549,12 @@ C<a>, making the same formula mean C<y ~ wt> there.
 =item * A categorical column with only one level contributes no column, so
 C<y ~ x + g> fits C<y ~ x>. R refuses the model outright ("contrasts can be
 applied only to factors with 2 or more levels").
+
+=item * An interaction's variables are named in the order they first appear among
+the terms that remain after removals, where R orders them by the whole
+formula. So C<y ~ x*z*w - x*z>, whose first remaining term is C<w>, names its
+interactions C<w:x>, C<w:z> and C<w:x:z> where R has C<x:w>, C<z:w> and C<x:z:w>.
+The fit is the same.
 
 =back
 
@@ -16790,10 +16984,16 @@ departure from it.
 
 Standardized mean difference between two continuous groups, standardizing by the
 simple (unweighted) average of the group variances — the convention used for
-covariate-balance diagnostics in "Table 1" (R's C<tableone> / C<stddiff>). Returns
-the signed value. Validated numerically against R.
+covariate-balance diagnostics in "Table 1". It is C<tableone>'s continuous SMD
+(tableone 0.13.2, C<StdDiff()>), validated against that package's tests, but
+signed: C<tableone> reports the absolute value.
 
  my $balance = smd(\@exposed_age, \@unexposed_age);   # |smd| < 0.1 is well balanced
+
+A column that is one constant in both groups has an SMD of 0, which is how
+C<tableone> defines the 0/0, and a column that is constant within each group but
+differs between them is C<±Inf>. Values that are C<undef> or not numbers are
+dropped; each group needs two that are left.
 
 Unlike L</"cohen_d"> (which pools by sample size), C<smd> weights the two
 group variances equally, so the two diverge when the groups differ in size.
@@ -18081,19 +18281,77 @@ C<to> output paths, empty structures, and the error cases.
 =head2 vif
 
 Variance inflation factors, the standard multicollinearity diagnostic for a
-regression model. For each predictor, C<vif> regresses it on all the other
-predictors and reports C<1 / (1 - R²)>; values above ~5–10 flag problematic
-collinearity. The second argument is either a formula string (its right-hand-side
-terms are used) or an array reference of predictor column names. Validated
-numerically against R. Numeric predictors only — categorical predictors would
-need a generalized VIF.
+regression model; values above ~5–10 flag problematic collinearity. Same as
+C<car::vif()> (car 3.1-5) at its default C<type = "terms">, and validated against
+it.
 
- my $v = vif(\%data, [qw(age bmi sbp chol)]);        # or 'y ~ age + bmi + sbp + chol'
+ my $v = vif(\%data, 'sbp ~ age + bmi + chol');      # or [qw(age bmi chol)]
  for my $p (sort { $v->{$b} <=> $v->{$a} } keys %$v) {
      printf "%-6s VIF = %.2f\n", $p, $v->{$p};
  }
 
-Returns a hash of C<< predictor =E<gt> VIF >>.
+The second argument is a formula, read exactly as L</"lm"> reads it, or an
+array reference of column names, which is the formula C<~ age + bmi + chol>. A
+formula's response is not needed, since a VIF depends only on the predictors,
+but when there is one it takes out the rows where it is missing, as it does
+from the model C<car::vif()> is given. So interactions, removed terms, C<.> and
+factors are all understood:
+
+ vif(\%data, 'sbp ~ age * bmi + chol');      # terms age, bmi, chol, age:bmi
+ vif(\%data, 'sbp ~ . - id');
+ vif(\%data, [qw(age bmi smoking)]);         # smoking is a factor: a GVIF table
+
+For each term, with C<C> the correlation matrix of the design's columns less the
+intercept and C<S> the term's own columns,
+
+ GVIF = det(C[S, S]) * det(C[-S, -S]) / det(C)
+
+which for a term with one column is the familiar C<1 / (1 - R²)> from
+regressing that column on all the others. This is Fox and Monette's
+generalized VIF, the quantity C<car::vif()> computes.
+
+When every term has one column, as numeric main effects and their products do,
+the result is a hash of C<< term =E<gt> VIF >>. When any term has more, as a factor with
+three or more levels does, each term maps to a hash instead, as C<car::vif()>'s
+result becomes a table:
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>Key</th>
+  <th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>GVIF</code></td>
+  <td>The generalized VIF.</td>
+</tr>
+<tr>
+  <td><code>Df</code></td>
+  <td>The term's number of columns.</td>
+</tr>
+<tr>
+  <td><code>GVIF^(1/(2*Df))</code></td>
+  <td><code>GVIF</code> to the power <code>1/(2 Df)</code>, comparable across terms of different sizes.</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+As in C<car::vif()>, a model with an interaction warns that "there are
+higher-order terms (interactions) in this model" (car's C<type = "predictor"> is
+not implemented), a model with no intercept warns "No intercept: vifs may not be
+sensible.", and a model with fewer than two terms, or with an aliased column,
+is an error. A formula whose response is a name the data do not have is an
+error too.
 
 =head2 wilcox_test
 
