@@ -37587,13 +37587,6 @@ OUTPUT:
  # Upper-tail chi-square p-value P(X > stat) on df degrees of freedom.  df is
  # taken as an NV (not get_p_value's int) so a fractional df is not truncated,
  # matching what the Perl version computed as _igamc($df/2, $stat/2).
-NV _pchisq_upper(stat, df)
-	NV stat
-	NV df
-CODE:
-	RETVAL = (df <= 0.0 || stat <= 0.0) ? 1.0 : igamc(df / 2.0, stat / 2.0);
-OUTPUT:
-	RETVAL
 
  # density() -- R's stats::density.default(), kernel density estimation.  See
  # the block comment above the dens_* helpers for what each piece is a port of.
