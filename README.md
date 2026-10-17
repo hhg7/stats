@@ -589,7 +589,8 @@ row is ignored. R spells this `tibble::deframe()`; pandas spells it
 ### Arguments
 
 `$aoh` — an array ref of hash refs. Required. Every row has to be a hash ref
-carrying both named columns.
+carrying both named columns. A blessed array or row is fine, and so is a tied
+one.
 
 Everything after it is `name => value` pairs:
 
@@ -606,8 +607,14 @@ Everything after it is `name => value` pairs:
 A hash ref mapping each row's `var_name` cell to its `value_name` cell. An
 empty array ref gives back `{}`.
 
-Values are assigned across, so a value that is itself a reference is shared
-with the input rather than cloned — the same shallow copy `aoh2hoa` makes.
+A key is the string Perl makes of the key cell, so the number `2.50` becomes
+the key `2.5`. A key cell that holds a reference is an error, because its
+string is the reference's address. An object that overloads its operators is
+keyed by its string form, and a compiled pattern (`qr//`) by its pattern.
+
+Values are copied across, so a value that is itself a reference is shared with
+the input rather than cloned — the same shallow copy `aoh2hoa` makes. The input
+is not changed.
 
 ### Example
 
@@ -634,12 +641,13 @@ same way.
 ### Errors
 
 `aoh2h` dies when the first argument is undefined or not an array ref, when the
-options are not `name => value` pairs, when an option is unknown, when
-`var_name` equals `value_name`, when `duplicates` is not one of the three
-allowed words, when a row is not a hash ref, when a row is missing either named
-column, when a row's key cell is `undef`, or — under the default
-`duplicates => 'die'` — when two rows share a key. Every message names the
-offending row by index.
+options are not `name => value` pairs, when an option name is `undef` or
+unknown, when `var_name` equals `value_name`, when `duplicates` is not one of
+the three allowed words, when a row is not a hash ref, when a row is missing
+either named column, when a row's key cell is `undef` or a reference, or —
+under the default `duplicates => 'die'` — when two rows share a key. Every
+message about a row names it by index; for a shared key, that is the index of
+the first repeat.
 
 ### See also
 
@@ -3758,8 +3766,9 @@ An empty hash gives back `[]`. `undef` values are carried through as `undef`.
 ### Errors
 
 `h2aoh` dies when the argument is undefined or not a hash ref, when the options
-are not `name => value` pairs, when an option is unknown, when `var_name`
-equals `value_name`, or when `sort` is not one of the three allowed words.
+are not `name => value` pairs, when an option name is `undef` or unknown, when
+`var_name` equals `value_name`, or when `sort` is not one of the three allowed
+words.
 
 It also dies when any value is a **reference**, naming the key and pointing at
 the converter that was probably meant: a hash of array refs is
@@ -6104,6 +6113,16 @@ if the two differ in length, `read_table` warns, as R does, and uses
 `col_names`. With `header => 0`, a line starting with the comment marker is
 always a comment, even `#text` with no space after the marker, as in R; with a
 header, such a line can be a commented-out header, as described below.
+
+A row with more or fewer fields than the table has columns is an
+`Alignment error`, which names the row and says what its field count was
+compared with: `3 headers`, `3 'col_names'`, or, with `header => 0` and no
+`col_names`, `3 in data row 1`. When the header or data row 1 was a single
+field, with no separator in it, and the row has more, it adds that `sep` may be
+wrong. The default `sep` comes from the file's name, so a `;`-separated file
+named `.csv` or `.csv.gz` fails that way until it is told otherwise:
+
+    my $d = read_table('annotation.csv.gz', header => 0, sep => ';');
 
 `quote => ''` turns quoting off: a `"` is kept as ordinary text wherever it
 appears. By default a `"` anywhere in a field opens a quoted field that runs to

@@ -3,7 +3,7 @@
 require 5.010001;
 use strict;
 package Stats::LikeR;
-our $VERSION = '0.3217';	# quoted: a bare version ending in 0, such as 0.320, is the number 0.32, which the dist would be named
+our $VERSION = '0.3218';	# quoted: a bare version ending in 0, such as 0.320, is the number 0.32, which the dist would be named
 require XSLoader;
 use warnings FATAL => 'all';
 use Exporter 'import';
@@ -86,6 +86,7 @@ my %HELP_ALIAS = (
 	_hoa_assign       => 'assign',
 	col               => 'filter',
 	_rename_inplace   => 'rename_cols',
+	_aoh2h            => 'aoh2h',
 	_cols_select      => 'select_cols',
 	_cols_drop        => 'drop_cols',
 	_cols_rename      => 'rename_cols',
@@ -1105,12 +1106,25 @@ sub _kv_names {
 	return ($var, $value);
 }
 
+# _opt_names_defined($caller, @pairs) -- die, in the caller's name, on an undef
+# option name.  Without it `my %arg = @_` raises perl's own "Use of
+# uninitialized value", which the FATAL warnings above make fatal and which
+# names a line of this file rather than the option.  Up to 0.3217 that was what
+# h2aoh({}, undef, 1) and aoh2h([], undef, 1) died with.
+sub _opt_names_defined {
+	my $caller = shift;
+	for (my $j = 0; $j < @_; $j += 2) {
+		die "$caller: an option name is undefined\n" unless defined $_[$j];
+	}
+}
+
 sub h2aoh {
 	my $h = shift;
 	die "h2aoh: first argument is undefined\n" unless defined $h;
 	die "h2aoh: first argument must be a hashref\n" unless ref($h) eq 'HASH';
 	die "h2aoh: arguments after the hash must be name => value pairs\n"
 		if @_ % 2;
+	_opt_names_defined('h2aoh', @_);
 	my %arg   = @_;
 	my %known = ( var_name => 1, value_name => 1, sort => 1 );
 	my @bad   = sort grep { !$known{$_} } keys %arg;
@@ -1159,13 +1173,18 @@ sub h2aoh {
 	return [ map { { $var_name => $_, $value_name => $h->{$_} } } @keys ];
 }
 
+# The rows are read by the XSUB _aoh2h, which also makes every check on them;
+# only the options are read here.
 sub aoh2h {
 	my $aoh = shift;
 	die "aoh2h: first argument is undefined\n" unless defined $aoh;
+	# reftype, not ref: a blessed array of hashes is still one, as aoh2hoa
+	# already took it.  Up to 0.3217 a blessed frame or row was refused.
 	die "aoh2h: first argument must be an arrayref of hashrefs\n"
-		unless ref($aoh) eq 'ARRAY';
+		unless (reftype($aoh) || '') eq 'ARRAY';
 	die "aoh2h: arguments after the data frame must be name => value pairs\n"
 		if @_ % 2;
+	_opt_names_defined('aoh2h', @_);
 	my %arg   = @_;
 	my %known = ( var_name => 1, value_name => 1, duplicates => 1 );
 	my @bad   = sort grep { !$known{$_} } keys %arg;
@@ -1173,29 +1192,11 @@ sub aoh2h {
 
 	my ($var_name, $value_name) = _kv_names('aoh2h', \%arg);
 	my $dup = defined $arg{duplicates} ? lc $arg{duplicates} : 'die';
+	my %dup_code = ( die => 0, first => 1, last => 2 );	# _aoh2h's `dup`
 	die "aoh2h: duplicates '$dup' isn't allowed (die, first, last)\n"
-		unless $dup eq 'die' || $dup eq 'first' || $dup eq 'last';
+		unless exists $dup_code{$dup};
 
-	my %out;
-	my $i = 0;
-	for my $row (@$aoh) {
-		die "aoh2h: index $i is not a hashref\n" unless ref($row) eq 'HASH';
-		die "aoh2h: index $i has no '$var_name' column\n"
-			unless exists $row->{$var_name};
-		die "aoh2h: index $i has no '$value_name' column\n"
-			unless exists $row->{$value_name};
-		my $k = $row->{$var_name};
-		die "aoh2h: index $i has an undefined '$var_name'; a hash key has to "
-		  . "be defined\n" unless defined $k;
-		if (exists $out{$k}) {
-			die "aoh2h: duplicate key '$k' has >= 2 occurrences\n"
-				if $dup eq 'die';
-			if ($dup eq 'first') { $i++; next }
-		}
-		$out{$k} = $row->{$value_name};
-		$i++;
-	}
-	return \%out;
+	return _aoh2h($aoh, $var_name, $value_name, $dup_code{$dup});
 }
 # agg / concat / rbind  --  additions to lib/Stats/LikeR.pm
 # Splice these in after the dropna sub. Also add  agg concat rbind  to
@@ -3536,6 +3537,11 @@ sub read_table {
 	# hoh: rows whose name an earlier row already had, and the first of them as
 	# [name, data row]. Counted and warned about once, after the parse.
 	my ($n_dup_rn, $first_dup_rn) = (0, undef);
+	# The alignment message's parts, set by $finalize_header: what a ragged
+	# row's field count is compared with, and a note for a width of one whose
+	# line held no separator (undef when there is none). The parser's
+	# S_fast_row() gets both through the plan.
+	my ($width_txt, $sep_note);
 
 # Once the header is fixed there is nothing left for the row closure below to
 # decide, so the parser is given a plan and builds the rest of the table
@@ -3569,6 +3575,8 @@ sub read_table {
 		$plan->{idx}  = [ map { $last{$_} } @uniq_header ];
 		$plan->{ncol} = scalar @header;
 		$plan->{file} = $file;
+		$plan->{width}    = $width_txt;
+		$plan->{sep_note} = $sep_note;
 		$plan->{na}   = $has_na ? \%na_string : undef;
 		if (@cls) {
 			$plan->{cls} = [ @cls ];
@@ -3731,6 +3739,37 @@ sub read_table {
 		# nor the row loop below has to fetch them out of %data (and
 		# autovivify them) once per column per row.
 		@hoa_cols = map { $data{$_} ||= [] } @uniq_header if $otype eq 'hoa';
+		# What the alignment message compares a ragged row with. With
+		# header => 0 there is no header to count, and up to 0.3217 the message
+		# said "N headers" all the same, which read as though header => 0 had
+		# been ignored; it now says where the width came from.
+		my $w = @header;
+		$width_txt = $want_header ? "$w headers"
+		           : $col_names   ? "$w 'col_names'"
+		           :                "$w in data row 1";
+		# A width of one, read from the file, means that the line that set it
+		# held no separator, and a later row with more fields did: the shape of
+		# a file read with the wrong sep. A ';'-separated .csv read with the
+		# default ',' fails on the first row with a comma in its text. Not for
+		# an .xlsx, whose cells are not split, nor where 'col_names' set the
+		# width.
+		$sep_note = undef;
+		if ($w == 1 && !$is_xlsx && !$col_names) {
+			my $where = $want_header ? 'the header' : 'data row 1';
+			if ($sep_re) {
+				$sep_note = "$where has no match for the sep regex $sep_re, so "
+				  . "it may not be what separates this file's fields";
+			} else {
+				my $s = $args{sep} eq "\t" ? '\t' : $args{sep};
+				$sep_note = exists $input_args{sep}
+					? "$where has no '$s' in it, so '$s' may not be what "
+					  . "separates this file's fields"
+					: "$where has no '$s' in it, and '$s' is only the default "
+					  . "sep for this file's name: pass 'sep' if its fields are "
+					  . "separated by something else";
+			}
+			$sep_note = _as_bytes($sep_note);
+		}
 	};
 
 	# _parse_csv_file() treats a line whose comment marker is followed by
@@ -3913,10 +3952,12 @@ sub read_table {
 # --- DATA PROCESSING (operate on $line_ref directly; no row copy)
 		$data_row++;
 		if (@$line_ref != @header) {
-			# FIX: alignment errors now say WHICH row is ragged
-			die sprintf "Alignment error on %s data row %d (%d fields vs %d headers)%s.\n",
-				$file, $data_row, scalar @$line_ref, scalar @header,
-				defined $quote_note ? "; $quote_note" : '';
+			# FIX: alignment errors now say WHICH row is ragged. The words
+			# are S_fast_row()'s in LikeR.xs, and must stay the same.
+			die sprintf "Alignment error on %s data row %d (%d fields vs %s)%s%s.\n",
+				$file, $data_row, scalar @$line_ref, $width_txt,
+				defined $quote_note ? "; $quote_note" : '',
+				defined $sep_note && @$line_ref > @header ? "; $sep_note" : '';
 		}
 		my %line_hash;
 		for my $i (0 .. $#header) {
@@ -7269,7 +7310,8 @@ C<df.set_index('k')['v'].to_dict()>.
 =head3 Arguments
 
 C<$aoh> — an array ref of hash refs. Required. Every row has to be a hash ref
-carrying both named columns.
+carrying both named columns. A blessed array or row is fine, and so is a tied
+one.
 
 Everything after it is C<< name =E<gt> value >> pairs:
 
@@ -7315,8 +7357,14 @@ C<var_name> and C<value_name> must differ.
 A hash ref mapping each row's C<var_name> cell to its C<value_name> cell. An
 empty array ref gives back C<{}>.
 
-Values are assigned across, so a value that is itself a reference is shared
-with the input rather than cloned — the same shallow copy C<aoh2hoa> makes.
+A key is the string Perl makes of the key cell, so the number C<2.50> becomes
+the key C<2.5>. A key cell that holds a reference is an error, because its
+string is the reference's address. An object that overloads its operators is
+keyed by its string form, and a compiled pattern (C<qr//>) by its pattern.
+
+Values are copied across, so a value that is itself a reference is shared with
+the input rather than cloned — the same shallow copy C<aoh2hoa> makes. The input
+is not changed.
 
 =head3 Example
 
@@ -7343,12 +7391,13 @@ same way.
 =head3 Errors
 
 C<aoh2h> dies when the first argument is undefined or not an array ref, when the
-options are not C<< name =E<gt> value >> pairs, when an option is unknown, when
-C<var_name> equals C<value_name>, when C<duplicates> is not one of the three
-allowed words, when a row is not a hash ref, when a row is missing either named
-column, when a row's key cell is C<undef>, or — under the default
-C<< duplicates =E<gt> 'die' >> — when two rows share a key. Every message names the
-offending row by index.
+options are not C<< name =E<gt> value >> pairs, when an option name is C<undef> or
+unknown, when C<var_name> equals C<value_name>, when C<duplicates> is not one of
+the three allowed words, when a row is not a hash ref, when a row is missing
+either named column, when a row's key cell is C<undef> or a reference, or —
+under the default C<< duplicates =E<gt> 'die' >> — when two rows share a key. Every
+message about a row names it by index; for a shared key, that is the index of
+the first repeat.
 
 =head3 See also
 
@@ -11971,8 +12020,9 @@ An empty hash gives back C<[]>. C<undef> values are carried through as C<undef>.
 =head3 Errors
 
 C<h2aoh> dies when the argument is undefined or not a hash ref, when the options
-are not C<< name =E<gt> value >> pairs, when an option is unknown, when C<var_name>
-equals C<value_name>, or when C<sort> is not one of the three allowed words.
+are not C<< name =E<gt> value >> pairs, when an option name is C<undef> or unknown, when
+C<var_name> equals C<value_name>, or when C<sort> is not one of the three allowed
+words.
 
 It also dies when any value is a B<reference>, naming the key and pointing at
 the converter that was probably meant: a hash of array refs is
@@ -15545,6 +15595,16 @@ if the two differ in length, C<read_table> warns, as R does, and uses
 C<col_names>. With C<< header =E<gt> 0 >>, a line starting with the comment marker is
 always a comment, even C<#text> with no space after the marker, as in R; with a
 header, such a line can be a commented-out header, as described below.
+
+A row with more or fewer fields than the table has columns is an
+C<Alignment error>, which names the row and says what its field count was
+compared with: C<3 headers>, C<3 'col_names'>, or, with C<< header =E<gt> 0 >> and no
+C<col_names>, C<3 in data row 1>. When the header or data row 1 was a single
+field, with no separator in it, and the row has more, it adds that C<sep> may be
+wrong. The default C<sep> comes from the file's name, so a C<;>-separated file
+named C<.csv> or C<.csv.gz> fails that way until it is told otherwise:
+
+ my $d = read_table('annotation.csv.gz', header => 0, sep => ';');
 
 C<< quote =E<gt> '' >> turns quoting off: a C<"> is kept as ordinary text wherever it
 appears. By default a C<"> anywhere in a field opens a quoted field that runs to

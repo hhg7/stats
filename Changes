@@ -1,5 +1,94 @@
 Revision history for Stats-LikeR
 
+0.3218 2026-10-16 CDT (Claude Opus 5.5 helped)
+
+ [read_table()]
+
+ - An "Alignment error" now says what a ragged row's field count was
+   compared with. With header => 0 there is no header, but the message
+   still ended "(2 fields vs 1 headers)", which read as though header => 0
+   had been ignored. It now ends "(2 fields vs 1 in data row 1)", or "(2
+   fields vs 1 'col_names')" where col_names set the width. With a header
+   it is unchanged.
+
+ - When the header or data row 1 is a single field and a later row has
+   more, the message adds that the line has no separator in it, so sep may
+   be wrong, and, when sep was not passed, that ',' or a tab is only the
+   default for the file's name. A ';'-separated file named .csv.gz, read
+   with header => 0, failed on its first row with a comma in its text, and
+   nothing in the message pointed at the ',' that the name had chosen. The
+   note is not given for an .xlsx, or where col_names set the width.
+
+ [aoh2h() and h2aoh()]
+
+ - aoh2h() now dies on a key cell that holds a reference. It used the
+   reference's address as the key, so { variable => [1, 2], value => 1 }
+   came back as { 'ARRAY(0x611ec9f965f8)' => 1 }, a key nothing could
+   look up. h2aoh() already refused reference values for the same reason.
+   An object that overloads its operators is still a key, under its string
+   form, and is now stringified once per row instead of twice; so is a
+   qr//, under its pattern.
+
+ - aoh2h() takes a blessed array of rows, and blessed rows. It refused
+   both as "not a hashref", although aoh2hoa() takes them.
+
+ - aoh2h()'s duplicate-key message now names the row, as its other
+   messages about a row do and as the documentation said they all did:
+   "duplicate key 'a' has >= 2 occurrences, the first repeat at index 2".
+
+ - An undef option name, as in aoh2h($aoh, undef, 1) or h2aoh(\%h, undef,
+   1), now dies with "an option name is undefined". It died with perl's
+   "Use of uninitialized value within @_ in list assignment at
+   .../LikeR.pm line 1169", which named a line of the module rather than
+   the mistake.
+
+ [aoh2h(): speed and memory]
+
+ - aoh2h() is now XS. It runs 2.1 to 3.9 times as fast, and its result
+   takes 25% to 66% less memory, mostly because the keys are no longer
+   also stored in perl's shared string table: a frame's keys are its data,
+   and usually live in this one hash. A number is copied as a number, so
+   one that has been printed no longer brings its cached string along.
+   A tied frame sees the same EXISTS and FETCH calls, in the same order,
+   as before. The input is not changed.
+
+ - Each figure below is one cold call on perl 5.44.0, the median of 7
+   runs, on a frame of three columns; memory is the RSS the result adds.
+   The string values are numeric strings, which is what read_table()
+   gives, and the "printed" integers had been interpolated into a string
+   before the call. With 1000 distinct keys the result is under 1 MB
+   either way.
+
+ - | rows | keys | values | time, 0.3217 -> 0.3218 | faster |
+   |---|---|---|---|---|
+   | 1e6 | 1e6 | strings | 563 ms -> 272 ms | 2.1x |
+   | 1e6 | 1e6 | integers | 517 ms -> 201 ms | 2.6x |
+   | 1e6 | 1e6 | printed integers | 559 ms -> 208 ms | 2.7x |
+   | 1e6 | 1000 | strings, `duplicates => 'first'` | 215 ms -> 55 ms | 3.9x |
+   | 1e6 | 1000 | strings, `duplicates => 'last'` | 251 ms -> 69 ms | 3.6x |
+   | 1e5 | 1e5 | strings | 41.5 ms -> 16.3 ms | 2.5x |
+   | 1e5 | 1e5 | integers | 37.9 ms -> 11.2 ms | 3.4x |
+
+ - | rows | keys | values | memory, 0.3217 -> 0.3218 | change |
+   |---|---|---|---|---|
+   | 1e6 | 1e6 | strings | 130.0 MB -> 85.4 MB | -34% |
+   | 1e6 | 1e6 | integers | 114.7 MB -> 39.5 MB | -66% |
+   | 1e6 | 1e6 | printed integers | 114.6 MB -> 39.5 MB | -66% |
+   | 1e5 | 1e5 | strings | 12.4 MB -> 9.3 MB | -25% |
+   | 1e5 | 1e5 | integers | 10.9 MB -> 4.7 MB | -57% |
+
+ [Tests]
+
+ - t/read_table.alignment.t checks each wording from both the parser's
+   fast path and read_table's row closure, which must agree word for word.
+
+ - t/aoh2h.regressions.t: 18 of its 73 tests fail on 0.3217, those for the
+   four aoh2h() and h2aoh() fixes above and for the overloaded key it
+   stringified twice. The rest hold the XS version to what 0.3217 did:
+   the key perl makes of every kind of cell, input cells left untouched,
+   the order of a tied frame's EXISTS and FETCH calls, and no leak on
+   return or on any croak.
+
 0.3217 2026-10-12 CDT (Claude Opus 5.5 helped)
 
  [cor()]

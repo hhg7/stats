@@ -10331,6 +10331,133 @@ PERL_STATIC_INLINE SV *flt_cell_copy(pTHX_ SV *s) {
 	return newSVsv(s ? s : &PL_sv_undef);
 }
 
+/*The fold behind aoh2h(), reached through the XSUB _aoh2h. aoh2h() has already
+checked the options: aoh is the frame's array, the two names are defined and
+differ, and dup is one of the three codes at its declaration.
+
+Up to 0.3217 this loop was Perl; Changes has the before and after for 0.3218.
+Three choices make the C version faster and smaller, and each is easy to undo
+by accident. Every figure below is one cold call on perl-5.44.0, 1e6 rows of
+three columns, the median of three runs, and the memory is the RSS the result
+adds:
+
+ - The result's keys are not shared (HvSHAREKEYS_off). perl normally keeps every
+hash key in its shared string table as well as in the hash, which pays when the
+same key is in many hashes, such as column names in the rows of a frame. Here
+the keys are the frame's data and usually live in this one hash, so the table's
+copy is pure cost. With sharing left on, distinct keys with string values took
+130.5 MB and 322 ms, against 85.5 MB and 274 ms without; with integer values,
+115.0 MB and 290 ms against 39.5 MB and 205 ms. perl 5.44.0's hv.h, above
+HvSHAREKEYS, says perl itself turns sharing off for a hash that is "getting
+large", so this is a state perl already handles.
+ - Under 'die' every kept row is a new key, so the hash is presized to the row
+count. Under 'first' and 'last' it is not: presizing 1e6 rows that hold 1000
+distinct keys gave a 16 MB bucket array for 1000 entries, where growing it
+gives 0.07 MB.
+ - A bare number is copied as one, by flt_cell_copy(), and not by newSVsv(). A
+number that has been printed or interpolated carries a cached string, which
+newSVsv() copies along with the larger body that holds it: such values took
+70.0 MB that way and take 39.5 MB now, where the Perl version took 114.6 MB.
+
+String values are copied rather than shared copy-on-write. Sharing measured
+another 30 MB less per 1e6 short strings, but it also marks the caller's cells
+copy-on-write, which the Perl version never did and which perl's sv.h says XS
+code may not be safe for (see flt_cell_copy()).
+
+A key cell is hashed as it stands only when it is a plain string. Anything else
+-- a number, an overloaded object, a tied cell -- is stringified into kbuf
+first. Hashing the cell itself would cache a string in the caller's number,
+growing every row of the input, and would run a tied cell's FETCH or an
+object's overloading a second time.
+
+A tied or restricted row asks exists() before it fetches, as the Perl version
+did. A tied hash's fetch never fails, so it cannot tell a missing column from an
+undef one, and a restricted hash croaks in perl's own words on a missing key.
+Such a row's value is fetched only once the row is known to be kept, so FETCH
+runs exactly where it used to. A plain row under 'die' copies its value before
+the repeat is found, so that one store serves as both the lookup and the write.
+Only a tied scalar in a plain row's value cell can see that: one FETCH more, in a
+call that then croaks.*/
+static SV *aoh2h_fold(pTHX_ AV *aoh, SV *var_name, SV *value_name,	// no restrict here or below: all perl-managed
+                      short dup) {	// dup: 0 = die, 1 = first, 2 = last
+	HV *out = newHV();
+	SV *rv = sv_2mortal(newRV_noinc((SV *)out));	//mortal first, so a croak below frees the partial hash
+	STRLEN kl, vl;
+	const char *kp = SvPV_const(var_name, kl);
+	const char *vp = SvPV_const(value_name, vl);
+	/*shared-key copies of the two names, so each row lookup reuses their
+	hash; a negative length marks UTF-8, as newSVpvn_share() requires*/
+	SV *kname = sv_2mortal(newSVpvn_share(kp, SvUTF8(var_name) ? -(I32)kl : (I32)kl, 0));
+	SV *vname = sv_2mortal(newSVpvn_share(vp, SvUTF8(value_name) ? -(I32)vl : (I32)vl, 0));
+	SV *kbuf = sv_newmortal();	//a key cell that is not a plain string is stringified here, never in place
+	const SSize_t n = av_len(aoh) + 1;
+	HvSHAREKEYS_off(out);
+	if (dup == 0 && n > 1) hv_ksplit(out, (IV)n);
+	ENTER; SAVETMPS;
+	for (SSize_t i = 0; i < n; i++) {
+		FREETMPS;	//the placeholders a tied frame or row made for the row before
+		SV **rp = av_fetch(aoh, i, 0);
+		SV *r = rp ? *rp : NULL;	//a copy of the pointer: mg_get() may move the array's block, see av_slow_at()
+		if (r) SvGETMAGIC(r);
+		if (!(r && SvROK(r) && SvTYPE(SvRV(r)) == SVt_PVHV))
+			croak("aoh2h: index %" IVdf " is not a hashref\n", (IV)i);
+		HV *row = (HV *)SvRV(r);
+		const bool careful = SvRMAGICAL(row) || SvREADONLY(row);	//tied or restricted: see above
+		SV *k;
+		SV *v = NULL;	//stays NULL on a careful row until the row is known to be kept
+		if (careful) {
+			if (!hv_exists_ent(row, kname, 0))
+				croak("aoh2h: index %" IVdf " has no '%" SVf "' column\n", (IV)i, SVfARG(kname));
+			if (!hv_exists_ent(row, vname, 0))
+				croak("aoh2h: index %" IVdf " has no '%" SVf "' column\n", (IV)i, SVfARG(vname));
+			HE *ke = hv_fetch_ent(row, kname, 0, 0);
+			k = ke ? HeVAL(ke) : &PL_sv_undef;
+		} else {
+			HE *ke = hv_fetch_ent(row, kname, 0, 0);
+			if (!ke)
+				croak("aoh2h: index %" IVdf " has no '%" SVf "' column\n", (IV)i, SVfARG(kname));
+			HE *ve = hv_fetch_ent(row, vname, 0, 0);
+			if (!ve)
+				croak("aoh2h: index %" IVdf " has no '%" SVf "' column\n", (IV)i, SVfARG(vname));
+			k = HeVAL(ke);
+			v = HeVAL(ve);
+		}
+		SvGETMAGIC(k);
+		if (!SvOK(k))
+			croak("aoh2h: index %" IVdf " has an undefined '%" SVf "'; a hash key has to be defined\n",
+			      (IV)i, SVfARG(kname));
+		/*An object that overloads its operators stringifies to whatever its
+		class says, and a qr// to its pattern, both of which are keys; any
+		other reference stringifies to its address, which is not. SvRXOK is
+		asked for separately because a Regexp's stringification is perl's own,
+		not overloading, and whether SvAMAGIC is set for one differs by perl.*/
+		if (SvROK(k) && !SvAMAGIC(k) && !SvRXOK(k))
+			croak("aoh2h: index %" IVdf " has a reference in '%" SVf "' (%s); a hash key would be its address, not its contents\n",
+			      (IV)i, SVfARG(kname), sv_reftype(SvRV(k), TRUE));
+		if (SvGMAGICAL(k) || !SvPOK(k)) {
+			sv_setsv_nomg(kbuf, k);
+			(void)SvPV_force_nomg_nolen(kbuf);
+			k = kbuf;
+		}
+		if ((dup == 1 || (dup == 0 && careful)) && hv_exists_ent(out, k, 0)) {
+			if (dup == 1) continue;	//'first': the earlier row stands
+			croak("aoh2h: duplicate key '%" SVf "' has >= 2 occurrences, the first repeat at index %" IVdf "\n",
+			      SVfARG(k), (IV)i);
+		}
+		if (!v) {
+			HE *ve = hv_fetch_ent(row, vname, 0, 0);
+			v = ve ? HeVAL(ve) : &PL_sv_undef;
+		}
+		const size_t had = (size_t)HvUSEDKEYS(out);	//a store that adds no key replaced one
+		(void)hv_store_ent(out, k, flt_cell_copy(aTHX_ v), 0);
+		if (dup == 0 && (size_t)HvUSEDKEYS(out) == had)
+			croak("aoh2h: duplicate key '%" SVf "' has >= 2 occurrences, the first repeat at index %" IVdf "\n",
+			      SVfARG(k), (IV)i);
+	}
+	FREETMPS; LEAVE;
+	return SvREFCNT_inc(rv);
+}
+
 /*the row a closure predicate sees, over a HoA frame
 A HoA has no row hashes, so one has to be built for the predicate.  Building
 a fresh one per row costs a hash, a hash entry and a scalar per column per
@@ -10954,6 +11081,12 @@ The plan's keys, all set by read_table's install_plan():
   rn     mode 2 only: the index into keys of the row_names column
   na     the na_strings set, or undef when there is none
   file   for the alignment message
+  width  for the alignment message too: what a ragged row's field count is
+         compared with, as "3 headers", "3 'col_names'" or "3 in data row 1"
+  sep_note
+         optional: the alignment message's note when the width is 1 and the
+         line that set it held no separator, given only for a row with more
+         fields than that; undef = none
   flt_fld, flt_sub
          optional, and given together: the filters, in the order read_table
          runs them, as each one's field (0 = the whole row, else the field's
@@ -10979,6 +11112,8 @@ typedef struct {
 	size_t  n_na;
 	AV     *row;	//_parse_csv_file()'s row buffer, owned; NULL for an .xlsx
 	const char *file;
+	const char *width;	//borrowed from the plan hash, as file is
+	const char *sep_note;	//likewise; NULL = none
 	size_t nout, ncol, rn;// rn mode 2 only
 	size_t row_n;	//data rows emitted so far, by both paths together
 	size_t n_dup;	//mode 2: rows whose name an earlier row already had
@@ -11083,6 +11218,11 @@ static void S_plan_init(pTHX_ csv_plan *restrict p, HV *restrict h){
 	p->ncol = (size_t)SvUV(S_plan_key(aTHX_ h, "ncol"));
 	p->mode = (short int)SvIV(S_plan_key(aTHX_ h, "mode"));
 	p->file = SvPV_nolen_const(S_plan_key(aTHX_ h, "file"));
+	p->width = SvPV_nolen_const(S_plan_key(aTHX_ h, "width"));
+	{
+		SV **e = hv_fetchs(h, "sep_note", 0);
+		p->sep_note = (e && *e && SvOK(*e)) ? SvPV_nolen_const(*e) : NULL;
+	}
 	{	/*a reference to read_table's $data_row, not a copy: it is read
 		here, which is after the callback has emitted any rows of its own*/
 		SV *rsv = S_plan_key(aTHX_ h, "row");
@@ -11599,13 +11739,14 @@ static void S_fast_row(pTHX_ csv_plan *restrict p, AV **restrict rowp){
 	const size_t w = (size_t)(AvFILLp(row) + 1);
 	SV **ary, *rn = NULL;	//mode 2: the row's name, still owned by the row
 	HV  *h  = NULL;
-	if (w != p->ncol) {
+	if (w != p->ncol) {	//word for word the die in read_table's own row closure
+		SV *msg = sv_2mortal(newSVpvf("Alignment error on %s data row %" UVuf " (%" UVuf " fields vs %s)",
+			p->file, (UV)(p->row_n + 1), (UV)w, p->width));
 		if (p->span_line)
-			croak("Alignment error on %s data row %" UVuf " (%" UVuf " fields vs %" UVuf " headers); %" SVf ".\n",
-			      p->file, (UV)(p->row_n + 1), (UV)w, (UV)p->ncol,
-			      SVfARG(S_quote_note(aTHX_ p->span_line, p->span_mid, p->span_to)));
-		croak("Alignment error on %s data row %" UVuf " (%" UVuf " fields vs %" UVuf " headers).\n",
-		      p->file, (UV)(p->row_n + 1), (UV)w, (UV)p->ncol);
+			sv_catpvf(msg, "; %" SVf, SVfARG(S_quote_note(aTHX_ p->span_line, p->span_mid, p->span_to)));
+		if (p->sep_note && w > p->ncol)
+			sv_catpvf(msg, "; %s", p->sep_note);
+		croak("%" SVf ".\n", SVfARG(msg));
 	}
 	p->row_n++;
 	if (p->nflt) {
@@ -20969,6 +21110,16 @@ SV *aoh2hoa(data)
 		}
 		RETVAL = newRV_noinc((SV *)out);
 	}
+	OUTPUT:
+		RETVAL
+
+SV *_aoh2h(data, var_name, value_name, dup)
+	SV *data
+	SV *var_name
+	SV *value_name
+	short dup
+	CODE:
+		RETVAL = aoh2h_fold(aTHX_ (AV *)SvRV(data), var_name, value_name, dup);
 	OUTPUT:
 		RETVAL
 

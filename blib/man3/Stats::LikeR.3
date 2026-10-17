@@ -58,7 +58,7 @@
 .\" ========================================================================
 .\"
 .IX Title "Stats::LikeR 3"
-.TH Stats::LikeR 3 2026-10-12 "perl v5.44.0" "User Contributed Perl Documentation"
+.TH Stats::LikeR 3 2026-10-17 "perl v5.44.0" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -687,7 +687,8 @@ row is ignored. R spells this \f(CWtibble::deframe()\fR; pandas spells it
 .IX Subsection "Arguments"
 .PP
 \&\f(CW$aoh\fR — an array ref of hash refs. Required. Every row has to be a hash ref
-carrying both named columns.
+carrying both named columns. A blessed array or row is fine, and so is a tied
+one.
 .PP
 Everything after it is \f(CW\*(C`name => value\*(C'\fR pairs:
 .PP
@@ -699,8 +700,14 @@ Everything after it is \f(CW\*(C`name => value\*(C'\fR pairs:
 A hash ref mapping each row\*(Aqs \f(CW\*(C`var_name\*(C'\fR cell to its \f(CW\*(C`value_name\*(C'\fR cell. An
 empty array ref gives back \f(CW\*(C`{}\*(C'\fR.
 .PP
-Values are assigned across, so a value that is itself a reference is shared
-with the input rather than cloned — the same shallow copy \f(CW\*(C`aoh2hoa\*(C'\fR makes.
+A key is the string Perl makes of the key cell, so the number \f(CW2.50\fR becomes
+the key \f(CW2.5\fR. A key cell that holds a reference is an error, because its
+string is the reference\*(Aqs address. An object that overloads its operators is
+keyed by its string form, and a compiled pattern (\f(CW\*(C`qr//\*(C'\fR) by its pattern.
+.PP
+Values are copied across, so a value that is itself a reference is shared with
+the input rather than cloned — the same shallow copy \f(CW\*(C`aoh2hoa\*(C'\fR makes. The input
+is not changed.
 .PP
 \fIExample\fR
 .IX Subsection "Example"
@@ -734,12 +741,13 @@ same way.
 .IX Subsection "Errors"
 .PP
 \&\f(CW\*(C`aoh2h\*(C'\fR dies when the first argument is undefined or not an array ref, when the
-options are not \f(CW\*(C`name => value\*(C'\fR pairs, when an option is unknown, when
-\&\f(CW\*(C`var_name\*(C'\fR equals \f(CW\*(C`value_name\*(C'\fR, when \f(CW\*(C`duplicates\*(C'\fR is not one of the three
-allowed words, when a row is not a hash ref, when a row is missing either named
-column, when a row\*(Aqs key cell is \f(CW\*(C`undef\*(C'\fR, or — under the default
-\&\f(CW\*(C`duplicates => \*(Aqdie\*(Aq\*(C'\fR — when two rows share a key. Every message names the
-offending row by index.
+options are not \f(CW\*(C`name => value\*(C'\fR pairs, when an option name is \f(CW\*(C`undef\*(C'\fR or
+unknown, when \f(CW\*(C`var_name\*(C'\fR equals \f(CW\*(C`value_name\*(C'\fR, when \f(CW\*(C`duplicates\*(C'\fR is not one of
+the three allowed words, when a row is not a hash ref, when a row is missing
+either named column, when a row\*(Aqs key cell is \f(CW\*(C`undef\*(C'\fR or a reference, or —
+under the default \f(CW\*(C`duplicates => \*(Aqdie\*(Aq\*(C'\fR — when two rows share a key. Every
+message about a row names it by index; for a shared key, that is the index of
+the first repeat.
 .PP
 \fISee also\fR
 .IX Subsection "See also"
@@ -4124,8 +4132,9 @@ An empty hash gives back \f(CW\*(C`[]\*(C'\fR. \f(CW\*(C`undef\*(C'\fR values ar
 .IX Subsection "Errors"
 .PP
 \&\f(CW\*(C`h2aoh\*(C'\fR dies when the argument is undefined or not a hash ref, when the options
-are not \f(CW\*(C`name => value\*(C'\fR pairs, when an option is unknown, when \f(CW\*(C`var_name\*(C'\fR
-equals \f(CW\*(C`value_name\*(C'\fR, or when \f(CW\*(C`sort\*(C'\fR is not one of the three allowed words.
+are not \f(CW\*(C`name => value\*(C'\fR pairs, when an option name is \f(CW\*(C`undef\*(C'\fR or unknown, when
+\&\f(CW\*(C`var_name\*(C'\fR equals \f(CW\*(C`value_name\*(C'\fR, or when \f(CW\*(C`sort\*(C'\fR is not one of the three allowed
+words.
 .PP
 It also dies when any value is a \fBreference\fR, naming the key and pointing at
 the converter that was probably meant: a hash of array refs is
@@ -6606,6 +6615,18 @@ if the two differ in length, \f(CW\*(C`read_table\*(C'\fR warns, as R does, and 
 \&\f(CW\*(C`col_names\*(C'\fR. With \f(CW\*(C`header => 0\*(C'\fR, a line starting with the comment marker is
 always a comment, even \f(CW\*(C`#text\*(C'\fR with no space after the marker, as in R; with a
 header, such a line can be a commented\-out header, as described below.
+.PP
+A row with more or fewer fields than the table has columns is an
+\&\f(CW\*(C`Alignment error\*(C'\fR, which names the row and says what its field count was
+compared with: \f(CW\*(C`3 headers\*(C'\fR, \f(CW\*(C`3 \*(Aqcol_names\*(Aq\*(C'\fR, or, with \f(CW\*(C`header => 0\*(C'\fR and no
+\&\f(CW\*(C`col_names\*(C'\fR, \f(CW\*(C`3 in data row 1\*(C'\fR. When the header or data row 1 was a single
+field, with no separator in it, and the row has more, it adds that \f(CW\*(C`sep\*(C'\fR may be
+wrong. The default \f(CW\*(C`sep\*(C'\fR comes from the file\*(Aqs name, so a \f(CW\*(C`;\*(C'\fR\-separated file
+named \f(CW\*(C`.csv\*(C'\fR or \f(CW\*(C`.csv.gz\*(C'\fR fails that way until it is told otherwise:
+.PP
+.Vb 1
+\& my $d = read_table(\*(Aqannotation.csv.gz\*(Aq, header => 0, sep => \*(Aq;\*(Aq);
+.Ve
 .PP
 \&\f(CW\*(C`quote => \*(Aq\*(Aq\*(C'\fR turns quoting off: a \f(CW\*(C`"\*(C'\fR is kept as ordinary text wherever it
 appears. By default a \f(CW\*(C`"\*(C'\fR anywhere in a field opens a quoted field that runs to
