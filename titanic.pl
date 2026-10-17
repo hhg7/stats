@@ -10,6 +10,14 @@ use Stats::LikeR;
 
 my $titanic = read_table('titanic.csv');
 $titanic = cfilter($titanic, remove => ['ticketno', 'embarked']);
+my $sex = agg($titanic, by => 'gender', agg => { gender => ['n']});
+view($sex);
+=my $sex_gb = agg($titanic, by => 'gender', agg => { survived => ['sum', 'n', 'mean'] });
+#----
+$titanic = assign($titanic, survived => sub { $_->{survived} eq 'yes' ? 1 : 0 });
+my $gb = agg($titanic, by => 'gender', agg => { survived => ['sum', 'n', 'mean'] });
+view($gb);
+=end
 $titanic = assign($titanic, survived => sub { $_->{survived} eq 'yes' ? 1 : 0});
 view($titanic);
 my $glm = glm(formula => 'survived ~ age + class + gender + fare', data => $titanic, family => 'binomial');

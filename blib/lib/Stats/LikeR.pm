@@ -5507,23 +5507,27 @@ sub _t1_classify {
 }
 
 # p-value + test label for a continuous variable across >=2 groups.
-# @$byg is one arrayref of (numeric, defined) values per group.
+# @$byg is one arrayref of (numeric, defined) values per group.  Returns
+# (undef, undef) when the test cannot run, as _t1_cat_p() does: t_test() dies
+# on a group of one and on data that are constant, and up to 0.3218 that took
+# the whole table down for the sake of one row.
 sub _t1_cont_p {
 	my ($byg, $nonpar) = @_;
 	my @g = grep { @$_ >= 1 } @$byg;
 	return (undef, undef) if @g < 2;
-	if (@g == 2) {
-		my $r = $nonpar ? wilcox_test($g[0], $g[1]) : t_test($g[0], $g[1]);
-		return ($r->{'p_value'}, $nonpar ? 'wilcoxon' : 't-test');
-	}
-	# >2 groups: Kruskal-Wallis (nonparametric) or one-way ANOVA
-	my (@x, @lab);
-	for my $i (0 .. $#g) { push @x, @{ $g[$i] }; push @lab, ("g$i") x scalar @{ $g[$i] } }
-	if ($nonpar) {
-		return (kruskal_test(\@x, \@lab)->{'p_value'}, 'kruskal-wallis');
-	}
-	my $aov = aov({ value => \@x, grp => \@lab }, 'value ~ grp');
-	return ($aov->{grp}{'Pr(>F)'}, 'anova');
+	my @r = eval {
+		if (@g == 2) {
+			my $r = $nonpar ? wilcox_test($g[0], $g[1]) : t_test($g[0], $g[1]);
+			return ($r->{'p_value'}, $nonpar ? 'wilcoxon' : 't-test');
+		}
+		# >2 groups: Kruskal-Wallis (nonparametric) or one-way ANOVA
+		my (@x, @lab);
+		for my $i (0 .. $#g) { push @x, @{ $g[$i] }; push @lab, ("g$i") x scalar @{ $g[$i] } }
+		return (kruskal_test(\@x, \@lab)->{'p_value'}, 'kruskal-wallis') if $nonpar;
+		my $aov = aov({ value => \@x, grp => \@lab }, 'value ~ grp');
+		return ($aov->{grp}{'Pr(>F)'}, 'anova');
+	};
+	return $@ ? (undef, undef) : @r;
 }
 
 # p-value + test label for a categorical variable: chi-squared on the
@@ -5559,6 +5563,14 @@ sub table_one {
 	my $pdig   = defined $opt{pct_digits} ? $opt{pct_digits} : 1;
 	my $nonpar = $opt{nonparametric} ? 1 : 0;
 	my %types  = $opt{types} ? %{ $opt{types} } : ();
+	# anything but 'continuous' took the categorical branch, so a misspelling
+	# or types => { age => 'numeric' } made a row of every distinct age
+	for my $v (sort keys %types) {
+		my $t = $types{$v};
+		die "table_one: the type of '$v' must be 'continuous' or 'categorical', not '"
+		  . (defined $t ? $t : 'undef') . "'\n"
+			unless defined $t && ($t eq 'continuous' || $t eq 'categorical');
+	}
 
 	my $shape   = _df_shape($df, 'table_one');
 	my @allcols = colnames($df);
@@ -5571,11 +5583,25 @@ sub table_one {
 	my @need = (@vars, defined $by ? ($by) : ());
 	my ($col, $R) = _frame_cols($df, $shape, \@need);
 
+	# Indexed over 0 .. $R-1, as @lab is below, so that a `by` column shorter
+	# than the frame reads as 'NA' past its end; mapping over the column itself
+	# left those rows with no group, and the warning that raised was fatal.
+	my $bycol = defined $by ? $col->{$by} : undef;
 	my @grp = defined $by
-	        ? map { defined $_ ? "$_" : 'NA' } @{ $col->{$by} }
+	        ? map { defined $bycol->[$_] ? "$bycol->[$_]" : 'NA' } 0 .. $R - 1
 	        : ('Overall') x $R;
 	my %seen; my @groups = grep { !$seen{$_}++ } @grp;
-	@groups = sort @groups if defined $by;
+	if (defined $by) {
+		@groups = sort @groups;
+		# Each group is a key of every output row, beside these: a group named
+		# 'test' was overwritten by the label 't-test', and one named 'Overall'
+		# overwrote the column summarising every row.
+		my %fixed = map { $_ => 1 } qw(variable level type p_value test Overall);
+		my @clash = grep { $fixed{$_} } @groups;
+		die "table_one: the '$by' column has a group named '"
+		  . join("', '", @clash) . "', which is also the name of an output column\n"
+			if @clash;
+	}
 	# One pass that buckets every row, rather than a full scan of the frame per
 	# group: the row lists were built by O(groups x rows) greps, which is the
 	# same shape as the O(levels x groups x rows) counting further down that
@@ -5611,8 +5637,19 @@ sub table_one {
 		}
 		else {
 			my %lseen;
-			my @levels = sort grep { !$lseen{$_}++ }
+			my @levels = grep { !$lseen{$_}++ }
 			             map { defined $_ ? "$_" : 'NA' } @vals;
+			# Numeric codes in numeric order -- a string sort put stage 10
+			# between 1 and 2 -- with NA last.  A NaN level has no numeric
+			# order, and <=> returning undef is fatal here, so it keeps the
+			# string sort.
+			my @known = grep { $_ ne 'NA' } @levels;
+			if (@known && !grep { !looks_like_number($_) || $_ != $_ } @known) {
+				@levels = ( (sort { $a <=> $b || $a cmp $b } @known),
+				            (@known < @levels ? 'NA' : ()) );
+			} else {
+				@levels = sort @levels;
+			}
 			# Every count below comes from one pass per group plus one over the
 			# frame, looked up by level afterwards.
 			#
@@ -5806,15 +5843,26 @@ sub cramers_v {
 # Eta-squared, partial eta-squared and omega-squared for a one-way design,
 # from the ANOVA sums of squares.  Accepts an aov() result hash (single factor)
 # or raw values + group labels.
+#
+# The raw form goes through aov()'s stacked form, which fits Group as a factor
+# whatever its labels look like.  Up to 0.3218 it passed a formula instead, and
+# aov() fits a formula column whose values all look like numbers as one slope:
+# groups coded 1, 2, 3 were a linear trend with 1 df, and the airquality
+# Ozone ~ Month example gave eta_sq 0.0271 for R's 0.2352.
 sub eta_squared {
 	my @args = @_;
 	my $aov_res;
 	if (ref $args[0] eq 'HASH') {
 		$aov_res = $args[0];
 	} elsif (ref $args[0] eq 'ARRAY' && ref $args[1] eq 'ARRAY') {
+		my ($v, $g) = @args;
 		die "eta_squared: values and groups must have the same length\n"
-			unless @{ $args[0] } == @{ $args[1] };
-		$aov_res = aov({ __value => $args[0], __group => $args[1] }, '__value ~ __group');
+			unless @$v == @$g;
+		my %by;          # group label => its values; aov() drops an undef value itself
+		for my $i (0 .. $#$v) {
+			push @{ $by{ $g->[$i] } }, $v->[$i] if defined $g->[$i];
+		}
+		$aov_res = aov(\%by);
 	} else {
 		die "eta_squared: expected an aov() result or (\\\@values, \\\@groups)\n";
 	}
@@ -5822,10 +5870,15 @@ sub eta_squared {
 		or die "eta_squared: not an ANOVA result (no Residuals term)\n";
 	my $ss_resid = $resid->{'Sum Sq'};
 	my $ms_resid = $resid->{'Mean Sq'};
-	# the single non-Residuals effect term
-	my ($term) = grep { $_ ne 'Residuals' && ref $aov_res->{$_} eq 'HASH'
+	# SS_total below is SS_effect + SS_resid, which is the total only when there
+	# is one effect term.  Up to 0.3218 a two-factor result was answered for
+	# whichever term sorted first, with partial eta-squared reported as eta_sq.
+	my @terms = grep { $_ ne 'Residuals' && ref $aov_res->{$_} eq 'HASH'
 		&& exists $aov_res->{$_}{'Sum Sq'} } sort keys %$aov_res;
-	die "eta_squared: could not find an effect term\n" unless defined $term;
+	die "eta_squared: could not find an effect term\n" unless @terms;
+	die 'eta_squared: the aov() result has ' . @terms . " effect terms (@terms); "
+	  . "eta_squared() measures a one-way design, which has one\n" if @terms > 1;
+	my $term = $terms[0];
 	my $ss_eff = $aov_res->{$term}{'Sum Sq'};
 	my $df_eff = $aov_res->{$term}{'Df'};
 	my $ss_tot = $ss_eff + $ss_resid;
@@ -5847,15 +5900,18 @@ sub eta_squared {
 # built from the XS qnorm() that every other confidence limit in the
 # distribution uses.
 
-# _quantile7(\@sorted_ascending, $p): R's default (type 7) sample quantile.
+# _quantile7(\@sorted_ascending, $p): R's default (type 7) sample quantile,
+# in R 4.6.1 quantile.default()'s own arithmetic -- the 1-based index, and
+# (1 - h) * x[lo] + h * x[hi] rather than x[lo] + h * (x[hi] - x[lo]) -- so that
+# a break hosmer_lemeshow() compares a prediction against is R's to the bit.
 sub _quantile7 {
 	my ($s, $p) = @_;
-	my $n = scalar @$s;
-	return $s->[0] if $n == 1;
-	my $h = ($n - 1) * $p;
-	my $lo = int($h);
-	my $hi = $lo + 1 < $n ? $lo + 1 : $lo;
-	return $s->[$lo] + ($h - $lo) * ($s->[$hi] - $s->[$lo]);
+	my $index = 1 + (@$s - 1) * $p;
+	my $lo = int $index;                      # floor: $index >= 1
+	my $qs = $s->[$lo - 1];
+	return $qs unless $index > $lo && $s->[$lo] != $qs;
+	my $h = $index - $lo;
+	return (1 - $h) * $qs + $h * $s->[$lo];
 }
 
 # vif($data, $formula_or_predictors)
@@ -5893,10 +5949,29 @@ sub vif {
 
 # hosmer_lemeshow(\@observed, \@predicted, g => 10)
 #
-# Hosmer-Lemeshow goodness-of-fit test for a logistic model.  Observations are
-# grouped into `g` bins by risk deciles of the predicted probabilities (R's
-# cut() on type-7 quantiles, as in ResourceSelection::hoslem.test); the statistic
-# compares observed and expected event counts per bin.  df = g - 2.
+# Hosmer-Lemeshow goodness-of-fit test for a logistic model, ported from
+# ResourceSelection 0.3-6's hoslem.test() (R/hoslem.test.R):
+#
+#   qq <- unique(quantile(yhat, probs = seq(0, 1, 1/g)))
+#   cutyhat <- cut(yhat, breaks = qq, include.lowest = TRUE)
+#   chisq <- sum((observed - expected)^2/expected)
+#   G <- length(unique(cutyhat)); df = G - 2
+#
+# Up to 0.3218 the breaks were not made unique, so a prediction tied at the
+# lowest break -- every prediction from a model with only categorical
+# predictors -- was a group of its own rather than part of the first one; and
+# df was g - 2 where 0.3-6 has G - 2, the number of groups that hold a row.
+#
+# Two departures from 0.3-6, both where it has no usable answer:
+#  * an empty bin, which cut() makes when two breaks fall in the gap between
+#    the same two sorted predictions, is left out rather than added as 0/0,
+#    which made R's statistic NaN; a bin whose expected count is 0 and whose
+#    observed count is also 0 adds 0 for the same reason.
+#  * the last break is the largest prediction.  seq(0, 1, 1/g) ends at
+#    1 - 2^-53 rather than 1 for some g (49 is the first), and the last
+#    quantile then falls below the largest prediction, which cut() leaves out of
+#    every bin: at g = 49 the package's own example bins 499 of 500 rows and,
+#    counting the NA as a group, reports df 48.
 sub hosmer_lemeshow {
 	my ($obs, $pred, %opt) = @_;
 	die "hosmer_lemeshow: observed and predicted must be array references\n"
@@ -5904,7 +5979,8 @@ sub hosmer_lemeshow {
 	die "hosmer_lemeshow: observed and predicted must have the same length\n"
 		unless @$obs == @$pred;
 	my $g = defined $opt{g} ? $opt{g} : 10;
-	die "hosmer_lemeshow: g must be at least 3\n" if $g < 3;
+	die "hosmer_lemeshow: g must be an integer of at least 3\n"
+		unless looks_like_number($g) && $g == int $g && $g >= 3;
 
 	my (@y, @p);
 	for my $i (0 .. $#$obs) {
@@ -5917,36 +5993,56 @@ sub hosmer_lemeshow {
 	die "hosmer_lemeshow: not enough complete observations for g=$g groups\n" if $n < $g;
 
 	my @sorted = sort { $a <=> $b } @p;
-	my @breaks = map { _quantile7(\@sorted, $_ / $g) } 0 .. $g;
+	# seq(0, 1, 1/g) is (0:g) * (1/g) in R, not (0:g) / g; the two differ in
+	# the last bit for some k, and with it which side of a tie a break lands on.
+	my $step = 1 / $g;
+	my @br = sort { $a <=> $b }
+		( map( { _quantile7(\@sorted, $_ * $step) } 0 .. $g - 1 ), $sorted[-1] );
+	my @qq = ($br[0]);
+	for my $b (@br[1 .. $#br]) { push @qq, $b if $b != $qq[-1] }
+	die "hosmer_lemeshow: every prediction is $qq[0], so there is only one group\n"
+		if @qq < 2;
 
+	my $nbin = $#qq;
 	my (@O1, @O0, @E1, @E0, @ng);
-	$O1[$_] = $O0[$_] = $E1[$_] = $E0[$_] = $ng[$_] = 0 for 0 .. $g - 1;
+	$O1[$_] = $O0[$_] = $E1[$_] = $E0[$_] = $ng[$_] = 0 for 0 .. $nbin - 1;
 	for my $i (0 .. $n - 1) {
-		# cut(..., include.lowest = TRUE): first interval closed on the left,
-		# every other interval left-open / right-closed.
-		my $gi = $g - 1;
-		for my $j (1 .. $g) { if ($p[$i] <= $breaks[$j]) { $gi = $j - 1; last } }
-		$O1[$gi] += $y[$i];
-		$O0[$gi] += 1 - $y[$i];
-		$E1[$gi] += $p[$i];
-		$E0[$gi] += 1 - $p[$i];
-		$ng[$gi]++;
+		# cut(..., include.lowest = TRUE): bin 0 is [qq0, qq1], bin k is
+		# (qq_k, qq_k+1].  A binary search for the first break >= the
+		# prediction, as R's .bincode() does.
+		my ($lo, $hi) = (0, $nbin);
+		while ($hi - $lo > 1) {
+			my $mid = ($lo + $hi) >> 1;
+			if ($p[$i] > $qq[$mid]) { $lo = $mid } else { $hi = $mid }
+		}
+		$O1[$lo] += $y[$i];
+		$O0[$lo] += 1 - $y[$i];
+		$E1[$lo] += $p[$i];
+		$E0[$lo] += 1 - $p[$i];
+		$ng[$lo]++;
 	}
 
 	my ($chi, $used) = (0, 0);
 	my @groups;
-	for my $j (0 .. $g - 1) {
+	for my $j (0 .. $nbin - 1) {
 		next unless $ng[$j];
 		$used++;
-		$chi += ($O1[$j] - $E1[$j]) ** 2 / $E1[$j] if $E1[$j] > 0;
-		$chi += ($O0[$j] - $E0[$j]) ** 2 / $E0[$j] if $E0[$j] > 0;
+		for my $oe ([ $O1[$j], $E1[$j] ], [ $O0[$j], $E0[$j] ]) {
+			my ($o, $e) = @$oe;
+			$chi += $e ? ($o - $e) ** 2 / $e : $o ? 9**9**9 : 0;
+		}
 		push @groups, { n => $ng[$j], observed => $O1[$j], expected => $E1[$j] };
 	}
-	my $df = $g - 2;
+	die "hosmer_lemeshow: the predictions allow only one group\n" if $used < 2;
+	warn "hosmer_lemeshow: the data allowed $used of the $g groups requested\n"
+		if $used < $g;
+	my $df = $used - 2;
+	# 1 - pchisq(chisq, 0) in R: the chi-square on 0 df is all at 0
+	my $pv = $df ? _pchisq_upper($chi, $df) : $chi > 0 ? 0 : 1;
 	return {
 		statistic => $chi,
 		parameter => $df,
-		'p_value'   => _pchisq_upper($chi, $df),
+		'p_value'   => $pv,
 		groups    => $used,
 		table     => \@groups,
 	};

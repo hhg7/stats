@@ -19723,12 +19723,15 @@ static NV d_qt(NV p, const NV *par, bool lower, bool give_log) {
 	return lower ? -qt_tail(df, p) : qt_tail(df, p);
 }
 
+/*df = 0 is a valid chi-square, with all its mass at 0: R 4.6.1's
+tests/d-p-q-r-tst-2.R pins pchisq(c(-1,0,1), df=0) == c(0,0,1), and its upper
+tail as c(1,1,0). Up to 0.3218 both came back NaN, as for a negative df.*/
 static NV d_pchisq(NV q, const NV *par, bool lower, bool give_log) {
 	const NV df = par[0];
 	if (nv_isnan(q) || nv_isnan(df)) return NV_NAN;
-	if (!(df > 0.0))                 return NV_NAN;
+	if (df < 0.0)                    return NV_NAN;
 	if (q <= 0.0)    return dist_log(lower ? 0.0 : 1.0, give_log);
-	if (nv_isinf(q)) return dist_log(lower ? 1.0 : 0.0, give_log);
+	if (nv_isinf(q) || df == 0.0) return dist_log(lower ? 1.0 : 0.0, give_log);
 	return dist_log(lower ? igam(df / 2.0, q / 2.0)
 	                      : igamc(df / 2.0, q / 2.0), give_log);
 }
@@ -19766,9 +19769,10 @@ static NV d_qchisq(NV p, const NV *par, bool lower, bool give_log) {
 	const NV df = par[0];
 	if (give_log) p = nv_exp(p);
 	if (nv_isnan(p) || p < 0.0 || p > 1.0) return NV_NAN;
-	if (nv_isnan(df) || !(df > 0.0))       return NV_NAN;
+	if (nv_isnan(df) || df < 0.0)          return NV_NAN;
 	if (p == 0.0) return lower ? 0.0 : NV_INF;
 	if (p == 1.0) return lower ? NV_INF : 0.0;
+	if (df == 0.0) return 0.0;               //all the mass is at 0, as R's qchisq(0.5, 0) is
 	/*Always bisect against the tail below 0.5. Above it the comparison inside
 	qchisq_solve() is between two numbers near 1, which is what cost 7.3e-12
 	relative at p = 1 - 2^-16 on df = 1; reflected, both sides are small and
