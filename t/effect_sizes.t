@@ -78,6 +78,10 @@ sub is_approx {
 # error handling
 throws_ok { cohen_d([1], [2,3]) } qr/at least two/, 'cohen_d needs >=2 per group';
 throws_ok { cramers_v([[1,2]]) }  qr/two rows/,     'cramers_v needs >=2 rows';
+# Bergsma's correction divides by N - 1; up to 0.3217 this died on perl's own
+# "Illegal division by zero"
+throws_ok { cramers_v([[1,0],[0,0]]) } qr/^cramers_v: the table total must be more than 1$/m,
+	'cramers_v: a table total of 1 is refused by name';
 throws_ok { eta_squared(42) }     qr/expected/,     'eta_squared rejects bad input';
 
 # Devel::Cover's own per-line counters are allocated inside whatever block is

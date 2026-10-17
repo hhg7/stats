@@ -2975,6 +2975,12 @@ does. An \f(CW\*(C`undef\*(C'\fR element becomes \f(CW\*(C`NaN\*(C'\fR.
 \& my $zs = qnorm([0.025, 0.5, 0.975]);   # [\-1.9599639845, 0, 1.9599639845]
 .Ve
 .PP
+\&\f(CW\*(C`df => 0\*(C'\fR is a chi\-square with all its mass at 0, as in R, not an invalid
+parameter: \f(CW\*(C`pchisq($q, 0)\*(C'\fR is 0 for \f(CW\*(C`$q <= 0\*(C'\fR and 1 above it, and
+\&\f(CW\*(C`qchisq($p, 0)\*(C'\fR is 0, or \f(CW\*(C`Inf\*(C'\fR at \f(CW\*(C`$p = 1\*(C'\fR. R\*(Aqs own \f(CW\*(C`tests/d\-p\-q\-r\-tst\-2.R\*(C'\fR
+pins those values; up to 0.3217 both functions returned \f(CW\*(C`NaN\*(C'\fR there. A negative
+\&\f(CW\*(C`df\*(C'\fR is still \f(CW\*(C`NaN\*(C'\fR.
+.PP
 \fIWhat each one does, in one picture\fR
 .IX Subsection "What each one does, in one picture"
 .PP
@@ -3384,6 +3390,14 @@ Eta\-squared (η²) and related effect sizes for a one\-way ANOVA, computed from
 sums of squares. Returns η², partial η² (equal to η² for a one\-way design), and
 ω² (omega\-squared, a less biased estimator). Accepts either raw values and group
 labels or an existing \f(CW\*(C`aov\*(C'\fR result. Validated numerically against R.
+.PP
+The group labels are a factor whatever they look like: codes \f(CW\*(C`1, 2, 3\*(C'\fR are
+three groups, not one slope. Up to 0.3217 numeric codes were fitted as a slope,
+so R\*(Aqs \f(CW\*(C`airquality\*(C'\fR example, Ozone by Month 5 to 9, gave η² 0.027 for R\*(Aqs
+0.235. An undef value or group drops its row. An \f(CW\*(C`aov\*(C'\fR result must have exactly
+one effect term; a two\-factor result is refused rather than answered for one of
+its terms. An \f(CW\*(C`aov\*(C'\fR fitted from a formula still treats a numeric column as a
+slope, as R\*(Aqs \f(CWaov()\fR does without \f(CWfactor()\fR.
 .PP
 .Vb 2
 \& my $e = eta_squared(\e@values, \e@group);            # or eta_squared($aov_result)
@@ -4345,8 +4359,23 @@ The Hosmer\-Lemeshow goodness\-of\-fit test for a logistic\-regression model. Gi
 the observed 0/1 outcomes and the model\*(Aqs predicted probabilities, it bins the
 observations into \f(CW\*(C`g\*(C'\fR risk groups (deciles by default) and compares observed and
 expected event counts. A large p\-value indicates the model fits adequately. The
-grouping and statistic follow R\*(Aqs \f(CW\*(C`ResourceSelection::hoslem.test\*(C'\fR, against which
-it was validated numerically.
+grouping, statistic and degrees of freedom are those of \f(CW\*(C`hoslem.test()\*(C'\fR in R\*(Aqs
+ResourceSelection 0.3\-6, and \f(CW\*(C`t/hosmer_lemeshow.R.t\*(C'\fR holds it to that
+function\*(Aqs own documented example at 17 values of \f(CW\*(C`g\*(C'\fR.
+.PP
+The bins are cut at the \fIdistinct\fR quantiles of the predictions, so tied
+predictions — every prediction from a model whose predictors are all
+categorical — can leave fewer than \f(CW\*(C`g\*(C'\fR groups. The degrees of freedom are then
+\&\f(CW\*(C`groups \- 2\*(C'\fR, not \f(CW\*(C`g \- 2\*(C'\fR, and a warning says how many groups the data allowed,
+as R\*(Aqs does. One group is an error. Up to 0.3217 tied breaks were kept, which
+gave a tie at the lowest break a group of its own, and the degrees of freedom
+were always \f(CW\*(C`g \- 2\*(C'\fR.
+.PP
+Two cases depart from \f(CW\*(C`hoslem.test()\*(C'\fR, which has no usable answer in either:
+a cell whose observed and expected counts are both 0, as in an empty bin, adds
+0 to the statistic where R adds 0/0 and returns \f(CW\*(C`NaN\*(C'\fR; and the last break is
+the largest prediction, where R\*(Aqs \f(CW\*(C`seq(0, 1, 1/g)\*(C'\fR falls short of 1 at some
+\&\f(CW\*(C`g\*(C'\fR (49 is the first) and leaves the largest prediction out of every bin.
 .PP
 .Vb 3
 \& # $fit is a binomial glm(); align observed outcomes with fitted_values
@@ -7732,6 +7761,17 @@ and the test follows: t\-test / ANOVA for continuous (Wilcoxon / Kruskal with
 (which columns), \f(CW\*(C`types\*(C'\fR (override a column\*(Aqs type), \f(CW\*(C`nonparametric\*(C'\fR, \f(CW\*(C`digits\*(C'\fR,
 \&\f(CW\*(C`pct_digits\*(C'\fR. Each returned row has \f(CW\*(C`variable\*(C'\fR, \f(CW\*(C`level\*(C'\fR, one column per group,
 \&\f(CW\*(C`Overall\*(C'\fR, and — on a variable\*(Aqs row — \f(CW\*(C`p_value\*(C'\fR and \f(CW\*(C`test\*(C'\fR.
+.PP
+A variable whose test cannot run has no \f(CW\*(C`p_value\*(C'\fR or \f(CW\*(C`test\*(C'\fR, and the rest of
+the table is unaffected: a categorical one that \f(CW\*(C`chisq_test\*(C'\fR cannot test, or a
+continuous one that is constant or has a single observation in a group. Up to
+0.3217 the continuous case died, taking the whole table with it.
+.PP
+Because each group is a key of every row, a \f(CW\*(C`by\*(C'\fR column with a group named
+\&\f(CW\*(C`variable\*(C'\fR, \f(CW\*(C`level\*(C'\fR, \f(CW\*(C`type\*(C'\fR, \f(CW\*(C`p_value\*(C'\fR, \f(CW\*(C`test\*(C'\fR or \f(CW\*(C`Overall\*(C'\fR is an error. A
+\&\f(CW\*(C`types\*(C'\fR value must be \f(CW\*(C`continuous\*(C'\fR or \f(CW\*(C`categorical\*(C'\fR. Categorical levels are
+listed in string order, except that levels which are all numbers are listed in
+numeric order, with \f(CW\*(C`NA\*(C'\fR last.
 .SS t_test
 .IX Subsection "t_test"
 There are 1\-sample and 2\-sample t\-tests, from one or two arrays:

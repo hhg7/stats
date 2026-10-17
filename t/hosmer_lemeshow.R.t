@@ -20,7 +20,7 @@
 #
 # hoslem.test() bins the predictions at unique(quantile(yhat, seq(0, 1, 1/g))),
 # so tied predictions merge breaks, and its df is G - 2 for the G bins that
-# hold a row -- not g - 2.  Up to 0.3218 this function kept every break, which
+# hold a row -- not g - 2.  Up to 0.3217 this function kept every break, which
 # split a tie at the lowest break into a group of its own, and reported
 # g - 2: on the 'cat' set at the default g = 10, predictions from a 4-level
 # factor, it gave X-squared 2.745 on 4 groups and df 8, where R gives 0.920
@@ -49,14 +49,19 @@
 #
 # TOLERANCE
 #
-# 1e-13 relative on the statistic and 1e-12 on the p-value.  The worst
-# disagreement observed on the double build is 1.0e-15 on the statistic ('doc',
-# g = 10: 4.5227187290490685 for R's ...729) and 2.2e-15 on the p-value,
-# which comes from _pchisq_upper()'s incomplete gamma rather than from the
-# binning.  The 'doc' predictions are 17-digit decimals of R's doubles, which a
-# long-double or quadmath perl reads as a slightly different number, so the
-# headroom is for that; the other sets are dyadic and exact at every width.
-# Group sizes, df and observed counts are integers and are compared exactly.
+# 1e-12 relative on the statistic and on the p-value.  The worst disagreement
+# observed on the double build is 8.3e-15 on the statistic, at 'doc', g = 5,
+# where X-squared is only 0.43 and each (O - E)^2 is a difference of two sums
+# of about 50 terms that R and this function add in different orders; and
+# 7.7e-15 on the p-value, at 'doc', g = 49.  The 'doc' predictions are
+# 17-digit decimals of R's doubles, which a wider NV reads as a slightly
+# different number, while the other sets are dyadic and exact at every width.
+# Across the nine perls of ./test.all.perls.pl on 2026-10-16 the worst was
+# 8.7e-15 on the statistic (perl 5.10.1) and 9.4e-15 on the p-value
+# (5.44.0+x87); the long-double and quadmath perls came closer to R, at
+# 7.9e-16 and 2.0e-15.  That leaves over a hundredfold headroom on every
+# build.  Group sizes, df and observed counts are integers and are compared
+# exactly.
 #
 # Every set has n - 1 prime and above each g it is run at, so no break's index
 # 1 + (n - 1) * k / g is an integer.  At an integer index the break is itself a
@@ -71,7 +76,7 @@ use Test::Exception;
 use Test::LeakTrace 'no_leaks_ok';
 use Stats::LikeR qw(hosmer_lemeshow);
 
-my $TOL_STAT = 1e-13;
+my $TOL_STAT = 1e-12;
 my $TOL_P    = 1e-12;
 my $INF      = 9**9**9;
 
@@ -168,7 +173,7 @@ my @DIVERGE = (
 	[ 'zero', 5, 0.33333333333333337, 3, 0.95364217309625521, 5 ],
 );
 
-my %WORST = (stat => 0, p => 0);
+my %WORST = (stat => [ 0, '' ], p => [ 0, '' ]);
 for my $r (@R_ROWS, @DIVERGE) {
 	my ($set, $g, $stat, $df, $p, $G) = @$r;
 	my ($h, $warn) = run_hl($set, g => $g);
@@ -190,10 +195,11 @@ for my $r (@R_ROWS, @DIVERGE) {
 		my ($k, $got, $want) = @$_;
 		next unless $want;
 		my $e = abs($got - $want) / abs($want);
-		$WORST{$k} = $e if $e > $WORST{$k};
+		$WORST{$k} = [ $e, $what ] if $e > $WORST{$k}[0];
 	}
 }
-diag(sprintf 'worst relative error vs R: statistic %.2g, p-value %.2g', @WORST{qw(stat p)});
+diag(sprintf 'worst relative error vs R: statistic %.2g (%s), p-value %.2g (%s)',
+	map { @{ $WORST{$_} } } qw(stat p));
 
 # hoslem.test()'s observed and expected table at the default g = 10, as
 # [ rows, observed events, expected events ].
@@ -244,11 +250,9 @@ throws_ok { hosmer_lemeshow([0, 1, 1, 0], [(0.5) x 4], g => 3) }
 # that row, which then matches the call without it.
 {
 	my ($y, $p) = @{ $SETS{tie} };
+	local $SIG{__WARN__} = sub {};    # 4 of the 5 groups: tested above
 	my $clean = hosmer_lemeshow($y, $p, g => 5);
-	my $dirty = do {
-		local $SIG{__WARN__} = sub {};
-		hosmer_lemeshow([ @$y, undef, 1, 'yes', 0 ], [ @$p, 0.5, undef, 0.25, 'NA' ], g => 5);
-	};
+	my $dirty = hosmer_lemeshow([ @$y, undef, 1, 'yes', 0 ], [ @$p, 0.5, undef, 0.25, 'NA' ], g => 5);
 	is_deeply($dirty, $clean, 'undef and non-numeric cells drop their row');
 }
 

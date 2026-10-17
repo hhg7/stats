@@ -2635,6 +2635,12 @@ does. An `undef` element becomes `NaN`.
     my $z  = qnorm(0.975);                 # 1.959963984540054
     my $zs = qnorm([0.025, 0.5, 0.975]);   # [-1.9599639845, 0, 1.9599639845]
 
+`df => 0` is a chi-square with all its mass at 0, as in R, not an invalid
+parameter: `pchisq($q, 0)` is 0 for `$q <= 0` and 1 above it, and
+`qchisq($p, 0)` is 0, or `Inf` at `$p = 1`. R's own `tests/d-p-q-r-tst-2.R`
+pins those values; up to 0.3217 both functions returned `NaN` there. A negative
+`df` is still `NaN`.
+
 ### What each one does, in one picture
 
 The same identity read from two ends: a `p*` function is given the boundary and
@@ -3040,6 +3046,14 @@ sums of squares. Returns η², partial η² (equal to η² for a one-way design)
 ω² (omega-squared, a less biased estimator). Accepts either raw values and group
 labels or an existing [`aov`](#aov) result. Validated numerically against R.
 
+The group labels are a factor whatever they look like: codes `1, 2, 3` are
+three groups, not one slope. Up to 0.3217 numeric codes were fitted as a slope,
+so R's `airquality` example, Ozone by Month 5 to 9, gave η² 0.027 for R's
+0.235. An undef value or group drops its row. An `aov` result must have exactly
+one effect term; a two-factor result is refused rather than answered for one of
+its terms. An `aov` fitted from a formula still treats a numeric column as a
+slope, as R's `aov()` does without `factor()`.
+
     my $e = eta_squared(\@values, \@group);            # or eta_squared($aov_result)
     printf "eta^2 = %.3f, omega^2 = %.3f\n", $e->{eta_sq}, $e->{omega_sq};
 
@@ -3050,7 +3064,7 @@ labels or an existing [`aov`](#aov) result. Validated numerically against R.
 | `eta_sq` | `Double` | η² = SS_effect / SS_total. | `0.8457` |
 | `partial_eta_sq` | `Double` | Partial η² = SS_effect / (SS_effect + SS_resid). | `0.8457` |
 | `omega_sq` | `Double` | ω², adjusted for bias. | `0.7743` |
-| `term` | `String` | Name of the effect term used. | `"grp"` |
+| `term` | `String` | Name of the effect term used: `Group` for raw values and labels. | `"grp"` |
 
 ## ffill
 
@@ -3952,8 +3966,23 @@ The Hosmer-Lemeshow goodness-of-fit test for a logistic-regression model. Given
 the observed 0/1 outcomes and the model's predicted probabilities, it bins the
 observations into `g` risk groups (deciles by default) and compares observed and
 expected event counts. A large p-value indicates the model fits adequately. The
-grouping and statistic follow R's `ResourceSelection::hoslem.test`, against which
-it was validated numerically.
+grouping, statistic and degrees of freedom are those of `hoslem.test()` in R's
+ResourceSelection 0.3-6, and `t/hosmer_lemeshow.R.t` holds it to that
+function's own documented example at 17 values of `g`.
+
+The bins are cut at the *distinct* quantiles of the predictions, so tied
+predictions — every prediction from a model whose predictors are all
+categorical — can leave fewer than `g` groups. The degrees of freedom are then
+`groups - 2`, not `g - 2`, and a warning says how many groups the data allowed,
+as R's does. One group is an error. Up to 0.3217 tied breaks were kept, which
+gave a tie at the lowest break a group of its own, and the degrees of freedom
+were always `g - 2`.
+
+Two cases depart from `hoslem.test()`, which has no usable answer in either:
+a cell whose observed and expected counts are both 0, as in an empty bin, adds
+0 to the statistic where R adds 0/0 and returns `NaN`; and the last break is
+the largest prediction, where R's `seq(0, 1, 1/g)` falls short of 1 at some
+`g` (49 is the first) and leaves the largest prediction out of every bin.
 
     # $fit is a binomial glm(); align observed outcomes with fitted_values
     my @obs  = map { $data{$_}{outcome} } @ids;
@@ -3975,9 +4004,9 @@ it was validated numerically.
 | Variable | Type | Description | Example |
 | --- | --- | --- | --- |
 | `statistic` | `Double` | Hosmer-Lemeshow chi-squared statistic. | `4.3456` |
-| `parameter` | `Integer` | Degrees of freedom, `g - 2`. | `8` |
+| `parameter` | `Integer` | Degrees of freedom, `groups - 2`. | `8` |
 | `p_value` | `Double` | Goodness-of-fit p-value (large = good fit). | `0.825` |
-| `groups` | `Integer` | Number of non-empty groups used. | `10` |
+| `groups` | `Integer` | Number of groups that hold a row; fewer than `g` when predictions are tied. | `10` |
 | `table` | `ArrayRef` | Per-group `{n, observed, expected}` event summaries. | |
 
 ## hurdle
@@ -7117,6 +7146,17 @@ and the test follows: t-test / ANOVA for continuous (Wilcoxon / Kruskal with
 (which columns), `types` (override a column's type), `nonparametric`, `digits`,
 `pct_digits`. Each returned row has `variable`, `level`, one column per group,
 `Overall`, and — on a variable's row — `p_value` and `test`.
+
+A variable whose test cannot run has no `p_value` or `test`, and the rest of
+the table is unaffected: a categorical one that `chisq_test` cannot test, or a
+continuous one that is constant or has a single observation in a group. Up to
+0.3217 the continuous case died, taking the whole table with it.
+
+Because each group is a key of every row, a `by` column with a group named
+`variable`, `level`, `type`, `p_value`, `test` or `Overall` is an error. A
+`types` value must be `continuous` or `categorical`. Categorical levels are
+listed in string order, except that levels which are all numbers are listed in
+numeric order, with `NA` last.
 
 ## t_test
 

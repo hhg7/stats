@@ -19734,7 +19734,7 @@ static NV d_qt(NV p, const NV *par, bool lower, bool give_log) {
 
 /*df = 0 is a valid chi-square, with all its mass at 0: R 4.6.1's
 tests/d-p-q-r-tst-2.R pins pchisq(c(-1,0,1), df=0) == c(0,0,1), and its upper
-tail as c(1,1,0). Up to 0.3218 both came back NaN, as for a negative df.*/
+tail as c(1,1,0). Up to 0.3217 both came back NaN, as for a negative df.*/
 static NV d_pchisq(NV q, const NV *par, bool lower, bool give_log) {
 	const NV df = par[0];
 	if (nv_isnan(q) || nv_isnan(df)) return NV_NAN;

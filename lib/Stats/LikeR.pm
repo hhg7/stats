@@ -4693,34 +4693,33 @@ sub _tukey_compare {
 # mutates its input.  Shape is classified by _df_shape (the agg()/view()
 # detector); 'output_type' defaults to the input family, like agg().
 
-# _frame_cols($df, $shape, \@need) -> (\%col, $R)
+# _frame_cols($df, $shape, \@need, \@rows) -> (\%col, $R, \@rows)
 #
 # Extract the named columns once, aligned to row positions 0 .. R-1, using
 # the same per-shape access agg() uses.  For HoA the column arrays are
 # aliased (read-only callers), not rebuilt; every other shape materialises
 # a fresh per-column slice.  HoH rows are visited in string-sorted key
-# order so a positional axis exists.  Not exported.
+# order so a positional axis exists.  \@rows is those rows in that order,
+# undef for HoA, which needs none; passing back the one an earlier call
+# returned skips finding them again -- for HoH, a sort of every key -- so a
+# caller can fetch one column at a time.  Not exported.
 sub _frame_cols {
-	my ($df, $shape, $need) = @_;
-	my (%col, $R);
-	if ($shape eq 'AoA') {
-		my @h = grep { defined } @$df;
-		$R = scalar @h;
-		for my $c (@$need) { $col{$c} = [ map { $_->[$c] } @h ] }
-	} elsif ($shape eq 'AoH') {
-		my @h = grep { defined } @$df;
-		$R = scalar @h;
-		for my $c (@$need) { $col{$c} = [ map { $_->{$c} } @h ] }
-	} elsif ($shape eq 'HoA') {
-		$R = 0;
+	my ($df, $shape, $need, $rows) = @_;
+	my %col;
+	if ($shape eq 'HoA') {
+		my $R = 0;
 		for my $v (values %$df) { $R = @$v if ref $v eq 'ARRAY' && @$v > $R }
 		for my $c (@$need) { $col{$c} = ref $df->{$c} eq 'ARRAY' ? $df->{$c} : [] }
-	} else {                                     # HoH
-		my @h = map { $df->{$_} } sort keys %$df;
-		$R = scalar @h;
-		for my $c (@$need) { $col{$c} = [ map { $_->{$c} } @h ] }
+		return (\%col, $R, undef);
 	}
-	return (\%col, $R);
+	$rows ||= $shape eq 'HoH' ? [ map { $df->{$_} } sort keys %$df ]
+	                          : [ grep { defined } @$df ];
+	if ($shape eq 'AoA') {
+		for my $c (@$need) { $col{$c} = [ map { $_->[$c] } @$rows ] }
+	} else {                                     # AoH, HoH
+		for my $c (@$need) { $col{$c} = [ map { $_->{$c} } @$rows ] }
+	}
+	return (\%col, scalar @$rows, $rows);
 }
 
 # _sort_group_keys(\@order, \%repr) -> \@sorted
@@ -5500,16 +5499,19 @@ sub _tukey_col {
 # numeric, else 'categorical'.
 sub _t1_classify {
 	my ($vals) = @_;
-	my @def = grep { defined } @$vals;
-	return 'categorical' unless @def;
-	for (@def) { return 'categorical' unless looks_like_number($_) }
-	return 'continuous';
+	my $any = 0;                     # 0 = no defined value seen yet
+	for (@$vals) {
+		next unless defined;
+		return 'categorical' unless looks_like_number($_);
+		$any = 1;
+	}
+	return $any ? 'continuous' : 'categorical';
 }
 
 # p-value + test label for a continuous variable across >=2 groups.
 # @$byg is one arrayref of (numeric, defined) values per group.  Returns
 # (undef, undef) when the test cannot run, as _t1_cat_p() does: t_test() dies
-# on a group of one and on data that are constant, and up to 0.3218 that took
+# on a group of one and on data that are constant, and up to 0.3217 that took
 # the whole table down for the sake of one row.
 sub _t1_cont_p {
 	my ($byg, $nonpar) = @_;
@@ -5521,9 +5523,17 @@ sub _t1_cont_p {
 			return ($r->{'p_value'}, $nonpar ? 'wilcoxon' : 't-test');
 		}
 		# >2 groups: Kruskal-Wallis (nonparametric) or one-way ANOVA
+		my %by; @by{ map { "g$_" } 0 .. $#g } = @g;
+		return (kruskal_test(\%by)->{'p_value'}, 'kruskal-wallis') if $nonpar;
+		# oneway_test(var_equal => 1) is the F test aov() computes for one
+		# factor -- R's oneway.test(var.equal = TRUE) -- from each group's sum
+		# and sum of squares, where aov() builds and rotates a design: on 1e5
+		# rows in three groups, 8 ms against aov()'s 54.  It refuses a group of
+		# one observation, which aov() takes, so that case still goes to aov().
+		return (oneway_test(\@g, var_equal => 1)->{Group}{'Pr(>F)'}, 'anova')
+			unless grep { @$_ < 2 } @g;
 		my (@x, @lab);
 		for my $i (0 .. $#g) { push @x, @{ $g[$i] }; push @lab, ("g$i") x scalar @{ $g[$i] } }
-		return (kruskal_test(\@x, \@lab)->{'p_value'}, 'kruskal-wallis') if $nonpar;
 		my $aov = aov({ value => \@x, grp => \@lab }, 'value ~ grp');
 		return ($aov->{grp}{'Pr(>F)'}, 'anova');
 	};
@@ -5580,19 +5590,25 @@ sub table_one {
 	                      : grep { !defined $by || $_ ne $by } @allcols;
 	for my $v (@vars) { die "table_one: column '$v' not found\n" unless $colset{$v} }
 
-	my @need = (@vars, defined $by ? ($by) : ());
-	my ($col, $R) = _frame_cols($df, $shape, \@need);
+	# Each column is fetched as it is summarised rather than all at once: an
+	# AoA, AoH or HoH frame's columns are copies, and holding every one of them
+	# for the whole call was most of the memory this used.
+	my ($bc, $R, $rows) = _frame_cols($df, $shape, defined $by ? [$by] : []);
 
-	# Indexed over 0 .. $R-1, as @lab is below, so that a `by` column shorter
+	# $gidx[$r] is row $r's group, an index into @groups.  The labels are read
+	# over 0 .. $R-1, as every column below is, so that a `by` column shorter
 	# than the frame reads as 'NA' past its end; mapping over the column itself
 	# left those rows with no group, and the warning that raised was fatal.
-	my $bycol = defined $by ? $col->{$by} : undef;
-	my @grp = defined $by
-	        ? map { defined $bycol->[$_] ? "$bycol->[$_]" : 'NA' } 0 .. $R - 1
-	        : ('Overall') x $R;
-	my %seen; my @groups = grep { !$seen{$_}++ } @grp;
+	my (@groups, @gidx, @gsize);
 	if (defined $by) {
-		@groups = sort @groups;
+		my $bycol = $bc->{$by};
+		my %size;                        # label => rows in that group
+		for my $r (0 .. $R - 1) {
+			my $g = $bycol->[$r];
+			$size{ defined $g ? $g : 'NA' }++;
+		}
+		@groups = sort keys %size;
+		@gsize  = @size{@groups};
 		# Each group is a key of every output row, beside these: a group named
 		# 'test' was overwritten by the label 't-test', and one named 'Overall'
 		# overwrote the column summarising every row.
@@ -5601,32 +5617,42 @@ sub table_one {
 		die "table_one: the '$by' column has a group named '"
 		  . join("', '", @clash) . "', which is also the name of an output column\n"
 			if @clash;
+		my %gpos; @gpos{@groups} = 0 .. $#groups;
+		@gidx = map { my $g = $bycol->[$_]; $gpos{ defined $g ? $g : 'NA' } } 0 .. $R - 1;
+	} else {
+		@groups = ('Overall');
+		@gsize  = ($R);
+		@gidx   = (0) x $R;
 	}
-	# One pass that buckets every row, rather than a full scan of the frame per
-	# group: the row lists were built by O(groups x rows) greps, which is the
-	# same shape as the O(levels x groups x rows) counting further down that
-	# this file already records having replaced with a single pass.
-	my %gpos; @gpos{ @groups } = 0 .. $#groups;
-	my @grp_rows = map { [] } @groups;
-	for my $r (0 .. $R - 1) { push @{ $grp_rows[ $gpos{ $grp[$r] } ] }, $r }
 
 	my @out;
 	for my $v (@vars) {
-		my @vals = @{ $col->{$v} };
-		my $type = $types{$v} || _t1_classify(\@vals);
+		my ($vc) = _frame_cols($df, $shape, [$v], $rows);
+		my $vals = $vc->{$v};
+		my $type = $types{$v} || _t1_classify($vals);
 
 		if ($type eq 'continuous') {
 			my %row = (variable => $v, level => '', type => 'continuous');
-			my @byg;
+			# One pass in row order, so each group's values and the Overall
+			# ones keep the order they had, and with it mean()'s and sd()'s
+			# last bit.  Each value is made a number once, here: mean(), sd()
+			# and the test used to read copies of the cell, and each copy of a
+			# numeric string was parsed again.
+			my @byg = map { [] } @groups;
+			my @allv;
+			for my $r (0 .. $R - 1) {
+				my $x = $vals->[$r];
+				next unless defined $x && looks_like_number($x);
+				my $num = 0 + $x;
+				push @{ $byg[ $gidx[$r] ] }, $num;
+				push @allv, $num;
+			}
 			for my $gi (0 .. $#groups) {
-				my @gv = grep { looks_like_number($_) }
-				         grep { defined } map { $vals[$_] } @{ $grp_rows[$gi] };
-				push @byg, \@gv;
-				$row{ $groups[$gi] } = @gv
-					? sprintf('%.*f (%.*f)', $digits, mean(\@gv), $digits, @gv > 1 ? sd(\@gv) : 0)
+				my $gv = $byg[$gi];
+				$row{ $groups[$gi] } = @$gv
+					? sprintf('%.*f (%.*f)', $digits, mean($gv), $digits, @$gv > 1 ? sd($gv) : 0)
 					: '';
 			}
-			my @allv = grep { looks_like_number($_) } grep { defined } @vals;
 			$row{Overall} = @allv
 				? sprintf('%.*f (%.*f)', $digits, mean(\@allv), $digits, @allv > 1 ? sd(\@allv) : 0)
 				: '';
@@ -5636,9 +5662,26 @@ sub table_one {
 			push @out, \%row;
 		}
 		else {
-			my %lseen;
-			my @levels = grep { !$lseen{$_}++ }
-			             map { defined $_ ? "$_" : 'NA' } @vals;
+			# One pass over the rows counts every (group, level) pair; the
+			# Overall count of a level is the sum over the groups, since every
+			# row is in exactly one.  Up to 0.3217 a string was built for every
+			# row and counted twice, and the levels listed came from the cells
+			# themselves, so a column shorter than the frame counted its rows
+			# past the end as NA without listing an NA row; they are listed now.
+			#
+			# Before that the counts came from a `grep` over a group's rows for
+			# each (level, group) pair -- run twice -- plus one more scan of
+			# every row per level for the Overall column: O(levels x groups x
+			# rows), which on 20000 rows cost 0.021s at 5 levels against 0.120s
+			# at 40.
+			my @gcnt = map { {} } @groups;   # $gcnt[$gi]{$level} = rows in that group
+			for my $r (0 .. $R - 1) {
+				my $x = $vals->[$r];
+				$gcnt[ $gidx[$r] ]{ defined $x ? $x : 'NA' }++;
+			}
+			my %allcnt;
+			for my $c (@gcnt) { $allcnt{$_} += $c->{$_} for keys %$c }
+			my @levels = keys %allcnt;
 			# Numeric codes in numeric order -- a string sort put stage 10
 			# between 1 and 2 -- with NA last.  A NaN level has no numeric
 			# order, and <=> returning undef is fatal here, so it keeps the
@@ -5650,36 +5693,11 @@ sub table_one {
 			} else {
 				@levels = sort @levels;
 			}
-			# Every count below comes from one pass per group plus one over the
-			# frame, looked up by level afterwards.
-			#
-			# They used to come from a `grep` over a group's rows for each
-			# (level, group) pair -- run twice, once to build the table
-			# _t1_cat_p() sees and again to format the output rows -- plus one
-			# more scan of every row per level for the Overall column. That is
-			# O(levels x groups x rows), and on 20000 rows it cost 0.021s at 5
-			# levels against 0.120s at 40, growing without bound in the number
-			# of levels where one pass is flat in it.
-			#
-			# $lab[$r] is the level row $r contributes, indexed over 0 .. $R-1
-			# rather than over @vals so that a column shorter than the frame
-			# still reads as 'NA' past its end, exactly as indexing $vals[$_]
-			# out of range did. @levels stays derived from @vals, so a level
-			# that no row in range carries still prints, with a count of 0.
-			my @lab = map { defined $vals[$_] ? "$vals[$_]" : 'NA' } 0 .. $R - 1;
-			my @gcnt;                         # $gcnt[$gi]{$level} = rows in that group
-			for my $gi (0 .. $#grp_rows) {
-				my %c;
-				$c{ $lab[$_] }++ for @{ $grp_rows[$gi] };
-				$gcnt[$gi] = \%c;
-			}
-			my %allcnt;
-			$allcnt{$_}++ for @lab;
 			my %hdr = (variable => $v, level => '', type => 'categorical');
 			if (defined $by && @groups >= 2) {
 				my @table;
 				for my $lv (@levels) {
-					push @table, [ map { $gcnt[$_]{$lv} || 0 } 0 .. $#grp_rows ];
+					push @table, [ map { $gcnt[$_]{$lv} || 0 } 0 .. $#groups ];
 				}
 				($hdr{'p_value'}, $hdr{test}) = _t1_cat_p(\@table);
 			}
@@ -5688,7 +5706,7 @@ sub table_one {
 				my %row = (variable => $v, level => $lv, type => 'categorical');
 				for my $gi (0 .. $#groups) {
 					my $cnt = $gcnt[$gi]{$lv} || 0;
-					my $tot = scalar @{ $grp_rows[$gi] };
+					my $tot = $gsize[$gi];
 					$row{ $groups[$gi] } = $tot ? sprintf('%d (%.*f%%)', $cnt, $pdig, 100 * $cnt / $tot) : '0';
 				}
 				my $cntall = $allcnt{$lv} || 0;
@@ -5810,6 +5828,9 @@ sub cramers_v {
 		}
 	}
 	die "cramers_v: table total is zero\n" unless $N;
+	# the bias correction divides by N - 1: up to 0.3217 a total of 1 died on
+	# perl's own "Illegal division by zero", naming a line of this file
+	die "cramers_v: the table total must be more than 1\n" unless $N > 1;
 	my $chi = 0;
 	for my $i (0 .. $r - 1) {
 		for my $j (0 .. $c - 1) {
@@ -5844,11 +5865,11 @@ sub cramers_v {
 # from the ANOVA sums of squares.  Accepts an aov() result hash (single factor)
 # or raw values + group labels.
 #
-# The raw form goes through aov()'s stacked form, which fits Group as a factor
-# whatever its labels look like.  Up to 0.3218 it passed a formula instead, and
-# aov() fits a formula column whose values all look like numbers as one slope:
-# groups coded 1, 2, 3 were a linear trend with 1 df, and the airquality
-# Ozone ~ Month example gave eta_sq 0.0271 for R's 0.2352.
+# The raw form fits Group as a factor whatever its labels look like, through
+# oneway_test() or aov()'s stacked form; see below for which.  Up to 0.3217 it
+# passed aov() a formula, which fits a column whose values all look like
+# numbers as one slope: groups coded 1, 2, 3 were a linear trend with 1 df,
+# and the airquality Ozone ~ Month example gave eta_sq 0.0271 for R's 0.2352.
 sub eta_squared {
 	my @args = @_;
 	my $aov_res;
@@ -5859,10 +5880,22 @@ sub eta_squared {
 		die "eta_squared: values and groups must have the same length\n"
 			unless @$v == @$g;
 		my %by;          # group label => its values; aov() drops an undef value itself
+		my $plain = 1;   # 0 = some value is undef or not a number
 		for my $i (0 .. $#$v) {
-			push @{ $by{ $g->[$i] } }, $v->[$i] if defined $g->[$i];
+			next unless defined $g->[$i];
+			my $x = $v->[$i];
+			$plain = 0 unless defined $x && looks_like_number($x);
+			push @{ $by{ $g->[$i] } }, $x;
 		}
-		$aov_res = aov(\%by);
+		# oneway_test(var_equal => 1) gives the table aov()'s stacked form does,
+		# from each group's sum and sum of squares rather than a design matrix:
+		# on 1e6 values in 5 groups, 0.10 s and 47 MB against 0.73 s and 326 MB.
+		# It refuses what aov() takes -- one group, a group of one value, and an
+		# undef or non-numeric value, which aov() drops -- so those go to aov().
+		my $small = grep { @$_ < 2 } values %by;   # groups of fewer than two values
+		$aov_res = $plain && keys %by >= 2 && !$small
+			? oneway_test(\%by, var_equal => 1)
+			: aov(\%by);
 	} else {
 		die "eta_squared: expected an aov() result or (\\\@values, \\\@groups)\n";
 	}
@@ -5871,7 +5904,7 @@ sub eta_squared {
 	my $ss_resid = $resid->{'Sum Sq'};
 	my $ms_resid = $resid->{'Mean Sq'};
 	# SS_total below is SS_effect + SS_resid, which is the total only when there
-	# is one effect term.  Up to 0.3218 a two-factor result was answered for
+	# is one effect term.  Up to 0.3217 a two-factor result was answered for
 	# whichever term sorted first, with partial eta-squared reported as eta_sq.
 	my @terms = grep { $_ ne 'Residuals' && ref $aov_res->{$_} eq 'HASH'
 		&& exists $aov_res->{$_}{'Sum Sq'} } sort keys %$aov_res;
@@ -5957,7 +5990,7 @@ sub vif {
 #   chisq <- sum((observed - expected)^2/expected)
 #   G <- length(unique(cutyhat)); df = G - 2
 #
-# Up to 0.3218 the breaks were not made unique, so a prediction tied at the
+# Up to 0.3217 the breaks were not made unique, so a prediction tied at the
 # lowest break -- every prediction from a model with only categorical
 # predictors -- was a group of its own rather than part of the first one; and
 # df was g - 2 where 0.3-6 has G - 2, the number of groups that hold a row.
@@ -6037,12 +6070,12 @@ sub hosmer_lemeshow {
 	warn "hosmer_lemeshow: the data allowed $used of the $g groups requested\n"
 		if $used < $g;
 	my $df = $used - 2;
-	# 1 - pchisq(chisq, 0) in R: the chi-square on 0 df is all at 0
-	my $pv = $df ? _pchisq_upper($chi, $df) : $chi > 0 ? 0 : 1;
 	return {
 		statistic => $chi,
 		parameter => $df,
-		'p_value'   => $pv,
+		# not _pchisq_upper(), which is NaN at an infinite statistic and 1 at
+		# df 0, where R's 1 - pchisq(chisq, 0) is 0 for any chisq > 0
+		'p_value'   => pchisq($chi, $df, lower => 0),
 		groups    => $used,
 		table     => \@groups,
 	};
@@ -10245,6 +10278,12 @@ does. An C<undef> element becomes C<NaN>.
  my $z  = qnorm(0.975);                 # 1.959963984540054
  my $zs = qnorm([0.025, 0.5, 0.975]);   # [-1.9599639845, 0, 1.9599639845]
 
+C<< df =E<gt> 0 >> is a chi-square with all its mass at 0, as in R, not an invalid
+parameter: C<pchisq($q, 0)> is 0 for C<< $q E<lt>= 0 >> and 1 above it, and
+C<qchisq($p, 0)> is 0, or C<Inf> at C<$p = 1>. R's own C<tests/d-p-q-r-tst-2.R>
+pins those values; up to 0.3217 both functions returned C<NaN> there. A negative
+C<df> is still C<NaN>.
+
 =head3 What each one does, in one picture
 
 The same identity read from two ends: a C<p*> function is given the boundary and
@@ -10894,6 +10933,14 @@ sums of squares. Returns η², partial η² (equal to η² for a one-way design)
 ω² (omega-squared, a less biased estimator). Accepts either raw values and group
 labels or an existing L<C<aov>|/"aov"> result. Validated numerically against R.
 
+The group labels are a factor whatever they look like: codes C<1, 2, 3> are
+three groups, not one slope. Up to 0.3217 numeric codes were fitted as a slope,
+so R's C<airquality> example, Ozone by Month 5 to 9, gave η² 0.027 for R's
+0.235. An undef value or group drops its row. An C<aov> result must have exactly
+one effect term; a two-factor result is refused rather than answered for one of
+its terms. An C<aov> fitted from a formula still treats a numeric column as a
+slope, as R's C<aov()> does without C<factor()>.
+
  my $e = eta_squared(\@values, \@group);            # or eta_squared($aov_result)
  printf "eta^2 = %.3f, omega^2 = %.3f\n", $e->{eta_sq}, $e->{omega_sq};
 
@@ -10934,7 +10981,7 @@ labels or an existing L<C<aov>|/"aov"> result. Validated numerically against R.
 <tr>
   <td><code>term</code></td>
   <td><code>String</code></td>
-  <td>Name of the effect term used.</td>
+  <td>Name of the effect term used: <code>Group</code> for raw values and labels.</td>
   <td><code>"grp"</code></td>
 </tr>
 </tbody>
@@ -12357,8 +12404,23 @@ The Hosmer-Lemeshow goodness-of-fit test for a logistic-regression model. Given
 the observed 0/1 outcomes and the model's predicted probabilities, it bins the
 observations into C<g> risk groups (deciles by default) and compares observed and
 expected event counts. A large p-value indicates the model fits adequately. The
-grouping and statistic follow R's C<ResourceSelection::hoslem.test>, against which
-it was validated numerically.
+grouping, statistic and degrees of freedom are those of C<hoslem.test()> in R's
+ResourceSelection 0.3-6, and C<t/hosmer_lemeshow.R.t> holds it to that
+function's own documented example at 17 values of C<g>.
+
+The bins are cut at the I<distinct> quantiles of the predictions, so tied
+predictions — every prediction from a model whose predictors are all
+categorical — can leave fewer than C<g> groups. The degrees of freedom are then
+C<groups - 2>, not C<g - 2>, and a warning says how many groups the data allowed,
+as R's does. One group is an error. Up to 0.3217 tied breaks were kept, which
+gave a tie at the lowest break a group of its own, and the degrees of freedom
+were always C<g - 2>.
+
+Two cases depart from C<hoslem.test()>, which has no usable answer in either:
+a cell whose observed and expected counts are both 0, as in an empty bin, adds
+0 to the statistic where R adds 0/0 and returns C<NaN>; and the last break is
+the largest prediction, where R's C<seq(0, 1, 1/g)> falls short of 1 at some
+C<g> (49 is the first) and leaves the largest prediction out of every bin.
 
  # $fit is a binomial glm(); align observed outcomes with fitted_values
  my @obs  = map { $data{$_}{outcome} } @ids;
@@ -12437,7 +12499,7 @@ it was validated numerically.
 <tr>
   <td><code>parameter</code></td>
   <td><code>Integer</code></td>
-  <td>Degrees of freedom, <code>g - 2</code>.</td>
+  <td>Degrees of freedom, <code>groups - 2</code>.</td>
   <td><code>8</code></td>
 </tr>
 <tr>
@@ -12449,7 +12511,7 @@ it was validated numerically.
 <tr>
   <td><code>groups</code></td>
   <td><code>Integer</code></td>
-  <td>Number of non-empty groups used.</td>
+  <td>Number of groups that hold a row; fewer than <code>g</code> when predictions are tied.</td>
   <td><code>10</code></td>
 </tr>
 <tr>
@@ -17015,6 +17077,17 @@ C<< nonparametric =E<gt> 1 >>), chi-squared for categorical. Options: C<by>, C<v
 (which columns), C<types> (override a column's type), C<nonparametric>, C<digits>,
 C<pct_digits>. Each returned row has C<variable>, C<level>, one column per group,
 C<Overall>, and — on a variable's row — C<p_value> and C<test>.
+
+A variable whose test cannot run has no C<p_value> or C<test>, and the rest of
+the table is unaffected: a categorical one that C<chisq_test> cannot test, or a
+continuous one that is constant or has a single observation in a group. Up to
+0.3217 the continuous case died, taking the whole table with it.
+
+Because each group is a key of every row, a C<by> column with a group named
+C<variable>, C<level>, C<type>, C<p_value>, C<test> or C<Overall> is an error. A
+C<types> value must be C<continuous> or C<categorical>. Categorical levels are
+listed in string order, except that levels which are all numbers are listed in
+numeric order, with C<NA> last.
 
 =head2 t_test
 

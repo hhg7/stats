@@ -77,7 +77,132 @@ Revision history for Stats-LikeR
    | 1e5 | 1e5 | strings | 12.4 MB -> 9.3 MB | -25% |
    | 1e5 | 1e5 | integers | 10.9 MB -> 4.7 MB | -57% |
 
+ [cramers_v()]
+
+ - A table whose total is 1, or below 1 with fractional counts, is now
+   refused with "cramers_v: the table total must be more than 1". Bergsma's
+   bias correction divides by N - 1, and a total of 1 died on perl's own
+   "Illegal division by zero", naming a line of the module.
+
+ [eta_squared()]
+
+ - Group labels that look like numbers are now a factor. The raw form,
+   eta_squared(\@values, \@groups), passed aov() a formula, and aov() fits
+   a numeric column as one slope, so groups coded 1, 2, 3 were a linear
+   trend on 1 df. R's airquality example, Ozone by Month 5 to 9, gave
+   eta_sq 0.0271 where summary(aov(Ozone ~ factor(Month))) gives 0.2352.
+   The raw form's term is now 'Group', not '__group'.
+
+ - An aov() result with more than one effect term is now refused. It was
+   answered for whichever term sorted first, with that term's sum of
+   squares plus the residual one taken as the total, so eta_sq was
+   partial eta-squared and omega_sq was wrong as well.
+
+ - The raw form fits through oneway_test(var_equal => 1) where the data
+   allow it, and through aov() where oneway_test() would refuse them: one
+   group, a group of one value, or a value that is undef or not a number.
+   On 1e6 values in 5 groups that is 0.10 s and 47 MB, where aov() takes
+   0.73 s and 326 MB, and the two agree to 7e-16.
+
+ [hosmer_lemeshow()]
+
+ - The groups and the degrees of freedom are now those of hoslem.test() in
+   ResourceSelection 0.3-6. The breaks were not made unique, so a
+   prediction tied at the lowest one, as every prediction from a model
+   with only categorical predictors is, became a group of its own; and df
+   was g - 2 where hoslem.test() has G - 2, for the G groups that hold a
+   row. On predictions from a 4-level factor at the default g = 10, 0.3217
+   gave X-squared 2.745 on 4 groups and df 8, where hoslem.test() gives
+   0.920 on 3 groups and df 1.
+
+ - Fewer groups than g now warn, as R does: "hosmer_lemeshow: the data
+   allowed 3 of the 10 groups requested". One group, where R stops, is an
+   error.
+
+ - Two departures from hoslem.test() are deliberate, in cases where it has
+   no usable answer. A cell whose observed and expected counts are both 0
+   adds 0, where R adds 0/0 and returns NaN; that is every cell of an empty
+   bin. The last break is the largest prediction: R's seq(0, 1, 1/g) falls
+   short of 1 at g = 49, and the package's own example then bins 499 of
+   its 500 rows and reports df 48.
+
+ - g must now be an integer; g => 3.5 used to be accepted.
+
+ [table_one()]
+
+ - A continuous variable whose test cannot run now gets no p-value, as a
+   categorical one already did. t_test() dies on data that are constant
+   and on a group of one observation, and that took the whole table down.
+
+ - A by column with a group named variable, level, type, p_value, test or
+   Overall is now an error. Each group is a key of every output row, so a
+   group named 'test' had its summary overwritten by the label 't-test',
+   and one named 'Overall' overwrote the column that summarises every row.
+
+ - A types value other than 'continuous' or 'categorical' is now an error.
+   types => { age => 'numeric' } was taken as categorical, a row for every
+   distinct age.
+
+ - A by column shorter than the frame now reads as NA past its end, as
+   every other column did; it died on perl's "uninitialized value"
+   warning. A categorical column shorter than the frame now lists its rows
+   past the end as an NA level. They were already counted in the
+   percentages.
+
+ - Levels that are all numbers are listed in numeric order, with NA last.
+   They were sorted as strings, so stage 10 came between 1 and 2.
+
+ [table_one(): speed and memory]
+
+ - Columns are fetched one at a time instead of all at once; each value is
+   made a number once, where mean(), sd() and the test each parsed their
+   own copy of the string; the per-row group label strings and level
+   strings are gone; and with more than two groups the ANOVA p-value comes
+   from oneway_test(var_equal => 1), which agrees with aov() to the 1e-12
+   that R's anova(lm()) and oneway.test() differ by on the same data.
+
+ - Each figure is the best of 3 cold calls on perl 5.44.0 with by => 'arm'
+   (three groups) over four continuous and four categorical columns, about
+   5% missing; memory is the peak RSS the call adds.
+
+ - | rows | frame | test | time, 0.3217 -> 0.3218 | memory, 0.3217 -> 0.3218 |
+   |---|---|---|---|---|
+   | 1e6 | AoH | parametric | 10.53 s -> 5.32 s | 1573.7 MB -> 536.8 MB |
+   | 1e6 | AoH | nonparametric | 7.40 s -> 5.56 s | 1416.7 MB -> 545.0 MB |
+   | 1e6 | HoA | parametric | 8.71 s -> 2.72 s | 748.2 MB -> 167.0 MB |
+   | 1e6 | HoA | nonparametric | 5.55 s -> 2.94 s | 590.5 MB -> 172.6 MB |
+   | 1e5 | AoH | parametric | 0.91 s -> 0.42 s | 157.6 MB -> 53.4 MB |
+   | 1e5 | HoA | parametric | 0.72 s -> 0.23 s | 75.5 MB -> 16.8 MB |
+
+ [pchisq() and qchisq()]
+
+ - df => 0 is now the chi-square with all its mass at 0, as in R:
+   pchisq($q, 0) is 0 for $q <= 0 and 1 above, and qchisq($p, 0) is 0, or
+   Inf at $p = 1. Both returned NaN, and t/distributions.R.scipy.t asserted
+   NaN for pchisq(1, 0) under a comment saying R returns NaN there too. R's
+   own tests/d-p-q-r-tst-2.R pins the values above.
+
  [Tests]
+
+ - t/hosmer_lemeshow.R.t, with its generator t/hosmer_lemeshow.R.R: 316
+   tests, 103 of which fail on 0.3217. They hold the function to
+   hoslem.test() on the package's documented example at 17 values of g,
+   and on tied, categorical and two-valued predictions, including each
+   warning and each case where R stops. The deliberate departures above
+   are pinned against a third opinion in R that makes the same two
+   changes.
+
+ - t/eta_squared.R.t, with its generator t/eta_squared.R.R: 54 tests, 24
+   of which fail on 0.3217, on R's own airquality, PlantGrowth,
+   InsectSprays and chickwts examples. Each is run under its own labels,
+   under numeric codes and as an aov() result, and warpbreaks covers the
+   two-factor refusal.
+
+ - t/table_one.t has a test for each table_one() fix above; on 0.3217 it
+   dies at the first of them.
+
+ - t/distributions.R.scipy.t: six df = 0 cases from R's
+   tests/d-p-q-r-tst-2.R, all of which fail on 0.3217.
 
  - t/read_table.alignment.t checks each wording from both the parser's
    fast path and read_table's row closure, which must agree word for word.

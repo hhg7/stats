@@ -587,7 +587,7 @@ is( scalar keys %COUNT, 8, 'the frozen table covered all eight functions' );
 #
 # The log-scale and qchisq() rows are R 4.6.1's answers to the same arguments,
 # pchisq(c(-1,0,1,Inf), 0, log.p=TRUE) and qchisq(c(0,.5,1), 0) with each
-# tail. Up to 0.3218 every one of them was NaN, and the NaN list above asserted
+# tail. Up to 0.3217 every one of them was NaN, and the NaN list above asserted
 # it for pchisq(1, 0), under a comment saying R returns NaN there too.
 {
 	my $INF = 9 ** 9 ** 9;
