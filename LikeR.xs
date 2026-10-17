@@ -17874,12 +17874,6 @@ static void epi_read_2x2(pTHX_ SV *sv, const char *who, NV *a, NV *b, NV *c, NV 
 
 // ROC / AUC
 typedef struct { NV score; int lab; } ROCPt; //lab: 1 = positive case
-static int rocpt_cmp_desc(const void *a, const void *b) {
-	const ROCPt *pa = (const ROCPt *)a, *pb = (const ROCPt *)b;
-	if (pa->score > pb->score) return -1;
-	if (pa->score < pb->score) return 1;
-	return 0;
-}
 
 /*(value, original-index) pair, sorted ascending by value.  Used by the
 active_frac mode of auroc() and bedroc() to pick exactly ceil(frac*N) items
