@@ -778,7 +778,7 @@ sub _html_fold {
 
 sub colnames {
 	my ($df) = @_;
-	die "colnames: undefined data in first position\n" unless defined $df;
+	_usage_error('colnames', 'undefined data in first position') unless defined $df;
 	my $shape = _df_shape($df, 'colnames');
 	my @cols;
 	if ($shape eq 'AoA') {                       # widest row -> 0 .. m-1
@@ -814,7 +814,7 @@ sub colnames {
 
 sub rownames {
 	my ($df) = @_;
-	die "rownames: undefined data in first position\n" unless defined $df;
+	_usage_error('rownames', 'undefined data in first position') unless defined $df;
 	my $shape = _df_shape($df, 'rownames');
 	my @rows;
 	if ($shape eq 'HoH') {                        # outer keys ARE the rows
@@ -892,11 +892,11 @@ sub rownames {
 sub _cols_arg {                         # normalise + validate a column list
 	my ($fn, @a) = @_;
 	my @cols = (@a == 1 && ref $a[0] eq 'ARRAY') ? @{ $a[0] } : @a;
-	die "$fn: at least one column is required\n" unless @cols;
+	_usage_error($fn, 'at least one column is required') unless @cols;
 	my %seen;
 	for my $c (@cols) {
-		die "$fn: column identifier is undefined\n" unless defined $c;
-		die "$fn: duplicate column '$c' in the list\n" if $seen{$c}++;
+		_usage_error($fn, 'column identifier is undefined') unless defined $c;
+		_usage_error($fn, "duplicate column '$c' in the list") if $seen{$c}++;
 	}
 	return @cols;
 }
@@ -912,9 +912,9 @@ sub _aoa_int_cols { # validate integer positions in range
 	my ($fn, $df, @cols) = @_;
 	my $w = _aoa_width($df);
 	for my $c (@cols) {
-		die "$fn: AoA column '$c' is not a non-negative integer\n"
+		_usage_error($fn, "AoA column '$c' is not a non-negative integer")
 			unless $c =~ /^\d+$/;
-		die "$fn: AoA column index $c out of range (max index " . ($w - 1) . ")\n"
+		_usage_error($fn, "AoA column index $c out of range (max index " . ($w - 1) . ")")
 			if $c >= $w;
 	}
 	return $w;
@@ -959,7 +959,7 @@ sub _rename_inplace { # VOID-context rename: mutate the source
 
 sub select_cols {# shape code passed to the XS: 1 = AoH, 2 = HoH, 3 = AoA
 	my $df = _untied(shift);
-	die "select_cols: undefined data in first position\n" unless defined $df;
+	_usage_error('select_cols', 'undefined data in first position') unless defined $df;
 	my @cols  = _cols_arg('select_cols', @_);
 	my $shape = _df_shape($df, 'select_cols');
 
@@ -984,7 +984,7 @@ sub select_cols {# shape code passed to the XS: 1 = AoH, 2 = HoH, 3 = AoA
 
 sub drop_cols {
 	my $df = _untied(shift);
-	die "drop_cols: undefined data in first position\n" unless defined $df;
+	_usage_error('drop_cols', 'undefined data in first position') unless defined $df;
 	my @cols  = _cols_arg('drop_cols', @_);
 	my %drop  = map { $_ => 1 } @cols;
 	my $shape = _df_shape($df, 'drop_cols');
@@ -1012,18 +1012,18 @@ sub drop_cols {
 sub rename_cols {
 	my $df = shift;
 	$df = _untied($df) if defined wantarray;   # void context renames the frame itself
-	die "rename_cols: undefined data in first position\n" unless defined $df;
+	_usage_error('rename_cols', 'undefined data in first position') unless defined $df;
 	my %map;
 	if (@_ == 1 && ref $_[0] eq 'HASH') {
 		%map = %{ $_[0] };
 	} else {
-		die "rename_cols: arguments after the data frame must be old => new pairs (or one hashref)\n"
+		_usage_error('rename_cols', 'arguments after the data frame must be old => new pairs (or one hashref)')
 			if @_ % 2;
 		%map = @_;
 	}
-	die "rename_cols: at least one old => new mapping is required\n" unless %map;
+	_usage_error('rename_cols', 'at least one old => new mapping is required') unless %map;
 	for my $o (keys %map) {
-		die "rename_cols: new name for '$o' is undefined\n" unless defined $map{$o};
+		_usage_error('rename_cols', "new name for '$o' is undefined") unless defined $map{$o};
 	}
 	my $shape = _df_shape($df, 'rename_cols');
 	die "rename_cols: an AoA has no column names to rename (convert to AoH/HoA first)\n"
@@ -1062,10 +1062,10 @@ sub rename_cols {
 
 sub aoh2hoh {
 	my ($aoh, $key) = @_;
-	die 'aoh2hoh: first argument is undefined' unless defined $aoh;
-	die 'aoh2hoh: first argument must be an arrayref of hashrefs'
+	_usage_error('aoh2hoh', 'first argument is undefined') unless defined $aoh;
+	_usage_error('aoh2hoh', 'first argument must be an arrayref of hashrefs')
 	  unless ref($aoh) eq 'ARRAY';
-	die 'aoh2hoh: a row key must be defined' unless defined $key;
+	_usage_error('aoh2hoh', 'a row key must be defined') unless defined $key;
 	my %out;
 	my $i = 0;
 	for my $row (@$aoh) {
@@ -1105,8 +1105,30 @@ sub _kv_names {
 	my ($caller, $arg) = @_;
 	my $var   = defined $arg->{var_name}   ? $arg->{var_name}   : 'variable';
 	my $value = defined $arg->{value_name} ? $arg->{value_name} : 'value';
-	die "$caller: var_name and value_name must differ\n" if $var eq $value;
+	_usage_error($caller, 'var_name and value_name must differ') if $var eq $value;
 	return ($var, $value);
+}
+
+# _usage_text($fn) -- $fn's argparse-style help screen, from
+# Stats::LikeR::Usage, which is compiled only here, on the way to an error.  A
+# name with no screen gets none, so that the error is still raised rather than
+# lost to a second one; t/usage.t keeps every exported name covered.
+sub _usage_text {
+	my ($fn) = @_;
+	require Stats::LikeR::Usage;
+	my $name = exists $Stats::LikeR::Usage::ALIAS{$fn} ? $Stats::LikeR::Usage::ALIAS{$fn} : $fn;
+	my $screen = $Stats::LikeR::Usage::SCREEN{$name};
+	return defined $screen ? $screen : '';
+}
+
+# _usage_error($fn, $msg) -- die over an argument $fn was called with as
+# argparse does: the help screen, then "$fn: error: $msg" as the last line.
+# For the form of a call only (a missing or mistyped argument, an unknown
+# option, a value outside its choices); an error in the data keeps its own
+# one-line message.  The XS raises the same through usage_croak().
+sub _usage_error {
+	my ($fn, $msg) = @_;
+	die _usage_text($fn) . "$fn: error: $msg\n";
 }
 
 # _opt_names_defined($caller, @pairs) -- die, in the caller's name, on an undef
@@ -1117,21 +1139,21 @@ sub _kv_names {
 sub _opt_names_defined {
 	my $caller = shift;
 	for (my $j = 0; $j < @_; $j += 2) {
-		die "$caller: an option name is undefined\n" unless defined $_[$j];
+		_usage_error($caller, 'an option name is undefined') unless defined $_[$j];
 	}
 }
 
 sub h2aoh {
 	my $h = shift;
-	die "h2aoh: first argument is undefined\n" unless defined $h;
-	die "h2aoh: first argument must be a hashref\n" unless ref($h) eq 'HASH';
-	die "h2aoh: arguments after the hash must be name => value pairs\n"
+	_usage_error('h2aoh', 'first argument is undefined') unless defined $h;
+	_usage_error('h2aoh', 'first argument must be a hashref') unless ref($h) eq 'HASH';
+	_usage_error('h2aoh', 'arguments after the hash must be name => value pairs')
 		if @_ % 2;
 	_opt_names_defined('h2aoh', @_);
 	my %arg   = @_;
 	my %known = ( var_name => 1, value_name => 1, sort => 1 );
 	my @bad   = sort grep { !$known{$_} } keys %arg;
-	die "h2aoh: unknown argument(s): @bad\n" if @bad;
+	_usage_error('h2aoh', "unknown argument(s): @bad") if @bad;
 
 	my ($var_name, $value_name) = _kv_names('h2aoh', \%arg);
 
@@ -1170,7 +1192,7 @@ sub h2aoh {
 		} @keys;
 	}
 	elsif ($how ne 'none') {
-		die "h2aoh: sort '$how' isn't allowed (key, value, none)\n";
+		_usage_error('h2aoh', "sort '$how' isn't allowed (key, value, none)");
 	}
 
 	return [ map { { $var_name => $_, $value_name => $h->{$_} } } @keys ];
@@ -1183,19 +1205,19 @@ sub h2aoh {
 # alone.  It is a glob alias, as rbind is of concat, so its messages say df2h.
 sub df2h {
 	my $df = shift;
-	die "df2h: first argument is undefined\n" unless defined $df;
+	_usage_error('df2h', 'first argument is undefined') unless defined $df;
 	# reftype, not ref: a blessed frame or row is still one, as aoh2hoa
 	# already took it.  Up to 0.3217 aoh2h refused them.
 	my $type = reftype($df) || '';
-	die "df2h: first argument must be a data frame (AoA, AoH, HoA or HoH)\n"
+	_usage_error('df2h', 'first argument must be a data frame (AoA, AoH, HoA or HoH)')
 		unless $type eq 'ARRAY' || $type eq 'HASH';
-	die "df2h: arguments after the data frame must be name => value pairs\n"
+	_usage_error('df2h', 'arguments after the data frame must be name => value pairs')
 		if @_ % 2;
 	_opt_names_defined('df2h', @_);
 	my %arg   = @_;
 	my %known = ( var_name => 1, value_name => 1, duplicates => 1 );
 	my @bad   = sort grep { !$known{$_} } keys %arg;
-	die "df2h: unknown argument(s): @bad\n" if @bad;
+	_usage_error('df2h', "unknown argument(s): @bad") if @bad;
 
 	# A tied frame is copied once, as _untied() does, so that deciding its
 	# shape here does not FETCH a row the XS then FETCHes again.  _untied()
@@ -1306,9 +1328,12 @@ sub _untied {
 
 sub _df_shape {
 	my ($df, $caller) = @_;
+	unless (ref $df) {
+		my $msg = 'data frame must be an ARRAY (AoA/AoH) or HASH (HoA/HoH) ref';
+		_usage_error($caller, $msg) if defined $caller;	# the caller's help screen
+		die "data frame: $msg\n";
+	}
 	$caller = 'data frame' unless defined $caller;
-	die "$caller: data frame must be an ARRAY (AoA/AoH) or HASH (HoA/HoH) ref\n"
-		unless ref $df;
 	if (ref $df eq 'ARRAY') {
 		for my $e (@$df) {
 			next unless defined $e;
@@ -1429,29 +1454,29 @@ sub _df_shape {
 
 	sub agg {
 		my $df = _untied(shift);
-		die "agg: undefined data in first position\n" unless defined $df;
+		_usage_error('agg', 'undefined data in first position') unless defined $df;
 		my $shape = _df_shape($df, 'agg');
-		die "agg: arguments after the data frame must be name => value pairs\n"
+		_usage_error('agg', 'arguments after the data frame must be name => value pairs')
 			if @_ % 2;
 		my %arg = @_;
 		my %known = ( agg => 1, by => 1, skipna => 1, sort => 1, 'output_type' => 1 );
 		my @bad = sort grep { !$known{$_} } keys %arg;
-		die "agg: unknown argument(s): @bad\n" if @bad;
+		_usage_error('agg', "unknown argument(s): @bad") if @bad;
 
 		my $spec = $arg{agg};
-		die "agg: an 'agg' spec (hashref of column => aggregator) is required\n"
+		_usage_error('agg', "an 'agg' spec (hashref of column => aggregator) is required")
 			unless ref $spec eq 'HASH' and %$spec;
 
 		my @by = !defined $arg{by}          ? ()
 		       : ref $arg{by} eq 'ARRAY'    ? @{ $arg{by} }
 		       :                              ( $arg{by} );
-		die "agg: 'by' contains an undefined column\n" if grep { !defined } @by;
+		_usage_error('agg', "'by' contains an undefined column") if grep { !defined } @by;
 		my $skipna = exists $arg{skipna} ? ($arg{skipna} ? 1 : 0) : 1;
 		my $dosort = exists $arg{sort}   ? ($arg{sort}   ? 1 : 0) : 1;
 		my $otype  = defined $arg{'output_type'} ? lc $arg{'output_type'}
 		           : lc $shape;
 		my %ok_otype = ( aoa => 1, aoh => 1, hoa => 1, hoh => 1 );
-		die "agg: output_type '$otype' isn't allowed (aoa, aoh, hoa, hoh)\n"
+		_usage_error('agg', "output_type '$otype' isn't allowed (aoa, aoh, hoa, hoh)")
 			unless $ok_otype{$otype};
 
 		my @agg_cols = keys %$spec;
@@ -1461,7 +1486,7 @@ sub _df_shape {
 		}
 		if ($shape eq 'AoA') {           # positions; Perl's own negative indexing
 			for my $c (@by, @agg_cols) {
-				die "agg: AoA columns are integer positions, not '$c'\n"
+				_usage_error('agg', "AoA columns are integer positions, not '$c'")
 					unless $c =~ /\A-?[0-9]+\z/;
 			}
 		} elsif ($shape eq 'HoA') {
@@ -1481,12 +1506,12 @@ sub _df_shape {
 		for my $c (@agg_cols) {
 			my $s = $spec->{$c};
 			my @funcs = ref $s eq 'ARRAY' ? @$s : ($s);
-			die "agg: empty aggregator list for column '$c'\n" unless @funcs;
+			_usage_error('agg', "empty aggregator list for column '$c'") unless @funcs;
 			for my $f (@funcs) {
 				next if ref $f eq 'CODE';
-				die "agg: aggregator for column '$c' must be a name or a coderef\n"
+				_usage_error('agg', "aggregator for column '$c' must be a name or a coderef")
 					if !defined $f || ref $f;
-				die "agg: unknown aggregator '$f'\n"
+				_usage_error('agg', "unknown aggregator '$f'")
 					unless exists $AGG_MIN{$f} || $AGG_OTHER{$f};
 			}
 			my $ncode = grep { ref $_ eq 'CODE' } @funcs;
@@ -1626,7 +1651,7 @@ sub _df_shape {
 # cell stays missing rather than becoming ''.
 sub map_cell (&) {
 	my ($code) = @_;
-	die "map_cell: expects a code block, e.g. map_cell { s/x//g }\n"
+	_usage_error('map_cell', 'expects a code block')
 		unless ref $code eq 'CODE';
 	return bless { code => $code }, 'Stats::LikeR::map_cell';
 }
@@ -1634,10 +1659,10 @@ sub map_cell (&) {
 sub assign {
 	my $df = shift;
 	my $current_sub = (split(/::/,(caller(0))[3]))[-1];
-	die "$current_sub: first argument is undefined" unless defined $df;
-	die "$current_sub: first argument must be a data frame (AoH arrayref or HoA/HoH hashref)"
+	_usage_error($current_sub, 'first argument is undefined') unless defined $df;
+	_usage_error($current_sub, 'first argument must be a data frame (AoH arrayref or HoA/HoH hashref)')
 		unless ref $df;
-	die "$current_sub: expected an even list of (name => value) pairs" if @_ % 2;
+	_usage_error($current_sub, 'expected an even list of (name => value) pairs') if @_ % 2;
 
 	my $r = ref $df;
 	my $shape;                                      # 'AoH', 'HoA' or 'HoH'
@@ -1670,7 +1695,7 @@ sub assign {
 			}
 		}
 	} else {
-		die "$current_sub: data frame must be an arrayref (AoH) or hashref (HoA/HoH)";
+		_usage_error($current_sub, 'data frame must be an arrayref (AoH) or hashref (HoA/HoH)');
 	}
 
 	# Row count. For a HoA it is the longest column; with no column at all yet
@@ -1703,7 +1728,7 @@ sub assign {
 				if $shape eq 'HoA' and not $hoa_col{$name};
 			next;
 		}
-		die "$current_sub: value for '$name' must be a CODE or ARRAY ref"
+		_usage_error($current_sub, "value for '$name' must be a CODE or ARRAY ref")
 			unless $sref eq 'CODE' or $sref eq 'ARRAY';
 		if ($sref eq 'ARRAY') {
 			$n = @$spec unless defined $n;
@@ -1905,18 +1930,18 @@ sub assign {
 
 sub chunk {
 	my ($aref, @rest) = @_;
-	die "chunk: first argument must be an ARRAY reference\n"
+	_usage_error('chunk', 'first argument must be an ARRAY reference')
 		unless ref $aref eq 'ARRAY';
 	# Own the message for an odd argument list.  Falling straight into a hash
 	# assignment left perl to report it, and under `warnings FATAL => 'all'`
 	# chunk($aref, 2) died as "Odd number of elements in hash assignment at
 	# LikeR.pm line 1686" -- naming neither chunk nor the option it wanted.
-	die "chunk: arguments after the array reference must be name => value "
-	  . "pairs; pass exactly one of size => N or parts => K\n"
+	_usage_error('chunk', 'arguments after the array reference must be name => value '
+	  . 'pairs; pass exactly one of size => N or parts => K')
 		if @rest % 2;
 	my %opt = @rest;
 
-	die "chunk: pass exactly one of size => N or parts => K\n"
+	_usage_error('chunk', 'pass exactly one of size => N or parts => K')
 		if  (defined $opt{size} && defined $opt{parts})
 		||  (!defined $opt{size} && !defined $opt{parts});
 
@@ -1926,7 +1951,7 @@ sub chunk {
 	my @groups;
 	if (defined $opt{size}) {
 		my $sz = $opt{size};
-		die "chunk: size must be a positive integer\n"
+		_usage_error('chunk', 'size must be a positive integer')
 			unless $sz =~ /\A[1-9][0-9]*\z/;
 		for (my $i = 0; $i < $n; $i += $sz) {
 			my $hi = $i + $sz - 1;
@@ -1935,7 +1960,7 @@ sub chunk {
 		}
 	} else {
 		my $k = $opt{parts};
-		die "chunk: parts must be a positive integer\n"
+		_usage_error('chunk', 'parts must be a positive integer')
 			unless $k =~ /\A[1-9][0-9]*\z/;
 		for my $i (0 .. $k - 1) {
 			my $lo = int( $i       * $n / $k );
@@ -1993,7 +2018,7 @@ sub col { Stats::LikeR::col::_new(@_) }
 
 	sub _new {
 		my ($name) = @_;
-		die "col(): expects a single column name\n" if !defined($name) || ref $name;
+		Stats::LikeR::_usage_error('col', 'expects a single column name') if !defined($name) || ref $name;
 		return bless { name => $name }, __PACKAGE__;
 	}
 
@@ -2151,14 +2176,14 @@ sub col { Stats::LikeR::col::_new(@_) }
 #        emitted noting that row names collided.
 sub concat {
 	my @frames = grep { defined } @_;
-	die "concat: needs at least one data frame\n" unless @frames;
+	_usage_error('concat', 'needs at least one data frame') unless @frames;
 
 	# reference shape = first non-empty frame; remember a fallback for all-empty
 	my $ref_shape;
 	for my $f (@frames) {
 		my $nonempty = ref $f eq 'ARRAY' ? scalar(@$f)
 		             : ref $f eq 'HASH'  ? scalar(keys %$f)
-		             : die "concat: every frame must be an ARRAY or HASH ref\n";
+		             : _usage_error('concat', 'every frame must be an ARRAY or HASH ref');
 		next unless $nonempty;
 		$ref_shape = _df_shape($f, 'concat');
 		last;
@@ -2259,28 +2284,28 @@ sub concat {
 #
 sub dropna {
 	my $df = shift;
-	die 'dropna: first argument is undefined' unless defined $df;
-	die "dropna: first argument must be a data frame (HoA/HoH hashref or AoH arrayref)\n"
+	_usage_error('dropna', 'first argument is undefined') unless defined $df;
+	_usage_error('dropna', 'first argument must be a data frame (HoA/HoH hashref or AoH arrayref)')
 		unless ref $df;
-	die "dropna: arguments after the data frame must be name => value pairs\n"
+	_usage_error('dropna', 'arguments after the data frame must be name => value pairs')
 		if @_ % 2;
 	my %arg = @_;
 
 	my %known = ( cols => 1, rows => 1, how => 1 );
 	my @bad = sort grep { !$known{$_} } keys %arg;
-	die "dropna: unknown argument(s): @bad\n" if @bad;
+	_usage_error('dropna', "unknown argument(s): @bad") if @bad;
 
 	my $have_cols = exists $arg{cols};
 	my $have_rows = exists $arg{rows};
-	die "dropna: pass exactly one of 'cols' or 'rows'\n"
+	_usage_error('dropna', "pass exactly one of 'cols' or 'rows'")
 		unless $have_cols xor $have_rows;
 
 	my $sel = $have_cols ? $arg{cols} : $arg{rows};
-	die "dropna: '" . ($have_cols ? 'cols' : 'rows') . "' must be an arrayref\n"
+	_usage_error('dropna', "'" . ($have_cols ? 'cols' : 'rows') . "' must be an arrayref")
 		unless ref $sel eq 'ARRAY';
 
 	my $how = defined $arg{how} ? lc $arg{how} : 'any';
-	die "dropna: 'how' must be 'any' or 'all'\n"
+	_usage_error('dropna', "'how' must be 'any' or 'all'")
 		unless $how eq 'any' or $how eq 'all';
 
 	my $r = ref $df;
@@ -2369,7 +2394,7 @@ sub dropna {
 		return { map { $_ => [ @{ $df->{$_} }[@keep] ] } keys %$df };
 	}
 
-	die "dropna: data frame must be an arrayref (AoH) or hashref (HoA/HoH)\n";
+	_usage_error('dropna', 'data frame must be an arrayref (AoH) or hashref (HoA/HoH)');
 }
 
 # drop_duplicates($df, subset => $col | \@cols, keep => 'first' | 'last' | 0)
@@ -2395,27 +2420,27 @@ sub dropna {
 # survivor therefore reaches the input's cell.
 sub drop_duplicates {
 	my $df = _untied(shift);
-	die "drop_duplicates: undefined data in first position\n" unless defined $df;
-	die "drop_duplicates: arguments after the data frame must be name => value pairs\n"
+	_usage_error('drop_duplicates', 'undefined data in first position') unless defined $df;
+	_usage_error('drop_duplicates', 'arguments after the data frame must be name => value pairs')
 		if @_ % 2;
 	my %arg = @_;
 	my %known = ( subset => 1, keep => 1 );
 	my @bad = sort grep { !$known{$_} } keys %arg;
-	die "drop_duplicates: unknown argument(s): @bad\n" if @bad;
+	_usage_error('drop_duplicates', "unknown argument(s): @bad") if @bad;
 
 	my $shape = _df_shape($df, 'drop_duplicates');
-	die "drop_duplicates: an HoH data frame is not supported (convert to AoH/HoA/AoA first)\n"
+	_usage_error('drop_duplicates', 'an HoH data frame is not supported (convert to AoH/HoA/AoA first)')
 		if $shape eq 'HoH';
 
 	# keep -> code: 1 = first, -1 = last, 0 = drop every duplicate
 	my $keep = exists $arg{keep} ? $arg{keep} : 'first';
-	die "drop_duplicates: 'keep' is undefined (use 'first', 'last', or 0)\n"
+	_usage_error('drop_duplicates', "'keep' is undefined (use 'first', 'last', or 0)")
 		unless defined $keep;
 	my $kc;
 	if    ($keep eq 'first') { $kc =  1 }
 	elsif ($keep eq 'last')  { $kc = -1 }
 	elsif ($keep eq 'none' || $keep eq '' || (looks_like_number($keep) && $keep == 0)) { $kc = 0 }
-	else  { die "drop_duplicates: 'keep' must be 'first', 'last', or 0 (got '$keep')\n" }
+	else  { _usage_error('drop_duplicates', "'keep' must be 'first', 'last', or 0 (got '$keep')") }
 
 	# subset -> ordered column list
 	my @sub;
@@ -2423,12 +2448,12 @@ sub drop_duplicates {
 		my $s = $arg{subset};
 		if    (ref $s eq 'ARRAY') { @sub = @$s }
 		elsif (!ref $s)           { @sub = ($s) }
-		else { die "drop_duplicates: 'subset' must be a column or an arrayref of columns\n" }
-		die "drop_duplicates: 'subset' is empty\n" unless @sub;
+		else { _usage_error('drop_duplicates', "'subset' must be a column or an arrayref of columns") }
+		_usage_error('drop_duplicates', "'subset' is empty") unless @sub;
 		my %seen;
 		for my $c (@sub) {
-			die "drop_duplicates: undefined column in 'subset'\n" unless defined $c;
-			die "drop_duplicates: duplicate column '$c' in 'subset'\n" if $seen{$c}++;
+			_usage_error('drop_duplicates', "undefined column in 'subset'") unless defined $c;
+			_usage_error('drop_duplicates', "duplicate column '$c' in 'subset'") if $seen{$c}++;
 		}
 	}
 
@@ -2467,8 +2492,8 @@ sub drop_duplicates {
 sub ncol {
 	my ($data) = @_;
 	my $type = reftype $data;
-	die 'ncol: expected an ARRAY or HASH ref (got '
-		. (defined $data ? (ref($data) || 'non-ref scalar') : 'undef') . ")\n"
+	_usage_error('ncol', 'expected an ARRAY or HASH ref (got '
+		. (defined $data ? (ref($data) || 'non-ref scalar') : 'undef') . ')')
 		unless defined $type && ($type eq 'ARRAY' || $type eq 'HASH');
 
 	if ($type eq 'ARRAY') {
@@ -2551,8 +2576,8 @@ sub ncol {
 sub nrow {
 	my ($data) = @_;
 	my $type = reftype $data;
-	die 'nrow: expected an ARRAY or HASH ref (got '
-		. (defined $data ? (ref($data) || 'non-ref scalar') : 'undef') . ')'
+	_usage_error('nrow', 'expected an ARRAY or HASH ref (got '
+		. (defined $data ? (ref($data) || 'non-ref scalar') : 'undef') . ')')
 		unless defined $type;
 
 	# AoH / AoA (and a plain vector): one top-level element per row.
@@ -2591,7 +2616,7 @@ sub nrow {
 sub qcut {
 	my ($data, $q, %opt) = @_;
 
-	die "qcut: first argument must be an ARRAY reference (try h('qcut'))\n"
+	_usage_error('qcut', 'first argument must be an ARRAY reference')
 		unless ref $data eq 'ARRAY';
 
 	# probability vector: q+1 evenly spaced points, or an explicit list
@@ -2599,7 +2624,7 @@ sub qcut {
 	if (ref $q eq 'ARRAY') {
 		$probs = [ sort { $a <=> $b } @$q ];
 	} else {
-		die "qcut: number of quantiles must be a positive integer\n"
+		_usage_error('qcut', 'number of quantiles must be a positive integer')
 			unless defined $q && $q =~ /\A[1-9][0-9]*\z/;
 		$probs = [ map { $_ / $q } 0 .. $q ];
 	}
@@ -2612,7 +2637,7 @@ sub qcut {
 	my $want_edges = exists $opt{edges}
 		? ($opt{edges} ? 1 : 0)
 		: ($want_codes ? 0 : 1);
-	die "qcut: nothing to return (set edges => 1 or codes => 1)\n"
+	_usage_error('qcut', 'nothing to return (set edges => 1 or codes => 1)')
 		unless $want_edges || $want_codes;
 
 	# does the column contain any NA?
@@ -2692,6 +2717,8 @@ sub summary {
 	if (@_ && ref $_[0]) {
 		# summary(\@arr, ...) / summary(\%h, ...)
 		$data = shift;
+		_usage_error($current_sub, 'arguments after the data must be name => value pairs')
+			if @_ % 2;
 		%args = @_;
 	} else {
 		# summary(@vector) / summary(@vector, nrows => N): peel recognised
@@ -2705,16 +2732,16 @@ sub summary {
 		$data = \@list;
 	}
 	my @bad = sort grep { !$opt_key{$_} } keys %args;
-	die "$current_sub: unknown argument(s): @bad\n" if @bad;
+	_usage_error($current_sub, "unknown argument(s): @bad") if @bad;
 	# row cap: nrows / nrow / n / rows are synonyms (default 10)
 	my $nrows = exists $args{nrows} ? $args{nrows} : exists $args{nrow} ? $args{nrow}
 			  : exists $args{n}     ? $args{n}     : exists $args{rows} ? $args{rows}
 			  :                       10;
-	die "$current_sub: 'nrows' must be a non-negative integer\n"
+	_usage_error($current_sub, "'nrows' must be a non-negative integer")
 		unless defined $nrows && $nrows =~ /^\d+$/;
 
 	my $rt = ref $data;
-	die "$current_sub: data must either be a hash or an array, not \"$rt\"\n"
+	_usage_error($current_sub, "data must either be a hash or an array, not \"$rt\"")
 		unless $rt eq 'ARRAY' or $rt eq 'HASH';
 
 	# resolve the data shape into (label, numeric-vector) series
@@ -3318,13 +3345,15 @@ sub _as_bytes {
 
 sub read_table {
 	my $file = shift;
+	# without a name, -f would die on the fatal "uninitialized" warning instead
+	_usage_error('read_table', 'file name missing') unless defined $file;
 	die "read_table: \"$file\" is not a file\n"   unless -f $file;
 	die "read_table: \"$file\" is not readable\n" unless -r $file;
 
 	my %input_args = @_;
 	if (exists $input_args{delim}) {
 		# FIX: sep + delim together used to silently prefer delim
-		die "read_table: pass either 'sep' or 'delim', not both\n"
+		_usage_error('read_table', "pass either 'sep' or 'delim', not both")
 			if exists $input_args{sep};
 		$input_args{sep} = delete $input_args{delim};
 	}
@@ -3338,8 +3367,8 @@ sub read_table {
 	{
 		my @given = grep { exists $input_args{$_} }
 			qw(na_strings na_values undef_val);
-		die "read_table: pass only one of 'na_strings', 'na_values' or "
-		  . "'undef_val'; got " . join(', ', map { "'$_'" } @given) . "\n"
+		_usage_error('read_table', "pass only one of 'na_strings', 'na_values' or "
+		  . "'undef_val'; got " . join(', ', map { "'$_'" } @given))
 			if @given > 1;
 		$input_args{'na_strings'} = delete $input_args{ $given[0] } if @given;
 	}
@@ -3384,55 +3413,52 @@ sub read_table {
 		'_closure',
 	);
 	my @undef_args = sort grep { !$allowed_args{$_} } keys %args;
-	if (@undef_args) {
-		my $current_sub = ( split /::/, (caller(0))[3] )[-1];
-		die "the args \"@undef_args\" aren't defined for $current_sub\n";
-	}
+	_usage_error('read_table', "unknown argument(s): @undef_args") if @undef_args;
 	# explode => 1, the default for a VCF read with its header: every sample
 	# column is split on ':' into one column per FORMAT key, and the table is
 	# a hoh keyed by CHROM:POS:REF:ALT (see _vcf_explode). Without a header
 	# there is no FORMAT column to split by, so header => 0 reads it plain.
 	if (exists $args{explode}) {
-		die "read_table: 'explode' applies only to a VCF (.vcf, .vcf.gz or "
-		  . ".vcf.bgz), and \"$file\" is not named as one\n"
+		_usage_error('read_table', "'explode' applies only to a VCF (.vcf, .vcf.gz or "
+		  . ".vcf.bgz), and \"$file\" is not named as one")
 			unless $is_vcf;
-		die "read_table: 'explode' must be 0 or 1\n"
+		_usage_error('read_table', "'explode' must be 0 or 1")
 			unless defined $args{explode} && !ref $args{explode}
 				&& $args{explode} =~ /\A[01]?\z/;
 	}
 	my $explode = $is_vcf && ($args{explode} // 1)
 		&& !(exists $args{header} && defined $args{header} && !$args{header});
 	my $otype = $args{'output_type'} // ($explode ? 'hoh' : 'aoh');
-	die "read_table: output_type \"$otype\" isn't allowed (aoa, aoh, hoa, hoh)\n"
+	_usage_error('read_table', "output_type \"$otype\" isn't allowed (aoa, aoh, hoa, hoh)")
 		unless $otype =~ m/^(?:aoa|aoh|hoa|hoh)$/;
 	# Only a hoh is keyed by a column. An aoa is positional, and an aoh or hoa
 	# keeps every column as data, so a row_names column would only be a column
 	# like any other. Up to 0.3213 an aoh or hoa checked the name against the
 	# header and then ignored it, which read as though it had done something.
-	die "read_table: 'row_names' has no meaning for output_type \"$otype\"; "
-	  . "the row names column is read as an ordinary column\n"
+	_usage_error('read_table', "'row_names' has no meaning for output_type \"$otype\"; "
+	  . "the row names column is read as an ordinary column")
 		if $otype ne 'hoh' && defined $args{'row_names'};
 	# compared with the header's bytes, both here and in _vcf_explode()
 	$args{'row_names'} = _as_bytes($args{'row_names'}) if defined $args{'row_names'};
 	# 'sheet' picks a worksheet, which only an .xlsx has; it was ignored on
 	# any other file up to 0.3213, as 'explode' is refused on a non-VCF.
-	die "read_table: 'sheet' applies only to an .xlsx, and \"$file\" is not "
-	  . "named as one\n"
+	_usage_error('read_table', "'sheet' applies only to an .xlsx, and \"$file\" is not "
+	  . "named as one")
 		if defined $args{sheet} && !$is_xlsx;
 	# A qr// separator is found by perl's regex engine; any other sep is
 	# a literal string, as it has always been. A regex is not looked at for an
 	# .xlsx, where a literal sep is not either.
 	if (ref $args{sep} && ref $args{sep} ne 'Regexp') {
-		die "read_table: 'sep' must be a string or a qr// regex, not a "
-		  . ref($args{sep}) . " reference\n";
+		_usage_error('read_table', "'sep' must be a string or a qr// regex, not a "
+		  . ref($args{sep}) . " reference");
 	}
 	my $sep_re = (ref $args{sep} && !$is_xlsx) ? $args{sep} : undef;
 	# Refused before the file is read, so that qr/\s*/ fails the same way
 	# whatever the file holds. A pattern that matches nothing but an empty
 	# string -- a bare lookahead, say -- passes this, and is refused where it
 	# first matches one anywhere but at the start of a line.
-	die "read_table: the sep regex $sep_re matches an empty string; it must "
-	  . "match at least one character\n"
+	_usage_error('read_table', "the sep regex $sep_re matches an empty string; it must "
+	  . "match at least one character")
 		if $sep_re && '' =~ /\A(?:$sep_re)\z/;
 	# header => 0 is R's header = FALSE and pandas' header=None: the first line
 	# is data, and the columns are named by 'col_names' or, as R names them,
@@ -3441,17 +3467,17 @@ sub read_table {
 	# header => ($n > 0) must not be refused when it is false.
 	my $want_header = 1;
 	if (exists $args{header}) {
-		die "read_table: 'header' must be 0 or 1\n"
+		_usage_error('read_table', "'header' must be 0 or 1")
 			unless defined $args{header} && !ref $args{header}
 				&& $args{header} =~ /\A[01]?\z/;
 		$want_header = $args{header} ? 1 : 0;
 	}
 	my $col_names = $args{'col_names'};
 	if (defined $col_names) {
-		die "read_table: 'col_names' must be an ARRAY reference of names\n"
+		_usage_error('read_table', "'col_names' must be an ARRAY reference of names")
 			unless ref $col_names eq 'ARRAY' && @$col_names;
 		for my $n (@$col_names) {
-			die "read_table: 'col_names' may only hold defined, plain strings\n"
+			_usage_error('read_table', "'col_names' may only hold defined, plain strings")
 				if !defined $n || ref $n;
 		}
 	}
@@ -3460,7 +3486,7 @@ sub read_table {
 	# read.table would also take "'", which neither parser here knows.
 	my $quote = 1;
 	if (exists $args{quote}) {
-		die "read_table: 'quote' must be '\"' (the default) or '' (no quoting)\n"
+		_usage_error('read_table', "'quote' must be '\"' (the default) or '' (no quoting)")
 			unless defined $args{quote} && !ref $args{quote}
 				&& ($args{quote} eq '' || $args{quote} eq '"');
 		$quote = $args{quote} eq '"' ? 1 : 0;
@@ -3549,13 +3575,13 @@ sub read_table {
 	if (defined $filter && ref($filter) eq 'CODE') {
 		$filter = { 0 => $filter };
 	} elsif (defined $filter && ref($filter) ne 'HASH') {
-		die "'filter' must be a CODE or HASH reference\n";
+		_usage_error('read_table', "'filter' must be a CODE or HASH reference");
 	}
 	# The parser calls the subs itself (see $plan below), and it takes a code
 	# reference only. Asked up front, so a bad one is not first noticed on
 	# whichever row reaches it.
 	for my $k (sort keys %{ $filter || {} }) {
-		die "read_table: filter '$k' must be a CODE reference\n"
+		_usage_error('read_table', "filter '$k' must be a CODE reference")
 			unless (reftype($filter->{$k}) // '') eq 'CODE';
 	}
 
@@ -3574,17 +3600,17 @@ sub read_table {
 	my $cls_of = sub {
 		my ($c) = @_;
 		return 0 unless defined $c;
-		die "read_table: colClasses '$c' is not one read_table reads: it takes "
-		  . "'numeric' (or 'double' or 'real'), 'integer', 'character' or undef\n"
+		_usage_error('read_table', "colClasses '$c' is not one read_table reads: it takes "
+		  . "'numeric' (or 'double' or 'real'), 'integer', 'character' or undef")
 			unless exists $cls_code{$c};
 		return $cls_code{$c};
 	};
 	if (defined $cls_arg) {
 		my $r = ref $cls_arg;
-		die "read_table: 'colClasses' must be a string, an ARRAY reference or a "
-		  . "HASH reference\n" if $r && $r ne 'ARRAY' && $r ne 'HASH';
+		_usage_error('read_table', "'colClasses' must be a string, an ARRAY reference or a "
+		  . "HASH reference") if $r && $r ne 'ARRAY' && $r ne 'HASH';
 		$cls_of->($_) for $r eq 'ARRAY' ? @$cls_arg : $r eq 'HASH' ? values %$cls_arg : $cls_arg;
-		die "read_table: 'colClasses' is an empty list\n" if $r eq 'ARRAY' && !@$cls_arg;
+		_usage_error('read_table', "'colClasses' is an empty list") if $r eq 'ARRAY' && !@$cls_arg;
 	}
 	my @cls;	# per field of @header, once it is fixed: a %cls_code value
 
@@ -3607,12 +3633,12 @@ sub read_table {
 		my $ns = $args{'na_strings'};
 		my @ns = !defined($ns)       ? ()
 		       : ref($ns) eq 'ARRAY' ? @$ns
-		       : ref($ns)            ? die "read_table: 'na_strings' must be a "
+		       : ref($ns)            ? _usage_error('read_table', "'na_strings' must be a "
 		                                 . 'string or an ARRAY reference, not a '
-		                                 . ref($ns) . " reference\n"
+		                                 . ref($ns) . ' reference')
 		       :                       ($ns);
 		for my $s (@ns) {
-			die "read_table: 'na_strings' may not contain an undefined value\n"
+			_usage_error('read_table', "'na_strings' may not contain an undefined value")
 				unless defined $s;
 			$na_string{ _as_bytes($s) } = 1;
 		}
@@ -4184,7 +4210,7 @@ sub read_table {
 sub view {
 	my $data = shift;
 	if (not defined $data) {
-		die 'view received undefined data';
+		_usage_error('view', 'undefined data in first position');
 	}
 	my %args = @_;
 	# reject unknown arguments (mirrors read_table/write_table)
@@ -4193,14 +4219,14 @@ sub view {
 		to return_only row_names color colors
 	);
 	my @bad = sort grep { !$allowed{$_} } keys %args;
-	die "view: unknown argument(s): @bad\n" if @bad;
+	_usage_error('view', "unknown argument(s): @bad") if @bad;
 	# n / rows (synonyms); reject conflicting or non-integer values
-	die "view: pass either 'n' or 'rows', not both\n"
+	_usage_error('view', "pass either 'n' or 'rows', not both")
 		if exists $args{n} && exists $args{rows};
 	my $n = exists $args{rows} ? $args{rows}
 		  : exists $args{n}    ? $args{n}
 		  :                      6;
-	die "view: 'n'/'rows' must be a non-negative integer\n"
+	_usage_error('view', "'n'/'rows' must be a non-negative integer")
 		unless defined $n && $n =~ /^\d+$/;
 	my $na    = exists $args{na}        ? $args{na}       : 'undef';
 	my $maxw  = exists $args{max_width} ? $args{max_width} : 80;
@@ -4215,12 +4241,12 @@ sub view {
 		   : (defined $ENV{COLUMNS} && $ENV{COLUMNS} =~ /^[1-9][0-9]*\z/)
 			 ? $ENV{COLUMNS}
 			 : 80;
-	die "view: 'width' must be a positive integer\n"
+	_usage_error('view', "'width' must be a positive integer")
 		unless defined $tw && $tw =~ /^[1-9][0-9]*\z/;
 	my $label_col = $args{row_names};
 	my $rt = ref $data;
-	die "view: expected an ARRAY (AoH) or HASH (HoA/HoH) reference, got "
-	  . ($rt || 'a non-reference') . "\n"
+	_usage_error('view', 'expected an ARRAY (AoH) or HASH (HoA/HoH) reference, got '
+	  . ($rt || 'a non-reference'))
 	  unless $rt eq 'ARRAY' or $rt eq 'HASH';
 	my ($kind, @cols, @labels, @raw, $total, $lab_header);
 	if ($rt eq 'ARRAY') {
@@ -4604,20 +4630,24 @@ sub _render_grid {
 # scale otherwise).  Per-level means are observed marginal means, which
 # match R's model.tables means for one-way (and balanced) designs.
 sub TukeyHSD {
+	_usage_error('TukeyHSD', 'first argument must be a fitted-model hashref (from aov/lm/glm)')
+		unless ref($_[0]) eq 'HASH';
+	# checked before %opt is filled, which an odd list would make perl's own
+	# "Odd number of elements" die under FATAL warnings
+	_usage_error('TukeyHSD', 'arguments after the fit must be name => value pairs')
+		unless @_ % 2;
 	my ($fit, %opt) = @_;
-	die 'TukeyHSD: first argument must be a fitted-model hashref (from aov/lm/glm)'
-		unless ref($fit) eq 'HASH';
 	my %known = map { $_ => 1 } qw(conf_level data formula ordered response which);
 	my @bad = sort grep { !$known{$_} } keys %opt;
-	die "TukeyHSD: unknown argument(s): @bad\n" if @bad;
+	_usage_error('TukeyHSD', "unknown argument(s): @bad") if @bad;
 
 	my $conf = exists $opt{conf_level} ? $opt{conf_level} : 0.95;
-	die 'TukeyHSD: conf_level must be between 0 and 1'
+	_usage_error('TukeyHSD', 'conf_level must be between 0 and 1')
 		unless $conf > 0 && $conf < 1;
 	my $ordered = $opt{ordered} ? 1 : 0;
 
 	my $data = $opt{data}
-		or die "TukeyHSD: 'data' (the data frame used to fit the model) is required";
+		or _usage_error('TukeyHSD', "'data' (the data frame used to fit the model) is required");
 
 	# residual mean square (MSE) and residual d.f., per model type
 	my ($mse, $df);
@@ -4673,7 +4703,7 @@ sub TukeyHSD {
 	if (!defined($resp) && defined $opt{formula}) {
 		($resp) = $opt{formula} =~ /\A\s*([^~]+?)\s*~/;
 	}
-	die "TukeyHSD: need the response variable; pass response => 'name' or formula => 'y ~ ...'"
+	_usage_error('TukeyHSD', "need the response variable; pass response => 'name' or formula => 'y ~ ...'")
 		unless defined($resp) && length $resp;
 
 	# factors present in the model (idx 0 of each xlevels entry = reference)
@@ -4690,7 +4720,7 @@ sub TukeyHSD {
 		if (exists $xl->{$f}) { push @factors, $f }
 		else { warn "TukeyHSD: '$f' is not a factor in the model and will be dropped\n" }
 	}
-	die "TukeyHSD: 'which' specified no factors" unless @factors;
+	_usage_error('TukeyHSD', "'which' specified no factors") unless @factors;
 
 	my $y = _tukey_col($data, $resp);
 
@@ -4883,15 +4913,15 @@ sub _sort_group_keys {
 # within each block.  The original frame is never modified.
 sub melt {
 	my $df = shift;
-	die 'melt: undefined data in first position' unless defined $df;
+	_usage_error('melt', 'undefined data in first position') unless defined $df;
 	my $shape = _df_shape($df, 'melt');
-	die "melt: arguments after the data frame must be name => value pairs\n"
+	_usage_error('melt', 'arguments after the data frame must be name => value pairs')
 		if @_ % 2;
 	my %arg = @_;
 	my %known = ( id_vars => 1, value_vars => 1, var_name => 1,
 	              value_name => 1, 'output_type' => 1 );
 	my @bad = sort grep { !$known{$_} } keys %arg;
-	die "melt: unknown argument(s): @bad\n" if @bad;
+	_usage_error('melt', "unknown argument(s): @bad") if @bad;
 
 	my @id = !defined $arg{id_vars}        ? ()
 	       : ref $arg{id_vars} eq 'ARRAY'  ? @{ $arg{id_vars} }
@@ -4900,7 +4930,7 @@ sub melt {
 	my $value_name = defined $arg{value_name} ? $arg{value_name} : 'value';
 	my $otype = defined $arg{'output_type'} ? lc $arg{'output_type'} : lc $shape;
 	my %ok_otype = ( aoa => 1, aoh => 1, hoa => 1, hoh => 1 );
-	die "melt: output_type '$otype' isn't allowed (aoa, aoh, hoa, hoh)\n"
+	_usage_error('melt', "output_type '$otype' isn't allowed (aoa, aoh, hoa, hoh)")
 		unless $ok_otype{$otype};
 
 	my @universe = colnames($df);
@@ -4913,7 +4943,7 @@ sub melt {
 		die "melt: column '$c' not found\n" unless $uni{$c};
 	}
 	# name hygiene: the emitted variable/value columns must not collide
-	die "melt: var_name and value_name must differ\n"
+	_usage_error('melt', 'var_name and value_name must differ')
 		if $var_name eq $value_name;
 	if ($otype ne 'aoa') {
 		for my $c (@id) {
@@ -5002,23 +5032,23 @@ sub melt {
 # The original frame is never modified.
 sub pivot_table {
 	my $df = shift;
-	die 'pivot_table: undefined data in first position' unless defined $df;
+	_usage_error('pivot_table', 'undefined data in first position') unless defined $df;
 	my $shape = _df_shape($df, 'pivot_table');
-	die "pivot_table: arguments after the data frame must be name => value pairs\n"
+	_usage_error('pivot_table', 'arguments after the data frame must be name => value pairs')
 		if @_ % 2;
 	my %arg = @_;
 	my %known = ( index => 1, columns => 1, values => 1, aggfunc => 1,
 	              fill_value => 1, skipna => 1, sort => 1, sep => 1,
 	              'output_type' => 1 );
 	my @bad = sort grep { !$known{$_} } keys %arg;
-	die "pivot_table: unknown argument(s): @bad\n" if @bad;
-	die "pivot_table: 'columns' is required\n" unless defined $arg{columns};
+	_usage_error('pivot_table', "unknown argument(s): @bad") if @bad;
+	_usage_error('pivot_table', "'columns' is required") unless defined $arg{columns};
 
 	my @index   = !defined $arg{index}       ? ()
 	            : ref $arg{index} eq 'ARRAY'  ? @{ $arg{index} }
 	            :                               ( $arg{index} );
 	my @columns = ref $arg{columns} eq 'ARRAY' ? @{ $arg{columns} } : ( $arg{columns} );
-	die "pivot_table: 'columns' must name at least one column\n" unless @columns;
+	_usage_error('pivot_table', "'columns' must name at least one column") unless @columns;
 
 	my $sep      = defined $arg{sep} ? $arg{sep} : '.';
 	my $skipna   = exists $arg{skipna} ? ($arg{skipna} ? 1 : 0) : 1;
@@ -5027,17 +5057,17 @@ sub pivot_table {
 	my $fill     = $arg{fill_value};
 	my $otype    = defined $arg{'output_type'} ? lc $arg{'output_type'} : lc $shape;
 	my %ok_otype = ( aoa => 1, aoh => 1, hoa => 1, hoh => 1 );
-	die "pivot_table: output_type '$otype' isn't allowed (aoa, aoh, hoa, hoh)\n"
+	_usage_error('pivot_table', "output_type '$otype' isn't allowed (aoa, aoh, hoa, hoh)")
 		unless $ok_otype{$otype};
 
 	my $af = exists $arg{aggfunc} ? $arg{aggfunc} : 'mean';
 	my @funcs = ref $af eq 'ARRAY' ? @$af : ( $af );
-	die "pivot_table: empty aggfunc list\n" unless @funcs;
+	_usage_error('pivot_table', 'empty aggfunc list') unless @funcs;
 	my %known_agg = map { $_ => 1 }
 		qw(mean median sum sd var min max count n nunique first last mode);
 	for my $f (@funcs) {
 		next if ref $f eq 'CODE';
-		die "pivot_table: unknown aggfunc '$f'\n" unless $known_agg{$f};
+		_usage_error('pivot_table', "unknown aggfunc '$f'") unless $known_agg{$f};
 	}
 
 	my @universe = colnames($df);
@@ -5159,19 +5189,19 @@ sub pivot_table {
 # a NEW frame (rows/columns rebuilt as needed); the original is never modified.
 sub fillna {
 	my $df = shift;
-	die 'fillna: undefined data in first position' unless defined $df;
+	_usage_error('fillna', 'undefined data in first position') unless defined $df;
 	my $shape = _df_shape($df, 'fillna');
-	die "fillna: arguments after the data frame must be name => value pairs\n"
+	_usage_error('fillna', 'arguments after the data frame must be name => value pairs')
 		if @_ % 2;
 	my %arg = @_;
 	my %known = ( value => 1, cols => 1 );
 	my @bad = sort grep { !$known{$_} } keys %arg;
-	die "fillna: unknown argument(s): @bad\n" if @bad;
-	die "fillna: a 'value' is required\n" unless exists $arg{value};
+	_usage_error('fillna', "unknown argument(s): @bad") if @bad;
+	_usage_error('fillna', "a 'value' is required") unless exists $arg{value};
 
 	my $value   = $arg{value};
 	my $per_col = ref $value eq 'HASH';
-	die "fillna: 'cols' cannot be combined with a per-column 'value' hashref\n"
+	_usage_error('fillna', "'cols' cannot be combined with a per-column 'value' hashref")
 		if $per_col && exists $arg{cols};
 
 	my @universe = colnames($df);
@@ -5184,7 +5214,7 @@ sub fillna {
 	} else {
 		$scalar_fill = $value;
 		if (exists $arg{cols}) {
-			die "fillna: 'cols' must be an arrayref\n"
+			_usage_error('fillna', "'cols' must be an arrayref")
 				unless ref $arg{cols} eq 'ARRAY';
 			for my $c (@{ $arg{cols} }) {
 				die "fillna: column '$c' not found\n" unless $uni{$c};
@@ -5280,17 +5310,17 @@ sub _impute_prop {
 	my $df   = shift;
 	my $name = shift;
 	my $dir  = shift;
-	die "$name: undefined data in first position" unless defined $df;
+	_usage_error($name, 'undefined data in first position') unless defined $df;
 	my $shape = _df_shape($df, $name);
-	die "$name: arguments after the data frame must be name => value pairs\n"
+	_usage_error($name, 'arguments after the data frame must be name => value pairs')
 		if @_ % 2;
 	my %arg = @_;
 	my %known = ( cols => 1, limit => 1 );
 	my @bad = sort grep { !$known{$_} } keys %arg;
-	die "$name: unknown argument(s): @bad\n" if @bad;
+	_usage_error($name, "unknown argument(s): @bad") if @bad;
 
 	my $limit = $arg{limit};
-	die "$name: 'limit' must be a positive integer\n"
+	_usage_error($name, "'limit' must be a positive integer")
 		if defined $limit
 		&& ( !looks_like_number($limit) || $limit < 1 || $limit != int $limit );
 
@@ -5298,7 +5328,7 @@ sub _impute_prop {
 	my %uni = map { $_ => 1 } @universe;
 	my @targets;
 	if (exists $arg{cols}) {
-		die "$name: 'cols' must be an arrayref\n" unless ref $arg{cols} eq 'ARRAY';
+		_usage_error($name, "'cols' must be an arrayref") unless ref $arg{cols} eq 'ARRAY';
 		for my $c (@{ $arg{cols} }) {
 			die "$name: column '$c' not found\n" unless $uni{$c};
 		}
@@ -5405,37 +5435,37 @@ sub bfill { _impute_prop( shift, 'bfill', -1, @_ ) }
 # each column's existing length only; a non-ref row is passed through untouched.
 sub interpolate {
 	my $df = shift;
-	die "interpolate: undefined data in first position" unless defined $df;
+	_usage_error('interpolate', 'undefined data in first position') unless defined $df;
 	my $shape = _df_shape($df, 'interpolate');
-	die "interpolate: arguments after the data frame must be name => value pairs\n"
+	_usage_error('interpolate', 'arguments after the data frame must be name => value pairs')
 		if @_ % 2;
 	my %arg = @_;
 	my %known = ( cols => 1, limit => 1, limit_direction => 1,
 	              limit_area => 1, method => 1, order => 1, x => 1 );
 	my @bad = sort grep { !$known{$_} } keys %arg;
-	die "interpolate: unknown argument(s): @bad\n" if @bad;
+	_usage_error('interpolate', "unknown argument(s): @bad") if @bad;
 
 	my %known_method = map { $_ => 1 } qw(
 		linear index values time slinear nearest zero pad ffill bfill backfill
 		quadratic cubic cubicspline pchip akima barycentric krogh polynomial spline );
 	my $method = defined $arg{method} ? lc $arg{method} : 'linear';
-	die "interpolate: unknown method '$method'\n" unless $known_method{$method};
+	_usage_error('interpolate', "unknown method '$method'") unless $known_method{$method};
 
 	my $order = $arg{order};
 	if ($method eq 'polynomial' || $method eq 'spline') {
-		die "interpolate: method '$method' requires an integer 'order' >= 1\n"
+		_usage_error('interpolate', "method '$method' requires an integer 'order' >= 1")
 			unless defined $order && looks_like_number($order)
 			    && $order >= 1 && $order == int $order;
 	}
 
 	my $limit = $arg{limit};
-	die "interpolate: 'limit' must be a positive integer\n"
+	_usage_error('interpolate', "'limit' must be a positive integer")
 		if defined $limit
 		&& ( !looks_like_number($limit) || $limit < 1 || $limit != int $limit );
 
 	my $dir = defined $arg{limit_direction} ? lc $arg{limit_direction} : 'forward';
 	my %okdir = ( forward => 1, backward => 1, both => 1 );
-	die "interpolate: 'limit_direction' must be 'forward', 'backward', or 'both'\n"
+	_usage_error('interpolate', "'limit_direction' must be 'forward', 'backward', or 'both'")
 		unless $okdir{$dir};
 	# the directional-hold methods pin their own direction
 	$dir = 'forward'  if $method eq 'pad'   || $method eq 'ffill';
@@ -5444,7 +5474,7 @@ sub interpolate {
 	my $area;
 	if (defined $arg{limit_area}) {
 		$area = lc $arg{limit_area};
-		die "interpolate: 'limit_area' must be 'inside' or 'outside'\n"
+		_usage_error('interpolate', "'limit_area' must be 'inside' or 'outside'")
 			unless $area eq 'inside' || $area eq 'outside';
 	}
 
@@ -5452,7 +5482,7 @@ sub interpolate {
 	my %uni = map { $_ => 1 } @universe;
 	my @targets;
 	if (exists $arg{cols}) {
-		die "interpolate: 'cols' must be an arrayref\n" unless ref $arg{cols} eq 'ARRAY';
+		_usage_error('interpolate', "'cols' must be an arrayref") unless ref $arg{cols} eq 'ARRAY';
 		for my $c (@{ $arg{cols} }) {
 			die "interpolate: column '$c' not found\n" unless $uni{$c};
 		}
@@ -5655,7 +5685,7 @@ sub table_one {
 	my ($df, %opt) = @_;
 	my %known = map { $_ => 1 } qw(by vars types nonparametric digits pct_digits);
 	my @bad = sort grep { !$known{$_} } keys %opt;
-	die "table_one: unknown argument(s): @bad\n" if @bad;
+	_usage_error('table_one', "unknown argument(s): @bad") if @bad;
 
 	my $by     = $opt{by};
 	my $digits = defined $opt{digits}     ? $opt{digits}     : 2;
@@ -5666,8 +5696,8 @@ sub table_one {
 	# or types => { age => 'numeric' } made a row of every distinct age
 	for my $v (sort keys %types) {
 		my $t = $types{$v};
-		die "table_one: the type of '$v' must be 'continuous' or 'categorical', not '"
-		  . (defined $t ? $t : 'undef') . "'\n"
+		_usage_error('table_one', "the type of '$v' must be 'continuous' or 'categorical', not '"
+		  . (defined $t ? $t : 'undef') . "'")
 			unless defined $t && ($t eq 'continuous' || $t eq 'categorical');
 	}
 
@@ -5813,7 +5843,7 @@ sub table_one {
 # _num_pair(\@x, \@y, $who) -> (\@xn, \@yn): defined, numeric values only.
 sub _num_pair {
 	my ($x, $y, $who) = @_;
-	die "$who: first two arguments must be array references\n"
+	_usage_error($who, 'first two arguments must be array references')
 		unless ref $x eq 'ARRAY' && ref $y eq 'ARRAY';
 	my @xn = grep { defined && looks_like_number($_) } @$x;
 	my @yn = grep { defined && looks_like_number($_) } @$y;
@@ -5840,14 +5870,18 @@ sub _num_pair {
 # with df = n1 + n2 - 2.  effectsize 1.0.3 uses the exact gamma ratio; the two
 # differ by 4e-5 relative at df = 30 and by 3e-6 at df = 100.
 sub cohen_d {
-	my ($x, $y, %opt) = @_;
+	my ($x, $y, @rest) = @_;
+	_usage_error('cohen_d', 'arguments after the two groups must be name => value pairs')
+		if @rest % 2;
+	_opt_names_defined('cohen_d', @rest);
+	my %opt = @rest;
 	my @bad = sort grep { $_ ne 'conf_level' && $_ ne 'ci_method' } keys %opt;
-	die "cohen_d: unknown argument(s): @bad\n" if @bad;
+	_usage_error('cohen_d', "unknown argument(s): @bad") if @bad;
 	my $cl = defined $opt{conf_level} ? $opt{conf_level} : 0.95;
-	die "cohen_d: conf_level must be between 0 and 1\n"
+	_usage_error('cohen_d', 'conf_level must be between 0 and 1')
 		unless looks_like_number($cl) && $cl > 0 && $cl < 1;
 	my $method = defined $opt{ci_method} ? $opt{ci_method} : 'nct';
-	die "cohen_d: ci_method must be 'nct' or 'normal'\n"
+	_usage_error('cohen_d', "ci_method must be 'nct' or 'normal'")
 		unless $method eq 'nct' || $method eq 'normal';
 	my ($xn, $yn) = _num_pair($x, $y, 'cohen_d');
 	my ($n1, $n2) = (scalar @$xn, scalar @$yn);
@@ -5936,7 +5970,7 @@ sub cramers_v {
 	} elsif (ref $args[0] eq 'ARRAY' && ref $args[1] eq 'ARRAY') {
 		($tab) = _xtab($args[0], $args[1]);
 	} else {
-		die "cramers_v: expected a count table or two parallel vectors\n";
+		_usage_error('cramers_v', 'expected a count table or two parallel vectors');
 	}
 	my $r = scalar @$tab;
 	die "cramers_v: table needs at least two rows and columns\n" if $r < 2;
@@ -6022,7 +6056,7 @@ sub eta_squared {
 			? oneway_test(\%by, var_equal => 1)
 			: aov(\%by);
 	} else {
-		die "eta_squared: expected an aov() result or (\\\@values, \\\@groups)\n";
+		_usage_error('eta_squared', 'expected an aov() result or (\@values, \@groups)');
 	}
 	my $resid = $aov_res->{Residuals}
 		or die "eta_squared: not an ANOVA result (no Residuals term)\n";
@@ -6132,14 +6166,14 @@ sub _chol_det {
 # did not take its rows out, where car's model has none of them.
 sub vif {
 	my ($data, $spec) = @_;
-	die "vif: first argument must be a data reference\n" unless ref $data;
+	_usage_error('vif', 'first argument must be a data reference') unless ref $data;
 	my $formula;
 	if (ref $spec eq 'ARRAY') {
 		$formula = '~ ' . join(' + ', @$spec);
 	} elsif (defined $spec && !ref $spec && $spec =~ /~/) {
 		$formula = $spec;
 	} else {
-		die "vif: expected a formula string or an array ref of predictors\n";
+		_usage_error('vif', 'expected a formula string or an array ref of predictors');
 	}
 	# the XS croaks from this line, so its messages would name a line of this
 	# file; vif()'s own messages carry no location, and neither do these
@@ -6227,13 +6261,18 @@ sub vif {
 #    every bin: at g = 49 the package's own example bins 499 of 500 rows and,
 #    counting the NA as a group, reports df 48.
 sub hosmer_lemeshow {
-	my ($obs, $pred, %opt) = @_;
-	die "hosmer_lemeshow: observed and predicted must be array references\n"
+	my ($obs, $pred, @opt) = @_;
+	_usage_error('hosmer_lemeshow', 'observed and predicted must be array references')
 		unless ref $obs eq 'ARRAY' && ref $pred eq 'ARRAY';
+	# checked before the hash is built, which an odd list makes die with perl's
+	# own "Odd number of elements" instead
+	_usage_error('hosmer_lemeshow', 'options after the two arrays must be name => value pairs')
+		if @opt % 2;
+	my %opt = @opt;
 	die "hosmer_lemeshow: observed and predicted must have the same length\n"
 		unless @$obs == @$pred;
 	my $g = defined $opt{g} ? $opt{g} : 10;
-	die "hosmer_lemeshow: g must be an integer of at least 3\n"
+	_usage_error('hosmer_lemeshow', 'g must be an integer of at least 3')
 		unless looks_like_number($g) && $g == int $g && $g >= 3;
 
 	my (@y, @p);
@@ -6341,23 +6380,23 @@ sub _qgamma {
 sub age_standardize {
 	my @a = @_;
 	my (%opt, $count, $pop, $stdpop, $rate);
-	if (ref $a[0] eq 'ARRAY') {
-		($count, $pop, $stdpop) = (shift @a, shift @a, shift @a);
-		%opt = @a;
-	} else {
-		%opt = @a;
-		($count, $pop, $stdpop, $rate) = @opt{qw(count pop stdpop rate)};
-	}
+	my $positional = ref $a[0] eq 'ARRAY';	# else every argument is named
+	($count, $pop, $stdpop) = splice(@a, 0, 3) if $positional;
+	_usage_error('age_standardize', 'arguments must be name => value pairs, after any '
+	  . 'positional count, pop and stdpop') if @a % 2;
+	_opt_names_defined('age_standardize', @a);
+	%opt = @a;
+	($count, $pop, $stdpop, $rate) = @opt{qw(count pop stdpop rate)} unless $positional;
 	my %known = map { $_ => 1 } qw(count pop stdpop rate per conf_level);
 	my @bad = sort grep { !$known{$_} } keys %opt;
-	die "age_standardize: unknown argument(s): @bad\n" if @bad;
+	_usage_error('age_standardize', "unknown argument(s): @bad") if @bad;
 	$rate ||= $opt{rate};
 	my $cl  = defined $opt{conf_level} ? $opt{conf_level} : 0.95;
 	my $per = defined $opt{per} ? $opt{per} : 1;
-	die "age_standardize: conf_level must be between 0 and 1\n" unless $cl > 0 && $cl < 1;
-	die "age_standardize: 'pop' and 'stdpop' array refs are required\n"
+	_usage_error('age_standardize', 'conf_level must be between 0 and 1') unless $cl > 0 && $cl < 1;
+	_usage_error('age_standardize', "'pop' and 'stdpop' array refs are required")
 		unless ref $pop eq 'ARRAY' && ref $stdpop eq 'ARRAY';
-	die "age_standardize: supply either 'count' or 'rate'\n"
+	_usage_error('age_standardize', "supply either 'count' or 'rate'")
 		unless ref $count eq 'ARRAY' || ref $rate eq 'ARRAY';
 
 	my $k = scalar @$pop;
@@ -6442,12 +6481,12 @@ sub _is_fit {
 sub _anova_fits {
 	my @m;
 	push @m, shift while @_ && _is_fit($_[0]);
-	die "anova: options after the models must be name => value pairs\n" if @_ % 2;
+	_usage_error('anova', 'options after the models must be name => value pairs') if @_ % 2;
 	my %opt = @_;
-	for (keys %opt) {
-		die "anova: unknown argument '$_'\n" unless /^(?:test|dispersion)$/;
+	for (sort keys %opt) {
+		_usage_error('anova', "unknown argument '$_'") unless /^(?:test|dispersion)$/;
 	}
-	die "anova: give at least two fitted models to compare\n" if @m < 2;
+	_usage_error('anova', 'give at least two fitted models to compare') if @m < 2;
 	my $is_glm = exists $m[0]{family};
 	for (@m) {
 		die "anova: cannot compare lm() and glm() fits in one table\n"
@@ -6511,7 +6550,7 @@ sub _anova_fits {
 			     : "anova: using F test with a fixed dispersion is inappropriate\n");
 		}
 	}
-	die "anova: test must be 'F', 'Chisq' or 'LRT'\n" unless $test =~ /^(?:F|Chisq|LRT)$/;
+	_usage_error('anova', "test must be 'F', 'Chisq' or 'LRT'") unless $test =~ /^(?:F|Chisq|LRT)$/;
 	my @rows;
 	for my $i (0 .. $#m) {
 		my %r = $is_glm ? ('Resid. Df' => $resdf[$i], 'Resid. Dev' => $resdev[$i])

@@ -224,6 +224,11 @@ is_deeply([ sort keys %seen_method ], [ sort @METHODS ],
 
 diag(sprintf 'worst relative error vs R: %.4g (%s)', $worst, $worst_at);
 
+# A call of the wrong form prints p_adjust's help screen, then the error last.
+like(do { local $@; eval { p_adjust([0.01, 0.5], 'nonesuch') }; $@ },
+	qr/\Ausage: p_adjust\(.*^example:\n.*\n\np_adjust: error: \QUnknown p-value adjustment method: nonesuch\E\n\z/ms,
+	'p_adjust: an unknown method prints the help screen, and the error last');
+
 done_testing();
 
 __DATA__

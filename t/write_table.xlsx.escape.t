@@ -219,9 +219,9 @@ sub cell_a {
 		'freezing 1048575 rows and 16383 columns is allowed';
 	like(sheet($f), qr{<pane xSplit="16383" ySplit="1048575" topLeftCell="XFD1048576"}, '... and anchored at XFD1048576');
 	throws_ok { write_table([['a']], xlsx_path(), quiet => 1, xlsx_freeze_rows => 2**20) }
-		qr/^write_table: 'xlsx_freeze_rows' must be a non-negative integer no larger than 1048575/, '2**20 frozen rows die';
+		qr/\nwrite_table: error: 'xlsx_freeze_rows' must be a non-negative integer no larger than 1048575/, '2**20 frozen rows die';
 	throws_ok { write_table([['a']], xlsx_path(), quiet => 1, xlsx_freeze_cols => 2**14) }
-		qr/^write_table: 'xlsx_freeze_cols' must be a non-negative integer no larger than 16383/, '2**14 frozen columns die';
+		qr/\nwrite_table: error: 'xlsx_freeze_cols' must be a non-negative integer no larger than 16383/, '2**14 frozen columns die';
 	throws_ok { write_table([['a']], xlsx_path(), quiet => 1, xlsx_freeze_rows => 2**32 + 1) }
 		qr/'xlsx_freeze_rows' must be a non-negative integer no larger than 1048575/,
 		'2**32 + 1 dies, rather than wrapping to 1';

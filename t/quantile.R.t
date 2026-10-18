@@ -419,4 +419,14 @@ SKIP: {
 	no_leaks_ok { eval { quantile(x => []) } } 'no leaks on the croak path';
 }
 
+# A call of the wrong form dies with the function's help screen, laid out as
+# argparse lays one out, and the error itself on the last line.
+is(eval { quantile([1, 2, 3], probs => [0.5], 'type'); 1 }, undef, 'an odd option list dies');
+like($@, qr/\Ausage: quantile\(X \[, probs => ARRAYREF\]\)\n.*\n\nquantile: error: arguments after the data must be name => value pairs\n\z/ms,
+	'... with the help screen above the error');
+is(eval { quantile([1, 2, 3], prob => [0.5]); 1 }, undef, 'an unknown option dies');
+like($@, qr/^quantile: error: unknown argument 'prob'\n\z/m, '... naming it on the last line');
+is(eval { quantile([1, 2, 3], probs => [1.5]); 1 }, undef, 'a probability outside [0, 1] dies');
+like($@, qr/^quantile: error: probabilities must be between 0 and 1\n\z/m, '... naming it on the last line');
+
 done_testing();

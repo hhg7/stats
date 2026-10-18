@@ -899,30 +899,31 @@ for my $row (@SCIPY_ONE) {
 		'return hash has exactly the four documented keys');
 }
 
-# Argument validation.  Every croak path ks_test() has.
+# Argument validation.  Every croak path ks_test() has.  An error in the call
+# is the help screen, then the error on the last line.
 {
 	my @x = (1, 2, 3, 4);
 	my @y = (5, 6, 7, 8);
 	my $NAN = $INF - $INF;
 	my @croaks = (
 		[ 'no arguments at all', sub { ks_test() },
-		  qr/^ks_test: 'x' is a required argument and must be an ARRAY reference/ ],
+		  qr/\Ausage: ks_test\(.*^ks_test: error: 'x' is a required argument and must be an ARRAY reference/ms ],
 		[ 'x is not a reference', sub { ks_test(x => 5, y => \@y) },
-		  qr/^ks_test: 'x' is a required argument and must be an ARRAY reference/ ],
+		  qr/\Ausage: ks_test\(.*^ks_test: error: 'x' is a required argument and must be an ARRAY reference/ms ],
 		[ 'unknown alternative', sub { ks_test(\@x, \@y, alternative => 'up') },
-		  qr/^ks_test: alternative must be 'two\.sided', 'less', or 'greater'/ ],
+		  qr/\Ausage: ks_test\(.*^ks_test: error: alternative must be 'two\.sided', 'less', or 'greater'/ms ],
 		# R accepts match.arg abbreviations ('gr', 'l'); ks_test does not, and
 		# says so rather than silently defaulting to two-sided.
 		[ 'abbreviated alternative', sub { ks_test(\@x, \@y, alternative => 'gr') },
-		  qr/^ks_test: alternative must be 'two\.sided', 'less', or 'greater'/ ],
+		  qr/\Ausage: ks_test\(.*^ks_test: error: alternative must be 'two\.sided', 'less', or 'greater'/ms ],
 		[ 'unknown named argument', sub { ks_test(\@x, \@y, mode => 'exact') },
-		  qr/^ks_test: unknown argument 'mode'/ ],
+		  qr/\Ausage: ks_test\(.*^ks_test: error: unknown argument 'mode'/ms ],
 		[ 'named argument with no value', sub { ks_test(\@x, \@y, 'exact') },
-		  qr/^ks_test: argument 'exact' is missing a value/ ],
+		  qr/\Ausage: ks_test\(.*^ks_test: error: argument 'exact' is missing a value/ms ],
 		[ 'unsupported 1-sample distribution', sub { ks_test(\@x, 'punif') },
-		  qr/^ks_test: Unsupported 1-sample distribution 'punif'\. Use arrays for 2-sample\./ ],
+		  qr/\Ausage: ks_test\(.*^ks_test: error: Unsupported 1-sample distribution 'punif'\. Use arrays for 2-sample\./ms ],
 		[ 'y neither array ref nor CDF name', sub { ks_test(\@x, exact => 1) },
-		  qr/^ks_test: Invalid arguments for 'y'\./ ],
+		  qr/\Ausage: ks_test\(.*^ks_test: error: Invalid arguments for 'y'\./ms ],
 		[ 'empty x', sub { ks_test([], \@y) },
 		  qr/^Not enough 'x' observations/ ],
 		[ 'x is all missing', sub { ks_test([undef, undef], \@y) },
@@ -949,7 +950,7 @@ for my $row (@SCIPY_ONE) {
 	# The message stringifies the ref, so match loosely.
 	my $ok = eval { ks_test(\@x, {}); 1 };
 	ok(!$ok, 'croak: hashref y dies');
-	like("$@", qr/^ks_test: argument 'HASH\(0x[0-9a-f]+\)' is missing a value/,
+	like("$@", qr/\Ausage: ks_test\(.*^ks_test: error: argument 'HASH\(0x[0-9a-f]+\)' is missing a value/ms,
 		'croak: hashref y message');
 }
 

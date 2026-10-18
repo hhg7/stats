@@ -199,6 +199,7 @@ PERL_ARCHIVE_AFTER =
 
 
 TO_INST_PM = lib/Stats/LikeR.pm \
+	lib/Stats/LikeR/Usage.pm \
 	read.me.pod
 PERL_ARCHLIBDEP = /home/con/perl5/perlbrew/perls/perl-5.44.0/lib/5.44.0/x86_64-linux
 PERL_INCDEP = /home/con/perl5/perlbrew/perls/perl-5.44.0/lib/5.44.0/x86_64-linux/CORE
@@ -1115,6 +1116,7 @@ pm_to_blib : $(FIRST_MAKEFILE) $(TO_INST_PM)
 	  -e 'pop @parts; $$filter=join q{ }, map qq{"$$_"}, @parts;' \
 	  -e 'pm_to_blib({@ARGV}, '\''$(INST_LIB)/auto'\'', $$filter, '\''$(PERM_DIR)'\'')' -- $(PM_FILTER) -- \
 	  'lib/Stats/LikeR.pm' 'blib/lib/Stats/LikeR.pm' \
+	  'lib/Stats/LikeR/Usage.pm' 'blib/lib/Stats/LikeR/Usage.pm' \
 	  'read.me.pod' '$(INST_LIB)/Stats/read.me.pod' 
 	$(NOECHO) $(TOUCH) pm_to_blib
 

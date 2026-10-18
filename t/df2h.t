@@ -182,6 +182,14 @@ for my $shape (qw(AoA HoA)) {
 #----------------------------------------------------------------------------
 # Reading the shape
 {
+	# the help screen df2h() prints, argparse-style, above a call-form error
+	my $usage = do {
+		my $err = err { df2h() };
+		like($err, qr/\Ausage: df2h\(DF .*^options:\n.*^example:\n.*\n\ndf2h: error: /ms,
+			'a call-form error is usage, options and example, then the error last');
+		$err =~ s/df2h: error: .*\z//s;
+		$err;
+	};
 	is_deeply(df2h([]), {}, 'an empty array is an empty frame');
 	is_deeply(df2h({}), {}, 'so is an empty hash');
 	is(err { df2h([ undef, [ 'a', 1 ] ]) }, "df2h: index 0 is not an arrayref\n",
@@ -198,10 +206,10 @@ for my $shape (qw(AoA HoA)) {
 	is(err { df2h({ a => 1 }) },
 		"df2h: first argument is a flat hash, not a data frame: none of its values is an array or hash ref\n",
 		'a flat hash dies');
-	is(err { df2h('x') }, "df2h: first argument must be a data frame (AoA, AoH, HoA or HoH)\n", 'a string dies');
-	is(err { df2h(\'x') }, "df2h: first argument must be a data frame (AoA, AoH, HoA or HoH)\n",
+	is(err { df2h('x') }, "${usage}df2h: error: first argument must be a data frame (AoA, AoH, HoA or HoH)\n", 'a string dies');
+	is(err { df2h(\'x') }, "${usage}df2h: error: first argument must be a data frame (AoA, AoH, HoA or HoH)\n",
 		'a scalar ref dies');
-	is(err { df2h(undef) }, "df2h: first argument is undefined\n", 'undef dies');
+	is(err { df2h(undef) }, "${usage}df2h: error: first argument is undefined\n", 'undef dies');
 
 	# blessed frames, rows and columns are what they are underneath
 	is_deeply(df2h(bless([ bless([ 'a', 1 ], 'Row') ], 'Frame')), { a => 1 }, 'a blessed AoA of blessed rows');

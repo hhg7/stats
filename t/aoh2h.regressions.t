@@ -120,13 +120,13 @@ sub kv { my $h = shift; join ',', map { "$_=" . (defined $h->{$_} ? $h->{$_} : '
 # 2. An undef option name dies in the function's own words.
 {
 	my $e = err { aoh2h([], undef, 1) };
-	like($e, qr/^df2h: an option name is undefined$/, 'aoh2h: an undef option name gets its own message');
+	like($e, qr/\ndf2h: error: an option name is undefined\n\z/, 'aoh2h: an undef option name gets its own message');
 	unlike($e, qr/uninitialized|LikeR\.pm line/, "aoh2h: and not perl's warning about LikeR.pm");
-	like(err { aoh2h([], var_name => 'k', undef, 'v') }, qr/^df2h: an option name is undefined$/,
+	like(err { aoh2h([], var_name => 'k', undef, 'v') }, qr/\ndf2h: error: an option name is undefined\n\z/,
 		'aoh2h: in any position');
 
 	$e = err { h2aoh({}, undef, 1) };
-	like($e, qr/^h2aoh: an option name is undefined$/, 'h2aoh: an undef option name gets its own message');
+	like($e, qr/\nh2aoh: error: an option name is undefined\n\z/, 'h2aoh: an undef option name gets its own message');
 	unlike($e, qr/uninitialized|LikeR\.pm line/, "h2aoh: and not perl's warning about LikeR.pm");
 
 	# an undef option *value* was always fine: it means the default

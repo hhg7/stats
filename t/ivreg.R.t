@@ -453,4 +453,12 @@ SKIP: {
 	                             'no leaks: croak');
 }
 diag(sprintf('worst relative disagreement with %s: %.3g (%s)', $_, $worst{$_}, $worst_at{$_})) for sort keys %worst;
+# A call of the wrong form dies with the function's argparse-style help screen
+# (lib/Stats/LikeR/Usage.pm), then "fn: error: ..." as its last line.
+{
+	my $err = eval { ivreg(formula => 'y ~ x | z', data => { x => [1, 2], y => [1, 2], z => [2, 1] }, vcov => 'HC3'); 1 } ? '' : $@;
+	like($err, qr/\Ausage: ivreg\(.*^example:\n.*\n\nivreg: error: \Qvcov must be 'model', 'HC0' or 'HC1'\E\n\z/ms,
+		'ivreg: vcov must be \'model\', \'HC0\' or \'HC1\', under the help screen');
+}
+
 done_testing();

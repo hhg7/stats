@@ -179,10 +179,10 @@ sub child_result {
 		is(child_result($call), 'croak', "matrix: $call croaks, no signal");
 	}
 	like(do { local $@; eval { matrix([1..6], 0) }; $@ },
-	     qr/Dimensions must be greater than 0/,
-	     'matrix: a zero dimension keeps its old message');
+	     qr/\nmatrix: error: nrow and ncol must be greater than 0$/,
+	     'matrix: a zero dimension is refused as a call-form error, under the help screen');
 	like(do { local $@; eval { matrix([1..6], 'greater') }; $@ },
-	     qr/matrix: nrow must be a number/,
+	     qr/matrix: error: nrow must be a number/,
 	     'matrix: a non-numeric dimension names the argument');
 	# R truncates: matrix(1:6, nrow = 2.7) is a two-row matrix.
 	is(scalar @{ matrix([1..6], 2)   }, 2, 'matrix: nrow 2 still gives 2 rows');
@@ -248,7 +248,7 @@ sub child_result {
 		is(child_result($call), 'croak', "merge: $call croaks, no signal");
 	}
 	like(do { local $@; eval { merge(\1, [{a=>1}]) }; $@ },
-	     qr/merge: left frame must be AoH\/HoA\/HoH/,
+	     qr/merge: error: left frame must be AoH\/HoA\/HoH/,
 	     'merge: the frame check is the message the caller sees');
 	# The join itself is untouched.
 	my $j = merge([{id=>1, x=>10}], [{id=>1, y=>20}], on => 'id');
@@ -296,10 +296,10 @@ sub child_result {
 		is(child_result($call), 'croak', "$call croaks instead of aborting");
 	}
 	like(do { local $@; eval { rnorm(-1) }; $@ },
-	     qr/rnorm: n must be an integer >= 0, not -1/,
+	     qr/rnorm: error: n must be an integer >= 0, not -1/,
 	     'rnorm: the message names the function and the argument');
 	like(do { local $@; eval { hist([1,2,3], sub { 1 }) }; $@ },
-	     qr/hist: breaks must be a number/,
+	     qr/hist: error: breaks must be a number/,
 	     'hist: a reference in the breaks slot names the argument');
 	# runif already had this check; the shared one must not change it.
 	like(do { local $@; eval { runif(-1) }; $@ },
@@ -313,7 +313,7 @@ sub child_result {
 {
 	for my $bad (0, -5, -1) {
 		like(do { local $@; eval { hist([1,2,3,4,5], breaks => $bad) }; $@ },
-		     qr/hist: breaks must be an integer >= 1/,
+		     qr/hist: error: breaks must be an integer >= 1/,
 		     "hist: breaks => $bad is refused (R: invalid number of 'breaks')");
 	}
 	# R: hist(1:5, breaks = 2) and breaks = 2.7 both give 0 2 4 6, counts 2 2 1.
@@ -341,7 +341,7 @@ sub child_result {
 	     qr/sample: cannot take a sample of 5 from a population of 2/,
 	     'sample: the hash branch croaks the same way the array branch does');
 	like(do { local $@; eval { sample('not a ref', 1) }; $@ },
-	     qr/Usage: sample/,
+	     qr/\Ausage: sample\(.*\n\nsample: error: the first argument must be an array or hash reference\n\z/s,
 	     'sample: a non-reference is a usage error, not a silent undef');
 	# The ordinary draws are unchanged, and no element is ever undef.
 	my $a = sample([qw(a b c d e)], 3);

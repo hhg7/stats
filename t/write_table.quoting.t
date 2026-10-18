@@ -126,20 +126,20 @@ throws_ok { wbytes([[1]], col_names => [[]]) } qr/^write_table: Cannot write nes
 	'AoA col_names: a reference dies';
 
 # ---- sep and the file name ---------------------------------------------
-throws_ok { wbytes([['a']], sep => '') } qr/^write_table: 'sep' must not be empty/, "sep => '' dies";
-throws_ok { wbytes([['a']], delim => '') } qr/^write_table: 'sep' must not be empty/, "delim => '' dies";
-throws_ok { wbytes([['a']], sep => "\0") } qr/^write_table: 'sep' may not contain a NUL/, 'a NUL sep dies';
-throws_ok { wbytes([['a']], sep => ";\0") } qr/^write_table: 'sep' may not contain a NUL/, 'a NUL inside sep dies';
-throws_ok { wbytes([['a']], sep => '"') } qr/^write_table: 'sep' may not contain '"'/, 'a quote sep dies';
-throws_ok { wbytes([['a']], sep => "\r") } qr/^write_table: 'sep' may not contain a CR/, 'a CR sep dies';
-throws_ok { wbytes([['a']], sep => "\n") } qr/^write_table: 'sep' may not contain a LF/, 'a LF sep dies';
-throws_ok { wbytes([['a']], sep => undef) } qr/^write_table: 'sep' must be a string/, 'sep => undef dies';
-throws_ok { wbytes([['a']], sep => qr/,/) } qr/^write_table: 'sep' must be a string/, 'a qr// sep dies';
+throws_ok { wbytes([['a']], sep => '') } qr/\nwrite_table: error: 'sep' must not be empty/, "sep => '' dies";
+throws_ok { wbytes([['a']], delim => '') } qr/\nwrite_table: error: 'sep' must not be empty/, "delim => '' dies";
+throws_ok { wbytes([['a']], sep => "\0") } qr/\nwrite_table: error: 'sep' may not contain a NUL/, 'a NUL sep dies';
+throws_ok { wbytes([['a']], sep => ";\0") } qr/\nwrite_table: error: 'sep' may not contain a NUL/, 'a NUL inside sep dies';
+throws_ok { wbytes([['a']], sep => '"') } qr/\nwrite_table: error: 'sep' may not contain '"'/, 'a quote sep dies';
+throws_ok { wbytes([['a']], sep => "\r") } qr/\nwrite_table: error: 'sep' may not contain a CR/, 'a CR sep dies';
+throws_ok { wbytes([['a']], sep => "\n") } qr/\nwrite_table: error: 'sep' may not contain a LF/, 'a LF sep dies';
+throws_ok { wbytes([['a']], sep => undef) } qr/\nwrite_table: error: 'sep' must be a string/, 'sep => undef dies';
+throws_ok { wbytes([['a']], sep => qr/,/) } qr/\nwrite_table: error: 'sep' must be a string/, 'a qr// sep dies';
 is(wbytes([['a', 'b'], ['x::y', 1]], sep => '::'), qq{a::b\n"x::y"::1\n}, 'a two-byte sep still works');
 {
 	my $f = "$dir/nul.csv";
 	throws_ok { write_table([['a']], "$f\0.tex", quiet => 1) }
-		qr/^write_table: the file name contains a NUL character/, 'a NUL in the file name dies';
+		qr/\nwrite_table: error: the file name contains a NUL character/, 'a NUL in the file name dies';
 	ok(!-e $f, '... and nothing was written under the name before it');
 }
 
@@ -180,7 +180,7 @@ throws_ok { wbytes({ a => [1, 2] }, row_names => 'nope') }
 	like($W[0], qr/^write_table: 1 row of '.*' has no 'id' \(row_names\); its label/, 'AoH: singular wording');
 }
 throws_ok { wbytes([['a'], [1]], row_names => [1]) }
-	qr/^write_table: 'row_names' must be 0, 1 or a column name, not a reference/, 'row_names => [] dies';
+	qr/\nwrite_table: error: 'row_names' must be 0, 1 or a column name, not a reference/, 'row_names => [] dies';
 
 # ---- restricted hashes ---------------------------------------------------
 {

@@ -383,4 +383,17 @@ is_approx($pca_na->{sdev}[1], 0.0, 'prcomp (NA): collinear matrix component is z
 	no_leaks_ok { prcomp( \%hoa ); prcomp( $tied{'tied HoH'} ) } 'prcomp: no leaks with UTF-8 names and tied input' unless $INC{'Devel/Cover.pm'};
 }
 
+# A call of the wrong form dies with the function's argparse-style help screen
+# (lib/Stats/LikeR/Usage.pm), then "fn: error: ..." as its last line.
+{
+	my $err = eval { prcomp([ [1, 2], [3, 4] ], colour => 1); 1 } ? '' : $@;
+	like($err, qr/\Ausage: prcomp\(.*^example:\n.*\n\nprcomp: error: \Qunknown argument 'colour'\E\n\z/ms,
+		'prcomp: unknown argument \'colour\', under the help screen');
+}
+{
+	my $err = eval { prcomp([ 1, 2 ]); 1 } ? '' : $@;
+	like($err, qr/\Ausage: prcomp\(.*^example:\n.*\n\nprcomp: error: \QArray reference must contain ArrayRefs (AoA) or HashRefs (AoH)\E\n\z/ms,
+		'prcomp: Array reference must contain ArrayRefs (AoA) or HashRefs (AoH), under the help screen');
+}
+
 done_testing();

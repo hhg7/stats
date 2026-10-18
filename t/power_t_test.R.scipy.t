@@ -496,7 +496,8 @@ is_rel(power_t_test(n => 30, delta => 0.5)->{power}, 0.4778409859409133, 1e-9,
 throws_ok { power_t_test(n => 30, delta => 0.5, power => undef, bogus => 1) }
 	qr/unknown argument 'bogus'/, 'unknown argument croaks';
 throws_ok { power_t_test(n => 30, delta => 0.5, 'power') }
-	qr/Usage: power_t_test/, 'an odd argument list croaks';
+	qr/\Ausage: power_t_test\(.*^options:\n.*^example:\n.*\n\npower_t_test: error: arguments must be name => value pairs\n\z/ms,
+	'an odd argument list croaks with the help screen, and the error last';
 
 # R's assert_NULL_or_prob(). power => 1.5 used to run the n bracket out to
 # 1.3e12 and report that as the required sample size.

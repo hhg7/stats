@@ -176,10 +176,10 @@ SKIP: {
 	print {$keep} "precious\n";
 	close $keep;
 	throws_ok { write_table([{ a => 1 }], $f, 'xlsx_sheet' => '') }
-		qr/^write_table: 'xlsx_sheet' must have at least one character/, 'an empty sheet name dies';
+		qr/\nwrite_table: error: 'xlsx_sheet' must have at least one character/, 'an empty sheet name dies';
 	foreach my $c ('\\', '*', '?', ':', '/', '[', ']') {
 		throws_ok { write_table([{ a => 1 }], $f, 'xlsx_sheet' => "a${c}b") }
-			qr/^write_table: 'xlsx_sheet' may not contain '\Q$c\E'/, "a sheet name holding '$c' dies";
+			qr/\nwrite_table: error: 'xlsx_sheet' may not contain '\Q$c\E'/, "a sheet name holding '$c' dies";
 	}
 	open $keep, '<', $f or die "cannot read $f: $!";
 	is( scalar <$keep>, "precious\n", 'a refused sheet name leaves an existing file intact' );

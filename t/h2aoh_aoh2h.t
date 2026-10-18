@@ -270,4 +270,12 @@ use Test::More;
 	}
 }
 
+# A call-form error dies with the function's argparse-style help screen from
+# lib/Stats/LikeR/Usage.pm, the error itself on the last line.
+{
+	my $err = eval { h2aoh({ a => 1 }, sort => 'x'); 1 } ? '' : $@;
+	like($err, qr/\Ausage: h2aoh\(.*\n\nh2aoh: error: \Qsort 'x' isn't allowed (key, value, none)\E\n\z/s,
+		'h2aoh: a call-form error prints the help screen, the error on its last line');
+}
+
 done_testing();

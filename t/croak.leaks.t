@@ -120,7 +120,7 @@ my @cases = (
     [ 'cmh_test flat hole',  sub { Stats::LikeR::cmh_test( [ hole_at(2) ] ) },
         qr/cmh_test: cell at index 2 is undef/ ],
     [ 'binom_test hole',     sub { my @x; $x[1] = 5; Stats::LikeR::binom_test( \@x ) },
-        qr/binom_test: successes is undef/ ],
+        qr/binom_test: error: successes is undef/ ],
     # A hole in the middle: `delete $r[-1]` would shorten the array instead,
     # and be caught by the column-count check rather than by the cell reader.
     [ 'fisher_test AoA hole', sub { my @r; $r[0] = 3; $r[2] = 5; $#r = 1;
@@ -143,7 +143,7 @@ my @cases = (
     # -- the leaking-croak set
     [ 'dunn_test unknown method',
         sub { Stats::LikeR::dunn_test( \@dunn_x, \@dunn_g, method => 'nope' ) },
-        qr/dunn_test: unknown method 'nope'/ ],
+        qr/dunn_test: error: unknown method 'nope'/ ],
     [ 'scale non-numeric element',
         sub { Stats::LikeR::scale( [ 1 .. 50, 'notanumber' ] ) },
         qr/scale: non-numeric value/ ],
@@ -155,7 +155,7 @@ my @cases = (
         qr/col2col: column 'nosuchcolumn' not found/ ],
     [ 'col2col undef in column list',
         sub { Stats::LikeR::col2col( \%c2c, 'sum', [undef] ) },
-        qr/col2col: column list contains an undefined entry/ ],
+        qr/col2col: error: column list contains an undefined entry/ ],
     [ 'fisher_test non-numeric cell',
         sub { Stats::LikeR::fisher_test( [ [ 1, 2 ], [ 3, 'zz' ] ] ) },
         qr/fisher_test: array cell is not a number/ ],

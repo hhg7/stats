@@ -289,4 +289,12 @@ SKIP: {
 	}, 'no leaks: croak');
 }
 diag(sprintf('worst relative disagreement with survey: %.3g (%s)', $worst, $worst_at));
+# A call of the wrong form dies with the function's argparse-style help screen
+# (lib/Stats/LikeR/Usage.pm), then "fn: error: ..." as its last line.
+{
+	my $err = eval { svyglm(data => { x => [1, 2], y => [1, 2] }); 1 } ? '' : $@;
+	like($err, qr/\Ausage: svyglm\(.*^example:\n.*\n\nsvyglm: error: \Qformula is required\E\n\z/ms,
+		'svyglm: formula is required, under the help screen');
+}
+
 done_testing();

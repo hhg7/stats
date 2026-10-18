@@ -1077,4 +1077,12 @@ SKIP: {
 	Test::LeakTrace::no_leaks_ok(sub { eval { lmer(formula => 'Reaction ~ Days', data => $S) } }, 'no leaks: croak');
 }
 diag(sprintf('worst relative disagreement, %s: %.3g (%s)', $_, $worst{$_}, $worst_at{$_})) for sort keys %worst;
+# A call of the wrong form dies with the function's argparse-style help screen
+# (lib/Stats/LikeR/Usage.pm), then "fn: error: ..." as its last line.
+{
+	my $err = eval { lmer(formula => 'y ~ x + (1 | g)', data => { x => [1, 2], y => [1, 2], g => [1, 2] }, conf_level => 2); 1 } ? '' : $@;
+	like($err, qr/\Ausage: lmer\(.*^example:\n.*\n\nlmer: error: \Qconf_level must be between 0 and 1\E\n\z/ms,
+		'lmer: conf_level must be between 0 and 1, under the help screen');
+}
+
 done_testing();

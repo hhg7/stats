@@ -646,4 +646,17 @@ SKIP: {
 }
 
 diag(sprintf('worst disagreement, %s: %.3g', $_, $worst{$_})) for sort keys %worst;
+# A call of the wrong form dies with the function's argparse-style help screen
+# (lib/Stats/LikeR/Usage.pm), then "fn: error: ..." as its last line.
+{
+	my $err = eval { zerotrunc(formula => 'y ~ x', data => { x => [1, 2], y => [1, 2] }, dist => 'binomial'); 1 } ? '' : $@;
+	like($err, qr/\Ausage: zerotrunc\(.*^example:\n.*\n\nzerotrunc: error: \Qdist must be 'poisson', 'negbin' or 'geometric'\E\n\z/ms,
+		'zerotrunc: dist must be \'poisson\', \'negbin\' or \'geometric\', under the help screen');
+}
+{
+	my $err = eval { hurdle(formula => 'y ~ x', 'data'); 1 } ? '' : $@;
+	like($err, qr/\Ausage: hurdle\(.*^example:\n.*\n\nhurdle: error: \Qarguments must be name => value pairs\E\n\z/ms,
+		'hurdle: arguments must be name => value pairs, under the help screen');
+}
+
 done_testing();

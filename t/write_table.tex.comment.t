@@ -76,9 +76,9 @@ sub body {
 	write_table([['a'], [1]], $f, quiet => 1, tex_comment => bless([], 'Plain'));
 	like(body($f), qr/\A% Plain=ARRAY\(0x[0-9a-f]+\)\n/, 'a blessed array is an object, and stringified');
 	throws_ok { write_table([['a']], texfile(), quiet => 1, tex_comment => {}) }
-		qr/^write_table: 'tex_comment' must be a string or an ARRAY reference/, 'an unblessed hash dies';
+		qr/\nwrite_table: error: 'tex_comment' must be a string or an ARRAY reference/, 'an unblessed hash dies';
 	throws_ok { write_table([['a']], "$dir/x.xlsx", quiet => 1, xlsx_comment => sub { 1 }) }
-		qr/^write_table: 'xlsx_comment' must be a string or an ARRAY reference/, 'xlsx_comment: an unblessed code ref dies';
+		qr/\nwrite_table: error: 'xlsx_comment' must be a string or an ARRAY reference/, 'xlsx_comment: an unblessed code ref dies';
 	my $kept = texfile();
 	write_table([['old']], $kept, quiet => 1, tex => 0);
 	eval { write_table([['a']], $kept, quiet => 1, tex_comment => {}) };

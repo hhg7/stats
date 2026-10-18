@@ -665,15 +665,24 @@ is( scalar keys %COUNT, 8, 'the frozen table covered all eight functions' );
 
 # Argument errors.
 {
-	throws_ok { pt(1) } qr/^pt: 'df' is required/, 'a missing df is fatal';
-	throws_ok { pf(1, 2) } qr/^pf: 'df2' is required/, 'a missing df2 is fatal';
-	throws_ok { pbinom(1, 10) } qr/^pbinom: 'prob' is required/,
+	# Each is a usage error: the function's help screen, then the error alone on
+	# the last line, as Python's argparse prints one.
+	throws_ok { pt(1) } qr/^pt: error: 'df' is required\n\z/m, 'a missing df is fatal';
+	throws_ok { pf(1, 2) } qr/^pf: error: 'df2' is required\n\z/m, 'a missing df2 is fatal';
+	throws_ok { pbinom(1, 10) } qr/^pbinom: error: 'prob' is required\n\z/m,
 		'a missing prob is fatal';
-	throws_ok { pt(1, 5, bogus => 1) } qr/^pt: unknown argument 'bogus'/,
+	throws_ok { pt(1, 5, bogus => 1) } qr/^pt: error: unknown argument 'bogus'\n\z/m,
 		'an unknown argument is fatal';
-	throws_ok { pt(1, 5, 'lower') } qr/^pt: 'lower' was given with no value/,
+	throws_ok { pt(1, 5, 'lower') } qr/^pt: error: 'lower' was given with no value\n\z/m,
 		'a trailing option name with no value is fatal';
-	throws_ok { qnorm() } qr/^Usage: qnorm\(x/, 'no arguments at all is fatal';
+	throws_ok { qnorm() } qr/^qnorm: error: the first argument, a number or an array reference, is required\n\z/m,
+		'no arguments at all is fatal';
+	for my $fn (qw(qnorm pt qt pchisq qchisq pf qf pbinom)) {
+		no strict 'refs';
+		my $f = \&{"Stats::LikeR::$fn"};
+		throws_ok { $f->() } qr/\Ausage: $fn\(.*^options:\n.*^example:\n.*\n\n$fn: error: [^\n]+\n\z/ms,
+			"$fn: a call-form error prints the help screen, and the error last";
+	}
 	# qnorm's parameters both have defaults, so it needs nothing but x.
 	lives_ok { qnorm(0.5) } 'qnorm needs only a probability';
 }

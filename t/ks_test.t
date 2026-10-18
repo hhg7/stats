@@ -272,6 +272,14 @@ throws_ok { ks_test(\@SEP_X, 'pcauchy') }
 	qr/Unsupported 1-sample distribution 'pcauchy'/,
 	'unsupported distribution: message includes the name';
 
+{	# an error in the call prints the help screen, then the error on the last line
+	my $screen = Stats::LikeR::_usage_text('ks_test');
+	like($screen, qr/\Ausage: ks_test\(/, 'ks_test has a help screen');
+	eval { ks_test(\@SEP_X, \@SEP_Y, bogus => 1) };
+	is($@, $screen . "ks_test: error: unknown argument 'bogus'\n",
+		'a call-form error is the screen, then the error on the last line');
+}
+
 lives_ok { ks_test(\@SEP_X, \@SEP_Y) }            'valid 2-sample lives';
 lives_ok { ks_test([-1, 0, 1], 'pnorm') }          'valid 1-sample lives';
 lives_ok { ks_test(x => \@SEP_X, y => \@SEP_Y) }   '#1 fully-named call lives';
