@@ -27,11 +27,25 @@ use Stats::LikeR qw(write_table);
 my $dir = File::Temp->newdir;
 my $seq = 0;
 sub texfile { $seq++; return "$dir/t$seq.tex" }
+# write_table opens its file with PerlIO_open()'s default layers, which are
+# :crlf where perl is a CRLF shop (Windows), so every "\n" it writes lands as
+# "\r\n" there; 0.33's MSWin32 smoker failed 8 of these on that alone.
+# :crlf maps "\n" and nothing else, so undoing it gives back exactly the text
+# write_table wrote -- a CR that leaked from tex_comment still shows -- and the
+# literals below stay in \n.
+my $CRLF = do {
+	open my $fh, '>', "$dir/nl.probe" or die "cannot write a probe: $!";
+	my $crlf = grep { $_ eq 'crlf' } PerlIO::get_layers($fh);
+	close $fh;
+	$crlf;
+};
 sub slurp {
 	my $file = shift;
 	open my $fh, '<:raw', $file or die "cannot read $file: $!";
 	local $/;
-	return <$fh>;
+	my $text = <$fh>;
+	$text =~ s/\r\n/\n/g if $CRLF;
+	return $text;
 }
 # the file after its "%written by" line
 sub body {

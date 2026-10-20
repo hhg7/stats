@@ -50,11 +50,24 @@ use Stats::LikeR qw(write_table read_table);
 my $dir = tempdir(CLEANUP => 1);
 my $seq = 0;
 sub path { $seq++; return "$dir/q$seq." . (shift // 'csv') }
+# write_table opens its file with PerlIO_open()'s default layers, which are
+# :crlf where perl is a CRLF shop (Windows), so every "\n" it writes lands as
+# "\r\n" there; 0.33's MSWin32 smoker failed 29 of these on that alone.
+# :crlf maps "\n" and nothing else, so undoing it gives back exactly the text
+# write_table wrote, a stray CR included, and the literals below stay in \n.
+my $CRLF = do {
+	open my $fh, '>', path('nl.probe') or die "cannot write a probe: $!";
+	my $crlf = grep { $_ eq 'crlf' } PerlIO::get_layers($fh);
+	close $fh;
+	$crlf;
+};
 sub slurp {
 	my $file = shift;
 	open my $fh, '<:raw', $file or die "cannot read \"$file\": $!";
 	local $/;
-	return <$fh>;
+	my $text = <$fh>;
+	$text =~ s/\r\n/\n/g if $CRLF;
+	return $text;
 }
 # write, then the bytes written; warnings are kept in @W
 our @W;
@@ -137,7 +150,8 @@ throws_ok { wbytes([['a']], sep => undef) } qr/\nwrite_table: error: 'sep' must 
 throws_ok { wbytes([['a']], sep => qr/,/) } qr/\nwrite_table: error: 'sep' must be a string/, 'a qr// sep dies';
 is(wbytes([['a', 'b'], ['x::y', 1]], sep => '::'), qq{a::b\n"x::y"::1\n}, 'a two-byte sep still works');
 {
-	my $f = "$dir/nul.csv";
+	# not "nul.csv": NUL is a DOS device name, which -e finds on Windows
+	my $f = "$dir/nulbyte.csv";
 	throws_ok { write_table([['a']], "$f\0.tex", quiet => 1) }
 		qr/\nwrite_table: error: the file name contains a NUL character/, 'a NUL in the file name dies';
 	ok(!-e $f, '... and nothing was written under the name before it');
