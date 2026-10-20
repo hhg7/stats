@@ -2,6 +2,10 @@ Revision history for Stats-LikeR
 
 0.33 2026-10-17 CDT (Claude Opus 5.5 helped)
 
+ [usage]
+ - when given an incorrect series of arguments, a menu resembling the help
+   from Python's `argparse` is shown
+
  [df2h(), which was aoh2h()]
 
  - aoh2h() is now df2h(), and folds two columns of any of the four data
