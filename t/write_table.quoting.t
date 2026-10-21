@@ -34,6 +34,13 @@
 #   "Attempt to access disallowed key" partway through the file;
 # - finding an AoH's or a HoH's columns iterated every row hash, which left an
 #   iterator allocated on each (the OOK flag) for good.
+# - with a separator of more than one byte, a field whose end and the
+#   separator after it spelled the separator again was written bare: sep "::"
+#   and the fields "a:", ":b" became "a::::b", which read_table cuts at the
+#   first "::" it finds, as three fields.  The round trips below (fixed cases,
+#   then 2000 generated tables) all failed somewhere on 0.33; the generator is
+#   a fixed LCG so that the tables are the same on every run and srand() is
+#   left alone.
 
 require 5.010;
 use strict;
@@ -149,6 +156,55 @@ throws_ok { wbytes([['a']], sep => "\n") } qr/\nwrite_table: error: 'sep' may no
 throws_ok { wbytes([['a']], sep => undef) } qr/\nwrite_table: error: 'sep' must be a string/, 'sep => undef dies';
 throws_ok { wbytes([['a']], sep => qr/,/) } qr/\nwrite_table: error: 'sep' must be a string/, 'a qr// sep dies';
 is(wbytes([['a', 'b'], ['x::y', 1]], sep => '::'), qq{a::b\n"x::y"::1\n}, 'a two-byte sep still works');
+# ---- a multi-byte sep made by a field's end and the separator after it ---
+is(wbytes([['a', 'b'], ['a:', ':b']], sep => '::'), qq{a::b\n"a:":::b\n},
+	"sep '::': a field ending in ':' is quoted");
+is(wbytes([['a', 'b'], [':b', 'a:']], sep => '::'), qq{a::b\n:b::a:\n},
+	"sep '::': ... but not the last field, which no separator follows");
+is(wbytes([['a', 'b'], ['xab', 'y']], sep => 'aba'), qq{aabab\n"xab"abay\n},
+	"sep 'aba': 'ab' then 'aba' spells 'aba' one byte early");
+is(wbytes([['a', 'b'], ['xa', 'y']], sep => 'aba'), qq{aabab\nxaabay\n},
+	"sep 'aba': 'a' then 'aba' is 'aaba', which holds 'aba' only where it belongs");
+is(wbytes([['h', 'b'], ['xa', 'y']], sep => 'aaa'), qq{haaab\n"xa"aaay\n},
+	"sep 'aaa': 'a' then 'aaa' spells it one byte early");
+is(wbytes([['h', 'b'], ['xaa', 'y']], sep => 'aaa'), qq{haaab\n"xaa"aaay\n},
+	"sep 'aaa': ... and 'aa' then 'aaa' two bytes early");
+is(wbytes([['a', 'b'], ['xab', 'y']], sep => 'abab'), qq{aababb\n"xab"ababy\n},
+	"sep 'abab': 'ab' then 'abab'");
+is(wbytes([['a', 'b'], ['xa', 'by']], sep => 'ab'), qq{aabb\nxaabby\n},
+	"sep 'ab': 'a' then 'ab' cannot spell 'ab' early, so stays bare");
+is(wbytes([['a', 'b'], ['x:', 'y']], sep => ':;'), qq{a:;b\nx::;y\n},
+	"sep ':;': a field ending in ':' is safe, the sep is not periodic");
+{
+	my $f = path();
+	write_table([['h1', 'h2', 'h3'], ['a:', ':b', 'c:'], [':', ':', ':']], $f, sep => '::', quiet => 1);
+	is_deeply(read_table($f, sep => '::', output_type => 'aoa'),
+		[['h1', 'h2', 'h3'], ['a:', ':b', 'c:'], [':', ':', ':']], "sep '::': the fields read back");
+}
+{
+	my $state = 20261020;	# LCG state: Numerical Recipes' a and c, mod 2**32
+	my $rand = sub { $state = (1664525 * $state + 1013904223) % 4294967296; $state % $_[0] };
+	my @sep_bytes = (':', ';', 'a', 'b', '|', ',', ' ', "\t", 'x');
+	my @cell_bytes = (@sep_bytes, '"', "\n", '#');
+	my ($bad, $first) = (0, '');
+	for my $t (1 .. 2000) {
+		my $sep = join '', map { $sep_bytes[ $rand->(scalar @sep_bytes) ] } 0 .. $rand->(4);
+		my $nc = 2 + $rand->(3);
+		my @rows = map { [ map { join '', map { $cell_bytes[ $rand->(scalar @cell_bytes) ] } 1 .. $rand->(6) } 1 .. $nc ] } 1 .. 3;
+		my @head = map { "c$_" } 1 .. $nc;
+		my $f = path('txt');
+		write_table([\@head, @rows], $f, sep => $sep, quiet => 1);
+		my $got = eval { local $SIG{__WARN__} = sub {}; read_table($f, sep => $sep, output_type => 'aoa') };
+		my $want = [\@head, map { [ map { length $_ ? $_ : undef } @$_ ] } @rows];	# '' reads back as undef
+		next if $got && Test::More::_deep_check($got, $want);
+		$bad++;
+		$first ||= "sep " . B::perlstring($sep) . ', rows ' . join(' | ', map { join ' ', map { B::perlstring($_) } @$_ } @rows);
+		unlink $f;
+	}
+	is($bad, 0, '2000 generated tables with a multi-byte or one-byte sep read back as written')
+		or diag("the first that did not: $first");
+}
+
 {
 	# not "nul.csv": NUL is a DOS device name, which -e finds on Windows
 	my $f = "$dir/nulbyte.csv";

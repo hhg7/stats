@@ -604,6 +604,8 @@ Keys are handled SV-first (`hv_iterkeysv` / `hv_fetch_ent`), so UTF-8 and otherw
 
 A row that is **not** a hash ref is skipped rather than fatal: it contributes `undef` to every column at its index. So a stray `undef` or scalar in the input thins the columns at that position instead of dying.
 
+A tied array of rows, a tied row (such as a `Tie::IxHash`) and a tied cell are read through their `FETCH`, once per value.
+
 ### Notes
 
 The output column order follows hash iteration order and is therefore not guaranteed — sort the keys if you need a stable layout. Round-tripping through `hoa2aoh` (or the reverse) reconstructs the data but not necessarily the original key/row ordering, and rows originally absent a key will gain it as an explicit `undef`.
@@ -1215,6 +1217,12 @@ cannot be ruled out. For 9/10 the interval would sit well above `0.5`.
 You can also pass the counts as `binom_test([6, 4])` — 6 right, 4 wrong — when
 you have wins and losses instead of wins and a total.
 
+Every count must be a whole number (to within 1e-7, as in R) that is not
+negative. `NaN`, an infinity, `undef` or a string croaks, as R's `binom.test`
+stops on them. So does a count, or a successes + failures sum, of `LONG_MAX`
+or more: 9223372036854775807 on most 64-bit systems, but 2147483647 on Windows
+and on 32-bit perls.
+
 ## cfilter
 
 Select **columns** out of a table and return it in the same shape. A column is
@@ -1568,7 +1576,8 @@ the common OR), and `k` (number of strata).
 As in R, the continuity correction of 0.5 is applied only when the observed
 count is at least 0.5 away from its expectation, and `method` says whether it
 was ("with" or "without continuity correction"). A cell that is `NaN` or
-infinite is a fatal error, as `NA` is in R. Degenerate tables give what R
+infinite is a fatal error, as `NA` is in R, and so is a stratum whose total is
+below 2 ("sample size in each stratum must be > 1"). Degenerate tables give what R
 gives: when every stratum has zero variance the statistic and p-value are
 `NaN`, and when no stratum has off-diagonal counts the common odds ratio is
 `Inf`.
@@ -2099,7 +2108,8 @@ Cox proportional-hazards regression: how covariates raise or lower the hazard
 (the risk of an event over time). It is the survival-analysis counterpart of
 [`glm`](#glm) and reports hazard ratios, like R's `survival::coxph` (Efron ties).
 
-Give times, an event flag (1 = event, 0 = censored), and one or more covariates
+Give times, an event flag (1 = event, 0 = censored; or 2 = event, 1 = censored,
+as `Surv()` reads a flag whose largest value is 2), and one or more covariates
 (a single `\@x`, or `[\@x1, \@x2, ...]`):
 
     use Stats::LikeR 'coxph';
@@ -2254,8 +2264,12 @@ Columns in an AoA are addressed by non-negative integer index:
 
 The result reuses the original row array-refs (a reorder, not a deep
 copy), so it is cheap and the caller's data is left untouched. A
-non-integer or negative index croaks; an index no row contains is
-reported as a missing column.
+non-integer or negative index croaks, and so does one too large to index
+an array (above 2**63 - 1, or 2**31 - 1 on a 32-bit perl); an index no row
+contains is reported as a missing column.
+
+Rows that are tied arrays, and a tied column of a HoA, are read through
+their `FETCH`.
 
 ### Undefined and missing values
 
@@ -2264,6 +2278,12 @@ row that lacks the key (AoH/HoH) or is shorter than the index (AoA); it
 is treated the same as an explicit `undef`. Defined values are ordered
 first (ascending, or per the comparison type), undef/missing last, and
 undef rows keep their original relative order.
+
+In a numeric column a `NaN` sorts last with them, in its original place
+among them, as R's `order()` puts `NaN` with `NA`:
+`csort([{x=>3}, {x=>'NaN'}, {x=>1}, {x=>undef}, {x=>2}], 'x')` gives the
+`x` order 1, 2, 3, NaN, undef. In a column that is not all numbers,
+`'NaN'` is a string like any other.
 
     my $rows = [
         [ 1, 5 ],
@@ -2291,6 +2311,11 @@ consequences worth knowing:
   row is undef. Such rows go to the bottom.
 * A comparator that handles undef itself (e.g. `$a->{v} // 0`) never trips
   the probe, so csort leaves its ordering completely alone.
+* A row the comparator cannot compare with itself -- it returns `undef`,
+  which is what `<=>` returns when either side is `NaN` -- goes to the end
+  with the undef rows. So `NaN` sorts last both ascending
+  (`$a->{v} <=> $b->{v}`) and descending (`$b->{v} <=> $a->{v}`), as R's
+  `order()` puts it last with or without `decreasing = TRUE`.
 * A comparator that dies for a real reason still propagates that error
   unchanged.
 * The probe calls your comparator once per row, so keep comparators free
@@ -2707,6 +2732,18 @@ parameter: `pchisq($q, 0)` is 0 for `$q <= 0` and 1 above it, and
 pins those values; up to 0.3217 both functions returned `NaN` there. A negative
 `df` is still `NaN`.
 
+`df => Inf` (perl's `9**9**9`, or the string `"Inf"`) is the limit R gives it:
+`pt($q, Inf)` is `pnorm($q)` and `qt($p, Inf)` is `qnorm($p)`;
+`pf($x, $df1, Inf)` is `pchisq($x * $df1, $df1)`, `pf($x, Inf, $df2)` the upper
+tail of `pchisq($df2 / $x, $df2)`, and with both infinite *F* is a step at 1
+(`0.5` at 1 itself); `qf` inverts each. Up to 0.331 none of this was handled:
+`qt(0.975, Inf)` was `3.1e-61` and `pf(0.5, 3, Inf)` was `1`. A finite but huge
+df is computed exactly rather than by R's `df > 4e5` approximation in `qf`.
+
+`pbinom`'s `size` must be a whole number within R's own fuzz,
+`1e-9 * max(1, |size|)`, and is then rounded, so `pbinom(3, 10 + 1e-10, 0.5)`
+is R's `0.171875`; up to 0.331 anything not exactly whole was `NaN`.
+
 ### What each one does, in one picture
 
 The same identity read from two ends: a `p*` function is given the boundary and
@@ -2776,8 +2813,10 @@ computes the requested side directly:
     pchisq(1e-30, 1);            # 7.978845608028654e-16, not 0
     pt(-75, 15);                 # 5.4e-21, from the lower tail itself
 
-`qnorm`, `qchisq` and `qf` reflect a probability above `0.5` onto `1 - p`
-before inverting, for the same reason in the other direction — that keeps the
+Every `q*` function inverts the *smaller* of the two tails it is handed: a
+probability above `0.5` is reflected onto `1 - p`, and a log probability above
+`log(1/2)` onto `-expm1(log p)`, before inverting, for the same reason in the
+other direction — that keeps the
 root-finder comparing small numbers instead of numbers that agree to fifteen
 places. The reflection is free rather than a trade: for `p >= 0.5` the two
 operands of `1 - p` lie within a factor of two of each other, so Sterbenz's
@@ -2835,37 +2874,52 @@ error over those six confidence levels:
 frozen rows of the test it generates. Like the other generators it is committed
 next to its test and nothing in the suite calls it.
 
-### Accuracy, and the one place `log` is not R's
+### Accuracy, `log`, and where R is not the answer
 
-These are glue over routines the module already had — `normal_quantile_hp`,
-`pt_upper`/`qt_tail`, the incomplete gamma and beta — whose series and
-continued fractions stop at a relative `1e-15` on every build. So they are
-double-accurate on a long-double or `__float128` perl too, rather than more
-accurate there, and they agree with R to about `1e-14` relative.
+The incomplete gamma behind `pchisq` and `qchisq` is R's own (Morten Welinder's
+`pgamma.c`), and the incomplete beta behind `pt`, `pf` and `pbinom` switches
+to R's TOMS 708 algorithms once a shape reaches 1000. Both stay accurate in
+relative terms at any df: up to 0.331 `pchisq(1e15, 1e15)` was `0.379` where R
+and the truth are `0.50000000594708`, `pt(1.96, 1e15)` was `0.97448` for
+`0.97500`, and `pf(1, 1e15, 1e15)` was `0.481` for exactly `0.5`. `qchisq` is a
+Newton iteration from AS 91's starting value, so `qchisq(0.5, 1e10)` takes about
+2 microseconds where it took 11 milliseconds. The constants are a double's, as
+R's are, so these agree with R to about `1e-14` relative on a double,
+long-double and `__float128` perl alike.
 
-Two things are deliberately not R:
+`log => 1` is carried through in both directions, as in R:
 
-  - **`log => 1` on a `p*` function returns `log()` of the probability already
-    computed**, not a log carried through the series. A tail that underflowed
-    to `0` therefore logs to `-Inf`, and a tail that rounded to `1` logs to `0`
-    rather than to the tiny negative number R reports. R's `pt`/`pchisq`/`pf`
-    carry `log_p` through and can do better; `pnorm` here does too, because R's
-    Cody algorithm was ported whole. The `q*` functions take `log_p` properly:
-    the argument is exponentiated, which is exact, and lets you name quantiles
-    the linear scale cannot — `qnorm(-800, log_p => 1)` is reachable where
-    `exp(-800)` is just `0`.
-  - **`qf` disagrees with R in the far tail of *F*, and is right.** At
-    `qf(2^-20, 1, 10)` R is 9.9e-4 away from the 60-digit value and this module
-    is 1.0e-15 away; R's own `pf` confirms it, inverting this module's answer to
-    1.6e-15 and its own to 4.9e-4. Thirteen such rows are pinned in
-    `t/distributions.R.scipy.t` against mpmath at `mp.dps = 60`, each asserted
+  - **a `p*` function computes the log of its tail**, so a tail far below the
+    smallest double still has one — `pt(-1e10, 30, log => 1)` is
+    `-642.385...` — and a tail a hair under 1 logs to the tiny negative number
+    rather than to `0`.
+  - **a `q*` function takes a log probability without ever exponentiating what
+    it cannot**: `qnorm(-1e-20, log => 1)` is `9.262340089798405` (it was `Inf`,
+    since `exp(-1e-20)` is `1`), and `qt(-1000, 5, log => 1)` is
+    `-1.1333163490175e+87` (it was `-Inf`). Up to 0.331 this paragraph said the
+    `p*` functions returned `log()` of the probability already computed, and the
+    `q*` functions exponentiated their argument.
+
+Where R is the weaker reference, the tests say so and pin the 60-digit value:
+
+  - **`qf` in the far tail of *F*.** At `qf(2^-20, 1, 10)` R is 9.9e-4 away from
+    the 60-digit value and this module is 1.0e-15 away; R's own `pf` confirms
+    it, inverting this module's answer to 1.6e-15 and its own to 4.9e-4. On the
+    log scale R's `qbeta` returns `0` for roots it cannot reach:
+    `qf(-64, 1, 1, log.p = TRUE)` is `0` in R and `6.3466722361887e-56` here.
+    These are pinned in `t/distributions.R.scipy.t` and
+    `t/distributions.limits.R.t` against mpmath at `mp.dps = 60`, each asserted
     both to be right *and* to still disagree with R, so the divergence cannot
     quietly change.
+  - **`qt` on the log scale**: `qt(-700, 5, log.p = TRUE)` is 1.8e-9 off in R
+    and 9e-15 here.
 
 Non-centrality (`ncp`) is not implemented; nor is `qbinom`. Everything is
 cross-validated in `t/distributions.R.scipy.t` (2041 tests) against a frozen
 table of R 4.6.1 values, SciPy 1.18.0's own mpmath reference cases, and R's own
-round-trip identities from `tests/d-p-q-r-tests.R`.
+round-trip identities from `tests/d-p-q-r-tests.R`; and in
+`t/distributions.limits.R.t` at infinite and enormous df and on the log scale,
+against R 4.6.1 and the extreme-tail checks of R's `tests/d-p-q-r-tst-2.R`.
 
 ## dnorm
 
@@ -2884,6 +2938,10 @@ Usage:
 but default mean, standard deviation, and log can be passed as parameters:
 
     $x = dnorm(0, mean => 0, sd => 2, 'log' => 0);
+
+Where the density is 0 — `x` infinite, `sd => Inf`, `sd => 0` away from the
+mean — `log => 1` gives `-Inf`, as R does (up to 0.331 it gave `0`). An `undef`
+`x`, or an `undef` element, is `NaN`.
 
 ## drop_cols
 
@@ -3395,13 +3453,19 @@ Any table of at least 2x2 counts is accepted, as either a 2D array reference or 
         [7, 2, 1],
     ]);
 
-For tables larger than 2x2 the p-value is computed by exact enumeration of
-every contingency table sharing the observed row and column margins (the
-multivariate hypergeometric distribution), and matches R's `fisher.test` to
-full precision. Only the two-sided test is defined in this case, so
-`alternative` is ignored and the returned hash reference omits `conf_int` and
-`estimate` (the conditional-MLE odds ratio and its confidence interval are
-reported for 2x2 tables only):
+For tables larger than 2x2 the p-value is the exact one: the sum of the
+multivariate hypergeometric probability of every contingency table that shares
+the observed row and column margins and is no more probable than the observed
+table. It is computed with Mehta & Patel's network algorithm, as R's
+`fisher.test` does, and agrees with R to about 1e-12. On the tables where the
+two differ in the last digits, `fisher_test` is the closer to the exact rational
+answer (within 1.4e-13 of it on every table checked), because R's FEXACT merges
+paths whose weights agree to 3.45e-7. A table counts as "as or more extreme"
+under FEXACT's own rule: its probability is at most the observed one times
+1 + 3.45e-7. Only the two-sided test is defined in this case, so `alternative`
+is ignored and the returned hash reference omits `conf_int` and `estimate`
+(the conditional-MLE odds ratio and its confidence interval are reported for
+2x2 tables only):
 
     {
     alternative   "two.sided",
@@ -3415,18 +3479,31 @@ and columns by the sorted keys of the first row, so the result is deterministic;
 every row must expose the same set of column keys, and every row of an array
 input must have the same number of columns.
 
-Enumeration is exact but finite: a table whose margins put more completions in
-the way than can be walked is refused outright,
+The exact test is exact but finite. Every table R answers with its default
+`workspace = 200000` is answered here, in comparable time or less (Mehta &
+Patel's 5x7 6th example takes 0.04 s), and so are many that R refuses, such as
+the 6x6 table of R's PR#18336, which R declines with `hash key 5e+09 > INT_MAX`.
+A table that would need more than a few seconds of work, or more than about
+128 MB, is refused outright rather than answered with an approximation:
 
-    fisher_test: 5x7 table is too large for exact enumeration
+    fisher_test: 4x3 table is too large for exact enumeration
 
-rather than answered with an approximation. Subtrees that lie wholly inside or
-wholly outside the tail are summed in closed form or dropped without being
-walked, which puts most tables of practical size well inside the limit --
-`fisher_test` computes the 6x6 table of R's PR#18336, which R's own `fisher.test`
-declines with `hash key 5e+09 > INT_MAX` -- but R's network algorithm (FEXACT)
-still reaches tables this one cannot, such as the 5x7 6th example of Mehta &
-Patel. For those, use `chisq_test`, or R.
+For those, use `chisq_test`, or R's `simulate.p.value`.
+
+### Counts
+
+Cells are read as R's `fisher.test` reads them. A negative, `NaN` or infinite
+cell, an `undef` or a string croaks, as does a count past R's
+`.Machine$integer.max` (2147483647). A count that is not a whole number is
+rounded to the nearest one (halves to even, as R's `round()` does) with R's
+warning:
+
+    fisher_test: 'x' has been rounded to integer: Mean relative difference: 0.1111111
+
+An all-zero 2x2 table gives p = 1, an odds ratio of 0 and a confidence interval
+of [0, Inf], as R does. An all-zero larger table croaks, as R's does
+("FEXACT error 3"). Where a C `long` is 32 bits (Windows, 32-bit perls), a
+table whose total passes 2147483647 croaks, where R would still answer it.
 
 ## friedman_test
 
@@ -3687,7 +3764,9 @@ Each is called the same way:
     group_by($aoh_data, 'Testosterone, total (nmol/L)', 'Gender');
 
 and each returns a hash of arrays. A row whose value is missing or `undef` is
-left out, so the second Female row contributes nothing. `$aoh_data` gives
+left out, so the second Female row contributes nothing. So is a row whose
+group is missing or `undef`, as R's `split()` drops an `NA` level: it is not
+pooled with a group named `""`, and it does not warn. `$aoh_data` gives
 
     {
         Female   [
@@ -4114,6 +4193,12 @@ into `count` and `zero` halves; `loglik` and its two parts `loglik_count` and
 the fitted mean `P(y > 0) mu / (1 - f(0))`. Validated against `pscl` and
 `countreg` on their documented examples, with a third opinion from `mpmath`.
 
+When either part's counts are no more dispersed than a Poisson's, its
+negative-binomial likelihood rises all the way to `theta = Inf`: that part is
+then the Poisson (or, for the zero part, complementary log-log) fit, and
+`theta` (or `theta_zero`) and its `SE_logtheta` are reported as `Inf`, as in
+[`zerotrunc`](#zerotrunc).
+
 ## interpolate
 
 Fill NA (undef) cells along the row axis, like `pandas.DataFrame.interpolate`.
@@ -4356,8 +4441,11 @@ The result holds `coefficients`, `summary` (per term `Estimate`,
 `Std. Error`, `t value`, `Pr(>|t|)`), `vcov`, `vcov_type`, `conf_int`,
 `terms`, `endogenous` and `instruments` (the terms each role was given),
 `fitted_values`, `residuals`, `sigma`, `rss`, `r_squared`, `adj_r_squared`,
-`df_residual`, `rank`, `nobs`, `n_clusters` with a cluster, and `waldtest`, the
-F test of every coefficient but the intercept. `diagnostics` has
+`df_residual`, `rank`, `nobs` (the rows of nonzero weight, as `ivreg`'s
+`nobs`), `n_clusters` with a cluster, and `waldtest`, the F test of every
+coefficient but the intercept. `df_residual` and `sigma` count only the rows of
+nonzero weight too; `adj_r_squared` and the Sargan statistic count every row,
+as `summary.ivreg()` does. `diagnostics` has
 
 - `weak`: per endogenous regressor, the first-stage F test of the excluded
   instruments (`statistic`, `df1`, `df2`, `p_value`);
@@ -4464,16 +4552,36 @@ These follow R's `ks.test` convention: `'greater'`/`'less'` describe which CDF
 lies *above* the other, which (because a higher CDF means smaller values) is
 the opposite of which sample tends to be larger.
 
-`exact` controls how the p-value is computed. Omit it to let the test choose:
-the exact distribution is used for small samples (two-sample when nx·ny 
-10000, one-sample when n < 100) and the asymptotic (Kolmogorov limiting)
-approximation otherwise. Pass `exact => 1` to force the exact computation or
-`exact => 0` to force the asymptotic one. Exact p-values cannot be computed
-when the data contain ties; if ties are present on the exact path, the test
-warns and falls back to the asymptotic p-value. (The exact one-sample test is
-only available for the two-sided alternative; a one-sided one-sample request
-also falls back to asymptotic.) In either fallback the returned `method` is
-the asymptotic one, so it always names the p-value you actually got.
+`exact` controls how the p-value is computed, by R 4.6.1's own rules. Omit it
+to let the test choose: the exact distribution is used for small samples
+(two-sample when nx·ny < 10000; one-sample when n < 100 and there are no ties)
+and the asymptotic (Kolmogorov limiting) approximation otherwise. Pass
+`exact => 1` to force the exact computation or `exact => 0` to force the
+asymptotic one. The returned `method` always names the p-value you got.
+
+- **Two samples with ties.** The exact p-value is R's: the lattice recursion
+  conditioned on the observed tie pattern, so `ks_test([1, 2, 2, 3, 3],
+  [1, 2, 3, 3, 4, 5, 6])` gives R's documented 8/33. On the asymptotic path
+  ties draw R's warning, `p-value will be approximate in the presence of
+  ties`. (Up to 0.33 ties on the exact path warned and fell back to the
+  asymptotic p-value.)
+- **One sample.** Ties draw R's warning, `ties should not be present for the
+  one-sample Kolmogorov-Smirnov test`, and keep the automatic choice off the
+  exact path. The exact one-sided p-value is R's Birnbaum–Tingey sum, the
+  exact two-sided one Marsaglia, Tsang and Wang's algorithm.
+- **Asymptotic two-sided p-values** are R's series to R's tolerance of 1e-6,
+  so they match R to the last digit, including where that tolerance leaves R
+  up to 4.6e-6 (relative) from the limiting distribution itself.
+- **Limits that R does not have.** A forced exact run larger than nx·ny = 10⁷
+  (two-sample), or a two-sided one-sample one whose matrix would be of order
+  over 500, warns `too large for an exact p-value` and uses the asymptotic
+  p-value. A one-sided asymptotic
+  p-value is `exp(-2 n D²)` evaluated directly, where R's `1 - (1 - exp())`
+  rounds anything below about 1e-16 to `0`.
+
+Warnings go through perl's `warn`, so a `$SIG{__WARN__}` handler sees them;
+one that dies leaves nothing allocated behind. A tied array is read like any
+other.
 
 ### Return value
 
@@ -4735,6 +4843,20 @@ Random-effects terms are written as in `lme4`: `(1 | g)` a random intercept,
 crossed or nested, are allowed, and `(1 | a/b)` expands to `(1 | a) + (1 | a:b)`.
 The fixed part is expanded as for [`lm`](#lm).
 
+As in `lme4`, a model croaks when a grouping factor has only one level among
+the rows it keeps ("grouping factors must have > 1 sampled level"), when one has
+as many levels as there are rows ("number of levels of each grouping factor must
+be < number of observations (problems: ...)"), or when a correlated term has at
+least as many random effects as there are rows. These are `lmerControl()`'s
+default checks; `lme4` names a nested factor `b:a` where this names it `a:b`.
+
+With a single grouping factor the fit takes one level at a time, so any number
+of levels is practical. With more than one (crossed or nested), the random
+effects are handled as one dense matrix, whose time grows as the cube of their
+total count: 2000 random effects took about 5 minutes on a desktop, and more
+than 4000 croaks. `lme4`'s sparse Cholesky is the tool for designs larger than
+that.
+
 | Option | Default | Description |
 | --- | --- | --- |
 | `formula` | *(required)* | Fixed effects plus one or more `( terms \| group )` random-effects terms. |
@@ -4771,9 +4893,22 @@ Give times, an event flag (1 = event, 0 = censored), and a group label per row:
     print $r->{'p_value'};
 
 Result keys: `statistic` (chi-squared), `parameter` (df = groups − 1),
-`p_value`, `observed` and `expected` events per group, and `groups`. See
+`p_value`, `observed` and `expected` events per group, `groups` and `rho`. See
 [`survfit`](#survfit) for the curves and [`coxph`](#coxph) to adjust for
 covariates.
+
+`rho => 1` gives Peto & Peto's modification of the Gehan–Wilcoxon test, which
+weights the early differences more, and any other `rho` the rest of
+`survdiff()`'s G-rho family: each event time is weighted by S(t−)^rho, the
+pooled Kaplan–Meier estimate just before it. `observed` and `expected` are
+then weighted counts, as `survdiff()`'s are. The default, 0, is the log-rank
+test.
+
+The event flag is read as `survival::Surv()` reads it: 1 = event and 0 =
+censored, or 2 = event and 1 = censored when the largest value is 2. Perl's
+true and false count as 1 and 0. Any other value is an error, and so is an
+undef or `NaN` time or status, where R would drop the row as missing.
+An undef group label is an error too.
 
 ## Lonly
 
@@ -5026,6 +5161,10 @@ Takes either an array or an array reference, and returns an array of the most co
 When several values tie for most common, they come back in the order each was
 first seen, whatever perl's hash seed is.
 
+Values are counted by their string form, so `1`, `1.0` and `"1"` are one value
+and `"1.0"` another. A number is formatted in a copy to find it, so `mode`
+does not add a string buffer to every numeric scalar it is given.
+
 ## ncol
 
 `ncol($frame)` returns how many **columns** a data frame has. Like `nrow`, it
@@ -5140,7 +5279,7 @@ usually fractional. Pass `var_equal => 1` for the classic equal-variance form.
 
 | Option | Default | Meaning |
 |--------|---------|---------|
-| `var_equal` | `0` (false) | `0` → Welch's test (unequal variances). `1` → pooled-variance test. The dotted `var.equal` is refused as an unknown argument. |
+| `var_equal` | `0` (false) | `0` → Welch's test (unequal variances). `1` → pooled-variance test. The dotted `var.equal` is refused as an unknown argument, as is any key not in this table, or a key with no value. |
 | `formula` | *none* | `'response ~ factor'`. Only valid with a **hash** input; an error with an array of arrays. |
 
 ### Data validation
@@ -5159,7 +5298,18 @@ Note that this differs from R, which drops incomplete cases via `na.action`
 rather than complaining. If you want R's behaviour, filter the missing values
 out yourself first (see `dropna`).
 
-Each group needs at least two observations, and you need at least two groups.
+`NaN` is the exception: it is R's `NA` too, and it is dropped, as `na.action`
+drops it, in all three shapes. A `formula` row whose response is `NaN` goes
+before its label is counted, so a group whose every response is `NaN` does
+not exist, as R drops an unused factor level. (Up to 0.33 a `NaN` was kept,
+and made every statistic `NaN`.)
+
+Each group needs at least two observations after that, and you need at least
+two groups. There is no limit on the number of groups.
+
+Group labels come back as they went in: a UTF-8 label (a hash key, or a value
+of the `formula` factor) keeps its UTF-8 flag in `group_stats`, and a
+`formula` may name UTF-8 columns. Two labels that are `eq` are one group.
 
 ### Output
 
@@ -5361,6 +5511,11 @@ a `method => ...` pair. These three are the same call:
 - An `undef` cell counts toward the family as a p-value of 1, which is how the
   flat form has always treated it, and comes back adjusted rather than as
   `undef`.
+- A NaN p-value is R's `NA`: it is left out of the family, so the family size
+  counts only the others, and it comes back NaN in its own place. R's
+  `p.adjust(c(0.01, NaN, 0.04, 0.03, NaN, 0.02), "holm")` and
+  `p_adjust([0.01, 'nan', 0.04, 0.03, 'nan', 0.02], 'holm')` both give 0.04,
+  NaN, 0.06, 0.06, NaN, 0.06.
 - Within a frame the family is enumerated in a fixed order — rows in order and
   then columns by name for an AoA, AoH or HoH; columns by name and then rows
   for a HoA; row labels in sorted order for a HoH — so tied p-values break the
@@ -5553,7 +5708,8 @@ Use `log => 1` for tails that would otherwise underflow to `0`:
 
 - `sd => 0` gives a step at the mean: `x < mean` returns `0`, otherwise `1`.
 - `sd < 0` returns `NaN` and warns.
-- A `NaN` input (or an `undef` element of an array reference) yields `NaN`.
+- A `NaN` input, an `undef` input, or an `undef` element of an array reference
+  yields `NaN` (R's `NA`). Up to 0.331 an `undef` was read as `0`.
 - `+Inf` returns `1`, `-Inf` returns `0`.
 
 ## prcomp
@@ -5565,10 +5721,10 @@ Principal Component Analysis
 | Option | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
 | `center` | Boolean | `1` (True) | If true, the variables are shifted to be zero-centered before the analysis takes place. |
-| `scale` | Boolean | `0` (False) | If true, the variables are scaled to have unit variance before the analysis takes place. *Note: If a column has zero variance, the function will `croak` to prevent division by zero.* |
+| `scale` | Boolean | `0` (False) | If true, the variables are scaled to have unit variance before the analysis takes place: each column is divided by `sqrt(sum(x^2)/(n-1))` once centred, as R's `scale()` does, which is the root mean square about zero when `center` is false. *Note: If a column has zero variance, the function will `croak` to prevent division by zero.* |
 | `retx` | Boolean | `1` (True) | If true, the rotated data (the original data multiplied by the rotation matrix) is returned under the key `x`. |
-| `tol` | Number | `undef` | A value indicating the magnitude below which components should be omitted. Components are omitted if their standard deviation is less than or equal to `tol` times the standard deviation of the first component. |
-| `rank` | Integer | `undef` | Optionally specify a strict limit on the number of principal components to return. The function will return `min(rank, rows, columns)` components. |
+| `tol` | Number | `undef` | A value indicating the magnitude below which components should be omitted from `rotation` and `x`. Components are omitted if their standard deviation is less than or equal to `tol` times the standard deviation of the first component. `sdev` keeps all of them, as R's does. |
+| `rank` | Integer | `undef` | Optionally specify a strict limit on the number of principal components in `rotation` and `x`: `min(rank, rows, columns)` of them. `sdev` keeps all `min(rows, columns)`, as R's does. |
 
 ### Results
 
@@ -5578,8 +5734,8 @@ The `prcomp` function returns a HashRef containing the following keys representi
 
 | Key | Type | Description |
 | :--- | :--- | :--- |
-| `sdev` | ArrayRef[Number] | The standard deviations of the principal components. Mathematically, these are the square roots of the eigenvalues of the covariance matrix. |
-| `rotation` | ArrayRef[ArrayRef] | A 2D array representing the matrix of variable loadings (the eigenvectors). Each inner array represents a row, and the columns correspond to the principal components. |
+| `sdev` | ArrayRef[Number] | The standard deviations of the principal components, all `min(rows, columns)` of them. Mathematically, these are the square roots of the eigenvalues of the covariance matrix; they are computed, as R computes them, from the singular values of the centred (and scaled) data, which keeps a direction the data do not span at rounding level (about `1e-16` of the first) rather than at `1e-8`. |
+| `rotation` | ArrayRef[ArrayRef] | A 2D array representing the matrix of variable loadings (the eigenvectors). Each inner array represents a row, and the columns correspond to the principal components. A component is only defined up to its sign, and the signs here need not be R's. |
 | `x` | ArrayRef[ArrayRef] | A 2D array containing the rotated data (often referred to as PCA scores). This is the original data projected onto the principal components. *Note: Only present if the `retx` option is true.* |
 | `center` | ArrayRef[Number] or `0` | The centering values used (typically the column means). Returns false (`0`) if centering was disabled. |
 | `scale` | ArrayRef[Number] or `0` | The scaling values used (typically the column standard deviations). Returns false (`0`) if scaling was disabled. |
@@ -5610,31 +5766,31 @@ which returns
         ],
         rotation   [
             [0] [
-                    [0] 0.707106781186547,
-                    [1] 0.707106781186548
-                ],
-            [1] [
                     [0] 0.707106781186548,
                     [1] -0.707106781186547
+                ],
+            [1] [
+                    [0] 0.707106781186547,
+                    [1] 0.707106781186548
                 ]
         ],
         scale      0,
         sdev       [
             [0] 2.44948974278318,
-            [1] 1.4142135623731
+            [1] 1.41421356237309
         ],
         x          [
             [0] [
-                    [0] -1.41421356237309,
-                    [1] -1.4142135623731
-                ],
-            [1] [
                     [0] -1.4142135623731,
                     [1] 1.41421356237309
                 ],
+            [1] [
+                    [0] -1.41421356237309,
+                    [1] -1.4142135623731
+                ],
             [2] [
                     [0] 2.82842712474619,
-                    [1] 2.22044604925031e-16
+                    [1] 6.66133814775094e-16
                 ]
         ]
     }
@@ -6000,16 +6156,38 @@ and out of a data frame.
 
 ## quantile
 
-Calculates sample quantiles using R's continuous Type 7 interpolation. 
+Calculates sample quantiles using R's continuous Type 7 interpolation, in R's
+own arithmetic (`index = 1 + (n-1)p`), so the values are R's to the last bit on
+a perl whose NV is a double.
 
     my $quantile = quantile('x' => [1..99], probs => [0.05, 0.1, 0.25]);
+    my $median   = quantile([1..99], probs => 0.5);    # { '50%' => 50 }
 
-If the `probs` parameter is omitted, it behaves identically to R by defaulting to the 0, 25, 50, 75, and 100 percentiles (`c(0, .25, .5, .75, 1)`). The returned hash keys match R's standardized naming convention (e.g., `"25%"`, `"33.3%"`).
+If the `probs` parameter is omitted, it behaves identically to R by defaulting
+to the 0, 25, 50, 75, and 100 percentiles (`c(0, .25, .5, .75, 1)`). `probs` is
+an array ref, or a single number; anything else is an error.
+
+The returned hash is keyed by R's own names for the probabilities — what
+`names(quantile(x, probs))` gives — so `1/3` is `"33.33333%"`, `0.0014` is
+`"0.14%"` and `1e-6` is `"0.0001%"`. Like R, fewer than 100 probabilities are
+each named to 7 significant digits (`formatC(100 * p, format = "fg", digits =
+7)`), while 100 or more share one format chosen for the whole vector (`format(100
+* p, digits = 7)`), so `seq(0, 1, 0.005)` is keyed `"0.0%"`, `"0.5%"`, `"1.0%"`
+and so on.
+
+A hash cannot hold two values under one name. The same probability asked for
+twice is one key. Two *different* probabilities that R would name alike — 0.99999999
+and 1 are both `"100%"` — are an error naming both, rather than one value
+silently replacing the other.
+
+An `undef` probability is R's `NA`, and a NaN one is NaN: each gives `undef` or
+NaN respectively, under the key `""`, which is how R names them.
 
 A probability that lands a hair outside `[0, 1]` — the usual result of computing
 one rather than writing it down — is clamped to the endpoint rather than
 refused, within the same `100 * eps` that R allows; anything further out is an
-error. `undef` values in `x` are dropped.
+error. `undef` values in `x` are dropped, and a NaN in `x` makes every quantile
+NaN (R refuses such an `x` unless `na.rm = TRUE`).
 
 ## rank
 
@@ -6157,8 +6335,9 @@ set to, so a `local $/;` in the calling code does not change what is read.
 Lines may end in LF or CRLF, and a file whose lines end in a bare CR, as
 classic Mac OS wrote them, is read as R and pandas read it. The start of the
 file is read 64 KB at a time, up to 1 MB, until a CR turns up; if no LF has by
-then, the file is split on CR. In any other file a lone CR outside quotes is
-dropped.
+then, the file is split on CR. An LF inside a quoted field is part of a cell,
+not a line end, and does not count. In any other file a lone CR outside quotes
+is dropped.
 With `'output_type' => 'hoh'` a file whose only column is the row name gives
 one empty hash per row, as R's `read.table` gives a data frame of zero columns.
 Rows that repeat an earlier row's name overwrite it, later values winning, and
@@ -6783,13 +6962,28 @@ name/value pairs — the two are equivalent:
 
 `center` and `scale` each take a number to use instead of the mean or the
 standard deviation, or one of `mean`/`sd`, `true`/`false`, `none`, `1`/`0` and
-the empty string, matched case-insensitively. With `center => 0` the divisor
-is R's: the root mean square about zero, `sqrt(sum(x^2)/(n-1))`, not the
-standard deviation.
+the empty string, matched case-insensitively. The automatic scale is R's:
+`sqrt(sum(x^2)/(n-1))` of the column once it has been centred, which is the
+standard deviation when the centre is the mean, the root mean square about zero
+with `center => 0`, and neither with a numeric centre.
 
 It fully supports matrix operations. By passing an array of arrays, `scale` processes the data column by column independently:
 
     my $scaled_mat = scale([[1, 2], [3, 4], [5, 6]]);
+
+As in R, `center` and `scale` may also be array refs holding one number per
+column (a flat list is one column); a vector of the wrong length is an error.
+Each value is used as given, so a 0 in a `scale` vector divides by zero, as R
+does.
+
+    my $m = scale([[1, 2], [3, 5], [5, 9]], center => [1, 2], scale => [2, 3]);
+    # [[0, 0], [1, 1], [2, 2.333...]]
+
+Every row of a matrix must be an array ref of the same length as the first;
+anything else is an error. An `undef` value is R's `NA`: it stays `undef`, in
+its place, and its column's mean and scale are taken over the values that are
+there (R's `colMeans(na.rm = TRUE)`). A NaN is left out of them the same way and
+comes back NaN. Scaling needs at least two rows (or values).
 
 ## sd
 
@@ -6978,7 +7172,10 @@ and returns the hash reference:
 
 matching R's `shapiro.test(1:5)` to the last digit it prints. Values that are
 `undef` or `NaN` are dropped first, exactly as R's `complete.cases()` drops
-them, and the remaining sample must hold between 3 and 5000 values.
+them, and the remaining sample must hold between 3 and 5000 values. A string
+that is not a number croaks, naming its index (`shapiro_test: x at index 2 is
+not a number`), as R's `stopifnot(is.numeric(x))` refuses it; it used to be
+read as `0`. A tied array is read like any other.
 
 ## skew
 
@@ -7175,6 +7372,12 @@ Option `conf_level` (default `0.95`). Each stratum has arrays `time`, `n_risk`,
 `n_event`, `n_censor`, `surv`, `std_err`, `lower`, `upper`, plus `median`, `n`,
 and `events`. Compare curves with [`logrank_test`](#logrank_test); model
 covariate effects with [`coxph`](#coxph).
+
+The event flag is read as `survival::Surv()` reads it: 1 = event and 0 =
+censored, or 2 = event and 1 = censored when the largest value is 2. Perl's
+true and false count as 1 and 0. Any other value is an error, and so is an
+undef or `NaN` time or status, where R would drop the row as missing.
+An undef `group` label is an error too.
 
 ## svyglm
 
@@ -8061,7 +8264,7 @@ An empty `{}` or `[]` is a table with no rows, and is written as one: the header
 
 Every cell of delimited output is written whole, including one holding a NUL byte, and a cell of a tied hash or array (such as `Tie::IxHash`) is read through its `FETCH`. A number is formatted the way perl formats it, but in a copy, so writing a table does not add a string buffer to every numeric scalar in it. Nor does finding an AoH's or a HoH's columns leave an iterator on every row hash, as walking them with `keys` would. A row that is a restricted hash (`Hash::Util::lock_keys`) may lack some of the columns; those cells are written empty, where they used to die with *Attempt to access disallowed key*.
 
-A field is quoted when it holds a quote (which is doubled), a line break or the separator, as Python's `csv.writer` quotes, and in two more places where `read_table` would otherwise not see the record at all. A record of a single field that is empty, `undef` or nothing but spaces and tabs is written quoted, `""` or `"  "`, because a blank line is skipped on reading; `csv.writer` writes `['']` and `[None]` the same way. The first field of a record is quoted when it starts with `#`, `read_table`'s default comment character.
+A field is quoted when it holds a quote (which is doubled), a line break or the separator, as Python's `csv.writer` quotes, and in two more places where `read_table` would otherwise not see the record at all. With a separator of more than one character, a field is also quoted when its end and the separator written after it would spell the separator early -- `"a:"` before `::`, which would otherwise be written `a:::` and read back cut at the first `::`. A record of a single field that is empty, `undef` or nothing but spaces and tabs is written quoted, `""` or `"  "`, because a blank line is skipped on reading; `csv.writer` writes `['']` and `[None]` the same way. The first field of a record is quoted when it starts with `#`, `read_table`'s default comment character.
 
 A reference anywhere in the table is an error, in a header cell (`col_names`, or an AoA's first row) as in a data cell. For an AoA, an `undef` in `col_names` is an empty header cell in its place, since an AoA's columns are positional; for every other shape, which looks its columns up by name, it is skipped.
 
@@ -8286,6 +8489,16 @@ The result holds `coefficients`, `summary` (per term `Estimate`, `Std. Error`,
 truncated mean `mu / (1 - f(0))`, and Pearson-style `residuals`. The fit is a
 damped Newton iteration on the exact likelihood and its analytic Hessian.
 Validated against `countreg` and against `mpmath` at 60 digits.
+
+For `negbin`, counts no more dispersed than a Poisson's have no finite
+maximum-likelihood `theta`: the likelihood keeps rising as `theta` grows, and
+its supremum is the Poisson fit. `zerotrunc` checks for this first (the score
+for overdispersion at the Poisson fit is not positive) and then returns that
+Poisson fit, with `theta` and `SE_logtheta` both `Inf` and the degrees of
+freedom still counting `theta`. `countreg` returns the same fit, but stopped
+wherever its BFGS search halts on the way, typically with `theta` near `1e5`,
+so its coefficients and log-likelihood differ from these by roughly
+`1/theta`.
 
 ## F and z tail p-values
 

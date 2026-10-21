@@ -20,19 +20,46 @@ documents each one:
   assignment does: a value that is a reference is copied as a reference, so
   the thing it points at is still shared.
 
+## The 2026-10-20 audit
+
+Six auditors read the XSUBs that no earlier audit had covered. The survival
+functions were fixed first; everything else they found was fixed in the same
+release, 0.331, and `Changes` describes each fix. The `t/audit.2026-10-20.*.t`
+files, `t/distributions.limits.R.t`, `t/scale.R.t`, `t/prcomp.R.t` and the
+extended `t/<fn>.R.t` files pin them.
+
+Divergences from R that were kept on purpose, each documented in README or in
+its test file:
+
+- **`ks_test()`**: the two-sample one-sided asymptotic p is `exp(-2nq^2)`
+  computed directly, where R's `1 - (1 - exp())` rounds anything below about
+  1e-16 to 0. Where R's Birnbaum-Tingey sum takes the log of a negative
+  number and returns NaN, `ks_test` drops that term and returns 1.
+- **`fisher_test()`**: an r x c p-value can differ from R's by up to about
+  3e-12, because FEXACT merges paths whose weights agree to 3.45e-7; this one
+  is closer to the exact rational value. An all-zero r x c table still croaks,
+  as R does, where SciPy gives 1.
+- **`zerotrunc()` / `hurdle()`**: a negbin fit whose likelihood rises to the
+  Poisson limit reports `theta` as Inf, where countreg's BFGS stops near 1e5.
+- **`cmh_test()`**: K = 1 is accepted, where R refuses it.
+- **`p_adjust()`**: undef is a p-value of 1 counted in the family, as README
+  documents; R would treat it as NA.
+
 ## Left open
 
-- **`cmh_test()`** skips a stratum whose total is 0, and runs on one whose
-  total is 1. R's `mantelhaen.test()` stops on both ("sample size in each
-  stratum must be > 1").
+- **`binom_test(3, 1e18)`** runs an O(n) loop and effectively never returns.
+  R fails there too, trying to allocate 37 GB.
+- **The incomplete gamma and beta** (0.331's ports of R's pgamma.c and
+  TOMS 708) use R's double-precision series constants, so `pchisq`, `pt`,
+  `pf` and every p-value built on them are about double-accurate on
+  long-double and quadmath perls, not accurate to the NV's width.
+- **`fisher_test()`** refuses PR#4688 (4x3, N = 16442), as R does, after
+  0.6 s. A table whose total passes 2^31 - 1 croaks where a C long is 32 bits.
 - **`sum()`, `mean()`, `sd()`, `var()`** pay about 0.5 ns per element for the
   compensated sum that matches R's long-double accumulation (0.93 to 1.40
   ns per element for `sum()` on 1e6 NVs). If that matters more than the last
   bits of a badly conditioned sum, `sum()` alone could go back to a plain
   four-lane sum.
-- **`rank()`** compares `Stack_off_t` with `size_t` (`opt_start`) in two
-  loops, which `-Wextra` reports under strict C99. The default build flags do
-  not.
 - **Formulas** (every function that reads one through `lm_formula_terms()`)
   have no parentheses: `y ~ (a + b)*c` and `y ~ (a + b + c)^2` die with "0
   degrees of freedom", as does arithmetic inside a function or `I()`, such as

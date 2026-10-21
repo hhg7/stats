@@ -177,15 +177,22 @@ like($err, qr/missing a value/,
  cmp_ok($r->{'p_value'}, '>', 0.99, "#5 aliased x/y: p ~ 1");
 }
 
-# Ties handling — exact path must warn and fall back to asymptotic.
-
+# Ties handling, as R 4.6.1: an exact request with ties gets the exact p-value
+# conditional on the tie pattern, silently, and an asymptotic one warns.  Up
+# to 0.33 the exact request warned and fell back to asymptotic.
+#   R: ks.test(c(1,2,2,3), c(2,3,3,4), exact = TRUE)  -> D = 0.5, p = 0.48571428571428565
+#      ks.test(c(1,2,2,3), c(2,3,3,4), exact = FALSE) -> p = 0.69937419993527605,
+#      warning "p-value will be approximate in the presence of ties"
 {
- # Small samples => exact is auto-selected; shared values create ties.
  my ($r, $err, $warns) = run(sub { ks_test([1,2,2,3], [2,3,3,4], exact => 1) });
  is($err, undef, "ties: no exception");
- ok((grep { /ties/i } @$warns), "ties: warns about exact-with-ties")
+ is(scalar(@$warns), 0, "ties: the exact path does not warn") or diag("warnings: @$warns");
+ like($r->{method}, qr/exact/, "ties: stays exact");
+ cmp_ok(abs($r->{p_value} - 0.48571428571428565), '<', 1e-14, "ties: R's tie-conditional p");
+ ($r, $err, $warns) = run(sub { ks_test([1,2,2,3], [2,3,3,4], exact => 0) });
+ ok((grep { /approximate in the presence of ties/ } @$warns), "ties: the asymptotic path warns, as R")
      or diag("warnings: @$warns");
- like($r->{method}, qr/asymptotic/, "ties: fell back to asymptotic method");
+ cmp_ok(abs($r->{p_value} - 0.69937419993527605), '<', 1e-14, "ties: R's asymptotic p");
 }
 
 # Bug #6 — forced exact beyond the auto-gate
@@ -317,10 +324,12 @@ no_leaks_ok {
 	} 'forced-exact DP buffer: no memory leak' unless $INC{'Devel/Cover.pm'};
 }
 
-# ties fallback (warns, then takes the asymptotic branch)
-#no_leaks_ok {
-#	eval { ks_test([1,2,2,3], [2,3,3,4], exact => 1) }
-#} 'ties fallback path: no memory leak' unless $INC{'Devel/Cover.pm'};
+# ties: the tie-conditional DP, and the warning on the asymptotic path
+no_leaks_ok {
+	local $SIG{__WARN__} = sub {};
+	eval { ks_test([1,2,2,3], [2,3,3,4], exact => 1) };
+	eval { ks_test([1,2,2,3], [2,3,3,4], exact => 0) };
+} 'ties paths: no memory leak' unless $INC{'Devel/Cover.pm'};
 
 # ---- error paths: croak AFTER allocating x_data (and y_data). The eval {}
 #      swallows the exception so the tracer can complete. These are the

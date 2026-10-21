@@ -58,7 +58,7 @@
 .\" ========================================================================
 .\"
 .IX Title "Stats::LikeR 3"
-.TH Stats::LikeR 3 2026-10-18 "perl v5.44.0" "User Contributed Perl Documentation"
+.TH Stats::LikeR 3 2026-10-21 "perl v5.44.0" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -705,6 +705,8 @@ Values are \fBcopied\fR (\f(CW\*(C`newSVsv\*(C'\fR), so the returned structure i
 Keys are handled SV\-first (\f(CW\*(C`hv_iterkeysv\*(C'\fR / \f(CW\*(C`hv_fetch_ent\*(C'\fR), so UTF\-8 and otherwise non\-trivial hash keys round\-trip correctly.
 .PP
 A row that is \fBnot\fR a hash ref is skipped rather than fatal: it contributes \f(CW\*(C`undef\*(C'\fR to every column at its index. So a stray \f(CW\*(C`undef\*(C'\fR or scalar in the input thins the columns at that position instead of dying.
+.PP
+A tied array of rows, a tied row (such as a \f(CW\*(C`Tie::IxHash\*(C'\fR) and a tied cell are read through their \f(CW\*(C`FETCH\*(C'\fR, once per value.
 .PP
 \fINotes\fR
 .IX Subsection "Notes"
@@ -1406,6 +1408,12 @@ whether they do worse.
 .PP
 You can also pass the counts as \f(CW\*(C`binom_test([6, 4])\*(C'\fR — 6 right, 4 wrong — when
 you have wins and losses instead of wins and a total.
+.PP
+Every count must be a whole number (to within 1e\-7, as in R) that is not
+negative. \f(CW\*(C`NaN\*(C'\fR, an infinity, \f(CW\*(C`undef\*(C'\fR or a string croaks, as R\*(Aqs \f(CW\*(C`binom.test\*(C'\fR
+stops on them. So does a count, or a successes + failures sum, of \f(CW\*(C`LONG_MAX\*(C'\fR
+or more: 9223372036854775807 on most 64\-bit systems, but 2147483647 on Windows
+and on 32\-bit perls.
 .SS cfilter
 .IX Subsection "cfilter"
 Select \fBcolumns\fR out of a table and return it in the same shape. A column is
@@ -1799,7 +1807,8 @@ the common OR), and \f(CW\*(C`k\*(C'\fR (number of strata).
 As in R, the continuity correction of 0.5 is applied only when the observed
 count is at least 0.5 away from its expectation, and \f(CW\*(C`method\*(C'\fR says whether it
 was ("with" or "without continuity correction"). A cell that is \f(CW\*(C`NaN\*(C'\fR or
-infinite is a fatal error, as \f(CW\*(C`NA\*(C'\fR is in R. Degenerate tables give what R
+infinite is a fatal error, as \f(CW\*(C`NA\*(C'\fR is in R, and so is a stratum whose total is
+below 2 ("sample size in each stratum must be > 1"). Degenerate tables give what R
 gives: when every stratum has zero variance the statistic and p\-value are
 \&\f(CW\*(C`NaN\*(C'\fR, and when no stratum has off\-diagonal counts the common odds ratio is
 \&\f(CW\*(C`Inf\*(C'\fR.
@@ -2402,7 +2411,8 @@ Cox proportional\-hazards regression: how covariates raise or lower the hazard
 (the risk of an event over time). It is the survival\-analysis counterpart of
 \&\f(CW\*(C`glm\*(C'\fR and reports hazard ratios, like R\*(Aqs \f(CW\*(C`survival::coxph\*(C'\fR (Efron ties).
 .PP
-Give times, an event flag (1 = event, 0 = censored), and one or more covariates
+Give times, an event flag (1 = event, 0 = censored; or 2 = event, 1 = censored,
+as \f(CWSurv()\fR reads a flag whose largest value is 2), and one or more covariates
 (a single \f(CW\*(C`\e@x\*(C'\fR, or \f(CW\*(C`[\e@x1, \e@x2, ...]\*(C'\fR):
 .PP
 .Vb 1
@@ -2553,8 +2563,12 @@ Columns in an AoA are addressed by non\-negative integer index:
 .PP
 The result reuses the original row array\-refs (a reorder, not a deep
 copy), so it is cheap and the caller\*(Aqs data is left untouched. A
-non\-integer or negative index croaks; an index no row contains is
-reported as a missing column.
+non\-integer or negative index croaks, and so does one too large to index
+an array (above 2*\fI63 \- 1, or 2\fR*31 \- 1 on a 32\-bit perl); an index no row
+contains is reported as a missing column.
+.PP
+Rows that are tied arrays, and a tied column of a HoA, are read through
+their \f(CW\*(C`FETCH\*(C'\fR.
 .PP
 \fIUndefined and missing values\fR
 .IX Subsection "Undefined and missing values"
@@ -2564,6 +2578,12 @@ row that lacks the key (AoH/HoH) or is shorter than the index (AoA); it
 is treated the same as an explicit \f(CW\*(C`undef\*(C'\fR. Defined values are ordered
 first (ascending, or per the comparison type), undef/missing last, and
 undef rows keep their original relative order.
+.PP
+In a numeric column a \f(CW\*(C`NaN\*(C'\fR sorts last with them, in its original place
+among them, as R\*(Aqs \f(CWorder()\fR puts \f(CW\*(C`NaN\*(C'\fR with \f(CW\*(C`NA\*(C'\fR:
+\&\f(CW\*(C`csort([{x=>3}, {x=>\*(AqNaN\*(Aq}, {x=>1}, {x=>undef}, {x=>2}], \*(Aqx\*(Aq)\*(C'\fR gives the
+\&\f(CW\*(C`x\*(C'\fR order 1, 2, 3, NaN, undef. In a column that is not all numbers,
+\&\f(CW\*(AqNaN\*(Aq\fR is a string like any other.
 .PP
 .Vb 7
 \& my $rows = [
@@ -2596,6 +2616,12 @@ row is undef. Such rows go to the bottom.
 .IP \(bu 4
 A comparator that handles undef itself (e.g. \f(CW\*(C`$a\->{v} // 0\*(C'\fR) never trips
 the probe, so csort leaves its ordering completely alone.
+.IP \(bu 4
+A row the comparator cannot compare with itself \-\- it returns \f(CW\*(C`undef\*(C'\fR,
+which is what \f(CW\*(C`<=>\*(C'\fR returns when either side is \f(CW\*(C`NaN\*(C'\fR \-\- goes to the end
+with the undef rows. So \f(CW\*(C`NaN\*(C'\fR sorts last both ascending
+(\f(CW\*(C`$a\->{v} <=> $b\->{v}\*(C'\fR) and descending (\f(CW\*(C`$b\->{v} <=> $a\->{v}\*(C'\fR), as R\*(Aqs
+\&\f(CWorder()\fR puts it last with or without \f(CW\*(C`decreasing = TRUE\*(C'\fR.
 .IP \(bu 4
 A comparator that dies for a real reason still propagates that error
 unchanged.
@@ -3038,6 +3064,18 @@ parameter: \f(CW\*(C`pchisq($q, 0)\*(C'\fR is 0 for \f(CW\*(C`$q <= 0\*(C'\fR an
 pins those values; up to 0.3217 both functions returned \f(CW\*(C`NaN\*(C'\fR there. A negative
 \&\f(CW\*(C`df\*(C'\fR is still \f(CW\*(C`NaN\*(C'\fR.
 .PP
+\&\f(CW\*(C`df => Inf\*(C'\fR (perl\*(Aqs \f(CW\*(C`9**9**9\*(C'\fR, or the string \f(CW"Inf"\fR) is the limit R gives it:
+\&\f(CW\*(C`pt($q, Inf)\*(C'\fR is \f(CWpnorm($q)\fR and \f(CW\*(C`qt($p, Inf)\*(C'\fR is \f(CWqnorm($p)\fR;
+\&\f(CW\*(C`pf($x, $df1, Inf)\*(C'\fR is \f(CW\*(C`pchisq($x * $df1, $df1)\*(C'\fR, \f(CW\*(C`pf($x, Inf, $df2)\*(C'\fR the upper
+tail of \f(CW\*(C`pchisq($df2 / $x, $df2)\*(C'\fR, and with both infinite \fIF\fR is a step at 1
+(\f(CW0.5\fR at 1 itself); \f(CW\*(C`qf\*(C'\fR inverts each. Up to 0.331 none of this was handled:
+\&\f(CW\*(C`qt(0.975, Inf)\*(C'\fR was \f(CW3.1e\-61\fR and \f(CW\*(C`pf(0.5, 3, Inf)\*(C'\fR was \f(CW1\fR. A finite but huge
+df is computed exactly rather than by R\*(Aqs \f(CW\*(C`df > 4e5\*(C'\fR approximation in \f(CW\*(C`qf\*(C'\fR.
+.PP
+\&\f(CW\*(C`pbinom\*(C'\fR\*(Aqs \f(CW\*(C`size\*(C'\fR must be a whole number within R\*(Aqs own fuzz,
+\&\f(CW\*(C`1e\-9 * max(1, |size|)\*(C'\fR, and is then rounded, so \f(CW\*(C`pbinom(3, 10 + 1e\-10, 0.5)\*(C'\fR
+is R\*(Aqs \f(CW0.171875\fR; up to 0.331 anything not exactly whole was \f(CW\*(C`NaN\*(C'\fR.
+.PP
 \fIWhat each one does, in one picture\fR
 .IX Subsection "What each one does, in one picture"
 .PP
@@ -3098,8 +3136,10 @@ computes the requested side directly:
 \& pt(\-75, 15);                 # 5.4e\-21, from the lower tail itself
 .Ve
 .PP
-\&\f(CW\*(C`qnorm\*(C'\fR, \f(CW\*(C`qchisq\*(C'\fR and \f(CW\*(C`qf\*(C'\fR reflect a probability above \f(CW0.5\fR onto \f(CW\*(C`1 \- p\*(C'\fR
-before inverting, for the same reason in the other direction — that keeps the
+Every \f(CW\*(C`q*\*(C'\fR function inverts the \fIsmaller\fR of the two tails it is handed: a
+probability above \f(CW0.5\fR is reflected onto \f(CW\*(C`1 \- p\*(C'\fR, and a log probability above
+\&\f(CWlog(1/2)\fR onto \f(CW\*(C`\-expm1(log p)\*(C'\fR, before inverting, for the same reason in the
+other direction — that keeps the
 root\-finder comparing small numbers instead of numbers that agree to fifteen
 places. The reflection is free rather than a trade: for \f(CW\*(C`p >= 0.5\*(C'\fR the two
 operands of \f(CW\*(C`1 \- p\*(C'\fR lie within a factor of two of each other, so Sterbenz\*(Aqs
@@ -3147,39 +3187,55 @@ error over those six confidence levels:
 frozen rows of the test it generates. Like the other generators it is committed
 next to its test and nothing in the suite calls it.
 .PP
-\fIAccuracy, and the one place \fR\f(CI\*(C`log\*(C'\fR\fI is not R\*(Aqs\fR
-.IX Subsection "Accuracy, and the one place log is not R's"
+\fIAccuracy, \fR\f(CI\*(C`log\*(C'\fR\fI, and where R is not the answer\fR
+.IX Subsection "Accuracy, log, and where R is not the answer"
 .PP
-These are glue over routines the module already had — \f(CW\*(C`normal_quantile_hp\*(C'\fR,
-\&\f(CW\*(C`pt_upper\*(C'\fR/\f(CW\*(C`qt_tail\*(C'\fR, the incomplete gamma and beta — whose series and
-continued fractions stop at a relative \f(CW1e\-15\fR on every build. So they are
-double\-accurate on a long\-double or \f(CW\*(C`_\|_float128\*(C'\fR perl too, rather than more
-accurate there, and they agree with R to about \f(CW1e\-14\fR relative.
+The incomplete gamma behind \f(CW\*(C`pchisq\*(C'\fR and \f(CW\*(C`qchisq\*(C'\fR is R\*(Aqs own (Morten Welinder\*(Aqs
+\&\f(CW\*(C`pgamma.c\*(C'\fR), and the incomplete beta behind \f(CW\*(C`pt\*(C'\fR, \f(CW\*(C`pf\*(C'\fR and \f(CW\*(C`pbinom\*(C'\fR switches
+to R\*(Aqs TOMS 708 algorithms once a shape reaches 1000. Both stay accurate in
+relative terms at any df: up to 0.331 \f(CW\*(C`pchisq(1e15, 1e15)\*(C'\fR was \f(CW0.379\fR where R
+and the truth are \f(CW0.50000000594708\fR, \f(CW\*(C`pt(1.96, 1e15)\*(C'\fR was \f(CW0.97448\fR for
+\&\f(CW0.97500\fR, and \f(CW\*(C`pf(1, 1e15, 1e15)\*(C'\fR was \f(CW0.481\fR for exactly \f(CW0.5\fR. \f(CW\*(C`qchisq\*(C'\fR is a
+Newton iteration from AS 91\*(Aqs starting value, so \f(CW\*(C`qchisq(0.5, 1e10)\*(C'\fR takes about
+2 microseconds where it took 11 milliseconds. The constants are a double\*(Aqs, as
+R\*(Aqs are, so these agree with R to about \f(CW1e\-14\fR relative on a double,
+long\-double and \f(CW\*(C`_\|_float128\*(C'\fR perl alike.
 .PP
-Two things are deliberately not R:
+\&\f(CW\*(C`log => 1\*(C'\fR is carried through in both directions, as in R:
 .IP \(bu 4
-\&\fR\f(CB\*(C`log => 1\*(C'\fR\fB on a \fR\f(CB\*(C`p*\*(C'\fR\fB function returns \fR\f(CBlog()\fR\fB of the probability already
-computed\fR, not a log carried through the series. A tail that underflowed
-to \f(CW0\fR therefore logs to \f(CW\*(C`\-Inf\*(C'\fR, and a tail that rounded to \f(CW1\fR logs to \f(CW0\fR
-rather than to the tiny negative number R reports. R\*(Aqs \f(CW\*(C`pt\*(C'\fR/\f(CW\*(C`pchisq\*(C'\fR/\f(CW\*(C`pf\*(C'\fR
-carry \f(CW\*(C`log_p\*(C'\fR through and can do better; \f(CW\*(C`pnorm\*(C'\fR here does too, because R\*(Aqs
-Cody algorithm was ported whole. The \f(CW\*(C`q*\*(C'\fR functions take \f(CW\*(C`log_p\*(C'\fR properly:
-the argument is exponentiated, which is exact, and lets you name quantiles
-the linear scale cannot — \f(CW\*(C`qnorm(\-800, log_p => 1)\*(C'\fR is reachable where
-\&\f(CWexp(\-800)\fR is just \f(CW0\fR.
+\&\fBa \fR\f(CB\*(C`p*\*(C'\fR\fB function computes the log of its tail\fR, so a tail far below the
+smallest double still has one — \f(CW\*(C`pt(\-1e10, 30, log => 1)\*(C'\fR is
+\&\f(CW\-642.385...\fR — and a tail a hair under 1 logs to the tiny negative number
+rather than to \f(CW0\fR.
 .IP \(bu 4
-\&\fR\f(CB\*(C`qf\*(C'\fR\fB disagrees with R in the far tail of \fR\f(BIF\fR\fB, and is right.\fR At
-\&\f(CW\*(C`qf(2^\-20, 1, 10)\*(C'\fR R is 9.9e\-4 away from the 60\-digit value and this module
-is 1.0e\-15 away; R\*(Aqs own \f(CW\*(C`pf\*(C'\fR confirms it, inverting this module\*(Aqs answer to
-1.6e\-15 and its own to 4.9e\-4. Thirteen such rows are pinned in
-\&\f(CW\*(C`t/distributions.R.scipy.t\*(C'\fR against mpmath at \f(CW\*(C`mp.dps = 60\*(C'\fR, each asserted
+\&\fBa \fR\f(CB\*(C`q*\*(C'\fR\fB function takes a log probability without ever exponentiating what
+it cannot\fR: \f(CW\*(C`qnorm(\-1e\-20, log => 1)\*(C'\fR is \f(CW9.262340089798405\fR (it was \f(CW\*(C`Inf\*(C'\fR,
+since \f(CWexp(\-1e\-20)\fR is \f(CW1\fR), and \f(CW\*(C`qt(\-1000, 5, log => 1)\*(C'\fR is
+\&\f(CW\-1.1333163490175e+87\fR (it was \f(CW\*(C`\-Inf\*(C'\fR). Up to 0.331 this paragraph said the
+\&\f(CW\*(C`p*\*(C'\fR functions returned \f(CWlog()\fR of the probability already computed, and the
+\&\f(CW\*(C`q*\*(C'\fR functions exponentiated their argument.
+.PP
+Where R is the weaker reference, the tests say so and pin the 60\-digit value:
+.IP \(bu 4
+\&\fR\f(CB\*(C`qf\*(C'\fR\fB in the far tail of \fR\f(BIF\fR\fB.\fR At \f(CW\*(C`qf(2^\-20, 1, 10)\*(C'\fR R is 9.9e\-4 away from
+the 60\-digit value and this module is 1.0e\-15 away; R\*(Aqs own \f(CW\*(C`pf\*(C'\fR confirms
+it, inverting this module\*(Aqs answer to 1.6e\-15 and its own to 4.9e\-4. On the
+log scale R\*(Aqs \f(CW\*(C`qbeta\*(C'\fR returns \f(CW0\fR for roots it cannot reach:
+\&\f(CW\*(C`qf(\-64, 1, 1, log.p = TRUE)\*(C'\fR is \f(CW0\fR in R and \f(CW6.3466722361887e\-56\fR here.
+These are pinned in \f(CW\*(C`t/distributions.R.scipy.t\*(C'\fR and
+\&\f(CW\*(C`t/distributions.limits.R.t\*(C'\fR against mpmath at \f(CW\*(C`mp.dps = 60\*(C'\fR, each asserted
 both to be right \fIand\fR to still disagree with R, so the divergence cannot
 quietly change.
+.IP \(bu 4
+\&\fR\f(CB\*(C`qt\*(C'\fR\fB on the log scale\fR: \f(CW\*(C`qt(\-700, 5, log.p = TRUE)\*(C'\fR is 1.8e\-9 off in R
+and 9e\-15 here.
 .PP
 Non\-centrality (\f(CW\*(C`ncp\*(C'\fR) is not implemented; nor is \f(CW\*(C`qbinom\*(C'\fR. Everything is
 cross\-validated in \f(CW\*(C`t/distributions.R.scipy.t\*(C'\fR (2041 tests) against a frozen
 table of R 4.6.1 values, SciPy 1.18.0\*(Aqs own mpmath reference cases, and R\*(Aqs own
-round\-trip identities from \f(CW\*(C`tests/d\-p\-q\-r\-tests.R\*(C'\fR.
+round\-trip identities from \f(CW\*(C`tests/d\-p\-q\-r\-tests.R\*(C'\fR; and in
+\&\f(CW\*(C`t/distributions.limits.R.t\*(C'\fR at infinite and enormous df and on the log scale,
+against R 4.6.1 and the extreme\-tail checks of R\*(Aqs \f(CW\*(C`tests/d\-p\-q\-r\-tst\-2.R\*(C'\fR.
 .SS dnorm
 .IX Subsection "dnorm"
 gives the density of the normal distribution, with the specified mean and standard deviation.
@@ -3199,6 +3255,10 @@ but default mean, standard deviation, and log can be passed as parameters:
 .Vb 1
 \& $x = dnorm(0, mean => 0, sd => 2, \*(Aqlog\*(Aq => 0);
 .Ve
+.PP
+Where the density is 0 — \f(CW\*(C`x\*(C'\fR infinite, \f(CW\*(C`sd => Inf\*(C'\fR, \f(CW\*(C`sd => 0\*(C'\fR away from the
+mean — \f(CW\*(C`log => 1\*(C'\fR gives \f(CW\*(C`\-Inf\*(C'\fR, as R does (up to 0.331 it gave \f(CW0\fR). An \f(CW\*(C`undef\*(C'\fR
+\&\f(CW\*(C`x\*(C'\fR, or an \f(CW\*(C`undef\*(C'\fR element, is \f(CW\*(C`NaN\*(C'\fR.
 .SS drop_cols
 .IX Subsection "drop_cols"
 Return a new data frame with the named columns removed and the rest kept —
@@ -3773,13 +3833,19 @@ Any table of at least 2x2 counts is accepted, as either a 2D array reference or 
 \& ]);
 .Ve
 .PP
-For tables larger than 2x2 the p\-value is computed by exact enumeration of
-every contingency table sharing the observed row and column margins (the
-multivariate hypergeometric distribution), and matches R\*(Aqs \f(CW\*(C`fisher.test\*(C'\fR to
-full precision. Only the two\-sided test is defined in this case, so
-\&\f(CW\*(C`alternative\*(C'\fR is ignored and the returned hash reference omits \f(CW\*(C`conf_int\*(C'\fR and
-\&\f(CW\*(C`estimate\*(C'\fR (the conditional\-MLE odds ratio and its confidence interval are
-reported for 2x2 tables only):
+For tables larger than 2x2 the p\-value is the exact one: the sum of the
+multivariate hypergeometric probability of every contingency table that shares
+the observed row and column margins and is no more probable than the observed
+table. It is computed with Mehta & Patel\*(Aqs network algorithm, as R\*(Aqs
+\&\f(CW\*(C`fisher.test\*(C'\fR does, and agrees with R to about 1e\-12. On the tables where the
+two differ in the last digits, \f(CW\*(C`fisher_test\*(C'\fR is the closer to the exact rational
+answer (within 1.4e\-13 of it on every table checked), because R\*(Aqs FEXACT merges
+paths whose weights agree to 3.45e\-7. A table counts as "as or more extreme"
+under FEXACT\*(Aqs own rule: its probability is at most the observed one times
+1 + 3.45e\-7. Only the two\-sided test is defined in this case, so \f(CW\*(C`alternative\*(C'\fR
+is ignored and the returned hash reference omits \f(CW\*(C`conf_int\*(C'\fR and \f(CW\*(C`estimate\*(C'\fR
+(the conditional\-MLE odds ratio and its confidence interval are reported for
+2x2 tables only):
 .PP
 .Vb 6
 \& {
@@ -3795,20 +3861,36 @@ and columns by the sorted keys of the first row, so the result is deterministic;
 every row must expose the same set of column keys, and every row of an array
 input must have the same number of columns.
 .PP
-Enumeration is exact but finite: a table whose margins put more completions in
-the way than can be walked is refused outright,
+The exact test is exact but finite. Every table R answers with its default
+\&\f(CW\*(C`workspace = 200000\*(C'\fR is answered here, in comparable time or less (Mehta &
+Patel\*(Aqs 5x7 6th example takes 0.04 s), and so are many that R refuses, such as
+the 6x6 table of R\*(Aqs PR#18336, which R declines with \f(CW\*(C`hash key 5e+09 > INT_MAX\*(C'\fR.
+A table that would need more than a few seconds of work, or more than about
+128 MB, is refused outright rather than answered with an approximation:
 .PP
 .Vb 1
-\& fisher_test: 5x7 table is too large for exact enumeration
+\& fisher_test: 4x3 table is too large for exact enumeration
 .Ve
 .PP
-rather than answered with an approximation. Subtrees that lie wholly inside or
-wholly outside the tail are summed in closed form or dropped without being
-walked, which puts most tables of practical size well inside the limit \-\-
-\&\f(CW\*(C`fisher_test\*(C'\fR computes the 6x6 table of R\*(Aqs PR#18336, which R\*(Aqs own \f(CW\*(C`fisher.test\*(C'\fR
-declines with \f(CW\*(C`hash key 5e+09 > INT_MAX\*(C'\fR \-\- but R\*(Aqs network algorithm (FEXACT)
-still reaches tables this one cannot, such as the 5x7 6th example of Mehta &
-Patel. For those, use \f(CW\*(C`chisq_test\*(C'\fR, or R.
+For those, use \f(CW\*(C`chisq_test\*(C'\fR, or R\*(Aqs \f(CW\*(C`simulate.p.value\*(C'\fR.
+.PP
+\fICounts\fR
+.IX Subsection "Counts"
+.PP
+Cells are read as R\*(Aqs \f(CW\*(C`fisher.test\*(C'\fR reads them. A negative, \f(CW\*(C`NaN\*(C'\fR or infinite
+cell, an \f(CW\*(C`undef\*(C'\fR or a string croaks, as does a count past R\*(Aqs
+\&\f(CW\*(C`.Machine$integer.max\*(C'\fR (2147483647). A count that is not a whole number is
+rounded to the nearest one (halves to even, as R\*(Aqs \f(CWround()\fR does) with R\*(Aqs
+warning:
+.PP
+.Vb 1
+\& fisher_test: \*(Aqx\*(Aq has been rounded to integer: Mean relative difference: 0.1111111
+.Ve
+.PP
+An all\-zero 2x2 table gives p = 1, an odds ratio of 0 and a confidence interval
+of [0, Inf], as R does. An all\-zero larger table croaks, as R\*(Aqs does
+("FEXACT error 3"). Where a C \f(CW\*(C`long\*(C'\fR is 32 bits (Windows, 32\-bit perls), a
+table whose total passes 2147483647 croaks, where R would still answer it.
 .SS friedman_test
 .IX Subsection "friedman_test"
 The Friedman rank\-sum test, the non\-parametric analog of a repeated\-measures
@@ -4041,7 +4123,9 @@ Each is called the same way:
 .Ve
 .PP
 and each returns a hash of arrays. A row whose value is missing or \f(CW\*(C`undef\*(C'\fR is
-left out, so the second Female row contributes nothing. \f(CW$aoh_data\fR gives
+left out, so the second Female row contributes nothing. So is a row whose
+group is missing or \f(CW\*(C`undef\*(C'\fR, as R\*(Aqs \f(CWsplit()\fR drops an \f(CW\*(C`NA\*(C'\fR level: it is not
+pooled with a group named \f(CW""\fR, and it does not warn. \f(CW$aoh_data\fR gives
 .PP
 .Vb 9
 \& {
@@ -4477,6 +4561,12 @@ into \f(CW\*(C`count\*(C'\fR and \f(CW\*(C`zero\*(C'\fR halves; \f(CW\*(C`loglik
 \&\f(CW\*(C`theta_zero\*(C'\fR/\f(CW\*(C`SE_logtheta_zero\*(C'\fR for a \f(CW\*(C`negbin\*(C'\fR zero part; and \f(CW\*(C`fitted_values\*(C'\fR,
 the fitted mean \f(CW\*(C`P(y > 0) mu / (1 \- f(0))\*(C'\fR. Validated against \f(CW\*(C`pscl\*(C'\fR and
 \&\f(CW\*(C`countreg\*(C'\fR on their documented examples, with a third opinion from \f(CW\*(C`mpmath\*(C'\fR.
+.PP
+When either part\*(Aqs counts are no more dispersed than a Poisson\*(Aqs, its
+negative\-binomial likelihood rises all the way to \f(CW\*(C`theta = Inf\*(C'\fR: that part is
+then the Poisson (or, for the zero part, complementary log\-log) fit, and
+\&\f(CW\*(C`theta\*(C'\fR (or \f(CW\*(C`theta_zero\*(C'\fR) and its \f(CW\*(C`SE_logtheta\*(C'\fR are reported as \f(CW\*(C`Inf\*(C'\fR, as in
+\&\f(CW\*(C`zerotrunc\*(C'\fR.
 .SS interpolate
 .IX Subsection "interpolate"
 Fill NA (undef) cells along the row axis, like \f(CW\*(C`pandas.DataFrame.interpolate\*(C'\fR.
@@ -4725,8 +4815,11 @@ The result holds \f(CW\*(C`coefficients\*(C'\fR, \f(CW\*(C`summary\*(C'\fR (per 
 \&\f(CW\*(C`Std. Error\*(C'\fR, \f(CW\*(C`t value\*(C'\fR, \f(CWPr(>|t|)\fR), \f(CW\*(C`vcov\*(C'\fR, \f(CW\*(C`vcov_type\*(C'\fR, \f(CW\*(C`conf_int\*(C'\fR,
 \&\f(CW\*(C`terms\*(C'\fR, \f(CW\*(C`endogenous\*(C'\fR and \f(CW\*(C`instruments\*(C'\fR (the terms each role was given),
 \&\f(CW\*(C`fitted_values\*(C'\fR, \f(CW\*(C`residuals\*(C'\fR, \f(CW\*(C`sigma\*(C'\fR, \f(CW\*(C`rss\*(C'\fR, \f(CW\*(C`r_squared\*(C'\fR, \f(CW\*(C`adj_r_squared\*(C'\fR,
-\&\f(CW\*(C`df_residual\*(C'\fR, \f(CW\*(C`rank\*(C'\fR, \f(CW\*(C`nobs\*(C'\fR, \f(CW\*(C`n_clusters\*(C'\fR with a cluster, and \f(CW\*(C`waldtest\*(C'\fR, the
-F test of every coefficient but the intercept. \f(CW\*(C`diagnostics\*(C'\fR has
+\&\f(CW\*(C`df_residual\*(C'\fR, \f(CW\*(C`rank\*(C'\fR, \f(CW\*(C`nobs\*(C'\fR (the rows of nonzero weight, as \f(CW\*(C`ivreg\*(C'\fR\*(Aqs
+\&\f(CW\*(C`nobs\*(C'\fR), \f(CW\*(C`n_clusters\*(C'\fR with a cluster, and \f(CW\*(C`waldtest\*(C'\fR, the F test of every
+coefficient but the intercept. \f(CW\*(C`df_residual\*(C'\fR and \f(CW\*(C`sigma\*(C'\fR count only the rows of
+nonzero weight too; \f(CW\*(C`adj_r_squared\*(C'\fR and the Sargan statistic count every row,
+as \f(CW\*(C`summary.ivreg()\*(C'\fR does. \f(CW\*(C`diagnostics\*(C'\fR has
 .IP \(bu 4
 \&\f(CW\*(C`weak\*(C'\fR: per endogenous regressor, the first\-stage F test of the excluded
 instruments (\f(CW\*(C`statistic\*(C'\fR, \f(CW\*(C`df1\*(C'\fR, \f(CW\*(C`df2\*(C'\fR, \f(CW\*(C`p_value\*(C'\fR);
@@ -4849,16 +4942,39 @@ These follow R\*(Aqs \f(CW\*(C`ks.test\*(C'\fR convention: \f(CW\*(Aqgreater\*(A
 lies \fIabove\fR the other, which (because a higher CDF means smaller values) is
 the opposite of which sample tends to be larger.
 .PP
-\&\f(CW\*(C`exact\*(C'\fR controls how the p\-value is computed. Omit it to let the test choose:
-the exact distribution is used for small samples (two\-sample when nx·ny 
-10000, one\-sample when n < 100) and the asymptotic (Kolmogorov limiting)
-approximation otherwise. Pass \f(CW\*(C`exact => 1\*(C'\fR to force the exact computation or
-\&\f(CW\*(C`exact => 0\*(C'\fR to force the asymptotic one. Exact p\-values cannot be computed
-when the data contain ties; if ties are present on the exact path, the test
-warns and falls back to the asymptotic p\-value. (The exact one\-sample test is
-only available for the two\-sided alternative; a one\-sided one\-sample request
-also falls back to asymptotic.) In either fallback the returned \f(CW\*(C`method\*(C'\fR is
-the asymptotic one, so it always names the p\-value you actually got.
+\&\f(CW\*(C`exact\*(C'\fR controls how the p\-value is computed, by R 4.6.1\*(Aqs own rules. Omit it
+to let the test choose: the exact distribution is used for small samples
+(two\-sample when nx·ny < 10000; one\-sample when n < 100 and there are no ties)
+and the asymptotic (Kolmogorov limiting) approximation otherwise. Pass
+\&\f(CW\*(C`exact => 1\*(C'\fR to force the exact computation or \f(CW\*(C`exact => 0\*(C'\fR to force the
+asymptotic one. The returned \f(CW\*(C`method\*(C'\fR always names the p\-value you got.
+.IP \(bu 4
+\&\fBTwo samples with ties.\fR The exact p\-value is R\*(Aqs: the lattice recursion
+conditioned on the observed tie pattern, so \f(CW\*(C`ks\e_test([1, 2, 2, 3, 3],
+[1, 2, 3, 3, 4, 5, 6])\*(C'\fR gives R\*(Aqs documented 8/33. On the asymptotic path
+ties draw R\*(Aqs warning, \f(CW\*(C`p\-value will be approximate in the presence of
+ties\*(C'\fR. (Up to 0.33 ties on the exact path warned and fell back to the
+asymptotic p\-value.)
+.IP \(bu 4
+\&\fBOne sample.\fR Ties draw R\*(Aqs warning, \f(CW\*(C`ties should not be present for the
+one\-sample Kolmogorov\-Smirnov test\*(C'\fR, and keep the automatic choice off the
+exact path. The exact one\-sided p\-value is R\*(Aqs Birnbaum–Tingey sum, the
+exact two\-sided one Marsaglia, Tsang and Wang\*(Aqs algorithm.
+.IP \(bu 4
+\&\fBAsymptotic two\-sided p\-values\fR are R\*(Aqs series to R\*(Aqs tolerance of 1e\-6,
+so they match R to the last digit, including where that tolerance leaves R
+up to 4.6e\-6 (relative) from the limiting distribution itself.
+.IP \(bu 4
+\&\fBLimits that R does not have.\fR A forced exact run larger than nx·ny = 10⁷
+(two\-sample), or a two\-sided one\-sample one whose matrix would be of order
+over 500, warns \f(CW\*(C`too large for an exact p\-value\*(C'\fR and uses the asymptotic
+p\-value. A one\-sided asymptotic
+p\-value is \f(CW\*(C`exp(\-2 n D²)\*(C'\fR evaluated directly, where R\*(Aqs \f(CW\*(C`1 \- (1 \- exp())\*(C'\fR
+rounds anything below about 1e\-16 to \f(CW0\fR.
+.PP
+Warnings go through perl\*(Aqs \f(CW\*(C`warn\*(C'\fR, so a \f(CW$SIG{_\|_WARN_\|_}\fR handler sees them;
+one that dies leaves nothing allocated behind. A tied array is read like any
+other.
 .PP
 \fIReturn value\fR
 .IX Subsection "Return value"
@@ -5146,6 +5262,20 @@ Random\-effects terms are written as in \f(CW\*(C`lme4\*(C'\fR: \f(CW\*(C`(1 | g
 crossed or nested, are allowed, and \f(CW\*(C`(1 | a/b)\*(C'\fR expands to \f(CW\*(C`(1 | a) + (1 | a:b)\*(C'\fR.
 The fixed part is expanded as for \f(CW\*(C`lm\*(C'\fR.
 .PP
+As in \f(CW\*(C`lme4\*(C'\fR, a model croaks when a grouping factor has only one level among
+the rows it keeps ("grouping factors must have > 1 sampled level"), when one has
+as many levels as there are rows ("number of levels of each grouping factor must
+be < number of observations (problems: ...)"), or when a correlated term has at
+least as many random effects as there are rows. These are \f(CWlmerControl()\fR\*(Aqs
+default checks; \f(CW\*(C`lme4\*(C'\fR names a nested factor \f(CW\*(C`b:a\*(C'\fR where this names it \f(CW\*(C`a:b\*(C'\fR.
+.PP
+With a single grouping factor the fit takes one level at a time, so any number
+of levels is practical. With more than one (crossed or nested), the random
+effects are handled as one dense matrix, whose time grows as the cube of their
+total count: 2000 random effects took about 5 minutes on a desktop, and more
+than 4000 croaks. \f(CW\*(C`lme4\*(C'\fR\*(Aqs sparse Cholesky is the tool for designs larger than
+that.
+.PP
 The result holds \f(CW\*(C`coefficients\*(C'\fR, \f(CW\*(C`summary\*(C'\fR (per term \f(CW\*(C`Estimate\*(C'\fR,
 \&\f(CW\*(C`Std. Error\*(C'\fR, \f(CW\*(C`df\*(C'\fR, \f(CW\*(C`t value\*(C'\fR, \f(CWPr(>|t|)\fR), \f(CW\*(C`vcov\*(C'\fR, \f(CW\*(C`conf_int\*(C'\fR, \f(CW\*(C`terms\*(C'\fR,
 \&\f(CW\*(C`fitted_values\*(C'\fR (including the predicted random effects), \f(CW\*(C`sigma\*(C'\fR (residual
@@ -5176,9 +5306,22 @@ Give times, an event flag (1 = event, 0 = censored), and a group label per row:
 .Ve
 .PP
 Result keys: \f(CW\*(C`statistic\*(C'\fR (chi\-squared), \f(CW\*(C`parameter\*(C'\fR (df = groups − 1),
-\&\f(CW\*(C`p_value\*(C'\fR, \f(CW\*(C`observed\*(C'\fR and \f(CW\*(C`expected\*(C'\fR events per group, and \f(CW\*(C`groups\*(C'\fR. See
+\&\f(CW\*(C`p_value\*(C'\fR, \f(CW\*(C`observed\*(C'\fR and \f(CW\*(C`expected\*(C'\fR events per group, \f(CW\*(C`groups\*(C'\fR and \f(CW\*(C`rho\*(C'\fR. See
 \&\f(CW\*(C`survfit\*(C'\fR for the curves and \f(CW\*(C`coxph\*(C'\fR to adjust for
 covariates.
+.PP
+\&\f(CW\*(C`rho => 1\*(C'\fR gives Peto & Peto\*(Aqs modification of the Gehan–Wilcoxon test, which
+weights the early differences more, and any other \f(CW\*(C`rho\*(C'\fR the rest of
+\&\f(CWsurvdiff()\fR\*(Aqs G\-rho family: each event time is weighted by S(t−)^rho, the
+pooled Kaplan–Meier estimate just before it. \f(CW\*(C`observed\*(C'\fR and \f(CW\*(C`expected\*(C'\fR are
+then weighted counts, as \f(CWsurvdiff()\fR\*(Aqs are. The default, 0, is the log\-rank
+test.
+.PP
+The event flag is read as \f(CWsurvival::Surv()\fR reads it: 1 = event and 0 =
+censored, or 2 = event and 1 = censored when the largest value is 2. Perl\*(Aqs
+true and false count as 1 and 0. Any other value is an error, and so is an
+undef or \f(CW\*(C`NaN\*(C'\fR time or status, where R would drop the row as missing.
+An undef group label is an error too.
 .SS Lonly
 .IX Subsection "Lonly"
 .Vb 2
@@ -5457,6 +5600,10 @@ Takes either an array or an array reference, and returns an array of the most co
 .PP
 When several values tie for most common, they come back in the order each was
 first seen, whatever perl\*(Aqs hash seed is.
+.PP
+Values are counted by their string form, so \f(CW1\fR, \f(CW1.0\fR and \f(CW"1"\fR are one value
+and \f(CW"1.0"\fR another. A number is formatted in a copy to find it, so \f(CW\*(C`mode\*(C'\fR
+does not add a string buffer to every numeric scalar it is given.
 .SS ncol
 .IX Subsection "ncol"
 \&\f(CWncol($frame)\fR returns how many \fBcolumns\fR a data frame has. Like \f(CW\*(C`nrow\*(C'\fR, it
@@ -5605,7 +5752,18 @@ Note that this differs from R, which drops incomplete cases via \f(CW\*(C`na.act
 rather than complaining. If you want R\*(Aqs behaviour, filter the missing values
 out yourself first (see \f(CW\*(C`dropna\*(C'\fR).
 .PP
-Each group needs at least two observations, and you need at least two groups.
+\&\f(CW\*(C`NaN\*(C'\fR is the exception: it is R\*(Aqs \f(CW\*(C`NA\*(C'\fR too, and it is dropped, as \f(CW\*(C`na.action\*(C'\fR
+drops it, in all three shapes. A \f(CW\*(C`formula\*(C'\fR row whose response is \f(CW\*(C`NaN\*(C'\fR goes
+before its label is counted, so a group whose every response is \f(CW\*(C`NaN\*(C'\fR does
+not exist, as R drops an unused factor level. (Up to 0.33 a \f(CW\*(C`NaN\*(C'\fR was kept,
+and made every statistic \f(CW\*(C`NaN\*(C'\fR.)
+.PP
+Each group needs at least two observations after that, and you need at least
+two groups. There is no limit on the number of groups.
+.PP
+Group labels come back as they went in: a UTF\-8 label (a hash key, or a value
+of the \f(CW\*(C`formula\*(C'\fR factor) keeps its UTF\-8 flag in \f(CW\*(C`group_stats\*(C'\fR, and a
+\&\f(CW\*(C`formula\*(C'\fR may name UTF\-8 columns. Two labels that are \f(CW\*(C`eq\*(C'\fR are one group.
 .PP
 \fIOutput\fR
 .IX Subsection "Output"
@@ -5831,6 +5989,12 @@ An \f(CW\*(C`undef\*(C'\fR cell counts toward the family as a p\-value of 1, whi
 flat form has always treated it, and comes back adjusted rather than as
 \&\f(CW\*(C`undef\*(C'\fR.
 .IP \(bu 4
+A NaN p\-value is R\*(Aqs \f(CW\*(C`NA\*(C'\fR: it is left out of the family, so the family size
+counts only the others, and it comes back NaN in its own place. R\*(Aqs
+\&\f(CW\*(C`p.adjust(c(0.01, NaN, 0.04, 0.03, NaN, 0.02), "holm")\*(C'\fR and
+\&\f(CW\*(C`p_adjust([0.01, \*(Aqnan\*(Aq, 0.04, 0.03, \*(Aqnan\*(Aq, 0.02], \*(Aqholm\*(Aq)\*(C'\fR both give 0.04,
+NaN, 0.06, 0.06, NaN, 0.06.
+.IP \(bu 4
 Within a frame the family is enumerated in a fixed order — rows in order and
 then columns by name for an AoA, AoH or HoH; columns by name and then rows
 for a HoA; row labels in sorted order for a HoH — so tied p\-values break the
@@ -6023,7 +6187,8 @@ Use \f(CW\*(C`log => 1\*(C'\fR for tails that would otherwise underflow to \f(CW
 .IP \(bu 4
 \&\f(CW\*(C`sd < 0\*(C'\fR returns \f(CW\*(C`NaN\*(C'\fR and warns.
 .IP \(bu 4
-A \f(CW\*(C`NaN\*(C'\fR input (or an \f(CW\*(C`undef\*(C'\fR element of an array reference) yields \f(CW\*(C`NaN\*(C'\fR.
+A \f(CW\*(C`NaN\*(C'\fR input, an \f(CW\*(C`undef\*(C'\fR input, or an \f(CW\*(C`undef\*(C'\fR element of an array reference
+yields \f(CW\*(C`NaN\*(C'\fR (R\*(Aqs \f(CW\*(C`NA\*(C'\fR). Up to 0.331 an \f(CW\*(C`undef\*(C'\fR was read as \f(CW0\fR.
 .IP \(bu 4
 \&\f(CW\*(C`+Inf\*(C'\fR returns \f(CW1\fR, \f(CW\*(C`\-Inf\*(C'\fR returns \f(CW0\fR.
 .SS prcomp
@@ -6070,31 +6235,31 @@ which returns
 \&     ],
 \&     rotation   [
 \&         [0] [
-\&                 [0] 0.707106781186547,
-\&                 [1] 0.707106781186548
-\&             ],
-\&         [1] [
 \&                 [0] 0.707106781186548,
 \&                 [1] \-0.707106781186547
+\&             ],
+\&         [1] [
+\&                 [0] 0.707106781186547,
+\&                 [1] 0.707106781186548
 \&             ]
 \&     ],
 \&     scale      0,
 \&     sdev       [
 \&         [0] 2.44948974278318,
-\&         [1] 1.4142135623731
+\&         [1] 1.41421356237309
 \&     ],
 \&     x          [
 \&         [0] [
-\&                 [0] \-1.41421356237309,
-\&                 [1] \-1.4142135623731
-\&             ],
-\&         [1] [
 \&                 [0] \-1.4142135623731,
 \&                 [1] 1.41421356237309
 \&             ],
+\&         [1] [
+\&                 [0] \-1.41421356237309,
+\&                 [1] \-1.4142135623731
+\&             ],
 \&         [2] [
 \&                 [0] 2.82842712474619,
-\&                 [1] 2.22044604925031e\-16
+\&                 [1] 6.66133814775094e\-16
 \&             ]
 \&     ]
 \& }
@@ -6489,18 +6654,40 @@ than bins, and \f(CW\*(C`assign\*(C'\fR / \f(CW\*(C`vals\*(C'\fR move a binned c
 and out of a data frame.
 .SS quantile
 .IX Subsection "quantile"
-Calculates sample quantiles using R\*(Aqs continuous Type 7 interpolation.
+Calculates sample quantiles using R\*(Aqs continuous Type 7 interpolation, in R\*(Aqs
+own arithmetic (\f(CW\*(C`index = 1 + (n\-1)p\*(C'\fR), so the values are R\*(Aqs to the last bit on
+a perl whose NV is a double.
 .PP
-.Vb 1
+.Vb 2
 \& my $quantile = quantile(\*(Aqx\*(Aq => [1..99], probs => [0.05, 0.1, 0.25]);
+\& my $median   = quantile([1..99], probs => 0.5);    # { \*(Aq50%\*(Aq => 50 }
 .Ve
 .PP
-If the \f(CW\*(C`probs\*(C'\fR parameter is omitted, it behaves identically to R by defaulting to the 0, 25, 50, 75, and 100 percentiles (\f(CW\*(C`c(0, .25, .5, .75, 1)\*(C'\fR). The returned hash keys match R\*(Aqs standardized naming convention (e.g., \f(CW"25%"\fR, \f(CW"33.3%"\fR).
+If the \f(CW\*(C`probs\*(C'\fR parameter is omitted, it behaves identically to R by defaulting
+to the 0, 25, 50, 75, and 100 percentiles (\f(CW\*(C`c(0, .25, .5, .75, 1)\*(C'\fR). \f(CW\*(C`probs\*(C'\fR is
+an array ref, or a single number; anything else is an error.
+.PP
+The returned hash is keyed by R\*(Aqs own names for the probabilities — what
+\&\f(CW\*(C`names(quantile(x, probs))\*(C'\fR gives — so \f(CW\*(C`1/3\*(C'\fR is \f(CW"33.33333%"\fR, \f(CW0.0014\fR is
+\&\f(CW"0.14%"\fR and \f(CW1e\-6\fR is \f(CW"0.0001%"\fR. Like R, fewer than 100 probabilities are
+each named to 7 significant digits (\f(CW\*(C`formatC(100 * p, format = "fg", digits =
+7)\*(C'\fR), while 100 or more share one format chosen for the whole vector (\f(CW\*(C`format(100
+* p, digits = 7)\*(C'\fR), so \f(CW\*(C`seq(0, 1, 0.005)\*(C'\fR is keyed \f(CW"0.0%"\fR, \f(CW"0.5%"\fR, \f(CW"1.0%"\fR
+and so on.
+.PP
+A hash cannot hold two values under one name. The same probability asked for
+twice is one key. Two \fIdifferent\fR probabilities that R would name alike — 0.99999999
+and 1 are both \f(CW"100%"\fR — are an error naming both, rather than one value
+silently replacing the other.
+.PP
+An \f(CW\*(C`undef\*(C'\fR probability is R\*(Aqs \f(CW\*(C`NA\*(C'\fR, and a NaN one is NaN: each gives \f(CW\*(C`undef\*(C'\fR or
+NaN respectively, under the key \f(CW""\fR, which is how R names them.
 .PP
 A probability that lands a hair outside \f(CW\*(C`[0, 1]\*(C'\fR — the usual result of computing
 one rather than writing it down — is clamped to the endpoint rather than
 refused, within the same \f(CW\*(C`100 * eps\*(C'\fR that R allows; anything further out is an
-error. \f(CW\*(C`undef\*(C'\fR values in \f(CW\*(C`x\*(C'\fR are dropped.
+error. \f(CW\*(C`undef\*(C'\fR values in \f(CW\*(C`x\*(C'\fR are dropped, and a NaN in \f(CW\*(C`x\*(C'\fR makes every quantile
+NaN (R refuses such an \f(CW\*(C`x\*(C'\fR unless \f(CW\*(C`na.rm = TRUE\*(C'\fR).
 .SS rank
 .IX Subsection "rank"
 Rank values like R\*(Aqs \f(CWrank()\fR. Takes flat scalars and/or array refs (like \f(CW\*(C`min\*(C'\fR), with optional trailing \f(CW\*(C`ties_method\*(C'\fR / \f(CW\*(C`na_last\*(C'\fR options. Returns the list of ranks in input order.
@@ -6634,8 +6821,9 @@ set to, so a \f(CW\*(C`local $/;\*(C'\fR in the calling code does not change wha
 Lines may end in LF or CRLF, and a file whose lines end in a bare CR, as
 classic Mac OS wrote them, is read as R and pandas read it. The start of the
 file is read 64 KB at a time, up to 1 MB, until a CR turns up; if no LF has by
-then, the file is split on CR. In any other file a lone CR outside quotes is
-dropped.
+then, the file is split on CR. An LF inside a quoted field is part of a cell,
+not a line end, and does not count. In any other file a lone CR outside quotes
+is dropped.
 With \f(CW\*(Aqoutput_type\*(Aq => \*(Aqhoh\*(Aq\fR a file whose only column is the row name gives
 one empty hash per row, as R\*(Aqs \f(CW\*(C`read.table\*(C'\fR gives a data frame of zero columns.
 Rows that repeat an earlier row\*(Aqs name overwrite it, later values winning, and
@@ -7364,15 +7552,32 @@ name/value pairs — the two are equivalent:
 .PP
 \&\f(CW\*(C`center\*(C'\fR and \f(CW\*(C`scale\*(C'\fR each take a number to use instead of the mean or the
 standard deviation, or one of \f(CW\*(C`mean\*(C'\fR/\f(CW\*(C`sd\*(C'\fR, \f(CW\*(C`true\*(C'\fR/\f(CW\*(C`false\*(C'\fR, \f(CW\*(C`none\*(C'\fR, \f(CW1\fR/\f(CW0\fR and
-the empty string, matched case\-insensitively. With \f(CW\*(C`center => 0\*(C'\fR the divisor
-is R\*(Aqs: the root mean square about zero, \f(CW\*(C`sqrt(sum(x^2)/(n\-1))\*(C'\fR, not the
-standard deviation.
+the empty string, matched case\-insensitively. The automatic scale is R\*(Aqs:
+\&\f(CW\*(C`sqrt(sum(x^2)/(n\-1))\*(C'\fR of the column once it has been centred, which is the
+standard deviation when the centre is the mean, the root mean square about zero
+with \f(CW\*(C`center => 0\*(C'\fR, and neither with a numeric centre.
 .PP
 It fully supports matrix operations. By passing an array of arrays, \f(CW\*(C`scale\*(C'\fR processes the data column by column independently:
 .PP
 .Vb 1
 \& my $scaled_mat = scale([[1, 2], [3, 4], [5, 6]]);
 .Ve
+.PP
+As in R, \f(CW\*(C`center\*(C'\fR and \f(CW\*(C`scale\*(C'\fR may also be array refs holding one number per
+column (a flat list is one column); a vector of the wrong length is an error.
+Each value is used as given, so a 0 in a \f(CW\*(C`scale\*(C'\fR vector divides by zero, as R
+does.
+.PP
+.Vb 2
+\& my $m = scale([[1, 2], [3, 5], [5, 9]], center => [1, 2], scale => [2, 3]);
+\& # [[0, 0], [1, 1], [2, 2.333...]]
+.Ve
+.PP
+Every row of a matrix must be an array ref of the same length as the first;
+anything else is an error. An \f(CW\*(C`undef\*(C'\fR value is R\*(Aqs \f(CW\*(C`NA\*(C'\fR: it stays \f(CW\*(C`undef\*(C'\fR, in
+its place, and its column\*(Aqs mean and scale are taken over the values that are
+there (R\*(Aqs \f(CW\*(C`colMeans(na.rm = TRUE)\*(C'\fR). A NaN is left out of them the same way and
+comes back NaN. Scaling needs at least two rows (or values).
 .SS sd
 .IX Subsection "sd"
 .Vb 1
@@ -7598,7 +7803,10 @@ and returns the hash reference:
 .PP
 matching R\*(Aqs \f(CW\*(C`shapiro.test(1:5)\*(C'\fR to the last digit it prints. Values that are
 \&\f(CW\*(C`undef\*(C'\fR or \f(CW\*(C`NaN\*(C'\fR are dropped first, exactly as R\*(Aqs \f(CW\*(C`complete.cases()\*(C'\fR drops
-them, and the remaining sample must hold between 3 and 5000 values.
+them, and the remaining sample must hold between 3 and 5000 values. A string
+that is not a number croaks, naming its index (\f(CW\*(C`shapiro\e_test: x at index 2 is
+not a number\*(C'\fR), as R\*(Aqs \f(CW\*(C`stopifnot(is.numeric(x))\*(C'\fR refuses it; it used to be
+read as \f(CW0\fR. A tied array is read like any other.
 .SS skew
 .IX Subsection "skew"
 Sample skewness — the direction and degree of a distribution\*(Aqs asymmetry.
@@ -7793,6 +8001,12 @@ Option \f(CW\*(C`conf_level\*(C'\fR (default \f(CW0.95\fR). Each stratum has arr
 \&\f(CW\*(C`n_event\*(C'\fR, \f(CW\*(C`n_censor\*(C'\fR, \f(CW\*(C`surv\*(C'\fR, \f(CW\*(C`std_err\*(C'\fR, \f(CW\*(C`lower\*(C'\fR, \f(CW\*(C`upper\*(C'\fR, plus \f(CW\*(C`median\*(C'\fR, \f(CW\*(C`n\*(C'\fR,
 and \f(CW\*(C`events\*(C'\fR. Compare curves with \f(CW\*(C`logrank_test\*(C'\fR; model
 covariate effects with \f(CW\*(C`coxph\*(C'\fR.
+.PP
+The event flag is read as \f(CWsurvival::Surv()\fR reads it: 1 = event and 0 =
+censored, or 2 = event and 1 = censored when the largest value is 2. Perl\*(Aqs
+true and false count as 1 and 0. Any other value is an error, and so is an
+undef or \f(CW\*(C`NaN\*(C'\fR time or status, where R would drop the row as missing.
+An undef \f(CW\*(C`group\*(C'\fR label is an error too.
 .SS svyglm
 .IX Subsection "svyglm"
 Design\-based regression for survey data, \f(CWsurvey::svyglm()\fR on a
@@ -8687,7 +8901,7 @@ An empty \f(CW\*(C`{}\*(C'\fR or \f(CW\*(C`[]\*(C'\fR is a table with no rows, a
 .PP
 Every cell of delimited output is written whole, including one holding a NUL byte, and a cell of a tied hash or array (such as \f(CW\*(C`Tie::IxHash\*(C'\fR) is read through its \f(CW\*(C`FETCH\*(C'\fR. A number is formatted the way perl formats it, but in a copy, so writing a table does not add a string buffer to every numeric scalar in it. Nor does finding an AoH\*(Aqs or a HoH\*(Aqs columns leave an iterator on every row hash, as walking them with \f(CW\*(C`keys\*(C'\fR would. A row that is a restricted hash (\f(CW\*(C`Hash::Util::lock_keys\*(C'\fR) may lack some of the columns; those cells are written empty, where they used to die with \fIAttempt to access disallowed key\fR.
 .PP
-A field is quoted when it holds a quote (which is doubled), a line break or the separator, as Python\*(Aqs \f(CW\*(C`csv.writer\*(C'\fR quotes, and in two more places where \f(CW\*(C`read_table\*(C'\fR would otherwise not see the record at all. A record of a single field that is empty, \f(CW\*(C`undef\*(C'\fR or nothing but spaces and tabs is written quoted, \f(CW""\fR or \f(CW"  "\fR, because a blank line is skipped on reading; \f(CW\*(C`csv.writer\*(C'\fR writes \f(CW\*(C`[\*(Aq\*(Aq]\*(C'\fR and \f(CW\*(C`[None]\*(C'\fR the same way. The first field of a record is quoted when it starts with \f(CW\*(C`#\*(C'\fR, \f(CW\*(C`read_table\*(C'\fR\*(Aqs default comment character.
+A field is quoted when it holds a quote (which is doubled), a line break or the separator, as Python\*(Aqs \f(CW\*(C`csv.writer\*(C'\fR quotes, and in two more places where \f(CW\*(C`read_table\*(C'\fR would otherwise not see the record at all. With a separator of more than one character, a field is also quoted when its end and the separator written after it would spell the separator early \-\- \f(CW"a:"\fR before \f(CW\*(C`::\*(C'\fR, which would otherwise be written \f(CW\*(C`a:::\*(C'\fR and read back cut at the first \f(CW\*(C`::\*(C'\fR. A record of a single field that is empty, \f(CW\*(C`undef\*(C'\fR or nothing but spaces and tabs is written quoted, \f(CW""\fR or \f(CW"  "\fR, because a blank line is skipped on reading; \f(CW\*(C`csv.writer\*(C'\fR writes \f(CW\*(C`[\*(Aq\*(Aq]\*(C'\fR and \f(CW\*(C`[None]\*(C'\fR the same way. The first field of a record is quoted when it starts with \f(CW\*(C`#\*(C'\fR, \f(CW\*(C`read_table\*(C'\fR\*(Aqs default comment character.
 .PP
 A reference anywhere in the table is an error, in a header cell (\f(CW\*(C`col_names\*(C'\fR, or an AoA\*(Aqs first row) as in a data cell. For an AoA, an \f(CW\*(C`undef\*(C'\fR in \f(CW\*(C`col_names\*(C'\fR is an empty header cell in its place, since an AoA\*(Aqs columns are positional; for every other shape, which looks its columns up by name, it is skipped.
 .PP
@@ -8930,6 +9144,16 @@ The result holds \f(CW\*(C`coefficients\*(C'\fR, \f(CW\*(C`summary\*(C'\fR (per 
 truncated mean \f(CW\*(C`mu / (1 \- f(0))\*(C'\fR, and Pearson\-style \f(CW\*(C`residuals\*(C'\fR. The fit is a
 damped Newton iteration on the exact likelihood and its analytic Hessian.
 Validated against \f(CW\*(C`countreg\*(C'\fR and against \f(CW\*(C`mpmath\*(C'\fR at 60 digits.
+.PP
+For \f(CW\*(C`negbin\*(C'\fR, counts no more dispersed than a Poisson\*(Aqs have no finite
+maximum\-likelihood \f(CW\*(C`theta\*(C'\fR: the likelihood keeps rising as \f(CW\*(C`theta\*(C'\fR grows, and
+its supremum is the Poisson fit. \f(CW\*(C`zerotrunc\*(C'\fR checks for this first (the score
+for overdispersion at the Poisson fit is not positive) and then returns that
+Poisson fit, with \f(CW\*(C`theta\*(C'\fR and \f(CW\*(C`SE_logtheta\*(C'\fR both \f(CW\*(C`Inf\*(C'\fR and the degrees of
+freedom still counting \f(CW\*(C`theta\*(C'\fR. \f(CW\*(C`countreg\*(C'\fR returns the same fit, but stopped
+wherever its BFGS search halts on the way, typically with \f(CW\*(C`theta\*(C'\fR near \f(CW1e5\fR,
+so its coefficients and log\-likelihood differ from these by roughly
+\&\f(CW\*(C`1/theta\*(C'\fR.
 .SS "F and z tail p\-values"
 .IX Subsection "F and z tail p-values"
 A p\-value is an upper\-tail probability, and the obvious way to get one from a

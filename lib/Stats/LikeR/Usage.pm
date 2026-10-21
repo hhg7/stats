@@ -1287,8 +1287,9 @@ positional arguments:
 
 options:
   x => ARRAYREF          the data by name, in place of X
-  probs => ARRAYREF      probabilities in [0, 1] (default: [0, 0.25, 0.5, 0.75,
-                         1])
+  probs => ARRAYREF      probabilities in [0, 1], or one number (default: [0,
+                         0.25, 0.5, 0.75, 1]); an undef or NaN prob gives
+                         undef or NaN under the key ''
 
 example:
   quantile([1 .. 9], probs => [0.25, 0.5])
@@ -1330,11 +1331,14 @@ positional arguments:
 
 options:
   center => C            mean, true or 1 subtracts the mean; none, false, 0 or
-                         '' subtracts nothing; any other number is subtracted
+                         '' subtracts nothing; any other number is subtracted,
+                         and an array ref gives one number per column
                          (default: mean)
-  scale => S             sd, true or 1 divides by the standard deviation; none,
-                         false, 0 or '' divides by nothing; any other number is
-                         divided by (default: sd)
+  scale => S             sd, true or 1 divides by sqrt(sum(x^2)/(n-1)) of the
+                         centred column, the sd when centred on the mean; none,
+                         false, 0 or '' divides by nothing; any other number,
+                         or an array ref of one per column, is divided by
+                         (default: sd)
   { center => C, scale => S }
                          the same options as a trailing hash ref
 
@@ -2530,9 +2534,11 @@ options:
   center => BOOL         shift each column to mean zero first (default: 1)
   scale => BOOL          scale each column to unit variance first (default: 0)
   retx => BOOL           return the rotated data as x (default: 1)
-  tol => TOL             leave out components whose sdev is at most tol times
-                         the first's (default: undef, keep all)
-  rank => N              return at most N components (default: undef, all)
+  tol => TOL             leave out of rotation and x the components whose sdev
+                         is at most tol times the first's (default: undef, keep
+                         all); sdev always has all of them, as in R
+  rank => N              return at most N components in rotation and x
+                         (default: undef, all)
 
 example:
   prcomp([ [2, 4], [4, 2], [6, 6] ])
@@ -2586,7 +2592,8 @@ Kaplan-Meier survival curves, as survival::survfit().
 
 positional arguments:
   TIME                   array ref of survival or censoring times
-  STATUS                 array ref of event flags: 1 = event, 0 = censored
+  STATUS                 array ref of event flags: 1 = event, 0 = censored; or
+                         2 = event, 1 = censored, when the largest is 2
 
 options:
   group => GROUP         array ref of group labels, for one curve per group
@@ -2601,20 +2608,26 @@ example:
 END
 
 $SCREEN{logrank_test} = <<'END';
-usage: logrank_test(TIME, STATUS, GROUP)
+usage: logrank_test(TIME, STATUS, GROUP [, rho => RHO])
 
 Log-rank (Mantel-Cox) test that survival curves differ, as survival::survdiff().
 
 positional arguments:
   TIME                   array ref of survival or censoring times
-  STATUS                 array ref of event flags: 1 = event, 0 = censored
+  STATUS                 array ref of event flags: 1 = event, 0 = censored; or
+                         2 = event, 1 = censored, when the largest is 2
   GROUP                  array ref of group labels, two or more groups
+
+options:
+  rho => RHO             weight each event time by S(t-)^RHO, the pooled
+                         Kaplan-Meier curve; 1 is Peto & Peto's test (default:
+                         0, the log-rank test)
 
 example:
   logrank_test([1, 2, 3, 4, 5, 6], [1, 1, 0, 1, 1, 1], [qw(a a a b b b)])
       # returns { statistic => 2.4694, parameter => 1, p_value => 0.1161,
       #           observed => [2, 3], expected => [0.9, 4.1],
-      #           groups => ['a', 'b'], method }
+      #           groups => ['a', 'b'], rho => 0, method }
 
 END
 
@@ -2626,7 +2639,8 @@ Cox proportional-hazards regression, as survival::coxph().
 positional arguments:
   TIME                   array ref of stop times; or leave out all three and
                          give formula => and data =>
-  STATUS                 array ref of event flags: 1 = event, 0 = censored
+  STATUS                 array ref of event flags: 1 = event, 0 = censored; or
+                         2 = event, 1 = censored, when the largest is 2
   COVARIATES             an array ref of one covariate, or [\@x1, \@x2, ...]
 
 options:

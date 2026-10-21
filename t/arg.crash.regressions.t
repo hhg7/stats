@@ -220,22 +220,22 @@ sub child_result {
 
 # --- 3. scale: a matrix row that is a non-array reference (was SIGSEGV) -----
 {
-	# A row that is not an array-ref is treated as absent and reads as 0.0,
-	# which is what this function has always done with a plain string or an
-	# undef row (av_fetch() misses and the cell defaults).  The fix makes a
-	# reference to the wrong thing take that same path instead of being
-	# dereferenced as an AV; it deliberately does not start croaking, because
-	# that would change what the two already-tolerated rows do.
+	# A row that is not an array-ref used to be treated as absent and read as
+	# 0.0, which is what this function did with a plain string or an undef
+	# row.  Since 0.331 every such row croaks, as a short or long one does:
+	# a matrix has no row of zeros R would ever see.  What this section pins
+	# is still the crash: each call has to come back as a perl-level croak,
+	# not a signal.
 	for my $call ('scale([[1,2], sub { 1 }])',
 	              'scale([[1,2], \1])',
 	              'scale([[1,2], bless({}, q(Foo))])',
-	              'scale([[1,2], qr/x/])') {
-		is(child_result($call), 'ok', "$call completes without a signal");
+	              'scale([[1,2], qr/x/])',
+	              'scale([[1,2], undef])') {
+		is(child_result($call), 'croak', "$call croaks without a signal");
 	}
-	my @plain = scale([[1,2], undef]);
-	ok(scalar @plain, 'scale: an undef row still returns a result');
-	is_deeply([scale([[1,2], sub { 1 }])], [scale([[1,2], undef])],
-	          'scale: a code-ref row reads the same as an undef row');
+	like(eval { scale([[1,2], undef]); 1 } ? '' : $@,
+	     qr/^scale: row 1 of the matrix is not an array reference/,
+	     'scale: an undef row is named in the croak');
 	my @good = scale([[1,3],[2,4]]);
 	is(scalar @good, 1, 'scale: an ordinary matrix still returns one ref');
 }

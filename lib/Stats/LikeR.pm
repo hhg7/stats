@@ -3,7 +3,7 @@
 require 5.010001;
 use strict;
 package Stats::LikeR;
-our $VERSION = '0.33';	# quoted: a bare version ending in 0, such as 0.320, is the number 0.32, which the dist would be named
+our $VERSION = '0.331';	# quoted: a bare version ending in 0, such as 0.320, is the number 0.32, which the dist would be named
 require XSLoader;
 use warnings FATAL => 'all';
 use Exporter 'import';
@@ -3274,28 +3274,49 @@ sub _sniff_compression {
 # reads LF and CRLF only, and handed such a file back as one long header.
 #
 # The file is taken for one only when what is read of it holds a CR and no LF
-# at all, so an LF or CRLF file with a stray CR in its first line still reads
-# as it always has. A CR that ends the block may be the first half of a CRLF,
-# so the block is extended past it. 64 KB is one read; reading stops at 1 MB,
-# which bounds the cost for a file with no line end in its first megabyte, and
-# reads that one as LF, as it was read before.
+# outside a quoted field, so an LF or CRLF file with a stray CR in its first
+# line still reads as it always has. A line break inside quotes is part of a
+# cell, not a line end: up to 0.33 any LF counted, so a CR file with one quoted
+# cell holding an LF was split on LF, and 'a,b\r1,"x\ny"\r2,z\r' came back as
+# the one row a, b1, "x\ny2", z where R 4.6.1's read.csv() and pandas 3.0.4's
+# read_csv() both read a, b over (1, "x\ny") and (2, z). Quotes are counted
+# as _parse_csv_file() counts them -- every '"' opens or closes one, a doubled
+# '""' doing both -- unless $quote is false (quote => ''). A CR that ends the
+# block may be the first half of a CRLF, so the block is extended past it. 64
+# KB is one read; reading stops at 1 MB, which bounds the cost for a file with
+# no line end in its first megabyte, and reads that one as LF, as it was read
+# before.
 sub _eol_is_cr {
-	my ($file, $codec) = @_;
+	my ($file, $codec, $quote) = @_;
 	# not on a compressed handle: it is opened :raw already, and a bare binmode
 	# is :raw, which can pop the via layer that is doing the decompressing
 	my $fh = $codec ? _open_decompressed($file, $codec) : _open_read($file);
 	binmode $fh unless $codec;
 	my $buf = '';
 	my $eof = 0;
+	my $in_q = 0;	# the scan is inside a quoted field
+	my $cr = 0;	# a CR outside quotes has been seen
+	my $lf = 0;	# an LF outside quotes has been seen
+	my $class = $quote ? qr/["\r\n]/ : qr/[\r\n]/;
+	pos($buf) = 0;
 	while (length $buf < 1 << 20) {
+		my $at = pos($buf) // 0;	# where the scan resumes in the grown block
 		my $got = read $fh, $buf, 1 << 16, length $buf;
 		if (!$got) { $eof = 1; last }
-		last if index($buf, "\n") >= 0;
-		last if index($buf, "\r") >= 0 && substr($buf, -1) ne "\r";
+		pos($buf) = $at;
+		while ($buf =~ /$class/g) {
+			my $c = substr($buf, pos($buf) - 1, 1);
+			if ($c eq '"')   { $in_q = !$in_q }
+			elsif ($in_q)    { next }
+			elsif ($c eq "\n") { $lf = 1; last }
+			else             { $cr = 1 }
+		}
+		last if $lf;
+		last if $cr && substr($buf, -1) ne "\r";
+		pos($buf) = length $buf;
 	}
 	_close($fh);
-	return 0 if index($buf, "\n") >= 0;
-	return 0 if index($buf, "\r") < 0;
+	return 0 if $lf || !$cr;
 	return 1 if $eof || substr($buf, -1) ne "\r";
 	return 0;	# 1 MB ending in a CR whose partner was not read: as before
 }
@@ -3383,7 +3404,10 @@ sub read_table {
 	die "read_table: \"$file\" is $codec-compressed, which read_table cannot "
 	  . "decompress; decompress it first, or recompress it with gzip or bzip2\n"
 		if $codec =~ /\A(?:xz|lzma|zstd|lzop)\z/;
-	my $cr_eol  = $is_xlsx ? 0  : _eol_is_cr($file, $codec);	# lines end in a bare CR
+	# quote => '' makes '"' text, so it opens no quoted field for the line-end
+	# scan either; the value itself is checked further down
+	my $cr_eol  = $is_xlsx ? 0  : _eol_is_cr($file, $codec,
+		!(defined $input_args{quote} && !ref $input_args{quote} && $input_args{quote} eq ''));	# lines end in a bare CR
 	my $eol     = $cr_eol ? "\r" : "\n";
 	# The extension only picks the default sep, and a compressed file's is
 	# that of the text inside it: x.tsv.gz is tab-separated.
@@ -7714,6 +7738,8 @@ Keys are handled SV-first (C<hv_iterkeysv> / C<hv_fetch_ent>), so UTF-8 and othe
 
 A row that is B<not> a hash ref is skipped rather than fatal: it contributes C<undef> to every column at its index. So a stray C<undef> or scalar in the input thins the columns at that position instead of dying.
 
+A tied array of rows, a tied row (such as a C<Tie::IxHash>) and a tied cell are read through their C<FETCH>, once per value.
+
 =head3 Notes
 
 The output column order follows hash iteration order and is therefore not guaranteed — sort the keys if you need a stable layout. Round-tripping through C<hoa2aoh> (or the reverse) reconstructs the data but not necessarily the original key/row ordering, and rows originally absent a key will gain it as an explicit C<undef>.
@@ -8561,6 +8587,12 @@ whether they do worse.
 You can also pass the counts as C<binom_test([6, 4])> — 6 right, 4 wrong — when
 you have wins and losses instead of wins and a total.
 
+Every count must be a whole number (to within 1e-7, as in R) that is not
+negative. C<NaN>, an infinity, C<undef> or a string croaks, as R's C<binom.test>
+stops on them. So does a count, or a successes + failures sum, of C<LONG_MAX>
+or more: 9223372036854775807 on most 64-bit systems, but 2147483647 on Windows
+and on 32-bit perls.
+
 =head2 cfilter
 
 Select B<columns> out of a table and return it in the same shape. A column is
@@ -9048,7 +9080,8 @@ the common OR), and C<k> (number of strata).
 As in R, the continuity correction of 0.5 is applied only when the observed
 count is at least 0.5 away from its expectation, and C<method> says whether it
 was ("with" or "without continuity correction"). A cell that is C<NaN> or
-infinite is a fatal error, as C<NA> is in R. Degenerate tables give what R
+infinite is a fatal error, as C<NA> is in R, and so is a stratum whose total is
+below 2 ("sample size in each stratum must be > 1"). Degenerate tables give what R
 gives: when every stratum has zero variance the statistic and p-value are
 C<NaN>, and when no stratum has off-diagonal counts the common odds ratio is
 C<Inf>.
@@ -9745,7 +9778,8 @@ Cox proportional-hazards regression: how covariates raise or lower the hazard
 (the risk of an event over time). It is the survival-analysis counterpart of
 L<C<glm>|/"glm"> and reports hazard ratios, like R's C<survival::coxph> (Efron ties).
 
-Give times, an event flag (1 = event, 0 = censored), and one or more covariates
+Give times, an event flag (1 = event, 0 = censored; or 2 = event, 1 = censored,
+as C<Surv()> reads a flag whose largest value is 2), and one or more covariates
 (a single C<\@x>, or C<[\@x1, \@x2, ...]>):
 
  use Stats::LikeR 'coxph';
@@ -10004,8 +10038,12 @@ Columns in an AoA are addressed by non-negative integer index:
 
 The result reuses the original row array-refs (a reorder, not a deep
 copy), so it is cheap and the caller's data is left untouched. A
-non-integer or negative index croaks; an index no row contains is
-reported as a missing column.
+non-integer or negative index croaks, and so does one too large to index
+an array (above 2*I<63 - 1, or 2>*31 - 1 on a 32-bit perl); an index no row
+contains is reported as a missing column.
+
+Rows that are tied arrays, and a tied column of a HoA, are read through
+their C<FETCH>.
 
 =head3 Undefined and missing values
 
@@ -10014,6 +10052,12 @@ row that lacks the key (AoH/HoH) or is shorter than the index (AoA); it
 is treated the same as an explicit C<undef>. Defined values are ordered
 first (ascending, or per the comparison type), undef/missing last, and
 undef rows keep their original relative order.
+
+In a numeric column a C<NaN> sorts last with them, in its original place
+among them, as R's C<order()> puts C<NaN> with C<NA>:
+C<< csort([{x=E<gt>3}, {x=E<gt>'NaN'}, {x=E<gt>1}, {x=E<gt>undef}, {x=E<gt>2}], 'x') >> gives the
+C<x> order 1, 2, 3, NaN, undef. In a column that is not all numbers,
+C<'NaN'> is a string like any other.
 
  my $rows = [
      [ 1, 5 ],
@@ -10044,6 +10088,12 @@ row is undef. Such rows go to the bottom.
 
 =item * A comparator that handles undef itself (e.g. C<< $a-E<gt>{v} // 0 >>) never trips
 the probe, so csort leaves its ordering completely alone.
+
+=item * A row the comparator cannot compare with itself -- it returns C<undef>,
+which is what C<< E<lt>=E<gt> >> returns when either side is C<NaN> -- goes to the end
+with the undef rows. So C<NaN> sorts last both ascending
+(C<< $a-E<gt>{v} E<lt>=E<gt> $b-E<gt>{v} >>) and descending (C<< $b-E<gt>{v} E<lt>=E<gt> $a-E<gt>{v} >>), as R's
+C<order()> puts it last with or without C<decreasing = TRUE>.
 
 =item * A comparator that dies for a real reason still propagates that error
 unchanged.
@@ -10685,6 +10735,18 @@ C<qchisq($p, 0)> is 0, or C<Inf> at C<$p = 1>. R's own C<tests/d-p-q-r-tst-2.R>
 pins those values; up to 0.3217 both functions returned C<NaN> there. A negative
 C<df> is still C<NaN>.
 
+C<< df =E<gt> Inf >> (perl's C<9**9**9>, or the string C<"Inf">) is the limit R gives it:
+C<pt($q, Inf)> is C<pnorm($q)> and C<qt($p, Inf)> is C<qnorm($p)>;
+C<pf($x, $df1, Inf)> is C<pchisq($x * $df1, $df1)>, C<pf($x, Inf, $df2)> the upper
+tail of C<pchisq($df2 / $x, $df2)>, and with both infinite I<F> is a step at 1
+(C<0.5> at 1 itself); C<qf> inverts each. Up to 0.331 none of this was handled:
+C<qt(0.975, Inf)> was C<3.1e-61> and C<pf(0.5, 3, Inf)> was C<1>. A finite but huge
+df is computed exactly rather than by R's C<< df E<gt> 4e5 >> approximation in C<qf>.
+
+C<pbinom>'s C<size> must be a whole number within R's own fuzz,
+C<1e-9 * max(1, |size|)>, and is then rounded, so C<pbinom(3, 10 + 1e-10, 0.5)>
+is R's C<0.171875>; up to 0.331 anything not exactly whole was C<NaN>.
+
 =head3 What each one does, in one picture
 
 The same identity read from two ends: a C<p*> function is given the boundary and
@@ -10818,8 +10880,10 @@ computes the requested side directly:
  pchisq(1e-30, 1);            # 7.978845608028654e-16, not 0
  pt(-75, 15);                 # 5.4e-21, from the lower tail itself
 
-C<qnorm>, C<qchisq> and C<qf> reflect a probability above C<0.5> onto C<1 - p>
-before inverting, for the same reason in the other direction — that keeps the
+Every C<q*> function inverts the I<smaller> of the two tails it is handed: a
+probability above C<0.5> is reflected onto C<1 - p>, and a log probability above
+C<log(1/2)> onto C<-expm1(log p)>, before inverting, for the same reason in the
+other direction — that keeps the
 root-finder comparing small numbers instead of numbers that agree to fifteen
 places. The reflection is free rather than a trade: for C<< p E<gt>= 0.5 >> the two
 operands of C<1 - p> lie within a factor of two of each other, so Sterbenz's
@@ -10939,42 +11003,62 @@ C<t/std_qnorm.mpmath.py> is the arbiter and prints that table, along with the
 frozen rows of the test it generates. Like the other generators it is committed
 next to its test and nothing in the suite calls it.
 
-=head3 Accuracy, and the one place C<log> is not R's
+=head3 Accuracy, C<log>, and where R is not the answer
 
-These are glue over routines the module already had — C<normal_quantile_hp>,
-C<pt_upper>/C<qt_tail>, the incomplete gamma and beta — whose series and
-continued fractions stop at a relative C<1e-15> on every build. So they are
-double-accurate on a long-double or C<__float128> perl too, rather than more
-accurate there, and they agree with R to about C<1e-14> relative.
+The incomplete gamma behind C<pchisq> and C<qchisq> is R's own (Morten Welinder's
+C<pgamma.c>), and the incomplete beta behind C<pt>, C<pf> and C<pbinom> switches
+to R's TOMS 708 algorithms once a shape reaches 1000. Both stay accurate in
+relative terms at any df: up to 0.331 C<pchisq(1e15, 1e15)> was C<0.379> where R
+and the truth are C<0.50000000594708>, C<pt(1.96, 1e15)> was C<0.97448> for
+C<0.97500>, and C<pf(1, 1e15, 1e15)> was C<0.481> for exactly C<0.5>. C<qchisq> is a
+Newton iteration from AS 91's starting value, so C<qchisq(0.5, 1e10)> takes about
+2 microseconds where it took 11 milliseconds. The constants are a double's, as
+R's are, so these agree with R to about C<1e-14> relative on a double,
+long-double and C<__float128> perl alike.
 
-Two things are deliberately not R:
+C<< log =E<gt> 1 >> is carried through in both directions, as in R:
 
 =over
 
-=item * B<< C<< log =E<gt> 1 >> on a C<p*> function returns C<log()> of the probability already
-computed >>, not a log carried through the series. A tail that underflowed
-to C<0> therefore logs to C<-Inf>, and a tail that rounded to C<1> logs to C<0>
-rather than to the tiny negative number R reports. R's C<pt>/C<pchisq>/C<pf>
-carry C<log_p> through and can do better; C<pnorm> here does too, because R's
-Cody algorithm was ported whole. The C<q*> functions take C<log_p> properly:
-the argument is exponentiated, which is exact, and lets you name quantiles
-the linear scale cannot — C<< qnorm(-800, log_p =E<gt> 1) >> is reachable where
-C<exp(-800)> is just C<0>.
+=item * B<< a C<p*> function computes the log of its tail >>, so a tail far below the
+smallest double still has one — C<< pt(-1e10, 30, log =E<gt> 1) >> is
+C<-642.385...> — and a tail a hair under 1 logs to the tiny negative number
+rather than to C<0>.
 
-=item * B<< C<qf> disagrees with R in the far tail of I<F>, and is right. >> At
-C<qf(2^-20, 1, 10)> R is 9.9e-4 away from the 60-digit value and this module
-is 1.0e-15 away; R's own C<pf> confirms it, inverting this module's answer to
-1.6e-15 and its own to 4.9e-4. Thirteen such rows are pinned in
-C<t/distributions.R.scipy.t> against mpmath at C<mp.dps = 60>, each asserted
+=item * B<< a C<q*> function takes a log probability without ever exponentiating what
+it cannot >>: C<< qnorm(-1e-20, log =E<gt> 1) >> is C<9.262340089798405> (it was C<Inf>,
+since C<exp(-1e-20)> is C<1>), and C<< qt(-1000, 5, log =E<gt> 1) >> is
+C<-1.1333163490175e+87> (it was C<-Inf>). Up to 0.331 this paragraph said the
+C<p*> functions returned C<log()> of the probability already computed, and the
+C<q*> functions exponentiated their argument.
+
+=back
+
+Where R is the weaker reference, the tests say so and pin the 60-digit value:
+
+=over
+
+=item * B<< C<qf> in the far tail of I<F>. >> At C<qf(2^-20, 1, 10)> R is 9.9e-4 away from
+the 60-digit value and this module is 1.0e-15 away; R's own C<pf> confirms
+it, inverting this module's answer to 1.6e-15 and its own to 4.9e-4. On the
+log scale R's C<qbeta> returns C<0> for roots it cannot reach:
+C<qf(-64, 1, 1, log.p = TRUE)> is C<0> in R and C<6.3466722361887e-56> here.
+These are pinned in C<t/distributions.R.scipy.t> and
+C<t/distributions.limits.R.t> against mpmath at C<mp.dps = 60>, each asserted
 both to be right I<and> to still disagree with R, so the divergence cannot
 quietly change.
+
+=item * B<< C<qt> on the log scale >>: C<qt(-700, 5, log.p = TRUE)> is 1.8e-9 off in R
+and 9e-15 here.
 
 =back
 
 Non-centrality (C<ncp>) is not implemented; nor is C<qbinom>. Everything is
 cross-validated in C<t/distributions.R.scipy.t> (2041 tests) against a frozen
 table of R 4.6.1 values, SciPy 1.18.0's own mpmath reference cases, and R's own
-round-trip identities from C<tests/d-p-q-r-tests.R>.
+round-trip identities from C<tests/d-p-q-r-tests.R>; and in
+C<t/distributions.limits.R.t> at infinite and enormous df and on the log scale,
+against R 4.6.1 and the extreme-tail checks of R's C<tests/d-p-q-r-tst-2.R>.
 
 =head2 dnorm
 
@@ -11001,6 +11085,10 @@ Usage:
 but default mean, standard deviation, and log can be passed as parameters:
 
  $x = dnorm(0, mean => 0, sd => 2, 'log' => 0);
+
+Where the density is 0 — C<x> infinite, C<< sd =E<gt> Inf >>, C<< sd =E<gt> 0 >> away from the
+mean — C<< log =E<gt> 1 >> gives C<-Inf>, as R does (up to 0.331 it gave C<0>). An C<undef>
+C<x>, or an C<undef> element, is C<NaN>.
 
 =head2 drop_cols
 
@@ -11729,13 +11817,19 @@ Any table of at least 2x2 counts is accepted, as either a 2D array reference or 
      [7, 2, 1],
  ]);
 
-For tables larger than 2x2 the p-value is computed by exact enumeration of
-every contingency table sharing the observed row and column margins (the
-multivariate hypergeometric distribution), and matches R's C<fisher.test> to
-full precision. Only the two-sided test is defined in this case, so
-C<alternative> is ignored and the returned hash reference omits C<conf_int> and
-C<estimate> (the conditional-MLE odds ratio and its confidence interval are
-reported for 2x2 tables only):
+For tables larger than 2x2 the p-value is the exact one: the sum of the
+multivariate hypergeometric probability of every contingency table that shares
+the observed row and column margins and is no more probable than the observed
+table. It is computed with Mehta & Patel's network algorithm, as R's
+C<fisher.test> does, and agrees with R to about 1e-12. On the tables where the
+two differ in the last digits, C<fisher_test> is the closer to the exact rational
+answer (within 1.4e-13 of it on every table checked), because R's FEXACT merges
+paths whose weights agree to 3.45e-7. A table counts as "as or more extreme"
+under FEXACT's own rule: its probability is at most the observed one times
+1 + 3.45e-7. Only the two-sided test is defined in this case, so C<alternative>
+is ignored and the returned hash reference omits C<conf_int> and C<estimate>
+(the conditional-MLE odds ratio and its confidence interval are reported for
+2x2 tables only):
 
  {
  alternative   "two.sided",
@@ -11749,18 +11843,31 @@ and columns by the sorted keys of the first row, so the result is deterministic;
 every row must expose the same set of column keys, and every row of an array
 input must have the same number of columns.
 
-Enumeration is exact but finite: a table whose margins put more completions in
-the way than can be walked is refused outright,
+The exact test is exact but finite. Every table R answers with its default
+C<workspace = 200000> is answered here, in comparable time or less (Mehta &
+Patel's 5x7 6th example takes 0.04 s), and so are many that R refuses, such as
+the 6x6 table of R's PR#18336, which R declines with C<< hash key 5e+09 E<gt> INT_MAX >>.
+A table that would need more than a few seconds of work, or more than about
+128 MB, is refused outright rather than answered with an approximation:
 
- fisher_test: 5x7 table is too large for exact enumeration
+ fisher_test: 4x3 table is too large for exact enumeration
 
-rather than answered with an approximation. Subtrees that lie wholly inside or
-wholly outside the tail are summed in closed form or dropped without being
-walked, which puts most tables of practical size well inside the limit --
-C<fisher_test> computes the 6x6 table of R's PR#18336, which R's own C<fisher.test>
-declines with C<< hash key 5e+09 E<gt> INT_MAX >> -- but R's network algorithm (FEXACT)
-still reaches tables this one cannot, such as the 5x7 6th example of Mehta &
-Patel. For those, use C<chisq_test>, or R.
+For those, use C<chisq_test>, or R's C<simulate.p.value>.
+
+=head3 Counts
+
+Cells are read as R's C<fisher.test> reads them. A negative, C<NaN> or infinite
+cell, an C<undef> or a string croaks, as does a count past R's
+C<.Machine$integer.max> (2147483647). A count that is not a whole number is
+rounded to the nearest one (halves to even, as R's C<round()> does) with R's
+warning:
+
+ fisher_test: 'x' has been rounded to integer: Mean relative difference: 0.1111111
+
+An all-zero 2x2 table gives p = 1, an odds ratio of 0 and a confidence interval
+of [0, Inf], as R does. An all-zero larger table croaks, as R's does
+("FEXACT error 3"). Where a C C<long> is 32 bits (Windows, 32-bit perls), a
+table whose total passes 2147483647 croaks, where R would still answer it.
 
 =head2 friedman_test
 
@@ -12323,7 +12430,9 @@ Each is called the same way:
  group_by($aoh_data, 'Testosterone, total (nmol/L)', 'Gender');
 
 and each returns a hash of arrays. A row whose value is missing or C<undef> is
-left out, so the second Female row contributes nothing. C<$aoh_data> gives
+left out, so the second Female row contributes nothing. So is a row whose
+group is missing or C<undef>, as R's C<split()> drops an C<NA> level: it is not
+pooled with a group named C<"">, and it does not warn. C<$aoh_data> gives
 
  {
      Female   [
@@ -13016,6 +13125,12 @@ C<theta_zero>/C<SE_logtheta_zero> for a C<negbin> zero part; and C<fitted_values
 the fitted mean C<< P(y E<gt> 0) mu / (1 - f(0)) >>. Validated against C<pscl> and
 C<countreg> on their documented examples, with a third opinion from C<mpmath>.
 
+When either part's counts are no more dispersed than a Poisson's, its
+negative-binomial likelihood rises all the way to C<theta = Inf>: that part is
+then the Poisson (or, for the zero part, complementary log-log) fit, and
+C<theta> (or C<theta_zero>) and its C<SE_logtheta> are reported as C<Inf>, as in
+L<C<zerotrunc>|/"zerotrunc">.
+
 =head2 interpolate
 
 Fill NA (undef) cells along the row axis, like C<pandas.DataFrame.interpolate>.
@@ -13379,8 +13494,11 @@ The result holds C<coefficients>, C<summary> (per term C<Estimate>,
 C<Std. Error>, C<t value>, C<< Pr(E<gt>|t|) >>), C<vcov>, C<vcov_type>, C<conf_int>,
 C<terms>, C<endogenous> and C<instruments> (the terms each role was given),
 C<fitted_values>, C<residuals>, C<sigma>, C<rss>, C<r_squared>, C<adj_r_squared>,
-C<df_residual>, C<rank>, C<nobs>, C<n_clusters> with a cluster, and C<waldtest>, the
-F test of every coefficient but the intercept. C<diagnostics> has
+C<df_residual>, C<rank>, C<nobs> (the rows of nonzero weight, as C<ivreg>'s
+C<nobs>), C<n_clusters> with a cluster, and C<waldtest>, the F test of every
+coefficient but the intercept. C<df_residual> and C<sigma> count only the rows of
+nonzero weight too; C<adj_r_squared> and the Sargan statistic count every row,
+as C<summary.ivreg()> does. C<diagnostics> has
 
 =over
 
@@ -13499,16 +13617,43 @@ These follow R's C<ks.test> convention: C<'greater'>/C<'less'> describe which CD
 lies I<above> the other, which (because a higher CDF means smaller values) is
 the opposite of which sample tends to be larger.
 
-C<exact> controls how the p-value is computed. Omit it to let the test choose:
-the exact distribution is used for small samples (two-sample when nx·ny 
-10000, one-sample when n < 100) and the asymptotic (Kolmogorov limiting)
-approximation otherwise. Pass C<< exact =E<gt> 1 >> to force the exact computation or
-C<< exact =E<gt> 0 >> to force the asymptotic one. Exact p-values cannot be computed
-when the data contain ties; if ties are present on the exact path, the test
-warns and falls back to the asymptotic p-value. (The exact one-sample test is
-only available for the two-sided alternative; a one-sided one-sample request
-also falls back to asymptotic.) In either fallback the returned C<method> is
-the asymptotic one, so it always names the p-value you actually got.
+C<exact> controls how the p-value is computed, by R 4.6.1's own rules. Omit it
+to let the test choose: the exact distribution is used for small samples
+(two-sample when nx·ny < 10000; one-sample when n < 100 and there are no ties)
+and the asymptotic (Kolmogorov limiting) approximation otherwise. Pass
+C<< exact =E<gt> 1 >> to force the exact computation or C<< exact =E<gt> 0 >> to force the
+asymptotic one. The returned C<method> always names the p-value you got.
+
+=over
+
+=item * B<Two samples with ties.> The exact p-value is R's: the lattice recursion
+conditioned on the observed tie pattern, so C<ks\_test([1, 2, 2, 3, 3],
+[1, 2, 3, 3, 4, 5, 6])> gives R's documented 8/33. On the asymptotic path
+ties draw R's warning, C<p-value will be approximate in the presence of
+ties>. (Up to 0.33 ties on the exact path warned and fell back to the
+asymptotic p-value.)
+
+=item * B<One sample.> Ties draw R's warning, C<ties should not be present for the
+one-sample Kolmogorov-Smirnov test>, and keep the automatic choice off the
+exact path. The exact one-sided p-value is R's Birnbaum–Tingey sum, the
+exact two-sided one Marsaglia, Tsang and Wang's algorithm.
+
+=item * B<Asymptotic two-sided p-values> are R's series to R's tolerance of 1e-6,
+so they match R to the last digit, including where that tolerance leaves R
+up to 4.6e-6 (relative) from the limiting distribution itself.
+
+=item * B<Limits that R does not have.> A forced exact run larger than nx·ny = 10⁷
+(two-sample), or a two-sided one-sample one whose matrix would be of order
+over 500, warns C<too large for an exact p-value> and uses the asymptotic
+p-value. A one-sided asymptotic
+p-value is C<exp(-2 n D²)> evaluated directly, where R's C<1 - (1 - exp())>
+rounds anything below about 1e-16 to C<0>.
+
+=back
+
+Warnings go through perl's C<warn>, so a C<$SIG{__WARN__}> handler sees them;
+one that dies leaves nothing allocated behind. A tied array is read like any
+other.
 
 =head3 Return value
 
@@ -13821,6 +13966,20 @@ C<(1 | g) + (0 + x | g)> is the uncorrelated pair; several grouping factors,
 crossed or nested, are allowed, and C<(1 | a/b)> expands to C<(1 | a) + (1 | a:b)>.
 The fixed part is expanded as for L<C<lm>|/"lm">.
 
+As in C<lme4>, a model croaks when a grouping factor has only one level among
+the rows it keeps ("grouping factors must have > 1 sampled level"), when one has
+as many levels as there are rows ("number of levels of each grouping factor must
+be < number of observations (problems: ...)"), or when a correlated term has at
+least as many random effects as there are rows. These are C<lmerControl()>'s
+default checks; C<lme4> names a nested factor C<b:a> where this names it C<a:b>.
+
+With a single grouping factor the fit takes one level at a time, so any number
+of levels is practical. With more than one (crossed or nested), the random
+effects are handled as one dense matrix, whose time grows as the cube of their
+total count: 2000 random effects took about 5 minutes on a desktop, and more
+than 4000 croaks. C<lme4>'s sparse Cholesky is the tool for designs larger than
+that.
+
 
 
 =begin html
@@ -13890,9 +14049,22 @@ Give times, an event flag (1 = event, 0 = censored), and a group label per row:
  print $r->{'p_value'};
 
 Result keys: C<statistic> (chi-squared), C<parameter> (df = groups − 1),
-C<p_value>, C<observed> and C<expected> events per group, and C<groups>. See
+C<p_value>, C<observed> and C<expected> events per group, C<groups> and C<rho>. See
 L<C<survfit>|/"survfit"> for the curves and L<C<coxph>|/"coxph"> to adjust for
 covariates.
+
+C<< rho =E<gt> 1 >> gives Peto & Peto's modification of the Gehan–Wilcoxon test, which
+weights the early differences more, and any other C<rho> the rest of
+C<survdiff()>'s G-rho family: each event time is weighted by S(t−)^rho, the
+pooled Kaplan–Meier estimate just before it. C<observed> and C<expected> are
+then weighted counts, as C<survdiff()>'s are. The default, 0, is the log-rank
+test.
+
+The event flag is read as C<survival::Surv()> reads it: 1 = event and 0 =
+censored, or 2 = event and 1 = censored when the largest value is 2. Perl's
+true and false count as 1 and 0. Any other value is an error, and so is an
+undef or C<NaN> time or status, where R would drop the row as missing.
+An undef group label is an error too.
 
 =head2 Lonly
 
@@ -14240,6 +14412,10 @@ Takes either an array or an array reference, and returns an array of the most co
 When several values tie for most common, they come back in the order each was
 first seen, whatever perl's hash seed is.
 
+Values are counted by their string form, so C<1>, C<1.0> and C<"1"> are one value
+and C<"1.0"> another. A number is formatted in a copy to find it, so C<mode>
+does not add a string buffer to every numeric scalar it is given.
+
 =head2 ncol
 
 C<ncol($frame)> returns how many B<columns> a data frame has. Like C<nrow>, it
@@ -14420,7 +14596,7 @@ I<group> is a vector of at least two numeric observations.
 <tr>
   <td><code>var_equal</code></td>
   <td><code>0</code> (false)</td>
-  <td><code>0</code> → Welch's test (unequal variances). <code>1</code> → pooled-variance test. The dotted <code>var.equal</code> is refused as an unknown argument.</td>
+  <td><code>0</code> → Welch's test (unequal variances). <code>1</code> → pooled-variance test. The dotted <code>var.equal</code> is refused as an unknown argument, as is any key not in this table, or a key with no value.</td>
 </tr>
 <tr>
   <td><code>formula</code></td>
@@ -14450,7 +14626,18 @@ Note that this differs from R, which drops incomplete cases via C<na.action>
 rather than complaining. If you want R's behaviour, filter the missing values
 out yourself first (see C<dropna>).
 
-Each group needs at least two observations, and you need at least two groups.
+C<NaN> is the exception: it is R's C<NA> too, and it is dropped, as C<na.action>
+drops it, in all three shapes. A C<formula> row whose response is C<NaN> goes
+before its label is counted, so a group whose every response is C<NaN> does
+not exist, as R drops an unused factor level. (Up to 0.33 a C<NaN> was kept,
+and made every statistic C<NaN>.)
+
+Each group needs at least two observations after that, and you need at least
+two groups. There is no limit on the number of groups.
+
+Group labels come back as they went in: a UTF-8 label (a hash key, or a value
+of the C<formula> factor) keeps its UTF-8 flag in C<group_stats>, and a
+C<formula> may name UTF-8 columns. Two labels that are C<eq> are one group.
 
 =head3 Output
 
@@ -14720,6 +14907,12 @@ a C<< method =E<gt> ... >> pair. These three are the same call:
 =item * An C<undef> cell counts toward the family as a p-value of 1, which is how the
 flat form has always treated it, and comes back adjusted rather than as
 C<undef>.
+
+=item * A NaN p-value is R's C<NA>: it is left out of the family, so the family size
+counts only the others, and it comes back NaN in its own place. R's
+C<p.adjust(c(0.01, NaN, 0.04, 0.03, NaN, 0.02), "holm")> and
+C<p_adjust([0.01, 'nan', 0.04, 0.03, 'nan', 0.02], 'holm')> both give 0.04,
+NaN, 0.06, 0.06, NaN, 0.06.
 
 =item * Within a frame the family is enumerated in a fixed order — rows in order and
 then columns by name for an AoA, AoH or HoH; columns by name and then rows
@@ -15034,7 +15227,8 @@ Use C<< log =E<gt> 1 >> for tails that would otherwise underflow to C<0>:
 
 =item * C<< sd E<lt> 0 >> returns C<NaN> and warns.
 
-=item * A C<NaN> input (or an C<undef> element of an array reference) yields C<NaN>.
+=item * A C<NaN> input, an C<undef> input, or an C<undef> element of an array reference
+yields C<NaN> (R's C<NA>). Up to 0.331 an C<undef> was read as C<0>.
 
 =item * C<+Inf> returns C<1>, C<-Inf> returns C<0>.
 
@@ -15070,7 +15264,7 @@ Principal Component Analysis
   <td><code>scale</code></td>
   <td>Boolean</td>
   <td><code>0</code> (False)</td>
-  <td>If true, the variables are scaled to have unit variance before the analysis takes place. <i>Note: If a column has zero variance, the function will <code>croak</code> to prevent division by zero.</i></td>
+  <td>If true, the variables are scaled to have unit variance before the analysis takes place: each column is divided by <code>sqrt(sum(x^2)/(n-1))</code> once centred, as R's <code>scale()</code> does, which is the root mean square about zero when <code>center</code> is false. <i>Note: If a column has zero variance, the function will <code>croak</code> to prevent division by zero.</i></td>
 </tr>
 <tr>
   <td><code>retx</code></td>
@@ -15082,13 +15276,13 @@ Principal Component Analysis
   <td><code>tol</code></td>
   <td>Number</td>
   <td><code>undef</code></td>
-  <td>A value indicating the magnitude below which components should be omitted. Components are omitted if their standard deviation is less than or equal to <code>tol</code> times the standard deviation of the first component.</td>
+  <td>A value indicating the magnitude below which components should be omitted from <code>rotation</code> and <code>x</code>. Components are omitted if their standard deviation is less than or equal to <code>tol</code> times the standard deviation of the first component. <code>sdev</code> keeps all of them, as R's does.</td>
 </tr>
 <tr>
   <td><code>rank</code></td>
   <td>Integer</td>
   <td><code>undef</code></td>
-  <td>Optionally specify a strict limit on the number of principal components to return. The function will return <code>min(rank, rows, columns)</code> components.</td>
+  <td>Optionally specify a strict limit on the number of principal components in <code>rotation</code> and <code>x</code>: <code>min(rank, rows, columns)</code> of them. <code>sdev</code> keeps all <code>min(rows, columns)</code>, as R's does.</td>
 </tr>
 </tbody>
 </table>
@@ -15119,12 +15313,12 @@ The C<prcomp> function returns a HashRef containing the following keys represent
 <tr>
   <td><code>sdev</code></td>
   <td>ArrayRef[Number]</td>
-  <td>The standard deviations of the principal components. Mathematically, these are the square roots of the eigenvalues of the covariance matrix.</td>
+  <td>The standard deviations of the principal components, all <code>min(rows, columns)</code> of them. Mathematically, these are the square roots of the eigenvalues of the covariance matrix; they are computed, as R computes them, from the singular values of the centred (and scaled) data, which keeps a direction the data do not span at rounding level (about <code>1e-16</code> of the first) rather than at <code>1e-8</code>.</td>
 </tr>
 <tr>
   <td><code>rotation</code></td>
   <td>ArrayRef[ArrayRef]</td>
-  <td>A 2D array representing the matrix of variable loadings (the eigenvectors). Each inner array represents a row, and the columns correspond to the principal components.</td>
+  <td>A 2D array representing the matrix of variable loadings (the eigenvectors). Each inner array represents a row, and the columns correspond to the principal components. A component is only defined up to its sign, and the signs here need not be R's.</td>
 </tr>
 <tr>
   <td><code>x</code></td>
@@ -15178,31 +15372,31 @@ which returns
      ],
      rotation   [
          [0] [
-                 [0] 0.707106781186547,
-                 [1] 0.707106781186548
-             ],
-         [1] [
                  [0] 0.707106781186548,
                  [1] -0.707106781186547
+             ],
+         [1] [
+                 [0] 0.707106781186547,
+                 [1] 0.707106781186548
              ]
      ],
      scale      0,
      sdev       [
          [0] 2.44948974278318,
-         [1] 1.4142135623731
+         [1] 1.41421356237309
      ],
      x          [
          [0] [
-                 [0] -1.41421356237309,
-                 [1] -1.4142135623731
-             ],
-         [1] [
                  [0] -1.4142135623731,
                  [1] 1.41421356237309
              ],
+         [1] [
+                 [0] -1.41421356237309,
+                 [1] -1.4142135623731
+             ],
          [2] [
                  [0] 2.82842712474619,
-                 [1] 2.22044604925031e-16
+                 [1] 6.66133814775094e-16
              ]
      ]
  }
@@ -15767,16 +15961,38 @@ and out of a data frame.
 
 =head2 quantile
 
-Calculates sample quantiles using R's continuous Type 7 interpolation. 
+Calculates sample quantiles using R's continuous Type 7 interpolation, in R's
+own arithmetic (C<index = 1 + (n-1)p>), so the values are R's to the last bit on
+a perl whose NV is a double.
 
  my $quantile = quantile('x' => [1..99], probs => [0.05, 0.1, 0.25]);
+ my $median   = quantile([1..99], probs => 0.5);    # { '50%' => 50 }
 
-If the C<probs> parameter is omitted, it behaves identically to R by defaulting to the 0, 25, 50, 75, and 100 percentiles (C<c(0, .25, .5, .75, 1)>). The returned hash keys match R's standardized naming convention (e.g., C<"25%">, C<"33.3%">).
+If the C<probs> parameter is omitted, it behaves identically to R by defaulting
+to the 0, 25, 50, 75, and 100 percentiles (C<c(0, .25, .5, .75, 1)>). C<probs> is
+an array ref, or a single number; anything else is an error.
+
+The returned hash is keyed by R's own names for the probabilities — what
+C<names(quantile(x, probs))> gives — so C<1/3> is C<"33.33333%">, C<0.0014> is
+C<"0.14%"> and C<1e-6> is C<"0.0001%">. Like R, fewer than 100 probabilities are
+each named to 7 significant digits (C<formatC(100 * p, format = "fg", digits =
+7)>), while 100 or more share one format chosen for the whole vector (C<format(100
+* p, digits = 7)>), so C<seq(0, 1, 0.005)> is keyed C<"0.0%">, C<"0.5%">, C<"1.0%">
+and so on.
+
+A hash cannot hold two values under one name. The same probability asked for
+twice is one key. Two I<different> probabilities that R would name alike — 0.99999999
+and 1 are both C<"100%"> — are an error naming both, rather than one value
+silently replacing the other.
+
+An C<undef> probability is R's C<NA>, and a NaN one is NaN: each gives C<undef> or
+NaN respectively, under the key C<"">, which is how R names them.
 
 A probability that lands a hair outside C<[0, 1]> — the usual result of computing
 one rather than writing it down — is clamped to the endpoint rather than
 refused, within the same C<100 * eps> that R allows; anything further out is an
-error. C<undef> values in C<x> are dropped.
+error. C<undef> values in C<x> are dropped, and a NaN in C<x> makes every quantile
+NaN (R refuses such an C<x> unless C<na.rm = TRUE>).
 
 =head2 rank
 
@@ -16089,8 +16305,9 @@ set to, so a C<local $/;> in the calling code does not change what is read.
 Lines may end in LF or CRLF, and a file whose lines end in a bare CR, as
 classic Mac OS wrote them, is read as R and pandas read it. The start of the
 file is read 64 KB at a time, up to 1 MB, until a CR turns up; if no LF has by
-then, the file is split on CR. In any other file a lone CR outside quotes is
-dropped.
+then, the file is split on CR. An LF inside a quoted field is part of a cell,
+not a line end, and does not count. In any other file a lone CR outside quotes
+is dropped.
 With C<< 'output_type' =E<gt> 'hoh' >> a file whose only column is the row name gives
 one empty hash per row, as R's C<read.table> gives a data frame of zero columns.
 Rows that repeat an earlier row's name overwrite it, later values winning, and
@@ -16864,13 +17081,28 @@ name/value pairs — the two are equivalent:
 
 C<center> and C<scale> each take a number to use instead of the mean or the
 standard deviation, or one of C<mean>/C<sd>, C<true>/C<false>, C<none>, C<1>/C<0> and
-the empty string, matched case-insensitively. With C<< center =E<gt> 0 >> the divisor
-is R's: the root mean square about zero, C<sqrt(sum(x^2)/(n-1))>, not the
-standard deviation.
+the empty string, matched case-insensitively. The automatic scale is R's:
+C<sqrt(sum(x^2)/(n-1))> of the column once it has been centred, which is the
+standard deviation when the centre is the mean, the root mean square about zero
+with C<< center =E<gt> 0 >>, and neither with a numeric centre.
 
 It fully supports matrix operations. By passing an array of arrays, C<scale> processes the data column by column independently:
 
  my $scaled_mat = scale([[1, 2], [3, 4], [5, 6]]);
+
+As in R, C<center> and C<scale> may also be array refs holding one number per
+column (a flat list is one column); a vector of the wrong length is an error.
+Each value is used as given, so a 0 in a C<scale> vector divides by zero, as R
+does.
+
+ my $m = scale([[1, 2], [3, 5], [5, 9]], center => [1, 2], scale => [2, 3]);
+ # [[0, 0], [1, 1], [2, 2.333...]]
+
+Every row of a matrix must be an array ref of the same length as the first;
+anything else is an error. An C<undef> value is R's C<NA>: it stays C<undef>, in
+its place, and its column's mean and scale are taken over the values that are
+there (R's C<colMeans(na.rm = TRUE)>). A NaN is left out of them the same way and
+comes back NaN. Scaling needs at least two rows (or values).
 
 =head2 sd
 
@@ -17073,7 +17305,10 @@ and returns the hash reference:
 
 matching R's C<shapiro.test(1:5)> to the last digit it prints. Values that are
 C<undef> or C<NaN> are dropped first, exactly as R's C<complete.cases()> drops
-them, and the remaining sample must hold between 3 and 5000 values.
+them, and the remaining sample must hold between 3 and 5000 values. A string
+that is not a number croaks, naming its index (C<shapiro\_test: x at index 2 is
+not a number>), as R's C<stopifnot(is.numeric(x))> refuses it; it used to be
+read as C<0>. A tied array is read like any other.
 
 =head2 skew
 
@@ -17385,6 +17620,12 @@ Option C<conf_level> (default C<0.95>). Each stratum has arrays C<time>, C<n_ris
 C<n_event>, C<n_censor>, C<surv>, C<std_err>, C<lower>, C<upper>, plus C<median>, C<n>,
 and C<events>. Compare curves with L<C<logrank_test>|/"logrank_test">; model
 covariate effects with L<C<coxph>|/"coxph">.
+
+The event flag is read as C<survival::Surv()> reads it: 1 = event and 0 =
+censored, or 2 = event and 1 = censored when the largest value is 2. Perl's
+true and false count as 1 and 0. Any other value is an error, and so is an
+undef or C<NaN> time or status, where R would drop the row as missing.
+An undef C<group> label is an error too.
 
 =head2 svyglm
 
@@ -18860,7 +19101,7 @@ An empty C<{}> or C<[]> is a table with no rows, and is written as one: the head
 
 Every cell of delimited output is written whole, including one holding a NUL byte, and a cell of a tied hash or array (such as C<Tie::IxHash>) is read through its C<FETCH>. A number is formatted the way perl formats it, but in a copy, so writing a table does not add a string buffer to every numeric scalar in it. Nor does finding an AoH's or a HoH's columns leave an iterator on every row hash, as walking them with C<keys> would. A row that is a restricted hash (C<Hash::Util::lock_keys>) may lack some of the columns; those cells are written empty, where they used to die with I<Attempt to access disallowed key>.
 
-A field is quoted when it holds a quote (which is doubled), a line break or the separator, as Python's C<csv.writer> quotes, and in two more places where C<read_table> would otherwise not see the record at all. A record of a single field that is empty, C<undef> or nothing but spaces and tabs is written quoted, C<""> or C<"  ">, because a blank line is skipped on reading; C<csv.writer> writes C<['']> and C<[None]> the same way. The first field of a record is quoted when it starts with C<#>, C<read_table>'s default comment character.
+A field is quoted when it holds a quote (which is doubled), a line break or the separator, as Python's C<csv.writer> quotes, and in two more places where C<read_table> would otherwise not see the record at all. With a separator of more than one character, a field is also quoted when its end and the separator written after it would spell the separator early -- C<"a:"> before C<::>, which would otherwise be written C<a:::> and read back cut at the first C<::>. A record of a single field that is empty, C<undef> or nothing but spaces and tabs is written quoted, C<""> or C<"  ">, because a blank line is skipped on reading; C<csv.writer> writes C<['']> and C<[None]> the same way. The first field of a record is quoted when it starts with C<#>, C<read_table>'s default comment character.
 
 A reference anywhere in the table is an error, in a header cell (C<col_names>, or an AoA's first row) as in a data cell. For an AoA, an C<undef> in C<col_names> is an empty header cell in its place, since an AoA's columns are positional; for every other shape, which looks its columns up by name, it is skipped.
 
@@ -19263,6 +19504,16 @@ C<SE_logtheta> for C<negbin>, as C<countreg> reports them; C<fitted_values>, the
 truncated mean C<mu / (1 - f(0))>, and Pearson-style C<residuals>. The fit is a
 damped Newton iteration on the exact likelihood and its analytic Hessian.
 Validated against C<countreg> and against C<mpmath> at 60 digits.
+
+For C<negbin>, counts no more dispersed than a Poisson's have no finite
+maximum-likelihood C<theta>: the likelihood keeps rising as C<theta> grows, and
+its supremum is the Poisson fit. C<zerotrunc> checks for this first (the score
+for overdispersion at the Poisson fit is not positive) and then returns that
+Poisson fit, with C<theta> and C<SE_logtheta> both C<Inf> and the degrees of
+freedom still counting C<theta>. C<countreg> returns the same fit, but stopped
+wherever its BFGS search halts on the way, typically with C<theta> near C<1e5>,
+so its coefficients and log-likelihood differ from these by roughly
+C<1/theta>.
 
 =head2 F and z tail p-values
 
