@@ -22518,6 +22518,8 @@ _df_shape(...)
 		hv_iterinit(hv);
 		while ((he = hv_iternext(hv))) {
 			SV *v = he_val(aTHX_ hv, he);
+			//he_val() runs get magic only for a magical hash; a plain one can still hold a tied value
+			if (!SvRMAGICAL(hv)) SvGETMAGIC(v);
 			if (ref_named(aTHX_ v, SVt_PVAV, "ARRAY"))     saw_arr  = TRUE;
 			else if (ref_named(aTHX_ v, SVt_PVHV, "HASH")) saw_hash = TRUE;
 			if (saw_arr && saw_hash) {

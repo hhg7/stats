@@ -163,6 +163,33 @@ is(eval { Stats::LikeR::_df_shape([], 'a', 'b'); 1 }, undef, 'three arguments di
 	   "died: x: hashref mixes array and hash values (ambiguous HoA/HoH)\n", 'tied mixed hash dies');
 }
 
+# a tied value in a plain hash or array: the container has no magic, the
+# value does, and the hash's must still be fetched
+{
+	package TieScalar;
+	our $fetched = 0;
+	sub TIESCALAR { bless [ $_[1] ], $_[0] }
+	sub FETCH     { $fetched++; $_[0][0] }
+	sub STORE     { }
+	package main;
+
+	my %h = (a => [1], b => 1);
+	tie $h{b}, 'TieScalar', { x => 1 };
+	$TieScalar::fetched = 0;
+	is(outcome(\&Stats::LikeR::_df_shape, \%h, 'x'),
+	   outcome(\&perl_df_shape, \%h, 'x'), 'tied value in a plain hash makes it mixed');
+	my %hh = (b => 1);
+	tie $hh{b}, 'TieScalar', { x => 1 };
+	$TieScalar::fetched = 0;
+	is(Stats::LikeR::_df_shape(\%hh), 'HoH', 'tied value in a plain hash makes it a HoH');
+	is($TieScalar::fetched, 1, '  fetched once');
+	my @a = (undef);
+	tie $a[0], 'TieScalar', [1];
+	$TieScalar::fetched = 0;
+	is(Stats::LikeR::_df_shape(\@a), 'AoA', 'tied element in a plain array');
+	is($TieScalar::fetched, 1, '  fetched once');
+}
+
 # the caller's each iterator is left where it was, by a whole walk and by one
 # cut short by the mix error
 {
