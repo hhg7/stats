@@ -10684,7 +10684,9 @@ counts as the container it is. A C<qr//> is C<REGEXP> on every perl,
 including 5.10, where C<Scalar::Util::reftype> calls it C<SCALAR>.
 
 =item * A tied array or hash is classified by what its elements fetch, each element at
-most once. A hash's C<each> iterator is left where it was.
+most once. A plain hash's C<each> iterator is left where it was. A tied
+hash's is not: the walk calls the tie class's C<FIRSTKEY>, which restarts it
+as C<keys> would.
 
 =item * Only the top two levels are looked at: C<[ [ [1] ] ]> is an C<AoA>.
 

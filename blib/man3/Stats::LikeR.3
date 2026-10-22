@@ -3064,8 +3064,10 @@ Blessing is ignored: a blessed array or hash, and a blessed row inside one,
 counts as the container it is. A \f(CW\*(C`qr//\*(C'\fR is \f(CW\*(C`REGEXP\*(C'\fR on every perl,
 including 5.10, where \f(CW\*(C`Scalar::Util::reftype\*(C'\fR calls it \f(CW\*(C`SCALAR\*(C'\fR.
 .IP \(bu 4
-A tied array or hash is classified by what its elements fetch. Walking a
-hash resets its \f(CW\*(C`each\*(C'\fR iterator, as \f(CW\*(C`keys\*(C'\fR does.
+A tied array or hash is classified by what its elements fetch, each element at
+most once. A plain hash\*(Aqs \f(CW\*(C`each\*(C'\fR iterator is left where it was. A tied
+hash\*(Aqs is not: the walk calls the tie class\*(Aqs \f(CW\*(C`FIRSTKEY\*(C'\fR, which restarts it
+as \f(CW\*(C`keys\*(C'\fR would.
 .IP \(bu 4
 Only the top two levels are looked at: \f(CW\*(C`[ [ [1] ] ]\*(C'\fR is an \f(CW\*(C`AoA\*(C'\fR.
 .SS "Distribution functions"

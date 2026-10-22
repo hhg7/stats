@@ -2729,7 +2729,9 @@ Things worth knowing:
   counts as the container it is. A `qr//` is `REGEXP` on every perl,
   including 5.10, where `Scalar::Util::reftype` calls it `SCALAR`.
 - A tied array or hash is classified by what its elements fetch, each element at
-  most once. A hash's `each` iterator is left where it was.
+  most once. A plain hash's `each` iterator is left where it was. A tied
+  hash's is not: the walk calls the tie class's `FIRSTKEY`, which restarts it
+  as `keys` would.
 - Only the top two levels are looked at: `[ [ [1] ] ]` is an `AoA`.
 
 ## Distribution functions

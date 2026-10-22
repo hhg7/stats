@@ -28,8 +28,9 @@ Revision history for Stats-LikeR
    already looked at one row only. Memory is unchanged within a few kB.
 
  - A tied frame's values are fetched once each by the shape check, where
-   the Perl fetched a value up to twice, and a hash's each iterator is left
-   where it was instead of being reset.
+   the Perl fetched a value up to twice, and a plain hash's each iterator
+   is left where it was instead of being reset. A tied hash's still is, as
+   the walk has to call its FIRSTKEY.
 
 0.331 2026-10-20 CDT (Claude Opus 5.5 helped)
 

@@ -22472,7 +22472,8 @@ _aoh_key_union(df)
  #
  # This was a Perl sub up to 0.331, and keeps its answers and messages.  A
  # tied value is fetched once, where the Perl fetched it once per test, and
- # the hash's each iterator is left where it was rather than reset.
+ # a plain hash's each iterator is left where it was rather than reset (a
+ # tied one's FIRSTKEY restarts it, as it must).
 SV *
 _df_shape(...)
   CODE:
@@ -39427,7 +39428,8 @@ CODE:
 			} else {
 				HV *hv = (HV *)ref;
 				HE *he;
-				/*The caller's each() iterator is put back afterwards. A walk
+				/*A plain hash's each() iterator is put back afterwards; a tied
+				one's cannot be, since hv_iterinit() leads to its FIRSTKEY. A walk
 				that stops early is finished by hv_walk_out(), without
 				fetching the rest, because perl before 5.18 leaks the entry a
 				tied iterator holds when ITER_KEEP_END's hv_iterinit() cuts it
