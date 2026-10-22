@@ -2684,6 +2684,54 @@ row name; for a shared key, that is the first repeat.
 [`h2aoh`](#h2aoh) is the reverse. [`aoh2hoh`](#aoh2hoh) also indexes rows by a
 column, but keeps the whole row as the value instead of one cell.
 
+## dftype
+
+Name the shape of a data structure, as a string. The four data frame shapes
+the rest of the module takes come back by their usual names, so `dftype` is
+the way to ask which of them you have before handing it to a function that
+wants a particular one.
+
+    dftype([ [1, 2], [3, 4] ]);                # 'AoA'
+    dftype([ { a => 1 }, { a => 2 } ]);        # 'AoH'
+    dftype({ a => [1, 2], b => [3, 4] });      # 'HoA'
+    dftype({ r1 => { a => 1 }, r2 => { a => 2 } });   # 'HoH'
+    dftype([ 1, 2, 3 ]);                       # 'array'
+    dftype({ a => 1, b => 2 });                # 'hash'
+    dftype(42);                                # 'scalar'
+    dftype(undef);                             # 'undef'
+    dftype(\&mean);                            # 'CODE'
+
+It takes exactly one argument.
+
+| Argument | Result |
+| --- | --- |
+| `undef` | `undef` (the string) |
+| anything else that is not a reference | `scalar` |
+| an array ref whose defined elements are all array refs | `AoA` |
+| an array ref whose defined elements are all hash refs | `AoH` |
+| any other array ref | `array` |
+| a hash ref whose defined values are all array refs | `HoA` |
+| a hash ref whose defined values are all hash refs | `HoH` |
+| any other hash ref | `hash` |
+| a compiled pattern, `qr//` | `REGEXP` |
+| any other reference | its type as `ref` names an unblessed one: `SCALAR`, `REF`, `CODE`, `GLOB`, ... |
+
+Things worth knowing:
+
+- An `undef` element or value is passed over, so `[ undef, { a => 1 } ]` is an
+  `AoH`. A container that has no defined element at all — `[]`, `{}`,
+  `[ undef ]` — is a plain `array` or `hash`, since nothing in it says which
+  frame it would be.
+- One element of another kind is enough to make it plain: `[ [1], { a => 1 } ]`
+  and `[ [1], 2 ]` are both `array`. Every element is checked, not only the
+  first, up to the first one that does not fit.
+- Blessing is ignored: a blessed array or hash, and a blessed row inside one,
+  counts as the container it is. A `qr//` is `REGEXP` on every perl,
+  including 5.10, where `Scalar::Util::reftype` calls it `SCALAR`.
+- A tied array or hash is classified by what its elements fetch, each element at
+  most once. A hash's `each` iterator is left where it was.
+- Only the top two levels are looked at: `[ [ [1] ] ]` is an `AoA`.
+
 ## Distribution functions
 
 `pnorm` and `dnorm` have never had company: there was no way to ask for a
@@ -2736,13 +2784,13 @@ pins those values; up to 0.3217 both functions returned `NaN` there. A negative
 `pt($q, Inf)` is `pnorm($q)` and `qt($p, Inf)` is `qnorm($p)`;
 `pf($x, $df1, Inf)` is `pchisq($x * $df1, $df1)`, `pf($x, Inf, $df2)` the upper
 tail of `pchisq($df2 / $x, $df2)`, and with both infinite *F* is a step at 1
-(`0.5` at 1 itself); `qf` inverts each. Up to 0.331 none of this was handled:
+(`0.5` at 1 itself); `qf` inverts each. Up to 0.33 none of this was handled:
 `qt(0.975, Inf)` was `3.1e-61` and `pf(0.5, 3, Inf)` was `1`. A finite but huge
 df is computed exactly rather than by R's `df > 4e5` approximation in `qf`.
 
 `pbinom`'s `size` must be a whole number within R's own fuzz,
 `1e-9 * max(1, |size|)`, and is then rounded, so `pbinom(3, 10 + 1e-10, 0.5)`
-is R's `0.171875`; up to 0.331 anything not exactly whole was `NaN`.
+is R's `0.171875`; up to 0.33 anything not exactly whole was `NaN`.
 
 ### What each one does, in one picture
 
@@ -2879,7 +2927,7 @@ next to its test and nothing in the suite calls it.
 The incomplete gamma behind `pchisq` and `qchisq` is R's own (Morten Welinder's
 `pgamma.c`), and the incomplete beta behind `pt`, `pf` and `pbinom` switches
 to R's TOMS 708 algorithms once a shape reaches 1000. Both stay accurate in
-relative terms at any df: up to 0.331 `pchisq(1e15, 1e15)` was `0.379` where R
+relative terms at any df: up to 0.33 `pchisq(1e15, 1e15)` was `0.379` where R
 and the truth are `0.50000000594708`, `pt(1.96, 1e15)` was `0.97448` for
 `0.97500`, and `pf(1, 1e15, 1e15)` was `0.481` for exactly `0.5`. `qchisq` is a
 Newton iteration from AS 91's starting value, so `qchisq(0.5, 1e10)` takes about
@@ -2896,7 +2944,7 @@ long-double and `__float128` perl alike.
   - **a `q*` function takes a log probability without ever exponentiating what
     it cannot**: `qnorm(-1e-20, log => 1)` is `9.262340089798405` (it was `Inf`,
     since `exp(-1e-20)` is `1`), and `qt(-1000, 5, log => 1)` is
-    `-1.1333163490175e+87` (it was `-Inf`). Up to 0.331 this paragraph said the
+    `-1.1333163490175e+87` (it was `-Inf`). Up to 0.33 this paragraph said the
     `p*` functions returned `log()` of the probability already computed, and the
     `q*` functions exponentiated their argument.
 
@@ -2940,7 +2988,7 @@ but default mean, standard deviation, and log can be passed as parameters:
     $x = dnorm(0, mean => 0, sd => 2, 'log' => 0);
 
 Where the density is 0 — `x` infinite, `sd => Inf`, `sd => 0` away from the
-mean — `log => 1` gives `-Inf`, as R does (up to 0.331 it gave `0`). An `undef`
+mean — `log => 1` gives `-Inf`, as R does (up to 0.33 it gave `0`). An `undef`
 `x`, or an `undef` element, is `NaN`.
 
 ## drop_cols
@@ -5709,7 +5757,7 @@ Use `log => 1` for tails that would otherwise underflow to `0`:
 - `sd => 0` gives a step at the mean: `x < mean` returns `0`, otherwise `1`.
 - `sd < 0` returns `NaN` and warns.
 - A `NaN` input, an `undef` input, or an `undef` element of an array reference
-  yields `NaN` (R's `NA`). Up to 0.331 an `undef` was read as `0`.
+  yields `NaN` (R's `NA`). Up to 0.33 an `undef` was read as `0`.
 - `+Inf` returns `1`, `-Inf` returns `0`.
 
 ## prcomp

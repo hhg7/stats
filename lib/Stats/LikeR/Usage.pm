@@ -371,6 +371,20 @@ example:
 
 END
 
+$SCREEN{dftype} = <<'END';
+usage: dftype(DATA)
+
+Name the shape of DATA: AoA, AoH, HoA, HoH, array, hash, scalar or undef.
+
+positional arguments:
+  DATA                   any scalar, or a reference to anything
+
+example:
+  dftype([ { a => 1 }, { a => 2 } ])
+      # returns 'AoH'
+
+END
+
 $SCREEN{drop_cols} = <<'END';
 usage: drop_cols(DF, COLUMN [, COLUMN ...])
 

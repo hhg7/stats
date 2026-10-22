@@ -22214,6 +22214,37 @@ static void ag_set_init(pTHX_ ag_set *restrict s, short int shape, AV *ids, HV *
 	}
 }
 
+/*What dftype() makes of one element of an array, or one value of a hash.
+
+Get magic runs first, so a tied element is classified by what it fetches. A
+blessed reference counts by the container it refers to, which _df_shape()
+does not do: it asks ref_named() instead. e is NULL for av_fetch()'s hole in a
+sparse array.*/
+static unsigned short int dftype_cell(pTHX_ SV *e) // 0 = undef, 1 = array ref, 2 = hash ref, 3 = anything else
+{
+	//not restrict: e is perl-managed, and a tied FETCH can reach it again
+	if (!e) return 0;
+	SvGETMAGIC(e);
+	if (!SvOK(e)) return 0;
+	if (!SvROK(e)) return 3;
+	const svtype t = SvTYPE(SvRV(e));
+	return t == SVt_PVAV ? 1 : t == SVt_PVHV ? 2 : 3;
+}
+
+/*Perl's ref($sv) eq name, for name "ARRAY" or "HASH" and its svtype t: an
+unblessed container of that type, or an object blessed into a package of that
+name, which is what ref() reports for both. _df_shape() was a Perl sub up to
+0.331 and decided every shape this way, so a blessed frame or row is not a
+frame or row to it; the callers, still in Perl, test ref() the same way. sv's
+get magic must have run.*/
+static bool ref_named(pTHX_ SV *sv, svtype t, const char *restrict name)
+{
+	//not restrict: sv is perl-managed
+	if (!SvROK(sv)) return FALSE;
+	SV *rv = SvRV(sv);
+	return SvOBJECT(rv) ? strEQ(sv_reftype(rv, TRUE), name) : SvTYPE(rv) == t;
+}
+
 MODULE = Stats::LikeR  PACKAGE = Stats::LikeR
 
 void
@@ -22425,6 +22456,78 @@ _aoh_key_union(df)
 		ITER_KEEP_END;
 	}
 	RETVAL = newRV_noinc((SV *)out);
+}
+  OUTPUT:
+	RETVAL
+
+ # _df_shape($df [, $caller]) -- 'AoA', 'AoH', 'HoA' or 'HoH', the shape the
+ # frame functions written in Perl branch on.  An array is an AoA or an AoH by
+ # its first defined element, and an AoH when it has none.  A hash is a HoH
+ # when any value is a hash ref, and otherwise a HoA, an empty or flat one
+ # included; a hash holding both array and hash refs dies.  Shapes are told
+ # apart by ref(), so a blessed frame or row is neither (see ref_named()).
+ # $caller names the function in the error messages; a $df that is not a
+ # reference dies with its help screen, or with "data frame:" when no caller
+ # is given.
+ #
+ # This was a Perl sub up to 0.331, and keeps its answers and messages.  A
+ # tied value is fetched once, where the Perl fetched it once per test, and
+ # the hash's each iterator is left where it was rather than reset.
+SV *
+_df_shape(...)
+  CODE:
+{
+	if (items < 1 || items > 2)
+		croak("Usage: Stats::LikeR::_df_shape(df [, caller])");
+	SV *df = ST(0);	//not restrict: perl-managed, like everything this reads
+	SV *caller_sv = items > 1 ? ST(1) : NULL;
+	SvGETMAGIC(df);
+	if (caller_sv) SvGETMAGIC(caller_sv);
+	const bool named = caller_sv && SvOK(caller_sv);
+	const char *who = named ? SvPV_nomg_nolen(caller_sv) : "data frame";
+	if (!SvROK(df)) {
+		static const char msg[] = "data frame must be an ARRAY (AoA/AoH) or HASH (HoA/HoH) ref";
+		if (named) usage_croak(aTHX_ who, "%s", msg);	// the caller's help screen
+		croak("data frame: %s\n", msg);
+	}
+	const char *shape;
+	if (ref_named(aTHX_ df, SVt_PVAV, "ARRAY")) {
+		//an object blessed into a package named ARRAY need not be one, and @$df died on it
+		if (SvTYPE(SvRV(df)) != SVt_PVAV) croak("Not an ARRAY reference");
+		AV *av = (AV *)SvRV(df);
+		shape = "AoH";	// empty, or nothing defined: harmless default
+		const SSize_t top = av_len(av);
+		for (SSize_t i = 0; i <= top; i++) {
+			SV **e = av_fetch(av, i, 0);
+			if (!e) continue;
+			SvGETMAGIC(*e);
+			if (!SvOK(*e)) continue;
+			if (ref_named(aTHX_ *e, SVt_PVAV, "ARRAY"))     shape = "AoA";
+			else if (!ref_named(aTHX_ *e, SVt_PVHV, "HASH"))
+				croak("%s: array elements must be ARRAY (AoA) or HASH (AoH) refs\n", who);
+			break;
+		}
+	} else {
+		//the Perl took any other reference as a hash, and %$df died on a non-hash
+		if (SvTYPE(SvRV(df)) != SVt_PVHV) croak("Not a HASH reference");
+		HV *hv = (HV *)SvRV(df);
+		bool saw_arr = FALSE, saw_hash = FALSE;
+		HE *he;
+		ITER_KEEP_BEGIN(hv);
+		hv_iterinit(hv);
+		while ((he = hv_iternext(hv))) {
+			SV *v = he_val(aTHX_ hv, he);
+			if (ref_named(aTHX_ v, SVt_PVAV, "ARRAY"))     saw_arr  = TRUE;
+			else if (ref_named(aTHX_ v, SVt_PVHV, "HASH")) saw_hash = TRUE;
+			if (saw_arr && saw_hash) {
+				hv_walk_out(aTHX_ hv);
+				croak("%s: hashref mixes array and hash values (ambiguous HoA/HoH)\n", who);
+			}
+		}
+		ITER_KEEP_END;
+		shape = saw_hash ? "HoH" : "HoA";	// arrays, or empty -> default
+	}
+	RETVAL = newSVpv(shape, 0);
 }
   OUTPUT:
 	RETVAL
@@ -39272,6 +39375,85 @@ SV *hoa2hoh(...)
 	}
 	OUTPUT:
 		RETVAL
+
+ # dftype($data): the name of the shape $data has -- AoA, AoH, HoA, HoH for a
+ # frame, array or hash for any other container, scalar or undef for a value,
+ # and the referent's type, as ref() names it, for any other reference.
+SV *dftype(...)
+CODE:
+{
+	if (items != 1)
+		usage_croak(aTHX_ "dftype", "expected 1 argument, got %" UVuf, (UV)items);
+	SV *data = ST(0);	//not restrict: perl-managed, like every container below
+	SvGETMAGIC(data);
+	const char *name;
+	if (!SvOK(data))
+		name = "undef";
+	else if (!SvROK(data))
+		name = "scalar";
+	else {
+		SV *ref = SvRV(data);
+		const svtype t = SvTYPE(ref);
+		/*Before 5.12 a qr// refers to a PVMG carrying qr magic, which
+		sv_reftype() calls SCALAR; from 5.12 on it is a REGEXP. Name it the
+		same on both. SvRXOK(data) would say so on either, but it runs get
+		magic on data, which has run once already, and before 5.12 it answers
+		only for a reference, so it cannot be asked about ref instead. The
+		test below is the one 5.10's Perl_get_re_arg() makes of the referent.*/
+#if PERL_BCDVERSION >= 0x5011000
+		if (t == SVt_REGEXP)
+#else
+		if (t == SVt_PVMG && mg_find(ref, PERL_MAGIC_qr))
+#endif
+			name = "REGEXP";
+		else if (t != SVt_PVAV && t != SVt_PVHV)
+			name = sv_reftype(ref, FALSE);
+		else {
+			short int kind = -1; // -1 = no defined element yet, 0 = mixed, 1 = all array refs, 2 = all hash refs; read after the loop
+			if (t == SVt_PVAV) {
+				AV *av = (AV *)ref;
+				const SSize_t top = av_len(av);
+				for (SSize_t i = 0; i <= top; i++) {
+					SV **e = av_fetch(av, i, 0);
+					const unsigned short int c = dftype_cell(aTHX_ e ? *e : NULL);
+					if (c == 0) continue;
+					if (c == 3 || (kind != -1 && kind != (short int)c)) {
+						kind = 0;
+						break;
+					}
+					kind = (short int)c;
+				}
+				name = kind == 1 ? "AoA" : kind == 2 ? "AoH" : "array";
+			} else {
+				HV *hv = (HV *)ref;
+				HE *he;
+				/*The caller's each() iterator is put back afterwards. A walk
+				that stops early is finished by hv_walk_out(), without
+				fetching the rest, because perl before 5.18 leaks the entry a
+				tied iterator holds when ITER_KEEP_END's hv_iterinit() cuts it
+				short.*/
+				ITER_KEEP_BEGIN(hv);
+				(void)hv_iterinit(hv);
+				while ((he = hv_iternext(hv))) {
+					//hv_iterval(), not he_val(): dftype_cell() runs the get magic, once
+					const unsigned short int c = dftype_cell(aTHX_ hv_iterval(hv, he));
+					if (c == 0) continue;
+					if (c == 3 || (kind != -1 && kind != (short int)c)) {
+						kind = 0;
+						hv_walk_out(aTHX_ hv);
+						break;
+					}
+					kind = (short int)c;
+				}
+				ITER_KEEP_END;
+				name = kind == 1 ? "HoA" : kind == 2 ? "HoH" : "hash";
+			}
+		}
+	}
+	RETVAL = newSVpv(name, 0);
+}
+OUTPUT:
+	RETVAL
 
 void vals(...)
 PREINIT:

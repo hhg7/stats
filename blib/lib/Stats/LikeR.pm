@@ -3,13 +3,13 @@
 require 5.010001;
 use strict;
 package Stats::LikeR;
-our $VERSION = '0.331';	# quoted: a bare version ending in 0, such as 0.320, is the number 0.32, which the dist would be named
+our $VERSION = '0.34';	# quoted: a bare version ending in 0, such as 0.320, is the number 0.32, which the dist would be named
 require XSLoader;
 use warnings FATAL => 'all';
 use Exporter 'import';
 use Scalar::Util qw(reftype looks_like_number);
 XSLoader::load('Stats::LikeR', $VERSION);
-our @EXPORT_OK = qw(h add_data age_standardize agg anova aoh2h aoh2hoa aoh2hoh aov assign auc auroc avals bedroc bfill binom_test cfilter chisq_test chunk col col2col colnames concat cmh_test cor cor_test cov csort density df2h bw_nrd0 bw_nrd bw_ucv bw_bcv bw_sj dnorm cohen_d cramers_v eta_squared drop_cols drop_duplicates dropna epi_2x2 ffill fillna filter fisher_test get_union glm group_by h2aoh hoa2aoh hoa2hoh hoh2hoa hist interpolate intersection is_equivalent kruskal_test ks_test kurtosis Lonly ljoin lm map_cell matrix max mean median melt merge min mode ncol nrow oneway_test p_adjust pivot_table pnorm pt qt pchisq qchisq pf qf pbinom qnorm power_t_test predict prop_test mcnemar_test friedman_test dunn_test prcomp ptukey qcut qtukey quantile rank roc Ronly rbind rbinom read_table rename_cols rnorm rownames runif sample scale sd select_cols seq shapiro_test skew smd sum summary survfit logrank_test coxph table_one t_test transpose TukeyHSD uniq vals value_counts var var_test vif hosmer_lemeshow view wilcox_test write_table zerotrunc hurdle svyglm ivreg lmer);
+our @EXPORT_OK = qw(h add_data age_standardize agg anova aoh2h aoh2hoa aoh2hoh aov assign auc auroc avals bedroc bfill binom_test cfilter chisq_test chunk col col2col colnames concat cmh_test cor cor_test cov csort density df2h dftype bw_nrd0 bw_nrd bw_ucv bw_bcv bw_sj dnorm cohen_d cramers_v eta_squared drop_cols drop_duplicates dropna epi_2x2 ffill fillna filter fisher_test get_union glm group_by h2aoh hoa2aoh hoa2hoh hoh2hoa hist interpolate intersection is_equivalent kruskal_test ks_test kurtosis Lonly ljoin lm map_cell matrix max mean median melt merge min mode ncol nrow oneway_test p_adjust pivot_table pnorm pt qt pchisq qchisq pf qf pbinom qnorm power_t_test predict prop_test mcnemar_test friedman_test dunn_test prcomp ptukey qcut qtukey quantile rank roc Ronly rbind rbinom read_table rename_cols rnorm rownames runif sample scale sd select_cols seq shapiro_test skew smd sum summary survfit logrank_test coxph table_one t_test transpose TukeyHSD uniq vals value_counts var var_test vif hosmer_lemeshow view wilcox_test write_table zerotrunc hurdle svyglm ivreg lmer);
 our @EXPORT = @EXPORT_OK;
 
 # File operations: failure reporting
@@ -1326,35 +1326,7 @@ sub _untied {
 	return $df;
 }
 
-sub _df_shape {
-	my ($df, $caller) = @_;
-	unless (ref $df) {
-		my $msg = 'data frame must be an ARRAY (AoA/AoH) or HASH (HoA/HoH) ref';
-		_usage_error($caller, $msg) if defined $caller;	# the caller's help screen
-		die "data frame: $msg\n";
-	}
-	$caller = 'data frame' unless defined $caller;
-	if (ref $df eq 'ARRAY') {
-		for my $e (@$df) {
-			next unless defined $e;
-			return 'AoA' if ref $e eq 'ARRAY';
-			return 'AoH' if ref $e eq 'HASH';
-			die "$caller: array elements must be ARRAY (AoA) or HASH (AoH) refs\n";
-		}
-		return 'AoH';                         # empty -> harmless default
-	}
-	# HASH: HoA vs HoH, rejecting a mix
-	my ($saw_arr, $saw_hash) = (0, 0);
-	for my $v (values %$df) {
-		next unless ref $v;
-		$saw_arr++  if ref $v eq 'ARRAY';
-		$saw_hash++ if ref $v eq 'HASH';
-	}
-	die "$caller: hashref mixes array and hash values (ambiguous HoA/HoH)\n"
-		if $saw_arr and $saw_hash;
-	return 'HoH' if $saw_hash;
-	return 'HoA';                             # arrays, or empty -> default
-}
+# _df_shape($df [, $caller]) is in LikeR.xs, where its rules are written out.
 
 # agg($df, agg => { col => 'mean' | [ 'mean', 'sd', .. ] | \&code, .. }, %opts)
 #
@@ -10616,6 +10588,108 @@ row name; for a shared key, that is the first repeat.
 L<C<h2aoh>|/"h2aoh"> is the reverse. L</"C<aoh2hoh>"> also indexes rows by a
 column, but keeps the whole row as the value instead of one cell.
 
+=head2 dftype
+
+Name the shape of a data structure, as a string. The four data frame shapes
+the rest of the module takes come back by their usual names, so C<dftype> is
+the way to ask which of them you have before handing it to a function that
+wants a particular one.
+
+ dftype([ [1, 2], [3, 4] ]);                # 'AoA'
+ dftype([ { a => 1 }, { a => 2 } ]);        # 'AoH'
+ dftype({ a => [1, 2], b => [3, 4] });      # 'HoA'
+ dftype({ r1 => { a => 1 }, r2 => { a => 2 } });   # 'HoH'
+ dftype([ 1, 2, 3 ]);                       # 'array'
+ dftype({ a => 1, b => 2 });                # 'hash'
+ dftype(42);                                # 'scalar'
+ dftype(undef);                             # 'undef'
+ dftype(\&mean);                            # 'CODE'
+
+It takes exactly one argument.
+
+
+
+=begin html
+
+<table>
+<thead>
+<tr>
+  <th>Argument</th>
+  <th>Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>undef</code></td>
+  <td><code>undef</code> (the string)</td>
+</tr>
+<tr>
+  <td>anything else that is not a reference</td>
+  <td><code>scalar</code></td>
+</tr>
+<tr>
+  <td>an array ref whose defined elements are all array refs</td>
+  <td><code>AoA</code></td>
+</tr>
+<tr>
+  <td>an array ref whose defined elements are all hash refs</td>
+  <td><code>AoH</code></td>
+</tr>
+<tr>
+  <td>any other array ref</td>
+  <td><code>array</code></td>
+</tr>
+<tr>
+  <td>a hash ref whose defined values are all array refs</td>
+  <td><code>HoA</code></td>
+</tr>
+<tr>
+  <td>a hash ref whose defined values are all hash refs</td>
+  <td><code>HoH</code></td>
+</tr>
+<tr>
+  <td>any other hash ref</td>
+  <td><code>hash</code></td>
+</tr>
+<tr>
+  <td>a compiled pattern, <code>qr//</code></td>
+  <td><code>REGEXP</code></td>
+</tr>
+<tr>
+  <td>any other reference</td>
+  <td>its type as <code>ref</code> names an unblessed one: <code>SCALAR</code>, <code>REF</code>, <code>CODE</code>, <code>GLOB</code>, ...</td>
+</tr>
+</tbody>
+</table>
+
+=end html
+
+
+
+Things worth knowing:
+
+=over
+
+=item * An C<undef> element or value is passed over, so C<< [ undef, { a =E<gt> 1 } ] >> is an
+C<AoH>. A container that has no defined element at all — C<[]>, C<{}>,
+C<[ undef ]> — is a plain C<array> or C<hash>, since nothing in it says which
+frame it would be.
+
+=item * One element of another kind is enough to make it plain: C<< [ [1], { a =E<gt> 1 } ] >>
+and C<[ [1], 2 ]> are both C<array>. Every element is checked, not only the
+first, up to the first one that does not fit.
+
+=item * Blessing is ignored: a blessed array or hash, and a blessed row inside one,
+counts as the container it is. A C<qr//> is C<REGEXP> on every perl,
+including 5.10, where C<Scalar::Util::reftype> calls it C<SCALAR>.
+
+=item * A tied array or hash is classified by what its elements fetch. Walking a
+hash resets its C<each> iterator, as C<keys> does.
+
+=item * Only the top two levels are looked at: C<[ [ [1] ] ]> is an C<AoA>.
+
+=back
+
 =head2 Distribution functions
 
 C<pnorm> and C<dnorm> have never had company: there was no way to ask for a
@@ -10739,13 +10813,13 @@ C<< df =E<gt> Inf >> (perl's C<9**9**9>, or the string C<"Inf">) is the limit R 
 C<pt($q, Inf)> is C<pnorm($q)> and C<qt($p, Inf)> is C<qnorm($p)>;
 C<pf($x, $df1, Inf)> is C<pchisq($x * $df1, $df1)>, C<pf($x, Inf, $df2)> the upper
 tail of C<pchisq($df2 / $x, $df2)>, and with both infinite I<F> is a step at 1
-(C<0.5> at 1 itself); C<qf> inverts each. Up to 0.331 none of this was handled:
+(C<0.5> at 1 itself); C<qf> inverts each. Up to 0.33 none of this was handled:
 C<qt(0.975, Inf)> was C<3.1e-61> and C<pf(0.5, 3, Inf)> was C<1>. A finite but huge
 df is computed exactly rather than by R's C<< df E<gt> 4e5 >> approximation in C<qf>.
 
 C<pbinom>'s C<size> must be a whole number within R's own fuzz,
 C<1e-9 * max(1, |size|)>, and is then rounded, so C<pbinom(3, 10 + 1e-10, 0.5)>
-is R's C<0.171875>; up to 0.331 anything not exactly whole was C<NaN>.
+is R's C<0.171875>; up to 0.33 anything not exactly whole was C<NaN>.
 
 =head3 What each one does, in one picture
 
@@ -11008,7 +11082,7 @@ next to its test and nothing in the suite calls it.
 The incomplete gamma behind C<pchisq> and C<qchisq> is R's own (Morten Welinder's
 C<pgamma.c>), and the incomplete beta behind C<pt>, C<pf> and C<pbinom> switches
 to R's TOMS 708 algorithms once a shape reaches 1000. Both stay accurate in
-relative terms at any df: up to 0.331 C<pchisq(1e15, 1e15)> was C<0.379> where R
+relative terms at any df: up to 0.33 C<pchisq(1e15, 1e15)> was C<0.379> where R
 and the truth are C<0.50000000594708>, C<pt(1.96, 1e15)> was C<0.97448> for
 C<0.97500>, and C<pf(1, 1e15, 1e15)> was C<0.481> for exactly C<0.5>. C<qchisq> is a
 Newton iteration from AS 91's starting value, so C<qchisq(0.5, 1e10)> takes about
@@ -11028,7 +11102,7 @@ rather than to C<0>.
 =item * B<< a C<q*> function takes a log probability without ever exponentiating what
 it cannot >>: C<< qnorm(-1e-20, log =E<gt> 1) >> is C<9.262340089798405> (it was C<Inf>,
 since C<exp(-1e-20)> is C<1>), and C<< qt(-1000, 5, log =E<gt> 1) >> is
-C<-1.1333163490175e+87> (it was C<-Inf>). Up to 0.331 this paragraph said the
+C<-1.1333163490175e+87> (it was C<-Inf>). Up to 0.33 this paragraph said the
 C<p*> functions returned C<log()> of the probability already computed, and the
 C<q*> functions exponentiated their argument.
 
@@ -11087,7 +11161,7 @@ but default mean, standard deviation, and log can be passed as parameters:
  $x = dnorm(0, mean => 0, sd => 2, 'log' => 0);
 
 Where the density is 0 — C<x> infinite, C<< sd =E<gt> Inf >>, C<< sd =E<gt> 0 >> away from the
-mean — C<< log =E<gt> 1 >> gives C<-Inf>, as R does (up to 0.331 it gave C<0>). An C<undef>
+mean — C<< log =E<gt> 1 >> gives C<-Inf>, as R does (up to 0.33 it gave C<0>). An C<undef>
 C<x>, or an C<undef> element, is C<NaN>.
 
 =head2 drop_cols
@@ -15228,7 +15302,7 @@ Use C<< log =E<gt> 1 >> for tails that would otherwise underflow to C<0>:
 =item * C<< sd E<lt> 0 >> returns C<NaN> and warns.
 
 =item * A C<NaN> input, an C<undef> input, or an C<undef> element of an array reference
-yields C<NaN> (R's C<NA>). Up to 0.331 an C<undef> was read as C<0>.
+yields C<NaN> (R's C<NA>). Up to 0.33 an C<undef> was read as C<0>.
 
 =item * C<+Inf> returns C<1>, C<-Inf> returns C<0>.
 

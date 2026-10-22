@@ -1,5 +1,36 @@
 Revision history for Stats-LikeR
 
+0.34 2026-10-21 CDT (Claude Opus 5.5 helped)
+
+ [New function: dftype]
+
+ - dftype($data) names the shape of a structure: AoA, AoH, HoA or HoH for
+   the four data frame shapes, array or hash for any other container, scalar
+   or undef for a value, and the referent's type, as ref() gives an unblessed
+   one, for any other reference. It is in XS and checks every element up to
+   the first that does not fit, so [ [1], { a => 1 } ] is an array rather
+   than the AoA its first row suggests. undef elements are passed over, a
+   blessed container counts as what it is, a tied one by what it fetches,
+   and a qr// is REGEXP on 5.10 as well. t/dftype.t covers every row of the
+   table in its documentation, the call-form error and the leak checks.
+
+ [Shape detection in XS]
+
+ - _df_shape(), which every frame function written in Perl calls to tell
+   an AoA, AoH, HoA or HoH apart (colnames, rownames, select_cols,
+   drop_cols, rename_cols, agg, concat, drop_duplicates, melt, pivot_table,
+   fillna, ffill, bfill, interpolate and table_one), is now XS. It gives the
+   same answers and dies with the same messages; t/df_shape.t keeps the
+   0.331 Perl sub and checks the two agree on 39 inputs, each with and
+   without a caller name. A hash is 3 to 8 times faster to classify: 0.23
+   us instead of 1.76 for a 20-column HoA, and 73 ms instead of 112 to 192
+   for a HoH of a million rows. An array is 2 to 4 times faster, as it
+   already looked at one row only. Memory is unchanged within a few kB.
+
+ - A tied frame's values are fetched once each by the shape check, where
+   the Perl fetched a value up to twice, and a hash's each iterator is left
+   where it was instead of being reset.
+
 0.331 2026-10-20 CDT (Claude Opus 5.5 helped)
 
  [survfit(), logrank_test() and coxph()]

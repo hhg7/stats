@@ -58,7 +58,7 @@
 .\" ========================================================================
 .\"
 .IX Title "Stats::LikeR 3"
-.TH Stats::LikeR 3 2026-10-21 "perl v5.44.0" "User Contributed Perl Documentation"
+.TH Stats::LikeR 3 2026-10-22 "perl v5.44.0" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -3028,6 +3028,46 @@ row name; for a shared key, that is the first repeat.
 .PP
 \&\f(CW\*(C`h2aoh\*(C'\fR is the reverse. "\f(CW\*(C`aoh2hoh\*(C'\fR" also indexes rows by a
 column, but keeps the whole row as the value instead of one cell.
+.SS dftype
+.IX Subsection "dftype"
+Name the shape of a data structure, as a string. The four data frame shapes
+the rest of the module takes come back by their usual names, so \f(CW\*(C`dftype\*(C'\fR is
+the way to ask which of them you have before handing it to a function that
+wants a particular one.
+.PP
+.Vb 9
+\& dftype([ [1, 2], [3, 4] ]);                # \*(AqAoA\*(Aq
+\& dftype([ { a => 1 }, { a => 2 } ]);        # \*(AqAoH\*(Aq
+\& dftype({ a => [1, 2], b => [3, 4] });      # \*(AqHoA\*(Aq
+\& dftype({ r1 => { a => 1 }, r2 => { a => 2 } });   # \*(AqHoH\*(Aq
+\& dftype([ 1, 2, 3 ]);                       # \*(Aqarray\*(Aq
+\& dftype({ a => 1, b => 2 });                # \*(Aqhash\*(Aq
+\& dftype(42);                                # \*(Aqscalar\*(Aq
+\& dftype(undef);                             # \*(Aqundef\*(Aq
+\& dftype(\e&mean);                            # \*(AqCODE\*(Aq
+.Ve
+.PP
+It takes exactly one argument.
+.PP
+Things worth knowing:
+.IP \(bu 4
+An \f(CW\*(C`undef\*(C'\fR element or value is passed over, so \f(CW\*(C`[ undef, { a => 1 } ]\*(C'\fR is an
+\&\f(CW\*(C`AoH\*(C'\fR. A container that has no defined element at all — \f(CW\*(C`[]\*(C'\fR, \f(CW\*(C`{}\*(C'\fR,
+\&\f(CW\*(C`[ undef ]\*(C'\fR — is a plain \f(CW\*(C`array\*(C'\fR or \f(CW\*(C`hash\*(C'\fR, since nothing in it says which
+frame it would be.
+.IP \(bu 4
+One element of another kind is enough to make it plain: \f(CW\*(C`[ [1], { a => 1 } ]\*(C'\fR
+and \f(CW\*(C`[ [1], 2 ]\*(C'\fR are both \f(CW\*(C`array\*(C'\fR. Every element is checked, not only the
+first, up to the first one that does not fit.
+.IP \(bu 4
+Blessing is ignored: a blessed array or hash, and a blessed row inside one,
+counts as the container it is. A \f(CW\*(C`qr//\*(C'\fR is \f(CW\*(C`REGEXP\*(C'\fR on every perl,
+including 5.10, where \f(CW\*(C`Scalar::Util::reftype\*(C'\fR calls it \f(CW\*(C`SCALAR\*(C'\fR.
+.IP \(bu 4
+A tied array or hash is classified by what its elements fetch. Walking a
+hash resets its \f(CW\*(C`each\*(C'\fR iterator, as \f(CW\*(C`keys\*(C'\fR does.
+.IP \(bu 4
+Only the top two levels are looked at: \f(CW\*(C`[ [ [1] ] ]\*(C'\fR is an \f(CW\*(C`AoA\*(C'\fR.
 .SS "Distribution functions"
 .IX Subsection "Distribution functions"
 \&\f(CW\*(C`pnorm\*(C'\fR and \f(CW\*(C`dnorm\*(C'\fR have never had company: there was no way to ask for a
@@ -3068,13 +3108,13 @@ pins those values; up to 0.3217 both functions returned \f(CW\*(C`NaN\*(C'\fR th
 \&\f(CW\*(C`pt($q, Inf)\*(C'\fR is \f(CWpnorm($q)\fR and \f(CW\*(C`qt($p, Inf)\*(C'\fR is \f(CWqnorm($p)\fR;
 \&\f(CW\*(C`pf($x, $df1, Inf)\*(C'\fR is \f(CW\*(C`pchisq($x * $df1, $df1)\*(C'\fR, \f(CW\*(C`pf($x, Inf, $df2)\*(C'\fR the upper
 tail of \f(CW\*(C`pchisq($df2 / $x, $df2)\*(C'\fR, and with both infinite \fIF\fR is a step at 1
-(\f(CW0.5\fR at 1 itself); \f(CW\*(C`qf\*(C'\fR inverts each. Up to 0.331 none of this was handled:
+(\f(CW0.5\fR at 1 itself); \f(CW\*(C`qf\*(C'\fR inverts each. Up to 0.33 none of this was handled:
 \&\f(CW\*(C`qt(0.975, Inf)\*(C'\fR was \f(CW3.1e\-61\fR and \f(CW\*(C`pf(0.5, 3, Inf)\*(C'\fR was \f(CW1\fR. A finite but huge
 df is computed exactly rather than by R\*(Aqs \f(CW\*(C`df > 4e5\*(C'\fR approximation in \f(CW\*(C`qf\*(C'\fR.
 .PP
 \&\f(CW\*(C`pbinom\*(C'\fR\*(Aqs \f(CW\*(C`size\*(C'\fR must be a whole number within R\*(Aqs own fuzz,
 \&\f(CW\*(C`1e\-9 * max(1, |size|)\*(C'\fR, and is then rounded, so \f(CW\*(C`pbinom(3, 10 + 1e\-10, 0.5)\*(C'\fR
-is R\*(Aqs \f(CW0.171875\fR; up to 0.331 anything not exactly whole was \f(CW\*(C`NaN\*(C'\fR.
+is R\*(Aqs \f(CW0.171875\fR; up to 0.33 anything not exactly whole was \f(CW\*(C`NaN\*(C'\fR.
 .PP
 \fIWhat each one does, in one picture\fR
 .IX Subsection "What each one does, in one picture"
@@ -3193,7 +3233,7 @@ next to its test and nothing in the suite calls it.
 The incomplete gamma behind \f(CW\*(C`pchisq\*(C'\fR and \f(CW\*(C`qchisq\*(C'\fR is R\*(Aqs own (Morten Welinder\*(Aqs
 \&\f(CW\*(C`pgamma.c\*(C'\fR), and the incomplete beta behind \f(CW\*(C`pt\*(C'\fR, \f(CW\*(C`pf\*(C'\fR and \f(CW\*(C`pbinom\*(C'\fR switches
 to R\*(Aqs TOMS 708 algorithms once a shape reaches 1000. Both stay accurate in
-relative terms at any df: up to 0.331 \f(CW\*(C`pchisq(1e15, 1e15)\*(C'\fR was \f(CW0.379\fR where R
+relative terms at any df: up to 0.33 \f(CW\*(C`pchisq(1e15, 1e15)\*(C'\fR was \f(CW0.379\fR where R
 and the truth are \f(CW0.50000000594708\fR, \f(CW\*(C`pt(1.96, 1e15)\*(C'\fR was \f(CW0.97448\fR for
 \&\f(CW0.97500\fR, and \f(CW\*(C`pf(1, 1e15, 1e15)\*(C'\fR was \f(CW0.481\fR for exactly \f(CW0.5\fR. \f(CW\*(C`qchisq\*(C'\fR is a
 Newton iteration from AS 91\*(Aqs starting value, so \f(CW\*(C`qchisq(0.5, 1e10)\*(C'\fR takes about
@@ -3211,7 +3251,7 @@ rather than to \f(CW0\fR.
 \&\fBa \fR\f(CB\*(C`q*\*(C'\fR\fB function takes a log probability without ever exponentiating what
 it cannot\fR: \f(CW\*(C`qnorm(\-1e\-20, log => 1)\*(C'\fR is \f(CW9.262340089798405\fR (it was \f(CW\*(C`Inf\*(C'\fR,
 since \f(CWexp(\-1e\-20)\fR is \f(CW1\fR), and \f(CW\*(C`qt(\-1000, 5, log => 1)\*(C'\fR is
-\&\f(CW\-1.1333163490175e+87\fR (it was \f(CW\*(C`\-Inf\*(C'\fR). Up to 0.331 this paragraph said the
+\&\f(CW\-1.1333163490175e+87\fR (it was \f(CW\*(C`\-Inf\*(C'\fR). Up to 0.33 this paragraph said the
 \&\f(CW\*(C`p*\*(C'\fR functions returned \f(CWlog()\fR of the probability already computed, and the
 \&\f(CW\*(C`q*\*(C'\fR functions exponentiated their argument.
 .PP
@@ -3257,7 +3297,7 @@ but default mean, standard deviation, and log can be passed as parameters:
 .Ve
 .PP
 Where the density is 0 — \f(CW\*(C`x\*(C'\fR infinite, \f(CW\*(C`sd => Inf\*(C'\fR, \f(CW\*(C`sd => 0\*(C'\fR away from the
-mean — \f(CW\*(C`log => 1\*(C'\fR gives \f(CW\*(C`\-Inf\*(C'\fR, as R does (up to 0.331 it gave \f(CW0\fR). An \f(CW\*(C`undef\*(C'\fR
+mean — \f(CW\*(C`log => 1\*(C'\fR gives \f(CW\*(C`\-Inf\*(C'\fR, as R does (up to 0.33 it gave \f(CW0\fR). An \f(CW\*(C`undef\*(C'\fR
 \&\f(CW\*(C`x\*(C'\fR, or an \f(CW\*(C`undef\*(C'\fR element, is \f(CW\*(C`NaN\*(C'\fR.
 .SS drop_cols
 .IX Subsection "drop_cols"
@@ -6188,7 +6228,7 @@ Use \f(CW\*(C`log => 1\*(C'\fR for tails that would otherwise underflow to \f(CW
 \&\f(CW\*(C`sd < 0\*(C'\fR returns \f(CW\*(C`NaN\*(C'\fR and warns.
 .IP \(bu 4
 A \f(CW\*(C`NaN\*(C'\fR input, an \f(CW\*(C`undef\*(C'\fR input, or an \f(CW\*(C`undef\*(C'\fR element of an array reference
-yields \f(CW\*(C`NaN\*(C'\fR (R\*(Aqs \f(CW\*(C`NA\*(C'\fR). Up to 0.331 an \f(CW\*(C`undef\*(C'\fR was read as \f(CW0\fR.
+yields \f(CW\*(C`NaN\*(C'\fR (R\*(Aqs \f(CW\*(C`NA\*(C'\fR). Up to 0.33 an \f(CW\*(C`undef\*(C'\fR was read as \f(CW0\fR.
 .IP \(bu 4
 \&\f(CW\*(C`+Inf\*(C'\fR returns \f(CW1\fR, \f(CW\*(C`\-Inf\*(C'\fR returns \f(CW0\fR.
 .SS prcomp
