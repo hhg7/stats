@@ -3,7 +3,7 @@
 require 5.010001;
 use strict;
 package Stats::LikeR;
-our $VERSION = '0.34';	# quoted: a bare version ending in 0, such as 0.320, is the number 0.32, which the dist would be named
+our $VERSION = '0.341';	# quoted: a bare version ending in 0, such as 0.320, is the number 0.32, which the dist would be named
 require XSLoader;
 use warnings FATAL => 'all';
 use Exporter 'import';
@@ -19397,7 +19397,9 @@ an array or hash whose first defined element is itself a reference. A column of
 a HoA, or a row of a HoH, holds plain values instead. Every other value must then
 be a data frame or empty. A plain value or a column beside a data frame is an
 error that names both keys. A hash whose values are all empty is still the
-empty HoA or HoH it always was.
+empty HoA or HoH it always was. A tied sheet is not looked into, so that none of
+its values is fetched twice. It can sit in a workbook beside other sheets, but
+a hash whose sheets are I<all> tied is read as a HoA or HoH.
 
 Only an C<.xlsx> file holds more than one table, so a workbook is an error for any
 other kind of file. C<xlsx_sheet> is an error too, since the keys name the sheets.
